@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v2.2 (Код 43)
+    GRM Unified Economy v2.3 (Код 43)
 
     ЕДИНЫЙ аддон экономики фракций — написан с нуля.
     ЗАМЕНЯЕТ собой два старых модуля:
@@ -131,6 +131,17 @@ if SERVER then
         e.departmentSalaries  = istable(e.departmentSalaries) and e.departmentSalaries or {}
         e.history             = istable(e.history) and e.history or {}
         e.nextPay             = tonumber(e.nextPay) or (os.time() + e.salaryInterval)
+        -- Права фракции на систему штрафов (настраивает superadmin).
+        -- По умолчанию доступ ВЫКЛЮЧЕН: его выдают точечно фракциям.
+        local fp = istable(e.finePerms) and e.finePerms or {}
+        e.finePerms = fp
+        fp.enabled        = fp.enabled == true     -- фракция может штрафовать вообще
+        fp.allRoles       = fp.allRoles == true    -- штрафовать могут все члены
+        fp.roles          = istable(fp.roles) and fp.roles or {} -- разрешённые роли
+        fp.ownFaction     = fp.ownFaction ~= false -- цели: свои члены фракции
+        fp.otherFactions  = fp.otherFactions == true -- цели: другие фракции
+        fp.civilians      = fp.civilians ~= false  -- цели: граждане (без фракции)
+        fp.maxAmount      = math.max(0, math.floor(tonumber(fp.maxAmount) or 0)) -- лимит (0 = общий)
         return e
     end
 
@@ -447,12 +458,57 @@ if SERVER then
     timer.Create("GRM_Economy_AutoSave", 120, 0, save)
     hook.Add("ShutDown", "GRM_Economy_Save", function() dirty = true save() end)
 
+    -- ── ДОСТУП К ШТРАФАМ (v2.3): кто и кого может штрафовать ──
+    -- Возвращает true либо false + причину отказа.
+    function E.CanFine(issuer, target)
+        if not IsValid(issuer) or not issuer:IsPlayer() then return true end -- система
+        if issuer:IsSuperAdmin() then return true end                        -- superadmin: всегда
+        if not IsValid(target) or not target:IsPlayer() then return false, "Нет цели" end
+        if target == issuer then return false, "Нельзя штрафовать себя" end
+
+        local iname, ifac = factionOf(issuer)
+        if not iname then return false, "Ваша фракция не имеет доступа к системе штрафов" end
+        local fp = entry(iname).finePerms
+        if not fp.enabled then
+            return false, "Фракция [" .. iname .. "] не имеет доступа к системе штрафов"
+        end
+        -- КТО: лидер всегда; иначе — все члены либо отмеченные роли
+        if not isLeaderOf(issuer, ifac) and not fp.allRoles then
+            local info = ifac.Members[issuer:SteamID()] or {}
+            if not fp.roles[tostring(info.Role or "")] then
+                return false, "Ваша роль во фракции не имеет права штрафовать"
+            end
+        end
+        -- КОГО: свои / другие фракции / граждане
+        local tname = factionOf(target)
+        if tname == iname then
+            if not fp.ownFaction then return false, "[" .. iname .. "] не может штрафовать своих членов" end
+        elseif tname then
+            if not fp.otherFactions then return false, "[" .. iname .. "] не может штрафовать другие фракции" end
+        else
+            if not fp.civilians then return false, "[" .. iname .. "] не может штрафовать граждан (без фракции)" end
+        end
+        return true
+    end
+
+    -- Эффективный лимит штрафа для конкретного игрока.
+    function E.FineMaxFor(ply)
+        if IsValid(ply) and ply:IsPlayer() and ply:IsSuperAdmin() then return E.Config.FineMaxAmount end
+        local iname = factionOf(ply)
+        local fp = iname and entry(iname).finePerms
+        if fp and fp.enabled and fp.maxAmount > 0 then
+            return math.min(fp.maxAmount, E.Config.FineMaxAmount)
+        end
+        return E.Config.FineMaxAmount
+    end
+
     -- ── ШТРАФЫ ──────────────────────────────────────────────
     function E.Fine(issuer, target, amount, reason)
         if not IsValid(target) or not target:IsPlayer() then return false, "Нет цели" end
         amount = math.floor(tonumber(amount) or 0)
         if amount <= 0 then return false, "Сумма должна быть > 0" end
-        if amount > E.Config.FineMaxAmount then amount = E.Config.FineMaxAmount end
+        local maxFor = E.FineMaxFor and E.FineMaxFor(issuer) or E.Config.FineMaxAmount
+        if amount > maxFor then amount = maxFor end
         if GRM.GetBalance(target) <= 0 then return false, "У игрока нет средств" end
 
         local issued = math.min(amount, GRM.GetBalance(target))
@@ -585,6 +641,19 @@ if SERVER then
             if istable(a.departments) then
                 e.departmentSalaries = {}
                 for k, v in pairs(a.departments) do e.departmentSalaries[tostring(k)] = math.max(0, math.floor(tonumber(v) or 0)) end
+            end
+            if istable(a.fine) then
+                local fp = e.finePerms
+                fp.enabled       = a.fine.enabled == true
+                fp.allRoles      = a.fine.allRoles == true
+                fp.ownFaction    = a.fine.ownFaction ~= false
+                fp.otherFactions = a.fine.otherFactions == true
+                fp.civilians     = a.fine.civilians ~= false
+                fp.maxAmount     = math.max(0, math.floor(tonumber(a.fine.maxAmount) or 0))
+                if istable(a.fine.roles) then
+                    fp.roles = {}
+                    for k, v in pairs(a.fine.roles) do if v == true then fp.roles[tostring(k)] = true end end
+                end
             end
             dirty = true
             save()
@@ -894,7 +963,8 @@ if SERVER then
         end
 
         if cmd == "/fine" or cmd == "!fine" then
-            -- /fine <сумма> [причина...] — цель: игрок в перекрестии
+            -- /fine <сумма> [причина...] — цель: игрок в перекрестии (до 250 юнитов)
+            -- Права: E.CanFine — доступ выдаёт superadmin в админ-панели (Фракции → Штрафы).
             local amt = math.floor(tonumber(args[2]) or 0)
             local reason = table.concat(args, " ", 3)
             if amt <= 0 then notify(ply, "/fine <сумма> [причина]", 255, 100, 100) return "" end
@@ -904,19 +974,10 @@ if SERVER then
                 notify(ply, "Смотрите на игрока (до 250 юнитов).", 255, 100, 100)
                 return ""
             end
-            local tf = factionOf(target)
-            local allowed = ply:IsSuperAdmin() or (tf and isLeaderOf(ply, Factions[tf]))
-            if not allowed then
-                notify(ply, "Штрафовать можно только членов своей фракции (лидер) или суперадмином.", 255, 100, 100)
-                return ""
-            end
-            if target == ply then notify(ply, "Нельзя штрафовать себя.", 255, 100, 100) return "" end
-            if ply:IsSuperAdmin() and tf then
-                -- суперадмин может любого; лидер — только свою фракцию
-            elseif not ply:IsSuperAdmin() and not (tf and isLeaderOf(ply, Factions[tf])) then
-                return ""
-            end
-            E.Fine(ply, target, amt, reason ~= "" and reason or "нарушение")
+            local ok, why = E.CanFine(ply, target)
+            if not ok then notify(ply, why or "Нет доступа к системе штрафов.", 255, 100, 100) return "" end
+            local okFine, issued = E.Fine(ply, target, amt, reason ~= "" and reason or "нарушение")
+            if not okFine and issued then notify(ply, tostring(issued), 255, 100, 100) end
             return ""
         end
     end)
@@ -943,7 +1004,7 @@ if SERVER then
     end)
 
     load()
-    print("[GRM Economy] Unified Economy v2.2 загружена: фракций " .. table.Count(E.Data.factions))
+    print("[GRM Economy] Unified Economy v2.3 загружена: фракций " .. table.Count(E.Data.factions))
 end
 
 -- ============================================================
@@ -1171,9 +1232,9 @@ if CLIENT then
             if f._playerSid then showSel(f._playerSid) end
         end
 
-        -- ═══ ВКЛАДКА 4: ФРАКЦИИ И ЗП (ставки/надбавки) ═══
+        -- ═══ ВКЛАДКА 4: ФРАКЦИИ (ЗП, ставки/надбавки, доступ к штрафам) ═══
         do
-            local pnl = sheetPanel("Фракции и ЗП", "icon16/group.png")
+            local pnl = sheetPanel("Фракции", "icon16/group.png")
             local listW = 230
             local list = vgui.Create("DListView", pnl)
             list:SetPos(4, 4) list:SetSize(listW, pnl:GetTall() - 8)
@@ -1198,57 +1259,70 @@ if CLIENT then
                 local fd = (d.factions or {})[name]
                 if not fd then return end
                 local e = fd.entry or {}
+                local fp = istable(e.finePerms) and e.finePerms or {}
                 -- восстановление выбранной фракции после пересборки свежими данными
                 f._restoreFaction = name
-                local rolesTbl, deptsTbl = {}, {}
+                local rolesTbl, deptsTbl, fineChks = {}, {}, {}
 
-                local function label(txt, x, y, col)
-                    local l = vgui.Create("DLabel", editor)
-                    l:SetPos(x, y) l:SetSize(280, 22)
+                local function label(par, txt, x, y, col, w)
+                    local l = vgui.Create("DLabel", par)
+                    l:SetPos(x, y) l:SetSize(w or 280, 22)
                     l:SetText(txt) l:SetFont("GRM_Eco_Normal")
                     l:SetTextColor(col or CUI.dim)
+                    return l
                 end
-                local function wang(x, y, w, val, maxv)
-                    local wn = vgui.Create("DNumberWang", editor)
+                local function wang(par, x, y, w, val, maxv)
+                    local wn = vgui.Create("DNumberWang", par)
                     wn:SetPos(x, y) wn:SetSize(w, 24)
                     wn:SetMin(0) wn:SetMax(maxv or 1000000) wn:SetValue(val or 0)
                     return wn
                 end
 
-                label("Фракция: " .. name .. "  (онлайн " .. (fd.online or 0) .. "/" .. (fd.members or 0) .. ")", 12, 8, CUI.text)
-                label("Бюджет: " .. money(e.budget or 0), 12, 32, CUI.yellow)
-                label("Налог, %:", 12, 62)
-                local taxW = wang(120, 62, 80, math.floor((e.taxRate or 0) * 100), (d.config and math.floor((d.config.maxTax or 0.5) * 100)) or 50)
-                label("Базовая ЗП:", 12, 94)
-                local baseW = wang(120, 94, 110, e.baseSalary or 0)
-                label("Интервал ЗП, сек:", 12, 126)
-                local intW = wang(160, 126, 90, e.salaryInterval or 600)
+                label(editor, "Фракция: " .. name .. "  (онлайн " .. (fd.online or 0) .. "/" .. (fd.members or 0) .. ")", 12, 8, CUI.text, 420)
+                label(editor, "Бюджет: " .. money(e.budget or 0), 12, 32, CUI.yellow, 420)
 
-                local pfb = vgui.Create("DCheckBoxLabel", editor)
-                pfb:SetPos(12, 158) pfb:SetSize(280, 24)
+                local sub = vgui.Create("DPropertySheet", editor)
+                sub:SetPos(8, 58) sub:SetSize(editor:GetWide() - 16, editor:GetTall() - 66)
+
+                -- ── ПОДВКЛАДКА: ЗАРПЛАТЫ ──
+                local pz = vgui.Create("DPanel", sub)
+                pz:SetPaintBackground(false)
+                sub:AddSheet("Зарплаты", pz, "icon16/money.png")
+
+                label(pz, "Налог, %:", 10, 12)
+                local taxW = wang(pz, 120, 10, 80, math.floor((e.taxRate or 0) * 100), (d.config and math.floor((d.config.maxTax or 0.5) * 100)) or 50)
+                label(pz, "Базовая ЗП:", 10, 44)
+                local baseW = wang(pz, 120, 42, 110, e.baseSalary or 0)
+                label(pz, "Интервал ЗП, сек:", 10, 76)
+                local intW = wang(pz, 160, 74, 90, e.salaryInterval or 600)
+
+                local pfb = vgui.Create("DCheckBoxLabel", pz)
+                pfb:SetPos(10, 108) pfb:SetSize(280, 22)
                 pfb:SetText("Выплачивать ЗП из бюджета фракции")
                 pfb:SetTextColor(CUI.text) pfb:SetValue(e.payFromBudget and 1 or 0)
 
-                -- быстрые операции с бюджетом фракции
-                local bAmt = vgui.Create("DTextEntry", editor)
-                bAmt:SetPos(12, 190) bAmt:SetSize(90, 24)
+                local bAmt = vgui.Create("DTextEntry", pz)
+                bAmt:SetPos(10, 138) bAmt:SetSize(90, 24)
                 bAmt:SetNumeric(true) bAmt:SetPlaceholderText("Сумма")
-                local bgive = btn(editor, "+ Бюджет", CUI.green, 86, 24)
-                bgive:SetPos(108, 190)
+                local bgive = btn(pz, "+ Бюджет", CUI.green, 86, 24)
+                bgive:SetPos(106, 138)
                 bgive.DoClick = function()
                     act({ action = "budget_give", faction = name, amount = math.max(0, math.floor(tonumber(bAmt:GetValue()) or 0)) })
                 end
-                local btake = btn(editor, "- Бюджет", CUI.red, 86, 24)
-                btake:SetPos(200, 190)
+                local btake = btn(pz, "- Бюджет", CUI.red, 86, 24)
+                btake:SetPos(198, 138)
                 btake.DoClick = function()
                     act({ action = "budget_take", faction = name, amount = math.max(0, math.floor(tonumber(bAmt:GetValue()) or 0)) })
                 end
 
+                label(pz, "История:", 10, 174, CUI.text)
+                histBox(pz, e.history or {}, 10, 198, 270, math.max(60, pz:GetTall() - 198 - 52))
+
                 -- ЗП по ролям (ставки)
-                local rolesBox = vgui.Create("DScrollPanel", editor)
-                rolesBox:SetPos(300, 40) rolesBox:SetSize(editor:GetWide() - 312, (editor:GetTall() - 120) / 2 - 10)
+                label(pz, "ЗП по ролям (ставки):", 300, 8, CUI.text)
+                local rolesBox = vgui.Create("DScrollPanel", pz)
+                rolesBox:SetPos(300, 30) rolesBox:SetSize(pz:GetWide() - 312, (pz:GetTall() - 140) / 2)
                 rolesBox.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
-                label("ЗП по ролям (ставки):", 300, 18, CUI.text)
                 for _, rName in ipairs(fd.roles or {}) do
                     local row = vgui.Create("DPanel", rolesBox)
                     row:Dock(TOP) row:SetTall(26) row:DockMargin(4, 2, 4, 2) row.Paint = nil
@@ -1261,11 +1335,11 @@ if CLIENT then
                 end
 
                 -- ЗП по отделам (надбавки)
-                local deptsBox = vgui.Create("DScrollPanel", editor)
-                deptsBox:SetPos(300, 44 + (editor:GetTall() - 120) / 2)
-                deptsBox:SetSize(editor:GetWide() - 312, (editor:GetTall() - 120) / 2 - 30)
+                label(pz, "ЗП по отделам (надбавки):", 300, 34 + (pz:GetTall() - 140) / 2 + 10, CUI.text)
+                local deptsBox = vgui.Create("DScrollPanel", pz)
+                deptsBox:SetPos(300, 34 + (pz:GetTall() - 140) / 2 + 32)
+                deptsBox:SetSize(pz:GetWide() - 312, (pz:GetTall() - 140) / 2 - 50)
                 deptsBox.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
-                label("ЗП по отделам (надбавки):", 300, 24 + (editor:GetTall() - 120) / 2, CUI.text)
                 for _, dName in ipairs(fd.departments or {}) do
                     local row = vgui.Create("DPanel", deptsBox)
                     row:Dock(TOP) row:SetTall(26) row:DockMargin(4, 2, 4, 2) row.Paint = nil
@@ -1277,12 +1351,66 @@ if CLIENT then
                     deptsTbl[dName] = wn
                 end
 
-                local saveB = btn(editor, "Сохранить", CUI.green, 150, 32)
-                saveB:SetPos(12, editor:GetTall() - 44)
-                saveB.DoClick = function()
+                -- ── ПОДВКЛАДКА: ШТРАФЫ (доступ фракции к /fine) ──
+                local pf = vgui.Create("DPanel", sub)
+                pf:SetPaintBackground(false)
+                sub:AddSheet("Штрафы", pf, "icon16/accept.png")
+
+                label(pf, "Доступ фракции [" .. name .. "] к системе штрафов", 10, 8, CUI.text, 560)
+
+                local chEn = vgui.Create("DCheckBoxLabel", pf)
+                chEn:SetPos(10, 36) chEn:SetSize(560, 22)
+                chEn:SetText("Фракции РАЗРЕШЕНО штрафовать (команда /fine)")
+                chEn:SetTextColor(CUI.text) chEn:SetValue(fp.enabled and 1 or 0)
+
+                local chAll = vgui.Create("DCheckBoxLabel", pf)
+                chAll:SetPos(10, 62) chAll:SetSize(560, 22)
+                chAll:SetText("Штрафовать могут ВСЕ члены фракции (выкл — лидер + роли ниже)")
+                chAll:SetTextColor(CUI.text) chAll:SetValue(fp.allRoles and 1 or 0)
+
+                local chOwn = vgui.Create("DCheckBoxLabel", pf)
+                chOwn:SetPos(10, 88) chOwn:SetSize(560, 22)
+                chOwn:SetText("Можно штрафовать СВОИХ членов фракции")
+                chOwn:SetTextColor(CUI.text) chOwn:SetValue(fp.ownFaction and 1 or 0)
+
+                local chOther = vgui.Create("DCheckBoxLabel", pf)
+                chOther:SetPos(10, 114) chOther:SetSize(560, 22)
+                chOther:SetText("Можно штрафовать членов ДРУГИХ ФРАКЦИЙ")
+                chOther:SetTextColor(CUI.text) chOther:SetValue(fp.otherFactions and 1 or 0)
+
+                local chCiv = vgui.Create("DCheckBoxLabel", pf)
+                chCiv:SetPos(10, 140) chCiv:SetSize(560, 22)
+                chCiv:SetText("Можно штрафовать ГРАЖДАН (игроков без фракции)")
+                chCiv:SetTextColor(CUI.text) chCiv:SetValue(fp.civilians and 1 or 0)
+
+                label(pf, "Лимит суммы штрафа (0 = общий максимум):", 10, 174)
+                local maxW = wang(pf, 330, 172, 110, fp.maxAmount or 0, 100000000)
+
+                label(pf, "Роли с правом штрафовать:", 10, 206, CUI.text, 340)
+                local rolesFine = vgui.Create("DScrollPanel", pf)
+                rolesFine:SetPos(10, 230) rolesFine:SetSize(340, math.max(80, pf:GetTall() - 230 - 56))
+                rolesFine.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
+                for _, rName in ipairs(fd.roles or {}) do
+                    local c = vgui.Create("DCheckBoxLabel", rolesFine)
+                    c:Dock(TOP) c:SetTall(20) c:DockMargin(8, 1, 4, 1)
+                    c:SetText(rName) c:SetTextColor(CUI.text)
+                    c:SetValue((fp.roles or {})[rName] and 1 or 0)
+                    fineChks[rName] = c
+                end
+
+                label(pf, "Правила: superadmin может всегда. Лидер фракции —", 370, 230, CUI.dim, 340)
+                label(pf, "всегда, если включён сам доступ. Отмеченные роли", 370, 252, CUI.dim, 340)
+                label(pf, "штрафуют дополнительно к лидеру. Категории целей", 370, 274, CUI.dim, 340)
+                label(pf, "(свои / другие фракции / граждане) настраиваются", 370, 296, CUI.dim, 340)
+                label(pf, "отдельно. Лимит суммы перекрывает общий лимит.", 370, 318, CUI.dim, 340)
+
+                -- ЕДИНОЕ сохранение: зарплаты + права штрафов одним пакетом
+                local function doSave()
                     local roles, depts = {}, {}
                     for k, wn in pairs(rolesTbl) do roles[k] = math.floor(tonumber(wn:GetValue()) or 0) end
                     for k, wn in pairs(deptsTbl) do depts[k] = math.floor(tonumber(wn:GetValue()) or 0) end
+                    local froles = {}
+                    for k, c in pairs(fineChks) do if c:GetChecked() then froles[k] = true end end
                     act({
                         action = "save_entry", faction = name,
                         taxRate = math.Clamp((tonumber(taxW:GetValue()) or 0) / 100, 0, 1),
@@ -1290,20 +1418,32 @@ if CLIENT then
                         salaryInterval = math.floor(tonumber(intW:GetValue()) or 600),
                         payFromBudget = pfb:GetChecked(),
                         roles = roles, departments = depts,
+                        fine = {
+                            enabled = chEn:GetChecked(),
+                            allRoles = chAll:GetChecked(),
+                            ownFaction = chOwn:GetChecked(),
+                            otherFactions = chOther:GetChecked(),
+                            civilians = chCiv:GetChecked(),
+                            maxAmount = math.max(0, math.floor(tonumber(maxW:GetValue()) or 0)),
+                            roles = froles,
+                        },
                     })
                     -- окно НЕ переоткрываем: сервер пришлёт свежие данные,
                     -- и этот же фрейм пересоберётся через buildAdminUI.
                 end
 
-                local payNow = btn(editor, "Выплатить ЗП сейчас", CUI.yellow, 180, 32)
-                payNow:SetPos(170, editor:GetTall() - 44)
+                local saveZ = btn(pz, "Сохранить", CUI.green, 150, 32)
+                saveZ:SetPos(10, pz:GetTall() - 42)
+                saveZ.DoClick = doSave
+                local payNow = btn(pz, "Выплатить ЗП сейчас", CUI.yellow, 180, 32)
+                payNow:SetPos(170, pz:GetTall() - 42)
                 payNow.DoClick = function()
                     act({ action = "pay_now", faction = name })
                 end
 
-                -- История фракции
-                label("История:", 12, 226, CUI.text)
-                histBox(editor, e.history or {}, 12, 250, 270, math.max(60, editor:GetTall() - 250 - 56))
+                local saveF = btn(pf, "Сохранить", CUI.green, 150, 32)
+                saveF:SetPos(10, pf:GetTall() - 42)
+                saveF.DoClick = doSave
             end
 
             list.OnRowSelected = function(_, _, ln) showEditor(ln.Faction) end
@@ -1519,5 +1659,5 @@ if CLIENT then
         net.Start(NET_OPEN_ADMIN) net.SendToServer()
     end)
 
-    print("[GRM Economy] Unified Economy v2.2 — клиент загружен")
+    print("[GRM Economy] Unified Economy v2.3 — клиент загружен")
 end
