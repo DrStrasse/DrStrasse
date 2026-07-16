@@ -1,5 +1,12 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v1.5 (Код 42)
+    GRM Currency Core v1.5.1 (Код 42)
+
+    v1.5.1 (репорт: «не подтягивает из базы»): найден дедлок —
+    защита от перезаписи при ошибке сериализации не сбрасывала dirty,
+    а сверка пропускалась при dirty → замок навсегда.
+    Теперь: ошибка сериализации не блокирует систему; сверка НЕ
+    зависит от dirty (позаписная проверка «запись не тронута локально»);
+    страж-синглтон от второй копии аддона; чат-команда /dbcheck.
 
     v1.5 (заказ владельца): сверка «память ↔ база» (disk reconcile).
       - Ядро хранит зеркало последнего состояния диска (diskMirror);
@@ -94,6 +101,17 @@ end
 -- СЕРВЕР
 -- ============================================================
 if SERVER then
+    -- GRM-FIX: страж-синглтон. Если ядро уже загружено (вторая копия
+    -- файла в другом аддоне) — НЕ поднимаем второй экземпляр: две копии
+    -- грызли бы один data-файл и затирали друг друга.
+    if GRM._currencyCoreActive then
+        print("[GRM Currency][!] ВТОРАЯ копия sh_grm_currency.lua обнаружена и ПРОПУЩЕНА " ..
+              "(активно ядро v" .. tostring(GRM._currencyCoreVer) .. "). Удалите дубликат из addons/!")
+        return
+    end
+    GRM._currencyCoreActive = true
+    GRM._currencyCoreVer = "1.5.1"
+
     util.AddNetworkString(NET_SYNC)
     util.AddNetworkString(NET_NOTIFY)
     -- Совместимость с внешними модулями (Tab Menu Код 47, HUD Код 48):
@@ -143,7 +161,9 @@ if SERVER then
             -- дампим память в отдельный файл и кричим в консоль.
             file.Write("grm_currency_err_" .. os.time() .. ".txt",
                 "TableToJSON вернул: " .. tostring(txt))
-            print("[GRM Currency] SAVE ОШИБКА сериализации! Данные в data/grm_currency_err_*.txt")
+            print("[GRM Currency] SAVE ОШИБКА сериализации! Дамп в data/grm_currency_err_*.txt")
+            -- GRM-FIX: НЕ оставляем dirty застрявшим (клинил и сейв, и сверку)
+            dirty = false
             return
         end
         file.Write(DATA_FILE, txt)
@@ -324,7 +344,6 @@ if SERVER then
     -- от последнего известного нам состояния диска. Свои свежие, ещё не
     -- сброшенные изменения НЕ трогает (файл тогда == зеркалу).
     local function reconcile(reason)
-        if dirty then return 0 end -- память впереди диска: не сверяемся в этот тик
         if not file.Exists(DATA_FILE, "DATA") then return 0 end
         local rawTxt = file.Read(DATA_FILE, "DATA") or ""
         local okJs, raw = pcall(util.JSONToTable, rawTxt)
@@ -334,7 +353,8 @@ if SERVER then
             if isstring(sid) and type(rec) == "table" then
                 local diskBal = normalize(rec.balance)
                 local mirrorBal = diskMirror[sid]
-                if mirrorBal == nil and records[sid] == nil then
+                local memRec = records[sid]
+                if mirrorBal == nil and memRec == nil then
                     -- запись есть в базе, но её нет в памяти и не было: поднимаем
                     local mem = ensure(sid, tostring(rec.name or "?"))
                     mem.balance = diskBal
@@ -342,19 +362,29 @@ if SERVER then
                     adopted = adopted + 1
                     print(("[GRM Currency] DB↔MEM [%s] новая запись из базы: %s"):format(reason, sid))
                 elseif mirrorBal ~= nil and diskBal ~= mirrorBal then
-                    -- файл менялся снаружи: база главнее
-                    local mem = records[sid] or ensure(sid, tostring(rec.name or "?"))
-                    local old = mem.balance
-                    if old ~= diskBal then
-                        mem.balance = diskBal
-                        mem.name = tostring(rec.name or mem.name)
-                        adopted = adopted + 1
-                        local online = onlinePlayerOf(sid)
-                        if online then pushBalance(online) end
-                        hook.Run("GRM_MoneyChanged", online or sid, diskBal, diskBal - old,
-                            "Сверка с базой (" .. tostring(reason) .. ")")
-                        print(("[GRM Currency] DB↔MEM [%s] %s: %d → %d (поднято из базы)")
-                            :format(reason, sid, old, diskBal))
+                    -- файл менялся снаружи...
+                    -- GRM-FIX: поднимаем ТОЛЬКО если эту запись не трогали
+                    -- локально с последней записи/чтения диска (memory == mirror) —
+                    -- свои свежие и не сброшенные деньги не затираем никогда.
+                    if memRec and memRec.balance ~= mirrorBal then
+                        diskMirror[sid] = diskBal
+                    else
+                        local mem = memRec or ensure(sid, tostring(rec.name or "?"))
+                        local old = mem.balance
+                        if old ~= diskBal then
+                            mem.balance = diskBal
+                            mem.name = tostring(rec.name or mem.name)
+                            dirty = true -- сбросим файл в консистентное состояние
+                            adopted = adopted + 1
+                            local online = onlinePlayerOf(sid)
+                            if online then pushBalance(online) end
+                            hook.Run("GRM_MoneyChanged", online or sid, diskBal, diskBal - old,
+                                "Сверка с базой (" .. tostring(reason) .. ")")
+                            print(("[GRM Currency] DB↔MEM [%s] %s: %d → %d (поднято из базы)")
+                                :format(reason, sid, old, diskBal))
+                        else
+                            diskMirror[sid] = diskBal
+                        end
                     end
                 end
             end
@@ -366,6 +396,23 @@ if SERVER then
         if IsValid(ply) and not ply:IsSuperAdmin() then return end
         local n = reconcile("команда")
         print(("[GRM Currency] сверка завершена: принято изменений из базы: %d"):format(n))
+    end)
+
+    -- Чат-команда для superadmin (работает из игры, на ответ есть нотифай)
+    hook.Add("PlayerSay", "GRM_Currency_DBCheck", function(ply, text)
+        local cmd = string.lower(string.Trim(text or ""))
+        if cmd ~= "/dbcheck" and cmd ~= "!dbcheck" then return end
+        if not ply:IsSuperAdmin() then
+            if GRM.Notify then GRM.Notify(ply, "Только для superadmin.", 255, 100, 100) end
+            return ""
+        end
+        local n1 = reconcile("чат /dbcheck")
+        local n2 = (hook.Run("GRM_Economy_DBCheck") == true) and 1 or 0
+        if GRM.Notify then
+            GRM.Notify(ply, ("Сверка с базой: наличка +%d, экономика %s"):format(
+                n1, n2 > 0 and "обновлена" or "без изменений"), 100, 220, 255)
+        end
+        return ""
     end)
 
     -- ========================================================
@@ -488,7 +535,7 @@ if SERVER then
     end
     concommand.Add("grm_money", moneyCmd)
 
-    print(("[GRM Currency] ядро загружено v1.4.1, счетов в памяти: %d (баланс первого: %s)"):format(
+    print(("[GRM Currency] ядро загружено v1.5.1, счетов в памяти: %d (баланс первого: %s)"):format(
         table.Count(records),
         (function() for _, r in pairs(records) do return tostring(r.balance) end return "—" end)()))
 end

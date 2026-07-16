@@ -1082,6 +1082,29 @@ if SERVER then
     end)
 
     -- ── Консоль ─────────────────────────────────────────────
+    -- Чат-команда /dbcheck (superadmin): сверить с базой прямо из игры
+    hook.Add("PlayerSay", "GRM_Economy_DBCheck", function(ply, text)
+        local cmd = string.lower(string.Trim(text or ""))
+        if cmd ~= "/dbcheck" and cmd ~= "!dbcheck" then return end
+        if not ply:IsSuperAdmin() then
+            if GRM.Notify then GRM.Notify(ply, "Только для superadmin.", 255, 100, 100) end
+            return ""
+        end
+        local changed = reconcileEconomy("чат /dbcheck")
+        if GRM.Notify then
+            GRM.Notify(ply, changed
+                and "Сверка экономики: данные подняты из базы"
+                or  "Сверка экономики: расхождений с базой нет",
+                100, 220, changed and 100 or 255)
+        end
+        return ""
+    end)
+
+    -- Хук для объединённого ответа на /dbcheck из ядра валюты
+    hook.Add("GRM_Economy_DBCheck", "GRM_Economy_DBCheckHook", function()
+        return reconcileEconomy("команда")
+    end)
+
     concommand.Add("grm_economy", function(ply, _, cargs)
         if IsValid(ply) and not ply:IsSuperAdmin() then return end
         local mode = tostring(cargs[1] or "")
