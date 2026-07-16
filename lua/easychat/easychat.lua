@@ -124,78 +124,111 @@ local function get_unknown_name(ply)
 	return "[UNKNOWN]"
 end
 
-EasyChat.NativeNick = EasyChat.NativeNick or PLY.Nick
+-- GRM FIX (stack overflow on lua_refresh):
+-- Never bind EasyChat.NativeNick to PLY.Nick after we wrap Nick/Name/GetName —
+-- on refresh check_nick_override did NativeNick = PLY.Nick while PLY.Nick was
+-- already our wrapper → NativeNick → GetProperNick → NativeNick → overflow.
+-- Always prefer the engine function PLY.EngineNick as the true native nick.
+local function resolve_engine_nick()
+	if isfunction(PLY.EngineNick) then return PLY.EngineNick end
+	if isfunction(PLY.RealNick) and PLY.RealNick ~= PLY.Nick then return PLY.RealNick end
+	-- first boot only: capture current Nick if it still looks "engine-like"
+	if isfunction(EasyChat._TrueNativeNick) then return EasyChat._TrueNativeNick end
+	if isfunction(PLY.Nick) then
+		EasyChat._TrueNativeNick = PLY.Nick
+		return PLY.Nick
+	end
+	return function() return "unconnected" end
+end
+
+EasyChat.NativeNick = resolve_engine_nick()
+EasyChat._TrueNativeNick = EasyChat.NativeNick
+
 function EasyChat.GetProperNick(ply)
 	if not IsValid(ply) then return get_unknown_name(ply) end
 
-	local ply_nick = EasyChat.NativeNick(ply)
+	local native = EasyChat._TrueNativeNick or EasyChat.NativeNick or resolve_engine_nick()
+	local ok, ply_nick = pcall(native, ply)
+	if not ok or ply_nick == nil then
+		return get_unknown_name(ply)
+	end
+	ply_nick = tostring(ply_nick)
 	if ply_nick == "unconnected" then return ply_nick end
 
 	if ec_markup then
-		local mk = ec_markup.CachePlayer("EasyChat", ply, function()
-			return ec_markup.AdvancedParse(ply_nick, { nick = true })
+		local mk_ok, mk = pcall(function()
+			return ec_markup.CachePlayer("EasyChat", ply, function()
+				return ec_markup.AdvancedParse(ply_nick, { nick = true })
+			end)
 		end)
-
-		return mk:GetText()
+		if mk_ok and mk and mk.GetText then
+			return mk:GetText()
+		end
+		local t_ok, text = pcall(ec_markup.GetText, ply_nick, true)
+		if t_ok and text then return text end
 	end
 
-	return ec_markup.GetText(ply_nick, true)
+	return ply_nick
 end
 
 local wrappers = {}
 local wrapper_addr
 local function make_nick_override_wrapper()
-	local native_nick = EasyChat.NativeNick
-	local fn_addr
+	-- always call through _TrueNativeNick / GetProperNick, never through PLY.Nick
 	local function wrapper(ply)
-		if not fn_addr or not wrappers[fn_addr] then return native_nick(ply) end
-
 		return EasyChat.GetProperNick(ply)
 	end
 
-	fn_addr = tostring(wrapper)
 	wrapper_addr = tostring(wrapper)
 	wrappers[wrapper_addr] = true
-
 	return wrapper
 end
 
 local function rich_nick_wrapper(ply)
-	return EasyChat.NativeNick(ply)
+	local native = EasyChat._TrueNativeNick or EasyChat.NativeNick or resolve_engine_nick()
+	local ok, n = pcall(native, ply)
+	if ok and n ~= nil then return tostring(n) end
+	return get_unknown_name(ply)
 end
 
 local clean_name_fns = { "Nick", "Name", "GetName", "GetNick" }
 local tagged_name_fns = { "RichNick", "RichName", "GetRichName", "GetRichNick", "NickDecorated", "NameDecorated", "GetNameDecorated", "GetNickDecorated" }
-local function check_nick_override_wrapper_status()
-	if wrapper_addr and wrapper_addr ~= tostring(PLY.Nick) then
-		wrappers[wrapper_addr] = nil
-		EasyChat.NativeNick = PLY.Nick
 
-		local new_wrapper = make_nick_override_wrapper()
-		for _, fn_name in ipairs(clean_name_fns) do
-			PLY[fn_name] = new_wrapper
-		end
-
-		for _, fn_name in ipairs(tagged_name_fns) do
-			PLY[fn_name] = rich_nick_wrapper
-		end
+local function rebind_nick_wrappers()
+	-- re-resolve engine nick if possible (never take PLY.Nick after wrap)
+	if isfunction(PLY.EngineNick) then
+		EasyChat._TrueNativeNick = PLY.EngineNick
+		EasyChat.NativeNick = PLY.EngineNick
+	elseif isfunction(EasyChat._TrueNativeNick) then
+		EasyChat.NativeNick = EasyChat._TrueNativeNick
 	end
 
+	local new_wrapper = make_nick_override_wrapper()
+	for _, fn_name in ipairs(clean_name_fns) do
+		PLY[fn_name] = new_wrapper
+	end
+	for _, fn_name in ipairs(tagged_name_fns) do
+		PLY[fn_name] = rich_nick_wrapper
+	end
+end
+
+local function check_nick_override_wrapper_status()
+	-- If another addon replaced Nick, re-install OUR wrapper but keep engine nick pure
+	if wrapper_addr and wrapper_addr ~= tostring(PLY.Nick) then
+		wrappers[wrapper_addr] = nil
+		-- DO NOT: EasyChat.NativeNick = PLY.Nick  (that caused stack overflow)
+		rebind_nick_wrappers()
+	end
 	timer.Simple(1, check_nick_override_wrapper_status)
 end
 
-local new_wrapper = make_nick_override_wrapper()
-for _, fn_name in ipairs(clean_name_fns) do
-	PLY[fn_name] = new_wrapper
-end
+rebind_nick_wrappers()
 
-for _, fn_name in ipairs(tagged_name_fns) do
-	PLY[fn_name] = rich_nick_wrapper
+if isfunction(PLY.EngineNick) then
+	PLY.RealNick = PLY.EngineNick
+	PLY.RealName = PLY.EngineNick
+	PLY.GetRealName = PLY.EngineNick
 end
-
-PLY.RealNick = PLY.EngineNick
-PLY.RealName = PLY.EngineNick
-PLY.GetRealName = PLY.EngineNick
 
 timer.Simple(1, check_nick_override_wrapper_status)
 
