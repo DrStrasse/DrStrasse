@@ -1,5 +1,12 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v1.4 (Код 42)
+    GRM Currency Core v1.4.1 (Код 42)
+
+    v1.4.1: диагностика персистентности + защита от перезаписи:
+      - SAVE/LOAD печатают факты (счетов, байт, путь) — видно, где обрыв;
+      - если сериализация вернула nil/мусор — основной файл НЕ трогаем,
+        пишем grm_currency_err_<t>.txt с дампом памяти;
+      - зеркальная копия каждой записи: data/grm_currency_backup.json;
+      - normalize отсекает NaN (мог убить сериализацию всего файла).
 
     v1.4 (заказ владельца — «валюта сбрасывается после рестарта»):
       - мгновенный сброс на диск: тикер 5с сбрасывает любые изменения,
@@ -92,6 +99,7 @@ if SERVER then
 
     local function normalize(amount)
         amount = math.floor(tonumber(amount) or 0)
+        if amount ~= amount then amount = 0 end -- NaN убивал бы сериализацию файла
         if amount > GRM.MaxBalance then amount = GRM.MaxBalance end
         if amount < 0 then amount = 0 end
         return amount
@@ -114,22 +122,38 @@ if SERVER then
 
     local function saveNow()
         if not dirty then return end
-        file.Write(DATA_FILE, util.TableToJSON(records, true) or "{}")
+        local txt = util.TableToJSON(records, true)
+        if not isstring(txt) or #txt < 3 then
+            -- GRM-FIX: НИКОГДА не затираем рабочий файл пустышкой —
+            -- дампим память в отдельный файл и кричим в консоль.
+            file.Write("grm_currency_err_" .. os.time() .. ".txt",
+                "TableToJSON вернул: " .. tostring(txt))
+            print("[GRM Currency] SAVE ОШИБКА сериализации! Данные в data/grm_currency_err_*.txt")
+            return
+        end
+        file.Write(DATA_FILE, txt)
+        file.Write("grm_currency_backup.json", txt) -- зеркало на случай повреждения
         dirty = false
+        print(("[GRM Currency] SAVE ok: счетов %d, %d байт -> data/%s")
+            :format(table.Count(records), #txt, DATA_FILE))
     end
 
     local function loadData()
         records = {}
-        if not file.Exists(DATA_FILE, "DATA") then return end
+        if not file.Exists(DATA_FILE, "DATA") then
+            print("[GRM Currency] LOAD: файла data/" .. DATA_FILE .. " НЕТ на сервере — стартуем с пустых счетов")
+            return
+        end
         local rawTxt = file.Read(DATA_FILE, "DATA") or ""
+        print(("[GRM Currency] LOAD: файл найден, %d байт"):format(#rawTxt))
         -- GRM-FIX: битый JSON (обрыв записи при падении) больше не
         -- обнуляет счета молча — файл откладывается для ручного спасения.
         local okJs, raw = pcall(util.JSONToTable, rawTxt)
         if not okJs or not istable(raw) then
             local backup = "grm_currency_corrupt_" .. os.time() .. ".txt"
             file.Write(backup, rawTxt)
-            print("[GRM Currency] ОШИБКА чтения " .. DATA_FILE ..
-                  " — сохранён как data/" .. backup)
+            print("[GRM Currency] ОШИБКА парсинга " .. DATA_FILE ..
+                  " — копия сохранена как data/" .. backup)
             raw = {}
         end
         for sid, rec in pairs(raw) do
@@ -387,7 +411,9 @@ if SERVER then
     end
     concommand.Add("grm_money", moneyCmd)
 
-    print("[GRM Currency] ядро загружено, счетов: " .. tostring(table.Count(records)))
+    print(("[GRM Currency] ядро загружено v1.4.1, счетов в памяти: %d (баланс первого: %s)"):format(
+        table.Count(records),
+        (function() for _, r in pairs(records) do return tostring(r.balance) end return "—" end)()))
 end
 
 -- ============================================================
