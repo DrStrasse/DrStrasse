@@ -1,5 +1,11 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v1.3 (Код 42)
+    GRM Currency Core v1.4 (Код 42)
+
+    v1.4 (заказ владельца — «валюта сбрасывается после рестарта»):
+      - мгновенный сброс на диск: тикер 5с сбрасывает любые изменения,
+        больше не зависим от ShutDown и автосейва раз в 180с;
+      - чтение JSON через pcall: битый файл НЕ затирает счета, а
+        откладывается в grm_currency_corrupt_<time>.txt.
 
     v1.3 (аудит синхронизации с HUD/Tab):
       - API, вызванное по SteamID64-строке (админ-панель, гос.выплаты),
@@ -115,7 +121,17 @@ if SERVER then
     local function loadData()
         records = {}
         if not file.Exists(DATA_FILE, "DATA") then return end
-        local raw = util.JSONToTable(file.Read(DATA_FILE, "DATA") or "") or {}
+        local rawTxt = file.Read(DATA_FILE, "DATA") or ""
+        -- GRM-FIX: битый JSON (обрыв записи при падении) больше не
+        -- обнуляет счета молча — файл откладывается для ручного спасения.
+        local okJs, raw = pcall(util.JSONToTable, rawTxt)
+        if not okJs or not istable(raw) then
+            local backup = "grm_currency_corrupt_" .. os.time() .. ".txt"
+            file.Write(backup, rawTxt)
+            print("[GRM Currency] ОШИБКА чтения " .. DATA_FILE ..
+                  " — сохранён как data/" .. backup)
+            raw = {}
+        end
         for sid, rec in pairs(raw) do
             if isstring(sid) and type(rec) == "table" then
                 records[sid] = {
@@ -298,6 +314,11 @@ if SERVER then
     end)
 
     timer.Create("GRM_Currency_AutoSave", AUTOSAVE, 0, saveNow)
+    -- GRM-FIX: быстрый сброс изменений на диск каждые 5с — переживаем
+    -- килл процесса без ShutDown и длинные окна автосейва.
+    timer.Create("GRM_Currency_Flush", 5, 0, function()
+        if dirty then saveNow() end
+    end)
 
     -- ========================================================
     -- КОНСОЛЬНЫЕ УТИЛИТЫ (сервер-консоль / суперадмин)

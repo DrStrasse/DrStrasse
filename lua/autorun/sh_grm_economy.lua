@@ -1,5 +1,10 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v2.3.2 (Код 43)
+    GRM Unified Economy v2.3.3 (Код 43)
+
+    v2.3.3 (заказ владельца): банковский счёт теперь синхронизируется
+            в HUD (своя строка «НА СЧЁТУ»): каналы GRM_Bank_Sync/Request,
+            пуш при входе и после каждой операции со счётом; быстрый
+            сброс данных на диск каждые 5с (переживаем килл процесса).
 
     v2.3.2: починка вкладки «Фракции» — список/редактор теперь
             раскладываются по РЕАЛЬНЫМ размерам страницы (PerformLayout),
@@ -91,6 +96,9 @@ if SERVER then
     util.AddNetworkString(NET_BANK_ACT)
     util.AddNetworkString(NET_SYNC)
     util.AddNetworkString(NET_INFO)
+    -- Синк банковского счёта в HUD (Код 48): строка «НА СЧЁТУ»
+    util.AddNetworkString("GRM_Bank_Sync")
+    util.AddNetworkString("GRM_Bank_Request")
 
     E.Data = E.Data or { version = 2, factions = {} }
     local dirty = false
@@ -311,6 +319,28 @@ if SERVER then
         return acc
     end
 
+    -- Банковский баланс БЕЗ создания записи (для пассивного синка в HUD)
+    local function bankBalOf(sid)
+        local acc = E.Data.accounts[tostring(sid or "")]
+        return math.max(0, math.floor(acc and acc.balance or 0))
+    end
+
+    -- Пуш счёта владельцу (HUD Код 48, строка «НА СЧЁТУ»)
+    local function pushBank(ply)
+        if not IsValid(ply) or not ply:IsPlayer() then return end
+        net.Start("GRM_Bank_Sync")
+            net.WriteUInt(bankBalOf(ply:SteamID64()), 32)
+        net.Send(ply)
+    end
+    net.Receive("GRM_Bank_Request", function(_, ply) pushBank(ply) end)
+
+    -- Найти онлайн-игрока по SteamID64-строке и запушить ему счёт
+    local function pushBankBySid(sid)
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and p:SteamID64() == tostring(sid) then pushBank(p) return end
+        end
+    end
+
     -- ply может быть Player или строкой SteamID64
     function E.BankBalance(ply)
         local sid = isstring(ply) and ply or (IsValid(ply) and ply:SteamID64())
@@ -468,6 +498,8 @@ if SERVER then
 
     timer.Create("GRM_Economy_AutoSave", 120, 0, save)
     hook.Add("ShutDown", "GRM_Economy_Save", function() dirty = true save() end)
+    -- GRM-FIX: сброс изменений на диск каждые 5с — переживаем килл процесса
+    timer.Create("GRM_Economy_Flush", 5, 0, function() if dirty then save() end end)
 
     -- ── ДОСТУП К ШТРАФАМ (v2.3): кто и кого может штрафовать ──
     -- Возвращает true либо false + причину отказа.
@@ -561,7 +593,9 @@ if SERVER then
     end
 
     hook.Add("PlayerInitialSpawn", "GRM_Economy_Sync", function(ply)
-        timer.Simple(5, function() if IsValid(ply) then syncPlayer(ply) end end)
+        timer.Simple(5, function()
+            if IsValid(ply) then syncPlayer(ply) pushBank(ply) end
+        end)
     end)
 
     -- ── АДМИН-ПАНЕЛЬ: данные (единая панель экономики) ─────
@@ -747,6 +781,7 @@ if SERVER then
             local acc = account(sid)
             acc.balance = v
             dirty = true save()
+            pushBankBySid(sid) -- HUD получателя, если он в сети
             addLog(("Админ %s установил банковский счёт %s: %s"):format(ply:Nick(), sid, money(v)))
             notify(ply, "Банковский счёт установлен: " .. money(v), 100, 220, 100)
 
@@ -844,6 +879,7 @@ if SERVER then
             notify(ply, ("Переведено %s → %s"):format(money(amt), IsValid(target) and target:Nick() or toSid), 255, 180, 80)
             if IsValid(target) then
                 notify(target, "На ваш счёт поступило " .. money(amt) .. " от " .. ply:Nick(), 100, 220, 100)
+                pushBank(target) -- HUD получателя
             end
         elseif a.type == "deposit" then
             if not name then notify(ply, "Вы не во фракции.", 255, 100, 100) return end
@@ -879,6 +915,7 @@ if SERVER then
         -- переоткроем с актуальными данными (это УМЕСТНО для терминала —
         -- пользователь ждёт обновления цифр после операции)
         syncPlayer(ply)
+        pushBank(ply) -- HUD: строка «НА СЧЁТУ»
     end)
 
     -- ── ЧАТ-КОМАНДЫ (PlayerSay — работают без GRM.Chat) ─────
@@ -1079,6 +1116,12 @@ if CLIENT then
     net.Receive(NET_SYNC, function()
         E.Local = { faction = net.ReadString(), data = net.ReadTable() or {} }
         hook.Run("GRM_EconomySynced", E.Local.faction, E.Local.data)
+    end)
+
+    -- Банковский счёт для HUD (Код 48): GRM.PlayerBank — живое значение
+    net.Receive("GRM_Bank_Sync", function()
+        GRM.PlayerBank = net.ReadUInt(32)
+        hook.Run("GRM_BankBalanceUpdated", GRM.PlayerBank)
     end)
 
     net.Receive(NET_INFO, function()

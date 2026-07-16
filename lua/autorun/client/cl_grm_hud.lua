@@ -1,5 +1,7 @@
 --[[--------------------------------------------------------------------
-    GRM HUD v10.1 — Полноценный HUD для Sandbox
+    GRM HUD v10.2 — Полноценный HUD для Sandbox
+    v10.2: разделённые строки денег «НАЛИЧКА» (кошелёк, ядро валюты)
+           и «НА СЧЁТУ» (банк, экономика → GRM_Bank_Sync)
     v10.1: ресивер grm_balance рассылает хук GRM_BalanceUpdated
            (мгновенное обновление Tab Menu); сумма рисуется через
            GRM.Format (имя валюты из экономики), $ — только fallback
@@ -20,6 +22,7 @@ GRM.HUD.Config = {
     hpColorLow     = Color(220, 60, 60, 255),
     armorColor     = Color(60, 150, 220, 255),
     moneyColor     = Color(80, 220, 130, 255),
+    bankColor      = Color(95, 170, 255, 255),
     ammoColor      = Color(220, 180, 60, 255),
     ammo2Color     = Color(180, 180, 190, 255),
     slotBg         = Color(20, 22, 30, 220),
@@ -91,12 +94,14 @@ hook.Add("InitPostEntity", "GRM_HUD_ReqBal", function()
     timer.Simple(1, function()
         net.Start("grm_request_bal")
         net.SendToServer()
+        net.Start("GRM_Bank_Request")  -- банковский счёт (экономика)
+        net.SendToServer()
     end)
 end)
 
 -- АНИМАЦИЯ
-local anim = { hp = 100, armor = 0, bal = 0, ammo1 = 0, ammo2 = 0 }
-local actual = { hp = 100, maxHp = 100, armor = 0, bal = 0, ammo1 = 0, ammo2 = 0, alive = true }
+local anim = { hp = 100, armor = 0, bal = 0, bank = 0, ammo1 = 0, ammo2 = 0 }
+local actual = { hp = 100, maxHp = 100, armor = 0, bal = 0, bank = 0, ammo1 = 0, ammo2 = 0, alive = true }
 local lastUpdate = 0
 
 local function UpdateValues()
@@ -110,6 +115,7 @@ local function UpdateValues()
     actual.maxHp = math.max(lp:GetMaxHealth(), 1)
     actual.armor = lp:Armor()
     actual.bal = GRM.PlayerBalance or 0
+    actual.bank = GRM.PlayerBank or 0
     local wep = lp:GetActiveWeapon()
     if IsValid(wep) then
         actual.ammo1 = wep:Clip1() or 0
@@ -125,6 +131,7 @@ local function AnimateValues()
     anim.hp    = Lerp(spd, anim.hp, actual.hp)
     anim.armor = Lerp(spd, anim.armor, actual.armor)
     anim.bal   = Lerp(spd * 0.5, anim.bal, actual.bal)
+    anim.bank  = Lerp(spd * 0.5, anim.bank, actual.bank)
     anim.ammo1 = Lerp(spd * 2, anim.ammo1, actual.ammo1)
     anim.ammo2 = Lerp(spd * 2, anim.ammo2, actual.ammo2)
 end
@@ -275,8 +282,8 @@ local function DrawMainHUD()
     if not actual.alive then return end
     local cfg = GRM.HUD.Config
     local sh, sw = ScrH(), ScrW()
-    local px, py = 16, sh - 16 - 94
-    local pw, ph = 210, 88
+    local px, py = 16, sh - 16 - 118
+    local pw, ph = 210, 112
     draw.RoundedBox(8, px + 2, py + 2, pw, ph, cfg.bgShadow)
     draw.RoundedBox(8, px, py, pw, ph, cfg.bgColor)
     local barX, barY = px + 10, py + 20
@@ -303,9 +310,17 @@ local function DrawMainHUD()
     if arFrac > 0 then draw.RoundedBox(4, barX, arBarY, barW * arFrac, barH, cfg.armorColor) end
     draw.SimpleText(math.Round(anim.armor), "GRM_HUD_Value", barX + barW / 2, arBarY + barH / 2, Color(255, 255, 255, 240), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 
-    local moneyY = arBarY + barH + 6
-    local moneyTxt = (GRM.Format and GRM.Format(math.Round(anim.bal))) or ("$" .. string.Comma(math.Round(anim.bal)))
-    draw.SimpleText(moneyTxt, "GRM_HUD_Money", barX, moneyY, cfg.moneyColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    -- GRM-FIX: две строки денег — наличка (кошелёк) и счёт (банк)
+    local moneyY = arBarY + barH + 8
+    draw.SimpleText("НАЛИЧКА", "GRM_HUD_Label", barX, moneyY + 2, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    local cashTxt = (GRM.Format and GRM.Format(math.Round(anim.bal))) or ("$" .. string.Comma(math.Round(anim.bal)))
+    draw.SimpleText(cashTxt, "GRM_HUD_Money", barX + barW, moneyY, cfg.moneyColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+    local bankY = moneyY + 18
+    draw.SimpleText("НА СЧЁТУ", "GRM_HUD_Label", barX, bankY + 2, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    local bankTxt = (GRM.PlayerBank ~= nil)
+        and ((GRM.Format and GRM.Format(math.Round(anim.bank))) or ("$" .. string.Comma(math.Round(anim.bank))))
+        or "—"
+    draw.SimpleText(bankTxt, "GRM_HUD_Money", barX + barW, bankY, cfg.bankColor or cfg.moneyColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
 
     if actual.ammo1 >= 0 then
         local ax, ay = sw - 16 - 150, sh - 16 - 60
