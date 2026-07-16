@@ -411,3 +411,5 @@
 **81.** (16.07.2026) EasyChat stack overflow `NativeNick` на lua_refresh: `check_nick_override_wrapper_status` делал `EasyChat.NativeNick = PLY.Nick` когда `PLY.Nick` уже был EC-wrapper → `GetProperNick` → `NativeNick` → снова wrapper. Фикс: всегда `EngineNick` / `_TrueNativeNick` как pure nick; rebind без присвоения NativeNick=PLY.Nick; pcall вокруг native. `zz_easychat_grm_fix.lua` — ignore `server/murder.lua` (Unhandled Lua Refresh вне Murder) + reassert EngineNick.
 
 **82.** (16.07.2026) Код **63** GRM Alarm: сети NetworkID; hub mode 1/2/3; sensor motion scan + LOS brush; mode2 → CreateSound siren + log; mode3 → log only; terminal UI control/sensors/logs; permanent map json; access View/Control × factions/roles/depts/steam; /alarm_access + /factions tab «Сигнализация»; perm whitelist.
+
+**83.** (16.07.2026) Код **64** Doors: map doors ownership (player rent/perm, faction, category multi-faction), ACL, lock via Fire Lock/Unlock, PlayerUse gate; warrants; door_access (manage/warrant/force + alarm-friendly factions/categories). Alarm v1.1 ignores friendlies via Doors.IsFriendlyForAlarm. **65** grm_item_drop entity + inventory `/drop` active weapon to world.

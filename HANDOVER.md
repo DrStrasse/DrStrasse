@@ -23,7 +23,8 @@ git reset --hard FETCH_HEAD   # в своей рабочей ветке сесс
 - Код **60** CCTV
 - Код **61** Wanted:
 - Код **62** RP-чат:
-- Код **63** Alarm: датчики/хаб/терминал, /alarm_access `sh_grm_rp_chat.lua` (/me /do /it /try /roll…) `/wanted`, `/wanted_access`, data/grm_wanted/ (+ access `/cctv_access`): `sh_grm_cctv_config` / `sv_grm_cctv` / `cl_grm_cctv` +
+- Код **63** Alarm:
+- Код **64–65** Doors/Warrants + /drop item_drop датчики/хаб/терминал, /alarm_access `sh_grm_rp_chat.lua` (/me /do /it /try /roll…) `/wanted`, `/wanted_access`, data/grm_wanted/ (+ access `/cctv_access`): `sh_grm_cctv_config` / `sv_grm_cctv` / `cl_grm_cctv` +
   `grm_cctv_{camera,monitor,server}` (находка 69).
 - `dist/` — готовые zip для владельца (grm_single_addon.zip = один аддон;
   grm_economy.zip; grm_fix_hud_tab_currency.zip; grm_full_code.zip).
@@ -39,7 +40,7 @@ git reset --hard FETCH_HEAD   # в своей рабочей ветке сесс
   локальных функций + прогон стенда + пересборка ВСЕХ 4 zip +
   обновить README (строка модуля) + ANALYSIS (новая находка) +
   **commit+push сразу же** (песочница откатывает файлы прямо посреди хода!).
-- Следующий свободный номер модуля: **Код 64**.
+- Следующий свободный номер модуля: **Код 66**.
 
 ## Грабли среды (выстрадано)
 - `/tmp` стирается между ходами; `/home/user` вне репо откатывается;

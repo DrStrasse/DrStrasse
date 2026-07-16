@@ -253,26 +253,35 @@ hook.Add("Think", "GRM_Alarm_Scan", function()
                     local origin = sensor:GetPos()
                     for _, ply in ipairs(player.GetAll()) do
                         if IsValid(ply) and ply:Alive() and origin:DistToSqr(ply:GetPos()) <= radius * radius then
-                            local last = tonumber(sensor:GetLastTrigger()) or 0
-                            if now - last >= cd then
-                                local tr = util.TraceLine({
-                                    start = origin + Vector(0, 0, 8),
-                                    endpos = ply:EyePos(),
-                                    filter = { sensor, ply },
-                                    mask = MASK_SOLID_BRUSHONLY,
-                                })
-                                if not tr.Hit then
-                                    sensor:SetLastTrigger(now)
-                                    local text = string.format("Движение: %s @ %s (r=%d)",
-                                        ply:Nick(),
-                                        sensor:GetLabel() ~= "" and sensor:GetLabel() or sensor:GetDeviceID(),
-                                        radius)
-                                    if mode == A.MODE_PASSIVE then
-                                        A.Log(netID, "motion", text .. " [пассив]", ply)
-                                    elseif mode == A.MODE_ARMED then
-                                        A.Log(netID, "motion", text .. " [охрана]", ply)
-                                        if not hub:GetAlarmActive() then
-                                            A.StartSiren(hub, text, ply)
+                            -- Игнор «своих»: доступ управления сигналкой / door friendly / warrant force
+                            local friendly = false
+                            if GRM.Doors and GRM.Doors.IsFriendlyForAlarm then
+                                friendly = GRM.Doors.IsFriendlyForAlarm(ply, netID) == true
+                            elseif A.CanControl and A.CanControl(ply) then
+                                friendly = true
+                            end
+                            if not friendly then
+                                local last = tonumber(sensor:GetLastTrigger()) or 0
+                                if now - last >= cd then
+                                    local tr = util.TraceLine({
+                                        start = origin + Vector(0, 0, 8),
+                                        endpos = ply:EyePos(),
+                                        filter = { sensor, ply },
+                                        mask = MASK_SOLID_BRUSHONLY,
+                                    })
+                                    if not tr.Hit then
+                                        sensor:SetLastTrigger(now)
+                                        local text = string.format("Движение: %s @ %s (r=%d)",
+                                            ply:Nick(),
+                                            sensor:GetLabel() ~= "" and sensor:GetLabel() or sensor:GetDeviceID(),
+                                            radius)
+                                        if mode == A.MODE_PASSIVE then
+                                            A.Log(netID, "motion", text .. " [пассив]", ply)
+                                        elseif mode == A.MODE_ARMED then
+                                            A.Log(netID, "motion", text .. " [охрана]", ply)
+                                            if not hub:GetAlarmActive() then
+                                                A.StartSiren(hub, text, ply)
+                                            end
                                         end
                                     end
                                 end
@@ -523,4 +532,4 @@ concommand.Add("grm_alarm_save", function(ply)
     A.SavePermanent()
 end)
 
-print("[GRM Alarm] server v1.0.0")
+print("[GRM Alarm] server v1.1.0 — ignore friendlies")
