@@ -1,8 +1,11 @@
 --[[--------------------------------------------------------------------
-    GRM Doors Access Manager v2.0.0 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
+    GRM Doors Access Manager v2.1.0 (Код 64)
     Центральный менеджер прав доступа к дверям, ордерам на обыск и вскрытию.
+    Интеграция с меню /factions (вкладка «Двери и Ордера»).
+
       - Управление фракционными категориями;
-      - Права на выдачу ордеров /warrant (по фракциям, рангам, SteamID);
+      - Гибкая выдача прав на ордера на обыск (/warrant):
+        по Фракциям, Рангам, Подразделениям (Отделам) и SteamID;
       - Права на таран / вскрытие дверей (ForceDoor);
       - Настройки "своих" фракций/категорий для сигнализаций;
       - Команды: /door_access, !door_access, grm_door_access;
@@ -203,7 +206,7 @@ if SERVER then
         end
     end)
 
-    print("[GRM Doors] Mенеджер доступа к дверям v2.0.0 загружен (сервер)")
+    print("[GRM Doors] Менеджер доступа к дверям v2.1.0 загружен (сервер)")
 end
 
 -- ============================================================
@@ -253,19 +256,19 @@ if CLIENT then
         local frame = vgui.Create("DFrame")
         AM._f = frame
         frame:SetTitle("")
-        frame:SetSize(940, 680)
+        frame:SetSize(960, 680)
         frame:Center()
         frame:MakePopup()
         frame:ShowCloseButton(false)
         frame.Paint = function(_, pw, ph)
             draw.RoundedBox(8, 0, 0, pw, ph, CUI.bg)
             draw.RoundedBoxEx(8, 0, 0, pw, 38, Color(28, 34, 46), true, true, false, false)
-            draw.SimpleText("Менеджер прав: Двери, Ордера и Сигнализация", "GRMDoorAcc_Title", 14, 19, CUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("Настройка доступа: Двери, Ордера на обыск (/warrant) и Сигнализация", "GRMDoorAcc_Title", 14, 19, CUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
 
         local closeBtn = vgui.Create("DButton", frame)
         closeBtn:SetText("X") closeBtn:SetFont("GRMDoorAcc_Title") closeBtn:SetTextColor(color_white)
-        closeBtn:SetPos(896, 6) closeBtn:SetSize(32, 26)
+        closeBtn:SetPos(916, 6) closeBtn:SetSize(32, 26)
         closeBtn.DoClick = function() frame:Close() end
         closeBtn.Paint = function(self, pw, ph)
             draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and CUI.red or Color(45, 52, 68))
@@ -275,7 +278,7 @@ if CLIENT then
         tabs:Dock(FILL)
         tabs:DockMargin(8, 44, 8, 52)
 
-        local function addFactionTab(title, field)
+        local function addFactionTab(title, field, icon)
             local sc = vgui.Create("DScrollPanel")
             sc:DockMargin(4, 4, 4, 4)
             for _, fn in ipairs(sortKeys(factionsMap)) do
@@ -285,52 +288,68 @@ if CLIENT then
 
                 local chk = vgui.Create("DCheckBoxLabel", r)
                 chk:Dock(FILL) chk:DockMargin(10, 0, 0, 0)
-                chk:SetText("Разрешить фракции: " .. fn) chk:SetTextColor(CUI.text)
+                chk:SetText("Разрешить всей фракции: " .. fn) chk:SetTextColor(CUI.text)
                 chk:SetValue(data[field][fn] and 1 or 0)
                 chk.OnChange = function(_, val)
                     if val then data[field][fn] = true else data[field][fn] = nil end
                 end
             end
-            tabs:AddSheet(title, sc, "icon16/group.png")
+            tabs:AddSheet(title, sc, icon or "icon16/group.png")
         end
 
-        addFactionTab("Управление: Фракции", "ManageFactions")
-        addFactionTab("Ордера: Фракции", "WarrantFactions")
-        addFactionTab("Вскрытие: Фракции", "ForceFactions")
-        addFactionTab("Сигнализация «Свои»: Фракции", "AlarmFriendlyFactions")
+        addFactionTab("Ордера: Фракции", "WarrantFactions", "icon16/exclamation.png")
+        addFactionTab("Вскрытие: Фракции", "ForceFactions", "icon16/key.png")
+        addFactionTab("Управление: Фракции", "ManageFactions", "icon16/shield.png")
+        addFactionTab("Сигнализация «Свои»: Фракции", "AlarmFriendlyFactions", "icon16/bell.png")
 
-        -- Категории "Свои"
-        do
-            local sc = vgui.Create("DScrollPanel")
-            sc:DockMargin(4, 4, 4, 4)
+        local function addNestedTab(title, field, sourceKey, icon)
+            local panel = vgui.Create("DPanel")
+            panel:SetPaintBackground(false)
 
-            local lbl = vgui.Create("DLabel", sc)
-            lbl:Dock(TOP) lbl:SetTall(36) lbl:DockMargin(6, 4, 6, 6)
-            lbl:SetWrap(true) lbl:SetTextColor(CUI.dim) lbl:SetFont("GRMDoorAcc_Normal")
-            lbl:SetText("Фракции из этих категорий считаются «своими» для охранных систем и не вызывают тревогу:")
+            local combo = vgui.Create("DComboBox", panel)
+            combo:Dock(TOP) combo:SetTall(30) combo:DockMargin(8, 8, 8, 4)
+            combo:SetValue("Выберите фракцию...")
 
-            for _, c in ipairs(cats) do
-                local cid = c.id or c.name
-                local r = vgui.Create("DPanel", sc)
-                r:Dock(TOP) r:SetTall(32) r:DockMargin(0, 0, 0, 4)
-                r.Paint = function(_, pw, ph) draw.RoundedBox(6, 0, 0, pw, ph, CUI.panel) end
+            local sc = vgui.Create("DScrollPanel", panel)
+            sc:Dock(FILL) sc:DockMargin(8, 4, 8, 8)
 
-                local chk = vgui.Create("DCheckBoxLabel", r)
-                chk:Dock(FILL) chk:DockMargin(10, 0, 0, 0)
-                chk:SetText("Категория: " .. tostring(c.name or cid))
-                chk:SetTextColor(CUI.text)
-                chk:SetValue(data.AlarmFriendlyCategories[cid] and 1 or 0)
-                chk.OnChange = function(_, val)
-                    if val then data.AlarmFriendlyCategories[cid] = true else data.AlarmFriendlyCategories[cid] = nil end
+            local function rebuild(fname)
+                sc:Clear()
+                local f = factionsMap[fname]
+                if not f or not istable(f[sourceKey]) then return end
+
+                for _, key in ipairs(f[sourceKey]) do
+                    local r = vgui.Create("DPanel", sc)
+                    r:Dock(TOP) r:SetTall(32) r:DockMargin(0, 0, 0, 4)
+                    r.Paint = function(_, pw, ph) draw.RoundedBox(6, 0, 0, pw, ph, CUI.panel) end
+
+                    data[field][fname] = istable(data[field][fname]) and data[field][fname] or {}
+                    local chk = vgui.Create("DCheckBoxLabel", r)
+                    chk:Dock(FILL) chk:DockMargin(10, 0, 0, 0)
+                    chk:SetText(tostring(key)) chk:SetTextColor(CUI.text)
+                    chk:SetValue(data[field][fname][key] and 1 or 0)
+                    chk.OnChange = function(_, val)
+                        data[field][fname] = data[field][fname] or {}
+                        if val then data[field][fname][key] = true else data[field][fname][key] = nil end
+                    end
                 end
             end
-            tabs:AddSheet("Сигнализация «Свои»: Категории", sc, "icon16/bell.png")
+
+            for _, fn in ipairs(sortKeys(factionsMap)) do combo:AddChoice(fn) end
+            combo.OnSelect = function(_, _, val) rebuild(val) end
+
+            tabs:AddSheet(title, panel, icon or "icon16/user.png")
         end
+
+        addNestedTab("Ордера: Ранги", "WarrantRoles", "Roles", "icon16/user_suit.png")
+        addNestedTab("Ордера: Подразделения", "WarrantDepartments", "Departments", "icon16/building.png")
+        addNestedTab("Вскрытие: Ранги", "ForceRoles", "Roles", "icon16/key_add.png")
+        addNestedTab("Вскрытие: Подразделения", "ForceDepartments", "Departments", "icon16/building_add.png")
 
         local bot = vgui.Create("DPanel", frame)
         bot:Dock(BOTTOM) bot:SetTall(44) bot:SetPaintBackground(false)
 
-        local bSave = mkBtn(bot, "Сохранить изменения", CUI.green, 200, 32)
+        local bSave = mkBtn(bot, "Сохранить настройки доступа", CUI.green, 240, 32)
         bSave:Dock(RIGHT) bSave:DockMargin(0, 6, 12, 6)
         bSave.DoClick = function()
             net.Start(NET_SAVE) net.WriteTable(data) net.SendToServer()
@@ -366,5 +385,47 @@ if CLIENT then
         end
     end)
 
-    print("[GRM Doors] Менеджер доступа к дверям v2.0.0 загружен (клиент)")
+    -- Вставка вкладки в меню /factions
+    local function installFactionsTab()
+        if not OpenAdminMenu or AM._wrappedOpenAdminMenu then return end
+        AM._oldOpenAdminMenu = OpenAdminMenu
+        AM._wrappedOpenAdminMenu = true
+        OpenAdminMenu = function(...)
+            if AM._oldOpenAdminMenu then AM._oldOpenAdminMenu(...) end
+            timer.Simple(0.3, function()
+                if not ui or not IsValid(ui.currentFrame) then return end
+                local sheet
+                for _, child in ipairs(ui.currentFrame:GetChildren()) do
+                    if child.ClassName == "DPropertySheet" then sheet = child break end
+                end
+                if not IsValid(sheet) then return end
+                for _, item in ipairs(sheet.Items or {}) do
+                    if item.Tab and (item.Tab:GetText() == "Двери и Ордера" or item.Tab:GetText() == "Двери") then return end
+                end
+                local panel = vgui.Create("DPanel")
+                panel:SetPaintBackground(false)
+
+                local label = vgui.Create("DLabel", panel)
+                label:Dock(TOP)
+                label:SetTall(70)
+                label:DockMargin(12, 12, 12, 4)
+                label:SetWrap(true)
+                label:SetText("Централизованное управление правами на двери, выписку ордеров на обыск (/warrant) и вскрытие замков по Фракциям, Рангам и Подразделениям.")
+                label:SetTextColor(Color(220, 220, 230))
+
+                local button = mkBtn(panel, "Настроить доступ к Дверям и Ордерам", CUI.accent)
+                button:Dock(TOP)
+                button:SetTall(38)
+                button:DockMargin(12, 8, 12, 0)
+                button.DoClick = AM.OpenMenu
+
+                sheet:AddSheet("Двери и Ордера", panel, "icon16/door.png")
+            end)
+        end
+    end
+
+    timer.Create("GRM_DoorAccess_WaitFactions", 0.5, 24, installFactionsTab)
+    timer.Simple(1, installFactionsTab)
+
+    print("[GRM Doors] Менеджер доступа к дверям v2.1.0 загружен (клиент)")
 end

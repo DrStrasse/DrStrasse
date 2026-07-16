@@ -5,7 +5,7 @@
 
 Набор Lua-модулей для Garry's Mod: фракции, экономика, инвентарь, логистика,
 завод полного цикла, видеонаблюдение (CCTV), сигнализации, система розыска, двери,
-телефонная связь, стамина, RP-чат и персистентность. Все модули общаются через
+дверные ключи `ds_key_swep`, телефонная связь, стамина, RP-чат и персистентность. Все модули общаются через
 глобальный namespace `GRM` и глобальную таблицу `Factions`.
 
 ## Установка
@@ -48,9 +48,10 @@
 | 51–54 | `lua/autorun/sh_grm_cctv_*.lua` | **CCTV Видеонаблюдение:** конфиг, доступы, сервер, клиент и сущности `grm_cctv_camera`, `grm_cctv_monitor`, `grm_cctv_server` |
 | 55–58 | `lua/autorun/sh_grm_alarm_*.lua` | **Система Сигнализаций:** конфиг, доступы, сервер, клиент и сущности `grm_alarm_sensor`, `grm_alarm_hub`, `grm_alarm_terminal` |
 | 59–60 | `lua/autorun/sh_grm_wanted_*.lua` | **Система Розыска:** статусы wanted/warrant, причины, серверная обработка, клиентский HUD и списки |
-| 61–62 | `lua/autorun/sh_grm_doors*.lua` | **Система Дверей:** привязка дверей к фракциям, рангам и группам, интерфейс доступа |
+| 61–62 | `lua/autorun/sh_grm_doors*.lua` | **Система Дверей v2.0.0 & Access v2.1.0:** синхронизация двойных створок, 3D2D HUD, гибкие права на ордера в `/factions` (фракция/ранг/отдел) |
 | 63–64 | `lua/autorun/sh_grm_rp_chat.lua` | **RP Чат и EasyChat патчи:** команды `/me`, `/do`, `/it`, `/try`, `/roll`, `/w`, `/y`, `/looc`, `/ooc` |
 | 65 | `lua/entities/grm_item_drop/` | **Выброшенный предмет/оружие:** сущность 3D-модели предмета при выбросе из инвентаря/рук (`/drop`) |
+| 66 | `lua/weapons/ds_key_swep/` | **Дверные ключи `ds_key_swep`:** оружие для блокировки (ЛКМ), разблокировки (ПКМ) и вызова меню двери (R) |
 
 ## Основные команды
 
@@ -59,9 +60,9 @@
 `/logistics_start`, `/logistics_crates`, `!fbudget`, `!fpay`, `!fwithdraw`, `!fpayall`, `!fsettax`, `/mysalary`, `/fine <сумма> [причина]`, `/vlist`, `/myvehicles`,
 `/vshop`, `/phoneshop`, `/phone_remove`
 
-**Админ:** `/factions`, `/salary_admin`, `/logistics_admin`, `/models_admin`,
+**Админ / Руководство:** `/factions`, `/salary_admin`, `/logistics_admin`, `/models_admin`,
 `/weapons_admin`, `/mask_admin`, `!grmmenu`/`!grmadmin`/`!econadmin`, `/scanvehicles`,
-`/spawnmenu`, `/vshop_admin`, `/phoneshop_admin`, `/phone_access`,
+`/spawnmenu`, `/vshop_admin`, `/phoneshop_admin`, `/phone_access`, `/door_access`, `/warrant`, `/unwarrant`, `/warrants`,
 `/permadd`, `/permremove`, `/permlist`, `/permload`
 
 Подробный разбор архитектуры и замеченных проблем — в `ANALYSIS.md`.
