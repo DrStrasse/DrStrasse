@@ -20,7 +20,8 @@ git reset --hard FETCH_HEAD   # в своей рабочей ветке сесс
 - Из dop.addons (16.07.2026): Коды **51–59** — ctx, encumbrance, food, handcuffs,
   mining, roomtap, sent_vehicle_dealer, vehicle keys, EasyChat. Дубли ядра
   (spawn/access/antistuck/inventory forks) **не** вливались. См. находку 68.
-- Код **60** CCTV (+ access `/cctv_access`): `sh_grm_cctv_config` / `sv_grm_cctv` / `cl_grm_cctv` +
+- Код **60** CCTV
+- Код **61** Wanted: `/wanted`, `/wanted_access`, data/grm_wanted/ (+ access `/cctv_access`): `sh_grm_cctv_config` / `sv_grm_cctv` / `cl_grm_cctv` +
   `grm_cctv_{camera,monitor,server}` (находка 69).
 - `dist/` — готовые zip для владельца (grm_single_addon.zip = один аддон;
   grm_economy.zip; grm_fix_hud_tab_currency.zip; grm_full_code.zip).
@@ -36,7 +37,7 @@ git reset --hard FETCH_HEAD   # в своей рабочей ветке сесс
   локальных функций + прогон стенда + пересборка ВСЕХ 4 zip +
   обновить README (строка модуля) + ANALYSIS (новая находка) +
   **commit+push сразу же** (песочница откатывает файлы прямо посреди хода!).
-- Следующий свободный номер модуля: **Код 61**.
+- Следующий свободный номер модуля: **Код 62**.
 
 ## Грабли среды (выстрадано)
 - `/tmp` стирается между ходами; `/home/user` вне репо откатывается;

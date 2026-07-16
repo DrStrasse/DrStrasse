@@ -403,3 +403,5 @@
 **77.** (16.07.2026, заказ: меню доступа CCTV / вкладка /factions) Новый `sh_grm_cctv_access.lua`: data/grm_cctv/access.json (Factions / Roles / Departments / Steam + PublicView); /cctv_access, grm_cctv_access, вкладка «CCTV» в OpenAdminMenu (/factions); override HasAccess/CanView/CanConfigure (как phone_access). Superadmin always; PublicView = смотреть всем.
 
 **78.** (16.07.2026) CCTV scanlines «сжались» в узкую полосу: цикл был `for y = 50, math.min(h,120), 4` — только ~70px сверху. v1.2.4 — линии на всю высоту кадра step 3, ширина до правой колонки UI (не поверх «УПРАВЛЕНИЕ»).
+
+**79.** (16.07.2026) Код **61** GRM Wanted v1.0.0 — розыск: уровни 0–5, database.json (массив записей sid/level/reasons), catalog.json статей admin/crime, история; API SetLevel/AddCharge/Clear; UI /wanted; access manager /wanted_access + вкладка «Розыск» в /factions (View/Edit × Factions/Roles/Departments/Steam). Уровень статьи = max(текущий, defaultLevel), не бесконечная сумма.
