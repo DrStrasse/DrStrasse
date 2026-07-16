@@ -1,6 +1,6 @@
 -- Round-trip тест персистентности GRM currency/economy (мок GMod API + сценарии)
 -- Запуск: собрать LuaJIT (github.com/LuaJIT/LuaJIT, ветка v2.1), из КОРНЯ репо:
---   rm -rf tools/luatest/data && ./luajit tools/luatest/roundtrip_test.lua save  (и далее load/corrupt/corrupt_all/treasury_corrupt)
+--   rm -rf tools/luatest/data && ./luajit tools/luatest/roundtrip_test.lua save  (и далее load/bank_reconcile_attack/bank_boot_pick_fresh/corrupt/corrupt_all/treasury_corrupt)
 
 -- GMod API mock + harness для round-trip теста GRM currency/economy
 local PHASE = arg[1] or "save"
@@ -309,3 +309,40 @@ end
 foreign("fmt_array_sid", '[\n\t{\n\t\t"sid64": "76561199385153957",\n\t\t"balance": 500200,\n\t\t"name": "Alexander Von Groenner"\n\t}\n]', 500200)
 foreign("fmt_array_nick", '[\n\t{\n\t\t"name": "Alexander Von Groenner",\n\t\t"balance": 500200\n\t}\n]', 500200)
 foreign("fmt_mapnum", '{\n\t"76561199385153957": 500200\n}', 500200)
+
+-- ── фазы «банк помнит» (economy v3.0.1) ────────────────────────────────
+-- bank_reconcile_attack: постаревший ОСНОВНОЙ файл подкидывается ВО ВРЕМЯ
+-- работы: сверка обязана отклонить его и перезаписать памятью.
+if PHASE == "bank_reconcile_attack" then
+    GRM = GRM or {}
+    dofile("lua/autorun/sh_grm_currency.lua")
+    dofile("lua/autorun/sh_grm_economy.lua")
+    assert(GRM.Economy.BankBalance("76561199385153957") == 200000, "bank_attack: банк до атаки не поднялся")
+    -- внешняя сущность подменяет основной файл на старый снимок
+    local stale = '{"version":2,"factions":{"Polizei":{"budget":250000,"taxRate":0.05,"history":[]}},' ..
+        '"accounts":{"76561190000000000":{"balance":777,"name":"Old Timer"}},' ..
+        '"state":{"budget":0,"history":[]},"log":[],"config":{}}'
+    file.Write("grm_treasury.json", stale)
+    assert(TIMERS["GRM_Economy_Reconcile"], "нет таймера сверки экономики")
+    TIMERS["GRM_Economy_Reconcile"].fn() -- в GMod это тик 15с
+    assert(GRM.Economy.BankBalance("76561199385153957") == 200000,
+        "bank_attack: сверка ЗАТЁРЛА банк постаревшим файлом: " .. tostring(GRM.Economy.BankBalance("76561199385153957")))
+    local tr = file.Read("grm_treasury.json") or ""
+    assert(tr:find("200000"), "bank_attack: файл не самоизлечился, самоизлечение: " .. tr:sub(1, 100))
+    print("PHASE bank_reconcile_attack: OK — сверка отклонила старый файл, память перезаписала диск")
+end
+
+-- bank_boot_pick_fresh: на рестарте основной файл «постаревший» (0 счетов),
+-- зеркало свежее: загрузчик обязан выбрать ЗЕРКАЛО и залечить основной.
+if PHASE == "bank_boot_pick_fresh" then
+    local stale = '{"version":2,"factions":{"Polizei":{"budget":250000,"taxRate":0.05,"history":[]}},' ..
+        '"accounts":{},"state":{"budget":0,"history":[]},"log":[],"config":{}}'
+    file.Write("grm_treasury.json", stale)
+    GRM = GRM or {}
+    dofile("lua/autorun/sh_grm_currency.lua")
+    dofile("lua/autorun/sh_grm_economy.lua")
+    assert(GRM.Economy.BankBalance("76561199385153957") == 200000,
+        "bank_boot: loader выбрал старый основной файл вместо свежего зеркала, банк: " ..
+        tostring(GRM.Economy.BankBalance("76561199385153957")))
+    print("PHASE bank_boot_pick_fresh: OK — loader предпочёл свежее зеркало старому основному файлу")
+end

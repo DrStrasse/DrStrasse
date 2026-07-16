@@ -1,8 +1,21 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v3.0.0 (Код 43) — ПЕРЕПИСАНО С НУЛЯ
+    GRM Unified Economy v3.0.1 (Код 43) — ПЕРЕПИСАНО С НУЛЯ
 
     Чистая версия без наслоений (SQL/сторожа файла/захвата — убраны;
     на сервере владельца SQL недоступен, файловый контур доказан).
+
+    v3.0.1 — «банк помнит»:
+      * СВЕРКА больше не затирает память файлом: «воскресший»/постаревший
+        файл, который стирает чей-то счёт или бюджет, ОТКЛОНЯЕТСЯ, а память
+        мгновенно перезаписывает файл обратно («самолечение» — та же
+        политика, что у валюты v2.0.1, у которой наличка уже выживает);
+      * банковские операции (взнос/снятие/перевод) пишутся на диск СРАЗУ,
+        а не «когда-нибудь в ближайший флаш»;
+      * загрузчик выбирает САМЫЙ ПОЛНЫЙ источник (основной/зеркало/семена),
+        а не первый непустой: старый основной файл проигрывает свежему
+        зеркалу, а не наоборот;
+      * SAVE ok-печать с причиной каждой записи + рентген счетов при
+        загрузке: по консоли видно, что, когда и почему пишется на диск.
 
     Содержит ВСЮ экономическую часть:
       1) Бюджеты/налоги фракций (ставка 0–50%, налог только с ЗП);
@@ -83,7 +96,7 @@ if SERVER then
         return
     end
     GRM._economyCoreActive = true
-    GRM._economyCoreVer = "3.0.0"
+    GRM._economyCoreVer = "3.0.1"
     GRM._economyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_OPEN_ADMIN)
@@ -247,10 +260,10 @@ if SERVER then
         local txt = file.Read(fname, "DATA") or ""
         if string.Trim(txt) == "[]" then return nil end -- "[]" = файла нет
         local ok, t = pcall(util.JSONToTable, txt)
-        return (ok and istable(t)) and t or nil
+        return ((ok and istable(t)) and t or nil), txt
     end
 
-    local function save(force)
+    local function save(force, why)
         if not dirty and not force then return end
         -- АНТИСВАЙП: пустые счета+фракции НЕ затирают непустую базу.
         local myAcc = istable(E.Data.accounts) and next(E.Data.accounts) ~= nil
@@ -290,6 +303,9 @@ if SERVER then
             print(("[GRM Economy][!] ЗАПИСЬ НЕ ПОДТВЕРДИЛАСЬ: сохранено %d байт, на диске %s")
                 :format(#txt, (isstring(chk) and (tostring(#chk) .. " байт") or "файл пропал")))
         end
+        print(("[GRM Economy] SAVE ok: фракций %d, счетов %d, %d байт -> data/%s [%s]"):format(
+            table.Count(E.Data.factions or {}), table.Count(E.Data.accounts or {}), #txt,
+            DATA_FILE, tostring(why or "сейв")))
     end
 
     local function importLegacy()
@@ -338,13 +354,26 @@ if SERVER then
     local LOAD_SEEDS = { DATA_FILE, BACKUP_FILE, "grm_economy_backup.json",
                          "grm_economy.json", "grm_currency_backup.json", "grm_wallet_backup.json" }
 
+    -- Выбор источника: САМЫЙ ПОЛНЫЙ, а не первый непустой.
+    -- Это ломает схему «внешняя сущность воскресила старый основной файл»:
+    -- свежее зеркало всегда перетянет старый grm_treasury.json, а не наоборот.
+    local function srcScore(t, tx)
+        local a = istable(t.accounts) and table.Count(t.accounts) or 0
+        local f = istable(t.factions) and table.Count(t.factions) or 0
+        return a * 100000000 + f * 10000 + #(tx or "")
+    end
+
     local function load()
-        local t, srcName = nil, nil
+        local t, srcName, srcTxt, best = nil, nil, nil, -1
         for _, srcf in ipairs(LOAD_SEEDS) do
-            local tt = tryJSON(srcf)
-            if tt and not extWasEmpty(tt) then t, srcName = tt, srcf break end
+            local tt, tx = tryJSON(srcf)
+            if tt and not extWasEmpty(tt) then
+                local sc = srcScore(tt, tx)
+                if sc > best then t, srcName, srcTxt, best = tt, srcf, tx, sc end
+            end
         end
-        if not t then t = tryJSON(DATA_FILE) or tryJSON(BACKUP_FILE) end
+        if not t then t, srcTxt = tryJSON(DATA_FILE) end
+        if not t then t, srcTxt = tryJSON(BACKUP_FILE) end
         if t and istable(t.factions) then
             E.Data = t
             if srcName and srcName ~= DATA_FILE then
@@ -368,10 +397,26 @@ if SERVER then
         E.Data.config = istable(E.Data.config) and E.Data.config or {}
         applyConfig()
         for name in pairs(E.Data.factions) do entry(name) end
-        if srcName ~= nil and srcName ~= DATA_FILE then dirty = true save(true) end -- материализуем зеркала
+        if srcName ~= nil and srcName ~= DATA_FILE then
+            dirty = true save(true, "материализация из " .. tostring(srcName)) -- лечим основной файл сразу
+        elseif isstring(srcTxt) then
+            lastDiskTxt = srcTxt -- помним содержимое диска: сверка не срабатывает вхолостую
+        end
         print(("[GRM Economy] LOAD: база data/%s (источник: %s): фракций %d, счетов %d")
             :format(DATA_FILE, tostring(srcName or DATA_FILE),
                 table.Count(E.Data.factions), table.Count(E.Data.accounts)))
+        -- Рентген счетов: по консоли видно, КТО именно поднялся с диска
+        do
+            local total, shown = table.Count(E.Data.accounts), 0
+            for sid, a in pairs(E.Data.accounts) do
+                if shown >= 5 then break end
+                print(("[GRM Economy]   счёт %s = %s (%s)"):format(tostring(sid),
+                    money(math.floor(tonumber(istable(a) and a.balance) or 0)),
+                    tostring(istable(a) and a.name or "?")))
+                shown = shown + 1
+            end
+            if total > shown then print("[GRM Economy]   …и ещё счетов: " .. (total - shown)) end
+        end
     end
 
     -- ========================================================
@@ -425,6 +470,7 @@ if SERVER then
         local acc = account(ply:SteamID64(), ply:Nick())
         acc.balance = acc.balance + amount
         dirty = true
+        save(true, "взнос на счёт") -- банк пишется на диск СРАЗУ, не ждём флаш
         return true, acc.balance
     end
 
@@ -436,6 +482,7 @@ if SERVER then
         acc.balance = acc.balance - amount
         dirty = true
         GRM.GiveMoney(ply, amount, "Банкомат: снятие со счёта")
+        save(true, "снятие со счёта")
         return true, acc.balance
     end
 
@@ -453,6 +500,7 @@ if SERVER then
         to.balance = to.balance + amount
         dirty = true
         addLog(("Перевод счёт→счёт: %s → %s: %s"):format(ply:Nick(), toSid, money(amount)))
+        save(true, "перевод счёт→счёт")
         return true, from.balance
     end
 
@@ -565,13 +613,18 @@ if SERVER then
     end)
 
     -- ── График сохранений ───────────────────────────────────
-    timer.Create("GRM_Economy_AutoSave8s", 8, 0, function() save(true) end)
-    hook.Add("ShutDown", "GRM_Economy_Save", function() dirty = true save() end)
-    timer.Create("GRM_Economy_Flush", 5, 0, function() if dirty then save() end end)
+    timer.Create("GRM_Economy_AutoSave8s", 8, 0, function() save(true, "автосейв 8с") end)
+    hook.Add("ShutDown", "GRM_Economy_Save", function() dirty = true save(true, "shutdown") end)
+    timer.Create("GRM_Economy_Flush", 5, 0, function() if dirty then save(false, "флаш 5с") end end)
 
     -- ========================================================
     -- СВЕРКА «ПАМЯТЬ ↔ БАЗА»
     -- ========================================================
+    -- Политика v3.0.1: как у валюты — ПАМЯТЬ ГЛАВНЕЕ. Файл подхватывается
+    -- только если он НИЧЕГО не убивает (ручная правка админа «добавить» —
+    -- ок; «воскресший» старый файл, стирающий счета, — отклоняется и
+    -- мгновенно перезаписывается памятью обратно).
+    local lastBark = 0
     local function reconcileEconomy(reason)
         if dirty then return false end
         if not file.Exists(DATA_FILE, "DATA") then return false end
@@ -593,6 +646,40 @@ if SERVER then
             lastDiskTxt = txt
             return false
         end
+        -- АНТИ-ПОТЕРЯ: файл не имеет права убивать то, что уже в памяти.
+        -- Если файл уменьшает/теряет чей-то счёт или бюджет фракции — он
+        -- «постаревший/воскресший»: отклоняем и перезаписываем памятью.
+        local loss = nil
+        for sid, acc in pairs(E.Data.accounts or {}) do
+            local fb = (istable(t.accounts) and istable(t.accounts[sid]))
+                and tonumber(t.accounts[sid].balance) or 0
+            local mb = math.floor(tonumber(istable(acc) and acc.balance) or 0)
+            if mb > math.floor(fb) then
+                loss = ("счёт %s: в памяти %d, в файле %d"):format(tostring(sid), mb, math.floor(fb))
+                break
+            end
+        end
+        if not loss then
+            for name, e in pairs(E.Data.factions or {}) do
+                local fe = istable(t.factions) and t.factions[name] or nil
+                local fb = istable(fe) and tonumber(fe.budget) or 0
+                local mb = math.floor(tonumber(istable(e) and e.budget) or 0)
+                if mb > math.floor(fb) then
+                    loss = ("бюджет [%s]: в памяти %d, в файле %d"):format(tostring(name), mb, math.floor(fb))
+                    break
+                end
+            end
+        end
+        if loss then
+            if os.time() - lastBark > 60 then
+                lastBark = os.time()
+                print("[GRM Economy][!] DB↔MEM ОТКЛОНЕНО: файл моложе памяти и стирает данные (" .. loss ..
+                    ") — ПАМЯТЬ ГЛАВНЕЕ, файл перезаписан (самолечение)")
+            end
+            dirty = true
+            save(true, "сверка: самолечение")
+            return false
+        end
         local oldAccounts = E.Data.accounts
         E.Data = t
         E.Data.version = 2
@@ -602,6 +689,7 @@ if SERVER then
         E.Data.log = istable(E.Data.log) and E.Data.log or {}
         E.Data.config = istable(E.Data.config) and E.Data.config or {}
         if applyConfig then pcall(applyConfig) end
+        for name in pairs(E.Data.factions) do entry(name) end
         lastDiskTxt = txt
         local pushed = 0
         for _, p in ipairs(player.GetAll()) do
@@ -818,7 +906,7 @@ if SERVER then
                 end
             end
             dirty = true
-            save()
+            save(true, "админ: настройки фракции")
             addHistory(name, "Настройки обновлены админом " .. ply:Nick())
             addLog("Админ " .. ply:Nick() .. " обновил настройки [" .. name .. "]")
             notify(ply, "Фракция [" .. name .. "] сохранена.", 100, 220, 100)
@@ -839,7 +927,7 @@ if SERVER then
 
         -- ── ГОС.БЮДЖЕТ ──────────────────────────────────────
         elseif a.action == "save_now" then
-            dirty = true save()
+            dirty = true save(true, "админ: сохранить сейчас")
             notify(ply, "Данные экономики сохранены на диск.", 100, 220, 100)
         elseif a.action == "state_give" then
             local v = amt(a.amount)
@@ -896,7 +984,7 @@ if SERVER then
             if sid == "" then return end
             local acc = account(sid)
             acc.balance = v
-            dirty = true save()
+            dirty = true save(true, "админ: счёт игрока")
             pushBankBySid(sid)
             addLog(("Админ %s установил банковский счёт %s: %s"):format(ply:Nick(), sid, money(v)))
             notify(ply, "Банковский счёт установлен: " .. money(v), 100, 220, 100)
@@ -930,7 +1018,7 @@ if SERVER then
             end
             E.Data.config = out
             applyConfig()
-            dirty = true save()
+            dirty = true save(true, "админ: общие настройки")
             addLog("Админ " .. ply:Nick() .. " обновил общие настройки экономики")
             notify(ply, "Настройки экономики сохранены.", 100, 220, 100)
         end
@@ -1166,7 +1254,7 @@ if SERVER then
     concommand.Add("grm_economy", function(ply, _, cargs)
         if IsValid(ply) and not ply:IsSuperAdmin() then return end
         local mode = tostring(cargs[1] or "")
-        if mode == "save" then dirty = true save() print("[GRM Economy] сохранено.")
+        if mode == "save" then dirty = true save(true, "команда grm_economy save") print("[GRM Economy] сохранено.")
         elseif mode == "list" then
             print("[GRM Economy] фракций с экономикой: " .. table.Count(E.Data.factions))
             for name in pairs(E.Data.factions) do
@@ -1188,7 +1276,7 @@ if SERVER then
     -- ========================================================
     load()
     lastDiskTxt = file.Exists(DATA_FILE, "DATA") and (file.Read(DATA_FILE, "DATA") or "") or nil
-    print(("[GRM Economy] Unified Economy v3.0.0 (переписано с нуля) загружена (путь: %s, база: data/%s): фракций %d, счетов %d"):format(
+    print(("[GRM Economy] Unified Economy v3.0.1 (переписано с нуля) загружена (путь: %s, база: data/%s): фракций %d, счетов %d"):format(
         tostring(debug.getinfo(1, "S").short_src), DATA_FILE,
         table.Count(E.Data.factions), table.Count(E.Data.accounts)))
 end
@@ -1919,5 +2007,5 @@ if CLIENT then
         net.Start(NET_OPEN_ADMIN) net.SendToServer()
     end)
 
-    print("[GRM Economy] Unified Economy v3.0.0 — клиент загружен")
+    print("[GRM Economy] Unified Economy v3.0.1 — клиент загружен")
 end
