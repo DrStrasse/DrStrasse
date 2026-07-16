@@ -1,6 +1,7 @@
 --[[--------------------------------------------------------------------
-    GRM CCTV — shared configuration (Код 60)
+    GRM CCTV — shared configuration (Код 60) v1.2.0
     Видеонаблюдение: камеры, монитор (ПК), серверная стойка сети.
+    + pan/zoom, freeze, скриншоты.
 ----------------------------------------------------------------------]]
 
 if SERVER then AddCSLuaFile() end
@@ -11,59 +12,82 @@ GRM.CCTV = GRM.CCTV or {}
 local C = GRM.CCTV
 
 C.Config = C.Config or {
-    -- Модели (владелец: computer / camera / servers).
-    CameraModel  = "models/props_silo/camera.mdl",
-    CameraModelAlt = "models/props/cs_assault/camera.mdl",
-    MonitorModel = "models/natalya/sims/computer.mdl",
+    CameraModel     = "models/props_silo/camera.mdl",
+    CameraModelAlt  = "models/props/cs_assault/camera.mdl",
+    MonitorModel    = "models/natalya/sims/computer.mdl",
     MonitorModelAlt = "models/props/cs_office/computer.mdl",
-    ServerModel  = "models/props_lab/servers.mdl",
+    ServerModel     = "models/props_lab/servers.mdl",
 
-    -- Сеть: камера видна монитору, если у них один NetworkID
-    -- И есть хотя бы одна включённая серверная стойка с тем же NetworkID.
     DefaultNetwork = "main",
     MaxNetworkLen  = 32,
     MaxLabelLen    = 48,
 
-    -- Камера
-    DefaultFOV     = 75,
-    MinFOV         = 40,
-    MaxFOV         = 100,
+    -- Базовый FOV камеры (при спавне / настройка E)
+    DefaultFOV = 75,
+    MinFOV     = 25,   -- максимальный зум (ближе)
+    MaxFOV     = 100,  -- шире
+
     MaxCamerasPerNetwork = 32,
     MaxMonitorsPerMap    = 24,
     MaxServersPerMap     = 12,
 
-    -- Дальность Use()
     UseDistance = 140,
-
-    -- Обновление списка камер на мониторе (сек)
     ListRefreshSeconds = 2,
+    SaveDir = "grm_cctv",
 
-    -- Персистентность (permanent-устройства, поставленные админом/tool)
-    SaveDir  = "grm_cctv",
-    -- файл: data/grm_cctv/<map>.json — массив устройств (без числовых ключей-sid)
-
-    -- Доступ
     Access = {
         SuperAdminBypass = true,
-        -- Если true — смотреть монитор могут все; настройка камер/стойки — только с доступом.
         PublicView = false,
-        -- SteamID64 в белом списке (заполняет владелец)
-        AllowSteam = {
-            -- ["7656119..."] = true,
-        },
-        -- Имена фракций из Factions (если таблица есть)
-        AllowFactions = {
-            -- ["Полиция"] = true,
-        },
+        AllowSteam = {},
+        AllowFactions = {},
     },
 
-    -- 3D2D / подписи
     DrawLabels = true,
     LabelDistance = 420,
-
-    -- Переключение «живого» вида: клиент ставит ViewEntity на камеру
-    -- (рендер чужого prop как «камеры» — штатный приём GMod CCTV).
     SwitchCooldown = 0.15,
+
+    -- Обзор мышью
+    AllowPan = true,
+    PanYawMax = 55,
+    PanPitchMax = 35,
+    PanSensitivity = 0.06,
+
+    -- Зум (колёсико / клавиши)
+    AllowZoom = true,
+    ZoomStep = 4,          -- на один тик колёсика / нажатие
+    ZoomMinFOV = 25,       -- ближе
+    ZoomMaxFOV = 100,      -- дальше
+    -- Клавиши зума (см. KEY_* на клиенте): = / + приблизить, - отдалить
+
+    FreezePlayer = true,
+
+    -- Скриншоты
+    -- GMod render.Capture пишет в data/ ТОЛЬКО на клиенте того, кто смотрит.
+    Screenshots = {
+        Enabled = true,
+        -- Относительно garrysmod/data/
+        -- Итог: data/grm_cctv/screenshots/<сеть>/<камера>/<файл>.jpg
+        Dir = "grm_cctv/screenshots",
+        Format = "jpeg",       -- "jpeg" | "png"
+        Quality = 90,          -- jpeg 1..100
+        HideUI = true,         -- прятать оверлей на 1 кадр при съёмке
+        Cooldown = 1.0,        -- сек между снимками
+        -- Имя файла: {map}_{network}_{camid}_{YYYYMMDD_HHMMSS}.jpg
+    },
+
+    -- Видеозапись (DVR):
+    -- В чистом GMod НЕТ штатного API «пиши framebuffer камеры в файл N минут».
+    -- render.Capture — покадровые скрины (тяжёло и не AVI).
+    -- Реальные варианты «куда направить запись»:
+    --   1) папка скриншотов выше (рекомендуем);
+    --   2) внешний demo/SourceTV (tv_record) — серверный demo, не «картинка с камеры»;
+    --   3) внешний OBS у оператора.
+    -- VideoRecording.Enabled оставляем false; путь — задел под будущий модуль.
+    VideoRecording = {
+        Enabled = false,
+        Dir = "grm_cctv/recordings",
+        Note = "Не реализовано движком GMod; используйте скриншоты или OBS.",
+    },
 }
 
 function C.NormalizeNetwork(value)
@@ -77,8 +101,10 @@ end
 
 function C.ClampFOV(fov)
     local cfg = C.Config
+    local zmin = tonumber(cfg.ZoomMinFOV) or tonumber(cfg.MinFOV) or 25
+    local zmax = tonumber(cfg.ZoomMaxFOV) or tonumber(cfg.MaxFOV) or 100
     fov = tonumber(fov) or cfg.DefaultFOV or 75
-    return math.Clamp(math.floor(fov + 0.5), cfg.MinFOV or 40, cfg.MaxFOV or 100)
+    return math.Clamp(math.floor(fov + 0.5), zmin, zmax)
 end
 
-print("[GRM CCTV] config v1.0.0")
+print("[GRM CCTV] config v1.2.0")

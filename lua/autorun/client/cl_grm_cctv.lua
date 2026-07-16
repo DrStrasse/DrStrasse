@@ -1,5 +1,6 @@
 --[[--------------------------------------------------------------------
-    GRM CCTV — client UI + live view overlay (Код 60)
+    GRM CCTV — client v1.2.0
+    UI, live view, pan, zoom, freeze local input, screenshots, help HUD.
 ----------------------------------------------------------------------]]
 
 if not CLIENT then return end
@@ -18,6 +19,7 @@ local NET_ACTION     = "GRM_CCTV_Action"
 local NET_VIEW       = "GRM_CCTV_View"
 local NET_VIEW_STOP  = "GRM_CCTV_ViewStop"
 local NET_NOTIFY     = "GRM_CCTV_Notify"
+local NET_SHOT_OK    = "GRM_CCTV_ShotOk"
 
 local ViewState = {
     active = false,
@@ -25,7 +27,31 @@ local ViewState = {
     monitor = NULL,
     label = "",
     network = "",
+    baseFov = 75,
     fov = 75,
+    allowPan = true,
+    yawMax = 55,
+    pitchMax = 35,
+    sens = 0.06,
+    yawOff = 0,
+    pitchOff = 0,
+    baseAng = Angle(0, 0, 0),
+    allowZoom = true,
+    zoomStep = 4,
+    zoomMin = 25,
+    zoomMax = 100,
+    shotEnabled = true,
+    shotDir = "grm_cctv/screenshots",
+    shotFormat = "jpeg",
+    shotQuality = 90,
+    shotHideUI = true,
+    shotCooldown = 1.0,
+    shotMap = "map",
+    shotCamId = "cam",
+    hideOverlay = false,
+    lastShot = 0,
+    flashUntil = 0,
+    lastShotPath = "",
 }
 
 local function sendAction(action, ent, writeExtra)
@@ -41,8 +67,6 @@ local function styleFrame(frame, title)
     frame:SetSize(math.min(ScrW() * 0.5, 560), math.min(ScrH() * 0.6, 480))
     frame:Center()
     frame:MakePopup()
-    frame:SetKeyboardInputEnabled(true)
-    frame:SetMouseInputEnabled(true)
 end
 
 local function addLabeledEntry(parent, y, label, default, numeric)
@@ -51,14 +75,13 @@ local function addLabeledEntry(parent, y, label, default, numeric)
     lbl:SetSize(120, 20)
     lbl:SetText(label)
     lbl:SetTextColor(Color(220, 220, 220))
-
     local entry
     if numeric then
         entry = vgui.Create("DNumberWang", parent)
         entry:SetPos(140, y)
         entry:SetSize(180, 22)
-        entry:SetMin(40)
-        entry:SetMax(100)
+        entry:SetMin(10)
+        entry:SetMax(150)
         entry:SetValue(tonumber(default) or 75)
     else
         entry = vgui.Create("DTextEntry", parent)
@@ -79,7 +102,25 @@ local function addBtn(parent, x, y, w, h, text, col, fn)
     return b
 end
 
--- ── notify ─────────────────────────────────────────────────
+local function safePart(s)
+    s = string.lower(tostring(s or "x"))
+    s = string.gsub(s, "[^%w%-%_]", "_")
+    if s == "" then s = "x" end
+    return string.sub(s, 1, 40)
+end
+
+local function ensureShotDirs(relFile)
+    -- relFile like grm_cctv/screenshots/main/cam/file.jpg
+    local parts = string.Explode("/", relFile)
+    local acc = ""
+    for i = 1, #parts - 1 do
+        acc = (acc == "") and parts[i] or (acc .. "/" .. parts[i])
+        if not file.IsDir(acc, "DATA") then
+            file.CreateDir(acc)
+        end
+    end
+end
+
 net.Receive(NET_NOTIFY, function()
     local ok = net.ReadBool()
     local msg = net.ReadString() or ""
@@ -90,43 +131,43 @@ net.Receive(NET_NOTIFY, function()
     end
 end)
 
--- ── camera config ──────────────────────────────────────────
+net.Receive(NET_SHOT_OK, function()
+    local path = net.ReadString() or ""
+    ViewState.lastShotPath = path
+    ViewState.flashUntil = CurTime() + 0.35
+end)
+
+-- ── config menus (camera / server / monitor) ───────────────
 net.Receive(NET_OPEN_CAM, function()
     local ent = net.ReadEntity()
     if not IsValid(ent) then return end
-
     if IsValid(CCTV._camFrame) then CCTV._camFrame:Remove() end
     local f = vgui.Create("DFrame")
     CCTV._camFrame = f
     styleFrame(f, "Камера — " .. (ent:GetLabel() or ""))
     f:SetSize(460, 280)
-
     local label = addLabeledEntry(f, 40, "Подпись", ent:GetLabel())
     local network = addLabeledEntry(f, 70, "Сеть", ent:GetNetworkID())
     local fov = addLabeledEntry(f, 100, "FOV", ent:GetCamFOV(), true)
-
     local active = vgui.Create("DCheckBoxLabel", f)
     active:SetPos(15, 140)
     active:SetText("Камера включена (ONLINE)")
     active:SetValue(ent:GetActive())
     active:SizeToContents()
-
     local perm = vgui.Create("DCheckBoxLabel", f)
     perm:SetPos(15, 165)
     perm:SetText("Permanent (суперадмин, переживает рестарт)")
     perm:SetValue(ent:GetPermanent())
     perm:SizeToContents()
-
     local idlbl = vgui.Create("DLabel", f)
     idlbl:SetPos(15, 195)
     idlbl:SetSize(420, 18)
     idlbl:SetText("ID: " .. tostring(ent:GetDeviceID() or ""))
     idlbl:SetTextColor(Color(150, 150, 150))
-
     addBtn(f, 15, 230, 120, 28, "Сохранить", Color(100, 220, 120), function()
         sendAction("set_label", ent, function() net.WriteString(label:GetValue()) end)
         sendAction("set_network", ent, function() net.WriteString(network:GetValue()) end)
-        sendAction("set_fov", ent, function() net.WriteUInt(math.Clamp(tonumber(fov:GetValue()) or 75, 40, 100), 8) end)
+        sendAction("set_fov", ent, function() net.WriteUInt(math.Clamp(tonumber(fov:GetValue()) or 75, 10, 150), 8) end)
         sendAction("set_active", ent, function() net.WriteBool(active:GetChecked()) end)
         sendAction("set_permanent", ent, function() net.WriteBool(perm:GetChecked()) end)
         f:Close()
@@ -134,39 +175,26 @@ net.Receive(NET_OPEN_CAM, function()
     addBtn(f, 150, 230, 100, 28, "Отмена", nil, function() f:Close() end)
 end)
 
--- ── server config ──────────────────────────────────────────
 net.Receive(NET_OPEN_SRV, function()
     local ent = net.ReadEntity()
     if not IsValid(ent) then return end
-
     if IsValid(CCTV._srvFrame) then CCTV._srvFrame:Remove() end
     local f = vgui.Create("DFrame")
     CCTV._srvFrame = f
     styleFrame(f, "Сервер CCTV — " .. (ent:GetLabel() or ""))
     f:SetSize(460, 250)
-
     local label = addLabeledEntry(f, 40, "Подпись", ent:GetLabel())
     local network = addLabeledEntry(f, 70, "Сеть", ent:GetNetworkID())
-
     local active = vgui.Create("DCheckBoxLabel", f)
     active:SetPos(15, 110)
     active:SetText("Стойка ONLINE (без неё камеры сети не видны)")
     active:SetValue(ent:GetActive())
     active:SizeToContents()
-
     local perm = vgui.Create("DCheckBoxLabel", f)
     perm:SetPos(15, 140)
     perm:SetText("Permanent (суперадмин)")
     perm:SetValue(ent:GetPermanent())
     perm:SizeToContents()
-
-    local hint = vgui.Create("DLabel", f)
-    hint:SetPos(15, 170)
-    hint:SetSize(420, 30)
-    hint:SetWrap(true)
-    hint:SetText("Камеры и мониторы с тем же ID сети работают только при включённой стойке.")
-    hint:SetTextColor(Color(180, 180, 180))
-
     addBtn(f, 15, 205, 120, 28, "Сохранить", Color(100, 220, 120), function()
         sendAction("set_label", ent, function() net.WriteString(label:GetValue()) end)
         sendAction("set_network", ent, function() net.WriteString(network:GetValue()) end)
@@ -177,7 +205,6 @@ net.Receive(NET_OPEN_SRV, function()
     addBtn(f, 150, 205, 100, 28, "Отмена", nil, function() f:Close() end)
 end)
 
--- ── monitor UI ─────────────────────────────────────────────
 local function buildMonitorUI(monitor, netID, hasSrv, canCfg, cams)
     if IsValid(CCTV._monFrame) then CCTV._monFrame:Remove() end
     local f = vgui.Create("DFrame")
@@ -194,7 +221,7 @@ local function buildMonitorUI(monitor, netID, hasSrv, canCfg, cams)
         status:SetText("Сервер сети: ONLINE · камер: " .. tostring(#cams))
         status:SetTextColor(Color(100, 220, 120))
     else
-        status:SetText("Сервер сети: OFFLINE — просмотр недоступен (поставь/включи grm_cctv_server)")
+        status:SetText("Сервер сети: OFFLINE — просмотр недоступен")
         status:SetTextColor(Color(255, 140, 100))
     end
 
@@ -207,20 +234,11 @@ local function buildMonitorUI(monitor, netID, hasSrv, canCfg, cams)
     list:AddColumn("FOV"):SetFixedWidth(50)
     list:AddColumn("ID"):SetFixedWidth(120)
     list:SetMultiSelect(false)
-
     for i, cam in ipairs(cams) do
-        local line = list:AddLine(
-            tostring(i),
-            cam.label or "Камера",
-            cam.active and "ONLINE" or "OFF",
-            tostring(cam.fov or 75),
-            string.sub(cam.id or "", 1, 16)
-        )
+        local line = list:AddLine(tostring(i), cam.label or "Камера", cam.active and "ONLINE" or "OFF",
+            tostring(cam.fov or 75), string.sub(cam.id or "", 1, 16))
         line._camEnt = cam.ent
         line._active = cam.active
-        if not cam.active and isfunction(line.SetTextColor) then
-            line:SetTextColor(Color(160, 100, 100))
-        end
     end
 
     local function selectedCam()
@@ -236,23 +254,19 @@ local function buildMonitorUI(monitor, netID, hasSrv, canCfg, cams)
         end
         local cam, active = selectedCam()
         if not IsValid(cam) then
-            chat.AddText(Color(255, 200, 100), "[CCTV] ", color_white, "Выбери камеру в списке.")
+            chat.AddText(Color(255, 200, 100), "[CCTV] ", color_white, "Выбери камеру.")
             return
         end
         if not active then
             chat.AddText(Color(255, 140, 100), "[CCTV] ", color_white, "Камера выключена.")
             return
         end
-        sendAction("view_cam", monitor, function()
-            net.WriteEntity(cam)
-        end)
+        sendAction("view_cam", monitor, function() net.WriteEntity(cam) end)
         f:Close()
     end)
-
     addBtn(f, 165, f:GetTall() - 85, 110, 30, "Обновить", nil, function()
         sendAction("refresh_list", monitor)
     end)
-
     if canCfg then
         local label = addLabeledEntry(f, f:GetTall() - 50, "Сеть монитора", netID)
         label:SetPos(15, f:GetTall() - 48)
@@ -267,21 +281,15 @@ local function buildMonitorUI(monitor, netID, hasSrv, canCfg, cams)
             sendAction("set_permanent", monitor, function() net.WriteBool(true) end)
         end)
     end
-
     addBtn(f, f:GetWide() - 115, f:GetTall() - 85, 100, 30, "Закрыть", nil, function() f:Close() end)
-
     list.DoDoubleClick = function()
-        if hasSrv then
-            local cam, active = selectedCam()
-            if IsValid(cam) and active then
-                sendAction("view_cam", monitor, function() net.WriteEntity(cam) end)
-                f:Close()
-            end
+        if not hasSrv then return end
+        local cam, active = selectedCam()
+        if IsValid(cam) and active then
+            sendAction("view_cam", monitor, function() net.WriteEntity(cam) end)
+            f:Close()
         end
     end
-
-    CCTV._monList = list
-    CCTV._monEntity = monitor
 end
 
 local function readCamList(n)
@@ -304,8 +312,7 @@ net.Receive(NET_OPEN_MON, function()
     local canCfg = net.ReadBool()
     local n = net.ReadUInt(8)
     local cams = readCamList(n)
-    if not IsValid(mon) then return end
-    buildMonitorUI(mon, netID, hasSrv, canCfg, cams)
+    if IsValid(mon) then buildMonitorUI(mon, netID, hasSrv, canCfg, cams) end
 end)
 
 net.Receive(NET_LIST, function()
@@ -314,45 +321,225 @@ net.Receive(NET_LIST, function()
     local hasSrv = net.ReadBool()
     local n = net.ReadUInt(8)
     local cams = readCamList(n)
-    if not IsValid(mon) then return end
-    -- rebuild preserving configure rights if frame open
-    buildMonitorUI(mon, netID, hasSrv, true, cams)
+    if IsValid(mon) then buildMonitorUI(mon, netID, hasSrv, true, cams) end
 end)
 
 -- ── live view ──────────────────────────────────────────────
+local function resetPan()
+    ViewState.yawOff = 0
+    ViewState.pitchOff = 0
+    if IsValid(ViewState.cam) then
+        ViewState.baseAng = ViewState.cam:GetAngles()
+    else
+        ViewState.baseAng = Angle(0, 0, 0)
+    end
+end
+
+local function stopView()
+    if not ViewState.active then return end
+    sendAction("stop_view", ViewState.monitor)
+    ViewState.active = false
+    ViewState.cam = NULL
+    ViewState.monitor = NULL
+    ViewState.yawOff = 0
+    ViewState.pitchOff = 0
+    ViewState.hideOverlay = false
+    gui.EnableScreenClicker(false)
+end
+
+local function clampZoom(fov)
+    return math.Clamp(tonumber(fov) or 75, ViewState.zoomMin or 25, ViewState.zoomMax or 100)
+end
+
+local function applyZoomDelta(dir)
+    if not ViewState.active or not ViewState.allowZoom then return end
+    -- dir > 0 = zoom in (меньший FOV), dir < 0 = zoom out
+    local step = ViewState.zoomStep or 4
+    ViewState.fov = clampZoom((ViewState.fov or 75) - dir * step)
+end
+
+local function takeScreenshot()
+    if not ViewState.active or not ViewState.shotEnabled then return end
+    local now = CurTime()
+    if now < (ViewState.lastShot or 0) + (ViewState.shotCooldown or 1) then
+        chat.AddText(Color(255, 200, 100), "[CCTV] ", color_white, "Подождите перед следующим снимком.")
+        return
+    end
+    if not IsValid(ViewState.cam) then return end
+
+    ViewState.lastShot = now
+    local doHide = ViewState.shotHideUI
+    if doHide then ViewState.hideOverlay = true end
+
+    timer.Simple(0, function()
+        if not ViewState.active then
+            ViewState.hideOverlay = false
+            return
+        end
+        local fmt = string.lower(ViewState.shotFormat or "jpeg")
+        if fmt ~= "png" then fmt = "jpeg" end
+        local ext = (fmt == "png") and "png" or "jpg"
+        local stamp = os.date("%Y%m%d_%H%M%S")
+        local netPart = safePart(ViewState.network)
+        local camPart = safePart(ViewState.shotCamId)
+        local mapPart = safePart(ViewState.shotMap)
+        local dir = tostring(ViewState.shotDir or "grm_cctv/screenshots")
+        dir = string.gsub(dir, "^/+", "")
+        dir = string.gsub(dir, "%.%.", "")
+        local rel = string.format("%s/%s/%s/%s_%s_%s_%s.%s",
+            dir, netPart, camPart, mapPart, netPart, camPart, stamp, ext)
+
+        ensureShotDirs(rel)
+
+        local ok, data = pcall(function()
+            return render.Capture({
+                format = fmt,
+                quality = math.Clamp(tonumber(ViewState.shotQuality) or 90, 10, 100),
+                x = 0, y = 0,
+                w = ScrW(), h = ScrH(),
+                alpha = false,
+            })
+        end)
+
+        ViewState.hideOverlay = false
+
+        if not ok or not data or data == "" then
+            chat.AddText(Color(255, 120, 120), "[CCTV] ", color_white, "Не удалось сделать скриншот (render.Capture).")
+            return
+        end
+
+        file.Write(rel, data)
+        local fullHint = "garrysmod/data/" .. rel
+        ViewState.lastShotPath = rel
+        ViewState.flashUntil = CurTime() + 0.4
+
+        sendAction("screenshot", ViewState.monitor, function()
+            net.WriteString(rel)
+            net.WriteString(ViewState.label or "")
+        end)
+
+        chat.AddText(Color(100, 220, 140), "[CCTV] ", color_white, "Скриншот сохранён: ", Color(180, 220, 255), fullHint)
+    end)
+end
+
 net.Receive(NET_VIEW, function()
     local cam = net.ReadEntity()
     local mon = net.ReadEntity()
     local label = net.ReadString()
     local network = net.ReadString()
     local fov = net.ReadUInt(8)
+    local allowPan = net.ReadBool()
+    local yawMax = net.ReadUInt(8)
+    local pitchMax = net.ReadUInt(8)
+    local sens = net.ReadFloat()
+    local allowZoom = net.ReadBool()
+    local zoomStep = net.ReadUInt(8)
+    local zoomMin = net.ReadUInt(8)
+    local zoomMax = net.ReadUInt(8)
+    local shotEnabled = net.ReadBool()
+    local shotDir = net.ReadString()
+    local shotFormat = net.ReadString()
+    local shotQuality = net.ReadUInt(8)
+    local shotHideUI = net.ReadBool()
+    local shotCooldown = net.ReadFloat()
+    local shotMap = net.ReadString()
+    local shotCamId = net.ReadString()
+
     ViewState.active = true
     ViewState.cam = cam
     ViewState.monitor = mon
     ViewState.label = label
     ViewState.network = network
+    ViewState.baseFov = fov
     ViewState.fov = fov
+    ViewState.allowPan = allowPan
+    ViewState.yawMax = yawMax
+    ViewState.pitchMax = pitchMax
+    ViewState.sens = (sens and sens > 0) and sens or 0.06
+    ViewState.allowZoom = allowZoom
+    ViewState.zoomStep = zoomStep
+    ViewState.zoomMin = zoomMin
+    ViewState.zoomMax = zoomMax
+    ViewState.shotEnabled = shotEnabled
+    ViewState.shotDir = shotDir
+    ViewState.shotFormat = shotFormat
+    ViewState.shotQuality = shotQuality
+    ViewState.shotHideUI = shotHideUI
+    ViewState.shotCooldown = shotCooldown
+    ViewState.shotMap = shotMap
+    ViewState.shotCamId = shotCamId
+    ViewState.hideOverlay = false
+    resetPan()
+
     if IsValid(CCTV._monFrame) then CCTV._monFrame:Close() end
+    gui.EnableScreenClicker(false)
 end)
 
 net.Receive(NET_VIEW_STOP, function()
     ViewState.active = false
     ViewState.cam = NULL
     ViewState.monitor = NULL
+    ViewState.yawOff = 0
+    ViewState.pitchOff = 0
+    ViewState.hideOverlay = false
+    gui.EnableScreenClicker(false)
+end)
+
+hook.Add("InputMouseApply", "GRM_CCTV_MousePan", function(cmd, x, y, ang)
+    if not ViewState.active or not ViewState.allowPan then return end
+    if not IsValid(ViewState.cam) then return end
+    local sens = ViewState.sens or 0.06
+    ViewState.yawOff = math.Clamp((ViewState.yawOff or 0) - x * sens, -(ViewState.yawMax or 55), (ViewState.yawMax or 55))
+    ViewState.pitchOff = math.Clamp((ViewState.pitchOff or 0) + y * sens, -(ViewState.pitchMax or 35), (ViewState.pitchMax or 35))
+    cmd:SetMouseX(0)
+    cmd:SetMouseY(0)
+    return true
+end)
+
+-- Колёсико: приблизить / отдалить
+hook.Add("PlayerBindPress", "GRM_CCTV_ZoomBinds", function(ply, bind, pressed)
+    if not ViewState.active or ply ~= LocalPlayer() then return end
+    bind = string.lower(tostring(bind or ""))
+    if not pressed then
+        if string.find(bind, "invnext", 1, true) or string.find(bind, "invprev", 1, true) then
+            return true -- block weapon switch even on release
+        end
+        return
+    end
+    if string.find(bind, "invnext", 1, true) then
+        applyZoomDelta(-1) -- scroll down = out
+        return true
+    end
+    if string.find(bind, "invprev", 1, true) then
+        applyZoomDelta(1) -- scroll up = in
+        return true
+    end
 end)
 
 hook.Add("CalcView", "GRM_CCTV_CalcView", function(ply, pos, ang, fov)
     if not ViewState.active then return end
     local cam = ViewState.cam
     if not IsValid(cam) then return end
-    local origin = cam:GetPos() + cam:GetForward() * 6 + cam:GetUp() * 2
-    local angles = cam:GetAngles()
+    local base = ViewState.baseAng or cam:GetAngles()
+    local viewAng = Angle(base.p, base.y, base.r)
+    viewAng:RotateAroundAxis(viewAng:Up(), ViewState.yawOff or 0)
+    viewAng:RotateAroundAxis(viewAng:Right(), ViewState.pitchOff or 0)
+    local origin = cam:GetPos() + viewAng:Forward() * 6 + viewAng:Up() * 2
     return {
         origin = origin,
-        angles = angles,
+        angles = viewAng,
         fov = ViewState.fov or cam:GetCamFOV() or 75,
         drawviewer = false,
     }
+end)
+
+hook.Add("CreateMove", "GRM_CCTV_CreateMove", function(cmd)
+    if not ViewState.active then return end
+    cmd:ClearMovement()
+    cmd:SetButtons(0)
+    cmd:SetForwardMove(0)
+    cmd:SetSideMove(0)
+    cmd:SetUpMove(0)
 end)
 
 hook.Add("HUDShouldDraw", "GRM_CCTV_HideHUD", function(name)
@@ -364,73 +551,207 @@ end)
 
 surface.CreateFont("GRM_CCTV_Title", { font = "Roboto", size = 22, weight = 700, extended = true })
 surface.CreateFont("GRM_CCTV_Meta", { font = "Roboto", size = 16, weight = 500, extended = true })
+surface.CreateFont("GRM_CCTV_Help", { font = "Roboto", size = 16, weight = 600, extended = true })
+surface.CreateFont("GRM_CCTV_HelpTitle", { font = "Roboto", size = 17, weight = 800, extended = true })
+surface.CreateFont("GRM_CCTV_Key", { font = "Roboto", size = 14, weight = 700, extended = true })
+
+local function drawKeyChip(x, y, keyText, desc, alpha)
+    alpha = alpha or 230
+    surface.SetFont("GRM_CCTV_Key")
+    local kw, kh = surface.GetTextSize(keyText)
+    local padX, padY = 7, 3
+    local boxW, boxH = kw + padX * 2, kh + padY * 2
+    surface.SetDrawColor(20, 28, 22, alpha)
+    surface.DrawRect(x, y, boxW, boxH)
+    surface.SetDrawColor(90, 220, 130, alpha)
+    surface.DrawOutlinedRect(x, y, boxW, boxH, 1)
+    draw.SimpleText(keyText, "GRM_CCTV_Key", x + boxW * 0.5, y + boxH * 0.5,
+        Color(200, 255, 210, alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    if desc and desc ~= "" then
+        draw.SimpleText(desc, "GRM_CCTV_Help", x + boxW + 8, y + boxH * 0.5,
+            Color(230, 235, 230, alpha), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    end
+    return boxH
+end
 
 hook.Add("HUDPaint", "GRM_CCTV_Overlay", function()
     if not ViewState.active then return end
+    if ViewState.hideOverlay then return end
+
     local w, h = ScrW(), ScrH()
+    local helpH = 148
 
-    -- vignette bars (letterbox)
-    surface.SetDrawColor(0, 0, 0, 180)
-    surface.DrawRect(0, 0, w, 48)
-    surface.DrawRect(0, h - 56, w, 56)
+    surface.SetDrawColor(0, 0, 0, 190)
+    surface.DrawRect(0, 0, w, 56)
+    surface.SetDrawColor(0, 0, 0, 205)
+    surface.DrawRect(0, h - helpH, w, helpH)
 
-    -- scanline-ish
-    surface.SetDrawColor(0, 255, 120, 12)
-    for y = 48, h - 56, 4 do
+    surface.SetDrawColor(0, 255, 120, 10)
+    for y = 56, h - helpH, 4 do
         surface.DrawRect(0, y, w, 1)
     end
 
-    -- REC indicator
     local blink = (math.floor(CurTime() * 2) % 2 == 0)
     if blink then
         surface.SetDrawColor(220, 40, 40, 230)
         draw.NoTexture()
-        surface.DrawRect(18, 16, 12, 12)
+        surface.DrawRect(18, 20, 12, 12)
     end
-    draw.SimpleText("REC  LIVE", "GRM_CCTV_Meta", 38, 14, Color(255, 80, 80), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    draw.SimpleText("REC  LIVE", "GRM_CCTV_Meta", 38, 18, Color(255, 80, 80), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
 
-    draw.SimpleText(
-        ViewState.label ~= "" and ViewState.label or "Камера",
-        "GRM_CCTV_Title", w * 0.5, 12, Color(220, 255, 220), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP
-    )
-    draw.SimpleText(
-        "сеть: " .. tostring(ViewState.network or "?") .. "  ·  FOV " .. tostring(ViewState.fov or 75),
-        "GRM_CCTV_Meta", w * 0.5, 34, Color(160, 200, 160), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP
-    )
+    draw.SimpleText(ViewState.label ~= "" and ViewState.label or "Камера",
+        "GRM_CCTV_Title", w * 0.5, 8, Color(220, 255, 220), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
 
-    local t = os.date("%Y-%m-%d %H:%M:%S")
-    draw.SimpleText(t, "GRM_CCTV_Meta", w - 16, 14, Color(200, 200, 200), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
-
+    local zoomPct = 0
+    do
+        local zmin, zmax = ViewState.zoomMin or 25, ViewState.zoomMax or 100
+        local f = ViewState.fov or 75
+        if zmax > zmin then
+            zoomPct = math.floor((1 - (f - zmin) / (zmax - zmin)) * 100 + 0.5)
+        end
+    end
     draw.SimpleText(
-        "[RMB / ESC / E] выйти с камеры",
-        "GRM_CCTV_Meta", w * 0.5, h - 36, Color(220, 220, 220), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP
-    )
+        string.format("сеть: %s  ·  FOV %d  ·  зум %d%%",
+            tostring(ViewState.network or "?"), tonumber(ViewState.fov) or 75, zoomPct),
+        "GRM_CCTV_Meta", w * 0.5, 34, Color(160, 200, 160), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+
+    draw.SimpleText(os.date("%Y-%m-%d %H:%M:%S"), "GRM_CCTV_Meta", w - 16, 18,
+        Color(200, 200, 200), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+
+    -- crosshair
+    local cx, cy = w * 0.5, h * 0.5
+    surface.SetDrawColor(80, 255, 120, 150)
+    surface.DrawLine(cx - 10, cy, cx + 10, cy)
+    surface.DrawLine(cx, cy - 10, cx, cy + 10)
+
+    -- flash on shot
+    if CurTime() < (ViewState.flashUntil or 0) then
+        surface.SetDrawColor(255, 255, 255, 60)
+        surface.DrawRect(0, 0, w, h)
+    end
+
+    -- help panel
+    local baseY = h - helpH + 8
+    draw.SimpleText("УПРАВЛЕНИЕ КАМЕРОЙ", "GRM_CCTV_HelpTitle", 16, baseY, Color(120, 230, 150))
+
+    local col1, col2, col3 = 16, math.floor(w * 0.34), math.floor(w * 0.66)
+    local y1, y2, y3 = baseY + 24, baseY + 24, baseY + 24
+
+    -- col1 pan
+    draw.SimpleText("Обзор:", "GRM_CCTV_Help", col1, y1, Color(180, 200, 180))
+    y1 = y1 + 18
+    if ViewState.allowPan then
+        y1 = y1 + drawKeyChip(col1, y1, "МЫШЬ ← →", "смотреть влево / вправо") + 5
+        y1 = y1 + drawKeyChip(col1, y1, "МЫШЬ ↑ ↓", "смотреть вверх / вниз") + 4
+        draw.SimpleText(string.format("углы: %+.0f° / %+.0f° (±%d / ±%d)",
+            ViewState.yawOff or 0, ViewState.pitchOff or 0, ViewState.yawMax or 55, ViewState.pitchMax or 35),
+            "GRM_CCTV_Meta", col1, y1, Color(140, 175, 140))
+    else
+        draw.SimpleText("поворот выключен", "GRM_CCTV_Help", col1, y1, Color(200, 180, 120))
+    end
+
+    -- col2 zoom
+    draw.SimpleText("Зум / масштаб:", "GRM_CCTV_Help", col2, y2, Color(180, 200, 180))
+    y2 = y2 + 18
+    if ViewState.allowZoom then
+        y2 = y2 + drawKeyChip(col2, y2, "КОЛЁСИКО ↑", "приблизить (zoom in)") + 5
+        y2 = y2 + drawKeyChip(col2, y2, "КОЛЁСИКО ↓", "отдалить (zoom out)") + 5
+        y2 = y2 + drawKeyChip(col2, y2, "+ / =", "приблизить") + 5
+        y2 = y2 + drawKeyChip(col2, y2, "-", "отдалить") + 4
+        draw.SimpleText(string.format("FOV %d  (ближе %d … шире %d)",
+            tonumber(ViewState.fov) or 75, ViewState.zoomMin or 25, ViewState.zoomMax or 100),
+            "GRM_CCTV_Meta", col2, y2, Color(140, 175, 140))
+    else
+        draw.SimpleText("зум выключен", "GRM_CCTV_Help", col2, y2, Color(200, 180, 120))
+    end
+
+    -- col3 exit + shot
+    draw.SimpleText("Снимок и выход:", "GRM_CCTV_Help", col3, y3, Color(180, 200, 180))
+    y3 = y3 + 18
+    if ViewState.shotEnabled then
+        y3 = y3 + drawKeyChip(col3, y3, "F", "сделать скриншот") + 5
+        y3 = y3 + drawKeyChip(col3, y3, "ПРОБЕЛ", "сделать скриншот") + 4
+    end
+    y3 = y3 + drawKeyChip(col3, y3, "ПКМ", "выйти из режима") + 5
+    y3 = y3 + drawKeyChip(col3, y3, "ESC / E", "выйти из режима") + 4
+
+    local pathHint = ViewState.lastShotPath ~= "" and ("последний: data/" .. ViewState.lastShotPath)
+        or ("папка: garrysmod/data/" .. tostring(ViewState.shotDir or "grm_cctv/screenshots") .. "/…")
+    draw.SimpleText(
+        pathHint .. "   |   тело у монитора стоит   |   !camexit / grm_cctv_stop",
+        "GRM_CCTV_Meta", w * 0.5, h - 14, Color(150, 160, 150), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 end)
 
-local function stopView()
+-- keys: exit / zoom / screenshot
+local function onExitButton(btn)
     if not ViewState.active then return end
-    sendAction("stop_view", ViewState.monitor)
-    ViewState.active = false
+    if btn == MOUSE_RIGHT or btn == KEY_ESCAPE or btn == KEY_E
+        or btn == KEY_BACKSPACE or btn == KEY_Q then
+        stopView()
+        return true
+    end
+    -- zoom keys
+    if ViewState.allowZoom then
+        if btn == KEY_EQUAL or btn == KEY_PAD_PLUS then
+            applyZoomDelta(1)
+            return true
+        end
+        if btn == KEY_MINUS or btn == KEY_PAD_MINUS then
+            applyZoomDelta(-1)
+            return true
+        end
+    end
+    -- screenshot (Space used for shot; not exit)
+    if ViewState.shotEnabled and (btn == KEY_F or btn == KEY_SPACE) then
+        takeScreenshot()
+        return true
+    end
 end
 
-hook.Add("PlayerButtonDown", "GRM_CCTV_ExitKeys", function(ply, btn)
-    if not ViewState.active then return end
+hook.Add("PlayerButtonDown", "GRM_CCTV_Keys", function(ply, btn)
     if ply ~= LocalPlayer() then return end
-    if btn == MOUSE_RIGHT or btn == KEY_ESCAPE or btn == KEY_E then
-        stopView()
-    end
+    onExitButton(btn)
 end)
 
--- also bind +use edge
-hook.Add("KeyPress", "GRM_CCTV_ExitUse", function(ply, key)
+hook.Add("KeyPress", "GRM_CCTV_KeyPress", function(ply, key)
     if ply ~= LocalPlayer() or not ViewState.active then return end
     if key == IN_USE or key == IN_ATTACK2 then
         stopView()
+    elseif key == IN_JUMP and ViewState.shotEnabled then
+        -- Space also fires KeyPress JUMP — screenshot already via PlayerButtonDown
     end
 end)
 
-concommand.Add("grm_cctv_stop", function()
-    stopView()
+hook.Add("Think", "GRM_CCTV_ExitThink", function()
+    if not ViewState.active then return end
+    if input.IsKeyDown(KEY_ESCAPE) or input.IsMouseDown(MOUSE_RIGHT) then
+        local now = CurTime()
+        if (ViewState._exitCD or 0) > now then return end
+        ViewState._exitCD = now + 0.25
+        stopView()
+    end
 end)
 
-print("[GRM CCTV] client v1.0.0")
+hook.Add("Think", "GRM_CCTV_CamValid", function()
+    if ViewState.active and not IsValid(ViewState.cam) then
+        stopView()
+    end
+end)
+
+concommand.Add("grm_cctv_stop", function() stopView() end)
+concommand.Add("grm_cctv_shot", function() takeScreenshot() end)
+
+hook.Add("OnPlayerChat", "GRM_CCTV_ChatExit", function(ply, text)
+    if ply ~= LocalPlayer() or not ViewState.active then return end
+    local t = string.Trim(string.lower(tostring(text or "")))
+    if t == "!camexit" or t == "/camexit" or t == "!cctvexit" then
+        stopView()
+        return true
+    end
+    if t == "!camshot" or t == "/camshot" then
+        takeScreenshot()
+        return true
+    end
+end)
+
+print("[GRM CCTV] client v1.2.0")

@@ -1,6 +1,6 @@
 --[[--------------------------------------------------------------------
-    GRM CCTV — server (Код 60)
-    Реестр устройств, доступ, сеть, открытие UI, view switch, сейв.
+    GRM CCTV — server v1.2.0 (Код 60)
+    Реестр, доступ, сеть, view + freeze, сейв, screenshot notify.
 ----------------------------------------------------------------------]]
 
 if CLIENT then return end
@@ -14,7 +14,7 @@ GRM.CCTV = GRM.CCTV or {}
 local CCTV = GRM.CCTV
 local CFG = function() return CCTV.Config or {} end
 
-CCTV.Devices = CCTV.Devices or {} -- [entIndex] = ent
+CCTV.Devices = CCTV.Devices or {}
 
 local NET_OPEN_CAM   = "GRM_CCTV_OpenCam"
 local NET_OPEN_MON   = "GRM_CCTV_OpenMon"
@@ -24,6 +24,7 @@ local NET_ACTION     = "GRM_CCTV_Action"
 local NET_VIEW       = "GRM_CCTV_View"
 local NET_VIEW_STOP  = "GRM_CCTV_ViewStop"
 local NET_NOTIFY     = "GRM_CCTV_Notify"
+local NET_SHOT_OK    = "GRM_CCTV_ShotOk"
 
 util.AddNetworkString(NET_OPEN_CAM)
 util.AddNetworkString(NET_OPEN_MON)
@@ -33,8 +34,8 @@ util.AddNetworkString(NET_ACTION)
 util.AddNetworkString(NET_VIEW)
 util.AddNetworkString(NET_VIEW_STOP)
 util.AddNetworkString(NET_NOTIFY)
+util.AddNetworkString(NET_SHOT_OK)
 
--- ── utils ──────────────────────────────────────────────────
 local function jsonT(txt)
     local ok, t = pcall(util.JSONToTable, txt, false, true)
     return (ok and istable(t)) and t or nil
@@ -44,7 +45,7 @@ local function notify(ply, ok, msg)
     if not IsValid(ply) then return end
     net.Start(NET_NOTIFY)
         net.WriteBool(ok and true or false)
-        net.WriteString(string.sub(tostring(msg or ""), 1, 200))
+        net.WriteString(string.sub(tostring(msg or ""), 1, 220))
     net.Send(ply)
     if GRM and isfunction(GRM.Notify) then
         local r, g, b = ok and 100 or 255, ok and 220 or 120, ok and 100 or 120
@@ -73,7 +74,6 @@ local function isCCTVClass(cls)
     return cls == "grm_cctv_camera" or cls == "grm_cctv_monitor" or cls == "grm_cctv_server"
 end
 
--- ── access ─────────────────────────────────────────────────
 function CCTV.HasAccess(ply)
     if not IsValid(ply) then return false end
     local acc = CFG().Access or {}
@@ -115,7 +115,6 @@ function CCTV.CanConfigure(ply, ent)
     return CCTV.HasAccess(ply)
 end
 
--- ── registry ───────────────────────────────────────────────
 function CCTV.RegisterDevice(ent)
     if not IsValid(ent) then return end
     CCTV.Devices[ent:EntIndex()] = ent
@@ -163,7 +162,6 @@ local function countClass(cls)
     return n
 end
 
--- ── persistence (array of records; finding 65-safe) ────────
 local function savePath()
     local dir = CFG().SaveDir or "grm_cctv"
     if not file.IsDir(dir, "DATA") then file.CreateDir(dir) end
@@ -212,10 +210,10 @@ function CCTV.SavePermanent()
     file.Write(path, txt)
     local chk = file.Read(path, "DATA")
     if chk ~= txt then
-        print("[GRM CCTV] SAVE fail: read-back mismatch " .. path)
+        print("[GRM CCTV] SAVE fail: read-back " .. path)
         return false
     end
-    print(("[GRM CCTV] SAVE ok: %d устройств -> data/%s"):format(#list, path))
+    print(("[GRM CCTV] SAVE ok: %d -> data/%s"):format(#list, path))
     return true
 end
 
@@ -227,7 +225,7 @@ function CCTV.LoadPermanent()
     if not istable(t) then
         local q = (CFG().SaveDir or "grm_cctv") .. "/corrupt_" .. os.time() .. ".txt"
         file.Write(q, raw)
-        print("[GRM CCTV] LOAD: битый файл, карантин data/" .. q)
+        print("[GRM CCTV] LOAD: quarantine data/" .. q)
         return 0
     end
     local spawned = 0
@@ -261,11 +259,79 @@ function CCTV.LoadPermanent()
             end
         end
     end
-    print(("[GRM CCTV] LOAD: восстановлено %d устройств из data/%s"):format(spawned, path))
+    print(("[GRM CCTV] LOAD: %d from data/%s"):format(spawned, path))
     return spawned
 end
 
--- ── open menus ─────────────────────────────────────────────
+function CCTV.StopView(ply, silent)
+    if not IsValid(ply) then return end
+    if not ply._grmCCTVView then
+        if ply._grmCCTVFrozen then
+            ply:Freeze(false)
+            ply._grmCCTVFrozen = nil
+        end
+        ply:SetViewEntity(nil)
+        return
+    end
+    ply:SetViewEntity(nil)
+    if ply._grmCCTVFrozen or (CFG().FreezePlayer ~= false) then
+        ply:Freeze(false)
+        ply._grmCCTVFrozen = nil
+    end
+    ply._grmCCTVView = nil
+    ply._grmCCTVCam = nil
+    ply._grmCCTVMonitor = nil
+    if not silent then
+        net.Start(NET_VIEW_STOP)
+        net.Send(ply)
+    end
+end
+
+function CCTV.StartView(ply, cam, monitor, netID)
+    if not IsValid(ply) or not IsValid(cam) or not IsValid(monitor) then return false end
+    if ply._grmCCTVView then CCTV.StopView(ply, true) end
+
+    ply:SetViewEntity(cam)
+    ply._grmCCTVView = true
+    ply._grmCCTVCam = cam
+    ply._grmCCTVMonitor = monitor
+    if CFG().FreezePlayer ~= false then
+        ply:Freeze(true)
+        ply._grmCCTVFrozen = true
+        if ply.SetLocalVelocity then ply:SetLocalVelocity(Vector(0, 0, 0)) end
+        if ply.SetVelocity then ply:SetVelocity(Vector(0, 0, 0)) end
+    end
+
+    local cfg = CFG()
+    local sc = cfg.Screenshots or {}
+    net.Start(NET_VIEW)
+        net.WriteEntity(cam)
+        net.WriteEntity(monitor)
+        net.WriteString(string.sub(cam:GetLabel() or "Камера", 1, 48))
+        net.WriteString(netID)
+        net.WriteUInt(CCTV.ClampFOV(cam:GetCamFOV()), 8)
+        net.WriteBool(cfg.AllowPan ~= false)
+        net.WriteUInt(math.Clamp(tonumber(cfg.PanYawMax) or 55, 0, 180), 8)
+        net.WriteUInt(math.Clamp(tonumber(cfg.PanPitchMax) or 35, 0, 89), 8)
+        net.WriteFloat(tonumber(cfg.PanSensitivity) or 0.06)
+        -- zoom
+        net.WriteBool(cfg.AllowZoom ~= false)
+        net.WriteUInt(math.Clamp(tonumber(cfg.ZoomStep) or 4, 1, 30), 8)
+        net.WriteUInt(math.Clamp(tonumber(cfg.ZoomMinFOV) or 25, 10, 90), 8)
+        net.WriteUInt(math.Clamp(tonumber(cfg.ZoomMaxFOV) or 100, 40, 150), 8)
+        -- screenshots
+        net.WriteBool(sc.Enabled ~= false)
+        net.WriteString(string.sub(tostring(sc.Dir or "grm_cctv/screenshots"), 1, 120))
+        net.WriteString(string.sub(tostring(sc.Format or "jpeg"), 1, 8))
+        net.WriteUInt(math.Clamp(tonumber(sc.Quality) or 90, 10, 100), 8)
+        net.WriteBool(sc.HideUI ~= false)
+        net.WriteFloat(tonumber(sc.Cooldown) or 1.0)
+        net.WriteString(string.sub(string.lower(game.GetMap() or "map"), 1, 40))
+        net.WriteString(string.sub(cam:GetDeviceID() or "cam", 1, 40))
+    net.Send(ply)
+    return true
+end
+
 function CCTV.OpenCameraMenu(ply, ent)
     if not IsValid(ply) or not IsValid(ent) then return end
     if not withinUse(ply, ent) then return end
@@ -338,17 +404,10 @@ local function sendList(ply, monitor)
     net.Send(ply)
 end
 
--- ── actions from client ────────────────────────────────────
 local VALID_ACTIONS = {
-    set_label = true,
-    set_network = true,
-    set_active = true,
-    set_fov = true,
-    set_permanent = true,
-    refresh_list = true,
-    save_all = true,
-    view_cam = true,
-    stop_view = true,
+    set_label = true, set_network = true, set_active = true, set_fov = true,
+    set_permanent = true, refresh_list = true, save_all = true,
+    view_cam = true, stop_view = true, screenshot = true,
 }
 
 net.Receive(NET_ACTION, function(_, ply)
@@ -370,18 +429,30 @@ net.Receive(NET_ACTION, function(_, ply)
             return
         end
         local ok = CCTV.SavePermanent()
-        notify(ply, ok, ok and "CCTV: permanent-устройства сохранены." or "CCTV: ошибка сохранения.")
+        notify(ply, ok, ok and "CCTV: permanent сохранены." or "CCTV: ошибка сохранения.")
         return
     end
 
     if action == "stop_view" then
-        if ply._grmCCTVView then
-            ply:SetViewEntity(nil)
-            ply._grmCCTVView = nil
-            ply._grmCCTVCam = nil
-            net.Start(NET_VIEW_STOP)
-            net.Send(ply)
+        CCTV.StopView(ply)
+        return
+    end
+
+    if action == "screenshot" then
+        -- Клиент уже сохранил файл в data/; сервер логирует и подтверждает.
+        if not ply._grmCCTVView then return end
+        local relPath = string.sub(net.ReadString() or "", 1, 200)
+        local camLabel = string.sub(net.ReadString() or "", 1, 48)
+        if relPath == "" then
+            notify(ply, false, "Скриншот: пустой путь.")
+            return
         end
+        print(("[GRM CCTV] SCREENSHOT %s (%s) cam=%s -> data/%s"):format(
+            ply:Nick(), steam64(ply), camLabel, relPath))
+        notify(ply, true, "Скриншот: garrysmod/data/" .. relPath)
+        net.Start(NET_SHOT_OK)
+            net.WriteString(relPath)
+        net.Send(ply)
         return
     end
 
@@ -408,29 +479,16 @@ net.Receive(NET_ACTION, function(_, ply)
             return
         end
         if not CCTV.NetworkHasServer(netID) then
-            notify(ply, false, "Нет активной серверной стойки в сети «" .. netID .. "».")
+            notify(ply, false, "Нет ONLINE-сервера сети «" .. netID .. "».")
             return
         end
         local now = CurTime()
         if (ply._grmCCTVCD or 0) > now then return end
         ply._grmCCTVCD = now + (CFG().SwitchCooldown or 0.15)
-
-        -- ViewEntity = камера; клиент рисует HUD оверлей.
-        ply:SetViewEntity(cam)
-        ply._grmCCTVView = true
-        ply._grmCCTVCam = cam
-        ply._grmCCTVMonitor = monitor
-        net.Start(NET_VIEW)
-            net.WriteEntity(cam)
-            net.WriteEntity(monitor)
-            net.WriteString(string.sub(cam:GetLabel() or "Камера", 1, 48))
-            net.WriteString(netID)
-            net.WriteUInt(CCTV.ClampFOV(cam:GetCamFOV()), 8)
-        net.Send(ply)
+        CCTV.StartView(ply, cam, monitor, netID)
         return
     end
 
-    -- configure actions need entity
     if not IsValid(ent) or not isCCTVClass(classOf(ent)) then return end
     if not withinUse(ply, ent) then return end
     if not CCTV.CanConfigure(ply, ent) then
@@ -464,73 +522,61 @@ net.Receive(NET_ACTION, function(_, ply)
         end
         local on = net.ReadBool()
         ent:SetPermanent(on)
-        if on then
-            local sid = steam64(ply)
-            if ent:GetOwnerSteam() == "" then
-                ent:SetOwnerSteam(sid)
-                ent:SetOwnerName(ply:Nick())
-            end
+        if on and ent:GetOwnerSteam() == "" then
+            ent:SetOwnerSteam(steam64(ply))
+            ent:SetOwnerName(ply:Nick())
         end
         CCTV.SavePermanent()
-        notify(ply, true, on and "Устройство в permanent-сейве." or "Снято с permanent.")
+        notify(ply, true, on and "В permanent-сейве." or "Снято с permanent.")
     end
 end)
 
--- ── safety: stop view if far / invalid ─────────────────────
 hook.Add("Think", "GRM_CCTV_ViewGuard", function()
     for _, ply in ipairs(player.GetAll()) do
         if ply._grmCCTVView then
-            local mon = ply._grmCCTVMonitor
-            local cam = ply._grmCCTVCam
+            local mon, cam = ply._grmCCTVMonitor, ply._grmCCTVCam
             local bad = false
             if not IsValid(mon) or not IsValid(cam) then bad = true end
             if not bad and not withinUse(ply, mon) then bad = true end
             if not bad and not cam:GetActive() then bad = true end
             if not bad and not CCTV.NetworkHasServer(cam:GetNetworkID()) then bad = true end
-            if bad then
-                ply:SetViewEntity(nil)
-                ply._grmCCTVView = nil
-                ply._grmCCTVCam = nil
-                ply._grmCCTVMonitor = nil
-                net.Start(NET_VIEW_STOP)
-                net.Send(ply)
-            end
+            if bad then CCTV.StopView(ply) end
         end
     end
 end)
 
 hook.Add("PlayerDisconnected", "GRM_CCTV_Disconnect", function(ply)
-    if IsValid(ply) then
-        ply:SetViewEntity(nil)
-        ply._grmCCTVView = nil
-    end
+    if IsValid(ply) then CCTV.StopView(ply, true) end
 end)
 
 hook.Add("PlayerDeath", "GRM_CCTV_Death", function(ply)
-    if IsValid(ply) and ply._grmCCTVView then
-        ply:SetViewEntity(nil)
-        ply._grmCCTVView = nil
-        net.Start(NET_VIEW_STOP)
-        net.Send(ply)
-    end
+    if IsValid(ply) then CCTV.StopView(ply) end
 end)
 
--- block weapon fire while viewing? optional soft lock via Move
+hook.Add("PlayerSilentDeath", "GRM_CCTV_SilentDeath", function(ply)
+    if IsValid(ply) then CCTV.StopView(ply) end
+end)
+
 hook.Add("StartCommand", "GRM_CCTV_Lock", function(ply, cmd)
     if not IsValid(ply) or not ply._grmCCTVView then return end
-    cmd:RemoveKey(IN_ATTACK)
-    cmd:RemoveKey(IN_ATTACK2)
-    cmd:RemoveKey(IN_RELOAD)
+    cmd:ClearMovement()
+    cmd:ClearButtons()
+    cmd:SetButtons(0)
+    cmd:SetForwardMove(0)
+    cmd:SetSideMove(0)
+    cmd:SetUpMove(0)
 end)
 
--- ── spawn helpers / limits ─────────────────────────────────
+hook.Add("SetupMove", "GRM_CCTV_SetupMove", function(ply, mv, cmd)
+    if not IsValid(ply) or not ply._grmCCTVView then return end
+    mv:SetForwardSpeed(0)
+    mv:SetSideSpeed(0)
+    mv:SetUpSpeed(0)
+    mv:SetVelocity(Vector(0, 0, 0))
+end)
+
 hook.Add("PlayerSpawnedSENT", "GRM_CCTV_Spawned", function(ply, ent)
     if not IsValid(ent) or not isCCTVClass(classOf(ent)) then return end
-    local cls = classOf(ent)
-    local cfg = CFG()
-    if cls == "grm_cctv_camera" and countClass(cls) > (cfg.MaxCamerasPerNetwork or 32) * 4 then
-        -- soft global cap
-    end
     if IsValid(ply) then
         ent:SetOwnerSteam(steam64(ply))
         ent:SetOwnerName(ply:Nick())
@@ -538,24 +584,18 @@ hook.Add("PlayerSpawnedSENT", "GRM_CCTV_Spawned", function(ply, ent)
     CCTV.RegisterDevice(ent)
 end)
 
--- ── load / save hooks ──────────────────────────────────────
 hook.Add("InitPostEntity", "GRM_CCTV_Load", function()
-    timer.Simple(2, function()
-        CCTV.LoadPermanent()
-    end)
+    timer.Simple(2, function() CCTV.LoadPermanent() end)
 end)
 
 hook.Add("PostCleanupMap", "GRM_CCTV_Reload", function()
-    timer.Simple(1, function()
-        CCTV.LoadPermanent()
-    end)
+    timer.Simple(1, function() CCTV.LoadPermanent() end)
 end)
 
 hook.Add("ShutDown", "GRM_CCTV_ShutdownSave", function()
     CCTV.SavePermanent()
 end)
 
--- console
 concommand.Add("grm_cctv_save", function(ply)
     if IsValid(ply) and not ply:IsSuperAdmin() then return end
     local ok = CCTV.SavePermanent()
@@ -584,4 +624,4 @@ concommand.Add("grm_cctv_list", function(ply)
     if IsValid(ply) then ply:ChatPrint(msg) end
 end)
 
-print("[GRM CCTV] server v1.0.0")
+print("[GRM CCTV] server v1.2.0")
