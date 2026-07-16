@@ -434,3 +434,9 @@
      - По Отделам/Подразделениям (`WarrantDepartments` / `ForceDepartments`);
      - По SteamID / SteamID64 (`WarrantSteam` / `ForceSteam`).
 - Код полностью валидирован синтаксическим чекером, прогнаны все 13 фаз юнит-тестов стенда, архивы `dist/` пересобраны.
+
+**71.** (17.07.2026, исправление ошибки `attempt to call field 'IsDoor' (a nil value)` при отрисовке 3D2D HUD дверей)
+Прицеливание на дверь вызывало ошибку `IsDoor (a nil value)` на клиенте, так как объявление `function D.IsDoor(ent)` находилось внутри блока `if SERVER then`.
+ФИКС (`sh_grm_doors.lua` v2.0.1):
+- Функции `D.IsDoor`, `D.GetDoorID`, `D.GetPartnerDoor` вынесены в **SHARED**-блок файла до `if SERVER then`. Теперь они доступны и авторитетны на сервере, клиенте, в SWEP `ds_key_swep` и в хуках отрисовки HUD.
+- Синтаксис и валидация 473 файлов подтверждены, тесты пройдены 13/13, релизные архивы в `dist/` пересобраны.

@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Doors System v2.0.0 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
+    GRM Doors System v2.0.1 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
     Полная система управления дверями:
       - Уникальные ID на основе MapCreationID + позиций;
       - Двойные (партнёрские) двери — действия синхронно на обе створки;
@@ -7,7 +7,7 @@
       - Совладельцы с управлением через GUI (добавить/удалить);
       - Доступ по фракциям, рангам (Faction|Role) и категориям;
       - Ордера на обыск (/warrant, /unwarrant, /warrants) и взлом;
-      - Взаимодействие через E, ключи (vehicle_keys_swep), /lock, /unlock;
+      - Взаимодействие через E, ключи (vehicle_keys_swep, ds_key_swep), /lock, /unlock;
       - 3D2D HUD-индикатор статуса двери при прицеливании;
       - Хуки для Lockpick / Battering Ram.
 
@@ -43,6 +43,57 @@ D.Config = D.Config or {
     },
 }
 
+-- ============================================================
+-- SHARED ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (доступны на сервере и клиенте)
+-- ============================================================
+local function mapName()
+    return string.lower(game.GetMap() or "unknown")
+end
+
+function D.IsDoor(ent)
+    if not IsValid(ent) then return false end
+    local cls = ent:GetClass()
+    local cfg = D.Config and D.Config.DoorClasses or {}
+    if cfg[cls] then return true end
+    if cls == "prop_door_rotating" or cls == "func_door" or cls == "func_door_rotating" then
+        return true
+    end
+    return false
+end
+
+-- Уникальный ID двери (MapCreationID надежен, fallback — координаты)
+function D.GetDoorID(ent)
+    if not IsValid(ent) then return nil end
+    local map = mapName()
+    local mcid = ent:MapCreationID()
+    if mcid and mcid > 0 then
+        return string.format("%s_m%d", map, mcid)
+    end
+    local pos = ent:GetPos()
+    return string.format("%s_%s_%.0f_%.0f_%.0f",
+        map, ent:GetClass(),
+        math.floor(pos.x + 0.5), math.floor(pos.y + 0.5), math.floor(pos.z + 0.5))
+end
+
+-- Поиск парной (двойной) двери рядом
+function D.GetPartnerDoor(ent)
+    if not IsValid(ent) or not D.IsDoor(ent) then return nil end
+    local pos = ent:GetPos()
+    local parent = ent:GetParent()
+    if IsValid(parent) and D.IsDoor(parent) then return parent end
+
+    local near = ents.FindInSphere(pos, 110)
+    for _, other in ipairs(near) do
+        if IsValid(other) and other ~= ent and D.IsDoor(other) then
+            local oPos = other:GetPos()
+            if math.abs(pos.z - oPos.z) <= 30 then
+                return other
+            end
+        end
+    end
+    return nil
+end
+
 local NET_OPEN      = "GRM_Doors_Open"
 local NET_ACT       = "GRM_Doors_Act"
 local NET_INFO      = "GRM_Doors_Info"
@@ -77,10 +128,6 @@ if SERVER then
         if not file.IsDir(DATA_DIR, "DATA") then file.CreateDir(DATA_DIR) end
     end
 
-    local function mapName()
-        return string.lower(game.GetMap() or "unknown")
-    end
-
     local function notify(ply, msg, r, g, b)
         if not IsValid(ply) then return end
         if GRM.Notify then
@@ -107,49 +154,6 @@ if SERVER then
             end
         end
         return sid
-    end
-
-    function D.IsDoor(ent)
-        if not IsValid(ent) then return false end
-        local cls = ent:GetClass()
-        if D.Config.DoorClasses[cls] then return true end
-        if cls == "prop_door_rotating" or cls == "func_door" or cls == "func_door_rotating" then
-            return true
-        end
-        return false
-    end
-
-    -- Уникальный ID двери (MapCreationID надежен, fallback — координаты)
-    function D.GetDoorID(ent)
-        if not IsValid(ent) then return nil end
-        local map = mapName()
-        local mcid = ent:MapCreationID()
-        if mcid and mcid > 0 then
-            return string.format("%s_m%d", map, mcid)
-        end
-        local pos = ent:GetPos()
-        return string.format("%s_%s_%.0f_%.0f_%.0f",
-            map, ent:GetClass(),
-            math.floor(pos.x + 0.5), math.floor(pos.y + 0.5), math.floor(pos.z + 0.5))
-    end
-
-    -- Поиск парной (двойной) двери рядом
-    function D.GetPartnerDoor(ent)
-        if not IsValid(ent) or not D.IsDoor(ent) then return nil end
-        local pos = ent:GetPos()
-        local parent = ent:GetParent()
-        if IsValid(parent) and D.IsDoor(parent) then return parent end
-
-        local near = ents.FindInSphere(pos, 110)
-        for _, other in ipairs(near) do
-            if IsValid(other) and other ~= ent and D.IsDoor(other) then
-                local oPos = other:GetPos()
-                if math.abs(pos.z - oPos.z) <= 30 then
-                    return other
-                end
-            end
-        end
-        return nil
     end
 
     local function aimDoor(ply)
@@ -919,7 +923,7 @@ if SERVER then
         D.LoadWarrants()
     end)
 
-    print("[GRM Doors] Серверная система дверей v2.0.0 загружена")
+    print("[GRM Doors] Серверная система дверей v2.0.1 загружена")
 end
 
 -- ============================================================
@@ -978,7 +982,7 @@ if CLIENT then
         if not D.IsDoor(ent) and not (IsValid(ent:GetParent()) and D.IsDoor(ent:GetParent())) then return end
 
         local dist = tr.StartPos:DistToSqr(tr.HitPos)
-        local maxDist = (D.Config.HUDDistance or 220) ^ 2
+        local maxDist = (D.Config and D.Config.HUDDistance or 220) ^ 2
         if dist > maxDist then return end
 
         local alpha = math.Clamp((1 - dist / maxDist) * 255, 0, 240)
@@ -1086,11 +1090,11 @@ if CLIENT then
         end
 
         if d.can_access or d.is_owner or d.is_admin then
-            local bLock = btn(actBox, d.locked and "Заблокировать" or "Заблокировать", CUI.red, 270, 32)
+            local bLock = btn(actBox, "Заблокировать замок", CUI.red, 270, 32)
             bLock:SetPos(12, btnY)
             bLock.DoClick = function() act({ action = "lock", entIndex = ent:EntIndex() }) end
 
-            local bUnlock = btn(actBox, "Разблокировать", CUI.green, 270, 32)
+            local bUnlock = btn(actBox, "Разблокировать замок", CUI.green, 270, 32)
             bUnlock:SetPos(292, btnY)
             bUnlock.DoClick = function() act({ action = "unlock", entIndex = ent:EntIndex() }) end
             btnY = btnY + 40
@@ -1261,5 +1265,5 @@ if CLIENT then
         net.Start(NET_ACT) net.WriteTable({ action = "open_menu" }) net.SendToServer()
     end)
 
-    print("[GRM Doors] Клиентская система дверей v2.0.0 загружена")
+    print("[GRM Doors] Клиентская система дверей v2.0.1 загружена")
 end
