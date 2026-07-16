@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Perm Entities v1.0.0 (Код 50)
+    GRM Perm Entities v1.1.0 (Код 50)
     «Пермы» для разворачиваемых энтити GRM: банкомат (grm_bank_terminal),
     таксофон, АТС, телефонный терминал, прослушка, телефон.
     Админ наводит прицел -> команда -> энтити переживает рестарт карты
@@ -12,13 +12,15 @@
     Чтение всё равно только через jsonT() (ignoreConversions=true).
 
     Команды (только суперадмин; add/remove — глядя на энтити ≤256 юнитов):
-      чат:     /permadd   /permremove   /permlist
-      консоль: grm_perm_add  grm_perm_remove  grm_perm_list
+      чат:     /permadd   /permremove   /permlist   /permload
+      консоль: grm_perm_add  grm_perm_remove  grm_perm_list  grm_perm_load
+      /permload — немедленная загрузка из файла (без рестарта); антидубль:
+      на занятое место (тот же класс в радиусе 6 юнитов) второй не ставится.
     Рамки: не больше 64 пермов на карту; дедуп по классу+точке (6 юнитов);
     воскрешённые энтити заморожены (EnableMotion(false)).
 ----------------------------------------------------------------------]]
 
-local PERM_VER = "1.0.0"
+local PERM_VER = "1.1.0"
 GRM = GRM or {}
 GRM._permEntitiesVer = PERM_VER
 
@@ -111,30 +113,47 @@ if SERVER then
     end
 
     -- ── Восстановление на карте ─────────────────────────────
+    -- Антидубль: не ставим энтити, если того же класса уже стоит на месте
+    -- (важно для ручной /permload поверх живой карты)
+    local function isOccupied(class, pos)
+        local center = Vector(tonumber(pos.x) or 0, tonumber(pos.y) or 0, tonumber(pos.z) or 0)
+        for _, ent in ipairs(ents.FindInSphere(center, PERM_RANGE)) do
+            if IsValid(ent) and tostring(ent:GetClass() or "") == class then return true end
+        end
+        return false
+    end
+
+    -- Возвращает: сколько заспавнено, сколько пропущено (уже стоят)
     local function spawnAll(reason)
         local map = game.GetMap()
-        local done = 0
+        local done, skipped = 0, 0
         for _, rec in ipairs(loadList()) do
             if rec.map == map and PERM_CLASSES[rec.class] then
-                local ent = ents.Create(rec.class)
-                if IsValid(ent) then
-                    if isstring(rec.model) and rec.model ~= "" then
-                        pcall(function() ent:SetModel(rec.model) end)
-                    end
-                    ent:SetPos(Vector(tonumber(rec.pos.x) or 0, tonumber(rec.pos.y) or 0, tonumber(rec.pos.z) or 0))
-                    ent:SetAngles(Angle(tonumber(rec.ang.p) or 0, tonumber(rec.ang.y) or 0, tonumber(rec.ang.r) or 0))
-                    ent:Spawn()
-                    ent:Activate()
-                    local ph = ent:GetPhysicsObject()
-                    if IsValid(ph) then ph:EnableMotion(false) end -- перм не катается по карте
-                    ent._grmPerm = true
-                    done = done + 1
+                if isOccupied(rec.class, rec.pos) then
+                    skipped = skipped + 1
                 else
-                    print("[GRM Perm][!] Не удалось создать класс " .. tostring(rec.class) .. " — запись пропущена")
+                    local ent = ents.Create(rec.class)
+                    if IsValid(ent) then
+                        if isstring(rec.model) and rec.model ~= "" then
+                            pcall(function() ent:SetModel(rec.model) end)
+                        end
+                        ent:SetPos(Vector(tonumber(rec.pos.x) or 0, tonumber(rec.pos.y) or 0, tonumber(rec.pos.z) or 0))
+                        ent:SetAngles(Angle(tonumber(rec.ang.p) or 0, tonumber(rec.ang.y) or 0, tonumber(rec.ang.r) or 0))
+                        ent:Spawn()
+                        ent:Activate()
+                        local ph = ent:GetPhysicsObject()
+                        if IsValid(ph) then ph:EnableMotion(false) end -- перм не катается по карте
+                        ent._grmPerm = true
+                        done = done + 1
+                    else
+                        print("[GRM Perm][!] Не удалось создать класс " .. tostring(rec.class) .. " — запись пропущена")
+                    end
                 end
             end
         end
-        print(( "[GRM Perm] восстановлено перм-энтити на карте %s: %d (%s)" ):format(tostring(map), done, tostring(reason or "?")))
+        print(("[GRM Perm] восстановлено перм-энтити на карте %s: %d, уже на месте: %d (%s)")
+            :format(tostring(map), done, skipped, tostring(reason or "?")))
+        return done, skipped
     end
     hook.Add("InitPostEntity", "GRM_PermEntities_Spawn", function()
         timer.Simple(1, function() spawnAll("InitPostEntity") end)
@@ -209,6 +228,15 @@ if SERVER then
         tell(ply, "В радиусе " .. PERM_RANGE .. " юнитов перм-записи для этого энтити нет.", 255, 200, 80)
     end
 
+    local function loadPerm(ply)
+        local spawned, skipped = spawnAll("ручная загрузка")
+        if spawned == 0 and skipped == 0 then
+            tell(ply, "[ПЕРМ] Для этой карты в базе записей нет.", 255, 200, 80)
+        else
+            tell(ply, ("[ПЕРМ] Загрузка из базы: восстановлено %d, уже на месте %d."):format(spawned, skipped), 100, 220, 255)
+        end
+    end
+
     local function listPerm(ply)
         local list = loadList()
         local map = game.GetMap()
@@ -234,16 +262,18 @@ if SERVER then
     concommand.Add("grm_perm_add", guarded(addPerm))
     concommand.Add("grm_perm_remove", guarded(removePerm))
     concommand.Add("grm_perm_list", guarded(listPerm))
+    concommand.Add("grm_perm_load", guarded(loadPerm))
 
     hook.Add("PlayerSay", "GRM_PermEntities_Chat", function(ply, text)
         local t = string.lower(string.Trim(tostring(text or "")))
-        if t ~= "/permadd" and t ~= "/permremove" and t ~= "/permlist" then return end
+        if t ~= "/permadd" and t ~= "/permremove" and t ~= "/permlist" and t ~= "/permload" then return end
         if not IsValid(ply) or not ply:IsSuperAdmin() then
             tell(ply, "Только суперадмин.", 255, 100, 100)
             return ""
         end
         if t == "/permadd" then addPerm(ply)
         elseif t == "/permremove" then removePerm(ply)
+        elseif t == "/permload" then loadPerm(ply)
         else listPerm(ply) end
         return ""
     end)

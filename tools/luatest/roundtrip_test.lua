@@ -438,6 +438,7 @@ function Angle(p, y, r) return { p = p or 0, y = y or 0, r = r or 0 } end
 HUD_PRINTTALK = HUD_PRINTTALK or 2
 util.TraceLine = function() return { Entity = _G.__AIM_ENT } end
 local SPAWNED_ENTS = {}
+local CREATED_ENTS = {}
 ents = ents or {
     Create = function(class)
         local e = { __ent = true, __valid = true, _class = class }
@@ -454,9 +455,19 @@ ents = ents or {
             return { IsValid = function() return true end, EnableMotion = function() end }
         end
         function e:Remove() self.__valid = false end
+        CREATED_ENTS[#CREATED_ENTS + 1] = e
         return e
     end,
-    FindInSphere = function() return {} end,
+    FindInSphere = function(pos, r)
+        local out = {}
+        for _, e in ipairs(CREATED_ENTS) do
+            if e.__valid ~= false and e._pos then
+                local dx, dy, dz = e._pos.x - pos.x, e._pos.y - pos.y, e._pos.z - pos.z
+                if dx * dx + dy * dy + dz * dz <= (r or 1) * (r or 1) then out[#out + 1] = e end
+            end
+        end
+        return out
+    end,
 }
 
 -- perm: добавить/дедуп/воскрешение после cleanup/снятие/чат-команда
@@ -503,6 +514,21 @@ if PHASE == "perm" then
     atm.__valid = true
     fireHook("PlayerSay", ply, "/permadd")
     assert((file.Read("grm_perm_entities.json") or ""):find("grm_bank_terminal"), "perm: /permadd чатом не сработал")
+
+    -- /permload: поверх живого энтити — дублёра не ставит...
+    local cnt = #SPAWNED_ENTS
+    fireHook("PlayerSay", ply, "/permload")
+    assert(#SPAWNED_ENTS == cnt, "permload: заспавнил дублёра поверх существующего")
+    -- ...а после удаления — восстанавливает из файла немедленно
+    atm:Remove()
+    fireHook("PlayerSay", ply, "/permload")
+    assert(#SPAWNED_ENTS == cnt + 1, "permload: не восстановил из файла")
+    local lp = SPAWNED_ENTS[#SPAWNED_ENTS]
+    assert(lp:GetPos().x == 10 and lp:GetPos().z == 30 and lp._grmPerm == true, "permload: координаты/метка неверны")
+    -- и консольный вариант тоже с антидублем
+    fireHook("PlayerSay", ply, "/permload")
+    assert(#SPAWNED_ENTS == cnt + 1, "permload: повтор выдал дублёра")
+
     file.Write("grm_perm_entities.json", "[]") -- убираем за фазой
-    print("PHASE perm: OK — перм пишется/дедупится/воскресает после cleanup/снимается, чат и консоль равнозначны")
+    print("PHASE perm: OK — перм пишется/дедупится/воскресает после cleanup/снимается, /permload с антидублем, чат и консоль равнозначны")
 end
