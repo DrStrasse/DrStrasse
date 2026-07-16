@@ -439,8 +439,8 @@ end)
 
 hook.Add("InitPostEntity", "GRM_HUD_Welcome", function()
     timer.Simple(4, function()
-        if IsValid(LocalPlayer()) then GRM.AddNotification("HUD v10.0 загружен — колёсико для выбора оружия", 5, Color(100, 180, 255)) end
+        if IsValid(LocalPlayer()) then GRM.AddNotification("HUD v10.2 загружен — колёсико для выбора оружия", 5, Color(100, 180, 255)) end
     end)
 end)
 
-print("[GRM] HUD v10.0 загружен")
+print("[GRM] HUD v10.2 загружен")

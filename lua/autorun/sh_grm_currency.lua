@@ -1,5 +1,11 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v1.5.4 (Код 42)
+    GRM Currency Core v1.5.5 (Код 42)
+
+    v1.5.5 (аудит синхронизации HUD/Tab): GRM.Notify шлёт ОБА канала
+    (GRM_Currency_Notify + легаси grm_notify), поэтому при установленном
+    HUD (Код 48) каждое уведомление показывалось дважды — всплывашкой
+    HUD и строкой в чате/legacy. Клиентский вывод GRM_Currency_Notify
+    теперь молчит, если стек HUD присутствует (GRM.HUD).
 
     v1.5.4 (репорт: «attempt to call global 'cleanNick' (a nil value)»,
     таймер GRM_Currency_Flush умирал): cleanNick была объявлена НИЖЕ
@@ -132,7 +138,7 @@ if SERVER then
         return
     end
     GRM._currencyCoreActive = true
-    GRM._currencyCoreVer = "1.5.4"
+    GRM._currencyCoreVer = "1.5.5"
     GRM._currencyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_SYNC)
@@ -624,7 +630,7 @@ if SERVER then
     end
     concommand.Add("grm_money", moneyCmd)
 
-    print(("[GRM Currency] ядро загружено v1.5.4, счетов в памяти: %d (баланс первого: %s)"):format(
+    print(("[GRM Currency] ядро загружено v1.5.5, счетов в памяти: %d (баланс первого: %s)"):format(
         table.Count(records),
         (function() for _, r in pairs(records) do return tostring(r.balance) end return "—" end)()))
 end
@@ -648,6 +654,9 @@ if CLIENT then
     end)
 
     net.Receive(NET_NOTIFY, function()
+        -- v1.5.5: наш HUD (Код 48) уже рисует это уведомление всплывашкой
+        -- из легаси-канала grm_notify (GRM.Notify шлёт оба) — не дублируем.
+        if GRM.HUD then return end
         local msg = net.ReadString()
         local r, g, b = net.ReadUInt(8), net.ReadUInt(8), net.ReadUInt(8)
         local col = Color(r, g, b)

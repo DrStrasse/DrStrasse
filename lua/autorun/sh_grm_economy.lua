@@ -1,5 +1,9 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v2.3.6 (Код 43)
+    GRM Unified Economy v2.3.7 (Код 43)
+
+    v2.3.7 (аудит синхронизации HUD/Tab): канал банка GRM_Bank_Sync
+    переведён с UInt(32) на Double — счета выше ~4.29 млрд прилетали
+    в HUD битыми (переполнение). Оба конца канала меняются здесь же.
 
     v2.3.5/2.3.6: страж-синглтон; сохранение ≤8с гарантировано (файл
     пишется только при реальных изменениях); сверка с базой 15с +
@@ -109,7 +113,7 @@ if SERVER then
         return
     end
     GRM._economyCoreActive = true
-    GRM._economyCoreVer = "2.3.6"
+    GRM._economyCoreVer = "2.3.7"
     GRM._economyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_OPEN_ADMIN)
@@ -358,7 +362,7 @@ if SERVER then
     local function pushBank(ply)
         if not IsValid(ply) or not ply:IsPlayer() then return end
         net.Start("GRM_Bank_Sync")
-            net.WriteUInt(bankBalOf(ply:SteamID64()), 32)
+            net.WriteDouble(bankBalOf(ply:SteamID64())) -- v2.3.7: Double, UInt32 ломал счета > 4.29 млрд
         net.Send(ply)
     end
     net.Receive("GRM_Bank_Request", function(_, ply) pushBank(ply) end)
@@ -1215,7 +1219,7 @@ if CLIENT then
 
     -- Банковский счёт для HUD (Код 48): GRM.PlayerBank — живое значение
     net.Receive("GRM_Bank_Sync", function()
-        GRM.PlayerBank = net.ReadUInt(32)
+        GRM.PlayerBank = net.ReadDouble() or 0 -- v2.3.7: парно к WriteDouble на сервере
         hook.Run("GRM_BankBalanceUpdated", GRM.PlayerBank)
     end)
 
