@@ -712,18 +712,84 @@ if SERVER then
     end)
 
     -- ── Чат-команды ──────────────────────────────────────────────
-    hook.Add("PlayerSay", "GRM_Inv_ChatCmds", function(ply, text)
-        local cmd = text:Trim():lower()
+    
+    -- ── /drop — выбросить активное оружие на землю ───────────
+    function GRM.Inventory.DropActiveWeapon(ply)
+        if not IsValid(ply) or not ply:IsPlayer() then return false end
+        local wep = ply:GetActiveWeapon()
+        if not IsValid(wep) then
+            if GRM.Notify then GRM.Notify(ply, "Нет оружия в руках", 255, 180, 60) end
+            return false
+        end
+        local class = wep:GetClass()
+        if class == "weapon_fists" or class == "weapon_physgun" or class == "gmod_tool"
+            or class == "weapon_physcannon" or class == "weapon_crowbar" then
+            if GRM.Notify then GRM.Notify(ply, "Это нельзя выбросить", 255, 180, 60) end
+            return false
+        end
+        -- SWEP наручников / ключей — не дропаем служебное
+        if class == "grm_handcuffs" or class == "grm_cuffed" or class == "vehicle_keys_swep" then
+            if GRM.Notify then GRM.Notify(ply, "Служебное оружие нельзя выбросить", 255, 180, 60) end
+            return false
+        end
 
-        if cmd == "/inv" or cmd == "/inventory" or cmd == "!inv" or cmd == "!inventory" then
+        local clip1 = wep:Clip1()
+        local clip2 = wep:Clip2()
+        local itemID = "weapon:" .. class
+
+        local ent = ents.Create("grm_item_drop")
+        if not IsValid(ent) then
+            -- fallback: engine drop
+            ply:DropWeapon(wep)
+            if GRM.Notify then GRM.Notify(ply, "Оружие выброшено (fallback)", 100, 220, 100) end
+            return true
+        end
+
+        local dist = (GRM.Inventory.Config and GRM.Inventory.Config.DropDistance) or 80
+        local pos = ply:GetShootPos() + ply:GetAimVector() * 40
+        -- slightly forward of player feet if aim is bad
+        if not pos or pos:DistToSqr(ply:GetPos()) > 40000 then
+            pos = ply:GetPos() + ply:GetForward() * dist + Vector(0, 0, 30)
+        end
+        ent:SetPos(pos)
+        ent:SetAngles(Angle(0, ply:EyeAngles().y, 0))
+        ent:SetItemID(itemID)
+        ent:SetItemCount(1)
+        ent:SetDisplayName(wep:GetPrintName() ~= "" and wep:GetPrintName() or class)
+        ent.ItemData = { class = class, clip1 = clip1, clip2 = clip2 }
+        ent:Spawn()
+        ent:Activate()
+
+        local phys = ent:GetPhysicsObject()
+        if IsValid(phys) then
+            phys:SetVelocity(ply:GetAimVector() * 180 + Vector(0, 0, 60))
+        end
+
+        ply:StripWeapon(class)
+        if GRM.Notify then GRM.Notify(ply, "Оружие выброшено: " .. (ent:GetDisplayName() or class), 100, 220, 100) end
+        return true
+    end
+
+    hook.Add("PlayerSay", "GRM_Inv_ChatCmds", function(ply, text)
+        local cmd = string.Trim(string.lower(text or ""))
+        local args = string.Explode(" ", cmd)
+        local c0 = args[1] or ""
+
+        if c0 == "/inv" or c0 == "/inventory" or c0 == "!inv" or c0 == "!inventory" then
             GRM.Inventory.SyncToClient(ply)
             net.Start("grm_inv_open")
             net.Send(ply)
             return ""
         end
 
-        if cmd == "/store" or cmd == "!store" then
+        if c0 == "/store" or c0 == "!store" then
             GRM.Inventory.StoreActiveWeapon(ply)
+            return ""
+        end
+
+        -- /drop — оружие из рук на землю (entity grm_item_drop)
+        if c0 == "/drop" or c0 == "!drop" or c0 == "/dropweapon" or c0 == "!dropweapon" then
+            GRM.Inventory.DropActiveWeapon(ply)
             return ""
         end
     end)
