@@ -10,7 +10,7 @@
 (или прямо в `garrysmod/lua/`). Файлы в `lua/autorun/` загружаются
 автоматически на сервере и клиенте.
 
-## Файлы (куски 1–5 — 39 модулей)
+## Файлы (куски 1–5 — 41 модуль)
 
 | # | Файл | Назначение |
 |---|------|-----------|
@@ -43,13 +43,13 @@
 | 31–33 | `lua/entities/grm_phone/{shared,init,cl_init}.lua` | Entity стационарного телефона: авто-номер при спавне, Use() → меню, табличка номера |
 | 34–36 | `lua/entities/grm_phone_terminal/{shared,init,cl_init}.lua` | Entity терминала мониторинга связи: TerminalName, Use() → терминал |
 | 37–39 | `lua/entities/grm_phone_wiretap/{shared,init,cl_init}.lua` | Entity прослушки: TargetNumber/ExchangeID/Active, Use() → меню прослушки, 3D2D-индикатор ON/OFF — **последний кусок телефонии** |
+| 40 | `lua/autorun/client/cl_grm_faction_logistics.lua` | Клиент логистики: меню рейса/погрузки/ящика/склада/арсенала, админ-доступ, HUD-подписи и маршрут, анимация переноски ящика |
+| 41 | `lua/autorun/client/cl_grm_factory_fullcycle.lua` | Клиент завода: крафт-меню (3D-превью оружия), склад, мусорка, терминал продажи GPU, скупщик/шкаф, QTE на стрелках, HUD прогресса |
 
 ## Зависимости, которых пока НЕТ в репозитории
 
 Эти модули упоминаются в коде, но ещё не присланы (ожидаются следующими кусками):
 
-- `lua/autorun/client/cl_grm_faction_logistics.lua` — клиент логистики (UI)
-- `lua/autorun/client/cl_grm_factory_fullcycle.lua` — клиент завода (UI крафта и QTE)
 - Ядро валюты: `GRM.GiveMoney / TakeMoney / HasMoney / GetBalance / SetBalance / Format / Notify` + конфиг `GRM.StartBalance` + клиентская переменная `GRM.LocalBalance`
 - **Entity дилера** (`entities/sent_vehicle_dealer/…`) — `vehicle_dealer.lua` это патч поверх неё
 - Радио-модуль с глобальной таблицей `RadioFrequencies` (для телефонной интеграции рации)
@@ -86,6 +86,7 @@
 `/weapons_admin`, `/mask_admin`, `!grmmenu`/`!grmadmin`, `/scanvehicles`,
 `/spawnmenu`, `/vshop_admin`, `/phoneshop_admin`, `/phone_access`,
 `/phone_admin_remove`, консоль: `grm_logistics_place_*`, `grm_logistics_save/load`,
+`grm_logistics_admin_menu`, `grm_logistics_crates`,
 `grm_fc_save/load`, `grm_weapon_buyer_admin`, `grm_adminmenu`, `grm_antistuck_vehicle`,
 `grm_phone_save/load`, `grm_phone_remove_look`, `grm_phone_admin_remove`,
 `grm_phone_shop_admin`, `grm_phone_shop_add_look`, `grm_phone_shop_reload`,
