@@ -222,6 +222,9 @@ local function mkPly(nick, sid64, sid)
         IsSuperAdmin = function() return true end,
         SetNW2Int = function() end,
         GetPos = function() return { DistToSqr = function() return 0 end } end,
+        GetShootPos = function() return Vector(0, 0, 60) end,
+        GetAimVector = function() return Vector(1, 0, 0) end,
+        PrintMessage = function() end,
     }
     p.__mt = { __index = function(t, k) return rawget(t, k) end }
     return p
@@ -230,6 +233,16 @@ end
 -- ================= ТЕСТ СЦЕНАРИЙ ===========================
 local function fireHook(ev, ...)
     if HOOKS[ev] then for _, fn in pairs(HOOKS[ev]) do fn(...) end end
+end
+
+-- timer.Simple стреляет ОДИН раз: имитируем потребление
+local function fireSimpleTimers()
+    local list = {}
+    for i, t in ipairs(TIMERS) do
+        list[#list + 1] = t
+        TIMERS[i] = nil
+    end
+    for _, t in ipairs(list) do t.fn() end
 end
 
 GRM = nil
@@ -405,8 +418,91 @@ if PHASE == "bank_nick_mirror" then
     local ghost = mkPly("Old Timer Ghost", "76561190000111000", "STEAM_0:0:999")
     _G.__PLAYERS = { ghost }
     fireHook("PlayerInitialSpawn", ghost)
-    for _, t in ipairs(TIMERS) do t.fn() end -- timer.Simple(2с) подхвата
+    fireSimpleTimers() -- timer.Simple(2с) подхвата
     assert(GRM.Economy.BankBalance(ghost) == 777,
         "bank_nick_mirror: счёт не поднят по нику при входе: " .. tostring(GRM.Economy.BankBalance(ghost)))
     print("PHASE bank_nick_mirror: OK — зеркало electro_balance вернуло счёта и по сиду, и по нику")
+end
+
+-- ── моки для перм-энтити (Код 50) ───────────────────────────────
+game = game or { GetMap = function() return _G.__MAP or "gm_flatgrass" end }
+local VMT = {
+    __add = function(a, b) return Vector(a.x + b.x, a.y + b.y, a.z + b.z) end,
+    __mul = function(a, k)
+        if type(a) == "number" then a, k = k, a end
+        return Vector(a.x * k, a.y * k, a.z * k)
+    end,
+}
+function Vector(x, y, z) return setmetatable({ x = x or 0, y = y or 0, z = z or 0 }, VMT) end
+function Angle(p, y, r) return { p = p or 0, y = y or 0, r = r or 0 } end
+HUD_PRINTTALK = HUD_PRINTTALK or 2
+util.TraceLine = function() return { Entity = _G.__AIM_ENT } end
+local SPAWNED_ENTS = {}
+ents = ents or {
+    Create = function(class)
+        local e = { __ent = true, __valid = true, _class = class }
+        function e:GetClass() return self._class end
+        function e:SetModel(m) self._model = m end
+        function e:GetModel() return self._model end
+        function e:SetPos(v) self._pos = v end
+        function e:GetPos() return self._pos end
+        function e:SetAngles(a) self._ang = a end
+        function e:GetAngles() return self._ang end
+        function e:Spawn() self._spawned = true SPAWNED_ENTS[#SPAWNED_ENTS + 1] = self end
+        function e:Activate() self._active = true end
+        function e:GetPhysicsObject()
+            return { IsValid = function() return true end, EnableMotion = function() end }
+        end
+        function e:Remove() self.__valid = false end
+        return e
+    end,
+    FindInSphere = function() return {} end,
+}
+
+-- perm: добавить/дедуп/воскрешение после cleanup/снятие/чат-команда
+if PHASE == "perm" then
+    file.Write("grm_perm_entities.json", "[]") -- изоляция фазы: чистый старт
+    GRM = GRM or {}
+    dofile("lua/autorun/sh_grm_perm_entities.lua")
+    fireHook("InitPostEntity")
+    fireSimpleTimers()
+    assert(#SPAWNED_ENTS == 0, "perm: без записей что-то заспавнилось")
+
+    local ply = mkPly("Alexander Von Groenner", "76561199385153957", "STEAM_0:1:100")
+    local atm = ents.Create("grm_bank_terminal")
+    atm:SetModel("models/starless/atm.mdl")
+    atm:SetPos(Vector(10, 20, 30))
+    atm:SetAngles(Angle(0, 90, 0))
+    _G.__AIM_ENT = atm
+    concommand["grm_perm_add"](ply, nil, {})
+    local txt = file.Read("grm_perm_entities.json") or ""
+    assert(txt:find("grm_bank_terminal"), "perm: запись не сохранилась: " .. txt:sub(1, 80))
+
+    concommand["grm_perm_add"](ply, nil, {}) -- дубликат на том же месте
+    local t2 = util.JSONToTable(file.Read("grm_perm_entities.json") or "", false, true)
+    assert(istable(t2) and #t2 == 1, "perm: дедуп не сработал, записей " .. tostring(istable(t2) and #t2 or -1))
+
+    atm.__valid = false -- «сервер рестартанул / cleanup»
+    local before = #SPAWNED_ENTS
+    fireHook("PostCleanupMap")
+    fireSimpleTimers()
+    assert(#SPAWNED_ENTS == before + 1, "perm: энтити не воскресла по карте")
+    local back = SPAWNED_ENTS[#SPAWNED_ENTS]
+    assert(back:GetClass() == "grm_bank_terminal", "perm: воскрес не тот класс")
+    assert(back:GetPos().x == 10 and back:GetPos().y == 20 and back:GetPos().z == 30, "perm: позиция не совпала")
+    assert(back:GetAngles().y == 90, "perm: угол не совпал")
+    assert(back._grmPerm == true, "perm: нет метки перм-энтити")
+
+    _G.__AIM_ENT = back
+    concommand["grm_perm_remove"](ply, nil, {})
+    local t3 = util.JSONToTable(file.Read("grm_perm_entities.json") or "", false, true)
+    assert(istable(t3) and #t3 == 0, "perm: запись не удалена")
+    assert(back.__valid == false, "perm: энтити не удалена с карты")
+
+    _G.__AIM_ENT = atm -- чат-команда до кучи (атм «воскрес» вручную)
+    atm.__valid = true
+    fireHook("PlayerSay", ply, "/permadd")
+    assert((file.Read("grm_perm_entities.json") or ""):find("grm_bank_terminal"), "perm: /permadd чатом не сработал")
+    file.Write("grm_perm_entities.json", "[]") -- убираем за фазой
+    print("PHASE perm: OK — перм пишется/дедупится/воскресает после cleanup/снимается, чат и консоль равнозначны")
 end
