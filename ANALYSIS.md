@@ -405,3 +405,5 @@
 **78.** (16.07.2026) CCTV scanlines «сжались» в узкую полосу: цикл был `for y = 50, math.min(h,120), 4` — только ~70px сверху. v1.2.4 — линии на всю высоту кадра step 3, ширина до правой колонки UI (не поверх «УПРАВЛЕНИЕ»).
 
 **79.** (16.07.2026) Код **61** GRM Wanted v1.0.0 — розыск: уровни 0–5, database.json (массив записей sid/level/reasons), catalog.json статей admin/crime, история; API SetLevel/AddCharge/Clear; UI /wanted; access manager /wanted_access + вкладка «Розыск» в /factions (View/Edit × Factions/Roles/Departments/Steam). Уровень статьи = max(текущий, defaultLevel), не бесконечная сумма.
+
+**80.** (16.07.2026, владелец: «/me /do /it /try /roll отвалились») В репо был только `sh_grm_chat_config` (цвета/радиусы) без обработчиков команд; EasyChat даёт Local/Team, но не RP-команды. Новый **Код 62** `sh_grm_rp_chat.lua`: серверный PlayerSay (+ PlayerSayTransform/SkipPlayerSay для EasyChat) — /me /do /it /try /roll|/dice /w|/whisper /y|/yell /looc|// /ooc|/g; обычный чат локальный при ForceNormalChatLocal; net GRM_RPChat_Msg + EasyChat.PlayerAddText; радиусы/цвета из GRM.Chat.Config.
