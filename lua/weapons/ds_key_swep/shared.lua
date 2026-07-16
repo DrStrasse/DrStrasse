@@ -149,7 +149,7 @@ if CLIENT then
         local door = self:GetAimedDoor()
         if not IsValid(door) then return end
 
-        local locked = door:GetNWBool("GRM_DoorLocked", false)
+        local locked = (GRM and GRM.Doors and GRM.Doors.IsDoorLocked and GRM.Doors.IsDoorLocked(door)) or door:GetNWBool("GRM_DoorLocked", false)
         local title = door:GetNWString("GRM_DoorTitle", "")
         local ownerStr = door:GetNWString("GRM_DoorOwner", "")
 

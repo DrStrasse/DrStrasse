@@ -1,14 +1,17 @@
 --[[--------------------------------------------------------------------
-    GRM Doors System v2.0.1 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
+    GRM Doors System v2.0.2 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
     Полная система управления дверями:
       - Уникальные ID на основе MapCreationID + позиций;
       - Двойные (партнёрские) двери — действия синхронно на обе створки;
+      - Точная синхронизация замков: перехват AcceptInput ("Lock"/"Unlock") +
+        проверка m_bLocked и автоматическая передача клиентам;
+      - Наглядный 3D2D HUD: одновременно показывает и Владельца, и
+        четкий статус замка (ЗАКРЫТО / ОТКРЫТО);
       - Персональная покупка / аренда с таймером и авто-выселением;
       - Совладельцы с управлением через GUI (добавить/удалить);
       - Доступ по фракциям, рангам (Faction|Role) и категориям;
       - Ордера на обыск (/warrant, /unwarrant, /warrants) и взлом;
       - Взаимодействие через E, ключи (vehicle_keys_swep, ds_key_swep), /lock, /unlock;
-      - 3D2D HUD-индикатор статуса двери при прицеливании;
       - Хуки для Lockpick / Battering Ram.
 
     Команды:
@@ -94,6 +97,16 @@ function D.GetPartnerDoor(ent)
     return nil
 end
 
+function D.IsDoorLocked(ent)
+    if not IsValid(ent) then return false end
+    if ent:GetNWBool("GRM_DoorLocked", false) == true then return true end
+    if SERVER and ent.GetInternalVariable then
+        local b = ent:GetInternalVariable("m_bLocked")
+        if b == true or b == 1 then return true end
+    end
+    return false
+end
+
 local NET_OPEN      = "GRM_Doors_Open"
 local NET_ACT       = "GRM_Doors_Act"
 local NET_INFO      = "GRM_Doors_Info"
@@ -156,6 +169,26 @@ if SERVER then
         return sid
     end
 
+    local function syncLockNW(ent, locked)
+        if not IsValid(ent) then return end
+        ent:SetNWBool("GRM_DoorLocked", locked == true)
+        local partner = D.GetPartnerDoor(ent)
+        if IsValid(partner) then
+            partner:SetNWBool("GRM_DoorLocked", locked == true)
+        end
+    end
+
+    local function syncTitleNW(ent, title, ownerStr)
+        if not IsValid(ent) then return end
+        ent:SetNWString("GRM_DoorTitle", title or "")
+        ent:SetNWString("GRM_DoorOwner", ownerStr or "")
+        local partner = D.GetPartnerDoor(ent)
+        if IsValid(partner) then
+            partner:SetNWString("GRM_DoorTitle", title or "")
+            partner:SetNWString("GRM_DoorOwner", ownerStr or "")
+        end
+    end
+
     local function aimDoor(ply)
         if not IsValid(ply) then return nil end
         local tr = util.TraceLine({
@@ -170,6 +203,18 @@ if SERVER then
         end
         return nil
     end
+
+    -- Перехват любых изменений замка в движке Source
+    hook.Add("AcceptInput", "GRM_Doors_SyncInput", function(ent, input, activator, caller, value)
+        if D.IsDoor(ent) then
+            local lIn = string.lower(tostring(input or ""))
+            if lIn == "lock" then
+                syncLockNW(ent, true)
+            elseif lIn == "unlock" then
+                syncLockNW(ent, false)
+            end
+        end
+    end)
 
     -- ── Хранилище ──────────────────────────────────────────
     local function doorsFile()
@@ -214,6 +259,35 @@ if SERVER then
                 D.Data.doors[rec.id] = rec
             end
         end
+
+        -- Сразу применяем сохранённые состояния ко всем энтити на карте
+        timer.Simple(1, function()
+            for _, ent in ipairs(ents.GetAll()) do
+                if IsValid(ent) and D.IsDoor(ent) then
+                    local id = D.GetDoorID(ent)
+                    local rec = D.Data.doors[id]
+                    if rec then
+                        local ownerTxt = ""
+                        if rec.owner_type == "player" then ownerTxt = rec.owner_nick or ""
+                        elseif rec.owner_type == "faction" then ownerTxt = "Фракция: " .. tostring(rec.owner_faction)
+                        elseif rec.owner_type == "category" then ownerTxt = "Категория: " .. tostring(rec.owner_category) end
+
+                        syncTitleNW(ent, rec.title, ownerTxt)
+                        if rec.locked then
+                            ent:Fire("Lock", "", 0)
+                            syncLockNW(ent, true)
+                        else
+                            ent:Fire("Unlock", "", 0)
+                            syncLockNW(ent, false)
+                        end
+                    else
+                        local isEngLocked = ent:GetInternalVariable("m_bLocked") == true or ent:GetInternalVariable("m_bLocked") == 1
+                        syncLockNW(ent, isEngLocked)
+                    end
+                end
+            end
+        end)
+
         print("[GRM Doors] Загружено дверей на карте " .. mapName() .. ": " .. table.Count(D.Data.doors))
     end
 
@@ -278,6 +352,7 @@ if SERVER then
         D.Data.doors = D.Data.doors or {}
         local rec = D.Data.doors[id]
         if not rec then
+            local engLocked = ent:GetInternalVariable("m_bLocked") == true or ent:GetInternalVariable("m_bLocked") == 1
             rec = {
                 id = id,
                 map = mapName(),
@@ -294,34 +369,22 @@ if SERVER then
                 roles = {},           -- map "Faction|Role" -> true
                 rent_until = 0,
                 rent_price = tonumber(D.Config.RentPrice) or 5000,
-                locked = false,
+                locked = engLocked,
                 ownable = true,
             }
             D.Data.doors[id] = rec
         end
+
+        -- Автоматический синк NetworkVars при обращении к двери
+        local isEngLocked = ent:GetInternalVariable("m_bLocked") == true or ent:GetInternalVariable("m_bLocked") == 1
+        local isLocked = rec.locked or isEngLocked
+        if isLocked ~= ent:GetNWBool("GRM_DoorLocked", false) then
+            syncLockNW(ent, isLocked)
+        end
+
         return rec, id
     end
     D.GetRecord = getRecord
-
-    local function syncLockNW(ent, locked)
-        if not IsValid(ent) then return end
-        ent:SetNWBool("GRM_DoorLocked", locked == true)
-        local partner = D.GetPartnerDoor(ent)
-        if IsValid(partner) then
-            partner:SetNWBool("GRM_DoorLocked", locked == true)
-        end
-    end
-
-    local function syncTitleNW(ent, title, ownerStr)
-        if not IsValid(ent) then return end
-        ent:SetNWString("GRM_DoorTitle", title or "")
-        ent:SetNWString("GRM_DoorOwner", ownerStr or "")
-        local partner = D.GetPartnerDoor(ent)
-        if IsValid(partner) then
-            partner:SetNWString("GRM_DoorTitle", title or "")
-            partner:SetNWString("GRM_DoorOwner", ownerStr or "")
-        end
-    end
 
     local function playerFactionInfo(ply)
         if not IsValid(ply) or not istable(Factions) then return nil, nil, nil end
@@ -466,15 +529,15 @@ if SERVER then
             end
         end
 
+        local isLocked = D.IsDoorLocked(ent)
         local ok, reason = D.CanAccessDoor(ply, ent)
-        local rec = select(1, getRecord(ent))
 
-        if rec and rec.locked and not ok then
+        if isLocked and not ok then
             notify(ply, "Дверь заперта на замок. У вас нет доступа.", 255, 90, 90)
             return false
         end
 
-        if not ok and rec and rec.owner_type ~= "none" then
+        if not ok and select(1, getRecord(ent)) and select(1, getRecord(ent)).owner_type ~= "none" then
             notify(ply, "У вас нет доступа к этой двери.", 255, 120, 90)
             return false
         end
@@ -593,6 +656,7 @@ if SERVER then
         if not rec then return nil end
         local canAccess = select(1, D.CanAccessDoor(ply, ent))
         local isOwner = rec.owner_type == "player" and rec.owner_sid == steam64(ply)
+        local isLocked = D.IsDoorLocked(ent)
 
         local coOwnersInfo = {}
         if istable(rec.co_owners) then
@@ -613,7 +677,7 @@ if SERVER then
             owner_sid = rec.owner_sid or "",
             owner_faction = rec.owner_faction or "",
             owner_category = rec.owner_category or "",
-            locked = rec.locked == true,
+            locked = isLocked,
             rent_until = tonumber(rec.rent_until) or 0,
             rent_price = tonumber(rec.rent_price) or (D.Config.RentPrice or 5000),
             can_access = canAccess,
@@ -923,7 +987,7 @@ if SERVER then
         D.LoadWarrants()
     end)
 
-    print("[GRM Doors] Серверная система дверей v2.0.1 загружена")
+    print("[GRM Doors] Серверная система дверей v2.0.2 загружена")
 end
 
 -- ============================================================
@@ -933,8 +997,8 @@ if CLIENT then
     surface.CreateFont("GRMDoor_Title",  { font = "Roboto", size = 18, weight = 800, extended = true })
     surface.CreateFont("GRMDoor_Sub",    { font = "Roboto", size = 14, weight = 600, extended = true })
     surface.CreateFont("GRMDoor_Normal", { font = "Roboto", size = 13, weight = 500, extended = true })
-    surface.CreateFont("GRMDoor_HUD",    { font = "Roboto", size = 20, weight = 700, extended = true })
-    surface.CreateFont("GRMDoor_HUDSm", { font = "Roboto", size = 14, weight = 500, extended = true })
+    surface.CreateFont("GRMDoor_HUD",    { font = "Roboto", size = 19, weight = 800, extended = true })
+    surface.CreateFont("GRMDoor_HUDSm",  { font = "Roboto", size = 13, weight = 600, extended = true })
 
     local CUI = {
         bg     = Color(20, 24, 32, 250),
@@ -971,7 +1035,7 @@ if CLIENT then
         chat.AddText(Color(70, 160, 240), "[Двери] ", color_white, net.ReadString())
     end)
 
-    -- 3D2D HUD при прицеливании на дверь
+    -- 3D2D HUD при прицеливании на дверь: ЧЁТКИЙ вывод статуса замка И владельца
     hook.Add("HUDPaint", "GRM_Doors_HUD3D2D", function()
         local ply = LocalPlayer()
         if not IsValid(ply) or not ply:Alive() then return end
@@ -986,25 +1050,29 @@ if CLIENT then
         if dist > maxDist then return end
 
         local alpha = math.Clamp((1 - dist / maxDist) * 255, 0, 240)
-        local locked = ent:GetNWBool("GRM_DoorLocked", false)
+        local locked = D.IsDoorLocked(ent)
         local title = ent:GetNWString("GRM_DoorTitle", "")
         local ownerStr = ent:GetNWString("GRM_DoorOwner", "")
 
         local sw, sh = ScrW(), ScrH()
-        local cx, cy = sw / 2, sh / 2 + 100
-        local bw, bh = 280, 70
+        local cx, cy = sw / 2, sh / 2 + 90
+        local bw, bh = 300, 76
 
-        draw.RoundedBox(8, cx - bw / 2, cy, bw, bh, Color(16, 20, 28, alpha * 0.9))
+        draw.RoundedBox(8, cx - bw / 2, cy, bw, bh, Color(16, 20, 28, alpha * 0.92))
         surface.SetDrawColor(locked and Color(220, 70, 70, alpha) or Color(60, 190, 110, alpha))
         surface.DrawOutlinedRect(cx - bw / 2, cy, bw, bh, 2)
 
         local dispTitle = title ~= "" and title or "Дверь"
         draw.SimpleText(dispTitle, "GRMDoor_HUD", cx, cy + 18, Color(240, 245, 250, alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 
-        local lockTxt = locked and "ЗАКРЫТО" or "ОТКРЫТО"
-        local lockCol = locked and Color(240, 80, 80, alpha) or Color(80, 220, 120, alpha)
-        local subText = ownerStr ~= "" and ownerStr or lockTxt
-        draw.SimpleText(subText, "GRMDoor_HUDSm", cx, cy + 46, ownerStr ~= "" and Color(200, 210, 225, alpha) or lockCol, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        -- Строка 2: Владелец / Статус
+        local dispOwner = ownerStr ~= "" and ownerStr or "Продаётся / Ничья"
+        draw.SimpleText(dispOwner, "GRMDoor_HUDSm", cx, cy + 38, Color(200, 210, 225, alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+
+        -- Строка 3: Гарантированный замок (ЗАКРЫТО / ОТКРЫТО)
+        local lockTxt = locked and "[ЗАКРЫТО]" or "[ОТКРЫТО]"
+        local lockCol = locked and Color(255, 90, 90, alpha) or Color(90, 230, 130, alpha)
+        draw.SimpleText(lockTxt, "GRMDoor_HUDSm", cx, cy + 58, lockCol, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end)
 
     -- VGUI Меню управления дверью
@@ -1265,5 +1333,5 @@ if CLIENT then
         net.Start(NET_ACT) net.WriteTable({ action = "open_menu" }) net.SendToServer()
     end)
 
-    print("[GRM Doors] Клиентская система дверей v2.0.1 загружена")
+    print("[GRM Doors] Клиентская система дверей v2.0.2 загружена")
 end
