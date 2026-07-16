@@ -1,5 +1,11 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v1.5.5 (Код 42)
+    GRM Currency Core v1.5.6 (Код 42)
+
+    v1.5.6 (репорт: «пишет SAVE ok, но после рестарта пропадает; в json — []»):
+    антисвайп-страж: ПУСТАЯ память никогда не перезаписывает НЕПУСТОЙ файл
+    базы (раньше пустой дамп «[]» легально затирал реальные счета — отсюда
+    вечная потеря данных после рестарта). Полный wipe — только удалением
+    файла на выключенном сервере.
 
     v1.5.5 (аудит синхронизации HUD/Tab): GRM.Notify шлёт ОБА канала
     (GRM_Currency_Notify + легаси grm_notify), поэтому при установленном
@@ -138,7 +144,7 @@ if SERVER then
         return
     end
     GRM._currencyCoreActive = true
-    GRM._currencyCoreVer = "1.5.5"
+    GRM._currencyCoreVer = "1.5.6"
     GRM._currencyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_SYNC)
@@ -213,6 +219,27 @@ if SERVER then
     local function saveNow(force)
         if not dirty and not force then return end
         local clean, poison = sanitizedDump()
+        -- GRM-FIX v1.5.6: ПУСТАЯ память НИКОГДА не перезаписывает НЕПУСТУЮ базу.
+        -- "[]" (пустая таблица) — легальный JSON, поэтому без этого стража пустой
+        -- дамп молча затирал реальные счета (после битой загрузки, чужой записи
+        -- в файл по FTP и т.п.). Полный сброс — только ручным удалением файла
+        -- при выключенном сервере.
+        if next(clean) == nil then
+            local prev = lastSavedTxt
+            if (not isstring(prev)) and file.Exists(DATA_FILE, "DATA") then
+                prev = file.Read(DATA_FILE, "DATA")
+            end
+            local hadRecords = false
+            if isstring(prev) and #prev > 0 then
+                local okP, prevTab = pcall(util.JSONToTable, prev)
+                hadRecords = okP and istable(prevTab) and next(prevTab) ~= nil
+            end
+            if hadRecords then
+                print("[GRM Currency] SAVE ОТКЛОНЁН: память пуста, а в базе есть счета — базу НЕ затираем (антисвайп-страж v1.5.6)")
+                dirty = false
+                return
+            end
+        end
         if #poison > 0 then
             print("[GRM Currency] SAVE: очищены подозрительные ники: " .. table.concat(poison, ", "))
         end
@@ -630,7 +657,7 @@ if SERVER then
     end
     concommand.Add("grm_money", moneyCmd)
 
-    print(("[GRM Currency] ядро загружено v1.5.5, счетов в памяти: %d (баланс первого: %s)"):format(
+    print(("[GRM Currency] ядро загружено v1.5.6, счетов в памяти: %d (баланс первого: %s)"):format(
         table.Count(records),
         (function() for _, r in pairs(records) do return tostring(r.balance) end return "—" end)()))
 end

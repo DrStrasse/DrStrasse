@@ -1,5 +1,10 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v2.3.7 (Код 43)
+    GRM Unified Economy v2.3.8 (Код 43)
+
+    v2.3.8 (репорт: «наличка не переживает рестарт, в json — []»):
+    антисвайп-стражи: save() не затирает непустую базу пустой памятью;
+    сверка не принимает файл без счетов/фракций поверх непустой памяти.
+    Полный сброс — только удалением файла на выключенном сервере.
 
     v2.3.7 (аудит синхронизации HUD/Tab): канал банка GRM_Bank_Sync
     переведён с UInt(32) на Double — счета выше ~4.29 млрд прилетали
@@ -113,7 +118,7 @@ if SERVER then
         return
     end
     GRM._economyCoreActive = true
-    GRM._economyCoreVer = "2.3.7"
+    GRM._economyCoreVer = "2.3.8"
     GRM._economyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_OPEN_ADMIN)
@@ -204,6 +209,29 @@ if SERVER then
 
     local function save(force)
         if not dirty and not force then return end
+        -- GRM-FIX v2.3.8: антисвайп-страж. Пустые счета+фракции НИКОГДА не
+        -- перезаписывают базу, где они были (после битой загрузки/чужой
+        -- записи в файл). Полный сброс — удалением файла на выкл. сервере.
+        local myAcc = istable(E.Data.accounts) and next(E.Data.accounts) ~= nil
+        local myFac = istable(E.Data.factions) and next(E.Data.factions) ~= nil
+        if not myAcc and not myFac then
+            local prev = lastDiskTxt
+            if (not isstring(prev)) and file.Exists(DATA_FILE, "DATA") then
+                prev = file.Read(DATA_FILE, "DATA")
+            end
+            if isstring(prev) and #prev > 0 then
+                local okP, dt = pcall(util.JSONToTable, prev)
+                if okP and istable(dt) then
+                    local hadAcc = istable(dt.accounts) and next(dt.accounts) ~= nil
+                    local hadFac = istable(dt.factions) and next(dt.factions) ~= nil
+                    if hadAcc or hadFac then
+                        print("[GRM Economy] SAVE ОТКЛОНЁН: память пуста, а в базе есть счета/фракции — базу НЕ затираем (антисвайп-страж v2.3.8)")
+                        dirty = false
+                        return
+                    end
+                end
+            end
+        end
         local txt = util.TableToJSON(E.Data, true) or "{}"
         if txt == lastDiskTxt then dirty = false return end -- без изменений: диск не долбим
         file.Write(DATA_FILE, txt)
@@ -545,6 +573,17 @@ if SERVER then
         if txt == lastDiskTxt then return false end -- файл не менялся с нашей записи/чтения
         local okJs, t = pcall(util.JSONToTable, txt)
         if not okJs or not istable(t) then return false end
+        -- GRM-FIX v2.3.8: пустой файл/дамп без счетов и фракций НЕ вытирает
+        -- непустую память (двойник стража в save — иначе каскадный wipe).
+        local gotAcc = istable(t.accounts) and next(t.accounts) ~= nil
+        local gotFac = istable(t.factions) and next(t.factions) ~= nil
+        local memAcc = istable(E.Data.accounts) and next(E.Data.accounts) ~= nil
+        local memFac = istable(E.Data.factions) and next(E.Data.factions) ~= nil
+        if not gotAcc and not gotFac and (memAcc or memFac) then
+            print("[GRM Economy] DB↔MEM ОТКЛОНЕНО: файл пуст/без счетов, а память непуста — память сохранена (антисвайп-страж v2.3.8)")
+            lastDiskTxt = txt
+            return false
+        end
         local oldAccounts = E.Data.accounts
         E.Data = t
         E.Data.version = 2
