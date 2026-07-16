@@ -442,12 +442,11 @@ local function takeScreenshot()
 
     ViewState.lastShot = now
     ViewState.pendingShot = true
-    if ViewState.shotHideUI ~= false then
-        ViewState.hideOverlay = true
-    end
+    -- HUD камеры РИСУЕТСЯ на снимок (drawCCTVChrome в RT). hideOverlay не трогаем.
 end
 
--- Захват строго в PostRender: RT + RenderView (не framebuffer ViewEntity)
+-- Захват в PostRender: RenderView (мир) + 2D HUD камеры в тот же RT, затем Capture.
+-- Так на скрин попадают REC / имя / правая колонка подсказок (не только «голый» 3D).
 hook.Add("PostRender", "GRM_CCTV_CaptureShot", function()
     if not ViewState.pendingShot then return end
     if not ViewState.active or not IsValid(ViewState.cam) then
@@ -477,11 +476,10 @@ hook.Add("PostRender", "GRM_CCTV_CaptureShot", function()
     local rel = string.format("%s/%s/%s/%s_%s_%s_%s.%s",
         dir, netPart, camPart, mapPart, netPart, camPart, stamp, ext)
 
-    -- разрешение снимка (не обязательно full HD — стабильнее)
-    local sw, sh = ScrW(), ScrH()
-    local capW = math.min(sw, 1280)
-    local capH = math.floor(capW * (sh / math.max(sw, 1)))
-    capH = math.Clamp(capH, 240, 720)
+    -- Полный размер экрана — HUD 1:1 как в игре
+    local capW, capH = ScrW(), ScrH()
+    capW = math.Clamp(capW, 640, 1920)
+    capH = math.Clamp(capH, 360, 1080)
 
     local rt, w, h = getShotRT(capW, capH)
     local data
@@ -491,7 +489,6 @@ hook.Add("PostRender", "GRM_CCTV_CaptureShot", function()
         render.Clear(0, 0, 0, 255, true, true)
         render.SetViewPort(0, 0, w, h)
 
-        -- Явно рисуем мир с точки камеры (обходит чёрный SetViewEntity-буфер)
         render.RenderView({
             origin = origin,
             angles = angles,
@@ -506,7 +503,14 @@ hook.Add("PostRender", "GRM_CCTV_CaptureShot", function()
             bloomtone = false,
         })
 
-        render.CapturePixels() -- на части билдов стабилизирует Capture из RT
+        -- 2D: тот же HUD камеры, что на экране
+        cam.Start2D()
+        if isfunction(drawCCTVChrome) then
+            drawCCTVChrome(w, h, true) -- true = screenshot mode (без flash)
+        end
+        cam.End2D()
+
+        render.CapturePixels()
         data = render.Capture({
             format = fmt,
             quality = math.Clamp(tonumber(ViewState.shotQuality) or 90, 10, 100),
@@ -523,8 +527,8 @@ hook.Add("PostRender", "GRM_CCTV_CaptureShot", function()
         ViewState.pendingShot = false
         ViewState.hideOverlay = false
         chat.AddText(Color(255, 120, 120), "[CCTV] ", color_white, "Ошибка снимка: " .. tostring(err))
-        -- на всякий случай снимем RT
         pcall(function() render.PopRenderTarget() end)
+        pcall(function() cam.End2D() end)
         return
     end
 
@@ -684,7 +688,7 @@ surface.CreateFont("GRM_CCTV_Help", { font = "Roboto", size = 16, weight = 600, 
 surface.CreateFont("GRM_CCTV_HelpTitle", { font = "Roboto", size = 17, weight = 800, extended = true })
 surface.CreateFont("GRM_CCTV_Key", { font = "Roboto", size = 14, weight = 700, extended = true })
 
-local function drawKeyChip(x, y, keyText, desc, alpha, maxDescW)
+local function drawKeyChip(x, y, keyText, desc, alpha)
     alpha = alpha or 230
     surface.SetFont("GRM_CCTV_Key")
     local kw, kh = surface.GetTextSize(keyText)
@@ -697,40 +701,22 @@ local function drawKeyChip(x, y, keyText, desc, alpha, maxDescW)
     draw.SimpleText(keyText, "GRM_CCTV_Key", x + boxW * 0.5, y + boxH * 0.5,
         Color(200, 255, 210, alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     if desc and desc ~= "" then
-        local dx = x + boxW + 8
-        draw.SimpleText(desc, "GRM_CCTV_Help", dx, y + boxH * 0.5,
+        draw.SimpleText(desc, "GRM_CCTV_Help", x + boxW + 8, y + boxH * 0.5,
             Color(225, 232, 225, alpha), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
     return boxH + 4
 end
 
-local function drawHelpSection(x, y, title, lines)
-    draw.SimpleText(title, "GRM_CCTV_HelpTitle", x, y, Color(120, 230, 150))
-    y = y + 20
-    for _, row in ipairs(lines) do
-        if row.kind == "chip" then
-            y = y + drawKeyChip(x, y, row.key, row.desc)
-        elseif row.kind == "text" then
-            draw.SimpleText(row.text, "GRM_CCTV_Meta", x, y, row.col or Color(150, 170, 150))
-            y = y + 16
-        elseif row.kind == "gap" then
-            y = y + (row.h or 6)
-        end
-    end
-    return y
-end
+-- Единый HUD камеры: и на экране, и на скриншоте (рисуется в RT).
+-- w,h — размер поверхности; forShot — без «вспышки» после F.
+function drawCCTVChrome(w, h, forShot)
+    w = w or ScrW()
+    h = h or ScrH()
 
-hook.Add("HUDPaint", "GRM_CCTV_Overlay", function()
-    if not ViewState.active then return end
-    if ViewState.hideOverlay then return end
-
-    local w, h = ScrW(), ScrH()
-
-    -- Верхняя планка (тонкая, не мешает)
+    -- верхняя планка
     surface.SetDrawColor(0, 0, 0, 200)
     surface.DrawRect(0, 0, w, 50)
 
-    -- Лёгкие scanlines только сверху/не по всему экрану
     surface.SetDrawColor(0, 255, 120, 8)
     for y = 50, math.min(h, 120), 4 do
         surface.DrawRect(0, y, w, 1)
@@ -763,31 +749,27 @@ hook.Add("HUDPaint", "GRM_CCTV_Overlay", function()
     draw.SimpleText(os.date("%Y-%m-%d %H:%M:%S"), "GRM_CCTV_Meta", w - 12, 14,
         Color(200, 200, 200), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
 
-    -- прицел по центру
+    -- прицел
     local cx, cy = w * 0.5, h * 0.5
     surface.SetDrawColor(80, 255, 120, 140)
     surface.DrawLine(cx - 9, cy, cx + 9, cy)
     surface.DrawLine(cx, cy - 9, cx, cy + 9)
 
-    if CurTime() < (ViewState.flashUntil or 0) then
+    if not forShot and CurTime() < (ViewState.flashUntil or 0) then
         surface.SetDrawColor(255, 255, 255, 55)
         surface.DrawRect(0, 0, w, h)
     end
 
-    ------------------------------------------------------------------
-    -- БОКОВАЯ КОЛОНКА ПОДСКАЗОК (справа) — не пересекается с HP/весом/едой слева-снизу
-    ------------------------------------------------------------------
+    -- правая колонка
     local panelW = math.Clamp(math.floor(w * 0.26), 280, 360)
     local panelX = w - panelW - 12
     local panelY = 60
     local panelH = h - panelY - 12
 
-    -- фон колонки
     surface.SetDrawColor(8, 12, 10, 210)
     surface.DrawRect(panelX, panelY, panelW, panelH)
     surface.SetDrawColor(70, 180, 110, 180)
     surface.DrawOutlinedRect(panelX, panelY, panelW, panelH, 1)
-    -- тонкая полоска слева панели
     surface.SetDrawColor(90, 220, 130, 220)
     surface.DrawRect(panelX, panelY, 3, panelH)
 
@@ -802,7 +784,6 @@ hook.Add("HUDPaint", "GRM_CCTV_Overlay", function()
     surface.DrawRect(x, y, innerW, 1)
     y = y + 10
 
-    -- Обзор
     draw.SimpleText("Обзор", "GRM_CCTV_Help", x, y, Color(180, 210, 180))
     y = y + 18
     if ViewState.allowPan then
@@ -821,7 +802,6 @@ hook.Add("HUDPaint", "GRM_CCTV_Overlay", function()
     surface.DrawRect(x, y, innerW, 1)
     y = y + 10
 
-    -- Зум
     draw.SimpleText("Зум", "GRM_CCTV_Help", x, y, Color(180, 210, 180))
     y = y + 18
     if ViewState.allowZoom then
@@ -843,7 +823,6 @@ hook.Add("HUDPaint", "GRM_CCTV_Overlay", function()
     surface.DrawRect(x, y, innerW, 1)
     y = y + 10
 
-    -- Снимок
     draw.SimpleText("Снимок", "GRM_CCTV_Help", x, y, Color(180, 210, 180))
     y = y + 18
     if ViewState.shotEnabled then
@@ -859,7 +838,6 @@ hook.Add("HUDPaint", "GRM_CCTV_Overlay", function()
     surface.DrawRect(x, y, innerW, 1)
     y = y + 10
 
-    -- Выход
     draw.SimpleText("Выход из камеры", "GRM_CCTV_Help", x, y, Color(180, 210, 180))
     y = y + 18
     y = y + drawKeyChip(x, y, "ПКМ", "выйти")
@@ -868,19 +846,23 @@ hook.Add("HUDPaint", "GRM_CCTV_Overlay", function()
     draw.SimpleText("ещё: Backspace · Q · !camexit", "GRM_CCTV_Meta", x, y, Color(140, 160, 140))
     y = y + 20
 
-    -- путь к скрину внизу панели
     local pathHint
     if ViewState.lastShotPath ~= "" then
         pathHint = "снимок: data/" .. ViewState.lastShotPath
     else
         pathHint = "папка: data/" .. tostring(ViewState.shotDir or "grm_cctv/screenshots")
     end
-    -- wrap-ish: truncate
     if #pathHint > 48 then
         pathHint = "…" .. string.sub(pathHint, -46)
     end
     draw.SimpleText(pathHint, "GRM_CCTV_Meta", x, panelY + panelH - 28, Color(130, 150, 130))
     draw.SimpleText("тело у монитора стоит", "GRM_CCTV_Meta", x, panelY + panelH - 14, Color(120, 140, 120))
+end
+
+hook.Add("HUDPaint", "GRM_CCTV_Overlay", function()
+    if not ViewState.active then return end
+    if ViewState.hideOverlay then return end
+    drawCCTVChrome(ScrW(), ScrH(), false)
 end)
 
 -- keys: exit / zoom / screenshot
@@ -955,4 +937,4 @@ hook.Add("OnPlayerChat", "GRM_CCTV_ChatExit", function(ply, text)
     end
 end)
 
-print("[GRM CCTV] client v1.2.2")
+print("[GRM CCTV] client v1.2.3")

@@ -395,3 +395,5 @@
 **73.** (16.07.2026) CCTV скриншоты были чёрными: `render.Capture` экрана при `SetViewEntity` часто отдаёт пустой/чёрный backbuffer. Фикс v1.2.1 — `PostRender`: `PushRenderTarget` + `render.RenderView` с origin/angles/fov камеры (pan/zoom), затем `render.Capture` из RT; оверлей прячется на кадр; путь тот же `data/grm_cctv/screenshots/...`.
 
 **74.** (16.07.2026) CCTV HUD: нижняя полоса подсказок наслаивалась на HP/вес/еду/патроны. v1.2.2 — подсказки **справа вертикальной колонкой**; `cl_drawhud 0` на время view + `HUDShouldDraw` режет ваниль; при выходе `cl_drawhud 1`. Центр экрана и низ-лево свободны.
+
+**75.** (16.07.2026) CCTV-скрин без HUD: захват шёл только `RenderView` в RT (3D), оверлей HUDPaint на снимок не попадал + HideUI прятал UI. v1.2.3 — общая `drawCCTVChrome(w,h)` для экрана и RT; после RenderView в RT `cam.Start2D` + chrome (REC, имя, правая колонка); HideUI по умолчанию не режет chrome на скрине.
