@@ -1,26 +1,9 @@
-GRM CCTV v1.2.0
+GRM CCTV v1.2.1
 ===============
-Установка: слей lua/ в garrysmod/addons/grm/lua/
-  или папку grm_cctv/ в garrysmod/addons/grm_cctv/
+Скриншоты: F / Пробел
+  Пишутся в garrysmod/data/grm_cctv/screenshots/<сеть>/<cam>/...
+  Захват через render.RenderView (не чёрный SetViewEntity-буфер).
 
-Спавн: Q → Entities → GRM CCTV
-  1) grm_cctv_server (ONLINE, сеть main)
-  2) grm_cctv_camera (сеть main)
-  3) grm_cctv_monitor → E → Смотреть
-
-В режиме камеры:
-  МЫШЬ ←→ / ↑↓     — поворот обзора
-  КОЛЁСИКО / + / - — зум (приблизить / отдалить)
-  F или ПРОБЕЛ     — скриншот
-  ПКМ / ESC / E    — выход
-
-Скриншоты пишутся на КЛИЕНТЕ смотрящего:
-  garrysmod/data/grm_cctv/screenshots/<сеть>/<id_камеры>/<файл>.jpg
-
-Куда «направить запись»:
-  • Скриншоты — папка выше (Screenshots.Dir в sh_grm_cctv_config.lua)
-  • Полноценное видео с камеры GMod штатно НЕ пишет (нет DVR API).
-    Варианты: OBS у оператора, или tv_record/demo (это не картинка CCTV).
-  • VideoRecording.Dir в конфиге — задел под будущий модуль (сейчас Enabled=false).
-
-Консоль: grm_cctv_save | grm_cctv_load | grm_cctv_list | grm_cctv_shot | grm_cctv_stop
+Зум: колёсико / + / -
+Поворот: мышь
+Выход: ПКМ / ESC / E

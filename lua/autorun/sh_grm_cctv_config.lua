@@ -72,6 +72,7 @@ C.Config = C.Config or {
         Quality = 90,          -- jpeg 1..100
         HideUI = true,         -- прятать оверлей на 1 кадр при съёмке
         Cooldown = 1.0,        -- сек между снимками
+        -- Захват: RenderView→RT (не framebuffer ViewEntity — иначе часто чёрный кадр)
         -- Имя файла: {map}_{network}_{camid}_{YYYYMMDD_HHMMSS}.jpg
     },
 
@@ -107,4 +108,4 @@ function C.ClampFOV(fov)
     return math.Clamp(math.floor(fov + 0.5), zmin, zmax)
 end
 
-print("[GRM CCTV] config v1.2.0")
+print("[GRM CCTV] config v1.2.1")

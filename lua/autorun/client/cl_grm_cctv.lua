@@ -52,6 +52,10 @@ local ViewState = {
     lastShot = 0,
     flashUntil = 0,
     lastShotPath = "",
+    pendingShot = false,
+    shotRT = nil,
+    shotRTW = 0,
+    shotRTH = 0,
 }
 
 local function sendAction(action, ent, writeExtra)
@@ -358,8 +362,62 @@ local function applyZoomDelta(dir)
     ViewState.fov = clampZoom((ViewState.fov or 75) - dir * step)
 end
 
+-- Снимок через RenderView в RT: обычный render.Capture экрана при SetViewEntity
+-- часто даёт ЧЁРНЫЙ кадр (буфер viewentity не тот). Рендерим вид камеры сами.
+local function getShotView()
+    local cam = ViewState.cam
+    if not IsValid(cam) then return nil end
+    local base = ViewState.baseAng or cam:GetAngles()
+    local viewAng = Angle(base.p, base.y, base.r)
+    viewAng:RotateAroundAxis(viewAng:Up(), ViewState.yawOff or 0)
+    viewAng:RotateAroundAxis(viewAng:Right(), ViewState.pitchOff or 0)
+    local origin = cam:GetPos() + viewAng:Forward() * 6 + viewAng:Up() * 2
+    return origin, viewAng, ViewState.fov or cam:GetCamFOV() or 75
+end
+
+local function getShotRT(w, h)
+    w = math.floor(math.Clamp(w or ScrW(), 320, 1920))
+    h = math.floor(math.Clamp(h or ScrH(), 240, 1080))
+    if not ViewState.shotRT or ViewState.shotRTW ~= w or ViewState.shotRTH ~= h then
+        ViewState.shotRT = GetRenderTargetEx(
+            "GRM_CCTV_ShotRT_" .. w .. "x" .. h,
+            w, h,
+            RT_SIZE_NO_CHANGE,
+            MATERIAL_RT_DEPTH_SEPARATE,
+            0, 0,
+            IMAGE_FORMAT_RGB888
+        )
+        ViewState.shotRTW = w
+        ViewState.shotRTH = h
+    end
+    return ViewState.shotRT, w, h
+end
+
+local function finishScreenshot(data, rel)
+    ViewState.hideOverlay = false
+    ViewState.pendingShot = false
+    if not data or data == "" then
+        chat.AddText(Color(255, 120, 120), "[CCTV] ", color_white, "Скриншот пустой (чёрный/ошибка захвата).")
+        return
+    end
+    -- грубая проверка «всё чёрное»: слишком маленький jpeg/png почти всегда брак
+    if #data < 800 then
+        chat.AddText(Color(255, 160, 80), "[CCTV] ", color_white, "Снимок подозрительно мал — возможно, чёрный кадр. Попробуйте ещё раз.")
+    end
+    ensureShotDirs(rel)
+    file.Write(rel, data)
+    ViewState.lastShotPath = rel
+    ViewState.flashUntil = CurTime() + 0.45
+    sendAction("screenshot", ViewState.monitor, function()
+        net.WriteString(rel)
+        net.WriteString(ViewState.label or "")
+    end)
+    chat.AddText(Color(100, 220, 140), "[CCTV] ", color_white, "Скриншот: ", Color(180, 220, 255), "garrysmod/data/" .. rel)
+end
+
 local function takeScreenshot()
     if not ViewState.active or not ViewState.shotEnabled then return end
+    if ViewState.pendingShot then return end
     local now = CurTime()
     if now < (ViewState.lastShot or 0) + (ViewState.shotCooldown or 1) then
         chat.AddText(Color(255, 200, 100), "[CCTV] ", color_white, "Подождите перед следующим снимком.")
@@ -368,59 +426,95 @@ local function takeScreenshot()
     if not IsValid(ViewState.cam) then return end
 
     ViewState.lastShot = now
-    local doHide = ViewState.shotHideUI
-    if doHide then ViewState.hideOverlay = true end
-
-    timer.Simple(0, function()
-        if not ViewState.active then
-            ViewState.hideOverlay = false
-            return
-        end
-        local fmt = string.lower(ViewState.shotFormat or "jpeg")
-        if fmt ~= "png" then fmt = "jpeg" end
-        local ext = (fmt == "png") and "png" or "jpg"
-        local stamp = os.date("%Y%m%d_%H%M%S")
-        local netPart = safePart(ViewState.network)
-        local camPart = safePart(ViewState.shotCamId)
-        local mapPart = safePart(ViewState.shotMap)
-        local dir = tostring(ViewState.shotDir or "grm_cctv/screenshots")
-        dir = string.gsub(dir, "^/+", "")
-        dir = string.gsub(dir, "%.%.", "")
-        local rel = string.format("%s/%s/%s/%s_%s_%s_%s.%s",
-            dir, netPart, camPart, mapPart, netPart, camPart, stamp, ext)
-
-        ensureShotDirs(rel)
-
-        local ok, data = pcall(function()
-            return render.Capture({
-                format = fmt,
-                quality = math.Clamp(tonumber(ViewState.shotQuality) or 90, 10, 100),
-                x = 0, y = 0,
-                w = ScrW(), h = ScrH(),
-                alpha = false,
-            })
-        end)
-
-        ViewState.hideOverlay = false
-
-        if not ok or not data or data == "" then
-            chat.AddText(Color(255, 120, 120), "[CCTV] ", color_white, "Не удалось сделать скриншот (render.Capture).")
-            return
-        end
-
-        file.Write(rel, data)
-        local fullHint = "garrysmod/data/" .. rel
-        ViewState.lastShotPath = rel
-        ViewState.flashUntil = CurTime() + 0.4
-
-        sendAction("screenshot", ViewState.monitor, function()
-            net.WriteString(rel)
-            net.WriteString(ViewState.label or "")
-        end)
-
-        chat.AddText(Color(100, 220, 140), "[CCTV] ", color_white, "Скриншот сохранён: ", Color(180, 220, 255), fullHint)
-    end)
+    ViewState.pendingShot = true
+    if ViewState.shotHideUI ~= false then
+        ViewState.hideOverlay = true
+    end
 end
+
+-- Захват строго в PostRender: RT + RenderView (не framebuffer ViewEntity)
+hook.Add("PostRender", "GRM_CCTV_CaptureShot", function()
+    if not ViewState.pendingShot then return end
+    if not ViewState.active or not IsValid(ViewState.cam) then
+        ViewState.pendingShot = false
+        ViewState.hideOverlay = false
+        return
+    end
+
+    local origin, angles, fov = getShotView()
+    if not origin then
+        ViewState.pendingShot = false
+        ViewState.hideOverlay = false
+        chat.AddText(Color(255, 120, 120), "[CCTV] ", color_white, "Нет вида камеры для снимка.")
+        return
+    end
+
+    local fmt = string.lower(ViewState.shotFormat or "jpeg")
+    if fmt ~= "png" then fmt = "jpeg" end
+    local ext = (fmt == "png") and "png" or "jpg"
+    local stamp = os.date("%Y%m%d_%H%M%S")
+    local netPart = safePart(ViewState.network)
+    local camPart = safePart(ViewState.shotCamId)
+    local mapPart = safePart(ViewState.shotMap)
+    local dir = tostring(ViewState.shotDir or "grm_cctv/screenshots")
+    dir = string.gsub(dir, "^/+", "")
+    dir = string.gsub(dir, "%.%.", "")
+    local rel = string.format("%s/%s/%s/%s_%s_%s_%s.%s",
+        dir, netPart, camPart, mapPart, netPart, camPart, stamp, ext)
+
+    -- разрешение снимка (не обязательно full HD — стабильнее)
+    local sw, sh = ScrW(), ScrH()
+    local capW = math.min(sw, 1280)
+    local capH = math.floor(capW * (sh / math.max(sw, 1)))
+    capH = math.Clamp(capH, 240, 720)
+
+    local rt, w, h = getShotRT(capW, capH)
+    local data
+    local ok, err = pcall(function()
+        local oldW, oldH = ScrW(), ScrH()
+        render.PushRenderTarget(rt)
+        render.Clear(0, 0, 0, 255, true, true)
+        render.SetViewPort(0, 0, w, h)
+
+        -- Явно рисуем мир с точки камеры (обходит чёрный SetViewEntity-буфер)
+        render.RenderView({
+            origin = origin,
+            angles = angles,
+            x = 0, y = 0,
+            w = w, h = h,
+            fov = fov,
+            aspectratio = w / math.max(h, 1),
+            drawhud = false,
+            drawviewmodel = false,
+            drawmonitors = true,
+            dopostprocess = false,
+            bloomtone = false,
+        })
+
+        render.CapturePixels() -- на части билдов стабилизирует Capture из RT
+        data = render.Capture({
+            format = fmt,
+            quality = math.Clamp(tonumber(ViewState.shotQuality) or 90, 10, 100),
+            x = 0, y = 0,
+            w = w, h = h,
+            alpha = false,
+        })
+
+        render.SetViewPort(0, 0, oldW, oldH)
+        render.PopRenderTarget()
+    end)
+
+    if not ok then
+        ViewState.pendingShot = false
+        ViewState.hideOverlay = false
+        chat.AddText(Color(255, 120, 120), "[CCTV] ", color_white, "Ошибка снимка: " .. tostring(err))
+        -- на всякий случай снимем RT
+        pcall(function() render.PopRenderTarget() end)
+        return
+    end
+
+    finishScreenshot(data, rel)
+end)
 
 net.Receive(NET_VIEW, function()
     local cam = net.ReadEntity()
@@ -754,4 +848,4 @@ hook.Add("OnPlayerChat", "GRM_CCTV_ChatExit", function(ply, text)
     end
 end)
 
-print("[GRM CCTV] client v1.2.0")
+print("[GRM CCTV] client v1.2.1")
