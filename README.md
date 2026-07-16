@@ -31,7 +31,8 @@
 | 6 | `lua/autorun/sh_grm_inventory.lua` | Инвентарь: 24 слота, стаки, оружие/патроны/предметы, выброс `grm_item_drop`, JSON-персистентность |
 | 7 | `lua/autorun/sh_grm_movement.lua` | Стамина: бег/прыжки, звук дыхания (CreateSound), HUD-полоса выносливости |
 | 8 | `lua/autorun/sh_grm_chat_config.lua` | Конфиг чата: радиусы local/whisper/yell/LOOC, цвета, настройки контекстного меню |
-| 62 | `lua/autorun/sh_grm_rp_chat.lua` | **RP-чат v1.0.0:** `/me` `/do` `/it` `/try` `/roll` `/w` `/y` `/looc` `/ooc`, локальный чат по радиусу из `sh_grm_chat_config`; совместим с EasyChat |
+| 62 | `lua/autorun/sh_grm_rp_chat.lua` | **RP-чат v1.0.0:** `/me` `/do` `/it` `/try` `/roll` `/w` `/y` `/looc` `/ooc`,
+`/alarm_access`, терминал охраны (E), локальный чат по радиусу из `sh_grm_chat_config`; совместим с EasyChat |
 | ~~9~~ | ~~`sh_grm_faction_economy_plus.lua`~~ | **УДАЛЁН** — заменён Кодом 43 |
 | 10 | `lua/autorun/sh_factions.lua` | Ядро фракций: ранги, отделы, приглашения, рация `/fr`, волна `/dep` `/depb`, меню `/factions`, HUD-таблички |
 | 11 | `lua/autorun/sh_faction_fixes.lua` | Расширение фракций: комендантский час `/kom_hour`, модели+bodygroups, оружие по рангам, маскировка V2, `/gnews` |

@@ -41,6 +41,9 @@ if SERVER then
         grm_cctv_camera    = true,
         grm_cctv_monitor   = true,
         grm_cctv_server    = true,
+        grm_alarm_sensor   = true,
+        grm_alarm_hub      = true,
+        grm_alarm_terminal = true,
     }
 
     -- JSON только без конверсии ключей (находка 65)
