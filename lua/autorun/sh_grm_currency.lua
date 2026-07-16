@@ -1,5 +1,11 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v1.5.3 (Код 42)
+    GRM Currency Core v1.5.4 (Код 42)
+
+    v1.5.4 (репорт: «attempt to call global 'cleanNick' (a nil value)»,
+    таймер GRM_Currency_Flush умирал): cleanNick была объявлена НИЖЕ
+    места использования — каждый вызов уходил в nil-глобал, поэтому
+    падали ВСЕ сохранения (флаш 5с и автосейв 8с) и ничего не писалось
+    на диск. Хелпер поднят выше sanitizedDump/loadData.
 
     v1.5.3 (репорт: «SAVE ОШИБКА сериализации» нонстоп): порог длины
     JSON считал пустую таблицу "{}" ошибкой + возможна «ядовитая»
@@ -126,7 +132,7 @@ if SERVER then
         return
     end
     GRM._currencyCoreActive = true
-    GRM._currencyCoreVer = "1.5.3"
+    GRM._currencyCoreVer = "1.5.4"
     GRM._currencyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_SYNC)
@@ -171,6 +177,17 @@ if SERVER then
     end
 
     local lastSavedTxt = nil -- что реально лежит в файле (защита от пустых записей)
+
+    -- Управляющие байты (кроме перевода строки) и DEL ломали бы JSON.
+    -- ВАЖНО: объявлена ПЕРЕД sanitizedDump/loadData — они вызывают её как upvalue;
+    -- определение ниже по файлу превращало вызов в nil-глобал и убивало КАЖДОЕ сохранение.
+    local function cleanNick(s)
+        s = tostring(s or "?")
+        s = string.gsub(s, "[\1-\9\11-\31\127]", "")
+        if s == "" then s = "?" end
+        if #s > 64 then s = s:sub(1, 64) end
+        return s
+    end
 
     -- Очистка структуры перед сериализацией: ники без управляющих байт,
     -- счётчики нормализуются. Если какая-то запись "ядовитая" — в лог
@@ -265,15 +282,6 @@ if SERVER then
                 }
             end
         end
-    end
-
-    -- Управляющие байты (кроме перевода строки) и DEL ломали бы JSON
-    local function cleanNick(s)
-        s = tostring(s or "?")
-        s = string.gsub(s, "[\1-\9\11-\31\127]", "")
-        if s == "" then s = "?" end
-        if #s > 64 then s = s:sub(1, 64) end
-        return s
     end
 
     local function ensure(sid, nick)
@@ -616,7 +624,7 @@ if SERVER then
     end
     concommand.Add("grm_money", moneyCmd)
 
-    print(("[GRM Currency] ядро загружено v1.5.3, счетов в памяти: %d (баланс первого: %s)"):format(
+    print(("[GRM Currency] ядро загружено v1.5.4, счетов в памяти: %d (баланс первого: %s)"):format(
         table.Count(records),
         (function() for _, r in pairs(records) do return tostring(r.balance) end return "—" end)()))
 end
