@@ -3,7 +3,7 @@ AddCSLuaFile("entities/grm_bank_terminal/cl_init.lua")
 include("entities/grm_bank_terminal/shared.lua")
 
 function ENT:Initialize()
-    local model = "models/props_c17/consolebox01a.mdl"
+    local model = "models/starless/atm.mdl"
     if GRM and GRM.Economy and GRM.Economy.Config and GRM.Economy.Config.BankTerminalModel then
         model = GRM.Economy.Config.BankTerminalModel
     end

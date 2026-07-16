@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v2.0 (Код 43)
+    GRM Unified Economy v2.1 (Код 43)
 
     ЕДИНЫЙ аддон экономики фракций — написан с нуля.
     ЗАМЕНЯЕТ собой два старых модуля:
@@ -51,7 +51,7 @@ E.Config = E.Config or {
     FineToBudget       = true,  -- штрафы → бюджет фракции штрафующего
     FineMaxAmount      = 100000,
     UseDistance        = 180,
-    BankTerminalModel  = "models/props_c17/consolebox01a.mdl",
+    BankTerminalModel  = "models/starless/atm.mdl",
 }
 
 local DATA_FILE  = "grm_economy.json"
@@ -202,10 +202,74 @@ if SERVER then
             E.Data = { version = 2, factions = {} }
             importLegacy() -- первый запуск: подтянуть данные старых модулей
         end
+        E.Data.accounts = istable(E.Data.accounts) and E.Data.accounts or {}
         for name in pairs(E.Data.factions) do entry(name) end
     end
 
-    -- ── ПУБЛИЧНОЕ API (совместимость с Кодом 13 и др.) ───────
+        -- ── ЛИЧНЫЕ БАНКОВСКИЕ СЧЕТА (банкомат для ВСЕХ игроков) ──
+    local function account(sid, nick)
+        sid = tostring(sid or "")
+        if sid == "" then return nil end
+        local acc = E.Data.accounts[sid]
+        if not acc then
+            acc = { balance = 0, name = nick or "?" }
+            E.Data.accounts[sid] = acc
+            dirty = true
+        end
+        acc.balance = math.max(0, math.floor(tonumber(acc.balance) or 0))
+        if nick and nick ~= "" then acc.name = nick end
+        return acc
+    end
+
+    -- ply может быть Player или строкой SteamID64
+    function E.BankBalance(ply)
+        local sid = isstring(ply) and ply or (IsValid(ply) and ply:SteamID64())
+        if not sid then return 0 end
+        local acc = E.Data.accounts[sid]
+        return acc and acc.balance or 0
+    end
+
+    -- Наличные -> банковский счёт
+    function E.BankDeposit(ply, amount)
+        amount = math.max(0, math.floor(tonumber(amount) or 0))
+        if not IsValid(ply) or amount <= 0 then return false end
+        if not (GRM.HasMoney and GRM.HasMoney(ply, amount)) then return false end
+        GRM.TakeMoney(ply, amount)
+        local acc = account(ply:SteamID64(), ply:Nick())
+        acc.balance = acc.balance + amount
+        dirty = true
+        return true, acc.balance
+    end
+
+    -- Банковский счёт -> наличные
+    function E.BankWithdraw(ply, amount)
+        amount = math.max(0, math.floor(tonumber(amount) or 0))
+        if not IsValid(ply) or amount <= 0 then return false end
+        local acc = account(ply:SteamID64(), ply:Nick())
+        if acc.balance < amount then return false end
+        acc.balance = acc.balance - amount
+        dirty = true
+        GRM.GiveMoney(ply, amount)
+        return true, acc.balance
+    end
+
+    -- Счёт -> счёт (получатель может быть офлайн: ключ — SteamID64)
+    function E.BankTransfer(ply, toSid, amount)
+        amount = math.max(0, math.floor(tonumber(amount) or 0))
+        if not IsValid(ply) or amount <= 0 then return false end
+        toSid = tostring(toSid or "")
+        if toSid == "" or toSid == ply:SteamID64() then return false end
+        local from = account(ply:SteamID64(), ply:Nick())
+        if from.balance < amount then return false end
+        local to = account(toSid)
+        if not to then return false end
+        from.balance = from.balance - amount
+        to.balance = to.balance + amount
+        dirty = true
+        return true, from.balance
+    end
+
+-- ── ПУБЛИЧНОЕ API (совместимость с Кодом 13 и др.) ───────
     function GRM.FactionBudgetGet(name)
         if not name then return 0 end
         local e = E.Data.factions[name]
@@ -451,6 +515,7 @@ if SERVER then
             net.WriteEntity(ent)
             net.WriteTable({
                 balance = GRM.GetBalance(ply),
+                bank = E.BankBalance(ply),
                 faction = name or "",
                 factionData = name and entry(name) or nil,
                 mySalary = select(1, E.GetSalaryFor(ply)),
@@ -467,7 +532,30 @@ if SERVER then
         local f = name and Factions[name]
         local amt = math.max(0, math.floor(tonumber(a.amount) or 0))
 
-        if a.type == "deposit" then
+        if a.type == "bank_deposit" then
+            if amt <= 0 then return end
+            local ok, newbal = E.BankDeposit(ply, amt)
+            if not ok then notify(ply, "Недостаточно наличных.", 255, 100, 100) return end
+            notify(ply, ("Внесено на счёт: %s (счёт: %s)"):format(money(amt), money(newbal)), 100, 220, 100)
+        elseif a.type == "bank_withdraw" then
+            if amt <= 0 then return end
+            local ok, newbal = E.BankWithdraw(ply, amt)
+            if not ok then notify(ply, "На счёте только: " .. money(E.BankBalance(ply)), 255, 100, 100) return end
+            notify(ply, ("Снято со счёта: %s (остаток: %s)"):format(money(amt), money(newbal)), 100, 220, 100)
+        elseif a.type == "bank_transfer" then
+            if amt <= 0 then return end
+            local toSid = tostring(a.to or "")
+            local ok = E.BankTransfer(ply, toSid, amt)
+            if not ok then notify(ply, "Перевод не выполнен: недостаточно средств на счёте.", 255, 100, 100) return end
+            local target
+            for _, p in ipairs(player.GetAll()) do
+                if IsValid(p) and p:SteamID64() == toSid then target = p break end
+            end
+            notify(ply, ("Переведено %s → %s"):format(money(amt), IsValid(target) and target:Nick() or toSid), 255, 180, 80)
+            if IsValid(target) then
+                notify(target, "На ваш счёт поступило " .. money(amt) .. " от " .. ply:Nick(), 100, 220, 100)
+            end
+        elseif a.type == "deposit" then
             if not name then notify(ply, "Вы не во фракции.", 255, 100, 100) return end
             if amt <= 0 then return end
             if not GRM.HasMoney(ply, amt) then notify(ply, "Недостаточно средств.", 255, 100, 100) return end
@@ -641,7 +729,7 @@ if SERVER then
     end)
 
     load()
-    print("[GRM Economy] Unified Economy v2.0 загружена: фракций " .. table.Count(E.Data.factions))
+    print("[GRM Economy] Unified Economy v2.1 загружена: фракций " .. table.Count(E.Data.factions))
 end
 
 -- ============================================================
@@ -869,45 +957,18 @@ if CLIENT then
         net.Start(NET_OPEN_ADMIN) net.SendToServer()
     end)
 
-    -- ── БАНК-ТЕРМИНАЛ UI ────────────────────────────────────
+    -- ── БАНК-ТЕРМИНАЛ (БАНКОМАТ): вкладки — счёт / перевод / фракция ──
     net.Receive(NET_OPEN_BANK, function()
         local ent = net.ReadEntity()
         local d = net.ReadTable() or {}
-        local f = frame("Банковский терминал GRM", 560, 470)
+        local f = frame("Банкомат GRM", 580, 520)
 
-        local y = 50
-        local function big(txt, col)
-            local l = vgui.Create("DLabel", f)
-            l:SetPos(16, y) l:SetSize(530, 26)
-            l:SetText(txt) l:SetFont("GRM_Eco_Title")
-            l:SetTextColor(col or CUI.text)
-            y = y + 30
-        end
-        local function small(txt, col)
-            local l = vgui.Create("DLabel", f)
-            l:SetPos(16, y) l:SetSize(530, 20)
-            l:SetText(txt) l:SetFont("GRM_Eco_Normal")
-            l:SetTextColor(col or CUI.dim)
-            y = y + 24
-        end
+        local sheet = vgui.Create("DPropertySheet", f)
+        sheet:Dock(FILL)
+        sheet:DockMargin(8, 34, 8, 8)
 
-        big("Баланс: " .. money(d.balance or 0), CUI.green)
-        if (d.faction or "") ~= "" and d.factionData then
-            small("Фракция: " .. d.faction .. "  |  Бюджет: " .. money(d.factionData.budget or 0)
-                .. "  |  Налог: " .. math.floor((d.factionData.taxRate or 0) * 100) .. "%")
-            small("Ваша ЗП: " .. money(d.mySalary or 0)
-                .. (d.leader and "  |  Вы — ЛИДЕР" or ""), CUI.yellow)
-        else
-            small("Вы не состоите во фракции.", CUI.dim)
-        end
-        y = y + 8
-
-        local amt = vgui.Create("DTextEntry", f)
-        amt:SetPos(16, y) amt:SetSize(180, 28)
-        amt:SetNumeric(true) amt:SetPlaceholderText("Сумма...")
-
-        local function bankAction(t, extra)
-            local a = math.floor(tonumber(amt:GetValue()) or 0)
+        local function bankAction(t, amtEntry, extra)
+            local a = math.floor(tonumber(amtEntry:GetValue()) or 0)
             if a <= 0 then return end
             net.Start(NET_BANK_ACT)
                 net.WriteTable({ type = t, amount = a, to = extra })
@@ -915,38 +976,90 @@ if CLIENT then
             f:Close()
         end
 
-        local dep = btn(f, "В бюджет фракции", CUI.accent, 160, 28)
-        dep:SetPos(210, y) dep.DoClick = function() bankAction("deposit") end
-        local wd = btn(f, "Снять (лидер)", CUI.yellow, 150, 28)
-        wd:SetPos(380, y) wd.DoClick = function() bankAction("withdraw") end
-        y = y + 42
+        local function tabLabel(p, txt, col, x, y)
+            local l = vgui.Create("DLabel", p)
+            l:SetPos(x, y) l:SetSize(535, 24)
+            l:SetText(txt) l:SetFont("GRM_Eco_Title")
+            l:SetTextColor(col or CUI.text)
+        end
+        local function tabSmall(p, txt, col, x, y)
+            local l = vgui.Create("DLabel", p)
+            l:SetPos(x, y) l:SetSize(535, 20)
+            l:SetText(txt) l:SetFont("GRM_Eco_Normal")
+            l:SetTextColor(col or CUI.dim)
+        end
+        local function tabAmt(p, x, y)
+            local amt = vgui.Create("DTextEntry", p)
+            amt:SetPos(x, y) amt:SetSize(150, 28)
+            amt:SetNumeric(true) amt:SetPlaceholderText("Сумма...")
+            return amt
+        end
 
-        local combo = vgui.Create("DComboBox", f)
-        combo:SetPos(16, y) combo:SetSize(350, 28)
-        combo:SetValue("Получатель перевода...")
-        for _, p in ipairs(d.players or {}) do combo:AddChoice(p.nick, p.sid64) end
+        -- ВКЛАДКА 1: личный счёт — доступна ВСЕМ игрокам
+        local p1 = vgui.Create("DPanel", sheet)
+        p1.Paint = function() end
+        sheet:AddSheet("Мой счёт", p1, "icon16/money.png")
+        tabLabel(p1, "Наличные: " .. money(d.balance or 0), CUI.green, 14, 12)
+        tabLabel(p1, "Счёт в банке: " .. money(d.bank or 0), CUI.yellow, 14, 44)
+        local amt1 = tabAmt(p1, 14, 86)
+        local dep = btn(p1, "Внести на счёт", CUI.green, 160, 28)
+        dep:SetPos(174, 86)
+        dep.DoClick = function() bankAction("bank_deposit", amt1) end
+        local wd = btn(p1, "Снять со счёта", CUI.accent, 160, 28)
+        wd:SetPos(344, 86)
+        wd.DoClick = function() bankAction("bank_withdraw", amt1) end
+        tabSmall(p1, "Счёт в банке сохраняется всегда: при смерти теряются", CUI.dim, 14, 132)
+        tabSmall(p1, "только наличные, деньги на счёте — в безопасности.", CUI.dim, 14, 154)
 
-        local tr = btn(f, "➜ Перевести", CUI.green, 160, 28)
-        tr:SetPos(380, y)
+        -- ВКЛАДКА 2: перевод другому игроку (счёт -> счёт)
+        local p2 = vgui.Create("DPanel", sheet)
+        p2.Paint = function() end
+        sheet:AddSheet("Перевод", p2, "icon16/arrow_right.png")
+        tabLabel(p2, "Ваш счёт: " .. money(d.bank or 0), CUI.yellow, 14, 12)
+        local combo = vgui.Create("DComboBox", p2)
+        combo:SetPos(14, 50) combo:SetSize(330, 28)
+        combo:SetValue("Получатель (игроки онлайн)...")
+        for _, pl in ipairs(d.players or {}) do combo:AddChoice(pl.nick, pl.sid64) end
+        local amt2 = tabAmt(p2, 14, 92)
+        local tr = btn(p2, "Перевести со счёта", CUI.green, 190, 28)
+        tr:SetPos(174, 92)
         tr.DoClick = function()
             local _, sid = combo:GetSelected()
             if not sid then return end
-            bankAction("transfer", sid)
+            bankAction("bank_transfer", amt2, sid)
         end
-        y = y + 44
+        tabSmall(p2, "Списывается с вашего счёта, зачисляется на счёт получателя.", CUI.dim, 14, 138)
 
-        if d.factionData and istable(d.factionData.history) then
-            small("Последние операции фракции:", CUI.text)
-            local hist = vgui.Create("DScrollPanel", f)
-            hist:SetPos(16, y) hist:SetSize(530, math.max(60, 470 - y - 16))
-            hist.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CUI.panel) end
-            local h = d.factionData.history
-            for i = #h, math.max(1, #h - 30), -1 do
-                local rec = h[i]
-                local l = vgui.Create("DLabel", hist)
-                l:Dock(TOP) l:SetTall(16) l:DockMargin(8, 2, 4, 1)
-                l:SetFont("GRM_Eco_Small") l:SetTextColor(CUI.dim)
-                l:SetText(os.date("%d.%m %H:%M", rec.t or 0) .. " — " .. tostring(rec.s or ""))
+        -- ВКЛАДКА 3: фракция — только для членов фракции
+        if (d.faction or "") ~= "" and d.factionData then
+            local p3 = vgui.Create("DPanel", sheet)
+            p3.Paint = function() end
+            sheet:AddSheet("Фракция", p3, "icon16/group.png")
+            tabLabel(p3, d.faction .. ": бюджет " .. money(d.factionData.budget or 0), CUI.green, 14, 12)
+            tabSmall(p3, "Налог: " .. math.floor((d.factionData.taxRate or 0) * 100) .. "%"
+                .. "  |  Ваша ЗП: " .. money(d.mySalary or 0)
+                .. (d.leader and "  |  Вы — ЛИДЕР" or ""), CUI.yellow, 14, 44)
+            local amt3 = tabAmt(p3, 14, 76)
+            local fdep = btn(p3, "Внести в бюджет (наличные)", CUI.accent, 210, 28)
+            fdep:SetPos(174, 76)
+            fdep.DoClick = function() bankAction("deposit", amt3) end
+            local fwd = btn(p3, "Вывести (лидер)", CUI.yellow, 150, 28)
+            fwd:SetPos(394, 76)
+            fwd.DoClick = function() bankAction("withdraw", amt3) end
+
+            if istable(d.factionData.history) then
+                tabSmall(p3, "Последние операции фракции:", CUI.text, 14, 118)
+                local hist = vgui.Create("DScrollPanel", p3)
+                hist:SetPos(14, 142) hist:SetSize(535, 290)
+                hist.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CUI.panel) end
+                local h = d.factionData.history
+                for i = #h, math.max(1, #h - 30), -1 do
+                    local rec = h[i]
+                    local l = vgui.Create("DLabel", hist)
+                    l:Dock(TOP) l:SetTall(16) l:DockMargin(8, 2, 4, 1)
+                    l:SetFont("GRM_Eco_Small") l:SetTextColor(CUI.dim)
+                    l:SetText(os.date("%d.%m %H:%M", rec.t or 0) .. " — " .. tostring(rec.s or ""))
+                end
             end
         end
     end)
@@ -955,5 +1068,5 @@ if CLIENT then
         net.Start(NET_OPEN_ADMIN) net.SendToServer()
     end)
 
-    print("[GRM Economy] Unified Economy v2.0 — клиент загружен")
+    print("[GRM Economy] Unified Economy v2.1 — клиент загружен")
 end
