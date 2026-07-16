@@ -1,5 +1,9 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v2.3.4 (Код 43)
+    GRM Unified Economy v2.3.6 (Код 43)
+
+    v2.3.5/2.3.6: страж-синглтон; сохранение ≤8с гарантировано (файл
+    пишется только при реальных изменениях); сверка с базой 15с +
+    /dbcheck; защита от дедлока dirty.
 
     v2.3.4: сверка с базой grm_economy.json (счета/фракции/гос.бюджет):
             раз в 60с файл перечитывается, если менялся СНАРУЖИ —
@@ -94,6 +98,16 @@ local NET_INFO        = "GRM_Eco_Info"
 -- СЕРВЕР
 -- ============================================================
 if SERVER then
+    -- GRM-FIX: страж-синглтон: вторая копия модуля пропускается,
+    -- иначе две копии грызут один data-файл.
+    if GRM._economyCoreActive then
+        print("[GRM Economy][!] ВТОРАЯ копия sh_grm_economy.lua ПРОПУЩЕНА " ..
+              "(активен v" .. tostring(GRM._economyCoreVer) .. "). Удалите дубликат из addons/!")
+        return
+    end
+    GRM._economyCoreActive = true
+    GRM._economyCoreVer = "2.3.6"
+
     util.AddNetworkString(NET_OPEN_ADMIN)
     util.AddNetworkString(NET_ADMIN_DATA)
     util.AddNetworkString(NET_ADMIN_ACT)
@@ -180,9 +194,10 @@ if SERVER then
     -- Текст файла, который мы последний раз читали/писали — сверка с базой
     local lastDiskTxt = nil
 
-    local function save()
-        if not dirty then return end
+    local function save(force)
+        if not dirty and not force then return end
         local txt = util.TableToJSON(E.Data, true) or "{}"
+        if txt == lastDiskTxt then dirty = false return end -- без изменений: диск не долбим
         file.Write(DATA_FILE, txt)
         lastDiskTxt = txt
         dirty = false
@@ -506,7 +521,8 @@ if SERVER then
         end
     end)
 
-    timer.Create("GRM_Economy_AutoSave", 120, 0, save)
+    -- (убран старый автосейв 120с — заменён на: флаш 5с по изменениям + авто 8с)
+    timer.Create("GRM_Economy_AutoSave8s", 8, 0, function() save(true) end)
     hook.Add("ShutDown", "GRM_Economy_Save", function() dirty = true save() end)
     -- GRM-FIX: сброс изменений на диск каждые 5с — переживаем килл процесса
     timer.Create("GRM_Economy_Flush", 5, 0, function() if dirty then save() end end)
@@ -545,7 +561,7 @@ if SERVER then
             :format(tostring(reason), DATA_FILE, pushed))
         return true
     end
-    timer.Create("GRM_Economy_Reconcile", 60, 0, function() reconcileEconomy("тик 60с") end)
+    timer.Create("GRM_Economy_Reconcile", 15, 0, function() reconcileEconomy("тик 15с") end)
     concommand.Add("grm_economy_check", function(ply)
         if IsValid(ply) and not ply:IsSuperAdmin() then return end
         local ok = reconcileEconomy("команда")
