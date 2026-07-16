@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v1.1 (Код 42)
+    GRM Currency Core v1.2 (Код 42)
 
     Ядро валюты GRM — восстановлено с нуля (старый файл утерян).
     Реализует контракт, который ожидают уже существующие модули:
@@ -68,6 +68,10 @@ end
 if SERVER then
     util.AddNetworkString(NET_SYNC)
     util.AddNetworkString(NET_NOTIFY)
+    -- Совместимость с внешними модулями (Tab Menu Код 47, HUD Код 48):
+    util.AddNetworkString("grm_balance")
+    util.AddNetworkString("grm_request_bal")
+    util.AddNetworkString("grm_notify")
 
     -- records[sid64] = { balance = number, name = string }
     local records = {}
@@ -124,7 +128,16 @@ if SERVER then
         net.Start(NET_SYNC)
             net.WriteUInt(bal, 32)
         net.Send(ply)
+        -- Легаси-пуш для Tab Menu / HUD (мгновенное обновление баланса там)
+        net.Start("grm_balance")
+            net.WriteInt(bal, 32)
+        net.Send(ply)
     end
+
+    -- Запрос баланса от внешних клиентов (HUD при входе, Tab при обновлении)
+    net.Receive("grm_request_bal", function(_, ply)
+        if IsValid(ply) then pushBalance(ply) end
+    end)
 
     local function changed(ply, newBalance, delta, reason)
         hook.Run("GRM_MoneyChanged", ply, newBalance, delta, reason or "")
@@ -207,11 +220,21 @@ if SERVER then
     -- Цветное уведомление: тост + продублировано в чат.
     function GRM.Notify(ply, msg, r, g, b)
         if not IsValid(ply) or not ply:IsPlayer() then return end
+        local rr = math.Clamp(math.floor(tonumber(r) or 255), 0, 255)
+        local gg = math.Clamp(math.floor(tonumber(g) or 255), 0, 255)
+        local bb = math.Clamp(math.floor(tonumber(b) or 255), 0, 255)
         net.Start(NET_NOTIFY)
             net.WriteString(tostring(msg or ""))
-            net.WriteUInt(math.Clamp(math.floor(tonumber(r) or 255), 0, 255), 8)
-            net.WriteUInt(math.Clamp(math.floor(tonumber(g) or 255), 0, 255), 8)
-            net.WriteUInt(math.Clamp(math.floor(tonumber(b) or 255), 0, 255), 8)
+            net.WriteUInt(rr, 8)
+            net.WriteUInt(gg, 8)
+            net.WriteUInt(bb, 8)
+        net.Send(ply)
+        -- Легаси-дубль для стека уведомлений HUD (Код 48)
+        net.Start("grm_notify")
+            net.WriteString(tostring(msg or ""))
+            net.WriteUInt(rr, 8)
+            net.WriteUInt(gg, 8)
+            net.WriteUInt(bb, 8)
         net.Send(ply)
     end
 
@@ -332,6 +355,13 @@ if CLIENT then
     net.Receive(NET_SYNC, function()
         GRM.LocalBalance = net.ReadUInt(32)
         hook.Run("GRM_LocalMoneyChanged", GRM.LocalBalance)
+    end)
+
+    -- Зеркало для внешних модулей: HUD (Код 48) и Tab Menu (Код 47)
+    -- читают GRM.PlayerBalance как единственный источник баланса.
+    GRM.PlayerBalance = GRM.PlayerBalance or GRM.LocalBalance
+    hook.Add("GRM_LocalMoneyChanged", "GRM_Currency_MirrorPlayerBalance", function(bal)
+        GRM.PlayerBalance = bal
     end)
 
     net.Receive(NET_NOTIFY, function()

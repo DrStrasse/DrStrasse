@@ -10,7 +10,7 @@
 (или прямо в `garrysmod/lua/`). Файлы в `lua/autorun/` загружаются
 автоматически на сервере и клиенте.
 
-## Файлы (куски 1–5 + собственные наработки — 44 модуля)
+## Файлы (куски 1–5 + собственные наработки — 47 модулей)
 
 > **Экономика переписана с нуля (Код 43):** старые модули Код 9
 > (`sh_grm_faction_economy_plus.lua`) и Код 12 (`sh_grm_faction_economy.lua`)
@@ -33,7 +33,10 @@
 | 11 | `lua/autorun/sh_faction_fixes.lua` | Расширение фракций: комендантский час `/kom_hour`, модели+bodygroups, оружие по рангам, маскировка V2, `/gnews` |
 | ~~12~~ | ~~`sh_grm_faction_economy.lua`~~ | **УДАЛЁН** — заменён Кодом 43 |
 | 43 | `lua/autorun/sh_grm_economy.lua` | **Единая экономика v2.0 (с нуля):** бюджеты/налоги (только с ЗП!) фракций, зарплаты по ролям/отделам, штрафы `/fine`, история, импорт легаси-данных, админ-панель `/salary_admin` (обновляется без переоткрытия), банк-терминал; команды `!fbudget !fpay !fwithdraw !fpayall !fsettax /mysalary` |
-| 44–46 | `lua/entities/grm_bank_terminal/{shared,init,cl_init}.lua` | **Банковский терминал** (замена «недоделанного терминала»): E → баланс, взнос/снятие бюджета, переводы игрокам, история операций, 3D2D-табличка |
+| 44–46 | `lua/entities/grm_bank_terminal/{shared,init,cl_init}.lua` | **Банкомат** (замена «недоделанного терминала», модель `models/starless/atm.mdl`): E → вкладки «Мой счёт» (личный банковский счёт для ВСЕХ игроков), «Перевод» (счёт→счёт), «Фракция» (бюджет/ЗП/история), 3D2D-табличка |
+| 47 | `lua/autorun/sh_grm_tab_menu.lua` | Tab-меню v1.7 (scoreboard): список игроков с рангом/фракцией/балансом/пингом, поиск, сортировки, детальная панель (гаг/кик/бан/ULX-мут/спавн транспорта), личная заглушка голоса; команда `grm_tabmenu` |
+| 48 | `lua/autorun/client/cl_grm_hud.lua` | HUD v10.0: HP/броня бары, деньги (`GRM.PlayerBalance`), патроны, кастомный селектор оружия (колёсико/1-6/ЛКМ), стек уведомлений, шрифты `GRM_HUD_*`, скрытие ванильных элементов |
+| 49 | `lua/autorun/client/cl_grm_inventory_ui.lua` | GUI инвентаря v2.1: сетка 6×4 со слотами, drag&drop перемещение, детальная панель предмета (использовать/выбросить/разделить), дефолтные иконки завода, учёт веса `GRM.Encumbrance` (если есть), защита переопределения `INV.OpenGUI` |
 | 13 | `lua/autorun/sh_grm_admin_menu.lua` | Суперадмин-меню экономики v1.1: балансы, персональные налоги, переводы, журнал действий — `!grmmenu` |
 | 14 | `lua/autorun/sh_grm_shop_integration.lua` | Интеграция магазина/дилера: сканер транспорта (GMod/SimFPhys/LVS/Glide), вкладка «Транспорт» в меню лидера, `/scanvehicles` `/vlist` |
 | 15 | `lua/autorun/sh_spawn_points.lua` | Точки спавна фракций/глобальные (per-map JSON), админ-меню `/spawnmenu`, случайный спавн по точкам |
@@ -53,7 +56,7 @@
 | 37–39 | `lua/entities/grm_phone_wiretap/{shared,init,cl_init}.lua` | Entity прослушки: TargetNumber/ExchangeID/Active, Use() → меню прослушки, 3D2D-индикатор ON/OFF — **последний кусок телефонии** |
 | 40 | `lua/autorun/client/cl_grm_faction_logistics.lua` | Клиент логистики: меню рейса/погрузки/ящика/склада/арсенала, админ-доступ, HUD-подписи и маршрут, анимация переноски ящика |
 | 41 | `lua/autorun/client/cl_grm_factory_fullcycle.lua` | Клиент завода: крафт-меню (3D-превью оружия), склад, мусорка, терминал продажи GPU, скупщик/шкаф, QTE на стрелках, HUD прогресса |
-| 42 | `lua/autorun/sh_grm_currency.lua` | **Ядро валюты v1.0 — написано с нуля** (старый файл утерян): `GiveMoney/TakeMoney/HasMoney/GetBalance/SetBalance/Format/Notify`, `StartBalance`, `LocalBalance`, JSON-персистентность, офлайн-игроки, хук `GRM_MoneyChanged`, консоль `grm_money` |
+| 42 | `lua/autorun/sh_grm_currency.lua` | **Ядро валюты v1.2 — написано с нуля** (старый файл утерян): `GiveMoney/TakeMoney/HasMoney/GetBalance/SetBalance/Format/Notify` (+ опциональный `reason`), `GetAllBalances`, JSON-персистентность, офлайн-игроки, хуки `GRM_MoneyChanged`/`GRM_LocalMoneyChanged`, консоль `grm_money`, легаси-мост `grm_balance`/`grm_request_bal`/`grm_notify` + зеркало `GRM.PlayerBalance` для Tab/HUD |
 
 ## Зависимости, которых пока НЕТ в репозитории
 
@@ -63,9 +66,9 @@
 - **Entity дилера** (`entities/sent_vehicle_dealer/…`) — `vehicle_dealer.lua` это патч поверх неё
 - Радио-модуль с глобальной таблицей `RadioFrequencies` (для телефонной интеграции рации)
 - `GRM.Encumbrance` — система веса/перегруза
-- GUI инвентаря: `GRM.Inventory.OpenGUI()` + entity `grm_item_drop`
+- ~~GUI инвентаря: `GRM.Inventory.OpenGUI()`~~ — **ПОЛУЧЕНО** (Код 49). Осталась entity `grm_item_drop`
 - `GRM.Chat` — основная реализация чата (здесь только конфиг); вероятно, она же даёт хук `PlayerSayTransform`
-- Шрифты `GRM_HUD_Label`, `GRM_HUD_Value` — из HUD-ядра
+- ~~Шрифты `GRM_HUD_Label`..`GRM_SlotNameActive`~~ — **ПОЛУЧЕНЫ** с HUD v10.0 (Код 48)
 - Внешние: ArcCW (оружие), simfphys/LVS (матовозки/транспорт), ULX/ULib (опционально)
 - Ресурс `sound/kom_hour.wav` — положить в `addons/grm/sound/`
 
