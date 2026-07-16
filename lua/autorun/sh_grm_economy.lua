@@ -1,5 +1,12 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v2.3.1 (Код 43)
+    GRM Unified Economy v2.3.2 (Код 43)
+
+    v2.3.2: починка вкладки «Фракции» — список/редактор теперь
+            раскладываются по РЕАЛЬНЫМ размерам страницы (PerformLayout),
+            а не по нулевым в момент создания (DPropertySheet растягивает
+            только активную страницу); свой заметный крестик закрытия
+            (движковый был невидим на тёмной шапке); единый тёмный фон
+            всех вкладок админки и банкомата.
 
     v2.3.1: фикс краша админ-панели "Tried to use a NULL Panel!"
             (dframe.lua, SetPos) — buildAdminUI больше не зовёт
@@ -1032,11 +1039,27 @@ if CLIENT then
     local function frame(title, w, h)
         local f = vgui.Create("DFrame")
         f:SetTitle("") f:SetSize(w, h) f:Center() f:MakePopup()
+        -- GRM-FIX: движковый крестик (скин) невидим на тёмной шапке —
+        -- прячем его и рисуем свой, контрастный.
+        f:ShowCloseButton(false)
         f.Paint = function(_, pw, ph)
             draw.RoundedBox(8, 0, 0, pw, ph, CUI.bg)
             draw.RoundedBoxEx(8, 0, 0, pw, 36, Color(27, 35, 48), true, true, false, false)
             draw.SimpleText(title, "GRM_Eco_Title", 13, 18, CUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
+        local bx = vgui.Create("DButton", f)
+        bx:SetText("") bx:SetPos(w - 42, 6) bx:SetSize(30, 24)
+        bx:SetTooltip("Закрыть")
+        bx.DoClick = function() f:Close() end
+        bx.Paint = function(_, pw, ph)
+            draw.RoundedBox(4, 0, 0, pw, ph, _:IsHovered() and Color(196, 62, 62) or Color(46, 56, 74))
+            surface.SetDrawColor(240, 242, 246)
+            surface.DrawLine(9, 7, pw - 9, ph - 7)
+            surface.DrawLine(9, ph - 7, pw - 9, 7)
+        end
+        -- помечаем как хром окна: пересборка содержимого (buildAdminUI)
+        -- НЕ должна удалять крестик
+        bx._grmChrome = true
         return f
     end
 
@@ -1080,7 +1103,7 @@ if CLIENT then
         for _, ch in ipairs(adminFrame:GetChildren()) do
             if ch ~= adminFrame.btnClose and ch ~= adminFrame.btnMaxim
                 and ch ~= adminFrame.btnMinim and ch ~= adminFrame.lblTitle
-                and ch ~= adminFrame.imgIcon then
+                and ch ~= adminFrame.imgIcon and not ch._grmChrome then
                 ch:Remove()
             end
         end
@@ -1095,6 +1118,7 @@ if CLIENT then
         local function sheetPanel(name, icon)
             local p = vgui.Create("DPanel", tabs)
             p:SetPaintBackground(false)
+            p.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
             local sh = tabs:AddSheet(name, p, icon)
             local oldClick = sh.Tab.DoClick
             sh.Tab.DoClick = function(...)
@@ -1251,7 +1275,7 @@ if CLIENT then
             local pnl = sheetPanel("Фракции", "icon16/group.png")
             local listW = 230
             local list = vgui.Create("DListView", pnl)
-            list:SetPos(4, 4) list:SetSize(listW, pnl:GetTall() - 8)
+            list:SetPos(4, 4) list:SetSize(listW, 560)
             list:SetMultiSelect(false)
             list:AddColumn("Фракция") list:AddColumn("Бюджет")
 
@@ -1265,8 +1289,27 @@ if CLIENT then
             end
 
             local editor = vgui.Create("DPanel", pnl)
-            editor:SetPos(listW + 12, 4) editor:SetSize(pnl:GetWide() - listW - 16, pnl:GetTall() - 8)
+            editor:SetPos(listW + 12, 4) editor:SetSize(700, 560)
             editor.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CUI.panel) end
+
+            -- GRM-FIX: DPropertySheet растягивает страницу только при её
+            -- активации, поэтому GetWide()/GetTall() в момент создания почти
+            -- всегда нулевые — список «схлопывался», фракции не отображались.
+            -- Считаем размеры по РЕАЛЬНОЙ раскладке (PerformLayout).
+            local editorSub = nil
+            pnl.PerformLayout = function(_, w, h)
+                list:SetPos(4, 4) list:SetSize(listW, h - 8)
+                if IsValid(editor) then
+                    editor:SetPos(listW + 12, 4)
+                    editor:SetSize(math.max(200, w - listW - 16), h - 8)
+                end
+            end
+            editor.PerformLayout = function(_, w, h)
+                if IsValid(editorSub) then
+                    editorSub:SetPos(8, 58)
+                    editorSub:SetSize(math.max(300, w - 16), math.max(200, h - 66))
+                end
+            end
 
             local function showEditor(name)
                 editor:Clear()
@@ -1296,7 +1339,8 @@ if CLIENT then
                 label(editor, "Бюджет: " .. money(e.budget or 0), 12, 32, CUI.yellow, 420)
 
                 local sub = vgui.Create("DPropertySheet", editor)
-                sub:SetPos(8, 58) sub:SetSize(editor:GetWide() - 16, editor:GetTall() - 66)
+                sub:SetPos(8, 58) sub:SetSize(math.max(300, editor:GetWide() - 16), math.max(200, editor:GetTall() - 66))
+                editorSub = sub
 
                 -- ── ПОДВКЛАДКА: ЗАРПЛАТЫ ──
                 local pz = vgui.Create("DPanel", sub)
@@ -1330,12 +1374,12 @@ if CLIENT then
                 end
 
                 label(pz, "История:", 10, 174, CUI.text)
-                histBox(pz, e.history or {}, 10, 198, 270, math.max(60, pz:GetTall() - 198 - 52))
+                local histZ = histBox(pz, e.history or {}, 10, 198, 270, 300)
 
                 -- ЗП по ролям (ставки)
                 label(pz, "ЗП по ролям (ставки):", 300, 8, CUI.text)
                 local rolesBox = vgui.Create("DScrollPanel", pz)
-                rolesBox:SetPos(300, 30) rolesBox:SetSize(pz:GetWide() - 312, (pz:GetTall() - 140) / 2)
+                rolesBox:SetPos(300, 30) rolesBox:SetSize(600, 180)
                 rolesBox.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
                 for _, rName in ipairs(fd.roles or {}) do
                     local row = vgui.Create("DPanel", rolesBox)
@@ -1349,10 +1393,10 @@ if CLIENT then
                 end
 
                 -- ЗП по отделам (надбавки)
-                label(pz, "ЗП по отделам (надбавки):", 300, 34 + (pz:GetTall() - 140) / 2 + 10, CUI.text)
+                local deptLbl = label(pz, "ЗП по отделам (надбавки):", 300, 230, CUI.text)
                 local deptsBox = vgui.Create("DScrollPanel", pz)
-                deptsBox:SetPos(300, 34 + (pz:GetTall() - 140) / 2 + 32)
-                deptsBox:SetSize(pz:GetWide() - 312, (pz:GetTall() - 140) / 2 - 50)
+                deptsBox:SetPos(300, 254)
+                deptsBox:SetSize(600, 120)
                 deptsBox.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
                 for _, dName in ipairs(fd.departments or {}) do
                     local row = vgui.Create("DPanel", deptsBox)
@@ -1402,7 +1446,7 @@ if CLIENT then
 
                 label(pf, "Роли с правом штрафовать:", 10, 206, CUI.text, 340)
                 local rolesFine = vgui.Create("DScrollPanel", pf)
-                rolesFine:SetPos(10, 230) rolesFine:SetSize(340, math.max(80, pf:GetTall() - 230 - 56))
+                rolesFine:SetPos(10, 230) rolesFine:SetSize(340, 240)
                 rolesFine.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
                 for _, rName in ipairs(fd.roles or {}) do
                     local c = vgui.Create("DCheckBoxLabel", rolesFine)
@@ -1447,17 +1491,35 @@ if CLIENT then
                 end
 
                 local saveZ = btn(pz, "Сохранить", CUI.green, 150, 32)
-                saveZ:SetPos(10, pz:GetTall() - 42)
+                saveZ:SetPos(10, 520)
                 saveZ.DoClick = doSave
                 local payNow = btn(pz, "Выплатить ЗП сейчас", CUI.yellow, 180, 32)
-                payNow:SetPos(170, pz:GetTall() - 42)
+                payNow:SetPos(170, 520)
                 payNow.DoClick = function()
                     act({ action = "pay_now", faction = name })
                 end
 
                 local saveF = btn(pf, "Сохранить", CUI.green, 150, 32)
-                saveF:SetPos(10, pf:GetTall() - 42)
+                saveF:SetPos(10, 520)
                 saveF.DoClick = doSave
+
+                -- GRM-FIX: применяем РЕАЛЬНЫЕ размеры страниц при раскладке
+                pz.PerformLayout = function(_, w, h)
+                    local half = math.max(90, (h - 140) / 2)
+                    if IsValid(histZ)    then histZ:SetSize(270, math.max(60, h - 198 - 52)) end
+                    if IsValid(rolesBox) then rolesBox:SetSize(math.max(200, w - 312), half) end
+                    if IsValid(deptLbl)  then deptLbl:SetPos(300, 34 + half + 10) end
+                    if IsValid(deptsBox) then
+                        deptsBox:SetPos(300, 34 + half + 32)
+                        deptsBox:SetSize(math.max(200, w - 312), math.max(40, half - 50))
+                    end
+                    if IsValid(saveZ)    then saveZ:SetPos(10, h - 42) end
+                    if IsValid(payNow)   then payNow:SetPos(170, h - 42) end
+                end
+                pf.PerformLayout = function(_, w, h)
+                    if IsValid(rolesFine) then rolesFine:SetSize(340, math.max(80, h - 230 - 56)) end
+                    if IsValid(saveF)     then saveF:SetPos(10, h - 42) end
+                end
             end
 
             list.OnRowSelected = function(_, _, ln) showEditor(ln.Faction) end
@@ -1602,6 +1664,8 @@ if CLIENT then
 
         -- ВКЛАДКА 1: личный счёт — доступна ВСЕМ игрокам
         local p1 = vgui.Create("DPanel", sheet)
+        p1:SetPaintBackground(false)
+        p1.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
         p1.Paint = function() end
         sheet:AddSheet("Мой счёт", p1, "icon16/money.png")
         tabLabel(p1, "Наличные: " .. money(d.balance or 0), CUI.green, 14, 12)
@@ -1618,6 +1682,8 @@ if CLIENT then
 
         -- ВКЛАДКА 2: перевод другому игроку (счёт -> счёт)
         local p2 = vgui.Create("DPanel", sheet)
+        p2:SetPaintBackground(false)
+        p2.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
         p2.Paint = function() end
         sheet:AddSheet("Перевод", p2, "icon16/arrow_right.png")
         tabLabel(p2, "Ваш счёт: " .. money(d.bank or 0), CUI.yellow, 14, 12)
@@ -1638,6 +1704,8 @@ if CLIENT then
         -- ВКЛАДКА 3: фракция — только для членов фракции
         if (d.faction or "") ~= "" and d.factionData then
             local p3 = vgui.Create("DPanel", sheet)
+        p3:SetPaintBackground(false)
+        p3.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
             p3.Paint = function() end
             sheet:AddSheet("Фракция", p3, "icon16/group.png")
             tabLabel(p3, d.faction .. ": бюджет " .. money(d.factionData.budget or 0), CUI.green, 14, 12)
