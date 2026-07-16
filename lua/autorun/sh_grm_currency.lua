@@ -1,5 +1,13 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v1.4.1 (Код 42)
+    GRM Currency Core v1.5 (Код 42)
+
+    v1.5 (заказ владельца): сверка «память ↔ база» (disk reconcile).
+      - Ядро хранит зеркало последнего состояния диска (diskMirror);
+      - каждые 60с И при входе игрока файл перечитывается: если запись
+        в базе ОТЛИЧАЕТСЯ от зеркала (базу правили снаружи/другой процесс) —
+        баланс в игре ПОДНИМАЕТСЯ ИЗ БАЗЫ с пушем в HUD и записью в лог;
+      - свои свежие изменения сверка не затирает (файл == зеркалу → пропуск);
+      - ручной прогон: grm_money check в серверной консоли.
 
     v1.4.1: диагностика персистентности + защита от перезаписи:
       - SAVE/LOAD печатают факты (счетов, байт, путь) — видно, где обрыв;
@@ -96,6 +104,13 @@ if SERVER then
     -- records[sid64] = { balance = number, name = string }
     local records = {}
     local dirty = false
+    -- Зеркало последнего состояния файла на диске (sid64 → balance):
+    -- чем файл отличается от зеркала — то изменилось СНАРУЖИ (не нами).
+    local diskMirror = {}
+    local function mirrorFill()
+        diskMirror = {}
+        for sid, rec in pairs(records) do diskMirror[sid] = rec.balance end
+    end
 
     local function normalize(amount)
         amount = math.floor(tonumber(amount) or 0)
@@ -133,6 +148,7 @@ if SERVER then
         end
         file.Write(DATA_FILE, txt)
         file.Write("grm_currency_backup.json", txt) -- зеркало на случай повреждения
+        mirrorFill() -- записали мы: зеркало = нашему состоянию
         dirty = false
         print(("[GRM Currency] SAVE ok: счетов %d, %d байт -> data/%s")
             :format(table.Count(records), #txt, DATA_FILE))
@@ -302,9 +318,61 @@ if SERVER then
     end
 
     -- ========================================================
+    -- СВЕРКА «ПАМЯТЬ ↔ БАЗА»: база главнее, если её правили снаружи
+    -- ========================================================
+    -- Поднимает баланс игрока из файла, если в файле значение отличается
+    -- от последнего известного нам состояния диска. Свои свежие, ещё не
+    -- сброшенные изменения НЕ трогает (файл тогда == зеркалу).
+    local function reconcile(reason)
+        if dirty then return 0 end -- память впереди диска: не сверяемся в этот тик
+        if not file.Exists(DATA_FILE, "DATA") then return 0 end
+        local rawTxt = file.Read(DATA_FILE, "DATA") or ""
+        local okJs, raw = pcall(util.JSONToTable, rawTxt)
+        if not okJs or not istable(raw) then return 0 end
+        local adopted = 0
+        for sid, rec in pairs(raw) do
+            if isstring(sid) and type(rec) == "table" then
+                local diskBal = normalize(rec.balance)
+                local mirrorBal = diskMirror[sid]
+                if mirrorBal == nil and records[sid] == nil then
+                    -- запись есть в базе, но её нет в памяти и не было: поднимаем
+                    local mem = ensure(sid, tostring(rec.name or "?"))
+                    mem.balance = diskBal
+                    diskMirror[sid] = diskBal
+                    adopted = adopted + 1
+                    print(("[GRM Currency] DB↔MEM [%s] новая запись из базы: %s"):format(reason, sid))
+                elseif mirrorBal ~= nil and diskBal ~= mirrorBal then
+                    -- файл менялся снаружи: база главнее
+                    local mem = records[sid] or ensure(sid, tostring(rec.name or "?"))
+                    local old = mem.balance
+                    if old ~= diskBal then
+                        mem.balance = diskBal
+                        mem.name = tostring(rec.name or mem.name)
+                        adopted = adopted + 1
+                        local online = onlinePlayerOf(sid)
+                        if online then pushBalance(online) end
+                        hook.Run("GRM_MoneyChanged", online or sid, diskBal, diskBal - old,
+                            "Сверка с базой (" .. tostring(reason) .. ")")
+                        print(("[GRM Currency] DB↔MEM [%s] %s: %d → %d (поднято из базы)")
+                            :format(reason, sid, old, diskBal))
+                    end
+                end
+            end
+        end
+        return adopted
+    end
+
+    concommand.Add("grm_money_check", function(ply)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        local n = reconcile("команда")
+        print(("[GRM Currency] сверка завершена: принято изменений из базы: %d"):format(n))
+    end)
+
+    -- ========================================================
     -- ЖИЗНЕННЫЙ ЦИКЛ
     -- ========================================================
     loadData()
+    mirrorFill()
 
     hook.Add("PlayerInitialSpawn", "GRM_Currency_Init", function(ply)
         if not IsValid(ply) or ply:IsBot() then return end
@@ -320,7 +388,10 @@ if SERVER then
         -- Клиент может быть ещё не готов принимать net — шлём с задержкой.
         local tag = "GRM_Currency_FirstSync_" .. sid
         timer.Create(tag, 2, 1, function()
-            if IsValid(ply) then pushBalance(ply) end
+            if IsValid(ply) then
+                reconcile("вход игрока") -- поднять правки базы, сделанные пока игрок был офлайн
+                pushBalance(ply)
+            end
         end)
     end)
 
@@ -342,6 +413,12 @@ if SERVER then
     -- килл процесса без ShutDown и длинные окна автосейва.
     timer.Create("GRM_Currency_Flush", 5, 0, function()
         if dirty then saveNow() end
+    end)
+
+    -- Сверка с базой раз в минуту (поднимает внешние правки файла)
+    timer.Create("GRM_Currency_Reconcile", 60, 0, function()
+        local n = reconcile("тик 60с")
+        if n > 0 then print(("[GRM Currency] сверка: принято %d изменений из базы"):format(n)) end
     end)
 
     -- ========================================================

@@ -1,5 +1,10 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v2.3.3 (Код 43)
+    GRM Unified Economy v2.3.4 (Код 43)
+
+    v2.3.4: сверка с базой grm_economy.json (счета/фракции/гос.бюджет):
+            раз в 60с файл перечитывается, если менялся СНАРУЖИ —
+            данные поднимаются из базы, счета онлайн-игроков улетают
+            в HUD; свои несброшенные изменения сверка не трогает.
 
     v2.3.3 (заказ владельца): банковский счёт теперь синхронизируется
             в HUD (своя строка «НА СЧЁТУ»): каналы GRM_Bank_Sync/Request,
@@ -172,9 +177,14 @@ if SERVER then
     end
 
     -- ── Сохранение / загрузка / импорт легаси ───────────────
+    -- Текст файла, который мы последний раз читали/писали — сверка с базой
+    local lastDiskTxt = nil
+
     local function save()
         if not dirty then return end
-        file.Write(DATA_FILE, util.TableToJSON(E.Data, true) or "{}")
+        local txt = util.TableToJSON(E.Data, true) or "{}"
+        file.Write(DATA_FILE, txt)
+        lastDiskTxt = txt
         dirty = false
     end
 
@@ -500,6 +510,47 @@ if SERVER then
     hook.Add("ShutDown", "GRM_Economy_Save", function() dirty = true save() end)
     -- GRM-FIX: сброс изменений на диск каждые 5с — переживаем килл процесса
     timer.Create("GRM_Economy_Flush", 5, 0, function() if dirty then save() end end)
+
+    -- GRM-FIX: сверка с базой (файл grm_economy.json как «база данных»).
+    -- Если файл изменился снаружи (правили руками через FTP, другой
+    -- инструмент) — поднимаем его целиком; свои несброшенные правки не теряем.
+    local function reconcileEconomy(reason)
+        if dirty then return false end
+        if not file.Exists(DATA_FILE, "DATA") then return false end
+        local txt = file.Read(DATA_FILE, "DATA") or ""
+        if txt == lastDiskTxt then return false end -- файл не менялся с нашей записи/чтения
+        local okJs, t = pcall(util.JSONToTable, txt)
+        if not okJs or not istable(t) then return false end
+        local oldAccounts = E.Data.accounts
+        E.Data = t
+        E.Data.version = 2
+        E.Data.factions = istable(E.Data.factions) and E.Data.factions or {}
+        E.Data.accounts = istable(E.Data.accounts) and E.Data.accounts or {}
+        E.Data.state = istable(E.Data.state) and E.Data.state or { budget = 0, history = {} }
+        E.Data.log = istable(E.Data.log) and E.Data.log or {}
+        E.Data.config = istable(E.Data.config) and E.Data.config or {}
+        if applyConfig then pcall(applyConfig) end
+        lastDiskTxt = txt
+        -- пушим счета, если они реально изменились
+        local pushed = 0
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and p:IsPlayer() then
+                local sid = p:SteamID64()
+                local oldBal = oldAccounts and oldAccounts[sid] and oldAccounts[sid].balance or 0
+                local newBal = E.Data.accounts[sid] and E.Data.accounts[sid].balance or 0
+                if oldBal ~= newBal then pushBank(p) pushed = pushed + 1 end
+            end
+        end
+        print(("[GRM Economy] DB↔MEM [%s]: данные подняты из %s, счетов обновлено онлайн: %d")
+            :format(tostring(reason), DATA_FILE, pushed))
+        return true
+    end
+    timer.Create("GRM_Economy_Reconcile", 60, 0, function() reconcileEconomy("тик 60с") end)
+    concommand.Add("grm_economy_check", function(ply)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        local ok = reconcileEconomy("команда")
+        print("[GRM Economy] сверка завершена: " .. (ok and "подняты изменения из базы" or "расхождений нет"))
+    end)
 
     -- ── ДОСТУП К ШТРАФАМ (v2.3): кто и кого может штрафовать ──
     -- Возвращает true либо false + причину отказа.
@@ -1052,6 +1103,7 @@ if SERVER then
     end)
 
     load()
+    lastDiskTxt = file.Exists(DATA_FILE, "DATA") and (file.Read(DATA_FILE, "DATA") or "") or nil
     print("[GRM Economy] Unified Economy v2.3 загружена: фракций " .. table.Count(E.Data.factions))
 end
 
