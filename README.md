@@ -10,7 +10,13 @@
 (или прямо в `garrysmod/lua/`). Файлы в `lua/autorun/` загружаются
 автоматически на сервере и клиенте.
 
-## Файлы (куски 1–5 + восстановленное ядро валюты — 42 модуля)
+## Файлы (куски 1–5 + собственные наработки — 44 модуля)
+
+> **Экономика переписана с нуля (Код 43):** старые модули Код 9
+> (`sh_grm_faction_economy_plus.lua`) и Код 12 (`sh_grm_faction_economy.lua`)
+> **удалены и заменены** единым аддоном `sh_grm_economy.lua`. Данные старых
+> файлов (`grm_faction_budgets.json`, `grm_faction_economy_plus.json`)
+> одноразово импортируются при первом запуске.
 
 | # | Файл | Назначение |
 |---|------|-----------|
@@ -22,10 +28,12 @@
 | 6 | `lua/autorun/sh_grm_inventory.lua` | Инвентарь: 24 слота, стаки, оружие/патроны/предметы, выброс `grm_item_drop`, JSON-персистентность |
 | 7 | `lua/autorun/sh_grm_movement.lua` | Стамина: бег/прыжки, звук дыхания (CreateSound), HUD-полоса выносливости |
 | 8 | `lua/autorun/sh_grm_chat_config.lua` | Конфиг чата: радиусы local/whisper/yell/LOOC, цвета, настройки контекстного меню |
-| 9 | `lua/autorun/sh_grm_faction_economy_plus.lua` | Экономика Plus: бюджеты, налоги, зарплаты по рангам/отделам, история, панель `/salary_admin` |
+| ~~9~~ | ~~`sh_grm_faction_economy_plus.lua`~~ | **УДАЛЁН** — заменён Кодом 43 |
 | 10 | `lua/autorun/sh_factions.lua` | Ядро фракций: ранги, отделы, приглашения, рация `/fr`, волна `/dep` `/depb`, меню `/factions`, HUD-таблички |
 | 11 | `lua/autorun/sh_faction_fixes.lua` | Расширение фракций: комендантский час `/kom_hour`, модели+bodygroups, оружие по рангам, маскировка V2, `/gnews` |
-| 12 | `lua/autorun/sh_grm_faction_economy.lua` | Базовая экономика фракций: бюджет, налог, `!fbudget` `!fpay` `!fwithdraw` `!fpayall` `!fsettax` |
+| ~~12~~ | ~~`sh_grm_faction_economy.lua`~~ | **УДАЛЁН** — заменён Кодом 43 |
+| 43 | `lua/autorun/sh_grm_economy.lua` | **Единая экономика v2.0 (с нуля):** бюджеты/налоги (только с ЗП!) фракций, зарплаты по ролям/отделам, штрафы `/fine`, история, импорт легаси-данных, админ-панель `/salary_admin` (обновляется без переоткрытия), банк-терминал; команды `!fbudget !fpay !fwithdraw !fpayall !fsettax /mysalary` |
+| 44–46 | `lua/entities/grm_bank_terminal/{shared,init,cl_init}.lua` | **Банковский терминал** (замена «недоделанного терминала»): E → баланс, взнос/снятие бюджета, переводы игрокам, история операций, 3D2D-табличка |
 | 13 | `lua/autorun/sh_grm_admin_menu.lua` | Суперадмин-меню экономики v1.1: балансы, персональные налоги, переводы, журнал действий — `!grmmenu` |
 | 14 | `lua/autorun/sh_grm_shop_integration.lua` | Интеграция магазина/дилера: сканер транспорта (GMod/SimFPhys/LVS/Glide), вкладка «Транспорт» в меню лидера, `/scanvehicles` `/vlist` |
 | 15 | `lua/autorun/sh_spawn_points.lua` | Точки спавна фракций/глобальные (per-map JSON), админ-меню `/spawnmenu`, случайный спавн по точкам |
@@ -65,7 +73,7 @@
 
 `factions.json`, `invites.json`, `factions_extended.json`, `fw_faction_extras.json`,
 `default_models.json`, `default_weapons.json`, `grm_inventories.json`,
-`grm_faction_budgets.json`, `grm_faction_economy_plus.json`, `gnews_log.txt`,
+`grm_economy.json` (+ legacy `grm_faction_budgets.json`, `grm_faction_economy_plus.json` — импортируются один раз), `gnews_log.txt`,
 `grm_logistics/{access.json, inventory_crates.json, maps/<map>.json}`,
 `grm_factory_fullcycle/{weapon_lockers.json, weapon_market.json, weapon_buyers.json, maps/<map>.json}`,
 `grm_admin_log.json`, `grm_player_taxes.json`, `grm_currency.json`,
@@ -78,7 +86,7 @@
 
 **Игрок:** `/inv`, `/store`, `/fjoin`, `/fleave`, `/fr`, `/dep`, `/depb`, `/mask`,
 `/model`, `/gnews`, `/kom_hour`, `/logistics_start`, `/logistics_crates`,
-`!fbudget`, `!fpay`, `!fwithdraw`, `!fpayall`, `!fsettax`, `/vlist`, `/myvehicles`,
+`!fbudget`, `!fpay`, `!fwithdraw`, `!fpayall`, `!fsettax`, `/mysalary`, `/fine <сумма> [причина]`, `/vlist`, `/myvehicles`,
 `/vshop`, `/phoneshop` (`/teleshop`), `/phone_remove`
 
 **Лидер фракции:** `/vaccess` (доступ транспорта для рангов/отделов)
@@ -92,6 +100,6 @@
 `grm_phone_save/load`, `grm_phone_remove_look`, `grm_phone_admin_remove`,
 `grm_phone_shop_admin`, `grm_phone_shop_add_look`, `grm_phone_shop_reload`,
 `grm_phone_access_reload`, `grm_phone_access_debug`,
-`grm_money <give|take|set|info|list|save>`, `grm_balance`
+`grm_money <give|take|set|info|list|save>`, `grm_balance`, `grm_economy <save|list>`
 
 Подробный разбор архитектуры и замеченных проблем — в `ANALYSIS.md`.
