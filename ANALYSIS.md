@@ -1,4 +1,4 @@
-# Технический анализ кодовой базы GRM (куски 1–2: 14 файлов)
+# Технический анализ кодовой базы GRM (куски 1–3: 23 файла)
 
 Дата анализа: 2026-07-16. Все файлы восстановлены из web-вставки
 (HTML-сущности, markdown-ссылки, `_`→`*`) и проходят синтаксический
@@ -41,6 +41,25 @@
 - `sh_grm_shop_integration.lua` — сканер транспорта с кешем 30 с
   (`list.Get("Vehicles")`, `simfphys_vehicles`, `LVS_Vehicles`, scripted
   ents с префиксом `glide_`/базой vehicle) и вкладка «Транспорт».
+
+Кусок 3 добавляет подсистемы:
+- **Спавн-поинты** (`sh_spawn_points.lua`): глобальные и фракционные
+  точки per-map, PlayerSpawn → случайная точка, админ-меню `/spawnmenu`.
+  Новые глобалы: `GlobalSpawnPoints`, `AddGlobalSpawnPoint`,
+  `AddSpawnPointForFaction`, `GetSpawnPointForPlayer` и др.
+- **Транспорт** (`sh_grm_vehicle_access.lua` + `vehicle_dealer.lua` +
+  `zz_grm_vehicle_antistuck.lua`): покупки доступа, доступ
+  фракция>отдел>ранг, магазин `/vshop`, патч дилера (хуки
+  `VD_PreSpawnCheck`/`VD_FilterVehicleList`/`VD_OnVehicleSpawned`,
+  блок Q-меню `PlayerSpawnVehicle`), анти-застревание.
+  Новые глобалы: `GRM_HasVehicleAccess`, `GRM_GetAccessibleVehicles`,
+  `GRM_GetAllVehicleClasses`, `GRM.VehicleAntiStuck`.
+- **Телефония** (`sh_grm_phone_config.lua`, `sh_grm_phone_access.lua`,
+  `sh_grm_phone_shop.lua`, `server/sv_grm_phone.lua`,
+  `client/cl_grm_phone.lua`): namespace `GRM.Phone` + `.AccessManager` +
+  `.Shop`; звонки через АТС с лимитом линий, прослушка (голос И текст
+  через перехват PlayerSay), терминал мониторинга, per-map
+  персистентность, единый войс-хук (локальный+рация+телефон).
 
 ## 2. Потоки данных
 
@@ -116,6 +135,50 @@
     (`sh_grm_vehicle_access.lua`, `vehicle_dealer.lua`); при получении
     проверить, что они сами валидируют права (лидер фракции/админ).
     До тех пор net-сообщения просто игнорируются сервером — без вреда.
+    (Код 16 закрыл эти получатели: `GRM_VAccess_Open`/`GRM_VShop_Open`
+    теперь обрабатываются сервером, права проверяются — лидер/суперадмин.)
+16. `PlayerSayTransform` — НЕ ванильный GMod-хук (ваниль: `PlayerSay` /
+    `OnPlayerChat`), но используется повсеместно в проекте (Код 10:2163,
+    Код 11 ×2, теперь Код 15, 20, 21). Предположительно его вызывает
+    недостающая реализация `GRM.Chat` или базовый gamemode. До её появления
+    клиентские команды через этот хук (`/spawnmenu`, `/phone_access`,
+    клиентский `/phoneshop_admin`) работать не будут.
+17. Хук `FactionCreated` (слушает `sh_spawn_points.lua`) нигде не вызывается
+    (`hook.Run` в `sh_factions.lua` отсутствует) → `SpawnPoints_InitNew`
+    не сработает. Не критично: `ensureFactionSpawnPoints` вызывается лениво
+    во всех API точек. Замечание на будущее: поле `f.SpawnPoints` живёт
+    внутри объекта фракции — если `sh_factions.lua` сериализует фракции
+    целиком, точки попадут и в `factions.json` (дубль с
+    `spawn_points_factions_<map>.json`, безвредный).
+18. `RadioFrequencies` (глобал для радио-войса телефонии) нигде в пакете
+    не создаётся → `radioVoice()` всегда false, с nil-guard. Телефония
+    и рация свяжутся сами, когда появится радио-модуль с этой таблицей.
+19. Телефон-оверрайд через таймеры корректен: `sh_grm_phone_access.lua`
+    грузится в `lua/autorun/`, а `server/sv_grm_phone.lua` — ПОЗЖЕ
+    (subdir), и переопределяет `P.HasEquipmentAccess`. Поэтому
+    AccessManager переустанавливает override на 0/1/3/6 с — победит
+    AccessManager (данные из `grm_phone/access.json`), fallback на
+    конфиг сохранён внутри проверки. Задумано верно.
+20. `vehicle_dealer.lua`: fallback в `VD_FilterVehicleList` — «если после
+    фильтрации 0, показываем всё» — ослабляет защиту при ненастроенном
+    магазине (осознанная обратная совместимость, но злоупотребляемо:
+    игрок без прав может видеть полный список дилера). Комбинация с
+    `PlayerSpawnVehicle`-блоком всё равно не даёт заспавнить.
+21. `zz_`-префикс антистастка — верное решение: `lua/autorun/` грузится
+    по алфавиту, `zz_` ставит `ShouldCollide`-хук позже остальных.
+    Аккуратная тонкая логика (OnlyAfterVehicleExit + малый
+    InsideOBBExpand) — редкий случай зрелого тюнинга после плохого UX.
+22. Двойная персистентность телефонии НЕ дублирует entity:
+    `P.SaveMapEntities` пропускает `ent.GRMPhoneShopOwned` (их хранит
+    магазин в `player_equipment.json`). `AdminRemoveEntity` корректно
+    чистит обе базы (`removeFromShopStorage` + немедленный
+    `SaveMapEntities`).
+23. Магазин транспорта (Код 16) на клиенте показывает баланс через
+    `GRM.LocalBalance` — клиентской переменной в пакете НЕТ (ждём ядро
+    валюты); без неё UI покажет «Баланс: ???» — остальное работает.
+24. Мёртвый код (безвредно): в `sv_grm_phone.lua` локали `allWiretaps`/
+    `allTerminals` объявлены, но не используются (мониторинг идёт через
+    `P.Monitoring`).
 
 ## 4. Совместимость с GLua
 
@@ -134,5 +197,9 @@
 3. Выбрать одну экономику (см. пункт 1 раздела 3).
 4. Положить `sound/kom_hour.wav` для комендантского часа.
 5. Проверить классы транспорта в `L.Access.vehicles` под simfphys/LVS.
-6. Для вкладки «Транспорт» (Код 14): доложить
-   `sh_grm_vehicle_access.lua` + `vehicle_dealer.lua`.
+6. Для вкладки «Транспорт» (Код 14): `sh_grm_vehicle_access.lua` +
+   `vehicle_dealer.lua` уже на месте (Код 16–17); осталась entity
+   `sent_vehicle_dealer`.
+7. Доложить 5 entity телефонии (`entities/grm_phone|grm_payphone|
+   grm_pbx_station|grm_phone_wiretap|grm_phone_terminal`) — без них
+   `ents.Create` вернёт NULL и магазин/сохранение не заработают.

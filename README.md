@@ -10,7 +10,7 @@
 (или прямо в `garrysmod/lua/`). Файлы в `lua/autorun/` загружаются
 автоматически на сервере и клиенте.
 
-## Файлы (куски 1–2 — 14 модулей)
+## Файлы (куски 1–3 — 23 модуля)
 
 | # | Файл | Назначение |
 |---|------|-----------|
@@ -28,6 +28,15 @@
 | 12 | `lua/autorun/sh_grm_faction_economy.lua` | Базовая экономика фракций: бюджет, налог, `!fbudget` `!fpay` `!fwithdraw` `!fpayall` `!fsettax` |
 | 13 | `lua/autorun/sh_grm_admin_menu.lua` | Суперадмин-меню экономики v1.1: балансы, персональные налоги, переводы, журнал действий — `!grmmenu` |
 | 14 | `lua/autorun/sh_grm_shop_integration.lua` | Интеграция магазина/дилера: сканер транспорта (GMod/SimFPhys/LVS/Glide), вкладка «Транспорт» в меню лидера, `/scanvehicles` `/vlist` |
+| 15 | `lua/autorun/sh_spawn_points.lua` | Точки спавна фракций/глобальные (per-map JSON), админ-меню `/spawnmenu`, случайный спавн по точкам |
+| 16 | `lua/autorun/sh_grm_vehicle_access.lua` | Доступ к транспорту: персональные покупки, доступ по фракции/рангу/отделу, магазин `/vshop`, админ цен `/vshop_admin` |
+| 17 | `lua/autorun/vehicle_dealer.lua` | Патч дилера v3: проверка доступа перед спавном, фильтр списка, блок Q-меню, кулдаун 2с, лог спавнов |
+| 18 | `lua/autorun/zz_grm_vehicle_antistuck.lua` | Анти-застревание при выходе из машины (NoCollide + поиск безопасной точки, simfphys/LVS), `zz_` грузится последним |
+| 19 | `lua/autorun/sh_grm_phone_config.lua` | Конфиг телефонии: радиусы, номера 1000–9999, модели телефонов/АТС, звуки, доступ спецслужб |
+| 20 | `lua/autorun/sh_grm_phone_access.lua` | Менеджер доступа к оборудованию связи (`/phone_access`), переопределяет `GRM.Phone.HasEquipmentAccess`, вкладка «Телефония» в админ-меню фракций |
+| 21 | `lua/autorun/sh_grm_phone_shop.lua` | Магазин телефонии v2: каталог (телефон/таксофон/АТС/прослушка/терминал), покупка доступа, спавн, лимиты, `/phoneshop` |
+| 22 | `lua/autorun/server/sv_grm_phone.lua` | Сервер телефонии: звонки, АТС-линии, прослушка (голос+текст), мониторинг, per-map сохранение, интеграция войса |
+| 23 | `lua/autorun/client/cl_grm_phone.lua` | Клиент телефонии: UI телефона/АТС/прослушки/терминала связи |
 
 ## Зависимости, которых пока НЕТ в репозитории
 
@@ -36,15 +45,15 @@
 - `lua/autorun/sh_grm_logistics_config.lua` — **обязателен** для `sv_grm_logistics.lua`
 - `lua/autorun/client/cl_grm_faction_logistics.lua` — клиент логистики (UI)
 - `lua/autorun/client/cl_grm_factory_fullcycle.lua` — клиент завода (UI крафта и QTE)
-- Ядро валюты: `GRM.GiveMoney / TakeMoney / HasMoney / GetBalance / SetBalance / Format / Notify` + конфиг `GRM.StartBalance`
-- `lua/autorun/sh_grm_vehicle_access.lua` — система доступа к транспорту (`GRM_GetAccessibleVehicles`, сеть `GRM_VAccess_Open`), нужна для Кода 14
-- `vehicle_dealer.lua` + магазин (`GRM_VShop_Open`) — выдача/покупка транспорта, нужны для Кода 14
+- Ядро валюты: `GRM.GiveMoney / TakeMoney / HasMoney / GetBalance / SetBalance / Format / Notify` + конфиг `GRM.StartBalance` + клиентская переменная `GRM.LocalBalance`
+- **Entity телефонии** (`entities/grm_phone/`, `entities/grm_payphone/`, `entities/grm_pbx_station/`, `entities/grm_phone_wiretap/`, `entities/grm_phone_terminal/`) — без них магазин/сохранение не смогут создать объекты
+- **Entity дилера** (`entities/sent_vehicle_dealer/…`) — `vehicle_dealer.lua` это патч поверх неё
+- Радио-модуль с глобальной таблицей `RadioFrequencies` (для телефонной интеграции рации)
 - `GRM.Encumbrance` — система веса/перегруза
 - GUI инвентаря: `GRM.Inventory.OpenGUI()` + entity `grm_item_drop`
-- `GRM.Chat` — основная реализация чата (здесь только конфиг)
-- `GRM.Phone` — телефония (кнопка в настройках расширения фракций)
+- `GRM.Chat` — основная реализация чата (здесь только конфиг); вероятно, она же даёт хук `PlayerSayTransform`
 - Шрифты `GRM_HUD_Label`, `GRM_HUD_Value` — из HUD-ядра
-- Внешние: ArcCW (оружие), simfphys/LVS (матовозки), ULX/ULib (опционально)
+- Внешние: ArcCW (оружие), simfphys/LVS (матовозки/транспорт), ULX/ULib (опционально)
 - Ресурс `sound/kom_hour.wav` — положить в `addons/grm/sound/`
 
 ## Файлы данных (garrysmod/data)
@@ -54,17 +63,28 @@
 `grm_faction_budgets.json`, `grm_faction_economy_plus.json`, `gnews_log.txt`,
 `grm_logistics/{access.json, inventory_crates.json, maps/<map>.json}`,
 `grm_factory_fullcycle/{weapon_lockers.json, weapon_market.json, weapon_buyers.json, maps/<map>.json}`,
-`grm_admin_log.json`, `grm_player_taxes.json`
+`grm_admin_log.json`, `grm_player_taxes.json`,
+`spawn_points_global_<map>.json`, `spawn_points_factions_<map>.json`,
+`grm_vehicle_purchases.json`, `grm_vehicle_prices.json`, `grm_faction_vehicle_access.json`, `vd_spawn_log.txt`,
+`grm_phone/{access.json, shop_catalog.json, shop_purchases.json, player_equipment.json, <map>.json}`,
+`grm_phone_records/<YYYY-MM-DD>.txt`
 
 ## Основные команды
 
 **Игрок:** `/inv`, `/store`, `/fjoin`, `/fleave`, `/fr`, `/dep`, `/depb`, `/mask`,
 `/model`, `/gnews`, `/kom_hour`, `/logistics_start`, `/logistics_crates`,
-`!fbudget`, `!fpay`, `!fwithdraw`, `!fpayall`, `!fsettax`, `/vlist`
+`!fbudget`, `!fpay`, `!fwithdraw`, `!fpayall`, `!fsettax`, `/vlist`, `/myvehicles`,
+`/vshop`, `/phoneshop` (`/teleshop`), `/phone_remove`
+
+**Лидер фракции:** `/vaccess` (доступ транспорта для рангов/отделов)
 
 **Админ:** `/factions`, `/salary_admin`, `/logistics_admin`, `/models_admin`,
 `/weapons_admin`, `/mask_admin`, `!grmmenu`/`!grmadmin`, `/scanvehicles`,
-консоль: `grm_logistics_place_*`, `grm_logistics_save/load`, `grm_fc_save/load`,
-`grm_weapon_buyer_admin`, `grm_adminmenu`
+`/spawnmenu`, `/vshop_admin`, `/phoneshop_admin`, `/phone_access`,
+`/phone_admin_remove`, консоль: `grm_logistics_place_*`, `grm_logistics_save/load`,
+`grm_fc_save/load`, `grm_weapon_buyer_admin`, `grm_adminmenu`, `grm_antistuck_vehicle`,
+`grm_phone_save/load`, `grm_phone_remove_look`, `grm_phone_admin_remove`,
+`grm_phone_shop_admin`, `grm_phone_shop_add_look`, `grm_phone_shop_reload`,
+`grm_phone_access_reload`, `grm_phone_access_debug`
 
 Подробный разбор архитектуры и замеченных проблем — в `ANALYSIS.md`.
