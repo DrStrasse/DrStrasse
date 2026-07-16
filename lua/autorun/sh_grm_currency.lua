@@ -1,5 +1,13 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v1.5.6 (Код 42)
+    GRM Currency Core v1.5.7 (Код 42)
+
+    v1.5.7 (репорт: «SAVE ok есть, а в файле [] — кто-то перезаписывает»):
+    СТОРОЖ ФАЙЛА (2с): любая чужая запись grm_currency.json фиксируется
+    в форензик-логе и данные мгновенно восстанавливаются из памяти;
+    ЗАХВАТ СЛОТОВ: таймеры/хуки/API с нашими именами принудительно
+    наши — старая копия без синглтон-стража глушится до 10с даже при
+    загрузке после нас; форензик-лог всех событий в
+    data/grm_currency_forensics.txt (кто/когда/почему сохранял).
 
     v1.5.6 (репорт: «пишет SAVE ok, но после рестарта пропадает; в json — []»):
     антисвайп-страж: ПУСТАЯ память никогда не перезаписывает НЕПУСТОЙ файл
@@ -110,6 +118,15 @@ local NET_NOTIFY  = "GRM_Currency_Notify"
 local AUTOSAVE    = 8   -- секунды: гарантированный интервал автосохранения
 local RECONCILE   = 15  -- секунды: интервал сверки «память ↔ база»
 
+-- Форензик-лог всех событий сохранений/сторожа: data/grm_currency_forensics.txt
+local FRX_FILE = "grm_currency_forensics.txt"
+local function logForensic(line)
+    local prev = file.Read(FRX_FILE, "DATA") or ""
+    local txt = prev .. "[" .. os.date("%d.%m %H:%M:%S") .. "] " .. tostring(line) .. "\r\n"
+    if #txt > 60000 then txt = string.sub(txt, #txt - 50000) end -- держим хвост
+    file.Write(FRX_FILE, txt)
+end
+
 -- ============================================================
 -- ШАРЕД: форматирование
 -- ============================================================
@@ -144,7 +161,7 @@ if SERVER then
         return
     end
     GRM._currencyCoreActive = true
-    GRM._currencyCoreVer = "1.5.6"
+    GRM._currencyCoreVer = "1.5.7"
     GRM._currencyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_SYNC)
@@ -216,7 +233,7 @@ if SERVER then
         return clean, poison
     end
 
-    local function saveNow(force)
+    local function saveNow(force, why)
         if not dirty and not force then return end
         local clean, poison = sanitizedDump()
         -- GRM-FIX v1.5.6: ПУСТАЯ память НИКОГДА не перезаписывает НЕПУСТУЮ базу.
@@ -235,7 +252,9 @@ if SERVER then
                 hadRecords = okP and istable(prevTab) and next(prevTab) ~= nil
             end
             if hadRecords then
-                print("[GRM Currency] SAVE ОТКЛОНЁН: память пуста, а в базе есть счета — базу НЕ затираем (антисвайп-страж v1.5.6)")
+                local msg = ("SAVE ОТКЛОНЁН (вызов: %s): память пуста, а в базе есть счета — базу НЕ затираем (антисвайп-страж)"):format(tostring(why or "?"))
+                print("[GRM Currency] " .. msg)
+                logForensic(msg .. " | стек: " .. string.sub(tostring(debug.traceback("", 2)), 1, 300))
                 dirty = false
                 return
             end
@@ -273,8 +292,8 @@ if SERVER then
         lastSavedTxt = txt
         mirrorFill() -- записали мы: зеркало = нашему состоянию
         dirty = false
-        print(("[GRM Currency] SAVE ok: счетов %d, %d байт -> data/%s")
-            :format(table.Count(records), #txt, DATA_FILE))
+        print(("[GRM Currency] SAVE ok: счетов %d, %d байт -> data/%s%s")
+            :format(table.Count(records), #txt, DATA_FILE, why and (" [" .. tostring(why) .. "]") or ""))
     end
 
     local function loadData()
@@ -383,7 +402,7 @@ if SERVER then
         local old = rec.balance
         rec.balance = normalize(amount)
         dirty = true
-        saveNow()
+        saveNow(false, "SetBalance")
         local onlinePly = (IsValid(ply) and ply:IsPlayer()) and ply or onlinePlayerOf(sid)
         if onlinePly then rec.name = onlinePly:Nick() pushBalance(onlinePly) end
         changed(IsValid(ply) and ply or sid, rec.balance, rec.balance - old, reason)
@@ -541,14 +560,26 @@ if SERVER then
     mirrorFill()
     lastSavedTxt = file.Exists(DATA_FILE, "DATA") and (file.Read(DATA_FILE, "DATA") or "") or nil
 
-    hook.Add("PlayerInitialSpawn", "GRM_Currency_Init", function(ply)
+    -- ========================================================
+    -- СЛОТЫ ЖИЗНЕННОГО ЦИКЛА + СТОРОЖ ФАЙЛА + ЗАХВАТ РЕГИСТРАЦИЙ (v1.5.7)
+    -- Всё сгруппировано в installHostSlots(): чужие копии модуля без
+    -- синглтон-стража, регистрирующие таймеры/хуки/API с ТЕМИ ЖЕ именами,
+    -- детерминированно глушатся нами (≤10с) даже если загрузились позже.
+    -- ========================================================
+    local apiSnapshot = {}
+    for _, n in ipairs({ "GiveMoney", "TakeMoney", "SetBalance", "GetBalance", "HasMoney",
+                         "AddMoney", "CanAfford", "Format", "Notify", "GetAllBalances" }) do
+        apiSnapshot[n] = GRM[n]
+    end
+
+    local function onInitSpawn(ply)
         if not IsValid(ply) or ply:IsBot() then return end
         local sid = ply:SteamID64()
         local rec = records[sid]
         if not rec then
             ensure(sid, ply:Nick())
             dirty = true
-            saveNow()
+            saveNow(false, "вход игрока")
         else
             rec.name = ply:Nick()
         end
@@ -560,35 +591,115 @@ if SERVER then
                 pushBalance(ply)
             end
         end)
-    end)
+    end
 
-    hook.Add("PlayerDisconnected", "GRM_Currency_Disconnect", function(ply)
+    local function onDisconnect(ply)
         if not IsValid(ply) then return end
         local rec = records[ply:SteamID64()]
         if rec then rec.name = ply:Nick() end
         dirty = true
-        saveNow()
-    end)
+        saveNow(false, "дисконнект")
+    end
 
-    hook.Add("ShutDown", "GRM_Currency_Shutdown", function()
+    local function onShutdown()
         dirty = true
-        saveNow()
+        saveNow(false, "shutdown")
+    end
+
+    local function tickAutoSave() saveNow(true, "автосейв 8с") end
+    local function tickFlush() if dirty then saveNow(false, "флаш 5с") end end
+    local function tickReconcile()
+        local n = reconcile("тик 15с")
+        if n > 0 then
+            print(("[GRM Currency] сверка: принято %d изменений из базы"):format(n))
+            logForensic(("сверка: принято %d изменений"):format(n))
+        end
+    end
+
+    local reclaimed = {}
+    local function installHostSlots(report)
+        -- Таймеры по имени: Create заменяет одноимённые — наш слот всегда наш.
+        timer.Create("GRM_Currency_AutoSave", AUTOSAVE, 0, tickAutoSave)
+        timer.Create("GRM_Currency_Flush", 5, 0, tickFlush)
+        timer.Create("GRM_Currency_Reconcile", RECONCILE, 0, tickReconcile)
+        -- Хуки (событие+ID): чужая копия с теми же ID вытесняется.
+        local slots = {
+            { "PlayerInitialSpawn", "GRM_Currency_Init", onInitSpawn },
+            { "PlayerDisconnected", "GRM_Currency_Disconnect", onDisconnect },
+            { "ShutDown",           "GRM_Currency_Shutdown", onShutdown },
+        }
+        for _, s in ipairs(slots) do
+            local ev = hook.GetTable()[s[1]]
+            local cur = ev and ev[s[2]]
+            if cur ~= s[3] then
+                if cur ~= nil and report and not reclaimed[s[2]] then
+                    reclaimed[s[2]] = true
+                    print("[GRM Currency] ЗАХВАТ: чужая регистрация " .. s[2] .. " вытеснена — на сервере ЖИЛА вторая копия модуля!")
+                    logForensic("захват слота " .. s[2] .. " (была чужая регистрация)")
+                end
+                hook.Remove(s[1], s[2])
+                hook.Add(s[1], s[2], s[3])
+            end
+        end
+        -- API ядра: если переопределено чужой копией — возвращаем свои ссылки.
+        for n, fn in pairs(apiSnapshot) do
+            if fn ~= nil and GRM[n] ~= fn then
+                GRM[n] = fn
+                if report and not reclaimed["API_" .. n] then
+                    reclaimed["API_" .. n] = true
+                    print("[GRM Currency] ЗАХВАТ: API GRM." .. n .. " возвращён у чужой копии")
+                    logForensic("захват API " .. n)
+                end
+            end
+        end
+    end
+
+    installHostSlots(false) -- первичная установка слотов при загрузке
+    -- Сторожевой захват: копия, загруженная ПОЗЖЕ нас, живёт ≤10 секунд.
+    timer.Create("GRM_Currency_Takeover", 10, 0, function() installHostSlots(true) end)
+
+    -- СТОРОЖ ФАЙЛА (v1.5.7): любая ЧУЖАЯ запись grm_currency.json фиксируется
+    -- в форензик-логе, легальные правки поднимаются, данные восстанавливаются.
+    local lastBark = 0
+    timer.Create("GRM_Currency_Watchdog", 2, 0, function()
+        if not isstring(lastSavedTxt) then return end
+        if not file.Exists(DATA_FILE, "DATA") then return end
+        local txt = file.Read(DATA_FILE, "DATA") or ""
+        if txt == lastSavedTxt then return end
+        -- Безобидный случай: система хостинга переписала файл ТЕМ ЖЕ смыслом
+        -- в другом форматировании — принимаем его как эталон, диск не долбим.
+        local okW, ext = pcall(util.JSONToTable, txt)
+        if okW and istable(ext) then
+            local clean = sanitizedDump()
+            local same = true
+            for sid, rec in pairs(clean) do
+                local e = ext[sid]
+                if not (istable(e) and normalize(e.balance) == rec.balance) then same = false break end
+            end
+            if same then
+                for sid in pairs(ext) do
+                    if clean[sid] == nil then same = false break end
+                end
+            end
+            if same then lastSavedTxt = txt mirrorFill() return end
+        end
+        -- Файл изменил НЕ наш saveNow: либо правка по FTP (легальна — поднимаем),
+        -- либо чужой писатель (вредоносен — затрётся нашим состоянием).
+        local n = reconcile("сторож файла")
+        dirty = true
+        saveNow(true, "сторож-самолечение")
+        logForensic(("ЧУЖАЯ ЗАПИСЬ в %s (%d байт, поднято правок %d) — файл приведён к состоянию памяти"):format(DATA_FILE, #txt, n))
+        if os.time() - lastBark >= 30 then
+            lastBark = os.time()
+            print(("[GRM Currency] СТОРОЖ: файл %s перезаписан снаружи (%d байт)! Данные восстановлены; детали: data/grm_currency_forensics.txt"):format(DATA_FILE, #txt))
+        end
     end)
 
-    -- Автосохранение с гарантией ≤8с (force обходит только флаг dirty,
-    -- но пустые записи всё равно отсекаются сравнением содержимого)
-    timer.Create("GRM_Currency_AutoSave", AUTOSAVE, 0, function() saveNow(true) end)
-    -- GRM-FIX: быстрый сброс изменений на диск каждые 5с — переживаем
-    -- килл процесса без ShutDown и длинные окна автосейва.
-    timer.Create("GRM_Currency_Flush", 5, 0, function()
-        if dirty then saveNow() end
-    end)
-
-    -- Сверка с базой (поднимает внешние правки файла)
-    timer.Create("GRM_Currency_Reconcile", RECONCILE, 0, function()
-        local n = reconcile("тик 60с")
-        if n > 0 then print(("[GRM Currency] сверка: принято %d изменений из базы"):format(n)) end
-    end)
+    -- Форензик-строка загрузки: путь файла виден прямо в логе data/.
+    logForensic(("BOOT v1.5.7: путь=%s, счетов=%d, файл=%s байт"):format(
+        tostring(debug.getinfo(1, "S").short_src),
+        table.Count(records),
+        file.Exists(DATA_FILE, "DATA") and tostring(#(file.Read(DATA_FILE, "DATA") or "")) or "нет файла"))
 
     -- ========================================================
     -- КОНСОЛЬНЫЕ УТИЛИТЫ (сервер-консоль / суперадмин)
@@ -619,7 +730,7 @@ if SERVER then
         local mode, query = tostring(args[1] or ""), tostring(args[2] or "")
         local amount = math.floor(tonumber(args[3] or "") or 0)
 
-        if mode == "save" then dirty = true saveNow() print("[GRM Currency] сохранено") return end
+        if mode == "save" then dirty = true saveNow(false, "команда save") print("[GRM Currency] сохранено") return end
         if mode == "list" then
             print("[GRM Currency] счетов: " .. tostring(table.Count(records)))
             local n = 0
@@ -653,13 +764,12 @@ if SERVER then
             print("[GRM Currency] " .. tostring(name) .. " = " .. GRM.Format(GRM.GetBalance(target)))
         end
         dirty = true
-        saveNow()
+        saveNow(false, "grm_money")
     end
     concommand.Add("grm_money", moneyCmd)
 
-    print(("[GRM Currency] ядро загружено v1.5.6, счетов в памяти: %d (баланс первого: %s)"):format(
-        table.Count(records),
-        (function() for _, r in pairs(records) do return tostring(r.balance) end return "—" end)()))
+    print(("[GRM Currency] ядро загружено v1.5.7, путь: %s, счетов в памяти: %d"):format(
+        tostring(debug.getinfo(1, "S").short_src), table.Count(records)))
 end
 
 -- ============================================================
