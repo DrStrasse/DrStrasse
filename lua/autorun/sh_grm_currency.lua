@@ -1,5 +1,12 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v1.5.2 (Код 42)
+    GRM Currency Core v1.5.3 (Код 42)
+
+    v1.5.3 (репорт: «SAVE ОШИБКА сериализации» нонстоп): порог длины
+    JSON считал пустую таблицу "{}" ошибкой + возможна «ядовитая»
+    запись с управляющими символами в нике. Теперь: валидность =
+    живой парсинг (round-trip), ники чистятся на входе и перед
+    записью; при сбое — аварийный пословный формат, в дампе
+    ВИДНО виновника (sid + очищенное имя).
 
     v1.5.2: сохранение ≤8с гарантировано + сверка ≤15с.
       Авто-запись каждые 8с, но файл ПИШЕТСЯ только при реальных
@@ -119,7 +126,7 @@ if SERVER then
         return
     end
     GRM._currencyCoreActive = true
-    GRM._currencyCoreVer = "1.5.2"
+    GRM._currencyCoreVer = "1.5.3"
     GRM._currencyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_SYNC)
@@ -165,17 +172,47 @@ if SERVER then
 
     local lastSavedTxt = nil -- что реально лежит в файле (защита от пустых записей)
 
+    -- Очистка структуры перед сериализацией: ники без управляющих байт,
+    -- счётчики нормализуются. Если какая-то запись "ядовитая" — в лог
+    -- улетает её sid и очищенное имя (становится видно виновника).
+    local function sanitizedDump()
+        local clean, poison = {}, {}
+        for sid, rec in pairs(records) do
+            local nm = cleanNick(rec and rec.name)
+            if istable(rec) and rec.name ~= nil and tostring(rec.name) ~= nm then
+                poison[#poison + 1] = tostring(sid) .. " («" .. nm .. "»)"
+            end
+            clean[tostring(sid)] = { balance = normalize(rec and rec.balance), name = nm }
+        end
+        return clean, poison
+    end
+
     local function saveNow(force)
         if not dirty and not force then return end
-        local txt = util.TableToJSON(records, true)
-        if not isstring(txt) or #txt < 3 then
-            -- GRM-FIX: НИКОГДА не затираем рабочий файл пустышкой —
-            -- дампим память в отдельный файл и кричим в консоль.
+        local clean, poison = sanitizedDump()
+        if #poison > 0 then
+            print("[GRM Currency] SAVE: очищены подозрительные ники: " .. table.concat(poison, ", "))
+        end
+        local txt = util.TableToJSON(clean, true)
+        -- GRM-FIX: валидность = живой парсинг (round-trip), а не длина.
+        -- Пустая таблица "{}" — легальное состояние, а не ошибка.
+        local okRound = isstring(txt) and (pcall(util.JSONToTable, txt) == true)
+        if not okRound then
+            -- АВАРИЙНЫЙ путь: пишем пословный формат "sid|balance|name",
+            -- чтобы данные пережили даже полностью сломанный сериализатор.
+            local lines = {}
+            for sid, rec in pairs(clean) do
+                lines[#lines + 1] = sid .. "|" .. tostring(rec.balance) .. "|" .. rec.name
+            end
+            local rescue = table.concat(lines, "\n")
+            file.Write(DATA_FILE, rescue)
             file.Write("grm_currency_err_" .. os.time() .. ".txt",
-                "TableToJSON вернул: " .. tostring(txt))
-            print("[GRM Currency] SAVE ОШИБКА сериализации! Дамп в data/grm_currency_err_*.txt")
-            -- GRM-FIX: НЕ оставляем dirty застрявшим (клинил и сейв, и сверку)
+                "TableToJSON/sanity: " .. tostring(txt) .. "\r\nПодозреваемые: " .. table.concat(poison, ", ") ..
+                "\r\nДамп памяти записан в основной файл строками sid|balance|name")
+            lastSavedTxt = rescue
+            mirrorFill()
             dirty = false
+            print("[GRM Currency] SAVE: JSON не собрался — записан АВАРИЙНЫЙ формат (" .. tostring(#lines) .. " счетов), данные спасены")
             return
         end
         -- GRM-FIX: содержимое не изменилось → файл НЕ трогаем вообще:
@@ -207,6 +244,18 @@ if SERVER then
             print("[GRM Currency] ОШИБКА парсинга " .. DATA_FILE ..
                   " — копия сохранена как data/" .. backup)
             raw = {}
+            -- GRM-FIX: пробуем АВАРИЙНЫЙ формат (sid|balance|name построчно)
+            local rescued = 0
+            for line in rawTxt:gmatch("[^\n]+") do
+                local lsid, lbal, lname = line:match("^(%S+)%|(-?%d+)%|(.*)$")
+                if lsid and lbal then
+                    raw[lsid] = { balance = tonumber(lbal), name = cleanNick(lname or "?") }
+                    rescued = rescued + 1
+                end
+            end
+            if rescued > 0 then
+                print(("[GRM Currency] LOAD: из аварийного формата поднято счетов: %d"):format(rescued))
+            end
         end
         for sid, rec in pairs(raw) do
             if isstring(sid) and type(rec) == "table" then
@@ -218,12 +267,25 @@ if SERVER then
         end
     end
 
+    -- Управляющие байты (кроме перевода строки) и DEL ломали бы JSON
+    local function cleanNick(s)
+        s = tostring(s or "?")
+        s = string.gsub(s, "[\1-\9\11-\31\127]", "")
+        if s == "" then s = "?" end
+        if #s > 64 then s = s:sub(1, 64) end
+        return s
+    end
+
     local function ensure(sid, nick)
+        nick = nick and cleanNick(nick) or nil
         if not records[sid] then
             records[sid] = { balance = normalize(GRM.StartBalance), name = nick or "?" }
             dirty = true
         end
-        if nick and nick ~= "" then records[sid].name = nick end
+        if nick and nick ~= "" and records[sid].name ~= nick then
+            records[sid].name = nick
+            dirty = true
+        end
         return records[sid]
     end
 
@@ -554,7 +616,7 @@ if SERVER then
     end
     concommand.Add("grm_money", moneyCmd)
 
-    print(("[GRM Currency] ядро загружено v1.5.2, счетов в памяти: %d (баланс первого: %s)"):format(
+    print(("[GRM Currency] ядро загружено v1.5.3, счетов в памяти: %d (баланс первого: %s)"):format(
         table.Count(records),
         (function() for _, r in pairs(records) do return tostring(r.balance) end return "—" end)()))
 end
