@@ -13,7 +13,7 @@
 (или прямо в `garrysmod/lua/`). Файлы в `lua/autorun/` загружаются
 автоматически на сервере и клиенте.
 
-## Файлы (куски 1–5 + собственные наработки + dop.addons — **147 lua-файлов**)
+## Файлы (куски 1–5 + собственные наработки + dop.addons — **156+ lua-файлов** (Код 60 CCTV))
 
 > **Экономика переписана с нуля (Код 43):** старые модули Код 9
 > (`sh_grm_faction_economy_plus.lua`) и Код 12 (`sh_grm_faction_economy.lua`)
@@ -117,7 +117,8 @@
 `grm_phone_records/<YYYY-MM-DD>.txt`,
 `grm_roomtap/{access.json,temporary_equipment.json,records/...}`,
 `grm_saves/<map>.json`, `grm_saves/grm_orespawns_<map>.json`,
-`grm_food_vending_<map>.json` (автоматы)
+`grm_food_vending_<map>.json` (автоматы),
+`grm_cctv/<map>.json` (permanent-камеры/мониторы/стойки)
 
 ## Основные команды
 
@@ -138,6 +139,7 @@
 `grm_phone_shop_admin`, `grm_phone_shop_add_look`, `grm_phone_shop_reload`,
 `grm_phone_access_reload`, `grm_phone_access_debug`,
 `grm_money <give|take|set|info|list|save>`, `grm_balance`, `grm_economy <save|list>`,
-`grm_cuffs_give`, `grm_saveentities` / `!saveentities`, `vk_givekey`/`vk_revokekey`/`vk_setowner`
+`grm_cuffs_give`, `grm_saveentities` / `!saveentities`, `vk_givekey`/`vk_revokekey`/`vk_setowner`,
+`grm_cctv_save` / `grm_cctv_load` / `grm_cctv_list`
 
 Подробный разбор архитектуры и замеченных проблем — в `ANALYSIS.md`.
