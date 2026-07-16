@@ -1,5 +1,7 @@
 --[[--------------------------------------------------------------------
-    GRM Tab Menu v1.7 — Полная синхронизация баланса (исправлено)
+    GRM Tab Menu v1.8 — Полная синхронизация баланса (исправлено)
+    v1.8: серверный fallback grm_request_bal больше не перекрывает
+          обработчик ядра валюты (маркер GRM._currencyReqBalRcv)
     - Используется GRM.PlayerBalance вместо локальной _myBalance
     - Добавлен net-обработчик grm_request_bal на сервере
     - Баланс обновляется мгновенно при изменении
@@ -46,14 +48,18 @@ if SERVER then
     end
 
     -- ── Обработчик запроса баланса (для клиента) ────────────────
-    net.Receive("grm_request_bal", function(_, ply)
-        if GRM.GetBalance then
-            local bal = GRM.GetBalance(ply)
-            net.Start("grm_balance")
-                net.WriteInt(bal, 32)
-            net.Send(ply)
-        end
-    end)
+    -- Только fallback: если ядро валюты (Код 42) уже установило свой
+    -- обработчик (он шлёт и NET_SYNC, и grm_balance) — не перекрываем его.
+    if not GRM._currencyReqBalRcv then
+        net.Receive("grm_request_bal", function(_, ply)
+            if GRM.GetBalance then
+                local bal = GRM.GetBalance(ply)
+                net.Start("grm_balance")
+                    net.WriteInt(bal, 32)
+                net.Send(ply)
+            end
+        end)
+    end
 
     -- ── Остальные функции (без изменений) ────────────────────────
     local function getPlayerRank(ply)
@@ -225,7 +231,7 @@ if SERVER then
         end
     end)
 
-    print("[GRM] Tab Menu v1.7 — сервер загружен")
+    print("[GRM] Tab Menu v1.8 — сервер загружен")
 end
 
 if CLIENT then

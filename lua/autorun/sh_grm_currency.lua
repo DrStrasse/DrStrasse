@@ -1,5 +1,12 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v1.2 (Код 42)
+    GRM Currency Core v1.3 (Код 42)
+
+    v1.3 (аудит синхронизации с HUD/Tab):
+      - API, вызванное по SteamID64-строке (админ-панель, гос.выплаты),
+        теперь находит онлайн-игрока и мгновенно пушит баланс в HUD/Tab
+        (раньше pushBalance срабатывал только при объекте Player);
+      - выставлен маркер GRM._currencyReqBalRcv, чтобы Tab Menu (Код 47)
+        не перекрывал серверный обработчик grm_request_bal (терялся NET_SYNC).
 
     Ядро валюты GRM — восстановлено с нуля (старый файл утерян).
     Реализует контракт, который ожидают уже существующие модули:
@@ -90,6 +97,15 @@ if SERVER then
         return nil
     end
 
+    -- Если API вызвали по SteamID64-строке (админ-панель, гос.выплаты),
+    -- ищем онлайн-игрока, чтобы мгновенно запушить баланс в HUD/Tab.
+    local function onlinePlayerOf(sid)
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and p:SteamID64() == sid then return p end
+        end
+        return nil
+    end
+
     local function saveNow()
         if not dirty then return end
         file.Write(DATA_FILE, util.TableToJSON(records, true) or "{}")
@@ -139,6 +155,10 @@ if SERVER then
         if IsValid(ply) then pushBalance(ply) end
     end)
 
+    -- Маркер для Tab Menu (Код 47): НЕ переустанавливать свой легаси-
+    -- обработчик grm_request_bal поверх этого (иначе теряется NET_SYNC-пуш).
+    GRM._currencyReqBalRcv = true
+
     local function changed(ply, newBalance, delta, reason)
         hook.Run("GRM_MoneyChanged", ply, newBalance, delta, reason or "")
     end
@@ -169,7 +189,8 @@ if SERVER then
         rec.balance = normalize(amount)
         dirty = true
         saveNow()
-        if IsValid(ply) and ply:IsPlayer() then pushBalance(ply) end
+        local onlinePly = (IsValid(ply) and ply:IsPlayer()) and ply or onlinePlayerOf(sid)
+        if onlinePly then rec.name = onlinePly:Nick() pushBalance(onlinePly) end
         changed(IsValid(ply) and ply or sid, rec.balance, rec.balance - old, reason)
         return true
     end
@@ -183,7 +204,8 @@ if SERVER then
         local rec = ensure(sid, nick)
         rec.balance = normalize(rec.balance + amount)
         dirty = true
-        if IsValid(ply) and ply:IsPlayer() then pushBalance(ply) end
+        local onlinePly = (IsValid(ply) and ply:IsPlayer()) and ply or onlinePlayerOf(sid)
+        if onlinePly then rec.name = onlinePly:Nick() pushBalance(onlinePly) end
         changed(IsValid(ply) and ply or sid, rec.balance, amount, reason)
         return true
     end
@@ -198,7 +220,8 @@ if SERVER then
         local taken = math.min(amount, rec.balance) -- уход в минус запрещён
         rec.balance = rec.balance - taken
         dirty = true
-        if IsValid(ply) and ply:IsPlayer() then pushBalance(ply) end
+        local onlinePly = (IsValid(ply) and ply:IsPlayer()) and ply or onlinePlayerOf(sid)
+        if onlinePly then rec.name = onlinePly:Nick() pushBalance(onlinePly) end
         changed(IsValid(ply) and ply or sid, rec.balance, -taken, reason)
         return taken >= amount
     end

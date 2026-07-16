@@ -1,5 +1,8 @@
 --[[--------------------------------------------------------------------
-    GRM HUD v10.0 — Полноценный HUD для Sandbox
+    GRM HUD v10.1 — Полноценный HUD для Sandbox
+    v10.1: ресивер grm_balance рассылает хук GRM_BalanceUpdated
+           (мгновенное обновление Tab Menu); сумма рисуется через
+           GRM.Format (имя валюты из экономики), $ — только fallback
     Путь: garrysmod/addons/grm_hud/lua/autorun/client/cl_grm_hud.lua
     (Код 48; сохранено агентом: снят ГМЛ-манглинг веб-вставки — восстановлены < > * _)
 --------------------------------------------------------------------]]
@@ -59,7 +62,13 @@ end
 GRM.PlayerBalance = GRM.PlayerBalance or 0
 if not GRM.HUD._balRcv then
     GRM.HUD._balRcv = true
-    net.Receive("grm_balance", function() GRM.PlayerBalance = net.ReadInt(32) end)
+    net.Receive("grm_balance", function()
+        local bal = net.ReadInt(32)
+        GRM.PlayerBalance = bal
+        -- Фан-аут для Tab Menu (Код 47) и других модулей: HUD грузится
+        -- последним и перекрывает их ресиверы, поэтому рассылаем хук.
+        hook.Run("GRM_BalanceUpdated", bal)
+    end)
 end
 
 -- УВЕДОМЛЕНИЯ
@@ -295,7 +304,8 @@ local function DrawMainHUD()
     draw.SimpleText(math.Round(anim.armor), "GRM_HUD_Value", barX + barW / 2, arBarY + barH / 2, Color(255, 255, 255, 240), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 
     local moneyY = arBarY + barH + 6
-    draw.SimpleText("$" .. string.Comma(math.Round(anim.bal)), "GRM_HUD_Money", barX, moneyY, cfg.moneyColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    local moneyTxt = (GRM.Format and GRM.Format(math.Round(anim.bal))) or ("$" .. string.Comma(math.Round(anim.bal)))
+    draw.SimpleText(moneyTxt, "GRM_HUD_Money", barX, moneyY, cfg.moneyColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
 
     if actual.ammo1 >= 0 then
         local ax, ay = sw - 16 - 150, sh - 16 - 60
