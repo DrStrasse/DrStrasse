@@ -10,7 +10,7 @@
 (или прямо в `garrysmod/lua/`). Файлы в `lua/autorun/` загружаются
 автоматически на сервере и клиенте.
 
-## Файлы (куски 1–4 — 36 модулей)
+## Файлы (куски 1–5 — 39 модулей)
 
 | # | Файл | Назначение |
 |---|------|-----------|
@@ -42,6 +42,7 @@
 | 28–30 | `lua/entities/grm_pbx_station/{shared,init,cl_init}.lua` | Entity АТС: ExchangeID/Active/MaxLines, Use() → меню АТС, табличка статуса |
 | 31–33 | `lua/entities/grm_phone/{shared,init,cl_init}.lua` | Entity стационарного телефона: авто-номер при спавне, Use() → меню, табличка номера |
 | 34–36 | `lua/entities/grm_phone_terminal/{shared,init,cl_init}.lua` | Entity терминала мониторинга связи: TerminalName, Use() → терминал |
+| 37–39 | `lua/entities/grm_phone_wiretap/{shared,init,cl_init}.lua` | Entity прослушки: TargetNumber/ExchangeID/Active, Use() → меню прослушки, 3D2D-индикатор ON/OFF — **последний кусок телефонии** |
 
 ## Зависимости, которых пока НЕТ в репозитории
 
@@ -50,7 +51,6 @@
 - `lua/autorun/client/cl_grm_faction_logistics.lua` — клиент логистики (UI)
 - `lua/autorun/client/cl_grm_factory_fullcycle.lua` — клиент завода (UI крафта и QTE)
 - Ядро валюты: `GRM.GiveMoney / TakeMoney / HasMoney / GetBalance / SetBalance / Format / Notify` + конфиг `GRM.StartBalance` + клиентская переменная `GRM.LocalBalance`
-- **Entity прослушки** (`entities/grm_phone_wiretap/{shared,init,cl_init}.lua`) — последний кусок телефонии
 - **Entity дилера** (`entities/sent_vehicle_dealer/…`) — `vehicle_dealer.lua` это патч поверх неё
 - Радио-модуль с глобальной таблицей `RadioFrequencies` (для телефонной интеграции рации)
 - `GRM.Encumbrance` — система веса/перегруза
