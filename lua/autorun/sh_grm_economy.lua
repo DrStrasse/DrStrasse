@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v2.1 (Код 43)
+    GRM Unified Economy v2.2 (Код 43)
 
     ЕДИНЫЙ аддон экономики фракций — написан с нуля.
     ЗАМЕНЯЕТ собой два старых модуля:
@@ -52,6 +52,9 @@ E.Config = E.Config or {
     FineMaxAmount      = 100000,
     UseDistance        = 180,
     BankTerminalModel  = "models/starless/atm.mdl",
+    TaxToState         = true,  -- налоги с ЗП → ГОС.БЮДЖЕТ (false → обратно в бюджет фракции)
+    FinesToState       = true,  -- штрафы без фракции-получателя → гос.бюджет (false → сгорают)
+    LogSize            = 300,   -- записей общего финансового лога сервера
 }
 
 local DATA_FILE  = "grm_economy.json"
@@ -194,6 +197,65 @@ if SERVER then
         end
     end
 
+    -- ── ГОС.БЮДЖЕТ И ГЛОБАЛЬНЫЙ ФИН.ЛОГ (v2.2) ────────────
+    -- Применение сохранённых (админ-панелью) настроек поверх дефолтов.
+    local function applyConfig()
+        local c = E.Data.config
+        if not istable(c) then return end
+        for k, v in pairs(c) do
+            if E.Config[k] ~= nil then E.Config[k] = v end
+        end
+        if tonumber(c.StartBalance) then GRM.StartBalance = tonumber(c.StartBalance) end
+        if isstring(c.CurrencyName) and c.CurrencyName ~= "" then GRM.CurrencyName = c.CurrencyName end
+    end
+
+    local function stateHist(text)
+        local st = E.Data.state
+        st.history = istable(st.history) and st.history or {}
+        st.history[#st.history + 1] = { t = os.time(), s = tostring(text) }
+        while #st.history > E.Config.HistorySize do table.remove(st.history, 1) end
+        dirty = true
+    end
+
+    local function stateAdd(delta, reason)
+        local st = E.Data.state
+        st.budget = math.max(0, math.floor((tonumber(st.budget) or 0) + delta))
+        dirty = true
+        if reason then stateHist(reason) end
+        return st.budget
+    end
+
+    local function addLog(text)
+        if not istable(E.Data.log) then E.Data.log = {} end
+        local lg = E.Data.log
+        lg[#lg + 1] = { t = os.time(), s = tostring(text) }
+        local max = math.max(50, math.floor(tonumber(E.Config.LogSize) or 300))
+        while #lg > max do table.remove(lg, 1) end
+        dirty = true
+    end
+    E.Log = addLog -- публично: другие системы тоже могут писать в фин.лог
+
+    -- Любое движение наличных через ядро валюты попадает в общий лог.
+    hook.Add("GRM_MoneyChanged", "GRM_Economy_FinLog", function(ply, newBalance, delta, reason)
+        local who = "?"
+        if IsValid(ply) and ply:IsPlayer() then
+            who = ply:Nick()
+        elseif isstring(ply) then
+            who = ply
+            if GRM.GetAllBalances then
+                local rec = GRM.GetAllBalances()[ply]
+                if rec and rec.name then who = tostring(rec.name) end
+            end
+        end
+        delta = math.floor(tonumber(delta) or 0)
+        addLog(("%s %s%s (баланс: %s)%s"):format(
+            who,
+            delta >= 0 and "+" or "-",
+            money(math.abs(delta)),
+            money(newBalance),
+            (isstring(reason) and reason ~= "") and (" | " .. reason) or ""))
+    end)
+
     local function load()
         local t = tryJSON(DATA_FILE)
         if t and istable(t.factions) then
@@ -203,6 +265,12 @@ if SERVER then
             importLegacy() -- первый запуск: подтянуть данные старых модулей
         end
         E.Data.accounts = istable(E.Data.accounts) and E.Data.accounts or {}
+        E.Data.state = istable(E.Data.state) and E.Data.state or { budget = 0, history = {} }
+        E.Data.state.budget = math.max(0, math.floor(tonumber(E.Data.state.budget) or 0))
+        E.Data.state.history = istable(E.Data.state.history) and E.Data.state.history or {}
+        E.Data.log = istable(E.Data.log) and E.Data.log or {}
+        E.Data.config = istable(E.Data.config) and E.Data.config or {}
+        applyConfig() -- сохранённые настройки поверх дефолтов
         for name in pairs(E.Data.factions) do entry(name) end
     end
 
@@ -234,7 +302,7 @@ if SERVER then
         amount = math.max(0, math.floor(tonumber(amount) or 0))
         if not IsValid(ply) or amount <= 0 then return false end
         if not (GRM.HasMoney and GRM.HasMoney(ply, amount)) then return false end
-        GRM.TakeMoney(ply, amount)
+        GRM.TakeMoney(ply, amount, "Банкомат: взнос на счёт")
         local acc = account(ply:SteamID64(), ply:Nick())
         acc.balance = acc.balance + amount
         dirty = true
@@ -249,7 +317,7 @@ if SERVER then
         if acc.balance < amount then return false end
         acc.balance = acc.balance - amount
         dirty = true
-        GRM.GiveMoney(ply, amount)
+        GRM.GiveMoney(ply, amount, "Банкомат: снятие со счёта")
         return true, acc.balance
     end
 
@@ -266,6 +334,7 @@ if SERVER then
         from.balance = from.balance - amount
         to.balance = to.balance + amount
         dirty = true
+        addLog(("Перевод счёт→счёт: %s → %s: %s"):format(ply:Nick(), toSid, money(amount)))
         return true, from.balance
     end
 
@@ -345,8 +414,12 @@ if SERVER then
                     local tax  = math.floor(gross * rate)
                     local net  = gross - tax
                     if e.payFromBudget then e.budget = e.budget - gross end
-                    e.budget = math.max(0, e.budget + tax)
-                    GRM.GiveMoney(ply, net)
+                    if E.Config.TaxToState then
+                        stateAdd(tax, ("Налог %d%% с ЗП %s [%s]"):format(math.floor(rate * 100), ply:Nick(), name))
+                    else
+                        e.budget = math.max(0, e.budget + tax)
+                    end
+                    GRM.GiveMoney(ply, net, "Зарплата [" .. name .. "]")
                     notify(ply, "Зарплата [" .. name .. "]: " .. money(net)
                         .. " (налог " .. math.floor(rate * 100) .. "%)", 100, 220, 100)
                     addHistory(name, "ЗП " .. ply:Nick() .. ": " .. money(net) .. " (налог " .. money(tax) .. ")")
@@ -383,12 +456,14 @@ if SERVER then
         if GRM.GetBalance(target) <= 0 then return false, "У игрока нет средств" end
 
         local issued = math.min(amount, GRM.GetBalance(target))
-        GRM.TakeMoney(target, issued)
+        GRM.TakeMoney(target, issued, "Штраф: " .. tostring(reason or "нарушение"))
 
         local receiptName = factionOf(issuer)
         if receiptName and E.Config.FineToBudget then
             GRM.FactionBudgetAdd(receiptName, issued,
                 ("Штраф %s от %s: %s"):format(target:Nick(), IsValid(issuer) and issuer:Nick() or "система", money(issued)))
+        elseif E.Config.FinesToState then
+            stateAdd(issued, ("Штраф %s от %s"):format(target:Nick(), IsValid(issuer) and issuer:Nick() or "система"))
         end
 
         notify(target,
@@ -396,8 +471,10 @@ if SERVER then
                 IsValid(issuer) and issuer:Nick() or "система"),
             255, 80, 70)
         if IsValid(issuer) and issuer ~= target then
-            notify(issuer, "Штраф выписан: " .. target:Nick() .. " -" .. money(issued)
-                .. (receiptName and (" → бюджет [" .. receiptName .. "]") or ""), 100, 220, 100)
+            local dest = " (деньги сгорают)"
+            if receiptName and E.Config.FineToBudget then dest = " → бюджет [" .. receiptName .. "]"
+            elseif E.Config.FinesToState then dest = " → гос.бюджет" end
+            notify(issuer, "Штраф выписан: " .. target:Nick() .. " -" .. money(issued) .. dest, 100, 220, 100)
         end
         local tf = factionOf(target)
         if tf and tf ~= receiptName then
@@ -420,7 +497,7 @@ if SERVER then
         timer.Simple(5, function() if IsValid(ply) then syncPlayer(ply) end end)
     end)
 
-    -- ── АДМИН-ПАНЕЛЬ: данные ────────────────────────────────
+    -- ── АДМИН-ПАНЕЛЬ: данные (единая панель экономики) ─────
     local function buildAdminData()
         local factions = {}
         if Factions then
@@ -428,7 +505,7 @@ if SERVER then
                 if istable(f) then
                     local roles, depts = {}, {}
                     if istable(f.Roles) then for _, r in ipairs(f.Roles) do roles[#roles + 1] = tostring(r) end end
-                    if istable(f.Departments) then for _, d in ipairs(f.Departments) do depts[#depts + 1] = tostring(d) end end
+                    if istable(f.Departments) then for _, dd in ipairs(f.Departments) do depts[#depts + 1] = tostring(dd) end end
                     factions[name] = {
                         entry = entry(name),
                         roles = roles,
@@ -445,9 +522,35 @@ if SERVER then
                 factions[name] = { entry = entry(name), roles = {}, departments = {}, online = 0, members = 0 }
             end
         end
-        return { factions = factions, config = {
-            maxTax = E.Config.MaxTaxRate, minInterval = E.Config.MinSalaryInterval,
-        } }
+
+        -- игроки + их банковские счета + суммарная статистика
+        local players, cashSum, bankSum = {}, 0, 0
+        if GRM.GetAllBalances then players = GRM.GetAllBalances() end
+        for sid, rec in pairs(players) do
+            cashSum = cashSum + (tonumber(rec.balance) or 0)
+            local acc = E.Data.accounts[sid]
+            rec.bank = acc and acc.balance or 0
+            bankSum = bankSum + rec.bank
+        end
+
+        local fullcfg = table.Copy(E.Config)
+        fullcfg.StartBalance = GRM.StartBalance or 1000
+        fullcfg.CurrencyName = GRM.CurrencyName or "GRM"
+
+        return {
+            factions = factions,
+            state = E.Data.state,
+            players = players,
+            log = E.Data.log,
+            config = {
+                maxTax = E.Config.MaxTaxRate, minInterval = E.Config.MinSalaryInterval,
+            },
+            fullconfig = fullcfg,
+            stats = {
+                players = table.Count(players), cash = cashSum, bank = bankSum,
+                factions = table.Count(E.Data.factions), logSize = #(E.Data.log or {}),
+            },
+        }
     end
 
     local function sendAdminData(ply)
@@ -465,10 +568,12 @@ if SERVER then
         if not IsValid(ply) or not ply:IsSuperAdmin() then return end
         local a = net.ReadTable() or {}
         local name = tostring(a.faction or "")
-        if name == "" then return end
-        local e = entry(name)
+        local function amt(v) return math.max(0, math.floor(tonumber(v) or 0)) end
+        local function sidArg() return tostring(a.sid or "") end
 
         if a.action == "save_entry" then
+            if name == "" then return end
+            local e = entry(name)
             e.taxRate            = math.Clamp(tonumber(a.taxRate) or e.taxRate, 0, E.Config.MaxTaxRate)
             e.baseSalary         = math.max(0, math.floor(tonumber(a.baseSalary) or 0))
             e.salaryInterval     = math.max(E.Config.MinSalaryInterval, math.floor(tonumber(a.salaryInterval) or e.salaryInterval))
@@ -484,16 +589,121 @@ if SERVER then
             dirty = true
             save()
             addHistory(name, "Настройки обновлены админом " .. ply:Nick())
+            addLog("Админ " .. ply:Nick() .. " обновил настройки [" .. name .. "]")
             notify(ply, "Фракция [" .. name .. "] сохранена.", 100, 220, 100)
+
         elseif a.action == "budget_give" or a.action == "budget_take" then
-            local amt = math.max(0, math.floor(tonumber(a.amount) or 0))
-            if a.action == "budget_take" then amt = -math.min(amt, e.budget) end
-            GRM.FactionBudgetAdd(name, amt, ("Админ %s: %s%s"):format(ply:Nick(), amt > 0 and "+" or "", money(math.abs(amt))))
-            notify(ply, "Бюджет [" .. name .. "]: " .. money(e.budget), 100, 220, 255)
+            if name == "" then return end
+            local e = entry(name)
+            local v = amt(a.amount)
+            if a.action == "budget_take" then v = -math.min(v, e.budget) end
+            if v ~= 0 then
+                GRM.FactionBudgetAdd(name, v, ("Админ %s: %s%s"):format(ply:Nick(), v > 0 and "+" or "", money(math.abs(v))))
+                notify(ply, "Бюджет [" .. name .. "]: " .. money(entry(name).budget), 100, 220, 255)
+            end
+
         elseif a.action == "pay_now" then
-            e.nextPay = os.time()
+            if name == "" then return end
+            entry(name).nextPay = os.time()
             notify(ply, "Принудительная выплата запрошена для [" .. name .. "].", 255, 200, 80)
+
+        -- ── ГОС.БЮДЖЕТ ──────────────────────────────────────
+        elseif a.action == "save_now" then
+            dirty = true save()
+            notify(ply, "Данные экономики сохранены на диск.", 100, 220, 100)
+        elseif a.action == "state_give" then
+            local v = amt(a.amount)
+            if v <= 0 then return end
+            stateAdd(v, ("Админ %s пополнил гос.бюджет: +%s"):format(ply:Nick(), money(v)))
+            notify(ply, "Гос.бюджет: " .. money(E.Data.state.budget), 235, 180, 60)
+        elseif a.action == "state_take" then
+            local v = math.min(amt(a.amount), E.Data.state.budget)
+            if v <= 0 then return end
+            stateAdd(-v, ("Админ %s изъял из гос.бюджета: -%s"):format(ply:Nick(), money(v)))
+            notify(ply, "Гос.бюджет: " .. money(E.Data.state.budget), 235, 180, 60)
+        elseif a.action == "state_set" then
+            E.Data.state.budget = amt(a.amount)
+            dirty = true
+            stateHist("Админ " .. ply:Nick() .. " установил гос.бюджет: " .. money(E.Data.state.budget))
+            notify(ply, "Гос.бюджет: " .. money(E.Data.state.budget), 235, 180, 60)
+        elseif a.action == "state_to_faction" then
+            if name == "" then return end
+            local v = amt(a.amount)
+            if v <= 0 then return end
+            if E.Data.state.budget < v then notify(ply, "В гос.бюджете только: " .. money(E.Data.state.budget), 255, 100, 100) return end
+            stateAdd(-v, ("Перечислено фракции [%s] (админ %s)"):format(name, ply:Nick()))
+            GRM.FactionBudgetAdd(name, v, "Трансфер из гос.бюджета: " .. money(v))
+            notify(ply, ("В [%s] перечислено %s из гос.бюджета"):format(name, money(v)), 100, 220, 100)
+        elseif a.action == "state_pay" then
+            local sid, v = sidArg(), amt(a.amount)
+            if sid == "" or v <= 0 then return end
+            if E.Data.state.budget < v then notify(ply, "В гос.бюджете только: " .. money(E.Data.state.budget), 255, 100, 100) return end
+            stateAdd(-v, ("Выплата игроку %s (админ %s)"):format(sid, ply:Nick()))
+            GRM.GiveMoney(sid, v, "Выплата из гос.бюджета")
+            for _, p in ipairs(player.GetAll()) do
+                if IsValid(p) and p:SteamID64() == sid then
+                    notify(p, "Вам выплачено из гос.бюджета: " .. money(v), 100, 220, 100)
+                    break
+                end
+            end
+            notify(ply, "Выплачено " .. money(v) .. " игроку " .. sid, 100, 220, 100)
+
+        -- ── ИГРОКИ: балансы наличных и счетов ───────────────
+        elseif a.action == "player_give" or a.action == "player_take" or a.action == "player_set" then
+            local sid, v = sidArg(), amt(a.amount)
+            if sid == "" then return end
+            if a.action == "player_give" then
+                GRM.GiveMoney(sid, v, "Админ " .. ply:Nick() .. ": выдача")
+            elseif a.action == "player_take" then
+                GRM.TakeMoney(sid, v, "Админ " .. ply:Nick() .. ": изъятие")
+            else
+                GRM.SetBalance(sid, v, "Админ " .. ply:Nick() .. ": установка баланса")
+            end
+            local rec = GRM.GetAllBalances and GRM.GetAllBalances()[sid]
+            notify(ply, "Баланс обновлён: " .. money(rec and rec.balance or 0), 100, 220, 100)
+        elseif a.action == "player_bank_set" then
+            local sid, v = sidArg(), amt(a.amount)
+            if sid == "" then return end
+            local acc = account(sid)
+            acc.balance = v
+            dirty = true save()
+            addLog(("Админ %s установил банковский счёт %s: %s"):format(ply:Nick(), sid, money(v)))
+            notify(ply, "Банковский счёт установлен: " .. money(v), 100, 220, 100)
+
+        -- ── ОБЩИЕ НАСТРОЙКИ ─────────────────────────────────
+        elseif a.action == "config_save" and istable(a.config) then
+            local c = a.config
+            local out = istable(E.Data.config) and E.Data.config or {}
+            local function num(key, mn, mx)
+                local v = tonumber(c[key])
+                if v then out[key] = math.Clamp(math.floor(v * 1000 + 0.5) / 1000, mn, mx) end
+            end
+            num("DefaultTaxRate", 0, 1)
+            num("MaxTaxRate", 0.01, 1)
+            num("SalaryInterval", 30, 86400)
+            num("MinSalaryInterval", 10, 3600)
+            num("HistorySize", 10, 500)
+            num("LogSize", 50, 2000)
+            num("FineMaxAmount", 100, 100000000)
+            num("UseDistance", 50, 1000)
+            num("StartBalance", 0, 100000000)
+            for _, key in ipairs({ "PayFromBudget", "FineToBudget", "TaxToState", "FinesToState" }) do
+                if c[key] ~= nil then out[key] = c[key] == true end
+            end
+            if isstring(c.CurrencyName) and c.CurrencyName ~= "" then
+                out.CurrencyName = string.Left(c.CurrencyName, 16)
+            end
+            if isstring(c.BankTerminalModel) and string.StartWith(c.BankTerminalModel, "models/")
+                and not string.find(c.BankTerminalModel, "..", 1, true) then
+                out.BankTerminalModel = string.Left(c.BankTerminalModel, 128)
+            end
+            E.Data.config = out
+            applyConfig()
+            dirty = true save()
+            addLog("Админ " .. ply:Nick() .. " обновил общие настройки экономики")
+            notify(ply, "Настройки экономики сохранены.", 100, 220, 100)
         end
+
         -- КЛЮЧЕВОЕ ОТЛИЧИЕ от старой панели: НЕ переоткрываем окно,
         -- отдаём свежий пакет данных — клиент обновит поля на месте.
         sendAdminData(ply)
@@ -723,13 +933,17 @@ if SERVER then
                 print(string.format("  [%s] бюджет %s, налог %d%%, ЗП база %s, интервал %ds",
                     name, money(e.budget), math.floor(e.taxRate * 100), money(e.baseSalary), e.salaryInterval))
             end
+        elseif mode == "state" then
+            print("[GRM Economy] гос.бюджет: " .. money(E.Data.state.budget))
+        elseif mode == "accounts" then
+            print("[GRM Economy] банковских счетов: " .. table.Count(E.Data.accounts))
         else
-            print("[GRM Economy] grm_economy <save|list>")
+            print("[GRM Economy] grm_economy <save|list|state|accounts>")
         end
     end)
 
     load()
-    print("[GRM Economy] Unified Economy v2.1 загружена: фракций " .. table.Count(E.Data.factions))
+    print("[GRM Economy] Unified Economy v2.2 загружена: фракций " .. table.Count(E.Data.factions))
 end
 
 -- ============================================================
@@ -783,8 +997,14 @@ if CLIENT then
         chat.AddText(Color(120, 220, 120), "[Экономика] ", color_white, net.ReadString())
     end)
 
-    -- ── АДМИН-ПАНЕЛЬ (обновляется НА МЕСТЕ — без переоткрытия) ──
+    -- ── ЕДИНАЯ АДМИН-ПАНЕЛЬ ЭКОНОМИКИ (обновляется НА МЕСТЕ) ──
     local adminFrame = nil
+
+    local function act(t)
+        net.Start(NET_ADMIN_ACT)
+            net.WriteTable(t)
+        net.SendToServer()
+    end
 
     local function buildAdminUI(d)
         if not IsValid(adminFrame) then return end
@@ -794,104 +1014,276 @@ if CLIENT then
         local tabs = vgui.Create("DPropertySheet", f)
         tabs:Dock(FILL) tabs:DockMargin(8, 44, 8, 8)
 
-        local pnl = vgui.Create("DPanel", tabs) pnl:SetPaintBackground(false)
-
-        local listW = 230
-        local list = vgui.Create("DListView", pnl)
-        list:SetPos(4, 4) list:SetSize(listW, pnl:GetTall() - 8)
-        list:SetMultiSelect(false)
-        list:AddColumn("Фракция") list:AddColumn("Бюджет")
-
-        local names = {}
-        for n in pairs(d.factions or {}) do names[#names + 1] = n end
-        table.sort(names)
-        for _, n in ipairs(names) do
-            local fd = d.factions[n]
-            local ln = list:AddLine(n, money(fd.entry and fd.entry.budget or 0))
-            ln.Faction = n
+        -- запоминаем активную вкладку, чтобы пересборка свежими данными
+        -- возвращала админа на ту же вкладку (без переоткрытия окна)
+        local lastTab = f._tabName
+        local function sheetPanel(name, icon)
+            local p = vgui.Create("DPanel", tabs)
+            p:SetPaintBackground(false)
+            local sh = tabs:AddSheet(name, p, icon)
+            local oldClick = sh.Tab.DoClick
+            sh.Tab.DoClick = function(...)
+                f._tabName = name
+                if oldClick then oldClick(...) end
+            end
+            if lastTab == name then tabs:SetActiveTab(sh.Tab) end
+            return p
         end
 
-        local editor = vgui.Create("DPanel", pnl)
-        editor:SetPos(listW + 12, 4) editor:SetSize(pnl:GetWide() - listW - 16, pnl:GetTall() - 8)
-        editor.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CUI.panel) end
-
-        local function showEditor(name)
-            editor:Clear()
-            local fd = (d.factions or {})[name]
-            if not fd then return end
-            local e = fd.entry or {}
-            -- запоминаем выбранную фракцию для восстановления после
-            -- пересборки свежими данными (никаких переоткрытий окна!)
-            f._restoreFaction = name
-            local rolesTbl, deptsTbl = {}, {}
-
-            local function label(txt, x, y, col)
-                local l = vgui.Create("DLabel", editor)
-                l:SetPos(x, y) l:SetSize(200, 22)
-                l:SetText(txt) l:SetFont("GRM_Eco_Normal")
-                l:SetTextColor(col or CUI.dim)
+        local function lbl(p, txt, col, x, y, w, font)
+            local l = vgui.Create("DLabel", p)
+            l:SetPos(x, y) l:SetSize(w or 560, 22)
+            l:SetText(txt) l:SetFont(font or "GRM_Eco_Normal")
+            l:SetTextColor(col or CUI.dim)
+            return l
+        end
+        local function amtEntry(p, x, y, w)
+            local t = vgui.Create("DTextEntry", p)
+            t:SetPos(x, y) t:SetSize(w or 150, 26)
+            t:SetNumeric(true) t:SetPlaceholderText("Сумма...")
+            return t
+        end
+        local function getAmt(t) return math.max(0, math.floor(tonumber(t:GetValue()) or 0)) end
+        local function histBox(p, list, x, y, w, h)
+            local box = vgui.Create("DScrollPanel", p)
+            box:SetPos(x, y) box:SetSize(w, h)
+            box.Paint = function(_, pw, ph) draw.RoundedBox(6, 0, 0, pw, ph, Color(22, 28, 38, 240)) end
+            for i = #list, math.max(1, #list - 80), -1 do
+                local rec = list[i]
+                local l = vgui.Create("DLabel", box)
+                l:Dock(TOP) l:SetTall(16) l:DockMargin(6, 1, 4, 1)
+                l:SetFont("GRM_Eco_Small") l:SetTextColor(CUI.dim)
+                l:SetText(os.date("%d.%m %H:%M", rec.t or 0) .. " — " .. tostring(rec.s or ""))
             end
-            local function wang(x, y, w, val, maxv)
-                local wn = vgui.Create("DNumberWang", editor)
-                wn:SetPos(x, y) wn:SetSize(w, 24)
-                wn:SetMin(0) wn:SetMax(maxv or 1000000) wn:SetValue(val or 0)
-                return wn
+            return box
+        end
+
+        local stats = d.stats or {}
+        local st = d.state or {}
+        local full = d.fullconfig or {}
+
+        -- ═══ ВКЛАДКА 1: ОБЗОР ═══
+        do
+            local p = sheetPanel("Обзор", "icon16/chart_bar.png")
+            lbl(p, "Единая панель управления экономикой сервера", CUI.text, 12, 10, 800, "GRM_Eco_Title")
+            lbl(p, "Доступ: только superadmin. Изменения сохраняются сразу и пишутся в фин.лог.", CUI.dim, 12, 36, 900)
+
+            lbl(p, "ГОС.БЮДЖЕТ: " .. money(st.budget or 0), CUI.yellow, 12, 70, 800, "GRM_Eco_Title")
+            lbl(p, ("Счетов игроков: %d | Наличными на руках: %s | На банковских счетах: %s"):format(
+                stats.players or 0, money(stats.cash or 0), money(stats.bank or 0)), CUI.text, 12, 102, 920)
+            lbl(p, ("Фракций с экономикой: %d | Записей в общем фин.логе: %d"):format(
+                stats.factions or 0, stats.logSize or 0), CUI.text, 12, 128, 920)
+            lbl(p, "Открыть панель: чат /feco_admin (или /salary_admin), консоль grm_salary_admin.", CUI.dim, 12, 154, 920)
+
+            local sv = btn(p, "Сохранить данные на диск", CUI.accent, 260, 32)
+            sv:SetPos(12, 196)
+            sv.DoClick = function() act({ action = "save_now" }) end
+        end
+
+        -- ═══ ВКЛАДКА 2: ГОС.БЮДЖЕТ ═══
+        do
+            local p = sheetPanel("Гос.бюджет", "icon16/money.png")
+            lbl(p, "Гос.бюджет: " .. money(st.budget or 0), CUI.yellow, 12, 10, 800, "GRM_Eco_Title")
+            lbl(p, "Сюда поступают налоги с зарплат и штрафы (управляется во вкладке «Настройки»).", CUI.dim, 12, 36, 920)
+
+            local amt = amtEntry(p, 12, 66, 150)
+            local bg = btn(p, "Пополнить", CUI.green, 120, 26) bg:SetPos(170, 66)
+            bg.DoClick = function() act({ action = "state_give", amount = getAmt(amt) }) end
+            local bt = btn(p, "Изъять", CUI.red, 100, 26) bt:SetPos(296, 66)
+            bt.DoClick = function() act({ action = "state_take", amount = getAmt(amt) }) end
+            local bs = btn(p, "Установить", CUI.accent, 110, 26) bs:SetPos(402, 66)
+            bs.DoClick = function() act({ action = "state_set", amount = getAmt(amt) }) end
+
+            lbl(p, "Перечислить фракции:", CUI.text, 12, 106, 150)
+            local cmb = vgui.Create("DComboBox", p)
+            cmb:SetPos(170, 104) cmb:SetSize(250, 26)
+            cmb:SetValue("Фракция...")
+            for n in pairs(d.factions or {}) do cmb:AddChoice(n, n) end
+            local bf = btn(p, "Перечислить из гос.", CUI.yellow, 180, 26) bf:SetPos(430, 104)
+            bf.DoClick = function()
+                local _, nm = cmb:GetSelected()
+                if nm then act({ action = "state_to_faction", faction = nm, amount = getAmt(amt) }) end
             end
 
-            label("Фракция: " .. name .. "  (онлайн " .. (fd.online or 0) .. "/" .. (fd.members or 0) .. ")", 12, 8, CUI.text)
-            label("Налог, %:", 12, 40)
-            local taxW = wang(120, 40, 80, math.floor((e.taxRate or 0) * 100), (d.config and math.floor((d.config.maxTax or 0.5) * 100)) or 50)
-            label("Базовая ЗП:", 12, 72)
-            local baseW = wang(120, 72, 110, e.baseSalary or 0)
-            label("Интервал ЗП, сек:", 12, 104)
-            local intW = wang(160, 104, 90, e.salaryInterval or 600)
-
-            local pfb = vgui.Create("DCheckBoxLabel", editor)
-            pfb:SetPos(12, 136) pfb:SetSize(280, 24)
-            pfb:SetText("Выплачивать ЗП из бюджета фракции")
-            pfb:SetTextColor(CUI.text) pfb:SetValue(e.payFromBudget and 1 or 0)
-
-            -- ЗП по ролям
-            local rolesBox = vgui.Create("DScrollPanel", editor)
-            rolesBox:SetPos(300, 40) rolesBox:SetSize(editor:GetWide() - 312, (editor:GetTall() - 120) / 2 - 10)
-            rolesBox.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
-            label("ЗП по ролям:", 300, 18, CUI.text)
-            for _, rName in ipairs(fd.roles or {}) do
-                local row = vgui.Create("DPanel", rolesBox)
-                row:Dock(TOP) row:SetTall(26) row:DockMargin(4, 2, 4, 2) row.Paint = nil
-                local l = vgui.Create("DLabel", row) l:Dock(LEFT) l:SetWide(170)
-                l:SetText(rName) l:SetFont("GRM_Eco_Small") l:SetTextColor(CUI.text)
-                local wn = vgui.Create("DNumberWang", row) wn:Dock(RIGHT) wn:SetWide(90)
-                wn:SetMin(0) wn:SetMax(1000000)
-                wn:SetValue((e.roleSalaries or {})[rName] or 0)
-                rolesTbl[rName] = wn
+            lbl(p, "Выплатить игроку:", CUI.text, 12, 140, 150)
+            local cmb2 = vgui.Create("DComboBox", p)
+            cmb2:SetPos(170, 138) cmb2:SetSize(250, 26)
+            cmb2:SetValue("Игрок (все известные)...")
+            for sid, rec in pairs(d.players or {}) do
+                cmb2:AddChoice(tostring(rec.name or sid) .. " (" .. sid .. ")", sid)
+            end
+            local bp = btn(p, "Выплатить из гос.", CUI.green, 180, 26) bp:SetPos(430, 138)
+            bp.DoClick = function()
+                local _, sid = cmb2:GetSelected()
+                if sid then act({ action = "state_pay", sid = sid, amount = getAmt(amt) }) end
             end
 
-            -- ЗП по отделам
-            local deptsBox = vgui.Create("DScrollPanel", editor)
-            deptsBox:SetPos(300, 44 + (editor:GetTall() - 120) / 2)
-            deptsBox:SetSize(editor:GetWide() - 312, (editor:GetTall() - 120) / 2 - 30)
-            deptsBox.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
-            label("ЗП по отделам:", 300, 24 + (editor:GetTall() - 120) / 2, CUI.text)
-            for _, dName in ipairs(fd.departments or {}) do
-                local row = vgui.Create("DPanel", deptsBox)
-                row:Dock(TOP) row:SetTall(26) row:DockMargin(4, 2, 4, 2) row.Paint = nil
-                local l = vgui.Create("DLabel", row) l:Dock(LEFT) l:SetWide(170)
-                l:SetText(dName) l:SetFont("GRM_Eco_Small") l:SetTextColor(CUI.text)
-                local wn = vgui.Create("DNumberWang", row) wn:Dock(RIGHT) wn:SetWide(90)
-                wn:SetMin(0) wn:SetMax(1000000)
-                wn:SetValue((e.departmentSalaries or {})[dName] or 0)
-                deptsTbl[dName] = wn
+            lbl(p, "Операции гос.бюджета:", CUI.text, 12, 176, 400)
+            histBox(p, st.history or {}, 12, 200, 930, 320)
+        end
+
+        -- ═══ ВКЛАДКА 3: ИГРОКИ ═══
+        do
+            local p = sheetPanel("Игроки", "icon16/user.png")
+            local list = vgui.Create("DListView", p)
+            list:SetPos(4, 4) list:SetSize(940, 400)
+            list:SetMultiSelect(false)
+            list:AddColumn("Ник") list:AddColumn("Наличные") list:AddColumn("Счёт в банке") list:AddColumn("SteamID64")
+
+            local sids = {}
+            for sid in pairs(d.players or {}) do sids[#sids + 1] = sid end
+            table.sort(sids, function(a1, b1)
+                return tostring((d.players[a1] or {}).name or a1):lower() < tostring((d.players[b1] or {}).name or b1):lower()
+            end)
+            for _, sid in ipairs(sids) do
+                local rec = d.players[sid]
+                local ln = list:AddLine(tostring(rec.name or "?"), money(rec.balance or 0), money(rec.bank or 0), sid)
+                ln.Sid = sid
             end
 
-            local saveB = btn(editor, "💾 Сохранить", CUI.green, 150, 32)
-            saveB:SetPos(12, editor:GetTall() - 44)
-            saveB.DoClick = function()
-                local roles, depts = {}, {}
-                for k, wn in pairs(rolesTbl) do roles[k] = math.floor(tonumber(wn:GetValue()) or 0) end
-                for k, wn in pairs(deptsTbl) do depts[k] = math.floor(tonumber(wn:GetValue()) or 0) end
-                net.Start(NET_ADMIN_ACT)
-                    net.WriteTable({
+            local sel = lbl(p, "Выберите игрока в таблице", CUI.text, 12, 414, 920)
+            local amt = amtEntry(p, 12, 442, 140)
+            local function forSel(mk)
+                return function()
+                    if not f._playerSid then return end
+                    act(mk(f._playerSid, getAmt(amt)))
+                end
+            end
+            local b1 = btn(p, "Выдать", CUI.green, 100, 26) b1:SetPos(160, 442)
+            b1.DoClick = forSel(function(sid, v) return { action = "player_give", sid = sid, amount = v } end)
+            local b2 = btn(p, "Изъять", CUI.red, 100, 26) b2:SetPos(266, 442)
+            b2.DoClick = forSel(function(sid, v) return { action = "player_take", sid = sid, amount = v } end)
+            local b3 = btn(p, "Установить наличные", CUI.accent, 180, 26) b3:SetPos(372, 442)
+            b3.DoClick = forSel(function(sid, v) return { action = "player_set", sid = sid, amount = v } end)
+            local b4 = btn(p, "Установить счёт", CUI.yellow, 160, 26) b4:SetPos(558, 442)
+            b4.DoClick = forSel(function(sid, v) return { action = "player_bank_set", sid = sid, amount = v } end)
+
+            local function showSel(sid)
+                local rec = (d.players or {})[sid]
+                if not rec then return end
+                sel:SetText(("Игрок: %s | наличные %s | счёт %s | %s"):format(
+                    tostring(rec.name or sid), money(rec.balance or 0), money(rec.bank or 0), sid))
+            end
+            list.OnRowSelected = function(_, _, ln)
+                f._playerSid = ln.Sid
+                showSel(ln.Sid)
+            end
+            if f._playerSid then showSel(f._playerSid) end
+        end
+
+        -- ═══ ВКЛАДКА 4: ФРАКЦИИ И ЗП (ставки/надбавки) ═══
+        do
+            local pnl = sheetPanel("Фракции и ЗП", "icon16/group.png")
+            local listW = 230
+            local list = vgui.Create("DListView", pnl)
+            list:SetPos(4, 4) list:SetSize(listW, pnl:GetTall() - 8)
+            list:SetMultiSelect(false)
+            list:AddColumn("Фракция") list:AddColumn("Бюджет")
+
+            local names = {}
+            for n in pairs(d.factions or {}) do names[#names + 1] = n end
+            table.sort(names)
+            for _, n in ipairs(names) do
+                local fd = d.factions[n]
+                local ln = list:AddLine(n, money(fd.entry and fd.entry.budget or 0))
+                ln.Faction = n
+            end
+
+            local editor = vgui.Create("DPanel", pnl)
+            editor:SetPos(listW + 12, 4) editor:SetSize(pnl:GetWide() - listW - 16, pnl:GetTall() - 8)
+            editor.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CUI.panel) end
+
+            local function showEditor(name)
+                editor:Clear()
+                local fd = (d.factions or {})[name]
+                if not fd then return end
+                local e = fd.entry or {}
+                -- восстановление выбранной фракции после пересборки свежими данными
+                f._restoreFaction = name
+                local rolesTbl, deptsTbl = {}, {}
+
+                local function label(txt, x, y, col)
+                    local l = vgui.Create("DLabel", editor)
+                    l:SetPos(x, y) l:SetSize(280, 22)
+                    l:SetText(txt) l:SetFont("GRM_Eco_Normal")
+                    l:SetTextColor(col or CUI.dim)
+                end
+                local function wang(x, y, w, val, maxv)
+                    local wn = vgui.Create("DNumberWang", editor)
+                    wn:SetPos(x, y) wn:SetSize(w, 24)
+                    wn:SetMin(0) wn:SetMax(maxv or 1000000) wn:SetValue(val or 0)
+                    return wn
+                end
+
+                label("Фракция: " .. name .. "  (онлайн " .. (fd.online or 0) .. "/" .. (fd.members or 0) .. ")", 12, 8, CUI.text)
+                label("Бюджет: " .. money(e.budget or 0), 12, 32, CUI.yellow)
+                label("Налог, %:", 12, 62)
+                local taxW = wang(120, 62, 80, math.floor((e.taxRate or 0) * 100), (d.config and math.floor((d.config.maxTax or 0.5) * 100)) or 50)
+                label("Базовая ЗП:", 12, 94)
+                local baseW = wang(120, 94, 110, e.baseSalary or 0)
+                label("Интервал ЗП, сек:", 12, 126)
+                local intW = wang(160, 126, 90, e.salaryInterval or 600)
+
+                local pfb = vgui.Create("DCheckBoxLabel", editor)
+                pfb:SetPos(12, 158) pfb:SetSize(280, 24)
+                pfb:SetText("Выплачивать ЗП из бюджета фракции")
+                pfb:SetTextColor(CUI.text) pfb:SetValue(e.payFromBudget and 1 or 0)
+
+                -- быстрые операции с бюджетом фракции
+                local bAmt = vgui.Create("DTextEntry", editor)
+                bAmt:SetPos(12, 190) bAmt:SetSize(90, 24)
+                bAmt:SetNumeric(true) bAmt:SetPlaceholderText("Сумма")
+                local bgive = btn(editor, "+ Бюджет", CUI.green, 86, 24)
+                bgive:SetPos(108, 190)
+                bgive.DoClick = function()
+                    act({ action = "budget_give", faction = name, amount = math.max(0, math.floor(tonumber(bAmt:GetValue()) or 0)) })
+                end
+                local btake = btn(editor, "- Бюджет", CUI.red, 86, 24)
+                btake:SetPos(200, 190)
+                btake.DoClick = function()
+                    act({ action = "budget_take", faction = name, amount = math.max(0, math.floor(tonumber(bAmt:GetValue()) or 0)) })
+                end
+
+                -- ЗП по ролям (ставки)
+                local rolesBox = vgui.Create("DScrollPanel", editor)
+                rolesBox:SetPos(300, 40) rolesBox:SetSize(editor:GetWide() - 312, (editor:GetTall() - 120) / 2 - 10)
+                rolesBox.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
+                label("ЗП по ролям (ставки):", 300, 18, CUI.text)
+                for _, rName in ipairs(fd.roles or {}) do
+                    local row = vgui.Create("DPanel", rolesBox)
+                    row:Dock(TOP) row:SetTall(26) row:DockMargin(4, 2, 4, 2) row.Paint = nil
+                    local l = vgui.Create("DLabel", row) l:Dock(LEFT) l:SetWide(170)
+                    l:SetText(rName) l:SetFont("GRM_Eco_Small") l:SetTextColor(CUI.text)
+                    local wn = vgui.Create("DNumberWang", row) wn:Dock(RIGHT) wn:SetWide(90)
+                    wn:SetMin(0) wn:SetMax(1000000)
+                    wn:SetValue((e.roleSalaries or {})[rName] or 0)
+                    rolesTbl[rName] = wn
+                end
+
+                -- ЗП по отделам (надбавки)
+                local deptsBox = vgui.Create("DScrollPanel", editor)
+                deptsBox:SetPos(300, 44 + (editor:GetTall() - 120) / 2)
+                deptsBox:SetSize(editor:GetWide() - 312, (editor:GetTall() - 120) / 2 - 30)
+                deptsBox.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
+                label("ЗП по отделам (надбавки):", 300, 24 + (editor:GetTall() - 120) / 2, CUI.text)
+                for _, dName in ipairs(fd.departments or {}) do
+                    local row = vgui.Create("DPanel", deptsBox)
+                    row:Dock(TOP) row:SetTall(26) row:DockMargin(4, 2, 4, 2) row.Paint = nil
+                    local l = vgui.Create("DLabel", row) l:Dock(LEFT) l:SetWide(170)
+                    l:SetText(dName) l:SetFont("GRM_Eco_Small") l:SetTextColor(CUI.text)
+                    local wn = vgui.Create("DNumberWang", row) wn:Dock(RIGHT) wn:SetWide(90)
+                    wn:SetMin(0) wn:SetMax(1000000)
+                    wn:SetValue((e.departmentSalaries or {})[dName] or 0)
+                    deptsTbl[dName] = wn
+                end
+
+                local saveB = btn(editor, "Сохранить", CUI.green, 150, 32)
+                saveB:SetPos(12, editor:GetTall() - 44)
+                saveB.DoClick = function()
+                    local roles, depts = {}, {}
+                    for k, wn in pairs(rolesTbl) do roles[k] = math.floor(tonumber(wn:GetValue()) or 0) end
+                    for k, wn in pairs(deptsTbl) do depts[k] = math.floor(tonumber(wn:GetValue()) or 0) end
+                    act({
                         action = "save_entry", faction = name,
                         taxRate = math.Clamp((tonumber(taxW:GetValue()) or 0) / 100, 0, 1),
                         baseSalary = math.floor(tonumber(baseW:GetValue()) or 0),
@@ -899,46 +1291,105 @@ if CLIENT then
                         payFromBudget = pfb:GetChecked(),
                         roles = roles, departments = depts,
                     })
-                net.SendToServer()
-                -- окно НЕ переоткрываем: сервер пришлёт свежие данные,
-                -- и этот же фрейм пересоберётся через buildAdminUI.
+                    -- окно НЕ переоткрываем: сервер пришлёт свежие данные,
+                    -- и этот же фрейм пересоберётся через buildAdminUI.
+                end
+
+                local payNow = btn(editor, "Выплатить ЗП сейчас", CUI.yellow, 180, 32)
+                payNow:SetPos(170, editor:GetTall() - 44)
+                payNow.DoClick = function()
+                    act({ action = "pay_now", faction = name })
+                end
+
+                -- История фракции
+                label("История:", 12, 226, CUI.text)
+                histBox(editor, e.history or {}, 12, 250, 270, math.max(60, editor:GetTall() - 250 - 56))
             end
 
-            local payNow = btn(editor, "⚡ Выплатить ЗП сейчас", CUI.yellow, 190, 32)
-            payNow:SetPos(170, editor:GetTall() - 44)
-            payNow.DoClick = function()
-                net.Start(NET_ADMIN_ACT)
-                    net.WriteTable({ action = "pay_now", faction = name })
-                net.SendToServer()
+            list.OnRowSelected = function(_, _, ln) showEditor(ln.Faction) end
+            local restore = f._restoreFaction
+            if restore and (d.factions or {})[restore] then
+                showEditor(restore)
+            elseif #names > 0 then
+                showEditor(names[1])
             end
-
-            -- История
-            local hist = vgui.Create("DScrollPanel", editor)
-            hist:SetPos(12, 170) hist:SetSize(270, editor:GetTall() - 170 - 54)
-            hist.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
-            label("История:", 12, 148, CUI.text)
-            local h = e.history or {}
-            for i = #h, math.max(1, #h - 40), -1 do
-                local rec = h[i]
-                local l = vgui.Create("DLabel", hist)
-                l:Dock(TOP) l:SetTall(16) l:DockMargin(6, 1, 4, 1)
-                l:SetFont("GRM_Eco_Small") l:SetTextColor(CUI.dim)
-                l:SetText(os.date("%d.%m %H:%M", rec.t or 0) .. " — " .. tostring(rec.s or ""))
-            end
-
-            list._sel = name
         end
 
-        list.OnRowSelected = function(_, _, ln) showEditor(ln.Faction) end
-        local restore = f._restoreFaction
-        if restore and (d.factions or {})[restore] then
-            showEditor(restore)
-        elseif #names > 0 then
-            showEditor(names[1])
+        -- ═══ ВКЛАДКА 5: ФИН.ЛОГ (все операции сервера) ═══
+        do
+            local p = sheetPanel("Фин.лог", "icon16/table.png")
+            lbl(p, "Последние финансовые операции сервера — все системы двигающие деньги:", CUI.text, 12, 10, 760)
+            local rf = btn(p, "Обновить", CUI.accent, 100, 24)
+            rf:SetPos(844, 8)
+            rf.DoClick = function() net.Start(NET_OPEN_ADMIN) net.SendToServer() end
+            histBox(p, d.log or {}, 12, 40, 932, 480)
         end
 
-        tabs:AddSheet("Фракции и зарплаты", pnl, "icon16/money.png")
-        f._selectFaction = function(n) f._restoreFaction = n showEditor(n) end
+        -- ═══ ВКЛАДКА 6: НАСТРОЙКИ ═══
+        do
+            local p = sheetPanel("Настройки", "icon16/cog.png")
+            lbl(p, "Общие настройки экономики — применяются сразу, хранятся в grm_economy.json", CUI.text, 12, 8, 920)
+
+            local wns, cks = {}, {}
+            local function row(txt, key, y, pct, mx)
+                lbl(p, txt, CUI.text, 12, y + 2, 340)
+                local wn = vgui.Create("DNumberWang", p)
+                wn:SetPos(360, y) wn:SetSize(100, 24)
+                wn:SetMin(0) wn:SetMax(mx or 100000000)
+                local v = tonumber(full[key]) or 0
+                if pct then v = math.floor(v * 100 + 0.5) end
+                wn:SetValue(v)
+                wns[key] = { wn = wn, pct = pct }
+            end
+            local function chk(txt, key, y)
+                local c = vgui.Create("DCheckBoxLabel", p)
+                c:SetPos(12, y) c:SetSize(560, 22)
+                c:SetText(txt) c:SetTextColor(CUI.text)
+                c:SetValue(full[key] and 1 or 0)
+                cks[key] = c
+            end
+
+            row("Налог по умолчанию, %", "DefaultTaxRate", 38, true, 100)
+            row("Максимальный налог, %", "MaxTaxRate", 68, true, 100)
+            row("Интервал ЗП по умолчанию, сек", "SalaryInterval", 98, false, 86400)
+            row("Минимальный интервал ЗП, сек", "MinSalaryInterval", 128, false, 3600)
+            row("Записей истории на фракцию", "HistorySize", 158, false, 500)
+            row("Записей общего фин.лога", "LogSize", 188, false, 2000)
+            row("Максимальный штраф", "FineMaxAmount", 218, false, 100000000)
+            row("Дистанция использования банкомата", "UseDistance", 248, false, 1000)
+            row("Стартовый баланс новичка", "StartBalance", 278, false, 100000000)
+
+            lbl(p, "Название валюты:", CUI.text, 12, 312, 340)
+            local cname = vgui.Create("DTextEntry", p)
+            cname:SetPos(360, 308) cname:SetSize(160, 24)
+            cname:SetText(tostring(full.CurrencyName or "GRM"))
+
+            lbl(p, "Модель банкомата:", CUI.text, 12, 342, 340)
+            local cmodel = vgui.Create("DTextEntry", p)
+            cmodel:SetPos(360, 338) cmodel:SetSize(340, 24)
+            cmodel:SetText(tostring(full.BankTerminalModel or "models/starless/atm.mdl"))
+
+            chk("По умолчанию ЗП выплачивается из бюджета фракции", "PayFromBudget", 376)
+            chk("Штрафы зачисляются в бюджет фракции штрафующего", "FineToBudget", 400)
+            chk("Налоги с зарплат поступают в ГОС.БЮДЖЕТ (выкл — обратно фракции)", "TaxToState", 424)
+            chk("Штрафы без фракции-получателя → гос.бюджет (выкл — сгорают)", "FinesToState", 448)
+
+            local sbtn = btn(p, "Сохранить настройки", CUI.green, 240, 32)
+            sbtn:SetPos(12, 486)
+            sbtn.DoClick = function()
+                local out = {}
+                for key, rec in pairs(wns) do
+                    local v = math.max(0, math.floor(tonumber(rec.wn:GetValue()) or 0))
+                    out[key] = rec.pct and math.Clamp(v / 100, 0, 1) or v
+                end
+                for key, c in pairs(cks) do out[key] = c:GetChecked() end
+                local nm = string.Trim(tostring(cname:GetValue() or ""))
+                if nm ~= "" then out.CurrencyName = nm end
+                local mdl = string.Trim(tostring(cmodel:GetValue() or ""))
+                if mdl ~= "" then out.BankTerminalModel = mdl end
+                act({ action = "config_save", config = out })
+            end
+        end
     end
 
     net.Receive(NET_ADMIN_DATA, function()
@@ -952,7 +1403,7 @@ if CLIENT then
 
     net.Receive(NET_OPEN_ADMIN, function()
         if IsValid(adminFrame) then adminFrame:Remove() end
-        adminFrame = frame("GRM Economy — админ-панель зарплат и бюджетов", 900, 620)
+        adminFrame = frame("GRM Economy — единая админ-панель экономики", 1000, 660)
         -- открыли пустой каркас — сразу запрашиваем данные у сервера
         net.Start(NET_OPEN_ADMIN) net.SendToServer()
     end)
@@ -1068,5 +1519,5 @@ if CLIENT then
         net.Start(NET_OPEN_ADMIN) net.SendToServer()
     end)
 
-    print("[GRM Economy] Unified Economy v2.1 — клиент загружен")
+    print("[GRM Economy] Unified Economy v2.2 — клиент загружен")
 end

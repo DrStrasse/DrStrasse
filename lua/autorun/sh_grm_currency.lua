@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v1.0 (Код 42)
+    GRM Currency Core v1.1 (Код 42)
 
     Ядро валюты GRM — восстановлено с нуля (старый файл утерян).
     Реализует контракт, который ожидают уже существующие модули:
@@ -126,8 +126,8 @@ if SERVER then
         net.Send(ply)
     end
 
-    local function changed(ply, newBalance, delta)
-        hook.Run("GRM_MoneyChanged", ply, newBalance, delta)
+    local function changed(ply, newBalance, delta, reason)
+        hook.Run("GRM_MoneyChanged", ply, newBalance, delta, reason or "")
     end
 
     -- ========================================================
@@ -147,7 +147,7 @@ if SERVER then
         return GRM.GetBalance(ply) >= amount
     end
 
-    function GRM.SetBalance(ply, amount)
+    function GRM.SetBalance(ply, amount, reason)
         local sid = sidOf(ply)
         if not sid then return false end
         local nick = IsValid(ply) and ply:IsPlayer() and ply:Nick() or nil
@@ -157,11 +157,11 @@ if SERVER then
         dirty = true
         saveNow()
         if IsValid(ply) and ply:IsPlayer() then pushBalance(ply) end
-        changed(IsValid(ply) and ply or sid, rec.balance, rec.balance - old)
+        changed(IsValid(ply) and ply or sid, rec.balance, rec.balance - old, reason)
         return true
     end
 
-    function GRM.GiveMoney(ply, amount)
+    function GRM.GiveMoney(ply, amount, reason)
         amount = math.floor(tonumber(amount) or 0)
         if amount <= 0 then return false end
         local sid = sidOf(ply)
@@ -171,11 +171,11 @@ if SERVER then
         rec.balance = normalize(rec.balance + amount)
         dirty = true
         if IsValid(ply) and ply:IsPlayer() then pushBalance(ply) end
-        changed(IsValid(ply) and ply or sid, rec.balance, amount)
+        changed(IsValid(ply) and ply or sid, rec.balance, amount, reason)
         return true
     end
 
-    function GRM.TakeMoney(ply, amount)
+    function GRM.TakeMoney(ply, amount, reason)
         amount = math.floor(tonumber(amount) or 0)
         if amount <= 0 then return false end
         local sid = sidOf(ply)
@@ -186,13 +186,23 @@ if SERVER then
         rec.balance = rec.balance - taken
         dirty = true
         if IsValid(ply) and ply:IsPlayer() then pushBalance(ply) end
-        changed(IsValid(ply) and ply or sid, rec.balance, -taken)
+        changed(IsValid(ply) and ply or sid, rec.balance, -taken, reason)
         return taken >= amount
     end
 
     -- Алиасы для будущих модулей.
     GRM.AddMoney  = GRM.GiveMoney
     GRM.CanAfford = GRM.HasMoney
+
+    -- Копия всех счетов (sid64 → {balance, name}) — для единой
+    -- админ-панели экономики (Код 43) и других админ-инструментов.
+    function GRM.GetAllBalances()
+        local out = {}
+        for sid, rec in pairs(records) do
+            out[sid] = { balance = rec.balance, name = rec.name }
+        end
+        return out
+    end
 
     -- Цветное уведомление: тост + продублировано в чат.
     function GRM.Notify(ply, msg, r, g, b)
