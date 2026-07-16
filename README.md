@@ -140,6 +140,6 @@
 `grm_phone_access_reload`, `grm_phone_access_debug`,
 `grm_money <give|take|set|info|list|save>`, `grm_balance`, `grm_economy <save|list>`,
 `grm_cuffs_give`, `grm_saveentities` / `!saveentities`, `vk_givekey`/`vk_revokekey`/`vk_setowner`,
-`grm_cctv_save` / `grm_cctv_load` / `grm_cctv_list`
+`grm_cctv_save` / `grm_cctv_load` / `grm_cctv_list`, `/cctv_access` (выдача доступа)
 
 Подробный разбор архитектуры и замеченных проблем — в `ANALYSIS.md`.

@@ -35,6 +35,8 @@ C.Config = C.Config or {
     ListRefreshSeconds = 2,
     SaveDir = "grm_cctv",
 
+    -- Доступ живой: /cctv_access и вкладка CCTV в /factions (sh_grm_cctv_access.lua).
+    -- Поля ниже — fallback, если access.json ещё пуст.
     Access = {
         SuperAdminBypass = true,
         PublicView = false,
