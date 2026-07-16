@@ -1,5 +1,19 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v3.0.1 (Код 43) — ПЕРЕПИСАНО С НУЛЯ
+    GRM Unified Economy v3.0.2 (Код 43) — ПЕРЕПИСАНО С НУЛЯ
+
+    v3.0.2 (КОРЕНЬ ВСЕЙ САГИ): голый util.JSONToTable калечил числовые
+    ключи-строки (wiki: «keys are converted to numbers wherever possible.
+    This means using Player:SteamID64 as keys won't work») — счета банка
+    после загрузки были «на печати есть», а по строке-сиду недостижимы,
+    отсюда вечный «на счету 0». Теперь ВСЁ чтение — через jsonT()
+    (ignoreConversions=true) + страховка fixArr для списков.
+
+      * зеркало счетов grm_bank_nicks.json по нику/сиду с полем
+        electro_balance (второй контур жизни, как у налички): счёт
+        восстанавливается из зеркала при внешнем откате/вайпе treasury,
+        записи без сида поднимаются по нику при входе игрока;
+      * ЖЁСТКИЕ РАМКИ счёта: целое число в [0 .. GRM.MaxBalance];
+      * E.GetElectroBalance / GRM.GetElectroBalance — публичный псевдоним счёта.
 
     Чистая версия без наслоений (SQL/сторожа файла/захвата — убраны;
     на сервере владельца SQL недоступен, файловый контур доказан).
@@ -72,6 +86,7 @@ E.Config = E.Config or {
 
 local DATA_FILE    = "grm_treasury.json"
 local BACKUP_FILE  = "grm_treasury_backup.json"
+local BANK_MIRROR_FILE = "grm_bank_nicks.json" -- зеркало счетов по нику/сиду (поле electro_balance)
 local LEGACY_BUDGETS = "grm_faction_budgets.json"      -- Код 12
 local LEGACY_PLUS    = "grm_faction_economy_plus.json" -- Код 9
 
@@ -96,7 +111,7 @@ if SERVER then
         return
     end
     GRM._economyCoreActive = true
-    GRM._economyCoreVer = "3.0.1"
+    GRM._economyCoreVer = "3.0.2"
     GRM._economyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_OPEN_ADMIN)
@@ -245,6 +260,7 @@ if SERVER then
     -- ПЕРСИСТЕНТНОСТЬ (простой контур: JSON-файл + зеркало)
     -- ========================================================
     local lastDiskTxt = nil -- что мы последний раз писали/читали
+    local pendingNickBank = {} -- зеркало банка без сида: ник -> electro_balance (подхват при входе)
 
     local function extWasEmpty(t)
         if not istable(t) then return true end
@@ -255,12 +271,59 @@ if SERVER then
         return not (hasF or hasA or hasL or hasS)
     end
 
+    -- ВАЖНО (корень всей саги потерь!): голый util.JSONToTable(txt) КАЛЕЧИТ
+    -- числовые ключи-строки — по умолчанию ignoreConversions=false, «keys
+    -- are converted to numbers wherever possible» (офиц. wiki). SteamID64
+    -- (17 цифр > 2^53) превращается в битое число 7.6561199385154e+16:
+    -- счёт «на печати есть», а по строке-сиду недостижим -> «на счету 0».
+    -- Парсим ТОЛЬКО так:
+    local function jsonT(txt)
+        local ok, t = pcall(util.JSONToTable, txt, false, true)
+        return (ok and istable(t)) and t or nil
+    end
+
+    -- Страховка: если парсер всё же вернул список с ключами-строками —
+    -- пересобираем его числовыми индексами (ipairs/#/table.remove не ломаются)
+    local function fixArr(a)
+        if not istable(a) then return {} end
+        if a[1] ~= nil or a["1"] == nil then return a end
+        local out, i = {}, 1
+        while a[tostring(i)] ~= nil do out[i] = a[tostring(i)] i = i + 1 end
+        for k, v in pairs(a) do
+            if tonumber(k) == nil then out[k] = v end
+        end
+        return out
+    end
+
+    -- ── Зеркало банка по нику (поле electro_balance) ────────
+    -- Второй контур жизни счёта: массив {sid, name, electro_balance}.
+    -- Ничто не является КЛЮЧОМ таблицы -> ловушка JSONToTable с числовыми
+    -- ключами тут в принципе незаконна. Если кто-то снаружи откатит или
+    -- завайпит grm_treasury*.json, при загрузке счета поднимаются из
+    -- зеркала (по сиду; записи без сида — по нику при входе, как наличка).
+    local function saveBankMirror()
+        if not istable(E.Data.accounts) then return end
+        local arr = {}
+        for sid, acc in pairs(E.Data.accounts) do
+            arr[#arr + 1] = {
+                sid = tostring(sid),
+                name = tostring(istable(acc) and acc.name or "?"),
+                electro_balance = math.max(0, math.floor(tonumber(istable(acc) and acc.balance) or 0)),
+            }
+        end
+        table.sort(arr, function(a, b) return a.sid < b.sid end) -- детерминированный вывод
+        local okJ, txt = pcall(util.TableToJSON, arr, true)
+        if okJ and isstring(txt) and txt ~= "" then
+            file.Write(BANK_MIRROR_FILE, txt)
+        end
+    end
+
     local function tryJSON(fname)
         if not file.Exists(fname, "DATA") then return nil end
         local txt = file.Read(fname, "DATA") or ""
         if string.Trim(txt) == "[]" then return nil end -- "[]" = файла нет
-        local ok, t = pcall(util.JSONToTable, txt)
-        return ((ok and istable(t)) and t or nil), txt
+        local t = jsonT(txt)
+        return t, txt
     end
 
     local function save(force, why)
@@ -274,8 +337,8 @@ if SERVER then
                 prev = file.Read(DATA_FILE, "DATA")
             end
             if isstring(prev) and #prev > 0 then
-                local okP, dt = pcall(util.JSONToTable, prev)
-                if okP and istable(dt) then
+                local dt = jsonT(prev)
+                if dt then
                     local hadAcc = istable(dt.accounts) and next(dt.accounts) ~= nil
                     local hadFac = istable(dt.factions) and next(dt.factions) ~= nil
                     if hadAcc or hadFac then
@@ -303,6 +366,7 @@ if SERVER then
             print(("[GRM Economy][!] ЗАПИСЬ НЕ ПОДТВЕРДИЛАСЬ: сохранено %d байт, на диске %s")
                 :format(#txt, (isstring(chk) and (tostring(#chk) .. " байт") or "файл пропал")))
         end
+        saveBankMirror() -- зеркало electro_balance по нику/сиду (второй контур жизни счёта)
         print(("[GRM Economy] SAVE ok: фракций %d, счетов %d, %d байт -> data/%s [%s]"):format(
             table.Count(E.Data.factions or {}), table.Count(E.Data.accounts or {}), #txt,
             DATA_FILE, tostring(why or "сейв")))
@@ -390,13 +454,58 @@ if SERVER then
             importLegacy() -- источников с данными нет: легаси-импорт
         end
         E.Data.accounts = istable(E.Data.accounts) and E.Data.accounts or {}
+        -- ЖЁСТКИЕ РАМКИ: поднятые счета приводим к целым [0 .. GRM.MaxBalance]
+        do
+            local cap = math.max(0, math.floor(tonumber(GRM.MaxBalance) or 2000000000))
+            for sid, a in pairs(E.Data.accounts) do
+                if istable(a) then
+                    a.balance = math.Clamp(math.floor(tonumber(a.balance) or 0), 0, cap)
+                else
+                    E.Data.accounts[sid] = { balance = math.Clamp(math.floor(tonumber(a) or 0), 0, cap), name = "?" }
+                end
+            end
+        end
         E.Data.state = istable(E.Data.state) and E.Data.state or { budget = 0, history = {} }
         E.Data.state.budget = math.max(0, math.floor(tonumber(E.Data.state.budget) or 0))
         E.Data.state.history = istable(E.Data.state.history) and E.Data.state.history or {}
         E.Data.log = istable(E.Data.log) and E.Data.log or {}
+        E.Data.log = fixArr(E.Data.log)
+        E.Data.state.history = fixArr(E.Data.state.history)
         E.Data.config = istable(E.Data.config) and E.Data.config or {}
         applyConfig()
         for name in pairs(E.Data.factions) do entry(name) end
+        -- ── Восстановление счетов из зеркала electro_balance ──
+        -- treasury — главный источник; зеркало лечит лишь то, чего в нём
+        -- НЕТ (внешний откат/вайп). Записи без сида ждут входа по нику.
+        do
+            local m = tryJSON(BANK_MIRROR_FILE)
+            local restored = 0
+            if istable(m) then
+                local list = istable(m[1]) and m or { m }
+                for _, rec in ipairs(list) do
+                    if istable(rec) then
+                        local cap = math.max(0, math.floor(tonumber(GRM.MaxBalance) or 2000000000))
+                        local rbal = math.Clamp(math.floor(tonumber(rec.electro_balance) or 0), 0, cap)
+                        local rsid = isstring(rec.sid) and rec.sid or nil
+                        if rsid and rsid ~= "" then
+                            if E.Data.accounts[rsid] == nil then
+                                E.Data.accounts[rsid] = { balance = rbal, name = tostring(rec.name or "?") }
+                                restored = restored + 1
+                                print(("[GRM Economy] счёт %s восстановлен из зеркала electro_balance: %d (%s)")
+                                    :format(rsid, rbal, tostring(rec.name or "?")))
+                            end
+                        else
+                            local nick = tostring(rec.name or "")
+                            if nick ~= "" and rbal > 0 then pendingNickBank[nick] = rbal end
+                        end
+                    end
+                end
+            end
+            if restored > 0 then
+                dirty = true -- материализация/флаш мгновенно залечит treasury
+                print("[GRM Economy] банк-зеркало по никам: восстановлено счетов: " .. restored)
+            end
+        end
         if srcName ~= nil and srcName ~= DATA_FILE then
             dirty = true save(true, "материализация из " .. tostring(srcName)) -- лечим основной файл сразу
         elseif isstring(srcTxt) then
@@ -431,7 +540,9 @@ if SERVER then
             E.Data.accounts[sid] = acc
             dirty = true
         end
-        acc.balance = math.max(0, math.floor(tonumber(acc.balance) or 0))
+        -- ЖЁСТКИЕ РАМКИ: целое число, неотрицательное, не выше GRM.MaxBalance
+        local cap = math.max(0, math.floor(tonumber(GRM.MaxBalance) or 2000000000))
+        acc.balance = math.Clamp(math.floor(tonumber(acc.balance) or 0), 0, cap)
         if nick and nick ~= "" then acc.name = nick end
         return acc
     end
@@ -461,6 +572,10 @@ if SERVER then
         local acc = E.Data.accounts[sid]
         return acc and acc.balance or 0
     end
+
+    -- «Электронный баланс»: публичный псевдоним счёта (как GRM.GetBalance у налички)
+    E.GetElectroBalance = E.BankBalance
+    if not GRM.GetElectroBalance then GRM.GetElectroBalance = E.BankBalance end
 
     function E.BankDeposit(ply, amount)
         amount = math.max(0, math.floor(tonumber(amount) or 0))
@@ -612,6 +727,27 @@ if SERVER then
         end
     end)
 
+    -- Подхват счёта ПО НИКУ из зеркала electro_balance при входе (как у налички)
+    hook.Add("PlayerInitialSpawn", "GRM_Economy_BankJoin", function(ply)
+        timer.Simple(2, function()
+            if not IsValid(ply) or not ply:IsPlayer() then return end
+            local nick = ply:Nick()
+            local want = pendingNickBank[nick]
+            if want ~= nil then
+                pendingNickBank[nick] = nil
+                local sid = ply:SteamID64()
+                if isstring(sid) and E.Data.accounts[sid] == nil then
+                    E.Data.accounts[sid] = { balance = want, name = nick }
+                    dirty = true
+                    save(true, "счёт поднят ПО НИКУ (зеркало electro_balance)")
+                    print(("[GRM Economy] счёт %s поднят ПО НИКУ «%s» из зеркала electro_balance: %d")
+                        :format(sid, nick, want))
+                    pushBank(ply)
+                end
+            end
+        end)
+    end)
+
     -- ── График сохранений ───────────────────────────────────
     timer.Create("GRM_Economy_AutoSave8s", 8, 0, function() save(true, "автосейв 8с") end)
     hook.Add("ShutDown", "GRM_Economy_Save", function() dirty = true save(true, "shutdown") end)
@@ -630,8 +766,8 @@ if SERVER then
         if not file.Exists(DATA_FILE, "DATA") then return false end
         local txt = file.Read(DATA_FILE, "DATA") or ""
         if txt == lastDiskTxt then return false end
-        local okJs, t = pcall(util.JSONToTable, txt)
-        if not okJs or not istable(t) then return false end
+        local t = jsonT(txt)
+        if t == nil then return false end
         local gotAcc = istable(t.accounts) and next(t.accounts) ~= nil
         local gotFac = istable(t.factions) and next(t.factions) ~= nil
         local memAcc = istable(E.Data.accounts) and next(E.Data.accounts) ~= nil
@@ -687,6 +823,8 @@ if SERVER then
         E.Data.accounts = istable(E.Data.accounts) and E.Data.accounts or {}
         E.Data.state = istable(E.Data.state) and E.Data.state or { budget = 0, history = {} }
         E.Data.log = istable(E.Data.log) and E.Data.log or {}
+        E.Data.log = fixArr(E.Data.log)
+        E.Data.state.history = fixArr(E.Data.state.history)
         E.Data.config = istable(E.Data.config) and E.Data.config or {}
         if applyConfig then pcall(applyConfig) end
         for name in pairs(E.Data.factions) do entry(name) end
@@ -983,7 +1121,7 @@ if SERVER then
             local sid, v = sidArg(), amt(a.amount)
             if sid == "" then return end
             local acc = account(sid)
-            acc.balance = v
+            acc.balance = math.Clamp(v, 0, math.max(0, math.floor(tonumber(GRM.MaxBalance) or 2000000000))) -- жёсткие рамки
             dirty = true save(true, "админ: счёт игрока")
             pushBankBySid(sid)
             addLog(("Админ %s установил банковский счёт %s: %s"):format(ply:Nick(), sid, money(v)))
@@ -1276,7 +1414,7 @@ if SERVER then
     -- ========================================================
     load()
     lastDiskTxt = file.Exists(DATA_FILE, "DATA") and (file.Read(DATA_FILE, "DATA") or "") or nil
-    print(("[GRM Economy] Unified Economy v3.0.1 (переписано с нуля) загружена (путь: %s, база: data/%s): фракций %d, счетов %d"):format(
+    print(("[GRM Economy] Unified Economy v3.0.2 (переписано с нуля) загружена (путь: %s, база: data/%s): фракций %d, счетов %d"):format(
         tostring(debug.getinfo(1, "S").short_src), DATA_FILE,
         table.Count(E.Data.factions), table.Count(E.Data.accounts)))
 end
@@ -2007,5 +2145,5 @@ if CLIENT then
         net.Start(NET_OPEN_ADMIN) net.SendToServer()
     end)
 
-    print("[GRM Economy] Unified Economy v3.0.1 — клиент загружен")
+    print("[GRM Economy] Unified Economy v3.0.2 — клиент загружен")
 end

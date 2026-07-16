@@ -1,5 +1,10 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v2.0.1 (Код 42) — ПЕРЕПИСАНО С НУЛЯ
+    GRM Currency Core v2.0.2 (Код 42) — ПЕРЕПИСАНО С НУЛЯ
+
+    v2.0.2 (КОРЕНЬ ВСЕЙ САГИ): голый util.JSONToTable калечил ключи SteamID64
+    (конверсия ключей в числа по умолчанию — «using Player:SteamID64 as keys
+    won't work», офиц. wiki) — свои же файлы читались как «0 записей». Теперь
+    ВСЁ чтение идёт через jsonT() с ignoreConversions=true.
 
     v2.0.1 (репорт «файл 85 байт, в памяти 0, в базе есть счета»): ВСЕЯДНЫЙ
     загрузчик — поднимает map (наш), plain sid->число, array-записи с
@@ -77,7 +82,7 @@ if SERVER then
         return
     end
     GRM._currencyCoreActive = true
-    GRM._currencyCoreVer = "2.0.1"
+    GRM._currencyCoreVer = "2.0.2"
     GRM._currencyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_SYNC)
@@ -172,6 +177,17 @@ if SERVER then
         return clean
     end
 
+    -- ВАЖНО (корень всей саги потерь!): голый util.JSONToTable(txt) КАЛЕЧИТ
+    -- числовые ключи-строки — по умолчанию ignoreConversions=false, «keys
+    -- are converted to numbers wherever possible» (офиц. wiki). SteamID64
+    -- (17 цифр > 2^53) превращается в битое число 7.6561199385154e+16 —
+    -- запись есть в таблице, но недостижима по строке-сиду навсегда.
+    -- Поэтому «файл полный, память пуста». Парсим ТОЛЬКО так:
+    local function jsonT(txt)
+        local ok, t = pcall(util.JSONToTable, txt, false, true)
+        return (ok and istable(t)) and t or nil
+    end
+
     local function saveNow(force, why)
         if not dirty and not force then return end
         local clean = sanitizedDump()
@@ -183,8 +199,8 @@ if SERVER then
             end
             local hadRecords = false
             if isstring(prev) and #prev > 0 then
-                local okP, prevTab = pcall(util.JSONToTable, prev)
-                hadRecords = okP and istable(prevTab) and next(prevTab) ~= nil
+                local prevTab = jsonT(prev)
+                hadRecords = prevTab ~= nil and next(prevTab) ~= nil
             end
             if hadRecords then
                 print(("[GRM Currency] SAVE ОТКЛОНЁН (%s): память пуста, а в базе есть счета — базу НЕ затираем")
@@ -198,7 +214,7 @@ if SERVER then
         local okJ, txt = pcall(dumpWallet, clean)
         if not okJ then txt = nil end
         -- Валидность = живой round-trip парсинг движком
-        local okRound = isstring(txt) and (pcall(util.JSONToTable, txt) == true)
+        local okRound = isstring(txt) and (jsonT(txt) ~= nil)
         if not okRound then
             local lines = {}
             for sid, rec in pairs(clean) do
@@ -273,8 +289,8 @@ if SERVER then
     --   array:  [ {"name": "X", "balance": N} ]           — чужой по никам
     -- Возвращает число найденных записей и метку формата.
     local function parseJSONInto(rawTxt)
-        local okJs, raw = pcall(util.JSONToTable, rawTxt)
-        if not okJs or not istable(raw) then return 0, "corrupt" end
+        local raw = jsonT(rawTxt)
+        if raw == nil then return 0, "corrupt" end
         local n, fmt = 0, "map"
         for sid, rec in pairs(raw) do
             if isstring(sid) then
@@ -524,8 +540,8 @@ if SERVER then
     local function reconcile(reason)
         if not file.Exists(DATA_FILE, "DATA") then return 0 end
         local rawTxt = file.Read(DATA_FILE, "DATA") or ""
-        local okJs, raw = pcall(util.JSONToTable, rawTxt)
-        if not okJs or not istable(raw) then return 0 end
+        local raw = jsonT(rawTxt)
+        if raw == nil then return 0 end
         -- Файл в ЧУЖОМ формате (нет ни одной sid-записи): принимать нечего.
         -- Если память наша и непуста — доминируем: переписываем файл
         -- своим состоянием и оставляем отпечаток чужого писателя.
@@ -737,7 +753,7 @@ if SERVER then
     end
     concommand.Add("grm_money", moneyCmd)
 
-    print(("[GRM Currency] ядро загружено v2.0.1 (переписано с нуля), путь: %s, база: data/%s, счетов в памяти: %d, файл: %s байт"):format(
+    print(("[GRM Currency] ядро загружено v2.0.2 (переписано с нуля), путь: %s, база: data/%s, счетов в памяти: %d, файл: %s байт"):format(
         tostring(debug.getinfo(1, "S").short_src), DATA_FILE, table.Count(records),
         file.Exists(DATA_FILE, "DATA") and tostring(#(file.Read(DATA_FILE, "DATA") or "")) or "нет файла"))
 end

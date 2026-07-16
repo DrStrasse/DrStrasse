@@ -125,10 +125,35 @@ local function jsonDecode(s)
     return parseVal()
 end
 
+-- Эмуляция ловушки GMod: util.JSONToTable БЕЗ третьего аргумента конвертирует
+-- числовые строки-ключи в числа (wiki: «keys are converted to numbers wherever
+-- possible. This means using Player:SteamID64 as keys won't work»). Ключ
+-- «76561199385153957» превращается в битое double 7.6561199385154e+16.
+local function convertKeysR(t)
+    local ks = {}
+    for k in pairs(t) do ks[#ks + 1] = k end
+    for _, k in ipairs(ks) do
+        local v = rawget(t, k)
+        if isstring(k) then
+            local n = tonumber(k)
+            if n ~= nil then
+                rawset(t, k, nil)
+                rawset(t, n, v) -- sid64 не влезает в double точно -> ключ калечится, как в GMod
+            end
+        end
+        if type(v) == "table" then convertKeysR(v) end
+    end
+end
+
 util = {
     AddNetworkString = function() end,
     TableToJSON = function(t, pretty) return jsonEncode(t, pretty) end,
-    JSONToTable = function(s) return jsonDecode(s) end,
+    JSONToTable = function(s, ignoreLimits, ignoreConversions)
+        local ok, t = pcall(jsonDecode, s)
+        if not ok then return nil end
+        if t ~= nil and not ignoreConversions then convertKeysR(t) end
+        return t
+    end,
 }
 
 -- ── file ───────────────────────────────────────────────────
@@ -345,4 +370,43 @@ if PHASE == "bank_boot_pick_fresh" then
         "bank_boot: loader выбрал старый основной файл вместо свежего зеркала, банк: " ..
         tostring(GRM.Economy.BankBalance("76561199385153957")))
     print("PHASE bank_boot_pick_fresh: OK — loader предпочёл свежее зеркало старому основному файлу")
+end
+
+-- sidkey_trap: живая демонстрация ЛОВУШКИ GMod (корень всей саги потерь)
+if PHASE == "sidkey_trap" then
+    local w = file.Read("grm_wallet.json") or ""
+    assert(#w > 0, "sidkey_trap: нет файла кошелька (сначала фаза save)")
+    local bare  = util.JSONToTable(w)               -- как делали ВСЕ версии до v2.0.2
+    local fixed = util.JSONToTable(w, false, true)  -- как делает jsonT() в v2.0.2+
+    local recognized = 0
+    for k in pairs(bare or {}) do if isstring(k) then recognized = recognized + 1 end end
+    assert(recognized == 0, "sidkey_trap: эмуляция отклонилась: строковых ключей " .. recognized)
+    assert(fixed and fixed["76561199385153957"] ~= nil, "sidkey_trap: с ignoreConversions ключ потерян!")
+    print("PHASE sidkey_trap: OK — голый JSONToTable калечит sid64-ключ (0 строковых), флаг спасает запись")
+end
+
+-- bank_nick_mirror: treasury откачены (счета пустые), но есть зеркало
+-- electro_balance: счёт по сиду восстанавливается на загрузке,
+-- запись без сида — по нику при входе игрока.
+if PHASE == "bank_nick_mirror" then
+    local stale = '{"version":2,"factions":{"Polizei":{"budget":250000,"taxRate":0.05,"history":[]}},' ..
+        '"accounts":{},"state":{"budget":0,"history":[]},"log":[],"config":{}}'
+    file.Write("grm_treasury.json", stale)
+    file.Write("grm_treasury_backup.json", stale)
+    file.Write("grm_bank_nicks.json", '[\n' ..
+        '\t{\n\t\t"sid": "76561199385153957",\n\t\t"name": "Alexander Von Groenner",\n\t\t"electro_balance": 200000\n\t},\n' ..
+        '\t{\n\t\t"name": "Old Timer Ghost",\n\t\t"electro_balance": 777\n\t}\n]')
+    GRM = GRM or {}
+    dofile("lua/autorun/sh_grm_currency.lua")
+    dofile("lua/autorun/sh_grm_economy.lua")
+    assert(GRM.Economy.BankBalance("76561199385153957") == 200000,
+        "bank_nick_mirror: счёт не восстановлен из зеркала по сиду: " .. tostring(GRM.Economy.BankBalance("76561199385153957")))
+    -- вход игрока без сида в зеркале: подхват по нику
+    local ghost = mkPly("Old Timer Ghost", "76561190000111000", "STEAM_0:0:999")
+    _G.__PLAYERS = { ghost }
+    fireHook("PlayerInitialSpawn", ghost)
+    for _, t in ipairs(TIMERS) do t.fn() end -- timer.Simple(2с) подхвата
+    assert(GRM.Economy.BankBalance(ghost) == 777,
+        "bank_nick_mirror: счёт не поднят по нику при входе: " .. tostring(GRM.Economy.BankBalance(ghost)))
+    print("PHASE bank_nick_mirror: OK — зеркало electro_balance вернуло счёта и по сиду, и по нику")
 end
