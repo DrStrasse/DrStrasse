@@ -10,7 +10,7 @@
 (или прямо в `garrysmod/lua/`). Файлы в `lua/autorun/` загружаются
 автоматически на сервере и клиенте.
 
-## Файлы (куски 1–5 — 41 модуль)
+## Файлы (куски 1–5 + восстановленное ядро валюты — 42 модуля)
 
 | # | Файл | Назначение |
 |---|------|-----------|
@@ -45,12 +45,13 @@
 | 37–39 | `lua/entities/grm_phone_wiretap/{shared,init,cl_init}.lua` | Entity прослушки: TargetNumber/ExchangeID/Active, Use() → меню прослушки, 3D2D-индикатор ON/OFF — **последний кусок телефонии** |
 | 40 | `lua/autorun/client/cl_grm_faction_logistics.lua` | Клиент логистики: меню рейса/погрузки/ящика/склада/арсенала, админ-доступ, HUD-подписи и маршрут, анимация переноски ящика |
 | 41 | `lua/autorun/client/cl_grm_factory_fullcycle.lua` | Клиент завода: крафт-меню (3D-превью оружия), склад, мусорка, терминал продажи GPU, скупщик/шкаф, QTE на стрелках, HUD прогресса |
+| 42 | `lua/autorun/sh_grm_currency.lua` | **Ядро валюты v1.0 — написано с нуля** (старый файл утерян): `GiveMoney/TakeMoney/HasMoney/GetBalance/SetBalance/Format/Notify`, `StartBalance`, `LocalBalance`, JSON-персистентность, офлайн-игроки, хук `GRM_MoneyChanged`, консоль `grm_money` |
 
 ## Зависимости, которых пока НЕТ в репозитории
 
 Эти модули упоминаются в коде, но ещё не присланы (ожидаются следующими кусками):
 
-- Ядро валюты: `GRM.GiveMoney / TakeMoney / HasMoney / GetBalance / SetBalance / Format / Notify` + конфиг `GRM.StartBalance` + клиентская переменная `GRM.LocalBalance`
+- ~~Ядро валюты~~ — **ВОССТАНОВЛЕНО С НУЛЯ** (Код 42): `GRM.GiveMoney / TakeMoney / HasMoney / GetBalance / SetBalance / Format / Notify` + `GRM.StartBalance` + `GRM.LocalBalance`
 - **Entity дилера** (`entities/sent_vehicle_dealer/…`) — `vehicle_dealer.lua` это патч поверх неё
 - Радио-модуль с глобальной таблицей `RadioFrequencies` (для телефонной интеграции рации)
 - `GRM.Encumbrance` — система веса/перегруза
@@ -67,7 +68,7 @@
 `grm_faction_budgets.json`, `grm_faction_economy_plus.json`, `gnews_log.txt`,
 `grm_logistics/{access.json, inventory_crates.json, maps/<map>.json}`,
 `grm_factory_fullcycle/{weapon_lockers.json, weapon_market.json, weapon_buyers.json, maps/<map>.json}`,
-`grm_admin_log.json`, `grm_player_taxes.json`,
+`grm_admin_log.json`, `grm_player_taxes.json`, `grm_currency.json`,
 `spawn_points_global_<map>.json`, `spawn_points_factions_<map>.json`,
 `grm_vehicle_purchases.json`, `grm_vehicle_prices.json`, `grm_faction_vehicle_access.json`, `vd_spawn_log.txt`,
 `grm_phone/{access.json, shop_catalog.json, shop_purchases.json, player_equipment.json, <map>.json}`,
@@ -90,6 +91,7 @@
 `grm_fc_save/load`, `grm_weapon_buyer_admin`, `grm_adminmenu`, `grm_antistuck_vehicle`,
 `grm_phone_save/load`, `grm_phone_remove_look`, `grm_phone_admin_remove`,
 `grm_phone_shop_admin`, `grm_phone_shop_add_look`, `grm_phone_shop_reload`,
-`grm_phone_access_reload`, `grm_phone_access_debug`
+`grm_phone_access_reload`, `grm_phone_access_debug`,
+`grm_money <give|take|set|info|list|save>`, `grm_balance`
 
 Подробный разбор архитектуры и замеченных проблем — в `ANALYSIS.md`.
