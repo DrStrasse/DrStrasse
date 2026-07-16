@@ -717,9 +717,15 @@ function drawCCTVChrome(w, h, forShot)
     surface.SetDrawColor(0, 0, 0, 200)
     surface.DrawRect(0, 0, w, 50)
 
-    surface.SetDrawColor(0, 255, 120, 8)
-    for y = 50, math.min(h, 120), 4 do
-        surface.DrawRect(0, y, w, 1)
+    -- Scanlines: ровная сетка на всю высоту кадра (не «сжатая» полоса 50..120)
+    -- Правую колонку управления не заливаем линиями — там UI.
+    do
+        local sideW = math.Clamp(math.floor(w * 0.26), 280, 360)
+        local viewRight = w - sideW - 14
+        surface.SetDrawColor(0, 255, 120, 7)
+        for y = 50, h - 1, 3 do
+            surface.DrawRect(0, y, math.max(1, viewRight), 1)
+        end
     end
 
     local blink = (math.floor(CurTime() * 2) % 2 == 0)
@@ -937,4 +943,4 @@ hook.Add("OnPlayerChat", "GRM_CCTV_ChatExit", function(ply, text)
     end
 end)
 
-print("[GRM CCTV] client v1.2.3")
+print("[GRM CCTV] client v1.2.4")
