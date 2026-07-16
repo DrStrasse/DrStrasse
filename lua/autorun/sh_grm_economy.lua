@@ -1,100 +1,35 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v2.5.1 (Код 43)
+    GRM Unified Economy v3.0.0 (Код 43) — ПЕРЕПИСАНО С НУЛЯ
 
-    v2.5.1 (внешний аудит «нет контроля успешности записи»): по фактам —
-    file.Write в GMod возвращает nil, «контроль» делается read-back'ом
-    после сейва (был с v2.4/форензиком). По аудиту: сериализация под
-    pcall — ошибка TableToJSON откладывает запись, а не роняет таймер.
+    Чистая версия без наслоений (SQL/сторожа файла/захвата — убраны;
+    на сервере владельца SQL недоступен, файловый контур доказан).
 
-    v2.5.0 (репорт: «после рестарта опять стартовые значения»): БАЗА
-    ПЕРЕЕХАЛА ВО ВСТРОЕННУЮ SQLite (garrysmod/sv.db, таблица grm_store,
-    ключ treasury). sv.db живёт ВНЕ папки data/ — его не трогают
-    ftp-синкеры, боты деплоя, чистильщики data/ и «фантомные писатели».
-    data/grm_treasury.json + _backup остаются ЗЕРКАЛАМИ для глаз/FTP
-    и пишутся каждым сейвом. Порядок загрузки: SQL sv.db -> treasury
-    -> treasury_backup -> grm_economy_backup -> grm_economy.json ->
-    grm_currency_backup -> grm_wallet_backup.
+    Содержит ВСЮ экономическую часть:
+      1) Бюджеты/налоги фракций (ставка 0–50%, налог только с ЗП);
+      2) Зарплаты по ролям/отделам/базовая, из бюджета или «воздушные»;
+      3) Персональный налог: приоритет GRM.GetPlayerTaxRate (Код 13);
+      4) Штрафы /fine — деньги в бюджет фракции штрафующего
+         (или в гос.бюджет, или сгорают — по настройке);
+      5) Гос.бюджет: налоги/штрафы → состояние; переводы фракциям,
+         выплаты игрокам из админ-панели;
+      6) Личные банковские счета (банкомат grm_bank_terminal): взнос,
+         снятие, переводы счёт→счёт по SteamID64 (офлайн тоже);
+      7) Общий фин.лог сервера + истории фракций и гос.бюджета;
+      8) Единая админ-панель /feco_admin (=/salary_admin), чат-команды
+         !fbudget !fpay !fwithdraw !fpayall !fsettax /mysalary /fine.
 
-    v2.4.0 (репорт: «в дате баланс/истории/наличка — пусто»): ПЕРЕЕЗД
-    файла экономики на НОВОЕ имя data/grm_treasury.json — старый
-    grm_economy.json становится декоем для фантома и ядром не читается.
-    Зеркало grm_treasury_backup.json пишется КАЖДЫМ сейвом парой.
-    Семена миграции: treasury -> treasury_backup -> grm_economy_backup
-    -> grm_economy.json -> grm_currency_backup -> grm_wallet_backup.
-    Битый файл при загрузке — карантин, а НЕ сброс. "[]" = файла нет.
-    Boot-строка показывает источник и имя базы.
+    Персистентность — простой надёжный контур:
+      ПАМЯТЬ (E.Data)
+        └─ save: JSON -> data/grm_treasury.json (+ зеркало _backup.json),
+                 write-if-changed, read-back проверка
+        └─ load: grm_treasury.json -> _backup -> grm_economy_backup.json
+                 -> grm_economy.json -> grm_currency_backup -> grm_wallet_backup
+                 (первый непустой по смыслу; битый источник — карантин,
+                  НЕ сброс; пустой "[]" считается отсутствием файла)
+        └─ сверка 15с + /dbcheck: внешние правки файла поднимаются,
+           пустой внешний файл непустую память не затирает (страж).
 
-
-    v2.3.9 (репорт: «салари-лог переполняется»): общий фин.лог тонул в
-    рутине — при 20 игроках онлайн зарплата каждые 10 минут писала
-    ~120 записей/час, лимит 300 вымывал штрафы/переводы/админ-действия
-    за пару часов. Теперь рутинные потоки («Зарплата...», «Сверка с
-    базой...») в общий лог НЕ пишутся: зарплата остаётся в истории
-    фракций и сводке госбюджета, сверка — в консоли сервера.
-
-    v2.3.8 (репорт: «наличка не переживает рестарт, в json — []»):
-    антисвайп-стражи: save() не затирает непустую базу пустой памятью;
-    сверка не принимает файл без счетов/фракций поверх непустой памяти.
-    Полный сброс — только удалением файла на выключенном сервере.
-
-    v2.3.7 (аудит синхронизации HUD/Tab): канал банка GRM_Bank_Sync
-    переведён с UInt(32) на Double — счета выше ~4.29 млрд прилетали
-    в HUD битыми (переполнение). Оба конца канала меняются здесь же.
-
-    v2.3.5/2.3.6: страж-синглтон; сохранение ≤8с гарантировано (файл
-    пишется только при реальных изменениях); сверка с базой 15с +
-    /dbcheck; защита от дедлока dirty.
-
-    v2.3.4: сверка с базой grm_economy.json (счета/фракции/гос.бюджет):
-            раз в 60с файл перечитывается, если менялся СНАРУЖИ —
-            данные поднимаются из базы, счета онлайн-игроков улетают
-            в HUD; свои несброшенные изменения сверка не трогает.
-
-    v2.3.3 (заказ владельца): банковский счёт теперь синхронизируется
-            в HUD (своя строка «НА СЧЁТУ»): каналы GRM_Bank_Sync/Request,
-            пуш при входе и после каждой операции со счётом; быстрый
-            сброс данных на диск каждые 5с (переживаем килл процесса).
-
-    v2.3.2: починка вкладки «Фракции» — список/редактор теперь
-            раскладываются по РЕАЛЬНЫМ размерам страницы (PerformLayout),
-            а не по нулевым в момент создания (DPropertySheet растягивает
-            только активную страницу); свой заметный крестик закрытия
-            (движковый был невидим на тёмной шапке); единый тёмный фон
-            всех вкладок админки и банкомата.
-
-    v2.3.1: фикс краша админ-панели "Tried to use a NULL Panel!"
-            (dframe.lua, SetPos) — buildAdminUI больше не зовёт
-            adminFrame:Clear(), вычистка только своих панелей.
-
-    ЕДИНЫЙ аддон экономики фракций — написан с нуля.
-    ЗАМЕНЯЕТ собой два старых модуля:
-      • sh_grm_faction_economy_plus.lua (Код 9) — зарплаты Plus;
-      • sh_grm_faction_economy.lua      (Код 12) — базовые бюджеты.
-
-    Что внутри (всё по экономической части):
-      1) Бюджеты фракций (единый grm_economy.json, импорт двух старых
-         файлов данных — ничего не теряется);
-      2) Налоги фракций (ставка 0–50%, налог берётся с ЗАРПЛАТЫ;
-         старый вариант Кода 12 — налог со ВСЕГО баланса раз в 300с —
-         полностью убран: именно он и давал «двойное налогообложение»);
-      3) Персональный налог: приоритет у GRM.GetPlayerTaxRate (Код 13);
-      4) Зарплаты по ролям / отделам / базовая, из бюджета либо «воздушные»;
-      5) ШТРАФЫ (/fine) — новая механика: деньги осуждённого уходят
-         в бюджет фракции выписавшего штраф (либо сгорают, если выписал
-         внефракционный суперадмин);
-      6) Фракционные настройки: интервал ЗП, payFromBudget, ЗП по ролям
-         и отделам — через объединённую админ-панель /salary_admin;
-      7) Обратная совместимость API для Кода 13 и будущих модулей:
-         GRM.FactionBudgetGet/Add/Set, GRM.FactionTaxGet/Set;
-      8) Совместимость чат-команд: !fbudget !fpay !fwithdraw !fpayall
-         !fsettax (+ слэш-варианты), /mysalary, /fine.
-
-    Исправление бага старой панели: при сохранении окно админки больше
-    НЕ переоткрывается — сервер отвечает свежими данными, а клиент
-    обновляет поля НА МЕСТЕ.
-
-    Зависит от: ядра валюты (Код 42: GiveMoney/TakeMoney/HasMoney/
-    GetBalance/Format/Notify) и таблицы Factions (Код 10).
+    Зависит от: ядра валюты (Код 42) и таблицы Factions (Код 10).
 ----------------------------------------------------------------------]]
 
 if SERVER then AddCSLuaFile() end
@@ -109,48 +44,46 @@ local E = GRM.Economy
 E.Config = E.Config or {
     DefaultTaxRate     = 0.05,  -- 5%
     MaxTaxRate         = 0.5,   -- потолок 50%
-    SalaryInterval     = 600,   -- секунд между выплатами (по умолчанию)
+    SalaryInterval     = 600,   -- сек между выплатами (по умолчанию)
     MinSalaryInterval  = 60,
-    HistorySize        = 50,    -- записей истории на фракцию
+    HistorySize        = 50,    -- записей истории на фракцию/гос.бюджет
     PayFromBudget      = true,  -- ЗП из бюджета по умолчанию
     FineToBudget       = true,  -- штрафы → бюджет фракции штрафующего
     FineMaxAmount      = 100000,
     UseDistance        = 180,
     BankTerminalModel  = "models/starless/atm.mdl",
-    TaxToState         = true,  -- налоги с ЗП → ГОС.БЮДЖЕТ (false → обратно в бюджет фракции)
+    TaxToState         = true,  -- налоги с ЗП → гос.бюджет (false → обратно в бюджет фракции)
     FinesToState       = true,  -- штрафы без фракции-получателя → гос.бюджет (false → сгорают)
-    LogSize            = 300,   -- записей общего финансового лога сервера
+    LogSize            = 300,   -- записей общего финансового лога
 }
 
-local DATA_FILE  = "grm_treasury.json" -- v2.4.0: переезд; grm_economy.json — декой для фантома
-local BACKUP_FILE = "grm_treasury_backup.json" -- зеркало каждой удачной записи
-local LEGACY_BUDGETS = "grm_faction_budgets.json"       -- Код 12
-local LEGACY_PLUS    = "grm_faction_economy_plus.json"  -- Код 9
+local DATA_FILE    = "grm_treasury.json"
+local BACKUP_FILE  = "grm_treasury_backup.json"
+local LEGACY_BUDGETS = "grm_faction_budgets.json"      -- Код 12
+local LEGACY_PLUS    = "grm_faction_economy_plus.json" -- Код 9
 
-local NET_OPEN_ADMIN  = "GRM_Eco_AdminOpen"
-local NET_ADMIN_DATA  = "GRM_Eco_AdminData"
-local NET_ADMIN_ACT   = "GRM_Eco_AdminAction"
-local NET_OPEN_BANK   = "GRM_Eco_OpenBank"
-local NET_BANK_ACT    = "GRM_Eco_BankAction"
-local NET_SYNC        = "GRM_Eco_Sync"
-local NET_INFO        = "GRM_Eco_Info"
+local NET_OPEN_ADMIN = "GRM_Eco_AdminOpen"
+local NET_ADMIN_DATA = "GRM_Eco_AdminData"
+local NET_ADMIN_ACT  = "GRM_Eco_AdminAction"
+local NET_OPEN_BANK  = "GRM_Eco_OpenBank"
+local NET_BANK_ACT   = "GRM_Eco_BankAction"
+local NET_SYNC       = "GRM_Eco_Sync"
+local NET_INFO       = "GRM_Eco_Info"
 
 -- ============================================================
 -- СЕРВЕР
 -- ============================================================
 if SERVER then
-    -- GRM-FIX: страж-синглтон: вторая копия модуля пропускается,
-    -- иначе две копии грызут один data-файл.
+    -- Синглтон: вторая копия модуля пропускается
     if GRM._economyCoreActive then
         local src = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
         print("[GRM Economy][!] ВТОРАЯ копия sh_grm_economy.lua ПРОПУЩЕНА, путь: " .. tostring(src))
         print("[GRM Economy][!] Активен модуль v" .. tostring(GRM._economyCoreVer) ..
-              ", путь: " .. tostring(GRM._economyCoreSrc) ..
-              ". Оставьте ОДНУ (самую новую) копию, остальные удалите!")
+              ", путь: " .. tostring(GRM._economyCoreSrc) .. ". Оставьте ОДНУ копию!")
         return
     end
     GRM._economyCoreActive = true
-    GRM._economyCoreVer = "2.5.1"
+    GRM._economyCoreVer = "3.0.0"
     GRM._economyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_OPEN_ADMIN)
@@ -160,14 +93,13 @@ if SERVER then
     util.AddNetworkString(NET_BANK_ACT)
     util.AddNetworkString(NET_SYNC)
     util.AddNetworkString(NET_INFO)
-    -- Синк банковского счёта в HUD (Код 48): строка «НА СЧЁТУ»
-    util.AddNetworkString("GRM_Bank_Sync")
+    util.AddNetworkString("GRM_Bank_Sync")    -- строка «НА СЧЁТУ» в HUD (Код 48)
     util.AddNetworkString("GRM_Bank_Request")
 
     E.Data = E.Data or { version = 2, factions = {} }
     local dirty = false
 
-    -- ── Хелперы уведомлений / инфо ──────────────────────────
+    -- ── Хелперы ─────────────────────────────────────────────
     local function notify(ply, msg, r, g, b)
         if GRM.Notify then GRM.Notify(ply, msg, r or 100, g or 220, b or 100) return end
         net.Start(NET_INFO) net.WriteString(tostring(msg or "")) net.Send(ply)
@@ -175,7 +107,6 @@ if SERVER then
 
     local function money(n) return GRM.Format and GRM.Format(n) or (tostring(n) .. " GRM") end
 
-    -- ── Доступ к фракциям (Код 10) ──────────────────────────
     local function factionOf(ply)
         if not Factions or not IsValid(ply) then return nil end
         local sid = ply:SteamID()
@@ -205,26 +136,25 @@ if SERVER then
     local function entry(name)
         E.Data.factions[name] = E.Data.factions[name] or {}
         local e = E.Data.factions[name]
-        e.budget              = math.max(0, math.floor(tonumber(e.budget) or 0))
-        e.taxRate             = math.Clamp(tonumber(e.taxRate) or E.Config.DefaultTaxRate, 0, E.Config.MaxTaxRate)
-        e.baseSalary          = math.max(0, math.floor(tonumber(e.baseSalary) or 0))
-        e.salaryInterval      = math.max(E.Config.MinSalaryInterval, math.floor(tonumber(e.salaryInterval) or E.Config.SalaryInterval))
-        e.payFromBudget       = e.payFromBudget ~= false
-        e.roleSalaries        = istable(e.roleSalaries) and e.roleSalaries or {}
-        e.departmentSalaries  = istable(e.departmentSalaries) and e.departmentSalaries or {}
-        e.history             = istable(e.history) and e.history or {}
-        e.nextPay             = tonumber(e.nextPay) or (os.time() + e.salaryInterval)
-        -- Права фракции на систему штрафов (настраивает superadmin).
-        -- По умолчанию доступ ВЫКЛЮЧЕН: его выдают точечно фракциям.
+        e.budget             = math.max(0, math.floor(tonumber(e.budget) or 0))
+        e.taxRate            = math.Clamp(tonumber(e.taxRate) or E.Config.DefaultTaxRate, 0, E.Config.MaxTaxRate)
+        e.baseSalary         = math.max(0, math.floor(tonumber(e.baseSalary) or 0))
+        e.salaryInterval     = math.max(E.Config.MinSalaryInterval, math.floor(tonumber(e.salaryInterval) or E.Config.SalaryInterval))
+        e.payFromBudget      = e.payFromBudget ~= false
+        e.roleSalaries       = istable(e.roleSalaries) and e.roleSalaries or {}
+        e.departmentSalaries = istable(e.departmentSalaries) and e.departmentSalaries or {}
+        e.history            = istable(e.history) and e.history or {}
+        e.nextPay            = tonumber(e.nextPay) or (os.time() + e.salaryInterval)
+        -- Права на систему штрафов (по умолчанию ВЫКЛЮЧЕНЫ)
         local fp = istable(e.finePerms) and e.finePerms or {}
         e.finePerms = fp
-        fp.enabled        = fp.enabled == true     -- фракция может штрафовать вообще
-        fp.allRoles       = fp.allRoles == true    -- штрафовать могут все члены
-        fp.roles          = istable(fp.roles) and fp.roles or {} -- разрешённые роли
-        fp.ownFaction     = fp.ownFaction ~= false -- цели: свои члены фракции
-        fp.otherFactions  = fp.otherFactions == true -- цели: другие фракции
-        fp.civilians      = fp.civilians ~= false  -- цели: граждане (без фракции)
-        fp.maxAmount      = math.max(0, math.floor(tonumber(fp.maxAmount) or 0)) -- лимит (0 = общий)
+        fp.enabled       = fp.enabled == true     -- фракция может штрафовать вообще
+        fp.allRoles      = fp.allRoles == true    -- штрафовать могут все члены
+        fp.roles         = istable(fp.roles) and fp.roles or {}
+        fp.ownFaction    = fp.ownFaction ~= false -- цели: свои члены
+        fp.otherFactions = fp.otherFactions == true -- цели: другие фракции
+        fp.civilians     = fp.civilians ~= false  -- цели: граждане
+        fp.maxAmount     = math.max(0, math.floor(tonumber(fp.maxAmount) or 0))
         return e
     end
 
@@ -235,100 +165,74 @@ if SERVER then
         dirty = true
     end
 
-    -- ── Сохранение / загрузка / импорт легаси ───────────────
-    -- Текст файла, который мы последний раз читали/писали — сверка с базой
-    local lastDiskTxt = nil
-
-    -- v2.5.0: ОСНОВНАЯ БАЗА — встроенная SQLite (garrysmod/sv.db) ВНЕ data/.
-    -- Таблица общая с ядром валюты (grm_store), ключ "treasury".
-    local SQL_TABLE, SQL_KEY, SQL_SRC = "grm_store", "treasury", "SQL sv.db"
-    local sqlOn = false
-    local function sqlRun(q)
-        local r = sql.Query(q)
-        if r ~= nil then return true, r end
-        return false, tostring(sql.LastError() or "?")
-    end
-    do
-        local ok, err = sqlRun("CREATE TABLE IF NOT EXISTS " .. SQL_TABLE ..
-            " (k TEXT PRIMARY KEY, v TEXT)")
-        sqlOn = ok
-        if not ok then
-            print("[GRM Economy][!] SQLite недоступен (" .. tostring(err) .. ") — работаем только с json")
-        end
-    end
-    local function storePut(txt)
-        if not sqlOn then return end
-        local ok, err = sqlRun("REPLACE INTO " .. SQL_TABLE .. " (k, v) VALUES (" ..
-            sql.SQLStr(SQL_KEY) .. ", " .. sql.SQLStr(txt) .. ")")
-        if not ok then print("[GRM Economy][!] SQL-запись не удалась: " .. tostring(err)) end
-    end
-    local function storeGet()
-        if not sqlOn then return nil end
-        local ok, rows = sqlRun("SELECT v FROM " .. SQL_TABLE ..
-            " WHERE k = " .. sql.SQLStr(SQL_KEY))
-        if not ok or not istable(rows) or not istable(rows[1]) then return nil end
-        return rows[1].v
+    local function stateHist(text)
+        local st = E.Data.state
+        st.history = istable(st.history) and st.history or {}
+        st.history[#st.history + 1] = { t = os.time(), s = tostring(text) }
+        while #st.history > E.Config.HistorySize do table.remove(st.history, 1) end
+        dirty = true
     end
 
-    local function save(force)
-        if not dirty and not force then return end
-        -- GRM-FIX v2.3.8: антисвайп-страж. Пустые счета+фракции НИКОГДА не
-        -- перезаписывают базу, где они были (после битой загрузки/чужой
-        -- записи в файл). Полный сброс — удалением файла на выкл. сервере.
-        local myAcc = istable(E.Data.accounts) and next(E.Data.accounts) ~= nil
-        local myFac = istable(E.Data.factions) and next(E.Data.factions) ~= nil
-        if not myAcc and not myFac then
-            local prev = lastDiskTxt
-            if (not isstring(prev)) and file.Exists(DATA_FILE, "DATA") then
-                prev = file.Read(DATA_FILE, "DATA")
-            end
-            local hadAcc, hadFac = false, false
-            if isstring(prev) and #prev > 0 then
-                local okP, dt = pcall(util.JSONToTable, prev)
-                if okP and istable(dt) then
-                    hadAcc = istable(dt.accounts) and next(dt.accounts) ~= nil
-                    hadFac = istable(dt.factions) and next(dt.factions) ~= nil
-                end
-            end
-            if not (hadAcc or hadFac) then -- v2.5.0: база — это ещё и SQL sv.db
-                local sp = storeGet()
-                if isstring(sp) and #sp > 0 then
-                    local okS, dtS = pcall(util.JSONToTable, sp)
-                    if okS and istable(dtS) then
-                        hadAcc = istable(dtS.accounts) and next(dtS.accounts) ~= nil
-                        hadFac = istable(dtS.factions) and next(dtS.factions) ~= nil
-                    end
-                end
-            end
-            if hadAcc or hadFac then
-                print("[GRM Economy] SAVE ОТКЛОНЁН: память пуста, а в базе есть счета/фракции — базу НЕ затираем (антисвайп-страж)")
-                dirty = false
-                return
-            end
-        end
-        -- v2.5.1: сериализация под pcall: ошибка не роняет сейв в краш
-        -- таймера — просто откладываем запись (dirty остаётся, повторит флаш)
-        local okJ, txt = pcall(util.TableToJSON, E.Data, true)
-        if not okJ or not isstring(txt) or txt == "" then
-            print("[GRM Economy][!] SAVE: сериализация не удалась — повторим ближайшим флашем")
-            return
-        end
-        if txt == lastDiskTxt then dirty = false return end -- без изменений: диск не долбим
-        file.Write(DATA_FILE, txt)
-        file.Write(BACKUP_FILE, txt) -- v2.4.0: зеркало каждой удачной записи
-        storePut(txt) -- v2.5.0: основная база — SQL sv.db
-        lastDiskTxt = txt
-        dirty = false
-        -- v2.5.1: read-back SQL — «тихая» запись станет видна сразу
-        if sqlOn then
-            local back = storeGet()
-            if back ~= txt then
-                print("[GRM Economy][!] SQL-ПРОВЕРКА: запись в sv.db не подтвердилась!")
-            end
-        end
+    -- объявлена раньше E.Fine (ниже) — upvalue
+    local function stateAdd(delta, reason)
+        local st = E.Data.state
+        st.budget = math.max(0, math.floor((tonumber(st.budget) or 0) + delta))
+        dirty = true
+        if reason then stateHist(reason) end
+        return st.budget
     end
 
-    -- v2.4.0: пуст по факту (для семян миграции и стражей)
+    local function addLog(text)
+        if not istable(E.Data.log) then E.Data.log = {} end
+        local lg = E.Data.log
+        lg[#lg + 1] = { t = os.time(), s = tostring(text) }
+        local max = math.max(50, math.floor(tonumber(E.Config.LogSize) or 300))
+        while #lg > max do table.remove(lg, 1) end
+        dirty = true
+    end
+    E.Log = addLog -- публично: другие системы могут писать в фин.лог
+
+    -- Фин.лог: зарплатный спам и строки сверки НЕ пишем
+    hook.Add("GRM_MoneyChanged", "GRM_Economy_FinLog", function(ply, newBalance, delta, reason)
+        if isstring(reason) then
+            if string.StartWith(reason, "Зарплата") then return end
+            if string.StartWith(reason, "Сверка с базой") then return end
+        end
+        local who = "?"
+        if IsValid(ply) and ply:IsPlayer() then
+            who = ply:Nick()
+        elseif isstring(ply) then
+            who = ply
+            if GRM.GetAllBalances then
+                local rec = GRM.GetAllBalances()[ply]
+                if rec and rec.name then who = tostring(rec.name) end
+            end
+        end
+        delta = math.floor(tonumber(delta) or 0)
+        addLog(("%s %s%s (баланс: %s)%s"):format(
+            who,
+            delta >= 0 and "+" or "-",
+            money(math.abs(delta)),
+            money(newBalance),
+            (isstring(reason) and reason ~= "") and (" | " .. reason) or ""))
+    end)
+
+    -- ── Сохранённые настройки поверх дефолтов ───────────────
+    local function applyConfig()
+        local c = E.Data.config
+        if not istable(c) then return end
+        for k, v in pairs(c) do
+            if E.Config[k] ~= nil then E.Config[k] = v end
+        end
+        if tonumber(c.StartBalance) then GRM.StartBalance = tonumber(c.StartBalance) end
+        if isstring(c.CurrencyName) and c.CurrencyName ~= "" then GRM.CurrencyName = c.CurrencyName end
+    end
+
+    -- ========================================================
+    -- ПЕРСИСТЕНТНОСТЬ (простой контур: JSON-файл + зеркало)
+    -- ========================================================
+    local lastDiskTxt = nil -- что мы последний раз писали/читали
+
     local function extWasEmpty(t)
         if not istable(t) then return true end
         local hasF = istable(t.factions) and next(t.factions) ~= nil
@@ -341,9 +245,51 @@ if SERVER then
     local function tryJSON(fname)
         if not file.Exists(fname, "DATA") then return nil end
         local txt = file.Read(fname, "DATA") or ""
-        if string.Trim(txt) == "[]" then return nil end -- v2.4.0: отпечаток фантома = файла нет
+        if string.Trim(txt) == "[]" then return nil end -- "[]" = файла нет
         local ok, t = pcall(util.JSONToTable, txt)
         return (ok and istable(t)) and t or nil
+    end
+
+    local function save(force)
+        if not dirty and not force then return end
+        -- АНТИСВАЙП: пустые счета+фракции НЕ затирают непустую базу.
+        local myAcc = istable(E.Data.accounts) and next(E.Data.accounts) ~= nil
+        local myFac = istable(E.Data.factions) and next(E.Data.factions) ~= nil
+        if not myAcc and not myFac then
+            local prev = lastDiskTxt
+            if (not isstring(prev)) and file.Exists(DATA_FILE, "DATA") then
+                prev = file.Read(DATA_FILE, "DATA")
+            end
+            if isstring(prev) and #prev > 0 then
+                local okP, dt = pcall(util.JSONToTable, prev)
+                if okP and istable(dt) then
+                    local hadAcc = istable(dt.accounts) and next(dt.accounts) ~= nil
+                    local hadFac = istable(dt.factions) and next(dt.factions) ~= nil
+                    if hadAcc or hadFac then
+                        print("[GRM Economy] SAVE ОТКЛОНЁН: память пуста, а в базе есть счета/фракции — базу НЕ затираем (антисвайп)")
+                        dirty = false
+                        return
+                    end
+                end
+            end
+        end
+        -- Сериализация под pcall: ошибка откладывает запись, а не роняет таймер
+        local okJ, txt = pcall(util.TableToJSON, E.Data, true)
+        if not okJ or not isstring(txt) or txt == "" then
+            print("[GRM Economy][!] SAVE: сериализация не удалась — повторим ближайшим флашем")
+            return -- dirty остаётся
+        end
+        if txt == lastDiskTxt then dirty = false return end -- без изменений
+        file.Write(DATA_FILE, txt)
+        file.Write(BACKUP_FILE, txt)
+        lastDiskTxt = txt
+        dirty = false
+        -- READ-BACK: перечитываем — тихая запись станет криком
+        local chk = file.Read(DATA_FILE, "DATA")
+        if chk ~= txt then
+            print(("[GRM Economy][!] ЗАПИСЬ НЕ ПОДТВЕРДИЛАСЬ: сохранено %d байт, на диске %s")
+                :format(#txt, (isstring(chk) and (tostring(#chk) .. " байт") or "файл пропал")))
+        end
     end
 
     local function importLegacy()
@@ -363,7 +309,7 @@ if SERVER then
                 end
             end
         end
-        -- Код 9: grm_faction_economy_plus.json = { [name] = { budget, taxRate, baseSalary, ... } }
+        -- Код 9: grm_faction_economy_plus.json
         local p9 = tryJSON(LEGACY_PLUS)
         if p9 then
             local map = p9.factions or p9
@@ -389,96 +335,19 @@ if SERVER then
         end
     end
 
-    -- ── ГОС.БЮДЖЕТ И ГЛОБАЛЬНЫЙ ФИН.ЛОГ (v2.2) ────────────
-    -- Применение сохранённых (админ-панелью) настроек поверх дефолтов.
-    local function applyConfig()
-        local c = E.Data.config
-        if not istable(c) then return end
-        for k, v in pairs(c) do
-            if E.Config[k] ~= nil then E.Config[k] = v end
-        end
-        if tonumber(c.StartBalance) then GRM.StartBalance = tonumber(c.StartBalance) end
-        if isstring(c.CurrencyName) and c.CurrencyName ~= "" then GRM.CurrencyName = c.CurrencyName end
-    end
-
-    local function stateHist(text)
-        local st = E.Data.state
-        st.history = istable(st.history) and st.history or {}
-        st.history[#st.history + 1] = { t = os.time(), s = tostring(text) }
-        while #st.history > E.Config.HistorySize do table.remove(st.history, 1) end
-        dirty = true
-    end
-
-    local function stateAdd(delta, reason)
-        local st = E.Data.state
-        st.budget = math.max(0, math.floor((tonumber(st.budget) or 0) + delta))
-        dirty = true
-        if reason then stateHist(reason) end
-        return st.budget
-    end
-
-    local function addLog(text)
-        if not istable(E.Data.log) then E.Data.log = {} end
-        local lg = E.Data.log
-        lg[#lg + 1] = { t = os.time(), s = tostring(text) }
-        local max = math.max(50, math.floor(tonumber(E.Config.LogSize) or 300))
-        while #lg > max do table.remove(lg, 1) end
-        dirty = true
-    end
-    E.Log = addLog -- публично: другие системы тоже могут писать в фин.лог
-
-    -- Любое движение наличных через ядро валюты попадает в общий лог.
-    hook.Add("GRM_MoneyChanged", "GRM_Economy_FinLog", function(ply, newBalance, delta, reason)
-        -- v2.3.9: рутина забивает общий лог — фильтруем на входе.
-        -- Зарплата видна в истории фракций (addHistory) и гос.бюджете,
-        -- сверка с базой — в консоли сервера и форензик-логе валюты.
-        if isstring(reason) then
-            if string.StartWith(reason, "Зарплата") then return end
-            if string.StartWith(reason, "Сверка с базой") then return end
-        end
-        local who = "?"
-        if IsValid(ply) and ply:IsPlayer() then
-            who = ply:Nick()
-        elseif isstring(ply) then
-            who = ply
-            if GRM.GetAllBalances then
-                local rec = GRM.GetAllBalances()[ply]
-                if rec and rec.name then who = tostring(rec.name) end
-            end
-        end
-        delta = math.floor(tonumber(delta) or 0)
-        addLog(("%s %s%s (баланс: %s)%s"):format(
-            who,
-            delta >= 0 and "+" or "-",
-            money(math.abs(delta)),
-            money(newBalance),
-            (isstring(reason) and reason ~= "") and (" | " .. reason) or ""))
-    end)
-
     local LOAD_SEEDS = { DATA_FILE, BACKUP_FILE, "grm_economy_backup.json",
                          "grm_economy.json", "grm_currency_backup.json", "grm_wallet_backup.json" }
+
     local function load()
         local t, srcName = nil, nil
-        -- v2.5.0: ИСТОЧНИК №1 — SQL sv.db (вне data/, вне досягаемости писателей json)
-        do
-            local sp = storeGet()
-            if isstring(sp) and string.Trim(sp) ~= "" then
-                local okS, tt = pcall(util.JSONToTable, sp)
-                if okS and istable(tt) and not extWasEmpty(tt) then t, srcName = tt, SQL_SRC end
-            end
-        end
-        if not t then
-            for _, srcf in ipairs(LOAD_SEEDS) do
-                local tt = tryJSON(srcf)
-                if tt and not extWasEmpty(tt) then t, srcName = tt, srcf break end
-            end
+        for _, srcf in ipairs(LOAD_SEEDS) do
+            local tt = tryJSON(srcf)
+            if tt and not extWasEmpty(tt) then t, srcName = tt, srcf break end
         end
         if not t then t = tryJSON(DATA_FILE) or tryJSON(BACKUP_FILE) end
         if t and istable(t.factions) then
             E.Data = t
-            if srcName == SQL_SRC then
-                print(("[GRM Economy] LOAD: база поднята из SQL sv.db — зеркало data/%s обновится"):format(DATA_FILE))
-            elseif srcName and srcName ~= DATA_FILE then
+            if srcName and srcName ~= DATA_FILE then
                 print(("[GRM Economy] МИГРАЦИЯ: данные подняты из data/%s -> data/%s"):format(srcName, DATA_FILE))
             end
         else
@@ -497,16 +366,17 @@ if SERVER then
         E.Data.state.history = istable(E.Data.state.history) and E.Data.state.history or {}
         E.Data.log = istable(E.Data.log) and E.Data.log or {}
         E.Data.config = istable(E.Data.config) and E.Data.config or {}
-        applyConfig() -- сохранённые настройки поверх дефолтов
+        applyConfig()
         for name in pairs(E.Data.factions) do entry(name) end
-        -- v2.5.0: источник не json-зеркало — материализуем зеркала и sv.db сразу
-        if srcName ~= nil and srcName ~= DATA_FILE then dirty = true save(true) end
+        if srcName ~= nil and srcName ~= DATA_FILE then dirty = true save(true) end -- материализуем зеркала
         print(("[GRM Economy] LOAD: база data/%s (источник: %s): фракций %d, счетов %d")
             :format(DATA_FILE, tostring(srcName or DATA_FILE),
                 table.Count(E.Data.factions), table.Count(E.Data.accounts)))
     end
 
-        -- ── ЛИЧНЫЕ БАНКОВСКИЕ СЧЕТА (банкомат для ВСЕХ игроков) ──
+    -- ========================================================
+    -- ЛИЧНЫЕ БАНКОВСКИЕ СЧЕТА (банкомат для всех игроков)
+    -- ========================================================
     local function account(sid, nick)
         sid = tostring(sid or "")
         if sid == "" then return nil end
@@ -521,29 +391,25 @@ if SERVER then
         return acc
     end
 
-    -- Банковский баланс БЕЗ создания записи (для пассивного синка в HUD)
     local function bankBalOf(sid)
         local acc = E.Data.accounts[tostring(sid or "")]
         return math.max(0, math.floor(acc and acc.balance or 0))
     end
 
-    -- Пуш счёта владельцу (HUD Код 48, строка «НА СЧЁТУ»)
     local function pushBank(ply)
         if not IsValid(ply) or not ply:IsPlayer() then return end
         net.Start("GRM_Bank_Sync")
-            net.WriteDouble(bankBalOf(ply:SteamID64())) -- v2.3.7: Double, UInt32 ломал счета > 4.29 млрд
+            net.WriteDouble(bankBalOf(ply:SteamID64())) -- Double: UInt32 ломал счета > 4.29 млрд
         net.Send(ply)
     end
     net.Receive("GRM_Bank_Request", function(_, ply) pushBank(ply) end)
 
-    -- Найти онлайн-игрока по SteamID64-строке и запушить ему счёт
     local function pushBankBySid(sid)
         for _, p in ipairs(player.GetAll()) do
             if IsValid(p) and p:SteamID64() == tostring(sid) then pushBank(p) return end
         end
     end
 
-    -- ply может быть Player или строкой SteamID64
     function E.BankBalance(ply)
         local sid = isstring(ply) and ply or (IsValid(ply) and ply:SteamID64())
         if not sid then return 0 end
@@ -551,7 +417,6 @@ if SERVER then
         return acc and acc.balance or 0
     end
 
-    -- Наличные -> банковский счёт
     function E.BankDeposit(ply, amount)
         amount = math.max(0, math.floor(tonumber(amount) or 0))
         if not IsValid(ply) or amount <= 0 then return false end
@@ -563,7 +428,6 @@ if SERVER then
         return true, acc.balance
     end
 
-    -- Банковский счёт -> наличные
     function E.BankWithdraw(ply, amount)
         amount = math.max(0, math.floor(tonumber(amount) or 0))
         if not IsValid(ply) or amount <= 0 then return false end
@@ -592,7 +456,9 @@ if SERVER then
         return true, from.balance
     end
 
--- ── ПУБЛИЧНОЕ API (совместимость с Кодом 13 и др.) ───────
+    -- ========================================================
+    -- ПУБЛИЧНОЕ API (совместимость с Кодом 13 и др.)
+    -- ========================================================
     function GRM.FactionBudgetGet(name)
         if not name then return 0 end
         local e = E.Data.factions[name]
@@ -645,7 +511,7 @@ if SERVER then
         return gross, name
     end
 
-    -- Эффективная налоговая ставка: персональная (Код 13) > фракционная.
+    -- Эффективная ставка: персональная (Код 13) > фракционная
     local function taxRateFor(ply, name)
         if GRM.GetPlayerTaxRate then
             local ok, r = pcall(GRM.GetPlayerTaxRate, ply)
@@ -698,36 +564,32 @@ if SERVER then
         end
     end)
 
-    -- (убран старый автосейв 120с — заменён на: флаш 5с по изменениям + авто 8с)
+    -- ── График сохранений ───────────────────────────────────
     timer.Create("GRM_Economy_AutoSave8s", 8, 0, function() save(true) end)
     hook.Add("ShutDown", "GRM_Economy_Save", function() dirty = true save() end)
-    -- GRM-FIX: сброс изменений на диск каждые 5с — переживаем килл процесса
     timer.Create("GRM_Economy_Flush", 5, 0, function() if dirty then save() end end)
 
-    -- GRM-FIX: сверка с базой (файл grm_economy.json как «база данных»).
-    -- Если файл изменился снаружи (правили руками через FTP, другой
-    -- инструмент) — поднимаем его целиком; свои несброшенные правки не теряем.
+    -- ========================================================
+    -- СВЕРКА «ПАМЯТЬ ↔ БАЗА»
+    -- ========================================================
     local function reconcileEconomy(reason)
         if dirty then return false end
         if not file.Exists(DATA_FILE, "DATA") then return false end
         local txt = file.Read(DATA_FILE, "DATA") or ""
-        if txt == lastDiskTxt then return false end -- файл не менялся с нашей записи/чтения
+        if txt == lastDiskTxt then return false end
         local okJs, t = pcall(util.JSONToTable, txt)
         if not okJs or not istable(t) then return false end
-        -- GRM-FIX v2.3.8: пустой файл/дамп без счетов и фракций НЕ вытирает
-        -- непустую память (двойник стража в save — иначе каскадный wipe).
         local gotAcc = istable(t.accounts) and next(t.accounts) ~= nil
         local gotFac = istable(t.factions) and next(t.factions) ~= nil
         local memAcc = istable(E.Data.accounts) and next(E.Data.accounts) ~= nil
         local memFac = istable(E.Data.factions) and next(E.Data.factions) ~= nil
         if not gotAcc and not gotFac and (memAcc or memFac) then
-            print("[GRM Economy] DB↔MEM ОТКЛОНЕНО: файл пуст/без счетов, а память непуста — память сохранена (антисвайп-страж v2.3.8)")
+            print("[GRM Economy] DB↔MEM ОТКЛОНЕНО: файл без счетов/фракций, а память непуста — память сохранена (антисвайп)")
             lastDiskTxt = txt
             return false
         end
-        -- v2.4.0: внешний файл, пустой по факту, не вытирает непустую память
         if extWasEmpty(t) and not extWasEmpty(E.Data) then
-            print("[GRM Economy] DB↔MEM ОТКЛОНЕНО: внешний файл пуст по сути, память нет (страж v2.4.0)")
+            print("[GRM Economy] DB↔MEM ОТКЛОНЕНО: внешний файл пуст по сути, память нет — память сохранена")
             lastDiskTxt = txt
             return false
         end
@@ -741,7 +603,6 @@ if SERVER then
         E.Data.config = istable(E.Data.config) and E.Data.config or {}
         if applyConfig then pcall(applyConfig) end
         lastDiskTxt = txt
-        -- пушим счета, если они реально изменились
         local pushed = 0
         for _, p in ipairs(player.GetAll()) do
             if IsValid(p) and p:IsPlayer() then
@@ -762,11 +623,12 @@ if SERVER then
         print("[GRM Economy] сверка завершена: " .. (ok and "подняты изменения из базы" or "расхождений нет"))
     end)
 
-    -- ── ДОСТУП К ШТРАФАМ (v2.3): кто и кого может штрафовать ──
-    -- Возвращает true либо false + причину отказа.
+    -- ========================================================
+    -- ШТРАФЫ
+    -- ========================================================
     function E.CanFine(issuer, target)
         if not IsValid(issuer) or not issuer:IsPlayer() then return true end -- система
-        if issuer:IsSuperAdmin() then return true end                        -- superadmin: всегда
+        if issuer:IsSuperAdmin() then return true end
         if not IsValid(target) or not target:IsPlayer() then return false, "Нет цели" end
         if target == issuer then return false, "Нельзя штрафовать себя" end
 
@@ -776,14 +638,12 @@ if SERVER then
         if not fp.enabled then
             return false, "Фракция [" .. iname .. "] не имеет доступа к системе штрафов"
         end
-        -- КТО: лидер всегда; иначе — все члены либо отмеченные роли
         if not isLeaderOf(issuer, ifac) and not fp.allRoles then
             local info = ifac.Members[issuer:SteamID()] or {}
             if not fp.roles[tostring(info.Role or "")] then
                 return false, "Ваша роль во фракции не имеет права штрафовать"
             end
         end
-        -- КОГО: свои / другие фракции / граждане
         local tname = factionOf(target)
         if tname == iname then
             if not fp.ownFaction then return false, "[" .. iname .. "] не может штрафовать своих членов" end
@@ -795,7 +655,6 @@ if SERVER then
         return true
     end
 
-    -- Эффективный лимит штрафа для конкретного игрока.
     function E.FineMaxFor(ply)
         if IsValid(ply) and ply:IsPlayer() and ply:IsSuperAdmin() then return E.Config.FineMaxAmount end
         local iname = factionOf(ply)
@@ -806,7 +665,6 @@ if SERVER then
         return E.Config.FineMaxAmount
     end
 
-    -- ── ШТРАФЫ ──────────────────────────────────────────────
     function E.Fine(issuer, target, amount, reason)
         if not IsValid(target) or not target:IsPlayer() then return false, "Нет цели" end
         amount = math.floor(tonumber(amount) or 0)
@@ -846,7 +704,7 @@ if SERVER then
 
     -- ── СИНХРОНИЗАЦИЯ клиентов ──────────────────────────────
     local function syncPlayer(ply)
-        local name, f = factionOf(ply)
+        local name = factionOf(ply)
         net.Start(NET_SYNC)
             net.WriteString(name or "")
             net.WriteTable(name and entry(name) or {})
@@ -859,7 +717,7 @@ if SERVER then
         end)
     end)
 
-    -- ── АДМИН-ПАНЕЛЬ: данные (единая панель экономики) ─────
+    -- ── АДМИН-ПАНЕЛЬ: данные ────────────────────────────────
     local function buildAdminData()
         local factions = {}
         if Factions then
@@ -878,14 +736,12 @@ if SERVER then
                 end
             end
         end
-        -- известные записи без живой фракции тоже отдаём
         for name in pairs(E.Data.factions) do
             if not factions[name] then
                 factions[name] = { entry = entry(name), roles = {}, departments = {}, online = 0, members = 0 }
             end
         end
 
-        -- игроки + их банковские счета + суммарная статистика
         local players, cashSum, bankSum = {}, 0, 0
         if GRM.GetAllBalances then players = GRM.GetAllBalances() end
         for sid, rec in pairs(players) do
@@ -936,10 +792,10 @@ if SERVER then
         if a.action == "save_entry" then
             if name == "" then return end
             local e = entry(name)
-            e.taxRate            = math.Clamp(tonumber(a.taxRate) or e.taxRate, 0, E.Config.MaxTaxRate)
-            e.baseSalary         = math.max(0, math.floor(tonumber(a.baseSalary) or 0))
-            e.salaryInterval     = math.max(E.Config.MinSalaryInterval, math.floor(tonumber(a.salaryInterval) or e.salaryInterval))
-            e.payFromBudget      = a.payFromBudget == true
+            e.taxRate        = math.Clamp(tonumber(a.taxRate) or e.taxRate, 0, E.Config.MaxTaxRate)
+            e.baseSalary     = math.max(0, math.floor(tonumber(a.baseSalary) or 0))
+            e.salaryInterval = math.max(E.Config.MinSalaryInterval, math.floor(tonumber(a.salaryInterval) or e.salaryInterval))
+            e.payFromBudget  = a.payFromBudget == true
             if istable(a.roles) then
                 e.roleSalaries = {}
                 for k, v in pairs(a.roles) do e.roleSalaries[tostring(k)] = math.max(0, math.floor(tonumber(v) or 0)) end
@@ -969,9 +825,8 @@ if SERVER then
 
         elseif a.action == "budget_give" or a.action == "budget_take" then
             if name == "" then return end
-            local e = entry(name)
             local v = amt(a.amount)
-            if a.action == "budget_take" then v = -math.min(v, e.budget) end
+            if a.action == "budget_take" then v = -math.min(v, entry(name).budget) end
             if v ~= 0 then
                 GRM.FactionBudgetAdd(name, v, ("Админ %s: %s%s"):format(ply:Nick(), v > 0 and "+" or "", money(math.abs(v))))
                 notify(ply, "Бюджет [" .. name .. "]: " .. money(entry(name).budget), 100, 220, 255)
@@ -1042,7 +897,7 @@ if SERVER then
             local acc = account(sid)
             acc.balance = v
             dirty = true save()
-            pushBankBySid(sid) -- HUD получателя, если он в сети
+            pushBankBySid(sid)
             addLog(("Админ %s установил банковский счёт %s: %s"):format(ply:Nick(), sid, money(v)))
             notify(ply, "Банковский счёт установлен: " .. money(v), 100, 220, 100)
 
@@ -1080,13 +935,13 @@ if SERVER then
             notify(ply, "Настройки экономики сохранены.", 100, 220, 100)
         end
 
-        -- КЛЮЧЕВОЕ ОТЛИЧИЕ от старой панели: НЕ переоткрываем окно,
-        -- отдаём свежий пакет данных — клиент обновит поля на месте.
         sendAdminData(ply)
         timer.Simple(0.5, function() for _, p in ipairs(player.GetAll()) do if IsValid(p) then syncPlayer(p) end end end)
     end)
 
-    -- ── БАНК-ТЕРМИНАЛ ───────────────────────────────────────
+    -- ========================================================
+    -- БАНКОМАТ (окно взаимодействия с терминалом)
+    -- ========================================================
     function E.OpenBankTerminal(ply, ent)
         if not IsValid(ply) or not IsValid(ent) then return end
         if ply:GetPos():DistToSqr(ent:GetPos()) > (E.Config.UseDistance ^ 2) * 4 then return end
@@ -1140,7 +995,7 @@ if SERVER then
             notify(ply, ("Переведено %s → %s"):format(money(amt), IsValid(target) and target:Nick() or toSid), 255, 180, 80)
             if IsValid(target) then
                 notify(target, "На ваш счёт поступило " .. money(amt) .. " от " .. ply:Nick(), 100, 220, 100)
-                pushBank(target) -- HUD получателя
+                pushBank(target)
             end
         elseif a.type == "deposit" then
             if not name then notify(ply, "Вы не во фракции.", 255, 100, 100) return end
@@ -1173,13 +1028,13 @@ if SERVER then
             notify(ply, "Переведено " .. money(amt) .. " → " .. target:Nick(), 255, 180, 80)
             notify(target, "Получено " .. money(amt) .. " от " .. ply:Nick(), 100, 220, 100)
         end
-        -- переоткроем с актуальными данными (это УМЕСТНО для терминала —
-        -- пользователь ждёт обновления цифр после операции)
         syncPlayer(ply)
-        pushBank(ply) -- HUD: строка «НА СЧЁТУ»
+        pushBank(ply)
     end)
 
-    -- ── ЧАТ-КОМАНДЫ (PlayerSay — работают без GRM.Chat) ─────
+    -- ========================================================
+    -- ЧАТ-КОМАНДЫ
+    -- ========================================================
     hook.Add("PlayerSay", "GRM_Economy_Chat", function(ply, text)
         local args = string.Explode(" ", string.Trim(text or ""))
         local cmd = string.lower(args[1] or "")
@@ -1272,8 +1127,6 @@ if SERVER then
         end
 
         if cmd == "/fine" or cmd == "!fine" then
-            -- /fine <сумма> [причина...] — цель: игрок в перекрестии (до 250 юнитов)
-            -- Права: E.CanFine — доступ выдаёт superadmin в админ-панели (Фракции → Штрафы).
             local amt = math.floor(tonumber(args[2]) or 0)
             local reason = table.concat(args, " ", 3)
             if amt <= 0 then notify(ply, "/fine <сумма> [причина]", 255, 100, 100) return "" end
@@ -1291,26 +1144,21 @@ if SERVER then
         end
     end)
 
-    -- ── Консоль ─────────────────────────────────────────────
-    -- Чат-команда /dbcheck (superadmin): сверить с базой прямо из игры
     hook.Add("PlayerSay", "GRM_Economy_DBCheck", function(ply, text)
         local cmd = string.lower(string.Trim(text or ""))
         if cmd ~= "/dbcheck" and cmd ~= "!dbcheck" then return end
         if not ply:IsSuperAdmin() then
-            if GRM.Notify then GRM.Notify(ply, "Только для superadmin.", 255, 100, 100) end
+            GRM.Notify(ply, "Только для superadmin.", 255, 100, 100)
             return ""
         end
-        local changed = reconcileEconomy("чат /dbcheck")
-        if GRM.Notify then
-            GRM.Notify(ply, changed
-                and "Сверка экономики: данные подняты из базы"
-                or  "Сверка экономики: расхождений с базой нет",
-                100, 220, changed and 100 or 255)
-        end
+        local changedEco = reconcileEconomy("чат /dbcheck")
+        GRM.Notify(ply, changedEco
+            and "Сверка экономики: данные подняты из базы"
+            or  "Сверка экономики: расхождений с базой нет",
+            100, 220, changedEco and 100 or 255)
         return ""
     end)
 
-    -- Хук для объединённого ответа на /dbcheck из ядра валюты
     hook.Add("GRM_Economy_DBCheck", "GRM_Economy_DBCheckHook", function()
         return reconcileEconomy("команда")
     end)
@@ -1335,16 +1183,16 @@ if SERVER then
         end
     end)
 
+    -- ========================================================
+    -- СТАРТ
+    -- ========================================================
     load()
     lastDiskTxt = file.Exists(DATA_FILE, "DATA") and (file.Read(DATA_FILE, "DATA") or "") or nil
-    print(("[GRM Economy] Unified Economy v2.5.1 загружена (путь: %s, база: SQL sv.db + зеркало data/%s): фракций %d, счетов %d"):format(
+    print(("[GRM Economy] Unified Economy v3.0.0 (переписано с нуля) загружена (путь: %s, база: data/%s): фракций %d, счетов %d"):format(
         tostring(debug.getinfo(1, "S").short_src), DATA_FILE,
         table.Count(E.Data.factions), table.Count(E.Data.accounts)))
 end
 
--- ============================================================
--- КЛИЕНТ
--- ============================================================
 if CLIENT then
     E.Local = E.Local or { faction = "", data = {} }
 
@@ -2071,5 +1919,5 @@ if CLIENT then
         net.Start(NET_OPEN_ADMIN) net.SendToServer()
     end)
 
-    print("[GRM Economy] Unified Economy v2.3 — клиент загружен")
+    print("[GRM Economy] Unified Economy v3.0.0 — клиент загружен")
 end

@@ -1,167 +1,44 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v1.6.1 (Код 42)
+    GRM Currency Core v2.0.0 (Код 42) — ПЕРЕПИСАНО С НУЛЯ
 
-    v1.6.1 (внешний аудит «нет контроля успешности записи»): по фактам —
-    (а) file.Write в GMod НИЧЕГО не возвращает (nil), проверять нечего:
-    отслеживание «тихой» записи делается READ-BACK'ом после сейва (и он
-    был с v1.5.9); (б) по аудиту — сериализация util.TableToJSON переведена
-    под pcall: ошибка сериализатора больше не может уронить timer сейва,
-    а уходит в аварийный путь sid|balance|name.
+    Простой надёжный контур (без SQL/сторожей/захватов — они не нужны
+    и на сервере владельца SQL недоступен):
 
-    v1.6.0 (репорт: «после рестарта опять стартовые 1.000»): БАЗА
-    ПЕРЕЕХАЛА ВО ВСТРОЕННУЮ SQLite (garrysmod/sv.db, таблица grm_store,
-    ключ wallet). sv.db живёт ВНЕ папки data/ — его не трогают
-    ftp-синхронизации, боты деплоя, чистильщики data/ и любые
-    «фантомные писатели» json. data/grm_wallet.json остаётся ЗЕРКАЛОМ
-    для просмотра глазами и по-прежнему пишется каждым сейвом.
-    Порядок загрузки: SQL sv.db -> grm_wallet.json -> зеркала.
-    Read-back проверяет и SQL-запись. Плюс строка «НОВЫЙ счёт» при
-    входе игрока без записи: печатает состояние баз в момент, когда
-    рождается пресловутый «сброс до 1.000».
+      ПАМЯТЬ (records по SteamID64)
+        └─ save: JSON -> data/grm_wallet.json (+ зеркало _backup.json)
+                 -> read-back: перечитали и сравнили (тихой записи нет)
+        └─ load: grm_wallet.json -> grm_wallet_backup.json
+                 -> grm_currency_backup.json (старый сид)
+                 -> битый файл: карантин + regex-спасение записей
+        └─ сверка 15с: внешние правки файла поднимаются в игру
 
-    v1.5.9 (репорт: "в дате пусто"): ЗАГРУЗКА-СПАСАТЕЛЬ — если основной
-    источник дал 0 счетов, пробуются альтернативные зеркала
-    (grm_wallet_backup.json, grm_currency_backup.json): тишина одного
-    файла больше не равна потере всех балансов. В boot-строке видно
-    имя выбранного источника. Плюс КОНТРОЛЬ ЗАПИСИ (read-back):
-    после каждого сейва файл перечитывается и сравнивается — если
-    содержимое не наше, в консоль и форензик летит «ПЕРЕЗАПИСАН
-    СНАРУЖИ» с количеством байт: что/кто переписал файл между нашим
-    сейвом и чтением (хост-синкер/антивирус/фантом) становится видно.
+    Стражи (маленькие, доказанные):
+      * пустая память НИКОГДА не затирает непустой файл (антисвайп);
+      * битый файл не равен потере данных (карантин + спасение);
+      * вторая копия модуля пропускается (синглтон).
 
-
-    v1.5.8 (по предложению владельца): БАЗА ПЕРЕЕХАЛА на новое имя
-    data/grm_wallet.json — чужой «фантомный писатель» знал только старое
-    имя и затирал его пустым «[]»; старый grm_currency.json оставлен
-    ДЕКОЕМ и больше НЕ читается вообще. Миграция ТОЛЬКО из зеркала
-    grm_currency_backup.json (туда реально писались живые сейвы):
-    поднимается разово при первом старте, если в нём есть счета.
-
-    v1.5.7 (репорт: «SAVE ok есть, а в файле [] — кто-то перезаписывает»):
-    СТОРОЖ ФАЙЛА (2с): любая чужая запись grm_currency.json фиксируется
-    в форензик-логе и данные мгновенно восстанавливаются из памяти;
-    ЗАХВАТ СЛОТОВ: таймеры/хуки/API с нашими именами принудительно
-    наши — старая копия без синглтон-стража глушится до 10с даже при
-    загрузке после нас; форензик-лог всех событий в
-    data/grm_currency_forensics.txt (кто/когда/почему сохранял).
-
-    v1.5.6 (репорт: «пишет SAVE ok, но после рестарта пропадает; в json — []»):
-    антисвайп-страж: ПУСТАЯ память никогда не перезаписывает НЕПУСТОЙ файл
-    базы (раньше пустой дамп «[]» легально затирал реальные счета — отсюда
-    вечная потеря данных после рестарта). Полный wipe — только удалением
-    файла на выключенном сервере.
-
-    v1.5.5 (аудит синхронизации HUD/Tab): GRM.Notify шлёт ОБА канала
-    (GRM_Currency_Notify + легаси grm_notify), поэтому при установленном
-    HUD (Код 48) каждое уведомление показывалось дважды — всплывашкой
-    HUD и строкой в чате/legacy. Клиентский вывод GRM_Currency_Notify
-    теперь молчит, если стек HUD присутствует (GRM.HUD).
-
-    v1.5.4 (репорт: «attempt to call global 'cleanNick' (a nil value)»,
-    таймер GRM_Currency_Flush умирал): cleanNick была объявлена НИЖЕ
-    места использования — каждый вызов уходил в nil-глобал, поэтому
-    падали ВСЕ сохранения (флаш 5с и автосейв 8с) и ничего не писалось
-    на диск. Хелпер поднят выше sanitizedDump/loadData.
-
-    v1.5.3 (репорт: «SAVE ОШИБКА сериализации» нонстоп): порог длины
-    JSON считал пустую таблицу "{}" ошибкой + возможна «ядовитая»
-    запись с управляющими символами в нике. Теперь: валидность =
-    живой парсинг (round-trip), ники чистятся на входе и перед
-    записью; при сбое — аварийный пословный формат, в дампе
-    ВИДНО виновника (sid + очищенное имя).
-
-    v1.5.2: сохранение ≤8с гарантировано + сверка ≤15с.
-      Авто-запись каждые 8с, но файл ПИШЕТСЯ только при реальных
-      изменениях (сравнение с последним записанным содержимым) —
-      пустого долбёжки диска нет, внешние правки сверка видит.
-
-    v1.5.1 (репорт: «не подтягивает из базы»): найден дедлок —
-    защита от перезаписи при ошибке сериализации не сбрасывала dirty,
-    а сверка пропускалась при dirty → замок навсегда.
-    Теперь: ошибка сериализации не блокирует систему; сверка НЕ
-    зависит от dirty (позаписная проверка «запись не тронута локально»);
-    страж-синглтон от второй копии аддона; чат-команда /dbcheck.
-
-    v1.5 (заказ владельца): сверка «память ↔ база» (disk reconcile).
-      - Ядро хранит зеркало последнего состояния диска (diskMirror);
-      - каждые 60с И при входе игрока файл перечитывается: если запись
-        в базе ОТЛИЧАЕТСЯ от зеркала (базу правили снаружи/другой процесс) —
-        баланс в игре ПОДНИМАЕТСЯ ИЗ БАЗЫ с пушем в HUD и записью в лог;
-      - свои свежие изменения сверка не затирает (файл == зеркалу → пропуск);
-      - ручной прогон: grm_money check в серверной консоли.
-
-    v1.4.1: диагностика персистентности + защита от перезаписи:
-      - SAVE/LOAD печатают факты (счетов, байт, путь) — видно, где обрыв;
-      - если сериализация вернула nil/мусор — основной файл НЕ трогаем,
-        пишем grm_currency_err_<t>.txt с дампом памяти;
-      - зеркальная копия каждой записи: data/grm_currency_backup.json;
-      - normalize отсекает NaN (мог убить сериализацию всего файла).
-
-    v1.4 (заказ владельца — «валюта сбрасывается после рестарта»):
-      - мгновенный сброс на диск: тикер 5с сбрасывает любые изменения,
-        больше не зависим от ShutDown и автосейва раз в 180с;
-      - чтение JSON через pcall: битый файл НЕ затирает счета, а
-        откладывается в grm_currency_corrupt_<time>.txt.
-
-    v1.3 (аудит синхронизации с HUD/Tab):
-      - API, вызванное по SteamID64-строке (админ-панель, гос.выплаты),
-        теперь находит онлайн-игрока и мгновенно пушит баланс в HUD/Tab
-        (раньше pushBalance срабатывал только при объекте Player);
-      - выставлен маркер GRM._currencyReqBalRcv, чтобы Tab Menu (Код 47)
-        не перекрывал серверный обработчик grm_request_bal (терялся NET_SYNC).
-
-    Ядро валюты GRM — восстановлено с нуля (старый файл утерян).
-    Реализует контракт, который ожидают уже существующие модули:
-
-      Сервер:  GRM.GiveMoney(ply, amount)      — начислить
-               GRM.TakeMoney(ply, amount)      — списать (баланс не ниже 0)
-               GRM.HasMoney(ply, amount)       — достаточно ли средств
-               GRM.GetBalance(ply)             — текущий баланс (число)
-               GRM.SetBalance(ply, amount)     — установить (админ)
-               GRM.Notify(ply, msg, r, g, b)   — цветное уведомление игроку
-      Шаред:   GRM.Format(amount)              — "1 500 GRM"
-      Клиент:  GRM.LocalBalance                — живой баланс локального игрока
-      Конфиг:  GRM.StartBalance                — стартовый баланс новичка
-      Мета:    GRM.CurrencyName                — суффикс валюты в Format
-
-    Все аргументы ply могут быть Player ИЛИ строкой SteamID64 — так ядро
-    работает и с офлайн-игроками (админ-действия, налоги и т.п.).
-
-    Персистентность: data/grm_currency.json (SteamID64 → баланс/ник).
-    Автосохранение каждые 180с + сохранение при дисконнекте/выключении.
-
-    Хук для сторонних систем:
-      hook.Add("GRM_MoneyChanged", ..., function(ply, newBalance, delta) end)
-      — вызывается на СЕРВЕРЕ при любом изменении баланса; на клиенте
-      вызывается как hook "GRM_LocalMoneyChanged"(newBalance) при синке.
-
-    Совместимые алиасы (на будущее): GRM.AddMoney = GRM.GiveMoney,
-    GRM.CanAfford = GRM.HasMoney.
+    Печать на каждом шаге: LOAD/SAVE/НОВЫЙ счёт — по консоли
+    диагноз ставится за одну строку.
 ----------------------------------------------------------------------]]
+
+if SERVER then AddCSLuaFile() end
 
 GRM = GRM or {}
 
 -- ============================================================
 -- КОНФИГ
 -- ============================================================
-GRM.StartBalance  = GRM.StartBalance  or 1000   -- стартовый баланс нового игрока
-GRM.CurrencyName  = GRM.CurrencyName  or "GRM"  -- суффикс валюты
-GRM.MaxBalance    = GRM.MaxBalance    or 2000000000 -- защита от переполнения NW2/net
+GRM.StartBalance  = GRM.StartBalance  or 1000
+GRM.CurrencyName  = GRM.CurrencyName  or "GRM"
+GRM.MaxBalance    = GRM.MaxBalance    or 2000000000
 
-local DATA_FILE   = "grm_wallet.json" -- v1.5.8: НОВОЕ имя базы; grm_currency.json — декой для фантома, не читаем
+local DATA_FILE   = "grm_wallet.json"
+local BACKUP_FILE = "grm_wallet_backup.json"
+local LEGACY_SEED = "grm_currency_backup.json" -- старое зеркало (эпоха grm_currency.json)
 local NET_SYNC    = "GRM_Currency_Sync"
 local NET_NOTIFY  = "GRM_Currency_Notify"
-local AUTOSAVE    = 8   -- секунды: гарантированный интервал автосохранения
-local RECONCILE   = 15  -- секунды: интервал сверки «память ↔ база»
-
--- Форензик-лог всех событий сохранений/сторожа: data/grm_currency_forensics.txt
-local FRX_FILE = "grm_currency_forensics.txt"
-local function logForensic(line)
-    local prev = file.Read(FRX_FILE, "DATA") or ""
-    local txt = prev .. "[" .. os.date("%d.%m %H:%M:%S") .. "] " .. tostring(line) .. "\r\n"
-    if #txt > 60000 then txt = string.sub(txt, #txt - 50000) end -- держим хвост
-    file.Write(FRX_FILE, txt)
-end
+local AUTOSAVE    = 8   -- сек
+local RECONCILE   = 15  -- сек
 
 -- ============================================================
 -- ШАРЕД: форматирование
@@ -171,7 +48,6 @@ function GRM.Format(amount)
     local neg = n < 0
     n = math.abs(n)
     local s = tostring(n)
-    -- разбиение на тысячи: 1234567 -> "1 234 567"
     local out, cnt = "", 0
     for i = #s, 1, -1 do
         out = s:sub(i, i) .. out
@@ -185,83 +61,39 @@ end
 -- СЕРВЕР
 -- ============================================================
 if SERVER then
-    -- GRM-FIX: страж-синглтон. Если ядро уже загружено (вторая копия
-    -- файла в другом аддоне) — НЕ поднимаем второй экземпляр: две копии
-    -- грызли бы один data-файл и затирали друг друга.
+    -- Синглтон: вторая копия файла пропускается.
     if GRM._currencyCoreActive then
         local src = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
         print("[GRM Currency][!] ВТОРАЯ копия sh_grm_currency.lua ПРОПУЩЕНА, путь: " .. tostring(src))
         print("[GRM Currency][!] Активно ядро v" .. tostring(GRM._currencyCoreVer) ..
-              ", путь: " .. tostring(GRM._currencyCoreSrc) ..
-              ". Оставьте ОДНУ (самую новую) копию, остальные удалите!")
+              ", путь: " .. tostring(GRM._currencyCoreSrc) .. ". Оставьте ОДНУ копию!")
         return
     end
     GRM._currencyCoreActive = true
-    GRM._currencyCoreVer = "1.6.1"
+    GRM._currencyCoreVer = "2.0.0"
     GRM._currencyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_SYNC)
     util.AddNetworkString(NET_NOTIFY)
-    -- Совместимость с внешними модулями (Tab Menu Код 47, HUD Код 48):
-    util.AddNetworkString("grm_balance")
+    util.AddNetworkString("grm_balance")      -- легаси для Tab/HUD
     util.AddNetworkString("grm_request_bal")
     util.AddNetworkString("grm_notify")
 
     -- records[sid64] = { balance = number, name = string }
     local records = {}
     local dirty = false
-    -- Зеркало последнего состояния файла на диске (sid64 → balance):
-    -- чем файл отличается от зеркала — то изменилось СНАРУЖИ (не нами).
+    -- Зеркало диска: что лежит в файле по нашим данным (sid -> balance)
     local diskMirror = {}
     local function mirrorFill()
         diskMirror = {}
         for sid, rec in pairs(records) do diskMirror[sid] = rec.balance end
     end
-
-    -- ========================================================
-    -- v1.6.0: ОСНОВНАЯ БАЗА — встроенная SQLite (garrysmod/sv.db).
-    -- sv.db лежит ВНЕ data/: переживает чистку data/, синкеры и
-    -- «фантомных писателей» json. data/grm_wallet.json — лишь зеркало.
-    -- Формат значения — тот же JSON (sid64 -> {balance, name}).
-    -- ========================================================
-    local SQL_TABLE = "grm_store"   -- общая таблица GRM (экономика: ключ "treasury")
-    local SQL_KEY   = "wallet"
-    local SQL_SRC   = "SQL sv.db"   -- метка источника для LOAD-печати
-    local sqlOn = false
-    local function sqlRun(q)
-        local r = sql.Query(q)
-        if r ~= nil then return true, r end
-        return false, tostring(sql.LastError() or "?")
-    end
-    do
-        local ok, err = sqlRun("CREATE TABLE IF NOT EXISTS " .. SQL_TABLE ..
-            " (k TEXT PRIMARY KEY, v TEXT)")
-        sqlOn = ok
-        if not ok then
-            print("[GRM Currency][!] SQLite недоступен (" .. tostring(err) ..
-                  ") — работаем как раньше, только json-файлы")
-        end
-    end
-    local function storePut(txt)
-        if not sqlOn then return end
-        local ok, err = sqlRun("REPLACE INTO " .. SQL_TABLE .. " (k, v) VALUES (" ..
-            sql.SQLStr(SQL_KEY) .. ", " .. sql.SQLStr(txt) .. ")")
-        if not ok then
-            print("[GRM Currency][!] SQL-запись не удалась: " .. tostring(err))
-            logForensic("SQL-запись не удалась: " .. tostring(err))
-        end
-    end
-    local function storeGet()
-        if not sqlOn then return nil end
-        local ok, rows = sqlRun("SELECT v FROM " .. SQL_TABLE ..
-            " WHERE k = " .. sql.SQLStr(SQL_KEY))
-        if not ok or not istable(rows) or not istable(rows[1]) then return nil end
-        return rows[1].v
-    end
+    -- Что мы последний раз реально записали в файл (write-if-changed + read-back)
+    local lastSavedTxt = nil
 
     local function normalize(amount)
         amount = math.floor(tonumber(amount) or 0)
-        if amount ~= amount then amount = 0 end -- NaN убивал бы сериализацию файла
+        if amount ~= amount then amount = 0 end -- NaN
         if amount > GRM.MaxBalance then amount = GRM.MaxBalance end
         if amount < 0 then amount = 0 end
         return amount
@@ -273,8 +105,6 @@ if SERVER then
         return nil
     end
 
-    -- Если API вызвали по SteamID64-строке (админ-панель, гос.выплаты),
-    -- ищем онлайн-игрока, чтобы мгновенно запушить баланс в HUD/Tab.
     local function onlinePlayerOf(sid)
         for _, p in ipairs(player.GetAll()) do
             if IsValid(p) and p:SteamID64() == sid then return p end
@@ -282,11 +112,7 @@ if SERVER then
         return nil
     end
 
-    local lastSavedTxt = nil -- что реально лежит в файле (защита от пустых записей)
-
-    -- Управляющие байты (кроме перевода строки) и DEL ломали бы JSON.
-    -- ВАЖНО: объявлена ПЕРЕД sanitizedDump/loadData — они вызывают её как upvalue;
-    -- определение ниже по файлу превращало вызов в nil-глобал и убивало КАЖДОЕ сохранение.
+    -- Управляющие байты и DEL ломали бы JSON
     local function cleanNick(s)
         s = tostring(s or "?")
         s = string.gsub(s, "[\1-\9\11-\31\127]", "")
@@ -295,29 +121,50 @@ if SERVER then
         return s
     end
 
-    -- Очистка структуры перед сериализацией: ники без управляющих байт,
-    -- счётчики нормализуются. Если какая-то запись "ядовитая" — в лог
-    -- улетает её sid и очищенное имя (становится видно виновника).
-    local function sanitizedDump()
-        local clean, poison = {}, {}
-        for sid, rec in pairs(records) do
-            local nm = cleanNick(rec and rec.name)
-            if istable(rec) and rec.name ~= nil and tostring(rec.name) ~= nm then
-                poison[#poison + 1] = tostring(sid) .. " («" .. nm .. "»)"
-            end
-            clean[tostring(sid)] = { balance = normalize(rec and rec.balance), name = nm }
+    -- ========================================================
+    -- СОХРАНЕНИЕ
+    -- ========================================================
+    -- Собственный ДЕТЕРМИНИРОВАННЫЙ сериализатор: всегда "balance"
+    -- первым полем. При обрыве записи (краш посреди сейва) regex-
+    -- спасение извлекает баланс гарантированно и ПОЛНОСТЬЮ.
+    local function jsonStr(s)
+        return '"' .. tostring(s or ""):gsub('[%z\1-\31\\"]', function(c)
+            local m = { ['"'] = '\\"', ['\\'] = '\\\\', ['\n'] = '\\n', ['\r'] = '\\r', ['\t'] = '\\t' }
+            return m[c] or string.format("\\u%04x", string.byte(c))
+        end) .. '"'
+    end
+
+    local function dumpWallet(clean)
+        local parts = { "{" }
+        local first = true
+        for sid, rec in pairs(clean) do
+            parts[#parts + 1] = (first and "" or ",") ..
+                "\n\t" .. jsonStr(sid) .. ": {" ..
+                '\n\t\t"balance": ' .. tostring(rec.balance) .. "," ..
+                '\n\t\t"name": ' .. jsonStr(rec.name) ..
+                "\n\t}"
+            first = false
         end
-        return clean, poison
+        if first then return "{}" end
+        parts[#parts + 1] = "\n}"
+        return table.concat(parts)
+    end
+
+    local function sanitizedDump()
+        local clean = {}
+        for sid, rec in pairs(records) do
+            clean[tostring(sid)] = {
+                balance = normalize(rec and rec.balance),
+                name = cleanNick(rec and rec.name),
+            }
+        end
+        return clean
     end
 
     local function saveNow(force, why)
         if not dirty and not force then return end
-        local clean, poison = sanitizedDump()
-        -- GRM-FIX v1.5.6: ПУСТАЯ память НИКОГДА не перезаписывает НЕПУСТУЮ базу.
-        -- "[]" (пустая таблица) — легальный JSON, поэтому без этого стража пустой
-        -- дамп молча затирал реальные счета (после битой загрузки, чужой записи
-        -- в файл по FTP и т.п.). Полный сброс — только ручным удалением файла
-        -- при выключенном сервере.
+        local clean = sanitizedDump()
+        -- АНТИСВАЙП: пустая память НИКОГДА не затирает непустой файл.
         if next(clean) == nil then
             local prev = lastSavedTxt
             if (not isstring(prev)) and file.Exists(DATA_FILE, "DATA") then
@@ -328,140 +175,89 @@ if SERVER then
                 local okP, prevTab = pcall(util.JSONToTable, prev)
                 hadRecords = okP and istable(prevTab) and next(prevTab) ~= nil
             end
-            if not hadRecords then -- v1.6.0: база — это ещё и SQL sv.db
-                local sp = storeGet()
-                if isstring(sp) and #sp > 0 then
-                    local okS, prevS = pcall(util.JSONToTable, sp)
-                    hadRecords = okS and istable(prevS) and next(prevS) ~= nil
-                end
-            end
             if hadRecords then
-                local msg = ("SAVE ОТКЛОНЁН (вызов: %s): память пуста, а в базе есть счета — базу НЕ затираем (антисвайп-страж)"):format(tostring(why or "?"))
-                print("[GRM Currency] " .. msg)
-                logForensic(msg .. " | стек: " .. string.sub(tostring(debug.traceback("", 2)), 1, 300))
+                print(("[GRM Currency] SAVE ОТКЛОНЁН (%s): память пуста, а в базе есть счета — базу НЕ затираем")
+                    :format(tostring(why or "?")))
                 dirty = false
                 return
             end
         end
-        if #poison > 0 then
-            print("[GRM Currency] SAVE: очищены подозрительные ники: " .. table.concat(poison, ", "))
-        end
-        -- v1.6.1: сериализация под pcall — ошибка TableToJSON не роняет
-        -- таймеры, а уходит в АВАРИЙНЫЙ путь ниже (sid|balance|name)
-        local okJ, txt = pcall(util.TableToJSON, clean, true)
+        -- Сериализация под pcall: ошибка не роняет таймеры,
+        -- а уходит в аварийный путь (sid|balance|name построчно).
+        local okJ, txt = pcall(dumpWallet, clean)
         if not okJ then txt = nil end
-        -- GRM-FIX: валидность = живой парсинг (round-trip), а не длина.
-        -- Пустая таблица "{}" — легальное состояние, а не ошибка.
+        -- Валидность = живой round-trip парсинг движком
         local okRound = isstring(txt) and (pcall(util.JSONToTable, txt) == true)
         if not okRound then
-            -- АВАРИЙНЫЙ путь: пишем пословный формат "sid|balance|name",
-            -- чтобы данные пережили даже полностью сломанный сериализатор.
             local lines = {}
             for sid, rec in pairs(clean) do
                 lines[#lines + 1] = sid .. "|" .. tostring(rec.balance) .. "|" .. rec.name
             end
             local rescue = table.concat(lines, "\n")
             file.Write(DATA_FILE, rescue)
+            file.Write(BACKUP_FILE, rescue)
             file.Write("grm_wallet_err_" .. os.time() .. ".txt",
-                "TableToJSON/sanity: " .. tostring(txt) .. "\r\nПодозреваемые: " .. table.concat(poison, ", ") ..
-                "\r\nДамп памяти записан в основной файл строками sid|balance|name")
+                "TableToJSON не собрался; записан аварийный построчный формат")
             lastSavedTxt = rescue
             mirrorFill()
             dirty = false
-            print("[GRM Currency] SAVE: JSON не собрался — записан АВАРИЙНЫЙ формат (" .. tostring(#lines) .. " счетов), данные спасены")
+            print(("[GRM Currency] SAVE: JSON не собрался — записан АВАРИЙНЫЙ формат (%d счетов), данные спасены")
+                :format(#lines))
             return
         end
-        -- GRM-FIX: содержимое не изменилось → файл НЕ трогаем вообще:
-        -- нулевой износ диска и сверка с базой видит внешние правки.
-        if txt == lastSavedTxt then dirty = false return end
+        if txt == lastSavedTxt then dirty = false return end -- без изменений
         file.Write(DATA_FILE, txt)
-        file.Write("grm_wallet_backup.json", txt) -- зеркало на случай повреждения
-        storePut(txt) -- v1.6.0: основная база — SQL sv.db
+        file.Write(BACKUP_FILE, txt)
         lastSavedTxt = txt
-        mirrorFill() -- записали мы: зеркало = нашему состоянию
+        mirrorFill()
         dirty = false
-        print(("[GRM Currency] SAVE ok: счетов %d, %d байт -> data/%s%s%s")
+        print(("[GRM Currency] SAVE ok: счетов %d, %d байт -> data/%s%s")
             :format(table.Count(records), #txt, DATA_FILE,
-                sqlOn and " +sv.db" or "", why and (" [" .. tostring(why) .. "]") or ""))
-        -- v1.6.0: read-back SQL — если sv.db не принял запись, видно сразу
-        if sqlOn then
-            local back = storeGet()
-            if back ~= txt then
-                print("[GRM Currency][!] SQL-ПРОВЕРКА: запись в sv.db не подтвердилась!")
-                logForensic("SQL read-back mismatch после сейва [" .. tostring(why or "?") .. "]")
-            end
-        end
-        -- v1.5.9: КОНТРОЛЬ ЗАПИСИ. Перечитываем файл сразу после сейва:
-        -- если он уже не наш — переписан снаружи (хост-синкер/фантом),
-        -- и это становится ВИДНО, а не «почему-то пропало».
+                why and (" [" .. tostring(why) .. "]") or ""))
+        -- READ-BACK: перечитываем — «тихая» запись станет криком
         local chk = file.Read(DATA_FILE, "DATA")
         if chk ~= txt then
-            print(("[GRM Currency] ЗАПИСЬ ПЕРЕЗАПИСАНА СНАРУЖИ: только что сохранено %d байт, на диске %s"):format(
-                #txt, (isstring(chk) and tostring(#chk) or "файл пропал") .. " байт"))
-            logForensic(("ЗАПИСЬ ПЕРЕЗАПИСАНА СНАРУЖИ: сохранили %d байт [%s], прочитали %s"):format(
-                #txt, tostring(why or "?"), isstring(chk) and (#chk .. " байт") or "ФАЙЛ ПРОПАЛ"))
+            print(("[GRM Currency][!] ЗАПИСЬ НЕ ПОДТВЕРДИЛАСЬ: сохранено %d байт [%s], на диске %s")
+                :format(#txt, tostring(why or "?"),
+                    (isstring(chk) and (tostring(#chk) .. " байт") or "файл пропал")))
         end
     end
 
-    -- v1.5.8: разовая миграция. По указанию владельца старый основной
-    -- grm_currency.json НЕ читается (скомпрометирован фантомом) — только
-    -- зеркало grm_currency_backup.json, куда реально писались сейвы.
-    local MIGRATE_FROM = { "grm_currency_backup.json" }
+    -- ========================================================
+    -- ЗАГРУЗКА (+ спасение из битого файла regex'ом)
+    -- ========================================================
+    -- Вытаскивает записи {"balance": N, "name": "X"} по ключу-"sid"
+    -- из любого, даже обрубленного/битого текста.
+    local function rescueScan(text, dst)
+        local rescued = 0
+        if not isstring(text) then return 0 end
+        -- полные записи (два порядка полей)
+        for sid, bal, nm in text:gmatch('"([^"]+)"%s*:%s*{%s*"balance"%s*:%s*(%d+)%s*,%s*"name"%s*:%s*"([^"]*)"') do
+            dst[sid] = { balance = normalize(tonumber(bal)), name = cleanNick(nm) }
+            rescued = rescued + 1
+        end
+        for sid, nm, bal in text:gmatch('"([^"]+)"%s*:%s*{%s*"name"%s*:%s*"([^"]*)"%s*,%s*"balance"%s*:%s*(%d+)') do
+            if not dst[sid] then
+                dst[sid] = { balance = normalize(tonumber(bal)), name = cleanNick(nm) }
+                rescued = rescued + 1
+            end
+        end
+        -- поле-уровневое спасение: запись обрублена — берём хотя бы баланс
+        for sid, bal in text:gmatch('"([^"]+)"%s*:%s*{%s*"balance"%s*:%s*(%d+)') do
+            if not dst[sid] then
+                dst[sid] = { balance = normalize(tonumber(bal)), name = "?" }
+                rescued = rescued + 1
+            end
+        end
+        return rescued
+    end
 
-    local function loadData()
-        records = {}
-        local rawTxt, srcName = nil, DATA_FILE
-        -- v1.6.0: ИСТОЧНИК №1 — SQL sv.db (живёт вне data/, фантому недоступен)
-        local sqlTxt = storeGet()
-        if isstring(sqlTxt) and #sqlTxt > 0 then
-            local okS, tabS = pcall(util.JSONToTable, sqlTxt)
-            if okS and istable(tabS) and next(tabS) ~= nil then
-                rawTxt, srcName = sqlTxt, SQL_SRC
-            end
-        end
-        if rawTxt == nil and file.Exists(DATA_FILE, "DATA") then
-            rawTxt = file.Read(DATA_FILE, "DATA") or ""
-        end
-        if rawTxt == nil then
-            for _, legacy in ipairs(MIGRATE_FROM) do
-                if file.Exists(legacy, "DATA") then
-                    local t = file.Read(legacy, "DATA") or ""
-                    local okL, tab = pcall(util.JSONToTable, t)
-                    if okL and istable(tab) and next(tab) ~= nil then
-                        rawTxt, srcName = t, legacy
-                        break
-                    end
-                end
-            end
-        end
-        if rawTxt == nil then
-            print("[GRM Currency] LOAD: ни SQL sv.db, ни data/" .. DATA_FILE .. " счетов не дали — стартуем с пустых")
-            logForensic("LOAD: SQL и файлы пусты/отсутствуют — старт с нуля")
-            return
-        end
-        print(("[GRM Currency] LOAD: источник %s (%d байт)"):format(srcName, #rawTxt))
-        -- GRM-FIX: битый JSON (обрыв записи при падении) больше не
-        -- обнуляет счета молча — файл откладывается для ручного спасения.
+    -- Разбор валидного JSON одного источника в records.
+    -- Возвращает true, если источник дал хотя бы одну запись;
+    -- false+nil-code различают «битый» и «пустой».
+    local function parseJSONInto(rawTxt)
         local okJs, raw = pcall(util.JSONToTable, rawTxt)
-        if not okJs or not istable(raw) then
-            local backup = "grm_wallet_corrupt_" .. os.time() .. ".txt"
-            file.Write(backup, rawTxt)
-            print("[GRM Currency] ОШИБКА парсинга " .. DATA_FILE ..
-                  " — копия сохранена как data/" .. backup)
-            raw = {}
-            -- GRM-FIX: пробуем АВАРИЙНЫЙ формат (sid|balance|name построчно)
-            local rescued = 0
-            for line in rawTxt:gmatch("[^\n]+") do
-                local lsid, lbal, lname = line:match("^(%S+)%|(-?%d+)%|(.*)$")
-                if lsid and lbal then
-                    raw[lsid] = { balance = tonumber(lbal), name = cleanNick(lname or "?") }
-                    rescued = rescued + 1
-                end
-            end
-            if rescued > 0 then
-                print(("[GRM Currency] LOAD: из аварийного формата поднято счетов: %d"):format(rescued))
-            end
-        end
+        if not okJs or not istable(raw) then return false, "corrupt" end
         for sid, rec in pairs(raw) do
             if isstring(sid) and type(rec) == "table" then
                 records[sid] = {
@@ -470,39 +266,65 @@ if SERVER then
                 }
             end
         end
-        -- v1.5.9: источник дал 0 счетов, а зеркала живы — поднимаем их
-        if table.Count(records) == 0 then
-            for _, alt in ipairs({ "grm_wallet_backup.json", "grm_currency_backup.json" }) do
-                if alt ~= srcName and file.Exists(alt, "DATA") then
-                    local t2 = file.Read(alt, "DATA") or ""
-                    local okA, rawA = pcall(util.JSONToTable, t2)
-                    if okA and istable(rawA) and next(rawA) ~= nil then
-                        for sid2, rec2 in pairs(rawA) do
-                            if isstring(sid2) and type(rec2) == "table" then
-                                records[sid2] = { balance = normalize(rec2.balance), name = tostring(rec2.name or "?") }
-                            end
-                        end
-                        if next(records) ~= nil then
-                            print(("[GRM Currency] СПАСЕНИЕ: основной источник пуст — поднято счетов %d из data/%s"):format(table.Count(records), alt))
-                            logForensic(("СПАСЕНИЕ из %s: счетов %d (основной источник %s был пуст)"):format(alt, table.Count(records), srcName))
-                            dirty = true
-                            break
-                        end
+        return next(records) ~= nil, "ok"
+    end
+
+    local function loadData()
+        records = {}
+        local SEEDS = { DATA_FILE, BACKUP_FILE, LEGACY_SEED }
+        local corrupt = {}
+        -- ПРОХОД 1: первый источник с ВАЛИДНЫМ непустым JSON побеждает —
+        -- целое зеркало всегда главнее обглоданного основного файла.
+        local srcName = nil
+        for _, cand in ipairs(SEEDS) do
+            if file.Exists(cand, "DATA") then
+                local rawTxt = file.Read(cand, "DATA") or ""
+                if string.Trim(rawTxt) ~= "" then
+                    print(("[GRM Currency] LOAD: источник data/%s (%d байт)"):format(cand, #rawTxt))
+                    local okAny, code = parseJSONInto(rawTxt)
+                    if okAny then srcName = cand break end
+                    if code == "corrupt" then
+                        corrupt[#corrupt + 1] = { name = cand, txt = rawTxt }
+                        print(("[GRM Currency] LOAD: data/%s битый — отложен в карантин, смотрю следующий источник"):format(cand))
+                    else
+                        print(("[GRM Currency] LOAD: data/%s валиден, но записей 0 — смотрю следующий источник"):format(cand))
                     end
                 end
             end
         end
-        if srcName == SQL_SRC then
-            dirty = true -- материализуем json-зеркало ближайшим сейвом
-            print(("[GRM Currency] LOAD: база поднята из SQL sv.db, счетов %d — зеркало data/%s обновится сейвом"):format(
-                table.Count(records), DATA_FILE))
-            logForensic(("LOAD из SQL sv.db: счетов %d"):format(table.Count(records)))
-        elseif srcName ~= DATA_FILE then
-            dirty = true -- первая же запись уйдёт в НОВЫЙ файл
-            print(("[GRM Currency] МИГРАЦИЯ: поднято счетов %d из data/%s -> будет записано в data/%s"):format(
-                table.Count(records), srcName, DATA_FILE))
-            logForensic(("МИГРАЦИЯ из %s: счетов %d"):format(srcName, table.Count(records)))
+        -- ПРОХОД 2: валидных источников нет — спасаем из битых:
+        -- карантин каждого + regex-вытаскивание записей + аварийный
+        -- построчный формат sid|balance|name.
+        if not srcName and #corrupt > 0 then
+            for _, c in ipairs(corrupt) do
+                local backup = "grm_wallet_corrupt_" .. os.time() .. ".txt"
+                file.Write(backup, c.txt)
+                print("[GRM Currency] ОШИБКА парсинга " .. c.name ..
+                      " — копия сохранена как data/" .. backup)
+                local rescued = rescueScan(c.txt, records)
+                if rescued > 0 then
+                    print(("[GRM Currency] СПАСЕНИЕ regex'ом из битого %s: записей %d")
+                        :format(c.name, rescued))
+                    break
+                end
+                for line in c.txt:gmatch("[^\n]+") do
+                    local lsid, lbal, lname = line:match("^(%S+)%|(-?%d+)%|(.*)$")
+                    if lsid and lbal and not records[lsid] then
+                        records[lsid] = { balance = normalize(tonumber(lbal)), name = cleanNick(lname or "?") }
+                    end
+                end
+                if next(records) ~= nil then
+                    print(("[GRM Currency] СПАСЕНИЕ построчного формата из %s"):format(c.name))
+                    break
+                end
+            end
         end
+        if srcName and srcName ~= DATA_FILE and next(records) ~= nil then
+            dirty = true -- материализуем в основной файл ближайшим сейвом
+            print(("[GRM Currency] МИГРАЦИЯ: счетов %d поднято из data/%s -> data/%s")
+                :format(table.Count(records), srcName, DATA_FILE))
+        end
+        print(("[GRM Currency] LOAD итог: счетов в памяти %d"):format(table.Count(records)))
     end
 
     local function ensure(sid, nick)
@@ -518,28 +340,24 @@ if SERVER then
         return records[sid]
     end
 
-    -- Отправка актуального баланса конкретному онлайн-игроку.
+    -- Отправка актуального баланса онлайн-игроку
     local function pushBalance(ply)
         if not IsValid(ply) or not ply:IsPlayer() then return end
         local rec = records[ply:SteamID64()]
         local bal = rec and rec.balance or 0
-        ply:SetNW2Int("GRM_Money", bal) -- для внешних HUD
+        ply:SetNW2Int("GRM_Money", bal)
         net.Start(NET_SYNC)
             net.WriteUInt(bal, 32)
         net.Send(ply)
-        -- Легаси-пуш для Tab Menu / HUD (мгновенное обновление баланса там)
         net.Start("grm_balance")
             net.WriteInt(bal, 32)
         net.Send(ply)
     end
 
-    -- Запрос баланса от внешних клиентов (HUD при входе, Tab при обновлении)
     net.Receive("grm_request_bal", function(_, ply)
         if IsValid(ply) then pushBalance(ply) end
     end)
-
-    -- Маркер для Tab Menu (Код 47): НЕ переустанавливать свой легаси-
-    -- обработчик grm_request_bal поверх этого (иначе теряется NET_SYNC-пуш).
+    -- Маркер для Tab Menu: не переустанавливать свой обработчик grm_request_bal
     GRM._currencyReqBalRcv = true
 
     local function changed(ply, newBalance, delta, reason)
@@ -547,7 +365,7 @@ if SERVER then
     end
 
     -- ========================================================
-    -- ПУБЛИЧНОЕ API (контракт остальных модулей)
+    -- ПУБЛИЧНОЕ API
     -- ========================================================
     function GRM.GetBalance(ply)
         local sid = sidOf(ply)
@@ -600,7 +418,7 @@ if SERVER then
         if not sid then return false end
         local nick = IsValid(ply) and ply:IsPlayer() and ply:Nick() or nil
         local rec = ensure(sid, nick)
-        local taken = math.min(amount, rec.balance) -- уход в минус запрещён
+        local taken = math.min(amount, rec.balance)
         rec.balance = rec.balance - taken
         dirty = true
         local onlinePly = (IsValid(ply) and ply:IsPlayer()) and ply or onlinePlayerOf(sid)
@@ -609,12 +427,9 @@ if SERVER then
         return taken >= amount
     end
 
-    -- Алиасы для будущих модулей.
     GRM.AddMoney  = GRM.GiveMoney
     GRM.CanAfford = GRM.HasMoney
 
-    -- Копия всех счетов (sid64 → {balance, name}) — для единой
-    -- админ-панели экономики (Код 43) и других админ-инструментов.
     function GRM.GetAllBalances()
         local out = {}
         for sid, rec in pairs(records) do
@@ -623,7 +438,6 @@ if SERVER then
         return out
     end
 
-    -- Цветное уведомление: тост + продублировано в чат.
     function GRM.Notify(ply, msg, r, g, b)
         if not IsValid(ply) or not ply:IsPlayer() then return end
         local rr = math.Clamp(math.floor(tonumber(r) or 255), 0, 255)
@@ -635,7 +449,6 @@ if SERVER then
             net.WriteUInt(gg, 8)
             net.WriteUInt(bb, 8)
         net.Send(ply)
-        -- Легаси-дубль для стека уведомлений HUD (Код 48)
         net.Start("grm_notify")
             net.WriteString(tostring(msg or ""))
             net.WriteUInt(rr, 8)
@@ -645,11 +458,8 @@ if SERVER then
     end
 
     -- ========================================================
-    -- СВЕРКА «ПАМЯТЬ ↔ БАЗА»: база главнее, если её правили снаружи
+    -- СВЕРКА «ПАМЯТЬ ↔ БАЗА»: внешние правки файла поднимаем
     -- ========================================================
-    -- Поднимает баланс игрока из файла, если в файле значение отличается
-    -- от последнего известного нам состояния диска. Свои свежие, ещё не
-    -- сброшенные изменения НЕ трогает (файл тогда == зеркалу).
     local function reconcile(reason)
         if not file.Exists(DATA_FILE, "DATA") then return 0 end
         local rawTxt = file.Read(DATA_FILE, "DATA") or ""
@@ -662,17 +472,14 @@ if SERVER then
                 local mirrorBal = diskMirror[sid]
                 local memRec = records[sid]
                 if mirrorBal == nil and memRec == nil then
-                    -- запись есть в базе, но её нет в памяти и не было: поднимаем
                     local mem = ensure(sid, tostring(rec.name or "?"))
                     mem.balance = diskBal
                     diskMirror[sid] = diskBal
                     adopted = adopted + 1
                     print(("[GRM Currency] DB↔MEM [%s] новая запись из базы: %s"):format(reason, sid))
                 elseif mirrorBal ~= nil and diskBal ~= mirrorBal then
-                    -- файл менялся снаружи...
-                    -- GRM-FIX: поднимаем ТОЛЬКО если эту запись не трогали
-                    -- локально с последней записи/чтения диска (memory == mirror) —
-                    -- свои свежие и не сброшенные деньги не затираем никогда.
+                    -- файл менялся снаружи: поднимаем, только если эту
+                    -- запись сами не трогали с последней записи диска
                     if memRec and memRec.balance ~= mirrorBal then
                         diskMirror[sid] = diskBal
                     else
@@ -681,7 +488,7 @@ if SERVER then
                         if old ~= diskBal then
                             mem.balance = diskBal
                             mem.name = tostring(rec.name or mem.name)
-                            dirty = true -- сбросим файл в консистентное состояние
+                            dirty = true
                             adopted = adopted + 1
                             local online = onlinePlayerOf(sid)
                             if online then pushBalance(online) end
@@ -705,20 +512,17 @@ if SERVER then
         print(("[GRM Currency] сверка завершена: принято изменений из базы: %d"):format(n))
     end)
 
-    -- Чат-команда для superadmin (работает из игры, на ответ есть нотифай)
     hook.Add("PlayerSay", "GRM_Currency_DBCheck", function(ply, text)
         local cmd = string.lower(string.Trim(text or ""))
         if cmd ~= "/dbcheck" and cmd ~= "!dbcheck" then return end
         if not ply:IsSuperAdmin() then
-            if GRM.Notify then GRM.Notify(ply, "Только для superadmin.", 255, 100, 100) end
+            GRM.Notify(ply, "Только для superadmin.", 255, 100, 100)
             return ""
         end
         local n1 = reconcile("чат /dbcheck")
         local n2 = (hook.Run("GRM_Economy_DBCheck") == true) and 1 or 0
-        if GRM.Notify then
-            GRM.Notify(ply, ("Сверка с базой: наличка +%d, экономика %s"):format(
-                n1, n2 > 0 and "обновлена" or "без изменений"), 100, 220, 255)
-        end
+        GRM.Notify(ply, ("Сверка с базой: наличка +%d, экономика %s"):format(
+            n1, n2 > 0 and "обновлена" or "без изменений"), 100, 220, 255)
         return ""
     end)
 
@@ -729,161 +533,55 @@ if SERVER then
     mirrorFill()
     lastSavedTxt = file.Exists(DATA_FILE, "DATA") and (file.Read(DATA_FILE, "DATA") or "") or nil
 
-    -- ========================================================
-    -- СЛОТЫ ЖИЗНЕННОГО ЦИКЛА + СТОРОЖ ФАЙЛА + ЗАХВАТ РЕГИСТРАЦИЙ (v1.5.7)
-    -- Всё сгруппировано в installHostSlots(): чужие копии модуля без
-    -- синглтон-стража, регистрирующие таймеры/хуки/API с ТЕМИ ЖЕ именами,
-    -- детерминированно глушатся нами (≤10с) даже если загрузились позже.
-    -- ========================================================
-    local apiSnapshot = {}
-    for _, n in ipairs({ "GiveMoney", "TakeMoney", "SetBalance", "GetBalance", "HasMoney",
-                         "AddMoney", "CanAfford", "Format", "Notify", "GetAllBalances" }) do
-        apiSnapshot[n] = GRM[n]
-    end
-
     local function onInitSpawn(ply)
         if not IsValid(ply) or ply:IsBot() then return end
         local sid = ply:SteamID64()
-        local rec = records[sid]
-        if not rec then
-            -- v1.6.0: ПРАВДА в момент «сброса до стартового баланса».
-            -- Если баланс должен был подняться, а здесь видно «счетов было 0,
-            -- файл N байт» — данные убиты снаружи МЕЖДУ сейвом и входом,
-            -- логика ядра тут ни при чём.
+        if not records[sid] then
+            -- ПРАВДА в момент «сброса до стартового баланса»
             local cnt = table.Count(records)
             local fsz = file.Exists(DATA_FILE, "DATA") and #(file.Read(DATA_FILE, "DATA") or "") or -1
-            local sq = (not sqlOn) and "недоступен" or (isstring(storeGet()) and "есть запись" or "пусто")
-            print(("[GRM Currency] НОВЫЙ счёт %s (%s): счетов в памяти было %d, зеркало data=%s байт, SQL sv.db: %s")
-                :format(sid, tostring(ply:Nick()), cnt, tostring(fsz), sq))
-            logForensic(("НОВЫЙ счёт %s: счетов было %d, файл=%s байт, sql=%s")
-                :format(sid, cnt, tostring(fsz), sq))
+            print(("[GRM Currency] НОВЫЙ счёт %s (%s): счетов в памяти было %d, файл data/%s = %s байт")
+                :format(sid, tostring(ply:Nick()), cnt, DATA_FILE, tostring(fsz)))
             ensure(sid, ply:Nick())
             dirty = true
             saveNow(false, "вход игрока")
         else
-            rec.name = ply:Nick()
+            records[sid].name = ply:Nick()
         end
-        -- Клиент может быть ещё не готов принимать net — шлём с задержкой.
         local tag = "GRM_Currency_FirstSync_" .. sid
         timer.Create(tag, 2, 1, function()
             if IsValid(ply) then
-                reconcile("вход игрока") -- поднять правки базы, сделанные пока игрок был офлайн
+                reconcile("вход игрока")
                 pushBalance(ply)
             end
         end)
     end
+    hook.Add("PlayerInitialSpawn", "GRM_Currency_Init", onInitSpawn)
 
-    local function onDisconnect(ply)
+    hook.Add("PlayerDisconnected", "GRM_Currency_Disconnect", function(ply)
         if not IsValid(ply) then return end
         local rec = records[ply:SteamID64()]
         if rec then rec.name = ply:Nick() end
         dirty = true
         saveNow(false, "дисконнект")
-    end
+    end)
 
-    local function onShutdown()
+    hook.Add("ShutDown", "GRM_Currency_Shutdown", function()
         dirty = true
         saveNow(false, "shutdown")
-    end
+    end)
 
-    local function tickAutoSave() saveNow(true, "автосейв 8с") end
-    local function tickFlush() if dirty then saveNow(false, "флаш 5с") end end
-    local function tickReconcile()
+    timer.Create("GRM_Currency_AutoSave", AUTOSAVE, 0, function() saveNow(true, "автосейв 8с") end)
+    timer.Create("GRM_Currency_Flush", 5, 0, function() if dirty then saveNow(false, "флаш 5с") end end)
+    timer.Create("GRM_Currency_Reconcile", RECONCILE, 0, function()
         local n = reconcile("тик 15с")
         if n > 0 then
             print(("[GRM Currency] сверка: принято %d изменений из базы"):format(n))
-            logForensic(("сверка: принято %d изменений"):format(n))
-        end
-    end
-
-    local reclaimed = {}
-    local function installHostSlots(report)
-        -- Таймеры по имени: Create заменяет одноимённые — наш слот всегда наш.
-        timer.Create("GRM_Currency_AutoSave", AUTOSAVE, 0, tickAutoSave)
-        timer.Create("GRM_Currency_Flush", 5, 0, tickFlush)
-        timer.Create("GRM_Currency_Reconcile", RECONCILE, 0, tickReconcile)
-        -- Хуки (событие+ID): чужая копия с теми же ID вытесняется.
-        local slots = {
-            { "PlayerInitialSpawn", "GRM_Currency_Init", onInitSpawn },
-            { "PlayerDisconnected", "GRM_Currency_Disconnect", onDisconnect },
-            { "ShutDown",           "GRM_Currency_Shutdown", onShutdown },
-        }
-        for _, s in ipairs(slots) do
-            local ev = hook.GetTable()[s[1]]
-            local cur = ev and ev[s[2]]
-            if cur ~= s[3] then
-                if cur ~= nil and report and not reclaimed[s[2]] then
-                    reclaimed[s[2]] = true
-                    print("[GRM Currency] ЗАХВАТ: чужая регистрация " .. s[2] .. " вытеснена — на сервере ЖИЛА вторая копия модуля!")
-                    logForensic("захват слота " .. s[2] .. " (была чужая регистрация)")
-                end
-                hook.Remove(s[1], s[2])
-                hook.Add(s[1], s[2], s[3])
-            end
-        end
-        -- API ядра: если переопределено чужой копией — возвращаем свои ссылки.
-        for n, fn in pairs(apiSnapshot) do
-            if fn ~= nil and GRM[n] ~= fn then
-                GRM[n] = fn
-                if report and not reclaimed["API_" .. n] then
-                    reclaimed["API_" .. n] = true
-                    print("[GRM Currency] ЗАХВАТ: API GRM." .. n .. " возвращён у чужой копии")
-                    logForensic("захват API " .. n)
-                end
-            end
-        end
-    end
-
-    installHostSlots(false) -- первичная установка слотов при загрузке
-    -- Сторожевой захват: копия, загруженная ПОЗЖЕ нас, живёт ≤10 секунд.
-    timer.Create("GRM_Currency_Takeover", 10, 0, function() installHostSlots(true) end)
-
-    -- СТОРОЖ ФАЙЛА (v1.5.7): любая ЧУЖАЯ запись grm_currency.json фиксируется
-    -- в форензик-логе, легальные правки поднимаются, данные восстанавливаются.
-    local lastBark = 0
-    timer.Create("GRM_Currency_Watchdog", 2, 0, function()
-        if not isstring(lastSavedTxt) then return end
-        if not file.Exists(DATA_FILE, "DATA") then return end
-        local txt = file.Read(DATA_FILE, "DATA") or ""
-        if txt == lastSavedTxt then return end
-        -- Безобидный случай: система хостинга переписала файл ТЕМ ЖЕ смыслом
-        -- в другом форматировании — принимаем его как эталон, диск не долбим.
-        local okW, ext = pcall(util.JSONToTable, txt)
-        if okW and istable(ext) then
-            local clean = sanitizedDump()
-            local same = true
-            for sid, rec in pairs(clean) do
-                local e = ext[sid]
-                if not (istable(e) and normalize(e.balance) == rec.balance) then same = false break end
-            end
-            if same then
-                for sid in pairs(ext) do
-                    if clean[sid] == nil then same = false break end
-                end
-            end
-            if same then lastSavedTxt = txt mirrorFill() return end
-        end
-        -- Файл изменил НЕ наш saveNow: либо правка по FTP (легальна — поднимаем),
-        -- либо чужой писатель (вредоносен — затрётся нашим состоянием).
-        local n = reconcile("сторож файла")
-        dirty = true
-        saveNow(true, "сторож-самолечение")
-        logForensic(("ЧУЖАЯ ЗАПИСЬ в %s (%d байт, поднято правок %d) — файл приведён к состоянию памяти"):format(DATA_FILE, #txt, n))
-        if os.time() - lastBark >= 30 then
-            lastBark = os.time()
-            print(("[GRM Currency] СТОРОЖ: файл %s перезаписан снаружи (%d байт)! Данные восстановлены; детали: data/grm_currency_forensics.txt"):format(DATA_FILE, #txt))
         end
     end)
 
-    -- Форензик-строка загрузки: путь файла виден прямо в логе data/.
-    logForensic(("BOOT v1.6.1: путь=%s, база=SQL sv.db+data/%s, счетов=%d, файл=%s байт, sql=%s"):format(
-        tostring(debug.getinfo(1, "S").short_src), DATA_FILE,
-        table.Count(records),
-        file.Exists(DATA_FILE, "DATA") and tostring(#(file.Read(DATA_FILE, "DATA") or "")) or "нет файла",
-        (not sqlOn) and "недоступен" or (isstring(storeGet()) and "есть" or "пусто")))
-
     -- ========================================================
-    -- КОНСОЛЬНЫЕ УТИЛИТЫ (сервер-консоль / суперадмин)
+    -- КОНСОЛЬНЫЕ УТИЛИТЫ
     -- ========================================================
     local function canUseConsole(ply)
         return not IsValid(ply) or (IsValid(ply) and ply:IsSuperAdmin())
@@ -891,7 +589,7 @@ if SERVER then
 
     local function findTarget(query)
         query = tostring(query or "")
-        if records[query] then return query, records[query].name end -- точный SteamID64
+        if records[query] then return query, records[query].name end
         local low = query:lower()
         for _, p in ipairs(player.GetAll()) do
             if p:Nick():lower():find(low, 1, true) then
@@ -949,8 +647,9 @@ if SERVER then
     end
     concommand.Add("grm_money", moneyCmd)
 
-    print(("[GRM Currency] ядро загружено v1.6.1, путь: %s, база: SQL sv.db + зеркало data/%s, счетов в памяти: %d"):format(
-        tostring(debug.getinfo(1, "S").short_src), DATA_FILE, table.Count(records)))
+    print(("[GRM Currency] ядро загружено v2.0.0 (переписано с нуля), путь: %s, база: data/%s, счетов в памяти: %d, файл: %s байт"):format(
+        tostring(debug.getinfo(1, "S").short_src), DATA_FILE, table.Count(records),
+        file.Exists(DATA_FILE, "DATA") and tostring(#(file.Read(DATA_FILE, "DATA") or "")) or "нет файла"))
 end
 
 -- ============================================================
@@ -964,28 +663,26 @@ if CLIENT then
         hook.Run("GRM_LocalMoneyChanged", GRM.LocalBalance)
     end)
 
-    -- Зеркало для внешних модулей: HUD (Код 48) и Tab Menu (Код 47)
-    -- читают GRM.PlayerBalance как единственный источник баланса.
+    -- Зеркало для Tab (Код 47) и HUD (Код 48)
     GRM.PlayerBalance = GRM.PlayerBalance or GRM.LocalBalance
     hook.Add("GRM_LocalMoneyChanged", "GRM_Currency_MirrorPlayerBalance", function(bal)
         GRM.PlayerBalance = bal
     end)
 
     net.Receive(NET_NOTIFY, function()
-        -- v1.5.5: наш HUD (Код 48) уже рисует это уведомление всплывашкой
-        -- из легаси-канала grm_notify (GRM.Notify шлёт оба) — не дублируем.
-        if GRM.HUD then return end
+        -- HUD (Код 48) показывает это же уведомление по grm_notify
+        if GRM.HUD then
+            net.ReadString() net.ReadUInt(8) net.ReadUInt(8) net.ReadUInt(8)
+            return
+        end
         local msg = net.ReadString()
         local r, g, b = net.ReadUInt(8), net.ReadUInt(8), net.ReadUInt(8)
         local col = Color(r, g, b)
-        -- Красноватые уведомления считаем ошибками, остальные — обычными.
         local ntype = (r >= 200 and g <= 160) and NOTIFY_ERROR or NOTIFY_GENERIC
         notification.AddLegacy(msg, ntype, 4)
         chat.AddText(col, msg)
     end)
 
-    -- Клиентская GRM.Notify: терпимая к обоим порядкам аргументов.
-    -- (ply, msg, r,g,b) игнорирует ply, (msg, r,g,b) — показывает локально.
     function GRM.Notify(a, b, c, d, e)
         local msg, r, g, bl
         if isentity(a) then msg, r, g, bl = b, c, d, e else msg, r, g, bl = a, b, c, d end
@@ -995,7 +692,6 @@ if CLIENT then
         chat.AddText(col, msg)
     end
 
-    -- Локальный просмотр баланса: grm_balance
     concommand.Add("grm_balance", function()
         chat.AddText(Color(100, 220, 100), "[GRM] Ваш баланс: " .. GRM.Format(GRM.LocalBalance))
     end)
