@@ -1,5 +1,12 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v2.3.8 (Код 43)
+    GRM Unified Economy v2.3.9 (Код 43)
+
+    v2.3.9 (репорт: «салари-лог переполняется»): общий фин.лог тонул в
+    рутине — при 20 игроках онлайн зарплата каждые 10 минут писала
+    ~120 записей/час, лимит 300 вымывал штрафы/переводы/админ-действия
+    за пару часов. Теперь рутинные потоки («Зарплата...», «Сверка с
+    базой...») в общий лог НЕ пишутся: зарплата остаётся в истории
+    фракций и сводке госбюджета, сверка — в консоли сервера.
 
     v2.3.8 (репорт: «наличка не переживает рестарт, в json — []»):
     антисвайп-стражи: save() не затирает непустую базу пустой памятью;
@@ -118,7 +125,7 @@ if SERVER then
         return
     end
     GRM._economyCoreActive = true
-    GRM._economyCoreVer = "2.3.8"
+    GRM._economyCoreVer = "2.3.9"
     GRM._economyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_OPEN_ADMIN)
@@ -328,6 +335,13 @@ if SERVER then
 
     -- Любое движение наличных через ядро валюты попадает в общий лог.
     hook.Add("GRM_MoneyChanged", "GRM_Economy_FinLog", function(ply, newBalance, delta, reason)
+        -- v2.3.9: рутина забивает общий лог — фильтруем на входе.
+        -- Зарплата видна в истории фракций (addHistory) и гос.бюджете,
+        -- сверка с базой — в консоли сервера и форензик-логе валюты.
+        if isstring(reason) then
+            if string.StartWith(reason, "Зарплата") then return end
+            if string.StartWith(reason, "Сверка с базой") then return end
+        end
         local who = "?"
         if IsValid(ply) and ply:IsPlayer() then
             who = ply:Nick()
@@ -1190,7 +1204,8 @@ if SERVER then
 
     load()
     lastDiskTxt = file.Exists(DATA_FILE, "DATA") and (file.Read(DATA_FILE, "DATA") or "") or nil
-    print("[GRM Economy] Unified Economy v2.3 загружена: фракций " .. table.Count(E.Data.factions))
+    print(("[GRM Economy] Unified Economy v2.3.9 загружена (путь: %s): фракций %d, счетов %d"):format(
+        tostring(debug.getinfo(1, "S").short_src), table.Count(E.Data.factions), table.Count(E.Data.accounts)))
 end
 
 -- ============================================================

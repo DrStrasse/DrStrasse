@@ -1,5 +1,12 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v1.5.7 (Код 42)
+    GRM Currency Core v1.5.8 (Код 42)
+
+    v1.5.8 (по предложению владельца): БАЗА ПЕРЕЕХАЛА на новое имя
+    data/grm_wallet.json — чужой «фантомный писатель» знал только старое
+    имя и затирал его пустым «[]»; старый grm_currency.json оставлен
+    ДЕКОЕМ и больше НЕ читается вообще. Миграция ТОЛЬКО из зеркала
+    grm_currency_backup.json (туда реально писались живые сейвы):
+    поднимается разово при первом старте, если в нём есть счета.
 
     v1.5.7 (репорт: «SAVE ok есть, а в файле [] — кто-то перезаписывает»):
     СТОРОЖ ФАЙЛА (2с): любая чужая запись grm_currency.json фиксируется
@@ -112,7 +119,7 @@ GRM.StartBalance  = GRM.StartBalance  or 1000   -- стартовый балан
 GRM.CurrencyName  = GRM.CurrencyName  or "GRM"  -- суффикс валюты
 GRM.MaxBalance    = GRM.MaxBalance    or 2000000000 -- защита от переполнения NW2/net
 
-local DATA_FILE   = "grm_currency.json"
+local DATA_FILE   = "grm_wallet.json" -- v1.5.8: НОВОЕ имя базы; grm_currency.json — декой для фантома, не читаем
 local NET_SYNC    = "GRM_Currency_Sync"
 local NET_NOTIFY  = "GRM_Currency_Notify"
 local AUTOSAVE    = 8   -- секунды: гарантированный интервал автосохранения
@@ -161,7 +168,7 @@ if SERVER then
         return
     end
     GRM._currencyCoreActive = true
-    GRM._currencyCoreVer = "1.5.7"
+    GRM._currencyCoreVer = "1.5.8"
     GRM._currencyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_SYNC)
@@ -275,7 +282,7 @@ if SERVER then
             end
             local rescue = table.concat(lines, "\n")
             file.Write(DATA_FILE, rescue)
-            file.Write("grm_currency_err_" .. os.time() .. ".txt",
+            file.Write("grm_wallet_err_" .. os.time() .. ".txt",
                 "TableToJSON/sanity: " .. tostring(txt) .. "\r\nПодозреваемые: " .. table.concat(poison, ", ") ..
                 "\r\nДамп памяти записан в основной файл строками sid|balance|name")
             lastSavedTxt = rescue
@@ -288,7 +295,7 @@ if SERVER then
         -- нулевой износ диска и сверка с базой видит внешние правки.
         if txt == lastSavedTxt then dirty = false return end
         file.Write(DATA_FILE, txt)
-        file.Write("grm_currency_backup.json", txt) -- зеркало на случай повреждения
+        file.Write("grm_wallet_backup.json", txt) -- зеркало на случай повреждения
         lastSavedTxt = txt
         mirrorFill() -- записали мы: зеркало = нашему состоянию
         dirty = false
@@ -296,19 +303,39 @@ if SERVER then
             :format(table.Count(records), #txt, DATA_FILE, why and (" [" .. tostring(why) .. "]") or ""))
     end
 
+    -- v1.5.8: разовая миграция. По указанию владельца старый основной
+    -- grm_currency.json НЕ читается (скомпрометирован фантомом) — только
+    -- зеркало grm_currency_backup.json, куда реально писались сейвы.
+    local MIGRATE_FROM = { "grm_currency_backup.json" }
+
     local function loadData()
         records = {}
-        if not file.Exists(DATA_FILE, "DATA") then
-            print("[GRM Currency] LOAD: файла data/" .. DATA_FILE .. " НЕТ на сервере — стартуем с пустых счетов")
+        local rawTxt, srcName = nil, DATA_FILE
+        if file.Exists(DATA_FILE, "DATA") then
+            rawTxt = file.Read(DATA_FILE, "DATA") or ""
+        else
+            for _, legacy in ipairs(MIGRATE_FROM) do
+                if file.Exists(legacy, "DATA") then
+                    local t = file.Read(legacy, "DATA") or ""
+                    local okL, tab = pcall(util.JSONToTable, t)
+                    if okL and istable(tab) and next(tab) ~= nil then
+                        rawTxt, srcName = t, legacy
+                        break
+                    end
+                end
+            end
+        end
+        if rawTxt == nil then
+            print("[GRM Currency] LOAD: файла data/" .. DATA_FILE .. " нет и мигрировать нечего — стартуем с пустых счетов")
+            logForensic("LOAD: новый файл отсутствует, миграционный источник пуст — старт с нуля")
             return
         end
-        local rawTxt = file.Read(DATA_FILE, "DATA") or ""
-        print(("[GRM Currency] LOAD: файл найден, %d байт"):format(#rawTxt))
+        print(("[GRM Currency] LOAD: читаю data/%s (%d байт)"):format(srcName, #rawTxt))
         -- GRM-FIX: битый JSON (обрыв записи при падении) больше не
         -- обнуляет счета молча — файл откладывается для ручного спасения.
         local okJs, raw = pcall(util.JSONToTable, rawTxt)
         if not okJs or not istable(raw) then
-            local backup = "grm_currency_corrupt_" .. os.time() .. ".txt"
+            local backup = "grm_wallet_corrupt_" .. os.time() .. ".txt"
             file.Write(backup, rawTxt)
             print("[GRM Currency] ОШИБКА парсинга " .. DATA_FILE ..
                   " — копия сохранена как data/" .. backup)
@@ -333,6 +360,12 @@ if SERVER then
                     name = tostring(rec.name or "?"),
                 }
             end
+        end
+        if srcName ~= DATA_FILE then
+            dirty = true -- первая же запись уйдёт в НОВЫЙ файл
+            print(("[GRM Currency] МИГРАЦИЯ: поднято счетов %d из data/%s -> будет записано в data/%s"):format(
+                table.Count(records), srcName, DATA_FILE))
+            logForensic(("МИГРАЦИЯ из %s: счетов %d"):format(srcName, table.Count(records)))
         end
     end
 
@@ -696,8 +729,8 @@ if SERVER then
     end)
 
     -- Форензик-строка загрузки: путь файла виден прямо в логе data/.
-    logForensic(("BOOT v1.5.7: путь=%s, счетов=%d, файл=%s байт"):format(
-        tostring(debug.getinfo(1, "S").short_src),
+    logForensic(("BOOT v1.5.8: путь=%s, база=%s, счетов=%d, файл=%s байт"):format(
+        tostring(debug.getinfo(1, "S").short_src), DATA_FILE,
         table.Count(records),
         file.Exists(DATA_FILE, "DATA") and tostring(#(file.Read(DATA_FILE, "DATA") or "")) or "нет файла"))
 
@@ -768,8 +801,8 @@ if SERVER then
     end
     concommand.Add("grm_money", moneyCmd)
 
-    print(("[GRM Currency] ядро загружено v1.5.7, путь: %s, счетов в памяти: %d"):format(
-        tostring(debug.getinfo(1, "S").short_src), table.Count(records)))
+    print(("[GRM Currency] ядро загружено v1.5.8, путь: %s, база: data/%s, счетов в памяти: %d"):format(
+        tostring(debug.getinfo(1, "S").short_src), DATA_FILE, table.Count(records)))
 end
 
 -- ============================================================
