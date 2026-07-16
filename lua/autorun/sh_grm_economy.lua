@@ -1,5 +1,15 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v2.3.9 (Код 43)
+    GRM Unified Economy v2.4.0 (Код 43)
+
+    v2.4.0 (репорт: «в дате баланс/истории/наличка — пусто»): ПЕРЕЕЗД
+    файла экономики на НОВОЕ имя data/grm_treasury.json — старый
+    grm_economy.json становится декоем для фантома и ядром не читается.
+    Зеркало grm_treasury_backup.json пишется КАЖДЫМ сейвом парой.
+    Семена миграции: treasury -> treasury_backup -> grm_economy_backup
+    -> grm_economy.json -> grm_currency_backup -> grm_wallet_backup.
+    Битый файл при загрузке — карантин, а НЕ сброс. "[]" = файла нет.
+    Boot-строка показывает источник и имя базы.
+
 
     v2.3.9 (репорт: «салари-лог переполняется»): общий фин.лог тонул в
     рутине — при 20 игроках онлайн зарплата каждые 10 минут писала
@@ -98,7 +108,8 @@ E.Config = E.Config or {
     LogSize            = 300,   -- записей общего финансового лога сервера
 }
 
-local DATA_FILE  = "grm_economy.json"
+local DATA_FILE  = "grm_treasury.json" -- v2.4.0: переезд; grm_economy.json — декой для фантома
+local BACKUP_FILE = "grm_treasury_backup.json" -- зеркало каждой удачной записи
 local LEGACY_BUDGETS = "grm_faction_budgets.json"       -- Код 12
 local LEGACY_PLUS    = "grm_faction_economy_plus.json"  -- Код 9
 
@@ -125,7 +136,7 @@ if SERVER then
         return
     end
     GRM._economyCoreActive = true
-    GRM._economyCoreVer = "2.3.9"
+    GRM._economyCoreVer = "2.4.0"
     GRM._economyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_OPEN_ADMIN)
@@ -232,7 +243,7 @@ if SERVER then
                     local hadAcc = istable(dt.accounts) and next(dt.accounts) ~= nil
                     local hadFac = istable(dt.factions) and next(dt.factions) ~= nil
                     if hadAcc or hadFac then
-                        print("[GRM Economy] SAVE ОТКЛОНЁН: память пуста, а в базе есть счета/фракции — базу НЕ затираем (антисвайп-страж v2.3.8)")
+                        print("[GRM Economy] SAVE ОТКЛОНЁН: память пуста, а в базе есть счета/фракции — базу НЕ затираем (антисвайп-страж)")
                         dirty = false
                         return
                     end
@@ -242,13 +253,26 @@ if SERVER then
         local txt = util.TableToJSON(E.Data, true) or "{}"
         if txt == lastDiskTxt then dirty = false return end -- без изменений: диск не долбим
         file.Write(DATA_FILE, txt)
+        file.Write(BACKUP_FILE, txt) -- v2.4.0: зеркало каждой удачной записи
         lastDiskTxt = txt
         dirty = false
     end
 
+    -- v2.4.0: пуст по факту (для семян миграции и стражей)
+    local function extWasEmpty(t)
+        if not istable(t) then return true end
+        local hasF = istable(t.factions) and next(t.factions) ~= nil
+        local hasA = istable(t.accounts) and next(t.accounts) ~= nil
+        local hasL = istable(t.log) and next(t.log) ~= nil
+        local hasS = istable(t.state) and istable(t.state.history) and next(t.state.history) ~= nil
+        return not (hasF or hasA or hasL or hasS)
+    end
+
     local function tryJSON(fname)
         if not file.Exists(fname, "DATA") then return nil end
-        local ok, t = pcall(util.JSONToTable, file.Read(fname, "DATA") or "")
+        local txt = file.Read(fname, "DATA") or ""
+        if string.Trim(txt) == "[]" then return nil end -- v2.4.0: отпечаток фантома = файла нет
+        local ok, t = pcall(util.JSONToTable, txt)
         return (ok and istable(t)) and t or nil
     end
 
@@ -361,13 +385,29 @@ if SERVER then
             (isstring(reason) and reason ~= "") and (" | " .. reason) or ""))
     end)
 
+    local LOAD_SEEDS = { DATA_FILE, BACKUP_FILE, "grm_economy_backup.json",
+                         "grm_economy.json", "grm_currency_backup.json", "grm_wallet_backup.json" }
     local function load()
-        local t = tryJSON(DATA_FILE)
+        local t, srcName = nil, nil
+        for _, srcf in ipairs(LOAD_SEEDS) do
+            local tt = tryJSON(srcf)
+            if tt and not extWasEmpty(tt) then t, srcName = tt, srcf break end
+        end
+        if not t then t = tryJSON(DATA_FILE) or tryJSON(BACKUP_FILE) end
         if t and istable(t.factions) then
             E.Data = t
+            if srcName and srcName ~= DATA_FILE then
+                print(("[GRM Economy] МИГРАЦИЯ: данные подняты из data/%s -> data/%s"):format(srcName, DATA_FILE))
+            end
         else
+            if file.Exists(DATA_FILE, "DATA") or file.Exists(BACKUP_FILE, "DATA") then
+                local q = "grm_treasury_corruptboot_" .. os.time() .. ".txt"
+                local rawB = (file.Read(DATA_FILE, "DATA") or "") .. "\n\n--== BACKUP ==--\n\n" .. (file.Read(BACKUP_FILE, "DATA") or "")
+                file.Write(q, rawB)
+                print("[GRM Economy] LOAD: база и зеркало биты/пусты — копии в data/" .. q .. ", данные НЕ сброшены молча")
+            end
             E.Data = { version = 2, factions = {} }
-            importLegacy() -- первый запуск: подтянуть данные старых модулей
+            importLegacy() -- источников с данными нет: легаси-импорт
         end
         E.Data.accounts = istable(E.Data.accounts) and E.Data.accounts or {}
         E.Data.state = istable(E.Data.state) and E.Data.state or { budget = 0, history = {} }
@@ -377,6 +417,9 @@ if SERVER then
         E.Data.config = istable(E.Data.config) and E.Data.config or {}
         applyConfig() -- сохранённые настройки поверх дефолтов
         for name in pairs(E.Data.factions) do entry(name) end
+        print(("[GRM Economy] LOAD: база data/%s (источник: %s): фракций %d, счетов %d")
+            :format(DATA_FILE, tostring(srcName or DATA_FILE),
+                table.Count(E.Data.factions), table.Count(E.Data.accounts)))
     end
 
         -- ── ЛИЧНЫЕ БАНКОВСКИЕ СЧЕТА (банкомат для ВСЕХ игроков) ──
@@ -595,6 +638,12 @@ if SERVER then
         local memFac = istable(E.Data.factions) and next(E.Data.factions) ~= nil
         if not gotAcc and not gotFac and (memAcc or memFac) then
             print("[GRM Economy] DB↔MEM ОТКЛОНЕНО: файл пуст/без счетов, а память непуста — память сохранена (антисвайп-страж v2.3.8)")
+            lastDiskTxt = txt
+            return false
+        end
+        -- v2.4.0: внешний файл, пустой по факту, не вытирает непустую память
+        if extWasEmpty(t) and not extWasEmpty(E.Data) then
+            print("[GRM Economy] DB↔MEM ОТКЛОНЕНО: внешний файл пуст по сути, память нет (страж v2.4.0)")
             lastDiskTxt = txt
             return false
         end
@@ -1204,8 +1253,9 @@ if SERVER then
 
     load()
     lastDiskTxt = file.Exists(DATA_FILE, "DATA") and (file.Read(DATA_FILE, "DATA") or "") or nil
-    print(("[GRM Economy] Unified Economy v2.3.9 загружена (путь: %s): фракций %d, счетов %d"):format(
-        tostring(debug.getinfo(1, "S").short_src), table.Count(E.Data.factions), table.Count(E.Data.accounts)))
+    print(("[GRM Economy] Unified Economy v2.4.0 загружена (путь: %s, база: data/%s): фракций %d, счетов %d"):format(
+        tostring(debug.getinfo(1, "S").short_src), DATA_FILE,
+        table.Count(E.Data.factions), table.Count(E.Data.accounts)))
 end
 
 -- ============================================================

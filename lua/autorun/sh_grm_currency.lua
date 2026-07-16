@@ -1,5 +1,16 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v1.5.8 (Код 42)
+    GRM Currency Core v1.5.9 (Код 42)
+
+    v1.5.9 (репорт: "в дате пусто"): ЗАГРУЗКА-СПАСАТЕЛЬ — если основной
+    источник дал 0 счетов, пробуются альтернативные зеркала
+    (grm_wallet_backup.json, grm_currency_backup.json): тишина одного
+    файла больше не равна потере всех балансов. В boot-строке видно
+    имя выбранного источника. Плюс КОНТРОЛЬ ЗАПИСИ (read-back):
+    после каждого сейва файл перечитывается и сравнивается — если
+    содержимое не наше, в консоль и форензик летит «ПЕРЕЗАПИСАН
+    СНАРУЖИ» с количеством байт: что/кто переписал файл между нашим
+    сейвом и чтением (хост-синкер/антивирус/фантом) становится видно.
+
 
     v1.5.8 (по предложению владельца): БАЗА ПЕРЕЕХАЛА на новое имя
     data/grm_wallet.json — чужой «фантомный писатель» знал только старое
@@ -168,7 +179,7 @@ if SERVER then
         return
     end
     GRM._currencyCoreActive = true
-    GRM._currencyCoreVer = "1.5.8"
+    GRM._currencyCoreVer = "1.5.9"
     GRM._currencyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_SYNC)
@@ -301,6 +312,16 @@ if SERVER then
         dirty = false
         print(("[GRM Currency] SAVE ok: счетов %d, %d байт -> data/%s%s")
             :format(table.Count(records), #txt, DATA_FILE, why and (" [" .. tostring(why) .. "]") or ""))
+        -- v1.5.9: КОНТРОЛЬ ЗАПИСИ. Перечитываем файл сразу после сейва:
+        -- если он уже не наш — переписан снаружи (хост-синкер/фантом),
+        -- и это становится ВИДНО, а не «почему-то пропало».
+        local chk = file.Read(DATA_FILE, "DATA")
+        if chk ~= txt then
+            print(("[GRM Currency] ЗАПИСЬ ПЕРЕЗАПИСАНА СНАРУЖИ: только что сохранено %d байт, на диске %s"):format(
+                #txt, (isstring(chk) and tostring(#chk) or "файл пропал") .. " байт"))
+            logForensic(("ЗАПИСЬ ПЕРЕЗАПИСАНА СНАРУЖИ: сохранили %d байт [%s], прочитали %s"):format(
+                #txt, tostring(why or "?"), isstring(chk) and (#chk .. " байт") or "ФАЙЛ ПРОПАЛ"))
+        end
     end
 
     -- v1.5.8: разовая миграция. По указанию владельца старый основной
@@ -359,6 +380,28 @@ if SERVER then
                     balance = normalize(rec.balance),
                     name = tostring(rec.name or "?"),
                 }
+            end
+        end
+        -- v1.5.9: источник дал 0 счетов, а зеркала живы — поднимаем их
+        if table.Count(records) == 0 then
+            for _, alt in ipairs({ "grm_wallet_backup.json", "grm_currency_backup.json" }) do
+                if alt ~= srcName and file.Exists(alt, "DATA") then
+                    local t2 = file.Read(alt, "DATA") or ""
+                    local okA, rawA = pcall(util.JSONToTable, t2)
+                    if okA and istable(rawA) and next(rawA) ~= nil then
+                        for sid2, rec2 in pairs(rawA) do
+                            if isstring(sid2) and type(rec2) == "table" then
+                                records[sid2] = { balance = normalize(rec2.balance), name = tostring(rec2.name or "?") }
+                            end
+                        end
+                        if next(records) ~= nil then
+                            print(("[GRM Currency] СПАСЕНИЕ: основной источник пуст — поднято счетов %d из data/%s"):format(table.Count(records), alt))
+                            logForensic(("СПАСЕНИЕ из %s: счетов %d (основной источник %s был пуст)"):format(alt, table.Count(records), srcName))
+                            dirty = true
+                            break
+                        end
+                    end
+                end
             end
         end
         if srcName ~= DATA_FILE then
@@ -729,7 +772,7 @@ if SERVER then
     end)
 
     -- Форензик-строка загрузки: путь файла виден прямо в логе data/.
-    logForensic(("BOOT v1.5.8: путь=%s, база=%s, счетов=%d, файл=%s байт"):format(
+    logForensic(("BOOT v1.5.9: путь=%s, база=%s, счетов=%d, файл=%s байт"):format(
         tostring(debug.getinfo(1, "S").short_src), DATA_FILE,
         table.Count(records),
         file.Exists(DATA_FILE, "DATA") and tostring(#(file.Read(DATA_FILE, "DATA") or "")) or "нет файла"))
@@ -801,7 +844,7 @@ if SERVER then
     end
     concommand.Add("grm_money", moneyCmd)
 
-    print(("[GRM Currency] ядро загружено v1.5.8, путь: %s, база: data/%s, счетов в памяти: %d"):format(
+    print(("[GRM Currency] ядро загружено v1.5.9, путь: %s, база: data/%s, счетов в памяти: %d"):format(
         tostring(debug.getinfo(1, "S").short_src), DATA_FILE, table.Count(records)))
 end
 
