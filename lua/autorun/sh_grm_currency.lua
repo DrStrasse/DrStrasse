@@ -1,5 +1,12 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v1.6.0 (Код 42)
+    GRM Currency Core v1.6.1 (Код 42)
+
+    v1.6.1 (внешний аудит «нет контроля успешности записи»): по фактам —
+    (а) file.Write в GMod НИЧЕГО не возвращает (nil), проверять нечего:
+    отслеживание «тихой» записи делается READ-BACK'ом после сейва (и он
+    был с v1.5.9); (б) по аудиту — сериализация util.TableToJSON переведена
+    под pcall: ошибка сериализатора больше не может уронить timer сейва,
+    а уходит в аварийный путь sid|balance|name.
 
     v1.6.0 (репорт: «после рестарта опять стартовые 1.000»): БАЗА
     ПЕРЕЕХАЛА ВО ВСТРОЕННУЮ SQLite (garrysmod/sv.db, таблица grm_store,
@@ -190,7 +197,7 @@ if SERVER then
         return
     end
     GRM._currencyCoreActive = true
-    GRM._currencyCoreVer = "1.6.0"
+    GRM._currencyCoreVer = "1.6.1"
     GRM._currencyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_SYNC)
@@ -339,7 +346,10 @@ if SERVER then
         if #poison > 0 then
             print("[GRM Currency] SAVE: очищены подозрительные ники: " .. table.concat(poison, ", "))
         end
-        local txt = util.TableToJSON(clean, true)
+        -- v1.6.1: сериализация под pcall — ошибка TableToJSON не роняет
+        -- таймеры, а уходит в АВАРИЙНЫЙ путь ниже (sid|balance|name)
+        local okJ, txt = pcall(util.TableToJSON, clean, true)
+        if not okJ then txt = nil end
         -- GRM-FIX: валидность = живой парсинг (round-trip), а не длина.
         -- Пустая таблица "{}" — легальное состояние, а не ошибка.
         local okRound = isstring(txt) and (pcall(util.JSONToTable, txt) == true)
@@ -866,7 +876,7 @@ if SERVER then
     end)
 
     -- Форензик-строка загрузки: путь файла виден прямо в логе data/.
-    logForensic(("BOOT v1.6.0: путь=%s, база=SQL sv.db+data/%s, счетов=%d, файл=%s байт, sql=%s"):format(
+    logForensic(("BOOT v1.6.1: путь=%s, база=SQL sv.db+data/%s, счетов=%d, файл=%s байт, sql=%s"):format(
         tostring(debug.getinfo(1, "S").short_src), DATA_FILE,
         table.Count(records),
         file.Exists(DATA_FILE, "DATA") and tostring(#(file.Read(DATA_FILE, "DATA") or "")) or "нет файла",
@@ -939,7 +949,7 @@ if SERVER then
     end
     concommand.Add("grm_money", moneyCmd)
 
-    print(("[GRM Currency] ядро загружено v1.6.0, путь: %s, база: SQL sv.db + зеркало data/%s, счетов в памяти: %d"):format(
+    print(("[GRM Currency] ядро загружено v1.6.1, путь: %s, база: SQL sv.db + зеркало data/%s, счетов в памяти: %d"):format(
         tostring(debug.getinfo(1, "S").short_src), DATA_FILE, table.Count(records)))
 end
 

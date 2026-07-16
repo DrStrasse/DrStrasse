@@ -1,5 +1,10 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v2.5.0 (Код 43)
+    GRM Unified Economy v2.5.1 (Код 43)
+
+    v2.5.1 (внешний аудит «нет контроля успешности записи»): по фактам —
+    file.Write в GMod возвращает nil, «контроль» делается read-back'ом
+    после сейва (был с v2.4/форензиком). По аудиту: сериализация под
+    pcall — ошибка TableToJSON откладывает запись, а не роняет таймер.
 
     v2.5.0 (репорт: «после рестарта опять стартовые значения»): БАЗА
     ПЕРЕЕХАЛА ВО ВСТРОЕННУЮ SQLite (garrysmod/sv.db, таблица grm_store,
@@ -145,7 +150,7 @@ if SERVER then
         return
     end
     GRM._economyCoreActive = true
-    GRM._economyCoreVer = "2.5.0"
+    GRM._economyCoreVer = "2.5.1"
     GRM._economyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_OPEN_ADMIN)
@@ -301,13 +306,26 @@ if SERVER then
                 return
             end
         end
-        local txt = util.TableToJSON(E.Data, true) or "{}"
+        -- v2.5.1: сериализация под pcall: ошибка не роняет сейв в краш
+        -- таймера — просто откладываем запись (dirty остаётся, повторит флаш)
+        local okJ, txt = pcall(util.TableToJSON, E.Data, true)
+        if not okJ or not isstring(txt) or txt == "" then
+            print("[GRM Economy][!] SAVE: сериализация не удалась — повторим ближайшим флашем")
+            return
+        end
         if txt == lastDiskTxt then dirty = false return end -- без изменений: диск не долбим
         file.Write(DATA_FILE, txt)
         file.Write(BACKUP_FILE, txt) -- v2.4.0: зеркало каждой удачной записи
         storePut(txt) -- v2.5.0: основная база — SQL sv.db
         lastDiskTxt = txt
         dirty = false
+        -- v2.5.1: read-back SQL — «тихая» запись станет видна сразу
+        if sqlOn then
+            local back = storeGet()
+            if back ~= txt then
+                print("[GRM Economy][!] SQL-ПРОВЕРКА: запись в sv.db не подтвердилась!")
+            end
+        end
     end
 
     -- v2.4.0: пуст по факту (для семян миграции и стражей)
@@ -1319,7 +1337,7 @@ if SERVER then
 
     load()
     lastDiskTxt = file.Exists(DATA_FILE, "DATA") and (file.Read(DATA_FILE, "DATA") or "") or nil
-    print(("[GRM Economy] Unified Economy v2.5.0 загружена (путь: %s, база: SQL sv.db + зеркало data/%s): фракций %d, счетов %d"):format(
+    print(("[GRM Economy] Unified Economy v2.5.1 загружена (путь: %s, база: SQL sv.db + зеркало data/%s): фракций %d, счетов %d"):format(
         tostring(debug.getinfo(1, "S").short_src), DATA_FILE,
         table.Count(E.Data.factions), table.Count(E.Data.accounts)))
 end
