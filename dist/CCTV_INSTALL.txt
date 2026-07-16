@@ -1,0 +1,15 @@
+GRM CCTV v1.0.0 (Код 60)
+========================
+Установка:
+  A) В общий GRM: скопируй содержимое lua/ в garrysmod/addons/grm/lua/
+  B) Отдельный аддон: папку grm_cctv/ в garrysmod/addons/grm_cctv/
+
+Q → Entities → GRM CCTV:
+  grm_cctv_server  → стойка сети (ONLINE обязательна)
+  grm_cctv_camera  → камеры
+  grm_cctv_monitor → компьютер, E → смотреть
+
+Выход с камеры: RMB / ESC / E
+Permanent: галочка в меню (суперадмин) или /permadd
+Консоль: grm_cctv_save | grm_cctv_load | grm_cctv_list
+Данные: garrysmod/data/grm_cctv/<map>.json
