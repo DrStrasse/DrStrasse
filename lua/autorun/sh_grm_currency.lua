@@ -1,5 +1,12 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v2.0.0 (Код 42) — ПЕРЕПИСАНО С НУЛЯ
+    GRM Currency Core v2.0.1 (Код 42) — ПЕРЕПИСАНО С НУЛЯ
+
+    v2.0.1 (репорт «файл 85 байт, в памяти 0, в базе есть счета»): ВСЕЯДНЫЙ
+    загрузчик — поднимает map (наш), plain sid->число, array-записи с
+    sid-полем, array-записи ПО НИКУ (старые чужие кошельки). Неизвестный
+    формат ≤4Кб печатается целиком в консоль (отпечаток чужого писателя).
+    Сверка 15с: файл в чужом формате не затирает память, а переписывается
+    ЕЁ состоянием (доминирование), печать с троттлингом 60с.
 
     Простой надёжный контур (без SQL/сторожей/захватов — они не нужны
     и на сервере владельца SQL недоступен):
@@ -70,7 +77,7 @@ if SERVER then
         return
     end
     GRM._currencyCoreActive = true
-    GRM._currencyCoreVer = "2.0.0"
+    GRM._currencyCoreVer = "2.0.1"
     GRM._currencyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_SYNC)
@@ -82,6 +89,10 @@ if SERVER then
     -- records[sid64] = { balance = number, name = string }
     local records = {}
     local dirty = false
+    -- Счета из массивной базы БЕЗ sid (старые чужие кошельки): поднимаем
+    -- по нику при входе игрока
+    local pendingByNick = {}
+    local fmtBark = 0 -- троттлинг печати «чужой формат» в сверке
     -- Зеркало диска: что лежит в файле по нашим данным (sid -> balance)
     local diskMirror = {}
     local function mirrorFill()
@@ -252,28 +263,59 @@ if SERVER then
         return rescued
     end
 
-    -- Разбор валидного JSON одного источника в records.
-    -- Возвращает true, если источник дал хотя бы одну запись;
-    -- false+nil-code различают «битый» и «пустой».
+    -- sid-подобные поля в массивных записях (форматы старых кошельков)
+    local SID_FIELDS = { "sid", "sid64", "steamid", "steamid64", "steamID64", "steam", "id", "key" }
+
+    -- ВСЕЯДНЫЙ разбор: известные форматы кошелька -> records/pendingByNick.
+    --   map:    {"765...": {"balance": N, "name": "X"}}   — наш формат
+    --   plain:  {"765...": N}                             — старый sid->число
+    --   array:  [ {"sid64": "765...", "balance": N, ...} ]— чужой с sid-полем
+    --   array:  [ {"name": "X", "balance": N} ]           — чужой по никам
+    -- Возвращает число найденных записей и метку формата.
     local function parseJSONInto(rawTxt)
         local okJs, raw = pcall(util.JSONToTable, rawTxt)
-        if not okJs or not istable(raw) then return false, "corrupt" end
+        if not okJs or not istable(raw) then return 0, "corrupt" end
+        local n, fmt = 0, "map"
         for sid, rec in pairs(raw) do
-            if isstring(sid) and type(rec) == "table" then
-                records[sid] = {
-                    balance = normalize(rec.balance),
-                    name = tostring(rec.name or "?"),
-                }
+            if isstring(sid) then
+                if type(rec) == "table" then
+                    records[sid] = { balance = normalize(rec.balance), name = tostring(rec.name or "?") }
+                    n = n + 1
+                elseif tonumber(rec) ~= nil then
+                    records[sid] = { balance = normalize(rec), name = "?" }
+                    n = n + 1
+                    fmt = "plain"
+                end
             end
         end
-        return next(records) ~= nil, "ok"
+        if n == 0 then
+            for _, rec in pairs(raw) do
+                if type(rec) == "table" and tonumber(rec.balance) ~= nil then
+                    local key = nil
+                    for _, f in ipairs(SID_FIELDS) do
+                        if isstring(rec[f]) and #rec[f] >= 4 then key = rec[f] break end
+                    end
+                    if key then
+                        records[key] = { balance = normalize(rec.balance), name = tostring(rec.name or "?") }
+                        n = n + 1
+                        fmt = "array+sid"
+                    elseif isstring(rec.name) and cleanNick(rec.name) ~= "?" then
+                        pendingByNick[cleanNick(rec.name)] = normalize(rec.balance)
+                        n = n + 1
+                        fmt = "array+bynick"
+                    end
+                end
+            end
+        end
+        if n == 0 and next(raw) ~= nil then fmt = "unknown" end
+        return n, fmt
     end
 
     local function loadData()
         records = {}
         local SEEDS = { DATA_FILE, BACKUP_FILE, LEGACY_SEED }
         local corrupt = {}
-        -- ПРОХОД 1: первый источник с ВАЛИДНЫМ непустым JSON побеждает —
+        -- ПРОХОД 1: первый источник с РАСПОЗНАННЫМИ записями побеждает —
         -- целое зеркало всегда главнее обглоданного основного файла.
         local srcName = nil
         for _, cand in ipairs(SEEDS) do
@@ -281,13 +323,23 @@ if SERVER then
                 local rawTxt = file.Read(cand, "DATA") or ""
                 if string.Trim(rawTxt) ~= "" then
                     print(("[GRM Currency] LOAD: источник data/%s (%d байт)"):format(cand, #rawTxt))
-                    local okAny, code = parseJSONInto(rawTxt)
-                    if okAny then srcName = cand break end
-                    if code == "corrupt" then
+                    local n, fmt = parseJSONInto(rawTxt)
+                    if n > 0 then
+                        srcName = cand
+                        print(("[GRM Currency] LOAD: поднято записей %d (формат: %s)"):format(n, fmt))
+                        break
+                    end
+                    if fmt == "corrupt" then
                         corrupt[#corrupt + 1] = { name = cand, txt = rawTxt }
                         print(("[GRM Currency] LOAD: data/%s битый — отложен в карантин, смотрю следующий источник"):format(cand))
                     else
-                        print(("[GRM Currency] LOAD: data/%s валиден, но записей 0 — смотрю следующий источник"):format(cand))
+                        print(("[GRM Currency] LOAD: data/%s валиден, но записей не распознано (формат: %s) — смотрю следующий источник")
+                            :format(cand, fmt))
+                        -- ОТПЕЧАТОК ЧУЖОГО ПИСАТЕЛЯ: маленький файл печатаем целиком
+                        if #rawTxt <= 4096 then
+                            print("[GRM Currency]   содержимое data/" .. cand .. " целиком:")
+                            for line in rawTxt:gmatch("[^\n]+") do print("  | " .. line) end
+                        end
                     end
                 end
             end
@@ -330,7 +382,16 @@ if SERVER then
     local function ensure(sid, nick)
         nick = nick and cleanNick(nick) or nil
         if not records[sid] then
-            records[sid] = { balance = normalize(GRM.StartBalance), name = nick or "?" }
+            -- массивная база без sid (чужой кошелёк): поднимаем по нику
+            local byNick = nick and pendingByNick[nick]
+            if byNick ~= nil then
+                records[sid] = { balance = byNick, name = nick or "?" }
+                pendingByNick[nick] = nil
+                print(("[GRM Currency] счёт %s поднят ПО НИКУ «%s» из массивной базы: %s")
+                    :format(sid, nick or "?", GRM.Format(byNick)))
+            else
+                records[sid] = { balance = normalize(GRM.StartBalance), name = nick or "?" }
+            end
             dirty = true
         end
         if nick and nick ~= "" and records[sid].name ~= nick then
@@ -465,39 +526,68 @@ if SERVER then
         local rawTxt = file.Read(DATA_FILE, "DATA") or ""
         local okJs, raw = pcall(util.JSONToTable, rawTxt)
         if not okJs or not istable(raw) then return 0 end
+        -- Файл в ЧУЖОМ формате (нет ни одной sid-записи): принимать нечего.
+        -- Если память наша и непуста — доминируем: переписываем файл
+        -- своим состоянием и оставляем отпечаток чужого писателя.
+        local recognized, anyEntries = 0, 0
+        for k, v in pairs(raw) do
+            anyEntries = anyEntries + 1
+            if isstring(k) and (type(v) == "table" or tonumber(v) ~= nil) then recognized = recognized + 1 end
+        end
+        if anyEntries > 0 and recognized == 0 then
+            if next(records) ~= nil then
+                dirty = true
+                saveNow(true, "сверка: самолечение чужого формата")
+                if os.time() - fmtBark >= 60 then
+                    fmtBark = os.time()
+                    print(("[GRM Currency] СВЕРКА: файл data/%s в ЧУЖОМ формате (%d записей не наших) — переписан состоянием памяти (%d счетов). На сервере есть другой писатель в этот файл!")
+                        :format(DATA_FILE, anyEntries, table.Count(records)))
+                    if #rawTxt <= 2048 then
+                        print("[GRM Currency]   содержимое чужой записи: " .. rawTxt:gsub("%s+", " "))
+                    end
+                end
+            end
+            return 0
+        end
         local adopted = 0
         for sid, rec in pairs(raw) do
-            if isstring(sid) and type(rec) == "table" then
-                local diskBal = normalize(rec.balance)
-                local mirrorBal = diskMirror[sid]
-                local memRec = records[sid]
-                if mirrorBal == nil and memRec == nil then
-                    local mem = ensure(sid, tostring(rec.name or "?"))
-                    mem.balance = diskBal
-                    diskMirror[sid] = diskBal
-                    adopted = adopted + 1
-                    print(("[GRM Currency] DB↔MEM [%s] новая запись из базы: %s"):format(reason, sid))
-                elseif mirrorBal ~= nil and diskBal ~= mirrorBal then
-                    -- файл менялся снаружи: поднимаем, только если эту
-                    -- запись сами не трогали с последней записи диска
-                    if memRec and memRec.balance ~= mirrorBal then
+            if isstring(sid) then
+                -- терпим и к формату sid -> число
+                local recBal, recName
+                if type(rec) == "table" then recBal, recName = rec.balance, rec.name
+                elseif tonumber(rec) ~= nil then recBal, recName = rec, nil end
+                if recBal ~= nil then
+                    local diskBal = normalize(recBal)
+                    local mirrorBal = diskMirror[sid]
+                    local memRec = records[sid]
+                    if mirrorBal == nil and memRec == nil then
+                        local mem = ensure(sid, tostring(recName or "?"))
+                        mem.balance = diskBal
                         diskMirror[sid] = diskBal
-                    else
-                        local mem = memRec or ensure(sid, tostring(rec.name or "?"))
-                        local old = mem.balance
-                        if old ~= diskBal then
-                            mem.balance = diskBal
-                            mem.name = tostring(rec.name or mem.name)
-                            dirty = true
-                            adopted = adopted + 1
-                            local online = onlinePlayerOf(sid)
-                            if online then pushBalance(online) end
-                            hook.Run("GRM_MoneyChanged", online or sid, diskBal, diskBal - old,
-                                "Сверка с базой (" .. tostring(reason) .. ")")
-                            print(("[GRM Currency] DB↔MEM [%s] %s: %d → %d (поднято из базы)")
-                                :format(reason, sid, old, diskBal))
-                        else
+                        adopted = adopted + 1
+                        print(("[GRM Currency] DB↔MEM [%s] новая запись из базы: %s"):format(reason, sid))
+                    elseif mirrorBal ~= nil and diskBal ~= mirrorBal then
+                        -- файл менялся снаружи: поднимаем, только если эту
+                        -- запись сами не трогали с последней записи диска
+                        if memRec and memRec.balance ~= mirrorBal then
                             diskMirror[sid] = diskBal
+                        else
+                            local mem = memRec or ensure(sid, tostring(recName or "?"))
+                            local old = mem.balance
+                            if old ~= diskBal then
+                                mem.balance = diskBal
+                                if recName then mem.name = tostring(recName) end
+                                dirty = true
+                                adopted = adopted + 1
+                                local online = onlinePlayerOf(sid)
+                                if online then pushBalance(online) end
+                                hook.Run("GRM_MoneyChanged", online or sid, diskBal, diskBal - old,
+                                    "Сверка с базой (" .. tostring(reason) .. ")")
+                                print(("[GRM Currency] DB↔MEM [%s] %s: %d → %d (поднято из базы)")
+                                    :format(reason, sid, old, diskBal))
+                            else
+                                diskMirror[sid] = diskBal
+                            end
                         end
                     end
                 end
@@ -647,7 +737,7 @@ if SERVER then
     end
     concommand.Add("grm_money", moneyCmd)
 
-    print(("[GRM Currency] ядро загружено v2.0.0 (переписано с нуля), путь: %s, база: data/%s, счетов в памяти: %d, файл: %s байт"):format(
+    print(("[GRM Currency] ядро загружено v2.0.1 (переписано с нуля), путь: %s, база: data/%s, счетов в памяти: %d, файл: %s байт"):format(
         tostring(debug.getinfo(1, "S").short_src), DATA_FILE, table.Count(records),
         file.Exists(DATA_FILE, "DATA") and tostring(#(file.Read(DATA_FILE, "DATA") or "")) or "нет файла"))
 end

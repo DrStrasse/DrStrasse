@@ -291,3 +291,21 @@ elseif PHASE == "treasury_corrupt" then
     print("PHASE treasury_corrupt: OK — экономика поднялась из зеркала")
 
 end
+
+-- фазы чужих форматов (v2.0.1): кладём чужой файл и проверяем подъём
+local function foreign(phaseName, content, expect)
+    if PHASE == phaseName then
+        file.Write("grm_wallet.json", content)
+        file.Write("grm_wallet_backup.json", content)
+        dofile("lua/autorun/sh_grm_currency.lua")
+        local ply = mkPly("Alexander Von Groenner", "76561199385153957", "STEAM_0:1:100")
+        _G.__PLAYERS = { ply }
+        fireHook("PlayerInitialSpawn", ply)
+        local bal = GRM.GetBalance(ply)
+        assert(bal == expect, phaseName .. ": баланс " .. tostring(bal) .. " != " .. tostring(expect))
+        print("PHASE " .. phaseName .. ": OK (" .. tostring(bal) .. ")")
+    end
+end
+foreign("fmt_array_sid", '[\n\t{\n\t\t"sid64": "76561199385153957",\n\t\t"balance": 500200,\n\t\t"name": "Alexander Von Groenner"\n\t}\n]', 500200)
+foreign("fmt_array_nick", '[\n\t{\n\t\t"name": "Alexander Von Groenner",\n\t\t"balance": 500200\n\t}\n]', 500200)
+foreign("fmt_mapnum", '{\n\t"76561199385153957": 500200\n}', 500200)
