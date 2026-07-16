@@ -101,12 +101,16 @@ if SERVER then
     -- GRM-FIX: страж-синглтон: вторая копия модуля пропускается,
     -- иначе две копии грызут один data-файл.
     if GRM._economyCoreActive then
-        print("[GRM Economy][!] ВТОРАЯ копия sh_grm_economy.lua ПРОПУЩЕНА " ..
-              "(активен v" .. tostring(GRM._economyCoreVer) .. "). Удалите дубликат из addons/!")
+        local src = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
+        print("[GRM Economy][!] ВТОРАЯ копия sh_grm_economy.lua ПРОПУЩЕНА, путь: " .. tostring(src))
+        print("[GRM Economy][!] Активен модуль v" .. tostring(GRM._economyCoreVer) ..
+              ", путь: " .. tostring(GRM._economyCoreSrc) ..
+              ". Оставьте ОДНУ (самую новую) копию, остальные удалите!")
         return
     end
     GRM._economyCoreActive = true
     GRM._economyCoreVer = "2.3.6"
+    GRM._economyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_OPEN_ADMIN)
     util.AddNetworkString(NET_ADMIN_DATA)

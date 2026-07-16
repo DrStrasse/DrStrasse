@@ -111,12 +111,16 @@ if SERVER then
     -- файла в другом аддоне) — НЕ поднимаем второй экземпляр: две копии
     -- грызли бы один data-файл и затирали друг друга.
     if GRM._currencyCoreActive then
-        print("[GRM Currency][!] ВТОРАЯ копия sh_grm_currency.lua обнаружена и ПРОПУЩЕНА " ..
-              "(активно ядро v" .. tostring(GRM._currencyCoreVer) .. "). Удалите дубликат из addons/!")
+        local src = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
+        print("[GRM Currency][!] ВТОРАЯ копия sh_grm_currency.lua ПРОПУЩЕНА, путь: " .. tostring(src))
+        print("[GRM Currency][!] Активно ядро v" .. tostring(GRM._currencyCoreVer) ..
+              ", путь: " .. tostring(GRM._currencyCoreSrc) ..
+              ". Оставьте ОДНУ (самую новую) копию, остальные удалите!")
         return
     end
     GRM._currencyCoreActive = true
-    GRM._currencyCoreVer = "1.5.1"
+    GRM._currencyCoreVer = "1.5.2"
+    GRM._currencyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_SYNC)
     util.AddNetworkString(NET_NOTIFY)
@@ -550,7 +554,7 @@ if SERVER then
     end
     concommand.Add("grm_money", moneyCmd)
 
-    print(("[GRM Currency] ядро загружено v1.5.1, счетов в памяти: %d (баланс первого: %s)"):format(
+    print(("[GRM Currency] ядро загружено v1.5.2, счетов в памяти: %d (баланс первого: %s)"):format(
         table.Count(records),
         (function() for _, r in pairs(records) do return tostring(r.balance) end return "—" end)()))
 end
