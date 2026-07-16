@@ -1,5 +1,16 @@
 --[[--------------------------------------------------------------------
-    GRM Currency Core v1.5.9 (Код 42)
+    GRM Currency Core v1.6.0 (Код 42)
+
+    v1.6.0 (репорт: «после рестарта опять стартовые 1.000»): БАЗА
+    ПЕРЕЕХАЛА ВО ВСТРОЕННУЮ SQLite (garrysmod/sv.db, таблица grm_store,
+    ключ wallet). sv.db живёт ВНЕ папки data/ — его не трогают
+    ftp-синхронизации, боты деплоя, чистильщики data/ и любые
+    «фантомные писатели» json. data/grm_wallet.json остаётся ЗЕРКАЛОМ
+    для просмотра глазами и по-прежнему пишется каждым сейвом.
+    Порядок загрузки: SQL sv.db -> grm_wallet.json -> зеркала.
+    Read-back проверяет и SQL-запись. Плюс строка «НОВЫЙ счёт» при
+    входе игрока без записи: печатает состояние баз в момент, когда
+    рождается пресловутый «сброс до 1.000».
 
     v1.5.9 (репорт: "в дате пусто"): ЗАГРУЗКА-СПАСАТЕЛЬ — если основной
     источник дал 0 счетов, пробуются альтернативные зеркала
@@ -179,7 +190,7 @@ if SERVER then
         return
     end
     GRM._currencyCoreActive = true
-    GRM._currencyCoreVer = "1.5.9"
+    GRM._currencyCoreVer = "1.6.0"
     GRM._currencyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_SYNC)
@@ -198,6 +209,47 @@ if SERVER then
     local function mirrorFill()
         diskMirror = {}
         for sid, rec in pairs(records) do diskMirror[sid] = rec.balance end
+    end
+
+    -- ========================================================
+    -- v1.6.0: ОСНОВНАЯ БАЗА — встроенная SQLite (garrysmod/sv.db).
+    -- sv.db лежит ВНЕ data/: переживает чистку data/, синкеры и
+    -- «фантомных писателей» json. data/grm_wallet.json — лишь зеркало.
+    -- Формат значения — тот же JSON (sid64 -> {balance, name}).
+    -- ========================================================
+    local SQL_TABLE = "grm_store"   -- общая таблица GRM (экономика: ключ "treasury")
+    local SQL_KEY   = "wallet"
+    local SQL_SRC   = "SQL sv.db"   -- метка источника для LOAD-печати
+    local sqlOn = false
+    local function sqlRun(q)
+        local r = sql.Query(q)
+        if r ~= nil then return true, r end
+        return false, tostring(sql.LastError() or "?")
+    end
+    do
+        local ok, err = sqlRun("CREATE TABLE IF NOT EXISTS " .. SQL_TABLE ..
+            " (k TEXT PRIMARY KEY, v TEXT)")
+        sqlOn = ok
+        if not ok then
+            print("[GRM Currency][!] SQLite недоступен (" .. tostring(err) ..
+                  ") — работаем как раньше, только json-файлы")
+        end
+    end
+    local function storePut(txt)
+        if not sqlOn then return end
+        local ok, err = sqlRun("REPLACE INTO " .. SQL_TABLE .. " (k, v) VALUES (" ..
+            sql.SQLStr(SQL_KEY) .. ", " .. sql.SQLStr(txt) .. ")")
+        if not ok then
+            print("[GRM Currency][!] SQL-запись не удалась: " .. tostring(err))
+            logForensic("SQL-запись не удалась: " .. tostring(err))
+        end
+    end
+    local function storeGet()
+        if not sqlOn then return nil end
+        local ok, rows = sqlRun("SELECT v FROM " .. SQL_TABLE ..
+            " WHERE k = " .. sql.SQLStr(SQL_KEY))
+        if not ok or not istable(rows) or not istable(rows[1]) then return nil end
+        return rows[1].v
     end
 
     local function normalize(amount)
@@ -269,6 +321,13 @@ if SERVER then
                 local okP, prevTab = pcall(util.JSONToTable, prev)
                 hadRecords = okP and istable(prevTab) and next(prevTab) ~= nil
             end
+            if not hadRecords then -- v1.6.0: база — это ещё и SQL sv.db
+                local sp = storeGet()
+                if isstring(sp) and #sp > 0 then
+                    local okS, prevS = pcall(util.JSONToTable, sp)
+                    hadRecords = okS and istable(prevS) and next(prevS) ~= nil
+                end
+            end
             if hadRecords then
                 local msg = ("SAVE ОТКЛОНЁН (вызов: %s): память пуста, а в базе есть счета — базу НЕ затираем (антисвайп-страж)"):format(tostring(why or "?"))
                 print("[GRM Currency] " .. msg)
@@ -307,11 +366,21 @@ if SERVER then
         if txt == lastSavedTxt then dirty = false return end
         file.Write(DATA_FILE, txt)
         file.Write("grm_wallet_backup.json", txt) -- зеркало на случай повреждения
+        storePut(txt) -- v1.6.0: основная база — SQL sv.db
         lastSavedTxt = txt
         mirrorFill() -- записали мы: зеркало = нашему состоянию
         dirty = false
-        print(("[GRM Currency] SAVE ok: счетов %d, %d байт -> data/%s%s")
-            :format(table.Count(records), #txt, DATA_FILE, why and (" [" .. tostring(why) .. "]") or ""))
+        print(("[GRM Currency] SAVE ok: счетов %d, %d байт -> data/%s%s%s")
+            :format(table.Count(records), #txt, DATA_FILE,
+                sqlOn and " +sv.db" or "", why and (" [" .. tostring(why) .. "]") or ""))
+        -- v1.6.0: read-back SQL — если sv.db не принял запись, видно сразу
+        if sqlOn then
+            local back = storeGet()
+            if back ~= txt then
+                print("[GRM Currency][!] SQL-ПРОВЕРКА: запись в sv.db не подтвердилась!")
+                logForensic("SQL read-back mismatch после сейва [" .. tostring(why or "?") .. "]")
+            end
+        end
         -- v1.5.9: КОНТРОЛЬ ЗАПИСИ. Перечитываем файл сразу после сейва:
         -- если он уже не наш — переписан снаружи (хост-синкер/фантом),
         -- и это становится ВИДНО, а не «почему-то пропало».
@@ -332,9 +401,18 @@ if SERVER then
     local function loadData()
         records = {}
         local rawTxt, srcName = nil, DATA_FILE
-        if file.Exists(DATA_FILE, "DATA") then
+        -- v1.6.0: ИСТОЧНИК №1 — SQL sv.db (живёт вне data/, фантому недоступен)
+        local sqlTxt = storeGet()
+        if isstring(sqlTxt) and #sqlTxt > 0 then
+            local okS, tabS = pcall(util.JSONToTable, sqlTxt)
+            if okS and istable(tabS) and next(tabS) ~= nil then
+                rawTxt, srcName = sqlTxt, SQL_SRC
+            end
+        end
+        if rawTxt == nil and file.Exists(DATA_FILE, "DATA") then
             rawTxt = file.Read(DATA_FILE, "DATA") or ""
-        else
+        end
+        if rawTxt == nil then
             for _, legacy in ipairs(MIGRATE_FROM) do
                 if file.Exists(legacy, "DATA") then
                     local t = file.Read(legacy, "DATA") or ""
@@ -347,11 +425,11 @@ if SERVER then
             end
         end
         if rawTxt == nil then
-            print("[GRM Currency] LOAD: файла data/" .. DATA_FILE .. " нет и мигрировать нечего — стартуем с пустых счетов")
-            logForensic("LOAD: новый файл отсутствует, миграционный источник пуст — старт с нуля")
+            print("[GRM Currency] LOAD: ни SQL sv.db, ни data/" .. DATA_FILE .. " счетов не дали — стартуем с пустых")
+            logForensic("LOAD: SQL и файлы пусты/отсутствуют — старт с нуля")
             return
         end
-        print(("[GRM Currency] LOAD: читаю data/%s (%d байт)"):format(srcName, #rawTxt))
+        print(("[GRM Currency] LOAD: источник %s (%d байт)"):format(srcName, #rawTxt))
         -- GRM-FIX: битый JSON (обрыв записи при падении) больше не
         -- обнуляет счета молча — файл откладывается для ручного спасения.
         local okJs, raw = pcall(util.JSONToTable, rawTxt)
@@ -404,7 +482,12 @@ if SERVER then
                 end
             end
         end
-        if srcName ~= DATA_FILE then
+        if srcName == SQL_SRC then
+            dirty = true -- материализуем json-зеркало ближайшим сейвом
+            print(("[GRM Currency] LOAD: база поднята из SQL sv.db, счетов %d — зеркало data/%s обновится сейвом"):format(
+                table.Count(records), DATA_FILE))
+            logForensic(("LOAD из SQL sv.db: счетов %d"):format(table.Count(records)))
+        elseif srcName ~= DATA_FILE then
             dirty = true -- первая же запись уйдёт в НОВЫЙ файл
             print(("[GRM Currency] МИГРАЦИЯ: поднято счетов %d из data/%s -> будет записано в data/%s"):format(
                 table.Count(records), srcName, DATA_FILE))
@@ -653,6 +736,17 @@ if SERVER then
         local sid = ply:SteamID64()
         local rec = records[sid]
         if not rec then
+            -- v1.6.0: ПРАВДА в момент «сброса до стартового баланса».
+            -- Если баланс должен был подняться, а здесь видно «счетов было 0,
+            -- файл N байт» — данные убиты снаружи МЕЖДУ сейвом и входом,
+            -- логика ядра тут ни при чём.
+            local cnt = table.Count(records)
+            local fsz = file.Exists(DATA_FILE, "DATA") and #(file.Read(DATA_FILE, "DATA") or "") or -1
+            local sq = (not sqlOn) and "недоступен" or (isstring(storeGet()) and "есть запись" or "пусто")
+            print(("[GRM Currency] НОВЫЙ счёт %s (%s): счетов в памяти было %d, зеркало data=%s байт, SQL sv.db: %s")
+                :format(sid, tostring(ply:Nick()), cnt, tostring(fsz), sq))
+            logForensic(("НОВЫЙ счёт %s: счетов было %d, файл=%s байт, sql=%s")
+                :format(sid, cnt, tostring(fsz), sq))
             ensure(sid, ply:Nick())
             dirty = true
             saveNow(false, "вход игрока")
@@ -772,10 +866,11 @@ if SERVER then
     end)
 
     -- Форензик-строка загрузки: путь файла виден прямо в логе data/.
-    logForensic(("BOOT v1.5.9: путь=%s, база=%s, счетов=%d, файл=%s байт"):format(
+    logForensic(("BOOT v1.6.0: путь=%s, база=SQL sv.db+data/%s, счетов=%d, файл=%s байт, sql=%s"):format(
         tostring(debug.getinfo(1, "S").short_src), DATA_FILE,
         table.Count(records),
-        file.Exists(DATA_FILE, "DATA") and tostring(#(file.Read(DATA_FILE, "DATA") or "")) or "нет файла"))
+        file.Exists(DATA_FILE, "DATA") and tostring(#(file.Read(DATA_FILE, "DATA") or "")) or "нет файла",
+        (not sqlOn) and "недоступен" or (isstring(storeGet()) and "есть" or "пусто")))
 
     -- ========================================================
     -- КОНСОЛЬНЫЕ УТИЛИТЫ (сервер-консоль / суперадмин)
@@ -844,7 +939,7 @@ if SERVER then
     end
     concommand.Add("grm_money", moneyCmd)
 
-    print(("[GRM Currency] ядро загружено v1.5.9, путь: %s, база: data/%s, счетов в памяти: %d"):format(
+    print(("[GRM Currency] ядро загружено v1.6.0, путь: %s, база: SQL sv.db + зеркало data/%s, счетов в памяти: %d"):format(
         tostring(debug.getinfo(1, "S").short_src), DATA_FILE, table.Count(records)))
 end
 

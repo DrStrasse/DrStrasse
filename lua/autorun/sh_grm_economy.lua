@@ -1,5 +1,14 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v2.4.0 (Код 43)
+    GRM Unified Economy v2.5.0 (Код 43)
+
+    v2.5.0 (репорт: «после рестарта опять стартовые значения»): БАЗА
+    ПЕРЕЕХАЛА ВО ВСТРОЕННУЮ SQLite (garrysmod/sv.db, таблица grm_store,
+    ключ treasury). sv.db живёт ВНЕ папки data/ — его не трогают
+    ftp-синкеры, боты деплоя, чистильщики data/ и «фантомные писатели».
+    data/grm_treasury.json + _backup остаются ЗЕРКАЛАМИ для глаз/FTP
+    и пишутся каждым сейвом. Порядок загрузки: SQL sv.db -> treasury
+    -> treasury_backup -> grm_economy_backup -> grm_economy.json ->
+    grm_currency_backup -> grm_wallet_backup.
 
     v2.4.0 (репорт: «в дате баланс/истории/наличка — пусто»): ПЕРЕЕЗД
     файла экономики на НОВОЕ имя data/grm_treasury.json — старый
@@ -136,7 +145,7 @@ if SERVER then
         return
     end
     GRM._economyCoreActive = true
-    GRM._economyCoreVer = "2.4.0"
+    GRM._economyCoreVer = "2.5.0"
     GRM._economyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_OPEN_ADMIN)
@@ -225,6 +234,37 @@ if SERVER then
     -- Текст файла, который мы последний раз читали/писали — сверка с базой
     local lastDiskTxt = nil
 
+    -- v2.5.0: ОСНОВНАЯ БАЗА — встроенная SQLite (garrysmod/sv.db) ВНЕ data/.
+    -- Таблица общая с ядром валюты (grm_store), ключ "treasury".
+    local SQL_TABLE, SQL_KEY, SQL_SRC = "grm_store", "treasury", "SQL sv.db"
+    local sqlOn = false
+    local function sqlRun(q)
+        local r = sql.Query(q)
+        if r ~= nil then return true, r end
+        return false, tostring(sql.LastError() or "?")
+    end
+    do
+        local ok, err = sqlRun("CREATE TABLE IF NOT EXISTS " .. SQL_TABLE ..
+            " (k TEXT PRIMARY KEY, v TEXT)")
+        sqlOn = ok
+        if not ok then
+            print("[GRM Economy][!] SQLite недоступен (" .. tostring(err) .. ") — работаем только с json")
+        end
+    end
+    local function storePut(txt)
+        if not sqlOn then return end
+        local ok, err = sqlRun("REPLACE INTO " .. SQL_TABLE .. " (k, v) VALUES (" ..
+            sql.SQLStr(SQL_KEY) .. ", " .. sql.SQLStr(txt) .. ")")
+        if not ok then print("[GRM Economy][!] SQL-запись не удалась: " .. tostring(err)) end
+    end
+    local function storeGet()
+        if not sqlOn then return nil end
+        local ok, rows = sqlRun("SELECT v FROM " .. SQL_TABLE ..
+            " WHERE k = " .. sql.SQLStr(SQL_KEY))
+        if not ok or not istable(rows) or not istable(rows[1]) then return nil end
+        return rows[1].v
+    end
+
     local function save(force)
         if not dirty and not force then return end
         -- GRM-FIX v2.3.8: антисвайп-страж. Пустые счета+фракции НИКОГДА не
@@ -237,23 +277,35 @@ if SERVER then
             if (not isstring(prev)) and file.Exists(DATA_FILE, "DATA") then
                 prev = file.Read(DATA_FILE, "DATA")
             end
+            local hadAcc, hadFac = false, false
             if isstring(prev) and #prev > 0 then
                 local okP, dt = pcall(util.JSONToTable, prev)
                 if okP and istable(dt) then
-                    local hadAcc = istable(dt.accounts) and next(dt.accounts) ~= nil
-                    local hadFac = istable(dt.factions) and next(dt.factions) ~= nil
-                    if hadAcc or hadFac then
-                        print("[GRM Economy] SAVE ОТКЛОНЁН: память пуста, а в базе есть счета/фракции — базу НЕ затираем (антисвайп-страж)")
-                        dirty = false
-                        return
+                    hadAcc = istable(dt.accounts) and next(dt.accounts) ~= nil
+                    hadFac = istable(dt.factions) and next(dt.factions) ~= nil
+                end
+            end
+            if not (hadAcc or hadFac) then -- v2.5.0: база — это ещё и SQL sv.db
+                local sp = storeGet()
+                if isstring(sp) and #sp > 0 then
+                    local okS, dtS = pcall(util.JSONToTable, sp)
+                    if okS and istable(dtS) then
+                        hadAcc = istable(dtS.accounts) and next(dtS.accounts) ~= nil
+                        hadFac = istable(dtS.factions) and next(dtS.factions) ~= nil
                     end
                 end
+            end
+            if hadAcc or hadFac then
+                print("[GRM Economy] SAVE ОТКЛОНЁН: память пуста, а в базе есть счета/фракции — базу НЕ затираем (антисвайп-страж)")
+                dirty = false
+                return
             end
         end
         local txt = util.TableToJSON(E.Data, true) or "{}"
         if txt == lastDiskTxt then dirty = false return end -- без изменений: диск не долбим
         file.Write(DATA_FILE, txt)
         file.Write(BACKUP_FILE, txt) -- v2.4.0: зеркало каждой удачной записи
+        storePut(txt) -- v2.5.0: основная база — SQL sv.db
         lastDiskTxt = txt
         dirty = false
     end
@@ -389,14 +441,26 @@ if SERVER then
                          "grm_economy.json", "grm_currency_backup.json", "grm_wallet_backup.json" }
     local function load()
         local t, srcName = nil, nil
-        for _, srcf in ipairs(LOAD_SEEDS) do
-            local tt = tryJSON(srcf)
-            if tt and not extWasEmpty(tt) then t, srcName = tt, srcf break end
+        -- v2.5.0: ИСТОЧНИК №1 — SQL sv.db (вне data/, вне досягаемости писателей json)
+        do
+            local sp = storeGet()
+            if isstring(sp) and string.Trim(sp) ~= "" then
+                local okS, tt = pcall(util.JSONToTable, sp)
+                if okS and istable(tt) and not extWasEmpty(tt) then t, srcName = tt, SQL_SRC end
+            end
+        end
+        if not t then
+            for _, srcf in ipairs(LOAD_SEEDS) do
+                local tt = tryJSON(srcf)
+                if tt and not extWasEmpty(tt) then t, srcName = tt, srcf break end
+            end
         end
         if not t then t = tryJSON(DATA_FILE) or tryJSON(BACKUP_FILE) end
         if t and istable(t.factions) then
             E.Data = t
-            if srcName and srcName ~= DATA_FILE then
+            if srcName == SQL_SRC then
+                print(("[GRM Economy] LOAD: база поднята из SQL sv.db — зеркало data/%s обновится"):format(DATA_FILE))
+            elseif srcName and srcName ~= DATA_FILE then
                 print(("[GRM Economy] МИГРАЦИЯ: данные подняты из data/%s -> data/%s"):format(srcName, DATA_FILE))
             end
         else
@@ -417,6 +481,8 @@ if SERVER then
         E.Data.config = istable(E.Data.config) and E.Data.config or {}
         applyConfig() -- сохранённые настройки поверх дефолтов
         for name in pairs(E.Data.factions) do entry(name) end
+        -- v2.5.0: источник не json-зеркало — материализуем зеркала и sv.db сразу
+        if srcName ~= nil and srcName ~= DATA_FILE then dirty = true save(true) end
         print(("[GRM Economy] LOAD: база data/%s (источник: %s): фракций %d, счетов %d")
             :format(DATA_FILE, tostring(srcName or DATA_FILE),
                 table.Count(E.Data.factions), table.Count(E.Data.accounts)))
@@ -1253,7 +1319,7 @@ if SERVER then
 
     load()
     lastDiskTxt = file.Exists(DATA_FILE, "DATA") and (file.Read(DATA_FILE, "DATA") or "") or nil
-    print(("[GRM Economy] Unified Economy v2.4.0 загружена (путь: %s, база: data/%s): фракций %d, счетов %d"):format(
+    print(("[GRM Economy] Unified Economy v2.5.0 загружена (путь: %s, база: SQL sv.db + зеркало data/%s): фракций %d, счетов %d"):format(
         tostring(debug.getinfo(1, "S").short_src), DATA_FILE,
         table.Count(E.Data.factions), table.Count(E.Data.accounts)))
 end
