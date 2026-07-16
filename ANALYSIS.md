@@ -1,4 +1,4 @@
-# Технический анализ кодовой базы GRM (куски 1–3: 23 файла)
+# Технический анализ кодовой базы GRM (куски 1–4: 36 файлов)
 
 Дата анализа: 2026-07-16. Все файлы восстановлены из web-вставки
 (HTML-сущности, markdown-ссылки, `_`→`*`) и проходят синтаксический
@@ -179,6 +179,33 @@
 24. Мёртвый код (безвредно): в `sv_grm_phone.lua` локали `allWiretaps`/
     `allTerminals` объявлены, но не используются (мониторинг идёт через
     `P.Monitoring`).
+25. Конфиг логистики получен (Код 24) — `include()` в `sv_grm_logistics.lua`
+    теперь резолвится, жёсткая зависимость закрыта. Сверка полей: награды
+    — таблица `{weapon=600, ammo=300, material=200}`; ёмкости склада
+    `{weapons=80, ammo/materials=5000, medical/repair=500}`; единственная
+    матовозка — `simfphys_gta_sa_barracks` (12 ящиков). ВАЖНО: классификация
+    оружия в ящике идёт по паттернам (makarov/p228/glock/deagle/revolver и
+    smg/p90/m4/ak/rifle/ar2/mp5) — оружие вне паттернов не попадёт в ящик
+    (напр. `arccw_rpg7` с завода; при желании добавить паттерн "rpg").
+26. Entity телефонии (Коды 25–36) точно закрывают NetworkVar-контракты
+    сервера: телефон/таксофон (PhoneNumber, DisplayName, ExchangeID,
+    LineState = String 0–3; OtherPhone = Entity 0; CallID = Int 0), АТС
+    (ExchangeID/Active/MaxLines), терминал (TerminalName). Номер телефона
+    генерируется в Initialize через `GRM.Phone.GenerateNumber()` — требует
+    загруженного к моменту спавна сервера телефонии (autorun раньше,
+    порядок верен).
+27. Quirk PBX: `if self:GetActive() == false then self:SetActive(true) end`
+    — NetworkVar Bool по умолчанию false, поэтому свежая АТС включается в
+    Initialize; при загрузке с карты `SetActive(rec.active)` вызывается
+    ПОСЛЕ Spawn → явный false побеждает, семантика корректна.
+28. `WarehouseModel = "models/Barney.mdl"` — склад логистики визуально это
+    Барни-кладовщик (осознанная дизайн-фишка, не ошибка). Обе точки
+    (LoadingPointModel — полупрозрачная труба маркера) требуют контент
+    ванильного GMod/HL2 — есть из коробки.
+29. Телефонии не хватает ровно одной entity: `grm_phone_wiretap`
+    (3 файла). До её появления: `ents.Create("grm_phone_wiretap")` = NULL
+    в магазине/загрузке, `P.SaveMapEntities`/`LoadMapEntities` по классу
+    пусты. Остальное телефония-цепочка полностью замкнута.
 
 ## 4. Совместимость с GLua
 
@@ -189,7 +216,7 @@
 
 ## 5. Быстрый чек-лист запуска
 
-1. Доложить `sh_grm_logistics_config.lua` (иначе логистика не стартует).
+1. ~~Доложить `sh_grm_logistics_config.lua`~~ — ПОЛУЧЕН (Код 24).
 2. Доложить клиенты UI: `cl_grm_faction_logistics.lua`,
    `cl_grm_factory_fullcycle.lua`, GUI инвентаря, `grm_item_drop`,
    ядро валюты `GRM.GiveMoney/TakeMoney/HasMoney/GetBalance/SetBalance/
@@ -200,6 +227,5 @@
 6. Для вкладки «Транспорт» (Код 14): `sh_grm_vehicle_access.lua` +
    `vehicle_dealer.lua` уже на месте (Код 16–17); осталась entity
    `sent_vehicle_dealer`.
-7. Доложить 5 entity телефонии (`entities/grm_phone|grm_payphone|
-   grm_pbx_station|grm_phone_wiretap|grm_phone_terminal`) — без них
-   `ents.Create` вернёт NULL и магазин/сохранение не заработают.
+7. ~~5 entity телефонии~~ — 4 из 5 ПОЛУЧЕНЫ (Коды 25–36); осталась
+   только `entities/grm_phone_wiretap/{shared,init,cl_init}.lua`.

@@ -10,7 +10,7 @@
 (или прямо в `garrysmod/lua/`). Файлы в `lua/autorun/` загружаются
 автоматически на сервере и клиенте.
 
-## Файлы (куски 1–3 — 23 модуля)
+## Файлы (куски 1–4 — 36 модулей)
 
 | # | Файл | Назначение |
 |---|------|-----------|
@@ -37,16 +37,20 @@
 | 21 | `lua/autorun/sh_grm_phone_shop.lua` | Магазин телефонии v2: каталог (телефон/таксофон/АТС/прослушка/терминал), покупка доступа, спавн, лимиты, `/phoneshop` |
 | 22 | `lua/autorun/server/sv_grm_phone.lua` | Сервер телефонии: звонки, АТС-линии, прослушка (голос+текст), мониторинг, per-map сохранение, интеграция войса |
 | 23 | `lua/autorun/client/cl_grm_phone.lua` | Клиент телефонии: UI телефона/АТС/прослушки/терминала связи |
+| 24 | `lua/autorun/sh_grm_logistics_config.lua` | **Конфиг логистики** (закрывает жёсткую зависимость Кода 2): дистанции, ящики 2 пист. + 5 авт., награды, матовозка `simfphys_gta_sa_barracks` |
+| 25–27 | `lua/entities/grm_payphone/{shared,init,cl_init}.lua` | Entity таксофона: NetworkVars линии, Use() → меню телефона, 3D2D-табличка |
+| 28–30 | `lua/entities/grm_pbx_station/{shared,init,cl_init}.lua` | Entity АТС: ExchangeID/Active/MaxLines, Use() → меню АТС, табличка статуса |
+| 31–33 | `lua/entities/grm_phone/{shared,init,cl_init}.lua` | Entity стационарного телефона: авто-номер при спавне, Use() → меню, табличка номера |
+| 34–36 | `lua/entities/grm_phone_terminal/{shared,init,cl_init}.lua` | Entity терминала мониторинга связи: TerminalName, Use() → терминал |
 
 ## Зависимости, которых пока НЕТ в репозитории
 
 Эти модули упоминаются в коде, но ещё не присланы (ожидаются следующими кусками):
 
-- `lua/autorun/sh_grm_logistics_config.lua` — **обязателен** для `sv_grm_logistics.lua`
 - `lua/autorun/client/cl_grm_faction_logistics.lua` — клиент логистики (UI)
 - `lua/autorun/client/cl_grm_factory_fullcycle.lua` — клиент завода (UI крафта и QTE)
 - Ядро валюты: `GRM.GiveMoney / TakeMoney / HasMoney / GetBalance / SetBalance / Format / Notify` + конфиг `GRM.StartBalance` + клиентская переменная `GRM.LocalBalance`
-- **Entity телефонии** (`entities/grm_phone/`, `entities/grm_payphone/`, `entities/grm_pbx_station/`, `entities/grm_phone_wiretap/`, `entities/grm_phone_terminal/`) — без них магазин/сохранение не смогут создать объекты
+- **Entity прослушки** (`entities/grm_phone_wiretap/{shared,init,cl_init}.lua`) — последний кусок телефонии
 - **Entity дилера** (`entities/sent_vehicle_dealer/…`) — `vehicle_dealer.lua` это патч поверх неё
 - Радио-модуль с глобальной таблицей `RadioFrequencies` (для телефонной интеграции рации)
 - `GRM.Encumbrance` — система веса/перегруза
