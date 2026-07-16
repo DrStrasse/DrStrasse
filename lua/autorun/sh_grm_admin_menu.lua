@@ -220,8 +220,16 @@ if SERVER then
 
     net.Receive("grm_admin_request", function(_, ply)
         if not guard(ply) then return end
+        -- GRM-FIX: pcall вокруг buildData — раньше любая ошибка сборки
+        -- молча оставляла клиент с вечно пустым списком игроков.
+        local okData, pack = pcall(buildData)
+        if not okData then
+            ErrorNoHalt("[GRM Admin] buildData error: " .. tostring(pack) .. "\n")
+            fail(ply, "Ошибка сборки данных: " .. tostring(pack))
+            return
+        end
         net.Start("grm_admin_data")
-            net.WriteTable(buildData())
+            net.WriteTable(pack)
         net.Send(ply)
     end)
 
@@ -430,7 +438,7 @@ if SERVER then
 
     hook.Add("PlayerSay", "GRM_AdminMenuCmd", function(ply, text)
         local cmd = text:Trim():lower()
-        if cmd == "!grmmenu" or cmd == "!grmadmin" then
+        if cmd == "!grmmenu" or cmd == "!grmadmin" or cmd == "!econadmin" or cmd == "/econadmin" then
             if not hasAdminAccess(ply) then
                 GRM.Notify(ply, "Нет прав доступа к GRM Admin Menu", 255, 100, 100)
             else
@@ -444,6 +452,13 @@ if SERVER then
     -- ── Конкоманда для открытия меню ─────────────────────────
 
     concommand.Add("grm_adminmenu", function(ply)
+        if not hasAdminAccess(ply) then return end
+        net.Start("grm_admin_open")
+        net.Send(ply)
+    end)
+
+    -- GRM-FIX: короткий алиас econadmin → то же меню, тот же guard.
+    concommand.Add("econadmin", function(ply)
         if not hasAdminAccess(ply) then return end
         net.Start("grm_admin_open")
         net.Send(ply)
@@ -629,7 +644,10 @@ if CLIENT then
 
             _frame._notify = n
             timer.Simple(3, function() if IsValid(n) then n:Remove() end end)
-            timer.Simple(0.3, requestData)
+            -- GRM-FIX: авто-рефреш только при УСПЕХЕ. Раньше requestData
+            -- слался и на отказ доступа → бесконечный цикл уведомлений
+            -- «Нет прав доступа» каждые 0.3с и вечно пустой список.
+            if success then timer.Simple(0.3, requestData) end
         end
     end)
 
@@ -1229,12 +1247,23 @@ if CLIENT then
 
         switchTab(1)
         requestData()
+
+        -- GRM-FIX: сторожевые повторы. Если первый пакет данных потерялся
+        -- (меню открыто сразу после захода, переполненный net-буфер),
+        -- пере-запрашиваем до 3 раз, пока _data не появится.
+        local tag = "GRM_Admin_DataWatchdog_" .. tostring(f)
+        timer.Create(tag, 1.2, 3, function()
+            if not IsValid(_frame) or _frame ~= f then timer.Remove(tag) return end
+            if _data then timer.Remove(tag) return end
+            requestData()
+        end)
     end
 
-    -- Конкоманда клиента
-    concommand.Add("grm_adminmenu", function()
-        if not LocalPlayer():IsAdmin() then return end
-        GRM.OpenAdminMenu()
-    end)
+    -- GRM-FIX: клиентская регистрация grm_adminmenu УДАЛЕНА.
+    -- Команда была зарегистрирована на обеих сторонах: меню открывалось
+    -- локально И тут же второй раз по ответу сервера (мерцание,
+    -- пересоздание элементов, двойные requestData). Теперь единственный
+    -- открыватель — серверная concommand (grm_adminmenu / econadmin)
+    -- и чат: !grmmenu / !econadmin.
 
 end -- CLIENT

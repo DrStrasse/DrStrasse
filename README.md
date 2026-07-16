@@ -84,11 +84,11 @@
 **Лидер фракции:** `/vaccess` (доступ транспорта для рангов/отделов)
 
 **Админ:** `/factions`, `/salary_admin`, `/logistics_admin`, `/models_admin`,
-`/weapons_admin`, `/mask_admin`, `!grmmenu`/`!grmadmin`, `/scanvehicles`,
+`/weapons_admin`, `/mask_admin`, `!grmmenu`/`!grmadmin`/`!econadmin`, `/scanvehicles`,
 `/spawnmenu`, `/vshop_admin`, `/phoneshop_admin`, `/phone_access`,
 `/phone_admin_remove`, консоль: `grm_logistics_place_*`, `grm_logistics_save/load`,
 `grm_logistics_admin_menu`, `grm_logistics_crates`,
-`grm_fc_save/load`, `grm_weapon_buyer_admin`, `grm_adminmenu`, `grm_antistuck_vehicle`,
+`grm_fc_save/load`, `grm_weapon_buyer_admin`, `grm_adminmenu`, `econadmin`, `grm_antistuck_vehicle`,
 `grm_phone_save/load`, `grm_phone_remove_look`, `grm_phone_admin_remove`,
 `grm_phone_shop_admin`, `grm_phone_shop_add_look`, `grm_phone_shop_reload`,
 `grm_phone_access_reload`, `grm_phone_access_debug`,
