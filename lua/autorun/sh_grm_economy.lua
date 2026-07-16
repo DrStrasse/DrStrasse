@@ -1,5 +1,9 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v2.3 (Код 43)
+    GRM Unified Economy v2.3.1 (Код 43)
+
+    v2.3.1: фикс краша админ-панели "Tried to use a NULL Panel!"
+            (dframe.lua, SetPos) — buildAdminUI больше не зовёт
+            adminFrame:Clear(), вычистка только своих панелей.
 
     ЕДИНЫЙ аддон экономики фракций — написан с нуля.
     ЗАМЕНЯЕТ собой два старых модуля:
@@ -1069,7 +1073,17 @@ if CLIENT then
 
     local function buildAdminUI(d)
         if not IsValid(adminFrame) then return end
-        adminFrame:Clear()
+        -- GRM-FIX: НЕ adminFrame:Clear() — он удалял служебные дети DFrame
+        -- (btnClose/btnMaxim/btnMinim/lblTitle), из-за чего PerformLayout
+        -- падал с "Tried to use a NULL Panel!" (dframe.lua, SetPos).
+        -- Снимаем только наши панели, потомки DFrame не трогаем.
+        for _, ch in ipairs(adminFrame:GetChildren()) do
+            if ch ~= adminFrame.btnClose and ch ~= adminFrame.btnMaxim
+                and ch ~= adminFrame.btnMinim and ch ~= adminFrame.lblTitle
+                and ch ~= adminFrame.imgIcon then
+                ch:Remove()
+            end
+        end
 
         local f = adminFrame
         local tabs = vgui.Create("DPropertySheet", f)
