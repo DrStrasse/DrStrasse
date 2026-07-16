@@ -1,0 +1,6 @@
+.luabuild/
+.cache/
+tools/luatest/data/
+.sudo_as_admin_successful
+__pycache__/
+*.pyc

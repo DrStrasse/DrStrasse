@@ -1,0 +1,6 @@
+{
+  "title": "GRM Handcuffs",
+  "type": "weapon",
+  "tags": ["roleplay", "realism"],
+  "ignore": ["*.psd", "*.vcproj", "*.svn*", "*.git*"]
+}

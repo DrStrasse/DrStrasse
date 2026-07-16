@@ -1,0 +1,7 @@
+"AddonInfo"
+{
+    name        "GRM Food & Hunger System"
+    author      "GRM"
+    description "Система голода и торговые автоматы"
+    version     "1.1"
+}

@@ -8,15 +8,18 @@ git fetch origin arena/019f69c8-drstrasse
 git reset --hard FETCH_HEAD   # в своей рабочей ветке сессии
 ```
 
-После этого прочитай `README.md` (48 модулей, таблица) и `ANALYSIS.md`
+После этого прочитай `README.md` (147 lua / Коды 1–59 (см. README), таблица) и `ANALYSIS.md`
 (находки 1–67 — там вся история боли и уроки, НЕ повторяй старые ошибки).
 
 ## Где что лежит
-- `lua/` — весь код (48 модулей; см. таблицу в README).
+- `lua/` — весь код (147 lua / Коды 1–59 (см. README); см. таблицу в README).
 - Ключевые: Код 42 `lua/autorun/sh_grm_currency.lua` (валюта **v2.0.2**),
   Код 43 `lua/autorun/sh_grm_economy.lua` (экономика **v3.0.2**, банк,
   зеркало `grm_bank_nicks.json` с полем `electro_balance`),
   Код 50 `lua/autorun/sh_grm_perm_entities.lua` (пермы энтити **v1.1.0**).
+- Из dop.addons (16.07.2026): Коды **51–59** — ctx, encumbrance, food, handcuffs,
+  mining, roomtap, sent_vehicle_dealer, vehicle keys, EasyChat. Дубли ядра
+  (spawn/access/antistuck/inventory forks) **не** вливались. См. находку 68.
 - `dist/` — готовые zip для владельца (grm_single_addon.zip = один аддон;
   grm_economy.zip; grm_fix_hud_tab_currency.zip; grm_full_code.zip).
   Владелец качает по raw-линкам на ветке — **ветку не удалять**.
@@ -31,7 +34,7 @@ git reset --hard FETCH_HEAD   # в своей рабочей ветке сесс
   локальных функций + прогон стенда + пересборка ВСЕХ 4 zip +
   обновить README (строка модуля) + ANALYSIS (новая находка) +
   **commit+push сразу же** (песочница откатывает файлы прямо посреди хода!).
-- Следующий свободный номер модуля: **Код 51**.
+- Следующий свободный номер модуля: **Код 60**.
 
 ## Грабли среды (выстрадано)
 - `/tmp` стирается между ходами; `/home/user` вне репо откатывается;
