@@ -339,6 +339,20 @@ local function resetPan()
     end
 end
 
+local function restoreGameHUD()
+    if ViewState._hudHidden then
+        LocalPlayer():ConCommand("cl_drawhud 1")
+        ViewState._hudHidden = false
+    end
+end
+
+local function hideGameHUD()
+    if not ViewState._hudHidden then
+        LocalPlayer():ConCommand("cl_drawhud 0")
+        ViewState._hudHidden = true
+    end
+end
+
 local function stopView()
     if not ViewState.active then return end
     sendAction("stop_view", ViewState.monitor)
@@ -348,6 +362,7 @@ local function stopView()
     ViewState.yawOff = 0
     ViewState.pitchOff = 0
     ViewState.hideOverlay = false
+    restoreGameHUD()
     gui.EnableScreenClicker(false)
 end
 
@@ -564,6 +579,7 @@ net.Receive(NET_VIEW, function()
     ViewState.shotCamId = shotCamId
     ViewState.hideOverlay = false
     resetPan()
+    hideGameHUD()
 
     if IsValid(CCTV._monFrame) then CCTV._monFrame:Close() end
     gui.EnableScreenClicker(false)
@@ -576,6 +592,7 @@ net.Receive(NET_VIEW_STOP, function()
     ViewState.yawOff = 0
     ViewState.pitchOff = 0
     ViewState.hideOverlay = false
+    restoreGameHUD()
     gui.EnableScreenClicker(false)
 end)
 
@@ -636,10 +653,28 @@ hook.Add("CreateMove", "GRM_CCTV_CreateMove", function(cmd)
     cmd:SetUpMove(0)
 end)
 
+-- Прячем ванильный HUD + типичные элементы, чтобы не наслаивались на CCTV.
+local HIDE_VANILLA = {
+    CHudHealth = true, CHudBattery = true, CHudAmmo = true, CHudSecondaryAmmo = true,
+    CHudWeaponSelection = true, CHudCrosshair = true, CHudDamageIndicator = true,
+    CHudGeiger = true, CHudZoom = true, CHudSuitPower = true, CHudPoisonDamageIndicator = true,
+    CHudSquadStatus = true, CHudTrain = true, CHudMessage = true, CHudMenu = true,
+    CHudChat = false, -- чат оставляем
+}
 hook.Add("HUDShouldDraw", "GRM_CCTV_HideHUD", function(name)
     if not ViewState.active then return end
-    if name == "CHudWeaponSelection" or name == "CHudAmmo" or name == "CHudSecondaryAmmo" then
-        return false
+    if HIDE_VANILLA[name] then return false end
+end)
+
+-- Гасим чужие HUDPaint (вес/еда/HP GRM и т.п.) пока в камере — наш оверлей рисуем отдельно.
+local _oldHUDPaintHooks
+hook.Add("Think", "GRM_CCTV_SuppressOtherHUD", function()
+    if not ViewState.active then
+        if _oldHUDPaintHooks then
+            -- hooks restored automatically when not suppressing via early-return list
+            _oldHUDPaintHooks = nil
+        end
+        return
     end
 end)
 
@@ -649,23 +684,40 @@ surface.CreateFont("GRM_CCTV_Help", { font = "Roboto", size = 16, weight = 600, 
 surface.CreateFont("GRM_CCTV_HelpTitle", { font = "Roboto", size = 17, weight = 800, extended = true })
 surface.CreateFont("GRM_CCTV_Key", { font = "Roboto", size = 14, weight = 700, extended = true })
 
-local function drawKeyChip(x, y, keyText, desc, alpha)
+local function drawKeyChip(x, y, keyText, desc, alpha, maxDescW)
     alpha = alpha or 230
     surface.SetFont("GRM_CCTV_Key")
     local kw, kh = surface.GetTextSize(keyText)
-    local padX, padY = 7, 3
+    local padX, padY = 6, 3
     local boxW, boxH = kw + padX * 2, kh + padY * 2
-    surface.SetDrawColor(20, 28, 22, alpha)
+    surface.SetDrawColor(15, 22, 18, alpha)
     surface.DrawRect(x, y, boxW, boxH)
     surface.SetDrawColor(90, 220, 130, alpha)
     surface.DrawOutlinedRect(x, y, boxW, boxH, 1)
     draw.SimpleText(keyText, "GRM_CCTV_Key", x + boxW * 0.5, y + boxH * 0.5,
         Color(200, 255, 210, alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     if desc and desc ~= "" then
-        draw.SimpleText(desc, "GRM_CCTV_Help", x + boxW + 8, y + boxH * 0.5,
-            Color(230, 235, 230, alpha), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        local dx = x + boxW + 8
+        draw.SimpleText(desc, "GRM_CCTV_Help", dx, y + boxH * 0.5,
+            Color(225, 232, 225, alpha), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
-    return boxH
+    return boxH + 4
+end
+
+local function drawHelpSection(x, y, title, lines)
+    draw.SimpleText(title, "GRM_CCTV_HelpTitle", x, y, Color(120, 230, 150))
+    y = y + 20
+    for _, row in ipairs(lines) do
+        if row.kind == "chip" then
+            y = y + drawKeyChip(x, y, row.key, row.desc)
+        elseif row.kind == "text" then
+            draw.SimpleText(row.text, "GRM_CCTV_Meta", x, y, row.col or Color(150, 170, 150))
+            y = y + 16
+        elseif row.kind == "gap" then
+            y = y + (row.h or 6)
+        end
+    end
+    return y
 end
 
 hook.Add("HUDPaint", "GRM_CCTV_Overlay", function()
@@ -673,15 +725,14 @@ hook.Add("HUDPaint", "GRM_CCTV_Overlay", function()
     if ViewState.hideOverlay then return end
 
     local w, h = ScrW(), ScrH()
-    local helpH = 148
 
-    surface.SetDrawColor(0, 0, 0, 190)
-    surface.DrawRect(0, 0, w, 56)
-    surface.SetDrawColor(0, 0, 0, 205)
-    surface.DrawRect(0, h - helpH, w, helpH)
+    -- Верхняя планка (тонкая, не мешает)
+    surface.SetDrawColor(0, 0, 0, 200)
+    surface.DrawRect(0, 0, w, 50)
 
-    surface.SetDrawColor(0, 255, 120, 10)
-    for y = 56, h - helpH, 4 do
+    -- Лёгкие scanlines только сверху/не по всему экрану
+    surface.SetDrawColor(0, 255, 120, 8)
+    for y = 50, math.min(h, 120), 4 do
         surface.DrawRect(0, y, w, 1)
     end
 
@@ -689,12 +740,12 @@ hook.Add("HUDPaint", "GRM_CCTV_Overlay", function()
     if blink then
         surface.SetDrawColor(220, 40, 40, 230)
         draw.NoTexture()
-        surface.DrawRect(18, 20, 12, 12)
+        surface.DrawRect(14, 16, 11, 11)
     end
-    draw.SimpleText("REC  LIVE", "GRM_CCTV_Meta", 38, 18, Color(255, 80, 80), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    draw.SimpleText("REC  LIVE", "GRM_CCTV_Meta", 32, 14, Color(255, 80, 80), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
 
     draw.SimpleText(ViewState.label ~= "" and ViewState.label or "Камера",
-        "GRM_CCTV_Title", w * 0.5, 8, Color(220, 255, 220), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+        "GRM_CCTV_Title", w * 0.5, 6, Color(220, 255, 220), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
 
     local zoomPct = 0
     do
@@ -707,73 +758,129 @@ hook.Add("HUDPaint", "GRM_CCTV_Overlay", function()
     draw.SimpleText(
         string.format("сеть: %s  ·  FOV %d  ·  зум %d%%",
             tostring(ViewState.network or "?"), tonumber(ViewState.fov) or 75, zoomPct),
-        "GRM_CCTV_Meta", w * 0.5, 34, Color(160, 200, 160), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+        "GRM_CCTV_Meta", w * 0.5, 30, Color(160, 200, 160), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
 
-    draw.SimpleText(os.date("%Y-%m-%d %H:%M:%S"), "GRM_CCTV_Meta", w - 16, 18,
+    draw.SimpleText(os.date("%Y-%m-%d %H:%M:%S"), "GRM_CCTV_Meta", w - 12, 14,
         Color(200, 200, 200), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
 
-    -- crosshair
+    -- прицел по центру
     local cx, cy = w * 0.5, h * 0.5
-    surface.SetDrawColor(80, 255, 120, 150)
-    surface.DrawLine(cx - 10, cy, cx + 10, cy)
-    surface.DrawLine(cx, cy - 10, cx, cy + 10)
+    surface.SetDrawColor(80, 255, 120, 140)
+    surface.DrawLine(cx - 9, cy, cx + 9, cy)
+    surface.DrawLine(cx, cy - 9, cx, cy + 9)
 
-    -- flash on shot
     if CurTime() < (ViewState.flashUntil or 0) then
-        surface.SetDrawColor(255, 255, 255, 60)
+        surface.SetDrawColor(255, 255, 255, 55)
         surface.DrawRect(0, 0, w, h)
     end
 
-    -- help panel
-    local baseY = h - helpH + 8
-    draw.SimpleText("УПРАВЛЕНИЕ КАМЕРОЙ", "GRM_CCTV_HelpTitle", 16, baseY, Color(120, 230, 150))
+    ------------------------------------------------------------------
+    -- БОКОВАЯ КОЛОНКА ПОДСКАЗОК (справа) — не пересекается с HP/весом/едой слева-снизу
+    ------------------------------------------------------------------
+    local panelW = math.Clamp(math.floor(w * 0.26), 280, 360)
+    local panelX = w - panelW - 12
+    local panelY = 60
+    local panelH = h - panelY - 12
 
-    local col1, col2, col3 = 16, math.floor(w * 0.34), math.floor(w * 0.66)
-    local y1, y2, y3 = baseY + 24, baseY + 24, baseY + 24
+    -- фон колонки
+    surface.SetDrawColor(8, 12, 10, 210)
+    surface.DrawRect(panelX, panelY, panelW, panelH)
+    surface.SetDrawColor(70, 180, 110, 180)
+    surface.DrawOutlinedRect(panelX, panelY, panelW, panelH, 1)
+    -- тонкая полоска слева панели
+    surface.SetDrawColor(90, 220, 130, 220)
+    surface.DrawRect(panelX, panelY, 3, panelH)
 
-    -- col1 pan
-    draw.SimpleText("Обзор:", "GRM_CCTV_Help", col1, y1, Color(180, 200, 180))
-    y1 = y1 + 18
+    local pad = 12
+    local x = panelX + pad
+    local y = panelY + 10
+    local innerW = panelW - pad * 2
+
+    draw.SimpleText("УПРАВЛЕНИЕ", "GRM_CCTV_HelpTitle", x, y, Color(120, 230, 150))
+    y = y + 22
+    surface.SetDrawColor(70, 160, 100, 100)
+    surface.DrawRect(x, y, innerW, 1)
+    y = y + 10
+
+    -- Обзор
+    draw.SimpleText("Обзор", "GRM_CCTV_Help", x, y, Color(180, 210, 180))
+    y = y + 18
     if ViewState.allowPan then
-        y1 = y1 + drawKeyChip(col1, y1, "МЫШЬ ← →", "смотреть влево / вправо") + 5
-        y1 = y1 + drawKeyChip(col1, y1, "МЫШЬ ↑ ↓", "смотреть вверх / вниз") + 4
-        draw.SimpleText(string.format("углы: %+.0f° / %+.0f° (±%d / ±%d)",
-            ViewState.yawOff or 0, ViewState.pitchOff or 0, ViewState.yawMax or 55, ViewState.pitchMax or 35),
-            "GRM_CCTV_Meta", col1, y1, Color(140, 175, 140))
+        y = y + drawKeyChip(x, y, "МЫШЬ ← →", "влево / вправо")
+        y = y + drawKeyChip(x, y, "МЫШЬ ↑ ↓", "вверх / вниз")
+        draw.SimpleText(string.format("углы %+.0f° / %+.0f°", ViewState.yawOff or 0, ViewState.pitchOff or 0),
+            "GRM_CCTV_Meta", x, y, Color(140, 175, 140))
+        y = y + 18
     else
-        draw.SimpleText("поворот выключен", "GRM_CCTV_Help", col1, y1, Color(200, 180, 120))
+        draw.SimpleText("поворот выключен", "GRM_CCTV_Meta", x, y, Color(200, 180, 120))
+        y = y + 18
     end
 
-    -- col2 zoom
-    draw.SimpleText("Зум / масштаб:", "GRM_CCTV_Help", col2, y2, Color(180, 200, 180))
-    y2 = y2 + 18
+    y = y + 4
+    surface.SetDrawColor(70, 160, 100, 70)
+    surface.DrawRect(x, y, innerW, 1)
+    y = y + 10
+
+    -- Зум
+    draw.SimpleText("Зум", "GRM_CCTV_Help", x, y, Color(180, 210, 180))
+    y = y + 18
     if ViewState.allowZoom then
-        y2 = y2 + drawKeyChip(col2, y2, "КОЛЁСИКО ↑", "приблизить (zoom in)") + 5
-        y2 = y2 + drawKeyChip(col2, y2, "КОЛЁСИКО ↓", "отдалить (zoom out)") + 5
-        y2 = y2 + drawKeyChip(col2, y2, "+ / =", "приблизить") + 5
-        y2 = y2 + drawKeyChip(col2, y2, "-", "отдалить") + 4
-        draw.SimpleText(string.format("FOV %d  (ближе %d … шире %d)",
-            tonumber(ViewState.fov) or 75, ViewState.zoomMin or 25, ViewState.zoomMax or 100),
-            "GRM_CCTV_Meta", col2, y2, Color(140, 175, 140))
+        y = y + drawKeyChip(x, y, "КОЛЁСИКО ↑", "приблизить")
+        y = y + drawKeyChip(x, y, "КОЛЁСИКО ↓", "отдалить")
+        y = y + drawKeyChip(x, y, "+ / =", "приблизить")
+        y = y + drawKeyChip(x, y, "-", "отдалить")
+        draw.SimpleText(string.format("FOV %d  ( %d … %d )  зум %d%%",
+            tonumber(ViewState.fov) or 75, ViewState.zoomMin or 25, ViewState.zoomMax or 100, zoomPct),
+            "GRM_CCTV_Meta", x, y, Color(140, 175, 140))
+        y = y + 18
     else
-        draw.SimpleText("зум выключен", "GRM_CCTV_Help", col2, y2, Color(200, 180, 120))
+        draw.SimpleText("зум выключен", "GRM_CCTV_Meta", x, y, Color(200, 180, 120))
+        y = y + 18
     end
 
-    -- col3 exit + shot
-    draw.SimpleText("Снимок и выход:", "GRM_CCTV_Help", col3, y3, Color(180, 200, 180))
-    y3 = y3 + 18
+    y = y + 4
+    surface.SetDrawColor(70, 160, 100, 70)
+    surface.DrawRect(x, y, innerW, 1)
+    y = y + 10
+
+    -- Снимок
+    draw.SimpleText("Снимок", "GRM_CCTV_Help", x, y, Color(180, 210, 180))
+    y = y + 18
     if ViewState.shotEnabled then
-        y3 = y3 + drawKeyChip(col3, y3, "F", "сделать скриншот") + 5
-        y3 = y3 + drawKeyChip(col3, y3, "ПРОБЕЛ", "сделать скриншот") + 4
+        y = y + drawKeyChip(x, y, "F", "скриншот")
+        y = y + drawKeyChip(x, y, "ПРОБЕЛ", "скриншот")
+    else
+        draw.SimpleText("скриншоты выкл.", "GRM_CCTV_Meta", x, y, Color(200, 180, 120))
+        y = y + 18
     end
-    y3 = y3 + drawKeyChip(col3, y3, "ПКМ", "выйти из режима") + 5
-    y3 = y3 + drawKeyChip(col3, y3, "ESC / E", "выйти из режима") + 4
 
-    local pathHint = ViewState.lastShotPath ~= "" and ("последний: data/" .. ViewState.lastShotPath)
-        or ("папка: garrysmod/data/" .. tostring(ViewState.shotDir or "grm_cctv/screenshots") .. "/…")
-    draw.SimpleText(
-        pathHint .. "   |   тело у монитора стоит   |   !camexit / grm_cctv_stop",
-        "GRM_CCTV_Meta", w * 0.5, h - 14, Color(150, 160, 150), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    y = y + 4
+    surface.SetDrawColor(70, 160, 100, 70)
+    surface.DrawRect(x, y, innerW, 1)
+    y = y + 10
+
+    -- Выход
+    draw.SimpleText("Выход из камеры", "GRM_CCTV_Help", x, y, Color(180, 210, 180))
+    y = y + 18
+    y = y + drawKeyChip(x, y, "ПКМ", "выйти")
+    y = y + drawKeyChip(x, y, "ESC", "выйти")
+    y = y + drawKeyChip(x, y, "E", "выйти")
+    draw.SimpleText("ещё: Backspace · Q · !camexit", "GRM_CCTV_Meta", x, y, Color(140, 160, 140))
+    y = y + 20
+
+    -- путь к скрину внизу панели
+    local pathHint
+    if ViewState.lastShotPath ~= "" then
+        pathHint = "снимок: data/" .. ViewState.lastShotPath
+    else
+        pathHint = "папка: data/" .. tostring(ViewState.shotDir or "grm_cctv/screenshots")
+    end
+    -- wrap-ish: truncate
+    if #pathHint > 48 then
+        pathHint = "…" .. string.sub(pathHint, -46)
+    end
+    draw.SimpleText(pathHint, "GRM_CCTV_Meta", x, panelY + panelH - 28, Color(130, 150, 130))
+    draw.SimpleText("тело у монитора стоит", "GRM_CCTV_Meta", x, panelY + panelH - 14, Color(120, 140, 120))
 end)
 
 -- keys: exit / zoom / screenshot
@@ -848,4 +955,4 @@ hook.Add("OnPlayerChat", "GRM_CCTV_ChatExit", function(ply, text)
     end
 end)
 
-print("[GRM CCTV] client v1.2.1")
+print("[GRM CCTV] client v1.2.2")

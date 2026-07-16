@@ -393,3 +393,5 @@
 **72.** (16.07.2026) CCTV v1.2.0 — зум (колёсико / +/- , FOV ZoomMin..ZoomMax), скриншоты `render.Capture` → `data/grm_cctv/screenshots/<сеть>/<camid>/…jpg` (путь Screenshots.Dir), сервер логирует и шлёт ShotOk; pan+freeze+exit сохранены. Видеозапись: честно Disabled — GMod не даёт DVR framebuffer; варианты OBS / tv_record; VideoRecording.Dir — задел.
 
 **73.** (16.07.2026) CCTV скриншоты были чёрными: `render.Capture` экрана при `SetViewEntity` часто отдаёт пустой/чёрный backbuffer. Фикс v1.2.1 — `PostRender`: `PushRenderTarget` + `render.RenderView` с origin/angles/fov камеры (pan/zoom), затем `render.Capture` из RT; оверлей прячется на кадр; путь тот же `data/grm_cctv/screenshots/...`.
+
+**74.** (16.07.2026) CCTV HUD: нижняя полоса подсказок наслаивалась на HP/вес/еду/патроны. v1.2.2 — подсказки **справа вертикальной колонкой**; `cl_drawhud 0` на время view + `HUDShouldDraw` режет ваниль; при выходе `cl_drawhud 1`. Центр экрана и низ-лево свободны.

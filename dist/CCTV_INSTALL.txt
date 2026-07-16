@@ -1,9 +1,4 @@
-GRM CCTV v1.2.1
-===============
-Скриншоты: F / Пробел
-  Пишутся в garrysmod/data/grm_cctv/screenshots/<сеть>/<cam>/...
-  Захват через render.RenderView (не чёрный SetViewEntity-буфер).
-
-Зум: колёсико / + / -
-Поворот: мышь
-Выход: ПКМ / ESC / E
+GRM CCTV v1.2.2
+Подсказки — справа столбцом (не перекрывают HP/вес).
+В режиме камеры cl_drawhud 0 (игровой HUD скрыт).
+Скриншоты: F / Пробел → data/grm_cctv/screenshots/...
