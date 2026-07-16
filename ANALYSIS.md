@@ -1,4 +1,4 @@
-# Технический анализ кодовой базы GRM (кусок 1: 12 файлов)
+# Технический анализ кодовой базы GRM (куски 1–2: 14 файлов)
 
 Дата анализа: 2026-07-16. Все файлы восстановлены из web-вставки
 (HTML-сущности, markdown-ссылки, `_`→`*`) и проходят синтаксический
@@ -28,6 +28,19 @@
 `local` в `sh_factions.lua`, а `sh_faction_fixes.lua` переопределяет
 `OpenAdminMenu`, добавляя вкладку «Расширенные настройки». Это хрупкий,
 но рабочий контракт — при рефакторинге не локализовать эти функции.
+Тот же контракт использует кусок 2: `sh_grm_shop_integration.lua`
+патчит глобальный `OpenLeaderMenu` (объявлен в `sh_factions.lua:2000`)
+через самоликвидирующийся Think-хук и добавляет вкладку «Транспорт»
+в DPropertySheet меню лидера.
+
+Кусок 2 дополнительно вводит:
+- `sh_grm_admin_menu.lua` — суперадмин-панель экономики (5 вкладок:
+  обзор/игроки/фракции/переводы/журнал). Сервер держит кольцевой журнал
+  50 записей (`grm_admin_log.json`) и персональные налоги
+  (`grm_player_taxes.json`, 0–50%, переопределяют фракционный).
+- `sh_grm_shop_integration.lua` — сканер транспорта с кешем 30 с
+  (`list.Get("Vehicles")`, `simfphys_vehicles`, `LVS_Vehicles`, scripted
+  ents с префиксом `glide_`/базой vehicle) и вкладка «Транспорт».
 
 ## 2. Потоки данных
 
@@ -77,6 +90,32 @@
    `startRoute` доверяет entity из нета, но сверяет `resolveTruck(p)==truck`.
 10. Move-хук стамины применяется ко всем игрокам; при bhop в воздухе
     maxSpeed = WalkSpeed*1.2 и не тратит стамину — задумано.
+11. `sh_grm_admin_menu.lua` по алфавиту грузится РАНЬШЕ обеих экономик и
+    создаёт fallback-заглушки `GRM.FactionBudgetGet/Add/TaxGet/TaxSet`
+    (`= GRM.X or function...`). Настоящие реализации из экономики их
+    перезаписывают — порядок корректный. Но если экономику отключить,
+    админка молча покажет нулевые бюджеты: учитывать при диагностике.
+12. `GRM.GetPlayerTaxRate` теперь определяется admin-меню (сервер,
+    `grm_player_taxes.json`), а `sh_grm_faction_economy.lua:161` зовёт
+    его с nil-guard — персональные налоги свяжутся автоматически.
+    ВНИМАНИЕ: `sh_grm_faction_economy_plus.lua` персональный налог НЕ
+    использует — ещё один аргумент в пользу «оставить одну экономику»
+    (см. пункт 1) либо допилить Plus.
+13. Admin-меню добавляет требования к ядру валюты: `GRM.SetBalance(ply,n)`
+    и `GRM.StartBalance` (было только Give/Take/Has/GetBalance/Format).
+    `GRM.Notify(ply, msg, r, g, b)` — подтверждённая сигнатура (5 арг.).
+14. Безопасность admin-меню нормальная: все серверные net-обработчики
+    (`grm_admin_request`, `grm_admin_action`) защищены `hasAdminAccess`
+    (superadmin / whitelist SteamID64); клиентская конкоманда слабее
+    (IsAdmin), но сервер всё равно ответит «Нет прав». Минус: `buildData()`
+    при запросе делает вложенные проходы игроки×фракции×игроки —
+    O(n²) при большом онлайне; для админ-панели терпимо.
+15. Shop integration: безопасность `/scanvehicles` — IsAdmin, `/vlist`
+    безопасен. Кнопки вкладки «Транспорт» шлют `GRM_VAccess_Open` и
+    `GRM_VShop_Open` — серверные получатели ещё НЕ присланы
+    (`sh_grm_vehicle_access.lua`, `vehicle_dealer.lua`); при получении
+    проверить, что они сами валидируют права (лидер фракции/админ).
+    До тех пор net-сообщения просто игнорируются сервером — без вреда.
 
 ## 4. Совместимость с GLua
 
@@ -90,7 +129,10 @@
 1. Доложить `sh_grm_logistics_config.lua` (иначе логистика не стартует).
 2. Доложить клиенты UI: `cl_grm_faction_logistics.lua`,
    `cl_grm_factory_fullcycle.lua`, GUI инвентаря, `grm_item_drop`,
-   ядро валюты `GRM.GiveMoney/...`.
+   ядро валюты `GRM.GiveMoney/TakeMoney/HasMoney/GetBalance/SetBalance/
+   Format/Notify` + `GRM.StartBalance`.
 3. Выбрать одну экономику (см. пункт 1 раздела 3).
 4. Положить `sound/kom_hour.wav` для комендантского часа.
 5. Проверить классы транспорта в `L.Access.vehicles` под simfphys/LVS.
+6. Для вкладки «Транспорт» (Код 14): доложить
+   `sh_grm_vehicle_access.lua` + `vehicle_dealer.lua`.

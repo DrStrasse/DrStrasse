@@ -10,7 +10,7 @@
 (или прямо в `garrysmod/lua/`). Файлы в `lua/autorun/` загружаются
 автоматически на сервере и клиенте.
 
-## Файлы (кусок 1 — 12 модулей)
+## Файлы (куски 1–2 — 14 модулей)
 
 | # | Файл | Назначение |
 |---|------|-----------|
@@ -26,6 +26,8 @@
 | 10 | `lua/autorun/sh_factions.lua` | Ядро фракций: ранги, отделы, приглашения, рация `/fr`, волна `/dep` `/depb`, меню `/factions`, HUD-таблички |
 | 11 | `lua/autorun/sh_faction_fixes.lua` | Расширение фракций: комендантский час `/kom_hour`, модели+bodygroups, оружие по рангам, маскировка V2, `/gnews` |
 | 12 | `lua/autorun/sh_grm_faction_economy.lua` | Базовая экономика фракций: бюджет, налог, `!fbudget` `!fpay` `!fwithdraw` `!fpayall` `!fsettax` |
+| 13 | `lua/autorun/sh_grm_admin_menu.lua` | Суперадмин-меню экономики v1.1: балансы, персональные налоги, переводы, журнал действий — `!grmmenu` |
+| 14 | `lua/autorun/sh_grm_shop_integration.lua` | Интеграция магазина/дилера: сканер транспорта (GMod/SimFPhys/LVS/Glide), вкладка «Транспорт» в меню лидера, `/scanvehicles` `/vlist` |
 
 ## Зависимости, которых пока НЕТ в репозитории
 
@@ -34,7 +36,9 @@
 - `lua/autorun/sh_grm_logistics_config.lua` — **обязателен** для `sv_grm_logistics.lua`
 - `lua/autorun/client/cl_grm_faction_logistics.lua` — клиент логистики (UI)
 - `lua/autorun/client/cl_grm_factory_fullcycle.lua` — клиент завода (UI крафта и QTE)
-- Ядро валюты: `GRM.GiveMoney / TakeMoney / HasMoney / GetBalance / Format / Notify`
+- Ядро валюты: `GRM.GiveMoney / TakeMoney / HasMoney / GetBalance / SetBalance / Format / Notify` + конфиг `GRM.StartBalance`
+- `lua/autorun/sh_grm_vehicle_access.lua` — система доступа к транспорту (`GRM_GetAccessibleVehicles`, сеть `GRM_VAccess_Open`), нужна для Кода 14
+- `vehicle_dealer.lua` + магазин (`GRM_VShop_Open`) — выдача/покупка транспорта, нужны для Кода 14
 - `GRM.Encumbrance` — система веса/перегруза
 - GUI инвентаря: `GRM.Inventory.OpenGUI()` + entity `grm_item_drop`
 - `GRM.Chat` — основная реализация чата (здесь только конфиг)
@@ -49,16 +53,18 @@
 `default_models.json`, `default_weapons.json`, `grm_inventories.json`,
 `grm_faction_budgets.json`, `grm_faction_economy_plus.json`, `gnews_log.txt`,
 `grm_logistics/{access.json, inventory_crates.json, maps/<map>.json}`,
-`grm_factory_fullcycle/{weapon_lockers.json, weapon_market.json, weapon_buyers.json, maps/<map>.json}`
+`grm_factory_fullcycle/{weapon_lockers.json, weapon_market.json, weapon_buyers.json, maps/<map>.json}`,
+`grm_admin_log.json`, `grm_player_taxes.json`
 
 ## Основные команды
 
 **Игрок:** `/inv`, `/store`, `/fjoin`, `/fleave`, `/fr`, `/dep`, `/depb`, `/mask`,
 `/model`, `/gnews`, `/kom_hour`, `/logistics_start`, `/logistics_crates`,
-`!fbudget`, `!fpay`, `!fwithdraw`, `!fpayall`, `!fsettax`
+`!fbudget`, `!fpay`, `!fwithdraw`, `!fpayall`, `!fsettax`, `/vlist`
 
 **Админ:** `/factions`, `/salary_admin`, `/logistics_admin`, `/models_admin`,
-`/weapons_admin`, `/mask_admin`, консоль: `grm_logistics_place_*`,
-`grm_logistics_save/load`, `grm_fc_save/load`, `grm_weapon_buyer_admin`
+`/weapons_admin`, `/mask_admin`, `!grmmenu`/`!grmadmin`, `/scanvehicles`,
+консоль: `grm_logistics_place_*`, `grm_logistics_save/load`, `grm_fc_save/load`,
+`grm_weapon_buyer_admin`, `grm_adminmenu`
 
 Подробный разбор архитектуры и замеченных проблем — в `ANALYSIS.md`.
