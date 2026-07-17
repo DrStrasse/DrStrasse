@@ -1,5 +1,8 @@
 --[[--------------------------------------------------------------------
-    GRM Doors System v2.0.3 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
+    GRM Doors System v2.0.4 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
+    v2.0.4: авто-обновление меню больше не выбрасывает на первую вкладку —
+            активная вкладка и позиция прокрутки восстанавливаются после
+            пересборки (фикс скачка вкладок при клике по чекбоксам ACL).
     Полная система управления дверями:
       - Уникальные ID на основе MapCreationID + позиций;
       - Двойные (партнёрские) двери — действия синхронно на обе створки;
@@ -986,7 +989,7 @@ if SERVER then
         D.LoadWarrants()
     end)
 
-    print("[GRM Doors] Серверная система дверей v2.0.3 загружена")
+    print("[GRM Doors] Серверная система дверей v2.0.4 загружена")
 end
 
 -- ============================================================
@@ -1115,6 +1118,26 @@ if CLIENT then
         local canManage = net.ReadBool()
         if not IsValid(ent) then return end
 
+        -- GRM-FIX v2.0.4: запоминаем активную вкладку и её прокрутку ДО пересборки,
+        -- чтобы авто-обновление меню не выбрасывало игрока на первую вкладку
+        local prevTabName, prevScroll
+        if IsValid(D._sheet) then
+            local at = D._sheet:GetActiveTab()
+            if IsValid(at) then
+                prevTabName = at:GetText()
+                for _, it in ipairs(D._sheet.Items or {}) do
+                    if it.Tab == at and IsValid(it.Panel) then
+                        for _, ch in ipairs(it.Panel:GetChildren()) do
+                            if IsValid(ch) and ch.ClassName == "DScrollPanel" then
+                                prevScroll = ch:GetVBar():GetScroll()
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
         if IsValid(D._frame) then D._frame:Remove() end
         local f = vgui.Create("DFrame")
         D._frame = f
@@ -1140,6 +1163,7 @@ if CLIENT then
         local sheet = vgui.Create("DPropertySheet", f)
         sheet:Dock(FILL)
         sheet:DockMargin(8, 44, 8, 8)
+        D._sheet = sheet
 
         local p1 = vgui.Create("DPanel", sheet) p1:SetPaintBackground(false)
         sheet:AddSheet("Обзор", p1, "icon16/door.png")
@@ -1353,11 +1377,33 @@ if CLIENT then
                 act({ action = "toggle_ownable", entIndex = ent:EntIndex() })
             end
         end
+
+        -- GRM-FIX v2.0.4: восстанавливаем вкладку и прокрутку ПОСЛЕ пересборки
+        if prevTabName then
+            for _, it in ipairs(sheet.Items or {}) do
+                if IsValid(it.Tab) and it.Tab:GetText() == prevTabName then
+                    sheet:SetActiveTab(it.Tab)
+                    if prevScroll then
+                        local restorePnl = it.Panel
+                        timer.Simple(0, function()
+                            if not IsValid(restorePnl) then return end
+                            for _, ch in ipairs(restorePnl:GetChildren()) do
+                                if IsValid(ch) and ch.ClassName == "DScrollPanel" then
+                                    ch:GetVBar():SetScroll(prevScroll)
+                                    break
+                                end
+                            end
+                        end)
+                    end
+                    break
+                end
+            end
+        end
     end)
 
     concommand.Add("grm_door", function()
         net.Start(NET_ACT) net.WriteTable({ action = "open_menu" }) net.SendToServer()
     end)
 
-    print("[GRM Doors] Клиентская система дверей v2.0.3 загружена")
+    print("[GRM Doors] Клиентская система дверей v2.0.4 загружена")
 end
