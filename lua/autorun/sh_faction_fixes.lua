@@ -573,9 +573,22 @@ if SERVER then
         end
     end
 
-    local function applyWeaponsToAll()
+    local function applyWeaponsToTargetGroup(targetFaction, targetRole, targetDept)
         for _, ply in ipairs(player.GetAll()) do
-            ApplyWeaponsToPlayer(ply)
+            if IsValid(ply) then
+                local factionName, member = getFactionMemberByPlayer(ply)
+                if targetFaction and targetFaction ~= "" and factionName == targetFaction then
+                    if targetRole and targetRole ~= "" and member and member.Role ~= targetRole then
+                        continue
+                    end
+                    if targetDept and targetDept ~= "" and member and member.Department ~= targetDept then
+                        continue
+                    end
+                    ApplyWeaponsToPlayer(ply)
+                elseif not targetFaction or targetFaction == "" then
+                    ApplyWeaponsToPlayer(ply)
+                end
+            end
         end
     end
 
@@ -775,16 +788,16 @@ if SERVER then
         local f = Factions[factionName]
         if saveType == "faction" then
             f.Weapons = weapons
+            applyWeaponsToTargetGroup(factionName, nil, nil)
         elseif saveType == "role" then
             f.RoleWeapons = f.RoleWeapons or {}
             f.RoleWeapons[key] = weapons
+            applyWeaponsToTargetGroup(factionName, key, nil)
         elseif saveType == "department" then
             f.DepartmentWeapons = f.DepartmentWeapons or {}
             f.DepartmentWeapons[key] = weapons
+            applyWeaponsToTargetGroup(factionName, nil, key)
         end
-
-        saveFactionExtras()
-        applyWeaponsToAll()
         if broadcastFactionData then pcall(broadcastFactionData) end
         ply:PrintMessage(HUD_PRINTTALK, "[Оружие] Сохранено.")
     end)
