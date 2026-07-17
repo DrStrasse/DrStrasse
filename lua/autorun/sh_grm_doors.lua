@@ -1111,6 +1111,7 @@ end
 -- КЛИЕНТСКАЯ ЧАСТЬ
 -- ============================================================
 if CLIENT then
+    CreateClientConVar("grm_cl_doorhud", "1", true, false) -- F4 → Настройки
     surface.CreateFont("GRMDoor_Title",  { font = "Roboto", size = 18, weight = 800, extended = true })
     surface.CreateFont("GRMDoor_Sub",    { font = "Roboto", size = 14, weight = 600, extended = true })
     surface.CreateFont("GRMDoor_Normal", { font = "Roboto", size = 13, weight = 500, extended = true })
@@ -1188,6 +1189,8 @@ if CLIENT then
 
     -- 3D2D HUD при прицеливании на дверь: ЕДИНСТВЕННЫЙ И НАГЛЯДНЫЙ
     hook.Add("HUDPaint", "GRM_Doors_HUD3D2D", function()
+        local cv = GetConVar("grm_cl_doorhud")
+        if cv and cv:GetInt() == 0 then return end
         local ply = LocalPlayer()
         if not IsValid(ply) or not ply:Alive() then return end
 

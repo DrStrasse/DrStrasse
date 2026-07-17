@@ -1904,11 +1904,12 @@ if CLIENT then
         end
     end
 
+    -- v2.1: интерактивное админ-меню моделей с живым превью (GRM v2 refresh)
     local function openAdminModelsMenu()
         pendingModelsCb = function(data)
             local frame = vgui.Create("DFrame")
             frame:SetTitle("Управление моделями")
-            frame:SetSize(900, 680)
+            frame:SetSize(1100, 700)
             frame:Center()
             frame:MakePopup()
             ui.currentModelsFrame = frame
@@ -1919,20 +1920,114 @@ if CLIENT then
             local function addModelPanel(title, modelList, saveFunc)
                 local panel = vgui.Create("DPanel")
                 panel:SetPaintBackground(false)
-                local scroll = vgui.Create("DScrollPanel", panel)
+
+                -- ЛЕВО: список моделей
+                local left = vgui.Create("DPanel", panel)
+                left:Dock(LEFT) left:SetWide(560) left:DockMargin(5, 5, 2, 42)
+                left:SetPaintBackground(false)
+
+                local scroll = vgui.Create("DScrollPanel", left)
                 scroll:Dock(FILL)
-                scroll:DockMargin(5, 5, 5, 42)
-                buildModelList(scroll, modelList, saveFunc)
+
+                -- ПРАВО: живое превью
+                local previewPanel = vgui.Create("DPanel", panel)
+                previewPanel:Dock(FILL) previewPanel:DockMargin(2, 5, 5, 42)
+                previewPanel.Paint = function(_, w, h)
+                    draw.RoundedBox(6, 0, 0, w, h, THEME.bgLight)
+                    draw.SimpleText("Предпросмотр", "DermaDefaultBold", 10, 14, THEME.dim or Color(160,165,175), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                end
+
+                local preview = vgui.Create("DAdjustableModelPanel", previewPanel)
+                preview:Dock(FILL) preview:DockMargin(6, 24, 6, 6)
+                preview:SetFOV(38)
+
+                local info = vgui.Create("DLabel", previewPanel)
+                info:Dock(BOTTOM) info:SetTall(34) info:DockMargin(6, 0, 6, 4)
+                info:SetText("") info:SetWrap(true) info:SetAutoStretchVertical(true)
+
+                local function showInPreview(entry)
+                    entry = normalizeModelEntry(entry)
+                    if not IsValid(preview) or entry.path == "" then return end
+                    preview:SetModel(entry.path)
+                    local ent = preview:GetEntity()
+                    if IsValid(ent) then
+                        ent:SetSkin(tonumber(entry.skin) or 0)
+                        for i = 0, (ent:GetNumBodyGroups() or 1) - 1 do ent:SetBodygroup(i, 0) end
+                        for g, v in pairs(entry.bodygroups or {}) do
+                            ent:SetBodygroup(tonumber(g) or 0, tonumber(v) or 0)
+                        end
+                    end
+                    info:SetText(entry.path .. "\nskin " .. tostring(entry.skin) .. " | bg " .. bodygroupsToText(entry.bodygroups))
+                end
+
+                local selected = nil
+                local function rebuild()
+                    scroll:Clear()
+                    for idx, entry in ipairs(modelList) do
+                        entry = normalizeModelEntry(entry)
+                        modelList[idx] = entry
+
+                        local row = scroll:Add("DPanel")
+                        row:Dock(TOP) row:SetTall(70) row:DockMargin(0, 0, 0, 5)
+                        row.Paint = function(_, w, h)
+                            draw.RoundedBox(5, 0, 0, w, h, (selected == row) and Color(44, 66, 96) or THEME.bgLight)
+                        end
+                        row:SetCursor("hand")
+                        row.OnMousePressed = function()
+                            selected = row
+                            showInPreview(entry)
+                            surface.PlaySound("buttons/button14.wav")
+                            for _, sib in ipairs(scroll:GetCanvas():GetChildren()) do if sib.InvalidateLayout then sib:InvalidateLayout() end end
+                        end
+
+                        local ico = vgui.Create("SpawnIcon", row)
+                        ico:Dock(LEFT) ico:SetWide(64) ico:DockMargin(3, 3, 0, 3)
+                        ico:SetModel(entry.path, tonumber(entry.skin) or 0)
+                        ico:SetMouseInputEnabled(false) ico:SetTooltip(false)
+
+                        local lbl = vgui.Create("DLabel", row)
+                        lbl:Dock(FILL) lbl:DockMargin(4, 0, 0, 0)
+                        lbl:SetText(entry.path .. "\nskin " .. tostring(entry.skin) .. " | bg " .. bodygroupsToText(entry.bodygroups))
+                        lbl:SetTextColor(THEME.text) lbl:SetWrap(true)
+                        lbl:SetMouseInputEnabled(false)
+
+                        local bgBtn = styledButton(row, "Боди", Color(110, 120, 210))
+                        bgBtn:Dock(RIGHT) bgBtn:SetWide(52) bgBtn:DockMargin(2, 20, 2, 20)
+                        bgBtn.DoClick = function()
+                            openBodygroupsEditor(entry, function(updated)
+                                modelList[idx] = normalizeModelEntry(updated)
+                                rebuild() saveFunc(modelList)
+                                showInPreview(modelList[idx] or entry)
+                            end)
+                        end
+
+                        local editBtn = styledButton(row, "Ред.", THEME.accent)
+                        editBtn:Dock(RIGHT) editBtn:SetWide(50) editBtn:DockMargin(2, 20, 2, 20)
+                        editBtn.DoClick = function()
+                            openModelEntryEditor(entry, function(updated)
+                                modelList[idx] = normalizeModelEntry(updated)
+                                rebuild() saveFunc(modelList)
+                                showInPreview(modelList[idx] or entry)
+                            end, false)
+                        end
+
+                        local del = styledButton(row, "X", THEME.danger)
+                        del:Dock(RIGHT) del:SetWide(38) del:DockMargin(2, 20, 4, 20)
+                        del.DoClick = function()
+                            table.remove(modelList, idx)
+                            rebuild() saveFunc(modelList)
+                        end
+                    end
+                    if modelList[1] then showInPreview(modelList[1]) end
+                end
+                rebuild()
 
                 local add = vgui.Create("DButton", panel)
-                add:Dock(BOTTOM)
-                add:SetTall(34)
-                add:SetText("+ Добавить модель")
+                add:Dock(BOTTOM) add:SetTall(34) add:SetText("+ Добавить модель")
                 add.DoClick = function()
                     openModelEntryEditor({ path = "models/player/Group01/male_07.mdl" }, function(entry)
                         table.insert(modelList, normalizeModelEntry(entry))
-                        buildModelList(scroll, modelList, saveFunc)
-                        saveFunc(modelList)
+                        rebuild() saveFunc(modelList)
                     end, false)
                 end
                 return panel
@@ -2000,11 +2095,12 @@ if CLIENT then
         if pendingWeaponsCb then local cb = pendingWeaponsCb pendingWeaponsCb = nil cb(data) end
     end)
 
+    -- v2.1: интерактивное админ-меню оружия с каталогом и поиском (GRM v2 refresh)
     local function openWeaponsAdminMenu()
         pendingWeaponsCb = function(data)
             local frame = vgui.Create("DFrame")
             frame:SetTitle("Управление оружием")
-            frame:SetSize(860, 640)
+            frame:SetSize(1100, 680)
             frame:Center()
             frame:MakePopup()
             ui.currentWeaponsFrame = frame
@@ -2012,35 +2108,133 @@ if CLIENT then
             local tabs = vgui.Create("DPropertySheet", frame)
             tabs:Dock(FILL)
 
+            -- полный каталог оружия из зарегистрированных SWEP'ов
+            local function weaponCatalog()
+                local out, seen = {}, {}
+                for _, w in ipairs(weapons.GetList() or {}) do
+                    local cls = w.ClassName or ""
+                    if cls ~= "" and not seen[cls] then
+                        seen[cls] = true
+                        out[#out + 1] = { class = cls, name = (w.PrintName and w.PrintName ~= "") and w.PrintName or cls, cat = w.Category or "Прочее" }
+                    end
+                end
+                table.sort(out, function(a, b)
+                    if a.cat == b.cat then return a.name < b.name end
+                    return a.cat < b.cat
+                end)
+                return out
+            end
+            local CATALOG = weaponCatalog()
+
             local function addWeaponPanel(list, saveFunc)
+                list = istable(list) and list or {}
                 local panel = vgui.Create("DPanel")
                 panel:SetPaintBackground(false)
-                local scroll = vgui.Create("DScrollPanel", panel)
+
+                local function inList(cls)
+                    for _, c in ipairs(list) do if c == cls then return true end end
+                    return false
+                end
+
+                -- ЛЕВО: текущий набор
+                local left = vgui.Create("DPanel", panel)
+                left:Dock(LEFT) left:SetWide(430) left:DockMargin(5, 5, 2, 40)
+                left:SetPaintBackground(false)
+                local leftTitle = vgui.Create("DLabel", left)
+                leftTitle:Dock(TOP) leftTitle:SetTall(20)
+                leftTitle:SetText("В наборе (удалить ✕):") leftTitle:SetTextColor(THEME.text)
+                local scroll = vgui.Create("DScrollPanel", left)
                 scroll:Dock(FILL)
-                scroll:DockMargin(5, 5, 5, 40)
-                buildWeaponList(scroll, list, saveFunc)
 
+                -- ПРАВО: каталог с поиском
+                local right = vgui.Create("DPanel", panel)
+                right:Dock(FILL) right:DockMargin(2, 5, 5, 40)
+                right:SetPaintBackground(false)
+                local search = vgui.Create("DTextEntry", right)
+                search:Dock(TOP) search:SetTall(24)
+                search:SetPlaceholderText("Поиск по имени/классу в каталоге...")
+                local catScroll = vgui.Create("DScrollPanel", right)
+                catScroll:Dock(FILL)
+
+                local function rebuildList()
+                    scroll:Clear()
+                    for idx, class in ipairs(list) do
+                        local wpn = weapons.Get(class)
+                        local row = scroll:Add("DPanel")
+                        row:Dock(TOP) row:SetTall(30) row:DockMargin(0, 0, 0, 3)
+                        row:SetPaintBackground(false)
+                        row.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, THEME.bgLight) end
+
+                        local lbl = vgui.Create("DLabel", row)
+                        lbl:Dock(FILL) lbl:DockMargin(6, 0, 0, 0)
+                        lbl:SetText((wpn and wpn.PrintName and wpn.PrintName ~= "") and (wpn.PrintName .. "  (" .. class .. ")") or class)
+                        lbl:SetTextColor(THEME.text)
+
+                        local del = styledButton(row, "X", THEME.danger)
+                        del:Dock(RIGHT) del:SetWide(56) del:DockMargin(0, 3, 3, 3)
+                        del.DoClick = function()
+                            table.remove(list, idx)
+                            saveFunc(list)
+                            rebuildList()
+                        end
+                    end
+                end
+
+                local function rebuildCatalog(filter)
+                    catScroll:Clear()
+                    filter = string.lower(trim(filter))
+                    local lastCat = nil
+                    for _, w in ipairs(CATALOG) do
+                        if filter == "" or string.find(string.lower(w.name .. " " .. w.class), filter, 1, true) then
+                            if w.cat ~= lastCat then
+                                lastCat = w.cat
+                                local hdr = catScroll:Add("DLabel")
+                                hdr:Dock(TOP) hdr:SetTall(18)
+                                hdr:SetText("— " .. tostring(lastCat) .. " —")
+                                hdr:SetTextColor(THEME.accent or Color(70,150,240))
+                                hdr:SetContentAlignment(5)
+                            end
+                            local has = inList(w.class)
+                            local rowBtn = catScroll:Add("DButton")
+                            rowBtn:Dock(TOP) rowBtn:SetTall(24) rowBtn:DockMargin(0, 0, 0, 2)
+                            rowBtn:SetText("")
+                            rowBtn.Paint = function(_, pw, ph)
+                                draw.RoundedBox(4, 0, 0, pw, ph, has and Color(44, 80, 60) or THEME.bgLight)
+                                draw.SimpleText(w.name, "DermaDefault", 8, ph / 2, has and Color(120, 230, 150) or THEME.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                                draw.SimpleText(w.class, "DermaDefault", pw - 8, ph / 2, THEME.dim or Color(150,155,165), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                            end
+                            rowBtn.DoClick = function()
+                                if inList(w.class) then
+                                    for i, c in ipairs(list) do if c == w.class then table.remove(list, i) break end end
+                                else
+                                    list[#list + 1] = w.class
+                                end
+                                saveFunc(list)
+                                rebuildList()
+                                rebuildCatalog(search:GetText())
+                            end
+                        end
+                    end
+                end
+                search.OnChange = function() rebuildCatalog(search:GetText()) end
+
+                rebuildList() rebuildCatalog("")
+
+                -- ручное добавление по классу (как раньше)
                 local row = vgui.Create("DPanel", panel)
-                row:Dock(BOTTOM)
-                row:SetTall(34)
-                row:SetPaintBackground(false)
-
+                row:Dock(BOTTOM) row:SetTall(34) row:SetPaintBackground(false)
                 local entry = vgui.Create("DTextEntry", row)
                 entry:Dock(FILL)
-                entry:SetPlaceholderText("classname оружия...")
-
+                entry:SetPlaceholderText("или вручную: classname оружия...")
                 local add = vgui.Create("DButton", row)
-                add:Dock(RIGHT)
-                add:SetWide(100)
-                add:SetText("+ Добавить")
-
+                add:Dock(RIGHT) add:SetWide(100) add:SetText("+ Добавить")
                 local function confirm()
                     local class = trim(entry:GetText())
-                    if class == "" then return end
+                    if class == "" or inList(class) then return end
                     table.insert(list, class)
                     entry:SetText("")
-                    buildWeaponList(scroll, list, saveFunc)
                     saveFunc(list)
+                    rebuildList() rebuildCatalog(search:GetText())
                 end
                 entry.OnEnter = confirm
                 add.DoClick = confirm

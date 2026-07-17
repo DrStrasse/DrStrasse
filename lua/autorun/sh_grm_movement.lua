@@ -132,6 +132,7 @@ end
 -- КЛИЕНТ
 -- ============================================================
 if CLIENT then
+    CreateClientConVar("grm_cl_staminahud", "1", true, false) -- F4 → Настройки
     GRM.LocalStamina = GRM.LocalStamina or GRM.Movement.Config.StaminaMax
 
     local breathSound = nil
@@ -211,6 +212,8 @@ if CLIENT then
 
     -- Полоса выносливости (центр снизу, над HUD)
     hook.Add("HUDPaint", "GRM_Movement_StaminaHUD", function()
+        local cv = GetConVar("grm_cl_staminahud")
+        if cv and cv:GetInt() == 0 then return end
         local ply = LocalPlayer()
         if not IsValid(ply) or not ply:Alive() then return end
         local stamina = GRM.LocalStamina or 0

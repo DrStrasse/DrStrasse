@@ -6,6 +6,7 @@
 
 if not CLIENT then return end
 
+CreateClientConVar("grm_cl_foodhud", "1", true, false) -- F4 → Настройки
 GRM = GRM or {}
 GRM.Food = GRM.Food or {}
 
@@ -43,6 +44,8 @@ net.Receive("GRM_Food_Sync", function()
 end)
 
 hook.Add("HUDPaint", "GRM_Food_HUD", function()
+    local cv = GetConVar("grm_cl_foodhud")
+    if cv and cv:GetInt() == 0 then return end
     local ply = LocalPlayer()
     if not IsValid(ply) or not ply:Alive() then return end
 
