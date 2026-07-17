@@ -1,8 +1,15 @@
 --[[--------------------------------------------------------------------
-    GRM Doors System v2.0.4 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
+    GRM Doors System v2.0.5 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
     v2.0.4: авто-обновление меню больше не выбрасывает на первую вкладку —
             активная вкладка и позиция прокрутки восстанавливаются после
             пересборки (фикс скачка вкладок при клике по чекбоксам ACL).
+    v2.0.5: авторитетный реконсилер замков (сервер каждые LockSyncInterval сек.
+            возвращает состояние управляемых дверей к rec.locked — никакие
+            внешние Fire-входы и парные створки больше не «висят» в ОТКРЫТО);
+            GetPartnerDoor: радиус из конфига, та же модель, ближайшая створка;
+            CRUD-API категорий фракций (D.CreateCategory/DeleteCategory/
+            RenameCategory/CategorySetFaction) для меню настройки категорий;
+            в ACL-вкладке двери появились чекбоксы категорий.
     Полная система управления дверями:
       - Уникальные ID на основе MapCreationID + позиций;
       - Двойные (партнёрские) двери — действия синхронно на обе створки;
@@ -44,6 +51,8 @@ D.Config = D.Config or {
     PermPriceMultiplier = 3,            -- множитель покупки навечно (х3)
     SuperAdminBypass = true,
     HUDDistance = 220,                  -- дистанция 3D2D HUD
+    PartnerRadius = 130,                -- радиус поиска парной створки (широкие ворота ~128)
+    LockSyncInterval = 2.0,             -- период авторитетного реконсилера замков (сервер)
     DoorClasses = {
         prop_door_rotating = true,
         func_door = true,
@@ -88,16 +97,25 @@ function D.GetPartnerDoor(ent)
     local parent = ent:GetParent()
     if IsValid(parent) and D.IsDoor(parent) then return parent end
 
-    local near = ents.FindInSphere(pos, 110)
+    -- v2.0.5: радиус из конфига (широкие двойные ворота ~128 юн. между осями
+    -- раньше не находили пару), кандидат — ТОЛЬКО с той же моделью и у того же
+    -- пола (Z ±30), побеждает БЛИЖАЙШИЙ — соседние двери коридора не цепляются.
+    local radius = (D.Config and D.Config.PartnerRadius) or 110
+    local mdl = ent:GetModel()
+    local best, bestDist
+    local near = ents.FindInSphere(pos, radius)
     for _, other in ipairs(near) do
         if IsValid(other) and other ~= ent and D.IsDoor(other) then
             local oPos = other:GetPos()
-            if math.abs(pos.z - oPos.z) <= 30 then
-                return other
+            if math.abs(pos.z - oPos.z) <= 30 and other:GetModel() == mdl then
+                local dd = pos:DistToSqr(oPos)
+                if not bestDist or dd < bestDist then
+                    best, bestDist = other, dd
+                end
             end
         end
     end
-    return nil
+    return best
 end
 
 function D.IsDoorLocked(ent)
@@ -219,6 +237,39 @@ if SERVER then
         end
     end)
 
+    -- v2.0.5 АВТОРИТЕТНЫЙ РЕКОНСИЛЕР ЗАМКОВ:
+    -- GRM — единственный источник правды для УПРАВЛЯЕМЫХ дверей (запертых
+    -- или имеющих владельца). Если движок/карта/геймод сбросил замок через
+    -- Fire-входы или парная створка осталась висеть — возвращаем rec.locked.
+    -- Для публичных/картовых дверей: истина — движок, правим только HUD.
+    timer.Create("GRM_Doors_LockReconciler", (D.Config and D.Config.LockSyncInterval) or 2.0, 0, function()
+        if not istable(D.Data) or not istable(D.Data.doors) then return end
+        for _, ent in ipairs(ents.GetAll()) do
+            if IsValid(ent) and D.IsDoor(ent) then
+                local rec = D.Data.doors[D.GetDoorID(ent)]
+                local okE, engRaw = pcall(ent.GetInternalVariable, ent, "m_bLocked")
+                if not okE then engRaw = nil end
+                local hasEng = (engRaw ~= nil)
+                local engLocked = (engRaw == true or engRaw == 1) and true or false
+
+                if rec and (rec.locked == true or (rec.owner_type and rec.owner_type ~= "none")) then
+                    local want = rec.locked == true
+                    if hasEng and engLocked ~= want then
+                        ent:Fire(want and "Lock" or "Unlock", "", 0)
+                    end
+                    if ent:GetNWBool("GRM_DoorLocked", false) ~= want then
+                        syncLockNW(ent, want)
+                    end
+                else
+                    local want = (rec and rec.locked == true) or engLocked
+                    if ent:GetNWBool("GRM_DoorLocked", false) ~= want then
+                        syncLockNW(ent, want)
+                    end
+                end
+            end
+        end
+    end)
+
     -- Перехват нажатий F2 / F4 / биндов дверей на сервере
     local function handleServerDoorBind(ply)
         if not IsValid(ply) then return end
@@ -287,7 +338,10 @@ if SERVER then
                         local ownerTxt = ""
                         if rec.owner_type == "player" then ownerTxt = rec.owner_nick or ""
                         elseif rec.owner_type == "faction" then ownerTxt = "Фракция: " .. tostring(rec.owner_faction)
-                        elseif rec.owner_type == "category" then ownerTxt = "Категория: " .. tostring(rec.owner_category) end
+                        elseif rec.owner_type == "category" then
+                            local cc = D.Data.categories and D.Data.categories[rec.owner_category]
+                            ownerTxt = "Категория: " .. ((istable(cc) and tostring(cc.name or rec.owner_category)) or tostring(rec.owner_category))
+                        end
 
                         syncTitleNW(ent, rec.title, ownerTxt)
                         if rec.locked then
@@ -336,6 +390,63 @@ if SERVER then
                 D.Data.categories = t
             end
         end
+    end
+
+    -- ── v2.0.5 CRUD-API категорий фракций (для меню настройки категорий) ──
+    function D.CreateCategory(id, name)
+        id = string.lower(tostring(id or ""))
+        id = string.gsub(id, "[^%w_%-]", "")
+        if id == "" or #id > 32 then return nil, "Некорректный ID категории (латиница/цифры/_/-, до 32)" end
+        D.Data.categories = D.Data.categories or {}
+        if D.Data.categories[id] then return nil, "Категория с таким ID уже существует" end
+        name = string.sub(tostring(name or ""), 1, 48)
+        if name == "" then name = id end
+        local c = { id = id, name = name, factions = {} }
+        D.Data.categories[id] = c
+        D.SaveCategories()
+        return c
+    end
+
+    function D.RenameCategory(id, name)
+        local c = D.Data.categories and D.Data.categories[tostring(id or "")]
+        if not istable(c) then return nil, "Категория не найдена" end
+        name = string.sub(tostring(name or ""), 1, 48)
+        if name == "" then return nil, "Пустое название" end
+        c.name = name
+        D.SaveCategories()
+        return true
+    end
+
+    function D.DeleteCategory(id)
+        id = tostring(id or "")
+        if not (D.Data.categories and D.Data.categories[id]) then return nil, "Категория не найдена" end
+        D.Data.categories[id] = nil
+        -- вычищаем ссылки на категорию из дверных записей
+        for _, rec in pairs(D.Data.doors or {}) do
+            if istable(rec) then
+                if rec.owner_type == "category" and rec.owner_category == id then
+                    rec.owner_type = "none"
+                    rec.owner_category = ""
+                end
+                if istable(rec.categories) and rec.categories[id] ~= nil then
+                    rec.categories[id] = nil
+                end
+            end
+        end
+        D.SaveDoors()
+        D.SaveCategories()
+        return true
+    end
+
+    function D.CategorySetFaction(id, factionName, on)
+        local c = D.Data.categories and D.Data.categories[tostring(id or "")]
+        if not istable(c) then return nil, "Категория не найдена" end
+        factionName = tostring(factionName or "")
+        if factionName == "" then return nil, "Не указана фракция" end
+        c.factions = istable(c.factions) and c.factions or {}
+        if on then c.factions[factionName] = true else c.factions[factionName] = nil end
+        D.SaveCategories()
+        return true
     end
 
     function D.SaveWarrants()
@@ -681,6 +792,8 @@ if SERVER then
             owner_sid = rec.owner_sid or "",
             owner_faction = rec.owner_faction or "",
             owner_category = rec.owner_category or "",
+            owner_category_name = (istable(D.Data.categories) and istable(D.Data.categories[rec.owner_category or ""])
+                and tostring(D.Data.categories[rec.owner_category or ""].name or "")) or "",
             locked = isLocked,
             rent_until = tonumber(rec.rent_until) or 0,
             rent_price = tonumber(rec.rent_price) or (D.Config.RentPrice or 5000),
@@ -854,13 +967,15 @@ if SERVER then
             if not canManage then return end
             rec.owner_type = "category"
             rec.owner_category = tostring(a.category or "")
-            rec.owner_faction = ""
-            rec.owner_sid = ""
-            rec.rent_until = 0
-            syncTitleNW(ent, rec.title, "Категория: " .. rec.owner_category)
-            D.SaveDoors()
-            notify(ply, "Назначен владелец: категория [" .. rec.owner_category .. "]", 100, 220, 100)
-            D.OpenDoorMenu(ply)
+        rec.owner_faction = ""
+        rec.owner_sid = ""
+        rec.rent_until = 0
+        local catC = D.Data.categories and D.Data.categories[rec.owner_category]
+        local catDisp = (istable(catC) and tostring(catC.name or rec.owner_category)) or rec.owner_category
+        syncTitleNW(ent, rec.title, "Категория: " .. catDisp)
+        D.SaveDoors()
+        notify(ply, "Назначен владелец: категория [" .. catDisp .. "]", 100, 220, 100)
+        D.OpenDoorMenu(ply)
 
         elseif act == "toggle_ownable" then
             if not canManage then return end
@@ -989,7 +1104,7 @@ if SERVER then
         D.LoadWarrants()
     end)
 
-    print("[GRM Doors] Серверная система дверей v2.0.4 загружена")
+    print("[GRM Doors] Серверная система дверей v2.0.5 загружена")
 end
 
 -- ============================================================
@@ -1185,7 +1300,7 @@ if CLIENT then
         local ownerDesc = "Никто"
         if d.owner_type == "player" then ownerDesc = tostring(d.owner_nick) .. " (" .. tostring(d.owner_sid) .. ")"
         elseif d.owner_type == "faction" then ownerDesc = "Фракция: " .. tostring(d.owner_faction)
-        elseif d.owner_type == "category" then ownerDesc = "Категория: " .. tostring(d.owner_category) end
+        elseif d.owner_type == "category" then ownerDesc = "Категория: " .. tostring((d.owner_category_name and d.owner_category_name ~= "") and d.owner_category_name or d.owner_category) end
 
         infoRow(scroll1, "ID Двери:", tostring(d.id or "?"), CUI.dim)
         infoRow(scroll1, "Название:", d.title ~= "" and d.title or "Без названия", CUI.text)
@@ -1327,6 +1442,26 @@ if CLIENT then
                     end
                 end
             end
+
+            -- v2.0.5: доступ по КАТЕГОРИЯМ фракций
+            for _, cData in ipairs(catsList or {}) do
+                local cid = cData.id
+                if isstring(cid) and cid ~= "" then
+                    local cHas = d.categories and d.categories[cid] == true
+
+                    local cRow = vgui.Create("DPanel", scroll3)
+                    cRow:Dock(TOP) cRow:SetTall(32) cRow:DockMargin(0, 0, 0, 2)
+                    cRow.Paint = function(_, pw, ph) draw.RoundedBox(6, 0, 0, pw, ph, Color(38, 46, 62)) end
+
+                    local cChk = vgui.Create("DCheckBoxLabel", cRow)
+                    cChk:Dock(LEFT) cChk:SetWide(340) cChk:DockMargin(10, 0, 0, 0)
+                    cChk:SetText("Категория: " .. tostring(cData.name or cid)) cChk:SetTextColor(CUI.yellow)
+                    cChk:SetValue(cHas and 1 or 0)
+                    cChk.OnChange = function()
+                        act({ action = "toggle_acl_category", entIndex = ent:EntIndex(), category = cid })
+                    end
+                end
+            end
         end
 
         if canManage or d.is_admin then
@@ -1405,5 +1540,5 @@ if CLIENT then
         net.Start(NET_ACT) net.WriteTable({ action = "open_menu" }) net.SendToServer()
     end)
 
-    print("[GRM Doors] Клиентская система дверей v2.0.4 загружена")
+    print("[GRM Doors] Клиентская система дверей v2.0.5 загружена")
 end
