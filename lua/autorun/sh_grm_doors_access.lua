@@ -7,6 +7,9 @@
             как владельцы дверей и в ACL дверей); меню запоминает активную
             вкладку и прокрутку при авто-обновлении; кнопка быстрого входа
             в категории из вкладки «Двери и Ордера» меню /factions.
+    v2.2.1: стандартный однорядный tabScroller заменён на двухрядную полосу
+            кнопок-вкладок — 9 широких вкладок не влезали в один ряд и
+            «Категории фракций» уезжали за правый край окна.
 
       - Управление фракционными категориями;
       - Гибкая выдача прав на ордера на обыск (/warrant):
@@ -245,7 +248,7 @@ if SERVER then
         end
     end)
 
-    print("[GRM Doors] Менеджер доступа к дверям v2.2.0 загружен (сервер)")
+    print("[GRM Doors] Менеджер доступа к дверям v2.2.1 загружен (сервер)")
 end
 
 -- ============================================================
@@ -535,6 +538,50 @@ if CLIENT then
         addNestedTab("Вскрытие: Ранги", "ForceRoles", "Roles", "icon16/key_add.png")
         addNestedTab("Вскрытие: Подразделения", "ForceDepartments", "Departments", "icon16/building_add.png")
 
+        -- v2.2.1: скрываем однорядный tabScroller (вкладки не влезают по ширине)
+        -- и рисуем свою двухрядную полосу кнопок-вкладок вместо него
+        tabs.tabScroller:Hide()
+        tabs:DockMargin(8, 2, 8, 52)
+
+        local tabBar = vgui.Create("DPanel", frame)
+        tabBar:Dock(TOP)
+        tabBar:SetTall(62)
+        tabBar:DockMargin(8, 44, 8, 2)
+        tabBar:SetPaintBackground(false)
+
+        local tabBtns = {}
+        for idx, it in ipairs(tabs.Items or {}) do
+            if IsValid(it.Tab) then
+                local b = vgui.Create("DButton", tabBar)
+                b:SetText(it.Tab:GetText() or ("Вкладка " .. idx))
+                b:SetFont("GRMDoorAcc_Normal")
+                b:SetTextColor(CUI.text)
+                b._tab = it.Tab
+                b.DoClick = function() tabs:SetActiveTab(b._tab) end
+                b.Paint = function(self, pw, ph)
+                    local active = tabs:GetActiveTab() == self._tab
+                    local c = active and CUI.accent or CUI.panel
+                    if not active and self:IsHovered() then c = Color(52, 60, 76) end
+                    draw.RoundedBox(6, 0, 0, pw, ph, c)
+                end
+                tabBtns[#tabBtns + 1] = b
+            end
+        end
+
+        tabBar.PerformLayout = function(self, w, h)
+            surface.SetFont("GRMDoorAcc_Normal")
+            local x, y = 0, 0
+            for _, b in ipairs(tabBtns) do
+                local tw = surface.GetTextSize(b:GetText() or "") or 40
+                local bw = tw + 26
+                if x > 0 and x + bw > w then x = 0 y = y + 31 end
+                b:SetPos(x, y) b:SetSize(bw, 28)
+                x = x + bw + 6
+            end
+            local needH = y + 28
+            if needH > 0 and self:GetTall() ~= needH then self:SetTall(needH) end
+        end
+
         -- v2.2.0: восстанавливаем вкладку (и прокрутку) после пересборки;
         -- явный wantTab (вход по кнопке из /factions) в приоритете
         local restoreName = wantTab or prevTab
@@ -642,5 +689,5 @@ if CLIENT then
     timer.Create("GRM_DoorAccess_WaitFactions", 0.5, 24, installFactionsTab)
     timer.Simple(1, installFactionsTab)
 
-    print("[GRM Doors] Менеджер доступа к дверям v2.2.0 загружен (клиент)")
+    print("[GRM Doors] Менеджер доступа к дверям v2.2.1 загружен (клиент)")
 end
