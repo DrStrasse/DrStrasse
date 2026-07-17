@@ -1,18 +1,20 @@
 --[[--------------------------------------------------------------------
-    GRM Doors System v2.0.2 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
+    GRM Doors System v2.0.3 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
     Полная система управления дверями:
       - Уникальные ID на основе MapCreationID + позиций;
       - Двойные (партнёрские) двери — действия синхронно на обе створки;
       - Точная синхронизация замков: перехват AcceptInput ("Lock"/"Unlock") +
         проверка m_bLocked и автоматическая передача клиентам;
+      - Чёткое подавление встроенных/сторонних HUD дверей во избежание наслоений;
+      - Перехват клавиш F1-F4 на дверях: отключает чужие окна дверей и открывает GRM Doors;
       - Наглядный 3D2D HUD: одновременно показывает и Владельца, и
-        четкий статус замка (ЗАКРЫТО / ОТКРЫТО);
+        гарантированный статус замка (ЗАКРЫТО / ОТКРЫТО);
       - Персональная покупка / аренда с таймером и авто-выселением;
       - Совладельцы с управлением через GUI (добавить/удалить);
       - Доступ по фракциям, рангам (Faction|Role) и категориям;
       - Ордера на обыск (/warrant, /unwarrant, /warrants) и взлом;
       - Взаимодействие через E, ключи (vehicle_keys_swep, ds_key_swep), /lock, /unlock;
-      - Хуки для Lockpick / Battering Ram.
+      - Интеграция с Тараном ds_battering_ram и QTE-Отмычкой ds_lockpick.
 
     Команды:
       /door — меню двери (смотришь на дверь)
@@ -64,7 +66,6 @@ function D.IsDoor(ent)
     return false
 end
 
--- Уникальный ID двери (MapCreationID надежен, fallback — координаты)
 function D.GetDoorID(ent)
     if not IsValid(ent) then return nil end
     local map = mapName()
@@ -78,7 +79,6 @@ function D.GetDoorID(ent)
         math.floor(pos.x + 0.5), math.floor(pos.y + 0.5), math.floor(pos.z + 0.5))
 end
 
--- Поиск парной (двойной) двери рядом
 function D.GetPartnerDoor(ent)
     if not IsValid(ent) or not D.IsDoor(ent) then return nil end
     local pos = ent:GetPos()
@@ -204,7 +204,7 @@ if SERVER then
         return nil
     end
 
-    -- Перехват любых изменений замка в движке Source
+    -- Перехват входных команд движка Source
     hook.Add("AcceptInput", "GRM_Doors_SyncInput", function(ent, input, activator, caller, value)
         if D.IsDoor(ent) then
             local lIn = string.lower(tostring(input or ""))
@@ -215,6 +215,21 @@ if SERVER then
             end
         end
     end)
+
+    -- Перехват нажатий F2 / F4 / биндов дверей на сервере
+    local function handleServerDoorBind(ply)
+        if not IsValid(ply) then return end
+        local ent = aimDoor(ply)
+        if IsValid(ent) then
+            D.OpenDoorMenu(ply)
+            return true
+        end
+    end
+
+    hook.Add("ShowTeam", "GRM_Doors_ServerOverrideF2", handleServerDoorBind)
+    hook.Add("ShowSpare1", "GRM_Doors_ServerOverrideF3", handleServerDoorBind)
+    hook.Add("ShowSpare2", "GRM_Doors_ServerOverrideF4", handleServerDoorBind)
+    hook.Add("ShowHelp", "GRM_Doors_ServerOverrideF1", handleServerDoorBind)
 
     -- ── Хранилище ──────────────────────────────────────────
     local function doorsFile()
@@ -260,7 +275,6 @@ if SERVER then
             end
         end
 
-        -- Сразу применяем сохранённые состояния ко всем энтити на карте
         timer.Simple(1, function()
             for _, ent in ipairs(ents.GetAll()) do
                 if IsValid(ent) and D.IsDoor(ent) then
@@ -358,15 +372,15 @@ if SERVER then
                 map = mapName(),
                 class = ent:GetClass(),
                 title = "",
-                owner_type = "none", -- none | player | faction | category
+                owner_type = "none",
                 owner_sid = "",
                 owner_nick = "",
                 owner_faction = "",
                 owner_category = "",
-                co_owners = {},       -- массив sid64
-                factions = {},        -- map factionName -> true
-                categories = {},      -- map catId -> true
-                roles = {},           -- map "Faction|Role" -> true
+                co_owners = {},
+                factions = {},
+                categories = {},
+                roles = {},
                 rent_until = 0,
                 rent_price = tonumber(D.Config.RentPrice) or 5000,
                 locked = engLocked,
@@ -375,7 +389,6 @@ if SERVER then
             D.Data.doors[id] = rec
         end
 
-        -- Автоматический синк NetworkVars при обращении к двери
         local isEngLocked = ent:GetInternalVariable("m_bLocked") == true or ent:GetInternalVariable("m_bLocked") == 1
         local isLocked = rec.locked or isEngLocked
         if isLocked ~= ent:GetNWBool("GRM_DoorLocked", false) then
@@ -439,12 +452,10 @@ if SERVER then
         end
 
         local sid = steam64(ply)
-        -- Главный владелец
         if rec.owner_type == "player" and rec.owner_sid == sid then
             return true, "owner"
         end
 
-        -- Совладельцы
         if istable(rec.co_owners) then
             for _, s in ipairs(rec.co_owners) do
                 if s == sid then return true, "coowner" end
@@ -460,11 +471,9 @@ if SERVER then
             return true, "owner_category"
         end
 
-        -- Белый список фракций
         if fac and istable(rec.factions) and rec.factions[fac] then
             return true, "acl_faction"
         end
-        -- Белый список категорий
         if fac and istable(rec.categories) then
             for catId, on in pairs(rec.categories) do
                 if on and factionInCategory(fac, catId) then
@@ -472,20 +481,17 @@ if SERVER then
                 end
             end
         end
-        -- Белый список ролей "FactionName|RoleName"
         if fac and role and istable(rec.roles) then
             local key = fac .. "|" .. tostring(role)
             if rec.roles[key] then return true, "acl_role" end
         end
 
-        -- Проверка ордеров на обыск для спецслужб
         if rec.owner_type == "player" and rec.owner_sid ~= "" and D.HasWarrant(rec.owner_sid) then
             if D.AccessManager and D.AccessManager.CanWarrant and D.AccessManager.CanWarrant(ply) then
                 return true, "warrant"
             end
         end
 
-        -- Вскрытие сотрудниками органов
         if D.AccessManager and D.AccessManager.CanForceDoor and D.AccessManager.CanForceDoor(ply) then
             return true, "force_access"
         end
@@ -502,7 +508,6 @@ if SERVER then
         return false
     end
 
-    -- Переключение замка двери и её партнёра
     function D.LockDoor(ent, locked)
         if not IsValid(ent) then return end
         local rec = select(1, getRecord(ent))
@@ -519,7 +524,6 @@ if SERVER then
         end
     end
 
-    -- ── Взаимодействие игрока ──────────────────────────────
     hook.Add("PlayerUse", "GRM_Doors_Use", function(ply, ent)
         if not D.IsDoor(ent) then
             if IsValid(ent) and IsValid(ent:GetParent()) and D.IsDoor(ent:GetParent()) then
@@ -543,7 +547,6 @@ if SERVER then
         end
     end)
 
-    -- Покупка / Аренда двери
     function D.ClaimDoor(ply, ent, mode)
         if not IsValid(ply) or not IsValid(ent) then return false, "Недействительный объект" end
         local rec, id = getRecord(ent)
@@ -612,7 +615,6 @@ if SERVER then
         return true
     end
 
-    -- Ордера на обыск
     function D.IssueWarrant(issuer, targetSid, minutes, reason)
         if not IsValid(issuer) then return false, "Ошибка инициатора" end
         if not (D.AccessManager and D.AccessManager.CanWarrant and D.AccessManager.CanWarrant(issuer))
@@ -650,7 +652,6 @@ if SERVER then
         return true
     end
 
-    -- Упаковка данных для UI
     local function packDoorData(ent, ply)
         local rec, id = getRecord(ent)
         if not rec then return nil end
@@ -819,7 +820,7 @@ if SERVER then
 
         elseif act == "toggle_acl_role" then
             if not isOwner and not canManage then return end
-            local key = tostring(a.roleKey or "") -- "Faction|Role"
+            local key = tostring(a.roleKey or "")
             rec.roles = rec.roles or {}
             rec.roles[key] = (not rec.roles[key]) or nil
             D.SaveDoors()
@@ -867,7 +868,6 @@ if SERVER then
         end
     end)
 
-    -- Чат-команды
     hook.Add("PlayerSay", "GRM_Doors_Chat", function(ply, text)
         local args = string.Explode(" ", string.Trim(text or ""))
         local cmd = string.lower(args[1] or "")
@@ -954,7 +954,6 @@ if SERVER then
         end
     end)
 
-    -- Таймер проверки окончания аренды и ордеров
     timer.Create("GRM_Doors_Tick", 60, 0, function()
         local now = os.time()
         local changed = false
@@ -987,7 +986,7 @@ if SERVER then
         D.LoadWarrants()
     end)
 
-    print("[GRM Doors] Серверная система дверей v2.0.2 загружена")
+    print("[GRM Doors] Серверная система дверей v2.0.3 загружена")
 end
 
 -- ============================================================
@@ -1035,7 +1034,41 @@ if CLIENT then
         chat.AddText(Color(70, 160, 240), "[Двери] ", color_white, net.ReadString())
     end)
 
-    -- 3D2D HUD при прицеливании на дверь: ЧЁТКИЙ вывод статуса замка И владельца
+    -- ПОДАВЛЕНИЕ СТОРОННИХ / ВСТРОЕННЫХ HUD ДВЕРЕЙ (во избежание наслоений)
+    hook.Add("HUDShouldDraw", "GRM_Doors_HideGamemodeDoorHUD", function(name)
+        if name == "DarkRP_DoorHUD" or name == "RPDoorHUD" or name == "DoorHUD" or name == "HUDDrawDoorData" or name == "SuperiorDoorHUD" then
+            return false
+        end
+    end)
+
+    hook.Add("HUDDrawDoorData", "GRM_Doors_SuppressGamemodeDoorData", function()
+        return true
+    end)
+
+    hook.Remove("HUDPaint", "DarkRP_DoorHUD")
+    hook.Remove("HUDPaint", "doorHUD")
+    hook.Remove("HUDPaint", "DrawDoorInfo")
+    hook.Remove("HUDPaint", "HUDPaint_Doors")
+    hook.Remove("HUDPaint", "DoorHUD")
+    hook.Remove("HUDPaint", "SuperiorDoorHUD")
+
+    -- Перехват биндов клавиш F1-F4 на дверях
+    local function handleDoorBindOverride()
+        local ply = LocalPlayer()
+        if not IsValid(ply) then return end
+        local tr = ply:GetEyeTrace()
+        if IsValid(tr.Entity) and D.IsDoor(tr.Entity) and tr.StartPos:DistToSqr(tr.HitPos) <= 180 * 180 then
+            act({ action = "open_menu" })
+            return true
+        end
+    end
+
+    hook.Add("ShowTeam", "GRM_Doors_OverrideF2", handleDoorBindOverride)
+    hook.Add("ShowSpare1", "GRM_Doors_OverrideF3", handleDoorBindOverride)
+    hook.Add("ShowSpare2", "GRM_Doors_OverrideF4", handleDoorBindOverride)
+    hook.Add("ShowHelp", "GRM_Doors_OverrideF1", handleDoorBindOverride)
+
+    -- 3D2D HUD при прицеливании на дверь: ЕДИНСТВЕННЫЙ И НАГЛЯДНЫЙ
     hook.Add("HUDPaint", "GRM_Doors_HUD3D2D", function()
         local ply = LocalPlayer()
         if not IsValid(ply) or not ply:Alive() then return end
@@ -1065,11 +1098,9 @@ if CLIENT then
         local dispTitle = title ~= "" and title or "Дверь"
         draw.SimpleText(dispTitle, "GRMDoor_HUD", cx, cy + 18, Color(240, 245, 250, alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 
-        -- Строка 2: Владелец / Статус
         local dispOwner = ownerStr ~= "" and ownerStr or "Продаётся / Ничья"
         draw.SimpleText(dispOwner, "GRMDoor_HUDSm", cx, cy + 38, Color(200, 210, 225, alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 
-        -- Строка 3: Гарантированный замок (ЗАКРЫТО / ОТКРЫТО)
         local lockTxt = locked and "[ЗАКРЫТО]" or "[ОТКРЫТО]"
         local lockCol = locked and Color(255, 90, 90, alpha) or Color(90, 230, 130, alpha)
         draw.SimpleText(lockTxt, "GRMDoor_HUDSm", cx, cy + 58, lockCol, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
@@ -1110,7 +1141,6 @@ if CLIENT then
         sheet:Dock(FILL)
         sheet:DockMargin(8, 44, 8, 8)
 
-        -- Вкладка 1: Обзор
         local p1 = vgui.Create("DPanel", sheet) p1:SetPaintBackground(false)
         sheet:AddSheet("Обзор", p1, "icon16/door.png")
 
@@ -1186,7 +1216,6 @@ if CLIENT then
             end
         end
 
-        -- Вкладка 2: Совладельцы
         if d.is_owner or d.is_admin then
             local p2 = vgui.Create("DPanel", sheet) p2:SetPaintBackground(false)
             sheet:AddSheet("Совладельцы", p2, "icon16/user_add.png")
@@ -1232,7 +1261,6 @@ if CLIENT then
             end
         end
 
-        -- Вкладка 3: Доступ Фракциям & Ролям
         if d.is_owner or d.is_admin then
             local p3 = vgui.Create("DPanel", sheet) p3:SetPaintBackground(false)
             sheet:AddSheet("Фракции и Роли", p3, "icon16/group_key.png")
@@ -1256,7 +1284,6 @@ if CLIENT then
                     act({ action = "toggle_acl_faction", entIndex = ent:EntIndex(), faction = fn })
                 end
 
-                -- Роли этой фракции
                 if istable(fData.roles) and #fData.roles > 0 then
                     for _, rName in ipairs(fData.roles) do
                         local roleKey = fn .. "|" .. rName
@@ -1278,7 +1305,6 @@ if CLIENT then
             end
         end
 
-        -- Вкладка 4: Администрирование (только SuperAdmin / Manage)
         if canManage or d.is_admin then
             local p4 = vgui.Create("DPanel", sheet) p4:SetPaintBackground(false)
             sheet:AddSheet("Администрирование", p4, "icon16/shield.png")
@@ -1333,5 +1359,5 @@ if CLIENT then
         net.Start(NET_ACT) net.WriteTable({ action = "open_menu" }) net.SendToServer()
     end)
 
-    print("[GRM Doors] Клиентская система дверей v2.0.2 загружена")
+    print("[GRM Doors] Клиентская система дверей v2.0.3 загружена")
 end
