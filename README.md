@@ -63,7 +63,9 @@
 | 74 | `lua/autorun/sh_grm_f4menu.lua` | **F4-меню v1.3.0:** вкладки Профиль / Команды / Настройки (HUD-выключатели) / **Графика** (пресеты FPS+/Красота, 10 тоглов, слайдеры дальности/качества). Шпаргалка команд: +радио/оповещение/доска/доступы. F4 ловится биндом и прямым опросом (toggle), уступает дверям; `/menu` `/f4` |
 | 75 | `lua/autorun/sh_grm_broadcast.lua` + `lua/entities/grm_radio/`, `grm_broadcast_mic/`, `grm_loudspeaker/` + мост `sh_grm_factions_bridge.lua` | **Радиовещание + массовое оповещение v1.1.0:** микрофон (Black Ops p_int_microphone; `/bcast_allow`) — голос+текст в эфире до приёмников; радио citizenradio (E — станция); громкоговорители → `/alert` `/alertall` (команды идут через PlayerSayTransform — не проглатываются чат-системой); доступы и из `/factions` → «Доступы»; спавн `/radiomic_add` `/radio_add` `/speaker_add` — АВТОперсистентность без /permadd (grm_bcents/<map>.json) |
 | 76 | `lua/autorun/sh_grm_board.lua` + `lua/entities/grm_board/` | **Доска объявлений/набор во фракции** (модель corkboardverticle01): доступ фракциям: `/factions` → «Доступы», суперадмин E→⚙ у доски, `/board_allow`, лидер открывает/закрывает набор, игрок E→«Вступить» попадает во фракцию автоматически (FactionsAPI), лидеру — сведения (ник, RP-имя, SteamID, время) + журнал 20 записей; `/board_add` |
-| — | `materials/entities/*.png` | **Иконки Q-меню:** 31 иконка в едином стиле для всех энтити и оружия GRM (автоподхват по имени класса) |
+| 77 | `lua/autorun/sh_grm_jobs.lua` + `lua/entities/grm_jobcenter/`, `grm_depot/` | **Биржа труда v1.0.0:** терминал (E → вакансии: курьер/патруль/грузчик/инспектор, ротация 5 мин, награда по дистанции, жёсткий дедлайн по настенным часам, 3D-маркер цели, вкладка «Работа» в F4) + точки доставки `/jobdepot_add`; **заказы фракций** — лидер с доступом «БИРЖА» (`/factions` → «Доступы», `/job_allow`) публикует задания с ЭСКРОУ награды из бюджета фракции (выполнил — исполнителю, отозвал/просрочил — возврат, до 3 шт., 24 ч); `/jobs` `/jobcancel`; автоперсистентность (`grm_jobs_ents/<map>.json`, активные задачи массивом в `grm_jobs_active.json` — переживают рестарт); хуки GRM_Jobs_Started/Completed/Failed для ачивок |
+| 78 | `lua/autorun/sh_grm_achievements.lua` | **Ачивки и вознаграждения v1.0.0:** 21 достижение (экономика, биржа, радио/оповещение, доска/фракции, часы в городе, пешие километры, стрик входа) с денежными наградами — начисление автоматически при разблокировке (тост «★» + звук + чат), вкладка «Ачивки» в F4 с прогресс-барами, `/ach`; **ежедневный бонус** за вход с растущим стриком (500+250/день, потолок 2000); прогресс из хуков сборки (деньги/задачи/эфир/оповещения/вступление) + тик-поллинг (время, пешком с анти-телепорт-капой); хранение массивом `grm_achievements.json`; `/ach_reset ник` (суперадмин) |
+| — | `materials/entities/*.png` | **Иконки Q-меню:** 33 иконки в едином стиле для всех энтити и оружия GRM (автоподхват по имени класса) |
 
 **Освежение v2 (в составе Кода 11):** `/models_admin` и `/weapons_admin` — живое превью модели (DAdjustableModelPanel, клик по строке), SpawnIcon в строках, каталог оружия с поиском и категориями (выбор кликом из всех SWEP'ов сервера), инфо-панель скина/бодигрупп.
 
@@ -72,11 +74,13 @@
 **Игрок:** `/inv`, `/drop`, `/store`, `/fjoin`, `/fleave`, `/fr`, `/dep`, `/depb`, `/mask`,
 `/model`, `/gnews`, `/kom_hour`, `/me`, `/do`, `/it`, `/try`, `/roll`, `/w`, `/y`, `/looc`,
 `/logistics_start`, `/logistics_crates`, `!fbudget`, `!fpay`, `!fwithdraw`, `!fpayall`, `!fsettax`, `/mysalary`, `/fine <сумма> [причина]`, `/vlist`, `/myvehicles`,
-`/vshop`, `/phoneshop`, `/phone_remove`, `/alert <текст>`, `/alertall <текст>` (по доступу), `/name`, `/char`, `/rpdesc`, `/menu`
+`/vshop`, `/phoneshop`, `/phone_remove`, `/alert <текст>`, `/alertall <текст>` (по доступу), `/name`, `/char`, `/rpdesc`, `/menu`,
+`/jobs`, `/jobcancel`, `/ach`; E по терминалу «Биржа труда» — вакансии и заказы фракций; F4 → «Работа»/«Ачивки»; ежедневный бонус — автоматически при входе
 
 **Админ / Руководство:** `/factions`, `/salary_admin`, `/logistics_admin`, `/models_admin`,
 `/weapons_admin`, `/mask_admin`, `!grmmenu`/`!grmadmin`/`!econadmin`, `/scanvehicles`,
 `/spawnmenu`, `/vshop_admin`, `/phoneshop_admin`, `/phone_access`, `/door_access`, `/warrant`, `/unwarrant`, `/warrants`,
-`/permadd`, `/permremove`, `/permlist`, `/permload`, `/radiomic_add`, `/radio_add`, `/speaker_add`, `/board_add`, `/board_allow <фракция>`, `/bcast_allow <фракция>`, `/alert_allow <фракция>`, вкладка «Доступы» в `/factions`
+`/permadd`, `/permremove`, `/permlist`, `/permload`, `/radiomic_add`, `/radio_add`, `/speaker_add`, `/board_add`, `/board_allow <фракция>`, `/bcast_allow <фракция>`, `/alert_allow <фракция>`,
+`/jobcenter_add`, `/jobcenter_remove`, `/jobdepot_add`, `/jobdepot_remove`, `/job_allow <фракция>`, `/job_deny <фракция>`, `/job_list`, `/ach_reset <ник>`, вкладка «Доступы» в `/factions` (доска/эфир/оповещение/**биржа**)
 
 Подробный разбор архитектуры и замеченных проблем — в `ANALYSIS.md`.

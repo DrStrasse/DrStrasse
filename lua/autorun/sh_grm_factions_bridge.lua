@@ -1,13 +1,16 @@
 --[[--------------------------------------------------------------------
-    GRM Factions Bridge v1.0.0 (доработка Кодов 75/76)
+    GRM Factions Bridge v1.1.0 (доработка Кодов 75/76/77)
     Вкладка «Доступы» в админ-меню /factions (суперадмин):
-    три чекбокса на фракцию —
+    четыре чекбокса на фракцию —
       ДОСКА   — лидер может вести набор через доску объявлений (Код 76);
       ЭФИР    — члены фракции могут запускать эфир у микрофона (Код 75);
-      ОПОВЕЩ. — право на /alert и /alertall (Код 75).
-    Запись идёт в data/grm_board.json и data/grm_broadcast.json (те же
-    хранилища, что у чат-команд /board_allow, /bcast_allow, /alert_allow).
+      ОПОВЕЩ. — право на /alert и /alertall (Код 75);
+      БИРЖА   — лидер публикует заказы биржи труда с эскроу бюджета (Код 77).
+    Запись идёт в data/grm_board.json, data/grm_broadcast.json и
+    data/grm_jobs.json (те же хранилища, что у чат-команд /board_allow,
+    /bcast_allow, /alert_allow, /job_allow).
     Хук билда: GRM_FactionsAdmin_BuildTabs (вызывается из sh_factions).
+    v1.1.0: +канал «jobs» (БИРЖА).
 ----------------------------------------------------------------------]]
 
 if SERVER then AddCSLuaFile() end
@@ -40,6 +43,8 @@ if SERVER then
             return (GRM.Broadcast and GRM.Broadcast.Cfg and GRM.Broadcast.Cfg.journalists) or {}
         elseif kind == "alert" then
             return (GRM.Broadcast and GRM.Broadcast.Cfg and GRM.Broadcast.Cfg.alerters) or {}
+        elseif kind == "jobs" then
+            return (GRM.Jobs and GRM.Jobs.Cfg and GRM.Jobs.Cfg.allow) or {}
         end
         return {}
     end
@@ -51,6 +56,7 @@ if SERVER then
             net.WriteTable(accTable("board"))
             net.WriteTable(accTable("journ"))
             net.WriteTable(accTable("alert"))
+            net.WriteTable(accTable("jobs"))
         net.Send(ply)
     end)
 
@@ -59,7 +65,7 @@ if SERVER then
         local kind = net.ReadString()
         local fname = net.ReadString()
         local allow = net.ReadBool()
-        if kind ~= "board" and kind ~= "journ" and kind ~= "alert" then return end
+        if kind ~= "board" and kind ~= "journ" and kind ~= "alert" and kind ~= "jobs" then return end
         if not isstring(fname) or fname == "" then return end
         if not (istable(Factions) and istable(Factions[fname])) then return end
 
@@ -68,13 +74,17 @@ if SERVER then
             GRM.Board.Cfg.allow[fname] = allow and true or nil
             if not allow then GRM.Board.Cfg.open[fname] = nil end
             GRM.Board.SaveCfg()
+        elseif kind == "jobs" then
+            if not (GRM.Jobs and GRM.Jobs.Cfg and GRM.Jobs.SaveCfg) then return end
+            GRM.Jobs.Cfg.allow[fname] = allow and true or nil
+            GRM.Jobs.SaveCfg("мост /factions: БИРЖА " .. fname)
         else
             if not (GRM.Broadcast and GRM.Broadcast.Cfg and GRM.Broadcast.SaveCfg) then return end
             local tbl = accTable(kind)
             tbl[fname] = allow and true or nil
             GRM.Broadcast.SaveCfg()
         end
-        local labels = { board = "Доска набора", journ = "Эфир (радио)", alert = "Оповещение" }
+        local labels = { board = "Доска набора", journ = "Эфир (радио)", alert = "Оповещение", jobs = "Биржа труда" }
         ply:PrintMessage(HUD_PRINTTALK, "[Доступы] " .. (labels[kind] or kind) .. " — «" .. fname .. "»: " .. (allow and "ВЫДАН" or "ОТОЗВАН"))
     end)
 
@@ -102,7 +112,7 @@ if CLIENT then
 
     local curPanel = nil
 
-    local function buildRows(container, factions, board, journ, alert)
+    local function buildRows(container, factions, board, journ, alert, jobs)
         container:Clear()
 
         local head = vgui.Create("DPanel", container)
@@ -116,6 +126,7 @@ if CLIENT then
         hl(350, "Доска", C.teal)
         hl(500, "Эфир", C.acc)
         hl(650, "Оповещ.", C.red)
+        hl(800, "Биржа", C.yellow)
 
         for _, name in ipairs(factions) do
             local row = vgui.Create("DPanel", container)
@@ -145,6 +156,7 @@ if CLIENT then
             chk(350, function() return board[name] == true end, "board", C.teal)
             chk(500, function() return journ[name] == true end, "journ", C.acc)
             chk(650, function() return alert[name] == true end, "alert", C.red)
+            chk(800, function() return jobs[name] == true end, "jobs", C.yellow)
         end
 
         if #factions == 0 then
@@ -160,8 +172,9 @@ if CLIENT then
         local board = net.ReadTable() or {}
         local journ = net.ReadTable() or {}
         local alert = net.ReadTable() or {}
+        local jobs = net.ReadTable() or {}
         if IsValid(curPanel._rows) then
-            buildRows(curPanel._rows, factions, board, journ, alert)
+            buildRows(curPanel._rows, factions, board, journ, alert, jobs)
         end
     end)
 
@@ -174,7 +187,7 @@ if CLIENT then
 
         local info = vgui.Create("DLabel", panel)
         info:Dock(TOP) info:SetTall(44) info:SetFont("GRMFAcc_Normal") info:SetTextColor(C.dim)
-        info:SetText("ДОСКА — лидер фракции может открывать набор через доску объявлений и видеть журнал вступивших. ЭФИР — члены фракции запускают эфир у микрофонных стоек. ОПОВЕЩЕНИЕ — право на команды /alert и /alertall. Суперадмин может всё без галочек.")
+        info:SetText("ДОСКА — лидер фракции может открывать набор через доску объявлений и видеть журнал вступивших. ЭФИР — члены фракции запускают эфир у микрофонных стоек. ОПОВЕЩЕНИЕ — право на команды /alert и /alertall. БИРЖА — лидер публикует заказы биржи труда (награда резервируется с бюджета фракции). Суперадмин может всё без галочек.")
         info:SetWrap(true) info:SetAutoStretchVertical(true)
 
         local rows = vgui.Create("DScrollPanel", panel)

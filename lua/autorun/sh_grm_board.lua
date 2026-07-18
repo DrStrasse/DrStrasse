@@ -20,7 +20,7 @@ GRM = GRM or {}
 GRM.Board = GRM.Board or {}
 local BD = GRM.Board
 
-BD.Version      = "1.0.0"
+BD.Version      = "1.0.1" -- +hook GRM_Board_Joined (метрика ачивок Код 78)
 BD.DataFile     = "grm_board.json"
 BD.JournalMax   = 20
 
@@ -174,6 +174,7 @@ if SERVER then
         while #BD.Cfg.journal[fname] > BD.JournalMax do table.remove(BD.Cfg.journal[fname]) end
         BD.SaveCfg()
 
+        hook.Run("GRM_Board_Joined", ply, fname)
         if GRM.Notify then GRM.Notify(ply, "Вы вступили во фракцию «" .. fname .. "» через доску объявлений!", 100, 220, 100) end
         ply:PrintMessage(HUD_PRINTTALK, "[Доска] Вы вступили во фракцию " .. fname .. ". Ранг по умолчанию: " .. tostring((_G.FactionsAPI.PrimeRole and _G.FactionsAPI.PrimeRole(fname)) or "—"))
 

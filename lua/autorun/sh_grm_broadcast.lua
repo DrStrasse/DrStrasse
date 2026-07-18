@@ -1,5 +1,7 @@
 --[[--------------------------------------------------------------------
-    GRM Broadcast v1.1.0 (Код 75) — Радиовещание и массовое оповещение
+    GRM Broadcast v1.1.1 (Код 75) — Радиовещание и массовое оповещение
+    v1.1.1: +хуки GRM_BC_BroadcastStart(ply, station) и GRM_BC_Alert
+      (ply, text, global) — метрики ачивок (Код 78).
     v1.1.0: команды обрабатываются через PlayerSayTransform + fallback
       PlayerSay (EasyChat-хуки не проглатывают — репорт «/alertall не
       работает»); АВТОперсистентность энтити (grm_bcents/<map>.json) —
@@ -26,7 +28,7 @@ GRM = GRM or {}
 GRM.Broadcast = GRM.Broadcast or {}
 local BC = GRM.Broadcast
 
-BC.Version       = "1.1.0"
+BC.Version       = "1.1.1"
 BC.ReceiveRadius = 500   -- радиус слышимости от приёмника
 BC.MicMaxDist    = 250   -- спикер должен стоять у микрофона
 BC.SpeakerRadius = 700   -- радиус громкоговорителя оповещения
@@ -208,6 +210,7 @@ if SERVER then
         ent:SetNWString("GRM_BC_Speaker", rpName(ply))
         ent:SetNWString("GRM_BC_Last", "")
         ent:EmitSound("npc/overwatch/radiovoice/on3.wav", 65, 100)
+        hook.Run("GRM_BC_BroadcastStart", ply, tostring(ent:GetNWString("GRM_BC_Station", "ГРМ-Радио")))
         if GRM.Notify then GRM.Notify(ply, "ВЫ В ЭФИРЕ: " .. ent:GetNWString("GRM_BC_Station", "ГРМ-Радио") .. ". Говорите в голосовой чат и пишите текстовые реплики — их услышат/прочтут слушатели у радиоприёмников. Не отходите от микрофона.", 100, 220, 100) end
         return true
     end
@@ -290,7 +293,7 @@ if SERVER then
     end)
 
     -- массовое оповещение -----------------------------------------------
-    function BC.SendAlert(fromName, text, global)
+    function BC.SendAlert(fromName, text, global, srcPly)
         text = string.Trim(tostring(text or ""))
         if #text < 3 then return false, "Текст оповещения короче 3 символов" end
         text = string.sub(text, 1, 240)
@@ -320,6 +323,7 @@ if SERVER then
             net.WriteString(fromName)
             net.WriteString(text)
         net.Send(targets)
+        if IsValid(srcPly) then hook.Run("GRM_BC_Alert", srcPly, text, global and true or false) end
         return true, "Оповещение передано (" .. #targets .. " чел.)"
     end
 
@@ -384,13 +388,13 @@ if SERVER then
         -- оповещения
         if string.sub(low, 1, 7) == "/alert " then
             if not BC.IsAlerter(ply) then ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] Нет доступа (см. /alert_allow у суперадмина).") return true end
-            local ok, msg = BC.SendAlert(rpName(ply), string.sub(t, 8), false)
+            local ok, msg = BC.SendAlert(rpName(ply), string.sub(t, 8), false, ply)
             ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] " .. tostring(msg))
             return true
         end
         if string.sub(low, 1, 10) == "/alertall " then
             if not BC.IsAlerter(ply) then ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] Нет доступа.") return true end
-            local ok, msg = BC.SendAlert(rpName(ply), string.sub(t, 11), true)
+            local ok, msg = BC.SendAlert(rpName(ply), string.sub(t, 11), true, ply)
             ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] " .. tostring(msg))
             return true
         end
@@ -500,7 +504,7 @@ if SERVER then
     -- консольное оповещение (из server console / rcon)
     concommand.Add("grm_alert", function(ply, _, args)
         if IsValid(ply) and not BC.IsAlerter(ply) then return end
-        local ok, msg = BC.SendAlert(IsValid(ply) and rpName(ply) or "Сервер", table.concat(args or {}, " "), true)
+        local ok, msg = BC.SendAlert(IsValid(ply) and rpName(ply) or "Сервер", table.concat(args or {}, " "), true, ply)
         if IsValid(ply) then ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] " .. tostring(msg))
         else print("[GRM Broadcast] " .. tostring(msg)) end
     end)
