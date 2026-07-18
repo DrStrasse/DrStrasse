@@ -23,6 +23,8 @@ function ENT:Initialize()
     self:SetNWBool("GRM_BC_Live", false)
     self:SetNWString("GRM_BC_Speaker", "")
     self:SetNWString("GRM_BC_Last", "")
+    self:SetNWBool("GRM_BC_PA", false)   -- режим громкой связи (Код 85)
+    self:SetNWInt("GRM_RN_Link", -1)     -- -1 = радиосеть не отвечала (модуль снят)
 end
 
 function ENT:Use(activator)

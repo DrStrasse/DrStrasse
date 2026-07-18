@@ -611,7 +611,12 @@ local function radioVoice(listener, speaker)
     if not RadioFrequencies then return false end
     local sf = RadioFrequencies[speaker:SteamID64()]
     local lf = RadioFrequencies[listener:SteamID64()]
-    return sf and lf and sf == lf
+    if not (sf and lf and sf == lf) then return false end
+    -- RadioNet (Код 85): частота ловится только в покрытии сети
+    -- (стойка+антенны); вне сети — прямая дальность рации
+    local rn = GRM and GRM.RadioNet
+    if rn and rn.RadioPairOK and not rn.RadioPairOK(speaker, listener) then return false end
+    return true
 end
 
 local function phoneVoice(listener, speaker)
@@ -653,6 +658,15 @@ local function installVoiceHook()
     hook.Add("PlayerCanHearPlayersVoice", "GRM_Phone_IntegratedVoice", function(listener, speaker)
         if not IsValid(listener) or not IsValid(speaker) then return false, false end
         if listener == speaker then return false, false end
+
+        -- RadioNet (Код 85) решает ПЕРВЫМ: эфир/громкая связь/мегафон.
+        -- Без явной консультации хуки PlayerCanHearPlayersVoice итера-
+        -- рируются в случайном порядке pairs() и душат друг друга.
+        local rn = GRM and GRM.RadioNet
+        if rn and rn.VoiceRoute then
+            local c, h = rn.VoiceRoute(listener, speaker)
+            if c ~= nil then return c, h end
+        end
 
         local canLocal = localVoice(listener, speaker)
         if canLocal then return true, true end

@@ -1,5 +1,12 @@
 --[[--------------------------------------------------------------------
-    GRM Broadcast v1.1.1 (Код 75) — Радиовещание и массовое оповещение
+    GRM Broadcast v1.2.0 (Код 75) — Радиовещание и массовое оповещение
+    v1.2.0: интеграция с RadioNet (Код 85): эфир до приёмников доходит
+      только в покрытии сети (микрофон↔передатчик↔стойка↔антенны) и с
+      «радио-искажением» у края покрытия; новый режим микрофона ГРОМКАЯ
+      СВЯЗЬ (доступ /alert_allow): голос звучит усиленно из сетевых
+      громкоговорителей с треском; /alert срабатывает только на громко-
+      говорителях, реально подключённых к сети; легаси-хук голоса ниже
+      самоотключается, пока RadioNet в сборке (маршрутизация там).
     v1.1.1: +хуки GRM_BC_BroadcastStart(ply, station) и GRM_BC_Alert
       (ply, text, global) — метрики ачивок (Код 78).
     v1.1.0: команды обрабатываются через PlayerSayTransform + fallback
@@ -28,7 +35,7 @@ GRM = GRM or {}
 GRM.Broadcast = GRM.Broadcast or {}
 local BC = GRM.Broadcast
 
-BC.Version       = "1.1.1"
+BC.Version       = "1.2.0"
 BC.ReceiveRadius = 500   -- радиус слышимости от приёмника
 BC.MicMaxDist    = 250   -- спикер должен стоять у микрофона
 BC.SpeakerRadius = 700   -- радиус громкоговорителя оповещения
@@ -211,7 +218,29 @@ if SERVER then
         ent:SetNWString("GRM_BC_Last", "")
         ent:EmitSound("npc/overwatch/radiovoice/on3.wav", 65, 100)
         hook.Run("GRM_BC_BroadcastStart", ply, tostring(ent:GetNWString("GRM_BC_Station", "ГРМ-Радио")))
-        if GRM.Notify then GRM.Notify(ply, "ВЫ В ЭФИРЕ: " .. ent:GetNWString("GRM_BC_Station", "ГРМ-Радио") .. ". Говорите в голосовой чат и пишите текстовые реплики — их услышат/прочтут слушатели у радиоприёмников. Не отходите от микрофона.", 100, 220, 100) end
+        local pa = ent:GetNWBool("GRM_BC_PA", false)
+        if GRM.Notify then
+            if pa then
+                GRM.Notify(ply, "ВЫ В ГРОМКОЙ СВЯЗИ: голос звучит усиленно из всех сетевых громкоговорителей (с эффектом рупора). Не отходите от микрофона.", 120, 200, 255)
+            else
+                GRM.Notify(ply, "ВЫ В ЭФИРЕ: " .. ent:GetNWString("GRM_BC_Station", "ГРМ-Радио") .. ". Говорите в голосовой чат и пишите текстовые реплики — их услышат/прочтут слушатели у радиоприёмников. Не отходите от микрофона.", 100, 220, 100)
+            end
+        end
+        -- предупреждения инфраструктуры (RadioNet, Код 85)
+        local RNm = GRM.RadioNet
+        if RNm then
+            if pa then
+                local any = false
+                for _, s in ipairs(ents.FindByClass("grm_loudspeaker")) do
+                    if RNm.SpeakerActive and RNm.SpeakerActive(s) then any = true break end
+                end
+                if not any and GRM.Notify then
+                    GRM.Notify(ply, "ВНИМАНИЕ: ни один громкоговоритель не подключён к радиосети — громкая связь никуда не уйдёт! (стойка/антенна: /rn_status)", 255, 140, 90)
+                end
+            elseif RNm.MicLink and RNm.MicLink(ent) < 2 and GRM.Notify then
+                GRM.Notify(ply, "ВНИМАНИЕ: микрофон вне радиосети (стойка/передатчик далеко или обесточены) — приёмники НЕ примут эфир, вас слышно только рядом. Диагностика: /rn_status", 255, 140, 90)
+            end
+        end
         return true
     end
 
@@ -244,6 +273,8 @@ if SERVER then
 
     -- голос через радио ------------------------------------------------
     hook.Add("PlayerCanHearPlayersVoice", "GRM_BC_Voice", function(listener, speaker)
+        -- RadioNet (Код 85) — единая точка маршрутов голоса в сборке
+        if GRM.RadioNet and GRM.RadioNet.VoiceRoute then return end
         if not IsValid(listener) or not IsValid(speaker) then return end
         local mic = speaker._grmBCMic
         if not IsValid(mic) or not mic.BCLive or mic.BCSpeaker ~= speaker then return end
@@ -258,9 +289,16 @@ if SERVER then
 
     -- текстовые заголовки ----------------------------------------------
     local function listenersOf(micIdx)
+        local RNm = GRM.RadioNet
+        if RNm and RNm.MicLink then
+            local mic = Entity(micIdx)
+            if not IsValid(mic) or RNm.MicLink(mic) < 2 then return {} end -- вне сети текст не ретранслируется
+        end
         local set, out = {}, {}
         for _, r in ipairs(ents.FindByClass("grm_radio")) do
-            if r:GetNWBool("GRM_BC_On", false) and r:GetNWInt("GRM_BC_Mic", 0) == micIdx then
+            local covered = true
+            if RNm and RNm.ReceiverOK then covered = RNm.ReceiverOK(r) end
+            if covered and r:GetNWBool("GRM_BC_On", false) and r:GetNWInt("GRM_BC_Mic", 0) == micIdx then
                 for _, p in ipairs(player.GetAll()) do
                     if not set[p] and p:GetPos():DistToSqr(r:GetPos()) <= BC.ReceiveRadius * BC.ReceiveRadius then
                         set[p] = true
@@ -272,6 +310,26 @@ if SERVER then
         return out
     end
 
+    -- слушатели ГРОМКОЙ СВЯЗИ: все рядом с громкоговорителями в сети
+    local function paListenersOf()
+        local RNm = GRM.RadioNet
+        local set, out = {}, {}
+        for _, s in ipairs(ents.FindByClass("grm_loudspeaker")) do
+            local active = true
+            if RNm and RNm.SpeakerActive then active = RNm.SpeakerActive(s) end
+            if active then
+                for _, p in ipairs(player.GetAll()) do
+                    if not set[p] and p:GetPos():DistToSqr(s:GetPos()) <= BC.SpeakerRadius * BC.SpeakerRadius then
+                        set[p] = true
+                        out[#out + 1] = p
+                    end
+                end
+            end
+        end
+        return out
+    end
+    BC.PAListeners = paListenersOf
+
     hook.Add("PlayerSay", "GRM_BC_SayRelay", function(ply, text)
         if not IsValid(ply) then return end
         local mic = ply._grmBCMic
@@ -282,7 +340,13 @@ if SERVER then
         local station = mic:GetNWString("GRM_BC_Station", "ГРМ-Радио")
         local name = rpName(ply)
         mic:SetNWString("GRM_BC_Last", os.date("%H:%M ") .. text)
-        local plys = listenersOf(mic:EntIndex())
+        local plys
+        if mic:GetNWBool("GRM_BC_PA", false) then
+            plys = paListenersOf()
+            station = "ГРОМКАЯ СВЯЗЬ: " .. station
+        else
+            plys = listenersOf(mic:EntIndex())
+        end
         if #plys > 0 then
             net.Start(NET_LINE)
                 net.WriteString(station)
@@ -301,24 +365,31 @@ if SERVER then
         if global then
             for _, p in ipairs(player.GetAll()) do targets[#targets + 1] = p end
         else
+            local RNm = GRM.RadioNet
             local speakers = ents.FindByClass("grm_loudspeaker")
             if #speakers == 0 then return false, "В городе не установлено громкоговорителей (/speaker_add + /permadd). Глобально: /alertall" end
-            local marked = {}
+            local marked, anyActive = {}, false
             for _, sp in ipairs(speakers) do
-                sp:SetNWBool("GRM_BC_Alert", true)
-                sp:EmitSound("ambient/alarms/warningbell1.wav", 78, 100)
-                timer.Create("GRM_BC_SpkOff" .. sp:EntIndex(), BC.AlertDuration, 1, function()
-                    if IsValid(sp) then sp:SetNWBool("GRM_BC_Alert", false) end
-                end)
-                for _, p in ipairs(player.GetAll()) do
-                    if not marked[p] and p:GetPos():DistToSqr(sp:GetPos()) <= BC.SpeakerRadius * BC.SpeakerRadius then
-                        marked[p] = true
-                        targets[#targets + 1] = p
+                local usable = true
+                if RNm and RNm.SpeakerActive then usable = RNm.SpeakerActive(sp) end
+                if usable then
+                    anyActive = true
+                    sp:SetNWBool("GRM_BC_Alert", true)
+                    sp:EmitSound("ambient/alarms/warningbell1.wav", 78, 100)
+                    timer.Create("GRM_BC_SpkOff" .. sp:EntIndex(), BC.AlertDuration, 1, function()
+                        if IsValid(sp) then sp:SetNWBool("GRM_BC_Alert", false) end
+                    end)
+                    for _, p in ipairs(player.GetAll()) do
+                        if not marked[p] and p:GetPos():DistToSqr(sp:GetPos()) <= BC.SpeakerRadius * BC.SpeakerRadius then
+                            marked[p] = true
+                            targets[#targets + 1] = p
+                        end
                     end
                 end
             end
+            if not anyActive then return false, "Ни один громкоговоритель не подключён к радиосети (нужны активная стойка/антенна — диагностика: /rn_status). Глобально: /alertall" end
         end
-        if #targets == 0 then return false, "Рядом с громкоговорителями никого нет. Глобально: /alertall" end
+        if #targets == 0 then return false, "Рядом с громкоговорителями в сети никого нет. Глобально: /alertall" end
         net.Start(NET_ALERT)
             net.WriteString(fromName)
             net.WriteString(text)
@@ -472,11 +543,16 @@ if SERVER then
 
     -- меню микрофона -------------------------------------------------------
     function BC.OpenMicMenu(ply, ent)
+        local RNm = GRM.RadioNet
+        local link = 2
+        if RNm and RNm.MicLink then link = RNm.MicLink(ent) end
         net.Start(NET_MIC_OPEN)
             net.WriteUInt(ent:EntIndex(), 16)
             net.WriteString(ent:GetNWString("GRM_BC_Station", "ГРМ-Радио"))
             net.WriteBool(ent:GetNWBool("GRM_BC_Live", false))
             net.WriteString(ent:GetNWString("GRM_BC_Speaker", ""))
+            net.WriteBool(ent:GetNWBool("GRM_BC_PA", false))
+            net.WriteUInt(link, 2)
         net.Send(ply)
     end
 
@@ -494,6 +570,17 @@ if SERVER then
         if act == "name" then
             BC.SetMicName(ent, name)
             ply:PrintMessage(HUD_PRINTTALK, "[Радио] Станция переименована: " .. BC.MicName(ent))
+        elseif act == "pa-on" then
+            -- громкая связь = массовое оповещение голосом: доступ как у /alert
+            if not BC.IsAlerter(ply) then
+                if GRM.Notify then GRM.Notify(ply, "Громкая связь доступна оповестителям (/alert_allow Фракция — у суперадмина).", 255, 120, 90) end
+                return
+            end
+            ent:SetNWBool("GRM_BC_PA", true)
+            if GRM.Notify then GRM.Notify(ply, "Режим ГРОМКАЯ СВЯЗЬ: эфир пойдёт через сетевые громкоговорители города.", 120, 200, 255) end
+        elseif act == "pa-off" then
+            ent:SetNWBool("GRM_BC_PA", false)
+            if GRM.Notify then GRM.Notify(ply, "Режим радиоэфира восстановлен.", 220, 190, 100) end
         elseif act == "start" then
             BC.StartLive(ply, ent)
         elseif act == "stop" then
@@ -616,23 +703,39 @@ if CLIENT then
         local station = net.ReadString()
         local live = net.ReadBool()
         local speaker = net.ReadString()
+        local pamode = net.ReadBool()
+        local link = net.ReadUInt(2)
 
-        local f = mkFrame(560, 330, "Микрофонная стойка (эфир)")
+        local f = mkFrame(560, 470, "Микрофонная стойка (эфир)")
         local st = vgui.Create("DLabel", f)
         st:SetPos(14, 46) st:SetSize(532, 20) st:SetFont("GRMBC_Sub")
-        st:SetText(live and ("СТАТУС: В ЭФИРЕ — " .. speaker) or "СТАТУС: молчит")
+        st:SetText(live and ("СТАТУС: " .. (pamode and "ГРОМКАЯ СВЯЗЬ — " or "В ЭФИРЕ — ") .. speaker) or "СТАТУС: молчит")
         st:SetTextColor(live and C.red or C.dim)
 
+        -- сеть (RadioNet, Код 85)
+        local netl = vgui.Create("DLabel", f)
+        netl:SetPos(14, 70) netl:SetSize(532, 18) netl:SetFont("GRMBC_Normal")
+        if link >= 2 then
+            netl:SetText("Радиосеть: ПОДКЛЮЧЁН (эфир уйдёт в город)")
+            netl:SetTextColor(C.green)
+        elseif link == 1 then
+            netl:SetText("Радиосеть: передатчик рядом, но ВНЕ СЕТИ (проверьте стойку!)")
+            netl:SetTextColor(C.yellow)
+        else
+            netl:SetText("Радиосеть: НЕТ СВЯЗИ — эфир в город не выйдет (стойка/передатчик)")
+            netl:SetTextColor(C.red)
+        end
+
         local lbl = vgui.Create("DLabel", f)
-        lbl:SetPos(14, 74) lbl:SetSize(532, 18) lbl:SetFont("GRMBC_Normal") lbl:SetTextColor(C.dim)
+        lbl:SetPos(14, 94) lbl:SetSize(532, 18) lbl:SetFont("GRMBC_Normal") lbl:SetTextColor(C.dim)
         lbl:SetText("Позывной станции (виден слушателям у приёмников):")
 
         local entry = vgui.Create("DTextEntry", f)
-        entry:SetPos(14, 96) entry:SetSize(400, 32) entry:SetFont("GRMBC_Sub")
+        entry:SetPos(14, 116) entry:SetSize(400, 32) entry:SetFont("GRMBC_Sub")
         entry:SetText(station)
 
         local bName = mkBtn(f, "Сохранить", C.acc)
-        bName:SetPos(424, 96) bName:SetSize(122, 32)
+        bName:SetPos(424, 116) bName:SetSize(122, 32)
         bName.DoClick = function()
             net.Start(NET_MIC_SET)
                 net.WriteUInt(entIdx, 16)
@@ -641,8 +744,20 @@ if CLIENT then
             net.SendToServer()
         end
 
-        local bLive = mkBtn(f, live and "ЗАВЕРШИТЬ ЭФИР" or "НАЧАТЬ ЭФИР", live and C.red or C.green)
-        bLive:SetPos(14, 150) bLive:SetSize(532, 46)
+        -- режим: радиоэфир / громкая связь (Код 85)
+        local bMode = mkBtn(f, pamode and "РЕЖИМ: ГРОМКАЯ СВЯЗЬ (клик — в радиоэфир)" or "РЕЖИМ: РАДИОЭФИР (клик — громкая связь)", pamode and Color(90, 130, 220) or C.acc)
+        bMode:SetPos(14, 160) bMode:SetSize(532, 38)
+        bMode.DoClick = function()
+            net.Start(NET_MIC_SET)
+                net.WriteUInt(entIdx, 16)
+                net.WriteString(pamode and "pa-off" or "pa-on")
+                net.WriteString("")
+            net.SendToServer()
+            f:Close()
+        end
+
+        local bLive = mkBtn(f, live and "ЗАВЕРШИТЬ ЭФИР" or (pamode and "НАЧАТЬ ГРОМКУЮ СВЯЗЬ" or "НАЧАТЬ ЭФИР"), live and C.red or C.green)
+        bLive:SetPos(14, 208) bLive:SetSize(532, 46)
         bLive.DoClick = function()
             net.Start(NET_MIC_SET)
                 net.WriteUInt(entIdx, 16)
@@ -653,8 +768,8 @@ if CLIENT then
         end
 
         local hint = vgui.Create("DLabel", f)
-        hint:SetPos(14, 208) hint:SetSize(532, 108) hint:SetFont("GRMBC_Normal") hint:SetTextColor(C.dim)
-        hint:SetText("В эфире ваш ГОЛОС слышат все возле настроенных приёмников, а текстовые реплики уходят заголовками. Не отходите дальше ~2.5 м от микрофона — эфир прервётся автоматически. Доступ к эфиру выдаёт суперадмин: /bcast_allow ИмяФракции.")
+        hint:SetPos(14, 266) hint:SetSize(532, 188) hint:SetFont("GRMBC_Normal") hint:SetTextColor(C.dim)
+        hint:SetText("РАДИОЭФИР: голос и реплики слышат/читают слушатели у приёмников. ГРОМКАЯ СВЯЗЬ (доступ оповестителя — /alert_allow): голос звучит УСИЛЕННО из всех громкоговорителей города с эффектом рупора. Оба режима требуют живой радиосети: серверная стойка + (передатчик) + антенны — иначе эфир услышат только стоящие рядом. Качество сигнала на краю покрытия антенн падает: голос слушателей хрипит и выпадает. Не отходите дальше ~2.5 м от микрофона — эфир прервётся сам. Доступ к эфиру: /bcast_allow ИмяФракции.")
         hint:SetWrap(true) hint:SetAutoStretchVertical(true)
     end)
 
