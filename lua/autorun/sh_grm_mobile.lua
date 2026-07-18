@@ -45,7 +45,7 @@ GRM = GRM or {}
 GRM.Mobile = GRM.Mobile or {}
 local MB = GRM.Mobile
 
-MB.Version   = "1.0.1"
+MB.Version   = "1.0.2"
 MB.DataFile  = "grm_mobile.json"
 MB.ForumFile = "grm_mobile_forum.json"
 MB.SmsCap       = 40    -- глубина ящика SMS
@@ -897,11 +897,22 @@ if CLIENT then
             end
             y = y + 40
         end
-        txt("↑/↓ — выбор • ENTER — открыть • BACKSPACE — убрать", "GRMMob_M", w / 2, h - 14, MC.dim, TEXT_ALIGN_CENTER)
+        txt("↑/↓ выбор • ENTER открыть • E продиктовать номер • BACKSPACE убрать", "GRMMob_M", w / 2, h - 14, MC.dim, TEXT_ALIGN_CENTER)
+    end
+    -- RP-обмен номерами: номер уходит в ЛОКАЛЬНЫЙ чат (/me радиусом),
+    -- как в GTA Online диктуют номер вслух — стоящий рядом запишет его в контакты.
+    local function dictateNumber()
+        local n = tostring(M.st.number or "")
+        if #n < 4 then
+            notification.AddLegacy("Номер ещё не выдан — достаньте телефон и подождите пару секунд", NOTIFY_HINT, 4)
+            return
+        end
+        RunConsoleCommand("say", "/me диктует свой мобильный номер: " .. n)
     end
     screenKey.home = function(btn)
         if btn == KEY_UP then M.sel = M.sel - 1 if M.sel < 1 then M.sel = #HOME_ROWS end
         elseif btn == KEY_DOWN then M.sel = M.sel + 1 if M.sel > #HOME_ROWS then M.sel = 1 end
+        elseif btn == KEY_E then dictateNumber()
         elseif btn == KEY_ENTER then
             local app = HOME_ROWS[M.sel]
             if app then
@@ -955,12 +966,15 @@ if CLIENT then
         local st = M.st
         local state = st.lineState or "idle"
         local num = st.otherNumber or "…"
-        txt(num, "GRMMob_B", w / 2, 130, MC.text, TEXT_ALIGN_CENTER)
+        txt(num, "GRMMob_B", w / 2, 118, MC.text, TEXT_ALIGN_CENTER)
+        if st.otherName and st.otherName ~= "" then
+            txt(st.otherName, "GRMMob_S", w / 2, 148, MC.dim, TEXT_ALIGN_CENTER)
+        end
         local lbl = state == "dialing" and "ВЫЗОВ…"
             or state == "ringing" and "ВХОДЯЩИЙ ВЫЗОВ"
             or state == "call" and ("РАЗГОВОР  " .. string.FormattedTime(M.callSec or 0, "%02i:%02i"))
             or "линия свободна"
-        txt(lbl, "GRMMob_S", w / 2, 172,
+        txt(lbl, "GRMMob_S", w / 2, 178,
             state == "call" and MC.green or state == "ringing" and MC.yellow or MC.dim, TEXT_ALIGN_CENTER)
         if state == "ringing" then
             txt("ENTER — ответить", "GRMMob_S", w / 2, h - 90, MC.green, TEXT_ALIGN_CENTER)
@@ -1353,12 +1367,15 @@ if CLIENT then
     hook.Add("HUDPaint", "GRM_Mob_Incoming", function()
         if M.open then return end
         if M.st.lineState ~= "ringing" then return end
-        local w, h = 300, 74
+        local w, h = 300, 88
         local x, y = ScrW() - w - 24, ScrH() - h - 160
         draw.RoundedBox(10, x, y, w, h, Color(12, 16, 24, 235))
-        txt("ВХОДЯЩИЙ ВЫЗОВ", "GRMMob_S", x + w / 2, y + 18, MC.yellow, TEXT_ALIGN_CENTER)
-        txt(tostring(M.st.otherNumber or "…"), "GRMMob_T", x + w / 2, y + 40, MC.text, TEXT_ALIGN_CENTER)
-        txt("ENTER — ответить  •  BACKSPACE — отклонить", "GRMMob_M", x + w / 2, y + 60, MC.dim, TEXT_ALIGN_CENTER)
+        txt("ВХОДЯЩИЙ ВЫЗОВ", "GRMMob_S", x + w / 2, y + 16, MC.yellow, TEXT_ALIGN_CENTER)
+        txt(tostring(M.st.otherNumber or "…"), "GRMMob_T", x + w / 2, y + 38, MC.text, TEXT_ALIGN_CENTER)
+        if M.st.otherName and M.st.otherName ~= "" then
+            txt(tostring(M.st.otherName), "GRMMob_X", x + w / 2, y + 58, MC.dim, TEXT_ALIGN_CENTER)
+        end
+        txt("ENTER — ответить  •  BACKSPACE — отклонить", "GRMMob_M", x + w / 2, y + 76, MC.dim, TEXT_ALIGN_CENTER)
     end)
 
     print("[GRM Mobile] Клиент v" .. MB.Version .. " загружен (стрелка ВВЕРХ — достать телефон)")
