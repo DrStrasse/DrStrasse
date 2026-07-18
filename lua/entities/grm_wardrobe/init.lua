@@ -72,17 +72,17 @@ function ENT:Initialize()
     local phys = self:GetPhysicsObject()
     if IsValid(phys) then phys:EnableMotion(false) end
 
+    -- восстановление конфига с диска (rec.cfg — единственный источник,
+    -- extraModels/hiddenModels лежат ВНУТРИ cfg, урок: не плодить копии)
     local rec = select(1, findCfgRec(self))
-    self._cfg = rec and rec.cfg or defaultCfg()
-    self._extra = rec and istable(rec.extra) and rec.extra or {}
-    self._hidden = rec and istable(rec.hidden) and rec.hidden or {}
+    self._cfg = (rec and istable(rec.cfg)) and table.Copy(rec.cfg) or defaultCfg()
+    self._cfg.extraModels  = istable(self._cfg.extraModels)  and self._cfg.extraModels  or {}
+    self._cfg.hiddenModels = istable(self._cfg.hiddenModels) and self._cfg.hiddenModels or {}
     self:SetCivilian(self._cfg.allowCivilian and 1 or 0)
     self:SetFaction(self._cfg.allowFaction and 1 or 0)
     self:SetSkin(self._cfg.allowSkin and 1 or 0)
     self:SetBodygroups(self._cfg.allowBodygroups and 1 or 0)
-    self.cfg = { allowCivilian = self._cfg.allowCivilian, allowFaction = self._cfg.allowFaction,
-                 allowSkin = self._cfg.allowSkin, allowBodygroups = self._cfg.allowBodygroups,
-                 extraModels = self._extra, hiddenModels = self._hidden }
+    self.cfg = table.Copy(self._cfg)
 end
 
 local function getCfg(ent)
@@ -133,6 +133,10 @@ end
 
 function ENT:Use(activator)
     if not IsValid(activator) or not activator:IsPlayer() then return end
+    -- антиспам E: не чаще раза в 0.8 c на игрока
+    local now = CurTime()
+    if (activator._grmWardrobeNext or 0) > now then return end
+    activator._grmWardrobeNext = now + 0.8
     if activator:GetPos():DistToSqr(self:GetPos()) > 200 * 200 then return end
     if not (GRM and GRM.Char and GRM.Char.BuildPayload) then return end
 

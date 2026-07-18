@@ -19,7 +19,7 @@ ENT.Category  = "GRM — RP"
 ENT.Spawnable = true
 ENT.AdminOnly = true
 
-ENT.Model = "models/props_c17/FurnitureLocker001a.mdl"
+ENT.Model = "models/props_interiors/FurnitureCabinetDrawer01a.mdl"
 
 function ENT:SetupDataTables()
     self:NetworkVar("Int", 0, "Civilian")  -- 0/1

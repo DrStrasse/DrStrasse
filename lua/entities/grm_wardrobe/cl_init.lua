@@ -35,7 +35,9 @@ function ENT:Draw()
     self:DrawModel()
     if LocalPlayer():GetPos():DistToSqr(self:GetPos()) > 300 * 300 then return end
     local ang = self:GetAngles()
-    local pos = self:GetPos() + ang:Up() * 82
+    -- табличка строго над шкафом: считаем высоту от габаритов модели
+    local maxs = self:OBBMaxs()
+    local pos = self:GetPos() + ang:Up() * ((maxs and maxs.z or 60) + 16)
     cam.Start3D2D(pos, Angle(0, LocalPlayer():EyeAngles().y - 90, 90), 0.08)
         draw.RoundedBox(6, -150, -30, 300, 60, Color(16, 20, 28, 220))
         surface.SetDrawColor(70, 150, 240, 230)

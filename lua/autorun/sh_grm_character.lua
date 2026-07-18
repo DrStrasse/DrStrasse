@@ -1,5 +1,6 @@
 --[[--------------------------------------------------------------------
-    GRM Identity Core v1.0.0 (Код 72) — Персонажи, RP-имена, регистрация
+    GRM Identity Core v1.1.0 (Код 72) — Персонажи, RP-имена, регистрация
+    v1.1.0: ширина меню удвоена (до 1880 px, адаптивно под экран).
     Ядро + точки расширения (патчи-провайдеры):
 
       - При КАЖДОМ входе игрок встречает меню персонажа:
@@ -28,7 +29,7 @@ GRM = GRM or {}
 GRM.Char = GRM.Char or {}
 local CH = GRM.Char
 
-CH.Version    = "1.0.0"
+CH.Version    = "1.1.0"
 CH.NameMin    = 3     -- минимальная длина RP-имени
 CH.NameMax    = 48
 CH.DataFile   = "grm_characters.json"
@@ -385,7 +386,11 @@ if CLIENT then
         local f = vgui.Create("DFrame")
         CH._frame = f
         f:SetTitle("")
-        f:SetSize(940, 620)
+        -- меню в два раза шире прежнего (940 → 1880), но не шире экрана
+        local fw = math.min(1880, ScrW() - 16)
+        local fh = math.min(620, ScrH() - 40)
+        local leftW = math.floor(fw * 0.52)
+        f:SetSize(fw, fh)
         f:Center()
         f:MakePopup()
         f:ShowCloseButton(false)
@@ -402,7 +407,7 @@ if CLIENT then
 
         local x = vgui.Create("DButton", f)
         x:SetText("X") x:SetFont("GRMChar_Title") x:SetTextColor(color_white)
-        x:SetPos(896, 8) x:SetSize(32, 28)
+        x:SetPos(fw - 44, 8) x:SetSize(32, 28)
         x.DoClick = function()
             if canClose() then f:Close() else surface.PlaySound("buttons/button10.wav") end
         end
@@ -412,7 +417,7 @@ if CLIENT then
         if payload.wardrobe and payload.isAdmin and payload.wardrobeEnt then
             local bCfg = mkBtn(f, "⚙ Настройка гардероба", C.yellow)
             bCfg:SetTextColor(Color(30, 28, 20))
-            bCfg:SetPos(560, 8) bCfg:SetSize(220, 28)
+            bCfg:SetPos(fw - 320, 8) bCfg:SetSize(220, 28)
             bCfg.DoClick = function()
                 net.Start("GRM_Wardrobe_CfgReq")
                     net.WriteUInt(tonumber(payload.wardrobeEnt) or 0, 16)
@@ -423,7 +428,7 @@ if CLIENT then
 
         -- ЛЕВАЯ КОЛОНКА: имя + провайдеры (список внешностей)
         local left = vgui.Create("DPanel", f)
-        left:Dock(LEFT) left:DockMargin(10, 54, 4, 10) left:SetWide(470)
+        left:Dock(LEFT) left:DockMargin(10, 54, 4, 10) left:SetWide(leftW)
         left:SetPaintBackground(false)
 
         local nameBox = vgui.Create("DPanel", left)
@@ -433,14 +438,14 @@ if CLIENT then
             draw.SimpleText("Игровое имя (RP Name)", "GRMChar_Sub", 10, 14, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
         local nameEntry = vgui.Create("DTextEntry", nameBox)
-        nameEntry:SetPos(10, 30) nameEntry:SetSize(330, 30)
+        nameEntry:SetPos(10, 30) nameEntry:SetSize(math.min(560, leftW - 30), 30)
         nameEntry:SetFont("GRMChar_Sub")
         nameEntry:SetPlaceholderText("Имя Фамилия")
         nameEntry:SetText(draft.name)
         nameEntry:SetUpdateOnType(true)
         nameEntry.OnChange = function() draft.name = nameEntry:GetValue() end
         local nameHint = vgui.Create("DLabel", nameBox)
-        nameHint:SetPos(10, 62) nameHint:SetSize(450, 20) nameHint:SetFont("GRMChar_Normal") nameHint:SetTextColor(C.dim)
+        nameHint:SetPos(10, 62) nameHint:SetSize(leftW - 20, 20) nameHint:SetFont("GRMChar_Normal") nameHint:SetTextColor(C.dim)
         local function updHint()
             local n = CH.ValidateName(draft.name)
             nameHint:SetText(n and ("OK: «" .. n .. "»") or ("Имя: мин. " .. (payload.nameMin or 3) .. " символа"))

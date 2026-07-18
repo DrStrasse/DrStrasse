@@ -42,7 +42,7 @@
 | 42 | `lua/autorun/sh_grm_currency.lua` | **Ядро валюты v2.0.2:** `GiveMoney/TakeMoney/HasMoney/GetBalance/SetBalance/Format/Notify`, JSON-персистентность |
 | 43 | `lua/autorun/sh_grm_economy.lua` | **Единая экономика v3.0.3:** бюджеты, налоги, зарплаты, штрафы `/fine`, банк-терминалы, зеркало по никам, склеивание ключей |
 | 44–46 | `lua/entities/grm_bank_terminal/` | **Банкомат** (`models/starless/atm.mdl`): личные счета, переводы, управление бюджетом фракций |
-| 47 | `lua/autorun/sh_grm_tab_menu.lua` | Tab-меню v1.8 (scoreboard): список игроков, фильтры, балансы, глушение голоса |
+| 47 | `lua/autorun/sh_grm_tab_menu.lua` | Tab-меню v1.9 (scoreboard): RP-имя вместо Steam-ника (стим мелкой строкой в карточке), список игроков, фильтры, балансы, глушение голоса |
 | 48 | `lua/autorun/client/cl_grm_hud.lua` | HUD v10.2: Здоровье/Броня, Наличные, Банк, Патроны, Селектор оружия, Уведомления |
 | 49 | `lua/autorun/client/cl_grm_inventory_ui.lua` | GUI инвентаря v2.1: сетка 6×4, Drag&Drop, детали предметов |
 | 50 | `lua/autorun/sh_grm_perm_entities.lua` | **Пермы энтити v1.1.0:** Закрепление банкоматов, телефонов, АТС, CCTV и сигнализаций на карте |
@@ -57,10 +57,10 @@
 | 68 | `lua/weapons/ds_lockpick/` | **QTE-Отмычка `ds_lockpick`:** интерактивный взлом запертых дверей и кейпадов с подбором пинов |
 | 69 | `lua/weapons/gmod_tool/stools/ffd_fading_door.lua` | **FFD Fading Door:** тулган создания исчезающих дверей с нумпадом, инверсией и авто-закрытием |
 | 70 | `lua/entities/grm_keypad/` | **FFD Keypad (`grm_keypad` & `ffd_keypad.lua`):** интерактивный кодовый замок с 3D2D экраном, PIN, фракционным доступом и платным проходом |
-| 71 | `lua/autorun/sh_grm_rpdesc.lua` | **RPDesc v2.0.0:** описания персонажей над головами, редактор `/rpdesc`, конвары grm_cl_rpdesc(+_dist), лимит 420 симв., анти-флуд всех |
-| 72 | `lua/autorun/sh_grm_character.lua` | **Ядро персонажей GRM Identity v1.0.0:** меню создания/выбора персонажа при КАЖДОМ входе, RP-имя (`/name`, NWString GRM_RPName), провайдер-патчи `RegisterProvider` (встроены гражданский+фракционный гардероб), синхрон с фракционным спавном, `/char` |
-| 73 | `lua/entities/grm_wardrobe/` + `server/sv_grm_wardrobe_spawn.lua` | **Гардероб:** E → меню внешности (фильтры: гражданское/фракция/скины/бодигруппы + особые и скрытые модели, настраивает суперадмин E→⚙), `/wardrobe_add` `/wardrobe_remove`, перм-класс grm_wardrobe, конфиг в data/grm_wardrobe/<map>.json |
-| 74 | `lua/autorun/sh_grm_f4menu.lua` | **F4-меню v1.0.0:** вкладки Профиль (RP-имя, персонаж, RPDesc, карточка) / Команды (шпаргалка 7 групп) / Настройки (выключатели HUD: RPDesc, двери, стамина, еда; дистанция RPDesc). F4 уступает дверям; `/menu` `/f4` |
+| 71 | `lua/autorun/sh_grm_rpdesc.lua` | **RPDesc v2.1.0:** RP-имя + описание над головой ВСЕМ (включая себя, 1-е/3-е лицо), редактор `/rpdesc`, конвары grm_cl_rpdesc(+_dist), лимит 420 симв., анти-флуд |
+| 72 | `lua/autorun/sh_grm_character.lua` | **Ядро персонажей GRM Identity v1.1.0:** меню при КАЖДОМ входе (ширина ×2), RP-имя (`/name`, NWString GRM_RPName), провайдер-патчи `RegisterProvider` (гражданский+фракционный гардероб), синхрон с фракционным спавном, `/char` |
+| 73 | `lua/entities/grm_wardrobe/` + `server/sv_grm_wardrobe_spawn.lua` | **Гардероб:** шкаф `props_interiors/FurnitureCabinetDrawer01a`, E → меню внешности (фильтры + особые/скрытые модели, суперадмин E→⚙), `/wardrobe_add` `/wardrobe_remove`, перм-класс grm_wardrobe, конфиг в data/grm_wardrobe/<map>.json (выживает рестарт) |
+| 74 | `lua/autorun/sh_grm_f4menu.lua` | **F4-меню v1.1.0:** вкладки Профиль (RP-имя, персонаж, RPDesc, карточка) / Команды (шпаргалка 7 групп) / Настройки (выключатели HUD: имена+описания, двери, стамина, еда; дистанция). F4 уступает дверям; `/menu` `/f4` |
 
 **Освежение v2 (в составе Кода 11):** `/models_admin` и `/weapons_admin` — живое превью модели (DAdjustableModelPanel, клик по строке), SpawnIcon в строках, каталог оружия с поиском и категориями (выбор кликом из всех SWEP'ов сервера), инфо-панель скина/бодигрупп.
 

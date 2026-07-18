@@ -1,5 +1,6 @@
 --[[--------------------------------------------------------------------
-    GRM F4 Menu v1.0.0 (Код 74) — Игровое меню на F4
+    GRM F4 Menu v1.1.0 (Код 74) — Игровое меню на F4
+    v1.1.0: подписи настроек отражают отрисовку RP-имён над головами (Код 71 v2.1.0).
       - «Профиль»: игровое имя (RP Name) со сменой, внешность (меню
         персонажа Код 72), описание персонажа (RPDesc Код 71),
         карточка (SteamID64, фракция/роль, баланс).
@@ -17,7 +18,7 @@ if not CLIENT then return end
 GRM = GRM or {}
 GRM.F4 = GRM.F4 or {}
 local F4 = GRM.F4
-F4.Version = "1.0.0"
+F4.Version = "1.1.0"
 
 surface.CreateFont("GRMF4_Title",  { font = "Roboto", size = 22, weight = 800, extended = true })
 surface.CreateFont("GRMF4_Sub",    { font = "Roboto", size = 15, weight = 600, extended = true })
@@ -226,14 +227,14 @@ local function buildSettingsTab(sc)
         return chk
     end
 
-    toggle(30,  "grm_cl_rpdesc",     "Описания персонажей над головами (RPDesc)")
+    toggle(30,  "grm_cl_rpdesc",     "Имена и описания персонажей над головами (RPDesc)")
     toggle(58,  "grm_cl_doorhud",    "3D2D-таблички дверей (владелец/замок)")
     toggle(86,  "grm_cl_staminahud", "Полоса выносливости (стамина)")
     toggle(114, "grm_cl_foodhud",    "Полоса сытости (еда)")
 
     local lbl = vgui.Create("DLabel", b)
     lbl:SetPos(14, 146) lbl:SetSize(300, 22) lbl:SetFont("GRMF4_Sub") lbl:SetTextColor(C.text)
-    lbl:SetText("Дистанция отрисовки RPDesc (юниты)")
+    lbl:SetText("Дистанция отрисовки имён и описаний (юниты)")
 
     local sl = vgui.Create("DNumSlider", b)
     sl:SetPos(10, 168) sl:SetSize(420, 30)

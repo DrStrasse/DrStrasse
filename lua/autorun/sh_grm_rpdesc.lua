@@ -1,5 +1,9 @@
 --[[--------------------------------------------------------------------
-    GRM RPDesc v2.0.0 (Код 71) — Описания персонажей (сервер + клиент)
+    GRM RPDesc v2.1.0 (Код 71) — Описания + игровые (RP) имена над головами
+    v2.1.0: над головой дополнительно рисуется ИГРОВОЕ имя персонажа
+      (NWString GRM_RPName из Кода 72) — всем игрокам, включая себя
+      (от первого и от третьего лица), над блоком описания; общая
+      дистанция отрисовки (grm_cl_rpdesc_dist).
     Освежение присланного владельцем модуля RPDesc:
       - Деманглирование web-вставки (HTML-сущности, markdown-ссылки);
       - Хранение на сервере (rpdescs.json — формат СОВМЕСТИМ со старым);
@@ -22,7 +26,7 @@ local RD = GRM.RPDesc
 RD.MaxLength   = 420    -- жёсткий лимит символов на сервере
 RD.DrawDist    = 200    -- стандартный радиус отрисовки (юниты)
 RD.MaxLines    = 7      -- максимум строк над головой
-RD.Version     = "2.0.0"
+RD.Version     = "2.1.0"
 
 local DESC_FILE = "rpdescs.json"
 
@@ -129,6 +133,7 @@ if CLIENT then
         antialias = true, extended = true,
     })
     surface.CreateFont("GRM_RPDesc_TitleF", { font = "Roboto", size = 18, weight = 800, extended = true })
+    surface.CreateFont("GRM_RPName_Font",   { font = "Roboto", size = 19, weight = 800, antialias = true, extended = true })
 
     -- запрос синхронизации при старте и подключении
     net.Start("RPDesc_RequestSync") net.SendToServer()
@@ -304,27 +309,36 @@ if CLIENT then
         local maxWidth, pad = 300, 6
         surface.SetFont("GRM_RPDesc_Font")
         local _, lineH = surface.GetTextSize("A")
+        surface.SetFont("GRM_RPName_Font")
+        local _, nameH = surface.GetTextSize("A")
 
         for _, ply in ipairs(player.GetAll()) do
             if IsValid(ply) and ply:Alive() then
-                local desc = descriptions[ply:SteamID()]
-                if desc and desc ~= "" then
-                    local isSelf = (ply == lp)
-                    local alpha = 255
-                    local d = lp:GetPos():Distance(ply:GetPos())
-                    if isSelf then
-                        alpha = 200
-                    else
-                        if d > maxDist then continue end
-                        alpha = math.Clamp(255 * (1.15 - d / maxDist), 60, 255)
-                    end
+                local rname = string.Trim(tostring(ply:GetNWString("GRM_RPName", "") or ""))
+                local desc = descriptions[ply:SteamID()] or ""
+                if rname == "" and desc == "" then continue end
 
-                    local pos = ply:GetPos() + Vector(0, 0, 80)
-                    local sp = pos:ToScreen()
-                    if not sp.visible then continue end
+                local isSelf = (ply == lp)
+                local alpha = 255
+                local d = lp:GetPos():Distance(ply:GetPos())
+                if isSelf then
+                    alpha = 200 -- себе показываем всегда (запрос владельца)
+                else
+                    if d > maxDist then continue end
+                    alpha = math.Clamp(255 * (1.15 - d / maxDist), 60, 255)
+                end
 
+                local pos = ply:GetPos() + Vector(0, 0, 80)
+                local sp = pos:ToScreen()
+                if not sp.visible then continue end
+
+                local topY = sp.y -- верх всего блока; имя уедет ещё выше
+
+                -- описание (нижний блок, ближе к голове)
+                if desc ~= "" then
                     local lines = wrapText(desc, maxWidth)
                     if #lines > 0 then
+                        surface.SetFont("GRM_RPDesc_Font")
                         local boxW = 0
                         for _, ln in ipairs(lines) do
                             local w = surface.GetTextSize(ln) or 0
@@ -341,7 +355,20 @@ if CLIENT then
                         for i, ln in ipairs(lines) do
                             draw.SimpleText(ln, "GRM_RPDesc_Font", sp.x, by + pad + (i - 1) * (lineH + 2), Color(235, 240, 248, alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
                         end
+                        topY = by
                     end
+                end
+
+                -- игровое (RP) имя — самый верхний блок, золотая плашка
+                if rname ~= "" then
+                    surface.SetFont("GRM_RPName_Font")
+                    local nw = surface.GetTextSize(rname) or 0
+                    local nbW, nbH = nw + 22, nameH + 8
+                    local nx, ny = sp.x - nbW / 2, topY - nbH - 4
+                    draw.RoundedBox(6, nx, ny, nbW, nbH, Color(12, 16, 24, alpha * 0.85))
+                    surface.SetDrawColor(230, 190, 80, alpha * 0.85)
+                    surface.DrawOutlinedRect(nx, ny, nbW, nbH, 1)
+                    draw.SimpleText(rname, "GRM_RPName_Font", sp.x, ny + 4, Color(255, 226, 140, alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
                 end
             end
         end
