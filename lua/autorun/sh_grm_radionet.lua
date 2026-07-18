@@ -45,9 +45,27 @@
     pairs() (находка 100). Легаси-хук ш_grм_broadcast самоотключается,
     пока RadioNet в сборке.
 
-    Спавн (суперадмин): /rack_add /antenna_add /rstation_add (+_remove),
-    диагностика: /rn_status. Автоперсистентность: grm_rnents/<map>.json
-    (аналог Кода 75, антидубль при рестарте).
+    КОД 87 (v1.1.0) — NetSys: ИДЕНТИФИКАЦИЯ И ТОЧЕЧНАЯ МАРШРУТИЗАЦИЯ.
+    Каждая железка сети получает позывной (RAX/ANT/RST/MIC/SPK/RAD/CON-001…)
+    и попадает в реестр (grm_rnsys/<map>.json, переживает рестарт —
+    «воскрешение» записей по позиции). Через ПУЛЬТ РАДИОСЕТИ
+    (grm_net_console — компьютер, работает у АКТИВНОЙ стойки; суперадмин):
+      • список устройств с состоянием/позицией — вкл/выкл ВЫВОД любой
+        железки точечно (антенна гаснет — её круг покрытия схлопывается,
+        громкоговоритель замолкает, приёмник глохнет, стойка вынимается
+        из ядра);
+      • ГРУППЫ устройств (напр. «Север»): оповещение /alert с пульта
+        идёт на конкретную группу громкоговорителей ИЛИ на весь город;
+      • цель ГРОМКОЙ СВЯЗИ микрофона: его голос звучит только из
+        громкоговорителей выбранной группы;
+      • ПЕЛЕНГ: дистанция/азимут/качество сигнала от пульта до каждого
+        устройства; ЖУРНАЛ событий (кто/что/позиция/качество; передачи
+        эфира, громкой связи, мегафона, оповещения, переключения) —
+        /rn_log печатает последние 12.
+
+    Спавн (суперадмин): /rack_add /antenna_add /rstation_add /console_add
+    (+_remove), диагностика: /rn_status. Автоперсистентность:
+    grm_rnents/<map>.json (аналог Кода 75, антидубль при рестарте).
 ----------------------------------------------------------------------]]
 
 if SERVER then AddCSLuaFile() end
@@ -56,7 +74,7 @@ GRM = GRM or {}
 GRM.RadioNet = GRM.RadioNet or {}
 local RN = GRM.RadioNet
 
-RN.Version    = "1.0.0"
+RN.Version    = "1.1.0"  -- Код 87: NetSys — пульт/реестр/группы/пеленг/журнал
 
 -- настройки сети (юниты = юниты Source; ~40 юн = 1 м)
 RN.LinkDist     = 700    -- радиус связывания оборудования со стойкой
@@ -68,20 +86,46 @@ RN.SpeakerRadius = 700   -- радиус слышимости громкогов
 RN.MegaRange    = 1600   -- дальность мегафона
 RN.PAQuality    = 0.85   -- «металлическая» громкая связь: базовое качество
 RN.MegaQuality  = 0.92   -- качество мегафона
+RN.LogCap       = 150    -- глубина журнала событий радиосети
 
-local NET_FX = "GRM_RN_FX"
+local NET_FX   = "GRM_RN_FX"
+local NET_OPEN = "GRM_RN_NetOpen"  -- пульт: сервер → клиент (снапшот)
+local NET_OP   = "GRM_RN_NetOp"    -- пульт: клиент → сервер (операции)
+
+-- Реестр устройств (Код 87): каждая сетевая железка получает личный
+-- позывной (RAX-001 стойки, ANT-001 антенны, RST-001 передатчики,
+-- MIC-001 микрофоны, SPK-001 громкоговорители, RAD-001 приёмники,
+-- CON-001 пульты). Идентификация, точечное включение/отключение,
+-- группы (вывод на «свой сектор» или на весь город), пеленг (дистанция/
+-- азимут/качество от пульта) и журнал событий — через пульт
+-- grm_net_console (E по компьютеру рядом с АКТИВНОЙ стойкой).
+RN.Kinds = {
+    grm_server_rack    = { k = "rack",    p = "RAX", label = "Стойка" },
+    grm_antenna        = { k = "antenna", p = "ANT", label = "Антенна" },
+    grm_radio_station  = { k = "station", p = "RST", label = "Передатчик" },
+    grm_broadcast_mic  = { k = "mic",     p = "MIC", label = "Микрофон" },
+    grm_loudspeaker    = { k = "speaker", p = "SPK", label = "Громкоговоритель" },
+    grm_radio          = { k = "radio",   p = "RAD", label = "Радиоприёмник" },
+    grm_net_console    = { k = "console", p = "CON", label = "Пульт" },
+}
 
 -- ============================================================
 -- СЕРВЕР
 -- ============================================================
 if SERVER then
     util.AddNetworkString(NET_FX)
+    util.AddNetworkString(NET_OPEN)
+    util.AddNetworkString(NET_OP)
 
     -- форвард-декларации (урок 97-хотфикса: замыкания выше объявлений)
     local recompute
     local paVoiceHear
     local radioVoiceHear
     local notifyFx
+    local deviceOnForEnt
+    local deviceInGroupForEnt
+    local logEvent
+    local consoleOpen
 
     ----------------------------------------------------------------
     -- Пересчёт топологии сети (кэш для дешёвых запросов голоса)
@@ -124,17 +168,21 @@ if SERVER then
         return RN.QualityAt(pos) >= RN.CoverMinQ
     end
 
-    -- громкоговоритель в сети: рядом активная стойка ИЛИ точка в покрытии
+    -- громкоговоритель в сети: рядом активная стойка ИЛИ точка в покрытии;
+    -- Код 87: пульт может точечно снять устройство с эфира (rec.off)
     function RN.SpeakerActive(spk)
         if not IsValid(spk) then return false end
+        if deviceOnForEnt and not deviceOnForEnt(spk) then return false end
         local pos = spk:GetPos()
         if nearActiveRack(pos, RN.LinkDist) then return true end
         return RN.CoveredAt(pos)
     end
 
-    -- радиоприёмник ловит станцию только в покрытии антенн
+    -- радиоприёмник ловит станцию только в покрытии антенн (+ тот же
+    -- точечный запрет с пульта)
     function RN.ReceiverOK(radioEnt)
         if not IsValid(radioEnt) then return false end
+        if deviceOnForEnt and not deviceOnForEnt(radioEnt) then return false end
         return RN.CoveredAt(radioEnt:GetPos())
     end
 
@@ -202,11 +250,16 @@ if SERVER then
     end
 
     -- громкая связь: слушатель рядом с СЕТЕВЫМ громкоговорителем —
-    -- голос звучит усиленно (не 3D) и слегка «хрипит»
-    paVoiceHear = function(listener)
+    -- голос звучит усиленно (не 3D) и слегка «хрипит».
+    -- Код 87: микрофону пультом назначается цель (группа) — тогда
+    -- громкая связь звучит только из громкоговорителей этой группы.
+    paVoiceHear = function(listener, mic)
+        local target = (IsValid(mic) and mic:GetNWString("GRM_RN_Target", "")) or ""
         local rr = RN.SpeakerRadius
         for _, s in ipairs(ents.FindByClass("grm_loudspeaker")) do
-            if RN.SpeakerActive(s) and listener:GetPos():DistToSqr(s:GetPos()) <= rr * rr then
+            if RN.SpeakerActive(s)
+                and (target == "" or (deviceInGroupForEnt and deviceInGroupForEnt(s, target)))
+                and listener:GetPos():DistToSqr(s:GetPos()) <= rr * rr then
                 if RN.Drop(listener:EntIndex() + 3, RN.PAQuality) then return nil end
                 return true
             end
@@ -227,7 +280,7 @@ if SERVER then
         local mic = speaker._grmBCMic
         if IsValid(mic) and mic.BCLive and mic.BCSpeaker == speaker then
             if mic:GetNWBool("GRM_BC_PA", false) then
-                local r = paVoiceHear(listener)
+                local r = paVoiceHear(listener, mic)
                 if r ~= nil then
                     speaker._rnTxSeen = now speaker._rnFx = "pa"
                     return r, false
@@ -300,9 +353,19 @@ if SERVER then
                     if kind then
                         notifyFx(ply, kind, true)
                         if kind == "pa" then paRelayClicks(true) end
+                        local n = ply.GetNWString and ply:GetNWString("GRM_RPName", "") or ""
+                        if n == "" then n = ply:Nick() end
+                        if logEvent then
+                            logEvent("tx_" .. tostring(kind), n, ply:SteamID64(), ply:GetPos(),
+                                kind == "radio" and "эфир микрофона начат" or kind == "pa" and "ГРОМКАЯ СВЯЗЬ начата" or "мегафон включён")
+                        end
                     else
                         notifyFx(ply, RN._fxLastKind[ply] or "radio", false)
                         if RN._fxLastKind[ply] == "pa" then paRelayClicks(false) end
+                        if logEvent then
+                            logEvent("tx_end", ply:Nick(), ply:SteamID64(), ply:GetPos(),
+                                "передача «" .. tostring(RN._fxLastKind[ply] or "radio") .. "» завершена")
+                        end
                     end
                     RN._fxState[ply] = kind
                 end
@@ -314,7 +377,7 @@ if SERVER then
     ----------------------------------------------------------------
     -- Автоперсистентность энтити сети (паттерн Кода 75)
     ----------------------------------------------------------------
-    local PERSIST_CLASSES = { grm_server_rack = true, grm_antenna = true, grm_radio_station = true }
+    local PERSIST_CLASSES = { grm_server_rack = true, grm_antenna = true, grm_radio_station = true, grm_net_console = true }
     local function jsonT(txt)
         local ok, t = pcall(util.JSONToTable, txt, false, true)
         return (ok and istable(t)) and t or nil
@@ -393,14 +456,323 @@ if SERVER then
     end)
 
     ----------------------------------------------------------------
+    -- Код 87 — NetSys: реестр устройств (идентификация), группы,
+    -- точечное включение/маршрутизация, пеленг и журнал событий.
+    -- Хранение: grm_rnsys/<map>.json (jsonT с 3-м аргументом, н65).
+    ----------------------------------------------------------------
+    local function sysFile()
+        if not file.IsDir("grm_rnsys", "DATA") then file.CreateDir("grm_rnsys") end
+        return "grm_rnsys/" .. string.lower(game.GetMap() or "unknown") .. ".json"
+    end
+    RN.Sys = RN.Sys or {}
+    local function loadSys()
+        local t = jsonT(file.Read(sysFile(), "DATA") or "")
+        RN.Sys.next    = (istable(t) and istable(t.next))    and t.next    or {}
+        RN.Sys.devices = (istable(t) and istable(t.devices)) and t.devices or {}
+        RN.Sys.log     = (istable(t) and istable(t.log))     and t.log     or {}
+    end
+    function RN.SysSave(reason)
+        local ok, txt = pcall(util.TableToJSON, {
+            next = RN.Sys.next or {}, devices = RN.Sys.devices or {}, log = RN.Sys.log or {},
+        }, true)
+        if ok and txt then
+            file.Write(sysFile(), txt)
+            local rb = file.Read(sysFile(), "DATA")
+            print("[GRM RadioNet] SYS SAVE ok (" .. tostring(reason or "?") .. "), устройств: "
+                .. tostring(table.Count(RN.Sys.devices or {})) .. ", журнал: "
+                .. tostring(#(RN.Sys.log or {})) .. ", read-back: " .. tostring(rb ~= nil))
+        end
+    end
+    loadSys()
+
+    -- журнал событий с пеленгом (позиция + качество канала в точке)
+    RN._logDirty = false
+    logEvent = function(kind, who, sid64, pos, note)
+        local q, px, py, pz = 0, 0, 0, 0
+        if pos then
+            px = math.floor((pos.x or 0) + 0.5) py = math.floor((pos.y or 0) + 0.5) pz = math.floor((pos.z or 0) + 0.5)
+            q = math.floor(RN.QualityAt(pos) * 100 + 0.5)
+        end
+        local log = RN.Sys.log
+        log[#log + 1] = { ts = os.time(), kind = tostring(kind or "?"), who = tostring(who or "?"),
+            sid64 = tostring(sid64 or ""), x = px, y = py, z = pz, q = q, note = tostring(note or "") }
+        while #log > RN.LogCap do table.remove(log, 1) end
+        RN._logDirty = true -- сброс на диск таймером: события могут быть частыми
+    end
+    RN.LogEvent = logEvent
+    timer.Create("GRM_RN_LogFlush", 2, 0, function()
+        if RN._logDirty then RN._logDirty = false RN.SysSave("журнал событий") end
+    end)
+    function RN.LogTail(n)
+        local out, log = {}, RN.Sys.log or {}
+        local from = math.max(1, #log - (n or 12) + 1)
+        for i = from, #log do out[#out + 1] = log[i] end
+        return out
+    end
+
+    -- регистрация: позывной каждой железке; «воскрешение» записи после
+    -- рестарта по ближайшей незанятой позиции того же вида (≤32 юн)
+    RN._id2ent = {}
+    local function registerDevices()
+        local seen, id2ent = {}, {}
+        for class, meta in pairs(RN.Kinds) do
+            for _, e in ipairs(ents.FindByClass(class)) do
+                if IsValid(e) then
+                    local epos = e:GetPos()
+                    local id = e:GetNWString("GRM_NetID", "")
+                    if id ~= "" then
+                        local rec = RN.Sys.devices[id]
+                        if (not istable(rec)) or rec.kind ~= meta.k or seen[id] then id = "" end
+                    end
+                    if id == "" then
+                        local bestD = 32 * 32 + 1
+                        for did, rec in pairs(RN.Sys.devices) do
+                            if rec.kind == meta.k and not seen[did] and istable(rec.pos) then
+                                local dx = (rec.pos.x or 0) - epos.x
+                                local dy = (rec.pos.y or 0) - epos.y
+                                local dz = (rec.pos.z or 0) - epos.z
+                                local d2 = dx * dx + dy * dy + dz * dz
+                                if d2 < bestD then id = did bestD = d2 end
+                            end
+                        end
+                        if not istable(RN.Sys.devices[id or ""]) then id = "" end
+                    end
+                    if id == "" then
+                        local n = tonumber(RN.Sys.next[meta.p]) or 1
+                        repeat
+                            id = meta.p .. "-" .. string.format("%03d", n)
+                            n = n + 1
+                        until not RN.Sys.devices[id]
+                        RN.Sys.next[meta.p] = n
+                        RN.Sys.devices[id] = { id = id, kind = meta.k, pos = {}, off = false, groups = {}, born = os.time() }
+                        RN.SysSave("реестр: новое устройство " .. id)
+                    end
+                    local rec = RN.Sys.devices[id]
+                    seen[id] = true
+                    rec.pos = { x = math.floor(epos.x + 0.5), y = math.floor(epos.y + 0.5), z = math.floor(epos.z + 0.5) }
+                    rec.lastSeen = os.time()
+                    rec.groups = istable(rec.groups) and rec.groups or {}
+                    if e:GetNWString("GRM_NetID", "") ~= id then e:SetNWString("GRM_NetID", id) end
+                    if meta.k == "mic" then
+                        local tg = tostring(rec.paTarget or "")
+                        if e:GetNWString("GRM_RN_Target", "") ~= tg then e:SetNWString("GRM_RN_Target", tg) end
+                    end
+                    id2ent[id] = e
+                end
+            end
+        end
+        RN._id2ent = id2ent
+        return seen
+    end
+    RN._RegisterDevices = registerDevices -- экспорт для стенда
+
+    -- пультный выключатель устройства (nil-устойчиво: до назначения id не душим)
+    deviceOnForEnt = function(ent)
+        if not IsValid(ent) then return false end
+        local id = ent:GetNWString("GRM_NetID", "")
+        if id == "" then return true end
+        local rec = RN.Sys.devices[id]
+        return not (istable(rec) and rec.off == true)
+    end
+    deviceInGroupForEnt = function(ent, group)
+        if not IsValid(ent) then return false end
+        local id = ent:GetNWString("GRM_NetID", "")
+        local rec = id ~= "" and RN.Sys.devices[id] or nil
+        return istable(rec) and istable(rec.groups) and rec.groups[group] == true
+    end
+    RN.DeviceOnForEnt = deviceOnForEnt
+    RN.DeviceInGroupForEnt = deviceInGroupForEnt
+    function RN.DeviceId(ent) return IsValid(ent) and ent:GetNWString("GRM_NetID", "") or "" end
+
+    -- пульт радиосети ---------------------------------------------------
+    local function consoleLinked(con)
+        return IsValid(con) and nearActiveRack(con:GetPos(), RN.LinkDist)
+    end
+    local function bearingOf(from, to)
+        local dx = (to.x or 0) - from.x
+        local dy = (to.y or 0) - from.y
+        local dz = (to.z or 0) - from.z
+        local ang = math.deg(math.atan2(dy, dx))
+        if ang < 0 then ang = ang + 360 end
+        return math.floor(math.sqrt(dx * dx + dy * dy + dz * dz) + 0.5), math.floor(ang + 0.5)
+    end
+    local function deviceNetState(rec, e)
+        if not IsValid(e) then return "призрак (запись без железа)" end
+        local k = rec.kind
+        if k == "rack" then return e:GetNWBool("GRM_RN_On", true) and "ядро ВКЛ" or "питание ВЫКЛ" end
+        if k == "antenna" then return e:GetNWBool("GRM_RN_Linked", false) and "усиливает сеть" or "нет стойки рядом" end
+        if k == "station" then return e:GetNWBool("GRM_RN_Online", false) and "в сети" or "вне сети" end
+        if k == "mic" then
+            local l = RN.MicLink(e)
+            return l >= 2 and "в сети" or (l == 1 and "передатчик ВНЕ сети" or "голый — эфира не будет")
+        end
+        if k == "speaker" then return RN.SpeakerActive(e) and "в сети" or "вне сети" end
+        if k == "radio" then return RN.ReceiverOK(e) and "покрытие OK" or "вне покрытия" end
+        if k == "console" then return consoleLinked(e) and "в сети" or "нет стойки рядом" end
+        return "?"
+    end
+
+    consoleOpen = function(ply, con)
+        if not IsValid(ply) or not IsValid(con) then return end
+        if not ply:IsSuperAdmin() then
+            if GRM.Notify then GRM.Notify(ply, "Доступ к пульту радиосети — только у суперадмина.", 255, 140, 110) end
+            return
+        end
+        if not consoleLinked(con) then
+            if GRM.Notify then GRM.Notify(ply, "Пульт ВНЕ СЕТИ: рядом нет АКТИВНОЙ серверной стойки (радиус связи " .. tostring(RN.LinkDist) .. " юн).", 255, 140, 110) end
+            return
+        end
+        recompute()
+        local cpos = con:GetPos()
+        local devs, groups, gset = {}, {}, {}
+        for id, rec in pairs(RN.Sys.devices) do
+            local e = RN._id2ent[id]
+            local dist, az, q = 0, 0, 0
+            if istable(rec.pos) then
+                dist, az = bearingOf(cpos, rec.pos)
+                q = math.floor(RN.QualityAt(Vector(rec.pos.x or 0, rec.pos.y or 0, rec.pos.z or 0)) * 100 + 0.5)
+            end
+            local glist = {}
+            for g in pairs(rec.groups or {}) do
+                glist[#glist + 1] = g
+                if not gset[g] then gset[g] = true groups[#groups + 1] = g end
+            end
+            table.sort(glist)
+            local label
+            for _, meta in pairs(RN.Kinds) do if meta.k == rec.kind then label = meta.label break end end
+            devs[#devs + 1] = {
+                id = id, kind = rec.kind, label = label or rec.kind,
+                alive = IsValid(e), off = rec.off == true,
+                state = deviceNetState(rec, e),
+                x = rec.pos and rec.pos.x or 0, y = rec.pos and rec.pos.y or 0, z = rec.pos and rec.pos.z or 0,
+                dist = dist, az = az, q = q,
+                groups = table.concat(glist, ", "),
+                paTarget = rec.kind == "mic" and tostring(rec.paTarget or "") or nil,
+                lastSeen = tonumber(rec.lastSeen) or 0,
+            }
+        end
+        table.sort(devs, function(a, b) return tostring(a.id) < tostring(b.id) end)
+        table.sort(groups)
+        net.Start(NET_OPEN)
+            net.WriteUInt(con:EntIndex(), 16)
+            net.WriteTable({ idx = con:EntIndex(), devices = devs, groups = groups, log = RN.LogTail(RN.LogCap) })
+        net.Send(ply)
+    end
+    RN.ConsoleOpen = consoleOpen
+
+    -- операции пульта (всё перевалидируется: права + живая связь пульта)
+    net.Receive(NET_OP, function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        local con = Entity(net.ReadUInt(16))
+        local op = tostring(net.ReadString() or "")
+        local a = net.ReadTable()
+        if not istable(a) or not IsValid(con) or con:GetClass() ~= "grm_net_console" then return end
+        if not consoleLinked(con) then
+            if GRM.Notify then GRM.Notify(ply, "Пульт вне сети — операция отклонена.", 255, 140, 110) end
+            return
+        end
+
+        if op == "refresh" then consoleOpen(ply, con) return end
+
+        if op == "toggle" then
+            local id = tostring(a.id or "")
+            local rec = RN.Sys.devices[id]
+            if not istable(rec) then return end
+            local e = RN._id2ent[id]
+            if rec.kind == "console" and IsValid(e) and e == con then
+                if GRM.Notify then GRM.Notify(ply, "Пульт нельзя отключить сам у себя.", 255, 200, 120) end
+                return
+            end
+            rec.off = not (rec.off == true)
+            RN.SysSave("toggle " .. id)
+            recompute()
+            logEvent("dev_switch", ply:Nick(), ply:SteamID64(), IsValid(e) and e:GetPos() or nil,
+                rec.off and ("вывод устройства " .. id .. " ВЫКЛЮЧЕН пультом") or ("вывод " .. id .. " возвращён"))
+            consoleOpen(ply, con)
+            return
+        end
+
+        if op == "assign" then
+            local id = tostring(a.id or "")
+            local g = string.sub(string.Trim(tostring(a.group or "")), 1, 24)
+            local rec = RN.Sys.devices[id]
+            if not istable(rec) or g == "" then return end
+            rec.groups = istable(rec.groups) and rec.groups or {}
+            if a.on == true then rec.groups[g] = true else rec.groups[g] = nil end
+            RN.SysSave("группа " .. id .. " → «" .. g .. "» " .. tostring(a.on == true))
+            consoleOpen(ply, con)
+            return
+        end
+
+        if op == "group_del" then
+            local g = tostring(a.group or "")
+            local n = 0
+            for _, rec in pairs(RN.Sys.devices) do
+                if istable(rec.groups) and rec.groups[g] == true then rec.groups[g] = nil n = n + 1 end
+            end
+            RN.SysSave("группа «" .. g .. "» удалена (снято устройств: " .. n .. ")")
+            consoleOpen(ply, con)
+            return
+        end
+
+        if op == "dev_del" then
+            local id = tostring(a.id or "")
+            if IsValid(RN._id2ent[id]) then return end -- живое устройство не выкидываем
+            if RN.Sys.devices[id] then
+                RN.Sys.devices[id] = nil
+                RN.SysSave("запись " .. id .. " удалена")
+            end
+            consoleOpen(ply, con)
+            return
+        end
+
+        if op == "mic_target" then
+            local id = tostring(a.id or "")
+            local rec = RN.Sys.devices[id]
+            if not istable(rec) or rec.kind ~= "mic" then return end
+            local g = string.sub(string.Trim(tostring(a.group or "")), 1, 24)
+            rec.paTarget = (g ~= "") and g or nil
+            local e = RN._id2ent[id]
+            if IsValid(e) then e:SetNWString("GRM_RN_Target", rec.paTarget or "") end
+            RN.SysSave("цель ГРОМКОЙ СВЯЗИ " .. id .. " = " .. (rec.paTarget or "весь город"))
+            consoleOpen(ply, con)
+            return
+        end
+
+        if op == "alert" then
+            local text = string.sub(string.Trim(tostring(a.text or "")), 1, 240)
+            if #text < 3 then
+                if GRM.Notify then GRM.Notify(ply, "Текст оповещения короче 3 символов.", 255, 140, 110) end
+                return
+            end
+            if not (GRM.Broadcast and GRM.Broadcast.SendAlert) then return end
+            local target = string.sub(string.Trim(tostring(a.target or "")), 1, 24)
+            local name = ply:GetNWString("GRM_RPName", "")
+            if name == "" then name = ply:Nick() end
+            local okA, msg = GRM.Broadcast.SendAlert(name, text, false, ply, target ~= "" and target or nil)
+            if GRM.Notify then GRM.Notify(ply, tostring(msg or (okA and "Оповещение отправлено" or "Ошибка оповещения")), okA and 120 or 255, okA and 220 or 140, 110) end
+            consoleOpen(ply, con)
+            return
+        end
+
+        if op == "log_clear" then
+            RN.Sys.log = {}
+            RN.SysSave("журнал очищен")
+            consoleOpen(ply, con)
+            return
+        end
+    end)
+
+    ----------------------------------------------------------------
     -- Периодический пересчёт сети
     ----------------------------------------------------------------
     recompute = function()
+        registerDevices()  -- Код 87: позывные/реестр прежде топологии
         local racks = ents.FindByClass("grm_server_rack")
         RN._racks = racks
         local active = {}
         for _, r in ipairs(racks) do
-            if IsValid(r) and r:GetNWBool("GRM_RN_On", true) then active[#active + 1] = r end
+            if IsValid(r) and r:GetNWBool("GRM_RN_On", true) and deviceOnForEnt(r) then active[#active + 1] = r end
         end
         RN._activeRacks = active
 
@@ -410,7 +782,7 @@ if SERVER then
         local ants, linked = ents.FindByClass("grm_antenna"), 0
         for _, a in ipairs(ants) do
             if IsValid(a) then
-                local isL = nearActiveRack(a:GetPos(), RN.LinkDist)
+                local isL = nearActiveRack(a:GetPos(), RN.LinkDist) and deviceOnForEnt(a)
                 if a:GetNWBool("GRM_RN_Linked", false) ~= isL then a:SetNWBool("GRM_RN_Linked", isL) end
                 if isL then
                     linked = linked + 1
@@ -434,6 +806,12 @@ if SERVER then
                 if st:GetNWBool("GRM_RN_Online", false) ~= on then st:SetNWBool("GRM_RN_Online", on) end
             end
         end
+        for _, c in ipairs(ents.FindByClass("grm_net_console")) do
+            if IsValid(c) then
+                local on = nearActiveRack(c:GetPos(), RN.LinkDist)
+                if c:GetNWBool("GRM_RN_Online", false) ~= on then c:SetNWBool("GRM_RN_Online", on) end
+            end
+        end
     end
     RN.Recompute = recompute
     timer.Create("GRM_RN_Watch", 0.7, 0, recompute)
@@ -455,12 +833,22 @@ if SERVER then
         local stOn = 0
         for _, s in ipairs(stations) do if nearActiveRack(s:GetPos(), RN.LinkDist) then stOn = stOn + 1 end end
         local racksOn = #RN._activeRacks
+        local devTotal, devOff, conOn = 0, 0, 0
+        for _, rec in pairs(RN.Sys and RN.Sys.devices or {}) do
+            devTotal = devTotal + 1
+            if rec.off == true then devOff = devOff + 1 end
+        end
+        for _, c in ipairs(ents.FindByClass("grm_net_console")) do
+            if c:GetNWBool("GRM_RN_Online", false) then conOn = conOn + 1 end
+        end
         return {
             "Стойки: " .. tostring(racksOn) .. "/" .. tostring(#(RN._racks or {})) .. " активны (питание — клавиша E)",
             "Антенны: " .. tostring(RN._antsLinked) .. "/" .. tostring(RN._antsTotal) .. " связаны со стойками (радиус связи " .. RN.LinkDist .. ", покрытие антенны " .. RN.AntennaRange .. " юн)",
             "Передатчики в сети: " .. tostring(stOn) .. "/" .. tostring(#stations),
             "Микрофоны: в сети " .. tostring(m2) .. ", передатчик вне сети " .. tostring(m1) .. ", голых " .. tostring(#mics - m2 - m1),
             "Громкоговорители в сети: " .. tostring(spkOn) .. "/" .. tostring(#spk),
+            "Реестр: " .. tostring(devTotal) .. " устройств с позывными (отключено пультом: " .. tostring(devOff) .. "); пультов в сети: " .. tostring(conOn) .. " (/console_add)",
+            "Журнал событий: " .. tostring(#(RN.Sys and RN.Sys.log or {})) .. " записей (/rn_log — последние 12)",
             "Покрытие: " .. tostring(#(RN._coverage or {})) .. " кругов (стойка " .. RN.RackRange .. " юн, антенна " .. RN.AntennaRange .. " юн); рация вне сети — " .. RN.DirectRadio .. " юн напрямую",
         }
     end
@@ -487,8 +875,9 @@ if SERVER then
         if class == "grm_server_rack" then nt:SetNWBool("GRM_RN_On", true) end
         RN.PersistAdd(nt)
         recompute()
-        ply:PrintMessage(HUD_PRINTTALK, "[" .. label .. "] Установлен и СОХРАНЁН на карте автоматически. Снять: /" ..
-            (class == "grm_server_rack" and "rack" or class == "grm_antenna" and "antenna" or "rstation") .. "_remove прицелом.")
+        local rmCmd = ({ grm_server_rack = "rack_remove", grm_antenna = "antenna_remove",
+            grm_radio_station = "rstation_remove", grm_net_console = "console_remove" })[class] or "rstation_remove"
+        ply:PrintMessage(HUD_PRINTTALK, "[" .. label .. "] Установлен и СОХРАНЁН на карте автоматически. Снять: /" .. rmCmd .. " прицелом.")
         if GRM.Notify then GRM.Notify(ply, label .. " установлен (персистентно).", 100, 220, 100) end
     end
     local function removeAtAim(ply, class, label)
@@ -527,6 +916,20 @@ if SERVER then
         if low == "/antenna_remove" then removeAtAim(ply, "grm_antenna", "Антенна") return true end
         if low == "/rstation_add" then spawnAtAim(ply, "grm_radio_station", "Радиопередатчик") return true end
         if low == "/rstation_remove" then removeAtAim(ply, "grm_radio_station", "Радиопередатчик") return true end
+        if low == "/console_add" then spawnAtAim(ply, "grm_net_console", "Пульт радиосети") return true end
+        if low == "/console_remove" then removeAtAim(ply, "grm_net_console", "Пульт радиосети") return true end
+        if low == "/rn_log" then
+            if not ply:IsSuperAdmin() then ply:PrintMessage(HUD_PRINTTALK, "[Радиосеть] Только для суперадмина.") return true end
+            local log = RN.LogTail(12)
+            if #log == 0 then ply:PrintMessage(HUD_PRINTTALK, "[Радиосеть] Журнал пуст.") return true end
+            ply:PrintMessage(HUD_PRINTTALK, "[Радиосеть] ===== журнал (последние " .. tostring(#log) .. ") =====")
+            for _, e in ipairs(log) do
+                ply:PrintMessage(HUD_PRINTTALK, ("[Радиосеть] %s | %s | %s | (%d %d %d) q=%d%% | %s"):format(
+                    os.date("%H:%M:%S", tonumber(e.ts) or 0), tostring(e.kind), tostring(e.who),
+                    tonumber(e.x) or 0, tonumber(e.y) or 0, tonumber(e.z) or 0, tonumber(e.q) or 0, tostring(e.note)))
+            end
+            return true
+        end
         if low == "/rn_status" or low == "/rn_net" then
             if not ply:IsSuperAdmin() then ply:PrintMessage(HUD_PRINTTALK, "[Радиосеть] Только для суперадмина.") return true end
             recompute()
@@ -577,6 +980,357 @@ if CLIENT then
                     if math.Rand(0, 1) < p then
                         surface.PlaySound("ambient/energy/spark" .. tostring(math.random(1, 6)) .. ".wav")
                     end
+                end
+            end
+        end
+    end)
+
+    ----------------------------------------------------------------
+    -- Код 87 — окно пульта радиосети (NetSys)
+    ----------------------------------------------------------------
+    surface.CreateFont("GRMCon_T", { font = "Roboto", size = 18, weight = 800, extended = true })
+    surface.CreateFont("GRMCon_S", { font = "Roboto", size = 13, weight = 600, extended = true })
+    surface.CreateFont("GRMCon_X", { font = "Roboto", size = 12, weight = 500, extended = true })
+
+    local CC = {
+        bg = Color(16, 20, 28, 250), head = Color(26, 32, 44, 255), panel = Color(30, 36, 48, 240),
+        acc = Color(90, 170, 250), green = Color(80, 210, 130), red = Color(225, 85, 80),
+        yellow = Color(230, 190, 70), text = Color(240, 245, 250), dim = Color(160, 170, 185),
+    }
+    local _con = { frame = nil, data = nil, lists = {}, auto = false }
+
+    local function sendOp(op, payload)
+        if not (_con.data and _con.data.idx) then return end
+        net.Start(NET_OP)
+            net.WriteUInt(_con.data.idx, 16)
+            net.WriteString(op)
+            net.WriteTable(payload or {})
+        net.SendToServer()
+    end
+
+    local function kindLabel(rec) return tostring(rec.label or rec.kind or "?") end
+
+    local function fillDevices()
+        local lv = _con.lists.dev
+        if not IsValid(lv) or not istable(_con.data) then return end
+        lv:Clear()
+        for _, d in ipairs(_con.data.devices or {}) do
+            local st = d.off and "ВЫКЛЮЧЕН пультом" or tostring(d.state or "?")
+            if not d.alive then st = "ПРИЗРАК (железа нет)" end
+            local ln = lv:AddLine(d.id, kindLabel(d), st,
+                string.format("%d %d %d", d.x or 0, d.y or 0, d.z or 0),
+                tostring(d.dist or 0), tostring(d.az or 0) .. "°",
+                tostring(d.q or 0) .. "%", tostring(d.groups or ""))
+            ln.grmDev = d
+        end
+        if IsValid(_con.lists.devHead) then
+            _con.lists.devHead:SetText("Устройств в реестре: " .. tostring(#(_con.data.devices or {}))
+                .. "  (ПКМ по строке — включение/группы/цель громкой связи; автообновление 2 с)")
+        end
+    end
+
+    local function fillGroups()
+        local lv = _con.lists.grp
+        if not IsValid(lv) or not istable(_con.data) then return end
+        lv:Clear()
+        local cnt = {}
+        for _, d in ipairs(_con.data.devices or {}) do
+            for g in string.gmatch(tostring(d.groups or ""), "[^,%s][^,]*") do
+                g = string.Trim(g)
+                if g ~= "" then cnt[g] = (cnt[g] or 0) + 1 end
+            end
+        end
+        for _, g in ipairs(_con.data.groups or {}) do
+            local ln = lv:AddLine(g, tostring(cnt[g] or 0))
+            ln.grmGroup = g
+        end
+    end
+
+    local function fillLog()
+        local lv = _con.lists.log
+        if not IsValid(lv) or not istable(_con.data) then return end
+        lv:Clear()
+        local log = _con.data.log or {}
+        for i = #log, 1, -1 do
+            local e = log[i]
+            lv:AddLine(os.date("%H:%M:%S", tonumber(e.ts) or 0), tostring(e.kind or "?"),
+                tostring(e.who or "?"),
+                string.format("%d %d %d", tonumber(e.x) or 0, tonumber(e.y) or 0, tonumber(e.z) or 0),
+                tostring(tonumber(e.q) or 0) .. "%", tostring(e.note or ""))
+        end
+    end
+
+    local function onGroupPicked(dev, g)
+        sendOp("assign", { id = dev.id, group = g, on = true })
+    end
+
+    local function deviceMenu(line)
+        local d = line.grmDev
+        if not istable(d) then return end
+        local m = DermaMenu()
+        if d.alive then
+            m:AddOption(d.off and "✔ Вернуть вывод (включить)" or "✖ Снять с эфира (выключить)", function()
+                sendOp("toggle", { id = d.id })
+            end):SetIcon(d.off and "icon16/accept.png" or "icon16/cancel.png")
+
+            local hasGroups = false
+            for g in string.gmatch(tostring(d.groups or ""), "[^,%s][^,]*") do
+                if not hasGroups then hasGroups = true end
+                break
+            end
+
+            local plus = m:AddSubMenu("➕ Включить в группу…")
+            plus:AddOption("＋ Новая группа…", function()
+                Derma_StringRequest("Группа устройства " .. d.id, "Имя группы (например, Север):", "", function(txt)
+                    local g = string.sub(string.Trim(tostring(txt or "")), 1, 24)
+                    if g ~= "" then onGroupPicked(d, g) end
+                end)
+            end)
+            local gset = {}
+            for g in string.gmatch(tostring(d.groups or ""), "[^,%s][^,]*") do gset[string.Trim(g)] = true end
+            for _, g in ipairs((_con.data or {}).groups or {}) do
+                if not gset[g] then
+                    plus:AddOption(g, function() onGroupPicked(d, g) end)
+                end
+            end
+
+            local minus = m:AddSubMenu("➖ Вывести из группы…")
+            local any = false
+            for g in string.gmatch(tostring(d.groups or ""), "[^,%s][^,]*") do
+                any = true
+                local gg = string.Trim(g)
+                minus:AddOption(gg, function()
+                    sendOp("assign", { id = d.id, group = gg, on = false })
+                end)
+            end
+            if not any then minus:AddOption("(устройство не в группах)", function() end) end
+
+            if d.kind == "mic" then
+                local tsub = m:AddSubMenu("🎯 Цель ГРОМКОЙ СВЯЗИ: " .. (d.paTarget ~= nil and d.paTarget ~= "" and d.paTarget or "весь город"))
+                tsub:AddOption("Весь город (все громкоговорители)", function()
+                    sendOp("mic_target", { id = d.id, group = "" })
+                end)
+                for _, g in ipairs((_con.data or {}).groups or {}) do
+                    tsub:AddOption("Группа «" .. g .. "»", function()
+                        sendOp("mic_target", { id = d.id, group = g })
+                    end)
+                end
+            end
+        else
+            m:AddOption("🗑 Удалить запись о призраке", function()
+                Derma_Query("Удалить запись «" .. tostring(d.id) .. "» из реестра? Железа на карте уже нет.",
+                    "Реестр радиосети", "Удалить", function() sendOp("dev_del", { id = d.id }) end, "Отмена", function() end)
+            end):SetIcon("icon16/bin.png")
+        end
+        m:Open()
+    end
+
+    local function mkBtn(p, txt, col)
+        local b = vgui.Create("DButton", p)
+        b:SetText(txt) b:SetFont("GRMCon_S") b:SetTextColor(color_white)
+        b.Paint = function(self, pw, ph)
+            local cc = col or CC.acc
+            if self:IsHovered() then cc = Color(math.min(255, cc.r + 25), math.min(255, cc.g + 25), math.min(255, cc.b + 25)) end
+            draw.RoundedBox(6, 0, 0, pw, ph, cc)
+        end
+        return b
+    end
+
+    local function openConsoleWindow(data)
+        if IsValid(_con.frame) then _con.frame:Remove() end
+        _con.data = data
+        _con.lists = {}
+
+        local f = vgui.Create("DFrame")
+        _con.frame = f
+        f:SetSize(980, 660) f:Center() f:MakePopup() f:ShowCloseButton(false) f:SetTitle("")
+        f.Paint = function(_, pw, ph)
+            draw.RoundedBox(10, 0, 0, pw, ph, CC.bg)
+            draw.RoundedBoxEx(10, 0, 0, pw, 44, CC.head, true, true, false, false)
+            draw.SimpleText("ПУЛЬТ РАДИОСЕТИ — идентификация, группы, пеленг, журнал", "GRMCon_T", 14, 22, CC.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
+        local x = mkBtn(f, "X", CC.red, 34, 28) x:SetPos(980 - 42, 8)
+        x.DoClick = function() f:Remove() end
+        f.OnRemove = function()
+            _con.frame = nil
+            timer.Remove("GRM_Con_Auto")
+        end
+
+        local tabs = vgui.Create("DPropertySheet", f)
+        tabs:SetPos(10, 52) tabs:SetSize(960, 598)
+
+        -- ===== Вкладка УСТРОЙСТВА =====
+        local pDev = vgui.Create("DPanel", tabs)
+        pDev:SetPaintBackground(false)
+        local head = vgui.Create("DLabel", pDev)
+        head:SetFont("GRMCon_X") head:SetTextColor(CC.dim) head:SetPos(6, 2) head:SetSize(940, 18)
+        _con.lists.devHead = head
+        local dev = vgui.Create("DListView", pDev)
+        dev:SetPos(0, 24) dev:SetSize(936, 520) dev:SetMultiSelect(false)
+        dev:SetDataHeight(22)
+        dev:AddColumn("ID"):SetFixedWidth(72)
+        dev:AddColumn("Тип"):SetFixedWidth(108)
+        dev:AddColumn("Статус"):SetFixedWidth(220)
+        dev:AddColumn("Позиция"):SetFixedWidth(150)
+        dev:AddColumn("До пульта"):SetFixedWidth(74)
+        dev:AddColumn("Азим."):SetFixedWidth(52)
+        dev:AddColumn("Кач."):SetFixedWidth(50)
+        dev:AddColumn("Группы")
+        dev.OnRowRightClick = function(_, line) deviceMenu(line) end
+        dev.OnRowSelected = function(_, _, line)
+            -- одиночный клик тоже открывает действия — удобнее с тачскрином-севера
+        end
+        _con.lists.dev = dev
+        local bRef = mkBtn(pDev, "Обновить", CC.acc, 120, 30) bRef:SetPos(0, 552)
+        bRef.DoClick = function() sendOp("refresh") end
+        local chk = vgui.Create("DCheckBoxLabel", pDev)
+        chk:SetPos(136, 556) chk:SetText("автообновление") chk:SetFont("GRMCon_X") chk:SetTextColor(CC.dim)
+        chk:SetChecked(_con.auto == true) chk:SizeToContents()
+        chk.OnChange = function(_, on)
+            _con.auto = on == true
+            timer.Remove("GRM_Con_Auto")
+            if _con.auto then
+                timer.Create("GRM_Con_Auto", 2, 0, function()
+                    if not IsValid(_con.frame) then timer.Remove("GRM_Con_Auto") return end
+                    sendOp("refresh")
+                end)
+            end
+        end
+        tabs:AddSheet(" Устройства ", pDev, "icon16/drive_network.png")
+
+        -- ===== Вкладка ГРУППЫ =====
+        local pGrp = vgui.Create("DPanel", tabs)
+        pGrp:SetPaintBackground(false)
+        local gl = vgui.Create("DLabel", pGrp)
+        gl:SetFont("GRMCon_X") gl:SetTextColor(CC.dim) gl:SetPos(6, 2) gl:SetSize(940, 34)
+        gl:SetText("Группы собираются на вкладке «Устройства» (ПКМ → «Включить в группу»). Оповещение с пульта по группе звучит только из её громкоговорителей.")
+        local grp = vgui.Create("DListView", pGrp)
+        grp:SetPos(0, 40) grp:SetSize(460, 500) grp:SetMultiSelect(false)
+        grp:AddColumn("Группа"):SetFixedWidth(300)
+        grp:AddColumn("Устройств")
+        _con.lists.grp = grp
+        local bDel = mkBtn(pGrp, "Удалить выбранную группу", CC.red, 240, 30) bDel:SetPos(0, 552)
+        bDel.DoClick = function()
+            local _, line = grp:GetSelectedLine()
+            if not line or not line.grmGroup then return end
+            Derma_Query("Удалить группу «" .. line.grmGroup .. "»? Устройства останутся, только сбросится их принадлежность.",
+                "Группы радиосети", "Удалить", function() sendOp("group_del", { group = line.grmGroup }) end, "Отмена", function() end)
+        end
+        tabs:AddSheet(" Группы ", pGrp, "icon16/folder_link.png")
+
+        -- ===== Вкладка ОПОВЕЩЕНИЕ =====
+        local pAl = vgui.Create("DPanel", tabs)
+        pAl:SetPaintBackground(false)
+        local l1 = vgui.Create("DLabel", pAl)
+        l1:SetFont("GRMCon_S") l1:SetText("Куда оповещать:") l1:SetTextColor(CC.text) l1:SetPos(10, 12) l1:SizeToContents()
+        _con.combo = vgui.Create("DComboBox", pAl)
+        _con.combo:SetPos(160, 8) _con.combo:SetSize(300, 26)
+        _con.combo:SetValue("Весь город (все сетевые громкоговорители)")
+        _con.combo:AddChoice("Весь город (все сетевые громкоговорители)", "")
+        for _, g in ipairs(data.groups or {}) do
+            _con.combo:AddChoice("Группа «" .. g .. "»", g)
+        end
+        _con.combo.OnSelect = function(_, _, _, v) _con.alertTarget = tostring(v or "") end
+        _con.alertTarget = ""
+        local l2 = vgui.Create("DLabel", pAl)
+        l2:SetFont("GRMCon_S") l2:SetText("Текст:") l2:SetTextColor(CC.text) l2:SetPos(10, 50) l2:SizeToContents()
+        _con.alertEntry = vgui.Create("DTextEntry", pAl)
+        _con.alertEntry:SetPos(160, 46) _con.alertEntry:SetSize(560, 28) _con.alertEntry:SetFont("GRMCon_S")
+        _con.alertEntry:SetPlaceholderText("Внимание! В секторе…")
+        local bSend = mkBtn(pAl, "Оповестить", CC.yellow, 140, 30) bSend:SetPos(160, 86)
+        bSend.DoClick = function()
+            local t = string.Trim(tostring(_con.alertEntry:GetValue() or ""))
+            if #t < 3 then return end
+            sendOp("alert", { target = _con.alertTarget, text = t })
+            _con.alertEntry:SetValue("")
+        end
+        local l3 = vgui.Create("DLabel", pAl)
+        l3:SetFont("GRMCon_X") l3:SetTextColor(CC.dim) l3:SetPos(10, 130) l3:SetSize(920, 60)
+        l3:SetText("Оповещение звучит ТОЛЬКО из громкоговорителей: (а) подключённых к живой сети (стойка/антенна), "
+            .. "(б) не выключенных этим пультом, (в) входящих в выбранную группу (или всех — для «весь город»). "
+            .. "Голосом — через режим ГРОМКАЯ СВЯЗЬ у микрофона; его цель задаётся ПКМ по микрофону на вкладке «Устройства».")
+        tabs:AddSheet(" Оповещение ", pAl, "icon16/sound.png")
+
+        -- ===== Вкладка ЖУРНАЛ =====
+        local pLog = vgui.Create("DPanel", tabs)
+        pLog:SetPaintBackground(false)
+        local hl = vgui.Create("DLabel", pLog)
+        hl:SetFont("GRMCon_X") hl:SetTextColor(CC.dim) hl:SetPos(6, 2) hl:SetSize(940, 18)
+        hl:SetText("События сети: кто, что, откуда (пеленг) и с каким качеством канала. Глубина — " .. tostring(RN.LogCap) .. " записей.")
+        local lg = vgui.Create("DListView", pLog)
+        lg:SetPos(0, 24) lg:SetSize(936, 520) lg:SetMultiSelect(false)
+        lg:SetDataHeight(20)
+        lg:AddColumn("Время"):SetFixedWidth(64)
+        lg:AddColumn("Событие"):SetFixedWidth(90)
+        lg:AddColumn("Кто/устройство"):SetFixedWidth(170)
+        lg:AddColumn("Позиция"):SetFixedWidth(140)
+        lg:AddColumn("Кач."):SetFixedWidth(46)
+        lg:AddColumn("Детали")
+        _con.lists.log = lg
+        local bLR = mkBtn(pLog, "Обновить", CC.acc, 120, 30) bLR:SetPos(0, 552)
+        bLR.DoClick = function() sendOp("refresh") end
+        local bLC = mkBtn(pLog, "Очистить журнал", CC.red, 160, 30) bLC:SetPos(132, 552)
+        bLC.DoClick = function()
+            Derma_Query("Стереть весь журнал событий радиосети?", "Журнал", "Стереть", function() sendOp("log_clear") end, "Отмена", function() end)
+        end
+        tabs:AddSheet(" Журнал+пеленг ", pLog, "icon16/table.png")
+
+        fillDevices() fillGroups() fillLog()
+    end
+
+    net.Receive(NET_OPEN, function()
+        local idx = net.ReadUInt(16)
+        local data = net.ReadTable()
+        if not istable(data) then return end
+        data.idx = idx
+        if IsValid(_con.frame) then
+            _con.data = data
+            fillDevices() fillGroups() fillLog()
+            if IsValid(_con.combo) and _con.combo.grmFilled ~= data then
+                _con.combo:Clear()
+                _con.combo:AddChoice("Весь город (все сетевые громкоговорители)", "")
+                for _, g in ipairs(data.groups or {}) do
+                    _con.combo:AddChoice("Группа «" .. g .. "»", g)
+                end
+                _con.combo.grmFilled = data
+            end
+        else
+            openConsoleWindow(data)
+        end
+    end)
+
+    ----------------------------------------------------------------
+    -- Код 87 — слой ИДЕНТИФИКАЦИИ: позывной устройства над железкой
+    ----------------------------------------------------------------
+    surface.CreateFont("GRMNetId_S", { font = "Roboto", size = 13, weight = 600, extended = true })
+    local _idCache = {}
+    timer.Create("GRM_RN_IdCache", 2, 0, function()
+        local t = {}
+        for class in pairs(RN.Kinds or {}) do
+            for _, e in ipairs(ents.FindByClass(class)) do
+                if IsValid(e) then t[#t + 1] = e end
+            end
+        end
+        _idCache = t
+    end)
+    hook.Add("PostDrawTranslucentRenderables", "GRM_RN_NetIds", function()
+        local lp = LocalPlayer()
+        if not IsValid(lp) then return end
+        local lpos = lp:GetPos()
+        for _, e in ipairs(_idCache) do
+            if IsValid(e) and e:GetPos():DistToSqr(lpos) <= 350 * 350 then
+                local id = e:GetNWString("GRM_NetID", "")
+                if id ~= "" then
+                    local ang = e:GetAngles()
+                    local maxs = e:OBBMaxs()
+                    local pos = e:GetPos() + ang:Up() * ((maxs and maxs.z or 40) + 26)
+                    cam.Start3D2D(pos, Angle(0, lp:EyeAngles().y - 90, 90), 0.055)
+                        local tw = 40 + #id * 9
+                        draw.RoundedBox(6, -tw, -12, tw * 2, 24, Color(12, 16, 22, 210))
+                        surface.SetDrawColor(90, 170, 250, 160)
+                        surface.DrawOutlinedRect(-tw, -12, tw * 2, 24, 1)
+                        draw.SimpleText(id, "GRMNetId_S", 0, 0, Color(150, 210, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    cam.End3D2D()
                 end
             end
         end

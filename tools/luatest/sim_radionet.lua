@@ -85,6 +85,7 @@ local function mkPly(id, x, isSAdmin)
     if k == "GetShootPos" then return function() return self.__pos end end
     if k == "GetAimVector" then return function() return V(1, 0, 0) end end
     if k == "Nick" then return function() return "Игрок" .. tostring(self.__idx) end end
+    if k == "GetNWString" then return function() return "" end end
     return nil
   end })
   return p
@@ -112,8 +113,14 @@ net = { Start = function(m) H.netlog.cur = { msg = m, f = {} } end,
         WriteString = function(v) H.netlog.cur.f[#H.netlog.cur.f + 1] = v end,
         WriteBool = function(v) H.netlog.cur.f[#H.netlog.cur.f + 1] = v and "T" or "F" end,
         Broadcast = function() H.netlog[#H.netlog + 1] = H.netlog.cur H.netlog.cur = nil end,
-        Send = function() H.netlog.cur = nil end,
-        Receive = function() end }
+        WriteTable = function(v) H.netlog.cur.f[#H.netlog.cur.f + 1] = v end,
+        Send = function(ply) if H.netlog.cur then H.netlog.cur.sentTo = ply H.netlog[#H.netlog + 1] = H.netlog.cur H.netlog.cur = nil end end,
+        Receive = function(m, fn) H.netrecv[m] = fn end }
+net.ReadUInt = function() return tonumber(table.remove(H.seq or {}, 1)) or 0 end
+net.ReadString = function() return tostring(table.remove(H.seq or {}, 1) or "") end
+net.ReadTable = function() local v = table.remove(H.seq or {}, 1) return istable(v) and v or {} end
+H.netrecv = H.netrecv or {}
+H.seq = {}
 concommand = { Add = function() end }
 HUD_PRINTTALK = 3
 TT = 0
@@ -339,6 +346,198 @@ RN.Recompute()
 ok(mic:GetNWInt("GRM_RN_Link", -9) == 2, "микрофон: NW link = 2")
 ok(st:GetNWBool("GRM_RN_Online", false) == true, "передатчик: NW online")
 ok(ant:GetNWBool("GRM_RN_Linked", false) == true, "антенна: NW linked")
+
+P("== 18. NetSys (Код 87): реестр позывных ==")
+RN.Recompute()
+local micId = mic:GetNWString("GRM_NetID", "")
+ok(micId:match("^MIC%-%d%d%d$") ~= nil, "микрофон получил позывной " .. micId)
+local antId = ant:GetNWString("GRM_NetID", "")
+ok(antId:match("^ANT%-%d%d%d$") ~= nil, "антенна получила позывной " .. antId)
+local spkId1 = spk1:GetNWString("GRM_NetID", "")
+ok(spkId1:match("^SPK%-%d%d%d$") ~= nil, "громкоговоритель: " .. spkId1)
+local preCount = table.Count(RN.Sys.devices or {})
+RN.Recompute()
+ok(table.Count(RN.Sys.devices or {}) == preCount, "рестарт-рекомпьют не плодит записи (стабильные id)")
+ok(mic:GetNWString("GRM_NetID", "") == micId, "позывной стабилен между пересчётами")
+-- «воскрешение» записи по позиции после рестарта
+local spkA = mkEnt("grm_loudspeaker", 600, 90001, 0)
+RN.Recompute()
+local spkAid = spkA:GetNWString("GRM_NetID", "")
+ok(spkAid ~= "", "новый громкоговоритель зарегистрирован: " .. spkAid)
+spkA:Remove()
+local spkA2 = mkEnt("grm_loudspeaker", 600, 90001, 0)
+RN.Recompute()
+ok(spkA2:GetNWString("GRM_NetID", "") == spkAid, "после «рестарта» запись воскресла по позиции (тот же id)")
+
+P("== 19. Точечное управление: пульт и выключатели ==")
+-- своя активная стойка в тестовой «секции 90001» — пульту нужна живая сеть
+local rack87 = mkEnt("grm_server_rack", 0, 90001, 0)
+rack87:SetNWBool("GRM_RN_On", true)
+RN.Recompute()
+ok(rack87:GetNWString("GRM_NetID", ""):match("^RAX%-%d%d%d$") ~= nil, "стойка секции зарегистрирована")
+local con = mkEnt("grm_net_console", 100, 90001, 0) -- у активной стойки (0,90001,0)
+RN.Recompute()
+ok(con:GetNWString("GRM_NetID", ""):match("^CON%-%d%d%d$") ~= nil, "пульт получил позывной")
+ok(con:GetNWBool("GRM_RN_Online", false) == true, "пульт у активной стойки — в сети")
+local conFar = mkEnt("grm_net_console", 90000, 90001, 0)
+RN.Recompute()
+ok(conFar:GetNWBool("GRM_RN_Online", false) == false, "пульт в глуши — вне сети")
+-- разрешения/связь пульта
+H.notifies = {}
+GRM.Notify = function(ply, txt) H.notifies[#H.notifies + 1] = tostring(txt) end
+local admin = mkPly(301, 0, true)
+local guest = mkPly(302, 0, false)
+H.players[#H.players + 1] = admin
+H.players[#H.players + 1] = guest
+local function netlogFind(msg)
+  for i = #H.netlog, 1, -1 do if H.netlog[i].msg == msg then return H.netlog[i] end end
+  return nil
+end
+RN.ConsoleOpen(guest, con)
+ok(H.notifies[#H.notifies]:find("суперадмина") ~= nil, "гостю в пульт отказано (только суперадмин)")
+RN.ConsoleOpen(admin, conFar)
+ok(H.notifies[#H.notifies]:find("ВНЕ СЕТИ") ~= nil, "пульт без стойки рядом не открывается")
+RN.ConsoleOpen(admin, con)
+local dump1 = netlogFind("GRM_RN_NetOpen")
+ok(dump1 ~= nil and istable(dump1.f) and istable(dump1.f[2]), "снапшот пульта отправлен админу")
+local devIds = {}
+for _, d in ipairs(dump1.f[2].devices or {}) do devIds[d.id] = d end
+ok(devIds[micId] ~= nil and devIds[micId].kind == "mic", "в снапшоте микрофон идентифицирован " .. micId)
+ok(devIds[spkAid] ~= nil and devIds[spkAid].alive == true, "в снапшоте живой громкоговоритель")
+-- пеленг: дистанция от пульта (100,90001) до громкоговорителя (600,90001) = 500
+ok(devIds[spkAid] ~= nil and devIds[spkAid].dist == 500, "пеленг: дистанция до SPK посчитана (500)")
+-- операции пульта (seq: idx, op, таблица)
+local function fireOp(ply, idx, op, tbl)
+  H.seq = { idx, op, tbl or {} }
+  H.netrecv["GRM_RN_NetOp"](0, ply)
+end
+fireOp(guest, con:EntIndex(), "toggle", { id = spkAid })
+ok(RN.Sys.devices[spkAid].off ~= true, "операция пульта от гостя проигнорирована")
+fireOp(admin, conFar:EntIndex(), "toggle", { id = spkAid })
+ok(RN.Sys.devices[spkAid].off ~= true, "операция через пульт ВНЕ СЕТИ отклонена")
+-- выключить громкоговоритель у стойки: spk1 (600,0,0) был активен
+RN.Recompute()
+ok(RN.SpeakerActive(spk1) == true, "до выключения громкоговоритель в сети")
+fireOp(admin, con:EntIndex(), "toggle", { id = spkId1 })
+ok(RN.Sys.devices[spkId1].off == true, "пульт пометил вывод ВЫКЛ")
+RN.Recompute()
+ok(RN.SpeakerActive(spk1) == false, "выключенный пультом громкоговоритель молчит (точечная настройка)")
+fireOp(admin, con:EntIndex(), "toggle", { id = spkId1 })
+RN.Recompute()
+ok(RN.SpeakerActive(spk1) == true, "повторный toggle вернул громкоговоритель в эфир")
+-- выключить АНТЕННУ: её круг покрытия схлопывается
+local covBefore = #RN._coverage
+fireOp(admin, con:EntIndex(), "toggle", { id = antId })
+RN.Recompute()
+ok(#RN._coverage == covBefore - 1, "антенна ВЫКЛ → её круг покрытия убран (взаимозависимость звеньев)")
+ok(RN.CoveredAt(V(5500, 0, 0)) == false, "точка покрывалась только антенной — теперь глушь")
+ok(RN.ReceiverOK(radio) == false, "приёмник в зоне той антенны — вне покрытия")
+fireOp(admin, con:EntIndex(), "toggle", { id = antId })
+RN.Recompute()
+ok(RN.CoveredAt(V(5500, 0, 0)) == true, "антенна обратно ВКЛ → покрытие восстановлено")
+-- пульт нельзя выключить сам у себя
+local conId = con:GetNWString("GRM_NetID", "")
+fireOp(admin, con:EntIndex(), "toggle", { id = conId })
+ok(RN.Sys.devices[conId].off ~= true, "пульт сам себя не гасит")
+
+P("== 20. Группы и нацеленный вывод ==")
+fireOp(admin, con:EntIndex(), "assign", { id = spkId1, group = "Север", on = true })
+ok(RN.DeviceInGroupForEnt(spk1, "Север") == true, "громкоговоритель включён в группу «Север»")
+fireOp(admin, con:EntIndex(), "assign", { id = spkId1, group = "Север", on = false })
+ok(RN.DeviceInGroupForEnt(spk1, "Север") == false, "громкоговоритель выведен из группы")
+fireOp(admin, con:EntIndex(), "assign", { id = spkId1, group = "Север", on = true })
+fireOp(admin, con:EntIndex(), "assign", { id = spkA2:GetNWString("GRM_NetID",""), group = "Север", on = true })
+RN.ConsoleOpen(admin, con)
+local dump2 = netlogFind("GRM_RN_NetOpen")
+ok(dump2 ~= nil and #((dump2.f[2] or {}).groups or {}) >= 1, "группа видна в снапшоте пульта")
+-- оповещение по группе (SendAlert вызывается с targetGroup)
+H.alerts = {}
+GRM.Broadcast = GRM.Broadcast or {}
+GRM.Broadcast.SendAlert = function(name, text, global, srcPly, tgt)
+  H.alerts[#H.alerts + 1] = { name = name, text = text, tgt = tgt }
+  return true, "Оповещение передано"
+end
+fireOp(admin, con:EntIndex(), "alert", { target = "Север", text = "Внимание, Север!" })
+ok(H.alerts[#H.alerts] ~= nil and H.alerts[#H.alerts].tgt == "Север", "/alert с пульта ушёл на конкретную группу")
+fireOp(admin, con:EntIndex(), "alert", { target = "", text = "Внимание, город!" })
+ok(H.alerts[#H.alerts] ~= nil and H.alerts[#H.alerts].tgt == nil, "/alert без группы = весь город (nil-группа)")
+-- цель громкой связи микрофона
+fireOp(admin, con:EntIndex(), "mic_target", { id = micId, group = "Север" })
+ok(mic:GetNWString("GRM_RN_Target", "") == "Север", "микрофону назначена цель ГРОМКОЙ СВЯЗИ")
+ok(RN.Sys.devices[micId].paTarget == "Север", "цель сохранилась в записи реестра")
+-- голос ведущего: звучит только у громкоговорителей группы
+mic.BCLive = true mic.BCSpeaker = ms
+mic:SetNWBool("GRM_BC_PA", true)
+RN.Drop = function() return false end -- маршрут без выпадений для чистого теста
+ms._grmBCMic = mic
+local paL1 = mkPly(401, 650, false)   -- у spk1 (600,0): в группе
+local paL2 = mkPly(402, 5600, false)  -- у spk2 (5500,0): НЕ в группе
+H.players[#H.players + 1] = paL1
+H.players[#H.players + 1] = paL2
+ok(RN.SpeakerActive(spk2) == true, "второй громкоговоритель в сети, но вне группы")
+local hear1 = RN.VoiceRoute(paL1, ms)
+local hear2 = RN.VoiceRoute(paL2, ms)
+ok(hear1 == true, "слушатель у громкоговорителя группы слышит громкую связь")
+ok(hear2 == false, "слушатель у громкоговорителя ВНЕ группы — тишина (нацеленность)")
+fireOp(admin, con:EntIndex(), "mic_target", { id = micId, group = "" })
+ok(mic:GetNWString("GRM_RN_Target", "") == "", "цель сброшена — снова весь город")
+local hear2b = RN.VoiceRoute(paL2, ms)
+ok(hear2b == true, "без цели громкая связь снова звучит везде")
+mic:SetNWBool("GRM_BC_PA", false) mic.BCLive = false ms._grmBCMic = nil
+-- удаление группы снимает принадлежности
+fireOp(admin, con:EntIndex(), "group_del", { group = "Север" })
+ok(RN.DeviceInGroupForEnt(spk1, "Север") == false, "group_del снял группу с устройств")
+-- удаление записи-призрака
+RN.Sys.devices["SPK-666"] = { id = "SPK-666", kind = "speaker", pos = { x = 1, y = 1, z = 1 }, off = false, groups = {} }
+fireOp(admin, con:EntIndex(), "dev_del", { id = micId })
+ok(RN.Sys.devices[micId] ~= nil, "живое устройство из реестта не выкинуть")
+fireOp(admin, con:EntIndex(), "dev_del", { id = "SPK-666" })
+ok(RN.Sys.devices["SPK-666"] == nil, "запись-призрак удалена пультом")
+
+P("== 21. Журнал событий и пеленг передач ==")
+local logBefore = #RN.Sys.log
+local txp = mkPly(501, 1234, false)
+txp._rnTxSeen = TT txp._rnFx = "radio"
+H.players[#H.players + 1] = txp
+H.timers["GRM_RN_FxWatch"]()
+local lastE = RN.Sys.log[#RN.Sys.log]
+ok(#RN.Sys.log > logBefore, "старт передачи записан в журнал")
+ok(lastE ~= nil and lastE.kind == "tx_radio", "событие = эфир микрофона")
+ok(lastE ~= nil and tostring(lastE.who):find("Игрок501") ~= nil, "в журнале кто передавал")
+ok(lastE ~= nil and lastE.q >= 0 and lastE.q <= 100, "пеленг: качество канала в записи (q=" .. tostring(lastE and lastE.q) .. ")")
+txp._rnTxSeen = nil
+H.timers["GRM_RN_FxWatch"]()
+ok(RN.Sys.log[#RN.Sys.log].kind == "tx_end", "окончание передачи тоже залогировано")
+-- кап журнала
+for i = 1, 400 do RN.LogEvent("test", "тест", "0", nil, "наполнение") end
+ok(#RN.Sys.log == RN.LogCap, "журнал усечён до LogCap=" .. tostring(RN.LogCap))
+-- /rn_log
+H.chatlog = {}
+ok(RN.HandleChat(admin, "/rn_log") == true, "/rn_log — команда принята")
+local sawLog = false
+for _, l in ipairs(H.chatlog) do if l:find("журнал") or l:find("tx_") then sawLog = true break end end
+ok(sawLog, "/rn_log печатает последние события админу")
+H.chatlog = {}
+RN.HandleChat(guest, "/rn_log")
+ok(#H.chatlog == 1 and H.chatlog[1]:find("суперадмина"), "гостю /rn_log закрыт")
+-- очистка журнала пультом
+fireOp(admin, con:EntIndex(), "log_clear")
+ok(#RN.Sys.log == 0, "журнал очищен операцией пульта")
+
+P("== 22. Автоперсист появился и у пульта ==")
+H.trace = { Hit = true, HitPos = V(7700, 90001, 0), HitNormal = V(0, 0, 1) }
+RN.HandleChat(admin, "/console_add")
+ok(RN._restoring ~= true, "флаг восстановления не застрял")
+local conAdded = nil
+for _, e in ipairs(REG.byClass["grm_net_console"]) do
+  if e:GetPos().x >= 7700 and e:GetPos().x <= 7705 then conAdded = e break end
+end
+ok(conAdded ~= nil, "/console_add поставил пульт по прицелу")
+local conInPersist = false
+for k, rec in pairs(RN.Persist or {}) do
+  if rec.class == "grm_net_console" then conInPersist = true break end
+end
+ok(conInPersist, "пульт сохранён в автоперсистенте карты")
 
 P("")
 P("ИТОГ: " .. tostring(checks) .. " проверок, провалов: " .. tostring(failed))

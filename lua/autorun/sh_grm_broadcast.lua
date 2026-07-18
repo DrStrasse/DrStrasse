@@ -35,7 +35,7 @@ GRM = GRM or {}
 GRM.Broadcast = GRM.Broadcast or {}
 local BC = GRM.Broadcast
 
-BC.Version       = "1.2.0"
+BC.Version       = "1.2.1"  -- Код 87: SendAlert(…, targetGroup) + журнал радиосети
 BC.ReceiveRadius = 500   -- радиус слышимости от приёмника
 BC.MicMaxDist    = 250   -- спикер должен стоять у микрофона
 BC.SpeakerRadius = 700   -- радиус громкоговорителя оповещения
@@ -357,10 +357,13 @@ if SERVER then
     end)
 
     -- массовое оповещение -----------------------------------------------
-    function BC.SendAlert(fromName, text, global, srcPly)
+    -- Код 87: пятый параметр targetGroup (группа RadioNet) — оповещение
+    -- звучит только из громкоговорителей этой группы (пульт радиосети).
+    function BC.SendAlert(fromName, text, global, srcPly, targetGroup)
         text = string.Trim(tostring(text or ""))
         if #text < 3 then return false, "Текст оповещения короче 3 символов" end
         text = string.sub(text, 1, 240)
+        targetGroup = (isstring(targetGroup) and targetGroup ~= "") and targetGroup or nil
         local targets = {}
         if global then
             for _, p in ipairs(player.GetAll()) do targets[#targets + 1] = p end
@@ -372,6 +375,9 @@ if SERVER then
             for _, sp in ipairs(speakers) do
                 local usable = true
                 if RNm and RNm.SpeakerActive then usable = RNm.SpeakerActive(sp) end
+                if usable and targetGroup then
+                    usable = (RNm and RNm.DeviceInGroupForEnt) and RNm.DeviceInGroupForEnt(sp, targetGroup) or false
+                end
                 if usable then
                     anyActive = true
                     sp:SetNWBool("GRM_BC_Alert", true)
@@ -387,15 +393,28 @@ if SERVER then
                     end
                 end
             end
-            if not anyActive then return false, "Ни один громкоговоритель не подключён к радиосети (нужны активная стойка/антенна — диагностика: /rn_status). Глобально: /alertall" end
+            if not anyActive then
+                if targetGroup then
+                    return false, "В группе «" .. targetGroup .. "» нет активных сетевых громкоговорителей (состав — на пульте радиосети). Глобально: /alertall"
+                end
+                return false, "Ни один громкоговоритель не подключён к радиосети (нужны активная стойка/антенна — диагностика: /rn_status). Глобально: /alertall"
+            end
         end
-        if #targets == 0 then return false, "Рядом с громкоговорителями в сети никого нет. Глобально: /alertall" end
+        if #targets == 0 then return false, "Рядом с громкоговорителями" .. (targetGroup and (" группы «" .. targetGroup .. "»") or "") .. " никого нет. Глобально: /alertall" end
         net.Start(NET_ALERT)
             net.WriteString(fromName)
             net.WriteString(text)
         net.Send(targets)
         if IsValid(srcPly) then hook.Run("GRM_BC_Alert", srcPly, text, global and true or false) end
-        return true, "Оповещение передано (" .. #targets .. " чел.)"
+        -- Код 87: журнал радиосети (пеленг: позиция источника + качество)
+        if GRM.RadioNet and GRM.RadioNet.LogEvent then
+            GRM.RadioNet.LogEvent("alert", tostring(fromName),
+                IsValid(srcPly) and srcPly:SteamID64() or "",
+                IsValid(srcPly) and srcPly:GetPos() or nil,
+                "оповещение" .. (targetGroup and (" → группа «" .. targetGroup .. "»") or (global and " (глобальное)" or ""))
+                    .. ": «" .. string.sub(text, 1, 60) .. "» (" .. #targets .. " чел.)")
+        end
+        return true, "Оповещение передано (" .. #targets .. " чел.)" .. (targetGroup and (" → группа «" .. targetGroup .. "»") or "")
     end
 
     -- админ-команды доступа ----------------------------------------------
