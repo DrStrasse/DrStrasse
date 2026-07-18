@@ -5,7 +5,9 @@
       репорт владельца: бинд до хука не доходил. F4 теперь ещё и ЗАКРЫВАЕТ
       открытое меню (toggle). Новая вкладка «Графика»: пресеты FPS+/Красота,
       выключатели (тени, свет, блики, вода, небо, трава, motion blur, многоядерность),
-      слайдеры дальности отрисовки объектов, LOD, текстур, декалей и лимита FPS.
+      слайдеры дальности отрисовки объектов, LOD, текстур и декалей.
+    v1.2.1: убран слайдер fps_max (движок блокирует RunConsoleCommand →
+      спам-ошибка при открытии вкладки); добавлен тогл вспышек выстрелов.
       - «Профиль»: игровое имя (RP Name) со сменой, внешность (меню
         персонажа Код 72), описание персонажа (RPDesc Код 71),
         карточка (SteamID64, фракция/роль, баланс).
@@ -23,7 +25,7 @@ if not CLIENT then return end
 GRM = GRM or {}
 GRM.F4 = GRM.F4 or {}
 local F4 = GRM.F4
-F4.Version = "1.2.0"
+F4.Version = "1.2.1"
 
 surface.CreateFont("GRMF4_Title",  { font = "Roboto", size = 22, weight = 800, extended = true })
 surface.CreateFont("GRMF4_Sub",    { font = "Roboto", size = 15, weight = 600, extended = true })
@@ -280,6 +282,7 @@ local GFX_TOGGLES = {
     { { "r_DrawDetailProps" },    "Трава и мелкие детали ландшафта" },
     { { "r_drawskybox" },         "3D-небо (skybox)" },
     { { "mat_motion_blur_enabled" },"Размытие в движении (motion blur)" },
+    { { "muzzleflash_light" },      "Вспышки выстрелов (динамический свет)" },
     { { "gmod_mcore_test" },      "Многоядерный рендер (обычно +FPS)" },
 }
 
@@ -288,7 +291,6 @@ local GFX_SLIDERS = {
     { "r_staticprop_lod", "Дальность/детализация крупных объектов (LOD: -1 максимум, 3 минимум)", -1, 3 },
     { "mat_picmip",       "Качество текстур (0 — максимум, 4 — минимум)", 0, 4 },
     { "mp_decals",        "Декали — следы выстрелов и крови (шт.)", 0, 2048 },
-    { "fps_max",          "Лимит FPS (0 — без лимита)", 0, 500 },
 }
 
 local function buildGraphicsTab(sc, refresh)
@@ -347,11 +349,11 @@ local function buildGraphicsTab(sc, refresh)
         end
     end
 
-    local b3 = block(sc, 64, "Примечание:")
+    local b3 = block(sc, 78, "Примечание:")
     local note = vgui.Create("DLabel", b3)
-    note:SetPos(14, 28) note:SetSize(720, 30)
+    note:SetPos(14, 28) note:SetSize(720, 44)
     note:SetFont("GRMF4_Normal") note:SetTextColor(C.dim)
-    note:SetText("Качество текстур и LOD полностью применятся после перезахода на сервер. Все значения сохраняются на вашем ПК.")
+    note:SetText("Качество текстур и LOD полностью применятся после перезахода на сервер. Значения сохраняются на вашем ПК. Лимит FPS (fps_max) движком запрещён к смене из скриптов — задайте его в консоли вручную при желании.")
     note:SetWrap(true) note:SetAutoStretchVertical(true)
 end
 
