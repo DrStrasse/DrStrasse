@@ -307,6 +307,12 @@ if SERVER then
         return carriedTier(ply) ~= nil
     end
 
+    -- вызов из инвентаря (useFunc mobile_open): подсказка + форс-свежий пуш состояния
+    function MB.ServerNotify(ply, msg)
+        if GRM.Notify then GRM.Notify(ply, tostring(msg or ""), 120, 200, 255) end
+        if pushState then pushState(ply, true) end
+    end
+
     ----------------------------------------------------------------
     -- телефон в руке во время вызова (prop_dynamic у кисти)
     ----------------------------------------------------------------
