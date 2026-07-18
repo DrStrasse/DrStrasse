@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v3.0.3 (Код 43) — ПЕРЕПИСАНО С НУЛЯ
+    GRM Unified Economy v3.0.4 (Код 43) — ПЕРЕПИСАНО С НУЛЯ
 
     v3.0.2 (КОРЕНЬ ВСЕЙ САГИ): голый util.JSONToTable калечил числовые
     ключи-строки (wiki: «keys are converted to numbers wherever possible.
@@ -111,7 +111,7 @@ if SERVER then
         return
     end
     GRM._economyCoreActive = true
-    GRM._economyCoreVer = "3.0.3"
+    GRM._economyCoreVer = "3.0.4"
     GRM._economyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_OPEN_ADMIN)
@@ -696,6 +696,35 @@ if SERVER then
         e.budget = math.max(0, math.floor(tonumber(value) or 0))
         dirty = true
         hook.Run("GRM_FactionBudgetChanged", name, e.budget, 0)
+    end
+
+    -- ── Гос.бюджет (публичный доступ для единой админ-панели, Код 82) ──
+    function E.StateBudgetGet()
+        return math.floor(tonumber(E.Data.state and E.Data.state.budget) or 0)
+    end
+
+    function E.StateBudgetAdd(delta, reason)
+        return stateAdd(math.floor(tonumber(delta) or 0), reason)
+    end
+
+    function E.StateBudgetSet(value, reason)
+        E.Data.state.budget = math.max(0, math.floor(tonumber(value) or 0))
+        dirty = true
+        if reason then stateHist(reason) end
+        return E.Data.state.budget
+    end
+
+    -- Сводка по фракции для админ-панелей (не мутирует запись)
+    function E.FactionInfo(name)
+        local e = E.Data.factions[name]
+        if not istable(e) then return nil end
+        return {
+            budget = math.floor(tonumber(e.budget) or 0),
+            taxRate = tonumber(e.taxRate) or 0,
+            baseSalary = math.floor(tonumber(e.baseSalary) or 0),
+            salaryInterval = math.floor(tonumber(e.salaryInterval) or 0),
+            payFromBudget = e.payFromBudget == true,
+        }
     end
 
     function GRM.FactionTaxGet(name)

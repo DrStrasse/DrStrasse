@@ -31,6 +31,7 @@ local VD_SPAWN_OFFSET    = Vector(0, 0, 50)    -- смещение от диле
 local VD_SPAWN_FORWARD   = 200                   -- расстояние спавна вперёд от дилера
 local VD_MAX_VEHICLES    = 3                     -- макс. машин на игрока
 local VD_DEALER_DIR      = "grm/dealers/"
+local VD_AdminBypassClass = nil                  -- админ-спавн из ТАБ (аудит): обход лимита/доступа/цены на один класс
 
 -- Модель дилера по умолчанию
 local DEALER_DEFAULT_MODEL = "models/Humans/Group01/Male_02.mdl"
@@ -38,6 +39,28 @@ local DEALER_DEFAULT_MODEL = "models/Humans/Group01/Male_02.mdl"
 -- ════════════════════════════════════════════════════════
 -- Сеть
 -- ════════════════════════════════════════════════════════
+local VD_REFUND_RATE      = 0.5                  -- возврат при удалении своего Т/С (50% цены)
+
+-- Цена класса в списках дилера: ищем по __global/__nofaction/[фракция игрока]
+-- Фракционный транспорт — служебный, бесплатный (price = 0).
+local function priceOf(dealer, faction, vehicleClass)
+    local vehicles = dealer.VD_Vehicles or {}
+    if faction and vehicles[faction] then
+        for _, v in ipairs(vehicles[faction]) do
+            if v.class == vehicleClass then return 0, faction end
+        end
+    end
+    for _, v in ipairs(vehicles["__global"] or {}) do
+        if v.class == vehicleClass then return math.max(0, math.floor(tonumber(v.price) or 0)), "global" end
+    end
+    for _, v in ipairs(vehicles["__nofaction"] or {}) do
+        if v.class == vehicleClass then return math.max(0, math.floor(tonumber(v.price) or 0)), "nofaction" end
+    end
+    return 0, nil
+end
+
+local pushMyVehicles -- fwd: список «Мои Т/С» в меню дилера (Код 82)
+
 util.AddNetworkString("VD_OpenMenu")
 util.AddNetworkString("VD_SpawnRequest")
 util.AddNetworkString("VD_SpawnResult")
@@ -45,6 +68,8 @@ util.AddNetworkString("VD_ConfigOpen")
 util.AddNetworkString("VD_ConfigData")
 util.AddNetworkString("VD_ConfigSave")
 util.AddNetworkString("VD_SetSpawnPoint")
+util.AddNetworkString("VD_MyList")
+util.AddNetworkString("VD_RemoveRequest")
 
 -- ════════════════════════════════════════════════════════
 -- Отладка
@@ -252,14 +277,14 @@ local function SpawnVehicleForPlayer(ply, dealer, vehicleClass)
     if not IsValid(ply) or not IsValid(dealer) then return false, "Ошибка: невалидный игрок или дилер" end
     if not vehicleClass or vehicleClass == "" then return false, "Не указан класс транспорта" end
 
-    -- Проверка лимита
+    -- Проверка лимита (админ-спавн из ТАБ обходит и лимит, и фильтры доступа)
     local count = 0
     for id, ent in pairs(VD_AllVehicles) do
         if IsValid(ent) and ent.VD_Owner == ply then
             count = count + 1
         end
     end
-    if count >= VD_MAX_VEHICLES then
+    if count >= VD_MAX_VEHICLES and VD_AdminBypassClass ~= vehicleClass then
         return false, "Лимит транспорта достигнут (" .. VD_MAX_VEHICLES .. "). Удалите старую машину."
     end
 
@@ -284,8 +309,8 @@ local function SpawnVehicleForPlayer(ply, dealer, vehicleClass)
         end
     end
 
-    -- ═══ Проверки доступа (пропускаем для фракционных машин) ═══
-    if not isFactionVehicle then
+    -- ═══ Проверки доступа (пропускаем для фракционных машин и админ-спавна) ═══
+    if not isFactionVehicle and VD_AdminBypassClass ~= vehicleClass then
         local dealerData = {
             vehicles = dealer.VD_Vehicles or {},
         }
@@ -310,6 +335,22 @@ local function SpawnVehicleForPlayer(ply, dealer, vehicleClass)
             spawnPos = dealer:GetSpawnPos()
             spawnAngle = dealer:GetSpawnAngle()
         end)
+    end
+
+    -- ═══ Оплата (Код 82): цена из списков дилера; фракционный — бесплатно; ═══
+    -- ═══ админ-спавн из ТАБ (VD_AdminBypassClass) — без списания.           ═══
+    local vdPaid = 0
+    local vdPrice, vdPriceSrc = priceOf(dealer, faction, vehicleClass)
+    local vdFree = (VD_AdminBypassClass == vehicleClass) or (vdPriceSrc == faction)
+    if not vdFree and vdPrice > 0 then
+        if not (GRM and GRM.TakeMoney) then
+            return false, "Модуль валюты недоступен — покупка невозможна"
+        end
+        if GRM.GetBalance and GRM.GetBalance(ply) < vdPrice then
+            return false, "Не хватает наличных: нужно " .. tostring(GRM.Format and GRM.Format(vdPrice) or vdPrice)
+        end
+        GRM.TakeMoney(ply, vdPrice, "Покупка транспорта у дилера: " .. tostring(vehicleClass))
+        vdPaid = vdPrice
     end
 
     if not spawnPos then
@@ -439,6 +480,10 @@ local function SpawnVehicleForPlayer(ply, dealer, vehicleClass)
     end
 
     if not IsValid(ent) then
+        if vdPaid > 0 and GRM and GRM.GiveMoney then
+            GRM.GiveMoney(ply, vdPaid, "Возврат: транспорт не создан")
+            ply:ChatPrint("[VD] Транспорт не создан — деньги возвращены: " .. tostring(GRM.Format and GRM.Format(vdPaid) or vdPaid))
+        end
         return false, "Не удалось создать транспорт: " .. vehicleClass
     end
 
@@ -446,16 +491,54 @@ local function SpawnVehicleForPlayer(ply, dealer, vehicleClass)
     ent.VD_ID        = ent:EntIndex()
     ent.VD_Class     = vehicleClass
     ent.VD_SpawnTime = CurTime()
+    ent.VD_Price     = vdPaid -- для возврата 50% при удалении (VD_REFUND_RATE)
     VD_AllVehicles[ent:EntIndex()] = ent
 
-    ply:ChatPrint("[VD] Транспорт заспавнен: " .. displayName)
+    -- ═══ Владение ключами (Код 82): машина сразу закрыта, ключ у владельца ═══
+    if VK then
+        if vdPriceSrc and vdPriceSrc ~= "global" and vdPriceSrc ~= "nofaction" and faction and VK.SetFactionOwner then
+            pcall(VK.SetFactionOwner, ent, faction)
+        elseif VK.SetPlayerOwner then
+            pcall(VK.SetPlayerOwner, ent, ply)
+        end
+    end
+
+    local payNote = ""
+    if vdPaid > 0 then
+        payNote = " • оплачено: " .. tostring(GRM.Format and GRM.Format(vdPaid) or vdPaid)
+    end
+    ply:ChatPrint("[VD] Транспорт заспавнен: " .. displayName .. payNote)
     hook.Run("VD_OnVehicleSpawned", ent, ply, vehicleClass)
 
     local dID = dealer.VD_ID or ""
     pcall(function() dID = dealer:GetDealerID() end)
-    vdDbgPrint(ply:Nick(), "заспавнил", vehicleClass, "через дилера", dID)
+    vdDbgPrint(ply:Nick(), "заспавнил", vehicleClass, "через дилера", dID, "paid:", vdPaid)
+    pcall(pushMyVehicles, ply) -- обновить «Мои Т/С» в меню дилера (Код 82)
 
-    return true, "Транспорт заспавнен: " .. displayName
+    return true, "Транспорт заспавнен: " .. displayName .. payNote
+end
+
+-- ════════════════════════════════════════════════════════
+-- «Мои Т/С»: снапшот владельцу для меню дилера (Код 82)
+-- ════════════════════════════════════════════════════════
+pushMyVehicles = function(ply)
+    if not IsValid(ply) then return end
+    local out = {}
+    for id, ent in pairs(VD_AllVehicles) do
+        if IsValid(ent) and ent.VD_Owner == ply then
+            local refund = math.floor((tonumber(ent.VD_Price) or 0) * VD_REFUND_RATE)
+            out[#out + 1] = {
+                id = ent:EntIndex(),
+                class = tostring(ent.VD_Class or ent:GetClass()),
+                name = (VK and VK.GetVehicleDisplayName and VK.GetVehicleDisplayName(ent)) or tostring(ent.VD_Class or ent:GetClass()),
+                price = tonumber(ent.VD_Price) or 0,
+                refund = refund,
+            }
+        end
+    end
+    net.Start("VD_MyList")
+        net.WriteTable(out)
+    net.Send(ply)
 end
 
 -- ════════════════════════════════════════════════════════
@@ -591,6 +674,7 @@ function ENT:Use(activator, caller)
         net.WriteString(self:GetDealerName())
         net.WriteTable(vlist)
     net.Send(activator)
+    pcall(pushMyVehicles, activator) -- «Мои Т/С» (Код 82)
 end
 
 -- ════════════════════════════════════════════════════════
@@ -675,6 +759,43 @@ net.Receive("VD_SpawnRequest", function(_, ply)
         net.WriteBool(ok)
         net.WriteString(msg or "")
     net.Send(ply)
+end)
+
+net.Receive("VD_RemoveRequest", function(_, ply)
+    if not IsValid(ply) then return end
+    local veh = net.ReadEntity()
+    local function res(ok, msg)
+        net.Start("VD_SpawnResult")
+            net.WriteBool(ok == true)
+            net.WriteString(tostring(msg or ""))
+        net.Send(ply)
+    end
+    if not IsValid(veh) then res(false, "Транспорт не найден") return end
+    local idx = veh:EntIndex()
+    local tracked = (VD_AllVehicles and VD_AllVehicles[idx] ~= nil) or veh.VD_Owner ~= nil or veh.VD_ID ~= nil
+    if not tracked then res(false, "Это не транспорт из дилера") return end
+    local mine = (veh.VD_Owner == ply)
+        or (veh.VK_OwnerType == "player" and veh.VK_OwnerSteam == ply:SteamID())
+    if not (mine or ply:IsSuperAdmin()) then res(false, "Это не ваш транспорт") return end
+    if ply:GetPos():DistToSqr(veh:GetPos()) > 600 * 600 then res(false, "Слишком далеко от транспорта") return end
+
+    -- возврат владельцу (Код 82): 50% фактической цены покупки
+    local refund = 0
+    local price = tonumber(veh.VD_Price) or 0
+    local owner = veh.VD_Owner
+    if mine and price > 0 then
+        refund = math.floor(price * VD_REFUND_RATE)
+    end
+    local cls = tostring(veh.VD_Class or veh:GetClass())
+    if VD_AllVehicles then VD_AllVehicles[idx] = nil end
+    veh:Remove()
+    if refund > 0 and GRM and GRM.GiveMoney and IsValid(owner) then
+        GRM.GiveMoney(owner, refund, "Возврат за удалённый транспорт: " .. cls)
+    end
+    vdDbgPrint(ply:Nick(), "удалил транспорт", cls, "возврат:", refund)
+    hook.Run("VD_OnVehicleRemoved", veh, ply, cls)
+    res(true, "Транспорт убран: " .. cls .. (refund > 0 and (" • возврат " .. tostring(GRM.Format and GRM.Format(refund) or refund)) or ""))
+    pcall(pushMyVehicles, ply)
 end)
 
 net.Receive("VD_ConfigOpen", function(_, ply)
@@ -1004,15 +1125,21 @@ hook.Add("PlayerSay", "VD_ChatCommands", function(ply, text)
     end
 
     if lower == "/vd_remove" or lower == "!vd_remove" then
-        local removed = 0
+        local removed, refunded = 0, 0
         for id, ent in pairs(VD_AllVehicles) do
             if IsValid(ent) and ent.VD_Owner == ply then
+                local price = tonumber(ent.VD_Price) or 0
+                if price > 0 then refunded = refunded + math.floor(price * VD_REFUND_RATE) end
                 ent:Remove()
                 VD_AllVehicles[id] = nil
                 removed = removed + 1
             end
         end
-        ply:ChatPrint("[VD] Удалено транспорта: " .. removed)
+        if refunded > 0 and GRM and GRM.GiveMoney then
+            GRM.GiveMoney(ply, refunded, "Возврат за удалённый транспорт (/vd_remove)")
+        end
+        ply:ChatPrint("[VD] Удалено транспорта: " .. removed .. (refunded > 0 and (" • возврат " .. tostring(GRM.Format and GRM.Format(refunded) or refunded)) or ""))
+        pcall(pushMyVehicles, ply)
         return ""
     end
 end)
@@ -1102,3 +1229,84 @@ hook.Add("ShutDown", "VD_SaveOnShutdown", function()
 end)
 
 print("[VD] Сущность sent_vehicle_dealer загружена")
+
+-- ════════════════════════════════════════════════════════
+-- Мост ТАБ-меню (аудит протоколов): админ-спавн транспорта игроку
+-- Раньше ТАБ слал VD_RequestVehicleList / VD_AdminSpawnVehicle в никуда —
+-- кнопки «Заспавнить» были мёртвыми. Обработчики здесь, поверх
+-- того же контура SpawnVehicleForPlayer (без денег и фильтров доступа).
+-- ════════════════════════════════════════════════════════
+util.AddNetworkString("VD_RequestVehicleList")
+util.AddNetworkString("VD_AdminSpawnVehicle")
+util.AddNetworkString("VD_VehicleList")
+
+function _G.VD_AdminSpawnFor(targetPly, vehicleClass)
+    if not IsValid(targetPly) then return false, "Игрок не в сети" end
+    local dealer, bd = nil, math.huge
+    for id, d in pairs(VehicleDealers or {}) do
+        if IsValid(d) then
+            local dist = targetPly:GetPos():DistToSqr(d:GetPos())
+            if dist < bd then bd = dist dealer = d end
+        end
+    end
+    if not IsValid(dealer) then
+        for _, d in ipairs(ents.FindByClass("sent_vehicle_dealer")) do
+            if IsValid(d) then dealer = d break end
+        end
+    end
+    if not IsValid(dealer) then return false, "На карте нет авто-дилеров (sent_vehicle_dealer)" end
+    VD_AdminBypassClass = vehicleClass
+    local ok, err = SpawnVehicleForPlayer(targetPly, dealer, vehicleClass)
+    VD_AdminBypassClass = nil
+    return ok, err
+end
+
+net.Receive("VD_RequestVehicleList", function(_, ply)
+    if not IsValid(ply) or not (ply:IsSuperAdmin() or ply:IsAdmin()) then return end
+    local out, seen = {}, {}
+    local function collect(dealer)
+        if not IsValid(dealer) or not istable(dealer.VD_Vehicles) then return end
+        local dname = SafeGetDealerName and SafeGetDealerName(dealer) or "дилер"
+        for _, arr in pairs(dealer.VD_Vehicles) do
+            if istable(arr) then
+                for _, v in ipairs(arr) do
+                    if istable(v) and isstring(v.class) and v.class ~= "" and not seen[v.class] then
+                        seen[v.class] = true
+                        out[#out + 1] = { class = v.class, name = tostring(v.name or v.PrintName or v.class), dealer = tostring(dname) }
+                    end
+                end
+            end
+        end
+    end
+    for _, dealer in ipairs(ents.FindByClass("sent_vehicle_dealer")) do collect(dealer) end
+    for _, d in pairs(VehicleDealers or {}) do collect(d) end
+    table.sort(out, function(a, b) return a.name:lower() < b.name:lower() end)
+    net.Start("VD_VehicleList")
+        net.WriteTable(out)
+    net.Send(ply)
+end)
+
+net.Receive("VD_AdminSpawnVehicle", function(_, ply)
+    if not IsValid(ply) or not ply:IsSuperAdmin() then
+        if IsValid(ply) then ply:PrintMessage(HUD_PRINTTALK, "[ТАБ•Транспорт] Только суперадмин.") end
+        return
+    end
+    local sid64  = tostring(net.ReadString() or "")
+    local vclass = string.Trim(tostring(net.ReadString() or ""))
+    if vclass == "" then return end
+    local target = nil
+    for _, p in ipairs(player.GetAll()) do
+        if IsValid(p) and p:SteamID64() == sid64 then target = p break end
+    end
+    if not IsValid(target) then
+        ply:PrintMessage(HUD_PRINTTALK, "[ТАБ•Транспорт] Игрок с таким SID64 не в сети.")
+        return
+    end
+    local ok, err = _G.VD_AdminSpawnFor(target, vclass)
+    if ok then
+        ply:PrintMessage(HUD_PRINTTALK, "[ТАБ•Транспорт] Выдано " .. vclass .. " → " .. target:Nick())
+        if GRM and GRM.Notify then GRM.Notify(target, "Администрация выдала вам транспорт: " .. vclass, 160, 220, 255) end
+    else
+        ply:PrintMessage(HUD_PRINTTALK, "[ТАБ•Транспорт] Ошибка: " .. tostring(err or "неизвестно"))
+    end
+end)

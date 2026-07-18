@@ -16,13 +16,25 @@ def build_dist():
                 filepath = os.path.join(root, f)
                 arcname = os.path.join("grm", filepath)
                 z.write(filepath, arcname)
+        # материалы/иконки энтити (Q-меню): materials/entities/<class>.png
+        if os.path.isdir("materials"):
+            for root, dirs, files in os.walk("materials"):
+                for f in files:
+                    filepath = os.path.join(root, f)
+                    arcname = os.path.join("grm", filepath)
+                    z.write(filepath, arcname)
 
-    # 2. grm_full_code.zip (lua/...)
+    # 2. grm_full_code.zip (lua/... + materials/...)
     with zipfile.ZipFile("dist/grm_full_code.zip", "w", zipfile.ZIP_DEFLATED) as z:
         for root, dirs, files in os.walk("lua"):
             for f in files:
                 filepath = os.path.join(root, f)
                 z.write(filepath, filepath)
+        if os.path.isdir("materials"):
+            for root, dirs, files in os.walk("materials"):
+                for f in files:
+                    filepath = os.path.join(root, f)
+                    z.write(filepath, filepath)
 
     # 3. grm_economy.zip (economy-related lua files)
     economy_files = [

@@ -172,15 +172,28 @@ end
 -- ════════════════════════════════════════════════════════
 -- Меню выбора транспорта
 -- ════════════════════════════════════════════════════════
+-- ════════════════════════════════════════════════════════
+-- «Мои Т/С» (Код 82): кэш списка владельца + живое обновление
+-- ════════════════════════════════════════════════════════
+local VD_MyVehicles = {}
+local VD_MyPanel, VD_MenuFrame = nil, nil
+local refreshMySection -- fwd
+
+net.Receive("VD_MyList", function()
+    VD_MyVehicles = net.ReadTable() or {}
+    if IsValid(VD_MyPanel) and refreshMySection then refreshMySection() end
+end)
+
 local function OpenVehicleMenu(dealerID, dealerName, vlist)
-    if not vlist or #vlist == 0 then
+    if (not vlist or #vlist == 0) and #VD_MyVehicles == 0 then
         chat.AddText(Color(255, 100, 100), "[VD] ", Color(200, 200, 200), "У вас нет доступа к транспорту у этого дилера")
         return
     end
 
     local frame = vgui.Create("DFrame")
+    VD_MenuFrame = frame
     frame:SetTitle(dealerName or "Дилер транспорта")
-    frame:SetSize(560, 480)
+    frame:SetSize(560, 540)
     frame:Center()
     frame:MakePopup()
     frame:SetSkin("Default")
@@ -197,10 +210,62 @@ local function OpenVehicleMenu(dealerID, dealerName, vlist)
         draw.SimpleText(self:GetTitle(), "VD_MenuTitle", w / 2, 14, Color(100, 200, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
 
-    -- Список транспорта
+    -- ═══ «Мои Т/С» — верхняя секция (Код 82): убрать с возвратом 50% ═══
+    local myPanel = vgui.Create("DPanel", frame)
+    VD_MyPanel = myPanel
+    myPanel:Dock(TOP)
+    myPanel:DockMargin(8, 32, 8, 4)
+
+    refreshMySection = function()
+        if not IsValid(myPanel) then return end
+        myPanel:Clear()
+        local n = #VD_MyVehicles
+        if n == 0 then myPanel:SetTall(0) myPanel:SetVisible(false) return end
+        myPanel:SetVisible(true)
+        myPanel:SetTall(30 + n * 30 + 8)
+        myPanel.Paint = function(_, w, h)
+            surface.SetDrawColor(18, 32, 52, 240)
+            surface.DrawRect(0, 0, w, h)
+            surface.SetDrawColor(80, 160, 120, 160)
+            surface.DrawOutlinedRect(0, 0, w, h, 1)
+            draw.SimpleText("МОЙ ТРАНСПОРТ (" .. n .. "/3)  •  удаление возвращает 50% цены", "VD_MenuSmall", 8, 12, Color(140, 220, 170), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
+        for i, mv in ipairs(VD_MyVehicles) do
+            local row = vgui.Create("DPanel", myPanel)
+            row:SetPos(6, 26 + (i - 1) * 30) row:SetSize(536, 27)
+            row.Paint = function(_, w, h)
+                surface.SetDrawColor(28, 46, 70, 220)
+                surface.DrawRect(0, 0, w, h)
+                draw.SimpleText(tostring(mv.name or mv.class), "VD_MenuSmall", 8, 7, Color(220, 235, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText(tostring(mv.class or ""), "VD_MenuSmall", 8, 16, Color(120, 150, 180), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                if (mv.refund or 0) > 0 then
+                    local rt = GRM and GRM.Format and GRM.Format(mv.refund) or tostring(mv.refund)
+                    draw.SimpleText("возврат " .. rt, "VD_MenuSmall", w - 92, h / 2, Color(120, 220, 130), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                end
+            end
+            local del = vgui.Create("DButton", row)
+            del:SetPos(536 - 78, 3) del:SetSize(74, 21)
+            del:SetText("")
+            del.Paint = function(self, w, h)
+                local col = self:IsHovered() and Color(210, 90, 80, 240) or Color(160, 60, 55, 210)
+                surface.SetDrawColor(col)
+                surface.DrawRect(0, 0, w, h)
+                draw.SimpleText("УБРАТЬ", "VD_MenuSmall", w / 2, h / 2, Color(255, 235, 235), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            end
+            del.vid = mv.id
+            del.DoClick = function(self)
+                net.Start("VD_RemoveRequest")
+                    net.WriteEntity(Entity(self.vid or 0))
+                net.SendToServer()
+            end
+        end
+    end
+    refreshMySection()
+
+    -- Список транспорта у дилера
     local scroll = vgui.Create("DScrollPanel", frame)
     scroll:Dock(FILL)
-    scroll:DockMargin(8, 32, 8, 8)
+    scroll:DockMargin(8, 4, 8, 8)
 
     local sbar = scroll:GetVBar()
     sbar:SetWide(6)
@@ -290,7 +355,7 @@ local function OpenVehicleMenu(dealerID, dealerName, vlist)
     local hint = vgui.Create("DLabel", frame)
     hint:Dock(BOTTOM)
     hint:DockMargin(8, 0, 8, 4)
-    hint:SetText("Транспорт по вашему доступу  |  /vd_remove — удалить свой транспорт  |  /vshop — купить доступ")
+    hint:SetText("Покупка списывает цену с наличных  |  удаление своего Т/С возвращает 50%  |  /vd_remove — убрать ВСЕ свои  |  C возле машины — замок/багажник")
     hint:SetFont("VD_MenuSmall")
     hint:SetTextColor(Color(140, 160, 180))
     hint:SetContentAlignment(5)

@@ -41,6 +41,13 @@ if SERVER then
         grm_cctv_camera    = true,
         grm_cctv_monitor   = true,
         grm_cctv_server    = true,
+        grm_wardrobe       = true,
+        grm_radio          = true,
+        grm_broadcast_mic  = true,
+        grm_board          = true,
+        -- Биржа труда (Код 77) — модуль и сам автоперсистентен, классы тут для /permadd-совместимости
+        grm_jobcenter      = true,
+        grm_depot          = true,
         grm_alarm_sensor   = true,
         grm_alarm_hub      = true,
         grm_alarm_terminal = true,

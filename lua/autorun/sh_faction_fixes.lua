@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    Factions Extended / sh_faction_fixes.lua
+    Factions Extended / sh_faction_fixes.lua  v3.1.1
     Полностью исправленная версия расширения фракций:
 
       • Комендантский час.
@@ -9,6 +9,20 @@
       • Исправлен выбор модели без DModelBrowser.
       • Исправлено удаление модели из списка по крестику.
       • GNewsAccess сохраняется и может использоваться только лидером, если ваш /gnews проверяет лидера.
+
+    v3.1.1 (заказ владельца «переработать и синхронизировать расш.настройки»):
+      - Вкладка «Расширенные настройки» /factions переехала с обезьяньего
+        патча OpenAdminMenu (мёртвого: sh_factions грузится позже и
+        перезаписывал глобал — вкладка пропадала) на хук-точку
+        GRM_FactionsAdmin_BuildTabs — как мост «Доступы».
+      - Синхронизация: buildSyncData теперь зеркалит Models/RoleModels/
+        DepartmentModels/Weapons/RoleWeapons/DepartmentWeapons/GNewsAccess —
+        вкладка показывает ЖИВЫЕ счётчики и статус ком.часа (активен/таймер/
+        кем объявлен + кнопка отмены), маскировку по отделам; авто-синк
+        1.5 с при любом изменении зеркал.
+      - ФИКС: списки оружия из /weapons_admin не писались на диск —
+        saveFactionExtras() теперь вызывается и для оружия (раньше после
+        рестарта слетало).
 
     Зависимость:
       Основная система фракций должна создавать глобальную таблицу Factions.
@@ -798,6 +812,9 @@ if SERVER then
             f.DepartmentWeapons[key] = weapons
             applyWeaponsToTargetGroup(factionName, nil, key)
         end
+        -- фикс v3.1.1: оружейные списки раньше НЕ сохранялись на диск
+        -- (только модели) — после рестарта слетали; пишем в fw_faction_extras.json
+        saveFactionExtras()
         if broadcastFactionData then pcall(broadcastFactionData) end
         ply:PrintMessage(HUD_PRINTTALK, "[Оружие] Сохранено.")
     end)
@@ -1904,11 +1921,12 @@ if CLIENT then
         end
     end
 
+    -- v2.1: интерактивное админ-меню моделей с живым превью (GRM v2 refresh)
     local function openAdminModelsMenu()
         pendingModelsCb = function(data)
             local frame = vgui.Create("DFrame")
             frame:SetTitle("Управление моделями")
-            frame:SetSize(900, 680)
+            frame:SetSize(1100, 700)
             frame:Center()
             frame:MakePopup()
             ui.currentModelsFrame = frame
@@ -1919,20 +1937,114 @@ if CLIENT then
             local function addModelPanel(title, modelList, saveFunc)
                 local panel = vgui.Create("DPanel")
                 panel:SetPaintBackground(false)
-                local scroll = vgui.Create("DScrollPanel", panel)
+
+                -- ЛЕВО: список моделей
+                local left = vgui.Create("DPanel", panel)
+                left:Dock(LEFT) left:SetWide(560) left:DockMargin(5, 5, 2, 42)
+                left:SetPaintBackground(false)
+
+                local scroll = vgui.Create("DScrollPanel", left)
                 scroll:Dock(FILL)
-                scroll:DockMargin(5, 5, 5, 42)
-                buildModelList(scroll, modelList, saveFunc)
+
+                -- ПРАВО: живое превью
+                local previewPanel = vgui.Create("DPanel", panel)
+                previewPanel:Dock(FILL) previewPanel:DockMargin(2, 5, 5, 42)
+                previewPanel.Paint = function(_, w, h)
+                    draw.RoundedBox(6, 0, 0, w, h, THEME.bgLight)
+                    draw.SimpleText("Предпросмотр", "DermaDefaultBold", 10, 14, THEME.dim or Color(160,165,175), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                end
+
+                local preview = vgui.Create("DAdjustableModelPanel", previewPanel)
+                preview:Dock(FILL) preview:DockMargin(6, 24, 6, 6)
+                preview:SetFOV(38)
+
+                local info = vgui.Create("DLabel", previewPanel)
+                info:Dock(BOTTOM) info:SetTall(34) info:DockMargin(6, 0, 6, 4)
+                info:SetText("") info:SetWrap(true) info:SetAutoStretchVertical(true)
+
+                local function showInPreview(entry)
+                    entry = normalizeModelEntry(entry)
+                    if not IsValid(preview) or entry.path == "" then return end
+                    preview:SetModel(entry.path)
+                    local ent = preview:GetEntity()
+                    if IsValid(ent) then
+                        ent:SetSkin(tonumber(entry.skin) or 0)
+                        for i = 0, (ent:GetNumBodyGroups() or 1) - 1 do ent:SetBodygroup(i, 0) end
+                        for g, v in pairs(entry.bodygroups or {}) do
+                            ent:SetBodygroup(tonumber(g) or 0, tonumber(v) or 0)
+                        end
+                    end
+                    info:SetText(entry.path .. "\nskin " .. tostring(entry.skin) .. " | bg " .. bodygroupsToText(entry.bodygroups))
+                end
+
+                local selected = nil
+                local function rebuild()
+                    scroll:Clear()
+                    for idx, entry in ipairs(modelList) do
+                        entry = normalizeModelEntry(entry)
+                        modelList[idx] = entry
+
+                        local row = scroll:Add("DPanel")
+                        row:Dock(TOP) row:SetTall(70) row:DockMargin(0, 0, 0, 5)
+                        row.Paint = function(_, w, h)
+                            draw.RoundedBox(5, 0, 0, w, h, (selected == row) and Color(44, 66, 96) or THEME.bgLight)
+                        end
+                        row:SetCursor("hand")
+                        row.OnMousePressed = function()
+                            selected = row
+                            showInPreview(entry)
+                            surface.PlaySound("buttons/button14.wav")
+                            for _, sib in ipairs(scroll:GetCanvas():GetChildren()) do if sib.InvalidateLayout then sib:InvalidateLayout() end end
+                        end
+
+                        local ico = vgui.Create("SpawnIcon", row)
+                        ico:Dock(LEFT) ico:SetWide(64) ico:DockMargin(3, 3, 0, 3)
+                        ico:SetModel(entry.path, tonumber(entry.skin) or 0)
+                        ico:SetMouseInputEnabled(false) ico:SetTooltip(false)
+
+                        local lbl = vgui.Create("DLabel", row)
+                        lbl:Dock(FILL) lbl:DockMargin(4, 0, 0, 0)
+                        lbl:SetText(entry.path .. "\nskin " .. tostring(entry.skin) .. " | bg " .. bodygroupsToText(entry.bodygroups))
+                        lbl:SetTextColor(THEME.text) lbl:SetWrap(true)
+                        lbl:SetMouseInputEnabled(false)
+
+                        local bgBtn = styledButton(row, "Боди", Color(110, 120, 210))
+                        bgBtn:Dock(RIGHT) bgBtn:SetWide(52) bgBtn:DockMargin(2, 20, 2, 20)
+                        bgBtn.DoClick = function()
+                            openBodygroupsEditor(entry, function(updated)
+                                modelList[idx] = normalizeModelEntry(updated)
+                                rebuild() saveFunc(modelList)
+                                showInPreview(modelList[idx] or entry)
+                            end)
+                        end
+
+                        local editBtn = styledButton(row, "Ред.", THEME.accent)
+                        editBtn:Dock(RIGHT) editBtn:SetWide(50) editBtn:DockMargin(2, 20, 2, 20)
+                        editBtn.DoClick = function()
+                            openModelEntryEditor(entry, function(updated)
+                                modelList[idx] = normalizeModelEntry(updated)
+                                rebuild() saveFunc(modelList)
+                                showInPreview(modelList[idx] or entry)
+                            end, false)
+                        end
+
+                        local del = styledButton(row, "X", THEME.danger)
+                        del:Dock(RIGHT) del:SetWide(38) del:DockMargin(2, 20, 4, 20)
+                        del.DoClick = function()
+                            table.remove(modelList, idx)
+                            rebuild() saveFunc(modelList)
+                        end
+                    end
+                    if modelList[1] then showInPreview(modelList[1]) end
+                end
+                rebuild()
 
                 local add = vgui.Create("DButton", panel)
-                add:Dock(BOTTOM)
-                add:SetTall(34)
-                add:SetText("+ Добавить модель")
+                add:Dock(BOTTOM) add:SetTall(34) add:SetText("+ Добавить модель")
                 add.DoClick = function()
                     openModelEntryEditor({ path = "models/player/Group01/male_07.mdl" }, function(entry)
                         table.insert(modelList, normalizeModelEntry(entry))
-                        buildModelList(scroll, modelList, saveFunc)
-                        saveFunc(modelList)
+                        rebuild() saveFunc(modelList)
                     end, false)
                 end
                 return panel
@@ -2000,11 +2112,12 @@ if CLIENT then
         if pendingWeaponsCb then local cb = pendingWeaponsCb pendingWeaponsCb = nil cb(data) end
     end)
 
+    -- v2.1: интерактивное админ-меню оружия с каталогом и поиском (GRM v2 refresh)
     local function openWeaponsAdminMenu()
         pendingWeaponsCb = function(data)
             local frame = vgui.Create("DFrame")
             frame:SetTitle("Управление оружием")
-            frame:SetSize(860, 640)
+            frame:SetSize(1100, 680)
             frame:Center()
             frame:MakePopup()
             ui.currentWeaponsFrame = frame
@@ -2012,35 +2125,133 @@ if CLIENT then
             local tabs = vgui.Create("DPropertySheet", frame)
             tabs:Dock(FILL)
 
+            -- полный каталог оружия из зарегистрированных SWEP'ов
+            local function weaponCatalog()
+                local out, seen = {}, {}
+                for _, w in ipairs(weapons.GetList() or {}) do
+                    local cls = w.ClassName or ""
+                    if cls ~= "" and not seen[cls] then
+                        seen[cls] = true
+                        out[#out + 1] = { class = cls, name = (w.PrintName and w.PrintName ~= "") and w.PrintName or cls, cat = w.Category or "Прочее" }
+                    end
+                end
+                table.sort(out, function(a, b)
+                    if a.cat == b.cat then return a.name < b.name end
+                    return a.cat < b.cat
+                end)
+                return out
+            end
+            local CATALOG = weaponCatalog()
+
             local function addWeaponPanel(list, saveFunc)
+                list = istable(list) and list or {}
                 local panel = vgui.Create("DPanel")
                 panel:SetPaintBackground(false)
-                local scroll = vgui.Create("DScrollPanel", panel)
+
+                local function inList(cls)
+                    for _, c in ipairs(list) do if c == cls then return true end end
+                    return false
+                end
+
+                -- ЛЕВО: текущий набор
+                local left = vgui.Create("DPanel", panel)
+                left:Dock(LEFT) left:SetWide(430) left:DockMargin(5, 5, 2, 40)
+                left:SetPaintBackground(false)
+                local leftTitle = vgui.Create("DLabel", left)
+                leftTitle:Dock(TOP) leftTitle:SetTall(20)
+                leftTitle:SetText("В наборе (удалить ✕):") leftTitle:SetTextColor(THEME.text)
+                local scroll = vgui.Create("DScrollPanel", left)
                 scroll:Dock(FILL)
-                scroll:DockMargin(5, 5, 5, 40)
-                buildWeaponList(scroll, list, saveFunc)
 
+                -- ПРАВО: каталог с поиском
+                local right = vgui.Create("DPanel", panel)
+                right:Dock(FILL) right:DockMargin(2, 5, 5, 40)
+                right:SetPaintBackground(false)
+                local search = vgui.Create("DTextEntry", right)
+                search:Dock(TOP) search:SetTall(24)
+                search:SetPlaceholderText("Поиск по имени/классу в каталоге...")
+                local catScroll = vgui.Create("DScrollPanel", right)
+                catScroll:Dock(FILL)
+
+                local function rebuildList()
+                    scroll:Clear()
+                    for idx, class in ipairs(list) do
+                        local wpn = weapons.Get(class)
+                        local row = scroll:Add("DPanel")
+                        row:Dock(TOP) row:SetTall(30) row:DockMargin(0, 0, 0, 3)
+                        row:SetPaintBackground(false)
+                        row.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, THEME.bgLight) end
+
+                        local lbl = vgui.Create("DLabel", row)
+                        lbl:Dock(FILL) lbl:DockMargin(6, 0, 0, 0)
+                        lbl:SetText((wpn and wpn.PrintName and wpn.PrintName ~= "") and (wpn.PrintName .. "  (" .. class .. ")") or class)
+                        lbl:SetTextColor(THEME.text)
+
+                        local del = styledButton(row, "X", THEME.danger)
+                        del:Dock(RIGHT) del:SetWide(56) del:DockMargin(0, 3, 3, 3)
+                        del.DoClick = function()
+                            table.remove(list, idx)
+                            saveFunc(list)
+                            rebuildList()
+                        end
+                    end
+                end
+
+                local function rebuildCatalog(filter)
+                    catScroll:Clear()
+                    filter = string.lower(trim(filter))
+                    local lastCat = nil
+                    for _, w in ipairs(CATALOG) do
+                        if filter == "" or string.find(string.lower(w.name .. " " .. w.class), filter, 1, true) then
+                            if w.cat ~= lastCat then
+                                lastCat = w.cat
+                                local hdr = catScroll:Add("DLabel")
+                                hdr:Dock(TOP) hdr:SetTall(18)
+                                hdr:SetText("— " .. tostring(lastCat) .. " —")
+                                hdr:SetTextColor(THEME.accent or Color(70,150,240))
+                                hdr:SetContentAlignment(5)
+                            end
+                            local has = inList(w.class)
+                            local rowBtn = catScroll:Add("DButton")
+                            rowBtn:Dock(TOP) rowBtn:SetTall(24) rowBtn:DockMargin(0, 0, 0, 2)
+                            rowBtn:SetText("")
+                            rowBtn.Paint = function(_, pw, ph)
+                                draw.RoundedBox(4, 0, 0, pw, ph, has and Color(44, 80, 60) or THEME.bgLight)
+                                draw.SimpleText(w.name, "DermaDefault", 8, ph / 2, has and Color(120, 230, 150) or THEME.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                                draw.SimpleText(w.class, "DermaDefault", pw - 8, ph / 2, THEME.dim or Color(150,155,165), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                            end
+                            rowBtn.DoClick = function()
+                                if inList(w.class) then
+                                    for i, c in ipairs(list) do if c == w.class then table.remove(list, i) break end end
+                                else
+                                    list[#list + 1] = w.class
+                                end
+                                saveFunc(list)
+                                rebuildList()
+                                rebuildCatalog(search:GetText())
+                            end
+                        end
+                    end
+                end
+                search.OnChange = function() rebuildCatalog(search:GetText()) end
+
+                rebuildList() rebuildCatalog("")
+
+                -- ручное добавление по классу (как раньше)
                 local row = vgui.Create("DPanel", panel)
-                row:Dock(BOTTOM)
-                row:SetTall(34)
-                row:SetPaintBackground(false)
-
+                row:Dock(BOTTOM) row:SetTall(34) row:SetPaintBackground(false)
                 local entry = vgui.Create("DTextEntry", row)
                 entry:Dock(FILL)
-                entry:SetPlaceholderText("classname оружия...")
-
+                entry:SetPlaceholderText("или вручную: classname оружия...")
                 local add = vgui.Create("DButton", row)
-                add:Dock(RIGHT)
-                add:SetWide(100)
-                add:SetText("+ Добавить")
-
+                add:Dock(RIGHT) add:SetWide(100) add:SetText("+ Добавить")
                 local function confirm()
                     local class = trim(entry:GetText())
-                    if class == "" then return end
+                    if class == "" or inList(class) then return end
                     table.insert(list, class)
                     entry:SetText("")
-                    buildWeaponList(scroll, list, saveFunc)
                     saveFunc(list)
+                    rebuildList() rebuildCatalog(search:GetText())
                 end
                 entry.OnEnter = confirm
                 add.DoClick = confirm
@@ -2345,6 +2556,25 @@ if CLIENT then
         net.SendToServer()
     end
 
+    -- ============================================================================
+    -- Вкладка «Расширенные настройки» админ-меню /factions (v3.1.1, переработка)
+    --
+    -- Раньше вкладка вставлялась обезьяньим патчем глобала OpenAdminMenu —
+    -- sh_factions.lua грузится ПОЗЖЕ и перезаписывал его, поэтому вкладка тихо
+    -- пропадала («раньше была — сейчас нет»). Теперь честная точка расширения:
+    -- hook GRM_FactionsAdmin_BuildTabs (вызывается sh_factions при построении
+    -- вкладок админ-меню, тот же механизм, что у моста «Доступы»).
+    --
+    -- СИНХРОНИЗАЦИЯ состояния (заказ владельца «переработать и синхронизировать»):
+    --   ком.час доступ:  cfg.CurfewRoles   → проверяет hasCurfewAccess (/kom_hour)
+    --   гос.новости:     f.GNewsAccess     → hasGNewsAccess (/gnews) — зеркало в
+    --                                          FactionsData с v3.1.1 (buildSyncData)
+    --   модели/оружие:   f.Models/RoleModels/DepartmentModels, f.Weapons/...
+    --                    → читают GetModelsForPlayer (/model) и ApplyWeaponsToPlayer
+    --                      (спавн); во вкладке — ЖИВЫЕ счётчики из NET_SYNC_ALL
+    --   маскировка v2:   cfg.MaskDepartments → getAvailableMasks (/mask)
+    -- Таймер-синк 1.5 c: панель сама пересобирается при изменении зеркал.
+    -- ============================================================================
     function OpenExtendedSettings(parentFrame)
         local panel = vgui.Create("DPanel")
         panel:SetPaintBackground(false)
@@ -2367,6 +2597,24 @@ if CLIENT then
         scroll:Dock(FILL)
         scroll:DockMargin(0, 8, 0, 0)
 
+        local function infoLine(parent, text, col, tall)
+            local l = vgui.Create("DLabel", parent)
+            l:Dock(TOP)
+            l:SetTall(tall or 22)
+            l:SetWrap(true)
+            l:SetAutoStretchVertical(true)
+            l:SetText(text)
+            l:SetTextColor(col or THEME.textDim)
+            l:SetFont("FactionsExt_Small")
+            return l
+        end
+        local function countArr(t) return istable(t) and #t or 0 end
+        local function countMapLists(t)
+            local n = 0
+            if istable(t) then for _, v in pairs(t) do if istable(v) then n = n + #v end end end
+            return n
+        end
+
         local function rebuildCombo()
             factionCombo:Clear()
             local sorted = {}
@@ -2376,62 +2624,112 @@ if CLIENT then
             if sorted[1] then factionCombo:SetValue(sorted[1]) end
         end
 
+        local function sigOf(factionName)
+            local f = FactionsData and FactionsData[factionName]
+            if not istable(f) then return "none" end
+            local cfg = (FactionsExtData and FactionsExtData[factionName]) or {}
+            return table.concat({
+                tostring(countArr(f.Models)), tostring(countMapLists(f.RoleModels)), tostring(countMapLists(f.DepartmentModels)),
+                tostring(countArr(f.Weapons)), tostring(countMapLists(f.RoleWeapons)), tostring(countMapLists(f.DepartmentWeapons)),
+                tostring(f.GNewsAccess == true), tostring(cfg.GNewsAccess == true),
+                tostring(CurfewState and CurfewState.active == true), tostring(CurfewState and CurfewState.faction or ""),
+                tostring(istable(cfg.MaskDepartments) and table.Count(cfg.MaskDepartments) or 0),
+                tostring(countArr(cfg.CurfewRoles)),
+            }, "|")
+        end
+
+        local lastSig = nil
+
         local function rebuild(factionName)
             scroll:Clear()
             if not factionName or not FactionsData or not FactionsData[factionName] then return end
             local f = FactionsData[factionName]
-            local cfg = FactionsExtData[factionName] or { CurfewRoles = {}, MaskDepartments = {}, GNewsAccess = false }
+            local cfg = (FactionsExtData and FactionsExtData[factionName]) or { CurfewRoles = {}, MaskDepartments = {}, GNewsAccess = false }
 
+            infoLine(scroll, "Единый стейт доступов: эти же данные читают /model, выдача оружия при спавне, /kom_hour, /mask и /gnews. Изменения применяются мгновенно (синк 1.5 с).", THEME.textDim, 30)
+
+            -- Комендантский час ------------------------------------------------
             sectionLabel(scroll, "Комендантский час (/kom_hour)")
+            if CurfewState and CurfewState.active == true then
+                local left = math.max(0, (tonumber(CurfewState.endTime) or 0) - CurTime())
+                infoLine(scroll, string.format("СТАТУС: АКТИВЕН — осталось %02d:%02d%s", math.floor(left / 60), math.floor(left % 60),
+                    (CurfewState.faction or "") ~= "" and (" • объявила: " .. tostring(CurfewState.faction)) or ""), Color(255, 120, 120), 20)
+                local stopBtn = styledButton(scroll, "Отменить комендантский час", THEME.danger)
+                stopBtn:Dock(TOP) stopBtn:SetTall(30) stopBtn:DockMargin(0, 2, 0, 4)
+                stopBtn.DoClick = function() sendExtAction("stopCurfew", { factionName }) end
+            else
+                infoLine(scroll, "СТАТУС: не активен. Запуск: /kom_hour [мин] в чате — доступ у отмеченных ниже ролей.", THEME.textDim, 20)
+            end
+            local marked = 0
             for _, role in ipairs(f.Roles or {}) do
+                local on = tableHasValue(cfg.CurfewRoles or {}, role)
+                if on then marked = marked + 1 end
                 local chk = vgui.Create("DCheckBoxLabel", scroll)
                 chk:Dock(TOP)
-                chk:SetTall(26)
+                chk:SetTall(24)
                 chk:SetText(role)
-                chk:SetTextColor(THEME.text)
+                chk:SetTextColor(on and Color(140, 240, 160) or THEME.text)
                 chk:SetFont("FactionsExt_Normal")
-                chk:SetValue(tableHasValue(cfg.CurfewRoles or {}, role))
+                chk:SetValue(on and 1 or 0)
                 chk.OnChange = function() sendExtAction("toggleCurfewRole", { factionName, role }) end
             end
+            if #(f.Roles or {}) == 0 then infoLine(scroll, "Ролей нет — создайте во вкладке «Роли».", THEME.textDim, 20) end
 
-            sectionLabel(scroll, "GNewsAccess — только лидер фракции")
+            -- ГосНовости --------------------------------------------------------
+            sectionLabel(scroll, "Гос.новости (/gnews)")
+            local gnewsOn = (f.GNewsAccess == true) or (cfg.GNewsAccess == true)
             local gnews = vgui.Create("DCheckBoxLabel", scroll)
             gnews:Dock(TOP)
-            gnews:SetTall(28)
-            gnews:SetText("Разрешить /gnews лидеру этой фракции")
-            gnews:SetTextColor(THEME.text)
+            gnews:SetTall(26)
+            gnews:SetText(gnewsOn and "Доступ ВЫДАН лидеру этой фракции" or "Разрешить /gnews лидеру этой фракции")
+            gnews:SetTextColor(gnewsOn and Color(140, 240, 160) or THEME.text)
             gnews:SetFont("FactionsExt_Normal")
-            gnews:SetValue((cfg.GNewsAccess == true) or (f.GNewsAccess == true))
+            gnews:SetValue(gnewsOn and 1 or 0)
             gnews.OnChange = function(_, val) sendExtAction("setGNewsAccess", { factionName, tobool(val) }) end
 
-            sectionLabel(scroll, "Маскировка V2")
-            local info = vgui.Create("DLabel", scroll)
-            info:Dock(TOP)
-            info:SetTall(44)
-            info:SetWrap(true)
-            info:SetText("Откройте редактор, чтобы подписывать маскировки, выбирать модели, skin и bodygroups.")
-            info:SetTextColor(THEME.textDim)
-            info:SetFont("FactionsExt_Small")
+            -- Модели ------------------------------------------------------------
+            sectionLabel(scroll, "Модели (/model)")
+            local mGen, mRole, mDept = countArr(f.Models), countMapLists(f.RoleModels), countMapLists(f.DepartmentModels)
+            infoLine(scroll, "Назначено: общих " .. mGen .. " • по ролям " .. mRole .. " • по отделам " .. mDept ..
+                (mGen + mRole + mDept == 0 and " (действуют стандартные)" or ""), THEME.text, 20)
+            local modelsBtn = styledButton(scroll, "Редактор моделей (/models_admin)", THEME.accent)
+            modelsBtn:Dock(TOP) modelsBtn:SetTall(32) modelsBtn:DockMargin(0, 2, 0, 4)
+            modelsBtn.DoClick = openAdminModelsMenu
 
-            local maskBtn = styledButton(scroll, "Открыть редактор маскировки V2", THEME.accent)
-            maskBtn:Dock(TOP)
-            maskBtn:SetTall(34)
-            maskBtn:DockMargin(0, 4, 0, 4)
+            -- Оружие ------------------------------------------------------------
+            sectionLabel(scroll, "Оружие при спавне")
+            local wGen, wRole, wDept = countArr(f.Weapons), countMapLists(f.RoleWeapons), countMapLists(f.DepartmentWeapons)
+            local preview = {}
+            for i = 1, 3 do if istable(f.Weapons) and f.Weapons[i] then preview[#preview + 1] = tostring(f.Weapons[i]) end end
+            infoLine(scroll, "Назначено: общих " .. wGen .. " • по ролям " .. wRole .. " • по отделам " .. wDept ..
+                (wGen + wRole + wDept == 0 and " (стандартный набор)" or "") ..
+                (#preview > 0 and (" | " .. table.concat(preview, ", ") .. (wGen > 3 and ", …" or "")) or ""), THEME.text, 20)
+            local weaponsBtn = styledButton(scroll, "Редактор оружия (/weapons_admin)", THEME.accent)
+            weaponsBtn:Dock(TOP) weaponsBtn:SetTall(32) weaponsBtn:DockMargin(0, 2, 0, 4)
+            weaponsBtn.DoClick = openWeaponsAdminMenu
+
+            -- Маскировка ---------------------------------------------------------
+            sectionLabel(scroll, "Маскировка V2 (/mask)")
+            local depts = istable(cfg.MaskDepartments) and cfg.MaskDepartments or {}
+            if table.Count(depts) == 0 then
+                infoLine(scroll, "Отделов маскировки нет — создаются в редакторе (кнопка ниже).", THEME.textDim, 20)
+            else
+                local names = {}
+                for d in pairs(depts) do names[#names + 1] = d end
+                table.sort(names)
+                for _, d in ipairs(names) do
+                    local dept = istable(depts[d]) and depts[d] or {}
+                    infoLine(scroll, "• " .. d .. " — ролей с доступом: " .. countArr(dept.Roles) .. ", вариантов: " .. countArr(dept.Models), THEME.text, 18)
+                end
+            end
+            local maskBtn = styledButton(scroll, "Редактор маскировки V2 (/mask_admin)", THEME.accent)
+            maskBtn:Dock(TOP) maskBtn:SetTall(32) maskBtn:DockMargin(0, 2, 0, 4)
             maskBtn.DoClick = openMaskAdminMenu
 
-            sectionLabel(scroll, "Телефония / доступ к оборудованию")
-            local phoneInfo = vgui.Create("DLabel", scroll)
-            phoneInfo:Dock(TOP)
-            phoneInfo:SetTall(44)
-            phoneInfo:SetWrap(true)
-            phoneInfo:SetText("Настройка доступа фракций, рангов и отделов к АТС, прослушке и компьютеру мониторинга связи.")
-            phoneInfo:SetTextColor(THEME.textDim)
-            phoneInfo:SetFont("FactionsExt_Small")
-
-            local phoneAccessBtn = styledButton(scroll, "Настроить доступ к телефонии", Color(70, 150, 210))
-            phoneAccessBtn:Dock(TOP)
-            phoneAccessBtn:SetTall(34)
-            phoneAccessBtn:DockMargin(0, 4, 0, 4)
+            -- Телефония ----------------------------------------------------------
+            sectionLabel(scroll, "Телефония / оборудование")
+            local phoneAccessBtn = styledButton(scroll, "Доступ к АТС / прослушке (/phone_access)", Color(70, 150, 210))
+            phoneAccessBtn:Dock(TOP) phoneAccessBtn:SetTall(32) phoneAccessBtn:DockMargin(0, 2, 0, 0)
             phoneAccessBtn.DoClick = function()
                 if GRM and GRM.Phone and GRM.Phone.AccessManager and GRM.Phone.AccessManager.OpenMenu then
                     GRM.Phone.AccessManager.OpenMenu()
@@ -2440,57 +2738,46 @@ if CLIENT then
                     notification.AddLegacy("Если меню не открылось — проверьте, что grm_phone_system установлен и загружен.", NOTIFY_HINT, 4)
                 end
             end
-
-            sectionLabel(scroll, "Администрирование")
-            local modelsBtn = styledButton(scroll, "Модели (/models_admin)", THEME.accent)
-            modelsBtn:Dock(TOP)
-            modelsBtn:SetTall(32)
-            modelsBtn.DoClick = openAdminModelsMenu
-
-            local weaponsBtn = styledButton(scroll, "Оружие (/weapons_admin)", THEME.accent)
-            weaponsBtn:Dock(TOP)
-            weaponsBtn:SetTall(32)
-            weaponsBtn:DockMargin(0, 4, 0, 0)
-            weaponsBtn.DoClick = openWeaponsAdminMenu
         end
 
-        factionCombo.OnSelect = function(_, _, val) rebuild(val) end
+        factionCombo.OnSelect = function(_, _, val)
+            lastSig = sigOf(val)
+            rebuild(val)
+        end
         refresh.DoClick = function()
             rebuildCombo()
             local val = factionCombo:GetValue()
-            if val and val ~= "" then rebuild(val) end
+            if val and val ~= "" then lastSig = sigOf(val) rebuild(val) end
         end
+
+        -- авто-синк с зеркалами (заказ «синхронизировать»): изменилось — пересобрать
+        local tName = "FactionsExt_ExtTabSync_" .. tostring({}):gsub("%W", "")
+        timer.Create(tName, 1.5, 0, function()
+            if not IsValid(panel) then timer.Remove(tName) return end
+            local val = factionCombo:GetValue()
+            if not val or val == "" then return end
+            local s = sigOf(val)
+            if s ~= lastSig then lastSig = s rebuild(val) end
+        end)
+        panel.OnRemove = function() timer.Remove(tName) end
 
         timer.Simple(0.2, function()
             if IsValid(panel) then
                 rebuildCombo()
                 local val = factionCombo:GetValue()
-                if val and val ~= "" then rebuild(val) end
+                if val and val ~= "" then lastSig = sigOf(val) rebuild(val) end
             end
         end)
 
         return panel
     end
 
-    if not FactionsExt_OriginalOpenAdminMenu then
-        FactionsExt_OriginalOpenAdminMenu = OpenAdminMenu
-    end
+    -- Точка расширения вместо мёртвого обезьяньего патча OpenAdminMenu (v3.1.1)
+    hook.Add("GRM_FactionsAdmin_BuildTabs", "FactionsExt_ExtendedTab", function(tabs)
+        if not IsValid(tabs) then return end
+        tabs:AddSheet("Расширенные настройки", OpenExtendedSettings(tabs), "icon16/cog.png")
+    end)
 
-    OpenAdminMenu = function()
-        if FactionsExt_OriginalOpenAdminMenu then FactionsExt_OriginalOpenAdminMenu() end
-        timer.Simple(0.25, function()
-            if not IsValid(ui.currentFrame) then return end
-            local sheet
-            for _, child in ipairs(ui.currentFrame:GetChildren()) do
-                if child.ClassName == "DPropertySheet" then sheet = child break end
-            end
-            if not IsValid(sheet) then return end
-            for _, item in ipairs(sheet.Items or {}) do
-                if item.Tab and item.Tab:GetText() == "Расширенные настройки" then return end
-            end
-            sheet:AddSheet("Расширенные настройки", OpenExtendedSettings(ui.currentFrame), "icon16/cog.png")
-        end)
-    end
 
     net.Receive(NET_MASK_ADMIN_DATA, function()
         local data = net.ReadTable() or {}

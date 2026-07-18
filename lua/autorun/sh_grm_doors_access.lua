@@ -1,7 +1,15 @@
 --[[--------------------------------------------------------------------
-    GRM Doors Access Manager v2.1.0 (Код 64)
+    GRM Doors Access Manager v2.2.0 (Код 64)
     Центральный менеджер прав доступа к дверям, ордерам на обыск и вскрытию.
     Интеграция с меню /factions (вкладка «Двери и Ордера»).
+    v2.2.0: вкладка «Категории фракций» — создание/переименование/удаление
+            кастомных категорий и объединение фракций в них (используются
+            как владельцы дверей и в ACL дверей); меню запоминает активную
+            вкладку и прокрутку при авто-обновлении; кнопка быстрого входа
+            в категории из вкладки «Двери и Ордера» меню /factions.
+    v2.2.1: стандартный однорядный tabScroller заменён на двухрядную полосу
+            кнопок-вкладок — 9 широких вкладок не влезали в один ряд и
+            «Категории фракций» уезжали за правый край окна.
 
       - Управление фракционными категориями;
       - Гибкая выдача прав на ордера на обыск (/warrant):
@@ -19,8 +27,8 @@ GRM.Doors = GRM.Doors or {}
 GRM.Doors.AccessManager = GRM.Doors.AccessManager or {}
 local AM = GRM.Doors.AccessManager
 
-local NET_REQ, NET_DATA, NET_SAVE, NET_RESULT =
-    "GRM_DoorAccess_Request", "GRM_DoorAccess_Data", "GRM_DoorAccess_Save", "GRM_DoorAccess_Result"
+local NET_REQ, NET_DATA, NET_SAVE, NET_RESULT, NET_CAT =
+    "GRM_DoorAccess_Request", "GRM_DoorAccess_Data", "GRM_DoorAccess_Save", "GRM_DoorAccess_Result", "GRM_DoorAccess_CatAct"
 
 local ACCESS_FILE = "grm_doors/access.json"
 
@@ -67,6 +75,7 @@ if SERVER then
     util.AddNetworkString(NET_DATA)
     util.AddNetworkString(NET_SAVE)
     util.AddNetworkString(NET_RESULT)
+    util.AddNetworkString(NET_CAT)
 
     function AM.Load()
         if not file.IsDir("grm_doors", "DATA") then file.CreateDir("grm_doors") end
@@ -130,13 +139,49 @@ if SERVER then
     net.Receive(NET_REQ, function(_, ply) sendData(ply) end)
 
     net.Receive(NET_SAVE, function(_, ply)
-        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        -- было IsSuperAdmin-only: выданные управляющие доступом (той же
+        -- матрицы) жали «Сохранить» и получали тишину — репорт владельца.
+        -- Теперь единый гейт с операциями категорий (AM.CanManage).
+        if not IsValid(ply) or not AM.CanManage(ply) then return end
         AM.Save(net.ReadTable() or {})
         net.Start(NET_RESULT)
             net.WriteBool(true)
             net.WriteString("Настройки доступа к дверям и ордерам сохранены.")
         net.Send(ply)
         sendData(ply)
+    end)
+
+    -- v2.2.0: операции с кастомными категориями фракций
+    net.Receive(NET_CAT, function(_, ply)
+        if not IsValid(ply) or not AM.CanManage(ply) then return end
+        if not (GRM.Doors and GRM.Doors.CreateCategory) then return end
+
+        local a = net.ReadTable() or {}
+        local op = tostring(a.op or "")
+        local ok, res, msg = false, nil, ""
+
+        if op == "create" then
+            res, msg = GRM.Doors.CreateCategory(a.id, a.name)
+            ok = istable(res)
+            if ok then msg = "Категория создана: " .. tostring(res.name or res.id) end
+        elseif op == "rename" then
+            ok, msg = GRM.Doors.RenameCategory(a.id, a.name)
+            if ok then msg = "Категория переименована." end
+        elseif op == "delete" then
+            ok, msg = GRM.Doors.DeleteCategory(a.id)
+            if ok then msg = "Категория удалена (ссылки дверей очищены)." end
+        elseif op == "setfaction" then
+            ok, msg = GRM.Doors.CategorySetFaction(a.id, a.faction, a.on == true)
+            if ok then msg = (a.on and "Фракция добавлена в категорию: " or "Фракция убрана из категории: ") .. tostring(a.faction) end
+        else
+            msg = "Неизвестная операция."
+        end
+
+        net.Start(NET_RESULT)
+            net.WriteBool(ok and true or false)
+            net.WriteString(tostring(msg or ""))
+        net.Send(ply)
+        if ok then sendData(ply) end
     end)
 
     local function checkAccess(ply, manageKey, roleKey, deptKey, steamKey)
@@ -206,7 +251,7 @@ if SERVER then
         end
     end)
 
-    print("[GRM Doors] Менеджер доступа к дверям v2.1.0 загружен (сервер)")
+    print("[GRM Doors] Менеджер доступа к дверям v2.2.1 загружен (сервер)")
 end
 
 -- ============================================================
@@ -234,6 +279,16 @@ if CLIENT then
         return k
     end
 
+    -- v2.2.0: поиск скролла вкладки (вкладка может БЫТЬ скроллом или содержать его)
+    local function pageScroll(pnl)
+        if not IsValid(pnl) then return nil end
+        if pnl.ClassName == "DScrollPanel" then return pnl end
+        for _, ch in ipairs(pnl:GetChildren()) do
+            if IsValid(ch) and ch.ClassName == "DScrollPanel" then return ch end
+        end
+        return nil
+    end
+
     local function mkBtn(p, text, col, w, h)
         local b = vgui.Create("DButton", p)
         if w then b:SetWide(w) end
@@ -251,6 +306,25 @@ if CLIENT then
     local function openAccessMenu(factionsMap, data, cats)
         data = normalize(data)
         cats = cats or {}
+        table.sort(cats, function(a, b) return tostring(a and a.id) < tostring(b and b.id) end)
+
+        -- v2.2.0: запоминаем активную вкладку и прокрутку ДО пересборки
+        local wantTab = AM._wantTab
+        AM._wantTab = nil
+        local prevTab, prevScroll
+        if IsValid(AM._tabs) then
+            local at = AM._tabs:GetActiveTab()
+            if IsValid(at) then
+                prevTab = at:GetText()
+                for _, it in ipairs(AM._tabs.Items or {}) do
+                    if it.Tab == at then
+                        local sp = pageScroll(it.Panel)
+                        if sp then prevScroll = sp:GetVBar():GetScroll() end
+                        break
+                    end
+                end
+            end
+        end
 
         if IsValid(AM._f) then AM._f:Remove() end
         local frame = vgui.Create("DFrame")
@@ -277,6 +351,7 @@ if CLIENT then
         local tabs = vgui.Create("DPropertySheet", frame)
         tabs:Dock(FILL)
         tabs:DockMargin(8, 44, 8, 52)
+        AM._tabs = tabs
 
         local function addFactionTab(title, field, icon)
             local sc = vgui.Create("DScrollPanel")
@@ -301,6 +376,126 @@ if CLIENT then
         addFactionTab("Вскрытие: Фракции", "ForceFactions", "icon16/key.png")
         addFactionTab("Управление: Фракции", "ManageFactions", "icon16/shield.png")
         addFactionTab("Сигнализация «Свои»: Фракции", "AlarmFriendlyFactions", "icon16/bell.png")
+
+        -- v2.2.0 ВКЛАДКА «КАТЕГОРИИ ФРАКЦИЙ»: создание категорий, объединение
+        -- фракций, переименование/удаление. Категории используются как
+        -- владельцы дверей и в ACL дверей (меню двери, вкладка «Фракции и Роли»).
+        do
+            local catPage = vgui.Create("DPanel")
+            catPage:SetPaintBackground(false)
+
+            local cr = vgui.Create("DPanel", catPage)
+            cr:Dock(TOP) cr:SetTall(64) cr:DockMargin(8, 8, 8, 6)
+            cr.Paint = function(_, pw, ph)
+                draw.RoundedBox(6, 0, 0, pw, ph, CUI.panel)
+                draw.SimpleText("Создать категорию (ID — латиница/цифры/_/-, напр. polizei_swat)", "GRMDoorAcc_Normal", 10, 14, CUI.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+            local idEntry = vgui.Create("DTextEntry", cr)
+            idEntry:SetPos(10, 30) idEntry:SetSize(200, 26) idEntry:SetPlaceholderText("ID категории")
+            local nameEntry = vgui.Create("DTextEntry", cr)
+            nameEntry:SetPos(218, 30) nameEntry:SetSize(320, 26) nameEntry:SetPlaceholderText("Название категории")
+            local bCreate = mkBtn(cr, "Создать", CUI.green, 120, 26)
+            bCreate:SetPos(546, 30)
+            bCreate.DoClick = function()
+                net.Start(NET_CAT)
+                net.WriteTable({ op = "create", id = idEntry:GetValue(), name = nameEntry:GetValue() })
+                net.SendToServer()
+            end
+
+            local catScroll = vgui.Create("DScrollPanel", catPage)
+            catScroll:Dock(FILL) catScroll:DockMargin(8, 4, 8, 8)
+
+            local facNames = sortKeys(factionsMap)
+
+            local function buildCatBlock(c)
+                local cid = tostring(c.id or "")
+                if cid == "" then return end
+                local cname = tostring(c.name or cid)
+
+                local facs, seenF = {}, {}
+                if istable(c.factions) then
+                    for k, v in pairs(c.factions) do
+                        local fn
+                        if v == true and isstring(k) then fn = k
+                        elseif isnumber(k) and isstring(v) then fn = v end
+                        if fn and not seenF[fn] then seenF[fn] = true facs[#facs + 1] = fn end
+                    end
+                end
+                table.sort(facs)
+
+                local n = #facs
+                local block = vgui.Create("DPanel", catScroll)
+                block:Dock(TOP) block:SetTall(34 + n * 26 + 36 + 36) block:DockMargin(0, 0, 0, 6)
+                block.Paint = function(_, pw, ph)
+                    draw.RoundedBox(6, 0, 0, pw, ph, CUI.panel)
+                    draw.SimpleText(cname .. "   [" .. cid .. "]", "GRMDoorAcc_Normal", 10, 15, CUI.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                end
+
+                for i, fn in ipairs(facs) do
+                    local rf = vgui.Create("DPanel", block)
+                    rf:SetPos(10, 30 + (i - 1) * 26) rf:SetSize(430, 22)
+                    rf.Paint = function(_, pw, ph)
+                        draw.RoundedBox(4, 0, 0, pw, ph, Color(26, 32, 42))
+                        draw.SimpleText("• " .. fn, "GRMDoorAcc_Normal", 8, ph / 2, CUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    end
+                    local bRem = mkBtn(rf, "убрать", CUI.red, 100, 20)
+                    bRem:SetPos(322, 1)
+                    bRem.DoClick = function()
+                        net.Start(NET_CAT)
+                        net.WriteTable({ op = "setfaction", id = cid, faction = fn, on = false })
+                        net.SendToServer()
+                    end
+                end
+
+                local yA = 34 + n * 26
+                local addCombo = vgui.Create("DComboBox", block)
+                addCombo:SetPos(10, yA) addCombo:SetSize(300, 26)
+                addCombo:SetValue("Добавить фракцию...")
+                for _, fn in ipairs(facNames) do addCombo:AddChoice(fn) end
+                local bAdd = mkBtn(block, "Добавить", CUI.green, 120, 26)
+                bAdd:SetPos(318, yA)
+                bAdd.DoClick = function()
+                    local _, fn = addCombo:GetSelected()
+                    if fn then
+                        net.Start(NET_CAT)
+                        net.WriteTable({ op = "setfaction", id = cid, faction = fn, on = true })
+                        net.SendToServer()
+                    end
+                end
+
+                local yB = yA + 36
+                local renEntry = vgui.Create("DTextEntry", block)
+                renEntry:SetPos(10, yB) renEntry:SetSize(300, 26) renEntry:SetValue(cname)
+                local bRen = mkBtn(block, "Переименовать", CUI.accent, 120, 26)
+                bRen:SetPos(318, yB)
+                bRen.DoClick = function()
+                    net.Start(NET_CAT)
+                    net.WriteTable({ op = "rename", id = cid, name = renEntry:GetValue() })
+                    net.SendToServer()
+                end
+                local bDel = mkBtn(block, "Удалить категорию", CUI.red, 160, 26)
+                bDel:SetPos(448, yB)
+                bDel.DoClick = function()
+                    Derma_Query("Удалить категорию «" .. cname .. "»?\nСсылки дверей на неё будут очищены.", "Удаление категории",
+                        "Удалить", function()
+                            net.Start(NET_CAT)
+                            net.WriteTable({ op = "delete", id = cid })
+                            net.SendToServer()
+                        end,
+                        "Отмена", function() end)
+                end
+            end
+
+            for _, c in ipairs(cats) do buildCatBlock(c) end
+            if #cats == 0 then
+                local empty = vgui.Create("DLabel", catScroll)
+                empty:Dock(TOP) empty:SetTall(30) empty:DockMargin(4, 4, 4, 4)
+                empty:SetText("Пока нет ни одной категории — создайте первую выше.")
+                empty:SetTextColor(CUI.dim) empty:SetFont("GRMDoorAcc_Normal")
+            end
+
+            tabs:AddSheet("Категории фракций", catPage, "icon16/folder_user.png")
+        end
 
         local function addNestedTab(title, field, sourceKey, icon)
             local panel = vgui.Create("DPanel")
@@ -346,6 +541,69 @@ if CLIENT then
         addNestedTab("Вскрытие: Ранги", "ForceRoles", "Roles", "icon16/key_add.png")
         addNestedTab("Вскрытие: Подразделения", "ForceDepartments", "Departments", "icon16/building_add.png")
 
+        -- v2.2.1: скрываем однорядный tabScroller (вкладки не влезают по ширине)
+        -- и рисуем свою двухрядную полосу кнопок-вкладок вместо него
+        tabs.tabScroller:Hide()
+        tabs:DockMargin(8, 2, 8, 52)
+
+        local tabBar = vgui.Create("DPanel", frame)
+        tabBar:Dock(TOP)
+        tabBar:SetTall(62)
+        tabBar:DockMargin(8, 44, 8, 2)
+        tabBar:SetPaintBackground(false)
+
+        local tabBtns = {}
+        for idx, it in ipairs(tabs.Items or {}) do
+            if IsValid(it.Tab) then
+                local b = vgui.Create("DButton", tabBar)
+                b:SetText(it.Tab:GetText() or ("Вкладка " .. idx))
+                b:SetFont("GRMDoorAcc_Normal")
+                b:SetTextColor(CUI.text)
+                b._tab = it.Tab
+                b.DoClick = function() tabs:SetActiveTab(b._tab) end
+                b.Paint = function(self, pw, ph)
+                    local active = tabs:GetActiveTab() == self._tab
+                    local c = active and CUI.accent or CUI.panel
+                    if not active and self:IsHovered() then c = Color(52, 60, 76) end
+                    draw.RoundedBox(6, 0, 0, pw, ph, c)
+                end
+                tabBtns[#tabBtns + 1] = b
+            end
+        end
+
+        tabBar.PerformLayout = function(self, w, h)
+            surface.SetFont("GRMDoorAcc_Normal")
+            local x, y = 0, 0
+            for _, b in ipairs(tabBtns) do
+                local tw = surface.GetTextSize(b:GetText() or "") or 40
+                local bw = tw + 26
+                if x > 0 and x + bw > w then x = 0 y = y + 31 end
+                b:SetPos(x, y) b:SetSize(bw, 28)
+                x = x + bw + 6
+            end
+            local needH = y + 28
+            if needH > 0 and self:GetTall() ~= needH then self:SetTall(needH) end
+        end
+
+        -- v2.2.0: восстанавливаем вкладку (и прокрутку) после пересборки;
+        -- явный wantTab (вход по кнопке из /factions) в приоритете
+        local restoreName = wantTab or prevTab
+        if restoreName then
+            for _, it in ipairs(tabs.Items or {}) do
+                if IsValid(it.Tab) and it.Tab:GetText() == restoreName then
+                    tabs:SetActiveTab(it.Tab)
+                    if prevScroll and not wantTab then
+                        local rPnl = it.Panel
+                        timer.Simple(0, function()
+                            local sp = pageScroll(rPnl)
+                            if sp then sp:GetVBar():SetScroll(prevScroll) end
+                        end)
+                    end
+                    break
+                end
+            end
+        end
+
         local bot = vgui.Create("DPanel", frame)
         bot:Dock(BOTTOM) bot:SetTall(44) bot:SetPaintBackground(false)
 
@@ -370,7 +628,8 @@ if CLIENT then
         end
     end)
 
-    function AM.OpenMenu()
+    function AM.OpenMenu(tabName)
+        if isstring(tabName) and tabName ~= "" then AM._wantTab = tabName end
         net.Start(NET_REQ) net.SendToServer()
     end
 
@@ -417,7 +676,13 @@ if CLIENT then
                 button:Dock(TOP)
                 button:SetTall(38)
                 button:DockMargin(12, 8, 12, 0)
-                button.DoClick = AM.OpenMenu
+                button.DoClick = function() AM.OpenMenu() end
+
+                local btnCats = mkBtn(panel, "Управление категориями фракций (владельцы дверей)", CUI.green)
+                btnCats:Dock(TOP)
+                btnCats:SetTall(38)
+                btnCats:DockMargin(12, 8, 12, 0)
+                btnCats.DoClick = function() AM.OpenMenu("Категории фракций") end
 
                 sheet:AddSheet("Двери и Ордера", panel, "icon16/door.png")
             end)
@@ -427,5 +692,5 @@ if CLIENT then
     timer.Create("GRM_DoorAccess_WaitFactions", 0.5, 24, installFactionsTab)
     timer.Simple(1, installFactionsTab)
 
-    print("[GRM Doors] Менеджер доступа к дверям v2.1.0 загружен (клиент)")
+    print("[GRM Doors] Менеджер доступа к дверям v2.2.1 загружен (клиент)")
 end

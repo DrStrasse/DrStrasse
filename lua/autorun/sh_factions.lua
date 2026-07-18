@@ -150,14 +150,24 @@ if SERVER then
             if type(f) == "table" then
                 ensureDefaults(f)
                 data[name] = {
-                    Leader         = f.Leader,
-                    Roles          = f.Roles,
-                    Departments    = f.Departments,
-                    Members        = f.Members,
-                    Tag            = f.Tag,
-                    Color          = f.Color,
-                    DepAccess      = f.DepAccess,
-                    LeaderRoleName = f.LeaderRoleName
+                    Leader           = f.Leader,
+                    Roles            = f.Roles,
+                    Departments      = f.Departments,
+                    Members          = f.Members,
+                    Tag              = f.Tag,
+                    Color            = f.Color,
+                    DepAccess        = f.DepAccess,
+                    LeaderRoleName   = f.LeaderRoleName,
+                    -- v3.1.1: зеркалируем доступ-модели/оружие/госновости для
+                    -- вкладки «Расширенные настройки» (синк с /models_admin,
+                    -- /weapons_admin, setGNewsAccess — те же серверные поля)
+                    Models           = f.Models,
+                    RoleModels       = f.RoleModels,
+                    DepartmentModels = f.DepartmentModels,
+                    Weapons          = f.Weapons,
+                    RoleWeapons      = f.RoleWeapons,
+                    DepartmentWeapons= f.DepartmentWeapons,
+                    GNewsAccess      = f.GNewsAccess == true
                 }
             end
         end
@@ -829,6 +839,30 @@ if SERVER then
         end, "factions_leader")
         cmdLeader:defaultAccess(ULib.ACCESS_ALL)
     end
+
+    -- ============================================================
+    -- Публичный API для модулей GRM (доска набора Код 76, радио Код 75 и др.)
+    -- Только экспорт ссылок на уже существующие локальные функции —
+    -- логика/сейв/формат данных НЕ меняются.
+    -- ============================================================
+    _G.FactionsAPI = _G.FactionsAPI or {}
+    _G.FactionsAPI.AddMember      = function(factionName, steamID) return addMember(factionName, steamID) end
+    _G.FactionsAPI.RemoveMember   = function(factionName, steamID) return removeMember(factionName, steamID) end
+    _G.FactionsAPI.GetFactionOf   = function(steamID) return getFactionOfPlayer(steamID) end
+    _G.FactionsAPI.IsLeader       = function(steamID, factionName)
+        local f = Factions[factionName]
+        return (istable(f) and f.Leader == steamID) or false
+    end
+    _G.FactionsAPI.GetLeader      = function(factionName)
+        local f = Factions[factionName]
+        return istable(f) and f.Leader or nil
+    end
+    _G.FactionsAPI.PrimeRole      = function(factionName)
+        local f = Factions[factionName]
+        return istable(f) and getDefaultMemberRole(f) or nil
+    end
+    _G.FactionsAPI.Save           = function() saveFactions(Factions) end
+    _G.FactionsAPI.List           = function() return Factions end
 
     print("[Factions] Серверная часть загружена (v3 fixed + чат-команда /factions)")
 end
@@ -1973,6 +2007,11 @@ if CLIENT then
         depWaveScroll:Dock(FILL)
         ui.depWaveScroll = depWaveScroll
         tabs:AddSheet("Волна департамента", depWavePanel, "icon16/transmit.png")
+
+        -- GRM hook: сторонние модули достраивают вкладки админки (Коды 75/76 — доступы к эфиру, оповещению, доске)
+        if hook and hook.Call then
+            pcall(hook.Call, "GRM_FactionsAdmin_BuildTabs", nil, tabs)
+        end
 
         -- FIX: При открытии меню запрашиваем данные с сервера (factions.json)
         timer.Simple(0.4, function()

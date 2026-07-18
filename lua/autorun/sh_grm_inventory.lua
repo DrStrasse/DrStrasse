@@ -159,6 +159,20 @@ GRM.Inventory.ItemDefs = {
         maxStack = 3,
         weight = 2.0,
     },
+
+    -- === ДЕНЬГИ (физические, Код 81) ===
+    -- Число в стаке = сумма. Дроп на землю — моделью cs_assault/money.mdl
+    -- (см. grm_item_drop: def.model). Хранится в инвентаре и багажнике.
+    ["money"] = {
+        type = "item",
+        name = "Деньги",
+        desc = "Пачка наличных (число = сумма). Использование — обналичить в кошелёк.",
+        icon = "icon16/money.png",
+        maxStack = 50000,
+        weight = 0.001,
+        model = "models/props/cs_assault/money.mdl",
+        useFunc = "cash_to_wallet",
+    },
 }
 
 -- Функция регистрации нового предмета (для аддонов)
@@ -466,6 +480,17 @@ if SERVER then
                     GRM.Notify(ply, "Броня уже полная", 255, 180, 60)
                     return
                 end
+            elseif def.useFunc == "cash_to_wallet" then
+                -- Деньги: число в стаке = сумма, обналичиваем ВЕСЬ стак
+                local amt = math.max(0, math.floor(tonumber(slot.count) or 0))
+                if amt > 0 and GRM.GiveMoney then
+                    inv.slots[slotIdx] = nil
+                    GRM.Inventory.SyncSlot(ply, slotIdx)
+                    GRM.GiveMoney(ply, amt, "Обналичены деньги из инвентаря")
+                    GRM.Notify(ply, "Обналичено: " .. (GRM.Format and GRM.Format(amt) or tostring(amt)), 100, 220, 100)
+                    hook.Run("GRM_Money_Cashed", ply, amt)
+                end
+                return
             end
             if used then
                 GRM.Inventory.RemoveFromSlot(ply, slotIdx, 1)
