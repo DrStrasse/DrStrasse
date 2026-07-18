@@ -830,6 +830,30 @@ if SERVER then
         cmdLeader:defaultAccess(ULib.ACCESS_ALL)
     end
 
+    -- ============================================================
+    -- Публичный API для модулей GRM (доска набора Код 76, радио Код 75 и др.)
+    -- Только экспорт ссылок на уже существующие локальные функции —
+    -- логика/сейв/формат данных НЕ меняются.
+    -- ============================================================
+    _G.FactionsAPI = _G.FactionsAPI or {}
+    _G.FactionsAPI.AddMember      = function(factionName, steamID) return addMember(factionName, steamID) end
+    _G.FactionsAPI.RemoveMember   = function(factionName, steamID) return removeMember(factionName, steamID) end
+    _G.FactionsAPI.GetFactionOf   = function(steamID) return getFactionOfPlayer(steamID) end
+    _G.FactionsAPI.IsLeader       = function(steamID, factionName)
+        local f = Factions[factionName]
+        return (istable(f) and f.Leader == steamID) or false
+    end
+    _G.FactionsAPI.GetLeader      = function(factionName)
+        local f = Factions[factionName]
+        return istable(f) and f.Leader or nil
+    end
+    _G.FactionsAPI.PrimeRole      = function(factionName)
+        local f = Factions[factionName]
+        return istable(f) and getDefaultMemberRole(f) or nil
+    end
+    _G.FactionsAPI.Save           = function() saveFactions(Factions) end
+    _G.FactionsAPI.List           = function() return Factions end
+
     print("[Factions] Серверная часть загружена (v3 fixed + чат-команда /factions)")
 end
 

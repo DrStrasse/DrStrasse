@@ -1,0 +1,602 @@
+--[[--------------------------------------------------------------------
+    GRM Broadcast v1.0.0 (Код 75) — Радиовещание и массовое оповещение
+    Три энтити:
+      - grm_broadcast_mic  — микрофонная стойка (журналисты/СМИ): E →
+        название станции, «Начать эфир». В эфире ГОЛОС и ТЕКСТ спикера
+        ретранслируются слушателям возле настроенных радиоприёмников.
+      - grm_radio          — домашний приёмник (citizenradio): E → список
+        живых станций, настройка станции / выключение.
+      - grm_loudspeaker    — уличный громкоговоритель оповещения района.
+    Массовое оповещение: /alert текст (возле громкоговорителей),
+    /alertall текст (всем). Доступ: суперадмин или фракции из списка
+    (/alert_allow Фракция, /alert_deny Фракция; журналисты:
+    /bcast_allow Фракция, /bcast_deny Фракция — суперадмин всегда может).
+    Спавн: /radiomic_add /radio_add /speaker_add (суперадмин) + /permadd.
+    Конфиг: data/grm_broadcast.json
+----------------------------------------------------------------------]]
+
+if SERVER then AddCSLuaFile() end
+
+GRM = GRM or {}
+GRM.Broadcast = GRM.Broadcast or {}
+local BC = GRM.Broadcast
+
+BC.Version       = "1.0.0"
+BC.ReceiveRadius = 500   -- радиус слышимости от приёмника
+BC.MicMaxDist    = 250   -- спикер должен стоять у микрофона
+BC.SpeakerRadius = 700   -- радиус громкоговорителя оповещения
+BC.AlertDuration = 8     -- секунды показа оповещения
+BC.ConfigFile    = "grm_broadcast.json"
+
+local NET_RADIO_OPEN = "GRM_BC_RadioOpen"
+local NET_RADIO_SET  = "GRM_BC_RadioSet"
+local NET_MIC_OPEN   = "GRM_BC_MicOpen"
+local NET_MIC_SET    = "GRM_BC_MicSet"
+local NET_LINE       = "GRM_BC_Line"
+local NET_ALERT      = "GRM_BC_Alert"
+
+-- ============================================================
+-- СЕРВЕР
+-- ============================================================
+if SERVER then
+    util.AddNetworkString(NET_RADIO_OPEN)
+    util.AddNetworkString(NET_RADIO_SET)
+    util.AddNetworkString(NET_MIC_OPEN)
+    util.AddNetworkString(NET_MIC_SET)
+    util.AddNetworkString(NET_LINE)
+    util.AddNetworkString(NET_ALERT)
+
+    -- конфиг доступа ------------------------------------------------
+    local function jsonT(txt)
+        local ok, t = pcall(util.JSONToTable, txt, false, true)
+        return (ok and istable(t)) and t or nil
+    end
+    local function defaultCfg()
+        return { journalists = {}, alerters = {}, micNames = {} }
+    end
+    local function loadCfg()
+        BC.Cfg = BC.Cfg or defaultCfg()
+        local t = jsonT(file.Read(BC.ConfigFile, "DATA") or "")
+        if istable(t) then
+            BC.Cfg.journalists = istable(t.journalists) and t.journalists or {}
+            BC.Cfg.alerters    = istable(t.alerters)    and t.alerters    or {}
+            BC.Cfg.micNames    = istable(t.micNames)    and t.micNames    or {}
+        end
+    end
+    function BC.SaveCfg()
+        local ok, txt = pcall(util.TableToJSON, BC.Cfg or defaultCfg(), true)
+        if ok and txt then file.Write(BC.ConfigFile, txt) end
+    end
+    loadCfg()
+
+    -- помощники доступа ----------------------------------------------
+    local function factionOf(ply)
+        if not IsValid(ply) or not istable(Factions) then return nil end
+        local sid, s64 = ply:SteamID(), ply:SteamID64()
+        for name, f in pairs(Factions) do
+            if istable(f) and istable(f.Members) and (f.Members[sid] or f.Members[s64]) then
+                return name
+            end
+        end
+        return nil
+    end
+    BC.FactionOf = factionOf
+
+    function BC.IsJournalist(ply)
+        if IsValid(ply) and ply:IsSuperAdmin() then return true end
+        local fac = factionOf(ply)
+        return fac ~= nil and (BC.Cfg.journalists or {})[fac] == true
+    end
+    function BC.IsAlerter(ply)
+        if IsValid(ply) and ply:IsSuperAdmin() then return true end
+        local fac = factionOf(ply)
+        return fac ~= nil and (BC.Cfg.alerters or {})[fac] == true
+    end
+
+    local function rpName(ply)
+        local n = ply:GetNWString("GRM_RPName", "")
+        return (n ~= "" and n) or ply:Nick()
+    end
+    BC.RPName = rpName
+
+    local function cfgKey(pos)
+        return string.format("%.0f_%.0f_%.0f", pos.x, pos.y, pos.z)
+    end
+    function BC.MicName(ent)
+        local n = (BC.Cfg.micNames or {})[cfgKey(ent:GetPos())]
+        if isstring(n) and n ~= "" then return n end
+        return "ГРМ-Радио"
+    end
+    function BC.SetMicName(ent, name)
+        name = string.Trim(tostring(name or ""))
+        name = string.sub(name, 1, 40)
+        BC.Cfg.micNames[cfgKey(ent:GetPos())] = name
+        BC.SaveCfg()
+        if IsValid(ent) then ent:SetNWString("GRM_BC_Station", name) end
+    end
+
+    -- эфир ------------------------------------------------------------
+    function BC.StartLive(ply, ent)
+        if not IsValid(ply) or not IsValid(ent) then return end
+        -- спикер может вести только один эфир
+        for _, m in ipairs(ents.FindByClass("grm_broadcast_mic")) do
+            if m ~= ent and m.BCSpeaker == ply and m.BCLive then BC.StopLive(m, "переключение") end
+        end
+        if ent.BCLive and IsValid(ent.BCSpeaker) and ent.BCSpeaker ~= ply then
+            if GRM.Notify then GRM.Notify(ply, "Микрофон занят: в эфире " .. rpName(ent.BCSpeaker), 255, 120, 90) end
+            return false
+        end
+        ent.BCLive = true
+        ent.BCSpeaker = ply
+        ply._grmBCMic = ent
+        ent:SetNWBool("GRM_BC_Live", true)
+        ent:SetNWString("GRM_BC_Speaker", rpName(ply))
+        ent:SetNWString("GRM_BC_Last", "")
+        ent:EmitSound("npc/overwatch/radiovoice/on3.wav", 65, 100)
+        if GRM.Notify then GRM.Notify(ply, "ВЫ В ЭФИРЕ: " .. ent:GetNWString("GRM_BC_Station", "ГРМ-Радио") .. ". Говорите в голосовой чат и пишите текстовые реплики — их услышат/прочтут слушатели у радиоприёмников. Не отходите от микрофона.", 100, 220, 100) end
+        return true
+    end
+
+    function BC.StopLive(ent, reason)
+        if not IsValid(ent) then return end
+        ent.BCLive = false
+        local sp = ent.BCSpeaker
+        ent.BCSpeaker = nil
+        if IsValid(sp) then
+            sp._grmBCMic = nil
+            if GRM.Notify then GRM.Notify(sp, "Эфир завершён" .. (reason and (" (" .. tostring(reason) .. ")") or "") .. ".", 255, 200, 90) end
+        end
+        ent:SetNWBool("GRM_BC_Live", false)
+        ent:SetNWString("GRM_BC_Speaker", "")
+        ent:EmitSound("npc/overwatch/radiovoice/off2.wav", 65, 100)
+    end
+
+    -- сторож: спикер отошёл/умер → эфир гаснет
+    timer.Create("GRM_BC_LiveWatch", 0.5, 0, function()
+        for _, ent in ipairs(ents.FindByClass("grm_broadcast_mic")) do
+            if ent.BCLive then
+                local sp = ent.BCSpeaker
+                if not IsValid(sp) or not sp:Alive()
+                    or sp:GetPos():DistToSqr(ent:GetPos()) > BC.MicMaxDist * BC.MicMaxDist then
+                    BC.StopLive(ent, "спикер покинул микрофон")
+                end
+            end
+        end
+    end)
+
+    -- голос через радио ------------------------------------------------
+    hook.Add("PlayerCanHearPlayersVoice", "GRM_BC_Voice", function(listener, speaker)
+        if not IsValid(listener) or not IsValid(speaker) then return end
+        local mic = speaker._grmBCMic
+        if not IsValid(mic) or not mic.BCLive or mic.BCSpeaker ~= speaker then return end
+        for _, r in ipairs(ents.FindByClass("grm_radio")) do
+            if r:GetNWBool("GRM_BC_On", false) and r:GetNWInt("GRM_BC_Mic", 0) == mic:EntIndex() then
+                if listener:GetPos():DistToSqr(r:GetPos()) <= BC.ReceiveRadius * BC.ReceiveRadius then
+                    return true, false -- слышно глобально (эффект радио)
+                end
+            end
+        end
+    end)
+
+    -- текстовые заголовки ----------------------------------------------
+    local function listenersOf(micIdx)
+        local set, out = {}, {}
+        for _, r in ipairs(ents.FindByClass("grm_radio")) do
+            if r:GetNWBool("GRM_BC_On", false) and r:GetNWInt("GRM_BC_Mic", 0) == micIdx then
+                for _, p in ipairs(player.GetAll()) do
+                    if not set[p] and p:GetPos():DistToSqr(r:GetPos()) <= BC.ReceiveRadius * BC.ReceiveRadius then
+                        set[p] = true
+                        out[#out + 1] = p
+                    end
+                end
+            end
+        end
+        return out
+    end
+
+    hook.Add("PlayerSay", "GRM_BC_SayRelay", function(ply, text)
+        if not IsValid(ply) then return end
+        local mic = ply._grmBCMic
+        if not IsValid(mic) or not mic.BCLive or mic.BCSpeaker ~= ply then return end
+        text = string.Trim(tostring(text or ""))
+        if text == "" or string.sub(text, 1, 1) == "/" or string.sub(text, 1, 1) == "!" then return end
+        text = string.sub(text, 1, 200)
+        local station = mic:GetNWString("GRM_BC_Station", "ГРМ-Радио")
+        local name = rpName(ply)
+        mic:SetNWString("GRM_BC_Last", os.date("%H:%M ") .. text)
+        local plys = listenersOf(mic:EntIndex())
+        if #plys > 0 then
+            net.Start(NET_LINE)
+                net.WriteString(station)
+                net.WriteString(name)
+                net.WriteString(text)
+            net.Send(plys)
+        end
+    end)
+
+    -- массовое оповещение -----------------------------------------------
+    function BC.SendAlert(fromName, text, global)
+        text = string.Trim(tostring(text or ""))
+        if #text < 3 then return false, "Текст оповещения короче 3 символов" end
+        text = string.sub(text, 1, 240)
+        local targets = {}
+        if global then
+            for _, p in ipairs(player.GetAll()) do targets[#targets + 1] = p end
+        else
+            local speakers = ents.FindByClass("grm_loudspeaker")
+            if #speakers == 0 then return false, "В городе не установлено громкоговорителей (/speaker_add + /permadd). Глобально: /alertall" end
+            local marked = {}
+            for _, sp in ipairs(speakers) do
+                sp:SetNWBool("GRM_BC_Alert", true)
+                sp:EmitSound("ambient/alarms/warningbell1.wav", 78, 100)
+                timer.Create("GRM_BC_SpkOff" .. sp:EntIndex(), BC.AlertDuration, 1, function()
+                    if IsValid(sp) then sp:SetNWBool("GRM_BC_Alert", false) end
+                end)
+                for _, p in ipairs(player.GetAll()) do
+                    if not marked[p] and p:GetPos():DistToSqr(sp:GetPos()) <= BC.SpeakerRadius * BC.SpeakerRadius then
+                        marked[p] = true
+                        targets[#targets + 1] = p
+                    end
+                end
+            end
+        end
+        if #targets == 0 then return false, "Рядом с громкоговорителями никого нет. Глобально: /alertall" end
+        net.Start(NET_ALERT)
+            net.WriteString(fromName)
+            net.WriteString(text)
+        net.Send(targets)
+        return true, "Оповещение передано (" .. #targets .. " чел.)"
+    end
+
+    -- админ-команды доступа ----------------------------------------------
+    local function listToText(tbl)
+        local out = {}
+        for k, v in pairs(tbl or {}) do if v then out[#out + 1] = k end end
+        table.sort(out)
+        return (#out > 0) and table.concat(out, ", ") or "(пусто — только суперадмины)"
+    end
+
+    -- спавн энтити --------------------------------------------------------
+    local function spawnAtAim(ply, class, label)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then
+            if IsValid(ply) then ply:PrintMessage(HUD_PRINTTALK, "[" .. label .. "] Только для суперадмина.") end
+            return
+        end
+        local tr = util.TraceLine({ start = ply:GetShootPos(), endpos = ply:GetShootPos() + ply:GetAimVector() * 320, filter = ply })
+        if not tr.Hit then ply:PrintMessage(HUD_PRINTTALK, "[" .. label .. "] Прицельтесь в пол/стену рядом.") return end
+        local nt = ents.Create(class)
+        if not IsValid(nt) then ply:PrintMessage(HUD_PRINTTALK, "[" .. label .. "] Энтити не зарегистрирована!") return end
+        nt:SetPos(tr.HitPos + tr.HitNormal * 2)
+        local ang = (ply:GetPos() - tr.HitPos):Angle()
+        nt:SetAngles(Angle(0, ang.y, 0))
+        nt:Spawn() nt:Activate()
+        ply:PrintMessage(HUD_PRINTTALK, "[" .. label .. "] Установлен. Закрепите пермом: /permadd (в прицеле), снять: /permremove.")
+        if GRM.Notify then GRM.Notify(ply, label .. " установлен.", 100, 220, 100) end
+    end
+    local function removeAtAim(ply, class, label)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        local tr = util.TraceLine({ start = ply:GetShootPos(), endpos = ply:GetShootPos() + ply:GetAimVector() * 220, filter = ply })
+        local ent = tr.Entity
+        if not IsValid(ent) or ent:GetClass() ~= class then
+            ply:PrintMessage(HUD_PRINTTALK, "[" .. label .. "] В прицеле нет такой энтити.")
+            return
+        end
+        ent:Remove()
+        ply:PrintMessage(HUD_PRINTTALK, "[" .. label .. "] Удалён. Снимите и перм: /permremove.")
+    end
+
+    hook.Add("PlayerSay", "GRM_BC_AdminCmds", function(ply, text)
+        local t = string.Trim(text or "")
+        local low = string.lower(t)
+        -- оповещения
+        if string.sub(low, 1, 7) == "/alert " then
+            if not BC.IsAlerter(ply) then ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] Нет доступа (см. /alert_allow у суперадмина).") return "" end
+            local ok, msg = BC.SendAlert(rpName(ply), string.sub(t, 8), false)
+            ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] " .. tostring(msg))
+            return ""
+        end
+        if string.sub(low, 1, 10) == "/alertall " then
+            if not BC.IsAlerter(ply) then ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] Нет доступа.") return "" end
+            local ok, msg = BC.SendAlert(rpName(ply), string.sub(t, 11), true)
+            ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] " .. tostring(msg))
+            return ""
+        end
+        if low == "/alert" or low == "/alertall" then
+            ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] Формат: /alert текст оповещения (возле громкоговорителей) или /alertall текст (всем игрокам)")
+            return ""
+        end
+        -- доступ журналистов/оповестителей (суперадмин)
+        local function editAccess(tbl, name, add)
+            if not ply:IsSuperAdmin() then ply:PrintMessage(HUD_PRINTTALK, "[Радио] Только для суперадмина.") return true end
+            local fname = string.Trim(name or "")
+            if fname == "" or not (istable(Factions) and Factions[fname]) then
+                ply:PrintMessage(HUD_PRINTTALK, "[Радио] Укажите точное имя фракции (см. /factions).")
+                return true
+            end
+            tbl[fname] = add and true or nil
+            BC.SaveCfg()
+            ply:PrintMessage(HUD_PRINTTALK, "[Радио] " .. (add and "Выдан доступ: " or "Отобран доступ: ") .. fname)
+            return true
+        end
+        if string.sub(low, 1, 13) == "/bcast_allow " and editAccess(BC.Cfg.journalists, string.sub(t, 14), true) then return "" end
+        if string.sub(low, 1, 12) == "/bcast_deny " and editAccess(BC.Cfg.journalists, string.sub(t, 13), false) then return "" end
+        if string.sub(low, 1, 13) == "/alert_allow " and editAccess(BC.Cfg.alerters, string.sub(t, 14), true) then return "" end
+        if string.sub(low, 1, 12) == "/alert_deny " and editAccess(BC.Cfg.alerters, string.sub(t, 13), false) then return "" end
+        if low == "/bcast_list" then
+            ply:PrintMessage(HUD_PRINTTALK, "[Радио] Журналисты: " .. listToText(BC.Cfg.journalists) .. " | Оповестители: " .. listToText(BC.Cfg.alerters))
+            return ""
+        end
+        -- спавн/удаление энтити
+        if low == "/radiomic_add" then spawnAtAim(ply, "grm_broadcast_mic", "Микрофон") return "" end
+        if low == "/radiomic_remove" then removeAtAim(ply, "grm_broadcast_mic", "Микрофон") return "" end
+        if low == "/radio_add" then spawnAtAim(ply, "grm_radio", "Радиоприёмник") return "" end
+        if low == "/radio_remove" then removeAtAim(ply, "grm_radio", "Радиоприёмник") return "" end
+        if low == "/speaker_add" then spawnAtAim(ply, "grm_loudspeaker", "Громкоговоритель") return "" end
+        if low == "/speaker_remove" then removeAtAim(ply, "grm_loudspeaker", "Громкоговоритель") return "" end
+    end)
+
+    -- меню приёмника: открытие/настройка ---------------------------------
+    function BC.OpenRadioMenu(ply, ent)
+        local stations = {}
+        for _, m in ipairs(ents.FindByClass("grm_broadcast_mic")) do
+            stations[#stations + 1] = {
+                idx = m:EntIndex(),
+                station = m:GetNWString("GRM_BC_Station", "ГРМ-Радио"),
+                live = m:GetNWBool("GRM_BC_Live", false),
+                speaker = m:GetNWString("GRM_BC_Speaker", ""),
+            }
+        end
+        net.Start(NET_RADIO_OPEN)
+            net.WriteUInt(ent:EntIndex(), 16)
+            net.WriteInt(ent:GetNWInt("GRM_BC_Mic", 0), 16)
+            net.WriteTable(stations)
+        net.Send(ply)
+    end
+
+    net.Receive(NET_RADIO_SET, function(_, ply)
+        if not IsValid(ply) then return end
+        local ent = Entity(net.ReadUInt(16))
+        local micIdx = net.ReadInt(16)
+        if not IsValid(ent) or ent:GetClass() ~= "grm_radio" then return end
+        if ply:GetPos():DistToSqr(ent:GetPos()) > 250 * 250 then return end
+        if micIdx <= 0 then
+            ent:SetNWBool("GRM_BC_On", false)
+            ent:SetNWInt("GRM_BC_Mic", 0)
+            if GRM.Notify then GRM.Notify(ply, "Приёмник выключен.", 220, 180, 90) end
+            return
+        end
+        local mic = Entity(micIdx)
+        if not IsValid(mic) or mic:GetClass() ~= "grm_broadcast_mic" then return end
+        ent:SetNWBool("GRM_BC_On", true)
+        ent:SetNWInt("GRM_BC_Mic", micIdx)
+        if GRM.Notify then GRM.Notify(ply, "Настроен на станцию: " .. mic:GetNWString("GRM_BC_Station", "ГРМ-Радио") .. ". Слышимость ~" .. BC.ReceiveRadius .. " юнитов.", 100, 220, 100) end
+    end)
+
+    -- меню микрофона -------------------------------------------------------
+    function BC.OpenMicMenu(ply, ent)
+        net.Start(NET_MIC_OPEN)
+            net.WriteUInt(ent:EntIndex(), 16)
+            net.WriteString(ent:GetNWString("GRM_BC_Station", "ГРМ-Радио"))
+            net.WriteBool(ent:GetNWBool("GRM_BC_Live", false))
+            net.WriteString(ent:GetNWString("GRM_BC_Speaker", ""))
+        net.Send(ply)
+    end
+
+    net.Receive(NET_MIC_SET, function(_, ply)
+        if not IsValid(ply) then return end
+        local ent = Entity(net.ReadUInt(16))
+        local act = net.ReadString()
+        local name = net.ReadString()
+        if not IsValid(ent) or ent:GetClass() ~= "grm_broadcast_mic" then return end
+        if ply:GetPos():DistToSqr(ent:GetPos()) > BC.MicMaxDist * BC.MicMaxDist then return end
+        if not BC.IsJournalist(ply) then
+            if GRM.Notify then GRM.Notify(ply, "Нет доступа к микрофону (журналисты: /bcast_allow у суперадмина).", 255, 120, 90) end
+            return
+        end
+        if act == "name" then
+            BC.SetMicName(ent, name)
+            ply:PrintMessage(HUD_PRINTTALK, "[Радио] Станция переименована: " .. BC.MicName(ent))
+        elseif act == "start" then
+            BC.StartLive(ply, ent)
+        elseif act == "stop" then
+            if ent.BCSpeaker == ply or ply:IsSuperAdmin() then BC.StopLive(ent, "ведущий завершил") end
+        end
+    end)
+
+    -- консольное оповещение (из server console / rcon)
+    concommand.Add("grm_alert", function(ply, _, args)
+        if IsValid(ply) and not BC.IsAlerter(ply) then return end
+        local ok, msg = BC.SendAlert(IsValid(ply) and rpName(ply) or "Сервер", table.concat(args or {}, " "), true)
+        if IsValid(ply) then ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] " .. tostring(msg))
+        else print("[GRM Broadcast] " .. tostring(msg)) end
+    end)
+
+    print("[GRM Broadcast] Сервер v" .. BC.Version .. " загружен")
+end
+
+-- ============================================================
+-- КЛИЕНТ
+-- ============================================================
+if CLIENT then
+    surface.CreateFont("GRMBC_Title",  { font = "Roboto", size = 20, weight = 800, extended = true })
+    surface.CreateFont("GRMBC_Sub",    { font = "Roboto", size = 15, weight = 600, extended = true })
+    surface.CreateFont("GRMBC_Normal", { font = "Roboto", size = 13, weight = 500, extended = true })
+    surface.CreateFont("GRMBC_Alert",  { font = "Roboto", size = 26, weight = 900, extended = true })
+    surface.CreateFont("GRMBC_AlertS", { font = "Roboto", size = 16, weight = 600, extended = true })
+
+    local C = {
+        bg    = Color(20, 24, 32, 252),
+        head  = Color(28, 34, 46, 255),
+        panel = Color(32, 38, 50, 245),
+        acc   = Color(70, 150, 240),
+        green = Color(60, 190, 110),
+        red   = Color(220, 75, 70),
+        yellow= Color(230, 180, 60),
+        text  = Color(240, 245, 250),
+        dim   = Color(160, 170, 185),
+    }
+
+    local function mkBtn(p, txt, col)
+        local b = vgui.Create("DButton", p)
+        b:SetText(txt) b:SetFont("GRMBC_Sub") b:SetTextColor(color_white)
+        b.Paint = function(self, pw, ph)
+            local cc = col or C.acc
+            if not self:IsEnabled() then cc = Color(60, 65, 75)
+            elseif self:IsHovered() then cc = Color(math.min(255, cc.r + 25), math.min(255, cc.g + 25), math.min(255, cc.b + 25)) end
+            draw.RoundedBox(6, 0, 0, pw, ph, cc)
+        end
+        return b
+    end
+
+    local function mkFrame(w, h, title)
+        local f = vgui.Create("DFrame")
+        f:SetTitle("") f:SetSize(w, h) f:Center() f:MakePopup() f:ShowCloseButton(false)
+        f.Paint = function(_, pw, ph)
+            draw.RoundedBox(8, 0, 0, pw, ph, C.bg)
+            draw.RoundedBoxEx(8, 0, 0, pw, 40, C.head, true, true, false, false)
+            draw.SimpleText(title, "GRMBC_Title", 14, 20, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
+        local x = vgui.Create("DButton", f)
+        x:SetText("X") x:SetFont("GRMBC_Title") x:SetTextColor(color_white)
+        x:SetPos(w - 40, 6) x:SetSize(32, 26)
+        x.DoClick = function() f:Close() end
+        x.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.red or Color(45, 52, 68)) end
+        return f
+    end
+
+    -- ---------- меню приёмника ----------
+    net.Receive(NET_RADIO_OPEN, function()
+        local entIdx = net.ReadUInt(16)
+        local curMic = net.ReadInt(16)
+        local stations = net.ReadTable() or {}
+
+        local f = mkFrame(560, 420, "Радиоприёмник")
+        local info = vgui.Create("DLabel", f)
+        info:SetPos(14, 46) info:SetSize(532, 20) info:SetFont("GRMBC_Normal") info:SetTextColor(C.dim)
+        info:SetText("Слышимость около приёмника. Подстроитесь к живой станции.")
+
+        local sc = vgui.Create("DScrollPanel", f)
+        sc:SetPos(10, 70) sc:SetSize(540, 280)
+
+        local function send(micIdx)
+            net.Start(NET_RADIO_SET)
+                net.WriteUInt(entIdx, 16)
+                net.WriteInt(micIdx, 16)
+            net.SendToServer()
+            f:Close()
+        end
+
+        if #stations == 0 then
+            local none = vgui.Create("DLabel", sc)
+            none:Dock(TOP) none:SetTall(30) none:SetFont("GRMBC_Sub") none:SetTextColor(C.dim)
+            none:SetText("Станций не найдено (микрофоны не установлены).")
+        end
+        for _, st in ipairs(stations) do
+            local row = vgui.Create("DPanel", sc)
+            row:Dock(TOP) row:SetTall(56) row:DockMargin(0, 0, 0, 4)
+            local tuned = (curMic == st.idx)
+            row.Paint = function(_, pw, ph)
+                draw.RoundedBox(6, 0, 0, pw, ph, tuned and Color(44, 66, 96) or C.panel)
+                draw.SimpleText(st.station, "GRMBC_Sub", 10, 16, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                local live = st.live and ("В ЭФИРЕ: " .. (st.speaker ~= "" and st.speaker or "ведущий")) or "молчит"
+                local lc = st.live and C.red or C.dim
+                draw.SimpleText(live, "GRMBC_Normal", 10, 40, lc, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+            local b = mkBtn(row, tuned and "Слушаете" or "Слушать", tuned and C.green or C.acc)
+            b:SetPos(440, 12) b:SetSize(90, 32) b:SetFont("GRMBC_Normal")
+            b.DoClick = function() send(st.idx) end
+        end
+
+        local bOff = mkBtn(f, "Выключить приёмник", C.red)
+        bOff:SetPos(10, 366) bOff:SetSize(200, 36)
+        bOff.DoClick = function() send(0) end
+    end)
+
+    -- ---------- меню микрофона ----------
+    net.Receive(NET_MIC_OPEN, function()
+        local entIdx = net.ReadUInt(16)
+        local station = net.ReadString()
+        local live = net.ReadBool()
+        local speaker = net.ReadString()
+
+        local f = mkFrame(560, 330, "Микрофонная стойка (эфир)")
+        local st = vgui.Create("DLabel", f)
+        st:SetPos(14, 46) st:SetSize(532, 20) st:SetFont("GRMBC_Sub")
+        st:SetText(live and ("СТАТУС: В ЭФИРЕ — " .. speaker) or "СТАТУС: молчит")
+        st:SetTextColor(live and C.red or C.dim)
+
+        local lbl = vgui.Create("DLabel", f)
+        lbl:SetPos(14, 74) lbl:SetSize(532, 18) lbl:SetFont("GRMBC_Normal") lbl:SetTextColor(C.dim)
+        lbl:SetText("Позывной станции (виден слушателям у приёмников):")
+
+        local entry = vgui.Create("DTextEntry", f)
+        entry:SetPos(14, 96) entry:SetSize(400, 32) entry:SetFont("GRMBC_Sub")
+        entry:SetText(station)
+
+        local bName = mkBtn(f, "Сохранить", C.acc)
+        bName:SetPos(424, 96) bName:SetSize(122, 32)
+        bName.DoClick = function()
+            net.Start(NET_MIC_SET)
+                net.WriteUInt(entIdx, 16)
+                net.WriteString("name")
+                net.WriteString(entry:GetValue() or "")
+            net.SendToServer()
+        end
+
+        local bLive = mkBtn(f, live and "ЗАВЕРШИТЬ ЭФИР" or "НАЧАТЬ ЭФИР", live and C.red or C.green)
+        bLive:SetPos(14, 150) bLive:SetSize(532, 46)
+        bLive.DoClick = function()
+            net.Start(NET_MIC_SET)
+                net.WriteUInt(entIdx, 16)
+                net.WriteString(live and "stop" or "start")
+                net.WriteString("")
+            net.SendToServer()
+            f:Close()
+        end
+
+        local hint = vgui.Create("DLabel", f)
+        hint:SetPos(14, 208) hint:SetSize(532, 108) hint:SetFont("GRMBC_Normal") hint:SetTextColor(C.dim)
+        hint:SetText("В эфире ваш ГОЛОС слышат все возле настроенных приёмников, а текстовые реплики уходят заголовками. Не отходите дальше ~2.5 м от микрофона — эфир прервётся автоматически. Доступ к эфиру выдаёт суперадмин: /bcast_allow ИмяФракции.")
+        hint:SetWrap(true) hint:SetAutoStretchVertical(true)
+    end)
+
+    -- ---------- текстовая строка эфира ----------
+    net.Receive(NET_LINE, function()
+        local station = net.ReadString()
+        local name = net.ReadString()
+        local text = net.ReadString()
+        chat.AddText(Color(90, 170, 250), "[📻 " .. station .. "] ",
+            Color(240, 220, 140), name .. ": ",
+            color_white, text)
+        surface.PlaySound("buttons/button16.wav")
+    end)
+
+    -- ---------- баннер массового оповещения ----------
+    local alertData = nil
+    net.Receive(NET_ALERT, function()
+        alertData = {
+            from = net.ReadString(),
+            text = net.ReadString(),
+            untilT = CurTime() + BC.AlertDuration,
+        }
+        surface.PlaySound("npc/overwatch/radiovoice/on3.wav")
+    end)
+
+    hook.Add("HUDPaint", "GRM_BC_AlertBanner", function()
+        if not alertData then return end
+        local left = alertData.untilT - CurTime()
+        if left <= 0 then alertData = nil return end
+        local a = math.Clamp(left * 2, 0, 1) * 255
+        local blink = (math.sin(CurTime() * 8) + 1) * 0.5
+        local w = math.min(900, ScrW() - 120)
+        local x, y = (ScrW() - w) / 2, 60
+        draw.RoundedBox(8, x, y, w, 92, Color(140, 20, 20, a * 0.92))
+        surface.SetDrawColor(255, 80 + blink * 120, 60, a)
+        surface.DrawOutlinedRect(x, y, w, 92, 3)
+        draw.SimpleText("ВНИМАНИЕ! ОПОВЕЩЕНИЕ ГОРОДА", "GRMBC_Alert", ScrW() / 2, y + 18, Color(255, 235, 230, a), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText(alertData.text, "GRMBC_AlertS", ScrW() / 2, y + 52, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Источник: " .. alertData.from, "GRMBC_Normal", ScrW() / 2, y + 76, Color(255, 200, 190, a), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end)
+
+    print("[GRM Broadcast] Клиент v" .. BC.Version .. " загружен")
+end
