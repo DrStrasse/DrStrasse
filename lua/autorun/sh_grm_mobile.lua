@@ -45,7 +45,7 @@ GRM = GRM or {}
 GRM.Mobile = GRM.Mobile or {}
 local MB = GRM.Mobile
 
-MB.Version   = "1.1.0"
+MB.Version   = "1.2.0"
 MB.DataFile  = "grm_mobile.json"
 MB.ForumFile = "grm_mobile_forum.json"
 MB.SmsCap       = 40    -- глубина ящика SMS
@@ -263,6 +263,7 @@ if SERVER then
         line:SetPhoneNumber(rec.number)
         line:SetDisplayName("Моб. " .. rpName(ply))
         line:SetExchangeID(MB.Exchange)
+        if line:GetLineState() == "" then line:SetLineState("idle") end -- Код 88.3: страховка (находка 105)
         MB.Lines[sid64] = line
         return line
     end
@@ -589,10 +590,21 @@ if SERVER then
 
         if op == "open" then
             if not tk then return end
+            ply._grmMobUI = CurTime() -- Код 88.3: UI открыт — стойка игрока + автообновление
             pushState(ply, true)
             pushData(ply, "contacts", { rows = contactRows(ply) })
             pushData(ply, "notes", { rows = noteRows(ply) })
             pushData(ply, "sms", { rows = smsRows(ply) })
+            return
+        end
+        -- Код 88.3: поддержка флага «телефон открыт» (пока флаг свежий,
+        -- StartCommand не даёт двигаться/стрелять, клиент глушит слоты оружия)
+        if op == "ping" then
+            if tk then ply._grmMobUI = CurTime() end
+            return
+        end
+        if op == "close" then
+            ply._grmMobUI = nil
             return
         end
 
@@ -727,6 +739,9 @@ if SERVER then
                             line:SetDisplayName("Моб. " .. rpName(ply))
                         end
                         local st = line:GetLineState()
+                        if st == "" then -- Код 88.3: самолечение пустого состояния (трупы строки 9 старого init)
+                            line:SetLineState("idle") st = "idle"
+                        end
                         if (st == "call" or st == "dialing" or st == "ringing") and not MB.SignalOK(ply, tk) then
                             if GRM.Phone and GRM.Phone.ForceEndCall then
                                 local call = GRM.Phone.Calls and GRM.Phone.Calls[line:GetCallID()]
@@ -744,8 +759,32 @@ if SERVER then
                     if IsValid(hp) then hp:Remove() end
                     MB.HandProps[ply] = nil
                 end
+                -- Код 88.3: флаг «UI открыт». Протух (>3с без пинга) или трубка
+                -- убрана — снимаем; свежий — раз в 3с льём данные (автообновление
+                -- контактов/заметок/SMS прямо в открытый телефон).
+                local ui = ply._grmMobUI
+                if ui then
+                    if (not tk) or ((CurTime() - ui) > 3) then
+                        ply._grmMobUI = nil
+                    elseif (CurTime() - (ply._grmMobDataTs or 0)) >= 3 then
+                        ply._grmMobDataTs = CurTime()
+                        pushData(ply, "contacts", { rows = contactRows(ply) })
+                        pushData(ply, "notes", { rows = noteRows(ply) })
+                        pushData(ply, "sms", { rows = smsRows(ply) })
+                    end
+                end
                 pushState(ply)
             end
+        end
+    end)
+
+    -- стойка игрока с открытым телефоном: не двигается, не стреляет, не жмёт
+    -- кнопок (клавиши самого телефона — клиентские хуки, не затронуты)
+    hook.Add("StartCommand", "GRM_Mob_LockMove", function(ply, cmd)
+        local ui = ply._grmMobUI
+        if ui and (CurTime() - ui) < 3 then
+            cmd:ClearMovement()
+            cmd:ClearButtons()
         end
     end)
 
@@ -984,6 +1023,7 @@ if CLIENT then
         M.open = false M.screen = "home" M.sel = 1 M.dialNum = "" M.scroll = 0
         M.down = {} M.nextRep = {}
         killEntry()
+        sendAct({ op = "close" }) -- Код 88.3: снять серверный флаг стойки
     end
 
     -- ---------- мягкая панель-заголовок экрана приложения ----------
@@ -1825,11 +1865,23 @@ if CLIENT then
         screenEnter.home()
     end)
 
-    -- секундомер разговора + скрытие панели при закрытии
+    -- секундомер разговора + скрытие панели при закрытии + keepalive стойки
     timer.Create("GRM_Mob_Tick", 1, 0, function()
         if M.st.lineState == "call" then M.callSec = (M.callSec or 0) + 1 else M.callSec = 0 end
         if IsValid(phone) then phone:SetVisible(M.open and M.st.has == true) end
         if M.open and M.st.has ~= true then closePhone() end
+        if M.open then sendAct({ op = "ping" }) end -- Код 88.3: UI жив — держать флаг свежим
+    end)
+
+    -- Код 88.3: пока телефон открыт — слоты оружия не переключаются,
+    -- а колесо мыши листает меню вместо выбора оружия
+    hook.Add("PlayerBindPress", "GRM_Mob_Binds", function(ply, bind, pressed)
+        if ply ~= LocalPlayer() then return end
+        if not pressed then return end
+        if not (M.open and M.st.has == true) then return end
+        if bind == "invnext" then fireKey(KEY_DOWN) return true end
+        if bind == "invprev" then fireKey(KEY_UP) return true end
+        if string.find(bind, "^slot") then return true end
     end)
 
     -- мини-карточка входящего в HUD (даже когда телефон убран): пульс рамки

@@ -74,7 +74,7 @@ GRM = GRM or {}
 GRM.RadioNet = GRM.RadioNet or {}
 local RN = GRM.RadioNet
 
-RN.Version    = "1.1.0"  -- Код 87: NetSys — пульт/реестр/группы/пеленг/журнал
+RN.Version    = "1.2.0"  -- Код 88.4: авто-свипер персистента (оборудование перманентно любым способом)
 
 -- настройки сети (юниты = юниты Source; ~40 юн = 1 м)
 RN.LinkDist     = 700    -- радиус связывания оборудования со стойкой
@@ -424,6 +424,39 @@ if SERVER then
         if RN.Persist[k] then RN.Persist[k] = nil savePersist("persist remove") end
     end
 
+    -- Код 88.4: авто-свипер персистента — вышки и оборудование сейвятся
+    -- ПЕРМАНЕНТНО независимо от способа постановки (чат-команда, Q-меню, дюп).
+    -- Переехавшая энтити мигрирует по ключу, удалённая живьём — выпадает из
+    -- реестра (иначе реестр воскрешал бы снятое админом после рестарта).
+    -- Первый прогон через 15с — заведомо после воскрешения (InitPostEntity+4с).
+    local function persistSweep()
+        if RN._restoring then return end
+        local seen = {}
+        for class in pairs(PERSIST_CLASSES) do
+            for _, e in ipairs(ents.FindByClass(class)) do
+                if IsValid(e) then
+                    local k = persistKey(class, e:GetPos())
+                    seen[k] = true
+                    if not RN.Persist[k] then
+                        if e._grmRNKey and RN.Persist[e._grmRNKey] then RN.Persist[e._grmRNKey] = nil end
+                        RN.PersistAdd(e)
+                    end
+                    e._grmRNKey = k
+                end
+            end
+        end
+        local lost = 0
+        for k, rec in pairs(RN.Persist or {}) do
+            if PERSIST_CLASSES[rec.class] and not seen[k] then
+                RN.Persist[k] = nil
+                lost = lost + 1
+            end
+        end
+        if lost > 0 then savePersist("sweep removal " .. lost) end
+    end
+    timer.Create("GRM_RN_PersistSweep", 15, 0, persistSweep)
+    RN._devSweep = persistSweep -- тест-экспорт (сим)
+
     hook.Add("InitPostEntity", "GRM_RN_Restore", function()
         timer.Simple(4, function()
             RN._restoring = true
@@ -445,6 +478,7 @@ if SERVER then
                             local phys = ent:GetPhysicsObject()
                             if IsValid(phys) then phys:EnableMotion(false) end
                             if rec.class == "grm_server_rack" then ent:SetNWBool("GRM_RN_On", true) end
+                            ent._grmRNKey = k -- Код 88.4: свипер узнаёт своих
                             restored = restored + 1
                         end
                     end

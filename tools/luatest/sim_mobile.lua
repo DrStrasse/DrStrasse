@@ -652,10 +652,96 @@ H.seq = { "phone" }
 H.netrecv["GRM_PhoneShop_Spawn"](0, p9)
 ok(hasNotif(p9, "купите доступ"), "стационарный товар: старая модель доступа не сломана")
 
+-- ══ 13. Код 88.3 — регресс живых багов (находка 105) ═══════════════════
+P("== 13. Код 88.3: регресс живых багов ==")
+
+-- 13.1 Реальный init.lua линии в строгой песочнице: SetUseType(nil) = ошибка
+-- (как в GMod), неизвестные глобалы запрещены — класс бага находки 105
+-- (NO_USE не существует в GLua → Initialize умирал → LineState="" → «линия занята»).
+local srcEnt = assert(io.open("lua/entities/grm_mobile_line/init.lua", "rb")):read("*a")
+local dt105 = { ExchangeID = "", LineState = "" }
+local calls105 = {}
+local ENT105 = {}
+ENT105.GetExchangeID = function() return dt105.ExchangeID end
+ENT105.SetExchangeID = function(_, v) dt105.ExchangeID = v end
+ENT105.GetLineState = function() return dt105.LineState end
+ENT105.SetLineState = function(_, v) dt105.LineState = v end
+ENT105.SetMoveType = function(_, v) calls105.movetype = v end
+ENT105.SetSolid = function(_, v) calls105.solid = v end
+ENT105.SetNoDraw = function(_, v) calls105.nodraw = v end
+ENT105.SetUseType = function(_, v)
+  assert(type(v) == "number", "bad argument #1 to 'SetUseType' (number expected, got nil)")
+  calls105.usetype = v
+end
+ENT105.NetworkVar = function() end
+local env105 = {
+  ENT = ENT105, AddCSLuaFile = function() end, include = function() end,
+  print = print, type = type, tostring = tostring, pairs = pairs, ipairs = ipairs,
+  SIMPLE_USE = 0, MOVETYPE_NONE = 0, SOLID_NONE = 1,
+}
+setmetatable(env105, { __index = function(_, k) error("unknown global in init.lua: " .. tostring(k), 2) end })
+local ch105, chErr105 = loadstring(srcEnt, "init.lua")
+ok(ch105 ~= nil, "init.lua парсится: " .. tostring(chErr105))
+if ch105 then
+  setfenv(ch105, env105)
+  local okRun105, runErr105 = pcall(ch105)
+  ok(okRun105, "init.lua выполняется: " .. tostring(runErr105))
+  local okInit105, initErr105 = pcall(function() ENT105:Initialize() end)
+  ok(okInit105 and dt105.LineState == "idle" and dt105.ExchangeID == "cell",
+     "Initialize: LineState=idle, ExchangeID=cell (" .. tostring(initErr105) .. ")")
+  ok(calls105.usetype == 0, "SetUseType получил ЧИСЛО (SIMPLE_USE), не nil")
+end
+
+-- 13.2 Флаг «UI открыт»: open/ping/close/протух + автообновление данных
+clearLogs()
+MB.HandleAction(p1, { op = "open" })
+ok(tonumber(p1._grmMobUI) ~= nil, "op=open поставил серверный флаг стойки")
+local ts0 = p1._grmMobUI
+TT = TT + 1
+MB.HandleAction(p1, { op = "ping" })
+ok(p1._grmMobUI ~= nil and p1._grmMobUI > ts0, "op=ping освежает флаг")
+clearLogs()
+p1._grmMobDataTs = nil
+H.timers["GRM_Mob_Think"]()
+local pushed105 = false
+for _, e in ipairs(H.netlog) do
+  if e.msg == "GRM_Mob_Data" and e.f[1] == "contacts" then pushed105 = true end
+end
+ok(pushed105, "открытый UI: автообновление contacts в тикере")
+ok(tonumber(p1._grmMobDataTs) ~= nil, "метка автообновления выставлена")
+MB.HandleAction(p1, { op = "close" })
+ok(p1._grmMobUI == nil, "op=close снимает флаг")
+MB.HandleAction(p1, { op = "open" })
+TT = TT + 5
+H.timers["GRM_Mob_Think"]()
+ok(p1._grmMobUI == nil, "протухший флаг (>3с без пинга) снят тикером")
+
+-- 13.3 Стойка: StartCommand обнуляет движение/кнопки при свежем флаге
+local cleared = {}
+local cmd105 = { ClearMovement = function() cleared.move = true end, ClearButtons = function() cleared.btn = true end }
+MB.HandleAction(p1, { op = "open" })
+fire("StartCommand", p1, cmd105)
+ok(cleared.move == true and cleared.btn == true, "StartCommand: движение и кнопки обнулены в телефоне")
+cleared = {}
+MB.HandleAction(p1, { op = "close" })
+fire("StartCommand", p1, cmd105)
+ok(cleared.move == nil, "после close стойка не действует")
+TT = TT + 2
+
+-- 13.4 Самолечение пустого LineState (трупы старого бага на живой линии)
+local l105 = MB.Lines[p1:SteamID64()]
+ok(IsValid(l105), "линия p1 жива для теста самолечения")
+if IsValid(l105) then
+  l105:SetLineState("")
+  H.timers["GRM_Mob_Think"]()
+  ok(l105:GetLineState() == "idle", "пустой LineState вылечен в idle тикером")
+end
+
 -- ══ 12. Итог ═══════════════════════════════════════════════════════════
 H.timers["GRM_Mob_Think"]()
 H.timers["GRM_Phone_CallThink"]()
 ok(true, "финальный прогон тикеров без ошибок")
+-- итоговая сводка теперь включает секцию 13
 P("")
 if failed == 0 then
   P("PASS " .. tostring(checks) .. "/" .. tostring(checks) .. " — sim_mobile OK")

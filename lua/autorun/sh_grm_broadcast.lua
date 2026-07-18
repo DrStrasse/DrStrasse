@@ -35,7 +35,7 @@ GRM = GRM or {}
 GRM.Broadcast = GRM.Broadcast or {}
 local BC = GRM.Broadcast
 
-BC.Version       = "1.2.1"  -- Код 87: SendAlert(…, targetGroup) + журнал радиосети
+BC.Version       = "1.3.0"  -- Код 88.4: авто-свипер персистента (устройства перманентны любым способом постановки)
 BC.ReceiveRadius = 500   -- радиус слышимости от приёмника
 BC.MicMaxDist    = 250   -- спикер должен стоять у микрофона
 BC.SpeakerRadius = 700   -- радиус громкоговорителя оповещения
@@ -123,6 +123,37 @@ if SERVER then
         local k = persistKey(ent:GetClass(), ent:GetPos())
         if BC.Persist[k] then BC.Persist[k] = nil savePersist() end
     end
+
+    -- Код 88.4: авто-свипер персистента (зеркало RadioNet): радио/микрофон/
+    -- громкоговорители сейвятся перманентно ЛЮБЫМ способом постановки;
+    -- переезд = миграция ключа, удаление живьём = выпадение из реестра.
+    local function persistSweep()
+        if BC._restoring then return end
+        local seen = {}
+        for class in pairs(PERSIST_CLASSES) do
+            for _, e in ipairs(ents.FindByClass(class)) do
+                if IsValid(e) then
+                    local k = persistKey(class, e:GetPos())
+                    seen[k] = true
+                    if not BC.Persist[k] then
+                        if e._grmBCKey and BC.Persist[e._grmBCKey] then BC.Persist[e._grmBCKey] = nil end
+                        BC.PersistAdd(e)
+                    end
+                    e._grmBCKey = k
+                end
+            end
+        end
+        local lost = 0
+        for k, rec in pairs(BC.Persist or {}) do
+            if PERSIST_CLASSES[rec.class] and not seen[k] then
+                BC.Persist[k] = nil
+                lost = lost + 1
+            end
+        end
+        if lost > 0 then savePersist() end
+    end
+    timer.Create("GRM_BC_PersistSweep", 17, 0, persistSweep)
+    BC._devSweep = persistSweep -- тест-экспорт (сим)
 
     -- воскрешение после рестарта (антидубль: если рядом уже есть — пропускаем)
     hook.Add("InitPostEntity", "GRM_BC_Restore", function()

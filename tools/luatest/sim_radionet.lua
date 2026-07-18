@@ -539,6 +539,37 @@ for k, rec in pairs(RN.Persist or {}) do
 end
 ok(conInPersist, "пульт сохранён в автоперсистенте карты")
 
+P("== 23. Код 88.4 — авто-свипер персистента (постановка любым способом) ==")
+-- энтити, поставленная МИМО команд (Q-меню/дюп), сама уходит в персист
+local sweepAnt = mkEnt("grm_antenna", 60000, 0, 0)
+local function hasPersistAt(class, x)
+  local want = class .. "|" .. string.format("%.0f_%.0f_%.0f", x, 0, 0)
+  return RN.Persist[want] ~= nil, want
+end
+local hadBefore = hasPersistAt("grm_antenna", 60000)
+ok(hadBefore == false, "новая антенна вне реестра (чистый старт проверки)")
+RN._devSweep()
+local inNow = hasPersistAt("grm_antenna", 60000)
+ok(inNow, "свипер: антенна, поставленная мимо команд, попала в персист")
+ok(sweepAnt._grmRNKey ~= nil, "свипер пометил энтити своим ключом")
+-- переезд: ключ мигрирует на новую позицию, старой записи нет
+local oldKey = sweepAnt._grmRNKey
+sweepAnt:SetPos(V(61000, 0, 0))
+RN._devSweep()
+ok(RN.Persist[oldKey] == nil, "после переезда старый ключ удалён")
+ok(hasPersistAt("grm_antenna", 61000), "после переезда новый ключ записан")
+-- удаление живьём: запись выпадает (иначе воскрешала бы снятое)
+sweepAnt:Remove()
+RN._devSweep()
+ok(hasPersistAt("grm_antenna", 61000) == false, "удалённая антенна выпала из персиста")
+-- свипер не трогает чужие классы
+local alien = mkEnt("prop_physics", 62000, 0, 0)
+RN._devSweep()
+local alienOk = true
+for k, rec in pairs(RN.Persist or {}) do if rec.class == "prop_physics" then alienOk = false end end
+ok(alienOk, "чужие классы свипер игнорирует")
+alien:Remove()
+
 P("")
 P("ИТОГ: " .. tostring(checks) .. " проверок, провалов: " .. tostring(failed))
 if failed > 0 then os.exit(1) end

@@ -170,7 +170,7 @@ local okr, rerr = pcall(chunk)
 ok(okr, "выполняется без ошибок: " .. tostring(rerr))
 local MB = GRM.Mobile
 ok(MB ~= nil, "GRM.Mobile зарегистрирован")
-ok(MB.Version == "1.1.0", "версия 1.1.0")
+ok(MB.Version == "1.2.0", "версия 1.2.0")
 
 -- ---------- хелперы симуляции ----------
 local function tap(k)                      -- короткое нажатие
@@ -389,6 +389,34 @@ paintPhone()
 ok(true, "калькулятор отработал без ошибок")
 tap(KEY_BACKSPACE)
 
+-- ---------- Код 88.3: колесо и слоты ----------
+sect("Код 88.3: колесо листает, слоты оружия заблокированы")
+local function bindRet(b, pr)
+    local blocked = false
+    if H["PlayerBindPress"] then
+        for _, fn in pairs(H["PlayerBindPress"]) do
+            if fn(LP, b, pr) then blocked = true end
+        end
+    end
+    return blocked
+end
+ok(bindRet("slot1", true) == true, "slot1 заблокирован при открытом телефоне")
+ok(bindRet("slot4", true) == true, "slot4 заблокирован")
+ok(bindRet("invprev", false) == false, "отпускание бинда не глушится")
+-- колесо вниз: sel 1→2 (sms), ENTER → sms_read доказывает позицию
+NET_SENT = {}
+ok(bindRet("invnext", true) == true, "колесо вниз заблокировано для оружия")
+tap(KEY_ENTER)
+act = lastAct()
+ok(act ~= nil and act.op == "sms_read", "колесо сдвинуло выбор на №2 (SMS)")
+tap(KEY_BACKSPACE)
+NET_SENT = {}
+bindRet("invprev", true) bindRet("invprev", true)  -- вверх дважды: 1→8→7 (forum)
+tap(KEY_ENTER)
+act = lastAct()
+ok(act ~= nil and act.op == "forum_query", "колесо вверх дважды → №7 Форум")
+tap(KEY_BACKSPACE)
+
 -- ---------- E: диктовка ----------
 sect("E: продиктовать номер в локальный чат")
 RUN_CC = {}
@@ -397,11 +425,21 @@ ok(#RUN_CC >= 1 and RUN_CC[1].cmd == "say" and tostring(RUN_CC[1].arg):find("123
     "say /me … 12345 отправлен")
 
 -- ---------- закрытие и потеря трубки ----------
-sect("закрытие телефона и потеря трубки")
+sect("закрытие телефона и потеря трубки (op=close/ping)")
+NET_SENT = {}
 tap(KEY_BACKSPACE)                                -- домой закрылся (мы на home)
+act = lastAct()
+ok(act ~= nil and act.op == "close", "закрытие отправило op=close (снятие стойки)")
 if timer._t and timer._t["GRM_Mob_Tick"] then timer._t["GRM_Mob_Tick"]() end
 ok(true, "тикер секундомера отработал")
 tap(KEY_UP)                                       -- переоткрыть
+NET_SENT = {}
+if timer._t and timer._t["GRM_Mob_Tick"] then timer._t["GRM_Mob_Tick"]() end
+act = lastAct()
+ok(act ~= nil and act.op == "ping", "открытый UI шлёт keepalive-ping раз в секунду")
+-- слоты НЕ заблокированы, когда телефон закрыт: закрываем и проверяем
+tap(KEY_BACKSPACE)
+ok(bindRet("slot1", true) == false, "при закрытом телефоне slot1 свободен")
 sendToClient("GRM_Mob_State", { has = false, lineState = "idle", unread = 0 })
 if timer._t and timer._t["GRM_Mob_Tick"] then timer._t["GRM_Mob_Tick"]() end
 ok(true, "state has=false + тикер: телефон сам закрылся без ошибок")

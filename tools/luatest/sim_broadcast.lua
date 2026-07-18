@@ -91,3 +91,47 @@ P("return:", tostring(r2))
 
 P("=== net sent:")
 for _, s in ipairs(netlog.sent or {}) do P("net -> " .. tostring(s.msg) .. " to " .. tostring(type(s.to))) end
+
+-- ══ Код 88.4 — авто-свипер персистента broadcast-устройств ══════════════
+local BC = GRM.Broadcast
+local swpOk, swpFail = 0, 0
+local function sok(cond, name)
+  if cond then swpOk = swpOk + 1 P("  ok  " .. name)
+  else swpFail = swpFail + 1 P("  FAIL " .. name) end
+end
+sok(BC ~= nil and BC._devSweep ~= nil, "свипер экспортирован (BC._devSweep)")
+if BC and BC._devSweep then
+  local pos = { x = 50000, y = 7, z = 3 }
+  local radio = {
+    GetClass = function() return "grm_radio" end,
+    GetPos = function() return pos end,
+    GetAngles = function() return { p = 0, y = 0, r = 0 } end,
+  }
+  H.entsByClass = { grm_radio = { radio } }
+  BC._devSweep()
+  local key1 = "grm_radio|50000_7_3"
+  sok(BC.Persist[key1] ~= nil, "свипер: радио мимо команд попало в персист")
+  sok(radio._grmBCKey == key1, "энтити помечена ключом свипера")
+  -- переезд: миграция ключа
+  pos.x = 51000
+  BC._devSweep()
+  sok(BC.Persist[key1] == nil, "после переезда старая запись удалена")
+  sok(BC.Persist["grm_radio|51000_7_3"] ~= nil, "после переезда новая запись создана")
+  -- удаление живьём: выпадает из реестра
+  H.entsByClass = {}
+  BC._devSweep()
+  sok(BC.Persist["grm_radio|51000_7_3"] == nil, "удалённое радио выпало из персиста")
+  -- чужие классы не трогаем
+  local alien = { GetClass = function() return "prop_physics" end,
+    GetPos = function() return { x = 1, y = 2, z = 3 } end,
+    GetAngles = function() return { p = 0, y = 0, r = 0 } end }
+  H.entsByClass = { prop_physics = { alien } }
+  BC._devSweep()
+  local clean = true
+  for k, rec in pairs(BC.Persist or {}) do if rec.class == "prop_physics" then clean = false end end
+  sok(clean, "чужие классы игнорируются")
+  H.entsByClass = nil
+end
+P(string.format("свипер broadcast: %d ok, %d fail", swpOk, swpFail))
+if swpFail > 0 then os.exit(1) end
+P("SIM_BROADCAST OK")
