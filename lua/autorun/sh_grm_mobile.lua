@@ -45,7 +45,7 @@ GRM = GRM or {}
 GRM.Mobile = GRM.Mobile or {}
 local MB = GRM.Mobile
 
-MB.Version   = "1.0.0"
+MB.Version   = "1.0.1"
 MB.DataFile  = "grm_mobile.json"
 MB.ForumFile = "grm_mobile_forum.json"
 MB.SmsCap       = 40    -- глубина ящика SMS
@@ -1297,14 +1297,18 @@ if CLIENT then
     end
 
     -- ---------- клавиши стрелок (ядро GTA-управления) ----------
+    local noPhoneHintTs = 0
     hook.Add("PlayerButtonDown", "GRM_Mob_Keys", function(ply, btn)
         if ply ~= LocalPlayer() then return end
         -- не лезем, когда открыт чат/набор в других окнах
         if vgui.GetKeyboardFocus() ~= nil then return end
         if not M.st.has then
-            if btn == KEY_UP and M.st.has ~= true then
-    -- тихий хинт не спамим
+            -- подсказка новичку, куда девался телефон (троттл 15с)
+            if btn == KEY_UP and CurTime() - noPhoneHintTs >= 15 then
+                noPhoneHintTs = CurTime()
+                notification.AddLegacy("Мобильного нет: купите трубку в /phoneshop (раздел «Мобильные»)", NOTIFY_HINT, 5)
             end
+            return
         end
         if not M.open then
             if btn == KEY_UP and M.st.has == true then
@@ -1322,6 +1326,19 @@ if CLIENT then
         end
         local fn = screenKey[M.screen] or screenKey.home
         fn(btn)
+    end)
+
+    -- запасной путь открытия (у кого стрелки заняты биндами): grm_mobile_open / say !mob
+    concommand.Add("grm_mobile_open", function()
+        if not M.st.has then
+            notification.AddLegacy("Мобильного нет: купите трубку в /phoneshop (раздел «Мобильные»)", NOTIFY_HINT, 5)
+            return
+        end
+        if M.open then return end
+        openPhone()
+        phone = ensurePhone()
+        phone:SetVisible(true)
+        screenEnter.home()
     end)
 
     -- секундомер разговора + скрытие панели при закрытии
