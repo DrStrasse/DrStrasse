@@ -1,8 +1,17 @@
 --[[--------------------------------------------------------------------
-    GRM Q-меню и инструменты v1.0.0 (Код 83) — управление песочницей
+    GRM Q-меню и инструменты v1.1.0 (Код 83) — управление песочницей
 
     Единая точка настройки того, что игрокам разрешено делать через
     Q-меню и toolgun. Суперадмин — вне всех ограничений.
+
+    v1.1.0 (findings 98): конфиг ТЕПЕРЬ синкается всем клиентам
+    (GRM_QMenu_Sync: на вход и после каждой правки из хаба — раньше
+    клиент держал дефолт и клиентские гейты «приоткрывались»), а флаг
+    playersQ закрывает и ВАНИЛЬНОЕ, и КАСТОМНОЕ Q-меню: дополнительный
+    универсальный слой PlayerBindPress глушит сам бинд "+menu", поэтому
+    НИ ОДИН аддон спавн-меню, открывающийся по Q, не стартует.
+    (Слои 2/3 — спавн по типам и toolgun — серверные и так работают
+    против любой менюшки.)
 
     Настройка: /grm_admin → вкладка «Инструменты» (суперадмин).
     Конфиг персистится: data/grm_qmenu.json (jsonT 3-им аргументом, н65).
@@ -20,7 +29,7 @@ GRM = GRM or {}
 GRM.QMenu = GRM.QMenu or {}
 local QM = GRM.QMenu
 
-QM.Version = "1.0.0"
+QM.Version = "1.1.0"
 
 local CONFIG_FILE = "grm_qmenu.json"
 
@@ -92,6 +101,21 @@ QM.Cfg = defaultCfg()
 if SERVER then
     local function jsonT(txt) return util.JSONToTable(txt, false, true) end
 
+    -- v1.1.0: синк конфига всем клиентам (раньше клиент жил с дефолтом
+    -- и клиентские гейты открытия Q работали некорректно после правок хаба)
+    local NET_SYNC = "GRM_QMenu_Sync"
+    util.AddNetworkString(NET_SYNC)
+    function QM.PushSync(ply)
+        net.Start(NET_SYNC)
+            net.WriteTable(QM.Cfg or defaultCfg())
+        if IsValid(ply) then net.Send(ply) else net.Broadcast() end
+    end
+    hook.Add("PlayerInitialSpawn", "GRM_QMenu_SyncJoin", function(ply)
+        timer.Simple(4, function()
+            if IsValid(ply) and GRM.QMenu then GRM.QMenu.PushSync(ply) end
+        end)
+    end)
+
     local function sanitizeList(t)
         local out = {}
         if istable(t) then
@@ -135,6 +159,7 @@ if SERVER then
         file.Write(CONFIG_FILE, txt)
         local back = file.Read(CONFIG_FILE, "DATA") or ""
         if back == "" then print("[GRM QMenu][!] КОНТРОЛЬ ЗАПИСИ: файл пуст после save (" .. tostring(why) .. ")") end
+        QM.PushSync(nil) -- v1.1.0: клиенты сразу получают свежий конфиг
         return true
     end
 
@@ -215,19 +240,38 @@ end
 
 -- Клиент: когда Q закрыто для игрока — не даём открыть спавн-меню вовсе.
 if CLIENT then
-    hook.Add("SpawnMenuOpen", "GRM_QMenu_BlockOpen", function()
+    -- v1.1.0: живой конфиг с сервера (и при входе, и после правок хаба)
+    net.Receive("GRM_QMenu_Sync", function()
+        local t = net.ReadTable()
+        if not istable(t) then return end
+        local d = defaultCfg()
+        for k, v in pairs(t) do d[k] = v end -- слить поверх дефолтов
+        GRM.QMenu.Cfg = d
+    end)
+
+    local function qBlockedForMe()
         local lp = LocalPlayer()
-        if IsValid(lp) and lp:IsSuperAdmin() then return end
-        if GRM.QMenu and GRM.QMenu.Cfg and GRM.QMenu.Cfg.playersQ == false then
-            return false
-        end
+        if IsValid(lp) and lp:IsSuperAdmin() then return false end
+        return GRM.QMenu and GRM.QMenu.Cfg and GRM.QMenu.Cfg.playersQ == false
+    end
+
+    hook.Add("SpawnMenuOpen", "GRM_QMenu_BlockOpen", function()
+        if qBlockedForMe() then return false end
     end)
 
     hook.Add("ContextMenuOpen", "GRM_QMenu_BlockCtx", function()
-        local lp = LocalPlayer()
-        if IsValid(lp) and lp:IsSuperAdmin() then return end
-        if GRM.QMenu and GRM.QMenu.Cfg and GRM.QMenu.Cfg.playersQ == false then
+        if qBlockedForMe() then
             return false -- C-меню песочницы тоже закрыто (наше GRM-меню живёт своим хуком)
         end
+    end)
+
+    -- v1.1.0: УНИВЕРСАЛЬНЫЙ слой — глушим сам бинд "+menu" (Q).
+    -- Работает против ВАНИЛЬНОГО и ЛЮБОГО КАСТОМНОГО спавн-меню, открываемого
+    -- по Q: бинд не доходит ни до одного аддона. (Контекстный бинд C не трогаем:
+    -- там живёт наше GRM-меню — замок/багажник/инвентарь.)
+    hook.Add("PlayerBindPress", "GRM_QMenu_BindBlock", function(_, bind, pressed)
+        if not pressed then return end
+        if bind ~= "+menu" then return end
+        if qBlockedForMe() then return true end
     end)
 end

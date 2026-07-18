@@ -20,7 +20,7 @@ GRM = GRM or {}
 GRM.Board = GRM.Board or {}
 local BD = GRM.Board
 
-BD.Version      = "1.0.1" -- +hook GRM_Board_Joined (метрика ачивок Код 78)
+BD.Version      = "1.1.0" -- автоназначение отдела/должности при вступлении (Cfg.assign, заказ 18.07)
 BD.DataFile     = "grm_board.json"
 BD.JournalMax   = 20
 
@@ -28,6 +28,7 @@ local NET_OPEN   = "GRM_Board_Open"
 local NET_JOIN   = "GRM_Board_Join"
 local NET_TOGGLE = "GRM_Board_Toggle"
 local NET_ADMIN  = "GRM_Board_Admin"
+local NET_ASSIGN = "GRM_Board_Assign" -- v1.1.0: лидер/суперадмин задаёт отдел+должность автозачисления
 
 -- ============================================================
 -- СЕРВЕР
@@ -37,13 +38,14 @@ if SERVER then
     util.AddNetworkString(NET_JOIN)
     util.AddNetworkString(NET_TOGGLE)
     util.AddNetworkString(NET_ADMIN)
+    util.AddNetworkString(NET_ASSIGN)
 
     local function jsonT(txt)
         local ok, t = pcall(util.JSONToTable, txt, false, true)
         return (ok and istable(t)) and t or nil
     end
     local function defaultCfg()
-        return { allow = {}, open = {}, journal = {} }
+        return { allow = {}, open = {}, journal = {}, assign = {} }
     end
     local function loadCfg()
         BD.Cfg = BD.Cfg or defaultCfg()
@@ -52,6 +54,7 @@ if SERVER then
             BD.Cfg.allow   = istable(t.allow)   and t.allow   or {}
             BD.Cfg.open    = istable(t.open)    and t.open    or {}
             BD.Cfg.journal = istable(t.journal) and t.journal or {}
+            BD.Cfg.assign  = istable(t.assign)  and t.assign  or {} -- v1.1.0
         end
     end
     function BD.SaveCfg()
@@ -105,6 +108,16 @@ if SERVER then
         if istable(Factions) then
             for name, f in pairs(Factions) do
                 if istable(f) then
+                    -- v1.1.0: списки отделов/должностей для настройки автозачисления
+                    local depts = {}
+                    for _, d in ipairs(istable(f.Departments) and f.Departments or {}) do
+                        depts[#depts + 1] = tostring(d)
+                    end
+                    local roles = {}
+                    for _, r in ipairs(istable(f.Roles) and f.Roles or {}) do
+                        if r ~= f.LeaderRoleName then roles[#roles + 1] = tostring(r) end
+                    end
+                    local asg = istable(BD.Cfg.assign) and BD.Cfg.assign[name] or nil
                     factions[#factions + 1] = {
                         name = name,
                         allowed = BD.Cfg.allow[name] == true,
@@ -112,6 +125,10 @@ if SERVER then
                         leader = leaderDisplay(name),
                         members = istable(f.Members) and table.Count(f.Members) or 0,
                         canManage = canManage(ply, name),
+                        depts = depts,
+                        roles = roles,
+                        adept = (istable(asg) and tostring(asg.dept or "")) or "",
+                        arole = (istable(asg) and tostring(asg.role or "")) or "",
                     }
                 end
             end
@@ -162,12 +179,29 @@ if SERVER then
             return
         end
 
+        -- v1.1.0: автоназначение отдела/должности (Cfg.assign, задаётся лидером у доски)
+        local asg = istable(BD.Cfg.assign) and BD.Cfg.assign[fname] or nil
+        local asgParts = {}
+        if istable(asg) then
+            if isstring(asg.dept) and asg.dept ~= "" and _G.FactionsAPI.SetMemberDepartment then
+                local okD = pcall(_G.FactionsAPI.SetMemberDepartment, fname, ply:SteamID(), asg.dept)
+                if okD then asgParts[#asgParts + 1] = "отдел «" .. asg.dept .. "»" end
+            end
+            if isstring(asg.role) and asg.role ~= "" and _G.FactionsAPI.SetMemberRole then
+                local okR = pcall(_G.FactionsAPI.SetMemberRole, fname, ply:SteamID(), asg.role)
+                if okR then asgParts[#asgParts + 1] = "должность «" .. asg.role .. "»" end
+            end
+        end
+        local asgText = (#asgParts > 0) and table.concat(asgParts, ", ") or nil
+
         -- журнал + сведения лидеру
         local rec = {
             nick = ply:Nick(),
             rp = rpName(ply),
             sid = ply:SteamID(),
             time = os.time(),
+            dept = istable(asg) and asg.dept or nil,
+            role = istable(asg) and asg.role or nil,
         }
         BD.Cfg.journal[fname] = istable(BD.Cfg.journal[fname]) and BD.Cfg.journal[fname] or {}
         table.insert(BD.Cfg.journal[fname], 1, rec)
@@ -176,7 +210,11 @@ if SERVER then
 
         hook.Run("GRM_Board_Joined", ply, fname)
         if GRM.Notify then GRM.Notify(ply, "Вы вступили во фракцию «" .. fname .. "» через доску объявлений!", 100, 220, 100) end
-        ply:PrintMessage(HUD_PRINTTALK, "[Доска] Вы вступили во фракцию " .. fname .. ". Ранг по умолчанию: " .. tostring((_G.FactionsAPI.PrimeRole and _G.FactionsAPI.PrimeRole(fname)) or "—"))
+        if asgText then
+            ply:PrintMessage(HUD_PRINTTALK, "[Доска] Вы вступили во фракцию " .. fname .. ". Зачисление: " .. asgText .. ".")
+        else
+            ply:PrintMessage(HUD_PRINTTALK, "[Доска] Вы вступили во фракцию " .. fname .. ". Ранг по умолчанию: " .. tostring((_G.FactionsAPI.PrimeRole and _G.FactionsAPI.PrimeRole(fname)) or "—"))
+        end
 
         local lsid = (_G.FactionsAPI.GetLeader and _G.FactionsAPI.GetLeader(fname)) or (istable(f) and f.Leader)
         local leader = lsid and player.GetBySteamID(lsid) or nil
@@ -187,9 +225,45 @@ if SERVER then
         end
         if IsValid(leader) then
             local msg = "По доске объявлений вступил: " .. rec.rp .. " (Steam: " .. rec.nick .. ", " .. rec.sid .. ")"
+                .. (asgText and (" — зачислен: " .. asgText) or "")
             leader:PrintMessage(HUD_PRINTTALK, "[Доска • " .. fname .. "] " .. msg)
             if GRM.Notify then GRM.Notify(leader, msg, 100, 200, 255) end
         end
+    end)
+
+    -- v1.1.0: лидер (с доступом)/суперадмин задаёт отдел/должность автозачисления
+    net.Receive(NET_ASSIGN, function(_, ply)
+        if not IsValid(ply) then return end
+        local fname = net.ReadString()
+        local dept  = string.Trim(net.ReadString() or "")
+        local role  = string.Trim(net.ReadString() or "")
+        if not isstring(fname) or fname == "" then return end
+        if not canManage(ply, fname) then
+            if GRM.Notify then GRM.Notify(ply, "Настраивать зачисление может лидер фракции с доступом к доске.", 255, 120, 90) end
+            return
+        end
+        local f = istable(Factions) and Factions[fname] or nil
+        if not istable(f) then return end
+        if dept ~= "" and not (istable(f.Departments) and table.HasValue(f.Departments, dept)) then
+            ply:PrintMessage(HUD_PRINTTALK, "[Доска] Отдел «" .. dept .. "» не существует во фракции «" .. fname .. "».")
+            return
+        end
+        if role ~= "" and (not istable(f.Roles) or not table.HasValue(f.Roles, role) or role == f.LeaderRoleName) then
+            ply:PrintMessage(HUD_PRINTTALK, "[Доска] Должность «" .. role .. "» недопустима (нет во фракции или это роль лидера).")
+            return
+        end
+        BD.Cfg.assign = istable(BD.Cfg.assign) and BD.Cfg.assign or {}
+        if dept == "" and role == "" then
+            BD.Cfg.assign[fname] = nil
+        else
+            BD.Cfg.assign[fname] = { dept = (dept ~= "" and dept) or nil, role = (role ~= "" and role) or nil }
+        end
+        BD.SaveCfg()
+        local desc = {}
+        if dept ~= "" then desc[#desc + 1] = "отдел «" .. dept .. "»" end
+        if role ~= "" then desc[#desc + 1] = "должность «" .. role .. "»" end
+        ply:PrintMessage(HUD_PRINTTALK, "[Доска] Автозачисление «" .. fname .. "»: "
+            .. ((#desc > 0) and table.concat(desc, ", ") or "по умолчанию (последний ранг, основной отдел)"))
     end)
 
     -- лидер открывает/закрывает набор ------------------------------------
@@ -384,14 +458,83 @@ if CLIENT then
         if #managed > 0 then
             local b2h = 30 + #managed * 56 + 8
             local b2 = block(b2h, "Управление набором (вы — лидер с доступом):", C.yellow)
-            for i, fr in ipairs(managed) do
+        -- v1.1.0: окно автозачисления (отдел + должность для вступающих)
+        local function openAssignFrame(fr2)
+            local af = vgui.Create("DFrame")
+            af:SetTitle("") af:SetSize(440, 240) af:Center() af:MakePopup() af:ShowCloseButton(true)
+            af.Paint = function(_, pw, ph)
+                draw.RoundedBox(8, 0, 0, pw, ph, C.bg)
+                draw.RoundedBoxEx(8, 0, 0, pw, 38, C.head, true, true, false, false)
+                draw.SimpleText("Автозачисление — «" .. fr2.name .. "»", "GRMBoard_Sub", 12, 19, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+
+            local info = vgui.Create("DLabel", af)
+            info:SetPos(14, 44) info:SetSize(412, 18)
+            info:SetFont("GRMBoard_Normal") info:SetTextColor(C.dim)
+            info:SetText("Вступивший через доску попадёт сразу сюда (лидеру придёт отчёт):")
+
+            local dl = vgui.Create("DLabel", af)
+            dl:SetPos(14, 70) dl:SetSize(120, 22) dl:SetFont("GRMBoard_Normal") dl:SetTextColor(C.text)
+            dl:SetText("Отдел:")
+            local cbDept = vgui.Create("DComboBox", af)
+            cbDept:SetPos(140, 70) cbDept:SetSize(286, 24)
+            cbDept:SetValue(fr2.adept ~= "" and fr2.adept or "— по умолчанию —")
+            cbDept:AddChoice("— по умолчанию —", "", fr2.adept == "")
+            for _, d in ipairs(fr2.depts or {}) do cbDept:AddChoice(tostring(d), tostring(d), fr2.adept == d) end
+
+            local rl = vgui.Create("DLabel", af)
+            rl:SetPos(14, 102) rl:SetSize(120, 22) rl:SetFont("GRMBoard_Normal") rl:SetTextColor(C.text)
+            rl:SetText("Должность:")
+            local cbRole = vgui.Create("DComboBox", af)
+            cbRole:SetPos(140, 102) cbRole:SetSize(286, 24)
+            cbRole:SetValue(fr2.arole ~= "" and fr2.arole or "— по умолчанию —")
+            cbRole:AddChoice("— по умолчанию —", "", fr2.arole == "")
+            for _, r in ipairs(fr2.roles or {}) do cbRole:AddChoice(tostring(r), tostring(r), fr2.arole == r) end
+
+            local save = mkBtn(af, "Сохранить зачисление", C.green)
+            save:SetPos(14, 140) save:SetSize(412, 34) save:SetFont("GRMBoard_Normal")
+            save.DoClick = function()
+                local _, dv = cbDept:GetSelected()
+                local _, rv = cbRole:GetSelected()
+                net.Start(NET_ASSIGN)
+                    net.WriteString(fr2.name)
+                    net.WriteString(tostring(dv or ""))
+                    net.WriteString(tostring(rv or ""))
+                net.SendToServer()
+                fr2.adept, fr2.arole = tostring(dv or ""), tostring(rv or "") -- локальное отражение до следующего открытия доски
+                af:Close()
+            end
+
+            local rst = mkBtn(af, "Сбросить (по умолчанию)", Color(110, 118, 132))
+            rst:SetPos(14, 182) rst:SetSize(412, 26) rst:SetFont("GRMBoard_Normal")
+            rst.DoClick = function()
+                net.Start(NET_ASSIGN)
+                    net.WriteString(fr2.name)
+                    net.WriteString("")
+                    net.WriteString("")
+                net.SendToServer()
+                fr2.adept, fr2.arole = "", ""
+                af:Close()
+            end
+        end
+        for i, fr in ipairs(managed) do
                 local row = vgui.Create("DPanel", b2)
                 row:SetPos(10, 28 + (i - 1) * 56) row:SetSize(860, 52)
-                row.Paint = function(_, pw, ph)
+                row._fr = fr
+                row.Paint = function(self, pw, ph)
+                    local fr2 = self._fr
                     draw.RoundedBox(5, 0, 0, pw, ph, Color(26, 32, 42))
-                    draw.SimpleText(fr.name, "GRMBoard_Sub", 10, 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    draw.SimpleText(fr.open and "Набор: ОТКРЫТ" or "Набор: закрыт", "GRMBoard_Normal", 10, 36, fr.open and C.green or C.red, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    draw.SimpleText(fr2.name, "GRMBoard_Sub", 10, 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    local ast = ""
+                    if (fr2.arole or "") ~= "" or (fr2.adept or "") ~= "" then
+                        ast = " • зачисление: " .. ((fr2.adept or "") ~= "" and fr2.adept or "основной отдел")
+                            .. " / " .. ((fr2.arole or "") ~= "" and fr2.arole or "по умолчанию")
+                    end
+                    draw.SimpleText((fr2.open and "Набор: ОТКРЫТ" or "Набор: закрыт") .. ast, "GRMBoard_Normal", 10, 36, fr2.open and C.green or C.red, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                 end
+                local bAsg = mkBtn(row, "Отдел/должность", C.acc)
+                bAsg:SetPos(390, 10) bAsg:SetSize(140, 32) bAsg:SetFont("GRMBoard_Normal")
+                bAsg.DoClick = function() openAssignFrame(fr) end
                 local bTgl = mkBtn(row, fr.open and "Закрыть набор" or "Открыть набор", fr.open and C.red or C.green)
                 bTgl:SetPos(540, 10) bTgl:SetSize(150, 32) bTgl:SetFont("GRMBoard_Normal")
                 bTgl.DoClick = function()
@@ -428,10 +571,14 @@ if CLIENT then
                         local r = vgui.Create("DPanel", jsc)
                         r:Dock(TOP) r:SetTall(52) r:DockMargin(0, 0, 0, 4)
                         local rp, nick, sid, when = tostring(e.rp or e.nick or "?"), tostring(e.nick or "?"), tostring(e.sid or "?"), tonumber(e.time) or 0
+                        local asgLine = ""
+                        if (e.dept or "") ~= "" or (e.role or "") ~= "" then
+                            asgLine = "  •  зачислен: " .. tostring(e.dept or "осн. отдел") .. " / " .. tostring(e.role or "по умолч.")
+                        end
                         r.Paint = function(_, pw, ph)
                             draw.RoundedBox(5, 0, 0, pw, ph, C.panel)
                             draw.SimpleText(rp .. "  (Steam: " .. nick .. ")", "GRMBoard_Sub", 10, 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                            draw.SimpleText(sid .. "  •  " .. (when > 0 and os.date("%d.%m.%Y %H:%M", when) or "—"), "GRMBoard_Normal", 10, 36, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                            draw.SimpleText(sid .. "  •  " .. (when > 0 and os.date("%d.%m.%Y %H:%M", when) or "—") .. asgLine, "GRMBoard_Normal", 10, 36, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                         end
                     end
                 end

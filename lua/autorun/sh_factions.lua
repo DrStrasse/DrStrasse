@@ -611,6 +611,17 @@ if SERVER then
             done(ok, err)
         elseif action == "deleteFaction" then
             if not isSuperAdmin then done(false, "Только суперадмин") return end
+            -- Root Guard (Код 84): не-root суперадмину удаление исполняется
+            -- ТОЛЬКО после подтверждения владельцем сервера (fail-closed).
+            if GRM and GRM.Root and GRM.Root.Request then
+                local allowedNow = GRM.Root.Request(ply, "faction_delete",
+                    "Удаление фракции «" .. tostring(args[1]) .. "»",
+                    { faction = args[1] })
+                if not allowedNow then
+                    respondTo(ply, true, "Запрос на удаление «" .. tostring(args[1]) .. "» отправлен владельцу сервера — исполнится после его подтверждения.")
+                    return -- НЕ удаляем и НЕ вещаем: фракция остаётся жить
+                end
+            end
             local ok, err = deleteFaction(args[1])
             done(ok, err)
         elseif action == "changeLeader" then
@@ -863,6 +874,13 @@ if SERVER then
     end
     _G.FactionsAPI.Save           = function() saveFactions(Factions) end
     _G.FactionsAPI.List           = function() return Factions end
+    -- Код 84 (Root Guard): прямое удаление — ВЫЗЫВАТЬ ТОЛЬКО из одобренного
+    -- исполнителя Root Guard (обходной путь для уже подтверждённых заявок).
+    _G.FactionsAPI.DeleteFaction  = function(factionName) return deleteFaction(factionName) end
+    _G.FactionsAPI.Broadcast      = function() broadcastFactionData() end
+    -- Код 76 v1.1.0 (доска: автоназначение отдела/должности при вступлении):
+    _G.FactionsAPI.SetMemberRole       = function(factionName, steamID, role) return setMemberRole(factionName, steamID, role) end
+    _G.FactionsAPI.SetMemberDepartment = function(factionName, steamID, dept) return setMemberDepartment(factionName, steamID, dept) end
 
     print("[Factions] Серверная часть загружена (v3 fixed + чат-команда /factions)")
 end
