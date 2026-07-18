@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM RP Chat v1.0.0 (Код 62)
+    GRM RP Chat v1.1.0 (Код 62; 88.1 — подсказка «никто не слышит»)
     /me /do /it /try /roll /w /y /looc /ooc + локальный чат по радиусу.
 
     Работает с EasyChat (PlayerSay на сервере) и без него.
@@ -41,7 +41,7 @@ if SERVER then
         return
     end
     GRM._rpChatActive = true
-    GRM._rpChatVer = "1.0.0"
+    GRM._rpChatVer = "1.1.0"
 
     local function sendTo(ply, parts)
         -- parts = { Color, "text", Color, "text", ... }
@@ -68,17 +68,20 @@ if SERVER then
     end
 
     local function broadcastNear(originPly, maxDistSqr, parts, includeSelf)
-        if not IsValid(originPly) then return end
+        if not IsValid(originPly) then return 0 end
         local origin = originPly:GetPos()
+        local others = 0
         for _, ply in ipairs(player.GetAll()) do
             if IsValid(ply) then
                 if ply == originPly then
                     if includeSelf ~= false then sendTo(ply, parts) end
                 elseif origin:DistToSqr(ply:GetPos()) <= maxDistSqr then
                     sendTo(ply, parts)
+                    others = others + 1
                 end
             end
         end
+        return others
     end
 
     local function broadcastAll(parts, filterFn)
@@ -261,7 +264,24 @@ if SERVER then
                 col("localChat", Color(235, 235, 235)),
                 ": " .. msg,
             }
-            broadcastNear(ply, radiusSqr("LocalRadius", 355), parts)
+            local others = broadcastNear(ply, radiusSqr("LocalRadius", 355), parts)
+            -- Код 88.1 (репорт «чат закрыт»): молчание больше НЕ молчит.
+            -- Если в радиусе никого — отправитель сразу видит системную строку,
+            -- а не «сообщение пропало».
+            if others == 0 then
+                local now = CurTime()
+                local last = C._aloneHint and C._aloneHint[ply] or 0
+                if now - last >= 8 then -- троттл, чтобы не спамить при диалоге-пустышке
+                    C._aloneHint = C._aloneHint or {}
+                    C._aloneHint[ply] = now
+                    local r = math.floor(math.sqrt(radiusSqr("LocalRadius", 355)))
+                    sendTo(ply, {
+                        col("system", Color(255, 200, 80)),
+                        "[Чат] Рядом никого нет — вас никто не слышит (локальный чат ~"
+                            .. tostring(r) .. " юн). Громче: /y, глобально: /ooc, в трубку: по телефону.",
+                    })
+                end
+            end
             return ""
         end
     end
@@ -291,7 +311,7 @@ if SERVER then
         end
     end)
 
-    print("[GRM RPChat] server v1.0.0 — /me /do /it /try /roll /w /y /looc /ooc + local")
+    print("[GRM RPChat] server v1.1.0 (подсказка «никто не слышит») — /me /do /it /try /roll /w /y /looc /ooc + local")
 end
 
 -- ============================================================

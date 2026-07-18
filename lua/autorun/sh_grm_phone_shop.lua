@@ -169,6 +169,98 @@ local function defaultCatalog()
             maxOwned = 2,
             spawnFrozen = true,
         },
+        -- ══ Код 88: мобильные телефоны (предметы инвентаря, invItem — БЕЗ мирового спавна) ══
+        mobile_crappy = {
+            id = "mobile_crappy",
+            name = "Badger Crappy (мобильный)",
+            desc = "Дешёвая трубка. Только звонки, слабый приём на окраинах. Кладётся в инвентарь.",
+            class = "grm_mobile_line",
+            model = "models/ivancorn/gtaiv/electrical/phones/cellphone_badger_crappy.mdl",
+            price = 700,
+            enabled = true,
+            special = false,
+            maxOwned = 2,
+            spawnFrozen = true,
+            invItem = "mobile_crappy",
+        },
+        mobile_badger = {
+            id = "mobile_badger",
+            name = "Badger Classic (мобильный)",
+            desc = "Звонки, SMS, контакты. Кладётся в инвентарь.",
+            class = "grm_mobile_line",
+            model = "models/ivancorn/gtaiv/electrical/phones/cellphone_badger.mdl",
+            price = 1800,
+            enabled = true,
+            special = false,
+            maxOwned = 2,
+            spawnFrozen = true,
+            invItem = "mobile_badger",
+        },
+        mobile_badger_touch = {
+            id = "mobile_badger_touch",
+            name = "Badger Touch (мобильный)",
+            desc = "Сенсорный Badger: SMS, контакты, заметки. Кладётся в инвентарь.",
+            class = "grm_mobile_line",
+            model = "models/ivancorn/gtaiv/electrical/phones/phone_mobile_badger_touchscreen.mdl",
+            price = 3500,
+            enabled = true,
+            special = false,
+            maxOwned = 2,
+            spawnFrozen = true,
+            invItem = "mobile_badger_touch",
+        },
+        mobile_lost = {
+            id = "mobile_lost",
+            name = "The Lost Flip (мобильный)",
+            desc = "Байкерская раскладушка: SMS, контакты, заметки. Кладётся в инвентарь.",
+            class = "grm_mobile_line",
+            model = "models/ivancorn/gtaiv/electrical/phones/cellphone_thelostdamned.mdl",
+            price = 4200,
+            enabled = true,
+            special = false,
+            maxOwned = 2,
+            spawnFrozen = true,
+            invItem = "mobile_lost",
+        },
+        mobile_tinkle = {
+            id = "mobile_tinkle",
+            name = "Panoramic Tinkle (смартфон)",
+            desc = "Все приложения: биржа, фракция, форум, заметки. Кладётся в инвентарь.",
+            class = "grm_mobile_line",
+            model = "models/ivancorn/gtaiv/electrical/phones/cellphone_panoramic_tinkle.mdl",
+            price = 6500,
+            enabled = true,
+            special = false,
+            maxOwned = 2,
+            spawnFrozen = true,
+            invItem = "mobile_tinkle",
+        },
+        mobile_whiz_high = {
+            id = "mobile_whiz_high",
+            name = "Whiz Highspeed (смартфон)",
+            desc = "Флагман Whiz: всё сразу, уверенный приём. Кладётся в инвентарь.",
+            class = "grm_mobile_line",
+            model = "models/ivancorn/gtaiv/electrical/phones/cellphone_whiz_highspeed.mdl",
+            price = 9000,
+            enabled = true,
+            special = false,
+            maxOwned = 2,
+            spawnFrozen = true,
+            invItem = "mobile_whiz_high",
+        },
+        mobile_whiz_gold = {
+            id = "mobile_whiz_gold",
+            name = "Whiz Gold (смартфон)",
+            desc = "Золотой Whiz: статус и лучший приёмник в городе. Кладётся в инвентарь.",
+            class = "grm_mobile_line",
+            model = "models/ivancorn/gtaiv/electrical/phones/cellphone_whiz_gold.mdl",
+            price = 14000,
+            enabled = true,
+            special = false,
+            maxOwned = 2,
+            spawnFrozen = true,
+            invItem = "mobile_whiz_gold",
+        },
     }
 end
 
@@ -198,6 +290,8 @@ local function normalizeItem(id, item)
         maxOwned = math.max(0, math.floor(tonumber(item.maxOwned) or 1)),
         spawnFrozen = item.spawnFrozen ~= false,
         data = istable(item.data) and item.data or {},
+        -- Код 88: если задан — товар покупается как ПРЕДМЕТ инвентаря (мобильные).
+        invItem = (item.invItem ~= nil and tostring(item.invItem) ~= "") and tostring(item.invItem) or nil,
     }
 end
 
@@ -250,6 +344,18 @@ if SERVER then
         if not next(loaded) then
             loaded = defaultCatalog()
             writeJSON(CATALOG_FILE, loaded)
+        else
+            -- Код 88: самозалечивание — докидываем отсутствующие мобильные товары
+            -- (у существующих серверов каталог уже сохранён в data без них).
+            local defs = defaultCatalog()
+            local added = false
+            for id, item in pairs(defs) do
+                if item.invItem and loaded[id] == nil then
+                    loaded[id] = item
+                    added = true
+                end
+            end
+            if added then writeJSON(CATALOG_FILE, loaded) end
         end
         SHOP.Catalog = normalizeCatalog(loaded)
         return SHOP.Catalog
@@ -454,6 +560,9 @@ if SERVER then
         local item = SHOP.Catalog[itemID]
         if not item then return false, "Товар не найден." end
         if item.enabled == false then return false, "Товар отключён." end
+        if item.invItem then
+            return false, "Мобильный покупается сразу — жмите «Купить»."
+        end
         if item.special and cfg().RequireAccessToBuySpecial ~= false and not hasAccessForSpecial(ply) then
             return false, "Нет доступа к покупке спецоборудования связи."
         end
@@ -464,6 +573,17 @@ if SERVER then
         local item = SHOP.Catalog[itemID]
         if not item then return false, "Товар не найден." end
         if item.enabled == false then return false, "Товар отключён." end
+        if item.invItem then
+            -- Код 88: телефон — предмет инвентаря. Доступ к линии не нужен, лимит по штукам.
+            if not (GRM and GRM.Inventory and GRM.Inventory.AddItem) then
+                return false, "Модуль инвентаря не загружен."
+            end
+            local have = GRM.Inventory.CountItem and GRM.Inventory.CountItem(ply, item.invItem) or 0
+            if item.maxOwned > 0 and have >= item.maxOwned then
+                return false, "У вас уже максимум таких телефонов: " .. tostring(item.maxOwned)
+            end
+            return true
+        end
         if not playerHasAccess(ply, itemID) then return false, "Сначала купите доступ к этому оборудованию." end
         if item.special and cfg().RequireAccessToSpawnSpecial ~= false and not hasAccessForSpecial(ply) then
             return false, "Ваш доступ к спецоборудованию связи отозван."
@@ -519,9 +639,30 @@ if SERVER then
 
     net.Receive(NET_SPAWN, function(_, ply)
         local itemID = net.ReadString()
+        local item = SHOP.Catalog[itemID]
 
         local ok, reason = canSpawnItem(ply, itemID)
         if not ok then notify(ply, false, reason) return end
+
+        -- Код 88: мобильный телефон — покупка предмета в инвентарь, БЕЗ спавна в мир.
+        if item.invItem then
+            local price = tonumber(item.price) or 0
+            if not canPay(ply, price) then
+                notify(ply, false, "Недостаточно средств. Нужно: " .. moneyName(price))
+                return
+            end
+            takeMoney(ply, price)
+            local left = GRM.Inventory.AddItem(ply, item.invItem, 1)
+            if (left or 1) > 0 then
+                giveMoney(ply, price) -- инвентарь переполнен — возврат денег
+                notify(ply, false, "Инвентарь переполнен. Деньги возвращены.")
+                return
+            end
+            notify(ply, true, "Куплено: " .. (item.name or itemID) .. " за " .. moneyName(price) .. ". Телефон в инвентаре.")
+            hook.Run("GRM_Mobile_Bought", ply, itemID)
+            sendShopData(ply)
+            return
+        end
 
         local ent, err = spawnEquipment(ply, itemID)
         if not IsValid(ent) then notify(ply, false, err or "Ошибка спавна.") return end
@@ -757,11 +898,27 @@ else
                     draw.RoundedBox(6, 0, 0, w, h, Color(34, 36, 44, 240))
                     draw.SimpleText(item.name or id, "DermaDefaultBold", 12, 14, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                     draw.SimpleText(item.desc or "", "DermaDefault", 12, 36, Color(180, 185, 195), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    draw.SimpleText("Цена доступа: " .. moneyText(item.price or 0), "DermaDefault", 12, 58, Color(120, 220, 120), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    draw.SimpleText(item.purchased and "Доступ куплен" or "Доступ не куплен", "DermaDefaultBold", 12, 80, item.purchased and Color(100, 220, 100) or Color(255, 180, 80), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    draw.SimpleText((item.invItem and "Цена: " or "Цена доступа: ") .. moneyText(item.price or 0), "DermaDefault", 12, 58, Color(120, 220, 120), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    if item.invItem then
+                        draw.SimpleText("Предмет в инвентарь • открыть: СТРЕЛКА ВВЕРХ", "DermaDefaultBold", 12, 80, Color(120, 200, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    else
+                        draw.SimpleText(item.purchased and "Доступ куплен" or "Доступ не куплен", "DermaDefaultBold", 12, 80, item.purchased and Color(100, 220, 100) or Color(255, 180, 80), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    end
                 end
 
-                if item.purchased then
+                if item.invItem then
+                    -- Код 88: мобильный — одна кнопка «Купить», покупка многократная (лимит штук на сервере).
+                    local buy = vgui.Create("DButton", row)
+                    buy:SetPos(500, 20)
+                    buy:SetSize(140, 30)
+                    buy:SetText(item.canSpawn and "Купить" or "Недоступно")
+                    buy:SetTooltip(item.canSpawn and "" or tostring(item.spawnReason or ""))
+                    buy:SetEnabled(item.canSpawn == true)
+                    buy.DoClick = function()
+                        spawnItem(id)
+                        frame:Close()
+                    end
+                elseif item.purchased then
                     local spawn = vgui.Create("DButton", row)
                     spawn:SetPos(500, 20)
                     spawn:SetSize(140, 30)

@@ -491,6 +491,14 @@ if SERVER then
                     hook.Run("GRM_Money_Cashed", ply, amt)
                 end
                 return
+            elseif def.useFunc == "mobile_open" then
+                -- Код 88: мобильный телефон из инвентаря — предмет НЕ тратится.
+                if GRM.Mobile and GRM.Mobile.ServerNotify then
+                    GRM.Mobile.ServerNotify(ply, "Телефон у вас. Нажмите СТРЕЛКУ ВВЕРХ, чтобы открыть меню")
+                else
+                    GRM.Notify(ply, "Нажмите СТРЕЛКУ ВВЕРХ, чтобы открыть телефон", 100, 220, 100)
+                end
+                return
             end
             if used then
                 GRM.Inventory.RemoveFromSlot(ply, slotIdx, 1)
