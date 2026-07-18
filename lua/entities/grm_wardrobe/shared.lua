@@ -19,7 +19,9 @@ ENT.Category  = "GRM — RP"
 ENT.Spawnable = true
 ENT.AdminOnly = true
 
-ENT.Model = "models/props_interiors/FurnitureCabinetDrawer01a.mdl"
+ENT.Model = "models/props_interiors/Furniture_CabinetDrawer01a.mdl"
+-- запасная модель, если основная у клиента отсутствует (проверяется в Initialize)
+ENT.ModelFallback = "models/props_c17/FurnitureLocker001a.mdl"
 
 function ENT:SetupDataTables()
     self:NetworkVar("Int", 0, "Civilian")  -- 0/1

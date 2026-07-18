@@ -64,7 +64,15 @@ local function findCfgRec(ent)
 end
 
 function ENT:Initialize()
-    self:SetModel(self.Model)
+    -- урок из репорта владельца: неверный путь модели = ERROR-плашка
+    -- и МЁРТВАЯ клавиша E (нет физики — трейс не попадает). Проверяем
+    -- наличие модели и честно фолбэчимся на локер.
+    local mdl = self.Model
+    if not util.IsValidModel(mdl) then
+        mdl = self.ModelFallback
+        print("[GRM Wardrobe] ВНИМАНИЕ: модель '" .. tostring(self.Model) .. "' не найдена на сервере, использую фолбэк '" .. tostring(mdl) .. "'")
+    end
+    self:SetModel(mdl)
     self:PhysicsInit(SOLID_VPHYSICS)
     self:SetMoveType(MOVETYPE_VPHYSICS)
     self:SetSolid(SOLID_VPHYSICS)
