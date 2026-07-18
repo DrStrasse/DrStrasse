@@ -1998,6 +1998,11 @@ if CLIENT then
         ui.depWaveScroll = depWaveScroll
         tabs:AddSheet("Волна департамента", depWavePanel, "icon16/transmit.png")
 
+        -- GRM hook: сторонние модули достраивают вкладки админки (Коды 75/76 — доступы к эфиру, оповещению, доске)
+        if hook and hook.Call then
+            pcall(hook.Call, "GRM_FactionsAdmin_BuildTabs", nil, tabs)
+        end
+
         -- FIX: При открытии меню запрашиваем данные с сервера (factions.json)
         timer.Simple(0.4, function()
             if IsValid(frame) then

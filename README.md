@@ -60,9 +60,9 @@
 | 71 | `lua/autorun/sh_grm_rpdesc.lua` | **RPDesc v2.1.0:** RP-имя + описание над головой ВСЕМ (включая себя, 1-е/3-е лицо), редактор `/rpdesc`, конвары grm_cl_rpdesc(+_dist), лимит 420 симв., анти-флуд |
 | 72 | `lua/autorun/sh_grm_character.lua` | **Ядро персонажей GRM Identity v1.1.0:** меню при КАЖДОМ входе (ширина ×2), RP-имя (`/name`, NWString GRM_RPName), провайдер-патчи `RegisterProvider` (гражданский+фракционный гардероб), синхрон с фракционным спавном, `/char` |
 | 73 | `lua/entities/grm_wardrobe/` + `server/sv_grm_wardrobe_spawn.lua` | **Гардероб:** шкаф `props_interiors/Furniture_CabinetDrawer01a` (фолбэк на локер при отсутствии модели), E → меню внешности (фильтры + особые/скрытые модели, суперадмин E→⚙), `/wardrobe_add` `/wardrobe_remove`, перм-класс grm_wardrobe, конфиг в data/grm_wardrobe/<map>.json (выживает рестарт) |
-| 74 | `lua/autorun/sh_grm_f4menu.lua` | **F4-меню v1.2.1:** вкладки Профиль / Команды / Настройки (HUD-выключатели) / **Графика** (пресеты FPS+/Красота, 10 тоглов, слайдеры дальности отрисовки, LOD, текстур, декалей). F4 ловится биндом И прямым опросом клавиши (антидубль, toggle открыть/закрыть), уступает дверям; `/menu` `/f4` |
-| 75 | `lua/autorun/sh_grm_broadcast.lua` + `lua/entities/grm_radio/`, `grm_broadcast_mic/`, `grm_loudspeaker/` | **Радиовещание + массовое оповещение:** микрофон (Black Ops p_int_microphone, журналисты: `/bcast_allow Фракция`) — голос и текст в эфире до приёмников; радио citizenradio (E — настройка станции); громкоговорители по районам → `/alert текст` (доступ `/alert_allow`), `/alertall` всем; спавн `/radiomic_add` `/radio_add` `/speaker_add` + перм |
-| 76 | `lua/autorun/sh_grm_board.lua` + `lua/entities/grm_board/` | **Доска объявлений/набор во фракции:** суперадмин E→⚙ выдаёт доступ фракциям (и `/board_allow`), лидер открывает/закрывает набор, игрок E→«Вступить» попадает во фракцию автоматически (FactionsAPI), лидеру — сведения (ник, RP-имя, SteamID, время) + журнал 20 записей; `/board_add` |
+| 74 | `lua/autorun/sh_grm_f4menu.lua` | **F4-меню v1.3.0:** вкладки Профиль / Команды / Настройки (HUD-выключатели) / **Графика** (пресеты FPS+/Красота, 10 тоглов, слайдеры дальности/качества). Шпаргалка команд: +радио/оповещение/доска/доступы. F4 ловится биндом и прямым опросом (toggle), уступает дверям; `/menu` `/f4` |
+| 75 | `lua/autorun/sh_grm_broadcast.lua` + `lua/entities/grm_radio/`, `grm_broadcast_mic/`, `grm_loudspeaker/` + мост `sh_grm_factions_bridge.lua` | **Радиовещание + массовое оповещение:** микрофон (Black Ops p_int_microphone, журналисты: `/bcast_allow Фракция`) — голос и текст в эфире до приёмников; радио citizenradio (E — настройка станции); громкоговорители по районам → `/alert` `/alertall`; доступы и из `/factions` → вкладка «Доступы»; спавн `/radiomic_add` `/radio_add` `/speaker_add` + перм |
+| 76 | `lua/autorun/sh_grm_board.lua` + `lua/entities/grm_board/` | **Доска объявлений/набор во фракции:** доступ фракциям: `/factions` → «Доступы», суперадмин E→⚙ у доски, `/board_allow`, лидер открывает/закрывает набор, игрок E→«Вступить» попадает во фракцию автоматически (FactionsAPI), лидеру — сведения (ник, RP-имя, SteamID, время) + журнал 20 записей; `/board_add` |
 | — | `materials/entities/*.png` | **Иконки Q-меню:** 31 иконка в едином стиле для всех энтити и оружия GRM (автоподхват по имени класса) |
 
 **Освежение v2 (в составе Кода 11):** `/models_admin` и `/weapons_admin` — живое превью модели (DAdjustableModelPanel, клик по строке), SpawnIcon в строках, каталог оружия с поиском и категориями (выбор кликом из всех SWEP'ов сервера), инфо-панель скина/бодигрупп.
@@ -72,11 +72,11 @@
 **Игрок:** `/inv`, `/drop`, `/store`, `/fjoin`, `/fleave`, `/fr`, `/dep`, `/depb`, `/mask`,
 `/model`, `/gnews`, `/kom_hour`, `/me`, `/do`, `/it`, `/try`, `/roll`, `/w`, `/y`, `/looc`,
 `/logistics_start`, `/logistics_crates`, `!fbudget`, `!fpay`, `!fwithdraw`, `!fpayall`, `!fsettax`, `/mysalary`, `/fine <сумма> [причина]`, `/vlist`, `/myvehicles`,
-`/vshop`, `/phoneshop`, `/phone_remove`
+`/vshop`, `/phoneshop`, `/phone_remove`, `/alert <текст>`, `/alertall <текст>` (по доступу), `/name`, `/char`, `/rpdesc`, `/menu`
 
 **Админ / Руководство:** `/factions`, `/salary_admin`, `/logistics_admin`, `/models_admin`,
 `/weapons_admin`, `/mask_admin`, `!grmmenu`/`!grmadmin`/`!econadmin`, `/scanvehicles`,
 `/spawnmenu`, `/vshop_admin`, `/phoneshop_admin`, `/phone_access`, `/door_access`, `/warrant`, `/unwarrant`, `/warrants`,
-`/permadd`, `/permremove`, `/permlist`, `/permload`
+`/permadd`, `/permremove`, `/permlist`, `/permload`, `/radiomic_add`, `/radio_add`, `/speaker_add`, `/board_add`, `/board_allow <фракция>`, `/bcast_allow <фракция>`, `/alert_allow <фракция>`, вкладка «Доступы» в `/factions`
 
 Подробный разбор архитектуры и замеченных проблем — в `ANALYSIS.md`.
