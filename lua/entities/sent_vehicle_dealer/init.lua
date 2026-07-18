@@ -12,6 +12,13 @@
       VD_PreSpawnCheck(ply, vehicleClass, dealerData)  — вернуть false чтобы запретить
       VD_FilterVehicleList(ply, vehicleList)            — вернуть отфильтрованный список
       VD_OnVehicleSpawned(ent, ply, vehicleClass)       — уведомление о спавне
+      VD_OnVehicleRemoved(veh, ply, cls)                — уведомление об удалении
+
+    Диллер 2.1: единая точка удаления VD_RemoveDealerVehicle(ply, veh, opts) → ok, msg, refund
+    (общая для меню дилера, C-меню транспорта и сторонних модулей — одинаковые права и возврат),
+    VD_OpenMenu несёт баланс игрока и модели для превью, «Мои Т/С» — замок/дистанция,
+    VD_MyListReq — живое обновление списка из открытого меню.
+--------------------------------------------------------------------]]
 --------------------------------------------------------------------]]
 
 AddCSLuaFile("cl_init.lua")
@@ -59,6 +66,17 @@ local function priceOf(dealer, faction, vehicleClass)
     return 0, nil
 end
 
+-- Модель класса для превью в меню (2.1): Vehicles → simfphys → LVS → buggy (находка 85: фолбэк-цепочка)
+local function resolveVehicleModel(vehicleClass)
+    local v = (list.Get("Vehicles") or {})[vehicleClass]
+    if v and isstring(v.Model) and v.Model ~= "" and util.IsValidModel(v.Model) then return v.Model end
+    local s = (list.Get("simfphys_vehicles") or {})[vehicleClass]
+    if s and isstring(s.Model) and s.Model ~= "" and util.IsValidModel(s.Model) then return s.Model end
+    local l = (list.Get("LVS_Vehicles") or {})[vehicleClass]
+    if l and isstring(l.Model) and l.Model ~= "" and util.IsValidModel(l.Model) then return l.Model end
+    return "models/buggy.mdl"
+end
+
 local pushMyVehicles -- fwd: список «Мои Т/С» в меню дилера (Код 82)
 
 util.AddNetworkString("VD_OpenMenu")
@@ -70,6 +88,7 @@ util.AddNetworkString("VD_ConfigSave")
 util.AddNetworkString("VD_SetSpawnPoint")
 util.AddNetworkString("VD_MyList")
 util.AddNetworkString("VD_RemoveRequest")
+util.AddNetworkString("VD_MyListReq")   -- 2.1: меню просит свежий «Мои Т/С» (живое обновление)
 
 -- ════════════════════════════════════════════════════════
 -- Отладка
@@ -265,6 +284,11 @@ local function GetVehicleListForPlayer(ply, dealer)
     local hookResult = hook.Run("VD_FilterVehicleList", ply, vlist)
     if hookResult and istable(hookResult) then
         vlist = hookResult
+    end
+
+    -- 2.1: модель для живого превью в меню каталога
+    for _, v in ipairs(vlist) do
+        v.model = resolveVehicleModel(v.class)
     end
 
     return vlist
@@ -527,18 +551,77 @@ pushMyVehicles = function(ply)
     for id, ent in pairs(VD_AllVehicles) do
         if IsValid(ent) and ent.VD_Owner == ply then
             local refund = math.floor((tonumber(ent.VD_Price) or 0) * VD_REFUND_RATE)
+            local locked = (ent.VK_Locked == true)
+            if not locked and ent.GetNW2Bool then
+                locked = ent:GetNW2Bool("VK_Locked", false) == true
+            end
             out[#out + 1] = {
                 id = ent:EntIndex(),
                 class = tostring(ent.VD_Class or ent:GetClass()),
                 name = (VK and VK.GetVehicleDisplayName and VK.GetVehicleDisplayName(ent)) or tostring(ent.VD_Class or ent:GetClass()),
                 price = tonumber(ent.VD_Price) or 0,
                 refund = refund,
+                locked = locked, -- 2.1: статус замка в «Моём транспорте»
+                dist = math.floor(ply:GetPos():Distance(ent:GetPos()) + 0.5), -- 2.1
             }
         end
     end
     net.Start("VD_MyList")
         net.WriteTable(out)
     net.Send(ply)
+end
+
+-- ════════════════════════════════════════════════════════
+-- ЕДИНАЯ точка удаления дилерского транспорта (Диллер 2.1)
+-- Зовут: меню дилера (VD_RemoveRequest), C-меню транспорта (sh_grm_ctx),
+-- сторонние модули. Одинаковые правила для всех путей:
+--   • только «трекнутый» дилерский транспорт (реестр/VD-поля);
+--   • владелец (VD_Owner или VK-ключ) — с возвратом VD_REFUND_RATE от VD_Price;
+--   • суперадмин — любое дилерское, БЕЗ выплат (деньги из воздуха не генерим);
+--   • дистанция до Т/С ≤ opts.maxDist (стандарт 600), снимается opts.skipDistance;
+--   • живое обновление «Мои Т/С» у инициатора и у владельца;
+--   • хук VD_OnVehicleRemoved(veh, ply, cls) после удаления.
+-- Возврат: ok(bool), msg(string), refund(number).
+-- ════════════════════════════════════════════════════════
+function _G.VD_RemoveDealerVehicle(ply, veh, opts)
+    opts = opts or {}
+    if not IsValid(ply) then return false, "Невалидный игрок", 0 end
+    if not IsValid(veh) then return false, "Транспорт не найден", 0 end
+
+    local idx = veh:EntIndex()
+    local tracked = (VD_AllVehicles and VD_AllVehicles[idx] ~= nil)
+        or veh.VD_Owner ~= nil or veh.VD_ID ~= nil
+    if not tracked then return false, "Это не транспорт из дилера", 0 end
+
+    local mine = (veh.VD_Owner == ply)
+        or (veh.VK_OwnerType == "player" and veh.VK_OwnerSteam == ply:SteamID())
+    if not (mine or ply:IsSuperAdmin()) then return false, "Это не ваш транспорт", 0 end
+
+    local maxDist = tonumber(opts.maxDist) or 600
+    if not opts.skipDistance and ply:GetPos():DistToSqr(veh:GetPos()) > maxDist * maxDist then
+        return false, "Слишком далеко от транспорта (подойдите ближе)", 0
+    end
+
+    local owner = veh.VD_Owner
+    local price = tonumber(veh.VD_Price) or 0
+    local refund = (mine and price > 0) and math.floor(price * VD_REFUND_RATE) or 0
+    local cls = tostring(veh.VD_Class or veh:GetClass())
+
+    if VD_AllVehicles then VD_AllVehicles[idx] = nil end
+    veh:Remove()
+    if refund > 0 and GRM and GRM.GiveMoney and IsValid(owner) then
+        GRM.GiveMoney(owner, refund, "Возврат за удалённый транспорт: " .. cls)
+    end
+    vdDbgPrint(ply:Nick(), "удалил транспорт", cls, "возврат:", refund)
+    hook.Run("VD_OnVehicleRemoved", veh, ply, cls)
+
+    local money = ""
+    if refund > 0 then
+        money = " • возврат " .. tostring(GRM and GRM.Format and GRM.Format(refund) or refund)
+    end
+    pcall(pushMyVehicles, ply)
+    if IsValid(owner) and owner ~= ply then pcall(pushMyVehicles, owner) end
+    return true, "Транспорт убран: " .. cls .. money, refund
 end
 
 -- ════════════════════════════════════════════════════════
@@ -673,6 +756,7 @@ function ENT:Use(activator, caller)
         net.WriteString(self:GetDealerID())
         net.WriteString(self:GetDealerName())
         net.WriteTable(vlist)
+        net.WriteUInt(math.max(0, GRM and GRM.GetBalance and GRM.GetBalance(activator) or 0), 32) -- 2.1: баланс для UI
     net.Send(activator)
     pcall(pushMyVehicles, activator) -- «Мои Т/С» (Код 82)
 end
@@ -761,41 +845,42 @@ net.Receive("VD_SpawnRequest", function(_, ply)
     net.Send(ply)
 end)
 
+-- Удаление конкретного Т/С (2.1): entity + флаг fromMenu.
+-- fromMenu=true — удаление из вкладки «Мой транспорт» у дилера: дистанция
+-- до самого Т/С не важна (гараж), но игрок ОБЯЗАН стоять возле любого дилера.
 net.Receive("VD_RemoveRequest", function(_, ply)
     if not IsValid(ply) then return end
     local veh = net.ReadEntity()
+    local fromMenu = net.ReadBool and net.ReadBool() or false
     local function res(ok, msg)
         net.Start("VD_SpawnResult")
             net.WriteBool(ok == true)
             net.WriteString(tostring(msg or ""))
         net.Send(ply)
     end
-    if not IsValid(veh) then res(false, "Транспорт не найден") return end
-    local idx = veh:EntIndex()
-    local tracked = (VD_AllVehicles and VD_AllVehicles[idx] ~= nil) or veh.VD_Owner ~= nil or veh.VD_ID ~= nil
-    if not tracked then res(false, "Это не транспорт из дилера") return end
-    local mine = (veh.VD_Owner == ply)
-        or (veh.VK_OwnerType == "player" and veh.VK_OwnerSteam == ply:SteamID())
-    if not (mine or ply:IsSuperAdmin()) then res(false, "Это не ваш транспорт") return end
-    if ply:GetPos():DistToSqr(veh:GetPos()) > 600 * 600 then res(false, "Слишком далеко от транспорта") return end
+    local opts = nil
+    if fromMenu then
+        local nearDealer = false
+        for id, d in pairs(VehicleDealers) do
+            if IsValid(d) and ply:GetPos():DistToSqr(d:GetPos()) <= 400 * 400 then
+                nearDealer = true
+                break
+            end
+        end
+        if not nearDealer then
+            res(false, "Удаление из меню — только стоя возле дилера")
+            return
+        end
+        opts = { skipDistance = true }
+    end
+    local ok, msg = _G.VD_RemoveDealerVehicle(ply, veh, opts)
+    res(ok, msg)
+end)
 
-    -- возврат владельцу (Код 82): 50% фактической цены покупки
-    local refund = 0
-    local price = tonumber(veh.VD_Price) or 0
-    local owner = veh.VD_Owner
-    if mine and price > 0 then
-        refund = math.floor(price * VD_REFUND_RATE)
-    end
-    local cls = tostring(veh.VD_Class or veh:GetClass())
-    if VD_AllVehicles then VD_AllVehicles[idx] = nil end
-    veh:Remove()
-    if refund > 0 and GRM and GRM.GiveMoney and IsValid(owner) then
-        GRM.GiveMoney(owner, refund, "Возврат за удалённый транспорт: " .. cls)
-    end
-    vdDbgPrint(ply:Nick(), "удалил транспорт", cls, "возврат:", refund)
-    hook.Run("VD_OnVehicleRemoved", veh, ply, cls)
-    res(true, "Транспорт убран: " .. cls .. (refund > 0 and (" • возврат " .. tostring(GRM.Format and GRM.Format(refund) or refund)) or ""))
-    pcall(pushMyVehicles, ply)
+-- 2.1: открытое меню периодически просит свежий «Мои Т/С» (замок/дистанция/возврат)
+net.Receive("VD_MyListReq", function(_, ply)
+    if not IsValid(ply) then return end
+    pushMyVehicles(ply)
 end)
 
 net.Receive("VD_ConfigOpen", function(_, ply)

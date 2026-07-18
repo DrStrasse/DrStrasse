@@ -170,195 +170,445 @@ function ENT:Draw()
 end
 
 -- ════════════════════════════════════════════════════════
--- Меню выбора транспорта
+-- Меню дилера (Диллер 2.1): вкладки «Каталог» и «Мой транспорт»
+-- Каталог: поиск, живое превью модели, баланс, цена, кнопка покупки.
+-- Мой транспорт: статус замка, дистанция, удалённая сдача с возвратом 50%.
 -- ════════════════════════════════════════════════════════
--- ════════════════════════════════════════════════════════
--- «Мои Т/С» (Код 82): кэш списка владельца + живое обновление
--- ════════════════════════════════════════════════════════
+surface.CreateFont("VD_RTitle", { font = "Roboto", size = 20, weight = 700, extended = true })
+surface.CreateFont("VD_RItem",  { font = "Roboto", size = 16, weight = 600, extended = true })
+surface.CreateFont("VD_RSmall", { font = "Roboto", size = 13, weight = 500, extended = true })
+surface.CreateFont("VD_RTiny",  { font = "Roboto", size = 11, weight = 500, extended = true })
+surface.CreateFont("VD_RBig",   { font = "Roboto", size = 24, weight = 800, extended = true })
+
+local function fmtMoney(n)
+    n = tonumber(n) or 0
+    if GRM and GRM.Format then return GRM.Format(n) end
+    return tostring(n) .. " $"
+end
+
+-- Бейдж источника доступа к позиции каталога
+local SRC_STYLE = {
+    global     = { t = "ОБЩИЙ",       c = Color(150, 200, 255) },
+    nofaction  = { t = "БЕЗ ФРАКЦИИ", c = Color(190, 190, 255) },
+    role       = { t = "РАНГ",        c = Color(200, 140, 255) },
+    department = { t = "ОТДЕЛ",       c = Color(255, 190,  90) },
+    personal   = { t = "ЛИЧНЫЙ",      c = Color(120, 230, 130) },
+}
+local function srcStyle(src)
+    return SRC_STYLE[src] or { t = string.upper(tostring(src or "фракция")), c = Color(90, 190, 255) }
+end
+
+local function styleScroll(sp)
+    local sb = sp:GetVBar()
+    sb:SetWide(6)
+    sb.Paint = function(_, w, h) surface.SetDrawColor(28, 42, 64, 200) surface.DrawRect(0, 0, w, h) end
+    if sb.btnUp then sb.btnUp.Paint = function() end end
+    if sb.btnDown then sb.btnDown.Paint = function() end end
+    sb.btnGrip.Paint = function(_, w, h) surface.SetDrawColor(70, 140, 210, 190) surface.DrawRect(0, 0, w, h) end
+end
+
+-- Кэш «Мой транспорт» (Код 82 + 2.1: locked/dist) + живое обновление
 local VD_MyVehicles = {}
-local VD_MyPanel, VD_MenuFrame = nil, nil
-local refreshMySection -- fwd
+local VD_MenuFrame = nil
+local refreshMySection -- fwd: пересборка вкладки «Мой транспорт» открытого меню
 
 net.Receive("VD_MyList", function()
     VD_MyVehicles = net.ReadTable() or {}
-    if IsValid(VD_MyPanel) and refreshMySection then refreshMySection() end
+    if refreshMySection then refreshMySection() end
 end)
 
-local function OpenVehicleMenu(dealerID, dealerName, vlist)
-    if (not vlist or #vlist == 0) and #VD_MyVehicles == 0 then
+local function OpenVehicleMenu(dealerID, dealerName, vlist, balance)
+    vlist = vlist or {}
+    balance = math.max(0, tonumber(balance) or 0)
+    if #vlist == 0 and #VD_MyVehicles == 0 then
         chat.AddText(Color(255, 100, 100), "[VD] ", Color(200, 200, 200), "У вас нет доступа к транспорту у этого дилера")
         return
     end
 
     local frame = vgui.Create("DFrame")
     VD_MenuFrame = frame
-    frame:SetTitle(dealerName or "Дилер транспорта")
-    frame:SetSize(560, 540)
+    frame:SetTitle("")
+    frame:SetSize(940, 620)
     frame:Center()
     frame:MakePopup()
-    frame:SetSkin("Default")
+    frame._balance = balance
+    frame._pendingPrice = 0 -- цена незавершённой покупки (для локального пересчёта баланса)
 
-    local oldPaint = frame.Paint
-    frame.Paint = function(self, w, h)
-        surface.SetDrawColor(15, 25, 45, 245)
+    frame.Paint = function(_, w, h)
+        surface.SetDrawColor(13, 18, 28, 250)
         surface.DrawRect(0, 0, w, h)
-        surface.SetDrawColor(60, 140, 220, 200)
-        surface.DrawOutlinedRect(0, 0, w, h, 2)
-        -- Заголовок
-        surface.SetDrawColor(20, 40, 70, 250)
-        surface.DrawRect(0, 0, w, 28)
-        draw.SimpleText(self:GetTitle(), "VD_MenuTitle", w / 2, 14, Color(100, 200, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        surface.SetDrawColor(62, 138, 214, 220)
+        surface.DrawOutlinedRect(0, 0, w, h, 1)
+        surface.SetDrawColor(22, 32, 48, 255)
+        surface.DrawRect(0, 0, w, 30)
+        draw.SimpleText(tostring(dealerName or "Дилер транспорта"), "VD_RTitle", 12, 15,
+            Color(120, 200, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("каталог • покупка за наличные • сдача своего Т/С — возврат 50%", "VD_RTiny", w - 34, 15,
+            Color(130, 150, 175), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
     end
 
-    -- ═══ «Мои Т/С» — верхняя секция (Код 82): убрать с возвратом 50% ═══
-    local myPanel = vgui.Create("DPanel", frame)
-    VD_MyPanel = myPanel
-    myPanel:Dock(TOP)
-    myPanel:DockMargin(8, 32, 8, 4)
+    -- Подвал (создаём ДО вкладок: док-лейаут держит порядок создания)
+    local footer = vgui.Create("DLabel", frame)
+    footer:Dock(BOTTOM)
+    footer:SetTall(18)
+    footer:DockMargin(10, 0, 10, 4)
+    footer:SetFont("VD_RTiny")
+    footer:SetTextColor(Color(115, 135, 160))
+    footer:SetContentAlignment(5)
+    footer:SetText("Двойной клик по позиции — купить сразу  •  C возле машины — замок / багажник / сдача  •  /vd_remove — сдать всё из чата")
 
-    refreshMySection = function()
-        if not IsValid(myPanel) then return end
-        myPanel:Clear()
-        local n = #VD_MyVehicles
-        if n == 0 then myPanel:SetTall(0) myPanel:SetVisible(false) return end
-        myPanel:SetVisible(true)
-        myPanel:SetTall(30 + n * 30 + 8)
-        myPanel.Paint = function(_, w, h)
-            surface.SetDrawColor(18, 32, 52, 240)
+    local tabs = vgui.Create("DPropertySheet", frame)
+    tabs:Dock(FILL)
+    tabs:DockMargin(10, 34, 10, 2)
+    tabs.Paint = function(_, w, h)
+        surface.SetDrawColor(17, 24, 36, 245)
+        surface.DrawRect(0, 0, w, h)
+    end
+    frame._tabs = tabs
+
+    -- ═══════════ ВКЛАДКА «КАТАЛОГ» ═══════════
+    local pageCat = vgui.Create("DPanel")
+    pageCat:SetPaintBackground(false)
+
+    local topBar = vgui.Create("DPanel", pageCat)
+    topBar:Dock(TOP) topBar:SetTall(30) topBar:DockMargin(6, 6, 6, 4)
+    topBar:SetPaintBackground(false)
+
+    local search = vgui.Create("DTextEntry", topBar)
+    search:Dock(LEFT) search:SetWide(300)
+    search:SetFont("VD_RSmall")
+    search:SetPlaceholderText("Поиск: название, класс или источник…")
+
+    local balLbl = vgui.Create("DLabel", topBar)
+    balLbl:Dock(RIGHT) balLbl:SetWide(250)
+    balLbl:SetFont("VD_RItem")
+    balLbl:SetTextColor(Color(140, 220, 160))
+    balLbl:SetContentAlignment(6)
+    frame._updBalance = function()
+        if IsValid(balLbl) then
+            balLbl:SetText("Наличные: " .. fmtMoney(frame._balance))
+        end
+    end
+    frame._updBalance()
+
+    -- Правая панель деталей (превью/цена/кнопка)
+    local detail = vgui.Create("DPanel", pageCat)
+    detail:Dock(RIGHT) detail:SetWide(300) detail:DockMargin(4, 0, 6, 6)
+    detail.Paint = function(_, w, h)
+        surface.SetDrawColor(20, 28, 42, 240)
+        surface.DrawRect(0, 0, w, h)
+        surface.SetDrawColor(50, 90, 140, 160)
+        surface.DrawOutlinedRect(0, 0, w, h, 1)
+    end
+
+    local list = vgui.Create("DScrollPanel", pageCat)
+    list:Dock(FILL) list:DockMargin(6, 0, 4, 6)
+    styleScroll(list)
+
+    local function rebuildDetail()
+        detail:Clear()
+        local veh = frame._sel
+        if not veh then
+            local em = vgui.Create("DLabel", detail)
+            em:Dock(FILL)
+            em:SetFont("VD_RSmall")
+            em:SetContentAlignment(5)
+            em:SetTextColor(Color(140, 155, 180))
+            em:SetText("Выберите транспорт\nв списке слева")
+            return
+        end
+
+        -- Живое превью модели
+        local mp = vgui.Create("DModelPanel", detail)
+        mp:Dock(TOP) mp:SetTall(168) mp:DockMargin(6, 6, 6, 4)
+        local mdl = tostring(veh.model or "")
+        if mdl == "" or not util.IsValidModel(mdl) then mdl = "models/buggy.mdl" end
+        mp:SetModel(mdl)
+        if IsValid(mp.Entity) then
+            local mn, mx = mp.Entity:GetRenderBounds()
+            mn = mn or Vector(0, 0, 0)
+            mx = mx or Vector(100, 100, 60)
+            local size = mn:Distance(mx)
+            if size < 60 then size = 60 end
+            mp:SetCamPos(Vector(size * 0.75, size * 0.75, size * 0.5))
+            mp:SetLookAt((mn + mx) * 0.5)
+        end
+
+        local nm = vgui.Create("DLabel", detail)
+        nm:Dock(TOP) nm:SetTall(24) nm:DockMargin(10, 2, 10, 0)
+        nm:SetFont("VD_RItem") nm:SetTextColor(Color(225, 238, 255))
+        nm:SetText(tostring(veh.name or veh.class or "Транспорт"))
+
+        local cl = vgui.Create("DLabel", detail)
+        cl:Dock(TOP) cl:SetTall(15) cl:DockMargin(10, 0, 10, 0)
+        cl:SetFont("VD_RTiny") cl:SetTextColor(Color(115, 135, 160))
+        cl:SetText(tostring(veh.class or ""))
+
+        local st = srcStyle(veh.source)
+        local sr = vgui.Create("DLabel", detail)
+        sr:Dock(TOP) sr:SetTall(15) sr:DockMargin(10, 1, 10, 0)
+        sr:SetFont("VD_RTiny") sr:SetTextColor(st.c)
+        sr:SetText("Доступ: " .. st.t)
+
+        local price = math.max(0, tonumber(veh.price) or 0)
+        local isService = (SRC_STYLE[veh.source] == nil) -- фракционный список = служебный
+        local afford = price <= 0 or frame._balance >= price
+
+        local pr = vgui.Create("DLabel", detail)
+        pr:Dock(TOP) pr:SetTall(34) pr:DockMargin(10, 6, 10, 0)
+        pr:SetFont("VD_RBig")
+        if isService then
+            pr:SetText("СЛУЖЕБНЫЙ") pr:SetTextColor(st.c)
+        elseif price > 0 then
+            pr:SetText(fmtMoney(price)) pr:SetTextColor(Color(120, 230, 130))
+        else
+            pr:SetText("БЕСПЛАТНО") pr:SetTextColor(Color(140, 170, 200))
+        end
+
+        if not afford then
+            local nd = vgui.Create("DLabel", detail)
+            nd:Dock(TOP) nd:SetTall(16) nd:DockMargin(10, 0, 10, 0)
+            nd:SetFont("VD_RTiny") nd:SetTextColor(Color(255, 130, 120))
+            nd:SetText("Не хватает: " .. fmtMoney(price - frame._balance))
+        end
+
+        local buy = vgui.Create("DButton", detail)
+        buy:Dock(TOP) buy:SetTall(42) buy:DockMargin(10, 10, 10, 0)
+        buy:SetText("")
+        buy:SetEnabled(afford)
+        buy.Paint = function(self, w, h)
+            local c
+            if not afford then c = Color(60, 70, 85, 210)
+            elseif self:IsHovered() then c = Color(70, 190, 110, 245)
+            else c = Color(50, 155, 90, 225) end
+            surface.SetDrawColor(c)
             surface.DrawRect(0, 0, w, h)
-            surface.SetDrawColor(80, 160, 120, 160)
-            surface.DrawOutlinedRect(0, 0, w, h, 1)
-            draw.SimpleText("МОЙ ТРАНСПОРТ (" .. n .. "/3)  •  удаление возвращает 50% цены", "VD_MenuSmall", 8, 12, Color(140, 220, 170), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            local t = (price > 0 and not isService) and "КУПИТЬ" or "ЗАСПАВНИТЬ"
+            draw.SimpleText(t, "VD_RItem", w / 2, h / 2,
+                afford and Color(255, 255, 255) or Color(150, 160, 175),
+                TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
-        for i, mv in ipairs(VD_MyVehicles) do
-            local row = vgui.Create("DPanel", myPanel)
-            row:SetPos(6, 26 + (i - 1) * 30) row:SetSize(536, 27)
-            row.Paint = function(_, w, h)
-                surface.SetDrawColor(28, 46, 70, 220)
-                surface.DrawRect(0, 0, w, h)
-                draw.SimpleText(tostring(mv.name or mv.class), "VD_MenuSmall", 8, 7, Color(220, 235, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                draw.SimpleText(tostring(mv.class or ""), "VD_MenuSmall", 8, 16, Color(120, 150, 180), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                if (mv.refund or 0) > 0 then
-                    local rt = GRM and GRM.Format and GRM.Format(mv.refund) or tostring(mv.refund)
-                    draw.SimpleText("возврат " .. rt, "VD_MenuSmall", w - 92, h / 2, Color(120, 220, 130), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-                end
-            end
-            local del = vgui.Create("DButton", row)
-            del:SetPos(536 - 78, 3) del:SetSize(74, 21)
-            del:SetText("")
-            del.Paint = function(self, w, h)
-                local col = self:IsHovered() and Color(210, 90, 80, 240) or Color(160, 60, 55, 210)
-                surface.SetDrawColor(col)
-                surface.DrawRect(0, 0, w, h)
-                draw.SimpleText("УБРАТЬ", "VD_MenuSmall", w / 2, h / 2, Color(255, 235, 235), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-            end
-            del.vid = mv.id
-            del.DoClick = function(self)
-                net.Start("VD_RemoveRequest")
-                    net.WriteEntity(Entity(self.vid or 0))
-                net.SendToServer()
-            end
-        end
-    end
-    refreshMySection()
-
-    -- Список транспорта у дилера
-    local scroll = vgui.Create("DScrollPanel", frame)
-    scroll:Dock(FILL)
-    scroll:DockMargin(8, 4, 8, 8)
-
-    local sbar = scroll:GetVBar()
-    sbar:SetWide(6)
-    sbar.Paint = function(self, w, h)
-        surface.SetDrawColor(30, 50, 80, 200)
-        surface.DrawRect(0, 0, w, h)
-    end
-    sbar.btnUp.Paint = function() end
-    sbar.btnDown.Paint = function() end
-    sbar.btnGrip.Paint = function(self, w, h)
-        surface.SetDrawColor(60, 140, 220, 180)
-        surface.DrawRect(0, 0, w, h)
-    end
-
-    for i, veh in ipairs(vlist) do
-        local row = scroll:Add("DPanel")
-        row:Dock(TOP)
-        row:DockMargin(0, 0, 0, 4)
-        row:SetTall(56)
-
-        -- Определяем цвет по источнику доступа
-        local sourceColor = Color(120, 150, 180)
-        local sourceText = ""
-        if veh.source == "faction" then
-            sourceColor = Color(80, 180, 255)
-            sourceText = "Фракция"
-        elseif veh.source == "role" then
-            sourceColor = Color(180, 120, 255)
-            sourceText = "Ранг"
-        elseif veh.source == "department" then
-            sourceColor = Color(255, 180, 60)
-            sourceText = "Отдел"
-        elseif veh.source == "personal" then
-            sourceColor = Color(100, 220, 100)
-            sourceText = "Лично"
+        buy.DoClick = function()
+            local v = frame._sel
+            if not v then return end
+            frame._pendingPrice = (price > 0 and not isService and afford) and price or 0
+            net.Start("VD_SpawnRequest")
+                net.WriteString(dealerID)
+                net.WriteString(v.class or "")
+            net.SendToServer()
         end
 
+        local note = vgui.Create("DLabel", detail)
+        note:Dock(TOP) note:DockMargin(10, 8, 10, 0)
+        note:SetFont("VD_RTiny") note:SetTextColor(Color(120, 140, 160))
+        note:SetAutoStretchVertical(true) note:SetWrap(true)
+        note:SetText("Списание с наличных при покупке. Сдача своего Т/С — 50% цены: вкладка «Мой транспорт» или C у машины.")
+    end
+    frame._showDetail = function(veh)
+        frame._sel = veh
+        rebuildDetail()
+    end
+
+    -- Строки каталога
+    local rows = {}
+    for _, veh in ipairs(vlist) do
+        local row = vgui.Create("DButton", list)
+        row:Dock(TOP) row:SetTall(52) row:DockMargin(0, 0, 0, 4)
+        row:SetText("")
+        row._veh = veh
+        local st = srcStyle(veh.source)
+        local price = math.max(0, tonumber(veh.price) or 0)
+        local isService = (SRC_STYLE[veh.source] == nil)
         row.Paint = function(self, w, h)
-            -- Фон строки
-            surface.SetDrawColor(25, 40, 65, 220)
+            local hov = self:IsHovered()
+            surface.SetDrawColor(self._sel and Color(30, 48, 72, 245) or (hov and Color(27, 39, 58, 235) or Color(22, 31, 47, 225)))
             surface.DrawRect(0, 0, w, h)
-            -- Рамка
-            surface.SetDrawColor(50, 100, 160, 120)
+            surface.SetDrawColor(self._sel and Color(80, 160, 230, 220) or Color(45, 75, 115, 120))
             surface.DrawOutlinedRect(0, 0, w, h, 1)
-
-            -- Название
-            local displayName = veh.name or veh.class or "Неизвестно"
-            draw.SimpleText(displayName, "VD_MenuItem", 12, 12, Color(220, 235, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-
-            -- Класс
-            draw.SimpleText(veh.class or "", "VD_MenuSmall", 12, 32, Color(120, 150, 180), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-
-            -- Источник доступа
-            if sourceText ~= "" then
-                draw.SimpleText(sourceText, "VD_MenuSmall", 12, 46, sourceColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            end
-
-            -- Цена
-            if veh.price and veh.price > 0 then
-                local priceText = GRM and GRM.Format and GRM.Format(veh.price) or tostring(veh.price) .. "$"
-                draw.SimpleText(priceText, "VD_MenuItem", w - 90, 16, Color(100, 220, 100), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-            end
+            draw.SimpleText(tostring(veh.name or veh.class or "?"), "VD_RItem", 10, 10,
+                Color(224, 236, 250), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(tostring(veh.class or ""), "VD_RTiny", 10, 29,
+                Color(115, 135, 160), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("● " .. st.t, "VD_RTiny", 10, 40, st.c, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            local pt, pc
+            if isService then pt, pc = "служебный", st.c
+            elseif price > 0 then pt, pc = fmtMoney(price), Color(120, 230, 130)
+            else pt, pc = "бесплатно", Color(120, 150, 180) end
+            draw.SimpleText(pt, "VD_RItem", w - 12, h / 2, pc, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
-
-        -- Кнопка "Спавн"
-        local btn = vgui.Create("DButton", row)
-        btn:Dock(RIGHT)
-        btn:DockMargin(4, 10, 8, 10)
-        btn:SetWide(70)
-        btn:SetText("")
-        btn.Paint = function(self, w, h)
-            local col = self:IsHovered() and Color(80, 200, 120, 240) or Color(50, 150, 90, 200)
-            surface.SetDrawColor(col)
-            surface.DrawRect(0, 0, w, h)
-            draw.SimpleText("Спавн", "VD_MenuSmall", w / 2, h / 2, Color(255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        row.DoClick = function(self)
+            for _, r in ipairs(rows) do r._sel = (r == self) end
+            frame._showDetail(veh)
         end
-        btn.DoClick = function()
+        row.DoDoubleClick = function(self)
+            for _, r in ipairs(rows) do r._sel = (r == self) end
+            frame._showDetail(veh)
+            frame._pendingPrice = (price > 0 and not isService and frame._balance >= price) and price or 0
             net.Start("VD_SpawnRequest")
                 net.WriteString(dealerID)
                 net.WriteString(veh.class or "")
             net.SendToServer()
-            frame:Close()
+        end
+        table.insert(rows, row)
+    end
+
+    search.OnChange = function(self)
+        local q = string.lower(self:GetText() or "")
+        for _, r in ipairs(rows) do
+            local v = r._veh
+            local vis = q == ""
+                or string.find(string.lower(tostring(v.name or "")), q, 1, true)
+                or string.find(string.lower(tostring(v.class or "")), q, 1, true)
+                or string.find(string.lower(tostring(v.source or "")), q, 1, true)
+            r:SetVisible(vis == true)
+        end
+        list:InvalidateLayout()
+    end
+
+    rebuildDetail()
+
+    -- ═══════════ ВКЛАДКА «МОЙ ТРАНСПОРТ» ═══════════
+    local pageMy = vgui.Create("DPanel")
+    pageMy:SetPaintBackground(false)
+
+    local myHead = vgui.Create("DLabel", pageMy)
+    myHead:Dock(TOP) myHead:SetTall(22) myHead:DockMargin(8, 6, 8, 2)
+    myHead:SetFont("VD_RSmall") myHead:SetTextColor(Color(150, 205, 175))
+
+    local myScroll = vgui.Create("DScrollPanel", pageMy)
+    myScroll:Dock(FILL) myScroll:DockMargin(6, 0, 6, 4)
+    styleScroll(myScroll)
+
+    local myBottom = vgui.Create("DPanel", pageMy)
+    myBottom:Dock(BOTTOM) myBottom:SetTall(34) myBottom:DockMargin(6, 2, 6, 4)
+    myBottom:SetPaintBackground(false)
+
+    local function sendRemove(entID)
+        net.Start("VD_RemoveRequest")
+            net.WriteEntity(Entity(entID or 0))
+            net.WriteBool(true) -- fromMenu: сдаём удалённо, стоя у дилера (гараж)
+        net.SendToServer()
+    end
+
+    local function rebuildMy()
+        if not IsValid(myScroll) or not IsValid(myBottom) then return end
+        myScroll:Clear()
+        myBottom:Clear()
+        local n = #VD_MyVehicles
+        myHead:SetText(string.format("Мой транспорт (%d/3)  •  сдача возвращает 50%%  •  обновление каждые 5 сек", n))
+
+        local totalRefund = 0
+        for _, mv in ipairs(VD_MyVehicles) do
+            totalRefund = totalRefund + (tonumber(mv.refund) or 0)
+            local row = vgui.Create("DPanel", myScroll)
+            row:Dock(TOP) row:SetTall(48) row:DockMargin(0, 0, 0, 4)
+            row._mv = mv
+            row.Paint = function(self, w, h)
+                local m = self._mv
+                surface.SetDrawColor(24, 36, 54, 230)
+                surface.DrawRect(0, 0, w, h)
+                surface.SetDrawColor(60, 110, 90, 130)
+                surface.DrawOutlinedRect(0, 0, w, h, 1)
+                draw.SimpleText(tostring(m.name or m.class or "?"), "VD_RItem", 10, 9,
+                    Color(224, 236, 250), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText(tostring(m.class or ""), "VD_RTiny", 10, 27,
+                    Color(115, 135, 160), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                -- статус замка
+                local lc = m.locked and Color(235, 130, 120) or Color(130, 225, 150)
+                draw.SimpleText(m.locked and "ЗАКРЫТ" or "ОТКРЫТ", "VD_RTiny", 250, 27,
+                    lc, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                -- дистанция до Т/С
+                draw.SimpleText("≈ " .. tostring(m.dist or 0) .. " м", "VD_RTiny", 250, 9,
+                    Color(140, 160, 185), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                -- возврат
+                if (tonumber(m.refund) or 0) > 0 then
+                    draw.SimpleText("вернуть " .. fmtMoney(m.refund), "VD_RSmall", w - 126, h / 2,
+                        Color(130, 225, 145), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                else
+                    draw.SimpleText("без возврата", "VD_RTiny", w - 126, h / 2,
+                        Color(130, 145, 165), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                end
+            end
+            local del = vgui.Create("DButton", row)
+            del:Dock(RIGHT) del:DockMargin(6, 8, 8, 8) del:SetWide(104)
+            del:SetText("")
+            del._mv = mv
+            del.Paint = function(self, w, h)
+                local c = self:IsHovered() and Color(205, 95, 85, 245) or Color(165, 70, 62, 215)
+                surface.SetDrawColor(c)
+                surface.DrawRect(0, 0, w, h)
+                draw.SimpleText("УБРАТЬ", "VD_RSmall", w / 2, h / 2,
+                    Color(255, 240, 240), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            end
+            del.DoClick = function(self)
+                local m = self._mv
+                if not m then return end
+                local rf = (tonumber(m.refund) or 0) > 0
+                    and ("Возврат: " .. fmtMoney(m.refund)) or "Без возврата средств"
+                Derma_Query("Убрать «" .. tostring(m.name or m.class) .. "»?\n" .. rf,
+                    "Сдать транспорт дилеру",
+                    "Убрать", function() sendRemove(m.id) end,
+                    "Оставить", function() end)
+            end
+        end
+
+        if n == 0 then
+            local em = vgui.Create("DLabel", myScroll)
+            em:Dock(TOP) em:SetTall(60)
+            em:SetFont("VD_RSmall")
+            em:SetContentAlignment(5)
+            em:SetTextColor(Color(130, 150, 175))
+            em:SetText("У вас нет заспавненного транспорта.\nКупите в каталоге или возьмите служебный.")
+        end
+
+        if n > 0 then
+            local sum = vgui.Create("DLabel", myBottom)
+            sum:Dock(LEFT) sum:SetWide(380)
+            sum:SetFont("VD_RSmall") sum:SetTextColor(Color(150, 200, 170))
+            sum:SetText("Сдать всё: " .. n .. " ед. • суммарный возврат " .. fmtMoney(totalRefund))
+
+            local all = vgui.Create("DButton", myBottom)
+            all:Dock(RIGHT) all:SetWide(180)
+            all:SetText("")
+            all._count = n
+            all._sum = totalRefund
+            all.Paint = function(self, w, h)
+                local c = self:IsHovered() and Color(200, 90, 70, 245) or Color(160, 60, 50, 215)
+                surface.SetDrawColor(c)
+                surface.DrawRect(0, 0, w, h)
+                draw.SimpleText("УБРАТЬ ВСЁ (" .. self._count .. ")", "VD_RSmall", w / 2, h / 2,
+                    Color(255, 240, 240), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            end
+            all.DoClick = function(self)
+                Derma_Query("Сдать ВЕСЬ транспорт (" .. self._count .. " ед.)?\nСуммарный возврат: " .. fmtMoney(self._sum),
+                    "Сдать весь транспорт",
+                    "Убрать всё", function()
+                        for _, mv in ipairs(VD_MyVehicles) do sendRemove(mv.id) end
+                    end,
+                    "Отмена", function() end)
+            end
         end
     end
 
-    -- Подсказка внизу
-    local hint = vgui.Create("DLabel", frame)
-    hint:Dock(BOTTOM)
-    hint:DockMargin(8, 0, 8, 4)
-    hint:SetText("Покупка списывает цену с наличных  |  удаление своего Т/С возвращает 50%  |  /vd_remove — убрать ВСЕ свои  |  C возле машины — замок/багажник")
-    hint:SetFont("VD_MenuSmall")
-    hint:SetTextColor(Color(140, 160, 180))
-    hint:SetContentAlignment(5)
+    refreshMySection = rebuildMy -- живое обновление по VD_MyList (Код 82/2.1)
+    rebuildMy()
+
+    -- Автообновление гаража, пока меню открыто (замок/дистанция/возврат)
+    local tname = "VD_MyRefresh_" .. tostring(frame)
+    timer.Create(tname, 5, 0, function()
+        if not IsValid(frame) then timer.Remove(tname) return end
+        net.Start("VD_MyListReq")
+        net.SendToServer()
+    end)
+
+    tabs:AddSheet("  Каталог  ", pageCat, "icon16/car.png")
+    local sheetMy = tabs:AddSheet("  Мой транспорт  ", pageMy, "icon16/money.png")
+    frame._myTab = sheetMy
+
+    -- Каталог пуст (напр. только свой служебный) — сразу гараж
+    if #vlist == 0 and sheetMy and IsValid(sheetMy.Tab) then
+        tabs:SetActiveTab(sheetMy.Tab)
+    end
 end
 
 -- ════════════════════════════════════════════════════════
@@ -697,22 +947,35 @@ end
 -- Сетевые обработчики (клиент)
 -- ════════════════════════════════════════════════════════
 
--- Открытие меню выбора транспорта
+-- Открытие меню дилера (2.1: 4-е поле — баланс наличных для UI)
 net.Receive("VD_OpenMenu", function()
     local dealerID   = net.ReadString()
     local dealerName = net.ReadString()
     local vlist      = net.ReadTable()
-    OpenVehicleMenu(dealerID, dealerName, vlist)
+    local balance    = net.ReadUInt(32) or 0
+    OpenVehicleMenu(dealerID, dealerName, vlist, balance)
 end)
 
--- Результат спавна
+-- Результат операции (покупка/сдача)
 net.Receive("VD_SpawnResult", function()
     local ok  = net.ReadBool()
     local msg = net.ReadString()
     if ok then
         chat.AddText(Color(100, 220, 100), "[VD] ", Color(200, 255, 200), msg)
+        if IsValid(VD_MenuFrame) then
+            local f = VD_MenuFrame
+            -- локальный пересчёт баланса после покупки (сервер — источник истины)
+            f._balance = math.max(0, (tonumber(f._balance) or 0) - (tonumber(f._pendingPrice) or 0))
+            f._pendingPrice = 0
+            if f._updBalance then f._updBalance() end
+            -- после покупки переключаемся в гараж: туда уже летит свежий VD_MyList
+            if f._tabs and f._myTab and IsValid(f._myTab.Tab) then
+                f._tabs:SetActiveTab(f._myTab.Tab)
+            end
+        end
     else
         chat.AddText(Color(255, 100, 100), "[VD] ", Color(255, 200, 200), msg)
+        if IsValid(VD_MenuFrame) then VD_MenuFrame._pendingPrice = 0 end
     end
 end)
 

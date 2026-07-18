@@ -27,17 +27,19 @@ if SERVER then
         if not (IsValid(veh) and VK.IsVehicle(veh)) then return nil end
         local canManage = (VK.CanInteract and VK.CanInteract(veh, ply, true)) or ply:IsSuperAdmin()
         local canUse = (VK.CanInteract and VK.CanInteract(veh, ply, false)) or ply:IsSuperAdmin()
-        local mine = (veh.VD_Owner == ply)
+        local mineStrict = (veh.VD_Owner == ply)
             or (veh.VK_OwnerType == "player" and veh.VK_OwnerSteam == ply:SteamID())
-            or ply:IsSuperAdmin()
+        local mine = mineStrict or ply:IsSuperAdmin()
         local tracked = (VD_AllVehicles and VD_AllVehicles[veh:EntIndex()] ~= nil)
             or veh.VD_Owner ~= nil or veh.VD_ID ~= nil
+        local price = tonumber(veh.VD_Price) or 0
         return {
             name = (VK.GetVehicleDisplayName and VK.GetVehicleDisplayName(veh)) or veh:GetClass(),
             locked = veh.VK_Locked == true or veh:GetNW2Bool("VK_Locked", false),
             canManage = canManage == true,   -- владелец/ключи/суперадмин → замок
             canUse = canUse == true,         -- член фракции/ключи → багажник (дальше решит TK.CanAccess)
             canRemove = mine and tracked,    -- только Т/С дилера у своего владельца; суперадмин — любое дилерское
+            refund = (mineStrict and price > 0) and math.floor(price * 0.5) or 0, -- подпись кнопки (2.1)
         }
     end
 
@@ -106,32 +108,18 @@ if SERVER then
             return
         end
 
-        -- «Убрать Т/С»: только дилерское, своё; суперадмин — любое дилерское
+        -- «Убрать Т/С» (Диллер 2.1): ЕДИНАЯ точка удаления с меню дилера —
+        -- одинаковые права, возврат 50%, чистка реестра, синк «Мои Т/С».
         if doAct == "remove" then
-            local tracked = (VD_AllVehicles and VD_AllVehicles[veh:EntIndex()] ~= nil)
-                or veh.VD_Owner ~= nil or veh.VD_ID ~= nil
-            if not tracked then
-                if GRM.Notify then GRM.Notify(ply, "Это не транспорт из дилера", 255, 140, 120) end
+            local removeFn = _G.VD_RemoveDealerVehicle
+            if not removeFn then
+                if GRM.Notify then GRM.Notify(ply, "Модуль авто-дилера не загружен", 255, 140, 120) end
                 return
             end
-            local mine = (veh.VD_Owner == ply)
-                or (veh.VK_OwnerType == "player" and veh.VK_OwnerSteam == ply:SteamID())
-            if not (mine or ply:IsSuperAdmin()) then
-                if GRM.Notify then GRM.Notify(ply, "Это не ваш транспорт", 255, 140, 120) end
-                return
-            end
-            local owner = veh.VD_Owner
-            local price = tonumber(veh.VD_Price) or 0
-            local refund = (mine and price > 0) and math.floor(price * 0.5) or 0
-            local cls = tostring(veh.VD_Class or veh:GetClass())
-            if VD_AllVehicles then VD_AllVehicles[veh:EntIndex()] = nil end
-            veh:Remove()
-            if refund > 0 and GRM.GiveMoney and IsValid(owner) then
-                GRM.GiveMoney(owner, refund, "Возврат за удалённый транспорт: " .. cls)
-            end
-            hook.Run("VD_OnVehicleRemoved", veh, ply, cls)
+            local ok, msg = removeFn(ply, veh, { maxDist = 400 })
             if GRM.Notify then
-                GRM.Notify(ply, "Транспорт убран: " .. cls .. (refund > 0 and (" • возврат " .. (GRM.Format and GRM.Format(refund) or refund)) or ""), 140, 230, 150)
+                if ok then GRM.Notify(ply, tostring(msg or "Готово"), 140, 230, 150)
+                else GRM.Notify(ply, tostring(msg or "Отказ"), 255, 140, 120) end
             end
             return
         end
@@ -161,6 +149,7 @@ local BORD = Color(40, 45, 65, 180)
 local visible = false
 local wasDown = false
 local cooldowns = {}
+local armed = { id = nil, untilT = 0 } -- двойное нажатие для опасных кнопок (confirm)
 local data = {}
 local tp = false
 
@@ -203,8 +192,16 @@ local BTNS = {
       fn = vehAct("lock"),   c = Color(90, 140, 200), ch = Color(110, 160, 220), ok = vehOk("canManage") },
     { id = "veh_trunk",  l = "Багажник (открыть/закрыть)", fn = vehAct("trunk"),
       c = Color(200, 160, 80), ch = Color(220, 180, 100), ok = vehOk("canUse") },
-    { id = "veh_remove", l = "Убрать Т/С (возврат 50%)", fn = vehAct("remove"),
-      c = Color(190, 90, 80), ch = Color(210, 110, 100), ok = vehOk("canRemove") },
+    { id = "veh_remove", l = function()
+          if istable(data.veh) and (data.veh.refund or 0) > 0 then
+              local rt = GRM and GRM.Format and GRM.Format(data.veh.refund) or tostring(data.veh.refund)
+              return "Убрать Т/С (вернуть " .. rt .. ")"
+          end
+          return "Убрать Т/С"
+      end,
+      fn = vehAct("remove"),
+      c = Color(190, 90, 80), ch = Color(210, 110, 100), ok = vehOk("canRemove"),
+      confirm = true }, -- двойное нажатие-подтверждение (Диллер 2.1)
     { id = "tp",         l = function() return (tp and "Выкл" or "Вкл") .. " 3-е лицо" end, fn = actTp, c = CC.third, ch = CC.thirdH, ok = function() return true end },
     { id = "radio",      l = "Рация",        fn = actRadio,      c = CC.radio,   ch = CC.radioH,   ok = function() return true end },
     { id = "faction",    l = "Меню фракции", fn = actFactions,   c = CC.faction, ch = CC.factionH, ok = function() return data.isLeaderOrAdmin == true or data.isFactionMember == true end },
@@ -250,6 +247,8 @@ local function drawMenu()
     local click = down and not wasDown
     local cy = y + pad + vehBar
 
+    if armed.id and CurTime() > (armed.untilT or 0) then armed.id = nil end -- протухло подтверждение
+
     for _, b in ipairs(list) do
         local bx, by = x + pad, cy
         local col, colH = b.c, b.ch
@@ -257,15 +256,27 @@ local function drawMenu()
             col = tp and Color(60, 160, 80) or b.c
             colH = tp and Color(80, 180, 100) or b.ch
         end
+        local isArmed = (armed.id == b.id)
+        if isArmed then
+            col, colH = Color(210, 70, 60), Color(230, 90, 80)
+        end
         local hov = mx >= bx and mx <= bx + bw and my >= by and my <= by + bh
         draw.RoundedBox(4, bx, by, bw, bh, hov and colH or col)
         local lbl = type(b.l) == "function" and b.l() or b.l
+        if isArmed then lbl = "⚠ Ещё раз — подтвердить" end
         draw.SimpleText(lbl, "GRMCtx_Normal", bx + bw / 2, by + bh / 2, Color(255, 255, 255, 230), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         if hov and click then
             local cd = cooldowns[b.id]
             if not cd or CurTime() > cd then
-                cooldowns[b.id] = CurTime() + 0.3
-                b.fn()
+                if b.confirm and not isArmed then
+                    -- опасное действие: первое нажатие только «взводит» кнопку на 3 с
+                    armed.id = b.id
+                    armed.untilT = CurTime() + 3
+                else
+                    cooldowns[b.id] = CurTime() + 0.3
+                    armed.id = nil
+                    b.fn()
+                end
             end
         end
         cy = cy + bh + gap
