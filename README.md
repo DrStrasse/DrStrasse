@@ -15,6 +15,12 @@
 (или прямо в `garrysmod/lua/`). Файлы в `lua/autorun/` загружаются
 автоматически на сервере и клиенте.
 
+**Начиная с Кода 88 (мобильные телефоны)** вместе с `lua/` нужно
+скопировать и папки `models/ivancorn/` + `materials/models/ivancorn/`
+(модели трубок GTA IV by ivancorn) — иначе мобильные будут ERROR.
+Готовый `dist/grm_single_addon.zip`/`grm_full_code.zip` уже содержит
+всё тремя папками (lua, models, materials).
+
 ## Файлы (основные модули)
 
 | # | Файл | Назначение |
