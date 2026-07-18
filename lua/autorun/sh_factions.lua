@@ -150,14 +150,24 @@ if SERVER then
             if type(f) == "table" then
                 ensureDefaults(f)
                 data[name] = {
-                    Leader         = f.Leader,
-                    Roles          = f.Roles,
-                    Departments    = f.Departments,
-                    Members        = f.Members,
-                    Tag            = f.Tag,
-                    Color          = f.Color,
-                    DepAccess      = f.DepAccess,
-                    LeaderRoleName = f.LeaderRoleName
+                    Leader           = f.Leader,
+                    Roles            = f.Roles,
+                    Departments      = f.Departments,
+                    Members          = f.Members,
+                    Tag              = f.Tag,
+                    Color            = f.Color,
+                    DepAccess        = f.DepAccess,
+                    LeaderRoleName   = f.LeaderRoleName,
+                    -- v3.1.1: зеркалируем доступ-модели/оружие/госновости для
+                    -- вкладки «Расширенные настройки» (синк с /models_admin,
+                    -- /weapons_admin, setGNewsAccess — те же серверные поля)
+                    Models           = f.Models,
+                    RoleModels       = f.RoleModels,
+                    DepartmentModels = f.DepartmentModels,
+                    Weapons          = f.Weapons,
+                    RoleWeapons      = f.RoleWeapons,
+                    DepartmentWeapons= f.DepartmentWeapons,
+                    GNewsAccess      = f.GNewsAccess == true
                 }
             end
         end

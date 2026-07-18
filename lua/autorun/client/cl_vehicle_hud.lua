@@ -166,7 +166,8 @@ net.Receive(NET_SEND_LIST, function()
     if IsValid(veh) then VK.OpenOwnerKeyMenu(veh, players) end
 end)
 
--- Passive owner label for any player looking at a configured vehicle.
+-- Passive owner label + подсказки управления для игрока, смотрящего на
+-- машину ВБЛИЗИ (заказ владельца: хинты по багажнику и замку при прицеле).
 hook.Add("HUDPaint", "VK_PassiveVehicleOwnerHUD", function()
     local ply = LocalPlayer()
     if not IsValid(ply) then return end
@@ -177,26 +178,36 @@ hook.Add("HUDPaint", "VK_PassiveVehicleOwnerHUD", function()
     if ply:GetPos():DistToSqr(veh:GetPos()) > (VK.HUD_RANGE or 220) ^ 2 then return end
 
     local ownerType, _, ownerNick, factionName, locked = VK.GetOwnerState(veh)
-    if ownerType == "" and not locked then return end
+    local trunkOpen = veh:GetNW2Bool("VK_TrunkOpen", false)
+    local x, y = ScrW() / 2, ScrH() / 2 + 56
 
-    local ownerText, ownerColor
-    if ownerType == VK.OWNER_TYPE.PLAYER then
-        ownerText = "Владелец: " .. (ownerNick ~= "" and ownerNick or "Неизвестно")
-        ownerColor = Color(120, 200, 255)
-    elseif ownerType == VK.OWNER_TYPE.FACTION then
-        ownerText = "Фракция: " .. (factionName ~= "" and factionName or "Неизвестно")
-        ownerColor = Color(255, 195, 120)
-    else
-        ownerText = "Без владельца"
-        ownerColor = VK.COL.DIM
+    -- Название техники (GetVehicleDisplayName) убрано по заказу («Comedy
+    -- Effect») — остаются владелец, статус замка и подсказки управления.
+    if ownerType ~= "" or locked then
+        local ownerText, ownerColor
+        if ownerType == VK.OWNER_TYPE.PLAYER then
+            ownerText = "Владелец: " .. (ownerNick ~= "" and ownerNick or "Неизвестно")
+            ownerColor = Color(120, 200, 255)
+        elseif ownerType == VK.OWNER_TYPE.FACTION then
+            ownerText = "Фракция: " .. (factionName ~= "" and factionName or "Неизвестно")
+            ownerColor = Color(255, 195, 120)
+        else
+            ownerText = "Без владельца"
+            ownerColor = VK.COL.DIM
+        end
+        draw.SimpleText(ownerText, "VK_HUD_Title", x, y, ownerColor, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+        draw.SimpleText(locked and "ЗАБЛОКИРОВАНА" or "РАЗБЛОКИРОВАНА", "VK_HUD_Normal", x, y + 24,
+            locked and VK.COL.DANGER or VK.COL.SUCCESS, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+        y = y + 24
     end
 
-    local x, y = ScrW() / 2, ScrH() / 2 + 56
-    -- Название техники (GetVehicleDisplayName) над машиной убрано по заказу
-    -- владельца (строка «Comedy Effect») — остаются владелец и статус замка.
-    draw.SimpleText(ownerText, "VK_HUD_Title", x, y, ownerColor, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-    draw.SimpleText(locked and "ЗАБЛОКИРОВАНА" or "РАЗБЛОКИРОВАНА", "VK_HUD_Normal", x, y + 24,
-        locked and VK.COL.DANGER or VK.COL.SUCCESS, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+    -- Подсказки управления — у ЛЮБОЙ машины при взгляде вблизи (220 юн).
+    if trunkOpen then
+        draw.SimpleText("● БАГАЖНИК ОТКРЫТ", "VK_HUD_Normal", x, y + 20, Color(255, 205, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+        draw.SimpleText("кладите/забирайте в окне • /trunk — захлопнуть", "VK_HUD_Small", x, y + 40, Color(210, 200, 170), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+    else
+        draw.SimpleText("Ключи: ЛКМ/ПКМ — замок  •  /trunk — багажник", "VK_HUD_Small", x, y + 20, Color(200, 205, 215, 230), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+    end
 end)
 
 print("[VK] Vehicle key client loaded")
