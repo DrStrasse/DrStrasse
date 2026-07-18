@@ -1,5 +1,10 @@
 --[[--------------------------------------------------------------------
-    GRM Broadcast v1.0.0 (Код 75) — Радиовещание и массовое оповещение
+    GRM Broadcast v1.1.0 (Код 75) — Радиовещание и массовое оповещение
+    v1.1.0: команды обрабатываются через PlayerSayTransform + fallback
+      PlayerSay (EasyChat-хуки не проглатывают — репорт «/alertall не
+      работает»); АВТОперсистентность энтити (grm_bcents/<map>.json) —
+      /speaker_add и пр. больше НЕ требуют /permadd, воскресают после
+      рестарта с антидублем.
     Три энтити:
       - grm_broadcast_mic  — микрофонная стойка (журналисты/СМИ): E →
         название станции, «Начать эфир». В эфире ГОЛОС и ТЕКСТ спикера
@@ -21,7 +26,7 @@ GRM = GRM or {}
 GRM.Broadcast = GRM.Broadcast or {}
 local BC = GRM.Broadcast
 
-BC.Version       = "1.0.0"
+BC.Version       = "1.1.0"
 BC.ReceiveRadius = 500   -- радиус слышимости от приёмника
 BC.MicMaxDist    = 250   -- спикер должен стоять у микрофона
 BC.SpeakerRadius = 700   -- радиус громкоговорителя оповещения
@@ -68,6 +73,76 @@ if SERVER then
         if ok and txt then file.Write(BC.ConfigFile, txt) end
     end
     loadCfg()
+
+    -- автоперсистентность энтити (без /permadd): радио/микрофон/громкоговорители
+    -- сохраняются на карту при постановке и воскресают после рестарта -------
+    local PERSIST_CLASSES = { grm_radio = true, grm_broadcast_mic = true, grm_loudspeaker = true }
+    local function entsFile()
+        if not file.IsDir("grm_bcents", "DATA") then file.CreateDir("grm_bcents") end
+        return "grm_bcents/" .. string.lower(game.GetMap() or "unknown") .. ".json"
+    end
+    BC.Persist = BC.Persist or {}
+    local function loadPersist()
+        local t = jsonT(file.Read(entsFile(), "DATA") or "")
+        BC.Persist = istable(t) and t or {}
+    end
+    local function savePersist()
+        local ok, txt = pcall(util.TableToJSON, BC.Persist or {}, true)
+        if ok and txt then file.Write(entsFile(), txt) end
+    end
+    loadPersist()
+
+    local function persistKey(class, pos)
+        return tostring(class) .. "|" .. string.format("%.0f_%.0f_%.0f", pos.x, pos.y, pos.z)
+    end
+
+    function BC.PersistAdd(ent)
+        if not IsValid(ent) or BC._restoring then return end
+        local class = ent:GetClass()
+        if not PERSIST_CLASSES[class] then return end
+        local pos, ang = ent:GetPos(), ent:GetAngles()
+        BC.Persist[persistKey(class, pos)] = {
+            class = class,
+            pos = { x = pos.x, y = pos.y, z = pos.z },
+            ang = { p = ang.p or 0, y = ang.y or 0, r = ang.r or 0 },
+        }
+        savePersist()
+    end
+
+    function BC.PersistRemove(ent)
+        if not IsValid(ent) then return end
+        local k = persistKey(ent:GetClass(), ent:GetPos())
+        if BC.Persist[k] then BC.Persist[k] = nil savePersist() end
+    end
+
+    -- воскрешение после рестарта (антидубль: если рядом уже есть — пропускаем)
+    hook.Add("InitPostEntity", "GRM_BC_Restore", function()
+        timer.Simple(3, function()
+            BC._restoring = true
+            for k, rec in pairs(BC.Persist or {}) do
+                if PERSIST_CLASSES[rec.class] and istable(rec.pos) then
+                    local pos = Vector(tonumber(rec.pos.x) or 0, tonumber(rec.pos.y) or 0, tonumber(rec.pos.z) or 0)
+                    local dup = false
+                    for _, e in ipairs(ents.FindByClass(rec.class)) do
+                        if IsValid(e) and e:GetPos():DistToSqr(pos) < 64 then dup = true break end
+                    end
+                    if not dup then
+                        local ent = ents.Create(rec.class)
+                        if IsValid(ent) then
+                            ent:SetPos(pos)
+                            local a = istable(rec.ang) and rec.ang or {}
+                            ent:SetAngles(Angle(tonumber(a.p) or 0, tonumber(a.y) or 0, tonumber(a.r) or 0))
+                            ent:Spawn() ent:Activate()
+                            local phys = ent:GetPhysicsObject()
+                            if IsValid(phys) then phys:EnableMotion(false) end
+                        end
+                    end
+                end
+            end
+            BC._restoring = false
+            print("[GRM Broadcast] Персистент: проверено записей — " .. tostring(table.Count(BC.Persist or {})))
+        end)
+    end)
 
     -- помощники доступа ----------------------------------------------
     local function factionOf(ply)
@@ -270,8 +345,9 @@ if SERVER then
         local ang = (ply:GetPos() - tr.HitPos):Angle()
         nt:SetAngles(Angle(0, ang.y, 0))
         nt:Spawn() nt:Activate()
-        ply:PrintMessage(HUD_PRINTTALK, "[" .. label .. "] Установлен. Закрепите пермом: /permadd (в прицеле), снять: /permremove.")
-        if GRM.Notify then GRM.Notify(ply, label .. " установлен.", 100, 220, 100) end
+        BC.PersistAdd(nt) -- персистентность вшита: /permadd больше не нужен
+        ply:PrintMessage(HUD_PRINTTALK, "[" .. label .. "] Установлен и СОХРАНЁН на карте автоматически. Снять: /" .. (class == "grm_radio" and "radio" or class == "grm_broadcast_mic" and "radiomic" or "speaker") .. "_remove прицелом.")
+        if GRM.Notify then GRM.Notify(ply, label .. " установлен (персистентно).", 100, 220, 100) end
     end
     local function removeAtAim(ply, class, label)
         if not IsValid(ply) or not ply:IsSuperAdmin() then return end
@@ -281,29 +357,46 @@ if SERVER then
             ply:PrintMessage(HUD_PRINTTALK, "[" .. label .. "] В прицеле нет такой энтити.")
             return
         end
+        BC.PersistRemove(ent)
         ent:Remove()
-        ply:PrintMessage(HUD_PRINTTALK, "[" .. label .. "] Удалён. Снимите и перм: /permremove.")
+        ply:PrintMessage(HUD_PRINTTALK, "[" .. label .. "] Удалён (и из персистента).")
     end
 
+    hook.Add("PlayerSayTransform", "GRM_BC_TransformCmds", function(ply, datapack)
+        if not istable(datapack) then return end
+        local msg = datapack[1]
+        if not isstring(msg) then return end
+        -- EasyChat-дружественно: обрабатываем команды ПЕРЕД PlayerSay,
+        -- чтобы их никто не проглотил по цепочке хуков
+        if BC.HandleChat and BC.HandleChat(ply, msg) then
+            datapack[1] = ""
+            datapack.SkipPlayerSay = true
+        end
+    end)
+
     hook.Add("PlayerSay", "GRM_BC_AdminCmds", function(ply, text)
+        if BC.HandleChat and BC.HandleChat(ply, text) then return "" end
+    end)
+    -- единый обработчик чат-команд (вызывается из PlayerSayTransform и PlayerSay)
+    function BC.HandleChat(ply, text)
         local t = string.Trim(text or "")
         local low = string.lower(t)
         -- оповещения
         if string.sub(low, 1, 7) == "/alert " then
-            if not BC.IsAlerter(ply) then ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] Нет доступа (см. /alert_allow у суперадмина).") return "" end
+            if not BC.IsAlerter(ply) then ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] Нет доступа (см. /alert_allow у суперадмина).") return true end
             local ok, msg = BC.SendAlert(rpName(ply), string.sub(t, 8), false)
             ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] " .. tostring(msg))
-            return ""
+            return true
         end
         if string.sub(low, 1, 10) == "/alertall " then
-            if not BC.IsAlerter(ply) then ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] Нет доступа.") return "" end
+            if not BC.IsAlerter(ply) then ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] Нет доступа.") return true end
             local ok, msg = BC.SendAlert(rpName(ply), string.sub(t, 11), true)
             ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] " .. tostring(msg))
-            return ""
+            return true
         end
         if low == "/alert" or low == "/alertall" then
             ply:PrintMessage(HUD_PRINTTALK, "[Оповещение] Формат: /alert текст оповещения (возле громкоговорителей) или /alertall текст (всем игрокам)")
-            return ""
+            return true
         end
         -- доступ журналистов/оповестителей (суперадмин)
         local function editAccess(tbl, name, add)
@@ -318,22 +411,23 @@ if SERVER then
             ply:PrintMessage(HUD_PRINTTALK, "[Радио] " .. (add and "Выдан доступ: " or "Отобран доступ: ") .. fname)
             return true
         end
-        if string.sub(low, 1, 13) == "/bcast_allow " and editAccess(BC.Cfg.journalists, string.sub(t, 14), true) then return "" end
-        if string.sub(low, 1, 12) == "/bcast_deny " and editAccess(BC.Cfg.journalists, string.sub(t, 13), false) then return "" end
-        if string.sub(low, 1, 13) == "/alert_allow " and editAccess(BC.Cfg.alerters, string.sub(t, 14), true) then return "" end
-        if string.sub(low, 1, 12) == "/alert_deny " and editAccess(BC.Cfg.alerters, string.sub(t, 13), false) then return "" end
+        if string.sub(low, 1, 13) == "/bcast_allow " and editAccess(BC.Cfg.journalists, string.sub(t, 14), true) then return true end
+        if string.sub(low, 1, 12) == "/bcast_deny " and editAccess(BC.Cfg.journalists, string.sub(t, 13), false) then return true end
+        if string.sub(low, 1, 13) == "/alert_allow " and editAccess(BC.Cfg.alerters, string.sub(t, 14), true) then return true end
+        if string.sub(low, 1, 12) == "/alert_deny " and editAccess(BC.Cfg.alerters, string.sub(t, 13), false) then return true end
         if low == "/bcast_list" then
             ply:PrintMessage(HUD_PRINTTALK, "[Радио] Журналисты: " .. listToText(BC.Cfg.journalists) .. " | Оповестители: " .. listToText(BC.Cfg.alerters))
-            return ""
+            return true
         end
         -- спавн/удаление энтити
-        if low == "/radiomic_add" then spawnAtAim(ply, "grm_broadcast_mic", "Микрофон") return "" end
-        if low == "/radiomic_remove" then removeAtAim(ply, "grm_broadcast_mic", "Микрофон") return "" end
-        if low == "/radio_add" then spawnAtAim(ply, "grm_radio", "Радиоприёмник") return "" end
-        if low == "/radio_remove" then removeAtAim(ply, "grm_radio", "Радиоприёмник") return "" end
-        if low == "/speaker_add" then spawnAtAim(ply, "grm_loudspeaker", "Громкоговоритель") return "" end
-        if low == "/speaker_remove" then removeAtAim(ply, "grm_loudspeaker", "Громкоговоритель") return "" end
-    end)
+        if low == "/radiomic_add" then spawnAtAim(ply, "grm_broadcast_mic", "Микрофон") return true end
+        if low == "/radiomic_remove" then removeAtAim(ply, "grm_broadcast_mic", "Микрофон") return true end
+        if low == "/radio_add" then spawnAtAim(ply, "grm_radio", "Радиоприёмник") return true end
+        if low == "/radio_remove" then removeAtAim(ply, "grm_radio", "Радиоприёмник") return true end
+        if low == "/speaker_add" then spawnAtAim(ply, "grm_loudspeaker", "Громкоговоритель") return true end
+        if low == "/speaker_remove" then removeAtAim(ply, "grm_loudspeaker", "Громкоговоритель") return true end
+        return false
+    end
 
     -- меню приёмника: открытие/настройка ---------------------------------
     function BC.OpenRadioMenu(ply, ent)
