@@ -7,6 +7,20 @@ if SERVER then
     util.AddNetworkString("GRM_Ctx_Check")
     util.AddNetworkString("GRM_Ctx_Result")
     util.AddNetworkString("GRM_Ctx_VehAct")
+    util.AddNetworkString("GRM_Ctx_MoneyAct")
+
+    -- Игрок в прицеле (для кнопки «Передать деньги»)
+    local function aimPlyInfo(ply)
+        -- pcall: в нетиповых средах (тестовые стенды) плейер может не иметь GetEyeTrace
+        local ok, tr = pcall(function() return ply:GetEyeTrace() end)
+        if not ok or not istable(tr) then return nil end
+        local t = tr.Entity
+        if IsValid(t) and t:IsPlayer() and t ~= ply
+            and t:GetPos():DistToSqr(ply:GetPos()) <= 300 * 300 then
+            return { name = t:Nick(), idx = t:EntIndex() }
+        end
+        return nil
+    end
 
     local function getPlayerFaction(ply)
         if not Factions then return nil, nil end
@@ -51,6 +65,7 @@ if SERVER then
         result.isLeaderOrAdmin = (faction and faction.Leader == ply:SteamID()) or ply:IsSuperAdmin()
         result.factionName = factionName or ""
         result.veh = vehInfo(ply)
+        result.aimPly = aimPlyInfo(ply)
         result.hasMaskAccess = false
         if factionName and FactionsExt and FactionsExt[factionName] then
             local cfg = FactionsExt[factionName]
@@ -125,7 +140,41 @@ if SERVER then
         end
     end)
 
-    print("[GRM CTX] Server loaded (v2: кнопки транспорта, Код 82)")
+    -- ── Передача денег из контекст-меню (Код 85.2) ─────────────
+    -- Выброс пачки идёт клиентской командой /dropmoney (вся логика на месте).
+    local lastGive = {}
+    net.Receive("GRM_Ctx_MoneyAct", function(_, ply)
+        if not IsValid(ply) then return end
+        local op = tostring(net.ReadString() or "")
+        if op ~= "give" then return end
+        local target = net.ReadEntity()
+        local amount = math.floor(net.ReadUInt(32))
+        local now = CurTime()
+        if lastGive[ply] and now - lastGive[ply] < 0.8 then return end -- антифлуд
+        lastGive[ply] = now
+        if not (IsValid(target) and target:IsPlayer() and target ~= ply) then
+            if GRM.Notify then GRM.Notify(ply, "Игрок не найден.", 255, 140, 120) end
+            return
+        end
+        if target:GetPos():DistToSqr(ply:GetPos()) > 300 * 300 then
+            if GRM.Notify then GRM.Notify(ply, "Слишком далеко — подойдите ближе (до 300 юнитов).", 255, 140, 120) end
+            return
+        end
+        if amount <= 0 then return end
+        if not (GRM.TakeMoney and GRM.GiveMoney and GRM.GetBalance) then return end
+        if GRM.GetBalance(ply) < amount then
+            if GRM.Notify then GRM.Notify(ply, "Не хватает наличных (есть " .. tostring(GRM.GetBalance(ply)) .. ").", 255, 140, 120) end
+            return
+        end
+        GRM.TakeMoney(ply, amount, "Передача наличных: " .. target:Nick())
+        GRM.GiveMoney(target, amount, "Передача наличных от " .. ply:Nick())
+        if GRM.Notify then
+            GRM.Notify(ply, "Передано " .. tostring(amount) .. " → " .. target:Nick(), 120, 220, 140)
+            GRM.Notify(target, "Вам передали " .. tostring(amount) .. " (от " .. ply:Nick() .. ")", 120, 220, 140)
+        end
+    end)
+
+    print("[GRM CTX] Server loaded (v3: +передача денег в C-меню)")
 end
 
 if CLIENT then
@@ -170,6 +219,28 @@ end
 local function actFactions()  RunConsoleCommand("say", "/factions") end
 local function actMask()      RunConsoleCommand("say", "/mask") end
 
+-- Деньги в C-меню (по заказу: «выбросить деньги / передать деньги игроку»)
+local function actDropMoney()
+    Derma_StringRequest("Выбросить наличные", "Сумма (пачка упадёт перед вами):", "",
+        function(v)
+            local n = math.floor(tonumber(v) or 0)
+            if n > 0 then RunConsoleCommand("say", "/dropmoney " .. tostring(n)) end
+        end)
+end
+local function actGiveMoney()
+    local ap = istable(data.aimPly) and data.aimPly or nil
+    Derma_StringRequest("Передать наличные", "Сумма для передачи " .. (ap and ("(" .. tostring(ap.name) .. ")") or "игроку") .. ":", "",
+        function(v)
+            local n = math.floor(tonumber(v) or 0)
+            if n <= 0 or not ap then return end
+            net.Start("GRM_Ctx_MoneyAct")
+                net.WriteString("give")
+                net.WriteEntity(Entity(ap.idx or 0))
+                net.WriteUInt(n, 32)
+            net.SendToServer()
+        end)
+end
+
 -- Транспорт рядом (Код 82): сервер сам перепроверит прицел и права
 -- fg: req объявлена форвардом — vehAct вызывает её из замыкания (иначе была бы
 -- ссылка на ГЛОБАЛЬНЫЙ req=nil → timer.Simple(function expected, got nil), 18.07.2026)
@@ -190,6 +261,19 @@ local BTNS = {
     { id = "ticket",     l = "Тикет",        fn = actTicket,     c = CC.ticket,  ch = CC.ticketH,  ok = function() return true end },
     { id = "inventory",  l = "Инвентарь",    fn = actInv,        c = CC.inv,     ch = CC.invH,     ok = function() return true end },
     { id = "market",     l = "Маркет",       fn = actMarket,     c = CC.market,  ch = CC.marketH,  ok = function() return true end },
+    { id = "money_drop", l = "Выбросить деньги…", fn = actDropMoney,
+      c = Color(190, 150, 60), ch = Color(210, 170, 80), ok = function() return true end },
+    { id = "money_give", l = function()
+          if istable(data.aimPly) then
+              local n = tostring(data.aimPly.name or "игроку")
+              if #n > 16 then n = string.sub(n, 1, 15) .. "…" end
+              return "Передать деньги: " .. n
+          end
+          return "Передать деньги игроку"
+      end,
+      fn = actGiveMoney,
+      c = Color(90, 170, 90), ch = Color(110, 190, 110),
+      ok = function() return istable(data.aimPly) end },
     -- ── транспорт (Код 82): только когда смотрим на машину ──
     { id = "veh_lock",   l = function() return (istable(data.veh) and data.veh.locked) and "Открыть замок Т/С" or "Закрыть Т/С на замок" end,
       fn = vehAct("lock"),   c = Color(90, 140, 200), ch = Color(110, 160, 220), ok = vehOk("canManage") },

@@ -47,7 +47,19 @@ net.Receive(N.routeSync,function()
 end)
 
 net.Receive(N.routeMenu,function()
-    local truck=net.ReadEntity();local loads=net.ReadTable()or{};local wh=net.ReadTable()or{};local x=f("Начать логистический рейс",560,330)
+    local truck=net.ReadEntity();local loads=net.ReadTable()or{};local wh=net.ReadTable()or{}
+    -- пустая инфраструктура — главный тихий фейл «меню не открылось/нечего выбрать»
+    if #loads==0 or #wh==0 then
+        local x=f("Начать логистический рейс",560,330)
+        local d=vgui.Create("DLabel",x);d:SetPos(20,70);d:SetSize(520,200);d:SetFont("GRML_Normal");d:SetTextColor(CUI.dim)
+        d:SetWrap(true);d:SetAutoStretchVertical(true)
+        d:SetText("Логистика на этой карте не развёрнута:\n"
+            .. (#loads==0 and "• нет ни одной ТОЧКИ ПОГРУЗКИ (суперадмин: grm_logistics_place_loading)\n" or "")
+            .. (#wh==0 and "• нет ни одного СКЛАДА фракции (суперадмин: grm_logistics_place_warehouse <фракция> MAIN)\n" or "")
+            .. "\nПосле установки откройте меню снова: /logistics_start")
+        return
+    end
+    local x=f("Начать логистический рейс",560,330)
 
     local lc=vgui.Create("DComboBox",x);lc:SetPos(20,65);lc:SetSize(520,30);lc:SetValue("Точка погрузки")
     for _,v in ipairs(loads)do lc:AddChoice(v.name,v.id)end

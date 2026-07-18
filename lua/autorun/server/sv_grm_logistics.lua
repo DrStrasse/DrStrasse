@@ -171,7 +171,19 @@ local function listWarehouses() local out={} for _,e in ipairs(ents.FindByClass(
 
 local function truckConfig(ent)
     if not IsValid(ent) then return nil end
-    return L.Access.vehicles[ent.VD_Class or ""] or L.Access.vehicles[ent:GetClass()]
+    -- матчимся по всем известным ключам: дилерский VD_Class, класс энтити
+    -- (LVS / собственные), spawnlist-имя simfphys (VehicleName поле)
+    return L.Access.vehicles[ent.VD_Class or ""]
+        or L.Access.vehicles[ent:GetClass()]
+        or L.Access.vehicles[isstring(ent.VehicleName) and ent.VehicleName or ""]
+end
+
+-- список ключей, по которым сущность МОГЛА бы быть матовозкой — для диагностики
+local function truckKeys(ent)
+    if not IsValid(ent) then return "нет сущности" end
+    return "class=" .. tostring(ent:GetClass())
+        .. " | VD_Class=" .. tostring(ent.VD_Class or "нет")
+        .. " | VehicleName=" .. tostring(isstring(ent.VehicleName) and ent.VehicleName or "нет")
 end
 
 local function resolveTruck(p)
@@ -820,7 +832,21 @@ net.Receive(NET.action,function(_,p)
     elseif act=="refresh" then L.UseEntity(p,e) end
 end)
 
-concommand.Add("grm_logistics_start",function(p) local truck=resolveTruck(p); if not truck then notify(p,false,"Сядьте водителем в разрешённую матовозку") return end if not canLogistics(p) then notify(p,false,"Нет доступа к логистике") return end openRouteMenu(p,truck) end)
+concommand.Add("grm_logistics_start",function(p)
+    local truck=resolveTruck(p)
+    if not truck then
+        local cur = IsValid(p) and p:InVehicle() and p:GetVehicle() or nil
+        local hint = IsValid(cur) and (" Текущая сущность: " .. truckKeys(cur)) or ""
+        notify(p,false,"Сядьте водителем в разрешённую матовозку." .. hint .. " (добавить: /logistics_admin или grm_logistics_addtruck)")
+        return
+    end
+    if not canLogistics(p) then
+        local f = factionOf(p)
+        notify(p,false,f and ("Фракция «" .. f .. "» не имеет доступа к логистике (выдать: /logistics_admin)") or "Вы не во фракции с доступом к логистике")
+        return
+    end
+    openRouteMenu(p,truck)
+end)
 concommand.Add("grm_logistics_crates",function(p) if IsValid(p) then openCrateInv(p) end end)
 concommand.Add("grm_logistics_save",function(p) L.SaveMap(p) end)
 concommand.Add("grm_logistics_load",function(p) L.LoadMap(p) end)
@@ -838,11 +864,62 @@ concommand.Add("grm_logistics_access",function(p,_,a) if not IsValid(p) or not p
 concommand.Add("grm_logistics_addtruck",function(p,_,a) if not IsValid(p) or not p:IsSuperAdmin() then return end; local class=a[1];if not class then return end;L.Access.vehicles[class]={capacity=tonumber(a[2])or C.DefaultTruckCapacity,rearOffset=C.TruckRearOffset};saveAccess();notify(p,true,"Транспорт логистики добавлен")end)
 concommand.Add("grm_logistics_admin",function(p) if not IsValid(p) or not p:IsSuperAdmin() then return end; local factions={}; for name in pairs(Factions or {}) do factions[#factions+1]=name end; table.sort(factions); net.Start(NET.admin);net.WriteTable({factions=factions,access=L.Access.factions,vehicles=L.Access.vehicles});net.Send(p) end)
 
-hook.Add("PlayerSay","GRML_ChatCommands",function(p,text)
+-- единый обработчик команд логистики (вызывается из PlayerSayTransform
+-- и из PlayerSay — защита от проглатывания чат-системами, паттерн н75)
+local function chatStart(p)
+    local truck=resolveTruck(p)
+    if not truck then
+        local cur = IsValid(p) and p:InVehicle() and p:GetVehicle() or nil
+        local hint = IsValid(cur) and (" Текущая сущность: " .. truckKeys(cur)) or ""
+        notify(p,false,"Сядьте водителем в разрешённую матовозку." .. hint .. " (добавить: /logistics_admin или grm_logistics_addtruck)")
+        return
+    end
+    if not canLogistics(p) then
+        local f = factionOf(p)
+        notify(p,false,f and ("Фракция «" .. f .. "» не имеет доступа к логистике (выдать: /logistics_admin)") or "Вы не во фракции с доступом к логистике")
+        return
+    end
+    openRouteMenu(p,truck)
+end
+function L.HandleChat(p,text)
  local c=string.lower(string.Trim(text or ""))
- if c=="/logistics_start" or c=="!logistics_start" then local truck=resolveTruck(p);if not truck then notify(p,false,"Сядьте водителем в разрешённую матовозку") elseif not canLogistics(p) then notify(p,false,"Нет доступа к логистике") else openRouteMenu(p,truck) end; return "" end
- if c=="/logistics_crates" or c=="!logistics_crates" then openCrateInv(p); return "" end
- if (c=="/logistics_admin" or c=="!logistics_admin") and p:IsSuperAdmin() then local factions={};for name in pairs(Factions or{})do factions[#factions+1]=name end;table.sort(factions);net.Start(NET.admin);net.WriteTable({factions=factions,access=L.Access.factions,vehicles=L.Access.vehicles});net.Send(p);return "" end
+ if c=="/logistics_start" or c=="!logistics_start" then chatStart(p); return true end
+ if c=="/logistics_crates" or c=="!logistics_crates" then openCrateInv(p); return true end
+ if (c=="/logistics_admin" or c=="!logistics_admin") and p:IsSuperAdmin() then local factions={};for name in pairs(Factions or{})do factions[#factions+1]=name end;table.sort(factions);net.Start(NET.admin);net.WriteTable({factions=factions,access=L.Access.factions,vehicles=L.Access.vehicles});net.Send(p);return true end
+ return false
+end
+hook.Add("PlayerSayTransform","GRML_TransformCmds",function(p,datapack)
+    if not istable(datapack) then return end
+    local msg = datapack[1]
+    if not isstring(msg) then return end
+    if L.HandleChat and L.HandleChat(p, msg) then
+        datapack[1] = ""
+        datapack.SkipPlayerSay = true
+    end
+end)
+hook.Add("PlayerSay","GRML_ChatCommands",function(p,text)
+ if L.HandleChat and L.HandleChat(p,text) then return "" end
+end)
+
+-- диагностика (суперадмин): фракция, доступ, распознавание матовозки
+concommand.Add("grm_logistics_debug",function(p)
+    if not IsValid(p) or not p:IsSuperAdmin() then return end
+    local f = factionOf(p)
+    print("[GRM Logistics][DEBUG] игрок " .. p:Nick() .. ": фракция=" .. tostring(f) ..
+        ", доступ=" .. tostring(f and L.Access.factions[f] == true) ..
+        ", canLogistics=" .. tostring(canLogistics(p)))
+    local acc = {}
+    for k, v in pairs(L.Access.factions or {}) do if v then acc[#acc + 1] = k end end
+    print("[GRM Logistics][DEBUG] доступные фракции: " .. table.concat(acc, ", "))
+    local cur = p:InVehicle() and p:GetVehicle() or nil
+    print("[GRM Logistics][DEBUG] в машине: " .. tostring(IsValid(cur)) ..
+        (IsValid(cur) and (" | " .. truckKeys(cur)) or ""))
+    print("[GRM Logistics][DEBUG] resolveTruck=" .. tostring(resolveTruck(p)))
+    local tks = {}
+    for k in pairs(L.Access.vehicles or {}) do tks[#tks + 1] = k end
+    table.sort(tks)
+    print("[GRM Logistics][DEBUG] ключи транспорта доступа: " .. table.concat(tks, ", "))
+    notify(p, true, "Диагностика логистики — см. консоль сервера")
 end)
 
 -- map persistence

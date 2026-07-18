@@ -135,11 +135,17 @@ if SERVER then
 
     local function money(n) return GRM.Format and GRM.Format(n) or (tostring(n) .. " GRM") end
 
+    -- членство игрока в записи фракции: ключи Members исторически бывают
+    -- и SteamID, и SteamID64 (старые данные/модули) — проверяем ОБА (н101)
+    local function memberRec(f, ply)
+        if not (istable(f) and istable(f.Members) and IsValid(ply)) then return nil end
+        return f.Members[ply:SteamID()] or f.Members[ply:SteamID64()]
+    end
+
     local function factionOf(ply)
         if not Factions or not IsValid(ply) then return nil end
-        local sid = ply:SteamID()
         for name, f in pairs(Factions) do
-            if istable(f) and istable(f.Members) and f.Members[sid] then
+            if istable(f) and memberRec(f, ply) then
                 return name, f
             end
         end
@@ -155,7 +161,7 @@ if SERVER then
         f = f or (Factions and Factions[name])
         if not istable(f) or not istable(f.Members) then return out end
         for _, p in ipairs(player.GetAll()) do
-            if IsValid(p) and f.Members[p:SteamID()] then out[#out + 1] = p end
+            if IsValid(p) and memberRec(f, p) then out[#out + 1] = p end
         end
         return out
     end
@@ -984,7 +990,7 @@ if SERVER then
             return false, "Фракция [" .. iname .. "] не имеет доступа к системе штрафов"
         end
         if not isLeaderOf(issuer, ifac) and not fp.allRoles then
-            local info = ifac.Members[issuer:SteamID()] or {}
+            local info = memberRec(ifac, issuer) or {}
             if not fp.roles[tostring(info.Role or "")] then
                 return false, "Ваша роль во фракции не имеет права штрафовать"
             end
@@ -1046,6 +1052,10 @@ if SERVER then
         hook.Run("GRM_FineIssued", issuer, target, issued, tostring(reason or ""))
         return true, issued
     end
+
+    -- тестовая поверхность для сим-стендов (живая настройка finePerms
+    -- идёт через /feco_admin; прямой доступ к записи — ТОЛЬКО для тестов)
+    E._dev_entry = entry
 
     -- ── СИНХРОНИЗАЦИЯ клиентов ──────────────────────────────
     local function syncPlayer(ply)
@@ -1485,18 +1495,71 @@ if SERVER then
 
         if cmd == "/fine" or cmd == "!fine" then
             local amt = math.floor(tonumber(args[2]) or 0)
-            local reason = table.concat(args, " ", 3)
-            if amt <= 0 then notify(ply, "/fine <сумма> [причина]", 255, 100, 100) return "" end
-            local tr = ply:GetEyeTrace()
-            local target = tr.Entity
-            if not (IsValid(target) and target:IsPlayer() and target:GetPos():DistToSqr(ply:GetPos()) <= 250 * 250) then
-                notify(ply, "Смотрите на игрока (до 250 юнитов).", 255, 100, 100)
-                return ""
+            if amt <= 0 then notify(ply, "/fine <сумма> [причина] — цель в прицеле, или /fine <сумма> <ник> [причина]", 255, 100, 100) return "" end
+            -- цель №1: по нику (часть ника, единственное совпадение)
+            local target, reason = nil, ""
+            local tail = string.Trim(table.concat(args, " ", 3))
+            if tail ~= "" then
+                local low = string.lower(tail)
+                local matches = {}
+                for _, p in ipairs(player.GetAll()) do
+                    if IsValid(p) and p ~= ply and string.find(string.lower(p:Nick()), low, 1, true) then
+                        matches[#matches + 1] = p
+                    end
+                end
+                if #matches == 1 then
+                    target = matches[1]
+                end
+            end
+            -- цель №2: игрок в прицеле (остаток строки — причина)
+            if not IsValid(target) then
+                reason = tail
+                local tr = ply:GetEyeTrace()
+                target = tr.Entity
+                if not (IsValid(target) and target:IsPlayer() and target:GetPos():DistToSqr(ply:GetPos()) <= 250 * 250) then
+                    notify(ply, "Смотрите на игрока (до 250 юнитов) или укажите ник: /fine <сумма> <ник> [причина]", 255, 100, 100)
+                    return ""
+                end
+                if target == ply then
+                    notify(ply, "Нельзя штрафовать себя.", 255, 100, 100)
+                    return ""
+                end
             end
             local ok, why = E.CanFine(ply, target)
             if not ok then notify(ply, why or "Нет доступа к системе штрафов.", 255, 100, 100) return "" end
             local okFine, issued = E.Fine(ply, target, amt, reason ~= "" and reason or "нарушение")
             if not okFine and issued then notify(ply, tostring(issued), 255, 100, 100) end
+            return ""
+        end
+
+        if cmd == "/fines" or cmd == "!fines" then
+            -- статус моих полномочий и последние штрафы фракции
+            if ply:IsSuperAdmin() then
+                notify(ply, "Суперадмин: штрафовать можете любого, лимит " .. money(E.Config.FineMaxAmount) .. ". Настройка доступов фракций: /feco_admin → вкладка фракции → «Штрафы»", 120, 200, 255)
+                return ""
+            end
+            local iname, ifac = factionOf(ply)
+            if not iname then notify(ply, "Вы не во фракции — система штрафов недоступна.", 255, 140, 100) return "" end
+            local fp = entry(iname).finePerms
+            if not fp.enabled then
+                notify(ply, "Фракция [" .. iname .. "] не имеет доступа к системе штрафов (включить: /feco_admin суперадмином).", 255, 140, 100)
+                return ""
+            end
+            local mine = {}
+            for _, h in ipairs(istable(entry(iname).history) and entry(iname).history or {}) do
+                if isstring(h.s) and string.find(h.s, "Штраф", 1, true) then mine[#mine + 1] = os.date("%d.%m %H:%M ", h.t or 0) .. h.s end
+            end
+            local lines = {
+                ("Доступ штрафов [%s]: %s | лимит вашего штрафа: %s"):format(
+                    iname,
+                    (fp.allRoles and "все роли" or "по ролям") .. (isLeaderOf(ply, ifac) and " (вы лидер — без ограничений)" or ""),
+                    money(E.FineMaxFor(ply))),
+                "Цели: свои=" .. tostring(fp.ownFaction) .. ", другие фракции=" .. tostring(fp.otherFactions) .. ", граждане=" .. tostring(fp.civilians),
+                "Недавние штрафы фракции: " .. (#mine > 0 and "" or "(пусто)"),
+            }
+            for i = math.max(1, #mine - 4), #mine do lines[#lines + 1] = "  " .. mine[i] end
+            for _, ln in ipairs(lines) do ply:PrintMessage(HUD_PRINTTALK, "[Штрафы] " .. ln) end
+            notify(ply, "Статус системы штрафов — в чате.", 120, 200, 255)
             return ""
         end
     end)

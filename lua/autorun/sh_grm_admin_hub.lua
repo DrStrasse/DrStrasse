@@ -198,7 +198,8 @@ if SERVER then
         local c = (GRM.QMenu and GRM.QMenu.Cfg) or {}
         local flags = {}
         for _, k in ipairs({ "playersQ", "allowProps", "allowRagdolls", "allowEffects",
-            "allowNPCs", "allowSENTs", "allowSWEPs", "allowVehiclesQ", "whitelistMode" }) do
+            "allowNPCs", "allowSENTs", "allowSWEPs", "allowVehiclesQ", "whitelistMode",
+            "grmBuildMenu", "propsFree" }) do
             flags[#flags + 1] = { key = k, val = c[k] == true }
         end
         local tools = {}
@@ -351,7 +352,8 @@ if SERVER then
         elseif act == "qToggle" then
             local key = tostring(args.key or "")
             local valid = { playersQ = true, allowProps = true, allowRagdolls = true, allowEffects = true,
-                allowNPCs = true, allowSENTs = true, allowSWEPs = true, allowVehiclesQ = true, whitelistMode = true }
+                allowNPCs = true, allowSENTs = true, allowSWEPs = true, allowVehiclesQ = true, whitelistMode = true,
+                grmBuildMenu = true, propsFree = true }
             if valid[key] and GRM.QMenu then
                 GRM.QMenu.Cfg[key] = args.val == true
                 GRM.QMenu.Save("hub: " .. key)
@@ -745,6 +747,8 @@ if CLIENT then
         allowSWEPs = "Оружие из Q игрокам",
         allowVehiclesQ = "Транспорт из Q игрокам (обычно ВЫКЛ — есть дилер)",
         whitelistMode = "БЕЛЫЙ режим инструментов (разрешены только отмеченные)",
+        grmBuildMenu = "Меню стройки GRM вместо ванильного Q (каталог пропов/инструменты)",
+        propsFree = "Меню стройки: свободный спавн ЛЮБЫХ моделей (ВЫКЛ — только каталог)",
     }
 
     local function buildTools(sc, d)

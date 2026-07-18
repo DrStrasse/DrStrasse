@@ -242,6 +242,11 @@ local sy = lastNet("GRM_QMenu_Sync")
 ok(sy ~= nil and istable(sy.tableV) and sy.tableV.playersQ == true, "qmenu: после Save конфиг рассылается (GRM_QMenu_Sync)")
 
 -- клиентская ветка: перезагружаем файл с CLIENT=true
+-- стаб vgui: build-меню v2.0.0 при нажатии Q строит DFrame — в стенде панели не настоящие
+local ANYfun; local ANYobj = setmetatable({}, { __index = function() return ANYfun end })
+ANYfun = function() return ANYobj end
+_G.vgui = { Create = function() return ANYobj end }
+if _G._SIM == nil then _G._SIM = {} end
 SERVER, CLIENT = false, true
 local Me = Pete
 function LocalPlayer() return Me end
