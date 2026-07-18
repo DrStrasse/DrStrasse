@@ -13,8 +13,8 @@ ENT.Category  = "GRM — RP"
 ENT.Spawnable = true
 ENT.AdminOnly = true
 
-ENT.Model          = "models/props_wasteland/controlroom_console001a.mdl"
-ENT.ModelFallback  = "models/props_interiors/VendingMachineSoda01a.mdl"
+ENT.Model          = "models/lt_c/holo_wall_unit.mdl"
+ENT.ModelFallback  = "models/props_wasteland/controlroom_console001a.mdl"
 ENT.ModelFallback2 = "models/props_lab/citizenradio.mdl"
 
 function ENT:SetupDataTables() end
