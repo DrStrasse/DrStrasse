@@ -34,7 +34,7 @@ GRM = GRM or {}
 GRM.Ach = GRM.Ach or {}
 local AC = GRM.Ach
 
-AC.Version   = "1.0.0"
+AC.Version   = "1.0.1"   -- +API AC.SaveNow/AdminReset для единой админ-панели (Код 79)
 AC.DataFile  = "grm_achievements.json"
 
 -- ежедневный бонус
@@ -325,6 +325,16 @@ if SERVER then
     end
 
     net.Receive(NET_GET, function(_, ply) pushData(ply) end)
+
+    -- API для внешних админ-инструментов (единая панель Код 79)
+    function AC.SaveNow(why) saveAll(why or "admin") end
+    function AC.AdminReset(plyOrSid)
+        local sid = isstring(plyOrSid) and plyOrSid or (IsValid(plyOrSid) and (plyOrSid:SteamID64() or plyOrSid:SteamID()))
+        if not sid then return false end
+        AC.Records[sid] = { sid = sid, c = {}, u = {}, earned = 0, streak = 0, lastDaily = "" }
+        saveAll("admin reset " .. tostring(sid))
+        return true
+    end
 
     -- чат -------------------------------------------------------------------
     local function nearestLines(ply, count)

@@ -192,9 +192,10 @@ hook.Add("HUDPaint", "VK_PassiveVehicleOwnerHUD", function()
     end
 
     local x, y = ScrW() / 2, ScrH() / 2 + 56
-    draw.SimpleText(VK.GetVehicleDisplayName(veh), "VK_HUD_Title", x, y, VK.COL.TEXT, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-    draw.SimpleText(ownerText, "VK_HUD_Normal", x, y + 22, ownerColor, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-    draw.SimpleText(locked and "ЗАБЛОКИРОВАНА" or "РАЗБЛОКИРОВАНА", "VK_HUD_Small", x, y + 41,
+    -- Название техники (GetVehicleDisplayName) над машиной убрано по заказу
+    -- владельца (строка «Comedy Effect») — остаются владелец и статус замка.
+    draw.SimpleText(ownerText, "VK_HUD_Title", x, y, ownerColor, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+    draw.SimpleText(locked and "ЗАБЛОКИРОВАНА" or "РАЗБЛОКИРОВАНА", "VK_HUD_Normal", x, y + 24,
         locked and VK.COL.DANGER or VK.COL.SUCCESS, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
 end)
 

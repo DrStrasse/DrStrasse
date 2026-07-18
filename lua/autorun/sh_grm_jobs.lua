@@ -1,5 +1,18 @@
 --[[--------------------------------------------------------------------
-    GRM Jobs Exchange v1.0.0 (Код 77) — Биржа труда
+    GRM Jobs Exchange v1.1.0 (Код 77) — Биржа труда
+
+    v1.1.0 (заказ владельца «фракции выставляют свои работы для найма»):
+      - ВАКАНСИИ фракций поверх разовых заказов: лидер ставит зарплату
+        за смену, длительность смены (5/10/15/20 мин) и число смен —
+        эскроу = зарплата × смены списывается с бюджета сразу, возврат
+        по остатку (отзыв/просрочка/провал исполнителя).
+      - /jobpost — форма публикации С ЛЮБОГО места: зона смены вакансии
+        фиксируется там, где стоит лидер (встал у станка завода →
+        опубликовал «рабочие на боеприпасы»). Через терминал зона —
+        позиция терминала. jtype shift: зона 400 юн, не в транспорте.
+      - Работодателю в сети летят уведомления: вышел на смену / смена
+        отработана / заказ выполнен; в карточке — выплачено и последний
+        исполнитель (payedTotal/lastWorker).
 
     Система подработки для жителей города + заказы от фракций:
 
@@ -42,14 +55,17 @@ GRM = GRM or {}
 GRM.Jobs = GRM.Jobs or {}
 local JB = GRM.Jobs
 
-JB.Version     = "1.0.0"
+JB.Version     = "1.1.0"  -- +вакансии фракций: зарплата×смены, зона работы, /jobpost
 JB.DataFile    = "grm_jobs.json"
 JB.ActiveFile  = "grm_jobs_active.json"
 JB.Rotate      = 300      -- смена вакансий, сек
-JB.MaxPosts    = 3        -- одновременных заказов на фракцию
+JB.MaxPosts    = 3        -- одновременных заказов/вакансий на фракцию
 JB.PostExpire  = 86400    -- срок жизни заказа фракции, сек
 JB.MinReward   = 100
 JB.MaxReward   = 10000
+JB.MinSalary   = 100      -- вакансия: зарплата за смену (мин/макс)
+JB.MaxSalary   = 5000
+JB.MaxShifts   = 10       -- вакансия: смен на одну публикацию
 
 local NET_OPEN      = "GRM_Jobs_Open"
 local NET_ACCEPT    = "GRM_Jobs_Accept"
@@ -61,6 +77,7 @@ local NET_ALLOW     = "GRM_Jobs_Allow"
 local NET_TRACKER   = "GRM_Jobs_Tracker"
 local NET_GETMY     = "GRM_Jobs_GetMy"
 local NET_MYSTATE   = "GRM_Jobs_MyState"
+local NET_FORM      = "GRM_Jobs_PostForm" -- S→C: открыть форму публикации (зона = где стоишь)
 
 -- ============================================================
 -- ШАБЛОНЫ ЗАДАНИЙ (можно расширять из других модулей — JB.Register)
@@ -114,6 +131,7 @@ if SERVER then
     util.AddNetworkString(NET_TRACKER)
     util.AddNetworkString(NET_GETMY)
     util.AddNetworkString(NET_MYSTATE)
+    util.AddNetworkString(NET_FORM)
 
     local function jsonT(txt)
         local ok, t = pcall(util.JSONToTable, txt, false, true)
@@ -317,7 +335,7 @@ if SERVER then
                     tx = j.target.x, ty = j.target.y, tz = j.target.z,
                     cx = j.center and j.center.x or 0, cy = j.center and j.center.y or 0, cz = j.center and j.center.z or 0,
                     fromPost = j.fromPost and true or false,
-                    postFac = j.postFac, postId = j.postId,
+                    postFac = j.postFac, postId = j.postId, postKind = j.postKind,
                 }
             end
         end
@@ -341,6 +359,7 @@ if SERVER then
                     target = Vector(tonumber(r.tx) or 0, tonumber(r.ty) or 0, tonumber(r.tz) or 0),
                     center = Vector(tonumber(r.cx) or 0, tonumber(r.cy) or 0, tonumber(r.cz) or 0),
                     fromPost = r.fromPost == true, postFac = r.postFac, postId = r.postId,
+                    postKind = r.postKind,
                 }
                 n = n + 1
             end
@@ -404,6 +423,7 @@ if SERVER then
             target = fields.target, center = fields.center or (IsValid(ply) and ply:GetPos() or Vector(0, 0, 0)),
             fromPost = fields.fromPost and true or false,
             postFac = fields.postFac, postId = fields.postId,
+            postKind = fields.postKind,
         }
         saveActive("старт")
         JB.PushTracker(ply)
@@ -413,16 +433,34 @@ if SERVER then
         return true
     end
 
+    -- остаток эскроу по посту (вакансия = зарплата×остаток смен)
+    local function postEscrow(p)
+        if not istable(p) then return 0 end
+        if tostring(p.kind or "order") == "vacancy" then
+            return (tonumber(p.salary) or 0) * (tonumber(p.shiftsLeft) or 0)
+        end
+        return tonumber(p.reward) or 0
+    end
+
     local function releasePost(job, refundWhy)
-        -- снять бронь с заказа фракции и вернуть эскроу в бюджет
+        -- снять бронь с публикации фракции и вернуть эскроу в бюджет
         if not (istable(job) and job.fromPost) then return end
         local fac = JB.Cfg.posts and JB.Cfg.posts[tostring(job.postFac or "")]
         if istable(fac) then
             for i, p in ipairs(fac) do
                 if tostring(p.id) == tostring(job.postId) then
-                    if GRM.FactionBudgetAdd then GRM.FactionBudgetAdd(tostring(job.postFac), tonumber(p.reward) or 0, "Биржа труда: возврат эскроу (" .. tostring(refundWhy or "-") .. ")") end
-                    table.remove(fac, i)
-                    JB.SaveCfg("возврат эскроу: " .. tostring(refundWhy or "-"))
+                    if tostring(p.kind or "order") == "vacancy" and tostring(job.postKind or "") ~= "order" then
+                        -- вакансия МНОГОРАЗОВАЯ: провал исполнителя снимает только его бронь,
+                        -- смены и эскроу остаются (ни одна смена не оплачена — возвращать нечего)
+                        p.takenBy = nil
+                        JB.SaveCfg("бронь вакансии снята: " .. tostring(refundWhy or "-"))
+                        if JB.NotifyEmployer then JB.NotifyEmployer(tostring(job.postFac), "Смена «" .. tostring(p.title) .. "» прервана (" .. tostring(refundWhy or "-") .. "). Вакансия снова доступна, осталось смен: " .. tostring(tonumber(p.shiftsLeft) or 0) .. ".") end
+                    else
+                        local esc = postEscrow(p)
+                        if esc > 0 and GRM.FactionBudgetAdd then GRM.FactionBudgetAdd(tostring(job.postFac), esc, "Биржа труда: возврат эскроу (" .. tostring(refundWhy or "-") .. ")") end
+                        table.remove(fac, i)
+                        JB.SaveCfg("возврат эскроу: " .. tostring(refundWhy or "-"))
+                    end
                     break
                 end
             end
@@ -435,13 +473,27 @@ if SERVER then
         if not istable(j) then return end
         JB.Active[sd] = nil
         if j.fromPost then
-            -- заказ оплачен эскроу при публикации: просто удаляем заказ
-            local fac = JB.Cfg.posts and JB.Cfg.posts[tostring(j.postFac or "")]
+            -- оплата уже в эскроу: с заказа снимаем с витрины, вакансию уменьшаем на смену
+            local facName = tostring(j.postFac or "")
+            local fac = JB.Cfg.posts and JB.Cfg.posts[facName]
             if istable(fac) then
                 for i, p in ipairs(fac) do
-                    if tostring(p.id) == tostring(j.postId) then table.remove(fac, i) break end
+                    if tostring(p.id) == tostring(j.postId) then
+                        if tostring(p.kind or "order") == "vacancy" and j.postKind ~= "order" then
+                            p.shiftsLeft = math.max(0, (tonumber(p.shiftsLeft) or 1) - 1)
+                            p.payedTotal = (tonumber(p.payedTotal) or 0) + (tonumber(j.reward) or 0)
+                            p.lastWorker = rpName(ply)
+                            p.takenBy = nil
+                            if p.shiftsLeft <= 0 then table.remove(fac, i) end
+                            JB.NotifyEmployer(facName, "Смена «" .. tostring(p.title) .. "» отработана: " .. rpName(ply) .. " +" .. (GRM.Format and GRM.Format(j.reward) or tostring(j.reward)) .. ". Осталось смен: " .. tostring(p.shiftsLeft) .. ".")
+                        else
+                            table.remove(fac, i)
+                            JB.NotifyEmployer(facName, "Заказ «" .. tostring(p.title) .. "» выполнен: " .. rpName(ply) .. " +" .. (GRM.Format and GRM.Format(j.reward) or tostring(j.reward)) .. ".")
+                        end
+                        break
+                    end
                 end
-                JB.SaveCfg("заказ выполнен")
+                JB.SaveCfg("публикация выполнена")
             end
         end
         local st = statRec(sd, ply:Nick())
@@ -484,8 +536,9 @@ if SERVER then
                         JB.Fail(ply, "время вышло")
                     elseif ply:Alive() then
                         local pp = ply:GetPos()
-                        if j.jtype == "stay" then
-                            if pp:DistToSqr(j.target) < 300 * 300 then
+                        if j.jtype == "stay" or j.jtype == "shift" then
+                            local rad = (j.jtype == "shift") and 400 or 300
+                            if pp:DistToSqr(j.target) < rad * rad then
                                 if ply:InVehicle() then
                                     if (j._hintT or 0) < CurTime() then
                                         j._hintT = CurTime() + 10
@@ -531,7 +584,8 @@ if SERVER then
                 for i = #list, 1, -1 do
                     local p = list[i]
                     if tonumber(p.exp or 0) > 0 and p.exp < now and p.takenBy == nil then
-                        if GRM.FactionBudgetAdd then GRM.FactionBudgetAdd(fac, tonumber(p.reward) or 0, "Биржа труда: заказ просрочен") end
+                        local esc = postEscrow(p)
+                        if esc > 0 and GRM.FactionBudgetAdd then GRM.FactionBudgetAdd(fac, esc, "Биржа труда: публикация просрочена") end
                         table.remove(list, i)
                         dropped = dropped + 1
                     end
@@ -567,7 +621,11 @@ if SERVER then
                     postsWire[#postsWire + 1] = {
                         id = tonumber(p.id) or 0, faction = fac, title = tostring(p.title or ""),
                         desc = tostring(p.desc or ""), jtype = tostring(p.jtype or "goto"),
-                        reward = tonumber(p.reward) or 0, author = tostring(p.author or ""),
+                        kind = tostring(p.kind or "order"),
+                        reward = tonumber(p.reward) or 0, salary = tonumber(p.salary) or 0,
+                        shiftSec = tonumber(p.shiftSec) or 0, shiftsLeft = tonumber(p.shiftsLeft) or 0,
+                        payedTotal = tonumber(p.payedTotal) or 0, lastWorker = tostring(p.lastWorker or ""),
+                        author = tostring(p.author or ""),
                         taken = p.takenBy ~= nil, mine = (tostring(p.authorSid or "") == sd),
                     }
                 end
@@ -634,6 +692,20 @@ if SERVER then
         end
     end)
 
+    -- уведомить лидера фракции-заказчика (если он в сети)
+    local function notifyEmployer(fac, text)
+        local lsid = (_G.FactionsAPI and _G.FactionsAPI.GetLeader) and _G.FactionsAPI.GetLeader(fac) or nil
+        if not lsid and istable(Factions) and istable(Factions[fac]) then lsid = Factions[fac].Leader end
+        if not lsid then return end
+        local leader = player.GetBySteamID(tostring(lsid))
+        if IsValid(leader) then
+            leader:PrintMessage(HUD_PRINTTALK, "[Биржа • " .. fac .. "] " .. tostring(text))
+            if GRM.Notify then GRM.Notify(leader, text, 160, 200, 255) end
+        end
+    end
+    JB.NotifyEmployer = notifyEmployer
+    JB.PostEscrow = postEscrow -- (объявлен выше, рядом с releasePost)
+
     net.Receive(NET_POST, function(_, ply)
         if not IsValid(ply) then return end
         local canP, myFac = canPost(ply)
@@ -645,42 +717,75 @@ if SERVER then
             if GRM.Notify then GRM.Notify(ply, "Вы не состоите во фракции.", 255, 130, 110) end
             return
         end
+        local kind  = tostring(net.ReadString() or "order")
         local title = string.Trim(net.ReadString() or "")
-        local desc = string.Trim(net.ReadString() or "")
+        local desc  = string.Trim(net.ReadString() or "")
         local jtype = tostring(net.ReadString() or "goto")
-        local reward = math.floor(tonumber(net.ReadUInt(20)) or 0)
+        local money = math.floor(tonumber(net.ReadUInt(20)) or 0)   -- разовая награда / зарплата за смену
+        local shiftSec = tonumber(net.ReadUInt(12)) or 600           -- вакансия: длительность смены
+        local shifts   = tonumber(net.ReadUInt(8))  or 1             -- вакансия: число смен
+        local zoneMode = tostring(net.ReadString() or "term")        -- "term" — точка терминала, "here" — где стою
+        if kind ~= "vacancy" then kind = "order" end
         if jtype ~= "goto" and jtype ~= "stay" and jtype ~= "roundtrip" then jtype = "goto" end
+        local SHIFT_SET = { [300] = true, [600] = true, [900] = true, [1200] = true }
+        if not SHIFT_SET[shiftSec] then shiftSec = 600 end
+        shifts = math.floor(shifts)
+        if shifts < 1 then shifts = 1 end
+        if shifts > JB.MaxShifts then shifts = JB.MaxShifts end
         if #title < 4 or #title > 40 then
-            if GRM.Notify then GRM.Notify(ply, "Название заказа: 4–40 символов.", 255, 190, 90) end
+            if GRM.Notify then GRM.Notify(ply, "Название: 4–40 символов.", 255, 190, 90) end
             return
         end
         desc = string.sub(desc, 1, 120)
-        if reward < JB.MinReward or reward > JB.MaxReward then
-            if GRM.Notify then GRM.Notify(ply, "Награда: " .. tostring(JB.MinReward) .. "–" .. tostring(JB.MaxReward) .. ".", 255, 190, 90) end
+        if kind == "order" and (money < JB.MinReward or money > JB.MaxReward) then
+            if GRM.Notify then GRM.Notify(ply, "Награда разового заказа: " .. tostring(JB.MinReward) .. "–" .. tostring(JB.MaxReward) .. ".", 255, 190, 90) end
             return
         end
+        if kind == "vacancy" and (money < JB.MinSalary or money > JB.MaxSalary) then
+            if GRM.Notify then GRM.Notify(ply, "Зарплата за смену: " .. tostring(JB.MinSalary) .. "–" .. tostring(JB.MaxSalary) .. ".", 255, 190, 90) end
+            return
+        end
+        local escrow = (kind == "vacancy") and (money * shifts) or money
         JB.Cfg.posts[myFac] = JB.Cfg.posts[myFac] or {}
         if #JB.Cfg.posts[myFac] >= JB.MaxPosts then
             if GRM.Notify then GRM.Notify(ply, "Лимит: " .. tostring(JB.MaxPosts) .. " заказа(ов) одновременно на фракцию.", 255, 190, 90) end
             return
         end
-        if GRM.FactionBudgetGet and (GRM.FactionBudgetGet(myFac) or 0) < reward then
-            if GRM.Notify then GRM.Notify(ply, "В бюджете фракции недостаточно средств для эскроу " .. tostring(reward) .. ".", 255, 130, 110) end
+        if GRM.FactionBudgetGet and (GRM.FactionBudgetGet(myFac) or 0) < escrow then
+            if GRM.Notify then GRM.Notify(ply, "В бюджете недостаточно средств для эскроу " .. tostring(escrow) .. ".", 255, 130, 110) end
             return
+        end
+        -- зона смены: от точки терминала или с текущей позиции лидера (/jobpost у станка)
+        local zone = nil
+        if kind == "vacancy" then
+            if zoneMode == "here" then
+                zone = ply:GetPos()
+            else
+                local rec = JB._lastOffers and JB._lastOffers[sid64(ply)]
+                zone = (istable(rec) and rec.center) or ply:GetPos()
+            end
         end
         local id = tonumber(JB.Cfg.nextId) or 1
         JB.Cfg.nextId = id + 1
-        if GRM.FactionBudgetAdd then GRM.FactionBudgetAdd(myFac, -reward, "Биржа труда: эскроу заказа «" .. title .. "»") end
-        local staySec = (jtype == "stay") and 90 or 0
-        local timeSec = (jtype == "stay") and 420 or ((jtype == "roundtrip") and 900 or 600)
+        if GRM.FactionBudgetAdd then GRM.FactionBudgetAdd(myFac, -escrow, "Биржа труда: эскроу «" .. title .. "»") end
+        local staySec = (kind == "vacancy") and shiftSec or ((jtype == "stay") and 90 or 0)
+        local timeSec = (kind == "vacancy") and (shiftSec + 300) or ((jtype == "stay") and 420 or ((jtype == "roundtrip") and 900 or 600))
         JB.Cfg.posts[myFac][#JB.Cfg.posts[myFac] + 1] = {
-            id = id, title = title, desc = desc, jtype = jtype, reward = reward,
+            id = id, kind = kind, title = title, desc = desc, jtype = jtype,
+            reward = (kind == "order") and money or nil,
+            salary = (kind == "vacancy") and money or nil,
+            shiftSec = (kind == "vacancy") and shiftSec or nil,
+            shiftsLeft = (kind == "vacancy") and shifts or nil,
+            zone = zone and { x = zone.x, y = zone.y, z = zone.z } or nil,
             author = rpName(ply), authorSid = sid64(ply), time = os.time(),
             exp = os.time() + JB.PostExpire, staySec = staySec, timeSec = timeSec,
+            payedTotal = 0, lastWorker = "",
         }
-        JB.SaveCfg("новый заказ " .. myFac)
-        if GRM.Notify then GRM.Notify(ply, "Заказ «" .. title .. "» опубликован (" .. (GRM.Format and GRM.Format(reward) or tostring(reward)) .. " эскроу с бюджета " .. myFac .. ").", 120, 255, 150) end
-        ply:PrintMessage(HUD_PRINTTALK, "[Биржа] Заказ «" .. title .. "» опубликован. Исполнителей ждём у терминалов биржи труда.")
+        JB.SaveCfg("новый " .. kind .. " " .. myFac)
+        if GRM.Notify then GRM.Notify(ply, "«" .. title .. "» опубликовано (" .. (GRM.Format and GRM.Format(escrow) or tostring(escrow)) .. " эскроу с бюджета " .. myFac .. ").", 120, 255, 150) end
+        ply:PrintMessage(HUD_PRINTTALK, (kind == "vacancy") and
+            ("[Биржа] Вакансия «" .. title .. "»: " .. tostring(shifts) .. " смен × " .. (GRM.Format and GRM.Format(money) or tostring(money)) .. ". Исполнителей ждём у терминалов биржи.") or
+            ("[Биржа] Заказ «" .. title .. "» опубликован. Исполнителей ждём у терминалов биржи труда."))
     end)
 
     net.Receive(NET_UNPOST, function(_, ply)
@@ -694,21 +799,28 @@ if SERVER then
         for i, p in ipairs(list) do
             if tostring(p.id) == id then
                 if p.takenBy ~= nil then
-                    -- исполнитель уже в пути: проваливаем его задачу с возвратом эскроу
+                    -- исполнитель уже в пути: проваливаем его задачу
+                    -- (разовый заказ удалится сам в releasePost, вакансия останется со снятой бронью)
                     for _, pl in ipairs(player.GetAll()) do
                         if IsValid(pl) then
                             local j = JB.Active[sid64(pl)]
                             if istable(j) and j.fromPost and tostring(j.postId) == tostring(p.id) then
-                                JB.Fail(pl, "заказ отозван заказчиком")
+                                JB.Fail(pl, "публикация отозвана заказчиком")
                             end
                         end
                     end
-                else
-                    if GRM.FactionBudgetAdd then GRM.FactionBudgetAdd(fac, tonumber(p.reward) or 0, "Биржа труда: заказ отозван") end
-                    table.remove(list, i)
-                    JB.SaveCfg("отзыв заказа")
                 end
-                if GRM.Notify then GRM.Notify(ply, "Заказ «" .. tostring(p.title) .. "» отозван, эскроу возвращено в бюджет.", 255, 190, 90) end
+                -- пост ещё на витрине (не удалён releasePost)? вернуть остаток эскроу и снять
+                local idx = nil
+                for k, q in ipairs(list) do if tostring(q.id) == id then idx = k break end end
+                local refund = 0
+                if idx then
+                    refund = postEscrow(p)
+                    if refund > 0 and GRM.FactionBudgetAdd then GRM.FactionBudgetAdd(fac, refund, "Биржа труда: публикация отозвана") end
+                    table.remove(list, idx)
+                    JB.SaveCfg("отзыв публикации")
+                end
+                if GRM.Notify then GRM.Notify(ply, "«" .. tostring(p.title) .. "» отозвано" .. (refund > 0 and (", остаток эскроу " .. (GRM.Format and GRM.Format(refund) or tostring(refund)) .. " возвращён в бюджет.") or "."), 255, 190, 90) end
                 return
             end
         end
@@ -722,34 +834,48 @@ if SERVER then
         if not istable(list) then return end
         for _, p in ipairs(list) do
             if tostring(p.id) == id then
+                local isVac = tostring(p.kind or "order") == "vacancy"
                 if p.takenBy ~= nil then
-                    if GRM.Notify then GRM.Notify(ply, "Заказ уже взят другим исполнителем.", 255, 190, 90) end
+                    if GRM.Notify then GRM.Notify(ply, "Уже выполняется другим исполнителем.", 255, 190, 90) end
                     return
                 end
                 if tostring(p.authorSid or "") == sid64(ply) then
-                    if GRM.Notify then GRM.Notify(ply, "Свой собственный заказ выполнять нельзя.", 255, 190, 90) end
+                    if GRM.Notify then GRM.Notify(ply, "Свою собственную публикацию выполнять нельзя.", 255, 190, 90) end
                     return
                 end
-                local target = assignTarget()
+                if isVac and (tonumber(p.shiftsLeft) or 0) <= 0 then
+                    if GRM.Notify then GRM.Notify(ply, "Смены по вакансии исчерпаны.", 255, 190, 90) end
+                    return
+                end
+                local target
+                if isVac and istable(p.zone) then
+                    target = Vector(tonumber(p.zone.x) or 0, tonumber(p.zone.y) or 0, tonumber(p.zone.z) or 0)
+                else
+                    target = assignTarget()
+                end
                 if not target then
                     if GRM.Notify then GRM.Notify(ply, "В городе нет точек доставки — администрации: /jobdepot_add.", 255, 130, 110) end
                     return
                 end
                 local ok = JB.StartJob(ply, {
-                    title = tostring(p.title) .. " [заказ " .. fac .. "]",
-                    desc = tostring(p.desc or ""), jtype = p.jtype,
-                    reward = p.reward, timeSec = tonumber(p.timeSec) or 600,
+                    title = tostring(p.title) .. (isVac and (" [вакансия " .. fac .. "]") or (" [заказ " .. fac .. "]")),
+                    desc = tostring(p.desc or ""),
+                    jtype = isVac and "shift" or p.jtype,
+                    reward = isVac and (tonumber(p.salary) or 0) or (tonumber(p.reward) or 0),
+                    timeSec = tonumber(p.timeSec) or 600,
                     staySec = tonumber(p.staySec) or 0,
                     target = target, fromPost = true, postFac = fac, postId = p.id,
+                    postKind = isVac and "vacancy" or "order",
                 })
                 if ok then
                     p.takenBy = sid64(ply)
-                    JB.SaveCfg("заказ взят")
+                    JB.SaveCfg(isVac and "смена начата" or "заказ взят")
+                    if isVac then JB.NotifyEmployer(fac, "На смену «" .. tostring(p.title) .. "» вышел " .. rpName(ply) .. " (осталось смен: " .. tostring(p.shiftsLeft) .. ").") end
                 end
                 return
             end
         end
-        if GRM.Notify then GRM.Notify(ply, "Заказ не найден (уже закрыт).", 255, 190, 90) end
+        if GRM.Notify then GRM.Notify(ply, "Публикация не найдена (уже закрыта).", 255, 190, 90) end
     end)
 
     net.Receive(NET_ALLOW, function(_, ply)
@@ -836,6 +962,19 @@ if SERVER then
         if low == "/jobcancel" then
             if istable(JB.Active[sid64(ply)]) then JB.Fail(ply, "отказ работника")
             else ply:PrintMessage(HUD_PRINTTALK, "[Биржа] Активной задачи нет.") end
+            return true
+        end
+        if low == "/jobpost" then
+            -- публикация заказа/вакансии С ЛЮБОГО места (лидер с доступом «БИРЖА»);
+            -- зона смены вакансии = текущая позиция лидера (у станка, на заводе)
+            local canP, myFac = canPost(ply)
+            if not (canP or ply:IsSuperAdmin()) then
+                ply:PrintMessage(HUD_PRINTTALK, "[Биржа] Публиковать может лидер фракции с доступом «БИРЖА» (/job_allow у суперадмина или /factions → «Доступы»).")
+                return true
+            end
+            net.Start(NET_FORM)
+                net.WriteString(tostring(myFac or ""))
+            net.Send(ply)
             return true
         end
         if low == "/jobcenter_add" then return spawnAtAim(ply, "grm_jobcenter", "Терминал биржи труда") end
@@ -965,7 +1104,93 @@ if CLIENT then
         return b
     end
 
-    local JTYPE_NAMES = { goto = "Доставка", stay = "Дежурство", roundtrip = "Туда-обратно" }
+    local JTYPE_NAMES = { goto = "Доставка", stay = "Дежурство", roundtrip = "Туда-обратно", shift = "Смена" }
+
+    -- общая форма публикации заказа/вакансии (терминал + /jobpost)
+    function JB.OpenPostForm(zoneMode, myFac)
+        if IsValid(JB._postForm) then JB._postForm:Remove() end
+        local f = vgui.Create("DFrame")
+        JB._postForm = f
+        f:SetTitle("")
+        f:SetSize(520, 372)
+        f:Center()
+        f:MakePopup()
+        f:ShowCloseButton(false)
+        f.Paint = function(_, pw, ph)
+            draw.RoundedBox(8, 0, 0, pw, ph, C.bg)
+            draw.RoundedBoxEx(8, 0, 0, pw, 42, C.head, true, true, false, false)
+            draw.SimpleText("Публикация от «" .. tostring(myFac) .. "»", "GRMJobs_Title", 14, 21, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(zoneMode == "here" and "Зона смены: где вы стоите" or "Зона смены: точка терминала", "GRMJobs_Small", 410, 21, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        end
+        local x = vgui.Create("DButton", f)
+        x:SetText("X") x:SetFont("GRMJobs_Title") x:SetTextColor(color_white)
+        x:SetPos(476, 7) x:SetSize(32, 28)
+        x.DoClick = function() f:Close() end
+        x.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.red or Color(45, 52, 68)) end
+
+        local eTitle = vgui.Create("DTextEntry", f)
+        eTitle:SetPos(14, 52) eTitle:SetSize(300, 26) eTitle:SetPlaceholderText("Название (4–40): «Рабочие на завод»") eTitle:SetFont("GRMJobs_Normal")
+        local eDesc = vgui.Create("DTextEntry", f)
+        eDesc:SetPos(14, 84) eDesc:SetSize(492, 26) eDesc:SetPlaceholderText("Описание (до 120 симв.): «Производство боеприпасов и оружия, смена у станков»") eDesc:SetFont("GRMJobs_Normal")
+
+        local cb = vgui.Create("DComboBox", f)
+        cb:SetPos(14, 120) cb:SetSize(240, 26) cb:SetFont("GRMJobs_Normal")
+        cb:AddChoice("Вакансия: смены за зарплату", "vacancy", true)
+        cb:AddChoice("Разовый заказ: доставка", "order|goto")
+        cb:AddChoice("Разовый заказ: дежурство 90 с", "order|stay")
+        cb:AddChoice("Разовый заказ: туда-обратно", "order|roundtrip")
+
+        local slPay = vgui.Create("DNumSlider", f)
+        slPay:SetPos(14, 152) slPay:SetSize(480, 30)
+        slPay:SetText("Зарплата за смену (или награда заказа)") slPay:SetMin(100) slPay:SetMax(5000) slPay:SetDecimals(0) slPay:SetValue(1000)
+
+        local cbShift = vgui.Create("DComboBox", f)
+        cbShift:SetPos(14, 192) cbShift:SetSize(240, 26) cbShift:SetFont("GRMJobs_Normal")
+        cbShift:AddChoice("Смена 5 минут", 300)
+        cbShift:AddChoice("Смена 10 минут", 600, true)
+        cbShift:AddChoice("Смена 15 минут", 900)
+        cbShift:AddChoice("Смена 20 минут", 1200)
+
+        local slShifts = vgui.Create("DNumSlider", f)
+        slShifts:SetPos(14, 226) slShifts:SetSize(480, 30)
+        slShifts:SetText("Смен на вакансию (эскроу = зарплата × смены)") slShifts:SetMin(1) slShifts:SetMax(JB.MaxShifts) slShifts:SetDecimals(0) slShifts:SetValue(3)
+
+        local hint = vgui.Create("DLabel", f)
+        hint:SetPos(14, 262) hint:SetSize(492, 56) hint:SetFont("GRMJobs_Small") hint:SetTextColor(C.dim)
+        hint:SetText("Вакансия: работник встаёт в зону смены и отрабатывает время — зарплата после каждой смены из эскроу. Разовый заказ: цель назначается из точек доставки города. Деньги резервируются с бюджета при публикации; отзыв/срок — возврат. Лимит: " .. tostring(JB.MaxPosts) .. " публикации(й) на фракцию, срок 24 ч.")
+        hint:SetWrap(true) hint:SetAutoStretchVertical(true)
+
+        local bPub = vgui.Create("DButton", f)
+        bPub:SetPos(14, 324) bPub:SetSize(492, 34) bPub:SetText("Опубликовать (эскроу с бюджета фракции)")
+        bPub:SetFont("GRMJobs_Sub") bPub:SetTextColor(color_white)
+        bPub.Paint = function(self, pw, ph) draw.RoundedBox(6, 0, 0, pw, ph, self:IsHovered() and Color(80, 210, 130) or C.green) end
+        bPub.DoClick = function()
+            local _, data = cb:GetSelected()
+            data = tostring(data or "vacancy")
+            local kind, jtype = "vacancy", "goto"
+            if string.sub(data, 1, 6) == "order|" then
+                kind = "order"
+                jtype = string.sub(data, 7)
+            end
+            local _, shiftSec = cbShift:GetSelected()
+            net.Start(NET_POST)
+                net.WriteString(kind)
+                net.WriteString(eTitle:GetValue() or "")
+                net.WriteString(eDesc:GetValue() or "")
+                net.WriteString(jtype)
+                net.WriteUInt(math.floor(tonumber(slPay:GetValue()) or 0), 20)
+                net.WriteUInt(tonumber(shiftSec) or 600, 12)
+                net.WriteUInt(math.floor(tonumber(slShifts:GetValue()) or 1), 8)
+                net.WriteString(zoneMode or "term")
+            net.SendToServer()
+            timer.Simple(0.4, function() if IsValid(f) then f:Close() end end)
+        end
+    end
+
+    net.Receive(NET_FORM, function()
+        local fac = net.ReadString() or ""
+        JB.OpenPostForm("here", fac ~= "" and fac or "фракция")
+    end)
 
     net.Receive(NET_OPEN, function()
         local isSuper = net.ReadBool()
@@ -1023,6 +1248,7 @@ if CLIENT then
                 draw.SimpleText(tostring(active.title) .. "  (" .. tostring(fmtMoney(active.reward or 0)) .. ")", "GRMJobs_Sub", 10, 16, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                 local note = ""
                 if active.jtype == "stay" then note = " | в зоне: " .. tostring(active.stayLeft or 0) .. " с" end
+                if active.jtype == "shift" then note = " | смена: " .. tostring(active.stayLeft or 0) .. " с" end
                 if active.jtype == "roundtrip" then note = (active.stage == 2) and " | этап: возврат к терминалу" or " | этап: к точке" end
                 if active.fromPost then note = note .. " | заказ " .. tostring(active.postFac) end
                 draw.SimpleText(tostring(active.desc or ""), "GRMJobs_Small", 10, 34, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
@@ -1077,14 +1303,21 @@ if CLIENT then
             none:SetText("Пока ни одна фракция не опубликовала заказ.")
         end
         for i, p in ipairs(posts) do
+            local isVac = p.kind == "vacancy"
             local row = vgui.Create("DPanel", bp)
             row:SetPos(10, 28 + (i - 1) * 58) row:SetSize(880, 54)
             row.Paint = function(_, pw, ph)
                 draw.RoundedBox(5, 0, 0, pw, ph, C.panel2)
-                draw.SimpleText(tostring(p.title) .. "  —  " .. tostring(p.faction), "GRMJobs_Sub", 10, 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                draw.SimpleText(tostring(p.desc or "") .. "  •  тип: " .. tostring(JTYPE_NAMES[p.jtype] or p.jtype) .. "  •  автор: " .. tostring(p.author), "GRMJobs_Small", 10, 31, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                local status = p.taken and "ВЗЯТ исполнителем" or (fmtMoney(p.reward or 0) .. " • свободен")
-                draw.SimpleText(status, "GRMJobs_Normal", 10, 46, p.taken and C.red or C.teal, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText((isVac and "ВАКАНСИЯ «" or "Заказ «") .. tostring(p.title) .. "»  —  " .. tostring(p.faction), "GRMJobs_Sub", 10, 14, isVac and C.green or C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText(tostring(p.desc or "") .. "  •  " .. (isVac and ("зона смены • автор: ") or ("тип: " .. tostring(JTYPE_NAMES[p.jtype] or p.jtype) .. " • автор: ")) .. tostring(p.author), "GRMJobs_Small", 10, 31, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                local status
+                if isVac then
+                    status = (p.taken and "СМЕНА ИДЁТ • " or "") .. "зарплата " .. fmtMoney(p.salary or 0) .. " × осталось смен: " .. tostring(p.shiftsLeft or 0) ..
+                        ((tonumber(p.payedTotal) or 0) > 0 and (" • выплачено: " .. fmtMoney(p.payedTotal) .. " (" .. tostring(p.lastWorker) .. ")") or "")
+                else
+                    status = p.taken and "ВЗЯТ исполнителем" or (fmtMoney(p.reward or 0) .. " • свободен")
+                end
+                draw.SimpleText(status, "GRMJobs_Normal", 10, 46, p.taken and C.red or (isVac and C.green or C.teal), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             end
             if canP and p.mine then
                 local bUn = mkBtn(row, "Отозвать", C.red)
@@ -1111,36 +1344,15 @@ if CLIENT then
             end
         end
 
-        -- публикация заказа лидером
+        -- публикация заказа/вакансии лидером (форма-всплывашка)
         if canP then
-            local bf = block(150, "Опубликовать заказ от фракции «" .. myFac .. "» (эскроу с бюджета):", C.green)
-            local eTitle = vgui.Create("DTextEntry", bf)
-            eTitle:SetPos(10, 28) eTitle:SetSize(300, 26) eTitle:SetPlaceholderText("Название заказа (4–40 симв.)") eTitle:SetFont("GRMJobs_Normal")
-            local eDesc = vgui.Create("DTextEntry", bf)
-            eDesc:SetPos(320, 28) eDesc:SetSize(560, 26) eDesc:SetPlaceholderText("Описание (до 120 симв., необязательно)") eDesc:SetFont("GRMJobs_Normal")
-            local cb = vgui.Create("DComboBox", bf)
-            cb:SetPos(10, 62) cb:SetSize(220, 26) cb:SetFont("GRMJobs_Normal")
-            cb:AddChoice("Доставка (к точке)", "goto", true)
-            cb:AddChoice("Дежурство (90 с в зоне)", "stay")
-            cb:AddChoice("Туда-обратно", "roundtrip")
-            local sl = vgui.Create("DNumSlider", bf)
-            sl:SetPos(250, 60) sl:SetSize(400, 30)
-            sl:SetText("Награда") sl:SetMin(JB.MinReward) sl:SetMax(JB.MaxReward) sl:SetDecimals(0) sl:SetValue(1000)
-            local bPub = mkBtn(bf, "Опубликовать", C.green)
-            bPub:SetPos(668, 104) bPub:SetSize(212, 34) bPub:SetFont("GRMJobs_Normal")
-            bPub.DoClick = function()
-                local _, jtype = cb:GetSelected()
-                net.Start(NET_POST)
-                    net.WriteString(eTitle:GetValue() or "")
-                    net.WriteString(eDesc:GetValue() or "")
-                    net.WriteString(tostring(jtype or "goto"))
-                    net.WriteUInt(math.floor(tonumber(sl:GetValue()) or 0), 20)
-                net.SendToServer()
-                timer.Simple(0.5, function() if IsValid(f) then f:Close() end end)
-            end
+            local bf = block(64, "Вы — лидер с доступом «БИРЖА»: публикация работ от «" .. myFac .. "» (эскроу с бюджета):", C.green)
+            local bPub = mkBtn(bf, "Опубликовать заказ / вакансию", C.green)
+            bPub:SetPos(10, 26) bPub:SetSize(300, 30) bPub:SetFont("GRMJobs_Normal")
+            bPub.DoClick = function() JB.OpenPostForm("term", myFac) end
             local hint = vgui.Create("DLabel", bf)
-            hint:SetPos(10, 108) hint:SetSize(640, 34) hint:SetFont("GRMJobs_Small") hint:SetTextColor(C.dim)
-            hint:SetText("Сумма награды резервируется с бюджета фракции сразу. Выполнение — деньги исполнителю, отзыв/срок 24 ч — возврат. Одновременно до " .. tostring(JB.MaxPosts) .. " заказов.")
+            hint:SetPos(330, 28) hint:SetSize(550, 30) hint:SetFont("GRMJobs_Small") hint:SetTextColor(C.dim)
+            hint:SetText("Вакансия у станка/завода: встаньте на место и используйте /jobpost — зона смены будет там, где вы стоите.")
             hint:SetWrap(true) hint:SetAutoStretchVertical(true)
         end
 
@@ -1195,6 +1407,7 @@ if CLIENT then
                     draw.SimpleText(tostring(my.desc or ""), "GRMJobs_Small", 12, y, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP) y = y + 20
                     local note = "Осталось: " .. fmtTime(left) .. " • награда: " .. fmtMoney(my.reward or 0)
                     if my.jtype == "stay" then note = note .. " • в зоне: " .. tostring(my.stayLeft or 0) .. " с" end
+                    if my.jtype == "shift" then note = note .. " • СМЕНА: " .. tostring(my.stayLeft or 0) .. " с" end
                     if my.jtype == "roundtrip" then note = note .. ((my.stage == 2) and " • этап: возврат" or " • этап: к точке") end
                     if my.fromPost then note = note .. " • заказ " .. tostring(my.postFac) end
                     draw.SimpleText(note, "GRMJobs_Normal", 12, y, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP) y = y + 24

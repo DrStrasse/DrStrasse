@@ -139,7 +139,10 @@ if SERVER then
     net.Receive(NET_REQ, function(_, ply) sendData(ply) end)
 
     net.Receive(NET_SAVE, function(_, ply)
-        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        -- было IsSuperAdmin-only: выданные управляющие доступом (той же
+        -- матрицы) жали «Сохранить» и получали тишину — репорт владельца.
+        -- Теперь единый гейт с операциями категорий (AM.CanManage).
+        if not IsValid(ply) or not AM.CanManage(ply) then return end
         AM.Save(net.ReadTable() or {})
         net.Start(NET_RESULT)
             net.WriteBool(true)

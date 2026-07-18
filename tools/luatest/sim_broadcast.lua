@@ -54,16 +54,24 @@ local ply = setmetatable({
 }, { __index = function(_, k) P("СТУБ-ВЫЗОВ ply:" .. tostring(k)) return function() return nil end end })
 H.players = { ply }
 
+-- вектор-заглушка с DistToSqr (SendAlert мерит радиус громкоговорителей)
+local VMT = {}
+VMT.__index = function(self, k)
+  if k == "DistToSqr" then return function(s, o) local dx, dy, dz = s.x - o.x, s.y - o.y, s.z - o.z return dx * dx + dy * dy + dz * dz end end
+  return nil
+end
+local function V(x, y, z) return setmetatable({ x = x or 0, y = y or 0, z = z or 0 }, VMT) end
+
 -- громкоговоритель-заглушка
 local spk = setmetatable({}, { __index = function(_, k)
   if k == "SetNWBool" then return function() end end
   if k == "EmitSound" then return function() P("SPK EMIT") end end
   if k == "EntIndex" then return function() return 5 end end
-  if k == "GetPos" then return function() return { x=0,y=0,z=0 } end end
+  if k == "GetPos" then return function() return V(0, 0, 0) end end
   P("СТУБ-ВЫЗОВ spk:" .. tostring(k)) return function() return nil end
 end })
 H.entsByClass = { grm_loudspeaker = { spk }, grm_radio = {}, grm_broadcast_mic = {} }
-ply.GetPos = function() return { x=10,y=0,z=0 } end
+ply.GetPos = function() return V(10, 0, 0) end
 
 GAMEMODE = nil
 AddCSLuaFile = function() end

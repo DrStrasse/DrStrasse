@@ -164,6 +164,7 @@ CHECK("первая вакансия — курьер (goto)", offers[1] and off
 H._curPly = worker
 netInject("GRM_Jobs_Accept", { offers[1].idx })
 CHECK("задача принята", istable(JB.Active[wsid]))
+CHECK("улицы живы: idx у вакансии числовой", type(offers[1].idx) == "number")
 local job = JB.Active[wsid]
 CHECK("у задачи есть цель", job and job.target and math.abs(job.target.x) > 100)
 
@@ -182,8 +183,9 @@ CHECK("first_pay докрылась каскадом наград", rec.u.first_
 CHECK("метрика moneyEarned выросла", (rec.c.moneyEarned or 0) > 0)
 
 -- 4) заказ фракции: публикация (эскроу) → взятие → смена → выполнение
+--    (layout NET_POST v1.1.0: kind, title, desc, jtype, money(u20), shiftSec(u12), shifts(u8), zoneMode)
 H._curPly = leader
-netInject("GRM_Jobs_Post", { "Патруль парка", "Продежурить на точке", "stay", 1500 })
+netInject("GRM_Jobs_Post", { "order", "Патруль парка", "Продежурить на точке", "stay", 1500, 600, 1, "term" })
 local posts = JB.Cfg.posts["Мэрия"] or {}
 CHECK("заказ опубликован", #posts == 1)
 CHECK("эскроу списано (5000-1500=3500)", budget == 3500)
@@ -204,7 +206,7 @@ CHECK("метрика jobsFaction у исполнителя", (rec2.c.jobsFactio
 
 -- 5) публикация и отзыв: возврат эскроу
 H._curPly = leader
-netInject("GRM_Jobs_Post", { "Доставка архива", "", "goto", 1200 })
+netInject("GRM_Jobs_Post", { "order", "Доставка архива", "", "goto", 1200, 600, 1, "term" })
 posts = JB.Cfg.posts["Мэрия"] or {}
 pid = posts[1] and posts[1].id
 CHECK("второй заказ опубликован (3500-1200=2300)", budget == 2300 and pid ~= nil)
@@ -212,14 +214,91 @@ netInject("GRM_Jobs_Unpost", { "Мэрия", pid })
 CHECK("отзыв вернул эскроу (2300+1200=3500)", budget == 3500)
 CHECK("витрина пуста", #(JB.Cfg.posts["Мэрия"] or {}) == 0)
 
--- 6) /jobs и /jobcancel через PlayerSay
+-- 6) ВАКАНСИЯ фракции: зарплата×смены, зона «где стою», две смены двумя рабочими
+H._curPly = leader
+netInject("GRM_Jobs_Post", { "vacancy", "Завод смена", "Производство боеприпасов", "stay", 400, 300, 2, "here" })
+posts = JB.Cfg.posts["Мэрия"] or {}
+local vp = posts[1]
+CHECK("вакансия опубликована", istable(vp) and vp.kind == "vacancy")
+CHECK("зарплата/смены сохранены", vp and vp.salary == 400 and vp.shiftsLeft == 2)
+CHECK("эскроу = зарплата × смены (3500-800=2700)", budget == 2700)
+CHECK("JB.PostEscrow = 800", JB.PostEscrow(vp) == 800)
+CHECK("зона зафиксирована (here)", istable(vp.zone))
+pid = vp.id
+
+-- первая смена: worker2
+vp.staySec = 5 -- сим-ускорение: короткая смена
+H._curPly = worker2
+netInject("GRM_Jobs_TakePost", { "Мэрия", pid })
+local jv = JB.Active[worker2:SteamID64()]
+CHECK("смена взята", istable(jv) and jv.jtype == "shift" and jv.postKind == "vacancy")
+CHECK("зарплата в задаче = 400", jv.reward == 400)
+CHECK("цель смены = зона вакансии", jv.target and math.abs(jv.target.x - vp.zone.x) < 1)
+CHECK("бронь выставлена", vp.takenBy == worker2:SteamID64())
+worker2._pos = Vector(vp.zone.x, vp.zone.y, vp.zone.z)
+for i = 1, 6 do JB.TickJobs() end
+CHECK("первая смена отработана", JB.Active[worker2:SteamID64()] == nil)
+CHECK("осталась 1 смена", vp.shiftsLeft == 1)
+CHECK("payedTotal=400, lastWorker=Грузов", vp.payedTotal == 400 and vp.lastWorker == "Грузов")
+CHECK("бронь снята, вакансия на витрине", vp.takenBy == nil and #(JB.Cfg.posts["Мэрия"] or {}) == 1)
+CHECK("бюджет не дёрнулся (эскроу списан при публикации)", budget == 2700)
+CHECK("JB.PostEscrow = 400 (остаток)", JB.PostEscrow(vp) == 400)
+
+-- вторая смена: worker закрывает вакансию
+vp.staySec = 5
+H._curPly = worker
+local earnedBefore = JB.StatsFor(worker:SteamID64()).earned
+netInject("GRM_Jobs_TakePost", { "Мэрия", pid })
+worker._pos = Vector(vp.zone.x, vp.zone.y, vp.zone.z)
+for i = 1, 6 do JB.TickJobs() end
+CHECK("вторая смена отработана", JB.Active[worker:SteamID64()] == nil)
+CHECK("вакансия закрылась (смены исчерпаны)", #(JB.Cfg.posts["Мэрия"] or {}) == 0)
+CHECK("статистика worker +400", JB.StatsFor(worker:SteamID64()).earned == earnedBefore + 400)
+CHECK("бюджет без возврата (всё выплачено сменами)", budget == 2700)
+local recw = AC.RecOf(worker)
+CHECK("метрика jobsFaction у второго исполнителя", (recw.c.jobsFaction or 0) == 1)
+
+-- 7) регресс: провал исполнителя НЕ закрывает многоразовую вакансию
+H._curPly = leader
+netInject("GRM_Jobs_Post", { "vacancy", "Сборка гаек", "", "stay", 300, 300, 2, "here" })
+vp = (JB.Cfg.posts["Мэрия"] or {})[#(JB.Cfg.posts["Мэрия"] or {})]
+CHECK("вакансия 2 опубликована (2700-600=2100)", budget == 2100 and istable(vp))
+pid = vp.id
+H._curPly = worker2
+netInject("GRM_Jobs_TakePost", { "Мэрия", pid })
+c2 = H.hooks["PlayerSay"]["GRM_Jobs_ChatCmds"](worker2, "/jobcancel")
+CHECK("исполнитель отказался", c2 == "" and JB.Active[worker2:SteamID64()] == nil)
+CHECK("вакансия ЖИВА после провала (бронь снята)", #(JB.Cfg.posts["Мэрия"] or {}) == 1 and vp.takenBy == nil)
+CHECK("смены не сгорели", vp.shiftsLeft == 2)
+CHECK("эскроу не трогали (ни одна смена не оплачена)", budget == 2100)
+H._curPly = leader
+netInject("GRM_Jobs_Unpost", { "Мэрия", pid })
+CHECK("отзыв свободной вакансии вернул эскроу (2100+600=2700)", budget == 2700)
+CHECK("витрина пуста", #(JB.Cfg.posts["Мэрия"] or {}) == 0)
+
+-- 8) регресс: отзыв лидером ЗАНЯТОЙ вакансии — провал исполнителя + полный возврат
+H._curPly = leader
+netInject("GRM_Jobs_Post", { "vacancy", "Упаковка", "", "stay", 300, 300, 2, "here" })
+vp = (JB.Cfg.posts["Мэрия"] or {})[#(JB.Cfg.posts["Мэрия"] or {})]
+CHECK("вакансия 3 опубликована (2700-600=2100)", budget == 2100 and istable(vp))
+pid = vp.id
+H._curPly = worker2
+netInject("GRM_Jobs_TakePost", { "Мэрия", pid })
+CHECK("смена 3 взята", istable(JB.Active[worker2:SteamID64()]))
+H._curPly = leader
+netInject("GRM_Jobs_Unpost", { "Мэрия", pid })
+CHECK("исполнитель провален отзывом", JB.Active[worker2:SteamID64()] == nil)
+CHECK("занятая вакансия снята с витрины", #(JB.Cfg.posts["Мэрия"] or {}) == 0)
+CHECK("неизрасходованный эскроу возвращён (2100+600=2700)", budget == 2700)
+
+-- 9) /jobs и /jobcancel через PlayerSay
 H._curPly = worker
 local c1 = H.hooks["PlayerSay"]["GRM_Jobs_ChatCmds"](worker, "/jobs")
 CHECK("/jobs поглощена", c1 == "")
-local c2 = H.hooks["PlayerSay"]["GRM_Jobs_ChatCmds"](worker, "/jobcancel")
+c2 = H.hooks["PlayerSay"]["GRM_Jobs_ChatCmds"](worker, "/jobcancel")
 CHECK("/jobcancel поглощена (нет задачи — честно говорит)", c2 == "")
 
--- 7) чужотные команды не поглощаются
+-- 10) чужотные команды не поглощаются
 local c3 = H.hooks["PlayerSay"]["GRM_Jobs_ChatCmds"](worker, "/alert test")
 CHECK("чужая команда проходит мимо (nil)", c3 == nil)
 local c4 = H.hooks["PlayerSay"]["GRM_Ach_ChatCmds"](worker, "/ach")
