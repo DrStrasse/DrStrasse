@@ -1,6 +1,11 @@
 --[[--------------------------------------------------------------------
-    GRM F4 Menu v1.1.0 (Код 74) — Игровое меню на F4
-    v1.1.0: подписи настроек отражают отрисовку RP-имён над головами (Код 71 v2.1.0).
+    GRM F4 Menu v1.2.0 (Код 74) — Игровое меню на F4
+    v1.2.0: F4 ловится ДВУМЯ путями (бинд gm_showspare2 + прямой опрос
+      KEY_F4 в Think с анти-дублем и защитой от ввода текста/консоли/ESC) —
+      репорт владельца: бинд до хука не доходил. F4 теперь ещё и ЗАКРЫВАЕТ
+      открытое меню (toggle). Новая вкладка «Графика»: пресеты FPS+/Красота,
+      выключатели (тени, свет, блики, вода, небо, трава, motion blur, многоядерность),
+      слайдеры дальности отрисовки объектов, LOD, текстур, декалей и лимита FPS.
       - «Профиль»: игровое имя (RP Name) со сменой, внешность (меню
         персонажа Код 72), описание персонажа (RPDesc Код 71),
         карточка (SteamID64, фракция/роль, баланс).
@@ -8,8 +13,8 @@
         (Чат RP, Персонаж, Фракции, Деньги, Двери, Транспорт, Телефон, Прочее).
       - «Настройки»: клиентские выключатели HUD (RPDesc над головами,
         дистанция RPDesc, HUD дверей, полоса стамины, полоса сытости).
-      - Открытие: F4 (ShowSpare2) — уступает дверям (прицел на дверь → меню двери),
-        команда /menu, !menu, /f4, concommand grm_f4.
+      - Открытие: F4 (бинд ShowSpare2 + резервный опрос KEY_F4) — уступает дверям
+        (прицел на дверь → меню двери), команда /menu, !menu, /f4, concommand grm_f4.
 ----------------------------------------------------------------------]]
 
 if SERVER then AddCSLuaFile() end
@@ -18,7 +23,7 @@ if not CLIENT then return end
 GRM = GRM or {}
 GRM.F4 = GRM.F4 or {}
 local F4 = GRM.F4
-F4.Version = "1.1.0"
+F4.Version = "1.2.0"
 
 surface.CreateFont("GRMF4_Title",  { font = "Roboto", size = 22, weight = 800, extended = true })
 surface.CreateFont("GRMF4_Sub",    { font = "Roboto", size = 15, weight = 600, extended = true })
@@ -249,6 +254,108 @@ local function buildSettingsTab(sc)
 end
 
 -----------------------------------------------------------
+-- Вкладка «Графика» (удобная базовая настройка без стандартного меню)
+-----------------------------------------------------------
+local GFX_PRESET_LOW = {
+    { "r_shadows", "0" }, { "r_dynamic", "0" }, { "mat_specular", "0" },
+    { "r_waterforceexpensive", "0" }, { "r_WaterDrawReflection", "0" }, { "r_WaterDrawRefraction", "0" },
+    { "r_DrawDetailProps", "0" }, { "cl_detaildist", "450" }, { "r_staticprop_lod", "3" },
+    { "mat_picmip", "2" }, { "mp_decals", "50" }, { "mat_motion_blur_enabled", "0" },
+    { "gmod_mcore_test", "1" }, { "r_drawskybox", "1" },
+}
+local GFX_PRESET_HIGH = {
+    { "r_shadows", "1" }, { "r_dynamic", "1" }, { "mat_specular", "1" },
+    { "r_waterforceexpensive", "1" }, { "r_WaterDrawReflection", "1" }, { "r_WaterDrawRefraction", "1" },
+    { "r_DrawDetailProps", "1" }, { "cl_detaildist", "1500" }, { "r_staticprop_lod", "-1" },
+    { "mat_picmip", "0" }, { "mp_decals", "2048" }, { "mat_motion_blur_enabled", "0" },
+    { "gmod_mcore_test", "1" }, { "r_drawskybox", "1" },
+}
+
+local GFX_TOGGLES = {
+    { { "r_shadows" },            "Динамические тени (дорогие для FPS)" },
+    { { "r_dynamic" },            "Динамическое освещение (фонарики, лампы)" },
+    { { "mat_specular" },         "Блики и отсветы на поверхностях" },
+    { { "r_WaterDrawReflection", "r_WaterDrawRefraction" }, "Отражения и преломление воды" },
+    { { "r_waterforceexpensive" },"Дорогая (реалистичная) вода" },
+    { { "r_DrawDetailProps" },    "Трава и мелкие детали ландшафта" },
+    { { "r_drawskybox" },         "3D-небо (skybox)" },
+    { { "mat_motion_blur_enabled" },"Размытие в движении (motion blur)" },
+    { { "gmod_mcore_test" },      "Многоядерный рендер (обычно +FPS)" },
+}
+
+local GFX_SLIDERS = {
+    { "cl_detaildist",    "Дальность отрисовки мелких объектов (трава/детали)", 400, 4096 },
+    { "r_staticprop_lod", "Дальность/детализация крупных объектов (LOD: -1 максимум, 3 минимум)", -1, 3 },
+    { "mat_picmip",       "Качество текстур (0 — максимум, 4 — минимум)", 0, 4 },
+    { "mp_decals",        "Декали — следы выстрелов и крови (шт.)", 0, 2048 },
+    { "fps_max",          "Лимит FPS (0 — без лимита)", 0, 500 },
+}
+
+local function buildGraphicsTab(sc, refresh)
+    -- пресеты
+    local b0 = block(sc, 76, "Быстрые пресеты:")
+    local function applyPreset(list, name)
+        for _, kv in ipairs(list) do RunConsoleCommand(kv[1], kv[2]) end
+        timer.Simple(0.1, function() if refresh then refresh() end end)
+        notification.AddLegacy("Пресет графики «" .. name .. "» применён.", NOTIFY_GENERIC, 3)
+    end
+    local bLow = mkBtn(b0, "FPS+ (низкая графика)", C.green)
+    bLow:SetPos(10, 30) bLow:SetSize(250, 32)
+    bLow.DoClick = function() applyPreset(GFX_PRESET_LOW, "FPS+") end
+    local bHigh = mkBtn(b0, "Красота (высокая графика)", C.acc)
+    bHigh:SetPos(270, 30) bHigh:SetSize(250, 32)
+    bHigh.DoClick = function() applyPreset(GFX_PRESET_HIGH, "Красота") end
+
+    -- выключатели эффектов
+    local b1 = block(sc, 28 + #GFX_TOGGLES * 26 + 8, "Эффекты и качество:")
+    for i, t in ipairs(GFX_TOGGLES) do
+        local cvars, label = t[1], t[2]
+        local cv = GetConVar(cvars[1])
+        local y = 26 + (i - 1) * 26
+        if not cv then
+            local off = vgui.Create("DLabel", b1)
+            off:SetPos(14, y) off:SetSize(600, 24) off:SetFont("GRMF4_Normal") off:SetTextColor(C.dim)
+            off:SetText(label .. " — недоступно")
+        else
+            local chk = vgui.Create("DCheckBoxLabel", b1)
+            chk:SetPos(14, y) chk:SetSize(600, 24)
+            chk:SetText(label) chk:SetFont("GRMF4_Normal") chk:SetTextColor(C.text)
+            chk:SetValue(cv:GetInt() ~= 0 and 1 or 0)
+            chk.OnChange = function(_, v)
+                for _, cn in ipairs(cvars) do RunConsoleCommand(cn, v and "1" or "0") end
+            end
+        end
+    end
+
+    -- слайдеры дальности/качества
+    local b2 = block(sc, 28 + #GFX_SLIDERS * 50 + 8, "Дальность отрисовки и качество:")
+    for i, s in ipairs(GFX_SLIDERS) do
+        local cvar, label, mn, mx = s[1], s[2], s[3], s[4]
+        local y = 26 + (i - 1) * 50
+        local lbl = vgui.Create("DLabel", b2)
+        lbl:SetPos(14, y) lbl:SetSize(720, 18) lbl:SetFont("GRMF4_Normal") lbl:SetTextColor(C.text)
+        lbl:SetText(label)
+        local sl = vgui.Create("DNumSlider", b2)
+        sl:SetPos(10, y + 18) sl:SetSize(560, 28)
+        sl:SetMin(mn) sl:SetMax(mx) sl:SetDecimals(0)
+        if GetConVar(cvar) then
+            sl:SetConVar(cvar)
+        else
+            sl:SetEnabled(false)
+            lbl:SetText(label .. " — недоступно")
+            lbl:SetTextColor(C.dim)
+        end
+    end
+
+    local b3 = block(sc, 64, "Примечание:")
+    local note = vgui.Create("DLabel", b3)
+    note:SetPos(14, 28) note:SetSize(720, 30)
+    note:SetFont("GRMF4_Normal") note:SetTextColor(C.dim)
+    note:SetText("Качество текстур и LOD полностью применятся после перезахода на сервер. Все значения сохраняются на вашем ПК.")
+    note:SetWrap(true) note:SetAutoStretchVertical(true)
+end
+
+-----------------------------------------------------------
 -- Главное окно
 -----------------------------------------------------------
 local function buildMenu()
@@ -304,26 +411,80 @@ local function buildMenu()
     sc3:Dock(FILL)
     buildSettingsTab(sc3)
     sheet:AddSheet("Настройки", p3, "icon16/cog.png")
+
+    -- Графика (пересобирается для мгновенного обновления значений)
+    local p4 = vgui.Create("DPanel")
+    p4:SetPaintBackground(false)
+    local sc4 = vgui.Create("DScrollPanel", p4)
+    sc4:Dock(FILL)
+    local function refreshGfx()
+        if not IsValid(sc4) then return end
+        sc4:Clear()
+        buildGraphicsTab(sc4, refreshGfx)
+    end
+    refreshGfx()
+    sheet:AddSheet("Графика", p4, "icon16/monitor.png")
 end
 
 function F4.Open()
     buildMenu()
 end
 
+function F4.Close()
+    if IsValid(F4._frame) then F4._frame:Remove() end
+end
+
+function F4.Toggle()
+    if IsValid(F4._frame) then F4.Close() else F4.Open() end
+end
+
 concommand.Add("grm_f4", F4.Open)
 
--- F4 (ShowSpare2): уступаем прицелу на дверь (там меню двери)
+-- уступаем прицелу на дверь (двери открывают своё меню) — общий предикат
+local function yieldsToDoor(ply)
+    if not IsValid(ply) then return false end
+    if not (GRM and GRM.Doors and GRM.Doors.IsDoor) then return false end
+    local tr = ply:GetEyeTrace()
+    if not (tr and IsValid(tr.Entity)) then return false end
+    if not GRM.Doors.IsDoor(tr.Entity) then return false end
+    local maxD = (GRM.Doors.Config and GRM.Doors.Config.UseDistance) or 180
+    return tr.StartPos:DistToSqr(tr.HitPos) <= maxD * maxD
+end
+
+-- анти-дубль: два канала (бинд и опрос) могут увидеть одно нажатие
+local function keyPressHandled()
+    local now = CurTime()
+    if (F4._keyTs or 0) + 0.25 > now then return true end
+    F4._keyTs = now
+    return false
+end
+
+-- Канал 1: стандартный бинд gm_showspare2 (F4)
 hook.Add("ShowSpare2", "GRM_F4_Open", function(ply)
-    local tr = IsValid(ply) and ply:GetEyeTrace() or nil
-    if tr and IsValid(tr.Entity) and GRM and GRM.Doors and GRM.Doors.IsDoor
-        and GRM.Doors.IsDoor(tr.Entity)
-        and tr.StartPos:DistToSqr(tr.HitPos) <= (GRM.Doors.Config and (GRM.Doors.Config.UseDistance or 180) or 180) ^ 2 then
-        return -- двери откроют своё меню
-    end
-    if ply == LocalPlayer() then
-        F4.Open()
-        return true
-    end
+    if not IsValid(ply) or ply ~= LocalPlayer() then return end
+    if yieldsToDoor(ply) then return end
+    if keyPressHandled() then return true end
+    F4.Toggle()
+    return true
+end)
+
+-- Канал 2: резервный прямой опрос клавиши (если бинд съеден/переопределён)
+local f4WasDown = false
+hook.Add("Think", "GRM_F4_KeyPoll", function()
+    local down = input.IsKeyDown(KEY_F4)
+    if down == f4WasDown then return end
+    f4WasDown = down
+    if not down then return end -- срабатываем на ФРОНТ нажатия, не на удержание
+    -- не лезем, когда идёт набор текста, консоль или ESC-меню
+    if IsValid(vgui.GetKeyboardFocus()) then return end
+    if gui.IsConsoleVisible() then return end
+    if gui.IsGameUIVisible() then return end
+    local lp = LocalPlayer()
+    if not IsValid(lp) then return end
+    if lp.IsTyping and lp:IsTyping() then return end
+    if yieldsToDoor(lp) then return end
+    if keyPressHandled() then return end
+    F4.Toggle()
 end)
 
 hook.Add("PlayerSayTransform", "GRM_F4_Chat", function(ply, datapack)
