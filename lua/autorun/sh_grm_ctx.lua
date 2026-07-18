@@ -171,6 +171,9 @@ local function actFactions()  RunConsoleCommand("say", "/factions") end
 local function actMask()      RunConsoleCommand("say", "/mask") end
 
 -- Транспорт рядом (Код 82): сервер сам перепроверит прицел и права
+-- fg: req объявлена форвардом — vehAct вызывает её из замыкания (иначе была бы
+-- ссылка на ГЛОБАЛЬНЫЙ req=nil → timer.Simple(function expected, got nil), 18.07.2026)
+local req
 local function vehAct(what)
     return function()
         net.Start("GRM_Ctx_VehAct")
@@ -208,7 +211,7 @@ local BTNS = {
     { id = "mask",       l = "Маскировка",   fn = actMask,       c = CC.mask,    ch = CC.maskH,    ok = function() return data.hasMaskAccess == true end },
 }
 
-local function req()
+req = function()
     net.Start("GRM_Ctx_Check")
     net.SendToServer()
 end
