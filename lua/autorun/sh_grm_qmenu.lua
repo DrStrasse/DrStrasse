@@ -1,6 +1,11 @@
 --[[--------------------------------------------------------------------
-    GRM Q-меню и инструменты v3.2.0 (Код 93) — «GRM Стройка+»
+    GRM Q-меню и инструменты v3.2.1 (Код 94) — «GRM Стройка+»
 
+    v3.2.1 (Код 94, находка 111, визуальный пас по скриншоту): окно КРУПНЕЕ
+    и ШИРЕ (0.72/0.82 экрана, пределы 1080..1360 × 680..900), футер 64px
+    в два чистых ряда — кнопки 30px с шагом 8px БЕЗ наслоения, строка
+    «Мои пропы / активный инструмент / тост» отделена визуально, шапка
+    правой колонки инструментов поднята до 30px.
     v3.2.0 (Код 93, находка 110): у владельца живое меню перекрывал ЧУЖОЙ
     аддон «GRM Restricted Q Menu» (не входит в сборку) — он глушил Q раньше
     нашего хука. Добавлено:
@@ -66,7 +71,7 @@ GRM = GRM or {}
 GRM.QMenu = GRM.QMenu or {}
 local QM = GRM.QMenu
 
-QM.Version = "3.2.0"
+QM.Version = "3.2.1"
 
 local CONFIG_FILE = "grm_qmenu.json"
 
@@ -702,7 +707,7 @@ if SERVER then
     end)
 
     QM.Load("старт")
-    print("[GRM QMenu] Стройка+ v" .. QM.Version .. " загружена (Код 93). Игрок: Q | Админ: /qm | Хаб: /grm_admin → «Инструменты»")
+    print("[GRM QMenu] Стройка+ v" .. QM.Version .. " загружена (Код 94). Игрок: Q | Админ: /qm | Хаб: /grm_admin → «Инструменты»")
 end
 
 -- ============================================================
@@ -914,15 +919,15 @@ if CLIENT then
         if not admin and QM._tab ~= "catalog" then QM._tab = "catalog" end
 
         -- размер окна: адаптив от экрана (гарды для стендов без ScrW/ScrH)
-        local FW, FH = 1100, 720
+        local FW, FH = 1200, 780
         if isfunction(ScrW) and isfunction(ScrH) then
             local sw, sh = ScrW(), ScrH()
             if isnumber(sw) and isnumber(sh) and sw > 0 and sh > 0 then
-                FW = math.Clamp(math.floor(sw * 0.62), 960, 1180)
-                FH = math.Clamp(math.floor(sh * 0.74), 620, 780)
+                FW = math.Clamp(math.floor(sw * 0.72), 1080, 1360)
+                FH = math.Clamp(math.floor(sh * 0.82), 680, 900)
             end
         end
-        local HEAD_H, PAD, SIDE_W, FOOT_H = 46, 10, 238, 54
+        local HEAD_H, PAD, SIDE_W, FOOT_H = 46, 10, 238, 64
         local CW = FW - PAD * 2 - 10 - SIDE_W          -- ширина левой (контентной) зоны
         local toolsX = FW - PAD - SIDE_W
         local tabsY, tabsH = HEAD_H + PAD, 30
@@ -1023,11 +1028,11 @@ if CLIENT then
         toolsPane:SetPos(toolsX, HEAD_H + PAD) toolsPane:SetSize(SIDE_W, FH - HEAD_H - PAD - PAD)
         toolsPane.Paint = function(_, pw, ph)
             draw.RoundedBox(6, 0, 0, pw, ph, QC.panel)
-            draw.RoundedBoxEx(6, 0, 0, pw, 26, QC.head, true, true, false, false)
-            draw.SimpleText("ИНСТРУМЕНТЫ", "GRMQ_Small", 10, 13, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.RoundedBoxEx(6, 0, 0, pw, 30, QC.head, true, true, false, false)
+            draw.SimpleText("ИНСТРУМЕНТЫ", "GRMQ_Small", 10, 15, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
         local toolsScroll = vgui.Create("DScrollPanel", toolsPane)
-        toolsScroll:SetPos(4, 30) toolsScroll:SetSize(SIDE_W - 8, FH - HEAD_H - PAD - PAD - 34)
+        toolsScroll:SetPos(4, 34) toolsScroll:SetSize(SIDE_W - 8, FH - HEAD_H - PAD - PAD - 38)
 
         local buildToolsPane
         local function scrollAdd(sc, pnl, mTop, mLeft)
@@ -1112,24 +1117,25 @@ if CLIENT then
         -- ── ФУТЕР: действия + счётчик + активный тул + тосты ─
         local foot = vgui.Create("DPanel", f)
         foot:SetPos(PAD, footY) foot:SetSize(CW, FOOT_H)
-        local bGun = mkBtn(foot, "Взять тулган", QC.acc) bGun:SetPos(6, 5) bGun:SetSize(112, 26)
+        local bGun = mkBtn(foot, "Взять тулган", QC.acc) bGun:SetPos(6, 6) bGun:SetSize(124, 30)
         bGun.DoClick = function()
             net.Start("GRM_QMenu_Toolgun") net.WriteBool(true) net.SendToServer()
         end
-        local bGunOff = mkBtn(foot, "Убрать тулган", QC.panel2) bGunOff:SetPos(124, 5) bGunOff:SetSize(112, 26)
+        local bGunOff = mkBtn(foot, "Убрать тулган", QC.panel2) bGunOff:SetPos(138, 6) bGunOff:SetSize(124, 30)
         bGunOff.DoClick = function()
             net.Start("GRM_QMenu_Toolgun") net.WriteBool(false) net.SendToServer()
         end
-        local bRmOne = mkBtn(foot, "Убрать проп в прицеле", QC.yellow) bRmOne:SetPos(242, 5) bRmOne:SetSize(168, 26)
+        local bRmOne = mkBtn(foot, "Убрать проп в прицеле", QC.yellow) bRmOne:SetPos(270, 6) bRmOne:SetSize(184, 30)
         bRmOne.DoClick = function()
             net.Start("GRM_QMenu_RemoveOne") net.SendToServer()
         end
-        local bRmAll = mkBtn(foot, "Убрать все мои", QC.red) bRmAll:SetPos(416, 5) bRmAll:SetSize(118, 26)
+        local bRmAll = mkBtn(foot, "Убрать все мои", QC.red) bRmAll:SetPos(462, 6) bRmAll:SetSize(140, 30)
         bRmAll.DoClick = function()
             net.Start("GRM_QMenu_ClearProps") net.SendToServer()
         end
         foot.Paint = function(_, pw, ph)
             draw.RoundedBox(6, 0, 0, pw, ph, QC.panel)
+            draw.RoundedBox(0, 6, 38, pw - 12, 1, QC.line)
             draw.SimpleText("Мои пропы: " .. tostring(QM._count or 0) .. " / " .. tostring(QM._cap or (cfg().menuPropCap or 24)),
                 "GRMQ_Text", 8, ph - 12, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             local act = "нет"
@@ -1138,7 +1144,7 @@ if CLIENT then
                     if t.id == QM._activeTool then act = t.label break end
                 end
             end
-            draw.SimpleText("Инструмент: " .. act, "GRMQ_Small", 170, ph - 12, QC.dim2, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("Инструмент: " .. act, "GRMQ_Small", 220, ph - 12, QC.dim2, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             local toast = (QM._toastAt and CurTime() < QM._toastAt) and (QM._toast or "") or ""
             draw.SimpleText(toast, "GRMQ_Small", pw - 8, ph - 12, QC.green, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
