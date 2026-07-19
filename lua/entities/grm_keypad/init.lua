@@ -1,10 +1,17 @@
 --[[--------------------------------------------------------------------
     grm_keypad — init.lua (Серверный обработчик кейпада)
+    Код 104 (находка 121): кнопки нажимаются ПРИЦЕЛОМ + E (как в модовых
+    кейпадах: навёл на цифру — нажал, старый общий [E]=OK убран, чтобы не
+    было двойных срабатываний); белый список фракций — СПИСОК через
+    запятую (чекбоксы в панели тулгана); вспышка кнопки на экране у всех
+    клиентов через net GRM_KeypadPress.
 ----------------------------------------------------------------------]]
 
 AddCSLuaFile("cl_init.lua")
 AddCSLuaFile("shared.lua")
 include("shared.lua")
+
+util.AddNetworkString("GRM_KeypadPress")
 
 function ENT:Initialize()
     self:SetModel("models/props_lab/keypad.mdl")
@@ -114,9 +121,8 @@ function ENT:PressButton(btn, ply)
         return
     end
 
-    -- Фракционный режим (Faction Mode)
+    -- Фракционный режим (Faction Mode) — Код 104: список через запятую
     if mode == 1 then
-        local fac = self:GetFaction()
         local plyFac = nil
         if Factions and IsValid(ply) then
             for fName, fData in pairs(Factions) do
@@ -126,10 +132,10 @@ function ENT:PressButton(btn, ply)
             end
         end
 
-        if ply:IsSuperAdmin() or (fac ~= "" and plyFac == fac) or (ply == self.KeypadOwner) then
+        if ply:IsSuperAdmin() or self:IsFactionAllowed(plyFac) or (ply == self.KeypadOwner) then
             self:ProcessGrant(ply)
         else
-            if GRM.Notify then GRM.Notify(ply, "Доступ ограничен фракцией [" .. (fac ~= "" and fac or "—") .. "]", 255, 100, 100) end
+            if GRM.Notify then GRM.Notify(ply, "Доступ ограничен фракцией [" .. string.Trim(tostring(self:GetFaction() or "")) .. "]", 255, 100, 100) end
             self:ProcessDeny(ply)
         end
         return
@@ -161,6 +167,32 @@ function ENT:PressButton(btn, ply)
 end
 
 function ENT:Use(ply)
-    if not IsValid(ply) then return end
-    self:PressButton("OK", ply)
+    -- Код 104: общий E=OK убран — кнопки жмутся прицелом (см. хук ниже),
+    -- чтобы не было двойных срабатываний «и цифра, и OK».
 end
+
+-- ============================================================
+-- Код 104 (находка 121): нажатие кнопок ПРИЦЕЛОМ + E.
+-- Сервер сам считает, какая кнопка под HitPos (геометрия общая, shared),
+-- клиент ничего не шлёт — протокол не расширяем пользовательским вводом.
+-- ============================================================
+hook.Add("KeyPress", "GRM_Keypad_AimPress", function(ply, key)
+    if key ~= IN_USE then return end
+    if not IsValid(ply) then return end
+    local tr = ply:GetEyeTrace()
+    if not tr then return end
+    local ent = tr.Entity
+    if not (IsValid(ent) and ent:GetClass() == "grm_keypad") then return end
+    if ply:GetShootPos():DistToSqr(ent:GetPos()) > (130 * 130) then return end
+    local now = CurTime()
+    if (ply.__grmKeypadNextPress or 0) > now then return end
+    ply.__grmKeypadNextPress = now + 0.15 -- лёгкий анти-дабл
+    local idx, b = ent:KeypadButtonAt(tr.HitPos)
+    if not (idx and b) then return end
+    ent:PressButton(b.text, ply)
+    -- вспышка нажатой кнопки на экранах всех клиентов
+    net.Start("GRM_KeypadPress")
+        net.WriteEntity(ent)
+        net.WriteUInt(idx, 8)
+    net.Broadcast()
+end)

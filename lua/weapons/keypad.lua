@@ -1,5 +1,6 @@
 --[[--------------------------------------------------------------------
-    GRM Keypad Weapon v1.0.0 (Код 103, находка 120) — «классический»
+    GRM Keypad Weapon v1.1.0 (Код 104, находка 121: спавн строго в +X без
+    доп. поворотов) — «классический»
     кейпад-оружие (SWEP class: keypad) в духе патриарховских keypad-модов:
     в руках выглядит как тулган, ЛКМ ставит grm_keypad, ПКМ снимает.
 
@@ -82,11 +83,9 @@ function SWEP:PrimaryAttack()
 
     local kat = ents.Create("grm_keypad")
     if not IsValid(kat) then return false end
-    local ang = tr.HitNormal:Angle()
-    ang:RotateAroundAxis(ang:Right(), -90)
-    ang:RotateAroundAxis(ang:Up(), 180)
-    kat:SetPos(tr.HitPos + tr.HitNormal * 1.5)
-    kat:SetAngles(ang)
+    -- Код 104: чистый HitNormal:Angle() без поворотов (модель лицом в +X)
+    kat:SetPos(tr.HitPos + tr.HitNormal * 1.2)
+    kat:SetAngles(tr.HitNormal:Angle())
     kat.KeypadOwner = ply
     kat.KeyGranted = 1
     kat.KeyDenied  = 2

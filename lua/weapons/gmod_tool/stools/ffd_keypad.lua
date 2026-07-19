@@ -35,12 +35,11 @@ if SERVER then
         local ent = ents.Create("grm_keypad")
         if not IsValid(ent) then return false end
 
-        local ang = trace.HitNormal:Angle()
-        ang:RotateAroundAxis(ang:Right(), -90)
-        ang:RotateAroundAxis(ang:Up(), 180)
-
-        ent:SetPos(trace.HitPos + trace.HitNormal * 1.5)
-        ent:SetAngles(ang)
+        -- Код 104 (находка 121): кейпад-модель смотрит лицом в +X,
+        -- любые доп. повороты КЛАДУТ её набок (скрин владельца). Чистый
+        -- HitNormal:Angle() без RotateAroundAxis — как у модовых кейпадов.
+        ent:SetPos(trace.HitPos + trace.HitNormal * 1.2)
+        ent:SetAngles(trace.HitNormal:Angle())
 
         ent.KeypadOwner = ply
         ent.KeyGranted = math.Clamp(tonumber(kGranted) or 1, 1, 9)
@@ -127,6 +126,47 @@ function TOOL.BuildCPanel(panel)
         combo:AddChoice("0: Пароль (PIN-код)", 0)
         combo:AddChoice("1: Доступ по Фракции", 1)
         combo:AddChoice("2: Платный проход (GRM Cash)", 2)
+    end
+
+    -- Код 104 (находка 121): окошко фракций с чекбоксами (замечание №1
+    -- владельца). Для режима «Фракция» — можно выбрать НЕСКОЛЬКО, список
+    -- летит в конвар ffd_keypad_faction через запятую (кейпад разберёт).
+    if istable(Factions) and next(Factions) then
+        panel:Help("Фракции с доступом (режим «Доступ по Фракции»):")
+        local cur = {}
+        local cvStr = ""
+        local cv = GetConVar and GetConVar("ffd_keypad_faction")
+        if cv then cvStr = cv:GetString() or "" end
+        for name in string.gmatch(cvStr, "([^,]+)") do
+            cur[string.Trim(name)] = true
+        end
+        local names = {}
+        for name in pairs(Factions) do names[#names + 1] = name end
+        table.sort(names)
+        local wrap = vgui.Create("DPanel", panel)
+        wrap:SetPaintBackground(false)
+        wrap:SetTall(#names * 22 + 4)
+        for _, name in ipairs(names) do
+            local cb = vgui.Create("DCheckBoxLabel", wrap)
+            cb:Dock(TOP) cb:DockMargin(6, 0, 0, 2)
+            cb:SetText(name)
+            cb:SetChecked(cur[name] == true)
+            cb.facName = name
+            cb.checked = cur[cb.facName] == true -- для сим-слежки
+            cb.OnChange = function(self, v)
+                cur[self.facName] = v == true
+                self.checked = v == true          -- для сим-слежки
+                local out = {}
+                for _, n in ipairs(names) do
+                    if cur[n] then out[#out + 1] = n end
+                end
+                RunConsoleCommand("ffd_keypad_faction", table.concat(out, ","))
+            end
+        end
+        panel:AddItem(wrap)
+    else
+        -- фолбэк вне GRM-окружения: одна фракция текстом (legacy-поведение)
+        panel:AddControl("TextEntry", { Label = "Фракция с доступом:", Command = "ffd_keypad_faction" })
     end
 
     panel:AddControl("Numpad", { Label = "Сигнал успешного входа (Granted):", Command = "ffd_keypad_key_granted" })
