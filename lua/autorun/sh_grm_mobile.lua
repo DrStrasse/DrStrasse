@@ -45,7 +45,7 @@ GRM = GRM or {}
 GRM.Mobile = GRM.Mobile or {}
 local MB = GRM.Mobile
 
-MB.Version   = "1.2.1"
+MB.Version   = "1.2.2"  -- Код 100: анти-скачок выбора (OS-авторепит парами + снап плашки)
 MB.DataFile  = "grm_mobile.json"
 MB.ForumFile = "grm_mobile_forum.json"
 MB.SmsCap       = 40    -- глубина ящика SMS
@@ -866,7 +866,7 @@ if CLIENT then
         st = { has = false }, open = false, screen = "home",
         sel = 1, scroll = 0, selY = nil, tabs = {}, dialNum = "",
         ringWas = false, callSec = 0, entryPanel = nil,
-        down = {}, nextRep = {}, animT = 0, openT = 0,
+        down = {}, nextRep = {}, stormHold = {}, animT = 0, openT = 0,
         flash = {}, threadNum = nil, homeRows = {},
     }
 
@@ -1015,13 +1015,13 @@ if CLIENT then
         if M.st.has ~= true then return end
         M.open = true M.screen = "home" M.sel = 1 M.dialNum = "" M.scroll = 0
         M.selY = nil M.openT = CurTime() M.animT = CurTime()
-        M.down = {} M.nextRep = {}
+        M.down = {} M.nextRep = {} M.stormHold = {}
         sendAct({ op = "open" })
         if screenEnter.home then screenEnter.home() end
     end
     local function closePhone()
         M.open = false M.screen = "home" M.sel = 1 M.dialNum = "" M.scroll = 0
-        M.down = {} M.nextRep = {}
+        M.down = {} M.nextRep = {} M.stormHold = {}
         killEntry()
         sendAct({ op = "close" }) -- Код 88.3: снять серверный флаг стойки
     end
@@ -1051,6 +1051,9 @@ if CLIENT then
         -- анимированная плашка выделения: лерп по вертикали между строк
         local targetY = yTop + (M.sel - first) * rowH
         if M.selY == nil then M.selY = targetY end
+        -- Код 100: кольцевой перепрыг (последняя→первая строка и наоборот) —
+        -- плашка появляется сразу на месте, а не «проезжает» весь список
+        if math.abs(targetY - M.selY) > rowH * 1.5 then M.selY = targetY end
         local ft = math.min(0.25, FrameTime())
         M.selY = M.selY + (targetY - M.selY) * math.min(1, ft * 18)
         if math.abs(M.selY - targetY) < 0.5 then M.selY = targetY end
@@ -1825,6 +1828,14 @@ if CLIENT then
         end
         -- системный авторепит глушим: повторный Down без Up — не наше событие
         if M.down[btn] then return end
+        -- Код 100: на части клиентов (SDL) системный повтор идёт ПАРАМИ
+        -- Down+Up при ФИЗИЧЕСКИ зажатой клавише — флаг M.down его не видит,
+        -- и выбор «скачет» на 25–40 Гц. Рубеж: Down принимаем, только если
+        -- клавиша реально отпускалась. Физика отличает человека (клавиша
+        -- отжата между нажатиями) от OS-шторма (зажата весь шторм);
+        -- отпускание фиксируют PlayerButtonUp (невиртуальный) и Think.
+        if M.stormHold[btn] then return end
+        M.stormHold[btn] = true
         M.down[btn] = CurTime()
         M.nextRep[btn] = CurTime() + REP_DELAY
         fireKey(btn)
@@ -1832,8 +1843,14 @@ if CLIENT then
 
     hook.Add("PlayerButtonUp", "GRM_Mob_KeysUp", function(ply, btn)
         if ply ~= LocalPlayer() then return end
+        -- Код 100: «виртуальный» Up из пары OS-повтора — клавиша физически
+        -- всё ещё зажата (IsKeyDown=true), значит это НЕ отпускание:
+        -- удержание и репит-клок живут дальше. Реальное отпускание при
+        -- однокадровом лаге состояния добирается сторожем в Think.
+        if M.down[btn] and input.IsKeyDown(btn) then return end
         M.down[btn] = nil
         M.nextRep[btn] = nil
+        M.stormHold[btn] = nil
     end)
 
     hook.Add("Think", "GRM_Mob_NavTick", function()
@@ -1849,6 +1866,11 @@ if CLIENT then
                 M.nextRep[btn] = now + REP_INT
                 fireKey(btn)
             end
+        end
+        -- Код 100: физическое отпускание клавиши снимает шторм-блок —
+        -- следующее честное нажатие снова пройдёт
+        for btn, _ in pairs(M.stormHold) do
+            if not input.IsKeyDown(btn) then M.stormHold[btn] = nil end
         end
     end)
 
@@ -1908,5 +1930,7 @@ if CLIENT then
         txt("ENTER — ответить  •  BACKSPACE — отклонить", "GRMMob_M", x + w / 2, y + h - 12, MC.dim, TEXT_ALIGN_CENTER)
     end)
 
+    -- тест-экспорт состояния для сим-стенда (смотреть, не трогать)
+    MB._devUI = M
     print("[GRM Mobile] Клиент v" .. MB.Version .. " загружен (стрелка ВВЕРХ — достать телефон; плавная навигация 88.2)")
 end

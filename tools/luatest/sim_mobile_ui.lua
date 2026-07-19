@@ -62,7 +62,8 @@ surface = {
 }
 local DRAWS = { boxes = 0, texts = 0 }
 draw = {
-    RoundedBox = function() DRAWS.boxes = DRAWS.boxes + 1 end,
+    RoundedBox = function(_, x, y, w, h) DRAWS.boxes = DRAWS.boxes + 1
+        if DRAWS.log then DRAWS.log[#DRAWS.log + 1] = { x = x, y = y, w = w, h = h } end end,
     RoundedBoxEx = function() DRAWS.boxes = DRAWS.boxes + 1 end,
     SimpleText = function() DRAWS.texts = DRAWS.texts + 1 end,
 }
@@ -171,13 +172,13 @@ local okr, rerr = pcall(chunk)
 ok(okr, "выполняется без ошибок: " .. tostring(rerr))
 local MB = GRM.Mobile
 ok(MB ~= nil, "GRM.Mobile зарегистрирован")
-ok(MB.Version == "1.2.1", "версия 1.2.1")
+ok(MB.Version == "1.2.2", "версия 1.2.2 (Код 100: анти-скачок выбора)")
 
 -- ---------- хелперы симуляции ----------
-local function tap(k)                      -- короткое нажатие
+local function tap(k)                      -- короткое нажатие (темп человека: 0.09с — Код 100 дебаунс 0.07 пропускает)
     fireHook("PlayerButtonDown", LP, k)
     fireHook("PlayerButtonUp", LP, k)
-    TT = TT + 0.02
+    TT = TT + 0.09
 end
 local function press(k)                    -- зажать (Down без Up)
     KEYS_HELD[k] = true
@@ -437,6 +438,48 @@ RUN_CC = {}
 tap(KEY_E)
 ok(#RUN_CC >= 1 and RUN_CC[1].cmd == "say" and tostring(RUN_CC[1].arg):find("12345") ~= nil,
     "say /me … 12345 отправлен")
+
+-- ---------- Код 100: OS-авторепит ПАРАМИ (SDL) не крутит выбор ----------
+sect("Код 100: шторм повторов парами Down+Up (обход флага M.down) — выбор не скачет")
+tap(KEY_BACKSPACE)                                -- домой закрылся
+tap(KEY_UP)                                       -- переоткрыли: home, sel=1
+NET_SENT = {}
+KEYS_HELD[KEY_DOWN] = true                        -- SDL-семантика: клавиша ФИЗИЧЕСКИ зажата весь шторм
+for i = 1, 15 do                                  -- 33 Гц повтор парами Down+Up: до фикса каждый проходил как новое нажатие
+    fireHook("PlayerButtonDown", LP, KEY_DOWN)
+    fireHook("PlayerButtonUp", LP, KEY_DOWN)
+    TT = TT + 0.03
+end
+KEYS_HELD[KEY_DOWN] = false                       -- реальное отпускание
+fireHook("PlayerButtonUp", LP, KEY_DOWN)
+tap(KEY_ENTER)                                    -- принят ровно ОДИН шаг: sel=2 (sms)
+act = lastAct()
+ok(act ~= nil and act.op == "sms_read", "шторм 15 пар down/up → ровно один шаг (№2 SMS), выбор не ускакал")
+tap(KEY_BACKSPACE)
+NET_SENT = {}
+tap(KEY_DOWN) tap(KEY_DOWN) tap(KEY_DOWN) tap(KEY_DOWN)  -- честный темп: 4 одиночных нажатия
+tap(KEY_ENTER)
+act = lastAct()
+ok(act ~= nil and act.op == "jobs_query", "человеческий темп 0.09с: все 4 шага приняты → №5 Биржа")
+tap(KEY_BACKSPACE)
+
+sect("Код 100: кольцевой перепрыг — плашка снапится на место, список не пролетает")
+paintPhone()                                      -- selY успокоена на строке 1
+DRAWS.log = {}
+tap(KEY_UP)                                       -- 1 → 8 (кольцевой вверх)
+paintPhone()
+local hb
+for _, b in ipairs(DRAWS.log) do if b.w == 312 and b.h == 39 then hb = b break end end
+ok(hb ~= nil and hb.y >= 370, "перепрыг 1→8: плашка сразу на строке 8 (y=" .. tostring(hb and hb.y) .. ", без пролёта списка)")
+DRAWS.log = nil
+paintPhone()
+DRAWS.log = {}
+tap(KEY_DOWN)                                     -- 8 → 1 (кольцевой вниз)
+paintPhone()
+local hb2
+for _, b in ipairs(DRAWS.log) do if b.w == 312 and b.h == 39 then hb2 = b break end end
+DRAWS.log = nil
+ok(hb2 ~= nil and hb2.y <= 86, "перепрыг 8→1: плашка сразу на строке 1 (y=" .. tostring(hb2 and hb2.y) .. ")")
 
 -- ---------- закрытие и потеря трубки ----------
 sect("закрытие телефона и потеря трубки (op=close/ping)")
