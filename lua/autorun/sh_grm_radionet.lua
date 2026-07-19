@@ -66,6 +66,26 @@
     Спавн (суперадмин): /rack_add /antenna_add /rstation_add /console_add
     (+_remove), диагностика: /rn_status. Автоперсистентность:
     grm_rnents/<map>.json (аналог Кода 75, антидубль при рестарте).
+
+    КОД 98 (v1.3.0) — КОМАНДЫ РАЦИИ /freq /r (находка 115: их
+    ОБРАБОТЧИКА НЕ БЫЛО ВООБЩЕ). C-меню (sh_grm_ctx, кнопка «Рация»)
+    честно слало «say /freq 145.5» и «say /freqleave» в чат — команды
+    улетали в пустоту: ни один модуль сборки их не парсил (DarkRP-шного
+    радио в сборке тоже нет). Теперь частоты — полноценный текстовый
+    эфир радиосети, на той же логике покрытия, что голосовая рация:
+
+      /freq 145.5   — настроить рацию на частоту (1–999.9 шаг 0.1);
+                      запоминается за игроком (sid64) до /freqleave.
+      /freq         — напомнить текущую частоту (ещё: !freq).
+      /freqleave    — отключиться (ещё: /freq off, /freq 0, !-варианты).
+      /r <текст>    — сказать в эфир: слышат все, кто на ТОЙ ЖЕ частоте
+                      И в досягаемости (правило ручной рации
+                      RadioPairOK: оба в сети — хоть через карту; вне
+                      сети — только прямая дальность RN.DirectRadio).
+                      На прямой дальности текст идёт С ПОМЕХАМИ: чем
+                      дальше, тем больше символов съедает шипение («*»).
+                      Антифлуд RN.FreqSayDelay, длина RN.FreqMaxLen,
+                      передачи журналируются (/rn_log, вид freq_say).
 ----------------------------------------------------------------------]]
 
 if SERVER then AddCSLuaFile() end
@@ -74,7 +94,7 @@ GRM = GRM or {}
 GRM.RadioNet = GRM.RadioNet or {}
 local RN = GRM.RadioNet
 
-RN.Version    = "1.2.0"  -- Код 88.4: авто-свипер персистента (оборудование перманентно любым способом)
+RN.Version    = "1.3.0"  -- Код 98: команды рации /freq /r (обработчика не было — находка 115)
 
 -- настройки сети (юниты = юниты Source; ~40 юн = 1 м)
 RN.LinkDist     = 700    -- радиус связывания оборудования со стойкой
@@ -884,8 +904,163 @@ if SERVER then
             "Реестр: " .. tostring(devTotal) .. " устройств с позывными (отключено пультом: " .. tostring(devOff) .. "); пультов в сети: " .. tostring(conOn) .. " (/console_add)",
             "Журнал событий: " .. tostring(#(RN.Sys and RN.Sys.log or {})) .. " записей (/rn_log — последние 12)",
             "Покрытие: " .. tostring(#(RN._coverage or {})) .. " кругов (стойка " .. RN.RackRange .. " юн, антенна " .. RN.AntennaRange .. " юн); рация вне сети — " .. RN.DirectRadio .. " юн напрямую",
+            "Радиочастоты (/freq /r, Код 98): абонентов на частотах: " .. tostring(table.Count(RN._freq or {})),
         }
     end
+
+    ----------------------------------------------------------------
+    -- Радиоканалы (Код 98): /freq <частота>, /freqleave, /r <текст>.
+    -- До этого кода команд /freq /r НЕ СУЩЕСТВОВАЛО на сервере вовсе
+    -- (находка 115): C-меню слало их в никуда. Здесь они живут на
+    -- правилах радиосети: доставка по RadioPairOK (оба в покрытии
+    -- сети ИЛИ прямая дальность), на прямой дальности — помехи в
+    -- тексте по мере удаления. Частота помнится за sid64 до явного
+    -- /freqleave (смерть/перезаход рацию не сбрасывают).
+    ----------------------------------------------------------------
+    RN.FreqMin      = 1      -- нижняя граница частоты (МГц)
+    RN.FreqMax      = 999.9  -- верхняя (совпадает с подсказкой C-меню)
+    RN.FreqSayDelay = 1.5    -- антифлуд: пауза между радиосообщениями
+    RN.FreqMaxLen   = 220    -- макс. длина одного сообщения (символов)
+
+    RN._freq = RN._freq or {} -- sid64 → «145.5»
+
+    -- нормализация: 1..999.9, шаг 0.1 → ключ вида «145.5»; «145.55» — отказ
+    function RN.FreqKey(arg)
+        local n = tonumber(string.match(tostring(arg or ""), "^%s*(%d+%.?%d*)%s*$"))
+        if not n or n < RN.FreqMin or n > RN.FreqMax then return nil end
+        local key = string.format("%.1f", n)
+        if math.abs(tonumber(key) - n) > 0.0001 then return nil end
+        return key
+    end
+
+    function RN.FreqOf(ply)
+        if not IsValid(ply) then return nil end
+        local f = ply._rnFreq
+        if f == nil and ply.SteamID64 then f = RN._freq[tostring(ply:SteamID64() or "")] end
+        return f
+    end
+
+    local function freqChat(ply, msg)
+        if IsValid(ply) and ply.PrintMessage then ply:PrintMessage(HUD_PRINTTALK, msg) end
+    end
+
+    -- безопасный срез по UTF-8 символам (байтовый sub ломал бы кириллицу)
+    local function ucut(s, maxChars)
+        local cp = (utf8 and utf8.charpattern) or "."
+        local out, n = {}, 0
+        for ch in string.gmatch(tostring(s or ""), cp) do
+            n = n + 1
+            if n > maxChars then break end
+            out[#out + 1] = ch
+        end
+        return table.concat(out)
+    end
+
+    function RN.FreqSet(ply, arg)
+        local key = RN.FreqKey(arg)
+        if not key then
+            freqChat(ply, "[Рация] Частота — число 1–999.9 с шагом 0.1. Пример: /freq 145.5")
+            return false
+        end
+        ply._rnFreq = key
+        if ply.SteamID64 then RN._freq[tostring(ply:SteamID64() or "")] = key end
+        freqChat(ply, "[Рация] Вы на частоте " .. key .. " МГц. Говорить: /r текст. Отключиться: /freqleave")
+        if GRM.Notify then GRM.Notify(ply, "Рация: частота " .. key .. " МГц (/r текст)", 140, 200, 255) end
+        if RN.LogEvent then RN.LogEvent("freq_join", IsValid(ply) and ply:Nick() or "?",
+            ply.SteamID64 and ply:SteamID64() or "", IsValid(ply) and ply:GetPos() or nil, "частота " .. key) end
+        return true
+    end
+
+    function RN.FreqInfo(ply)
+        local f = RN.FreqOf(ply)
+        if f then
+            freqChat(ply, "[Рация] Текущая частота: " .. f .. " МГц. Говорить: /r текст. Отключиться: /freqleave")
+        else
+            freqChat(ply, "[Рация] Рация не настроена. Включить: /freq 145.5")
+        end
+    end
+
+    function RN.FreqLeave(ply)
+        local f = RN.FreqOf(ply)
+        if not f then freqChat(ply, "[Рация] Вы и так не на частоте.") return end
+        ply._rnFreq = nil
+        if ply.SteamID64 then RN._freq[tostring(ply:SteamID64() or "")] = nil end
+        freqChat(ply, "[Рация] Частота " .. f .. " покинута — рация отключена.")
+        if RN.LogEvent then RN.LogEvent("freq_leave", ply:Nick(),
+            ply.SteamID64 and ply:SteamID64() or "", ply:GetPos(), "частота " .. f) end
+    end
+
+    -- помехи текста: часть символов заменяется «*» (шипение); пробелы живут,
+    -- кириллица не ломается (идём посимвольно по utf8.charpattern)
+    function RN.FreqScramble(s, keep, seed)
+        if keep >= 0.985 then return s end
+        local cp = (utf8 and utf8.charpattern) or "."
+        local out, i = {}, 0
+        for ch in string.gmatch(tostring(s or ""), cp) do
+            i = i + 1
+            if ch == " " then
+                out[#out + 1] = ch
+            else
+                local h = (seed * 2654435761 + i * 40503) % 1000
+                out[#out + 1] = (h < keep * 1000) and ch or "*"
+            end
+        end
+        return table.concat(out)
+    end
+
+    function RN.FreqSay(ply, raw)
+        local f = RN.FreqOf(ply)
+        if not f then
+            freqChat(ply, "[Рация] Вы не на частоте — сначала настройтесь: /freq 145.5")
+            return false
+        end
+        local now = CurTime()
+        if ply._rnFreqTs and (now - ply._rnFreqTs) < RN.FreqSayDelay then
+            freqChat(ply, "[Рация] Не так быстро: следующая передача через " .. tostring(RN.FreqSayDelay) .. " сек.")
+            return false
+        end
+        ply._rnFreqTs = now
+        local text = ucut(string.Trim(tostring(raw or "")), RN.FreqMaxLen)
+        if text == "" then freqChat(ply, "[Рация] Пустое сообщение в эфир не уходит.") return false end
+        local name = (IsValid(ply) and ply.Nick) and ply:Nick() or "?"
+        local myPos = IsValid(ply) and ply:GetPos() or nil
+        local delivered = 0
+        for _, lp in ipairs(player.GetAll()) do
+            if RN.FreqOf(lp) == f then
+                local ok = (lp == ply)
+                local body = text
+                if not ok and myPos and IsValid(lp) and lp.GetPos then
+                    if RN.RadioPairOK(ply, lp) then
+                        ok = true
+                        -- оба в сети — текст чистый на любой дистанции;
+                        -- прямая дальность — помехи ∝ удалению
+                        if not (RN.CoveredAt(myPos) and RN.CoveredAt(lp:GetPos())) then
+                            local d = math.sqrt(myPos:DistToSqr(lp:GetPos()))
+                            local keep = math.max(0.25, math.min(1, 1.1 - d / RN.DirectRadio))
+                            body = RN.FreqScramble(text, keep, lp:EntIndex())
+                        end
+                    end
+                end
+                if ok then
+                    freqChat(lp, "[Рация " .. f .. "] " .. name .. ": " .. body)
+                    delivered = delivered + 1
+                end
+            end
+        end
+        if delivered <= 1 then
+            freqChat(ply, "[Рация] …в эфире тишина: на этой частоте вас никто не слышит (нет абонентов или все вне связи).")
+        end
+        if RN.LogEvent then RN.LogEvent("freq_say", name, ply.SteamID64 and ply:SteamID64() or "", myPos,
+            "частота " .. f .. ", слышат " .. tostring(delivered) .. " | " .. text) end
+        return true
+    end
+
+    -- восстановление частоты при входе: память по sid64 в пределах сессии
+    hook.Add("PlayerInitialSpawn", "GRM_RN_FreqSpawn", function(ply)
+        if not IsValid(ply) or not ply.SteamID64 then return end
+        local f = RN._freq[tostring(ply:SteamID64() or "")]
+        if f then ply._rnFreq = f end
+    end)
 
     ----------------------------------------------------------------
     -- Чат-команды (тот же каркас PlayerSayTransform+PlayerSay,
@@ -973,6 +1148,19 @@ if SERVER then
             end
             return true
         end
+        -- Код 98: радиоканалы /freq /r (поглощаем — в игровой чат не уходит)
+        if low == "/freq" or low == "!freq" then RN.FreqInfo(ply) return true end
+        if low == "/freqleave" or low == "!freqleave"
+            or low == "/freq off" or low == "!freq off"
+            or low == "/freq 0" or low == "!freq 0" then RN.FreqLeave(ply) return true end
+        local farg = string.match(low, "^[!/]freq%s+(%S+)%s*$")
+        if farg then RN.FreqSet(ply, farg) return true end
+        if low == "/r" or low == "!r" then
+            ply:PrintMessage(HUD_PRINTTALK, "[Рация] Формат: /r текст сообщения")
+            return true
+        end
+        local rmsg = string.match(text or "", "^%s*[!/][rR]%s+(.+)$")
+        if rmsg then RN.FreqSay(ply, rmsg) return true end
         return false
     end
 

@@ -73,7 +73,7 @@ Entity = function(i) return REG.byIdx[i] end
 
 -- игроки -----------------------------------------------------------------
 local function mkPly(id, x, isSAdmin)
-  local p = { __pos = V(x, 0, 0), __idx = id, __sa = isSAdmin and true or false }
+  local p = { __pos = V(x, 0, 0), __idx = id, __sa = isSAdmin and true or false, __chat = {} }
   p = setmetatable(p, { __index = function(self, k)
     if k == "GetPos" then return function() return self.__pos end end
     if k == "SetPos" then return function(_, v) self.__pos = v end end
@@ -81,7 +81,7 @@ local function mkPly(id, x, isSAdmin)
     if k == "IsSuperAdmin" then return function() return self.__sa end end
     if k == "SteamID" then return function() return "STEAM_0:1:" .. tostring(self.__idx) end end
     if k == "SteamID64" then return function() return "76561198000000" .. tostring(100 + self.__idx) end end
-    if k == "PrintMessage" then return function(_, _, txt) H.chatlog[#H.chatlog + 1] = tostring(txt) end end
+    if k == "PrintMessage" then return function(_, _, txt) H.chatlog[#H.chatlog + 1] = tostring(txt) self.__chat[#self.__chat + 1] = tostring(txt) end end
     if k == "GetShootPos" then return function() return self.__pos end end
     if k == "GetAimVector" then return function() return V(1, 0, 0) end end
     if k == "Nick" then return function() return "Игрок" .. tostring(self.__idx) end end
@@ -569,6 +569,102 @@ local alienOk = true
 for k, rec in pairs(RN.Persist or {}) do if rec.class == "prop_physics" then alienOk = false end end
 ok(alienOk, "чужие классы свипер игнорирует")
 alien:Remove()
+
+P("== 24. Радиоканалы /freq /r (Код 98, находка 115) ==")
+-- мир: (0,0,0) — покрытие стойки; (5500,0,0) — покрытие антенны;
+-- (20000,0,0) и (20800,0,0) — глушь, между собой 800 юн (< 1500 прямой)
+local u1 = mkPly(601, 0, false)
+local u2 = mkPly(602, 5500, false)
+local u3 = mkPly(603, 20000, false)
+local u4 = mkPly(604, 20800, false)
+local u5 = mkPly(605, 100, false)
+H.players = { u1, u2, u3, u4, u5 }
+local function lastChat(p, pat)
+  for i = #p.__chat, 1, -1 do if p.__chat[i]:find(pat) then return p.__chat[i] end end
+  return nil
+end
+-- FreqKey: нормализация и отсечки
+ok(RN.FreqKey("145") == "145.0", "FreqKey: «145» → «145.0»")
+ok(RN.FreqKey("999.9") == "999.9", "FreqKey: верхняя граница 999.9 ок")
+ok(RN.FreqKey("145.55") == nil, "FreqKey: шаг мельче 0.1 — отказ")
+ok(RN.FreqKey("0.5") == nil and RN.FreqKey("1000") == nil and RN.FreqKey("abc") == nil, "FreqKey: вне диапазона/мусор — отказ")
+-- /r без настроенной частоты
+ok(RN.HandleChat(u1, "/r привет") == true, "/r поглощён даже без частоты")
+ok(lastChat(u1, "не на частоте") ~= nil and RN.FreqOf(u1) == nil, "/r без частоты — подсказка, эфира нет")
+-- невалидные частоты отвергаются (обработчик раньше отсутствовал — команды висели в чате)
+ok(RN.HandleChat(u1, "/freq abc") == true and RN.FreqOf(u1) == nil, "/freq abc — отказ")
+ok(RN.HandleChat(u1, "/freq 0.5") == true and RN.FreqOf(u1) == nil, "/freq 0.5 (ниже 1) — отказ")
+ok(RN.HandleChat(u1, "/freq 1000") == true and RN.FreqOf(u1) == nil, "/freq 1000 (выше 999.9) — отказ")
+ok(RN.HandleChat(u1, "/freq 145.55") == true and RN.FreqOf(u1) == nil, "/freq 145.55 (шаг 0.01) — отказ")
+ok(lastChat(u1, "1–999.9") ~= nil, "отказ сопровождается подсказкой формата")
+-- подключение (C-меню шлёт именно такое: /freq <число>)
+ok(RN.HandleChat(u1, "/freq 145.5") == true and RN.FreqOf(u1) == "145.5", "/freq 145.5 — рация настроена")
+ok(lastChat(u1, "на частоте 145.5") ~= nil, "подтверждение подключения в чат")
+ok(RN.HandleChat(u2, "/FREQ 200") == true and RN.FreqOf(u2) == "200.0", "регистр команды не важен: /FREQ 200 → 200.0")
+RN.HandleChat(u2, "/freq 145.5")
+RN.HandleChat(u3, "/freq 145.5")
+RN.HandleChat(u4, "/freq 145.5")
+ok(RN.FreqOf(u2) == "145.5" and RN.FreqOf(u3) == "145.5" and RN.FreqOf(u4) == "145.5", "четверо на одной частоте 145.5")
+ok(RN.HandleChat(u1, "/freq") == true and lastChat(u1, "145.5 МГц") ~= nil, "голый /freq — напоминает текущую частоту")
+-- передача: оба в сети (разные круги покрытия) — чистый текст
+TT = 500
+local n2before, n3before, n4before = #u2.__chat, #u3.__chat, #u4.__chat
+ok(RN.HandleChat(u1, "/r Operaciya nachalas") == true, "/r ушёл в эфир (отправитель в сети)")
+ok(lastChat(u1, "%[Рация 145.5%] Игрок601: Operaciya nachalas") ~= nil, "отправителю — собственное эхо")
+ok(#u2.__chat == n2before + 1 and u2.__chat[#u2.__chat] == "[Рация 145.5] Игрок601: Operaciya nachalas", "второй абонент в сети — текст чистый, без помех")
+ok(#u3.__chat == n3before, "абонент в глуши (вне сети и далеко) — ничего не получил")
+ok(#u4.__chat == n4before, "второй «глухой» тоже мимо")
+ok(lastChat(u1, "тишина") == nil, "есть слышащие — подсказки про тишину нет")
+-- передача по прямой дальности: помехи ∝ расстоянию
+TT = 502
+RN.HandleChat(u3, "/r Ky ky svyaz proveryaem")
+local m4 = lastChat(u4, "%[Рация 145.5%] Игрок603:")
+ok(m4 ~= nil, "прямая дальность 800 юн — доставлено")
+local b4 = m4 and m4:match("Игрок603: (.+)$")
+ok(b4 ~= nil and b4 ~= "Ky ky svyaz proveryaem" and b4:find("%*") ~= nil, "текст с помехами: часть символов съело шипение")
+ok(b4 ~= nil and #b4 == #"Ky ky svyaz proveryaem", "длина сообщения сохранена")
+ok(lastChat(u3, "%[Рация 145.5%] Игрок603: Ky ky svyaz proveryaem") ~= nil, "у отправителя — чистое эхо")
+ok(lastChat(u1, "Игрок603") == nil and lastChat(u2, "Игрок603") == nil, "до дальних абонентов (в сети, но вне пары) передача из глуши не долетела")
+ok(lastChat(u3, "тишина") == nil, "слушатель был — тишины нет")
+-- один на частоте: эфир слышит тишину
+RN.HandleChat(u5, "/freq 77.7")
+TT = 504
+RN.HandleChat(u5, "/r kto nibud na svyazi")
+ok(lastChat(u5, "тишина") ~= nil, "один абонент — подсказка «в эфире тишина»")
+-- антифлуд
+local n5 = #u5.__chat
+RN.HandleChat(u5, "/r snova snova")
+ok(lastChat(u5, "Не так быстро") ~= nil and #u5.__chat == n5 + 1, "антифлуд: повтор раньше паузы отброшен")
+-- !-вариант команды
+TT = 510
+ok(RN.HandleChat(u1, "!r poreshali") == true and u2.__chat[#u2.__chat] == "[Рация 145.5] Игрок601: poreshali", "!r работает так же, как /r")
+-- маршрутные предохранители: чужие команды не страдают
+ok(RN.HandleChat(admin, "/radio ne nasha") == false, "/radio — чужая команда, не трогаем")
+ok(RN.HandleChat(admin, "/report bug") == false, "/report — чужая, пропускаем")
+ok(RN.HandleChat(admin, "/r") == true and lastChat(admin, "Формат: /r") ~= nil, "голый /r — подсказка формата (поглощён)")
+-- отключение
+ok(RN.HandleChat(u1, "/freqleave") == true and RN.FreqOf(u1) == nil, "/freqleave — рация отключена")
+ok(RN.HandleChat(u1, "/r test") == true and lastChat(u1, "не на частоте") ~= nil, "после отключения /r снова отказан")
+RN.HandleChat(u1, "/freq 145.5")
+ok(RN.HandleChat(u1, "/freq 0") == true and RN.FreqOf(u1) == nil, "/freq 0 — тоже отключение (для C-меню)")
+ok(RN._freq[tostring(u1:SteamID64())] == nil, "запись sid64 зачищена сменой частоты на off")
+-- восстановление при перезаходе (память сессии по sid64)
+u2._rnFreq = nil
+H.hooks["PlayerInitialSpawn"]["GRM_RN_FreqSpawn"](u2)
+ok(u2._rnFreq == "145.5", "PlayerInitialSpawn: частота воскрешена из памяти sid64")
+-- журнал: передачи попадают в /rn_log
+local sawSay = false
+for _, e in ipairs(RN.LogTail(40)) do if e.kind == "freq_say" then sawSay = true break end end
+ok(sawSay, "радиопередачи журналируются (вид freq_say)")
+-- юнит-проверки скремблера
+ok(RN.FreqScramble("privet gorod", 1, 5) == "privet gorod", "скремблер: keep=1 — текст нетронут")
+local sA1, sA2 = RN.FreqScramble("privet gorod", 0.4, 42), RN.FreqScramble("privet gorod", 0.4, 42)
+ok(sA1 == sA2 and sA1 ~= "privet gorod", "скремблер детерминирован seed'ом")
+ok(RN.FreqScramble("a b c", 0.5, 7):find(" ") ~= nil, "пробелы сквозь помехи живут")
+-- статус суперадмина теперь показывает абонентов частот
+local sawFreqLine = false
+for _, ln in ipairs(RN.StatusLines()) do if ln:find("Радиочастоты") then sawFreqLine = true break end end
+ok(sawFreqLine, "/rn_status печатает строку абонентов радиочастот")
 
 P("")
 P("ИТОГ: " .. tostring(checks) .. " проверок, провалов: " .. tostring(failed))
