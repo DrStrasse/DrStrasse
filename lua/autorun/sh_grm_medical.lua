@@ -14,6 +14,15 @@
     Команды: /medcards (окно: у медика — список пациентов и редактор,
     у прочих — своя карта), /mycard (то же, сразу своя карта),
     консоль grm_medcards.
+
+    v1.1.0 (Код 101, находка 118): ВЫДАЧА МЕДКАРТЫ НА РУКИ. У врача в
+    редакторе карты кнопка «Выдать карту на руки» — пациенту падает в
+    инвентарь предмет «Медицинская карта» (модель-бумажка, дропается и
+    подбирается, sid64 владельца хранится в данных предмета). Кнопка
+    «Использовать» в /inv открывает просмотр карты любому держателю
+    (RP: физическую карту можно показать). Повторная выдача, пока карта
+    есть в инвентаре пациента, закрыта; факт выдачи пишется в карту
+    (поле issued + служебная запись журнала kind=«issue»).
 ----------------------------------------------------------------------]]
 
 if SERVER then AddCSLuaFile() end
@@ -22,7 +31,7 @@ GRM = GRM or {}
 GRM.Medical = GRM.Medical or {}
 local MD = GRM.Medical
 
-MD.Version   = "1.0.0"
+MD.Version   = "1.1.0"
 MD.ConfigFile = "grm_medcfg.json"
 MD.CardsFile  = "grm_medcards.json"
 MD.MaxEntries = 60
@@ -38,7 +47,34 @@ MD.EntryKinds = {
     vitals       = "Показания",
     prescription = "Назначение",
     operation    = "Операция",
+    issue        = "Выдача карты", -- служебный вид: пишется только op «issue» (Код 101)
 }
+
+-- Код 101: медицинская карта как предмет инвентаря («на руки»).
+-- sid64 владельца лежит в данных предмета (slot.data.sid64) — дроп,
+-- подбор и рестарт привязку не теряют (сейв инвентаря хранит data).
+MD.CardItem      = "medcard"
+MD.CardItemModel   = "models/props_lab/clipboard.mdl"
+MD.CardItemModelFB = "models/props_c17/paper01.mdl" -- фолбэк (н85)
+
+if GRM.Inventory and GRM.Inventory.RegisterItem then
+    local function regMedCard()
+        local mdl = MD.CardItemModel
+        if util.IsValidModel and not util.IsValidModel(mdl) then mdl = MD.CardItemModelFB end
+        GRM.Inventory.RegisterItem(MD.CardItem, {
+            type = "item",
+            name = "Медицинская карта",
+            desc = "Заполненная врачом карта пациента. «Использовать» — посмотреть карту. Не теряйте.",
+            icon = "icon16/vcard.png",
+            maxStack = 1,
+            weight = 0.2,
+            model = mdl,
+            useFunc = "medcard_view",
+        })
+    end
+    regMedCard()
+    timer.Simple(2, regMedCard) -- инвентарь мог подгрузиться позже
+end
 
 local NET_OPEN   = "GRM_Med_Open"
 local NET_CARD   = "GRM_Med_Card"
@@ -216,6 +252,34 @@ if SERVER then
         pushCard(ply, sid64, doctor == true)
     end)
 
+    -- Код 101: просмотр карты с физического предмета на руках
+    -- («Использовать» в инвентаре, useFunc medcard_view). RP-логика
+    -- физического носителя: держишь карту в руках — значит, можешь её
+    -- прочитать (и показать врачу/полиции), даже если она чужая.
+    -- Править по-прежнему может только персонал с доступом.
+    function MD.ViewIssued(ply, data)
+        if not IsValid(ply) then return end
+        if not istable(data) or tostring(data.sid64 or "") == "" then
+            if GRM.Notify then GRM.Notify(ply, "Пустой бланк карты — на нём нет печати выдачи. Заполненную выдаёт врач (окно /medcards).", 255, 200, 90) end
+            return
+        end
+        local sid64 = tostring(data.sid64)
+        -- актуализируем имя по онлайну (карта могла выехать с давним сейвом)
+        local c0 = MD.Cards[sid64]
+        if istable(c0) then
+            for _, p in ipairs(player.GetAll()) do
+                if IsValid(p) and p:SteamID64() == sid64 then c0.name = rpName(p) break end
+            end
+        end
+        pushOpen(ply) -- окно: у медика — полная редакция, у прочих — просмотр
+        -- карту шлём чуть позже открытия: у пациентского окна есть
+        -- авто-запрос своей карты на 0.1с — наш снапшот должен лечь поверх.
+        timer.Simple(0.2, function()
+            if not IsValid(ply) then return end
+            pushCard(ply, sid64, MD.CanTreat(ply) == true)
+        end)
+    end
+
     net.Receive(NET_EDIT, function(_, ply)
         if not IsValid(ply) then return end
         if not MD.CanTreat(ply) then
@@ -247,6 +311,7 @@ if SERVER then
         if op == "add" then
             local kind = tostring(net.ReadString() or "")
             if not MD.EntryKinds[kind] then return end
+            if kind == "issue" then return end -- служебная: ставит только кнопка выдачи
             local text = string.sub(string.Trim(tostring(net.ReadString() or "")), 1, 500)
             if text == "" then return end
             card.name = tostring(net.ReadString() or card.name or "?")
@@ -287,6 +352,50 @@ if SERVER then
             card.updated = os.time()
             MD.SaveCards("del entry " .. sid64)
             pushCard(ply, sid64, true)
+            return
+        end
+
+        -- Код 101: выдать медицинскую карту пациенту «на руки» (предмет инвентаря).
+        if op == "issue" then
+            if not (GRM.Inventory and GRM.Inventory.AddItem and GRM.Inventory.CountItem) then
+                if GRM.Notify then GRM.Notify(ply, "Инвентарь недоступен — выдача карт невозможна.", 255, 140, 110) end
+                return
+            end
+            if sid64 == ply:SteamID64() then
+                if GRM.Notify then GRM.Notify(ply, "Себе карту выдавать не нужно — своя карта всегда у вас в /mycard.", 255, 200, 90) end
+                return
+            end
+            local patient
+            for _, p in ipairs(player.GetAll()) do
+                if IsValid(p) and p:SteamID64() == sid64 then patient = p break end
+            end
+            if not IsValid(patient) then
+                if GRM.Notify then GRM.Notify(ply, "Пациент не в сети — выдать карту на руки нельзя.", 255, 200, 90) end
+                return
+            end
+            if GRM.Inventory.CountItem(patient, MD.CardItem) > 0 then
+                if GRM.Notify then GRM.Notify(ply, "У этого пациента уже есть медкарта на руках.", 255, 200, 90) end
+                return
+            end
+            local left = GRM.Inventory.AddItem(patient, MD.CardItem, 1, { sid64 = sid64 })
+            if (left or 1) > 0 then
+                if GRM.Notify then GRM.Notify(ply, "В инвентаре пациента нет места.", 255, 140, 110) end
+                return
+            end
+            card.name = rpName(patient)
+            card.issued = { ts = os.time(), doctor = myName, doctorSid64 = ply:SteamID64() }
+            card.entries[#card.entries + 1] = {
+                ts = os.time(), doctor = myName, doctorSid64 = ply:SteamID64(),
+                doctorFac = myFac, kind = "issue", text = "Медицинская карта выдана на руки",
+            }
+            while #card.entries > MD.MaxEntries do table.remove(card.entries, 1) end
+            card.updated = os.time()
+            MD.SaveCards("issue " .. sid64)
+            pushCard(ply, sid64, true)
+            if GRM.Notify then
+                GRM.Notify(ply, "Медкарта выдана на руки: " .. rpName(patient), 120, 220, 140)
+                GRM.Notify(patient, "Врач " .. myName .. " выдал вам медицинскую карту — она в инвентаре (/inv).", 120, 220, 140)
+            end
             return
         end
     end)
@@ -492,7 +601,9 @@ if CLIENT then
             ksel._medCardDyn = true
             ksel:SetPos(x0, y) ksel:SetSize(180, 28) ksel:SetFont("GRMMed_Text")
             ksel:SetValue("Запись приёма")
-            for k, lab in pairs(MD.EntryKinds) do ksel:AddChoice(lab, k, k == "note") end
+            for k, lab in pairs(MD.EntryKinds) do
+                if k ~= "issue" then ksel:AddChoice(lab, k, k == "note") end -- issue — только кнопкой выдачи (Код 101)
+            end
 
             local txt = vgui.Create("DTextEntry", parent)
             txt._medCardDyn = true
@@ -515,6 +626,27 @@ if CLIENT then
                     net.WriteString(tostring(card.name or "?"))
                 net.SendToServer()
                 txt:SetText("")
+            end
+
+            -- Код 101: выдача медкарты пациенту «на руки» (предмет инвентаря)
+            local bIssue = mkBtn(parent, "Выдать карту на руки", MC.acc, 190, 28)
+            bIssue._medCardDyn = true
+            bIssue:SetPos(x0, y + 34)
+            bIssue.DoClick = function()
+                net.Start(NET_EDIT)
+                    net.WriteString("issue")
+                    net.WriteString(_cardSid or "")
+                net.SendToServer()
+            end
+            local iss = vgui.Create("DLabel", parent)
+            iss._medCardDyn = true
+            iss:SetPos(x0 + 200, y + 38) iss:SetSize(w0 - 200, 22)
+            iss:SetFont("GRMMed_Text") iss:SetTextColor(MC.dim)
+            if istable(card.issued) then
+                iss:SetText("выдана на руки: " .. os.date("%d.%m.%Y %H:%M", tonumber(card.issued.ts) or 0)
+                    .. " • " .. tostring(card.issued.doctor or "?"))
+            else
+                iss:SetText("на руки ещё не выдана")
             end
         end
     end

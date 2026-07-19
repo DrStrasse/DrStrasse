@@ -310,6 +310,31 @@ local onCount = 0
 for i = 1, 24 do local s = inv2.slots[i] if s and s.id == "radio_modulator" and istable(s.data) and s.data.on == true then onCount = onCount + 1 end end
 ok(onCount == 2, "AddItem(+data): второй модулятор лёг со СВОИМ включённым состоянием")
 
+print("== 8. Код 101: медкарта на руках — «Использовать» открывает просмотр, предмет цел ==")
+-- симулируем выдачу: врач положил карту с sid64 владельца (см. sh_grm_medical op «issue»)
+local patient = mkPly("76561198000000077")
+GRM.Inventory.RegisterItem("medcard", { type = "item", name = "Медицинская карта", maxStack = 1, weight = 0.2, useFunc = "medcard_view" })
+GRM.Inventory.AddItem(patient, "medcard", 1, { sid64 = "76561198000000077" })
+local viewCalls = { n = 0 }
+GRM.Medical = GRM.Medical or {}
+GRM.Medical.ViewIssued = function(p, data) viewCalls.n = viewCalls.n + 1 viewCalls[viewCalls.n] = data or false end
+local pinv = GRM.Inventory.GetPlayerInv(patient)
+local mslot
+for i = 1, 24 do local s = pinv.slots[i] if s and s.id == "medcard" then mslot = i break end end
+ok(mslot ~= nil, "медкарта выдана (в слоте с sid64 владельца)")
+H.seq = { mslot } H.recv["grm_inv_use"](0, patient)
+ok(viewCalls.n == 1, "useFunc medcard_view: вызван MD.ViewIssued")
+ok(viewCalls.n == 1 and istable(viewCalls[1]) and viewCalls[1].sid64 == "76561198000000077",
+   "ViewIssued получил ТЕ ЖЕ данные экземпляра (sid64 владельца)")
+ok(pinv.slots[mslot] ~= nil and GRM.Inventory.CountItem(patient, "medcard") == 1,
+   "медкарта НЕ расходуется при просмотре")
+-- предмет-«бланк» без данных: до модуля доходит вызов с nil-data (модуль сам объяснит про пустую карту)
+GRM.Inventory.AddItem(patient, "medcard", 1)
+local bslot
+for i = 1, 24 do local s = pinv.slots[i] if s and s.id == "medcard" and not s.data then bslot = i break end end
+if bslot then H.seq = { bslot } H.recv["grm_inv_use"](0, patient) end
+ok(bslot ~= nil and viewCalls.n == 2 and viewCalls[2] == false, "отдельный бланк тоже доходит до модуля медицины (data=nil)")
+
 print("")
 print(("РЕЗУЛЬТАТ: %d/%d проверок, провалов: %d"):format(checks - failed, checks, failed))
 if failed > 0 then os.exit(1) end

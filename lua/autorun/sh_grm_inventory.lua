@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Inventory System v1.2.0 (Код 99)
+    GRM Inventory System v1.3.0 (Код 101)
     Полноценный инвентарь с ячейками для патронов, оружия и предметов
 
     Возможности:
@@ -22,6 +22,11 @@
     получил необязательный 4-й параметр data — grm_item_drop раньше
     терял данные не-оружейных предметов при подборе (включённый
     модулятор поднимался бы сброшенным).
+    v1.3.0 (Код 101, находка 118): useFunc «medcard_view» — медицинская
+    карта на руках: «Использовать» открывает просмотр карты владельца
+    (sid64 — в slot.data предмета, поэтому переживает дроп/подбор и
+    рестарт). Предмет НЕ тратится. Сам просмотр — на стороне модуля
+    медицины (MD.ViewIssued).
       • Синхронизация сервер ↔ клиент
       • Стакирование одинаковых предметов (патроны)
       • Интеграция с GRM Currency
@@ -598,6 +603,15 @@ if SERVER then
                 end
                 if slot.data.on and GRM.RadioNet and GRM.RadioNet.FreqInfo then
                     GRM.RadioNet.FreqInfo(ply)
+                end
+                return
+            elseif def.useFunc == "medcard_view" then
+                -- Код 101: медицинская карта на руках — предмет НЕ тратится.
+                -- sid64 владельца лежит в slot.data (выдача/дроп/подбор).
+                if GRM.Medical and GRM.Medical.ViewIssued then
+                    GRM.Medical.ViewIssued(ply, slot.data)
+                else
+                    GRM.Notify(ply, "Модуль медкарт не загружен", 255, 140, 110)
                 end
                 return
             end
