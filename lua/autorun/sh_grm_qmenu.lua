@@ -1,6 +1,18 @@
 --[[--------------------------------------------------------------------
-    GRM Q-меню и инструменты v3.1.0 (Код 92) — «GRM Стройка+»
+    GRM Q-меню и инструменты v3.2.0 (Код 93) — «GRM Стройка+»
 
+    v3.2.0 (Код 93, находка 110): у владельца живое меню перекрывал ЧУЖОЙ
+    аддон «GRM Restricted Q Menu» (не входит в сборку) — он глушил Q раньше
+    нашего хука. Добавлено:
+      · авто-сенсус чужих обработчиков SpawnMenuOpen/ContextMenuOpen через
+        6с после загрузки клиента — предупреждение в консоль с id-кандидатов
+        (hook.GetTable, все вызовы в garдах, стенды не трогает);
+      · /qm_diag (суперадмин) и консольная grm_qmenu_diag: полный дамп
+        хуков Q-ивентов с пометкой «ЧУЖОЙ» — по id видно, какой аддон
+        перехватывает меню;
+      · Cfg.adminsToo (дефолт false): суперадмину ТОЖЕ открывать
+        «Стройка+» вместо ванильного Q — предпросмотр игрового меню без
+        захода игроком (чекбокс в Настройках, SetOpt).
     v3.1.0 (Код 92, находка 109): полная переработка визуала по скриншотам
     владельца. Вёрстка «как у ванильного Q»: слева вкладки + контент,
     СПРАВА — сворачиваемые категории инструментов (клик = тул в руку,
@@ -54,7 +66,7 @@ GRM = GRM or {}
 GRM.QMenu = GRM.QMenu or {}
 local QM = GRM.QMenu
 
-QM.Version = "3.1.0"
+QM.Version = "3.2.0"
 
 local CONFIG_FILE = "grm_qmenu.json"
 
@@ -162,6 +174,8 @@ local function defaultCfg()
         menuPropCap  = 24,     -- лимит меню-пропов на игрока
         -- v3.0.0
         protectFurniture = true, -- remover игроков — только на их пропах
+        -- v3.2.0
+        adminsToo    = false,  -- суперадмину тоже наше меню вместо ванильного Q
     }
 end
 
@@ -188,8 +202,9 @@ if SERVER then
     local NET_SETOPT  = "GRM_QMenu_SetOpt"
     local NET_FEED    = "GRM_QMenu_Feedback"
     local NET_OPEN    = "GRM_QMenu_Open"
+    local NET_DIAG    = "GRM_QMenu_Diag"
     for _, s in ipairs({ NET_SYNC, NET_SPAWN, NET_REMOVE1, NET_CLEAR, NET_GUN,
-        NET_TOOL, NET_CURATE, NET_SEED, NET_SETOPT, NET_FEED, NET_OPEN }) do
+        NET_TOOL, NET_CURATE, NET_SEED, NET_SETOPT, NET_FEED, NET_OPEN, NET_DIAG }) do
         util.AddNetworkString(s)
     end
 
@@ -252,7 +267,7 @@ if SERVER then
         local d = defaultCfg()
         for _, k in ipairs({ "playersQ", "allowProps", "allowRagdolls", "allowEffects",
             "allowNPCs", "allowSENTs", "allowSWEPs", "allowVehiclesQ", "whitelistMode",
-            "grmBuildMenu", "propsFree", "protectFurniture" }) do
+            "grmBuildMenu", "propsFree", "protectFurniture", "adminsToo" }) do
             if t[k] ~= nil then d[k] = t[k] == true end
         end
         d.toolDeny  = sanitizeList(t.toolDeny)
@@ -598,7 +613,7 @@ if SERVER then
     -- ── настройки из меню (только суперадмин) ───────────────
     local OPT_BOOL = {
         playersQ = true, grmBuildMenu = true, propsFree = true,
-        whitelistMode = true, protectFurniture = true,
+        whitelistMode = true, protectFurniture = true, adminsToo = true,
     }
     net.Receive(NET_SETOPT, function(_, ply)
         if not IsValid(ply) or not ply:IsSuperAdmin() then return end
@@ -627,6 +642,13 @@ if SERVER then
         if low == "/qm" or low == "/build" then
             net.Start(NET_OPEN)
             net.Send(ply)
+            return true
+        end
+        if low == "/qm_diag" then
+            if not ply:IsSuperAdmin() then ply:PrintMessage(HUD_PRINTTALK, "[Стройка] Только суперадмин.") return true end
+            net.Start(NET_DIAG)
+            net.Send(ply)
+            ply:PrintMessage(HUD_PRINTTALK, "[Стройка] Дамп обработчиков Q-меню → в КОНСОЛЬ клиента (клавиша ~). Ищите строки «ЧУЖОЙ».")
             return true
         end
         if low == "/qm_seed" then
@@ -680,7 +702,7 @@ if SERVER then
     end)
 
     QM.Load("старт")
-    print("[GRM QMenu] Стройка+ v" .. QM.Version .. " загружена (Код 92). Игрок: Q | Админ: /qm | Хаб: /grm_admin → «Инструменты»")
+    print("[GRM QMenu] Стройка+ v" .. QM.Version .. " загружена (Код 93). Игрок: Q | Админ: /qm | Хаб: /grm_admin → «Инструменты»")
 end
 
 -- ============================================================
@@ -733,13 +755,65 @@ if CLIENT then
         if GRM.QMenu and GRM.QMenu.OpenMenu then GRM.QMenu.OpenMenu() end
     end)
 
+    -- ── диагностика перехватчиков Q (v3.2.0, находка 110) ──
+    local function isOurs(id)
+        local s = tostring(id)
+        return string.find(s, "GRM", 1, true) ~= nil or string.find(s, "grm_", 1, true) ~= nil
+    end
+    local function censusQHooks(evs)
+        local out = {}
+        if not (istable(hook) and isfunction(hook.GetTable)) then return out end
+        local ht = hook.GetTable()
+        if not istable(ht) then return out end
+        for _, ev in ipairs(evs) do
+            local t = ht[ev]
+            if istable(t) then
+                for id in pairs(t) do
+                    if not isOurs(id) then out[#out + 1] = { ev = ev, id = tostring(id) } end
+                end
+            end
+        end
+        return out
+    end
+    function QM.DiagDump(why)
+        print("[GRM QMenu] ==== дамп обработчиков Q-меню (" .. tostring(why or "?") .. ") ====")
+        local evs = { "SpawnMenuOpen", "OnSpawnMenuOpen", "ContextMenuOpen", "OnContextMenuOpen", "PlayerBindPress" }
+        local bad = censusQHooks(evs)
+        for _, r in ipairs(bad) do
+            print(("[GRM QMenu]  %s  [ %s ]  <-- ЧУЖОЙ"):format(r.ev, r.id))
+        end
+        print(("[GRM QMenu] чужих обработчиков: %d. Q открывает чужое окно? Отключите аддон по id выше (garrysmod/addons или коллекция Workshop), затем смените карту."):format(#bad))
+    end
+    net.Receive("GRM_QMenu_Diag", function()
+        if QM.DiagDump then QM.DiagDump("/qm_diag") end
+    end)
+    if istable(concommand) and isfunction(concommand.Add) then
+        concommand.Add("grm_qmenu_diag", function()
+            if QM.DiagDump then QM.DiagDump("консоль") end
+        end)
+    end
+    -- автосенсус через 6с: предупреждение в консоль, если меню кто-то перехватывает
+    if istable(timer) and isfunction(timer.Simple) then
+        timer.Simple(6, function()
+            local bad = censusQHooks({ "SpawnMenuOpen", "OnSpawnMenuOpen", "ContextMenuOpen" })
+            if #bad > 0 then
+                local ids = {}
+                for _, r in ipairs(bad) do ids[#ids + 1] = r.ev .. "[" .. r.id .. "]" end
+                print("[GRM QMenu][!] Q-меню перехватывают чужие хуки: " .. table.concat(ids, ", ")
+                    .. " — «Стройка+» может не показываться. Диагностика: /qm_diag")
+            end
+        end)
+    end
+
     local function cfg() return GRM.QMenu.Cfg or {} end
 
     local function isAdmin() return IsValid(LocalPlayer()) and LocalPlayer():IsSuperAdmin() end
 
     local function qBlockedForMe()
-        if isAdmin() then return false end
-        return cfg().playersQ == false
+        local c = cfg()
+        if c.playersQ ~= false then return false end
+        if isAdmin() and c.adminsToo ~= true then return false end
+        return true
     end
 
     hook.Add("SpawnMenuOpen", "GRM_QMenu_BlockOpen", function()
@@ -1209,6 +1283,7 @@ if CLIENT then
             optRow("propsFree", "Свободный спавн ЛЮБЫХ моделей (ВЫКЛ = только каталог)")
             optRow("whitelistMode", "Белый режим инструментов (только из toolAllow)")
             optRow("protectFurniture", "Защита чужих/серверных пропов от remover игроков")
+            optRow("adminsToo", "Суперадмину тоже «Стройка+» вместо ванильного Q (предпросмотр)")
 
             lab(content, "Лимит пропов на игрока (menuPropCap):", 12, y + 7, 300, QC.text, "GRMQ_Text")
             local nw = vgui.Create("DNumberWang", content)

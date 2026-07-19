@@ -182,6 +182,7 @@ ok(QM.Cfg.playersQ == true, "дефолт: ванильное Q открыто")
 ok(QM.Cfg.grmBuildMenu == true, "дефолт: меню стройки включено")
 ok(QM.Cfg.protectFurniture == true, "дефолт v3: защита мебели включена")
 ok(QM.Cfg.menuPropCap == 24, "дефолт: лимит 24")
+ok(QM.Cfg.adminsToo == false, "дефолт v3.2: суперадмин с ванильным Q (adminsToo=false)")
 QM.Cfg.playersQ = false
 QM.Cfg.propList = { "models/props_c17/furnituretable001a.mdl" }
 ok(QM.Save("тест") == true, "Save отработал")
@@ -323,6 +324,10 @@ ok(QM.Cfg.menuPropCap == 24, "menuPropCap вернулся к 24")
 fireRecv("GRM_QMenu_SetOpt", admin, { "protectFurniture", false, false })
 ok(QM.Cfg.protectFurniture == false, "защита мебели выключается из меню")
 fireRecv("GRM_QMenu_SetOpt", admin, { "protectFurniture", false, true })
+fireRecv("GRM_QMenu_SetOpt", admin, { "adminsToo", false, true })
+ok(QM.Cfg.adminsToo == true, "v3.2: adminsToo включается из меню (предпросмотр)")
+fireRecv("GRM_QMenu_SetOpt", admin, { "adminsToo", false, false })
+ok(QM.Cfg.adminsToo == false, "v3.2: adminsToo выключается обратно")
 
 P("== 8. Защита мебели от remover (CanTool-hook) ==")
 TT = TT + 1
