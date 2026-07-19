@@ -1,6 +1,15 @@
 --[[--------------------------------------------------------------------
-    GRM Q-меню и инструменты v3.2.1 (Код 94) — «GRM Стройка+»
+    GRM Q-меню и инструменты v3.3.0 (Код 95) — «GRM Стройка+»
 
+    v3.3.0 (Код 95, находка 112):
+      · НАСЛОЕНИЕ ИНСТРУМЕНТОВ (баг из v3.1.0): строки правой колонки
+        создавались БЕЗ Dock(TOP) — скролл не раскладывал их вертикально,
+        вся колонка лежала стопкой в одной точке с нулевой шириной.
+        scrollAdd теперь докует TOP сам (DScrollPanel.AddItem родительства
+        не докует — знать и не повторять!).
+      · HOLD-Q как ванильное: +menu pressed=true → открыть; pressed=false
+        → закрыть (QM.CloseMenu); OpenMenu больше не toggle (повтор при
+        удержании игнорируется), /qm остался переключателем через ресивер.
     v3.2.1 (Код 94, находка 111, визуальный пас по скриншоту): окно КРУПНЕЕ
     и ШИРЕ (0.72/0.82 экрана, пределы 1080..1360 × 680..900), футер 64px
     в два чистых ряда — кнопки 30px с шагом 8px БЕЗ наслоения, строка
@@ -71,7 +80,7 @@ GRM = GRM or {}
 GRM.QMenu = GRM.QMenu or {}
 local QM = GRM.QMenu
 
-QM.Version = "3.2.1"
+QM.Version = "3.3.0"
 
 local CONFIG_FILE = "grm_qmenu.json"
 
@@ -707,7 +716,7 @@ if SERVER then
     end)
 
     QM.Load("старт")
-    print("[GRM QMenu] Стройка+ v" .. QM.Version .. " загружена (Код 94). Игрок: Q | Админ: /qm | Хаб: /grm_admin → «Инструменты»")
+    print("[GRM QMenu] Стройка+ v" .. QM.Version .. " загружена (Код 95). Игрок: зажать Q | Админ: /qm | Хаб: /grm_admin → «Инструменты»")
 end
 
 -- ============================================================
@@ -757,7 +766,9 @@ if CLIENT then
     end)
 
     net.Receive("GRM_QMenu_Open", function()
-        if GRM.QMenu and GRM.QMenu.OpenMenu then GRM.QMenu.OpenMenu() end
+        if not (GRM.QMenu and GRM.QMenu.OpenMenu) then return end
+        if IsValid(GRM.QMenu._frame) and GRM.QMenu.CloseMenu then GRM.QMenu.CloseMenu()
+        else GRM.QMenu.OpenMenu() end
     end)
 
     -- ── диагностика перехватчиков Q (v3.2.0, находка 110) ──
@@ -912,8 +923,13 @@ if CLIENT then
     QM._toolCatsCollapsed = QM._toolCatsCollapsed or {}
     QM._activeTool = QM._activeTool or nil
 
+    function QM.CloseMenu()
+        if IsValid(QM._frame) then QM._frame:Remove() end
+        QM._frame = nil
+    end
+
     function QM.OpenMenu()
-        if IsValid(QM._frame) then QM._frame:Remove() QM._frame = nil return end
+        if IsValid(QM._frame) then return end -- hold-Q: повторное нажатие при удержании не гасит меню
         local admin = isAdmin()
         if QM._tab ~= "catalog" and QM._tab ~= "curate" and QM._tab ~= "settings" then QM._tab = "catalog" end
         if not admin and QM._tab ~= "catalog" then QM._tab = "catalog" end
@@ -986,8 +1002,9 @@ if CLIENT then
                 if QM._frame == f then QM._frame = nil end
             end
         end
+        f.OnRemove = function() if QM._frame == f then QM._frame = nil end end
         local x = mkBtn(f, "✕", QC.red) x:SetPos(FW - 44, 8) x:SetSize(32, 28)
-        x.DoClick = function() if IsValid(f) then f:Remove() end QM._frame = nil end
+        x.DoClick = function() QM.CloseMenu() end
 
         -- ── вкладки слева сверху (как в ваниле) ─────────────
         local tabDefs = { { "catalog", "Каталог пропов", 152 } }
@@ -1036,6 +1053,7 @@ if CLIENT then
 
         local buildToolsPane
         local function scrollAdd(sc, pnl, mTop, mLeft)
+            pnl:Dock(TOP) -- КЛЮЧЕВО: без Dock(TOP) строки скролла ложатся стопкой (баг н112)
             pnl:DockMargin(mLeft or 2, mTop or 3, 2, 0)
             sc:AddItem(pnl)
         end
@@ -1323,15 +1341,19 @@ if CLIENT then
         builders[QM._tab]()
     end
 
-    -- универсальный слой: бинд +menu глушится, открываем наше меню
+    -- универсальный слой: бинд +menu глушится; HOLD-Q как ванильное —
+    -- пока Q зажата меню открыто, отпустил — закрылось (v3.3.0)
     hook.Add("PlayerBindPress", "GRM_QMenu_BindBlock", function(_, bind, pressed)
-        if not pressed then return end
         if bind ~= "+menu" then return end
         if qBlockedForMe() then
-            if menuHasContent() then
-                QM.OpenMenu()
-            elseif IsValid(LocalPlayer()) then
-                LocalPlayer():PrintMessage(HUD_PRINTCENTER, "Q-меню и стройка закрыты администрацией")
+            if pressed then
+                if menuHasContent() then
+                    if not IsValid(QM._frame) then QM.OpenMenu() end
+                elseif IsValid(LocalPlayer()) then
+                    LocalPlayer():PrintMessage(HUD_PRINTCENTER, "Q-меню и стройка закрыты администрацией")
+                end
+            else
+                QM.CloseMenu()
             end
             return true
         end
