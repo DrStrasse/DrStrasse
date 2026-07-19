@@ -1,6 +1,8 @@
 --[[--------------------------------------------------------------------
-    GRM Q-меню и инструменты v3.3.0 (Код 95) — «GRM Стройка+»
+    GRM Q-меню и инструменты v3.3.1 (Код 96) — «GRM Стройка+»
 
+    v3.3.1 (Код 96, находка 113): окно ещё крупнее — 80%×88% экрана,
+    пределы 1200..1560 × 720..980 (на 1920×1080 ≈ 1536×950).
     v3.3.0 (Код 95, находка 112):
       · НАСЛОЕНИЕ ИНСТРУМЕНТОВ (баг из v3.1.0): строки правой колонки
         создавались БЕЗ Dock(TOP) — скролл не раскладывал их вертикально,
@@ -80,7 +82,7 @@ GRM = GRM or {}
 GRM.QMenu = GRM.QMenu or {}
 local QM = GRM.QMenu
 
-QM.Version = "3.3.0"
+QM.Version = "3.3.1"
 
 local CONFIG_FILE = "grm_qmenu.json"
 
@@ -716,7 +718,7 @@ if SERVER then
     end)
 
     QM.Load("старт")
-    print("[GRM QMenu] Стройка+ v" .. QM.Version .. " загружена (Код 95). Игрок: зажать Q | Админ: /qm | Хаб: /grm_admin → «Инструменты»")
+    print("[GRM QMenu] Стройка+ v" .. QM.Version .. " загружена (Код 96). Игрок: зажать Q | Админ: /qm | Хаб: /grm_admin → «Инструменты»")
 end
 
 -- ============================================================
@@ -935,12 +937,12 @@ if CLIENT then
         if not admin and QM._tab ~= "catalog" then QM._tab = "catalog" end
 
         -- размер окна: адаптив от экрана (гарды для стендов без ScrW/ScrH)
-        local FW, FH = 1200, 780
+        local FW, FH = 1360, 860
         if isfunction(ScrW) and isfunction(ScrH) then
             local sw, sh = ScrW(), ScrH()
             if isnumber(sw) and isnumber(sh) and sw > 0 and sh > 0 then
-                FW = math.Clamp(math.floor(sw * 0.72), 1080, 1360)
-                FH = math.Clamp(math.floor(sh * 0.82), 680, 900)
+                FW = math.Clamp(math.floor(sw * 0.80), 1200, 1560)
+                FH = math.Clamp(math.floor(sh * 0.88), 720, 980)
             end
         end
         local HEAD_H, PAD, SIDE_W, FOOT_H = 46, 10, 238, 64
