@@ -116,7 +116,12 @@ function SWEP:SecondaryAttack()
     local tr = self:Trace()
     local ent = tr.Entity
     if not (IsValid(ent) and ent:GetClass() == "grm_keypad") then return false end
-    if ent.KeypadOwner ~= ply and not ply:IsSuperAdmin() then
+    -- Снять можно только СВОЙ кейпад (суперадмин — любой).
+    -- IsKeypadOwner (Код 105): учитывает и OwnerSID64, куда попадает
+    -- владелец после перм-восстановления кейпада на карте.
+    local ownerOK = (ent.KeypadOwner == ply)
+    if ent.IsKeypadOwner then ownerOK = ent:IsKeypadOwner(ply) end
+    if not ownerOK and not ply:IsSuperAdmin() then
         if GRM and GRM.Notify then GRM.Notify(ply, "Чужой кейпад снять нельзя.", 255, 140, 110) end
         return false
     end

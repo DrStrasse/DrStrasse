@@ -36,9 +36,18 @@
     воскрешённые энтити заморожены (EnableMotion(false)).
 ----------------------------------------------------------------------]]
 
-local PERM_VER = "1.2.0"
+local PERM_VER = "1.3.0"
 GRM = GRM or {}
 GRM._permEntitiesVer = PERM_VER
+
+-- Код 105 (находка 122): перм с ДАННЫМИ экземпляра. Модули регистрируют
+-- GRM.PermData.Extract[class] = fn(ent) -> таблица-данные (или nil) и
+-- GRM.PermData.Apply[class] = fn(ent, data). /permadd складывает их в
+-- rec.data, спавн после рестарта разворачивает обратно — кейпад
+-- восстаёт со своим PIN/режимом/фракциями, FFD-дверь — рабочей дверью.
+GRM.PermData = GRM.PermData or { Extract = {}, Apply = {} }
+GRM.PermData.Extract = GRM.PermData.Extract or {}
+GRM.PermData.Apply = GRM.PermData.Apply or {}
 
 if SERVER then
     local PERM_FILE  = "grm_perm_entities.json"
@@ -72,6 +81,10 @@ if SERVER then
         grm_alarm_speaker  = true, -- Код 89
         -- Кейпад прохода (Код 70/Код 89)
         grm_keypad         = true,
+        -- Код 105: prop_physics допускаем именно ради FFD-дверей
+        -- (владелец пермит двери; рабочее состояние восстанавливает
+        -- GRM.PermData.Apply["prop_physics"] из стула FFD Fading Door)
+        prop_physics       = true,
         -- RoomTap: комнатная прослушка (Код 72/Код 89)
         grm_roomtap_chip     = true,
         grm_roomtap_server   = true,
@@ -188,6 +201,13 @@ if SERVER then
                         local ph = ent:GetPhysicsObject()
                         if IsValid(ph) then ph:EnableMotion(false) end -- перм не катается по карте
                         ent._grmPerm = true
+                        -- Код 105: данные экземпляра обратно (PIN кейпада,
+                        -- конфиг FFD-двери и т.п.) — после Spawn, чтобы
+                        -- NetworkVar'ы уже существовали
+                        local applyFn = GRM.PermData and GRM.PermData.Apply and GRM.PermData.Apply[rec.class]
+                        if istable(rec.data) and applyFn then
+                            pcall(applyFn, ent, rec.data)
+                        end
                         done = done + 1
                     else
                         print("[GRM Perm][!] Не удалось создать класс " .. tostring(rec.class) .. " — запись пропущена")
@@ -238,11 +258,18 @@ if SERVER then
         local ang = ent:GetAngles()
         local model = ""
         pcall(function() model = tostring(ent:GetModel() or "") end)
-        list[#list + 1] = {
+        local rec = {
             map = map, class = class, model = model,
             pos = np,
             ang = { p = ang.p, y = ang.y, r = ang.r },
         }
+        -- Код 105: данные экземпляра (PIN кейпада, конфиг двери и т.п.)
+        local extractFn = GRM.PermData and GRM.PermData.Extract and GRM.PermData.Extract[class]
+        if extractFn then
+            local okX, data = pcall(extractFn, ent)
+            if okX and istable(data) then rec.data = data end
+        end
+        list[#list + 1] = rec
         if saveList(list) then
             tell(ply, "[ПЕРМ] " .. class .. " закреплён на карте. Переживёт рестарт и cleanup.", 100, 220, 100)
             print(("[GRM Perm] %s (%s) закрепил %s @ %d %d %d"):format(ply:Nick(), ply:SteamID64() or "?", class, np.x, np.y, np.z))

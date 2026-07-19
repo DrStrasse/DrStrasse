@@ -23,6 +23,10 @@ if CLIENT then
     language.Add("tool.ffd_keypad.name", "FFD Keypad (Кодовый замок)")
     language.Add("tool.ffd_keypad.desc", "Размещает электронный кейпад с PIN-кодом, поддержкой платного прохода и фракций")
     language.Add("tool.ffd_keypad.0", "ЛКМ: Установить Кейпад | ПКМ: Скопировать настройки с объекта")
+    -- алиас-стул «keypad» (include-обёртка) — те же подписи, иначе #tool.keypad.*
+    language.Add("tool.keypad.name", "FFD Keypad (Кодовый замок)")
+    language.Add("tool.keypad.desc", "Размещает электронный кейпад с PIN-кодом, поддержкой платного прохода и фракций")
+    language.Add("tool.keypad.0", "ЛКМ: Установить Кейпад | ПКМ: Скопировать настройки с объекта")
 end
 
 -- ============================================================
@@ -116,7 +120,15 @@ end
 function TOOL.BuildCPanel(panel)
     panel:AddControl("Header", { Description = "Настройка кодового замка FFD Keypad с поддержкой 3D2D дисплея и фракций." })
 
-    panel:AddControl("TextEntry", { Label = "Пароль (PIN-код):", Command = "ffd_keypad_password" })
+    -- Код 102/105 (находка 119/122): тот же исправленный путь, что и кейпад-моды —
+    -- хелпер DForm: настоящий живой контрол. Голый AddControl("TextEntry")
+    -- в этом билде GMod имени контрола НЕ знает и молча пропускал (замечание
+    -- владельца «нет поля для ввода PIN-кода»).
+    if panel.TextEntry then
+        panel:TextEntry("Пароль (PIN-код):", "ffd_keypad_password")
+    else
+        panel:AddControl("TextBox", { Label = "Пароль (PIN-код):", Command = "ffd_keypad_password" })
+    end
 
     -- Код 102 (находка 119): рукомесный vgui.Create+"combo:SetDock" падал
     -- (SetDock — несуществующий метод), панель инструмента вылетала целиком.
@@ -166,7 +178,11 @@ function TOOL.BuildCPanel(panel)
         panel:AddItem(wrap)
     else
         -- фолбэк вне GRM-окружения: одна фракция текстом (legacy-поведение)
-        panel:AddControl("TextEntry", { Label = "Фракция с доступом:", Command = "ffd_keypad_faction" })
+        if panel.TextEntry then
+            panel:TextEntry("Фракция с доступом (через запятую):", "ffd_keypad_faction")
+        else
+            panel:AddControl("TextBox", { Label = "Фракция с доступом (через запятую):", Command = "ffd_keypad_faction" })
+        end
     end
 
     panel:AddControl("Numpad", { Label = "Сигнал успешного входа (Granted):", Command = "ffd_keypad_key_granted" })

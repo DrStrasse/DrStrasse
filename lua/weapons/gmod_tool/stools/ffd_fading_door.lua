@@ -116,7 +116,9 @@ if SERVER then
         end
     end)
 
-    function TOOL:MakeFadingDoor(ply, ent, key, reversed, toggle, autoclose, closeTime)
+    -- ядро: применить настройки fading door (используется и тулганом, и
+    -- перм-восстановлением Кода 105). skipDupe — без записи в duplicator.
+    local function coreMakeFadingDoor(ply, ent, key, reversed, toggle, autoclose, closeTime, skipDupe)
         if not IsValid(ent) then return false end
 
         -- Очистка старых нумпад-импульсов
@@ -131,10 +133,16 @@ if SERVER then
         ent.FFD_AutoClose = autoclose == true or autoclose == 1
         ent.FFD_CloseTime = math.max(0.5, tonumber(closeTime) or 5)
         ent.FFD_Key = key
+        ent.FFD_OwnerSID64 = IsValid(ply) and tostring(ply:SteamID64() or "") or tostring(ent.FFD_OwnerSID64 or "")
 
-        -- Регистрация нумпад связи
-        ent.FFD_NumDown = numpad.OnDown(ply, key, "FFD_Fade_On", ent)
-        ent.FFD_NumUp = numpad.OnUp(ply, key, "FFD_Fade_Off", ent)
+        -- Регистрация нумпад связи. Без живого плеера (перм-восстановление
+        -- Кода 105 с офлайн-владельцем) бинд пропускаем — внутри
+        -- numpad.OnDown движок дёргает ply:ConCommand и роняется на NULL;
+        -- дверь всё равно остаётся рабочей через кейпад/отмычку.
+        if IsValid(ply) then
+            ent.FFD_NumDown = numpad.OnDown(ply, key, "FFD_Fade_On", ent)
+            ent.FFD_NumUp = numpad.OnUp(ply, key, "FFD_Fade_Off", ent)
+        end
 
         -- Публичные API методы для связки с Кейпадом и Отмычкой
         ent.FadeActivate = function() fadeOn(ply, ent) end
@@ -145,20 +153,66 @@ if SERVER then
         ent.FFD_IsActive = false
         applyFadeState(ent, false)
 
-        duplicator.StoreEntityModifier(ent, "FFD_FadingDoor", {
-            key = key,
-            reversed = reversed,
-            toggle = toggle,
-            autoclose = autoclose,
-            time = closeTime,
-        })
+        if not skipDupe then
+            duplicator.StoreEntityModifier(ent, "FFD_FadingDoor", {
+                key = key,
+                reversed = reversed,
+                toggle = toggle,
+                autoclose = autoclose,
+                time = closeTime,
+            })
+        end
 
         return true
     end
 
+    function TOOL:MakeFadingDoor(ply, ent, key, reversed, toggle, autoclose, closeTime)
+        return coreMakeFadingDoor(ply, ent, key, reversed, toggle, autoclose, closeTime, false)
+    end
+
     duplicator.RegisterEntityModifier("FFD_FadingDoor", function(ply, ent, data)
-        TOOL:MakeFadingDoor(ply, ent, data.key, data.reversed, data.toggle, data.autoclose, data.time)
+        coreMakeFadingDoor(ply, ent, data.key, data.reversed, data.toggle, data.autoclose, data.time, true)
     end)
+
+    -- ============================================================
+    -- Код 105 (находка 122): админский ПЕРМ FFD-двери. Дверь — обычный
+    -- prop_physics с флагами isFadingDoor; /permadd по такому пропу
+    -- пишет ещё и конфиг двери (rec.data.ffd), после рестарта проп
+    -- встаёт на место и СРАЗУ работает как fading door.
+    -- ============================================================
+    GRM = GRM or {}
+    GRM.FFD_MakeFadingDoor = function(ply, ent, key, reversed, toggle, autoclose, closeTime)
+        return coreMakeFadingDoor(ply, ent, key, reversed, toggle, autoclose, closeTime, true)
+    end
+    GRM.PermData = GRM.PermData or { Extract = {}, Apply = {} }
+    GRM.PermData.Extract = GRM.PermData.Extract or {}
+    GRM.PermData.Apply = GRM.PermData.Apply or {}
+    GRM.PermData.Extract["prop_physics"] = function(ent)
+        if not ent.isFadingDoor then return nil end
+        return {
+            ffd = {
+                key = tonumber(ent.FFD_Key) or 1,
+                reversed = ent.FFD_Reversed == true,
+                toggle = ent.FFD_Toggle == true,
+                autoclose = ent.FFD_AutoClose == true,
+                time = tonumber(ent.FFD_CloseTime) or 5,
+                owner = tostring(ent.FFD_OwnerSID64 or ""),
+            },
+        }
+    end
+    GRM.PermData.Apply["prop_physics"] = function(ent, t)
+        if not (istable(t) and istable(t.ffd)) then return end
+        local d = t.ffd
+        local ownerPly = nil
+        local want = tostring(d.owner or "")
+        if want ~= "" then
+            for _, p in ipairs(player.GetAll()) do
+                if IsValid(p) and tostring(p:SteamID64() or "") == want then ownerPly = p break end
+            end
+        end
+        coreMakeFadingDoor(ownerPly, ent, tonumber(d.key) or 1, d.reversed, d.toggle, d.autoclose, tonumber(d.time) or 5, true)
+        ent.FFD_OwnerSID64 = want
+    end
 end
 
 function TOOL:LeftClick(trace)

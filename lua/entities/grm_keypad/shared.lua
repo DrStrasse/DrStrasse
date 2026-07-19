@@ -30,19 +30,21 @@ function ENT:SetupDataTables()
 end
 
 -- ============================================================
--- Код 104 (находка 121): единая геометрия экрана кейпада.
--- Кейпад-модель (props_lab/keypad) смотрит лицом в +X: правильный спавн —
--- чистый ent:SetAngles(HitNormal:Angle()) БЕЗ доп. поворотов (лишние
--- RotateAroundAxis и клали кейпад набок, как на скрине владельца).
--- Оси плоскости 3D2D: экран-X = -GetRight(), экран-Y(вниз) = -GetUp(),
--- нормаль наружу = GetForward(). Поворачиваем угол как (Right, -90)
--- затем (Up, -90) — иначе текст зеркалит (старая пара (0,90,90) в
--- LocalToWorldAngles так и делала).
+-- Код 104/105 (находка 121/122): единая геометрия экрана кейпада.
+-- Кейпад-модель (props_lab/keypad) смотрит лицом в +X: спавн — чистый
+-- ent:SetAngles(HitNormal:Angle()) БЕЗ доп. поворотов.
+-- ВАЖНО про ориентацию 3D2D (находка 122): по формуле вики GMod
+-- pixel(x,y) -> world = pos + Rotate(ang)·(x·s, -y·s, 0), т.е. экран-X =
+-- ang:Forward(), экран-Y(вниз) = ang:Right(). Попытки собрать угол
+-- парой RotateAroundAxis давали ролл 180° — поэтому Код 105 строит угол
+-- НАПРЯМУЮ из базиса модели: текст-вправо = -GetRight(), текст-вниз =
+-- -GetUp(), нормаль наружу = GetForward()  →  AngleEx.
+-- Размер панели — НЕ константами, а по морде модели (OBBMins/OBBMaxs):
+-- панель автоподгоняется под грань, никаких «съехавших наполовину».
 -- ============================================================
-ENT.ScreenScale  = 0.035
-ENT.ScreenW      = 144            -- размер клиентской отрисовки, px
+ENT.ScreenW      = 144            -- размер клиентской раскладки, px
 ENT.ScreenH      = 220
-ENT.ScreenFwdOff = 1.6            -- на сколько экран «приподнят» над лицом модели
+ENT.ScreenPad    = 0.12           -- на сколько экран приподнят над гранью
 
 ENT.Buttons = {
     { text = "1", x = 12, y = 80,  w = 36, h = 28 },
@@ -59,27 +61,54 @@ ENT.Buttons = {
     { text = "OK",  x = 96, y = 182, w = 36, h = 28 },
 }
 
--- левая верхняя точка экрана в мире
-function ENT:KeypadScreenOrigin()
-    local s = self.ScreenScale or 0.035
-    return self:GetPos()
-        + self:GetForward() * (self.ScreenFwdOff or 1.6)
-        + self:GetRight() * ((self.ScreenW or 144) * s / 2)
-        + self:GetUp() * ((self.ScreenH or 220) * s / 2)
+-- рамка экрана: центр морды + масштаб px→юниты по реальному размеру грани
+function ENT:KeypadScreenFrame()
+    local W = tonumber(self.ScreenW) or 144
+    local H = tonumber(self.ScreenH) or 220
+    local center, w, h = nil, nil, nil
+    pcall(function()
+        local mins, maxs = self:OBBMins(), self:OBBMaxs()
+        if mins and maxs and (maxs.y - mins.y) > 0.3 and (maxs.z - mins.z) > 0.3 then
+            w = maxs.y - mins.y       -- ширина грани (модель-«право»)
+            h = maxs.z - mins.z       -- высота грани
+            center = self:GetPos()
+                + self:GetForward() * (maxs.x + (self.ScreenPad or 0.12))
+                - self:GetRight() * ((mins.y + maxs.y) / 2)
+                + self:GetUp() * ((mins.z + maxs.z) / 2)
+        end
+    end)
+    if not center then -- фолбэк: прежние константы
+        w, h = 4.8, 7.7
+        center = self:GetPos() + self:GetForward() * 1.6
+    end
+    local s = math.min(w / W, h / H)
+    if not s or s <= 0 then s = 0.035 end
+    return { center = center, scale = s }
 end
 
--- угол плоскости 3D2D (правильная, не зеркальная пара поворотов)
+function ENT:KeypadScreenScale()
+    return self:KeypadScreenFrame().scale
+end
+
+-- левая верхняя точка экрана в мире (текст-лево = +GetRight, верх = +GetUp)
+function ENT:KeypadScreenOrigin()
+    local fr = self:KeypadScreenFrame()
+    return fr.center
+        + self:GetRight() * ((tonumber(self.ScreenW) or 144) * fr.scale / 2)
+        + self:GetUp() * ((tonumber(self.ScreenH) or 220) * fr.scale / 2)
+end
+
+-- угол плоскости 3D2D напрямую из базиса (без подбора пар поворотов):
+-- Forward угла = вправо по экрану = -GetRight, Up угла = нормаль наружу =
+-- GetForward; тогда экран-Y(вниз) = Right угла = -GetUp  (находка 122).
 function ENT:KeypadScreenAngles()
-    local ang = self:GetAngles()
-    ang:RotateAroundAxis(ang:Right(), -90)
-    ang:RotateAroundAxis(ang:Up(), -90)
-    return ang
+    return (-self:GetRight()):AngleEx(self:GetForward())
 end
 
 -- какая кнопка под мировой точкой (прицел): индекс, кнопка или nil
 function ENT:KeypadButtonAt(hitPos)
     if not hitPos then return nil end
-    local s = self.ScreenScale or 0.035
+    local s = self:KeypadScreenScale()
     local rel = hitPos - self:KeypadScreenOrigin()
     local x = rel:Dot(-self:GetRight()) / s
     local y = rel:Dot(-self:GetUp()) / s
@@ -89,6 +118,15 @@ function ENT:KeypadButtonAt(hitPos)
         end
     end
     return nil
+end
+
+-- Код 105: владелец кейпада — сам игрок ИЛИ онлайн-совпадение sid64
+-- (permanent-восстановление: владелец мог перезайти/быть не в сети)
+function ENT:IsKeypadOwner(ply)
+    if not IsValid(ply) then return false end
+    if ply == self.KeypadOwner then return true end
+    local o = tostring(self.OwnerSID64 or "")
+    return o ~= "" and o == tostring(ply:SteamID64() or "")
 end
 
 if SERVER then

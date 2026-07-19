@@ -13,6 +13,50 @@ include("shared.lua")
 
 util.AddNetworkString("GRM_KeypadPress")
 
+-- ============================================================
+-- Код 105 (находка 122): админский ПЕРМ-кейпад. Данные кейпада едут в
+-- базу перм-энтити (sh_grm_perm_entities v1.3.0): /permadd по кейпаду
+-- фиксирует PIN/режим/цену/список фракций/кнопки сигналов/задержку/
+-- владельца — после рестарта сервера или админ-перезагрузки кейпад
+-- встаёт на место ГОТОВЫМ К РАБОТЕ, а не пустышкой с 1234.
+-- ============================================================
+local function keypadPermExtract(ent)
+    return {
+        password = tostring(ent:GetPassword() or "1234"),
+        mode     = tonumber(ent:GetMode()) or 0,
+        cost     = tonumber(ent:GetCost()) or 0,
+        faction  = tostring(ent:GetFaction() or ""),
+        granted  = tonumber(ent.KeyGranted) or 1,
+        denied   = tonumber(ent.KeyDenied) or 2,
+        hold     = tonumber(ent.HoldTime) or 5,
+        owner    = (IsValid(ent.KeypadOwner) and tostring(ent.KeypadOwner:SteamID64() or "")) or tostring(ent.OwnerSID64 or ""),
+    }
+end
+local function keypadPermApply(ent, t)
+    ent:SetPassword(tostring(t.password or "1234"))
+    ent:SetMode(tonumber(t.mode) or 0)
+    ent:SetCost(tonumber(t.cost) or 0)
+    ent:SetFaction(tostring(t.faction or ""))
+    ent.KeyGranted = math.Clamp(tonumber(t.granted) or 1, 1, 9)
+    ent.KeyDenied  = math.Clamp(tonumber(t.denied) or 2, 1, 9)
+    ent.HoldTime   = math.max(0.5, tonumber(t.hold) or 5)
+    ent.OwnerSID64 = tostring(t.owner or "")
+    if ent.OwnerSID64 ~= "" then
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and tostring(p:SteamID64() or "") == ent.OwnerSID64 then
+                ent.KeypadOwner = p
+                break
+            end
+        end
+    end
+end
+GRM = GRM or {}
+GRM.PermData = GRM.PermData or { Extract = {}, Apply = {} }
+GRM.PermData.Extract = GRM.PermData.Extract or {}
+GRM.PermData.Apply = GRM.PermData.Apply or {}
+GRM.PermData.Extract["grm_keypad"] = keypadPermExtract
+GRM.PermData.Apply["grm_keypad"] = keypadPermApply
+
 function ENT:Initialize()
     self:SetModel("models/props_lab/keypad.mdl")
     self:PhysicsInit(SOLID_VPHYSICS)
@@ -132,7 +176,7 @@ function ENT:PressButton(btn, ply)
             end
         end
 
-        if ply:IsSuperAdmin() or self:IsFactionAllowed(plyFac) or (ply == self.KeypadOwner) then
+        if ply:IsSuperAdmin() or self:IsFactionAllowed(plyFac) or self:IsKeypadOwner(ply) then
             self:ProcessGrant(ply)
         else
             if GRM.Notify then GRM.Notify(ply, "Доступ ограничен фракцией [" .. string.Trim(tostring(self:GetFaction() or "")) .. "]", 255, 100, 100) end
@@ -151,7 +195,7 @@ function ENT:PressButton(btn, ply)
 
     if btn == "OK" then
         local targetPass = self:GetPassword()
-        if self.CurrentInput == targetPass or (ply == self.KeypadOwner or ply:IsSuperAdmin()) then
+        if self.CurrentInput == targetPass or self:IsKeypadOwner(ply) or ply:IsSuperAdmin() then
             self:ProcessGrant(ply)
         else
             self:ProcessDeny(ply)
