@@ -17,6 +17,7 @@ local CFG = function() return A.Config or {} end
 A.Devices = A.Devices or {} -- [entIndex] = ent
 A.Logs = A.Logs or {}       -- [networkId] = { {t, kind, text, name, sid} }
 A.Sirens = A.Sirens or {}   -- [hubIndex] = { patch, stopAt }
+A.SpeakerPatches = A.SpeakerPatches or {} -- Код 89: [speakerIndex] = patch
 
 local NET_OPEN_DEV = "GRM_Alarm_OpenDev"
 local NET_OPEN_TRM = "GRM_Alarm_OpenTrm"
@@ -58,7 +59,9 @@ local function classOf(ent)
 end
 
 local function isAlarmClass(cls)
-    return cls == "grm_alarm_sensor" or cls == "grm_alarm_hub" or cls == "grm_alarm_terminal"
+    -- Код 89: динамик сирены — полноценное устройство сети
+    return cls == "grm_alarm_sensor" or cls == "grm_alarm_hub"
+        or cls == "grm_alarm_terminal" or cls == "grm_alarm_speaker"
 end
 
 local function withinUse(ply, ent)
@@ -163,6 +166,8 @@ function A.GetLogs(networkID, limit)
 end
 
 -- ── siren ──────────────────────────────────────────────────
+local syncSpeakers -- Код 89 (форвард-декларация, урок 97-хотфикса)
+
 function A.StopSiren(hub)
     if not IsValid(hub) then return end
     local idx = hub:EntIndex()
@@ -173,6 +178,7 @@ function A.StopSiren(hub)
     end
     A.Sirens[idx] = nil
     hub:SetAlarmActive(false)
+    if syncSpeakers then syncSpeakers(hub:GetNetworkID()) end
 end
 
 function A.StartSiren(hub, reason, ply)
@@ -192,6 +198,7 @@ function A.StartSiren(hub, reason, ply)
     A.Log(hub:GetNetworkID(), "alarm", "ТРЕВОГА: " .. tostring(reason or "?"), ply)
     print(("[GRM Alarm] ALARM net=%s hub=%s reason=%s"):format(
         tostring(hub:GetNetworkID()), tostring(hub:GetDeviceID()), tostring(reason)))
+    if syncSpeakers then syncSpeakers(hub:GetNetworkID()) end
 end
 
 function A.SetMode(networkID, mode, ply)
@@ -219,6 +226,62 @@ function A.ResetAlarm(networkID, ply)
     return true
 end
 
+-- ── Код 89: динамики сирены ────────────────────────────────
+-- Звучат, пока активна тревога в их сети; Active=false — динамик молчит.
+-- Синхронизация событийная (старт/стоп сирены хаба, смена режима/активности)
+-- + сторожевой прогон в скан-тикере (лента событий не теряется).
+local function stopSpeakerPatch(ent)
+    local idx = ent:EntIndex()
+    local p = A.SpeakerPatches[idx]
+    if p then p:Stop() end
+    A.SpeakerPatches[idx] = nil
+end
+A.StopSpeakerPatch = stopSpeakerPatch
+
+syncSpeakers = function(networkID)
+    networkID = A.NormalizeNetwork(networkID)
+    local hub = A.GetHub(networkID)
+    local alarmOn = IsValid(hub) and hub:GetAlarmActive() == true
+    for _, ent in ipairs(devicesOf(networkID, "grm_alarm_speaker")) do
+        local idx = ent:EntIndex()
+        local playing = A.SpeakerPatches[idx] ~= nil
+        local should = alarmOn and ent:GetActive() == true
+        if should and not playing then
+            local cfg = CFG()
+            local soundPath = cfg.SirenSound or "ambient/alarms/combine_bank_alarm_loop4.wav"
+            local patch = CreateSound(ent, soundPath)
+            if patch then
+                patch:SetSoundLevel(tonumber(cfg.SirenLevel) or 80)
+                patch:PlayEx(tonumber(cfg.SirenVolume) or 1, 100)
+                A.SpeakerPatches[idx] = patch
+            end
+        elseif playing and not should then
+            stopSpeakerPatch(ent)
+        end
+    end
+end
+
+local function syncAllSpeakers()
+    -- собираем сети из живых динамиков + сети с играющими патчами
+    local nets = {}
+    for _, ent in pairs(A.Devices) do
+        if IsValid(ent) and classOf(ent) == "grm_alarm_speaker" then
+            nets[A.NormalizeNetwork(ent:GetNetworkID())] = true
+        end
+    end
+    for n in pairs(nets) do syncSpeakers(n) end
+    -- патчи-сироты (динамик удалён, патч остался)
+    for idx, patch in pairs(A.SpeakerPatches) do
+        local ent = Entity(idx)
+        if not IsValid(ent) then
+            if patch then patch:Stop() end
+            A.SpeakerPatches[idx] = nil
+        end
+    end
+end
+A._speakerSync = syncSpeakers      -- тест-экспорт
+A._speakerSyncAll = syncAllSpeakers
+
 -- ── sensor scan ────────────────────────────────────────────
 local lastScan = 0
 hook.Add("Think", "GRM_Alarm_Scan", function()
@@ -238,6 +301,9 @@ hook.Add("Think", "GRM_Alarm_Scan", function()
             end
         end
     end
+
+    -- Код 89: сторожевой прогон динамиков сирены (restore/спавн/смена сети)
+    if syncAllSpeakers then syncAllSpeakers() end
 
     local cd = tonumber(CFG().TriggerCooldown) or 4
     for _, sensor in pairs(A.Devices) do
@@ -302,12 +368,16 @@ local function savePath()
     return dir .. "/" .. map .. ".json"
 end
 
+-- Код 89: defensive-вариант как в CCTV — если компоненты пришли таблицей
+-- (обёртки/восстановленные энтити), позиция не затирается нулями.
 local function vecT(v)
     if isvector and isvector(v) then return { x = v.x, y = v.y, z = v.z } end
+    if istable(v) then return { x = tonumber(v.x) or 0, y = tonumber(v.y) or 0, z = tonumber(v.z) or 0 } end
     return { x = 0, y = 0, z = 0 }
 end
 local function angT(a)
     if isangle and isangle(a) then return { p = a.p, y = a.y, r = a.r } end
+    if istable(a) then return { p = tonumber(a.p) or 0, y = tonumber(a.y) or 0, r = tonumber(a.r) or 0 } end
     return { p = 0, y = 0, r = 0 }
 end
 
@@ -328,6 +398,8 @@ function A.SavePermanent()
             if classOf(ent) == "grm_alarm_sensor" then
                 rec.radius = ent:GetRadius()
                 rec.active = ent:GetActive()
+            elseif classOf(ent) == "grm_alarm_speaker" then
+                rec.active = ent:GetActive() -- Код 89
             elseif classOf(ent) == "grm_alarm_hub" then
                 rec.mode = ent:GetMode()
             end
@@ -371,6 +443,8 @@ function A.LoadPermanent()
                     if classOf(ent) == "grm_alarm_sensor" then
                         if rec.radius then ent:SetRadius(tonumber(rec.radius) or 220) end
                         ent:SetActive(rec.active ~= false)
+                    elseif classOf(ent) == "grm_alarm_speaker" then
+                        if rec.active ~= nil then ent:SetActive(rec.active == true) end -- Код 89
                     elseif classOf(ent) == "grm_alarm_hub" then
                         ent:SetMode(A.ClampMode(rec.mode or 1))
                     end
@@ -406,8 +480,9 @@ function A.OpenDeviceMenu(ply, ent, kind)
             net.WriteUInt(math.Clamp(ent:GetRadius(), 0, 2000), 16)
             net.WriteBool(ent:GetActive())
         else
+            -- Код 89: speaker — bool = его Active (читается клиентом под kind)
             net.WriteUInt(0, 3)
-            net.WriteBool(false)
+            net.WriteBool(classOf(ent) == "grm_alarm_speaker" and ent:GetActive() or false)
             net.WriteUInt(0, 8)
         end
     net.Send(ply)
@@ -443,9 +518,16 @@ function A.OpenTerminal(ply, ent)
         net.WriteBool(alarm)
         net.WriteBool(A.CanControl(ply))
         net.WriteBool(IsValid(hub))
+        net.WriteUInt(#devicesOf(netID, "grm_alarm_speaker"), 8) -- Код 89
         net.WriteTable(sensorList)
         net.WriteTable(logs)
     net.Send(ply)
+end
+
+-- Код 89: любые правки настроек автоматически тонут в персистент
+-- (дебонс 1с — серия кликов не дёргает диск подряд)
+local function saveSoon()
+    timer.Create("GRM_Alarm_SaveSoon", 1, 1, function() A.SavePermanent() end)
 end
 
 net.Receive(NET_ACT, function(_, ply)
@@ -467,6 +549,7 @@ net.Receive(NET_ACT, function(_, ply)
         local ok, err = A.SetMode(netID, a.mode, ply)
         if not ok then notify(ply, false, tostring(err)) return end
         notify(ply, true, "Режим: " .. A.ModeName(err))
+        saveSoon()
         if IsValid(ent) and classOf(ent) == "grm_alarm_terminal" then
             A.OpenTerminal(ply, ent)
         end
@@ -482,11 +565,14 @@ net.Receive(NET_ACT, function(_, ply)
         local label = string.sub(string.Trim(tostring(a.label or "")), 1, CFG().MaxLabelLen or 48)
         if label == "" then label = "Устройство" end
         ent:SetLabel(label)
+        saveSoon()
         notify(ply, true, "Подпись: " .. label)
     elseif act == "set_network" then
         if not A.CanControl(ply) or not IsValid(ent) then return end
         if not withinUse(ply, ent) then return end
         ent:SetNetworkID(A.NormalizeNetwork(a.network))
+        saveSoon()
+        if classOf(ent) == "grm_alarm_speaker" then syncSpeakers(ent:GetNetworkID()) end
         notify(ply, true, "Сеть: " .. ent:GetNetworkID())
     elseif act == "set_sensor" then
         if not A.CanControl(ply) or not IsValid(ent) or classOf(ent) ~= "grm_alarm_sensor" then return end
@@ -496,7 +582,18 @@ net.Receive(NET_ACT, function(_, ply)
                 tonumber(CFG().MinSensorRadius) or 64, tonumber(CFG().MaxSensorRadius) or 800))
         end
         if a.active ~= nil then ent:SetActive(a.active and true or false) end
+        saveSoon()
         notify(ply, true, "Датчик обновлён.")
+    elseif act == "set_speaker" then -- Код 89: динамик сирены (вкл/выкл)
+        if not A.CanControl(ply) or not IsValid(ent) or classOf(ent) ~= "grm_alarm_speaker" then return end
+        if not withinUse(ply, ent) then return end
+        if a.active ~= nil then
+            ent:SetActive(a.active and true or false)
+            if not ent:GetActive() then A.StopSpeakerPatch(ent) end
+        end
+        syncSpeakers(ent:GetNetworkID())
+        saveSoon()
+        notify(ply, true, "Динамик " .. (ent:GetActive() and "включён." or "выключен."))
     elseif act == "set_permanent" then
         if not ply:IsSuperAdmin() or not IsValid(ent) then return end
         ent:SetPermanent(a.permanent and true or false)
@@ -532,4 +629,4 @@ concommand.Add("grm_alarm_save", function(ply)
     A.SavePermanent()
 end)
 
-print("[GRM Alarm] server v1.1.0 — ignore friendlies")
+print("[GRM Alarm] server v1.2.0 — динамик сирены, сеть в терминале, автосейв (Код 89)")

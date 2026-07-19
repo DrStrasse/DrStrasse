@@ -17,6 +17,9 @@ A.Config = A.Config or {
     SensorModel   = "models/bull/various/gyroscope.mdl",
     HubModel      = "models/props_lab/reciever_cart.mdl",
     TerminalModel = "models/props/cs_office/computer.mdl",
+    -- Код 89: динамик сирены
+    SpeakerModel  = "models/props_wasteland/speakercluster01a.mdl",
+    SpeakerModelFallback = "models/props_lab/citizenradio.mdl",
 
     DefaultNetwork = "main",
     MaxNetworkLen  = 32,
@@ -80,4 +83,4 @@ function A.ModeName(m)
     return (A.ModeNames and A.ModeNames[m]) or ("Режим " .. m)
 end
 
-print("[GRM Alarm] config v1.0.0")
+print("[GRM Alarm] config v1.1.0")

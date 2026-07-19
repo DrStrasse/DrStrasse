@@ -71,7 +71,9 @@ net.Receive(NET_OPEN_DEV, function()
     f:MakePopup()
     f.Paint = function(_, w, h)
         draw.RoundedBox(8, 0, 0, w, h, THEME.bg)
-        draw.SimpleText(kind == "hub" and "Блок коммутации" or "Датчик движения",
+        local title = kind == "hub" and "Блок коммутации"
+            or kind == "speaker" and "Динамик сирены" or "Датчик движения"
+        draw.SimpleText(title,
             "GRMAlarm_Title", 12, 18, THEME.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
 
@@ -95,7 +97,7 @@ net.Receive(NET_OPEN_DEV, function()
     network:SetText(netID or "main")
     y = y + 32
 
-    local radius, active, mode
+    local radius, active, mode, speakerActive
     if kind == "sensor" or ent:GetClass() == "grm_alarm_sensor" then
         local r = net.ReadUInt(16)
         local on = net.ReadBool()
@@ -107,6 +109,16 @@ net.Receive(NET_OPEN_DEV, function()
         active = vgui.Create("DCheckBoxLabel", f)
         active:SetPos(16, y) active:SetText("Датчик активен")
         active:SetTextColor(THEME.text) active:SetValue(on and 1 or 0)
+        y = y + 28
+    elseif kind == "speaker" then
+        -- Код 89: динамик сирены — без режима, только Active
+        net.ReadUInt(3)
+        local on = net.ReadBool()
+        net.ReadUInt(8)
+        lab("Воет сиреной, пока активна тревога в его сети.")
+        speakerActive = vgui.Create("DCheckBoxLabel", f)
+        speakerActive:SetPos(16, y) speakerActive:SetText("Динамик включён")
+        speakerActive:SetTextColor(THEME.text) speakerActive:SetValue(on and 1 or 0)
         y = y + 28
     else
         local m = net.ReadUInt(3)
@@ -140,6 +152,9 @@ net.Receive(NET_OPEN_DEV, function()
             local _, m = mode:GetSelected()
             act({ action = "set_mode", network = network:GetValue(), mode = m or 1, entIndex = ent:EntIndex() })
         end
+        if IsValid(speakerActive) then
+            act({ action = "set_speaker", entIndex = ent:EntIndex(), active = speakerActive:GetChecked() })
+        end
         f:Close()
     end
 
@@ -160,6 +175,7 @@ net.Receive(NET_OPEN_TRM, function()
     local alarm = net.ReadBool()
     local canCtrl = net.ReadBool()
     local hasHub = net.ReadBool()
+    local spkCount = net.ReadUInt(8) -- Код 89
     local sensors = net.ReadTable() or {}
     local logs = net.ReadTable() or {}
     if not IsValid(ent) then return end
@@ -185,10 +201,12 @@ net.Receive(NET_OPEN_TRM, function()
     local stCol = alarm and THEME.red or (A.ModeColors and A.ModeColors[mode]) or THEME.text
     status:SetTextColor(stCol)
     if not hasHub then
-        status:SetText("Нет блока коммутации в этой сети — поставьте grm_alarm_hub")
+        status:SetText("Нет блока коммутации в этой сети — поставьте grm_alarm_hub" ..
+            (spkCount > 0 and ("  |  динамиков: " .. tostring(spkCount)) or ""))
         status:SetTextColor(THEME.yellow)
     else
-        status:SetText((alarm and "⚠ ТРЕВОГА  |  " or "") .. "Режим: " .. modeName .. "  |  датчиков: " .. tostring(#sensors))
+        status:SetText((alarm and "⚠ ТРЕВОГА  |  " or "") .. "Режим: " .. modeName ..
+            "  |  датчиков: " .. tostring(#sensors) .. "  |  динамиков: " .. tostring(spkCount))
     end
 
     local sheet = vgui.Create("DPropertySheet", f)
@@ -223,17 +241,34 @@ net.Receive(NET_OPEN_TRM, function()
                 end)
             end
 
+            -- Код 89: строка сети терминала (раньше менялась только из меню устройства)
+            local netLab = vgui.Create("DLabel", p)
+            netLab:SetPos(20, 126) netLab:SetSize(400, 18)
+            netLab:SetFont("GRMAlarm_Normal") netLab:SetTextColor(THEME.text)
+            netLab:SetText("Сеть терминала (NetworkID):")
+            local netBox = vgui.Create("DTextEntry", p)
+            netBox:SetPos(20, 146) netBox:SetSize(220, 24)
+            netBox:SetText(netID)
+            local netBtn = btn(p, "Применить сеть", THEME.accent, 160, 24)
+            netBtn:SetPos(252, 146)
+            netBtn.DoClick = function()
+                act({ action = "set_network", entIndex = ent:EntIndex(), network = netBox:GetValue() })
+                timer.Simple(0.15, function()
+                    if IsValid(ent) then act({ action = "refresh_terminal", entIndex = ent:EntIndex() }) end
+                end)
+            end
+
             local help = vgui.Create("DLabel", p)
-            help:SetPos(20, 140)
+            help:SetPos(20, 190)
             help:SetSize(660, 120)
             help:SetWrap(true)
             help:SetFont("GRMAlarm_Small")
             help:SetTextColor(THEME.dim)
             help:SetText(
                 "Выключено — датчики молчат.\n" ..
-                "Под охраной — движение → лог + сирена (combine_bank_alarm).\n" ..
+                "Под охраной — движение → лог + сирена (combine_bank_alarm) из блока и всех динамиков сети.\n" ..
                 "Пассивный контроль — только лог движения, без сирены.\n" ..
-                "Блок коммутации (reciever_cart) обязателен в сети. Датчики и терминал — тот же NetworkID."
+                "Блок коммутации обязателен в сети. Датчики, динамики и терминал — тот же NetworkID."
             )
         else
             local l = vgui.Create("DLabel", p)

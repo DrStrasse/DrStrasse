@@ -1,6 +1,7 @@
 --[[--------------------------------------------------------------------
-    GRM CCTV — server v1.2.0 (Код 60)
+    GRM CCTV — server v1.2.1 (Код 60/Код 89)
     Реестр, доступ, сеть, view + freeze, сейв, screenshot notify.
+    Код 89: автосейв персистента при любой правке настроек (дебаунс 1с).
 ----------------------------------------------------------------------]]
 
 if CLIENT then return end
@@ -410,6 +411,12 @@ local VALID_ACTIONS = {
     view_cam = true, stop_view = true, screenshot = true,
 }
 
+-- Код 89: любая правка настроек автоматически тонет в персистент
+-- (дебаунс 1с — серия кликов не дёргает диск подряд).
+local function saveSoon()
+    timer.Create("GRM_CCTV_SaveSoon", 1, 1, function() CCTV.SavePermanent() end)
+end
+
 net.Receive(NET_ACTION, function(_, ply)
     if not IsValid(ply) then return end
     local action = net.ReadString() or ""
@@ -500,20 +507,24 @@ net.Receive(NET_ACTION, function(_, ply)
         local label = string.sub(string.Trim(net.ReadString() or ""), 1, CFG().MaxLabelLen or 48)
         if label == "" then label = "Устройство" end
         ent:SetLabel(label)
+        saveSoon() -- Код 89
         notify(ply, true, "Подпись: " .. label)
     elseif action == "set_network" then
         local nw = CCTV.NormalizeNetwork(net.ReadString())
         ent:SetNetworkID(nw)
+        saveSoon() -- Код 89
         notify(ply, true, "Сеть: " .. nw)
     elseif action == "set_active" then
         if not ent.SetActive then return end
         local on = net.ReadBool()
         ent:SetActive(on)
+        saveSoon() -- Код 89
         notify(ply, true, on and "Включено." or "Выключено.")
     elseif action == "set_fov" then
         if not ent.SetCamFOV then return end
         local fov = CCTV.ClampFOV(net.ReadUInt(8))
         ent:SetCamFOV(fov)
+        saveSoon() -- Код 89
         notify(ply, true, "FOV: " .. tostring(fov))
     elseif action == "set_permanent" then
         if not ply:IsSuperAdmin() then
@@ -624,4 +635,4 @@ concommand.Add("grm_cctv_list", function(ply)
     if IsValid(ply) then ply:ChatPrint(msg) end
 end)
 
-print("[GRM CCTV] server v1.2.0")
+print("[GRM CCTV] server v1.2.1 — автосейв персистента (Код 89)")
