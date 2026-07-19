@@ -148,6 +148,7 @@ function RunConsoleCommand(cmd, arg) RUN_CC[#RUN_CC + 1] = { cmd = cmd, arg = ar
 
 -- ---------- игрок-клиент ----------
 local LP = { _isLP = true }
+LP.Alive = function(s) return s._alive ~= false end
 function LocalPlayer() return LP end
 player = { GetAll = function() return {} end }
 
@@ -170,7 +171,7 @@ local okr, rerr = pcall(chunk)
 ok(okr, "выполняется без ошибок: " .. tostring(rerr))
 local MB = GRM.Mobile
 ok(MB ~= nil, "GRM.Mobile зарегистрирован")
-ok(MB.Version == "1.2.0", "версия 1.2.0")
+ok(MB.Version == "1.2.1", "версия 1.2.1")
 
 -- ---------- хелперы симуляции ----------
 local function tap(k)                      -- короткое нажатие
@@ -325,6 +326,19 @@ act = lastAct()
 ok(STR_CALLS >= 2, "Derma-запросы номера/текста показаны (" .. STR_CALLS .. ")")
 ok(act ~= nil and act.op == "sms" and act.num == "54321", "ответ ушёл: op=sms → 54321")
 tap(KEY_BACKSPACE)                                -- назад к тредам
+-- возврат в диалог сохраняет позицию треда (88.3b): идём на тред №2 (11111),
+-- BACKSPACE, повторный ENTER должен открыть ТОТ ЖЕ тред №2, а не верхний
+tap(KEY_DOWN)
+tap(KEY_ENTER)                                    -- тред 11111
+tap(KEY_BACKSPACE)                                -- назад; sel обязан остаться на №2
+STR_ANSWERS = { "x", "y" }                        -- номер перезабьём префиллом… нет: префилл = threadNum
+NET_SENT = {}
+tap(KEY_ENTER)                                    -- снова тред №2 (если позиция не сбросилась)
+STR_ANSWERS = { "11111", "проверка треда" }
+tap(KEY_ENTER)                                    -- ответить внутри треда
+act = lastAct()
+ok(act ~= nil and act.op == "sms" and act.num == "11111", "BACKSPACE из диалога сохраняет позицию треда (№2 = 11111)")
+tap(KEY_BACKSPACE)                                -- назад к тредам
 
 -- ---------- контакты ----------
 sect("контакты: меню действий, звонок")
@@ -437,9 +451,15 @@ NET_SENT = {}
 if timer._t and timer._t["GRM_Mob_Tick"] then timer._t["GRM_Mob_Tick"]() end
 act = lastAct()
 ok(act ~= nil and act.op == "ping", "открытый UI шлёт keepalive-ping раз в секунду")
--- слоты НЕ заблокированы, когда телефон закрыт: закрываем и проверяем
-tap(KEY_BACKSPACE)
-ok(bindRet("slot1", true) == false, "при закрытом телефоне slot1 свободен")
+-- смерть с открытым телефоном: UI закрывается сам, стойка не залипает на респавне
+LP._alive = false
+NET_SENT = {}
+if timer._t and timer._t["GRM_Mob_Tick"] then timer._t["GRM_Mob_Tick"]() end
+act = lastAct()
+ok(act ~= nil and act.op == "close", "смерть с открытым телефоном → op=close (стойка снята)")
+LP._alive = true
+-- слоты НЕ заблокированы, когда телефон закрыт
+ok(bindRet("slot1", true) == false, "после смертельного закрытия slot1 свободен")
 sendToClient("GRM_Mob_State", { has = false, lineState = "idle", unread = 0 })
 if timer._t and timer._t["GRM_Mob_Tick"] then timer._t["GRM_Mob_Tick"]() end
 ok(true, "state has=false + тикер: телефон сам закрылся без ошибок")

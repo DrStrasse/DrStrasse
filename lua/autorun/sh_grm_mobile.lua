@@ -45,7 +45,7 @@ GRM = GRM or {}
 GRM.Mobile = GRM.Mobile or {}
 local MB = GRM.Mobile
 
-MB.Version   = "1.2.0"
+MB.Version   = "1.2.1"
 MB.DataFile  = "grm_mobile.json"
 MB.ForumFile = "grm_mobile_forum.json"
 MB.SmsCap       = 40    -- глубина ящика SMS
@@ -1870,6 +1870,12 @@ if CLIENT then
         if M.st.lineState == "call" then M.callSec = (M.callSec or 0) + 1 else M.callSec = 0 end
         if IsValid(phone) then phone:SetVisible(M.open and M.st.has == true) end
         if M.open and M.st.has ~= true then closePhone() end
+        -- Код 88.3b: смерть с открытым телефоном — закрыть UI, иначе после
+        -- респавна клиент продолжал бы пинговать и сервер держал бы стойку
+        if M.open then
+            local lp = LocalPlayer()
+            if IsValid(lp) and lp.Alive and not lp:Alive() then closePhone() end
+        end
         if M.open then sendAct({ op = "ping" }) end -- Код 88.3: UI жив — держать флаг свежим
     end)
 
