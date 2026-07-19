@@ -51,6 +51,16 @@ L.InventoryCrates = read(CRATEFILE,{})
 local function saveAccess() write(ACCESSFILE,L.Access) end
 local function saveCrates() write(CRATEFILE,L.InventoryCrates) end
 
+-- Код 90: автосейв карты-точек дебаунсом 1с. Склад/оружейная меняют сток
+-- через addStock/takeStock без немедленной записи — до ShutDown сток жил
+-- только в памяти; краш/смена карты между кликом и шатдауном = сток терялся.
+-- Серия депозитов перезапускает таймер, диск не дёргается.
+local function saveSoon()
+    timer.Create("GRM_Logistics_SaveSoon",1,1,function()
+        if L.SaveMap then L.SaveMap(nil) end
+    end)
+end
+
 local function factionOf(p)
     if not IsValid(p) or not istable(Factions) then return nil,nil end
     for name,f in pairs(Factions) do
@@ -121,7 +131,7 @@ local function addStock(data,kind,item,n)
     local cat=category(kind,item); local target=kind=="weapon" and data.stock.weapons or data.stock.items
     local cap=tonumber(data.capacity[cat]) or 0; local current=used(target)
     if current+n>cap then return false end
-    target[item]=(tonumber(target[item])or 0)+n; return true
+    target[item]=(tonumber(target[item])or 0)+n; saveSoon(); return true
 end
 
 local function takeStock(data,kind,item,n)
@@ -129,6 +139,7 @@ local function takeStock(data,kind,item,n)
     if (tonumber(target[item])or 0)<n then return false end
     target[item]=target[item]-n
     if target[item]<=0 then target[item]=nil end
+    saveSoon() -- Код 90
     return true
 end
 
@@ -937,10 +948,13 @@ function L.LoadMap(p)
 end
 
 hook.Add("InitPostEntity","GRML_Load",function() timer.Simple(5,function() L.LoadMap(nil) end) end)
+-- Код 90: кнопка cleanup в spawnmenu раньше стирала точки до рестарта карты —
+-- как в Alarm/CCTV, воскрешаем из того же сейва.
+hook.Add("PostCleanupMap","GRML_Reload",function() timer.Simple(1,function() L.LoadMap(nil) end) end)
 hook.Add("ShutDown","GRML_Save",function()
     saveCrates()
     saveAccess()
     L.SaveMap(nil) -- Защита при рестарте: гарантированное сохранение всех оружейных шкафов
 end)
 
-print("[GRM Logistics] server loaded")
+print("[GRM Logistics] server v1.2.1 — автосейв стока + воскрешение после cleanup (Код 90)")

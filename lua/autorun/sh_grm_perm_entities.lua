@@ -15,8 +15,11 @@
       grm_net_console, grm_loudspeaker. grm_radio/grm_broadcast_mic
       тоже автоперсистентны, оставлены здесь лишь для совместимости
       со старыми базами.
+      НЕ добавляются (свой сейв карты со стоком, Код 90):
+      grm_logistics_loading, grm_logistics_warehouse, grm_logistics_armory.
       НЕ добавляются (временные по смыслу): grm_item_drop, grm_money_drop,
-      grm_ore_chunk (батч-дропы), grm_mobile_line (виртуальная станция).
+      grm_ore_chunk (батч-дропы), grm_mobile_line (виртуальная станция),
+      grm_logistics_crate (транспортный ящик).
 
     Хранилище: data/grm_perm_entities.json — МАССИВ записей
     {map, class, model, pos={x,y,z}, ang={p,y,r}}.
