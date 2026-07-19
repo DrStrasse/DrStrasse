@@ -119,17 +119,15 @@ function TOOL.BuildCPanel(panel)
 
     panel:AddControl("TextEntry", { Label = "Пароль (PIN-код):", Command = "ffd_keypad_password" })
 
-    local combo = vgui.Create("DComboBox", panel)
-    combo:SetDock(TOP)
-    combo:SetTall(28)
-    combo:SetValue("Режим работы...")
-    combo:AddChoice("0: Пароль (PIN-код)", 0)
-    combo:AddChoice("1: Доступ по Фракции", 1)
-    combo:AddChoice("2: Платный проход (GRM Cash)", 2)
-    combo.OnSelect = function(_, _, _, data)
-        RunConsoleCommand("ffd_keypad_mode", tostring(data))
+    -- Код 102 (находка 119): рукомесный vgui.Create+"combo:SetDock" падал
+    -- (SetDock — несуществующий метод), панель инструмента вылетала целиком.
+    -- Стандартный хелпер DForm сам докирует и синкает конвар.
+    local combo = panel:ComboBox("Режим работы:", "ffd_keypad_mode")
+    if IsValid(combo) then
+        combo:AddChoice("0: Пароль (PIN-код)", 0)
+        combo:AddChoice("1: Доступ по Фракции", 1)
+        combo:AddChoice("2: Платный проход (GRM Cash)", 2)
     end
-    panel:AddItem(combo)
 
     panel:AddControl("Numpad", { Label = "Сигнал успешного входа (Granted):", Command = "ffd_keypad_key_granted" })
     panel:AddControl("Numpad", { Label = "Сигнал отказа (Denied):", Command = "ffd_keypad_key_denied" })
