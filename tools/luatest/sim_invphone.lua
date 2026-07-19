@@ -1,0 +1,284 @@
+-- Симуляция Кода 88/97: телефон в инвентаре ДОЛЖЕН переживать рестарт сервера.
+-- Грузит НАСТОЯЩИЙ sh_grm_inventory.lua на моках, телефон кладётся AddItem,
+-- «рестарт» = повторный dofile модуля поверх того же диска.
+-- находка 114: инвентарь сейвился ТОЛЬКО автотаймером 10с + ShutDown —
+-- жёсткий рестарт хоста в окне до 10с после покупки стирал телефон.
+----------------------------------------------------------------------
+
+local DATA = "tools/luatest/data"
+os.execute("mkdir -p " .. DATA)
+
+string.Trim = string.Trim or function(s) return (tostring(s):gsub("^%s+", ""):gsub("%s+$", "")) end
+string.StartWith = string.StartWith or function(s, p) return s:sub(1, #p) == p end
+table.Count = table.Count or function(t) local n = 0 for _ in pairs(t or {}) do n = n + 1 end return n end
+math.Clamp = math.Clamp or function(v, lo, hi) if v < lo then return lo end if v > hi then return hi end return v end
+function AddCSLuaFile() end
+
+-- ── честный JSON (копия движка roundtrip_test.lua) ──────────────────
+local function jsonEncode(v, pretty, ind)
+    ind = ind or ""
+    local t = type(v)
+    if t == "nil" then return "null"
+    elseif t == "boolean" or t == "number" then return tostring(v)
+    elseif t == "string" then return '"' .. v:gsub("[%c\"\\]", function(c)
+        local m = { ["\n"] = "\\n", ["\r"] = "\\r", ["\t"] = "\\t", ['"'] = '\\"', ["\\"] = "\\\\" }
+        return m[c] or ("\\" .. c) end) .. '"'
+    elseif t == "table" then
+        local n = 0
+        for i = 1, 1e9 do if v[i] ~= nil then n = i else break end end
+        local isArr = true
+        local cnt = 0
+        for k in pairs(v) do cnt = cnt + 1 if type(k) ~= "number" or k < 1 or k > n or k ~= math.floor(k) then isArr = false break end end
+        local pad = ind .. "    "
+        if isArr then
+            if cnt == 0 then return "[]" end
+            local parts = {}
+            for i = 1, n do parts[#parts + 1] = pad .. jsonEncode(v[i], pretty, pad) end
+            return (pretty and "[\n" or "[") .. table.concat(parts, pretty and ",\n" or ",") .. (pretty and ("\n" .. ind) or "") .. "]"
+        else
+            local parts = {}
+            for k, val in pairs(v) do parts[#parts + 1] = pad .. jsonEncode(tostring(k), false) .. (pretty and ": " or ":") .. jsonEncode(val, pretty, pad) end
+            return (pretty and "{\n" or "{") .. table.concat(parts, pretty and ",\n" or ",") .. (pretty and ("\n" .. ind) or "") .. "}"
+        end
+    end
+    error("jsonEncode: unsupported " .. t)
+end
+local function jsonDecode(s)
+    local pos = 1
+    local parseVal
+    local function ws() while true do local c = s:sub(pos, pos) if c == " " or c == "\t" or c == "\n" or c == "\r" then pos = pos + 1 else break end end end
+    parseVal = function()
+        ws()
+        local c = s:sub(pos, pos)
+        if c == "{" then
+            pos = pos + 1
+            local t = {}
+            ws()
+            if s:sub(pos, pos) == "}" then pos = pos + 1 return t end
+            while true do
+                ws()
+                if s:sub(pos, pos) == "}" then pos = pos + 1 return t end
+                local k = parseVal()
+                ws()
+                if s:sub(pos, pos) ~= ":" then error("expected : at " .. pos) end
+                pos = pos + 1
+                t[tostring(k)] = parseVal()
+                ws()
+                c = s:sub(pos, pos)
+                if c == "," then pos = pos + 1
+                elseif c == "}" then pos = pos + 1 return t
+                else error("expected , or } at " .. pos) end
+            end
+        elseif c == "[" then
+            pos = pos + 1
+            local t = {}
+            local i = 1
+            ws()
+            if s:sub(pos, pos) == "]" then pos = pos + 1 return t end
+            while true do
+                t[i] = parseVal() i = i + 1
+                ws()
+                c = s:sub(pos, pos)
+                if c == "," then pos = pos + 1
+                elseif c == "]" then pos = pos + 1 return t
+                else error("expected , or ] at " .. pos) end
+            end
+        elseif c == '"' then
+            pos = pos + 1
+            local out = {}
+            while pos <= #s do
+                c = s:sub(pos, pos)
+                if c == '"' then pos = pos + 1 return table.concat(out) end
+                if c == "\\" then
+                    local e = s:sub(pos + 1, pos + 1)
+                    local m = { n = "\n", r = "\r", t = "\t", ['"'] = '"', ["\\"] = "\\", ["/"] = "/" }
+                    if m[e] then out[#out + 1] = m[e] pos = pos + 2
+                    elseif e == "u" then out[#out + 1] = "?" pos = pos + 6
+                    else out[#out + 1] = e pos = pos + 2 end
+                else out[#out + 1] = c pos = pos + 1 end
+            end
+            error("unterminated string")
+        elseif s:sub(pos, pos + 3) == "true" then pos = pos + 4 return true
+        elseif s:sub(pos, pos + 4) == "false" then pos = pos + 5 return false
+        elseif s:sub(pos, pos + 3) == "null" then pos = pos + 4 return nil
+        else
+            local num = s:match("^%-?%d+%.?%d*[eE]?[%+%-]?%d*", pos)
+            if num and #num > 0 then pos = pos + #num return tonumber(num) end
+            error("bad value at " .. pos .. ": " .. s:sub(pos, pos + 10))
+        end
+    end
+    return parseVal()
+end
+-- эмуляция GMod: JSONToTable без 3-го аргумента конвертирует числовые ключи
+local function convertKeysR(t)
+    local ks = {}
+    for k in pairs(t) do ks[#ks + 1] = k end
+    for _, k in ipairs(ks) do
+        local v = rawget(t, k)
+        if isstring(k) then
+            local n = tonumber(k)
+            if n ~= nil then rawset(t, k, nil) rawset(t, n, v) end
+        end
+        if type(v) == "table" then convertKeysR(v) end
+    end
+end
+
+util = {
+    AddNetworkString = function() end,
+    TableToJSON = function(t, pretty) return jsonEncode(t, pretty) end,
+    JSONToTable = function(s, ignoreLimits, ignoreConversions)
+        local ok, t = pcall(jsonDecode, s)
+        if not ok then return nil end
+        if t ~= nil and not ignoreConversions then convertKeysR(t) end
+        return t
+    end,
+}
+
+-- ── окружение ────────────────────────────────────────────────────────
+function istable(x) return type(x) == "table" end
+function isstring(x) return type(x) == "string" end
+function isnumber(x) return type(x) == "number" end
+function isfunction(x) return type(x) == "function" end
+function IsValid(o) return o ~= nil and o ~= false and not o.__removed end
+HUD_PRINTTALK, HUD_PRINTCENTER = 3, 4
+vector_origin = { x = 0, y = 0, z = 0 }
+
+local H = { hooks = {}, timers = {}, netlog = {}, chatlog = {} }
+hook = {
+    Add = function(name, id, fn) H.hooks[name] = H.hooks[name] or {} H.hooks[name][id] = fn end,
+    Run = function(name, ...)
+        for _, fn in pairs(H.hooks[name] or {}) do local r = fn(...) if r ~= nil then return r end end
+    end,
+}
+timer = {
+    Create = function(name, _, _, fn) H.timers[name] = fn end,
+    Simple = function(_, fn) if fn then fn() end end,
+    Remove = function(name) H.timers[name] = nil end,
+    Exists = function(name) return H.timers[name] ~= nil end,
+}
+file = {
+    Write = function(name, content)
+        local f = io.open(DATA .. "/" .. name, "wb")
+        if not f then error("file.Write failed: " .. name) end
+        f:write(content) f:close()
+    end,
+    Read = function(name)
+        local f = io.open(DATA .. "/" .. name, "rb")
+        if not f then return nil end
+        local c = f:read("*a") f:close()
+        return c
+    end,
+    Exists = function(name)
+        local f = io.open(DATA .. "/" .. name, "rb")
+        if f then f:close() return true end
+        return false
+    end,
+    IsDir = function() return true end,
+    CreateDir = function() end,
+    Delete = function(name) os.remove(DATA .. "/" .. name) end,
+}
+net = {
+    Start = function(m) H.netlog.cur = { msg = m } end,
+    WriteTable = function() end, WriteUInt = function() end, WriteString = function() end,
+    WriteBool = function() end, WriteInt = function() end,
+    Send = function() H.netlog.cur = nil end, Broadcast = function() H.netlog.cur = nil end,
+    Receive = function(m, fn) H.recv = H.recv or {} H.recv[m] = fn end,
+    ReadTable = function() return {} end, ReadString = function() return "" end, ReadUInt = function() return 0 end,
+    ReadBool = function() return false end, ReadInt = function() return 0 end,
+}
+ents = { Create = function() return nil end, FindByClass = function() return {} end }
+player = { GetAll = function() return {} end }
+game = { GetMap = function() return "gm_test" end }
+concommand = { Add = function() end }
+weapons = { Get = function() return nil end, IsBasedOn = function() return false end }
+surface = nil
+
+local function mkPly(sid64)
+    local p = { __sid64 = sid64 }
+    return setmetatable(p, { __index = function(self, k)
+        if k == "SteamID64" then return function() return self.__sid64 end end
+        if k == "SteamID" then return function() return "STEAM_0:1:1" end end
+        if k == "Nick" then return function() return "P" .. tostring(self.__sid64) end end
+        if k == "IsSuperAdmin" then return function() return true end end
+        if k == "IsPlayer" then return function() return true end end
+        if k == "GetActiveWeapon" then return function() return nil end end
+        if k == "GetShootPos" then return function() return vector_origin end end
+        if k == "GetAimVector" then return function() return vector_origin end end
+        if k == "GetPos" then return function() return vector_origin end end
+        if k == "PrintMessage" then return function(_, _, txt) H.chatlog[#H.chatlog + 1] = tostring(txt) end end
+        return nil
+    end })
+end
+
+GRM = nil -- гарантированно чистый неймспейс
+SERVER, CLIENT = true, false
+os.remove(DATA .. "/grm_inventories.json")
+
+local traces = {}
+
+dofile("lua/autorun/sh_grm_inventory.lua")
+GRM.Trace = traces -- отладка (не мешает модулю)
+
+local checks, failed = 0, 0
+local function ok(cond, name)
+    checks = checks + 1
+    if cond then print("  ok " .. tostring(checks) .. ". " .. name)
+    else failed = failed + 1 print("  FAIL " .. tostring(checks) .. ". " .. name) end
+end
+
+local ply = mkPly("76561198000000012")
+
+-- телефон-деф как в мобильном модуле
+GRM.Inventory.RegisterItem("mobile_badger", { type = "item", name = "Телефон: Badger", maxStack = 1, weight = 0.35 })
+
+print("== 1. Покупка телефона в инвентарь ==")
+local left = GRM.Inventory.AddItem(ply, "mobile_badger", 1)
+ok((left or 1) == 0, "AddItem: телефон принят (возврат 0)")
+ok(GRM.Inventory.CountItem(ply, "mobile_badger") == 1, "CountItem: 1 телефон до рестарта")
+-- патроны рядом, дыра в слотах для проверки разрежённой карты
+GRM.Inventory.AddItem(ply, "ammo_pistol", 30)
+GRM.Inventory.RemoveItem(ply, "mobile_badger", 1)
+ok(GRM.Inventory.CountItem(ply, "mobile_badger") == 0, "телефон убран → разрежённая карта слотов (ammo в слоте 2)")
+GRM.Inventory.AddItem(ply, "mobile_badger", 1)
+
+print("== 2. Автосейв ==")
+ok(H.timers["GRM_Inv_AutoSave"] ~= nil, "автотаймер сейва зарегистрирован")
+H.timers["GRM_Inv_AutoSave"]()
+ok(file.Exists("grm_inventories.json"), "файл grm_inventories.json создан автотаймером")
+local raw = file.Read("grm_inventories.json") or ""
+ok(string.find(raw, "mobile_badger", 1, true) ~= nil, "телефон есть в JSON на диске")
+
+print("== 3. Жёсткий рестарт (процесс убит, только файл) ==")
+dofile("lua/autorun/sh_grm_inventory.lua") -- модуль перегружается с нуля
+ok(GRM.Inventory.CountItem(ply, "mobile_badger") == 1, "ПОСЛЕ РЕСТАРТА: телефон на месте (CountItem=1)")
+ok(GRM.Inventory.CountItem(ply, "ammo_pistol") == 30, "патроны на месте")
+
+print("== 4. Дебаунс-автосейв на мутациях (v н114): покупка → файл за 2с ==")
+os.remove(DATA .. "/grm_inventories.json")
+-- имитируем новую покупку сразу после рестарта — файл стёрт, дебаунс обязан восстановить
+GRM.Inventory.AddItem(ply, "mobile_badger", 1)
+ok(H.timers["GRM_Inv_SaveSoon"] ~= nil, "дебаунс-таймер GRM_Inv_SaveSoon взведён после AddItem")
+H.timers["GRM_Inv_SaveSoon"]()
+ok(file.Exists("grm_inventories.json"), "файл восстановлен дебаунсом БЕЗ ожидания 10с")
+raw = file.Read("grm_inventories.json") or ""
+ok(string.find(raw, "mobile_badger", 1, true) ~= nil, "телефон в файле после дебаунса")
+
+print("== 5. Ключи слотов после JSON — строго числовые (нормализация) ==")
+local inv = GRM.Inventory.GetPlayerInv(ply)
+local strKeys = 0
+for k in pairs(inv.slots or {}) do if isstring(k) then strKeys = strKeys + 1 end end
+ok(strKeys == 0, "строковых ключей в слотах после лоада: 0 (нормализованы)")
+
+print("== 6. Rescue: файл, убитый СТАРЫМ лоадером (ключ-число), долечивается ==")
+-- эмулируем вред одного цикла старого кода: bare-parse (ключи → double) + пересейв
+local bad = util.JSONToTable(file.Read("grm_inventories.json") or "")
+file.Write("grm_inventories.json", util.TableToJSON(bad, true))
+dofile("lua/autorun/sh_grm_inventory.lua") -- рестарт с фиксом
+ok(GRM.Inventory.CountItem(ply, "mobile_badger") == 1, "легаси-файл с битым ключом: телефон ВОССТАНОВЛЕН rescue-цепочкой")
+local raw2 = file.Read("grm_inventories.json") or ""
+H.timers["GRM_Inv_SaveSoon"] = H.timers["GRM_Inv_SaveSoon"] or nil
+
+print("")
+print(("РЕЗУЛЬТАТ: %d/%d проверок, провалов: %d"):format(checks - failed, checks, failed))
+if failed > 0 then os.exit(1) end
+print("SIM INVPHONE: OK")

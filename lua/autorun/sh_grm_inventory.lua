@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Inventory System v1.0
+    GRM Inventory System v1.1.0 (Код 97)
     Полноценный инвентарь с ячейками для патронов, оружия и предметов
 
     Возможности:
@@ -9,6 +9,12 @@
       • Подбор предметов с земли / выброс из инвентаря
       • Использование предметов (экипировка оружия, применение патронов)
       • Сохранение инвентаря в файл (персистентность)
+    v1.1.0 (Код 97, находка 114): ЛОАДЕР калечил весь инвентарь при рестарте —
+    bare util.JSONToTable конвертировал sid64-ключ в битый double → записи
+    сиротели («пропадают купленные телефоны» — пропадало ВСЁ). Теперь:
+    jsonT 3-им аргументом (н65), нормализация ключей слотов в числа,
+    ленивое sid64-rescue для уже битых сейвов, дебаунс-автосейв 2с на любых
+    мутациях (окно 10с автотаймера закрыто), read-back SAVE-печать.
       • Синхронизация сервер ↔ клиент
       • Стакирование одинаковых предметов (патроны)
       • Интеграция с GRM Currency
@@ -214,25 +220,62 @@ if SERVER then
     local Inventories = {}  -- [SteamID64] = { slots = { [1] = {id="ammo_pistol", count=30}, ... } }
 
     -- ── Загрузка / Сохранение ────────────────────────────────────
+    -- находка 114: лоадер БЕЗ 3-го аргумента конвертировал sid64-ключ
+    -- «7656…» в битый double — после рестарта ВСЕ записи сиротели.
     local function loadInventories()
         if not file.Exists(INV_FILE, "DATA") then return {} end
         local raw = file.Read(INV_FILE, "DATA") or ""
         if raw == "" then return {} end
-        local ok, t = pcall(util.JSONToTable, raw)
-        if ok and istable(t) then return t end
-        return {}
+        local ok, t = pcall(util.JSONToTable, raw, false, true) -- н65: s64-ключи не конвертируем
+        if not (ok and istable(t)) then return {} end
+        local out = {}
+        for k, rec in pairs(t) do
+            if istable(rec) then
+                local sk = k
+                if isnumber(k) then sk = string.format("%.0f", k) end -- легаси битых сейвов
+                if isstring(sk) and sk ~= "" then
+                    local slots = {}
+                    for kk, vv in pairs(rec.slots or {}) do
+                        if istable(vv) then
+                            slots[tonumber(kk) or kk] = vv -- ключи слотов — строго числа
+                        end
+                    end
+                    rec.slots = slots
+                    out[sk] = rec
+                end
+            end
+        end
+        return out
     end
 
-    local function saveInventories()
+    local function saveInventories(why)
         local ok, enc = pcall(util.TableToJSON, Inventories, true)
-        if ok and enc then file.Write(INV_FILE, enc) end
+        if not ok or not isstring(enc) then
+            print("[GRM Inv][!] TableToJSON упал, сейв пропущен (" .. tostring(why or "?") .. ")")
+            return false
+        end
+        file.Write(INV_FILE, enc)
+        local rb = file.Read(INV_FILE, "DATA") or ""
+        if rb == "" then
+            print("[GRM Inv][!] КОНТРОЛЬ ЗАПИСИ: файл пуст после save (" .. tostring(why or "?") .. ")")
+            return false
+        end
+        return true
     end
+
+    -- дебаунс-автосейв 2с на любых мутациях: закрывает окно 10с автотаймера
+    local function saveSoon(why)
+        timer.Create("GRM_Inv_SaveSoon", 2, 1, function()
+            saveInventories("дебаунс: " .. tostring(why or "?"))
+        end)
+    end
+    GRM.Inventory._devSaveSoon = saveSoon -- тест-экспорт
 
     Inventories = loadInventories()
 
     -- Автосохранение
-    timer.Create("GRM_Inv_AutoSave", GRM.Inventory.Config.SaveInterval, 0, function()
-        saveInventories()
+    timer.Create("GRM_Inv_AutoSave", tonumber(GRM.Inventory.Config.SaveInterval) or 10, 0, function()
+        saveInventories("авто")
     end)
 
     -- ── Получить инвентарь игрока ────────────────────────────────
@@ -240,6 +283,26 @@ if SERVER then
         if not IsValid(ply) then return nil end
         local sid = ply:SteamID64()
         if not sid or sid == "0" then return nil end
+        if not Inventories[sid] then
+            -- находка 114: ленивое самолечение записи, покалеченной старым лоадером
+            local num = tonumber(sid)
+            if num then
+                -- кандидаты: числовые ключи И числовые строки (после легаси-конвертации)
+                local cand, cnt = nil, 0
+                for k in pairs(Inventories) do
+                    if k ~= sid then
+                        local kn = isnumber(k) and k or (isstring(k) and tonumber(k) or nil)
+                        if kn and math.abs(kn - num) < 64 then cand, cnt = k, cnt + 1 end
+                    end
+                end
+                if cnt == 1 then -- строго единственный: чужой инвентарь не отдаём
+                    Inventories[sid] = Inventories[cand]
+                    Inventories[cand] = nil
+                    saveSoon("sid64-rescue")
+                    print("[GRM Inv] запись с битым ключом восстановлена → " .. sid)
+                end
+            end
+        end
         if not Inventories[sid] then
             Inventories[sid] = { slots = {} }
         end
@@ -313,6 +376,7 @@ if SERVER then
             GRM.Inventory.SyncSlot(ply, emptySlot)
         end
 
+        saveSoon("add " .. tostring(itemID))
         return remaining
     end
 
@@ -342,6 +406,7 @@ if SERVER then
             }
         }
         GRM.Inventory.SyncSlot(ply, emptySlot)
+        saveSoon("addweapon")
         return true
     end
 
@@ -359,6 +424,7 @@ if SERVER then
             inv.slots[slotIdx] = nil
         end
         GRM.Inventory.SyncSlot(ply, slotIdx)
+        saveSoon("removefromslot")
         return true
     end
 
@@ -383,6 +449,7 @@ if SERVER then
                 GRM.Inventory.SyncSlot(ply, i)
             end
         end
+        saveSoon("remove " .. tostring(itemID))
         return remaining
     end
 
@@ -696,6 +763,7 @@ if SERVER then
     net.Receive("grm_inv_use", function(_, ply)
         local slotIdx = net.ReadUInt(8)
         useItem(ply, slotIdx)
+        saveSoon("use")
     end)
 
     -- Выброс предмета
@@ -703,6 +771,7 @@ if SERVER then
         local slotIdx = net.ReadUInt(8)
         local count = net.ReadUInt(16)
         dropItem(ply, slotIdx, count)
+        saveSoon("drop")
     end)
 
     -- Перемещение предмета
@@ -710,6 +779,7 @@ if SERVER then
         local fromSlot = net.ReadUInt(8)
         local toSlot = net.ReadUInt(8)
         moveItem(ply, fromSlot, toSlot)
+        saveSoon("move")
     end)
 
     -- Разделение стака
@@ -717,6 +787,7 @@ if SERVER then
         local slotIdx = net.ReadUInt(8)
         local splitCount = net.ReadUInt(16)
         splitStack(ply, slotIdx, splitCount)
+        saveSoon("split")
     end)
 
     -- Действие (убрать оружие)
@@ -724,6 +795,7 @@ if SERVER then
         local action = net.ReadString()
         if action == "store_weapon" then
             GRM.Inventory.StoreActiveWeapon(ply)
+            saveSoon("store_weapon")
         end
     end)
 
@@ -827,7 +899,7 @@ if SERVER then
         end
     end)
 
-    print("[GRM] Inventory v1.0 — сервер загружен")
+    print("[GRM] Inventory v1.1.0 (Код 97) — сервер загружен")
 end
 
 -- ================================================================
@@ -905,5 +977,5 @@ if CLIENT then
         GRM.Inventory.RequestOpen()
     end)
 
-    print("[GRM] Inventory v1.0 — клиент загружен")
+    print("[GRM] Inventory v1.1.0 — клиент загружен")
 end
