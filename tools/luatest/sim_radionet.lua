@@ -129,6 +129,23 @@ AddCSLuaFile = function() end
 
 -- грузим модуль ----------------------------------------------------------
 SERVER = true CLIENT = false
+-- Код 99: модуль регистрирует предмет модулятора в инвентарь при загрузке —
+-- стаб инвентаря нужен до dofile; per-player слоты через ply.__inv
+H.regItems = {}
+GRM = GRM or {}
+GRM.Inventory = {
+  RegisterItem = function(id, data) H.regItems[id] = data end,
+  GetPlayerInv = function(ply)
+    if not ply then return nil end
+    ply.__inv = ply.__inv or { slots = {} }
+    return ply.__inv
+  end,
+  CountItem = function(ply, id)
+    local n = 0
+    for _, s in pairs(((ply or {}).__inv or {}).slots or {}) do if s.id == id then n = n + (s.count or 1) end end
+    return n
+  end,
+}
 dofile("lua/autorun/sh_grm_radionet.lua")
 local RN = GRM.RadioNet
 RN.Recompute()
@@ -583,6 +600,11 @@ local function lastChat(p, pat)
   for i = #p.__chat, 1, -1 do if p.__chat[i]:find(pat) then return p.__chat[i] end end
   return nil
 end
+-- Код 99: частоты требуют активный модулятор в инвентаре — выдаём всем пятерым
+local function giveUnit(p, on)
+  p.__inv = { slots = { [1] = { id = "radio_modulator", count = 1, data = { on = on == true } } } }
+end
+giveUnit(u1, true) giveUnit(u2, true) giveUnit(u3, true) giveUnit(u4, true) giveUnit(u5, true)
 -- FreqKey: нормализация и отсечки
 ok(RN.FreqKey("145") == "145.0", "FreqKey: «145» → «145.0»")
 ok(RN.FreqKey("999.9") == "999.9", "FreqKey: верхняя граница 999.9 ок")
@@ -665,6 +687,39 @@ ok(RN.FreqScramble("a b c", 0.5, 7):find(" ") ~= nil, "пробелы сквоз
 local sawFreqLine = false
 for _, ln in ipairs(RN.StatusLines()) do if ln:find("Радиочастоты") then sawFreqLine = true break end end
 ok(sawFreqLine, "/rn_status печатает строку абонентов радиочастот")
+
+P("== 25. Код 99: частоты — только с активным модулятором (находка 116) ==")
+ok(H.regItems["radio_modulator"] ~= nil, "модуль зарегистрировал предмет radio_modulator в инвентаре")
+local unitDef = H.regItems["radio_modulator"] or {}
+ok(unitDef.model == RN.UnitModel or unitDef.model == RN.UnitModelFB, "модель предмета — reciever01b (или фолбэк, н85)")
+ok(unitDef.useFunc == "radio_toggle" and unitDef.maxStack == 1 and unitDef.type == "item", "деф модулятора: item/useFunc radio_toggle/стак 1")
+local w1 = mkPly(701, 0, false)      -- в покрытии, но БЕЗ железки
+H.players[#H.players + 1] = w1
+ok(RN.HasRadioUnit(w1) == false, "без модулятора — HasRadioUnit=false")
+ok(RN.HandleChat(w1, "/freq 145.5") == true and RN.FreqOf(w1) == nil and lastChat(w1, "модулятор") ~= nil, "/freq без модулятора — отказ с подсказкой, частота не настроена")
+ok(RN.HandleChat(w1, "/r test") == true and lastChat(w1, "модулятор") ~= nil, "/r без модулятора — тот же отказ")
+giveUnit(w1, false)                  -- модулятор есть, но ВЫКЛЮЧЕН
+ok(RN.HasRadioUnit(w1) == false, "модулятор ВЫКЛ — связи нет (гейт по data.on)")
+ok(RN.HandleChat(w1, "/freq 200") == true and RN.FreqOf(w1) == nil, "выключенный: /freq отклонён")
+giveUnit(w1, true)                   -- активировали
+ok(RN.HasRadioUnit(w1) == true, "модулятор ВКЛ — HasRadioUnit=true")
+ok(RN.HandleChat(w1, "/freq 200") == true and RN.FreqOf(w1) == "200.0", "активный: частота настроена")
+TT = 520
+local n1b = #u2.__chat
+ok(RN.HandleChat(w1, "/r kto tut") == true, "активный: /r уходит в эфир")
+ok(lastChat(w1, "тишина") ~= nil and #u2.__chat == n1b, "на 200.0 он один — тишина, чужих доставок нет")
+w1.__inv = { slots = {} }            -- выбросил предмет совсем
+ok(RN.HasRadioUnit(w1) == false, "модулятор выброшен — юнита нет")
+ok(RN.HandleChat(w1, "/r eshyo") == true and lastChat(w1, "модулятор") ~= nil, "без предмета /r закрыт даже при настроенной частоте")
+ok(RN.HandleChat(w1, "/freqleave") == true and RN.FreqOf(w1) == nil, "/freqleave доступен без модулятора (сброс частоты)")
+giveUnit(w1, true)
+RN.HandleChat(w1, "/freq 205")       -- частота настроена корректно
+giveUnit(w1, false)                  -- …и модулятор выключили (предмет на месте)
+ok(RN.HasRadioUnit(w1) == false and RN.FreqOf(w1) == "205.0", "ВЫКЛ: связи нет, частота при этом не сбрасывается (помнится)")
+RN.HandleChat(w1, "/freq")
+ok(lastChat(w1, "модулятор ВЫКЛ") ~= nil, "голый /freq честно говорит про выключенный модулятор")
+TT = 522
+ok(RN.HandleChat(w1, "/r proverka") == true and lastChat(w1, "модулятор") ~= nil, "ВЫКЛ + частота есть — /r всё равно закрыт")
 
 P("")
 P("ИТОГ: " .. tostring(checks) .. " проверок, провалов: " .. tostring(failed))

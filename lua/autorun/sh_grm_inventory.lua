@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Inventory System v1.1.0 (Код 97)
+    GRM Inventory System v1.2.0 (Код 99)
     Полноценный инвентарь с ячейками для патронов, оружия и предметов
 
     Возможности:
@@ -15,6 +15,13 @@
     jsonT 3-им аргументом (н65), нормализация ключей слотов в числа,
     ленивое sid64-rescue для уже битых сейвов, дебаунс-автосейв 2с на любых
     мутациях (окно 10с автотаймера закрыто), read-back SAVE-печать.
+    v1.2.0 (Код 99, находка 116): (а) useFunc «radio_toggle» — переносной
+    модулятор рации: «Использовать» переключает ВКЛ/ВЫКЛ, состояние живёт
+    в данных САМОГО предмета (slot.data.on) — переживает рестарт (сейв
+    инвентаря), падает в дроп и возвращается при подборе; (б) AddItem
+    получил необязательный 4-й параметр data — grm_item_drop раньше
+    терял данные не-оружейных предметов при подборе (включённый
+    модулятор поднимался бы сброшенным).
       • Синхронизация сервер ↔ клиент
       • Стакирование одинаковых предметов (патроны)
       • Интеграция с GRM Currency
@@ -331,7 +338,11 @@ if SERVER then
 
     -- ── Добавить предмет в инвентарь ─────────────────────────────
     -- Возвращает: количество, которое НЕ удалось добавить (0 = всё добавлено)
-    function GRM.Inventory.AddItem(ply, itemID, count)
+    -- Код 99: необязательный data — данные экземпляра (подбор с земли:
+    -- grm_item_drop возвращает включённое состояние модулятора и т.п.).
+    -- Применяется только к НОВОМУ слоту (слияние в существующий стак
+    -- данные жертвы не трогает — они остаются у стака-приёмника).
+    function GRM.Inventory.AddItem(ply, itemID, count, data)
         if not IsValid(ply) then return count end
         local inv = GRM.Inventory.GetPlayerInv(ply)
         if not inv then return count end
@@ -342,6 +353,7 @@ if SERVER then
         count = count or 1
         local maxStack = GRM.Inventory.GetMaxStack(itemID)
         local remaining = count
+        local extra = istable(data) and table.Copy(data) or nil
 
         -- Сначала пытаемся добавить в существующие стаки
         if def.type ~= "weapon" then
@@ -372,6 +384,10 @@ if SERVER then
                 id = itemID,
                 count = toAdd,
             }
+            if extra then
+                inv.slots[emptySlot].data = table.Copy(extra)
+                extra = nil -- данные экземпляра уходят только с первым новым слотом
+            end
             remaining = remaining - toAdd
             GRM.Inventory.SyncSlot(ply, emptySlot)
         end
@@ -564,6 +580,24 @@ if SERVER then
                     GRM.Mobile.ServerNotify(ply, "Телефон у вас. Нажмите СТРЕЛКУ ВВЕРХ, чтобы открыть меню")
                 else
                     GRM.Notify(ply, "Нажмите СТРЕЛКУ ВВЕРХ, чтобы открыть телефон", 100, 220, 100)
+                end
+                return
+            elseif def.useFunc == "radio_toggle" then
+                -- Код 99: переносной модулятор рации — ВКЛ/ВЫКЛ живёт в данных
+                -- самого предмета: рестарт/дроп/подбор состояние не теряют.
+                -- Предмет НЕ тратится. Доступ к /freq и /r проверяет RadioNet
+                -- (RN.HasRadioUnit: предмет в инвентаре И data.on == true).
+                slot.data = istable(slot.data) and slot.data or {}
+                slot.data.on = not (slot.data.on == true)
+                GRM.Inventory.SyncSlot(ply, slotIdx)
+                saveSoon("радио-модулятор on=" .. tostring(slot.data.on))
+                if slot.data.on then
+                    GRM.Notify(ply, "Модулятор ВКЛ: /freq 145.5 — частота, /r текст — эфир", 120, 210, 255)
+                else
+                    GRM.Notify(ply, "Модулятор ВЫКЛ — радиочастоты закрыты", 255, 200, 90)
+                end
+                if slot.data.on and GRM.RadioNet and GRM.RadioNet.FreqInfo then
+                    GRM.RadioNet.FreqInfo(ply)
                 end
                 return
             end

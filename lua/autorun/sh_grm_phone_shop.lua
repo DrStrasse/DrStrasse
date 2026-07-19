@@ -261,6 +261,20 @@ local function defaultCatalog()
             spawnFrozen = true,
             invItem = "mobile_whiz_gold",
         },
+        -- ══ Код 99: переносной модулятор рации — ключ к /freq и /r (RadioNet v1.4.0) ══
+        radio_modulator = {
+            id = "radio_modulator",
+            name = "Модулятор рации (переносной)",
+            desc = "Переносная радиостанция. Активируйте (Использовать в /inv) — откроются радиочастоты: /freq 145.5, /r текст. Выбрасывается и подбирается. Кладётся в инвентарь.",
+            class = "prop_physics", -- invItem-ветка: в мире не спавнится
+            model = "models/props_lab/reciever01b.mdl",
+            price = 1500,
+            enabled = true,
+            special = false,
+            maxOwned = 2,
+            spawnFrozen = true,
+            invItem = "radio_modulator",
+        },
     }
 end
 

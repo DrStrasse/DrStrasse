@@ -11,6 +11,7 @@ os.execute("mkdir -p " .. DATA)
 string.Trim = string.Trim or function(s) return (tostring(s):gsub("^%s+", ""):gsub("%s+$", "")) end
 string.StartWith = string.StartWith or function(s, p) return s:sub(1, #p) == p end
 table.Count = table.Count or function(t) local n = 0 for _ in pairs(t or {}) do n = n + 1 end return n end
+table.Copy = table.Copy or function(t) local o = {} for k, v in pairs(t or {}) do o[k] = v end return o end
 math.Clamp = math.Clamp or function(v, lo, hi) if v < lo then return lo end if v > hi then return hi end return v end
 function AddCSLuaFile() end
 
@@ -183,7 +184,8 @@ net = {
     WriteBool = function() end, WriteInt = function() end,
     Send = function() H.netlog.cur = nil end, Broadcast = function() H.netlog.cur = nil end,
     Receive = function(m, fn) H.recv = H.recv or {} H.recv[m] = fn end,
-    ReadTable = function() return {} end, ReadString = function() return "" end, ReadUInt = function() return 0 end,
+    ReadTable = function() return {} end, ReadString = function() return "" end,
+    ReadUInt = function() return tonumber(table.remove(H.seq or {}, 1)) or 0 end,
     ReadBool = function() return false end, ReadInt = function() return 0 end,
 }
 ents = { Create = function() return nil end, FindByClass = function() return {} end }
@@ -277,6 +279,36 @@ dofile("lua/autorun/sh_grm_inventory.lua") -- рестарт с фиксом
 ok(GRM.Inventory.CountItem(ply, "mobile_badger") == 1, "легаси-файл с битым ключом: телефон ВОССТАНОВЛЕН rescue-цепочкой")
 local raw2 = file.Read("grm_inventories.json") or ""
 H.timers["GRM_Inv_SaveSoon"] = H.timers["GRM_Inv_SaveSoon"] or nil
+
+print("== 7. Код 99: модулятор рации — toggle живёт в предмете, переживает всё ==")
+GRM.Notify = GRM.Notify or function() end
+GRM.Inventory.RegisterItem("radio_modulator", { type = "item", name = "Модулятор рации (переносной)", maxStack = 1, useFunc = "radio_toggle" })
+GRM.Inventory.AddItem(ply, "radio_modulator", 1)
+inv = GRM.Inventory.GetPlayerInv(ply) -- перечитаем после рестартов выше
+local slotIdx
+for i = 1, 24 do local s = inv.slots[i] if s and s.id == "radio_modulator" then slotIdx = i break end end
+ok(slotIdx ~= nil, "модулятор лежит в инвентаре (покупка)")
+H.seq = { slotIdx } H.recv["grm_inv_use"](0, ply)
+ok(inv.slots[slotIdx] ~= nil and istable(inv.slots[slotIdx].data) and inv.slots[slotIdx].data.on == true, "«Использовать» → модулятор ВКЛ (data.on=true, предмет не тратится)")
+H.seq = { slotIdx } H.recv["grm_inv_use"](0, ply)
+ok(inv.slots[slotIdx].data.on == false, "повторное использование → ВЫКЛ")
+H.seq = { slotIdx } H.recv["grm_inv_use"](0, ply)
+ok(inv.slots[slotIdx].data.on == true, "третье → снова ВКЛ")
+-- дебаунс-сейв от ресивера + жёсткий рестарт: состояние на диске
+H.timers["GRM_Inv_SaveSoon"]()
+dofile("lua/autorun/sh_grm_inventory.lua")
+-- перезагрузка модуля пересобирает ItemDefs — как в живом GMod, предмет
+-- регистрирует свой модуль (RadioNet) при старте, в симе повторяем вручную
+GRM.Inventory.RegisterItem("radio_modulator", { type = "item", name = "Модулятор рации (переносной)", maxStack = 1, useFunc = "radio_toggle" })
+local inv2 = GRM.Inventory.GetPlayerInv(ply)
+local foundOn = false
+for i = 1, 24 do local s = inv2.slots[i] if s and s.id == "radio_modulator" then foundOn = istable(s.data) and s.data.on == true end end
+ok(foundOn, "ПОСЛЕ РЕСТАРТА модулятор на месте и ВКЛЮЧЁН (slot.data в сейве)")
+-- подбор с земли: AddItem возвращает данные экземпляра (Код 99, 4-й аргумент)
+GRM.Inventory.AddItem(ply, "radio_modulator", 1, { on = true })
+local onCount = 0
+for i = 1, 24 do local s = inv2.slots[i] if s and s.id == "radio_modulator" and istable(s.data) and s.data.on == true then onCount = onCount + 1 end end
+ok(onCount == 2, "AddItem(+data): второй модулятор лёг со СВОИМ включённым состоянием")
 
 print("")
 print(("РЕЗУЛЬТАТ: %d/%d проверок, провалов: %d"):format(checks - failed, checks, failed))

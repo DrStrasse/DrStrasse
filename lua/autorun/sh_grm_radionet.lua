@@ -86,6 +86,18 @@
                       дальше, тем больше символов съедает шипение («*»).
                       Антифлуд RN.FreqSayDelay, длина RN.FreqMaxLen,
                       передачи журналируются (/rn_log, вид freq_say).
+
+    КОД 99 (v1.4.0) — ЧАСТОТЫ ТОЛЬКО С ПЕРЕНОСНЫМ МОДУЛЯТОРОМ (находка
+    116). По заказу: пока у игрока нет радио-железки на руках, /freq и
+    /r — бесполезные команды в никуда. Теперь в /phoneshop продаётся
+    предмет «Модулятор рации (переносной)» (модель reciever01b, кладётся
+    в инвентарь, выбрасывается на землю моделью и подбирается). Доступ к
+    частотам = предмет В ИНВЕНТАРЕ + АКТИВИРОВАН (кнопка «Использовать» —
+    переключатель ВКЛ/ВЫКЛ; состояние хранится в данных самого предмета,
+    поэтому переживает рестарт, дроп и подбор чужими руками — включённая
+    рация продаётся/теряется включённой). Гейт стоит на /freq (настройка)
+    и /r (передача). Покупка помнится инвентарём (н114), активация —
+    slot.data (Код 99 инвентаря v1.2.0: возврат data при подборе).
 ----------------------------------------------------------------------]]
 
 if SERVER then AddCSLuaFile() end
@@ -94,7 +106,7 @@ GRM = GRM or {}
 GRM.RadioNet = GRM.RadioNet or {}
 local RN = GRM.RadioNet
 
-RN.Version    = "1.3.0"  -- Код 98: команды рации /freq /r (обработчика не было — находка 115)
+RN.Version    = "1.4.0"  -- Код 99: радиочастоты — только с активным переносным модулятором (предмет)
 
 -- настройки сети (юниты = юниты Source; ~40 юн = 1 м)
 RN.LinkDist     = 700    -- радиус связывания оборудования со стойкой
@@ -128,6 +140,34 @@ RN.Kinds = {
     grm_radio          = { k = "radio",   p = "RAD", label = "Радиоприёмник" },
     grm_net_console    = { k = "console", p = "CON", label = "Пульт" },
 }
+
+-- Код 99: переносной модулятор рации — предмет инвентаря, ключ к частотам.
+RN.UnitItem  = "radio_modulator"
+RN.UnitModel = "models/props_lab/reciever01b.mdl"       -- по заказу
+RN.UnitModelFB = "models/props_lab/reciever01a.mdl"     -- фолбэк (н85)
+RN.UnitPrice = 1500                                     -- цена в /phoneshop
+
+-- Регистрация предмета в обоих мирах (клиент видит имя/иконку, сервер —
+-- логику). Модель — через IsValidModel с фолбэком (находка 85: нельзя
+-- уронить дроп с отсутствующей моделью).
+if GRM.Inventory and GRM.Inventory.RegisterItem then
+    local function regRadioUnit()
+        local mdl = RN.UnitModel
+        if util.IsValidModel and not util.IsValidModel(mdl) then mdl = RN.UnitModelFB end
+        GRM.Inventory.RegisterItem(RN.UnitItem, {
+            type = "item",
+            name = "Модулятор рации (переносной)",
+            desc = "Переносная радиостанция. «Использовать» — вкл/выкл. Когда включён: /freq 145.5 — частота, /r текст — эфир. Сеть — любая дистанция, вне сети до 37 м напрямую.",
+            icon = "icon16/transmit.png",
+            maxStack = 1,
+            weight = 0.6,
+            model = mdl,
+            useFunc = "radio_toggle",
+        })
+    end
+    regRadioUnit()
+    timer.Simple(2, regRadioUnit) -- инвентарь мог подгрузиться позже
+end
 
 -- ============================================================
 -- СЕРВЕР
@@ -924,6 +964,9 @@ if SERVER then
 
     RN._freq = RN._freq or {} -- sid64 → «145.5»
 
+    -- форвард-декларация (урок 97-хотфикса): needUnit выше объявления
+    local freqChat
+
     -- нормализация: 1..999.9, шаг 0.1 → ключ вида «145.5»; «145.55» — отказ
     function RN.FreqKey(arg)
         local n = tonumber(string.match(tostring(arg or ""), "^%s*(%d+%.?%d*)%s*$"))
@@ -940,7 +983,30 @@ if SERVER then
         return f
     end
 
-    local function freqChat(ply, msg)
+    -- Код 99 (находка 116): частоты только с железкой — переносной
+    -- модулятор должен лежать В ИНВЕНТАРЕ и быть АКТИВИРОВАННЫМ
+    -- (data.on == true, «Использовать» в /inv). Состояние в предмете:
+    -- выбрасываешь — теряешь связь, подбираешь — она как была.
+    function RN.HasRadioUnit(ply)
+        if not IsValid(ply) then return false end
+        if not (GRM.Inventory and GRM.Inventory.GetPlayerInv) then return false end
+        local inv = GRM.Inventory.GetPlayerInv(ply)
+        if not (istable(inv) and istable(inv.slots)) then return false end
+        for _, slot in pairs(inv.slots) do
+            if istable(slot) and slot.id == RN.UnitItem
+                and istable(slot.data) and slot.data.on == true then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function needUnit(ply)
+        freqChat(ply, "[Рация] Нужен АКТИВНЫЙ переносной модулятор: купите в /phoneshop («Модулятор рации») и нажмите «Использовать» в инвентаре (/inv).")
+        if GRM.Notify then GRM.Notify(ply, "Нет активного модулятора рации (магазин /phoneshop)", 255, 180, 90) end
+    end
+
+    freqChat = function(ply, msg)
         if IsValid(ply) and ply.PrintMessage then ply:PrintMessage(HUD_PRINTTALK, msg) end
     end
 
@@ -957,6 +1023,7 @@ if SERVER then
     end
 
     function RN.FreqSet(ply, arg)
+        if not RN.HasRadioUnit(ply) then needUnit(ply) return false end
         local key = RN.FreqKey(arg)
         if not key then
             freqChat(ply, "[Рация] Частота — число 1–999.9 с шагом 0.1. Пример: /freq 145.5")
@@ -973,10 +1040,15 @@ if SERVER then
 
     function RN.FreqInfo(ply)
         local f = RN.FreqOf(ply)
+        local unit = RN.HasRadioUnit(ply)
         if f then
-            freqChat(ply, "[Рация] Текущая частота: " .. f .. " МГц. Говорить: /r текст. Отключиться: /freqleave")
+            freqChat(ply, "[Рация] Текущая частота: " .. f .. " МГц" .. (unit and "" or " (модулятор ВЫКЛ — эфир закрыт)") .. ". Говорить: /r текст. Отключиться: /freqleave")
         else
-            freqChat(ply, "[Рация] Рация не настроена. Включить: /freq 145.5")
+            if unit then
+                freqChat(ply, "[Рация] Модулятор активен, но частота не настроена. Включить: /freq 145.5")
+            else
+                freqChat(ply, "[Рация] Рация не настроена. Нужен активный модулятор (/phoneshop) + /freq 145.5")
+            end
         end
     end
 
@@ -1009,6 +1081,7 @@ if SERVER then
     end
 
     function RN.FreqSay(ply, raw)
+        if not RN.HasRadioUnit(ply) then needUnit(ply) return false end
         local f = RN.FreqOf(ply)
         if not f then
             freqChat(ply, "[Рация] Вы не на частоте — сначала настройтесь: /freq 145.5")

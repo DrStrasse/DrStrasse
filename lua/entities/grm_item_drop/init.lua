@@ -59,7 +59,10 @@ function ENT:Use(ply)
     end
 
     if GRM.Inventory.AddItem then
-        local left = GRM.Inventory.AddItem(ply, id, count)
+        -- Код 99: данные экземпляра возвращаются в слот (включённый
+        -- модулятор поднимается включённым; сейв-рестарт тоже ихдержит —
+        -- дроп-энтити живёт в пределах сессии, data копируется целиком)
+        local left = GRM.Inventory.AddItem(ply, id, count, data)
         -- AddItem may return notAdded count or bool depending on version
         if left == false then
             if GRM.Notify then GRM.Notify(ply, "Некуда положить", 255, 100, 100) end
