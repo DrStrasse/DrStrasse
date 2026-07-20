@@ -283,7 +283,7 @@ if CLIENT then
         -- Кнопка добавления
         if canAdd then
             local btnAdd = vgui.Create("DButton", frame)
-            btnAdd:Dock(TOPRIGHT)
+            btnAdd:Dock(RIGHT)
             btnAdd:SetWide(170)
             btnAdd:SetTall(30)
             btnAdd:DockMargin(0, 8, 8, 0)
