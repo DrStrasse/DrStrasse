@@ -8,7 +8,7 @@ if SERVER then
     util.AddNetworkString("GRM_Ctx_Result")
     util.AddNetworkString("GRM_Ctx_VehAct")
     util.AddNetworkString("GRM_Ctx_MoneyAct")
-    util.AddNetworkString("GRM_Laws_List")
+    util.AddNetworkString("GRM_Laws_Open")
 
     -- Игрок в прицеле (для кнопки «Передать деньги»)
     local function aimPlyInfo(ply)
@@ -217,7 +217,7 @@ local function actRadio()
 end
 
 local function actLaws()
-    net.Start("GRM_Laws_List")
+    net.Start("GRM_Laws_Open")
     net.SendToServer()
 end
 local function actFactions()  RunConsoleCommand("say", "/factions") end
