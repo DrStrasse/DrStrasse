@@ -36,7 +36,7 @@
     воскрешённые энтити заморожены (EnableMotion(false)).
 ----------------------------------------------------------------------]]
 
-local PERM_VER = "1.3.0"
+local PERM_VER = "1.4.0"
 GRM = GRM or {}
 GRM._permEntitiesVer = PERM_VER
 
@@ -79,8 +79,9 @@ if SERVER then
         grm_alarm_hub      = true,
         grm_alarm_terminal = true,
         grm_alarm_speaker  = true, -- Код 89
-        -- Кейпад прохода (Код 70/Код 89)
+        -- Кейпад прохода (Код 70/Код 89) и сканер фракций (Код 107)
         grm_keypad         = true,
+        grm_scanner        = true,
         -- Код 105: prop_physics допускаем именно ради FFD-дверей
         -- (владелец пермит двери; рабочее состояние восстанавливает
         -- GRM.PermData.Apply["prop_physics"] из стула FFD Fading Door)

@@ -1,10 +1,10 @@
 --[[--------------------------------------------------------------------
     grm_keypad — init.lua (Серверный обработчик кейпада)
     Код 104 (находка 121): кнопки нажимаются ПРИЦЕЛОМ + E (как в модовых
-    кейпадах: навёл на цифру — нажал, старый общий [E]=OK убран, чтобы не
-    было двойных срабатываний); белый список фракций — СПИСОК через
-    запятую (чекбоксы в панели тулгана); вспышка кнопки на экране у всех
-    клиентов через net GRM_KeypadPress.
+    кейпадах); вспышка кнопки на экране всех клиентов (GRM_KeypadPress).
+    Код 106/107: PIN — строгое сравнение с тримом ДЛЯ ВСЕХ; кейпад
+    переведён на режим «только PIN» — фракционный доступ теперь у
+    FFD Scanner (lua/entities/grm_scanner), толл-режим удалён.
 ----------------------------------------------------------------------]]
 
 AddCSLuaFile("cl_init.lua")
@@ -20,12 +20,20 @@ util.AddNetworkString("GRM_KeypadPress")
 -- владельца — после рестарта сервера или админ-перезагрузки кейпад
 -- встаёт на место ГОТОВЫМ К РАБОТЕ, а не пустышкой с 1234.
 -- ============================================================
+-- ============================================================
+-- Код 107 (заказ владельца): КЕЙПАД ТЕПЕРЬ ТОЛЬКО PIN-РЕЖИМ.
+-- Фракционный доступ переехал в новый FFD Scanner (grm_scanner) —
+-- сканирует стоящего рядом человека и решает по его фракции.
+-- Толл-режим тоже убран как неиспользуемый. NetworkVar Mode и поля
+-- Cost/Faction оставлены лишь для совместимости старых перм-баз
+-- (Apply ниже всегда принудительно ставит режим 0).
+-- ============================================================
 local function keypadPermExtract(ent)
     return {
         password = tostring(ent:GetPassword() or "1234"),
-        mode     = tonumber(ent:GetMode()) or 0,
-        cost     = tonumber(ent:GetCost()) or 0,
-        faction  = tostring(ent:GetFaction() or ""),
+        mode     = 0, -- Код 107: сохраняем принудительно PIN
+        cost     = 0,
+        faction  = "",
         granted  = tonumber(ent.KeyGranted) or 1,
         denied   = tonumber(ent.KeyDenied) or 2,
         hold     = tonumber(ent.HoldTime) or 5,
@@ -33,10 +41,13 @@ local function keypadPermExtract(ent)
     }
 end
 local function keypadPermApply(ent, t)
-    ent:SetPassword(tostring(t.password or "1234"))
-    ent:SetMode(tonumber(t.mode) or 0)
-    ent:SetCost(tonumber(t.cost) or 0)
-    ent:SetFaction(tostring(t.faction or ""))
+    -- находка 123-про: пароль со стены конвара может прийти с хвостовым
+    -- пробелом — до Кода 106 это маскировал байпас и «верный PIN → отказ».
+    local pw = string.Trim(tostring(t.password or "1234"))
+    ent:SetPassword(pw ~= "" and pw or "1234")
+    ent:SetMode(0)  -- Код 107: только PIN, даже из старой базы с mode 1/2
+    ent:SetCost(0)
+    ent:SetFaction("")
     ent.KeyGranted = math.Clamp(tonumber(t.granted) or 1, 1, 9)
     ent.KeyDenied  = math.Clamp(tonumber(t.denied) or 2, 1, 9)
     ent.HoldTime   = math.max(0.5, tonumber(t.hold) or 5)
@@ -75,9 +86,10 @@ function ENT:Initialize()
     self.KeyDenied = self.KeyDenied or 2
     self.HoldTime = self.HoldTime or 5
 
-    self:SetMode(self.Mode or 0)
-    self:SetCost(self.Cost or 0)
-    self:SetFaction(self.Faction or "")
+    -- Код 107: кейпад = только PIN-режим, навсегда
+    self:SetMode(0)
+    self:SetCost(0)
+    self:SetFaction("")
 end
 
 function ENT:ProcessGrant(ply)
@@ -147,45 +159,8 @@ end
 function ENT:PressButton(btn, ply)
     if self:IsKeypadLocked() then return end
 
-    local mode = self:GetMode()
-
-    -- Платный режим (Toll Mode)
-    if mode == 2 then
-        local price = self:GetCost()
-        if price > 0 and GRM and GRM.HasMoney and GRM.TakeMoney then
-            if not GRM.HasMoney(ply, price) then
-                if GRM.Notify then GRM.Notify(ply, "Недостаточно денег для прохода (" .. price .. " GRM)", 255, 100, 100) end
-                self:ProcessDeny(ply)
-                return
-            end
-            GRM.TakeMoney(ply, price, "Платный проход через Кейпад")
-            if GRM.Notify then GRM.Notify(ply, "Оплачено " .. price .. " GRM. Доступ разрешён!", 100, 220, 100) end
-        end
-        self:ProcessGrant(ply)
-        return
-    end
-
-    -- Фракционный режим (Faction Mode) — Код 104: список через запятую
-    if mode == 1 then
-        local plyFac = nil
-        if Factions and IsValid(ply) then
-            for fName, fData in pairs(Factions) do
-                if istable(fData) and istable(fData.Members) and (fData.Members[ply:SteamID()] or fData.Members[ply:SteamID64()]) then
-                    plyFac = fName break
-                end
-            end
-        end
-
-        if ply:IsSuperAdmin() or self:IsFactionAllowed(plyFac) or self:IsKeypadOwner(ply) then
-            self:ProcessGrant(ply)
-        else
-            if GRM.Notify then GRM.Notify(ply, "Доступ ограничен фракцией [" .. string.Trim(tostring(self:GetFaction() or "")) .. "]", 255, 100, 100) end
-            self:ProcessDeny(ply)
-        end
-        return
-    end
-
-    -- PIN-код режим (Password Mode)
+    -- Код 107: кейпад — ТОЛЬКО PIN-режим (фракционный доступ — у
+    -- FFD Scanner, grm_scanner). Поля Mode/Cost/Faction мёртвы.
     if btn == "CLR" then
         self.CurrentInput = ""
         self:SetDisplayText("")
@@ -194,14 +169,14 @@ function ENT:PressButton(btn, ply)
     end
 
     if btn == "OK" then
-        -- Код 106 (находка 123): PIN-режим — СТРОГОЕ сравнение ДЛЯ ВСЕХ.
-        -- Байпасы владельца/суперадмина (Код 104/105) делали кейпад
-        -- «неразличающим»: владелец сервера тестирует со своего
-        -- суперадмин-аккаунта, и ЛЮБОЙ ввод открывал дверь. Теперь:
-        -- хочешь открыть — знай PIN (владелец и админ тоже). Байпас
-        -- владельца/админа остаётся только в фракционном режиме выше.
-        local targetPass = tostring(self:GetPassword() or "")
-        if self.CurrentInput ~= "" and self.CurrentInput == targetPass then
+        -- Код 106 (находка 123): PIN — СТРОГОЕ сравнение ДЛЯ ВСЕХ, без
+        -- байпасов владельца/суперадмина (они делали кейпад «неразличающим»
+        -- для самого тестирующего админа). Код 107: обе стороны ещё и
+        -- ТРИМЯТСЯ — конварный пароль с хвостовым пробелом (поле ввода
+        -- DForm не обрезает) раньше давал «верный PIN → отказ».
+        local targetPass = string.Trim(tostring(self:GetPassword() or ""))
+        local typed = string.Trim(tostring(self.CurrentInput or ""))
+        if typed ~= "" and typed == targetPass then
             self:ProcessGrant(ply)
         else
             self:ProcessDeny(ply)
@@ -209,10 +184,14 @@ function ENT:PressButton(btn, ply)
         return
     end
 
-    if #self.CurrentInput < 6 then
+    -- Код 107: кап ввода 6 → 10 цифр (длинные PIN тоже набираются до конца)
+    if #self.CurrentInput < 10 then
         self.CurrentInput = self.CurrentInput .. tostring(btn)
         self:SetDisplayText(string.rep("*", #self.CurrentInput))
         self:EmitSound("buttons/button14.wav", 60, 100 + #self.CurrentInput * 5)
+    else
+        -- насыщение поля — слышимый, но безмолвный отказ раньше путал
+        self:EmitSound("buttons/button10.wav", 65, 140)
     end
 end
 
@@ -236,7 +215,9 @@ hook.Add("KeyPress", "GRM_Keypad_AimPress", function(ply, key)
     if ply:GetShootPos():DistToSqr(ent:GetPos()) > (130 * 130) then return end
     local now = CurTime()
     if (ply.__grmKeypadNextPress or 0) > now then return end
-    ply.__grmKeypadNextPress = now + 0.15 -- лёгкий анти-дабл
+    -- Код 107: анти-дабл 0.15 → 0.06 — 0.15 съедал цифры быстрого набора
+    -- («правильный PIN → отказ»: человек спокойно тычет чаще 6-7 раз/с)
+    ply.__grmKeypadNextPress = now + 0.06
     local idx, b = ent:KeypadButtonAt(tr.HitPos)
     if not (idx and b) then return end
     ent:PressButton(b.text, ply)
