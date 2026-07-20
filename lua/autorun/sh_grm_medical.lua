@@ -57,24 +57,25 @@ MD.CardItem      = "medcard"
 MD.CardItemModel   = "models/props_lab/clipboard.mdl"
 MD.CardItemModelFB = "models/props_c17/paper01.mdl" -- фолбэк (н85)
 
-if GRM.Inventory and GRM.Inventory.RegisterItem then
-    local function regMedCard()
-        local mdl = MD.CardItemModel
-        if util.IsValidModel and not util.IsValidModel(mdl) then mdl = MD.CardItemModelFB end
-        GRM.Inventory.RegisterItem(MD.CardItem, {
-            type = "item",
-            name = "Медицинская карта",
-            desc = "Заполненная врачом карта пациента. «Использовать» — посмотреть карту. Не теряйте.",
-            icon = "icon16/vcard.png",
-            maxStack = 1,
-            weight = 0.2,
-            model = mdl,
-            useFunc = "medcard_view",
-        })
-    end
-    regMedCard()
-    timer.Simple(2, regMedCard) -- инвентарь мог подгрузиться позже
+-- Код 106 (находка 123): гард ВНУТРИ регистратора (снаружи он гасил и
+-- ретрай на перекошенной загрузке — урок «мёртвой кнопки» модулятора).
+local function regMedCard()
+    if not (GRM.Inventory and GRM.Inventory.RegisterItem) then return end
+    local mdl = MD.CardItemModel
+    if util.IsValidModel and not util.IsValidModel(mdl) then mdl = MD.CardItemModelFB end
+    GRM.Inventory.RegisterItem(MD.CardItem, {
+        type = "item",
+        name = "Медицинская карта",
+        desc = "Заполненная врачом карта пациента. «Использовать» — посмотреть карту. Не теряйте.",
+        icon = "icon16/vcard.png",
+        maxStack = 1,
+        weight = 0.2,
+        model = mdl,
+        useFunc = "medcard_view",
+    })
 end
+regMedCard()
+timer.Simple(2, regMedCard) -- инвентарь мог подгрузиться позже (ретрай живёт ВСЕГДА)
 
 local NET_OPEN   = "GRM_Med_Open"
 local NET_CARD   = "GRM_Med_Card"

@@ -106,7 +106,7 @@ GRM = GRM or {}
 GRM.RadioNet = GRM.RadioNet or {}
 local RN = GRM.RadioNet
 
-RN.Version    = "1.4.0"  -- Код 99: радиочастоты — только с активным переносным модулятором (предмет)
+RN.Version    = "1.4.1"  -- Код 106: регистрация модулятора — ретрай вне гарда (находка 123)
 
 -- настройки сети (юниты = юниты Source; ~40 юн = 1 м)
 RN.LinkDist     = 700    -- радиус связывания оборудования со стойкой
@@ -150,24 +150,29 @@ RN.UnitPrice = 1500                                     -- цена в /phonesho
 -- Регистрация предмета в обоих мирах (клиент видит имя/иконку, сервер —
 -- логику). Модель — через IsValidModel с фолбэком (находка 85: нельзя
 -- уронить дроп с отсутствующей моделью).
-if GRM.Inventory and GRM.Inventory.RegisterItem then
-    local function regRadioUnit()
-        local mdl = RN.UnitModel
-        if util.IsValidModel and not util.IsValidModel(mdl) then mdl = RN.UnitModelFB end
-        GRM.Inventory.RegisterItem(RN.UnitItem, {
-            type = "item",
-            name = "Модулятор рации (переносной)",
-            desc = "Переносная радиостанция. «Использовать» — вкл/выкл. Когда включён: /freq 145.5 — частота, /r текст — эфир. Сеть — любая дистанция, вне сети до 37 м напрямую.",
-            icon = "icon16/transmit.png",
-            maxStack = 1,
-            weight = 0.6,
-            model = mdl,
-            useFunc = "radio_toggle",
-        })
-    end
-    regRadioUnit()
-    timer.Simple(2, regRadioUnit) -- инвентарь мог подгрузиться позже
+-- Код 106 (находка 123): гард теперь ВНУТРИ регистратора — раньше он
+-- стоял снаружи и пропускал ВМЕСТЕ с ретраем: если на конкретной
+-- загрузке инвентарь отставал, модулятор терялся насовсем (мёртвая
+-- кнопка «Использовать» у владельца). Дубль-страховка: статический деф
+-- того же предмета лежит в sh_grm_inventory (v1.4.0) — запись ниже
+-- просто перезапишет его тем же содержимым (с проверенной моделью).
+local function regRadioUnit()
+    if not (GRM.Inventory and GRM.Inventory.RegisterItem) then return end
+    local mdl = RN.UnitModel
+    if util.IsValidModel and not util.IsValidModel(mdl) then mdl = RN.UnitModelFB end
+    GRM.Inventory.RegisterItem(RN.UnitItem, {
+        type = "item",
+        name = "Модулятор рации (переносной)",
+        desc = "Переносная радиостанция. «Использовать» — вкл/выкл. Когда включён: /freq 145.5 — частота, /r текст — эфир. Сеть — любая дистанция, вне сети до 37 м напрямую.",
+        icon = "icon16/transmit.png",
+        maxStack = 1,
+        weight = 0.6,
+        model = mdl,
+        useFunc = "radio_toggle",
+    })
 end
+regRadioUnit()
+timer.Simple(2, regRadioUnit) -- инвентарь мог подгрузиться позже (ретрай живёт ВСЕГДА)
 
 -- ============================================================
 -- СЕРВЕР

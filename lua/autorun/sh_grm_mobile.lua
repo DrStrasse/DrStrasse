@@ -800,26 +800,27 @@ if SERVER then
     ----------------------------------------------------------------
     -- предметы инвентаря (7 трубок GTA IV)
     ----------------------------------------------------------------
-    if GRM.Inventory and GRM.Inventory.RegisterItem then
-        local function regPhones()
-            for _, tk in ipairs(MB.Order) do
-                local t = MB.Tiers[tk]
-                GRM.Inventory.RegisterItem(t.item, {
-                    type = "item",
-                    name = "Телефон: " .. t.name,
-                    desc = t.desc .. " Оператор: " .. t.operator .. ". Открыть — СТРЕЛКА ВВЕРХ.",
-                    icon = "icon16/phone.png",
-                    maxStack = 1,
-                    weight = 0.35,
-                    model = t.model,      -- на земле падает настоящей моделью трубки
-                    useFunc = "mobile_open",
-                })
-            end
+    -- Код 106 (находка 123): гард ВНУТРИ регистратора (снаружи он гасил и
+    -- ретрай на перекошенной загрузке — урок «мёртвой кнопки» модулятора).
+    local function regPhones()
+        if not (GRM.Inventory and GRM.Inventory.RegisterItem) then return end
+        for _, tk in ipairs(MB.Order) do
+            local t = MB.Tiers[tk]
+            GRM.Inventory.RegisterItem(t.item, {
+                type = "item",
+                name = "Телефон: " .. t.name,
+                desc = t.desc .. " Оператор: " .. t.operator .. ". Открыть — СТРЕЛКА ВВЕРХ.",
+                icon = "icon16/phone.png",
+                maxStack = 1,
+                weight = 0.35,
+                model = t.model,      -- на земле падает настоящей моделью трубки
+                useFunc = "mobile_open",
+            })
         end
-        -- инвентарь может грузиться позже: пробуем сразу и отложенно
-        regPhones()
-        timer.Simple(2, regPhones)
     end
+    -- инвентарь может грузиться позже: пробуем сразу и отложенно
+    regPhones()
+    timer.Simple(2, regPhones)
 
     -- MP-константа доступна тестам
     MB._dev = { recOf = recOf, jsonT = jsonT }

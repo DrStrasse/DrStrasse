@@ -194,8 +194,14 @@ function ENT:PressButton(btn, ply)
     end
 
     if btn == "OK" then
-        local targetPass = self:GetPassword()
-        if self.CurrentInput == targetPass or self:IsKeypadOwner(ply) or ply:IsSuperAdmin() then
+        -- Код 106 (находка 123): PIN-режим — СТРОГОЕ сравнение ДЛЯ ВСЕХ.
+        -- Байпасы владельца/суперадмина (Код 104/105) делали кейпад
+        -- «неразличающим»: владелец сервера тестирует со своего
+        -- суперадмин-аккаунта, и ЛЮБОЙ ввод открывал дверь. Теперь:
+        -- хочешь открыть — знай PIN (владелец и админ тоже). Байпас
+        -- владельца/админа остаётся только в фракционном режиме выше.
+        local targetPass = tostring(self:GetPassword() or "")
+        if self.CurrentInput ~= "" and self.CurrentInput == targetPass then
             self:ProcessGrant(ply)
         else
             self:ProcessDeny(ply)

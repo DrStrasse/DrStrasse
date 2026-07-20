@@ -233,6 +233,13 @@ local ply = mkPly("76561198000000012")
 -- телефон-деф как в мобильном модуле
 GRM.Inventory.RegisterItem("mobile_badger", { type = "item", name = "Телефон: Badger", maxStack = 1, weight = 0.35 })
 
+-- Код 106 (находка 123): статический деф модулятора — ДО любых внешних
+-- регистраций (доказательство, что useFunc не зависит от порядка загрузки)
+local earlyModDef = GRM.Inventory.GetItemDef("radio_modulator")
+ok(istable(earlyModDef) and earlyModDef.useFunc == "radio_toggle" and earlyModDef.maxStack == 1
+   and earlyModDef.model == "models/props_lab/reciever01b.mdl",
+   "Код 106: деф radio_modulator есть СРАЗУ из sh_grm_inventory (статический, до внешних регистраций)")
+
 print("== 1. Покупка телефона в инвентарь ==")
 local left = GRM.Inventory.AddItem(ply, "mobile_badger", 1)
 ok((left or 1) == 0, "AddItem: телефон принят (возврат 0)")
@@ -334,6 +341,20 @@ local bslot
 for i = 1, 24 do local s = pinv.slots[i] if s and s.id == "medcard" and not s.data then bslot = i break end end
 if bslot then H.seq = { bslot } H.recv["grm_inv_use"](0, patient) end
 ok(bslot ~= nil and viewCalls.n == 2 and viewCalls[2] == false, "отдельный бланк тоже доходит до модуля медицины (data=nil)")
+
+print("== 9. Код 106: видимый отказ при предмете без дефа ==")
+-- предмет без дефа: раньше — тихий выход («мёртвая кнопка»), теперь — видимый отказ
+local notif = {}
+GRM.Notify = function(p, txt) notif[#notif + 1] = tostring(txt) end
+local invX = GRM.Inventory.GetPlayerInv(ply)
+local gslot
+for i = 1, 24 do if not (invX.slots[i] and invX.slots[i].id) then gslot = i break end end
+ok(gslot ~= nil, "найден свободный слот для призрачного предмета")
+invX.slots[gslot or 24] = { id = "ghost_item_x", count = 1 }
+H.seq = { gslot or 24 } H.recv["grm_inv_use"](0, ply)
+ok(#notif >= 1 and (notif[#notif]:find("не зарегистрирован", 1, true) ~= nil),
+   "нет дефа — игрок видит отказ «не зарегистрирован» (диагностика в один скрин)")
+invX.slots[gslot or 24] = nil
 
 print("")
 print(("РЕЗУЛЬТАТ: %d/%d проверок, провалов: %d"):format(checks - failed, checks, failed))

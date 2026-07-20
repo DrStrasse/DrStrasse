@@ -140,50 +140,91 @@ function TOOL.BuildCPanel(panel)
         combo:AddChoice("2: Платный проход (GRM Cash)", 2)
     end
 
-    -- Код 104 (находка 121): окошко фракций с чекбоксами (замечание №1
-    -- владельца). Для режима «Фракция» — можно выбрать НЕСКОЛЬКО, список
-    -- летит в конвар ffd_keypad_faction через запятую (кейпад разберёт).
-    if istable(Factions) and next(Factions) then
-        panel:Help("Фракции с доступом (режим «Доступ по Фракции»):")
+    -- Код 104/106 (находки 121/123): окошко фракций с чекбоксами.
+    -- Источник списка НА КЛИЕНТЕ — живой кэш FactionsData (полный синк
+    -- Factions_SyncAll из sh_factions.lua при входе и изменениях).
+    -- Серверный глобал Factions на клиенте равен НИЛ — Код 104 из-за
+    -- этого показывал одно текстовое поле (замечание владельца «окна с
+    -- фракциями нету, нужна интерактивность»). Окно строится ВСЕГДА и
+    -- само перестраивается: синк пришёл/фракции изменились — чекбоксы
+    -- подтянутся без переоткрытия панели (Think-подпись раз в 0.5с).
+    local function grmFactionNames()
+        local src = (istable(FactionsData) and next(FactionsData) and FactionsData)
+            or (istable(Factions) and next(Factions) and Factions)
+        if not src then return nil end
+        local names = {}
+        for name in pairs(src) do names[#names + 1] = tostring(name) end
+        table.sort(names)
+        return names
+    end
+
+    local function readCheckedSet()
         local cur = {}
-        local cvStr = ""
         local cv = GetConVar and GetConVar("ffd_keypad_faction")
-        if cv then cvStr = cv:GetString() or "" end
-        for name in string.gmatch(cvStr, "([^,]+)") do
+        for name in string.gmatch((cv and cv:GetString()) or "", "([^,]+)") do
             cur[string.Trim(name)] = true
         end
-        local names = {}
-        for name in pairs(Factions) do names[#names + 1] = name end
-        table.sort(names)
-        local wrap = vgui.Create("DPanel", panel)
-        wrap:SetPaintBackground(false)
-        wrap:SetTall(#names * 22 + 4)
-        for _, name in ipairs(names) do
-            local cb = vgui.Create("DCheckBoxLabel", wrap)
-            cb:Dock(TOP) cb:DockMargin(6, 0, 0, 2)
-            cb:SetText(name)
-            cb:SetChecked(cur[name] == true)
-            cb.facName = name
-            cb.checked = cur[cb.facName] == true -- для сим-слежки
-            cb.OnChange = function(self, v)
-                cur[self.facName] = v == true
-                self.checked = v == true          -- для сим-слежки
-                local out = {}
-                for _, n in ipairs(names) do
-                    if cur[n] then out[#out + 1] = n end
+        return cur
+    end
+
+    panel:Help("Фракции с доступом (режим «Доступ по Фракции»):")
+    local wrap = vgui.Create("DPanel", panel)
+    wrap:SetPaintBackground(false)
+    wrap:SetTall(30)
+    wrap.__sig = nil
+    wrap.__nextThink = 0
+
+    local function rebuildWrap(names)
+        wrap:Clear()
+        local cur = readCheckedSet()
+        if names then
+            wrap:SetTall(#names * 22 + 4)
+            for _, name in ipairs(names) do
+                local cb = vgui.Create("DCheckBoxLabel", wrap)
+                cb:Dock(TOP) cb:DockMargin(6, 0, 0, 2)
+                cb:SetText(name)
+                cb:SetChecked(cur[name] == true)
+                cb.facName = name
+                cb.checked = cur[cb.facName] == true -- для сим-слежки
+                cb.OnChange = function(self, v)
+                    cur[self.facName] = v == true
+                    self.checked = v == true          -- для сим-слежки
+                    local out = {}
+                    for _, n2 in ipairs(names) do
+                        if cur[n2] then out[#out + 1] = n2 end
+                    end
+                    RunConsoleCommand("ffd_keypad_faction", table.concat(out, ","))
                 end
-                RunConsoleCommand("ffd_keypad_faction", table.concat(out, ","))
             end
-        end
-        panel:AddItem(wrap)
-    else
-        -- фолбэк вне GRM-окружения: одна фракция текстом (legacy-поведение)
-        if panel.TextEntry then
-            panel:TextEntry("Фракция с доступом (через запятую):", "ffd_keypad_faction")
         else
-            panel:AddControl("TextBox", { Label = "Фракция с доступом (через запятую):", Command = "ffd_keypad_faction" })
+            -- данных фракций пока нет (синк не пришёл): ручное поле —
+            -- как только синк подтянется, Think перестроит на чекбоксы
+            wrap:SetTall(28)
+            local te = vgui.Create("DTextEntry", wrap)
+            te:Dock(TOP) te:DockMargin(6, 2, 0, 2)
+            if te.SetUpdateOnType then te:SetUpdateOnType(true) end
+            if te.SetConVar then te:SetConVar("ffd_keypad_faction") end
+            if te.SetTooltip then te:SetTooltip("Фракции ещё не синхронизированы — впишите вручную через запятую; при первом синке здесь появятся чекбоксы") end
         end
     end
+
+    local names0 = grmFactionNames()
+    wrap.__sig = names0 and table.concat(names0, "\1") or ""
+    rebuildWrap(names0)
+
+    wrap.Think = function(self)
+        local now = CurTime()
+        if now < (self.__nextThink or 0) then return end
+        self.__nextThink = now + 0.5
+        local names = grmFactionNames()
+        local sig = names and table.concat(names, "\1") or ""
+        if sig ~= self.__sig then
+            self.__sig = sig
+            rebuildWrap(names)
+        end
+    end
+
+    panel:AddItem(wrap)
 
     panel:AddControl("Numpad", { Label = "Сигнал успешного входа (Granted):", Command = "ffd_keypad_key_granted" })
     panel:AddControl("Numpad", { Label = "Сигнал отказа (Denied):", Command = "ffd_keypad_key_denied" })
