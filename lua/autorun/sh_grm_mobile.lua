@@ -50,6 +50,8 @@ MB.Tiers = {
 
 -- Регистрация предметов в инвентаре
 if SERVER then
+    util.AddNetworkString("GRM_Mobile_Open") -- ВАЖНО: добавляем net-строку
+    
     local function registerPhones()
         if not (GRM.Inventory and GRM.Inventory.RegisterItem) then return end
         
@@ -70,10 +72,27 @@ if SERVER then
     registerPhones()
     timer.Simple(2, registerPhones)
     
-    -- Обработчик использования телефона
+    -- Обработчик использования телефона из инвентаря
     GRM.Inventory.RegisterUseHandler("mobile_use", function(ply, slotIdx, slot, def)
         net.Start("GRM_Mobile_Open")
         net.Send(ply)
+    end)
+    
+    -- Обработчик net-сообщения от клиента (команда /mobile)
+    net.Receive("GRM_Mobile_Open", function(len, ply)
+        if IsValid(ply) then
+            net.Start("GRM_Mobile_Open")
+            net.Send(ply)
+        end
+    end)
+    
+    -- Команда /mobile через чат
+    hook.Add("PlayerSay", "GRM_Mobile_ChatCommand", function(ply, text)
+        if string.lower(string.Trim(text)) == "/mobile" then
+            net.Start("GRM_Mobile_Open")
+            net.Send(ply)
+            return ""
+        end
     end)
     
     print("[GRM Mobile] v2.0.0 loaded")
@@ -115,18 +134,9 @@ if CLIENT then
             end
         end
         
-        addAppButton("Телефон", "")
+        addAppButton("Телефон", "📞")
         addAppButton("SMS", "💬")
         addAppButton("Контакты", "👥")
         addAppButton("Заметки", "📝")
-    end)
-    
-    -- Команда /mobile
-    hook.Add("PlayerSay", "GRM_Mobile_Command", function(ply, text)
-        if string.lower(string.Trim(text)) == "/mobile" then
-            net.Start("GRM_Mobile_Open")
-            net.SendToServer()
-            return ""
-        end
     end)
 end
