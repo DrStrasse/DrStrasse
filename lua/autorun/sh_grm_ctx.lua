@@ -186,7 +186,6 @@ surface.CreateFont("GRMCtx_Normal", { font = "Roboto", size = 13, weight = 500, 
 local CC = {
     ticket  = Color(180, 100, 60),  ticketH  = Color(200, 120, 80),
     inv     = Color(50, 120, 200),  invH     = Color(70, 140, 220),
-    market  = Color(60, 180, 100),  marketH  = Color(80, 200, 120),
     third   = Color(100, 100, 180), thirdH   = Color(120, 120, 200),
     radio   = Color(180, 160, 60),  radioH   = Color(200, 180, 80),
     faction = Color(80, 80, 180),   factionH = Color(100, 100, 200),
@@ -204,7 +203,6 @@ local tp = false
 
 local function actTicket()    RunConsoleCommand("grm_ticket") end
 local function actInv()       RunConsoleCommand("grm_inventory") end
-local function actMarket()    RunConsoleCommand("grm_market") end
 local function actTp()
     tp = not tp
     RunConsoleCommand("simple_thirdperson_enable_toggle")
@@ -260,7 +258,6 @@ end
 local BTNS = {
     { id = "ticket",     l = "Тикет",        fn = actTicket,     c = CC.ticket,  ch = CC.ticketH,  ok = function() return true end },
     { id = "inventory",  l = "Инвентарь",    fn = actInv,        c = CC.inv,     ch = CC.invH,     ok = function() return true end },
-    { id = "market",     l = "Маркет",       fn = actMarket,     c = CC.market,  ch = CC.marketH,  ok = function() return true end },
     { id = "money_drop", l = "Выбросить деньги…", fn = actDropMoney,
       c = Color(190, 150, 60), ch = Color(210, 170, 80), ok = function() return true end },
     { id = "money_give", l = function()
