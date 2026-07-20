@@ -57,6 +57,7 @@
 | 68 | `lua/weapons/ds_lockpick/` | **QTE-Отмычка `ds_lockpick`:** интерактивный взлом запертых дверей и кейпадов с подбором пинов |
 | 69 | `lua/weapons/gmod_tool/stools/ffd_fading_door.lua` | **FFD Fading Door:** тулган создания исчезающих дверей с нумпадом, инверсией и авто-закрытием |
 | 70 | `lua/entities/grm_keypad/` | **FFD Keypad (`grm_keypad` & `ffd_keypad.lua`):** интерактивный кодовый замок с 3D2D экраном, PIN, фракционным доступом и платным проходом |
+| 71 | `lua/autorun/sh_grm_vendor.lua` | **Фреймворк Торгашей v1.0:** единый энтити `grm_vendor` (оружие/руда/еда/редкости), каталоги, toolgun `grm_vendor`, пермы через `/permadd`, UI в стиле HUD v10.2 |
 
 ## Основные команды
 

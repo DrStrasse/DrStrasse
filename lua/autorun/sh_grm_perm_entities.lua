@@ -1,12 +1,13 @@
 --[[--------------------------------------------------------------------
-    GRM Perm Entities v1.1.0 (Код 50)
+    GRM Perm Entities v1.2.0 (Код 50, обновлён в Коде 71)
     «Пермы» для разворачиваемых энтити GRM: банкомат (grm_bank_terminal),
-    таксофон, АТС, телефонный терминал, прослушка, телефон, CCTV-камера/монитор/сервер.
+    таксофон, АТС, телефонный терминал, прослушка, телефон, CCTV-камера/монитор/сервер,
+    торгаш (grm_vendor).
     Админ наводит прицел -> команда -> энтити переживает рестарт карты
     и cleanup-кнопку.
 
     Хранилище: data/grm_perm_entities.json — МАССИВ записей
-    {map, class, model, pos={x,y,z}, ang={p,y,r}}.
+    {map, class, model, pos={x,y,z}, ang={p,y,r}, data={...}}.
     Массив, а не карта: ловушка util.JSONToTable с числовыми
     ключами-строками тут невозможна в принципе (находка 65).
     Чтение всё равно только через jsonT() (ignoreConversions=true).
@@ -20,7 +21,7 @@
     воскрешённые энтити заморожены (EnableMotion(false)).
 ----------------------------------------------------------------------]]
 
-local PERM_VER = "1.1.0"
+local PERM_VER = "1.2.0"
 GRM = GRM or {}
 GRM._permEntitiesVer = PERM_VER
 
@@ -44,6 +45,8 @@ if SERVER then
         grm_alarm_sensor   = true,
         grm_alarm_hub      = true,
         grm_alarm_terminal = true,
+        -- Vendor (Код 71)
+        grm_vendor         = true,
     }
 
     -- JSON только без конверсии ключей (находка 65)
@@ -151,6 +154,10 @@ if SERVER then
                         local ph = ent:GetPhysicsObject()
                         if IsValid(ph) then ph:EnableMotion(false) end -- перм не катается по карте
                         ent._grmPerm = true
+                        -- Восстановление кастомных данных (vendorType, цены, лимиты)
+                        if rec.class == "grm_vendor" and rec.data and ent.ApplyPermData then
+                            ent:ApplyPermData(rec.data)
+                        end
                         done = done + 1
                     else
                         print("[GRM Perm][!] Не удалось создать класс " .. tostring(rec.class) .. " — запись пропущена")
@@ -201,10 +208,15 @@ if SERVER then
         local ang = ent:GetAngles()
         local model = ""
         pcall(function() model = tostring(ent:GetModel() or "") end)
+        local data = nil
+        if class == "grm_vendor" and ent.GetPermData then
+            data = ent:GetPermData()
+        end
         list[#list + 1] = {
             map = map, class = class, model = model,
             pos = np,
             ang = { p = ang.p, y = ang.y, r = ang.r },
+            data = data,
         }
         if saveList(list) then
             tell(ply, "[ПЕРМ] " .. class .. " закреплён на карте. Переживёт рестарт и cleanup.", 100, 220, 100)
