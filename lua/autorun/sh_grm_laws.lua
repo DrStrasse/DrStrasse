@@ -280,11 +280,107 @@ if CLIENT then
             draw.SimpleText("Законов: " .. #laws, "GRMLaws_Small", w - 16, 22, CUI.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
         
-        -- Кнопка добавления (в шапке окна)
+        -- Список законов
+        local scroll = vgui.Create("DScrollPanel", frame)
+        scroll:Dock(FILL)
+        scroll:DockMargin(8, 52, 8, 50)
+        
+        if #laws == 0 then
+            local label = vgui.Create("DLabel", scroll)
+            label:Dock(TOP)
+            label:SetTall(40)
+            label:SetText("Законов пока нет.")
+            label:SetTextColor(CUI.dim)
+            label:SetFont("GRMLaws_Normal")
+        else
+            for _, law in ipairs(laws) do
+                local row = vgui.Create("DPanel", scroll)
+                row:Dock(TOP)
+                row:SetTall(80)
+                row:DockMargin(0, 0, 0, 5)
+                
+                row.Paint = function(self, w, h)
+                    draw.RoundedBox(6, 0, 0, w, h, CUI.panel)
+                end
+                
+                -- Заголовок
+                local header = vgui.Create("DLabel", row)
+                header:Dock(TOP)
+                header:SetTall(22)
+                header:DockMargin(12, 8, 12, 0)
+                header:SetText(string.format("Закон #%d — %s (%s)", law.id, law.author, law.date))
+                header:SetTextColor(CUI.yellow)
+                header:SetFont("GRMLaws_Normal")
+                
+                -- Текст закона
+                local text = vgui.Create("DLabel", row)
+                text:Dock(FILL)
+                text:DockMargin(12, 0, 12, 8)
+                text:SetText(law.text)
+                text:SetTextColor(CUI.text)
+                text:SetFont("GRMLaws_Small")
+                
+                -- Кнопки действий (справа, горизонтально)
+                local btnsPanel = vgui.Create("DPanel", row)
+                btnsPanel:Dock(RIGHT)
+                btnsPanel:SetWide(200)
+                btnsPanel:DockMargin(0, 8, 8, 8)
+                btnsPanel:SetPaintBackground(false)
+                
+                if canEdit then
+                    local btnEdit = vgui.Create("DButton", btnsPanel)
+                    btnEdit:Dock(LEFT)
+                    btnEdit:SetWide(90)
+                    btnEdit:SetTall(32)
+                    btnEdit:DockMargin(0, 0, 4, 0)
+                    btnEdit:SetText("")
+                    btnEdit.Paint = function(self, w, h)
+                        local col = self:IsHovered() and Color(90, 175, 255) or CUI.accent
+                        draw.RoundedBox(5, 0, 0, w, h, col)
+                        draw.SimpleText("Изменить", "GRMLaws_Small", w/2, h/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    end
+                    btnEdit.DoClick = function()
+                        Derma_StringRequest("Редактировать закон #" .. law.id, "Новый текст закона:", law.text, function(newText)
+                            if newText and #newText >= 10 then
+                                net.Start("GRM_Laws_Edit")
+                                    net.WriteUInt(law.id, 16)
+                                    net.WriteString(newText)
+                                net.SendToServer()
+                            else
+                                notification.AddLegacy("Текст слишком короткий (мин. 10 символов)", NOTIFY_ERROR, 3)
+                            end
+                        end)
+                    end
+                end
+                
+                if canRemove then
+                    local btnDel = vgui.Create("DButton", btnsPanel)
+                    btnDel:Dock(LEFT)
+                    btnDel:SetWide(90)
+                    btnDel:SetTall(32)
+                    btnDel:SetText("")
+                    btnDel.Paint = function(self, w, h)
+                        local col = self:IsHovered() and Color(225, 90, 85) or CUI.red
+                        draw.RoundedBox(5, 0, 0, w, h, col)
+                        draw.SimpleText("Удалить", "GRMLaws_Small", w/2, h/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    end
+                    btnDel.DoClick = function()
+                        Derma_Query("Удалить закон #" .. law.id .. "?", "Подтверждение", "Да", function()
+                            net.Start("GRM_Laws_Remove")
+                                net.WriteUInt(law.id, 16)
+                            net.SendToServer()
+                        end, "Нет")
+                    end
+                end
+            end
+        end
+        
+        -- Кнопка добавления (внизу окна)
         if canAdd then
             local btnAdd = vgui.Create("DButton", frame)
-            btnAdd:SetPos(frame:GetWide() - 180, 8)
-            btnAdd:SetSize(170, 30)
+            btnAdd:Dock(BOTTOM)
+            btnAdd:SetTall(40)
+            btnAdd:DockMargin(8, 0, 8, 8)
             btnAdd:SetText("")
             btnAdd.Paint = function(self, w, h)
                 local col = self:IsHovered() and Color(75, 205, 125) or CUI.green
@@ -301,100 +397,6 @@ if CLIENT then
                         notification.AddLegacy("Текст слишком короткий (мин. 10 символов)", NOTIFY_ERROR, 3)
                     end
                 end)
-            end
-        end
-        
-        -- Список законов
-        local scroll = vgui.Create("DScrollPanel", frame)
-        scroll:Dock(FILL)
-        scroll:DockMargin(8, 52, 8, 8)
-        
-        if #laws == 0 then
-            local label = vgui.Create("DLabel", scroll)
-            label:Dock(TOP)
-            label:SetTall(40)
-            label:SetText("Законов пока нет.")
-            label:SetTextColor(CUI.dim)
-            label:SetFont("GRMLaws_Normal")
-            return
-        end
-        
-        for _, law in ipairs(laws) do
-            local row = vgui.Create("DPanel", scroll)
-            row:Dock(TOP)
-            row:SetTall(80)
-            row:DockMargin(0, 0, 0, 5)
-            
-            row.Paint = function(self, w, h)
-                draw.RoundedBox(6, 0, 0, w, h, CUI.panel)
-            end
-            
-            -- Заголовок
-            local header = vgui.Create("DLabel", row)
-            header:Dock(TOP)
-            header:SetTall(22)
-            header:DockMargin(12, 8, 12, 0)
-            header:SetText(string.format("Закон #%d — %s (%s)", law.id, law.author, law.date))
-            header:SetTextColor(CUI.yellow)
-            header:SetFont("GRMLaws_Normal")
-            
-            -- Текст закона
-            local text = vgui.Create("DLabel", row)
-            text:Dock(FILL)
-            text:DockMargin(12, 0, 12, 8)
-            text:SetText(law.text)
-            text:SetTextColor(CUI.text)
-            text:SetFont("GRMLaws_Small")
-            
-            -- Кнопки действий (справа)
-            local btnsPanel = vgui.Create("DPanel", row)
-            btnsPanel:Dock(RIGHT)
-            btnsPanel:SetWide(180)
-            btnsPanel:DockMargin(0, 8, 8, 8)
-            btnsPanel:SetPaintBackground(false)
-            
-            if canEdit then
-                local btnEdit = vgui.Create("DButton", btnsPanel)
-                btnEdit:Dock(TOP)
-                btnEdit:SetTall(36)
-                btnEdit:DockMargin(0, 0, 0, 4)
-                btnEdit:SetText("")
-                btnEdit.Paint = function(self, w, h)
-                    local col = self:IsHovered() and Color(90, 175, 255) or CUI.accent
-                    draw.RoundedBox(5, 0, 0, w, h, col)
-                    draw.SimpleText("Изменить", "GRMLaws_Normal", w/2, h/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                end
-                btnEdit.DoClick = function()
-                    Derma_StringRequest("Редактировать закон #" .. law.id, "Новый текст закона:", law.text, function(newText)
-                        if newText and #newText >= 10 then
-                            net.Start("GRM_Laws_Edit")
-                                net.WriteUInt(law.id, 16)
-                                net.WriteString(newText)
-                            net.SendToServer()
-                        else
-                            notification.AddLegacy("Текст слишком короткий (мин. 10 символов)", NOTIFY_ERROR, 3)
-                        end
-                    end)
-                end
-            end
-            
-            if canRemove then
-                local btnDel = vgui.Create("DButton", btnsPanel)
-                btnDel:Dock(TOP)
-                btnDel:SetTall(36)
-                btnDel:SetText("")
-                btnDel.Paint = function(self, w, h)
-                    local col = self:IsHovered() and Color(225, 90, 85) or CUI.red
-                    draw.RoundedBox(5, 0, 0, w, h, col)
-                    draw.SimpleText("Удалить", "GRMLaws_Normal", w/2, h/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                end
-                btnDel.DoClick = function()
-                    Derma_Query("Удалить закон #" .. law.id .. "?", "Подтверждение", "Да", function()
-                        net.Start("GRM_Laws_Remove")
-                            net.WriteUInt(law.id, 16)
-                        net.SendToServer()
-                    end, "Нет")
-                end
             end
         end
     end)
