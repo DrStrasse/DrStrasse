@@ -316,59 +316,59 @@ if CLIENT then
             if IsValid(ply) and ply:Alive() then
                 local rname = string.Trim(tostring(ply:GetNWString("GRM_RPName", "") or ""))
                 local desc = descriptions[ply:SteamID()] or ""
-                if rname == "" and desc == "" then continue end
+                if rname ~= "" or desc ~= "" then
+                    local isSelf = (ply == lp)
+                    local alpha = 255
+                    local d = lp:GetPos():Distance(ply:GetPos())
+                    if isSelf then
+                        alpha = 200 -- себе показываем всегда (запрос владельца)
+                    else
+                        if d <= maxDist then
+                            alpha = math.Clamp(255 * (1.15 - d / maxDist), 60, 255)
+                            local pos = ply:GetPos() + Vector(0, 0, 80)
+                            local sp = pos:ToScreen()
+                            if sp.visible then
+                                local topY = sp.y -- верх всего блока; имя уедет ещё выше
 
-                local isSelf = (ply == lp)
-                local alpha = 255
-                local d = lp:GetPos():Distance(ply:GetPos())
-                if isSelf then
-                    alpha = 200 -- себе показываем всегда (запрос владельца)
-                else
-                    if d > maxDist then continue end
-                    alpha = math.Clamp(255 * (1.15 - d / maxDist), 60, 255)
-                end
+                                -- описание (нижний блок, ближе к голове)
+                                if desc ~= "" then
+                                    local lines = wrapText(desc, maxWidth)
+                                    if #lines > 0 then
+                                        surface.SetFont("GRM_RPDesc_Font")
+                                        local boxW = 0
+                                        for _, ln in ipairs(lines) do
+                                            local w = surface.GetTextSize(ln) or 0
+                                            if w > boxW then boxW = w end
+                                        end
+                                        boxW = boxW + pad * 2
+                                        local boxH = #lines * (lineH + 2) + pad * 2
 
-                local pos = ply:GetPos() + Vector(0, 0, 80)
-                local sp = pos:ToScreen()
-                if not sp.visible then continue end
+                                        local bx, by = sp.x - boxW / 2, sp.y - boxH
+                                        draw.RoundedBox(6, bx, by, boxW, boxH, Color(10, 14, 20, alpha * 0.78))
+                                        surface.SetDrawColor(70, 150, 240, alpha * 0.7)
+                                        surface.DrawOutlinedRect(bx, by, boxW, boxH, 1)
 
-                local topY = sp.y -- верх всего блока; имя уедет ещё выше
+                                        for i, ln in ipairs(lines) do
+                                            draw.SimpleText(ln, "GRM_RPDesc_Font", sp.x, by + pad + (i - 1) * (lineH + 2), Color(235, 240, 248, alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                                        end
+                                        topY = by
+                                    end
+                                end
 
-                -- описание (нижний блок, ближе к голове)
-                if desc ~= "" then
-                    local lines = wrapText(desc, maxWidth)
-                    if #lines > 0 then
-                        surface.SetFont("GRM_RPDesc_Font")
-                        local boxW = 0
-                        for _, ln in ipairs(lines) do
-                            local w = surface.GetTextSize(ln) or 0
-                            if w > boxW then boxW = w end
+                                -- игровое (RP) имя — самый верхний блок, золотая плашка
+                                if rname ~= "" then
+                                    surface.SetFont("GRM_RPName_Font")
+                                    local nw = surface.GetTextSize(rname) or 0
+                                    local nbW, nbH = nw + 22, nameH + 8
+                                    local nx, ny = sp.x - nbW / 2, topY - nbH - 4
+                                    draw.RoundedBox(6, nx, ny, nbW, nbH, Color(12, 16, 24, alpha * 0.85))
+                                    surface.SetDrawColor(230, 190, 80, alpha * 0.85)
+                                    surface.DrawOutlinedRect(nx, ny, nbW, nbH, 1)
+                                    draw.SimpleText(rname, "GRM_RPName_Font", sp.x, ny + 4, Color(255, 226, 140, alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                                end
+                            end
                         end
-                        boxW = boxW + pad * 2
-                        local boxH = #lines * (lineH + 2) + pad * 2
-
-                        local bx, by = sp.x - boxW / 2, sp.y - boxH
-                        draw.RoundedBox(6, bx, by, boxW, boxH, Color(10, 14, 20, alpha * 0.78))
-                        surface.SetDrawColor(70, 150, 240, alpha * 0.7)
-                        surface.DrawOutlinedRect(bx, by, boxW, boxH, 1)
-
-                        for i, ln in ipairs(lines) do
-                            draw.SimpleText(ln, "GRM_RPDesc_Font", sp.x, by + pad + (i - 1) * (lineH + 2), Color(235, 240, 248, alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-                        end
-                        topY = by
                     end
-                end
-
-                -- игровое (RP) имя — самый верхний блок, золотая плашка
-                if rname ~= "" then
-                    surface.SetFont("GRM_RPName_Font")
-                    local nw = surface.GetTextSize(rname) or 0
-                    local nbW, nbH = nw + 22, nameH + 8
-                    local nx, ny = sp.x - nbW / 2, topY - nbH - 4
-                    draw.RoundedBox(6, nx, ny, nbW, nbH, Color(12, 16, 24, alpha * 0.85))
-                    surface.SetDrawColor(230, 190, 80, alpha * 0.85)
-                    surface.DrawOutlinedRect(nx, ny, nbW, nbH, 1)
-                    draw.SimpleText(rname, "GRM_RPName_Font", sp.x, ny + 4, Color(255, 226, 140, alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
                 end
             end
         end

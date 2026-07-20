@@ -516,17 +516,14 @@ end
 
 timer.Create("GRM_Food_HungerTick", 1, 0, function()
     for _, ply in ipairs(player.GetAll()) do
-        if not IsValid(ply) then continue end
+        if IsValid(ply) then
+            if not ply:Alive() then
+                GRM.Food.SyncHunger(ply)
+            else
+                local cur = GRM.Food.GetHunger(ply)
+                local newVal = math.max(0, cur - (cfg().HungerDrainPerSecond or 0.02))
 
-        if not ply:Alive() then
-            GRM.Food.SyncHunger(ply)
-            continue
-        end
-
-        local cur = GRM.Food.GetHunger(ply)
-        local newVal = math.max(0, cur - (cfg().HungerDrainPerSecond or 0.02))
-
-        GRM.Food.SetHunger(ply, newVal)
+                GRM.Food.SetHunger(ply, newVal)
 
         if newVal <= 0 then
             nextHungerDamage[ply] = nextHungerDamage[ply] or 0
@@ -538,13 +535,15 @@ timer.Create("GRM_Food_HungerTick", 1, 0, function()
             end
         end
 
-        local warningThreshold = (cfg().HungerMax or 100) * ((cfg().HungerWarningThreshold or 20) / 100)
-        if newVal <= warningThreshold and newVal > 0 then
-            nextHungerWarning[ply] = nextHungerWarning[ply] or 0
+                local warningThreshold = (cfg().HungerMax or 100) * ((cfg().HungerWarningThreshold or 20) / 100)
+                if newVal <= warningThreshold and newVal > 0 then
+                    nextHungerWarning[ply] = nextHungerWarning[ply] or 0
 
-            if CurTime() >= nextHungerWarning[ply] then
-                nextHungerWarning[ply] = CurTime() + 10
-                ply:ChatPrint("[Голод] Вы голодны! Найдите еду.")
+                    if CurTime() >= nextHungerWarning[ply] then
+                        nextHungerWarning[ply] = CurTime() + 10
+                        ply:ChatPrint("[Голод] Вы голодны! Найдите еду.")
+                    end
+                end
             end
         end
     end

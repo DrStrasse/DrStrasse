@@ -592,13 +592,11 @@ if SERVER then
             if IsValid(ply) then
                 local factionName, member = getFactionMemberByPlayer(ply)
                 if targetFaction and targetFaction ~= "" and factionName == targetFaction then
-                    if targetRole and targetRole ~= "" and member and member.Role ~= targetRole then
-                        continue
+                    local roleMatch = (not targetRole or targetRole == "") or (member and member.Role == targetRole)
+                    local deptMatch = (not targetDept or targetDept == "") or (member and member.Department == targetDept)
+                    if roleMatch and deptMatch then
+                        ApplyWeaponsToPlayer(ply)
                     end
-                    if targetDept and targetDept ~= "" and member and member.Department ~= targetDept then
-                        continue
-                    end
-                    ApplyWeaponsToPlayer(ply)
                 elseif not targetFaction or targetFaction == "" then
                     ApplyWeaponsToPlayer(ply)
                 end
@@ -1055,14 +1053,11 @@ if SERVER then
                     if ply.FactionsExt_MaskEntry then
                         applyStrictBodygroupsToPlayer(ply, ply.FactionsExt_MaskEntry)
                     end
-                    continue
-                end
-
-                local models = GetModelsForPlayer(ply)
-                if not istable(models) or not models[1] then continue end
-
-                local allowedCurrent = getAllowedModelEntryForCurrentPlayerModel(ply, models)
-                if allowedCurrent then
+                else
+                    local models = GetModelsForPlayer(ply)
+                    if istable(models) and models[1] then
+                        local allowedCurrent = getAllowedModelEntryForCurrentPlayerModel(ply, models)
+                        if allowedCurrent then
                     -- Не сбиваем модель, но строго возвращаем её сохранённые bodygroups.
                     -- Если игрок выбирал модель через /model, предпочтительнее его сохранённые настройки.
                     local desired = ply.FactionsExt_DesiredModelData
@@ -1072,8 +1067,10 @@ if SERVER then
                         applyStrictBodygroupsToPlayer(ply, allowedCurrent)
                     end
                 else
-                    -- Текущая модель не разрешена — ставим первую доступную.
-                    ApplyModelSettings(ply, models[1])
+                            -- Текущая модель не разрешена — ставим первую доступную.
+                            ApplyModelSettings(ply, models[1])
+                        end
+                    end
                 end
             end
         end

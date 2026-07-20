@@ -438,18 +438,17 @@ if SERVER then
         if not cfg().Enabled then return end
 
         for _, ply in ipairs(player.GetAll()) do
-            if not IsValid(ply) or not ply:Alive() or ply:InVehicle() then continue end
-            if cfg().IgnoreNoclip and ply:GetMoveType() == MOVETYPE_NOCLIP then continue end
-
-            -- Новый режим: проверяем только игроков, которые недавно вышли из машины.
-            -- Игроков, которые просто подошли к машине, не трогаем.
-            if not ply.GRM_AntiStuck_PostExitUntil or CurTime() > ply.GRM_AntiStuck_PostExitUntil then
-                continue
-            end
-
-            local ent = IsValid(ply.GRM_AntiStuck_LastVehicle) and ply.GRM_AntiStuck_LastVehicle or nil
-            if IsValid(ent) and playerLooksStuckInVehicle(ply, ent) then
-                AS.MovePlayerOutOfVehicle(ply, ent, "post_exit_think")
+            if IsValid(ply) and ply:Alive() and not ply:InVehicle() then
+                if not (cfg().IgnoreNoclip and ply:GetMoveType() == MOVETYPE_NOCLIP) then
+                    -- Новый режим: проверяем только игроков, которые недавно вышли из машины.
+                    -- Игроков, которые просто подошли к машине, не трогаем.
+                    if ply.GRM_AntiStuck_PostExitUntil and CurTime() <= ply.GRM_AntiStuck_PostExitUntil then
+                        local ent = IsValid(ply.GRM_AntiStuck_LastVehicle) and ply.GRM_AntiStuck_LastVehicle or nil
+                        if IsValid(ent) and playerLooksStuckInVehicle(ply, ent) then
+                            AS.MovePlayerOutOfVehicle(ply, ent, "post_exit_think")
+                        end
+                    end
+                end
             end
         end
     end)

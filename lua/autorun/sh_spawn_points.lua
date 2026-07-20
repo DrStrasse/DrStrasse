@@ -1023,7 +1023,6 @@ if CLIENT then
             local points = facData.points or facData
 
             local factionPanel = vgui.Create("DPropertySheet", tabs)
-            factionPanel:SetPaintBackground(false)
 
             -- Подвкладка: Фракция (общие точки)
             local facPointsPanel = vgui.Create("DPanel", factionPanel)

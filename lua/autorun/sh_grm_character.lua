@@ -221,14 +221,17 @@ if SERVER then
             return oa < ob
         end)
         for _, id in ipairs(ids) do
-            if opts.wardrobe and id == "civilian" and opts.allowCivilian == false then continue end
-            if opts.wardrobe and id == "faction" and opts.allowFaction == false then continue end
-            local def = CH.Providers[id]
-            local okT, title = pcall(def.Title or function() return id end, ply)
-            if okT and title then
-                local okO, outfits = pcall(def.Outfits, ply)
-                if okO and istable(outfits) and #outfits > 0 then
-                    sections[#sections + 1] = { id = id, title = tostring(title), outfits = outfits }
+            local skip = false
+            if opts.wardrobe and id == "civilian" and opts.allowCivilian == false then skip = true end
+            if opts.wardrobe and id == "faction" and opts.allowFaction == false then skip = true end
+            if not skip then
+                local def = CH.Providers[id]
+                local okT, title = pcall(def.Title or function() return id end, ply)
+                if okT and title then
+                    local okO, outfits = pcall(def.Outfits, ply)
+                    if okO and istable(outfits) and #outfits > 0 then
+                        sections[#sections + 1] = { id = id, title = tostring(title), outfits = outfits }
+                    end
                 end
             end
         end

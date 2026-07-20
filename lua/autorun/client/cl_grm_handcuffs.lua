@@ -228,21 +228,21 @@ end)
 
 hook.Add("PostDrawOpaqueRenderables", "GRM_Handcuffs_DrawDragRope", function()
     for _, ply in ipairs(player.GetAll()) do
-        if not isCuffed(ply) then continue end
+        if isCuffed(ply) then
+            local dragger = ply:GetNWEntity("GRM_CuffDragger")
+            if IsValid(dragger) then
+                local p1 = handPos(dragger, true)
+                local p2 = handPos(ply, true)
+                local light = render.GetLightColor(p2) * 255
+                local col = Color(math.max(light.x, 80), math.max(light.y, 80), math.max(light.z, 80), 255)
 
-        local dragger = ply:GetNWEntity("GRM_CuffDragger")
-        if not IsValid(dragger) then continue end
-
-        local p1 = handPos(dragger, true)
-        local p2 = handPos(ply, true)
-        local light = render.GetLightColor(p2) * 255
-        local col = Color(math.max(light.x, 80), math.max(light.y, 80), math.max(light.z, 80), 255)
-
-        render.SetMaterial(mats.rope)
-        render.StartBeam(2)
-            render.AddBeam(p1, 2, 0, col)
-            render.AddBeam(p2, 2, 1, col)
-        render.EndBeam()
+                render.SetMaterial(mats.rope)
+                render.StartBeam(2)
+                    render.AddBeam(p1, 2, 0, col)
+                    render.AddBeam(p2, 2, 1, col)
+                render.EndBeam()
+            end
+        end
     end
 end)
 

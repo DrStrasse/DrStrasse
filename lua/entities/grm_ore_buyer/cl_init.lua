@@ -19,20 +19,17 @@ hook.Add("HUDPaint", "GRM_OreBuyerLabel", function()
     local maxDist = 300
 
     for _, ent in ipairs(ents.FindByClass("grm_ore_buyer")) do
-        if not IsValid(ent) then continue end
+        if IsValid(ent) then
+            local dist = pos:Distance(ent:GetPos())
+            if dist <= maxDist then
+                local offset = Vector(0, 0, 50)
+                local screenPos = (ent:GetPos() + offset):ToScreen()
+                if screenPos.visible then
+                    local x, y = screenPos.x, screenPos.y
+                    local alpha = math.Clamp(255 - (dist / maxDist) * 200, 55, 255)
 
-        local dist = pos:Distance(ent:GetPos())
-        if dist > maxDist then continue end
-
-        local offset = Vector(0, 0, 50)
-        local screenPos = (ent:GetPos() + offset):ToScreen()
-        if not screenPos.visible then continue end
-
-        local x, y = screenPos.x, screenPos.y
-        local alpha = math.Clamp(255 - (dist / maxDist) * 200, 55, 255)
-
-        local text = "Скупщик руды"
-        surface.SetFont("OreBuyerLabel")
+                    local text = "Скупщик руды"
+                    surface.SetFont("OreBuyerLabel")
         local tw, th = surface.GetTextSize(text)
 
         local padding = 8
@@ -49,10 +46,13 @@ hook.Add("HUDPaint", "GRM_OreBuyerLabel", function()
         surface.SetTextPos(x + 2, y + 2)
         surface.DrawText(text)
 
-        surface.SetTextColor(255, 220, 80, alpha)
-        surface.SetFont("OreBuyerLabel")
-        surface.SetTextPos(x, y)
-        surface.DrawText(text)
+                    surface.SetTextColor(255, 220, 80, alpha)
+                    surface.SetFont("OreBuyerLabel")
+                    surface.SetTextPos(x, y)
+                    surface.DrawText(text)
+                end
+            end
+        end
     end
 end)
 

@@ -1257,13 +1257,9 @@ hook.Add("InitPostEntity", "VD_LoadSavedDealers", function()
     for _, fname in ipairs(files) do
         local dealerID = string.gsub(fname, "%.json$", "")
 
-        if VehicleDealers[dealerID] and IsValid(VehicleDealers[dealerID]) then
-            vdDbgPrint("Дилер уже существует, пропускаем:", dealerID)
-            continue
-        end
-
-        local data = LoadDealerConfig(dealerID)
-        if data and data.pos then
+        if not (VehicleDealers[dealerID] and IsValid(VehicleDealers[dealerID])) then
+            local data = LoadDealerConfig(dealerID)
+            if data and data.pos then
             local ent = ents.Create("sent_vehicle_dealer")
             if IsValid(ent) then
                 ent:SetPos(data.pos)
@@ -1303,8 +1299,6 @@ hook.Add("InitPostEntity", "VD_LoadSavedDealers", function()
                 VehicleDealers[dealerID] = ent
                 vdDbgPrint("Дилер восстановлен:", dealerID, data.name or "без имени")
             end
-        else
-            vdDbgPrint("Найден конфиг дилера (без позиции):", dealerID, data and data.name or "без имени")
         end
     end
 end)
