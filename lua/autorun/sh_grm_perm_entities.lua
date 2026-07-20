@@ -68,10 +68,7 @@ if SERVER then
         grm_phone_terminal = true,
         grm_phone_wiretap  = true,
         grm_phone          = true,
-        -- CCTV (Код 60)
-        grm_cctv_camera    = true,
-        grm_cctv_monitor   = true,
-        grm_cctv_server    = true,
+        -- ВАЖНО: CCTV НЕ здесь! У него своя система сохранения (CCTV.SavePermanent)
         grm_wardrobe       = true,
         -- Broadcast-классы автоперсистентны (Код 88.4) — тут лишь для совместимости со старыми базами
         grm_radio          = true,
@@ -107,6 +104,9 @@ if SERVER then
         grm_logistics_warehouse = true,
         grm_logistics_armory    = true,
         grm_logistics_crate     = true,
+        -- ВАЖНО: CCTV (grm_cctv_camera/monitor/server) НЕ в PERM_CLASSES!
+        -- У CCTV своя система сохранения через CCTV.SavePermanent/LoadPermanent
+        -- (grm_cctv/<map>.json). Добавление сюда создаёт дубликаты.
         -- Рудная ветка (Код 89)
         grm_ore_node       = true,
         grm_ore_buyer      = true,
