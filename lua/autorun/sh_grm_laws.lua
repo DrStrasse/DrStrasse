@@ -112,8 +112,8 @@ if SERVER then
     -- Открыть окно законов
     net.Receive("GRM_Laws_Open", function(_, ply)
         local laws = LAWS.GetAll()
-        local canAdd = ply:IsSuperAdmin() or (GRM.FactionPerms and GRM.FactionPerms.PlayerHasPermission(ply, "law_publish"))
-        local canRemove = ply:IsSuperAdmin() or (GRM.FactionPerms and GRM.FactionPerms.PlayerHasPermission(ply, "law_remove"))
+        local canAdd = ply:IsSuperAdmin() or (GRM.FactionEconomy and GRM.FactionEconomy.CanPublishLaws(ply))
+        local canRemove = ply:IsSuperAdmin() or (GRM.FactionEconomy and GRM.FactionEconomy.HasAccess(ply, "law_remove"))
         
         net.Start("GRM_Laws_List")
             net.WriteUInt(#laws, 16)
@@ -131,9 +131,11 @@ if SERVER then
     -- Добавить закон
     net.Receive("GRM_Laws_Add", function(_, ply)
         -- Проверка доступа
-        if not ply:IsSuperAdmin() and not (GRM.FactionPerms and GRM.FactionPerms.PlayerHasPermission(ply, "law_publish")) then
-            ply:ChatPrint("[Законы] У вас нет прав для публикации законов.")
-            return
+        if not ply:IsSuperAdmin() then
+            if not (GRM.FactionEconomy and GRM.FactionEconomy.CanPublishLaws(ply)) then
+                ply:ChatPrint("[Законы] У вас нет прав для публикации законов.")
+                return
+            end
         end
         
         local text = net.ReadString()
@@ -156,9 +158,11 @@ if SERVER then
     -- Удалить закон
     net.Receive("GRM_Laws_Remove", function(_, ply)
         -- Проверка доступа
-        if not ply:IsSuperAdmin() and not (GRM.FactionPerms and GRM.FactionPerms.PlayerHasPermission(ply, "law_remove")) then
-            ply:ChatPrint("[Законы] У вас нет прав для удаления законов.")
-            return
+        if not ply:IsSuperAdmin() then
+            if not (GRM.FactionEconomy and GRM.FactionEconomy.HasAccess(ply, "law_remove")) then
+                ply:ChatPrint("[Законы] У вас нет прав для удаления законов.")
+                return
+            end
         end
         
         local lawID = net.ReadUInt(16)
