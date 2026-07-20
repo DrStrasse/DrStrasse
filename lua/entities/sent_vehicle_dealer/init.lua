@@ -1260,132 +1260,48 @@ hook.Add("InitPostEntity", "VD_LoadSavedDealers", function()
         if not (VehicleDealers[dealerID] and IsValid(VehicleDealers[dealerID])) then
             local data = LoadDealerConfig(dealerID)
             if data and data.pos then
-            local ent = ents.Create("sent_vehicle_dealer")
-            if IsValid(ent) then
-                ent:SetPos(data.pos)
-                ent:SetAngles(data.angles or Angle(0, 0, 0))
-                ent:SetDealerID(dealerID)
-                ent:Spawn()
-                ent:Activate()
+                local ent = ents.Create("sent_vehicle_dealer")
+                if IsValid(ent) then
+                    ent:SetPos(data.pos)
+                    ent:SetAngles(data.angles or Angle(0, 0, 0))
+                    ent:SetDealerID(dealerID)
+                    ent:Spawn()
+                    ent:Activate()
 
-                if data.name and data.name ~= "" then
-                    ent:SetDealerName(data.name)
-                    ent.VD_Name = data.name
-                end
-                if data.model and data.model ~= "" then
-                    ent:SetDealerModel(data.model)
-                    ent:SetModel(data.model)
-                    ent.VD_Model = data.model
-                    local seq = ent:LookupSequence("idle_all") or ent:LookupSequence("idle") or 0
-                    if seq > 0 then
-                        ent:SetSequence(seq)
-                        ent:SetPlaybackRate(1)
-                        ent:SetCycle(0)
+                    if data.name and data.name ~= "" then
+                        ent:SetDealerName(data.name)
+                        ent.VD_Name = data.name
                     end
-                end
-                if data.vehicles then
-                    ent.VD_Vehicles = data.vehicles
-                end
-                if data.hasCustomSpawn and data.spawnPos then
-                    ent:SetSpawnPos(data.spawnPos)
-                    ent:SetSpawnAngle(data.spawnAngle or Angle(0, 0, 0))
-                    ent:SetHasCustomSpawn(true)
-                    ent.VD_HasCustomSpawn = true
-                    ent.VD_SpawnPos = data.spawnPos
-                    ent.VD_SpawnAngle = data.spawnAngle or Angle(0, 0, 0)
-                end
+                    if data.model and data.model ~= "" then
+                        ent:SetDealerModel(data.model)
+                        ent:SetModel(data.model)
+                        ent.VD_Model = data.model
+                        local seq = ent:LookupSequence("idle_all") or ent:LookupSequence("idle") or 0
+                        if seq > 0 then
+                            ent:SetSequence(seq)
+                            ent:SetPlaybackRate(1)
+                            ent:SetCycle(0)
+                        end
+                    end
+                    if data.vehicles then
+                        ent.VD_Vehicles = data.vehicles
+                    end
+                    if data.hasCustomSpawn and data.spawnPos then
+                        ent:SetSpawnPos(data.spawnPos)
+                        ent:SetSpawnAngle(data.spawnAngle or Angle(0, 0, 0))
+                        ent:SetHasCustomSpawn(true)
+                        ent.VD_HasCustomSpawn = true
+                        ent.VD_SpawnPos = data.spawnPos
+                        ent.VD_SpawnAngle = data.spawnAngle or Angle(0, 0, 0)
+                    end
 
-                ent.VD_ID = dealerID
-                VehicleDealers[dealerID] = ent
-                vdDbgPrint("Дилер восстановлен:", dealerID, data.name or "без имени")
+                    ent.VD_ID = dealerID
+                    VehicleDealers[dealerID] = ent
+                    vdDbgPrint("Дилер восстановлен:", dealerID, data.name or "без имени")
+                end
+            else
+                vdDbgPrint("Найден конфиг дилера (без позиции):", dealerID, data and data.name or "без имени")
             end
         end
-    end
-end)
-
-hook.Add("ShutDown", "VD_SaveOnShutdown", function()
-    SaveAllDealers()
-end)
-
-print("[VD] Сущность sent_vehicle_dealer загружена")
-
--- ════════════════════════════════════════════════════════
--- Мост ТАБ-меню (аудит протоколов): админ-спавн транспорта игроку
--- Раньше ТАБ слал VD_RequestVehicleList / VD_AdminSpawnVehicle в никуда —
--- кнопки «Заспавнить» были мёртвыми. Обработчики здесь, поверх
--- того же контура SpawnVehicleForPlayer (без денег и фильтров доступа).
--- ════════════════════════════════════════════════════════
-util.AddNetworkString("VD_RequestVehicleList")
-util.AddNetworkString("VD_AdminSpawnVehicle")
-util.AddNetworkString("VD_VehicleList")
-
-function _G.VD_AdminSpawnFor(targetPly, vehicleClass)
-    if not IsValid(targetPly) then return false, "Игрок не в сети" end
-    local dealer, bd = nil, math.huge
-    for id, d in pairs(VehicleDealers or {}) do
-        if IsValid(d) then
-            local dist = targetPly:GetPos():DistToSqr(d:GetPos())
-            if dist < bd then bd = dist dealer = d end
-        end
-    end
-    if not IsValid(dealer) then
-        for _, d in ipairs(ents.FindByClass("sent_vehicle_dealer")) do
-            if IsValid(d) then dealer = d break end
-        end
-    end
-    if not IsValid(dealer) then return false, "На карте нет авто-дилеров (sent_vehicle_dealer)" end
-    VD_AdminBypassClass = vehicleClass
-    local ok, err = SpawnVehicleForPlayer(targetPly, dealer, vehicleClass)
-    VD_AdminBypassClass = nil
-    return ok, err
-end
-
-net.Receive("VD_RequestVehicleList", function(_, ply)
-    if not IsValid(ply) or not (ply:IsSuperAdmin() or ply:IsAdmin()) then return end
-    local out, seen = {}, {}
-    local function collect(dealer)
-        if not IsValid(dealer) or not istable(dealer.VD_Vehicles) then return end
-        local dname = SafeGetDealerName and SafeGetDealerName(dealer) or "дилер"
-        for _, arr in pairs(dealer.VD_Vehicles) do
-            if istable(arr) then
-                for _, v in ipairs(arr) do
-                    if istable(v) and isstring(v.class) and v.class ~= "" and not seen[v.class] then
-                        seen[v.class] = true
-                        out[#out + 1] = { class = v.class, name = tostring(v.name or v.PrintName or v.class), dealer = tostring(dname) }
-                    end
-                end
-            end
-        end
-    end
-    for _, dealer in ipairs(ents.FindByClass("sent_vehicle_dealer")) do collect(dealer) end
-    for _, d in pairs(VehicleDealers or {}) do collect(d) end
-    table.sort(out, function(a, b) return a.name:lower() < b.name:lower() end)
-    net.Start("VD_VehicleList")
-        net.WriteTable(out)
-    net.Send(ply)
-end)
-
-net.Receive("VD_AdminSpawnVehicle", function(_, ply)
-    if not IsValid(ply) or not ply:IsSuperAdmin() then
-        if IsValid(ply) then ply:PrintMessage(HUD_PRINTTALK, "[ТАБ•Транспорт] Только суперадмин.") end
-        return
-    end
-    local sid64  = tostring(net.ReadString() or "")
-    local vclass = string.Trim(tostring(net.ReadString() or ""))
-    if vclass == "" then return end
-    local target = nil
-    for _, p in ipairs(player.GetAll()) do
-        if IsValid(p) and p:SteamID64() == sid64 then target = p break end
-    end
-    if not IsValid(target) then
-        ply:PrintMessage(HUD_PRINTTALK, "[ТАБ•Транспорт] Игрок с таким SID64 не в сети.")
-        return
-    end
-    local ok, err = _G.VD_AdminSpawnFor(target, vclass)
-    if ok then
-        ply:PrintMessage(HUD_PRINTTALK, "[ТАБ•Транспорт] Выдано " .. vclass .. " → " .. target:Nick())
-        if GRM and GRM.Notify then GRM.Notify(target, "Администрация выдала вам транспорт: " .. vclass, 160, 220, 255) end
-    else
-        ply:PrintMessage(HUD_PRINTTALK, "[ТАБ•Транспорт] Ошибка: " .. tostring(err or "неизвестно"))
     end
 end)
