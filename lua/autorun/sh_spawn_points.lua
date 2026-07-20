@@ -82,6 +82,19 @@ if SERVER then
         return "spawn_points_factions_" .. game.GetMap() .. ".json"
     end
 
+    -- Структура точек спавна:
+    -- data.factions = {
+    --   [factionName] = {
+    --     points = {...},           -- точки фракции (общие)
+    --     roles = {
+    --       [roleName] = {...},     -- точки конкретной роли
+    --     },
+    --     departments = {
+    --       [deptName] = {...},     -- точки конкретного отдела
+    --     }
+    --   }
+    -- }
+
     -- ----------------------------------------------------------------
     -- 1. Глобальные точки (загрузка/сохранение для текущей карты)
     -- ----------------------------------------------------------------
@@ -184,7 +197,11 @@ if SERVER then
         if Factions then
             for name, f in pairs(Factions) do
                 ensureFactionSpawnPoints(f)
-                data.factions[name] = f.SpawnPoints
+                data.factions[name] = {
+                    points = f.SpawnPoints or {},
+                    roles = f.RoleSpawnPoints or {},
+                    departments = f.DepartmentSpawnPoints or {}
+                }
             end
         end
         return data
@@ -256,6 +273,62 @@ if SERVER then
         return Factions[factionName].SpawnPoints
     end
 
+    -- === ТОЧКИ ДЛЯ РОЛЕЙ ===
+    function AddSpawnPointForRole(factionName, roleName, pos, ang)
+        if not Factions or not Factions[factionName] then return false end
+        local f = Factions[factionName]
+        if not f.RoleSpawnPoints then f.RoleSpawnPoints = {} end
+        if not f.RoleSpawnPoints[roleName] then f.RoleSpawnPoints[roleName] = {} end
+        table.insert(f.RoleSpawnPoints[roleName], { pos = vecToTable(pos), ang = angToTable(ang) })
+        saveFactionSpawnPoints(buildSpawnData().factions)
+        return true
+    end
+
+    function RemoveSpawnPointFromRole(factionName, roleName, index)
+        if not Factions or not Factions[factionName] then return false end
+        local f = Factions[factionName]
+        if not f.RoleSpawnPoints or not f.RoleSpawnPoints[roleName] then return false end
+        table.remove(f.RoleSpawnPoints[roleName], index)
+        if #f.RoleSpawnPoints[roleName] == 0 then f.RoleSpawnPoints[roleName] = nil end
+        saveFactionSpawnPoints(buildSpawnData().factions)
+        return true
+    end
+
+    function GetSpawnPointsForRole(factionName, roleName)
+        if not Factions or not Factions[factionName] then return {} end
+        local f = Factions[factionName]
+        if not f.RoleSpawnPoints or not f.RoleSpawnPoints[roleName] then return {} end
+        return f.RoleSpawnPoints[roleName]
+    end
+
+    -- === ТОЧКИ ДЛЯ ОТДЕЛОВ ===
+    function AddSpawnPointForDepartment(factionName, deptName, pos, ang)
+        if not Factions or not Factions[factionName] then return false end
+        local f = Factions[factionName]
+        if not f.DepartmentSpawnPoints then f.DepartmentSpawnPoints = {} end
+        if not f.DepartmentSpawnPoints[deptName] then f.DepartmentSpawnPoints[deptName] = {} end
+        table.insert(f.DepartmentSpawnPoints[deptName], { pos = vecToTable(pos), ang = angToTable(ang) })
+        saveFactionSpawnPoints(buildSpawnData().factions)
+        return true
+    end
+
+    function RemoveSpawnPointFromDepartment(factionName, deptName, index)
+        if not Factions or not Factions[factionName] then return false end
+        local f = Factions[factionName]
+        if not f.DepartmentSpawnPoints or not f.DepartmentSpawnPoints[deptName] then return false end
+        table.remove(f.DepartmentSpawnPoints[deptName], index)
+        if #f.DepartmentSpawnPoints[deptName] == 0 then f.DepartmentSpawnPoints[deptName] = nil end
+        saveFactionSpawnPoints(buildSpawnData().factions)
+        return true
+    end
+
+    function GetSpawnPointsForDepartment(factionName, deptName)
+        if not Factions or not Factions[factionName] then return {} end
+        local f = Factions[factionName]
+        if not f.DepartmentSpawnPoints or not f.DepartmentSpawnPoints[deptName] then return {} end
+        return f.DepartmentSpawnPoints[deptName]
+    end
+
     -- ----------------------------------------------------------------
     -- 6. Основная логика спавна
     -- ----------------------------------------------------------------
@@ -263,30 +336,62 @@ if SERVER then
     function GetSpawnPointForPlayer(ply)
         if not IsValid(ply) then return nil end
         local factionName = nil
+        local memberData = nil
 
         if Factions then
             local steamID = ply:SteamID()
             for name, f in pairs(Factions) do
                 if f.Members and f.Members[steamID] then
                     factionName = name
+                    memberData = f.Members[steamID]
                     break
                 end
             end
         end
 
-        local points = {}
-        if factionName then
-            points = GetSpawnPointsForFaction(factionName)
+        if not factionName then
+            -- Нет фракции → глобальные точки
+            local globalPoints = GetGlobalSpawnPoints()
+            if #globalPoints > 0 then
+                local point = globalPoints[math.random(1, #globalPoints)]
+                return tableToVec(point.pos), tableToAng(point.ang)
+            end
+            return nil
         end
 
-        if #points == 0 then
-            points = GetGlobalSpawnPoints()
+        -- ПРИОРИТЕТ 1: Точки роли (наивысший)
+        if memberData and memberData.Role then
+            local rolePoints = GetSpawnPointsForRole(factionName, memberData.Role)
+            if #rolePoints > 0 then
+                local point = rolePoints[math.random(1, #rolePoints)]
+                return tableToVec(point.pos), tableToAng(point.ang)
+            end
         end
 
-        if #points == 0 then return nil end
+        -- ПРИОРИТЕТ 2: Точки отдела
+        if memberData and memberData.Department then
+            local deptPoints = GetSpawnPointsForDepartment(factionName, memberData.Department)
+            if #deptPoints > 0 then
+                local point = deptPoints[math.random(1, #deptPoints)]
+                return tableToVec(point.pos), tableToAng(point.ang)
+            end
+        end
 
-        local point = points[math.random(1, #points)]
-        return tableToVec(point.pos), tableToAng(point.ang)
+        -- ПРИОРИТЕТ 3: Точки фракции
+        local factionPoints = GetSpawnPointsForFaction(factionName)
+        if #factionPoints > 0 then
+            local point = factionPoints[math.random(1, #factionPoints)]
+            return tableToVec(point.pos), tableToAng(point.ang)
+        end
+
+        -- Фолбэк: глобальные точки
+        local globalPoints = GetGlobalSpawnPoints()
+        if #globalPoints > 0 then
+            local point = globalPoints[math.random(1, #globalPoints)]
+            return tableToVec(point.pos), tableToAng(point.ang)
+        end
+
+        return nil
     end
 
     hook.Add("PlayerSpawn", "SpawnAtFactionPoint", function(ply)
@@ -306,6 +411,10 @@ if SERVER then
     util.AddNetworkString("SpawnAdmin_AddPoint")
     util.AddNetworkString("SpawnAdmin_RemovePoint")
     util.AddNetworkString("SpawnAdmin_TeleportToPoint")
+    util.AddNetworkString("SpawnAdmin_AddRolePoint")
+    util.AddNetworkString("SpawnAdmin_RemoveRolePoint")
+    util.AddNetworkString("SpawnAdmin_AddDeptPoint")
+    util.AddNetworkString("SpawnAdmin_RemoveDeptPoint")
 
     local function sendSpawnDataToPlayer(ply)
         net.Start("SpawnAdmin_SendData")
@@ -368,6 +477,46 @@ if SERVER then
 
         ply:SetPos(pos)
         ply:SetAngles(ang)
+    end)
+
+    -- === ТОЧКИ ДЛЯ РОЛЕЙ ===
+    net.Receive("SpawnAdmin_AddRolePoint", function(_, ply)
+        if not ply:IsSuperAdmin() then return end
+        local factionName = net.ReadString()
+        local roleName = net.ReadString()
+        local pos = net.ReadVector()
+        local ang = net.ReadAngle()
+        AddSpawnPointForRole(factionName, roleName, pos, ang)
+        sendSpawnDataToPlayer(ply)
+    end)
+
+    net.Receive("SpawnAdmin_RemoveRolePoint", function(_, ply)
+        if not ply:IsSuperAdmin() then return end
+        local factionName = net.ReadString()
+        local roleName = net.ReadString()
+        local index = net.ReadInt(32)
+        RemoveSpawnPointFromRole(factionName, roleName, index)
+        sendSpawnDataToPlayer(ply)
+    end)
+
+    -- === ТОЧКИ ДЛЯ ОТДЕЛОВ ===
+    net.Receive("SpawnAdmin_AddDeptPoint", function(_, ply)
+        if not ply:IsSuperAdmin() then return end
+        local factionName = net.ReadString()
+        local deptName = net.ReadString()
+        local pos = net.ReadVector()
+        local ang = net.ReadAngle()
+        AddSpawnPointForDepartment(factionName, deptName, pos, ang)
+        sendSpawnDataToPlayer(ply)
+    end)
+
+    net.Receive("SpawnAdmin_RemoveDeptPoint", function(_, ply)
+        if not ply:IsSuperAdmin() then return end
+        local factionName = net.ReadString()
+        local deptName = net.ReadString()
+        local index = net.ReadInt(32)
+        RemoveSpawnPointFromDepartment(factionName, deptName, index)
+        sendSpawnDataToPlayer(ply)
     end)
 
     print("[SpawnPoints] Серверная часть загружена (карта: " .. game.GetMap() .. ")")
