@@ -436,7 +436,11 @@ if SERVER then
 
     -- ── Чат-команда для открытия меню ────────────────────────
 
-    hook.Add("PlayerSay", "GRM_AdminMenuCmd", function(ply, text)
+    hook.Add("PlayerSayTransform", "GRM_AdminMenuCmd", function(ply, datapack)
+        if not istable(datapack) then return end
+        local text = datapack[1]
+        if not isstring(text) then return end
+        
         local cmd = text:Trim():lower()
         if cmd == "!grmmenu" or cmd == "!grmadmin" or cmd == "!econadmin" or cmd == "/econadmin" then
             if not hasAdminAccess(ply) then
@@ -445,7 +449,9 @@ if SERVER then
                 net.Start("grm_admin_open")
                 net.Send(ply)
             end
-            return ""
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
+            return
         end
     end)
 

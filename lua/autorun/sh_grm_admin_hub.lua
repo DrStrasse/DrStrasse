@@ -395,9 +395,17 @@ if SERVER then
             end
         end
     end)
-    hook.Add("PlayerSay", "GRM_Hub_ChatCmds", function(ply, text)
-        if string.lower(string.Trim(tostring(text or ""))) == "/grm_admin" then
-            if openHub(ply) then return "" end
+    hook.Add("PlayerSayTransform", "GRM_Hub_ChatCmds", function(ply, datapack)
+        if not istable(datapack) then return end
+        local text = datapack[1]
+        if not isstring(text) then return end
+        
+        if string.lower(string.Trim(text)) == "/grm_admin" then
+            if openHub(ply) then
+                datapack.SkipPlayerSay = true
+                datapack[1] = ""
+                return
+            end
         end
     end)
 
