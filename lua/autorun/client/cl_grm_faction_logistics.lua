@@ -78,10 +78,12 @@ if DListView_Line and DListView_Line.Paint then
     end
 end
 
--- DLabel — тёмный текст по умолчанию
-local oldLabelPaint = vgui.GetControlTable("DLabel").PaintBackground
-vgui.GetControlTable("DLabel").PaintBackground = function(self, w, h)
-    -- Прозрачный фон
+-- DLabel — прозрачный фон по умолчанию
+local DLabelCT = vgui.GetControlTable("DLabel")
+if DLabelCT then
+    DLabelCT.PaintBackground = function(self, w, h)
+        -- Прозрачный фон
+    end
 end
 
 local route={active=false}
