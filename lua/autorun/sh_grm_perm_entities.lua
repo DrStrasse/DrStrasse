@@ -102,6 +102,11 @@ if SERVER then
         grm_roomtap_terminal = true,
         -- GRM Vendor / Торгаш (Код 111)
         grm_vendor           = true,
+        -- GRM Logistics: склады, шкафы, точки погрузки (Код 112)
+        grm_logistics_loading   = true,
+        grm_logistics_warehouse = true,
+        grm_logistics_armory    = true,
+        grm_logistics_crate     = true,
         -- Рудная ветка (Код 89)
         grm_ore_node       = true,
         grm_ore_buyer      = true,
@@ -361,6 +366,20 @@ if SERVER then
         else listPerm(ply) end
         return ""
     end)
+
+    -- Делегаты для логистических entity (Код 112)
+    -- GRM.PermData.Extract[class] = fn(ent) -> таблица
+    -- GRM.PermData.Apply[class]   = fn(ent, data)
+    for _, class in ipairs({"grm_logistics_loading", "grm_logistics_warehouse", "grm_logistics_armory"}) do
+        GRM.PermData.Extract[class] = function(ent)
+            if not IsValid(ent) or not ent.GetPermData then return nil end
+            return ent:GetPermData()
+        end
+        GRM.PermData.Apply[class] = function(ent, data)
+            if not IsValid(ent) or not ent.ApplyPermData then return end
+            ent:ApplyPermData(data)
+        end
+    end
 
     print(("[GRM Perm] Perm Entities v%s загружен (путь: %s, база: data/%s)")
         :format(PERM_VER, tostring(debug.getinfo(1, "S").short_src), PERM_FILE))

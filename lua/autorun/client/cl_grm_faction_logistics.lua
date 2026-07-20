@@ -15,6 +15,66 @@ surface.CreateFont("GRML_Small",{font="Roboto",size=12,weight=400,extended=true}
 
 local CUI={bg=Color(20,25,34,248),panel=Color(34,43,57,245),accent=Color(70,155,255),green=Color(55,185,105),red=Color(205,70,65),yellow=Color(235,180,60),text=Color(240,244,250),dim=Color(165,175,190)}
 
+-- ========== СТИЛИЗАЦИЯ DERMA-ЭЛЕМЕНТОВ (тёмная тема HUD v10.2) ==========
+local inputBg   = Color(25, 30, 40, 240)
+local inputBgH  = Color(30, 38, 52, 245)
+local inputText = Color(220, 225, 235)
+local inputBorder = Color(60, 70, 85, 200)
+
+-- DTextEntry / DNumberWang — тёмные поля ввода
+local oldDEPaint = vgui.GetControlTable("DTextEntry").Paint
+vgui.GetControlTable("DTextEntry").Paint = function(self, w, h)
+    if self.__grml_skinned then return oldDEPaint(self, w, h) end
+    local bg = self:IsHovered() and inputBgH or inputBg
+    draw.RoundedBox(4, 0, 0, w, h, bg)
+    surface.SetDrawColor(inputBorder)
+    surface.DrawOutlinedRect(0, 0, w, h, 1)
+    self:DrawTextEntryText(inputText, CUI.accent, CUI.text)
+end
+
+-- DComboBox — тёмный выпадающий список
+local oldDCPaint = vgui.GetControlTable("DComboBox").Paint
+vgui.GetControlTable("DComboBox").Paint = function(self, w, h)
+    if self.__grml_skinned then return oldDCPaint(self, w, h) end
+    local bg = self:IsHovered() and inputBgH or inputBg
+    draw.RoundedBox(4, 0, 0, w, h, bg)
+    surface.SetDrawColor(inputBorder)
+    surface.DrawOutlinedRect(0, 0, w, h, 1)
+end
+-- Меню DComboBox
+local oldDMenuPaint = vgui.GetControlTable("DMenu").PaintBackground
+if oldDMenuPaint then
+    vgui.GetControlTable("DMenu").PaintBackground = function(self, w, h)
+        draw.RoundedBox(4, 0, 0, w, h, Color(30, 38, 52, 250))
+    end
+end
+
+-- DListView — тёмная таблица
+local oldDLVPaint = vgui.GetControlTable("DListView").Paint
+vgui.GetControlTable("DListView").Paint = function(self, w, h)
+    if self.__grml_skinned then return oldDLVPaint(self, w, h) end
+    draw.RoundedBox(4, 0, 0, w, h, inputBg)
+end
+-- Заголовки DListView
+local oldHeaderPaint = vgui.GetControlTable("DListView_Line") and vgui.GetControlTable("DListView_Line").Paint
+local DListView_Line = vgui.GetControlTable("DListView_Line")
+if DListView_Line then
+    DListView_Line.Paint = function(self, w, h)
+        if self:IsLineSelected() then
+            draw.RoundedBox(2, 0, 0, w, h, Color(70, 100, 160, 200))
+        elseif self.m_bSelected then
+            draw.RoundedBox(2, 0, 0, w, h, Color(50, 70, 120, 160))
+        end
+        self:DrawBackground(w, h)
+    end
+end
+
+-- DLabel — тёмный текст по умолчанию
+local oldLabelPaint = vgui.GetControlTable("DLabel").PaintBackground
+vgui.GetControlTable("DLabel").PaintBackground = function(self, w, h)
+    -- Прозрачный фон
+end
+
 local route={active=false}
 
 local function note(s,ok) notification.AddLegacy(s,ok and NOTIFY_GENERIC or NOTIFY_ERROR,4) end

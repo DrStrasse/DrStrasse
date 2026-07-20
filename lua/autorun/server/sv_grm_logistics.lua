@@ -124,6 +124,22 @@ local function armoryData(e)
     return x
 end
 
+-- Публичные API для PERM-DATA (Код 112)
+function L.GetWarehouseData(e) return warehouseData(e) end
+function L.GetArmoryData(e) return armoryData(e) end
+function L.RestoreWarehouseData(e, data)
+    if not (istable(data) and IsValid(e)) then return end
+    local lid = e:GetLogisticsID()
+    if lid == "" then return end
+    L.Warehouses[lid] = normalizeStoreData(data)
+end
+function L.RestoreArmoryData(e, data)
+    if not (istable(data) and IsValid(e)) then return end
+    local lid = e:GetLogisticsID()
+    if lid == "" then return end
+    L.Armories[lid] = normalizeStoreData(data)
+end
+
 local function used(t) local n=0 for _,v in pairs(t or {}) do n=n+(tonumber(v)or 0) end return n end
 local function category(kind,id) if kind=="weapon" then return "weapons" end if kind=="ammo" then return "ammo" end if id=="item_repair_kit" then return "repair" end if id=="item_healthkit" or id=="item_battery" then return "medical" end return "materials" end
 
