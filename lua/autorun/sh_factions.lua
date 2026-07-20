@@ -811,8 +811,14 @@ if SERVER then
 
     -- ============================================================
     -- ЧАТ-КОМАНДА /factions (для суперадмина и лидера)
+    -- ВАЖНО: регистрируем в PlayerSayTransform потому что EasyChat
+    -- устанавливает SkipPlayerSay=true для команд и PlayerSay не вызывается!
     -- ============================================================
-    hook.Add("PlayerSay", "Factions_ChatCommand", function(ply, text)
+    hook.Add("PlayerSayTransform", "Factions_ChatCommand", function(ply, datapack)
+        if not istable(datapack) then return end
+        local text = datapack[1]
+        if not isstring(text) then return end
+        
         local lower = string.lower(string.Trim(text))
         if lower == "/factions" then
             if ply:IsSuperAdmin() then
@@ -835,7 +841,9 @@ if SERVER then
                     ply:PrintMessage(HUD_PRINTTALK, "[Фракции] У вас нет прав для использования этой команды.")
                 end
             end
-            return ""  -- Скрываем команду из чата
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
+            return
         end
     end)
 
