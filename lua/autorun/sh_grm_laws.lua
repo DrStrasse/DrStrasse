@@ -83,6 +83,26 @@ function LAWS.Remove(lawID)
     return false, "Закон не найден"
 end
 
+-- Редактировать закон
+function LAWS.Edit(lawID, newText)
+    if not LAWS.Data then LAWS.Load() end
+    
+    if #newText > LAWS.MaxLawLength then
+        return false, "Закон слишком длинный (макс. " .. LAWS.MaxLawLength .. " символов)"
+    end
+    
+    for _, law in ipairs(LAWS.Data) do
+        if law.id == lawID then
+            law.text = newText
+            law.date = os.date("%d.%m.%Y %H:%M") .. " (ред.)"
+            LAWS.Save()
+            return true, law
+        end
+    end
+    
+    return false, "Закон не найден"
+end
+
 -- Получить все законы
 function LAWS.GetAll()
     if not LAWS.Data then LAWS.Load() end
@@ -97,6 +117,7 @@ if SERVER then
     util.AddNetworkString("GRM_Laws_List")
     util.AddNetworkString("GRM_Laws_Add")
     util.AddNetworkString("GRM_Laws_Remove")
+    util.AddNetworkString("GRM_Laws_Edit")
     
     -- Команда /laws
     hook.Add("PlayerSay", "GRM_Laws_Command", function(ply, text)
@@ -114,6 +135,7 @@ if SERVER then
         local laws = LAWS.GetAll()
         local canAdd = ply:IsSuperAdmin() or (GRM.FactionEconomy and GRM.FactionEconomy.CanPublishLaws(ply))
         local canRemove = ply:IsSuperAdmin() or (GRM.FactionEconomy and GRM.FactionEconomy.HasAccess(ply, "law_remove"))
+        local canEdit = canAdd -- Редактирование = добавление
         
         net.Start("GRM_Laws_List")
             net.WriteUInt(#laws, 16)
@@ -125,6 +147,7 @@ if SERVER then
             end
             net.WriteBool(canAdd)
             net.WriteBool(canRemove)
+            net.WriteBool(canEdit)
         net.Send(ply)
     end)
     
@@ -177,6 +200,35 @@ if SERVER then
         end
     end)
     
+    -- Редактировать закон
+    net.Receive("GRM_Laws_Edit", function(_, ply)
+        -- Проверка доступа
+        if not ply:IsSuperAdmin() then
+            if not (GRM.FactionEconomy and GRM.FactionEconomy.CanPublishLaws(ply)) then
+                ply:ChatPrint("[Законы] У вас нет прав для редактирования законов.")
+                return
+            end
+        end
+        
+        local lawID = net.ReadUInt(16)
+        local newText = net.ReadString()
+        
+        if not newText or #newText < 10 then
+            ply:ChatPrint("[Законы] Текст закона слишком короткий (мин. 10 символов).")
+            return
+        end
+        
+        local ok, result = LAWS.Edit(lawID, newText)
+        if ok then
+            ply:ChatPrint("[Законы] Закон #" .. lawID .. " отредактирован.")
+            -- Обновить окно
+            net.Start("GRM_Laws_Open")
+            net.Send(ply)
+        else
+            ply:ChatPrint("[Законы] Ошибка: " .. result)
+        end
+    end)
+    
     print("[GRM] Laws System v1.1 loaded (Код 123)")
 end
 
@@ -211,6 +263,7 @@ if CLIENT then
         
         local canAdd = net.ReadBool()
         local canRemove = net.ReadBool()
+        local canEdit = net.ReadBool()
         
         -- Создаём окно (размер как у Q-меню)
         local frame = vgui.Create("DFrame")
@@ -230,8 +283,10 @@ if CLIENT then
         -- Кнопка добавления
         if canAdd then
             local btnAdd = vgui.Create("DButton", frame)
-            btnAdd:SetPos(frame:GetWide() - 180, 8)
-            btnAdd:SetSize(170, 30)
+            btnAdd:Dock(TOPRIGHT)
+            btnAdd:SetWide(170)
+            btnAdd:SetTall(30)
+            btnAdd:DockMargin(0, 8, 8, 0)
             btnAdd:SetText("")
             btnAdd.Paint = function(self, w, h)
                 local col = self:IsHovered() and Color(75, 205, 125) or CUI.green
@@ -293,11 +348,42 @@ if CLIENT then
             text:SetTextColor(CUI.text)
             text:SetFont("GRMLaws_Small")
             
-            -- Кнопка удаления
+            -- Кнопки действий (справа)
+            local btnsPanel = vgui.Create("DPanel", row)
+            btnsPanel:Dock(RIGHT)
+            btnsPanel:SetWide(210)
+            btnsPanel:DockMargin(0, 8, 8, 8)
+            btnsPanel:SetPaintBackground(false)
+            
+            if canEdit then
+                local btnEdit = vgui.Create("DButton", btnsPanel)
+                btnEdit:Dock(TOP)
+                btnEdit:SetTall(28)
+                btnEdit:DockMargin(0, 0, 0, 4)
+                btnEdit:SetText("")
+                btnEdit.Paint = function(self, w, h)
+                    local col = self:IsHovered() and Color(90, 175, 255) or CUI.accent
+                    draw.RoundedBox(5, 0, 0, w, h, col)
+                    draw.SimpleText("Изменить", "GRMLaws_Small", w/2, h/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                end
+                btnEdit.DoClick = function()
+                    Derma_StringRequest("Редактировать закон #" .. law.id, "Новый текст закона:", law.text, function(newText)
+                        if newText and #newText >= 10 then
+                            net.Start("GRM_Laws_Edit")
+                                net.WriteUInt(law.id, 16)
+                                net.WriteString(newText)
+                            net.SendToServer()
+                        else
+                            notification.AddLegacy("Текст слишком короткий (мин. 10 символов)", NOTIFY_ERROR, 3)
+                        end
+                    end)
+                end
+            end
+            
             if canRemove then
-                local btnDel = vgui.Create("DButton", row)
-                btnDel:SetPos(row:GetWide() - 100, 8)
-                btnDel:SetSize(90, 30)
+                local btnDel = vgui.Create("DButton", btnsPanel)
+                btnDel:Dock(TOP)
+                btnDel:SetTall(28)
                 btnDel:SetText("")
                 btnDel.Paint = function(self, w, h)
                     local col = self:IsHovered() and Color(225, 90, 85) or CUI.red
