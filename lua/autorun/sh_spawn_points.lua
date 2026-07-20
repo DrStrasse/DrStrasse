@@ -380,6 +380,22 @@ end
 
 if CLIENT then
 
+    -- Цветовая схема HUD v10.2
+    local CUI = {
+        bg = Color(19, 24, 33, 248),
+        panel = Color(33, 42, 56, 245),
+        accent = Color(70, 155, 255),
+        green = Color(55, 185, 105),
+        red = Color(205, 70, 65),
+        yellow = Color(235, 180, 60),
+        text = Color(240, 244, 250),
+        dim = Color(166, 176, 191),
+    }
+
+    surface.CreateFont("GRML_Title", {font="Roboto", size=20, weight=800, extended=true})
+    surface.CreateFont("GRML_Normal", {font="Roboto", size=14, weight=500, extended=true})
+    surface.CreateFont("GRML_Small", {font="Roboto", size=12, weight=400, extended=true})
+
     -- Состояние открытого меню (обновляем в-месте при получении свежих данных)
     local menuState = {
         frame         = nil,
@@ -438,70 +454,130 @@ if CLIENT then
     end
 
     -- ----------------------------------------------------------------
-    -- Построение вкладки списка точек
+    -- Построение вкладки списка точек (тёмная тема HUD v10.2)
     -- ----------------------------------------------------------------
 
     local function buildPointTab(panel, points, factionKey)
-        local list = vgui.Create("DListView", panel)
-        list:Dock(FILL)
-        list:DockMargin(5, 5, 5, 5)
-        list:AddColumn("X")
-        list:AddColumn("Y")
-        list:AddColumn("Z")
-        list:AddColumn("Pitch")
-        list:AddColumn("Yaw")
-        list:AddColumn("Roll")
+        -- Поиск/фильтр
+        local searchBar = vgui.Create("DPanel", panel)
+        searchBar:Dock(TOP)
+        searchBar:SetTall(36)
+        searchBar:DockMargin(5, 5, 5, 5)
+        searchBar.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
 
-        local function refreshList()
-            list:Clear()
-            for i, point in ipairs(points) do
-                local px, py, pz = fmtPos(point.pos)
-                local pp, pyw, pr = fmtAng(point.ang)
-                local linePanel = list:AddLine(px, py, pz, pp, pyw, pr)
-                linePanel._dataIndex = i
-            end
+        local searchEntry = vgui.Create("DTextEntry", searchBar)
+        searchEntry:Dock(FILL)
+        searchEntry:DockMargin(5, 6, 5, 6)
+        searchEntry:SetPlaceholderText("Поиск по координатам...")
+        searchEntry.Paint = function(self, w, h)
+            draw.RoundedBox(4, 0, 0, w, h, Color(25, 30, 40, 240))
+            surface.SetDrawColor(Color(60, 70, 85, 200))
+            surface.DrawOutlinedRect(0, 0, w, h, 1)
+            self:DrawTextEntryText(Color(220, 225, 235), CUI.accent, CUI.text)
         end
 
+        -- Список точек (карточки вместо строк)
+        local scroll = vgui.Create("DScrollPanel", panel)
+        scroll:Dock(FILL)
+        scroll:DockMargin(5, 0, 5, 5)
+        scroll.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
+
+        local function refreshList()
+            -- Очищаем старые карточки
+            for _, child in ipairs(scroll:GetCanvas():GetChildren()) do
+                child:Remove()
+            end
+
+            local filter = string.lower(searchEntry:GetValue() or "")
+
+            for i, point in ipairs(points) do
+                -- Фильтрация
+                local showCard = true
+                if filter ~= "" then
+                    local coords = string.format("%.0f %.0f %.0f", point.pos.x, point.pos.y, point.pos.z)
+                    if not string.find(string.lower(coords), filter, 1, true) then
+                        showCard = false
+                    end
+                end
+
+                if showCard then
+                -- Карточка точки
+                local card = vgui.Create("DPanel", scroll:GetCanvas())
+                card:Dock(TOP)
+                card:SetTall(50)
+                card:DockMargin(4, 2, 4, 2)
+                card._dataIndex = i
+                card.Paint = function(self, w, h)
+                    local bg = self:IsHovered() and Color(40, 50, 65, 245) or Color(30, 38, 52, 240)
+                    if self:IsSelected() then bg = Color(50, 80, 140, 200) end
+                    draw.RoundedBox(4, 0, 0, w, h, bg)
+                    -- Координаты
+                    local px, py, pz = fmtPos(point.pos)
+                    draw.SimpleText(string.format("X:%s Y:%s Z:%s", px, py, pz), "GRML_Normal", 8, 8, CUI.text)
+                    draw.SimpleText(string.format("P:%s Y:%s R:%s", fmtAng(point.ang)), "GRML_Small", 8, 26, CUI.dim)
+                    -- Номер
+                    draw.SimpleText("#" .. i, "GRML_Small", w - 12, 8, CUI.dim, TEXT_ALIGN_RIGHT)
+                end
+                card.OnMousePressed = function(self)
+                    for _, c in ipairs(scroll:GetCanvas():GetChildren()) do c:SetSelected(false) end
+                    self:SetSelected(true)
+                end
+                card.IsSelected = function(self) return self._selected or false end
+                card.SetSelected = function(self, v) self._selected = v end
+                end -- if showCard
+            end -- for
+        end
+
+        searchEntry.OnValueChange = function() refreshList() end
         refreshList()
 
-        --- Получить индекс данных выбранной строки (nil если ничего не выбрано)
-        local function getSelectedIndex()
-            local line = list:GetSelectedLine()
-            if type(line) == "number" then
-                return line > 0 and line or nil
-            end
-            if IsValid(line) and line._dataIndex then
-                return line._dataIndex
+        -- Получить выбранную карточку
+        local function getSelectedCard()
+            for _, child in ipairs(scroll:GetCanvas():GetChildren()) do
+                if child:IsSelected() then return child end
             end
             return nil
         end
 
-        -- Добавить точку (текущая позиция)
-        local btnAdd = vgui.Create("DButton", panel)
-        btnAdd:SetText("Добавить точку (текущая позиция)")
-        btnAdd:Dock(BOTTOM)
-        btnAdd:SetTall(30)
-        btnAdd.DoClick = function()
+        -- Кнопки действий
+        local btnBar = vgui.Create("DPanel", panel)
+        btnBar:Dock(BOTTOM)
+        btnBar:SetTall(44)
+        btnBar:DockMargin(5, 5, 5, 5)
+        btnBar.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
+
+        local function actionBtn(parent, text, color, callback)
+            local btn = vgui.Create("DButton", parent)
+            btn:SetText("")
+            btn:SetFont("GRML_Normal")
+            btn.Paint = function(self, w, h)
+                local col = self:IsHovered() and Color(math.min(color.r+20,255), math.min(color.g+20,255), math.min(color.b+20,255)) or color
+                draw.RoundedBox(5, 0, 0, w, h, col)
+                draw.SimpleText(text, "GRML_Normal", w/2, h/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            end
+            btn.DoClick = callback
+            return btn
+        end
+
+        local btnAdd = actionBtn(btnBar, "Добавить (здесь)", CUI.green, function()
             net.Start("SpawnAdmin_AddPoint")
             net.WriteString(factionKey)
             net.WriteVector(LocalPlayer():GetPos())
             net.WriteAngle(LocalPlayer():GetAngles())
             net.SendToServer()
             notification.AddLegacy("Запрос отправлен...", NOTIFY_GENERIC, 2)
-        end
+        end)
+        btnAdd:Dock(LEFT)
+        btnAdd:SetWide(180)
+        btnAdd:DockMargin(5, 6, 5, 6)
 
-        -- Телепортироваться к выбранной
-        local btnTeleport = vgui.Create("DButton", panel)
-        btnTeleport:SetText("Телепортироваться к выбранной")
-        btnTeleport:Dock(BOTTOM)
-        btnTeleport:SetTall(30)
-        btnTeleport.DoClick = function()
-            local idx = getSelectedIndex()
-            if not idx then
+        local btnTeleport = actionBtn(btnBar, "Телепорт", CUI.accent, function()
+            local card = getSelectedCard()
+            if not card then
                 notification.AddLegacy("Выберите точку", NOTIFY_ERROR, 3)
                 return
             end
-            local point = points[idx]
+            local point = points[card._dataIndex]
             if point then
                 net.Start("SpawnAdmin_TeleportToPoint")
                 net.WriteVector(pointToVec(point.pos))
@@ -509,25 +585,36 @@ if CLIENT then
                 net.SendToServer()
                 if IsValid(menuState.frame) then menuState.frame:Close() end
             end
-        end
+        end)
+        btnTeleport:Dock(LEFT)
+        btnTeleport:SetWide(120)
+        btnTeleport:DockMargin(5, 6, 5, 6)
 
-        -- Удалить выбранную
-        local btnRemove = vgui.Create("DButton", panel)
-        btnRemove:SetText("Удалить выбранную")
-        btnRemove:Dock(BOTTOM)
-        btnRemove:SetTall(30)
-        btnRemove.DoClick = function()
-            local idx = getSelectedIndex()
-            if not idx then
+        local btnRemove = actionBtn(btnBar, "Удалить", CUI.red, function()
+            local card = getSelectedCard()
+            if not card then
                 notification.AddLegacy("Выберите точку", NOTIFY_ERROR, 3)
                 return
             end
             net.Start("SpawnAdmin_RemovePoint")
             net.WriteString(factionKey)
-            net.WriteInt(idx, 32)
+            net.WriteInt(card._dataIndex, 32)
             net.SendToServer()
             notification.AddLegacy("Запрос отправлен...", NOTIFY_GENERIC, 2)
-        end
+        end)
+        btnRemove:Dock(LEFT)
+        btnRemove:SetWide(100)
+        btnRemove:DockMargin(5, 6, 5, 6)
+
+        -- Экспорт/Импорт (справа)
+        local btnExport = actionBtn(btnBar, "Экспорт", CUI.yellow, function()
+            local data = util.TableToJSON(points, true)
+            SetClipboardText(data)
+            notification.AddLegacy("Точки скопированы в буфер обмена", NOTIFY_GENERIC, 3)
+        end)
+        btnExport:Dock(RIGHT)
+        btnExport:SetWide(100)
+        btnExport:DockMargin(5, 6, 5, 6)
 
         return refreshList
     end
@@ -545,14 +632,27 @@ if CLIENT then
         if IsValid(menuState.frame) then menuState.frame:Remove() end
 
         local frame = vgui.Create("DFrame")
-        frame:SetTitle("Управление точками спавна (SuperAdmin)")
-        frame:SetSize(800, 600)
+        frame:SetTitle("")
+        frame:SetSize(900, 650)
         frame:Center()
         frame:MakePopup()
+        frame:ShowCloseButton(true)
         menuState.frame = frame
+
+        -- Кастомная отрисовка фрейма (тёмная тема)
+        frame.Paint = function(self, w, h)
+            draw.RoundedBox(8, 0, 0, w, h, CUI.bg)
+            draw.RoundedBoxEx(8, 0, 0, w, 36, Color(27, 35, 48), true, true, false, false)
+            draw.SimpleText("Точки спавна", "GRML_Title", 12, 18, CUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            -- Счётчик точек
+            local total = #menuState.globalPoints
+            for _, pts in pairs(menuState.factions) do total = total + #pts end
+            draw.SimpleText("Всего: " .. total, "GRML_Small", w - 12, 18, CUI.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        end
 
         local tabs = vgui.Create("DPropertySheet", frame)
         tabs:Dock(FILL)
+        tabs:DockMargin(4, 40, 4, 4)
 
         -- Вкладка «Глобальные»
         local globalPanel = vgui.Create("DPanel")
