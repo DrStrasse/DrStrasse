@@ -305,7 +305,8 @@ local function normalizeItem(id, item)
         spawnFrozen = item.spawnFrozen ~= false,
         data = istable(item.data) and item.data or {},
         -- Код 88: если задан — товар покупается как ПРЕДМЕТ инвентаря (мобильные).
-        invItem = (item.invItem ~= nil and tostring(item.invItem) ~= "") and tostring(item.invItem) or nil,
+        -- Всегда строка (пустая если нет) — чтобы net.WriteTable передавал корректно
+        invItem = (item.invItem ~= nil and tostring(item.invItem) ~= "") and tostring(item.invItem) or "",
     }
 end
 
@@ -574,7 +575,7 @@ if SERVER then
         local item = SHOP.Catalog[itemID]
         if not item then return false, "Товар не найден." end
         if item.enabled == false then return false, "Товар отключён." end
-        if item.invItem then
+        if item.invItem and item.invItem ~= "" then
             return false, "Мобильный покупается сразу — жмите «Купить»."
         end
         if item.special and cfg().RequireAccessToBuySpecial ~= false and not hasAccessForSpecial(ply) then
@@ -587,7 +588,7 @@ if SERVER then
         local item = SHOP.Catalog[itemID]
         if not item then return false, "Товар не найден." end
         if item.enabled == false then return false, "Товар отключён." end
-        if item.invItem then
+        if item.invItem and item.invItem ~= "" then
             -- Код 88: телефон — предмет инвентаря. Доступ к линии не нужен, лимит по штукам.
             if not (GRM and GRM.Inventory and GRM.Inventory.AddItem) then
                 return false, "Модуль инвентаря не загружен."
@@ -659,7 +660,7 @@ if SERVER then
         if not ok then notify(ply, false, reason) return end
 
         -- Код 88: мобильный телефон — покупка предмета в инвентарь, БЕЗ спавна в мир.
-        if item.invItem then
+        if item.invItem and item.invItem ~= "" then
             local price = tonumber(item.price) or 0
             if not canPay(ply, price) then
                 notify(ply, false, "Недостаточно средств. Нужно: " .. moneyName(price))
@@ -913,14 +914,14 @@ else
                     draw.SimpleText(item.name or id, "DermaDefaultBold", 12, 14, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                     draw.SimpleText(item.desc or "", "DermaDefault", 12, 36, Color(180, 185, 195), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                     draw.SimpleText((item.invItem and "Цена: " or "Цена доступа: ") .. moneyText(item.price or 0), "DermaDefault", 12, 58, Color(120, 220, 120), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    if item.invItem then
+                    if item.invItem and item.invItem ~= "" then
                         draw.SimpleText("Предмет в инвентарь • открыть: СТРЕЛКА ВВЕРХ", "DermaDefaultBold", 12, 80, Color(120, 200, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                     else
                         draw.SimpleText(item.purchased and "Доступ куплен" or "Доступ не куплен", "DermaDefaultBold", 12, 80, item.purchased and Color(100, 220, 100) or Color(255, 180, 80), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                     end
                 end
 
-                if item.invItem then
+                if item.invItem and item.invItem ~= "" then
                     -- Код 88: мобильный — одна кнопка «Купить», покупка многократная (лимит штук на сервере).
                     local buy = vgui.Create("DButton", row)
                     buy:SetPos(500, 20)

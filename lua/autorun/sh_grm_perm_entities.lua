@@ -99,6 +99,8 @@ if SERVER then
         grm_roomtap_terminal = true,
         -- GRM Vendor / Торгаш (Код 111)
         grm_vendor           = true,
+        -- Денежный принтер (Код 115)
+        grm_money_printer    = true,
         -- GRM Logistics: склады, шкафы, точки погрузки (Код 112)
         grm_logistics_loading   = true,
         grm_logistics_warehouse = true,
