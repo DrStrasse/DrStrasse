@@ -109,7 +109,7 @@ function LAWS.GetAll()
     return LAWS.Data or {}
 end
 
--- Инициализация
+    -- Инициализация
 if SERVER then
     LAWS.Load()
     
@@ -118,6 +118,7 @@ if SERVER then
     util.AddNetworkString("GRM_Laws_Add")
     util.AddNetworkString("GRM_Laws_Remove")
     util.AddNetworkString("GRM_Laws_Edit")
+    util.AddNetworkString("GRM_Laws_Refresh") -- для живого обновления
     
     -- Команда /laws
     hook.Add("PlayerSay", "GRM_Laws_Command", function(ply, text)
@@ -221,13 +222,40 @@ if SERVER then
         local ok, result = LAWS.Edit(lawID, newText)
         if ok then
             ply:ChatPrint("[Законы] Закон #" .. lawID .. " отредактирован.")
-            -- Обновить окно
-            net.Start("GRM_Laws_Open")
-            net.Send(ply)
+            -- Живое обновление для всех
+            LAWS.BroadcastUpdate()
         else
             ply:ChatPrint("[Законы] Ошибка: " .. result)
         end
     end)
+    
+    -- Запрос обновления (клиент → сервер)
+    net.Receive("GRM_Laws_Refresh", function(_, ply)
+        net.Start("GRM_Laws_List")
+            local laws = LAWS.GetAll()
+            net.WriteUInt(#laws, 16)
+            for _, law in ipairs(laws) do
+                net.WriteUInt(law.id, 16)
+                net.WriteString(law.text)
+                net.WriteString(law.author)
+                net.WriteString(law.date)
+            end
+        net.Send(ply)
+    end)
+    
+    -- Рассылка обновления всем при изменении
+    function LAWS.BroadcastUpdate()
+        net.Start("GRM_Laws_List")
+            local laws = LAWS.GetAll()
+            net.WriteUInt(#laws, 16)
+            for _, law in ipairs(laws) do
+                net.WriteUInt(law.id, 16)
+                net.WriteString(law.text)
+                net.WriteString(law.author)
+                net.WriteString(law.date)
+            end
+        net.Broadcast()
+    end
     
     print("[GRM] Laws System v1.1 loaded (Код 123)")
 end
@@ -249,6 +277,9 @@ if CLIENT then
         dim = Color(166, 176, 191),
     }
     
+    -- Глобальная ссылка на окно законов
+    local lawsFrame = nil
+    
     net.Receive("GRM_Laws_List", function()
         local count = net.ReadUInt(16)
         local laws = {}
@@ -265,23 +296,48 @@ if CLIENT then
         local canRemove = net.ReadBool()
         local canEdit = net.ReadBool()
         
-        -- Создаём окно (размер как у Q-меню)
-        local frame = vgui.Create("DFrame")
-        frame:SetTitle("")
-        frame:SetSize(1400, 900)
-        frame:Center()
-        frame:MakePopup()
-        frame:ShowCloseButton(true)
+        -- Если окно уже открыто — обновляем его
+        if IsValid(lawsFrame) then
+            lawsFrame:Clear()
+            lawsFrame:InvalidateLayout()
+        else
+            -- Создаём окно (размер как у Q-меню)
+            lawsFrame = vgui.Create("DFrame")
+            lawsFrame:SetTitle("")
+            lawsFrame:SetSize(1400, 900)
+            lawsFrame:Center()
+            lawsFrame:MakePopup()
+            lawsFrame:ShowCloseButton(true)
         
-        frame.Paint = function(self, w, h)
+        -- Запрашиваем обновление при открытии
+        net.Start("GRM_Laws_Refresh")
+        net.SendToServer()
+        
+        -- Таймер живого обновления каждые 5 секунд
+        local updateTimer = "LawsUpdate_" .. tostring(lawsFrame)
+        timer.Create(updateTimer, 5, 0, function()
+            if IsValid(lawsFrame) then
+                net.Start("GRM_Laws_Refresh")
+                net.SendToServer()
+            else
+                timer.Remove(updateTimer)
+            end
+        end)
+        
+        lawsFrame.OnRemove = function()
+            timer.Remove(updateTimer)
+            lawsFrame = nil
+        end
+        
+        lawsFrame.Paint = function(self, w, h)
             draw.RoundedBox(8, 0, 0, w, h, CUI.bg)
             draw.RoundedBoxEx(8, 0, 0, w, 44, Color(27, 35, 48), true, true, false, false)
             draw.SimpleText("Законы государства", "GRMLaws_Title", 16, 22, CUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText("Законов: " .. #laws, "GRMLaws_Small", w - 16, 22, CUI.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("Законов: " .. #laws, "GRMLaws_Small", w - 16, 28, CUI.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
         
         -- Список законов
-        local scroll = vgui.Create("DScrollPanel", frame)
+        local scroll = vgui.Create("DScrollPanel", lawsFrame)
         scroll:Dock(FILL)
         scroll:DockMargin(8, 52, 8, 50)
         
@@ -406,7 +462,7 @@ if CLIENT then
         
         -- Кнопка добавления (внизу окна)
         if canAdd then
-            local btnAdd = vgui.Create("DButton", frame)
+            local btnAdd = vgui.Create("DButton", lawsFrame)
             btnAdd:Dock(BOTTOM)
             btnAdd:SetTall(40)
             btnAdd:DockMargin(8, 0, 8, 8)
@@ -428,5 +484,6 @@ if CLIENT then
                 end)
             end
         end
+        end -- закрываем else (создание окна)
     end)
 end
