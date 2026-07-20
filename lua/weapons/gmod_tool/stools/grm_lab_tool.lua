@@ -4,7 +4,7 @@ TOOL.Command = nil
 TOOL.ConfigName = ""
 
 TOOL.ClientConVar = {
-    grm_lab_type = "narc",
+    type = "narc",
 }
 
 local LAB_TYPES = {
@@ -46,8 +46,12 @@ function TOOL:LeftClick(tr)
     local ent = ents.Create(labInfo.class)
     if not IsValid(ent) then return false end
 
-    ent:SetPos(tr.HitPos + tr.HitNormal * 8)
+    -- Позиционируем НАД землёй (учитываем размер пропа)
+    local mins, maxs = ent:OBBMins(), ent:OBBMaxs()
+    local height = maxs.z - mins.z
+    ent:SetPos(tr.HitPos + Vector(0, 0, height / 2))
     ent:SetAngles(Angle(0, ply:EyeAngles().y + 180, 0))
+    ent.LabType = labType -- ВАЖНО: передаём тип на сервер
     ent:Spawn()
     ent:Activate()
 
