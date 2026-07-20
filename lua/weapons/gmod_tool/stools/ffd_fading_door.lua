@@ -134,6 +134,8 @@ if SERVER then
         ent.FFD_CloseTime = math.max(0.5, tonumber(closeTime) or 5)
         ent.FFD_Key = key
         ent.FFD_OwnerSID64 = IsValid(ply) and tostring(ply:SteamID64() or "") or tostring(ent.FFD_OwnerSID64 or "")
+        -- Код 108: клиентская метка «это FFD-дверь» — подсветка цели в FFD Link
+        ent:SetNWBool("FFD_IsDoor", true)
 
         -- Регистрация нумпад связи. Без живого плеера (перм-восстановление
         -- Кода 105 с офлайн-владельцем) бинд пропускаем — внутри
@@ -252,6 +254,14 @@ function TOOL:RightClick(trace)
     ent.isFadingDoor = nil
     ent.FFD_IsActive = nil
     ent.FFD_IsFaded = nil
+    ent:SetNWBool("FFD_IsDoor", false) -- Код 108: метка для FFD Link
+
+    -- Код 108: сама дверь перестала быть дверью — вычищаем её из связей
+    -- всех кейпадов/сканеров (иначе «мёртвые» записи ждали бы prune)
+    local unlinked = 0
+    if GRM and GRM.FFDLink and GRM.FFDLink.RemoveFromAll then
+        unlinked = GRM.FFDLink.RemoveFromAll(ent)
+    end
 
     ent:SetNotSolid(false)
     ent:SetRenderMode(RENDERMODE_NORMAL)
@@ -260,7 +270,8 @@ function TOOL:RightClick(trace)
     duplicator.ClearEntityModifier(ent, "FFD_FadingDoor")
 
     if GRM and GRM.Notify then
-        GRM.Notify(ply, "Статус Fading Door снят с объекта.", 235, 180, 60)
+        local extra = (unlinked > 0) and (" Отвязана от %d контроллер(ов)."):format(unlinked) or ""
+        GRM.Notify(ply, "Статус Fading Door снят с объекта." .. extra, 235, 180, 60)
     end
 
     return true

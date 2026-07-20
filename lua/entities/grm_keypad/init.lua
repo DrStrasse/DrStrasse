@@ -29,7 +29,7 @@ util.AddNetworkString("GRM_KeypadPress")
 -- (Apply ниже всегда принудительно ставит режим 0).
 -- ============================================================
 local function keypadPermExtract(ent)
-    return {
+    local rec = {
         password = tostring(ent:GetPassword() or "1234"),
         mode     = 0, -- Код 107: сохраняем принудительно PIN
         cost     = 0,
@@ -39,6 +39,11 @@ local function keypadPermExtract(ent)
         hold     = tonumber(ent.HoldTime) or 5,
         owner    = (IsValid(ent.KeypadOwner) and tostring(ent.KeypadOwner:SteamID64() or "")) or tostring(ent.OwnerSID64 or ""),
     }
+    -- Код 108: ручные связи с FFD-дверями едут в перм вместе с кейпадом
+    if GRM.FFDLink and GRM.FFDLink.ExportData then
+        rec.links = GRM.FFDLink.ExportData(ent)
+    end
+    return rec
 end
 local function keypadPermApply(ent, t)
     -- находка 123-про: пароль со стены конвара может прийти с хвостовым
@@ -59,6 +64,10 @@ local function keypadPermApply(ent, t)
                 break
             end
         end
+    end
+    -- Код 108: ручные связи с FFD-дверями обратно из перма
+    if GRM.FFDLink and GRM.FFDLink.ImportData then
+        GRM.FFDLink.ImportData(ent, istable(t.links) and t.links or {})
     end
 end
 GRM = GRM or {}
@@ -104,11 +113,20 @@ function ENT:ProcessGrant(ply)
         numpad.Activate(self.KeypadOwner, self.KeyGranted)
     end
 
-    -- Находим все Fading Door рядом
-    local nearProps = ents.FindInSphere(self:GetPos(), 250)
-    for _, prop in ipairs(nearProps) do
-        if IsValid(prop) and prop.isFadingDoor and prop.FadeActivate then
-            prop:FadeActivate()
+    -- Код 108 (заказ владельца): есть ручные связи (FFD Link) — открываем
+    -- ТОЛЬКО привязанные двери; нет связей — старое поведение (радиус 250).
+    -- Список ЗАХВАТЫВАЕМ: по таймеру гасим ровно те же двери.
+    local doorList = {}
+    if GRM.FFDLink and GRM.FFDLink.Count and GRM.FFDLink.Count(self) > 0 then
+        local _, doors = GRM.FFDLink.Fade(self, true)
+        for _, d in ipairs(doors or {}) do doorList[#doorList + 1] = d end
+    else
+        -- Находим все Fading Door рядом
+        for _, prop in ipairs(ents.FindInSphere(self:GetPos(), 250)) do
+            if IsValid(prop) and prop.isFadingDoor and prop.FadeActivate then
+                prop:FadeActivate()
+                doorList[#doorList + 1] = prop
+            end
         end
     end
 
@@ -125,7 +143,7 @@ function ENT:ProcessGrant(ply)
             numpad.Deactivate(self.KeypadOwner, self.KeyGranted)
         end
 
-        for _, prop in ipairs(nearProps) do
+        for _, prop in ipairs(doorList) do
             if IsValid(prop) and prop.isFadingDoor and prop.FadeDeactivate then
                 prop:FadeDeactivate()
             end

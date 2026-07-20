@@ -105,6 +105,10 @@ ents = {
     if not e.Spawn then function e:Spawn() self.spawned = true end end
     if not e.Activate then function e:Activate() self.activated = true end end
     if not e.GetClass then function e:GetClass() return self.__class end end
+    -- Код 108: стул FFD Link спрашивает IsPlayer/IsNPC/IsWorld (как любой стул)
+    if not e.IsPlayer then function e:IsPlayer() return false end end
+    if not e.IsNPC then function e:IsNPC() return false end end
+    if not e.IsWorld then function e:IsWorld() return false end end
     if not e.SetPassword then function e:SetPassword(p) self.password = p end end
     if not e.SetFaction then function e:SetFaction(v) self.faction = v end end
     if not e.GetFaction then function e:GetFaction() return self.faction or "" end end
@@ -115,6 +119,12 @@ ents = {
     if not e.SetColor then function e:SetColor(v) self.color = v end end
     if not e.DrawShadow then function e:DrawShadow(v) self.shadow = v end end
     if not e.SetNWBool then function e:SetNWBool(k, v) self.__nwb = self.__nwb or {} self.__nwb[k] = v end end
+    if not e.GetNWBool then function e:GetNWBool(k, d) local t = self.__nwb local v = t and t[k] if v == nil then return d end return v end end
+    -- Код 108: NW-зеркало связей (FFDLinkN / FFDLinkIdx) для клиентской подсветки
+    if not e.SetNWInt then function e:SetNWInt(k, v) self.__nwi = self.__nwi or {} self.__nwi[k] = v end end
+    if not e.GetNWInt then function e:GetNWInt(k, d) local t = self.__nwi local v = t and t[k] if v == nil then return d or 0 end return v end end
+    if not e.SetNWString then function e:SetNWString(k, v) self.__nws = self.__nws or {} self.__nws[k] = v end end
+    if not e.GetNWString then function e:GetNWString(k, d) local t = self.__nws local v = t and t[k] if v == nil then return d or "" end return v end end
     if not e.EmitSound then function e:EmitSound() end end
     if not e.EntIndex then function e:EntIndex() return self.__idx end end
     if not e.GetPhysicsObject then
@@ -740,7 +750,13 @@ file = {
 }
 
 dofile("lua/autorun/sh_grm_perm_entities.lua")
-ok(GRM._permEntitiesVer == "1.4.0", "perm-модуль v1.4.0 загружен (rec.data-хуки + класс сканера)")
+-- Код 108: ядро ручных связей FFD Link — грузим ДО /permadd, чтобы Extract
+-- кейпада/сканера уже писал rec.data.links (ручную привязку к дверям)
+dofile("lua/autorun/sh_grm_ffdlink.lua")
+ok(GRM._permEntitiesVer == "1.4.1", "perm-модуль v1.4.1 загружен (rec.data-хуки + класс сканера + links)")
+ok(GRM._ffdLinkVer == "1.0.0" and type(GRM.FFDLink.Add) == "function"
+   and type(GRM.FFDLink.Toggle) == "function" and type(GRM.FFDLink.Fade) == "function",
+   "ячейка связей Кода 108: GRM.FFDLink загружен (Add/Toggle/Fade)")
 ok(type(GRM.PermData.Extract["grm_keypad"]) == "function"
    and type(GRM.PermData.Apply["grm_keypad"]) == "function",
    "кейпад: Extract/Apply данных зарегистрированы (init.lua)")
@@ -882,6 +898,264 @@ scanFn(medic, IN_USE)
 ok(newSc:GetStatus() == 3, "перм-сканер: [E] снова запускает сканирование")
 fireTimer("GRM_Scanner_Resolve_77")
 ok(newSc:GetStatus() == 1 and H.npad[#H.npad] == 7, "перм-сканер: медика из списка пускает (grant 7-кнопкой)")
+
+-- ═══════ ЧАСТЬ 7: Код 108 — ручные связи GRM.FFDLink (заказ владельца) ═══
+print("== Код 108: ручная связь контроллер↔дверь (ядро GRM.FFDLink) ==")
+ok(type(H.dupeMods["FFD_LinkList"]) == "function",
+   "duplicator-модификатор FFD_LinkList: связи едут в дубликат")
+
+-- свежие контроллеры через ents.Create (полный набор NW-стабов)
+local kLink = ents.Create("grm_keypad")
+kLink.KeypadOwner = plyA
+kLink:SetPassword("1234")
+local scLink = ents.Create("grm_scanner")
+scLink.ScannerOwner = plyA
+scLink:SetFaction("Медики,Полиция")
+
+-- две реальные FFD-двери ВНУТРИ 250 юнитов: радиус-фолбэк взял бы обе
+local doorA = ents.Create("prop_physics") doorA:SetPos(mkVec(1, 0, 0))
+local doorB = ents.Create("prop_physics") doorB:SetPos(mkVec(3, 0, 0))
+GRM.FFD_MakeFadingDoor(plyA, doorA, 1, false, true, false, 5)
+GRM.FFD_MakeFadingDoor(plyA, doorB, 1, false, true, false, 5)
+ok(doorA.isFadingDoor == true and doorB.isFadingDoor == true and (doorA.__nwb or {}).FFD_IsDoor == true,
+   "двери стали FFD и получили клиентскую метку FFD_IsDoor (Код 108)")
+
+ok(GRM.FFDLink.Add(kLink, doorA) == true, "связь кейпад→дверьA добавлена")
+ok(GRM.FFDLink.Add(kLink, doorA) == false, "дубль связи не плодится")
+ok(GRM.FFDLink.Count(kLink) == 1, "у контроллера ровно одна связь")
+ok(GRM.FFDLink.Toggle(kLink, doorA) == false and GRM.FFDLink.Count(kLink) == 0, "Toggle снимает связь")
+ok(GRM.FFDLink.Toggle(kLink, doorA) == true and GRM.FFDLink.Count(kLink) == 1, "Toggle возвращает связь")
+ok((kLink.__nwi or {}).FFDLinkN == 1
+   and tostring((kLink.__nws or {}).FFDLinkIdx or "") == tostring(doorA:EntIndex()),
+   "NW-зеркало контроллера: число связей + EntIndex'ы для клиентской подсветки")
+
+-- ГЛАВНОЕ: грант по верному PIN открывает ТОЛЬКО привязанную дверь (не радиус!)
+kLink:SetStatus(0) kLink.IsGrantActive = false kLink.CurrentInput = "1234"
+doorA.FFD_IsActive, doorB.FFD_IsActive = false, false
+kLink:PressButton("OK", plyA)
+ok(doorA.FFD_IsActive == true and doorB.FFD_IsActive == false,
+   "кейпад со связью: открыта ТОЛЬКО привязанная дверьA (дверьB в 3 юнитах — закрыта)")
+fireTimer("GRM_Keypad_Grant_42")
+ok(doorA.FFD_IsActive == false, "по hold-таймеру закрылась та же привязанная дверьA")
+
+-- фолбэк: связей нет → старое поведение (радиус 250)
+GRM.FFDLink.Clear(kLink)
+ok(GRM.FFDLink.Count(kLink) == 0, "перед тестом фолбэка связи сняты")
+doorA.FFD_IsActive, doorB.FFD_IsActive = false, false
+kLink.CurrentInput = "1234"
+kLink:PressButton("OK", plyA)
+ok(doorA.FFD_IsActive == true and doorB.FFD_IsActive == true,
+   "без связей — радиус 250: обе ближние двери открылись (обратная совместимость)")
+fireTimer("GRM_Keypad_Grant_42")
+
+-- prune (находка 125): удалённая дверь само-вычищается, а СОСЕДНЯЯ дверь
+-- того же класса в паре юнитов (doorB стоит в 2 юнитах!) НЕ подменяет её —
+-- допуск разрешения позиции всего 1.2 юнита
+GRM.FFDLink.Add(kLink, doorA)
+doorA:Remove()
+ok(#GRM.FFDLink.Resolve(kLink, true) == 0 and GRM.FFDLink.Count(kLink) == 0,
+   "prune: мёртвая дверь вычищена, соседняя doorB НЕ подменила её (допуск 1.2 юнита)")
+-- но запись о живой двери при джиттере позиции переживает микросдвиг
+GRM.FFDLink.Add(kLink, doorB)
+local jitPos = doorB:GetPos()
+doorB:SetPos(mkVec(jitPos.x + 0.4, jitPos.y, jitPos.z)) -- физика/JSON подвинул на 0.4
+local resJit = GRM.FFDLink.Resolve(kLink, false)
+ok(#resJit == 1 and resJit[1] == doorB, "живая дверь с микросдвигом 0.4 юнита разрешается")
+doorB:SetPos(jitPos) -- вернули для дальнейших проверок
+GRM.FFDLink.Clear(kLink)
+
+local doorA2 = ents.Create("prop_physics") doorA2:SetPos(mkVec(1, 0, 0))
+GRM.FFD_MakeFadingDoor(plyA, doorA2, 1, false, true, false, 5)
+
+-- RemoveFromAll зачищает дверь во ВСЕХ контроллерах карты
+GRM.FFDLink.Add(kLink, doorA2)
+GRM.FFDLink.Add(scLink, doorA2)
+ok(GRM.FFDLink.Count(kLink) == 1 and GRM.FFDLink.Count(scLink) == 1, "дверьA2 привязана к двум контроллерам")
+ok(GRM.FFDLink.RemoveFromAll(doorA2) == 2 and GRM.FFDLink.Count(kLink) == 0
+   and GRM.FFDLink.Count(scLink) == 0, "RemoveFromAll: дверь отвязана ото всех контроллеров")
+
+-- сканер по связи: допуск медика открывает ТОЛЬКО привязанную дверь
+GRM.FFDLink.Add(scLink, doorA2)
+scLink:SetStatus(0)
+H.eyeTrace = { Entity = scLink, HitPos = mkVec(1, 0, 0) }
+medic.__grmScannerNextScan = 0
+doorA2.FFD_IsActive, doorB.FFD_IsActive = false, false
+H.npad = {}
+scanFn(medic, IN_USE)
+fireTimer("GRM_Scanner_Resolve_77")
+ok(scLink:GetStatus() == 1 and doorA2.FFD_IsActive == true and doorB.FFD_IsActive == false,
+   "сканер со связью: доступ медика открыл ТОЛЬКО привязанную дверьA2")
+fireTimer("GRM_Scanner_Grant_77")
+ok(doorA2.FFD_IsActive == false, "сканер: привязанная дверь закрылась по hold-таймеру")
+GRM.FFDLink.Clear(scLink)
+
+-- Export/Import (то, что едет в перм и дубликат)
+GRM.FFDLink.Add(kLink, doorB)
+local exL = GRM.FFDLink.ExportData(kLink)
+ok(#exL == 1 and exL[1].class == "prop_physics" and exL[1].x == 3,
+   "ExportData: сериализуемая запись (класс + позиция)")
+GRM.FFDLink.Clear(kLink)
+GRM.FFDLink.ImportData(kLink, exL)
+local resL = GRM.FFDLink.Resolve(kLink, false)
+ok(GRM.FFDLink.Count(kLink) == 1 and #resL == 1 and resL[1] == doorB,
+   "ImportData+Resolve: связь после сериализации раскрылась в ту же живую дверь")
+
+-- перм: связи пишутся в базу и возвращаются через Apply (рестарт карты)
+H.hit = { Entity = kLink }
+chatFn(admin5, "/permadd")
+local baseL = util.JSONToTable(FILES["grm_perm_entities.json"])
+local recL = baseL[#baseL]
+ok(recL.class == "grm_keypad" and istable(recL.data) and istable(recL.data.links)
+   and #recL.data.links == 1 and recL.data.links[1].x == 3,
+   "/permadd кейпада: rec.data.links — ручные связи в перм-базе (Код 108)")
+local kRest = ents.Create("grm_keypad")
+GRM.PermData.Apply["grm_keypad"](kRest, recL.data)
+local resRest = GRM.FFDLink.Resolve(kRest, false)
+ok(GRM.FFDLink.Count(kRest) == 1 and #resRest == 1 and resRest[1] == doorB,
+   "перм-Apply: после «рестарта» кейпад открывает ту же привязанную дверь")
+GRM.FFDLink.Remove(kLink, doorB)
+
+-- снятие статуса FFD-двери самоотвязывает её из всех контроллеров
+local doorX = ents.Create("prop_physics") doorX:SetPos(mkVec(6, 0, 0))
+GRM.FFD_MakeFadingDoor(plyA, doorX, 1, false, true, false, 5)
+GRM.FFDLink.Add(kLink, doorX)
+local ffdTOOL = TOOL -- стул ffd_fading_door был последним dofile-стулом
+local ffdToolObj = setmetatable({ GetOwner = function() return plyA end }, { __index = ffdTOOL })
+H.notifies = {}
+ok(ffdTOOL.RightClick(ffdToolObj, { Entity = doorX }) == true
+   and doorX.isFadingDoor == nil and GRM.FFDLink.Count(kLink) == 0,
+   "ПКМ стула FFD-двери: дверь перестала быть дверью И сама отвязалась от контроллера")
+
+-- ═════════════ ЧАСТЬ 8: Код 108 — стул FFD Link (тулган) ═════════════
+print("== stools/ffd_link.lua: ручная привязка из тулгана ==")
+TOOL = { ClientConVar = {} }
+SERVER, CLIENT = true, false
+dofile("lua/weapons/gmod_tool/stools/ffd_link.lua")
+ok(type(TOOL.LeftClick) == "function" and type(TOOL.RightClick) == "function"
+   and type(TOOL.Reload) == "function" and type(TOOL.Holster) == "function"
+   and type(TOOL.BuildCPanel) == "function", "стул FFD Link зарегистрирован")
+
+-- мок базового объект-API тулгана (как у rope: SetObject/GetEnt/NumObjects/Stage)
+local function mkLinkTool(owner)
+    local objs, st = {}, 0
+    local t = {}
+    function t:GetOwner() return owner end
+    function t:SetObject(i, ent) objs[i] = { ent = ent } end
+    function t:GetEnt(i) return objs[i] and objs[i].ent or nil end
+    function t:NumObjects()
+        local c = 0
+        for _ in pairs(objs) do c = c + 1 end
+        return c
+    end
+    function t:ClearObjects() objs = {} end
+    function t:SetStage(s) st = s end
+    function t:GetStage() return st end
+    return setmetatable(t, { __index = TOOL })
+end
+
+local ctrlL = ents.Create("grm_keypad")
+local doorL1 = ents.Create("prop_physics") doorL1:SetPos(mkVec(2, 0, 0))
+local doorL2 = ents.Create("prop_physics") doorL2:SetPos(mkVec(4, 0, 0))
+GRM.FFD_MakeFadingDoor(plyA, doorL1, 1, false, true, false, 5)
+GRM.FFD_MakeFadingDoor(plyA, doorL2, 1, false, true, false, 5)
+
+local lt = mkLinkTool(plyA)
+H.notifies = {}
+local hitC  = { Entity = ctrlL,  HitPos = mkVec(0, 0, 0), HitNormal = mkVec(0, 0, 1) }
+local hitD1 = { Entity = doorL1, HitPos = mkVec(2, 0, 0), HitNormal = mkVec(0, 0, 1) }
+local hitD2 = { Entity = doorL2, HitPos = mkVec(4, 0, 0), HitNormal = mkVec(0, 0, 1) }
+ok(TOOL.LeftClick(lt, hitC) == true and lt:NumObjects() == 1
+   and lt:GetStage() == 1 and lt:GetEnt(1) == ctrlL,
+   "ЛКМ по кейпаду: контроллер выбран (объект 1, стадия 1)")
+ok(lastNotify("контроллер выбран") ~= nil, "выбор контроллера — с notify-фидбеком")
+ok(TOOL.LeftClick(lt, hitD1) == true and GRM.FFDLink.Count(ctrlL) == 1, "ЛКМ по двери: связь добавлена")
+ok(TOOL.LeftClick(lt, hitD1) == true and GRM.FFDLink.Count(ctrlL) == 0, "повторный ЛКМ по двери: связь снята")
+ok(TOOL.LeftClick(lt, hitD2) == true and GRM.FFDLink.Count(ctrlL) == 1, "ЛКМ по второй двери: привязана")
+
+-- ПКМ по двери: отвязка ото всех контроллеров
+local ctrlL2 = ents.Create("grm_scanner")
+GRM.FFDLink.Add(ctrlL2, doorL2)
+ok(TOOL.RightClick(lt, { Entity = doorL2 }) == true
+   and GRM.FFDLink.Count(ctrlL) == 0 and GRM.FFDLink.Count(ctrlL2) == 0,
+   "ПКМ по двери: отвязана ото всех контроллеров карты")
+
+-- повторный ЛКМ по уже выбранному контроллеру — СНИМАЕТ выбор (UX-дизайн Кода 108)
+ok(TOOL.LeftClick(lt, hitC) == true and lt:NumObjects() == 0 and lt:GetStage() == 0,
+   "повторный ЛКМ по выбранному контроллеру — сброс выбора")
+ok(lastNotify("выбор контроллера снят") ~= nil, "сброс выбора — с notify")
+
+-- ПКМ по контроллеру: снять все его связи + сброс выбора
+TOOL.LeftClick(lt, hitC)  -- выбрали заново
+TOOL.LeftClick(lt, hitD1) -- привязали дверь
+ok(GRM.FFDLink.Count(ctrlL) == 1, "повторно связали для проверки ПКМ")
+ok(TOOL.RightClick(lt, { Entity = ctrlL }) == true and GRM.FFDLink.Count(ctrlL) == 0
+   and lt:NumObjects() == 0 and lt:GetStage() == 0,
+   "ПКМ по контроллеру: все связи сняты, выбор сброшен")
+ok(lastNotify("снято связей") ~= nil, "снятие связей — с notify-фидбеком")
+
+-- без выбранного контроллера ЛКМ по двери — вежливый отказ
+ok(TOOL.LeftClick(lt, hitD1) == false and GRM.FFDLink.Count(ctrlL) == 0,
+   "ЛКМ по двери без контроллера — ничего не связывает")
+ok(lastNotify("сначала") ~= nil, "подсказка «сначала выбери контроллер»")
+
+-- R — сброс выбора; Holster — тоже
+TOOL.LeftClick(lt, hitC)
+ok(TOOL.Reload(lt, {}) == true and lt:NumObjects() == 0 and lt:GetStage() == 0, "R: выбор сброшен")
+TOOL.LeftClick(lt, hitC)
+lt:Holster()
+ok(lt:NumObjects() == 0 and lt:GetStage() == 0, "Holster: выбор сброшен")
+
+-- клики по обычному пропу — вежливый отказ
+local boxL = ents.Create("prop_physics") boxL:SetPos(mkVec(9, 0, 0))
+ok(TOOL.LeftClick(lt, { Entity = boxL }) == false and TOOL.RightClick(lt, { Entity = boxL }) == false,
+   "клики по обычному пропу — вежливый отказ, связей нет")
+
+-- CPanel: только Header + 4 строки подсказки (без конваров)
+H.addons = {}
+local helps8 = 0
+local panel8 = {}
+function panel8:AddControl(kind) H.addons[#H.addons + 1] = kind end
+function panel8:Help() helps8 = helps8 + 1 end
+local okP8 = pcall(TOOL.BuildCPanel, panel8)
+ok(okP8 and #H.addons == 1 and H.addons[1] == "Header" and helps8 == 4,
+   "CPanel: Header + 4 подсказки, конваров не требуется")
+
+-- клиентская ветка: TOOL:DrawHUD (дёргается из SWEP:DrawHUD тулгана)
+SERVER, CLIENT = false, true
+language = language or { Add = function() end }
+draw = draw or {}
+H.hudtexts = {}
+draw.SimpleText = function(txt) H.hudtexts[#H.hudtexts + 1] = tostring(txt) end
+ScrW = ScrW or function() return 1920 end
+ScrH = ScrH or function() return 1080 end
+TEXT_ALIGN_CENTER = TEXT_ALIGN_CENTER or 1
+H.lp8 = { GetEyeTrace = function() return H.eyeTrace end }
+LocalPlayer = function() return H.lp8 end
+TOOL = { ClientConVar = {} }
+dofile("lua/weapons/gmod_tool/stools/ffd_link.lua") -- DrawHUD + language-строки
+dofile("lua/autorun/sh_grm_ffdlink.lua")            -- клиентские NW-хелперы
+ok(type(TOOL.DrawHUD) == "function" and type(GRM.FFDLink.LinkedCount) == "function"
+   and type(GRM.FFDLink.LinkedIndexSet) == "function", "клиент: DrawHUD + NW-хелперы связей")
+
+local ltc = mkLinkTool(plyA)
+local okHud0 = pcall(TOOL.DrawHUD, ltc)
+ok(okHud0 and (H.hudtexts[1] or ""):find("выбрать контроллер") ~= nil,
+   "HUD без выбора: подсказка выбрать контроллер, без краша")
+
+GRM.FFDLink.Add(ctrlL, doorL2) -- RefreshNW наполнит __nwi/__nws для клиента
+ltc:SetObject(1, ctrlL) ltc:SetStage(1)
+H.eyeTrace = { Entity = doorL2 }
+H.hudtexts = {}
+local okHud1 = pcall(TOOL.DrawHUD, ltc)
+local hudJoined = table.concat(H.hudtexts, " | ")
+ok(okHud1 and hudJoined:find("Контроллер") ~= nil and hudJoined:find("СВЯЗАНА") ~= nil,
+   "HUD: выбранный контроллер + подсветка «СВЯЗАНА» на привязанной двери")
+H.eyeTrace = { Entity = doorL1 }
+H.hudtexts = {}
+pcall(TOOL.DrawHUD, ltc)
+ok(table.concat(H.hudtexts, "|"):find("не связана") ~= nil,
+   "HUD: несвязанная FFD-дверь под прицелом помечается «не связана»")
+GRM.FFDLink.Clear(ctrlL)
 
 print("")
 print(("РЕЗУЛЬТАТ: %d/%d проверок, провалов: %d"):format(checks - failed, checks, failed))
