@@ -2735,6 +2735,78 @@ if CLIENT then
                     notification.AddLegacy("Если меню не открылось — проверьте, что grm_phone_system установлен и загружен.", NOTIFY_HINT, 4)
                 end
             end
+            
+            -- Законодательство ---------------------------------------------------
+            sectionLabel(scroll, "Законодательство (законы)")
+            
+            -- Проверяем доступы для текущей фракции
+            local factionPerms = {}
+            if GRM and GRM.FactionPerms and GRM.FactionPerms.GetFactionRoles then
+                factionPerms = GRM.FactionPerms.GetFactionRoles(factionName) or {}
+            end
+            
+            infoLine(scroll, "Настройка доступов к публикации и удалению законов по ролям фракции.", THEME.textDim, 20)
+            
+            -- Список ролей с чекбоксами для доступов
+            for _, role in ipairs(f.Roles or {}) do
+                local rolePerms = factionPerms[role] or {}
+                
+                local rolePanel = vgui.Create("DPanel", scroll)
+                rolePanel:Dock(TOP)
+                rolePanel:SetTall(50)
+                rolePanel:DockMargin(0, 4, 0, 0)
+                rolePanel.Paint = function(self, w, h)
+                    draw.RoundedBox(4, 0, 0, w, h, Color(40, 40, 40, 150))
+                end
+                
+                -- Название роли
+                local roleLabel = vgui.Create("DLabel", rolePanel)
+                roleLabel:SetPos(8, 4)
+                roleLabel:SetSize(200, 20)
+                roleLabel:SetText("Роль: " .. role)
+                roleLabel:SetTextColor(Color(255, 200, 100))
+                roleLabel:SetFont("FactionsExt_Normal")
+                
+                -- Чекбокс law_publish
+                local pubChk = vgui.Create("DCheckBoxLabel", rolePanel)
+                pubChk:SetPos(8, 26)
+                pubChk:SetSize(150, 20)
+                pubChk:SetText("Публикация законов")
+                pubChk:SetTextColor(rolePerms.law_publish and Color(140, 240, 160) or THEME.text)
+                pubChk:SetFont("FactionsExt_Small")
+                pubChk:SetValue(rolePerms.law_publish and 1 or 0)
+                pubChk.OnChange = function(_, val)
+                    if GRM and GRM.FactionPerms then
+                        if tobool(val) then
+                            GRM.FactionPerms.GrantToRole(factionName, role, "law_publish")
+                        else
+                            GRM.FactionPerms.RevokeFromRole(factionName, role, "law_publish")
+                        end
+                    end
+                end
+                
+                -- Чекбокс law_remove
+                local remChk = vgui.Create("DCheckBoxLabel", rolePanel)
+                remChk:SetPos(170, 26)
+                remChk:SetSize(150, 20)
+                remChk:SetText("Удаление законов")
+                remChk:SetTextColor(rolePerms.law_remove and Color(140, 240, 160) or THEME.text)
+                remChk:SetFont("FactionsExt_Small")
+                remChk:SetValue(rolePerms.law_remove and 1 or 0)
+                remChk.OnChange = function(_, val)
+                    if GRM and GRM.FactionPerms then
+                        if tobool(val) then
+                            GRM.FactionPerms.GrantToRole(factionName, role, "law_remove")
+                        else
+                            GRM.FactionPerms.RevokeFromRole(factionName, role, "law_remove")
+                        end
+                    end
+                end
+            end
+            
+            if #(f.Roles or {}) == 0 then
+                infoLine(scroll, "Ролей нет — создайте во вкладке «Роли».", THEME.textDim, 20)
+            end
         end
 
         factionCombo.OnSelect = function(_, _, val)
