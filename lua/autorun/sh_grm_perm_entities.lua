@@ -100,6 +100,8 @@ if SERVER then
         grm_roomtap_chip     = true,
         grm_roomtap_server   = true,
         grm_roomtap_terminal = true,
+        -- GRM Vendor / Торгаш (Код 111)
+        grm_vendor           = true,
         -- Рудная ветка (Код 89)
         grm_ore_node       = true,
         grm_ore_buyer      = true,
