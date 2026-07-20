@@ -56,26 +56,10 @@ function SWEP:SecondaryAttack()
     self:CheckDocuments(self.Owner, target)
 end
 
-function SWEP:CanSearch(ply)
-    -- Проверяем фракцию полиции
-    if Factions and Factions["Полиция"] then
-        local f = Factions["Полиция"]
-        if istable(f.Members) then
-            local sid = ply:SteamID()
-            local sid64 = ply:SteamID64()
-            if f.Members[sid] or f.Members[sid64] then
-                return true
-            end
-        end
-    end
-    
-    -- Или суперадмин
-    return ply:IsSuperAdmin()
-end
+-- CanSearch теперь в shared.lua
 
 function SWEP:PerformSearch(searcher, target)
     local found = {}
-    local confiscated = {}
     
     -- Проверяем инвентарь
     if GRM.Inventory and GRM.Inventory.GetPlayerInv then
@@ -87,10 +71,6 @@ function SWEP:PerformSearch(searcher, target)
                     for _, contraband in ipairs(self.Contraband) do
                         if slot.id == contraband then
                             found[#found + 1] = {type = "item", id = slot.id, count = slot.count or 1}
-                            
-                            -- Изъятие (автоматическое)
-                            GRM.Inventory.RemoveItem(target, slot.id, slot.count or 1)
-                            confiscated[#confiscated + 1] = slot.id
                         end
                     end
                 end
@@ -105,15 +85,11 @@ function SWEP:PerformSearch(searcher, target)
         for _, contraband in ipairs(self.ContrabandWeapons) do
             if class == contraband then
                 found[#found + 1] = {type = "weapon", id = class}
-                
-                -- Изъятие оружия
-                target:StripWeapon(class)
-                confiscated[#confiscated + 1] = class
             end
         end
     end
     
-    -- Отправляем результат обыскивающему
+    -- Отправляем результат обыскивающему (UI с чекбоксами)
     net.Start("GRM_Search_Result")
         net.WriteEntity(searcher)
         net.WriteEntity(target)
@@ -123,25 +99,15 @@ function SWEP:PerformSearch(searcher, target)
             net.WriteString(item.id)
             net.WriteUInt(item.count or 1, 8)
         end
-        net.WriteUInt(#confiscated, 8)
-        for _, id in ipairs(confiscated) do
-            net.WriteString(id)
-        end
     net.Send(searcher)
     
     -- Уведомление цели
-    if #found > 0 then
-        if GRM.Notify then
-            GRM.Notify(target, "У вас провели обыск и изъяли запрещённые предметы!", 255, 100, 100)
-        end
-    else
-        if GRM.Notify then
-            GRM.Notify(target, "У вас провели обыск. Ничего не найдено.", 100, 220, 100)
-        end
+    if GRM.Notify then
+        GRM.Notify(target, "У вас провели обыск.", 255, 200, 100)
     end
     
     -- Логирование
-    self:LogSearch(searcher, target, found, confiscated)
+    self:LogSearch(searcher, target, found)
 end
 
 function SWEP:CheckDocuments(searcher, target)
@@ -164,30 +130,74 @@ function SWEP:CheckDocuments(searcher, target)
     searcher:ChatPrint(msg)
 end
 
-function SWEP:LogSearch(searcher, target, found, confiscated)
-    -- Записываем в лог (можно расширить для сохранения в файл)
-    local log = string.format("[ОБЫСК] %s обыскал %s | Найдено: %d | Изъято: %d",
+function SWEP:LogSearch(searcher, target, found)
+    -- Записываем в лог
+    local log = string.format("[ОБЫСК] %s обыскал %s | Найдено: %d предметов",
         searcher:Nick(),
         target:Nick(),
-        #found,
-        #confiscated
+        #found
     )
     
     print(log)
     
-    -- Отправляем в чат полиции (если есть)
-    if Factions and Factions["Полиция"] then
-        for _, ply in ipairs(player.GetAll()) do
-            if IsValid(ply) then
-                local f = Factions["Полиция"]
-                if istable(f.Members) then
-                    local sid = ply:SteamID()
-                    local sid64 = ply:SteamID64()
-                    if f.Members[sid] or f.Members[sid64] then
-                        ply:ChatPrint(log)
-                    end
+    -- Отправляем в чат всем игрокам с доступом
+    for _, ply in ipairs(player.GetAll()) do
+        if IsValid(ply) and self:CanSearch(ply) then
+            ply:ChatPrint(log)
+        end
+    end
+end
+
+-- Изъятие предмета (по запросу от клиента)
+net.Receive("GRM_Search_Confiscate", function(_, searcher)
+    if not IsValid(searcher) then return end
+    if not searcher:IsPlayer() then return end
+    
+    -- Проверяем доступ
+    local canSearch = false
+    if searcher:IsSuperAdmin() then
+        canSearch = true
+    elseif Factions then
+        for _, factionName in ipairs(GRM.Search.AllowedFactions) do
+            local f = Factions[factionName]
+            if istable(f) and istable(f.Members) then
+                local sid = searcher:SteamID()
+                local sid64 = searcher:SteamID64()
+                if f.Members[sid] or f.Members[sid64] then
+                    canSearch = true
+                    break
                 end
             end
         end
     end
+    
+    if not canSearch then return end
+    
+    local target = net.ReadEntity()
+    if not IsValid(target) or not target:IsPlayer() then return end
+    
+    local itemType = net.ReadString()
+    local itemID = net.ReadString()
+    local count = net.ReadUInt(8)
+    
+    if itemType == "item" then
+        GRM.Inventory.RemoveItem(target, itemID, count)
+        if GRM.Notify then
+            GRM.Notify(searcher, "Изъято: " .. itemID .. " x" .. count, 100, 220, 100)
+            GRM.Notify(target, "У вас изъяли: " .. itemID, 255, 100, 100)
+        end
+    elseif itemType == "weapon" then
+        target:StripWeapon(itemID)
+        if GRM.Notify then
+            GRM.Notify(searcher, "Изъято оружие: " .. itemID, 100, 220, 100)
+            GRM.Notify(target, "У вас изъяли оружие: " .. itemID, 255, 100, 100)
+        end
+    end
+    
+    print("[ИЗЪЯТИЕ] " .. searcher:Nick() .. " изъял " .. itemID .. " у " .. target:Nick())
+end)
+
+-- Статическая проверка доступа (для net.Receive)
+function SWEP:CanSearchStatic(ply)
+    return SWEP:CanSearch(ply)
 end

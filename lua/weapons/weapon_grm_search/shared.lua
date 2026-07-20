@@ -61,3 +61,39 @@ SWEP.ContrabandWeapons = {
     "weapon_shotgun2",
     "weapon_mp52",
 }
+
+-- Фракции с доступом к обыску (настраивается через GRM.Search.AllowedFactions)
+-- По умолчанию: любая фракция с "police" или "law" в названии, либо суперадмин
+GRM.Search = GRM.Search or {}
+GRM.Search.AllowedFactions = {
+    "Полиция",
+    "Полиция",
+    "ЛSPD",
+    "Федеральная полиция",
+    "Sheriff",
+}
+
+function SWEP:CanSearch(ply)
+    -- Суперадмин всегда может
+    if ply:IsSuperAdmin() then return true end
+    
+    -- Проверяем через хук (другие модули могут переопределять)
+    local canSearch = hook.Call("GRM_Search_CanSearch", nil, ply)
+    if canSearch ~= nil then return canSearch end
+    
+    -- Проверяем через список разрешённых фракций
+    if Factions then
+        for _, factionName in ipairs(GRM.Search.AllowedFactions) do
+            local f = Factions[factionName]
+            if istable(f) and istable(f.Members) then
+                local sid = ply:SteamID()
+                local sid64 = ply:SteamID64()
+                if f.Members[sid] or f.Members[sid64] then
+                    return true
+                end
+            end
+        end
+    end
+    
+    return false
+end
