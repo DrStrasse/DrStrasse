@@ -49,9 +49,10 @@ function ENT:Use(ply)
             return
         end
         local wep = ply:Give(class, false)
-        if IsValid(wep) and data then
-            if data.clip1 then wep:SetClip1(tonumber(data.clip1) or wep:Clip1()) end
-            if data.clip2 then wep:SetClip2(tonumber(data.clip2) or wep:Clip2()) end
+        if IsValid(wep) then
+            -- Оружие подбирается с дефолтными патронами от ply:Give
+            -- clip1/clip2 больше не сохраняются (баг: ply:Give уже добавляет патроны в резерв,
+            -- и установка clip1 из data создавала дублирование — патроны удваивались)
         end
         if GRM.Notify then GRM.Notify(ply, "Подобрано оружие", 100, 220, 100) end
         self:Remove()

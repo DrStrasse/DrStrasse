@@ -968,8 +968,6 @@ if SERVER then
             return false
         end
 
-        local clip1 = wep:Clip1()
-        local clip2 = wep:Clip2()
         local itemID = "weapon:" .. class
 
         local ent = ents.Create("grm_item_drop")
@@ -991,7 +989,9 @@ if SERVER then
         ent:SetItemID(itemID)
         ent:SetItemCount(1)
         ent:SetDisplayName(wep:GetPrintName() ~= "" and wep:GetPrintName() or class)
-        ent.ItemData = { class = class, clip1 = clip1, clip2 = clip2 }
+        -- Не сохраняем clip1/clip2 — при подборе оружие даётся с дефолтными патронами (ply:Give)
+        -- Иначе ply:Give добавляет патроны в резерв + clip1 из data = дублирование (баг)
+        ent.ItemData = { class = class }
         ent:Spawn()
         ent:Activate()
 
