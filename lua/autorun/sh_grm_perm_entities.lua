@@ -39,7 +39,10 @@
 -- Код 108: кейпад/сканер несут в rec.data ещё и links — ручные связи
 -- с FFD-дверями (sh_grm_ffdlink.lua / инструмент FFD Link); связи
 -- разрешаются обратно в энтити по классу+позиции (сфера 15 юнитов).
-local PERM_VER = "1.4.1"
+-- Код 110: перм агрегатов кухни (плита/холодильник/горшок) — состояние
+-- (лоток плиты, содержимое холодильника, посадка) едет в rec.data
+-- через GRM.PermData-делегаты sh_grm_food_kitchen.lua.
+local PERM_VER = "1.5.0"
 GRM = GRM or {}
 GRM._permEntitiesVer = PERM_VER
 
@@ -85,6 +88,10 @@ if SERVER then
         -- Кейпад прохода (Код 70/Код 89) и сканер фракций (Код 107)
         grm_keypad         = true,
         grm_scanner        = true,
+        -- Кухня «GrandEats» (Код 110): плита, холодильник, горшок
+        grm_food_stove     = true,
+        grm_food_fridge    = true,
+        grm_food_planter   = true,
         -- Код 105: prop_physics допускаем именно ради FFD-дверей
         -- (владелец пермит двери; рабочее состояние восстанавливает
         -- GRM.PermData.Apply["prop_physics"] из стула FFD Fading Door)
