@@ -46,6 +46,14 @@ SWEP.Contraband = {
 
 -- Запрещённое оружие (кроме служебного)
 SWEP.ContrabandWeapons = {
+    -- ArcCW
+    "arccw_ak47",
+    "arccw_m4a1",
+    "arccw_p228",
+    "arccw_deagle",
+    "arccw_shotgun",
+    "arccw_mp5",
+    -- Старые классы (для совместимости)
     "weapon_ak472",
     "weapon_m42",
     "weapon_glock2",
