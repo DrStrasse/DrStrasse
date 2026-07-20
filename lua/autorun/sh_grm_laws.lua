@@ -268,7 +268,7 @@ if CLIENT then
         -- Создаём окно (размер как у Q-меню)
         local frame = vgui.Create("DFrame")
         frame:SetTitle("")
-        frame:SetSize(1000, 700)
+        frame:SetSize(1400, 900)
         frame:Center()
         frame:MakePopup()
         frame:ShowCloseButton(true)
@@ -349,20 +349,20 @@ if CLIENT then
             -- Кнопки действий (справа)
             local btnsPanel = vgui.Create("DPanel", row)
             btnsPanel:Dock(RIGHT)
-            btnsPanel:SetWide(110)
+            btnsPanel:SetWide(180)
             btnsPanel:DockMargin(0, 8, 8, 8)
             btnsPanel:SetPaintBackground(false)
             
             if canEdit then
                 local btnEdit = vgui.Create("DButton", btnsPanel)
                 btnEdit:Dock(TOP)
-                btnEdit:SetTall(28)
+                btnEdit:SetTall(36)
                 btnEdit:DockMargin(0, 0, 0, 4)
                 btnEdit:SetText("")
                 btnEdit.Paint = function(self, w, h)
                     local col = self:IsHovered() and Color(90, 175, 255) or CUI.accent
                     draw.RoundedBox(5, 0, 0, w, h, col)
-                    draw.SimpleText("Изменить", "GRMLaws_Small", w/2, h/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("Изменить", "GRMLaws_Normal", w/2, h/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                 end
                 btnEdit.DoClick = function()
                     Derma_StringRequest("Редактировать закон #" .. law.id, "Новый текст закона:", law.text, function(newText)
@@ -381,12 +381,12 @@ if CLIENT then
             if canRemove then
                 local btnDel = vgui.Create("DButton", btnsPanel)
                 btnDel:Dock(TOP)
-                btnDel:SetTall(28)
+                btnDel:SetTall(36)
                 btnDel:SetText("")
                 btnDel.Paint = function(self, w, h)
                     local col = self:IsHovered() and Color(225, 90, 85) or CUI.red
                     draw.RoundedBox(5, 0, 0, w, h, col)
-                    draw.SimpleText("Удалить", "GRMLaws_Small", w/2, h/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("Удалить", "GRMLaws_Normal", w/2, h/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                 end
                 btnDel.DoClick = function()
                     Derma_Query("Удалить закон #" .. law.id .. "?", "Подтверждение", "Да", function()
