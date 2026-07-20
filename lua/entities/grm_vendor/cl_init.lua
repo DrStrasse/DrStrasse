@@ -26,45 +26,44 @@ hook.Add("HUDPaint", "GRM_VendorLabel", function()
     local maxDist = 300
 
     for _, ent in ipairs(ents.FindByClass("grm_vendor")) do
-        if not IsValid(ent) then continue end
+        if IsValid(ent) then
+            local dist = ply:GetPos():Distance(ent:GetPos())
+            if dist <= maxDist then
+                -- Подсказка над головой NPC
+                local offset = Vector(0, 0, 62)
+                local scr = (ent:GetPos() + offset):ToScreen()
+                if scr.visible then
+                    local x, y = scr.x, scr.y
+                    local alpha = math.Clamp(255 - (dist / maxDist) * 200, 55, 255)
 
-        local dist = ply:GetPos():Distance(ent:GetPos())
-        if dist > maxDist then continue end
+                    local vtype = ent:GetNWString("VendorType", ent.VendorType or "weapon")
+                    local text = LABELS[vtype] or "🏪 Торгаш"
 
-        -- Подсказка над головой NPC
-        local offset = Vector(0, 0, 62)
-        local scr = (ent:GetPos() + offset):ToScreen()
-        if not scr.visible then continue end
+                    surface.SetFont("GRM_VendorLabel")
+                    local tw, th = surface.GetTextSize(text)
+                    local pad = 6
 
-        local x, y = scr.x, scr.y
-        local alpha = math.Clamp(255 - (dist / maxDist) * 200, 55, 255)
+                    -- Фон
+                    surface.SetDrawColor(0, 0, 0, alpha * 0.65)
+                    surface.DrawRect(x - pad, y - pad, tw + pad * 2, th + pad * 2)
 
-        local vtype = ent:GetNWString("VendorType", ent.VendorType or "weapon")
-        local text = LABELS[vtype] or "🏪 Торгаш"
+                    -- Текст
+                    surface.SetTextColor(255, 220, 80, alpha)
+                    surface.SetTextPos(x, y)
+                    surface.DrawText(text)
 
-        surface.SetFont("GRM_VendorLabel")
-        local tw, th = surface.GetTextSize(text)
-        local pad = 6
-
-        -- Фон
-        surface.SetDrawColor(0, 0, 0, alpha * 0.65)
-        surface.DrawRect(x - pad, y - pad, tw + pad * 2, th + pad * 2)
-
-        -- Текст
-        surface.SetTextColor(255, 220, 80, alpha)
-        surface.SetTextPos(x, y)
-        surface.DrawText(text)
-
-        -- Подсказка "E — купить" при близком расстоянии
-        if dist < 120 then
-            surface.SetFont("GRM_VendorLabel")
-            local hint = "[E] — Открыть магазин"
-            local hw, hh = surface.GetTextSize(hint)
-            surface.SetDrawColor(0, 0, 0, alpha * 0.5)
-            surface.DrawRect(x - pad, y + th + 4, hw + pad * 2, hh + pad)
-            surface.SetTextColor(200, 220, 255, alpha)
-            surface.SetTextPos(x, y + th + 4)
-            surface.DrawText(hint)
+                    -- Подсказка "E — купить" при близком расстоянии
+                    if dist < 120 then
+                        local hint = "[E] — Открыть магазин"
+                        local hw, hh = surface.GetTextSize(hint)
+                        surface.SetDrawColor(0, 0, 0, alpha * 0.5)
+                        surface.DrawRect(x - pad, y + th + 4, hw + pad * 2, hh + pad)
+                        surface.SetTextColor(200, 220, 255, alpha)
+                        surface.SetTextPos(x, y + th + 4)
+                        surface.DrawText(hint)
+                    end
+                end
+            end
         end
     end
 end)
