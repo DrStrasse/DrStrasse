@@ -82,33 +82,8 @@ local function equippedWeaponWeight(ply, breakdown)
 end
 
 local function liveAmmoWeight(ply, breakdown)
-    local total = 0
-    local seenAmmoIDs = {}
-    -- 1) Известные типы из конфига
-    for ammoType, unitWeight in pairs(C.AmmoWeights or {}) do
-        local ammoID = game.GetAmmoID(ammoType)
-        if ammoID and ammoID >= 0 and not seenAmmoIDs[ammoID] then
-            seenAmmoIDs[ammoID] = true
-            local count = math.max(0, ply:GetAmmoCount(ammoID) or 0)
-            local value = count * unitWeight
-            total = total + value
-            breakdown.ammo = breakdown.ammo + value
-        end
-    end
-    -- 2) Неизвестные типы (ArcCW/TFA кастомные)
-    local defaultWeight = 0.015
-    for ammoID = 0, 31 do
-        if not seenAmmoIDs[ammoID] then
-            local count = math.max(0, ply:GetAmmoCount(ammoID) or 0)
-            if count > 0 then
-                local value = count * defaultWeight
-                total = total + value
-                breakdown.ammo = breakdown.ammo + value
-                seenAmmoIDs[ammoID] = true
-            end
-        end
-    end
-    return total
+    -- Патроны НЕ учитываются в весе (баг: вес не сбрасывается)
+    return 0
 end
 
 function E.CalculateWeight(ply)
@@ -301,7 +276,7 @@ concommand.Add("grm_weight_debug", function(ply)
     if not IsValid(ply) then return end
     local state = E.GetPlayerState(ply)
     ply:ChatPrint(string.format("[Вес] Всего: %.2f / %.2f кг (жёсткий: %.2f)", state.weight, state.capacity, state.hard))
-    ply:ChatPrint(string.format("[Вес] Инвентарь: %.2f | Оружие: %.2f | Патроны: %.2f | Скорость: %d%%", state.breakdown.inventory, state.breakdown.weapons, state.breakdown.ammo, state.multiplier * 100))
+    ply:ChatPrint(string.format("[Вес] Инвентарь: %.2f | Оружие: %.2f | Скорость: %d%%", state.breakdown.inventory, state.breakdown.weapons, state.multiplier * 100))
 end)
 
 print("[GRM] Encumbrance server loaded")
