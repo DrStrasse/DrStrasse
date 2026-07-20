@@ -50,7 +50,8 @@ function ENT:Think()
         end
     end
 
-    self:NextTick(CurTime() + 1)
+    self:NextThink(CurTime() + 1)
+    return true
 end
 
 function ENT:CollectMoney()
