@@ -603,6 +603,206 @@ if CLIENT then
     end
 
     -- ----------------------------------------------------------------
+    -- Построение вкладки для РОЛЕЙ
+    -- ----------------------------------------------------------------
+
+    local function buildRoleTab(panel, factionName, rolesData)
+        -- Список ролей с их точками
+        local scroll = vgui.Create("DScrollPanel", panel)
+        scroll:Dock(FILL)
+        scroll:DockMargin(5, 5, 5, 5)
+        scroll.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
+
+        local canvas = scroll:GetCanvas()
+
+        for roleName, rolePoints in pairs(rolesData) do
+            -- Заголовок роли
+            local header = vgui.Create("DPanel", canvas)
+            header:Dock(TOP)
+            header:SetTall(30)
+            header:DockMargin(4, 4, 4, 2)
+            header.Paint = function(self, w, h)
+                draw.RoundedBox(4, 0, 0, w, h, Color(40, 50, 65, 245))
+                draw.SimpleText("Роль: " .. roleName .. " (" .. #rolePoints .. " точек)", "GRML_Normal", 8, 15, CUI.text)
+            end
+
+            -- Точки роли
+            for i, point in ipairs(rolePoints) do
+                local card = vgui.Create("DPanel", canvas)
+                card:Dock(TOP)
+                card:SetTall(40)
+                card:DockMargin(8, 2, 4, 2)
+                card.Paint = function(self, w, h)
+                    local bg = self:IsHovered() and Color(40, 50, 65, 245) or Color(30, 38, 52, 240)
+                    draw.RoundedBox(4, 0, 0, w, h, bg)
+                    local px, py, pz = fmtPos(point.pos)
+                    draw.SimpleText(string.format("#%d X:%s Y:%s Z:%s", i, px, py, pz), "GRML_Small", 8, 20, CUI.text)
+                end
+
+                -- Кнопка удаления
+                local btnDel = vgui.Create("DButton", card)
+                btnDel:Dock(RIGHT)
+                btnDel:SetWide(80)
+                btnDel:SetText("")
+                btnDel.Paint = function(self, w, h)
+                    local col = self:IsHovered() and Color(225, 90, 85) or CUI.red
+                    draw.RoundedBox(4, 0, 0, w, h, col)
+                    draw.SimpleText("Удалить", "GRML_Small", w/2, h/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                end
+                btnDel.DoClick = function()
+                    net.Start("SpawnAdmin_RemoveRolePoint")
+                    net.WriteString(factionName)
+                    net.WriteString(roleName)
+                    net.WriteInt(i, 32)
+                    net.SendToServer()
+                end
+            end
+        end
+
+        -- Кнопка добавления точки для роли
+        local addBar = vgui.Create("DPanel", panel)
+        addBar:Dock(BOTTOM)
+        addBar:SetTall(44)
+        addBar:DockMargin(5, 5, 5, 5)
+        addBar.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
+
+        local roleEntry = vgui.Create("DTextEntry", addBar)
+        roleEntry:Dock(LEFT)
+        roleEntry:SetWide(200)
+        roleEntry:DockMargin(5, 6, 5, 6)
+        roleEntry:SetPlaceholderText("Название роли...")
+        roleEntry.Paint = function(self, w, h)
+            draw.RoundedBox(4, 0, 0, w, h, Color(25, 30, 40, 240))
+            self:DrawTextEntryText(Color(220, 225, 235), CUI.accent, CUI.text)
+        end
+
+        local btnAdd = vgui.Create("DButton", addBar)
+        btnAdd:Dock(LEFT)
+        btnAdd:SetWide(150)
+        btnAdd:DockMargin(5, 6, 5, 6)
+        btnAdd:SetText("")
+        btnAdd.Paint = function(self, w, h)
+            local col = self:IsHovered() and Color(75, 205, 125) or CUI.green
+            draw.RoundedBox(5, 0, 0, w, h, col)
+            draw.SimpleText("Добавить точку", "GRML_Normal", w/2, h/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+        btnAdd.DoClick = function()
+            local roleName = roleEntry:GetValue()
+            if roleName == "" then
+                notification.AddLegacy("Введите название роли", NOTIFY_ERROR, 3)
+                return
+            end
+            net.Start("SpawnAdmin_AddRolePoint")
+            net.WriteString(factionName)
+            net.WriteString(roleName)
+            net.WriteVector(LocalPlayer():GetPos())
+            net.WriteAngle(LocalPlayer():GetAngles())
+            net.SendToServer()
+            roleEntry:SetValue("")
+        end
+    end
+
+    -- ----------------------------------------------------------------
+    -- Построение вкладки для ОТДЕЛОВ
+    -- ----------------------------------------------------------------
+
+    local function buildDepartmentTab(panel, factionName, deptsData)
+        -- Список отделов с их точками
+        local scroll = vgui.Create("DScrollPanel", panel)
+        scroll:Dock(FILL)
+        scroll:DockMargin(5, 5, 5, 5)
+        scroll.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
+
+        local canvas = scroll:GetCanvas()
+
+        for deptName, deptPoints in pairs(deptsData) do
+            -- Заголовок отдела
+            local header = vgui.Create("DPanel", canvas)
+            header:Dock(TOP)
+            header:SetTall(30)
+            header:DockMargin(4, 4, 4, 2)
+            header.Paint = function(self, w, h)
+                draw.RoundedBox(4, 0, 0, w, h, Color(40, 50, 65, 245))
+                draw.SimpleText("Отдел: " .. deptName .. " (" .. #deptPoints .. " точек)", "GRML_Normal", 8, 15, CUI.text)
+            end
+
+            -- Точки отдела
+            for i, point in ipairs(deptPoints) do
+                local card = vgui.Create("DPanel", canvas)
+                card:Dock(TOP)
+                card:SetTall(40)
+                card:DockMargin(8, 2, 4, 2)
+                card.Paint = function(self, w, h)
+                    local bg = self:IsHovered() and Color(40, 50, 65, 245) or Color(30, 38, 52, 240)
+                    draw.RoundedBox(4, 0, 0, w, h, bg)
+                    local px, py, pz = fmtPos(point.pos)
+                    draw.SimpleText(string.format("#%d X:%s Y:%s Z:%s", i, px, py, pz), "GRML_Small", 8, 20, CUI.text)
+                end
+
+                -- Кнопка удаления
+                local btnDel = vgui.Create("DButton", card)
+                btnDel:Dock(RIGHT)
+                btnDel:SetWide(80)
+                btnDel:SetText("")
+                btnDel.Paint = function(self, w, h)
+                    local col = self:IsHovered() and Color(225, 90, 85) or CUI.red
+                    draw.RoundedBox(4, 0, 0, w, h, col)
+                    draw.SimpleText("Удалить", "GRML_Small", w/2, h/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                end
+                btnDel.DoClick = function()
+                    net.Start("SpawnAdmin_RemoveDeptPoint")
+                    net.WriteString(factionName)
+                    net.WriteString(deptName)
+                    net.WriteInt(i, 32)
+                    net.SendToServer()
+                end
+            end
+        end
+
+        -- Кнопка добавления точки для отдела
+        local addBar = vgui.Create("DPanel", panel)
+        addBar:Dock(BOTTOM)
+        addBar:SetTall(44)
+        addBar:DockMargin(5, 5, 5, 5)
+        addBar.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
+
+        local deptEntry = vgui.Create("DTextEntry", addBar)
+        deptEntry:Dock(LEFT)
+        deptEntry:SetWide(200)
+        deptEntry:DockMargin(5, 6, 5, 6)
+        deptEntry:SetPlaceholderText("Название отдела...")
+        deptEntry.Paint = function(self, w, h)
+            draw.RoundedBox(4, 0, 0, w, h, Color(25, 30, 40, 240))
+            self:DrawTextEntryText(Color(220, 225, 235), CUI.accent, CUI.text)
+        end
+
+        local btnAdd = vgui.Create("DButton", addBar)
+        btnAdd:Dock(LEFT)
+        btnAdd:SetWide(150)
+        btnAdd:DockMargin(5, 6, 5, 6)
+        btnAdd:SetText("")
+        btnAdd.Paint = function(self, w, h)
+            local col = self:IsHovered() and Color(75, 205, 125) or CUI.green
+            draw.RoundedBox(5, 0, 0, w, h, col)
+            draw.SimpleText("Добавить точку", "GRML_Normal", w/2, h/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+        btnAdd.DoClick = function()
+            local deptName = deptEntry:GetValue()
+            if deptName == "" then
+                notification.AddLegacy("Введите название отдела", NOTIFY_ERROR, 3)
+                return
+            end
+            net.Start("SpawnAdmin_AddDeptPoint")
+            net.WriteString(factionName)
+            net.WriteString(deptName)
+            net.WriteVector(LocalPlayer():GetPos())
+            net.WriteAngle(LocalPlayer():GetAngles())
+            net.SendToServer()
+            deptEntry:SetValue("")
+        end
+    end
+
+    -- ----------------------------------------------------------------
     -- Построение вкладки списка точек (тёмная тема HUD v10.2)
     -- ----------------------------------------------------------------
 
@@ -795,7 +995,10 @@ if CLIENT then
             draw.SimpleText("Точки спавна", "GRML_Title", 12, 18, CUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             -- Счётчик точек
             local total = #menuState.globalPoints
-            for _, pts in pairs(menuState.factions) do total = total + #pts end
+            for _, facData in pairs(menuState.factions) do
+                local pts = facData.points or facData
+                if istable(pts) then total = total + #pts end
+            end
             draw.SimpleText("Всего: " .. total, "GRML_Small", w - 12, 18, CUI.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
 
@@ -809,17 +1012,38 @@ if CLIENT then
         menuState.refreshGlobal = buildPointTab(globalPanel, menuState.globalPoints, "__global")
         tabs:AddSheet("Глобальные", globalPanel, "icon16/world.png")
 
-        -- Вкладка для каждой фракции
+        -- Вкладка для каждой фракции (с подвкладками)
         local sortedFactions = {}
         for name in pairs(menuState.factions) do table.insert(sortedFactions, name) end
         table.sort(sortedFactions)
 
         for _, factionName in ipairs(sortedFactions) do
-            local points = menuState.factions[factionName]
-            local panel = vgui.Create("DPanel")
-            panel:SetPaintBackground(false)
-            menuState.refreshFac[factionName] = buildPointTab(panel, points, factionName)
-            tabs:AddSheet(factionName, panel, "icon16/group.png")
+            local facData = menuState.factions[factionName]
+            -- Поддержка старого формата (просто массив) и нового (таблица)
+            local points = facData.points or facData
+
+            local factionPanel = vgui.Create("DPropertySheet", tabs)
+            factionPanel:SetPaintBackground(false)
+
+            -- Подвкладка: Фракция (общие точки)
+            local facPointsPanel = vgui.Create("DPanel", factionPanel)
+            facPointsPanel:SetPaintBackground(false)
+            menuState.refreshFac[factionName] = buildPointTab(facPointsPanel, points, factionName)
+            factionPanel:AddSheet("Фракция", facPointsPanel, "icon16/group.png")
+
+            -- Подвкладка: Роли
+            local rolesPanel = vgui.Create("DPanel", factionPanel)
+            rolesPanel:SetPaintBackground(false)
+            buildRoleTab(rolesPanel, factionName, facData.roles or {})
+            factionPanel:AddSheet("Роли", rolesPanel, "icon16/user.png")
+
+            -- Подвкладка: Отделы
+            local deptsPanel = vgui.Create("DPanel", factionPanel)
+            deptsPanel:SetPaintBackground(false)
+            buildDepartmentTab(deptsPanel, factionName, facData.departments or {})
+            factionPanel:AddSheet("Отделы", deptsPanel, "icon16/users.png")
+
+            tabs:AddSheet(factionName, factionPanel, "icon16/group.png")
         end
 
         frame:Show()
