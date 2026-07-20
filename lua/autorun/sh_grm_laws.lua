@@ -312,13 +312,42 @@ if CLIENT then
                 header:SetTextColor(CUI.yellow)
                 header:SetFont("GRMLaws_Normal")
                 
-                -- Текст закона
-                local text = vgui.Create("DLabel", row)
-                text:Dock(FILL)
-                text:DockMargin(12, 0, 12, 8)
-                text:SetText(law.text)
-                text:SetTextColor(CUI.text)
-                text:SetFont("GRMLaws_Small")
+            -- Текст закона (с переносом строк)
+            local textPanel = vgui.Create("DPanel", row)
+            textPanel:Dock(FILL)
+            textPanel:DockMargin(12, 0, 210, 8)
+            textPanel:SetPaintBackground(false)
+            
+            -- Создаём multiline текст
+            local text = vgui.Create("DLabel", textPanel)
+            text:Dock(TOP)
+            text:SetTall(40) -- Начальная высота
+            text:SetText(law.text)
+            text:SetTextColor(CUI.text)
+            text:SetFont("GRMLaws_Small")
+            text:SetWrap(true)
+            text:SetAutoStretchVertical(true)
+            
+            local isExpanded = false
+            
+            -- Кнопка развернуть/свернуть (если текст длинный)
+            if #law.text > 100 then
+                local btnToggle = vgui.Create("DButton", textPanel)
+                btnToggle:Dock(BOTTOM)
+                btnToggle:SetTall(20)
+                btnToggle:SetText("")
+                btnToggle.Paint = function(self, w, h)
+                    draw.SimpleText(isExpanded and "▲ Свернуть" or "▼ Развернуть", "GRMLaws_Small", w/2, h/2, CUI.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                end
+                btnToggle.DoClick = function()
+                    isExpanded = not isExpanded
+                    if isExpanded then
+                        text:SetTall(0) -- Автоматическая высота
+                    else
+                        text:SetTall(40)
+                    end
+                end
+            end
                 
                 -- Кнопки действий (справа, горизонтально)
                 local btnsPanel = vgui.Create("DPanel", row)
