@@ -39,15 +39,15 @@ V.Models = {
 -- ============================================================
 V.Catalogs = V.Catalogs or {}
 
--- 1) ОРУЖИЕ — базовый набор (перекрывается реальными SWEP сервера)
+-- 1) ОРУЖИЕ — ArcCW (базовый набор; расширяется через V.RegisterItem)
 V.Catalogs.weapon = V.Catalogs.weapon or {
-    ["weapon_ak472"]    = { name = "AK-47",           price = 12000, model = "models/weapons/w_rif_ak47.mdl",    category = "Автоматы",  license = "gun" },
-    ["weapon_m42"]      = { name = "M4A1",            price = 13000, model = "models/weapons/w_rif_m4a1.mdl",    category = "Автоматы",  license = "gun" },
-    ["weapon_glock2"]   = { name = "Glock-18",        price = 3500,  model = "models/weapons/w_pist_glock18.mdl",category = "Пистолеты", license = "gun" },
-    ["weapon_deagle2"]  = { name = "Desert Eagle",    price = 6500,  model = "models/weapons/w_pist_deagle.mdl", category = "Пистолеты", license = "gun" },
-    ["weapon_shotgun2"] = { name = "Remington 870",   price = 9000,  model = "models/weapons/w_shotgun.mdl",     category = "Дробовики", license = "gun" },
-    ["weapon_mp52"]     = { name = "MP5",             price = 8500,  model = "models/weapons/w_smg_mp5.mdl",     category = "ПП",        license = "gun" },
-    ["arrest_stick"]    = { name = "Полицейская дубинка", price = 500, model = "models/weapons/w_stunbaton.mdl", category = "Спецназ", license = "police" },
+    ["arccw_ak47"]        = { name = "AK-47 (ArcCW)",     price = 12000, model = "models/weapons/w_rif_ak47.mdl",    category = "Автоматы",  license = "gun" },
+    ["arccw_m4a1"]        = { name = "M4A1 (ArcCW)",      price = 13000, model = "models/weapons/w_rif_m4a1.mdl",    category = "Автоматы",  license = "gun" },
+    ["arccw_p228"]        = { name = "P228 (ArcCW)",      price = 3500,  model = "models/weapons/w_pist_p228.mdl",   category = "Пистолеты", license = "gun" },
+    ["arccw_deagle"]      = { name = "Desert Eagle (ArcCW)", price = 6500, model = "models/weapons/w_pist_deagle.mdl", category = "Пистолеты", license = "gun" },
+    ["arccw_shotgun"]     = { name = "Remington 870 (ArcCW)", price = 9000, model = "models/weapons/w_shotgun.mdl",   category = "Дробовики", license = "gun" },
+    ["arccw_mp5"]         = { name = "MP5 (ArcCW)",       price = 8500,  model = "models/weapons/w_smg_mp5.mdl",     category = "ПП",        license = "gun" },
+    ["arrest_stick"]      = { name = "Полицейская дубинка", price = 500, model = "models/weapons/w_stunbaton.mdl",   category = "Спецназ",   license = "police" },
 }
 
 -- 2) РУДА — базовые цены, синхронизируются с GRM.OrePrices
