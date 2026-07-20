@@ -1,7 +1,9 @@
 --[[--------------------------------------------------------------------
-    GRM Vendor Toolgun (Код 111)
-    Спавн/настройка/удаление торгашей.
-    ВАЖНО: language.Add использует имя файла: tool.grm_vendor_tool.*
+    GRM Vendor Toolgun v1.2 (Код 111)
+    Исправления:
+    - Консольная команда: grm_vendor_tool_type (имя тула + имя конвара)
+    - Undo: регистрация удаления для клавиши Z
+    - Reload: корректный trace + проверка IsSuperAdmin
 ----------------------------------------------------------------------]]
 
 TOOL.Category   = "GRM"
@@ -9,6 +11,9 @@ TOOL.Name       = "#tool.grm_vendor_tool.name"
 TOOL.Command    = nil
 TOOL.ConfigName = ""
 
+-- ВАЖНО: GMod создаёт консольные команды по паттерну:
+--   grm_<имя_тула>_<имя_конвара>
+-- Для ClientConVar.type в tool grm_vendor_tool → grm_vendor_tool_type
 TOOL.ClientConVar = {
     type = "weapon",
 }
@@ -22,12 +27,11 @@ local VENDOR_LABELS = {
 }
 
 -- ========== ЛОКАЛИЗАЦИЯ ==========
--- ВАЖНО: имя должно совпадать с именем файла (grm_vendor_tool)
 if CLIENT then
     language.Add("tool.grm_vendor_tool.name",  "GRM Торгаш")
     language.Add("tool.grm_vendor_tool.desc",  "Спавн и настройка торгашей: оружие / руда / еда / редкости")
-    language.Add("tool.grm_vendor_tool.0",     "ЛКМ: Поставить торгаша. ПКМ: Настроить. R: Удалить.")
-    language.Add("tool.grm_vendor_tool.1",     "ЛКМ: Поставить торгаша. ПКМ: Настроить. R: Удалить.")
+    language.Add("tool.grm_vendor_tool.0",     "ЛКМ: Поставить. ПКМ: Настроить. R: Удалить. Z: Отмена.")
+    language.Add("tool.grm_vendor_tool.1",     "ЛКМ: Поставить. ПКМ: Настроить. R: Удалить. Z: Отмена.")
 end
 
 -- ========== ЛЕВЫЙ КЛИК: СПАВН ==========
@@ -36,12 +40,14 @@ function TOOL:LeftClick(tr)
     if CLIENT then return true end
 
     local ply = self:GetOwner()
-    if not ply:IsSuperAdmin() then
+    if not IsValid(ply) or not ply:IsSuperAdmin() then
         GRM.Notify(ply, "Только суперадмин!", 255, 100, 100)
         return false
     end
 
+    -- Получаем тип из конвара (правильное имя: grm_vendor_tool_type)
     local vtype = self:GetClientInfo("type")
+    if not vtype or vtype == "" then vtype = "weapon" end
     if not table.HasValue(VENDOR_TYPES, vtype) then vtype = "weapon" end
 
     local ent = ents.Create("grm_vendor")
@@ -58,6 +64,12 @@ function TOOL:LeftClick(tr)
     local phys = ent:GetPhysicsObject()
     if IsValid(phys) then phys:EnableMotion(false) end
 
+    -- Регистрация UNDO (клавиша Z)
+    undo.Create("GRM_Vendor")
+        undo.AddEntity(ent)
+        undo.SetPlayer(ply)
+    undo.Finish()
+
     ply:ChatPrint("[GRM Vendor] Поставлен: " .. (VENDOR_LABELS[vtype] or vtype) .. ". Наведись и введи /permadd чтобы закрепить на карте.")
     return true
 end
@@ -67,27 +79,40 @@ function TOOL:RightClick(tr)
     if CLIENT then return true end
 
     local ply = self:GetOwner()
-    if not ply:IsSuperAdmin() then return false end
+    if not IsValid(ply) or not ply:IsSuperAdmin() then return false end
 
     local ent = tr.Entity
-    if not IsValid(ent) or ent:GetClass() ~= "grm_vendor" then return false end
+    if not IsValid(ent) or ent:GetClass() ~= "grm_vendor" then
+        GRM.Notify(ply, "Наведи на торгаша!", 255, 100, 100)
+        return false
+    end
 
     self:OpenConfigPanel(ply, ent)
     return true
 end
 
--- ========== РЕЛОАД: УДАЛЕНИЕ ==========
+-- ========== РЕЛОАД (R): УДАЛЕНИЕ ==========
 function TOOL:Reload(tr)
     if CLIENT then return true end
 
     local ply = self:GetOwner()
-    if not ply:IsSuperAdmin() then return false end
+    if not IsValid(ply) or not ply:IsSuperAdmin() then return false end
 
+    -- Получаем entity из trace
     local ent = tr.Entity
-    if not IsValid(ent) or ent:GetClass() ~= "grm_vendor" then return false end
+    if not IsValid(ent) then
+        -- Фолбэк: ищем ближайшего торгаша в прицеле
+        ent = ply:GetEyeTrace().Entity
+    end
+    if not IsValid(ent) or ent:GetClass() ~= "grm_vendor" then
+        GRM.Notify(ply, "Наведи на торгаша!", 255, 100, 100)
+        return false
+    end
 
+    local vtype = ent.VendorType or "weapon"
     ent:Remove()
-    ply:ChatPrint("[GRM Vendor] Удалён.")
+
+    ply:ChatPrint("[GRM Vendor] Удалён: " .. (VENDOR_LABELS[vtype] or vtype) .. ".")
     return true
 end
 
@@ -106,7 +131,7 @@ if SERVER then
     end
 
     net.Receive("GRM_VendorTool_Config", function(_, ply)
-        if not ply:IsSuperAdmin() then return end
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
 
         local ent = net.ReadEntity()
         if not IsValid(ent) or ent:GetClass() ~= "grm_vendor" then return end
@@ -133,7 +158,6 @@ if CLIENT then
         frame:Center()
         frame:MakePopup()
 
-        -- Скролл-панель
         local scroll = vgui.Create("DScrollPanel", frame)
         scroll:Dock(FILL)
         scroll:DockMargin(8, 36, 8, 8)
@@ -150,7 +174,6 @@ if CLIENT then
                 draw.SimpleText("Базовая: " .. (GRM.Format and GRM.Format(item.price) or item.price), "DermaDefault", 8, 26, Color(180, 185, 195))
             end
 
-            -- Поле цены
             local priceEntry = vgui.Create("DNumberWang", row)
             priceEntry:SetPos(300, 8)
             priceEntry:SetSize(110, 24)
@@ -159,7 +182,6 @@ if CLIENT then
             priceEntry:SetDecimals(0)
             priceEntry:SetValue(customPrices[id] or item.price)
 
-            -- Поле лимита
             local limitEntry = vgui.Create("DNumberWang", row)
             limitEntry:SetPos(420, 8)
             limitEntry:SetSize(70, 24)
@@ -168,7 +190,6 @@ if CLIENT then
             limitEntry:SetDecimals(0)
             limitEntry:SetValue(customLimits[id] or 0)
 
-            -- Подписи
             local lbl1 = vgui.Create("DLabel", row)
             lbl1:SetPos(300, 30)
             lbl1:SetSize(110, 16)
@@ -188,7 +209,6 @@ if CLIENT then
             row._limitEntry = limitEntry
         end
 
-        -- Кнопка сохранения
         local save = vgui.Create("DButton", frame)
         save:Dock(BOTTOM)
         save:SetTall(36)
@@ -225,22 +245,23 @@ if CLIENT then
             Description = "GRM Торгаш: спавн / настройка цен и лимитов / удаление"
         })
 
-        -- Выбор типа
-        local combo = vgui.Create("DComboBox", CPanel)
-        combo:SetValue("Тип: Оружие")
-        for _, t in ipairs(VENDOR_TYPES) do
-            combo:AddChoice(VENDOR_LABELS[t], t)
-        end
-        combo.OnSelect = function(_, _, val, data)
-            RunConsoleCommand("grm_vendor_type", data)
-        end
-        CPanel:AddItem(combo)
+        -- ВАЖНО: ComboBox должен использовать RunConsoleCommand с ПРАВИЛЬНЫМ именем
+        -- grm_vendor_tool + _ + type = grm_vendor_tool_type
+        CPanel:AddControl("ComboBox", {
+            Label    = "Тип торгаша",
+            Options  = {
+                ["Оружие"]    = { grm_vendor_tool_type = "weapon" },
+                ["Руда"]      = { grm_vendor_tool_type = "ore" },
+                ["Еда"]       = { grm_vendor_tool_type = "food" },
+                ["Редкости"]  = { grm_vendor_tool_type = "rare" },
+            }
+        })
 
-        -- Подсказки
         CPanel:Help(
             "ЛКМ — поставить торгаша выбранного типа\n" ..
             "ПКМ — настроить цены/лимиты у существующего\n" ..
-            "R — удалить торгаша\n" ..
+            "R — удалить торгаша (навестись)\n" ..
+            "Z — отменить последний спавн (Undo)\n" ..
             "/permadd — закрепить на карте (переживёт рестарт)"
         )
     end
