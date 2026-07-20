@@ -101,6 +101,9 @@ if SERVER then
         grm_vendor           = true,
         -- Денежный принтер (Код 115)
         grm_money_printer    = true,
+        -- Лаборатории (Код 120)
+        grm_narc_lab         = true,
+        grm_med_lab          = true,
         -- GRM Logistics: склады, шкафы, точки погрузки (Код 112)
         grm_logistics_loading   = true,
         grm_logistics_warehouse = true,
