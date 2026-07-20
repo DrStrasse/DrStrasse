@@ -36,9 +36,9 @@ function TOOL:LeftClick(tr)
         return false
     end
 
-    local labType = self:GetClientInfo("grm_lab_type")
+    local labType = self:GetClientInfo("type")
     if not LAB_TYPES[labType] then
-        GRM.Notify(ply, "Неизвестный тип лаборатории", 255, 100, 100)
+        GRM.Notify(ply, "Неизвестный тип лаборатории: " .. tostring(labType), 255, 100, 100)
         return false
     end
 
@@ -114,8 +114,8 @@ function TOOL.BuildCPanel(CPanel)
     CPanel:AddControl("ComboBox", {
         Label = "Тип лаборатории",
         Options = {
-            ["Лаборатория наркотиков"] = { grm_lab_type = "narc" },
-            ["Медицинская лаборатория"] = { grm_lab_type = "med" },
+            ["Лаборатория наркотиков"] = { type = "narc" },
+            ["Медицинская лаборатория"] = { type = "med" },
         }
     })
 

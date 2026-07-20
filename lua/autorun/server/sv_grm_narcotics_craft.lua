@@ -26,16 +26,67 @@ util.AddNetworkString("GRM_NarcCraft_Done")
 -- ============================================================
 -- КРАФТ-СТАНЦИЯ: ЛАБОРАТОРИЯ
 -- ============================================================
+
+-- Рецепты наркотиков (дублируем здесь чтобы были доступны на сервере)
+local NARC_RECIPES = {
+    marijuana = {
+        name = "Марихуана",
+        model = "models/jmod/resources/propellent.mdl",
+        ingredients = { solvent = 2, precursor = 1 },
+        cook_time = 30,
+        yield = 3,
+    },
+    amphetamine = {
+        name = "Амфетамин",
+        model = "models/bloocobalt/l4d/items/w_eq_pills.mdl",
+        ingredients = { solvent = 3, precursor = 3 },
+        cook_time = 60,
+        yield = 5,
+    },
+    cocaine = {
+        name = "Кокаин",
+        model = "models/bloocobalt/l4d/items/w_eq_pills.mdl",
+        ingredients = { solvent = 5, precursor = 5, equipment = 1 },
+        cook_time = 90,
+        yield = 7,
+    },
+}
+
+-- Рецепты мед.препаратов
+local MED_RECIPES = {
+    painkillers = {
+        name = "Обезболивающее",
+        model = "models/bloocobalt/l4d/items/w_eq_pills.mdl",
+        ingredients = { solvent = 2, precursor = 1 },
+        cook_time = 20,
+        yield = 5,
+    },
+    antibiotics = {
+        name = "Антибиотики",
+        model = "models/bloocobalt/l4d/items/w_eq_pills.mdl",
+        ingredients = { solvent = 3, precursor = 2 },
+        cook_time = 30,
+        yield = 4,
+    },
+    adrenaline = {
+        name = "Адреналин",
+        model = "models/jmod/resources/coolant_bottle.mdl",
+        ingredients = { solvent = 5, precursor = 3, equipment = 1 },
+        cook_time = 45,
+        yield = 2,
+    },
+}
+
 CRAFT.LabType = {
     narc = {
         name = "Лаборатория наркотиков",
         model = "models/props_wasteland/laundry_washer003.mdl",
-        recipes = {"marijuana", "amphetamine", "cocaine"},
+        recipes = NARC_RECIPES,
     },
     med = {
         name = "Медицинская лаборатория",
         model = "models/props_wasteland/laundry_washer003.mdl",
-        recipes = {"painkillers", "antibiotics", "adrenaline"},
+        recipes = MED_RECIPES,
     },
 }
 
@@ -130,13 +181,13 @@ net.Receive("GRM_NarcCraft_Open", function(_, ply)
     -- Отправляем список рецептов
     net.Start("GRM_NarcCraft_Open")
         net.WriteString(labType)
-        net.WriteUInt(#lab.recipes, 8)
-        for _, recipeID in ipairs(lab.recipes) do
-            local recipe = (labType == "narc" and GRM.Narcotics.Recipes[recipeID]) or GRM.MedicalFull.Recipes[recipeID]
+        local recipes = lab.recipes
+        net.WriteUInt(table.Count(recipes), 8)
+        for recipeID, recipe in pairs(recipes) do
             net.WriteString(recipeID)
             net.WriteString(recipe.name)
-            net.WriteUInt(recipe.time, 16)
-            net.WriteUInt(recipe.yield, 8)
+            net.WriteUInt(recipe.cook_time or recipe.time or 30, 16)
+            net.WriteUInt(recipe.yield or 1, 8)
             net.WriteUInt(table.Count(recipe.ingredients), 8)
             for ing, count in pairs(recipe.ingredients) do
                 net.WriteString(ing)

@@ -10,6 +10,11 @@ function ENT:Initialize()
     self:SetUseType(SIMPLE_USE)
     self:SetCollisionGroup(COLLISION_GROUP_WEAPON)
     
+    -- Устанавливаем тип если не установлен (по умолчанию narc)
+    if not self.LabType then
+        self.LabType = "narc"
+    end
+    
     local phys = self:GetPhysicsObject()
     if IsValid(phys) then phys:Wake() end
 end
