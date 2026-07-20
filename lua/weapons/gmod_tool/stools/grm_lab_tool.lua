@@ -4,7 +4,7 @@ TOOL.Command = nil
 TOOL.ConfigName = ""
 
 TOOL.ClientConVar = {
-    type = "narc",
+    grm_lab_type = "narc",
 }
 
 local LAB_TYPES = {
@@ -36,7 +36,7 @@ function TOOL:LeftClick(tr)
         return false
     end
 
-    local labType = self:GetClientInfo("type")
+    local labType = self:GetClientInfo("grm_lab_type")
     if not LAB_TYPES[labType] then
         GRM.Notify(ply, "Неизвестный тип лаборатории", 255, 100, 100)
         return false
