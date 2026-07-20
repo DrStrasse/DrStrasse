@@ -20,6 +20,19 @@ function ENT:Initialize()
     self:SetCollisionGroup(COLLISION_GROUP_NPC)
     self:SetUseType(SIMPLE_USE)
     self:SetAutomaticFrameAdvance(true)
+
+    -- Корректировка позиции: опускаем entity на землю
+    local pos = self:GetPos()
+    local trace = util.TraceLine({
+        start = pos + Vector(0, 0, 100),
+        endpos = pos + Vector(0, 0, -100),
+        mask = MASK_NPCWORLDSTATIC,
+    })
+    if trace.Hit then
+        local mins = self:OBBMins()
+        self:SetPos(trace.HitPos - Vector(0, 0, mins.z))
+    end
+
     self:SetupIdleAnimation()
 
     -- NW для HUD-лейбла
@@ -28,17 +41,35 @@ end
 
 function ENT:SetupIdleAnimation()
     local seq = self:SelectWeightedSequence(ACT_IDLE)
-    if seq and seq >= 0 then self:ResetSequence(seq) self:SetPlaybackRate(1) return end
-    for _, name in ipairs({"idle_all","idle","idle_unarmed","stand","ref"}) do
+    if seq and seq >= 0 then
+        self:ResetSequence(seq)
+        self:SetPlaybackRate(1.0)
+        self:SetSequence(seq)
+        self:ResetSequenceInfo()
+        return
+    end
+    for _, name in ipairs({"idle_all","idle","idle_unarmed","stand","ref","idle_01","idle_02"}) do
         local s = self:LookupSequence(name)
-        if s and s >= 0 then self:ResetSequence(s) self:SetPlaybackRate(1) return end
+        if s and s >= 0 then
+            self:ResetSequence(s)
+            self:SetPlaybackRate(1.0)
+            self:SetSequence(s)
+            self:ResetSequenceInfo()
+            return
+        end
+    end
+    -- Фолбэк: любая доступная анимация
+    local s = self:LookupSequence(0)
+    if s and s >= 0 then
+        self:ResetSequence(s)
+        self:SetPlaybackRate(1.0)
+        self:SetSequence(s)
+        self:ResetSequenceInfo()
     end
 end
 
-function ENT:Think()
-    self:NextThink(CurTime() + 0.02)
-    return true
-end
+-- Think НЕ нужен для NPC с MOVETYPE_NONE и AutomaticFrameAdvance
+-- function ENT:Think() return true end
 
 -- ========== ИСПОЛЬЗОВАНИЕ (E) ==========
 function ENT:Use(ply)
@@ -60,6 +91,7 @@ function ENT:Use(ply)
             hunger     = item.hunger or nil,
             health     = item.health or nil,
             maxStack   = item.maxStack or nil,
+            isWeapon   = item.isWeapon or false,  -- SWEP или предмет инвентаря
         }
     end
 
@@ -117,10 +149,12 @@ net.Receive("GRM_Vendor_Buy", function(_, ply)
     GRM.TakeMoney(ply, price, "Покупка у торгаша: " .. item.name)
 
     -- Выдача товара
-    if ent.VendorType == "weapon" then
+    if ent.VendorType == "weapon" or item.isWeapon then
+        -- SWEP: выдаётся через ply:Give()
         ply:Give(itemID)
         GRM.Notify(ply, "Куплено: " .. item.name .. " за " .. GRM.Format(price), 100, 220, 100)
     elseif GRM.Inventory and GRM.Inventory.AddItem then
+        -- Предмет инвентаря
         local left = GRM.Inventory.AddItem(ply, itemID, 1)
         if left > 0 then
             -- Вернуть деньги за неполную покупку

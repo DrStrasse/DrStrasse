@@ -53,7 +53,12 @@ function TOOL:LeftClick(tr)
     local ent = ents.Create("grm_vendor")
     if not IsValid(ent) then return false end
 
-    ent:SetPos(tr.HitPos + tr.HitNormal * 8)
+    -- Правильное позиционирование: ставим на землю, не в воздух
+    local spawnPos = tr.HitPos
+    if tr.HitNormal.z > 0.7 then -- горизонтальная поверхность
+        spawnPos = spawnPos + tr.HitNormal * 1 -- минимальный отступ
+    end
+    ent:SetPos(spawnPos)
     ent:SetAngles(Angle(0, ply:EyeAngles().y + 180, 0))
     ent.VendorType = vtype
     local V = GRM.Vendor
@@ -61,8 +66,12 @@ function TOOL:LeftClick(tr)
     ent:Spawn()
     ent:Activate()
 
+    -- Физика: заморозить на месте
     local phys = ent:GetPhysicsObject()
-    if IsValid(phys) then phys:EnableMotion(false) end
+    if IsValid(phys) then
+        phys:EnableMotion(false)
+        phys:Sleep()
+    end
 
     -- Регистрация UNDO (клавиша Z)
     undo.Create("GRM_Vendor")

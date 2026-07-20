@@ -66,13 +66,21 @@ V.Catalogs.food = V.Catalogs.food or {
     ["grm_food_soda"]   = { name = "Газировка", price = 15, model = "models/props_junk/PopCan01a.mdl",                   hunger = 5,  health = 0 },
 }
 
--- 4) РЕДКОСТИ
+-- 4) РЕДКОСТИ: itemID -> { name, price, model, desc, maxStack, isWeapon }
+-- isWeapon=true → выдаётся через ply:Give() (SWEP), иначе через GRM.Inventory.AddItem()
 V.Catalogs.rare = V.Catalogs.rare or {
-    ["item_lockpick"]      = { name = "Отмычка",          price = 2500, model = "models/props_c17/TrapPropeller_Lever.mdl", desc = "Взлом замков (QTE)",        maxStack = 3 },
-    ["item_repair_kit"]    = { name = "Ремкомплект",      price = 5000, model = "models/props_c17/tools_wrench.mdl",        desc = "Ремонт транспорта",         maxStack = 3 },
-    ["radio_modulator"]    = { name = "Модулятор рации",  price = 8000, model = "models/props_lab/citizenradio.mdl",        desc = "Доступ к зашумлённым частотам", maxStack = 1 },
-    ["item_healthkit"]     = { name = "Аптечка",          price = 300,  model = "models/items/healthkit.mdl",               desc = "Лечит 25 HP",             maxStack = 5 },
-    ["item_battery"]       = { name = "Батарея",          price = 250,  model = "models/items/battery.mdl",                 desc = "Восстанавливает 15 брони",maxStack = 5 },
+    -- SWEP (оружие) — продаются через ply:Give()
+    ["ds_lockpick"]          = { name = "Отмычка (QTE)",       price = 2500,  model = "models/weapons/w_crowbar.mdl",       desc = "Взлом замков через QTE-мини-игру", maxStack = 1, isWeapon = true },
+    ["ds_key_swep"]          = { name = "Дверные ключи",       price = 500,   model = "models/weapons/w_keys.mdl",          desc = "Блокировка/разблокировка дверей",   maxStack = 1, isWeapon = true },
+    ["ds_battering_ram"]     = { name = "Полицейский таран",   price = 5000,  model = "models/weapons/w_rocket_launcher.mdl", desc = "Вскрытие дверей по ордеру",         maxStack = 1, isWeapon = true, license = "police" },
+    ["grm_handcuffs"]        = { name = "Наручники",           price = 1500,  model = "models/weapons/w_cuffs.mdl",         desc = "Задержание подозреваемых",           maxStack = 1, isWeapon = true, license = "police" },
+    ["weapon_grm_megaphone"] = { name = "Мегафон",             price = 3000,  model = "models/props_lab/tpplug.mdl",        desc = "Громкая связь для оповещений",       maxStack = 1, isWeapon = true },
+
+    -- Предметы инвентаря — продаются через GRM.Inventory.AddItem()
+    ["item_repair_kit"]      = { name = "Ремкомплект",         price = 5000,  model = "models/props_c17/tools_wrench.mdl",  desc = "Ремонт транспорта",                  maxStack = 3 },
+    ["radio_modulator"]      = { name = "Модулятор рации",     price = 8000,  model = "models/props_lab/citizenradio.mdl",  desc = "Доступ к зашумлённым частотам",      maxStack = 1 },
+    ["item_healthkit"]       = { name = "Аптечка",             price = 300,   model = "models/items/healthkit.mdl",         desc = "Лечит 25 HP",                        maxStack = 5 },
+    ["item_battery"]         = { name = "Батарея",             price = 250,   model = "models/items/battery.mdl",           desc = "Восстанавливает 15 брони",           maxStack = 5 },
 }
 
 -- ============================================================
