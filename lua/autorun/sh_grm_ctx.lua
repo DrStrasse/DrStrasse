@@ -8,6 +8,7 @@ if SERVER then
     util.AddNetworkString("GRM_Ctx_Result")
     util.AddNetworkString("GRM_Ctx_VehAct")
     util.AddNetworkString("GRM_Ctx_MoneyAct")
+    util.AddNetworkString("GRM_Laws_List")
 
     -- Игрок в прицеле (для кнопки «Передать деньги»)
     local function aimPlyInfo(ply)
@@ -214,6 +215,11 @@ local function actRadio()
             else RunConsoleCommand("say", "/freqleave") end
         end)
 end
+
+local function actLaws()
+    net.Start("GRM_Laws_List")
+    net.SendToServer()
+end
 local function actFactions()  RunConsoleCommand("say", "/factions") end
 local function actMask()      RunConsoleCommand("say", "/mask") end
 
@@ -288,6 +294,7 @@ local BTNS = {
       confirm = true }, -- двойное нажатие-подтверждение (Диллер 2.1)
     { id = "tp",         l = function() return (tp and "Выкл" or "Вкл") .. " 3-е лицо" end, fn = actTp, c = CC.third, ch = CC.thirdH, ok = function() return true end },
     { id = "radio",      l = "Рация",        fn = actRadio,      c = CC.radio,   ch = CC.radioH,   ok = function() return true end },
+    { id = "laws",       l = "Законы государства", fn = actLaws, c = Color(200, 180, 100), ch = Color(220, 200, 120), ok = function() return true end },
     { id = "faction",    l = "Меню фракции", fn = actFactions,   c = CC.faction, ch = CC.factionH, ok = function() return data.isLeaderOrAdmin == true or data.isFactionMember == true end },
     { id = "mask",       l = "Маскировка",   fn = actMask,       c = CC.mask,    ch = CC.maskH,    ok = function() return data.hasMaskAccess == true end },
 }
