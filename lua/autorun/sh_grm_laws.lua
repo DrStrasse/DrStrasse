@@ -280,13 +280,11 @@ if CLIENT then
             draw.SimpleText("Законов: " .. #laws, "GRMLaws_Small", w - 16, 22, CUI.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
         
-        -- Кнопка добавления
+        -- Кнопка добавления (в шапке окна)
         if canAdd then
             local btnAdd = vgui.Create("DButton", frame)
-            btnAdd:Dock(RIGHT)
-            btnAdd:SetWide(170)
-            btnAdd:SetTall(30)
-            btnAdd:DockMargin(0, 8, 8, 0)
+            btnAdd:SetPos(frame:GetWide() - 180, 8)
+            btnAdd:SetSize(170, 30)
             btnAdd:SetText("")
             btnAdd.Paint = function(self, w, h)
                 local col = self:IsHovered() and Color(75, 205, 125) or CUI.green
@@ -351,7 +349,7 @@ if CLIENT then
             -- Кнопки действий (справа)
             local btnsPanel = vgui.Create("DPanel", row)
             btnsPanel:Dock(RIGHT)
-            btnsPanel:SetWide(210)
+            btnsPanel:SetWide(110)
             btnsPanel:DockMargin(0, 8, 8, 8)
             btnsPanel:SetPaintBackground(false)
             
