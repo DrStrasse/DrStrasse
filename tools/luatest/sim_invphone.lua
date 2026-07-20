@@ -196,7 +196,7 @@ weapons = { Get = function() return nil end, IsBasedOn = function() return false
 surface = nil
 
 local function mkPly(sid64)
-    local p = { __sid64 = sid64 }
+    local p = { __sid64 = sid64, __hp = 100, __ar = 0 }
     return setmetatable(p, { __index = function(self, k)
         if k == "SteamID64" then return function() return self.__sid64 end end
         if k == "SteamID" then return function() return "STEAM_0:1:1" end end
@@ -208,9 +208,16 @@ local function mkPly(sid64)
         if k == "GetAimVector" then return function() return vector_origin end end
         if k == "GetPos" then return function() return vector_origin end end
         if k == "PrintMessage" then return function(_, _, txt) H.chatlog[#H.chatlog + 1] = tostring(txt) end end
+        if k == "Health" then return function() return self.__hp end end
+        if k == "GetMaxHealth" then return function() return 100 end end
+        if k == "SetHealth" then return function(_, v) self.__hp = v end end
+        if k == "Armor" then return function() return self.__ar end end
+        if k == "SetArmor" then return function(_, v) self.__ar = v end end
+        if k == "EmitSound" then return function() end end
         return nil
     end })
 end
+CurTime = CurTime or os.clock
 
 GRM = nil -- гарантированно чистый неймспейс
 SERVER, CLIENT = true, false
@@ -342,6 +349,16 @@ for i = 1, 24 do local s = pinv.slots[i] if s and s.id == "medcard" and not s.da
 if bslot then H.seq = { bslot } H.recv["grm_inv_use"](0, patient) end
 ok(bslot ~= nil and viewCalls.n == 2 and viewCalls[2] == false, "отдельный бланк тоже доходит до модуля медицины (data=nil)")
 
+print("== 8.5. Код 109 (находка 126): реестр UseHandlers — «нормальный модуль» ==")
+ok(type(GRM.Inventory.RegisterUseHandler) == "function" and istable(GRM.Inventory.UseHandlers),
+   "реестр обработчиков использования на месте (RegisterUseHandler/UseHandlers)")
+ok(type(GRM.Inventory.UseHandlers["radio_toggle"]) == "function"
+   and type(GRM.Inventory.UseHandlers["mobile_open"]) == "function"
+   and type(GRM.Inventory.UseHandlers["medcard_view"]) == "function"
+   and type(GRM.Inventory.UseHandlers["cash_to_wallet"]) == "function",
+   "встроенные обработчики зарегистрированы через реестр (radio/mobile/medcard/cash)")
+ok(type(GRM.Inventory.UseItem) == "function", "useItem экспортирована (GRM.Inventory.UseItem)")
+
 print("== 9. Код 106: видимый отказ при предмете без дефа ==")
 -- предмет без дефа: раньше — тихий выход («мёртвая кнопка»), теперь — видимый отказ
 local notif = {}
@@ -355,6 +372,86 @@ H.seq = { gslot or 24 } H.recv["grm_inv_use"](0, ply)
 ok(#notif >= 1 and (notif[#notif]:find("не зарегистрирован", 1, true) ~= nil),
    "нет дефа — игрок видит отказ «не зарегистрирован» (диагностика в один скрин)")
 invX.slots[gslot or 24] = nil
+
+print("== 10. Код 109 (находка 126): ПАТЧ ЕДЫ ПОСЛЕ инвентаря — ресивер больше НЕ заменяется ==")
+-- ЖИВАЯ РЕГРЕССИЯ из заказа владельца: zz_grm_food_inventory_patch раньше
+-- ЗАМЕНЯЛ net.Receive("grm_inv_use") своей неполной копией (без radio_toggle)
+-- — «жму Использовать — ничего», /freq /r навсегда «нет модулятора».
+GRM.Food = GRM.Food or {}
+GRM.Food.Config = GRM.Food.Config or { FoodItems = {
+    grm_food_apple = { name = "Яблоко", hungerRestore = 20, healthRestore = 0, price = 10, model = "models/props/cs_office/coffee_mug.mdl" },
+} }
+GRM.Food._hunger = 100
+GRM.Food.GetHunger = function() return GRM.Food._hunger end
+GRM.Food.RestoreHunger = function(_, n) GRM.Food._hunger = math.min(100, GRM.Food._hunger + (n or 0)) end
+scripted_ents = scripted_ents or { GetStored = function() return nil end }
+dofile("lua/autorun/zz_grm_food_inventory_patch.lua")
+hook.Run("InitPostEntity") -- в живой игре ставит интеграции через timer.Simple (мок — сразу)
+ok(H.recv["grm_inv_use"] ~= nil and H.recv["GRM_Vending_Buy"] ~= nil,
+   "после патча оба ресивера живы: инвентарный (его!) и автоматный")
+ok(type(GRM.Inventory.UseHandlers["grm_food_eat"]) == "function",
+   "патч зарегистрировал обработчик еды через API (ресивер не заменял)")
+-- предмет еды получил деф с useFunc grm_food_eat
+local appleDef = GRM.Inventory.GetItemDef("grm_food_apple")
+ok(istable(appleDef) and appleDef.useFunc == "grm_food_eat",
+   "патч зарегистрировал деф еды с useFunc grm_food_eat через ItemDefs")
+
+-- ГЛАВНОЕ: модулятор рации по-прежнему переключается ИМЕННО через grm_inv_use
+inv = GRM.Inventory.GetPlayerInv(ply)
+slotIdx = nil
+for i = 1, 24 do local s = inv.slots[i] if s and s.id == "radio_modulator" then slotIdx = i break end end
+ok(slotIdx ~= nil, "модулятор всё ещё в инвентаре после подгрузки патча еды")
+H.seq = { slotIdx } H.recv["grm_inv_use"](0, ply)
+ok(inv.slots[slotIdx] ~= nil and inv.slots[slotIdx].data.on == false,
+   "Код 109: ПОСЛЕ ПАТЧА ЕДЫ «Использовать» по модулятору ЖИВО (toggle → ВЫКЛ)")
+H.seq = { slotIdx } H.recv["grm_inv_use"](0, ply)
+ok(inv.slots[slotIdx].data.on == true,
+   "и снова → ВКЛ: замены ресивера больше нет, radio_toggle не тонет")
+
+-- и медкарта не умерла (тот же симптом был у всех «лишних» useFunc)
+local pinv2 = GRM.Inventory.GetPlayerInv(patient)
+local mslot2
+for i = 1, 24 do local s = pinv2.slots[i] if s and s.id == "medcard" then mslot2 = i break end end
+if mslot2 then H.seq = { mslot2 } H.recv["grm_inv_use"](0, patient) end
+ok(mslot2 ~= nil and viewCalls.n >= 3, "ПОСЛЕ ПАТЧА ЕДЫ медкарта тоже работает (medcard_view жив)")
+
+-- еда: собственный юзкейс патча — через тот же ресивер и реестр
+GRM.Inventory.AddItem(ply, "grm_food_apple", 1)
+local aslot
+for i = 1, 24 do local s = inv.slots[i] if s and s.id == "grm_food_apple" then aslot = i break end end
+GRM.Food._hunger = 40
+H.seq = { aslot } H.recv["grm_inv_use"](0, ply)
+ok(GRM.Food._hunger == 60 and inv.slots[aslot] == nil,
+   "еда съедена через реестр: сытость +20, предмет израсходован")
+GRM.Inventory.AddItem(ply, "grm_food_apple", 1)
+aslot = nil
+for i = 1, 24 do local s = inv.slots[i] if s and s.id == "grm_food_apple" then aslot = i break end end
+GRM.Food._hunger = 100
+H.seq = { aslot } H.recv["grm_inv_use"](0, ply)
+ok(GRM.Food._hunger == 100 and inv.slots[aslot] ~= nil,
+   "полная сытость → еда не тратится, отказ виден (canUseFoodNow)")
+
+-- сторонний модуль регистрирует useFunc сам — не трогая ресивер
+local trixHits = 0
+GRM.Inventory.RegisterUseHandler("trix", function() trixHits = trixHits + 1 end)
+GRM.Inventory.RegisterItem("trix_item", { type = "item", name = "Триксель", maxStack = 1, useFunc = "trix" })
+GRM.Inventory.AddItem(ply, "trix_item", 1)
+local tslot
+for i = 1, 24 do local s = inv.slots[i] if s and s.id == "trix_item" then tslot = i break end end
+H.seq = { tslot } H.recv["grm_inv_use"](0, ply)
+ok(trixHits == 1, "свой useFunc («trix») доезжает до обработчика через реестр — расширение без патчей")
+
+-- без обработчика — ВИДИМЫЙ отказ (а не тишина «мёртвой кнопки»)
+notif = {}
+GRM.Notify = function(p, txt) notif[#notif + 1] = tostring(txt) end
+GRM.Inventory.RegisterItem("lost_item", { type = "item", name = "Потеряшка", maxStack = 1, useFunc = "no_such_handler" })
+GRM.Inventory.AddItem(ply, "lost_item", 1)
+local lslot
+for i = 1, 24 do local s = inv.slots[i] if s and s.id == "lost_item" then lslot = i break end end
+H.seq = { lslot } H.recv["grm_inv_use"](0, ply)
+ok(#notif >= 1 and (notif[#notif]:find("не поднялся", 1, true) ~= nil),
+   "useFunc без обработчика → видимый отказ «модуль не поднялся» игроку")
+GRM.Notify = function() end -- вернуть тихий стаб
 
 print("")
 print(("РЕЗУЛЬТАТ: %d/%d проверок, провалов: %d"):format(checks - failed, checks, failed))

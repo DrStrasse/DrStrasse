@@ -2,8 +2,11 @@
     grm_scanner — init.lua (серверная логика FFD-сканера, Код 107)
     Сканирование: игрок подходит и жмёт [E] глядя на сканер → 0.9с
     анимации сканирования → строгая проверка ЕГО фракции по белому
-    списку → допущен (FFD-двери рядом открываются на hold-секунд,
+    списку → допущен (открываются ПРИВЯЗАННЫЕ FFD-двери на hold-секунд,
     нумпад-сигнал владельцу) или отказ (красная вспышка ~2с).
+    Код 109 (заказ владельца): авто-определение дверей по радиусу 250
+    УДАЛЕНО — сканер открывает ТОЛЬКО двери из ручных связей FFD Link
+    (инструмент «FFD Link»). Без связей не трогает ни одну дверь.
 ----------------------------------------------------------------------]]
 
 AddCSLuaFile("cl_init.lua")
@@ -12,7 +15,8 @@ include("shared.lua")
 
 local SCAN_TIME   = 0.9   -- анимация сканирования
 local DENY_TIME   = 2.0   -- красная вспышка отказа
-local DOOR_RADIUS = 250   -- как у кейпада: FFD-двери в радиусе
+-- Код 109: DOOR_RADIUS (250, авто-определение дверей) УДАЛЁН — двери
+-- открываются только из ручных связей FFD Link (заказ владельца).
 local AIM_RANGE   = 130   -- дистанция прицельного нажатия
 
 -- ============================================================
@@ -85,28 +89,18 @@ function ENT:Initialize()
     self:SetFaction(self.Faction or "")
 end
 
--- вспомогательно: открыть/закрыть FFD-двери. Код 108 (заказ владельца):
--- если у сканера есть ручные связи (FFD Link) — работаем ТОЛЬКО по ним;
--- иначе — старое поведение (все FFD-двери в радиусе 250). Возвращаем
--- захваченный список дверей, чтобы по таймеру закрыть те же самые.
+-- вспомогательно: открыть/закрыть FFD-двери. Код 108 (заказ владельца) +
+-- Код 109 (запрет авто-связи): сканер трогает ТОЛЬКО двери из ручного
+-- списка FFD Link. Радиусного авто-определения больше НЕТ (раньше сканер
+-- сам хватал все FFD-двери в 250 юнитах — заказ владельца Кода 109:
+-- «этого быть не должно»). Возвращаем захваченный список дверей, чтобы
+-- по таймеру закрыть те же самые.
 local function fadeDoorsNear(self, activate)
     if GRM.FFDLink and GRM.FFDLink.Count and GRM.FFDLink.Count(self) > 0 then
         local _, doors = GRM.FFDLink.Fade(self, activate)
         return doors or {}
     end
-    local list = {}
-    for _, prop in ipairs(ents.FindInSphere(self:GetPos(), DOOR_RADIUS)) do
-        if IsValid(prop) and prop.isFadingDoor then
-            if activate and prop.FadeActivate then
-                prop:FadeActivate()
-                list[#list + 1] = prop
-            elseif not activate and prop.FadeDeactivate then
-                prop:FadeDeactivate()
-                list[#list + 1] = prop
-            end
-        end
-    end
-    return list
+    return {}
 end
 
 function ENT:ProcessGrant(ply, fac)
@@ -118,8 +112,22 @@ function ENT:ProcessGrant(ply, fac)
         numpad.Activate(self.ScannerOwner, self.KeyGranted)
     end
 
-    -- Код 108: захватываем открытые двери — по таймеру закроем те же
+    -- Код 108/109: захватываем открытые двери (только ручные связи!) —
+    -- по таймеру закроем те же. Связей нет → сканер не трогает ни одну
+    -- дверь: авто-определения по радиусу больше нет (заказ Кода 109).
     local doorList = fadeDoorsNear(self, true)
+    if (not (GRM.FFDLink and GRM.FFDLink.Count)) or GRM.FFDLink.Count(self) <= 0 then
+        local now = CurTime()
+        if (self.__grmNoLinkHint or 0) <= now then
+            self.__grmNoLinkHint = now + 5
+            local msg = "Сканер не привязан ни к одной двери: свяжите инструментом «FFD Link» (ЛКМ по сканеру → ЛКМ по двери)."
+            if GRM.Notify then
+                GRM.Notify(ply, msg, 255, 210, 90)
+            elseif IsValid(ply) and ply.PrintMessage then
+                ply:PrintMessage(HUD_PRINTTALK, msg)
+            end
+        end
+    end
 
     local hold = math.max(0.5, tonumber(self.HoldTime) or 4)
     local idx = self:EntIndex()
@@ -131,14 +139,10 @@ function ENT:ProcessGrant(ply, fac)
         if IsValid(self.ScannerOwner) then
             numpad.Deactivate(self.ScannerOwner, self.KeyGranted)
         end
-        if GRM.FFDLink and GRM.FFDLink.Count and GRM.FFDLink.Count(self) > 0 then
-            for _, prop in ipairs(doorList or {}) do
-                if IsValid(prop) and prop.isFadingDoor and prop.FadeDeactivate then
-                    prop:FadeDeactivate()
-                end
+        for _, prop in ipairs(doorList or {}) do
+            if IsValid(prop) and prop.isFadingDoor and prop.FadeDeactivate then
+                prop:FadeDeactivate()
             end
-        else
-            fadeDoorsNear(self, false)
         end
     end)
 end

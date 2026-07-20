@@ -754,9 +754,9 @@ dofile("lua/autorun/sh_grm_perm_entities.lua")
 -- кейпада/сканера уже писал rec.data.links (ручную привязку к дверям)
 dofile("lua/autorun/sh_grm_ffdlink.lua")
 ok(GRM._permEntitiesVer == "1.4.1", "perm-модуль v1.4.1 загружен (rec.data-хуки + класс сканера + links)")
-ok(GRM._ffdLinkVer == "1.0.0" and type(GRM.FFDLink.Add) == "function"
+ok(GRM._ffdLinkVer == "1.1.0" and type(GRM.FFDLink.Add) == "function"
    and type(GRM.FFDLink.Toggle) == "function" and type(GRM.FFDLink.Fade) == "function",
-   "ячейка связей Кода 108: GRM.FFDLink загружен (Add/Toggle/Fade)")
+   "ячейка связей Кода 109 (v1.1.0): GRM.FFDLink загружен (Add/Toggle/Fade), авто-радиус-фолбэк удалён")
 ok(type(GRM.PermData.Extract["grm_keypad"]) == "function"
    and type(GRM.PermData.Apply["grm_keypad"]) == "function",
    "кейпад: Extract/Apply данных зарегистрированы (init.lua)")
@@ -938,15 +938,36 @@ ok(doorA.FFD_IsActive == true and doorB.FFD_IsActive == false,
 fireTimer("GRM_Keypad_Grant_42")
 ok(doorA.FFD_IsActive == false, "по hold-таймеру закрылась та же привязанная дверьA")
 
--- фолбэк: связей нет → старое поведение (радиус 250)
+-- Код 109 (заказ владельца): авто-связи УМЕРЛИ — контроллер без ручных
+-- связей не трогает НИ ОДНУ дверь, сколько бы их ни толклось рядом.
+-- Раньше здесь был «фолбэк радиус 250» — его заказали упразднить.
 GRM.FFDLink.Clear(kLink)
-ok(GRM.FFDLink.Count(kLink) == 0, "перед тестом фолбэка связи сняты")
+ok(GRM.FFDLink.Count(kLink) == 0, "перед тестом запрета авто-связи связи сняты")
 doorA.FFD_IsActive, doorB.FFD_IsActive = false, false
 kLink.CurrentInput = "1234"
+H.notifies = {}
 kLink:PressButton("OK", plyA)
-ok(doorA.FFD_IsActive == true and doorB.FFD_IsActive == true,
-   "без связей — радиус 250: обе ближние двери открылись (обратная совместимость)")
+ok(doorA.FFD_IsActive == false and doorB.FFD_IsActive == false,
+   "Код 109: кейпад без связей НЕ открывает двери сам (авто-радиус 250 удалён!)")
+ok(kLink:GetStatus() == 1, "грант-индикация и нумпад-сигнал живы и без привязанных дверей")
+ok(lastNotify("не привязан") ~= nil and lastNotify("FFD Link") ~= nil,
+   "без связей владельцу уходит ВИДИМАЯ подсказка про инструмент FFD Link")
 fireTimer("GRM_Keypad_Grant_42")
+
+-- сканер без связей тоже ничего не открывает сам
+scLink:SetStatus(0)
+H.eyeTrace = { Entity = scLink, HitPos = mkVec(1, 0, 0) }
+medic.__grmScannerNextScan = 0
+doorB.FFD_IsActive = false
+H.npad = {}
+H.notifies = {}
+scanFn(medic, IN_USE)
+fireTimer("GRM_Scanner_Resolve_77")
+ok(scLink:GetStatus() == 1 and doorB.FFD_IsActive == false,
+   "Код 109: сканер без связей допускает по фракции, но НЕ открывает двери сам")
+ok(lastNotify("не привязан") ~= nil and lastNotify("FFD Link") ~= nil,
+   "сканер без связей: видимая подсказка про FFD Link")
+fireTimer("GRM_Scanner_Grant_77")
 
 -- prune (находка 125): удалённая дверь само-вычищается, а СОСЕДНЯЯ дверь
 -- того же класса в паре юнитов (doorB стоит в 2 юнитах!) НЕ подменяет её —

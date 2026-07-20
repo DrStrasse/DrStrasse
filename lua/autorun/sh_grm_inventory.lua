@@ -1,6 +1,18 @@
 --[[--------------------------------------------------------------------
-    GRM Inventory System v1.3.0 (Код 101)
+    GRM Inventory System v1.5.0 (Код 109)
     Полноценный инвентарь с ячейками для патронов, оружия и предметов
+
+    v1.5.0 (Код 109, находка 126 — заказ владельца «нормальный модуль на
+    рации»): useFunc-диспетчер переведён на РЕЕСТР обработчиков
+    GRM.Inventory.RegisterUseHandler. Корень бага «в инвентаре жму
+    Использовать — ничего»: zz_grm_food_inventory_patch.lua не мог
+    расширить ЛОКАЛЬНУЮ useItem хуком и поэтому ЗАМЕНЯЛ net-ресивер
+    «grm_inv_use» своей неполной копией без radio_toggle/mobile_open/
+    cash_to_wallet/medcard_view — клик умирал беззвучно, модулятор
+    никогда не включался, а значит /freq и /r всегда отвечали «нет
+    активного модулятора» (в т.ч. после рестарта). Теперь замена
+    ресивера не нужна никому: обработчик регистрируется API-вызовом;
+    отсутствие обработчика = ВИДИМЫЙ отказ игроку + строка в консоль.
 
     Возможности:
       • Сетка инвентаря с настраиваемым количеством слотов
@@ -232,6 +244,27 @@ function GRM.Inventory.GetMaxStack(itemID)
     if not def then return 1 end
     if def.type == "weapon" then return 1 end
     return def.maxStack or GRM.Inventory.Config.MaxStack
+end
+
+-- ================================================================
+--  РЕЕСТР ОБРАБОТЧИКОВ ИСПОЛЬЗОВАНИЯ (Код 109, находка 126 — «нормальный
+--  модуль» для таких предметов, как модулятор рации)
+-- ================================================================
+-- Раньше useFunc обрабатывался захардкоженным if-elseif внутри ЛОКАЛЬНОЙ
+-- useItem — расширить её хуком было нельзя, поэтому патч еды просто
+-- ЗАМЕНЯЛ net.Receive("grm_inv_use") своей неполной копией, в которой
+-- radio_toggle/cash_to_wallet/mobile_open/medcard_view отсутствовали:
+-- «Использовать» по модулятору умирало БЕЗ ЗВУКА («жму — ничего»,
+-- заказ владельца Кода 109). Теперь обработчик — регистрируемая точка:
+--   GRM.Inventory.RegisterUseHandler("my_usefunc", function(ply, slotIdx, slot, def) ... end)
+-- Хендлер ПОЛНОСТЬЮ владеет потоком (сам решает уведомления/расход).
+-- Свой обработчик нельзя регистрировать заменой ресивера — только API.
+GRM.Inventory.UseHandlers = GRM.Inventory.UseHandlers or {}
+
+function GRM.Inventory.RegisterUseHandler(useFunc, fn)
+    if not isstring(useFunc) or useFunc == "" or not isfunction(fn) then return false end
+    GRM.Inventory.UseHandlers[useFunc] = fn
+    return true
 end
 
 -- ================================================================
@@ -578,81 +611,101 @@ if SERVER then
             return
         end
 
-        -- Предметы — использовать функцию
+        -- Предметы — использовать функцию.
+        -- Код 109 (находка 126): ДИСПЕТЧЕР ЧЕРЕЗ РЕЕСТР UseHandlers.
+        -- Захардкоженный if-elseif умер: раньше патч еды, не сумев
+        -- расширить local-функцию useItem хуком, просто ЗАМЕНЯЛ net-ресивер
+        -- «grm_inv_use» своей неполной копией — и обработчики radio_toggle/
+        -- cash_to_wallet/mobile_open/medcard_view тихо умирали («жму
+        -- Использовать — ничего», заказ владельца). Теперь: есть useFunc —
+        -- обязан быть и зарегистрированный обработчик, иначе ВИДИМЫЙ отказ.
         if def.type == "item" and def.useFunc then
-            local used = false
-            if def.useFunc == "heal_25" then
-                if ply:Health() < ply:GetMaxHealth() then
-                    ply:SetHealth(math.min(ply:GetMaxHealth(), ply:Health() + 25))
-                    used = true
-                else
-                    GRM.Notify(ply, "Здоровье уже полное", 255, 180, 60)
-                    return
-                end
-            elseif def.useFunc == "armor_15" then
-                if ply:Armor() < 100 then
-                    ply:SetArmor(math.min(100, ply:Armor() + 15))
-                    used = true
-                else
-                    GRM.Notify(ply, "Броня уже полная", 255, 180, 60)
-                    return
-                end
-            elseif def.useFunc == "cash_to_wallet" then
-                -- Деньги: число в стаке = сумма, обналичиваем ВЕСЬ стак
-                local amt = math.max(0, math.floor(tonumber(slot.count) or 0))
-                if amt > 0 and GRM.GiveMoney then
-                    inv.slots[slotIdx] = nil
-                    GRM.Inventory.SyncSlot(ply, slotIdx)
-                    GRM.GiveMoney(ply, amt, "Обналичены деньги из инвентаря")
-                    GRM.Notify(ply, "Обналичено: " .. (GRM.Format and GRM.Format(amt) or tostring(amt)), 100, 220, 100)
-                    hook.Run("GRM_Money_Cashed", ply, amt)
-                end
-                return
-            elseif def.useFunc == "mobile_open" then
-                -- Код 88: мобильный телефон из инвентаря — предмет НЕ тратится.
-                if GRM.Mobile and GRM.Mobile.ServerNotify then
-                    GRM.Mobile.ServerNotify(ply, "Телефон у вас. Нажмите СТРЕЛКУ ВВЕРХ, чтобы открыть меню")
-                else
-                    GRM.Notify(ply, "Нажмите СТРЕЛКУ ВВЕРХ, чтобы открыть телефон", 100, 220, 100)
-                end
-                return
-            elseif def.useFunc == "radio_toggle" then
-                -- Код 99: переносной модулятор рации — ВКЛ/ВЫКЛ живёт в данных
-                -- самого предмета: рестарт/дроп/подбор состояние не теряют.
-                -- Предмет НЕ тратится. Доступ к /freq и /r проверяет RadioNet
-                -- (RN.HasRadioUnit: предмет в инвентаре И data.on == true).
-                slot.data = istable(slot.data) and slot.data or {}
-                slot.data.on = not (slot.data.on == true)
-                GRM.Inventory.SyncSlot(ply, slotIdx)
-                saveSoon("радио-модулятор on=" .. tostring(slot.data.on))
-                if slot.data.on then
-                    GRM.Notify(ply, "Модулятор ВКЛ: /freq 145.5 — частота, /r текст — эфир", 120, 210, 255)
-                else
-                    GRM.Notify(ply, "Модулятор ВЫКЛ — радиочастоты закрыты", 255, 200, 90)
-                end
-                if slot.data.on and GRM.RadioNet and GRM.RadioNet.FreqInfo then
-                    GRM.RadioNet.FreqInfo(ply)
-                end
-                return
-            elseif def.useFunc == "medcard_view" then
-                -- Код 101: медицинская карта на руках — предмет НЕ тратится.
-                -- sid64 владельца лежит в slot.data (выдача/дроп/подбор).
-                if GRM.Medical and GRM.Medical.ViewIssued then
-                    GRM.Medical.ViewIssued(ply, slot.data)
-                else
-                    GRM.Notify(ply, "Модуль медкарт не загружен", 255, 140, 110)
-                end
+            local handler = (GRM.Inventory.UseHandlers or {})[def.useFunc]
+            if not handler then
+                GRM.Notify(ply, "«" .. tostring(def.name or itemID) .. "»: модуль-обработчик «" .. tostring(def.useFunc) .. "» не поднялся — сообщите админу", 255, 140, 110)
+                print("[GRM Inventory][!] useItem: нет обработчика «" .. tostring(def.useFunc) .. "» (предмет «" .. tostring(itemID) .. "») у " .. tostring(ply:Nick()))
                 return
             end
-            if used then
-                GRM.Inventory.RemoveFromSlot(ply, slotIdx, 1)
-                GRM.Notify(ply, "Использовано: " .. def.name, 100, 220, 100)
+            local okH, err = pcall(handler, ply, slotIdx, slot, def)
+            if not okH then
+                GRM.Notify(ply, "«" .. tostring(def.name or itemID) .. "»: внутренняя ошибка модуля — сообщите админу", 255, 140, 110)
+                print("[GRM Inventory][!] useItem: обработчик «" .. tostring(def.useFunc) .. "» упал: " .. tostring(err))
             end
             return
         end
 
         GRM.Notify(ply, "Этот предмет нельзя использовать", 255, 180, 60)
     end
+    GRM.Inventory.UseItem = useItem -- Код 109: публичная точка (диагностика/сим)
+
+    -- ── Встроенные обработчики useFunc (та же логика, что была захардко-
+    -- жена в useItem, но теперь через реестр: единый путь для всех) ──
+    GRM.Inventory.RegisterUseHandler("heal_25", function(ply, slotIdx, slot, def)
+        if ply:Health() < ply:GetMaxHealth() then
+            ply:SetHealth(math.min(ply:GetMaxHealth(), ply:Health() + 25))
+            GRM.Inventory.RemoveFromSlot(ply, slotIdx, 1)
+            GRM.Notify(ply, "Использовано: " .. tostring(def and def.name or "Аптечка"), 100, 220, 100)
+        else
+            GRM.Notify(ply, "Здоровье уже полное", 255, 180, 60)
+        end
+    end)
+    GRM.Inventory.RegisterUseHandler("armor_15", function(ply, slotIdx, slot, def)
+        if ply:Armor() < 100 then
+            ply:SetArmor(math.min(100, ply:Armor() + 15))
+            GRM.Inventory.RemoveFromSlot(ply, slotIdx, 1)
+            GRM.Notify(ply, "Использовано: " .. tostring(def and def.name or "Бронежилет"), 100, 220, 100)
+        else
+            GRM.Notify(ply, "Броня уже полная", 255, 180, 60)
+        end
+    end)
+    GRM.Inventory.RegisterUseHandler("cash_to_wallet", function(ply, slotIdx, slot, def)
+        -- Деньги: число в стаке = сумма, обналичиваем ВЕСЬ стак
+        local inv = GRM.Inventory.GetPlayerInv(ply)
+        if not inv then return end
+        local amt = math.max(0, math.floor(tonumber(slot.count) or 0))
+        if amt > 0 and GRM.GiveMoney then
+            inv.slots[slotIdx] = nil
+            GRM.Inventory.SyncSlot(ply, slotIdx)
+            GRM.GiveMoney(ply, amt, "Обналичены деньги из инвентаря")
+            GRM.Notify(ply, "Обналичено: " .. (GRM.Format and GRM.Format(amt) or tostring(amt)), 100, 220, 100)
+            hook.Run("GRM_Money_Cashed", ply, amt)
+        end
+    end)
+    GRM.Inventory.RegisterUseHandler("mobile_open", function(ply, slotIdx, slot, def)
+        -- Код 88: мобильный телефон из инвентаря — предмет НЕ тратится.
+        if GRM.Mobile and GRM.Mobile.ServerNotify then
+            GRM.Mobile.ServerNotify(ply, "Телефон у вас. Нажмите СТРЕЛКУ ВВЕРХ, чтобы открыть меню")
+        else
+            GRM.Notify(ply, "Нажмите СТРЕЛКУ ВВЕРХ, чтобы открыть телефон", 100, 220, 100)
+        end
+    end)
+    GRM.Inventory.RegisterUseHandler("radio_toggle", function(ply, slotIdx, slot, def)
+        -- Код 99: переносной модулятор рации — ВКЛ/ВЫКЛ живёт в данных
+        -- самого предмета: рестарт/дроп/подбор состояние не теряют.
+        -- Предмет НЕ тратится. Доступ к /freq и /r проверяет RadioNet
+        -- (RN.HasRadioUnit: предмет в инвентаре И data.on == true).
+        slot.data = istable(slot.data) and slot.data or {}
+        slot.data.on = not (slot.data.on == true)
+        GRM.Inventory.SyncSlot(ply, slotIdx)
+        saveSoon("радио-модулятор on=" .. tostring(slot.data.on))
+        if slot.data.on then
+            GRM.Notify(ply, "Модулятор ВКЛ: /freq 145.5 — частота, /r текст — эфир", 120, 210, 255)
+        else
+            GRM.Notify(ply, "Модулятор ВЫКЛ — радиочастоты закрыты", 255, 200, 90)
+        end
+        if slot.data.on and GRM.RadioNet and GRM.RadioNet.FreqInfo then
+            GRM.RadioNet.FreqInfo(ply)
+        end
+    end)
+    GRM.Inventory.RegisterUseHandler("medcard_view", function(ply, slotIdx, slot, def)
+        -- Код 101: медицинская карта на руках — предмет НЕ тратится.
+        -- sid64 владельца лежит в slot.data (выдача/дроп/подбор).
+        if GRM.Medical and GRM.Medical.ViewIssued then
+            GRM.Medical.ViewIssued(ply, slot.data)
+        else
+            GRM.Notify(ply, "Модуль медкарт не загружен", 255, 140, 110)
+        end
+    end)
 
     -- ── Выброс предмета ──────────────────────────────────────────
     local function dropItem(ply, slotIdx, count)

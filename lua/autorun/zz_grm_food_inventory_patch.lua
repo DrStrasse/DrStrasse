@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Food x GRM Inventory Patch
+    GRM Food x GRM Inventory Patch (v2 — Код 109, находка 126)
 
     Куда положить:
       garrysmod/addons/grm_food/lua/autorun/zz_grm_food_inventory_patch.lua
@@ -10,6 +10,14 @@
       3) Еду/напитки с земли можно подобрать в GRM Inventory через E.
       4) Еду/напитки можно использовать из GRM Inventory.
       5) Ничего не требует править в основных файлах: патч ставится отдельным autorun-файлом.
+
+    v2 (Код 109, заказ владельца): УДАЛЕНА полная замена net-ресивера
+    «grm_inv_use». Старая копия useItem знала только еду/оружие/патроны/
+    heal/armor и МОЛЧА убивала использование всех остальных предметов
+    (модулятор рации — «жму Использовать, ничего», кошелёк, телефон,
+    медкарта). Инвентарь v1.5.0 дал API GRM.Inventory.RegisterUseHandler —
+    обработчик «grm_food_eat» регистрируется через него, ресивер
+    инвентаря остаётся единственным и неприкосновенным.
 --------------------------------------------------------------------]]
 
 if SERVER then
@@ -206,126 +214,33 @@ local function useFoodFromInventory(ply, slotIdx, slot, itemID, data)
     notify(ply, "[Еда] Использовано: " .. (data.name or itemID) .. ".", 100, 220, 100)
 end
 
--- Полная замена grm_inv_use нужна потому, что в вашем Inventory useItem — local-функция,
--- её нельзя расширить hook'ом. Поэтому здесь повторяется штатная логика + добавлена еда.
-local function patchedInventoryUse(ply, slotIdx)
-    if not IsValid(ply) then return end
-    if not GRM.Inventory or not GRM.Inventory.GetPlayerInv then return end
-
-    registerFoodItemsInInventory()
-
-    local inv = GRM.Inventory.GetPlayerInv(ply)
-    if not inv then return end
-
-    local slot = inv.slots and inv.slots[slotIdx]
-    if not slot or not slot.id then return end
-
-    local itemID = slot.id
-
-    -- Еда/напитки GRM Food
-    local foodData = getFoodData(itemID)
-    if foodData then
-        useFoodFromInventory(ply, slotIdx, slot, itemID, foodData)
-        return
-    end
-
-    -- Оружие — экипировать
-    if string.StartWith(itemID, "weapon:") then
-        local weaponClass = slot.data and slot.data.class
-        if not weaponClass then return end
-
-        if ply:HasWeapon(weaponClass) then
-            notify(ply, "У вас уже есть это оружие", 255, 100, 100)
-            return
-        end
-
-        local wep = ply:Give(weaponClass)
-        if IsValid(wep) then
-            if slot.data and slot.data.clip1 and slot.data.clip1 > 0 then
-                wep:SetClip1(slot.data.clip1)
-            end
-
-            inv.slots[slotIdx] = nil
-            if GRM.Inventory.SyncSlot then
-                GRM.Inventory.SyncSlot(ply, slotIdx)
-            end
-
-            notify(ply, "Оружие экипировано", 100, 220, 100)
-        end
-
-        return
-    end
-
-    local def = GRM.Inventory.GetItemDef and GRM.Inventory.GetItemDef(itemID) or nil
-    if not def then return end
-
-    -- Патроны — добавить в запас
-    if def.type == "ammo" and def.ammoType then
-        local amount = slot.count or 1
-        ply:GiveAmmo(amount, def.ammoType, true)
-        inv.slots[slotIdx] = nil
-
-        if GRM.Inventory.SyncSlot then
-            GRM.Inventory.SyncSlot(ply, slotIdx)
-        end
-
-        notify(ply, "Получено " .. amount .. "x " .. (def.name or itemID), 100, 220, 100)
-        return
-    end
-
-    -- Обычные предметы из Inventory
-    if def.type == "item" and def.useFunc then
-        local used = false
-
-        if def.useFunc == "heal_25" then
-            if ply:Health() < ply:GetMaxHealth() then
-                ply:SetHealth(math.min(ply:GetMaxHealth(), ply:Health() + 25))
-                used = true
-            else
-                notify(ply, "Здоровье уже полное", 255, 180, 60)
-                return
-            end
-        elseif def.useFunc == "armor_15" then
-            if ply:Armor() < 100 then
-                ply:SetArmor(math.min(100, ply:Armor() + 15))
-                used = true
-            else
-                notify(ply, "Броня уже полная", 255, 180, 60)
-                return
-            end
-        elseif def.useFunc == "grm_food_eat" then
-            local data = getFoodData(itemID)
-            if data then
-                useFoodFromInventory(ply, slotIdx, slot, itemID, data)
-                return
-            end
-        end
-
-        if used then
-            if GRM.Inventory.RemoveFromSlot then
-                GRM.Inventory.RemoveFromSlot(ply, slotIdx, 1)
-            end
-            notify(ply, "Использовано: " .. (def.name or itemID), 100, 220, 100)
-        end
-
-        return
-    end
-
-    notify(ply, "Этот предмет нельзя использовать", 255, 180, 60)
-end
-
-local function installInventoryUsePatch()
-    if not GRM.Inventory or not GRM.Inventory.GetPlayerInv or not GRM.Inventory.SyncSlot then
+-- ===================================================================
+-- СЕРВЕР: ИСПОЛЬЗОВАНИЕ ЕДЫ ИЗ ИНВЕНТАРЯ (Код 109, находка 126)
+-- ===================================================================
+-- Раньше здесь стояла ПОЛНАЯ ЗАМЕНА net.Receive("grm_inv_use"): useItem
+-- в инвентаре была local-функцией, расширить её хуком было нельзя, и
+-- патч вынужденно копировал штатную логику. Копия знала только еду,
+-- оружие, патроны и heal/armor — а клики «Использовать» по всем
+-- остальным useFunc-предметам (МОДУЛЯТОР РАЦИИ, кошелёк, телефон,
+-- медкарта) умирали МОЛЧА: «жму — ничего» (заказ владельца Кода 109,
+-- «/r /freq не работают» — модулятор так и не включался никогда).
+-- С инвентаря v1.5.0 есть официальная точка расширения
+-- GRM.Inventory.RegisterUseHandler — регистрируем обработчик еды и
+-- больше НИЧЕГО не заменяем (ресивер инвентаря — единственный).
+local function installUseIntegration()
+    if not (GRM.Inventory and GRM.Inventory.RegisterUseHandler) then
         return false
     end
-
-    util.AddNetworkString("grm_inv_use")
-
-    net.Receive("grm_inv_use", function(_, ply)
-        local slotIdx = net.ReadUInt(8)
-        patchedInventoryUse(ply, slotIdx)
+    GRM.Inventory.RegisterUseHandler("grm_food_eat", function(ply, slotIdx, slot, def)
+        registerFoodItemsInInventory() -- страховка на перекошенную загрузку
+        local itemID = slot.id or (def and def.grmFoodID) or ""
+        local data = getFoodData(itemID)
+        if not data then
+            notify(ply, "[Еда] Неизвестный тип еды: " .. tostring(itemID), 255, 140, 110)
+            return
+        end
+        useFoodFromInventory(ply, slotIdx, slot, itemID, data)
     end)
-
     return true
 end
 
@@ -686,7 +601,7 @@ end
 
 local function tryInstallAll()
     registerFoodItemsInInventory()
-    installInventoryUsePatch()
+    installUseIntegration() -- Код 109: обработчик через API инвентаря, ресивер больше НЕ заменяется
     patchFoodEntityUse()
     installVendingBuyPatch()
 end
@@ -711,4 +626,4 @@ timer.Create("GRM_FoodInventoryPatch_InstallTimer", 1, 15, function()
     end
 end)
 
-print("[GRM Food] Inventory patch loaded: pickup/use food + vending drop distance fix.")
+print("[GRM Food] Inventory patch v2 loaded: pickup/use food (RegisterUseHandler, без замены ресивера) + vending drop distance fix.")

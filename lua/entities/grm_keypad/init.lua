@@ -5,6 +5,9 @@
     Код 106/107: PIN — строгое сравнение с тримом ДЛЯ ВСЕХ; кейпад
     переведён на режим «только PIN» — фракционный доступ теперь у
     FFD Scanner (lua/entities/grm_scanner), толл-режим удалён.
+    Код 109 (заказ владельца): авто-определение дверей по радиусу 250
+    УДАЛЕНО — кейпад открывает ТОЛЬКО двери из ручных связей FFD Link
+    (инструмент «FFD Link»). Без связей не трогает ни одну дверь.
 ----------------------------------------------------------------------]]
 
 AddCSLuaFile("cl_init.lua")
@@ -113,19 +116,26 @@ function ENT:ProcessGrant(ply)
         numpad.Activate(self.KeypadOwner, self.KeyGranted)
     end
 
-    -- Код 108 (заказ владельца): есть ручные связи (FFD Link) — открываем
-    -- ТОЛЬКО привязанные двери; нет связей — старое поведение (радиус 250).
+    -- Код 108 (заказ владельца) + Код 109 (запрет авто-связи): двери
+    -- открываются ТОЛЬКО из ручного списка FFD Link. Радиусного авто-
+    -- определения больше НЕТ: кейпад без связей не трогает ни одну дверь
+    -- (раньше он сам хватал все FFD-двери в 250 юнитах — заказ владельца
+    -- Кода 109: «этого быть не должно»).
     -- Список ЗАХВАТЫВАЕМ: по таймеру гасим ровно те же двери.
     local doorList = {}
     if GRM.FFDLink and GRM.FFDLink.Count and GRM.FFDLink.Count(self) > 0 then
         local _, doors = GRM.FFDLink.Fade(self, true)
         for _, d in ipairs(doors or {}) do doorList[#doorList + 1] = d end
     else
-        -- Находим все Fading Door рядом
-        for _, prop in ipairs(ents.FindInSphere(self:GetPos(), 250)) do
-            if IsValid(prop) and prop.isFadingDoor and prop.FadeActivate then
-                prop:FadeActivate()
-                doorList[#doorList + 1] = prop
+        -- видимая подсказка (с антиспамом), почему ничего не открылось
+        local now = CurTime()
+        if (self.__grmNoLinkHint or 0) <= now then
+            self.__grmNoLinkHint = now + 5
+            local msg = "Кейпад не привязан ни к одной двери: свяжите инструментом «FFD Link» (ЛКМ по кейпаду → ЛКМ по двери)."
+            if GRM.Notify then
+                GRM.Notify(ply, msg, 255, 210, 90)
+            elseif IsValid(ply) and ply.PrintMessage then
+                ply:PrintMessage(HUD_PRINTTALK, msg)
             end
         end
     end

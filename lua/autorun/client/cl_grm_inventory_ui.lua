@@ -107,7 +107,13 @@ local function rebuildDetail()
     local icon = vgui.Create("DImage", detailPanel)
     icon:SetPos(14, 14); icon:SetSize(48, 48); icon:SetImage(def.icon or "icon16/package.png")
     local title = vgui.Create("DLabel", detailPanel)
-    title:SetPos(74, 14); title:SetSize(260, 24); title:SetText(itemName(slot)); title:SetFont("GRMInv2_Normal"); title:SetTextColor(C.text)
+    -- Код 109: модулятор рации показывает своё состояние прямо в заголовке —
+    -- владелец сразу видит, что «Использовать» реально переключает ВКЛ/ВЫКЛ
+    local displayName = itemName(slot)
+    if slot.id == "radio_modulator" then
+        displayName = displayName .. ((slot.data and slot.data.on == true) and "  [ВКЛ]" or "  [ВЫКЛ]")
+    end
+    title:SetPos(74, 14); title:SetSize(260, 24); title:SetText(displayName); title:SetFont("GRMInv2_Normal"); title:SetTextColor(C.text)
     local count = vgui.Create("DLabel", detailPanel)
     count:SetPos(74, 38); count:SetSize(260, 20); count:SetText(string.format("Количество: %d   |   Вес: %.2f кг", tonumber(slot.count) or 1, itemWeight(slot))); count:SetFont("GRMInv2_Small"); count:SetTextColor(C.yellow)
     local desc = vgui.Create("DLabel", detailPanel)
