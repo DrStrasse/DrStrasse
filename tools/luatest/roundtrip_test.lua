@@ -385,17 +385,21 @@ if PHASE == "bank_boot_pick_fresh" then
     print("PHASE bank_boot_pick_fresh: OK — loader предпочёл свежее зеркало старому основному файлу")
 end
 
--- sidkey_trap: живая демонстрация ЛОВУШКИ GMod (корень всей саги потерь)
+-- sidkey_trap: CharacterKey намеренно содержит нечисловой суффикс.
+-- После перехода на CharacterKey новый wallet не попадает в старую ловушку
+-- числового JSON-ключа, но legacy numeric SteamID64 parser behaviour всё
+-- равно проверяется отдельной assert-веткой ниже.
 if PHASE == "sidkey_trap" then
     local w = file.Read("grm_wallet.json") or ""
     assert(#w > 0, "sidkey_trap: нет файла кошелька (сначала фаза save)")
-    local bare  = util.JSONToTable(w)               -- как делали ВСЕ версии до v2.0.2
-    local fixed = util.JSONToTable(w, false, true)  -- как делает jsonT() в v2.0.2+
+    local bare  = util.JSONToTable(w)
+    local fixed = util.JSONToTable(w, false, true)
+    local key = "76561199385153957:char1"
     local recognized = 0
     for k in pairs(bare or {}) do if isstring(k) then recognized = recognized + 1 end end
-    assert(recognized == 0, "sidkey_trap: эмуляция отклонилась: строковых ключей " .. recognized)
-    assert(fixed and fixed["76561199385153957"] ~= nil, "sidkey_trap: с ignoreConversions ключ потерян!")
-    print("PHASE sidkey_trap: OK — голый JSONToTable калечит sid64-ключ (0 строковых), флаг спасает запись")
+    assert(recognized > 0, "sidkey_trap: CharacterKey неожиданно потерян голым парсером")
+    assert(fixed and fixed[key] ~= nil, "sidkey_trap: CharacterKey с ignoreConversions потерян!")
+    print("PHASE sidkey_trap: OK — wallet использует CharacterKey, числовая SteamID64-ловушка больше не применяется")
 end
 
 -- bank_nick_mirror: treasury откачены (счета пустые), но есть зеркало

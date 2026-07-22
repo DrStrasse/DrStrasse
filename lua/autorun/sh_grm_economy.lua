@@ -532,11 +532,12 @@ if SERVER then
                         local rbal = math.Clamp(math.floor(tonumber(rec.electro_balance) or 0), 0, cap)
                         local rsid = isstring(rec.sid) and rec.sid or nil
                         if rsid and rsid ~= "" then
-                            if E.Data.accounts[rsid] == nil then
-                                E.Data.accounts[rsid] = { balance = rbal, name = tostring(rec.name or "?") }
+                            local rkey = persistedCharacterKey(rsid)
+                            if E.Data.accounts[rkey] == nil then
+                                E.Data.accounts[rkey] = { balance = rbal, name = tostring(rec.name or "?") }
                                 restored = restored + 1
                                 print(("[GRM Economy] счёт %s восстановлен из зеркала electro_balance: %d (%s)")
-                                    :format(rsid, rbal, tostring(rec.name or "?")))
+                                    :format(rkey, rbal, tostring(rec.name or "?")))
                             end
                         else
                             local nick = tostring(rec.name or "")
