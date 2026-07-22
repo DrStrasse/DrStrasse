@@ -386,6 +386,16 @@ if SERVER then
                 end
             end
         end
+        local allOutfits = {}
+        for _, section in ipairs(sections) do
+            for _, outfit in ipairs(section.outfits or {}) do
+                local copy = table.Copy(outfit)
+                copy.provider = section.id
+                copy.providerTitle = section.title
+                allOutfits[#allOutfits + 1] = copy
+            end
+        end
+
         local rec = normalizePlayerData(ply) or { active = "char1", slots = {} }
         local slots = {}
         for i = 1, CH.MaxSlots do
@@ -400,7 +410,8 @@ if SERVER then
             characterID = CH.GetActiveID(ply),
             characterKey = CH.GetActiveKey(ply),
             identityNote = "Активный CharacterKey: " .. CH.GetActiveKey(ply) .. ". Новые модули должны использовать GRM.Char.GetActiveKey(ply).",
-            sections = sections,
+            sections = sections, -- legacy payload compatibility
+            outfits = allOutfits,
             nameMin = CH.NameMin, nameMax = CH.NameMax,
             wardrobe = opts.wardrobe == true or nil,
             wardrobeTitle = opts.title,
@@ -598,6 +609,17 @@ if CLIENT then
         payload = istable(payload) and payload or {}
         local char = istable(payload.char) and payload.char or nil
         local sections = istable(payload.sections) and payload.sections or {}
+        local outfits = istable(payload.outfits) and payload.outfits or {}
+        if #outfits == 0 then
+            for _, sec in ipairs(sections) do
+                for _, outfit in ipairs(sec.outfits or {}) do
+                    local copy = table.Copy(outfit)
+                    copy.provider = sec.id
+                    copy.providerTitle = sec.title
+                    outfits[#outfits + 1] = copy
+                end
+            end
+        end
         local slots = istable(payload.slots) and payload.slots or {}
         local activeSlot = tostring(payload.activeSlot or "char1")
 
@@ -608,10 +630,10 @@ if CLIENT then
             skin = char and tonumber(char.skin) or 0,
             bodygroups = char and table.Copy(char.bodygroups or {}) or {},
         }
-        if draft.model == "" and sections[1] and sections[1].outfits and sections[1].outfits[1] then
-            draft.model = sections[1].outfits[1].path
-            draft.skin = tonumber(sections[1].outfits[1].skin) or 0
-            draft.bodygroups = table.Copy(sections[1].outfits[1].bodygroups or {})
+        if draft.model == "" and outfits[1] then
+            draft.model = outfits[1].path
+            draft.skin = tonumber(outfits[1].skin) or 0
+            draft.bodygroups = table.Copy(outfits[1].bodygroups or {})
         end
 
         if IsValid(CH._frame) then CH._frame:Remove() end
@@ -703,6 +725,7 @@ if CLIENT then
             b:SetPos(10 + (i - 1) * math.floor((leftW - 34) / 3), 30)
             b:SetSize(math.floor((leftW - 40) / 3), 34)
             b:SetFont("GRMChar_Normal")
+            b:SetTooltip(info.model ~= "" and ("Текущая модель: " .. info.model) or "Персонаж ещё не создан")
             b.DoClick = function()
                 net.Start(NET_SAVE)
                     net.WriteTable({ action = "select_slot", slot = info.id })
@@ -842,42 +865,42 @@ if CLIENT then
             rebuildBodygroups()
         end
 
-        -- секции провайдеров (вкладками)
+        -- Единый список внешности: гражданские и фракционные модели
+        -- не разделяются вкладками. Доступный набор уже отфильтрован сервером
+        -- для активного CharacterKey.
         local sheet = vgui.Create("DPropertySheet", left)
         sheet:Dock(FILL)
-        for _, sec in ipairs(sections) do
-            local sc = vgui.Create("DScrollPanel")
-            sc:DockMargin(2, 2, 2, 2)
-            for _, entry in ipairs(sec.outfits or {}) do
-                local row = vgui.Create("DPanel", sc)
-                row:Dock(TOP) row:SetTall(66) row:DockMargin(0, 0, 0, 6)
-                local isSel = (entry.path == draft.model)
-                row.Paint = function(_, pw, ph)
-                    draw.RoundedBox(6, 0, 0, pw, ph, (entry.path == draft.model) and Color(44, 66, 96) or C.panel)
-                end
-
-                local icon = vgui.Create("SpawnIcon", row)
-                icon:Dock(LEFT) icon:SetWide(62) icon:DockMargin(4, 4, 0, 4)
-                icon:SetModel(entry.path, tonumber(entry.skin) or 0)
-                icon:SetTooltip(false)
-                icon:SetMouseInputEnabled(false)
-
-                local bn = mkBtn(row, string.GetFileFromFilename(entry.path) or entry.path, C.panel)
-                bn:Dock(FILL) bn:DockMargin(0, 3, 3, 3)
-                bn:SetFont("GRMChar_Normal") bn:SetTextColor(C.text)
-                bn.Paint = function(self, pw, ph)
-                    local cc = (entry.path == draft.model) and Color(44, 66, 96) or C.panel2
-                    if self:IsHovered() then cc = Color(cc.r + 14, cc.g + 14, cc.b + 14) end
-                    draw.RoundedBox(5, 0, 0, pw, ph, cc)
-                end
-                bn:SetText(tostring(entry.path))
-                bn.DoClick = function()
-                    selectModel(entry)
-                    surface.PlaySound("buttons/button15.wav")
-                end
+        local sc = vgui.Create("DScrollPanel")
+        sc:DockMargin(2, 2, 2, 2)
+        for _, entry in ipairs(outfits) do
+            local row = vgui.Create("DPanel", sc)
+            row:Dock(TOP) row:SetTall(66) row:DockMargin(0, 0, 0, 6)
+            row.Paint = function(_, pw, ph)
+                draw.RoundedBox(6, 0, 0, pw, ph, (entry.path == draft.model) and Color(44, 66, 96) or C.panel)
             end
-            sheet:AddSheet(sec.title or sec.id, sc, "icon16/user.png")
+
+            local icon = vgui.Create("SpawnIcon", row)
+            icon:Dock(LEFT) icon:SetWide(62) icon:DockMargin(4, 4, 0, 4)
+            icon:SetModel(entry.path, tonumber(entry.skin) or 0)
+            icon:SetTooltip(false)
+            icon:SetMouseInputEnabled(false)
+
+            local bn = mkBtn(row, string.GetFileFromFilename(entry.path) or entry.path, C.panel)
+            bn:Dock(FILL) bn:DockMargin(0, 3, 3, 3)
+            bn:SetFont("GRMChar_Normal") bn:SetTextColor(C.text)
+            bn.Paint = function(self, pw, ph)
+                local cc = (entry.path == draft.model) and Color(44, 66, 96) or C.panel2
+                if self:IsHovered() then cc = Color(cc.r + 14, cc.g + 14, cc.b + 14) end
+                draw.RoundedBox(5, 0, 0, pw, ph, cc)
+            end
+            local provider = entry.providerTitle and ("  ·  " .. tostring(entry.providerTitle)) or ""
+            bn:SetText(tostring(entry.path) .. provider)
+            bn.DoClick = function()
+                selectModel(entry)
+                surface.PlaySound("buttons/button15.wav")
+            end
         end
+        sheet:AddSheet("Внешность", sc, "icon16/user.png")
 
         -- НИЗ: действия
         local bot = vgui.Create("DPanel", f)

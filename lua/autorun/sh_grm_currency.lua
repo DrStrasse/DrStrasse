@@ -617,7 +617,8 @@ if SERVER then
             return 0
         end
         local adopted = 0
-        for sid, rec in pairs(raw) do
+        for rawSid, rec in pairs(raw) do
+            local sid = isstring(rawSid) and persistedCharacterKey(rawSid) or rawSid
             if isstring(sid) then
                 -- терпим и к формату sid -> число
                 local recBal, recName

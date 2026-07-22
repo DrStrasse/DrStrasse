@@ -101,7 +101,8 @@ end
 -- общий помощник: членство с учётом обеих форм ключей (н101)
 local function memberRec(f, ply)
     if not (istable(f) and istable(f.Members) and IsValid(ply)) then return nil end
-    return GRM.Identity.FactionMember(f, ply)
+    if GRM.Identity and GRM.Identity.FactionMember then return GRM.Identity.FactionMember(f, ply) end
+    return f.Members[ply:SteamID()] or f.Members[ply:SteamID64()]
 end
 local function factionOf(ply)
     if not istable(Factions) or not IsValid(ply) then return nil end
