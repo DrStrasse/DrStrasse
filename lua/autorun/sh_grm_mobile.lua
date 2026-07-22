@@ -1000,6 +1000,22 @@ if CLIENT then
         M.down[key]=nil; M.hold[key]=nil; M.nextRepeat[key]=nil
     end
 
+    function MB.ClientIsOpen()
+        return M.open == true
+    end
+    function MB.ClientWheel(delta)
+        if M.open then move(tonumber(delta) or 1) return true end
+        return false
+    end
+    function MB.ClientSelect()
+        if M.open then enter() return true end
+        return false
+    end
+    function MB.ClientClose()
+        if M.open then closePhone(true) return true end
+        return false
+    end
+
     net.Receive("GRM_Mob_State", function()
         M.state = net.ReadTable() or {}; M.stateKnown = true; MB.ClientState=M.state
         if M.state.has == false then closePhone(false) end

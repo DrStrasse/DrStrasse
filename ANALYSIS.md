@@ -994,3 +994,9 @@
 ## Находка 136 (22.07.2026): MakePopup реально оставался в mobile UI
 
 После фикса 135 в описании было сказано «не MakePopup», но в клиентском коде телефона строка `MakePopup()` осталась. В живом GMod это продолжало давать DFrame VGUI-фокус и могло съедать UP/DOWN/СКМ. Теперь `sh_grm_mobile.lua` реально не вызывает `MakePopup` для телефона: панель остаётся HUD/VGUI-оверлеем без фокуса, а управление идёт через hooks + polling. Для СКМ добавлен `input.IsMouseDown(MOUSE_MIDDLE/MOUSE_3/107)` в дополнение к `PlayerButtonDown`/`PlayerBindPress`.
+
+---
+
+## Находка 137 (22.07.2026): селектор оружия HUD перехватывал колесо раньше mobile
+
+`cl_grm_hud.lua` имеет собственный `PlayerBindPress("GRM_HUD_Selector")`, который открывал кастомный селектор оружия на `invnext/invprev` и реагировал на `+attack`. Из-за порядка hook'ов mobile-блокировка не гарантировала победу: колесо уходило в HUD, СКМ/селектор оружия продолжали жить. Фикс: экспортированы `GRM.Mobile.ClientIsOpen/ClientWheel/ClientSelect/ClientClose`, а `cl_grm_hud.lua` получил ранний guard. При открытом телефоне HUD: закрывает selector, не рисует его, колесо отдаёт `ClientWheel`, `+attack3`/mouse3 отдаёт `ClientSelect`, все weapon/gameplay binds возвращают true.
