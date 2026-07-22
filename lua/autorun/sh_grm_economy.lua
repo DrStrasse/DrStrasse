@@ -167,7 +167,8 @@ if SERVER then
     local function memberRec(f, ply)
         if not (istable(f) and istable(f.Members) and IsValid(ply)) then return nil end
         local key = characterKeyOf(ply)
-        return GRM.Identity.FactionMember(f, ply)
+        if GRM.Identity and GRM.Identity.FactionMember then return GRM.Identity.FactionMember(f, ply) end
+        return f.Members[ply:SteamID()] or f.Members[ply:SteamID64()]
     end
 
     local function factionOf(ply)
@@ -1147,6 +1148,23 @@ if SERVER then
         local players, cashSum, bankSum = {}, 0, 0
         if GRM.GetAllBalances then players = GRM.GetAllBalances() end
         for sid, rec in pairs(players) do
+            local slot = tostring(sid):match(":(char[1-3])$")
+            local slotNo = slot and tonumber(slot:sub(5)) or nil
+            rec.characterLabel = slotNo and ("Персонаж " .. slotNo) or "Аккаунт"
+            local online = GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(sid) or nil
+            if IsValid(online) then
+                rec.rpName = online:GetNWString("GRM_RPName", "")
+                if rec.rpName == "" then rec.rpName = rec.name end
+                rec.accountName = online:Nick()
+            elseif slot and GRM.Char and GRM.Char.Data then
+                local account, slotID = tostring(sid):match("^(.-):(char[1-3])$")
+                local c = account and GRM.Char.Data[account] and GRM.Char.Data[account].slots and GRM.Char.Data[account].slots[slotID]
+                rec.rpName = c and c.name or rec.name
+                rec.accountName = rec.name
+            else
+                rec.rpName = rec.name
+                rec.accountName = rec.name
+            end
             cashSum = cashSum + (tonumber(rec.balance) or 0)
             local acc = E.Data.accounts[sid]
             rec.bank = acc and acc.balance or 0
@@ -1854,7 +1872,7 @@ if CLIENT then
             cmb2:SetPos(170, 138) cmb2:SetSize(250, 26)
             cmb2:SetValue("Игрок (все известные)...")
             for sid, rec in pairs(d.players or {}) do
-                cmb2:AddChoice(tostring(rec.name or sid) .. " (" .. sid .. ")", sid)
+                cmb2:AddChoice(tostring(rec.rpName or rec.name or sid) .. " (" .. tostring(rec.characterLabel or "Персонаж") .. ")", sid)
             end
             local bp = btn(p, "Выплатить из гос.", CUI.green, 180, 26) bp:SetPos(430, 138)
             bp.DoClick = function()
@@ -1872,16 +1890,17 @@ if CLIENT then
             local list = vgui.Create("DListView", p)
             list:SetPos(4, 4) list:SetSize(940, 400)
             list:SetMultiSelect(false)
-            list:AddColumn("Ник") list:AddColumn("Наличные") list:AddColumn("Счёт в банке") list:AddColumn("SteamID64")
+            list:AddColumn("Игрок / персонаж") list:AddColumn("Наличные") list:AddColumn("Счёт в банке")
 
             local sids = {}
             for sid in pairs(d.players or {}) do sids[#sids + 1] = sid end
             table.sort(sids, function(a1, b1)
-                return tostring((d.players[a1] or {}).name or a1):lower() < tostring((d.players[b1] or {}).name or b1):lower()
+                return tostring((d.players[a1] or {}).rpName or (d.players[a1] or {}).name or a1):lower() < tostring((d.players[b1] or {}).rpName or (d.players[b1] or {}).name or b1):lower()
             end)
             for _, sid in ipairs(sids) do
                 local rec = d.players[sid]
-                local ln = list:AddLine(tostring(rec.name or "?"), money(rec.balance or 0), money(rec.bank or 0), sid)
+                local display = tostring(rec.rpName or rec.name or "?") .. "  (" .. tostring(rec.characterLabel or "Персонаж") .. ")"
+                local ln = list:AddLine(display, money(rec.balance or 0), money(rec.bank or 0))
                 ln.Sid = sid
             end
 
