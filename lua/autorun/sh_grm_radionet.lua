@@ -115,6 +115,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.RadioNet = GRM.RadioNet or {}
 local RN = GRM.RadioNet
+local freqIdentity
 
 RN.Version    = "1.4.2"  -- Код 109: useFunc-диспетчер инвентаря — реестр (находка 126):
                          -- патч еды больше НЕ заменяет ресивер, «Использовать»
@@ -433,14 +434,14 @@ if SERVER then
                         local n = ply.GetNWString and ply:GetNWString("GRM_RPName", "") or ""
                         if n == "" then n = ply:Nick() end
                         if logEvent then
-                            logEvent("tx_" .. tostring(kind), n, ply:SteamID64(), ply:GetPos(),
+                            logEvent("tx_" .. tostring(kind), n, freqIdentity(ply), ply:GetPos(),
                                 kind == "radio" and "эфир микрофона начат" or kind == "pa" and "ГРОМКАЯ СВЯЗЬ начата" or "мегафон включён")
                         end
                     else
                         notifyFx(ply, RN._fxLastKind[ply] or "radio", false)
                         if RN._fxLastKind[ply] == "pa" then paRelayClicks(false) end
                         if logEvent then
-                            logEvent("tx_end", ply:Nick(), ply:SteamID64(), ply:GetPos(),
+                            logEvent("tx_end", ply:Nick(), freqIdentity(ply), ply:GetPos(),
                                 "передача «" .. tostring(RN._fxLastKind[ply] or "radio") .. "» завершена")
                         end
                     end
@@ -797,7 +798,7 @@ if SERVER then
             rec.off = not (rec.off == true)
             RN.SysSave("toggle " .. id)
             recompute()
-            logEvent("dev_switch", ply:Nick(), ply:SteamID64(), IsValid(e) and e:GetPos() or nil,
+            logEvent("dev_switch", ply:Nick(), freqIdentity(ply), IsValid(e) and e:GetPos() or nil,
                 rec.off and ("вывод устройства " .. id .. " ВЫКЛЮЧЕН пультом") or ("вывод " .. id .. " возвращён"))
             consoleOpen(ply, con)
             return
@@ -979,7 +980,22 @@ if SERVER then
     RN.FreqSayDelay = 1.5    -- антифлуд: пауза между радиосообщениями
     RN.FreqMaxLen   = 220    -- макс. длина одного сообщения (символов)
 
-    RN._freq = RN._freq or {} -- sid64 → «145.5»
+    freqIdentity = function(value)
+        if IsValid(value) and value.IsPlayer and value:IsPlayer() then
+            if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(value) end
+            return tostring(value:SteamID64() or "")
+        end
+        local raw = tostring(value or "")
+        if raw:match(":char[1-3]$") then return raw end
+        if raw:match("^%d+$") then return raw .. ":char1" end
+        if util.SteamIDTo64 then
+            local s64 = util.SteamIDTo64(raw)
+            if s64 and s64 ~= "0" then return tostring(s64) .. ":char1" end
+        end
+        return raw
+    end
+
+    RN._freq = RN._freq or {} -- CharacterKey → «145.5»
 
     -- форвард-декларация (урок 97-хотфикса): needUnit выше объявления
     local freqChat
@@ -996,7 +1012,7 @@ if SERVER then
     function RN.FreqOf(ply)
         if not IsValid(ply) then return nil end
         local f = ply._rnFreq
-        if f == nil and ply.SteamID64 then f = RN._freq[tostring(ply:SteamID64() or "")] end
+        if f == nil and ply.SteamID64 then f = RN._freq[tostring(freqIdentity(ply) or "")] end
         return f
     end
 
@@ -1047,11 +1063,11 @@ if SERVER then
             return false
         end
         ply._rnFreq = key
-        if ply.SteamID64 then RN._freq[tostring(ply:SteamID64() or "")] = key end
+        if ply.SteamID64 then RN._freq[tostring(freqIdentity(ply) or "")] = key end
         freqChat(ply, "[Рация] Вы на частоте " .. key .. " МГц. Говорить: /r текст. Отключиться: /freqleave")
         if GRM.Notify then GRM.Notify(ply, "Рация: частота " .. key .. " МГц (/r текст)", 140, 200, 255) end
         if RN.LogEvent then RN.LogEvent("freq_join", IsValid(ply) and ply:Nick() or "?",
-            ply.SteamID64 and ply:SteamID64() or "", IsValid(ply) and ply:GetPos() or nil, "частота " .. key) end
+            ply.SteamID64 and freqIdentity(ply) or "", IsValid(ply) and ply:GetPos() or nil, "частота " .. key) end
         return true
     end
 
@@ -1073,10 +1089,10 @@ if SERVER then
         local f = RN.FreqOf(ply)
         if not f then freqChat(ply, "[Рация] Вы и так не на частоте.") return end
         ply._rnFreq = nil
-        if ply.SteamID64 then RN._freq[tostring(ply:SteamID64() or "")] = nil end
+        if ply.SteamID64 then RN._freq[tostring(freqIdentity(ply) or "")] = nil end
         freqChat(ply, "[Рация] Частота " .. f .. " покинута — рация отключена.")
         if RN.LogEvent then RN.LogEvent("freq_leave", ply:Nick(),
-            ply.SteamID64 and ply:SteamID64() or "", ply:GetPos(), "частота " .. f) end
+            ply.SteamID64 and freqIdentity(ply) or "", ply:GetPos(), "частота " .. f) end
     end
 
     -- помехи текста: часть символов заменяется «*» (шипение); пробелы живут,
@@ -1140,7 +1156,7 @@ if SERVER then
         if delivered <= 1 then
             freqChat(ply, "[Рация] …в эфире тишина: на этой частоте вас никто не слышит (нет абонентов или все вне связи).")
         end
-        if RN.LogEvent then RN.LogEvent("freq_say", name, ply.SteamID64 and ply:SteamID64() or "", myPos,
+        if RN.LogEvent then RN.LogEvent("freq_say", name, ply.SteamID64 and freqIdentity(ply) or "", myPos,
             "частота " .. f .. ", слышат " .. tostring(delivered) .. " | " .. text) end
         return true
     end
@@ -1148,7 +1164,7 @@ if SERVER then
     -- восстановление частоты при входе: память по sid64 в пределах сессии
     hook.Add("PlayerInitialSpawn", "GRM_RN_FreqSpawn", function(ply)
         if not IsValid(ply) or not ply.SteamID64 then return end
-        local f = RN._freq[tostring(ply:SteamID64() or "")]
+        local f = RN._freq[tostring(freqIdentity(ply) or "")]
         if f then ply._rnFreq = f end
     end)
 

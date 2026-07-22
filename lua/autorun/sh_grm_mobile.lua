@@ -96,6 +96,22 @@ MB.ItemTier.mobile_touch = MB.ItemTier.mobile_touch or "badger_touch"
 MB.ItemTier.mobile_smartphone = MB.ItemTier.mobile_smartphone or "tinkle"
 MB.Lines = MB.Lines or {}
 MB.Data = MB.Data or {}
+
+function MB.Key(value)
+    if IsValid(value) and value:IsPlayer() then
+        if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(value) end
+        return tostring(value:SteamID64() or "")
+    end
+    local raw = tostring(value or "")
+    if raw:match(":char[1-3]$") then return raw end
+    if raw:match("^%d+$") then return raw .. ":char1" end
+    if util.SteamIDTo64 then
+        local s64 = util.SteamIDTo64(raw)
+        if s64 and s64 ~= "0" then return tostring(s64) .. ":char1" end
+    end
+    return raw
+end
+
 MB.Forum = MB.Forum or { posts = {} }
 MB.ForumCap = MB.ForumCap or 120
 
@@ -237,7 +253,7 @@ end
 
 function MB.EnsureData(ply)
     if not IsValid(ply) then return nil end
-    local sid = ply:SteamID64()
+    local sid = MB.Key(ply)
     MB.Data[sid] = MB.Data[sid] or { contacts = {}, sms = {}, notes = {}, number = MB.GenerateNumber() }
     local d = MB.Data[sid]
     d.contacts = istable(d.contacts) and d.contacts or {}
@@ -249,7 +265,7 @@ function MB.EnsureData(ply)
 end
 
 function MB.RemoveLine(plyOrSid)
-    local sid = isstring(plyOrSid) and plyOrSid or (IsValid(plyOrSid) and plyOrSid:SteamID64() or nil)
+    local sid = MB.Key(plyOrSid)
     if not sid then return end
     local line = MB.Lines[sid]
     if IsValid(line) then line:Remove() end
@@ -264,7 +280,7 @@ function MB.EnsureLine(ply)
         return nil
     end
 
-    local sid = ply:SteamID64()
+    local sid = MB.Key(ply)
     local data = MB.EnsureData(ply)
     local line = MB.Lines[sid]
 
@@ -300,7 +316,7 @@ function MB.Think()
     local seen = {}
     for _, ply in ipairs(list) do
         if IsValid(ply) then
-            local sid = ply:SteamID64()
+            local sid = MB.Key(ply)
             seen[sid] = true
             local line = MB.EnsureLine(ply)
             if ply._grmMobUI and CurTime() - ply._grmMobUI > 3 then
@@ -360,7 +376,7 @@ end
 
 function MB.Hangup(ply)
     if not (GRM.Phone and GRM.Phone.Hangup) then return false end
-    local sid = IsValid(ply) and ply:SteamID64() or nil
+    local sid = IsValid(ply) and MB.Key(ply) or nil
     local line = sid and MB.Lines[sid] or nil
     if not IsValid(line) then return false end
     GRM.Phone.Hangup(ply, line)
@@ -586,7 +602,7 @@ function MB.HandleAction(ply, act)
         net.Send(ply)
         return
     elseif op == "fac_query" then
-        local sid, sid64 = ply:SteamID(), ply:SteamID64()
+        local sid, sid64 = ply:SteamID(), MB.Key(ply)
         local foundName, found = nil, nil
         for name, fac in pairs(Factions or {}) do
             if istable(fac) and istable(fac.Members) and (fac.Members[sid] or fac.Members[sid64]) then
@@ -601,7 +617,7 @@ function MB.HandleAction(ply, act)
                 local oply = player.GetBySteamID64 and player.GetBySteamID64(tostring(msid)) or nil
                 if not IsValid(oply) then
                     for _, pp in ipairs(player.GetAll and player.GetAll() or {}) do
-                        if IsValid(pp) and (pp:SteamID64() == tostring(msid) or pp:SteamID() == tostring(msid)) then oply = pp break end
+                        if IsValid(pp) and (MB.Key(pp) == tostring(msid) or pp:SteamID() == tostring(msid)) then oply = pp break end
                     end
                 end
                 local isOn = IsValid(oply)
