@@ -129,9 +129,10 @@ function PERMS.PlayerHasPermission(ply, permission)
     if Factions then
         local sid = ply:SteamID()
         local sid64 = ply:SteamID64()
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
         for factionName, f in pairs(Factions) do
             if istable(f.Members) then
-                local member = f.Members[sid] or f.Members[sid64]
+                local member = f.Members[ck] or f.Members[sid] or f.Members[sid64]
                 if member then
                     local roleName = member.Role or "Участник"
                     if PERMS.RoleHasPermission(factionName, roleName, permission) then

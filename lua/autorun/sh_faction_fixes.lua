@@ -220,9 +220,10 @@ local function getFactionMemberByPlayer(ply)
     if not IsValid(ply) or not Factions then return nil, nil, nil, nil end
     local sid = ply:SteamID()
     local sid64 = ply:SteamID64()
+    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
     for factionName, f in pairs(Factions or {}) do
         if istable(f) and istable(f.Members) then
-            local member = f.Members[sid] or f.Members[sid64]
+            local member = f.Members[ck] or f.Members[sid] or f.Members[sid64]
             if istable(member) then
                 return factionName, member, f, sid
             end
@@ -1145,8 +1146,9 @@ if SERVER then
         if not IsValid(ply) or not istable(f) then return false end
         local sid = ply:SteamID()
         local sid64 = ply:SteamID64()
-        if f.Leader and (f.Leader == sid or f.Leader == sid64) then return true end
-        local member = f.Members and (f.Members[sid] or f.Members[sid64])
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
+        if f.Leader and (f.Leader == ck or f.Leader == sid or f.Leader == sid64) then return true end
+        local member = f.Members and (f.Members[ck] or f.Members[sid] or f.Members[sid64])
         local leaderRole = f.LeaderRoleName or "Лидер"
         return istable(member) and member.Role == leaderRole
     end
@@ -1185,7 +1187,8 @@ if SERVER then
             local tag = (f.Tag and f.Tag ~= "") and f.Tag or factionName
             local sid = ply:SteamID()
             local sid64 = ply:SteamID64()
-            local member = f.Members and (f.Members[sid] or f.Members[sid64])
+            local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
+            local member = f.Members and (f.Members[ck] or f.Members[sid] or f.Members[sid64])
             local role = (member and member.Role) or f.LeaderRoleName or "Лидер"
             local color = f.Color or { r = 255, g = 200, b = 50 }
 
