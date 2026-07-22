@@ -71,7 +71,7 @@ if SERVER then
     -- фракция игрока (обе ключ-формы)
     local function factionOfPly(ply)
         if _G.FactionsAPI and _G.FactionsAPI.GetFactionOf then
-            return _G.FactionsAPI.GetFactionOf(ply:SteamID()) or _G.FactionsAPI.GetFactionOf(ply:SteamID64())
+            return _G.FactionsAPI.GetFactionOf(ply)
         end
         if istable(Factions) then
             local sid, s64 = ply:SteamID(), ply:SteamID64()
@@ -84,7 +84,7 @@ if SERVER then
 
     local function isLeader(ply, fname)
         if _G.FactionsAPI and _G.FactionsAPI.IsLeader then
-            return _G.FactionsAPI.IsLeader(ply:SteamID(), fname) or _G.FactionsAPI.IsLeader(ply:SteamID64(), fname)
+            return _G.FactionsAPI.IsLeader(ply, fname)
         end
         return false
     end
@@ -98,7 +98,7 @@ if SERVER then
         local sid = (_G.FactionsAPI and _G.FactionsAPI.GetLeader) and _G.FactionsAPI.GetLeader(fname) or nil
         if not sid and istable(Factions) and istable(Factions[fname]) then sid = Factions[fname].Leader end
         if not sid then return "—" end
-        local p = player.GetBySteamID(sid)
+        local p = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(sid)) or player.GetBySteamID(sid) or player.GetBySteamID64(sid)
         if IsValid(p) then return rpName(p) end
         return tostring(sid)
     end
@@ -173,7 +173,7 @@ if SERVER then
             if GRM.Notify then GRM.Notify(ply, "Модуль фракций недоступен.", 255, 120, 90) end
             return
         end
-        local ok, err = _G.FactionsAPI.AddMember(fname, ply:SteamID())
+        local ok, err = _G.FactionsAPI.AddMember(fname, ply)
         if not ok then
             if GRM.Notify then GRM.Notify(ply, tostring(err or "Не удалось вступить."), 255, 120, 90) end
             return
@@ -184,11 +184,11 @@ if SERVER then
         local asgParts = {}
         if istable(asg) then
             if isstring(asg.dept) and asg.dept ~= "" and _G.FactionsAPI.SetMemberDepartment then
-                local okD = pcall(_G.FactionsAPI.SetMemberDepartment, fname, ply:SteamID(), asg.dept)
+                local okD = pcall(_G.FactionsAPI.SetMemberDepartment, fname, ply, asg.dept)
                 if okD then asgParts[#asgParts + 1] = "отдел «" .. asg.dept .. "»" end
             end
             if isstring(asg.role) and asg.role ~= "" and _G.FactionsAPI.SetMemberRole then
-                local okR = pcall(_G.FactionsAPI.SetMemberRole, fname, ply:SteamID(), asg.role)
+                local okR = pcall(_G.FactionsAPI.SetMemberRole, fname, ply, asg.role)
                 if okR then asgParts[#asgParts + 1] = "должность «" .. asg.role .. "»" end
             end
         end
