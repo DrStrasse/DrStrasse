@@ -85,7 +85,9 @@ function SWEP:CanInteract(veh, requireOwnerLevel)
 
     if ownerType == VK.OWNER_TYPE.FACTION and istable(Factions) and istable(Factions[factionName]) then
         local members = Factions[factionName].Members or {}
-        if members[ck] or members[ply:SteamID()] or members[ply:SteamID64()] then return true end
+        if GRM.Identity and GRM.Identity.FactionMember then
+            if GRM.Identity.FactionMember(Factions[factionName], ply) then return true end
+        elseif members[ply:SteamID()] or members[ply:SteamID64()] then return true end
     end
 
     if ownerType == VK.OWNER_TYPE.PLAYER then

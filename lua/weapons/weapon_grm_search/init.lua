@@ -164,7 +164,8 @@ net.Receive("GRM_Search_Confiscate", function(_, searcher)
                 local sid = searcher:SteamID()
                 local sid64 = searcher:SteamID64()
                 local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(searcher)) or sid64
-                if GRM.Identity.FactionMember(f, searcher) then
+                if (GRM.Identity and GRM.Identity.FactionMember and GRM.Identity.FactionMember(f, searcher))
+                    or (not GRM.Identity and (f.Members[sid] or f.Members[sid64])) then
                     canSearch = true
                     break
                 end

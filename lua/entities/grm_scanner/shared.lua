@@ -104,8 +104,11 @@ if SERVER then
     function ENT:ScannerFactionOf(ply)
         if not (Factions and IsValid(ply) and ply.SteamID) then return nil end
         for fName, fData in pairs(Factions) do
-            if istable(fData) and istable(fData.Members)
-                and GRM.Identity.FactionMember(fData, ply) then
+            local member = GRM.Identity and GRM.Identity.FactionMember and GRM.Identity.FactionMember(fData, ply)
+            if not member and not GRM.Identity then
+                member = fData.Members[ply:SteamID()] or fData.Members[ply:SteamID64()]
+            end
+            if istable(fData) and istable(fData.Members) and member then
                 return fName
             end
         end
