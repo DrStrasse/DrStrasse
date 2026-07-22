@@ -39,6 +39,7 @@ CH.PendingSelection = CH.PendingSelection or {}
 local NET_OPEN    = "GRM_Char_Open"
 local NET_SAVE    = "GRM_Char_Save"
 local NET_REQUEST = "GRM_Char_Request"
+local NET_CLOSE   = "GRM_Char_Close"
 
 -- ------------------------------------------------------------
 -- SHARED: валидация имени и нормализация внешности
@@ -100,6 +101,7 @@ if SERVER then
     util.AddNetworkString(NET_OPEN)
     util.AddNetworkString(NET_SAVE)
     util.AddNetworkString(NET_REQUEST)
+    util.AddNetworkString(NET_CLOSE)
 
     local function jsonT(txt)
         local ok, t = pcall(util.JSONToTable, txt, false, true)
@@ -430,6 +432,12 @@ if SERVER then
     end
     CH.OpenMenu = sendMenu
 
+    local function closeMenu(ply)
+        if not IsValid(ply) then return end
+        net.Start(NET_CLOSE)
+        net.Send(ply)
+    end
+
     -- вход: меню при КАЖДОМ заходе -------------------------------
     hook.Add("PlayerInitialSpawn", "GRM_Char_OnJoin", function(ply)
         timer.Simple(1.5, function() if IsValid(ply) then sendMenu(ply) end end)
@@ -490,7 +498,10 @@ if SERVER then
     end)
 
     hook.Add("PlayerDisconnected", "GRM_Char_ClearPending", function(ply)
-        if IsValid(ply) then CH.PendingSelection[ply:SteamID64()] = nil end
+        if IsValid(ply) then
+            CH.PendingSelection[ply:SteamID64()] = nil
+            saveChars("disconnect")
+        end
     end)
 
     net.Receive(NET_REQUEST, function(_, ply)
@@ -507,8 +518,8 @@ if SERVER then
         if d.action == "select_slot" then
             local slot = tostring(d.slot or "char1")
             if not slot:match("^char[123]$") then return end
-            CH.SetActiveSlot(ply, slot)
-            timer.Simple(0.1, function() if IsValid(ply) then sendMenu(ply) end end)
+            local ok = CH.SetActiveSlot(ply, slot)
+            if ok and hasCharacter(ply, slot) then closeMenu(ply) else sendMenu(ply) end
             return
         end
         if d.slot then CH.SetActiveSlot(ply, d.slot) end
@@ -549,7 +560,11 @@ if SERVER then
             end
         end
 
-        timer.Simple(0.35, function() if IsValid(ply) then sendMenu(ply) end end)
+        if CH.Get(ply) ~= nil and (not d.name or CH.ValidateName(d.name)) then
+            timer.Simple(0.05, function() if IsValid(ply) then closeMenu(ply) end end)
+        else
+            sendMenu(ply)
+        end
     end)
 
     -- команда /name Имя Фамилия ----------------------------------
@@ -628,6 +643,10 @@ if CLIENT then
                 end
             end
         end
+        local defaultOutfit = outfits[1]
+        for _, outfit in ipairs(outfits) do
+            if outfit.provider == "civilian" then defaultOutfit = outfit break end
+        end
         local slots = istable(payload.slots) and payload.slots or {}
         local activeSlot = tostring(payload.activeSlot or "char1")
         local refreshPreview, refreshSkinMax, rebuildBodygroups
@@ -641,10 +660,10 @@ if CLIENT then
             skin = char and tonumber(char.skin) or 0,
             bodygroups = char and table.Copy(char.bodygroups or {}) or {},
         }
-        if draft.model == "" and outfits[1] then
-            draft.model = outfits[1].path
-            draft.skin = tonumber(outfits[1].skin) or 0
-            draft.bodygroups = table.Copy(outfits[1].bodygroups or {})
+        if draft.model == "" and defaultOutfit then
+            draft.model = defaultOutfit.path
+            draft.skin = tonumber(defaultOutfit.skin) or 0
+            draft.bodygroups = table.Copy(defaultOutfit.bodygroups or {})
         end
 
         if IsValid(CH._frame) then
@@ -751,6 +770,11 @@ if CLIENT then
                 draft.model = tostring(info.model or "")
                 draft.skin = 0
                 draft.bodygroups = {}
+                if draft.model == "" and defaultOutfit then
+                    draft.model = defaultOutfit.path
+                    draft.skin = tonumber(defaultOutfit.skin) or 0
+                    draft.bodygroups = table.Copy(defaultOutfit.bodygroups or {})
+                end
                 nameEntry:SetText(draft.name)
                 updHint()
                 refreshPreview()
@@ -966,6 +990,13 @@ if CLIENT then
 
     net.Receive(NET_OPEN, function()
         openCharMenu(net.ReadTable() or {})
+    end)
+
+    net.Receive(NET_CLOSE, function()
+        if IsValid(CH._frame) then
+            CH._frame:Close()
+            CH._frame = nil
+        end
     end)
 
     -- точка входа гардероба (grm_wardrobe, Код 73)
