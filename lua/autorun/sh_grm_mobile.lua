@@ -129,6 +129,33 @@ function MB.GetTierByItem(itemID)
     return nil
 end
 
+function MB.IsMobileItem(itemID)
+    return (MB.ItemTier or {})[tostring(itemID or "")] ~= nil
+end
+
+function MB.InventoryMobileStats(ply)
+    local total, active, bestActive = 0, 0, nil
+    if not (IsValid(ply) and GRM.Inventory and GRM.Inventory.GetPlayerInv) then return total, active, bestActive end
+    local inv = GRM.Inventory.GetPlayerInv(ply)
+    if not (istable(inv) and istable(inv.slots)) then return total, active, bestActive end
+    local bestRank = 0
+    for _, slot in pairs(inv.slots) do
+        if istable(slot) then
+            local key = (MB.ItemTier or {})[tostring(slot.id or "")]
+            if key then
+                total = total + (tonumber(slot.count) or 1)
+                local data = istable(slot.data) and slot.data or nil
+                if data and data.active == true then
+                    active = active + 1
+                    local r = tierRank(key)
+                    if r > bestRank then bestActive, bestRank = key, r end
+                end
+            end
+        end
+    end
+    return total, active, bestActive
+end
+
 local function tierRank(key)
     for i, k in ipairs(TierOrder) do if k == key then return i end end
     return 0
@@ -138,35 +165,50 @@ function MB.CarriedTier(ply)
     if not (IsValid(ply) and GRM.Inventory) then return nil end
 
     local best, bestRank = nil, 0
+    local sawExplicitInactive = false
+    local sawAnyMobile = false
 
-    if GRM.Inventory.CountItem then
-        for itemID, key in pairs(MB.ItemTier or {}) do
-            if (GRM.Inventory.CountItem(ply, itemID) or 0) > 0 then
-                local r = tierRank(key)
-                if r > bestRank then best, bestRank = key, r end
-            end
-        end
-    end
-
-    -- Fallback: direct slot scan. This covers any CountItem mismatch, string/number
-    -- slot-key normalization issue, or legacy saved item ids.
     if GRM.Inventory.GetPlayerInv then
         local inv = GRM.Inventory.GetPlayerInv(ply)
         if istable(inv) and istable(inv.slots) then
             for _, slot in pairs(inv.slots) do
-                local itemID = istable(slot) and tostring(slot.id or "") or ""
-                local key = (MB.ItemTier or {})[itemID]
-                if key then
-                    local r = tierRank(key)
-                    if r > bestRank then best, bestRank = key, r end
+                if istable(slot) then
+                    local itemID = tostring(slot.id or "")
+                    local key = (MB.ItemTier or {})[itemID]
+                    if key then
+                        sawAnyMobile = true
+                        local data = istable(slot.data) and slot.data or nil
+                        if data and data.active == true then
+                            local r = tierRank(key)
+                            if r > bestRank then best, bestRank = key, r end
+                        elseif data and data.active == false then
+                            sawExplicitInactive = true
+                        end
+                    end
                 end
             end
         end
     end
 
-    return best
-end
+    if best then return best end
 
+    -- Legacy compatibility: старые телефоны, купленные ДО флага active, не имеют
+    -- slot.data.active вообще. Их считаем активными, но новые покупки из phoneshop
+    -- кладутся с active=false и требуют «Использовать».
+    if sawAnyMobile and not sawExplicitInactive and GRM.Inventory.GetPlayerInv then
+        local inv = GRM.Inventory.GetPlayerInv(ply)
+        for _, slot in pairs(inv.slots or {}) do
+            local key = istable(slot) and (MB.ItemTier or {})[tostring(slot.id or "")] or nil
+            if key then
+                local r = tierRank(key)
+                if r > bestRank then best, bestRank = key, r end
+            end
+        end
+        if best then return best end
+    end
+
+    return nil
+end
 function MB.SignalOf(ply)
     if not IsValid(ply) then return 0 end
     if not (GRM.RadioNet and GRM.RadioNet.QualityAt) then return 1 end
@@ -354,6 +396,8 @@ function MB.PushState(ply)
     if not IsValid(ply) then return end
     local tierKey = MB.CarriedTier(ply)
     local data = MB.EnsureData(ply)
+    local line = tierKey and MB.EnsureLine(ply) or nil
+    local other = IsValid(line) and line.GetOtherPhone and line:GetOtherPhone() or nil
     net.Start("GRM_Mob_State")
         net.WriteTable({
             tier = tierKey or "",
@@ -362,6 +406,10 @@ function MB.PushState(ply)
             unread = MB.UnreadCount(ply),
             apps = MB.AvailableApps(tierKey or ""),
             has = tierKey ~= nil,
+            active = tierKey ~= nil,
+            lineState = IsValid(line) and line.GetLineState and line:GetLineState() or "idle",
+            otherNumber = IsValid(other) and other.GetPhoneNumber and other:GetPhoneNumber() or "",
+            otherName = IsValid(other) and other.GetDisplayName and other:GetDisplayName() or "",
         })
     net.Send(ply)
 end
@@ -542,6 +590,18 @@ if SERVER then
         end
     end
 
+    function MB.HasAnyPhone(ply)
+        if not (IsValid(ply) and GRM.Inventory) then return false end
+        local total = MB.InventoryMobileStats and select(1, MB.InventoryMobileStats(ply)) or 0
+        if total > 0 then return true, total end
+        if GRM.Inventory.CountItem then
+            for itemID in pairs(MB.ItemTier or {}) do
+                if (GRM.Inventory.CountItem(ply, itemID) or 0) > 0 then return true, 1 end
+            end
+        end
+        return false, 0
+    end
+
     function MB.HasPhone(ply)
         if not IsValid(ply) then return false end
         if not GRM.Inventory then
@@ -591,7 +651,11 @@ if SERVER then
         local hasPhone = MB.HasPhone(ply)
         if not hasPhone then
             MB.PushState(ply) -- sends has=false explicitly; client may show throttled hint
-            MB.ServerNotify(ply, "У вас нет мобильного телефона. Купите его в /phoneshop.")
+            if MB.HasAnyPhone and MB.HasAnyPhone(ply) then
+                MB.ServerNotify(ply, "Телефон есть в инвентаре. Нажмите «Использовать», чтобы активировать его.")
+            else
+                MB.ServerNotify(ply, "У вас нет мобильного телефона. Купите его в /phoneshop.")
+            end
             return
         end
         -- Critical: send fresh state BEFORE opening. Without this, the client can still
@@ -840,7 +904,20 @@ if CLIENT then
         return false
     end
 
+    local function isMouse3(key)
+        return (_G.KEY_MOUSE3 and key == KEY_MOUSE3)
+            or (_G.MOUSE_MIDDLE and key == MOUSE_MIDDLE)
+            or (_G.MOUSE_3 and key == MOUSE_3)
+            or key == 107 -- common KEY_MOUSE3 fallback in GMod key enum
+    end
+
+    local function requestServerOpen()
+        net.Start("GRM_Mobile_Open")
+        net.SendToServer()
+    end
+
     local function keyDown(key)
+        -- Contract: UP opens, DOWN closes. No keyboard navigation/actions while open.
         if not M.open then
             if key == KEY_UP then
                 if hasPhone() then
@@ -848,18 +925,30 @@ if CLIENT then
                 elseif M.stateKnown then
                     openPhone(false)
                 else
-                    net.Start("GRM_Mobile_Open")
-                    net.SendToServer()
+                    requestServerOpen()
                 end
             end
             return
         end
-        if M.down[key] then return end
-        local t=now(); if M.lastTap[key] and t-M.lastTap[key] < 0.07 then return end
-        M.lastTap[key]=t; M.down[key]=true; M.hold[key]=t; M.nextRepeat[key]=t+0.45
-        if key==KEY_DOWN then move(1) elseif key==KEY_UP then move(-1) elseif key==KEY_ENTER or key==KEY_PAD_ENTER then enter() elseif key==KEY_BACKSPACE then back() elseif key==KEY_DELETE and M.screen=="notes" then sendAct({op="note_del", i=M.listSel}) elseif key==KEY_N and M.screen=="forum" then Derma_StringRequest("Форум", "Текст", "", function(txt) sendAct({op="forum_post", text=txt}) end) elseif key==KEY_E then RunConsoleCommand("say", "/me показывает номер мобильного: "..tostring(M.state.number or "")) elseif key==KEY_PAD_PLUS and M.screen=="calc" then M.calc=(M.calc or "").."+" else digit(key) end
+
+        if key == KEY_DOWN then
+            closePhone(true)
+            return
+        end
+
+        -- Selection/activation inside the phone is Mouse3 / middle mouse only.
+        if isMouse3(key) then
+            enter()
+            return
+        end
+
+        -- Everything else is intentionally ignored. Gameplay buttons are also cleared
+        -- server-side by StartCommand and client-side by PlayerBindPress below.
     end
-    local function keyUp(key) if input and input.IsKeyDown and input.IsKeyDown(key) then return end M.down[key]=nil; M.hold[key]=nil; M.nextRepeat[key]=nil end
+
+    local function keyUp(key)
+        M.down[key]=nil; M.hold[key]=nil; M.nextRepeat[key]=nil
+    end
 
     net.Receive("GRM_Mob_State", function()
         M.state = net.ReadTable() or {}; M.stateKnown = true; MB.ClientState=M.state
@@ -871,17 +960,36 @@ if CLIENT then
     hook.Add("PlayerButtonDown", "GRM_Mobile_KeyDown", function(ply, key) if ply ~= lp() then return end keyDown(key) end)
     hook.Add("PlayerButtonUp", "GRM_Mobile_KeyUp", function(ply, key) if ply ~= lp() then return end keyUp(key) end)
     hook.Add("Think", "GRM_Mobile_KeyRepeat", function()
-        if not M.open then return end
-        for key, nt in pairs(M.nextRepeat) do if (key==KEY_DOWN or key==KEY_UP) and now() >= nt then move(key==KEY_DOWN and 1 or -1); M.nextRepeat[key]=now()+0.11 end end
+        -- Keyboard repeat intentionally disabled: menu navigation is mouse wheel only.
     end)
     hook.Add("HUDPaint", "GRM_Mobile_CallHUD", function() if M.open and tostring(M.state.lineState or "") == "ringing" then draw.SimpleText("Входящий вызов", "GRMMob_B", ScrW()/2, 120, C.green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER) end end)
     hook.Add("PlayerBindPress", "GRM_Mobile_BlockSlots", function(_, bind, pressed)
-        if not (M.open and pressed) then return false end
-        bind=tostring(bind or "")
-        if bind:match("^slot%d") then return true end
-        if bind=="invnext" then move(1); return true end
-        if bind=="invprev" then move(-1); return true end
-        return false
+        if not M.open then return false end
+        bind = string.lower(tostring(bind or ""))
+
+        if not pressed then
+            return false
+        end
+
+        -- Mouse wheel is the only navigation channel while the phone is open.
+        if bind == "invnext" then move(1); return true end
+        if bind == "invprev" then move(-1); return true end
+
+        -- Middle mouse confirms/selects. Different configs expose it as +attack3/mouse3.
+        if bind == "+attack3" or bind == "attack3" or bind == "mouse3" or bind == "+mouse3" then
+            enter()
+            return true
+        end
+
+        -- Block weapon selector, weapon slots and all gameplay actions while phone UI is open.
+        if bind:match("^slot%d") or bind == "lastinv" or bind == "phys_swap" then return true end
+        if bind == "+attack" or bind == "+attack2" or bind == "+reload" or bind == "+use" then return true end
+        if bind == "+jump" or bind == "+duck" or bind == "+speed" or bind == "+walk" then return true end
+        if bind == "gmod_undo" or bind == "undo" or bind == "gm_showhelp" or bind == "gm_showteam" or bind == "gm_showspare1" or bind == "gm_showspare2" then return true end
+
+        -- Conservative default: if the phone is open, do not let unknown press-binds leak
+        -- into gameplay/addons. DOWN arrow or close button handles closing.
+        return true
     end)
     timer.Create("GRM_Mob_Tick", 1, 0, function()
         if not M.open then return end

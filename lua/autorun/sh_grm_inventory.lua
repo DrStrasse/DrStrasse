@@ -672,16 +672,26 @@ if SERVER then
         end
     end)
     GRM.Inventory.RegisterUseHandler("mobile_open", function(ply, slotIdx, slot, def)
-        -- Код 88/131: мобильный телефон из инвентаря — предмет НЕ тратится,
-        -- а меню открывается сразу. Раньше здесь была только подсказка про
-        -- стрелку вверх, из-за чего «Использовать» выглядело как мёртвая кнопка.
-        if GRM.Mobile and GRM.Mobile.Open then
-            GRM.Mobile.Open(ply)
-        elseif GRM.Mobile and GRM.Mobile.ServerNotify then
-            GRM.Mobile.ServerNotify(ply, "Телефон у вас. Нажмите СТРЕЛКУ ВВЕРХ, чтобы открыть меню")
+        -- Mobile contract: «Использовать» НЕ открывает UI. Оно активирует
+        -- выбранную трубку как рабочую. Открыть меню: СТРЕЛКА ВВЕРХ.
+        local inv = GRM.Inventory.GetPlayerInv(ply)
+        if inv and inv.slots then
+            for i, s in pairs(inv.slots) do
+                if s and s.id and GRM.Mobile and GRM.Mobile.IsMobileItem and GRM.Mobile.IsMobileItem(s.id) then
+                    s.data = istable(s.data) and s.data or {}
+                    s.data.active = (i == slotIdx)
+                    GRM.Inventory.SyncSlot(ply, i)
+                end
+            end
+            saveSoon("mobile activate")
         else
-            GRM.Notify(ply, "Нажмите СТРЕЛКУ ВВЕРХ, чтобы открыть телефон", 100, 220, 100)
+            slot.data = istable(slot.data) and slot.data or {}
+            slot.data.active = true
+            GRM.Inventory.SyncSlot(ply, slotIdx)
+            saveSoon("mobile activate")
         end
+        if GRM.Mobile and GRM.Mobile.PushState then GRM.Mobile.PushState(ply) end
+        GRM.Notify(ply, "Телефон активирован. Открыть — СТРЕЛКА ВВЕРХ, закрыть — СТРЕЛКА ВНИЗ.", 100, 220, 100)
     end)
     GRM.Inventory.RegisterUseHandler("radio_toggle", function(ply, slotIdx, slot, def)
         -- Код 99: переносной модулятор рации — ВКЛ/ВЫКЛ живёт в данных

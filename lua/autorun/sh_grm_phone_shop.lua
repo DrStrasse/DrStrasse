@@ -684,7 +684,8 @@ if SERVER then
                 return
             end
             takeMoney(ply, price)
-            local left = GRM.Inventory.AddItem(ply, item.invItem, 1)
+            local instData = tostring(item.invItem or ""):find("mobile_", 1, true) == 1 and { active = false } or nil
+            local left = GRM.Inventory.AddItem(ply, item.invItem, 1, instData)
             if (left or 1) > 0 then
                 giveMoney(ply, price) -- инвентарь переполнен — возврат денег
                 notify(ply, false, "Инвентарь переполнен. Деньги возвращены.")
