@@ -29,7 +29,7 @@ GRM = GRM or {}
 GRM.Char = GRM.Char or {}
 local CH = GRM.Char
 
-CH.Version    = "1.1.0"
+CH.Version    = "1.2.0"
 CH.NameMin    = 3     -- минимальная длина RP-имени
 CH.NameMax    = 48
 CH.DataFile   = "grm_characters.json"
@@ -54,6 +54,25 @@ function CH.GetName(plyOrSid64)
         return plyOrSid64:GetNWString("GRM_RPName", "")
     end
     return ""
+end
+
+function CH.GetActiveID(ply)
+    if IsValid(ply) and ply:IsPlayer() then return ply:GetNWString("GRM_CharacterID", "") end
+    return ""
+end
+
+function CH.GetActiveKey(ply)
+    if IsValid(ply) and ply:IsPlayer() then
+        local key = ply:GetNWString("GRM_CharacterKey", "")
+        if key ~= "" then return key end
+        return ply:SteamID64()
+    end
+    return tostring(ply or "")
+end
+
+function CH.MakeCharacterID(ply)
+    local sid = IsValid(ply) and ply:SteamID64() or "0"
+    return sid .. ":char1"
 end
 
 -- ------------------------------------------------------------
@@ -110,15 +129,37 @@ if SERVER then
     local function sid64(ply) return IsValid(ply) and ply:SteamID64() or "" end
 
     function CH.Get(ply)
+    local function ensureChar(ply)
+        if not IsValid(ply) then return nil end
+        local sid = sid64(ply)
+        CH.Data[sid] = istable(CH.Data[sid]) and CH.Data[sid] or {}
+        local c = CH.Data[sid]
+        if not isstring(c.id) or c.id == "" then c.id = CH.MakeCharacterID(ply) end
+        c.key = sid .. ":" .. c.id
+        ply:SetNWString("GRM_CharacterID", c.id)
+        ply:SetNWString("GRM_CharacterKey", c.key)
+        return c
+    end
+    CH.Ensure = ensureChar
+
+    function CH.GetActiveID(ply)
+        local c = CH.Get(ply)
+        return istable(c) and tostring(c.id or "") or ""
+    end
+    function CH.GetActiveKey(ply)
+        local c = CH.Get(ply)
+        return istable(c) and tostring(c.key or (sid64(ply) .. ":" .. tostring(c.id or ""))) or sid64(ply)
+    end
+
         return (CH.Data or {})[sid64(ply)]
     end
 
     function CH.SetName(ply, name)
         name = CH.ValidateName(name)
         if not name then return false, "Некорректное имя" end
-        CH.Data[sid64(ply)] = istable(CH.Data[sid64(ply)]) and CH.Data[sid64(ply)] or {}
-        CH.Data[sid64(ply)].name = name
-        CH.Data[sid64(ply)].updated = os.time()
+        local c = ensureChar(ply)
+        c.name = name
+        c.updated = os.time()
         ply:SetNWString("GRM_RPName", name)
         saveChars("setname")
         return true
@@ -149,11 +190,11 @@ if SERVER then
         -- синхронизация со строгим удержанием FactionsExt: эта запись побеждает в ModelCheck
         ply.FactionsExt_DesiredModelData = { path = entry.path, skin = tonumber(entry.skin) or 0, bodygroups = table.Copy(entry.bodygroups or {}) }
 
-        CH.Data[sid64(ply)] = istable(CH.Data[sid64(ply)]) and CH.Data[sid64(ply)] or {}
-        CH.Data[sid64(ply)].model = entry.path
-        CH.Data[sid64(ply)].skin = tonumber(entry.skin) or 0
-        CH.Data[sid64(ply)].bodygroups = table.Copy(entry.bodygroups or {})
-        CH.Data[sid64(ply)].updated = os.time()
+        local c = ensureChar(ply)
+        c.model = entry.path
+        c.skin = tonumber(entry.skin) or 0
+        c.bodygroups = table.Copy(entry.bodygroups or {})
+        c.updated = os.time()
         saveChars("appearance")
         return true
     end
@@ -237,6 +278,9 @@ if SERVER then
         end
         return {
             char = CH.Get(ply),
+            characterID = CH.GetActiveID(ply),
+            characterKey = CH.GetActiveKey(ply),
+            identityNote = "Текущий режим совместимости: один активный персонаж на SteamID. Новые модули должны использовать GRM.Char.GetActiveKey(ply).",
             sections = sections,
             nameMin = CH.NameMin, nameMax = CH.NameMax,
             wardrobe = opts.wardrobe == true or nil,
@@ -261,6 +305,11 @@ if SERVER then
         timer.Simple(2.2, function()
             if not IsValid(ply) then return end
             local c = CH.Get(ply)
+            if istable(c) then
+                if not c.id or c.id == "" then c = ensureChar(ply); saveChars("ensure-id") end
+                ply:SetNWString("GRM_CharacterID", tostring(c.id or ""))
+                ply:SetNWString("GRM_CharacterKey", tostring(c.key or (ply:SteamID64() .. ":" .. tostring(c.id or ""))))
+            end
             ply:SetNWString("GRM_RPName", istable(c) and tostring(c.name or "") or "")
             -- мягкое восстановление внешности персонажа (фракционная система может перекрыть позже — это ок)
             if istable(c) and isstring(c.model) and c.model ~= "" then
@@ -389,28 +438,31 @@ if CLIENT then
         local f = vgui.Create("DFrame")
         CH._frame = f
         f:SetTitle("")
-        -- меню в два раза шире прежнего (940 → 1880), но не шире экрана
-        local fw = math.min(1880, ScrW() - 16)
-        local fh = math.min(620, ScrH() - 40)
-        local leftW = math.floor(fw * 0.52)
+        -- v1.2: меню больше по высоте и компактнее по ширине: не «полоса», а полноценный экран персонажа
+        local fw = math.min(1320, ScrW() - 80)
+        local fh = math.min(860, ScrH() - 80)
+        local leftW = math.min(560, math.floor(fw * 0.44))
         f:SetSize(fw, fh)
         f:Center()
         f:MakePopup()
         f:ShowCloseButton(false)
+        f:SetDraggable(false)
         f.Paint = function(_, pw, ph)
-            draw.RoundedBox(8, 0, 0, pw, ph, C.bg)
-            draw.RoundedBoxEx(8, 0, 0, pw, 44, C.head, true, true, false, false)
+            draw.RoundedBox(12, 0, 0, pw, ph, Color(9, 12, 18, 252))
+            draw.RoundedBox(10, 8, 8, pw - 16, ph - 16, C.bg)
+            draw.RoundedBoxEx(10, 8, 8, pw - 16, 58, C.head, true, true, false, false)
             local ttl = payload.wardrobe and tostring(payload.wardrobeTitle or "Гардероб")
                 or (char and "Меню персонажа" or "Создание персонажа")
-            draw.SimpleText(ttl, "GRMChar_Title", 16, 22, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText("GRM Identity v" .. CH.Version, "GRMChar_Normal", pw - 16, 22, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(ttl, "GRMChar_Title", 24, 29, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("ID: " .. tostring(payload.characterID or "—"), "GRMChar_Normal", pw - 24, 22, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("GRM Identity v" .. CH.Version, "GRMChar_Normal", pw - 24, 42, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
 
         local function canClose() return char ~= nil or payload.wardrobe == true end
 
         local x = vgui.Create("DButton", f)
         x:SetText("X") x:SetFont("GRMChar_Title") x:SetTextColor(color_white)
-        x:SetPos(fw - 44, 8) x:SetSize(32, 28)
+        x:SetPos(fw - 48, 18) x:SetSize(32, 28)
         x.DoClick = function()
             if canClose() then f:Close() else surface.PlaySound("buttons/button10.wav") end
         end
@@ -431,11 +483,11 @@ if CLIENT then
 
         -- ЛЕВАЯ КОЛОНКА: имя + провайдеры (список внешностей)
         local left = vgui.Create("DPanel", f)
-        left:Dock(LEFT) left:DockMargin(10, 54, 4, 10) left:SetWide(leftW)
+        left:Dock(LEFT) left:DockMargin(18, 78, 8, 18) left:SetWide(leftW)
         left:SetPaintBackground(false)
 
         local nameBox = vgui.Create("DPanel", left)
-        nameBox:Dock(TOP) nameBox:SetTall(86) nameBox:DockMargin(0, 0, 0, 6)
+        nameBox:Dock(TOP) nameBox:SetTall(118) nameBox:DockMargin(0, 0, 0, 10)
         nameBox.Paint = function(_, pw, ph)
             draw.RoundedBox(6, 0, 0, pw, ph, C.panel)
             draw.SimpleText("Игровое имя (RP Name)", "GRMChar_Sub", 10, 14, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
@@ -449,6 +501,9 @@ if CLIENT then
         nameEntry.OnChange = function() draft.name = nameEntry:GetValue() end
         local nameHint = vgui.Create("DLabel", nameBox)
         nameHint:SetPos(10, 62) nameHint:SetSize(leftW - 20, 20) nameHint:SetFont("GRMChar_Normal") nameHint:SetTextColor(C.dim)
+        local idHint = vgui.Create("DLabel", nameBox)
+        idHint:SetPos(10, 88) idHint:SetSize(leftW - 20, 22) idHint:SetFont("GRMChar_Normal") idHint:SetTextColor(C.dim)
+        idHint:SetText("CharacterID: " .. tostring(payload.characterID or "будет создан"))
         local function updHint()
             local n = CH.ValidateName(draft.name)
             nameHint:SetText(n and ("OK: «" .. n .. "»") or ("Имя: мин. " .. (payload.nameMin or 3) .. " символа"))
@@ -458,11 +513,18 @@ if CLIENT then
 
         -- ПРАВАЯ КОЛОНКА: превью + настройка модели
         local right = vgui.Create("DPanel", f)
-        right:Dock(FILL) right:DockMargin(4, 54, 10, 10)
+        right:Dock(FILL) right:DockMargin(8, 78, 18, 18)
         right:SetPaintBackground(false)
 
+        local previewTitle = vgui.Create("DPanel", right)
+        previewTitle:Dock(TOP) previewTitle:SetTall(54) previewTitle:DockMargin(0,0,0,8)
+        previewTitle.Paint = function(_, pw, ph)
+            draw.RoundedBox(8, 0, 0, pw, ph, C.panel)
+            draw.SimpleText("3D-превью персонажа", "GRMChar_Sub", 14, 18, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("Модель, скин и bodygroups применяются после сохранения", "GRMChar_Normal", 14, 38, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
         local preview = vgui.Create("DAdjustableModelPanel", right)
-        preview:Dock(FILL) preview:DockMargin(0, 0, 0, 6)
+        preview:Dock(FILL) preview:DockMargin(0, 0, 0, 10)
         preview:SetFOV(40)
 
         local function refreshPreview()
@@ -587,14 +649,14 @@ if CLIENT then
             sc:DockMargin(2, 2, 2, 2)
             for _, entry in ipairs(sec.outfits or {}) do
                 local row = vgui.Create("DPanel", sc)
-                row:Dock(TOP) row:SetTall(58) row:DockMargin(0, 0, 0, 4)
+                row:Dock(TOP) row:SetTall(66) row:DockMargin(0, 0, 0, 6)
                 local isSel = (entry.path == draft.model)
                 row.Paint = function(_, pw, ph)
                     draw.RoundedBox(6, 0, 0, pw, ph, (entry.path == draft.model) and Color(44, 66, 96) or C.panel)
                 end
 
                 local icon = vgui.Create("SpawnIcon", row)
-                icon:Dock(LEFT) icon:SetWide(54) icon:DockMargin(3, 3, 0, 3)
+                icon:Dock(LEFT) icon:SetWide(62) icon:DockMargin(4, 4, 0, 4)
                 icon:SetModel(entry.path, tonumber(entry.skin) or 0)
                 icon:SetTooltip(false)
                 icon:SetMouseInputEnabled(false)
