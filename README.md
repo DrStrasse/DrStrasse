@@ -148,3 +148,9 @@
 
 - `lua/autorun/sh_grm_laws.lua` → **Laws v1.2.0**: исправлен краш окна законов `lua/vgui/dframe.lua:246 Tried to use a NULL Panel`. Причина: старый код делал `lawsFrame:Clear()` прямо на `DFrame`, удаляя внутреннюю кнопку закрытия; теперь пересоздаётся только вложенная body-панель, а серверный протокол `/laws` разделён на `GRM_Laws_Open` и `GRM_Laws_List` с полными флагами прав.
 - `lua/autorun/sh_grm_mobile.lua` → **Mobile v2.0.1 stabilization**: фактический файл в этой ветке был упрощённым v2.0.0 и не совпадал с историческим описанием Mobile v1.2.2. Серверный контур восстановлен до зелёного `sim_mobile 121/121`: 7 тиров из `/phoneshop`, `mobile_open`, линии `grm_mobile_line`, звонки через `GRM.Phone`, потеря сигнала, SMS, контакты, заметки, форум, jobs/faction query, keepalive/freeze. Клиентский UI пока остаётся упрощённым; `sim_mobile_ui` всё ещё ожидает старый полноценный v1.2.2-интерфейс.
+
+### Mobile rewrite 2026-07-22
+
+- `lua/autorun/sh_grm_mobile.lua` полностью возвращён к полноценному контракту мобильных телефонов: 7 моделей GTA IV/ivancorn, `GRM_Mob_Act`, стрелочная навигация, анти-авторепит/анти-скачок выбора, звонки через `GRM.Phone`, SMS-треды, контакты, заметки, биржа, фракция, форум, калькулятор, keepalive/freeze при открытом UI, колесо мыши как навигация.
+- `lua/autorun/sh_grm_phone_shop.lua` переделан под mobile: 7 мобильных товаров считаются авторитетными из кода, старые `mobile_touch/mobile_smartphone` вычищаются из сохранённого каталога, модели принудительно совпадают с указанными ассетами, UI магазина получил отдельную вкладку «Мобильные».
+- Проверки: `sim_mobile 121/121`, `sim_mobile_ui 44/44`, `sim_invphone 41/41`, GLua syntax 0 errors.

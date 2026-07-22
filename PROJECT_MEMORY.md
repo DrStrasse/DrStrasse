@@ -265,3 +265,12 @@ python3 tools/build_dist.py
 - `sh_grm_laws.lua` обновлён до v1.2.0: исправлен краш `DFrame` (`Tried to use a NULL Panel`) — больше не вызывается `lawsFrame:Clear()`, чистится только body-панель. Протокол `/laws` разделён на open/list/refresh, все list-пакеты содержат флаги прав.
 - `sh_grm_mobile.lua` обновлён до v2.0.1 stabilization: серверный контракт старого Mobile восстановлен частично/практически по стенду — `sim_mobile 121/121 OK`, `sim_invphone 41/41 OK`. Клиентский UI пока упрощённый; `sim_mobile_ui` всё ещё ожидает старый v1.2.2 и падает.
 - Новые mobile net-каналы `GRM_Mob_State`/`GRM_Mob_Data` имеют клиентские ресиверы; `proto_audit` снова показывает только старые 5 замечаний по FPerm/VD.
+
+
+---
+
+## 11. Rewrite mobile + phoneshop 2026-07-22
+
+- `sh_grm_mobile.lua`: восстановлен полноценный клиентский UI/протокол v1.2.2 (`GRM_Mob_Act`, стрелки, SMS/контакты/заметки/jobs/faction/forum/calc, keepalive, freeze, колесо, анти-скачок выбора). Серверный контур сохранён зелёным.
+- `sh_grm_phone_shop.lua`: мобильные 7 моделей ivancorn стали авторитетными товарами; каталог сам лечит старые mobile ids и модели; UI магазина разделён на вкладки «Мобильные» и «Оборудование».
+- Проверки: GLua 292/0, sim_mobile 121/121, sim_mobile_ui 44/44, sim_invphone 41/41.

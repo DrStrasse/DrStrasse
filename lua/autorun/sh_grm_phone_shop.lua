@@ -360,17 +360,25 @@ if SERVER then
             loaded = defaultCatalog()
             writeJSON(CATALOG_FILE, loaded)
         else
-            -- Код 88: самозалечивание — докидываем отсутствующие мобильные товары
-            -- (у существующих серверов каталог уже сохранён в data без них).
+            -- Mobile rewrite: мобильные товары авторитетны из кода, потому что
+            -- они жёстко связаны с item-id инвентаря, моделями ivancorn и лимитами.
+            -- Старые сохранённые каталоги могли содержать mobile_touch/mobile_smartphone
+            -- или старые модели — лечим при каждом старте.
             local defs = defaultCatalog()
-            local added = false
+            local changed = false
+            loaded.mobile_touch = nil
+            loaded.mobile_smartphone = nil
             for id, item in pairs(defs) do
-                if item.invItem and loaded[id] == nil then
+                if item.invItem and item.invItem ~= "" then
+                    local oldItem = loaded[id]
+                    if not istable(oldItem) or oldItem.model ~= item.model or oldItem.invItem ~= item.invItem then changed = true end
+                    loaded[id] = table.Copy(item)
+                elseif loaded[id] == nil then
                     loaded[id] = item
-                    added = true
+                    changed = true
                 end
             end
-            if added then writeJSON(CATALOG_FILE, loaded) end
+            if changed then writeJSON(CATALOG_FILE, loaded) end
         end
         SHOP.Catalog = normalizeCatalog(loaded)
         return SHOP.Catalog
@@ -879,93 +887,114 @@ else
         net.SendToServer()
     end
 
+    local function rowPaint(item, id)
+        return function(_, w, h)
+            draw.RoundedBox(8, 0, 0, w, h, Color(32, 36, 48, 245))
+            draw.SimpleText(item.name or id, "DermaDefaultBold", 96, 18, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(item.desc or "", "DermaDefault", 96, 42, Color(185, 192, 205), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            local priceLabel = (item.invItem and item.invItem ~= "") and "Цена: " or "Цена доступа: "
+            draw.SimpleText(priceLabel .. moneyText(item.price or 0), "DermaDefaultBold", 96, 68, Color(110, 220, 130), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            if item.invItem and item.invItem ~= "" then
+                draw.SimpleText("Мобильный телефон • покупается предметом в /inv • открыть: СТРЕЛКА ВВЕРХ", "DermaDefault", 96, 92, Color(120, 200, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            else
+                draw.SimpleText(item.purchased and "Доступ куплен" or "Доступ не куплен", "DermaDefault", 96, 92, item.purchased and Color(120, 230, 120) or Color(255, 185, 85), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+        end
+    end
+
+    local function addShopRow(parent, id, item, frame)
+        local row = vgui.Create("DPanel", parent)
+        row:Dock(TOP)
+        row:SetTall(116)
+        row:DockMargin(0, 0, 0, 8)
+        row.Paint = rowPaint(item, id)
+
+        local icon = vgui.Create("SpawnIcon", row)
+        icon:SetModel(item.model or "models/props_junk/cardboard_box004a.mdl")
+        icon:SetSize(72, 72)
+        icon:SetPos(12, 18)
+        if icon.SetTooltip then icon:SetTooltip(item.model or "") end
+
+        local btn = vgui.Create("DButton", row)
+        btn:SetSize(150, 34)
+        btn:SetPos(480, 42)
+
+        if item.invItem and item.invItem ~= "" then
+            btn:SetText(item.canSpawn and "Купить" or "Недоступно")
+            btn:SetEnabled(item.canSpawn == true)
+            if btn.SetTooltip then btn:SetTooltip(item.canSpawn and "Телефон попадёт в инвентарь" or tostring(item.spawnReason or "")) end
+            btn.DoClick = function()
+                spawnItem(id)
+                if IsValid(frame) then frame:Close() end
+            end
+        elseif item.purchased then
+            btn:SetText(item.canSpawn and "Поставить" or "Нет доступа")
+            btn:SetEnabled(item.canSpawn == true)
+            if btn.SetTooltip then btn:SetTooltip(item.canSpawn and "" or tostring(item.spawnReason or "")) end
+            btn.DoClick = function()
+                spawnItem(id)
+                if IsValid(frame) then frame:Close() end
+            end
+        else
+            btn:SetText(item.canBuy and "Купить доступ" or "Нет доступа")
+            btn:SetEnabled(item.canBuy == true)
+            if btn.SetTooltip then btn:SetTooltip(item.canBuy and "" or tostring(item.buyReason or "")) end
+            btn.DoClick = function()
+                buyAccess(id)
+                if IsValid(frame) then frame:Close() end
+            end
+        end
+    end
+
     net.Receive(NET_OPEN, function()
         local frame = vgui.Create("DFrame")
-        frame:SetTitle("GRM Shop — Телефонное оборудование")
-        frame:SetSize(660, 560)
+        frame:SetTitle("GRM PhoneShop — телефоны и связь")
+        frame:SetSize(720, 620)
         frame:Center()
         frame:MakePopup()
 
         local info = vgui.Create("DLabel", frame)
         info:Dock(TOP)
-        info:SetTall(30)
-        info:DockMargin(8, 4, 8, 0)
-        info:SetText("Ваше оборудование: " .. ownedCount .. " / " .. ownedMax)
-        info:SetTextColor(Color(220, 220, 230))
+        info:SetTall(32)
+        info:DockMargin(10, 6, 10, 0)
+        info:SetText("Оборудование на карте: " .. ownedCount .. " / " .. ownedMax .. "    •    Мобильные телефоны покупаются предметом в инвентарь")
+        info:SetTextColor(Color(220, 225, 235))
 
-        local scroll = vgui.Create("DScrollPanel", frame)
-        scroll:Dock(FILL)
-        scroll:DockMargin(8, 8, 8, 48)
+        local tabs = vgui.Create("DPropertySheet", frame)
+        tabs:Dock(FILL)
+        tabs:DockMargin(8, 8, 8, 46)
 
-        local sorted = {}
-        for id in pairs(shopData) do sorted[#sorted + 1] = id end
-        table.sort(sorted)
+        local mobilePanel = vgui.Create("DScrollPanel", tabs)
+        local equipPanel = vgui.Create("DScrollPanel", tabs)
+        tabs:AddSheet("Мобильные", mobilePanel, "icon16/phone.png")
+        tabs:AddSheet("Оборудование", equipPanel, "icon16/transmit.png")
 
-        for _, id in ipairs(sorted) do
-            local item = shopData[id]
+        local mobileIDs, equipIDs = {}, {}
+        for id, item in pairs(shopData) do
             if item.enabled ~= false then
-                local row = scroll:Add("DPanel")
-                row:Dock(TOP)
-                row:SetTall(104)
-                row:DockMargin(0, 0, 0, 6)
-
-                row.Paint = function(_, w, h)
-                    draw.RoundedBox(6, 0, 0, w, h, Color(34, 36, 44, 240))
-                    draw.SimpleText(item.name or id, "DermaDefaultBold", 12, 14, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    draw.SimpleText(item.desc or "", "DermaDefault", 12, 36, Color(180, 185, 195), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    draw.SimpleText((item.invItem and "Цена: " or "Цена доступа: ") .. moneyText(item.price or 0), "DermaDefault", 12, 58, Color(120, 220, 120), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    if item.invItem and item.invItem ~= "" then
-                        draw.SimpleText("Предмет в инвентарь • открыть: СТРЕЛКА ВВЕРХ", "DermaDefaultBold", 12, 80, Color(120, 200, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    else
-                        draw.SimpleText(item.purchased and "Доступ куплен" or "Доступ не куплен", "DermaDefaultBold", 12, 80, item.purchased and Color(100, 220, 100) or Color(255, 180, 80), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    end
-                end
-
-                if item.invItem and item.invItem ~= "" then
-                    -- Код 88: мобильный — одна кнопка «Купить», покупка многократная (лимит штук на сервере).
-                    local buy = vgui.Create("DButton", row)
-                    buy:SetPos(500, 20)
-                    buy:SetSize(140, 30)
-                    buy:SetText(item.canSpawn and "Купить" or "Недоступно")
-                    buy:SetTooltip(item.canSpawn and "" or tostring(item.spawnReason or ""))
-                    buy:SetEnabled(item.canSpawn == true)
-                    buy.DoClick = function()
-                        spawnItem(id)
-                        frame:Close()
-                    end
-                elseif item.purchased then
-                    local spawn = vgui.Create("DButton", row)
-                    spawn:SetPos(500, 20)
-                    spawn:SetSize(140, 30)
-                    spawn:SetText(item.canSpawn and "Поставить" or "Нет доступа")
-                    spawn:SetEnabled(item.canSpawn == true)
-                    spawn.DoClick = function()
-                        spawnItem(id)
-                        frame:Close()
-                    end
+                if item.invItem and item.invItem ~= "" and tostring(item.invItem):find("mobile_", 1, true) == 1 then
+                    mobileIDs[#mobileIDs + 1] = id
                 else
-                    local buy = vgui.Create("DButton", row)
-                    buy:SetPos(500, 20)
-                    buy:SetSize(140, 30)
-                    buy:SetText(item.canBuy and "Купить доступ" or "Нет доступа")
-                    buy:SetEnabled(item.canBuy == true)
-                    buy.DoClick = function()
-                        buyAccess(id)
-                        frame:Close()
-                    end
+                    equipIDs[#equipIDs + 1] = id
                 end
             end
         end
+        local order = { mobile_crappy=1, mobile_badger=2, mobile_badger_touch=3, mobile_lost=4, mobile_tinkle=5, mobile_whiz_high=6, mobile_whiz_gold=7 }
+        table.sort(mobileIDs, function(a,b) return (order[a] or 99) < (order[b] or 99) end)
+        table.sort(equipIDs)
+
+        for _, id in ipairs(mobileIDs) do addShopRow(mobilePanel, id, shopData[id], frame) end
+        for _, id in ipairs(equipIDs) do addShopRow(equipPanel, id, shopData[id], frame) end
 
         local remove = vgui.Create("DButton", frame)
         remove:Dock(BOTTOM)
         remove:SetTall(34)
         remove:DockMargin(8, 4, 8, 8)
-        remove:SetText("Убрать ближайшее моё оборудование")
+        remove:SetText("Убрать ближайшее моё стационарное оборудование")
         remove.DoClick = function()
             Derma_Query("Убрать ближайшее ваше телефонное оборудование?", "Телефония", "Убрать", function()
                 removeOwned()
-                frame:Close()
+                if IsValid(frame) then frame:Close() end
             end, "Отмена")
         end
     end)
