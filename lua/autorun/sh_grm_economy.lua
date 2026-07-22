@@ -627,7 +627,15 @@ if SERVER then
         return acc and acc.balance or 0
     end
 
-    -- «Электронный баланс»: публичный псевдоним счёта (как GRM.GetBalance у налички)
+    hook.Add("GRM_CharacterChanged", "GRM_Economy_CharacterSync", function(ply)
+        if not IsValid(ply) then return end
+        account(characterKeyOf(ply), ply:Nick())
+        dirty = true
+        save(true, "смена персонажа")
+        pushBank(ply)
+    end)
+
+    -- «Электронный баланс»:  публичный псевдоним счёта (как GRM.GetBalance у налички)
     E.GetElectroBalance = E.BankBalance
     if not GRM.GetElectroBalance then GRM.GetElectroBalance = E.BankBalance end
 

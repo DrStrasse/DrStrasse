@@ -804,6 +804,15 @@ if SERVER then
     end
     hook.Add("PlayerInitialSpawn", "GRM_Currency_Init", onInitSpawn)
 
+    hook.Add("GRM_CharacterChanged", "GRM_Currency_CharacterSync", function(ply)
+        if not IsValid(ply) then return end
+        local sid = sidOf(ply)
+        ensure(sid, ply:Nick())
+        dirty = true
+        saveNow(false, "смена персонажа")
+        pushBalance(ply)
+    end)
+
     hook.Add("PlayerDisconnected", "GRM_Currency_Disconnect", function(ply)
         if not IsValid(ply) then return end
         local rec = records[sidOf(ply)]

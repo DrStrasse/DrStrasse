@@ -622,6 +622,8 @@ if CLIENT then
         end
         local slots = istable(payload.slots) and payload.slots or {}
         local activeSlot = tostring(payload.activeSlot or "char1")
+        local refreshPreview, refreshSkinMax, rebuildBodygroups
+        local bContinue, bSave
 
         -- состояние редактора (черновик)
         local draft = {
@@ -727,11 +729,21 @@ if CLIENT then
             b:SetFont("GRMChar_Normal")
             b:SetTooltip(info.model ~= "" and ("Текущая модель: " .. info.model) or "Персонаж ещё не создан")
             b.DoClick = function()
-                net.Start(NET_SAVE)
-                    net.WriteTable({ action = "select_slot", slot = info.id })
-                net.SendToServer()
-                -- Сервер вернёт свежий payload: выбор слота не закрывает меню,
-                -- пустой слот превращается в форму создания персонажа.
+                -- Выбор карточки — только локальный черновик. Серверный активный
+                -- CharacterKey, счета, фракция и spawn НЕ меняются до подтверждения.
+                activeSlot = info.id
+                draft.name = tostring(info.name or "")
+                draft.model = tostring(info.model or "")
+                draft.skin = 0
+                draft.bodygroups = {}
+                nameEntry:SetText(draft.name)
+                updHint()
+                refreshPreview()
+                refreshSkinMax()
+                skinSlider:SetValue(draft.skin)
+                rebuildBodygroups()
+                bContinue:SetVisible(info.exists == true)
+                bSave:SetText(info.exists and "Сохранить и выбрать" or "Создать и выбрать")
             end
         end
 
@@ -751,7 +763,7 @@ if CLIENT then
         preview:Dock(FILL) preview:DockMargin(0, 0, 0, 10)
         preview:SetFOV(40)
 
-        local function refreshPreview()
+        refreshPreview = function()
             if not IsValid(preview) then return end
             if draft.model == "" then return end
             preview:SetModel(draft.model)
@@ -791,7 +803,7 @@ if CLIENT then
         if payload.allowBodygroups == false then
             sets:SetTall(payload.allowSkin == false and 4 or 60)
         end
-        local function refreshSkinMax()
+        refreshSkinMax = function()
             local ent = IsValid(preview) and preview:GetEntity()
             local mx = IsValid(ent) and (ent:SkinCount() - 1) or 0
             skinSlider:SetMax(mx)
@@ -805,7 +817,7 @@ if CLIENT then
         bgScroll:Dock(FILL) bgScroll:DockMargin(0, 4, 0, 0)
         if payload.allowBodygroups == false then bgScroll:SetVisible(false) end
 
-        local function rebuildBodygroups()
+        rebuildBodygroups = function()
             bgScroll:Clear()
             local ent = IsValid(preview) and preview:GetEntity()
             if not IsValid(ent) then return end
@@ -907,17 +919,17 @@ if CLIENT then
         bot:Dock(BOTTOM) bot:SetTall(50) bot:DockMargin(10, 0, 10, 10)
         bot:SetPaintBackground(false)
 
-        local bContinue = mkBtn(bot, char and "Продолжить" or "", C.acc)
+        bContinue = mkBtn(bot, char and "Продолжить" or "", C.acc)
         bContinue:Dock(RIGHT) bContinue:SetWide(150) bContinue:DockMargin(8, 6, 0, 6)
         bContinue:SetVisible(char ~= nil)
         bContinue.DoClick = function()
             net.Start(NET_SAVE)
-                net.WriteTable({ action = "select_slot", slot = payload.activeSlot or "char1" })
+                net.WriteTable({ action = "select_slot", slot = activeSlot or "char1" })
             net.SendToServer()
             timer.Simple(0.2, function() if IsValid(f) then f:Close() end end)
         end
 
-        local bSave = mkBtn(bot, char and "Сохранить изменения" or "Создать персонажа", C.green)
+        bSave = mkBtn(bot, char and "Сохранить изменения" or "Создать персонажа", C.green)
         bSave:Dock(RIGHT) bSave:SetWide(230) bSave:DockMargin(8, 6, 0, 6)
         bSave.DoClick = function()
             local nm = CH.ValidateName(draft.name)
@@ -926,7 +938,7 @@ if CLIENT then
                 return
             end
             net.Start(NET_SAVE)
-                net.WriteTable({ slot = payload.activeSlot or "char1", name = draft.name, model = draft.model, skin = draft.skin, bodygroups = draft.bodygroups })
+                net.WriteTable({ slot = activeSlot or "char1", name = draft.name, model = draft.model, skin = draft.skin, bodygroups = draft.bodygroups })
             net.SendToServer()
             timer.Simple(0.5, function() if IsValid(f) then f:Close() end end)
         end
