@@ -460,8 +460,9 @@ if SERVER then
         local leaderFaction = nil
         if Factions then
             local sid = ply:SteamID()
+            local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid
             for name, f in pairs(Factions) do
-                if istable(f) and f.Leader == sid then
+                if istable(f) and (f.Leader == ck or f.Leader == sid) then
                     isLeader = true
                     leaderFaction = name
                     break
@@ -517,8 +518,9 @@ if SERVER then
         local leaderFaction = nil
         if Factions then
             local sid = ply:SteamID()
+            local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid
             for name, f in pairs(Factions) do
-                if istable(f) and f.Leader == sid then
+                if istable(f) and (f.Leader == ck or f.Leader == sid) then
                     isLeader = true
                     leaderFaction = name
                     break

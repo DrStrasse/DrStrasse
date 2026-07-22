@@ -181,7 +181,8 @@ if SERVER then
     end
 
     local function isLeaderOf(ply, f)
-        return IsValid(ply) and istable(f) and tostring(f.Leader or "") == ply:SteamID()
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID()
+        return IsValid(ply) and istable(f) and (tostring(f.Leader or "") == ck or tostring(f.Leader or "") == ply:SteamID())
     end
 
     local function onlineMembers(name, f)
