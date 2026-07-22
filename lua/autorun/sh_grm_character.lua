@@ -35,11 +35,13 @@ CH.NameMax    = 48
     CH.DataFile   = "grm_characters.json"
 CH.MaxSlots    = 3
 CH.PendingSelection = CH.PendingSelection or {}
+CH.PendingMandatory = CH.PendingMandatory or {}
 
 local NET_OPEN    = "GRM_Char_Open"
 local NET_SAVE    = "GRM_Char_Save"
 local NET_REQUEST = "GRM_Char_Request"
 local NET_CLOSE   = "GRM_Char_Close"
+local NET_CANCEL   = "GRM_Char_Cancel"
 
 -- ------------------------------------------------------------
 -- SHARED: валидация имени и нормализация внешности
@@ -102,6 +104,7 @@ if SERVER then
     util.AddNetworkString(NET_SAVE)
     util.AddNetworkString(NET_REQUEST)
     util.AddNetworkString(NET_CLOSE)
+    util.AddNetworkString(NET_CANCEL)
 
     local function jsonT(txt)
         local ok, t = pcall(util.JSONToTable, txt, false, true)
@@ -190,10 +193,15 @@ if SERVER then
         return rec and rec.slots and istable(rec.slots[slot]) and tostring(rec.slots[slot].name or "") ~= ""
     end
 
-    local function setCharacterLock(ply, locked)
+    local function setCharacterLock(ply, locked, mandatory)
         if not IsValid(ply) then return end
-        CH.PendingSelection[ply:SteamID64()] = locked == true or nil
-        if ply.SetNWBool then ply:SetNWBool("GRM_CharacterPending", locked == true) end
+        local sid = ply:SteamID64()
+        CH.PendingSelection[sid] = locked == true or nil
+        CH.PendingMandatory[sid] = locked == true and mandatory == true or nil
+        if ply.SetNWBool then
+            ply:SetNWBool("GRM_CharacterPending", locked == true)
+            ply:SetNWBool("GRM_CharacterMandatory", locked == true and mandatory == true)
+        end
         if ply.Freeze then ply:Freeze(locked == true) end
     end
 
@@ -242,7 +250,7 @@ if SERVER then
         rec.active = slot
         saveChars("select-slot")
         applyActiveCharacter(ply)
-        setCharacterLock(ply, not hasCharacter(ply, slot))
+        setCharacterLock(ply, not hasCharacter(ply, slot), true)
         if GRM.Inventory and GRM.Inventory.SyncToClient then
             timer.Simple(0.05, function() if IsValid(ply) then GRM.Inventory.SyncToClient(ply) end end)
         end
@@ -421,6 +429,7 @@ if SERVER then
             allowSkin = opts.allowSkin, allowBodygroups = opts.allowBodygroups,
             isAdmin = ply:IsSuperAdmin() or nil,
             pending = CH.PendingSelection[sid64(ply)] == true,
+            mandatory = CH.PendingMandatory[sid64(ply)] == true,
         }
     end
 
@@ -445,13 +454,13 @@ if SERVER then
             if not IsValid(ply) then return end
             normalizePlayerData(ply)
             -- При каждом входе игрок обязан явно подтвердить персонажа.
-            setCharacterLock(ply, true)
+            setCharacterLock(ply, true, true)
         end)
         timer.Simple(2.2, function()
             if not IsValid(ply) then return end
             normalizePlayerData(ply)
             applyActiveCharacter(ply)
-            setCharacterLock(ply, true)
+            setCharacterLock(ply, true, true)
         end)
     end)
 
@@ -459,7 +468,7 @@ if SERVER then
         timer.Simple(0, function()
             if not IsValid(ply) then return end
             if CH.PendingSelection[ply:SteamID64()] then
-                setCharacterLock(ply, true)
+                setCharacterLock(ply, true, CH.PendingMandatory[ply:SteamID64()] == true)
                 -- Меню уже открывается одним таймером PlayerInitialSpawn.
                 -- Не отправляем его из каждого PlayerSpawn, иначе окна наслаиваются.
             end
@@ -500,6 +509,7 @@ if SERVER then
     hook.Add("PlayerDisconnected", "GRM_Char_ClearPending", function(ply)
         if IsValid(ply) then
             CH.PendingSelection[ply:SteamID64()] = nil
+            CH.PendingMandatory[ply:SteamID64()] = nil
             saveChars("disconnect")
         end
     end)
@@ -508,8 +518,15 @@ if SERVER then
         if not IsValid(ply) then return end
         -- Открытие персонажей через F4 /char переводит игрока в тот же
         -- безопасный режим выбора: мир затемняется и блокируется до подтверждения.
-        setCharacterLock(ply, true)
+        setCharacterLock(ply, true, false)
         sendMenu(ply)
+    end)
+
+    net.Receive(NET_CANCEL, function(_, ply)
+        if not IsValid(ply) then return end
+        setCharacterLock(ply, false, false)
+        applyActiveCharacter(ply)
+        closeMenu(ply)
     end)
 
     net.Receive(NET_SAVE, function(_, ply)
@@ -702,7 +719,15 @@ if CLIENT then
         x:SetText("X") x:SetFont("GRMChar_Title") x:SetTextColor(color_white)
         x:SetPos(fw - 48, 18) x:SetSize(32, 28)
         x.DoClick = function()
-            if canClose() then f:Close() else surface.PlaySound("buttons/button10.wav") end
+            if not canClose() then
+                surface.PlaySound("buttons/button10.wav")
+                return
+            end
+            if payload.pending and payload.mandatory ~= true then
+                net.Start(NET_CANCEL)
+                net.SendToServer()
+            end
+            f:Close()
         end
         x.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.red or Color(45, 52, 68)) end
 
