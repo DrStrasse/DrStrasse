@@ -1085,3 +1085,9 @@
 ## Находка 148 (22.07.2026): C-меню отправляло `/factions` через `say`, обходя PlayerSayTransform
 
 Кнопка «Меню фракций» в `sh_grm_ctx.lua` делала `RunConsoleCommand("say", "/factions")`. Ручной ввод `/factions` обрабатывается в `sh_factions.lua` через `PlayerSayTransform` (EasyChat-путь), а `say` из C-меню мог уйти в чат без этого transform и не открыть меню. Фикс: добавлен `GRM_Ctx_Action`; клиент шлёт action `factions`, сервер напрямую открывает `Factions_OpenAdminMenu` для суперадмина или `Factions_OpenLeaderMenu` для лидера. Имитация чата больше не используется.
+
+---
+
+## Находка 149 (22.07.2026): полный rewrite денежного принтера
+
+Старый `grm_money_printer` был минимальным: коробка-модель, автосбор при достижении лимита, баг уведомления `Снято: 0` после collect, TODO вместо UI настройки, прямые поля `PrintInterval/BreakChance` без сетевого меню. Переписан v2.0.0: владелец по SteamID64, накопление, сбор владельцем/суперадмином, состояние active/broken, нагрев, поломка от перегрева, ремонт за деньги, улучшение ёмкости/скорости, меню `GRM_Printer_Open/Action`, 3D2D статус с прогрессом/нагревом/состоянием. Добавлен `SpawnFunction`, конкоманда `grm_printer_config <interval|max|amount>` сохранена для суперадмина. Валидация: GLua 0, sim_money OK, sim_invphone OK.
