@@ -88,6 +88,17 @@ MED.Recipes = {
         time = 45,
         effect = { health = 30, bleed = -20 },
     },
+    detox = {
+        name = "Детокс-комплект",
+        model = "models/healthvial.mdl",
+        ingredients = {
+            narc_solvent = 4,
+            narc_precursor = 2,
+        },
+        yield = 2,
+        time = 40,
+        effect = { addiction = -35, poisoned = -50 },
+    },
 }
 
 -- ============================================================
@@ -134,36 +145,55 @@ if SERVER then
     util.AddNetworkString("GRM_Med_Treat")
     util.AddNetworkString("GRM_Med_Status")
     
-    -- Использование мед.препаратов
-    GRM.Inventory.RegisterUseHandler("med_use_painkillers", function(ply, slotIdx, slot, def)
-        local pain = ply:GetNWInt("GRM_Pain", 0)
-        ply:SetNWInt("GRM_Pain", math.max(0, pain - 50))
-        GRM.Inventory.RemoveItem(ply, "med_painkillers", 1)
-        if GRM.Notify then GRM.Notify(ply, "Боль уменьшена", 100, 220, 100) end
-    end)
-    
-    GRM.Inventory.RegisterUseHandler("med_use_antibiotics", function(ply, slotIdx, slot, def)
-        local infection = ply:GetNWInt("GRM_Infection", 0)
-        ply:SetNWInt("GRM_Infection", math.max(0, infection - 40))
-        GRM.Inventory.RemoveItem(ply, "med_antibiotics", 1)
-        if GRM.Notify then GRM.Notify(ply, "Инфекция подавлена", 100, 220, 100) end
-    end)
-    
-    GRM.Inventory.RegisterUseHandler("med_use_adrenaline", function(ply, slotIdx, slot, def)
-        ply:SetHealth(math.min(100, ply:Health() + 30))
-        local bleed = ply:GetNWInt("GRM_Bleed", 0)
-        ply:SetNWInt("GRM_Bleed", math.max(0, bleed - 20))
-        GRM.Inventory.RemoveItem(ply, "med_adrenaline", 1)
-        if GRM.Notify then GRM.Notify(ply, "Адреналин вколот! +30 HP", 100, 220, 100) end
-    end)
-    
-    GRM.Inventory.RegisterUseHandler("med_use_kit", function(ply, slotIdx, slot, def)
-        ply:SetHealth(math.min(100, ply:Health() + 50))
-        ply:SetNWInt("GRM_Bleed", 0)
-        GRM.Inventory.RemoveItem(ply, "med_kit_advanced", 1)
-        if GRM.Notify then GRM.Notify(ply, "Раны перевязаны, кровотечение остановлено", 100, 220, 100) end
-    end)
-    
+    -- Использование мед.препаратов (safe registrar: inventory may load later)
+    local function registerMedHandlers()
+        if not (GRM.Inventory and GRM.Inventory.RegisterUseHandler) then return false end
+
+        GRM.Inventory.RegisterUseHandler("med_use_painkillers", function(ply, slotIdx, slot, def)
+            local pain = ply:GetNWInt("GRM_Pain", 0)
+            ply:SetNWInt("GRM_Pain", math.max(0, pain - 50))
+            if GRM.Inventory.RemoveFromSlot then GRM.Inventory.RemoveFromSlot(ply, slotIdx, 1) else GRM.Inventory.RemoveItem(ply, "med_painkillers", 1) end
+            if GRM.Notify then GRM.Notify(ply, "Боль уменьшена", 100, 220, 100) end
+        end)
+
+        GRM.Inventory.RegisterUseHandler("med_use_antibiotics", function(ply, slotIdx, slot, def)
+            local infection = ply:GetNWInt("GRM_Infection", 0)
+            ply:SetNWInt("GRM_Infection", math.max(0, infection - 40))
+            if GRM.Inventory.RemoveFromSlot then GRM.Inventory.RemoveFromSlot(ply, slotIdx, 1) else GRM.Inventory.RemoveItem(ply, "med_antibiotics", 1) end
+            if GRM.Notify then GRM.Notify(ply, "Инфекция подавлена", 100, 220, 100) end
+        end)
+
+        GRM.Inventory.RegisterUseHandler("med_use_adrenaline", function(ply, slotIdx, slot, def)
+            ply:SetHealth(math.min((ply.GetMaxHealth and ply:GetMaxHealth()) or 100, ply:Health() + 30))
+            local bleed = ply:GetNWInt("GRM_Bleed", 0)
+            ply:SetNWInt("GRM_Bleed", math.max(0, bleed - 20))
+            if GRM.Inventory.RemoveFromSlot then GRM.Inventory.RemoveFromSlot(ply, slotIdx, 1) else GRM.Inventory.RemoveItem(ply, "med_adrenaline", 1) end
+            if GRM.Notify then GRM.Notify(ply, "Адреналин вколот! +30 HP", 100, 220, 100) end
+        end)
+
+        GRM.Inventory.RegisterUseHandler("med_use_detox", function(ply, slotIdx, slot, def)
+            if GRM.Narcotics and GRM.Narcotics.ClearAddiction then
+                GRM.Narcotics.ClearAddiction(ply, 35, "detox")
+            else
+                ply:SetNWInt("GRM_Addiction", math.max(0, (ply:GetNWInt("GRM_Addiction", 0) or 0) - 35))
+                ply:SetNWInt("GRM_Poisoned", math.max(0, (ply:GetNWInt("GRM_Poisoned", 0) or 0) - 50))
+            end
+            if GRM.Inventory.RemoveFromSlot then GRM.Inventory.RemoveFromSlot(ply, slotIdx, 1) else GRM.Inventory.RemoveItem(ply, "med_detox", 1) end
+            if GRM.Notify then GRM.Notify(ply, "Детоксикация проведена", 100, 220, 140) end
+        end)
+
+        GRM.Inventory.RegisterUseHandler("med_use_kit", function(ply, slotIdx, slot, def)
+            ply:SetHealth(math.min((ply.GetMaxHealth and ply:GetMaxHealth()) or 100, ply:Health() + 50))
+            ply:SetNWInt("GRM_Bleed", 0)
+            if GRM.Inventory.RemoveFromSlot then GRM.Inventory.RemoveFromSlot(ply, slotIdx, 1) else GRM.Inventory.RemoveItem(ply, "med_kit_advanced", 1) end
+            if GRM.Notify then GRM.Notify(ply, "Раны перевязаны, кровотечение остановлено", 100, 220, 100) end
+        end)
+        return true
+    end
+    registerMedHandlers()
+    timer.Simple(2, registerMedHandlers)
+    timer.Simple(6, registerMedHandlers)
+
     -- Обработка кровотечения
     hook.Add("Think", "GRM_Med_Bleed", function()
         for _, ply in ipairs(player.GetAll()) do
@@ -221,6 +251,8 @@ if SERVER then
                 pain = target:GetNWInt("GRM_Pain", 0),
                 infection = target:GetNWInt("GRM_Infection", 0),
                 poisoned = target:GetNWInt("GRM_Poisoned", 0),
+                addiction = target:GetNWInt("GRM_Addiction", 0),
+                narc = target:GetNWBool("GRM_NarcActive") and target:GetNWString("GRM_NarcType", "") or "нет",
             }
             
             ply:ChatPrint(string.format("=== Диагностика: %s ===", target:Nick()))
@@ -229,6 +261,8 @@ if SERVER then
             ply:ChatPrint(string.format("  Боль: %d%%", status.pain))
             ply:ChatPrint(string.format("  Инфекция: %d%%", status.infection))
             ply:ChatPrint(string.format("  Отравление: %d%%", status.poisoned))
+            ply:ChatPrint(string.format("  Зависимость: %d%%", status.addiction))
+            ply:ChatPrint("  Наркотический эффект: " .. tostring(status.narc))
             
             if status.bleed > 0 then
                 ply:ChatPrint("   ТРЕБУЕТСЯ: Перевязка")
@@ -238,6 +272,9 @@ if SERVER then
             end
             if status.infection > 30 then
                 ply:ChatPrint("  ⚠ ТРЕБУЕТСЯ: Антибиотики")
+            end
+            if status.addiction > 30 or status.poisoned > 30 then
+                ply:ChatPrint("  ⚠ ТРЕБУЕТСЯ: Детокс-комплект")
             end
             
             return ""

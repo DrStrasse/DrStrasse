@@ -22,260 +22,127 @@
     - Передозировка (смерть)
 ----------------------------------------------------------------------]]
 
-if SERVER then AddCSLuaFile() end
-
-GRM = GRM or {}
-GRM.Narcotics = GRM.Narcotics or {}
-local NARC = GRM.Narcotics
-
--- ============================================================
--- КОНФИГ
--- ============================================================
-NARC.Config = {
-    -- Шанс зависимости при употреблении (0-1)
-    AddictionChance = 0.15,
-    
-    -- Максимальный уровень зависимости (0-100)
-    MaxAddiction = 100,
-    
-    -- Урон от передозировки
-    OverdoseDamage = 10,
-    
-    -- Время варки (секунды)
-    CookTime = {
-        marijuana = 30,
-        amphetamine = 60,
-        cocaine = 90,
-    },
-    
-    -- Эффекты наркотиков
-    Effects = {
-        marijuana = {
-            duration = 120,
-            speed = 1.1,      -- +10% скорость
-            jump = 1.2,       -- +20% прыжок
-            health_regen = 2, -- регенерация HP/сек
-            addiction = 10,   -- уровень зависимости
-        },
-        amphetamine = {
-            duration = 180,
-            speed = 1.3,
-            stamina = 2.0,    -- бесконечная стамина
-            health_regen = 0,
-            addiction = 25,
-        },
-        cocaine = {
-            duration = 90,
-            speed = 1.5,
-            damage = 1.3,     -- +30% урон
-            health_regen = 5,
-            addiction = 40,
-        },
-    },
-}
-
--- ============================================================
--- ИНГРЕДИЕНТЫ (связь с рудой/металлом)
--- ============================================================
-NARC.Ingredients = {
-    -- Растворитель (из алюминиевой руды)
-    solvent = {
-        name = "Растворитель",
-        model = "models/jmod/resources/coolant_bottle.mdl",
-        from_ore = "ore_aluminum", -- нужна алюминиевая руда
-        yield = 5, -- из 1 руды = 5 растворителя
-    },
-    
-    -- Прекурсор (из медной руды + химикатов)
-    precursor = {
-        name = "Прекурсор",
-        model = "models/props/cs_office/cardboard_box03.mdl",
-        from_ore = "ore_copper",
-        yield = 3,
-    },
-    
-    -- Оборудование (из металла)
-    equipment = {
-        name = "Оборудование для варки",
-        model = "models/props_wasteland/laundry_washer003.mdl",
-        from_scrap = true, -- нужен металлолом
-        scrap_needed = 10,
-    },
-}
-
--- ============================================================
--- РЕЦЕПТЫ
--- ============================================================
-NARC.Recipes = {
-    marijuana = {
-        name = "Марихуана",
-        model = "models/jmod/resources/propellent.mdl",
-        ingredients = {
-            solvent = 2,
-            precursor = 1,
-        },
-        cook_time = 30,
-        yield = 3, -- порций
-        difficulty = 1, -- 1-10
-    },
-    
-    amphetamine = {
-        name = "Амфетамин",
-        model = "models/bloocobalt/l4d/items/w_eq_pills.mdl",
-        ingredients = {
-            solvent = 3,
-            precursor = 3,
-        },
-        cook_time = 60,
-        yield = 5,
-        difficulty = 5,
-    },
-    
-    cocaine = {
-        name = "Кокаин",
-        model = "models/bloocobalt/l4d/items/w_eq_pills.mdl",
-        ingredients = {
-            solvent = 5,
-            precursor = 5,
-            equipment = 1,
-        },
-        cook_time = 90,
-        yield = 7,
-        difficulty = 8,
-    },
-}
-
--- ============================================================
--- РЕГИСТРАЦИЯ ПРЕДМЕТОВ В ИНВЕНТАРЕ
--- ============================================================
-local function RegisterNarcotics()
-    if not (GRM.Inventory and GRM.Inventory.RegisterItem) then return end
-    
-    -- Ингредиенты
-    GRM.Inventory.RegisterItem("narc_solvent", {
-        type = "item",
-        name = "Растворитель",
-        desc = "Химический растворитель для варки. Из алюминиевой руды.",
-        icon = "icon16/bottle.png",
-        maxStack = 10,
-        weight = 0.5,
-        model = "models/jmod/resources/coolant_bottle.mdl",
-    })
-    
-    GRM.Inventory.RegisterItem("narc_precursor", {
-        type = "item",
-        name = "Прекурсор",
-        desc = "Химический прекурсор. Из медной руды.",
-        icon = "icon16/box.png",
-        maxStack = 10,
-        weight = 1.0,
-        model = "models/props/cs_office/cardboard_box03.mdl",
-    })
-    
-    GRM.Inventory.RegisterItem("narc_equipment", {
-        type = "item",
-        name = "Оборудование для варки",
-        desc = "Лабораторное оборудование. Из металлолома.",
-        icon = "icon16/wrench.png",
-        maxStack = 1,
-        weight = 5.0,
-        model = "models/props_wasteland/laundry_washer003.mdl",
-    })
-    
-    -- Наркотики
-    for id, recipe in pairs(NARC.Recipes) do
-        GRM.Inventory.RegisterItem("narc_" .. id, {
-            type = "item",
-            name = recipe.name,
-            desc = "Наркотическое вещество. Вызывает зависимость!",
-            icon = "icon16/pill.png",
-            maxStack = 5,
-            weight = 0.2,
-            model = recipe.model,
-            useFunc = "narc_use_" .. id,
-        })
-    end
-end
-
--- Регистрируем сразу и с задержкой (инвентарь может грузиться позже)
-RegisterNarcotics()
-timer.Simple(2, RegisterNarcotics)
-
--- ============================================================
--- СЕРВЕРНАЯ ЧАСТЬ
--- ============================================================
 if SERVER then
     util.AddNetworkString("GRM_Narc_Cook")
     util.AddNetworkString("GRM_Narc_Use")
     util.AddNetworkString("GRM_Narc_Status")
-    
-    -- Использование наркотика
-    GRM.Inventory.RegisterUseHandler("narc_use_marijuana", function(ply, slotIdx, slot, def)
-        NARC.ApplyEffect(ply, "marijuana")
-        GRM.Inventory.RemoveItem(ply, "narc_marijuana", 1)
-    end)
-    
-    GRM.Inventory.RegisterUseHandler("narc_use_amphetamine", function(ply, slotIdx, slot, def)
-        NARC.ApplyEffect(ply, "amphetamine")
-        GRM.Inventory.RemoveItem(ply, "narc_amphetamine", 1)
-    end)
-    
-    GRM.Inventory.RegisterUseHandler("narc_use_cocaine", function(ply, slotIdx, slot, def)
-        NARC.ApplyEffect(ply, "cocaine")
-        GRM.Inventory.RemoveItem(ply, "narc_cocaine", 1)
-    end)
-    
-    -- Применение эффектов
-    function NARC.ApplyEffect(ply, narcType)
+
+    local function notify(ply, msg, r, g, b)
+        if GRM.Notify then GRM.Notify(ply, msg, r or 255, g or 120, b or 120)
+        elseif IsValid(ply) and ply.ChatPrint then ply:ChatPrint("[Наркотики] " .. tostring(msg or "")) end
+    end
+
+    function NARC.GetAddiction(ply)
+        return IsValid(ply) and (ply:GetNWInt("GRM_Addiction", 0) or 0) or 0
+    end
+    function NARC.SetAddiction(ply, value, reason)
         if not IsValid(ply) then return end
-        
+        value = math.Clamp(math.floor(tonumber(value) or 0), 0, NARC.Config.MaxAddiction or 100)
+        ply:SetNWInt("GRM_Addiction", value)
+        ply:SetNWString("GRM_AddictionReason", tostring(reason or ""))
+    end
+    function NARC.ClearAddiction(ply, amount, reason)
+        if not IsValid(ply) then return end
+        amount = math.max(0, math.floor(tonumber(amount) or 100))
+        NARC.SetAddiction(ply, math.max(0, NARC.GetAddiction(ply) - amount), reason or "treatment")
+        ply:SetNWInt("GRM_Poisoned", math.max(0, (ply:GetNWInt("GRM_Poisoned", 0) or 0) - amount))
+        notify(ply, "Детоксикация: зависимость снижена", 100, 220, 140)
+    end
+
+    function NARC.ApplyEffect(ply, narcType)
+        if not IsValid(ply) or not ply:Alive() then return false end
+        narcType = tostring(narcType or "")
         local effect = NARC.Config.Effects[narcType]
-        if not effect then return end
-        
-        -- Шанс зависимости
-        if math.random() < NARC.Config.AddictionChance then
-            local currentAddiction = ply:GetNWInt("GRM_Addiction", 0)
-            ply:SetNWInt("GRM_Addiction", math.min(NARC.Config.MaxAddiction, currentAddiction + effect.addiction))
-        end
-        
-        -- Временные бафы
+        local recipe = NARC.Recipes[narcType]
+        if not effect or not recipe then return false end
+
+        local now = CurTime()
+        local untilTime = now + (tonumber(effect.duration) or 60)
+        NARC.Active[ply] = { type = narcType, untilTime = untilTime, nextRegen = now, nextDamage = now }
         ply:SetNWBool("GRM_NarcActive", true)
         ply:SetNWString("GRM_NarcType", narcType)
-        
-        -- Таймер окончания эффекта
-        timer.Simple(effect.duration, function()
-            if IsValid(ply) then
+        ply:SetNWFloat("GRM_NarcUntil", untilTime)
+
+        local add = tonumber(effect.addiction) or 0
+        if math.random() < (NARC.Config.AddictionChance or 0.15) then
+            add = math.max(add, 1)
+        else
+            add = math.floor(add * 0.35)
+        end
+        NARC.SetAddiction(ply, NARC.GetAddiction(ply) + add, narcType)
+        if add >= 20 then ply:SetNWInt("GRM_Poisoned", math.min(100, (ply:GetNWInt("GRM_Poisoned", 0) or 0) + math.floor(add / 2))) end
+
+        timer.Create("GRM_Narc_End_" .. ply:SteamID64(), tonumber(effect.duration) or 60, 1, function()
+            if IsValid(ply) and NARC.Active[ply] and NARC.Active[ply].type == narcType then
+                NARC.Active[ply] = nil
                 ply:SetNWBool("GRM_NarcActive", false)
                 ply:SetNWString("GRM_NarcType", "")
+                ply:SetNWFloat("GRM_NarcUntil", 0)
+                notify(ply, "Действие вещества прошло: " .. recipe.name, 180, 180, 220)
             end
         end)
-        
-        if GRM.Notify then
-            GRM.Notify(ply, "Вы употребили " .. NARC.Recipes[narcType].name, 255, 100, 100)
-        end
+
+        notify(ply, "Вы употребили: " .. recipe.name, 255, 120, 120)
+        return true
     end
-    
-    -- Регенерация здоровья от наркотиков
-    hook.Add("Think", "GRM_Narc_Regen", function()
-        for _, ply in ipairs(player.GetAll()) do
-            if IsValid(ply) and ply:Alive() and ply:GetNWBool("GRM_NarcActive") then
-                local narcType = ply:GetNWString("GRM_NarcType", "")
-                local effect = NARC.Config.Effects[narcType]
-                if effect and effect.health_regen > 0 then
-                    local hp = ply:Health()
-                    if hp < 100 then
-                        ply:SetHealth(math.min(100, hp + effect.health_regen * 0.1))
-                    end
+
+    local function registerUseHandlers()
+        if not (GRM.Inventory and GRM.Inventory.RegisterUseHandler) then return false end
+        for id in pairs(NARC.Recipes or {}) do
+            GRM.Inventory.RegisterUseHandler("narc_use_" .. id, function(ply, slotIdx, slot, def)
+                if NARC.ApplyEffect(ply, id) then
+                    if GRM.Inventory.RemoveFromSlot then GRM.Inventory.RemoveFromSlot(ply, slotIdx, 1)
+                    else GRM.Inventory.RemoveItem(ply, "narc_" .. id, 1) end
                 end
-                
-                -- Урон от передозировки (если зависимость высокая)
-                local addiction = ply:GetNWInt("GRM_Addiction", 0)
-                if addiction > 80 then
-                    ply:TakeDamage(NARC.Config.OverdoseDamage * 0.01, game.GetWorld(), game.GetWorld())
+            end)
+        end
+        return true
+    end
+    registerUseHandlers()
+    timer.Simple(2, registerUseHandlers)
+    timer.Simple(6, registerUseHandlers)
+
+    hook.Add("Think", "GRM_Narc_Regen", function()
+        local now = CurTime()
+        for _, ply in ipairs(player.GetAll()) do
+            if IsValid(ply) and ply:Alive() then
+                local active = NARC.Active[ply]
+                if active and active.untilTime > now then
+                    local effect = NARC.Config.Effects[active.type]
+                    if effect then
+                        if (effect.health_regen or 0) > 0 and (active.nextRegen or 0) <= now then
+                            active.nextRegen = now + 1
+                            if ply:Health() < ply:GetMaxHealth() then
+                                ply:SetHealth(math.min(ply:GetMaxHealth(), ply:Health() + (effect.health_regen or 0)))
+                            end
+                        end
+                    end
+                elseif active then
+                    NARC.Active[ply] = nil
+                    ply:SetNWBool("GRM_NarcActive", false)
+                    ply:SetNWString("GRM_NarcType", "")
+                end
+
+                local addiction = NARC.GetAddiction(ply)
+                if addiction > 80 and (ply._grmNarcNextOD or 0) <= now then
+                    ply._grmNarcNextOD = now + 5
+                    ply:TakeDamage(NARC.Config.OverdoseDamage or 10, game.GetWorld(), game.GetWorld())
+                    notify(ply, "Передозировка/ломка наносит вред!", 255, 80, 80)
                 end
             end
         end
     end)
-    
-    print("[GRM] Narcotics System loaded (Код 117)")
+
+    hook.Add("PlayerSay", "GRM_Narc_StatusCmd", function(ply, text)
+        local cmd = string.lower(string.Trim(text or ""))
+        if cmd == "/narc_status" or cmd == "!narc_status" or cmd == "/drugstatus" then
+            local active = ply:GetNWBool("GRM_NarcActive") and ply:GetNWString("GRM_NarcType", "") or "нет"
+            ply:ChatPrint("[Наркотики] Активный эффект: " .. tostring(active))
+            ply:ChatPrint("[Наркотики] Зависимость: " .. tostring(NARC.GetAddiction(ply)) .. "/100")
+            ply:ChatPrint("[Наркотики] Отравление: " .. tostring(ply:GetNWInt("GRM_Poisoned", 0)) .. "/100")
+            return ""
+        end
+    end)
+
+    print("[GRM] Narcotics System loaded v" .. tostring(NARC.Version))
 end

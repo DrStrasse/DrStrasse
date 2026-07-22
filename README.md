@@ -228,3 +228,9 @@
 ### Mobile deactivate hotfix 2026-07-22
 
 - Исправлен Lua Error `attempt to call global 'closePhone'`: `closePhone` теперь forward-declared до `screenItems`, где используется пунктом «Деактивировать».
+
+### Medical/Narcotics rewrite 2026-07-22
+
+- Наркотики: исправлены recipe ingredient id (`narc_solvent/narc_precursor/narc_equipment`), safe use-handlers, зависимость/отравление/статус `/narc_status`, нормальное окончание эффектов и урон от высокой зависимости.
+- Медицина: добавлен `med_detox` («Детокс-комплект»), safe use-handlers, `/diagnose` показывает зависимость и наркотический эффект.
+- Лаборатории: крафт наркотиков/медпрепаратов исправлен (`cook_time/time`, реальные item-id ингредиентов, проверка инвентаря, валидация labType).

@@ -1057,3 +1057,14 @@
 ## Находка 145 (22.07.2026): `closePhone` использовался в screenItems до объявления
 
 Пункт «Деактивировать» внутри `screenItems()` вызывал `closePhone(false)`, но `closePhone` был объявлен ниже как `local function closePhone`. Для уже скомпилированного `screenItems` этот local ещё не был виден, поэтому Lua искал глобальный `closePhone` и падал. Фикс: добавлен forward declaration `local closePhone` перед `screenItems`, а ниже функция задаётся как `closePhone = function(...) ... end`.
+
+---
+
+## Находка 146 (22.07.2026): рефактор наркотиков и медицины — id ингредиентов, safe use-handlers, детокс и крафт-таймеры
+
+1. `sh_grm_narcotics.lua`: рецепты наркотиков использовали логические ключи `solvent/precursor/equipment`, а реальные предметы инвентаря называются `narc_solvent/narc_precursor/narc_equipment`. Рецепты приведены к реальным item-id.
+2. Use-handlers наркотиков раньше регистрировались напрямую и могли упасть/не встать при перекошенной загрузке инвентаря. Добавлен safe-регистратор с ретраями; употребление списывает предмет через `RemoveFromSlot`, если доступно.
+3. Наркотики получили нормальный runtime-state: `NARC.Active`, `GRM_NarcActive`, `GRM_NarcType`, `GRM_NarcUntil`, зависимость `GRM_Addiction`, отравление `GRM_Poisoned`, команда `/narc_status`. Передозировка/ломка наносит периодический урон при высокой зависимости.
+4. `sh_grm_medical_full.lua`: добавлен препарат `med_detox` / «Детокс-комплект», safe-регистратор med use-handlers с ретраями, диагностика `/diagnose` теперь показывает зависимость и активный наркотический эффект. Детокс снижает зависимость и отравление через `GRM.Narcotics.ClearAddiction`.
+5. `sv_grm_narcotics_craft.lua`: исправлен `recipe.time` vs `cook_time`, добавлен resolver рецептов с fallback, проверка готовности инвентаря, валидация labType, правильные ingredient id. Крафт теперь списывает реальные item-id и выдаёт `narc_*`/`med_*`.
+6. Валидация: GLua 292/0, sim_medical 75/75, sim_invphone 41/41, sim_mobile 121/121; proto_audit без новых замечаний по этим модулям.
