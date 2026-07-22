@@ -319,7 +319,7 @@ function GRM.Food.LoadVendingMachines(ply, replaceAll)
     local raw = file.Read(path, "DATA")
     if not raw or raw == "" then return false end
 
-    local ok, data = pcall(util.JSONToTable, raw)
+    local ok, data = pcall(util.JSONToTable, raw, false, true)
     if not ok or not istable(data) then
         reply(ply, "[GRM Food] Ошибка чтения файла автоматов: data/" .. path)
         return false
@@ -446,6 +446,7 @@ local SAVE_FILE = "grm_hunger.json"
 
 local function getPlayerID(ply)
     if not IsValid(ply) then return nil end
+    if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
     return ply:SteamID64() or ply:SteamID() or tostring(ply:UserID())
 end
 
@@ -455,7 +456,7 @@ local function loadHunger()
     local raw = file.Read(SAVE_FILE, "DATA")
     if not raw or raw == "" then return end
 
-    local ok, data = pcall(util.JSONToTable, raw)
+    local ok, data = pcall(util.JSONToTable, raw, false, true)
     if ok and istable(data) then
         hungerData = data
     end
