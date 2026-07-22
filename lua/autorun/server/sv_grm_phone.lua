@@ -76,7 +76,7 @@ local function getFactionInfo(ply)
     local charKey = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
     for name, f in pairs(Factions) do
         if istable(f) and istable(f.Members) then
-            local m = f.Members[charKey] or f.Members[sid] or f.Members[sid64]
+            local m = GRM.Identity.FactionMember(f, ply)
             if istable(m) then return name, m.Role, m.Department end
         end
     end

@@ -152,7 +152,7 @@ function V.CanBuyWeapon(ply, item)
     if item.license == "police" then
         -- Проверяем через глобальную таблицу Factions
         if Factions and Factions.Polizei and Factions.Polizei.Members then
-            if Factions.Polizei.Members[(GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID()] or Factions.Polizei.Members[ply:SteamID()] or Factions.Polizei.Members[ply:SteamID64()] then
+            if GRM.Identity.FactionMember(Factions.Polizei, ply) then
                 return true
             end
         end

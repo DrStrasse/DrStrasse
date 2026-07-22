@@ -294,7 +294,7 @@ local function buildProfileTab(sc, refresh)
     local fac = "—"
     if istable(FactionsData) then
         for fname, fd in pairs(FactionsData) do
-            if istable(fd) and istable(fd.Members) and (fd.Members[lp:SteamID()] or fd.Members[lp:SteamID64()]) then
+            if istable(fd) and GRM.Identity.FactionMember(fd, lp) then
                 fac = fname break
             end
         end

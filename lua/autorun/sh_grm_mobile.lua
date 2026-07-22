@@ -605,7 +605,13 @@ function MB.HandleAction(ply, act)
         local sid, sid64 = ply:SteamID(), MB.Key(ply)
         local foundName, found = nil, nil
         for name, fac in pairs(Factions or {}) do
-            if istable(fac) and istable(fac.Members) and (fac.Members[sid] or fac.Members[sid64]) then
+            local member
+            if GRM.Identity and GRM.Identity.FactionMember then
+                member = GRM.Identity.FactionMember(fac, ply)
+            else
+                member = istable(fac) and fac.Members and (fac.Members[sid] or fac.Members[sid64])
+            end
+            if istable(fac) and member then
                 foundName, found = tostring(name), fac
                 break
             end

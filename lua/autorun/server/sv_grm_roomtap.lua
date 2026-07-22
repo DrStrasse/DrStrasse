@@ -189,7 +189,7 @@ local function getFactionInfo(ply)
 
     for factionName, faction in pairs(Factions) do
         if istable(faction) and istable(faction.Members) then
-            local member = faction.Members[charKey] or faction.Members[sid] or faction.Members[sid64]
+            local member = GRM.Identity.FactionMember(faction, ply)
             if istable(member) then
                 return factionName, member.Role, member.Department
             end

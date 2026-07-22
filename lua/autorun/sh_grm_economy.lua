@@ -167,7 +167,7 @@ if SERVER then
     local function memberRec(f, ply)
         if not (istable(f) and istable(f.Members) and IsValid(ply)) then return nil end
         local key = characterKeyOf(ply)
-        return f.Members[key] or f.Members[ply:SteamID()] or f.Members[ply:SteamID64()]
+        return GRM.Identity.FactionMember(f, ply)
     end
 
     local function factionOf(ply)

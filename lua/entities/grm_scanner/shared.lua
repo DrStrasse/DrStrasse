@@ -105,7 +105,7 @@ if SERVER then
         if not (Factions and IsValid(ply) and ply.SteamID) then return nil end
         for fName, fData in pairs(Factions) do
             if istable(fData) and istable(fData.Members)
-                and (fData.Members[(GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID()] or fData.Members[ply:SteamID()] or fData.Members[ply:SteamID64()]) then
+                and GRM.Identity.FactionMember(fData, ply) then
                 return fName
             end
         end

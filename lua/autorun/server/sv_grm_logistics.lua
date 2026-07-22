@@ -65,7 +65,7 @@ local function factionOf(p)
     if not IsValid(p) or not istable(Factions) then return nil,nil end
     for name,f in pairs(Factions) do
         if istable(f) and istable(f.Members) then
-            local m=f.Members[p:SteamID()] or f.Members[p:SteamID64()]
+            local m = GRM.Identity.FactionMember(f, p)
             if m then return name,m end
         end
     end

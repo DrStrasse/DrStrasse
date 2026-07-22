@@ -89,7 +89,7 @@ function SWEP:CanSearch(ply)
                 local sid = ply:SteamID()
                 local sid64 = ply:SteamID64()
                 local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
-                if f.Members[ck] or f.Members[sid] or f.Members[sid64] then
+                if GRM.Identity.FactionMember(f, ply) then
                     return true
                 end
             end

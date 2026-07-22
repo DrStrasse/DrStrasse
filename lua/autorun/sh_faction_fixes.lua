@@ -223,7 +223,7 @@ local function getFactionMemberByPlayer(ply)
     local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
     for factionName, f in pairs(Factions or {}) do
         if istable(f) and istable(f.Members) then
-            local member = f.Members[ck] or f.Members[sid] or f.Members[sid64]
+            local member = GRM.Identity.FactionMember(f, ply)
             if istable(member) then
                 return factionName, member, f, sid
             end
@@ -1148,7 +1148,7 @@ if SERVER then
         local sid64 = ply:SteamID64()
         local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
         if f.Leader and (f.Leader == ck or f.Leader == sid or f.Leader == sid64) then return true end
-        local member = f.Members and (f.Members[ck] or f.Members[sid] or f.Members[sid64])
+        local member = f.Members and GRM.Identity.FactionMember(f, ply)
         local leaderRole = f.LeaderRoleName or "Лидер"
         return istable(member) and member.Role == leaderRole
     end
@@ -1188,7 +1188,7 @@ if SERVER then
             local sid = ply:SteamID()
             local sid64 = ply:SteamID64()
             local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
-            local member = f.Members and (f.Members[ck] or f.Members[sid] or f.Members[sid64])
+            local member = f.Members and GRM.Identity.FactionMember(f, ply)
             local role = (member and member.Role) or f.LeaderRoleName or "Лидер"
             local color = f.Color or { r = 255, g = 200, b = 50 }
 

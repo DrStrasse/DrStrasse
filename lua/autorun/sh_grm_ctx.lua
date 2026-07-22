@@ -32,7 +32,7 @@ if SERVER then
         local s64 = ply:SteamID64()
         local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or s64
         for name, f in pairs(Factions) do
-            if istable(f) and istable(f.Members) and (f.Members[ck] or f.Members[sid] or f.Members[s64]) then
+            if istable(f) and GRM.Identity.FactionMember(f, ply) then
                 return name, f
             end
         end
@@ -102,7 +102,7 @@ if SERVER then
         result.hasMaskAccess = false
         if factionName and FactionsExt and FactionsExt[factionName] then
             local cfg = FactionsExt[factionName]
-            local member = faction and (faction.Members[ck] or faction.Members[ply:SteamID()] or faction.Members[ply:SteamID64()])
+            local member = faction and GRM.Identity.FactionMember(faction, ply)
             if member and cfg.MaskDepartments then
                 for _, dept in pairs(cfg.MaskDepartments) do
                     if istable(dept.Roles) then

@@ -92,6 +92,14 @@ function I.Actor(ply)
     }
 end
 
+-- Strict RP membership lookup. Once Character Core is active, SteamID
+-- aliases must never grant a character the faction of another slot.
+function I.FactionMember(faction, ply)
+    if not istable(faction) or not istable(faction.Members) then return nil end
+    if validPlayer(ply) then return faction.Members[I.CharacterKey(ply)] end
+    return faction.Members[tostring(ply or "")]
+end
+
 -- Resolve only online characters. The server remains authoritative: clients
 -- must never be allowed to resolve arbitrary keys through a net request.
 if SERVER then

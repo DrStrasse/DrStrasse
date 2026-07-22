@@ -526,7 +526,7 @@ if SERVER then
         for name, f in pairs(Factions) do
             if istable(f) and istable(f.Members) then
                 local ck = steam64(ply)
-                local m = f.Members[ck] or f.Members[sid] or f.Members[sid64]
+                local m = GRM.Identity.FactionMember(f, ply)
                 if istable(m) then return name, m.Role, m.Department end
             end
         end

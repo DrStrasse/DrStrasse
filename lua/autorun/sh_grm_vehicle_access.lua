@@ -127,8 +127,8 @@ if SERVER then
         local sid = ply:SteamID()
         local ck = characterKey(ply)
         for name, f in pairs(Factions) do
-            if istable(f) and istable(f.Members) and (f.Members[ck] or f.Members[sid] or f.Members[ply:SteamID64()]) then
-                local info = f.Members[ck] or f.Members[sid] or f.Members[ply:SteamID64()]
+            local info = istable(f) and GRM.Identity.FactionMember(f, ply) or nil
+            if info then
                 return name, info.Role or "Участник", info.Department or "Основной"
             end
         end

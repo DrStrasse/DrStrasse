@@ -167,7 +167,7 @@ function HC.GetFactionInfo(ply)
     for factionName, f in pairs(data or {}) do
         if istable(f) and istable(f.Members) then
             -- В вашем коде фракции используют SteamID(), но на всякий случай поддерживаем и SteamID64().
-            local member = f.Members[charKey] or f.Members[sid] or f.Members[sid64]
+            local member = GRM.Identity.FactionMember(f, ply)
             if istable(member) then
                 return factionName, member.Role, member.Department, f, source
             end
