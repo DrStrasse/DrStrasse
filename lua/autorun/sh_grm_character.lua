@@ -63,6 +63,9 @@ function CH.GetActiveID(ply)
 end
 
 function CH.GetActiveKey(ply)
+    if GRM.Identity and GRM.Identity.CharacterKey then
+        return GRM.Identity.CharacterKey(ply)
+    end
     if IsValid(ply) and ply:IsPlayer() then
         local key = ply:GetNWString("GRM_CharacterKey", "")
         if key ~= "" then return key end
