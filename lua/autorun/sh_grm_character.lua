@@ -318,9 +318,14 @@ if SERVER then
         Title = function(ply)
             if not istable(Factions) then return "Фракция" end
             local sid, s64 = ply:SteamID(), ply:SteamID64()
+            local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or nil
             for n, f in pairs(Factions) do
-                if istable(f) and istable(f.Members) and (f.Members[sid] or f.Members[s64]) then
-                    local m = f.Members[sid] or f.Members[s64]
+                local m = nil
+                if istable(f) and istable(f.Members) then
+                    if ck then m = f.Members[ck]
+                    else m = f.Members[sid] or f.Members[s64] end
+                end
+                if istable(m) then
                     return "Фракция: " .. n .. (m.Role and (" — " .. tostring(m.Role)) or "")
                 end
             end
@@ -331,8 +336,14 @@ if SERVER then
                 local hasFaction = false
                 if istable(Factions) then
                     local sid, s64 = ply:SteamID(), ply:SteamID64()
+                    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or nil
                     for _, f in pairs(Factions) do
-                        if istable(f) and istable(f.Members) and (f.Members[sid] or f.Members[s64]) then hasFaction = true break end
+                        if istable(f) and istable(f.Members) then
+                            local member
+                            if ck then member = f.Members[ck]
+                            else member = f.Members[sid] or f.Members[s64] end
+                            if member then hasFaction = true break end
+                        end
                     end
                 end
                 if not hasFaction then return {} end
