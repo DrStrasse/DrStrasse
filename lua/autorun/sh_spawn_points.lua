@@ -340,11 +340,16 @@ if SERVER then
 
         if Factions then
             local steamID = ply:SteamID()
-            local charKey = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or steamID
             for name, f in pairs(Factions) do
-                if f.Members and (f.Members[charKey] or f.Members[steamID] or f.Members[ply:SteamID64()]) then
+                local member
+                if GRM.Identity and GRM.Identity.FactionMember then
+                    member = GRM.Identity.FactionMember(f, ply)
+                elseif f.Members then
+                    member = f.Members[steamID] or f.Members[ply:SteamID64()]
+                end
+                if member then
                     factionName = name
-                    memberData = f.Members[charKey] or f.Members[steamID] or f.Members[ply:SteamID64()]
+                    memberData = member
                     break
                 end
             end
@@ -395,12 +400,20 @@ if SERVER then
         return nil
     end
 
-    hook.Add("PlayerSpawn", "SpawnAtFactionPoint", function(ply)
+    function GRM_MovePlayerToSpawnPoint(ply)
+        if not IsValid(ply) then return false end
         local pos, ang = GetSpawnPointForPlayer(ply)
-        if pos then
-            ply:SetPos(pos)
-            if ang then ply:SetAngles(ang) end
+        if not pos then return false end
+        ply:SetPos(pos)
+        if ang then
+            ply:SetAngles(ang)
+            if ply.SetEyeAngles then ply:SetEyeAngles(ang) end
         end
+        return true, pos, ang
+    end
+
+    hook.Add("PlayerSpawn", "SpawnAtFactionPoint", function(ply)
+        GRM_MovePlayerToSpawnPoint(ply)
     end)
 
     -- ----------------------------------------------------------------

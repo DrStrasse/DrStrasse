@@ -424,22 +424,56 @@ if SERVER then
         timer.Simple(0.2, function()
             if not IsValid(ply) then return end
             normalizePlayerData(ply)
-            setCharacterLock(ply, not hasCharacter(ply))
+            -- При каждом входе игрок обязан явно подтвердить персонажа.
+            setCharacterLock(ply, true)
         end)
         timer.Simple(2.2, function()
             if not IsValid(ply) then return end
             normalizePlayerData(ply)
             applyActiveCharacter(ply)
-            setCharacterLock(ply, not hasCharacter(ply))
+            setCharacterLock(ply, true)
         end)
     end)
 
     hook.Add("PlayerSpawn", "GRM_Char_BlockUnselectedSpawn", function(ply)
         timer.Simple(0, function()
             if not IsValid(ply) then return end
-            setCharacterLock(ply, not hasCharacter(ply))
-            if not hasCharacter(ply) then sendMenu(ply) end
+            if CH.PendingSelection[ply:SteamID64()] then
+                setCharacterLock(ply, true)
+                sendMenu(ply)
+            end
         end)
+    end)
+
+    local function characterPending(ply)
+        return IsValid(ply) and CH.PendingSelection[ply:SteamID64()] == true
+    end
+
+    hook.Add("StartCommand", "GRM_Char_BlockInput", function(ply, cmd)
+        if not characterPending(ply) then return end
+        ply:Freeze(true)
+        cmd:ClearMovement()
+        cmd:ClearButtons()
+    end)
+
+    hook.Add("PlayerUse", "GRM_Char_BlockUse", function(ply)
+        if characterPending(ply) then return false end
+    end)
+
+    hook.Add("PlayerSpawnProp", "GRM_Char_BlockProp", function(ply)
+        if characterPending(ply) then return false end
+    end)
+
+    hook.Add("CanTool", "GRM_Char_BlockTool", function(ply)
+        if characterPending(ply) then return false end
+    end)
+
+    hook.Add("CanPlayerEnterVehicle", "GRM_Char_BlockVehicle", function(ply)
+        if characterPending(ply) then return false end
+    end)
+
+    hook.Add("PlayerSay", "GRM_Char_BlockChat", function(ply)
+        if characterPending(ply) then return "" end
     end)
 
     hook.Add("PlayerDisconnected", "GRM_Char_ClearPending", function(ply)
@@ -853,7 +887,12 @@ if CLIENT then
         local bContinue = mkBtn(bot, char and "Продолжить" or "", C.acc)
         bContinue:Dock(RIGHT) bContinue:SetWide(150) bContinue:DockMargin(8, 6, 0, 6)
         bContinue:SetVisible(char ~= nil)
-        bContinue.DoClick = function() f:Close() end
+        bContinue.DoClick = function()
+            net.Start(NET_SAVE)
+                net.WriteTable({ action = "select_slot", slot = payload.activeSlot or "char1" })
+            net.SendToServer()
+            timer.Simple(0.2, function() if IsValid(f) then f:Close() end end)
+        end
 
         local bSave = mkBtn(bot, char and "Сохранить изменения" or "Создать персонажа", C.green)
         bSave:Dock(RIGHT) bSave:SetWide(230) bSave:DockMargin(8, 6, 0, 6)
@@ -894,6 +933,41 @@ if CLIENT then
             CH.OpenMenu()
             if istable(text) then text[1] = "" end
             return true
+        end
+    end)
+
+    local function clientCharacterPending()
+        local lp = LocalPlayer()
+        return IsValid(lp) and lp:GetNWBool("GRM_CharacterPending", false)
+    end
+
+    hook.Add("HUDPaintBackground", "GRM_Char_LockScreen", function()
+        if not clientCharacterPending() then return end
+        surface.SetDrawColor(0, 0, 0, 255)
+        surface.DrawRect(0, 0, ScrW(), ScrH())
+        draw.SimpleText("Выберите персонажа", "GRMChar_Title", ScrW() / 2, ScrH() - 84,
+            Color(235, 235, 245), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Игровой мир заблокирован до подтверждения персонажа", "GRMChar_Normal",
+            ScrW() / 2, ScrH() - 58, Color(145, 155, 175), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end)
+
+    hook.Add("PlayerBindPress", "GRM_Char_BlockBinds", function(_, bind)
+        if clientCharacterPending() then return true end
+    end)
+
+    hook.Add("SpawnMenuOpen", "GRM_Char_BlockSpawnMenu", function()
+        if clientCharacterPending() then return false end
+    end)
+
+    hook.Add("ContextMenuOpen", "GRM_Char_BlockContextMenu", function()
+        if clientCharacterPending() then return false end
+    end)
+
+    hook.Add("Think", "GRM_Char_CloseForeignMenus", function()
+        if not clientCharacterPending() then return end
+        if GRM.Mobile and GRM.Mobile.ClientIsOpen and GRM.Mobile.ClientIsOpen()
+            and GRM.Mobile.ClientClose then
+            GRM.Mobile.ClientClose()
         end
     end)
 
