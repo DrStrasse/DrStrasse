@@ -828,6 +828,116 @@ if CLIENT then
         return out
     end
 
+    local function calcEval(expr)
+        expr = tostring(expr or "")
+        local a, op, b = expr:match("^%s*(%-?%d+%.?%d*)%s*([%+%-%*/])%s*(%-?%d+%.?%d*)%s*$")
+        a, b = tonumber(a), tonumber(b)
+        if not a or not b or not op then return expr end
+        if op == "+" then return tostring(a + b) end
+        if op == "-" then return tostring(a - b) end
+        if op == "*" then return tostring(a * b) end
+        if op == "/" then return b ~= 0 and tostring(a / b) or "ERR" end
+        return expr
+    end
+
+    local function goHome()
+        M.screen = "home"
+        M.sel = 1
+        M.listSel = 1
+        M.smsThread = nil
+        M.contact = nil
+    end
+
+    local function setScreen(scr)
+        M.screen = scr or "home"
+        M.listSel = 1
+    end
+
+    local function screenItems()
+        local items = {}
+        local function add(label, fn, hint) items[#items + 1] = { label = label, fn = fn, hint = hint } end
+
+        if M.screen == "home" then
+            for _, a in ipairs(appList()) do
+                add(a.name, function()
+                    if a.id == "dial" then setScreen("dial")
+                    elseif a.id == "sms" then setScreen("sms"); sendAct({op="sms_read"})
+                    elseif a.id == "contacts" then setScreen("contacts")
+                    elseif a.id == "notes" then setScreen("notes")
+                    elseif a.id == "jobs" then setScreen("jobs"); sendAct({op="jobs_query"})
+                    elseif a.id == "fac" then setScreen("fac"); sendAct({op="fac_query"})
+                    elseif a.id == "forum" then setScreen("forum"); sendAct({op="forum_query"})
+                    elseif a.id == "calc" then setScreen("calc") end
+                end, a.id == "sms" and tonumber(M.state.unread or 0) > 0 and ("Новых: " .. tostring(M.state.unread)) or nil)
+            end
+        elseif M.screen == "dial" then
+            for _, d in ipairs({"1","2","3","4","5","6","7","8","9"}) do add(d, function() M.dial = (M.dial or "") .. d end, "цифра") end
+            add("← стереть", function() M.dial = string.sub(M.dial or "", 1, math.max(0, #(M.dial or "") - 1)) end)
+            add("0", function() M.dial = (M.dial or "") .. "0" end, "цифра")
+            add("Позвонить", function() if (M.dial or "") ~= "" then sendAct({op="dial", number=M.dial}) end end, M.dial)
+            add("Назад", function() goHome() end)
+        elseif M.screen == "sms" then
+            for _, th in ipairs(smsThreads()) do add(th.num, function() M.smsThread = th.num; setScreen("sms_dialog") end, (th.unread > 0 and ("новых: " .. th.unread .. " • ") or "") .. tostring(th.last or "")) end
+            add("Новое SMS", function()
+                Derma_StringRequest("SMS", "Номер", "", function(num)
+                    Derma_StringRequest("SMS", "Текст", "", function(txt) sendAct({op="sms", num=num, text=txt}) end)
+                end)
+            end)
+            add("Назад", function() goHome() end)
+        elseif M.screen == "sms_dialog" then
+            add("Ответить", function()
+                local num = M.smsThread or ""
+                Derma_StringRequest("SMS", "Текст для " .. num, "", function(txt) sendAct({op="sms", num=num, text=txt}) end)
+            end, M.smsThread)
+            add("Позвонить", function() if M.smsThread then sendAct({op="dial", number=M.smsThread}) end end)
+            add("Назад к SMS", function() setScreen("sms") end)
+            add("Главное меню", function() goHome() end)
+        elseif M.screen == "contacts" then
+            for _, r in ipairs(rows("contacts")) do add(tostring(r.name or r.num or "Контакт"), function() M.contact = r; setScreen("contact_actions") end, tostring(r.num or "")) end
+            add("Добавить контакт", function()
+                Derma_StringRequest("Контакт", "Имя", "", function(name)
+                    Derma_StringRequest("Контакт", "Номер", "", function(num) sendAct({op="contact_add", name=name, num=num}) end)
+                end)
+            end)
+            add("Назад", function() goHome() end)
+        elseif M.screen == "contact_actions" then
+            local r = M.contact or {}
+            add("Позвонить", function() if r.num then sendAct({op="dial", number=r.num}) end end, tostring(r.num or ""))
+            add("SMS", function() Derma_StringRequest("SMS", "Текст для " .. tostring(r.num or ""), "", function(txt) sendAct({op="sms", num=r.num or "", text=txt}) end) end)
+            add("Удалить", function() if r.i then sendAct({op="contact_del", i=r.i}) end; setScreen("contacts") end)
+            add("Назад", function() setScreen("contacts") end)
+        elseif M.screen == "notes" then
+            for _, r in ipairs(rows("notes")) do add(tostring(r.text or "Заметка"), function() end, "заметка") end
+            add("Добавить заметку", function() Derma_StringRequest("Заметка", "Текст", "", function(txt) sendAct({op="note_add", text=txt}) end) end)
+            add("Удалить выбранную", function() sendAct({op="note_del", i=math.max(1, M.listSel)}) end)
+            add("Назад", function() goHome() end)
+        elseif M.screen == "jobs" then
+            for _, r in ipairs(rows("jobs")) do add(tostring(r.fac or "") .. ": " .. tostring(r.title or ""), function() end, tostring(r.kind or "") .. " " .. tostring(r.pay or r.reward or "")) end
+            add("Обновить", function() sendAct({op="jobs_query"}) end)
+            add("Назад", function() goHome() end)
+        elseif M.screen == "fac" then
+            local d = (M.data.fac or {}).data or {}
+            for _, r in ipairs(d.rows or {}) do add((r.online and "● " or "○ ") .. tostring(r.name or "?"), function() end, tostring(r.role or "") .. " / " .. tostring(r.dept or "")) end
+            add("Обновить", function() sendAct({op="fac_query"}) end)
+            add("Назад", function() goHome() end)
+        elseif M.screen == "forum" then
+            for _, r in ipairs(rows("forum")) do add(tostring(r.author or "?") .. ": " .. tostring(r.text or ""), function() end, "пост") end
+            add("Новый пост", function() Derma_StringRequest("Форум", "Текст поста", "", function(txt) sendAct({op="forum_post", text=txt}) end) end)
+            add("Обновить", function() sendAct({op="forum_query"}) end)
+            add("Назад", function() goHome() end)
+        elseif M.screen == "calc" then
+            for _, b in ipairs({"7","8","9","+","4","5","6","-","1","2","3","*","0","/","C","="}) do
+                add(b, function()
+                    if b == "C" then M.calc = ""
+                    elseif b == "=" then M.calc = calcEval(M.calc)
+                    else M.calc = (M.calc or "") .. b end
+                end)
+            end
+            add("Назад", function() goHome() end)
+        end
+        return items
+    end
+
     local function closePhone(send)
         if not M.open then return end
         M.open = false
@@ -836,18 +946,30 @@ if CLIENT then
         M.frame = nil
     end
 
+    local function drawButtonList(w, startY, maxY)
+        local items = screenItems()
+        if #items == 0 then return end
+        if M.screen == "home" then M.sel = math.Clamp(M.sel, 1, #items) else M.listSel = math.Clamp(M.listSel, 1, #items) end
+        local selected = (M.screen == "home") and M.sel or M.listSel
+        local y = startY
+        for i, it in ipairs(items) do
+            if y > maxY then break end
+            local h = 42
+            local active = i == selected
+            draw.RoundedBox(8, 18, y, w - 36, h, active and C.accent or C.row)
+            draw.SimpleText(tostring(it.label or ""), "GRMMob_B", 32, y + 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            if it.hint and tostring(it.hint) ~= "" then draw.SimpleText(tostring(it.hint), "GRMMob_XS", 32, y + 31, active and Color(230,240,255) or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
+            y = y + h + 7
+        end
+    end
+
     local function openPhone(force)
         if not hasPhone() then
             if force then
-                -- Server only sends GRM_Mobile_Open after MB.HasPhone=true. If state packet
-                -- is delayed by a frame, trust the server and open with a safe tier.
                 M.state.has = true
                 if tostring(M.state.tier or "") == "" then M.state.tier = "tinkle" end
             else
-                if now() - (M.noPhoneAt or -999) >= 15 then
-                    M.noPhoneAt = now()
-                    if notification and notification.AddLegacy then notification.AddLegacy("Купите мобильный телефон в /phoneshop", NOTIFY_HINT or 3, 3) end
-                end
+                if now() - (M.noPhoneAt or -999) >= 15 then M.noPhoneAt = now(); notify("Купите мобильный телефон в /phoneshop") end
                 return
             end
         end
@@ -855,105 +977,80 @@ if CLIENT then
             local f = vgui.Create("DFrame")
             if not IsValid(f) then return end
             M.frame = f
-            safe(f, "SetSize", 340, 560)
-            if f.SetPos then f:SetPos((ScrW() - 340) / 2, (ScrH() - 560) / 2) end
+            local fw, fh = math.min(520, ScrW() - 80), math.min(720, ScrH() - 80)
+            safe(f, "SetSize", fw, fh)
+            if f.SetPos then f:SetPos(ScrW() - fw - 34, ScrH() - fh - 34) end
             safe(f, "SetVisible", true)
-            -- ВАЖНО: НЕ MakePopup. Телефон — HUD-панель без VGUI-фокуса,
-            -- иначе DFrame съедает UP/DOWN/СКМ и управление не доходит до hooks/polling.
             f.Paint = function(_, w, h)
                 draw.RoundedBox(18, 0, 0, w, h, C.shell)
                 draw.RoundedBox(14, 10, 10, w - 20, h - 20, C.bg)
-                draw.RoundedBoxEx(14, 10, 10, w - 20, 50, C.top, true, true, false, false)
-                draw.SimpleText("GRM Mobile", "GRMMob_T", 22, 34, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                draw.SimpleText(tostring(M.state.number or ""), "GRMMob_S", w - 22, 36, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                draw.RoundedBoxEx(14, 10, 10, w - 20, 58, C.top, true, true, false, false)
+                draw.SimpleText("GRM Mobile", "GRMMob_T", 24, 39, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText("№ " .. tostring(M.state.number or ""), "GRMMob_S", w - 24, 32, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                draw.SimpleText("Колесо — выбор  •  СКМ — нажать  •  ↓ — закрыть", "GRMMob_XS", w - 24, 52, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+
                 local st = tostring(M.state.lineState or "idle")
-                if st == "ringing" then draw.SimpleText("Входящий: " .. tostring(M.state.otherName or M.state.otherNumber or ""), "GRMMob_B", w/2, 82, C.green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER) end
-                if M.screen == "home" then
-                    local apps = appList()
-                    for i, a in ipairs(apps) do
-                        local y = 58 + (i - 1) * 46
-                        if i == M.sel then draw.RoundedBox(8, 14, y, 312, 39, C.accent) else draw.RoundedBox(8, 20, y, 300, 39, C.row) end
-                        draw.SimpleText(a.name, "GRMMob_B", 28, y + 20, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                        if a.id == "sms" and tonumber(M.state.unread or 0) > 0 then draw.SimpleText(tostring(M.state.unread), "GRMMob_S", 306, y + 20, C.green, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER) end
-                    end
-                elseif M.screen == "dial" then
-                    draw.SimpleText("Набор номера", "GRMMob_B", 24, 82, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    draw.SimpleText(M.dial == "" and "Введите номер" or M.dial, "GRMMob_T", 170, 135, C.green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                    draw.SimpleText("ENTER — звонок, BACKSPACE — назад", "GRMMob_S", 170, 500, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                elseif M.screen == "sms" then
-                    draw.SimpleText("SMS", "GRMMob_B", 24, 82, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    for i, th in ipairs(smsThreads()) do local y=100+(i-1)*42; draw.SimpleText((i==M.smsSel and "› " or "")..th.num.."  "..(th.last or ""), "GRMMob_S", 26, y, i==M.smsSel and C.green or C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
-                elseif M.screen == "sms_dialog" then
-                    draw.SimpleText("Диалог " .. tostring(M.smsThread or ""), "GRMMob_B", 24, 82, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    local ths=smsThreads(); local rr={}; for _,th in ipairs(ths) do if th.num==M.smsThread then rr=th.rows end end
-                    for i,m in ipairs(rr) do local y=105+(i-1)*40; draw.RoundedBox(8, m.dir=="out" and 100 or 24, y-14, 210, 28, m.dir=="out" and C.accent or C.row2); draw.SimpleText(tostring(m.text or ""), "GRMMob_S", m.dir=="out" and 112 or 36, y, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
-                elseif M.screen == "contacts" then
-                    draw.SimpleText("Контакты", "GRMMob_B", 24, 82, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    for i,r in ipairs(rows("contacts")) do local y=104+(i-1)*34; draw.SimpleText((i==M.listSel and "› " or "")..tostring(r.name).." "..tostring(r.num), "GRMMob_S", 26, y, i==M.listSel and C.green or C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
-                elseif M.screen == "notes" then
-                    draw.SimpleText("Заметки", "GRMMob_B", 24, 82, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    for i,r in ipairs(rows("notes")) do local y=104+(i-1)*38; draw.SimpleText((i==M.listSel and "› " or "")..tostring(r.text), "GRMMob_S", 26, y, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
-                elseif M.screen == "jobs" then
-                    draw.SimpleText("Биржа", "GRMMob_B", 24, 82, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    for i,r in ipairs(rows("jobs")) do draw.SimpleText(tostring(r.fac)..": "..tostring(r.title), "GRMMob_S", 26, 104+(i-1)*34, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
-                elseif M.screen == "fac" then
-                    local d=(M.data.fac or {}).data or {}; draw.SimpleText("Фракция: "..tostring(d.name or "нет"), "GRMMob_B", 24, 82, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    for i,r in ipairs(d.rows or {}) do draw.SimpleText((r.online and "● " or "○ ")..tostring(r.name).." "..tostring(r.role), "GRMMob_S", 26, 104+(i-1)*30, r.online and C.green or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
-                elseif M.screen == "forum" then
-                    draw.SimpleText("Форум", "GRMMob_B", 24, 82, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    for i,r in ipairs(rows("forum")) do draw.SimpleText(tostring(r.author)..": "..tostring(r.text), "GRMMob_S", 26, 104+(i-1)*36, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
-                elseif M.screen == "calc" then
-                    draw.SimpleText("Калькулятор", "GRMMob_B", 24, 82, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    draw.SimpleText(M.calc == "" and "0" or M.calc, "GRMMob_T", 170, 135, C.green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                if st == "ringing" then
+                    draw.RoundedBox(8, 18, 76, w - 36, 44, C.green)
+                    draw.SimpleText("Входящий: " .. tostring(M.state.otherName or M.state.otherNumber or ""), "GRMMob_B", w/2, 98, Color(10,20,15), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                 end
+
+                local title = ({ home="Главное меню", dial="Набор номера", sms="SMS", sms_dialog="Диалог " .. tostring(M.smsThread or ""), contacts="Контакты", contact_actions="Контакт", notes="Заметки", jobs="Биржа труда", fac="Моя фракция", forum="Форум", calc="Калькулятор" })[M.screen] or M.screen
+                draw.SimpleText(title, "GRMMob_B", 24, 92, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                local topY = 118
+                if M.screen == "dial" then
+                    draw.RoundedBox(8, 18, 112, w - 36, 54, C.row2)
+                    draw.SimpleText(M.dial == "" and "Введите номер" or M.dial, "GRMMob_T", w/2, 139, C.green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    topY = 178
+                elseif M.screen == "calc" then
+                    draw.RoundedBox(8, 18, 112, w - 36, 54, C.row2)
+                    draw.SimpleText(M.calc == "" and "0" or M.calc, "GRMMob_T", w/2, 139, C.green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    topY = 178
+                elseif M.screen == "sms_dialog" then
+                    local y = 112
+                    local rr = {}
+                    for _, th in ipairs(smsThreads()) do if th.num == M.smsThread then rr = th.rows end end
+                    for i = math.max(1, #rr - 4), #rr do
+                        local m = rr[i]
+                        if m then
+                            local out = m.dir == "out"
+                            draw.RoundedBox(8, out and w - 250 or 22, y, 228, 28, out and C.accent or C.row2)
+                            draw.SimpleText(tostring(m.text or ""), "GRMMob_XS", out and w - 238 or 34, y + 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                            y = y + 32
+                        end
+                    end
+                    topY = y + 8
+                end
+                drawButtonList(w, topY, h - 24)
             end
         end
-        M.open = true; safe(M.frame, "SetVisible", true); M.screen = "home"; M.sel = 1; sendAct({ op = "open" })
+        M.open = true
+        safe(M.frame, "SetVisible", true)
+        M.screen = "home"
+        M.sel = 1
+        M.listSel = 1
+        sendAct({ op = "open" })
     end
 
     local function move(delta)
-        if M.screen == "home" then local n=#appList(); M.sel=((M.sel-1+delta)%n)+1
-        elseif M.screen == "sms" then local n=math.max(1,#smsThreads()); M.smsSel=((M.smsSel-1+delta)%n)+1
-        else M.listSel=math.max(1,M.listSel+delta) end
+        local items = screenItems()
+        if #items == 0 then return end
+        if M.screen == "home" then M.sel = ((M.sel - 1 + delta) % #items) + 1 else M.listSel = ((M.listSel - 1 + delta) % #items) + 1 end
     end
     local function enter()
-        local st=tostring(M.state.lineState or "idle")
-        if st=="ringing" then sendAct({op="answer"}); return end
-        if M.screen=="home" then
-            local app=appList()[M.sel]; if not app then return end
-            if app.id=="dial" then M.screen="dial"; M.dial=""
-            elseif app.id=="sms" then M.screen="sms"; sendAct({op="sms_read"})
-            elseif app.id=="contacts" then M.screen="contacts"; M.listSel=1
-            elseif app.id=="notes" then M.screen="notes"; M.listSel=1
-            elseif app.id=="jobs" then M.screen="jobs"; sendAct({op="jobs_query"})
-            elseif app.id=="fac" then M.screen="fac"; sendAct({op="fac_query"})
-            elseif app.id=="forum" then M.screen="forum"; sendAct({op="forum_query"})
-            elseif app.id=="calc" then M.screen="calc"; M.calc="" end
-        elseif M.screen=="dial" then if M.dial~="" then sendAct({op="dial", number=M.dial}) end
-        elseif M.screen=="sms" then local th=smsThreads()[M.smsSel]; if th then M.smsThread=th.num; M.screen="sms_dialog" end
-        elseif M.screen=="sms_dialog" then
-            Derma_StringRequest("SMS", "Номер", M.smsThread or "", function(num) Derma_StringRequest("SMS", "Текст", "", function(txt) sendAct({op="sms", num=num, text=txt}) end) end)
-        elseif M.screen=="contacts" then
-            local r=rows("contacts")[M.listSel]; if r then local m=DermaMenu(); m:AddOption("Позвонить", function() sendAct({op="dial", number=r.num}) end); m:AddOption("SMS", function() sendAct({op="sms", num=r.num, text=""}) end); m:Open() end
-        elseif M.screen=="calc" then if M.calc:find("+") then local a,b=M.calc:match("^(%-?%d+)%+(%-?%d+)$"); if a then M.calc=tostring(tonumber(a)+tonumber(b)) end end
-        end
+        local st = tostring(M.state.lineState or "idle")
+        if st == "ringing" then sendAct({op="answer"}); return end
+        local items = screenItems()
+        local idx = (M.screen == "home") and M.sel or M.listSel
+        local it = items[idx]
+        if it and it.fn then it.fn() end
     end
     local function back()
         local st=tostring(M.state.lineState or "idle")
         if st=="ringing" or st=="call" or st=="dialing" then sendAct({op="hangup"}); return end
-        if M.screen=="home" then closePhone(true)
-        elseif M.screen=="sms_dialog" then M.screen="sms"
-        else M.screen="home"; M.sel=1 end
+        if M.screen == "home" then closePhone(true) else goHome() end
     end
-    local function digit(k)
-        local n=nil
-        for i=0,9 do if k==_G["KEY_"..i] or k==_G["KEY_PAD_"..i] then n=tostring(i) end end
-        if not n then return false end
-        if M.screen=="dial" then M.dial=(M.dial or "")..n return true end
-        if M.screen=="calc" then M.calc=(M.calc or "")..n return true end
-        return false
-    end
-
+    local function digit(_) return false end
     local function isMouse3(key)
         return (_G.KEY_MOUSE3 and key == KEY_MOUSE3)
             or (_G.MOUSE_MIDDLE and key == MOUSE_MIDDLE)
