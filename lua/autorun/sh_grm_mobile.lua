@@ -575,6 +575,54 @@ function MB.HandleAction(ply, act)
     end
 end
 
+
+function MB.ActivateInventoryPhone(ply, slotIdx, slot)
+    if not IsValid(ply) then return false end
+    if not (GRM.Inventory and GRM.Inventory.GetPlayerInv) then
+        if MB.ServerNotify then MB.ServerNotify(ply, "Инвентарь ещё не загружен.") end
+        return false
+    end
+
+    local inv = GRM.Inventory.GetPlayerInv(ply)
+    if not (istable(inv) and istable(inv.slots)) then return false end
+    slotIdx = tonumber(slotIdx) or 0
+    local changed = false
+    local activated = false
+
+    for i, s in pairs(inv.slots) do
+        if istable(s) and s.id and MB.IsMobileItem and MB.IsMobileItem(s.id) then
+            s.data = istable(s.data) and s.data or {}
+            local should = (i == slotIdx)
+            if s.data.active ~= should then changed = true end
+            s.data.active = should
+            if should then activated = true end
+            if GRM.Inventory.SyncSlot then GRM.Inventory.SyncSlot(ply, i) end
+        end
+    end
+
+    -- Fallback if caller passed slot but index comparison failed for any reason.
+    if not activated and istable(slot) and slot.id and MB.IsMobileItem and MB.IsMobileItem(slot.id) then
+        slot.data = istable(slot.data) and slot.data or {}
+        slot.data.active = true
+        changed = true
+        activated = true
+        if slotIdx > 0 and GRM.Inventory.SyncSlot then GRM.Inventory.SyncSlot(ply, slotIdx) end
+    end
+
+    if changed then
+        if GRM.Inventory._devSaveSoon then
+            GRM.Inventory._devSaveSoon("mobile activate")
+        elseif GRM.Inventory.SaveSoon then
+            GRM.Inventory.SaveSoon("mobile activate")
+        end
+    end
+    if MB.PushState then MB.PushState(ply) end
+    if MB.ServerNotify then
+        MB.ServerNotify(ply, activated and "Телефон активирован. Открыть — СТРЕЛКА ВВЕРХ, закрыть — СТРЕЛКА ВНИЗ." or "Телефон не найден в инвентаре.")
+    end
+    return activated
+end
+
 if SERVER then
     util.AddNetworkString("GRM_Mobile_Open")
     util.AddNetworkString("GRM_Mob_State")
@@ -631,12 +679,12 @@ if SERVER then
         end
 
         if GRM.Inventory.RegisterUseHandler then
-            local function openHandler(ply)
-                MB.Open(ply)
+            local function activateHandler(ply, slotIdx, slot)
+                MB.ActivateInventoryPhone(ply, slotIdx, slot)
             end
-            -- mobile_open — актуальный контракт инвентаря; mobile_use — alias для старых сохранённых предметов.
-            GRM.Inventory.RegisterUseHandler("mobile_open", openHandler)
-            GRM.Inventory.RegisterUseHandler("mobile_use", openHandler)
+            -- mobile_open/mobile_use: ИСПОЛЬЗОВАТЬ = активировать трубку, НЕ открывать UI.
+            GRM.Inventory.RegisterUseHandler("mobile_open", activateHandler)
+            GRM.Inventory.RegisterUseHandler("mobile_use", activateHandler)
         end
 
         return true
@@ -723,7 +771,8 @@ if CLIENT then
     local M = {
         open = false, frame = nil, stateKnown = false, state = { has = false, tier = "", number = "", lineState = "idle", unread = 0, signal = 0 },
         data = {}, screen = "home", sel = 1, listSel = 1, smsThread = nil, smsSel = 1,
-        dial = "", calc = "", down = {}, lastTap = {}, hold = {}, nextRepeat = {}, noPhoneAt = -999
+        dial = "", calc = "", down = {}, lastTap = {}, hold = {}, nextRepeat = {}, noPhoneAt = -999,
+        poll = { up = false, down = false, mouse3 = false }
     }
     MB._devUI = M
 
@@ -961,6 +1010,33 @@ if CLIENT then
     hook.Add("PlayerButtonUp", "GRM_Mobile_KeyUp", function(ply, key) if ply ~= lp() then return end keyUp(key) end)
     hook.Add("Think", "GRM_Mobile_KeyRepeat", function()
         -- Keyboard repeat intentionally disabled: menu navigation is mouse wheel only.
+        -- Live GMod note: DFrame/MakePopup may eat PlayerButtonDown for arrows.
+        -- Poll physical keys here so UP opens and DOWN closes even with VGUI focus.
+        if not input or not input.IsKeyDown then return end
+
+        local upNow = input.IsKeyDown(KEY_UP) == true
+        if upNow and not M.poll.up then
+            if not M.open then
+                if hasPhone() then openPhone(false)
+                elseif M.stateKnown then openPhone(false)
+                else requestServerOpen() end
+            end
+        end
+        M.poll.up = upNow
+
+        local downNow = input.IsKeyDown(KEY_DOWN) == true
+        if downNow and not M.poll.down then
+            if M.open then closePhone(true) end
+        end
+        M.poll.down = downNow
+
+        local mouse3Now = false
+        if _G.KEY_MOUSE3 then mouse3Now = mouse3Now or input.IsKeyDown(KEY_MOUSE3) == true end
+        if _G.MOUSE_MIDDLE then mouse3Now = mouse3Now or input.IsKeyDown(MOUSE_MIDDLE) == true end
+        if _G.MOUSE_3 then mouse3Now = mouse3Now or input.IsKeyDown(MOUSE_3) == true end
+        mouse3Now = mouse3Now or input.IsKeyDown(107) == true
+        if mouse3Now and not M.poll.mouse3 and M.open then enter() end
+        M.poll.mouse3 = mouse3Now
     end)
     hook.Add("HUDPaint", "GRM_Mobile_CallHUD", function() if M.open and tostring(M.state.lineState or "") == "ringing" then draw.SimpleText("Входящий вызов", "GRMMob_B", ScrW()/2, 120, C.green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER) end end)
     hook.Add("PlayerBindPress", "GRM_Mobile_BlockSlots", function(_, bind, pressed)
