@@ -38,7 +38,11 @@ local function ang(a) return {p=a.p,y=a.y,r=a.r} end
 local function V(t) return Vector(tonumber(t and(t.x or t[1]))or 0,tonumber(t and(t.y or t[2]))or 0,tonumber(t and(t.z or t[3]))or 0) end
 local function A(t) return Angle(tonumber(t and(t.p or t[1]))or 0,tonumber(t and(t.y or t[2]))or 0,tonumber(t and(t.r or t[3]))or 0) end
 local function id(prefix) return prefix.."_"..os.time().."_"..math.random(100000,999999) end
-local function sid(p) return IsValid(p) and p:SteamID64() or "" end
+local function sid(p)
+    if not IsValid(p) then return "" end
+    if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(p) end
+    return p:SteamID64() or ""
+end
 local function notify(p,ok,msg) if not IsValid(p) then return end net.Start(NET.result) net.WriteBool(ok) net.WriteString(msg or "") net.Send(p) end
 local function refreshWeight(p)
     if GRM and GRM.Encumbrance and GRM.Encumbrance.Refresh then GRM.Encumbrance.Refresh(p) end

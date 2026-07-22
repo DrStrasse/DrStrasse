@@ -274,7 +274,10 @@ if SERVER then
             local sid, s64 = ply:SteamID(), ply:SteamID64()
             local ck = sid64(ply)
             for name, f in pairs(Factions) do
-                if istable(f) and GRM.Identity.FactionMember(f, ply) then return name end
+                local member
+                if GRM.Identity and GRM.Identity.FactionMember then member = GRM.Identity.FactionMember(f, ply)
+                else member = istable(f) and f.Members and (f.Members[sid] or f.Members[s64]) end
+                if istable(f) and member then return name end
             end
         end
         return nil

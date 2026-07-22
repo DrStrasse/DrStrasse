@@ -789,7 +789,7 @@ if SERVER then
         local name, f = factionOf(ply)
         if not name then return 0, nil end
         local e = entry(name)
-        local info = f.Members[ply:SteamID()] or {}
+        local info = GRM.Identity.FactionMember(f, ply) or {}
         local gross = (info.Role and math.floor(tonumber(e.roleSalaries[info.Role]) or 0) or 0)
         if gross <= 0 and info.Department then
             gross = math.floor(tonumber(e.departmentSalaries[info.Department]) or 0)
