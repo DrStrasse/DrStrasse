@@ -466,11 +466,12 @@ if SERVER then
         if not factionName or not f then return DefaultModels end
         local role = member.Role
         local dept = member.Department
-        if dept and istable(f.DepartmentModels) and istable(f.DepartmentModels[dept]) and #f.DepartmentModels[dept] > 0 then
-            return f.DepartmentModels[dept]
-        end
+        -- Приоритет владельца: роль выше отдела.
         if role and istable(f.RoleModels) and istable(f.RoleModels[role]) and #f.RoleModels[role] > 0 then
             return f.RoleModels[role]
+        end
+        if dept and istable(f.DepartmentModels) and istable(f.DepartmentModels[dept]) and #f.DepartmentModels[dept] > 0 then
+            return f.DepartmentModels[dept]
         end
         if istable(f.Models) and #f.Models > 0 then return f.Models end
         return DefaultModels

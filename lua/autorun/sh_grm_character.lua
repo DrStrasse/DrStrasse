@@ -227,12 +227,28 @@ if SERVER then
 
     local function applyActiveCharacter(ply)
         local c = CH.Get(ply)
+        -- Сбрасываем желаемую модель прошлого персонажа до проверки нового.
+        ply.FactionsExt_DesiredModelData = nil
         if istable(c) then
             ply:SetNWString("GRM_CharacterID", tostring(c.id or activeSlot(ply)))
             ply:SetNWString("GRM_CharacterKey", tostring(c.key or CH.GetActiveKey(ply)))
             ply:SetNWString("GRM_RPName", tostring(c.name or ""))
+            local applied = false
             if isstring(c.model) and c.model ~= "" then
-                CH.ApplyAppearance(ply, { path = c.model, skin = c.skin, bodygroups = c.bodygroups })
+                applied = CH.ApplyAppearance(ply, { path = c.model, skin = c.skin, bodygroups = c.bodygroups }) == true
+            end
+            -- Старый/чужой faction-модельный путь не должен оставаться на новом
+            -- персонаже: берём первую разрешённую модель текущей роли/гражданина.
+            if not applied and _G.GetModelsForPlayer then
+                local allowed = _G.GetModelsForPlayer(ply) or {}
+                local fallback = allowed[1]
+                if istable(fallback) and isstring(fallback.path) then
+                    c.model = fallback.path
+                    c.skin = tonumber(fallback.skin) or 0
+                    c.bodygroups = table.Copy(fallback.bodygroups or {})
+                    CH.ApplyAppearance(ply, fallback)
+                    saveChars("model-fallback")
+                end
             end
         else
             ply:SetNWString("GRM_CharacterID", activeSlot(ply))
