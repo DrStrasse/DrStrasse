@@ -918,3 +918,17 @@
 6. **Интеграция с PERM_CLASSES.** `grm_vendor` добавлен в `sh_grm_perm_entities.lua` — торгаш закрепляется на карте через `/permadd`, переживает рестарт. `GetPermData`/`ApplyPermData` в entity сохраняют vendorType, customPrices, customLimits.
 
 7. **NWString для HUD-лейбла.** Клиентский `HUDPaint` читает `ent:GetNWString("VendorType")` — не зависит от синхронизации lua-таблицы `ent.VendorType` между сервером и клиентом.
+
+---
+
+## Находка 129 (22.07.2026): DFrame нельзя чистить через Clear; mobile-сервер восстановлен из упрощённого снапшота
+
+1. **Краш окна законов `lua/vgui/dframe.lua:246 Tried to use a NULL Panel` подтверждён кодом.** В `sh_grm_laws.lua` старый live-refresh делал `lawsFrame:Clear()` прямо на `DFrame`. `DFrame:Clear()` удаляет не только пользовательские строки, но и внутренние панели самого фрейма (`btnClose`/кнопки заголовка). Следующий стандартный `DFrame:PerformLayout()` пытался сделать `btnClose:SetPos(...)` и падал в NULL Panel — ровно стек владельца. Лечение: DFrame больше никогда не чистится; пересоздаётся только вложенная `frame._grmLawsBody`. Дополнительно серверный протокол приведён к нормальной схеме: `/laws` → клиентский `GRM_Laws_Open` → запрос `GRM_Laws_Refresh` → `GRM_Laws_List` с законами и флагами `canAdd/canRemove/canEdit`. Broadcast обновляет только уже открытые окна, не всплывает всем игрокам.
+
+2. **Mobile в ветке был не тем модулем, который описан историей.** README/ANALYSIS/стенды описывали Mobile v1.2.2 (Код 88/100), а фактический `sh_grm_mobile.lua` был упрощённым v2.0.0 на 142 строки: 4 тира вместо 7, другие item-id, `useFunc = mobile_use` вместо контракта инвентаря `mobile_open`, без линий, SMS, звонков, keepalive. Первый симптом в стенде — падение на `GRM.Inventory.RegisterUseHandler` при неполном/раннем инвентаре.
+
+3. **Стабилизационный слой Mobile v2.0.1.** Не восстанавливая пока весь старый клиентский смартфон, серверный контур приведён к историческому контракту: 7 тиров `/phoneshop`, модели ivancorn, `MB.Order`, `AvailableApps`, `CarriedTier`, `SignalOf/SignalOK`, `GRM_Mob_Think`, временная `grm_mobile_line`, `MB.Dial/Answer/Hangup` поверх `GRM.Phone`, разрыв разговора при потере сигнала, SMS/контакты/заметки/форум, `jobs_query`/`fac_query`, `open/ping/close` keepalive и `StartCommand` freeze. Добавлены клиентские ресиверы `GRM_Mob_State`/`GRM_Mob_Data`, чтобы протокол не был односторонним.
+
+4. **Валидация текущего прохода.** `tools/glua_check.py`: 292 файла, 0 syntax errors. `sim_mobile`: **121/121 OK**. `sim_invphone`: **41/41 OK**. `proto_audit.py` снова показывает только старые 5 замечаний (FactionPerm/VD), новые mobile-каналы закрыты. `sim_mobile_ui` остаётся красным, потому что он проверяет старый полноценный клиентский UI v1.2.2 (`GRM_Mob_Act`, антискачок выбора, экраны приложений); текущий клиент — упрощённая оболочка. Следующий проход по mobile должен быть именно восстановлением клиентского UI, а не серверной логики.
+
+5. **Урок:** `DFrame:Clear()` — опасный топор; для live-окон всегда иметь свой `body/content` и удалять только его. Исторические документы и стенды в этом репозитории считаются контрактом: если файл внезапно «упрощён», сначала восстановить совместимость серверного API, затем отдельно UI.

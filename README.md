@@ -143,3 +143,8 @@
 `/root_list`, `/root_queue`, `/root_add <STEAM_>`, `/root_del <STEAM_>`
 
 Подробный разбор архитектуры и замеченных проблем — в `ANALYSIS.md`.
+
+## Текущий статус фиксов 2026-07-22
+
+- `lua/autorun/sh_grm_laws.lua` → **Laws v1.2.0**: исправлен краш окна законов `lua/vgui/dframe.lua:246 Tried to use a NULL Panel`. Причина: старый код делал `lawsFrame:Clear()` прямо на `DFrame`, удаляя внутреннюю кнопку закрытия; теперь пересоздаётся только вложенная body-панель, а серверный протокол `/laws` разделён на `GRM_Laws_Open` и `GRM_Laws_List` с полными флагами прав.
+- `lua/autorun/sh_grm_mobile.lua` → **Mobile v2.0.1 stabilization**: фактический файл в этой ветке был упрощённым v2.0.0 и не совпадал с историческим описанием Mobile v1.2.2. Серверный контур восстановлен до зелёного `sim_mobile 121/121`: 7 тиров из `/phoneshop`, `mobile_open`, линии `grm_mobile_line`, звонки через `GRM.Phone`, потеря сигнала, SMS, контакты, заметки, форум, jobs/faction query, keepalive/freeze. Клиентский UI пока остаётся упрощённым; `sim_mobile_ui` всё ещё ожидает старый полноценный v1.2.2-интерфейс.
