@@ -86,6 +86,7 @@ end
 
 local function steamID64(ply)
     if not IsValid(ply) then return "" end
+    if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
     local id = ply:SteamID64()
     return id and id ~= "0" and id or ply:SteamID()
 end
@@ -184,10 +185,11 @@ local function getFactionInfo(ply)
 
     local sid = ply:SteamID()
     local sid64 = ply:SteamID64()
+    local charKey = steamID64(ply)
 
     for factionName, faction in pairs(Factions) do
         if istable(faction) and istable(faction.Members) then
-            local member = faction.Members[sid] or faction.Members[sid64]
+            local member = faction.Members[charKey] or faction.Members[sid] or faction.Members[sid64]
             if istable(member) then
                 return factionName, member.Role, member.Department
             end

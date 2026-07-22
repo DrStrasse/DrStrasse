@@ -56,9 +56,10 @@ local function getFactionInfo(ply)
     if not IsValid(ply) or not istable(Factions) then return nil, nil, nil end
     local sid = ply:SteamID()
     local sid64 = ply:SteamID64()
+    local charKey = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
     for factionName, f in pairs(Factions) do
         if istable(f) and istable(f.Members) then
-            local member = f.Members[sid] or f.Members[sid64]
+            local member = f.Members[charKey] or f.Members[sid] or f.Members[sid64]
             if istable(member) then
                 return factionName, member.Role, member.Department
             end
@@ -200,7 +201,8 @@ if SERVER then
 
         local sid = ply:SteamID()
         local sid64 = ply:SteamID64()
-        if data.Steam[sid64] == true or data.Steam[sid] == true then
+        local charKey = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
+        if data.Steam[charKey] == true or data.Steam[sid64] == true or data.Steam[sid] == true then
             return true, "steam"
         end
 
