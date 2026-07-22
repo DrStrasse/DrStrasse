@@ -418,6 +418,7 @@ if SERVER then
             wardrobeEnt = IsValid(opts.ent) and opts.ent:EntIndex() or nil,
             allowSkin = opts.allowSkin, allowBodygroups = opts.allowBodygroups,
             isAdmin = ply:IsSuperAdmin() or nil,
+            pending = CH.PendingSelection[sid64(ply)] == true,
         }
     end
 
@@ -491,7 +492,13 @@ if SERVER then
         if IsValid(ply) then CH.PendingSelection[ply:SteamID64()] = nil end
     end)
 
-    net.Receive(NET_REQUEST, function(_, ply) sendMenu(ply) end)
+    net.Receive(NET_REQUEST, function(_, ply)
+        if not IsValid(ply) then return end
+        -- Открытие персонажей через F4 /char переводит игрока в тот же
+        -- безопасный режим выбора: мир затемняется и блокируется до подтверждения.
+        setCharacterLock(ply, true)
+        sendMenu(ply)
+    end)
 
     net.Receive(NET_SAVE, function(_, ply)
         if not IsValid(ply) then return end
@@ -623,6 +630,7 @@ if CLIENT then
         local slots = istable(payload.slots) and payload.slots or {}
         local activeSlot = tostring(payload.activeSlot or "char1")
         local refreshPreview, refreshSkinMax, rebuildBodygroups
+        local skinSlider
         local bContinue, bSave
 
         -- состояние редактора (черновик)
@@ -662,7 +670,7 @@ if CLIENT then
             draw.SimpleText("GRM Identity v" .. CH.Version, "GRMChar_Normal", pw - 24, 42, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
 
-        local function canClose() return char ~= nil or payload.wardrobe == true end
+        local function canClose() return payload.wardrobe == true or (char ~= nil and payload.pending ~= true) end
 
         local x = vgui.Create("DButton", f)
         x:SetText("X") x:SetFont("GRMChar_Title") x:SetTextColor(color_white)
@@ -785,7 +793,7 @@ if CLIENT then
         skinLbl:Dock(TOP) skinLbl:SetTall(18) skinLbl:SetFont("GRMChar_Sub") skinLbl:SetTextColor(C.text)
         skinLbl:SetText("Скин")
 
-        local skinSlider = vgui.Create("DNumSlider", sets)
+        skinSlider = vgui.Create("DNumSlider", sets)
         skinSlider:Dock(TOP) skinSlider:SetTall(26)
         skinSlider:SetMin(0) skinSlider:SetDecimals(0)
         skinSlider:SetValue(draft.skin)
