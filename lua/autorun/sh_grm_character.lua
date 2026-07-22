@@ -232,6 +232,7 @@ if SERVER then
     end
 
     function CH.SetActiveSlot(ply, slot)
+        local oldKey = CH.GetActiveKey(ply)
         local rec = normalizePlayerData(ply)
         if not rec then return false end
         slot = tostring(slot or "char1")
@@ -243,6 +244,12 @@ if SERVER then
         if GRM.Inventory and GRM.Inventory.SyncToClient then
             timer.Simple(0.05, function() if IsValid(ply) then GRM.Inventory.SyncToClient(ply) end end)
         end
+        local newKey = CH.GetActiveKey(ply)
+        hook.Run("GRM_CharacterChanged", ply, oldKey, newKey)
+        timer.Simple(0, function()
+            if not IsValid(ply) or not hasCharacter(ply, slot) then return end
+            if ply.Alive and ply:Alive() and ply.Spawn then ply:Spawn() end
+        end)
         return true
     end
 
@@ -463,7 +470,10 @@ if SERVER then
 
         if CH.Get(ply) ~= nil and isstring(d.name) and CH.ValidateName(d.name) then
             setCharacterLock(ply, false)
-            if ply.Alive and not ply:Alive() then ply:Spawn() end
+            if wasNew then
+                hook.Run("GRM_CharacterChanged", ply, nil, CH.GetActiveKey(ply))
+            end
+            if wasNew and ply.Spawn then ply:Spawn() end
         end
 
         -- первичная регистрация: синхронизируем с фракционным спавном

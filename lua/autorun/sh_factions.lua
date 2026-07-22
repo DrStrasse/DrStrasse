@@ -279,6 +279,13 @@ if SERVER then
         net.Broadcast()
     end
 
+    hook.Add("GRM_CharacterChanged", "Factions_CharacterSync", function(ply)
+        if not IsValid(ply) then return end
+        timer.Simple(0, function()
+            if IsValid(ply) then broadcastFactionData() end
+        end)
+    end)
+
     local function getFactionOfPlayer(steamID)
         local key = memberKey(steamID)
         for name, f in pairs(Factions) do
