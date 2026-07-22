@@ -1988,14 +1988,63 @@ if CLIENT then
         btnChangeLeader.DoClick = function()
             local faction = factionCombo:GetValue()
             if not faction or faction == "" then return end
-            Derma_StringRequest("Смена лидера", "SteamID нового лидера:", "", function(steam)
-                if steam and steam ~= "" then
-                    sendAction("changeLeader", { faction, steam }, function(ok, msg)
-                        if ok then notification.AddLegacy("Лидер изменён", NOTIFY_GENERIC, 3) refreshAllUI()
-                        else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) end
-                    end)
+
+            local pick = vgui.Create("DFrame")
+            pick:SetTitle("Смена лидера — " .. faction)
+            pick:SetSize(520, 230)
+            pick:Center()
+            pick:MakePopup()
+
+            local help = vgui.Create("DLabel", pick)
+            help:Dock(TOP)
+            help:DockMargin(12, 10, 12, 4)
+            help:SetTall(32)
+            help:SetWrap(true)
+            help:SetText("Выберите персонажа онлайн или укажите его CharacterKey. SteamID аккаунта больше не используется как лидерский ключ.")
+
+            local combo = vgui.Create("DComboBox", pick)
+            combo:Dock(TOP)
+            combo:DockMargin(12, 4, 12, 4)
+            combo:SetTall(30)
+            combo:SetValue("Онлайн-персонажи")
+            local selectedKey = nil
+            function combo:OnSelect(_, _, data) selectedKey = data end
+            for _, target in ipairs(player.GetAll()) do
+                if IsValid(target) and target ~= LocalPlayer() then
+                    local key = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(target)) or target:SteamID64()
+                    local name = target:GetNWString("GRM_RPName", "")
+                    if name == "" then name = target:Nick() end
+                    combo:AddChoice(name .. "  [" .. tostring(key) .. "]", key)
                 end
-            end)
+            end
+
+            local entry = vgui.Create("DTextEntry", pick)
+            entry:Dock(TOP)
+            entry:DockMargin(12, 4, 12, 4)
+            entry:SetTall(28)
+            entry:SetPlaceholderText("CharacterKey для офлайн-персонажа: SteamID64:charN")
+
+            local confirm = styledButton(pick, "Назначить лидером", THEME.accent, THEME.accentDark)
+            confirm:Dock(BOTTOM)
+            confirm:DockMargin(12, 6, 12, 10)
+            confirm:SetTall(32)
+            confirm.DoClick = function()
+                local key = string.Trim(entry:GetValue() or "")
+                key = key ~= "" and key or selectedKey
+                if not key or key == "" or not key:match(":char[1-3]$") then
+                    notification.AddLegacy("Нужен CharacterKey формата SteamID64:char1/char2/char3", NOTIFY_ERROR, 3)
+                    return
+                end
+                sendAction("changeLeader", { faction, key }, function(ok, msg)
+                    if ok then
+                        notification.AddLegacy("Лидер изменён", NOTIFY_GENERIC, 3)
+                        pick:Close()
+                        refreshAllUI()
+                    else
+                        notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3)
+                    end
+                end)
+            end
         end
         Y = Y + 50
 
