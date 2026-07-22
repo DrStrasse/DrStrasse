@@ -51,8 +51,10 @@ function HC.Emit(ent, key)
 end
 
 local function steamIDs(ply)
-    if not IsValid(ply) then return "", "" end
-    return ply:SteamID(), ply:SteamID64()
+    if not IsValid(ply) then return "", "", "" end
+    local sid, sid64 = ply:SteamID(), ply:SteamID64()
+    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
+    return sid, sid64, ck
 end
 
 -- ============================================================
@@ -159,13 +161,13 @@ end
 function HC.GetFactionInfo(ply)
     if not IsValid(ply) then return nil, nil, nil, nil end
 
-    local sid, sid64 = steamIDs(ply)
+    local sid, sid64, charKey = steamIDs(ply)
     local data, source = HC.GetFactionsData()
 
     for factionName, f in pairs(data or {}) do
         if istable(f) and istable(f.Members) then
             -- В вашем коде фракции используют SteamID(), но на всякий случай поддерживаем и SteamID64().
-            local member = f.Members[sid] or f.Members[sid64]
+            local member = f.Members[charKey] or f.Members[sid] or f.Members[sid64]
             if istable(member) then
                 return factionName, member.Role, member.Department, f, source
             end

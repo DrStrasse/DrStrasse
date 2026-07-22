@@ -141,8 +141,19 @@ if SERVER then
         timer.Create("GRM_Ach_Debounce", 10, 1, function() if dirty then saveAll("дебаунс 10с") end end)
     end
 
+    local function achievementKey(value)
+        if IsValid(value) and value:IsPlayer() then
+            if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(value) end
+            return value:SteamID64() or value:SteamID()
+        end
+        local raw = tostring(value or "")
+        if raw:match(":char[1-3]$") then return raw end
+        if raw:match("^%d+$") then return raw .. ":char1" end
+        return raw
+    end
+
     local function recOf(ply)
-        local sid = ply:SteamID64() or ply:SteamID()
+        local sid = achievementKey(ply)
         if not AC.Records[sid] then
             AC.Records[sid] = { sid = sid, c = {}, u = {}, earned = 0, streak = 0, lastDaily = "" }
             markDirty()
@@ -229,7 +240,7 @@ if SERVER then
                 AC.AddMetric(p, "playSec", 30)
                 local fac = nil
                 if _G.FactionsAPI and _G.FactionsAPI.GetFactionOf then
-                    fac = _G.FactionsAPI.GetFactionOf(p:SteamID()) or _G.FactionsAPI.GetFactionOf(p:SteamID64())
+                    fac = _G.FactionsAPI.GetFactionOf(p)
                 elseif istable(Factions) then
                     local sid, s64 = p:SteamID(), p:SteamID64()
                     for name, f in pairs(Factions) do
@@ -246,7 +257,7 @@ if SERVER then
     timer.Create("GRM_Ach_Walk", 2, 0, function()
         for _, p in ipairs(player.GetAll()) do
             if IsValid(p) and p:IsPlayer() then
-                local k = p:SteamID64() or p:SteamID()
+                    local k = achievementKey(p)
                 if p:Alive() and (not p.InVehicle or not p:InVehicle()) and p:IsOnGround() then
                     local pos = p:GetPos()
                     local lp = lastPos[k]
@@ -329,7 +340,7 @@ if SERVER then
     -- API для внешних админ-инструментов (единая панель Код 79)
     function AC.SaveNow(why) saveAll(why or "admin") end
     function AC.AdminReset(plyOrSid)
-        local sid = isstring(plyOrSid) and plyOrSid or (IsValid(plyOrSid) and (plyOrSid:SteamID64() or plyOrSid:SteamID()))
+        local sid = achievementKey(plyOrSid)
         if not sid then return false end
         AC.Records[sid] = { sid = sid, c = {}, u = {}, earned = 0, streak = 0, lastDaily = "" }
         saveAll("admin reset " .. tostring(sid))
@@ -382,7 +393,7 @@ if SERVER then
                 if IsValid(p) and string.find(string.lower(p:Nick()), who, 1, true) then target = p break end
             end
             if not IsValid(target) then ply:PrintMessage(HUD_PRINTTALK, "[Ачивки] Игрок «" .. who .. "» не найден в онлайне.") return true end
-            local sid = target:SteamID64() or target:SteamID()
+            local sid = achievementKey(target)
             AC.Records[sid] = { sid = sid, c = {}, u = {}, earned = 0, streak = 0, lastDaily = "" }
             saveAll("ach_reset " .. target:Nick())
             ply:PrintMessage(HUD_PRINTTALK, "[Ачивки] Прогресс обнулён: " .. target:Nick())

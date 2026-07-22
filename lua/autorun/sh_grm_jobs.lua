@@ -247,17 +247,34 @@ if SERVER then
         local n = ply:GetNWString("GRM_RPName", "")
         return (n ~= "" and n) or ply:Nick()
     end
-    local function sid64(ply) return ply:SteamID64() or ply:SteamID() end
+    local function sid64(ply)
+        if IsValid(ply) and ply:IsPlayer() then
+            if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
+            return ply:SteamID64() or ply:SteamID()
+        end
+        local raw = tostring(ply or "")
+        if raw:match(":char[1-3]$") then return raw end
+        if raw:match("^%d+$") then return raw .. ":char1" end
+        if util.SteamIDTo64 then
+            local s64 = util.SteamIDTo64(raw)
+            if s64 and s64 ~= "0" then return tostring(s64) .. ":char1" end
+        end
+        return raw
+    end
 
     local function factionOfPly(ply)
         if not IsValid(ply) then return nil end
         if _G.FactionsAPI and _G.FactionsAPI.GetFactionOf then
-            return _G.FactionsAPI.GetFactionOf(ply:SteamID()) or _G.FactionsAPI.GetFactionOf(ply:SteamID64())
+            local found = _G.FactionsAPI.GetFactionOf(ply)
+            if found then return found end
+            found = _G.FactionsAPI.GetFactionOf(ply:SteamID()) or _G.FactionsAPI.GetFactionOf(ply:SteamID64())
+            if found then return found end
         end
         if istable(Factions) then
             local sid, s64 = ply:SteamID(), ply:SteamID64()
+            local ck = sid64(ply)
             for name, f in pairs(Factions) do
-                if istable(f) and istable(f.Members) and (f.Members[sid] or f.Members[s64]) then return name end
+                if istable(f) and istable(f.Members) and (f.Members[ck] or f.Members[sid] or f.Members[s64]) then return name end
             end
         end
         return nil
@@ -265,7 +282,9 @@ if SERVER then
     local function isLeader(ply, fname)
         if not fname then return false end
         if _G.FactionsAPI and _G.FactionsAPI.IsLeader then
-            return (_G.FactionsAPI.IsLeader(ply:SteamID(), fname) or _G.FactionsAPI.IsLeader(ply:SteamID64(), fname)) and true or false
+            return (_G.FactionsAPI.IsLeader(ply, fname)
+                or _G.FactionsAPI.IsLeader(ply:SteamID(), fname)
+                or _G.FactionsAPI.IsLeader(ply:SteamID64(), fname)) and true or false
         end
         return false
     end
@@ -350,7 +369,7 @@ if SERVER then
         local n = 0
         for _, r in ipairs(t) do
             if istable(r) and isstring(r.sid) then
-                JB.Active[r.sid] = {
+                JB.Active[sid64(r.sid)] = {
                     title = tostring(r.title or "Задача"), desc = tostring(r.desc or ""),
                     jtype = tostring(r.jtype or "goto"), stage = tonumber(r.stage) or 1,
                     stayLeft = tonumber(r.stayLeft) or 0, reward = tonumber(r.reward) or 0,
