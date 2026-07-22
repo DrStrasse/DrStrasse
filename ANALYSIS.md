@@ -980,3 +980,11 @@
 1. **Почему «Использовать» всё ещё открывало UI:** `sh_grm_inventory.lua` был исправлен, но `sh_grm_mobile.lua` после загрузки снова регистрировал `GRM.Inventory.RegisterUseHandler("mobile_open", openHandler)` и перетирал обработчик обратно на `MB.Open`. Теперь оба места используют один контракт: `mobile_open/mobile_use` = `MB.ActivateInventoryPhone`, то есть только активировать трубку.
 2. **Почему стрелки могли ничего не делать:** в живом клиенте `DFrame:MakePopup()`/VGUI-фокус может съедать `PlayerButtonDown` для стрелок. Добавлен polling в `Think` через `input.IsKeyDown`: UP открывает при закрытом телефоне, DOWN закрывает при открытом, Mouse3 подтверждает выбор. Это дублирует hook-контур и работает даже при VGUI focus.
 3. **Сохранение:** activation-флаг пишется в slot.data.active и пинает inventory save через `_devSaveSoon`/`SaveSoon`, чтобы выбранная рабочая трубка переживала рестарт.
+
+---
+
+## Находка 135 (22.07.2026): окончательная разводка управления mobile — use не открывает, VGUI не ест стрелки/СКМ
+
+1. **Причина повторного открытия по Use:** кроме обработчика в `sh_grm_inventory.lua`, сам `sh_grm_mobile.lua` регистрировал `mobile_open/mobile_use` и мог перетереть поведение после загрузки. Теперь оба обработчика ведут в `MB.ActivateInventoryPhone`: только выставить `slot.data.active`, сохранить инвентарь и отправить свежий state. UI не открывается.
+2. **Причина «стрелки не сразу/не работают»:** VGUI/DFrame с `MakePopup` может съедать `PlayerButtonDown`. Телефон больше не вызывает `MakePopup`, а UP/DOWN/Mouse3 дублируются polling-ом в `Think` через `input.IsKeyDown`/`input.IsMouseDown`. UP открывает, DOWN закрывает даже при VGUI focus.
+3. **Новый ввод:** колесо мыши (`invnext/invprev`) — навигация; СКМ (`+attack3`, `KEY_MOUSE3`, `MOUSE_MIDDLE`) — выбор. Клавиатура внутри телефона не рулит меню; все gameplay-binds блокируются.
