@@ -97,9 +97,13 @@ if SERVER then
         -- Убрано: автоматическое добавление "Участник" при каждом ensureDefaults
         -- вызывало баг — при переименовании ранга создавался дубликат.
         -- Роль по умолчанию теперь определяется через getDefaultMemberRole()
-        if not table.HasValue(f.Departments, "Основной") then
-            table.insert(f.Departments, 1, "Основной")
-        end
+        --
+        -- Код 108 (заказ владельца): «Основной» отдел больше НЕ воскресает
+        -- сам. Раньше этот блок вставлял его при КАЖДОМ ensureDefaults, а он
+        -- вызывается из каждого действия и каждой рассылки — стоило админу
+        -- удалить «Основной», как очередной sync тут же создавал его заново.
+        -- Отдел по умолчанию теперь — getDefaultDepartment() (первый реальный
+        -- отдел фракции, литерал «Основной» — лишь крайний фолбэк).
 
         if type(f.Tag) ~= "string" then f.Tag = "" end
         if not istable(f.Color) then f.Color = { r = 255, g = 200, b = 50 } end
@@ -114,6 +118,13 @@ if SERVER then
         if f.Leader and f.Members[f.Leader] then
             f.Members[f.Leader].Role = f.LeaderRoleName
         end
+    end
+
+    -- Отдел по умолчанию для новых участников (Код 108): первый реальный
+    -- отдел фракции; литерал «Основной» — лишь крайний фолбэк пустого списка.
+    local function getDefaultDepartment(f)
+        ensureDefaults(f)
+        return (istable(f.Departments) and f.Departments[1]) or "Основной"
     end
 
     -- Возвращает роль по умолчанию для новых участников:
@@ -150,14 +161,24 @@ if SERVER then
             if type(f) == "table" then
                 ensureDefaults(f)
                 data[name] = {
-                    Leader         = f.Leader,
-                    Roles          = f.Roles,
-                    Departments    = f.Departments,
-                    Members        = f.Members,
-                    Tag            = f.Tag,
-                    Color          = f.Color,
-                    DepAccess      = f.DepAccess,
-                    LeaderRoleName = f.LeaderRoleName
+                    Leader           = f.Leader,
+                    Roles            = f.Roles,
+                    Departments      = f.Departments,
+                    Members          = f.Members,
+                    Tag              = f.Tag,
+                    Color            = f.Color,
+                    DepAccess        = f.DepAccess,
+                    LeaderRoleName   = f.LeaderRoleName,
+                    -- v3.1.1: зеркалируем доступ-модели/оружие/госновости для
+                    -- вкладки «Расширенные настройки» (синк с /models_admin,
+                    -- /weapons_admin, setGNewsAccess — те же серверные поля)
+                    Models           = f.Models,
+                    RoleModels       = f.RoleModels,
+                    DepartmentModels = f.DepartmentModels,
+                    Weapons          = f.Weapons,
+                    RoleWeapons      = f.RoleWeapons,
+                    DepartmentWeapons= f.DepartmentWeapons,
+                    GNewsAccess      = f.GNewsAccess == true
                 }
             end
         end
@@ -397,7 +418,8 @@ if SERVER then
         if role == f.LeaderRoleName then return false, "Лидер назначается только отдельно" end
         if role and not table.HasValue(f.Roles, role) then return false, "Такого ранга нет" end
         if dept and not table.HasValue(f.Departments, dept) then return false, "Такого отдела нет" end
-        f.Members[steamID] = { Role = role or getDefaultMemberRole(f), Department = dept or "Основной" }
+        -- Код 108: дефолтный отдел — первый реальный (а не «Основной» из воздуха)
+        f.Members[steamID] = { Role = role or getDefaultMemberRole(f), Department = dept or getDefaultDepartment(f) }
         saveFactions(Factions)
         return true
     end
@@ -453,7 +475,7 @@ if SERVER then
         if not f.Members[newLeaderSteamID] then
             local existing = getFactionOfPlayer(newLeaderSteamID)
             if existing then return false, "Игрок уже состоит во фракции " .. existing end
-            f.Members[newLeaderSteamID] = { Role = getDefaultMemberRole(f), Department = "Основной" }
+            f.Members[newLeaderSteamID] = { Role = getDefaultMemberRole(f), Department = getDefaultDepartment(f) }
         end
         if f.Leader and f.Members[f.Leader] then
             f.Members[f.Leader].Role = getDefaultMemberRole(f)
@@ -499,7 +521,7 @@ if SERVER then
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
-        f.Members[steamID] = { Role = getDefaultMemberRole(f), Department = "Основной" }
+        f.Members[steamID] = { Role = getDefaultMemberRole(f), Department = getDefaultDepartment(f) }
         saveFactions(Factions)
         Invites[steamID] = nil
         saveInvites(Invites)
@@ -601,6 +623,17 @@ if SERVER then
             done(ok, err)
         elseif action == "deleteFaction" then
             if not isSuperAdmin then done(false, "Только суперадмин") return end
+            -- Root Guard (Код 84): не-root суперадмину удаление исполняется
+            -- ТОЛЬКО после подтверждения владельцем сервера (fail-closed).
+            if GRM and GRM.Root and GRM.Root.Request then
+                local allowedNow = GRM.Root.Request(ply, "faction_delete",
+                    "Удаление фракции «" .. tostring(args[1]) .. "»",
+                    { faction = args[1] })
+                if not allowedNow then
+                    respondTo(ply, true, "Запрос на удаление «" .. tostring(args[1]) .. "» отправлен владельцу сервера — исполнится после его подтверждения.")
+                    return -- НЕ удаляем и НЕ вещаем: фракция остаётся жить
+                end
+            end
             local ok, err = deleteFaction(args[1])
             done(ok, err)
         elseif action == "changeLeader" then
@@ -778,8 +811,14 @@ if SERVER then
 
     -- ============================================================
     -- ЧАТ-КОМАНДА /factions (для суперадмина и лидера)
+    -- ВАЖНО: регистрируем в PlayerSayTransform потому что EasyChat
+    -- устанавливает SkipPlayerSay=true для команд и PlayerSay не вызывается!
     -- ============================================================
-    hook.Add("PlayerSay", "Factions_ChatCommand", function(ply, text)
+    hook.Add("PlayerSayTransform", "Factions_ChatCommand", function(ply, datapack)
+        if not istable(datapack) then return end
+        local text = datapack[1]
+        if not isstring(text) then return end
+        
         local lower = string.lower(string.Trim(text))
         if lower == "/factions" then
             if ply:IsSuperAdmin() then
@@ -802,7 +841,9 @@ if SERVER then
                     ply:PrintMessage(HUD_PRINTTALK, "[Фракции] У вас нет прав для использования этой команды.")
                 end
             end
-            return ""  -- Скрываем команду из чата
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
+            return
         end
     end)
 
@@ -829,6 +870,37 @@ if SERVER then
         end, "factions_leader")
         cmdLeader:defaultAccess(ULib.ACCESS_ALL)
     end
+
+    -- ============================================================
+    -- Публичный API для модулей GRM (доска набора Код 76, радио Код 75 и др.)
+    -- Только экспорт ссылок на уже существующие локальные функции —
+    -- логика/сейв/формат данных НЕ меняются.
+    -- ============================================================
+    _G.FactionsAPI = _G.FactionsAPI or {}
+    _G.FactionsAPI.AddMember      = function(factionName, steamID) return addMember(factionName, steamID) end
+    _G.FactionsAPI.RemoveMember   = function(factionName, steamID) return removeMember(factionName, steamID) end
+    _G.FactionsAPI.GetFactionOf   = function(steamID) return getFactionOfPlayer(steamID) end
+    _G.FactionsAPI.IsLeader       = function(steamID, factionName)
+        local f = Factions[factionName]
+        return (istable(f) and f.Leader == steamID) or false
+    end
+    _G.FactionsAPI.GetLeader      = function(factionName)
+        local f = Factions[factionName]
+        return istable(f) and f.Leader or nil
+    end
+    _G.FactionsAPI.PrimeRole      = function(factionName)
+        local f = Factions[factionName]
+        return istable(f) and getDefaultMemberRole(f) or nil
+    end
+    _G.FactionsAPI.Save           = function() saveFactions(Factions) end
+    _G.FactionsAPI.List           = function() return Factions end
+    -- Код 84 (Root Guard): прямое удаление — ВЫЗЫВАТЬ ТОЛЬКО из одобренного
+    -- исполнителя Root Guard (обходной путь для уже подтверждённых заявок).
+    _G.FactionsAPI.DeleteFaction  = function(factionName) return deleteFaction(factionName) end
+    _G.FactionsAPI.Broadcast      = function() broadcastFactionData() end
+    -- Код 76 v1.1.0 (доска: автоназначение отдела/должности при вступлении):
+    _G.FactionsAPI.SetMemberRole       = function(factionName, steamID, role) return setMemberRole(factionName, steamID, role) end
+    _G.FactionsAPI.SetMemberDepartment = function(factionName, steamID, dept) return setMemberDepartment(factionName, steamID, dept) end
 
     print("[Factions] Серверная часть загружена (v3 fixed + чат-команда /factions)")
 end
@@ -1025,6 +1097,72 @@ if CLIENT then
         updateLeaderDepartments(data)
         updateLeaderMemberList(data)
         updateDepWavePanel(data)
+
+        -- ══════════════════════════════════════════════════════════════
+        -- Код 108 (заказ владельца): «живые» вкладки. Раньше админские
+        -- «Ранги»/«Отделы»/«Список» и комбо ролей/отделов строились ОДИН
+        -- раз при выборе фракции — пока не перевыбраешь/не перезапустишь
+        -- меню, изменения (свои же и чужие, прилетевшие SYNC_ALL-рассылкой)
+        -- на экране не появлялись. Теперь ВСЯКИЙ refreshAllUI перестраивает
+        -- текущие вкладки по свежим данным — меню закрывать не надо.
+        -- ══════════════════════════════════════════════════════════════
+        local function selOf(combo)
+            if not IsValid(combo) then return nil end
+            local v = combo:GetValue()
+            if isstring(v) and v ~= "" and data and data[v] then return v end
+            return nil
+        end
+
+        -- админская вкладка «Ранги»
+        local rFac = selOf(ui.factionComboRanks)
+        if IsValid(ui.ranksScroll) then
+            if rFac then updateRanksList(rFac, data) else ui.ranksScroll:Clear() end
+        end
+        -- админская вкладка «Отделы»
+        local dFac = selOf(ui.factionComboDepts)
+        if IsValid(ui.deptsScroll) then
+            if dFac then updateDepartmentsList(dFac, data) else ui.deptsScroll:Clear() end
+        end
+        -- админская вкладка «Список» (участники фракции)
+        local lFac = selOf(ui.factionComboList)
+        if IsValid(ui.memberScroll) then
+            if lFac then updateMemberListForFaction(lFac, data) else ui.memberScroll:Clear() end
+        end
+
+        -- комбо ролей/отделов во вкладках «Участники» — тоже живые:
+        -- пересобираем списки, выбранное значение сохраняем, если осталось
+        local function rebuildRoleDeptCombos(facName, roleCombo, deptCombo)
+            if not (IsValid(roleCombo) and IsValid(deptCombo)) then return end
+            local f = (facName and data) and data[facName] or nil
+            local selR = roleCombo:GetValue()
+            local selD = deptCombo:GetValue()
+            roleCombo:Clear()
+            deptCombo:Clear()
+            if istable(f) then
+                for _, r in ipairs(f.Roles or {}) do roleCombo:AddChoice(r) end
+                for _, d in ipairs(f.Departments or {}) do deptCombo:AddChoice(d) end
+                -- выбор сохраняем, если ещё жив; умер — поле гасим явно
+                -- (DComboBox:Clear может держать старый текст — находка 125)
+                if isstring(selR) and table.HasValue(f.Roles or {}, selR) then roleCombo:SetValue(selR)
+                else roleCombo:SetValue("") end
+                if isstring(selD) and table.HasValue(f.Departments or {}, selD) then deptCombo:SetValue(selD)
+                else deptCombo:SetValue("") end
+            else
+                roleCombo:SetValue("")
+                deptCombo:SetValue("")
+            end
+        end
+        rebuildRoleDeptCombos(selOf(ui.factionCombo3), ui.roleCombo3, ui.deptCombo3)
+
+        -- лидерская вкладка «Участники»: фракция — его собственная
+        if IsValid(ui.roleComboLeader) and IsValid(ui.deptComboLeader) then
+            local mySteam = IsValid(LocalPlayer()) and LocalPlayer():SteamID() or nil
+            local myLead = nil
+            for name, fdata in pairs(data or {}) do
+                if fdata.Leader == mySteam then myLead = name break end
+            end
+            rebuildRoleDeptCombos(myLead, ui.roleComboLeader, ui.deptComboLeader)
+        end
     end
 
     -- ============================================================
@@ -1542,35 +1680,36 @@ if CLIENT then
 
         for _, factionName in ipairs(sortedNames) do
             local f = data[factionName]
-            if not f then continue end
+            -- Код 108: continue→if-обёртка (ванильный Lua, стенды парсят файл напрямую)
+            if f then
+                local row = vgui.Create("DPanel", scroll)
+                row:Dock(TOP) row:SetTall(44) row:DockMargin(0, 2, 0, 2)
 
-            local row = vgui.Create("DPanel", scroll)
-            row:Dock(TOP) row:SetTall(44) row:DockMargin(0, 2, 0, 2)
+                local fCol = f.Color or { r = 60, g = 60, b = 60 }
+                function row:Paint(w, h)
+                    draw.RoundedBox(4, 0, 0, w, h, Color(fCol.r * 0.15, fCol.g * 0.15, fCol.b * 0.15, 200))
+                    surface.SetDrawColor(fCol.r, fCol.g, fCol.b, 180)
+                    surface.DrawRect(0, 0, 4, h)
+                end
 
-            local fCol = f.Color or { r = 60, g = 60, b = 60 }
-            function row:Paint(w, h)
-                draw.RoundedBox(4, 0, 0, w, h, Color(fCol.r * 0.15, fCol.g * 0.15, fCol.b * 0.15, 200))
-                surface.SetDrawColor(fCol.r, fCol.g, fCol.b, 180)
-                surface.DrawRect(0, 0, 4, h)
-            end
+                local tagStr = (f.Tag and f.Tag ~= "") and ("[" .. f.Tag .. "] ") or ""
+                local nameLbl = vgui.Create("DLabel", row)
+                nameLbl:SetPos(14, 12) nameLbl:SetSize(300, 20)
+                nameLbl:SetText(tagStr .. factionName)
+                nameLbl:SetTextColor(Color(fCol.r, fCol.g, fCol.b))
+                nameLbl:SetFont("Factions_Normal")
 
-            local tagStr = (f.Tag and f.Tag ~= "") and ("[" .. f.Tag .. "] ") or ""
-            local nameLbl = vgui.Create("DLabel", row)
-            nameLbl:SetPos(14, 12) nameLbl:SetSize(300, 20)
-            nameLbl:SetText(tagStr .. factionName)
-            nameLbl:SetTextColor(Color(fCol.r, fCol.g, fCol.b))
-            nameLbl:SetFont("Factions_Normal")
-
-            local chkDep = vgui.Create("DCheckBoxLabel", row)
-            chkDep:SetPos(360, 12) chkDep:SetSize(250, 20)
-            chkDep:SetText("Доступ к волне (/dep, /depb)")
-            chkDep:SetFont("Factions_Normal")
-            chkDep:SetValue(f.DepAccess and true or false)
-            chkDep.OnChange = function(_, val)
-                sendAction("setDepAccess", { factionName, tobool(val) }, function(ok, msg)
-                    if ok then notification.AddLegacy("Настройка обновлена", NOTIFY_GENERIC, 3) refreshAllUI()
-                    else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) chkDep:SetValue(not tobool(val)) end
-                end)
+                local chkDep = vgui.Create("DCheckBoxLabel", row)
+                chkDep:SetPos(360, 12) chkDep:SetSize(250, 20)
+                chkDep:SetText("Доступ к волне (/dep, /depb)")
+                chkDep:SetFont("Factions_Normal")
+                chkDep:SetValue(f.DepAccess and true or false)
+                chkDep.OnChange = function(_, val)
+                    sendAction("setDepAccess", { factionName, tobool(val) }, function(ok, msg)
+                        if ok then notification.AddLegacy("Настройка обновлена", NOTIFY_GENERIC, 3) refreshAllUI()
+                        else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) chkDep:SetValue(not tobool(val)) end
+                    end)
+                end
             end
         end
     end
@@ -1872,6 +2011,7 @@ if CLIENT then
 
         local roleCombo = vgui.Create("DComboBox", memberPanel)
         roleCombo:SetPos(100, Y) roleCombo:SetSize(200, 26)
+        ui.roleCombo3 = roleCombo -- Код 108: живое комбо (пересборка в refreshAllUI)
         Y = Y + 40
 
         local lblDeptM = vgui.Create("DLabel", memberPanel)
@@ -1880,6 +2020,7 @@ if CLIENT then
 
         local deptCombo = vgui.Create("DComboBox", memberPanel)
         deptCombo:SetPos(100, Y) deptCombo:SetSize(200, 26)
+        ui.deptCombo3 = deptCombo -- Код 108: живое комбо
         Y = Y + 45
 
         factionCombo3.OnSelect = function(_, _, value)
@@ -1974,6 +2115,11 @@ if CLIENT then
         ui.depWaveScroll = depWaveScroll
         tabs:AddSheet("Волна департамента", depWavePanel, "icon16/transmit.png")
 
+        -- GRM hook: сторонние модули достраивают вкладки админки (Коды 75/76 — доступы к эфиру, оповещению, доске)
+        if hook and hook.Call then
+            pcall(hook.Call, "GRM_FactionsAdmin_BuildTabs", nil, tabs)
+        end
+
         -- FIX: При открытии меню запрашиваем данные с сервера (factions.json)
         timer.Simple(0.4, function()
             if IsValid(frame) then
@@ -1989,6 +2135,18 @@ if CLIENT then
             ui.depWaveScroll = nil
             ui.editTagEntry = nil
             ui.editColorPreview = nil
+            -- Код 108: гасим все ссылки «живых» вкладок админки
+            ui.listView = nil
+            ui.factionCombo = nil
+            ui.factionComboRanks = nil
+            ui.ranksScroll = nil
+            ui.factionComboDepts = nil
+            ui.deptsScroll = nil
+            ui.factionCombo3 = nil
+            ui.roleCombo3 = nil
+            ui.deptCombo3 = nil
+            ui.factionComboList = nil
+            ui.memberScroll = nil
         end
 
         frame:Show()
@@ -2052,6 +2210,7 @@ if CLIENT then
 
         local roleCombo = vgui.Create("DComboBox", memberPanel)
         roleCombo:SetPos(100, Y) roleCombo:SetSize(200, 26)
+        ui.roleComboLeader = roleCombo -- Код 108: живое комбо (пересборка в refreshAllUI)
         Y = Y + 40
 
         local lblDeptL = vgui.Create("DLabel", memberPanel)
@@ -2060,6 +2219,7 @@ if CLIENT then
 
         local deptCombo = vgui.Create("DComboBox", memberPanel)
         deptCombo:SetPos(100, Y) deptCombo:SetSize(200, 26)
+        ui.deptComboLeader = deptCombo -- Код 108: живое комбо
         Y = Y + 45
 
         getData(function(data)
@@ -2152,6 +2312,8 @@ if CLIENT then
             ui.deptsScrollLeader = nil
             ui.memberScrollLeader = nil
             ui.leaderTitleLabel = nil
+            ui.roleComboLeader = nil -- Код 108: живые комбо лидера
+            ui.deptComboLeader = nil
         end
 
         frame:Show()
@@ -2232,43 +2394,46 @@ if CLIENT then
         local radius = GetConVarNumber("rpdesc_radius") or 5000
 
         for _, ply in ipairs(player.GetAll()) do
-            if not IsValid(ply) or not ply:Alive() or ply == lp then continue end
-            if lp:GetPos():Distance(ply:GetPos()) > radius then continue end
+            -- Код 108: continue→инвертированное условие (ванильный Lua)
+            if IsValid(ply) and ply:Alive() and ply ~= lp
+                and lp:GetPos():Distance(ply:GetPos()) <= radius then
+                local steam = ply:SteamID()
+                local faction, role = nil, nil
+                local fColor = Color(255, 200, 50)
+                local fTag = ""
 
-            local steam = ply:SteamID()
-            local faction, role = nil, nil
-            local fColor = Color(255, 200, 50)
-            local fTag = ""
+                for fname, fdata in pairs(FactionsData or {}) do
+                    if fdata.Members and fdata.Members[steam] then
+                        faction = fname
+                        role = fdata.Members[steam].Role
+                        if fdata.Color then fColor = Color(fdata.Color.r or 255, fdata.Color.g or 200, fdata.Color.b or 50) end
+                        fTag = (fdata.Tag and fdata.Tag ~= "") and fdata.Tag or ""
+                        break
+                    end
+                end
 
-            for fname, fdata in pairs(FactionsData or {}) do
-                if fdata.Members and fdata.Members[steam] then
-                    faction = fname
-                    role = fdata.Members[steam].Role
-                    if fdata.Color then fColor = Color(fdata.Color.r or 255, fdata.Color.g or 200, fdata.Color.b or 50) end
-                    fTag = (fdata.Tag and fdata.Tag ~= "") and fdata.Tag or ""
-                    break
+                if faction then
+                    local pos = ply:GetPos() + Vector(0, 0, 100)
+                    local screenPos = pos:ToScreen()
+                    if screenPos.visible then
+                        local x, y = screenPos.x, screenPos.y
+
+                        local displayFaction = (fTag ~= "") and ("[" .. fTag .. "] " .. faction) or faction
+                        local text = displayFaction .. (role and (" [" .. role .. "]") or "")
+
+                        surface.SetFont("Factions_HUD")
+                        local tw, th = surface.GetTextSize(text)
+                        local padding = 8
+                        local w = tw + padding * 2
+                        local h = th + padding * 2
+
+                        draw.RoundedBox(4, x - w / 2, y - h / 2, w, h, Color(15, 15, 20, 180))
+                        surface.SetDrawColor(fColor.r, fColor.g, fColor.b, 220)
+                        surface.DrawRect(x - w / 2, y + h / 2 - 3, w, 3)
+                        draw.SimpleText(text, "Factions_HUD", x, y, fColor, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    end
                 end
             end
-            if not faction then continue end
-
-            local pos = ply:GetPos() + Vector(0, 0, 100)
-            local screenPos = pos:ToScreen()
-            if not screenPos.visible then continue end
-            local x, y = screenPos.x, screenPos.y
-
-            local displayFaction = (fTag ~= "") and ("[" .. fTag .. "] " .. faction) or faction
-            local text = displayFaction .. (role and (" [" .. role .. "]") or "")
-
-            surface.SetFont("Factions_HUD")
-            local tw, th = surface.GetTextSize(text)
-            local padding = 8
-            local w = tw + padding * 2
-            local h = th + padding * 2
-
-            draw.RoundedBox(4, x - w / 2, y - h / 2, w, h, Color(15, 15, 20, 180))
-            surface.SetDrawColor(fColor.r, fColor.g, fColor.b, 220)
-            surface.DrawRect(x - w / 2, y + h / 2 - 3, w, 3)
-            draw.SimpleText(text, "Factions_HUD", x, y, fColor, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
     end)
 

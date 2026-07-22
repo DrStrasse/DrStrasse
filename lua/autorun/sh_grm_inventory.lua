@@ -1,6 +1,18 @@
 --[[--------------------------------------------------------------------
-    GRM Inventory System v1.0
+    GRM Inventory System v1.5.0 (Код 109)
     Полноценный инвентарь с ячейками для патронов, оружия и предметов
+
+    v1.5.0 (Код 109, находка 126 — заказ владельца «нормальный модуль на
+    рации»): useFunc-диспетчер переведён на РЕЕСТР обработчиков
+    GRM.Inventory.RegisterUseHandler. Корень бага «в инвентаре жму
+    Использовать — ничего»: zz_grm_food_inventory_patch.lua не мог
+    расширить ЛОКАЛЬНУЮ useItem хуком и поэтому ЗАМЕНЯЛ net-ресивер
+    «grm_inv_use» своей неполной копией без radio_toggle/mobile_open/
+    cash_to_wallet/medcard_view — клик умирал беззвучно, модулятор
+    никогда не включался, а значит /freq и /r всегда отвечали «нет
+    активного модулятора» (в т.ч. после рестарта). Теперь замена
+    ресивера не нужна никому: обработчик регистрируется API-вызовом;
+    отсутствие обработчика = ВИДИМЫЙ отказ игроку + строка в консоль.
 
     Возможности:
       • Сетка инвентаря с настраиваемым количеством слотов
@@ -9,6 +21,27 @@
       • Подбор предметов с земли / выброс из инвентаря
       • Использование предметов (экипировка оружия, применение патронов)
       • Сохранение инвентаря в файл (персистентность)
+    v1.1.0 (Код 97, находка 114): ЛОАДЕР калечил весь инвентарь при рестарте —
+    bare util.JSONToTable конвертировал sid64-ключ в битый double → записи
+    сиротели («пропадают купленные телефоны» — пропадало ВСЁ). Теперь:
+    jsonT 3-им аргументом (н65), нормализация ключей слотов в числа,
+    ленивое sid64-rescue для уже битых сейвов, дебаунс-автосейв 2с на любых
+    мутациях (окно 10с автотаймера закрыто), read-back SAVE-печать.
+    v1.2.0 (Код 99, находка 116): (а) useFunc «radio_toggle» — переносной
+    модулятор рации: «Использовать» переключает ВКЛ/ВЫКЛ, состояние живёт
+    в данных САМОГО предмета (slot.data.on) — переживает рестарт (сейв
+    инвентаря), падает в дроп и возвращается при подборе; (б) AddItem
+    получил необязательный 4-й параметр data — grm_item_drop раньше
+    терял данные не-оружейных предметов при подборе (включённый
+    модулятор поднимался бы сброшенным).
+    v1.4.0 (Код 106, находка 123): статический деф radio_modulator в
+    ItemDefs (живая гарантия useFunc при любом порядке загрузки), useItem
+    без тихих выходов — нет дефа = видимый отказ игроку + строка в консоль.
+    v1.3.0 (Код 101, находка 118): useFunc «medcard_view» — медицинская
+    карта на руках: «Использовать» открывает просмотр карты владельца
+    (sid64 — в slot.data предмета, поэтому переживает дроп/подбор и
+    рестарт). Предмет НЕ тратится. Сам просмотр — на стороне модуля
+    медицины (MD.ViewIssued).
       • Синхронизация сервер ↔ клиент
       • Стакирование одинаковых предметов (патроны)
       • Интеграция с GRM Currency
@@ -159,6 +192,39 @@ GRM.Inventory.ItemDefs = {
         maxStack = 3,
         weight = 2.0,
     },
+
+    -- === ДЕНЬГИ (физические, Код 81) ===
+    -- Число в стаке = сумма. Дроп на землю — моделью cs_assault/money.mdl
+    -- (см. grm_item_drop: def.model). Хранится в инвентаре и багажнике.
+    ["money"] = {
+        type = "item",
+        name = "Деньги",
+        desc = "Пачка наличных (число = сумма). Использование — обналичить в кошелёк.",
+        icon = "icon16/money.png",
+        maxStack = 50000,
+        weight = 0.001,
+        model = "models/props/cs_assault/money.mdl",
+        useFunc = "cash_to_wallet",
+    },
+
+    -- === МОДУЛЯТОР РАЦИИ (Код 99/106, находка 123) ===
+    -- СТАТИЧЕСКИЙ деф: гарантия useFunc при ЛЮБОМ порядке загрузки модулей.
+    -- Раньше дефом владел только RadioNet (внешняя регистрация с ретраем
+    -- ВНУТРИ гарда на GRM.Inventory): если на конкретной загрузке сервера
+    -- порядок файлов переворачивался, деф не появлялся вообще НИКОГДА
+    -- (ретрай тоже пропускался), а useItem молча выходил — «мёртвая
+    -- кнопка Использовать». RadioNet переписывает это же определение
+    -- своим (с валидацией модели) — содержимое идентично.
+    ["radio_modulator"] = {
+        type = "item",
+        name = "Модулятор рации (переносной)",
+        desc = "Переносная радиостанция. «Использовать» — вкл/выкл. Когда включён: /freq 145.5 — частота, /r текст — эфир. Сеть — любая дистанция, вне сети до 37 м напрямую.",
+        icon = "icon16/transmit.png",
+        maxStack = 1,
+        weight = 0.6,
+        model = "models/props_lab/reciever01b.mdl",
+        useFunc = "radio_toggle",
+    },
 }
 
 -- Функция регистрации нового предмета (для аддонов)
@@ -181,6 +247,27 @@ function GRM.Inventory.GetMaxStack(itemID)
 end
 
 -- ================================================================
+--  РЕЕСТР ОБРАБОТЧИКОВ ИСПОЛЬЗОВАНИЯ (Код 109, находка 126 — «нормальный
+--  модуль» для таких предметов, как модулятор рации)
+-- ================================================================
+-- Раньше useFunc обрабатывался захардкоженным if-elseif внутри ЛОКАЛЬНОЙ
+-- useItem — расширить её хуком было нельзя, поэтому патч еды просто
+-- ЗАМЕНЯЛ net.Receive("grm_inv_use") своей неполной копией, в которой
+-- radio_toggle/cash_to_wallet/mobile_open/medcard_view отсутствовали:
+-- «Использовать» по модулятору умирало БЕЗ ЗВУКА («жму — ничего»,
+-- заказ владельца Кода 109). Теперь обработчик — регистрируемая точка:
+--   GRM.Inventory.RegisterUseHandler("my_usefunc", function(ply, slotIdx, slot, def) ... end)
+-- Хендлер ПОЛНОСТЬЮ владеет потоком (сам решает уведомления/расход).
+-- Свой обработчик нельзя регистрировать заменой ресивера — только API.
+GRM.Inventory.UseHandlers = GRM.Inventory.UseHandlers or {}
+
+function GRM.Inventory.RegisterUseHandler(useFunc, fn)
+    if not isstring(useFunc) or useFunc == "" or not isfunction(fn) then return false end
+    GRM.Inventory.UseHandlers[useFunc] = fn
+    return true
+end
+
+-- ================================================================
 --  СЕРВЕР
 -- ================================================================
 if SERVER then
@@ -197,39 +284,155 @@ if SERVER then
     util.AddNetworkString("grm_inv_split")
 
     local INV_FILE = "grm_inventories.json"
-    local Inventories = {}  -- [SteamID64] = { slots = { [1] = {id="ammo_pistol", count=30}, ... } }
+    -- v1.6: ключ инвентаря = CharacterKey, если поднят GRM.Char.
+    -- fallback = SteamID64 для совместимости/тестов/серверов без character core.
+    local Inventories = {}  -- [InventoryKey] = { slots = { [1] = {id="ammo_pistol", count=30}, ... } }
 
     -- ── Загрузка / Сохранение ────────────────────────────────────
+    -- находка 114: лоадер БЕЗ 3-го аргумента конвертировал sid64-ключ
+    -- «7656…» в битый double — после рестарта ВСЕ записи сиротели.
     local function loadInventories()
         if not file.Exists(INV_FILE, "DATA") then return {} end
         local raw = file.Read(INV_FILE, "DATA") or ""
         if raw == "" then return {} end
-        local ok, t = pcall(util.JSONToTable, raw)
-        if ok and istable(t) then return t end
-        return {}
+        local ok, t = pcall(util.JSONToTable, raw, false, true) -- н65: s64-ключи не конвертируем
+        if not (ok and istable(t)) then return {} end
+        local out = {}
+        for k, rec in pairs(t) do
+            if istable(rec) then
+                local sk = k
+                if isnumber(k) then sk = string.format("%.0f", k) end -- легаси битых сейвов
+                if isstring(sk) and sk ~= "" then
+                    local rawSlots = rec.slots
+                    -- Rescue for very old/bad saves: sometimes the inventory table itself
+                    -- was saved as a slot map without the `.slots` wrapper.
+                    if not istable(rawSlots) then
+                        local looksLikeSlots = false
+                        for kk, vv in pairs(rec) do
+                            if (tonumber(kk) ~= nil) and istable(vv) and vv.id then looksLikeSlots = true break end
+                        end
+                        if looksLikeSlots then rawSlots = rec end
+                    end
+                    local slots = {}
+                    for kk, vv in pairs(rawSlots or {}) do
+                        if istable(vv) and vv.id then
+                            slots[tonumber(kk) or kk] = vv -- ключи слотов — строго числа
+                        end
+                    end
+                    rec.slots = slots
+                    out[sk] = rec
+                end
+            end
+        end
+        return out
     end
 
-    local function saveInventories()
+    local function saveInventories(why)
         local ok, enc = pcall(util.TableToJSON, Inventories, true)
-        if ok and enc then file.Write(INV_FILE, enc) end
+        if not ok or not isstring(enc) then
+            print("[GRM Inv][!] TableToJSON упал, сейв пропущен (" .. tostring(why or "?") .. ")")
+            return false
+        end
+        file.Write(INV_FILE, enc)
+        local rb = file.Read(INV_FILE, "DATA") or ""
+        if rb == "" then
+            print("[GRM Inv][!] КОНТРОЛЬ ЗАПИСИ: файл пуст после save (" .. tostring(why or "?") .. ")")
+            return false
+        end
+        return true
     end
+
+    -- дебаунс-автосейв 2с на любых мутациях: закрывает окно 10с автотаймера
+    local function saveSoon(why)
+        timer.Create("GRM_Inv_SaveSoon", 2, 1, function()
+            saveInventories("дебаунс: " .. tostring(why or "?"))
+        end)
+    end
+    GRM.Inventory._devSaveSoon = saveSoon -- тест-экспорт
 
     Inventories = loadInventories()
 
     -- Автосохранение
-    timer.Create("GRM_Inv_AutoSave", GRM.Inventory.Config.SaveInterval, 0, function()
-        saveInventories()
-    end)
-
-    -- ── Получить инвентарь игрока ────────────────────────────────
-    function GRM.Inventory.GetPlayerInv(ply)
+    local function steamKey(ply)
         if not IsValid(ply) then return nil end
         local sid = ply:SteamID64()
         if not sid or sid == "0" then return nil end
-        if not Inventories[sid] then
-            Inventories[sid] = { slots = {} }
+        return sid
+    end
+
+    local function inventoryKey(ply)
+        local sid = steamKey(ply)
+        if not sid then return nil, nil end
+        if GRM.Char and GRM.Char.GetActiveKey then
+            local ok, key = pcall(GRM.Char.GetActiveKey, ply)
+            key = ok and tostring(key or "") or ""
+            if key ~= "" and key ~= "0" then return key, sid end
         end
-        return Inventories[sid]
+        return sid, sid
+    end
+
+    function GRM.Inventory.GetInventoryKey(ply)
+        local key = inventoryKey(ply)
+        return key
+    end
+
+    local function normalizeSlots(rec)
+        rec = istable(rec) and rec or { slots = {} }
+        local slots = {}
+        for kk, vv in pairs(rec.slots or {}) do
+            if istable(vv) then slots[tonumber(kk) or kk] = vv end
+        end
+        rec.slots = slots
+        return rec
+    end
+
+    timer.Create("GRM_Inv_AutoSave", tonumber(GRM.Inventory.Config.SaveInterval) or 10, 0, function()
+        saveInventories("авто")
+    end)
+
+    -- ── Получить инвентарь игрока ────────────────────────────────
+    local function getLegacySteamInv(ply, sid)
+        if not Inventories[sid] then
+            -- находка 114: ленивое самолечение записи, покалеченной старым лоадером
+            local num = tonumber(sid)
+            if num then
+                local cand, cnt = nil, 0
+                for k in pairs(Inventories) do
+                    if k ~= sid then
+                        local kn = isnumber(k) and k or (isstring(k) and tonumber(k) or nil)
+                        if kn and math.abs(kn - num) < 64 then cand, cnt = k, cnt + 1 end
+                    end
+                end
+                if cnt == 1 then
+                    Inventories[sid] = Inventories[cand]
+                    Inventories[cand] = nil
+                    saveSoon("sid64-rescue")
+                    print("[GRM Inv] запись с битым ключом восстановлена → " .. sid)
+                end
+            end
+        end
+        if not Inventories[sid] then Inventories[sid] = { slots = {} } end
+        return normalizeSlots(Inventories[sid])
+    end
+
+    function GRM.Inventory.GetPlayerInv(ply)
+        if not IsValid(ply) then return nil end
+        local key, sid = inventoryKey(ply)
+        if not key then return nil end
+
+        -- No character core / no character key: exact old behavior for compatibility and old rescue tests.
+        if key == sid then return getLegacySteamInv(ply, sid) end
+
+        -- Character inventory: migrate old SteamID64 inventory into char1 only.
+        if not Inventories[key] and Inventories[sid] and tostring(key):find(tostring(sid) .. ":char1", 1, true) == 1 then
+            Inventories[key] = normalizeSlots(Inventories[sid])
+            Inventories[sid] = nil
+            saveSoon("migrate sid64 inventory -> char1")
+            print("[GRM Inv] инвентарь SteamID64 перенесён на CharacterKey → " .. tostring(key))
+        end
+
+        if not Inventories[key] then Inventories[key] = { slots = {} } end
+        return normalizeSlots(Inventories[key])
     end
 
     -- ── Синхронизация с клиентом ─────────────────────────────────
@@ -254,7 +457,11 @@ if SERVER then
 
     -- ── Добавить предмет в инвентарь ─────────────────────────────
     -- Возвращает: количество, которое НЕ удалось добавить (0 = всё добавлено)
-    function GRM.Inventory.AddItem(ply, itemID, count)
+    -- Код 99: необязательный data — данные экземпляра (подбор с земли:
+    -- grm_item_drop возвращает включённое состояние модулятора и т.п.).
+    -- Применяется только к НОВОМУ слоту (слияние в существующий стак
+    -- данные жертвы не трогает — они остаются у стака-приёмника).
+    function GRM.Inventory.AddItem(ply, itemID, count, data)
         if not IsValid(ply) then return count end
         local inv = GRM.Inventory.GetPlayerInv(ply)
         if not inv then return count end
@@ -265,6 +472,7 @@ if SERVER then
         count = count or 1
         local maxStack = GRM.Inventory.GetMaxStack(itemID)
         local remaining = count
+        local extra = istable(data) and table.Copy(data) or nil
 
         -- Сначала пытаемся добавить в существующие стаки
         if def.type ~= "weapon" then
@@ -295,10 +503,15 @@ if SERVER then
                 id = itemID,
                 count = toAdd,
             }
+            if extra then
+                inv.slots[emptySlot].data = table.Copy(extra)
+                extra = nil -- данные экземпляра уходят только с первым новым слотом
+            end
             remaining = remaining - toAdd
             GRM.Inventory.SyncSlot(ply, emptySlot)
         end
 
+        saveSoon("add " .. tostring(itemID))
         return remaining
     end
 
@@ -328,6 +541,7 @@ if SERVER then
             }
         }
         GRM.Inventory.SyncSlot(ply, emptySlot)
+        saveSoon("addweapon")
         return true
     end
 
@@ -345,6 +559,7 @@ if SERVER then
             inv.slots[slotIdx] = nil
         end
         GRM.Inventory.SyncSlot(ply, slotIdx)
+        saveSoon("removefromslot")
         return true
     end
 
@@ -369,6 +584,7 @@ if SERVER then
                 GRM.Inventory.SyncSlot(ply, i)
             end
         end
+        saveSoon("remove " .. tostring(itemID))
         return remaining
     end
 
@@ -437,7 +653,14 @@ if SERVER then
 
         -- Патроны — добавить в запас
         local def = GRM.Inventory.GetItemDef(itemID)
-        if not def then return end
+        if not def then
+            -- Код 106 (находка 123): тихий return прятал «мёртвую кнопку»
+            -- (модулятор рации без дефа на перекошенной загрузке). Теперь
+            -- мимо не пройти: игрок видит причину, админ — строку в консоли.
+            GRM.Notify(ply, "Предмет «" .. tostring(itemID) .. "» не зарегистрирован (модуль не поднялся) — сообщите админу", 255, 140, 110)
+            print("[GRM Inventory][!] useItem: нет дефа «" .. tostring(itemID) .. "» у " .. tostring(ply:Nick()))
+            return
+        end
         if def.type == "ammo" and def.ammoType then
             local amount = slot.count or 1
             ply:GiveAmmo(amount, def.ammoType, true)
@@ -447,35 +670,115 @@ if SERVER then
             return
         end
 
-        -- Предметы — использовать функцию
+        -- Предметы — использовать функцию.
+        -- Код 109 (находка 126): ДИСПЕТЧЕР ЧЕРЕЗ РЕЕСТР UseHandlers.
+        -- Захардкоженный if-elseif умер: раньше патч еды, не сумев
+        -- расширить local-функцию useItem хуком, просто ЗАМЕНЯЛ net-ресивер
+        -- «grm_inv_use» своей неполной копией — и обработчики radio_toggle/
+        -- cash_to_wallet/mobile_open/medcard_view тихо умирали («жму
+        -- Использовать — ничего», заказ владельца). Теперь: есть useFunc —
+        -- обязан быть и зарегистрированный обработчик, иначе ВИДИМЫЙ отказ.
         if def.type == "item" and def.useFunc then
-            local used = false
-            if def.useFunc == "heal_25" then
-                if ply:Health() < ply:GetMaxHealth() then
-                    ply:SetHealth(math.min(ply:GetMaxHealth(), ply:Health() + 25))
-                    used = true
-                else
-                    GRM.Notify(ply, "Здоровье уже полное", 255, 180, 60)
-                    return
-                end
-            elseif def.useFunc == "armor_15" then
-                if ply:Armor() < 100 then
-                    ply:SetArmor(math.min(100, ply:Armor() + 15))
-                    used = true
-                else
-                    GRM.Notify(ply, "Броня уже полная", 255, 180, 60)
-                    return
-                end
+            local handler = (GRM.Inventory.UseHandlers or {})[def.useFunc]
+            if not handler then
+                GRM.Notify(ply, "«" .. tostring(def.name or itemID) .. "»: модуль-обработчик «" .. tostring(def.useFunc) .. "» не поднялся — сообщите админу", 255, 140, 110)
+                print("[GRM Inventory][!] useItem: нет обработчика «" .. tostring(def.useFunc) .. "» (предмет «" .. tostring(itemID) .. "») у " .. tostring(ply:Nick()))
+                return
             end
-            if used then
-                GRM.Inventory.RemoveFromSlot(ply, slotIdx, 1)
-                GRM.Notify(ply, "Использовано: " .. def.name, 100, 220, 100)
+            local okH, err = pcall(handler, ply, slotIdx, slot, def)
+            if not okH then
+                GRM.Notify(ply, "«" .. tostring(def.name or itemID) .. "»: внутренняя ошибка модуля — сообщите админу", 255, 140, 110)
+                print("[GRM Inventory][!] useItem: обработчик «" .. tostring(def.useFunc) .. "» упал: " .. tostring(err))
             end
             return
         end
 
         GRM.Notify(ply, "Этот предмет нельзя использовать", 255, 180, 60)
     end
+    GRM.Inventory.UseItem = useItem -- Код 109: публичная точка (диагностика/сим)
+
+    -- ── Встроенные обработчики useFunc (та же логика, что была захардко-
+    -- жена в useItem, но теперь через реестр: единый путь для всех) ──
+    GRM.Inventory.RegisterUseHandler("heal_25", function(ply, slotIdx, slot, def)
+        if ply:Health() < ply:GetMaxHealth() then
+            ply:SetHealth(math.min(ply:GetMaxHealth(), ply:Health() + 25))
+            GRM.Inventory.RemoveFromSlot(ply, slotIdx, 1)
+            GRM.Notify(ply, "Использовано: " .. tostring(def and def.name or "Аптечка"), 100, 220, 100)
+        else
+            GRM.Notify(ply, "Здоровье уже полное", 255, 180, 60)
+        end
+    end)
+    GRM.Inventory.RegisterUseHandler("armor_15", function(ply, slotIdx, slot, def)
+        if ply:Armor() < 100 then
+            ply:SetArmor(math.min(100, ply:Armor() + 15))
+            GRM.Inventory.RemoveFromSlot(ply, slotIdx, 1)
+            GRM.Notify(ply, "Использовано: " .. tostring(def and def.name or "Бронежилет"), 100, 220, 100)
+        else
+            GRM.Notify(ply, "Броня уже полная", 255, 180, 60)
+        end
+    end)
+    GRM.Inventory.RegisterUseHandler("cash_to_wallet", function(ply, slotIdx, slot, def)
+        -- Деньги: число в стаке = сумма, обналичиваем ВЕСЬ стак
+        local inv = GRM.Inventory.GetPlayerInv(ply)
+        if not inv then return end
+        local amt = math.max(0, math.floor(tonumber(slot.count) or 0))
+        if amt > 0 and GRM.GiveMoney then
+            inv.slots[slotIdx] = nil
+            GRM.Inventory.SyncSlot(ply, slotIdx)
+            GRM.GiveMoney(ply, amt, "Обналичены деньги из инвентаря")
+            GRM.Notify(ply, "Обналичено: " .. (GRM.Format and GRM.Format(amt) or tostring(amt)), 100, 220, 100)
+            hook.Run("GRM_Money_Cashed", ply, amt)
+        end
+    end)
+    GRM.Inventory.RegisterUseHandler("mobile_open", function(ply, slotIdx, slot, def)
+        -- Mobile contract: «Использовать» НЕ открывает UI. Оно активирует
+        -- выбранную трубку как рабочую. Открыть меню: СТРЕЛКА ВВЕРХ.
+        local inv = GRM.Inventory.GetPlayerInv(ply)
+        if inv and inv.slots then
+            for i, s in pairs(inv.slots) do
+                if s and s.id and GRM.Mobile and GRM.Mobile.IsMobileItem and GRM.Mobile.IsMobileItem(s.id) then
+                    s.data = istable(s.data) and s.data or {}
+                    s.data.active = (i == slotIdx)
+                    GRM.Inventory.SyncSlot(ply, i)
+                end
+            end
+            saveSoon("mobile activate")
+        else
+            slot.data = istable(slot.data) and slot.data or {}
+            slot.data.active = true
+            GRM.Inventory.SyncSlot(ply, slotIdx)
+            saveSoon("mobile activate")
+        end
+        if GRM.Mobile and GRM.Mobile.PushState then GRM.Mobile.PushState(ply) end
+        GRM.Notify(ply, "Телефон активирован. Открыть — СТРЕЛКА ВВЕРХ, закрыть — СТРЕЛКА ВНИЗ.", 100, 220, 100)
+    end)
+    GRM.Inventory.RegisterUseHandler("radio_toggle", function(ply, slotIdx, slot, def)
+        -- Код 99: переносной модулятор рации — ВКЛ/ВЫКЛ живёт в данных
+        -- самого предмета: рестарт/дроп/подбор состояние не теряют.
+        -- Предмет НЕ тратится. Доступ к /freq и /r проверяет RadioNet
+        -- (RN.HasRadioUnit: предмет в инвентаре И data.on == true).
+        slot.data = istable(slot.data) and slot.data or {}
+        slot.data.on = not (slot.data.on == true)
+        GRM.Inventory.SyncSlot(ply, slotIdx)
+        saveSoon("радио-модулятор on=" .. tostring(slot.data.on))
+        if slot.data.on then
+            GRM.Notify(ply, "Модулятор ВКЛ: /freq 145.5 — частота, /r текст — эфир", 120, 210, 255)
+        else
+            GRM.Notify(ply, "Модулятор ВЫКЛ — радиочастоты закрыты", 255, 200, 90)
+        end
+        if slot.data.on and GRM.RadioNet and GRM.RadioNet.FreqInfo then
+            GRM.RadioNet.FreqInfo(ply)
+        end
+    end)
+    GRM.Inventory.RegisterUseHandler("medcard_view", function(ply, slotIdx, slot, def)
+        -- Код 101: медицинская карта на руках — предмет НЕ тратится.
+        -- sid64 владельца лежит в slot.data (выдача/дроп/подбор).
+        if GRM.Medical and GRM.Medical.ViewIssued then
+            GRM.Medical.ViewIssued(ply, slot.data)
+        else
+            GRM.Notify(ply, "Модуль медкарт не загружен", 255, 140, 110)
+        end
+    end)
 
     -- ── Выброс предмета ──────────────────────────────────────────
     local function dropItem(ply, slotIdx, count)
@@ -663,6 +966,7 @@ if SERVER then
     net.Receive("grm_inv_use", function(_, ply)
         local slotIdx = net.ReadUInt(8)
         useItem(ply, slotIdx)
+        saveSoon("use")
     end)
 
     -- Выброс предмета
@@ -670,6 +974,7 @@ if SERVER then
         local slotIdx = net.ReadUInt(8)
         local count = net.ReadUInt(16)
         dropItem(ply, slotIdx, count)
+        saveSoon("drop")
     end)
 
     -- Перемещение предмета
@@ -677,6 +982,7 @@ if SERVER then
         local fromSlot = net.ReadUInt(8)
         local toSlot = net.ReadUInt(8)
         moveItem(ply, fromSlot, toSlot)
+        saveSoon("move")
     end)
 
     -- Разделение стака
@@ -684,6 +990,7 @@ if SERVER then
         local slotIdx = net.ReadUInt(8)
         local splitCount = net.ReadUInt(16)
         splitStack(ply, slotIdx, splitCount)
+        saveSoon("split")
     end)
 
     -- Действие (убрать оружие)
@@ -691,6 +998,7 @@ if SERVER then
         local action = net.ReadString()
         if action == "store_weapon" then
             GRM.Inventory.StoreActiveWeapon(ply)
+            saveSoon("store_weapon")
         end
     end)
 
@@ -712,23 +1020,89 @@ if SERVER then
     end)
 
     -- ── Чат-команды ──────────────────────────────────────────────
-    hook.Add("PlayerSay", "GRM_Inv_ChatCmds", function(ply, text)
-        local cmd = text:Trim():lower()
+    
+    -- ── /drop — выбросить активное оружие на землю ───────────
+    function GRM.Inventory.DropActiveWeapon(ply)
+        if not IsValid(ply) or not ply:IsPlayer() then return false end
+        local wep = ply:GetActiveWeapon()
+        if not IsValid(wep) then
+            if GRM.Notify then GRM.Notify(ply, "Нет оружия в руках", 255, 180, 60) end
+            return false
+        end
+        local class = wep:GetClass()
+        if class == "weapon_fists" or class == "weapon_physgun" or class == "gmod_tool"
+            or class == "weapon_physcannon" or class == "weapon_crowbar" then
+            if GRM.Notify then GRM.Notify(ply, "Это нельзя выбросить", 255, 180, 60) end
+            return false
+        end
+        -- SWEP наручников / ключей — не дропаем служебное
+        if class == "grm_handcuffs" or class == "grm_cuffed" or class == "vehicle_keys_swep" then
+            if GRM.Notify then GRM.Notify(ply, "Служебное оружие нельзя выбросить", 255, 180, 60) end
+            return false
+        end
 
-        if cmd == "/inv" or cmd == "/inventory" or cmd == "!inv" or cmd == "!inventory" then
+        local itemID = "weapon:" .. class
+
+        local ent = ents.Create("grm_item_drop")
+        if not IsValid(ent) then
+            -- fallback: engine drop
+            ply:DropWeapon(wep)
+            if GRM.Notify then GRM.Notify(ply, "Оружие выброшено (fallback)", 100, 220, 100) end
+            return true
+        end
+
+        local dist = (GRM.Inventory.Config and GRM.Inventory.Config.DropDistance) or 80
+        local pos = ply:GetShootPos() + ply:GetAimVector() * 40
+        -- slightly forward of player feet if aim is bad
+        if not pos or pos:DistToSqr(ply:GetPos()) > 40000 then
+            pos = ply:GetPos() + ply:GetForward() * dist + Vector(0, 0, 30)
+        end
+        ent:SetPos(pos)
+        ent:SetAngles(Angle(0, ply:EyeAngles().y, 0))
+        ent:SetItemID(itemID)
+        ent:SetItemCount(1)
+        ent:SetDisplayName(wep:GetPrintName() ~= "" and wep:GetPrintName() or class)
+        -- Не сохраняем clip1/clip2 — при подборе оружие даётся с дефолтными патронами (ply:Give)
+        -- Иначе ply:Give добавляет патроны в резерв + clip1 из data = дублирование (баг)
+        ent.ItemData = { class = class }
+        ent:Spawn()
+        ent:Activate()
+
+        local phys = ent:GetPhysicsObject()
+        if IsValid(phys) then
+            phys:SetVelocity(ply:GetAimVector() * 180 + Vector(0, 0, 60))
+        end
+
+        ply:StripWeapon(class)
+        if GRM.Notify then GRM.Notify(ply, "Оружие выброшено: " .. (ent:GetDisplayName() or class), 100, 220, 100) end
+        return true
+    end
+
+    hook.Add("PlayerSay", "GRM_Inv_ChatCmds", function(ply, text)
+        local cmd = string.Trim(string.lower(text or ""))
+        local args = string.Explode(" ", cmd)
+        local c0 = args[1] or ""
+
+        if c0 == "/inv" or c0 == "/inventory" or c0 == "!inv" or c0 == "!inventory" then
             GRM.Inventory.SyncToClient(ply)
             net.Start("grm_inv_open")
             net.Send(ply)
             return ""
         end
 
-        if cmd == "/store" or cmd == "!store" then
+        if c0 == "/store" or c0 == "!store" then
             GRM.Inventory.StoreActiveWeapon(ply)
+            return ""
+        end
+
+        -- /drop — оружие из рук на землю (entity grm_item_drop)
+        if c0 == "/drop" or c0 == "!drop" or c0 == "/dropweapon" or c0 == "!dropweapon" then
+            GRM.Inventory.DropActiveWeapon(ply)
             return ""
         end
     end)
 
-    print("[GRM] Inventory v1.0 — сервер загружен")
+    print("[GRM] Inventory v1.1.0 (Код 97) — сервер загружен")
 end
 
 -- ================================================================
@@ -806,5 +1180,5 @@ if CLIENT then
         GRM.Inventory.RequestOpen()
     end)
 
-    print("[GRM] Inventory v1.0 — клиент загружен")
+    print("[GRM] Inventory v1.1.0 — клиент загружен")
 end

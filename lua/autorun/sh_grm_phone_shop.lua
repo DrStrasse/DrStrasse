@@ -169,6 +169,112 @@ local function defaultCatalog()
             maxOwned = 2,
             spawnFrozen = true,
         },
+        -- ══ Код 88: мобильные телефоны (предметы инвентаря, invItem — БЕЗ мирового спавна) ══
+        mobile_crappy = {
+            id = "mobile_crappy",
+            name = "Badger Crappy (мобильный)",
+            desc = "Дешёвая трубка. Только звонки, слабый приём на окраинах. Кладётся в инвентарь.",
+            class = "grm_mobile_line",
+            model = "models/ivancorn/gtaiv/electrical/phones/cellphone_badger_crappy.mdl",
+            price = 700,
+            enabled = true,
+            special = false,
+            maxOwned = 2,
+            spawnFrozen = true,
+            invItem = "mobile_crappy",
+        },
+        mobile_badger = {
+            id = "mobile_badger",
+            name = "Badger Classic (мобильный)",
+            desc = "Звонки, SMS, контакты. Кладётся в инвентарь.",
+            class = "grm_mobile_line",
+            model = "models/ivancorn/gtaiv/electrical/phones/cellphone_badger.mdl",
+            price = 1800,
+            enabled = true,
+            special = false,
+            maxOwned = 2,
+            spawnFrozen = true,
+            invItem = "mobile_badger",
+        },
+        mobile_badger_touch = {
+            id = "mobile_badger_touch",
+            name = "Badger Touch (мобильный)",
+            desc = "Сенсорный Badger: SMS, контакты, заметки. Кладётся в инвентарь.",
+            class = "grm_mobile_line",
+            model = "models/ivancorn/gtaiv/electrical/phones/phone_mobile_badger_touchscreen.mdl",
+            price = 3500,
+            enabled = true,
+            special = false,
+            maxOwned = 2,
+            spawnFrozen = true,
+            invItem = "mobile_badger_touch",
+        },
+        mobile_lost = {
+            id = "mobile_lost",
+            name = "The Lost Flip (мобильный)",
+            desc = "Байкерская раскладушка: SMS, контакты, заметки. Кладётся в инвентарь.",
+            class = "grm_mobile_line",
+            model = "models/ivancorn/gtaiv/electrical/phones/cellphone_thelostdamned.mdl",
+            price = 4200,
+            enabled = true,
+            special = false,
+            maxOwned = 2,
+            spawnFrozen = true,
+            invItem = "mobile_lost",
+        },
+        mobile_tinkle = {
+            id = "mobile_tinkle",
+            name = "Panoramic Tinkle (смартфон)",
+            desc = "Все приложения: биржа, фракция, форум, заметки. Кладётся в инвентарь.",
+            class = "grm_mobile_line",
+            model = "models/ivancorn/gtaiv/electrical/phones/cellphone_panoramic_tinkle.mdl",
+            price = 6500,
+            enabled = true,
+            special = false,
+            maxOwned = 2,
+            spawnFrozen = true,
+            invItem = "mobile_tinkle",
+        },
+        mobile_whiz_high = {
+            id = "mobile_whiz_high",
+            name = "Whiz Highspeed (смартфон)",
+            desc = "Флагман Whiz: всё сразу, уверенный приём. Кладётся в инвентарь.",
+            class = "grm_mobile_line",
+            model = "models/ivancorn/gtaiv/electrical/phones/cellphone_whiz_highspeed.mdl",
+            price = 9000,
+            enabled = true,
+            special = false,
+            maxOwned = 2,
+            spawnFrozen = true,
+            invItem = "mobile_whiz_high",
+        },
+        mobile_whiz_gold = {
+            id = "mobile_whiz_gold",
+            name = "Whiz Gold (смартфон)",
+            desc = "Золотой Whiz: статус и лучший приёмник в городе. Кладётся в инвентарь.",
+            class = "grm_mobile_line",
+            model = "models/ivancorn/gtaiv/electrical/phones/cellphone_whiz_gold.mdl",
+            price = 14000,
+            enabled = true,
+            special = false,
+            maxOwned = 2,
+            spawnFrozen = true,
+            invItem = "mobile_whiz_gold",
+        },
+        -- ══ Код 99: переносной модулятор рации — ключ к /freq и /r (RadioNet v1.4.0) ══
+        radio_modulator = {
+            id = "radio_modulator",
+            name = "Модулятор рации (переносной)",
+            desc = "Переносная радиостанция. Активируйте (Использовать в /inv) — откроются радиочастоты: /freq 145.5, /r текст. Выбрасывается и подбирается. Кладётся в инвентарь.",
+            class = "prop_physics", -- invItem-ветка: в мире не спавнится
+            model = "models/props_lab/reciever01b.mdl",
+            price = 1500,
+            enabled = true,
+            special = false,
+            maxOwned = 2,
+            spawnFrozen = true,
+            invItem = "radio_modulator",
+        },
     }
 end
 
@@ -198,6 +304,9 @@ local function normalizeItem(id, item)
         maxOwned = math.max(0, math.floor(tonumber(item.maxOwned) or 1)),
         spawnFrozen = item.spawnFrozen ~= false,
         data = istable(item.data) and item.data or {},
+        -- Код 88: если задан — товар покупается как ПРЕДМЕТ инвентаря (мобильные).
+        -- Всегда строка (пустая если нет) — чтобы net.WriteTable передавал корректно
+        invItem = (item.invItem ~= nil and tostring(item.invItem) ~= "") and tostring(item.invItem) or "",
     }
 end
 
@@ -250,6 +359,26 @@ if SERVER then
         if not next(loaded) then
             loaded = defaultCatalog()
             writeJSON(CATALOG_FILE, loaded)
+        else
+            -- Mobile rewrite: мобильные товары авторитетны из кода, потому что
+            -- они жёстко связаны с item-id инвентаря, моделями ivancorn и лимитами.
+            -- Старые сохранённые каталоги могли содержать mobile_touch/mobile_smartphone
+            -- или старые модели — лечим при каждом старте.
+            local defs = defaultCatalog()
+            local changed = false
+            loaded.mobile_touch = nil
+            loaded.mobile_smartphone = nil
+            for id, item in pairs(defs) do
+                if item.invItem and item.invItem ~= "" then
+                    local oldItem = loaded[id]
+                    if not istable(oldItem) or oldItem.model ~= item.model or oldItem.invItem ~= item.invItem then changed = true end
+                    loaded[id] = table.Copy(item)
+                elseif loaded[id] == nil then
+                    loaded[id] = item
+                    changed = true
+                end
+            end
+            if changed then writeJSON(CATALOG_FILE, loaded) end
         end
         SHOP.Catalog = normalizeCatalog(loaded)
         return SHOP.Catalog
@@ -454,6 +583,9 @@ if SERVER then
         local item = SHOP.Catalog[itemID]
         if not item then return false, "Товар не найден." end
         if item.enabled == false then return false, "Товар отключён." end
+        if item.invItem and item.invItem ~= "" then
+            return false, "Мобильный покупается сразу — жмите «Купить»."
+        end
         if item.special and cfg().RequireAccessToBuySpecial ~= false and not hasAccessForSpecial(ply) then
             return false, "Нет доступа к покупке спецоборудования связи."
         end
@@ -464,6 +596,17 @@ if SERVER then
         local item = SHOP.Catalog[itemID]
         if not item then return false, "Товар не найден." end
         if item.enabled == false then return false, "Товар отключён." end
+        if item.invItem and item.invItem ~= "" then
+            -- Код 88: телефон — предмет инвентаря. Доступ к линии не нужен, лимит по штукам.
+            if not (GRM and GRM.Inventory and GRM.Inventory.AddItem) then
+                return false, "Модуль инвентаря не загружен."
+            end
+            local have = GRM.Inventory.CountItem and GRM.Inventory.CountItem(ply, item.invItem) or 0
+            if item.maxOwned > 0 and have >= item.maxOwned then
+                return false, "У вас уже максимум таких телефонов: " .. tostring(item.maxOwned)
+            end
+            return true
+        end
         if not playerHasAccess(ply, itemID) then return false, "Сначала купите доступ к этому оборудованию." end
         if item.special and cfg().RequireAccessToSpawnSpecial ~= false and not hasAccessForSpecial(ply) then
             return false, "Ваш доступ к спецоборудованию связи отозван."
@@ -478,7 +621,16 @@ if SERVER then
         local catalog = {}
         for id, item in pairs(SHOP.Catalog or {}) do
             catalog[id] = table.Copy(item)
-            catalog[id].purchased = playerHasAccess(ply, id)
+            local isInvItem = item.invItem and item.invItem ~= ""
+            local ownedInv = 0
+            if isInvItem and GRM and GRM.Inventory and GRM.Inventory.CountItem then
+                ownedInv = GRM.Inventory.CountItem(ply, item.invItem) or 0
+            end
+            catalog[id].ownedCount = ownedInv
+            catalog[id].ownedMax = tonumber(item.maxOwned) or 0
+            -- Для мобильных «purchased» означает «у игрока уже есть такой предмет в инвентаре».
+            -- Это переживает рестарт через grm_inventories.json и сразу видно в /phoneshop.
+            catalog[id].purchased = isInvItem and ownedInv > 0 or playerHasAccess(ply, id)
             catalog[id].canBuy, catalog[id].buyReason = canBuyAccess(ply, id)
             catalog[id].canSpawn, catalog[id].spawnReason = canSpawnItem(ply, id)
         end
@@ -519,9 +671,31 @@ if SERVER then
 
     net.Receive(NET_SPAWN, function(_, ply)
         local itemID = net.ReadString()
+        local item = SHOP.Catalog[itemID]
 
         local ok, reason = canSpawnItem(ply, itemID)
         if not ok then notify(ply, false, reason) return end
+
+        -- Код 88: мобильный телефон — покупка предмета в инвентарь, БЕЗ спавна в мир.
+        if item.invItem and item.invItem ~= "" then
+            local price = tonumber(item.price) or 0
+            if not canPay(ply, price) then
+                notify(ply, false, "Недостаточно средств. Нужно: " .. moneyName(price))
+                return
+            end
+            takeMoney(ply, price)
+            local instData = tostring(item.invItem or ""):find("mobile_", 1, true) == 1 and { active = false } or nil
+            local left = GRM.Inventory.AddItem(ply, item.invItem, 1, instData)
+            if (left or 1) > 0 then
+                giveMoney(ply, price) -- инвентарь переполнен — возврат денег
+                notify(ply, false, "Инвентарь переполнен. Деньги возвращены.")
+                return
+            end
+            notify(ply, true, "Куплено: " .. (item.name or itemID) .. " за " .. moneyName(price) .. ". Телефон в инвентаре.")
+            hook.Run("GRM_Mobile_Bought", ply, itemID)
+            sendShopData(ply)
+            return
+        end
 
         local ent, err = spawnEquipment(ply, itemID)
         if not IsValid(ent) then notify(ply, false, err or "Ошибка спавна.") return end
@@ -723,77 +897,129 @@ else
         net.SendToServer()
     end
 
+    local function rowPaint(item, id)
+        return function(_, w, h)
+            draw.RoundedBox(8, 0, 0, w, h, Color(32, 36, 48, 245))
+            draw.SimpleText(item.name or id, "DermaDefaultBold", 96, 18, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(item.desc or "", "DermaDefault", 96, 42, Color(185, 192, 205), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            local priceLabel = (item.invItem and item.invItem ~= "") and "Цена: " or "Цена доступа: "
+            draw.SimpleText(priceLabel .. moneyText(item.price or 0), "DermaDefaultBold", 96, 68, Color(110, 220, 130), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            if item.invItem and item.invItem ~= "" then
+                local have = tonumber(item.ownedCount or 0) or 0
+                local max = tonumber(item.ownedMax or item.maxOwned or 0) or 0
+                local ownText = max > 0 and ("У вас: " .. have .. " / " .. max) or ("У вас: " .. have)
+                local ownCol = have > 0 and Color(120, 230, 120) or Color(120, 200, 255)
+                draw.SimpleText("Мобильный телефон • предмет в /inv • использовать = открыть меню", "DermaDefault", 96, 88, Color(120, 200, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText(ownText, "DermaDefaultBold", w - 184, 92, ownCol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            else
+                draw.SimpleText(item.purchased and "Доступ куплен" or "Доступ не куплен", "DermaDefault", 96, 92, item.purchased and Color(120, 230, 120) or Color(255, 185, 85), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+        end
+    end
+
+    local function addShopRow(parent, id, item, frame)
+        local row = vgui.Create("DPanel", parent)
+        row:Dock(TOP)
+        row:SetTall(116)
+        row:DockMargin(0, 0, 0, 8)
+        row.Paint = rowPaint(item, id)
+
+        local icon = vgui.Create("SpawnIcon", row)
+        icon:SetModel(item.model or "models/props_junk/cardboard_box004a.mdl")
+        icon:SetSize(72, 72)
+        icon:SetPos(12, 18)
+        if icon.SetTooltip then icon:SetTooltip(item.model or "") end
+
+        local btn = vgui.Create("DButton", row)
+        btn:SetSize(150, 34)
+        btn:SetPos(480, 42)
+
+        if item.invItem and item.invItem ~= "" then
+            local have = tonumber(item.ownedCount or 0) or 0
+            local max = tonumber(item.ownedMax or item.maxOwned or 0) or 0
+            local atLimit = max > 0 and have >= max
+            if atLimit then
+                btn:SetText("Уже есть")
+                btn:SetEnabled(false)
+            else
+                btn:SetText(have > 0 and "Купить ещё" or "Купить")
+                btn:SetEnabled(item.canSpawn == true)
+            end
+            if btn.SetTooltip then
+                btn:SetTooltip(atLimit and "Лимит этих телефонов уже достигнут" or (item.canSpawn and "Телефон попадёт в инвентарь" or tostring(item.spawnReason or "")))
+            end
+            btn.DoClick = function()
+                spawnItem(id)
+                if IsValid(frame) then frame:Close() end
+            end
+        elseif item.purchased then
+            btn:SetText(item.canSpawn and "Поставить" or "Нет доступа")
+            btn:SetEnabled(item.canSpawn == true)
+            if btn.SetTooltip then btn:SetTooltip(item.canSpawn and "" or tostring(item.spawnReason or "")) end
+            btn.DoClick = function()
+                spawnItem(id)
+                if IsValid(frame) then frame:Close() end
+            end
+        else
+            btn:SetText(item.canBuy and "Купить доступ" or "Нет доступа")
+            btn:SetEnabled(item.canBuy == true)
+            if btn.SetTooltip then btn:SetTooltip(item.canBuy and "" or tostring(item.buyReason or "")) end
+            btn.DoClick = function()
+                buyAccess(id)
+                if IsValid(frame) then frame:Close() end
+            end
+        end
+    end
+
     net.Receive(NET_OPEN, function()
         local frame = vgui.Create("DFrame")
-        frame:SetTitle("GRM Shop — Телефонное оборудование")
-        frame:SetSize(660, 560)
+        frame:SetTitle("GRM PhoneShop — телефоны и связь")
+        frame:SetSize(720, 620)
         frame:Center()
         frame:MakePopup()
 
         local info = vgui.Create("DLabel", frame)
         info:Dock(TOP)
-        info:SetTall(30)
-        info:DockMargin(8, 4, 8, 0)
-        info:SetText("Ваше оборудование: " .. ownedCount .. " / " .. ownedMax)
-        info:SetTextColor(Color(220, 220, 230))
+        info:SetTall(32)
+        info:DockMargin(10, 6, 10, 0)
+        info:SetText("Оборудование на карте: " .. ownedCount .. " / " .. ownedMax .. "    •    Мобильные телефоны покупаются предметом в инвентарь")
+        info:SetTextColor(Color(220, 225, 235))
 
-        local scroll = vgui.Create("DScrollPanel", frame)
-        scroll:Dock(FILL)
-        scroll:DockMargin(8, 8, 8, 48)
+        local tabs = vgui.Create("DPropertySheet", frame)
+        tabs:Dock(FILL)
+        tabs:DockMargin(8, 8, 8, 46)
 
-        local sorted = {}
-        for id in pairs(shopData) do sorted[#sorted + 1] = id end
-        table.sort(sorted)
+        local mobilePanel = vgui.Create("DScrollPanel", tabs)
+        local equipPanel = vgui.Create("DScrollPanel", tabs)
+        tabs:AddSheet("Мобильные", mobilePanel, "icon16/phone.png")
+        tabs:AddSheet("Оборудование", equipPanel, "icon16/transmit.png")
 
-        for _, id in ipairs(sorted) do
-            local item = shopData[id]
+        local mobileIDs, equipIDs = {}, {}
+        for id, item in pairs(shopData) do
             if item.enabled ~= false then
-                local row = scroll:Add("DPanel")
-                row:Dock(TOP)
-                row:SetTall(104)
-                row:DockMargin(0, 0, 0, 6)
-
-                row.Paint = function(_, w, h)
-                    draw.RoundedBox(6, 0, 0, w, h, Color(34, 36, 44, 240))
-                    draw.SimpleText(item.name or id, "DermaDefaultBold", 12, 14, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    draw.SimpleText(item.desc or "", "DermaDefault", 12, 36, Color(180, 185, 195), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    draw.SimpleText("Цена доступа: " .. moneyText(item.price or 0), "DermaDefault", 12, 58, Color(120, 220, 120), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    draw.SimpleText(item.purchased and "Доступ куплен" or "Доступ не куплен", "DermaDefaultBold", 12, 80, item.purchased and Color(100, 220, 100) or Color(255, 180, 80), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                end
-
-                if item.purchased then
-                    local spawn = vgui.Create("DButton", row)
-                    spawn:SetPos(500, 20)
-                    spawn:SetSize(140, 30)
-                    spawn:SetText(item.canSpawn and "Поставить" or "Нет доступа")
-                    spawn:SetEnabled(item.canSpawn == true)
-                    spawn.DoClick = function()
-                        spawnItem(id)
-                        frame:Close()
-                    end
+                if item.invItem and item.invItem ~= "" and tostring(item.invItem):find("mobile_", 1, true) == 1 then
+                    mobileIDs[#mobileIDs + 1] = id
                 else
-                    local buy = vgui.Create("DButton", row)
-                    buy:SetPos(500, 20)
-                    buy:SetSize(140, 30)
-                    buy:SetText(item.canBuy and "Купить доступ" or "Нет доступа")
-                    buy:SetEnabled(item.canBuy == true)
-                    buy.DoClick = function()
-                        buyAccess(id)
-                        frame:Close()
-                    end
+                    equipIDs[#equipIDs + 1] = id
                 end
             end
         end
+        local order = { mobile_crappy=1, mobile_badger=2, mobile_badger_touch=3, mobile_lost=4, mobile_tinkle=5, mobile_whiz_high=6, mobile_whiz_gold=7 }
+        table.sort(mobileIDs, function(a,b) return (order[a] or 99) < (order[b] or 99) end)
+        table.sort(equipIDs)
+
+        for _, id in ipairs(mobileIDs) do addShopRow(mobilePanel, id, shopData[id], frame) end
+        for _, id in ipairs(equipIDs) do addShopRow(equipPanel, id, shopData[id], frame) end
 
         local remove = vgui.Create("DButton", frame)
         remove:Dock(BOTTOM)
         remove:SetTall(34)
         remove:DockMargin(8, 4, 8, 8)
-        remove:SetText("Убрать ближайшее моё оборудование")
+        remove:SetText("Убрать ближайшее моё стационарное оборудование")
         remove.DoClick = function()
             Derma_Query("Убрать ближайшее ваше телефонное оборудование?", "Телефония", "Убрать", function()
                 removeOwned()
-                frame:Close()
+                if IsValid(frame) then frame:Close() end
             end, "Отмена")
         end
     end)

@@ -1,0 +1,4 @@
+.luabuild/
+tools/luatest/data/
+grm/
+dop.addons/

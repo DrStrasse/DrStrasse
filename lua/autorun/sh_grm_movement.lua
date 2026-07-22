@@ -55,25 +55,29 @@ if SERVER then
 
     timer.Create("GRM_StaminaTick", 0.1, 0, function()
         for _, ply in ipairs(player.GetAll()) do
-            if not IsValid(ply) then continue end
-            local data = getPlayerData(ply)
-            local isRunning = ply:KeyDown(IN_SPEED) and ply:GetVelocity():Length2D() > 50
-            local isOnGround = ply:IsOnGround()
+            if IsValid(ply) and not ply:InVehicle() then
+                local data = getPlayerData(ply)
+                local isRunning = ply:KeyDown(IN_SPEED) and ply:GetVelocity():Length2D() > 50
+                local isOnGround = ply:IsOnGround()
 
-            if isRunning and isOnGround then
-                data.stamina = math.max(0, data.stamina - GRM.Movement.Config.StaminaDrain * 0.1)
-            else
-                if isOnGround then
-                    data.stamina = math.min(GRM.Movement.Config.StaminaMax, data.stamina + GRM.Movement.Config.StaminaRegen * 0.1)
+                if isRunning and isOnGround then
+                    data.stamina = math.max(0, data.stamina - GRM.Movement.Config.StaminaDrain * 0.1)
+                else
+                    if isOnGround then
+                        data.stamina = math.min(GRM.Movement.Config.StaminaMax, data.stamina + GRM.Movement.Config.StaminaRegen * 0.1)
+                    end
                 end
-            end
 
-            syncStamina(ply)
+                syncStamina(ply)
+            end
         end
     end)
 
     hook.Add("Move", "GRM_Movement_Move", function(ply, mv)
         if not IsValid(ply) then return end
+        -- В транспорте стамина не влияет на скорость
+        if ply:InVehicle() then return end
+        
         local data = getPlayerData(ply)
         local isOnGround = ply:IsOnGround()
         local isRunning = ply:KeyDown(IN_SPEED)
@@ -132,6 +136,7 @@ end
 -- КЛИЕНТ
 -- ============================================================
 if CLIENT then
+    CreateClientConVar("grm_cl_staminahud", "1", true, false) -- F4 → Настройки
     GRM.LocalStamina = GRM.LocalStamina or GRM.Movement.Config.StaminaMax
 
     local breathSound = nil
@@ -211,6 +216,8 @@ if CLIENT then
 
     -- Полоса выносливости (центр снизу, над HUD)
     hook.Add("HUDPaint", "GRM_Movement_StaminaHUD", function()
+        local cv = GetConVar("grm_cl_staminahud")
+        if cv and cv:GetInt() == 0 then return end
         local ply = LocalPlayer()
         if not IsValid(ply) or not ply:Alive() then return end
         local stamina = GRM.LocalStamina or 0

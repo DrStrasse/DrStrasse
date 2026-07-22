@@ -15,6 +15,77 @@ surface.CreateFont("GRML_Small",{font="Roboto",size=12,weight=400,extended=true}
 
 local CUI={bg=Color(20,25,34,248),panel=Color(34,43,57,245),accent=Color(70,155,255),green=Color(55,185,105),red=Color(205,70,65),yellow=Color(235,180,60),text=Color(240,244,250),dim=Color(165,175,190)}
 
+-- ========== СТИЛИЗАЦИЯ DERMA-ЭЛЕМЕНТОВ (тёмная тема HUD v10.2) ==========
+local inputBg   = Color(25, 30, 40, 240)
+local inputBgH  = Color(30, 38, 52, 245)
+local inputText = Color(220, 225, 235)
+local inputBorder = Color(60, 70, 85, 200)
+
+-- DTextEntry / DNumberWang — тёмные поля ввода
+local DTextEntryCT = vgui.GetControlTable("DTextEntry")
+if DTextEntryCT and DTextEntryCT.Paint then
+    local oldDEPaint = DTextEntryCT.Paint
+    DTextEntryCT.Paint = function(self, w, h)
+        if self.__grml_skinned then return oldDEPaint(self, w, h) end
+        local bg = self:IsHovered() and inputBgH or inputBg
+        draw.RoundedBox(4, 0, 0, w, h, bg)
+        surface.SetDrawColor(inputBorder)
+        surface.DrawOutlinedRect(0, 0, w, h, 1)
+        self:DrawTextEntryText(inputText, CUI.accent, CUI.text)
+    end
+end
+
+-- DComboBox — тёмный выпадающий список
+local DComboBoxCT = vgui.GetControlTable("DComboBox")
+if DComboBoxCT and DComboBoxCT.Paint then
+    local oldDCPaint = DComboBoxCT.Paint
+    DComboBoxCT.Paint = function(self, w, h)
+        if self.__grml_skinned then return oldDCPaint(self, w, h) end
+        local bg = self:IsHovered() and inputBgH or inputBg
+        draw.RoundedBox(4, 0, 0, w, h, bg)
+        surface.SetDrawColor(inputBorder)
+        surface.DrawOutlinedRect(0, 0, w, h, 1)
+    end
+end
+-- Меню DComboBox
+local DMenuCT = vgui.GetControlTable("DMenu")
+if DMenuCT and DMenuCT.PaintBackground then
+    local oldDMenuPaint = DMenuCT.PaintBackground
+    DMenuCT.PaintBackground = function(self, w, h)
+        draw.RoundedBox(4, 0, 0, w, h, Color(30, 38, 52, 250))
+    end
+end
+
+-- DListView — тёмная таблица
+local DListViewCT = vgui.GetControlTable("DListView")
+if DListViewCT and DListViewCT.Paint then
+    local oldDLVPaint = DListViewCT.Paint
+    DListViewCT.Paint = function(self, w, h)
+        if self.__grml_skinned then return oldDLVPaint(self, w, h) end
+        draw.RoundedBox(4, 0, 0, w, h, inputBg)
+    end
+end
+-- Заголовки DListView
+local DListView_Line = vgui.GetControlTable("DListView_Line")
+if DListView_Line and DListView_Line.Paint then
+    DListView_Line.Paint = function(self, w, h)
+        if self:IsLineSelected() then
+            draw.RoundedBox(2, 0, 0, w, h, Color(70, 100, 160, 200))
+        elseif self.m_bSelected then
+            draw.RoundedBox(2, 0, 0, w, h, Color(50, 70, 120, 160))
+        end
+        self:DrawBackground(w, h)
+    end
+end
+
+-- DLabel — прозрачный фон по умолчанию
+local DLabelCT = vgui.GetControlTable("DLabel")
+if DLabelCT then
+    DLabelCT.PaintBackground = function(self, w, h)
+        -- Прозрачный фон
+    end
+end
+
 local route={active=false}
 
 local function note(s,ok) notification.AddLegacy(s,ok and NOTIFY_GENERIC or NOTIFY_ERROR,4) end
@@ -24,7 +95,6 @@ local function f(title,w,h) local x=vgui.Create("DFrame");x:SetTitle("");x:SetSi
 local function b(p,t,c,w,h) local x=vgui.Create("DButton",p);x:SetText(t);x:SetFont("GRML_Normal");x:SetTextColor(color_white);if w then x:SetWide(w) end;if h then x:SetTall(h) end;x.Paint=function(s,pw,ph)local col=s:IsHovered() and Color(math.min(c.r+20,255),math.min(c.g+20,255),math.min(c.b+20,255))or c;draw.RoundedBox(5,0,0,pw,ph,col)end;return x end
 
 local function act(a,e,wr)
-    -- admin_open и crate_list не относятся к конкретной entity.
     if not IsValid(e) and a~="admin_open" and a~="crate_list" and a~="admin_access" then return end
     net.Start(N.action)
         net.WriteString(a)
@@ -48,7 +118,19 @@ net.Receive(N.routeSync,function()
 end)
 
 net.Receive(N.routeMenu,function()
-    local truck=net.ReadEntity();local loads=net.ReadTable()or{};local wh=net.ReadTable()or{};local x=f("Начать логистический рейс",560,330)
+    local truck=net.ReadEntity();local loads=net.ReadTable()or{};local wh=net.ReadTable()or{}
+    -- пустая инфраструктура — главный тихий фейл «меню не открылось/нечего выбрать»
+    if #loads==0 or #wh==0 then
+        local x=f("Начать логистический рейс",560,330)
+        local d=vgui.Create("DLabel",x);d:SetPos(20,70);d:SetSize(520,200);d:SetFont("GRML_Normal");d:SetTextColor(CUI.dim)
+        d:SetWrap(true);d:SetAutoStretchVertical(true)
+        d:SetText("Логистика на этой карте не развёрнута:\n"
+            .. (#loads==0 and "• нет ни одной ТОЧКИ ПОГРУЗКИ (суперадмин: grm_logistics_place_loading)\n" or "")
+            .. (#wh==0 and "• нет ни одного СКЛАДА фракции (суперадмин: grm_logistics_place_warehouse <фракция> MAIN)\n" or "")
+            .. "\nПосле установки откройте меню снова: /logistics_start")
+        return
+    end
+    local x=f("Начать логистический рейс",560,330)
 
     local lc=vgui.Create("DComboBox",x);lc:SetPos(20,65);lc:SetSize(520,30);lc:SetValue("Точка погрузки")
     for _,v in ipairs(loads)do lc:AddChoice(v.name,v.id)end
@@ -63,7 +145,6 @@ net.Receive(N.loading,function()
     local point=net.ReadEntity();local d=net.ReadTable()or{};local x=f("Комплектация груза",700,470)
     local tabs=vgui.Create("DPropertySheet",x);tabs:Dock(FILL);tabs:DockMargin(8,44,8,52)
 
-    -- Всегда видимая кнопка выдаёт пустой ящик сразу в руки.
     local empty=b(x,"Получить пустой ящик в руки",CUI.accent,280,34);empty:SetPos(8,428)
     empty.DoClick=function()act("loading_empty_crate",point);x:Close()end
 
@@ -127,7 +208,6 @@ net.Receive(N.warehouse,function()
     local tabs=vgui.Create("DPropertySheet",x);tabs:Dock(FILL);tabs:DockMargin(6,42,6,6)
     local stock=vgui.Create("DPanel",tabs);stock:SetPaintBackground(false);openStockPanel(stock,d.stock,e,"warehouse_take","Достать");tabs:AddSheet("Запасы",stock,"icon16/briefcase.png")
 
-    -- Главная настройка именно склада: фракция и Network ID.
     local setup=vgui.Create("DPanel",tabs);setup:SetPaintBackground(false)
     local hint=vgui.Create("DLabel",setup);hint:SetPos(14,12);hint:SetSize(600,38);hint:SetWrap(true);hint:SetText("Сначала настройте этот склад: выберите фракцию и задайте Network ID. Затем связывайте с ним оружейные шкафы.");hint:SetFont("GRML_Small");hint:SetTextColor(CUI.dim)
 
@@ -151,8 +231,6 @@ net.Receive(N.warehouse,function()
     end
     tabs:AddSheet("Настройка склада",setup,"icon16/cog.png")
 
-    -- Связь со шкафами: кнопки находятся внизу вкладки через Dock,
-    -- поэтому не пропадают на любом разрешении и Derma-скине.
     local links=vgui.Create("DPanel",tabs);links:SetPaintBackground(false)
     local actionBar=vgui.Create("DPanel",links);actionBar:Dock(BOTTOM);actionBar:SetTall(42);actionBar:DockMargin(8,2,8,4);actionBar.Paint=function(_,w,h)draw.RoundedBox(5,0,0,w,h,CUI.panel)end
     local hint2=vgui.Create("DLabel",links);hint2:Dock(TOP);hint2:SetTall(44);hint2:DockMargin(8,6,8,2);hint2:SetWrap(true);hint2:SetText("Сканирование показывает шкафы на карте. Выберите шкаф и нажмите «Связать выбранный». Шкаф автоматически получит фракцию и Network ID склада.");hint2:SetFont("GRML_Small");hint2:SetTextColor(CUI.dim)
@@ -167,7 +245,44 @@ end)
 net.Receive(N.armory,function()
     local e=net.ReadEntity();local d=net.ReadTable()or{};local x=f("Арсенал фракции",620,510);local tabs=vgui.Create("DPropertySheet",x);tabs:Dock(FILL);tabs:DockMargin(6,42,6,6)
 
-    local own=vgui.Create("DPanel",tabs);own:SetPaintBackground(false);openStockPanel(own,d.stock,e,"armory_take","Достать");tabs:AddSheet("В шкафу",own,"icon16/briefcase.png")
+    local own=vgui.Create("DPanel",tabs);own:SetPaintBackground(false);openStockPanel(own,d.stock,e,"armory_take","Достать из шкафа");tabs:AddSheet("В шкафу",own,"icon16/briefcase.png")
+
+    -- Вкладка: Положить оружие / предметы в шкаф
+    local depositPnl=vgui.Create("DPanel",tabs);depositPnl:SetPaintBackground(false)
+    local topBar=vgui.Create("DPanel",depositPnl);topBar:Dock(TOP);topBar:SetTall(42);topBar:DockMargin(4,4,4,4);topBar.Paint=function(_,w,h)draw.RoundedBox(5,0,0,w,h,CUI.panel)end
+
+    local bDepActive=b(topBar,"Положить активное оружие из рук",CUI.green,320,32)
+    bDepActive:SetPos(5,5)
+    bDepActive.DoClick=function()
+        act("armory_deposit_active",e)
+        x:Close()
+    end
+
+    local depLV=vgui.Create("DListView",depositPnl);depLV:Dock(FILL);depLV:DockMargin(4,2,4,44);depLV:SetMultiSelect(false);depLV:AddColumn("Категория");depLV:AddColumn("Название");depLV:AddColumn("Количество")
+
+    for _,w in ipairs(d.myWeapons or {}) do
+        local q=depLV:AddLine("Оружие",w.name or w.class,"1")
+        q.K="weapon"; q.ID=w.class; q.Count=1
+    end
+    for _,it in ipairs(d.myItems or {}) do
+        local q=depLV:AddLine(it.type=="ammo" and "Патроны" or "Предмет",it.name or it.id,tostring(it.count or 1))
+        q.K=it.type=="ammo" and "ammo" or "material"; q.ID=it.id; q.Count=it.count or 1
+    end
+
+    local bDepSel=b(depositPnl,"Положить выбранное в шкаф",CUI.accent,240,34);bDepSel:SetPos(4,390)
+    bDepSel.DoClick=function()
+        local i=depLV:GetSelectedLine();local q=i and depLV:GetLine(i)
+        if not IsValid(q) then note("Выберите оружие или предмет из списка",false) return end
+        act("armory_deposit",e,function()
+            net.WriteString(q.K)
+            net.WriteString(q.ID)
+            net.WriteUInt(1,12)
+        end)
+        x:Close()
+    end
+
+    tabs:AddSheet("Положить",depositPnl,"icon16/add.png")
+
     local supply=vgui.Create("DPanel",tabs);supply:SetPaintBackground(false);openStockPanel(supply,d.supply,e,"armory_request","Запросить со склада");tabs:AddSheet("Запросить",supply,"icon16/arrow_down.png")
 
     if d.admin then
@@ -203,7 +318,7 @@ net.Receive(N.admin,function()
     for _,name in ipairs(d.factions or{})do
         pending[name]=d.access and d.access[name] or false
         local row=vgui.Create("DPanel",scroll);row:Dock(TOP);row:SetTall(34);row:DockMargin(0,0,0,4);row.Paint=function(_,w,h)draw.RoundedBox(4,0,0,w,h,CUI.panel)end
-        local c=vgui.Create("DCheckBoxLabel",row);c:Dock(FILL);c:DockMargin(10,0,0,0);c:SetText(name);c:SetFont("GRML_Normal");c:SetTextColor(CUI.text);c:SetValue(pending[name] and 1 or 0)
+        local c=c or vgui.Create("DCheckBoxLabel",row);c:Dock(FILL);c:DockMargin(10,0,0,0);c:SetText(name);c:SetFont("GRML_Normal");c:SetTextColor(CUI.text);c:SetValue(pending[name] and 1 or 0)
         c.OnChange=function(_,v) pending[name]=v and true or false end
     end
 
@@ -216,8 +331,6 @@ end)
 
 concommand.Add("grm_logistics_admin_menu",function() act("admin_open",NULL) end)
 
--- Добавляет вкладку «Логистика» в уже открытое /factions меню без
--- изменения исходного файла фракций.
 local function findSheet(panel)
     if not IsValid(panel) then return nil end
     if panel.ClassName=="DPropertySheet" then return panel end
@@ -235,7 +348,6 @@ timer.Create("GRML_FactionsMenuTab",0.7,0,function()
     sheet:AddSheet("Логистика",panel,"icon16/lorry.png")
 end)
 
--- Подписи логистических entity: склад, шкаф и точка погрузки.
 hook.Add("HUDPaint","GRML_EntityLabels",function()
     local ply=LocalPlayer();if not IsValid(ply) then return end
 
@@ -257,7 +369,6 @@ hook.Add("HUDPaint","GRML_EntityLabels",function()
         end
     end
 
-    -- Подсказка над ящиками, лежащими на земле.
     for _,crate in ipairs(ents.FindByClass("grm_logistics_crate"))do
         if IsValid(crate) and not IsValid(crate:GetParent()) and ply:GetPos():DistToSqr(crate:GetPos())<=500*500 then
             local kind=crate:GetCargoKind()

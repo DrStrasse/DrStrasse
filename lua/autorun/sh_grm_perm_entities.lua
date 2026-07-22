@@ -1,9 +1,25 @@
 --[[--------------------------------------------------------------------
-    GRM Perm Entities v1.1.0 (Код 50)
-    «Пермы» для разворачиваемых энтити GRM: банкомат (grm_bank_terminal),
-    таксофон, АТС, телефонный терминал, прослушка, телефон.
-    Админ наводит прицел -> команда -> энтити переживает рестарт карты
-    и cleanup-кнопку.
+    GRM Perm Entities v1.2.0 (Код 50/Код 89)
+    «Пермы» для разворачиваемых энтити GRM: банкомат, таксофон, АТС,
+    телефоны, CCTV-камера/монитор/сервер, сигнализация (сенсор/хаб/терминал/
+    динамик), кейпад, RoomTap (чип/сервер/терминал), рудный узел/скупщик,
+    дилер транспорта. Админ наводит прицел -> команда -> энтити
+    переживает рестарт карты и cleanup-кнопку.
+
+    Код 89 (находка 106): «все энтити всех модулей перманентно».
+      Добавлены классы: grm_alarm_speaker, grm_keypad, grm_roomtap_chip,
+      grm_roomtap_server, grm_roomtap_terminal, grm_ore_node, grm_ore_buyer,
+      sent_vehicle_dealer. Лимит 64 -> 256.
+      НЕ добавляются (у них и так авто-персистент Код 88.4, двойной
+      сейв дал бы дубли): grm_server_rack, grm_antenna, grm_radio_station,
+      grm_net_console, grm_loudspeaker. grm_radio/grm_broadcast_mic
+      тоже автоперсистентны, оставлены здесь лишь для совместимости
+      со старыми базами.
+      НЕ добавляются (свой сейв карты со стоком, Код 90):
+      grm_logistics_loading, grm_logistics_warehouse, grm_logistics_armory.
+      НЕ добавляются (временные по смыслу): grm_item_drop, grm_money_drop,
+      grm_ore_chunk (батч-дропы), grm_mobile_line (виртуальная станция),
+      grm_logistics_crate (транспортный ящик).
 
     Хранилище: data/grm_perm_entities.json — МАССИВ записей
     {map, class, model, pos={x,y,z}, ang={p,y,r}}.
@@ -16,18 +32,33 @@
       консоль: grm_perm_add  grm_perm_remove  grm_perm_list  grm_perm_load
       /permload — немедленная загрузка из файла (без рестарта); антидубль:
       на занятое место (тот же класс в радиусе 6 юнитов) второй не ставится.
-    Рамки: не больше 64 пермов на карту; дедуп по классу+точке (6 юнитов);
+    Рамки: не больше 256 пермов на карту; дедуп по классу+точке (6 юнитов);
     воскрешённые энтити заморожены (EnableMotion(false)).
 ----------------------------------------------------------------------]]
 
-local PERM_VER = "1.1.0"
+-- Код 108: кейпад/сканер несут в rec.data ещё и links — ручные связи
+-- с FFD-дверями (sh_grm_ffdlink.lua / инструмент FFD Link); связи
+-- разрешаются обратно в энтити по классу+позиции (сфера 15 юнитов).
+-- Код 110: перм агрегатов кухни (плита/холодильник/горшок) — состояние
+-- (лоток плиты, содержимое холодильника, посадка) едет в rec.data
+-- через GRM.PermData-делегаты sh_grm_food_kitchen.lua.
+local PERM_VER = "1.5.0"
 GRM = GRM or {}
 GRM._permEntitiesVer = PERM_VER
 
+-- Код 105 (находка 122): перм с ДАННЫМИ экземпляра. Модули регистрируют
+-- GRM.PermData.Extract[class] = fn(ent) -> таблица-данные (или nil) и
+-- GRM.PermData.Apply[class] = fn(ent, data). /permadd складывает их в
+-- rec.data, спавн после рестарта разворачивает обратно — кейпад
+-- восстаёт со своим PIN/режимом/фракциями, FFD-дверь — рабочей дверью.
+GRM.PermData = GRM.PermData or { Extract = {}, Apply = {} }
+GRM.PermData.Extract = GRM.PermData.Extract or {}
+GRM.PermData.Apply = GRM.PermData.Apply or {}
+
 if SERVER then
     local PERM_FILE  = "grm_perm_entities.json"
-    local PERM_MAX   = 64 -- лимит пермов на карту
-    local PERM_RANGE = 6  -- юнитов: дедуп при добавлении / поиск при снятии
+    local PERM_MAX   = 256 -- Код 89: лимит пермов на карту (было 64)
+    local PERM_RANGE = 6   -- юнитов: дедуп при добавлении / поиск при снятии
 
     -- классы, которым разрешён перм (расширяется здесь)
     local PERM_CLASSES = {
@@ -37,6 +68,55 @@ if SERVER then
         grm_phone_terminal = true,
         grm_phone_wiretap  = true,
         grm_phone          = true,
+        -- ВАЖНО: CCTV НЕ здесь! У него своя система сохранения (CCTV.SavePermanent)
+        grm_wardrobe       = true,
+        -- Broadcast-классы автоперсистентны (Код 88.4) — тут лишь для совместимости со старыми базами
+        grm_radio          = true,
+        grm_broadcast_mic  = true,
+        grm_board          = true,
+        -- Биржа труда (Код 77) — модуль и сам автоперсистентен, классы тут для /permadd-совместимости
+        grm_jobcenter      = true,
+        grm_depot          = true,
+        -- Охранная сигнализация (Код 62/Код 89)
+        grm_alarm_sensor   = true,
+        grm_alarm_hub      = true,
+        grm_alarm_terminal = true,
+        grm_alarm_speaker  = true, -- Код 89
+        -- Кейпад прохода (Код 70/Код 89) и сканер фракций (Код 107)
+        grm_keypad         = true,
+        grm_scanner        = true,
+        -- Кухня «GrandEats» (Код 110): плита, холодильник, горшок
+        grm_food_stove     = true,
+        grm_food_fridge    = true,
+        grm_food_planter   = true,
+        -- Код 105: prop_physics допускаем именно ради FFD-дверей
+        -- (владелец пермит двери; рабочее состояние восстанавливает
+        -- GRM.PermData.Apply["prop_physics"] из стула FFD Fading Door)
+        prop_physics       = true,
+        -- RoomTap: комнатная прослушка (Код 72/Код 89)
+        grm_roomtap_chip     = true,
+        grm_roomtap_server   = true,
+        grm_roomtap_terminal = true,
+        -- GRM Vendor / Торгаш (Код 111)
+        grm_vendor           = true,
+        -- Денежный принтер (Код 115)
+        grm_money_printer    = true,
+        -- Лаборатории (Код 120)
+        grm_narc_lab         = true,
+        grm_med_lab          = true,
+        -- GRM Logistics: склады, шкафы, точки погрузки (Код 112)
+        grm_logistics_loading   = true,
+        grm_logistics_warehouse = true,
+        grm_logistics_armory    = true,
+        grm_logistics_crate     = true,
+        -- ВАЖНО: CCTV (grm_cctv_camera/monitor/server) НЕ в PERM_CLASSES!
+        -- У CCTV своя система сохранения через CCTV.SavePermanent/LoadPermanent
+        -- (grm_cctv/<map>.json). Добавление сюда создаёт дубликаты.
+        -- Рудная ветка (Код 89)
+        grm_ore_node       = true,
+        grm_ore_buyer      = true,
+        -- Дилер транспорта (Код 89)
+        sent_vehicle_dealer = true,
     }
 
     -- JSON только без конверсии ключей (находка 65)
@@ -144,6 +224,13 @@ if SERVER then
                         local ph = ent:GetPhysicsObject()
                         if IsValid(ph) then ph:EnableMotion(false) end -- перм не катается по карте
                         ent._grmPerm = true
+                        -- Код 105: данные экземпляра обратно (PIN кейпада,
+                        -- конфиг FFD-двери и т.п.) — после Spawn, чтобы
+                        -- NetworkVar'ы уже существовали
+                        local applyFn = GRM.PermData and GRM.PermData.Apply and GRM.PermData.Apply[rec.class]
+                        if istable(rec.data) and applyFn then
+                            pcall(applyFn, ent, rec.data)
+                        end
                         done = done + 1
                     else
                         print("[GRM Perm][!] Не удалось создать класс " .. tostring(rec.class) .. " — запись пропущена")
@@ -194,11 +281,18 @@ if SERVER then
         local ang = ent:GetAngles()
         local model = ""
         pcall(function() model = tostring(ent:GetModel() or "") end)
-        list[#list + 1] = {
+        local rec = {
             map = map, class = class, model = model,
             pos = np,
             ang = { p = ang.p, y = ang.y, r = ang.r },
         }
+        -- Код 105: данные экземпляра (PIN кейпада, конфиг двери и т.п.)
+        local extractFn = GRM.PermData and GRM.PermData.Extract and GRM.PermData.Extract[class]
+        if extractFn then
+            local okX, data = pcall(extractFn, ent)
+            if okX and istable(data) then rec.data = data end
+        end
+        list[#list + 1] = rec
         if saveList(list) then
             tell(ply, "[ПЕРМ] " .. class .. " закреплён на карте. Переживёт рестарт и cleanup.", 100, 220, 100)
             print(("[GRM Perm] %s (%s) закрепил %s @ %d %d %d"):format(ply:Nick(), ply:SteamID64() or "?", class, np.x, np.y, np.z))
@@ -277,6 +371,20 @@ if SERVER then
         else listPerm(ply) end
         return ""
     end)
+
+    -- Делегаты для логистических entity (Код 112)
+    -- GRM.PermData.Extract[class] = fn(ent) -> таблица
+    -- GRM.PermData.Apply[class]   = fn(ent, data)
+    for _, class in ipairs({"grm_logistics_loading", "grm_logistics_warehouse", "grm_logistics_armory"}) do
+        GRM.PermData.Extract[class] = function(ent)
+            if not IsValid(ent) or not ent.GetPermData then return nil end
+            return ent:GetPermData()
+        end
+        GRM.PermData.Apply[class] = function(ent, data)
+            if not IsValid(ent) or not ent.ApplyPermData then return end
+            ent:ApplyPermData(data)
+        end
+    end
 
     print(("[GRM Perm] Perm Entities v%s загружен (путь: %s, база: data/%s)")
         :format(PERM_VER, tostring(debug.getinfo(1, "S").short_src), PERM_FILE))

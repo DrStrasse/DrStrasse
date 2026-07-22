@@ -25,8 +25,13 @@ L.Access, L.Warehouses, L.Armories, L.Routes, L.InventoryCrates = L.Access or {}
 
 local EQUIP = { grm_logistics_loading=true, grm_logistics_warehouse=true, grm_logistics_armory=true }
 
+local function jsonT(txt)
+    local ok, t = pcall(util.JSONToTable, txt, false, true)
+    return (ok and istable(t)) and t or nil
+end
+
 local function ensure() if not file.Exists(DIR,"DATA") then file.CreateDir(DIR) end if not file.Exists(MAPDIR,"DATA") then file.CreateDir(MAPDIR) end end
-local function read(path, fallback) local raw=file.Exists(path,"DATA") and file.Read(path,"DATA") or ""; local ok,t=pcall(util.JSONToTable,raw); return ok and istable(t) and t or table.Copy(fallback or {}) end
+local function read(path, fallback) local raw=file.Exists(path,"DATA") and file.Read(path,"DATA") or ""; local t=jsonT(raw); return t and t or table.Copy(fallback or {}) end
 local function write(path,t) ensure(); file.Write(path,util.TableToJSON(t or {},true)) end
 local function vec(v) return {x=v.x,y=v.y,z=v.z} end
 local function ang(a) return {p=a.p,y=a.y,r=a.r} end
@@ -45,6 +50,16 @@ L.InventoryCrates = read(CRATEFILE,{})
 
 local function saveAccess() write(ACCESSFILE,L.Access) end
 local function saveCrates() write(CRATEFILE,L.InventoryCrates) end
+
+-- Код 90: автосейв карты-точек дебаунсом 1с. Склад/оружейная меняют сток
+-- через addStock/takeStock без немедленной записи — до ShutDown сток жил
+-- только в памяти; краш/смена карты между кликом и шатдауном = сток терялся.
+-- Серия депозитов перезапускает таймер, диск не дёргается.
+local function saveSoon()
+    timer.Create("GRM_Logistics_SaveSoon",1,1,function()
+        if L.SaveMap then L.SaveMap(nil) end
+    end)
+end
 
 local function factionOf(p)
     if not IsValid(p) or not istable(Factions) then return nil,nil end
@@ -74,8 +89,6 @@ local function addCrateToken(p,crateID)
     local inv=GRM.Inventory.GetPlayerInv(p); local empty
     for i=1,GRM.Inventory.Config.MaxSlots do if not inv.slots[i] or not inv.slots[i].id then empty=i break end end
     if not empty then return false end
-    -- ownerSteam сохраняется в ItemData, чтобы выброшенный token можно было
-    -- превратить обратно в настоящий грузовой ящик на земле.
     inv.slots[empty]={id="logistics_crate",count=1,data={crateID=crateID,ownerSteam=sid(p)}}
     GRM.Inventory.SyncSlot(p,empty); return true
 end
@@ -92,8 +105,6 @@ local function normalizeStoreData(x)
     x.stock.weapons=x.stock.weapons or {}
     x.stock.items=x.stock.items or {}
     x.capacity=x.capacity or {}
-    -- Старые сохранения могли иметь пустую таблицу capacity. Заполняем
-    -- все отсутствующие категории значениями из конфига.
     for key,value in pairs(C.Capacity or {}) do
         if x.capacity[key]==nil then x.capacity[key]=value end
     end
@@ -113,17 +124,40 @@ local function armoryData(e)
     return x
 end
 
+-- Публичные API для PERM-DATA (Код 112)
+function L.GetWarehouseData(e) return warehouseData(e) end
+function L.GetArmoryData(e) return armoryData(e) end
+function L.RestoreWarehouseData(e, data)
+    if not (istable(data) and IsValid(e)) then return end
+    local lid = e:GetLogisticsID()
+    if lid == "" then return end
+    L.Warehouses[lid] = normalizeStoreData(data)
+end
+function L.RestoreArmoryData(e, data)
+    if not (istable(data) and IsValid(e)) then return end
+    local lid = e:GetLogisticsID()
+    if lid == "" then return end
+    L.Armories[lid] = normalizeStoreData(data)
+end
+
 local function used(t) local n=0 for _,v in pairs(t or {}) do n=n+(tonumber(v)or 0) end return n end
 local function category(kind,id) if kind=="weapon" then return "weapons" end if kind=="ammo" then return "ammo" end if id=="item_repair_kit" then return "repair" end if id=="item_healthkit" or id=="item_battery" then return "medical" end return "materials" end
 
 local function addStock(data,kind,item,n)
     local cat=category(kind,item); local target=kind=="weapon" and data.stock.weapons or data.stock.items
-    local cap=tonumber(data.capacity[cat]) or 0; local current=used(kind=="weapon" and data.stock.weapons or data.stock.items)
+    local cap=tonumber(data.capacity[cat]) or 0; local current=used(target)
     if current+n>cap then return false end
-    target[item]=(tonumber(target[item])or 0)+n; return true
+    target[item]=(tonumber(target[item])or 0)+n; saveSoon(); return true
 end
 
-local function takeStock(data,kind,item,n) local target=kind=="weapon" and data.stock.weapons or data.stock.items; if (tonumber(target[item])or 0)<n then return false end target[item]=target[item]-n if target[item]<=0 then target[item]=nil end return true end
+local function takeStock(data,kind,item,n)
+    local target=kind=="weapon" and data.stock.weapons or data.stock.items
+    if (tonumber(target[item])or 0)<n then return false end
+    target[item]=target[item]-n
+    if target[item]<=0 then target[item]=nil end
+    saveSoon() -- Код 90
+    return true
+end
 
 local function setLoadingVisual(point, active)
     if not IsValid(point) then return end
@@ -143,12 +177,11 @@ function L.InitializeEntity(e)
         local seq=e:SelectWeightedSequence(ACT_IDLE)
         if seq and seq>=0 then e:ResetSequence(seq); e:SetPlaybackRate(1); e:SetCycle(0) end
     elseif kind=="loading" then
-        -- Маркер не блокирует игроков/машины, но остаётся доступным по E.
         e:SetSolid(SOLID_BBOX)
         e:SetMoveType(MOVETYPE_NONE)
         e:SetCollisionGroup(COLLISION_GROUP_DEBRIS_TRIGGER)
         e:SetCollisionBounds(Vector(-42,-42,0),Vector(42,42,90))
-        setLoadingVisual(e, false) -- пока рейс не прибыл, маркер полностью прозрачен
+        setLoadingVisual(e, false)
     else e:PhysicsInit(SOLID_VPHYSICS); e:SetMoveType(MOVETYPE_VPHYSICS); e:SetSolid(SOLID_VPHYSICS) end
 
     e:SetUseType(SIMPLE_USE)
@@ -163,12 +196,21 @@ end
 local function listLoading() local out={} for _,e in ipairs(ents.FindByClass("grm_logistics_loading")) do out[#out+1]={id=e:GetLogisticsID(),name=e:GetPointName(),ent=e} end return out end
 local function listWarehouses() local out={} for _,e in ipairs(ents.FindByClass("grm_logistics_warehouse")) do out[#out+1]={id=e:GetLogisticsID(),name=e:GetPointName()~="" and e:GetPointName() or e:GetFactionName(),faction=e:GetFactionName(),ent=e} end return out end
 
--- simfphys/LVS often put a player into a child driver seat. The spawned
--- vehicle itself has another entity class, while Vehicle Dealer stores the
--- original configured classname in VD_Class. Check both values.
 local function truckConfig(ent)
     if not IsValid(ent) then return nil end
-    return L.Access.vehicles[ent.VD_Class or ""] or L.Access.vehicles[ent:GetClass()]
+    -- матчимся по всем известным ключам: дилерский VD_Class, класс энтити
+    -- (LVS / собственные), spawnlist-имя simfphys (VehicleName поле)
+    return L.Access.vehicles[ent.VD_Class or ""]
+        or L.Access.vehicles[ent:GetClass()]
+        or L.Access.vehicles[isstring(ent.VehicleName) and ent.VehicleName or ""]
+end
+
+-- список ключей, по которым сущность МОГЛА бы быть матовозкой — для диагностики
+local function truckKeys(ent)
+    if not IsValid(ent) then return "нет сущности" end
+    return "class=" .. tostring(ent:GetClass())
+        .. " | VD_Class=" .. tostring(ent.VD_Class or "нет")
+        .. " | VehicleName=" .. tostring(isstring(ent.VehicleName) and ent.VehicleName or "нет")
 end
 
 local function resolveTruck(p)
@@ -177,7 +219,6 @@ local function resolveTruck(p)
     local e=seat
     local seen={}
 
-    -- Standard vehicles and parent chains.
     for _=1,8 do
         if not IsValid(e) or seen[e] then break end
         seen[e]=true
@@ -187,7 +228,6 @@ local function resolveTruck(p)
         e=e:GetParent()
     end
 
-    -- simfphys/LVS fallback: locate the real vehicle by its driver seat.
     for _,candidate in ipairs(ents.GetAll()) do
         if truckConfig(candidate) then
             local driverSeat
@@ -245,8 +285,6 @@ local function openLoading(p,e)
     net.Start(NET.loading); net.WriteEntity(e); net.WriteTable({weapons=weapons,items=inv,truck=route.truck,cargo=#route.cargo,capacity=route.capacity}); net.Send(p)
 end
 
--- Cargo is also mirrored in Lua fields. This avoids accidental NetworkVar
--- slot desync on freshly created empty crates.
 local function setCrateCargo(e, kind, item, amount)
     kind, item, amount = tostring(kind or ""), tostring(item or ""), math.max(0, tonumber(amount) or 0)
     e.GRML_CargoKind, e.GRML_CargoID, e.GRML_CargoAmount = kind, item, amount
@@ -287,8 +325,6 @@ local function addWeaponToCrate(crate,class)
     local total,pistols,automatics=weaponCrateSummary(crate)
     local rules=C.WeaponCrate or {}
     local category=weaponCategory(class)
-    -- Стандартный оружейный ящик — строго 2 пистолета + 5 автоматов.
-    -- РПГ, дробовики и прочее оружие в эту матовозную норму не входят.
     if category=="other" then
         return false,"В этот ящик можно грузить только пистолеты и автоматы"
     end
@@ -382,8 +418,6 @@ local function createEmptyCrate(p,point)
     local crate=spawnCrate(point:GetPos(),"","",0)
     if not IsValid(crate) then notify(p,false,"Не удалось создать ящик") return end
 
-    -- Сразу выдаём пустой ящик в руки. Физика удаляется полностью,
-    -- поэтому модель не дёргается, не вращается и не болтается у ног.
     crate:PhysicsDestroy()
     crate:SetSolid(SOLID_NONE)
     crate.GRMCarrier=p
@@ -399,8 +433,6 @@ end
 
 local function carryCrate(p,e)
     if not canUse(p,e) or IsValid(p.GRMCarriedCrate) then return end
-    -- Уничтожаем physics object до SetParent: это исключает вращение,
-    -- физическую вибрацию и рассинхрон ящика при анимации игрока.
     e:PhysicsDestroy()
     e:SetSolid(SOLID_NONE)
     e.GRMCarrier=p
@@ -434,8 +466,6 @@ local function extractCrate(p,crateID)
     saveCrates()
 end
 
--- GRM Inventory выбрасывает предмет как grm_item_drop. Перехватываем
--- token logistics_crate и заменяем его настоящим физическим ящиком.
 local function findInventoryCrateRecord(ownerSteam,crateID)
     if ownerSteam and L.InventoryCrates[ownerSteam] and L.InventoryCrates[ownerSteam][crateID] then
         return ownerSteam,L.InventoryCrates[ownerSteam][crateID]
@@ -531,7 +561,6 @@ local function tryLoadCarriedCrate(p, crate)
     return false
 end
 
--- E во время переноски — явная кнопка/действие загрузки ящика.
 hook.Add("KeyPress","GRML_LoadCarriedCrateUse",function(ply,key)
     if key==IN_USE and IsValid(ply.GRMCarriedCrate) then
         tryLoadCarriedCrate(ply,ply.GRMCarriedCrate)
@@ -552,19 +581,17 @@ local function deliver(route)
         if not accepted then break end
     end
     if not accepted then notify(route.driver,false,"На складе недостаточно места для груза") return end
+    L.SaveMap(nil) -- Авто-сохранение изменений склада на карту
     local reward=0; for _,c in ipairs(route.cargo) do reward=reward+(C.RewardPerCrate[c.kind]or 0) end
     if IsValid(route.driver) and GRM and GRM.GiveMoney then GRM.GiveMoney(route.driver,reward); notify(route.driver,true,"Доставка завершена. Награда: "..reward.." GRM") end
     global("Груз доставлен на склад фракции "..wh:GetFactionName())
     L.Routes[route.truck:EntIndex()]=nil; if IsValid(route.driver) then net.Start(NET.routeSync); net.WriteBool(false); net.Send(route.driver) end
 end
 
--- Точка погрузки — служебный маркер. Её нельзя таскать physgun'ом,
--- удалять remover/toolgun'ом или менять через property menu.
 local function isLoadingMarker(ent)
     return IsValid(ent) and ent:GetClass()=="grm_logistics_loading"
 end
 
--- R во время переноски ставит ящик на землю перед игроком.
 hook.Add("KeyPress","GRML_DropCarriedCrate",function(ply,key)
     if key~=IN_RELOAD then return end
     local crate=ply.GRMCarriedCrate
@@ -602,7 +629,7 @@ timer.Create("GRML_RouteThink",0.4,0,function()
             L.Routes[key]=nil
         elseif r.phase=="to_loading" and r.truck:GetPos():DistToSqr(r.loading:GetPos())<=C.CheckpointRadius^2 then
             r.phase="loading"
-            setLoadingVisual(r.loading, true) -- активация: красный маркер 50% прозрачности
+            setLoadingVisual(r.loading, true)
             syncRoute(r)
             global("Матовозка прибыла на погрузку: "..r.loading:GetPointName())
         elseif r.phase=="loading" then
@@ -652,9 +679,29 @@ local function openArmory(p,e)
             supply=warehouseData(x)
         end
     end
+
+    local myWeapons = {}
+    for _,w in ipairs(p:GetWeapons()) do
+        if IsValid(w) and w:GetClass()~="weapon_fists" and w:GetClass()~="grm_handcuffs" and w:GetClass()~="grm_cuffed" and w:GetClass()~="vehicle_keys_swep" and w:GetClass()~="ds_key_swep" then
+            myWeapons[#myWeapons+1] = { class = w:GetClass(), name = w:GetPrintName() or w:GetClass() }
+        end
+    end
+
+    local myItems = {}
+    if invReady() then
+        for _,s in pairs(GRM.Inventory.GetPlayerInv(p).slots or {}) do
+            local d = GRM.Inventory.GetItemDef(s.id)
+            if d and (d.type=="ammo" or d.type=="item") then
+                myItems[#myItems+1] = { id = s.id, name = d.name or s.id, count = s.count or 1, type = d.type }
+            end
+        end
+    end
+
     local payload={
         stock=armory.stock,
         supply=supply and supply.stock or {weapons={},items={}},
+        myWeapons=myWeapons,
+        myItems=myItems,
         admin=p:IsSuperAdmin(),
         faction=e:GetFactionName(),
         network=e:GetNetworkID(),
@@ -683,19 +730,18 @@ local function warehouseTake(p,e,kind,item,amount)
     local d=warehouseData(e); amount=math.max(1,math.floor(tonumber(amount)or 1)); if not takeStock(d,kind,item,amount) then notify(p,false,"Нет предмета на складе") return end
     if kind=="weapon" then if p:HasWeapon(item) then addStock(d,kind,item,amount); notify(p,false,"У вас уже есть оружие") return end; p:Give(item); refreshWeight(p)
     else local ok,err=add(p,item,amount); if not ok then addStock(d,kind,item,amount); notify(p,false,err) return end end
+    L.SaveMap(nil) -- Сохраняем изменённые запасы на диск
     notify(p,true,"Предмет выдан со склада")
 end
 
 local function armoryRequest(p,e,kind,item,amount)
     if not canUse(p,e) or (e:GetFactionMode() and not memberOf(p,e:GetFactionName())) then return end
     local a=armoryData(e); local wh
-    -- Приоритет у явной связи, установленной superadmin через сканирование.
     if a.warehouseID then
         for _,x in ipairs(ents.FindByClass("grm_logistics_warehouse")) do
             if x:GetLogisticsID()==a.warehouseID then wh=x break end
         end
     end
-    -- Обратная совместимость для уже настроенных шкафов по faction/network.
     if not IsValid(wh) then
         for _,x in ipairs(ents.FindByClass("grm_logistics_warehouse")) do
             if x:GetFactionName()==e:GetFactionName() and x:GetNetworkID()==e:GetNetworkID() then wh=x break end
@@ -704,6 +750,7 @@ local function armoryRequest(p,e,kind,item,amount)
     if not IsValid(wh) then notify(p,false,"Связанный склад не найден") return end
     local w=warehouseData(wh); amount=math.max(1,math.floor(tonumber(amount)or 1)); if not takeStock(w,kind,item,amount) then notify(p,false,"На центральном складе нет нужного груза") return end
     if not addStock(a,kind,item,amount) then addStock(w,kind,item,amount); notify(p,false,"В шкафу недостаточно места") return end
+    L.SaveMap(nil) -- Сохраняем изменённые запасы шкафа и склада на диск
     notify(p,true,"Снабжение перемещено в шкаф")
 end
 
@@ -712,7 +759,56 @@ local function armoryTake(p,e,kind,item,amount)
     local a=armoryData(e); amount=math.max(1,math.floor(tonumber(amount)or 1)); if not takeStock(a,kind,item,amount) then notify(p,false,"Нет предмета в шкафу") return end
     if kind=="weapon" then if p:HasWeapon(item) then addStock(a,kind,item,amount); notify(p,false,"У вас уже есть это оружие") return end; p:Give(item); refreshWeight(p)
     else local ok,err=add(p,item,amount); if not ok then addStock(a,kind,item,amount); notify(p,false,err) return end end
+    L.SaveMap(nil) -- Сохраняем изменённые запасы шкафа на диск
     notify(p,true,"Предмет выдан")
+end
+
+local function armoryDepositActive(p,e)
+    if not canUse(p,e) or (e:GetFactionMode() and not memberOf(p,e:GetFactionName())) then return end
+    local w=p:GetActiveWeapon()
+    if not IsValid(w) or w:GetClass()=="weapon_fists" then
+        notify(p,false,"Возьмите в руки оружие, которое хотите положить в шкаф")
+        return
+    end
+    local class=w:GetClass()
+    if class=="grm_handcuffs" or class=="grm_cuffed" or class=="vehicle_keys_swep" or class=="ds_key_swep" then
+        notify(p,false,"Служебный предмет нельзя положить в шкаф")
+        return
+    end
+    local a=armoryData(e)
+    if not addStock(a,"weapon",class,1) then
+        notify(p,false,"В шкафу нет места для оружия")
+        return
+    end
+    p:StripWeapon(class)
+    refreshWeight(p)
+    L.SaveMap(nil) -- Персистентное сохранение!
+    notify(p,true,"Оружие положено в шкаф!")
+    openArmory(p,e)
+end
+
+local function armoryDepositItem(p,e,kind,item,amount)
+    if not canUse(p,e) or (e:GetFactionMode() and not memberOf(p,e:GetFactionName())) then return end
+    local a=armoryData(e)
+    amount=math.max(1,math.floor(tonumber(amount)or 1))
+    if kind=="weapon" then
+        local w=p:GetWeapon(item)
+        if not IsValid(w) then notify(p,false,"У вас нет этого оружия") return end
+        if not addStock(a,"weapon",item,1) then notify(p,false,"В шкафу нет места") return end
+        p:StripWeapon(item)
+        refreshWeight(p)
+    else
+        local ok,err=remove(p,item,amount)
+        if not ok then notify(p,false,err) return end
+        if not addStock(a,kind,item,amount) then
+            add(p,item,amount)
+            notify(p,false,"В шкафу нет места")
+            return
+        end
+    end
+    L.SaveMap(nil) -- Персистентное сохранение!
+    notify(p,true,"Предмет положен в оружейный шкаф!")
+    openArmory(p,e)
 end
 
 function L.UseEntity(p,e)
@@ -746,6 +842,8 @@ net.Receive(NET.action,function(_,p)
         openWarehouse(p,e)
     elseif act=="armory_request" then armoryRequest(p,e,net.ReadString(),net.ReadString(),net.ReadUInt(12))
     elseif act=="armory_take" then armoryTake(p,e,net.ReadString(),net.ReadString(),net.ReadUInt(12))
+    elseif act=="armory_deposit_active" then armoryDepositActive(p,e)
+    elseif act=="armory_deposit" then armoryDepositItem(p,e,net.ReadString(),net.ReadString(),net.ReadUInt(12))
     elseif act=="admin_open" and IsValid(p) and p:IsSuperAdmin() then local factions={};for name in pairs(Factions or{})do factions[#factions+1]=name end;table.sort(factions);net.Start(NET.admin);net.WriteTable({factions=factions,access=L.Access.factions,vehicles=L.Access.vehicles});net.Send(p)
     elseif act=="admin_access" and IsValid(p) and p:IsSuperAdmin() then L.Access.factions[net.ReadString()]=net.ReadBool(); saveAccess()
     elseif act=="admin_truck" and IsValid(p) and p:IsSuperAdmin() then local cls=net.ReadString(); L.Access.vehicles[cls]={capacity=net.ReadUInt(8),rearOffset=C.TruckRearOffset}; saveAccess()
@@ -761,7 +859,21 @@ net.Receive(NET.action,function(_,p)
     elseif act=="refresh" then L.UseEntity(p,e) end
 end)
 
-concommand.Add("grm_logistics_start",function(p) local truck=resolveTruck(p); if not truck then notify(p,false,"Сядьте водителем в разрешённую матовозку") return end if not canLogistics(p) then notify(p,false,"Нет доступа к логистике") return end openRouteMenu(p,truck) end)
+concommand.Add("grm_logistics_start",function(p)
+    local truck=resolveTruck(p)
+    if not truck then
+        local cur = IsValid(p) and p:InVehicle() and p:GetVehicle() or nil
+        local hint = IsValid(cur) and (" Текущая сущность: " .. truckKeys(cur)) or ""
+        notify(p,false,"Сядьте водителем в разрешённую матовозку." .. hint .. " (добавить: /logistics_admin или grm_logistics_addtruck)")
+        return
+    end
+    if not canLogistics(p) then
+        local f = factionOf(p)
+        notify(p,false,f and ("Фракция «" .. f .. "» не имеет доступа к логистике (выдать: /logistics_admin)") or "Вы не во фракции с доступом к логистике")
+        return
+    end
+    openRouteMenu(p,truck)
+end)
 concommand.Add("grm_logistics_crates",function(p) if IsValid(p) then openCrateInv(p) end end)
 concommand.Add("grm_logistics_save",function(p) L.SaveMap(p) end)
 concommand.Add("grm_logistics_load",function(p) L.LoadMap(p) end)
@@ -779,11 +891,62 @@ concommand.Add("grm_logistics_access",function(p,_,a) if not IsValid(p) or not p
 concommand.Add("grm_logistics_addtruck",function(p,_,a) if not IsValid(p) or not p:IsSuperAdmin() then return end; local class=a[1];if not class then return end;L.Access.vehicles[class]={capacity=tonumber(a[2])or C.DefaultTruckCapacity,rearOffset=C.TruckRearOffset};saveAccess();notify(p,true,"Транспорт логистики добавлен")end)
 concommand.Add("grm_logistics_admin",function(p) if not IsValid(p) or not p:IsSuperAdmin() then return end; local factions={}; for name in pairs(Factions or {}) do factions[#factions+1]=name end; table.sort(factions); net.Start(NET.admin);net.WriteTable({factions=factions,access=L.Access.factions,vehicles=L.Access.vehicles});net.Send(p) end)
 
-hook.Add("PlayerSay","GRML_ChatCommands",function(p,text)
+-- единый обработчик команд логистики (вызывается из PlayerSayTransform
+-- и из PlayerSay — защита от проглатывания чат-системами, паттерн н75)
+local function chatStart(p)
+    local truck=resolveTruck(p)
+    if not truck then
+        local cur = IsValid(p) and p:InVehicle() and p:GetVehicle() or nil
+        local hint = IsValid(cur) and (" Текущая сущность: " .. truckKeys(cur)) or ""
+        notify(p,false,"Сядьте водителем в разрешённую матовозку." .. hint .. " (добавить: /logistics_admin или grm_logistics_addtruck)")
+        return
+    end
+    if not canLogistics(p) then
+        local f = factionOf(p)
+        notify(p,false,f and ("Фракция «" .. f .. "» не имеет доступа к логистике (выдать: /logistics_admin)") or "Вы не во фракции с доступом к логистике")
+        return
+    end
+    openRouteMenu(p,truck)
+end
+function L.HandleChat(p,text)
  local c=string.lower(string.Trim(text or ""))
- if c=="/logistics_start" or c=="!logistics_start" then local truck=resolveTruck(p);if not truck then notify(p,false,"Сядьте водителем в разрешённую матовозку") elseif not canLogistics(p) then notify(p,false,"Нет доступа к логистике") else openRouteMenu(p,truck) end; return "" end
- if c=="/logistics_crates" or c=="!logistics_crates" then openCrateInv(p); return "" end
- if (c=="/logistics_admin" or c=="!logistics_admin") and p:IsSuperAdmin() then local factions={};for name in pairs(Factions or{})do factions[#factions+1]=name end;table.sort(factions);net.Start(NET.admin);net.WriteTable({factions=factions,access=L.Access.factions,vehicles=L.Access.vehicles});net.Send(p);return "" end
+ if c=="/logistics_start" or c=="!logistics_start" then chatStart(p); return true end
+ if c=="/logistics_crates" or c=="!logistics_crates" then openCrateInv(p); return true end
+ if (c=="/logistics_admin" or c=="!logistics_admin") and p:IsSuperAdmin() then local factions={};for name in pairs(Factions or{})do factions[#factions+1]=name end;table.sort(factions);net.Start(NET.admin);net.WriteTable({factions=factions,access=L.Access.factions,vehicles=L.Access.vehicles});net.Send(p);return true end
+ return false
+end
+hook.Add("PlayerSayTransform","GRML_TransformCmds",function(p,datapack)
+    if not istable(datapack) then return end
+    local msg = datapack[1]
+    if not isstring(msg) then return end
+    if L.HandleChat and L.HandleChat(p, msg) then
+        datapack[1] = ""
+        datapack.SkipPlayerSay = true
+    end
+end)
+hook.Add("PlayerSay","GRML_ChatCommands",function(p,text)
+ if L.HandleChat and L.HandleChat(p,text) then return "" end
+end)
+
+-- диагностика (суперадмин): фракция, доступ, распознавание матовозки
+concommand.Add("grm_logistics_debug",function(p)
+    if not IsValid(p) or not p:IsSuperAdmin() then return end
+    local f = factionOf(p)
+    print("[GRM Logistics][DEBUG] игрок " .. p:Nick() .. ": фракция=" .. tostring(f) ..
+        ", доступ=" .. tostring(f and L.Access.factions[f] == true) ..
+        ", canLogistics=" .. tostring(canLogistics(p)))
+    local acc = {}
+    for k, v in pairs(L.Access.factions or {}) do if v then acc[#acc + 1] = k end end
+    print("[GRM Logistics][DEBUG] доступные фракции: " .. table.concat(acc, ", "))
+    local cur = p:InVehicle() and p:GetVehicle() or nil
+    print("[GRM Logistics][DEBUG] в машине: " .. tostring(IsValid(cur)) ..
+        (IsValid(cur) and (" | " .. truckKeys(cur)) or ""))
+    print("[GRM Logistics][DEBUG] resolveTruck=" .. tostring(resolveTruck(p)))
+    local tks = {}
+    for k in pairs(L.Access.vehicles or {}) do tks[#tks + 1] = k end
+    table.sort(tks)
+    print("[GRM Logistics][DEBUG] ключи транспорта доступа: " .. table.concat(tks, ", "))
+    notify(p, true, "Диагностика логистики — см. консоль сервера")
 end)
 
 -- map persistence
@@ -801,6 +964,13 @@ function L.LoadMap(p)
 end
 
 hook.Add("InitPostEntity","GRML_Load",function() timer.Simple(5,function() L.LoadMap(nil) end) end)
-hook.Add("ShutDown","GRML_Save",function() saveCrates(); saveAccess() end)
+-- Код 90: кнопка cleanup в spawnmenu раньше стирала точки до рестарта карты —
+-- как в Alarm/CCTV, воскрешаем из того же сейва.
+hook.Add("PostCleanupMap","GRML_Reload",function() timer.Simple(1,function() L.LoadMap(nil) end) end)
+hook.Add("ShutDown","GRML_Save",function()
+    saveCrates()
+    saveAccess()
+    L.SaveMap(nil) -- Защита при рестарте: гарантированное сохранение всех оружейных шкафов
+end)
 
-print("[GRM Logistics] server loaded")
+print("[GRM Logistics] server v1.2.1 — автосейв стока + воскрешение после cleanup (Код 90)")

@@ -231,9 +231,25 @@ local function PrevWeapon()
     end
 end
 
+local function GRM_HUD_MobileOpen()
+    return GRM and GRM.Mobile and GRM.Mobile.ClientIsOpen and GRM.Mobile.ClientIsOpen() == true
+end
+
 hook.Add("PlayerBindPress", "GRM_HUD_Selector", function(ply, bind, pressed)
     if not pressed then return end
     if not IsValid(ply) or not ply:Alive() then return end
+    if GRM_HUD_MobileOpen() then
+        bind = string.lower(tostring(bind or ""))
+        selector.active = false
+        selector.alpha = 0
+        if bind == "invnext" then if GRM.Mobile.ClientWheel then GRM.Mobile.ClientWheel(1) end return true end
+        if bind == "invprev" then if GRM.Mobile.ClientWheel then GRM.Mobile.ClientWheel(-1) end return true end
+        if bind == "+attack3" or bind == "attack3" or bind == "mouse3" or bind == "+mouse3" then if GRM.Mobile.ClientSelect then GRM.Mobile.ClientSelect() end return true end
+        if bind:match("^slot%d") or bind == "lastinv" or bind == "phys_swap" then return true end
+        if bind == "+attack" or bind == "+attack2" or bind == "+reload" or bind == "+use" then return true end
+        if bind == "+jump" or bind == "+duck" or bind == "+speed" or bind == "+walk" then return true end
+        return true
+    end
     if bind == "invnext" then
         RefreshWeapons()
         if not selector.active then selector.active = true; FindCurrentWeapon() end
@@ -337,6 +353,7 @@ local function DrawMainHUD()
 end
 
 local function DrawWeaponSelector()
+    if GRM_HUD_MobileOpen and GRM_HUD_MobileOpen() then selector.active = false; selector.alpha = 0; return end
     local cfg = GRM.HUD.Config
     if selector.active and CurTime() - selector.lastInput > cfg.selectorTimeout then SelectWeapon() end
     local targetAlpha = selector.active and 255 or 0

@@ -107,13 +107,14 @@ local function allPhones()
     local out = {}
     for _, ent in ipairs(ents.FindByClass("grm_phone")) do out[#out + 1] = ent end
     for _, ent in ipairs(ents.FindByClass("grm_payphone")) do out[#out + 1] = ent end
+    for _, ent in ipairs(ents.FindByClass("grm_mobile_line")) do out[#out + 1] = ent end -- Код 88: сотовые линии
     return out
 end
 
 local function isPhoneEntity(ent)
     if not IsValid(ent) then return false end
     local class = ent:GetClass()
-    return class == "grm_phone" or class == "grm_payphone"
+    return class == "grm_phone" or class == "grm_payphone" or class == "grm_mobile_line"
 end
 
 local function updatePhoneVisual(phone, state)
@@ -228,8 +229,15 @@ local function endCall(call, reason)
     end
 end
 
+-- Код 88: внешний сброс разговора (потеря сигнала сотовой и т.п.)
+function P.ForceEndCall(call, reason) endCall(call, reason) end
+
 local function canUsePhone(ply, phone)
     if not IsValid(ply) or not IsValid(phone) then return false end
+    -- Код 88: сотовая линия — «рука» это наличие телефона в инвентаре
+    if phone.IsMobile then
+        return (GRM.Mobile and GRM.Mobile.CanUseLine and GRM.Mobile.CanUseLine(ply, phone)) == true
+    end
     return ply:GetPos():DistToSqr(phone:GetPos()) <= (cfg().MaxUseDistance or 180) ^ 2
 end
 
@@ -258,11 +266,21 @@ local function phoneCanCall(a, b)
     if b:GetLineState() ~= "idle" then return false, "Номер занят." end
 
     local exA, exB = a:GetExchangeID(), b:GetExchangeID()
-    if not P.IsExchangeActive(exA) then return false, "АТС вашей линии отключена." end
-    if not P.IsExchangeActive(exB) then return false, "АТС вызываемой линии отключена." end
-    if exA ~= exB and cfg().AllowCrossExchangeCalls ~= true then return false, "Между этими АТС нет соединения." end
-    if not P.HasFreeExchangeLine(exA) then return false, "На вашей АТС нет свободных линий." end
-    if exB ~= exA and not P.HasFreeExchangeLine(exB) then return false, "На вызываемой АТС нет свободных линий." end
+    -- Код 88: сотовая линия вместо АТС требует сигнала сети RadioNet
+    if a.IsMobile then
+        if not (GRM.Mobile and GRM.Mobile.LineOnline and GRM.Mobile.LineOnline(a)) then
+            return false, "Нет сигнала сотовой связи (покрытие сети / телефон в инвентаре)."
+        end
+    elseif not P.IsExchangeActive(exA) then return false, "АТС вашей линии отключена." end
+    if b.IsMobile then
+        if not (GRM.Mobile and GRM.Mobile.LineOnline and GRM.Mobile.LineOnline(b)) then
+            return false, "Абонент вне зоны покрытия сотовой связи."
+        end
+    elseif not P.IsExchangeActive(exB) then return false, "АТС вызываемой линии отключена." end
+    -- сотовая сеть соединяет с любой линией; АТС↔АТС — по старому правилу
+    if exA ~= exB and not (a.IsMobile or b.IsMobile) and cfg().AllowCrossExchangeCalls ~= true then return false, "Между этими АТС нет соединения." end
+    if not a.IsMobile and not P.HasFreeExchangeLine(exA) then return false, "На вашей АТС нет свободных линий." end
+    if exB ~= exA and not b.IsMobile and not P.HasFreeExchangeLine(exB) then return false, "На вызываемой АТС нет свободных линий." end
     return true
 end
 
@@ -581,9 +599,51 @@ end)
 
 -- Ring timeout / distance cleanup.
 timer.Create("GRM_Phone_CallThink", 1, 0, function()
+    local now = CurTime()
     for id, call in pairs(P.Calls) do
-        if not IsValid(call.from) or not IsValid(call.to) then P.Calls[id] = nil continue end
-        if not call.answered and CurTime() - call.started > (cfg().RingTimeout or 35) then endCall(call, "timeout") end
+        if not IsValid(call.from) or not IsValid(call.to) then
+            -- Код 88.1: энтити погибла в разговоре — НЕ просто трём запись,
+            -- а возвращаем выживший телефон в idle (иначе «линия занята» навсегда).
+            for _, ph in ipairs({ call.from, call.to }) do
+                if IsValid(ph) and ph:GetCallID() == id then
+                    setPhoneState(ph, "idle", 0, NULL)
+                    local cu = IsValid(ph) and ph.CurrentUser or nil
+                    if IsValid(cu) then notify(cu, "Линия разъединена (телефон собеседника удалён).", true) end
+                    ph.CurrentUser = nil
+                    emit(ph, "Hangup")
+                end
+            end
+            recordLine("CALL DROP #" .. tostring(id) .. " reason=dead_entity")
+            P.Calls[id] = nil
+        elseif not call.answered and now - call.started > (cfg().RingTimeout or 35) then
+            endCall(call, "timeout")
+        elseif call.answered then
+            -- Код 88.1 («чат закрыт»): обе трубки брошены >3с — звонок-призрак.
+            -- Пока звонок жив, чат держащего трубку уходит в линию; если из
+            -- линии все ушли, это молчаливый капкан для собеседника.
+            local holdA = IsValid(call.from) and IsValid(call.from.CurrentUser) and canUsePhone(call.from.CurrentUser, call.from)
+            local holdB = IsValid(call.to) and IsValid(call.to.CurrentUser) and canUsePhone(call.to.CurrentUser, call.to)
+            if holdA or holdB then
+                call.aloneSince = nil
+            else
+                call.aloneSince = call.aloneSince or now
+                if now - call.aloneSince >= 3 then
+                    endCall(call, "abandoned")
+                end
+            end
+        end
+    end
+
+    -- Код 88.1: самолечение «застрявших» линий — состояние вызова без записи звонка.
+    for _, phone in ipairs(allPhones()) do
+        if IsValid(phone) then
+            local st = phone:GetLineState()
+            if st ~= "idle" and not getCall(phone:GetCallID()) then
+                setPhoneState(phone, "idle", 0, NULL)
+                phone.CurrentUser = nil
+                recordLine("LINE HEAL " .. phone:GetPhoneNumber() .. " state=" .. tostring(st))
+            end
+        end
     end
 
     for ply, ent in pairs(P.PlayerDevice) do
@@ -596,6 +656,25 @@ timer.Create("GRM_Phone_CallThink", 1, 0, function()
 end)
 
 hook.Add("PlayerDisconnected", "GRM_Phone_Cleanup", function(ply)
+    -- Код 88.1 (репорт «чат закрыт»): отключившийся в разговоре НЕ должен
+    -- оставлять вечный звонок — иначе второй абонент продолжает писать
+    -- в пустую трубку (его чат глушится ретранслятором) до собственного hangup.
+    local dev = P.PlayerDevice[ply]
+    if IsValid(dev) and isPhoneEntity(dev) then
+        local call = getCall(dev:GetCallID())
+        if call then
+            -- других держателей трубки запоминаем ДО endCall (он обнуляет CurrentUser)
+            local others = {}
+            for _, ph in ipairs({ call.from, call.to }) do
+                local other = IsValid(ph) and ph.CurrentUser or nil
+                if IsValid(other) and other ~= ply then others[#others + 1] = other end
+            end
+            endCall(call, "disconnect")
+            for _, other in ipairs(others) do
+                notify(other, "Собеседник отключился — линия разъединена.", true)
+            end
+        end
+    end
     detachUser(ply)
 end)
 
@@ -611,7 +690,12 @@ local function radioVoice(listener, speaker)
     if not RadioFrequencies then return false end
     local sf = RadioFrequencies[speaker:SteamID64()]
     local lf = RadioFrequencies[listener:SteamID64()]
-    return sf and lf and sf == lf
+    if not (sf and lf and sf == lf) then return false end
+    -- RadioNet (Код 85): частота ловится только в покрытии сети
+    -- (стойка+антенны); вне сети — прямая дальность рации
+    local rn = GRM and GRM.RadioNet
+    if rn and rn.RadioPairOK and not rn.RadioPairOK(speaker, listener) then return false end
+    return true
 end
 
 local function phoneVoice(listener, speaker)
@@ -653,6 +737,15 @@ local function installVoiceHook()
     hook.Add("PlayerCanHearPlayersVoice", "GRM_Phone_IntegratedVoice", function(listener, speaker)
         if not IsValid(listener) or not IsValid(speaker) then return false, false end
         if listener == speaker then return false, false end
+
+        -- RadioNet (Код 85) решает ПЕРВЫМ: эфир/громкая связь/мегафон.
+        -- Без явной консультации хуки PlayerCanHearPlayersVoice итера-
+        -- рируются в случайном порядке pairs() и душат друг друга.
+        local rn = GRM and GRM.RadioNet
+        if rn and rn.VoiceRoute then
+            local c, h = rn.VoiceRoute(listener, speaker)
+            if c ~= nil then return c, h end
+        end
 
         local canLocal = localVoice(listener, speaker)
         if canLocal then return true, true end
