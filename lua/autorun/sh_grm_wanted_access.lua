@@ -394,7 +394,10 @@ if CLIENT then
             online:DockMargin(6, 0, 0, 0)
             online:SetValue("Онлайн…")
             for _, p in ipairs(player.GetAll()) do
-                if IsValid(p) then online:AddChoice(p:Nick(), p:SteamID64()) end
+                if IsValid(p) then
+                    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64()
+                    online:AddChoice(p:Nick() .. " [" .. ck .. "]", ck)
+                end
             end
             online.OnSelect = function(_, _, _, id)
                 if id then data[field][id] = true rebuild() end

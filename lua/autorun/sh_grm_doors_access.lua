@@ -190,7 +190,8 @@ if SERVER then
         if ply:IsSuperAdmin() then return true end
         local d = normalize(AM.Data or AM.Load())
         local sid, sid64 = ply:SteamID(), ply:SteamID64()
-        if d[steamKey][sid64] or d[steamKey][sid] then return true end
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
+        if d[steamKey][ck] or d[steamKey][sid64] or d[steamKey][sid] then return true end
 
         local fac, role, dept = factionInfo(ply)
         if not fac then return false end

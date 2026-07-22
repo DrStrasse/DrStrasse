@@ -632,7 +632,8 @@ if CLIENT then
             online:SetValue("Игрок онлайн…")
             for _, p in ipairs(player.GetAll()) do
                 if IsValid(p) then
-                    online:AddChoice(p:Nick() .. " (" .. p:SteamID64() .. ")", p:SteamID64())
+                    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64()
+                    online:AddChoice(p:Nick() .. " (" .. ck .. ")", ck)
                 end
             end
             online.OnSelect = function(_, _, _, data)

@@ -1043,7 +1043,7 @@ if SERVER then
             for _, p in ipairs(player.GetAll()) do
                 if IsValid(p) and (string.find(string.lower(p:Nick()), string.lower(who), 1, true)
                     or p:SteamID64() == who or p:SteamID() == who) then
-                    sid = p:SteamID64()
+                    sid = steam64(p)
                     break
                 end
             end
@@ -1058,7 +1058,7 @@ if SERVER then
             local sid = who
             for _, p in ipairs(player.GetAll()) do
                 if IsValid(p) and (string.find(string.lower(p:Nick()), string.lower(who), 1, true) or p:SteamID64() == who) then
-                    sid = p:SteamID64() break
+                    sid = steam64(p) break
                 end
             end
             local ok, err = D.RevokeWarrant(ply, sid)
@@ -1379,7 +1379,8 @@ if CLIENT then
             plyCombo:SetValue("Выберите игрока онлайн...")
             for _, p in ipairs(player.GetAll()) do
                 if IsValid(p) and p ~= LocalPlayer() then
-                    plyCombo:AddChoice(p:Nick() .. " (" .. p:SteamID64() .. ")", p:SteamID64())
+                    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64()
+                    plyCombo:AddChoice(p:Nick() .. " (" .. ck .. ")", ck)
                 end
             end
 
