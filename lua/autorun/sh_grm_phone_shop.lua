@@ -621,7 +621,16 @@ if SERVER then
         local catalog = {}
         for id, item in pairs(SHOP.Catalog or {}) do
             catalog[id] = table.Copy(item)
-            catalog[id].purchased = playerHasAccess(ply, id)
+            local isInvItem = item.invItem and item.invItem ~= ""
+            local ownedInv = 0
+            if isInvItem and GRM and GRM.Inventory and GRM.Inventory.CountItem then
+                ownedInv = GRM.Inventory.CountItem(ply, item.invItem) or 0
+            end
+            catalog[id].ownedCount = ownedInv
+            catalog[id].ownedMax = tonumber(item.maxOwned) or 0
+            -- Для мобильных «purchased» означает «у игрока уже есть такой предмет в инвентаре».
+            -- Это переживает рестарт через grm_inventories.json и сразу видно в /phoneshop.
+            catalog[id].purchased = isInvItem and ownedInv > 0 or playerHasAccess(ply, id)
             catalog[id].canBuy, catalog[id].buyReason = canBuyAccess(ply, id)
             catalog[id].canSpawn, catalog[id].spawnReason = canSpawnItem(ply, id)
         end
@@ -895,7 +904,12 @@ else
             local priceLabel = (item.invItem and item.invItem ~= "") and "Цена: " or "Цена доступа: "
             draw.SimpleText(priceLabel .. moneyText(item.price or 0), "DermaDefaultBold", 96, 68, Color(110, 220, 130), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             if item.invItem and item.invItem ~= "" then
-                draw.SimpleText("Мобильный телефон • покупается предметом в /inv • открыть: СТРЕЛКА ВВЕРХ", "DermaDefault", 96, 92, Color(120, 200, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                local have = tonumber(item.ownedCount or 0) or 0
+                local max = tonumber(item.ownedMax or item.maxOwned or 0) or 0
+                local ownText = max > 0 and ("У вас: " .. have .. " / " .. max) or ("У вас: " .. have)
+                local ownCol = have > 0 and Color(120, 230, 120) or Color(120, 200, 255)
+                draw.SimpleText("Мобильный телефон • предмет в /inv • использовать = открыть меню", "DermaDefault", 96, 88, Color(120, 200, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText(ownText, "DermaDefaultBold", w - 184, 92, ownCol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             else
                 draw.SimpleText(item.purchased and "Доступ куплен" or "Доступ не куплен", "DermaDefault", 96, 92, item.purchased and Color(120, 230, 120) or Color(255, 185, 85), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             end
@@ -920,9 +934,19 @@ else
         btn:SetPos(480, 42)
 
         if item.invItem and item.invItem ~= "" then
-            btn:SetText(item.canSpawn and "Купить" or "Недоступно")
-            btn:SetEnabled(item.canSpawn == true)
-            if btn.SetTooltip then btn:SetTooltip(item.canSpawn and "Телефон попадёт в инвентарь" or tostring(item.spawnReason or "")) end
+            local have = tonumber(item.ownedCount or 0) or 0
+            local max = tonumber(item.ownedMax or item.maxOwned or 0) or 0
+            local atLimit = max > 0 and have >= max
+            if atLimit then
+                btn:SetText("Уже есть")
+                btn:SetEnabled(false)
+            else
+                btn:SetText(have > 0 and "Купить ещё" or "Купить")
+                btn:SetEnabled(item.canSpawn == true)
+            end
+            if btn.SetTooltip then
+                btn:SetTooltip(atLimit and "Лимит этих телефонов уже достигнут" or (item.canSpawn and "Телефон попадёт в инвентарь" or tostring(item.spawnReason or "")))
+            end
             btn.DoClick = function()
                 spawnItem(id)
                 if IsValid(frame) then frame:Close() end

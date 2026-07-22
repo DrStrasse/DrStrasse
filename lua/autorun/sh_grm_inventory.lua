@@ -672,8 +672,12 @@ if SERVER then
         end
     end)
     GRM.Inventory.RegisterUseHandler("mobile_open", function(ply, slotIdx, slot, def)
-        -- Код 88: мобильный телефон из инвентаря — предмет НЕ тратится.
-        if GRM.Mobile and GRM.Mobile.ServerNotify then
+        -- Код 88/131: мобильный телефон из инвентаря — предмет НЕ тратится,
+        -- а меню открывается сразу. Раньше здесь была только подсказка про
+        -- стрелку вверх, из-за чего «Использовать» выглядело как мёртвая кнопка.
+        if GRM.Mobile and GRM.Mobile.Open then
+            GRM.Mobile.Open(ply)
+        elseif GRM.Mobile and GRM.Mobile.ServerNotify then
             GRM.Mobile.ServerNotify(ply, "Телефон у вас. Нажмите СТРЕЛКУ ВВЕРХ, чтобы открыть меню")
         else
             GRM.Notify(ply, "Нажмите СТРЕЛКУ ВВЕРХ, чтобы открыть телефон", 100, 220, 100)
