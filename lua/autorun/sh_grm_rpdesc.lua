@@ -30,6 +30,21 @@ RD.Version     = "2.1.0"
 
 local DESC_FILE = "rpdescs.json"
 
+local function identityKey(value)
+    if IsValid(value) and value:IsPlayer() then
+        if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(value) end
+        return tostring(value:SteamID64() or "") .. ":char1"
+    end
+    local raw = tostring(value or "")
+    if raw:match(":char[1-3]$") then return raw end
+    if raw:match("^%d+$") then return raw .. ":char1" end
+    if util and util.SteamIDTo64 then
+        local s64 = util.SteamIDTo64(raw)
+        if s64 and s64 ~= "0" then return tostring(s64) .. ":char1" end
+    end
+    return raw
+end
+
 local function sanitizeDesc(s)
     s = string.Trim(tostring(s or ""))
     -- убираем управляющие символы, схлопываем множественные пробелы
@@ -66,6 +81,15 @@ if SERVER then
     end
 
     RPDesc_Descriptions = RPDesc_Descriptions or loadDescs()
+    do
+        local moved = {}
+        for key, desc in pairs(RPDesc_Descriptions) do
+            local ck = identityKey(key)
+            if ck ~= key and moved[ck] == nil then moved[ck] = desc RPDesc_Descriptions[key] = nil end
+        end
+        for key, desc in pairs(moved) do RPDesc_Descriptions[key] = desc end
+        if next(moved) ~= nil then saveDescs(RPDesc_Descriptions) end
+    end
 
     local function sendAllDescs(ply)
         net.Start("RPDesc_Sync")
@@ -92,7 +116,7 @@ if SERVER then
         if (nextAllowed[ply] or 0) > now then return end
         nextAllowed[ply] = now + 2
 
-        local steamid = ply:SteamID()
+        local steamid = identityKey(ply)
         local desc = sanitizeDesc(net.ReadString())
 
         if desc ~= "" then
@@ -157,13 +181,13 @@ if CLIENT then
 
     local function getMySteamID()
         local ply = LocalPlayer()
-        return IsValid(ply) and ply:SteamID() or ""
+        return IsValid(ply) and identityKey(ply) or ""
     end
 
     -- API
     function RD.Get(ply)
         if not IsValid(ply) then return "" end
-        return descriptions[ply:SteamID()] or ""
+        return descriptions[identityKey(ply)] or ""
     end
     function RD.GetRaw(steamID)
         return descriptions[tostring(steamID or "")] or ""
@@ -315,7 +339,7 @@ if CLIENT then
         for _, ply in ipairs(player.GetAll()) do
             if IsValid(ply) and ply:Alive() then
                 local rname = string.Trim(tostring(ply:GetNWString("GRM_RPName", "") or ""))
-                local desc = descriptions[ply:SteamID()] or ""
+                local desc = descriptions[identityKey(ply)] or ""
                 if rname ~= "" or desc ~= "" then
                     local isSelf = (ply == lp)
                     local alpha = 255

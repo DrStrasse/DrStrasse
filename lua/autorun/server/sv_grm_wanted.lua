@@ -58,11 +58,18 @@ local function notify(ply, msg, r, g, b)
 end
 
 local function steam64(ply)
-    if isstring(ply) then return tostring(ply) end
-    if not IsValid(ply) or not ply:IsPlayer() then return "" end
-    local id = ply:SteamID64()
-    if id and id ~= "0" then return id end
-    return ply:SteamID() or ""
+    if IsValid(ply) and ply:IsPlayer() then
+        if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
+        return tostring(ply:SteamID64() or "") .. ":char1"
+    end
+    local raw = tostring(ply or "")
+    if raw:match(":char[1-3]$") then return raw end
+    if raw:match("^%d+$") then return raw .. ":char1" end
+    if util.SteamIDTo64 then
+        local s64 = util.SteamIDTo64(raw)
+        if s64 and s64 ~= "0" then return tostring(s64) .. ":char1" end
+    end
+    return raw
 end
 
 local function pushLevel(ply)
@@ -161,7 +168,8 @@ function W.Load()
     local list = istable(t.records) and t.records or (istable(t[1]) and t or {})
     for _, rec in ipairs(list) do
         if istable(rec) and isstring(rec.sid) and rec.sid ~= "" then
-            W.Records[rec.sid] = {
+            local key = steam64(rec.sid)
+            W.Records[key] = {
                 name = tostring(rec.name or "?"),
                 level = W.ClampLevel(rec.level),
                 reasons = istable(rec.reasons) and rec.reasons or {},
@@ -374,7 +382,7 @@ local function onlinePlayers()
         if IsValid(p) then
             t[#t + 1] = {
                 nick = p:Nick(),
-                sid64 = p:SteamID64(),
+                sid64 = steam64(p),
                 level = W.GetLevel(p),
             }
         end
@@ -478,7 +486,7 @@ hook.Add("PlayerSay", "GRM_Wanted_Chat", function(ply, text)
         for _, p in ipairs(player.GetAll()) do
             if IsValid(p) and (string.find(string.lower(p:Nick()), string.lower(who), 1, true)
                 or p:SteamID64() == who or p:SteamID() == who) then
-                sid = p:SteamID64()
+                sid = steam64(p)
                 break
             end
         end
@@ -495,7 +503,7 @@ hook.Add("PlayerSay", "GRM_Wanted_Chat", function(ply, text)
         for _, p in ipairs(player.GetAll()) do
             if IsValid(p) and (string.find(string.lower(p:Nick()), string.lower(who), 1, true)
                 or p:SteamID64() == who) then
-                sid = p:SteamID64()
+                sid = steam64(p)
                 break
             end
         end

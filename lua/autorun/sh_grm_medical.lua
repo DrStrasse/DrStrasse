@@ -82,10 +82,26 @@ local NET_CARD   = "GRM_Med_Card"
 local NET_EDIT   = "GRM_Med_Edit"
 local NET_ACCESS = "GRM_Med_Access"
 
+-- CharacterKey — персональный владелец медицинской карты.
+local function identityKey(ply)
+    if IsValid(ply) and ply:IsPlayer() then
+        if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
+        return tostring(ply:SteamID64() or "")
+    end
+    local raw = tostring(ply or "")
+    if raw:match(":char[1-3]$") then return raw end
+    if raw:match("^%d+$") then return raw end
+    if util.SteamIDTo64 then
+        local s64 = util.SteamIDTo64(raw)
+        if s64 and s64 ~= "0" then return tostring(s64) .. ":char1" end
+    end
+    return raw
+end
+
 -- общий помощник: членство с учётом обеих форм ключей (н101)
 local function memberRec(f, ply)
     if not (istable(f) and istable(f.Members) and IsValid(ply)) then return nil end
-    return f.Members[ply:SteamID()] or f.Members[ply:SteamID64()]
+    return f.Members[identityKey(ply)] or f.Members[ply:SteamID()] or f.Members[ply:SteamID64()]
 end
 local function factionOf(ply)
     if not istable(Factions) or not IsValid(ply) then return nil end
@@ -129,6 +145,13 @@ if SERVER then
         MD.Cards = MD.Cards or {}
         local t = jsonT(file.Read(MD.CardsFile, "DATA") or "")
         if istable(t) then MD.Cards = t end
+        local moved = {}
+        for key, card in pairs(MD.Cards) do
+            local ck = identityKey(key)
+            if ck ~= key and moved[ck] == nil then moved[ck] = card MD.Cards[key] = nil end
+        end
+        for key, card in pairs(moved) do MD.Cards[key] = card end
+        if next(moved) ~= nil then MD._CardsMigrated = true end
     end
     function MD.SaveCards(why)
         local ok, txt = pcall(util.TableToJSON, MD.Cards or {}, true)
@@ -199,7 +222,7 @@ if SERVER then
         if doctor then
             for _, p in ipairs(player.GetAll()) do
                 if IsValid(p) and p ~= ply then
-                    online[#online + 1] = { sid64 = p:SteamID64(), name = rpName(p), fac = factionOf(p) or "—" }
+                    online[#online + 1] = { sid64 = identityKey(p), name = rpName(p), fac = factionOf(p) or "—" }
                 end
             end
             table.sort(online, function(a, b) return tostring(a.name) < tostring(b.name) end)
@@ -227,7 +250,7 @@ if SERVER then
             net.WriteTable({
                 doctor = doctor == true, admin = ply:IsSuperAdmin(),
                 online = online, records = records, access = access,
-                mySid64 = ply:SteamID64(),
+                mySid64 = identityKey(ply),
             })
         net.Send(ply)
     end
@@ -242,13 +265,13 @@ if SERVER then
         local sid64 = tostring(net.ReadString() or "")
         if sid64 == "" then return end
         local doctor = MD.CanTreat(ply)
-        if sid64 ~= ply:SteamID64() and not doctor then
+        if sid64 ~= identityKey(ply) and not doctor then
             if GRM.Notify then GRM.Notify(ply, "Доступ к чужим картам — только у медиков.", 255, 140, 110) end
             return
         end
         -- актуализируем кэш имени по онлайну
         for _, p in ipairs(player.GetAll()) do
-            if p:SteamID64() == sid64 then cardOf(sid64).name = rpName(p) break end
+            if identityKey(p) == sid64 then cardOf(sid64).name = rpName(p) break end
         end
         pushCard(ply, sid64, doctor == true)
     end)
@@ -269,7 +292,7 @@ if SERVER then
         local c0 = MD.Cards[sid64]
         if istable(c0) then
             for _, p in ipairs(player.GetAll()) do
-                if IsValid(p) and p:SteamID64() == sid64 then c0.name = rpName(p) break end
+                if IsValid(p) and identityKey(p) == sid64 then c0.name = rpName(p) break end
             end
         end
         pushOpen(ply) -- окно: у медика — полная редакция, у прочих — просмотр
@@ -317,7 +340,7 @@ if SERVER then
             if text == "" then return end
             card.name = tostring(net.ReadString() or card.name or "?")
             card.entries[#card.entries + 1] = {
-                ts = os.time(), doctor = myName, doctorSid64 = ply:SteamID64(),
+                ts = os.time(), doctor = myName, doctorSid64 = identityKey(ply),
                 doctorFac = myFac, kind = kind, text = text,
                 active = (kind == "diagnosis") and true or nil,
             }
@@ -327,7 +350,7 @@ if SERVER then
             pushCard(ply, sid64, true)
             -- уведомить пациента, если он онлайн
             for _, p in ipairs(player.GetAll()) do
-                if p:SteamID64() == sid64 and GRM.Notify then
+                if identityKey(p) == sid64 and GRM.Notify then
                     GRM.Notify(p, "В вашу мед.карту добавлено: " .. (MD.EntryKinds[kind] or kind) .. " — «" .. text .. "» (" .. myName .. ")", 120, 200, 255)
                 end
             end
@@ -362,13 +385,13 @@ if SERVER then
                 if GRM.Notify then GRM.Notify(ply, "Инвентарь недоступен — выдача карт невозможна.", 255, 140, 110) end
                 return
             end
-            if sid64 == ply:SteamID64() then
+            if sid64 == identityKey(ply) then
                 if GRM.Notify then GRM.Notify(ply, "Себе карту выдавать не нужно — своя карта всегда у вас в /mycard.", 255, 200, 90) end
                 return
             end
             local patient
             for _, p in ipairs(player.GetAll()) do
-                if IsValid(p) and p:SteamID64() == sid64 then patient = p break end
+                if IsValid(p) and identityKey(p) == sid64 then patient = p break end
             end
             if not IsValid(patient) then
                 if GRM.Notify then GRM.Notify(ply, "Пациент не в сети — выдать карту на руки нельзя.", 255, 200, 90) end
@@ -384,9 +407,9 @@ if SERVER then
                 return
             end
             card.name = rpName(patient)
-            card.issued = { ts = os.time(), doctor = myName, doctorSid64 = ply:SteamID64() }
+            card.issued = { ts = os.time(), doctor = myName, doctorSid64 = identityKey(ply) }
             card.entries[#card.entries + 1] = {
-                ts = os.time(), doctor = myName, doctorSid64 = ply:SteamID64(),
+                ts = os.time(), doctor = myName, doctorSid64 = identityKey(ply),
                 doctorFac = myFac, kind = "issue", text = "Медицинская карта выдана на руки",
             }
             while #card.entries > MD.MaxEntries do table.remove(card.entries, 1) end
