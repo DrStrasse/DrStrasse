@@ -943,6 +943,8 @@ if CLIENT then
         M.listSel = 1
     end
 
+    local closePhone -- forward declaration: screenItems actions call it
+
     local function screenItems()
         local items = {}
         local function add(label, fn, hint, kind) items[#items + 1] = { label = label, fn = fn, hint = hint, kind = kind } end
@@ -1043,7 +1045,7 @@ if CLIENT then
         return items
     end
 
-    local function closePhone(send)
+    closePhone = function(send)
         if not M.open then return end
         M.open = false
         if send ~= false then sendAct({ op = "close" }) end

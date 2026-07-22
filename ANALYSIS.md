@@ -1051,3 +1051,9 @@
 ## Находка 144 (22.07.2026): строгий active/inventory gate для mobile UI
 
 У клиента оставался аварийный режим `openPhone(force)`, который при приходе `GRM_Mobile_Open` мог сам выставить `M.state.has=true`, если state ещё не пришёл. Это противоречит контракту: деактивирован/нет в инвентаре — меню не открывать. Фикс: force-открытие удалено. Клиент использует `pendingOpen` и ждёт `GRM_Mob_State`; открывает UI только при подтверждённом `has=true`. Если `has=false`, pending сбрасывается и UI закрывается. Серверный `MB.HasPhone` больше не возвращает true при отсутствующем `GRM.Inventory`.
+
+---
+
+## Находка 145 (22.07.2026): `closePhone` использовался в screenItems до объявления
+
+Пункт «Деактивировать» внутри `screenItems()` вызывал `closePhone(false)`, но `closePhone` был объявлен ниже как `local function closePhone`. Для уже скомпилированного `screenItems` этот local ещё не был виден, поэтому Lua искал глобальный `closePhone` и падал. Фикс: добавлен forward declaration `local closePhone` перед `screenItems`, а ниже функция задаётся как `closePhone = function(...) ... end`.

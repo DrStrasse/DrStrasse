@@ -224,3 +224,7 @@
 
 - Клиент больше не форсит `has=true` при открытии. UI открывается только после серверного `GRM_Mob_State.has=true`.
 - Если телефон деактивирован, отсутствует в инвентаре или инвентарь не загружен — меню не открывается.
+
+### Mobile deactivate hotfix 2026-07-22
+
+- Исправлен Lua Error `attempt to call global 'closePhone'`: `closePhone` теперь forward-declared до `screenItems`, где используется пунктом «Деактивировать».
