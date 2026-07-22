@@ -784,6 +784,17 @@ if CLIENT then
     local function hasPhone() return M.state and M.state.has ~= false and M.state.tier ~= nil and M.state.tier ~= "" end
     local function now() return CurTime and CurTime() or 0 end
 
+    local function askString(title, text, default, cb)
+        if M.promptOpen then return end
+        M.promptOpen = true
+        Derma_StringRequest(title, text, default or "", function(value)
+            M.promptOpen = false
+            if cb then cb(value) end
+        end, function()
+            M.promptOpen = false
+        end)
+    end
+
     local function sendAct(t)
         net.Start("GRM_Mob_Act")
         net.WriteTable(t or {})
@@ -880,15 +891,15 @@ if CLIENT then
         elseif M.screen == "sms" then
             for _, th in ipairs(smsThreads()) do add(th.num, function() M.smsThread = th.num; setScreen("sms_dialog") end, (th.unread > 0 and ("новых: " .. th.unread .. " • ") or "") .. tostring(th.last or "")) end
             add("Новое SMS", function()
-                Derma_StringRequest("SMS", "Номер", "", function(num)
-                    Derma_StringRequest("SMS", "Текст", "", function(txt) sendAct({op="sms", num=num, text=txt}) end)
+                askString("SMS", "Номер", "", function(num)
+                    askString("SMS", "Текст", "", function(txt) sendAct({op="sms", num=num, text=txt}) end)
                 end)
             end)
             add("Назад", function() goHome() end)
         elseif M.screen == "sms_dialog" then
             add("Ответить", function()
                 local num = M.smsThread or ""
-                Derma_StringRequest("SMS", "Текст для " .. num, "", function(txt) sendAct({op="sms", num=num, text=txt}) end)
+                askString("SMS", "Текст для " .. num, "", function(txt) sendAct({op="sms", num=num, text=txt}) end)
             end, M.smsThread)
             add("Позвонить", function() if M.smsThread then sendAct({op="dial", number=M.smsThread}) end end)
             add("Назад к SMS", function() setScreen("sms") end)
@@ -896,20 +907,20 @@ if CLIENT then
         elseif M.screen == "contacts" then
             for _, r in ipairs(rows("contacts")) do add(tostring(r.name or r.num or "Контакт"), function() M.contact = r; setScreen("contact_actions") end, tostring(r.num or "")) end
             add("Добавить контакт", function()
-                Derma_StringRequest("Контакт", "Имя", "", function(name)
-                    Derma_StringRequest("Контакт", "Номер", "", function(num) sendAct({op="contact_add", name=name, num=num}) end)
+                askString("Контакт", "Имя", "", function(name)
+                    askString("Контакт", "Номер", "", function(num) sendAct({op="contact_add", name=name, num=num}) end)
                 end)
             end)
             add("Назад", function() goHome() end)
         elseif M.screen == "contact_actions" then
             local r = M.contact or {}
             add("Позвонить", function() if r.num then sendAct({op="dial", number=r.num}) end end, tostring(r.num or ""))
-            add("SMS", function() Derma_StringRequest("SMS", "Текст для " .. tostring(r.num or ""), "", function(txt) sendAct({op="sms", num=r.num or "", text=txt}) end) end)
+            add("SMS", function() askString("SMS", "Текст для " .. tostring(r.num or ""), "", function(txt) sendAct({op="sms", num=r.num or "", text=txt}) end) end)
             add("Удалить", function() if r.i then sendAct({op="contact_del", i=r.i}) end; setScreen("contacts") end)
             add("Назад", function() setScreen("contacts") end)
         elseif M.screen == "notes" then
             for _, r in ipairs(rows("notes")) do add(tostring(r.text or "Заметка"), function() end, "заметка") end
-            add("Добавить заметку", function() Derma_StringRequest("Заметка", "Текст", "", function(txt) sendAct({op="note_add", text=txt}) end) end)
+            add("Добавить заметку", function() askString("Заметка", "Текст", "", function(txt) sendAct({op="note_add", text=txt}) end) end)
             add("Удалить выбранную", function() sendAct({op="note_del", i=math.max(1, M.listSel)}) end)
             add("Назад", function() goHome() end)
         elseif M.screen == "jobs" then
@@ -923,7 +934,7 @@ if CLIENT then
             add("Назад", function() goHome() end)
         elseif M.screen == "forum" then
             for _, r in ipairs(rows("forum")) do add(tostring(r.author or "?") .. ": " .. tostring(r.text or ""), function() end, "пост") end
-            add("Новый пост", function() Derma_StringRequest("Форум", "Текст поста", "", function(txt) sendAct({op="forum_post", text=txt}) end) end)
+            add("Новый пост", function() askString("Форум", "Текст поста", "", function(txt) sendAct({op="forum_post", text=txt}) end) end)
             add("Обновить", function() sendAct({op="forum_query"}) end)
             add("Назад", function() goHome() end)
         elseif M.screen == "calc" then
@@ -1086,7 +1097,10 @@ if CLIENT then
 
         -- Selection/activation inside the phone is Mouse3 / middle mouse only.
         if isMouse3(key) then
-            enter()
+            if now() - (tonumber(M.lastSelectAt) or -999) >= 0.25 then
+                M.lastSelectAt = now()
+                enter()
+            end
             return
         end
 
@@ -1105,8 +1119,14 @@ if CLIENT then
         if M.open then move(tonumber(delta) or 1) return true end
         return false
     end
+    local function selectCurrent()
+        if now() - (tonumber(M.lastSelectAt) or -999) < 0.25 then return end
+        M.lastSelectAt = now()
+        enter()
+    end
+
     function MB.ClientSelect()
-        if M.open then enter() return true end
+        if M.open then selectCurrent() return true end
         return false
     end
     function MB.ClientClose()
@@ -1159,7 +1179,12 @@ if CLIENT then
         if input.IsMouseDown then
             mouse3Now = mouse3Now or input.IsMouseDown(107) == true
         end
-        if mouse3Now and not M.poll.mouse3 and M.open then enter() end
+        if mouse3Now and not M.poll.mouse3 and M.open then
+            if now() - (tonumber(M.lastSelectAt) or -999) >= 0.25 then
+                M.lastSelectAt = now()
+                enter()
+            end
+        end
         M.poll.mouse3 = mouse3Now
     end)
     hook.Add("HUDPaint", "GRM_Mobile_CallHUD", function() if M.open and tostring(M.state.lineState or "") == "ringing" then draw.SimpleText("Входящий вызов", "GRMMob_B", ScrW()/2, 120, C.green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER) end end)
