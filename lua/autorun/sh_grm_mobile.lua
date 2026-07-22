@@ -86,6 +86,14 @@ MB.Tiers = {
 MB.Order = { "crappy", "badger", "badger_touch", "lost", "tinkle", "whiz_high", "whiz_gold" }
 local TierOrder = MB.Order
 MB.TierOrder = TierOrder
+MB.ItemTier = MB.ItemTier or {}
+for _, key in ipairs(TierOrder) do
+    if MB.Tiers[key] and MB.Tiers[key].item then MB.ItemTier[MB.Tiers[key].item] = key end
+end
+-- Legacy aliases from earlier broken/short mobile snapshots: if such item is already
+-- in a player's inventory, still treat it as a real phone instead of saying "buy one".
+MB.ItemTier.mobile_touch = MB.ItemTier.mobile_touch or "badger_touch"
+MB.ItemTier.mobile_smartphone = MB.ItemTier.mobile_smartphone or "tinkle"
 MB.Lines = MB.Lines or {}
 MB.Data = MB.Data or {}
 MB.Forum = MB.Forum or { posts = {} }
@@ -121,16 +129,42 @@ function MB.GetTierByItem(itemID)
     return nil
 end
 
+local function tierRank(key)
+    for i, k in ipairs(TierOrder) do if k == key then return i end end
+    return 0
+end
+
 function MB.CarriedTier(ply)
-    if not (IsValid(ply) and GRM.Inventory and GRM.Inventory.CountItem) then return nil end
-    for i = #TierOrder, 1, -1 do
-        local key = TierOrder[i]
-        local tier = MB.Tiers[key]
-        if tier and (GRM.Inventory.CountItem(ply, tier.item) or 0) > 0 then
-            return key
+    if not (IsValid(ply) and GRM.Inventory) then return nil end
+
+    local best, bestRank = nil, 0
+
+    if GRM.Inventory.CountItem then
+        for itemID, key in pairs(MB.ItemTier or {}) do
+            if (GRM.Inventory.CountItem(ply, itemID) or 0) > 0 then
+                local r = tierRank(key)
+                if r > bestRank then best, bestRank = key, r end
+            end
         end
     end
-    return nil
+
+    -- Fallback: direct slot scan. This covers any CountItem mismatch, string/number
+    -- slot-key normalization issue, or legacy saved item ids.
+    if GRM.Inventory.GetPlayerInv then
+        local inv = GRM.Inventory.GetPlayerInv(ply)
+        if istable(inv) and istable(inv.slots) then
+            for _, slot in pairs(inv.slots) do
+                local itemID = istable(slot) and tostring(slot.id or "") or ""
+                local key = (MB.ItemTier or {})[itemID]
+                if key then
+                    local r = tierRank(key)
+                    if r > bestRank then best, bestRank = key, r end
+                end
+            end
+        end
+    end
+
+    return best
 end
 
 function MB.SignalOf(ply)
@@ -510,16 +544,12 @@ if SERVER then
 
     function MB.HasPhone(ply)
         if not IsValid(ply) then return false end
-        if not (GRM.Inventory and GRM.Inventory.CountItem) then
+        if not GRM.Inventory then
             -- Инвентарь ещё не поднят: не блокируем команду ложным отказом.
-            return true
+            return true, MB.Tiers.tinkle
         end
-        for _, key in ipairs(TierOrder) do
-            local tier = MB.Tiers[key]
-            if tier and (GRM.Inventory.CountItem(ply, tier.item) or 0) > 0 then
-                return true, tier
-            end
-        end
+        local tierKey = MB.CarriedTier(ply)
+        if tierKey then return true, MB.Tiers[tierKey], tierKey end
         return false
     end
 
@@ -560,9 +590,14 @@ if SERVER then
         if not IsValid(ply) then return end
         local hasPhone = MB.HasPhone(ply)
         if not hasPhone then
+            MB.PushState(ply) -- sends has=false explicitly; client may show throttled hint
             MB.ServerNotify(ply, "У вас нет мобильного телефона. Купите его в /phoneshop.")
             return
         end
+        -- Critical: send fresh state BEFORE opening. Without this, the client can still
+        -- have startup has=false and will locally say "buy a phone" even though the item
+        -- is already in inventory.
+        MB.PushState(ply)
         net.Start("GRM_Mobile_Open")
         net.Send(ply)
     end
@@ -622,7 +657,7 @@ if CLIENT then
     }
 
     local M = {
-        open = false, frame = nil, state = { has = false, tier = "", number = "", lineState = "idle", unread = 0, signal = 0 },
+        open = false, frame = nil, stateKnown = false, state = { has = false, tier = "", number = "", lineState = "idle", unread = 0, signal = 0 },
         data = {}, screen = "home", sel = 1, listSel = 1, smsThread = nil, smsSel = 1,
         dial = "", calc = "", down = {}, lastTap = {}, hold = {}, nextRepeat = {}, noPhoneAt = -999
     }
@@ -688,13 +723,20 @@ if CLIENT then
         M.frame = nil
     end
 
-    local function openPhone()
+    local function openPhone(force)
         if not hasPhone() then
-            if now() - (M.noPhoneAt or -999) >= 15 then
-                M.noPhoneAt = now()
-                if notification and notification.AddLegacy then notification.AddLegacy("Купите мобильный телефон в /phoneshop", NOTIFY_HINT or 3, 3) end
+            if force then
+                -- Server only sends GRM_Mobile_Open after MB.HasPhone=true. If state packet
+                -- is delayed by a frame, trust the server and open with a safe tier.
+                M.state.has = true
+                if tostring(M.state.tier or "") == "" then M.state.tier = "tinkle" end
+            else
+                if now() - (M.noPhoneAt or -999) >= 15 then
+                    M.noPhoneAt = now()
+                    if notification and notification.AddLegacy then notification.AddLegacy("Купите мобильный телефон в /phoneshop", NOTIFY_HINT or 3, 3) end
+                end
+                return
             end
-            return
         end
         if not IsValid(M.frame) then
             local f = vgui.Create("DFrame")
@@ -799,7 +841,19 @@ if CLIENT then
     end
 
     local function keyDown(key)
-        if not M.open then if key==KEY_UP then openPhone() end return end
+        if not M.open then
+            if key == KEY_UP then
+                if hasPhone() then
+                    openPhone(false)
+                elseif M.stateKnown then
+                    openPhone(false)
+                else
+                    net.Start("GRM_Mobile_Open")
+                    net.SendToServer()
+                end
+            end
+            return
+        end
         if M.down[key] then return end
         local t=now(); if M.lastTap[key] and t-M.lastTap[key] < 0.07 then return end
         M.lastTap[key]=t; M.down[key]=true; M.hold[key]=t; M.nextRepeat[key]=t+0.45
@@ -808,11 +862,11 @@ if CLIENT then
     local function keyUp(key) if input and input.IsKeyDown and input.IsKeyDown(key) then return end M.down[key]=nil; M.hold[key]=nil; M.nextRepeat[key]=nil end
 
     net.Receive("GRM_Mob_State", function()
-        M.state = net.ReadTable() or {}; MB.ClientState=M.state
+        M.state = net.ReadTable() or {}; M.stateKnown = true; MB.ClientState=M.state
         if M.state.has == false then closePhone(false) end
     end)
     net.Receive("GRM_Mob_Data", function() local k=net.ReadString(); local p=net.ReadTable() or {}; M.data[tostring(k or "")]=p; MB.ClientData=M.data end)
-    net.Receive("GRM_Mobile_Open", function() openPhone() end)
+    net.Receive("GRM_Mobile_Open", function() openPhone(true) end)
 
     hook.Add("PlayerButtonDown", "GRM_Mobile_KeyDown", function(ply, key) if ply ~= lp() then return end keyDown(key) end)
     hook.Add("PlayerButtonUp", "GRM_Mobile_KeyUp", function(ply, key) if ply ~= lp() then return end keyUp(key) end)
