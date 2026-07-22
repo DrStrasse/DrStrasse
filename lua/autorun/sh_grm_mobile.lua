@@ -707,10 +707,7 @@ if SERVER then
 
     function MB.HasPhone(ply)
         if not IsValid(ply) then return false end
-        if not GRM.Inventory then
-            -- Инвентарь ещё не поднят: не блокируем команду ложным отказом.
-            return true, MB.Tiers.tinkle
-        end
+        if not GRM.Inventory then return false end
         local tierKey = MB.CarriedTier(ply)
         if tierKey then return true, MB.Tiers[tierKey], tierKey end
         return false
@@ -826,7 +823,7 @@ if CLIENT then
     }
 
     local M = {
-        open = false, frame = nil, stateKnown = false, state = { has = false, tier = "", number = "", lineState = "idle", unread = 0, signal = 0 },
+        open = false, frame = nil, stateKnown = false, pendingOpen = false, state = { has = false, tier = "", number = "", lineState = "idle", unread = 0, signal = 0 },
         data = {}, screen = "home", sel = 1, listSel = 1, smsThread = nil, smsSel = 1,
         dial = "", calc = "", down = {}, lastTap = {}, hold = {}, nextRepeat = {}, noPhoneAt = -999,
         promptOpen = false, lastSelectAt = -999,
@@ -1114,13 +1111,11 @@ if CLIENT then
 
     local function openPhone(force)
         if not hasPhone() then
-            if force then
-                M.state.has = true
-                if tostring(M.state.tier or "") == "" then M.state.tier = "tinkle" end
-            else
-                if now() - (M.noPhoneAt or -999) >= 15 then M.noPhoneAt = now(); notify("Купите мобильный телефон в /phoneshop") end
-                return
+            if now() - (M.noPhoneAt or -999) >= 15 then
+                M.noPhoneAt = now()
+                if M.stateKnown then notify("Активируйте телефон в инвентаре или купите его в /phoneshop") end
             end
+            return
         end
         if not IsValid(M.frame) then
             local f = vgui.Create("DFrame")
@@ -1223,10 +1218,10 @@ if CLIENT then
             if key == KEY_UP then
                 if hasPhone() then
                     openPhone(false)
-                elseif M.stateKnown then
-                    openPhone(false)
-                else
+                elseif not M.stateKnown then
                     requestServerOpen()
+                else
+                    openPhone(false)
                 end
             end
             return
@@ -1283,10 +1278,19 @@ if CLIENT then
 
     net.Receive("GRM_Mob_State", function()
         M.state = net.ReadTable() or {}; M.stateKnown = true; MB.ClientState=M.state
-        if M.state.has == false then closePhone(false) end
+        if M.state.has == false then
+            M.pendingOpen = false
+            closePhone(false)
+        elseif M.pendingOpen and not M.open then
+            M.pendingOpen = false
+            openPhone(false)
+        end
     end)
     net.Receive("GRM_Mob_Data", function() local k=net.ReadString(); local p=net.ReadTable() or {}; M.data[tostring(k or "")]=p; MB.ClientData=M.data end)
-    net.Receive("GRM_Mobile_Open", function() openPhone(true) end)
+    net.Receive("GRM_Mobile_Open", function()
+        M.pendingOpen = true
+        if hasPhone() then M.pendingOpen = false; openPhone(false) end
+    end)
 
     hook.Add("PlayerButtonDown", "GRM_Mobile_KeyDown", function(ply, key) if ply ~= lp() then return end keyDown(key) end)
     hook.Add("PlayerButtonUp", "GRM_Mobile_KeyUp", function(ply, key) if ply ~= lp() then return end keyUp(key) end)
@@ -1300,8 +1304,8 @@ if CLIENT then
         if upNow and not M.poll.up then
             if not M.open then
                 if hasPhone() then openPhone(false)
-                elseif M.stateKnown then openPhone(false)
-                else requestServerOpen() end
+                elseif not M.stateKnown then requestServerOpen()
+                else openPhone(false) end
             end
         end
         M.poll.up = upNow
