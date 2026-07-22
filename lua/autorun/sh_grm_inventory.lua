@@ -284,7 +284,9 @@ if SERVER then
     util.AddNetworkString("grm_inv_split")
 
     local INV_FILE = "grm_inventories.json"
-    local Inventories = {}  -- [SteamID64] = { slots = { [1] = {id="ammo_pistol", count=30}, ... } }
+    -- v1.6: ключ инвентаря = CharacterKey, если поднят GRM.Char.
+    -- fallback = SteamID64 для совместимости/тестов/серверов без character core.
+    local Inventories = {}  -- [InventoryKey] = { slots = { [1] = {id="ammo_pistol", count=30}, ... } }
 
     -- ── Загрузка / Сохранение ────────────────────────────────────
     -- находка 114: лоадер БЕЗ 3-го аргумента конвертировал sid64-ключ
@@ -301,9 +303,19 @@ if SERVER then
                 local sk = k
                 if isnumber(k) then sk = string.format("%.0f", k) end -- легаси битых сейвов
                 if isstring(sk) and sk ~= "" then
+                    local rawSlots = rec.slots
+                    -- Rescue for very old/bad saves: sometimes the inventory table itself
+                    -- was saved as a slot map without the `.slots` wrapper.
+                    if not istable(rawSlots) then
+                        local looksLikeSlots = false
+                        for kk, vv in pairs(rec) do
+                            if (tonumber(kk) ~= nil) and istable(vv) and vv.id then looksLikeSlots = true break end
+                        end
+                        if looksLikeSlots then rawSlots = rec end
+                    end
                     local slots = {}
-                    for kk, vv in pairs(rec.slots or {}) do
-                        if istable(vv) then
+                    for kk, vv in pairs(rawSlots or {}) do
+                        if istable(vv) and vv.id then
                             slots[tonumber(kk) or kk] = vv -- ключи слотов — строго числа
                         end
                     end
@@ -341,20 +353,49 @@ if SERVER then
     Inventories = loadInventories()
 
     -- Автосохранение
+    local function steamKey(ply)
+        if not IsValid(ply) then return nil end
+        local sid = ply:SteamID64()
+        if not sid or sid == "0" then return nil end
+        return sid
+    end
+
+    local function inventoryKey(ply)
+        local sid = steamKey(ply)
+        if not sid then return nil, nil end
+        if GRM.Char and GRM.Char.GetActiveKey then
+            local ok, key = pcall(GRM.Char.GetActiveKey, ply)
+            key = ok and tostring(key or "") or ""
+            if key ~= "" and key ~= "0" then return key, sid end
+        end
+        return sid, sid
+    end
+
+    function GRM.Inventory.GetInventoryKey(ply)
+        local key = inventoryKey(ply)
+        return key
+    end
+
+    local function normalizeSlots(rec)
+        rec = istable(rec) and rec or { slots = {} }
+        local slots = {}
+        for kk, vv in pairs(rec.slots or {}) do
+            if istable(vv) then slots[tonumber(kk) or kk] = vv end
+        end
+        rec.slots = slots
+        return rec
+    end
+
     timer.Create("GRM_Inv_AutoSave", tonumber(GRM.Inventory.Config.SaveInterval) or 10, 0, function()
         saveInventories("авто")
     end)
 
     -- ── Получить инвентарь игрока ────────────────────────────────
-    function GRM.Inventory.GetPlayerInv(ply)
-        if not IsValid(ply) then return nil end
-        local sid = ply:SteamID64()
-        if not sid or sid == "0" then return nil end
+    local function getLegacySteamInv(ply, sid)
         if not Inventories[sid] then
             -- находка 114: ленивое самолечение записи, покалеченной старым лоадером
             local num = tonumber(sid)
             if num then
-                -- кандидаты: числовые ключи И числовые строки (после легаси-конвертации)
                 local cand, cnt = nil, 0
                 for k in pairs(Inventories) do
                     if k ~= sid then
@@ -362,7 +403,7 @@ if SERVER then
                         if kn and math.abs(kn - num) < 64 then cand, cnt = k, cnt + 1 end
                     end
                 end
-                if cnt == 1 then -- строго единственный: чужой инвентарь не отдаём
+                if cnt == 1 then
                     Inventories[sid] = Inventories[cand]
                     Inventories[cand] = nil
                     saveSoon("sid64-rescue")
@@ -370,10 +411,28 @@ if SERVER then
                 end
             end
         end
-        if not Inventories[sid] then
-            Inventories[sid] = { slots = {} }
+        if not Inventories[sid] then Inventories[sid] = { slots = {} } end
+        return normalizeSlots(Inventories[sid])
+    end
+
+    function GRM.Inventory.GetPlayerInv(ply)
+        if not IsValid(ply) then return nil end
+        local key, sid = inventoryKey(ply)
+        if not key then return nil end
+
+        -- No character core / no character key: exact old behavior for compatibility and old rescue tests.
+        if key == sid then return getLegacySteamInv(ply, sid) end
+
+        -- Character inventory: migrate old SteamID64 inventory into char1 only.
+        if not Inventories[key] and Inventories[sid] and tostring(key):find(tostring(sid) .. ":char1", 1, true) == 1 then
+            Inventories[key] = normalizeSlots(Inventories[sid])
+            Inventories[sid] = nil
+            saveSoon("migrate sid64 inventory -> char1")
+            print("[GRM Inv] инвентарь SteamID64 перенесён на CharacterKey → " .. tostring(key))
         end
-        return Inventories[sid]
+
+        if not Inventories[key] then Inventories[key] = { slots = {} } end
+        return normalizeSlots(Inventories[key])
     end
 
     -- ── Синхронизация с клиентом ─────────────────────────────────

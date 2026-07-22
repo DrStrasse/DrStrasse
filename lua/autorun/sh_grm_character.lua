@@ -222,6 +222,9 @@ if SERVER then
         rec.active = slot
         saveChars("select-slot")
         applyActiveCharacter(ply)
+        if GRM.Inventory and GRM.Inventory.SyncToClient then
+            timer.Simple(0.05, function() if IsValid(ply) then GRM.Inventory.SyncToClient(ply) end end)
+        end
         return true
     end
 
