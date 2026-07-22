@@ -823,9 +823,17 @@ if CLIENT then
             draw.SimpleText("3D-превью персонажа", "GRMChar_Sub", 14, 18, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             draw.SimpleText("Модель, скин и bodygroups применяются после сохранения", "GRMChar_Normal", 14, 38, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
-        local preview = vgui.Create("DAdjustableModelPanel", right)
+        local preview = vgui.Create("DModelPanel", right)
         preview:Dock(FILL) preview:DockMargin(0, 0, 0, 10)
-        preview:SetFOV(40)
+        preview:SetFOV(36)
+        preview:SetDirectionalLight(BOX_TOP, Color(255, 255, 255))
+        preview:SetDirectionalLight(BOX_FRONT, Color(180, 200, 255))
+        preview:SetAmbientLight(Color(90, 100, 125))
+        function preview:LayoutEntity(ent) end
+        preview.Paint = function(self, pw, ph)
+            draw.RoundedBox(8, 0, 0, pw, ph, Color(18, 23, 32, 255))
+            self:DrawModel()
+        end
 
         refreshPreview = function()
             if not IsValid(preview) then return end
@@ -833,6 +841,11 @@ if CLIENT then
             preview:SetModel(draft.model)
             local ent = preview:GetEntity()
             if IsValid(ent) then
+                local mins, maxs = ent:OBBMins(), ent:OBBMaxs()
+                local center = (mins + maxs) * 0.5
+                local radius = math.max(24, (maxs - mins):Length() * 0.5)
+                preview:SetLookAt(center)
+                preview:SetCamPos(center + Vector(radius * 2.2, 0, radius * 0.08))
                 ent:SetSkin(math.Clamp(tonumber(draft.skin) or 0, 0, 64))
                 for i = 0, (ent:GetNumBodyGroups() or 1) - 1 do ent:SetBodygroup(i, 0) end
                 for g, v in pairs(draft.bodygroups or {}) do
@@ -955,13 +968,7 @@ if CLIENT then
                 draw.RoundedBox(6, 0, 0, pw, ph, (entry.path == draft.model) and Color(44, 66, 96) or C.panel)
             end
 
-            local icon = vgui.Create("SpawnIcon", row)
-            icon:Dock(LEFT) icon:SetWide(62) icon:DockMargin(4, 4, 0, 4)
-            icon:SetModel(entry.path, tonumber(entry.skin) or 0)
-            icon:SetTooltip(false)
-            icon:SetMouseInputEnabled(false)
-
-            local bn = mkBtn(row, string.GetFileFromFilename(entry.path) or entry.path, C.panel)
+            local bn = mkBtn(row, "", C.panel)
             bn:Dock(FILL) bn:DockMargin(0, 3, 3, 3)
             bn:SetFont("GRMChar_Normal") bn:SetTextColor(C.text)
             bn.Paint = function(self, pw, ph)
@@ -969,8 +976,9 @@ if CLIENT then
                 if self:IsHovered() then cc = Color(cc.r + 14, cc.g + 14, cc.b + 14) end
                 draw.RoundedBox(5, 0, 0, pw, ph, cc)
             end
-            local provider = entry.providerTitle and ("  ·  " .. tostring(entry.providerTitle)) or ""
-            bn:SetText(tostring(entry.path) .. provider)
+            local provider = entry.providerTitle and tostring(entry.providerTitle) or "Внешность"
+            bn:SetText(provider .. (entry.path == draft.model and "  •  ВЫБРАНО" or ""))
+            bn:SetTooltip("Выбрать этот образ")
             bn.DoClick = function()
                 selectModel(entry)
                 surface.PlaySound("buttons/button15.wav")
