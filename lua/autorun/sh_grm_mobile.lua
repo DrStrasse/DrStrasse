@@ -758,14 +758,15 @@ end
 
 
 if CLIENT then
-    surface.CreateFont("GRMMob_T", { font = "Roboto", size = 20, weight = 800, extended = true })
-    surface.CreateFont("GRMMob_B", { font = "Roboto", size = 15, weight = 600, extended = true })
-    surface.CreateFont("GRMMob_S", { font = "Roboto", size = 12, weight = 400, extended = true })
+    surface.CreateFont("GRMMob_T", { font = "Roboto", size = 24, weight = 800, extended = true })
+    surface.CreateFont("GRMMob_B", { font = "Roboto", size = 17, weight = 700, extended = true })
+    surface.CreateFont("GRMMob_S", { font = "Roboto", size = 13, weight = 500, extended = true })
+    surface.CreateFont("GRMMob_XS", { font = "Roboto", size = 11, weight = 400, extended = true })
 
     local C = {
         shell = Color(8, 10, 16, 252), bg = Color(18, 22, 32, 248), top = Color(30, 38, 54, 248),
         row = Color(38, 47, 65, 242), row2 = Color(48, 61, 84, 245), accent = Color(75, 155, 255),
-        text = Color(240, 244, 250), dim = Color(165, 176, 192), green = Color(70, 205, 120), red = Color(225, 80, 75)
+        text = Color(240, 244, 250), dim = Color(165, 176, 192), green = Color(70, 205, 120), red = Color(225, 80, 75), yellow = Color(245, 195, 70)
     }
 
     local M = {
