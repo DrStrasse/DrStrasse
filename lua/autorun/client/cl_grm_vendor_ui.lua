@@ -202,7 +202,9 @@ function CreateVendorRow(parent, scrollPanel, id, item, vType, ent, yPos)
         if item.hunger then
             draw.SimpleText("Сытость: +" .. item.hunger .. "  HP: +" .. (item.health or 0), "GRM_Vendor_Small", 82, infoY, CUI.green, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
         end
-        if item.maxStack then
+        if item.isEntity then
+            draw.SimpleText("Покупка создаёт объект рядом с вами", "GRM_Vendor_Small", 82, infoY, CUI.green, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        elseif item.maxStack then
             draw.SimpleText("Макс. стак: " .. item.maxStack, "GRM_Vendor_Small", 82, infoY, CUI.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
         end
         if item.license and item.license ~= "gun" then

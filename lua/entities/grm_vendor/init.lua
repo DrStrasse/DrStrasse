@@ -149,7 +149,25 @@ net.Receive("GRM_Vendor_Buy", function(_, ply)
     GRM.TakeMoney(ply, price, "Покупка у торгаша: " .. item.name)
 
     -- Выдача товара
-    if ent.VendorType == "weapon" or item.isWeapon then
+    if item.isEntity then
+        local class = tostring(item.class or itemID)
+        local spawned = ents.Create(class)
+        if not IsValid(spawned) then
+            GRM.GiveMoney(ply, price, "Возврат: entity не создана")
+            GRM.Notify(ply, "Не удалось создать: " .. tostring(item.name or class), 255, 100, 100)
+            return
+        end
+        local forward = ply:GetForward()
+        local pos = ply:GetPos() + forward * 70 + Vector(0, 0, 24)
+        spawned:SetPos(pos)
+        spawned:SetAngles(Angle(0, ply:EyeAngles().y, 0))
+        spawned:Spawn()
+        spawned:Activate()
+        if spawned.SetPrinterOwner then spawned:SetPrinterOwner(ply) else spawned:SetOwner(ply) end
+        local phys = spawned:GetPhysicsObject()
+        if IsValid(phys) then phys:Wake() end
+        GRM.Notify(ply, "Куплено и установлено рядом: " .. item.name .. " за " .. GRM.Format(price), 100, 220, 100)
+    elseif ent.VendorType == "weapon" or item.isWeapon then
         -- SWEP: выдаётся через ply:Give()
         ply:Give(itemID)
         GRM.Notify(ply, "Куплено: " .. item.name .. " за " .. GRM.Format(price), 100, 220, 100)
@@ -163,6 +181,9 @@ net.Receive("GRM_Vendor_Buy", function(_, ply)
         else
             GRM.Notify(ply, "Куплено: " .. item.name, 100, 220, 100)
         end
+    else
+        GRM.GiveMoney(ply, price, "Возврат: нет способа выдачи")
+        GRM.Notify(ply, "Товар нельзя выдать: " .. tostring(item.name or itemID), 255, 100, 100)
     end
 end)
 

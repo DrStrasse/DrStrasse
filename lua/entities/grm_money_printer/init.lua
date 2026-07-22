@@ -32,6 +32,20 @@ local DEFAULT = {
     maxPrintAmount = 2500,
 }
 
+local SND = {
+    print = "buttons/button17.wav",
+    collect = "garrysmod/save_load1.wav",
+    repair = "buttons/button15.wav",
+    upgrade = "buttons/button14.wav",
+    toggle = "buttons/lightswitch2.wav",
+    warn = "ambient/energy/spark" ,
+    broken = "ambient/energy/spark6.wav",
+}
+
+local function emit(ent, snd, level, pitch)
+    if IsValid(ent) and snd and snd ~= "" then ent:EmitSound(snd, level or 65, pitch or 100) end
+end
+
 local function money(n)
     n = math.floor(tonumber(n) or 0)
     return GRM and GRM.Format and GRM.Format(n) or (tostring(n) .. " GRM")
@@ -155,11 +169,12 @@ function ENT:PrintMoney()
     local add = math.min(self:GetPrintAmount(), self:GetMaxMoney() - self:GetPrinted())
     self:SetPrinted(self:GetPrinted() + add)
     self:SetHeat(math.min(120, self:GetHeat() + DEFAULT.heatPerPrint))
+    emit(self, SND.print, 58, math.random(95, 110))
 
     if self:GetHeat() >= DEFAULT.overheatAt then
         self:Break("перегрев")
     elseif self:GetHeat() >= DEFAULT.warningHeat and math.random() < 0.05 then
-        self:EmitSound("ambient/energy/spark" .. math.random(1, 6) .. ".wav", 65, 100)
+        emit(self, "ambient/energy/spark" .. math.random(1, 6) .. ".wav", 65, 100)
     end
 end
 
@@ -168,7 +183,7 @@ function ENT:Break(reason)
     self:SetBroken(true)
     self:SetActive(false)
     self:SetPrinterHealth(0)
-    self:EmitSound("ambient/energy/spark6.wav", 75, 100)
+    emit(self, SND.broken, 75, 100)
     net.Start("GRM_Printer_Broken")
         net.WriteEntity(self)
         net.WriteString(tostring(reason or "поломка"))
@@ -190,6 +205,7 @@ function ENT:CollectMoney(ply)
         return false
     end
     self:SetPrinted(0)
+    emit(self, SND.collect, 65, 105)
     if IsValid(ply) then notify(ply, "Снято с принтера: " .. money(amount), 100, 220, 100) end
     local owner = self:OwnerPlayer()
     if IsValid(owner) and owner ~= ply then notify(owner, "Принтер выплатил: " .. money(amount), 100, 220, 100) end
@@ -207,6 +223,7 @@ function ENT:Repair(ply)
     self:SetActive(true)
     self:SetPrinterHealth(DEFAULT.maxHealth)
     self:SetHeat(0)
+    emit(self, SND.repair, 65, 100)
     self.NextPrint = CurTime() + self:GetPrintInterval()
     notify(ply, "Принтер отремонтирован за " .. money(DEFAULT.repairCost), 100, 220, 100)
 end
@@ -216,6 +233,7 @@ function ENT:UpgradeCapacity(ply)
     if not canPay(ply, DEFAULT.upgradeCapacityCost) then notify(ply, "Нужно: " .. money(DEFAULT.upgradeCapacityCost), 255, 120, 120) return end
     takeMoney(ply, DEFAULT.upgradeCapacityCost, "Улучшение ёмкости принтера")
     self:SetMaxMoney(math.min(DEFAULT.maxCapacity, math.floor(self:GetMaxMoney() * 1.5)))
+    emit(self, SND.upgrade, 65, 105)
     notify(ply, "Ёмкость принтера улучшена до " .. money(self:GetMaxMoney()), 100, 220, 100)
 end
 
@@ -225,6 +243,7 @@ function ENT:UpgradeRate(ply)
     takeMoney(ply, DEFAULT.upgradeRateCost, "Улучшение скорости принтера")
     self:SetPrintInterval(math.max(DEFAULT.minInterval, math.floor(self:GetPrintInterval() * 0.85)))
     self:SetPrintAmount(math.min(DEFAULT.maxPrintAmount, math.floor(self:GetPrintAmount() * 1.25)))
+    emit(self, SND.upgrade, 65, 115)
     notify(ply, "Скорость принтера улучшена", 100, 220, 100)
 end
 
@@ -256,7 +275,7 @@ net.Receive("GRM_Printer_Action", function(_, ply)
     if not ent:IsOwner(ply) then notify(ply, "Это не ваш принтер", 255, 100, 100) return end
 
     if action == "collect" then ent:CollectMoney(ply)
-    elseif action == "toggle" then ent:SetActive(not ent:GetActive()); notify(ply, ent:GetActive() and "Принтер включён" or "Принтер выключен", 150, 220, 255)
+    elseif action == "toggle" then ent:SetActive(not ent:GetActive()); emit(ent, SND.toggle, 60, ent:GetActive() and 110 or 90); notify(ply, ent:GetActive() and "Принтер включён" or "Принтер выключен", 150, 220, 255)
     elseif action == "repair" then ent:Repair(ply)
     elseif action == "cap" then ent:UpgradeCapacity(ply)
     elseif action == "rate" then ent:UpgradeRate(ply)

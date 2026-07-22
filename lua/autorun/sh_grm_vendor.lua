@@ -81,6 +81,7 @@ V.Catalogs.rare = V.Catalogs.rare or {
     ["radio_modulator"]      = { name = "Модулятор рации",     price = 8000,  model = "models/props_lab/citizenradio.mdl",  desc = "Доступ к зашумлённым частотам",      maxStack = 1 },
     ["item_healthkit"]       = { name = "Аптечка",             price = 300,   model = "models/items/healthkit.mdl",         desc = "Лечит 25 HP",                        maxStack = 5 },
     ["item_battery"]         = { name = "Батарея",             price = 250,   model = "models/items/battery.mdl",           desc = "Восстанавливает 15 брони",           maxStack = 5 },
+    ["grm_money_printer"]    = { name = "Денежный принтер",     price = 25000, model = "models/props_lab/reciever01b.mdl",   desc = "Редкий аппарат для печати GRM. Спавнится рядом и привязывается к покупателю.", maxStack = 1, isEntity = true, class = "grm_money_printer", noSell = true },
 }
 
 -- ============================================================
@@ -136,7 +137,7 @@ end
 
 function V.GetSellPrice(ply, vendorType, id)
     local item = V.GetItem(vendorType, id)
-    if not item then return 0 end
+    if not item or item.noSell or item.isEntity then return 0 end
     return math.floor((item.price or 0) * V.Config.SellMultiplier)
 end
 
