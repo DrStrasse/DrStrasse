@@ -114,7 +114,7 @@ function ENT:SetPrinterOwner(ply)
     if not IsValid(ply) or not ply:IsPlayer() then return end
     self:SetOwner(ply)
     self:SetCreator(ply)
-    self:SetOwnerSID64(ply:SteamID64())
+    self:SetOwnerSID64((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64())
     self:SetOwnerName(ply:Nick())
 end
 
@@ -122,7 +122,7 @@ function ENT:OwnerPlayer()
     local sid = self:GetOwnerSID64()
     if sid == "" then return nil end
     for _, p in ipairs(player.GetAll()) do
-        if IsValid(p) and p:SteamID64() == sid then return p end
+        if IsValid(p) and (((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64()) == sid) then return p end
     end
     return nil
 end
@@ -131,7 +131,7 @@ function ENT:IsOwner(ply)
     if not IsValid(ply) then return false end
     if ply:IsSuperAdmin() then return true end
     local sid = self:GetOwnerSID64()
-    return sid ~= "" and ply:SteamID64() == sid
+    return sid ~= "" and ((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64()) == sid
 end
 
 function ENT:ClaimIfEmpty(ply)

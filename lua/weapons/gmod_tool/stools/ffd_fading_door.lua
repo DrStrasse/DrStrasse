@@ -133,7 +133,7 @@ if SERVER then
         ent.FFD_AutoClose = autoclose == true or autoclose == 1
         ent.FFD_CloseTime = math.max(0.5, tonumber(closeTime) or 5)
         ent.FFD_Key = key
-        ent.FFD_OwnerSID64 = IsValid(ply) and tostring(ply:SteamID64() or "") or tostring(ent.FFD_OwnerSID64 or "")
+        ent.FFD_OwnerSID64 = IsValid(ply) and tostring((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64() or "") or tostring(ent.FFD_OwnerSID64 or "")
         -- Код 108: клиентская метка «это FFD-дверь» — подсветка цели в FFD Link
         ent:SetNWBool("FFD_IsDoor", true)
 
@@ -209,7 +209,7 @@ if SERVER then
         local want = tostring(d.owner or "")
         if want ~= "" then
             for _, p in ipairs(player.GetAll()) do
-                if IsValid(p) and tostring(p:SteamID64() or "") == want then ownerPly = p break end
+                if IsValid(p) and tostring((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64() or "") == want then ownerPly = p break end
             end
         end
         coreMakeFadingDoor(ownerPly, ent, tonumber(d.key) or 1, d.reversed, d.toggle, d.autoclose, tonumber(d.time) or 5, true)
