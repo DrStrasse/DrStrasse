@@ -1068,3 +1068,14 @@
 4. `sh_grm_medical_full.lua`: добавлен препарат `med_detox` / «Детокс-комплект», safe-регистратор med use-handlers с ретраями, диагностика `/diagnose` теперь показывает зависимость и активный наркотический эффект. Детокс снижает зависимость и отравление через `GRM.Narcotics.ClearAddiction`.
 5. `sv_grm_narcotics_craft.lua`: исправлен `recipe.time` vs `cook_time`, добавлен resolver рецептов с fallback, проверка готовности инвентаря, валидация labType, правильные ingredient id. Крафт теперь списывает реальные item-id и выдаёт `narc_*`/`med_*`.
 6. Валидация: GLua 292/0, sim_medical 75/75, sim_invphone 41/41, sim_mobile 121/121; proto_audit без новых замечаний по этим модулям.
+
+---
+
+## Находка 147 (22.07.2026): полный rewrite лабораторий, наркотиков и медицинских препаратов
+
+1. Причина пустого окна лаборатории со скрина: entity `Use()` отправлял клиенту `GRM_NarcCraft_Open` только с `labType`, а клиент ждал полный payload рецептов. `grm_narc_lab` и `grm_med_lab` теперь вызывают серверный `GRM.NarcCraft.OpenLab(ply, labType, ent)`, который отправляет полноценную таблицу: рецепты, ингредиенты, наличие у игрока и флаг `can`.
+2. `sh_grm_narcotics.lua` переписан как Narcotics v2.0.0: реальные item-id ингредиентов (`narc_solvent`, `narc_precursor`, `narc_equipment`), safe-регистрация предметов/useFunc, активные эффекты, зависимость, отравление, `/narc_status`, урон от ломки/передозировки, damage multiplier hook.
+3. `sh_grm_medical_full.lua` переписан как Medical Full v2.1.0: препараты painkillers/antibiotics/adrenaline/detox, расширенная аптечка, safe use-handlers, `/diagnose` показывает зависимость/отравление/наркоэффект, `med_detox` лечит через `GRM.Narcotics.ClearAddiction`.
+4. `sv_grm_narcotics_craft.lua` переписан как Labs Craft v2.0.0: единый resolver рецептов narc/med, проверка инвентаря, корректные `time/cook_time`, защита от параллельного крафта, выдача `narc_*`/`med_*`, автообновление меню после завершения.
+5. `cl_grm_narcotics_craft.lua` переписан: нормальное окно рецептов, карточки ингредиентов с `have/need`, кнопка «Начать», empty-state. Старый тёмный пустой оверлей устранён.
+6. Валидация: GLua 292/0, sim_medical 75/75, sim_invphone 41/41, sim_mobile 121/121. Proto audit без новых замечаний по этим модулям.

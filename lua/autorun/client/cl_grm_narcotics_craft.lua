@@ -1,125 +1,96 @@
 --[[--------------------------------------------------------------------
-    GRM Narcotics Craft UI - Client v1.0 (Код 120)
+    GRM Labs Craft UI v2.0.0 — client
 ----------------------------------------------------------------------]]
 
 if SERVER then return end
 
 GRM = GRM or {}
 GRM.NarcCraft = GRM.NarcCraft or {}
-local CRAFT = GRM.NarcCraft
 
-surface.CreateFont("GRM_Craft_Title", {font = "Roboto", size = 18, weight = 700, extended = true})
-surface.CreateFont("GRM_Craft_Normal", {font = "Roboto", size = 14, weight = 500, extended = true})
-surface.CreateFont("GRM_Craft_Small", {font = "Roboto", size = 12, weight = 400, extended = true})
+surface.CreateFont("GRM_Craft_Title", {font="Roboto", size=22, weight=800, extended=true})
+surface.CreateFont("GRM_Craft_Normal", {font="Roboto", size=15, weight=600, extended=true})
+surface.CreateFont("GRM_Craft_Small", {font="Roboto", size=12, weight=500, extended=true})
 
-local CUI = {
-    bg = Color(19, 24, 33, 248),
-    panel = Color(33, 42, 56, 245),
-    accent = Color(70, 155, 255),
-    green = Color(55, 185, 105),
-    red = Color(205, 70, 65),
-    yellow = Color(235, 180, 60),
-    text = Color(240, 244, 250),
-    dim = Color(166, 176, 191),
+local C = {
+    bg=Color(18,22,32,248), top=Color(30,38,54,248), card=Color(34,43,62,246),
+    accent=Color(70,155,255), green=Color(70,205,120), red=Color(225,80,75),
+    text=Color(240,244,250), dim=Color(166,176,191), yellow=Color(245,195,70)
 }
 
--- ============================================================
--- ОТКРЫТИЕ МЕНЮ
--- ============================================================
-net.Receive("GRM_NarcCraft_Open", function()
-    local labType = net.ReadString()
-    local recipeCount = net.ReadUInt(8)
-    
-    local recipes = {}
-    for i = 1, recipeCount do
-        local id = net.ReadString()
-        local name = net.ReadString()
-        local time = net.ReadUInt(16)
-        local yield = net.ReadUInt(8)
-        local ingCount = net.ReadUInt(8)
-        local ingredients = {}
-        for j = 1, ingCount do
-            local ingID = net.ReadString()
-            local ingCount = net.ReadUInt(8)
-            ingredients[ingID] = ingCount
-        end
-        recipes[id] = {name = name, time = time, yield = yield, ingredients = ingredients}
+local function startCraft(labType, recipeID)
+    net.Start("GRM_NarcCraft_Start")
+        net.WriteString(labType or "narc")
+        net.WriteString(recipeID or "")
+    net.SendToServer()
+end
+
+local function openUI(data)
+    data = istable(data) and data or { labType="narc", title="Лаборатория", recipes={} }
+    local f = vgui.Create("DFrame")
+    f:SetTitle("")
+    f:SetSize(760, 560)
+    f:Center()
+    f:MakePopup()
+    f:ShowCloseButton(true)
+    f.Paint = function(_, w, h)
+        draw.RoundedBox(10, 0, 0, w, h, C.bg)
+        draw.RoundedBoxEx(10, 0, 0, w, 58, C.top, true, true, false, false)
+        draw.SimpleText(data.title or "Лаборатория", "GRM_Craft_Title", 18, 29, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Выберите рецепт. Ингредиенты подсвечены по наличию.", "GRM_Craft_Small", w - 18, 31, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
     end
-    
-    local frame = vgui.Create("DFrame")
-    frame:SetTitle("")
-    frame:SetSize(600, 500)
-    frame:Center()
-    frame:MakePopup()
-    frame:ShowCloseButton(true)
-    
-    frame.Paint = function(self, w, h)
-        draw.RoundedBox(8, 0, 0, w, h, CUI.bg)
-        draw.RoundedBoxEx(8, 0, 0, w, 36, Color(27, 35, 48), true, true, false, false)
-        local title = (labType == "narc" and "Лаборатория наркотиков" or "Медицинская лаборатория")
-        draw.SimpleText(title, "GRM_Craft_Title", 12, 18, CUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    end
-    
-    local scroll = vgui.Create("DScrollPanel", frame)
+
+    local scroll = vgui.Create("DScrollPanel", f)
     scroll:Dock(FILL)
-    scroll:DockMargin(8, 44, 8, 8)
-    
-    for id, recipe in pairs(recipes) do
+    scroll:DockMargin(12, 70, 12, 12)
+
+    if not data.recipes or #data.recipes == 0 then
+        local empty = vgui.Create("DLabel", scroll)
+        empty:Dock(TOP); empty:SetTall(80); empty:SetText("Нет рецептов для этой лаборатории")
+        empty:SetFont("GRM_Craft_Normal"); empty:SetTextColor(C.dim)
+        return
+    end
+
+    for _, r in ipairs(data.recipes) do
         local row = vgui.Create("DPanel", scroll)
         row:Dock(TOP)
-        row:SetTall(80)
-        row:DockMargin(0, 0, 0, 5)
-        
-        row.Paint = function(self, w, h)
-            draw.RoundedBox(6, 0, 0, w, h, CUI.panel)
-            draw.SimpleText(recipe.name, "GRM_Craft_Normal", 10, 8, CUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            draw.SimpleText(string.format("Время: %d сек | Выход: %d шт", recipe.time, recipe.yield), "GRM_Craft_Small", 10, 30, CUI.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            
-            -- Ингредиенты
-            local ingText = "Ингредиенты: "
-            for ing, count in pairs(recipe.ingredients) do
-                ingText = ingText .. ing .. "×" .. count .. " "
+        row:SetTall(118)
+        row:DockMargin(0, 0, 0, 8)
+        row.Paint = function(_, w, h)
+            draw.RoundedBox(8, 0, 0, w, h, C.card)
+            draw.SimpleText(r.name or r.id, "GRM_Craft_Normal", 14, 18, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("Время: " .. tostring(r.time or 0) .. " сек  •  Выход: " .. tostring(r.yield or 1), "GRM_Craft_Small", 14, 42, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            local x = 14
+            for _, ing in ipairs(r.ingredients or {}) do
+                local txt = tostring(ing.id) .. ": " .. tostring(ing.have or 0) .. "/" .. tostring(ing.need or 0)
+                draw.SimpleText(txt, "GRM_Craft_Small", x, 72, ing.ok and C.green or C.red, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                x = x + 165
             end
-            draw.SimpleText(ingText, "GRM_Craft_Small", 10, 50, CUI.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
         end
-        
         local btn = vgui.Create("DButton", row)
-        btn:Dock(RIGHT)
-        btn:SetWide(100)
-        btn:DockMargin(0, 20, 10, 20)
-        btn:SetText("Варить")
-        btn:SetFont("GRM_Craft_Normal")
-        btn.Paint = function(self, w, h)
-            local col = self:IsHovered() and Color(75, 205, 125) or CUI.green
-            draw.RoundedBox(5, 0, 0, w, h, col)
-            draw.SimpleText("Варить", "GRM_Craft_Normal", w/2, h/2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        end
+        btn:SetSize(150, 34)
+        btn:SetPos(590, 42)
+        btn:SetText(r.can and "Начать" or "Не хватает")
+        btn:SetEnabled(r.can == true)
         btn.DoClick = function()
-            net.Start("GRM_NarcCraft_Start")
-                net.WriteString(labType)
-                net.WriteString(id)
-            net.SendToServer()
-            frame:Close()
+            startCraft(data.labType, r.id)
+            f:Close()
         end
     end
+end
+
+net.Receive("GRM_NarcCraft_Open", function()
+    openUI(net.ReadTable() or {})
 end)
 
--- ============================================================
--- ПРОГРЕСС
--- ============================================================
 net.Receive("GRM_NarcCraft_Progress", function()
     local name = net.ReadString()
-    local time = net.ReadUInt(16)
-    
-    notification.AddLegacy("Варка " .. name .. " (" .. time .. " сек)...", NOTIFY_GENERIC, time)
+    local t = net.ReadUInt(16)
+    notification.AddLegacy("Процесс: " .. name .. " (" .. t .. " сек)", NOTIFY_GENERIC, 5)
 end)
 
--- ============================================================
--- ЗАВЕРШЕНИЕ
--- ============================================================
 net.Receive("GRM_NarcCraft_Done", function()
     local name = net.ReadString()
     notification.AddLegacy(name .. " готово!", NOTIFY_GENERIC, 5)
 end)
 
-print("[GRM] Narcotics Craft UI Client loaded")
+print("[GRM] Labs Craft UI Client loaded v2")

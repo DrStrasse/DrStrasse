@@ -1,15 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Narcotics Craft UI v1.0 (Код 120) — интерфейс варки наркотиков
-    
-    КРАФТ-СТАНЦИИ:
-    - Лаборатория для наркотиков (grm_narc_lab)
-    - Мед.лаборатория (grm_med_lab)
-    
-    UI:
-    - Список рецептов
-    - Инвентарь ингредиентов
-    - Прогресс-бар варки
-    - Уведомления о готовности
+    GRM Labs Craft v2.0.0 — лаборатории наркотиков и медицины
 ----------------------------------------------------------------------]]
 
 if CLIENT then return end
@@ -17,203 +7,124 @@ if CLIENT then return end
 GRM = GRM or {}
 GRM.NarcCraft = GRM.NarcCraft or {}
 local CRAFT = GRM.NarcCraft
+CRAFT.Version = "2.0.0"
+CRAFT.Active = CRAFT.Active or {}
 
 util.AddNetworkString("GRM_NarcCraft_Open")
 util.AddNetworkString("GRM_NarcCraft_Start")
 util.AddNetworkString("GRM_NarcCraft_Progress")
 util.AddNetworkString("GRM_NarcCraft_Done")
 
--- ============================================================
--- КРАФТ-СТАНЦИЯ: ЛАБОРАТОРИЯ
--- ============================================================
-
--- Рецепты наркотиков (дублируем здесь чтобы были доступны на сервере)
-local NARC_RECIPES = {
-    marijuana = {
-        name = "Марихуана",
-        model = "models/jmod/resources/propellent.mdl",
-        ingredients = { narc_solvent = 2, narc_precursor = 1 },
-        cook_time = 30,
-        yield = 3,
-    },
-    amphetamine = {
-        name = "Амфетамин",
-        model = "models/bloocobalt/l4d/items/w_eq_pills.mdl",
-        ingredients = { narc_solvent = 3, narc_precursor = 3 },
-        cook_time = 60,
-        yield = 5,
-    },
-    cocaine = {
-        name = "Кокаин",
-        model = "models/bloocobalt/l4d/items/w_eq_pills.mdl",
-        ingredients = { narc_solvent = 5, narc_precursor = 5, narc_equipment = 1 },
-        cook_time = 90,
-        yield = 7,
-    },
+local FALLBACK_NARC = {
+    marijuana = { name="Марихуана", ingredients={narc_solvent=2,narc_precursor=1}, cook_time=30, yield=3 },
+    amphetamine = { name="Амфетамин", ingredients={narc_solvent=3,narc_precursor=3}, cook_time=60, yield=5 },
+    cocaine = { name="Кокаин", ingredients={narc_solvent=5,narc_precursor=5,narc_equipment=1}, cook_time=90, yield=7 },
+}
+local FALLBACK_MED = {
+    painkillers = { name="Обезболивающее", ingredients={narc_solvent=2,narc_precursor=1}, time=20, yield=5 },
+    antibiotics = { name="Антибиотики", ingredients={narc_solvent=3,narc_precursor=2}, time=30, yield=4 },
+    adrenaline = { name="Адреналин", ingredients={narc_solvent=5,narc_precursor=3,narc_equipment=1}, time=45, yield=2 },
+    detox = { name="Детокс-комплект", ingredients={narc_solvent=4,narc_precursor=2}, time=40, yield=2 },
 }
 
--- Рецепты мед.препаратов
-local MED_RECIPES = {
-    painkillers = {
-        name = "Обезболивающее",
-        model = "models/bloocobalt/l4d/items/w_eq_pills.mdl",
-        ingredients = { narc_solvent = 2, narc_precursor = 1 },
-        cook_time = 20,
-        yield = 5,
-    },
-    antibiotics = {
-        name = "Антибиотики",
-        model = "models/bloocobalt/l4d/items/w_eq_pills.mdl",
-        ingredients = { narc_solvent = 3, narc_precursor = 2 },
-        cook_time = 30,
-        yield = 4,
-    },
-    adrenaline = {
-        name = "Адреналин",
-        model = "models/jmod/resources/coolant_bottle.mdl",
-        ingredients = { narc_solvent = 5, narc_precursor = 3, narc_equipment = 1 },
-        cook_time = 45,
-        yield = 2,
-    },
+local LAB_META = {
+    narc = { title = "Лаборатория наркотиков", outputPrefix = "narc_" },
+    med  = { title = "Медицинская лаборатория", outputPrefix = "med_" },
 }
 
-CRAFT.LabType = {
-    narc = {
-        name = "Лаборатория наркотиков",
-        model = "models/props_wasteland/laundry_washer003.mdl",
-        recipes = NARC_RECIPES,
-    },
-    med = {
-        name = "Медицинская лаборатория",
-        model = "models/props_wasteland/laundry_washer003.mdl",
-        recipes = MED_RECIPES,
-    },
-}
+local function notify(ply, msg, r, g, b)
+    if GRM.Notify then GRM.Notify(ply, msg, r or 100, g or 220, b or 100)
+    elseif IsValid(ply) and ply.ChatPrint then ply:ChatPrint("[Лаборатория] " .. tostring(msg or "")) end
+end
 
-local function recipeTable(labType)
-    if labType == "narc" then
-        return (GRM.Narcotics and GRM.Narcotics.Recipes) or NARC_RECIPES
+local function recipesOf(labType)
+    if labType == "narc" then return (GRM.Narcotics and GRM.Narcotics.Recipes) or FALLBACK_NARC end
+    return (GRM.MedicalFull and GRM.MedicalFull.Recipes) or FALLBACK_MED
+end
+local function recipeTime(r) return math.max(1, math.floor(tonumber(r and (r.time or r.cook_time)) or 30)) end
+local function invReady() return GRM.Inventory and GRM.Inventory.CountItem and GRM.Inventory.RemoveItem and GRM.Inventory.AddItem end
+
+local function payloadFor(ply, labType)
+    local recipes = recipesOf(labType)
+    local out = { labType = labType, title = (LAB_META[labType] and LAB_META[labType].title) or "Лаборатория", recipes = {} }
+    for id, r in pairs(recipes or {}) do
+        local row = { id=id, name=r.name or id, time=recipeTime(r), yield=tonumber(r.yield) or 1, ingredients={}, can=true }
+        for itemID, need in pairs(r.ingredients or {}) do
+            local have = invReady() and (GRM.Inventory.CountItem(ply, itemID) or 0) or 0
+            row.ingredients[#row.ingredients+1] = { id=itemID, need=need, have=have, ok=have>=need }
+            if have < need then row.can = false end
+        end
+        table.sort(row.ingredients, function(a,b) return a.id < b.id end)
+        out.recipes[#out.recipes+1] = row
     end
-    return (GRM.MedicalFull and GRM.MedicalFull.Recipes) or MED_RECIPES
+    table.sort(out.recipes, function(a,b) return a.name < b.name end)
+    return out
 end
 
-local function recipeTime(recipe)
-    return math.max(1, math.floor(tonumber(recipe and (recipe.time or recipe.cook_time)) or 30))
+function CRAFT.OpenLab(ply, labType, ent)
+    if not IsValid(ply) then return end
+    labType = (labType == "med") and "med" or "narc"
+    net.Start("GRM_NarcCraft_Open")
+        net.WriteTable(payloadFor(ply, labType))
+    net.Send(ply)
 end
 
-local function invReady()
-    return GRM.Inventory and GRM.Inventory.CountItem and GRM.Inventory.RemoveItem and GRM.Inventory.AddItem
-end
-
--- ============================================================
--- ПРОВЕРКА РЕЦЕПТА
--- ============================================================
 function CRAFT.CanCraft(ply, recipeID, labType)
     if not IsValid(ply) then return false, "Игрок недействителен" end
-    
     if not invReady() then return false, "Инвентарь не загружен" end
-    local recipes = recipeTable(labType)
+    local recipes = recipesOf(labType)
     local recipe = recipes and recipes[recipeID]
     if not recipe then return false, "Неизвестный рецепт" end
-
-    -- Проверяем ингредиенты
-    for ingredient, count in pairs(recipe.ingredients) do
-        local have = GRM.Inventory.CountItem(ply, ingredient) or 0
-        if have < count then
-            return false, string.format("Нужно %d %s (у вас: %d)", count, ingredient, have)
-        end
+    if CRAFT.Active[ply] then return false, "Вы уже заняты крафтом" end
+    for itemID, need in pairs(recipe.ingredients or {}) do
+        local have = GRM.Inventory.CountItem(ply, itemID) or 0
+        if have < need then return false, string.format("Нужно %d %s (у вас: %d)", need, itemID, have) end
     end
-    
-    return true
+    return true, recipe
 end
 
--- ============================================================
--- НАЧАЛО КРАФТА
--- ============================================================
 function CRAFT.StartCraft(ply, recipeID, labType)
-    local ok, err = CRAFT.CanCraft(ply, recipeID, labType)
-    if not ok then
-        if GRM.Notify then GRM.Notify(ply, err, 255, 100, 100) end
-        return
-    end
-    
-    local recipes = recipeTable(labType)
-    local recipe = recipes and recipes[recipeID]
-    if not recipe then return end
+    labType = (labType == "med") and "med" or "narc"
+    local ok, recipeOrErr = CRAFT.CanCraft(ply, recipeID, labType)
+    if not ok then notify(ply, recipeOrErr, 255, 100, 100) return end
+    local recipe = recipeOrErr
     local t = recipeTime(recipe)
+    for itemID, need in pairs(recipe.ingredients or {}) do GRM.Inventory.RemoveItem(ply, itemID, need) end
 
-    -- Списываем ингредиенты
-    for ingredient, count in pairs(recipe.ingredients) do
-        GRM.Inventory.RemoveItem(ply, ingredient, count)
-    end
-    
-    -- Отправляем прогресс
+    CRAFT.Active[ply] = { labType=labType, recipeID=recipeID, doneAt=CurTime()+t }
     net.Start("GRM_NarcCraft_Progress")
-        net.WriteString(recipe.name)
+        net.WriteString(recipe.name or recipeID)
         net.WriteUInt(t, 16)
     net.Send(ply)
-    
-    if GRM.Notify then
-        GRM.Notify(ply, "Варка " .. recipe.name .. " начата (" .. t .. " сек)", 100, 200, 255)
-    end
-    
-    -- Таймер завершения
+    notify(ply, "Процесс начат: " .. tostring(recipe.name or recipeID) .. " (" .. t .. " сек)", 100, 200, 255)
+
     timer.Simple(t, function()
         if not IsValid(ply) then return end
-        
-        -- Добавляем продукт
-        local outputID = (labType == "narc" and "narc_" or "med_") .. recipeID
-        local left = GRM.Inventory.AddItem(ply, outputID, recipe.yield)
-        
-        if left > 0 then
-            if GRM.Notify then GRM.Notify(ply, "Инвентарь полон! Потеряно: " .. left, 255, 100, 100) end
-        else
-            if GRM.Notify then GRM.Notify(ply, "Готово! Получено: " .. recipe.yield .. " " .. recipe.name, 100, 220, 100) end
-        end
-        
+        CRAFT.Active[ply] = nil
+        local output = ((LAB_META[labType] and LAB_META[labType].outputPrefix) or "narc_") .. recipeID
+        local left = GRM.Inventory.AddItem(ply, output, tonumber(recipe.yield) or 1)
+        if (left or 0) > 0 then notify(ply, "Инвентарь полон! Потеряно: " .. tostring(left), 255, 100, 100)
+        else notify(ply, "Готово: " .. tostring(recipe.name or recipeID), 100, 220, 100) end
         net.Start("GRM_NarcCraft_Done")
-            net.WriteString(recipe.name)
+            net.WriteString(recipe.name or recipeID)
         net.Send(ply)
+        CRAFT.OpenLab(ply, labType)
     end)
 end
 
--- ============================================================
--- СЕТЬ
--- ============================================================
 net.Receive("GRM_NarcCraft_Open", function(_, ply)
     if not IsValid(ply) then return end
-    
     local labType = net.ReadString()
     if labType ~= "narc" and labType ~= "med" then return end
-    local lab = CRAFT.LabType[labType]
-    if not lab then return end
-    
-    -- Отправляем список рецептов
-    net.Start("GRM_NarcCraft_Open")
-        net.WriteString(labType)
-        local recipes = lab.recipes
-        net.WriteUInt(table.Count(recipes), 8)
-        for recipeID, recipe in pairs(recipes) do
-            net.WriteString(recipeID)
-            net.WriteString(recipe.name)
-            net.WriteUInt(recipe.cook_time or recipe.time or 30, 16)
-            net.WriteUInt(recipe.yield or 1, 8)
-            net.WriteUInt(table.Count(recipe.ingredients), 8)
-            for ing, count in pairs(recipe.ingredients) do
-                net.WriteString(ing)
-                net.WriteUInt(count, 8)
-            end
-        end
-    net.Send(ply)
+    CRAFT.OpenLab(ply, labType)
 end)
 
 net.Receive("GRM_NarcCraft_Start", function(_, ply)
     if not IsValid(ply) then return end
-    
     local labType = net.ReadString()
     local recipeID = net.ReadString()
     if labType ~= "narc" and labType ~= "med" then return end
     CRAFT.StartCraft(ply, recipeID, labType)
 end)
 
-print("[GRM] Narcotics Craft UI loaded (Код 120)")
+print("[GRM] Labs Craft loaded v" .. CRAFT.Version)

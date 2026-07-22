@@ -11,7 +11,7 @@ function ENT:Draw()
     
     cam.Start3D2D(pos, ang, 0.1)
         draw.SimpleTextOutlined(
-            self.LabType == "narc" and "Лаборатория наркотиков" or "Мед.лаборатория",
+            self:GetNWString("LabType", self.LabType or "narc") == "narc" and "Лаборатория наркотиков" or "Мед.лаборатория",
             "GRM_Lab_Label",
             0, 0,
             Color(255, 255, 255),

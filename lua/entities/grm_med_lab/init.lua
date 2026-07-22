@@ -14,6 +14,7 @@ function ENT:Initialize()
     if not self.LabType then
         self.LabType = "med"
     end
+    self:SetNWString("LabType", self.LabType)
     
     local phys = self:GetPhysicsObject()
     if IsValid(phys) then phys:Wake() end
@@ -21,8 +22,10 @@ end
 
 function ENT:Use(ply)
     if not IsValid(ply) or not ply:IsPlayer() then return end
-    
-    net.Start("GRM_NarcCraft_Open")
-        net.WriteString(self.LabType or "med")
-    net.Send(ply)
+    local labType = self.LabType or "med"
+    if GRM and GRM.NarcCraft and GRM.NarcCraft.OpenLab then
+        GRM.NarcCraft.OpenLab(ply, labType, self)
+    else
+        ply:ChatPrint("[Лаборатория] Модуль крафта ещё не загружен")
+    end
 end
