@@ -8,7 +8,10 @@ if SERVER then
     util.AddNetworkString("GRM_Ctx_Result")
     util.AddNetworkString("GRM_Ctx_VehAct")
     util.AddNetworkString("GRM_Ctx_MoneyAct")
+    util.AddNetworkString("GRM_Ctx_Action")
     util.AddNetworkString("GRM_Laws_Open")
+    util.AddNetworkString("Factions_OpenAdminMenu")
+    util.AddNetworkString("Factions_OpenLeaderMenu")
 
     -- Игрок в прицеле (для кнопки «Передать деньги»)
     local function aimPlyInfo(ply)
@@ -32,6 +35,31 @@ if SERVER then
             end
         end
         return nil, nil
+    end
+
+    local function openFactionsMenu(ply)
+        if not IsValid(ply) then return end
+        if ply:IsSuperAdmin() then
+            net.Start("Factions_OpenAdminMenu")
+            net.Send(ply)
+            return
+        end
+
+        local sid, sid64 = ply:SteamID(), ply:SteamID64()
+        local isLeader = false
+        for _, f in pairs(Factions or {}) do
+            if istable(f) and (f.Leader == sid or f.Leader == sid64) then
+                isLeader = true
+                break
+            end
+        end
+
+        if isLeader then
+            net.Start("Factions_OpenLeaderMenu")
+            net.Send(ply)
+        else
+            ply:PrintMessage(HUD_PRINTTALK, "[Фракции] У вас нет прав для использования этого меню.")
+        end
     end
 
     -- Транспорт в прицеле (Код 82): имя/замок/права для кнопок меню
@@ -88,6 +116,15 @@ if SERVER then
         net.Start("GRM_Ctx_Result")
             net.WriteTable(result)
         net.Send(ply)
+    end)
+
+    net.Receive("GRM_Ctx_Action", function(_, ply)
+        if not IsValid(ply) then return end
+        local action = tostring(net.ReadString() or "")
+        if action == "factions" then
+            openFactionsMenu(ply)
+            return
+        end
     end)
 
     -- ── Действия с транспортом из контекст-меню (Код 82) ──────
@@ -220,7 +257,11 @@ local function actLaws()
     net.Start("GRM_Laws_Open")
     net.SendToServer()
 end
-local function actFactions()  RunConsoleCommand("say", "/factions") end
+local function actFactions()
+    net.Start("GRM_Ctx_Action")
+        net.WriteString("factions")
+    net.SendToServer()
+end
 local function actMask()      RunConsoleCommand("say", "/mask") end
 
 -- Деньги в C-меню (по заказу: «выбросить деньги / передать деньги игроку»)
@@ -295,7 +336,7 @@ local BTNS = {
     { id = "tp",         l = function() return (tp and "Выкл" or "Вкл") .. " 3-е лицо" end, fn = actTp, c = CC.third, ch = CC.thirdH, ok = function() return true end },
     { id = "radio",      l = "Рация",        fn = actRadio,      c = CC.radio,   ch = CC.radioH,   ok = function() return true end },
     { id = "laws",       l = "Законы государства", fn = actLaws, c = Color(200, 180, 100), ch = Color(220, 200, 120), ok = function() return true end },
-    { id = "faction",    l = "Меню фракции", fn = actFactions,   c = CC.faction, ch = CC.factionH, ok = function() return data.isLeaderOrAdmin == true or data.isFactionMember == true end },
+    { id = "faction",    l = "Меню фракций", fn = actFactions,   c = CC.faction, ch = CC.factionH, ok = function() return data.isLeaderOrAdmin == true or data.isFactionMember == true end },
     { id = "mask",       l = "Маскировка",   fn = actMask,       c = CC.mask,    ch = CC.maskH,    ok = function() return data.hasMaskAccess == true end },
 }
 

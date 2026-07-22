@@ -1079,3 +1079,9 @@
 4. `sv_grm_narcotics_craft.lua` переписан как Labs Craft v2.0.0: единый resolver рецептов narc/med, проверка инвентаря, корректные `time/cook_time`, защита от параллельного крафта, выдача `narc_*`/`med_*`, автообновление меню после завершения.
 5. `cl_grm_narcotics_craft.lua` переписан: нормальное окно рецептов, карточки ингредиентов с `have/need`, кнопка «Начать», empty-state. Старый тёмный пустой оверлей устранён.
 6. Валидация: GLua 292/0, sim_medical 75/75, sim_invphone 41/41, sim_mobile 121/121. Proto audit без новых замечаний по этим модулям.
+
+---
+
+## Находка 148 (22.07.2026): C-меню отправляло `/factions` через `say`, обходя PlayerSayTransform
+
+Кнопка «Меню фракций» в `sh_grm_ctx.lua` делала `RunConsoleCommand("say", "/factions")`. Ручной ввод `/factions` обрабатывается в `sh_factions.lua` через `PlayerSayTransform` (EasyChat-путь), а `say` из C-меню мог уйти в чат без этого transform и не открыть меню. Фикс: добавлен `GRM_Ctx_Action`; клиент шлёт action `factions`, сервер напрямую открывает `Factions_OpenAdminMenu` для суперадмина или `Factions_OpenLeaderMenu` для лидера. Имитация чата больше не используется.
