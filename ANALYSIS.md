@@ -988,3 +988,9 @@
 1. **Причина повторного открытия по Use:** кроме обработчика в `sh_grm_inventory.lua`, сам `sh_grm_mobile.lua` регистрировал `mobile_open/mobile_use` и мог перетереть поведение после загрузки. Теперь оба обработчика ведут в `MB.ActivateInventoryPhone`: только выставить `slot.data.active`, сохранить инвентарь и отправить свежий state. UI не открывается.
 2. **Причина «стрелки не сразу/не работают»:** VGUI/DFrame с `MakePopup` может съедать `PlayerButtonDown`. Телефон больше не вызывает `MakePopup`, а UP/DOWN/Mouse3 дублируются polling-ом в `Think` через `input.IsKeyDown`/`input.IsMouseDown`. UP открывает, DOWN закрывает даже при VGUI focus.
 3. **Новый ввод:** колесо мыши (`invnext/invprev`) — навигация; СКМ (`+attack3`, `KEY_MOUSE3`, `MOUSE_MIDDLE`) — выбор. Клавиатура внутри телефона не рулит меню; все gameplay-binds блокируются.
+
+---
+
+## Находка 136 (22.07.2026): MakePopup реально оставался в mobile UI
+
+После фикса 135 в описании было сказано «не MakePopup», но в клиентском коде телефона строка `MakePopup()` осталась. В живом GMod это продолжало давать DFrame VGUI-фокус и могло съедать UP/DOWN/СКМ. Теперь `sh_grm_mobile.lua` реально не вызывает `MakePopup` для телефона: панель остаётся HUD/VGUI-оверлеем без фокуса, а управление идёт через hooks + polling. Для СКМ добавлен `input.IsMouseDown(MOUSE_MIDDLE/MOUSE_3/107)` в дополнение к `PlayerButtonDown`/`PlayerBindPress`.

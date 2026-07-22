@@ -858,7 +858,8 @@ if CLIENT then
             safe(f, "SetSize", 340, 560)
             if f.SetPos then f:SetPos((ScrW() - 340) / 2, (ScrH() - 560) / 2) end
             safe(f, "SetVisible", true)
-            safe(f, "MakePopup")
+            -- ВАЖНО: НЕ MakePopup. Телефон — HUD-панель без VGUI-фокуса,
+            -- иначе DFrame съедает UP/DOWN/СКМ и управление не доходит до hooks/polling.
             f.Paint = function(_, w, h)
                 draw.RoundedBox(18, 0, 0, w, h, C.shell)
                 draw.RoundedBox(14, 10, 10, w - 20, h - 20, C.bg)
@@ -1032,9 +1033,18 @@ if CLIENT then
 
         local mouse3Now = false
         if _G.KEY_MOUSE3 then mouse3Now = mouse3Now or input.IsKeyDown(KEY_MOUSE3) == true end
-        if _G.MOUSE_MIDDLE then mouse3Now = mouse3Now or input.IsKeyDown(MOUSE_MIDDLE) == true end
-        if _G.MOUSE_3 then mouse3Now = mouse3Now or input.IsKeyDown(MOUSE_3) == true end
+        if _G.MOUSE_MIDDLE then
+            mouse3Now = mouse3Now or input.IsKeyDown(MOUSE_MIDDLE) == true
+            if input.IsMouseDown then mouse3Now = mouse3Now or input.IsMouseDown(MOUSE_MIDDLE) == true end
+        end
+        if _G.MOUSE_3 then
+            mouse3Now = mouse3Now or input.IsKeyDown(MOUSE_3) == true
+            if input.IsMouseDown then mouse3Now = mouse3Now or input.IsMouseDown(MOUSE_3) == true end
+        end
         mouse3Now = mouse3Now or input.IsKeyDown(107) == true
+        if input.IsMouseDown then
+            mouse3Now = mouse3Now or input.IsMouseDown(107) == true
+        end
         if mouse3Now and not M.poll.mouse3 and M.open then enter() end
         M.poll.mouse3 = mouse3Now
     end)
