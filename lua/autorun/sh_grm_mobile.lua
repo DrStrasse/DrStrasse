@@ -774,6 +774,7 @@ if CLIENT then
         open = false, frame = nil, stateKnown = false, state = { has = false, tier = "", number = "", lineState = "idle", unread = 0, signal = 0 },
         data = {}, screen = "home", sel = 1, listSel = 1, smsThread = nil, smsSel = 1,
         dial = "", calc = "", down = {}, lastTap = {}, hold = {}, nextRepeat = {}, noPhoneAt = -999,
+        promptOpen = false, lastSelectAt = -999,
         poll = { up = false, down = false, mouse3 = false }
     }
     MB._devUI = M
@@ -789,6 +790,20 @@ if CLIENT then
         if v < lo then return lo end
         if v > hi then return hi end
         return v
+    end
+
+    local function snd(kind)
+        if not surface or not surface.PlaySound then return end
+        local map = {
+            open = "buttons/button14.wav",
+            close = "buttons/button19.wav",
+            nav = "buttons/lightswitch2.wav",
+            select = "buttons/button15.wav",
+            back = "buttons/button10.wav",
+            err = "buttons/button8.wav",
+            ring = "buttons/button17.wav"
+        }
+        surface.PlaySound(map[kind] or map.select)
     end
 
     local function askString(title, text, default, cb)

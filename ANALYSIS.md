@@ -1030,3 +1030,9 @@
 2. Окно телефона визуально стало ближе к телефону: скрыт стандартный `DFrame` chrome (`SetTitle("")`, `ShowCloseButton(false)`, `SetDraggable(false)`), панель остаётся справа снизу и без `MakePopup`.
 3. Форум/биржа/контакты/заметки получили карточный рендер и empty-state, чтобы пустые вкладки не выглядели сломанными.
 4. Добавлены UI-звуки через `surface.PlaySound`: open/close/nav/select/back/error/ring на стандартных `buttons/*.wav`.
+
+---
+
+## Находка 142 (22.07.2026): `snd()` добавлен после использования — Lua видел глобал nil
+
+В mobile visual pass вызовы `snd("open")`, `snd("close")`, `snd("nav")` попали в функции `openPhone/closePhone/move/enter`, но сама функция `snd` не была объявлена выше этих функций в клиентском блоке. Lua из-за лексической области видимости искал глобальный `snd` и получал nil. Фикс: `local function snd(kind)` объявлен перед `askString` и до всех функций, которые его используют. Проверки: GLua 0, sim_mobile 121/121, sim_invphone 41/41.
