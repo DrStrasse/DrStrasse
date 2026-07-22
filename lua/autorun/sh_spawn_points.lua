@@ -340,10 +340,11 @@ if SERVER then
 
         if Factions then
             local steamID = ply:SteamID()
+            local charKey = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or steamID
             for name, f in pairs(Factions) do
-                if f.Members and f.Members[steamID] then
+                if f.Members and (f.Members[charKey] or f.Members[steamID] or f.Members[ply:SteamID64()]) then
                     factionName = name
-                    memberData = f.Members[steamID]
+                    memberData = f.Members[charKey] or f.Members[steamID] or f.Members[ply:SteamID64()]
                     break
                 end
             end

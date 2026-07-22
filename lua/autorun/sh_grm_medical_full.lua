@@ -111,7 +111,8 @@ if SERVER then
             if ok then return true end
         end
         if Factions and Factions["Медики"] and istable(Factions["Медики"].Members) then
-            return Factions["Медики"].Members[ply:SteamID()] ~= nil or Factions["Медики"].Members[ply:SteamID64()] ~= nil
+            local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64()
+    return Factions["Медики"].Members[ck] ~= nil or Factions["Медики"].Members[ply:SteamID()] ~= nil or Factions["Медики"].Members[ply:SteamID64()] ~= nil
         end
         return false
     end

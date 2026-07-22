@@ -114,8 +114,8 @@ function SWEP:CheckDocuments(searcher, target)
     -- Проверяем медкарту
     local hasMedicalCard = false
     if GRM.Medical and GRM.Medical.Cards then
-        local sid64 = target:SteamID64()
-        if GRM.Medical.Cards[sid64] then
+        local sid64 = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(target)) or target:SteamID64()
+        if GRM.Medical.Cards[sid64] or GRM.Medical.Cards[target:SteamID64()] then
             hasMedicalCard = true
         end
     end
@@ -163,7 +163,8 @@ net.Receive("GRM_Search_Confiscate", function(_, searcher)
             if istable(f) and istable(f.Members) then
                 local sid = searcher:SteamID()
                 local sid64 = searcher:SteamID64()
-                if f.Members[sid] or f.Members[sid64] then
+                local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(searcher)) or sid64
+                if f.Members[ck] or f.Members[sid] or f.Members[sid64] then
                     canSearch = true
                     break
                 end
