@@ -20,8 +20,9 @@ local NET_RADIO               = "Factions_Radio"
 local NET_RADIO_MSG           = "Factions_RadioMessage"
 local NET_OPEN_ADMIN          = "Factions_OpenAdminMenu"
 local NET_OPEN_LEADER         = "Factions_OpenLeaderMenu"
-local NET_DEP                 = "Factions_Dep"
-local NET_DEPB                = "Factions_Depb"
+local NET_DEP                  = "Factions_Dep"
+local NET_DEPB                 = "Factions_Depb"
+local NET_CHARACTER_CHOICES    = "Factions_CharacterChoices"
 local NET_DEP_MSG             = "Factions_DepMsg"
 local NET_DEPB_MSG            = "Factions_DepbMsg"
 
@@ -43,6 +44,7 @@ if SERVER then
     util.AddNetworkString(NET_OPEN_LEADER)
     util.AddNetworkString(NET_DEP)
     util.AddNetworkString(NET_DEPB)
+    util.AddNetworkString(NET_CHARACTER_CHOICES)
     util.AddNetworkString(NET_DEP_MSG)
     util.AddNetworkString(NET_DEPB_MSG)
 
@@ -243,6 +245,77 @@ if SERVER then
     ensureAllDefaults()
     if factionMigrationChanged then saveFactions(Factions) end
 
+    local function characterDisplay(key)
+        key = tostring(key or "")
+        local p = GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(key) or nil
+        if IsValid(p) then
+            local n = p:GetNWString("GRM_RPName", "")
+            return n ~= "" and n or p:Nick(), true, p:Nick()
+        end
+        local account, slot = key:match("^(.-):(char[1-3])$")
+        local rec = account and GRM.Char and GRM.Char.Data and GRM.Char and GRM.Char.Data[account]
+        local c = rec and rec.slots and rec.slots[slot]
+        return (c and c.name and c.name ~= "" and c.name or key), false, "offline"
+    end
+
+    local function buildMemberSync(f)
+        local out = {}
+        for key, rec in pairs(f.Members or {}) do
+            if istable(rec) then
+                local rp, online, steamNick = characterDisplay(key)
+                out[key] = {
+                    Role = rec.Role,
+                    Department = rec.Department,
+                    _characterKey = key,
+                    _rpName = rp,
+                    _online = online,
+                    _steamNick = steamNick,
+                }
+            end
+        end
+        return out
+    end
+
+    local function buildCharacterChoices()
+        local out = {}
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and p:IsPlayer() then
+                local account = p:SteamID64()
+                local chars = GRM.Char and GRM.Char.Data and GRM.Char and GRM.Char.Data[account] and GRM.Char and GRM.Char.Data[account].slots or {}
+                for i = 1, (GRM.Char and GRM.Char.MaxSlots or 3) do
+                    local id = "char" .. i
+                    local c = chars and chars[id]
+                    if istable(c) and tostring(c.name or "") ~= "" then
+                        local key = account .. ":" .. id
+                        out[#out + 1] = {
+                            key = key,
+                            rpName = tostring(c.name),
+                            steamNick = p:Nick(),
+                            slot = id,
+                            active = GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p) == key or false,
+                            faction = (function()
+                                for fname, f in pairs(Factions or {}) do
+                                    if istable(f) and rawget(f.Members or {}, key) then return fname end
+                                end
+                                return ""
+                            end)(),
+                        }
+                    end
+                end
+            end
+        end
+        table.sort(out, function(a, b)
+            return (a.rpName .. a.key):lower() < (b.rpName .. b.key):lower()
+        end)
+        return out
+    end
+
+    local function sendCharacterChoices(ply)
+        net.Start(NET_CHARACTER_CHOICES)
+            net.WriteTable(buildCharacterChoices())
+        if ply then net.Send(ply) else net.Broadcast() end
+    end
+
     local function buildSyncData()
         local data = {}
         for name, f in pairs(Factions) do
@@ -252,7 +325,7 @@ if SERVER then
                     Leader           = f.Leader,
                     Roles            = f.Roles,
                     Departments      = f.Departments,
-                    Members          = f.Members,
+                    Members          = buildMemberSync(f),
                     Tag              = f.Tag,
                     Color            = f.Color,
                     DepAccess        = f.DepAccess,
@@ -277,6 +350,7 @@ if SERVER then
         net.Start(NET_SYNC_ALL)
         net.WriteTable(buildSyncData())
         net.Broadcast()
+        sendCharacterChoices()
     end
 
     hook.Add("GRM_CharacterChanged", "Factions_CharacterSync", function(ply)
@@ -670,6 +744,7 @@ if SERVER then
         net.Start(NET_SEND_DATA)
         net.WriteTable(buildSyncData())
         net.Send(ply)
+        sendCharacterChoices(ply)
     end
 
     local function getFactionInfoForPlayer(steamID)
@@ -1054,6 +1129,7 @@ end
 if CLIENT then
     ui           = ui           or {}
     FactionsData = FactionsData or {}
+    FactionCharacterChoices = FactionCharacterChoices or {}
     local pendingActionCallback = nil
     local pendingDataCallback   = nil
     local nameCache             = nameCache or {}
@@ -1107,6 +1183,10 @@ if CLIENT then
     net.Receive(NET_SYNC_ALL, function()
         FactionsData = installClientFactionAliases(net.ReadTable() or {})
         refreshAllUI(FactionsData)
+    end)
+
+    net.Receive(NET_CHARACTER_CHOICES, function()
+        FactionCharacterChoices = net.ReadTable() or {}
     end)
 
     net.Receive(NET_RADIO_MSG, function()
@@ -1576,7 +1656,7 @@ if CLIENT then
             end
 
             local lblSteam = vgui.Create("DLabel", row)
-            lblSteam:SetPos(8, 6) lblSteam:SetSize(200, 20) lblSteam:SetText(steam)
+            lblSteam:SetPos(8, 6) lblSteam:SetSize(200, 20) lblSteam:SetText((info._rpName or steam) .. " [" .. steam .. "]")
             lblSteam:SetFont("Factions_Normal")
             if isLeaderMember then lblSteam:SetTextColor(Color(255, 220, 80)) end
 
@@ -1588,9 +1668,11 @@ if CLIENT then
             lblDept:SetPos(360, 6) lblDept:SetSize(130, 20) lblDept:SetText(info.Department or "Основной")
             lblDept:SetFont("Factions_Normal") lblDept:SetTextColor(THEME.textDim)
 
-            getPlayerName(steam, function(name)
-                if IsValid(lblSteam) then lblSteam:SetText(name .. " (" .. steam .. ")") end
-            end)
+            if not info._rpName then
+                getPlayerName(steam, function(name)
+                    if IsValid(lblSteam) then lblSteam:SetText(name .. " [" .. steam .. "]") end
+                end)
+            end
         end
     end
 
@@ -1804,7 +1886,7 @@ if CLIENT then
             end
 
             local lblSteam = vgui.Create("DLabel", row)
-            lblSteam:SetPos(8, 6) lblSteam:SetSize(220, 20) lblSteam:SetText(steam)
+            lblSteam:SetPos(8, 6) lblSteam:SetSize(220, 20) lblSteam:SetText((info._rpName or steam) .. " [" .. steam .. "]")
             lblSteam:SetFont("Factions_Normal")
             if steam == f.Leader then lblSteam:SetTextColor(Color(255, 220, 80)) end
 
@@ -1817,9 +1899,11 @@ if CLIENT then
             lblDept:SetPos(380, 6) lblDept:SetSize(130, 20) lblDept:SetText(info.Department or "Основной")
             lblDept:SetFont("Factions_Normal") lblDept:SetTextColor(THEME.textDim)
 
-            getPlayerName(steam, function(name)
-                if IsValid(lblSteam) then lblSteam:SetText(name .. " (" .. steam .. ")") end
-            end)
+            if not info._rpName then
+                getPlayerName(steam, function(name)
+                    if IsValid(lblSteam) then lblSteam:SetText(name .. " [" .. steam .. "]") end
+                end)
+            end
         end
     end
 
@@ -1991,7 +2075,7 @@ if CLIENT then
 
             local pick = vgui.Create("DFrame")
             pick:SetTitle("Смена лидера — " .. faction)
-            pick:SetSize(520, 230)
+            pick:SetSize(620, 300)
             pick:Center()
             pick:MakePopup()
 
@@ -2009,13 +2093,15 @@ if CLIENT then
             combo:SetValue("Онлайн-персонажи")
             local selectedKey = nil
             function combo:OnSelect(_, _, data) selectedKey = data end
-            for _, target in ipairs(player.GetAll()) do
-                if IsValid(target) and target ~= LocalPlayer() then
-                    local key = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(target)) or target:SteamID64()
-                    local name = target:GetNWString("GRM_RPName", "")
-                    if name == "" then name = target:Nick() end
-                    combo:AddChoice(name .. "  [" .. tostring(key) .. "]", key)
-                end
+            combo:SetSortItems(false)
+            for _, choice in ipairs(FactionCharacterChoices or {}) do
+                local active = choice.active and " • АКТИВЕН" or " • неактивен"
+                local fac = choice.faction ~= "" and (" • " .. choice.faction) or " • гражданский"
+                combo:AddChoice(
+                    tostring(choice.rpName or "?") .. "  — игрок: " .. tostring(choice.steamNick or "?") ..
+                    "  [" .. tostring(choice.slot or "char?") .. "]" .. active .. fac,
+                    tostring(choice.key or "")
+                )
             end
 
             local entry = vgui.Create("DTextEntry", pick)

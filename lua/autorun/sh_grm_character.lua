@@ -452,7 +452,8 @@ if SERVER then
             if not IsValid(ply) then return end
             if CH.PendingSelection[ply:SteamID64()] then
                 setCharacterLock(ply, true)
-                sendMenu(ply)
+                -- Меню уже открывается одним таймером PlayerInitialSpawn.
+                -- Не отправляем его из каждого PlayerSpawn, иначе окна наслаиваются.
             end
         end)
     end)
@@ -646,9 +647,15 @@ if CLIENT then
             draft.bodygroups = table.Copy(outfits[1].bodygroups or {})
         end
 
-        if IsValid(CH._frame) then CH._frame:Remove() end
+        if IsValid(CH._frame) then
+            CH._frame:Remove()
+            CH._frame = nil
+        end
         local f = vgui.Create("DFrame")
         CH._frame = f
+        f.OnRemove = function()
+            if CH._frame == f then CH._frame = nil end
+        end
         f:SetTitle("")
         -- v1.2: меню больше по высоте и компактнее по ширине: не «полоса», а полноценный экран персонажа
         local fw = math.min(1320, ScrW() - 80)
