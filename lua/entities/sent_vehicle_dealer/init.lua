@@ -194,13 +194,12 @@ local function GetVehicleListForPlayer(ply, dealer)
 
     -- ═══ Определяем фракцию игрока ═══
     local faction = nil
-    if Factions then
+    if FactionsAPI and FactionsAPI.GetFactionOf then
+        faction = FactionsAPI.GetFactionOf(ply)
+    elseif Factions then
         local steam = ply:SteamID()
         for fname, f in pairs(Factions) do
-            if f.Members and f.Members[steam] then
-                faction = fname
-                break
-            end
+            if f.Members and (f.Members[steam] or f.Members[ply:SteamID64()]) then faction = fname break end
         end
     end
 
@@ -315,13 +314,12 @@ local function SpawnVehicleForPlayer(ply, dealer, vehicleClass)
     -- ═══ Определяем, является ли класс фракционным для игрока ═══
     local isFactionVehicle = false
     local faction = nil
-    if Factions then
+    if FactionsAPI and FactionsAPI.GetFactionOf then
+        faction = FactionsAPI.GetFactionOf(ply)
+    elseif Factions then
         local steam = ply:SteamID()
         for fname, f in pairs(Factions) do
-            if f.Members and f.Members[steam] then
-                faction = fname
-                break
-            end
+            if f.Members and (f.Members[steam] or f.Members[ply:SteamID64()]) then faction = fname break end
         end
     end
     if faction and dealer.VD_Vehicles and dealer.VD_Vehicles[faction] then
@@ -594,7 +592,7 @@ function _G.VD_RemoveDealerVehicle(ply, veh, opts)
     if not tracked then return false, "Это не транспорт из дилера", 0 end
 
     local mine = (veh.VD_Owner == ply)
-        or (veh.VK_OwnerType == "player" and veh.VK_OwnerSteam == ply:SteamID())
+        or (veh.VK_OwnerType == "player" and veh.VK_OwnerSteam == ((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID()))
     if not (mine or ply:IsSuperAdmin()) then return false, "Это не ваш транспорт", 0 end
 
     local maxDist = tonumber(opts.maxDist) or 600

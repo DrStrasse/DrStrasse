@@ -93,7 +93,13 @@ end
 loadCache()
 
 local function playerSteamID(ply)
-    return IsValid(ply) and ply:SteamID() or ""
+    if not IsValid(ply) then return "" end
+    if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
+    return ply:SteamID() or ""
+end
+
+local function accountSteamID(ply)
+    return IsValid(ply) and (ply:SteamID() or "") or ""
 end
 
 local function makeKeyID()
@@ -219,7 +225,9 @@ function VK.IsFactionMember(ply, factionName)
     local faction = Factions[factionName]
     if not istable(faction) or not istable(faction.Members) then return false end
 
-    return faction.Members[ply:SteamID()] ~= nil
+    local ck = playerSteamID(ply)
+    return faction.Members[ck] ~= nil
+        or faction.Members[ply:SteamID()] ~= nil
         or faction.Members[ply:SteamID64()] ~= nil
 end
 
@@ -289,15 +297,15 @@ function VK.SetPlayerOwner(veh, ply)
     if not IsValid(veh) or not IsValid(ply) then return false end
 
     veh.VK_OwnerType = VK.OWNER_TYPE.PLAYER
-    veh.VK_OwnerSteam = ply:SteamID()
+    veh.VK_OwnerSteam = playerSteamID(ply)
     veh.VK_OwnerNick = ply:Nick()
     veh.VK_FactionName = nil
     veh.VD_Owner = ply -- compatibility with Vehicle Dealer
     -- При выдаче/смене владельца транспорт всегда закрывается.
     veh.VK_Locked = true
 
-    local keyID = VK.GetOrCreateOwnerKey(ply:SteamID(), "Ключи от машин: " .. ply:Nick())
-    if keyID then VK.GiveKey(ply:SteamID(), keyID) end
+    local keyID = VK.GetOrCreateOwnerKey(playerSteamID(ply), "Ключи от машин: " .. ply:Nick())
+    if keyID then VK.GiveKey(playerSteamID(ply), keyID) end
 
     VK.SyncKeyRing(ply)
     VK.UpdateKeySwep(ply)
@@ -340,7 +348,7 @@ function VK.CanInteract(veh, ply, requireOwnerLevel)
     if not IsValid(veh) or not IsValid(ply) or not VK.IsVehicle(veh) then return false end
     if ply:IsSuperAdmin() then return true end
 
-    if veh.VK_OwnerType == VK.OWNER_TYPE.PLAYER and veh.VK_OwnerSteam == ply:SteamID() then
+    if veh.VK_OwnerType == VK.OWNER_TYPE.PLAYER and veh.VK_OwnerSteam == playerSteamID(ply) then
         return true
     end
 
@@ -351,7 +359,7 @@ function VK.CanInteract(veh, ply, requireOwnerLevel)
     end
 
     if veh.VK_OwnerType == VK.OWNER_TYPE.PLAYER and veh.VK_OwnerSteam then
-        return VK.HasOwnerKey(ply:SteamID(), veh.VK_OwnerSteam)
+        return VK.HasOwnerKey(playerSteamID(ply), veh.VK_OwnerSteam)
     end
 
     return false
@@ -523,9 +531,9 @@ net.Receive(NET_REQUEST_LIST, function(_, ply)
     for _, target in ipairs(player.GetAll()) do
         if target ~= ply then
             players[#players + 1] = {
-                steam = target:SteamID(),
+                steam = playerSteamID(target),
                 nick = target:Nick(),
-                hasKey = VK.HasOwnerKey(target:SteamID(), veh.VK_OwnerSteam),
+                hasKey = VK.HasOwnerKey(playerSteamID(target), veh.VK_OwnerSteam),
             }
         end
     end
@@ -555,7 +563,7 @@ net.Receive(NET_GIVE_KEY, function(_, ply)
 
     local ownerName = veh.VK_OwnerNick or veh.VK_OwnerSteam
     local keyID = VK.GetOrCreateOwnerKey(veh.VK_OwnerSteam, "Ключи от машин: " .. ownerName)
-    local ok, message = VK.GiveKey(target:SteamID(), keyID)
+    local ok, message = VK.GiveKey(playerSteamID(target), keyID)
 
     if ok then
         target:EmitSound(VK.SND.KEY_GET, 65, 100)
@@ -588,7 +596,7 @@ net.Receive(NET_REVOKE_KEY, function(_, ply)
         return
     end
 
-    local ok, message = VK.RevokeKey(target:SteamID(), keyID)
+    local ok, message = VK.RevokeKey(playerSteamID(target), keyID)
     if ok then
         VK.SyncKeyRing(target)
         VK.UpdateKeySwep(target)
@@ -631,7 +639,7 @@ concommand.Add("vk_givekey", function(ply, _, args)
     end
 
     local keyID = VK.GetOrCreateOwnerKey(veh.VK_OwnerSteam, "Ключи от машин: " .. (veh.VK_OwnerNick or veh.VK_OwnerSteam))
-    local ok, message = VK.GiveKey(target:SteamID(), keyID)
+    local ok, message = VK.GiveKey(playerSteamID(target), keyID)
 
     if ok then
         VK.SyncKeyRing(target)
@@ -663,7 +671,7 @@ concommand.Add("vk_revokekey", function(ply, _, args)
         return
     end
 
-    local ok, message = VK.RevokeKey(target:SteamID(), keyID)
+    local ok, message = VK.RevokeKey(playerSteamID(target), keyID)
     if ok then
         VK.SyncKeyRing(target)
         VK.UpdateKeySwep(target)

@@ -110,14 +110,25 @@ if SERVER then
     FactionVehicleAccess = loadFactionAccess()
 
     -- ── Утилиты ──────────────────────────────────────────────────
+    local function characterKey(ply)
+        if IsValid(ply) and ply:IsPlayer() then
+            if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
+            return tostring(ply:SteamID64() or "")
+        end
+        local raw = tostring(ply or "")
+        if raw:match(":char[1-3]$") then return raw end
+        if raw:match("^%d+$") then return raw .. ":char1" end
+        return raw
+    end
 
     -- Получить фракцию, роль и отдел игрока
     local function getPlayerFactionInfo(ply)
         if not Factions then return nil, nil, nil end
         local sid = ply:SteamID()
+        local ck = characterKey(ply)
         for name, f in pairs(Factions) do
-            if istable(f) and istable(f.Members) and f.Members[sid] then
-                local info = f.Members[sid]
+            if istable(f) and istable(f.Members) and (f.Members[ck] or f.Members[sid] or f.Members[ply:SteamID64()]) then
+                local info = f.Members[ck] or f.Members[sid] or f.Members[ply:SteamID64()]
                 return name, info.Role or "Участник", info.Department or "Основной"
             end
         end
@@ -126,7 +137,7 @@ if SERVER then
 
     -- Проверить, есть ли у игрока персональный доступ к транспорту
     local function hasPersonalAccess(ply, vehicleClass)
-        local sid = ply:SteamID64()
+        local sid = characterKey(ply)
         if not PlayerPurchases[sid] then return false end
         for _, class in ipairs(PlayerPurchases[sid]) do
             if class == vehicleClass then return true end
@@ -192,7 +203,7 @@ if SERVER then
         local seen = {}
 
         -- Персональные покупки
-        local sid = ply:SteamID64()
+        local sid = characterKey(ply)
         if PlayerPurchases[sid] then
             for _, class in ipairs(PlayerPurchases[sid]) do
                 if not seen[class] then
@@ -323,7 +334,7 @@ if SERVER then
         GRM.TakeMoney(ply, price)
 
         -- Добавляем доступ
-        local sid = ply:SteamID64()
+        local sid = characterKey(ply)
         if not PlayerPurchases[sid] then PlayerPurchases[sid] = {} end
         table.insert(PlayerPurchases[sid], vehicleClass)
         savePurchases()
@@ -367,7 +378,7 @@ if SERVER then
         if not IsValid(ply) then return end
 
         local allVehicles = GRM_GetAllVehicleClasses()
-        local sid = ply:SteamID64()
+        local sid = characterKey(ply)
 
         -- Отмечаем, какие уже куплены
         local purchased = PlayerPurchases[sid] or {}
@@ -585,7 +596,7 @@ if SERVER then
         -- /vshop — открыть магазин транспорта
         if lower == "/vshop" or lower == "!vshop" then
             local allVehicles = GRM_GetAllVehicleClasses()
-            local sid = ply:SteamID64()
+            local sid = characterKey(ply)
             local purchased = PlayerPurchases[sid] or {}
             local purchasedSet = {}
             for _, class in ipairs(purchased) do purchasedSet[class] = true end
@@ -637,7 +648,7 @@ if SERVER then
 
         -- /myvehicles — список купленного транспорта
         if lower == "/myvehicles" or lower == "!myvehicles" then
-            local sid = ply:SteamID64()
+            local sid = characterKey(ply)
             local purchased = PlayerPurchases[sid]
             if not purchased or #purchased == 0 then
                 ply:ChatPrint("[GRM Shop] У вас нет купленного транспорта.")
