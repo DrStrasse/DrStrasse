@@ -32,8 +32,9 @@ local CH = GRM.Char
 CH.Version    = "1.3.0"
 CH.NameMin    = 3     -- минимальная длина RP-имени
 CH.NameMax    = 48
-CH.DataFile   = "grm_characters.json"
+    CH.DataFile   = "grm_characters.json"
 CH.MaxSlots    = 3
+CH.PendingSelection = CH.PendingSelection or {}
 
 local NET_OPEN    = "GRM_Char_Open"
 local NET_SAVE    = "GRM_Char_Save"
@@ -181,6 +182,19 @@ if SERVER then
         return nil
     end
 
+    local function hasCharacter(ply, slot)
+        local rec = normalizePlayerData(ply)
+        slot = tostring(slot or (rec and rec.active) or "char1")
+        return rec and rec.slots and istable(rec.slots[slot]) and tostring(rec.slots[slot].name or "") ~= ""
+    end
+
+    local function setCharacterLock(ply, locked)
+        if not IsValid(ply) then return end
+        CH.PendingSelection[ply:SteamID64()] = locked == true or nil
+        if ply.SetNWBool then ply:SetNWBool("GRM_CharacterPending", locked == true) end
+        if ply.Freeze then ply:Freeze(locked == true) end
+    end
+
     local function ensureChar(ply, slot)
         local rec = normalizePlayerData(ply)
         if not rec then return nil end
@@ -225,6 +239,7 @@ if SERVER then
         rec.active = slot
         saveChars("select-slot")
         applyActiveCharacter(ply)
+        setCharacterLock(ply, not hasCharacter(ply, slot))
         if GRM.Inventory and GRM.Inventory.SyncToClient then
             timer.Simple(0.05, function() if IsValid(ply) then GRM.Inventory.SyncToClient(ply) end end)
         end
@@ -388,11 +403,29 @@ if SERVER then
     -- вход: меню при КАЖДОМ заходе -------------------------------
     hook.Add("PlayerInitialSpawn", "GRM_Char_OnJoin", function(ply)
         timer.Simple(1.5, function() if IsValid(ply) then sendMenu(ply) end end)
+        timer.Simple(0.2, function()
+            if not IsValid(ply) then return end
+            normalizePlayerData(ply)
+            setCharacterLock(ply, not hasCharacter(ply))
+        end)
         timer.Simple(2.2, function()
             if not IsValid(ply) then return end
             normalizePlayerData(ply)
             applyActiveCharacter(ply)
+            setCharacterLock(ply, not hasCharacter(ply))
         end)
+    end)
+
+    hook.Add("PlayerSpawn", "GRM_Char_BlockUnselectedSpawn", function(ply)
+        timer.Simple(0, function()
+            if not IsValid(ply) then return end
+            setCharacterLock(ply, not hasCharacter(ply))
+            if not hasCharacter(ply) then sendMenu(ply) end
+        end)
+    end)
+
+    hook.Add("PlayerDisconnected", "GRM_Char_ClearPending", function(ply)
+        if IsValid(ply) then CH.PendingSelection[ply:SteamID64()] = nil end
     end)
 
     net.Receive(NET_REQUEST, function(_, ply) sendMenu(ply) end)
@@ -401,7 +434,9 @@ if SERVER then
         if not IsValid(ply) then return end
         local d = net.ReadTable() or {}
         if d.action == "select_slot" then
-            CH.SetActiveSlot(ply, d.slot)
+            local slot = tostring(d.slot or "char1")
+            if not slot:match("^char[123]$") then return end
+            CH.SetActiveSlot(ply, slot)
             timer.Simple(0.1, function() if IsValid(ply) then sendMenu(ply) end end)
             return
         end
@@ -424,6 +459,11 @@ if SERVER then
             local ok, err = CH.ApplyAppearance(ply, { path = d.model, skin = tonumber(d.skin) or 0, bodygroups = bg })
             if not ok and GRM.Notify then GRM.Notify(ply, tostring(err or "Не удалось применить внешность"), 255, 100, 100) end
             if ok and GRM.Notify then GRM.Notify(ply, "Внешность персонажа сохранена.", 100, 220, 100) end
+        end
+
+        if CH.Get(ply) ~= nil and isstring(d.name) and CH.ValidateName(d.name) then
+            setCharacterLock(ply, false)
+            if ply.Alive and not ply:Alive() then ply:Spawn() end
         end
 
         -- первичная регистрация: синхронизируем с фракционным спавном
@@ -612,7 +652,8 @@ if CLIENT then
                 net.Start(NET_SAVE)
                     net.WriteTable({ action = "select_slot", slot = info.id })
                 net.SendToServer()
-                timer.Simple(0.15, function() if IsValid(f) then f:Close() end end)
+                -- Сервер вернёт свежий payload: выбор слота не закрывает меню,
+                -- пустой слот превращается в форму создания персонажа.
             end
         end
 
