@@ -29,8 +29,10 @@ if SERVER then
     local function getPlayerFaction(ply)
         if not Factions then return nil, nil end
         local sid = ply:SteamID()
+        local s64 = ply:SteamID64()
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or s64
         for name, f in pairs(Factions) do
-            if istable(f) and istable(f.Members) and f.Members[sid] then
+            if istable(f) and istable(f.Members) and (f.Members[ck] or f.Members[sid] or f.Members[s64]) then
                 return name, f
             end
         end
@@ -46,9 +48,10 @@ if SERVER then
         end
 
         local sid, sid64 = ply:SteamID(), ply:SteamID64()
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
         local isLeader = false
         for _, f in pairs(Factions or {}) do
-            if istable(f) and (f.Leader == sid or f.Leader == sid64) then
+            if istable(f) and (f.Leader == ck or f.Leader == sid or f.Leader == sid64) then
                 isLeader = true
                 break
             end
@@ -71,7 +74,7 @@ if SERVER then
         local canManage = (VK.CanInteract and VK.CanInteract(veh, ply, true)) or ply:IsSuperAdmin()
         local canUse = (VK.CanInteract and VK.CanInteract(veh, ply, false)) or ply:IsSuperAdmin()
         local mineStrict = (veh.VD_Owner == ply)
-            or (veh.VK_OwnerType == "player" and veh.VK_OwnerSteam == ply:SteamID())
+            or (veh.VK_OwnerType == "player" and veh.VK_OwnerSteam == ((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID()))
         local mine = mineStrict or ply:IsSuperAdmin()
         local tracked = (VD_AllVehicles and VD_AllVehicles[veh:EntIndex()] ~= nil)
             or veh.VD_Owner ~= nil or veh.VD_ID ~= nil
@@ -91,14 +94,15 @@ if SERVER then
         local result = {}
         local factionName, faction = getPlayerFaction(ply)
         result.isFactionMember = (factionName ~= nil)
-        result.isLeaderOrAdmin = (faction and faction.Leader == ply:SteamID()) or ply:IsSuperAdmin()
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64()
+        result.isLeaderOrAdmin = (faction and (faction.Leader == ck or faction.Leader == ply:SteamID() or faction.Leader == ply:SteamID64())) or ply:IsSuperAdmin()
         result.factionName = factionName or ""
         result.veh = vehInfo(ply)
         result.aimPly = aimPlyInfo(ply)
         result.hasMaskAccess = false
         if factionName and FactionsExt and FactionsExt[factionName] then
             local cfg = FactionsExt[factionName]
-            local member = faction and faction.Members[ply:SteamID()]
+            local member = faction and (faction.Members[ck] or faction.Members[ply:SteamID()] or faction.Members[ply:SteamID64()])
             if member and cfg.MaskDepartments then
                 for _, dept in pairs(cfg.MaskDepartments) do
                     if istable(dept.Roles) then

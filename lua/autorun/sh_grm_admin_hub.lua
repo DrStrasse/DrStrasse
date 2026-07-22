@@ -141,7 +141,7 @@ if SERVER then
         local out = {}
         for _, p in ipairs(player.GetAll()) do
             if IsValid(p) then
-                local sid = p:SteamID64() or p:SteamID()
+                local sid = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64() or p:SteamID()
                 local achDone, achTotal = 0, 0
                 if GRM.Ach then
                     achTotal = #(GRM.Ach.Order or {})
@@ -180,7 +180,7 @@ if SERVER then
         for _, p in ipairs(player.GetAll()) do
             if IsValid(p) then
                 players[#players + 1] = {
-                    nick = p:Nick(), sid = tostring(p:SteamID64() or p:SteamID()),
+                    nick = p:Nick(), sid = tostring((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64() or p:SteamID()),
                     bal = (GRM.GetBalance and GRM.GetBalance(p)) or 0,
                 }
             end
@@ -281,7 +281,7 @@ if SERVER then
                             -- на витрине со снятой бронью — урок фикса Кода 77 v1.1.0)
                             for _, pl in ipairs(player.GetAll()) do
                                 if IsValid(pl) then
-                                    local j = GRM.Jobs.Active and GRM.Jobs.Active[pl:SteamID64() or pl:SteamID()]
+                                    local j = GRM.Jobs.Active and GRM.Jobs.Active[((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(pl)) or pl:SteamID64() or pl:SteamID())]
                                     if istable(j) and j.fromPost and tostring(j.postId) == tostring(p.id) then
                                         GRM.Jobs.Fail(pl, "публикация удалена админом")
                                     end
