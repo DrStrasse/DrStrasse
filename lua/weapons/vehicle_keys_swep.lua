@@ -79,12 +79,13 @@ function SWEP:CanInteract(veh, requireOwnerLevel)
     if ply:IsSuperAdmin() then return true end
 
     local ownerType, ownerSteam, _, factionName = VK.GetOwnerState(veh)
-    if ownerType == VK.OWNER_TYPE.PLAYER and ownerSteam == ply:SteamID() then return true end
+    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID()
+    if ownerType == VK.OWNER_TYPE.PLAYER and (ownerSteam == ck or ownerSteam == ply:SteamID()) then return true end
     if requireOwnerLevel then return false end
 
     if ownerType == VK.OWNER_TYPE.FACTION and istable(Factions) and istable(Factions[factionName]) then
         local members = Factions[factionName].Members or {}
-        if members[ply:SteamID()] or members[ply:SteamID64()] then return true end
+        if members[ck] or members[ply:SteamID()] or members[ply:SteamID64()] then return true end
     end
 
     if ownerType == VK.OWNER_TYPE.PLAYER then
