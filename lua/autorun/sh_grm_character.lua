@@ -29,10 +29,11 @@ GRM = GRM or {}
 GRM.Char = GRM.Char or {}
 local CH = GRM.Char
 
-CH.Version    = "1.2.0"
+CH.Version    = "1.3.0"
 CH.NameMin    = 3     -- минимальная длина RP-имени
 CH.NameMax    = 48
 CH.DataFile   = "grm_characters.json"
+CH.MaxSlots    = 3
 
 local NET_OPEN    = "GRM_Char_Open"
 local NET_SAVE    = "GRM_Char_Save"
@@ -127,37 +128,107 @@ if SERVER then
     loadChars()
 
     local function sid64(ply) return IsValid(ply) and ply:SteamID64() or "" end
+    local function clampSlot(n)
+        n = math.floor(tonumber(n) or 1)
+        if n < 1 then return 1 end
+        if n > (CH.MaxSlots or 3) then return CH.MaxSlots or 3 end
+        return n
+    end
+    local function slotID(n) return "char" .. tostring(clampSlot(n)) end
 
-    function CH.Get(ply)
-    local function ensureChar(ply)
+    local function normalizePlayerData(ply)
         if not IsValid(ply) then return nil end
         local sid = sid64(ply)
         CH.Data[sid] = istable(CH.Data[sid]) and CH.Data[sid] or {}
-        local c = CH.Data[sid]
-        if not isstring(c.id) or c.id == "" then c.id = CH.MakeCharacterID(ply) end
-        c.key = sid .. ":" .. c.id
+        local rec = CH.Data[sid]
+
+        -- Legacy migration: old format stored one character directly at CH.Data[sid].
+        if not istable(rec.slots) then
+            local old = table.Copy(rec)
+            rec = { active = "char1", slots = {} }
+            if old.name or old.model or old.id then
+                old.id = "char1"
+                old.key = sid .. ":char1"
+                rec.slots.char1 = old
+            end
+            CH.Data[sid] = rec
+            saveChars("migrate-multichar")
+        end
+
+        rec.active = tostring(rec.active or "char1")
+        if not rec.active:match("^char[123]$") then rec.active = "char1" end
+        rec.slots = istable(rec.slots) and rec.slots or {}
+        return rec
+    end
+
+    local function activeSlot(ply)
+        local rec = normalizePlayerData(ply)
+        return rec and rec.active or "char1"
+    end
+
+    local function activeChar(ply)
+        local rec = normalizePlayerData(ply)
+        if not rec then return nil end
+        local c = rec.slots[rec.active]
+        if istable(c) then
+            c.id = rec.active
+            c.key = sid64(ply) .. ":" .. rec.active
+            return c
+        end
+        return nil
+    end
+
+    local function ensureChar(ply, slot)
+        local rec = normalizePlayerData(ply)
+        if not rec then return nil end
+        slot = tostring(slot or rec.active or "char1")
+        if not slot:match("^char[123]$") then slot = "char1" end
+        rec.active = slot
+        rec.slots[slot] = istable(rec.slots[slot]) and rec.slots[slot] or {}
+        local c = rec.slots[slot]
+        c.id = slot
+        c.key = sid64(ply) .. ":" .. slot
         ply:SetNWString("GRM_CharacterID", c.id)
         ply:SetNWString("GRM_CharacterKey", c.key)
         return c
     end
     CH.Ensure = ensureChar
 
-    function CH.GetActiveID(ply)
+    function CH.Get(ply) return activeChar(ply) end
+    function CH.GetActiveID(ply) return activeSlot(ply) end
+    function CH.GetActiveKey(ply) return sid64(ply) .. ":" .. activeSlot(ply) end
+
+    local function applyActiveCharacter(ply)
         local c = CH.Get(ply)
-        return istable(c) and tostring(c.id or "") or ""
-    end
-    function CH.GetActiveKey(ply)
-        local c = CH.Get(ply)
-        return istable(c) and tostring(c.key or (sid64(ply) .. ":" .. tostring(c.id or ""))) or sid64(ply)
+        if istable(c) then
+            ply:SetNWString("GRM_CharacterID", tostring(c.id or activeSlot(ply)))
+            ply:SetNWString("GRM_CharacterKey", tostring(c.key or CH.GetActiveKey(ply)))
+            ply:SetNWString("GRM_RPName", tostring(c.name or ""))
+            if isstring(c.model) and c.model ~= "" then
+                CH.ApplyAppearance(ply, { path = c.model, skin = c.skin, bodygroups = c.bodygroups })
+            end
+        else
+            ply:SetNWString("GRM_CharacterID", activeSlot(ply))
+            ply:SetNWString("GRM_CharacterKey", CH.GetActiveKey(ply))
+            ply:SetNWString("GRM_RPName", "")
+        end
     end
 
-        return (CH.Data or {})[sid64(ply)]
+    function CH.SetActiveSlot(ply, slot)
+        local rec = normalizePlayerData(ply)
+        if not rec then return false end
+        slot = tostring(slot or "char1")
+        if not slot:match("^char[123]$") then return false end
+        rec.active = slot
+        saveChars("select-slot")
+        applyActiveCharacter(ply)
+        return true
     end
 
-    function CH.SetName(ply, name)
+    function CH.SetName(ply, name, slot)
         name = CH.ValidateName(name)
         if not name then return false, "Некорректное имя" end
-        local c = ensureChar(ply)
+        local c = ensureChar(ply, slot)
         c.name = name
         c.updated = os.time()
         ply:SetNWString("GRM_RPName", name)
@@ -276,11 +347,20 @@ if SERVER then
                 end
             end
         end
+        local rec = normalizePlayerData(ply) or { active = "char1", slots = {} }
+        local slots = {}
+        for i = 1, CH.MaxSlots do
+            local id = slotID(i)
+            local c = rec.slots[id]
+            slots[#slots + 1] = { id = id, index = i, exists = istable(c), name = istable(c) and tostring(c.name or "") or "", model = istable(c) and tostring(c.model or "") or "" }
+        end
         return {
             char = CH.Get(ply),
+            slots = slots,
+            activeSlot = rec.active or "char1",
             characterID = CH.GetActiveID(ply),
             characterKey = CH.GetActiveKey(ply),
-            identityNote = "Текущий режим совместимости: один активный персонаж на SteamID. Новые модули должны использовать GRM.Char.GetActiveKey(ply).",
+            identityNote = "Активный CharacterKey: " .. CH.GetActiveKey(ply) .. ". Новые модули должны использовать GRM.Char.GetActiveKey(ply).",
             sections = sections,
             nameMin = CH.NameMin, nameMax = CH.NameMax,
             wardrobe = opts.wardrobe == true or nil,
@@ -304,17 +384,8 @@ if SERVER then
         timer.Simple(1.5, function() if IsValid(ply) then sendMenu(ply) end end)
         timer.Simple(2.2, function()
             if not IsValid(ply) then return end
-            local c = CH.Get(ply)
-            if istable(c) then
-                if not c.id or c.id == "" then c = ensureChar(ply); saveChars("ensure-id") end
-                ply:SetNWString("GRM_CharacterID", tostring(c.id or ""))
-                ply:SetNWString("GRM_CharacterKey", tostring(c.key or (ply:SteamID64() .. ":" .. tostring(c.id or ""))))
-            end
-            ply:SetNWString("GRM_RPName", istable(c) and tostring(c.name or "") or "")
-            -- мягкое восстановление внешности персонажа (фракционная система может перекрыть позже — это ок)
-            if istable(c) and isstring(c.model) and c.model ~= "" then
-                CH.ApplyAppearance(ply, { path = c.model, skin = c.skin, bodygroups = c.bodygroups })
-            end
+            normalizePlayerData(ply)
+            applyActiveCharacter(ply)
         end)
     end)
 
@@ -323,10 +394,16 @@ if SERVER then
     net.Receive(NET_SAVE, function(_, ply)
         if not IsValid(ply) then return end
         local d = net.ReadTable() or {}
+        if d.action == "select_slot" then
+            CH.SetActiveSlot(ply, d.slot)
+            timer.Simple(0.1, function() if IsValid(ply) then sendMenu(ply) end end)
+            return
+        end
+        if d.slot then CH.SetActiveSlot(ply, d.slot) end
         local wasNew = CH.Get(ply) == nil
 
         if d.name ~= nil then
-            local ok, err = CH.SetName(ply, d.name)
+            local ok, err = CH.SetName(ply, d.name, d.slot)
             if not ok then
                 if GRM.Notify then GRM.Notify(ply, tostring(err), 255, 100, 100) end
             end
@@ -420,6 +497,8 @@ if CLIENT then
         payload = istable(payload) and payload or {}
         local char = istable(payload.char) and payload.char or nil
         local sections = istable(payload.sections) and payload.sections or {}
+        local slots = istable(payload.slots) and payload.slots or {}
+        local activeSlot = tostring(payload.activeSlot or "char1")
 
         -- состояние редактора (черновик)
         local draft = {
@@ -510,6 +589,26 @@ if CLIENT then
             nameHint:SetTextColor(n and C.green or C.red)
         end
         updHint() nameEntry.OnChange = function() draft.name = nameEntry:GetValue() updHint() end
+
+        local slotPanel = vgui.Create("DPanel", left)
+        slotPanel:Dock(TOP) slotPanel:SetTall(72) slotPanel:DockMargin(0, 0, 0, 10)
+        slotPanel.Paint = function(_, pw, ph)
+            draw.RoundedBox(6, 0, 0, pw, ph, C.panel)
+            draw.SimpleText("Слоты персонажей", "GRMChar_Sub", 10, 14, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
+        for i = 1, 3 do
+            local info = slots[i] or { id = "char" .. i, index = i, exists = false }
+            local b = mkBtn(slotPanel, (info.exists and (info.name ~= "" and info.name or ("Персонаж " .. i)) or ("+ Слот " .. i)), info.id == activeSlot and C.green or C.panel2)
+            b:SetPos(10 + (i - 1) * math.floor((leftW - 34) / 3), 30)
+            b:SetSize(math.floor((leftW - 40) / 3), 34)
+            b:SetFont("GRMChar_Normal")
+            b.DoClick = function()
+                net.Start(NET_SAVE)
+                    net.WriteTable({ action = "select_slot", slot = info.id })
+                net.SendToServer()
+                timer.Simple(0.15, function() if IsValid(f) then f:Close() end end)
+            end
+        end
 
         -- ПРАВАЯ КОЛОНКА: превью + настройка модели
         local right = vgui.Create("DPanel", f)
@@ -697,7 +796,7 @@ if CLIENT then
                 return
             end
             net.Start(NET_SAVE)
-                net.WriteTable({ name = draft.name, model = draft.model, skin = draft.skin, bodygroups = draft.bodygroups })
+                net.WriteTable({ slot = payload.activeSlot or "char1", name = draft.name, model = draft.model, skin = draft.skin, bodygroups = draft.bodygroups })
             net.SendToServer()
             timer.Simple(0.5, function() if IsValid(f) then f:Close() end end)
         end
