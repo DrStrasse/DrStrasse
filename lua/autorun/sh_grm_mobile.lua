@@ -783,6 +783,12 @@ if CLIENT then
     local function lp() return LocalPlayer and LocalPlayer() or nil end
     local function hasPhone() return M.state and M.state.has ~= false and M.state.tier ~= nil and M.state.tier ~= "" end
     local function now() return CurTime and CurTime() or 0 end
+    local function clamp(v, lo, hi)
+        v = tonumber(v) or lo or 0
+        if v < lo then return lo end
+        if v > hi then return hi end
+        return v
+    end
 
     local function askString(title, text, default, cb)
         if M.promptOpen then return end
@@ -961,7 +967,7 @@ if CLIENT then
     local function drawButtonList(w, startY, maxY)
         local items = screenItems()
         if #items == 0 then return end
-        if M.screen == "home" then M.sel = math.Clamp(M.sel, 1, #items) else M.listSel = math.Clamp(M.listSel, 1, #items) end
+        if M.screen == "home" then M.sel = clamp(M.sel, 1, #items) else M.listSel = clamp(M.listSel, 1, #items) end
         local selected = (M.screen == "home") and M.sel or M.listSel
         local y = startY
         for i, it in ipairs(items) do
