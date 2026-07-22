@@ -174,16 +174,23 @@ if SERVER then
     end
 
     local function steam64(ply)
-        if isstring(ply) then return tostring(ply) end
-        if not IsValid(ply) then return "" end
-        local id = ply:SteamID64()
-        if id and id ~= "0" then return id end
-        return ply:SteamID() or ""
+        if IsValid(ply) and ply:IsPlayer() then
+            if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
+            return tostring(ply:SteamID64() or "")
+        end
+        local raw = tostring(ply or "")
+        if raw:match(":char[1-3]$") then return raw end
+        if raw:match("^%d+$") then return raw .. ":char1" end
+        if util.SteamIDTo64 then
+            local s64 = util.SteamIDTo64(raw)
+            if s64 and s64 ~= "0" then return tostring(s64) .. ":char1" end
+        end
+        return raw
     end
 
     local function playerNickBySid(sid)
         for _, p in ipairs(player.GetAll()) do
-            if IsValid(p) and (p:SteamID64() == sid or p:SteamID() == sid) then
+            if IsValid(p) and (steam64(p) == sid or p:SteamID64() == sid or p:SteamID() == sid) then
                 return p:Nick()
             end
         end
@@ -518,7 +525,8 @@ if SERVER then
         local sid, sid64 = ply:SteamID(), ply:SteamID64()
         for name, f in pairs(Factions) do
             if istable(f) and istable(f.Members) then
-                local m = f.Members[sid] or f.Members[sid64]
+                local ck = steam64(ply)
+                local m = f.Members[ck] or f.Members[sid] or f.Members[sid64]
                 if istable(m) then return name, m.Role, m.Department end
             end
         end

@@ -73,9 +73,10 @@ end
 local function getFactionInfo(ply)
     if not IsValid(ply) or not Factions then return nil, nil, nil end
     local sid, sid64 = ply:SteamID(), ply:SteamID64()
+    local charKey = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
     for name, f in pairs(Factions) do
         if istable(f) and istable(f.Members) then
-            local m = f.Members[sid] or f.Members[sid64]
+            local m = f.Members[charKey] or f.Members[sid] or f.Members[sid64]
             if istable(m) then return name, m.Role, m.Department end
         end
     end
@@ -688,8 +689,10 @@ end
 
 local function radioVoice(listener, speaker)
     if not RadioFrequencies then return false end
-    local sf = RadioFrequencies[speaker:SteamID64()]
-    local lf = RadioFrequencies[listener:SteamID64()]
+    local sk = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(speaker)) or speaker:SteamID64()
+    local lk = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(listener)) or listener:SteamID64()
+    local sf = RadioFrequencies[sk]
+    local lf = RadioFrequencies[lk]
     if not (sf and lf and sf == lf) then return false end
     -- RadioNet (Код 85): частота ловится только в покрытии сети
     -- (стойка+антенны); вне сети — прямая дальность рации
