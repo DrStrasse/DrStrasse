@@ -309,11 +309,7 @@ function MB.Think()
             if ply._grmMobUI then
                 local lastPush = tonumber(ply._grmMobDataTs) or -999
                 if CurTime() - lastPush >= 3 then
-                    local d = MB.EnsureData(ply)
-                    net.Start("GRM_Mob_Data")
-                        net.WriteString("contacts")
-                        net.WriteTable({ rows = d and d.contacts or {} })
-                    net.Send(ply)
+                    MB.PushAllData(ply)
                     ply._grmMobDataTs = CurTime()
                 end
             end
@@ -414,6 +410,45 @@ function MB.PushState(ply)
     net.Send(ply)
 end
 
+function MB.PushData(ply, kind)
+    if not IsValid(ply) then return end
+    kind = tostring(kind or "")
+    local d = MB.EnsureData(ply)
+    local payload = { rows = {} }
+
+    if kind == "contacts" then
+        for i, r in ipairs(d.contacts or {}) do
+            payload.rows[#payload.rows + 1] = { i = i, name = r.name, num = r.num }
+        end
+    elseif kind == "sms" then
+        for i, r in ipairs(d.sms or {}) do
+            local row = table.Copy(r)
+            row.i = i
+            payload.rows[#payload.rows + 1] = row
+        end
+    elseif kind == "notes" then
+        for i, r in ipairs(d.notes or {}) do
+            payload.rows[#payload.rows + 1] = { i = i, text = r.text, ts = r.ts or r.time }
+        end
+    elseif kind == "forum" then
+        for i = 1, math.min(40, #MB.Forum.posts) do payload.rows[i] = MB.Forum.posts[i] end
+    else
+        return
+    end
+
+    net.Start("GRM_Mob_Data")
+        net.WriteString(kind)
+        net.WriteTable(payload)
+    net.Send(ply)
+end
+
+function MB.PushAllData(ply)
+    MB.PushData(ply, "contacts")
+    MB.PushData(ply, "sms")
+    MB.PushData(ply, "notes")
+    MB.PushData(ply, "forum")
+end
+
 function MB.SendSms(ply, num, text)
     if not IsValid(ply) then return false end
     local tierKey = MB.CarriedTier(ply)
@@ -453,6 +488,7 @@ function MB.HandleAction(ply, act)
     if op == "open" or op == "ping" then
         ply._grmMobUI = CurTime()
         MB.PushState(ply)
+        if op == "open" then MB.PushAllData(ply) end
         return
     elseif op == "close" then
         ply._grmMobUI = nil
@@ -462,6 +498,24 @@ function MB.HandleAction(ply, act)
         return
     elseif op == "sms" then
         MB.SendSms(ply, act.num, act.text)
+        return
+    elseif op == "deactivate" then
+        if GRM.Inventory and GRM.Inventory.GetPlayerInv then
+            local inv = GRM.Inventory.GetPlayerInv(ply)
+            if istable(inv) and istable(inv.slots) then
+                for i, sl in pairs(inv.slots) do
+                    if istable(sl) and sl.id and MB.IsMobileItem(sl.id) then
+                        sl.data = istable(sl.data) and sl.data or {}
+                        sl.data.active = false
+                        if GRM.Inventory.SyncSlot then GRM.Inventory.SyncSlot(ply, i) end
+                    end
+                end
+                if GRM.Inventory._devSaveSoon then GRM.Inventory._devSaveSoon("mobile deactivate") end
+            end
+        end
+        MB.RemoveLine(ply)
+        MB.PushState(ply)
+        if MB.ServerNotify then MB.ServerNotify(ply, "Телефон деактивирован. Активировать — через /inv → Использовать.") end
         return
     elseif op == "contact_add" then
         if not (tier and tier.contacts) then return end
@@ -481,9 +535,14 @@ function MB.HandleAction(ply, act)
         if #d.notes >= MB.NotesCap then return end
         local text = string.Trim(tostring(act.text or "")):sub(1, 500)
         if text ~= "" then d.notes[#d.notes + 1] = { text = text, time = os.time() } end
+        MB.PushData(ply, "notes")
         return
     elseif op == "note_del" then
         table.remove(d.notes, math.max(1, math.floor(tonumber(act.i) or 0)))
+        MB.PushData(ply, "notes")
+        return
+    elseif op == "note_query" then
+        MB.PushData(ply, "notes")
         return
     elseif op == "forum_post" then
         if not (tier and tier.apps) then return end
@@ -494,14 +553,10 @@ function MB.HandleAction(ply, act)
         ply._grmMobForumTs = now
         table.insert(MB.Forum.posts, 1, { author = ply:Nick(), text = text, time = now })
         while #MB.Forum.posts > MB.ForumCap do table.remove(MB.Forum.posts) end
+        MB.PushData(ply, "forum")
         return
     elseif op == "forum_query" then
-        local rows = {}
-        for i = 1, math.min(40, #MB.Forum.posts) do rows[i] = MB.Forum.posts[i] end
-        net.Start("GRM_Mob_Data")
-            net.WriteString("forum")
-            net.WriteTable({ rows = rows })
-        net.Send(ply)
+        MB.PushData(ply, "forum")
         return
     elseif op == "jobs_query" then
         local rows = {}
@@ -806,6 +861,10 @@ if CLIENT then
         surface.PlaySound(map[kind] or map.select)
     end
 
+    local function notify(txt)
+        if notification and notification.AddLegacy then notification.AddLegacy(tostring(txt or ""), NOTIFY_HINT or 3, 3) end
+    end
+
     local function askString(title, text, default, cb)
         if M.promptOpen then return end
         M.promptOpen = true
@@ -909,13 +968,14 @@ if CLIENT then
                     if a.id == "dial" then setScreen("dial")
                     elseif a.id == "sms" then setScreen("sms"); sendAct({op="sms_read"})
                     elseif a.id == "contacts" then setScreen("contacts")
-                    elseif a.id == "notes" then setScreen("notes")
+                    elseif a.id == "notes" then setScreen("notes"); sendAct({op="note_query"})
                     elseif a.id == "jobs" then setScreen("jobs"); sendAct({op="jobs_query"})
                     elseif a.id == "fac" then setScreen("fac"); sendAct({op="fac_query"})
                     elseif a.id == "forum" then setScreen("forum"); sendAct({op="forum_query"})
                     elseif a.id == "calc" then setScreen("calc") end
                 end, a.id == "sms" and tonumber(M.state.unread or 0) > 0 and ("Новых: " .. tostring(M.state.unread)) or nil)
             end
+            add("Деактивировать", function() sendAct({op="deactivate"}); closePhone(false) end, "выключить рабочую трубку", "call_bad")
         elseif M.screen == "dial" then
             for _, d in ipairs({"1","2","3","4","5","6","7","8","9"}) do add(d, function() M.dial = (M.dial or "") .. d; snd("select") end, "цифра", "digit") end
             add("←", function() M.dial = string.sub(M.dial or "", 1, math.max(0, #(M.dial or "") - 1)); snd("back") end, "стереть", "digit")
@@ -956,7 +1016,8 @@ if CLIENT then
         elseif M.screen == "notes" then
             for _, r in ipairs(rows("notes")) do add(tostring(r.text or "Заметка"), function() end, "заметка") end
             add("Добавить заметку", function() askString("Заметка", "Текст", "", function(txt) sendAct({op="note_add", text=txt}) end) end)
-            add("Удалить выбранную", function() sendAct({op="note_del", i=math.max(1, M.listSel)}) end)
+            add("Удалить выбранную", function() sendAct({op="note_del", i=math.max(1, M.listSel)}) end, nil, "call_bad")
+            add("Обновить", function() sendAct({op="note_query"}); snd("select") end, nil, "small")
             add("Назад", function() goHome(); snd("back") end, nil, "back")
         elseif M.screen == "jobs" then
             for _, r in ipairs(rows("jobs")) do add(tostring(r.fac or "") .. ": " .. tostring(r.title or ""), function() end, tostring(r.kind or "") .. " " .. tostring(r.pay or r.reward or "")) end
@@ -1175,6 +1236,11 @@ if CLIENT then
             closePhone(true)
             return
         end
+        if key == KEY_LEFT or key == KEY_RIGHT then
+            goHome()
+            snd("back")
+            return
+        end
 
         -- Selection/activation inside the phone is Mouse3 / middle mouse only.
         if isMouse3(key) then
@@ -1245,6 +1311,13 @@ if CLIENT then
             if M.open then closePhone(true) end
         end
         M.poll.down = downNow
+
+        local leftNow = input.IsKeyDown(KEY_LEFT) == true
+        if leftNow and not M.poll.left and M.open then goHome(); snd("back") end
+        M.poll.left = leftNow
+        local rightNow = input.IsKeyDown(KEY_RIGHT) == true
+        if rightNow and not M.poll.right and M.open then goHome(); snd("back") end
+        M.poll.right = rightNow
 
         local mouse3Now = false
         if _G.KEY_MOUSE3 then mouse3Now = mouse3Now or input.IsKeyDown(KEY_MOUSE3) == true end
