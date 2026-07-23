@@ -47,6 +47,7 @@ local function defaultCfg()
         allowBodygroups = true,
         extraModels = {},
         hiddenModels = {},
+        modelRules = {}, -- path -> { allowSkin=bool, bodygroups={[group]=bool} }
     }
 end
 
@@ -101,6 +102,7 @@ local function getCfg(ent)
     end
     ent.cfg.extraModels = istable(ent.cfg.extraModels) and ent.cfg.extraModels or {}
     ent.cfg.hiddenModels = istable(ent.cfg.hiddenModels) and ent.cfg.hiddenModels or {}
+    ent.cfg.modelRules = istable(ent.cfg.modelRules) and ent.cfg.modelRules or {}
     return ent.cfg
 end
 
@@ -118,7 +120,9 @@ local function filterSections(sections, cfg)
         local keep = istable(sec.outfits) and {} or nil
         for _, e in ipairs(sec.outfits or {}) do
             if not hidden[tostring(e.path)] then
-                keep[#keep + 1] = e
+                local copy = table.Copy(e)
+                copy.wardrobeRule = table.Copy(cfg.modelRules[tostring(e.path)] or {})
+                keep[#keep + 1] = copy
             end
         end
         if keep and #keep > 0 then
@@ -130,7 +134,7 @@ local function filterSections(sections, cfg)
     local extra = {}
     for _, p in ipairs(cfg.extraModels) do
         if isstring(p) and p ~= "" and not hidden[p] then
-            extra[#extra + 1] = { path = p, skin = 0, bodygroups = {} }
+            extra[#extra + 1] = { path = p, skin = 0, bodygroups = {}, wardrobeRule = table.Copy(cfg.modelRules[p] or {}) }
         end
     end
     if #extra > 0 then
@@ -200,6 +204,17 @@ net.Receive(NET_CFG_SET, function(_, ply)
     clean.hiddenModels = {}
     for _, p in ipairs(cfg.hiddenModels or {}) do
         if isstring(p) and p ~= "" then clean.hiddenModels[#clean.hiddenModels + 1] = string.Trim(p) end
+    end
+    clean.modelRules = {}
+    for path, rule in pairs(cfg.modelRules or {}) do
+        path = string.Trim(tostring(path or ""))
+        if path ~= "" and istable(rule) then
+            clean.modelRules[path] = { allowSkin = rule.allowSkin ~= false, bodygroups = {} }
+            for group, allowed in pairs(rule.bodygroups or {}) do
+                local index = tonumber(group)
+                if index then clean.modelRules[path].bodygroups[index] = allowed == true end
+            end
+        end
     end
 
     ent.cfg = clean

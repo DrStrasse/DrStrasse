@@ -68,7 +68,7 @@ local function openCfgMenu(entIdx, cfg)
     local f = vgui.Create("DFrame")
     _G._grmWardCfgFrame = f
     f:SetTitle("")
-    f:SetSize(560, 640)
+    f:SetSize(920, 780)
     f:Center()
     f:MakePopup()
     f:ShowCloseButton(false)
@@ -80,7 +80,7 @@ local function openCfgMenu(entIdx, cfg)
 
     local x = vgui.Create("DButton", f)
     x:SetText("X") x:SetFont("GRMWard_Title") x:SetTextColor(color_white)
-    x:SetPos(516, 6) x:SetSize(32, 26)
+    x:SetPos(876, 6) x:SetSize(32, 26)
     x.DoClick = function() f:Close() end
     x.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.red or Color(45, 52, 68)) end
 
@@ -171,6 +171,65 @@ local function openCfgMenu(entIdx, cfg)
             ed.hiddenModels[#ed.hiddenModels + 1] = p
             hdEntry:SetValue("") rebuildHd()
         end
+    end
+
+    -- Тонкие права бодигрупп для каждой конкретной модели.
+    ed.modelRules = istable(ed.modelRules) and ed.modelRules or {}
+    local b4 = block(360, "Точная настройка моделей и бодигрупп:")
+    local rulePath = vgui.Create("DTextEntry", b4)
+    rulePath:SetPos(10, 30) rulePath:SetSize(560, 28)
+    rulePath:SetPlaceholderText("models/...mdl — укажите модель")
+    local ruleLoad = mkBtn(b4, "Загрузить модель", C.acc)
+    ruleLoad:SetPos(580, 30) ruleLoad:SetSize(150, 28)
+    local ruleHelp = vgui.Create("DLabel", b4)
+    ruleHelp:SetPos(10, 60) ruleHelp:SetSize(560, 24)
+    ruleHelp:SetText("Отметьте группы, которые разрешено менять в этом гардеробе.")
+    ruleHelp:SetFont("GRMWard_Normal") ruleHelp:SetTextColor(C.dim)
+    local ruleScroll = vgui.Create("DScrollPanel", b4)
+    ruleScroll:SetPos(10, 88) ruleScroll:SetSize(560, 250)
+    local rulePreview = vgui.Create("DModelPanel", b4)
+    rulePreview:SetPos(590, 88) rulePreview:SetSize(140, 250)
+    rulePreview:SetFOV(42)
+    rulePreview.LayoutEntity = function() end
+    local rulePathActive = ""
+    local function rebuildRules()
+        ruleScroll:Clear()
+        local path = string.Trim(rulePathActive or "")
+        if path == "" or not util.IsValidModel(path) then
+            rulePreview:SetModel("models/player/Group01/male_07.mdl")
+            return
+        end
+        rulePreview:SetModel(path)
+        local rule = ed.modelRules[path] or { allowSkin = true, bodygroups = {} }
+        ed.modelRules[path] = rule
+        local ent = rulePreview:GetEntity()
+        if not IsValid(ent) then return end
+        local skin = vgui.Create("DCheckBoxLabel", ruleScroll)
+        skin:Dock(TOP) skin:SetTall(26) skin:SetText("Разрешить настройку skin")
+        skin:SetFont("GRMWard_Normal") skin:SetTextColor(C.text)
+        skin:SetValue(rule.allowSkin ~= false and 1 or 0)
+        skin.OnChange = function(_, value) rule.allowSkin = value end
+        for i = 0, (ent:GetNumBodyGroups() or 0) - 1 do
+            local count = ent:GetBodygroupCount(i) or 1
+            if count > 1 then
+                local row = vgui.Create("DCheckBoxLabel", ruleScroll)
+                row:Dock(TOP) row:SetTall(26)
+                row:SetText((ent:GetBodygroupName(i) or ("Группа " .. i)) .. "  (" .. count .. " вариантов)")
+                row:SetFont("GRMWard_Normal") row:SetTextColor(C.text)
+                row:SetValue(rule.bodygroups[i] ~= false and 1 or 0)
+                row.OnChange = function(_, value) rule.bodygroups[i] = value end
+            end
+        end
+    end
+    ruleLoad.DoClick = function()
+        rulePathActive = string.Trim(rulePath:GetValue() or "")
+        rebuildRules()
+    end
+    local modelChoices = {}
+    for _, p in ipairs(ed.extraModels or {}) do modelChoices[p] = true end
+    for _, p in ipairs(ed.hiddenModels or {}) do modelChoices[p] = true end
+    for p in pairs(modelChoices) do
+        -- Подсказка администратору: правило можно открыть вводом пути.
     end
 
     local bot = vgui.Create("DPanel", f)

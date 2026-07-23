@@ -600,12 +600,26 @@ if SERVER then
         end
 
         if isstring(d.model) and d.model ~= "" then
+            local wardrobeRule = nil
+            if d.wardrobe == true then
+                local wardrobe = Entity(tonumber(d.wardrobeEnt) or 0)
+                if not IsValid(wardrobe) or wardrobe:GetClass() ~= "grm_wardrobe"
+                    or ply:GetPos():DistToSqr(wardrobe:GetPos()) > 220 * 220 then
+                    if GRM.Notify then GRM.Notify(ply, "Гардероб недоступен или слишком далеко.", 255, 100, 100) end
+                    return
+                end
+                local cfg = wardrobe.cfg or {}
+                wardrobeRule = istable(cfg.modelRules) and cfg.modelRules[d.model] or {}
+            end
             local bg = {}
             for g, v in pairs(d.bodygroups or {}) do
                 local gi, vi = tonumber(g), tonumber(v)
-                if gi and vi and vi ~= 0 then bg[gi] = vi end
+                local allowed = not wardrobeRule or wardrobeRule.bodygroups == nil or wardrobeRule.bodygroups[gi] ~= false
+                if gi and vi and vi ~= 0 and allowed then bg[gi] = vi end
             end
-            local ok, err = CH.ApplyAppearance(ply, { path = d.model, skin = tonumber(d.skin) or 0, bodygroups = bg })
+            local chosenSkin = tonumber(d.skin) or 0
+            if wardrobeRule and wardrobeRule.allowSkin == false then chosenSkin = 0 end
+            local ok, err = CH.ApplyAppearance(ply, { path = d.model, skin = chosenSkin, bodygroups = bg })
             if not ok and GRM.Notify then GRM.Notify(ply, tostring(err or "Не удалось применить внешность"), 255, 100, 100) end
             if ok and GRM.Notify then GRM.Notify(ply, "Внешность персонажа сохранена.", 100, 220, 100) end
         end
@@ -729,11 +743,15 @@ if CLIENT then
             model = char and tostring(char.model or "") or "",
             skin = char and tonumber(char.skin) or 0,
             bodygroups = char and table.Copy(char.bodygroups or {}) or {},
+            wardrobeRule = {},
         }
         if draft.model == "" and defaultOutfit then
             draft.model = defaultOutfit.path
             draft.skin = tonumber(defaultOutfit.skin) or 0
             draft.bodygroups = table.Copy(defaultOutfit.bodygroups or {})
+        end
+        for _, outfit in ipairs(outfits) do
+            if outfit.path == draft.model then draft.wardrobeRule = table.Copy(outfit.wardrobeRule or {}) break end
         end
 
         if IsValid(CH._frame) then
@@ -978,8 +996,10 @@ if CLIENT then
             if not IsValid(ent) then return end
             local n = ent:GetNumBodyGroups() or 0
             for i = 0, n - 1 do
+                local allowed = draft.wardrobeRule and draft.wardrobeRule.bodygroups and draft.wardrobeRule.bodygroups[i]
+                if allowed == nil then allowed = true end
                 local count = ent:GetBodygroupCount(i) or 1
-                if count > 1 then
+                if allowed and count > 1 then
                     local row = vgui.Create("DPanel", bgScroll)
                     row:Dock(TOP) row:SetTall(24) row:DockMargin(0, 0, 0, 2)
                     row.Paint = function(_, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, C.panel2) end
@@ -1026,6 +1046,7 @@ if CLIENT then
             draft.model = entry.path
             draft.skin = tonumber(entry.skin) or 0
             draft.bodygroups = table.Copy(entry.bodygroups or {})
+            draft.wardrobeRule = table.Copy(entry.wardrobeRule or {})
             refreshPreview()
             refreshSkinMax()
             skinSlider:SetValue(draft.skin)
@@ -1076,7 +1097,7 @@ if CLIENT then
                 return
             end
             net.Start(NET_SAVE)
-                net.WriteTable({ slot = activeSlot or "char1", name = draft.name, model = draft.model, skin = draft.skin, bodygroups = draft.bodygroups })
+                net.WriteTable({ slot = activeSlot or "char1", name = draft.name, model = draft.model, skin = draft.skin, bodygroups = draft.bodygroups, wardrobe = payload.wardrobe == true, wardrobeEnt = payload.wardrobeEnt, wardrobeRule = draft.wardrobeRule })
             net.SendToServer()
         end
 
