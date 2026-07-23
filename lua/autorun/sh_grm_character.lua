@@ -257,7 +257,7 @@ if SERVER then
         end
     end
 
-    function CH.SetActiveSlot(ply, slot)
+    function CH.SetActiveSlot(ply, slot, forceSpawn)
         local oldKey = CH.GetActiveKey(ply)
         local rec = normalizePlayerData(ply)
         if not rec then return false end
@@ -272,10 +272,13 @@ if SERVER then
         end
         local newKey = CH.GetActiveKey(ply)
         hook.Run("GRM_CharacterChanged", ply, oldKey, newKey)
-        timer.Simple(0, function()
-            if not IsValid(ply) or not hasCharacter(ply, slot) then return end
-            if ply.Alive and ply:Alive() and ply.Spawn then ply:Spawn() end
-        end)
+        local shouldSpawn = forceSpawn == true or oldKey ~= newKey
+        if shouldSpawn then
+            timer.Simple(0, function()
+                if not IsValid(ply) or not hasCharacter(ply, slot) then return end
+                if ply.Alive and ply:Alive() and ply.Spawn then ply:Spawn() end
+            end)
+        end
         return true
     end
 
@@ -561,11 +564,25 @@ if SERVER then
         if d.action == "select_slot" then
             local slot = tostring(d.slot or "char1")
             if not slot:match("^char[123]$") then return end
-            local ok = CH.SetActiveSlot(ply, slot)
+            local sameActive = slot == activeSlot(ply)
+            local mandatory = CH.PendingMandatory[ply:SteamID64()] == true
+            if sameActive and not mandatory then
+                -- Anti-abuse: повторный выбор уже активного персонажа не
+                -- вызывает Spawn, телепорт, reset inventory или повторный gear-flow.
+                setCharacterLock(ply, false, false)
+                closeMenu(ply)
+                return
+            end
+            local ok = CH.SetActiveSlot(ply, slot, mandatory)
             if ok and hasCharacter(ply, slot) then closeMenu(ply) else sendMenu(ply) end
             return
         end
-        if d.slot then CH.SetActiveSlot(ply, d.slot) end
+        local requestedSlot = tostring(d.slot or activeSlot(ply))
+        local mandatory = CH.PendingMandatory[ply:SteamID64()] == true
+        local sameActive = requestedSlot == activeSlot(ply)
+        if not sameActive or mandatory then
+            CH.SetActiveSlot(ply, requestedSlot, mandatory)
+        end
         local wasNew = CH.Get(ply) == nil
 
         if d.name ~= nil then
@@ -815,6 +832,7 @@ if CLIENT then
             b:SetPos(10 + (i - 1) * math.floor((leftW - 34) / 3), 30)
             b:SetSize(math.floor((leftW - 40) / 3), 34)
             b:SetFont("GRMChar_Normal")
+            b:SetEnabled(not (info.id == payload.activeSlot and payload.pending and payload.mandatory ~= true))
             b:SetTooltip(info.model ~= "" and ("Текущая модель: " .. info.model) or "Персонаж ещё не создан")
             b.DoClick = function()
                 -- Выбор карточки — только локальный черновик. Серверный активный
