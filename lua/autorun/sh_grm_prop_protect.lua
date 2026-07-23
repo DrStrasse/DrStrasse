@@ -171,7 +171,7 @@ if SERVER then
 
     concommand.Add("grm_prop_admin", function(ply)
         if not IsValid(ply) or not ply:IsSuperAdmin() then return end
-        net.Start("GRM_PropProtect_Open") net.Send(ply)
+        net.Start("GRM_PropProtect_Data") net.WriteTable(PP.Cfg) net.Send(ply)
     end)
 
     hook.Add("InitPostEntity", "GRM_PropProtect_StabilizeExisting", function()
