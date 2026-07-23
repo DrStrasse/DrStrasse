@@ -397,8 +397,18 @@ if SERVER then
             if oa == ob then return a < b end
             return oa < ob
         end)
+        local hasFaction = false
+        if istable(Factions) and GRM.Identity and GRM.Identity.FactionMember then
+            for _, faction in pairs(Factions) do
+                if GRM.Identity.FactionMember(faction, ply) then hasFaction = true break end
+            end
+        end
         for _, id in ipairs(ids) do
             local skip = false
+            -- Гражданская и фракционная внешность взаимоисключающие:
+            -- персонаж фракции не видит civilian-пул, гражданский не видит faction-пул.
+            if id == "civilian" and hasFaction then skip = true end
+            if id == "faction" and not hasFaction then skip = true end
             if opts.wardrobe and id == "civilian" and opts.allowCivilian == false then skip = true end
             if opts.wardrobe and id == "faction" and opts.allowFaction == false then skip = true end
             if not skip then
