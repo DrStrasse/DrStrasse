@@ -807,7 +807,7 @@ if CLIENT then
         if payload.wardrobe and payload.isAdmin and payload.wardrobeEnt then
             local bCfg = mkBtn(f, "⚙ Настройка гардероба", C.yellow)
             bCfg:SetTextColor(Color(30, 28, 20))
-            bCfg:SetPos(fw - 320, 8) bCfg:SetSize(220, 28)
+            bCfg:SetPos(fw - 300, 20) bCfg:SetSize(230, 28)
             bCfg.DoClick = function()
                 net.Start("GRM_Wardrobe_CfgReq")
                     net.WriteUInt(tonumber(payload.wardrobeEnt) or 0, 16)
@@ -897,7 +897,7 @@ if CLIENT then
                 rebuildBodygroups()
                 bContinue:SetVisible(info.exists == true)
                 bSave:SetVisible(info.exists ~= true or payload.wardrobe == true)
-                bSave:SetText(info.exists and "" or "Создать и выбрать")
+                bSave:SetText(info.exists and (payload.wardrobe and "Сохранить" or "") or "Создать и выбрать")
             end
         end
 
@@ -937,8 +937,8 @@ if CLIENT then
                 -- DModelPanel использует FOV для вертикального кадра не так,
                 -- как обычная камера. Считаем дистанцию по высоте модели,
                 -- иначе голова/ноги обрезаются на разных моделях.
-                local distance = math.max(height * 1.35, width * 2.4,
-                    (height * 0.5) / math.tan(math.rad(fov * 0.5)) * 1.35)
+                local distance = math.max(height * 1.65, width * 2.8,
+                    (height * 0.5) / math.tan(math.rad(fov * 0.5)) * 1.55)
                 preview:SetFOV(fov)
                 preview:SetLookAt(center + Vector(0, 0, height * 0.02))
                 preview:SetCamPos(center + Vector(distance, 0, height * 0.03))
@@ -948,6 +948,11 @@ if CLIENT then
                     ent:SetBodygroup(tonumber(g) or 0, tonumber(v) or 0)
                 end
             end
+            preview._grmPreviewSig = tostring(draft.model) .. "|" .. tostring(draft.skin)
+        end
+        function preview:Think()
+            local sig = tostring(draft.model) .. "|" .. tostring(draft.skin)
+            if sig ~= self._grmPreviewSig then refreshPreview() end
         end
         refreshPreview()
         timer.Simple(0, function() if IsValid(preview) then refreshPreview() end end)
@@ -1122,7 +1127,7 @@ if CLIENT then
         bContinue:SetVisible(char ~= nil)
         bContinue.DoClick = submitCharacter
 
-        bSave = mkBtn(bot, char and "" or "Создать персонажа", C.green)
+        bSave = mkBtn(bot, char and (payload.wardrobe and "Сохранить" or "") or "Создать персонажа", C.green)
         bSave:Dock(RIGHT) bSave:SetWide(230) bSave:DockMargin(8, 6, 0, 6)
         bSave:SetVisible(char == nil or payload.wardrobe == true)
         bSave.DoClick = submitCharacter
