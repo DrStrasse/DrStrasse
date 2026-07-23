@@ -559,8 +559,9 @@ if SERVER then
             sendMenu(ply)
             return
         end
+        -- Отмена не должна повторно применять/сохранять внешность:
+        -- черновик жил только на клиенте, активный персонаж не менялся.
         setCharacterLock(ply, false, false)
-        applyActiveCharacter(ply)
         closeMenu(ply)
     end)
 
