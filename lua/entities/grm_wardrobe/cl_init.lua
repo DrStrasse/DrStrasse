@@ -191,7 +191,8 @@ local function openCfgMenu(entIdx, cfg)
     rulePreview:SetPos(590, 88) rulePreview:SetSize(140, 250)
     rulePreview:SetFOV(42)
     rulePreview.LayoutEntity = function() end
-    local rulePathActive = ""
+    local rulePathActive = string.Trim(tostring(cfg._model or ""))
+    rulePath:SetText(rulePathActive)
     local function rebuildRules()
         ruleScroll:Clear()
         local path = string.Trim(rulePathActive or "")
@@ -230,6 +231,9 @@ local function openCfgMenu(entIdx, cfg)
     for _, p in ipairs(ed.hiddenModels or {}) do modelChoices[p] = true end
     for p in pairs(modelChoices) do
         -- Подсказка администратору: правило можно открыть вводом пути.
+    end
+    if rulePathActive ~= "" then
+        timer.Simple(0, rebuildRules)
     end
 
     local bot = vgui.Create("DPanel", f)

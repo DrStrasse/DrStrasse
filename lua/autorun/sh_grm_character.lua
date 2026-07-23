@@ -1015,7 +1015,7 @@ if CLIENT then
                         local v = tonumber(draft.bodygroups[i]) or 0
                         valLbl:SetText(gname .. ":  " .. v .. " / " .. (count - 1))
                         valLbl:SizeToContentsX() valLbl:SetWide(190)
-                        ent:SetBodygroup(i, v)
+                        if IsValid(ent) then ent:SetBodygroup(i, v) end
                     end
                     bL.DoClick = function()
                         local v = tonumber(draft.bodygroups[i]) or 0
@@ -1041,6 +1041,9 @@ if CLIENT then
             end
         end
         rebuildBodygroups()
+        timer.Simple(0.12, function()
+            if IsValid(preview) then rebuildBodygroups() end
+        end)
 
         local function selectModel(entry)
             draft.model = entry.path
@@ -1051,6 +1054,9 @@ if CLIENT then
             refreshSkinMax()
             skinSlider:SetValue(draft.skin)
             rebuildBodygroups()
+            timer.Simple(0.12, function()
+                if IsValid(preview) then rebuildBodygroups() end
+            end)
         end
 
         -- Единый список внешности: гражданские и фракционные модели

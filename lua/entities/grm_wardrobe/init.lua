@@ -178,9 +178,12 @@ net.Receive(NET_CFG_REQ, function(_, ply)
     local ent = Entity(idx)
     if not IsValid(ent) or ent:GetClass() ~= "grm_wardrobe" then return end
     local cfg = getCfg(ent)
+    local payload = table.Copy(cfg)
+    payload._model = ent:GetModel()
+    payload._modelName = ent:GetClass()
     net.Start(NET_CFG_GET)
         net.WriteUInt(ent:EntIndex(), 16)
-        net.WriteTable(cfg)
+        net.WriteTable(payload)
     net.Send(ply)
 end)
 
