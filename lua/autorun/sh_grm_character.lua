@@ -836,7 +836,8 @@ if CLIENT then
                 skinSlider:SetValue(draft.skin)
                 rebuildBodygroups()
                 bContinue:SetVisible(info.exists == true)
-                bSave:SetText(info.exists and "Сохранить и выбрать" or "Создать и выбрать")
+                bSave:SetVisible(info.exists ~= true or payload.wardrobe == true)
+                bSave:SetText(info.exists and "" or "Создать и выбрать")
             end
         end
 
@@ -1028,19 +1029,7 @@ if CLIENT then
         bot:Dock(BOTTOM) bot:SetTall(50) bot:DockMargin(10, 0, 10, 10)
         bot:SetPaintBackground(false)
 
-        bContinue = mkBtn(bot, char and "Продолжить" or "", C.acc)
-        bContinue:Dock(RIGHT) bContinue:SetWide(150) bContinue:DockMargin(8, 6, 0, 6)
-        bContinue:SetVisible(char ~= nil)
-        bContinue.DoClick = function()
-            net.Start(NET_SAVE)
-                net.WriteTable({ action = "select_slot", slot = activeSlot or "char1" })
-            net.SendToServer()
-            timer.Simple(0.2, function() if IsValid(f) then f:Close() end end)
-        end
-
-        bSave = mkBtn(bot, char and "Сохранить изменения" or "Создать персонажа", C.green)
-        bSave:Dock(RIGHT) bSave:SetWide(230) bSave:DockMargin(8, 6, 0, 6)
-        bSave.DoClick = function()
+        local function submitCharacter()
             local nm = CH.ValidateName(draft.name)
             if not nm then
                 Derma_Message("Укажите игровое имя (мин. " .. (payload.nameMin or 3) .. " символа).", "Персонаж", "Ок")
@@ -1049,11 +1038,19 @@ if CLIENT then
             net.Start(NET_SAVE)
                 net.WriteTable({ slot = activeSlot or "char1", name = draft.name, model = draft.model, skin = draft.skin, bodygroups = draft.bodygroups })
             net.SendToServer()
-            timer.Simple(0.5, function() if IsValid(f) then f:Close() end end)
         end
 
+        bContinue = mkBtn(bot, char and "Продолжить" or "", C.acc)
+        bContinue:Dock(RIGHT) bContinue:SetWide(150) bContinue:DockMargin(8, 6, 0, 6)
+        bContinue:SetVisible(char ~= nil)
+        bContinue.DoClick = submitCharacter
+
+        bSave = mkBtn(bot, char and "" or "Создать персонажа", C.green)
+        bSave:Dock(RIGHT) bSave:SetWide(230) bSave:DockMargin(8, 6, 0, 6)
+        bSave:SetVisible(char == nil or payload.wardrobe == true)
+        bSave.DoClick = submitCharacter
+
         if not char then
-            -- акцент: без имени создать нельзя
             bSave:SetText("Создать персонажа (обязательно)")
         end
     end
@@ -1100,6 +1097,10 @@ if CLIENT then
             Color(235, 235, 245), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         draw.SimpleText("Игровой мир заблокирован до подтверждения персонажа", "GRMChar_Normal",
             ScrW() / 2, ScrH() - 58, Color(145, 155, 175), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end)
+
+    hook.Add("HUDShouldDraw", "GRM_Char_HideHUD", function()
+        if clientCharacterPending() then return false end
     end)
 
     hook.Add("PlayerBindPress", "GRM_Char_BlockBinds", function(_, bind)
