@@ -830,6 +830,7 @@ local function scrapTake(ply, bin, amount)
     local ok, reason = inventoryAdd(ply, "scrap_metal", amount)
     if not ok then notify(ply, false, reason) return end
     bin:SetStock(bin:GetStock() - amount)
+    scheduleFactorySave("scrap take")
     notify(ply, true, "Собрано металлолома: " .. amount)
 end
 
@@ -1015,6 +1016,15 @@ net.Receive(NET_ACTION, function(_, ply)
     end
 end)
 
+-- Единая автоперсистентность оборудования завода. Factory entities не входят
+-- в универсальный /permadd: здесь сохраняется ещё и stock/nextRefill.
+local function scheduleFactorySave(reason)
+    if FC.LoadingMap then return end
+    timer.Create("GRM_FC_SaveSoon", 1, 1, function()
+        if not FC.LoadingMap and FC.SaveMap then FC.SaveMap(nil, reason or "mutation") end
+    end)
+end
+
 -- Scrap bins replenish their finite stock over time.
 timer.Create("GRM_FC_ScrapRefill", 2, 0, function()
     local now = CurTime()
@@ -1022,6 +1032,7 @@ timer.Create("GRM_FC_ScrapRefill", 2, 0, function()
         if bin:GetNextRefill() <= now then
             bin:SetStock(math.min(CFG.ScrapBinMax or 50, bin:GetStock() + (CFG.ScrapRefillAmount or 5)))
             bin:SetNextRefill(now + (CFG.ScrapRefillEvery or 60))
+            scheduleFactorySave("scrap refill")
         end
     end
 end)
@@ -1035,7 +1046,7 @@ local function entityRecord(ent)
     return record
 end
 
-function FC.SaveMap(ply)
+function FC.SaveMap(ply, reason)
     if IsValid(ply) and not ply:IsSuperAdmin() then notify(ply, false, "Только superadmin может сохранять завод.") return 0 end
     ensureDirectories()
     local records = {}
@@ -1093,11 +1104,23 @@ function FC.LoadMap(ply)
     return count
 end
 
-concommand.Add("grm_fc_save", function(ply) FC.SaveMap(ply) end)
+hook.Add("OnEntityCreated", "GRM_FC_AutoSaveCreated", function(ent)
+    timer.Simple(0, function()
+        if IsValid(ent) and EQUIPMENT_CLASSES[ent:GetClass()] then scheduleFactorySave("entity created") end
+    end)
+end)
+hook.Add("EntityRemoved", "GRM_FC_AutoSaveRemoved", function(ent)
+    if ent and EQUIPMENT_CLASSES[ent:GetClass()] then scheduleFactorySave("entity removed") end
+end)
+hook.Add("PostCleanupMap", "GRM_FC_RestoreAfterCleanup", function()
+    timer.Simple(1, function() if FC.LoadMap then FC.LoadMap(nil) end end)
+end)
+
+concommand.Add("grm_fc_save", function(ply) FC.SaveMap(ply, "manual") end)
 concommand.Add("grm_fc_load", function(ply) FC.LoadMap(ply) end)
 
 hook.Add("InitPostEntity", "GRM_FC_LoadMap", function() timer.Simple(5, function() FC.LoadMap(nil) end) end)
-if CFG.SaveOnShutdown then hook.Add("ShutDown", "GRM_FC_SaveShutdown", function() FC.SaveMap(nil) end) end
+hook.Add("ShutDown", "GRM_FC_SaveShutdown", function() FC.SaveMap(nil, "shutdown") end)
 
 -- Локеры сохраняются независимо от ручного сохранения карты, поэтому
 -- положенное оружие не теряется при выходе игрока или рестарте сервера.
