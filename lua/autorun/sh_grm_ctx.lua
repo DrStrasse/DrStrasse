@@ -9,6 +9,7 @@ if SERVER then
     util.AddNetworkString("GRM_Ctx_VehAct")
     util.AddNetworkString("GRM_Ctx_MoneyAct")
     util.AddNetworkString("GRM_Ctx_Action")
+    util.AddNetworkString("GRM_Ctx_Radio")
     util.AddNetworkString("GRM_Laws_Open")
     util.AddNetworkString("Factions_OpenAdminMenu")
     util.AddNetworkString("Factions_OpenLeaderMenu")
@@ -132,6 +133,19 @@ if SERVER then
     end)
 
     -- ── Действия с транспортом из контекст-меню (Код 82) ──────
+    net.Receive("GRM_Ctx_Radio", function(_, ply)
+        if not IsValid(ply) then return end
+        local op = tostring(net.ReadString() or "")
+        local value = net.ReadString() or ""
+        local rn = GRM.RadioNet
+        if not rn then return end
+        if op == "leave" and rn.FreqLeave then
+            rn.FreqLeave(ply)
+        elseif op == "set" and rn.FreqSet then
+            rn.FreqSet(ply, value)
+        end
+    end)
+
     net.Receive("GRM_Ctx_VehAct", function(_, ply)
         if not IsValid(ply) then return end
         local doAct = tostring(net.ReadString() or "")
@@ -252,8 +266,10 @@ end
 local function actRadio()
     Derma_StringRequest("Рация", "Частота (1-999.9) или пусто = отключиться:", "",
         function(v)
-            if v and v ~= "" then RunConsoleCommand("say", "/freq " .. v)
-            else RunConsoleCommand("say", "/freqleave") end
+            net.Start("GRM_Ctx_Radio")
+                net.WriteString(v and v ~= "" and "set" or "leave")
+                net.WriteString(v or "")
+            net.SendToServer()
         end)
 end
 
