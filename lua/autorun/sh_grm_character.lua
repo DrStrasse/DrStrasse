@@ -846,10 +846,8 @@ if CLIENT then
         preview:SetDirectionalLight(BOX_FRONT, Color(180, 200, 255))
         preview:SetAmbientLight(Color(90, 100, 125))
         function preview:LayoutEntity(ent) end
-        preview.Paint = function(self, pw, ph)
-            draw.RoundedBox(8, 0, 0, pw, ph, Color(18, 23, 32, 255))
-            self:DrawModel()
-        end
+        -- Используем штатный Paint DModelPanel: он корректно запускает
+        -- cam.Start3D/DrawModel на всех ветках GMod.
 
         refreshPreview = function()
             if not IsValid(preview) then return end
@@ -870,6 +868,8 @@ if CLIENT then
             end
         end
         refreshPreview()
+        timer.Simple(0, function() if IsValid(preview) then refreshPreview() end end)
+        timer.Simple(0.15, function() if IsValid(preview) then refreshPreview() end end)
 
         local sets = vgui.Create("DPanel", right)
         sets:Dock(BOTTOM) sets:SetTall(132) sets:SetPaintBackground(false)
