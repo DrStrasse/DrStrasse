@@ -367,14 +367,14 @@ local GFX_PRESET_LOW = {
     { "r_shadows", "0" }, { "r_dynamic", "0" }, { "mat_specular", "0" },
     { "r_waterforceexpensive", "0" }, { "r_WaterDrawReflection", "0" }, { "r_WaterDrawRefraction", "0" },
     { "r_DrawDetailProps", "0" }, { "cl_detaildist", "450" }, { "r_staticprop_lod", "3" },
-    { "mat_picmip", "2" }, { "mp_decals", "50" }, { "mat_motion_blur_enabled", "0" },
+    { "mat_motion_blur_enabled", "0" },
     { "gmod_mcore_test", "1" }, { "r_drawskybox", "1" },
 }
 local GFX_PRESET_HIGH = {
     { "r_shadows", "1" }, { "r_dynamic", "1" }, { "mat_specular", "1" },
     { "r_waterforceexpensive", "1" }, { "r_WaterDrawReflection", "1" }, { "r_WaterDrawRefraction", "1" },
     { "r_DrawDetailProps", "1" }, { "cl_detaildist", "1500" }, { "r_staticprop_lod", "-1" },
-    { "mat_picmip", "0" }, { "mp_decals", "2048" }, { "mat_motion_blur_enabled", "0" },
+    { "mat_motion_blur_enabled", "0" },
     { "gmod_mcore_test", "1" }, { "r_drawskybox", "1" },
 }
 
@@ -394,8 +394,8 @@ local GFX_TOGGLES = {
 local GFX_SLIDERS = {
     { "cl_detaildist",    "Дальность отрисовки мелких объектов (трава/детали)", 400, 4096 },
     { "r_staticprop_lod", "Дальность/детализация крупных объектов (LOD: -1 максимум, 3 минимум)", -1, 3 },
-    { "mat_picmip",       "Качество текстур (0 — максимум, 4 — минимум)", 0, 4 },
-    { "mp_decals",        "Декали — следы выстрелов и крови (шт.)", 0, 2048 },
+    -- mat_picmip/mp_decals: движок блокирует RunConsoleCommand для этих
+    -- конваров из VGUI, поэтому они не создаются здесь (без спама ошибок).
 }
 
 local function buildGraphicsTab(sc, refresh)
