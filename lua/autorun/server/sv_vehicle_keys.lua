@@ -98,6 +98,38 @@ local function playerSteamID(ply)
     return ply:SteamID() or ""
 end
 
+local function characterOneKey(value)
+    local raw = tostring(value or "")
+    if raw:match(":char[1-3]$") then return raw end
+    if raw:match("^%d+$") then return raw .. ":char1" end
+    if util.SteamIDTo64 then
+        local s64 = util.SteamIDTo64(raw)
+        if s64 and s64 ~= "0" then return tostring(s64) .. ":char1" end
+    end
+    return raw
+end
+
+local function migrateLegacyRing(ply)
+    if not IsValid(ply) then return end
+    local active = playerSteamID(ply)
+    if not active:match(":char1$") then return end
+    local sources = { ply:SteamID(), ply:SteamID64(), characterOneKey(ply:SteamID64()) }
+    local target = VK.Cache.rings[active] or {}
+    VK.Cache.rings[active] = target
+    for _, source in ipairs(sources) do
+        for _, keyID in ipairs(VK.Cache.rings[tostring(source)] or {}) do
+            if not table.HasValue(target, keyID) then
+                target[#target + 1] = keyID
+                query("INSERT OR IGNORE INTO vk_player_keys(steam_id, key_id) VALUES(" .. sqlEscape(active) .. "," .. sqlEscape(keyID) .. ")")
+            end
+        end
+    end
+end
+
+for _, key in pairs(VK.Cache.keys) do
+    key.owner_steam = characterOneKey(key.owner_steam)
+end
+
 local function accountSteamID(ply)
     return IsValid(ply) and (ply:SteamID() or "") or ""
 end
@@ -207,6 +239,7 @@ end
 
 function VK.SyncKeyRing(ply)
     if not IsValid(ply) then return end
+    migrateLegacyRing(ply)
 
     local data = {}
     for _, keyID in ipairs(VK.Cache.rings[playerSteamID(ply)] or {}) do
@@ -247,6 +280,7 @@ end
 
 function VK.UpdateKeySwep(ply)
     if not IsValid(ply) then return end
+    migrateLegacyRing(ply)
 
     local config = VK.KEY_CONFIG or {}
     local ring = VK.Cache.rings[playerSteamID(ply)] or {}
