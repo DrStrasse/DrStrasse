@@ -296,4 +296,16 @@ concommand.Add("grm_printer_config", function(ply, _, args)
     ent:SendMenu(ply)
 end)
 
+hook.Add("PhysgunPickup", "GRM_MoneyPrinter_PhysgunPickup", function(ply, ent)
+    if not IsValid(ent) or ent:GetClass() ~= "grm_money_printer" then return end
+    if ent:IsOwner(ply) or (IsValid(ply) and ply:IsSuperAdmin()) then return true end
+    return false
+end)
+
+hook.Add("PhysgunDrop", "GRM_MoneyPrinter_PhysgunDrop", function(ply, ent)
+    if not IsValid(ent) or ent:GetClass() ~= "grm_money_printer" then return end
+    local phys = ent:GetPhysicsObject()
+    if IsValid(phys) then phys:Wake() end
+end)
+
 print("[GRM] Money Printer v2.0.0 entity loaded")
