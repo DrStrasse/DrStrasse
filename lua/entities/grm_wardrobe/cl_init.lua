@@ -175,32 +175,77 @@ local function openCfgMenu(entIdx, cfg)
 
     -- Тонкие права бодигрупп для каждой конкретной модели.
     ed.modelRules = istable(ed.modelRules) and ed.modelRules or {}
-    local b4 = block(420, "Точная настройка моделей и бодигрупп:")
+    local b4 = block(460, "Точная настройка моделей и бодигрупп:")
+    local factionCombo = vgui.Create("DComboBox", b4)
+    factionCombo:SetPos(10, 30) factionCombo:SetSize(230, 28)
+    factionCombo:SetValue("Фракция: все")
+    local roleCombo = vgui.Create("DComboBox", b4)
+    roleCombo:SetPos(250, 30) roleCombo:SetSize(230, 28)
+    roleCombo:SetValue("Роль: все")
+    local deptCombo = vgui.Create("DComboBox", b4)
+    deptCombo:SetPos(490, 30) deptCombo:SetSize(230, 28)
+    deptCombo:SetValue("Отдел: все")
     local modelCombo = vgui.Create("DComboBox", b4)
-    modelCombo:SetPos(10, 30) modelCombo:SetSize(720, 28)
-    modelCombo:SetValue("Выберите модель из фракций/ролей/отделов")
+    modelCombo:SetPos(10, 64) modelCombo:SetSize(720, 28)
+    modelCombo:SetValue("Выберите модель")
     local rulePath = vgui.Create("DTextEntry", b4)
-    rulePath:SetPos(10, 64) rulePath:SetSize(720, 28)
+    rulePath:SetPos(10, 98) rulePath:SetSize(720, 28)
     rulePath:SetPlaceholderText("models/...mdl — ручной путь")
     local ruleLoad = mkBtn(b4, "Загрузить", C.acc)
-    ruleLoad:SetPos(740, 30) ruleLoad:SetSize(130, 28)
+    ruleLoad:SetPos(740, 64) ruleLoad:SetSize(130, 28)
     local ruleHelp = vgui.Create("DLabel", b4)
-    ruleHelp:SetPos(10, 96) ruleHelp:SetSize(720, 24)
+    ruleHelp:SetPos(10, 132) ruleHelp:SetSize(720, 24)
     ruleHelp:SetText("Отметьте группы, которые разрешено менять в этом гардеробе.")
     ruleHelp:SetFont("GRMWard_Normal") ruleHelp:SetTextColor(C.dim)
     local ruleScroll = vgui.Create("DScrollPanel", b4)
-    ruleScroll:SetPos(10, 124) ruleScroll:SetSize(720, 270)
+    ruleScroll:SetPos(10, 160) ruleScroll:SetSize(720, 290)
     local rulePreview = vgui.Create("DModelPanel", b4)
-    rulePreview:SetPos(750, 124) rulePreview:SetSize(120, 270)
+    rulePreview:SetPos(750, 160) rulePreview:SetSize(120, 290)
     rulePreview:SetFOV(42)
     rulePreview.LayoutEntity = function() end
     local rulePathActive = string.Trim(tostring(cfg._model or ""))
     rulePath:SetText(rulePathActive)
+    local allChoices = {}
     for _, choice in ipairs(cfg._models or {}) do
-        if istable(choice) and isstring(choice.path) then
-            modelCombo:AddChoice(tostring(choice.label or "Модель") .. " — " .. choice.path, choice.path)
+        if istable(choice) and isstring(choice.path) then allChoices[#allChoices + 1] = choice end
+    end
+    local selectedFaction, selectedRole, selectedDept = "", "", ""
+    local function refillFilter(combo, title, values, selected)
+        combo:Clear() combo:SetValue(title)
+        combo:AddChoice(title, "")
+        table.sort(values)
+        for _, value in ipairs(values) do combo:AddChoice(value, value) end
+        if selected ~= "" then combo:SetValue(selected) end
+    end
+    local function rebuildModelChoices()
+        local roles, depts, factions = {}, {}, {}
+        for _, choice in ipairs(allChoices) do
+            if selectedFaction == "" or choice.faction == selectedFaction then
+                if choice.faction ~= "" then factions[choice.faction] = true end
+                if choice.role ~= "" then roles[choice.role] = true end
+                if choice.department ~= "" then depts[choice.department] = true end
+            end
+        end
+        local roleList, deptList, factionList = {}, {}, {}
+        for value in pairs(roles) do roleList[#roleList + 1] = value end
+        for value in pairs(depts) do deptList[#deptList + 1] = value end
+        for value in pairs(factions) do factionList[#factionList + 1] = value end
+        refillFilter(roleCombo, "Роль: все", roleList, selectedRole)
+        refillFilter(deptCombo, "Отдел: все", deptList, selectedDept)
+        refillFilter(factionCombo, "Фракция: все", factionList, selectedFaction)
+        modelCombo:Clear() modelCombo:SetValue("Выберите модель")
+        for _, choice in ipairs(allChoices) do
+            if (selectedFaction == "" or choice.faction == selectedFaction)
+                and (selectedRole == "" or choice.role == selectedRole)
+                and (selectedDept == "" or choice.department == selectedDept) then
+                modelCombo:AddChoice(tostring(choice.label or "Модель") .. " — " .. choice.path, choice.path)
+            end
         end
     end
+    function factionCombo:OnSelect(_, _, data) selectedFaction = tostring(data or "") selectedRole = "" selectedDept = "" rebuildModelChoices() end
+    function roleCombo:OnSelect(_, _, data) selectedRole = tostring(data or "") rebuildModelChoices() end
+    function deptCombo:OnSelect(_, _, data) selectedDept = tostring(data or "") rebuildModelChoices() end
+    rebuildModelChoices()
     local function rebuildRules()
         ruleScroll:Clear()
         local path = string.Trim(rulePathActive or "")
@@ -221,12 +266,21 @@ local function openCfgMenu(entIdx, cfg)
         for i = 0, (ent:GetNumBodyGroups() or 0) - 1 do
             local count = ent:GetBodygroupCount(i) or 1
             if count > 1 then
-                local row = vgui.Create("DCheckBoxLabel", ruleScroll)
-                row:Dock(TOP) row:SetTall(26)
-                row:SetText((ent:GetBodygroupName(i) or ("Группа " .. i)) .. "  (" .. count .. " вариантов)")
-                row:SetFont("GRMWard_Normal") row:SetTextColor(C.text)
-                row:SetValue(rule.bodygroups[i] ~= false and 1 or 0)
-                row.OnChange = function(_, value) rule.bodygroups[i] = value end
+                local title = ent:GetBodygroupName(i) or ("Группа " .. i)
+                for variant = 0, count - 1 do
+                    local row = vgui.Create("DCheckBoxLabel", ruleScroll)
+                    row:Dock(TOP) row:SetTall(24)
+                    row:SetText(title .. " → вариант " .. variant)
+                    row:SetFont("GRMWard_Normal") row:SetTextColor(C.text)
+                    local groupRule = rule.bodygroups[i]
+                    local allowed = groupRule == nil or groupRule == true
+                        or (istable(groupRule) and groupRule[variant] ~= false)
+                    row:SetValue(allowed and 1 or 0)
+                    row.OnChange = function(_, value)
+                        rule.bodygroups[i] = istable(rule.bodygroups[i]) and rule.bodygroups[i] or {}
+                        rule.bodygroups[i][variant] = value
+                    end
+                end
             end
         end
     end

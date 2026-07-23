@@ -614,7 +614,9 @@ if SERVER then
             local bg = {}
             for g, v in pairs(d.bodygroups or {}) do
                 local gi, vi = tonumber(g), tonumber(v)
-                local allowed = not wardrobeRule or wardrobeRule.bodygroups == nil or wardrobeRule.bodygroups[gi] ~= false
+                local groupRule = wardrobeRule and wardrobeRule.bodygroups and gi and wardrobeRule.bodygroups[gi]
+                local allowed = not groupRule or groupRule == true
+                    or (istable(groupRule) and groupRule[vi] ~= false)
                 if gi and vi and vi ~= 0 and allowed then bg[gi] = vi end
             end
             local chosenSkin = tonumber(d.skin) or 0
@@ -996,15 +998,25 @@ if CLIENT then
             if not IsValid(ent) then return end
             local n = ent:GetNumBodyGroups() or 0
             for i = 0, n - 1 do
-                local allowed = draft.wardrobeRule and draft.wardrobeRule.bodygroups and draft.wardrobeRule.bodygroups[i]
-                if allowed == nil then allowed = true end
+                local groupRule = draft.wardrobeRule and draft.wardrobeRule.bodygroups and draft.wardrobeRule.bodygroups[i]
                 local count = ent:GetBodygroupCount(i) or 1
-                if allowed and count > 1 then
+                local options = {}
+                for value = 0, count - 1 do
+                    local allowed = groupRule == nil or groupRule == true
+                        or (istable(groupRule) and groupRule[value] ~= false)
+                    if allowed then options[#options + 1] = value end
+                end
+                if #options > 0 and count > 1 then
                     local row = vgui.Create("DPanel", bgScroll)
                     row:Dock(TOP) row:SetTall(24) row:DockMargin(0, 0, 0, 2)
                     row.Paint = function(_, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, C.panel2) end
                     local gname = ent:GetBodygroupName(i) or ("Группа " .. i)
-                    local cur = tonumber(draft.bodygroups[i]) or 0
+                    local cur = tonumber(draft.bodygroups[i]) or options[1]
+                    local function optionIndex(value)
+                        for index, candidate in ipairs(options) do if candidate == value then return index end end
+                        return 1
+                    end
+                    if optionIndex(cur) == 1 and options[1] ~= cur then cur = options[1] draft.bodygroups[i] = cur end
 
                     local bL = mkBtn(row, "◀", C.acc) bL:Dock(LEFT) bL:SetWide(30) bL:DockMargin(2, 2, 0, 2)
                     local bR = mkBtn(row, "▶", C.acc) bR:Dock(RIGHT) bR:SetWide(30) bR:DockMargin(0, 2, 2, 2)
@@ -1013,22 +1025,20 @@ if CLIENT then
                     valLbl:SetFont("GRMChar_Normal") valLbl:SetTextColor(C.text)
                     local function upd()
                         local v = tonumber(draft.bodygroups[i]) or 0
-                        valLbl:SetText(gname .. ":  " .. v .. " / " .. (count - 1))
+                        valLbl:SetText(gname .. ":  " .. v .. " / " .. (count - 1) .. "  [доступно: " .. #options .. "]")
                         valLbl:SizeToContentsX() valLbl:SetWide(190)
                         if IsValid(ent) then ent:SetBodygroup(i, v) end
                     end
                     bL.DoClick = function()
-                        local v = tonumber(draft.bodygroups[i]) or 0
-                        v = (v - 1) % count
-                        draft.bodygroups[i] = v
-                        if v == 0 then draft.bodygroups[i] = nil end
+                        local index = optionIndex(tonumber(draft.bodygroups[i]) or options[1])
+                        index = ((index - 2) % #options) + 1
+                        draft.bodygroups[i] = options[index]
                         upd()
                     end
                     bR.DoClick = function()
-                        local v = tonumber(draft.bodygroups[i]) or 0
-                        v = (v + 1) % count
-                        draft.bodygroups[i] = v
-                        if v == 0 then draft.bodygroups[i] = nil end
+                        local index = optionIndex(tonumber(draft.bodygroups[i]) or options[1])
+                        index = (index % #options) + 1
+                        draft.bodygroups[i] = options[index]
                         upd()
                     end
                     upd()

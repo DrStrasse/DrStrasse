@@ -173,22 +173,22 @@ end
 
 local function collectModelChoices(cfg)
     local out, seen = {}, {}
-    local function add(path, label)
+    local function add(path, label, faction, role, department)
         path = string.Trim(tostring(path or ""))
         if path == "" or seen[path] then return end
         if util.IsValidModel and not util.IsValidModel(path) then return end
         seen[path] = true
-        out[#out + 1] = { path = path, label = tostring(label or "Модель") }
+        out[#out + 1] = { path = path, label = tostring(label or "Модель"), faction = faction or "", role = role or "", department = department or "" }
     end
     for _, e in ipairs(DefaultModels or {}) do add(istable(e) and e.path or e, "Гражданские модели") end
     for fname, f in pairs(Factions or {}) do
         if istable(f) then
-            for _, e in ipairs(f.Models or {}) do add(istable(e) and e.path or e, "Фракция: " .. fname) end
+            for _, e in ipairs(f.Models or {}) do add(istable(e) and e.path or e, "Фракция: " .. fname, fname) end
             for role, list in pairs(f.RoleModels or {}) do
-                for _, e in ipairs(list or {}) do add(istable(e) and e.path or e, fname .. " / роль: " .. role) end
+                for _, e in ipairs(list or {}) do add(istable(e) and e.path or e, fname .. " / роль: " .. role, fname, role) end
             end
             for dept, list in pairs(f.DepartmentModels or {}) do
-                for _, e in ipairs(list or {}) do add(istable(e) and e.path or e, fname .. " / отдел: " .. dept) end
+                for _, e in ipairs(list or {}) do add(istable(e) and e.path or e, fname .. " / отдел: " .. dept, fname, "", dept) end
             end
         end
     end
@@ -242,7 +242,17 @@ net.Receive(NET_CFG_SET, function(_, ply)
             clean.modelRules[path] = { allowSkin = rule.allowSkin ~= false, bodygroups = {} }
             for group, allowed in pairs(rule.bodygroups or {}) do
                 local index = tonumber(group)
-                if index then clean.modelRules[path].bodygroups[index] = allowed == true end
+                if index then
+                    if istable(allowed) then
+                        clean.modelRules[path].bodygroups[index] = {}
+                        for variant, enabled in pairs(allowed) do
+                            local vi = tonumber(variant)
+                            if vi then clean.modelRules[path].bodygroups[index][vi] = enabled == true end
+                        end
+                    else
+                        clean.modelRules[path].bodygroups[index] = allowed == true
+                    end
+                end
             end
         end
     end
