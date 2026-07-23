@@ -553,6 +553,12 @@ if SERVER then
 
     net.Receive(NET_CANCEL, function(_, ply)
         if not IsValid(ply) then return end
+        if CH.PendingMandatory[ply:SteamID64()] == true then
+            -- Первичный вход нельзя закрыть крестиком: меню возвращается,
+            -- игрок остаётся заблокирован до подтверждения персонажа.
+            sendMenu(ply)
+            return
+        end
         setCharacterLock(ply, false, false)
         applyActiveCharacter(ply)
         closeMenu(ply)
@@ -765,14 +771,13 @@ if CLIENT then
         x:SetText("X") x:SetFont("GRMChar_Title") x:SetTextColor(color_white)
         x:SetPos(fw - 48, 18) x:SetSize(32, 28)
         x.DoClick = function()
-            if not canClose() then
-                surface.PlaySound("buttons/button10.wav")
+            if payload.wardrobe == true then
+                f:Close()
                 return
             end
-            if payload.pending and payload.mandatory ~= true then
-                net.Start(NET_CANCEL)
-                net.SendToServer()
-            end
+            -- Отмена через крестик: сервер сам решает, можно ли выйти.
+            net.Start(NET_CANCEL)
+            net.SendToServer()
             f:Close()
         end
         x.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.red or Color(45, 52, 68)) end
