@@ -826,9 +826,24 @@ if CLIENT then
             draw.RoundedBox(6, 0, 0, pw, ph, C.panel)
             draw.SimpleText("Слоты персонажей", "GRMChar_Sub", 10, 14, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
+        local slotButtons = {}
+        local function refreshSlotButtons()
+            for _, slotButton in ipairs(slotButtons) do
+                slotButton._selected = slotButton._slotID == activeSlot
+            end
+        end
         for i = 1, 3 do
             local info = slots[i] or { id = "char" .. i, index = i, exists = false }
             local b = mkBtn(slotPanel, (info.exists and (info.name ~= "" and info.name or ("Персонаж " .. i)) or ("+ Слот " .. i)), info.id == activeSlot and C.green or C.panel2)
+            b._slotID = info.id
+            b._selected = info.id == activeSlot
+            slotButtons[#slotButtons + 1] = b
+            b.Paint = function(self, pw, ph)
+                local cc = self._selected and C.green or C.panel2
+                if not self:IsEnabled() then cc = Color(45, 50, 60)
+                elseif self:IsHovered() then cc = Color(math.min(255, cc.r + 18), math.min(255, cc.g + 18), math.min(255, cc.b + 18)) end
+                draw.RoundedBox(6, 0, 0, pw, ph, cc)
+            end
             b:SetPos(10 + (i - 1) * math.floor((leftW - 34) / 3), 30)
             b:SetSize(math.floor((leftW - 40) / 3), 34)
             b:SetFont("GRMChar_Normal")
@@ -838,6 +853,7 @@ if CLIENT then
                 -- Выбор карточки — только локальный черновик. Серверный активный
                 -- CharacterKey, счета, фракция и spawn НЕ меняются до подтверждения.
                 activeSlot = info.id
+                refreshSlotButtons()
                 draft.name = tostring(info.name or "")
                 draft.model = tostring(info.model or "")
                 draft.skin = 0
