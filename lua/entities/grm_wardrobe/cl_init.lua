@@ -68,7 +68,7 @@ local function openCfgMenu(entIdx, cfg)
     local f = vgui.Create("DFrame")
     _G._grmWardCfgFrame = f
     f:SetTitle("")
-    f:SetSize(920, 780)
+    f:SetSize(1120, 820)
     f:Center()
     f:MakePopup()
     f:ShowCloseButton(false)
@@ -80,7 +80,7 @@ local function openCfgMenu(entIdx, cfg)
 
     local x = vgui.Create("DButton", f)
     x:SetText("X") x:SetFont("GRMWard_Title") x:SetTextColor(color_white)
-    x:SetPos(876, 6) x:SetSize(32, 26)
+    x:SetPos(1076, 6) x:SetSize(32, 26)
     x.DoClick = function() f:Close() end
     x.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.red or Color(45, 52, 68)) end
 
@@ -175,24 +175,32 @@ local function openCfgMenu(entIdx, cfg)
 
     -- Тонкие права бодигрупп для каждой конкретной модели.
     ed.modelRules = istable(ed.modelRules) and ed.modelRules or {}
-    local b4 = block(360, "Точная настройка моделей и бодигрупп:")
+    local b4 = block(420, "Точная настройка моделей и бодигрупп:")
+    local modelCombo = vgui.Create("DComboBox", b4)
+    modelCombo:SetPos(10, 30) modelCombo:SetSize(720, 28)
+    modelCombo:SetValue("Выберите модель из фракций/ролей/отделов")
     local rulePath = vgui.Create("DTextEntry", b4)
-    rulePath:SetPos(10, 30) rulePath:SetSize(560, 28)
-    rulePath:SetPlaceholderText("models/...mdl — укажите модель")
-    local ruleLoad = mkBtn(b4, "Загрузить модель", C.acc)
-    ruleLoad:SetPos(580, 30) ruleLoad:SetSize(150, 28)
+    rulePath:SetPos(10, 64) rulePath:SetSize(720, 28)
+    rulePath:SetPlaceholderText("models/...mdl — ручной путь")
+    local ruleLoad = mkBtn(b4, "Загрузить", C.acc)
+    ruleLoad:SetPos(740, 30) ruleLoad:SetSize(130, 28)
     local ruleHelp = vgui.Create("DLabel", b4)
-    ruleHelp:SetPos(10, 60) ruleHelp:SetSize(560, 24)
+    ruleHelp:SetPos(10, 96) ruleHelp:SetSize(720, 24)
     ruleHelp:SetText("Отметьте группы, которые разрешено менять в этом гардеробе.")
     ruleHelp:SetFont("GRMWard_Normal") ruleHelp:SetTextColor(C.dim)
     local ruleScroll = vgui.Create("DScrollPanel", b4)
-    ruleScroll:SetPos(10, 88) ruleScroll:SetSize(560, 250)
+    ruleScroll:SetPos(10, 124) ruleScroll:SetSize(720, 270)
     local rulePreview = vgui.Create("DModelPanel", b4)
-    rulePreview:SetPos(590, 88) rulePreview:SetSize(140, 250)
+    rulePreview:SetPos(750, 124) rulePreview:SetSize(120, 270)
     rulePreview:SetFOV(42)
     rulePreview.LayoutEntity = function() end
     local rulePathActive = string.Trim(tostring(cfg._model or ""))
     rulePath:SetText(rulePathActive)
+    for _, choice in ipairs(cfg._models or {}) do
+        if istable(choice) and isstring(choice.path) then
+            modelCombo:AddChoice(tostring(choice.label or "Модель") .. " — " .. choice.path, choice.path)
+        end
+    end
     local function rebuildRules()
         ruleScroll:Clear()
         local path = string.Trim(rulePathActive or "")
@@ -221,6 +229,11 @@ local function openCfgMenu(entIdx, cfg)
                 row.OnChange = function(_, value) rule.bodygroups[i] = value end
             end
         end
+    end
+    function modelCombo:OnSelect(_, _, data)
+        rulePathActive = string.Trim(tostring(data or ""))
+        rulePath:SetText(rulePathActive)
+        rebuildRules()
     end
     ruleLoad.DoClick = function()
         rulePathActive = string.Trim(rulePath:GetValue() or "")

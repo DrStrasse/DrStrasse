@@ -171,6 +171,32 @@ function ENT:Use(activator)
     net.Send(activator)
 end
 
+local function collectModelChoices(cfg)
+    local out, seen = {}, {}
+    local function add(path, label)
+        path = string.Trim(tostring(path or ""))
+        if path == "" or seen[path] then return end
+        if util.IsValidModel and not util.IsValidModel(path) then return end
+        seen[path] = true
+        out[#out + 1] = { path = path, label = tostring(label or "Модель") }
+    end
+    for _, e in ipairs(DefaultModels or {}) do add(istable(e) and e.path or e, "Гражданские модели") end
+    for fname, f in pairs(Factions or {}) do
+        if istable(f) then
+            for _, e in ipairs(f.Models or {}) do add(istable(e) and e.path or e, "Фракция: " .. fname) end
+            for role, list in pairs(f.RoleModels or {}) do
+                for _, e in ipairs(list or {}) do add(istable(e) and e.path or e, fname .. " / роль: " .. role) end
+            end
+            for dept, list in pairs(f.DepartmentModels or {}) do
+                for _, e in ipairs(list or {}) do add(istable(e) and e.path or e, fname .. " / отдел: " .. dept) end
+            end
+        end
+    end
+    for _, path in ipairs(cfg.extraModels or {}) do add(path, "Особая модель гардероба") end
+    table.sort(out, function(a, b) return (a.label .. a.path):lower() < (b.label .. b.path):lower() end)
+    return out
+end
+
 -- запрос конфига (админ): EntIndex гардероба
 net.Receive(NET_CFG_REQ, function(_, ply)
     if not isCfgAdmin(ply) then return end
@@ -179,6 +205,7 @@ net.Receive(NET_CFG_REQ, function(_, ply)
     if not IsValid(ent) or ent:GetClass() ~= "grm_wardrobe" then return end
     local cfg = getCfg(ent)
     local payload = table.Copy(cfg)
+    payload._models = collectModelChoices(cfg)
     payload._model = ent:GetModel()
     payload._modelName = ent:GetClass()
     net.Start(NET_CFG_GET)
