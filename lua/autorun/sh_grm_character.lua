@@ -673,6 +673,9 @@ if CLIENT then
     -----------------------------------------------------------
     local function openCharMenu(payload)
         payload = istable(payload) and payload or {}
+        -- Bodygroups персонажа задаются моделью фракции через /models_admin.
+        -- В обычном меню персонажа их нельзя вручную переопределять.
+        if payload.wardrobe ~= true then payload.allowBodygroups = false end
         local char = istable(payload.char) and payload.char or nil
         local sections = istable(payload.sections) and payload.sections or {}
         local outfits = istable(payload.outfits) and payload.outfits or {}
@@ -867,9 +870,17 @@ if CLIENT then
             if IsValid(ent) then
                 local mins, maxs = ent:OBBMins(), ent:OBBMaxs()
                 local center = (mins + maxs) * 0.5
-                local radius = math.max(24, (maxs - mins):Length() * 0.5)
-                preview:SetLookAt(center)
-                preview:SetCamPos(center + Vector(radius * 2.2, 0, radius * 0.08))
+                local height = math.max(32, maxs.z - mins.z)
+                local width = math.max(32, maxs.y - mins.y)
+                local fov = 36
+                -- DModelPanel использует FOV для вертикального кадра не так,
+                -- как обычная камера. Считаем дистанцию по высоте модели,
+                -- иначе голова/ноги обрезаются на разных моделях.
+                local distance = math.max(height * 1.35, width * 2.4,
+                    (height * 0.5) / math.tan(math.rad(fov * 0.5)) * 1.35)
+                preview:SetFOV(fov)
+                preview:SetLookAt(center + Vector(0, 0, height * 0.02))
+                preview:SetCamPos(center + Vector(distance, 0, height * 0.03))
                 ent:SetSkin(math.Clamp(tonumber(draft.skin) or 0, 0, 64))
                 for i = 0, (ent:GetNumBodyGroups() or 1) - 1 do ent:SetBodygroup(i, 0) end
                 for g, v in pairs(draft.bodygroups or {}) do
