@@ -471,6 +471,22 @@ end
 
 loadHunger()
 
+-- Legacy hunger records were keyed by account SteamID64. Move them to
+-- char1 once Character Core is available so the old value is not lost.
+if GRM.Identity then
+    local moved = {}
+    for key, value in pairs(hungerData) do
+        local raw = tostring(key or "")
+        if raw:match("^%d+$") then
+            local newKey = raw .. ":char1"
+            if hungerData[newKey] == nil then moved[newKey] = value end
+            hungerData[key] = nil
+        end
+    end
+    for key, value in pairs(moved) do hungerData[key] = value end
+    if next(moved) ~= nil then saveHunger() end
+end
+
 function GRM.Food.GetHunger(ply)
     if not IsValid(ply) then return cfg().HungerMax or 100 end
 
@@ -567,6 +583,14 @@ hook.Add("PlayerInitialSpawn", "GRM_Food_OnJoin", function(ply)
 
         GRM.Food.SyncHunger(ply)
     end)
+end)
+
+hook.Add("GRM_CharacterChanged", "GRM_Food_OnCharacterChanged", function(ply)
+    if not IsValid(ply) then return end
+    local sid = getPlayerID(ply)
+    if sid and hungerData[sid] == nil then hungerData[sid] = cfg().HungerMax or 100 end
+    GRM.Food.SyncHunger(ply)
+    saveHunger()
 end)
 
 hook.Add("PlayerSpawn", "GRM_Food_OnSpawn", function(ply)
