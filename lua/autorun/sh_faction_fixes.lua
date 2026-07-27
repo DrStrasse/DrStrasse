@@ -630,6 +630,7 @@ if SERVER then
         ply:SetNWBool("IsMasked", true)
         ply:SetNWString("MaskModel", entry.path or "")
         ply:SetNWString("MaskName", entry.name or "")
+        ply:SetNWString("GRM_MaskDesc", ply:GetNWString("GRM_MaskDesc", ""))
         ApplyModelSettings(ply, entry)
     end
 
@@ -638,6 +639,7 @@ if SERVER then
         ply:SetNWBool("IsMasked", false)
         ply:SetNWString("MaskModel", "")
         ply:SetNWString("MaskName", "")
+        ply:SetNWString("GRM_MaskDesc", "")
         ply.FactionsExt_MaskEntry = nil
         local factionName = getFactionMemberByPlayer(ply)
         if factionName then
@@ -1110,6 +1112,24 @@ if SERVER then
             end
             local duration = math.Clamp(tonumber(arg) or 600, 60, 7200)
             startCurfew(ply, duration)
+            return ""
+        end
+
+        if lower:sub(1, 10) == "/maskdesc " or lower:sub(1, 10) == "!maskdesc " then
+            if not ply:GetNWBool("IsMasked", false) then
+                ply:PrintMessage(HUD_PRINTTALK, "[Маскировка] Сначала наденьте маскировку: /mask")
+                return ""
+            end
+            local desc = string.Trim(text:sub(11))
+            desc = string.gsub(desc, "[%c]", "")
+            desc = string.sub(desc, 1, 180)
+            ply:SetNWString("GRM_MaskDesc", desc)
+            ply:PrintMessage(HUD_PRINTTALK, desc ~= "" and "[Маскировка] Описание установлено." or "[Маскировка] Описание очищено.")
+            return ""
+        end
+
+        if lower == "/maskdesc" or lower == "!maskdesc" then
+            ply:PrintMessage(HUD_PRINTTALK, "[Маскировка] Установить описание: /maskdesc текст")
             return ""
         end
 

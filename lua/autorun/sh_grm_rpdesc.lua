@@ -338,8 +338,9 @@ if CLIENT then
 
         for _, ply in ipairs(player.GetAll()) do
             if IsValid(ply) and ply:Alive() then
-                local rname = string.Trim(tostring(ply:GetNWString("GRM_RPName", "") or ""))
-                local desc = descriptions[identityKey(ply)] or ""
+                local masked = ply:GetNWBool("IsMasked", false)
+                local rname = masked and "" or string.Trim(tostring(ply:GetNWString("GRM_RPName", "") or ""))
+                local desc = masked and string.Trim(ply:GetNWString("GRM_MaskDesc", "")) or (descriptions[identityKey(ply)] or "")
                 if rname ~= "" or desc ~= "" then
                     local isSelf = (ply == lp)
                     local alpha = 255
