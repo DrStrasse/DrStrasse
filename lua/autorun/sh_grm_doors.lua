@@ -1497,12 +1497,12 @@ if CLIENT then
             local facCombo = vgui.Create("DComboBox", b1)
             facCombo:SetPos(10, 32) facCombo:SetSize(280, 26)
             facCombo:SetValue("Выберите фракцию...")
-            for _, fData in ipairs(facList or {}) do facCombo:AddChoice(fData.name) end
+            for _, fData in ipairs(facList or {}) do facCombo:AddChoice(fData.name, fData.name) end
             local bSetFac = btn(b1, "Назначить", CUI.accent, 140, 26)
             bSetFac:SetPos(300, 32)
             bSetFac.DoClick = function()
-                local _, fn = facCombo:GetSelected()
-                if fn then act({ action = "set_faction_owner", entIndex = ent:EntIndex(), faction = fn }) end
+                local fn = facCombo:GetValue()
+                if fn and fn ~= "" and fn ~= "Выберите фракцию..." then act({ action = "set_faction_owner", entIndex = ent:EntIndex(), faction = fn }) end
             end
 
             local b2 = adminBlock("Назначить владельца — Категорию:", 70)
@@ -1513,8 +1513,8 @@ if CLIENT then
             local bSetCat = btn(b2, "Назначить", CUI.accent, 140, 26)
             bSetCat:SetPos(300, 32)
             bSetCat.DoClick = function()
-                local _, catId = catCombo:GetSelected()
-                if catId then act({ action = "set_category_owner", entIndex = ent:EntIndex(), category = catId }) end
+                local catId = catCombo:GetOptionData(catCombo:GetSelectedID()) or catCombo:GetValue()
+                if catId and catId ~= "" and catId ~= "Выберите категорию..." then act({ action = "set_category_owner", entIndex = ent:EntIndex(), category = catId }) end
             end
 
             local b3 = adminBlock("Статус доступности для приватизации:", 65)
