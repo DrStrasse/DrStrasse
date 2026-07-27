@@ -344,12 +344,13 @@ if CLIENT then
                     local isSelf = (ply == lp)
                     local alpha = 255
                     local d = lp:GetPos():Distance(ply:GetPos())
-                    if isSelf then
-                        alpha = 200 -- себе показываем всегда (запрос владельца)
-                    else
-                        if d <= maxDist then
+                    if isSelf or d <= maxDist then
+                        if isSelf then
+                            alpha = 200 -- себя рисуем даже в third-person
+                        else
                             alpha = math.Clamp(255 * (1.15 - d / maxDist), 60, 255)
-                            local pos = ply:GetPos() + Vector(0, 0, 80)
+                        end
+                        local pos = ply:GetPos() + Vector(0, 0, 80)
                             local sp = pos:ToScreen()
                             if sp.visible then
                                 local topY = sp.y -- верх всего блока; имя уедет ещё выше
@@ -395,8 +396,7 @@ if CLIENT then
                     end
                 end
             end
-        end
-    end)
+        end)
 
     print("[GRM RPDesc] Клиент v" .. RD.Version .. " загружен")
 end
