@@ -520,10 +520,18 @@ if CLIENT then
             local empty = card(canvas, 70) local txt = label(empty, "Точки ещё не созданы. Нажмите «Точка арестованного».", "GRMArrestBody", UI.dim) txt:SetPos(20, 22) txt:SetSize(760, 28)
         else
             for index, sp in ipairs(data.spawns or {}) do
-                local p = card(canvas, 82)
-                local title = label(p, "ТОЧКА " .. tostring(index) .. "  •  " .. tostring(sp.id), "GRMArrestHeading", UI.text) title:SetPos(20, 13) title:SetSize(450, 24)
-                local meta = label(p, tostring(sp.name or ("Точка ареста " .. tostring(index))), "GRMArrestSmall", UI.dim) meta:SetPos(20, 43) meta:SetSize(450, 20)
-                local remove = button(p, "Удалить точку", UI.red, 34) remove:SetPos(585, 22) remove:SetSize(200, 34)
+                local p = card(canvas, 108)
+                local title = label(p, "ТОЧКА " .. tostring(index) .. "  •  " .. tostring(sp.id), "GRMArrestHeading", UI.text) title:SetPos(20, 11) title:SetSize(450, 24)
+                local meta = label(p, tostring(sp.name or ("Точка ареста " .. tostring(index))), "GRMArrestSmall", UI.dim) meta:SetPos(20, 39) meta:SetSize(450, 20)
+                local linked = {}
+                for _, cam in ipairs(data.cameras or {}) do
+                    if tostring(cam.spawnID or "") == tostring(sp.id) then
+                        linked[#linked + 1] = tostring(cam.name or cam.id) .. " [" .. tostring(cam.id) .. "]"
+                    end
+                end
+                local linkText = #linked > 0 and ("Привязано к: " .. table.concat(linked, ", ")) or "Не привязана к камере"
+                local link = label(p, linkText, "GRMArrestSmall", #linked > 0 and UI.green or UI.orange) link:SetPos(20, 67) link:SetSize(540, 22)
+                local remove = button(p, "Удалить точку", UI.red, 34) remove:SetPos(585, 32) remove:SetSize(200, 34)
                 remove.DoClick = function()
                     Derma_Query("Удалить точку «" .. tostring(sp.id) .. "»? Привязка камер будет снята.", "Подтверждение удаления", "Удалить", function() sendAction("delete_spawn", sp.id) end, "Отмена")
                 end
