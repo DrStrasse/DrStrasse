@@ -950,7 +950,7 @@ if SERVER then
 
         local recipients = {}
         for memberSteam, _ in pairs(Factions[factionName].Members) do
-            local target = player.GetBySteamID(memberSteam)
+            local target = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(memberSteam)) or player.GetBySteamID(memberSteam) or player.GetBySteamID64(memberSteam)
             if IsValid(target) then recipients[#recipients + 1] = target end
         end
         if #recipients > 0 then
@@ -968,10 +968,19 @@ if SERVER then
         local displayTag = (tag and tag ~= "") and tag or factionName
         local msgText = string.format("[%s] %s (%s): - %s", displayTag, ply:Nick(), role or "Участник", text)
 
-        net.Start(NET_DEP_MSG)
-        net.WriteUInt(color.r, 8) net.WriteUInt(color.g, 8) net.WriteUInt(color.b, 8)
-        net.WriteString(msgText)
-        net.Broadcast()
+        local recipients = {}
+        for _, target in ipairs(player.GetAll()) do
+            if IsValid(target) then
+                local targetFaction, _, _, _, targetAccess = getFactionInfoForPlayer(memberKey(target))
+                if targetFaction and targetAccess then recipients[#recipients + 1] = target end
+            end
+        end
+        if #recipients > 0 then
+            net.Start(NET_DEP_MSG)
+            net.WriteUInt(color.r, 8) net.WriteUInt(color.g, 8) net.WriteUInt(color.b, 8)
+            net.WriteString(msgText)
+            net.Send(recipients)
+        end
     end)
 
     net.Receive(NET_DEPB, function(_, ply)
