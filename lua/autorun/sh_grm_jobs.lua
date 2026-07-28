@@ -636,7 +636,7 @@ if SERVER then
         JB._lastOffers[sid64(ply)] = { list = offers or {}, at = os.time(), center = ent:GetPos() }
         local wire = {}
         for _, o in ipairs(offers or {}) do
-            wire[#wire + 1] = { idx = o.idx, tplId = o.tplId, title = o.title, desc = o.desc, jtype = o.jtype, reward = o.reward, timeSec = o.timeSec, staySec = o.staySec, dist = o.dist }
+            wire[#wire + 1] = { idx = o.idx, tplId = o.tplId, title = o.title, desc = o.desc, jtype = o.jtype, reward = o.reward, timeSec = o.timeSec, staySec = o.staySec, dist = o.dist, zoneRadius = o.zoneRadius, zoneName = o.zoneName }
         end
         local sd = sid64(ply)
         local j = JB.Active[sd]
@@ -645,7 +645,7 @@ if SERVER then
             activeWire = {
                 title = j.title, desc = j.desc, jtype = j.jtype, stage = j.stage or 1,
                 stayLeft = j.stayLeft or 0, remain = math.max(0, (j.deadline or os.time()) - os.time()),
-                reward = j.reward or 0, fromPost = j.fromPost and true or false, postFac = tostring(j.postFac or ""),
+                reward = j.reward or 0, zoneRadius = j.zoneRadius or 180, zoneName = j.zoneName or "Точка работы", fromPost = j.fromPost and true or false, postFac = tostring(j.postFac or ""),
             }
         end
         local postsWire = {}
