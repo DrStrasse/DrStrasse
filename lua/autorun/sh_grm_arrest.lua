@@ -19,6 +19,7 @@ A.Cfg = A.Cfg or {
     },
     cameras = {},
     spawns = {},
+    access = { mode = "all", factions = {} },
 }
 
 local function key(ply)
@@ -42,6 +43,9 @@ local function load()
     A.Cfg.groups = istable(A.Cfg.groups) and A.Cfg.groups or {}
     A.Cfg.cameras = istable(A.Cfg.cameras) and A.Cfg.cameras or {}
     A.Cfg.spawns = istable(A.Cfg.spawns) and A.Cfg.spawns or {}
+    A.Cfg.access = istable(A.Cfg.access) and A.Cfg.access or { mode = "all", factions = {} }
+    A.Cfg.access.mode = A.Cfg.access.mode == "allowlist" and "allowlist" or "all"
+    A.Cfg.access.factions = istable(A.Cfg.access.factions) and A.Cfg.access.factions or {}
 end
 
     local function group(id)
@@ -53,8 +57,25 @@ end
     util.AddNetworkString("GRM_Arrest_AdminData")
     util.AddNetworkString("GRM_Arrest_AdminAction")
     util.AddNetworkString("GRM_Arrest_Event")
+    util.AddNetworkString("GRM_Arrest_AccessRequest")
+    util.AddNetworkString("GRM_Arrest_AccessData")
+    util.AddNetworkString("GRM_Arrest_AccessSave")
 
     load()
+
+    function A.CanArrest(ply)
+        if not IsValid(ply) or not ply:IsPlayer() then return false end
+        if ply:IsSuperAdmin() then return true end
+        local access = A.Cfg.access or {}
+        if access.mode ~= "allowlist" then return true end
+        for factionName, allowed in pairs(access.factions or {}) do
+            if allowed and GRM.Identity and GRM.Identity.FactionMember and Factions and Factions[factionName]
+                and GRM.Identity.FactionMember(Factions[factionName], ply) then
+                return true
+            end
+        end
+        return false
+    end
 
     local function announce(event, targetName, groupName)
         net.Start("GRM_Arrest_Event")
@@ -177,6 +198,10 @@ end
         local msg = string.Trim(text or "")
         local low = string.lower(msg)
         if low == "/arrest" or low:sub(1, 8) == "/arrest " then
+            if not A.CanArrest(ply) then
+                ply:ChatPrint("[Арест] Ваша фракция не имеет доступа к системе ареста.")
+                return ""
+            end
             local gid = string.Trim(msg:sub(8))
             if gid == "" then gid = "criminals" end
             local target = nearestPlayer(ply)
@@ -185,6 +210,10 @@ end
             return ""
         end
         if low == "/unarrest" then
+            if not A.CanArrest(ply) then
+                ply:ChatPrint("[Арест] Ваша фракция не имеет доступа к системе ареста.")
+                return ""
+            end
             local target = nearestPlayer(ply)
             if not A.UnarrestPlayer(ply, target) then ply:ChatPrint("[Арест] Цель не арестована.") end
             return ""
@@ -269,6 +298,26 @@ end
             loadCameras()
         end
         A.OpenAdmin(ply)
+    end)
+
+    net.Receive("GRM_Arrest_AccessRequest", function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        net.Start("GRM_Arrest_AccessData")
+            net.WriteTable(A.Cfg.access or { mode = "all", factions = {} })
+        net.Send(ply)
+    end)
+
+    net.Receive("GRM_Arrest_AccessSave", function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        local mode = net.ReadBool() and "allowlist" or "all"
+        local incoming = net.ReadTable() or {}
+        local factions = {}
+        for name, allowed in pairs(incoming) do
+            if isstring(name) and #name <= 96 and allowed == true then factions[name] = true end
+        end
+        A.Cfg.access = { mode = mode, factions = factions }
+        save()
+        net.Start("GRM_Arrest_AccessData") net.WriteTable(A.Cfg.access) net.Send(ply)
     end)
 
     concommand.Add("grm_arrest_admin", function(ply) A.OpenAdmin(ply) end)
@@ -545,6 +594,67 @@ if CLIENT then
         local gid = vgui.Create("DTextEntry", form) gid:SetPos(565, 18) gid:SetSize(220, 34) gid:SetPlaceholderText("ID: political")
         local create = button(form, "Создать / сохранить группу", UI.orange, 38) create:SetPos(20, 70) create:SetSize(765, 38)
         create.DoClick = function() sendAction("set_group", gid:GetValue(), function() net.WriteString(name:GetValue()) net.WriteString(model:GetValue()) end) end
+    end)
+
+    local arrestAccessPanel
+    local arrestAccessData = { mode = "all", factions = {} }
+
+    local function rebuildArrestAccessPanel()
+        if not IsValid(arrestAccessPanel) then return end
+        arrestAccessPanel:Clear()
+        local info = label(arrestAccessPanel, "Доступ к /arrest и /unarrest", "GRMArrestHeading", UI.text)
+        info:Dock(TOP) info:SetTall(28) info:DockMargin(12, 12, 12, 0)
+        local hint = label(arrestAccessPanel, "Суперадмин всегда имеет доступ. В режиме списка использовать арест смогут только отмеченные фракции.", "GRMArrestSmall", UI.dim)
+        hint:Dock(TOP) hint:SetTall(38) hint:DockMargin(12, 0, 12, 6)
+        local only = vgui.Create("DCheckBoxLabel", arrestAccessPanel)
+        only:Dock(TOP) only:SetTall(30) only:DockMargin(12, 0, 12, 8)
+        only:SetText("Ограничить систему ареста списком фракций") only:SetFont("GRMArrestBody") only:SetTextColor(UI.text)
+        only:SetValue(arrestAccessData.mode == "allowlist")
+        local list = vgui.Create("DScrollPanel", arrestAccessPanel)
+        list:Dock(FILL) list:DockMargin(12, 0, 12, 8)
+        local factions = FactionsData or {}
+        local names = {}
+        for name in pairs(factions) do names[#names + 1] = name end
+        table.sort(names, function(a, b) return tostring(a) < tostring(b) end)
+        if #names == 0 then
+            local empty = label(list, "Список фракций ещё не загружен.", "GRMArrestBody", UI.dim)
+            empty:Dock(TOP) empty:SetTall(40)
+        else
+            for _, name in ipairs(names) do
+                local row = vgui.Create("DPanel", list) row:Dock(TOP) row:SetTall(34) row:DockMargin(0, 0, 0, 4)
+                row:SetPaintBackground(false)
+                local check = vgui.Create("DCheckBoxLabel", row) check:Dock(FILL) check:DockMargin(8, 0, 0, 0)
+                check:SetText(tostring(name)) check:SetFont("GRMArrestBody") check:SetTextColor(UI.text)
+                check:SetValue(arrestAccessData.factions and arrestAccessData.factions[name] == true)
+                check.OnChange = function(_, value)
+                    arrestAccessData.factions[name] = value == true
+                end
+            end
+        end
+        local saveAccess = button(arrestAccessPanel, "СОХРАНИТЬ ДОСТУП", UI.green, 40)
+        saveAccess:Dock(BOTTOM) saveAccess:DockMargin(12, 0, 12, 12)
+        saveAccess.DoClick = function()
+            net.Start("GRM_Arrest_AccessSave")
+                net.WriteBool(only:GetChecked())
+                net.WriteTable(arrestAccessData.factions or {})
+            net.SendToServer()
+        end
+    end
+
+    net.Receive("GRM_Arrest_AccessData", function()
+        arrestAccessData = net.ReadTable() or { mode = "all", factions = {} }
+        arrestAccessData.factions = istable(arrestAccessData.factions) and arrestAccessData.factions or {}
+        timer.Simple(0, rebuildArrestAccessPanel)
+    end)
+
+    hook.Add("GRM_FactionsAdmin_BuildTabs", "GRM_Arrest_FactionAccessTab", function(tabs)
+        if not IsValid(tabs) or not IsValid(LocalPlayer()) or not LocalPlayer():IsSuperAdmin() then return end
+        arrestAccessPanel = vgui.Create("DPanel")
+        arrestAccessPanel:SetPaintBackground(false)
+        tabs:AddSheet("Доступ к аресту", arrestAccessPanel, "icon16/shield.png")
+        rebuildArrestAccessPanel()
+        net.Start("GRM_Arrest_AccessRequest") net.SendToServer()
+        timer.Simple(0.6, rebuildArrestAccessPanel)
     end)
 
     hook.Add("HUDPaint", "GRM_Arrest_Label", function()

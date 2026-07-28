@@ -1201,6 +1201,10 @@ if CLIENT then
         if cv and cv:GetInt() == 0 then return end
         local ply = LocalPlayer()
         if not IsValid(ply) or not ply:Alive() then return end
+        -- ds_key_swep рисует собственный HUD ключа. Не дублируем
+        -- информацию вторым дверным оверлеем в той же позиции.
+        local active = ply:GetActiveWeapon()
+        if IsValid(active) and active:GetClass() == "ds_key_swep" then return end
 
         local tr = ply:GetEyeTrace()
         local ent = tr.Entity
