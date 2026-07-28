@@ -410,7 +410,9 @@ if CLIENT then
                     local title = label(row, name, "GRMArrestBody", UI.text) title:Dock(LEFT) title:SetWide(210) title:SetContentAlignment(4)
                     local combo = vgui.Create("DComboBox", row) combo:Dock(FILL) combo:SetTall(34) combo:SetValue("Вариант " .. tostring(ed.bodygroups[i] or 0))
                     for value = 0, variants - 1 do combo:AddChoice("Вариант " .. value, value) end
-                    combo.OnSelect = function(_, _, value)
+                    combo.OnSelect = function(_, _, _, value)
+                        -- DComboBox передаёт выбранные данные четвёртым
+                        -- аргументом. Третий аргумент — отображаемый текст.
                         ed.bodygroups[i] = tonumber(value) or 0
                         applyAppearance(preview:GetEntity())
                     end
