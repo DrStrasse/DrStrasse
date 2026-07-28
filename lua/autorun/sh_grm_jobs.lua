@@ -333,6 +333,8 @@ if SERVER then
                     timeSec = math.floor(tpl.timeFn(dist)),
                     staySec = tpl.stay or 0,
                     dist = dist,
+                    zoneRadius = tonumber(tpl.radius or 180),
+                    zoneName = dep.GetNWString and dep:GetNWString("GRM_JobZoneName", "Точка работы") or "Точка работы",
                     target = dep:GetPos(),
                 }
             end
@@ -356,6 +358,7 @@ if SERVER then
                     reward = j.reward or 0, started = j.started or os.time(),
                     tx = j.target.x, ty = j.target.y, tz = j.target.z,
                     cx = j.center and j.center.x or 0, cy = j.center and j.center.y or 0, cz = j.center and j.center.z or 0,
+                    zoneRadius = j.zoneRadius or 180, zoneName = j.zoneName or "Точка работы",
                     fromPost = j.fromPost and true or false,
                     postFac = j.postFac, postId = j.postId, postKind = j.postKind,
                 }
@@ -380,6 +383,7 @@ if SERVER then
                     started = tonumber(r.started) or os.time(),
                     target = Vector(tonumber(r.tx) or 0, tonumber(r.ty) or 0, tonumber(r.tz) or 0),
                     center = Vector(tonumber(r.cx) or 0, tonumber(r.cy) or 0, tonumber(r.cz) or 0),
+                    zoneRadius = tonumber(r.zoneRadius) or 180, zoneName = tostring(r.zoneName or "Точка работы"),
                     fromPost = r.fromPost == true, postFac = r.postFac, postId = r.postId,
                     postKind = r.postKind,
                 }
@@ -401,6 +405,10 @@ if SERVER then
             net.WriteUInt(math.max(0, (j.deadline or os.time()) - os.time()), 20)
             net.WriteUInt(math.max(0, j.stayLeft or 0), 12)
             net.WriteUInt(j.stage or 1, 3)
+            local zoneRadius = math.floor(tonumber(j.zoneRadius) or 180)
+            if zoneRadius < 1 then zoneRadius = 1 elseif zoneRadius > 4095 then zoneRadius = 4095 end
+            net.WriteUInt(zoneRadius, 12)
+            net.WriteString(tostring(j.zoneName or "Точка работы"))
         else
             net.WriteBool(false)
         end
@@ -443,6 +451,7 @@ if SERVER then
             reward = fields.reward, deadline = os.time() + (fields.timeSec or 300),
             started = os.time(),
             target = fields.target, center = fields.center or (IsValid(ply) and ply:GetPos() or Vector(0, 0, 0)),
+            zoneRadius = tonumber(fields.zoneRadius) or 180, zoneName = tostring(fields.zoneName or "Точка работы"),
             fromPost = fields.fromPost and true or false,
             postFac = fields.postFac, postId = fields.postId,
             postKind = fields.postKind,
@@ -559,7 +568,7 @@ if SERVER then
                     elseif ply:Alive() then
                         local pp = ply:GetPos()
                         if j.jtype == "stay" or j.jtype == "shift" then
-                            local rad = (j.jtype == "shift") and 400 or 300
+                            local rad = tonumber(j.zoneRadius) or ((j.jtype == "shift") and 400 or 300)
                             if pp:DistToSqr(j.target) < rad * rad then
                                 if ply:InVehicle() then
                                     if (j._hintT or 0) < CurTime() then
@@ -576,7 +585,8 @@ if SERVER then
                                 if GRM.Notify then GRM.Notify(ply, tostring(j.title) .. ": вы вне рабочей зоны — вернитесь к маркеру (" .. tostring(math.floor(math.sqrt(pp:DistToSqr(j.target)))) .. " юн).", 255, 190, 90) end
                             end
                         elseif j.jtype == "roundtrip" and (j.stage or 1) == 1 then
-                            if pp:DistToSqr(j.target) < 170 * 170 then
+                            local targetRadius = tonumber(j.zoneRadius) or 170
+                            if pp:DistToSqr(j.target) < targetRadius * targetRadius then
                                 j.stage = 2
                                 saveActive("этап 2")
                                 JB.PushTracker(ply)
@@ -584,9 +594,11 @@ if SERVER then
                                 if GRM.Notify then GRM.Notify(ply, "Точка проверена. Возвращайтесь к терминалу биржи.", 120, 220, 255) end
                             end
                         elseif j.jtype == "roundtrip" then
-                            if pp:DistToSqr(j.center) < 220 * 220 then JB.Complete(ply) end
+                            local returnRadius = tonumber(j.zoneRadius) or 220
+                            if pp:DistToSqr(j.center) < returnRadius * returnRadius then JB.Complete(ply) end
                         else -- goto
-                            if pp:DistToSqr(j.target) < 170 * 170 then JB.Complete(ply) end
+                            local targetRadius = tonumber(j.zoneRadius) or 170
+                            if pp:DistToSqr(j.target) < targetRadius * targetRadius then JB.Complete(ply) end
                         end
                     end
                 end
@@ -702,6 +714,7 @@ if SERVER then
             title = offer.title, desc = offer.desc, jtype = offer.jtype,
             reward = offer.reward, timeSec = offer.timeSec, staySec = offer.staySec,
             target = offer.target, center = rec.center,
+            zoneRadius = offer.zoneRadius, zoneName = offer.zoneName,
         })
     end)
 
@@ -886,7 +899,9 @@ if SERVER then
                     reward = isVac and (tonumber(p.salary) or 0) or (tonumber(p.reward) or 0),
                     timeSec = tonumber(p.timeSec) or 600,
                     staySec = tonumber(p.staySec) or 0,
-                    target = target, fromPost = true, postFac = fac, postId = p.id,
+                    target = target, center = target, zoneRadius = isVac and 400 or 180,
+                    zoneName = tostring(p.title or "Рабочая зона"),
+                    fromPost = true, postFac = fac, postId = p.id,
                     postKind = isVac and "vacancy" or "order",
                 })
                 if ok then
@@ -1077,6 +1092,8 @@ if CLIENT then
                 remain = net.ReadUInt(20),
                 stayLeft = net.ReadUInt(12),
                 stage = net.ReadUInt(3),
+                radius = net.ReadUInt(12),
+                zoneName = net.ReadString() or "Точка работы",
                 at = CurTime(),
             }
         else
@@ -1088,6 +1105,9 @@ if CLIENT then
         if not istable(tracker) then return end
         local lp = LocalPlayer()
         if not IsValid(lp) then return end
+        local radius = math.max(40, tonumber(tracker.radius) or 180)
+        render.SetColorMaterial()
+        render.DrawWireframeSphere(tracker.target, radius, 32, 12, Color(70, 180, 255, 90), true)
         local pos = tracker.target + Vector(0, 0, 46 + math.sin(CurTime() * 2.5) * 6)
         local dist = math.floor(lp:GetPos():Distance(tracker.target))
         local ang = Angle(0, lp:EyeAngles().y - 90, 90)
@@ -1096,7 +1116,7 @@ if CLIENT then
             surface.SetDrawColor(C.yellow.r, C.yellow.g, C.yellow.b, 220)
             surface.DrawOutlinedRect(-130, -46, 260, 66, 2)
             draw.SimpleText("◎ " .. tostring(tracker.title), "GRMJobs_Sub", 0, -40, C.yellow, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-            draw.SimpleText(tostring(dist) .. " юн.", "GRMJobs_Normal", 0, -16, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+            draw.SimpleText(tostring(tracker.zoneName or "Рабочая зона") .. " • " .. tostring(dist) .. " юн.", "GRMJobs_Normal", 0, -16, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
         cam.End3D2D()
     end)
 
@@ -1304,7 +1324,7 @@ if CLIENT then
                 draw.RoundedBox(5, 0, 0, pw, ph, C.panel2)
                 draw.SimpleText(tostring(o.title) .. "  (" .. tostring(JTYPE_NAMES[o.jtype] or o.jtype) .. ")", "GRMJobs_Sub", 10, 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                 draw.SimpleText(tostring(o.desc or ""), "GRMJobs_Small", 10, 31, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                draw.SimpleText("≈" .. tostring(o.dist or 0) .. " юн • " .. fmtTime(o.timeSec or 0) .. " • " .. fmtMoney(o.reward or 0), "GRMJobs_Normal", 10, 46, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText("Зона: " .. tostring(o.zoneName or "Точка работы") .. " • радиус " .. tostring(o.zoneRadius or 180) .. " • " .. fmtTime(o.timeSec or 0) .. " • " .. fmtMoney(o.reward or 0), "GRMJobs_Normal", 10, 46, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             end
             local bTake = mkBtn(row, hasActive and "Занято" or "Взять", hasActive and Color(70, 78, 92) or C.green)
             bTake:SetPos(720, 11) bTake:SetSize(150, 32) bTake:SetFont("GRMJobs_Normal")
