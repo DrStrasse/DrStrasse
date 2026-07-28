@@ -428,6 +428,8 @@ if SERVER then
                     stage = j.stage or 1, stayLeft = j.stayLeft or 0,
                     remain = math.max(0, (j.deadline or os.time()) - os.time()),
                     reward = j.reward or 0,
+                    zoneName = j.zoneName or "Точка работы",
+                    zoneRadius = j.zoneRadius or 180,
                     fromPost = j.fromPost and true or false,
                     postFac = tostring(j.postFac or ""),
                 })
@@ -1294,7 +1296,7 @@ if CLIENT then
                 if active.jtype == "roundtrip" then note = (active.stage == 2) and " | этап: возврат к терминалу" or " | этап: к точке" end
                 if active.fromPost then note = note .. " | заказ " .. tostring(active.postFac) end
                 draw.SimpleText(tostring(active.desc or ""), "GRMJobs_Small", 10, 34, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                draw.SimpleText("Осталось: " .. fmtTime(active.remain or 0) .. note, "GRMJobs_Normal", 10, 51, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText("Зона: " .. tostring(active.zoneName or "Точка работы") .. " • радиус " .. tostring(active.zoneRadius or 180) .. " • осталось: " .. fmtTime(active.remain or 0) .. note, "GRMJobs_Normal", 10, 51, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             end
             local bCancel = mkBtn(bm, "Отказаться", C.red)
             bCancel:SetPos(738, 32) bCancel:SetSize(140, 34) bCancel:SetFont("GRMJobs_Normal")
