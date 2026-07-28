@@ -118,10 +118,15 @@ if SERVER then
         if not sp then return false, "Для камеры не назначена точка арестованного" end
         local g = group(groupID)
         target.GRM_ArrestOriginalModel = target:GetModel()
+        target.GRM_ArrestOriginalSkin = target:GetSkin()
+        target.GRM_ArrestOriginalBodygroups = {}
+        for i = 0, (target:GetNumBodyGroups() or 0) - 1 do target.GRM_ArrestOriginalBodygroups[i] = target:GetBodygroup(i) end
         target:SetNWBool("GRM_Arrested", true)
         target:SetNWString("GRM_ArrestGroup", groupID or "criminals")
         target:SetNWString("GRM_ArrestGroupName", g.name or groupID or "Арестованный")
-        if util.IsValidModel(g.model) then target:SetModel(g.model) end
+        if isstring(g.model) and g.model:match("^models/.+%.mdl$") then target:SetModel(g.model) end
+        target:SetSkin(math.max(0, math.floor(tonumber(g.skin) or 0)))
+        for group, value in pairs(g.bodygroups or {}) do target:SetBodygroup(tonumber(group) or 0, tonumber(value) or 0) end
         target:SetPos(vec(sp.pos))
         target:SetEyeAngles(ang(sp.ang or { p = 0, y = 0, r = 0 }))
         target:Freeze(false)
@@ -136,7 +141,11 @@ if SERVER then
         target:SetNWString("GRM_ArrestGroup", "")
         target:SetNWString("GRM_ArrestGroupName", "")
         if target.GRM_ArrestOriginalModel and util.IsValidModel(target.GRM_ArrestOriginalModel) then target:SetModel(target.GRM_ArrestOriginalModel) end
+        target:SetSkin(tonumber(target.GRM_ArrestOriginalSkin) or 0)
+        for group, value in pairs(target.GRM_ArrestOriginalBodygroups or {}) do target:SetBodygroup(tonumber(group) or 0, tonumber(value) or 0) end
         target.GRM_ArrestOriginalModel = nil
+        target.GRM_ArrestOriginalSkin = nil
+        target.GRM_ArrestOriginalBodygroups = nil
         if GRM.Notify then GRM.Notify(target, "Вы освобождены.", 120, 220, 140) end
         return true
     end
@@ -195,7 +204,23 @@ if SERVER then
             end
         elseif action == "set_group_model" then
             local model = string.Trim(net.ReadString() or "")
-            if A.Cfg.groups[id] and util.IsValidModel(model) then A.Cfg.groups[id].model = model save() end
+            if A.Cfg.groups[id] and model:match("^models/.+%.mdl$") then
+                A.Cfg.groups[id].model = model
+                save()
+            end
+        elseif action == "set_group_data" then
+            local data = net.ReadTable() or {}
+            local model = string.Trim(tostring(data.model or ""))
+            if A.Cfg.groups[id] and model:match("^models/.+%.mdl$") then
+                A.Cfg.groups[id].model = model
+                A.Cfg.groups[id].skin = math.max(0, math.floor(tonumber(data.skin) or 0))
+                A.Cfg.groups[id].bodygroups = {}
+                for group, value in pairs(data.bodygroups or {}) do
+                    local gi, vi = tonumber(group), tonumber(value)
+                    if gi and vi then A.Cfg.groups[id].bodygroups[gi] = vi end
+                end
+                save()
+            end
         elseif action == "set_camera_group" then
             local groupID = string.Trim(net.ReadString() or "")
             if A.Cfg.groups[groupID] then
@@ -251,11 +276,47 @@ if CLIENT then
                 net.WriteString(groupName:GetValue()) net.WriteString(groupModel:GetValue())
             net.SendToServer()
         end
+        local function openGroupEditor(gid, source)
+            local ed = table.Copy(source or {})
+            ed.bodygroups = istable(ed.bodygroups) and ed.bodygroups or {}
+            local w = vgui.Create("DFrame") w:SetSize(760, 620) w:Center() w:MakePopup()
+            w:SetTitle("Настройка группы арестованных: " .. tostring(ed.name or gid))
+            local model = vgui.Create("DTextEntry", w) model:SetPos(12, 38) model:SetSize(520, 28) model:SetText(ed.model or "")
+            local preview = vgui.Create("DModelPanel", w) preview:SetPos(550, 38) preview:SetSize(190, 300) preview:SetFOV(42) preview.LayoutEntity = function() end
+            local scrollBG = vgui.Create("DScrollPanel", w) scrollBG:SetPos(12, 78) scrollBG:SetSize(520, 300)
+            local load = vgui.Create("DButton", w) load:SetPos(12, 388) load:SetSize(160, 28) load:SetText("Считать модель")
+            local skin = vgui.Create("DNumSlider", w) skin:SetPos(180, 388) skin:SetSize(350, 28) skin:SetMin(0) skin:SetMax(16) skin:SetDecimals(0) skin:SetValue(ed.skin or 0)
+            local function rebuild()
+                scrollBG:Clear()
+                local ent = IsValid(preview:GetEntity()) and preview:GetEntity() or nil
+                if not IsValid(ent) then return end
+                for i = 0, (ent:GetNumBodyGroups() or 0) - 1 do
+                    local count = ent:GetBodygroupCount(i) or 1
+                    if count > 1 then
+                        local combo = vgui.Create("DComboBox", scrollBG) combo:Dock(TOP) combo:SetTall(28) combo:SetValue(ent:GetBodygroupName(i) or ("Группа " .. i))
+                        for value = 0, count - 1 do combo:AddChoice((ent:GetBodygroupName(i) or ("Группа " .. i)) .. " — вариант " .. value, value) end
+                        combo.OnSelect = function(_, _, value) ed.bodygroups[i] = tonumber(value) or 0 end
+                        if ed.bodygroups[i] then combo:SetValue((ent:GetBodygroupName(i) or ("Группа " .. i)) .. " — вариант " .. tostring(ed.bodygroups[i])) end
+                    end
+                end
+            end
+            load.DoClick = function()
+                if util.IsValidModel(model:GetValue()) then preview:SetModel(model:GetValue()) rebuild() end
+            end
+            if util.IsValidModel(model:GetValue()) then preview:SetModel(model:GetValue()) rebuild() end
+            local save = vgui.Create("DButton", w) save:SetPos(550, 570) save:SetSize(190, 32) save:SetText("Сохранить группу")
+            save.DoClick = function()
+                net.Start("GRM_Arrest_AdminAction") net.WriteString("set_group_data") net.WriteString(gid)
+                    net.WriteTable({ model = model:GetValue(), skin = skin:GetValue(), bodygroups = ed.bodygroups })
+                net.SendToServer() w:Close()
+            end
+        end
+
         for gid, g in pairs(data.groups or {}) do
             local label = vgui.Create("DLabel", scroll) label:Dock(TOP) label:SetTall(28) label:SetText("Группа: " .. tostring(g.name) .. " [" .. gid .. "] — " .. tostring(g.model or ""))
-            local model = vgui.Create("DTextEntry", scroll) model:Dock(TOP) model:SetTall(26) model:SetPlaceholderText("models/...mdl")
-            local b = vgui.Create("DButton", scroll) b:Dock(TOP) b:SetTall(28) b:SetText("Сохранить модель группы " .. gid)
-            b.DoClick = function() net.Start("GRM_Arrest_AdminAction") net.WriteString("set_group_model") net.WriteString(gid) net.WriteString(model:GetValue()) net.SendToServer() end
+            local model = vgui.Create("DTextEntry", scroll) model:Dock(TOP) model:SetTall(26) model:SetText(g.model or "") model:SetPlaceholderText("models/...mdl")
+            local b = vgui.Create("DButton", scroll) b:Dock(TOP) b:SetTall(28) b:SetText("Настроить модель, skin и bodygroups: " .. gid)
+            b.DoClick = function() openGroupEditor(gid, g) end
         end
         for _, cam in ipairs(data.cameras or {}) do
             local label = vgui.Create("DLabel", scroll) label:Dock(TOP) label:SetTall(24) label:SetText("Камера " .. tostring(cam.id) .. " → точка: " .. tostring(cam.spawnID or "не назначена"))
