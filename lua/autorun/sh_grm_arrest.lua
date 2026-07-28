@@ -244,95 +244,199 @@ if SERVER then
 end
 
 if CLIENT then
-    surface.CreateFont("GRMArrestTitle", { font = "Roboto", size = 20, weight = 800, extended = true })
+    surface.CreateFont("GRMArrestTitle", { font = "Roboto", size = 22, weight = 900, extended = true })
+    surface.CreateFont("GRMArrestHeading", { font = "Roboto", size = 16, weight = 800, extended = true })
+    surface.CreateFont("GRMArrestBody", { font = "Roboto", size = 14, weight = 500, extended = true })
+    surface.CreateFont("GRMArrestSmall", { font = "Roboto", size = 12, weight = 500, extended = true })
+
+    local UI = {
+        bg = Color(12, 17, 25, 252), header = Color(22, 29, 41, 255), sidebar = Color(17, 24, 35, 255),
+        card = Color(25, 34, 48, 255), card2 = Color(30, 41, 57, 255), line = Color(54, 68, 89, 220),
+        text = Color(239, 244, 250), dim = Color(157, 171, 190), accent = Color(72, 153, 255),
+        green = Color(70, 201, 128), orange = Color(241, 157, 78), red = Color(222, 87, 91),
+    }
+
+    local function label(parent, text, font, color)
+        local l = vgui.Create("DLabel", parent)
+        l:SetText(text or "") l:SetFont(font or "GRMArrestBody") l:SetTextColor(color or UI.text)
+        l:SetWrap(true)
+        return l
+    end
+
+    local function button(parent, text, color, tall)
+        local b = vgui.Create("DButton", parent)
+        b:SetText(text or "") b:SetFont("GRMArrestBody") b:SetTextColor(UI.text)
+        b:SetTall(tall or 34)
+        b:SetContentAlignment(5)
+        b.Paint = function(self, w, h)
+            local c = color or UI.card2
+            if self:IsHovered() then c = Color(math.min(c.r + 18, 255), math.min(c.g + 18, 255), math.min(c.b + 18, 255), c.a) end
+            draw.RoundedBox(6, 0, 0, w, h, c)
+        end
+        return b
+    end
+
+    local function sendAction(action, id, extra)
+        net.Start("GRM_Arrest_AdminAction")
+            net.WriteString(action or "")
+            net.WriteString(id or "")
+            if extra then extra() end
+        net.SendToServer()
+    end
+
+    local function sectionTitle(parent, title, subtitle)
+        local p = vgui.Create("DPanel", parent)
+        p:Dock(TOP) p:SetTall(48) p:DockMargin(0, 0, 0, 8) p:SetPaintBackground(false)
+        local t = label(p, title, "GRMArrestHeading", UI.text) t:SetPos(0, 0) t:SetSize(600, 24)
+        local s = label(p, subtitle or "", "GRMArrestSmall", UI.dim) s:SetPos(0, 25) s:SetSize(700, 20)
+        return p
+    end
+
+    local function card(parent, height)
+        local p = vgui.Create("DPanel", parent)
+        p:Dock(TOP) p:SetTall(height) p:DockMargin(0, 0, 0, 10)
+        p:SetPaintBackground(false)
+        p.Paint = function(self, w, h)
+            draw.RoundedBox(8, 0, 0, w, h, UI.card)
+            draw.RoundedBox(8, 0, 0, 4, h, UI.accent)
+        end
+        return p
+    end
+
+    local function openGroupEditor(gid, source)
+        local ed = table.Copy(source or {})
+        ed.bodygroups = istable(ed.bodygroups) and ed.bodygroups or {}
+        local w = vgui.Create("DFrame")
+        GRM.UI.Track("arrest_group_editor", w)
+        w:SetSize(920, 650) w:Center() w:MakePopup() w:SetTitle("") w:ShowCloseButton(false)
+        w:SetDeleteOnClose(true)
+        w.Paint = function(_, pw, ph)
+            draw.RoundedBox(10, 0, 0, pw, ph, UI.bg)
+            draw.RoundedBoxEx(10, 0, 0, pw, 62, UI.header, true, true, false, false)
+            draw.SimpleText("ВНЕШНОСТЬ ГРУППЫ", "GRMArrestSmall", 22, 17, UI.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(tostring(ed.name or gid), "GRMArrestTitle", 22, 42, UI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
+        local close = button(w, "×", UI.red, 30) close:SetPos(870, 16) close:SetSize(32, 30)
+        close.DoClick = function() w:Close() end
+
+        local model = vgui.Create("DTextEntry", w) model:SetPos(24, 92) model:SetSize(560, 34) model:SetFont("GRMArrestBody") model:SetText(ed.model or "")
+        model:SetPlaceholderText("Путь к модели, например models/grworkers/grworker.mdl")
+        model.Paint = function(self, pw, ph) draw.RoundedBox(5, 0, 0, pw, ph, UI.card2); self:DrawTextEntryText(UI.text, UI.accent, UI.text) end
+        local load = button(w, "Обновить превью", UI.accent, 34) load:SetPos(594, 92) load:SetSize(160, 34)
+        local preview = vgui.Create("DModelPanel", w) preview:SetPos(640, 150) preview:SetSize(230, 330) preview:SetFOV(42) preview.LayoutEntity = function() end
+        preview.PaintOver = function(_, pw, ph) draw.RoundedBox(6, 0, 0, pw, ph, Color(0, 0, 0, 18)) end
+        local previewHint = label(w, "ПРЕДПРОСМОТР", "GRMArrestSmall", UI.dim) previewHint:SetPos(640, 490) previewHint:SetSize(230, 20) previewHint:SetContentAlignment(5)
+
+        local body = vgui.Create("DScrollPanel", w) body:SetPos(24, 145) body:SetSize(570, 330)
+        local bodyTitle = label(w, "Параметры внешности", "GRMArrestHeading", UI.text) bodyTitle:SetPos(24, 126) bodyTitle:SetSize(400, 24)
+        local skin = vgui.Create("DNumSlider", w) skin:SetPos(24, 500) skin:SetSize(570, 32) skin:SetText("Skin") skin:SetFont("GRMArrestBody") skin:SetTextColor(UI.text) skin:SetMin(0) skin:SetMax(16) skin:SetDecimals(0) skin:SetValue(ed.skin or 0)
+        local function rebuild()
+            body:Clear()
+            local ent = IsValid(preview:GetEntity()) and preview:GetEntity() or nil
+            if not IsValid(ent) then
+                local hint = label(body, "Укажите корректную модель и нажмите «Обновить превью».", "GRMArrestBody", UI.dim)
+                hint:Dock(TOP) hint:SetTall(50)
+                return
+            end
+            local count = 0
+            for i = 0, (ent:GetNumBodyGroups() or 0) - 1 do
+                local variants = ent:GetBodygroupCount(i) or 1
+                if variants > 1 then
+                    count = count + 1
+                    local row = vgui.Create("DPanel", body) row:Dock(TOP) row:SetTall(48) row:DockMargin(0, 0, 8, 6) row:SetPaintBackground(false)
+                    local name = ent:GetBodygroupName(i) or ("Группа " .. i)
+                    local title = label(row, name, "GRMArrestBody", UI.text) title:Dock(LEFT) title:SetWide(210) title:SetContentAlignment(4)
+                    local combo = vgui.Create("DComboBox", row) combo:Dock(FILL) combo:SetTall(34) combo:SetValue("Вариант " .. tostring(ed.bodygroups[i] or 0))
+                    for value = 0, variants - 1 do combo:AddChoice("Вариант " .. value, value) end
+                    combo.OnSelect = function(_, _, value) ed.bodygroups[i] = tonumber(value) or 0 end
+                end
+            end
+            if count == 0 then
+                local hint = label(body, "У этой модели нет настраиваемых bodygroups.", "GRMArrestBody", UI.dim)
+                hint:Dock(TOP) hint:SetTall(40)
+            end
+        end
+        local function refreshPreview()
+            local path = string.Trim(model:GetValue() or "")
+            if util.IsValidModel(path) then preview:SetModel(path) rebuild() end
+        end
+        load.DoClick = refreshPreview
+        if util.IsValidModel(model:GetValue()) then preview:SetModel(model:GetValue()) rebuild() else rebuild() end
+
+        local save = button(w, "СОХРАНИТЬ ВНЕШНОСТЬ", UI.green, 40) save:SetPos(640, 550) save:SetSize(230, 40)
+        save.DoClick = function()
+            sendAction("set_group_data", gid, function()
+                net.WriteTable({ model = model:GetValue(), skin = skin:GetValue(), bodygroups = ed.bodygroups })
+            end)
+            w:Close()
+        end
+    end
+
     net.Receive("GRM_Arrest_AdminData", function()
         local data = net.ReadTable() or {}
         local f = vgui.Create("DFrame")
         GRM.UI.Track("arrest_admin", f)
-        f:SetSize(860, 640) f:Center() f:MakePopup() f:SetTitle("GRM — Арестованные и камеры")
-        local scroll = vgui.Create("DScrollPanel", f) scroll:Dock(FILL) scroll:DockMargin(8, 8, 8, 48)
-        local function button(text, y, action, id, extra)
-            local b = vgui.Create("DButton", scroll) b:Dock(TOP) b:SetTall(30) b:DockMargin(0, 2, 0, 2) b:SetText(text)
-            b.DoClick = function()
-                local actionID = id or ""
-                if actionID == "" and IsValid(idEntry) then actionID = idEntry:GetValue() end
-                net.Start("GRM_Arrest_AdminAction")
-                    net.WriteString(action)
-                    net.WriteString(actionID)
-                    if extra then extra() end
-                net.SendToServer()
-            end
+        f:SetSize(1120, 760) f:Center() f:MakePopup() f:SetTitle("") f:ShowCloseButton(false) f:SetDeleteOnClose(true)
+        f.Paint = function(_, pw, ph)
+            draw.RoundedBox(10, 0, 0, pw, ph, UI.bg)
+            draw.RoundedBoxEx(10, 0, 0, pw, 66, UI.header, true, true, false, false)
+            draw.SimpleText("GRM  /  СИСТЕМА АРЕСТА", "GRMArrestSmall", 24, 19, UI.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("Камеры, группы и точки содержания", "GRMArrestTitle", 24, 45, UI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
-        local help = vgui.Create("DLabel", scroll) help:Dock(TOP) help:SetTall(54) help:SetWrap(true)
-        help:SetText("Камера ставится в точку прицела. Точка арестованного — в месте, где вы стоите. Затем свяжите камеру с точкой и назначьте группе модель.")
-        local idEntry = vgui.Create("DTextEntry", scroll) idEntry:Dock(TOP) idEntry:SetTall(28) idEntry:SetPlaceholderText("ID камеры/точки или group id")
-        button("Добавить камеру в прицеле", 0, "add_camera", "", function() end)
-        button("Добавить точку арестованного здесь", 0, "add_spawn", "", function() end)
-        local groupName = vgui.Create("DTextEntry", scroll) groupName:Dock(TOP) groupName:SetTall(26) groupName:SetPlaceholderText("Название новой группы")
-        local groupModel = vgui.Create("DTextEntry", scroll) groupModel:Dock(TOP) groupModel:SetTall(26) groupModel:SetPlaceholderText("Модель группы: models/...mdl")
-        local groupID = vgui.Create("DTextEntry", scroll) groupID:Dock(TOP) groupID:SetTall(26) groupID:SetPlaceholderText("ID группы: criminals/political/guardhouse")
-        local groupAdd = vgui.Create("DButton", scroll) groupAdd:Dock(TOP) groupAdd:SetTall(28) groupAdd:SetText("Создать/сохранить группу")
-        groupAdd.DoClick = function()
-            net.Start("GRM_Arrest_AdminAction")
-                net.WriteString("set_group") net.WriteString(groupID:GetValue())
-                net.WriteString(groupName:GetValue()) net.WriteString(groupModel:GetValue())
-            net.SendToServer()
+        local close = button(f, "×", UI.red, 32) close:SetPos(1072, 17) close:SetSize(32, 32) close.DoClick = function() f:Close() end
+
+        local side = vgui.Create("DPanel", f) side:SetPos(0, 66) side:SetSize(245, 694) side:SetPaintBackground(false)
+        side.Paint = function(_, pw, ph)
+            draw.RoundedBoxEx(10, 0, 0, pw, ph, UI.sidebar, false, false, true, false)
+            draw.RoundedBox(0, pw - 1, 0, 1, ph, UI.line)
         end
-        local function openGroupEditor(gid, source)
-            local ed = table.Copy(source or {})
-            ed.bodygroups = istable(ed.bodygroups) and ed.bodygroups or {}
-            local w = vgui.Create("DFrame")
-            GRM.UI.Track("arrest_group_editor", w)
-            w:SetSize(760, 620) w:Center() w:MakePopup()
-            w:SetTitle("Настройка группы арестованных: " .. tostring(ed.name or gid))
-            local model = vgui.Create("DTextEntry", w) model:SetPos(12, 38) model:SetSize(520, 28) model:SetText(ed.model or "")
-            local preview = vgui.Create("DModelPanel", w) preview:SetPos(550, 38) preview:SetSize(190, 300) preview:SetFOV(42) preview.LayoutEntity = function() end
-            local scrollBG = vgui.Create("DScrollPanel", w) scrollBG:SetPos(12, 78) scrollBG:SetSize(520, 300)
-            local load = vgui.Create("DButton", w) load:SetPos(12, 388) load:SetSize(160, 28) load:SetText("Считать модель")
-            local skin = vgui.Create("DNumSlider", w) skin:SetPos(180, 388) skin:SetSize(350, 28) skin:SetMin(0) skin:SetMax(16) skin:SetDecimals(0) skin:SetValue(ed.skin or 0)
-            local function rebuild()
-                scrollBG:Clear()
-                local ent = IsValid(preview:GetEntity()) and preview:GetEntity() or nil
-                if not IsValid(ent) then return end
-                for i = 0, (ent:GetNumBodyGroups() or 0) - 1 do
-                    local count = ent:GetBodygroupCount(i) or 1
-                    if count > 1 then
-                        local combo = vgui.Create("DComboBox", scrollBG) combo:Dock(TOP) combo:SetTall(28) combo:SetValue(ent:GetBodygroupName(i) or ("Группа " .. i))
-                        for value = 0, count - 1 do combo:AddChoice((ent:GetBodygroupName(i) or ("Группа " .. i)) .. " — вариант " .. value, value) end
-                        combo.OnSelect = function(_, _, value) ed.bodygroups[i] = tonumber(value) or 0 end
-                        if ed.bodygroups[i] then combo:SetValue((ent:GetBodygroupName(i) or ("Группа " .. i)) .. " — вариант " .. tostring(ed.bodygroups[i])) end
-                    end
-                end
-            end
-            load.DoClick = function()
-                if util.IsValidModel(model:GetValue()) then preview:SetModel(model:GetValue()) rebuild() end
-            end
-            if util.IsValidModel(model:GetValue()) then preview:SetModel(model:GetValue()) rebuild() end
-            local save = vgui.Create("DButton", w) save:SetPos(550, 570) save:SetSize(190, 32) save:SetText("Сохранить группу")
-            save.DoClick = function()
-                net.Start("GRM_Arrest_AdminAction") net.WriteString("set_group_data") net.WriteString(gid)
-                    net.WriteTable({ model = model:GetValue(), skin = skin:GetValue(), bodygroups = ed.bodygroups })
-                net.SendToServer() w:Close()
-            end
+        local sideTitle = label(side, "УПРАВЛЕНИЕ", "GRMArrestSmall", UI.dim) sideTitle:SetPos(24, 28) sideTitle:SetSize(190, 20)
+        local help = label(side, "Настройте место камеры, точку телепорта и внешний вид каждой категории арестованных.", "GRMArrestBody", UI.text) help:SetPos(24, 58) help:SetSize(195, 100)
+        local stat = label(side, string.format("ГРУППЫ  %d\nКАМЕРЫ  %d\nТОЧКИ    %d", table.Count(data.groups or {}), #(data.cameras or {}), #(data.spawns or {})), "GRMArrestBody", UI.dim) stat:SetPos(24, 190) stat:SetSize(190, 90)
+        local hint = label(side, "Добавление происходит в точке прицела или под ногами администратора. После сохранения меню обновится автоматически.", "GRMArrestSmall", UI.dim) hint:SetPos(24, 540) hint:SetSize(195, 90)
+
+        local content = vgui.Create("DScrollPanel", f) content:SetPos(269, 86) content:SetSize(825, 650)
+        local canvas = content:GetCanvas()
+        sectionTitle(canvas, "Быстрые действия", "Создайте объекты на карте, затем свяжите камеру с точкой содержания.")
+        local actionBar = vgui.Create("DPanel", canvas) actionBar:Dock(TOP) actionBar:SetTall(46) actionBar:DockMargin(0, 0, 0, 18) actionBar:SetPaintBackground(false)
+        local addCam = button(actionBar, "+  Камера в прицеле", UI.accent, 40) addCam:Dock(LEFT) addCam:SetWide(245) addCam.DoClick = function() sendAction("add_camera", "") end
+        local addSpawn = button(actionBar, "+  Точка арестованного", UI.green, 40) addSpawn:Dock(LEFT) addSpawn:DockMargin(10, 0, 0, 0) addSpawn:SetWide(245) addSpawn.DoClick = function() sendAction("add_spawn", "") end
+
+        sectionTitle(canvas, "Группы арестованных", "Модель, skin и bodygroups сохраняются в конфигурации и применяются при аресте.")
+        for gid, g in pairs(data.groups or {}) do
+            local p = card(canvas, 86)
+            local name = label(p, tostring(g.name or gid), "GRMArrestHeading", UI.text) name:SetPos(20, 13) name:SetSize(350, 24)
+            local id = label(p, tostring(gid) .. "   •   " .. tostring(g.model or "модель не задана"), "GRMArrestSmall", UI.dim) id:SetPos(20, 42) id:SetSize(510, 22)
+            local edit = button(p, "Настроить внешность", UI.accent, 36) edit:SetPos(585, 22) edit:SetSize(200, 36) edit.DoClick = function() openGroupEditor(gid, g) end
         end
 
-        for gid, g in pairs(data.groups or {}) do
-            local label = vgui.Create("DLabel", scroll) label:Dock(TOP) label:SetTall(28) label:SetText("Группа: " .. tostring(g.name) .. " [" .. gid .. "] — " .. tostring(g.model or ""))
-            local model = vgui.Create("DTextEntry", scroll) model:Dock(TOP) model:SetTall(26) model:SetText(g.model or "") model:SetPlaceholderText("models/...mdl")
-            local b = vgui.Create("DButton", scroll) b:Dock(TOP) b:SetTall(28) b:SetText("Настроить модель, skin и bodygroups: " .. gid)
-            b.DoClick = function() openGroupEditor(gid, g) end
-        end
+        sectionTitle(canvas, "Камеры и точки содержания", "Камера определяет категорию, точка — место появления арестованного.")
         for _, cam in ipairs(data.cameras or {}) do
-            local label = vgui.Create("DLabel", scroll) label:Dock(TOP) label:SetTall(24) label:SetText("Камера " .. tostring(cam.id) .. " → точка: " .. tostring(cam.spawnID or "не назначена"))
-            local groupCombo = vgui.Create("DComboBox", scroll) groupCombo:Dock(TOP) groupCombo:SetTall(26) groupCombo:SetValue("Группа: " .. tostring(cam.group or "criminals"))
-            for gid, g in pairs(data.groups or {}) do groupCombo:AddChoice(tostring(g.name or gid) .. " [" .. gid .. "]", gid) end
-            local groupSet = vgui.Create("DButton", scroll) groupSet:Dock(TOP) groupSet:SetTall(26) groupSet:SetText("Назначить группу камере")
-            groupSet.DoClick = function()
-                local gid = groupCombo:GetOptionData(groupCombo:GetSelectedID()) or cam.group or "criminals"
-                net.Start("GRM_Arrest_AdminAction") net.WriteString("set_camera_group") net.WriteString(cam.id) net.WriteString(gid) net.SendToServer()
+            local p = card(canvas, 116)
+            local title = label(p, "КАМЕРА  " .. tostring(cam.id), "GRMArrestHeading", UI.text) title:SetPos(20, 12) title:SetSize(300, 24)
+            local meta = label(p, "Группа: " .. tostring(cam.group or "criminals") .. "   •   Точка: " .. tostring(cam.spawnID or "не назначена"), "GRMArrestSmall", UI.dim) meta:SetPos(20, 40) meta:SetSize(470, 22)
+            local combo = vgui.Create("DComboBox", p) combo:SetPos(505, 12) combo:SetSize(280, 32) combo:SetValue("Выбрать группу")
+            for gid, g in pairs(data.groups or {}) do combo:AddChoice(tostring(g.name or gid) .. "  [" .. gid .. "]", gid) end
+            local setGroup = button(p, "Назначить группу", UI.accent, 30) setGroup:SetPos(505, 52) setGroup:SetSize(135, 30)
+            setGroup.DoClick = function() local gid = combo:GetOptionData(combo:GetSelectedID()) or cam.group or "criminals"; sendAction("set_camera_group", cam.id, function() net.WriteString(gid) end) end
+            local setSpawn = button(p, "Привязать точку", UI.green, 30) setSpawn:SetPos(650, 52) setSpawn:SetSize(135, 30)
+            setSpawn.DoClick = function()
+                local menu = DermaMenu()
+                for _, sp in ipairs(data.spawns or {}) do menu:AddOption(tostring(sp.name or sp.id), function() sendAction("assign_camera_spawn", cam.id, function() net.WriteString(sp.id) end) end) end
+                menu:Open()
             end
-            for _, sp in ipairs(data.spawns or {}) do button("Привязать " .. cam.id .. " к " .. sp.id, 0, "assign_camera_spawn", cam.id, function() net.WriteString(sp.id) end) end
         end
+        if #(data.cameras or {}) == 0 then
+            local empty = card(canvas, 70) local txt = label(empty, "Камеры ещё не созданы. Нажмите «Камера в прицеле», стоя у нужной двери.", "GRMArrestBody", UI.dim) txt:SetPos(20, 22) txt:SetSize(760, 28)
+        end
+
+        sectionTitle(canvas, "Новая группа", "Создайте собственную категорию, затем настройте её внешний вид.")
+        local form = card(canvas, 128)
+        local name = vgui.Create("DTextEntry", form) name:SetPos(20, 18) name:SetSize(235, 34) name:SetPlaceholderText("Название, например Политические")
+        local model = vgui.Create("DTextEntry", form) model:SetPos(270, 18) model:SetSize(280, 34) model:SetPlaceholderText("models/.../model.mdl")
+        local gid = vgui.Create("DTextEntry", form) gid:SetPos(565, 18) gid:SetSize(220, 34) gid:SetPlaceholderText("ID: political")
+        local create = button(form, "Создать / сохранить группу", UI.orange, 38) create:SetPos(20, 70) create:SetSize(765, 38)
+        create.DoClick = function() sendAction("set_group", gid:GetValue(), function() net.WriteString(name:GetValue()) net.WriteString(model:GetValue()) end) end
     end)
 
     hook.Add("HUDPaint", "GRM_Arrest_Label", function()
@@ -342,7 +446,8 @@ if CLIENT then
             if IsValid(p) and p:GetNWBool("GRM_Arrested", false) and (p == lp or lp:GetPos():DistToSqr(p:GetPos()) < 600 * 600) then
                 local sp = (p:GetPos() + Vector(0, 0, 82)):ToScreen()
                 if sp.visible then
-                    draw.SimpleText("АРЕСТОВАННЫЙ: " .. p:GetNWString("GRM_ArrestGroupName", ""), "GRMArrestTitle", sp.x, sp.y, Color(255, 150, 100), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.RoundedBox(5, sp.x - 120, sp.y - 26, 240, 30, Color(13, 18, 27, 220))
+                    draw.SimpleText("АРЕСТОВАННЫЙ  •  " .. p:GetNWString("GRM_ArrestGroupName", ""), "GRMArrestSmall", sp.x, sp.y - 11, UI.orange, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                 end
             end
         end
