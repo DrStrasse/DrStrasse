@@ -290,7 +290,13 @@ local function buildProfileTab(sc, refresh)
     local b2 = block(sc, 96, "Персонаж:")
     local bChar = mkBtn(b2, "Меню персонажа (внешность)", C.acc)
     bChar:SetPos(10, 30) bChar:SetSize(250, 30)
-    bChar.DoClick = function() if GRM.Char and GRM.Char.OpenMenu then GRM.Char.OpenMenu() end end
+    bChar.DoClick = function()
+        if IsValid(lp) and lp:GetNWBool("GRM_Arrested", false) then
+            notification.AddLegacy("Во время ареста меню персонажа недоступно.", NOTIFY_ERROR, 5)
+            return
+        end
+        if GRM.Char and GRM.Char.OpenMenu then GRM.Char.OpenMenu() end
+    end
     local bDesc = mkBtn(b2, "Описание (RPDesc)", C.acc)
     bDesc:SetPos(10, 64) bDesc:SetSize(250, 30)
     bDesc.DoClick = function() if GRM.RPDesc and GRM.RPDesc.OpenEditor then GRM.RPDesc.OpenEditor() end end

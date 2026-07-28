@@ -545,6 +545,10 @@ if SERVER then
 
     net.Receive(NET_REQUEST, function(_, ply)
         if not IsValid(ply) then return end
+        if ply:GetNWBool("GRM_Arrested", false) then
+            if GRM.Notify then GRM.Notify(ply, "Во время ареста меню персонажа недоступно.", 255, 100, 100) end
+            return
+        end
         -- Открытие персонажей через F4 /char переводит игрока в тот же
         -- безопасный режим выбора: мир затемняется и блокируется до подтверждения.
         setCharacterLock(ply, true, false)
@@ -553,6 +557,10 @@ if SERVER then
 
     net.Receive(NET_CANCEL, function(_, ply)
         if not IsValid(ply) then return end
+        if ply:GetNWBool("GRM_Arrested", false) then
+            closeMenu(ply)
+            return
+        end
         if CH.PendingMandatory[ply:SteamID64()] == true then
             -- Первичный вход нельзя закрыть крестиком: меню возвращается,
             -- игрок остаётся заблокирован до подтверждения персонажа.
@@ -567,6 +575,10 @@ if SERVER then
 
     net.Receive(NET_SAVE, function(_, ply)
         if not IsValid(ply) then return end
+        if ply:GetNWBool("GRM_Arrested", false) then
+            if GRM.Notify then GRM.Notify(ply, "Нельзя менять персонажа во время ареста.", 255, 100, 100) end
+            return
+        end
         local d = net.ReadTable() or {}
         if d.action == "select_slot" then
             local slot = tostring(d.slot or "char1")
@@ -712,6 +724,11 @@ if CLIENT then
     -- Главное меню персонажа
     -----------------------------------------------------------
     local function openCharMenu(payload)
+        local lp = LocalPlayer()
+        if IsValid(lp) and lp:GetNWBool("GRM_Arrested", false) then
+            notification.AddLegacy("Во время ареста меню персонажа недоступно.", NOTIFY_ERROR, 5)
+            return
+        end
         payload = istable(payload) and payload or {}
         -- Bodygroups персонажа задаются моделью фракции через /models_admin.
         -- В обычном меню персонажа их нельзя вручную переопределять.
@@ -1152,6 +1169,11 @@ if CLIENT then
     CH._openFromWardrobe = openCharMenu
 
     function CH.OpenMenu()
+        local lp = LocalPlayer()
+        if IsValid(lp) and lp:GetNWBool("GRM_Arrested", false) then
+            notification.AddLegacy("Во время ареста меню персонажа недоступно.", NOTIFY_ERROR, 5)
+            return
+        end
         net.Start(NET_REQUEST) net.SendToServer()
     end
     concommand.Add("grm_character", CH.OpenMenu)
