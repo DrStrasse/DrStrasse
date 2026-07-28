@@ -266,6 +266,7 @@ end
 function INV.OpenGUI()
     if IsValid(frame) then frame:MakePopup(); rebuildSlots(); rebuildDetail(); return end
     local f = vgui.Create("DFrame")
+    GRM.UI.Track("inventory", f)
     f:SetTitle(""); f:SetSize(875, 570); f:Center(); f:MakePopup()
     frame = f
     f.OnRemove = function() frame = nil; INV.SelectedSlot = nil; dragData = nil; if IsValid(dragImage) then dragImage:Remove(); dragImage = nil end end

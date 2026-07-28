@@ -62,6 +62,7 @@ end
 
 local function createFrame(title, width, height)
     local frame = vgui.Create("DFrame")
+    GRM.UI.Track("roomtap", frame)
     frame:SetTitle("")
     frame:SetSize(width, height)
     frame:Center()

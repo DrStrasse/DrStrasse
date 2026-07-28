@@ -66,6 +66,7 @@ end)
 
 concommand.Add("grm_weight", function()
     local panel = vgui.Create("DFrame")
+    GRM.UI.Track("encumbrance", panel)
     panel:SetTitle(""); panel:SetSize(315, 155)
     panel:SetPos(ScrW() / 2 + 230, ScrH() / 2 - 180)
     panel:MakePopup(); panel:SetDeleteOnClose(true)

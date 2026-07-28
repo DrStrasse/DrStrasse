@@ -79,6 +79,7 @@ net.Receive("GRM_Vendor_Open", function()
 
     -- Главный фрейм
     local frame = vgui.Create("DFrame")
+    GRM.UI.Track("vendor", frame)
     frame:SetTitle("")
     frame:SetSize(780, 580)
     frame:Center()

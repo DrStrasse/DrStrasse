@@ -27,6 +27,7 @@ end
 local function openUI(data)
     data = istable(data) and data or { labType="narc", title="Лаборатория", recipes={} }
     local f = vgui.Create("DFrame")
+    GRM.UI.Track("narcotics_craft", f)
     f:SetTitle("")
     f:SetSize(760, 560)
     f:Center()

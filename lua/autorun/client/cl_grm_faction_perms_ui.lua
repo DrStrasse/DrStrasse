@@ -25,6 +25,7 @@ net.Receive("GRM_FPerm_Open", function()
     local perms = net.ReadTable() or {}
     
     local frame = vgui.Create("DFrame")
+    GRM.UI.Track("faction_permissions", frame)
     frame:SetTitle("")
     frame:SetSize(800, 600)
     frame:Center()

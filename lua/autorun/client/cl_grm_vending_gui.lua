@@ -189,6 +189,7 @@ net.Receive("GRM_Vending_Open", function()
     if not IsValid(ent) then return end
 
     local frame = vgui.Create("DFrame")
+    GRM.UI.Track("vending", frame)
     frame:SetSize(500, 400)
     frame:Center()
     frame:SetTitle("Торговый автомат")

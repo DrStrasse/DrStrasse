@@ -247,7 +247,9 @@ if CLIENT then
     surface.CreateFont("GRMArrestTitle", { font = "Roboto", size = 20, weight = 800, extended = true })
     net.Receive("GRM_Arrest_AdminData", function()
         local data = net.ReadTable() or {}
-        local f = vgui.Create("DFrame") f:SetSize(860, 640) f:Center() f:MakePopup() f:SetTitle("GRM — Арестованные и камеры")
+        local f = vgui.Create("DFrame")
+        GRM.UI.Track("arrest_admin", f)
+        f:SetSize(860, 640) f:Center() f:MakePopup() f:SetTitle("GRM — Арестованные и камеры")
         local scroll = vgui.Create("DScrollPanel", f) scroll:Dock(FILL) scroll:DockMargin(8, 8, 8, 48)
         local function button(text, y, action, id, extra)
             local b = vgui.Create("DButton", scroll) b:Dock(TOP) b:SetTall(30) b:DockMargin(0, 2, 0, 2) b:SetText(text)
@@ -279,7 +281,9 @@ if CLIENT then
         local function openGroupEditor(gid, source)
             local ed = table.Copy(source or {})
             ed.bodygroups = istable(ed.bodygroups) and ed.bodygroups or {}
-            local w = vgui.Create("DFrame") w:SetSize(760, 620) w:Center() w:MakePopup()
+            local w = vgui.Create("DFrame")
+            GRM.UI.Track("arrest_group_editor", w)
+            w:SetSize(760, 620) w:Center() w:MakePopup()
             w:SetTitle("Настройка группы арестованных: " .. tostring(ed.name or gid))
             local model = vgui.Create("DTextEntry", w) model:SetPos(12, 38) model:SetSize(520, 28) model:SetText(ed.model or "")
             local preview = vgui.Create("DModelPanel", w) preview:SetPos(550, 38) preview:SetSize(190, 300) preview:SetFOV(42) preview.LayoutEntity = function() end

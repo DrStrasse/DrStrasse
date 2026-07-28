@@ -20,6 +20,7 @@ net.Receive("GRM_Search_Result", function()
     
     -- Создаём окно результатов
     local frame = vgui.Create("DFrame")
+    GRM.UI.Track("search_result", frame)
     frame:SetTitle("Обыск: " .. target:Nick())
     frame:SetSize(500, 400)
     frame:Center()
