@@ -354,6 +354,20 @@ if CLIENT then
         local bodyTitle = label(w, "Параметры внешности", "GRMArrestHeading", UI.text) bodyTitle:SetPos(24, 126) bodyTitle:SetSize(400, 24)
         local skin = vgui.Create("DNumSlider", w) skin:SetPos(24, 500) skin:SetSize(570, 32) skin:SetText("Skin") skin:SetMin(0) skin:SetMax(16) skin:SetDecimals(0) skin:SetValue(ed.skin or 0)
         if IsValid(skin.Label) then skin.Label:SetFont("GRMArrestBody") skin.Label:SetTextColor(UI.text) end
+        local function applyAppearance(ent)
+            if not IsValid(ent) then return end
+            local maxSkin = math.max(0, (ent:SkinCount() or 1) - 1)
+            local selectedSkin = math.Clamp(math.floor(tonumber(ed.skin) or 0), 0, maxSkin)
+            ent:SetSkin(selectedSkin)
+            for group, value in pairs(ed.bodygroups or {}) do
+                local gi, vi = tonumber(group), tonumber(value)
+                if gi and vi then ent:SetBodygroup(gi, vi) end
+            end
+        end
+        skin.OnValueChanged = function(_, value)
+            ed.skin = math.floor(tonumber(value) or 0)
+            applyAppearance(preview:GetEntity())
+        end
         local function rebuild()
             body:Clear()
             local ent = IsValid(preview:GetEntity()) and preview:GetEntity() or nil
@@ -372,7 +386,10 @@ if CLIENT then
                     local title = label(row, name, "GRMArrestBody", UI.text) title:Dock(LEFT) title:SetWide(210) title:SetContentAlignment(4)
                     local combo = vgui.Create("DComboBox", row) combo:Dock(FILL) combo:SetTall(34) combo:SetValue("Вариант " .. tostring(ed.bodygroups[i] or 0))
                     for value = 0, variants - 1 do combo:AddChoice("Вариант " .. value, value) end
-                    combo.OnSelect = function(_, _, value) ed.bodygroups[i] = tonumber(value) or 0 end
+                    combo.OnSelect = function(_, _, value)
+                        ed.bodygroups[i] = tonumber(value) or 0
+                        applyAppearance(preview:GetEntity())
+                    end
                 end
             end
             if count == 0 then
@@ -382,10 +399,20 @@ if CLIENT then
         end
         local function refreshPreview()
             local path = string.Trim(model:GetValue() or "")
-            if util.IsValidModel(path) then preview:SetModel(path) rebuild() end
+            if util.IsValidModel(path) then
+                preview:SetModel(path)
+                applyAppearance(preview:GetEntity())
+                rebuild()
+            end
         end
         load.DoClick = refreshPreview
-        if util.IsValidModel(model:GetValue()) then preview:SetModel(model:GetValue()) rebuild() else rebuild() end
+        if util.IsValidModel(model:GetValue()) then
+            preview:SetModel(model:GetValue())
+            applyAppearance(preview:GetEntity())
+            rebuild()
+        else
+            rebuild()
+        end
 
         local save = button(w, "СОХРАНИТЬ ВНЕШНОСТЬ", UI.green, 40) save:SetPos(640, 550) save:SetSize(230, 40)
         save.DoClick = function()
