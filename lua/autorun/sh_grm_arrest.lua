@@ -329,7 +329,8 @@ if CLIENT then
 
         local body = vgui.Create("DScrollPanel", w) body:SetPos(24, 145) body:SetSize(570, 330)
         local bodyTitle = label(w, "Параметры внешности", "GRMArrestHeading", UI.text) bodyTitle:SetPos(24, 126) bodyTitle:SetSize(400, 24)
-        local skin = vgui.Create("DNumSlider", w) skin:SetPos(24, 500) skin:SetSize(570, 32) skin:SetText("Skin") skin:SetFont("GRMArrestBody") skin:SetTextColor(UI.text) skin:SetMin(0) skin:SetMax(16) skin:SetDecimals(0) skin:SetValue(ed.skin or 0)
+        local skin = vgui.Create("DNumSlider", w) skin:SetPos(24, 500) skin:SetSize(570, 32) skin:SetText("Skin") skin:SetMin(0) skin:SetMax(16) skin:SetDecimals(0) skin:SetValue(ed.skin or 0)
+        if IsValid(skin.Label) then skin.Label:SetFont("GRMArrestBody") skin.Label:SetTextColor(UI.text) end
         local function rebuild()
             body:Clear()
             local ent = IsValid(preview:GetEntity()) and preview:GetEntity() or nil
