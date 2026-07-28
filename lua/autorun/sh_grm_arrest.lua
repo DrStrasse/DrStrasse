@@ -45,7 +45,10 @@ local function load()
     A.Cfg.spawns = istable(A.Cfg.spawns) and A.Cfg.spawns or {}
     A.Cfg.access = istable(A.Cfg.access) and A.Cfg.access or { mode = "all", factions = {} }
     A.Cfg.access.mode = A.Cfg.access.mode == "allowlist" and "allowlist" or "all"
-    A.Cfg.access.factions = istable(A.Cfg.access.factions) and A.Cfg.access.factions or {}
+        A.Cfg.access.factions = istable(A.Cfg.access.factions) and A.Cfg.access.factions or {}
+    for _, g in pairs(A.Cfg.groups) do
+        if istable(g) then g.allowedFactions = istable(g.allowedFactions) and g.allowedFactions or {} end
+    end
 end
 
     local function group(id)
@@ -71,6 +74,25 @@ end
         for factionName, allowed in pairs(access.factions or {}) do
             if allowed and GRM.Identity and GRM.Identity.FactionMember and Factions and Factions[factionName]
                 and GRM.Identity.FactionMember(Factions[factionName], ply) then
+                return true
+            end
+        end
+        return false
+    end
+
+    function A.CanUseGroup(target, groupID)
+        local g = group(groupID)
+        local allowed = g and g.allowedFactions or {}
+        local hasRestriction = false
+        for _, enabled in pairs(allowed) do
+            if enabled == true then hasRestriction = true break end
+        end
+        if not hasRestriction then return true end
+        if not IsValid(target) or not target:IsPlayer() then return false end
+        for factionName, enabled in pairs(allowed) do
+            if enabled and Factions and Factions[factionName]
+                and GRM.Identity and GRM.Identity.FactionMember
+                and GRM.Identity.FactionMember(Factions[factionName], target) then
                 return true
             end
         end
@@ -147,6 +169,9 @@ end
         local sp = chooseSpawn(cam)
         if not sp then return false, "Для камеры не назначена точка арестованного" end
         local g = group(groupID)
+        if not A.CanUseGroup(target, groupID) then
+            return false, "Эта категория недоступна для фракции задержанного"
+        end
         target.GRM_ArrestOriginalModel = target:GetModel()
         target.GRM_ArrestOriginalSkin = target:GetSkin()
         target.GRM_ArrestOriginalBodygroups = {}
@@ -282,6 +307,12 @@ end
                     local gi, vi = tonumber(group), tonumber(value)
                     if gi and vi then A.Cfg.groups[id].bodygroups[gi] = vi end
                 end
+                A.Cfg.groups[id].allowedFactions = {}
+                for factionName, enabled in pairs(data.allowedFactions or {}) do
+                    if isstring(factionName) and #factionName <= 96 and enabled == true then
+                        A.Cfg.groups[id].allowedFactions[factionName] = true
+                    end
+                end
                 save()
             end
         elseif action == "set_camera_group" then
@@ -402,6 +433,7 @@ if CLIENT then
     local function openGroupEditor(gid, source)
         local ed = table.Copy(source or {})
         ed.bodygroups = istable(ed.bodygroups) and ed.bodygroups or {}
+        ed.allowedFactions = istable(ed.allowedFactions) and ed.allowedFactions or {}
         local w = vgui.Create("DFrame")
         GRM.UI.Track("arrest_group_editor", w)
         w:SetSize(920, 650) w:Center() w:MakePopup() w:SetTitle("") w:ShowCloseButton(false)
@@ -471,6 +503,20 @@ if CLIENT then
                 local hint = label(body, "У этой модели нет настраиваемых bodygroups.", "GRMArrestBody", UI.dim)
                 hint:Dock(TOP) hint:SetTall(40)
             end
+            local factionTitle = label(body, "Допуск категории по фракции задержанного", "GRMArrestHeading", UI.text)
+            factionTitle:Dock(TOP) factionTitle:SetTall(28) factionTitle:DockMargin(0, 12, 0, 4)
+            local factionHint = label(body, "Пустой список — категория доступна всем. Отметьте фракции, которым разрешена эта категория.", "GRMArrestSmall", UI.dim)
+            factionHint:Dock(TOP) factionHint:SetTall(34)
+            local names = {}
+            for factionName in pairs(FactionsData or {}) do names[#names + 1] = factionName end
+            table.sort(names, function(a, b) return tostring(a) < tostring(b) end)
+            for _, factionName in ipairs(names) do
+                local check = vgui.Create("DCheckBoxLabel", body)
+                check:Dock(TOP) check:SetTall(28) check:SetText(tostring(factionName))
+                check:SetFont("GRMArrestBody") check:SetTextColor(UI.text)
+                check:SetValue(ed.allowedFactions[factionName] == true)
+                check.OnChange = function(_, value) ed.allowedFactions[factionName] = value == true end
+            end
         end
         local function refreshPreview()
             local path = string.Trim(model:GetValue() or "")
@@ -492,7 +538,7 @@ if CLIENT then
         local save = button(w, "СОХРАНИТЬ ВНЕШНОСТЬ", UI.green, 40) save:SetPos(640, 550) save:SetSize(230, 40)
         save.DoClick = function()
             sendAction("set_group_data", gid, function()
-                net.WriteTable({ model = model:GetValue(), skin = skin:GetValue(), bodygroups = ed.bodygroups })
+                net.WriteTable({ model = model:GetValue(), skin = skin:GetValue(), bodygroups = ed.bodygroups, allowedFactions = ed.allowedFactions })
             end)
             w:Close()
         end
@@ -532,7 +578,11 @@ if CLIENT then
         for gid, g in pairs(data.groups or {}) do
             local p = card(canvas, 86)
             local name = label(p, tostring(g.name or gid), "GRMArrestHeading", UI.text) name:SetPos(20, 13) name:SetSize(350, 24)
-            local id = label(p, tostring(gid) .. "   •   " .. tostring(g.model or "модель не задана"), "GRMArrestSmall", UI.dim) id:SetPos(20, 42) id:SetSize(510, 22)
+            local allowedNames = {}
+            for factionName, enabled in pairs(g.allowedFactions or {}) do if enabled then allowedNames[#allowedNames + 1] = tostring(factionName) end end
+            table.sort(allowedNames)
+            local accessText = #allowedNames > 0 and ("   •   Допуск: " .. table.concat(allowedNames, ", ")) or "   •   Допуск: все фракции"
+            local id = label(p, tostring(gid) .. "   •   " .. tostring(g.model or "модель не задана") .. accessText, "GRMArrestSmall", UI.dim) id:SetPos(20, 42) id:SetSize(550, 22)
             local edit = button(p, "Настроить внешность", UI.accent, 36) edit:SetPos(585, 22) edit:SetSize(200, 36) edit.DoClick = function() openGroupEditor(gid, g) end
         end
 
@@ -655,6 +705,25 @@ if CLIENT then
         rebuildArrestAccessPanel()
         net.Start("GRM_Arrest_AccessRequest") net.SendToServer()
         timer.Simple(0.6, rebuildArrestAccessPanel)
+    end)
+
+    hook.Add("PostDrawTranslucentRenderables", "GRM_Arrest_Zones", function()
+        local lp = LocalPlayer()
+        if not IsValid(lp) then return end
+        for _, camEnt in ipairs(ents.FindByClass("grm_arrest_camera")) do
+            if IsValid(camEnt) and lp:GetPos():DistToSqr(camEnt:GetPos()) <= 900 * 900 then
+                local pos = camEnt:GetPos()
+                local color = Color(240, 150, 70, 180)
+                render.DrawWireframeSphere(pos, 52, 16, 8, color, true)
+                render.DrawLine(pos + Vector(0, 0, 2), pos + Vector(0, 0, 72), color, true)
+                local ang = Angle(0, lp:EyeAngles().y - 90, 90)
+                cam.Start3D2D(pos + Vector(0, 0, 78), ang, 0.08)
+                    draw.RoundedBox(5, -125, -25, 250, 50, Color(12, 17, 25, 220))
+                    draw.SimpleText("ЗОНА АРЕСТА", "GRMArrestSmall", 0, -9, color, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText(camEnt:GetCameraName() or "Камера", "GRMArrestSmall", 0, 10, UI.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                cam.End3D2D()
+            end
+        end
     end)
 
     hook.Add("HUDPaint", "GRM_Arrest_Label", function()
