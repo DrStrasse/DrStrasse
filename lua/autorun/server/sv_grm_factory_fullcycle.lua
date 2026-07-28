@@ -823,6 +823,8 @@ net.Receive(NET_QTE_ABORT, function(_, ply)
     if session and session.owner == ply then finishQTE(session, false, "Мини-игра прервана") end
 end)
 
+local scheduleFactorySave
+
 local function scrapTake(ply, bin, amount)
     if not canUse(ply, bin) then return end
     amount = math.Clamp(math.floor(tonumber(amount) or 1), 1, 10)
@@ -1018,7 +1020,7 @@ end)
 
 -- Единая автоперсистентность оборудования завода. Factory entities не входят
 -- в универсальный /permadd: здесь сохраняется ещё и stock/nextRefill.
-local function scheduleFactorySave(reason)
+scheduleFactorySave = function(reason)
     if FC.LoadingMap then return end
     timer.Create("GRM_FC_SaveSoon", 1, 1, function()
         if not FC.LoadingMap and FC.SaveMap then FC.SaveMap(nil, reason or "mutation") end
