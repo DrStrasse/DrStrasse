@@ -190,9 +190,32 @@ if SERVER then
             local rec = { id = id ~= "" and id or ("cam_" .. os.time()), name = id ~= "" and id or "Камера", group = "criminals", pos = vdata(tr.HitPos), ang = adata(Angle(0, ply:EyeAngles().y, 0)), spawnID = "" }
             A.Cfg.cameras[#A.Cfg.cameras + 1] = rec
             spawnCamera(rec) save()
+        elseif action == "delete_camera" then
+            for i = #A.Cfg.cameras, 1, -1 do
+                local cam = A.Cfg.cameras[i]
+                if tostring(cam.id) == id then
+                    for _, ent in ipairs(ents.FindByClass("grm_arrest_camera")) do
+                        if ent.GRMArrestID == cam.id then ent:Remove() end
+                    end
+                    table.remove(A.Cfg.cameras, i)
+                    break
+                end
+            end
+            save()
         elseif action == "add_spawn" then
             local rec = { id = id ~= "" and id or ("spawn_" .. os.time()), name = id ~= "" and id or "Точка ареста", pos = vdata(ply:GetPos()), ang = adata(ply:EyeAngles()) }
             A.Cfg.spawns[#A.Cfg.spawns + 1] = rec save()
+        elseif action == "delete_spawn" then
+            for i = #A.Cfg.spawns, 1, -1 do
+                if tostring(A.Cfg.spawns[i].id) == id then
+                    table.remove(A.Cfg.spawns, i)
+                    break
+                end
+            end
+            for _, cam in ipairs(A.Cfg.cameras or {}) do
+                if tostring(cam.spawnID or "") == id then cam.spawnID = "" end
+            end
+            save()
         elseif action == "set_group" then
             local name = string.Trim(net.ReadString() or "")
             local model = string.Trim(net.ReadString() or "")
@@ -413,7 +436,7 @@ if CLIENT then
 
         sectionTitle(canvas, "Камеры и точки содержания", "Камера определяет категорию, точка — место появления арестованного.")
         for _, cam in ipairs(data.cameras or {}) do
-            local p = card(canvas, 116)
+            local p = card(canvas, 150)
             local title = label(p, "КАМЕРА  " .. tostring(cam.id), "GRMArrestHeading", UI.text) title:SetPos(20, 12) title:SetSize(300, 24)
             local meta = label(p, "Группа: " .. tostring(cam.group or "criminals") .. "   •   Точка: " .. tostring(cam.spawnID or "не назначена"), "GRMArrestSmall", UI.dim) meta:SetPos(20, 40) meta:SetSize(470, 22)
             local combo = vgui.Create("DComboBox", p) combo:SetPos(505, 12) combo:SetSize(280, 32) combo:SetValue("Выбрать группу")
@@ -424,11 +447,31 @@ if CLIENT then
             setSpawn.DoClick = function()
                 local menu = DermaMenu()
                 for _, sp in ipairs(data.spawns or {}) do menu:AddOption(tostring(sp.name or sp.id), function() sendAction("assign_camera_spawn", cam.id, function() net.WriteString(sp.id) end) end) end
+                menu:AddOption("Снять привязку", function() sendAction("assign_camera_spawn", cam.id, function() net.WriteString("") end) end)
                 menu:Open()
+            end
+            local remove = button(p, "Удалить камеру", UI.red, 30) remove:SetPos(505, 94) remove:SetSize(280, 30)
+            remove.DoClick = function()
+                Derma_Query("Удалить камеру «" .. tostring(cam.id) .. "»?", "Подтверждение удаления", "Удалить", function() sendAction("delete_camera", cam.id) end, "Отмена")
             end
         end
         if #(data.cameras or {}) == 0 then
             local empty = card(canvas, 70) local txt = label(empty, "Камеры ещё не созданы. Нажмите «Камера в прицеле», стоя у нужной двери.", "GRMArrestBody", UI.dim) txt:SetPos(20, 22) txt:SetSize(760, 28)
+        end
+
+        sectionTitle(canvas, "Точки арестованных", "Удаление точки автоматически снимает её привязку со всех камер.")
+        if #(data.spawns or {}) == 0 then
+            local empty = card(canvas, 70) local txt = label(empty, "Точки ещё не созданы. Нажмите «Точка арестованного».", "GRMArrestBody", UI.dim) txt:SetPos(20, 22) txt:SetSize(760, 28)
+        else
+            for _, sp in ipairs(data.spawns or {}) do
+                local p = card(canvas, 82)
+                local title = label(p, "ТОЧКА  " .. tostring(sp.id), "GRMArrestHeading", UI.text) title:SetPos(20, 13) title:SetSize(450, 24)
+                local meta = label(p, tostring(sp.name or "Точка арестованного"), "GRMArrestSmall", UI.dim) meta:SetPos(20, 43) meta:SetSize(450, 20)
+                local remove = button(p, "Удалить точку", UI.red, 34) remove:SetPos(585, 22) remove:SetSize(200, 34)
+                remove.DoClick = function()
+                    Derma_Query("Удалить точку «" .. tostring(sp.id) .. "»? Привязка камер будет снята.", "Подтверждение удаления", "Удалить", function() sendAction("delete_spawn", sp.id) end, "Отмена")
+                end
+            end
         end
 
         sectionTitle(canvas, "Новая группа", "Создайте собственную категорию, затем настройте её внешний вид.")
