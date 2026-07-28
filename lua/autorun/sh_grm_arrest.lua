@@ -198,7 +198,7 @@ end
         local id = string.Trim(net.ReadString() or "")
         if action == "add_camera" then
             local tr = ply:GetEyeTrace()
-            local rec = { id = id ~= "" and id or ("cam_" .. os.time()), name = id ~= "" and id or "Камера", group = "criminals", pos = vdata(tr.HitPos), ang = adata(Angle(0, ply:EyeAngles().y, 0)), spawnID = "" }
+            local rec = { id = id ~= "" and id or ("cam_" .. os.time()), name = id ~= "" and id or ("Камера " .. tostring(#A.Cfg.cameras + 1)), group = "criminals", pos = vdata(tr.HitPos), ang = adata(Angle(0, ply:EyeAngles().y, 0)), spawnID = "" }
             A.Cfg.cameras[#A.Cfg.cameras + 1] = rec
             spawnCamera(rec) save()
         elseif action == "delete_camera" then
@@ -214,7 +214,7 @@ end
             end
             save()
         elseif action == "add_spawn" then
-            local rec = { id = id ~= "" and id or ("spawn_" .. os.time()), name = id ~= "" and id or "Точка ареста", pos = vdata(ply:GetPos()), ang = adata(ply:EyeAngles()) }
+            local rec = { id = id ~= "" and id or ("spawn_" .. os.time()), name = id ~= "" and id or ("Точка ареста " .. tostring(#A.Cfg.spawns + 1)), pos = vdata(ply:GetPos()), ang = adata(ply:EyeAngles()) }
             A.Cfg.spawns[#A.Cfg.spawns + 1] = rec save()
         elseif action == "delete_spawn" then
             for i = #A.Cfg.spawns, 1, -1 do
@@ -499,7 +499,10 @@ if CLIENT then
             local setSpawn = button(p, "Привязать точку", UI.green, 30) setSpawn:SetPos(650, 52) setSpawn:SetSize(135, 30)
             setSpawn.DoClick = function()
                 local menu = DermaMenu()
-                for _, sp in ipairs(data.spawns or {}) do menu:AddOption(tostring(sp.name or sp.id), function() sendAction("assign_camera_spawn", cam.id, function() net.WriteString(sp.id) end) end) end
+                for index, sp in ipairs(data.spawns or {}) do
+                    local caption = string.format("Точка %d  •  %s  [%s]", index, tostring(sp.name or "Точка ареста"), tostring(sp.id or "—"))
+                    menu:AddOption(caption, function() sendAction("assign_camera_spawn", cam.id, function() net.WriteString(sp.id) end) end)
+                end
                 menu:AddOption("Снять привязку", function() sendAction("assign_camera_spawn", cam.id, function() net.WriteString("") end) end)
                 menu:Open()
             end
@@ -516,10 +519,10 @@ if CLIENT then
         if #(data.spawns or {}) == 0 then
             local empty = card(canvas, 70) local txt = label(empty, "Точки ещё не созданы. Нажмите «Точка арестованного».", "GRMArrestBody", UI.dim) txt:SetPos(20, 22) txt:SetSize(760, 28)
         else
-            for _, sp in ipairs(data.spawns or {}) do
+            for index, sp in ipairs(data.spawns or {}) do
                 local p = card(canvas, 82)
-                local title = label(p, "ТОЧКА  " .. tostring(sp.id), "GRMArrestHeading", UI.text) title:SetPos(20, 13) title:SetSize(450, 24)
-                local meta = label(p, tostring(sp.name or "Точка арестованного"), "GRMArrestSmall", UI.dim) meta:SetPos(20, 43) meta:SetSize(450, 20)
+                local title = label(p, "ТОЧКА " .. tostring(index) .. "  •  " .. tostring(sp.id), "GRMArrestHeading", UI.text) title:SetPos(20, 13) title:SetSize(450, 24)
+                local meta = label(p, tostring(sp.name or ("Точка ареста " .. tostring(index))), "GRMArrestSmall", UI.dim) meta:SetPos(20, 43) meta:SetSize(450, 20)
                 local remove = button(p, "Удалить точку", UI.red, 34) remove:SetPos(585, 22) remove:SetSize(200, 34)
                 remove.DoClick = function()
                     Derma_Query("Удалить точку «" .. tostring(sp.id) .. "»? Привязка камер будет снята.", "Подтверждение удаления", "Удалить", function() sendAction("delete_spawn", sp.id) end, "Отмена")
