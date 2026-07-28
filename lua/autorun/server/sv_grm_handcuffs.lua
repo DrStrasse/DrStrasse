@@ -359,6 +359,24 @@ function HC.IsCuffed(ply)
     return IsValid(ply) and ply:GetNWBool("GRM_Cuffed", false)
 end
 
+function HC.StunPlayer(actor, target, seconds)
+    if not IsValid(target) or not target:IsPlayer() then return false end
+    seconds = math.Clamp(tonumber(seconds) or 4, 1, 12)
+    target.GRM_StunnedUntil = math.max(tonumber(target.GRM_StunnedUntil) or 0, CurTime() + seconds)
+    target:SetNWBool("GRM_Stunned", true)
+    target:SetNWFloat("GRM_StunnedUntil", target.GRM_StunnedUntil)
+    target:EmitSound("weapons/stunstick/stunstick_impact1.wav", 75, 100, 1)
+    if GRM.Notify then GRM.Notify(target, "Вы оглушены электродубинкой.", 255, 180, 90) end
+    timer.Create("GRM_Stun_" .. target:EntIndex(), 0.2, 0, function()
+        if not IsValid(target) then timer.Remove("GRM_Stun_" .. target:EntIndex()) return end
+        if CurTime() < (target.GRM_StunnedUntil or 0) then return end
+        target:SetNWBool("GRM_Stunned", false)
+        target:SetNWFloat("GRM_StunnedUntil", 0)
+        timer.Remove("GRM_Stun_" .. target:EntIndex())
+    end)
+    return true
+end
+
 
 -- ============================================================
 -- ОРУЖИЕ ПРИ СКОВЫВАНИИ
@@ -1034,6 +1052,11 @@ hook.Add("PlayerSwitchWeapon", "GRM_Handcuffs_ForceCuffedWeapon", function(ply, 
 end)
 
 hook.Add("StartCommand", "GRM_Handcuffs_BlockControls", function(ply, cmd)
+    if IsValid(ply) and ply:GetNWBool("GRM_Stunned", false) then
+        cmd:ClearMovement()
+        cmd:ClearButtons()
+        return
+    end
     if not HC.IsCuffed(ply) then return end
 
     cmd:RemoveKey(IN_ATTACK)
@@ -1045,9 +1068,9 @@ hook.Add("StartCommand", "GRM_Handcuffs_BlockControls", function(ply, cmd)
 
     -- Задержанный не может сам нажимать E для взаимодействия,
     -- освобождения, подбора или передачи. Освободить может только другой игрок.
-    if cfg().CanSelfRelease == false then
-        cmd:RemoveKey(IN_USE)
-    end
+    -- E не должен позволять выбирать сиденья, открывать Q-объекты или
+    -- взаимодействовать с дверями/пропами во время наручников.
+    cmd:RemoveKey(IN_USE)
 end)
 
 hook.Add("SetupMove", "GRM_Handcuffs_Move", function(ply, mv, cmd)
@@ -1091,14 +1114,25 @@ hook.Add("PlayerCanPickupWeapon", "GRM_Handcuffs_NoWeaponPickup", function(ply)
     if HC.IsCuffed(ply) then return false end
 end)
 
+hook.Add("PlayerSpawnProp", "GRM_Handcuffs_NoPropSpawn", function(ply)
+    if HC.IsCuffed(ply) or ply:GetNWBool("GRM_Stunned", false) then return false end
+end)
+hook.Add("PlayerSpawnSENT", "GRM_Handcuffs_NoSentSpawn", function(ply)
+    if HC.IsCuffed(ply) or ply:GetNWBool("GRM_Stunned", false) then return false end
+end)
+hook.Add("PlayerSpawnSWEP", "GRM_Handcuffs_NoSWEPSpawn", function(ply)
+    if HC.IsCuffed(ply) or ply:GetNWBool("GRM_Stunned", false) then return false end
+end)
+hook.Add("PlayerSpawnVehicle", "GRM_Handcuffs_NoVehicleSpawn", function(ply)
+    if HC.IsCuffed(ply) or ply:GetNWBool("GRM_Stunned", false) then return false end
+end)
+
 hook.Add("PlayerUse", "GRM_Handcuffs_ReleaseOrTransfer", function(ply, ent)
     if not IsValid(ply) or not IsValid(ent) then return end
 
-    -- Задержанный не может сам пользоваться E, развязывать себя/других,
-    -- открывать двери, передавать задержанных и т.п.
-    if HC.IsCuffed(ply) and cfg().CanSelfRelease == false then
-        return false
-    end
+    -- Задержанный не может сам пользоваться E: это закрывает смену
+    -- сиденья, выход из транспорта, двери, Q-объекты и подбор предметов.
+    if HC.IsCuffed(ply) then return false end
 
     -- Посадка/высадка задержанных в обычный транспорт, simfphys и LVS.
     if HC.TryHandleVehicleUse(ply, ent) then

@@ -313,6 +313,9 @@ if SERVER then
 
     -- ── проверки (суперадмин всегда может) ──────────────────
     function QM.CanOpenQ(ply)
+        if IsValid(ply) and (ply:GetNWBool("GRM_Cuffed", false) or ply:GetNWBool("GRM_Stunned", false)) then
+            return false
+        end
         if IsValid(ply) and ply:IsSuperAdmin() then return true end
         return QM.Cfg.playersQ == true
     end
@@ -323,6 +326,9 @@ if SERVER then
     }
 
     function QM.CanSpawn(ply, what)
+        if IsValid(ply) and (ply:GetNWBool("GRM_Cuffed", false) or ply:GetNWBool("GRM_Stunned", false)) then
+            return false, "Игрок ограничен наручниками/оглушением"
+        end
         if IsValid(ply) and ply:IsSuperAdmin() then return true end
         local flag = SpawnFlags[tostring(what or "")]
         if not flag then return true end
@@ -330,6 +336,9 @@ if SERVER then
     end
 
     function QM.CanUseTool(ply, tool)
+        if IsValid(ply) and (ply:GetNWBool("GRM_Cuffed", false) or ply:GetNWBool("GRM_Stunned", false)) then
+            return false, "Игрок ограничен наручниками/оглушением"
+        end
         if IsValid(ply) and ply:IsSuperAdmin() then return true end
         tool = string.lower(tostring(tool or ""))
         if tool == "" then return true end
@@ -828,6 +837,8 @@ if CLIENT then
     local function isAdmin() return IsValid(LocalPlayer()) and LocalPlayer():IsSuperAdmin() end
 
     local function qBlockedForMe()
+        local lp = LocalPlayer()
+        if IsValid(lp) and (lp:GetNWBool("GRM_Cuffed", false) or lp:GetNWBool("GRM_Stunned", false)) then return true end
         local c = cfg()
         if c.playersQ ~= false then return false end
         if isAdmin() and c.adminsToo ~= true then return false end
