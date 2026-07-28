@@ -44,16 +44,25 @@ local function load()
     A.Cfg.spawns = istable(A.Cfg.spawns) and A.Cfg.spawns or {}
 end
 
-local function group(id)
-    return A.Cfg.groups[tostring(id or "")] or A.Cfg.groups.criminals
-end
+    local function group(id)
+        return A.Cfg.groups[tostring(id or "")] or A.Cfg.groups.criminals
+    end
 
-if SERVER then
+    if SERVER then
     util.AddNetworkString("GRM_Arrest_Admin")
     util.AddNetworkString("GRM_Arrest_AdminData")
     util.AddNetworkString("GRM_Arrest_AdminAction")
+    util.AddNetworkString("GRM_Arrest_Event")
 
     load()
+
+    local function announce(event, targetName, groupName)
+        net.Start("GRM_Arrest_Event")
+            net.WriteString(event or "")
+            net.WriteString(targetName or "")
+            net.WriteString(groupName or "")
+        net.Broadcast()
+    end
 
     local function vec(t) return Vector(tonumber(t.x) or 0, tonumber(t.y) or 0, tonumber(t.z) or 0) end
     local function ang(t) return Angle(tonumber(t.p) or 0, tonumber(t.y) or 0, tonumber(t.r) or 0) end
@@ -132,6 +141,7 @@ if SERVER then
         target:Freeze(false)
         if GRM.Notify then GRM.Notify(target, "Вы арестованы: " .. tostring(g.name), 255, 150, 100) end
         actor:ChatPrint("[Арест] Арестованный отправлен в: " .. tostring(g.name))
+        announce("arrest", target:Nick(), g.name or groupID or "Арестованный")
         return true
     end
 
@@ -147,6 +157,7 @@ if SERVER then
         target.GRM_ArrestOriginalSkin = nil
         target.GRM_ArrestOriginalBodygroups = nil
         if GRM.Notify then GRM.Notify(target, "Вы освобождены.", 120, 220, 140) end
+        announce("unarrest", target:Nick(), "")
         return true
     end
 
@@ -267,6 +278,19 @@ if SERVER then
 end
 
 if CLIENT then
+    net.Receive("GRM_Arrest_Event", function()
+        local event = net.ReadString()
+        local targetName = net.ReadString()
+        local groupName = net.ReadString()
+        if event == "arrest" then
+            notification.AddLegacy("Арестован: " .. targetName .. "  •  помещён в камеру: " .. groupName, NOTIFY_ERROR, 7)
+            surface.PlaySound("buttons/button10.wav")
+        elseif event == "unarrest" then
+            notification.AddLegacy("Освобождён: " .. targetName, NOTIFY_GENERIC, 6)
+            surface.PlaySound("buttons/button14.wav")
+        end
+    end)
+
     surface.CreateFont("GRMArrestTitle", { font = "Roboto", size = 22, weight = 900, extended = true })
     surface.CreateFont("GRMArrestHeading", { font = "Roboto", size = 16, weight = 800, extended = true })
     surface.CreateFont("GRMArrestBody", { font = "Roboto", size = 14, weight = 500, extended = true })

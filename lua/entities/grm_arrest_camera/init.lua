@@ -3,13 +3,12 @@ AddCSLuaFile("shared.lua")
 include("shared.lua")
 
 function ENT:Initialize()
-    self:SetModel("models/props_wasteland/prison_bed001b.mdl")
-    self:PhysicsInit(SOLID_VPHYSICS)
-    self:SetMoveType(MOVETYPE_VPHYSICS)
-    self:SetSolid(SOLID_VPHYSICS)
+    -- Камера является невидимой точкой конфигурации. Физическая модель
+    -- намеренно не создаётся: визуальный маркер камеры больше не нужен.
+    self:SetNoDraw(true)
+    self:SetMoveType(MOVETYPE_NONE)
+    self:SetSolid(SOLID_NONE)
     self:SetUseType(SIMPLE_USE)
-    local phys = self:GetPhysicsObject()
-    if IsValid(phys) then phys:EnableMotion(false) phys:Sleep() end
 end
 
 function ENT:Use(ply)
