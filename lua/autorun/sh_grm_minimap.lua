@@ -227,7 +227,10 @@ else
         local mn, mx = worldBounds()
         local span = math.max(mx.x - mn.x, mx.y - mn.y)
         -- Камера ниже: меньше «дальнего» слоя и больше читаемых деталей
-        local center = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mx.z + math.max(800, span * 0.08))
+        -- Камера должна находиться выше максимальной геометрии карты.
+        -- Слишком низкая позиция попадает внутрь зданий и даёт пустой RT.
+        local cameraHeight = math.max(2500, span * 0.75)
+        local center = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mx.z + cameraHeight)
         render.PushRenderTarget(mapRT)
         render.Clear(7, 12, 19, 255, true, true)
         render.RenderView({
