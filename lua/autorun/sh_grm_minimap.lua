@@ -127,6 +127,15 @@ if SERVER then
     end)
 else
     local data = { districts = {}, points = {} }
+    local MUI = { bg = Color(10, 15, 23, 253), head = Color(19, 28, 41), card = Color(24, 35, 51), card2 = Color(29, 43, 61), line = Color(55, 75, 99), text = Color(235, 242, 250), dim = Color(150, 169, 190), blue = Color(67, 145, 240), green = Color(65, 195, 125), red = Color(215, 75, 84), orange = Color(235, 164, 70) }
+    surface.CreateFont("GRMMM_Title", { font = "Roboto", size = 21, weight = 900, extended = true })
+    surface.CreateFont("GRMMM_Body", { font = "Roboto", size = 13, weight = 600, extended = true })
+    surface.CreateFont("GRMMM_Small", { font = "Roboto", size = 11, weight = 500, extended = true })
+    local function styleButton(b, color)
+        b:SetFont("GRMMM_Body") b:SetTextColor(MUI.text)
+        b.Paint = function(self, w, h) local c = color or MUI.card2; if self:IsHovered() then c = Color(math.min(c.r + 18, 255), math.min(c.g + 18, 255), math.min(c.b + 18, 255)) end draw.RoundedBox(6, 0, 0, w, h, c) end
+        return b
+    end
     local frame
     local function worldBounds()
         local w = game.GetWorld()
@@ -167,12 +176,14 @@ else
     end)
     net.Receive("GRM_Minimap_Open", function()
         if IsValid(frame) then frame:Remove() end
-        frame = vgui.Create("DFrame") frame:SetSize(760, 620) frame:Center() frame:MakePopup() frame:SetTitle("GRM — Районы и мини-карта")
-        local name = vgui.Create("DTextEntry", frame) name:SetPos(18, 42) name:SetSize(300, 28) name:SetPlaceholderText("Название района/точки")
-        local radius = vgui.Create("DNumberWang", frame) radius:SetPos(328, 42) radius:SetSize(110, 28) radius:SetMin(100) radius:SetMax(10000) radius:SetValue(500)
-        local addD = vgui.Create("DButton", frame) addD:SetPos(448, 42) addD:SetSize(140, 28) addD:SetText("+ Район здесь") addD.DoClick = function() send("add_district", function() net.WriteString(name:GetValue()); net.WriteUInt(radius:GetValue(), 16) end) end
-        local addP = vgui.Create("DButton", frame) addP:SetPos(594, 42) addP:SetSize(140, 28) addP:SetText("+ Точка здесь") addP.DoClick = function() send("add_point", function() net.WriteString(name:GetValue()); net.WriteUInt(radius:GetValue(), 16) end) end
-        local sc = vgui.Create("DScrollPanel", frame) sc:SetPos(18, 82) sc:SetSize(716, 500)
+        frame = vgui.Create("DFrame") frame:SetSize(980, 720) frame:Center() frame:MakePopup() frame:SetTitle("") frame:ShowCloseButton(false) frame:SetDeleteOnClose(true)
+        frame.Paint = function(_, w, h) draw.RoundedBox(10, 0, 0, w, h, MUI.bg); draw.RoundedBoxEx(10, 0, 0, w, 64, MUI.head, true, true, false, false); draw.SimpleText("GRM  /  КАРТА И ТЕРРИТОРИИ", "GRMMM_Small", 22, 18, MUI.blue, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER); draw.SimpleText("Районы, точки захвата и навигация", "GRMMM_Title", 22, 43, MUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
+        local close = styleButton(vgui.Create("DButton", frame), MUI.red) close:SetPos(936, 16) close:SetSize(30, 30) close:SetText("×") close.DoClick = function() frame:Close() end
+        local name = vgui.Create("DTextEntry", frame) name:SetPos(22, 82) name:SetSize(370, 34) name:SetFont("GRMMM_Body") name:SetPlaceholderText("Название района или точки") name.Paint = function(self, w, h) draw.RoundedBox(6, 0, 0, w, h, MUI.card2); self:DrawTextEntryText(MUI.text, MUI.blue, MUI.text) end
+        local radius = vgui.Create("DNumberWang", frame) radius:SetPos(402, 82) radius:SetSize(120, 34) radius:SetMin(100) radius:SetMax(10000) radius:SetValue(500) radius:SetFont("GRMMM_Body")
+        local addD = styleButton(vgui.Create("DButton", frame), MUI.blue) addD:SetPos(534, 82) addD:SetSize(190, 34) addD:SetText("+  ДОБАВИТЬ РАЙОН") addD.DoClick = function() send("add_district", function() net.WriteString(name:GetValue()); net.WriteUInt(radius:GetValue(), 16) end) end
+        local addP = styleButton(vgui.Create("DButton", frame), MUI.orange) addP:SetPos(734, 82) addP:SetSize(220, 34) addP:SetText("+  ДОБАВИТЬ ТОЧКУ") addP.DoClick = function() send("add_point", function() net.WriteString(name:GetValue()); net.WriteUInt(radius:GetValue(), 16) end) end
+        local sc = vgui.Create("DScrollPanel", frame) sc:SetPos(22, 132) sc:SetSize(932, 550)
         local function editAccess(point)
             local w = vgui.Create("DFrame") w:SetSize(420, 520) w:Center() w:MakePopup() w:SetTitle("Доступ к точке: " .. tostring(point.name))
             local selected = table.Copy(point.allowedFactions or {})
@@ -187,18 +198,18 @@ else
         local function rebuild()
             if not IsValid(sc) or not IsValid(frame) then return end
             sc:Clear()
-            local title = vgui.Create("DLabel", sc) title:Dock(TOP) title:SetTall(30) title:SetText("РАЙОНЫ")
+            local title = vgui.Create("DLabel", sc) title:Dock(TOP) title:SetTall(34) title:SetFont("GRMMM_Body") title:SetTextColor(MUI.blue) title:SetText("РАЙОНЫ")
             for _, d in ipairs(data.districts or {}) do
-                local row = vgui.Create("DPanel", sc) row:Dock(TOP) row:SetTall(34) row:DockMargin(0, 0, 0, 4)
-                local l = vgui.Create("DLabel", row) l:Dock(FILL) l:SetText("" .. tostring(d.name) .. "  |  радиус " .. tostring(d.radius) .. "  |  " .. tostring(d.id))
-                local b = vgui.Create("DButton", row) b:Dock(RIGHT) b:SetWide(100) b:SetText("Удалить") b.DoClick = function() send("delete_district", function() net.WriteString(d.id) end) end
+                local row = vgui.Create("DPanel", sc) row:Dock(TOP) row:SetTall(42) row:DockMargin(0, 0, 0, 5) row.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, MUI.card) end
+                local l = vgui.Create("DLabel", row) l:Dock(FILL) l:DockMargin(14, 0, 0, 0) l:SetFont("GRMMM_Body") l:SetTextColor(MUI.text) l:SetText(tostring(d.name) .. "   •   радиус " .. tostring(d.radius) .. "   •   " .. tostring(d.id))
+                local b = styleButton(vgui.Create("DButton", row), MUI.red) b:Dock(RIGHT) b:DockMargin(5, 5, 5, 5) b:SetWide(110) b:SetText("Удалить") b.DoClick = function() send("delete_district", function() net.WriteString(d.id) end) end
             end
-            local pt = vgui.Create("DLabel", sc) pt:Dock(TOP) pt:SetTall(34) pt:SetText("ТОЧКИ ЗАХВАТА")
+            local pt = vgui.Create("DLabel", sc) pt:Dock(TOP) pt:SetTall(40) pt:SetFont("GRMMM_Body") pt:SetTextColor(MUI.orange) pt:SetText("ТОЧКИ ЗАХВАТА")
             for _, p in ipairs(data.points or {}) do
-                local row = vgui.Create("DPanel", sc) row:Dock(TOP) row:SetTall(34) row:DockMargin(0, 0, 0, 4)
-                local l = vgui.Create("DLabel", row) l:Dock(FILL) l:SetText(tostring(p.name) .. "  |  радиус: " .. tostring(p.radius or 180) .. "  |  владелец: " .. (p.owner ~= "" and p.owner or "свободна") .. "  |  захват: " .. (p.capturing ~= "" and tostring(p.capturing) or "нет") .. "  |  " .. tostring(p.id))
-                local access = vgui.Create("DButton", row) access:Dock(RIGHT) access:SetWide(100) access:SetText("Доступ") access.DoClick = function() editAccess(p) end
-                local b = vgui.Create("DButton", row) b:Dock(RIGHT) b:SetWide(100) b:SetText("Удалить") b.DoClick = function() send("delete_point", function() net.WriteString(p.id) end) end
+                local row = vgui.Create("DPanel", sc) row:Dock(TOP) row:SetTall(48) row:DockMargin(0, 0, 0, 5) row.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, MUI.card) end
+                local l = vgui.Create("DLabel", row) l:Dock(FILL) l:DockMargin(14, 0, 0, 0) l:SetFont("GRMMM_Small") l:SetTextColor(MUI.text) l:SetText(tostring(p.name) .. "   •   R " .. tostring(p.radius or 180) .. "   •   владелец: " .. (p.owner ~= "" and p.owner or "свободна") .. "   •   захват: " .. (p.capturing ~= "" and tostring(p.capturing) or "нет"))
+                local access = styleButton(vgui.Create("DButton", row), MUI.blue) access:Dock(RIGHT) access:DockMargin(5, 7, 0, 7) access:SetWide(110) access:SetText("Доступ") access.DoClick = function() editAccess(p) end
+                local b = styleButton(vgui.Create("DButton", row), MUI.red) b:Dock(RIGHT) b:DockMargin(5, 7, 5, 7) b:SetWide(110) b:SetText("Удалить") b.DoClick = function() send("delete_point", function() net.WriteString(p.id) end) end
             end
         end
         timer.Simple(0, rebuild)
