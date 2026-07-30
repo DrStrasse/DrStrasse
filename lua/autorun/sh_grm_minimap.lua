@@ -420,7 +420,7 @@ else
                 local ax, ay = ScrW() / 2, ScrH() - 105
                 surface.SetDrawColor(255, 220, 90, 255)
                 surface.DrawPoly({ { x = ax + dir.x * 22, y = ay + dir.y * 22 }, { x = ax - dir.x * 12 + side.x * 10, y = ay - dir.y * 12 + side.y * 10 }, { x = ax - dir.x * 12 - side.x * 10, y = ay - dir.y * 12 - side.y * 10 } })
-                draw.SimpleText("GPS: " .. tostring(point.name) .. "  •  " .. math.floor(lp:GetPos():Distance(target)) .. " м", "DermaDefaultBold", ScrW() / 2, ScrH() - 70, Color(255, 220, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                draw.SimpleText("GPS: " .. tostring(point.name) .. "  •  " .. math.floor(lp:GetPos():Distance(target)) .. " юн.", "DermaDefaultBold", ScrW() / 2, ScrH() - 70, Color(255, 220, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                 break
             end
         end
