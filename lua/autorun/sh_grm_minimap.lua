@@ -208,7 +208,8 @@ else
         mapSnapshotReady = true
         local mn, mx = worldBounds()
         local span = math.max(mx.x - mn.x, mx.y - mn.y)
-        local center = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mx.z + math.max(1200, span * 0.75))
+        -- Камера ниже: меньше «дальнего» слоя и больше читаемых деталей
+        local center = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mx.z + math.max(1200, span * 0.35))
         render.PushRenderTarget(mapRT)
         render.Clear(7, 12, 19, 255, true, true)
         render.RenderView({
