@@ -1,4 +1,4 @@
--- GRM Minimap / districts / capture points v0.1
+-- GRM GPS points / districts v0.2
 if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Minimap = GRM.Minimap or {}
@@ -9,7 +9,6 @@ if SERVER then
     util.AddNetworkString("GRM_Minimap_Data")
     util.AddNetworkString("GRM_Minimap_Open")
     util.AddNetworkString("GRM_Minimap_Action")
-    util.AddNetworkString("GRM_Minimap_CaptureEvent")
     MM.Data = MM.Data or { districts = {}, points = {}, overview = nil }
 
     local function save() file.Write(MM.File, util.TableToJSON(MM.Data, true)) end
@@ -28,7 +27,7 @@ if SERVER then
     end
     local function nextID(prefix) return prefix .. "_" .. os.time() .. "_" .. math.random(100, 999) end
     function MM.AddPoint(ply, name, pointPos, radius)
-        MM.Data.points[#MM.Data.points + 1] = { id = nextID("point"), name = string.sub(string.Trim(name or "Точка захвата"), 1, 48), pos = { x = pointPos.x, y = pointPos.y, z = pointPos.z }, radius = math.Clamp(tonumber(radius) or 180, 100, 2000), capture = 0, capturing = "", owner = "", allowedFactions = {} }
+        MM.Data.points[#MM.Data.points + 1] = { id = nextID("point"), name = string.sub(string.Trim(name or "GPS-точка"), 1, 48), pos = { x = pointPos.x, y = pointPos.y, z = pointPos.z }, radius = math.Clamp(tonumber(radius) or 180, 100, 2000), capture = 0, capturing = "", owner = "", allowedFactions = {} }
         save(); send(); return true
     end
     function MM.AddDistrict(ply, name, center, radius)
@@ -83,55 +82,6 @@ if SERVER then
         return Vector(c.x or 0, c.y or 0, point.z or 0):DistToSqr(point) <= (tonumber(district.radius) or 500)^2
     end
 
-    timer.Create("GRM_Minimap_CaptureTick", 1, 0, function()
-        local changed = false
-        for _, point in ipairs(MM.Data.points or {}) do
-            point.radius = tonumber(point.radius) or 180
-            local groups, count = {}, 0
-            local center = Vector(point.pos.x, point.pos.y, point.pos.z)
-            for _, ply in ipairs(player.GetAll()) do
-                if IsValid(ply) and ply:Alive() and ply:GetPos():DistToSqr(center) <= point.radius * point.radius then
-                    local fac = factionOf(ply)
-                    local allowed = point.allowedFactions or {}
-                    local restricted = false
-                    for _, enabled in pairs(allowed) do if enabled == true then restricted = true break end end
-                    if fac ~= "" and (not restricted or allowed[fac] == true) then groups[fac] = (groups[fac] or 0) + 1; count = count + 1 end
-                end
-            end
-            local only, groupCount = nil, 0
-            for fac in pairs(groups) do only = fac; groupCount = groupCount + 1 end
-            if count > 0 and groupCount == 1 then
-                point.capture = math.min(30, (tonumber(point.capture) or 0) + 1)
-                point.capturing = only
-                if point.capture >= 30 and point.owner ~= only then
-                    point.owner = only
-                    changed = true
-                    net.Start("GRM_Minimap_CaptureEvent")
-                        net.WriteString(tostring(point.name or "Точка"))
-                        net.WriteString(tostring(only))
-                    net.Broadcast()
-                end
-            elseif groupCount > 1 then
-                point.capture = math.max(0, (tonumber(point.capture) or 0) - 2)
-                point.capturing = "Оспаривается"
-            else
-                point.capturing = ""
-            end
-        end
-        for _, district in ipairs(MM.Data.districts or {}) do
-            local scores = {}
-            for _, point in ipairs(MM.Data.points or {}) do
-                local p = Vector(point.pos.x, point.pos.y, point.pos.z)
-                if insideDistrict(p, district) and tostring(point.owner or "") ~= "" then scores[point.owner] = (scores[point.owner] or 0) + 1 end
-            end
-            local winner, best = "", 0
-            for faction, score in pairs(scores) do if score > best then winner, best = faction, score elseif score == best then winner = "" end end
-            if district.owner ~= winner then district.owner = winner; changed = true end
-        end
-        if changed then save() end
-        send()
-    end)
-
     net.Receive("GRM_Minimap_Open", function(_, ply)
         if IsValid(ply) and ply:IsSuperAdmin() then send(ply) net.Start("GRM_Minimap_Open") net.Send(ply) end
     end)
@@ -144,9 +94,9 @@ if SERVER then
             MM.Data.districts[#MM.Data.districts + 1] = { id = nextID("district"), name = name ~= "" and name or "Район", center = pos(ply:GetPos()), radius = radius, color = { r = 70, g = 150, b = 240 } }
             save(); send()
         elseif action == "add_point" then
-            local name = string.sub(string.Trim(net.ReadString() or "Точка захвата"), 1, 48)
+            local name = string.sub(string.Trim(net.ReadString() or "GPS-точка"), 1, 48)
             local radius = math.Clamp(net.ReadUInt(16), 100, 2000)
-            MM.Data.points[#MM.Data.points + 1] = { id = nextID("point"), name = name ~= "" and name or "Точка захвата", pos = pos(ply:GetPos()), radius = radius, capture = 0, capturing = "", owner = "", allowedFactions = {} }
+            MM.Data.points[#MM.Data.points + 1] = { id = nextID("point"), name = name ~= "" and name or "GPS-точка", pos = pos(ply:GetPos()), radius = radius, capture = 0, capturing = "", owner = "", allowedFactions = {} }
             save(); send()
         elseif action == "set_point_access" then
             local id, incoming = net.ReadString(), net.ReadTable() or {}
@@ -282,15 +232,10 @@ else
         render.PopRenderTarget()
     end
     net.Receive("GRM_Minimap_Data", function() data = net.ReadTable() or data; mapSnapshotReady = false; nextMapRender = 0 end)
-    net.Receive("GRM_Minimap_CaptureEvent", function()
-        local pointName, faction = net.ReadString(), net.ReadString()
-        notification.AddLegacy("Точка «" .. pointName .. "» захвачена фракцией: " .. faction, NOTIFY_GENERIC, 6)
-        surface.PlaySound("buttons/button14.wav")
-    end)
     net.Receive("GRM_Minimap_Open", function()
         if IsValid(frame) then frame:Remove() end
         frame = vgui.Create("DFrame") frame:SetSize(980, 720) frame:Center() frame:MakePopup() frame:SetTitle("") frame:ShowCloseButton(false) frame:SetDeleteOnClose(true)
-        frame.Paint = function(_, w, h) draw.RoundedBox(10, 0, 0, w, h, MUI.bg); draw.RoundedBoxEx(10, 0, 0, w, 64, MUI.head, true, true, false, false); draw.SimpleText("GRM  /  GPS И ТЕРРИТОРИИ", "GRMMM_Small", 22, 18, MUI.blue, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER); draw.SimpleText("GPS-точки, районы и точки захвата", "GRMMM_Title", 22, 43, MUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
+        frame.Paint = function(_, w, h) draw.RoundedBox(10, 0, 0, w, h, MUI.bg); draw.RoundedBoxEx(10, 0, 0, w, 64, MUI.head, true, true, false, false); draw.SimpleText("GRM  /  GPS", "GRMMM_Small", 22, 18, MUI.blue, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER); draw.SimpleText("GPS-точки и навигация", "GRMMM_Title", 22, 43, MUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
         local close = styleButton(vgui.Create("DButton", frame), MUI.red) close:SetPos(936, 16) close:SetSize(30, 30) close:SetText("×") close.DoClick = function() frame:Close() end
         local name = vgui.Create("DTextEntry", frame) name:SetPos(22, 82) name:SetSize(370, 34) name:SetFont("GRMMM_Body") name:SetPlaceholderText("Название района или точки") name.Paint = function(self, w, h) draw.RoundedBox(6, 0, 0, w, h, MUI.card2); self:DrawTextEntryText(MUI.text, MUI.blue, MUI.text) end
         local radius = vgui.Create("DNumberWang", frame) radius:SetPos(402, 82) radius:SetSize(120, 34) radius:SetMin(100) radius:SetMax(10000) radius:SetValue(500) radius:SetFont("GRMMM_Body")
@@ -317,11 +262,10 @@ else
                 local l = vgui.Create("DLabel", row) l:Dock(FILL) l:DockMargin(14, 0, 0, 0) l:SetFont("GRMMM_Body") l:SetTextColor(MUI.text) l:SetText(tostring(d.name) .. "   •   радиус " .. tostring(d.radius) .. "   •   " .. tostring(d.id))
                 local b = styleButton(vgui.Create("DButton", row), MUI.red) b:Dock(RIGHT) b:DockMargin(5, 5, 5, 5) b:SetWide(110) b:SetText("Удалить") b.DoClick = function() send("delete_district", function() net.WriteString(d.id) end) end
             end
-            local pt = vgui.Create("DLabel", sc) pt:Dock(TOP) pt:SetTall(40) pt:SetFont("GRMMM_Body") pt:SetTextColor(MUI.orange) pt:SetText("ТОЧКИ ЗАХВАТА")
+            local pt = vgui.Create("DLabel", sc) pt:Dock(TOP) pt:SetTall(40) pt:SetFont("GRMMM_Body") pt:SetTextColor(MUI.orange) pt:SetText("GPS-ТОЧКИ")
             for _, p in ipairs(data.points or {}) do
                 local row = vgui.Create("DPanel", sc) row:Dock(TOP) row:SetTall(48) row:DockMargin(0, 0, 0, 5) row.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, MUI.card) end
-                local l = vgui.Create("DLabel", row) l:Dock(FILL) l:DockMargin(14, 0, 0, 0) l:SetFont("GRMMM_Small") l:SetTextColor(MUI.text) l:SetText(tostring(p.name) .. "   •   R " .. tostring(p.radius or 180) .. "   •   владелец: " .. (p.owner ~= "" and p.owner or "свободна") .. "   •   захват: " .. (p.capturing ~= "" and tostring(p.capturing) or "нет"))
-                local access = styleButton(vgui.Create("DButton", row), MUI.blue) access:Dock(RIGHT) access:DockMargin(5, 7, 0, 7) access:SetWide(110) access:SetText("Доступ") access.DoClick = function() editAccess(p) end
+                local l = vgui.Create("DLabel", row) l:Dock(FILL) l:DockMargin(14, 0, 0, 0) l:SetFont("GRMMM_Small") l:SetTextColor(MUI.text) l:SetText(tostring(p.name) .. "   •   GPS-метка   •   " .. tostring(p.id))
                 local b = styleButton(vgui.Create("DButton", row), MUI.red) b:Dock(RIGHT) b:DockMargin(5, 7, 5, 7) b:SetWide(110) b:SetText("Удалить") b.DoClick = function() send("delete_point", function() net.WriteString(p.id) end) end
             end
         end
@@ -335,7 +279,7 @@ else
         local list = vgui.Create("DScrollPanel", frame) list:SetPos(12, 36) list:SetSize(496, 440)
         for _, p in ipairs(data.points or {}) do
             local b = vgui.Create("DButton", list) b:Dock(TOP) b:SetTall(36) b:DockMargin(0, 0, 0, 5)
-            b:SetText(tostring(p.name) .. "  •  " .. (p.owner ~= "" and "контроль: " .. p.owner or "свободна"))
+            b:SetText(tostring(p.name) .. "  •  GPS-метка")
             b.DoClick = function() gpsTarget = p.id; frame:Close() end
         end
         local clear = vgui.Create("DButton", frame) clear:SetPos(12, 470) clear:SetSize(496, 24) clear:SetText("Сбросить GPS") clear.DoClick = function() gpsTarget = nil frame:Close() end
@@ -347,19 +291,20 @@ else
         local text = string.lower(string.Trim(pack and pack[1] or ""))
         if text == "/gps" then openGPS() pack[1] = "" return true end
     end)
-    hook.Add("PostDrawTranslucentRenderables", "GRM_Minimap_CaptureFlags", function()
+    hook.Add("PostDrawTranslucentRenderables", "GRM_GPS_WorldMarker", function()
         local lp = LocalPlayer()
-        if not IsValid(lp) then return end
+        if not IsValid(lp) or not gpsTarget then return end
         for _, point in ipairs(data.points or {}) do
-            local pos = Vector(point.pos.x, point.pos.y, point.pos.z or 0)
-            if lp:GetPos():DistToSqr(pos) <= 1400 * 1400 then
-                local col = point.owner ~= "" and Color(90, 220, 140, 230) or Color(240, 180, 70, 230)
-                render.DrawLine(pos, pos + Vector(0, 0, 82), col, true)
-                cam.Start3D2D(pos + Vector(0, 0, 84), Angle(0, lp:EyeAngles().y - 90, 90), 0.08)
-                    draw.RoundedBox(5, -115, -23, 230, 46, Color(10, 16, 24, 220))
-                    draw.SimpleText("ТОЧКА ЗАХВАТА", "DermaDefaultBold", 0, -8, col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                    draw.SimpleText(tostring(point.name), "DermaDefault", 0, 10, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            if tostring(point.id) == tostring(gpsTarget) then
+                local pos = Vector(point.pos.x, point.pos.y, point.pos.z or 0)
+                local col = Color(255, 215, 75, 240)
+                render.DrawLine(pos, pos + Vector(0, 0, 120), col, true)
+                cam.Start3D2D(pos + Vector(0, 0, 122), Angle(0, lp:EyeAngles().y - 90, 90), 0.08)
+                    draw.RoundedBox(5, -125, -22, 250, 44, Color(10, 16, 24, 225))
+                    draw.SimpleText("GPS", "DermaDefaultBold", 0, -8, col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText(tostring(point.name), "DermaDefault", 0, 9, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                 cam.End3D2D()
+                break
             end
         end
     end)
@@ -407,7 +352,6 @@ else
             surface.SetDrawColor(col) surface.DrawCircle(px, py, pr, col.r, col.g, col.b, 80)
             surface.SetDrawColor(col) surface.DrawRect(px - 3, py - 3, 6, 6)
             draw.SimpleText(tostring(p.name), "DermaDefault", px, py - 8, col, TEXT_ALIGN_CENTER, TEXT_ALIGN_BOTTOM)
-            if tonumber(p.capture or 0) > 0 then draw.SimpleText(math.floor((p.capture or 0) / 30 * 100) .. "%", "DermaDefault", px, py + 8, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP) end
         end
         local px, py = mapPos(lp:GetPos(), x, y, size)
         surface.SetDrawColor(90, 255, 150, 255) surface.DrawRect(px - 4, py - 4, 8, 8)
