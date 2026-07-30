@@ -491,6 +491,10 @@ end
 
 function HC.StopDragging(dragger, target)
     if IsValid(target) then
+        if target.GRM_CuffOriginalCollisionGroup ~= nil then
+            target:SetCollisionGroup(target.GRM_CuffOriginalCollisionGroup)
+            target.GRM_CuffOriginalCollisionGroup = nil
+        end
         target:SetNWBool("GRM_CuffDragged", false)
         target:SetNWEntity("GRM_CuffDragger", NULL)
     end
@@ -501,6 +505,10 @@ function HC.StopDragging(dragger, target)
         else
             for captive in pairs(dragger.GRM_Captives) do
                 if IsValid(captive) then
+                    if captive.GRM_CuffOriginalCollisionGroup ~= nil then
+                        captive:SetCollisionGroup(captive.GRM_CuffOriginalCollisionGroup)
+                        captive.GRM_CuffOriginalCollisionGroup = nil
+                    end
                     captive:SetNWBool("GRM_CuffDragged", false)
                     captive:SetNWEntity("GRM_CuffDragger", NULL)
                 end
@@ -533,6 +541,9 @@ function HC.StartDragging(dragger, target)
     end
 
     dragger.GRM_Captives[target] = true
+    target.GRM_CuffOriginalCollisionGroup = target:GetCollisionGroup()
+    target:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
+    target:SetPos(dragger:GetPos() - dragger:GetForward() * (cfg().DragFollowDistance or 48))
     target:SetNWBool("GRM_CuffDragged", true)
     target:SetNWEntity("GRM_CuffDragger", dragger)
     HC.Emit(dragger, "Drag")
@@ -1084,7 +1095,7 @@ hook.Add("SetupMove", "GRM_Handcuffs_Move", function(ply, mv, cmd)
     if IsValid(dragger) and dragger:Alive() then
         local follow = cfg().DragFollowDistance or 72
         local hard = cfg().DragHardDistance or 220
-        local desired = dragger:GetPos() - dragger:GetForward() * 45
+        local desired = dragger:GetPos() - dragger:GetForward() * (cfg().DragFollowDistance or 48)
         local delta = desired - ply:GetPos()
         local dist = delta:Length()
 
@@ -1092,7 +1103,7 @@ hook.Add("SetupMove", "GRM_Handcuffs_Move", function(ply, mv, cmd)
             ply:SetPos(dragger:GetPos() - dragger:GetForward() * follow)
             mv:SetVelocity(Vector(0, 0, 0))
         elseif dist > follow then
-            local vel = delta:GetNormalized() * math.Clamp(dist * 5, 80, 420)
+            local vel = delta:GetNormalized() * math.Clamp(dist * 4, 50, 240)
             mv:SetVelocity(Vector(vel.x, vel.y, mv:GetVelocity().z))
         end
     end
