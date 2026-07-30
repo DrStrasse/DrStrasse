@@ -45,7 +45,10 @@ if SERVER then
             for _, ply in ipairs(player.GetAll()) do
                 if IsValid(ply) and ply:Alive() and ply:GetPos():DistToSqr(center) <= point.radius * point.radius then
                     local fac = factionOf(ply)
-                    if fac ~= "" then groups[fac] = (groups[fac] or 0) + 1; count = count + 1 end
+                    local allowed = point.allowedFactions or {}
+                    local restricted = false
+                    for _, enabled in pairs(allowed) do if enabled == true then restricted = true break end end
+                    if fac ~= "" and (not restricted or allowed[fac] == true) then groups[fac] = (groups[fac] or 0) + 1; count = count + 1 end
                 end
             end
             local only, groupCount = nil, 0
@@ -86,7 +89,16 @@ if SERVER then
         elseif action == "add_point" then
             local name = string.sub(string.Trim(net.ReadString() or "Точка захвата"), 1, 48)
             local radius = math.Clamp(net.ReadUInt(16), 100, 2000)
-            MM.Data.points[#MM.Data.points + 1] = { id = nextID("point"), name = name ~= "" and name or "Точка захвата", pos = pos(ply:GetPos()), radius = radius, capture = 0, capturing = "", owner = "" }
+            MM.Data.points[#MM.Data.points + 1] = { id = nextID("point"), name = name ~= "" and name or "Точка захвата", pos = pos(ply:GetPos()), radius = radius, capture = 0, capturing = "", owner = "", allowedFactions = {} }
+            save(); send()
+        elseif action == "set_point_access" then
+            local id, incoming = net.ReadString(), net.ReadTable() or {}
+            for _, point in ipairs(MM.Data.points or {}) do
+                if tostring(point.id) == id then
+                    point.allowedFactions = {}
+                    for name, enabled in pairs(incoming) do if isstring(name) and enabled == true then point.allowedFactions[name] = true end end
+                end
+            end
             save(); send()
         elseif action == "delete_district" or action == "delete_point" then
             local id = net.ReadString()
@@ -153,6 +165,17 @@ else
         local addD = vgui.Create("DButton", frame) addD:SetPos(448, 42) addD:SetSize(140, 28) addD:SetText("+ Район здесь") addD.DoClick = function() send("add_district", function() net.WriteString(name:GetValue()); net.WriteUInt(radius:GetValue(), 16) end) end
         local addP = vgui.Create("DButton", frame) addP:SetPos(594, 42) addP:SetSize(140, 28) addP:SetText("+ Точка здесь") addP.DoClick = function() send("add_point", function() net.WriteString(name:GetValue()); net.WriteUInt(radius:GetValue(), 16) end) end
         local sc = vgui.Create("DScrollPanel", frame) sc:SetPos(18, 82) sc:SetSize(716, 500)
+        local function editAccess(point)
+            local w = vgui.Create("DFrame") w:SetSize(420, 520) w:Center() w:MakePopup() w:SetTitle("Доступ к точке: " .. tostring(point.name))
+            local selected = table.Copy(point.allowedFactions or {})
+            local list = vgui.Create("DScrollPanel", w) list:Dock(FILL) list:DockMargin(10, 10, 10, 48)
+            for factionName in SortedPairs(FactionsData or {}) do
+                local c = vgui.Create("DCheckBoxLabel", list) c:Dock(TOP) c:SetTall(30) c:SetText(tostring(factionName)) c:SetValue(selected[factionName] == true)
+                c.OnChange = function(_, value) selected[factionName] = value == true end
+            end
+            local saveAccess = vgui.Create("DButton", w) saveAccess:Dock(BOTTOM) saveAccess:SetTall(34) saveAccess:SetText("Сохранить доступ")
+            saveAccess.DoClick = function() send("set_point_access", function() net.WriteString(point.id); net.WriteTable(selected) end) w:Close() end
+        end
         local function rebuild()
             sc:Clear()
             local title = vgui.Create("DLabel", sc) title:Dock(TOP) title:SetTall(30) title:SetText("РАЙОНЫ")
@@ -165,6 +188,7 @@ else
             for _, p in ipairs(data.points or {}) do
                 local row = vgui.Create("DPanel", sc) row:Dock(TOP) row:SetTall(34) row:DockMargin(0, 0, 0, 4)
                 local l = vgui.Create("DLabel", row) l:Dock(FILL) l:SetText(tostring(p.name) .. "  |  радиус: " .. tostring(p.radius or 180) .. "  |  владелец: " .. (p.owner ~= "" and p.owner or "свободна") .. "  |  захват: " .. (p.capturing ~= "" and tostring(p.capturing) or "нет") .. "  |  " .. tostring(p.id))
+                local access = vgui.Create("DButton", row) access:Dock(RIGHT) access:SetWide(100) access:SetText("Доступ") access.DoClick = function() editAccess(p) end
                 local b = vgui.Create("DButton", row) b:Dock(RIGHT) b:SetWide(100) b:SetText("Удалить") b.DoClick = function() send("delete_point", function() net.WriteString(p.id) end) end
             end
         end
