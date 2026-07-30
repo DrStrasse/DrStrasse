@@ -249,7 +249,8 @@ if CLIENT then
         local text = online and ("Владелец: " .. (ownerName ~= "" and ownerName or "игрок")) or "Владелец: Никто"
         local col = online and Color(150, 220, 255) or Color(180, 180, 190)
         local w, h = 290, 30
-        local x, y = ScrW() - w - 18, 185
+        -- Верхний правый угол оставляем под будущую мини-карту.
+        local x, y = ScrW() - w - 18, math.floor(ScrH() * 0.32)
         draw.RoundedBox(6, x, y, w, h, Color(12, 17, 25, 225))
         draw.SimpleText(text, "GRMPP_Owner", x + 12, y + h / 2, col, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end)
