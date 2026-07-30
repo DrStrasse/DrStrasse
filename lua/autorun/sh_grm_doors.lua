@@ -78,17 +78,25 @@ function D.IsDoor(ent)
     return false
 end
 
-function D.GetDoorID(ent)
+local function baseDoorID(ent)
     if not IsValid(ent) then return nil end
     local map = mapName()
     local mcid = ent:MapCreationID()
-    if mcid and mcid > 0 then
-        return string.format("%s_m%d", map, mcid)
-    end
+    if mcid and mcid > 0 then return string.format("%s_m%d", map, mcid) end
     local pos = ent:GetPos()
-    return string.format("%s_%s_%.0f_%.0f_%.0f",
-        map, ent:GetClass(),
-        math.floor(pos.x + 0.5), math.floor(pos.y + 0.5), math.floor(pos.z + 0.5))
+    return string.format("%s_%s_%.0f_%.0f_%.0f", map, ent:GetClass(), math.floor(pos.x + 0.5), math.floor(pos.y + 0.5), math.floor(pos.z + 0.5))
+end
+
+function D.GetDoorID(ent)
+    local own = baseDoorID(ent)
+    if not own then return nil end
+    local partner = D.GetPartnerDoor(ent)
+    if IsValid(partner) then
+        local other = baseDoorID(partner)
+        if other and other < own then own = other end
+        return "pair_" .. own
+    end
+    return own
 end
 
 function D.GetPartnerDoor(ent)
@@ -486,6 +494,18 @@ if SERVER then
         if not id then return nil, nil end
         D.Data.doors = D.Data.doors or {}
         local rec = D.Data.doors[id]
+        if not rec then
+            local legacy = D.Data.doors[baseDoorID(ent)]
+            local partner = D.GetPartnerDoor(ent)
+            if not legacy and IsValid(partner) then legacy = D.Data.doors[baseDoorID(partner)] end
+            if legacy then
+                rec = legacy
+                rec.id = id
+                D.Data.doors[id] = rec
+                D.Data.doors[baseDoorID(ent)] = nil
+                if IsValid(partner) then D.Data.doors[baseDoorID(partner)] = nil end
+            end
+        end
         if not rec then
             local engLocked = ent:GetInternalVariable("m_bLocked") == true or ent:GetInternalVariable("m_bLocked") == 1
             rec = {
