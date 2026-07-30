@@ -197,7 +197,17 @@ end
         local tr = ply:GetEyeTrace()
         local target = tr and tr.Entity
         if IsValid(target) and target:IsPlayer() and target ~= ply and ply:GetPos():DistToSqr(target:GetPos()) <= 220 * 220 then return target end
-        return nil
+        -- Команда должна работать по сопровождаемому задержанному, даже
+        -- если прицел упирается в дверь/решётку/стену рядом с ним.
+        local best, bestDist
+        for _, candidate in ipairs(player.GetAll()) do
+            if IsValid(candidate) and candidate ~= ply and candidate:IsPlayer()
+                and GRM.Handcuffs and GRM.Handcuffs.IsCuffed and GRM.Handcuffs.IsCuffed(candidate) then
+                local dist = ply:GetPos():DistToSqr(candidate:GetPos())
+                if dist <= 220 * 220 and (not bestDist or dist < bestDist) then best, bestDist = candidate, dist end
+            end
+        end
+        return best
     end
 
     local function chooseCamera(groupID)

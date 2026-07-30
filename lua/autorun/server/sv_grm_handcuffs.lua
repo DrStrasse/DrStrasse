@@ -1108,7 +1108,10 @@ hook.Add("SetupMove", "GRM_Handcuffs_Move", function(ply, mv, cmd)
             ply:SetPos(desired)
             if mv.SetOrigin then mv:SetOrigin(desired) end
         end
-        mv:SetVelocity(Vector(0, 0, 0))
+        -- Не обнуляем вертикальную скорость: полный zero velocity убирал
+        -- гравитацию и делал сопровождаемого невесомым.
+        local currentVelocity = mv:GetVelocity()
+        mv:SetVelocity(Vector(0, 0, currentVelocity.z))
     end
 end)
 
