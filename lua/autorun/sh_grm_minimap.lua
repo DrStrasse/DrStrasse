@@ -317,8 +317,8 @@ else
                 surface.DrawOutlinedRect(x - panelW / 2, y - panelH / 2, panelW, panelH, 2)
                 draw.RoundedBox(6, x - panelW / 2 + 12, y - 23, 46, 46, Color(245, 180, 55, 255))
                 draw.SimpleText("GPS", "DermaDefaultBold", x - panelW / 2 + 35, y, Color(10, 16, 24), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                draw.SimpleText(tostring(point.name), "GRMChar_Normal", x - panelW / 2 + 72, y - 15, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                draw.SimpleText((visible and "МАРКЕР НА МЕСТЕ" or "НАПРАВЛЕНИЕ К ЦЕЛИ") .. "  •  " .. distance .. " м", "GRMChar_Small", x - panelW / 2 + 72, y + 13, Color(255, 215, 70), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText(tostring(point.name), "GRMMM_Body", x - panelW / 2 + 72, y - 15, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText((visible and "МАРКЕР НА МЕСТЕ" or "НАПРАВЛЕНИЕ К ЦЕЛИ") .. "  •  " .. distance .. " м", "GRMMM_Small", x - panelW / 2 + 72, y + 13, Color(255, 215, 70), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                 break
             end
         end
