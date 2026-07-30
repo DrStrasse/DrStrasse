@@ -665,6 +665,7 @@ if CLIENT then
         { "Скан транспорта", "/scanvehicles", "Все машины на карте" },
         { "Магазин телефонов", "/phoneshop_admin", "Доступ к телефонам/АТС" },
         { "Телефонный доступ", "/phone_access", "Кто пользуется телефонией" },
+        { "Единое сохранение карты", "/grm_persistence", "Сохранить/загрузить телефоны, CCTV, завод, логистику и остальные модули" },
         { "Ордера", "/warrants", "Активные ордера на обыск" },
         { "Каналы эфира/оповещения", "/bcasters", "Печать в чат: фракции с доступами эфира и оповещения" },
         { "Оповещение: синтаксис", "/alert", "Сервер ответит подсказкой: /alert текст (район) или /alertall текст (весь город)" },
@@ -809,7 +810,7 @@ if CLIENT then
         local b1 = block(sc, 30 + #MENU_LINKS * 36 + 8, "Быстрый запуск админ-меню сборки:", C.yellow)
         for i, m in ipairs(MENU_LINKS) do
             local row = vgui.Create("DPanel", b1)
-            row:SetPos(8, 26 + (i - 1) * 36) row:SetSize(930, 32)
+            row:SetPos(8, 26 + (i - 1) * 36) row:SetSize(math.max(930, sc:GetWide() - 16), 32)
             row.Paint = function(_, pw, ph)
                 draw.RoundedBox(4, 0, 0, pw, ph, C.panel2)
                 draw.SimpleText(m[1], "GRMHub_Sub", 8, ph / 2, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
@@ -833,7 +834,9 @@ if CLIENT then
         local f = vgui.Create("DFrame")
         HB._frame = f
         f:SetTitle("")
-        f:SetSize(1000, 660)
+        local fw = math.Clamp(math.floor(ScrW() * 0.88), 1180, 1480)
+        local fh = math.Clamp(math.floor(ScrH() * 0.86), 720, 920)
+        f:SetSize(fw, fh)
         f:Center()
         f:MakePopup()
         f:ShowCloseButton(false)
@@ -845,12 +848,15 @@ if CLIENT then
         end
         local x = vgui.Create("DButton", f)
         x:SetText("X") x:SetFont("GRMHub_Title") x:SetTextColor(color_white)
-        x:SetPos(952, 8) x:SetSize(32, 30)
+        x:SetPos(fw - 42, 8) x:SetSize(32, 30)
         x.DoClick = function() f:Close() end
         x.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.red or Color(45, 52, 68)) end
 
         local sheet = vgui.Create("DPropertySheet", f)
         sheet:Dock(FILL) sheet:DockMargin(10, 52, 10, 10)
+        sheet.Paint = function(_, w, h)
+            draw.RoundedBox(7, 0, 0, w, h, C.head)
+        end
 
         local pages = {}
         local function mkPage(tab, label, icon)
@@ -874,6 +880,21 @@ if CLIENT then
         mkPage("jobs", "Биржа", "icon16/bricks.png")
         mkPage("players", "Игроки", "icon16/group.png")
         mkPage("menu", "Меню", "icon16/application_view_tile.png")
+
+        -- Единый тёмный стиль вкладок: стандартный серый DPropertySheet
+        -- выбивается из GRM-дизайна и визуально сжимает рабочую область.
+        for _, item in ipairs(sheet.Items or {}) do
+            local tab = item.Tab
+            if IsValid(tab) then
+                tab:SetFont("GRMHub_Normal")
+                tab:SetTextColor(C.dim)
+                tab.Paint = function(self, w, h)
+                    local active = self:IsActive()
+                    draw.RoundedBoxEx(5, 0, 0, w, h, active and C.panel or C.panel2, true, true, false, false)
+                    if active then draw.RoundedBox(0, 0, h - 3, w, 3, C.acc) end
+                end
+            end
+        end
 
         HB._activeTab = "server"
         sheet.OnActiveTabChanged = function(_, _, newPnl)
