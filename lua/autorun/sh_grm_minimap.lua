@@ -323,7 +323,7 @@ else
                 local textX = math.Clamp(x + radius + 12, 12, sw - 12)
                 local align = textX > sw - 180 and TEXT_ALIGN_RIGHT or TEXT_ALIGN_LEFT
                 draw.SimpleTextOutlined(tostring(point.name), "GRMMM_Body", textX, y - 10, color_white, align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
-                draw.SimpleTextOutlined(distance .. " м", "GRMMM_Small", textX, y + 10, Color(255, 215, 70), align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
+                draw.SimpleTextOutlined(distance .. " юн.", "GRMMM_Small", textX, y + 10, Color(255, 215, 70), align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
                 break
             end
         end
