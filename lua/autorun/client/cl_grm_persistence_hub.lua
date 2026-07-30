@@ -79,11 +79,14 @@ net.Receive("GRM_Persistence_Result", function()
     surface.PlaySound(ok and "buttons/button14.wav" or "buttons/button10.wav")
 end)
 
-concommand.Add("grm_persistence_admin", function()
+local function requestPersistenceMenu()
     if IsValid(LocalPlayer()) and LocalPlayer():IsSuperAdmin() then
         net.Start("GRM_Persistence_Open") net.SendToServer()
     end
-end)
+end
+
+concommand.Add("grm_persistence_admin", requestPersistenceMenu)
+concommand.Add("grm_persistence", requestPersistenceMenu)
 
 hook.Add("PlayerSayTransform", "GRM_Persistence_Command", function(ply, data)
     if ply ~= LocalPlayer() then return end

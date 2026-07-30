@@ -79,3 +79,12 @@ concommand.Add("grm_persistence_admin", function(ply)
         net.Start("GRM_Persistence_Open") net.Send(ply)
     end
 end)
+
+hook.Add("PlayerSay", "GRM_Persistence_ChatCommand", function(ply, text)
+    if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+    local command = string.lower(string.Trim(tostring(text or "")))
+    if command == "/grm_persistence" or command == "!grm_persistence" then
+        net.Start("GRM_Persistence_Open") net.Send(ply)
+        return ""
+    end
+end)
