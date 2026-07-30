@@ -80,6 +80,24 @@ end
         return false
     end
 
+    function A.FactionOf(target)
+        if not IsValid(target) then return "" end
+        for factionName, faction in pairs(Factions or {}) do
+            if GRM.Identity and GRM.Identity.FactionMember and GRM.Identity.FactionMember(faction, target) then return tostring(factionName) end
+        end
+        return ""
+    end
+
+    function A.ResolveGroupForTarget(target, requested)
+        local factionName = A.FactionOf(target)
+        if factionName == "" then return "criminals" end
+        if requested and requested ~= "" and requested ~= "criminals" then return requested end
+        for groupID, g in pairs(A.Cfg.groups or {}) do
+            if groupID ~= "criminals" and istable(g.allowedFactions) and g.allowedFactions[factionName] == true then return groupID end
+        end
+        return "criminals"
+    end
+
     function A.CanUseGroup(target, groupID)
         local g = group(groupID)
         local allowed = g and g.allowedFactions or {}
@@ -175,6 +193,7 @@ end
         local HC = GRM.Handcuffs
         if not (HC and HC.IsCuffed and HC.IsCuffed(target)) then return false, "Сначала наденьте на человека наручники" end
         if target:GetNWBool("GRM_Arrested", false) then return false, "Человек уже арестован" end
+        groupID = A.ResolveGroupForTarget(target, groupID)
         local cam = chooseCamera(groupID)
         if not cam then return false, "Для этой группы не настроена камера ареста" end
         local sp = chooseSpawn(cam)

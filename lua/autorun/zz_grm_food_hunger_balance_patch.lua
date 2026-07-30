@@ -28,7 +28,7 @@ GRM.Food.Config = GRM.Food.Config or {}
 GRM.Food.BalancePatch = GRM.Food.BalancePatch or {}
 
 -- +0.5 к базовому множителю расхода, то есть x1.5.
-GRM.Food.BalancePatch.HungerDrainMultiplier = GRM.Food.BalancePatch.HungerDrainMultiplier or 1.5
+GRM.Food.BalancePatch.HungerDrainMultiplier = 0.5
 
 -- Базовое значение, от которого считаем баланс.
 -- Если в основном конфиге другое значение, патч возьмёт его как базу.
