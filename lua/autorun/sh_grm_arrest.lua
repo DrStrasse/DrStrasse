@@ -20,6 +20,7 @@ A.Cfg = A.Cfg or {
     cameras = {},
     spawns = {},
     access = { mode = "all", factions = {} },
+    prisonZones = {},
 }
 
 local function key(ply)
@@ -46,6 +47,7 @@ local function load()
     A.Cfg.access = istable(A.Cfg.access) and A.Cfg.access or { mode = "all", factions = {} }
     A.Cfg.access.mode = A.Cfg.access.mode == "allowlist" and "allowlist" or "all"
         A.Cfg.access.factions = istable(A.Cfg.access.factions) and A.Cfg.access.factions or {}
+    A.Cfg.prisonZones = istable(A.Cfg.prisonZones) and A.Cfg.prisonZones or {}
     for _, g in pairs(A.Cfg.groups) do
         if istable(g) then g.allowedFactions = istable(g.allowedFactions) and g.allowedFactions or {} end
     end
@@ -79,6 +81,25 @@ end
                 and GRM.Identity.FactionMember(Factions[factionName], ply) then
                 return true
             end
+        end
+        return false
+    end
+
+    function A.AddPrisonZone(a, b, name)
+        local mn = Vector(math.min(a.x, b.x), math.min(a.y, b.y), math.min(a.z, b.z))
+        local mx = Vector(math.max(a.x, b.x), math.max(a.y, b.y), math.max(a.z, b.z))
+        A.Cfg.prisonZones[#A.Cfg.prisonZones + 1] = { name = tostring(name or "Тюрьма"), min = { x = mn.x, y = mn.y, z = mn.z }, max = { x = mx.x, y = mx.y, z = mx.z } }
+        save()
+        return true
+    end
+
+    function A.IsInPrisonZone(ply)
+        if not IsValid(ply) then return false end
+        for _, zone in ipairs(A.Cfg.prisonZones or {}) do
+            local mn, mx = zone.min or {}, zone.max or {}
+            if ply:GetPos().x >= (mn.x or 0) and ply:GetPos().x <= (mx.x or 0)
+                and ply:GetPos().y >= (mn.y or 0) and ply:GetPos().y <= (mx.y or 0)
+                and ply:GetPos().z >= (mn.z or -math.huge) and ply:GetPos().z <= (mx.z or math.huge) then return true end
         end
         return false
     end
@@ -198,6 +219,9 @@ end
         local HC = GRM.Handcuffs
         if not (HC and HC.IsCuffed and HC.IsCuffed(target)) then return false, "Сначала наденьте на человека наручники" end
         if target:GetNWBool("GRM_Arrested", false) then return false, "Человек уже арестован" end
+        local wanted = GRM.Wanted and GRM.Wanted.GetLevel and GRM.Wanted.GetLevel(target) or 0
+        if wanted <= 0 then return false, "Сначала объявите игрока в розыск" end
+        if not A.IsInPrisonZone(target) then return false, "Доставьте задержанного в тюрьму или на гауптвахту" end
         groupID = A.ResolveGroupForTarget(target, groupID)
         local cam = chooseCamera(groupID)
         if not cam then return false, "Для этой группы не настроена камера ареста" end
