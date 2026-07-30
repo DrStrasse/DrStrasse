@@ -491,6 +491,7 @@ end
 
 function HC.StopDragging(dragger, target)
     if IsValid(target) then
+        target:SetParent(nil)
         target:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
         target:SetNWBool("GRM_CuffDragged", false)
         target:SetNWEntity("GRM_CuffDragger", NULL)
@@ -502,6 +503,7 @@ function HC.StopDragging(dragger, target)
         else
             for captive in pairs(dragger.GRM_Captives) do
                 if IsValid(captive) then
+                    captive:SetParent(nil)
                     captive:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
                     captive:SetNWBool("GRM_CuffDragged", false)
                     captive:SetNWEntity("GRM_CuffDragger", NULL)
@@ -537,7 +539,12 @@ function HC.StartDragging(dragger, target)
     dragger.GRM_Captives[target] = true
     target.GRM_CuffOriginalCollisionGroup = target:GetCollisionGroup()
     target:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
-    target:SetPos(dragger:GetPos() - dragger:GetForward() * (cfg().DragFollowDistance or 48))
+    -- Parent-escort removes the physics tug-of-war completely: the captive
+    -- follows the escort at a fixed local offset instead of being pulled by
+    -- velocity every tick.
+    target:SetParent(dragger)
+    target:SetLocalPos(Vector(-32, 0, 0))
+    target:SetLocalAngles(Angle(0, 180, 0))
     target:SetNWBool("GRM_CuffDragged", true)
     target:SetNWEntity("GRM_CuffDragger", dragger)
     HC.Emit(dragger, "Drag")
@@ -1093,25 +1100,10 @@ hook.Add("SetupMove", "GRM_Handcuffs_Move", function(ply, mv, cmd)
 
     local dragger = ply:GetNWEntity("GRM_CuffDragger")
     if IsValid(dragger) and dragger:Alive() then
-        local follow = cfg().DragFollowDistance or 72
-        local hard = cfg().DragHardDistance or 220
-        local desired = dragger:GetPos() - dragger:GetForward() * math.min(follow, 32)
-        desired.z = ply:GetPos().z
-        local delta = desired - ply:GetPos()
-        local dist = delta:Length()
+        -- При parent-escort движение уже выполняет движок. Не задаём
+        -- origin/velocity в SetupMove, иначе снова появляется рывок.
         ply:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
-
-        -- Не тянем игрока физической скоростью: именно velocity вызывала
-        -- растяжение и рывки при столкновении двух player hulls. Ведущий
-        -- задаёт задержанному стабильную точку следования.
-        if dist > 4 then
-            ply:SetPos(desired)
-            if mv.SetOrigin then mv:SetOrigin(desired) end
-        end
-        -- Не обнуляем вертикальную скорость: полный zero velocity убирал
-        -- гравитацию и делал сопровождаемого невесомым.
-        local currentVelocity = mv:GetVelocity()
-        mv:SetVelocity(Vector(0, 0, currentVelocity.z))
+        return
     end
 end)
 
