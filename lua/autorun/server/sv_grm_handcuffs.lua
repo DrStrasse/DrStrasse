@@ -491,10 +491,7 @@ end
 
 function HC.StopDragging(dragger, target)
     if IsValid(target) then
-        if target.GRM_CuffOriginalCollisionGroup ~= nil then
-            target:SetCollisionGroup(target.GRM_CuffOriginalCollisionGroup)
-            target.GRM_CuffOriginalCollisionGroup = nil
-        end
+        target:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
         target:SetNWBool("GRM_CuffDragged", false)
         target:SetNWEntity("GRM_CuffDragger", NULL)
     end
@@ -505,10 +502,7 @@ function HC.StopDragging(dragger, target)
         else
             for captive in pairs(dragger.GRM_Captives) do
                 if IsValid(captive) then
-                    if captive.GRM_CuffOriginalCollisionGroup ~= nil then
-                        captive:SetCollisionGroup(captive.GRM_CuffOriginalCollisionGroup)
-                        captive.GRM_CuffOriginalCollisionGroup = nil
-                    end
+                    captive:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
                     captive:SetNWBool("GRM_CuffDragged", false)
                     captive:SetNWEntity("GRM_CuffDragger", NULL)
                 end
@@ -565,6 +559,8 @@ function HC.CuffPlayer(actor, target)
     end
 
     target:SetNWBool("GRM_Cuffed", true)
+    if target.GRM_CuffOriginalCollisionGroup == nil then target.GRM_CuffOriginalCollisionGroup = target:GetCollisionGroup() end
+    target:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
     target:SetNWEntity("GRM_CuffOwner", actor)
     target:SetNWFloat("GRM_CuffReleaseProgress", 0)
     target:SetNWBool("GRM_CuffGagged", false)
@@ -588,6 +584,10 @@ function HC.UncuffPlayer(actor, target, silent)
     local dragger = target:GetNWEntity("GRM_CuffDragger")
     if IsValid(dragger) then
         HC.StopDragging(dragger, target)
+    end
+    if target.GRM_CuffOriginalCollisionGroup ~= nil then
+        target:SetCollisionGroup(target.GRM_CuffOriginalCollisionGroup)
+        target.GRM_CuffOriginalCollisionGroup = nil
     end
 
     target:SetNWBool("GRM_Cuffed", false)
@@ -1095,17 +1095,20 @@ hook.Add("SetupMove", "GRM_Handcuffs_Move", function(ply, mv, cmd)
     if IsValid(dragger) and dragger:Alive() then
         local follow = cfg().DragFollowDistance or 72
         local hard = cfg().DragHardDistance or 220
-        local desired = dragger:GetPos() - dragger:GetForward() * (cfg().DragFollowDistance or 48)
+        local desired = dragger:GetPos() - dragger:GetForward() * follow
+        desired.z = ply:GetPos().z
         local delta = desired - ply:GetPos()
         local dist = delta:Length()
+        ply:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
 
-        if dist > hard then
-            ply:SetPos(dragger:GetPos() - dragger:GetForward() * follow)
-            mv:SetVelocity(Vector(0, 0, 0))
-        elseif dist > follow then
-            local vel = delta:GetNormalized() * math.Clamp(dist * 4, 50, 240)
-            mv:SetVelocity(Vector(vel.x, vel.y, mv:GetVelocity().z))
+        -- Не тянем игрока физической скоростью: именно velocity вызывала
+        -- растяжение и рывки при столкновении двух player hulls. Ведущий
+        -- задаёт задержанному стабильную точку следования.
+        if dist > 4 then
+            ply:SetPos(desired)
+            if mv.SetOrigin then mv:SetOrigin(desired) end
         end
+        mv:SetVelocity(Vector(0, 0, 0))
     end
 end)
 
