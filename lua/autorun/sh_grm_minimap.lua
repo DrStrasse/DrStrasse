@@ -26,6 +26,14 @@ if SERVER then
         net.Start("GRM_Minimap_Data") net.WriteTable(MM.Data) if IsValid(ply) then net.Send(ply) else net.Broadcast() end
     end
     local function nextID(prefix) return prefix .. "_" .. os.time() .. "_" .. math.random(100, 999) end
+    function MM.AddPoint(ply, name, pointPos, radius)
+        MM.Data.points[#MM.Data.points + 1] = { id = nextID("point"), name = string.sub(string.Trim(name or "Точка захвата"), 1, 48), pos = { x = pointPos.x, y = pointPos.y, z = pointPos.z }, radius = math.Clamp(tonumber(radius) or 180, 100, 2000), capture = 0, capturing = "", owner = "", allowedFactions = {} }
+        save(); send(); return true
+    end
+    function MM.AddDistrict(ply, name, center, radius)
+        MM.Data.districts[#MM.Data.districts + 1] = { id = nextID("district"), name = string.sub(string.Trim(name or "Район"), 1, 48), center = { x = center.x, y = center.y, z = center.z }, radius = math.Clamp(tonumber(radius) or 500, 100, 10000), color = { r = 70, g = 150, b = 240 } }
+        save(); send(); return true
+    end
     load()
 
     local function factionOf(ply)
@@ -255,9 +263,15 @@ else
             for _, p in ipairs(data.points or {}) do
                 if p.id == gpsTarget then
                     local screen = Vector(p.pos.x, p.pos.y, p.pos.z or lp:GetPos().z):ToScreen()
-                    local angle = math.deg(math.atan2(screen.y - ScrH() / 2, screen.x - ScrW() / 2))
-                    draw.SimpleText("GPS: " .. tostring(p.name) .. "  •  " .. math.floor(lp:GetPos():Distance(Vector(p.pos.x, p.pos.y, p.pos.z or lp:GetPos().z))) .. " юн.", "DermaDefaultBold", ScrW() / 2, ScrH() - 70, Color(255, 220, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                    draw.SimpleText("↗", "DermaLarge", ScrW() / 2, ScrH() - 105, Color(255, 220, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    local target = Vector(p.pos.x, p.pos.y, p.pos.z or lp:GetPos().z)
+                    local relative = (target - lp:GetPos()):Angle().y - lp:EyeAngles().y
+                    local arrowX, arrowY = ScrW() / 2, ScrH() - 105
+                    local rad = math.rad(relative)
+                    local dir = Vector(math.cos(rad), math.sin(rad), 0)
+                    local side = Vector(-dir.y, dir.x, 0)
+                    surface.SetDrawColor(255, 220, 90, 255)
+                    surface.DrawPoly({ { x = arrowX + dir.x * 22, y = arrowY + dir.y * 22 }, { x = arrowX - dir.x * 12 + side.x * 10, y = arrowY - dir.y * 12 + side.y * 10 }, { x = arrowX - dir.x * 12 - side.x * 10, y = arrowY - dir.y * 12 - side.y * 10 } })
+                    draw.SimpleText("GPS: " .. tostring(p.name) .. "  •  " .. math.floor(lp:GetPos():Distance(target)) .. " юн.", "DermaDefaultBold", ScrW() / 2, ScrH() - 70, Color(255, 220, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                     break
                 end
             end

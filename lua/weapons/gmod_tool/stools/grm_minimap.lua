@@ -1,0 +1,41 @@
+TOOL.Category = "GRM"
+TOOL.Name = "GRM: районы и точки"
+TOOL.Command = nil
+TOOL.ConfigName = ""
+
+if CLIENT then
+    language.Add("tool.grm_minimap.name", "GRM: районы и точки")
+    language.Add("tool.grm_minimap.desc", "Размещение районов и точек захвата на мини-карте")
+    language.Add("tool.grm_minimap.0", "ЛКМ: точка захвата | ПКМ: район | R: открыть настройки")
+end
+
+function TOOL:LeftClick(trace)
+    if CLIENT then return true end
+    if not IsValid(self:GetOwner()) or not self:GetOwner():IsSuperAdmin() then return false end
+    if GRM.Minimap and GRM.Minimap.AddPoint then
+        GRM.Minimap.AddPoint(self:GetOwner(), "Точка захвата", trace.HitPos, 180)
+        self:GetOwner():ChatPrint("[Мини-карта] Точка захвата установлена. Откройте /grm_minimap_admin для настройки.")
+        return true
+    end
+    return false
+end
+
+function TOOL:RightClick(trace)
+    if CLIENT then return true end
+    if not IsValid(self:GetOwner()) or not self:GetOwner():IsSuperAdmin() then return false end
+    if GRM.Minimap and GRM.Minimap.AddDistrict then
+        GRM.Minimap.AddDistrict(self:GetOwner(), "Новый район", trace.HitPos, 500)
+        self:GetOwner():ChatPrint("[Мини-карта] Район установлен. Откройте /grm_minimap_admin для настройки.")
+        return true
+    end
+    return false
+end
+
+function TOOL:Reload(trace)
+    if CLIENT then return true end
+    if IsValid(self:GetOwner()) and self:GetOwner():IsSuperAdmin() then
+        self:GetOwner():ConCommand("grm_minimap_admin")
+        return true
+    end
+    return false
+end
