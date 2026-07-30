@@ -252,7 +252,7 @@ else
             local tr = util.TraceLine({ start = sample, endpos = Vector(sample.x, sample.y, mn.z - 8192), mask = MASK_SOLID_BRUSHONLY })
             if tr.Hit then surfaceZ = math.max(surfaceZ, tr.HitPos.z) end
         end
-        local cameraHeight = math.max(100, span * 0.01)
+        local cameraHeight = 50
         local center = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, surfaceZ + cameraHeight)
         mapRenderCenter = center
         mapRenderSpan = span
