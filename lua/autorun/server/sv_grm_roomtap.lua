@@ -84,6 +84,12 @@ local function safeFilePart(value, fallback)
     return result ~= "" and result or (fallback or "main")
 end
 
+local function rpName(ply)
+    if not IsValid(ply) then return "?" end
+    local name = ply:GetNWString("GRM_RPName", "")
+    return name ~= "" and name or ply:Nick()
+end
+
 local function steamID64(ply)
     if not IsValid(ply) then return "" end
     if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
@@ -360,7 +366,7 @@ local function subjectData(subject)
     if IsValid(subject) and subject:IsPlayer() then
         return {
             steamID = steamID64(subject),
-            name = subject:Nick(),
+            name = rpName(subject),
             position = vecToTable(subject:GetPos()),
         }
     end
@@ -872,7 +878,7 @@ local function makeShopRecord(ply, itemID, duration)
         class = item.class,
         map = game.GetMap(),
         ownerSteam = steamID64(ply),
-        ownerName = ply:Nick(),
+        ownerName = rpName(ply),
         expiresAt = os.time() + duration.seconds,
         createdAt = os.time(),
         pos = vecToTable(pos),
@@ -1090,7 +1096,7 @@ net.Receive(NET_DEVICE_ACTION, function(_, ply)
 
         for _, admin in ipairs(player.GetAll()) do
             if admin:IsSuperAdmin() then
-                notify(admin, false, "[Прослушка] Запрос сохранения от " .. ply:Nick() .. ". Команда: roomtap_requests")
+                notify(admin, false, "[Прослушка] Запрос сохранения от " .. rpName(ply) .. ". Команда: roomtap_requests")
             end
         end
         return

@@ -196,7 +196,7 @@ if SERVER then
 
         -- журнал + сведения лидеру
         local rec = {
-            nick = ply:Nick(),
+            nick = rpName(ply),
             rp = rpName(ply),
             sid = ply:SteamID(),
             time = os.time(),

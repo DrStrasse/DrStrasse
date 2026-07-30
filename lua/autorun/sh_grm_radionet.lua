@@ -205,6 +205,12 @@ if SERVER then
     local logEvent
     local consoleOpen
 
+    local function rpName(ply)
+        if not IsValid(ply) then return "?" end
+        local name = ply:GetNWString("GRM_RPName", "")
+        return name ~= "" and name or ply:Nick()
+    end
+
     ----------------------------------------------------------------
     -- Пересчёт топологии сети (кэш для дешёвых запросов голоса)
     ----------------------------------------------------------------
@@ -441,7 +447,7 @@ if SERVER then
                         notifyFx(ply, RN._fxLastKind[ply] or "radio", false)
                         if RN._fxLastKind[ply] == "pa" then paRelayClicks(false) end
                         if logEvent then
-                            logEvent("tx_end", ply:Nick(), freqIdentity(ply), ply:GetPos(),
+                            logEvent("tx_end", rpName(ply), freqIdentity(ply), ply:GetPos(),
                                 "передача «" .. tostring(RN._fxLastKind[ply] or "radio") .. "» завершена")
                         end
                     end
@@ -798,7 +804,7 @@ if SERVER then
             rec.off = not (rec.off == true)
             RN.SysSave("toggle " .. id)
             recompute()
-            logEvent("dev_switch", ply:Nick(), freqIdentity(ply), IsValid(e) and e:GetPos() or nil,
+            logEvent("dev_switch", rpName(ply), freqIdentity(ply), IsValid(e) and e:GetPos() or nil,
                 rec.off and ("вывод устройства " .. id .. " ВЫКЛЮЧЕН пультом") or ("вывод " .. id .. " возвращён"))
             consoleOpen(ply, con)
             return
@@ -1066,7 +1072,7 @@ if SERVER then
         if ply.SteamID64 then RN._freq[tostring(freqIdentity(ply) or "")] = key end
         freqChat(ply, "[Рация] Вы на частоте " .. key .. " МГц. Говорить: /r текст. Отключиться: /freqleave")
         if GRM.Notify then GRM.Notify(ply, "Рация: частота " .. key .. " МГц (/r текст)", 140, 200, 255) end
-        if RN.LogEvent then RN.LogEvent("freq_join", IsValid(ply) and ply:Nick() or "?",
+        if RN.LogEvent then RN.LogEvent("freq_join", rpName(ply),
             ply.SteamID64 and freqIdentity(ply) or "", IsValid(ply) and ply:GetPos() or nil, "частота " .. key) end
         return true
     end
@@ -1091,7 +1097,7 @@ if SERVER then
         ply._rnFreq = nil
         if ply.SteamID64 then RN._freq[tostring(freqIdentity(ply) or "")] = nil end
         freqChat(ply, "[Рация] Частота " .. f .. " покинута — рация отключена.")
-        if RN.LogEvent then RN.LogEvent("freq_leave", ply:Nick(),
+        if RN.LogEvent then RN.LogEvent("freq_leave", rpName(ply),
             ply.SteamID64 and freqIdentity(ply) or "", ply:GetPos(), "частота " .. f) end
     end
 
@@ -1128,7 +1134,7 @@ if SERVER then
         ply._rnFreqTs = now
         local text = ucut(string.Trim(tostring(raw or "")), RN.FreqMaxLen)
         if text == "" then freqChat(ply, "[Рация] Пустое сообщение в эфир не уходит.") return false end
-        local name = (IsValid(ply) and ply.Nick) and ply:Nick() or "?"
+        local name = rpName(ply)
         local myPos = IsValid(ply) and ply:GetPos() or nil
         local delivered = 0
         for _, lp in ipairs(player.GetAll()) do

@@ -529,8 +529,8 @@ if SERVER then
                 JB.SaveCfg("публикация выполнена")
             end
         end
-        local st = statRec(sd, ply:Nick())
-        st.nick = ply:Nick()
+        local st = statRec(sd, rpName(ply))
+        st.nick = rpName(ply)
         st.done = (tonumber(st.done) or 0) + 1
         st.earned = (tonumber(st.earned) or 0) + (tonumber(j.reward) or 0)
         if GRM.GiveMoney then GRM.GiveMoney(ply, j.reward, "Биржа труда: " .. tostring(j.title)) end
