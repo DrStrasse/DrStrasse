@@ -63,6 +63,9 @@ end
     util.AddNetworkString("GRM_Arrest_AccessRequest")
     util.AddNetworkString("GRM_Arrest_AccessData")
     util.AddNetworkString("GRM_Arrest_AccessSave")
+    util.AddNetworkString("GRM_Arrest_CategoryAccessRequest")
+    util.AddNetworkString("GRM_Arrest_CategoryAccessData")
+    util.AddNetworkString("GRM_Arrest_CategoryAccessSave")
 
     load()
 
@@ -379,6 +382,24 @@ end
         A.Cfg.access = { mode = mode, factions = factions }
         save()
         net.Start("GRM_Arrest_AccessData") net.WriteTable(A.Cfg.access) net.Send(ply)
+    end)
+
+    net.Receive("GRM_Arrest_CategoryAccessRequest", function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        net.Start("GRM_Arrest_CategoryAccessData") net.WriteTable(A.Cfg.groups or {}) net.Send(ply)
+    end)
+
+    net.Receive("GRM_Arrest_CategoryAccessSave", function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        local groupID, selected = net.ReadString(), net.ReadTable() or {}
+        local g = A.Cfg.groups[groupID]
+        if not istable(g) then return end
+        g.allowedFactions = {}
+        for factionName, enabled in pairs(selected) do
+            if isstring(factionName) and #factionName <= 96 and enabled == true then g.allowedFactions[factionName] = true end
+        end
+        save()
+        net.Start("GRM_Arrest_CategoryAccessData") net.WriteTable(A.Cfg.groups or {}) net.Send(ply)
     end)
 
     concommand.Add("grm_arrest_admin", function(ply) A.OpenAdmin(ply) end)
@@ -721,6 +742,42 @@ if CLIENT then
         end
     end
 
+    local arrestCategoryPanel
+    local arrestCategoryData = {}
+    local function rebuildArrestCategoryPanel()
+        if not IsValid(arrestCategoryPanel) then return end
+        arrestCategoryPanel:Clear()
+        local title = label(arrestCategoryPanel, "Категории ареста по фракциям задержанных", "GRMArrestHeading", UI.text)
+        title:Dock(TOP) title:SetTall(30) title:DockMargin(12, 12, 12, 0)
+        local hint = label(arrestCategoryPanel, "Отметьте фракции, которым разрешена конкретная категория. Пустой список означает обычную категорию для гражданских.", "GRMArrestSmall", UI.dim)
+        hint:Dock(TOP) hint:SetTall(38) hint:DockMargin(12, 0, 12, 8)
+        local factions = {}
+        for name in pairs(FactionsData or {}) do factions[#factions + 1] = name end
+        table.sort(factions)
+        for gid, g in pairs(arrestCategoryData or {}) do
+            local box = vgui.Create("DPanel", arrestCategoryPanel) box:Dock(TOP) box:SetTall(72) box:DockMargin(12, 0, 12, 8)
+            box.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, UI.card) end
+            local gl = label(box, tostring(g.name or gid) .. "  [" .. tostring(gid) .. "]", "GRMArrestBody", UI.text) gl:SetPos(12, 8) gl:SetSize(260, 24)
+            local selected = table.Copy(g.allowedFactions or {})
+            local checks = {}
+            for index, factionName in ipairs(factions) do
+                local c = vgui.Create("DCheckBoxLabel", box) c:SetPos(280 + ((index - 1) % 3) * 180, 8 + math.floor((index - 1) / 3) * 26) c:SetSize(175, 24)
+                c:SetText(tostring(factionName)) c:SetFont("GRMArrestSmall") c:SetTextColor(UI.text) c:SetValue(selected[factionName] == true)
+                c.OnChange = function(_, value) selected[factionName] = value == true end
+                checks[#checks + 1] = c
+            end
+            local saveGroup = button(box, "Сохранить", UI.green, 28) saveGroup:SetPos(12, 39) saveGroup:SetSize(150, 26)
+            saveGroup.DoClick = function()
+                net.Start("GRM_Arrest_CategoryAccessSave") net.WriteString(gid) net.WriteTable(selected) net.SendToServer()
+            end
+        end
+    end
+
+    net.Receive("GRM_Arrest_CategoryAccessData", function()
+        arrestCategoryData = net.ReadTable() or {}
+        timer.Simple(0, rebuildArrestCategoryPanel)
+    end)
+
     net.Receive("GRM_Arrest_AccessData", function()
         arrestAccessData = net.ReadTable() or { mode = "all", factions = {} }
         arrestAccessData.factions = istable(arrestAccessData.factions) and arrestAccessData.factions or {}
@@ -732,9 +789,14 @@ if CLIENT then
         arrestAccessPanel = vgui.Create("DPanel")
         arrestAccessPanel:SetPaintBackground(false)
         tabs:AddSheet("Доступ к аресту", arrestAccessPanel, "icon16/shield.png")
+        arrestCategoryPanel = vgui.Create("DPanel")
+        arrestCategoryPanel:SetPaintBackground(false)
+        tabs:AddSheet("Категории ареста", arrestCategoryPanel, "icon16/lock.png")
         rebuildArrestAccessPanel()
+        rebuildArrestCategoryPanel()
         net.Start("GRM_Arrest_AccessRequest") net.SendToServer()
-        timer.Simple(0.6, rebuildArrestAccessPanel)
+        net.Start("GRM_Arrest_CategoryAccessRequest") net.SendToServer()
+        timer.Simple(0.6, function() rebuildArrestAccessPanel() rebuildArrestCategoryPanel() end)
     end)
 
     hook.Add("PostDrawTranslucentRenderables", "GRM_Arrest_Zones", function()
