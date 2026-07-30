@@ -90,11 +90,15 @@ end
 function D.GetDoorID(ent)
     local own = baseDoorID(ent)
     if not own then return nil end
-    local partner = D.GetPartnerDoor(ent)
-    if IsValid(partner) then
-        local other = baseDoorID(partner)
-        if other and other < own then own = other end
-        return "pair_" .. own
+    -- Один проём карты иногда представлен несколькими сущностями
+    -- (механизм + визуальная створка). Объединяем только сущности почти
+    -- в одной точке, не соседние двери коридора.
+    for _, other in ipairs(ents.FindInSphere(ent:GetPos(), 12)) do
+        if IsValid(other) and other ~= ent and D.IsDoor(other)
+            and math.abs(other:GetPos().z - ent:GetPos().z) <= 8 then
+            local otherID = baseDoorID(other)
+            if otherID and otherID < own then own = otherID end
+        end
     end
     return own
 end
