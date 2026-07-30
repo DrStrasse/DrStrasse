@@ -242,7 +242,7 @@ else
             local tr = util.TraceLine({ start = sample, endpos = Vector(sample.x, sample.y, mn.z - 8192), mask = MASK_SOLID_BRUSHONLY })
             if tr.Hit then surfaceZ = math.max(surfaceZ, tr.HitPos.z) end
         end
-        local cameraHeight = math.max(1200, span * 0.18)
+        local cameraHeight = math.max(600, span * 0.08)
         local center = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, surfaceZ + cameraHeight)
         render.PushRenderTarget(mapRT)
         render.Clear(7, 12, 19, 255, true, true)
