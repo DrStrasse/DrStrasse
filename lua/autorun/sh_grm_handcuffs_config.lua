@@ -49,7 +49,7 @@ GRM.Handcuffs.Config = GRM.Handcuffs.Config or {
     AccessUsersCanReleaseWithUse = true,
 
     -- Клиентская поза рук за спиной для задержанного.
-    EnableBehindBackPose = true,
+    EnableBehindBackPose = false,
 
     GagBlocksTextChat = true,
     GagBlocksVoice = true,
@@ -71,7 +71,7 @@ GRM.Handcuffs.Config.CanSelfRelease = GRM.Handcuffs.Config.CanSelfRelease == nil
 GRM.Handcuffs.Config.StripWeaponsOnCuff = GRM.Handcuffs.Config.StripWeaponsOnCuff == nil and true or GRM.Handcuffs.Config.StripWeaponsOnCuff
 GRM.Handcuffs.Config.RestoreWeaponsOnUncuff = GRM.Handcuffs.Config.RestoreWeaponsOnUncuff == nil and true or GRM.Handcuffs.Config.RestoreWeaponsOnUncuff
 GRM.Handcuffs.Config.EnforceNoWeaponsWhileCuffed = GRM.Handcuffs.Config.EnforceNoWeaponsWhileCuffed == nil and true or GRM.Handcuffs.Config.EnforceNoWeaponsWhileCuffed
-GRM.Handcuffs.Config.EnableBehindBackPose = GRM.Handcuffs.Config.EnableBehindBackPose == nil and true or GRM.Handcuffs.Config.EnableBehindBackPose
+GRM.Handcuffs.Config.EnableBehindBackPose = GRM.Handcuffs.Config.EnableBehindBackPose == nil and false or GRM.Handcuffs.Config.EnableBehindBackPose
 GRM.Handcuffs.Config.VehicleUseDistance = GRM.Handcuffs.Config.VehicleUseDistance or 170
 GRM.Handcuffs.Config.VehicleSeatSearchRadius = GRM.Handcuffs.Config.VehicleSeatSearchRadius or 420
 GRM.Handcuffs.Config.VehicleExitOffset = GRM.Handcuffs.Config.VehicleExitOffset or 80

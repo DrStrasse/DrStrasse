@@ -386,7 +386,10 @@ end
 
 local function applyCuffPose(ply)
     if not IsValid(ply) then return end
-    if cfg().EnableBehindBackPose == false then return end
+    if cfg().EnableBehindBackPose == false then
+        resetCuffPose(ply)
+        return
+    end
 
     local presetID = math.Clamp(GetConVar("grm_cuffs_pose_preset"):GetInt() or 1, 1, 4)
     local preset = posePresets[presetID] or posePresets[1]
