@@ -211,7 +211,17 @@ else
         local center = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mx.z + math.max(1200, span * 0.75))
         render.PushRenderTarget(mapRT)
         render.Clear(7, 12, 19, 255, true, true)
-        render.RenderView({ origin = center, angles = Angle(90, 0, 0), x = 0, y = 0, w = 512, h = 512, fov = 90, drawhud = false, drawviewmodel = false, dopostprocess = false })
+        render.RenderView({
+            origin = center,
+            angles = Angle(90, 0, 0),
+            x = 0, y = 0, w = 512, h = 512,
+            -- Ортографическая проекция исключает перспективный «второй
+            -- слой» карты и дальний фон/небо по краям RenderView.
+            ortho = { left = -span * 0.5, right = span * 0.5, top = -span * 0.5, bottom = span * 0.5 },
+            znear = 1, zfar = math.max(4096, span * 2),
+            drawskybox = false, drawmonitors = false,
+            drawhud = false, drawviewmodel = false, dopostprocess = false,
+        })
         render.PopRenderTarget()
     end
     net.Receive("GRM_Minimap_Data", function() data = net.ReadTable() or data end)
