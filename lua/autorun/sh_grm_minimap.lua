@@ -222,6 +222,23 @@ else
         local text = string.lower(string.Trim(pack and pack[1] or ""))
         if text == "/gps" then openGPS() pack[1] = "" return true end
     end)
+    hook.Add("PostDrawTranslucentRenderables", "GRM_Minimap_CaptureFlags", function()
+        local lp = LocalPlayer()
+        if not IsValid(lp) then return end
+        for _, point in ipairs(data.points or {}) do
+            local pos = Vector(point.pos.x, point.pos.y, point.pos.z or 0)
+            if lp:GetPos():DistToSqr(pos) <= 1400 * 1400 then
+                local col = point.owner ~= "" and Color(90, 220, 140, 230) or Color(240, 180, 70, 230)
+                render.DrawLine(pos, pos + Vector(0, 0, 82), col, true)
+                cam.Start3D2D(pos + Vector(0, 0, 84), Angle(0, lp:EyeAngles().y - 90, 90), 0.08)
+                    draw.RoundedBox(5, -115, -23, 230, 46, Color(10, 16, 24, 220))
+                    draw.SimpleText("ТОЧКА ЗАХВАТА", "DermaDefaultBold", 0, -8, col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText(tostring(point.name), "DermaDefault", 0, 10, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                cam.End3D2D()
+            end
+        end
+    end)
+
     hook.Add("HUDPaint", "GRM_Minimap_HUD", function()
         local lp = LocalPlayer() if not IsValid(lp) then return end
         renderMapSnapshot()
