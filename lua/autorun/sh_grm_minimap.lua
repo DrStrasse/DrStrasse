@@ -185,6 +185,7 @@ else
             saveAccess.DoClick = function() send("set_point_access", function() net.WriteString(point.id); net.WriteTable(selected) end) w:Close() end
         end
         local function rebuild()
+            if not IsValid(sc) or not IsValid(frame) then return end
             sc:Clear()
             local title = vgui.Create("DLabel", sc) title:Dock(TOP) title:SetTall(30) title:SetText("РАЙОНЫ")
             for _, d in ipairs(data.districts or {}) do
