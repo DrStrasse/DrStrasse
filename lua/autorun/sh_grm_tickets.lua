@@ -174,6 +174,12 @@ else
                 menu:Open()
             end
         end
+        if #history > 0 then
+            local hTitle = vgui.Create("DLabel", sc) hTitle:Dock(TOP) hTitle:SetTall(34) hTitle:SetText("ИСТОРИЯ ЗАКРЫТЫХ ТИКЕТОВ") hTitle:SetTextColor(C.blue) hTitle:SetFont("GRMTicketBody")
+            for _, t in ipairs(history) do
+                local h = vgui.Create("DLabel", sc) h:Dock(TOP) h:SetTall(52) h:DockMargin(0, 0, 0, 5) h:SetText("#" .. tostring(t.id) .. " • " .. tostring(t.name) .. " • закрыл: " .. tostring(t.closedBy or "—") .. " • оценка: " .. (t.rating and (t.rating .. "/5") or "нет") .. "\n" .. tostring(t.text)) h:SetTextColor(C.dim) h:SetWrap(true)
+            end
+        end
     end
     net.Receive("GRM_Ticket_AdminData", function() openAdmin(net.ReadTable() or {}) end)
     concommand.Add("grm_ticket", openCreate)
