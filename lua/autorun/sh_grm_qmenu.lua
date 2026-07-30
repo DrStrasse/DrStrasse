@@ -115,7 +115,7 @@ QM.ToolCatalog = {
     { id = "button",     label = "Кнопка",                          desc = "Сигнальная кнопка.",                     cat = "ui" },
     { id = "camera",     label = "Камера",                          desc = "Камера наблюдателя.",                    cat = "ui" },
     { id = "textscreen", label = "Текстовый экран",                 desc = "Табличка с текстом на карте.",           cat = "ui" },
-    { id = "grm_minimap", label = "GRM: районы и точки",             desc = "Районы, точки захвата и мини-карта.",      cat = "ui" }
+    { id = "grm_minimap", label = "GRM: районы и точки",             desc = "Районы, точки захвата и мини-карта.",      cat = "ui" },
     -- Оформление
     { id = "colour",     label = "Цвет пропа",                      desc = "Перекраска и прозрачность.",             cat = "decor" },
     { id = "material",   label = "Материал пропа",                  desc = "Смена материала/текстуры.",              cat = "decor" },
