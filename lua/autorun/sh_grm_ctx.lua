@@ -325,6 +325,7 @@ end
 local BTNS = {
     { id = "ticket",     l = "Тикет",        fn = actTicket,     c = CC.ticket,  ch = CC.ticketH,  ok = function() return true end },
     { id = "inventory",  l = "Инвентарь",    fn = actInv,        c = CC.inv,     ch = CC.invH,     ok = function() return true end },
+    { id = "gps",        l = "GPS-метки",     fn = function() RunConsoleCommand("grm_gps") end, c = Color(55, 155, 185), ch = Color(75, 180, 210), ok = function() return true end },
     { id = "money_drop", l = "Выбросить деньги…", fn = actDropMoney,
       c = Color(190, 150, 60), ch = Color(210, 170, 80), ok = function() return true end },
     { id = "money_give", l = function()

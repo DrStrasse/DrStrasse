@@ -290,7 +290,7 @@ else
     net.Receive("GRM_Minimap_Open", function()
         if IsValid(frame) then frame:Remove() end
         frame = vgui.Create("DFrame") frame:SetSize(980, 720) frame:Center() frame:MakePopup() frame:SetTitle("") frame:ShowCloseButton(false) frame:SetDeleteOnClose(true)
-        frame.Paint = function(_, w, h) draw.RoundedBox(10, 0, 0, w, h, MUI.bg); draw.RoundedBoxEx(10, 0, 0, w, 64, MUI.head, true, true, false, false); draw.SimpleText("GRM  /  КАРТА И ТЕРРИТОРИИ", "GRMMM_Small", 22, 18, MUI.blue, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER); draw.SimpleText("Районы, точки захвата и навигация", "GRMMM_Title", 22, 43, MUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
+        frame.Paint = function(_, w, h) draw.RoundedBox(10, 0, 0, w, h, MUI.bg); draw.RoundedBoxEx(10, 0, 0, w, 64, MUI.head, true, true, false, false); draw.SimpleText("GRM  /  GPS И ТЕРРИТОРИИ", "GRMMM_Small", 22, 18, MUI.blue, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER); draw.SimpleText("GPS-точки, районы и точки захвата", "GRMMM_Title", 22, 43, MUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
         local close = styleButton(vgui.Create("DButton", frame), MUI.red) close:SetPos(936, 16) close:SetSize(30, 30) close:SetText("×") close.DoClick = function() frame:Close() end
         local name = vgui.Create("DTextEntry", frame) name:SetPos(22, 82) name:SetSize(370, 34) name:SetFont("GRMMM_Body") name:SetPlaceholderText("Название района или точки") name.Paint = function(self, w, h) draw.RoundedBox(6, 0, 0, w, h, MUI.card2); self:DrawTextEntryText(MUI.text, MUI.blue, MUI.text) end
         local radius = vgui.Create("DNumberWang", frame) radius:SetPos(402, 82) radius:SetSize(120, 34) radius:SetMin(100) radius:SetMax(10000) radius:SetValue(500) radius:SetFont("GRMMM_Body")
@@ -365,6 +365,8 @@ else
     end)
 
     hook.Add("HUDPaint", "GRM_Minimap_HUD", function()
+        -- Render-карта отключена: остаётся только GPS/точки/районы и их меню.
+        if false then
         local lp = LocalPlayer() if not IsValid(lp) then return end
         renderMapSnapshot()
         local size, x, y = 280, ScrW() - 300, 18
@@ -439,5 +441,24 @@ else
         local current = "Вне района"
         for _, d in ipairs(data.districts or {}) do if lp:GetPos():DistToSqr(Vector(d.center.x, d.center.y, d.center.z or 0)) <= (tonumber(d.radius) or 0)^2 then current = d.name end end
         draw.SimpleText(current, "DermaDefaultBold", x + size / 2, y + size + 10, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+        end
+    end)
+
+    hook.Add("HUDPaint", "GRM_GPS_HUD", function()
+        local lp = LocalPlayer()
+        if not IsValid(lp) or not gpsTarget then return end
+        for _, point in ipairs(data.points or {}) do
+            if tostring(point.id) == tostring(gpsTarget) then
+                local target = Vector(point.pos.x, point.pos.y, point.pos.z or lp:GetPos().z)
+                local relative = math.rad((target - lp:GetPos()):Angle().y - lp:EyeAngles().y)
+                local dir = Vector(math.cos(relative), math.sin(relative), 0)
+                local side = Vector(-dir.y, dir.x, 0)
+                local ax, ay = ScrW() / 2, ScrH() - 105
+                surface.SetDrawColor(255, 220, 90, 255)
+                surface.DrawPoly({ { x = ax + dir.x * 22, y = ay + dir.y * 22 }, { x = ax - dir.x * 12 + side.x * 10, y = ay - dir.y * 12 + side.y * 10 }, { x = ax - dir.x * 12 - side.x * 10, y = ay - dir.y * 12 - side.y * 10 } })
+                draw.SimpleText("GPS: " .. tostring(point.name) .. "  •  " .. math.floor(lp:GetPos():Distance(target)) .. " м", "DermaDefaultBold", ScrW() / 2, ScrH() - 70, Color(255, 220, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                break
+            end
+        end
     end)
 end

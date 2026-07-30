@@ -5,7 +5,7 @@ TOOL.ConfigName = ""
 
 if CLIENT then
     language.Add("tool.grm_minimap.name", "GRM: районы и точки")
-    language.Add("tool.grm_minimap.desc", "Размещение районов и точек захвата на мини-карте")
+    language.Add("tool.grm_minimap.desc", "Размещение GPS-точек, районов и точек захвата")
     language.Add("tool.grm_minimap.0", "ЛКМ: точка | ПКМ: район | присед+ПКМ: вершина | присед+R: центр обзора карты")
 end
 
