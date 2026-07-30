@@ -193,6 +193,22 @@ else
         local py = math.Clamp(1 - (v.y - mn.y) / math.max(1, mx.y - mn.y), 0, 1)
         return x + px * size, y + py * size
     end
+    local function districtAt(v)
+        for _, d in ipairs(data.districts or {}) do
+            local poly = d.polygon
+            local inside = false
+            if istable(poly) and #poly >= 3 and d.polygonClosed then
+                for i = 1, #poly do
+                    local a, b = poly[i], poly[i % #poly + 1]
+                    if ((a.y > v.y) ~= (b.y > v.y)) and v.x < (b.x - a.x) * (v.y - a.y) / math.max(0.0001, b.y - a.y) + a.x then inside = not inside end
+                end
+            else
+                local c = d.center or {}
+                inside = Vector(c.x or 0, c.y or 0, v.z):DistToSqr(v) <= (tonumber(d.radius) or 500)^2
+            end
+            if inside then return d end
+        end
+    end
     local function send(action, extra)
         net.Start("GRM_Minimap_Action") net.WriteString(action) if extra then extra() end net.SendToServer()
     end
@@ -209,7 +225,7 @@ else
         local mn, mx = worldBounds()
         local span = math.max(mx.x - mn.x, mx.y - mn.y)
         -- Камера ниже: меньше «дальнего» слоя и больше читаемых деталей
-        local center = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mx.z + math.max(1200, span * 0.35))
+        local center = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mx.z + math.max(1200, span * 0.25))
         render.PushRenderTarget(mapRT)
         render.Clear(7, 12, 19, 255, true, true)
         render.RenderView({
@@ -317,6 +333,16 @@ else
         surface.SetDrawColor(45, 65, 86, 255) surface.DrawOutlinedRect(x, y, size, size, 2)
         for i = 1, 7 do surface.SetDrawColor(30, 48, 66, 180) surface.DrawLine(x + i * size / 8, y, x + i * size / 8, y + size) surface.DrawLine(x, y + i * size / 8, x + size, y + i * size / 8) end
         local mn, mx = worldBounds()
+        local cellW, cellH = (mx.x - mn.x) / 8, (mx.y - mn.y) / 8
+        for gx = 0, 7 do for gy = 0, 7 do
+            local worldCell = Vector(mn.x + (gx + 0.5) * cellW, mn.y + (gy + 0.5) * cellH, 0)
+            local d = districtAt(worldCell)
+            if d then
+                local col = d.owner ~= "" and Color(80, 190, 120, 48) or Color(70, 140, 220, 34)
+                surface.SetDrawColor(col)
+                surface.DrawRect(x + gx * size / 8 + 1, y + (7 - gy) * size / 8 + 1, size / 8 - 2, size / 8 - 2)
+            end
+        end end
         local worldSpan = math.max(mx.x - mn.x, mx.y - mn.y)
         for _, d in ipairs(data.districts or {}) do
             local dx, dy = mapPos(Vector(d.center.x, d.center.y, 0), x, y, size)
