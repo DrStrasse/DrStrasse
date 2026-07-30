@@ -1084,6 +1084,7 @@ function FC.LoadMap(ply)
             local ent = ents.Create(record.class)
             if IsValid(ent) then
                 ent:SetPos(toVec(record.pos)); ent:SetAngles(toAng(record.ang)); ent:Spawn(); ent:Activate()
+                if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
                 ent:SetFactoryID(record.id or newID(record.kind))
 
                 if record.kind == "storage" then FC.StorageData[ent:GetFactoryID()] = istable(record.items) and record.items or {} end

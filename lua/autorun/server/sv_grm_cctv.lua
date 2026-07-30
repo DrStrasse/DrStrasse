@@ -246,6 +246,7 @@ function CCTV.LoadPermanent()
                     if isstring(rec.model) and rec.model ~= "" then ent:SetModel(rec.model) end
                     ent:Spawn()
                     ent:Activate()
+                    if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
                     if isstring(rec.device_id) and rec.device_id ~= "" then ent:SetDeviceID(rec.device_id) end
                     if isstring(rec.label) then ent:SetLabel(rec.label) end
                     if isstring(rec.network) then ent:SetNetworkID(CCTV.NormalizeNetwork(rec.network)) end

@@ -827,6 +827,7 @@ function P.LoadMapEntities(ply)
         local ent = ents.Create(rec.class)
         if IsValid(ent) then
             ent:SetPos(tableToVec(rec.pos or {})); ent:SetAngles(tableToAng(rec.ang or {})); ent:Spawn(); ent:Activate()
+            if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
             if rec.class == "grm_phone" or rec.class == "grm_payphone" then
                 ent:SetPhoneNumber(rec.number or P.GenerateNumber()); ent:SetDisplayName(rec.name or (rec.class == "grm_payphone" and "Таксофон" or "Телефон")); ent:SetExchangeID(rec.exchange or "main")
                 updatePhoneVisual(ent, "idle")

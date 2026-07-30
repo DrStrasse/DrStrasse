@@ -559,6 +559,7 @@ if SERVER then
                             local a = istable(rec.ang) and rec.ang or {}
                             ent:SetAngles(Angle(tonumber(a.p) or 0, tonumber(a.y) or 0, tonumber(a.r) or 0))
                             ent:Spawn() ent:Activate()
+                            if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
                             local phys = ent:GetPhysicsObject()
                             if IsValid(phys) then phys:EnableMotion(false) end
                             if rec.class == "grm_server_rack" then ent:SetNWBool("GRM_RN_On", true) end

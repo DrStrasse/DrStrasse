@@ -221,6 +221,7 @@ if SERVER then
                         ent:SetAngles(Angle(tonumber(rec.ang.p) or 0, tonumber(rec.ang.y) or 0, tonumber(rec.ang.r) or 0))
                         ent:Spawn()
                         ent:Activate()
+                        if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
                         local ph = ent:GetPhysicsObject()
                         if IsValid(ph) then ph:EnableMotion(false) end -- перм не катается по карте
                         ent._grmPerm = true

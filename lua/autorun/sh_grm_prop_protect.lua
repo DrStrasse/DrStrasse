@@ -43,8 +43,15 @@ function PP.IsManaged(ent)
     return IsValid(ent) and ent:GetClass() == "prop_physics"
 end
 
+function PP.MarkServerEntity(ent)
+    if not IsValid(ent) then return end
+    ent:SetNWString("GRM_EntityOwnerType", "server")
+    ent:SetNWString("GRM_EntityOwnerName", "Сервер")
+    ent.GRM_EntityOwnerType = "server"
+end
+
 function PP.IsOwnedEntity(ent)
-    return IsValid(ent) and ownerOf(ent) ~= ""
+    return IsValid(ent) and (ownerOf(ent) ~= "" or ent:GetNWString("GRM_EntityOwnerType", "") ~= "")
 end
 
 function PP.IsOwner(ply, ent)
@@ -227,10 +234,14 @@ if CLIENT then
         local tr = lp:GetEyeTrace()
         local ent = tr and tr.Entity
         if not IsValid(ent) or not PP.IsOwnedEntity(ent) then return end
+        local ownerType = ent.GRM_EntityOwnerType or ent:GetNWString("GRM_EntityOwnerType", "")
         local ownerKey = ownerOf(ent)
         local ownerName = ent:GetNWString("GRM_PropOwnerName", "")
         if ownerName == "" then ownerName = ent:GetNWString("GRM_EntityOwnerName", "") end
-        local online = false
+        if ownerType == "server" then
+            ownerName = "Сервер"
+        end
+        local online = ownerType == "server"
         for _, p in ipairs(player.GetAll()) do
             if IsValid(p) and GRM.Identity and GRM.Identity.CharacterKey
                 and GRM.Identity.CharacterKey(p) == ownerKey then online = true break end
