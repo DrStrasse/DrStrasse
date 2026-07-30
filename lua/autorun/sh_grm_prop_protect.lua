@@ -33,11 +33,18 @@ local function charKey(ply)
 end
 
 local function ownerOf(ent)
-    return tostring(ent.GRM_PropOwnerCharacterKey or ent:GetNWString("GRM_PropOwnerCharacterKey", ""))
+    local own = ent.GRM_PropOwnerCharacterKey or ent:GetNWString("GRM_PropOwnerCharacterKey", "")
+    if tostring(own or "") ~= "" then return tostring(own) end
+    own = ent.GRM_EntityOwnerCharacterKey or ent:GetNWString("GRM_EntityOwnerCharacterKey", "")
+    return tostring(own or "")
 end
 
 function PP.IsManaged(ent)
     return IsValid(ent) and ent:GetClass() == "prop_physics"
+end
+
+function PP.IsOwnedEntity(ent)
+    return IsValid(ent) and ownerOf(ent) ~= ""
 end
 
 function PP.IsOwner(ply, ent)
@@ -103,6 +110,15 @@ if SERVER then
         stablePhysics(ent)
     end
 
+    local function registerOwnedEntity(ply, ent)
+        if not IsValid(ply) or not IsValid(ent) or ent._grmPerm then return end
+        ent.GRM_EntityOwnerCharacterKey = charKey(ply)
+        ent.GRM_EntityOwnerAccountKey = ply:SteamID64()
+        ent.GRM_EntityOwnerName = ply:GetNWString("GRM_RPName", "") ~= "" and ply:GetNWString("GRM_RPName", "") or ply:Nick()
+        ent:SetNWString("GRM_EntityOwnerCharacterKey", ent.GRM_EntityOwnerCharacterKey)
+        ent:SetNWString("GRM_EntityOwnerName", ent.GRM_EntityOwnerName)
+    end
+
     hook.Add("PlayerSpawnedProp", "GRM_PropProtect_Register", function(ply, model, ent)
         if not PP.Cfg.enabled or not IsValid(ent) then return end
         if countProps(ply) >= tonumber(PP.Cfg.maxProps or 150) then
@@ -111,6 +127,25 @@ if SERVER then
             return
         end
         registerProp(ply, ent)
+    end)
+
+    hook.Add("PlayerSpawnedSENT", "GRM_PropProtect_RegisterSENT", registerOwnedEntity)
+    hook.Add("PlayerSpawnedSWEP", "GRM_PropProtect_RegisterSWEP", registerOwnedEntity)
+    hook.Add("PlayerSpawnedVehicle", "GRM_PropProtect_RegisterVehicle", registerOwnedEntity)
+
+    local function cleanupDisconnectedOwner(ply)
+        local ownerKey = charKey(ply)
+        timer.Create("GRM_PropProtect_Disconnect_" .. string.gsub(ownerKey, "[^%w_]", "_"), 300, 1, function()
+            for _, ent in ipairs(ents.GetAll()) do
+                if IsValid(ent) and not ent._grmPerm and ownerOf(ent) == ownerKey then ent:Remove() end
+            end
+        end)
+    end
+
+    hook.Add("PlayerDisconnected", "GRM_PropProtect_DisconnectCleanup", cleanupDisconnectedOwner)
+    hook.Add("PlayerInitialSpawn", "GRM_PropProtect_CancelDisconnectCleanup", function(ply)
+        local id = string.gsub(charKey(ply), "[^%w_]", "_")
+        timer.Remove("GRM_PropProtect_Disconnect_" .. id)
     end)
 
     hook.Add("PhysgunPickup", "GRM_PropProtect_Physgun", function(ply, ent)
@@ -185,6 +220,29 @@ end
 
 if CLIENT then
     net.Receive("GRM_PropProtect_Open", function() end)
+    surface.CreateFont("GRMPP_Owner", { font = "Roboto", size = 14, weight = 600, extended = true })
+    hook.Add("HUDPaint", "GRM_PropProtect_OwnerHUD", function()
+        local lp = LocalPlayer()
+        if not IsValid(lp) then return end
+        local tr = lp:GetEyeTrace()
+        local ent = tr and tr.Entity
+        if not IsValid(ent) or not PP.IsOwnedEntity(ent) then return end
+        local ownerKey = ownerOf(ent)
+        local ownerName = ent:GetNWString("GRM_PropOwnerName", "")
+        if ownerName == "" then ownerName = ent:GetNWString("GRM_EntityOwnerName", "") end
+        local online = false
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and GRM.Identity and GRM.Identity.CharacterKey
+                and GRM.Identity.CharacterKey(p) == ownerKey then online = true break end
+        end
+        local text = online and ("Владелец: " .. (ownerName ~= "" and ownerName or "игрок")) or "Владелец: Никто"
+        local col = online and Color(150, 220, 255) or Color(180, 180, 190)
+        local w, h = 290, 30
+        local x, y = ScrW() - w - 18, 185
+        draw.RoundedBox(6, x, y, w, h, Color(12, 17, 25, 225))
+        draw.SimpleText(text, "GRMPP_Owner", x + 12, y + h / 2, col, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    end)
+
     net.Receive("GRM_PropProtect_Data", function()
         local cfg = net.ReadTable() or {}
         local f = vgui.Create("DFrame")

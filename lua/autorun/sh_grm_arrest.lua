@@ -131,6 +131,17 @@ end
         for _, rec in ipairs(A.Cfg.cameras or {}) do if istable(rec) then spawnCamera(rec) end end
     end
 
+    function A.SaveConfig()
+        save()
+        return true
+    end
+
+    function A.LoadConfig()
+        load()
+        loadCameras()
+        return true
+    end
+
     function A.OpenAdmin(ply)
         if not IsValid(ply) or not ply:IsSuperAdmin() then return end
         net.Start("GRM_Arrest_AdminData")
