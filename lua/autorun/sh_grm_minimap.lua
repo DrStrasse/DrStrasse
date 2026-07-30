@@ -298,10 +298,12 @@ else
             if tostring(point.id) == tostring(gpsTarget) then
                 local target = Vector(point.pos.x, point.pos.y, point.pos.z or lp:GetPos().z)
                 local screen = target:ToScreen()
+                local distance = math.floor(lp:GetPos():Distance(target))
+                local scale = math.Clamp(0.75 + distance / 1800, 0.75, 1.35)
                 local sw, sh = ScrW(), ScrH()
                 local visible = screen.visible == true and screen.x > 0 and screen.x < sw and screen.y > 0 and screen.y < sh
                 local x, y = screen.x or sw / 2, screen.y or sh / 2
-                local panelW, panelH = 340, 82
+                local panelW, panelH = math.floor(340 * scale), math.floor(82 * scale)
                 if not visible then
                     local dx, dy = x - sw / 2, y - sh / 2
                     local len = math.max(1, math.sqrt(dx * dx + dy * dy))
@@ -310,7 +312,6 @@ else
                     y = math.Clamp(sh / 2 + dy * (sh / 2 - panelH / 2 - 24), panelH / 2 + 12, sh - panelH / 2 - 12)
                 end
                 x, y = math.Clamp(x, panelW / 2 + 12, sw - panelW / 2 - 12), math.Clamp(y, panelH / 2 + 12, sh - panelH / 2 - 12)
-                local distance = math.floor(lp:GetPos():Distance(target))
                 draw.RoundedBox(10, x - panelW / 2, y - panelH / 2, panelW, panelH, Color(8, 14, 23, 238))
                 surface.SetDrawColor(255, 215, 70, 255)
                 surface.DrawOutlinedRect(x - panelW / 2, y - panelH / 2, panelW, panelH, 2)
