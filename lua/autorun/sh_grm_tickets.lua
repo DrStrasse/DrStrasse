@@ -19,14 +19,16 @@ if SERVER then
     local NET_CREATE, NET_ADMIN, NET_ACTION, NET_REPLY, NET_ADMIN_REQ, NET_ZONE = "GRM_Ticket_Create", "GRM_Ticket_AdminData", "GRM_Ticket_AdminAction", "GRM_Ticket_Reply", "GRM_Ticket_AdminRequest", "GRM_Ticket_ZoneAction"
     for _, n in ipairs({ NET_CREATE, NET_ADMIN, NET_ACTION, NET_REPLY, NET_ADMIN_REQ, NET_ZONE }) do util.AddNetworkString(n) end
     util.AddNetworkString("GRM_Ticket_Rate")
+    util.AddNetworkString("GRM_Ticket_PlayerData")
+    util.AddNetworkString("GRM_Ticket_PlayerReply")
 
     local function save()
-        file.Write(T.File, util.TableToJSON({ nextID = T.NextID, history = T.History, zones = T.Zones }, true))
+        file.Write(T.File, util.TableToJSON({ nextID = T.NextID, active = T.Active, history = T.History, zones = T.Zones }, true))
     end
     local function load()
         if not file.Exists(T.File, "DATA") then return end
         local ok, d = pcall(util.JSONToTable, file.Read(T.File, "DATA") or "")
-        if ok and istable(d) then T.NextID = tonumber(d.nextID) or 0; T.History = istable(d.history) and d.history or {}; T.Zones = istable(d.zones) and d.zones or {} end
+        if ok and istable(d) then T.NextID = tonumber(d.nextID) or 0; T.Active = istable(d.active) and d.active or {}; T.History = istable(d.history) and d.history or {}; T.Zones = istable(d.zones) and d.zones or {} end
     end
     load()
 
@@ -42,6 +44,7 @@ if SERVER then
         table.sort(list, function(a, b) return (a.id or 0) > (b.id or 0) end)
         net.Start(NET_ADMIN) net.WriteTable({ tickets = list, zones = T.Zones, history = T.History }) net.Send(ply)
     end
+    local sendPlayerTicket
     local function create(ply, text)
         text = string.sub(string.Trim(tostring(text or "")), 1, 500)
         if text == "" then return false, "Опишите проблему" end
@@ -52,11 +55,15 @@ if SERVER then
         local ticket = { id = T.NextID, account = IsValid(ply) and ply:SteamID64() or "", name = rpName(ply), text = text, status = "open", admin = "", created = os.time(), messages = {} }
         T.Active[ticket.id] = ticket
         notifyAdmins("Новый тикет #" .. ticket.id .. " от " .. ticket.name .. ".")
-        if IsValid(ply) then ply:ChatPrint("[GRM Тикеты] Тикет #" .. ticket.id .. " создан. Ожидайте ответа администрации.") end
+        if IsValid(ply) then ply:ChatPrint("[GRM Тикеты] Тикет #" .. ticket.id .. " создан. Ожидайте ответа администрации."); sendPlayerTicket(ticket) end
         save(); return true, ticket.id
     end
     local function findPlayer(ticket)
         for _, p in ipairs(player.GetAll()) do if IsValid(p) and p:SteamID64() == ticket.account then return p end end
+    end
+    sendPlayerTicket = function(ticket)
+        local owner = findPlayer(ticket)
+        if IsValid(owner) then net.Start("GRM_Ticket_PlayerData") net.WriteTable(ticket) net.Send(owner) end
     end
 
     net.Receive(NET_ADMIN_REQ, function(_, ply)
@@ -97,9 +104,18 @@ if SERVER then
         if action == "tp_to_player" then local owner = findPlayer(ticket); if IsValid(owner) then ply:SetPos(owner:GetPos()) end
         elseif action == "bring_player" then local owner = findPlayer(ticket); if IsValid(owner) then owner:SetPos(ply:GetPos()); owner:ChatPrint("[GRM Тикеты] Администратор вызвал вас к себе.") end
         elseif action == "claim" then ticket.status = "claimed"; ticket.admin = rpName(ply); notifyAdmins("Тикет #" .. id .. " взял " .. rpName(ply) .. ".")
-        elseif action == "close" then ticket.status = "closed"; ticket.closedBy = rpName(ply); ticket.closed = os.time(); T.History[#T.History + 1] = ticket; T.Active[id] = nil; local owner = findPlayer(ticket); if IsValid(owner) then owner:ChatPrint("[GRM Тикеты] Тикет #" .. id .. " закрыт. Оцените работу: /ticket_rate " .. id) end
+        elseif action == "close" then ticket.status = "closed"; ticket.closedBy = rpName(ply); ticket.closed = os.time(); T.History[#T.History + 1] = ticket; T.Active[id] = nil; local owner = findPlayer(ticket); if IsValid(owner) then owner:ChatPrint("[GRM Тикеты] Тикет #" .. id .. " закрыт. Оцените работу: /ticket_rate " .. id); sendPlayerTicket(ticket) end
         end
         save(); sendAdmin(ply)
+    end)
+    net.Receive("GRM_Ticket_PlayerReply", function(_, ply)
+        local id = net.ReadUInt(24)
+        local text = string.sub(string.Trim(net.ReadString() or ""), 1, 500)
+        local ticket = T.Active[id]
+        if not IsValid(ply) or not ticket or ticket.account ~= ply:SteamID64() or text == "" then return end
+        ticket.messages[#ticket.messages + 1] = { from = rpName(ply), text = text, time = os.time() }
+        notifyAdmins("Новое сообщение в тикете #" .. id .. ".")
+        save(); sendPlayerTicket(ticket)
     end)
     net.Receive(NET_REPLY, function(_, ply)
         if not IsValid(ply) or not ply:IsAdmin() then return end
@@ -107,7 +123,7 @@ if SERVER then
         local ticket = T.Active[id] if not ticket or text == "" then return end
         ticket.messages[#ticket.messages + 1] = { from = rpName(ply), text = text, time = os.time() }
         local owner = findPlayer(ticket)
-        if IsValid(owner) then owner:ChatPrint("[Тикет #" .. id .. "] " .. rpName(ply) .. ": " .. text) end
+        if IsValid(owner) then owner:ChatPrint("[Тикет #" .. id .. "] " .. rpName(ply) .. ": " .. text); sendPlayerTicket(ticket) end
         ticket.status = "claimed"; ticket.admin = rpName(ply); save(); sendAdmin(ply)
     end)
     concommand.Add("grm_tickets", function(ply) if IsValid(ply) and ply:IsAdmin() then sendAdmin(ply) end end)
@@ -135,6 +151,22 @@ else
         local l = vgui.Create("DLabel", f) l:SetPos(16, 32) l:SetSize(388, 24) l:SetText("Оцените работу администратора:") l:SetTextColor(C.dim)
         for i = 1, 5 do local b = button(f, string.rep("★", i), Color(200, 155, 45)) b:SetPos(16 + (i - 1) * 77, 70) b:SetSize(68, 36) b.DoClick = function() net.Start("GRM_Ticket_Rate") net.WriteUInt(tonumber(id) or 0, 24) net.WriteUInt(i, 3) net.SendToServer() f:Close() end end
     end
+    local playerFrame
+    local currentPlayerTicket
+    local function showPlayerTicket(ticket)
+        currentPlayerTicket = ticket
+        if IsValid(playerFrame) then playerFrame:Remove() end
+        playerFrame = vgui.Create("DFrame") playerFrame:SetSize(430, 280) playerFrame:SetPos(ScrW() - 450, ScrH() - 310) playerFrame:SetTitle("GRM — Тикет #" .. tostring(ticket.id)) playerFrame:MakePopup()
+        local info = vgui.Create("DLabel", playerFrame) info:SetPos(12, 32) info:SetSize(405, 45) info:SetText("Статус: " .. tostring(ticket.status) .. "\nВаше обращение: " .. tostring(ticket.text)) info:SetTextColor(C.dim) info:SetWrap(true)
+        local list = vgui.Create("DScrollPanel", playerFrame) list:SetPos(12, 82) list:SetSize(405, 105)
+        for _, msg in ipairs(ticket.messages or {}) do local line = vgui.Create("DLabel", list) line:Dock(TOP) line:SetTall(24) line:SetText(tostring(msg.from) .. ": " .. tostring(msg.text)) line:SetTextColor(C.text) end
+        if ticket.status ~= "closed" then
+            local entry = vgui.Create("DTextEntry", playerFrame) entry:SetPos(12, 195) entry:SetSize(300, 30) entry:SetPlaceholderText("Сообщение администрации")
+            local send = button(playerFrame, "Отправить", C.blue) send:SetPos(320, 195) send:SetSize(97, 30) send.DoClick = function() net.Start("GRM_Ticket_PlayerReply") net.WriteUInt(ticket.id, 24) net.WriteString(entry:GetValue()) net.SendToServer() entry:SetText("") end
+        end
+    end
+    net.Receive("GRM_Ticket_PlayerData", function() showPlayerTicket(net.ReadTable() or {}) end)
+
     local function openCreate()
         local f = vgui.Create("DFrame")
         if GRM.UI and GRM.UI.Track then GRM.UI.Track("ticket_create", f) end
@@ -186,6 +218,15 @@ else
     concommand.Add("grm_tickets", function() net.Start("GRM_Ticket_AdminRequest") net.SendToServer() end)
     hook.Add("ShowTeam", "GRM_Tickets_F2", function(ply)
         if ply == LocalPlayer() and IsValid(ply) and ply:IsAdmin() then RunConsoleCommand("grm_tickets"); return true end
+    end)
+    hook.Add("PlayerBindPress", "GRM_Tickets_F2Bind", function(ply, bind, pressed)
+        if ply == LocalPlayer() and pressed and string.find(string.lower(bind or ""), "gm_showteam", 1, true) and ply:IsAdmin() then RunConsoleCommand("grm_tickets"); return true end
+    end)
+    local f2Down = false
+    hook.Add("Think", "GRM_Tickets_F2Poll", function()
+        local down = input.IsKeyDown(KEY_F2)
+        if down and not f2Down and IsValid(LocalPlayer()) and LocalPlayer():IsAdmin() then RunConsoleCommand("grm_tickets") end
+        f2Down = down
     end)
     hook.Add("PlayerSayTransform", "GRM_Tickets_ClientCommands", function(ply, data)
         if ply ~= LocalPlayer() then return end
