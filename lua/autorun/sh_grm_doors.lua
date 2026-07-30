@@ -348,7 +348,7 @@ if SERVER then
             for _, ent in ipairs(ents.GetAll()) do
                 if IsValid(ent) and D.IsDoor(ent) then
                     local id = D.GetDoorID(ent)
-                    local rec = D.Data.doors[id]
+                    local rec = D.GetRecord and select(1, D.GetRecord(ent)) or D.Data.doors[id]
                     if rec then
                         local ownerTxt = ""
                         if rec.owner_type == "player" then ownerTxt = rec.owner_nick or ""
@@ -372,6 +372,7 @@ if SERVER then
                     end
                 end
             end
+            if D.SaveDoors then D.SaveDoors() end
         end)
 
         print("[GRM Doors] Загружено дверей на карте " .. mapName() .. ": " .. table.Count(D.Data.doors))
