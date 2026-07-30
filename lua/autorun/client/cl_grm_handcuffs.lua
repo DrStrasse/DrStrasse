@@ -379,6 +379,8 @@ local function resetCuffPose(ply)
         end
     end
 
+    if ply.InvalidateBoneCache then ply:InvalidateBoneCache() end
+    if ply.SetupBones then ply:SetupBones() end
     posedPlayers[ply] = nil
 end
 

@@ -412,6 +412,23 @@ end
     concommand.Add("grm_arrest_reload", function(ply) if not IsValid(ply) or ply:IsSuperAdmin() then loadCameras() end end)
     hook.Add("InitPostEntity", "GRM_Arrest_LoadCameras", function() timer.Simple(2, loadCameras) end)
     hook.Add("ShutDown", "GRM_Arrest_Save", save)
+
+    -- Arrest appearance has higher priority than faction/character model
+    -- synchronizers. Re-apply only while the player is actually arrested.
+    timer.Create("GRM_Arrest_ModelPriority", 0.25, 0, function()
+        for _, ply in ipairs(player.GetAll()) do
+            if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then
+                local g = group(ply:GetNWString("GRM_ArrestGroup", "criminals"))
+                if isstring(g.model) and g.model ~= "" and string.lower(ply:GetModel() or "") ~= string.lower(g.model) then
+                    ply:SetModel(g.model)
+                end
+                ply:SetSkin(math.max(0, math.floor(tonumber(g.skin) or 0)))
+                for groupID, value in pairs(g.bodygroups or {}) do
+                    ply:SetBodygroup(tonumber(groupID) or 0, tonumber(value) or 0)
+                end
+            end
+        end
+    end)
 end
 
 if CLIENT then
