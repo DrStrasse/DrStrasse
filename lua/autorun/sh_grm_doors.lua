@@ -51,7 +51,7 @@ D.Config = D.Config or {
     PermPriceMultiplier = 3,            -- множитель покупки навечно (х3)
     SuperAdminBypass = true,
     HUDDistance = 220,                  -- дистанция 3D2D HUD
-    PartnerRadius = 130,                -- радиус поиска парной створки (широкие ворота ~128)
+    PartnerRadius = 45,                 -- только реальная соседняя створка, не соседние двери коридора
     LockSyncInterval = 2.0,             -- период авторитетного реконсилера замков (сервер)
     DoorClasses = {
         prop_door_rotating = true,
@@ -105,25 +105,9 @@ function D.GetPartnerDoor(ent)
     local parent = ent:GetParent()
     if IsValid(parent) and D.IsDoor(parent) then return parent end
 
-    -- v2.0.5: радиус из конфига (широкие двойные ворота ~128 юн. между осями
-    -- раньше не находили пару), кандидат — ТОЛЬКО с той же моделью и у того же
-    -- пола (Z ±30), побеждает БЛИЖАЙШИЙ — соседние двери коридора не цепляются.
-    local radius = (D.Config and D.Config.PartnerRadius) or 110
-    local mdl = ent:GetModel()
-    local best, bestDist
-    local near = ents.FindInSphere(pos, radius)
-    for _, other in ipairs(near) do
-        if IsValid(other) and other ~= ent and D.IsDoor(other) then
-            local oPos = other:GetPos()
-            if math.abs(pos.z - oPos.z) <= 30 and other:GetModel() == mdl then
-                local dd = pos:DistToSqr(oPos)
-                if not bestDist or dd < bestDist then
-                    best, bestDist = other, dd
-                end
-            end
-        end
-    end
-    return best
+    -- Автоматический радиусный поиск отключён. Он ошибочно объединял
+    -- соседние двери коридора/камеры и создавал «фантомную» вторую дверь.
+    -- Пара учитывается только через реальный parent map-объект.
 end
 
 function D.IsDoorLocked(ent)
@@ -344,6 +328,9 @@ if SERVER then
             end
         end
 
+        for id in pairs(D.Data.doors) do
+            if string.StartWith(tostring(id), "pair_") then D.Data.doors[id] = nil end
+        end
         timer.Simple(1, function()
             for _, ent in ipairs(ents.GetAll()) do
                 if IsValid(ent) and D.IsDoor(ent) then
