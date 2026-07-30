@@ -10,7 +10,7 @@ if SERVER then
     util.AddNetworkString("GRM_Minimap_Open")
     util.AddNetworkString("GRM_Minimap_Action")
     util.AddNetworkString("GRM_Minimap_CaptureEvent")
-    MM.Data = MM.Data or { districts = {}, points = {} }
+    MM.Data = MM.Data or { districts = {}, points = {}, overview = nil }
 
     local function save() file.Write(MM.File, util.TableToJSON(MM.Data, true)) end
     local function load()
@@ -20,6 +20,7 @@ if SERVER then
         end
         MM.Data.districts = istable(MM.Data.districts) and MM.Data.districts or {}
         MM.Data.points = istable(MM.Data.points) and MM.Data.points or {}
+        MM.Data.overview = istable(MM.Data.overview) and MM.Data.overview or nil
     end
     local function pos(t) return { x = t.x, y = t.y, z = t.z } end
     local function send(ply)
@@ -32,6 +33,10 @@ if SERVER then
     end
     function MM.AddDistrict(ply, name, center, radius)
         MM.Data.districts[#MM.Data.districts + 1] = { id = nextID("district"), name = string.sub(string.Trim(name or "Район"), 1, 48), center = { x = center.x, y = center.y, z = center.z }, radius = math.Clamp(tonumber(radius) or 500, 100, 10000), color = { r = 70, g = 150, b = 240 }, polygon = {}, owner = "" }
+        save(); send(); return true
+    end
+    function MM.SetOverview(point, height)
+        MM.Data.overview = { x = point.x, y = point.y, z = point.z, height = math.Clamp(tonumber(height) or 4096, 500, 20000) }
         save(); send(); return true
     end
     function MM.AddDistrictVertex(id, point)
@@ -161,6 +166,7 @@ if SERVER then
         elseif action == "load" then load(); send()
         end
     end)
+    hook.Add("PlayerInitialSpawn", "GRM_Minimap_Sync", function(ply) timer.Simple(3, function() if IsValid(ply) then send(ply) end end) end)
     concommand.Add("grm_minimap_admin", function(ply) if IsValid(ply) and ply:IsSuperAdmin() then send(ply) net.Start("GRM_Minimap_Open") net.Send(ply) end end)
     hook.Add("PlayerSay", "GRM_Minimap_AdminChat", function(ply, text)
         if IsValid(ply) and ply:IsSuperAdmin() and string.lower(string.Trim(text or "")) == "/grm_minimap_admin" then
@@ -254,8 +260,10 @@ else
             local tr = util.TraceLine({ start = sample, endpos = Vector(sample.x, sample.y, mn.z - 8192), mask = MASK_SOLID_BRUSHONLY })
             if tr.Hit then surfaceZ = math.max(surfaceZ, tr.HitPos.z) end
         end
-        local cameraHeight = 50
-        local center = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, surfaceZ + cameraHeight)
+        local overview = data.overview
+        local cameraHeight = overview and tonumber(overview.height) or 50
+        local center = overview and Vector(overview.x, overview.y, overview.z + cameraHeight)
+            or Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, surfaceZ + cameraHeight)
         mapRenderCenter = center
         mapRenderSpan = span
         render.PushRenderTarget(mapRT)
@@ -273,7 +281,7 @@ else
         })
         render.PopRenderTarget()
     end
-    net.Receive("GRM_Minimap_Data", function() data = net.ReadTable() or data end)
+    net.Receive("GRM_Minimap_Data", function() data = net.ReadTable() or data; mapSnapshotReady = false; nextMapRender = 0 end)
     net.Receive("GRM_Minimap_CaptureEvent", function()
         local pointName, faction = net.ReadString(), net.ReadString()
         notification.AddLegacy("Точка «" .. pointName .. "» захвачена фракцией: " .. faction, NOTIFY_GENERIC, 6)
@@ -318,7 +326,7 @@ else
             end
         end
         timer.Simple(0, rebuild)
-        net.Receive("GRM_Minimap_Data", function() data = net.ReadTable() or data; rebuild() end)
+        net.Receive("GRM_Minimap_Data", function() data = net.ReadTable() or data; mapSnapshotReady = false; nextMapRender = 0; rebuild() end)
     end)
     local gpsTarget
     local function openGPS()

@@ -6,7 +6,7 @@ TOOL.ConfigName = ""
 if CLIENT then
     language.Add("tool.grm_minimap.name", "GRM: районы и точки")
     language.Add("tool.grm_minimap.desc", "Размещение районов и точек захвата на мини-карте")
-    language.Add("tool.grm_minimap.0", "ЛКМ: точка | ПКМ: район | присед+ПКМ: вершина полигона | R: замкнуть район/настройки")
+    language.Add("tool.grm_minimap.0", "ЛКМ: точка | ПКМ: район | присед+ПКМ: вершина | присед+R: центр обзора карты")
 end
 
 function TOOL:LeftClick(trace)
@@ -43,7 +43,12 @@ end
 function TOOL:Reload(trace)
     if CLIENT then return true end
     if IsValid(self:GetOwner()) and self:GetOwner():IsSuperAdmin() then
-        if GRM.Minimap and GRM.Minimap.CloseNearestDistrict then GRM.Minimap.CloseNearestDistrict(trace.HitPos) end
+        if self:GetOwner():Crouching() and GRM.Minimap and GRM.Minimap.SetOverview then
+            GRM.Minimap.SetOverview(trace.HitPos, 4096)
+            self:GetOwner():ChatPrint("[Мини-карта] Центр обзора карты установлен в точке прицела.")
+        elseif GRM.Minimap and GRM.Minimap.CloseNearestDistrict then
+            GRM.Minimap.CloseNearestDistrict(trace.HitPos)
+        end
         self:GetOwner():ConCommand("grm_minimap_admin")
         return true
     end
