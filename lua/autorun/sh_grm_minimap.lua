@@ -98,6 +98,10 @@ if SERVER then
             local radius = math.Clamp(net.ReadUInt(16), 100, 2000)
             MM.Data.points[#MM.Data.points + 1] = { id = nextID("point"), name = name ~= "" and name or "GPS-точка", pos = pos(ply:GetPos()), radius = radius, capture = 0, capturing = "", owner = "", allowedFactions = {} }
             save(); send()
+        elseif action == "rename_point" then
+            local id, newName = net.ReadString(), string.sub(string.Trim(net.ReadString() or "GPS-точка"), 1, 64)
+            for _, point in ipairs(MM.Data.points or {}) do if tostring(point.id) == id then point.name = newName ~= "" and newName or point.name end end
+            save(); send()
         elseif action == "set_point_access" then
             local id, incoming = net.ReadString(), net.ReadTable() or {}
             for _, point in ipairs(MM.Data.points or {}) do
@@ -238,9 +242,7 @@ else
         frame.Paint = function(_, w, h) draw.RoundedBox(10, 0, 0, w, h, MUI.bg); draw.RoundedBoxEx(10, 0, 0, w, 64, MUI.head, true, true, false, false); draw.SimpleText("GRM  /  GPS", "GRMMM_Small", 22, 18, MUI.blue, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER); draw.SimpleText("GPS-точки и навигация", "GRMMM_Title", 22, 43, MUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
         local close = styleButton(vgui.Create("DButton", frame), MUI.red) close:SetPos(936, 16) close:SetSize(30, 30) close:SetText("×") close.DoClick = function() frame:Close() end
         local name = vgui.Create("DTextEntry", frame) name:SetPos(22, 82) name:SetSize(370, 34) name:SetFont("GRMMM_Body") name:SetPlaceholderText("Название района или точки") name.Paint = function(self, w, h) draw.RoundedBox(6, 0, 0, w, h, MUI.card2); self:DrawTextEntryText(MUI.text, MUI.blue, MUI.text) end
-        local radius = vgui.Create("DNumberWang", frame) radius:SetPos(402, 82) radius:SetSize(120, 34) radius:SetMin(100) radius:SetMax(10000) radius:SetValue(500) radius:SetFont("GRMMM_Body")
-        local addD = styleButton(vgui.Create("DButton", frame), MUI.blue) addD:SetPos(534, 82) addD:SetSize(190, 34) addD:SetText("+  ДОБАВИТЬ РАЙОН") addD.DoClick = function() send("add_district", function() net.WriteString(name:GetValue()); net.WriteUInt(radius:GetValue(), 16) end) end
-        local addP = styleButton(vgui.Create("DButton", frame), MUI.orange) addP:SetPos(734, 82) addP:SetSize(220, 34) addP:SetText("+  ДОБАВИТЬ ТОЧКУ") addP.DoClick = function() send("add_point", function() net.WriteString(name:GetValue()); net.WriteUInt(radius:GetValue(), 16) end) end
+        local addP = styleButton(vgui.Create("DButton", frame), MUI.orange) addP:SetPos(534, 82) addP:SetSize(420, 34) addP:SetText("+  ДОБАВИТЬ GPS-ТОЧКУ В МЕСТЕ ПРИЦЕЛА") addP.DoClick = function() send("add_point", function() net.WriteString(name:GetValue()); net.WriteUInt(180, 16) end) end
         local sc = vgui.Create("DScrollPanel", frame) sc:SetPos(22, 132) sc:SetSize(932, 550)
         local function editAccess(point)
             local w = vgui.Create("DFrame") w:SetSize(420, 520) w:Center() w:MakePopup() w:SetTitle("Доступ к точке: " .. tostring(point.name))
@@ -256,16 +258,14 @@ else
         local function rebuild()
             if not IsValid(sc) or not IsValid(frame) then return end
             sc:Clear()
-            local title = vgui.Create("DLabel", sc) title:Dock(TOP) title:SetTall(34) title:SetFont("GRMMM_Body") title:SetTextColor(MUI.blue) title:SetText("РАЙОНЫ")
-            for _, d in ipairs(data.districts or {}) do
-                local row = vgui.Create("DPanel", sc) row:Dock(TOP) row:SetTall(42) row:DockMargin(0, 0, 0, 5) row.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, MUI.card) end
-                local l = vgui.Create("DLabel", row) l:Dock(FILL) l:DockMargin(14, 0, 0, 0) l:SetFont("GRMMM_Body") l:SetTextColor(MUI.text) l:SetText(tostring(d.name) .. "   •   радиус " .. tostring(d.radius) .. "   •   " .. tostring(d.id))
-                local b = styleButton(vgui.Create("DButton", row), MUI.red) b:Dock(RIGHT) b:DockMargin(5, 5, 5, 5) b:SetWide(110) b:SetText("Удалить") b.DoClick = function() send("delete_district", function() net.WriteString(d.id) end) end
-            end
+            local title = vgui.Create("DLabel", sc) title:Dock(TOP) title:SetTall(34) title:SetFont("GRMMM_Body") title:SetTextColor(MUI.blue) title:SetText("СОХРАНЕННЫЕ GPS-ТОЧКИ")
             local pt = vgui.Create("DLabel", sc) pt:Dock(TOP) pt:SetTall(40) pt:SetFont("GRMMM_Body") pt:SetTextColor(MUI.orange) pt:SetText("GPS-ТОЧКИ")
             for _, p in ipairs(data.points or {}) do
                 local row = vgui.Create("DPanel", sc) row:Dock(TOP) row:SetTall(48) row:DockMargin(0, 0, 0, 5) row.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, MUI.card) end
                 local l = vgui.Create("DLabel", row) l:Dock(FILL) l:DockMargin(14, 0, 0, 0) l:SetFont("GRMMM_Small") l:SetTextColor(MUI.text) l:SetText(tostring(p.name) .. "   •   GPS-метка   •   " .. tostring(p.id))
+                local rename = styleButton(vgui.Create("DButton", row), MUI.blue) rename:Dock(RIGHT) rename:DockMargin(5, 7, 0, 7) rename:SetWide(110) rename:SetText("Подписать") rename.DoClick = function()
+                    Derma_StringRequest("Название GPS-точки", "Подпись, которую увидят игроки:", tostring(p.name or "GPS-точка"), function(value) send("rename_point", function() net.WriteString(p.id); net.WriteString(value or "") end) end)
+                end
                 local b = styleButton(vgui.Create("DButton", row), MUI.red) b:Dock(RIGHT) b:DockMargin(5, 7, 5, 7) b:SetWide(110) b:SetText("Удалить") b.DoClick = function() send("delete_point", function() net.WriteString(p.id) end) end
             end
         end
@@ -298,8 +298,8 @@ else
             if tostring(point.id) == tostring(gpsTarget) then
                 local pos = Vector(point.pos.x, point.pos.y, point.pos.z or 0)
                 local col = Color(255, 215, 75, 240)
-                render.DrawLine(pos, pos + Vector(0, 0, 120), col, true)
-                cam.Start3D2D(pos + Vector(0, 0, 122), Angle(0, lp:EyeAngles().y - 90, 90), 0.08)
+                render.DrawLine(pos, pos + Vector(0, 0, 58), col, true)
+                cam.Start3D2D(pos + Vector(0, 0, 60), Angle(0, lp:EyeAngles().y - 90, 90), 0.08)
                     draw.RoundedBox(5, -125, -22, 250, 44, Color(10, 16, 24, 225))
                     draw.SimpleText("GPS", "DermaDefaultBold", 0, -8, col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                     draw.SimpleText(tostring(point.name), "DermaDefault", 0, 9, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
