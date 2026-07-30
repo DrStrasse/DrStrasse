@@ -1043,7 +1043,12 @@ end)
 local function entityRecord(ent)
     local record = { class = ent:GetClass(), kind = ent.FactoryKind, id = ent:GetFactoryID(), pos = vecTable(ent:GetPos()), ang = angTable(ent:GetAngles()), model = ent:GetModel() }
     if ent.FactoryKind == "storage" then record.items = table.Copy(FC.GetStorage(ent)) end
-    if ent.FactoryKind == "scrap_bin" then record.stock = ent:GetStock(); record.nextRefill = ent:GetNextRefill() end
+    if ent.FactoryKind == "scrap_bin" then
+        record.stock = ent:GetStock()
+        -- CurTime() обнуляется после рестарта сервера, поэтому нельзя
+        -- сохранять абсолютное значение nextRefill между сессиями.
+        record.refillIn = math.max(0, (ent:GetNextRefill() or CurTime()) - CurTime())
+    end
     if ent.FactoryKind == "weapon_buyer" then record.weaponStock = table.Copy(FC.GetBuyerData(ent).stock) end
     return record
 end
@@ -1084,7 +1089,14 @@ function FC.LoadMap(ply)
                 if record.kind == "storage" then FC.StorageData[ent:GetFactoryID()] = istable(record.items) and record.items or {} end
                 if record.kind == "scrap_bin" then
                     ent:SetStock(math.Clamp(tonumber(record.stock) or CFG.ScrapBinStart, 0, CFG.ScrapBinMax or 40))
-                    ent:SetNextRefill(tonumber(record.nextRefill) or (CurTime() + (CFG.ScrapRefillEvery or 60)))
+                    local refillIn = tonumber(record.refillIn)
+                    if not refillIn then
+                        -- Совместимость со старыми сейвами, где записывался
+                        -- абсолютный CurTime(). После рестарта ограничиваем
+                        -- ожидание одним стандартным интервалом.
+                        refillIn = math.min(math.max(0, tonumber(record.nextRefill) or 0), CFG.ScrapRefillEvery or 60)
+                    end
+                    ent:SetNextRefill(CurTime() + math.max(0, refillIn))
                 elseif record.kind == "weapon_buyer" then
                     -- Отдельный файл buyer data свежее ручного сохранения карты.
                     if not FC.WeaponBuyerData[ent:GetFactoryID()] then
