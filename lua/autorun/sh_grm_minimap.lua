@@ -232,7 +232,9 @@ else
     local mapRenderCenter, mapRenderSpan
     local function renderMapSnapshot()
         if mapSnapshotReady and CurTime() < nextMapRender then return end
-        nextMapRender = CurTime() + 5
+        -- Снимок создаётся один раз при загрузке карты. Больше не
+        -- смешиваем текущую сцену/комнату с картографическим слоем.
+        nextMapRender = math.huge
         mapSnapshotReady = true
         local mn, mx = worldBounds()
         local span = math.max(mx.x - mn.x, mx.y - mn.y)
