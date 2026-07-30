@@ -291,19 +291,33 @@ else
         local text = string.lower(string.Trim(pack and pack[1] or ""))
         if text == "/gps" then openGPS() pack[1] = "" return true end
     end)
-    hook.Add("PostDrawTranslucentRenderables", "GRM_GPS_WorldMarker", function()
+    hook.Add("HUDPaint", "GRM_GPS_WorldMarkerHUD", function()
         local lp = LocalPlayer()
         if not IsValid(lp) or not gpsTarget then return end
         for _, point in ipairs(data.points or {}) do
             if tostring(point.id) == tostring(gpsTarget) then
-                local pos = Vector(point.pos.x, point.pos.y, point.pos.z or 0)
-                local col = Color(255, 215, 75, 240)
-                render.DrawLine(pos, pos + Vector(0, 0, 58), col, true)
-                cam.Start3D2D(pos + Vector(0, 0, 60), Angle(0, lp:EyeAngles().y - 90, 90), 0.08)
-                    draw.RoundedBox(5, -125, -22, 250, 44, Color(10, 16, 24, 225))
-                    draw.SimpleText("GPS", "DermaDefaultBold", 0, -8, col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                    draw.SimpleText(tostring(point.name), "DermaDefault", 0, 9, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                cam.End3D2D()
+                local target = Vector(point.pos.x, point.pos.y, point.pos.z or lp:GetPos().z)
+                local screen = target:ToScreen()
+                local sw, sh = ScrW(), ScrH()
+                local visible = screen.visible == true and screen.x > 0 and screen.x < sw and screen.y > 0 and screen.y < sh
+                local x, y = screen.x or sw / 2, screen.y or sh / 2
+                local panelW, panelH = 340, 82
+                if not visible then
+                    local dx, dy = x - sw / 2, y - sh / 2
+                    local len = math.max(1, math.sqrt(dx * dx + dy * dy))
+                    dx, dy = dx / len, dy / len
+                    x = math.Clamp(sw / 2 + dx * (sw / 2 - panelW / 2 - 24), panelW / 2 + 12, sw - panelW / 2 - 12)
+                    y = math.Clamp(sh / 2 + dy * (sh / 2 - panelH / 2 - 24), panelH / 2 + 12, sh - panelH / 2 - 12)
+                end
+                x, y = math.Clamp(x, panelW / 2 + 12, sw - panelW / 2 - 12), math.Clamp(y, panelH / 2 + 12, sh - panelH / 2 - 12)
+                local distance = math.floor(lp:GetPos():Distance(target))
+                draw.RoundedBox(10, x - panelW / 2, y - panelH / 2, panelW, panelH, Color(8, 14, 23, 238))
+                surface.SetDrawColor(255, 215, 70, 255)
+                surface.DrawOutlinedRect(x - panelW / 2, y - panelH / 2, panelW, panelH, 2)
+                draw.RoundedBox(6, x - panelW / 2 + 12, y - 23, 46, 46, Color(245, 180, 55, 255))
+                draw.SimpleText("GPS", "DermaDefaultBold", x - panelW / 2 + 35, y, Color(10, 16, 24), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                draw.SimpleText(tostring(point.name), "GRMChar_Normal", x - panelW / 2 + 72, y - 15, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.SimpleText((visible and "МАРКЕР НА МЕСТЕ" or "НАПРАВЛЕНИЕ К ЦЕЛИ") .. "  •  " .. distance .. " м", "GRMChar_Small", x - panelW / 2 + 72, y + 13, Color(255, 215, 70), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                 break
             end
         end
