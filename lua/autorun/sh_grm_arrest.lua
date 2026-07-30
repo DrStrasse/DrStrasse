@@ -601,6 +601,32 @@ if CLIENT then
         end
     end
 
+    local function openGroupAccessEditor(gid, source)
+        local selected = table.Copy(source.allowedFactions or {})
+        local w = vgui.Create("DFrame")
+        GRM.UI.Track("arrest_category_access", w)
+        w:SetSize(560, 520) w:Center() w:MakePopup() w:SetTitle("Доступ категории: " .. tostring(source.name or gid))
+        local hint = label(w, "Отметьте фракции задержанных, которым разрешена эта категория. Пустой список = доступна всем.", "GRMArrestSmall", UI.dim)
+        hint:SetPos(16, 36) hint:SetSize(520, 44)
+        local list = vgui.Create("DScrollPanel", w) list:SetPos(16, 88) list:SetSize(528, 350)
+        local names = {}
+        for name in pairs(FactionsData or {}) do names[#names + 1] = name end
+        table.sort(names)
+        for _, factionName in ipairs(names) do
+            local check = vgui.Create("DCheckBoxLabel", list)
+            check:Dock(TOP) check:SetTall(34) check:SetText(tostring(factionName)) check:SetFont("GRMArrestBody") check:SetTextColor(UI.text)
+            check:SetValue(selected[factionName] == true)
+            check.OnChange = function(_, value) selected[factionName] = value == true end
+        end
+        local saveAccess = button(w, "СОХРАНИТЬ ДОПУСК", UI.green, 38) saveAccess:SetPos(16, 452) saveAccess:SetSize(528, 38)
+        saveAccess.DoClick = function()
+            sendAction("set_group_data", gid, function()
+                net.WriteTable({ model = source.model or "models/player/Group03/male_07.mdl", skin = source.skin or 0, bodygroups = source.bodygroups or {}, allowedFactions = selected })
+            end)
+            w:Close()
+        end
+    end
+
     net.Receive("GRM_Arrest_AdminData", function()
         local data = net.ReadTable() or {}
         local f = vgui.Create("DFrame")
@@ -633,14 +659,15 @@ if CLIENT then
 
         sectionTitle(canvas, "Группы и доступ категорий", "Нажмите «Внешность и доступ фракций»: там задаются модель, bodygroups и фракции, которым разрешена эта категория.")
         for gid, g in pairs(data.groups or {}) do
-            local p = card(canvas, 86)
+            local p = card(canvas, 96)
             local name = label(p, tostring(g.name or gid), "GRMArrestHeading", UI.text) name:SetPos(20, 13) name:SetSize(350, 24)
             local allowedNames = {}
             for factionName, enabled in pairs(g.allowedFactions or {}) do if enabled then allowedNames[#allowedNames + 1] = tostring(factionName) end end
             table.sort(allowedNames)
             local accessText = #allowedNames > 0 and ("   •   Допуск: " .. table.concat(allowedNames, ", ")) or "   •   Допуск: все фракции"
             local id = label(p, tostring(gid) .. "   •   " .. tostring(g.model or "модель не задана") .. accessText, "GRMArrestSmall", UI.dim) id:SetPos(20, 42) id:SetSize(550, 22)
-            local edit = button(p, "Внешность и доступ фракций", UI.accent, 36) edit:SetPos(535, 22) edit:SetSize(250, 36) edit.DoClick = function() openGroupEditor(gid, g) end
+            local edit = button(p, "Внешность / bodygroups", UI.accent, 30) edit:SetPos(535, 10) edit:SetSize(250, 30) edit.DoClick = function() openGroupEditor(gid, g) end
+            local access = button(p, "ДОСТУП ФРАКЦИЙ К КАТЕГОРИИ", UI.orange, 30) access:SetPos(535, 48) access:SetSize(250, 30) access.DoClick = function() openGroupAccessEditor(gid, g) end
         end
 
         sectionTitle(canvas, "Камеры и точки содержания", "Камера определяет категорию, точка — место появления арестованного.")
