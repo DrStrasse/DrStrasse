@@ -302,26 +302,28 @@ else
                 local target = Vector(point.pos.x, point.pos.y, point.pos.z or lp:GetPos().z)
                 local screen = target:ToScreen()
                 local distance = math.floor(lp:GetPos():Distance(target))
-                local scale = math.Clamp(0.75 + distance / 1800, 0.75, 1.35)
                 local sw, sh = ScrW(), ScrH()
                 local visible = screen.visible == true and screen.x > 0 and screen.x < sw and screen.y > 0 and screen.y < sh
                 local x, y = screen.x or sw / 2, screen.y or sh / 2
-                local panelW, panelH = math.floor(340 * scale), math.floor(82 * scale)
+                local radius = math.Clamp(8 + distance / 450, 9, 20)
                 if not visible then
                     local dx, dy = x - sw / 2, y - sh / 2
                     local len = math.max(1, math.sqrt(dx * dx + dy * dy))
                     dx, dy = dx / len, dy / len
-                    x = math.Clamp(sw / 2 + dx * (sw / 2 - panelW / 2 - 24), panelW / 2 + 12, sw - panelW / 2 - 12)
-                    y = math.Clamp(sh / 2 + dy * (sh / 2 - panelH / 2 - 24), panelH / 2 + 12, sh - panelH / 2 - 12)
+                    x = math.Clamp(sw / 2 + dx * (sw / 2 - 34), 24, sw - 24)
+                    y = math.Clamp(sh / 2 + dy * (sh / 2 - 34), 24, sh - 24)
+                    surface.SetDrawColor(255, 215, 70, 255)
+                    surface.DrawPoly({ { x = x + dx * 18, y = y + dy * 18 }, { x = x - dx * 10 - dy * 10, y = y - dy * 10 + dx * 10 }, { x = x - dx * 10 + dy * 10, y = y - dy * 10 - dx * 10 } })
                 end
-                x, y = math.Clamp(x, panelW / 2 + 12, sw - panelW / 2 - 12), math.Clamp(y, panelH / 2 + 12, sh - panelH / 2 - 12)
-                draw.RoundedBox(10, x - panelW / 2, y - panelH / 2, panelW, panelH, Color(8, 14, 23, 238))
+                local pulse = math.sin(CurTime() * 4) * 3
                 surface.SetDrawColor(255, 215, 70, 255)
-                surface.DrawOutlinedRect(x - panelW / 2, y - panelH / 2, panelW, panelH, 2)
-                draw.RoundedBox(6, x - panelW / 2 + 12, y - 23, 46, 46, Color(245, 180, 55, 255))
-                draw.SimpleText("GPS", "DermaDefaultBold", x - panelW / 2 + 35, y, Color(10, 16, 24), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                draw.SimpleText(tostring(point.name), "GRMMM_Body", x - panelW / 2 + 72, y - 15, color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                draw.SimpleText((visible and "МАРКЕР НА МЕСТЕ" or "НАПРАВЛЕНИЕ К ЦЕЛИ") .. "  •  " .. distance .. " м", "GRMMM_Small", x - panelW / 2 + 72, y + 13, Color(255, 215, 70), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                surface.DrawCircle(x, y, radius + pulse, 255, 215, 70, 255)
+                surface.SetDrawColor(8, 14, 23, 240)
+                surface.DrawCircle(x, y, math.max(3, radius - 4), 8, 14, 23, 240)
+                local textX = math.Clamp(x + radius + 12, 12, sw - 12)
+                local align = textX > sw - 180 and TEXT_ALIGN_RIGHT or TEXT_ALIGN_LEFT
+                draw.SimpleTextOutlined(tostring(point.name), "GRMMM_Body", textX, y - 10, color_white, align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
+                draw.SimpleTextOutlined(distance .. " м", "GRMMM_Small", textX, y + 10, Color(255, 215, 70), align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
                 break
             end
         end
