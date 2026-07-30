@@ -631,7 +631,7 @@ if CLIENT then
         local addCam = button(actionBar, "+  Камера в прицеле", UI.accent, 40) addCam:Dock(LEFT) addCam:SetWide(245) addCam.DoClick = function() sendAction("add_camera", "") end
         local addSpawn = button(actionBar, "+  Точка арестованного", UI.green, 40) addSpawn:Dock(LEFT) addSpawn:DockMargin(10, 0, 0, 0) addSpawn:SetWide(245) addSpawn.DoClick = function() sendAction("add_spawn", "") end
 
-        sectionTitle(canvas, "Группы арестованных", "Модель, skin и bodygroups сохраняются в конфигурации и применяются при аресте.")
+        sectionTitle(canvas, "Группы и доступ категорий", "Нажмите «Внешность и доступ фракций»: там задаются модель, bodygroups и фракции, которым разрешена эта категория.")
         for gid, g in pairs(data.groups or {}) do
             local p = card(canvas, 86)
             local name = label(p, tostring(g.name or gid), "GRMArrestHeading", UI.text) name:SetPos(20, 13) name:SetSize(350, 24)
@@ -640,7 +640,7 @@ if CLIENT then
             table.sort(allowedNames)
             local accessText = #allowedNames > 0 and ("   •   Допуск: " .. table.concat(allowedNames, ", ")) or "   •   Допуск: все фракции"
             local id = label(p, tostring(gid) .. "   •   " .. tostring(g.model or "модель не задана") .. accessText, "GRMArrestSmall", UI.dim) id:SetPos(20, 42) id:SetSize(550, 22)
-            local edit = button(p, "Настроить внешность", UI.accent, 36) edit:SetPos(585, 22) edit:SetSize(200, 36) edit.DoClick = function() openGroupEditor(gid, g) end
+            local edit = button(p, "Внешность и доступ фракций", UI.accent, 36) edit:SetPos(535, 22) edit:SetSize(250, 36) edit.DoClick = function() openGroupEditor(gid, g) end
         end
 
         sectionTitle(canvas, "Камеры и точки содержания", "Камера определяет категорию, точка — место появления арестованного.")
