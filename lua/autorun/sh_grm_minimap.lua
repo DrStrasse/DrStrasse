@@ -66,7 +66,7 @@ else
         local w = game.GetWorld()
         if not IsValid(w) then return Vector(-4096, -4096, -4096), Vector(4096, 4096, 4096) end
         local a, b = w:GetModelBounds()
-        return Vector(a.x, a.y, -100000), Vector(b.x, b.y, 100000)
+        return Vector(a.x, a.y, a.z), Vector(b.x, b.y, b.z)
     end
     local function mapPos(v, x, y, size)
         local mn, mx = worldBounds()
@@ -76,6 +76,22 @@ else
     end
     local function send(action, extra)
         net.Start("GRM_Minimap_Action") net.WriteString(action) if extra then extra() end net.SendToServer()
+    end
+    local mapRT = GetRenderTarget("GRM_GRM_Minimap_" .. string.lower(game.GetMap() or "map"), 512, 512, false)
+    local mapMat = CreateMaterial("GRM_GRM_Minimap_Mat_" .. string.lower(game.GetMap() or "map"), "UnlitGeneric", {
+        ["$basetexture"] = mapRT:GetName(), ["$vertexalpha"] = 1, ["$vertexcolor"] = 1,
+    })
+    local nextMapRender = 0
+    local function renderMapSnapshot()
+        if CurTime() < nextMapRender then return end
+        nextMapRender = CurTime() + 0.6
+        local mn, mx = worldBounds()
+        local span = math.max(mx.x - mn.x, mx.y - mn.y)
+        local center = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mx.z + math.max(1200, span * 0.75))
+        render.PushRenderTarget(mapRT)
+        render.Clear(7, 12, 19, 255, true, true)
+        render.RenderView({ origin = center, angles = Angle(90, 0, 0), x = 0, y = 0, w = 512, h = 512, fov = 90, drawhud = false, drawviewmodel = false, dopostprocess = false })
+        render.PopRenderTarget()
     end
     net.Receive("GRM_Minimap_Data", function() data = net.ReadTable() or data end)
     net.Receive("GRM_Minimap_Open", function()
@@ -107,8 +123,10 @@ else
     concommand.Add("grm_minimap_admin", function() if IsValid(LocalPlayer()) and LocalPlayer():IsSuperAdmin() then net.Start("GRM_Minimap_Open") net.SendToServer() end end)
     hook.Add("HUDPaint", "GRM_Minimap_HUD", function()
         local lp = LocalPlayer() if not IsValid(lp) then return end
+        renderMapSnapshot()
         local size, x, y = 220, ScrW() - 238, 18
         draw.RoundedBox(8, x - 4, y - 4, size + 8, size + 8, Color(10, 16, 24, 235))
+        surface.SetMaterial(mapMat) surface.SetDrawColor(255, 255, 255, 185) surface.DrawTexturedRect(x, y, size, size)
         surface.SetDrawColor(45, 65, 86, 255) surface.DrawOutlinedRect(x, y, size, size, 2)
         for i = 1, 7 do surface.SetDrawColor(30, 48, 66, 180) surface.DrawLine(x + i * size / 8, y, x + i * size / 8, y + size) surface.DrawLine(x, y + i * size / 8, x + size, y + i * size / 8) end
         for _, d in ipairs(data.districts or {}) do
