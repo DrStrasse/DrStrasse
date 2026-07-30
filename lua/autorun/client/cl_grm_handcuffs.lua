@@ -386,22 +386,9 @@ end
 
 local function applyCuffPose(ply)
     if not IsValid(ply) then return end
-    if cfg().EnableBehindBackPose == false then
-        resetCuffPose(ply)
-        return
-    end
-
-    local presetID = math.Clamp(GetConVar("grm_cuffs_pose_preset"):GetInt() or 1, 1, 4)
-    local preset = posePresets[presetID] or posePresets[1]
-
-    for boneName, ang in pairs(preset) do
-        local bone = ply:LookupBone(boneName)
-        if bone then
-            ply:ManipulateBoneAngles(bone, ang)
-        end
-    end
-
-    posedPlayers[ply] = true
+    -- Behind-back bone manipulation is disabled completely. Different player
+    -- models use different bone axes and produce twisted/dangling arms.
+    resetCuffPose(ply)
 end
 
 hook.Add("Think", "GRM_Handcuffs_BehindBackPose", function()
