@@ -6,7 +6,7 @@ TOOL.ConfigName = ""
 if CLIENT then
     language.Add("tool.grm_minimap.name", "GRM: районы и точки")
     language.Add("tool.grm_minimap.desc", "Размещение районов и точек захвата на мини-карте")
-    language.Add("tool.grm_minimap.0", "ЛКМ: точка захвата | ПКМ: район | R: открыть настройки")
+    language.Add("tool.grm_minimap.0", "ЛКМ: точка | ПКМ: район | присед+ПКМ: вершина полигона | R: замкнуть район/настройки")
 end
 
 function TOOL:LeftClick(trace)
