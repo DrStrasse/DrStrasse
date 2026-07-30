@@ -68,6 +68,8 @@ end
     util.AddNetworkString("GRM_Arrest_CategoryAccessRequest")
     util.AddNetworkString("GRM_Arrest_CategoryAccessData")
     util.AddNetworkString("GRM_Arrest_CategoryAccessSave")
+    util.AddNetworkString("GRM_Arrest_ZoneRequest")
+    util.AddNetworkString("GRM_Arrest_ZoneData")
 
     load()
 
@@ -300,6 +302,11 @@ end
             if not A.UnarrestPlayer(ply, target) then ply:ChatPrint("[Арест] Цель не арестована.") end
             return ""
         end
+    end)
+
+    net.Receive("GRM_Arrest_ZoneRequest", function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        net.Start("GRM_Arrest_ZoneData") net.WriteTable(A.Cfg.prisonZones or {}) net.Send(ply)
     end)
 
     net.Receive("GRM_Arrest_Admin", function(_, ply) A.OpenAdmin(ply) end)
