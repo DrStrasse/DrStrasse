@@ -189,9 +189,11 @@ else
     end
     local function mapPos(v, x, y, size)
         local mn, mx = worldBounds()
-        local px = math.Clamp((v.x - mn.x) / math.max(1, mx.x - mn.x), 0, 1)
-        local py = math.Clamp(1 - (v.y - mn.y) / math.max(1, mx.y - mn.y), 0, 1)
-        return x + px * size, y + py * size
+        local worldX = math.Clamp((v.x - mn.x) / math.max(1, mx.x - mn.x), 0, 1)
+        local worldY = math.Clamp((v.y - mn.y) / math.max(1, mx.y - mn.y), 0, 1)
+        -- RenderView-карта поворачивается на 90° вправо; используем ту же
+        -- трансформацию для игрока, GPS, районов и точек.
+        return x + worldY * size, y + worldX * size
     end
     local function districtAt(v)
         for _, d in ipairs(data.districts or {}) do
@@ -225,7 +227,7 @@ else
         local mn, mx = worldBounds()
         local span = math.max(mx.x - mn.x, mx.y - mn.y)
         -- Камера ниже: меньше «дальнего» слоя и больше читаемых деталей
-        local center = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mx.z + math.max(1200, span * 0.25))
+        local center = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mx.z + math.max(800, span * 0.08))
         render.PushRenderTarget(mapRT)
         render.Clear(7, 12, 19, 255, true, true)
         render.RenderView({
@@ -329,7 +331,7 @@ else
         renderMapSnapshot()
         local size, x, y = 280, ScrW() - 300, 18
         draw.RoundedBox(8, x - 4, y - 4, size + 8, size + 8, Color(10, 16, 24, 235))
-        surface.SetMaterial(mapMat) surface.SetDrawColor(255, 255, 255, 185) surface.DrawTexturedRect(x, y, size, size)
+        surface.SetMaterial(mapMat) surface.SetDrawColor(255, 255, 255, 185) surface.DrawTexturedRectRotated(x + size / 2, y + size / 2, size, size, 90)
         surface.SetDrawColor(45, 65, 86, 255) surface.DrawOutlinedRect(x, y, size, size, 2)
         for i = 1, 7 do surface.SetDrawColor(30, 48, 66, 180) surface.DrawLine(x + i * size / 8, y, x + i * size / 8, y + size) surface.DrawLine(x, y + i * size / 8, x + size, y + i * size / 8) end
         local mn, mx = worldBounds()
