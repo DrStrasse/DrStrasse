@@ -99,14 +99,22 @@ else
         b.Paint = function(self, w, h) local c = self:IsHovered() and Color(math.min(col.r + 18, 255), math.min(col.g + 18, 255), math.min(col.b + 18, 255)) or col; draw.RoundedBox(6, 0, 0, w, h, c) end return b
     end
     local function openCreate()
-        local f = vgui.Create("DFrame") f:SetSize(620, 300) f:Center() f:MakePopup() f:SetTitle("GRM — Новый тикет")
-        local hint = vgui.Create("DLabel", f) hint:SetPos(16, 38) hint:SetSize(580, 35) hint:SetText("Опишите проблему. Администрация увидит ваш игровой ник персонажа и текст обращения.") hint:SetTextColor(C.dim) hint:SetWrap(true)
-        local entry = vgui.Create("DTextEntry", f) entry:SetPos(16, 82) entry:SetSize(588, 120) entry:SetMultiline(true) entry:SetPlaceholderText("Что произошло?")
-        local send = button(f, "Отправить тикет", C.green) send:SetPos(16, 222) send:SetSize(588, 38)
+        local f = vgui.Create("DFrame")
+        if GRM.UI and GRM.UI.Track then GRM.UI.Track("ticket_create", f) end
+        f:SetSize(680, 360) f:Center() f:MakePopup() f:SetTitle("") f:ShowCloseButton(false)
+        f.Paint = function(_, w, h) draw.RoundedBox(10, 0, 0, w, h, C.bg); draw.RoundedBoxEx(10, 0, 0, w, 58, C.head, true, true, false, false); draw.SimpleText("GRM  /  ОБРАЩЕНИЕ", "GRMTicketBody", 18, 17, C.blue, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER); draw.SimpleText("Новый тикет", "GRMTicketTitle", 18, 40, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
+        local close = button(f, "×", C.red) close:SetPos(638, 14) close:SetSize(28, 28) close.DoClick = function() f:Close() end
+        local hint = vgui.Create("DLabel", f) hint:SetPos(18, 70) hint:SetSize(640, 35) hint:SetText("Опишите проблему. Администрация увидит игровое имя вашего персонажа.") hint:SetTextColor(C.dim) hint:SetWrap(true)
+        local entry = vgui.Create("DTextEntry", f) entry:SetPos(18, 112) entry:SetSize(644, 140) entry:SetMultiline(true) entry:SetPlaceholderText("Что произошло?")
+        local send = button(f, "ОТПРАВИТЬ ТИКЕТ", C.green) send:SetPos(18, 278) send:SetSize(644, 40)
         send.DoClick = function() net.Start("GRM_Ticket_Create") net.WriteString(entry:GetValue()) net.SendToServer() f:Close() end
     end
     local function openAdmin(list)
-        local f = vgui.Create("DFrame") f:SetSize(900, 700) f:Center() f:MakePopup() f:SetTitle("GRM — Тикеты администрации")
+        local f = vgui.Create("DFrame")
+        if GRM.UI and GRM.UI.Track then GRM.UI.Track("ticket_admin", f) end
+        f:SetSize(1080, 760) f:Center() f:MakePopup() f:SetTitle("") f:ShowCloseButton(false)
+        f.Paint = function(_, w, h) draw.RoundedBox(10, 0, 0, w, h, C.bg); draw.RoundedBoxEx(10, 0, 0, w, 58, C.head, true, true, false, false); draw.SimpleText("GRM  /  ЦЕНТР ТИКЕТОВ", "GRMTicketBody", 18, 17, C.blue, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER); draw.SimpleText("Обращения игроков", "GRMTicketTitle", 18, 40, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
+        local closeFrame = button(f, "×", C.red) closeFrame:SetPos(1038, 14) closeFrame:SetSize(28, 28) closeFrame.DoClick = function() f:Close() end
         local sc = vgui.Create("DScrollPanel", f) sc:Dock(FILL) sc:DockMargin(10, 10, 10, 10)
         for _, t in ipairs(list or {}) do
             local p = vgui.Create("DPanel", sc) p:Dock(TOP) p:SetTall(145) p:DockMargin(0, 0, 0, 8) p.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, C.card) end
