@@ -9,6 +9,7 @@ if SERVER then
     util.AddNetworkString("GRM_Minimap_Data")
     util.AddNetworkString("GRM_Minimap_Open")
     util.AddNetworkString("GRM_Minimap_Action")
+    util.AddNetworkString("GRM_Minimap_CaptureEvent")
     MM.Data = MM.Data or { districts = {}, points = {} }
 
     local function save() file.Write(MM.File, util.TableToJSON(MM.Data, true)) end
@@ -52,7 +53,14 @@ if SERVER then
             if count > 0 and groupCount == 1 then
                 point.capture = math.min(30, (tonumber(point.capture) or 0) + 1)
                 point.capturing = only
-                if point.capture >= 30 and point.owner ~= only then point.owner = only; changed = true end
+                if point.capture >= 30 and point.owner ~= only then
+                    point.owner = only
+                    changed = true
+                    net.Start("GRM_Minimap_CaptureEvent")
+                        net.WriteString(tostring(point.name or "Точка"))
+                        net.WriteString(tostring(only))
+                    net.Broadcast()
+                end
             elseif groupCount > 1 then
                 point.capture = math.max(0, (tonumber(point.capture) or 0) - 2)
                 point.capturing = "Оспаривается"
@@ -77,7 +85,8 @@ if SERVER then
             save(); send()
         elseif action == "add_point" then
             local name = string.sub(string.Trim(net.ReadString() or "Точка захвата"), 1, 48)
-            MM.Data.points[#MM.Data.points + 1] = { id = nextID("point"), name = name ~= "" and name or "Точка захвата", pos = pos(ply:GetPos()), radius = 180, capture = 0, capturing = "", owner = "" }
+            local radius = math.Clamp(net.ReadUInt(16), 100, 2000)
+            MM.Data.points[#MM.Data.points + 1] = { id = nextID("point"), name = name ~= "" and name or "Точка захвата", pos = pos(ply:GetPos()), radius = radius, capture = 0, capturing = "", owner = "" }
             save(); send()
         elseif action == "delete_district" or action == "delete_point" then
             local id = net.ReadString()
@@ -131,13 +140,18 @@ else
         render.PopRenderTarget()
     end
     net.Receive("GRM_Minimap_Data", function() data = net.ReadTable() or data end)
+    net.Receive("GRM_Minimap_CaptureEvent", function()
+        local pointName, faction = net.ReadString(), net.ReadString()
+        notification.AddLegacy("Точка «" .. pointName .. "» захвачена фракцией: " .. faction, NOTIFY_GENERIC, 6)
+        surface.PlaySound("buttons/button14.wav")
+    end)
     net.Receive("GRM_Minimap_Open", function()
         if IsValid(frame) then frame:Remove() end
         frame = vgui.Create("DFrame") frame:SetSize(760, 620) frame:Center() frame:MakePopup() frame:SetTitle("GRM — Районы и мини-карта")
         local name = vgui.Create("DTextEntry", frame) name:SetPos(18, 42) name:SetSize(300, 28) name:SetPlaceholderText("Название района/точки")
         local radius = vgui.Create("DNumberWang", frame) radius:SetPos(328, 42) radius:SetSize(110, 28) radius:SetMin(100) radius:SetMax(10000) radius:SetValue(500)
         local addD = vgui.Create("DButton", frame) addD:SetPos(448, 42) addD:SetSize(140, 28) addD:SetText("+ Район здесь") addD.DoClick = function() send("add_district", function() net.WriteString(name:GetValue()); net.WriteUInt(radius:GetValue(), 16) end) end
-        local addP = vgui.Create("DButton", frame) addP:SetPos(594, 42) addP:SetSize(140, 28) addP:SetText("+ Точка здесь") addP.DoClick = function() send("add_point", function() net.WriteString(name:GetValue()) end) end
+        local addP = vgui.Create("DButton", frame) addP:SetPos(594, 42) addP:SetSize(140, 28) addP:SetText("+ Точка здесь") addP.DoClick = function() send("add_point", function() net.WriteString(name:GetValue()); net.WriteUInt(radius:GetValue(), 16) end) end
         local sc = vgui.Create("DScrollPanel", frame) sc:SetPos(18, 82) sc:SetSize(716, 500)
         local function rebuild()
             sc:Clear()
@@ -150,7 +164,7 @@ else
             local pt = vgui.Create("DLabel", sc) pt:Dock(TOP) pt:SetTall(34) pt:SetText("ТОЧКИ ЗАХВАТА")
             for _, p in ipairs(data.points or {}) do
                 local row = vgui.Create("DPanel", sc) row:Dock(TOP) row:SetTall(34) row:DockMargin(0, 0, 0, 4)
-                local l = vgui.Create("DLabel", row) l:Dock(FILL) l:SetText(tostring(p.name) .. "  |  владелец: " .. (p.owner ~= "" and p.owner or "свободна") .. "  |  захват: " .. (p.capturing ~= "" and tostring(p.capturing) or "нет") .. "  |  " .. tostring(p.id))
+                local l = vgui.Create("DLabel", row) l:Dock(FILL) l:SetText(tostring(p.name) .. "  |  радиус: " .. tostring(p.radius or 180) .. "  |  владелец: " .. (p.owner ~= "" and p.owner or "свободна") .. "  |  захват: " .. (p.capturing ~= "" and tostring(p.capturing) or "нет") .. "  |  " .. tostring(p.id))
                 local b = vgui.Create("DButton", row) b:Dock(RIGHT) b:SetWide(100) b:SetText("Удалить") b.DoClick = function() send("delete_point", function() net.WriteString(p.id) end) end
             end
         end
@@ -202,6 +216,17 @@ else
                     local tx, ty = mapPos(Vector(p.pos.x, p.pos.y, 0), x, y, size)
                     surface.SetDrawColor(255, 220, 90, 220) surface.DrawLine(px, py, tx, ty)
                     draw.SimpleText("GPS " .. math.floor(lp:GetPos():Distance(Vector(p.pos.x, p.pos.y, p.pos.z or lp:GetPos().z))), "DermaDefaultBold", x + size / 2, y + size + 25, Color(255, 220, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    break
+                end
+            end
+        end
+        if gpsTarget then
+            for _, p in ipairs(data.points or {}) do
+                if p.id == gpsTarget then
+                    local screen = Vector(p.pos.x, p.pos.y, p.pos.z or lp:GetPos().z):ToScreen()
+                    local angle = math.deg(math.atan2(screen.y - ScrH() / 2, screen.x - ScrW() / 2))
+                    draw.SimpleText("GPS: " .. tostring(p.name) .. "  •  " .. math.floor(lp:GetPos():Distance(Vector(p.pos.x, p.pos.y, p.pos.z or lp:GetPos().z))) .. " юн.", "DermaDefaultBold", ScrW() / 2, ScrH() - 70, Color(255, 220, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("↗", "DermaLarge", ScrW() / 2, ScrH() - 105, Color(255, 220, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                     break
                 end
             end
