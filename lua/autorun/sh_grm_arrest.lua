@@ -413,19 +413,34 @@ end
     hook.Add("InitPostEntity", "GRM_Arrest_LoadCameras", function() timer.Simple(2, loadCameras) end)
     hook.Add("ShutDown", "GRM_Arrest_Save", save)
 
-    -- Arrest appearance has higher priority than faction/character model
-    -- synchronizers. Re-apply only while the player is actually arrested.
+    local function applyArrestAppearance(ply, g)
+        if not IsValid(ply) or not istable(g) then return end
+        local desiredModel = tostring(g.model or "")
+        local modelChanged = desiredModel ~= "" and string.lower(ply:GetModel() or "") ~= string.lower(desiredModel)
+        local desiredSkin = math.max(0, math.floor(tonumber(g.skin) or 0))
+        local skinChanged = ply:GetSkin() ~= desiredSkin
+        local bodyChanged = false
+        for i = 0, (ply:GetNumBodyGroups() or 0) - 1 do
+            local wanted = tonumber(g.bodygroups and g.bodygroups[i] or 0) or 0
+            if ply:GetBodygroup(i) ~= wanted then bodyChanged = true break end
+        end
+        if not modelChanged and not skinChanged and not bodyChanged then return end
+        if modelChanged and util.IsValidModel(desiredModel) then ply:SetModel(desiredModel) end
+        -- Сначала жёстко сбрасываем случайные bodygroups модели, затем
+        -- применяем только сохранённые значения категории ареста.
+        for i = 0, (ply:GetNumBodyGroups() or 0) - 1 do ply:SetBodygroup(i, 0) end
+        local maxSkin = math.max(0, (ply:SkinCount() or 1) - 1)
+        ply:SetSkin(math.Clamp(desiredSkin, 0, maxSkin))
+        for groupID, value in pairs(g.bodygroups or {}) do ply:SetBodygroup(tonumber(groupID) or 0, tonumber(value) or 0) end
+    end
+
+    -- Arrest appearance has higher priority than faction/character/mask
+    -- synchronizers. It is applied only when something actually differs,
+    -- preventing visible model flicker.
     timer.Create("GRM_Arrest_ModelPriority", 0.25, 0, function()
         for _, ply in ipairs(player.GetAll()) do
             if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then
-                local g = group(ply:GetNWString("GRM_ArrestGroup", "criminals"))
-                if isstring(g.model) and g.model ~= "" and string.lower(ply:GetModel() or "") ~= string.lower(g.model) then
-                    ply:SetModel(g.model)
-                end
-                ply:SetSkin(math.max(0, math.floor(tonumber(g.skin) or 0)))
-                for groupID, value in pairs(g.bodygroups or {}) do
-                    ply:SetBodygroup(tonumber(groupID) or 0, tonumber(value) or 0)
-                end
+                applyArrestAppearance(ply, group(ply:GetNWString("GRM_ArrestGroup", "criminals")))
             end
         end
     end)

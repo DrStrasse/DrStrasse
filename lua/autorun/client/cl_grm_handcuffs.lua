@@ -417,6 +417,12 @@ hook.Add("Think", "GRM_Handcuffs_BehindBackPose", function()
     end
 end)
 
+hook.Add("EntityNetworkedVarChanged", "GRM_Handcuffs_ResetPoseOnUncuff", function(ent, name, _, value)
+    if IsValid(ent) and name == "GRM_Cuffed" and value == false then
+        timer.Simple(0, function() if IsValid(ent) then resetCuffPose(ent) end end)
+    end
+end)
+
 hook.Add("EntityRemoved", "GRM_Handcuffs_ResetPoseOnRemove", function(ent)
     if posedPlayers[ent] then
         resetCuffPose(ent)

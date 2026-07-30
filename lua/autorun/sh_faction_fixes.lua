@@ -494,7 +494,7 @@ if SERVER then
     end
 
     local function applyStrictBodygroupsToPlayer(ply, modelData)
-        if not IsValid(ply) then return end
+        if not IsValid(ply) or ply:GetNWBool("GRM_Arrested", false) then return end
         modelData = normalizeModelEntry(modelData)
 
         -- Если модель ещё не успела примениться или другой аддон перебил её,
@@ -520,7 +520,7 @@ if SERVER then
     end
 
     local function scheduleStrictModelApply(ply, modelData, reason)
-        if not IsValid(ply) then return end
+        if not IsValid(ply) or ply:GetNWBool("GRM_Arrested", false) then return end
         modelData = normalizeModelEntry(modelData)
         if not modelData.path or modelData.path == "" then return end
 
@@ -546,7 +546,7 @@ if SERVER then
     end
 
     function ApplyModelSettings(ply, modelData)
-        if not IsValid(ply) then return end
+        if not IsValid(ply) or ply:GetNWBool("GRM_Arrested", false) then return end
         modelData = normalizeModelEntry(modelData)
         if not modelData.path or modelData.path == "" then return end
         ply:SetModel(modelData.path)
