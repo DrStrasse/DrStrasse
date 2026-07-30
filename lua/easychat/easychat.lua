@@ -147,6 +147,14 @@ EasyChat._TrueNativeNick = EasyChat.NativeNick
 function EasyChat.GetProperNick(ply)
 	if not IsValid(ply) then return get_unknown_name(ply) end
 
+	-- GRM RP identity has priority over the Steam/display nickname in chat.
+	-- The native nickname remains available through EngineNick/RealNick for
+	-- administration and Steam actions.
+	local characterName = isfunction(ply.GetNWString) and ply:GetNWString("GRM_RPName", "") or ""
+	if isstring(characterName) and string.Trim(characterName) ~= "" then
+		return characterName
+	end
+
 	local native = EasyChat._TrueNativeNick or EasyChat.NativeNick or resolve_engine_nick()
 	local ok, ply_nick = pcall(native, ply)
 	if not ok or ply_nick == nil then
