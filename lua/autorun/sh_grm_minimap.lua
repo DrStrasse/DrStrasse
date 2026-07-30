@@ -189,10 +189,17 @@ else
     end
     local function mapPos(v, x, y, size)
         local mn, mx = worldBounds()
+        if mapRenderCenter and mapRenderSpan then
+            -- Используем тот же базис камеры, что и RenderView. Это убирает
+            -- ручные инверсии X/Y и гарантирует совпадение игрока с картой.
+            local viewAng = Angle(90, 0, 0)
+            local delta = v - mapRenderCenter
+            local sx = delta:Dot(viewAng:Right()) / mapRenderSpan
+            local sy = -delta:Dot(viewAng:Up()) / mapRenderSpan
+            return x + size * 0.5 + sx * size, y + size * 0.5 + sy * size
+        end
         local worldX = math.Clamp((v.x - mn.x) / math.max(1, mx.x - mn.x), 0, 1)
         local worldY = math.Clamp((v.y - mn.y) / math.max(1, mx.y - mn.y), 0, 1)
-        -- RenderView-карта поворачивается на 90° вправо; используем ту же
-        -- трансформацию для игрока, GPS, районов и точек.
         return x + worldY * size, y + worldX * size
     end
     local function districtAt(v)
@@ -220,6 +227,7 @@ else
     })
     local nextMapRender = 0
     local mapSnapshotReady = false
+    local mapRenderCenter, mapRenderSpan
     local function renderMapSnapshot()
         if mapSnapshotReady and CurTime() < nextMapRender then return end
         nextMapRender = CurTime() + 5
@@ -244,6 +252,8 @@ else
         end
         local cameraHeight = math.max(300, span * 0.04)
         local center = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, surfaceZ + cameraHeight)
+        mapRenderCenter = center
+        mapRenderSpan = span
         render.PushRenderTarget(mapRT)
         render.Clear(7, 12, 19, 255, true, true)
         render.RenderView({
@@ -347,7 +357,7 @@ else
         renderMapSnapshot()
         local size, x, y = 280, ScrW() - 300, 18
         draw.RoundedBox(8, x - 4, y - 4, size + 8, size + 8, Color(10, 16, 24, 235))
-        surface.SetMaterial(mapMat) surface.SetDrawColor(255, 255, 255, 185) surface.DrawTexturedRectRotated(x + size / 2, y + size / 2, size, size, 90)
+        surface.SetMaterial(mapMat) surface.SetDrawColor(255, 255, 255, 185) surface.DrawTexturedRect(x, y, size, size)
         surface.SetDrawColor(45, 65, 86, 255) surface.DrawOutlinedRect(x, y, size, size, 2)
         for i = 1, 7 do surface.SetDrawColor(30, 48, 66, 180) surface.DrawLine(x + i * size / 8, y, x + i * size / 8, y + size) surface.DrawLine(x, y + i * size / 8, x + size, y + i * size / 8) end
         local mn, mx = worldBounds()
