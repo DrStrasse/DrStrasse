@@ -126,6 +126,12 @@ if SERVER then
         if IsValid(owner) then owner:ChatPrint("[Тикет #" .. id .. "] " .. rpName(ply) .. ": " .. text); sendPlayerTicket(ticket) end
         ticket.status = "claimed"; ticket.admin = rpName(ply); save(); sendAdmin(ply)
     end)
+    hook.Add("PlayerInitialSpawn", "GRM_Tickets_RestorePlayerWindow", function(ply)
+        timer.Simple(2, function()
+            if not IsValid(ply) then return end
+            for _, ticket in pairs(T.Active) do if ticket.account == ply:SteamID64() then sendPlayerTicket(ticket) break end end
+        end)
+    end)
     concommand.Add("grm_tickets", function(ply) if IsValid(ply) and ply:IsAdmin() then sendAdmin(ply) end end)
     concommand.Add("grm_ticket", function(ply) if IsValid(ply) then ply:ChatPrint("Использование: /ticket текст обращения") end end)
     hook.Add("PlayerSay", "GRM_Tickets_Chat", function(ply, text)
@@ -221,6 +227,9 @@ else
     end)
     hook.Add("PlayerBindPress", "GRM_Tickets_F2Bind", function(ply, bind, pressed)
         if ply == LocalPlayer() and pressed and string.find(string.lower(bind or ""), "gm_showteam", 1, true) and ply:IsAdmin() then RunConsoleCommand("grm_tickets"); return true end
+    end)
+    hook.Add("PlayerButtonDown", "GRM_Tickets_F2Button", function(ply, button)
+        if ply == LocalPlayer() and button == KEY_F2 and ply:IsAdmin() then RunConsoleCommand("grm_tickets") end
     end)
     local f2Down = false
     hook.Add("Think", "GRM_Tickets_F2Poll", function()
