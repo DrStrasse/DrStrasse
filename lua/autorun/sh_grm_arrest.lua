@@ -194,6 +194,9 @@ end
     end
 
     local function nearestPlayer(ply)
+        if ply.GRM_Captives then
+            for captive in pairs(ply.GRM_Captives) do if IsValid(captive) and GRM.Handcuffs and GRM.Handcuffs.IsCuffed(captive) then return captive end end
+        end
         local tr = ply:GetEyeTrace()
         local target = tr and tr.Entity
         if IsValid(target) and target:IsPlayer() and target ~= ply and ply:GetPos():DistToSqr(target:GetPos()) <= 220 * 220 then return target end

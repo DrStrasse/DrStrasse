@@ -24,7 +24,7 @@ GRM.Handcuffs.Config = GRM.Handcuffs.Config or {
 
     CuffedWalkSpeedMultiplier = 0.45,
     CuffedRunSpeedMultiplier = 0.35,
-    DragFollowDistance = 48,
+    DragFollowDistance = 32,
     DragHardDistance = 110,
     MaxDraggedPlayers = 1,
 

@@ -1095,7 +1095,7 @@ hook.Add("SetupMove", "GRM_Handcuffs_Move", function(ply, mv, cmd)
     if IsValid(dragger) and dragger:Alive() then
         local follow = cfg().DragFollowDistance or 72
         local hard = cfg().DragHardDistance or 220
-        local desired = dragger:GetPos() - dragger:GetForward() * follow
+        local desired = dragger:GetPos() - dragger:GetForward() * math.min(follow, 32)
         desired.z = ply:GetPos().z
         local delta = desired - ply:GetPos()
         local dist = delta:Length()
