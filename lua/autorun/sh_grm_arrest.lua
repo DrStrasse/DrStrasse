@@ -191,6 +191,8 @@ end
         return A.Cfg.spawns[1]
     end
 
+    local applyArrestAppearance
+
     function A.ArrestPlayer(actor, target, groupID)
         if not IsValid(actor) or not IsValid(target) then return false, "Цель не найдена" end
         local HC = GRM.Handcuffs
@@ -212,9 +214,7 @@ end
         target:SetNWBool("GRM_Arrested", true)
         target:SetNWString("GRM_ArrestGroup", groupID or "criminals")
         target:SetNWString("GRM_ArrestGroupName", g.name or groupID or "Арестованный")
-        if isstring(g.model) and g.model:match("^models/.+%.mdl$") then target:SetModel(g.model) end
-        target:SetSkin(math.max(0, math.floor(tonumber(g.skin) or 0)))
-        for group, value in pairs(g.bodygroups or {}) do target:SetBodygroup(tonumber(group) or 0, tonumber(value) or 0) end
+        if applyArrestAppearance then applyArrestAppearance(target, g) end
         target:SetPos(vec(sp.pos))
         target:SetEyeAngles(ang(sp.ang or { p = 0, y = 0, r = 0 }))
         target:Freeze(false)
@@ -413,7 +413,7 @@ end
     hook.Add("InitPostEntity", "GRM_Arrest_LoadCameras", function() timer.Simple(2, loadCameras) end)
     hook.Add("ShutDown", "GRM_Arrest_Save", save)
 
-    local function applyArrestAppearance(ply, g)
+    applyArrestAppearance = function(ply, g)
         if not IsValid(ply) or not istable(g) then return end
         local desiredModel = tostring(g.model or "")
         local modelChanged = desiredModel ~= "" and string.lower(ply:GetModel() or "") ~= string.lower(desiredModel)
@@ -434,15 +434,15 @@ end
         for groupID, value in pairs(g.bodygroups or {}) do ply:SetBodygroup(tonumber(groupID) or 0, tonumber(value) or 0) end
     end
 
-    -- Arrest appearance has higher priority than faction/character/mask
-    -- synchronizers. It is applied only when something actually differs,
-    -- preventing visible model flicker.
-    timer.Create("GRM_Arrest_ModelPriority", 0.25, 0, function()
-        for _, ply in ipairs(player.GetAll()) do
-            if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then
+    -- Apply once on arrest and after a respawn race. Faction/character/mask
+    -- setters are guarded while GRM_Arrested is true, so no permanent timer
+    -- is needed and the model cannot visibly flicker.
+    hook.Add("PlayerSpawn", "GRM_Arrest_AppearanceAfterSpawn", function(ply)
+        timer.Simple(0.2, function()
+            if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) and applyArrestAppearance then
                 applyArrestAppearance(ply, group(ply:GetNWString("GRM_ArrestGroup", "criminals")))
             end
-        end
+        end)
     end)
 end
 

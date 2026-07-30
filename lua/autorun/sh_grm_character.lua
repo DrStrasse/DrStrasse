@@ -301,6 +301,7 @@ if SERVER then
     end
 
     function CH.ApplyAppearance(ply, entry)
+        if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then return false, "Внешность заблокирована во время ареста" end
         if not IsValid(ply) or not istable(entry) or not isstring(entry.path) then return false end
         if not isAllowedModel(ply, entry.path) then return false, "Модель не разрешена вашей фракцией/ролью" end
 
