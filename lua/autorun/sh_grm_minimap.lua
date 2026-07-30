@@ -31,8 +31,28 @@ if SERVER then
         save(); send(); return true
     end
     function MM.AddDistrict(ply, name, center, radius)
-        MM.Data.districts[#MM.Data.districts + 1] = { id = nextID("district"), name = string.sub(string.Trim(name or "Район"), 1, 48), center = { x = center.x, y = center.y, z = center.z }, radius = math.Clamp(tonumber(radius) or 500, 100, 10000), color = { r = 70, g = 150, b = 240 } }
+        MM.Data.districts[#MM.Data.districts + 1] = { id = nextID("district"), name = string.sub(string.Trim(name or "Район"), 1, 48), center = { x = center.x, y = center.y, z = center.z }, radius = math.Clamp(tonumber(radius) or 500, 100, 10000), color = { r = 70, g = 150, b = 240 }, polygon = {}, owner = "" }
         save(); send(); return true
+    end
+    function MM.AddDistrictVertex(id, point)
+        for _, district in ipairs(MM.Data.districts or {}) do
+            if tostring(district.id) == tostring(id) then
+                district.polygon = istable(district.polygon) and district.polygon or {}
+                district.polygon[#district.polygon + 1] = { x = point.x, y = point.y, z = point.z }
+                save(); send(); return true
+            end
+        end
+        return false
+    end
+    function MM.CloseNearestDistrict(point)
+        local nearest, dist
+        for _, district in ipairs(MM.Data.districts or {}) do
+            local center = district.center or {}
+            local d = Vector(center.x or 0, center.y or 0, point.z or 0):DistToSqr(point)
+            if not dist or d < dist then nearest, dist = district, d end
+        end
+        if nearest then nearest.polygonClosed = true; save(); send(); return true end
+        return false
     end
     load()
 
@@ -42,6 +62,20 @@ if SERVER then
             if GRM.Identity and GRM.Identity.FactionMember and GRM.Identity.FactionMember(faction, ply) then return tostring(name) end
         end
         return ""
+    end
+
+    local function insideDistrict(point, district)
+        local poly = district.polygon
+        if istable(poly) and #poly >= 3 and district.polygonClosed then
+            local inside = false
+            for i = 1, #poly do
+                local a, b = poly[i], poly[i % #poly + 1]
+                if ((a.y > point.y) ~= (b.y > point.y)) and point.x < (b.x - a.x) * (point.y - a.y) / math.max(0.0001, b.y - a.y) + a.x then inside = not inside end
+            end
+            return inside
+        end
+        local c = district.center or {}
+        return Vector(c.x or 0, c.y or 0, point.z or 0):DistToSqr(point) <= (tonumber(district.radius) or 500)^2
     end
 
     timer.Create("GRM_Minimap_CaptureTick", 1, 0, function()
@@ -78,6 +112,16 @@ if SERVER then
             else
                 point.capturing = ""
             end
+        end
+        for _, district in ipairs(MM.Data.districts or {}) do
+            local scores = {}
+            for _, point in ipairs(MM.Data.points or {}) do
+                local p = Vector(point.pos.x, point.pos.y, point.pos.z)
+                if insideDistrict(p, district) and tostring(point.owner or "") ~= "" then scores[point.owner] = (scores[point.owner] or 0) + 1 end
+            end
+            local winner, best = "", 0
+            for faction, score in pairs(scores) do if score > best then winner, best = faction, score elseif score == best then winner = "" end end
+            if district.owner ~= winner then district.owner = winner; changed = true end
         end
         if changed then save() end
         send()
@@ -157,9 +201,11 @@ else
         ["$basetexture"] = mapRT:GetName(), ["$vertexalpha"] = 1, ["$vertexcolor"] = 1,
     })
     local nextMapRender = 0
+    local mapSnapshotReady = false
     local function renderMapSnapshot()
-        if CurTime() < nextMapRender then return end
-        nextMapRender = CurTime() + 0.6
+        if mapSnapshotReady and CurTime() < nextMapRender then return end
+        nextMapRender = CurTime() + 5
+        mapSnapshotReady = true
         local mn, mx = worldBounds()
         local span = math.max(mx.x - mn.x, mx.y - mn.y)
         local center = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mx.z + math.max(1200, span * 0.75))
@@ -254,7 +300,7 @@ else
     hook.Add("HUDPaint", "GRM_Minimap_HUD", function()
         local lp = LocalPlayer() if not IsValid(lp) then return end
         renderMapSnapshot()
-        local size, x, y = 220, ScrW() - 238, 18
+        local size, x, y = 280, ScrW() - 300, 18
         draw.RoundedBox(8, x - 4, y - 4, size + 8, size + 8, Color(10, 16, 24, 235))
         surface.SetMaterial(mapMat) surface.SetDrawColor(255, 255, 255, 185) surface.DrawTexturedRect(x, y, size, size)
         surface.SetDrawColor(45, 65, 86, 255) surface.DrawOutlinedRect(x, y, size, size, 2)
@@ -264,8 +310,16 @@ else
         for _, d in ipairs(data.districts or {}) do
             local dx, dy = mapPos(Vector(d.center.x, d.center.y, 0), x, y, size)
             local dr = math.Clamp((tonumber(d.radius) or 500) / worldSpan * size, 6, size / 2)
-            surface.SetDrawColor(80, 160, 245, 120) surface.DrawCircle(dx, dy, dr, 80, 160, 245, 120)
-            draw.SimpleText(tostring(d.name), "DermaDefaultBold", dx, dy, Color(100, 200, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            surface.SetDrawColor(80, 160, 245, 120)
+            if istable(d.polygon) and #d.polygon >= 3 and d.polygonClosed then
+                for i = 1, #d.polygon do
+                    local a, b = d.polygon[i], d.polygon[i % #d.polygon + 1]
+                    local ax, ay = mapPos(Vector(a.x, a.y, 0), x, y, size)
+                    local bx, by = mapPos(Vector(b.x, b.y, 0), x, y, size)
+                    surface.DrawLine(ax, ay, bx, by)
+                end
+            else surface.DrawCircle(dx, dy, dr, 80, 160, 245, 120) end
+            draw.SimpleText(tostring(d.name) .. (d.owner ~= "" and " • " .. d.owner or ""), "DermaDefaultBold", dx, dy, Color(100, 200, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
         for _, p in ipairs(data.points or {}) do
             local px, py = mapPos(Vector(p.pos.x, p.pos.y, 0), x, y, size)
