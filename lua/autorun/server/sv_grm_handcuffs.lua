@@ -492,6 +492,7 @@ end
 function HC.StopDragging(dragger, target)
     if IsValid(target) then
         target:SetParent(nil)
+        target:Freeze(false)
         target:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
         target:SetNWBool("GRM_CuffDragged", false)
         target:SetNWEntity("GRM_CuffDragger", NULL)
@@ -504,6 +505,7 @@ function HC.StopDragging(dragger, target)
             for captive in pairs(dragger.GRM_Captives) do
                 if IsValid(captive) then
                     captive:SetParent(nil)
+                    captive:Freeze(false)
                     captive:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
                     captive:SetNWBool("GRM_CuffDragged", false)
                     captive:SetNWEntity("GRM_CuffDragger", NULL)
@@ -543,7 +545,8 @@ function HC.StartDragging(dragger, target)
     -- follows the escort at a fixed local offset instead of being pulled by
     -- velocity every tick.
     target:SetParent(dragger)
-    target:SetLocalPos(Vector(-32, 0, 0))
+    target:Freeze(true)
+    target:SetLocalPos(Vector(-8, 0, 0))
     target:SetLocalAngles(Angle(0, 180, 0))
     target:SetNWBool("GRM_CuffDragged", true)
     target:SetNWEntity("GRM_CuffDragger", dragger)
