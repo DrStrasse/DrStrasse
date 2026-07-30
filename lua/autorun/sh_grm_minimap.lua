@@ -222,15 +222,22 @@ else
         surface.SetMaterial(mapMat) surface.SetDrawColor(255, 255, 255, 185) surface.DrawTexturedRect(x, y, size, size)
         surface.SetDrawColor(45, 65, 86, 255) surface.DrawOutlinedRect(x, y, size, size, 2)
         for i = 1, 7 do surface.SetDrawColor(30, 48, 66, 180) surface.DrawLine(x + i * size / 8, y, x + i * size / 8, y + size) surface.DrawLine(x, y + i * size / 8, x + size, y + i * size / 8) end
+        local mn, mx = worldBounds()
+        local worldSpan = math.max(mx.x - mn.x, mx.y - mn.y)
         for _, d in ipairs(data.districts or {}) do
             local dx, dy = mapPos(Vector(d.center.x, d.center.y, 0), x, y, size)
-            draw.SimpleText(tostring(d.name), "DermaDefaultBold", dx, dy, Color(100, 180, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            local dr = math.Clamp((tonumber(d.radius) or 500) / worldSpan * size, 6, size / 2)
+            surface.SetDrawColor(80, 160, 245, 120) surface.DrawCircle(dx, dy, dr, 80, 160, 245, 120)
+            draw.SimpleText(tostring(d.name), "DermaDefaultBold", dx, dy, Color(100, 200, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
         for _, p in ipairs(data.points or {}) do
             local px, py = mapPos(Vector(p.pos.x, p.pos.y, 0), x, y, size)
             local col = p.owner ~= "" and Color(100, 220, 140, 255) or Color(240, 180, 70, 255)
+            local pr = math.Clamp((tonumber(p.radius) or 180) / worldSpan * size, 4, 34)
+            surface.SetDrawColor(col) surface.DrawCircle(px, py, pr, col.r, col.g, col.b, 80)
             surface.SetDrawColor(col) surface.DrawRect(px - 3, py - 3, 6, 6)
             draw.SimpleText(tostring(p.name), "DermaDefault", px, py - 8, col, TEXT_ALIGN_CENTER, TEXT_ALIGN_BOTTOM)
+            if tonumber(p.capture or 0) > 0 then draw.SimpleText(math.floor((p.capture or 0) / 30 * 100) .. "%", "DermaDefault", px, py + 8, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP) end
         end
         local px, py = mapPos(lp:GetPos(), x, y, size)
         surface.SetDrawColor(90, 255, 150, 255) surface.DrawRect(px - 4, py - 4, 8, 8)
