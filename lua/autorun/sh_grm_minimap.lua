@@ -135,6 +135,9 @@ else
     surface.CreateFont("GRMMM_Title", { font = "Roboto", size = 21, weight = 900, extended = true })
     surface.CreateFont("GRMMM_Body", { font = "Roboto", size = 13, weight = 600, extended = true })
     surface.CreateFont("GRMMM_Small", { font = "Roboto", size = 11, weight = 500, extended = true })
+    -- Compatibility aliases for clients with an older cached GPS panel.
+    surface.CreateFont("GRMChar_Small", { font = "Roboto", size = 11, weight = 500, extended = true })
+    surface.CreateFont("GRMChar_Normal", { font = "Roboto", size = 13, weight = 600, extended = true })
     local function styleButton(b, color)
         b:SetFont("GRMMM_Body") b:SetTextColor(MUI.text)
         b.Paint = function(self, w, h) local c = color or MUI.card2; if self:IsHovered() then c = Color(math.min(c.r + 18, 255), math.min(c.g + 18, 255), math.min(c.b + 18, 255)) end draw.RoundedBox(6, 0, 0, w, h, c) end
