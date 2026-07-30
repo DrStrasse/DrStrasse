@@ -215,10 +215,10 @@ else
             origin = center,
             angles = Angle(90, 0, 0),
             x = 0, y = 0, w = 512, h = 512,
-            -- Ортографическая проекция исключает перспективный «второй
-            -- слой» карты и дальний фон/небо по краям RenderView.
-            ortho = { left = -span * 0.5, right = span * 0.5, top = -span * 0.5, bottom = span * 0.5 },
-            znear = 1, zfar = math.max(4096, span * 2),
+            -- Перспективная top-down камера над всей картой: это надёжнее
+            -- поддерживается RenderView разных версий GMod, чем ortho-поле.
+            fov = 90,
+            znear = 1, zfar = math.max(8192, span * 3),
             drawskybox = false, drawmonitors = false,
             drawhud = false, drawviewmodel = false, dopostprocess = false,
         })
