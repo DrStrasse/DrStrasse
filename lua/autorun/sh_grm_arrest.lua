@@ -403,6 +403,12 @@ end
     end)
 
     concommand.Add("grm_arrest_admin", function(ply) A.OpenAdmin(ply) end)
+    hook.Add("PlayerSay", "GRM_Arrest_AdminChatCommand", function(ply, text)
+        if IsValid(ply) and ply:IsSuperAdmin() and string.lower(string.Trim(text or "")) == "/grm_arrest_admin" then
+            A.OpenAdmin(ply)
+            return ""
+        end
+    end)
     concommand.Add("grm_arrest_reload", function(ply) if not IsValid(ply) or ply:IsSuperAdmin() then loadCameras() end end)
     hook.Add("InitPostEntity", "GRM_Arrest_LoadCameras", function() timer.Simple(2, loadCameras) end)
     hook.Add("ShutDown", "GRM_Arrest_Save", save)
