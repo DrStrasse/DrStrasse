@@ -227,10 +227,23 @@ else
         local mn, mx = worldBounds()
         local span = math.max(mx.x - mn.x, mx.y - mn.y)
         -- Камера ниже: меньше «дальнего» слоя и больше читаемых деталей
-        -- Камера должна находиться выше максимальной геометрии карты.
-        -- Слишком низкая позиция попадает внутрь зданий и даёт пустой RT.
-        local cameraHeight = math.max(2500, span * 0.75)
-        local center = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mx.z + cameraHeight)
+        -- Не используем mx.z напрямую: у карт часто есть skybox/служебный
+        -- верхний слой, из-за которого камера улетает над городом.
+        -- Ищем реальную верхнюю поверхность карты трассировками вниз.
+        local surfaceZ = mn.z
+        local samples = {
+            Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, mx.z + 8192),
+            Vector(mn.x + span * 0.25, mn.y + span * 0.25, mx.z + 8192),
+            Vector(mx.x - span * 0.25, mx.y + span * 0.25, mx.z + 8192),
+            Vector(mn.x + span * 0.25, mx.y - span * 0.25, mx.z + 8192),
+            Vector(mx.x - span * 0.25, mx.y - span * 0.25, mx.z + 8192),
+        }
+        for _, sample in ipairs(samples) do
+            local tr = util.TraceLine({ start = sample, endpos = Vector(sample.x, sample.y, mn.z - 8192), mask = MASK_SOLID_BRUSHONLY })
+            if tr.Hit then surfaceZ = math.max(surfaceZ, tr.HitPos.z) end
+        end
+        local cameraHeight = math.max(1200, span * 0.18)
+        local center = Vector((mn.x + mx.x) * 0.5, (mn.y + mx.y) * 0.5, surfaceZ + cameraHeight)
         render.PushRenderTarget(mapRT)
         render.Clear(7, 12, 19, 255, true, true)
         render.RenderView({
