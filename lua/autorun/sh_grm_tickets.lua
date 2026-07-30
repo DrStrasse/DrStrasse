@@ -157,9 +157,9 @@ else
         local closeFrame = button(f, "×", C.red) closeFrame:SetPos(1038, 14) closeFrame:SetSize(28, 28) closeFrame.DoClick = function() f:Close() end
         local addZone = button(f, "+ Админ-зона здесь", C.green) addZone:SetPos(18, 70) addZone:SetSize(230, 32) addZone.DoClick = function() net.Start("GRM_Ticket_ZoneAction") net.WriteString("add") net.SendToServer() end
         local zoneInfo = vgui.Create("DLabel", f) zoneInfo:SetPos(260, 76) zoneInfo:SetSize(700, 22) zoneInfo:SetText("Админ-зон: " .. tostring(#(zones or {})) .. " • история: " .. tostring(#(history or {}))) zoneInfo:SetTextColor(C.dim)
-        local sc = vgui.Create("DScrollPanel", f) sc:Dock(FILL) sc:DockMargin(10, 52, 10, 10) sc:DockMargin(10, 10, 10, 10)
+        local sc = vgui.Create("DScrollPanel", f) sc:Dock(FILL) sc:DockMargin(10, 70, 10, 10)
         for _, t in ipairs(list or {}) do
-            local p = vgui.Create("DPanel", sc) p:Dock(TOP) p:SetTall(145) p:DockMargin(0, 0, 0, 8) p.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, C.card) end
+            local p = vgui.Create("DPanel", sc) p:Dock(TOP) p:SetTall(160) p:DockMargin(0, 0, 0, 8) p.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, C.card) end
             local l = vgui.Create("DLabel", p) l:SetPos(14, 10) l:SetSize(620, 24) l:SetFont("GRMTicketTitle") l:SetTextColor(C.text) l:SetText("#" .. t.id .. "  •  " .. tostring(t.name) .. "  •  " .. tostring(t.status))
             local body = vgui.Create("DLabel", p) body:SetPos(14, 42) body:SetSize(620, 42) local transcript = tostring(t.text); for _, msg in ipairs(t.messages or {}) do transcript = transcript .. "\n" .. tostring(msg.from) .. ": " .. tostring(msg.text) end; body:SetText(transcript) body:SetTextColor(C.dim) body:SetWrap(true)
             local reply = vgui.Create("DTextEntry", p) reply:SetPos(14, 92) reply:SetSize(500, 30) reply:SetPlaceholderText("Ответ игроку")
