@@ -193,9 +193,10 @@ else
         f:SetSize(1080, 760) f:Center() f:MakePopup() f:SetTitle("") f:ShowCloseButton(false)
         f.Paint = function(_, w, h) draw.RoundedBox(10, 0, 0, w, h, C.bg); draw.RoundedBoxEx(10, 0, 0, w, 58, C.head, true, true, false, false); draw.SimpleText("GRM  /  ЦЕНТР ТИКЕТОВ", "GRMTicketBody", 18, 17, C.blue, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER); draw.SimpleText("Обращения игроков", "GRMTicketTitle", 18, 40, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
         local closeFrame = button(f, "×", C.red) closeFrame:SetPos(1038, 14) closeFrame:SetSize(28, 28) closeFrame.DoClick = function() f:Close() end
-        local addZone = button(f, "+ Админ-зона здесь", C.green) addZone:SetPos(18, 70) addZone:SetSize(230, 32) addZone.DoClick = function() net.Start("GRM_Ticket_ZoneAction") net.WriteString("add") net.SendToServer() end
-        local zoneInfo = vgui.Create("DLabel", f) zoneInfo:SetPos(260, 76) zoneInfo:SetSize(700, 22) zoneInfo:SetText("Админ-зон: " .. tostring(#(zones or {})) .. " • история: " .. tostring(#(history or {}))) zoneInfo:SetTextColor(C.dim)
-        local sc = vgui.Create("DScrollPanel", f) sc:SetPos(10, 115) sc:SetSize(1060, 625)
+        local toolbar = vgui.Create("DPanel", f) toolbar:SetPos(10, 66) toolbar:SetSize(1060, 42) toolbar:SetPaintBackground(false) toolbar:SetZPos(10)
+        local addZone = button(toolbar, "+ Админ-зона здесь", C.green) addZone:SetPos(8, 5) addZone:SetSize(230, 32) addZone.DoClick = function() net.Start("GRM_Ticket_ZoneAction") net.WriteString("add") net.SendToServer() end
+        local zoneInfo = vgui.Create("DLabel", toolbar) zoneInfo:SetPos(250, 11) zoneInfo:SetSize(790, 22) zoneInfo:SetText("Админ-зон: " .. tostring(#(zones or {})) .. " • история: " .. tostring(#(history or {}))) zoneInfo:SetTextColor(C.dim)
+        local sc = vgui.Create("DScrollPanel", f) sc:SetPos(10, 116) sc:SetSize(1060, 624) sc:SetZPos(1)
         for _, t in ipairs(list or {}) do
             local p = vgui.Create("DPanel", sc) p:Dock(TOP) p:SetTall(160) p:DockMargin(0, 0, 0, 8) p.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, C.card) end
             local l = vgui.Create("DLabel", p) l:SetPos(14, 10) l:SetSize(620, 24) l:SetFont("GRMTicketTitle") l:SetTextColor(C.text) l:SetText("#" .. t.id .. "  •  " .. tostring(t.name) .. "  •  " .. tostring(t.status))
