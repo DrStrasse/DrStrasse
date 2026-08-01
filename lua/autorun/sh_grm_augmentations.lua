@@ -11,6 +11,7 @@ if SERVER then
 	AddCSLuaFile("cl_grm_augmentation_chips.lua")
 	AddCSLuaFile("cl_grm_augmentation_station.lua")
 	AddCSLuaFile("cl_grm_augmentations_hud.lua")
+	AddCSLuaFile("sh_grm_news.lua")
 end
 
 GRM = GRM or {}

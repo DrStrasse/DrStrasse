@@ -583,14 +583,14 @@ local function openComputer(ent,data)
   clear()
   textLabel(body,"ИНТЕРНЕТ-БРАУЗЕР",18,10,300,28,"GRMNet_Title",C.text)
   
-  -- Sample websites
-  local websites={
-   {name="GRM News",url="news.grm.net",content="Добро пожаловать в GRM News!\n\nПоследние новости города:\n\n• Открыт новый район\n• Обновлена система транспорта\n• Состоялся городской фестиваль\n\n© 2026 GRM News Network"},
-   {name="GRM Mail",url="mail.grm.net",content="GRM Mail Service\n\nВаш почтовый сервис.\n\nИспользуйте приложение 'Почта' для работы с письмами."},
-   {name="GRM Social",url="social.grm.net",content="GRM Social Network\n\nСоциальная сеть города.\n\nФункционал в разработке..."},
-   {name="GRM Weather",url="weather.grm.net",content="Погода в городе\n\nСегодня: +22°C, ясно\nЗавтра: +20°C, облачно\n\nВлажность: 45%\nВетер: 3 м/с"},
-   {name="GRM Maps",url="maps.grm.net",content="GRM Maps\n\nИнтерактивная карта города.\n\nФункционал в разработке..."}
-  }
+	-- Sample websites
+	local websites={
+		{name="GRM News",url="news.grm.net",content="[НАЖМИТЕ ДЛЯ ОТКРЫТИЯ НОВОСТНОГО ПОРТАЛА]",action="news"},
+		{name="GRM Mail",url="mail.grm.net",content="GRM Mail Service\n\nВаш почтовый сервис.\n\nИспользуйте приложение 'Почта' для работы с письмами."},
+		{name="GRM Social",url="social.grm.net",content="GRM Social Network\n\nСоциальная сеть города.\n\nФункционал в разработке..."},
+		{name="GRM Weather",url="weather.grm.net",content="Погода в городе\n\nСегодня: +22°C, ясно\nЗавтра: +20°C, облачно\n\nВлажность: 45%\nВетер: 3 м/с"},
+		{name="GRM Maps",url="maps.grm.net",content="GRM Maps\n\nИнтерактивная карта города.\n\nФункционал в разработке..."}
+	}
   
   -- Tabs system
   local tabs = {}
@@ -741,6 +741,16 @@ local function openComputer(ent,data)
   
   -- Function to load a website
   local function loadSite(site)
+   -- Проверка на специальное действие
+   if site.action == "news" then
+    if GRM.News and GRM.News.OpenPortal then
+     GRM.News.OpenPortal()
+    else
+     notification.AddLegacy("Новостной портал недоступен", NOTIFY_ERROR, 3)
+    end
+    return
+   end
+   
    currentSite = site
    browserFrame:Clear()
    
