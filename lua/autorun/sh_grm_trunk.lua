@@ -115,7 +115,14 @@ if SERVER then
 
     local function myFaction(ply)
         if _G.FactionsAPI and _G.FactionsAPI.GetFactionOf then
-            return _G.FactionsAPI.GetFactionOf(ply:SteamID()) or _G.FactionsAPI.GetFactionOf(ply:SteamID64())
+            local found = _G.FactionsAPI.GetFactionOf(ply)
+            if found then return found end
+        end
+        if istable(Factions) then
+            local sid, s64 = ply:SteamID(), ply:SteamID64()
+            for name, f in pairs(Factions) do
+                if istable(f) and istable(f.Members) and (f.Members[sid] or f.Members[s64]) then return name end
+            end
         end
         return nil
     end
@@ -124,7 +131,8 @@ if SERVER then
         if not IsValid(ply) or not IsValid(veh) then return false, "Нет машины" end
         if ply:IsSuperAdmin() then return true end
         local otype, osteam, fac, locked = ownerState(veh)
-        if otype == "player" and (osteam == ply:SteamID() or osteam == ply:SteamID64()) then return true end
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64()
+        if otype == "player" and (osteam == ck or osteam == ply:SteamID() or osteam == ply:SteamID64()) then return true end
         if otype == "faction" and fac ~= "" and myFaction(ply) == fac then return true end
         if not locked then return true end -- чужая, но ОТКРЫТАЯ машина: риск владельца (RP-кража)
         return false, "Багажник недоступен: машина заблокирована, ключи не ваши"
@@ -678,7 +686,7 @@ if CLIENT then
                 local mins, maxs = veh:OBBMins(), veh:OBBMaxs()
                 local back = (mins and mins.y) and mins.y or -60
                 local pos = veh:LocalToWorld(Vector(0, back - 8, (maxs and maxs.z or 60) * 0.5 + 30 + math.sin(CurTime() * 3) * 3))
-                local ang = Angle(0, lp:EyeAngles().y - 90, 90)
+                local ang = Angle(0, EyeAngles().y - 90, 90)
                 cam.Start3D2D(pos, ang, 0.1)
                     draw.RoundedBox(6, -110, -20, 220, 40, Color(14, 18, 26, 215))
                     surface.SetDrawColor(C.yellow.r, C.yellow.g, C.yellow.b, 220)

@@ -92,6 +92,7 @@ end
 
 local function steamID(ply)
     if not IsValid(ply) then return "" end
+    if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
     local sid64 = ply:SteamID64()
     if sid64 and sid64 ~= "0" then return sid64 end
     return ply:SteamID()

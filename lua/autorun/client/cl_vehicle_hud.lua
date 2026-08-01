@@ -30,7 +30,9 @@ function VK.ClientCanManagePersonalKeys(veh)
     if LocalPlayer():IsSuperAdmin() then return true end
 
     local ownerType, ownerSteam = VK.GetOwnerState(veh)
-    return ownerType == VK.OWNER_TYPE.PLAYER and ownerSteam == LocalPlayer():SteamID()
+    local lp = LocalPlayer()
+    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(lp)) or lp:SteamID()
+    return ownerType == VK.OWNER_TYPE.PLAYER and (ownerSteam == ck or ownerSteam == lp:SteamID())
 end
 
 net.Receive(NET_SYNC_VEHICLE, function()

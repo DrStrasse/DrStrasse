@@ -115,17 +115,63 @@ if SERVER then
         return amount
     end
 
+    local function characterKeyOf(value)
+        if IsValid(value) and value:IsPlayer() then
+            if GRM.Identity and GRM.Identity.CharacterKey then
+                return GRM.Identity.CharacterKey(value)
+            end
+            return tostring(value:SteamID64() or "") .. ":char1"
+        end
+        local raw = tostring(value or "")
+        if raw:match(":char[1-3]$") then return raw end
+        if player and player.GetAll then
+            for _, p in ipairs(player.GetAll()) do
+                if IsValid(p) and (p:SteamID() == raw or p:SteamID64() == raw) then
+                    return characterKeyOf(p)
+                end
+            end
+        end
+        if raw:match("^%d+$") then return raw .. ":char1" end
+        return raw
+    end
+
+    local function persistedCharacterKey(value)
+        local raw = tostring(value or "")
+        if raw:match(":char[1-3]$") then return raw end
+        if raw:match("^%d+$") then return raw .. ":char1" end
+        if util.SteamIDTo64 then
+            local s64 = util.SteamIDTo64(raw)
+            if s64 and s64 ~= "0" then return tostring(s64) .. ":char1" end
+        end
+        return raw
+    end
+
     local function sidOf(ply)
-        if isstring(ply) then return ply end
-        if IsValid(ply) then return ply:SteamID64() end
+        if ply == nil then return nil end
+        return characterKeyOf(ply)
+    end
+
+    local function onlinePlayerOf(key)
+        key = tostring(key or "")
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and characterKeyOf(p) == key then return p end
+        end
         return nil
     end
 
-    local function onlinePlayerOf(sid)
-        for _, p in ipairs(player.GetAll()) do
-            if IsValid(p) and p:SteamID64() == sid then return p end
+    local function migrateRecordKeys()
+        local changed = false
+        local moved = {}
+        for key, rec in pairs(records) do
+            local nk = persistedCharacterKey(key)
+            if nk ~= key then
+                if not records[nk] and not moved[nk] then moved[nk] = rec end
+                records[key] = nil
+                changed = true
+            end
         end
-        return nil
+        for key, rec in pairs(moved) do records[key] = rec end
+        return changed
     end
 
     -- Управляющие байты и DEL ломали бы JSON
@@ -387,6 +433,11 @@ if SERVER then
                 end
             end
         end
+        local migrated = migrateRecordKeys()
+        if migrated then
+            dirty = true
+            print("[GRM Currency] миграция счетов: старые AccountKey преобразованы в CharacterKey/char1")
+        end
         if srcName and srcName ~= DATA_FILE and next(records) ~= nil then
             dirty = true -- материализуем в основной файл ближайшим сейвом
             print(("[GRM Currency] МИГРАЦИЯ: счетов %d поднято из data/%s -> data/%s")
@@ -420,7 +471,7 @@ if SERVER then
     -- Отправка актуального баланса онлайн-игроку
     local function pushBalance(ply)
         if not IsValid(ply) or not ply:IsPlayer() then return end
-        local rec = records[ply:SteamID64()]
+        local rec = records[sidOf(ply)]
         local bal = rec and rec.balance or 0
         ply:SetNW2Int("GRM_Money", bal)
         net.Start(NET_SYNC)
@@ -566,7 +617,8 @@ if SERVER then
             return 0
         end
         local adopted = 0
-        for sid, rec in pairs(raw) do
+        for rawSid, rec in pairs(raw) do
+            local sid = isstring(rawSid) and persistedCharacterKey(rawSid) or rawSid
             if isstring(sid) then
                 -- терпим и к формату sid -> число
                 local recBal, recName
@@ -729,7 +781,7 @@ if SERVER then
 
     local function onInitSpawn(ply)
         if not IsValid(ply) or ply:IsBot() then return end
-        local sid = ply:SteamID64()
+        local sid = sidOf(ply)
         if not records[sid] then
             -- ПРАВДА в момент «сброса до стартового баланса»
             local cnt = table.Count(records)
@@ -752,9 +804,18 @@ if SERVER then
     end
     hook.Add("PlayerInitialSpawn", "GRM_Currency_Init", onInitSpawn)
 
+    hook.Add("GRM_CharacterChanged", "GRM_Currency_CharacterSync", function(ply)
+        if not IsValid(ply) then return end
+        local sid = sidOf(ply)
+        ensure(sid, ply:Nick())
+        dirty = true
+        saveNow(false, "смена персонажа")
+        pushBalance(ply)
+    end)
+
     hook.Add("PlayerDisconnected", "GRM_Currency_Disconnect", function(ply)
         if not IsValid(ply) then return end
-        local rec = records[ply:SteamID64()]
+        local rec = records[sidOf(ply)]
         if rec then rec.name = ply:Nick() end
         dirty = true
         saveNow(false, "дисконнект")

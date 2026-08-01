@@ -8,7 +8,7 @@ function ENT:Draw()
     local maxd = GRM.Alarm.Config.LabelDistance or 420
     if ply:GetPos():DistToSqr(self:GetPos()) > maxd * maxd then return end
     local pos = self:GetPos() + self:GetUp() * 16
-    local ang = Angle(0, ply:EyeAngles().y - 90, 90)
+    local ang = Angle(0, EyeAngles().y - 90, 90)
     cam.Start3D2D(pos, ang, 0.09)
         local on = self:GetActive()
         local col = on and Color(255, 170, 60) or Color(180, 80, 80)

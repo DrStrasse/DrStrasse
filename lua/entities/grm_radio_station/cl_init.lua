@@ -13,7 +13,7 @@ function ENT:Draw()
     local maxs = self:OBBMaxs()
     local pos = self:GetPos() + ang:Up() * ((maxs and maxs.z or 50) + 14)
     local blink = on and ((math.sin(CurTime() * 4) + 1) * 0.5) or 0
-    cam.Start3D2D(pos, Angle(0, lp:EyeAngles().y - 90, 90), 0.07)
+    cam.Start3D2D(pos, Angle(0, EyeAngles().y - 90, 90), 0.07)
         draw.RoundedBox(6, -160, -46, 320, 92, Color(14, 18, 26, 225))
         surface.SetDrawColor(on and 70 or 210, on and 150 or 140, on and 240 or 60, 190)
         surface.DrawOutlinedRect(-160, -46, 320, 92, 2)

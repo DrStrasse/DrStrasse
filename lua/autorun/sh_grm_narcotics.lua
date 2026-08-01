@@ -14,6 +14,10 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Narcotics = GRM.Narcotics or {}
 local NARC = GRM.Narcotics
+local function characterTimerKey(ply)
+    if IsValid(ply) and GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
+    return IsValid(ply) and ply:SteamID64() or "0"
+end
 
 NARC.Version = "2.0.0"
 NARC.Active = NARC.Active or {}
@@ -187,7 +191,7 @@ if SERVER then
         local poison = math.floor(tonumber(effect.poison) or 0)
         if poison > 0 then ply:SetNWInt("GRM_Poisoned", clamp((ply:GetNWInt("GRM_Poisoned", 0) or 0) + poison, 0, 100)) end
 
-        timer.Create("GRM_Narc_End_" .. ply:SteamID64(), duration, 1, function()
+        timer.Create("GRM_Narc_End_" .. characterTimerKey(ply), duration, 1, function()
             if not IsValid(ply) then return end
             local cur = NARC.Active[ply]
             if cur and cur.type == drug then
@@ -264,7 +268,7 @@ if SERVER then
 
     hook.Add("PlayerDisconnected", "GRM_Narc_Cleanup", function(ply)
         NARC.Active[ply] = nil
-        timer.Remove("GRM_Narc_End_" .. ply:SteamID64())
+        timer.Remove("GRM_Narc_End_" .. characterTimerKey(ply))
     end)
 
     hook.Add("PlayerSay", "GRM_Narc_StatusCmd", function(ply, text)

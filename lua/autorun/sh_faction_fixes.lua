@@ -220,9 +220,10 @@ local function getFactionMemberByPlayer(ply)
     if not IsValid(ply) or not Factions then return nil, nil, nil, nil end
     local sid = ply:SteamID()
     local sid64 = ply:SteamID64()
+    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
     for factionName, f in pairs(Factions or {}) do
         if istable(f) and istable(f.Members) then
-            local member = f.Members[sid] or f.Members[sid64]
+            local member = GRM.Identity.FactionMember(f, ply)
             if istable(member) then
                 return factionName, member, f, sid
             end
@@ -465,11 +466,12 @@ if SERVER then
         if not factionName or not f then return DefaultModels end
         local role = member.Role
         local dept = member.Department
-        if dept and istable(f.DepartmentModels) and istable(f.DepartmentModels[dept]) and #f.DepartmentModels[dept] > 0 then
-            return f.DepartmentModels[dept]
-        end
+        -- Приоритет владельца: роль выше отдела.
         if role and istable(f.RoleModels) and istable(f.RoleModels[role]) and #f.RoleModels[role] > 0 then
             return f.RoleModels[role]
+        end
+        if dept and istable(f.DepartmentModels) and istable(f.DepartmentModels[dept]) and #f.DepartmentModels[dept] > 0 then
+            return f.DepartmentModels[dept]
         end
         if istable(f.Models) and #f.Models > 0 then return f.Models end
         return DefaultModels
@@ -492,7 +494,7 @@ if SERVER then
     end
 
     local function applyStrictBodygroupsToPlayer(ply, modelData)
-        if not IsValid(ply) then return end
+        if not IsValid(ply) or ply:GetNWBool("GRM_Arrested", false) then return end
         modelData = normalizeModelEntry(modelData)
 
         -- Если модель ещё не успела примениться или другой аддон перебил её,
@@ -518,7 +520,7 @@ if SERVER then
     end
 
     local function scheduleStrictModelApply(ply, modelData, reason)
-        if not IsValid(ply) then return end
+        if not IsValid(ply) or ply:GetNWBool("GRM_Arrested", false) then return end
         modelData = normalizeModelEntry(modelData)
         if not modelData.path or modelData.path == "" then return end
 
@@ -544,7 +546,7 @@ if SERVER then
     end
 
     function ApplyModelSettings(ply, modelData)
-        if not IsValid(ply) then return end
+        if not IsValid(ply) or ply:GetNWBool("GRM_Arrested", false) then return end
         modelData = normalizeModelEntry(modelData)
         if not modelData.path or modelData.path == "" then return end
         ply:SetModel(modelData.path)
@@ -563,6 +565,7 @@ if SERVER then
     end
 
     function GetWeaponsForPlayer(ply)
+        if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then return {} end
         local factionName, member, f = getFactionMemberByPlayer(ply)
         if not factionName or not f then return DEFAULT_WEAPONS end
         local role = member.Role
@@ -580,6 +583,10 @@ if SERVER then
     function ApplyWeaponsToPlayer(ply)
         if not IsValid(ply) then return end
         ply:StripWeapons()
+        if ply:GetNWBool("GRM_Arrested", false) then
+            if ply.RemoveAllAmmo then ply:RemoveAllAmmo() end
+            return
+        end
         for _, class in ipairs(GetWeaponsForPlayer(ply)) do
             if isstring(class) and class ~= "" then
                 ply:Give(class)
@@ -628,6 +635,7 @@ if SERVER then
         ply:SetNWBool("IsMasked", true)
         ply:SetNWString("MaskModel", entry.path or "")
         ply:SetNWString("MaskName", entry.name or "")
+        ply:SetNWString("GRM_MaskDesc", ply:GetNWString("GRM_MaskDesc", ""))
         ApplyModelSettings(ply, entry)
     end
 
@@ -636,6 +644,7 @@ if SERVER then
         ply:SetNWBool("IsMasked", false)
         ply:SetNWString("MaskModel", "")
         ply:SetNWString("MaskName", "")
+        ply:SetNWString("GRM_MaskDesc", "")
         ply.FactionsExt_MaskEntry = nil
         local factionName = getFactionMemberByPlayer(ply)
         if factionName then
@@ -1085,8 +1094,34 @@ if SERVER then
         end
     end)
 
+    local function handleMaskChatCommand(ply, text)
+        local lower = safeLower(trim(text))
+
+        if lower == "/mask" or lower == "!mask" then
+            sendMaskMenu(ply)
+            return true
+        end
+
+        if lower == "/mask off" or lower == "!mask off" then
+            removeMask(ply)
+            ply:PrintMessage(HUD_PRINTTALK, "[Маскировка] Снята.")
+            return true
+        end
+
+        return false
+    end
+
+    hook.Add("PlayerSayTransform", "FactionsExt_MaskCommands", function(ply, datapack)
+        if not istable(datapack) or not isstring(datapack[1]) then return end
+        if not handleMaskChatCommand(ply, datapack[1]) then return end
+        datapack[1] = ""
+        datapack.SkipPlayerSay = true
+    end)
+
     hook.Add("PlayerSay", "FactionsExt_Commands", function(ply, text)
         local lower = safeLower(trim(text))
+
+        if handleMaskChatCommand(ply, text) then return "" end
 
         if string.sub(lower, 1, 9) == "/kom_hour" then
             local arg = trim(string.sub(text, 10))
@@ -1111,14 +1146,21 @@ if SERVER then
             return ""
         end
 
-        if lower == "/mask" or lower == "!mask" then
-            sendMaskMenu(ply)
+        if lower:sub(1, 10) == "/maskdesc " or lower:sub(1, 10) == "!maskdesc " then
+            if not ply:GetNWBool("IsMasked", false) then
+                ply:PrintMessage(HUD_PRINTTALK, "[Маскировка] Сначала наденьте маскировку: /mask")
+                return ""
+            end
+            local desc = string.Trim(text:sub(11))
+            desc = string.gsub(desc, "[%c]", "")
+            desc = string.sub(desc, 1, 180)
+            ply:SetNWString("GRM_MaskDesc", desc)
+            ply:PrintMessage(HUD_PRINTTALK, desc ~= "" and "[Маскировка] Описание установлено." or "[Маскировка] Описание очищено.")
             return ""
         end
 
-        if lower == "/mask off" or lower == "!mask off" then
-            removeMask(ply)
-            ply:PrintMessage(HUD_PRINTTALK, "[Маскировка] Снята.")
+        if lower == "/maskdesc" or lower == "!maskdesc" then
+            ply:PrintMessage(HUD_PRINTTALK, "[Маскировка] Установить описание: /maskdesc текст")
             return ""
         end
 
@@ -1145,8 +1187,9 @@ if SERVER then
         if not IsValid(ply) or not istable(f) then return false end
         local sid = ply:SteamID()
         local sid64 = ply:SteamID64()
-        if f.Leader and (f.Leader == sid or f.Leader == sid64) then return true end
-        local member = f.Members and (f.Members[sid] or f.Members[sid64])
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
+        if f.Leader and (f.Leader == ck or f.Leader == sid or f.Leader == sid64) then return true end
+        local member = f.Members and GRM.Identity.FactionMember(f, ply)
         local leaderRole = f.LeaderRoleName or "Лидер"
         return istable(member) and member.Role == leaderRole
     end
@@ -1185,7 +1228,8 @@ if SERVER then
             local tag = (f.Tag and f.Tag ~= "") and f.Tag or factionName
             local sid = ply:SteamID()
             local sid64 = ply:SteamID64()
-            local member = f.Members and (f.Members[sid] or f.Members[sid64])
+            local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
+            local member = f.Members and GRM.Identity.FactionMember(f, ply)
             local role = (member and member.Role) or f.LeaderRoleName or "Лидер"
             local color = f.Color or { r = 255, g = 200, b = 50 }
 

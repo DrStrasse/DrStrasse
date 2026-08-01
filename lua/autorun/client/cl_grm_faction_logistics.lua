@@ -90,7 +90,7 @@ local route={active=false}
 
 local function note(s,ok) notification.AddLegacy(s,ok and NOTIFY_GENERIC or NOTIFY_ERROR,4) end
 
-local function f(title,w,h) local x=vgui.Create("DFrame");x:SetTitle("");x:SetSize(w,h);x:Center();x:MakePopup();x.Paint=function(_,pw,ph) draw.RoundedBox(8,0,0,pw,ph,CUI.bg);draw.RoundedBoxEx(8,0,0,pw,36,Color(28,36,49),true,true,false,false);draw.SimpleText(title,"GRML_Title",12,18,CUI.text,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER) end;return x end
+local function f(title,w,h) local x=vgui.Create("DFrame");GRM.UI.Track("logistics", x);x:SetTitle("");x:SetSize(w,h);x:Center();x:MakePopup();x.Paint=function(_,pw,ph) draw.RoundedBox(8,0,0,pw,ph,CUI.bg);draw.RoundedBoxEx(8,0,0,pw,36,Color(28,36,49),true,true,false,false);draw.SimpleText(title,"GRML_Title",12,18,CUI.text,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER) end;return x end
 
 local function b(p,t,c,w,h) local x=vgui.Create("DButton",p);x:SetText(t);x:SetFont("GRML_Normal");x:SetTextColor(color_white);if w then x:SetWide(w) end;if h then x:SetTall(h) end;x.Paint=function(s,pw,ph)local col=s:IsHovered() and Color(math.min(c.r+20,255),math.min(c.g+20,255),math.min(c.b+20,255))or c;draw.RoundedBox(5,0,0,pw,ph,col)end;return x end
 

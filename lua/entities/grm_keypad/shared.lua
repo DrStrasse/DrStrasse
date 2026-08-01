@@ -126,7 +126,8 @@ function ENT:IsKeypadOwner(ply)
     if not IsValid(ply) then return false end
     if ply == self.KeypadOwner then return true end
     local o = tostring(self.OwnerSID64 or "")
-    return o ~= "" and o == tostring(ply:SteamID64() or "")
+    local key = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or tostring(ply:SteamID64() or "")
+    return o ~= "" and o == key
 end
 
 if SERVER then

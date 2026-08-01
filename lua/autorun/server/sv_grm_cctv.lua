@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM CCTV — server v1.2.1 (Код 60/Код 89)
+    GRM CCTV — server v1.3.2 (Код 60/Код 89)
     Реестр, доступ, сеть, view + freeze, сейв, screenshot notify.
     Код 89: автосейв персистента при любой правке настроек (дебаунс 1с).
 ----------------------------------------------------------------------]]
@@ -56,6 +56,7 @@ end
 
 local function steam64(ply)
     if not IsValid(ply) then return "" end
+    if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
     local id = ply:SteamID64()
     if id and id ~= "0" then return id end
     return ply:SteamID() or ""
@@ -124,6 +125,31 @@ end
 function CCTV.UnregisterDevice(ent)
     if not IsValid(ent) then return end
     CCTV.Devices[ent:EntIndex()] = nil
+end
+
+function CCTV.RebuildRegistry()
+    CCTV.Devices = {}
+    for _, cls in ipairs({ "grm_cctv_camera", "grm_cctv_monitor", "grm_cctv_server" }) do
+        for _, ent in ipairs(ents.FindByClass(cls)) do
+            if IsValid(ent) then CCTV.Devices[ent:EntIndex()] = ent end
+        end
+    end
+end
+
+function CCTV.FindDeviceByID(deviceID, expectedClass)
+    deviceID = tostring(deviceID or "")
+    if deviceID == "" then return nil end
+    for _, ent in pairs(CCTV.Devices) do
+        if IsValid(ent) and (not expectedClass or classOf(ent) == expectedClass)
+            and tostring(ent:GetDeviceID() or "") == deviceID then return ent end
+    end
+    -- Самолечение реестра после cleanup/restart/load-order гонки.
+    CCTV.RebuildRegistry()
+    for _, ent in pairs(CCTV.Devices) do
+        if IsValid(ent) and (not expectedClass or classOf(ent) == expectedClass)
+            and tostring(ent:GetDeviceID() or "") == deviceID then return ent end
+    end
+    return nil
 end
 
 function CCTV.NetworkHasServer(networkID)
@@ -197,7 +223,7 @@ function CCTV.SavePermanent()
                 network = ent:GetNetworkID(),
                 owner_steam = ent:GetOwnerSteam(),
                 owner_name = ent:GetOwnerName(),
-                active = (ent.GetActive and ent:GetActive()) or true,
+                active = (not ent.GetActive) or ent:GetActive() == true,
                 fov = (ent.GetCamFOV and ent:GetCamFOV()) or (CFG().DefaultFOV or 75),
             }
         end
@@ -229,39 +255,48 @@ function CCTV.LoadPermanent()
         print("[GRM CCTV] LOAD: quarantine data/" .. q)
         return 0
     end
-    local spawned = 0
+    CCTV.RebuildRegistry()
+    local spawned, healed, claimed = 0, 0, {}
     for _, rec in ipairs(t) do
         if istable(rec) and isstring(rec.class) and isCCTVClass(rec.class) then
             local pos = Vector(tonumber(rec.pos and rec.pos.x) or 0, tonumber(rec.pos and rec.pos.y) or 0, tonumber(rec.pos and rec.pos.z) or 0)
-            local busy = false
-            for _, e in ipairs(ents.FindInSphere(pos, 6)) do
-                if IsValid(e) and classOf(e) == rec.class then busy = true break end
-            end
-            if not busy then
-                local ent = ents.Create(rec.class)
-                if IsValid(ent) then
-                    ent:SetPos(pos)
-                    ent:SetAngles(Angle(tonumber(rec.ang and rec.ang.p) or 0, tonumber(rec.ang and rec.ang.y) or 0, tonumber(rec.ang and rec.ang.r) or 0))
-                    if isstring(rec.model) and rec.model ~= "" then ent:SetModel(rec.model) end
-                    ent:Spawn()
-                    ent:Activate()
-                    if isstring(rec.device_id) and rec.device_id ~= "" then ent:SetDeviceID(rec.device_id) end
-                    if isstring(rec.label) then ent:SetLabel(rec.label) end
-                    if isstring(rec.network) then ent:SetNetworkID(CCTV.NormalizeNetwork(rec.network)) end
-                    if isstring(rec.owner_steam) then ent:SetOwnerSteam(rec.owner_steam) end
-                    if isstring(rec.owner_name) then ent:SetOwnerName(rec.owner_name) end
-                    if ent.SetActive then ent:SetActive(rec.active ~= false) end
-                    if ent.SetCamFOV then ent:SetCamFOV(CCTV.ClampFOV(rec.fov)) end
-                    ent:SetPermanent(true)
-                    local phys = ent:GetPhysicsObject()
-                    if IsValid(phys) then phys:EnableMotion(false) end
-                    spawned = spawned + 1
+            local savedID = isstring(rec.device_id) and rec.device_id or ""
+            local ent = savedID ~= "" and CCTV.FindDeviceByID(savedID, rec.class) or nil
+            if IsValid(ent) and claimed[ent] then ent = nil end
+            if not IsValid(ent) then
+                for _, nearby in ipairs(ents.FindInSphere(pos, 8)) do
+                    if IsValid(nearby) and not claimed[nearby] and classOf(nearby) == rec.class then ent = nearby break end
                 end
+            end
+            local created = false
+            if not IsValid(ent) then
+                ent = ents.Create(rec.class)
+                if IsValid(ent) then ent:SetPos(pos);ent:SetAngles(Angle(tonumber(rec.ang and rec.ang.p) or 0,tonumber(rec.ang and rec.ang.y) or 0,tonumber(rec.ang and rec.ang.r) or 0));ent:Spawn();ent:Activate();created=true end
+            end
+            if IsValid(ent) then
+                claimed[ent] = true
+                ent:SetPos(pos)
+                ent:SetAngles(Angle(tonumber(rec.ang and rec.ang.p) or 0, tonumber(rec.ang and rec.ang.y) or 0, tonumber(rec.ang and rec.ang.r) or 0))
+                if isstring(rec.model) and rec.model ~= "" then ent:SetModel(rec.model) end
+                if savedID ~= "" then ent:SetDeviceID(savedID) end
+                if isstring(rec.label) then ent:SetLabel(rec.label) end
+                if isstring(rec.network) then ent:SetNetworkID(CCTV.NormalizeNetwork(rec.network)) end
+                if isstring(rec.owner_steam) then ent:SetOwnerSteam(rec.owner_steam) end
+                if isstring(rec.owner_name) then ent:SetOwnerName(rec.owner_name) end
+                if ent.SetActive then ent:SetActive(rec.active ~= false) end
+                if ent.SetCamFOV then ent:SetCamFOV(CCTV.ClampFOV(rec.fov)) end
+                ent:SetPermanent(true)
+                CCTV.RegisterDevice(ent)
+                if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
+                local phys = ent:GetPhysicsObject()
+                if IsValid(phys) then phys:EnableMotion(false) end
+                if created then spawned=spawned+1 else healed=healed+1 end
             end
         end
     end
-    print(("[GRM CCTV] LOAD: %d from data/%s"):format(spawned, path))
-    return spawned
+    CCTV.RebuildRegistry()
+    print(("[GRM CCTV] LOAD: created=%d healed=%d from data/%s"):format(spawned, healed, path))
+    return spawned + healed
 end
 
 function CCTV.StopView(ply, silent)
@@ -329,6 +364,9 @@ function CCTV.StartView(ply, cam, monitor, netID)
         net.WriteFloat(tonumber(sc.Cooldown) or 1.0)
         net.WriteString(string.sub(string.lower(game.GetMap() or "map"), 1, 40))
         net.WriteString(string.sub(cam:GetDeviceID() or "cam", 1, 40))
+        -- PVS-safe fallback: удалённая камера может ещё быть NULL на клиенте.
+        net.WriteVector(cam:GetPos())
+        net.WriteAngle(cam:GetAngles())
     net.Send(ply)
     return true
 end
@@ -465,8 +503,10 @@ net.Receive(NET_ACTION, function(_, ply)
 
     if action == "view_cam" then
         local cam = net.ReadEntity()
+        local camID = net.BytesLeft and net.BytesLeft() > 0 and string.sub(net.ReadString() or "", 1, 40) or ""
         local monitor = ent
         if not IsValid(monitor) or classOf(monitor) ~= "grm_cctv_monitor" then return end
+        if camID ~= "" then cam = CCTV.FindDeviceByID(camID, "grm_cctv_camera") end
         if not withinUse(ply, monitor) then return end
         if not CCTV.CanView(ply) then
             notify(ply, false, "Нет доступа.")
@@ -542,11 +582,17 @@ net.Receive(NET_ACTION, function(_, ply)
     end
 end)
 
+-- Remote cameras may be outside the player's normal PVS. Explicit visibility origin
+-- keeps props, NPCs and map details networked around the camera instead of a cut-down view.
+hook.Add("SetupPlayerVisibility", "GRM_CCTV_RemoteCameraPVS", function(ply)
+    if IsValid(ply) and ply._grmCCTVView and IsValid(ply._grmCCTVCam) then AddOriginToPVS(ply._grmCCTVCam:GetPos()) end
+end)
+
 hook.Add("Think", "GRM_CCTV_ViewGuard", function()
     for _, ply in ipairs(player.GetAll()) do
         if ply._grmCCTVView then
             local mon, cam = ply._grmCCTVMonitor, ply._grmCCTVCam
-            local bad = false
+            local bad = not ply:Alive()
             if not IsValid(mon) or not IsValid(cam) then bad = true end
             if not bad and not withinUse(ply, mon) then bad = true end
             if not bad and not cam:GetActive() then bad = true end
@@ -635,4 +681,4 @@ concommand.Add("grm_cctv_list", function(ply)
     if IsValid(ply) then ply:ChatPrint(msg) end
 end)
 
-print("[GRM CCTV] server v1.2.1 — автосейв персистента (Код 89)")
+print("[GRM CCTV] server v1.3.2 — full remote PVS, DeviceID reconnect, clean live-view (Код 89)")

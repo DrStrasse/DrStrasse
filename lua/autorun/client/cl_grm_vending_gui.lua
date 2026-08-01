@@ -52,7 +52,7 @@ function FOOD:Draw()
     local name = (data and data.name) or "Еда"
 
     local pos = self:GetPos() + Vector(0, 0, 24)
-    local ang = LocalPlayer():EyeAngles()
+    local ang = EyeAngles()
     ang:RotateAroundAxis(ang:Forward(), 90)
     ang:RotateAroundAxis(ang:Right(), 90)
 
@@ -76,7 +76,7 @@ function VENDING:Draw()
     self:DrawModel()
 
     local pos = self:GetPos() + Vector(0, 0, 82)
-    local ang = LocalPlayer():EyeAngles()
+    local ang = EyeAngles()
     ang:RotateAroundAxis(ang:Forward(), 90)
     ang:RotateAroundAxis(ang:Right(), 90)
 
@@ -189,6 +189,7 @@ net.Receive("GRM_Vending_Open", function()
     if not IsValid(ent) then return end
 
     local frame = vgui.Create("DFrame")
+    GRM.UI.Track("vending", frame)
     frame:SetSize(500, 400)
     frame:Center()
     frame:SetTitle("Торговый автомат")

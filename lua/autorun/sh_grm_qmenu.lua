@@ -115,6 +115,12 @@ QM.ToolCatalog = {
     { id = "button",     label = "Кнопка",                          desc = "Сигнальная кнопка.",                     cat = "ui" },
     { id = "camera",     label = "Камера",                          desc = "Камера наблюдателя.",                    cat = "ui" },
     { id = "textscreen", label = "Текстовый экран",                 desc = "Табличка с текстом на карте.",           cat = "ui" },
+    { id = "grm_minimap", label = "GRM: районы и точки",             desc = "Районы, точки захвата и мини-карта.",      cat = "ui" },
+    { id = "grm_vendor_tool", label = "GRM: торговцы", desc = "Торговцы предметами и аксессуарами.", cat = "ui" },
+    { id = "vehicle_dealer_tool", label = "GRM: дилер и площадка выдачи", desc = "Единый инструмент дилера, гаража и безопасной площадки транспорта.", cat = "ui" },
+    { id = "grm_quest_tool", label = "GRM: конструктор квестов", desc = "Квестовые NPC, зоны целей и точки кат-сцен.", cat = "ui" },
+    { id = "grm_network_tool", label = "GRM: электроника и интернет", desc = "Компьютеры, роутеры, принтеры, розетки и кабели связи.", cat = "ui" },
+    { id = "grm_door_admin", label = "GRM: двери", desc = "Канонические двери, владельцы и доступы без дублей.", cat = "ui" },
     -- Оформление
     { id = "colour",     label = "Цвет пропа",                      desc = "Перекраска и прозрачность.",             cat = "decor" },
     { id = "material",   label = "Материал пропа",                  desc = "Смена материала/текстуры.",              cat = "decor" },
@@ -313,6 +319,9 @@ if SERVER then
 
     -- ── проверки (суперадмин всегда может) ──────────────────
     function QM.CanOpenQ(ply)
+        if IsValid(ply) and (ply:GetNWBool("GRM_Cuffed", false) or ply:GetNWBool("GRM_Stunned", false)) then
+            return false
+        end
         if IsValid(ply) and ply:IsSuperAdmin() then return true end
         return QM.Cfg.playersQ == true
     end
@@ -323,6 +332,9 @@ if SERVER then
     }
 
     function QM.CanSpawn(ply, what)
+        if IsValid(ply) and (ply:GetNWBool("GRM_Cuffed", false) or ply:GetNWBool("GRM_Stunned", false)) then
+            return false, "Игрок ограничен наручниками/оглушением"
+        end
         if IsValid(ply) and ply:IsSuperAdmin() then return true end
         local flag = SpawnFlags[tostring(what or "")]
         if not flag then return true end
@@ -330,6 +342,9 @@ if SERVER then
     end
 
     function QM.CanUseTool(ply, tool)
+        if IsValid(ply) and (ply:GetNWBool("GRM_Cuffed", false) or ply:GetNWBool("GRM_Stunned", false)) then
+            return false, "Игрок ограничен наручниками/оглушением"
+        end
         if IsValid(ply) and ply:IsSuperAdmin() then return true end
         tool = string.lower(tostring(tool or ""))
         if tool == "" then return true end
@@ -828,6 +843,8 @@ if CLIENT then
     local function isAdmin() return IsValid(LocalPlayer()) and LocalPlayer():IsSuperAdmin() end
 
     local function qBlockedForMe()
+        local lp = LocalPlayer()
+        if IsValid(lp) and (lp:GetNWBool("GRM_Cuffed", false) or lp:GetNWBool("GRM_Stunned", false)) then return true end
         local c = cfg()
         if c.playersQ ~= false then return false end
         if isAdmin() and c.adminsToo ~= true then return false end

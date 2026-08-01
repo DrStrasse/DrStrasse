@@ -10,7 +10,7 @@ function ENT:Draw()
     if dist > maxd * maxd then return end
 
     local pos = self:GetPos() + self:GetUp() * 12
-    local ang = Angle(0, ply:EyeAngles().y - 90, 90)
+    local ang = Angle(0, EyeAngles().y - 90, 90)
     cam.Start3D2D(pos, ang, 0.08)
         local active = self:GetActive()
         local col = active and Color(80, 220, 120) or Color(220, 80, 80)

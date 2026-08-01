@@ -47,6 +47,7 @@ local function defaultCfg()
         allowBodygroups = true,
         extraModels = {},
         hiddenModels = {},
+        modelRules = {}, -- path -> { allowSkin=bool, bodygroups={[group]=bool} }
     }
 end
 
@@ -101,6 +102,7 @@ local function getCfg(ent)
     end
     ent.cfg.extraModels = istable(ent.cfg.extraModels) and ent.cfg.extraModels or {}
     ent.cfg.hiddenModels = istable(ent.cfg.hiddenModels) and ent.cfg.hiddenModels or {}
+    ent.cfg.modelRules = istable(ent.cfg.modelRules) and ent.cfg.modelRules or {}
     return ent.cfg
 end
 
@@ -118,7 +120,9 @@ local function filterSections(sections, cfg)
         local keep = istable(sec.outfits) and {} or nil
         for _, e in ipairs(sec.outfits or {}) do
             if not hidden[tostring(e.path)] then
-                keep[#keep + 1] = e
+                local copy = table.Copy(e)
+                copy.wardrobeRule = table.Copy(cfg.modelRules[tostring(e.path)] or {})
+                keep[#keep + 1] = copy
             end
         end
         if keep and #keep > 0 then
@@ -130,7 +134,7 @@ local function filterSections(sections, cfg)
     local extra = {}
     for _, p in ipairs(cfg.extraModels) do
         if isstring(p) and p ~= "" and not hidden[p] then
-            extra[#extra + 1] = { path = p, skin = 0, bodygroups = {} }
+            extra[#extra + 1] = { path = p, skin = 0, bodygroups = {}, wardrobeRule = table.Copy(cfg.modelRules[p] or {}) }
         end
     end
     if #extra > 0 then
@@ -167,6 +171,32 @@ function ENT:Use(activator)
     net.Send(activator)
 end
 
+local function collectModelChoices(cfg)
+    local out, seen = {}, {}
+    local function add(path, label, faction, role, department)
+        path = string.Trim(tostring(path or ""))
+        if path == "" or seen[path] then return end
+        if util.IsValidModel and not util.IsValidModel(path) then return end
+        seen[path] = true
+        out[#out + 1] = { path = path, label = tostring(label or "Модель"), faction = faction or "", role = role or "", department = department or "" }
+    end
+    for _, e in ipairs(DefaultModels or {}) do add(istable(e) and e.path or e, "Гражданские модели") end
+    for fname, f in pairs(Factions or {}) do
+        if istable(f) then
+            for _, e in ipairs(f.Models or {}) do add(istable(e) and e.path or e, "Фракция: " .. fname, fname) end
+            for role, list in pairs(f.RoleModels or {}) do
+                for _, e in ipairs(list or {}) do add(istable(e) and e.path or e, fname .. " / роль: " .. role, fname, role) end
+            end
+            for dept, list in pairs(f.DepartmentModels or {}) do
+                for _, e in ipairs(list or {}) do add(istable(e) and e.path or e, fname .. " / отдел: " .. dept, fname, "", dept) end
+            end
+        end
+    end
+    for _, path in ipairs(cfg.extraModels or {}) do add(path, "Особая модель гардероба") end
+    table.sort(out, function(a, b) return (a.label .. a.path):lower() < (b.label .. b.path):lower() end)
+    return out
+end
+
 -- запрос конфига (админ): EntIndex гардероба
 net.Receive(NET_CFG_REQ, function(_, ply)
     if not isCfgAdmin(ply) then return end
@@ -174,9 +204,13 @@ net.Receive(NET_CFG_REQ, function(_, ply)
     local ent = Entity(idx)
     if not IsValid(ent) or ent:GetClass() ~= "grm_wardrobe" then return end
     local cfg = getCfg(ent)
+    local payload = table.Copy(cfg)
+    payload._models = collectModelChoices(cfg)
+    payload._model = ent:GetModel()
+    payload._modelName = ent:GetClass()
     net.Start(NET_CFG_GET)
         net.WriteUInt(ent:EntIndex(), 16)
-        net.WriteTable(cfg)
+        net.WriteTable(payload)
     net.Send(ply)
 end)
 
@@ -200,6 +234,27 @@ net.Receive(NET_CFG_SET, function(_, ply)
     clean.hiddenModels = {}
     for _, p in ipairs(cfg.hiddenModels or {}) do
         if isstring(p) and p ~= "" then clean.hiddenModels[#clean.hiddenModels + 1] = string.Trim(p) end
+    end
+    clean.modelRules = {}
+    for path, rule in pairs(cfg.modelRules or {}) do
+        path = string.Trim(tostring(path or ""))
+        if path ~= "" and istable(rule) then
+            clean.modelRules[path] = { allowSkin = rule.allowSkin ~= false, bodygroups = {} }
+            for group, allowed in pairs(rule.bodygroups or {}) do
+                local index = tonumber(group)
+                if index then
+                    if istable(allowed) then
+                        clean.modelRules[path].bodygroups[index] = {}
+                        for variant, enabled in pairs(allowed) do
+                            local vi = tonumber(variant)
+                            if vi then clean.modelRules[path].bodygroups[index][vi] = enabled == true end
+                        end
+                    else
+                        clean.modelRules[path].bodygroups[index] = allowed == true
+                    end
+                end
+            end
+        end
     end
 
     ent.cfg = clean

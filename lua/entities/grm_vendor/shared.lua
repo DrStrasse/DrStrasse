@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Vendor Entity — shared (Код 111)
+    GRM Vendor Entity v2.0 — shared (Код 111)
 ----------------------------------------------------------------------]]
 
 ENT.Type      = "anim"
@@ -14,3 +14,6 @@ ENT.AutomaticFrameAdvance = true
 ENT.VendorType    = "weapon"
 ENT.CustomPrices  = nil
 ENT.CustomLimits  = nil
+ENT.EnabledItems = nil
+ENT.DisplayName = ""
+ENT.VendorModel = ""

@@ -40,7 +40,7 @@ local function keypadPermExtract(ent)
         granted  = tonumber(ent.KeyGranted) or 1,
         denied   = tonumber(ent.KeyDenied) or 2,
         hold     = tonumber(ent.HoldTime) or 5,
-        owner    = (IsValid(ent.KeypadOwner) and tostring(ent.KeypadOwner:SteamID64() or "")) or tostring(ent.OwnerSID64 or ""),
+        owner    = (IsValid(ent.KeypadOwner) and tostring((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ent.KeypadOwner)) or ent.KeypadOwner:SteamID64() or "")) or tostring(ent.OwnerSID64 or ""),
     }
     -- Код 108: ручные связи с FFD-дверями едут в перм вместе с кейпадом
     if GRM.FFDLink and GRM.FFDLink.ExportData then
@@ -62,7 +62,7 @@ local function keypadPermApply(ent, t)
     ent.OwnerSID64 = tostring(t.owner or "")
     if ent.OwnerSID64 ~= "" then
         for _, p in ipairs(player.GetAll()) do
-            if IsValid(p) and tostring(p:SteamID64() or "") == ent.OwnerSID64 then
+            if IsValid(p) and tostring((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64() or "") == ent.OwnerSID64 then
                 ent.KeypadOwner = p
                 break
             end

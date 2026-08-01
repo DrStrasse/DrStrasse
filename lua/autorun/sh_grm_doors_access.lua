@@ -54,9 +54,10 @@ end
 local function factionInfo(ply)
     if not IsValid(ply) or not istable(Factions) then return nil, nil, nil end
     local sid, sid64 = ply:SteamID(), ply:SteamID64()
+    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
     for n, f in pairs(Factions) do
         if istable(f) and istable(f.Members) then
-            local m = f.Members[sid] or f.Members[sid64]
+            local m = GRM.Identity.FactionMember(f, ply)
             if istable(m) then return n, m.Role, m.Department end
         end
     end
@@ -189,7 +190,8 @@ if SERVER then
         if ply:IsSuperAdmin() then return true end
         local d = normalize(AM.Data or AM.Load())
         local sid, sid64 = ply:SteamID(), ply:SteamID64()
-        if d[steamKey][sid64] or d[steamKey][sid] then return true end
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
+        if d[steamKey][ck] or d[steamKey][sid64] or d[steamKey][sid] then return true end
 
         local fac, role, dept = factionInfo(ply)
         if not fac then return false end

@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Vendor Framework v1.1 (Код 111)
+    GRM Vendor Framework v2.0 (Код 111)
     Единый фреймворк торгашей: оружие / руда / еда / редкости.
     Один энтити-класс grm_vendor, тип задаётся в data (vendorType).
     Каталоги — shared, расширяются аддонами, синхронизируются с
@@ -14,6 +14,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Vendor = GRM.Vendor or {}
 local V = GRM.Vendor
+V.Version = "2.0.0"
 
 -- ============================================================
 -- КОНФИГ
@@ -32,12 +33,14 @@ V.Models = {
     ore    = "models/kleiner.mdl",
     food   = "models/barney.mdl",
     rare   = "models/gman_high.mdl",
+    accessory = "models/alyx.mdl",
 }
 
 -- ============================================================
 -- КАТАЛОГИ (shared, регистрируются до загрузки энтити)
 -- ============================================================
 V.Catalogs = V.Catalogs or {}
+V.Catalogs.accessory = V.Catalogs.accessory or {}
 
 -- 1) ОРУЖИЕ — ArcCW (базовый набор; расширяется через V.RegisterItem)
 V.Catalogs.weapon = V.Catalogs.weapon or {
@@ -135,6 +138,30 @@ function V.GetItem(vendorType, id)
     return V.GetCatalog(vendorType)[id]
 end
 
+function V.IsItemEnabled(ent, id)
+    if not IsValid(ent) then return false end
+    local enabled = ent.EnabledItems
+    if not istable(enabled) or next(enabled) == nil then return true end
+    return enabled[tostring(id or "")] == true
+end
+
+function V.GetPrice(ent, id, item)
+    item = item or (IsValid(ent) and V.GetItem(ent.VendorType, id))
+    if not item then return 0 end
+    local custom = IsValid(ent) and ent.CustomPrices and ent.CustomPrices[id]
+    return math.Clamp(math.floor(tonumber(custom) or tonumber(item.price) or 0), 0, 100000000)
+end
+
+function V.GetLimit(ent, id)
+    return math.Clamp(math.floor(tonumber(IsValid(ent) and ent.CustomLimits and ent.CustomLimits[id]) or 0), 0, 10000)
+end
+
+function V.GetDisplayName(ent)
+    if IsValid(ent) and tostring(ent.DisplayName or "") ~= "" then return tostring(ent.DisplayName):sub(1, 64) end
+    local names = {weapon="Арсенал",ore="Скупщик руды",food="Продукты",rare="Редкости",accessory="Аксессуары"}
+    return names[IsValid(ent) and ent.VendorType or ""] or "GRM Торгаш"
+end
+
 function V.GetSellPrice(ply, vendorType, id)
     local item = V.GetItem(vendorType, id)
     if not item or item.noSell or item.isEntity then return 0 end
@@ -152,7 +179,7 @@ function V.CanBuyWeapon(ply, item)
     if item.license == "police" then
         -- Проверяем через глобальную таблицу Factions
         if Factions and Factions.Polizei and Factions.Polizei.Members then
-            if Factions.Polizei.Members[ply:SteamID()] or Factions.Polizei.Members[ply:SteamID64()] then
+            if GRM.Identity.FactionMember(Factions.Polizei, ply) then
                 return true
             end
         end
@@ -185,4 +212,238 @@ function V.RegisterModel(vendorType, model)
     V.Models[vendorType] = model
 end
 
-print("[GRM Vendor] Framework v1.1 loaded (Code 111)")
+-- ============================================================
+-- ВАЛИДНАЯ ПЕРСИСТЕНТНОСТЬ ТОРГАШЕЙ
+-- ============================================================
+if SERVER then
+    local DATA_DIR = "grm_vendors"
+    local function mapFile()
+        if not file.IsDir(DATA_DIR, "DATA") then file.CreateDir(DATA_DIR) end
+        return DATA_DIR .. "/" .. string.lower(game.GetMap() or "unknown") .. ".json"
+    end
+    local function jsonT(raw)
+        local ok, data = pcall(util.JSONToTable, raw or "", false, true)
+        return ok and istable(data) and data or nil
+    end
+    local function readRecords()
+        if not file.Exists(mapFile(), "DATA") then return {} end
+        local raw = file.Read(mapFile(), "DATA") or ""
+        local data = jsonT(raw)
+        if not data then
+            print("[GRM Vendor][!] Не удалось разобрать " .. mapFile() .. " (" .. #raw .. " байт)")
+            return {}
+        end
+        -- v2 хранит wrapper.vendors; старый формат был голым массивом.
+        -- pairs намеренно: ignoreConversions=true на некоторых сборках GMod
+        -- оставляет индексы JSON-массива строками, и ipairs видел 0 записей.
+        local source = istable(data.vendors) and data.vendors or (istable(data.records) and data.records or data)
+        local out = {}
+        for _, rec in pairs(source) do
+            if istable(rec) and isstring(rec.id) and istable(rec.pos) and istable(rec.ang) then out[#out + 1] = rec end
+        end
+        table.sort(out, function(a,b) return tostring(a.id) < tostring(b.id) end)
+        return out
+    end
+    local function writeRecords(records)
+        local wrapper = { version = 2, map = game.GetMap(), vendors = records or {} }
+        local ok, raw = pcall(util.TableToJSON, wrapper, true)
+        if not ok or not isstring(raw) then return false end
+        file.Write(mapFile(), raw)
+        if file.Read(mapFile(), "DATA") ~= raw then return false end
+        local verify = jsonT(raw)
+        local source = verify and verify.vendors
+        if not istable(source) then return false end
+        local valid = 0
+        for _, rec in pairs(source) do if istable(rec) and isstring(rec.id) then valid = valid + 1 end end
+        if valid ~= #(records or {}) then
+            print(("[GRM Vendor][!] Read-back parse mismatch: ожидалось %d, прочитано %d"):format(#(records or {}), valid))
+            return false
+        end
+        return true
+    end
+    local function vecData(v) return { x = v.x, y = v.y, z = v.z } end
+    local function angData(a) return { p = a.p, y = a.y, r = a.r } end
+    local function vec(t) return Vector(tonumber(t.x) or 0, tonumber(t.y) or 0, tonumber(t.z) or 0) end
+    local function ang(t) return Angle(tonumber(t.p) or 0, tonumber(t.y) or 0, tonumber(t.r) or 0) end
+    local function ensureID(ent)
+        if not IsValid(ent) then return "" end
+        local id = tostring(ent.GRMVendorID or "")
+        if id == "" then
+            local p = ent:GetPos()
+            id = "vendor_" .. util.CRC(table.concat({game.GetMap(), ent.VendorType or "weapon", p.x, p.y, p.z, SysTime(), math.random()}, ":"))
+            ent.GRMVendorID = id
+        end
+        ent:SetNWString("GRMVendorID", id)
+        return id
+    end
+    local function makeRecord(ent)
+        local id = ensureID(ent)
+        local p, a = ent:GetPos(), ent:GetAngles()
+        return {
+            id = id, vendorType = tostring(ent.VendorType or "weapon"), model = tostring(ent:GetModel() or ""),
+            pos = vecData(p), ang = angData(a), customPrices = table.Copy(ent.CustomPrices or {}),
+            customLimits = table.Copy(ent.CustomLimits or {}), enabledItems = table.Copy(ent.EnabledItems or {}),
+            displayName = tostring(ent.DisplayName or ""):sub(1, 64),
+        }
+    end
+    local function findRecord(records, id)
+        for index, rec in ipairs(records) do if tostring(rec.id) == tostring(id) then return rec, index end end
+    end
+    local function findLive(rec)
+        for _, ent in ipairs(ents.FindByClass("grm_vendor")) do
+            if IsValid(ent) then
+                if tostring(ent.GRMVendorID or "") == tostring(rec.id) then return ent end
+                if ent:GetPos():DistToSqr(vec(rec.pos)) <= 8 * 8 then return ent end
+            end
+        end
+    end
+    local function applyRecord(ent, rec)
+        if not IsValid(ent) then return false end
+        ent.GRMVendorID = tostring(rec.id)
+        ent.GRMVendorPersistent = true
+        ent.VendorType = V.Catalogs[rec.vendorType] and rec.vendorType or "weapon"
+        ent.CustomPrices = table.Copy(rec.customPrices or {})
+        ent.CustomLimits = table.Copy(rec.customLimits or {})
+        ent.EnabledItems = table.Copy(rec.enabledItems or {})
+        ent.DisplayName = tostring(rec.displayName or ""):sub(1, 64)
+        ent:SetNWString("GRMVendorID", ent.GRMVendorID)
+        ent:SetNWString("GRMVendorName", V.GetDisplayName(ent))
+        if ent.ApplyPermData then
+            ent:ApplyPermData({vendorType=ent.VendorType,model=rec.model,customPrices=ent.CustomPrices,customLimits=ent.CustomLimits,enabledItems=ent.EnabledItems,displayName=ent.DisplayName,vendorID=ent.GRMVendorID})
+        else
+            ent:SetNWString("VendorType", ent.VendorType)
+            ent:SetModel(V.Models[ent.VendorType] or rec.model or "models/kleiner.mdl")
+        end
+        return true
+    end
+    local function spawnRecord(rec)
+        local existing = findLive(rec)
+        if IsValid(existing) then applyRecord(existing, rec); return existing, false end
+        local ent = ents.Create("grm_vendor")
+        if not IsValid(ent) then return nil, false end
+        ent.VendorType = V.Catalogs[rec.vendorType] and rec.vendorType or "weapon"
+        ent.GRMVendorID = tostring(rec.id)
+        ent.CustomPrices = table.Copy(rec.customPrices or {})
+        ent.CustomLimits = table.Copy(rec.customLimits or {})
+        ent.EnabledItems = table.Copy(rec.enabledItems or {})
+        ent.DisplayName = tostring(rec.displayName or ""):sub(1, 64)
+        ent.VendorModel = tostring(rec.model or "")
+        ent:SetPos(vec(rec.pos)); ent:SetAngles(ang(rec.ang)); ent:Spawn(); ent:Activate()
+        applyRecord(ent, rec)
+        local phys = ent:GetPhysicsObject(); if IsValid(phys) then phys:EnableMotion(false); phys:Sleep() end
+        if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
+        return ent, true
+    end
+
+    function V.SaveVendor(ent)
+        if not IsValid(ent) or ent:GetClass() ~= "grm_vendor" then return false, "Торгаш не найден" end
+        local records, rec = readRecords(), makeRecord(ent)
+        local _, index = findRecord(records, rec.id)
+        if index then records[index] = rec else records[#records + 1] = rec end
+        ent.GRMVendorPersistent = true
+        return writeRecords(records), rec.id
+    end
+    function V.RemoveVendorSaveByID(id)
+        id = tostring(id or "")
+        if id == "" then return false end
+        local records, removed = readRecords(), false
+        for i = #records, 1, -1 do
+            if tostring(records[i].id) == id then table.remove(records, i); removed = true end
+        end
+        return removed and writeRecords(records) or false
+    end
+    function V.RemoveVendorSave(ent)
+        if not IsValid(ent) or ent:GetClass() ~= "grm_vendor" then return false end
+        local records, id = readRecords(), tostring(ent.GRMVendorID or "")
+        local removed = false
+        for i = #records, 1, -1 do
+            if records[i].id == id or ent:GetPos():DistToSqr(vec(records[i].pos)) <= 8 * 8 then table.remove(records, i); removed = true end
+        end
+        ent.GRMVendorPersistent = nil
+        return removed and writeRecords(records) or false
+    end
+    function V.SaveMapVendors()
+        -- Save-all обновляет/добавляет живых торговцев, но НЕ удаляет
+        -- отсутствующие записи. Иначе Save после cleanup/временного удаления
+        -- превращал валидную базу в [] и последующий Load «ничего не делал».
+        local records = readRecords()
+        local updated = 0
+        for _, ent in ipairs(ents.FindByClass("grm_vendor")) do
+            if IsValid(ent) then
+                local rec = makeRecord(ent)
+                local _, index = findRecord(records, rec.id)
+                if index then records[index] = rec else records[#records + 1] = rec end
+                ent.GRMVendorPersistent = true
+                updated = updated + 1
+            end
+        end
+        table.sort(records, function(a,b) return a.id < b.id end)
+        if not writeRecords(records) then return false, "ошибка записи/read-back" end
+        return true, ("обновлено живых %d, в базе всего %d"):format(updated, #records)
+    end
+    function V.LoadMapVendors()
+        local records = readRecords()
+        if #records == 0 then return false, "в базе этой карты нет сохранённых торгашей: data/" .. mapFile() end
+        local spawned, healed, failed = 0, 0, 0
+        for _, rec in ipairs(records) do
+            local ent, created = spawnRecord(rec)
+            if IsValid(ent) then if created then spawned = spawned + 1 else healed = healed + 1 end else failed = failed + 1 end
+        end
+        if failed > 0 then return false, ("создано %d, уже стояло %d, ошибок %d"):format(spawned, healed, failed) end
+        return true, ("создано %d, уже стояло/обновлено %d"):format(spawned, healed)
+    end
+    function V.ListSavedVendors() return readRecords() end
+
+    -- Старые grm_vendor из универсального perm-файла переносим один раз,
+    -- затем удаляем оттуда, чтобы два механизма никогда не создавали дубль.
+    local function migrateLegacyPerm()
+        local path = "grm_perm_entities.json"
+        if not file.Exists(path, "DATA") then return end
+        local legacy = jsonT(file.Read(path, "DATA")); if not legacy then return end
+        local keep, records, changed = {}, readRecords(), false
+        for _, old in ipairs(legacy) do
+            if old.class == "grm_vendor" and old.map == game.GetMap() then
+                local id = "vendor_legacy_" .. util.CRC(util.TableToJSON(old) or tostring(#records + 1))
+                if not findRecord(records, id) then
+                    records[#records + 1] = {id=id,vendorType=old.data and old.data.vendorType or "weapon",model=old.model,pos=old.pos,ang=old.ang,customPrices=old.data and old.data.customPrices or {},customLimits=old.data and old.data.customLimits or {}}
+                end
+                changed = true
+            else keep[#keep + 1] = old end
+        end
+        if changed then writeRecords(records); local ok, raw=pcall(util.TableToJSON,keep,true); if ok then file.Write(path,raw) end end
+    end
+
+    local function aimVendor(ply)
+        local tr = ply:GetEyeTrace(); local ent = tr and tr.Entity
+        if IsValid(ent) and ent:GetClass()=="grm_vendor" and ply:GetPos():DistToSqr(ent:GetPos())<=300*300 then return ent end
+    end
+    local function message(ply, ok, text)
+        if GRM.Notify then GRM.Notify(ply,text,ok and 100 or 255,ok and 220 or 120,ok and 130 or 90) else ply:ChatPrint("[Торгаши] "..text) end
+    end
+    local function command(ply, cmd, argument)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        if cmd=="save" then local ent=aimVendor(ply); local ok,id=V.SaveVendor(ent); message(ply,ok,ok and ("Торгаш сохранён: "..id) or tostring(id))
+        elseif cmd=="remove" then
+            local ent=aimVendor(ply)
+            local ok=IsValid(ent) and V.RemoveVendorSave(ent) or V.RemoveVendorSaveByID(argument)
+            message(ply,ok,ok and "Торгаш снят с сохранения" or "Наведи на торгаша или укажи ID: /vendor_unsave vendor_...")
+        elseif cmd=="save_all" then local ok,text=V.SaveMapVendors(); message(ply,ok,text)
+        elseif cmd=="load" then local ok,text=V.LoadMapVendors(); message(ply,ok,text)
+        elseif cmd=="list" then local list=V.ListSavedVendors(); message(ply,true,"Сохранено торгашей: "..#list); for i,r in ipairs(list) do print(("[GRM Vendor] #%d %s %s @ %.0f %.0f %.0f"):format(i,r.id,r.vendorType,r.pos.x,r.pos.y,r.pos.z)) end end
+    end
+    concommand.Add("grm_vendor_save",function(p) command(p,"save") end)
+    concommand.Add("grm_vendor_unsave",function(p,_,args) command(p,"remove",args[1]) end)
+    concommand.Add("grm_vendor_save_all",function(p) command(p,"save_all") end)
+    concommand.Add("grm_vendor_load",function(p) command(p,"load") end)
+    hook.Add("PlayerSayTransform","GRM_Vendor_PersistenceCommands",function(ply,pack)
+        if not istable(pack) or not isstring(pack[1]) then return end
+        local text=string.Trim(pack[1]); local name,argument=text:match("^(%S+)%s*(.-)$")
+        local map={['/vendor_save']='save',['/vendor_unsave']='remove',['/vendor_save_all']='save_all',['/vendor_load']='load',['/vendor_list']='list'}
+        local cmd=map[string.lower(name or "")]; if not cmd then return end
+        command(ply,cmd,argument); pack[1]=""; pack.SkipPlayerSay=true
+    end)
+    hook.Add("InitPostEntity","GRM_Vendor_PersistenceLoad",function() timer.Simple(1.4,function() migrateLegacyPerm(); V.LoadMapVendors() end) end)
+    hook.Add("PostCleanupMap","GRM_Vendor_PersistenceCleanup",function() timer.Simple(0.8,function() V.LoadMapVendors() end) end)
+end
+
+print("[GRM Vendor] Framework v2.0 loaded (Code 111)")

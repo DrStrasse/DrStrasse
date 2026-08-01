@@ -19,7 +19,7 @@ local DEFAULT = {
     maxMoney = 10000,
     printAmount = 250,
     printInterval = 20,
-    maxHealth = 100,
+    maxHealth = 250,
     heatPerPrint = 9,
     coolPerSecond = 1,
     overheatAt = 100,
@@ -114,7 +114,7 @@ function ENT:SetPrinterOwner(ply)
     if not IsValid(ply) or not ply:IsPlayer() then return end
     self:SetOwner(ply)
     self:SetCreator(ply)
-    self:SetOwnerSID64(ply:SteamID64())
+    self:SetOwnerSID64((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64())
     self:SetOwnerName(ply:Nick())
 end
 
@@ -122,7 +122,7 @@ function ENT:OwnerPlayer()
     local sid = self:GetOwnerSID64()
     if sid == "" then return nil end
     for _, p in ipairs(player.GetAll()) do
-        if IsValid(p) and p:SteamID64() == sid then return p end
+        if IsValid(p) and (((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64()) == sid) then return p end
     end
     return nil
 end
@@ -131,7 +131,7 @@ function ENT:IsOwner(ply)
     if not IsValid(ply) then return false end
     if ply:IsSuperAdmin() then return true end
     local sid = self:GetOwnerSID64()
-    return sid ~= "" and ply:SteamID64() == sid
+    return sid ~= "" and ((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64()) == sid
 end
 
 function ENT:ClaimIfEmpty(ply)
@@ -188,6 +188,32 @@ function ENT:Break(reason)
         net.WriteEntity(self)
         net.WriteString(tostring(reason or "поломка"))
     net.Broadcast()
+end
+
+function ENT:DestroyPrinter(attacker)
+    if self.GRM_Destroying then return end
+    self.GRM_Destroying = true
+    self:SetBroken(true)
+    self:SetActive(false)
+    self:SetPrinterHealth(0)
+    local pos = self:WorldSpaceCenter()
+    local effect = EffectData(); effect:SetOrigin(pos); effect:SetScale(1.2); util.Effect("Explosion", effect, true, true)
+    local blast = ents.Create("env_explosion")
+    if IsValid(blast) then blast:SetPos(pos);blast:SetOwner(IsValid(attacker) and attacker or self);blast:SetKeyValue("iMagnitude","70");blast:SetKeyValue("iRadiusOverride","180");blast:Spawn();blast:Fire("Explode","",0) end
+    emit(self, "ambient/explosions/explode_4.wav", 90, 100)
+    hook.Run("GRM_MoneyPrinterDestroyed", self, attacker, self:GetPrinted())
+    timer.Simple(0, function() if IsValid(self) then self:Remove() end end)
+end
+
+function ENT:OnTakeDamage(dmg)
+    if self.GRM_Destroying then return end
+    self:TakePhysicsDamage(dmg)
+    local amount = math.max(0, dmg:GetDamage())
+    if amount <= 0 then return end
+    local health = math.max(0, self:GetPrinterHealth() - math.ceil(amount))
+    self:SetPrinterHealth(health)
+    if health <= 0 then self:DestroyPrinter(dmg:GetAttacker())
+    elseif amount >= 15 and math.random() < 0.35 then emit(self, "ambient/energy/spark" .. math.random(1, 6) .. ".wav", 68, 100) end
 end
 
 function ENT:CollectMoney(ply)
@@ -252,7 +278,7 @@ function ENT:SendMenu(ply)
         net.WriteEntity(self)
         net.WriteTable({
             printed = self:GetPrinted(), maxMoney = self:GetMaxMoney(), heat = self:GetHeat(),
-            health = self:GetPrinterHealth(), active = self:GetActive(), broken = self:GetBroken(),
+            health = self:GetPrinterHealth(), maxHealth = DEFAULT.maxHealth, active = self:GetActive(), broken = self:GetBroken(),
             printAmount = self:GetPrintAmount(), printInterval = self:GetPrintInterval(),
             owner = self:GetOwnerName(), repairCost = DEFAULT.repairCost,
             upgradeCapacityCost = DEFAULT.upgradeCapacityCost, upgradeRateCost = DEFAULT.upgradeRateCost,
@@ -296,4 +322,16 @@ concommand.Add("grm_printer_config", function(ply, _, args)
     ent:SendMenu(ply)
 end)
 
-print("[GRM] Money Printer v2.0.0 entity loaded")
+hook.Add("PhysgunPickup", "GRM_MoneyPrinter_PhysgunPickup", function(ply, ent)
+    if not IsValid(ent) or ent:GetClass() ~= "grm_money_printer" then return end
+    if ent:IsOwner(ply) or (IsValid(ply) and ply:IsSuperAdmin()) then return true end
+    return false
+end)
+
+hook.Add("PhysgunDrop", "GRM_MoneyPrinter_PhysgunDrop", function(ply, ent)
+    if not IsValid(ent) or ent:GetClass() ~= "grm_money_printer" then return end
+    local phys = ent:GetPhysicsObject()
+    if IsValid(phys) then phys:Wake() end
+end)
+
+print("[GRM] Money Printer v2.1.0 entity loaded")

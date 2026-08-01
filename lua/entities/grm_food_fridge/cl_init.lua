@@ -23,7 +23,7 @@ function ENT:Draw()
         cap = tonumber((GRM.FoodKitchen.Cfg() or {}).FridgeSlots) or 12
     end
 
-    cam.Start3D2D(pos, Angle(0, lp:EyeAngles().y - 90, 90), 0.06)
+    cam.Start3D2D(pos, Angle(0, EyeAngles().y - 90, 90), 0.06)
         local w = 340
         draw.RoundedBox(8, -w / 2, -20, w, 54, Color(12, 16, 22, 215))
         surface.SetDrawColor(120, 200, 255, 170)

@@ -73,9 +73,10 @@ end
 local function getFactionInfo(ply)
     if not IsValid(ply) or not Factions then return nil, nil, nil end
     local sid, sid64 = ply:SteamID(), ply:SteamID64()
+    local charKey = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
     for name, f in pairs(Factions) do
         if istable(f) and istable(f.Members) then
-            local m = f.Members[sid] or f.Members[sid64]
+            local m = GRM.Identity.FactionMember(f, ply)
             if istable(m) then return name, m.Role, m.Department end
         end
     end
@@ -688,8 +689,10 @@ end
 
 local function radioVoice(listener, speaker)
     if not RadioFrequencies then return false end
-    local sf = RadioFrequencies[speaker:SteamID64()]
-    local lf = RadioFrequencies[listener:SteamID64()]
+    local sk = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(speaker)) or speaker:SteamID64()
+    local lk = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(listener)) or listener:SteamID64()
+    local sf = RadioFrequencies[sk]
+    local lf = RadioFrequencies[lk]
     if not (sf and lf and sf == lf) then return false end
     -- RadioNet (Код 85): частота ловится только в покрытии сети
     -- (стойка+антенны); вне сети — прямая дальность рации
@@ -824,6 +827,7 @@ function P.LoadMapEntities(ply)
         local ent = ents.Create(rec.class)
         if IsValid(ent) then
             ent:SetPos(tableToVec(rec.pos or {})); ent:SetAngles(tableToAng(rec.ang or {})); ent:Spawn(); ent:Activate()
+            if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
             if rec.class == "grm_phone" or rec.class == "grm_payphone" then
                 ent:SetPhoneNumber(rec.number or P.GenerateNumber()); ent:SetDisplayName(rec.name or (rec.class == "grm_payphone" and "Таксофон" or "Телефон")); ent:SetExchangeID(rec.exchange or "main")
                 updatePhoneVisual(ent, "idle")

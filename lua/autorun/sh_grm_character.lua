@@ -32,12 +32,16 @@ local CH = GRM.Char
 CH.Version    = "1.3.0"
 CH.NameMin    = 3     -- минимальная длина RP-имени
 CH.NameMax    = 48
-CH.DataFile   = "grm_characters.json"
+    CH.DataFile   = "grm_characters.json"
 CH.MaxSlots    = 3
+CH.PendingSelection = CH.PendingSelection or {}
+CH.PendingMandatory = CH.PendingMandatory or {}
 
 local NET_OPEN    = "GRM_Char_Open"
 local NET_SAVE    = "GRM_Char_Save"
 local NET_REQUEST = "GRM_Char_Request"
+local NET_CLOSE   = "GRM_Char_Close"
+local NET_CANCEL   = "GRM_Char_Cancel"
 
 -- ------------------------------------------------------------
 -- SHARED: валидация имени и нормализация внешности
@@ -63,6 +67,9 @@ function CH.GetActiveID(ply)
 end
 
 function CH.GetActiveKey(ply)
+    if GRM.Identity and GRM.Identity.CharacterKey then
+        return GRM.Identity.CharacterKey(ply)
+    end
     if IsValid(ply) and ply:IsPlayer() then
         local key = ply:GetNWString("GRM_CharacterKey", "")
         if key ~= "" then return key end
@@ -96,6 +103,8 @@ if SERVER then
     util.AddNetworkString(NET_OPEN)
     util.AddNetworkString(NET_SAVE)
     util.AddNetworkString(NET_REQUEST)
+    util.AddNetworkString(NET_CLOSE)
+    util.AddNetworkString(NET_CANCEL)
 
     local function jsonT(txt)
         local ok, t = pcall(util.JSONToTable, txt, false, true)
@@ -178,6 +187,24 @@ if SERVER then
         return nil
     end
 
+    local function hasCharacter(ply, slot)
+        local rec = normalizePlayerData(ply)
+        slot = tostring(slot or (rec and rec.active) or "char1")
+        return rec and rec.slots and istable(rec.slots[slot]) and tostring(rec.slots[slot].name or "") ~= ""
+    end
+
+    local function setCharacterLock(ply, locked, mandatory)
+        if not IsValid(ply) then return end
+        local sid = ply:SteamID64()
+        CH.PendingSelection[sid] = locked == true or nil
+        CH.PendingMandatory[sid] = locked == true and mandatory == true or nil
+        if ply.SetNWBool then
+            ply:SetNWBool("GRM_CharacterPending", locked == true)
+            ply:SetNWBool("GRM_CharacterMandatory", locked == true and mandatory == true)
+        end
+        if ply.Freeze then ply:Freeze(locked == true) end
+    end
+
     local function ensureChar(ply, slot)
         local rec = normalizePlayerData(ply)
         if not rec then return nil end
@@ -200,12 +227,28 @@ if SERVER then
 
     local function applyActiveCharacter(ply)
         local c = CH.Get(ply)
+        -- Сбрасываем желаемую модель прошлого персонажа до проверки нового.
+        ply.FactionsExt_DesiredModelData = nil
         if istable(c) then
             ply:SetNWString("GRM_CharacterID", tostring(c.id or activeSlot(ply)))
             ply:SetNWString("GRM_CharacterKey", tostring(c.key or CH.GetActiveKey(ply)))
             ply:SetNWString("GRM_RPName", tostring(c.name or ""))
+            local applied = false
             if isstring(c.model) and c.model ~= "" then
-                CH.ApplyAppearance(ply, { path = c.model, skin = c.skin, bodygroups = c.bodygroups })
+                applied = CH.ApplyAppearance(ply, { path = c.model, skin = c.skin, bodygroups = c.bodygroups }) == true
+            end
+            -- Старый/чужой faction-модельный путь не должен оставаться на новом
+            -- персонаже: берём первую разрешённую модель текущей роли/гражданина.
+            if not applied and _G.GetModelsForPlayer then
+                local allowed = _G.GetModelsForPlayer(ply) or {}
+                local fallback = allowed[1]
+                if istable(fallback) and isstring(fallback.path) then
+                    c.model = fallback.path
+                    c.skin = tonumber(fallback.skin) or 0
+                    c.bodygroups = table.Copy(fallback.bodygroups or {})
+                    CH.ApplyAppearance(ply, fallback)
+                    saveChars("model-fallback")
+                end
             end
         else
             ply:SetNWString("GRM_CharacterID", activeSlot(ply))
@@ -214,7 +257,8 @@ if SERVER then
         end
     end
 
-    function CH.SetActiveSlot(ply, slot)
+    function CH.SetActiveSlot(ply, slot, forceSpawn)
+        local oldKey = CH.GetActiveKey(ply)
         local rec = normalizePlayerData(ply)
         if not rec then return false end
         slot = tostring(slot or "char1")
@@ -222,8 +266,18 @@ if SERVER then
         rec.active = slot
         saveChars("select-slot")
         applyActiveCharacter(ply)
+        setCharacterLock(ply, not hasCharacter(ply, slot), true)
         if GRM.Inventory and GRM.Inventory.SyncToClient then
             timer.Simple(0.05, function() if IsValid(ply) then GRM.Inventory.SyncToClient(ply) end end)
+        end
+        local newKey = CH.GetActiveKey(ply)
+        hook.Run("GRM_CharacterChanged", ply, oldKey, newKey)
+        local shouldSpawn = forceSpawn == true or oldKey ~= newKey
+        if shouldSpawn then
+            timer.Simple(0, function()
+                if not IsValid(ply) or not hasCharacter(ply, slot) then return end
+                if ply.Alive and ply:Alive() and ply.Spawn then ply:Spawn() end
+            end)
         end
         return true
     end
@@ -247,6 +301,7 @@ if SERVER then
     end
 
     function CH.ApplyAppearance(ply, entry)
+        if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then return false, "Внешность заблокирована во время ареста" end
         if not IsValid(ply) or not istable(entry) or not isstring(entry.path) then return false end
         if not isAllowedModel(ply, entry.path) then return false, "Модель не разрешена вашей фракцией/ролью" end
 
@@ -293,9 +348,14 @@ if SERVER then
         Title = function(ply)
             if not istable(Factions) then return "Фракция" end
             local sid, s64 = ply:SteamID(), ply:SteamID64()
+            local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or nil
             for n, f in pairs(Factions) do
-                if istable(f) and istable(f.Members) and (f.Members[sid] or f.Members[s64]) then
-                    local m = f.Members[sid] or f.Members[s64]
+                local m = nil
+                if istable(f) and istable(f.Members) then
+                    if ck then m = f.Members[ck]
+                    else m = f.Members[sid] or f.Members[s64] end
+                end
+                if istable(m) then
                     return "Фракция: " .. n .. (m.Role and (" — " .. tostring(m.Role)) or "")
                 end
             end
@@ -306,8 +366,14 @@ if SERVER then
                 local hasFaction = false
                 if istable(Factions) then
                     local sid, s64 = ply:SteamID(), ply:SteamID64()
+                    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or nil
                     for _, f in pairs(Factions) do
-                        if istable(f) and istable(f.Members) and (f.Members[sid] or f.Members[s64]) then hasFaction = true break end
+                        if istable(f) and istable(f.Members) then
+                            local member
+                            if ck then member = f.Members[ck]
+                            else member = f.Members[sid] or f.Members[s64] end
+                            if member then hasFaction = true break end
+                        end
                     end
                 end
                 if not hasFaction then return {} end
@@ -335,8 +401,18 @@ if SERVER then
             if oa == ob then return a < b end
             return oa < ob
         end)
+        local hasFaction = false
+        if istable(Factions) and GRM.Identity and GRM.Identity.FactionMember then
+            for _, faction in pairs(Factions) do
+                if GRM.Identity.FactionMember(faction, ply) then hasFaction = true break end
+            end
+        end
         for _, id in ipairs(ids) do
             local skip = false
+            -- Гражданская и фракционная внешность взаимоисключающие:
+            -- персонаж фракции не видит civilian-пул, гражданский не видит faction-пул.
+            if id == "civilian" and hasFaction then skip = true end
+            if id == "faction" and not hasFaction then skip = true end
             if opts.wardrobe and id == "civilian" and opts.allowCivilian == false then skip = true end
             if opts.wardrobe and id == "faction" and opts.allowFaction == false then skip = true end
             if not skip then
@@ -350,6 +426,16 @@ if SERVER then
                 end
             end
         end
+        local allOutfits = {}
+        for _, section in ipairs(sections) do
+            for _, outfit in ipairs(section.outfits or {}) do
+                local copy = table.Copy(outfit)
+                copy.provider = section.id
+                copy.providerTitle = section.title
+                allOutfits[#allOutfits + 1] = copy
+            end
+        end
+
         local rec = normalizePlayerData(ply) or { active = "char1", slots = {} }
         local slots = {}
         for i = 1, CH.MaxSlots do
@@ -364,13 +450,16 @@ if SERVER then
             characterID = CH.GetActiveID(ply),
             characterKey = CH.GetActiveKey(ply),
             identityNote = "Активный CharacterKey: " .. CH.GetActiveKey(ply) .. ". Новые модули должны использовать GRM.Char.GetActiveKey(ply).",
-            sections = sections,
+            sections = sections, -- legacy payload compatibility
+            outfits = allOutfits,
             nameMin = CH.NameMin, nameMax = CH.NameMax,
             wardrobe = opts.wardrobe == true or nil,
             wardrobeTitle = opts.title,
             wardrobeEnt = IsValid(opts.ent) and opts.ent:EntIndex() or nil,
             allowSkin = opts.allowSkin, allowBodygroups = opts.allowBodygroups,
             isAdmin = ply:IsSuperAdmin() or nil,
+            pending = CH.PendingSelection[sid64(ply)] == true,
+            mandatory = CH.PendingMandatory[sid64(ply)] == true,
         }
     end
 
@@ -382,27 +471,138 @@ if SERVER then
     end
     CH.OpenMenu = sendMenu
 
+    local function closeMenu(ply)
+        if not IsValid(ply) then return end
+        net.Start(NET_CLOSE)
+        net.Send(ply)
+    end
+
     -- вход: меню при КАЖДОМ заходе -------------------------------
     hook.Add("PlayerInitialSpawn", "GRM_Char_OnJoin", function(ply)
         timer.Simple(1.5, function() if IsValid(ply) then sendMenu(ply) end end)
+        timer.Simple(0.2, function()
+            if not IsValid(ply) then return end
+            normalizePlayerData(ply)
+            -- При каждом входе игрок обязан явно подтвердить персонажа.
+            setCharacterLock(ply, true, true)
+        end)
         timer.Simple(2.2, function()
             if not IsValid(ply) then return end
             normalizePlayerData(ply)
             applyActiveCharacter(ply)
+            setCharacterLock(ply, true, true)
         end)
     end)
 
-    net.Receive(NET_REQUEST, function(_, ply) sendMenu(ply) end)
+    hook.Add("PlayerSpawn", "GRM_Char_BlockUnselectedSpawn", function(ply)
+        timer.Simple(0, function()
+            if not IsValid(ply) then return end
+            if CH.PendingSelection[ply:SteamID64()] then
+                setCharacterLock(ply, true, CH.PendingMandatory[ply:SteamID64()] == true)
+                -- Меню уже открывается одним таймером PlayerInitialSpawn.
+                -- Не отправляем его из каждого PlayerSpawn, иначе окна наслаиваются.
+            end
+        end)
+    end)
+
+    local function characterPending(ply)
+        return IsValid(ply) and CH.PendingSelection[ply:SteamID64()] == true
+    end
+
+    hook.Add("StartCommand", "GRM_Char_BlockInput", function(ply, cmd)
+        if not characterPending(ply) then return end
+        ply:Freeze(true)
+        cmd:ClearMovement()
+        cmd:ClearButtons()
+    end)
+
+    hook.Add("PlayerUse", "GRM_Char_BlockUse", function(ply)
+        if characterPending(ply) then return false end
+    end)
+
+    hook.Add("PlayerSpawnProp", "GRM_Char_BlockProp", function(ply)
+        if characterPending(ply) then return false end
+    end)
+
+    hook.Add("CanTool", "GRM_Char_BlockTool", function(ply)
+        if characterPending(ply) then return false end
+    end)
+
+    hook.Add("CanPlayerEnterVehicle", "GRM_Char_BlockVehicle", function(ply)
+        if characterPending(ply) then return false end
+    end)
+
+    hook.Add("PlayerSay", "GRM_Char_BlockChat", function(ply)
+        if characterPending(ply) then return "" end
+    end)
+
+    hook.Add("PlayerDisconnected", "GRM_Char_ClearPending", function(ply)
+        if IsValid(ply) then
+            CH.PendingSelection[ply:SteamID64()] = nil
+            CH.PendingMandatory[ply:SteamID64()] = nil
+            saveChars("disconnect")
+        end
+    end)
+
+    net.Receive(NET_REQUEST, function(_, ply)
+        if not IsValid(ply) then return end
+        if ply:GetNWBool("GRM_Arrested", false) then
+            if GRM.Notify then GRM.Notify(ply, "Во время ареста меню персонажа недоступно.", 255, 100, 100) end
+            return
+        end
+        -- Открытие персонажей через F4 /char переводит игрока в тот же
+        -- безопасный режим выбора: мир затемняется и блокируется до подтверждения.
+        setCharacterLock(ply, true, false)
+        sendMenu(ply)
+    end)
+
+    net.Receive(NET_CANCEL, function(_, ply)
+        if not IsValid(ply) then return end
+        if ply:GetNWBool("GRM_Arrested", false) then
+            closeMenu(ply)
+            return
+        end
+        if CH.PendingMandatory[ply:SteamID64()] == true then
+            -- Первичный вход нельзя закрыть крестиком: меню возвращается,
+            -- игрок остаётся заблокирован до подтверждения персонажа.
+            sendMenu(ply)
+            return
+        end
+        -- Отмена не должна повторно применять/сохранять внешность:
+        -- черновик жил только на клиенте, активный персонаж не менялся.
+        setCharacterLock(ply, false, false)
+        closeMenu(ply)
+    end)
 
     net.Receive(NET_SAVE, function(_, ply)
         if not IsValid(ply) then return end
-        local d = net.ReadTable() or {}
-        if d.action == "select_slot" then
-            CH.SetActiveSlot(ply, d.slot)
-            timer.Simple(0.1, function() if IsValid(ply) then sendMenu(ply) end end)
+        if ply:GetNWBool("GRM_Arrested", false) then
+            if GRM.Notify then GRM.Notify(ply, "Нельзя менять персонажа во время ареста.", 255, 100, 100) end
             return
         end
-        if d.slot then CH.SetActiveSlot(ply, d.slot) end
+        local d = net.ReadTable() or {}
+        if d.action == "select_slot" then
+            local slot = tostring(d.slot or "char1")
+            if not slot:match("^char[123]$") then return end
+            local sameActive = slot == activeSlot(ply)
+            local mandatory = CH.PendingMandatory[ply:SteamID64()] == true
+            if sameActive and not mandatory then
+                -- Anti-abuse: повторный выбор уже активного персонажа не
+                -- вызывает Spawn, телепорт, reset inventory или повторный gear-flow.
+                setCharacterLock(ply, false, false)
+                closeMenu(ply)
+                return
+            end
+            local ok = CH.SetActiveSlot(ply, slot, mandatory)
+            if ok and hasCharacter(ply, slot) then closeMenu(ply) else sendMenu(ply) end
+            return
+        end
+        local requestedSlot = tostring(d.slot or activeSlot(ply))
+        local mandatory = CH.PendingMandatory[ply:SteamID64()] == true
+        local sameActive = requestedSlot == activeSlot(ply)
+        if not sameActive or mandatory then
+            CH.SetActiveSlot(ply, requestedSlot, mandatory)
+        end
         local wasNew = CH.Get(ply) == nil
 
         if d.name ~= nil then
@@ -413,14 +613,38 @@ if SERVER then
         end
 
         if isstring(d.model) and d.model ~= "" then
+            local wardrobeRule = nil
+            if d.wardrobe == true then
+                local wardrobe = Entity(tonumber(d.wardrobeEnt) or 0)
+                if not IsValid(wardrobe) or wardrobe:GetClass() ~= "grm_wardrobe"
+                    or ply:GetPos():DistToSqr(wardrobe:GetPos()) > 220 * 220 then
+                    if GRM.Notify then GRM.Notify(ply, "Гардероб недоступен или слишком далеко.", 255, 100, 100) end
+                    return
+                end
+                local cfg = wardrobe.cfg or {}
+                wardrobeRule = istable(cfg.modelRules) and cfg.modelRules[d.model] or {}
+            end
             local bg = {}
             for g, v in pairs(d.bodygroups or {}) do
                 local gi, vi = tonumber(g), tonumber(v)
-                if gi and vi and vi ~= 0 then bg[gi] = vi end
+                local groupRule = wardrobeRule and wardrobeRule.bodygroups and gi and wardrobeRule.bodygroups[gi]
+                local allowed = not groupRule or groupRule == true
+                    or (istable(groupRule) and groupRule[vi] ~= false)
+                if gi and vi and vi ~= 0 and allowed then bg[gi] = vi end
             end
-            local ok, err = CH.ApplyAppearance(ply, { path = d.model, skin = tonumber(d.skin) or 0, bodygroups = bg })
+            local chosenSkin = tonumber(d.skin) or 0
+            if wardrobeRule and wardrobeRule.allowSkin == false then chosenSkin = 0 end
+            local ok, err = CH.ApplyAppearance(ply, { path = d.model, skin = chosenSkin, bodygroups = bg })
             if not ok and GRM.Notify then GRM.Notify(ply, tostring(err or "Не удалось применить внешность"), 255, 100, 100) end
             if ok and GRM.Notify then GRM.Notify(ply, "Внешность персонажа сохранена.", 100, 220, 100) end
+        end
+
+        if CH.Get(ply) ~= nil and isstring(d.name) and CH.ValidateName(d.name) then
+            setCharacterLock(ply, false)
+            if wasNew then
+                hook.Run("GRM_CharacterChanged", ply, nil, CH.GetActiveKey(ply))
+            end
+            if wasNew and ply.Spawn then ply:Spawn() end
         end
 
         -- первичная регистрация: синхронизируем с фракционным спавном
@@ -432,7 +656,11 @@ if SERVER then
             end
         end
 
-        timer.Simple(0.35, function() if IsValid(ply) then sendMenu(ply) end end)
+        if CH.Get(ply) ~= nil and (not d.name or CH.ValidateName(d.name)) then
+            timer.Simple(0.05, function() if IsValid(ply) then closeMenu(ply) end end)
+        else
+            sendMenu(ply)
+        end
     end)
 
     -- команда /name Имя Фамилия ----------------------------------
@@ -497,11 +725,37 @@ if CLIENT then
     -- Главное меню персонажа
     -----------------------------------------------------------
     local function openCharMenu(payload)
+        local lp = LocalPlayer()
+        if IsValid(lp) and lp:GetNWBool("GRM_Arrested", false) then
+            notification.AddLegacy("Во время ареста меню персонажа недоступно.", NOTIFY_ERROR, 5)
+            return
+        end
         payload = istable(payload) and payload or {}
+        -- Bodygroups персонажа задаются моделью фракции через /models_admin.
+        -- В обычном меню персонажа их нельзя вручную переопределять.
+        if payload.wardrobe ~= true then payload.allowBodygroups = false end
         local char = istable(payload.char) and payload.char or nil
         local sections = istable(payload.sections) and payload.sections or {}
+        local outfits = istable(payload.outfits) and payload.outfits or {}
+        if #outfits == 0 then
+            for _, sec in ipairs(sections) do
+                for _, outfit in ipairs(sec.outfits or {}) do
+                    local copy = table.Copy(outfit)
+                    copy.provider = sec.id
+                    copy.providerTitle = sec.title
+                    outfits[#outfits + 1] = copy
+                end
+            end
+        end
+        local defaultOutfit = outfits[1]
+        for _, outfit in ipairs(outfits) do
+            if outfit.provider == "civilian" then defaultOutfit = outfit break end
+        end
         local slots = istable(payload.slots) and payload.slots or {}
         local activeSlot = tostring(payload.activeSlot or "char1")
+        local refreshPreview, refreshSkinMax, rebuildBodygroups
+        local skinSlider
+        local bContinue, bSave
 
         -- состояние редактора (черновик)
         local draft = {
@@ -509,16 +763,26 @@ if CLIENT then
             model = char and tostring(char.model or "") or "",
             skin = char and tonumber(char.skin) or 0,
             bodygroups = char and table.Copy(char.bodygroups or {}) or {},
+            wardrobeRule = {},
         }
-        if draft.model == "" and sections[1] and sections[1].outfits and sections[1].outfits[1] then
-            draft.model = sections[1].outfits[1].path
-            draft.skin = tonumber(sections[1].outfits[1].skin) or 0
-            draft.bodygroups = table.Copy(sections[1].outfits[1].bodygroups or {})
+        if draft.model == "" and defaultOutfit then
+            draft.model = defaultOutfit.path
+            draft.skin = tonumber(defaultOutfit.skin) or 0
+            draft.bodygroups = table.Copy(defaultOutfit.bodygroups or {})
+        end
+        for _, outfit in ipairs(outfits) do
+            if outfit.path == draft.model then draft.wardrobeRule = table.Copy(outfit.wardrobeRule or {}) break end
         end
 
-        if IsValid(CH._frame) then CH._frame:Remove() end
+        if IsValid(CH._frame) then
+            CH._frame:Remove()
+            CH._frame = nil
+        end
         local f = vgui.Create("DFrame")
         CH._frame = f
+        f.OnRemove = function()
+            if CH._frame == f then CH._frame = nil end
+        end
         f:SetTitle("")
         -- v1.2: меню больше по высоте и компактнее по ширине: не «полоса», а полноценный экран персонажа
         local fw = math.min(1320, ScrW() - 80)
@@ -540,13 +804,20 @@ if CLIENT then
             draw.SimpleText("GRM Identity v" .. CH.Version, "GRMChar_Normal", pw - 24, 42, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
 
-        local function canClose() return char ~= nil or payload.wardrobe == true end
+        local function canClose() return payload.wardrobe == true or (char ~= nil and payload.pending ~= true) end
 
         local x = vgui.Create("DButton", f)
         x:SetText("X") x:SetFont("GRMChar_Title") x:SetTextColor(color_white)
         x:SetPos(fw - 48, 18) x:SetSize(32, 28)
         x.DoClick = function()
-            if canClose() then f:Close() else surface.PlaySound("buttons/button10.wav") end
+            if payload.wardrobe == true then
+                f:Close()
+                return
+            end
+            -- Отмена через крестик: сервер сам решает, можно ли выйти.
+            net.Start(NET_CANCEL)
+            net.SendToServer()
+            f:Close()
         end
         x.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.red or Color(45, 52, 68)) end
 
@@ -554,7 +825,7 @@ if CLIENT then
         if payload.wardrobe and payload.isAdmin and payload.wardrobeEnt then
             local bCfg = mkBtn(f, "⚙ Настройка гардероба", C.yellow)
             bCfg:SetTextColor(Color(30, 28, 20))
-            bCfg:SetPos(fw - 320, 8) bCfg:SetSize(220, 28)
+            bCfg:SetPos(fw - 300, 20) bCfg:SetSize(230, 28)
             bCfg.DoClick = function()
                 net.Start("GRM_Wardrobe_CfgReq")
                     net.WriteUInt(tonumber(payload.wardrobeEnt) or 0, 16)
@@ -599,17 +870,52 @@ if CLIENT then
             draw.RoundedBox(6, 0, 0, pw, ph, C.panel)
             draw.SimpleText("Слоты персонажей", "GRMChar_Sub", 10, 14, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
+        local slotButtons = {}
+        local function refreshSlotButtons()
+            for _, slotButton in ipairs(slotButtons) do
+                slotButton._selected = slotButton._slotID == activeSlot
+            end
+        end
         for i = 1, 3 do
             local info = slots[i] or { id = "char" .. i, index = i, exists = false }
             local b = mkBtn(slotPanel, (info.exists and (info.name ~= "" and info.name or ("Персонаж " .. i)) or ("+ Слот " .. i)), info.id == activeSlot and C.green or C.panel2)
+            b._slotID = info.id
+            b._selected = info.id == activeSlot
+            slotButtons[#slotButtons + 1] = b
+            b.Paint = function(self, pw, ph)
+                local cc = self._selected and C.green or C.panel2
+                if not self:IsEnabled() then cc = Color(45, 50, 60)
+                elseif self:IsHovered() then cc = Color(math.min(255, cc.r + 18), math.min(255, cc.g + 18), math.min(255, cc.b + 18)) end
+                draw.RoundedBox(6, 0, 0, pw, ph, cc)
+            end
             b:SetPos(10 + (i - 1) * math.floor((leftW - 34) / 3), 30)
             b:SetSize(math.floor((leftW - 40) / 3), 34)
             b:SetFont("GRMChar_Normal")
+            b:SetEnabled(not (info.id == payload.activeSlot and payload.pending and payload.mandatory ~= true))
+            b:SetTooltip(info.model ~= "" and ("Текущая модель: " .. info.model) or "Персонаж ещё не создан")
             b.DoClick = function()
-                net.Start(NET_SAVE)
-                    net.WriteTable({ action = "select_slot", slot = info.id })
-                net.SendToServer()
-                timer.Simple(0.15, function() if IsValid(f) then f:Close() end end)
+                -- Выбор карточки — только локальный черновик. Серверный активный
+                -- CharacterKey, счета, фракция и spawn НЕ меняются до подтверждения.
+                activeSlot = info.id
+                refreshSlotButtons()
+                draft.name = tostring(info.name or "")
+                draft.model = tostring(info.model or "")
+                draft.skin = 0
+                draft.bodygroups = {}
+                if draft.model == "" and defaultOutfit then
+                    draft.model = defaultOutfit.path
+                    draft.skin = tonumber(defaultOutfit.skin) or 0
+                    draft.bodygroups = table.Copy(defaultOutfit.bodygroups or {})
+                end
+                nameEntry:SetText(draft.name)
+                updHint()
+                refreshPreview()
+                refreshSkinMax()
+                skinSlider:SetValue(draft.skin)
+                rebuildBodygroups()
+                bContinue:SetVisible(info.exists == true)
+                bSave:SetVisible(info.exists ~= true or payload.wardrobe == true)
+                bSave:SetText(info.exists and (payload.wardrobe and "Сохранить" or "") or "Создать и выбрать")
             end
         end
 
@@ -625,24 +931,50 @@ if CLIENT then
             draw.SimpleText("3D-превью персонажа", "GRMChar_Sub", 14, 18, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             draw.SimpleText("Модель, скин и bodygroups применяются после сохранения", "GRMChar_Normal", 14, 38, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
-        local preview = vgui.Create("DAdjustableModelPanel", right)
+        local preview = vgui.Create("DModelPanel", right)
         preview:Dock(FILL) preview:DockMargin(0, 0, 0, 10)
-        preview:SetFOV(40)
+        preview:SetFOV(36)
+        preview:SetDirectionalLight(BOX_TOP, Color(255, 255, 255))
+        preview:SetDirectionalLight(BOX_FRONT, Color(180, 200, 255))
+        preview:SetAmbientLight(Color(90, 100, 125))
+        function preview:LayoutEntity(ent) end
+        -- Используем штатный Paint DModelPanel: он корректно запускает
+        -- cam.Start3D/DrawModel на всех ветках GMod.
 
-        local function refreshPreview()
+        refreshPreview = function()
             if not IsValid(preview) then return end
             if draft.model == "" then return end
             preview:SetModel(draft.model)
             local ent = preview:GetEntity()
             if IsValid(ent) then
+                local mins, maxs = ent:OBBMins(), ent:OBBMaxs()
+                local center = (mins + maxs) * 0.5
+                local height = math.max(32, maxs.z - mins.z)
+                local width = math.max(32, maxs.y - mins.y)
+                local fov = 36
+                -- DModelPanel использует FOV для вертикального кадра не так,
+                -- как обычная камера. Считаем дистанцию по высоте модели,
+                -- иначе голова/ноги обрезаются на разных моделях.
+                local distance = math.max(height * 1.65, width * 2.8,
+                    (height * 0.5) / math.tan(math.rad(fov * 0.5)) * 1.55)
+                preview:SetFOV(fov)
+                preview:SetLookAt(center + Vector(0, 0, height * 0.02))
+                preview:SetCamPos(center + Vector(distance, 0, height * 0.03))
                 ent:SetSkin(math.Clamp(tonumber(draft.skin) or 0, 0, 64))
                 for i = 0, (ent:GetNumBodyGroups() or 1) - 1 do ent:SetBodygroup(i, 0) end
                 for g, v in pairs(draft.bodygroups or {}) do
                     ent:SetBodygroup(tonumber(g) or 0, tonumber(v) or 0)
                 end
             end
+            preview._grmPreviewSig = tostring(draft.model) .. "|" .. tostring(draft.skin)
+        end
+        function preview:Think()
+            local sig = tostring(draft.model) .. "|" .. tostring(draft.skin)
+            if sig ~= self._grmPreviewSig then refreshPreview() end
         end
         refreshPreview()
+        timer.Simple(0, function() if IsValid(preview) then refreshPreview() end end)
+        timer.Simple(0.15, function() if IsValid(preview) then refreshPreview() end end)
 
         local sets = vgui.Create("DPanel", right)
         sets:Dock(BOTTOM) sets:SetTall(132) sets:SetPaintBackground(false)
@@ -651,7 +983,7 @@ if CLIENT then
         skinLbl:Dock(TOP) skinLbl:SetTall(18) skinLbl:SetFont("GRMChar_Sub") skinLbl:SetTextColor(C.text)
         skinLbl:SetText("Скин")
 
-        local skinSlider = vgui.Create("DNumSlider", sets)
+        skinSlider = vgui.Create("DNumSlider", sets)
         skinSlider:Dock(TOP) skinSlider:SetTall(26)
         skinSlider:SetMin(0) skinSlider:SetDecimals(0)
         skinSlider:SetValue(draft.skin)
@@ -669,7 +1001,7 @@ if CLIENT then
         if payload.allowBodygroups == false then
             sets:SetTall(payload.allowSkin == false and 4 or 60)
         end
-        local function refreshSkinMax()
+        refreshSkinMax = function()
             local ent = IsValid(preview) and preview:GetEntity()
             local mx = IsValid(ent) and (ent:SkinCount() - 1) or 0
             skinSlider:SetMax(mx)
@@ -683,19 +1015,31 @@ if CLIENT then
         bgScroll:Dock(FILL) bgScroll:DockMargin(0, 4, 0, 0)
         if payload.allowBodygroups == false then bgScroll:SetVisible(false) end
 
-        local function rebuildBodygroups()
+        rebuildBodygroups = function()
             bgScroll:Clear()
             local ent = IsValid(preview) and preview:GetEntity()
             if not IsValid(ent) then return end
             local n = ent:GetNumBodyGroups() or 0
             for i = 0, n - 1 do
+                local groupRule = draft.wardrobeRule and draft.wardrobeRule.bodygroups and draft.wardrobeRule.bodygroups[i]
                 local count = ent:GetBodygroupCount(i) or 1
-                if count > 1 then
+                local options = {}
+                for value = 0, count - 1 do
+                    local allowed = groupRule == nil or groupRule == true
+                        or (istable(groupRule) and groupRule[value] ~= false)
+                    if allowed then options[#options + 1] = value end
+                end
+                if #options > 0 and count > 1 then
                     local row = vgui.Create("DPanel", bgScroll)
                     row:Dock(TOP) row:SetTall(24) row:DockMargin(0, 0, 0, 2)
                     row.Paint = function(_, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, C.panel2) end
                     local gname = ent:GetBodygroupName(i) or ("Группа " .. i)
-                    local cur = tonumber(draft.bodygroups[i]) or 0
+                    local cur = tonumber(draft.bodygroups[i]) or options[1]
+                    local function optionIndex(value)
+                        for index, candidate in ipairs(options) do if candidate == value then return index end end
+                        return 1
+                    end
+                    if optionIndex(cur) == 1 and options[1] ~= cur then cur = options[1] draft.bodygroups[i] = cur end
 
                     local bL = mkBtn(row, "◀", C.acc) bL:Dock(LEFT) bL:SetWide(30) bL:DockMargin(2, 2, 0, 2)
                     local bR = mkBtn(row, "▶", C.acc) bR:Dock(RIGHT) bR:SetWide(30) bR:DockMargin(0, 2, 2, 2)
@@ -704,22 +1048,20 @@ if CLIENT then
                     valLbl:SetFont("GRMChar_Normal") valLbl:SetTextColor(C.text)
                     local function upd()
                         local v = tonumber(draft.bodygroups[i]) or 0
-                        valLbl:SetText(gname .. ":  " .. v .. " / " .. (count - 1))
+                        valLbl:SetText(gname .. ":  " .. v .. " / " .. (count - 1) .. "  [доступно: " .. #options .. "]")
                         valLbl:SizeToContentsX() valLbl:SetWide(190)
-                        ent:SetBodygroup(i, v)
+                        if IsValid(ent) then ent:SetBodygroup(i, v) end
                     end
                     bL.DoClick = function()
-                        local v = tonumber(draft.bodygroups[i]) or 0
-                        v = (v - 1) % count
-                        draft.bodygroups[i] = v
-                        if v == 0 then draft.bodygroups[i] = nil end
+                        local index = optionIndex(tonumber(draft.bodygroups[i]) or options[1])
+                        index = ((index - 2) % #options) + 1
+                        draft.bodygroups[i] = options[index]
                         upd()
                     end
                     bR.DoClick = function()
-                        local v = tonumber(draft.bodygroups[i]) or 0
-                        v = (v + 1) % count
-                        draft.bodygroups[i] = v
-                        if v == 0 then draft.bodygroups[i] = nil end
+                        local index = optionIndex(tonumber(draft.bodygroups[i]) or options[1])
+                        index = (index % #options) + 1
+                        draft.bodygroups[i] = options[index]
                         upd()
                     end
                     upd()
@@ -732,80 +1074,83 @@ if CLIENT then
             end
         end
         rebuildBodygroups()
+        timer.Simple(0.12, function()
+            if IsValid(preview) then rebuildBodygroups() end
+        end)
 
         local function selectModel(entry)
             draft.model = entry.path
             draft.skin = tonumber(entry.skin) or 0
             draft.bodygroups = table.Copy(entry.bodygroups or {})
+            draft.wardrobeRule = table.Copy(entry.wardrobeRule or {})
             refreshPreview()
             refreshSkinMax()
             skinSlider:SetValue(draft.skin)
             rebuildBodygroups()
+            timer.Simple(0.12, function()
+                if IsValid(preview) then rebuildBodygroups() end
+            end)
         end
 
-        -- секции провайдеров (вкладками)
+        -- Единый список внешности: гражданские и фракционные модели
+        -- не разделяются вкладками. Доступный набор уже отфильтрован сервером
+        -- для активного CharacterKey.
         local sheet = vgui.Create("DPropertySheet", left)
         sheet:Dock(FILL)
-        for _, sec in ipairs(sections) do
-            local sc = vgui.Create("DScrollPanel")
-            sc:DockMargin(2, 2, 2, 2)
-            for _, entry in ipairs(sec.outfits or {}) do
-                local row = vgui.Create("DPanel", sc)
-                row:Dock(TOP) row:SetTall(66) row:DockMargin(0, 0, 0, 6)
-                local isSel = (entry.path == draft.model)
-                row.Paint = function(_, pw, ph)
-                    draw.RoundedBox(6, 0, 0, pw, ph, (entry.path == draft.model) and Color(44, 66, 96) or C.panel)
-                end
-
-                local icon = vgui.Create("SpawnIcon", row)
-                icon:Dock(LEFT) icon:SetWide(62) icon:DockMargin(4, 4, 0, 4)
-                icon:SetModel(entry.path, tonumber(entry.skin) or 0)
-                icon:SetTooltip(false)
-                icon:SetMouseInputEnabled(false)
-
-                local bn = mkBtn(row, string.GetFileFromFilename(entry.path) or entry.path, C.panel)
-                bn:Dock(FILL) bn:DockMargin(0, 3, 3, 3)
-                bn:SetFont("GRMChar_Normal") bn:SetTextColor(C.text)
-                bn.Paint = function(self, pw, ph)
-                    local cc = (entry.path == draft.model) and Color(44, 66, 96) or C.panel2
-                    if self:IsHovered() then cc = Color(cc.r + 14, cc.g + 14, cc.b + 14) end
-                    draw.RoundedBox(5, 0, 0, pw, ph, cc)
-                end
-                bn:SetText(tostring(entry.path))
-                bn.DoClick = function()
-                    selectModel(entry)
-                    surface.PlaySound("buttons/button15.wav")
-                end
+        local sc = vgui.Create("DScrollPanel")
+        sc:DockMargin(2, 2, 2, 2)
+        for _, entry in ipairs(outfits) do
+            local row = vgui.Create("DPanel", sc)
+            row:Dock(TOP) row:SetTall(66) row:DockMargin(0, 0, 0, 6)
+            row.Paint = function(_, pw, ph)
+                draw.RoundedBox(6, 0, 0, pw, ph, (entry.path == draft.model) and Color(44, 66, 96) or C.panel)
             end
-            sheet:AddSheet(sec.title or sec.id, sc, "icon16/user.png")
+
+            local bn = mkBtn(row, "", C.panel)
+            bn:Dock(FILL) bn:DockMargin(0, 3, 3, 3)
+            bn:SetFont("GRMChar_Normal") bn:SetTextColor(C.text)
+            bn.Paint = function(self, pw, ph)
+                local cc = (entry.path == draft.model) and Color(44, 66, 96) or C.panel2
+                if self:IsHovered() then cc = Color(cc.r + 14, cc.g + 14, cc.b + 14) end
+                draw.RoundedBox(5, 0, 0, pw, ph, cc)
+            end
+            local provider = entry.providerTitle and tostring(entry.providerTitle) or "Внешность"
+            bn:SetText(provider .. (entry.path == draft.model and "  •  ВЫБРАНО" or ""))
+            bn:SetTooltip("Выбрать этот образ")
+            bn.DoClick = function()
+                selectModel(entry)
+                surface.PlaySound("buttons/button15.wav")
+            end
         end
+        sheet:AddSheet("Внешность", sc, "icon16/user.png")
 
         -- НИЗ: действия
         local bot = vgui.Create("DPanel", f)
         bot:Dock(BOTTOM) bot:SetTall(50) bot:DockMargin(10, 0, 10, 10)
         bot:SetPaintBackground(false)
 
-        local bContinue = mkBtn(bot, char and "Продолжить" or "", C.acc)
-        bContinue:Dock(RIGHT) bContinue:SetWide(150) bContinue:DockMargin(8, 6, 0, 6)
-        bContinue:SetVisible(char ~= nil)
-        bContinue.DoClick = function() f:Close() end
-
-        local bSave = mkBtn(bot, char and "Сохранить изменения" or "Создать персонажа", C.green)
-        bSave:Dock(RIGHT) bSave:SetWide(230) bSave:DockMargin(8, 6, 0, 6)
-        bSave.DoClick = function()
+        local function submitCharacter()
             local nm = CH.ValidateName(draft.name)
             if not nm then
                 Derma_Message("Укажите игровое имя (мин. " .. (payload.nameMin or 3) .. " символа).", "Персонаж", "Ок")
                 return
             end
             net.Start(NET_SAVE)
-                net.WriteTable({ slot = payload.activeSlot or "char1", name = draft.name, model = draft.model, skin = draft.skin, bodygroups = draft.bodygroups })
+                net.WriteTable({ slot = activeSlot or "char1", name = draft.name, model = draft.model, skin = draft.skin, bodygroups = draft.bodygroups, wardrobe = payload.wardrobe == true, wardrobeEnt = payload.wardrobeEnt, wardrobeRule = draft.wardrobeRule })
             net.SendToServer()
-            timer.Simple(0.5, function() if IsValid(f) then f:Close() end end)
         end
 
+        bContinue = mkBtn(bot, char and "Продолжить" or "", C.acc)
+        bContinue:Dock(RIGHT) bContinue:SetWide(150) bContinue:DockMargin(8, 6, 0, 6)
+        bContinue:SetVisible(char ~= nil)
+        bContinue.DoClick = submitCharacter
+
+        bSave = mkBtn(bot, char and (payload.wardrobe and "Сохранить" or "") or "Создать персонажа", C.green)
+        bSave:Dock(RIGHT) bSave:SetWide(230) bSave:DockMargin(8, 6, 0, 6)
+        bSave:SetVisible(char == nil or payload.wardrobe == true)
+        bSave.DoClick = submitCharacter
+
         if not char then
-            -- акцент: без имени создать нельзя
             bSave:SetText("Создать персонажа (обязательно)")
         end
     end
@@ -814,10 +1159,22 @@ if CLIENT then
         openCharMenu(net.ReadTable() or {})
     end)
 
+    net.Receive(NET_CLOSE, function()
+        if IsValid(CH._frame) then
+            CH._frame:Close()
+            CH._frame = nil
+        end
+    end)
+
     -- точка входа гардероба (grm_wardrobe, Код 73)
     CH._openFromWardrobe = openCharMenu
 
     function CH.OpenMenu()
+        local lp = LocalPlayer()
+        if IsValid(lp) and lp:GetNWBool("GRM_Arrested", false) then
+            notification.AddLegacy("Во время ареста меню персонажа недоступно.", NOTIFY_ERROR, 5)
+            return
+        end
         net.Start(NET_REQUEST) net.SendToServer()
     end
     concommand.Add("grm_character", CH.OpenMenu)
@@ -829,6 +1186,45 @@ if CLIENT then
             CH.OpenMenu()
             if istable(text) then text[1] = "" end
             return true
+        end
+    end)
+
+    local function clientCharacterPending()
+        local lp = LocalPlayer()
+        return IsValid(lp) and lp:GetNWBool("GRM_CharacterPending", false)
+    end
+
+    hook.Add("HUDPaintBackground", "GRM_Char_LockScreen", function()
+        if not clientCharacterPending() then return end
+        surface.SetDrawColor(0, 0, 0, 255)
+        surface.DrawRect(0, 0, ScrW(), ScrH())
+        draw.SimpleText("Выберите персонажа", "GRMChar_Title", ScrW() / 2, ScrH() - 84,
+            Color(235, 235, 245), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Игровой мир заблокирован до подтверждения персонажа", "GRMChar_Normal",
+            ScrW() / 2, ScrH() - 58, Color(145, 155, 175), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end)
+
+    hook.Add("HUDShouldDraw", "GRM_Char_HideHUD", function()
+        if clientCharacterPending() then return false end
+    end)
+
+    hook.Add("PlayerBindPress", "GRM_Char_BlockBinds", function(_, bind)
+        if clientCharacterPending() then return true end
+    end)
+
+    hook.Add("SpawnMenuOpen", "GRM_Char_BlockSpawnMenu", function()
+        if clientCharacterPending() then return false end
+    end)
+
+    hook.Add("ContextMenuOpen", "GRM_Char_BlockContextMenu", function()
+        if clientCharacterPending() then return false end
+    end)
+
+    hook.Add("Think", "GRM_Char_CloseForeignMenus", function()
+        if not clientCharacterPending() then return end
+        if GRM.Mobile and GRM.Mobile.ClientIsOpen and GRM.Mobile.ClientIsOpen()
+            and GRM.Mobile.ClientClose then
+            GRM.Mobile.ClientClose()
         end
     end)
 

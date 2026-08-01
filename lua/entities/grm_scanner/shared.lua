@@ -85,7 +85,8 @@ function ENT:IsScannerOwner(ply)
     if not IsValid(ply) then return false end
     if ply == self.ScannerOwner then return true end
     local o = tostring(self.OwnerSID64 or "")
-    return o ~= "" and o == tostring(ply:SteamID64() or "")
+    local key = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or tostring(ply:SteamID64() or "")
+    return o ~= "" and o == key
 end
 
 if SERVER then
@@ -103,8 +104,11 @@ if SERVER then
     function ENT:ScannerFactionOf(ply)
         if not (Factions and IsValid(ply) and ply.SteamID) then return nil end
         for fName, fData in pairs(Factions) do
-            if istable(fData) and istable(fData.Members)
-                and (fData.Members[ply:SteamID()] or fData.Members[ply:SteamID64()]) then
+            local member = GRM.Identity and GRM.Identity.FactionMember and GRM.Identity.FactionMember(fData, ply)
+            if not member and not GRM.Identity then
+                member = fData.Members[ply:SteamID()] or fData.Members[ply:SteamID64()]
+            end
+            if istable(fData) and istable(fData.Members) and member then
                 return fName
             end
         end

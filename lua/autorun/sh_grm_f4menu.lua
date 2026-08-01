@@ -92,6 +92,7 @@ local CMD_GROUPS = {
         { "/name Имя Фамилия", "Сменить игровое (RP) имя" },
         { "/rpdesc", "Редактировать описание персонажа" },
         { "/mask, /maskcfg", "Маскировка (по доступу)" },
+        { "/maskdesc текст", "Описание маскировки: пока маска надета, оригинальные RP-имя и RPDesc скрыты" },
         { "/model", "Выбор модели из разрешённых" },
         { "/wardrobe_add", "Поставить гардероб (суперадмин)" },
     }},
@@ -209,6 +210,21 @@ local CMD_GROUPS = {
         { "/board_allow Имя", "Выдать фракции доступ к доске набора" },
         { "/job_allow Имя", "Доступ работодателя: заказы/вакансии с эскроу бюджета" },
     }},
+    { name = "Сохранение карты (суперадмин)", items = {
+        { "grm_vending_save / grm_vending_load", "Автоматы еды: сохранить/загрузить позиции текущей карты" },
+        { "grm_vending_clear", "Удалить автоматы еды и очистить их сохранение" },
+        { "grm_fc_save / grm_fc_load", "Фабрика: станции, мусорки металлолома, склады, сток и запасы" },
+        { "grm_logistics_save / grm_logistics_load", "Логистика: точки погрузки, склады, оружейные и их содержимое" },
+        { "grm_logistics_remove", "Удалить логистическую entity под прицелом и убрать её из сохранения" },
+        { "grm_phone_save / grm_phone_load", "Стационарная телефония и объекты связи карты" },
+        { "grm_cctv_save / grm_cctv_load", "Камеры, мониторы и CCTV-серверы" },
+        { "grm_alarm_save", "Сигнализации, хабы, терминалы и динамики сирен" },
+        { "grm_roomtap_save / grm_roomtap_load", "Оборудование RoomTap и прослушка" },
+        { "grm_saveentities / grm_loadentities", "Перманентные рудные узлы и сохранённое оборудование" },
+        { "grm_perm_add / grm_perm_remove / grm_perm_load", "Универсальные перм-энтити (кроме систем со своим сейвом)" },
+        { "grm_wanted_save", "Ручной сейв базы розыска" },
+        { "grm_wardrobe_add / grm_wardrobe_remove", "Гардеробы на карте; конфиг гардероба сохраняется отдельно" },
+    }},
     { name = "Админ-панели (суперадмин)", items = {
         { "/grm_admin", "ЕДИНАЯ панель: сервер/доступы/ЭКОНОМИКА (гос.бюджет, бюджеты фракций, наличные игроков)/ИНСТРУМЕНТЫ (Q-меню и toolgun игроков)/биржа/игроки/меню" },
         { "/grm_admin → «Инструменты»", "Q-меню игрокам вкл/выкл + GRM-стройка (свой каталог одобренных пропов и инструментов вместо ванильного spawnmenu), спавн (пропы/NPC/SENT/SWEP/транспорт), чёрный список toolgun-инструментов или строгий белый режим" },
@@ -274,7 +290,13 @@ local function buildProfileTab(sc, refresh)
     local b2 = block(sc, 96, "Персонаж:")
     local bChar = mkBtn(b2, "Меню персонажа (внешность)", C.acc)
     bChar:SetPos(10, 30) bChar:SetSize(250, 30)
-    bChar.DoClick = function() if GRM.Char and GRM.Char.OpenMenu then GRM.Char.OpenMenu() end end
+    bChar.DoClick = function()
+        if IsValid(lp) and lp:GetNWBool("GRM_Arrested", false) then
+            notification.AddLegacy("Во время ареста меню персонажа недоступно.", NOTIFY_ERROR, 5)
+            return
+        end
+        if GRM.Char and GRM.Char.OpenMenu then GRM.Char.OpenMenu() end
+    end
     local bDesc = mkBtn(b2, "Описание (RPDesc)", C.acc)
     bDesc:SetPos(10, 64) bDesc:SetSize(250, 30)
     bDesc.DoClick = function() if GRM.RPDesc and GRM.RPDesc.OpenEditor then GRM.RPDesc.OpenEditor() end end
@@ -294,7 +316,7 @@ local function buildProfileTab(sc, refresh)
     local fac = "—"
     if istable(FactionsData) then
         for fname, fd in pairs(FactionsData) do
-            if istable(fd) and istable(fd.Members) and (fd.Members[lp:SteamID()] or fd.Members[lp:SteamID64()]) then
+            if istable(fd) and GRM.Identity.FactionMember(fd, lp) then
                 fac = fname break
             end
         end
@@ -367,14 +389,14 @@ local GFX_PRESET_LOW = {
     { "r_shadows", "0" }, { "r_dynamic", "0" }, { "mat_specular", "0" },
     { "r_waterforceexpensive", "0" }, { "r_WaterDrawReflection", "0" }, { "r_WaterDrawRefraction", "0" },
     { "r_DrawDetailProps", "0" }, { "cl_detaildist", "450" }, { "r_staticprop_lod", "3" },
-    { "mat_picmip", "2" }, { "mp_decals", "50" }, { "mat_motion_blur_enabled", "0" },
+    { "mat_motion_blur_enabled", "0" },
     { "gmod_mcore_test", "1" }, { "r_drawskybox", "1" },
 }
 local GFX_PRESET_HIGH = {
     { "r_shadows", "1" }, { "r_dynamic", "1" }, { "mat_specular", "1" },
     { "r_waterforceexpensive", "1" }, { "r_WaterDrawReflection", "1" }, { "r_WaterDrawRefraction", "1" },
     { "r_DrawDetailProps", "1" }, { "cl_detaildist", "1500" }, { "r_staticprop_lod", "-1" },
-    { "mat_picmip", "0" }, { "mp_decals", "2048" }, { "mat_motion_blur_enabled", "0" },
+    { "mat_motion_blur_enabled", "0" },
     { "gmod_mcore_test", "1" }, { "r_drawskybox", "1" },
 }
 
@@ -394,8 +416,8 @@ local GFX_TOGGLES = {
 local GFX_SLIDERS = {
     { "cl_detaildist",    "Дальность отрисовки мелких объектов (трава/детали)", 400, 4096 },
     { "r_staticprop_lod", "Дальность/детализация крупных объектов (LOD: -1 максимум, 3 минимум)", -1, 3 },
-    { "mat_picmip",       "Качество текстур (0 — максимум, 4 — минимум)", 0, 4 },
-    { "mp_decals",        "Декали — следы выстрелов и крови (шт.)", 0, 2048 },
+    -- mat_picmip/mp_decals: движок блокирует RunConsoleCommand для этих
+    -- конваров из VGUI, поэтому они не создаются здесь (без спама ошибок).
 }
 
 local function buildGraphicsTab(sc, refresh)

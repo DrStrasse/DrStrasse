@@ -2,8 +2,14 @@ include("easychat/client/vgui/richtextx.lua")
 include("easychat/client/vgui/richtext_legacy.lua")
 include("easychat/client/vgui/textentryx.lua")
 include("easychat/client/vgui/textentry_legacy.lua")
-include("easychat/client/vgui/emote_picker.lua")
-include("easychat/client/vgui/color_picker.lua")
+local ok, err = pcall(include, "easychat/client/vgui/emote_picker.lua")
+if not ok then
+	MsgC(Color(255, 0, 0), "[EasyChat] Failed to load emote_picker.lua: " .. tostring(err) .. "\n")
+end
+local ok2, err2 = pcall(include, "easychat/client/vgui/color_picker.lua")
+if not ok2 then
+	MsgC(Color(255, 0, 0), "[EasyChat] Failed to load color_picker.lua: " .. tostring(err2) .. "\n")
+end
 
 local NEW_LINE_PATTERN = "\n"
 local EC_LEGACY_ENTRY = GetConVar("easychat_legacy_entry")
@@ -61,6 +67,14 @@ local MAIN_TAB = {
 		self.TextEntry:SetPlaceholderText("type something...")
 
 		self.EmotePicker = vgui.Create("ECEmotePicker")
+		if not IsValid(self.EmotePicker) then
+			-- Fallback if ECEmotePicker failed to load
+			self.EmotePicker = vgui.Create("DPanel")
+			self.EmotePicker:SetSize(200, 300)
+			self.EmotePicker:SetVisible(false)
+			self.EmotePicker.GetWide = function() return 200 end
+			self.EmotePicker.GetTall = function() return 300 end
+		end
 		self.EmotePicker:SetVisible(false)
 		self.EmotePicker.OnEmoteClicked = function(_, emote_name, provider_name)
 			local text = ("%s <emote=%s,32,%s>"):format(self.TextEntry:GetText():Trim(), emote_name, provider_name)
@@ -122,6 +136,7 @@ local MAIN_TAB = {
 		self.BtnEmotePicker:SetIcon("icon16/emoticon_grin.png")
 		self.BtnEmotePicker:SetSize(25, 25)
 		self.BtnEmotePicker.DoClick = function()
+			if not IsValid(self.EmotePicker) then return end
 			local btn_x, btn_y = self.BtnEmotePicker:LocalToScreen(0, 0)
 			local x, y = btn_x - (self.EmotePicker:GetWide() / 2), btn_y - self.EmotePicker:GetTall()
 			if x + self.EmotePicker:GetWide() > ScrW() then
@@ -207,8 +222,10 @@ local MAIN_TAB = {
 
 			self.BtnSwitch:SetTextColor(EasyChat.TextColor)
 			self.BtnSwitch.Paint = btn_paint
+		if IsValid(self.BtnEmotePicker) then
 			self.BtnEmotePicker.Paint = btn_paint
-			self.BtnColorPicker.Paint = btn_paint
+		end
+		self.BtnColorPicker.Paint = btn_paint
 		end
 	end,
 	ComputeNewLineCount = function(self)
@@ -227,15 +244,19 @@ local MAIN_TAB = {
 			self.RichText:GotoTextEnd()
 		end
 
-		self.TextEntry:SetSize(w - self.BtnSwitch:GetWide() - self.BtnEmotePicker:GetWide() - self.BtnColorPicker:GetWide(), text_entry_height)
+		self.TextEntry:SetSize(w - self.BtnSwitch:GetWide() - (IsValid(self.BtnEmotePicker) and self.BtnEmotePicker:GetWide() or 25) - self.BtnColorPicker:GetWide(), text_entry_height)
 		self.TextEntry:SetPos(self.BtnSwitch:GetWide(), h - text_entry_height)
 
 		self.BtnSwitch:SetPos(0, h - text_entry_height)
-		self.BtnEmotePicker:SetPos(w - self.BtnEmotePicker:GetWide() - self.BtnColorPicker:GetWide(), h - text_entry_height)
+		if IsValid(self.BtnEmotePicker) then
+			self.BtnEmotePicker:SetPos(w - self.BtnEmotePicker:GetWide() - self.BtnColorPicker:GetWide(), h - text_entry_height)
+		end
 		self.BtnColorPicker:SetPos(w - self.BtnColorPicker:GetWide(), h - text_entry_height)
 	end,
 	OnRemove = function(self)
-		self.EmotePicker:Remove()
+		if IsValid(self.EmotePicker) then
+			self.EmotePicker:Remove()
+		end
 		self.ColorPicker:Remove()
 
 		hook.Remove("GUIMousePressed", self)

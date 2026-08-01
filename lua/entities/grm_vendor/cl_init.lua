@@ -17,6 +17,7 @@ local LABELS = {
     ore    = "⛏️ Скупщик руды",
     food   = "🍎 Ларёк еды",
     rare   = " Торговец редкостями",
+    accessory = "Торговец аксессуарами",
 }
 
 hook.Add("HUDPaint", "GRM_VendorLabel", function()
@@ -37,7 +38,8 @@ hook.Add("HUDPaint", "GRM_VendorLabel", function()
                     local alpha = math.Clamp(255 - (dist / maxDist) * 200, 55, 255)
 
                     local vtype = ent:GetNWString("VendorType", ent.VendorType or "weapon")
-                    local text = LABELS[vtype] or "🏪 Торгаш"
+                    local text = ent:GetNWString("GRMVendorName", "")
+                    if text == "" then text = LABELS[vtype] or "GRM Торгаш" end
 
                     surface.SetFont("GRM_VendorLabel")
                     local tw, th = surface.GetTextSize(text)

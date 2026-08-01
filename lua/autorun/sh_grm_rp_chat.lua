@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM RP Chat v1.1.0 (Код 62; 88.1 — подсказка «никто не слышит»)
+    GRM RP Chat v1.2.0 (Код 62; команды других модулей не перехватываются)
     /me /do /it /try /roll /w /y /looc /ooc + локальный чат по радиусу.
 
     Работает с EasyChat (PlayerSay на сервере) и без него.
@@ -255,6 +255,13 @@ if SERVER then
             return "" -- съели сообщение, не пускать в обычный чат
         end
 
+        -- Неизвестная этому модулю slash/bang-команда должна пройти дальше
+        -- по цепочке PlayerSay. Раньше RP-chat принимал её за локальную речь,
+        -- возвращал "" и случайным порядком хуков ломал /mask, /arrest,
+        -- /grm_arrest_admin и остальные команды модулей без transform-хука.
+        local prefix = string.sub(text, 1, 1)
+        if prefix == "/" or prefix == "!" then return end
+
         -- Обычный чат: локальный радиус, если ForceNormalChatLocal
         if cfg().ForceNormalChatLocal ~= false then
             local msg = text
@@ -311,7 +318,7 @@ if SERVER then
         end
     end)
 
-    print("[GRM RPChat] server v1.1.0 (подсказка «никто не слышит») — /me /do /it /try /roll /w /y /looc /ooc + local")
+    print("[GRM RPChat] server v1.2.0 (pass-through чужих команд) — /me /do /it /try /roll /w /y /looc /ooc + local")
 end
 
 -- ============================================================

@@ -20,8 +20,9 @@ local NET_RADIO               = "Factions_Radio"
 local NET_RADIO_MSG           = "Factions_RadioMessage"
 local NET_OPEN_ADMIN          = "Factions_OpenAdminMenu"
 local NET_OPEN_LEADER         = "Factions_OpenLeaderMenu"
-local NET_DEP                 = "Factions_Dep"
-local NET_DEPB                = "Factions_Depb"
+local NET_DEP                  = "Factions_Dep"
+local NET_DEPB                 = "Factions_Depb"
+local NET_CHARACTER_CHOICES    = "Factions_CharacterChoices"
 local NET_DEP_MSG             = "Factions_DepMsg"
 local NET_DEPB_MSG            = "Factions_DepbMsg"
 
@@ -43,6 +44,7 @@ if SERVER then
     util.AddNetworkString(NET_OPEN_LEADER)
     util.AddNetworkString(NET_DEP)
     util.AddNetworkString(NET_DEPB)
+    util.AddNetworkString(NET_CHARACTER_CHOICES)
     util.AddNetworkString(NET_DEP_MSG)
     util.AddNetworkString(NET_DEPB_MSG)
 
@@ -52,7 +54,7 @@ if SERVER then
     Invites       = nil
 
     local function safeJSONToTable(data)
-        local ok, tbl = pcall(util.JSONToTable, data or "")
+        local ok, tbl = pcall(util.JSONToTable, data or "", false, true)
         if ok and istable(tbl) then return tbl end
         return {}
     end
@@ -77,6 +79,92 @@ if SERVER then
 
     local function saveInvites(tbl)
         file.Write(INVITES_FILE, util.TableToJSON(tbl, true))
+    end
+
+    -- Character migration: faction membership is stored by CharacterKey.
+    -- SteamID/SteamID64 remain readable as compatibility aliases only.
+    local function canonicalMemberKey(value)
+        if IsValid(value) and value.IsPlayer and value:IsPlayer() then
+            return (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(value)) or (value:SteamID64() .. ":char1")
+        end
+        local raw = tostring(value or "")
+        if raw:match(":char[1-3]$") then return raw end
+        if raw:match("^%d+$") then return raw .. ":char1" end
+        -- A raw SteamID string may be an offline/legacy target. Keep it
+        -- readable here; online callers pass the Player object and therefore
+        -- resolve to the active CharacterKey. Disk migration below converts
+        -- legacy SteamID records deterministically.
+        return raw
+    end
+
+    local function persistedMemberKey(value)
+        local raw = tostring(value or "")
+        if raw:match(":char[1-3]$") then return raw end
+        if raw:match("^%d+$") then return raw .. ":char1" end
+        if util.SteamIDTo64 then
+            local s64 = util.SteamIDTo64(raw)
+            if s64 and s64 ~= "0" then return tostring(s64) .. ":char1" end
+        end
+        return raw
+    end
+
+    local function legacyAccountKey(value)
+        local raw = tostring(value or "")
+        if raw:match(":char[1-3]$") then return raw:gsub(":char[1-3]$", "") end
+        return raw
+    end
+
+    local function installMemberAliases(members)
+        if not istable(members) then return end
+        local oldIndex = getmetatable(members) and getmetatable(members).__index
+        setmetatable(members, { __index = function(t, key)
+            if oldIndex then
+                local old = type(oldIndex) == "function" and oldIndex(t, key) or oldIndex[key]
+                if old ~= nil then return old end
+            end
+            local ck = persistedMemberKey(key)
+            return rawget(t, ck)
+        end })
+    end
+
+    local function migrateFactionMembers()
+        local changed = false
+        for _, f in pairs(Factions or {}) do
+            if istable(f) then
+                f.Members = istable(f.Members) and f.Members or {}
+                local moved = {}
+                for key, rec in pairs(f.Members) do
+                    local ck = persistedMemberKey(key)
+                    if ck ~= key then
+                        if not rawget(f.Members, ck) then moved[ck] = rec end
+                        f.Members[key] = nil
+                        changed = true
+                    end
+                end
+                for ck, rec in pairs(moved) do f.Members[ck] = rec end
+                if f.Leader then
+                    local leaderKey = canonicalMemberKey(f.Leader)
+                    if leaderKey ~= f.Leader then f.Leader = leaderKey changed = true end
+                end
+                installMemberAliases(f.Members)
+            end
+        end
+        return changed
+    end
+
+    local function memberKey(value)
+        if IsValid(value) and value.IsPlayer and value:IsPlayer() then
+            return canonicalMemberKey(value)
+        end
+        local raw = tostring(value or "")
+        if player and player.GetAll then
+            for _, ply in ipairs(player.GetAll()) do
+                if IsValid(ply) and (ply:SteamID() == raw or ply:SteamID64() == raw) then
+                    return canonicalMemberKey(ply)
+                end
+            end
+        end
+        return canonicalMemberKey(raw)
     end
 
     local function ensureDefaults(f)
@@ -153,7 +241,80 @@ if SERVER then
 
     Factions = loadFactions()
     Invites  = loadInvites()
+    local factionMigrationChanged = migrateFactionMembers()
     ensureAllDefaults()
+    if factionMigrationChanged then saveFactions(Factions) end
+
+    local function characterDisplay(key)
+        key = tostring(key or "")
+        local p = GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(key) or nil
+        if IsValid(p) then
+            local n = p:GetNWString("GRM_RPName", "")
+            return n ~= "" and n or p:Nick(), true, p:Nick()
+        end
+        local account, slot = key:match("^(.-):(char[1-3])$")
+        local rec = account and GRM.Char and GRM.Char.Data and GRM.Char and GRM.Char.Data[account]
+        local c = rec and rec.slots and rec.slots[slot]
+        return (c and c.name and c.name ~= "" and c.name or key), false, "offline"
+    end
+
+    local function buildMemberSync(f)
+        local out = {}
+        for key, rec in pairs(f.Members or {}) do
+            if istable(rec) then
+                local rp, online, steamNick = characterDisplay(key)
+                out[key] = {
+                    Role = rec.Role,
+                    Department = rec.Department,
+                    _characterKey = key,
+                    _rpName = rp,
+                    _online = online,
+                    _steamNick = steamNick,
+                }
+            end
+        end
+        return out
+    end
+
+    local function buildCharacterChoices()
+        local out = {}
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and p:IsPlayer() then
+                local account = p:SteamID64()
+                local chars = GRM.Char and GRM.Char.Data and GRM.Char and GRM.Char.Data[account] and GRM.Char and GRM.Char.Data[account].slots or {}
+                for i = 1, (GRM.Char and GRM.Char.MaxSlots or 3) do
+                    local id = "char" .. i
+                    local c = chars and chars[id]
+                    if istable(c) and tostring(c.name or "") ~= "" then
+                        local key = account .. ":" .. id
+                        out[#out + 1] = {
+                            key = key,
+                            rpName = tostring(c.name),
+                            steamNick = p:Nick(),
+                            slot = id,
+                            active = GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p) == key or false,
+                            faction = (function()
+                                for fname, f in pairs(Factions or {}) do
+                                    if istable(f) and rawget(f.Members or {}, key) then return fname end
+                                end
+                                return ""
+                            end)(),
+                        }
+                    end
+                end
+            end
+        end
+        table.sort(out, function(a, b)
+            return (a.rpName .. a.key):lower() < (b.rpName .. b.key):lower()
+        end)
+        return out
+    end
+
+    local function sendCharacterChoices(ply)
+        net.Start(NET_CHARACTER_CHOICES)
+            net.WriteTable(buildCharacterChoices())
+        if ply then net.Send(ply) else net.Broadcast() end
+    end
 
     local function buildSyncData()
         local data = {}
@@ -164,7 +325,7 @@ if SERVER then
                     Leader           = f.Leader,
                     Roles            = f.Roles,
                     Departments      = f.Departments,
-                    Members          = f.Members,
+                    Members          = buildMemberSync(f),
                     Tag              = f.Tag,
                     Color            = f.Color,
                     DepAccess        = f.DepAccess,
@@ -189,13 +350,22 @@ if SERVER then
         net.Start(NET_SYNC_ALL)
         net.WriteTable(buildSyncData())
         net.Broadcast()
+        sendCharacterChoices()
     end
 
+    hook.Add("GRM_CharacterChanged", "Factions_CharacterSync", function(ply)
+        if not IsValid(ply) then return end
+        timer.Simple(0, function()
+            if IsValid(ply) then broadcastFactionData() end
+        end)
+    end)
+
     local function getFactionOfPlayer(steamID)
+        local key = memberKey(steamID)
         for name, f in pairs(Factions) do
             if type(f) == "table" then
                 ensureDefaults(f)
-                if f.Members[steamID] then return name end
+                if f.Members[key] or f.Members[steamID] then return name end
             end
         end
         return nil
@@ -209,8 +379,8 @@ if SERVER then
         local members = {}
         local leader  = nil
         if leaderSteamID and leaderSteamID ~= "" then
-            leader = leaderSteamID
-            members[leaderSteamID] = { Role = defaultLeaderRole, Department = "Основной" }
+            leader = memberKey(leaderSteamID)
+            members[leader] = { Role = defaultLeaderRole, Department = "Основной" }
         end
 
         Factions[name] = {
@@ -412,14 +582,17 @@ if SERVER then
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
-        if f.Members[steamID] then return false, "Игрок уже во фракции" end
-        local existing = getFactionOfPlayer(steamID)
+        local key = memberKey(steamID)
+        if f.Members[key] then return false, "Игрок уже во фракции" end
+        local existing = getFactionOfPlayer(key)
         if existing then return false, "Игрок уже состоит во фракции " .. existing end
         if role == f.LeaderRoleName then return false, "Лидер назначается только отдельно" end
         if role and not table.HasValue(f.Roles, role) then return false, "Такого ранга нет" end
         if dept and not table.HasValue(f.Departments, dept) then return false, "Такого отдела нет" end
         -- Код 108: дефолтный отдел — первый реальный (а не «Основной» из воздуха)
-        f.Members[steamID] = { Role = role or getDefaultMemberRole(f), Department = dept or getDefaultDepartment(f) }
+        local rec = { Role = role or getDefaultMemberRole(f), Department = dept or getDefaultDepartment(f) }
+        if isstring(steamID) and not steamID:match(":char[1-3]$") then rec.LegacyKey = steamID end
+        f.Members[key] = rec
         saveFactions(Factions)
         return true
     end
@@ -428,14 +601,15 @@ if SERVER then
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
-        if not f.Members[steamID] then return false, "Игрок не состоит во фракции" end
-        if steamID == f.Leader then
-            f.Members[steamID] = nil
+        local key = memberKey(steamID)
+        if not f.Members[key] then return false, "Игрок не состоит во фракции" end
+        if key == f.Leader then
+            f.Members[key] = nil
             f.Leader = nil
             saveFactions(Factions)
             return true, "Лидер удалён, фракция сохранена без лидера"
         end
-        f.Members[steamID] = nil
+        f.Members[key] = nil
         saveFactions(Factions)
         return true, "Участник удалён"
     end
@@ -444,15 +618,16 @@ if SERVER then
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
-        if not f.Members[steamID] then return false, "Игрок не состоит во фракции" end
+        local key = memberKey(steamID)
+        if not f.Members[key] then return false, "Игрок не состоит во фракции" end
         if not table.HasValue(f.Roles, newRole) then return false, "Такого ранга нет" end
-        if newRole == f.LeaderRoleName and steamID ~= f.Leader then
+        if newRole == f.LeaderRoleName and key ~= f.Leader then
             return false, "Лидер назначается только через смену лидера"
         end
-        if steamID == f.Leader and newRole ~= f.LeaderRoleName then
+        if key == f.Leader and newRole ~= f.LeaderRoleName then
             return false, "Нельзя изменить роль текущего лидера отдельно"
         end
-        f.Members[steamID].Role = newRole
+        f.Members[key].Role = newRole
         saveFactions(Factions)
         return true
     end
@@ -461,9 +636,10 @@ if SERVER then
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
-        if not f.Members[steamID] then return false, "Игрок не состоит во фракции" end
+        local key = memberKey(steamID)
+        if not f.Members[key] then return false, "Игрок не состоит во фракции" end
         if not table.HasValue(f.Departments, newDept) then return false, "Такого отдела нет" end
-        f.Members[steamID].Department = newDept
+        f.Members[key].Department = newDept
         saveFactions(Factions)
         return true
     end
@@ -472,16 +648,17 @@ if SERVER then
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
-        if not f.Members[newLeaderSteamID] then
-            local existing = getFactionOfPlayer(newLeaderSteamID)
+        local key = memberKey(newLeaderSteamID)
+        if not f.Members[key] then
+            local existing = getFactionOfPlayer(key)
             if existing then return false, "Игрок уже состоит во фракции " .. existing end
-            f.Members[newLeaderSteamID] = { Role = getDefaultMemberRole(f), Department = getDefaultDepartment(f) }
+            f.Members[key] = { Role = getDefaultMemberRole(f), Department = getDefaultDepartment(f) }
         end
         if f.Leader and f.Members[f.Leader] then
             f.Members[f.Leader].Role = getDefaultMemberRole(f)
         end
-        f.Leader = newLeaderSteamID
-        f.Members[newLeaderSteamID].Role = f.LeaderRoleName
+        f.Leader = key
+        f.Members[key].Role = f.LeaderRoleName
         saveFactions(Factions)
         return true
     end
@@ -494,16 +671,18 @@ if SERVER then
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
 
-        local fromPlayer   = player.GetBySteamID(fromSteam)
+        local fromPlayer   = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(fromSteam)) or player.GetBySteamID(fromSteam) or player.GetBySteamID64(fromSteam)
+        local fromKey      = memberKey(fromPlayer or fromSteam)
+        local targetKey    = memberKey(toSteam)
         local isSuperAdmin = IsValid(fromPlayer) and fromPlayer:IsSuperAdmin()
-        local isLeader     = (f.Leader == fromSteam)
+        local isLeader     = (f.Leader == fromKey)
         if not isSuperAdmin and not isLeader then return false, "Недостаточно прав" end
-        if getFactionOfPlayer(toSteam) then return false, "Игрок уже состоит во фракции" end
+        if getFactionOfPlayer(targetKey) then return false, "Игрок уже состоит во фракции" end
 
-        Invites[toSteam] = { faction = factionName, from = fromSteam, time = os.time() }
+        Invites[targetKey] = { faction = factionName, from = fromKey, time = os.time() }
         saveInvites(Invites)
 
-        local target = player.GetBySteamID(toSteam)
+        local target = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(targetKey)) or player.GetBySteamID(toSteam) or player.GetBySteamID64(toSteam)
         if IsValid(target) then
             target:PrintMessage(HUD_PRINTTALK, "Вы приглашены во фракцию " .. factionName .. "! Для принятия напишите /fjoin " .. factionName)
         end
@@ -511,42 +690,45 @@ if SERVER then
     end
 
     local function acceptInvite(steamID, factionName)
-        local inv = Invites[steamID]
+        local key = memberKey(steamID)
+        local inv = Invites[key]
         if not inv then return false, "У вас нет активных приглашений" end
         if factionName ~= "" and inv.faction:lower() ~= factionName:lower() then
             return false, "У вас нет приглашения в эту фракцию. Ваше приглашение: /fjoin " .. inv.faction
         end
         factionName = inv.faction
-        if getFactionOfPlayer(steamID) then return false, "Вы уже состоите во фракции" end
+        if getFactionOfPlayer(key) then return false, "Вы уже состоите во фракции" end
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
-        f.Members[steamID] = { Role = getDefaultMemberRole(f), Department = getDefaultDepartment(f) }
+        f.Members[key] = { Role = getDefaultMemberRole(f), Department = getDefaultDepartment(f) }
         saveFactions(Factions)
-        Invites[steamID] = nil
+        Invites[key] = nil
         saveInvites(Invites)
-        local ply = player.GetBySteamID(steamID)
+        local ply = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(key)) or player.GetBySteamID(steamID) or player.GetBySteamID64(steamID)
         if IsValid(ply) then ply:PrintMessage(HUD_PRINTTALK, "Вы вступили во фракцию " .. factionName) end
         return true
     end
 
     local function declineInvite(steamID, factionName)
-        local inv = Invites[steamID]
+        local key = memberKey(steamID)
+        local inv = Invites[key]
         if not inv then return false, "У вас нет активных приглашений" end
         if inv.faction ~= factionName then return false, "У вас нет приглашения в эту фракцию" end
-        Invites[steamID] = nil
+        Invites[key] = nil
         saveInvites(Invites)
         return true
     end
 
     local function leaveFaction(steamID)
-        local factionName = getFactionOfPlayer(steamID)
+        local key = memberKey(steamID)
+        local factionName = getFactionOfPlayer(key)
         if not factionName then return false, "Вы не состоите ни в одной фракции" end
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
-        if f.Leader == steamID then return false, "Лидер не может покинуть фракцию, используйте увольнение" end
-        f.Members[steamID] = nil
+        if f.Leader == key then return false, "Лидер не может покинуть фракцию, используйте увольнение" end
+        f.Members[key] = nil
         saveFactions(Factions)
         return true
     end
@@ -562,14 +744,17 @@ if SERVER then
         net.Start(NET_SEND_DATA)
         net.WriteTable(buildSyncData())
         net.Send(ply)
+        sendCharacterChoices(ply)
     end
 
     local function getFactionInfoForPlayer(steamID)
+        local key = memberKey(steamID)
         for name, f in pairs(Factions) do
             if type(f) == "table" then
                 ensureDefaults(f)
-                if f.Members[steamID] then
-                    return name, f.Members[steamID].Role, f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess
+                local rec = f.Members[key] or f.Members[steamID]
+                if rec then
+                    return name, rec.Role, f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess
                 end
             end
         end
@@ -584,7 +769,7 @@ if SERVER then
     net.Receive(NET_ACTION, function(_, ply)
         local action       = net.ReadString()
         local args         = net.ReadTable() or {}
-        local steam        = ply:SteamID()
+        local steam        = memberKey(ply)
         local isSuperAdmin = ply:IsSuperAdmin()
 
         local leaderFaction = nil
@@ -723,7 +908,7 @@ if SERVER then
 
     net.Receive(NET_JOIN, function(_, ply)
         local factionName = net.ReadString()
-        local ok, err = acceptInvite(ply:SteamID(), factionName)
+        local ok, err = acceptInvite(ply, factionName)
         if ok then
             ply:PrintMessage(HUD_PRINTTALK, "Вы вступили во фракцию " .. factionName)
             broadcastFactionData()
@@ -734,13 +919,13 @@ if SERVER then
 
     net.Receive(NET_DECLINE, function(_, ply)
         local factionName = net.ReadString()
-        local ok, err = declineInvite(ply:SteamID(), factionName)
+        local ok, err = declineInvite(ply, factionName)
         if ok then ply:PrintMessage(HUD_PRINTTALK, "Вы отклонили приглашение во фракцию " .. factionName)
         else ply:PrintMessage(HUD_PRINTTALK, "Ошибка: " .. err) end
     end)
 
     net.Receive(NET_LEAVE, function(_, ply)
-        local ok, err = leaveFaction(ply:SteamID())
+        local ok, err = leaveFaction(ply)
         if ok then ply:PrintMessage(HUD_PRINTTALK, "Вы покинули фракцию") broadcastFactionData()
         else ply:PrintMessage(HUD_PRINTTALK, "Ошибка: " .. err) end
     end)
@@ -748,7 +933,7 @@ if SERVER then
     net.Receive(NET_RADIO, function(_, ply)
         local text = net.ReadString()
         if not text or text == "" then return end
-        local steam = ply:SteamID()
+        local steam = memberKey(ply)
 
         local factionName, role = nil, nil
         for name, f in pairs(Factions) do
@@ -765,7 +950,7 @@ if SERVER then
 
         local recipients = {}
         for memberSteam, _ in pairs(Factions[factionName].Members) do
-            local target = player.GetBySteamID(memberSteam)
+            local target = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(memberSteam)) or player.GetBySteamID(memberSteam) or player.GetBySteamID64(memberSteam)
             if IsValid(target) then recipients[#recipients + 1] = target end
         end
         if #recipients > 0 then
@@ -776,23 +961,32 @@ if SERVER then
     net.Receive(NET_DEP, function(_, ply)
         local text = net.ReadString()
         if not text or text == "" then return end
-        local steam = ply:SteamID()
+        local steam = memberKey(ply)
         local factionName, role, tag, color, depAccess = getFactionInfoForPlayer(steam)
         if not factionName then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Вы не состоите ни в одной фракции.") return end
         if not depAccess then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Ваша фракция не имеет доступа к волне департамента.") return end
         local displayTag = (tag and tag ~= "") and tag or factionName
         local msgText = string.format("[%s] %s (%s): - %s", displayTag, ply:Nick(), role or "Участник", text)
 
-        net.Start(NET_DEP_MSG)
-        net.WriteUInt(color.r, 8) net.WriteUInt(color.g, 8) net.WriteUInt(color.b, 8)
-        net.WriteString(msgText)
-        net.Broadcast()
+        local recipients = {}
+        for _, target in ipairs(player.GetAll()) do
+            if IsValid(target) then
+                local targetFaction, _, _, _, targetAccess = getFactionInfoForPlayer(memberKey(target))
+                if targetFaction and targetAccess then recipients[#recipients + 1] = target end
+            end
+        end
+        if #recipients > 0 then
+            net.Start(NET_DEP_MSG)
+            net.WriteUInt(color.r, 8) net.WriteUInt(color.g, 8) net.WriteUInt(color.b, 8)
+            net.WriteString(msgText)
+            net.Send(recipients)
+        end
     end)
 
     net.Receive(NET_DEPB, function(_, ply)
         local text = net.ReadString()
         if not text or text == "" then return end
-        local steam = ply:SteamID()
+        local steam = memberKey(ply)
         local factionName, role, tag, color, depAccess = getFactionInfoForPlayer(steam)
         if not factionName then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Вы не состоите ни в одной фракции.") return end
         if not depAccess then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Ваша фракция не имеет доступа к волне департамента.") return end
@@ -826,7 +1020,7 @@ if SERVER then
                 net.Send(ply)
             else
                 -- Проверяем, является ли игрок лидером
-                local steam = ply:SteamID()
+                local steam = memberKey(ply)
                 local isLeader = false
                 for _, f in pairs(Factions) do
                     if type(f) == "table" and f.Leader == steam then
@@ -860,7 +1054,7 @@ if SERVER then
         cmdFactions:defaultAccess(ULib.ACCESS_SUPERADMIN)
 
         local cmdLeader = ulx.command("Utility", "ulx factions_leader", function(ply)
-            local steam = ply:SteamID()
+            local steam = memberKey(ply)
             local isLeader = false
             for _, f in pairs(Factions) do
                 if type(f) == "table" and f.Leader == steam then isLeader = true break end
@@ -882,7 +1076,19 @@ if SERVER then
     _G.FactionsAPI.GetFactionOf   = function(steamID) return getFactionOfPlayer(steamID) end
     _G.FactionsAPI.IsLeader       = function(steamID, factionName)
         local f = Factions[factionName]
-        return (istable(f) and f.Leader == steamID) or false
+        return istable(f) and f.Leader == memberKey(steamID) or false
+    end
+    _G.FactionsAPI.IsMember       = function(factionName, playerOrKey)
+        local f = Factions[factionName]
+        if not istable(f) then return false end
+        local key = memberKey(playerOrKey)
+        return f.Members[key] ~= nil or f.Members[playerOrKey] ~= nil
+    end
+    _G.FactionsAPI.GetMember      = function(factionName, playerOrKey)
+        local f = Factions[factionName]
+        if not istable(f) then return nil end
+        local key = memberKey(playerOrKey)
+        return f.Members[key] or f.Members[playerOrKey]
     end
     _G.FactionsAPI.GetLeader      = function(factionName)
         local f = Factions[factionName]
@@ -893,7 +1099,28 @@ if SERVER then
         return istable(f) and getDefaultMemberRole(f) or nil
     end
     _G.FactionsAPI.Save           = function() saveFactions(Factions) end
-    _G.FactionsAPI.List           = function() return Factions end
+    _G.FactionsAPI.List           = function()
+        -- Compatibility view for older GRM modules. The persisted table keeps
+        -- only CharacterKey records; legacy keys exist only in this snapshot.
+        local out = {}
+        for name, src in pairs(Factions or {}) do
+            if istable(src) then
+                local dst = {}
+                for k, v in pairs(src) do
+                    if k ~= "Members" then dst[k] = v end
+                end
+                dst.Members = {}
+                for key, rec in pairs(src.Members or {}) do
+                    dst.Members[key] = rec
+                    if istable(rec) and isstring(rec.LegacyKey) and rec.LegacyKey ~= key then
+                        dst.Members[rec.LegacyKey] = rec
+                    end
+                end
+                out[name] = dst
+            end
+        end
+        return out
+    end
     -- Код 84 (Root Guard): прямое удаление — ВЫЗЫВАТЬ ТОЛЬКО из одобренного
     -- исполнителя Root Guard (обходной путь для уже подтверждённых заявок).
     _G.FactionsAPI.DeleteFaction  = function(factionName) return deleteFaction(factionName) end
@@ -911,6 +1138,7 @@ end
 if CLIENT then
     ui           = ui           or {}
     FactionsData = FactionsData or {}
+    FactionCharacterChoices = FactionCharacterChoices or {}
     local pendingActionCallback = nil
     local pendingDataCallback   = nil
     local nameCache             = nameCache or {}
@@ -936,9 +1164,38 @@ if CLIENT then
     surface.CreateFont("Factions_Small",  { font = "Roboto", size = 12, weight = 400, antialias = true })
     surface.CreateFont("Factions_HUD",    { font = "Roboto", size = 16, weight = 700, antialias = true })
 
+    local function installClientFactionAliases(data)
+        for _, f in pairs(data or {}) do
+            if istable(f) and istable(f.Members) then
+                local raw = f.Members
+                setmetatable(raw, { __index = function(t, key)
+                    local ck = tostring(key or "")
+                    if not ck:match(":char[1-3]$") then
+                        if ck:match("^%d+$") then ck = ck .. ":char1"
+                        elseif util.SteamIDTo64 then
+                            local s64 = util.SteamIDTo64(ck)
+                            if s64 and s64 ~= "0" then ck = tostring(s64) .. ":char1" end
+                        end
+                    end
+                    return rawget(t, ck)
+                end })
+            end
+        end
+        return data
+    end
+
+    local function clientMemberKey(ply)
+        if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
+        return IsValid(ply) and ply:SteamID() or ""
+    end
+
     net.Receive(NET_SYNC_ALL, function()
-        FactionsData = net.ReadTable() or {}
+        FactionsData = installClientFactionAliases(net.ReadTable() or {})
         refreshAllUI(FactionsData)
+    end)
+
+    net.Receive(NET_CHARACTER_CHOICES, function()
+        FactionCharacterChoices = net.ReadTable() or {}
     end)
 
     net.Receive(NET_RADIO_MSG, function()
@@ -969,7 +1226,7 @@ if CLIENT then
     end)
 
     net.Receive(NET_SEND_DATA, function()
-        local data = net.ReadTable() or {}
+        local data = installClientFactionAliases(net.ReadTable() or {})
         FactionsData = data
         if pendingDataCallback then
             local cb = pendingDataCallback
@@ -1156,7 +1413,7 @@ if CLIENT then
 
         -- лидерская вкладка «Участники»: фракция — его собственная
         if IsValid(ui.roleComboLeader) and IsValid(ui.deptComboLeader) then
-            local mySteam = IsValid(LocalPlayer()) and LocalPlayer():SteamID() or nil
+            local mySteam = IsValid(LocalPlayer()) and clientMemberKey(LocalPlayer()) or nil
             local myLead = nil
             for name, fdata in pairs(data or {}) do
                 if fdata.Leader == mySteam then myLead = name break end
@@ -1173,7 +1430,7 @@ if CLIENT then
         local scroll = ui.ranksScrollLeader
         scroll:Clear()
 
-        local mySteam = LocalPlayer():SteamID()
+        local mySteam = clientMemberKey(LocalPlayer())
         local factionName, f = nil, nil
         for name, fdata in pairs(data or {}) do
             if fdata.Leader == mySteam then factionName = name f = fdata break end
@@ -1273,7 +1530,7 @@ if CLIENT then
         local scroll = ui.deptsScrollLeader
         scroll:Clear()
 
-        local mySteam = LocalPlayer():SteamID()
+        local mySteam = clientMemberKey(LocalPlayer())
         local factionName, f = nil, nil
         for name, fdata in pairs(data or {}) do
             if fdata.Leader == mySteam then factionName = name f = fdata break end
@@ -1365,7 +1622,7 @@ if CLIENT then
         local scroll = ui.memberScrollLeader
         scroll:Clear()
 
-        local mySteam = LocalPlayer():SteamID()
+        local mySteam = clientMemberKey(LocalPlayer())
         local factionName, f = nil, nil
         for name, fdata in pairs(data or {}) do
             if fdata.Leader == mySteam then factionName = name f = fdata break end
@@ -1408,7 +1665,7 @@ if CLIENT then
             end
 
             local lblSteam = vgui.Create("DLabel", row)
-            lblSteam:SetPos(8, 6) lblSteam:SetSize(200, 20) lblSteam:SetText(steam)
+            lblSteam:SetPos(8, 6) lblSteam:SetSize(200, 20) lblSteam:SetText((info._rpName or steam) .. " [" .. steam .. "]")
             lblSteam:SetFont("Factions_Normal")
             if isLeaderMember then lblSteam:SetTextColor(Color(255, 220, 80)) end
 
@@ -1420,9 +1677,11 @@ if CLIENT then
             lblDept:SetPos(360, 6) lblDept:SetSize(130, 20) lblDept:SetText(info.Department or "Основной")
             lblDept:SetFont("Factions_Normal") lblDept:SetTextColor(THEME.textDim)
 
-            getPlayerName(steam, function(name)
-                if IsValid(lblSteam) then lblSteam:SetText(name .. " (" .. steam .. ")") end
-            end)
+            if not info._rpName then
+                getPlayerName(steam, function(name)
+                    if IsValid(lblSteam) then lblSteam:SetText(name .. " [" .. steam .. "]") end
+                end)
+            end
         end
     end
 
@@ -1636,7 +1895,7 @@ if CLIENT then
             end
 
             local lblSteam = vgui.Create("DLabel", row)
-            lblSteam:SetPos(8, 6) lblSteam:SetSize(220, 20) lblSteam:SetText(steam)
+            lblSteam:SetPos(8, 6) lblSteam:SetSize(220, 20) lblSteam:SetText((info._rpName or steam) .. " [" .. steam .. "]")
             lblSteam:SetFont("Factions_Normal")
             if steam == f.Leader then lblSteam:SetTextColor(Color(255, 220, 80)) end
 
@@ -1649,9 +1908,11 @@ if CLIENT then
             lblDept:SetPos(380, 6) lblDept:SetSize(130, 20) lblDept:SetText(info.Department or "Основной")
             lblDept:SetFont("Factions_Normal") lblDept:SetTextColor(THEME.textDim)
 
-            getPlayerName(steam, function(name)
-                if IsValid(lblSteam) then lblSteam:SetText(name .. " (" .. steam .. ")") end
-            end)
+            if not info._rpName then
+                getPlayerName(steam, function(name)
+                    if IsValid(lblSteam) then lblSteam:SetText(name .. " [" .. steam .. "]") end
+                end)
+            end
         end
     end
 
@@ -1820,14 +2081,65 @@ if CLIENT then
         btnChangeLeader.DoClick = function()
             local faction = factionCombo:GetValue()
             if not faction or faction == "" then return end
-            Derma_StringRequest("Смена лидера", "SteamID нового лидера:", "", function(steam)
-                if steam and steam ~= "" then
-                    sendAction("changeLeader", { faction, steam }, function(ok, msg)
-                        if ok then notification.AddLegacy("Лидер изменён", NOTIFY_GENERIC, 3) refreshAllUI()
-                        else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) end
-                    end)
+
+            local pick = vgui.Create("DFrame")
+            pick:SetTitle("Смена лидера — " .. faction)
+            pick:SetSize(620, 300)
+            pick:Center()
+            pick:MakePopup()
+
+            local help = vgui.Create("DLabel", pick)
+            help:Dock(TOP)
+            help:DockMargin(12, 10, 12, 4)
+            help:SetTall(32)
+            help:SetWrap(true)
+            help:SetText("Выберите персонажа онлайн или укажите его CharacterKey. SteamID аккаунта больше не используется как лидерский ключ.")
+
+            local combo = vgui.Create("DComboBox", pick)
+            combo:Dock(TOP)
+            combo:DockMargin(12, 4, 12, 4)
+            combo:SetTall(30)
+            combo:SetValue("Онлайн-персонажи")
+            local selectedKey = nil
+            function combo:OnSelect(_, _, data) selectedKey = data end
+            combo:SetSortItems(false)
+            for _, choice in ipairs(FactionCharacterChoices or {}) do
+                local active = choice.active and " • АКТИВЕН" or " • неактивен"
+                local fac = choice.faction ~= "" and (" • " .. choice.faction) or " • гражданский"
+                combo:AddChoice(
+                    tostring(choice.rpName or "?") .. "  — игрок: " .. tostring(choice.steamNick or "?") ..
+                    "  [" .. tostring(choice.slot or "char?") .. "]" .. active .. fac,
+                    tostring(choice.key or "")
+                )
+            end
+
+            local entry = vgui.Create("DTextEntry", pick)
+            entry:Dock(TOP)
+            entry:DockMargin(12, 4, 12, 4)
+            entry:SetTall(28)
+            entry:SetPlaceholderText("CharacterKey для офлайн-персонажа: SteamID64:charN")
+
+            local confirm = styledButton(pick, "Назначить лидером", THEME.accent, THEME.accentDark)
+            confirm:Dock(BOTTOM)
+            confirm:DockMargin(12, 6, 12, 10)
+            confirm:SetTall(32)
+            confirm.DoClick = function()
+                local key = string.Trim(entry:GetValue() or "")
+                key = key ~= "" and key or selectedKey
+                if not key or key == "" or not key:match(":char[1-3]$") then
+                    notification.AddLegacy("Нужен CharacterKey формата SteamID64:char1/char2/char3", NOTIFY_ERROR, 3)
+                    return
                 end
-            end)
+                sendAction("changeLeader", { faction, key }, function(ok, msg)
+                    if ok then
+                        notification.AddLegacy("Лидер изменён", NOTIFY_GENERIC, 3)
+                        pick:Close()
+                        refreshAllUI()
+                    else
+                        notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3)
+                    end
+                end)
+            end
         end
         Y = Y + 50
 
@@ -2223,7 +2535,7 @@ if CLIENT then
         Y = Y + 45
 
         getData(function(data)
-            local mySteam = LocalPlayer():SteamID()
+            local mySteam = clientMemberKey(LocalPlayer())
             for _, f in pairs(data) do
                 if f.Leader == mySteam then
                     for _, role in ipairs(f.Roles or {}) do roleCombo:AddChoice(role) end
@@ -2377,7 +2689,7 @@ if CLIENT then
         if LocalPlayer():IsSuperAdmin() then OpenAdminMenu() return end
 
         getData(function(data)
-            local mySteam = LocalPlayer():SteamID()
+            local mySteam = clientMemberKey(LocalPlayer())
             for _, f in pairs(data or {}) do
                 if f.Leader == mySteam then OpenLeaderMenu() return end
             end
@@ -2397,7 +2709,7 @@ if CLIENT then
             -- Код 108: continue→инвертированное условие (ванильный Lua)
             if IsValid(ply) and ply:Alive() and ply ~= lp
                 and lp:GetPos():Distance(ply:GetPos()) <= radius then
-                local steam = ply:SteamID()
+                local steam = clientMemberKey(ply)
                 local faction, role = nil, nil
                 local fColor = Color(255, 200, 50)
                 local fTag = ""

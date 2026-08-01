@@ -117,7 +117,11 @@ function SWEP:SecondaryAttack()
     if not self:CanUseCuffs() then return end
 
     local owner = self:GetOwner()
-    local target = HC().GetTracePlayer(owner, cfg().DragDistance or 145)
+    local target
+    if owner.GRM_Captives then
+        for captive in pairs(owner.GRM_Captives) do if IsValid(captive) and HC().IsCuffed(captive) then target = captive break end end
+    end
+    target = target or HC().GetTracePlayer(owner, cfg().DragDistance or 145)
 
     if not IsValid(target) or not HC().IsCuffed(target) then
         HC().Notify(owner, "[Наручники] Наведитесь на задержанного игрока.")

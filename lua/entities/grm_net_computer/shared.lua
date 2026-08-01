@@ -1,0 +1,1 @@
+ENT.Type="anim";ENT.Base="grm_net_device";ENT.PrintName="Сетевой компьютер";ENT.Category="GRM — Electronics";ENT.Spawnable=true;ENT.AdminOnly=true;ENT.DeviceKind="computer";ENT.DefaultModel="models/natalya/sims/computer.mdl"

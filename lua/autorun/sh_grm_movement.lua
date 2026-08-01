@@ -35,7 +35,7 @@ if SERVER then
     local playerData = {}
 
     local function getPlayerData(ply)
-        local sid = ply:SteamID64()
+        local sid = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64()
         if not playerData[sid] then
             playerData[sid] = {
                 stamina = GRM.Movement.Config.StaminaMax,

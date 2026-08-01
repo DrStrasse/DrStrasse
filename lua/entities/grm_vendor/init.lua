@@ -1,255 +1,179 @@
---[[--------------------------------------------------------------------
-    GRM Vendor Entity — server (Код 111)
-----------------------------------------------------------------------]]
-
+-- GRM Vendor Entity v2.0 — authoritative transactions and persistence
 AddCSLuaFile("cl_init.lua")
 AddCSLuaFile("shared.lua")
 include("shared.lua")
 
-util.AddNetworkString("GRM_Vendor_Open")
-util.AddNetworkString("GRM_Vendor_Buy")
-util.AddNetworkString("GRM_Vendor_Sell")
+for _, name in ipairs({"GRM_Vendor_Open","GRM_Vendor_Buy","GRM_Vendor_Sell","GRM_Vendor_Result"}) do
+    util.AddNetworkString(name)
+end
 
--- ========== ИНИЦИАЛИЗАЦИЯ ==========
+local function notify(ply, ok, text)
+    if not IsValid(ply) then return end
+    net.Start("GRM_Vendor_Result") net.WriteBool(ok == true) net.WriteString(tostring(text or "")) net.Send(ply)
+    if GRM.Notify then GRM.Notify(ply, tostring(text or ""), ok and 100 or 255, ok and 220 or 110, ok and 130 or 90) end
+end
+
+local function inRange(ply, ent)
+    if not IsValid(ply) or not ply:IsPlayer() or not IsValid(ent) or ent:GetClass() ~= "grm_vendor" then return false end
+    local distance = GRM.Vendor and GRM.Vendor.Config and GRM.Vendor.Config.UseDistance or 120
+    return ply:Alive() and ply:GetPos():DistToSqr(ent:GetPos()) <= distance * distance
+end
+
+local function rateOK(ply, key, delay)
+    ply.GRMVendorRates = ply.GRMVendorRates or {}
+    if CurTime() < (ply.GRMVendorRates[key] or 0) then return false end
+    ply.GRMVendorRates[key] = CurTime() + (delay or 0.25)
+    return true
+end
+
 function ENT:Initialize()
     local V = GRM.Vendor
-    local model = (V and V.Models and V.Models[self.VendorType]) or "models/kleiner.mdl"
-    self:SetModel(model)
+    self.VendorType = V and V.Catalogs[self.VendorType] and self.VendorType or "weapon"
+    self.VendorModel=tostring(self.VendorModel or "")
+    self:SetModel(util.IsValidModel(self.VendorModel) and self.VendorModel or ((V and V.Models and V.Models[self.VendorType]) or "models/kleiner.mdl"))
     self:SetSolid(SOLID_BBOX)
     self:SetMoveType(MOVETYPE_NONE)
     self:SetCollisionGroup(COLLISION_GROUP_NPC)
     self:SetUseType(SIMPLE_USE)
     self:SetAutomaticFrameAdvance(true)
-
-    -- Корректировка позиции: опускаем entity на землю
-    local pos = self:GetPos()
-    local trace = util.TraceLine({
-        start = pos + Vector(0, 0, 100),
-        endpos = pos + Vector(0, 0, -100),
-        mask = MASK_NPCWORLDSTATIC,
-    })
-    if trace.Hit then
-        local mins = self:OBBMins()
-        self:SetPos(trace.HitPos - Vector(0, 0, mins.z))
-    end
-
+    self.CustomPrices = istable(self.CustomPrices) and self.CustomPrices or {}
+    self.CustomLimits = istable(self.CustomLimits) and self.CustomLimits or {}
+    self.EnabledItems = istable(self.EnabledItems) and self.EnabledItems or {}
+    self.DisplayName = tostring(self.DisplayName or ""):sub(1, 64)
+    self:SetNWString("VendorType", self.VendorType)
+    self:SetNWString("GRMVendorID", tostring(self.GRMVendorID or ""))
+    self:SetNWString("GRMVendorName", V and V.GetDisplayName(self) or "GRM Торгаш")
     self:SetupIdleAnimation()
-
-    -- NW для HUD-лейбла
-    self:SetNWString("VendorType", self.VendorType or "weapon")
 end
 
 function ENT:SetupIdleAnimation()
-    local seq = self:SelectWeightedSequence(ACT_IDLE)
-    if seq and seq >= 0 then
-        self:ResetSequence(seq)
-        self:SetPlaybackRate(1.0)
-        self:SetSequence(seq)
-        self:ResetSequenceInfo()
-        return
-    end
-    for _, name in ipairs({"idle_all","idle","idle_unarmed","stand","ref","idle_01","idle_02"}) do
-        local s = self:LookupSequence(name)
-        if s and s >= 0 then
-            self:ResetSequence(s)
-            self:SetPlaybackRate(1.0)
-            self:SetSequence(s)
-            self:ResetSequenceInfo()
-            return
+    local sequence = self:SelectWeightedSequence(ACT_IDLE)
+    if not sequence or sequence < 0 then
+        for _, name in ipairs({"idle_all","idle","idle_unarmed","stand","ref","idle_01"}) do
+            sequence = self:LookupSequence(name)
+            if sequence and sequence >= 0 then break end
         end
     end
-    -- Фолбэк: любая доступная анимация
-    local s = self:LookupSequence(0)
-    if s and s >= 0 then
-        self:ResetSequence(s)
-        self:SetPlaybackRate(1.0)
-        self:SetSequence(s)
-        self:ResetSequenceInfo()
-    end
+    if sequence and sequence >= 0 then self:ResetSequence(sequence); self:SetPlaybackRate(1); self:ResetSequenceInfo() end
 end
 
--- Think НЕ нужен для NPC с MOVETYPE_NONE и AutomaticFrameAdvance
--- function ENT:Think() return true end
-
--- ========== ИСПОЛЬЗОВАНИЕ (E) ==========
-function ENT:Use(ply)
-    if not IsValid(ply) or not ply:IsPlayer() then return end
-    local dist = GRM.Vendor and GRM.Vendor.Config and GRM.Vendor.Config.UseDistance or 120
-    if ply:GetPos():DistToSqr(self:GetPos()) > (dist * dist) then return end
-
-    local cat = GRM.Vendor.GetCatalog(self.VendorType)
-    local prices = {}
-    for id, item in pairs(cat) do
-        local price = (self.CustomPrices and self.CustomPrices[id]) or item.price
-        prices[id] = {
-            price      = price,
-            name       = item.name,
-            model      = item.model or "",
-            desc       = item.desc or "",
-            category   = item.category or "Прочее",
-            license    = item.license or nil,
-            hunger     = item.hunger or nil,
-            health     = item.health or nil,
-            maxStack   = item.maxStack or nil,
-            isWeapon   = item.isWeapon or false,  -- SWEP или предмет инвентаря
-        }
+function ENT:BuildCatalogPayload()
+    local V = GRM.Vendor
+    local payload = {}
+    for id, item in pairs(V.GetCatalog(self.VendorType)) do
+        if V.IsItemEnabled(self, id) then
+            payload[id] = {
+                name=tostring(item.name or id), desc=tostring(item.desc or ""), category=tostring(item.category or "Прочее"),
+                model=tostring(item.model or ""), price=V.GetPrice(self,id,item), sellPrice=V.GetSellPrice(nil,self.VendorType,id),
+                limit=V.GetLimit(self,id), license=item.license, hunger=item.hunger, health=item.health,
+                maxStack=item.maxStack, isWeapon=self.VendorType == "weapon" or item.isWeapon == true, isEntity=item.isEntity == true,
+                functions=table.Copy(item.functions or {}), functionConfig=table.Copy(item.functionConfig or {}),
+            }
+        end
     end
+    return payload
+end
 
+function ENT:OpenFor(ply)
+    if not inRange(ply,self) then return end
     net.Start("GRM_Vendor_Open")
         net.WriteEntity(self)
-        net.WriteString(self.VendorType or "weapon")
-        net.WriteTable(prices)
+        net.WriteString(self.VendorType)
+        net.WriteString(GRM.Vendor.GetDisplayName(self))
+        net.WriteTable(self:BuildCatalogPayload())
     net.Send(ply)
 end
 
--- ========== ПОКУПКА ==========
-net.Receive("GRM_Vendor_Buy", function(_, ply)
-    local ent = net.ReadEntity()
-    local itemID = net.ReadString()
+function ENT:Use(ply)
+    if rateOK(ply,"open",0.4) then self:OpenFor(ply) end
+end
 
-    if not IsValid(ent) or ent:GetClass() ~= "grm_vendor" then return end
-    local dist = GRM.Vendor and GRM.Vendor.Config and GRM.Vendor.Config.UseDistance or 120
-    if ply:GetPos():DistToSqr(ent:GetPos()) > (dist * dist) then return end
+local function ownedCount(ply, itemID, item)
+    local count = 0
+    if item.isWeapon then count = ply:HasWeapon(itemID) and 1 or 0 end
+    if GRM.Inventory and GRM.Inventory.CountItem then count = count + (tonumber(GRM.Inventory.CountItem(ply,itemID)) or 0) end
+    return count
+end
 
-    local item = GRM.Vendor.GetItem(ent.VendorType, itemID)
-    if not item then
-        GRM.Notify(ply, "Товар не найден", 255, 100, 100)
-        return
-    end
-
-    local price = (ent.CustomPrices and ent.CustomPrices[itemID]) or item.price
-    if not GRM.HasMoney(ply, price) then
-        GRM.Notify(ply, "Недостаточно средств. Нужно: " .. GRM.Format(price), 255, 100, 100)
-        return
-    end
-
-    -- Проверка лицензии
-    if ent.VendorType == "weapon" and not GRM.Vendor.CanBuyWeapon(ply, item) then
-        GRM.Notify(ply, "Нет лицензии на это оружие", 255, 100, 100)
-        return
-    end
-
-    -- Лимит количества
-    if ent.CustomLimits and ent.CustomLimits[itemID] then
-        local count = 0
-        if ent.VendorType == "weapon" then
-            for _, wep in ipairs(ply:GetWeapons()) do
-                if wep:GetClass() == itemID then count = count + 1 end
-            end
-        else
-            count = GRM.Inventory and GRM.Inventory.CountItem and GRM.Inventory.CountItem(ply, itemID) or 0
-        end
-        if count >= ent.CustomLimits[itemID] then
-            GRM.Notify(ply, "Достигнут лимит: " .. ent.CustomLimits[itemID], 255, 100, 100)
-            return
-        end
-    end
-
-    -- Списание денег
-    GRM.TakeMoney(ply, price, "Покупка у торгаша: " .. item.name)
-
-    -- Выдача товара
+local function grantItem(ply, itemID, item)
     if item.isEntity then
-        local class = tostring(item.class or itemID)
-        local spawned = ents.Create(class)
-        if not IsValid(spawned) then
-            GRM.GiveMoney(ply, price, "Возврат: entity не создана")
-            GRM.Notify(ply, "Не удалось создать: " .. tostring(item.name or class), 255, 100, 100)
-            return
-        end
-        local forward = ply:GetForward()
-        local pos = ply:GetPos() + forward * 70 + Vector(0, 0, 24)
-        spawned:SetPos(pos)
-        spawned:SetAngles(Angle(0, ply:EyeAngles().y, 0))
-        spawned:Spawn()
-        spawned:Activate()
-        if spawned.SetPrinterOwner then spawned:SetPrinterOwner(ply) else spawned:SetOwner(ply) end
-        local phys = spawned:GetPhysicsObject()
-        if IsValid(phys) then phys:Wake() end
-        GRM.Notify(ply, "Куплено и установлено рядом: " .. item.name .. " за " .. GRM.Format(price), 100, 220, 100)
-    elseif ent.VendorType == "weapon" or item.isWeapon then
-        -- SWEP: выдаётся через ply:Give()
-        ply:Give(itemID)
-        GRM.Notify(ply, "Куплено: " .. item.name .. " за " .. GRM.Format(price), 100, 220, 100)
-    elseif GRM.Inventory and GRM.Inventory.AddItem then
-        -- Предмет инвентаря
-        local left = GRM.Inventory.AddItem(ply, itemID, 1)
-        if left > 0 then
-            -- Вернуть деньги за неполную покупку
-            GRM.GiveMoney(ply, price, "Возврат: инвентарь полон")
-            GRM.Notify(ply, "Инвентарь полон!", 255, 100, 100)
-        else
-            GRM.Notify(ply, "Куплено: " .. item.name, 100, 220, 100)
-        end
-    else
-        GRM.GiveMoney(ply, price, "Возврат: нет способа выдачи")
-        GRM.Notify(ply, "Товар нельзя выдать: " .. tostring(item.name or itemID), 255, 100, 100)
+        local entity = ents.Create(tostring(item.class or itemID))
+        if not IsValid(entity) then return false, "Не удалось создать объект" end
+        entity:SetPos(ply:GetPos()+ply:GetForward()*70+Vector(0,0,24)); entity:SetAngles(Angle(0,ply:EyeAngles().y,0)); entity:Spawn(); entity:Activate()
+        if entity.SetPrinterOwner then entity:SetPrinterOwner(ply) else entity:SetOwner(ply) end
+        local phys=entity:GetPhysicsObject(); if IsValid(phys) then phys:Wake() end
+        return true
     end
+    if item.isWeapon then
+        if ply:HasWeapon(itemID) then return false, "Это оружие уже есть" end
+        return IsValid(ply:Give(itemID)), "Не удалось выдать оружие"
+    end
+    if not (GRM.Inventory and GRM.Inventory.AddItem) then return false, "Инвентарь не загружен" end
+    return (tonumber(GRM.Inventory.AddItem(ply,itemID,1)) or 1) == 0, "Инвентарь заполнен или предмет недоступен"
+end
+
+net.Receive("GRM_Vendor_Buy",function(_,ply)
+    local ent,itemID=net.ReadEntity(),net.ReadString()
+    if not inRange(ply,ent) or not rateOK(ply,"buy",0.3) then return end
+    local V,item=GRM.Vendor,GRM.Vendor.GetItem(ent.VendorType,itemID)
+    if item then item=table.Copy(item);if ent.VendorType=="weapon"then item.isWeapon=true end end
+    if not item or not V.IsItemEnabled(ent,itemID) then notify(ply,false,"Товар отсутствует у этого торговца") return end
+    if ply:GetNWBool("GRM_Arrested",false) then notify(ply,false,"Покупки недоступны во время ареста") return end
+    if not V.CanBuyWeapon(ply,item) then notify(ply,false,"Нет необходимого допуска или лицензии") return end
+    local limit=V.GetLimit(ent,itemID)
+    if limit>0 and ownedCount(ply,itemID,item)>=limit then notify(ply,false,"Достигнут лимит: "..limit) return end
+    local price=V.GetPrice(ent,itemID,item)
+    if price>0 and (not GRM.HasMoney or not GRM.HasMoney(ply,price)) then notify(ply,false,"Недостаточно средств: "..(GRM.Format and GRM.Format(price) or price)) return end
+    local granted,reason=grantItem(ply,itemID,item)
+    if not granted then notify(ply,false,reason or "Товар не выдан") return end
+    if price>0 and GRM.TakeMoney then GRM.TakeMoney(ply,price,"Покупка у "..V.GetDisplayName(ent)..": "..tostring(item.name or itemID)) end
+    notify(ply,true,"Куплено: "..tostring(item.name or itemID).." за "..(GRM.Format and GRM.Format(price) or price))
+    hook.Run("GRM_VendorPurchased",ply,ent,itemID,item,price)
 end)
 
--- ========== СКУПКА ==========
-net.Receive("GRM_Vendor_Sell", function(_, ply)
-    local ent = net.ReadEntity()
-    local itemID = net.ReadString()
-    local count = net.ReadUInt(16) or 1
+local function removeInventoryAmount(ply,itemID,wanted)
+    if not (GRM.Inventory and GRM.Inventory.RemoveItem) then return 0 end
+    local before=GRM.Inventory.CountItem and GRM.Inventory.CountItem(ply,itemID) or wanted
+    local remaining=tonumber(GRM.Inventory.RemoveItem(ply,itemID,wanted)) or wanted
+    local removed=math.Clamp(wanted-remaining,0,math.min(wanted,before))
+    return removed
+end
 
-    if not IsValid(ent) or ent:GetClass() ~= "grm_vendor" then return end
-    local dist = GRM.Vendor and GRM.Vendor.Config and GRM.Vendor.Config.UseDistance or 120
-    if ply:GetPos():DistToSqr(ent:GetPos()) > (dist * dist) then return end
-
-    local sellPrice = GRM.Vendor.GetSellPrice(ply, ent.VendorType, itemID)
-    if sellPrice <= 0 then
-        GRM.Notify(ply, "Этот товар не скупается", 255, 100, 100)
-        return
-    end
-
-    local removed = 0
-
-    if ent.VendorType == "weapon" then
-        -- Сначала снимаем оружие из рук
-        for _, wep in ipairs(ply:GetWeapons()) do
-            if wep:GetClass() == itemID and removed < count then
-                ply:StripWeapon(itemID)
-                removed = removed + 1
-            end
-        end
-        -- Потом из инвентаря (если предмет лежит там как "weapon:xxx")
-        if removed < count and GRM.Inventory and GRM.Inventory.RemoveItem then
-            removed = removed + GRM.Inventory.RemoveItem(ply, "weapon:" .. itemID, count - removed)
-        end
-    elseif GRM.Inventory and GRM.Inventory.RemoveItem then
-        removed = GRM.Inventory.RemoveItem(ply, itemID, count)
-    end
-
-    if removed > 0 then
-        local total = removed * sellPrice
-        GRM.GiveMoney(ply, total, "Скупка у торгаша: " .. itemID)
-        GRM.Notify(ply, "Продано " .. removed .. "x за " .. GRM.Format(total), 100, 220, 100)
-    else
-        GRM.Notify(ply, "У вас нет этого предмета", 255, 100, 100)
-    end
+net.Receive("GRM_Vendor_Sell",function(_,ply)
+    local ent,itemID,wanted=net.ReadEntity(),net.ReadString(),math.Clamp(net.ReadUInt(16),1,1000)
+    if not inRange(ply,ent) or not rateOK(ply,"sell",0.35) then return end
+    local V,item=GRM.Vendor,GRM.Vendor.GetItem(ent.VendorType,itemID)
+    if item then item=table.Copy(item);if ent.VendorType=="weapon"then item.isWeapon=true end end
+    if not item or not V.IsItemEnabled(ent,itemID) or item.noSell or item.isEntity then notify(ply,false,"Этот товар не скупается") return end
+    local removed=0
+    if item.isWeapon and ply:HasWeapon(itemID) and wanted>0 then ply:StripWeapon(itemID); removed=1 end
+    if removed<wanted then removed=removed+removeInventoryAmount(ply,itemID,wanted-removed) end
+    if removed<=0 then notify(ply,false,"У вас нет этого товара") return end
+    local unit=math.floor(V.GetPrice(ent,itemID,item)*(V.Config.SellMultiplier or 0.4))
+    local total=math.max(0,removed*unit)
+    if total>0 and GRM.GiveMoney then GRM.GiveMoney(ply,total,"Продажа торговцу: "..itemID) end
+    notify(ply,true,"Продано: "..removed.." шт. за "..(GRM.Format and GRM.Format(total) or total))
+    hook.Run("GRM_VendorSold",ply,ent,itemID,item,removed,total)
 end)
 
--- ========== PERM-DATA (Код 50 интеграция) ==========
 function ENT:GetPermData()
-    return {
-        vendorType   = self.VendorType,
-        customPrices = self.CustomPrices,
-        customLimits = self.CustomLimits,
-    }
+    return {vendorType=self.VendorType,vendorID=self.GRMVendorID,displayName=self.DisplayName,model=self:GetModel(),customPrices=self.CustomPrices,customLimits=self.CustomLimits,enabledItems=self.EnabledItems}
 end
 
 function ENT:ApplyPermData(data)
-    if not data then return end
-    self.VendorType = data.vendorType or "weapon"
-    self.CustomPrices = data.customPrices
-    self.CustomLimits = data.customLimits
-    local V = GRM.Vendor
-    if V and V.Models and V.Models[self.VendorType] then
-        self:SetModel(V.Models[self.VendorType])
-        self:SetupIdleAnimation()
-    end
-    self:SetNWString("VendorType", self.VendorType)
+    if not istable(data) then return end
+    local V=GRM.Vendor
+    self.VendorType=V and V.Catalogs[data.vendorType] and data.vendorType or "weapon"
+    self.GRMVendorID=tostring(data.vendorID or self.GRMVendorID or "")
+    self.GRMVendorPersistent=self.GRMVendorID~=""
+    self.DisplayName=tostring(data.displayName or ""):sub(1,64)
+    self.CustomPrices=table.Copy(data.customPrices or {})
+    self.CustomLimits=table.Copy(data.customLimits or {})
+    self.EnabledItems=table.Copy(data.enabledItems or {})
+    self.VendorModel=tostring(data.model or self.VendorModel or "")
+    self:SetModel(util.IsValidModel(self.VendorModel) and self.VendorModel or (V.Models[self.VendorType] or "models/kleiner.mdl"))
+    self:SetNWString("VendorType",self.VendorType); self:SetNWString("GRMVendorID",self.GRMVendorID); self:SetNWString("GRMVendorName",V.GetDisplayName(self))
+    self:SetupIdleAnimation()
 end
 
-print("[GRM Vendor] Entity server loaded (Code 111)")
+print("[GRM Vendor] Entity server v2.0 loaded")

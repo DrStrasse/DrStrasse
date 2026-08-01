@@ -1,15 +1,11 @@
 --[[--------------------------------------------------------------------
-    GRM Mobile v2.0.1 — мобильные телефоны (стабилизационный слой)
-
-    ВНИМАНИЕ: README/ANALYSIS описывают более крупный Mobile v1.2.2.
-    В этой ветке лежала упрощённая v2.0.0. Этот файл не восстанавливает
-    весь старый смартфон, но приводит текущий модуль в порядок:
-    - item-id синхронизированы с /phoneshop (7 мобильных товаров Кода 88);
-    - useFunc = mobile_open, как ждёт инвентарь v1.5.0;
-    - RegisterUseHandler вызывается только когда API инвентаря реально поднят;
-    - ретраи регистрации живут даже при перевёрнутом порядке загрузки;
-    - СТРЕЛКА ВВЕРХ и /mobile открывают простое окно телефона;
-    - повторное открытие не плодит DFrame-окна.
+    GRM Mobile UI v3.0 / protocol v1.2.2
+    Полноценная телефония с разными корпусами интерфейса:
+      • кнопочные Badger — LCD, навигационная клавиша и физическая клавиатура;
+      • The Lost Flip — отдельный раскладной корпус;
+      • Touch/Whiz/Tinkle — смартфон с сеткой приложений и touch hitboxes.
+    Серверный контракт звонков/SMS/контактов/заметок/биржи/фракции/форума
+    сохранён совместимым с v1.2.2.
 ----------------------------------------------------------------------]]
 
 if SERVER then AddCSLuaFile() end
@@ -22,7 +18,8 @@ MB.DataFile = "grm_mobile.json"
 MB.SmsCap = 40
 MB.ContactsCap = 50
 MB.NotesCap = 30
-MB.Version = "1.2.2"
+MB.Version = "1.2.2" -- network/data compatibility
+MB.UIVersion = "3.2.1"
 
 MB.Tiers = {
     crappy = {
@@ -31,7 +28,7 @@ MB.Tiers = {
         model = "models/ivancorn/gtaiv/electrical/phones/cellphone_badger_crappy.mdl",
         price = 700,
         desc = "Дешёвая трубка. Только звонки.",
-        sms = false, contacts = false, notes = false, apps = false, minQ = 0.35,
+        sms = false, contacts = false, notes = false, apps = false, minQ = 0.35, ui = "feature",
     },
     badger = {
         item = "mobile_badger",
@@ -39,7 +36,7 @@ MB.Tiers = {
         model = "models/ivancorn/gtaiv/electrical/phones/cellphone_badger.mdl",
         price = 1800,
         desc = "Рабочая лошадка: звонки, SMS, контакты.",
-        sms = true, contacts = true, notes = false, apps = false, minQ = 0.30,
+        sms = true, contacts = true, notes = false, apps = false, minQ = 0.30, ui = "feature",
     },
     badger_touch = {
         item = "mobile_badger_touch",
@@ -47,7 +44,7 @@ MB.Tiers = {
         model = "models/ivancorn/gtaiv/electrical/phones/phone_mobile_badger_touchscreen.mdl",
         price = 3500,
         desc = "Сенсорный Badger: SMS, контакты, заметки.",
-        sms = true, contacts = true, notes = true, apps = false, minQ = 0.25,
+        sms = true, contacts = true, notes = true, apps = false, minQ = 0.25, ui = "touch",
     },
     lost = {
         item = "mobile_lost",
@@ -55,7 +52,7 @@ MB.Tiers = {
         model = "models/ivancorn/gtaiv/electrical/phones/cellphone_thelostdamned.mdl",
         price = 4200,
         desc = "Байкерская раскладушка: SMS, контакты, заметки.",
-        sms = true, contacts = true, notes = true, apps = false, minQ = 0.22,
+        sms = true, contacts = true, notes = true, apps = false, minQ = 0.22, ui = "flip",
     },
     tinkle = {
         item = "mobile_tinkle",
@@ -63,7 +60,7 @@ MB.Tiers = {
         model = "models/ivancorn/gtaiv/electrical/phones/cellphone_panoramic_tinkle.mdl",
         price = 6500,
         desc = "Смартфон: базовые приложения, биржа, фракция, форум.",
-        sms = true, contacts = true, notes = true, apps = true, minQ = 0.18,
+        sms = true, contacts = true, notes = true, apps = true, minQ = 0.18, ui = "smartphone",
     },
     whiz_high = {
         item = "mobile_whiz_high",
@@ -71,7 +68,7 @@ MB.Tiers = {
         model = "models/ivancorn/gtaiv/electrical/phones/cellphone_whiz_highspeed.mdl",
         price = 9000,
         desc = "Флагман Whiz: уверенный приём и все приложения.",
-        sms = true, contacts = true, notes = true, apps = true, minQ = 0.14,
+        sms = true, contacts = true, notes = true, apps = true, minQ = 0.14, ui = "smartphone",
     },
     whiz_gold = {
         item = "mobile_whiz_gold",
@@ -79,7 +76,7 @@ MB.Tiers = {
         model = "models/ivancorn/gtaiv/electrical/phones/cellphone_whiz_gold.mdl",
         price = 14000,
         desc = "Золотой Whiz: статус и лучший приёмник в городе.",
-        sms = true, contacts = true, notes = true, apps = true, minQ = 0.10,
+        sms = true, contacts = true, notes = true, apps = true, minQ = 0.10, ui = "smartphone",
     },
 }
 
@@ -96,8 +93,53 @@ MB.ItemTier.mobile_touch = MB.ItemTier.mobile_touch or "badger_touch"
 MB.ItemTier.mobile_smartphone = MB.ItemTier.mobile_smartphone or "tinkle"
 MB.Lines = MB.Lines or {}
 MB.Data = MB.Data or {}
-MB.Forum = MB.Forum or { posts = {} }
+
+function MB.Key(value)
+    if IsValid(value) and value:IsPlayer() then
+        if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(value) end
+        return tostring(value:SteamID64() or "")
+    end
+    local raw = tostring(value or "")
+    if raw:match(":char[1-3]$") then return raw end
+    if raw:match("^%d+$") then return raw .. ":char1" end
+    if util.SteamIDTo64 then
+        local s64 = util.SteamIDTo64(raw)
+        if s64 and s64 ~= "0" then return tostring(s64) .. ":char1" end
+    end
+    return raw
+end
+
+MB.Forum = MB.Forum or { posts = {}, nextID = 1 }
+MB.Forum.posts = MB.Forum.posts or {}
+MB.Forum.nextID = math.max(1, math.floor(tonumber(MB.Forum.nextID) or 1))
 MB.ForumCap = MB.ForumCap or 120
+
+local function forumPostByID(id)
+    id = math.floor(tonumber(id) or 0)
+    if id <= 0 then return nil end
+    for _, post in ipairs(MB.Forum.posts) do
+        if math.floor(tonumber(post.id) or 0) == id then return post end
+    end
+    return nil
+end
+
+local function normalizeForumPosts()
+    local used, highest = {}, 0
+    for _, post in ipairs(MB.Forum.posts) do
+        if istable(post) then
+            local id = math.floor(tonumber(post.id) or 0)
+            if id <= 0 or used[id] then
+                id = math.max(MB.Forum.nextID, highest + 1)
+                while used[id] do id = id + 1 end
+            end
+            post.id = id
+            post.likes = istable(post.likes) and post.likes or {}
+            used[id], highest = true, math.max(highest, id)
+        end
+    end
+    MB.Forum.nextID = math.max(MB.Forum.nextID, highest + 1)
+end
+normalizeForumPosts()
 
 local AppBase = { "Телефон", "Калькулятор" }
 
@@ -237,7 +279,7 @@ end
 
 function MB.EnsureData(ply)
     if not IsValid(ply) then return nil end
-    local sid = ply:SteamID64()
+    local sid = MB.Key(ply)
     MB.Data[sid] = MB.Data[sid] or { contacts = {}, sms = {}, notes = {}, number = MB.GenerateNumber() }
     local d = MB.Data[sid]
     d.contacts = istable(d.contacts) and d.contacts or {}
@@ -249,7 +291,7 @@ function MB.EnsureData(ply)
 end
 
 function MB.RemoveLine(plyOrSid)
-    local sid = isstring(plyOrSid) and plyOrSid or (IsValid(plyOrSid) and plyOrSid:SteamID64() or nil)
+    local sid = MB.Key(plyOrSid)
     if not sid then return end
     local line = MB.Lines[sid]
     if IsValid(line) then line:Remove() end
@@ -264,7 +306,7 @@ function MB.EnsureLine(ply)
         return nil
     end
 
-    local sid = ply:SteamID64()
+    local sid = MB.Key(ply)
     local data = MB.EnsureData(ply)
     local line = MB.Lines[sid]
 
@@ -300,7 +342,7 @@ function MB.Think()
     local seen = {}
     for _, ply in ipairs(list) do
         if IsValid(ply) then
-            local sid = ply:SteamID64()
+            local sid = MB.Key(ply)
             seen[sid] = true
             local line = MB.EnsureLine(ply)
             if ply._grmMobUI and CurTime() - ply._grmMobUI > 3 then
@@ -360,7 +402,7 @@ end
 
 function MB.Hangup(ply)
     if not (GRM.Phone and GRM.Phone.Hangup) then return false end
-    local sid = IsValid(ply) and ply:SteamID64() or nil
+    local sid = IsValid(ply) and MB.Key(ply) or nil
     local line = sid and MB.Lines[sid] or nil
     if not IsValid(line) then return false end
     GRM.Phone.Hangup(ply, line)
@@ -399,6 +441,10 @@ function MB.PushState(ply)
             tier = tierKey or "",
             number = data and data.number or "",
             signal = MB.SignalOf(ply),
+            bars = math.max(0, math.min(4, math.ceil(MB.SignalOf(ply) * 4))),
+            operator = "GRM CELL",
+            modelName = tierKey and MB.Tiers[tierKey] and MB.Tiers[tierKey].name or "",
+            formFactor = tierKey and MB.Tiers[tierKey] and MB.Tiers[tierKey].ui or "feature",
             unread = MB.UnreadCount(ply),
             apps = MB.AvailableApps(tierKey or ""),
             has = tierKey ~= nil,
@@ -431,7 +477,30 @@ function MB.PushData(ply, kind)
             payload.rows[#payload.rows + 1] = { i = i, text = r.text, ts = r.ts or r.time }
         end
     elseif kind == "forum" then
-        for i = 1, math.min(40, #MB.Forum.posts) do payload.rows[i] = MB.Forum.posts[i] end
+        normalizeForumPosts()
+        local key = MB.Key(ply)
+        local replyCounts = {}
+        for _, post in ipairs(MB.Forum.posts) do
+            local parent = math.floor(tonumber(post.replyTo) or 0)
+            if parent > 0 then replyCounts[parent] = (replyCounts[parent] or 0) + 1 end
+        end
+        for i = 1, math.min(40, #MB.Forum.posts) do
+            local post = MB.Forum.posts[i]
+            local liked = false
+            for _, liker in ipairs(post.likes or {}) do if tostring(liker) == key then liked = true break end end
+            payload.rows[i] = {
+                id = post.id,
+                author = tostring(post.author or "Горожанин"),
+                text = tostring(post.text or ""),
+                time = tonumber(post.time or post.ts) or 0,
+                likes = #(post.likes or {}),
+                liked = liked,
+                replies = replyCounts[post.id] or 0,
+                replyTo = math.floor(tonumber(post.replyTo) or 0),
+                replyAuthor = tostring(post.replyAuthor or ""),
+                mine = tostring(post.authorKey or "") == key,
+            }
+        end
     else
         return
     end
@@ -500,6 +569,7 @@ function MB.HandleAction(ply, act)
         MB.SendSms(ply, act.num, act.text)
         return
     elseif op == "deactivate" then
+        ply._grmMobUI = nil
         if GRM.Inventory and GRM.Inventory.GetPlayerInv then
             local inv = GRM.Inventory.GetPlayerInv(ply)
             if istable(inv) and istable(inv.slots) then
@@ -550,9 +620,35 @@ function MB.HandleAction(ply, act)
         if ply._grmMobForumTs and now - ply._grmMobForumTs < 5 then return end
         local text = string.Trim(tostring(act.text or "")):sub(1, 500)
         if text == "" then return end
+        normalizeForumPosts()
+        local replyTo = math.floor(tonumber(act.replyTo) or 0)
+        local parent = replyTo > 0 and forumPostByID(replyTo) or nil
         ply._grmMobForumTs = now
-        table.insert(MB.Forum.posts, 1, { author = ply:Nick(), text = text, time = now })
+        local id = MB.Forum.nextID
+        MB.Forum.nextID = id + 1
+        table.insert(MB.Forum.posts, 1, {
+            id = id,
+            author = ply:Nick(),
+            authorKey = MB.Key(ply),
+            text = text,
+            time = now,
+            likes = {},
+            replyTo = parent and parent.id or 0,
+            replyAuthor = parent and tostring(parent.author or "") or "",
+        })
         while #MB.Forum.posts > MB.ForumCap do table.remove(MB.Forum.posts) end
+        MB.PushData(ply, "forum")
+        return
+    elseif op == "forum_like" then
+        if not (tier and tier.apps) then return end
+        if ply._grmMobForumLikeTs and CurTime() - ply._grmMobForumLikeTs < 0.35 then return end
+        local post = forumPostByID(act.id)
+        if not post then return end
+        ply._grmMobForumLikeTs = CurTime()
+        local key, found = MB.Key(ply), nil
+        post.likes = istable(post.likes) and post.likes or {}
+        for i, liker in ipairs(post.likes) do if tostring(liker) == key then found = i break end end
+        if found then table.remove(post.likes, found) else post.likes[#post.likes + 1] = key end
         MB.PushData(ply, "forum")
         return
     elseif op == "forum_query" then
@@ -586,10 +682,16 @@ function MB.HandleAction(ply, act)
         net.Send(ply)
         return
     elseif op == "fac_query" then
-        local sid, sid64 = ply:SteamID(), ply:SteamID64()
+        local sid, sid64 = ply:SteamID(), MB.Key(ply)
         local foundName, found = nil, nil
         for name, fac in pairs(Factions or {}) do
-            if istable(fac) and istable(fac.Members) and (fac.Members[sid] or fac.Members[sid64]) then
+            local member
+            if GRM.Identity and GRM.Identity.FactionMember then
+                member = GRM.Identity.FactionMember(fac, ply)
+            else
+                member = istable(fac) and fac.Members and (fac.Members[sid] or fac.Members[sid64])
+            end
+            if istable(fac) and member then
                 foundName, found = tostring(name), fac
                 break
             end
@@ -601,7 +703,7 @@ function MB.HandleAction(ply, act)
                 local oply = player.GetBySteamID64 and player.GetBySteamID64(tostring(msid)) or nil
                 if not IsValid(oply) then
                     for _, pp in ipairs(player.GetAll and player.GetAll() or {}) do
-                        if IsValid(pp) and (pp:SteamID64() == tostring(msid) or pp:SteamID() == tostring(msid)) then oply = pp break end
+                        if IsValid(pp) and (MB.Key(pp) == tostring(msid) or pp:SteamID() == tostring(msid)) then oply = pp break end
                     end
                 end
                 local isOn = IsValid(oply)
@@ -822,11 +924,26 @@ if CLIENT then
         card = Color(26, 32, 46, 246), card2 = Color(34, 43, 62, 246), violet = Color(135, 110, 255)
     }
 
+    local APP_META = {
+        dial={icon="icon16/telephone.png",color=Color(60,190,110)}, sms={icon="icon16/email.png",color=Color(65,145,240)},
+        contacts={icon="icon16/group.png",color=Color(236,158,67)}, notes={icon="icon16/note.png",color=Color(235,198,76)},
+        jobs={icon="icon16/briefcase.png",color=Color(70,174,205)}, fac={icon="icon16/shield.png",color=Color(202,83,91)},
+        forum={icon="icon16/comments.png",color=Color(135,105,235)}, calc={icon="icon16/calculator.png",color=Color(90,110,140)},
+        power={icon="icon16/disconnect.png",color=Color(190,72,82)},
+    }
+    local FORM = {
+        smartphone={shell=Color(8,11,17),screen=Color(17,24,35),accent=Color(65,145,240)},
+        touch={shell=Color(15,18,24),screen=Color(27,34,43),accent=Color(75,175,205)},
+        feature={shell=Color(25,29,34),screen=Color(32,48,38),accent=Color(55,95,68)},
+        flip={shell=Color(32,30,29),screen=Color(53,48,35),accent=Color(112,82,48)},
+    }
+
     local M = {
         open = false, frame = nil, stateKnown = false, pendingOpen = false, state = { has = false, tier = "", number = "", lineState = "idle", unread = 0, signal = 0 },
         data = {}, screen = "home", sel = 1, listSel = 1, smsThread = nil, smsSel = 1,
         dial = "", calc = "", down = {}, lastTap = {}, hold = {}, nextRepeat = {}, noPhoneAt = -999,
-        promptOpen = false, lastSelectAt = -999,
+        promptOpen = false, lastSelectAt = -999, lastPointerAt = -999,
+        pointerX = -999, pointerY = -999, pointerPulse = nil, pointerPending = false, pointerSerial = 0, hoverAnim = {},
         poll = { up = false, down = false, mouse3 = false }
     }
     MB._devUI = M
@@ -836,7 +953,17 @@ if CLIENT then
     end
     local function lp() return LocalPlayer and LocalPlayer() or nil end
     local function hasPhone() return M.state and M.state.has ~= false and M.state.tier ~= nil and M.state.tier ~= "" end
+    local function tierDef() return MB.Tiers[tostring(M.state.tier or "")] or MB.Tiers.crappy or {} end
+    local function formFactor() return tostring(tierDef().ui or "feature") end
+    local function smartForm() local f=formFactor();return f=="smartphone" or f=="touch" end
     local function now() return CurTime and CurTime() or 0 end
+    local function textInputActive()
+        if M.chatOpen == true then return true end
+        if chat and chat.IsChatOpen and chat.IsChatOpen() then return true end
+        local focus = vgui and vgui.GetKeyboardFocus and vgui.GetKeyboardFocus() or nil
+        if IsValid(focus) and focus ~= M.frame then return true end
+        return false
+    end
     local function clamp(v, lo, hi)
         v = tonumber(v) or lo or 0
         if v < lo then return lo end
@@ -892,6 +1019,7 @@ if CLIENT then
             out[#out+1] = { id="forum", name="Форум" }
         end
         out[#out+1] = { id="calc", name="Калькулятор" }
+        out[#out+1] = { id="power", name="Управление" }
         return out
     end
 
@@ -943,11 +1071,14 @@ if CLIENT then
         M.listSel = 1
     end
 
-    local closePhone -- forward declaration: screenItems actions call it
+    local closePhone -- forward declarations: dynamic UI callbacks call these
+    local enter
+    local back
+    local selectCurrent
 
     local function screenItems()
         local items = {}
-        local function add(label, fn, hint, kind) items[#items + 1] = { label = label, fn = fn, hint = hint, kind = kind } end
+        local function add(label, fn, hint, kind, id) items[#items + 1] = { label = label, fn = fn, hint = hint, kind = kind, id = id } end
 
         local st = tostring(M.state.lineState or "idle")
         if st == "ringing" then
@@ -971,10 +1102,17 @@ if CLIENT then
                     elseif a.id == "jobs" then setScreen("jobs"); sendAct({op="jobs_query"})
                     elseif a.id == "fac" then setScreen("fac"); sendAct({op="fac_query"})
                     elseif a.id == "forum" then setScreen("forum"); sendAct({op="forum_query"})
-                    elseif a.id == "calc" then setScreen("calc") end
-                end, a.id == "sms" and tonumber(M.state.unread or 0) > 0 and ("Новых: " .. tostring(M.state.unread)) or nil)
+                    elseif a.id == "calc" then setScreen("calc")
+                    elseif a.id == "power" then setScreen("power") end
+                end, a.id == "sms" and tonumber(M.state.unread or 0) > 0 and ("Новых: " .. tostring(M.state.unread)) or nil, "app", a.id)
             end
-            add("Деактивировать", function() sendAct({op="deactivate"}); closePhone(false) end, "выключить рабочую трубку", "call_bad")
+        elseif M.screen == "power" then
+            add("Убрать телефон", function() closePhone(true) end, "Закрыть интерфейс, оставив телефон активным", "small")
+            add("Деактивировать", function() setScreen("deactivate_confirm") end, "Выключить связь до повторной активации через инвентарь", "call_bad")
+            add("Главное меню", function() goHome(); snd("back") end, nil, "back")
+        elseif M.screen == "deactivate_confirm" then
+            add("Да, деактивировать", function() sendAct({op="deactivate"}); closePhone(false) end, "Телефон перестанет принимать звонки", "call_bad")
+            add("Отмена", function() setScreen("power"); snd("back") end, "Оставить телефон активным", "back")
         elseif M.screen == "dial" then
             for _, d in ipairs({"1","2","3","4","5","6","7","8","9"}) do add(d, function() M.dial = (M.dial or "") .. d; snd("select") end, "цифра", "digit") end
             add("←", function() M.dial = string.sub(M.dial or "", 1, math.max(0, #(M.dial or "") - 1)); snd("back") end, "стереть", "digit")
@@ -983,7 +1121,7 @@ if CLIENT then
             add("Очистить", function() M.dial = ""; snd("back") end, nil, "small")
             add("Назад", function() goHome(); snd("back") end, nil, "back")
         elseif M.screen == "sms" then
-            for _, th in ipairs(smsThreads()) do add(th.num, function() M.smsThread = th.num; setScreen("sms_dialog") end, (th.unread > 0 and ("новых: " .. th.unread .. " • ") or "") .. tostring(th.last or "")) end
+            for threadIndex, th in ipairs(smsThreads()) do add(th.num, function() M.smsThread = th.num;M.smsThreadListSel=threadIndex;setScreen("sms_dialog") end, (th.unread > 0 and ("новых: " .. th.unread .. " • ") or "") .. tostring(th.last or "")) end
             add("Новое SMS", function()
                 askString("SMS", "Номер", "", function(num)
                     askString("SMS", "Текст", "", function(txt) sendAct({op="sms", num=num, text=txt}) end)
@@ -999,7 +1137,7 @@ if CLIENT then
             add("Назад к SMS", function() setScreen("sms"); snd("back") end, nil, "back")
             add("Главное меню", function() goHome(); snd("back") end, nil, "back")
         elseif M.screen == "contacts" then
-            for _, r in ipairs(rows("contacts")) do add(tostring(r.name or r.num or "Контакт"), function() M.contact = r; setScreen("contact_actions") end, tostring(r.num or "")) end
+            for contactIndex, r in ipairs(rows("contacts")) do add(tostring(r.name or r.num or "Контакт"), function() M.contact = r;M.contactListSel=contactIndex;setScreen("contact_actions") end, tostring(r.num or "")) end
             add("Добавить контакт", function()
                 askString("Контакт", "Имя", "", function(name)
                     askString("Контакт", "Номер", "", function(num) sendAct({op="contact_add", name=name, num=num}) end)
@@ -1028,10 +1166,31 @@ if CLIENT then
             add("Обновить", function() sendAct({op="fac_query"}); snd("select") end, nil, "small")
             add("Назад", function() goHome(); snd("back") end, nil, "back")
         elseif M.screen == "forum" then
-            for _, r in ipairs(rows("forum")) do add(tostring(r.author or "?") .. ": " .. tostring(r.text or ""), function() end, "пост") end
-            add("Новый пост", function() askString("Форум", "Текст поста", "", function(txt) sendAct({op="forum_post", text=txt}) end) end)
-            add("Обновить", function() sendAct({op="forum_query"}); snd("select") end, nil, "small")
-            add("Назад", function() goHome(); snd("back") end, nil, "back")
+            add("Написать", function() askString("Новая публикация", "Что происходит в городе?", "", function(txt) sendAct({op="forum_post", text=txt}) end) end, nil, "forum_new")
+            add("Обновить", function() sendAct({op="forum_query"}); snd("select") end, nil, "forum_refresh")
+            add("Назад", function() goHome(); snd("back") end, nil, "forum_back")
+            for _, r in ipairs(rows("forum")) do
+                add(tostring(r.author or "Горожанин"), function()
+                    M.forumPost = r
+                    M.forumPostID = tonumber(r.id) or 0
+                    M.forumFeedSel = M.listSel
+                    setScreen("forum_detail")
+                end, tostring(r.text or ""), "forum_post", tonumber(r.id) or 0)
+            end
+        elseif M.screen == "forum_detail" then
+            local post = M.forumPost or {}
+            add(post.liked and "Убрать реакцию" or "Нравится", function()
+                if tonumber(post.id) then sendAct({op="forum_like", id=tonumber(post.id)}) end
+                post.liked = not post.liked
+                post.likes = math.max(0, (tonumber(post.likes) or 0) + (post.liked and 1 or -1))
+            end, nil, "forum_like")
+            add("Ответить", function()
+                askString("Ответ для " .. tostring(post.author or "пользователя"), "Текст ответа", "", function(txt)
+                    sendAct({op="forum_post", text=txt, replyTo=tonumber(post.id) or 0})
+                    setScreen("forum")
+                end)
+            end, nil, "forum_reply")
+            add("К ленте", function() setScreen("forum"); snd("back") end, nil, "forum_back")
         elseif M.screen == "calc" then
             for _, b in ipairs({"7","8","9","+","4","5","6","-","1","2","3","*","0","/","C","="}) do
                 add(b, function()
@@ -1048,30 +1207,211 @@ if CLIENT then
     closePhone = function(send)
         if not M.open then return end
         M.open = false
+        M.pointerPending = false
+        M.pointerPulse = nil
+        M.pointerSerial = (tonumber(M.pointerSerial) or 0) + 1
         if send ~= false then sendAct({ op = "close" }) end
         snd("close")
         if IsValid(M.frame) then safe(M.frame, "SetVisible", false); safe(M.frame, "Remove") end
         M.frame = nil
     end
 
+    local function fitText(text, font, maxWidth)
+        text = tostring(text or "")
+        if not surface or not surface.SetFont or not surface.GetTextSize then return text end
+        surface.SetFont(font)
+        if surface.GetTextSize(text) <= maxWidth then return text end
+        local suffix = "…"
+        while #text > 0 do
+            local cut = #text
+            while cut > 1 do
+                local byte = string.byte(text, cut)
+                if not byte or byte < 128 or byte > 191 then break end
+                cut = cut - 1
+            end
+            text = string.sub(text, 1, cut - 1)
+            if surface.GetTextSize(text .. suffix) <= maxWidth then return text .. suffix end
+        end
+        return suffix
+    end
+
+    local function pointerFeedback(x, y, w, h, id)
+        local over = M.pointerX >= x and M.pointerX <= x + w and M.pointerY >= y and M.pointerY <= y + h
+        local key = tostring(M.screen) .. ":" .. tostring(id or "")
+        local current = tonumber(M.hoverAnim[key]) or 0
+        local speed = math.min(1, (FrameTime and FrameTime() or 0.016) * 14)
+        current = current + ((over and 1 or 0) - current) * speed
+        if current < 0.01 and not over then current = 0 end
+        M.hoverAnim[key] = current
+        local pulse = M.pointerPulse
+        local pressed = pulse and pulse.screen == M.screen and pulse.id == tostring(id or "") and now() < (pulse.untilAt or 0)
+        return current, pressed == true
+    end
+
+    local function drawPointerFeedback(radius, x, y, w, h, id)
+        local hover, pressed = pointerFeedback(x, y, w, h, id)
+        if hover > 0 then
+            draw.RoundedBox(radius, x, y, w, h, Color(255, 255, 255, math.floor(24 * hover)))
+        end
+        if pressed then
+            draw.RoundedBox(radius, x + 2, y + 2, math.max(1, w - 4), math.max(1, h - 4), Color(8, 12, 20, 80))
+        end
+        return hover, pressed
+    end
+
     local function drawEmpty(w, y, title, text)
         draw.RoundedBox(10, 18, y, w - 36, 86, C.card)
-        draw.SimpleText(title, "GRMMob_B", w / 2, y + 30, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        draw.SimpleText(text or "", "GRMMob_XS", w / 2, y + 56, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText(fitText(title, "GRMMob_B", w - 64), "GRMMob_B", w / 2, y + 30, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText(fitText(text, "GRMMob_XS", w - 64), "GRMMob_XS", w / 2, y + 56, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+
+    local function forumAge(ts)
+        local delta = math.max(0, os.time() - (tonumber(ts) or os.time()))
+        if delta < 60 then return "сейчас" end
+        if delta < 3600 then return math.floor(delta / 60) .. " мин" end
+        if delta < 86400 then return math.floor(delta / 3600) .. " ч" end
+        return math.floor(delta / 86400) .. " д"
+    end
+
+    local function forumInitial(author)
+        author = string.Trim(tostring(author or "?"))
+        local first = string.byte(author, 1) or 63
+        local length = first < 128 and 1 or (first < 224 and 2 or (first < 240 and 3 or 4))
+        return string.upper(string.sub(author, 1, length))
+    end
+
+    local function wrapForumText(text, font, maxWidth, maxLines)
+        text = tostring(text or "")
+        surface.SetFont(font)
+        local lines, current = {}, ""
+        for word in text:gmatch("%S+") do
+            local candidate = current == "" and word or (current .. " " .. word)
+            if surface.GetTextSize(candidate) <= maxWidth then
+                current = candidate
+            else
+                if current ~= "" then lines[#lines + 1] = current end
+                current = fitText(word, font, maxWidth)
+                if #lines >= maxLines then break end
+            end
+        end
+        if current ~= "" and #lines < maxLines then lines[#lines + 1] = current end
+        if #lines == 0 then lines[1] = "Без текста" end
+        if #lines == maxLines and surface.GetTextSize(lines[#lines]) > maxWidth - 12 then lines[#lines] = fitText(lines[#lines], font, maxWidth - 12) end
+        return lines
+    end
+
+    local function drawForumFeed(w, startY, maxY, items)
+        M.listSel = clamp(M.listSel, 1, math.max(1, #items))
+        M.hitboxes = {}
+        local gap, x = 8, 18
+        local widths = { math.floor((w - 52) * .46), math.floor((w - 52) * .30) }
+        widths[3] = w - 36 - widths[1] - widths[2] - gap * 2
+        local colors = { C.violet, C.row2, Color(65, 72, 88) }
+        local icons = { "+  Написать", "↻  Обновить", "‹" }
+        for i = 1, 3 do
+            local active = M.listSel == i
+            draw.RoundedBox(12, x, startY, widths[i], 42, active and colors[i] or C.card2)
+            local _, pressed = drawPointerFeedback(12, x, startY, widths[i], 42, i)
+            draw.SimpleText(icons[i], i == 3 and "GRMMob_T" or "GRMMob_B", x + widths[i] / 2, startY + 21 + (pressed and 1 or 0), C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            M.hitboxes[#M.hitboxes + 1] = { x=x, y=startY, w=widths[i], h=42, index=i }
+            x = x + widths[i] + gap
+        end
+
+        local posts = math.max(0, #items - 3)
+        local y, cardH = startY + 54, 92
+        if posts == 0 then
+            drawEmpty(w, y, "Пока тихо", "Начните городское обсуждение")
+            return
+        end
+        local visible = math.max(1, math.floor((maxY - y + 8) / (cardH + 8)))
+        local selectedPost = M.listSel > 3 and (M.listSel - 3) or 1
+        local first = clamp(selectedPost - visible + 1, 1, math.max(1, posts - visible + 1))
+        for postIndex = first, math.min(posts, first + visible - 1) do
+            local itemIndex, item = postIndex + 3, items[postIndex + 3]
+            local post = rows("forum")[postIndex] or {}
+            local active = M.listSel == itemIndex
+            draw.RoundedBox(14, 18, y, w - 36, cardH, active and Color(54, 48, 92, 250) or C.card)
+            drawPointerFeedback(14, 18, y, w - 36, cardH, itemIndex)
+            draw.RoundedBox(18, 30, y + 12, 36, 36, active and C.violet or C.row2)
+            draw.SimpleText(forumInitial(post.author), "GRMMob_B", 48, y + 30, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            draw.SimpleText(fitText(post.author, "GRMMob_B", w - 180), "GRMMob_B", 78, y + 20, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(forumAge(post.time), "GRMMob_XS", w - 30, y + 20, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            if tostring(post.replyAuthor or "") ~= "" then
+                draw.SimpleText("↳ ответ для " .. fitText(post.replyAuthor, "GRMMob_XS", 110), "GRMMob_XS", 78, y + 38, C.violet, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+            draw.SimpleText(fitText(post.text, "GRMMob_S", w - 72), "GRMMob_S", 34, y + 60, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText((post.liked and "♥ " or "♡ ") .. tostring(tonumber(post.likes) or 0) .. "    ◌ " .. tostring(tonumber(post.replies) or 0), "GRMMob_XS", w - 30, y + 78, post.liked and Color(245,105,135) or C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            M.hitboxes[#M.hitboxes + 1] = { x=18, y=y, w=w-36, h=cardH, index=itemIndex }
+            y = y + cardH + 8
+        end
+    end
+
+    local function drawForumDetail(w, startY, maxY, items)
+        M.listSel = clamp(M.listSel, 1, #items)
+        M.hitboxes = {}
+        local post = M.forumPost or {}
+        draw.RoundedBox(16, 18, startY, w - 36, 174, C.card)
+        draw.RoundedBox(20, 32, startY + 14, 40, 40, C.violet)
+        draw.SimpleText(forumInitial(post.author), "GRMMob_B", 52, startY + 34, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText(fitText(post.author, "GRMMob_B", w - 180), "GRMMob_B", 84, startY + 24, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText(forumAge(post.time), "GRMMob_XS", w - 32, startY + 24, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        if tostring(post.replyAuthor or "") ~= "" then draw.SimpleText("Ответ для " .. fitText(post.replyAuthor, "GRMMob_XS", 150), "GRMMob_XS", 84, startY + 45, C.violet, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
+        local lines = wrapForumText(post.text, "GRMMob_S", w - 68, 4)
+        for i, line in ipairs(lines) do draw.SimpleText(line, "GRMMob_S", 34, startY + 70 + (i - 1) * 19, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
+        draw.SimpleText((post.liked and "♥" or "♡") .. "  " .. tostring(tonumber(post.likes) or 0) .. " нравится", "GRMMob_XS", 34, startY + 154, post.liked and Color(245,105,135) or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("◌  " .. tostring(tonumber(post.replies) or 0) .. " ответов", "GRMMob_XS", w - 34, startY + 154, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+
+        local labels = { post.liked and "♥  Убрать" or "♡  Нравится", "↳  Ответить", "‹  К ленте" }
+        local colors = { Color(185,70,105), C.violet, C.row2 }
+        local y = startY + 186
+        for i = 1, 3 do
+            if y + 44 > maxY then break end
+            local active = M.listSel == i
+            draw.RoundedBox(12, 18, y, w - 36, 44, active and colors[i] or C.card2)
+            local _, pressed = drawPointerFeedback(12, 18, y, w - 36, 44, i)
+            draw.SimpleText(labels[i], "GRMMob_B", w / 2, y + 22 + (pressed and 1 or 0), C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            M.hitboxes[#M.hitboxes + 1] = { x=18, y=y, w=w-36, h=44, index=i }
+            y = y + 52
+        end
     end
 
     local function drawButtonList(w, startY, maxY)
         local items = screenItems()
         if #items == 0 then return end
-        if M.screen == "home" then M.sel = clamp(M.sel, 1, #items) else M.listSel = clamp(M.listSel, 1, #items) end
-        local selected = (M.screen == "home") and M.sel or M.listSel
+        local lineState = tostring(M.state.lineState or "idle")
+        local callControls = lineState == "ringing" or lineState == "dialing" or lineState == "call"
+        if M.screen == "home" and not callControls then M.sel = clamp(M.sel, 1, #items) else M.listSel = clamp(M.listSel, 1, #items) end
+        local selected = (M.screen == "home" and not callControls) and M.sel or M.listSel
+        M.hitboxes = {}
+
+        if not callControls and M.screen == "forum" then drawForumFeed(w, startY, maxY, items) return end
+        if not callControls and M.screen == "forum_detail" then drawForumDetail(w, startY, maxY, items) return end
+
+        if not callControls and M.screen == "home" and smartForm() then
+            local cols,gap=3,10
+            local tile=math.floor((w-36-(cols-1)*gap)/cols)
+            for i,it in ipairs(items) do
+                local col=(i-1)%cols;local row=math.floor((i-1)/cols)
+                local x=18+col*(tile+gap);local y=startY+row*(tile+24+gap)
+                if y+tile+24>maxY then break end
+                local active=i==selected;local meta=APP_META[it.id] or {icon="icon16/power.png",color=C.red}
+                draw.RoundedBox(14,x,y,tile,tile,active and meta.color or C.card2)
+                local hover,pressed=drawPointerFeedback(14,x,y,tile,tile+24,i)
+                local iconSize=36+math.floor(hover*4);local iconShift=pressed and 2 or 0
+                surface.SetMaterial(Material(meta.icon,"smooth"));surface.SetDrawColor(255,255,255,math.min(255,(active and 255 or 220)+math.floor(hover*35)));surface.DrawTexturedRect(x+tile/2-iconSize/2,y+tile/2-iconSize/2+iconShift,iconSize,iconSize)
+                draw.SimpleText(fitText(it.label,"GRMMob_XS",tile),"GRMMob_XS",x+tile/2,y+tile+12+iconShift,hover>.05 and color_white or C.text,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+                if it.id=="sms" and tonumber(M.state.unread or 0)>0 then draw.RoundedBox(9,x+tile-22,y+5,18,18,C.red);draw.SimpleText(tostring(M.state.unread),"GRMMob_XS",x+tile-13,y+14,color_white,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)end
+                M.hitboxes[#M.hitboxes+1]={x=x,y=y,w=tile,h=tile+24,index=i}
+            end
+            return
+        end
 
         if (M.screen == "jobs" and #rows("jobs") == 0) then drawEmpty(w, startY, "Нет объявлений", "Нажмите «Обновить», чтобы проверить биржу"); startY = startY + 98 end
         if (M.screen == "forum" and #rows("forum") == 0) then drawEmpty(w, startY, "Форум пуст", "Создайте первый пост или обновите ленту"); startY = startY + 98 end
         if (M.screen == "contacts" and #rows("contacts") == 0) then drawEmpty(w, startY, "Контактов нет", "Добавьте первый контакт"); startY = startY + 98 end
         if (M.screen == "notes" and #rows("notes") == 0) then drawEmpty(w, startY, "Заметок нет", "Добавьте заметку"); startY = startY + 98 end
 
-        if M.screen == "dial" or M.screen == "calc" then
+        if not callControls and (M.screen == "dial" or M.screen == "calc") then
             local cols = (M.screen == "calc") and 4 or 3
             local gap = 8
             local bw = math.floor((w - 36 - (cols - 1) * gap) / cols)
@@ -1081,34 +1421,90 @@ if CLIENT then
                 local row = math.floor((i - 1) / cols)
                 local x = 18 + col * (bw + gap)
                 local y = startY + row * (bh + gap)
-                if y > maxY then break end
+                if y + bh > maxY then break end
                 local active = i == selected
                 local color = active and C.accent or C.card2
                 if it.kind == "call_good" then color = active and C.green or Color(38, 78, 55, 245) end
                 if it.kind == "call_bad" then color = active and C.red or Color(82, 42, 48, 245) end
                 if it.kind == "back" then color = active and C.yellow or Color(74, 62, 34, 245) end
                 draw.RoundedBox(10, x, y, bw, bh, color)
-                draw.SimpleText(tostring(it.label or ""), (it.kind == "digit" or M.screen == "calc") and "GRMMob_T" or "GRMMob_B", x + bw / 2, y + 24, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                local _,pressed=drawPointerFeedback(10,x,y,bw,bh,i)
+                draw.SimpleText(tostring(it.label or ""), (it.kind == "digit" or M.screen == "calc") and "GRMMob_T" or "GRMMob_B", x + bw / 2, y + 24 + (pressed and 1 or 0), C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                 if it.hint and tostring(it.hint) ~= "" then draw.SimpleText(tostring(it.hint), "GRMMob_XS", x + bw / 2, y + 43, active and Color(245,250,255) or C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER) end
+                M.hitboxes[#M.hitboxes+1]={x=x,y=y,w=bw,h=bh,index=i}
             end
             return
         end
 
         local y = startY
         for i, it in ipairs(items) do
-            if y > maxY then break end
             local isAction = it.kind == "small" or it.kind == "back" or it.kind == "call_good" or it.kind == "call_bad"
             local h = isAction and 42 or ((M.screen == "forum" or M.screen == "jobs" or M.screen == "contacts" or M.screen == "notes") and 64 or 46)
+            if y + h > maxY then break end
             local active = i == selected
             local color = active and C.accent or (isAction and C.row or C.card)
             if it.kind == "call_good" then color = active and C.green or Color(38, 78, 55, 245) end
             if it.kind == "call_bad" then color = active and C.red or Color(82, 42, 48, 245) end
             if it.kind == "back" then color = active and C.yellow or Color(74, 62, 34, 245) end
             draw.RoundedBox(10, 18, y, w - 36, h, color)
-            draw.SimpleText(tostring(it.label or ""), "GRMMob_B", 34, y + (it.hint and 20 or h/2), C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            if it.hint and tostring(it.hint) ~= "" then draw.SimpleText(tostring(it.hint), "GRMMob_XS", 34, y + h - 18, active and Color(230,240,255) or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
+            local hover,pressed=drawPointerFeedback(10,18,y,w-36,h,i)
+            draw.SimpleText(fitText(it.label, "GRMMob_B", w - 76), "GRMMob_B", 34 + math.floor(hover*3), y + (it.hint and 20 or h/2) + (pressed and 1 or 0), C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            if it.hint and tostring(it.hint) ~= "" then draw.SimpleText(fitText(it.hint, "GRMMob_XS", w - 76), "GRMMob_XS", 34, y + h - 18, active and Color(230,240,255) or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
+            M.hitboxes[#M.hitboxes+1]={x=18,y=y,w=w-36,h=h,index=i}
             y = y + h + 8
         end
+    end
+
+    local function activatePointerBox(box)
+        if not box or M.pointerPending then return end
+        if now() - (tonumber(M.lastPointerAt) or -999) < 0.18 then return end
+        M.lastPointerAt = now()
+
+        local screenAtClick = M.screen
+        local pulseID = box.navAction and ("nav:" .. tostring(box.navAction)) or (box.keyValue and ("key:" .. tostring(box.keyValue)) or tostring(box.index or ""))
+        M.pointerPulse = { screen=screenAtClick, id=pulseID, untilAt=now()+0.14 }
+        M.pointerPending = true
+        M.pointerSerial = (tonumber(M.pointerSerial) or 0) + 1
+        local clickSerial = M.pointerSerial
+
+        local action
+        if box.navAction then
+            local navAction = tostring(box.navAction)
+            action = function()
+                if navAction == "back" then back()
+                elseif navAction == "home" then goHome(); snd("back")
+                elseif navAction == "close" then closePhone(true) end
+            end
+        elseif box.keyValue then
+            local value = tostring(box.keyValue)
+            action = function()
+                if value == "OK" then
+                    enter()
+                elseif tonumber(value) then
+                    if M.screen == "dial" then M.dial = (M.dial or "") .. value
+                    elseif M.screen == "calc" then M.calc = (M.calc or "") .. value end
+                    snd("select")
+                end
+            end
+        else
+            -- Capture the item before its callback changes screenItems(). The short
+            -- delay leaves one painted frame for a visible press animation.
+            local items = screenItems()
+            local item = items[box.index]
+            if not item or not item.fn then M.pointerPending=false return end
+            local st = tostring(M.state.lineState or "idle")
+            if M.screen == "home" and st == "idle" then M.sel = box.index else M.listSel = box.index end
+            snd("select")
+            action = item.fn
+        end
+
+        local function finishClick()
+            if M.pointerSerial ~= clickSerial then return end
+            M.pointerPending = false
+            if not M.open or M.screen ~= screenAtClick then return end
+            action()
+        end
+        if timer and timer.Simple then timer.Simple(0.07, finishClick) else finishClick() end
     end
 
     local function openPhone(force)
@@ -1126,17 +1522,39 @@ if CLIENT then
             safe(f, "SetTitle", "")
             safe(f, "ShowCloseButton", false)
             safe(f, "SetDraggable", false)
-            local fw, fh = math.min(520, ScrW() - 80), math.min(720, ScrH() - 80)
+            local form=formFactor()
+            local baseSize=({smartphone={430,760},touch={410,720},feature={360,700},flip={370,750}})[form] or {360,700}
+            local fw,fh=math.min(baseSize[1],ScrW()-50),math.min(baseSize[2],ScrH()-50)
             safe(f, "SetSize", fw, fh)
             if f.SetPos then f:SetPos(ScrW() - fw - 34, ScrH() - fh - 34) end
-            safe(f, "SetVisible", true)
-            f.Paint = function(_, w, h)
-                draw.RoundedBox(18, 0, 0, w, h, C.shell)
-                draw.RoundedBox(14, 10, 10, w - 20, h - 20, C.bg)
-                draw.RoundedBoxEx(14, 10, 10, w - 20, 58, C.top, true, true, false, false)
-                draw.SimpleText("GRM Mobile", "GRMMob_T", 24, 39, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                draw.SimpleText("№ " .. tostring(M.state.number or ""), "GRMMob_S", w - 24, 32, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-                draw.SimpleText("Колесо — выбор  •  СКМ — нажать  •  ↓ — закрыть", "GRMMob_XS", w - 24, 52, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            safe(f,"SetVisible",true)
+            safe(f,"MakePopup")
+            f.OnKeyCodePressed=function(_,key)if MB._uiKeyDown then MB._uiKeyDown(key)end end
+            f.OnKeyCodeReleased=function(_,key)if MB._uiKeyUp then MB._uiKeyUp(key)end end
+            f.OnMousePressed=function(self,key)
+                if key~=MOUSE_LEFT then return end
+                local sx,sy=gui.MousePos();local fx,fy=self:GetPos();local x,y=sx-fx,sy-fy
+                for _,box in ipairs(M.hitboxes or{})do
+                    if x>=box.x and x<=box.x+box.w and y>=box.y and y<=box.y+box.h then
+                        activatePointerBox(box)
+                        return
+                    end
+                end
+            end
+            f.Paint = function(self, w, h)
+                if self.CursorPos then M.pointerX,M.pointerY=self:CursorPos() else M.pointerX,M.pointerY=-999,-999 end
+                local form=formFactor();local palette=FORM[form] or FORM.feature;local smart=smartForm()
+                draw.RoundedBox(smart and 28 or 18,0,0,w,h,palette.shell)
+                if form=="flip" then draw.RoundedBox(5,10,math.floor(h*.58),w-20,12,Color(12,12,14));surface.SetDrawColor(80,75,70);surface.DrawOutlinedRect(10,math.floor(h*.58),w-20,12,2)end
+                local screenBottom=smart and(h-45)or math.floor(h*(form=="flip"and .55 or .58))
+                draw.RoundedBox(smart and 22 or 9,10,10,w-20,screenBottom-10,palette.screen)
+                draw.RoundedBoxEx(smart and 20 or 8,10,10,w-20,42,palette.accent,true,true,false,false)
+                draw.SimpleText(os.date("%H:%M"),"GRMMob_S",22,27,C.text,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+                draw.SimpleText(tostring(M.state.operator or"GRM"),"GRMMob_XS",w/2,27,C.text,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+                local bars=clamp(math.floor(tonumber(M.state.bars)or((tonumber(M.state.signal)or 0)*4)),0,4)
+                for i=1,4 do draw.RoundedBox(1,w-70+(i-1)*8,32-i*4,5,4+i*4,i<=bars and C.green or Color(90,100,110))end
+                draw.SimpleText(tostring(M.state.modelName or tierDef().name or"GRM Mobile"),"GRMMob_B",20,64,smart and C.text or Color(25,40,28),TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+                draw.SimpleText("№"..tostring(M.state.number or""),"GRMMob_XS",w-20,64,smart and C.dim or Color(45,65,48),TEXT_ALIGN_RIGHT,TEXT_ALIGN_CENTER)
 
                 local st = tostring(M.state.lineState or "idle")
                 if st == "ringing" then
@@ -1144,33 +1562,79 @@ if CLIENT then
                     draw.SimpleText("Входящий: " .. tostring(M.state.otherName or M.state.otherNumber or ""), "GRMMob_B", w/2, 98, Color(10,20,15), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                 end
 
-                local title = ({ home="Главное меню", dial="Набор номера", sms="SMS", sms_dialog="Диалог " .. tostring(M.smsThread or ""), contacts="Контакты", contact_actions="Контакт", notes="Заметки", jobs="Биржа труда", fac="Моя фракция", forum="Форум", calc="Калькулятор" })[M.screen] or M.screen
-                draw.SimpleText(title, "GRMMob_B", 24, 92, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                local topY = 118
-                if M.screen == "dial" then
-                    draw.RoundedBox(8, 18, 112, w - 36, 54, C.row2)
-                    draw.SimpleText(M.dial == "" and "Введите номер" or M.dial, "GRMMob_T", w/2, 139, C.green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                    topY = 178
-                elseif M.screen == "calc" then
-                    draw.RoundedBox(8, 18, 112, w - 36, 54, C.row2)
-                    draw.SimpleText(M.calc == "" and "0" or M.calc, "GRMMob_T", w/2, 139, C.green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                    topY = 178
-                elseif M.screen == "sms_dialog" then
-                    local y = 112
+                local callControls = st == "ringing" or st == "dialing" or st == "call"
+                local title = ({ home="Главное меню", dial="Набор номера", sms="SMS", sms_dialog="Диалог " .. tostring(M.smsThread or ""), contacts="Контакты", contact_actions="Контакт", notes="Заметки", jobs="Биржа труда", fac="Моя фракция", forum="Городской форум", forum_detail="Публикация", calc="Калькулятор", power="Телефон", deactivate_confirm="Подтверждение" })[M.screen] or M.screen
+                if st == "ringing" then title = "Управление вызовом"
+                elseif st == "dialing" then title = "Исходящий вызов"
+                elseif st == "call" then title = "Разговор" end
+                local titleY = st == "ringing" and 142 or 92
+                draw.SimpleText(fitText(title, "GRMMob_B", w - 48), "GRMMob_B", 24, titleY, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                local topY = titleY + 26
+                if not callControls and M.screen == "dial" then
+                    draw.RoundedBox(8, 18, topY, w - 36, 54, C.row2)
+                    draw.SimpleText(fitText(M.dial == "" and "Введите номер" or M.dial, "GRMMob_T", w - 60), "GRMMob_T", w/2, topY + 27, C.green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    topY = topY + 66
+                elseif not callControls and M.screen == "calc" then
+                    draw.RoundedBox(8, 18, topY, w - 36, 54, C.row2)
+                    draw.SimpleText(fitText(M.calc == "" and "0" or M.calc, "GRMMob_T", w - 60), "GRMMob_T", w/2, topY + 27, C.green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    topY = topY + 66
+                elseif not callControls and M.screen == "sms_dialog" then
+                    local y = topY
                     local rr = {}
                     for _, th in ipairs(smsThreads()) do if th.num == M.smsThread then rr = th.rows end end
-                    for i = math.max(1, #rr - 4), #rr do
+                    local endIndex=clamp(#rr-(math.max(1,tonumber(M.smsSel)or 1)-1),1,math.max(1,#rr))
+                    for i = math.max(1, endIndex - 4), endIndex do
                         local m = rr[i]
                         if m then
                             local out = m.dir == "out"
                             draw.RoundedBox(8, out and w - 250 or 22, y, 228, 28, out and C.accent or C.row2)
-                            draw.SimpleText(tostring(m.text or ""), "GRMMob_XS", out and w - 238 or 34, y + 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                            draw.SimpleText(fitText(m.text, "GRMMob_XS", 204), "GRMMob_XS", out and w - 238 or 34, y + 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                             y = y + 32
                         end
                     end
                     topY = y + 8
                 end
-                drawButtonList(w, topY, h - 24)
+                local contentBottom=smart and(h-58)or(screenBottom-12)
+                drawButtonList(w,topY,contentBottom)
+                if not smart then
+                    local keyTop=screenBottom+22
+                    draw.RoundedBox(12,14,keyTop+8,82,46,Color(55,62,72))
+                    local _,backPressed=drawPointerFeedback(12,14,keyTop+8,82,46,"nav:back")
+                    draw.SimpleText("Назад","GRMMob_XS",55,keyTop+31+(backPressed and 1 or 0),C.text,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+                    draw.RoundedBox(12,w-96,keyTop+8,82,46,Color(108,45,50))
+                    local _,closePressed=drawPointerFeedback(12,w-96,keyTop+8,82,46,"nav:close")
+                    draw.SimpleText("Убрать","GRMMob_XS",w-55,keyTop+31+(closePressed and 1 or 0),C.text,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+                    M.hitboxes[#M.hitboxes+1]={x=14,y=keyTop+8,w=82,h=46,navAction="back"}
+                    M.hitboxes[#M.hitboxes+1]={x=w-96,y=keyTop+8,w=82,h=46,navAction="close"}
+                    draw.RoundedBox(18,w/2-52,keyTop,104,62,Color(44,49,56))
+                    draw.RoundedBox(12,w/2-30,keyTop+8,60,46,Color(70,80,90))
+                    local _,okPressed=drawPointerFeedback(18,w/2-52,keyTop,104,62,"key:OK")
+                    draw.SimpleText("OK","GRMMob_S",w/2,keyTop+31+(okPressed and 1 or 0),C.text,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+                    local labels={{"1",""},{"2","ABC"},{"3","DEF"},{"4","GHI"},{"5","JKL"},{"6","MNO"},{"7","PQRS"},{"8","TUV"},{"9","WXYZ"},{"*",""},{"0","+"},{"#",""}}
+                    local kw,kh=math.floor((w-64)/3),42
+                    for i,k in ipairs(labels)do
+                        local col=(i-1)%3;local row=math.floor((i-1)/3);local x=24+col*(kw+8);local y=keyTop+78+row*(kh+7)
+                        draw.RoundedBox(8,x,y,kw,kh,Color(48,54,62))
+                        local _,pressed=drawPointerFeedback(8,x,y,kw,kh,"key:"..k[1])
+                        draw.SimpleText(k[1],"GRMMob_B",x+kw/2,y+15+(pressed and 1 or 0),C.text,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+                        draw.SimpleText(k[2],"GRMMob_XS",x+kw/2,y+31+(pressed and 1 or 0),C.dim,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+                        M.hitboxes[#M.hitboxes+1]={x=x,y=y,w=kw,h=kh,keyValue=k[1]}
+                    end
+                    M.hitboxes[#M.hitboxes+1]={x=w/2-52,y=keyTop,w=104,h=62,keyValue="OK"}
+                else
+                    local navY,navGap= h-48,6
+                    local navW=math.floor((w-36-navGap*2)/3)
+                    local nav={{id="back",label="‹  Назад"},{id="home",label="○  Домой"},{id="close",label="—  Убрать"}}
+                    for i,entry in ipairs(nav)do
+                        local x=18+(i-1)*(navW+navGap)
+                        local base=entry.id=="close" and Color(70,42,48,245) or Color(31,40,56,245)
+                        draw.RoundedBox(10,x,navY,navW,34,base)
+                        local _,pressed=drawPointerFeedback(10,x,navY,navW,34,"nav:"..entry.id)
+                        draw.SimpleText(entry.label,"GRMMob_XS",x+navW/2,navY+17+(pressed and 1 or 0),C.text,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+                        M.hitboxes[#M.hitboxes+1]={x=x,y=navY,w=navW,h=34,navAction=entry.id}
+                    end
+                    draw.RoundedBox(3,w/2-25,h-8,50,3,Color(150,160,175,150))
+                end
             end
         end
         M.open = true
@@ -1183,30 +1647,47 @@ if CLIENT then
     end
 
     local function move(delta)
+        local st = tostring(M.state.lineState or "idle")
+        if st == "idle" and M.screen=="sms_dialog"then M.smsSel=math.max(1,(tonumber(M.smsSel)or 1)+delta);snd("nav");return end
         local items = screenItems()
         if #items == 0 then return end
-        if M.screen == "home" then M.sel = ((M.sel - 1 + delta) % #items) + 1 else M.listSel = ((M.listSel - 1 + delta) % #items) + 1 end
+        if M.screen == "home" and st == "idle" then M.sel = ((M.sel - 1 + delta) % #items) + 1 else M.listSel = ((M.listSel - 1 + delta) % #items) + 1 end
         snd("nav")
     end
-    local function enter()
+    enter = function()
         local st = tostring(M.state.lineState or "idle")
         if st == "ringing" then sendAct({op="answer"}); return end
+        if st=="idle" and M.screen=="dial" and (M.dial or"")~="" then snd("ring");sendAct({op="dial",number=M.dial});return end
         local items = screenItems()
-        local idx = (M.screen == "home") and M.sel or M.listSel
+        local idx = (M.screen == "home" and st == "idle") and M.sel or M.listSel
         local it = items[idx]
         if it and it.fn then snd("select"); it.fn() end
     end
-    local function back()
+    back = function()
         local st=tostring(M.state.lineState or "idle")
         if st=="ringing" or st=="call" or st=="dialing" then sendAct({op="hangup"}); return end
+        if M.screen=="sms_dialog"then M.screen="sms";M.listSel=math.max(1,tonumber(M.smsThreadListSel)or 1);M.smsSel=1;snd("back");return end
+        if M.screen=="contact_actions"then M.screen="contacts";M.listSel=math.max(1,tonumber(M.contactListSel)or 1);snd("back");return end
+        if M.screen=="forum_detail"then M.screen="forum";M.listSel=math.max(4,tonumber(M.forumFeedSel)or 4);snd("back");return end
+        if M.screen=="deactivate_confirm"then setScreen("power");snd("back");return end
         if M.screen == "home" then closePhone(true) else goHome() end
     end
-    local function digit(_) return false end
+    local DIGIT_KEYS = {
+        [KEY_0]="0",[KEY_1]="1",[KEY_2]="2",[KEY_3]="3",[KEY_4]="4",[KEY_5]="5",[KEY_6]="6",[KEY_7]="7",[KEY_8]="8",[KEY_9]="9",
+    }
+    local function digit(key)
+        local value=DIGIT_KEYS[key]
+        if not value then return false end
+        if M.screen=="dial" then M.dial=(M.dial or"")..value;snd("select");return true end
+        if M.screen=="calc" then M.calc=(M.calc or"")..value;snd("select");return true end
+        return false
+    end
     local function isMouse3(key)
+        -- Garry's Mod uses 107 for MOUSE_LEFT. Treating 107 as Mouse3 made every
+        -- left click also confirm the selected item through PlayerButtonDown.
         return (_G.KEY_MOUSE3 and key == KEY_MOUSE3)
             or (_G.MOUSE_MIDDLE and key == MOUSE_MIDDLE)
-            or (_G.MOUSE_3 and key == MOUSE_3)
-            or key == 107 -- common KEY_MOUSE3 fallback in GMod key enum
+            or key == 109 -- MOUSE_MIDDLE in GMod's BUTTON_CODE enum
     end
 
     local function requestServerOpen()
@@ -1215,46 +1696,40 @@ if CLIENT then
     end
 
     local function keyDown(key)
-        -- Contract: UP opens, DOWN closes. No keyboard navigation/actions while open.
+        if key==KEY_UP and not M.open and textInputActive() then return end
+        if M.down[key] then return end
+        if now()-(M.lastTap[key] or -999)<0.07 then return end
+        M.down[key]=true;M.lastTap[key]=now();M.hold[key]=now();M.nextRepeat[key]=now()+0.45
         if not M.open then
-            if key == KEY_UP then
-                if hasPhone() then
-                    openPhone(false)
-                elseif not M.stateKnown then
-                    requestServerOpen()
-                else
-                    openPhone(false)
-                end
-            end
+            if key==KEY_UP then if hasPhone()then openPhone(false)elseif not M.stateKnown then requestServerOpen()else openPhone(false)end end
             return
         end
-
-        if key == KEY_DOWN then
-            closePhone(true)
-            return
+        if key==KEY_UP then move(-1);return end
+        if key==KEY_DOWN then move(1);return end
+        if key==KEY_ENTER then enter();return end
+        if isMouse3(key)then selectCurrent();return end
+        if key==KEY_BACKSPACE then back();return end
+        if _G.KEY_ESCAPE and key==KEY_ESCAPE then closePhone(true);return end
+        if key==KEY_LEFT then back();return end
+        if key==KEY_RIGHT then goHome();snd("back");return end
+        if key==KEY_DELETE and M.screen=="notes"then sendAct({op="note_del",i=math.max(1,M.listSel)});return end
+        if key==KEY_N and M.screen=="forum"then askString("Форум","Текст поста","",function(txt)sendAct({op="forum_post",text=txt})end);return end
+        if key==KEY_E then RunConsoleCommand("say","/me показывает номер телефона "..tostring(M.state.number or""));return end
+        if digit(key)then return end
+        if M.screen=="calc"then
+            local operators={[_G.KEY_PAD_PLUS or -1]="+",[_G.KEY_PAD_MINUS or -2]="-",[_G.KEY_PAD_MULTIPLY or -3]="*",[_G.KEY_PAD_DIVIDE or -4]="/"}
+            local op=operators[key];if op then M.calc=(M.calc or"")..op;snd("select")end
         end
-        if key == KEY_LEFT or key == KEY_RIGHT then
-            goHome()
-            snd("back")
-            return
-        end
-
-        -- Selection/activation inside the phone is Mouse3 / middle mouse only.
-        if isMouse3(key) then
-            if now() - (tonumber(M.lastSelectAt) or -999) >= 0.25 then
-                M.lastSelectAt = now()
-                enter()
-            end
-            return
-        end
-
-        -- Everything else is intentionally ignored. Gameplay buttons are also cleared
-        -- server-side by StartCommand and client-side by PlayerBindPress below.
     end
 
     local function keyUp(key)
+        -- SDL/OS может слать синтетические Down+Up пары, пока клавиша всё
+        -- ещё физически зажата. Не снимаем lock до настоящего отпускания.
+        if input and input.IsKeyDown and input.IsKeyDown(key) then return end
         M.down[key]=nil; M.hold[key]=nil; M.nextRepeat[key]=nil
     end
+    MB._uiKeyDown=keyDown
+    MB._uiKeyUp=keyUp
 
     function MB.ClientIsOpen()
         return M.open == true
@@ -1263,7 +1738,7 @@ if CLIENT then
         if M.open then move(tonumber(delta) or 1) return true end
         return false
     end
-    local function selectCurrent()
+    selectCurrent = function()
         if now() - (tonumber(M.lastSelectAt) or -999) < 0.25 then return end
         M.lastSelectAt = now()
         enter()
@@ -1288,12 +1763,25 @@ if CLIENT then
             openPhone(false)
         end
     end)
-    net.Receive("GRM_Mob_Data", function() local k=net.ReadString(); local p=net.ReadTable() or {}; M.data[tostring(k or "")]=p; MB.ClientData=M.data end)
+    net.Receive("GRM_Mob_Data", function()
+        local k=net.ReadString()
+        local p=net.ReadTable() or {}
+        k=tostring(k or "")
+        M.data[k]=p
+        if k=="forum" and tonumber(M.forumPostID) then
+            for _,post in ipairs(p.rows or {})do
+                if tonumber(post.id)==tonumber(M.forumPostID)then M.forumPost=post break end
+            end
+        end
+        MB.ClientData=M.data
+    end)
     net.Receive("GRM_Mobile_Open", function()
         M.pendingOpen = true
         if hasPhone() then M.pendingOpen = false; openPhone(false) end
     end)
 
+    hook.Add("StartChat", "GRM_Mobile_BlockOpenWhileTyping", function() M.chatOpen = true end)
+    hook.Add("FinishChat", "GRM_Mobile_UnblockOpenAfterTyping", function() M.chatOpen = false end)
     hook.Add("PlayerButtonDown", "GRM_Mobile_KeyDown", function(ply, key) if ply ~= lp() then return end keyDown(key) end)
     hook.Add("PlayerButtonUp", "GRM_Mobile_KeyUp", function(ply, key) if ply ~= lp() then return end keyUp(key) end)
     hook.Add("Think", "GRM_Mobile_KeyRepeat", function()
@@ -1302,27 +1790,33 @@ if CLIENT then
         -- Poll physical keys here so UP opens and DOWN closes even with VGUI focus.
         if not input or not input.IsKeyDown then return end
 
+        if M.open then
+            for key,delta in pairs({[KEY_UP]=-1,[KEY_DOWN]=1})do
+                if M.down[key] and input.IsKeyDown(key) and now()>=(M.nextRepeat[key] or math.huge)then
+                    M.nextRepeat[key]=now()+0.11;move(delta)
+                end
+            end
+        end
+
         local upNow = input.IsKeyDown(KEY_UP) == true
-        if upNow and not M.poll.up then
-            if not M.open then
+        if upNow and not M.poll.up and not M.down[KEY_UP] then
+            if not M.open and not textInputActive() then
                 if hasPhone() then openPhone(false)
                 elseif not M.stateKnown then requestServerOpen()
                 else openPhone(false) end
-            end
+            elseif M.open then move(-1) end
         end
         M.poll.up = upNow
 
         local downNow = input.IsKeyDown(KEY_DOWN) == true
-        if downNow and not M.poll.down then
-            if M.open then closePhone(true) end
-        end
+        if downNow and not M.poll.down and not M.down[KEY_DOWN] and M.open then move(1) end
         M.poll.down = downNow
 
         local leftNow = input.IsKeyDown(KEY_LEFT) == true
-        if leftNow and not M.poll.left and M.open then goHome(); snd("back") end
+        if leftNow and not M.poll.left and not M.down[KEY_LEFT] and M.open then back() end
         M.poll.left = leftNow
         local rightNow = input.IsKeyDown(KEY_RIGHT) == true
-        if rightNow and not M.poll.right and M.open then goHome(); snd("back") end
+        if rightNow and not M.poll.right and not M.down[KEY_RIGHT] and M.open then goHome(); snd("back") end
         M.poll.right = rightNow
 
         local mouse3Now = false
@@ -1330,21 +1824,11 @@ if CLIENT then
         if _G.MOUSE_MIDDLE then
             mouse3Now = mouse3Now or input.IsKeyDown(MOUSE_MIDDLE) == true
             if input.IsMouseDown then mouse3Now = mouse3Now or input.IsMouseDown(MOUSE_MIDDLE) == true end
+        else
+            mouse3Now = mouse3Now or input.IsKeyDown(109) == true
+            if input.IsMouseDown then mouse3Now = mouse3Now or input.IsMouseDown(109) == true end
         end
-        if _G.MOUSE_3 then
-            mouse3Now = mouse3Now or input.IsKeyDown(MOUSE_3) == true
-            if input.IsMouseDown then mouse3Now = mouse3Now or input.IsMouseDown(MOUSE_3) == true end
-        end
-        mouse3Now = mouse3Now or input.IsKeyDown(107) == true
-        if input.IsMouseDown then
-            mouse3Now = mouse3Now or input.IsMouseDown(107) == true
-        end
-        if mouse3Now and not M.poll.mouse3 and M.open then
-            if now() - (tonumber(M.lastSelectAt) or -999) >= 0.25 then
-                M.lastSelectAt = now()
-                enter()
-            end
-        end
+        if mouse3Now and not M.poll.mouse3 and M.open then selectCurrent() end
         M.poll.mouse3 = mouse3Now
     end)
     hook.Add("HUDPaint", "GRM_Mobile_CallHUD", function() if M.open and tostring(M.state.lineState or "") == "ringing" then draw.SimpleText("Входящий вызов", "GRMMob_B", ScrW()/2, 120, C.green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER) end end)
@@ -1362,7 +1846,7 @@ if CLIENT then
 
         -- Middle mouse confirms/selects. Different configs expose it as +attack3/mouse3.
         if bind == "+attack3" or bind == "attack3" or bind == "mouse3" or bind == "+mouse3" then
-            enter()
+            selectCurrent()
             return true
         end
 

@@ -51,8 +51,10 @@ function HC.Emit(ent, key)
 end
 
 local function steamIDs(ply)
-    if not IsValid(ply) then return "", "" end
-    return ply:SteamID(), ply:SteamID64()
+    if not IsValid(ply) then return "", "", "" end
+    local sid, sid64 = ply:SteamID(), ply:SteamID64()
+    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
+    return sid, sid64, ck
 end
 
 -- ============================================================
@@ -159,13 +161,15 @@ end
 function HC.GetFactionInfo(ply)
     if not IsValid(ply) then return nil, nil, nil, nil end
 
-    local sid, sid64 = steamIDs(ply)
+    local sid, sid64, charKey = steamIDs(ply)
     local data, source = HC.GetFactionsData()
 
     for factionName, f in pairs(data or {}) do
         if istable(f) and istable(f.Members) then
             -- В вашем коде фракции используют SteamID(), но на всякий случай поддерживаем и SteamID64().
-            local member = f.Members[sid] or f.Members[sid64]
+            local member
+            if GRM.Identity and GRM.Identity.FactionMember then member = GRM.Identity.FactionMember(f, ply)
+            else member = f.Members[sid] or f.Members[sid64] end
             if istable(member) then
                 return factionName, member.Role, member.Department, f, source
             end
@@ -355,6 +359,25 @@ function HC.IsCuffed(ply)
     return IsValid(ply) and ply:GetNWBool("GRM_Cuffed", false)
 end
 
+function HC.StunPlayer(actor, target, seconds, options)
+    if not IsValid(target) or not target:IsPlayer() then return false end
+    options = istable(options) and options or {}
+    seconds = math.Clamp(tonumber(seconds) or 4, 1, 30)
+    target.GRM_StunnedUntil = math.max(tonumber(target.GRM_StunnedUntil) or 0, CurTime() + seconds)
+    target:SetNWBool("GRM_Stunned", true)
+    target:SetNWFloat("GRM_StunnedUntil", target.GRM_StunnedUntil)
+    if not options.silent then target:EmitSound("Weapon_StunStick.Melee_Hit", 75, 100, 1, CHAN_WEAPON) end
+    if not options.silentNotify and GRM.Notify then GRM.Notify(target, "Вы оглушены электродубинкой.", 255, 180, 90) end
+    timer.Create("GRM_Stun_" .. target:EntIndex(), 0.2, 0, function()
+        if not IsValid(target) then timer.Remove("GRM_Stun_" .. target:EntIndex()) return end
+        if CurTime() < (target.GRM_StunnedUntil or 0) then return end
+        target:SetNWBool("GRM_Stunned", false)
+        target:SetNWFloat("GRM_StunnedUntil", 0)
+        timer.Remove("GRM_Stun_" .. target:EntIndex())
+    end)
+    return true
+end
+
 
 -- ============================================================
 -- ОРУЖИЕ ПРИ СКОВЫВАНИИ
@@ -406,6 +429,12 @@ end
 
 function HC.EnforceCuffedWeaponState(ply)
     if not IsValid(ply) or not HC.IsCuffed(ply) then return end
+    if ply:GetNWBool("GRM_Arrested", false) then
+        ply.GRM_CuffStoredWeapons = nil
+        ply:StripWeapons()
+        if ply.RemoveAllAmmo then ply:RemoveAllAmmo() end
+        return
+    end
     if cfg().EnforceNoWeaponsWhileCuffed == false then return end
 
     for _, wep in ipairs(ply:GetWeapons()) do
@@ -454,6 +483,12 @@ end
 
 function ensureRestrainedWeapon(ply)
     if not IsValid(ply) then return end
+    if ply:GetNWBool("GRM_Arrested", false) then
+        ply.GRM_CuffStoredWeapons = nil
+        ply:StripWeapons()
+        if ply.RemoveAllAmmo then ply:RemoveAllAmmo() end
+        return
+    end
     local class = cfg().RestrainedWeaponClass or "grm_cuffed"
 
     if not ply:HasWeapon(class) then
@@ -467,21 +502,28 @@ function ensureRestrainedWeapon(ply)
     end)
 end
 
+local function clearEscortState(target)
+    if not IsValid(target) then return end
+
+    -- Чистим хвосты старой parent-реализации после lua_refresh, но никогда
+    -- не привязываем игрока обратно и не меняем его мировую позицию.
+    if IsValid(target:GetParent()) then target:SetParent(nil) end
+    target:Freeze(false)
+    target.GRM_CuffEscortDir = nil
+    target:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
+    target:SetNWBool("GRM_CuffDragged", false)
+    target:SetNWEntity("GRM_CuffDragger", NULL)
+end
+
 function HC.StopDragging(dragger, target)
-    if IsValid(target) then
-        target:SetNWBool("GRM_CuffDragged", false)
-        target:SetNWEntity("GRM_CuffDragger", NULL)
-    end
+    if IsValid(target) then clearEscortState(target) end
 
     if IsValid(dragger) and dragger.GRM_Captives then
         if IsValid(target) then
             dragger.GRM_Captives[target] = nil
         else
             for captive in pairs(dragger.GRM_Captives) do
-                if IsValid(captive) then
-                    captive:SetNWBool("GRM_CuffDragged", false)
-                    captive:SetNWEntity("GRM_CuffDragger", NULL)
-                end
+                clearEscortState(captive)
             end
             dragger.GRM_Captives = {}
         end
@@ -511,6 +553,28 @@ function HC.StartDragging(dragger, target)
     end
 
     dragger.GRM_Captives[target] = true
+    target.GRM_CuffOriginalCollisionGroup = target.GRM_CuffOriginalCollisionGroup or target:GetCollisionGroup()
+
+    -- Никаких SetParent/Freeze/SetPos: они телепортировали игрока в origin
+    -- ведущего, наследовали pitch/roll и бросали его вверх/вниз на лестницах.
+    -- Если код обновили через lua_refresh, сначала безопасно снимаем хвосты
+    -- старого parent-escort, сохраняя текущие мировые координаты.
+    if IsValid(target:GetParent()) then target:SetParent(nil) end
+    target:Freeze(false)
+    target:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
+
+    -- Начальная сторона берётся из фактического положения задержанного:
+    -- при включении сопровождения он не перескакивает мгновенно за спину.
+    local offset = target:GetPos() - dragger:GetPos()
+    offset.z = 0
+    if offset:LengthSqr() > 1 then
+        target.GRM_CuffEscortDir = offset:GetNormalized()
+    else
+        local forward = dragger:GetForward()
+        forward.z = 0
+        target.GRM_CuffEscortDir = forward:LengthSqr() > 0 and -forward:GetNormalized() or Vector(-1, 0, 0)
+    end
+
     target:SetNWBool("GRM_CuffDragged", true)
     target:SetNWEntity("GRM_CuffDragger", dragger)
     HC.Emit(dragger, "Drag")
@@ -532,6 +596,8 @@ function HC.CuffPlayer(actor, target)
     end
 
     target:SetNWBool("GRM_Cuffed", true)
+    if target.GRM_CuffOriginalCollisionGroup == nil then target.GRM_CuffOriginalCollisionGroup = target:GetCollisionGroup() end
+    target:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
     target:SetNWEntity("GRM_CuffOwner", actor)
     target:SetNWFloat("GRM_CuffReleaseProgress", 0)
     target:SetNWBool("GRM_CuffGagged", false)
@@ -555,6 +621,10 @@ function HC.UncuffPlayer(actor, target, silent)
     local dragger = target:GetNWEntity("GRM_CuffDragger")
     if IsValid(dragger) then
         HC.StopDragging(dragger, target)
+    end
+    if target.GRM_CuffOriginalCollisionGroup ~= nil then
+        target:SetCollisionGroup(target.GRM_CuffOriginalCollisionGroup)
+        target.GRM_CuffOriginalCollisionGroup = nil
     end
 
     target:SetNWBool("GRM_Cuffed", false)
@@ -1030,6 +1100,11 @@ hook.Add("PlayerSwitchWeapon", "GRM_Handcuffs_ForceCuffedWeapon", function(ply, 
 end)
 
 hook.Add("StartCommand", "GRM_Handcuffs_BlockControls", function(ply, cmd)
+    if IsValid(ply) and ply:GetNWBool("GRM_Stunned", false) then
+        cmd:ClearMovement()
+        cmd:ClearButtons()
+        return
+    end
     if not HC.IsCuffed(ply) then return end
 
     cmd:RemoveKey(IN_ATTACK)
@@ -1041,34 +1116,95 @@ hook.Add("StartCommand", "GRM_Handcuffs_BlockControls", function(ply, cmd)
 
     -- Задержанный не может сам нажимать E для взаимодействия,
     -- освобождения, подбора или передачи. Освободить может только другой игрок.
-    if cfg().CanSelfRelease == false then
-        cmd:RemoveKey(IN_USE)
+    -- E не должен позволять выбирать сиденья, открывать Q-объекты или
+    -- взаимодействовать с дверями/пропами во время наручников.
+    cmd:RemoveKey(IN_USE)
+
+    -- Во время сопровождения собственный WASD задержанного не должен
+    -- бороться с серверной плавной траекторией и создавать дёрганье.
+    if IsValid(ply:GetNWEntity("GRM_CuffDragger")) then
+        cmd:ClearMovement()
     end
 end)
 
 hook.Add("SetupMove", "GRM_Handcuffs_Move", function(ply, mv, cmd)
     if not HC.IsCuffed(ply) then return end
 
+    local dragger = ply:GetNWEntity("GRM_CuffDragger")
+    if IsValid(dragger) and dragger:Alive() and not dragger:InVehicle() then
+        local delta3 = dragger:GetPos() - ply:GetPos()
+        local horizontalDistance = Vector(delta3.x, delta3.y, 0):Length()
+        local verticalDistance = math.abs(delta3.z)
+
+        -- Через стену, обрыв или другой этаж не тянем вообще. Сопровождение
+        -- прекращается вместо телепорта, вертикального импульса или SetPos.
+        if horizontalDistance > (cfg().EscortBreakDistance or 420)
+            or verticalDistance > (cfg().EscortBreakVerticalDistance or 120) then
+            HC.StopDragging(dragger, ply)
+            HC.Notify(dragger, "[Наручники] Сопровождение прекращено: задержанный слишком далеко.")
+            return
+        end
+
+        ply:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
+
+        local dt = math.Clamp(FrameTime(), 0.001, 0.05)
+        local leaderVelocity = dragger:GetVelocity()
+        leaderVelocity.z = 0
+
+        -- Пока ведущий стоит, сохраняем сторону, с которой задержанного
+        -- взяли. При движении плавно переводим его за спину по направлению
+        -- фактической скорости, а не по углу камеры.
+        local escortDir = ply.GRM_CuffEscortDir or Vector(-1, 0, 0)
+        escortDir.z = 0
+        if escortDir:LengthSqr() <= 0.001 then escortDir = Vector(-1, 0, 0) end
+        escortDir:Normalize()
+
+        if leaderVelocity:LengthSqr() > 25 * 25 then
+            local wantedDir = leaderVelocity:GetNormalized() * -1
+            local turnBlend = math.Clamp(dt * (cfg().EscortTurnRate or 5), 0, 1)
+            escortDir = escortDir + (wantedDir - escortDir) * turnBlend
+            escortDir.z = 0
+            if escortDir:LengthSqr() > 0.001 then escortDir:Normalize() end
+            ply.GRM_CuffEscortDir = escortDir
+        end
+
+        local desiredPos = dragger:GetPos() + escortDir * (cfg().DragFollowDistance or 52)
+        local correction = desiredPos - ply:GetPos()
+        correction.z = 0 -- главное: сопровождение никогда не управляет высотой
+        local distance = correction:Length()
+        local correctionVelocity = Vector(0, 0, 0)
+        if distance > (cfg().EscortDeadZone or 10) then
+            correctionVelocity = correction:GetNormalized()
+                * ((distance - (cfg().EscortDeadZone or 10)) * (cfg().EscortCorrectionGain or 5.5))
+        end
+
+        local wantedVelocity = leaderVelocity + correctionVelocity
+        wantedVelocity.z = 0
+        local maxEscortSpeed = math.max(1, cfg().EscortMaxSpeed or 300)
+        if wantedVelocity:LengthSqr() > maxEscortSpeed * maxEscortSpeed then
+            wantedVelocity = wantedVelocity:GetNormalized() * maxEscortSpeed
+        end
+
+        -- Ускорение сглажено; вертикальная скорость принадлежит обычной
+        -- физике игрока (земля, ступени, падение), поэтому нет подбрасываний.
+        local currentVelocity = mv:GetVelocity()
+        local blend = math.Clamp(dt * (cfg().EscortAcceleration or 8), 0, 1)
+        local smoothVelocity = Vector(
+            currentVelocity.x + (wantedVelocity.x - currentVelocity.x) * blend,
+            currentVelocity.y + (wantedVelocity.y - currentVelocity.y) * blend,
+            currentVelocity.z
+        )
+        mv:SetVelocity(smoothVelocity)
+        mv:SetMaxClientSpeed(maxEscortSpeed)
+        mv:SetMaxSpeed(maxEscortSpeed)
+        return
+    elseif ply:GetNWBool("GRM_CuffDragged", false) then
+        HC.StopDragging(IsValid(dragger) and dragger or nil, ply)
+    end
+
     local maxSpeed = mv:GetMaxClientSpeed()
     mv:SetMaxClientSpeed(maxSpeed * (cfg().CuffedWalkSpeedMultiplier or 0.45))
     mv:SetMaxSpeed(mv:GetMaxSpeed() * (cfg().CuffedWalkSpeedMultiplier or 0.45))
-
-    local dragger = ply:GetNWEntity("GRM_CuffDragger")
-    if IsValid(dragger) and dragger:Alive() then
-        local follow = cfg().DragFollowDistance or 72
-        local hard = cfg().DragHardDistance or 220
-        local desired = dragger:GetPos() - dragger:GetForward() * 45
-        local delta = desired - ply:GetPos()
-        local dist = delta:Length()
-
-        if dist > hard then
-            ply:SetPos(dragger:GetPos() - dragger:GetForward() * follow)
-            mv:SetVelocity(Vector(0, 0, 0))
-        elseif dist > follow then
-            local vel = delta:GetNormalized() * math.Clamp(dist * 5, 80, 420)
-            mv:SetVelocity(Vector(vel.x, vel.y, mv:GetVelocity().z))
-        end
-    end
 end)
 
 hook.Add("CanPlayerEnterVehicle", "GRM_Handcuffs_NoVehicle", function(ply)
@@ -1087,14 +1223,25 @@ hook.Add("PlayerCanPickupWeapon", "GRM_Handcuffs_NoWeaponPickup", function(ply)
     if HC.IsCuffed(ply) then return false end
 end)
 
+hook.Add("PlayerSpawnProp", "GRM_Handcuffs_NoPropSpawn", function(ply)
+    if HC.IsCuffed(ply) or ply:GetNWBool("GRM_Stunned", false) then return false end
+end)
+hook.Add("PlayerSpawnSENT", "GRM_Handcuffs_NoSentSpawn", function(ply)
+    if HC.IsCuffed(ply) or ply:GetNWBool("GRM_Stunned", false) then return false end
+end)
+hook.Add("PlayerSpawnSWEP", "GRM_Handcuffs_NoSWEPSpawn", function(ply)
+    if HC.IsCuffed(ply) or ply:GetNWBool("GRM_Stunned", false) then return false end
+end)
+hook.Add("PlayerSpawnVehicle", "GRM_Handcuffs_NoVehicleSpawn", function(ply)
+    if HC.IsCuffed(ply) or ply:GetNWBool("GRM_Stunned", false) then return false end
+end)
+
 hook.Add("PlayerUse", "GRM_Handcuffs_ReleaseOrTransfer", function(ply, ent)
     if not IsValid(ply) or not IsValid(ent) then return end
 
-    -- Задержанный не может сам пользоваться E, развязывать себя/других,
-    -- открывать двери, передавать задержанных и т.п.
-    if HC.IsCuffed(ply) and cfg().CanSelfRelease == false then
-        return false
-    end
+    -- Задержанный не может сам пользоваться E: это закрывает смену
+    -- сиденья, выход из транспорта, двери, Q-объекты и подбор предметов.
+    if HC.IsCuffed(ply) then return false end
 
     -- Посадка/высадка задержанных в обычный транспорт, simfphys и LVS.
     if HC.TryHandleVehicleUse(ply, ent) then

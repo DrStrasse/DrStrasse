@@ -1,5 +1,7 @@
 --[[--------------------------------------------------------------------
-    GRM Doors System v2.0.5 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
+    GRM Doors System v2.0.6 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
+    v2.0.6: overlapping map entities of one physical door use one canonical
+            record; adjacent cell/corridor doors remain independent by AABB.
     v2.0.4: авто-обновление меню больше не выбрасывает на первую вкладку —
             активная вкладка и позиция прокрутки восстанавливаются после
             пересборки (фикс скачка вкладок при клике по чекбоксам ACL).
@@ -51,7 +53,10 @@ D.Config = D.Config or {
     PermPriceMultiplier = 3,            -- множитель покупки навечно (х3)
     SuperAdminBypass = true,
     HUDDistance = 220,                  -- дистанция 3D2D HUD
-    PartnerRadius = 130,                -- радиус поиска парной створки (широкие ворота ~128)
+    PartnerRadius = 45,                 -- только реальная соседняя створка, не соседние двери коридора
+    DuplicateCenterDistance = 64,       -- максимум между центрами двух представлений одной двери
+    DuplicateXYOverlap = 0.55,          -- overlap AABB: не склеивает соседние двери камер
+    DuplicateZOverlap = 0.72,
     LockSyncInterval = 2.0,             -- период авторитетного реконсилера замков (сервер)
     DoorClasses = {
         prop_door_rotating = true,
@@ -78,18 +83,104 @@ function D.IsDoor(ent)
     return false
 end
 
-function D.GetDoorID(ent)
+local function baseDoorID(ent)
     if not IsValid(ent) then return nil end
     local map = mapName()
     local mcid = ent:MapCreationID()
-    if mcid and mcid > 0 then
-        return string.format("%s_m%d", map, mcid)
-    end
+    if mcid and mcid > 0 then return string.format("%s_m%d", map, mcid) end
     local pos = ent:GetPos()
-    return string.format("%s_%s_%.0f_%.0f_%.0f",
-        map, ent:GetClass(),
-        math.floor(pos.x + 0.5), math.floor(pos.y + 0.5), math.floor(pos.z + 0.5))
+    return string.format("%s_%s_%.0f_%.0f_%.0f", map, ent:GetClass(), math.floor(pos.x + 0.5), math.floor(pos.y + 0.5), math.floor(pos.z + 0.5))
 end
+
+local function aabbOverlapRatio(a, b)
+    if not IsValid(a) or not IsValid(b) or not a.WorldSpaceAABB or not b.WorldSpaceAABB then return 0, 0 end
+    local amin, amax = a:WorldSpaceAABB()
+    local bmin, bmax = b:WorldSpaceAABB()
+    if not amin or not amax or not bmin or not bmax then return 0, 0 end
+
+    local ox = math.max(0, math.min(amax.x, bmax.x) - math.max(amin.x, bmin.x))
+    local oy = math.max(0, math.min(amax.y, bmax.y) - math.max(amin.y, bmin.y))
+    local oz = math.max(0, math.min(amax.z, bmax.z) - math.max(amin.z, bmin.z))
+    local areaA = math.max(1, (amax.x - amin.x) * (amax.y - amin.y))
+    local areaB = math.max(1, (bmax.x - bmin.x) * (bmax.y - bmin.y))
+    local heightA = math.max(1, amax.z - amin.z)
+    local heightB = math.max(1, bmax.z - bmin.z)
+    return (ox * oy) / math.min(areaA, areaB), oz / math.min(heightA, heightB)
+end
+
+function D.IsSamePhysicalDoor(a, b)
+    if not IsValid(a) or not IsValid(b) or a == b or not D.IsDoor(a) or not D.IsDoor(b) then return false end
+    if a:GetParent() == b or b:GetParent() == a then return true end
+
+    local centerA = a.WorldSpaceCenter and a:WorldSpaceCenter() or a:GetPos()
+    local centerB = b.WorldSpaceCenter and b:WorldSpaceCenter() or b:GetPos()
+    local maxCenter = (D.Config and D.Config.DuplicateCenterDistance) or 64
+    if centerA:DistToSqr(centerB) > maxCenter * maxCenter then return false end
+
+    local xy, z = aabbOverlapRatio(a, b)
+    return xy >= ((D.Config and D.Config.DuplicateXYOverlap) or 0.55)
+        and z >= ((D.Config and D.Config.DuplicateZOverlap) or 0.72)
+end
+
+function D.RebuildDoorIdentityCache()
+    if D._buildingDoorIdentity then return end
+    D._buildingDoorIdentity = true
+    local doors = {}
+    for _, ent in ipairs(ents.GetAll()) do
+        if IsValid(ent) and D.IsDoor(ent) then doors[#doors + 1] = ent end
+    end
+
+    local parent = {}
+    local function root(i)
+        if parent[i] ~= i then parent[i] = root(parent[i]) end
+        return parent[i]
+    end
+    local function unite(a, b)
+        local ra, rb = root(a), root(b)
+        if ra ~= rb then parent[rb] = ra end
+    end
+    for i = 1, #doors do parent[i] = i end
+    for i = 1, #doors do
+        for j = i + 1, #doors do
+            if D.IsSamePhysicalDoor(doors[i], doors[j]) then unite(i, j) end
+        end
+    end
+
+    local ids, groups = {}, {}
+    for i, ent in ipairs(doors) do
+        local r = root(i)
+        local id = baseDoorID(ent)
+        if id and (not ids[r] or id < ids[r]) then ids[r] = id end
+    end
+    D._canonicalDoorIDs, D._equivalentDoors = {}, {}
+    for i, ent in ipairs(doors) do
+        local id = ids[root(i)] or baseDoorID(ent)
+        D._canonicalDoorIDs[ent] = id
+        D._equivalentDoors[id] = D._equivalentDoors[id] or {}
+        D._equivalentDoors[id][#D._equivalentDoors[id] + 1] = ent
+    end
+    D._buildingDoorIdentity = nil
+end
+
+function D.GetDoorID(ent)
+    if not IsValid(ent) or not D.IsDoor(ent) then return nil end
+    if not D._canonicalDoorIDs or not D._canonicalDoorIDs[ent] then D.RebuildDoorIdentityCache() end
+    return D._canonicalDoorIDs and D._canonicalDoorIDs[ent] or baseDoorID(ent)
+end
+
+function D.GetEquivalentDoors(ent)
+    local id = D.GetDoorID(ent)
+    local list = id and D._equivalentDoors and D._equivalentDoors[id] or nil
+    if istable(list) and #list > 0 then return list end
+    return IsValid(ent) and { ent } or {}
+end
+
+hook.Add("InitPostEntity", "GRM_Doors_BuildIdentityCache", function()
+    timer.Simple(0, D.RebuildDoorIdentityCache)
+end)
+hook.Add("PostCleanupMap", "GRM_Doors_RebuildIdentityCache", function()
+    timer.Simple(0.2, D.RebuildDoorIdentityCache)
+end)
 
 function D.GetPartnerDoor(ent)
     if not IsValid(ent) or not D.IsDoor(ent) then return nil end
@@ -97,25 +188,9 @@ function D.GetPartnerDoor(ent)
     local parent = ent:GetParent()
     if IsValid(parent) and D.IsDoor(parent) then return parent end
 
-    -- v2.0.5: радиус из конфига (широкие двойные ворота ~128 юн. между осями
-    -- раньше не находили пару), кандидат — ТОЛЬКО с той же моделью и у того же
-    -- пола (Z ±30), побеждает БЛИЖАЙШИЙ — соседние двери коридора не цепляются.
-    local radius = (D.Config and D.Config.PartnerRadius) or 110
-    local mdl = ent:GetModel()
-    local best, bestDist
-    local near = ents.FindInSphere(pos, radius)
-    for _, other in ipairs(near) do
-        if IsValid(other) and other ~= ent and D.IsDoor(other) then
-            local oPos = other:GetPos()
-            if math.abs(pos.z - oPos.z) <= 30 and other:GetModel() == mdl then
-                local dd = pos:DistToSqr(oPos)
-                if not bestDist or dd < bestDist then
-                    best, bestDist = other, dd
-                end
-            end
-        end
-    end
-    return best
+    -- Автоматический радиусный поиск отключён. Он ошибочно объединял
+    -- соседние двери коридора/камеры и создавал «фантомную» вторую дверь.
+    -- Пара учитывается только через реальный parent map-объект.
 end
 
 function D.IsDoorLocked(ent)
@@ -174,16 +249,23 @@ if SERVER then
     end
 
     local function steam64(ply)
-        if isstring(ply) then return tostring(ply) end
-        if not IsValid(ply) then return "" end
-        local id = ply:SteamID64()
-        if id and id ~= "0" then return id end
-        return ply:SteamID() or ""
+        if IsValid(ply) and ply:IsPlayer() then
+            if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
+            return tostring(ply:SteamID64() or "")
+        end
+        local raw = tostring(ply or "")
+        if raw:match(":char[1-3]$") then return raw end
+        if raw:match("^%d+$") then return raw .. ":char1" end
+        if util.SteamIDTo64 then
+            local s64 = util.SteamIDTo64(raw)
+            if s64 and s64 ~= "0" then return tostring(s64) .. ":char1" end
+        end
+        return raw
     end
 
     local function playerNickBySid(sid)
         for _, p in ipairs(player.GetAll()) do
-            if IsValid(p) and (p:SteamID64() == sid or p:SteamID() == sid) then
+            if IsValid(p) and (steam64(p) == sid or p:SteamID64() == sid or p:SteamID() == sid) then
                 return p:Nick()
             end
         end
@@ -192,17 +274,21 @@ if SERVER then
 
     local function syncLockNW(ent, locked)
         if not IsValid(ent) then return end
-        ent:SetNWBool("GRM_DoorLocked", locked == true)
-        local partner = D.GetPartnerDoor(ent)
-        if IsValid(partner) then
-            partner:SetNWBool("GRM_DoorLocked", locked == true)
+        for _, equivalent in ipairs(D.GetEquivalentDoors(ent)) do
+            if IsValid(equivalent) then equivalent:SetNWBool("GRM_DoorLocked", locked == true) end
         end
+        local partner = D.GetPartnerDoor(ent)
+        if IsValid(partner) then partner:SetNWBool("GRM_DoorLocked", locked == true) end
     end
 
     local function syncTitleNW(ent, title, ownerStr)
         if not IsValid(ent) then return end
-        ent:SetNWString("GRM_DoorTitle", title or "")
-        ent:SetNWString("GRM_DoorOwner", ownerStr or "")
+        for _, equivalent in ipairs(D.GetEquivalentDoors(ent)) do
+            if IsValid(equivalent) then
+                equivalent:SetNWString("GRM_DoorTitle", title or "")
+                equivalent:SetNWString("GRM_DoorOwner", ownerStr or "")
+            end
+        end
         local partner = D.GetPartnerDoor(ent)
         if IsValid(partner) then
             partner:SetNWString("GRM_DoorTitle", title or "")
@@ -329,11 +415,14 @@ if SERVER then
             end
         end
 
+        for id in pairs(D.Data.doors) do
+            if string.StartWith(tostring(id), "pair_") then D.Data.doors[id] = nil end
+        end
         timer.Simple(1, function()
             for _, ent in ipairs(ents.GetAll()) do
                 if IsValid(ent) and D.IsDoor(ent) then
                     local id = D.GetDoorID(ent)
-                    local rec = D.Data.doors[id]
+                    local rec = D.GetRecord and select(1, D.GetRecord(ent)) or D.Data.doors[id]
                     if rec then
                         local ownerTxt = ""
                         if rec.owner_type == "player" then ownerTxt = rec.owner_nick or ""
@@ -357,6 +446,7 @@ if SERVER then
                     end
                 end
             end
+            if D.SaveDoors then D.SaveDoors() end
         end)
 
         print("[GRM Doors] Загружено дверей на карте " .. mapName() .. ": " .. table.Count(D.Data.doors))
@@ -474,11 +564,52 @@ if SERVER then
         end
     end
 
+    local function recordPriority(rec)
+        if not istable(rec) then return -1 end
+        local score = 0
+        if rec.owner_type and rec.owner_type ~= "none" then score = score + 100 end
+        if tostring(rec.title or "") ~= "" then score = score + 10 end
+        if rec.locked == true then score = score + 3 end
+        if rec.ownable == false then score = score + 1 end
+        return score
+    end
+
     local function getRecord(ent)
         local id = D.GetDoorID(ent)
         if not id then return nil, nil end
         D.Data.doors = D.Data.doors or {}
-        local rec = D.Data.doors[id]
+
+        -- У одного физического полотна карта может иметь две entity. Берём
+        -- самую содержательную старую запись (владелец важнее «ничьей»),
+        -- переносим её на канонический ID и удаляем фантомные алиасы.
+        local rec, bestScore = D.Data.doors[id], recordPriority(D.Data.doors[id])
+        local aliases = {}
+        for _, equivalent in ipairs(D.GetEquivalentDoors(ent)) do
+            local aliasID = baseDoorID(equivalent)
+            if aliasID then
+                aliases[aliasID] = true
+                local candidate = D.Data.doors[aliasID]
+                local score = recordPriority(candidate)
+                if score > bestScore then rec, bestScore = candidate, score end
+            end
+        end
+        local partner = D.GetPartnerDoor(ent)
+        if IsValid(partner) then
+            local partnerID = baseDoorID(partner)
+            if partnerID then
+                aliases[partnerID] = true
+                local candidate = D.Data.doors[partnerID]
+                local score = recordPriority(candidate)
+                if score > bestScore then rec, bestScore = candidate, score end
+            end
+        end
+        if rec then
+            rec.id = id
+            D.Data.doors[id] = rec
+            for aliasID in pairs(aliases) do
+                if aliasID ~= id then D.Data.doors[aliasID] = nil end
+            end
+        end
         if not rec then
             local engLocked = ent:GetInternalVariable("m_bLocked") == true or ent:GetInternalVariable("m_bLocked") == 1
             rec = {
@@ -518,7 +649,8 @@ if SERVER then
         local sid, sid64 = ply:SteamID(), ply:SteamID64()
         for name, f in pairs(Factions) do
             if istable(f) and istable(f.Members) then
-                local m = f.Members[sid] or f.Members[sid64]
+                local ck = steam64(ply)
+                local m = GRM.Identity.FactionMember(f, ply)
                 if istable(m) then return name, m.Role, m.Department end
             end
         end
@@ -628,7 +760,9 @@ if SERVER then
         local partner = D.GetPartnerDoor(ent)
 
         local cmd = locked and "Lock" or "Unlock"
-        ent:Fire(cmd, "", 0)
+        for _, equivalent in ipairs(D.GetEquivalentDoors(ent)) do
+            if IsValid(equivalent) then equivalent:Fire(cmd, "", 0) end
+        end
         if IsValid(partner) then partner:Fire(cmd, "", 0) end
 
         syncLockNW(ent, locked)
@@ -1035,7 +1169,7 @@ if SERVER then
             for _, p in ipairs(player.GetAll()) do
                 if IsValid(p) and (string.find(string.lower(p:Nick()), string.lower(who), 1, true)
                     or p:SteamID64() == who or p:SteamID() == who) then
-                    sid = p:SteamID64()
+                    sid = steam64(p)
                     break
                 end
             end
@@ -1050,7 +1184,7 @@ if SERVER then
             local sid = who
             for _, p in ipairs(player.GetAll()) do
                 if IsValid(p) and (string.find(string.lower(p:Nick()), string.lower(who), 1, true) or p:SteamID64() == who) then
-                    sid = p:SteamID64() break
+                    sid = steam64(p) break
                 end
             end
             local ok, err = D.RevokeWarrant(ply, sid)
@@ -1104,7 +1238,7 @@ if SERVER then
         D.LoadWarrants()
     end)
 
-    print("[GRM Doors] Серверная система дверей v2.0.5 загружена")
+    print("[GRM Doors] Серверная система дверей v2.0.6 загружена")
 end
 
 -- ============================================================
@@ -1170,6 +1304,13 @@ if CLIENT then
     hook.Remove("HUDPaint", "HUDPaint_Doors")
     hook.Remove("HUDPaint", "DoorHUD")
     hook.Remove("HUDPaint", "SuperiorDoorHUD")
+    -- Сторонние door HUD аддоны иногда регистрируют хуки позже GRM. Мягко
+    -- повторяем подавление известных дублей, чтобы надписи не наслаивались.
+    timer.Create("GRM_Doors_SuppressDuplicateHUD", 2, 0, function()
+        for _, id in ipairs({"DarkRP_DoorHUD","doorHUD","DrawDoorInfo","HUDPaint_Doors","DoorHUD","SuperiorDoorHUD"}) do
+            if id ~= "GRM_Doors_HUD3D2D" then hook.Remove("HUDPaint", id) end
+        end
+    end)
 
     -- Перехват биндов клавиш F1-F4 на дверях
     local function handleDoorBindOverride()
@@ -1193,6 +1334,10 @@ if CLIENT then
         if cv and cv:GetInt() == 0 then return end
         local ply = LocalPlayer()
         if not IsValid(ply) or not ply:Alive() then return end
+        -- ds_key_swep рисует собственный HUD ключа. Не дублируем
+        -- информацию вторым дверным оверлеем в той же позиции.
+        local active = ply:GetActiveWeapon()
+        if IsValid(active) and active:GetClass() == "ds_key_swep" then return end
 
         local tr = ply:GetEyeTrace()
         local ent = tr.Entity
@@ -1371,7 +1516,8 @@ if CLIENT then
             plyCombo:SetValue("Выберите игрока онлайн...")
             for _, p in ipairs(player.GetAll()) do
                 if IsValid(p) and p ~= LocalPlayer() then
-                    plyCombo:AddChoice(p:Nick() .. " (" .. p:SteamID64() .. ")", p:SteamID64())
+                    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64()
+                    plyCombo:AddChoice(p:Nick() .. " (" .. ck .. ")", ck)
                 end
             end
 
@@ -1488,12 +1634,12 @@ if CLIENT then
             local facCombo = vgui.Create("DComboBox", b1)
             facCombo:SetPos(10, 32) facCombo:SetSize(280, 26)
             facCombo:SetValue("Выберите фракцию...")
-            for _, fData in ipairs(facList or {}) do facCombo:AddChoice(fData.name) end
+            for _, fData in ipairs(facList or {}) do facCombo:AddChoice(fData.name, fData.name) end
             local bSetFac = btn(b1, "Назначить", CUI.accent, 140, 26)
             bSetFac:SetPos(300, 32)
             bSetFac.DoClick = function()
-                local _, fn = facCombo:GetSelected()
-                if fn then act({ action = "set_faction_owner", entIndex = ent:EntIndex(), faction = fn }) end
+                local fn = facCombo:GetValue()
+                if fn and fn ~= "" and fn ~= "Выберите фракцию..." then act({ action = "set_faction_owner", entIndex = ent:EntIndex(), faction = fn }) end
             end
 
             local b2 = adminBlock("Назначить владельца — Категорию:", 70)
@@ -1504,8 +1650,8 @@ if CLIENT then
             local bSetCat = btn(b2, "Назначить", CUI.accent, 140, 26)
             bSetCat:SetPos(300, 32)
             bSetCat.DoClick = function()
-                local _, catId = catCombo:GetSelected()
-                if catId then act({ action = "set_category_owner", entIndex = ent:EntIndex(), category = catId }) end
+                local catId = catCombo:GetOptionData(catCombo:GetSelectedID()) or catCombo:GetValue()
+                if catId and catId ~= "" and catId ~= "Выберите категорию..." then act({ action = "set_category_owner", entIndex = ent:EntIndex(), category = catId }) end
             end
 
             local b3 = adminBlock("Статус доступности для приватизации:", 65)
@@ -1543,5 +1689,5 @@ if CLIENT then
         net.Start(NET_ACT) net.WriteTable({ action = "open_menu" }) net.SendToServer()
     end)
 
-    print("[GRM Doors] Клиентская система дверей v2.0.5 загружена")
+    print("[GRM Doors] Клиентская система дверей v2.0.6 загружена")
 end

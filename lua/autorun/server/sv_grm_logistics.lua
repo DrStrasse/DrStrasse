@@ -38,7 +38,11 @@ local function ang(a) return {p=a.p,y=a.y,r=a.r} end
 local function V(t) return Vector(tonumber(t and(t.x or t[1]))or 0,tonumber(t and(t.y or t[2]))or 0,tonumber(t and(t.z or t[3]))or 0) end
 local function A(t) return Angle(tonumber(t and(t.p or t[1]))or 0,tonumber(t and(t.y or t[2]))or 0,tonumber(t and(t.r or t[3]))or 0) end
 local function id(prefix) return prefix.."_"..os.time().."_"..math.random(100000,999999) end
-local function sid(p) return IsValid(p) and p:SteamID64() or "" end
+local function sid(p)
+    if not IsValid(p) then return "" end
+    if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(p) end
+    return p:SteamID64() or ""
+end
 local function notify(p,ok,msg) if not IsValid(p) then return end net.Start(NET.result) net.WriteBool(ok) net.WriteString(msg or "") net.Send(p) end
 local function refreshWeight(p)
     if GRM and GRM.Encumbrance and GRM.Encumbrance.Refresh then GRM.Encumbrance.Refresh(p) end
@@ -65,7 +69,7 @@ local function factionOf(p)
     if not IsValid(p) or not istable(Factions) then return nil,nil end
     for name,f in pairs(Factions) do
         if istable(f) and istable(f.Members) then
-            local m=f.Members[p:SteamID()] or f.Members[p:SteamID64()]
+            local m = GRM.Identity.FactionMember(f, p)
             if m then return name,m end
         end
     end
@@ -885,6 +889,21 @@ local function place(p,class,setup)
 end
 
 concommand.Add("grm_logistics_place_loading",function(p,_,a) place(p,"grm_logistics_loading",function(e)e:SetPointName(table.concat(a," ")~="" and table.concat(a," ")or"Точка погрузки")end) end)
+
+concommand.Add("grm_logistics_remove", function(p)
+    if not IsValid(p) or not p:IsSuperAdmin() then return end
+    local tr = p:GetEyeTrace()
+    local ent = tr and tr.Entity
+    if not IsValid(ent) or not EQUIP[ent:GetClass()] then
+        notify(p, false, "Наведитесь на точку погрузки, склад или оружейный шкаф.")
+        return
+    end
+    ent:Remove()
+    timer.Simple(0, function()
+        L.SaveMap(nil)
+        notify(p, true, "Логистическая entity удалена и убрана из сохранения карты.")
+    end)
+end)
 concommand.Add("grm_logistics_place_warehouse",function(p,_,a) place(p,"grm_logistics_warehouse",function(e)e:SetFactionName(a[1]or"");e:SetNetworkID(a[2]or"MAIN")end) end)
 concommand.Add("grm_logistics_place_armory",function(p,_,a) place(p,"grm_logistics_armory",function(e)e:SetFactionName(a[1]or"");e:SetNetworkID(a[2]or"MAIN");e:SetFactionMode(true)end) end)
 concommand.Add("grm_logistics_access",function(p,_,a) if not IsValid(p) or not p:IsSuperAdmin() then return end; local faction=table.concat(a," "); if faction=="" then notify(p,false,"Использование: grm_logistics_access <фракция> <0/1>") return end; local enabled=tonumber(a[#a])~=0; if #a>1 then faction=table.concat(a," ",1,#a-1) end; L.Access.factions[faction]=enabled; saveAccess(); notify(p,true,"Доступ логистики: "..faction.." = "..tostring(enabled)) end)
@@ -912,6 +931,7 @@ function L.HandleChat(p,text)
  local c=string.lower(string.Trim(text or ""))
  if c=="/logistics_start" or c=="!logistics_start" then chatStart(p); return true end
  if c=="/logistics_crates" or c=="!logistics_crates" then openCrateInv(p); return true end
+ if (c=="/logistics_remove" or c=="!logistics_remove") and p:IsSuperAdmin() then RunConsoleCommand("grm_logistics_remove"); return true end
  if (c=="/logistics_admin" or c=="!logistics_admin") and p:IsSuperAdmin() then local factions={};for name in pairs(Factions or{})do factions[#factions+1]=name end;table.sort(factions);net.Start(NET.admin);net.WriteTable({factions=factions,access=L.Access.factions,vehicles=L.Access.vehicles});net.Send(p);return true end
  return false
 end

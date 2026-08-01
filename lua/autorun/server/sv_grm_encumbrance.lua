@@ -95,7 +95,14 @@ function E.CalculateWeight(ply)
     return math.Round(total * 100) / 100, breakdown
 end
 
-function E.GetCapacity(ply) return tonumber(C.Capacity) or 50 end
+function E.GetCapacity(ply)
+    local base = tonumber(C.Capacity) or 50
+    local bonus = 0
+    if IsValid(ply) and GRM.Customization and GRM.Customization.GetFunctionValue then
+        bonus = GRM.Customization.GetFunctionValue(ply, "backpack", "backpackCapacity", "sum")
+    end
+    return base + math.Clamp(tonumber(bonus) or 0, 0, 100)
+end
 function E.GetHardCapacity(ply) return E.GetCapacity(ply) * (tonumber(C.HardMultiplier) or 1.25) end
 
 function E.GetSpeedMultiplierForRatio(ratio)

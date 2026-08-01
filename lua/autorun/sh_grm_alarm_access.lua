@@ -42,9 +42,10 @@ end
 local function getFactionInfo(ply)
     if not IsValid(ply) or not istable(Factions) then return nil, nil, nil end
     local sid, sid64 = ply:SteamID(), ply:SteamID64()
+    local charKey = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
     for name, f in pairs(Factions) do
         if istable(f) and istable(f.Members) then
-            local m = f.Members[sid] or f.Members[sid64]
+            local m = GRM.Identity.FactionMember(f, ply)
             if istable(m) then return name, m.Role, m.Department end
         end
     end
@@ -114,9 +115,10 @@ if SERVER then
         if ply:IsSuperAdmin() then return true end
         local data = normalize(AM.Data or AM.Load())
         local sid, sid64 = ply:SteamID(), ply:SteamID64()
+        local charKey = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
         local steamT = mode == "control" and data.ControlSteam or data.ViewSteam
-        if steamT[sid64] or steamT[sid] then return true end
-        if mode == "view" and (data.ControlSteam[sid64] or data.ControlSteam[sid]) then return true end
+        if steamT[charKey] or steamT[sid64] or steamT[sid] then return true end
+        if mode == "view" and (data.ControlSteam[charKey] or data.ControlSteam[sid64] or data.ControlSteam[sid]) then return true end
 
         local fac, role, dept = getFactionInfo(ply)
         if not fac then return false end
@@ -290,7 +292,10 @@ if CLIENT then
             local online = vgui.Create("DComboBox", row)
             online:Dock(FILL) online:DockMargin(6, 0, 0, 0) online:SetValue("Онлайн…")
             for _, p in ipairs(player.GetAll()) do
-                if IsValid(p) then online:AddChoice(p:Nick(), p:SteamID64()) end
+                if IsValid(p) then
+                    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64()
+                    online:AddChoice(p:Nick() .. " [" .. ck .. "]", ck)
+                end
             end
             online.OnSelect = function(_, _, _, id) if id then data[field][id] = true rebuild() end end
             tabs:AddSheet(title, panel, "icon16/key.png")

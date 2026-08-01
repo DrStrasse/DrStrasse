@@ -10,7 +10,7 @@ function ENT:Draw()
     if dist > maxd * maxd then return end
 
     local pos = self:GetPos() + self:GetUp() * 28
-    local ang = Angle(0, ply:EyeAngles().y - 90, 90)
+    local ang = Angle(0, EyeAngles().y - 90, 90)
     cam.Start3D2D(pos, ang, 0.09)
         draw.SimpleTextOutlined(
             self:GetLabel() ~= "" and self:GetLabel() or "Монитор CCTV",

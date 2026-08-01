@@ -9,6 +9,7 @@ if SERVER then
     util.AddNetworkString("GRM_Ctx_VehAct")
     util.AddNetworkString("GRM_Ctx_MoneyAct")
     util.AddNetworkString("GRM_Ctx_Action")
+    util.AddNetworkString("GRM_Ctx_Radio")
     util.AddNetworkString("GRM_Laws_Open")
     util.AddNetworkString("Factions_OpenAdminMenu")
     util.AddNetworkString("Factions_OpenLeaderMenu")
@@ -29,8 +30,10 @@ if SERVER then
     local function getPlayerFaction(ply)
         if not Factions then return nil, nil end
         local sid = ply:SteamID()
+        local s64 = ply:SteamID64()
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or s64
         for name, f in pairs(Factions) do
-            if istable(f) and istable(f.Members) and f.Members[sid] then
+            if istable(f) and GRM.Identity.FactionMember(f, ply) then
                 return name, f
             end
         end
@@ -46,9 +49,10 @@ if SERVER then
         end
 
         local sid, sid64 = ply:SteamID(), ply:SteamID64()
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
         local isLeader = false
         for _, f in pairs(Factions or {}) do
-            if istable(f) and (f.Leader == sid or f.Leader == sid64) then
+            if istable(f) and (f.Leader == ck or f.Leader == sid or f.Leader == sid64) then
                 isLeader = true
                 break
             end
@@ -71,7 +75,7 @@ if SERVER then
         local canManage = (VK.CanInteract and VK.CanInteract(veh, ply, true)) or ply:IsSuperAdmin()
         local canUse = (VK.CanInteract and VK.CanInteract(veh, ply, false)) or ply:IsSuperAdmin()
         local mineStrict = (veh.VD_Owner == ply)
-            or (veh.VK_OwnerType == "player" and veh.VK_OwnerSteam == ply:SteamID())
+            or (veh.VK_OwnerType == "player" and veh.VK_OwnerSteam == ((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID()))
         local mine = mineStrict or ply:IsSuperAdmin()
         local tracked = (VD_AllVehicles and VD_AllVehicles[veh:EntIndex()] ~= nil)
             or veh.VD_Owner ~= nil or veh.VD_ID ~= nil
@@ -91,14 +95,15 @@ if SERVER then
         local result = {}
         local factionName, faction = getPlayerFaction(ply)
         result.isFactionMember = (factionName ~= nil)
-        result.isLeaderOrAdmin = (faction and faction.Leader == ply:SteamID()) or ply:IsSuperAdmin()
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64()
+        result.isLeaderOrAdmin = (faction and (faction.Leader == ck or faction.Leader == ply:SteamID() or faction.Leader == ply:SteamID64())) or ply:IsSuperAdmin()
         result.factionName = factionName or ""
         result.veh = vehInfo(ply)
         result.aimPly = aimPlyInfo(ply)
         result.hasMaskAccess = false
         if factionName and FactionsExt and FactionsExt[factionName] then
             local cfg = FactionsExt[factionName]
-            local member = faction and faction.Members[ply:SteamID()]
+            local member = faction and GRM.Identity.FactionMember(faction, ply)
             if member and cfg.MaskDepartments then
                 for _, dept in pairs(cfg.MaskDepartments) do
                     if istable(dept.Roles) then
@@ -128,6 +133,19 @@ if SERVER then
     end)
 
     -- ── Действия с транспортом из контекст-меню (Код 82) ──────
+    net.Receive("GRM_Ctx_Radio", function(_, ply)
+        if not IsValid(ply) then return end
+        local op = tostring(net.ReadString() or "")
+        local value = net.ReadString() or ""
+        local rn = GRM.RadioNet
+        if not rn then return end
+        if op == "leave" and rn.FreqLeave then
+            rn.FreqLeave(ply)
+        elseif op == "set" and rn.FreqSet then
+            rn.FreqSet(ply, value)
+        end
+    end)
+
     net.Receive("GRM_Ctx_VehAct", function(_, ply)
         if not IsValid(ply) then return end
         local doAct = tostring(net.ReadString() or "")
@@ -248,8 +266,10 @@ end
 local function actRadio()
     Derma_StringRequest("Рация", "Частота (1-999.9) или пусто = отключиться:", "",
         function(v)
-            if v and v ~= "" then RunConsoleCommand("say", "/freq " .. v)
-            else RunConsoleCommand("say", "/freqleave") end
+            net.Start("GRM_Ctx_Radio")
+                net.WriteString(v and v ~= "" and "set" or "leave")
+                net.WriteString(v or "")
+            net.SendToServer()
         end)
 end
 
@@ -305,6 +325,7 @@ end
 local BTNS = {
     { id = "ticket",     l = "Тикет",        fn = actTicket,     c = CC.ticket,  ch = CC.ticketH,  ok = function() return true end },
     { id = "inventory",  l = "Инвентарь",    fn = actInv,        c = CC.inv,     ch = CC.invH,     ok = function() return true end },
+    { id = "gps",        l = "GPS-метки",     fn = function() RunConsoleCommand("grm_gps") end, c = Color(55, 155, 185), ch = Color(75, 180, 210), ok = function() return true end },
     { id = "money_drop", l = "Выбросить деньги…", fn = actDropMoney,
       c = Color(190, 150, 60), ch = Color(210, 170, 80), ok = function() return true end },
     { id = "money_give", l = function()
