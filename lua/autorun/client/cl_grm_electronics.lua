@@ -679,37 +679,6 @@ local function openComputer(ent,data)
   
   local currentSite = nil
   
-  -- Function to load a website
-  local function loadSite(site)
-   currentSite = site
-   browserFrame:Clear()
-   
-   local header = vgui.Create("DPanel", browserFrame)
-   header:SetPos(0, 0)
-   header:SetSize(794, 50)
-   header.Paint = function(_, w, h)
-    draw.RoundedBoxEx(8, 0, 0, w, h, C.blue, true, true, false, false)
-    draw.SimpleText(site.name, "GRMNet_Title", 20, 25, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-   end
-   
-   local content = vgui.Create("DTextEntry", browserFrame)
-   content:SetPos(20, 60)
-   content:SetSize(754, 365)
-   content:SetMultiline(true)
-   content:SetEditable(false)
-   content:SetText(site.content)
-   content:SetFont("GRMNet_Body")
-   
-   urlEntry:SetText(site.url)
-   
-   -- Update tab if exists
-   if tabs[activeTabIndex] then
-    tabs[activeTabIndex].name = site.name
-    tabs[activeTabIndex].site = site
-    updateTabs()
-   end
-  end
-  
   -- Function to update tabs display
   local function updateTabs()
    -- Clear old tabs
@@ -768,6 +737,37 @@ local function openComputer(ent,data)
    
    -- Update new tab button position
    newTabBtn:SetPos(math.min(#tabs * tabWidth, 724), 4)
+  end
+  
+  -- Function to load a website
+  local function loadSite(site)
+   currentSite = site
+   browserFrame:Clear()
+   
+   local header = vgui.Create("DPanel", browserFrame)
+   header:SetPos(0, 0)
+   header:SetSize(794, 50)
+   header.Paint = function(_, w, h)
+    draw.RoundedBoxEx(8, 0, 0, w, h, C.blue, true, true, false, false)
+    draw.SimpleText(site.name, "GRMNet_Title", 20, 25, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+   end
+   
+   local content = vgui.Create("DTextEntry", browserFrame)
+   content:SetPos(20, 60)
+   content:SetSize(754, 365)
+   content:SetMultiline(true)
+   content:SetEditable(false)
+   content:SetText(site.content)
+   content:SetFont("GRMNet_Body")
+   
+   urlEntry:SetText(site.url)
+   
+   -- Update tab if exists
+   if tabs[activeTabIndex] then
+    tabs[activeTabIndex].name = site.name
+    tabs[activeTabIndex].site = site
+    updateTabs()
+   end
   end
   
   -- Add bookmark buttons
