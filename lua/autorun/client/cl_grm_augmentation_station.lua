@@ -228,9 +228,10 @@ net.Receive("GRM_AugStation_Open", function()
 		draw.RoundedBox(6, 0, 0, w, h, col)
 	end
 	btnCreate.DoClick = function()
+		local _, selectedCategory = catCombo:GetSelected()
 		local chipData = {
 			name = nameEntry:GetValue(),
-			category = catCombo:GetSelected(),
+			category = selectedCategory,
 			level = levelSlider:GetValue(),
 			modifiers = {}
 		}
