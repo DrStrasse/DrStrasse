@@ -25,13 +25,6 @@ function ENT:Use(activator, caller)
 		return
 	end
 	
-	-- Проверка лимита чипов
-	local playerChips = GRM.AugChips.GetPlayerChips(caller)
-	if #playerChips >= GRM.AugChips.Config.MaxChipsPerPlayer then
-		caller:ChatPrint("[Аугментации] У вас уже максимум чипов (" .. GRM.AugChips.Config.MaxChipsPerPlayer .. ")!")
-		return
-	end
-	
 	-- Получение данных чипа
 	local chipId = self:GetChipID()
 	local chipData = GRM.AugChips.ChipDatabase[chipId]
@@ -41,17 +34,30 @@ function ENT:Use(activator, caller)
 		return
 	end
 	
-	-- Добавление чипа игроку
-	table.insert(playerChips, chipData)
-	self:SetImplanted(true)
-	self:SetOwner(caller)
-	
-	caller:ChatPrint("[Аугментации] Вы получили чип: " .. chipData.name)
+	-- Добавление чипа в инвентарь как предмет
+	if GRM.Inventory and GRM.Inventory.AddItem then
+		local remaining = GRM.Inventory.AddItem(caller, "augmentation_chip", 1, {
+			chipId = chipId,
+			chipName = chipData.name,
+			chipCategory = chipData.category,
+			chipLevel = chipData.level,
+			chipModifiers = chipData.modifiers
+		})
+		
+		if remaining > 0 then
+			caller:ChatPrint("[Аугментации] Инвентарь полон! Невозможно подобрать чип.")
+			return
+		end
+		
+		caller:ChatPrint("[Аугментации] Чип добавлен в инвентарь: " .. chipData.name)
+		caller:ChatPrint("[Аугментации] Используйте чип из инвентаря для имплантации.")
+	else
+		caller:ChatPrint("[Аугментации] Ошибка: система инвентаря недоступна!")
+		return
+	end
 	
 	-- Удаление физической модели
 	self:Remove()
-	
-	GRM.AugChips.SaveData()
 end
 
 function ENT:OnRemove()

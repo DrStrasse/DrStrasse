@@ -366,6 +366,18 @@ function CHIPS.ExtractChip(ply, chipId)
 	return true, "Чип извлечен"
 end
 
+-- Открытие меню имплантации для чипа из инвентаря
+if SERVER then
+	function CHIPS.OpenImplantMenu(ply, chipData)
+		if not IsValid(ply) or not chipData then return end
+		
+		-- Отправка данных чипа клиенту для открытия меню
+		net.Start("GRM_AugChip_ImplantMenu")
+		net.WriteTable(chipData)
+		net.Send(ply)
+	end
+end
+
 -- Сохранение данных
 function CHIPS.SaveData()
 	if not SERVER then return end
@@ -397,6 +409,9 @@ if SERVER then
 	util.AddNetworkString("GRM_AugChip_OpenProgrammer")
 	util.AddNetworkString("GRM_AugStation_Open")
 	util.AddNetworkString("GRM_AugStation_SpawnChip")
+	util.AddNetworkString("GRM_AugChip_ImplantMenu")
+	util.AddNetworkString("GRM_AugChip_ImplantFromInventory")
+	util.AddNetworkString("GRM_AugChip_ImplantResult")
 	
 	hook.Add("Initialize", "GRM_AugChips_Init", function()
 		CHIPS.LoadData()
@@ -520,6 +535,81 @@ if SERVER then
 			ply:ChatPrint("[Аугментации] Чип создан: " .. result.name)
 			ply:ChatPrint("[Аугментации] Подберите чип чтобы добавить его в инвентарь")
 		end
+	end)
+	
+	-- Имплантация чипа из инвентаря
+	net.Receive("GRM_AugChip_ImplantFromInventory", function(len, ply)
+		local chipData = net.ReadTable()
+		local slotIdx = net.ReadUInt(8)
+		
+		if not IsValid(ply) or not chipData then return end
+		
+		-- Проверка лимита имплантированных чипов
+		local playerChips = CHIPS.GetPlayerChips(ply)
+		local implantedCount = 0
+		for _, chip in ipairs(playerChips) do
+			if chip.implanted then implantedCount = implantedCount + 1 end
+		end
+		
+		if implantedCount >= CHIPS.Config.MaxChipsPerPlayer then
+			ply:ChatPrint("[Аугментации] Достигнут максимум имплантированных чипов!")
+			return
+		end
+		
+		-- Имплантация чипа
+		local newChip = {
+			id = chipData.chipId or ("chip_" .. os.time() .. "_" .. math.random(1000, 9999)),
+			name = chipData.chipName or "Неизвестный чип",
+			category = chipData.chipCategory or "civilian",
+			level = chipData.chipLevel or 1,
+			modifiers = chipData.chipModifiers or {},
+			implanted = false,
+			created = os.time(),
+			creator = GRM.Identity and GRM.Identity.CharacterKey(ply) or ply:SteamID64()
+		}
+		
+		-- Бросок на успех имплантации
+		local roll = math.random()
+		local success, message
+		
+		if roll <= CHIPS.Config.ImplantSuccessRate then
+			-- Успех
+			newChip.implanted = true
+			newChip.implantTime = os.time()
+			CHIPS.ApplyChipEffects(ply, newChip)
+			table.insert(playerChips, newChip)
+			success = true
+			message = "Имплантация успешна: " .. newChip.name
+		elseif roll <= CHIPS.Config.ImplantSuccessRate + CHIPS.Config.RejectionChance then
+			-- Отторжение
+			success = false
+			message = "Отторжение чипа! Вы получили урон."
+			ply:TakeDamage(math.random(20, 40))
+		else
+			-- Осложнения
+			newChip.implanted = true
+			newChip.implantTime = os.time()
+			newChip.hasComplications = true
+			CHIPS.ApplyChipEffects(ply, newChip)
+			table.insert(playerChips, newChip)
+			success = true
+			message = "Имплантация с осложнениями: " .. newChip.name
+			ply:TakeDamage(math.random(10, 25))
+		end
+		
+		-- Удаление чипа из инвентаря при успешной имплантации
+		if success and GRM.Inventory then
+			GRM.Inventory.RemoveFromSlot(ply, slotIdx, 1)
+		end
+		
+		CHIPS.SaveData()
+		ply:ChatPrint("[Аугментации] " .. message)
+		
+		-- Отправка результата клиенту
+		net.Start("GRM_AugChip_ImplantResult")
+		net.WriteBool(success)
+		net.WriteString(message)
+		net.Send(ply)
 	end)
 	
 	print("[GRM AugChips] Chip system v1.0 loaded")

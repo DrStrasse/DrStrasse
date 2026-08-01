@@ -575,4 +575,126 @@ hook.Add("PlayerSayTransform", "GRM_AugChips_Cmd", function(ply, pack)
     end
 end)
 
+-- Обработка открытия меню имплантации из инвентаря
+net.Receive("GRM_AugChip_ImplantMenu", function()
+	local chipData = net.ReadTable()
+	
+	-- Создание окна подтверждения имплантации
+	local frame = vgui.Create("DFrame")
+	frame:SetTitle("Имплантация чипа")
+	frame:SetSize(400, 300)
+	frame:Center()
+	frame:MakePopup()
+	
+	frame.Paint = function(self, w, h)
+		draw.RoundedBox(8, 0, 0, w, h, GRM_COLORS.bg)
+		draw.RoundedBoxEx(8, 0, 0, w, 46, GRM_COLORS.head, true, true, false, false)
+		surface.SetDrawColor(GRM_COLORS.border)
+		surface.DrawLine(0, 46, w, 46)
+		
+		draw.SimpleText("ИМПЛАНТАЦИЯ ЧИПА", "GRMChip_Title", 14, 23, GRM_COLORS.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+	end
+	
+	-- Информация о чипе
+	local yPos = 60
+	local nameLabel = vgui.Create("DLabel", frame)
+	nameLabel:SetPos(20, yPos)
+	nameLabel:SetSize(360, 30)
+	nameLabel:SetText("Чип: " .. (chipData.chipName or "Неизвестный"))
+	nameLabel:SetFont("GRMChip_Bold")
+	nameLabel:SetTextColor(GRM_COLORS.text)
+	yPos = yPos + 35
+	
+	local catLabel = vgui.Create("DLabel", frame)
+	catLabel:SetPos(20, yPos)
+	catLabel:SetSize(360, 25)
+	catLabel:SetText("Категория: " .. (chipData.chipCategory or "civilian"))
+	catLabel:SetFont("GRMChip_Normal")
+	catLabel:SetTextColor(GRM_COLORS.text_dim)
+	yPos = yPos + 30
+	
+	local levelLabel = vgui.Create("DLabel", frame)
+	levelLabel:SetPos(20, yPos)
+	levelLabel:SetSize(360, 25)
+	levelLabel:SetText("Уровень: " .. (chipData.chipLevel or 1))
+	levelLabel:SetFont("GRMChip_Normal")
+	levelLabel:SetTextColor(GRM_COLORS.text_dim)
+	yPos = yPos + 40
+	
+	-- Шансы имплантации
+	local chancesLabel = vgui.Create("DLabel", frame)
+	chancesLabel:SetPos(20, yPos)
+	chancesLabel:SetSize(360, 25)
+	chancesLabel:SetText("Шансы имплантации:")
+	chancesLabel:SetFont("GRMChip_Bold")
+	chancesLabel:SetTextColor(GRM_COLORS.text)
+	yPos = yPos + 30
+	
+	local successLabel = vgui.Create("DLabel", frame)
+	successLabel:SetPos(40, yPos)
+	successLabel:SetSize(320, 20)
+	successLabel:SetText("✓ Успех: 85%")
+	successLabel:SetFont("GRMChip_Normal")
+	successLabel:SetTextColor(GRM_COLORS.success)
+	yPos = yPos + 25
+	
+	local rejectLabel = vgui.Create("DLabel", frame)
+	rejectLabel:SetPos(40, yPos)
+	rejectLabel:SetSize(320, 20)
+	rejectLabel:SetText("✗ Отторжение: 10% (урон 20-40 HP)")
+	rejectLabel:SetFont("GRMChip_Normal")
+	rejectLabel:SetTextColor(GRM_COLORS.error)
+	yPos = yPos + 25
+	
+	local compLabel = vgui.Create("DLabel", frame)
+	compLabel:SetPos(40, yPos)
+	compLabel:SetSize(320, 20)
+	compLabel:SetText("⚠ Осложнения: 5% (урон 10-25 HP)")
+	compLabel:SetFont("GRMChip_Normal")
+	compLabel:SetTextColor(GRM_COLORS.warning)
+	yPos = yPos + 40
+	
+	-- Кнопки
+	local btnImplant = vgui.Create("DButton", frame)
+	btnImplant:SetPos(20, yPos)
+	btnImplant:SetSize(170, 40)
+	btnImplant:SetText("ИМПЛАНТИРОВАТЬ")
+	btnImplant:SetFont("GRMChip_Bold")
+	btnImplant:SetTextColor(GRM_COLORS.text)
+	btnImplant.Paint = function(self, w, h)
+		local col = self:IsHovered() and GRM_COLORS.success or Color(40, 160, 80)
+		draw.RoundedBox(6, 0, 0, w, h, col)
+	end
+	btnImplant.DoClick = function()
+		-- Отправка запроса на имплантацию
+		net.Start("GRM_AugChip_ImplantFromInventory")
+		net.WriteTable(chipData)
+		net.WriteUInt(chipData.slotIdx or 1, 8)
+		net.SendToServer()
+		frame:Close()
+	end
+	
+	local btnCancel = vgui.Create("DButton", frame)
+	btnCancel:SetPos(210, yPos)
+	btnCancel:SetSize(170, 40)
+	btnCancel:SetText("ОТМЕНА")
+	btnCancel:SetFont("GRMChip_Bold")
+	btnCancel:SetTextColor(GRM_COLORS.text)
+	btnCancel.Paint = function(self, w, h)
+		local col = self:IsHovered() and GRM_COLORS.error or Color(160, 60, 60)
+		draw.RoundedBox(6, 0, 0, w, h, col)
+	end
+	btnCancel.DoClick = function()
+		frame:Close()
+	end
+end)
+
+-- Обработка результата имплантации
+net.Receive("GRM_AugChip_ImplantResult", function()
+	local success = net.ReadBool()
+	local message = net.ReadString()
+	
+	notification.AddLegacy(message, success and NOTIFY_GENERIC or NOTIFY_ERROR, 5)
+end)
+
 print("[GRM AugChips] Client programmer loaded")
