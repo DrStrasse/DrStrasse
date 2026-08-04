@@ -1,0 +1,1 @@
+ENT.Type="anim";ENT.Base="grm_net_device";ENT.PrintName="Сетевой принтер";ENT.Category="GRM — Electronics";ENT.Spawnable=true;ENT.AdminOnly=true;ENT.DeviceKind="printer";ENT.DefaultModel="models/props_interiors/printer.mdl"

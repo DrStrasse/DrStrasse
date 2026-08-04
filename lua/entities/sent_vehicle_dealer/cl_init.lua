@@ -1,0 +1,51 @@
+-- GRM Vehicle Dealer client v3.0
+include("shared.lua")
+local UI={bg=Color(11,16,24,252),head=Color(21,29,42),card=Color(28,38,52),card2=Color(34,47,64),text=Color(238,244,250),dim=Color(151,169,190),blue=Color(66,147,242),green=Color(61,190,117),red=Color(215,73,79),orange=Color(237,158,67),yellow=Color(239,198,81)}
+surface.CreateFont("GRMVD_Title",{font="Roboto",size=23,weight=900,extended=true});surface.CreateFont("GRMVD_Head",{font="Roboto",size=16,weight=800,extended=true});surface.CreateFont("GRMVD_Body",{font="Roboto",size=13,weight=550,extended=true});surface.CreateFont("GRMVD_Small",{font="Roboto",size=11,weight=500,extended=true})
+function ENT:Draw()
+ self:DrawModel();local lp=LocalPlayer();if not IsValid(lp)then return end;local d=lp:GetPos():Distance(self:GetPos());if d>600 then return end
+ local top=self:LocalToWorld(Vector(0,0,(self:OBBMaxs().z or 72)+16));local s=top:ToScreen();if not s.visible then return end
+ local a=math.Clamp(255-(d-120)*.42,45,255);local name=self:GetDealerName();if name==""then name="Дилер транспорта"end
+ surface.SetFont("GRMVD_Head");local tw=surface.GetTextSize(name);local width=math.Clamp(tw+42,270,520)
+ draw.RoundedBox(7,s.x-width/2,s.y-30,width,58,Color(12,17,25,a*.9));surface.SetDrawColor(65,145,235,a);surface.DrawOutlinedRect(s.x-width/2,s.y-30,width,58,2)
+ draw.SimpleText(name,"GRMVD_Head",s.x,s.y-10,Color(120,205,255,a),TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER);draw.SimpleText("ДИЛЕР / ГАРАЖ  •  [E]","GRMVD_Small",s.x,s.y+13,Color(220,230,240,a),TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+end
+local function money(n)return GRM.Format and GRM.Format(n)or tostring(n)end
+local function btn(p,t,c)local b=vgui.Create("DButton",p);b:SetText(t);b:SetFont("GRMVD_Body");b:SetTextColor(color_white);b.Paint=function(self,w,h)local x=self:IsHovered()and Color(math.min(c.r+18,255),math.min(c.g+18,255),math.min(c.b+18,255))or c;draw.RoundedBox(6,0,0,w,h,x)end;return b end
+local function preview(p,model)if not util.IsValidModel(model or"")then return end;p:SetModel(model);local e=p:GetEntity();if not IsValid(e)then return end;local mn,mx=e:GetRenderBounds();local size=math.max((mx-mn):Length(),30);p:SetFOV(34);p:SetCamPos(Vector(size,size,size*.55));p:SetLookAt((mn+mx)*.5);p.LayoutEntity=function(self,x)x:SetAngles(Angle(0,RealTime()*15%360,0))end end
+local function send(dealer,op,id)net.Start("GRM_VD_Action")net.WriteEntity(dealer)net.WriteString(op)if id then net.WriteString(id)end net.SendToServer();surface.PlaySound("buttons/button15.wav")end
+net.Receive("GRM_VD_Open",function()
+ local dealer,name,catalog,garage=net.ReadEntity(),net.ReadString(),net.ReadTable()or{},net.ReadTable()or{};if IsValid(GRM.VehicleDealerFrame)then GRM.VehicleDealerFrame:Remove()end
+ local f=vgui.Create("DFrame");GRM.VehicleDealerFrame=f;GRM.UI.Track("vehicle_dealer",f);f:SetSize(math.Clamp(ScrW()*.8,1050,1450),math.Clamp(ScrH()*.84,700,920));f:Center();f:MakePopup();f:SetTitle("");f:ShowCloseButton(false);f.Paint=function(_,w,h)draw.RoundedBox(10,0,0,w,h,UI.bg);draw.RoundedBoxEx(10,0,0,w,62,UI.head,true,true,false,false);draw.SimpleText("GRM / ТРАНСПОРТНЫЙ ЦЕНТР","GRMVD_Small",20,17,UI.blue);draw.SimpleText(name,"GRMVD_Title",20,42,UI.text,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)end
+ local close=btn(f,"×",UI.red);close:SetPos(f:GetWide()-44,15);close:SetSize(30,30);close.DoClick=function()f:Close()end
+ local tabs=vgui.Create("DPropertySheet",f);tabs:Dock(FILL);tabs:DockMargin(14,72,14,14)
+ local function page()local p=vgui.Create("DPanel");p:SetPaintBackground(false);local s=vgui.Create("DScrollPanel",p);s:Dock(FILL);return p,s end
+ local pc,sc=page();tabs:AddSheet("Каталог",pc,"icon16/car.png");for _,v in ipairs(catalog)do local r=vgui.Create("DPanel",sc);r:Dock(TOP);r:SetTall(112);r:DockMargin(0,0,5,7);r.Paint=function(self,w,h)draw.RoundedBox(8,0,0,w,h,self:IsHovered()and UI.card2 or UI.card);draw.SimpleText(v.name or v.class,"GRMVD_Head",116,13,UI.text);draw.SimpleText((v.category or"Транспорт").." • "..v.system,"GRMVD_Small",116,39,UI.dim);draw.SimpleText(v.service and"Служебный транспорт"or("Цена: "..money(v.price)),"GRMVD_Body",116,67,v.service and UI.blue or UI.yellow);if v.faction then draw.SimpleText("Фракция: "..v.faction,"GRMVD_Small",116,89,UI.orange)end end;local m=vgui.Create("DModelPanel",r);m:SetPos(8,8);m:SetSize(98,96);preview(m,v.model);local b=btn(r,v.service and"ВЫДАТЬ"or"КУПИТЬ",UI.green);b:Dock(RIGHT);b:SetWide(135);b:DockMargin(8,35,10,35);b.DoClick=function()send(dealer,"buy",v.class)end end
+ local pg,sg=page();tabs:AddSheet("Мой гараж",pg,"icon16/house.png");for _,v in ipairs(garage)do local r=vgui.Create("DPanel",sg);r:Dock(TOP);r:SetTall(105);r:DockMargin(0,0,5,7);r.Paint=function(_,w,h)draw.RoundedBox(8,0,0,w,h,UI.card);draw.SimpleText(v.name or v.class,"GRMVD_Head",112,14,UI.text);draw.SimpleText(v.class,"GRMVD_Small",112,41,UI.dim);draw.SimpleText(v.stored==false and"Выдан на карту"or"В гараже","GRMVD_Body",112,68,v.stored==false and UI.orange or UI.green)end;local m=vgui.Create("DModelPanel",r);m:SetPos(7,7);m:SetSize(96,90);preview(m,v.model);local actions=vgui.Create("DPanel",r);actions:Dock(RIGHT);actions:SetWide(280);actions:DockMargin(5,10,8,10);actions:SetPaintBackground(false);local main=btn(actions,v.stored==false and"В ГАРАЖ"or"ВЫДАТЬ",v.stored==false and UI.blue or UI.green);main:Dock(TOP);main:SetTall(37);main.DoClick=function()send(dealer,v.stored==false and"store"or"retrieve",v.id)end;local sell=btn(actions,"Продать (50%)",UI.red);sell:Dock(BOTTOM);sell:SetTall(30);sell.DoClick=function()Derma_Query("Продать транспорт навсегда?","Гараж","Продать",function()send(dealer,"sell",v.id)end,"Отмена")end end
+ if #garage==0 then local e=vgui.Create("DLabel",sg);e:Dock(TOP);e:SetTall(100);e:SetFont("GRMVD_Head");e:SetTextColor(UI.dim);e:SetContentAlignment(5);e:SetText("Гараж пуст. Купите личный транспорт в каталоге.")end
+end)
+net.Receive("GRM_VD_Result",function()local ok,text=net.ReadBool(),net.ReadString();notification.AddLegacy(text,ok and NOTIFY_GENERIC or NOTIFY_ERROR,5);surface.PlaySound(ok and"buttons/button9.wav"or"buttons/button10.wav")end)
+net.Receive("GRM_VD_AdminOpen",function()
+ local dealer,data=net.ReadEntity(),net.ReadTable()or{};local selected=table.Copy(data.vehicles or{});local f=vgui.Create("DFrame");GRM.UI.Track("vehicle_dealer_admin",f);f:SetSize(1180,760);f:Center();f:MakePopup();f:SetTitle("");f:ShowCloseButton(false);f.Paint=function(_,w,h)draw.RoundedBox(9,0,0,w,h,UI.bg);draw.RoundedBoxEx(9,0,0,w,58,UI.head,true,true,false,false);draw.SimpleText("GRM / НАСТРОЙКА ДИЛЕРА И ГАРАЖА","GRMVD_Title",18,29,UI.text,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)end
+ local close=btn(f,"×",UI.red);close:SetPos(1135,14);close:SetSize(30,30);close.DoClick=function()f:Close()end
+ local name=vgui.Create("DTextEntry",f);name:SetPos(16,72);name:SetSize(350,30);name:SetText(data.name or"");name:SetPlaceholderText("Название")
+ local model=vgui.Create("DTextEntry",f);model:SetPos(378,72);model:SetSize(786,30);model:SetText(data.model or"");model:SetPlaceholderText("Модель NPC")
+ local left=vgui.Create("DPanel",f);left:SetPos(16,116);left:SetSize(440,580);left.Paint=function(_,w,h)draw.RoundedBox(7,0,0,w,h,UI.card)end
+ local search=vgui.Create("DTextEntry",left);search:SetPos(8,8);search:SetSize(424,28);search:SetPlaceholderText("Поиск транспорта на сервере...")
+ local available=vgui.Create("DScrollPanel",left);available:SetPos(8,44);available:SetSize(424,528)
+ local right=vgui.Create("DPanel",f);right:SetPos(468,116);right:SetSize(696,580);right.Paint=function(_,w,h)draw.RoundedBox(7,0,0,w,h,UI.card)end
+ local selectedScroll=vgui.Create("DScrollPanel",right);selectedScroll:SetPos(8,8);selectedScroll:SetSize(680,564)
+ local function exists(class)for _,e in ipairs(selected)do if e.class==class then return true end end end
+ local rebuildSelected
+ local function rebuildAvailable()available:Clear();local q=string.lower(search:GetValue()or"");for _,v in ipairs(data.available or{})do if q==""or string.find(string.lower(v.name.." "..v.class),q,1,true)then local b=btn(available,v.name.."  ["..v.system.."]",exists(v.class)and UI.card2 or UI.blue);b:Dock(TOP);b:SetTall(32);b:DockMargin(0,0,0,4);b:SetEnabled(not exists(v.class));b.DoClick=function()selected[#selected+1]={class=v.class,name=v.name,price=0,category="Транспорт",faction="",service=false};rebuildAvailable();rebuildSelected()end end end end
+ rebuildSelected=function()selectedScroll:Clear();for index,e in ipairs(selected)do local row=vgui.Create("DPanel",selectedScroll);row:Dock(TOP);row:SetTall(72);row:DockMargin(0,0,0,5);row.Paint=function(_,w,h)draw.RoundedBox(6,0,0,w,h,UI.card2);draw.SimpleText(e.name or e.class,"GRMVD_Body",8,7,UI.text);draw.SimpleText(e.class,"GRMVD_Small",8,27,UI.dim)end
+  local price=vgui.Create("DNumberWang",row);price:SetPos(260,8);price:SetSize(105,24);price:SetMin(0);price:SetMax(100000000);price:SetValue(e.price or 0);price.OnValueChanged=function(_,v)e.price=math.floor(v)end
+  local cat=vgui.Create("DTextEntry",row);cat:SetPos(372,8);cat:SetSize(110,24);cat:SetText(e.category or"Транспорт");cat.OnChange=function(self)e.category=self:GetValue()end
+  local fac=vgui.Create("DTextEntry",row);fac:SetPos(260,39);fac:SetSize(222,24);fac:SetText(e.faction or"");fac:SetPlaceholderText("Фракция (пусто = всем)");fac.OnChange=function(self)e.faction=self:GetValue()end
+  local service=vgui.Create("DCheckBoxLabel",row);service:SetPos(490,8);service:SetSize(100,22);service:SetText("Служебный");service:SetTextColor(UI.text);service:SetValue(e.service==true);service.OnChange=function(_,v)e.service=v==true end
+  local rem=btn(row,"Удалить",UI.red);rem:SetPos(570,35);rem:SetSize(96,27);rem.DoClick=function()table.remove(selected,index);rebuildSelected();rebuildAvailable()end
+ end end
+ search.OnChange=rebuildAvailable;rebuildAvailable();rebuildSelected()
+ local save=btn(f,"СОХРАНИТЬ ДИЛЕРА, АССОРТИМЕНТ И ГАРАЖ",UI.green);save:SetPos(16,708);save:SetSize(1148,36);save.DoClick=function()net.Start("GRM_VD_AdminSave")net.WriteEntity(dealer)net.WriteTable({name=name:GetValue(),model=model:GetValue(),vehicles=selected})net.SendToServer();surface.PlaySound("buttons/button15.wav")end
+end)
+print("[GRM VehicleDealer] client v3.0 loaded")
