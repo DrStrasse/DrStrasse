@@ -10,10 +10,12 @@ SWEP.AdminOnly = false
 -- Контракт стандартного weapon_stunstick из HL2/GMod:
 -- в руках — v_stunstick, мир — w_stunbaton.
 SWEP.ViewModel = "models/weapons/v_stunstick.mdl"
-SWEP.WorldModel = "models/weapons/w_stunbaton.mdl"
+-- Собственная модель электродубинки для мира/третьего лица.
+SWEP.WorldModel = "models/stunsticelectrocwtc/stunelectro.mdl"
 SWEP.ViewModelFOV = 62
 SWEP.UseHands = true
-SWEP.HoldType = "melee2"
+-- Более естественная одноручная стойка, без поднятой «двуручной» позы.
+SWEP.HoldType = "melee"
 
 SWEP.Primary.ClipSize = -1
 SWEP.Primary.DefaultClip = -1
@@ -31,11 +33,11 @@ local function batonSound(ent, path, level, pitch)
 end
 
 function SWEP:Initialize()
-    self:SetHoldType("melee2")
+    self:SetHoldType("melee")
 end
 
 function SWEP:Deploy()
-    self:SetHoldType("melee2")
+    self:SetHoldType("melee")
     self:SendWeaponAnim(ACT_VM_DRAW)
     return true
 end
