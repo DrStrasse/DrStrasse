@@ -8,6 +8,13 @@ A.Config=A.Config or {allowAll=true, actions={create=true,implant=true,reprogram
 function A.Load() if not file.Exists(A.File,"DATA") then return end; local ok,d=pcall(util.JSONToTable,file.Read(A.File,"DATA"),false,true); if ok and istable(d) then A.Config=d end end
 function A.Save() file.CreateDir("grm_augmentation"); file.Write(A.File,util.TableToJSON(A.Config,true)) end
 function A.GetConfig() return table.Copy(A.Config) end
+function A.GetLists() local factions={}; for n in pairs(Factions or {}) do factions[#factions+1]=n end; table.sort(factions); return factions end
+if SERVER then
+ util.AddNetworkString("GRM_AugAccess_Request"); util.AddNetworkString("GRM_AugAccess_Data"); util.AddNetworkString("GRM_AugAccess_Save")
+ local function send(p) net.Start("GRM_AugAccess_Data"); net.WriteTable(A.Config); net.WriteTable(A.GetLists()); net.Send(p) end
+ net.Receive("GRM_AugAccess_Request",function(_,p) if p:IsSuperAdmin() then send(p) end end)
+ net.Receive("GRM_AugAccess_Save",function(_,p) if not p:IsSuperAdmin() then return end; local d=net.ReadTable() or {}; A.Config=d; A.Save(); send(p) end)
+end
 A.Load()
 function A.SetConfig(cfg) A.Config=table.Merge(A.Config,cfg or {}); A.Save() end
 local function value(ply,key)
