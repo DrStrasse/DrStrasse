@@ -3,8 +3,13 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.AugmentationAccess = GRM.AugmentationAccess or {}
 local A=GRM.AugmentationAccess
-A.Config=A.Config or {allowAll=true, actions={create=true,implant=true,reprogram=true,extract=true}, factions={}, departments={}, roles={}}
-function A.SetConfig(cfg) A.Config=table.Merge(A.Config,cfg or {}) end
+A.File="grm_augmentation/access.json"
+A.Config=A.Config or {allowAll=true, actions={create=true,implant=true,reprogram=true,extract=true,hack_door=true}, factions={}, departments={}, roles={}}
+function A.Load() if not file.Exists(A.File,"DATA") then return end; local ok,d=pcall(util.JSONToTable,file.Read(A.File,"DATA"),false,true); if ok and istable(d) then A.Config=d end end
+function A.Save() file.CreateDir("grm_augmentation"); file.Write(A.File,util.TableToJSON(A.Config,true)) end
+function A.GetConfig() return table.Copy(A.Config) end
+A.Load()
+function A.SetConfig(cfg) A.Config=table.Merge(A.Config,cfg or {}); A.Save() end
 local function value(ply,key)
     if not IsValid(ply) then return "" end
     return ply:GetNWString(key, "")
