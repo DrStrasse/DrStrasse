@@ -159,6 +159,8 @@ end
 -- Проверка прав доступа к аугментации
 function AUG.CanAccessAugmentation(ply, augType)
 	if not IsValid(ply) then return false end
+    local action = (augType == "HealthBoost" or augType == "EnhancedArmor") and "implant" or "implant"
+    if GRM.AugmentationAccess and not GRM.AugmentationAccess.Can(ply, action) then return false end
 	
 	-- Суперадмин имеет доступ ко всему
 	if ply:IsSuperAdmin() then return true end
