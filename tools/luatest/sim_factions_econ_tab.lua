@@ -327,22 +327,36 @@ if IsValid(sheet2) then
   if playersPage2 then scanButtons(playersPage2) end
   ok(not hasTakeBtn, "не-суперадмин: в «Игроки» нет кнопок выдать/изъять/установить (находка 177b)")
 
-  -- «Фракции»: нет подвкладки «Штрафы»
+  -- «Фракции»: подвкладка «Штрафы» ЕСТЬ, но без чекбоксов системы,
+  -- только числовое поле лимита (находка 177c)
   local facPage2 = nil
   for _, sh in ipairs(sheet2.children) do if sh.name == "Фракции" then facPage2 = sh.page break end end
-  local hasFinesSub = false
+  local finesSubPage = nil
   if facPage2 then
     local function scanSub(pnl)
       for _, ch in ipairs(pnl.children or {}) do
         if ch.__cls == "DPropertySheet" then
-          for _, sub in ipairs(ch.children or {}) do if sub.name == "Штрафы" then hasFinesSub = true end end
+          for _, sub in ipairs(ch.children or {}) do if sub.name == "Штрафы" then finesSubPage = sub.page end end
         end
         scanSub(ch)
       end
     end
     scanSub(facPage2)
   end
-  ok(not hasFinesSub, "не-суперадмин: подвкладки «Штрафы» НЕТ (находка 177b)")
+  ok(IsValid(finesSubPage), "не-суперадмин: подвкладка «Штрафы» есть (число можно менять, находка 177c)")
+  if IsValid(finesSubPage) then
+    local chkCount, wangCount = 0, 0
+    local function scan2(pnl)
+      for _, ch in ipairs(pnl.children or {}) do
+        if ch.__cls == "DCheckBoxLabel" then chkCount = chkCount + 1 end
+        if ch.__cls == "DNumberWang" then wangCount = wangCount + 1 end
+        scan2(ch)
+      end
+    end
+    scan2(finesSubPage)
+    ok(chkCount == 0, "не-суперадмин: в «Штрафах» НЕТ чекбоксов системы (включение/категории/роли)")
+    ok(wangCount == 1, "не-суперадмин: в «Штрафах» есть поле лимита (число)")
+  end
 
   -- у суперадмина всё это было (обратная проверка по прошлому sheet)
   local namesSuper = {}

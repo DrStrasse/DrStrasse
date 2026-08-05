@@ -1302,10 +1302,11 @@ if SERVER then
 
         if a.action == "save_entry" then
             if name == "" then return end
-            -- Находка 177b: настройку ШТРАФОВ (право штрафовать фракции)
-            -- шлёт только суперадмин; лидер/зам/доступные сохраняют только
-            -- зарплаты/налоги/бюджет. Сервер отбрасывает fine-блок.
-            if not ply:IsSuperAdmin() then a.fine = nil end
+            -- Находка 177b/177c: СИСТЕМУ штрафов (включение, категории целей,
+            -- роли) настраивает только суперадмин; лидер/зам/доступные могут
+            -- менять лишь ЧИСЛОВОЕ значение (лимит/«процент» штрафа) — как и
+            -- налоги/зарплаты. Поэтому fine-блок не отбрасывается целиком:
+            -- не-суперадмин сохраняет только maxAmount.
             local e = entry(name)
             e.taxRate        = math.Clamp(tonumber(a.taxRate) or e.taxRate, 0, E.Config.MaxTaxRate)
             e.baseSalary     = math.max(0, math.floor(tonumber(a.baseSalary) or 0))
@@ -1321,16 +1322,19 @@ if SERVER then
             end
             if istable(a.fine) then
                 local fp = e.finePerms
-                fp.enabled       = a.fine.enabled == true
-                fp.allRoles      = a.fine.allRoles == true
-                fp.ownFaction    = a.fine.ownFaction ~= false
-                fp.otherFactions = a.fine.otherFactions == true
-                fp.civilians     = a.fine.civilians ~= false
-                fp.maxAmount     = math.max(0, math.floor(tonumber(a.fine.maxAmount) or 0))
-                if istable(a.fine.roles) then
-                    fp.roles = {}
-                    for k, v in pairs(a.fine.roles) do if v == true then fp.roles[tostring(k)] = true end end
+                if ply:IsSuperAdmin() then
+                    fp.enabled       = a.fine.enabled == true
+                    fp.allRoles      = a.fine.allRoles == true
+                    fp.ownFaction    = a.fine.ownFaction ~= false
+                    fp.otherFactions = a.fine.otherFactions == true
+                    fp.civilians     = a.fine.civilians ~= false
+                    if istable(a.fine.roles) then
+                        fp.roles = {}
+                        for k, v in pairs(a.fine.roles) do if v == true then fp.roles[tostring(k)] = true end end
+                    end
                 end
+                -- не-суперадмин: только лимит суммы (система не трогается)
+                fp.maxAmount = math.max(0, math.floor(tonumber(a.fine.maxAmount) or fp.maxAmount))
             end
             dirty = true
             save(true, "админ: настройки фракции")
@@ -2198,14 +2202,16 @@ if CLIENT then
                 end
 
                 -- ── ПОДВКЛАДКА: ШТРАФЫ (доступ фракции к /fine) ──
-                -- Находка 177b: право настраивать штрафы — ТОЛЬКО суперадмин.
-                -- Лидер/зам/доступные видят только «Зарплаты».
-                local pf = nil
-                if isSuper then
-                    pf = vgui.Create("DPanel", sub)
-                    pf:SetPaintBackground(false)
-                    sub:AddSheet("Штрафы", pf, "icon16/accept.png")
+                -- Находка 177b/177c: СИСТЕМУ штрафов (включение, категории
+                -- целей, роли) настраивает только суперадмин; лидер/зам/
+                -- доступные видят подвкладку, но могут менять только ЧИСЛО —
+                -- лимит суммы штрафа (как налоги/зарплаты).
+                local pf = vgui.Create("DPanel", sub)
+                pf:SetPaintBackground(false)
+                sub:AddSheet("Штрафы", pf, "icon16/accept.png")
 
+                local maxW = nil -- лимит суммы штрафа (доступен всем с доступом; система — только суперадмин)
+                if isSuper then
                     label(pf, "Доступ фракции [" .. name .. "] к системе штрафов", 10, 8, CUI.text, 560)
 
                     local chEn = vgui.Create("DCheckBoxLabel", pf)
@@ -2234,7 +2240,7 @@ if CLIENT then
                     chCiv:SetTextColor(CUI.text) chCiv:SetValue(fp.civilians and 1 or 0)
 
                     label(pf, "Лимит суммы штрафа (0 = общий максимум):", 10, 174)
-                    local maxW = wang(pf, 330, 172, 110, fp.maxAmount or 0, 100000000)
+                    maxW = wang(pf, 330, 172, 110, fp.maxAmount or 0, 100000000)
 
                     label(pf, "Роли с правом штрафовать:", 10, 206, CUI.text, 340)
                     local rolesFine = vgui.Create("DScrollPanel", pf)
@@ -2253,6 +2259,13 @@ if CLIENT then
                     label(pf, "штрафуют дополнительно к лидеру. Категории целей", 370, 274, CUI.dim, 340)
                     label(pf, "(свои / другие фракции / граждане) настраиваются", 370, 296, CUI.dim, 340)
                     label(pf, "отдельно. Лимит суммы перекрывает общий лимит.", 370, 318, CUI.dim, 340)
+                else
+                    -- не-суперадмин: только лимит суммы (число), система не трогается
+                    label(pf, "Фракция [" .. name .. "] и система штрафов", 10, 8, CUI.text, 560)
+                    label(pf, "Систему штрафов (включение /fine, категории целей, роли) настраивает только superadmin.", 10, 34, CUI.dim, 560)
+                    label(pf, "Лимит суммы штрафа (0 = общий максимум):", 10, 66)
+                    maxW = wang(pf, 330, 64, 110, fp.maxAmount or 0, 100000000)
+                    label(pf, "Изменение лимита применяется к фракции и сохраняется.", 10, 98, CUI.dim, 560)
                 end
 
                 -- ЕДИНОЕ сохранение: зарплаты + (для суперадмина) права штрафов
@@ -2281,6 +2294,11 @@ if CLIENT then
                             civilians = chCiv:GetChecked(),
                             maxAmount = math.max(0, math.floor(tonumber(maxW:GetValue()) or 0)),
                             roles = froles,
+                        }
+                    elseif maxW then
+                        -- находка 177c: не-суперадмин меняет только ЛИМИТ (число)
+                        payload.fine = {
+                            maxAmount = math.max(0, math.floor(tonumber(maxW:GetValue()) or 0)),
                         }
                     end
                     act(payload)
