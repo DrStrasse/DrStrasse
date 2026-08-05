@@ -733,10 +733,40 @@ if SERVER then
         C.LootBagSet(ply, cur + take)
         return take
     end
+    -- Находка 179e: выгрузка сумки НЕ в кошелёк, а на землю (пачками/
+    -- паллетами) ЛИБО ближайшему отмывщику денег (если рядом и идёт ивент).
     function C.LootBagUnload(ply)
         if not IsValid(ply) then return 0, "Нет игрока" end
         local cur = C.LootBagGet(ply)
         if cur <= 0 then return 0, "Сумка пуста" end
+
+        -- 1) отмывщик денег рядом (радиус 400) и ивент активен → сдать ему
+        local launderer = nil
+        if GRM.Economy and GRM.Economy.FindNearestLaunderer then
+            launderer = GRM.Economy.FindNearestLaunderer(ply, 400)
+        end
+        if IsValid(launderer) and launderer.GetEventActive and launderer:GetEventActive() and launderer.DepositFromBag then
+            local deposited = launderer:DepositFromBag(ply)
+            if deposited > 0 then
+                C.LootBagSet(ply, math.max(0, C.LootBagGet(ply) - deposited))
+                hook.Run("GRM_LootBagUnloaded", ply, deposited)
+                return deposited
+            end
+        end
+
+        -- 2) иначе — на землю перед игроком (паллеты ≥50к / пачка money.mdl)
+        if GRM.Economy and GRM.Economy.SpawnCashAt then
+            local pos = ply:GetPos() + ply:GetForward() * 60 + Vector(0, 0, 10)
+            local spawned = GRM.Economy.SpawnCashAt(pos, cur, nil)
+            C.LootBagSet(ply, math.max(0, C.LootBagGet(ply) - spawned))
+            if GRM.Notify then
+                GRM.Notify(ply, "Выгружено на землю: " .. (GRM.Format and GRM.Format(spawned) or tostring(spawned)) .. " (E — подобрать)", 100, 220, 130)
+            end
+            hook.Run("GRM_LootBagUnloaded", ply, spawned)
+            return spawned
+        end
+
+        -- 3) фолбэк (нет экономики) — в кошелёк
         if not (GRM and GRM.GiveMoney) then return 0, "Модуль валюты не загружен" end
         C.LootBagSet(ply, 0)
         GRM.GiveMoney(ply, cur, "Сумка ограбления: выгрузка")
@@ -751,6 +781,33 @@ if SERVER then
         if err ~= nil and err ~= "" and GRM.Notify then
             GRM.Notify(ply, err, 255, 190, 90)
         end
+    end)
+
+    -- Находка 179e: /bag_unload в чате (EasyChat перехватывает PlayerSay)
+    local function bagUnloadChat(ply, datapack)
+        if not istable(datapack) then return end
+        local text = datapack[1]
+        if not isstring(text) then return end
+        if string.lower(string.Trim(text)) ~= "/bag_unload" then return end
+        if not IsValid(ply) then return end
+        local _, err = C.LootBagUnload(ply)
+        if err ~= nil and err ~= "" and GRM.Notify then
+            GRM.Notify(ply, err, 255, 190, 90)
+        end
+        datapack.SkipPlayerSay = true
+        datapack[1] = ""
+    end
+    hook.Add("PlayerSayTransform", "GRM_LootBag_UnloadTransform", bagUnloadChat)
+    hook.Add("PlayerSay", "GRM_LootBag_UnloadSay", function(ply, text)
+        if not isstring(text) then return end
+        if string.lower(string.Trim(text)) ~= "/bag_unload" then return end
+        if IsValid(ply) then
+            local _, err = C.LootBagUnload(ply)
+            if err ~= nil and err ~= "" and GRM.Notify then
+                GRM.Notify(ply, err, 255, 190, 90)
+            end
+        end
+        return ""
     end)
 
     -- Сумка снимается — деньги остаются в сумке (персонально), но

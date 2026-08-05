@@ -32,6 +32,7 @@ local TYPES = {
     press       = { id = "press",       class = "grm_money_press",          label = "Печатный станок" },
     terminal    = { id = "terminal",    class = "grm_money_press_terminal", label = "Терминал станка" },
     spawnpoint  = { id = "spawnpoint",  class = "grm_money_press",          label = "Точка выдачи паллет" },
+    launderer   = { id = "launderer",   class = "grm_money_launderer",      label = "Отмывщик денег (ивент)" },
 }
 
 local function canUse(ply)
@@ -116,7 +117,7 @@ function TOOL:Reload(trace)
         if GRM.Notify then GRM.Notify(ply, "Точка выдачи сброшена (паллеты снова у станка).", 100, 220, 130) end
         return true
     end
-    if cls ~= "grm_bank_vault" and cls ~= "grm_money_press" and cls ~= "grm_money_press_terminal" then
+    if cls ~= "grm_bank_vault" and cls ~= "grm_money_press" and cls ~= "grm_money_press_terminal" and cls ~= "grm_money_launderer" then
         if GRM.Notify then GRM.Notify(ply, "Наведите на банковское оборудование.", 255, 180, 90) end
         return false
     end
@@ -138,6 +139,7 @@ if CLIENT then
         t:AddChoice("Печатный станок (5000/10с)", "press")
         t:AddChoice("Терминал станка", "terminal")
         t:AddChoice("Точка выдачи паллет (суперадмин)", "spawnpoint")
+        t:AddChoice("Отмывщик денег (ивент ограбление)", "launderer")
 
         panel:Help(
             "ЛКМ — установить выбранное оборудование\n" ..

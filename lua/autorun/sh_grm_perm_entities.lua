@@ -105,6 +105,8 @@ if SERVER then
         grm_bank_vault          = true,
         grm_money_press         = true,
         grm_money_press_terminal = true,
+        -- Отмывщик денег / ивент «Ограбление» (находка 179e)
+        grm_money_launderer     = true,
         -- Лаборатории (Код 120)
         grm_narc_lab         = true,
         grm_med_lab          = true,
@@ -316,17 +318,32 @@ if SERVER then
         local map = game.GetMap()
         local pos = ent:GetPos()
         local np = { x = pos.x, y = pos.y, z = pos.z }
+        local found = false
+        -- Находка 179e: ищем запись по классу + ближайшей позиции (даже если
+        -- сущность чуть сдвинули физганом — запись всё равно снимется)
+        local bestRec, bestDist = nil, math.huge
         for i, rec in ipairs(list) do
-            if rec.map == map and sameSpot(rec.pos, np, rec.class, class) then
-                table.remove(list, i)
-                saveList(list)
-                ent:Remove()
-                tell(ply, "[ПЕРМ] " .. class .. " снят с карты (и из базы).", 235, 180, 60)
-                print(("[GRM Perm] %s снял перм %s @ %d %d %d"):format(ply:Nick(), class, np.x, np.y, np.z))
-                return
+            if rec.map == map and rec.class == class then
+                local dx = (tonumber(rec.pos and rec.pos.x) or 0) - np.x
+                local dy = (tonumber(rec.pos and rec.pos.y) or 0) - np.y
+                local dz = (tonumber(rec.pos and rec.pos.z) or 0) - np.z
+                local d2 = dx * dx + dy * dy + dz * dz
+                if d2 <= (PERM_RANGE * PERM_RANGE) and d2 < bestDist then
+                    bestRec, bestDist = i, d2
+                end
             end
         end
-        tell(ply, "В радиусе " .. PERM_RANGE .. " юнитов перм-записи для этого энтити нет.", 255, 200, 80)
+        if bestRec then
+            table.remove(list, bestRec)
+            saveList(list)
+            ent:Remove()
+            found = true
+            tell(ply, "[ПЕРМ] " .. class .. " снят с карты (и из базы).", 235, 180, 60)
+            print(("[GRM Perm] %s снял перм %s @ %d %d %d"):format(ply:Nick(), class, np.x, np.y, np.z))
+        end
+        if not found then
+            tell(ply, "В радиусе " .. PERM_RANGE .. " юнитов перм-записи для этого энтити нет.", 255, 200, 80)
+        end
     end
 
     -- Находка 179d: автообновление перм-записи при изменении состояния
@@ -398,6 +415,28 @@ if SERVER then
     concommand.Add("grm_perm_remove", guarded(removePerm))
     concommand.Add("grm_perm_list", guarded(listPerm))
     concommand.Add("grm_perm_load", guarded(loadPerm))
+
+    -- Находка 179e: EasyChat ставит SkipPlayerSay для команд → PlayerSay не
+    -- вызывается. Дублируем обработку через PlayerSayTransform (как /factions).
+    hook.Add("PlayerSayTransform", "GRM_PermEntities_ChatTransform", function(ply, datapack)
+        if not istable(datapack) then return end
+        local text = datapack[1]
+        if not isstring(text) then return end
+        local t = string.lower(string.Trim(text))
+        if t ~= "/permadd" and t ~= "/permremove" and t ~= "/permlist" and t ~= "/permload" then return end
+        if not IsValid(ply) or not ply:IsSuperAdmin() then
+            tell(ply, "Только суперадмин.", 255, 100, 100)
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
+            return
+        end
+        if t == "/permadd" then addPerm(ply)
+        elseif t == "/permremove" then removePerm(ply)
+        elseif t == "/permload" then loadPerm(ply)
+        else listPerm(ply) end
+        datapack.SkipPlayerSay = true
+        datapack[1] = ""
+    end)
 
     hook.Add("PlayerSay", "GRM_PermEntities_Chat", function(ply, text)
         local t = string.lower(string.Trim(tostring(text or "")))

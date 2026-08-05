@@ -390,6 +390,20 @@ if SERVER then
         return spawnAmt
     end
 
+    -- Ближайший к игроку отмывщик денег (находка 179e)
+    function E.FindNearestLaunderer(ply, radius)
+        if not IsValid(ply) then return nil end
+        radius = math.max(1, tonumber(radius) or 400)
+        local best, bestD = nil, math.huge
+        for _, ent in ipairs(ents.FindByClass("grm_money_launderer")) do
+            if IsValid(ent) then
+                local d = ply:GetPos():DistToSqr(ent:GetPos())
+                if d <= radius * radius and d < bestD then best, bestD = ent, d end
+            end
+        end
+        return best
+    end
+
     -- «Укладчик» точки: трасса вниз ищет пол, чтобы паллета/деньги стояли
     -- ровно и не улетали/проваливались (находка 178f).
     function E.SettleCashPos(p)
