@@ -146,27 +146,30 @@ hook.Add("GRM_ScannerDenied", "GRM_AlarmNotify_ScannerDenied", function(ply, sca
 end)
 
 -- ══ НАСТРОЙКА ФРАКЦИЙ (суперадмин) ═════════════════════════
-util.AddNetworkString("GRM_AlarmNotify_Open")
-util.AddNetworkString("GRM_AlarmNotify_Save")
-util.AddNetworkString("GRM_AlarmNotify_Data")
+-- Находка 179h-fix: AddNetworkString — ТОЛЬКО на сервере (на клиенте её нет)
+if SERVER then
+    util.AddNetworkString("GRM_AlarmNotify_Open")
+    util.AddNetworkString("GRM_AlarmNotify_Save")
+    util.AddNetworkString("GRM_AlarmNotify_Data")
 
-net.Receive("GRM_AlarmNotify_Open", function(_, ply)
-    if not IsValid(ply) or not ply:IsSuperAdmin() then return end
-    net.Start("GRM_AlarmNotify_Data")
-        net.WriteTable(DATA)
-        net.WriteTable(AN.FactionList())
-    net.Send(ply)
-end)
-net.Receive("GRM_AlarmNotify_Save", function(_, ply)
-    if not IsValid(ply) or not ply:IsSuperAdmin() then return end
-    local selected = net.ReadTable() or {}
-    DATA.factions = {}
-    for _, n in ipairs(selected) do
-        if isstring(n) and string.Trim(n) ~= "" then DATA.factions[string.Trim(n)] = true end
-    end
-    AN.Save()
-    if GRM.Notify then GRM.Notify(ply, "Фракции оповещения сохранены: " .. (#(DATA.factions) > 0 and table.concat(selected, ", ") or "никто"), 100, 220, 130) end
-end)
+    net.Receive("GRM_AlarmNotify_Open", function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        net.Start("GRM_AlarmNotify_Data")
+            net.WriteTable(DATA)
+            net.WriteTable(AN.FactionList())
+        net.Send(ply)
+    end)
+    net.Receive("GRM_AlarmNotify_Save", function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        local selected = net.ReadTable() or {}
+        DATA.factions = {}
+        for _, n in ipairs(selected) do
+            if isstring(n) and string.Trim(n) ~= "" then DATA.factions[string.Trim(n)] = true end
+        end
+        AN.Save()
+        if GRM.Notify then GRM.Notify(ply, "Фракции оповещения сохранены: " .. (#(DATA.factions) > 0 and table.concat(selected, ", ") or "никто"), 100, 220, 130) end
+    end)
+end -- if SERVER (сеть настройки)
 
 function AN.FactionList()
     local out = {}
@@ -180,24 +183,26 @@ function AN.FactionList()
 end
 
 -- чат-команда /grm_alarm_notify (суперадмин, EasyChat-совместимо)
-local function openNotifyMenu(ply)
-    if not IsValid(ply) then return end
-    if not ply:IsSuperAdmin() then
-        if GRM.Notify then GRM.Notify(ply, "Только суперадмин.", 255, 100, 100) end
-        return
+if SERVER then
+    local function openNotifyMenu(ply)
+        if not IsValid(ply) then return end
+        if not ply:IsSuperAdmin() then
+            if GRM.Notify then GRM.Notify(ply, "Только суперадмин.", 255, 100, 100) end
+            return
+        end
+        net.Start("GRM_AlarmNotify_Open")
+        net.SendToServer()
     end
-    net.Start("GRM_AlarmNotify_Open")
-    net.SendToServer()
+    concommand.Add("grm_alarm_notify", function(ply) openNotifyMenu(ply) end)
+    hook.Add("PlayerSayTransform", "GRM_AlarmNotify_Chat", function(ply, datapack)
+        if not istable(datapack) then return end
+        local text = datapack[1]
+        if not isstring(text) then return end
+        if string.lower(string.Trim(text)) ~= "/grm_alarm_notify" then return end
+        openNotifyMenu(ply)
+        datapack.SkipPlayerSay = true
+        datapack[1] = ""
+    end)
 end
-concommand.Add("grm_alarm_notify", function(ply) openNotifyMenu(ply) end)
-hook.Add("PlayerSayTransform", "GRM_AlarmNotify_Chat", function(ply, datapack)
-    if not istable(datapack) then return end
-    local text = datapack[1]
-    if not isstring(text) then return end
-    if string.lower(string.Trim(text)) ~= "/grm_alarm_notify" then return end
-    openNotifyMenu(ply)
-    datapack.SkipPlayerSay = true
-    datapack[1] = ""
-end)
 
 print("[GRM Alarm] Integration loaded (находка 179h): взломы кейпадов/сканеров/дверей → журнал + оповещение фракций")

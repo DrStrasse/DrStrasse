@@ -161,6 +161,7 @@ ok(cl:find("DCheckBoxLabel", 1, true) ~= nil and cl:find("facList", 1, true) ~= 
 local sh = assert(io.open("lua/autorun/sh_grm_alarm_integration.lua", "rb")):read("*a")
 ok(sh:find('"/grm_alarm_notify"', 1, true) ~= nil and sh:find('PlayerSayTransform', 1, true) ~= nil, "команда /grm_alarm_notify (EasyChat)")
 ok(sh:find('AddCSLuaFile("autorun/client/cl_grm_alarm_notify.lua")', 1, true) ~= nil, "клиентский файл регистрируется")
+ok(sh:find('if SERVER then', 1, true) ~= nil and sh:find('util.AddNetworkString("GRM_AlarmNotify_Open")', 1, true) ~= nil and sh:find('end -- if SERVER (сеть настройки)', 1, true) ~= nil, "AddNetworkString только на сервере (фикс клиента, находка 179h-fix)")
 
 print(string.format("sim_alarm_integration: %d ok, %d fail", pass, fail))
 if fail > 0 then os.exit(1) end

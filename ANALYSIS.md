@@ -2822,3 +2822,25 @@ roundtrip 14/14. dist пересобран.
 месте).
 
 GLua 404/0, симы 48/48, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179h-fix (клиент, 05.08.2026): attempt to call 'AddNetworkString' (nil) на клиенте
+
+Владелец (живой сервер):
+```
+sh_grm_alarm_integration.lua:149: attempt to call field 'AddNetworkString' (a nil value)
+```
+
+Причина: `util.AddNetworkString` — серверная функция, а модуль shared
+выполняется и на клиенте; вызовы net.Receive/net.Start для настройки
+оповещения тоже серверные.
+
+Сделано: блок «НАСТРОЙКА ФРАКЦИЙ» (AddNetworkString ×3 + net.Receive Open/Save)
+обёрнут в `if SERVER then ... end`; команда `/grm_alarm_notify` и чат-хук —
+тоже в `if SERVER`. На клиенте остаётся только чтение/сохранение через
+клиентский файл (cl_grm_alarm_notify.lua шлёт GRM_AlarmNotify_Save — каналы
+уже зарегистрированы сервером).
+
+sim_alarm_integration: 21 проверка (AddNetworkString только на сервере).
+GLua 404/0, симы 48/48, roundtrip 14/14. dist пересобран.
