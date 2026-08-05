@@ -77,13 +77,19 @@ function ENT:SpawnPos()
     return self:GetPos() + self:GetForward() * 60 + Vector(0, 0, 12)
 end
 
--- Находка 178d: точка выдачи переживает рестарт через /permadd (PermData)
+-- Находка 178d/178e: полное состояние станка переживает рестарт через
+-- /permadd (PermData): точка выдачи, скорость, буфер, статистика, вкл/выкл.
 GRM = GRM or {}
 GRM.PermData = GRM.PermData or { Extract = {}, Apply = {} }
 GRM.PermData.Extract = GRM.PermData.Extract or {}
 GRM.PermData.Apply = GRM.PermData.Apply or {}
 GRM.PermData.Extract["grm_money_press"] = function(ent)
-    local rec = {}
+    local rec = {
+        speed = math.floor(ent:GetSpeedLevel() or 0),
+        buffer = math.floor(ent:GetBuffer() or 0),
+        printed = math.floor(ent:GetTotalPrinted() or 0),
+        active = ent:GetActive() == true,
+    }
     if ent:GetHasCustomSpawn() then
         local p = ent:GetSpawnPos()
         local a = ent:GetSpawnAngle()
@@ -95,7 +101,14 @@ GRM.PermData.Extract["grm_money_press"] = function(ent)
     return rec
 end
 GRM.PermData.Apply["grm_money_press"] = function(ent, data)
-    if istable(data) and istable(data.spawn) then
+    if not istable(data) then return end
+    if data.speed then ent:SetSpeedLevel(math.floor(tonumber(data.speed) or 0)) end
+    if data.buffer then ent:SetBuffer(math.floor(tonumber(data.buffer) or 0)) end
+    if data.printed then ent:SetTotalPrinted(math.floor(tonumber(data.printed) or 0)) end
+    if data.active ~= nil then ent:SetActive(data.active == true) end
+    -- скорость влияет на сумму за цикл
+    ent:SetPrintAmount(ent:AmountPerCycle())
+    if istable(data.spawn) then
         ent:SetSpawnPos(Vector(tonumber(data.spawn.x) or 0, tonumber(data.spawn.y) or 0, tonumber(data.spawn.z) or 0))
         ent:SetSpawnAngle(Angle(tonumber(data.spawn.p) or 0, tonumber(data.spawn.y) or 0, tonumber(data.spawn.r) or 0))
         ent:SetHasCustomSpawn(true)

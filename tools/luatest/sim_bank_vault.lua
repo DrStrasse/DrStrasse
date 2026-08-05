@@ -392,6 +392,9 @@ ok(vcl:find('d.canManage', 1, true) ~= nil, "клиент: выгрузка ви
 local vin = assert(io.open("lua/entities/grm_bank_vault/init.lua", "rb")):read("*a")
 ok(vin:find('LoadNearCash', 1, true) ~= nil and vin:find('grm_money_drop', 1, true) ~= nil, "сервер: загрузка паллет и денег-пропов")
 ok(vin:find('UnloadCash', 1, true) ~= nil and vin:find('CanManage', 1, true) ~= nil, "сервер: выгрузка с правами")
+-- находка 178e: /permadd сохраняет запас хранилища
+ok(vin:find('PermData.Extract["grm_bank_vault"]', 1, true) ~= nil and vin:find('PermData.Apply["grm_bank_vault"]', 1, true) ~= nil, "перм: хранилище сохраняет HeldCash/Capacity (находка 178e)")
+ok(vin:find('held = math.floor(ent:GetHeldCash() or 0)', 1, true) ~= nil, "перм: хранилище Extract пишет HeldCash")
 
 -- ══════════════ 9. ТУЛ + Q-МЕНЮ + PERM + МОДЕЛИ ══════════════
 local tool = assert(io.open("lua/weapons/gmod_tool/stools/grm_bank_tool.lua", "rb")):read("*a")
@@ -408,7 +411,9 @@ ok(perm:find('grm_bank_vault', 1, true) ~= nil and perm:find('grm_money_press', 
 local vsh = assert(io.open("lua/entities/grm_bank_vault/shared.lua", "rb")):read("*a")
 ok(vsh:find('ground_locker_small.mdl', 1, true) ~= nil, "хранилище: модель ground_locker_small.mdl")
 local pin2 = assert(io.open("lua/entities/grm_money_press/init.lua", "rb")):read("*a")
-ok(pin2:find('PermData.Extract["grm_money_press"]', 1, true) ~= nil and pin2:find('PermData.Apply["grm_money_press"]', 1, true) ~= nil, "перм: точка выдачи переживает рестарт (находка 178d)")
+ok(pin2:find('PermData.Extract["grm_money_press"]', 1, true) ~= nil and pin2:find('PermData.Apply["grm_money_press"]', 1, true) ~= nil, "перм: станок переживает рестарт (находка 178d/178e)")
+ok(pin2:find('speed = math.floor(ent:GetSpeedLevel() or 0)', 1, true) ~= nil and pin2:find('buffer = math.floor(ent:GetBuffer() or 0)', 1, true) ~= nil and pin2:find('printed = math.floor(ent:GetTotalPrinted() or 0)', 1, true) ~= nil, "перм: станок сохраняет скорость/буфер/статистику (находка 178e)")
+ok(pin2:find('ent:SetPrintAmount(ent:AmountPerCycle())', 1, true) ~= nil, "перм: после восстановления скорости обновляется сумма цикла")
 local psh = assert(io.open("lua/entities/grm_money_press/shared.lua", "rb")):read("*a")
 ok(psh:find('hatch_frame.mdl', 1, true) ~= nil, "станок: модель hatch_frame.mdl")
 ok(psh:find('BaseAmount    = 5000', 1, true) ~= nil and psh:find('BaseInterval  = 10', 1, true) ~= nil, "станок: 5000 GRM / 10 сек")

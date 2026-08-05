@@ -52,6 +52,26 @@ function ENT:CanManage(ply)
     return GRM.Economy and GRM.Economy.CanManageEconomy and GRM.Economy.CanManageEconomy(ply) == true
 end
 
+-- Находка 178e: запас хранилища (HeldCash) переживает рестарт через /permadd
+GRM = GRM or {}
+GRM.PermData = GRM.PermData or { Extract = {}, Apply = {} }
+GRM.PermData.Extract = GRM.PermData.Extract or {}
+GRM.PermData.Apply = GRM.PermData.Apply or {}
+GRM.PermData.Extract["grm_bank_vault"] = function(ent)
+    return {
+        held = math.floor(ent:GetHeldCash() or 0),
+        capacity = math.floor(ent:GetCapacity() or 500000),
+    }
+end
+GRM.PermData.Apply["grm_bank_vault"] = function(ent, data)
+    if not istable(data) then return end
+    if data.capacity then ent:SetCapacity(math.max(1, math.floor(tonumber(data.capacity) or 500000))) end
+    if data.held then
+        local held = math.max(0, math.floor(tonumber(data.held) or 0))
+        ent:SetHeldCash(math.min(held, math.floor(ent:GetCapacity() or 500000)))
+    end
+end
+
 -- ── Загрузить: паллеты и деньги-пропы рядом → в хранилище ──
 function ENT:LoadNearCash(ply)
     if not IsValid(ply) then return 0 end
