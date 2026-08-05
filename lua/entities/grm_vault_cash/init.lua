@@ -19,7 +19,11 @@ function ENT:Initialize()
     if self:GetAmount() <= 0 then self:SetAmount(1) end
     self._picked = false
     local phys = self:GetPhysicsObject()
-    if IsValid(phys) then phys:Wake() end
+    if IsValid(phys) then
+        -- Находка 178f: паллета НЕПОДВИЖНА — иначе физика «выбрасывает»
+        -- её из точки (стена/пересечение) и она улетает в сторону.
+        phys:EnableMotion(false)
+    end
 end
 
 function ENT:OnRemove()
@@ -37,8 +41,35 @@ function ENT:Use(ply)
     self._grmUseT = CurTime() + 0.4
     local amt = math.max(0, math.floor(self:GetAmount() or 0))
     if amt <= 0 then self:Remove() return end
-    if not (GRM and GRM.GiveMoney) then return end
 
+    -- Находка 178f: сумка ограбления — деньги собираются ПОЭТАПНО
+    -- (порциями perUse за подход, максимум maxMoney в сумке).
+    if GRM.Customization and GRM.Customization.HasFunction and GRM.Customization.HasFunction(ply, "loot_bag") then
+        local taken = GRM.Customization.LootBagAdd and GRM.Customization.LootBagAdd(ply, amt) or 0
+        if taken > 0 then
+            local left = amt - taken
+            if left > 0 then
+                self:SetAmount(left)
+            else
+                self._picked = true
+                if IsValid(self.Vault) and self.Vault.GetHeldCash and self.Vault.SetHeldCash then
+                    local held = math.max(0, math.floor(self.Vault:GetHeldCash() or 0) - amt)
+                    self.Vault:SetHeldCash(held)
+                end
+                self:Remove()
+            end
+            if GRM.Notify then
+                local cur = GRM.Customization.LootBagGet and GRM.Customization.LootBagGet(ply) or 0
+                local maxM = GRM.Customization.LootBagMax and GRM.Customization.LootBagMax(ply) or 100000
+                GRM.Notify(ply, "В сумку ограбления: " .. (GRM.Format and GRM.Format(taken) or tostring(taken)) .. "  (в сумке: " .. (GRM.Format and GRM.Format(cur) or tostring(cur)) .. " / " .. (GRM.Format and GRM.Format(maxM) or tostring(maxM)) .. ")", 255, 210, 100)
+            end
+            return
+        end
+        -- сумка полна — не подбираем в кошелёк напрямую? Нет: подбираем
+        -- как обычно (полная сумка не блокирует обычный подбор).
+    end
+
+    if not (GRM and GRM.GiveMoney) then return end
     GRM.GiveMoney(ply, amt, "Подобраны деньги из банковского хранилища")
     self._picked = true
     if IsValid(self.Vault) and self.Vault.GetHeldCash and self.Vault.SetHeldCash then

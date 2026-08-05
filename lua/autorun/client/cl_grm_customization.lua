@@ -321,6 +321,18 @@ hook.Add("HUDPaint", "GRM_Customization_FunctionHUD", function()
         draw.RoundedBox(5, ScrW()/2 - 105, 64, 210, 25, Color(12, 20, 24, 195))
         draw.SimpleText(text, "GRMCustom_Small", ScrW()/2, 76, Color(115, 225, 155), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
+    -- Находка 178f: сумка ограбления — счётчик и выгрузка
+    if C.LocalHasFunction("loot_bag") and IsValid(LocalPlayer()) then
+        local cur = LocalPlayer():GetNWInt("GRM_LootBag", 0) or 0
+        local maxM = C.LocalFunctionValue("loot_bag", "lootMaxMoney", "max")
+        if maxM <= 0 then maxM = 100000 end
+        local text = ("СУМКА ОГРАБЛЕНИЯ: %s / %s"):format(
+            GRM and GRM.Format and GRM.Format(cur) or tostring(cur),
+            GRM and GRM.Format and GRM.Format(maxM) or tostring(maxM))
+        draw.RoundedBox(6, ScrW()/2 - 130, 96, 260, 26, Color(20, 14, 8, 205))
+        draw.SimpleText(text, "GRMCustom_Small", ScrW()/2, 102, Color(255, 200, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("/bag_unload — выгрузить в кошелёк", "GRMCustom_Small", ScrW()/2, 118, Color(150, 130, 100), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
 end)
 
 -- ============================================================
@@ -721,10 +733,12 @@ local function openAdmin(catalog)
     fields["Модель"].OnChange=function(self) local m=self:GetValue(); if util.IsValidModel(m) then preview:SetModel(m) end end
 
     local funcTitle=label(form,"ФУНКЦИОНАЛЬНОЕ ОБОРУДОВАНИЕ","GRMCustom_Head",UI.text); funcTitle:SetPos(12,382); funcTitle:SetSize(410,22)
-    local funcChecks={}; local functionOrder={"gasmask","backpack","radio","watch","armor","artificial_eye","night_vision","neuro_link","prosthesis"}
+    local funcChecks={}; local functionOrder={"gasmask","backpack","radio","watch","armor","artificial_eye","night_vision","neuro_link","prosthesis","loot_bag"}
     for i,functionID in ipairs(functionOrder) do
         local def=C.FunctionTypes[functionID] or {name=functionID}
-        local check=vgui.Create("DCheckBoxLabel",form); check:SetPos(12,406+(i-1)*25); check:SetSize(410,22)
+        -- находка 178f: сумка ограбления — чекбокс в правой колонке
+        local x = functionID == "loot_bag" and 430 or 12
+        local check=vgui.Create("DCheckBoxLabel",form); check:SetPos(x,406+(i-1)*25); check:SetSize(300,22)
         check:SetText(def.name); check:SetFont("GRMCustom_Body"); check:SetTextColor(UI.text); funcChecks[functionID]=check
     end
     local functionNum={}
@@ -735,6 +749,9 @@ local function openAdmin(catalog)
     functionNumber("Защита газа 0..0.98","gasProtection",12,0.85,0,0.98)
     functionNumber("Рюкзак +кг","backpackCapacity",150,20,0,100)
     functionNumber("Снижение урона","armorReduction",288,0.2,0,0.75)
+    -- находка 178f: параметры сумки ограбления
+    functionNumber("Сумка: макс. GRM","lootMaxMoney",430,100000,1000,1000000)
+    functionNumber("Сумка: за подход","lootPerUse",560,25000,1000,100000)
 
     local function setForm(id,item)
         selected=id or ""; item=item or {}; fields.ID:SetText(id or ""); fields["Название"]:SetText(item.name or ""); fields["Категория"]:SetText(item.category or ""); fields["Модель"]:SetText(item.model or ""); fields["Описание"]:SetText(item.description or ""); fields["Цена"]:SetText(tostring(item.price or 0))
@@ -742,6 +759,7 @@ local function openAdmin(catalog)
         local p=item.position or {}; local a=item.angles or {}; local vals={p.x or 0,p.y or 0,p.z or 0,a.p or 0,a.y or 0,a.r or 0,item.scale or 1}; for i,v in ipairs(vals) do nums[i]:SetValue(v) end
         for functionID,check in pairs(funcChecks) do check:SetValue(item.functions and item.functions[functionID] == true) end
         local cfg=item.functionConfig or {}; functionNum.gasProtection:SetValue(cfg.gasProtection or 0.85); functionNum.backpackCapacity:SetValue(cfg.backpackCapacity or 20); functionNum.armorReduction:SetValue(cfg.armorReduction or 0.2)
+        functionNum.lootMaxMoney:SetValue(cfg.lootMaxMoney or 100000); functionNum.lootPerUse:SetValue(cfg.lootPerUse or 25000)
         if util.IsValidModel(item.model or "") then preview:SetModel(item.model) end
     end
     slotCombo.OnSelect=function(_,_,_,slot) slotCombo._slot=slot; fillBones(slot) end
@@ -761,7 +779,7 @@ local function openAdmin(catalog)
             position={x=nums[1]:GetValue(),y=nums[2]:GetValue(),z=nums[3]:GetValue()},
             angles={p=nums[4]:GetValue(),y=nums[5]:GetValue(),r=nums[6]:GetValue()}, scale=nums[7]:GetValue(),
             functions=functions,
-            functionConfig={gasProtection=functionNum.gasProtection:GetValue(),backpackCapacity=functionNum.backpackCapacity:GetValue(),armorReduction=functionNum.armorReduction:GetValue()},
+            functionConfig={gasProtection=functionNum.gasProtection:GetValue(),backpackCapacity=functionNum.backpackCapacity:GetValue(),armorReduction=functionNum.armorReduction:GetValue(),lootMaxMoney=functionNum.lootMaxMoney:GetValue(),lootPerUse=functionNum.lootPerUse:GetValue()},
         }
         net.Start("GRM_Custom_AdminOp") net.WriteString("save") net.WriteString(id) net.WriteTable(payload) net.SendToServer()
     end

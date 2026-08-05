@@ -424,6 +424,11 @@ local csh = assert(io.open("lua/entities/grm_vault_cash/shared.lua", "rb")):read
 ok(csh:find('moneypalleta.mdl', 1, true) ~= nil, "паллета: модель moneypalleta.mdl")
 
 -- Находка 178c: 3D2D-дисплеи на ЛИЦЕВОЙ стороне модели (не биллборд сверху)
+local vcash = assert(io.open("lua/entities/grm_vault_cash/init.lua", "rb")):read("*a")
+ok(vcash:find('loot_bag', 1, true) ~= nil and vcash:find('LootBagAdd', 1, true) ~= nil, "паллета: ветка сумки ограбления (поэтапный сбор, находка 178f)")
+ok(vcash:find('EnableMotion(false)', 1, true) ~= nil, "паллета: неподвижна (не выбрасывается, находка 178f)")
+local econ2 = assert(io.open("lua/autorun/sh_grm_economy.lua", "rb")):read("*a")
+ok(econ2:find('SettleCashPos', 1, true) ~= nil, "economy: укладчик точки спавна денег (находка 178f)")
 local vcl2 = assert(io.open("lua/entities/grm_bank_vault/cl_init.lua", "rb")):read("*a")
 ok(vcl2:find("AngleEx(self:GetForward())", 1, true) ~= nil, "хранилище: дисплей на лицевой стороне (AngleEx GetForward, находка 178c)")
 ok(vcl2:find("EyeAngles().y - 90", 1, true) == nil, "хранилище: нет биллборда-надписи над моделью")

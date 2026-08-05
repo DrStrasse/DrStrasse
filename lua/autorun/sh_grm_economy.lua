@@ -378,7 +378,7 @@ if SERVER then
         local spawnAmt = math.min(amount, free)
         local ent = ents.Create("grm_vault_cash")
         if not IsValid(ent) then return 0 end
-        local pos = vault:GetPos() + Vector(0, 0, 12)
+        local pos = E.SettleCashPos(vault:GetPos() + Vector(0, 0, 12)) or (vault:GetPos() + Vector(0, 0, 12))
         local ang = Angle(0, math.random(0, 359), 0)
         ent:SetPos(pos)
         ent:SetAngles(ang)
@@ -390,7 +390,28 @@ if SERVER then
         return spawnAmt
     end
 
-    -- Спавн денег у точки (выгрузка из хранилища, находка 178b):
+    -- «Укладчик» точки: трасса вниз ищет пол, чтобы паллета/деньги стояли
+    -- ровно и не улетали/проваливались (находка 178f).
+    function E.SettleCashPos(p)
+        if not p then return nil end
+        for i = 0, 3 do
+            local probe = p + Vector(0, 0, i * 24)
+            local tr = util.TraceLine({
+                start = probe + Vector(0, 0, 300),
+                endpos = probe - Vector(0, 0, 100),
+                mask = MASK_SOLID,
+            })
+            if tr.Hit and not tr.StartSolid then
+                return tr.HitPos + Vector(0, 0, 10)
+            end
+            if not tr.StartSolid then
+                return probe + Vector(0, 0, 10)
+            end
+        end
+        return p + Vector(0, 0, 60)
+    end
+
+    -- Спавн денег у точки (выгрузка из хранилища, находка 178b/178f):
     --   ≥ 50.000 → паллеты grm_vault_cash (дробление по 100.000, остаток
     --   ≥ 50.000 тоже паллетой, < 50.000 — пачкой money.mdl);
     --   < 50.000 → пачка grm_money_drop (models/props/cs_assault/money.mdl).
@@ -400,10 +421,12 @@ if SERVER then
         local spawned = 0
         local PALLET_MAX = 100000
         local PALLET_MIN = 50000
+
         local function mk(class, amt)
             local ent = ents.Create(class)
             if not IsValid(ent) then return end
-            ent:SetPos(pos)
+            local p = E.SettleCashPos(pos)
+            ent:SetPos(p)
             ent:SetAngles(Angle(0, math.random(0, 359), 0))
             ent:SetAmount(amt)
             if vault and class == "grm_vault_cash" then ent.Vault = vault end

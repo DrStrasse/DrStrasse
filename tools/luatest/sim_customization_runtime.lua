@@ -45,6 +45,7 @@ local inventoryDefs, useHandlers = {}, {}
 local inv={slots={}}
 GRM={
  Notify=function() end,
+ GiveMoney=function() end,
  Identity={CharacterKey=function(p) return p.key end},
  Inventory={
   RegisterItem=function(id,d) inventoryDefs[id]=d end,
@@ -60,6 +61,8 @@ function ply:IsSuperAdmin() return self.super end
 function ply:SteamID64() return "76561198000000001" end
 function ply:GetNWBool(k,d) local v=self.nw[k]; if v==nil then return d end return v end
 function ply:SetNWBool(k,v) self.nw[k]=v end
+function ply:GetNWInt(k,d) local v=self.nw[k]; if v==nil then return d or 0 end return v end
+function ply:SetNWInt(k,v) self.nw[k]=v end
 function ply:Alive() return self.alive end
 player={GetAll=function() return {ply} end}
 
@@ -89,6 +92,8 @@ local loadout=C.GetLoadout(ply)
 ok(inv.slots[1]==nil and loadout.head and loadout.head.accessoryID=="cap","using inventory item equips it")
 ok(C.HasFunction(ply,"gasmask") and C.HasFunction(ply,"radio") and C.GetFunctionValue(ply,"backpack","backpackCapacity","sum")==100,"functional API reads equipped catalog flags")
 ok(FILES[C.LoadoutsFile]~=nil,"loadout persisted by CharacterKey")
+
+
 
 ply.nw.GRM_CustomEditing=true
 now=102
@@ -136,6 +141,34 @@ equipIndex,equipSlot=nil,nil
 for idx,s in pairs(inv.slots) do if s.id=="grm_acc_cap" then equipIndex,equipSlot=idx,s break end end
 if equipIndex then useHandlers.grm_accessory_equip(ply,equipIndex,equipSlot,inventoryDefs.grm_acc_cap) end
 ok(C.Confiscate(ply)==1 and next((C.GetLoadout(ply)))==nil,"arrest confiscation destroys worn accessory")
+
+
+-- ══ СУМКА ОГРАБЛЕНИЯ (находка 178f) — в конце, чтобы не ломать rateOK-очередь ══
+now = 300
+ok(C.FunctionTypes.loot_bag ~= nil, "loot_bag: тип функции зарегистрирован")
+readStrings={"save","bag"}
+readTables={{name="Сумка",category="Снаряжение",model="models/props_junk/duffelbag.mdl",description="сумка",price=3000,slot="torso",bone="ValveBiped.Bip01_Spine2",position={x=0,y=0,z=0},angles={p=0,y=0,r=0},scale=1,functions={loot_bag=true},functionConfig={lootMaxMoney=100000,lootPerUse=25000}}}
+receivers.GRM_Custom_AdminOp(0,ply)
+local bagItem=C.Catalog.bag
+ok(bagItem and bagItem.functionConfig.lootMaxMoney==100000 and bagItem.functionConfig.lootPerUse==25000, "loot_bag: конфиг сумки сохранён в каталоге")
+inv.slots[1]={id="grm_acc_bag",count=1}
+now=301
+readStrings={"equip_inventory","torso"}; readUInts={1}
+receivers.GRM_Custom_Op(0,ply)
+ok(C.HasFunction(ply,"loot_bag"), "loot_bag: сумка надета")
+local t1=C.LootBagAdd(ply,300000)
+ok(t1==25000 and C.LootBagGet(ply)==25000, "loot_bag: 1-й заход = 25.000 (не все 300.000)")
+local t2=C.LootBagAdd(ply,300000)
+local t3=C.LootBagAdd(ply,300000)
+ok(t2==25000 and t3==25000 and C.LootBagGet(ply)==75000, "loot_bag: 3 захода = 75.000")
+local t4=C.LootBagAdd(ply,300000)
+ok(t4==25000 and C.LootBagGet(ply)==100000, "loot_bag: 4-й заход = 100.000 (максимум)")
+local t5=C.LootBagAdd(ply,300000)
+ok(t5==0 and C.LootBagGet(ply)==100000, "loot_bag: сумка полна — 5-й заход 0")
+local unloaded,err=C.LootBagUnload(ply)
+ok(unloaded==100000 and C.LootBagGet(ply)==0, "loot_bag: /bag_unload выгрузил 100.000 в кошелёк")
+C.UnequipSlot(ply,"torso",true,true)
+ok(C.LootBagAdd(ply,50000)==0, "loot_bag: без надетой сумки сбор 0")
 
 print(("CUSTOMIZATION RUNTIME: %d/%d, failures=%d"):format(checks-failed,checks,failed))
 if failed>0 then os.exit(1) end
