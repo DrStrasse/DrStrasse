@@ -170,6 +170,19 @@ net.Receive("GRM_Custom_Sync", function()
     hook.Run("GRM_CustomizationUpdated", ply)
 end)
 
+-- Находка 179z: фонарик (F) вырублен на клиенте. 1) блокируем сам бинд
+-- +flashlight (движок даже не попытается включить), 2) принудительно гасим
+-- уже включённый (мог быть включён до хука/другим аддоном). Причина:
+-- при включённом освещении движок уводит рендер в световой проход, где
+-- аксессуары перестают отрисовываться.
+hook.Add("PlayerBindPress", "GRM_Customization_NoFlashlightBind", function(ply, bind)
+    if bind == "+flashlight" then return true end
+end)
+hook.Add("Think", "GRM_Customization_FlashlightForceOff", function()
+    local lp = LocalPlayer()
+    if IsValid(lp) and lp:GetFlashlight() then lp:SetFlashlight(false) end
+end)
+
 hook.Add("EntityRemoved", "GRM_Customization_CacheCleanup", function(ent)
     if ent:IsPlayer() then clearPlayerCache(ent); C.ClientLoadouts[ent] = nil end
 end)

@@ -3328,3 +3328,38 @@ prop_protect 23, security OK, alarm 27. dist пересобран.
 
 Тесты: sim_launderer_menu 20/20 (SAVE_BAR tall 40, кнопка 170×26,
 центрирование); sim_heist 125/125; GLua 404/0; dist пересобран.
+
+---
+
+## Находка 179z (05.08.2026): аксессуары — запоминание функций при входе; фонарик (F) вырублен глобально
+
+Владелец: «Фикс аксессуаров - запоминание, плюс F фонарик в целом надо
+вырубить, ибо из-за того, что на F включаю фонарик / в целом врубив
+освещение аксессуары перестают нормально отражаться/отрисовываться».
+
+1. **ЗАПОМИНАНИЕ (lua/autorun/sh_grm_customization.lua):** OnEquip
+   вызывался ТОЛЬКО в момент надевания — после рестарта сервера
+   NWBool-флаги функциональных аксессуаров (artificial_eye / night_vision /
+   neuro_link / prosthesis, `GRM_Accessory_*`) терялись, интеграции
+   (аугментации и пр.) «не помнили» надетый аксессуар до пере-надевания.
+   Теперь хук PlayerInitialSpawn (GRM_Customization_Join) после синка
+   вызывает dispatchFunctionEvent("OnEquip", ...) для ВСЕХ надетых
+   аксессуаров — эффекты восстанавливаются при входе.
+
+2. **ФОНАРИК ВЫРУБЛЕН (3 уровня):**
+   - сервер: `hook.Add("AllowFlashlight", "GRM_Customization_NoFlashlight",
+     return false)` — движок не даёт включить фонарик никому;
+   - клиент: `PlayerBindPress` блокирует сам бинд `+flashlight` (F);
+   - клиент: `Think` принудительно гасит уже включённый фонарик
+     (`lp:SetFlashlight(false)`), если его включил другой аддон/до хука.
+   Причина: при включённом освещении движок уводит рендер в световой
+   проход, где аксессуары (ручной DrawModel) перестают отрисовываться.
+
+Тесты: sim_customization 63 → **67/67** (статики: AllowFlashlight на
+сервере, блок +flashlight, force-off в Think, OnEquip-восстановление при
+входе); sim_customization_runtime 30 → **36/36** (AllowFlashlight()==false,
+надевание night_vision → флаг, «рестарт» сбрасывает, вход восстанавливает
+флаг через OnEquip). GLua 404/0; roundtrip 14/14; симы: heist 125,
+perm_upsert 14, launderer_menu 21, bank_vault 87, econ_access 42,
+prop_protect 23, security OK, alarm 27, customization_render 12,
+world_labels OK. dist пересобран.

@@ -75,6 +75,12 @@ ok(has(radionet,'HasFunction(ply, "radio")'),"functional radio integrates with R
 ok(has(client,'GRM_Customization_FunctionHUD') and has(client,'LocalHasFunction("watch")') and has(client,'LocalHasFunction("gasmask")'),"watch and gasmask expose client HUD functionality")
 ok(has(arrest,"GRM.Customization.Confiscate"),"arrest confiscates worn accessories")
 ok(not has(core,"pac.") and not has(client,"pac."),"implementation has no PAC3 runtime/code dependency")
+-- Находка 179z: фонарик (F) вырублен — серверный AllowFlashlight=false,
+-- клиент блокирует бинд и принудительно гасит; запоминание функций при входе
+ok(has(core,'hook.Add("AllowFlashlight", "GRM_Customization_NoFlashlight"'),"flashlight banned on server (AllowFlashlight=false)")
+ok(has(core,'dispatchFunctionEvent("OnEquip", ply, slot, item, equipped)') and has(core,"C.GetLoadout(ply)"),"rejoin restores OnEquip for worn accessories (memory fix)")
+ok(has(client,'bind == "+flashlight"'),"client blocks +flashlight bind (PlayerBindPress)")
+ok(has(client,"lp:GetFlashlight()") and has(client,"lp:SetFlashlight(false)"),"client force-off already-lit flashlight (Think)")
 
 -- Numeric transform normalization contract.
 local function clamp(v,a,b) return math.max(a,math.min(b,v)) end

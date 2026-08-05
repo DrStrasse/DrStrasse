@@ -170,5 +170,27 @@ ok(unloaded==100000 and C.LootBagGet(ply)==0, "loot_bag: /bag_unload выгру�
 C.UnequipSlot(ply,"torso",true,true)
 ok(C.LootBagAdd(ply,50000)==0, "loot_bag: без надетой сумки сбор 0")
 
+-- ══ ФОНАРИК + ЗАПОМИНАНИЕ (находка 179z) ══
+now = 400
+local afHook = hooks.AllowFlashlight and hooks.AllowFlashlight.GRM_Customization_NoFlashlight
+ok(type(afHook) == "function" and afHook() == false, "фонарик: AllowFlashlight запрещён глобально (находка 179z)")
+-- аксессуар с функцией night_vision (OnEquip ставит NWBool-флаг)
+readStrings={"save","nv"}; readUInts={}
+readTables={{name="Ночное зрение",category="Глаза",model="models/props_combine/combine_faceplate.mdl",description="НВ",price=9000,slot="face",bone="ValveBiped.Bip01_Head1",position={x=0,y=0,z=0},angles={p=0,y=0,r=0},scale=1,functions={night_vision=true},functionConfig={}}}
+receivers.GRM_Custom_AdminOp(0,ply)
+local nvItem = C.Catalog.nv
+ok(nvItem ~= nil and nvItem.functions.night_vision == true, "запоминание: аксессуар НВ добавлен в каталог")
+inv.slots[1]={id="grm_acc_nv",count=1}
+now=401
+readStrings={"equip_inventory","face"}; readUInts={1}
+receivers.GRM_Custom_Op(0,ply)
+ok(ply:GetNWBool("GRM_Accessory_night_vision", false) == true, "запоминание: OnEquip выставил флаг при надевании")
+-- эмуляция рестарта сервера: NWBool сброшен, лоадаут остался на диске
+ply.nw.GRM_Accessory_night_vision = nil
+ok(ply:GetNWBool("GRM_Accessory_night_vision", false) == false, "запоминание: после «рестарта» флаг сброшен")
+ok(hooks.PlayerInitialSpawn ~= nil and hooks.PlayerInitialSpawn.GRM_Customization_Join ~= nil, "запоминание: хук входа зарегистрирован")
+hooks.PlayerInitialSpawn.GRM_Customization_Join(ply)
+ok(ply:GetNWBool("GRM_Accessory_night_vision", false) == true, "запоминание: вход восстанавливает OnEquip надетых аксессуаров (находка 179z)")
+
 print(("CUSTOMIZATION RUNTIME: %d/%d, failures=%d"):format(checks-failed,checks,failed))
 if failed>0 then os.exit(1) end

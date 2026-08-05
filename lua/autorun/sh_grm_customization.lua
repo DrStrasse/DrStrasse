@@ -581,7 +581,29 @@ if SERVER then
         timer.Simple(0, function() if IsValid(ply) then C.SyncPlayer(ply) end end)
     end)
     hook.Add("PlayerInitialSpawn", "GRM_Customization_Join", function(ply)
-        timer.Simple(3, function() if IsValid(ply) then C.SyncAllTo(ply); C.SyncPlayer(ply) end end)
+        timer.Simple(3, function()
+            if IsValid(ply) then
+                C.SyncAllTo(ply); C.SyncPlayer(ply)
+                -- Находка 179z: запоминание функциональных эффектов надетых
+                -- аксессуаров. OnEquip раньше вызывался только в момент
+                -- надевания — после рестарта NWBool-флаги (artificial_eye /
+                -- night_vision / neuro_link / prosthesis) терялись, и
+                -- аксессуар «не запоминался» до пере-надевания. Восстанавливаем
+                -- эффекты для всего надетого при входе.
+                local loadout = C.GetLoadout(ply)
+                for slot, equipped in pairs(loadout) do
+                    local item = C.Catalog[equipped.accessoryID]
+                    if item then dispatchFunctionEvent("OnEquip", ply, slot, item, equipped) end
+                end
+            end
+        end)
+    end)
+    -- Находка 179z: фонарик (F) ВЫРУБЛЕН глобально. При включённом
+    -- освещении движок уводит рендер в отдельный световой проход, где
+    -- аксессуары перестают отрисовываться. AllowFlashlight=false — движок
+    -- не даёт включить фонарик никому.
+    hook.Add("AllowFlashlight", "GRM_Customization_NoFlashlight", function()
+        return false
     end)
     hook.Add("ShutDown", "GRM_Customization_Save", function() saveCatalog(); saveLoadouts() end)
 
