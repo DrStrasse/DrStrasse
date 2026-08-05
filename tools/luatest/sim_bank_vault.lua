@@ -391,5 +391,13 @@ ok(tsh:find('holo_wall_unit.mdl', 1, true) ~= nil, "терминал: модел
 local csh = assert(io.open("lua/entities/grm_vault_cash/shared.lua", "rb")):read("*a")
 ok(csh:find('moneypalleta.mdl', 1, true) ~= nil, "паллета: модель moneypalleta.mdl")
 
+-- Находка 178c: 3D2D-дисплеи на ЛИЦЕВОЙ стороне модели (не биллборд сверху)
+local vcl2 = assert(io.open("lua/entities/grm_bank_vault/cl_init.lua", "rb")):read("*a")
+ok(vcl2:find("AngleEx(self:GetForward())", 1, true) ~= nil, "хранилище: дисплей на лицевой стороне (AngleEx GetForward, находка 178c)")
+ok(vcl2:find("EyeAngles().y - 90", 1, true) == nil, "хранилище: нет биллборда-надписи над моделью")
+local pcl = assert(io.open("lua/entities/grm_money_press/cl_init.lua", "rb")):read("*a")
+ok(pcl:find("AngleEx(self:GetForward())", 1, true) ~= nil, "станок: дисплей на лицевой стороне (AngleEx GetForward, находка 178c)")
+ok(pcl:find("EyeAngles().y - 90", 1, true) == nil, "станок: нет биллборда-надписи над моделью")
+
 print(string.format("sim_bank_vault: %d ok, %d fail", pass, fail))
 if fail > 0 then os.exit(1) end

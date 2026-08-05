@@ -16,9 +16,12 @@ function ENT:Draw()
     if not IsValid(ply) then return end
     if ply:GetPos():DistToSqr(self:GetPos()) > 700 * 700 then return end
 
-    local pos = self:GetPos() + self:GetUp() * 55
-    local ang = Angle(0, EyeAngles().y - 90, 90)
-    cam.Start3D2D(pos, ang, 0.07)
+    -- Находка 178c: статус на ЛИЦЕВОЙ стороне станка (по GetForward)
+    local mins, maxs = self:OBBMins(), self:OBBMaxs()
+    local depth = (maxs and mins and (maxs.x - mins.x) > 0.1) and (maxs.x - mins.x) or 40
+    local pos = self:WorldSpaceCenter() + self:GetForward() * (depth * 0.5 + 8)
+    local ang = (-self:GetRight()):AngleEx(self:GetForward())
+    cam.Start3D2D(pos, ang, 0.06)
         local w, h = 320, 128
         draw.RoundedBox(8, -w/2, -h/2, w, h, Color(8, 12, 18, 225))
         draw.RoundedBox(6, -w/2 + 5, -h/2 + 5, w - 10, h - 10, Color(16, 24, 34, 235))
