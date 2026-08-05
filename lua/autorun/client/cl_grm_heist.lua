@@ -1,8 +1,9 @@
 --[[--------------------------------------------------------------------
-    GRM Heist — клиент ивента «Ограбление» (находка 179e)
+    GRM Heist — клиент ивента «Ограбление» (находка 179e/179o)
     • Огромный баннер вверху экрана: «НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ» и итоги;
     • обратный отсчёт до конца ивента (50 минут);
-    • музыка music/hl2_song20_submix0.mp3 на время ивента.
+    • музыка играет С СЕРВЕРА (CreateSound на отмывщике, звук слышен на
+      всей карте) — клиент музыку сам не запускает.
 ----------------------------------------------------------------------]]
 if not CLIENT then return end
 
@@ -16,31 +17,6 @@ local Heist = GRM.Heist
 
 Heist.Banner = nil      -- { text, sub, until }
 Heist.EventEndsAt = 0   -- реальное время конца (для отсчёта)
-Heist.Music = nil
-
-local function stopMusic()
-    if IsValid(Heist.Music) then
-        Heist.Music:Stop()
-        Heist.Music = nil
-    end
-end
-
-local function startMusic()
-    stopMusic()
-    -- Находка 179m: музыка ивента — music/hl2_song20_submix0.mp3
-    local lp = LocalPlayer()
-    if not IsValid(lp) then return end
-    local path = "music/hl2_song20_submix0.mp3"
-    if util and util.PrecacheSound then
-        pcall(util.PrecacheSound, path)
-    end
-    local snd = CreateSound(lp, path)
-    if IsValid(snd) then
-        snd:EnableLooping(true)
-        snd:Play()
-        Heist.Music = snd
-    end
-end
 
 net.Receive("GRM_Heist_Event", function()
     local state = net.ReadString()
@@ -52,12 +28,11 @@ net.Receive("GRM_Heist_Event", function()
     if state == "start" then
         Heist.Banner = { text = title, sub = subtitle, ["until"] = CurTime() + 10 }
         Heist.EventEndsAt = endsAt
-        if music then startMusic() end
+        -- музыка уже играет с сервера (см. StartEvent отмывщика)
         surface.PlaySound("buttons/button15.wav")
     elseif state == "end" then
         Heist.Banner = { text = title, sub = subtitle, ["until"] = CurTime() + 12 }
         Heist.EventEndsAt = 0
-        stopMusic()
     end
 end)
 

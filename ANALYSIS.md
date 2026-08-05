@@ -2970,3 +2970,28 @@ music/hl2_song20_submix0.mp3».
 комментарии в shared.lua/init.lua отмывщика). robber_bank.wav больше нигде
 не используется. sim_heist: 73 проверки (путь mp3, нет robber_bank).
 GLua 404/0, симы 48/48, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179o (05.08.2026): музыка ивента — воспроизведение С СЕРВЕРА, а не на клиенте
+
+Владелец: «музыка в целом не воспроизводиться. Надо её не локальной на
+клиента делать, а чтобы на сервер воспроизводило».
+
+Причина: музыка запускалась клиентским `CreateSound(LocalPlayer(), ...)` —
+локально на клиенте, и не играла.
+
+Сделано:
+1. **Сервер** (grm_money_launderer/init.lua, StartEvent): `CreateSound(self,
+   "music/hl2_song20_submix0.mp3")` на ОТМЫВЩИКЕ + `SetSoundLevel(0)`
+   (без затухания — слышно на всей карте, как сирена сигнализации) +
+   `EnableLooping(true)` + `PlayEx(1, 100)`. `StopHeistMusic()` — в EndEvent
+   и OnRemove.
+2. **Клиент** (cl_grm_heist.lua): клиентская startMusic/Heist.Music УБРАНЫ —
+   остались только баннер и отсчёт; музыка приходит с сервера как
+   позиционный звук (слышен всем, у кого есть файл mp3 — hl2_song20 —
+   стоковый HL2).
+
+sim_heist: 75 проверок (сервер: CreateSound/SetSoundLevel(0)/EnableLooping/
+PlayEx/StopHeistMusic; клиент: нет startMusic/Heist.Music). GLua 404/0,
+симы 48/48, roundtrip 14/14. dist пересобран.

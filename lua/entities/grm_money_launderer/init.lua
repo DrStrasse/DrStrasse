@@ -72,6 +72,7 @@ function ENT:OnRemove()
     if self:GetEventActive() then
         self:BroadcastEvent("end", "ОГРАБЛЕНИЕ ПРЕРВАНО", "", false)
     end
+    self:StopHeistMusic()
 end
 
 function ENT:CanManage(ply)
@@ -189,7 +190,18 @@ function ENT:StartEvent()
     self:SetMoneyHeld(0)
     self.FactionDelivered = {}
     self:SetWinnerFaction("")
-    -- баннер на весь сервер + музыка music/hl2_song20_submix0.mp3
+    -- Находка 179o: музыка С СЕРВЕРА (не клиентская!) — CreateSound на
+    -- отмывщике, зацикливание, SetSoundLevel(0) = без затухания (слышно
+    -- на всей карте, как у сирены сигнализации).
+    self:StopHeistMusic()
+    local patch = CreateSound(self, "music/hl2_song20_submix0.mp3")
+    if patch then
+        patch:SetSoundLevel(0)
+        patch:EnableLooping(true)
+        patch:PlayEx(1, 100)
+        self.HeistMusic = patch
+    end
+    -- баннер на весь сервер
     self:BroadcastEvent("start", "НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ",
         "Участники: " .. self:GetParticipantCount() .. "  •  Цель: " .. money(self:GetGoalMoney()) ..
         "  •  Время: 50 минут  •  Сдайте деньги отмывщику  •  ДВИГАЙТЕСЬ К ЛОКАЦИИ!", true)
@@ -197,6 +209,14 @@ function ENT:StartEvent()
         :format(self:EntIndex(), self:GetParticipantCount(), money(self:GetGoalMoney())))
     -- Находка 179f: грабители получают GPS-маркер на Рейхсбанк (хранилище)
     self:SendHeistTargetMarkers()
+end
+
+-- Находка 179o: остановка серверной музыки
+function ENT:StopHeistMusic()
+    if self.HeistMusic then
+        self.HeistMusic:Stop()
+        self.HeistMusic = nil
+    end
 end
 
 function ENT:EndEvent(criminalsWin, reason)
@@ -214,6 +234,7 @@ function ENT:EndEvent(criminalsWin, reason)
         sub = tostring(reason or "Деньги не доставлены отмывщику за отведённое время")
     end
     self:BroadcastEvent("end", title, sub, false)
+    self:StopHeistMusic()
     print(("[GRM Heist] ИВЕНТ ОГРАБЛЕНИЕ окончен: %s (%s)"):format(title, sub))
     self:SetEventActive(false)
     self:SetEventEndsAt(0)

@@ -57,6 +57,16 @@ duplicator = { StoreEntityModifier = function() end, RegisterEntityModifier = fu
 _F = {}
 Entity = function(idx) return _F[idx] end
 local spawnedClasses = {}
+local heistPatches = {}
+CreateSound = function(owner, path)
+  local p = { owner = owner, path = path, stopped = false, loop = nil, played = false, level = nil }
+  p.Stop = function() p.stopped = true end
+  p.SetSoundLevel = function(_, l) p.level = l end
+  p.EnableLooping = function(_, b) p.loop = b end
+  p.PlayEx = function() p.played = true end
+  heistPatches[#heistPatches + 1] = p
+  return p
+end
 ents = {
   Create = function(cls) return mkEnt(cls) end,
   FindByClass = function(cls)
@@ -354,8 +364,8 @@ ok(lin4:find('function ENT:LeaveJob', 1, true) ~= nil and lin4:find('action == "
 local lcl6 = assert(io.open("lua/entities/grm_money_launderer/cl_init.lua", "rb")):read("*a")
 ok(lcl6:find('ОТМЕНИТЬ УЧАСТИЕ', 1, true) ~= nil and lcl6:find('act(ent, "leave")', 1, true) ~= nil, "клиент: кнопка «ОТМЕНИТЬ УЧАСТИЕ» (находка 179m)")
 local heistCl = assert(io.open("lua/autorun/client/cl_grm_heist.lua", "rb")):read("*a")
-ok(heistCl:find('local path = "music/hl2_song20_submix0.mp3"', 1, true) ~= nil, "музыка: путь music/hl2_song20_submix0.mp3 (находка 179m)")
-ok(heistCl:find('robber_bank.wav', 1, true) == nil, "музыка: robber_bank.wav больше не используется")
+ok(heistCl:find('local function startMusic', 1, true) == nil and heistCl:find('Heist.Music', 1, true) == nil, "клиент: музыку сам НЕ запускает (играет с сервера, находка 179o)")
+ok(heistCl:find('играет С СЕРВЕРА', 1, true) ~= nil, "клиент: комментарий «музыка с сервера»")
 
 -- ══════════════ 7. Тул + перм + модели ══════════════
 local tool = assert(io.open("lua/weapons/gmod_tool/stools/grm_bank_tool.lua", "rb")):read("*a")
@@ -375,9 +385,11 @@ ok(tool2:find('heisttarget', 1, true) ~= nil and tool2:find('SetHeistTarget', 1,
 ok(tool2:find('Цель ивента — Рейхсбанк', 1, true) ~= nil, "тул: название режима")
 local lin = assert(io.open("lua/entities/grm_money_launderer/init.lua", "rb")):read("*a")
 ok(lin:find('НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ', 1, true) ~= nil, "баннер: «НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ»")
-ok(lin:find('hl2_song20_submix0.mp3', 1, true) ~= nil, "музыка: hl2_song20_submix0.mp3 (сервер-комментарий)")
+ok(lin:find('CreateSound(self, "music/hl2_song20_submix0.mp3")', 1, true) ~= nil, "сервер: CreateSound на отмывщике (находка 179o)")
+ok(lin:find('patch:SetSoundLevel(0)', 1, true) ~= nil and lin:find('patch:EnableLooping(true)', 1, true) ~= nil and lin:find('patch:PlayEx(1, 100)', 1, true) ~= nil, "сервер: SetSoundLevel(0)=везде + цикл + PlayEx (находка 179o)")
+ok(lin:find('function ENT:StopHeistMusic', 1, true) ~= nil and lin:find('self.HeistMusic:Stop()', 1, true) ~= nil, "сервер: StopHeistMusic в EndEvent/OnRemove")
 local lcl = assert(io.open("lua/autorun/client/cl_grm_heist.lua", "rb")):read("*a")
-ok(lcl:find('hl2_song20_submix0.mp3', 1, true) ~= nil and lcl:find('EnableLooping(true)', 1, true) ~= nil, "клиент: музыка hl2_song20_submix0.mp3 зациклена")
+ok(lcl:find('local function startMusic', 1, true) == nil, "клиент: нет startMusic (музыка с сервера)")
 ok(lcl:find('GRMHeist_Banner', 1, true) ~= nil and lcl:find('ОГРАБЛЕНИЕ', 1, true) ~= nil, "клиент: баннер и отсчёт")
 
 print(string.format("sim_heist: %d ok, %d fail", pass, fail))
