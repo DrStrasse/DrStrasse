@@ -3014,3 +3014,43 @@ PlayEx/StopHeistMusic; клиент: нет startMusic/Heist.Music). GLua 404/0,
 sim_heist: 78 проверок (клиент-подпись, сервер-отказ во время ивента,
 функциональный LeaveJob-отказ). GLua 404/0, симы 48/48, roundtrip 14/14.
 dist пересобран.
+
+---
+
+## Находка 179q (05.08.2026): ивент «Ограбление» падал — CreateSound вернул «пустой» патч без EnableLooping
+
+Владелец (живой сервер, стек при запуске ивента):
+```
+grm_money_launderer/init.lua:200: attempt to call method 'EnableLooping' (a nil value)
+  1. StartEvent - init.lua:200
+  2. TakeJob - init.lua:266
+  3. func - net.lua:34
+```
+
+Причина: `CreateSound(self, "music/hl2_song20_submix0.mp3")` (находка 179o) на
+сервере вернул объект-заглушку — звук не найден/не прекэширован, у патча НЕТ
+метода `EnableLooping` (а `SetSoundLevel` при этом есть — частичный объект).
+`if patch then` пропускал заглушку, и `patch:EnableLooping(true)` ронял ивент
+при первом же наборе минимума участников (TakeJob → StartEvent).
+
+Сделано (lua/entities/grm_money_launderer/init.lua — тот же паттерн, что
+лечил сирену сигнализации в находке 176):
+
+1. **StartEvent**: `if patch and isfunction(patch.EnableLooping) then` —
+   полный контур (SetSoundLevel(0)/EnableLooping/PlayEx) только у живого
+   патча; иначе **резервный позиционный `self:EmitSound("music/hl2_song20_
+   submix0.mp3", 100, 100)`** — музыка играет и без патча (разово).
+2. **StopHeistMusic**: `pcall` вокруг `self.HeistMusic:Stop()` (патч мог
+   быть «пустым») + `self:StopSound(...)` — глушит и резервный EmitSound,
+   и живой патч при окончании ивента/OnRemove.
+
+Тест sim_heist: мок CreateSound научился возвращать «пустой» патч
+(переключатель __emptySoundPatch — имитация живого сервера), счётчики
+EmitSound/StopSound в ENT-моке. Новые проверки: StartEvent не падает на
+пустом патче, резервный EmitSound сыгран, ивент запущен несмотря на звук,
+StopSound глушит резерв, статические стражи (isfunction/fallback/pcall).
+sim_heist 78 → **85/85**.
+
+Проверки: GLua 404/0; roundtrip 14/14; симы 48/48 (sim_heist 85,
+sim_bank_vault 87, sim_econ_access 42, sim_prop_protect 23, sim_security OK);
+proto_audit — только известные замечания. dist пересобран.

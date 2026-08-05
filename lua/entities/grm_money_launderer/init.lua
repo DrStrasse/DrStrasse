@@ -193,13 +193,20 @@ function ENT:StartEvent()
     -- Находка 179o: музыка С СЕРВЕРА (не клиентская!) — CreateSound на
     -- отмывщике, зацикливание, SetSoundLevel(0) = без затухания (слышно
     -- на всей карте, как у сирены сигнализации).
+    -- Находка 179q: CreateSound может вернуть «пустой» патч без методов
+    -- (звук не найден/не прекэширован) — `patch:EnableLooping` = nil и
+    -- ивент падал. Проверяем isfunction; иначе резервный EmitSound.
     self:StopHeistMusic()
     local patch = CreateSound(self, "music/hl2_song20_submix0.mp3")
-    if patch then
+    if patch and isfunction(patch.EnableLooping) then
         patch:SetSoundLevel(0)
         patch:EnableLooping(true)
         patch:PlayEx(1, 100)
         self.HeistMusic = patch
+    else
+        -- Звук недоступен как патч — играем позиционным EmitSound
+        -- (глушится в StopHeistMusic через StopSound).
+        self:EmitSound("music/hl2_song20_submix0.mp3", 100, 100)
     end
     -- баннер на весь сервер
     self:BroadcastEvent("start", "НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ",
@@ -212,11 +219,14 @@ function ENT:StartEvent()
 end
 
 -- Находка 179o: остановка серверной музыки
+-- Находка 179q: Stop под pcall (патч мог быть «пустым»), плюс StopSound
+-- гасит резервный EmitSound из StartEvent.
 function ENT:StopHeistMusic()
     if self.HeistMusic then
-        self.HeistMusic:Stop()
+        pcall(function() self.HeistMusic:Stop() end)
         self.HeistMusic = nil
     end
+    self:StopSound("music/hl2_song20_submix0.mp3")
 end
 
 function ENT:EndEvent(criminalsWin, reason)

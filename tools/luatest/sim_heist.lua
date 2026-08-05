@@ -58,7 +58,17 @@ _F = {}
 Entity = function(idx) return _F[idx] end
 local spawnedClasses = {}
 local heistPatches = {}
+local emitLog = {}
+local stopLog = {}
 CreateSound = function(owner, path)
+  -- Находка 179q: живой сервер может вернуть «пустой» патч (звук не найден) —
+  -- методов EnableLooping/PlayEx на нём нет. Имитируем это переключателем.
+  if _G.__emptySoundPatch then
+    local p = { owner = owner, path = path, stopped = false }
+    p.Stop = function() p.stopped = true end
+    heistPatches[#heistPatches + 1] = p
+    return p
+  end
   local p = { owner = owner, path = path, stopped = false, loop = nil, played = false, level = nil }
   p.Stop = function() p.stopped = true end
   p.SetSoundLevel = function(_, l) p.level = l end
@@ -140,7 +150,8 @@ EMT.__index = function(t, k)
   elseif k == "Spawn" then return function(s) spawnedClasses[s.__cls] = (spawnedClasses[s.__cls] or 0) + 1 end
   elseif k == "Activate" then return function() end
   elseif k == "Remove" then return function(s) s.__valid = false end
-  elseif k == "EmitSound" then return function() end
+  elseif k == "EmitSound" then return function(s, path) emitLog[#emitLog + 1] = tostring(path) end
+  elseif k == "StopSound" then return function(s, path) stopLog[#stopLog + 1] = tostring(path) end
   elseif k == "IsPlayer" then return function() return false end
   elseif k == "IsNPC" then return function() return false end
   elseif k == "IsWorld" then return function() return false end
@@ -245,6 +256,21 @@ ok(ld:GetEventEndsAt() == _G.__now + 3000, "таймер 50 минут (3000 с�
 local startBc = false
 for _, m in ipairs(H.broadcasts) do if m == "GRM_Heist_Event" then startBc = true end end
 ok(startBc, "broadcast GRM_Heist_Event отправлен (баннер/музыка всем)")
+
+-- ══════════════ 2a. ПУСТОЙ ЗВУКОВОЙ ПАТЧ (находка 179q) ══════════════
+-- Живой сервер: CreateSound вернул объект-заглушку без EnableLooping
+-- (звук не найден/не прекэширован) — StartEvent не должен падать.
+_G.__emptySoundPatch = true
+emitLog = {}
+ld:SetEventActive(false)
+local okStartEmpty = pcall(function() ld:StartEvent() end)
+ok(okStartEmpty, "пустой патч: StartEvent не падает (находка 179q)")
+ok(#emitLog > 0, "пустой патч: резервный EmitSound сыгран (находка 179q)")
+ok(ld:GetEventActive() == true, "пустой патч: ивент запущен несмотря на звук")
+stopLog = {}
+ld:StopHeistMusic()
+ok(#stopLog > 0, "StopHeistMusic: StopSound глушит резервный EmitSound (находка 179q)")
+_G.__emptySoundPatch = nil
 
 -- ══════════════ 2b. ЦЕЛЬ ИВЕНТА (находка 179f) ══════════════
 -- дефолт: ближайшее хранилище
@@ -394,7 +420,10 @@ local lin = assert(io.open("lua/entities/grm_money_launderer/init.lua", "rb")):r
 ok(lin:find('НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ', 1, true) ~= nil, "баннер: «НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ»")
 ok(lin:find('CreateSound(self, "music/hl2_song20_submix0.mp3")', 1, true) ~= nil, "сервер: CreateSound на отмывщике (находка 179o)")
 ok(lin:find('patch:SetSoundLevel(0)', 1, true) ~= nil and lin:find('patch:EnableLooping(true)', 1, true) ~= nil and lin:find('patch:PlayEx(1, 100)', 1, true) ~= nil, "сервер: SetSoundLevel(0)=везде + цикл + PlayEx (находка 179o)")
+ok(lin:find('isfunction(patch.EnableLooping)', 1, true) ~= nil, "сервер: guard isfunction для патча (находка 179q)")
+ok(lin:find('self:EmitSound("music/hl2_song20_submix0.mp3", 100, 100)', 1, true) ~= nil, "сервер: резервный EmitSound при пустом патче (находка 179q)")
 ok(lin:find('function ENT:StopHeistMusic', 1, true) ~= nil and lin:find('self.HeistMusic:Stop()', 1, true) ~= nil, "сервер: StopHeistMusic в EndEvent/OnRemove")
+ok(lin:find('pcall(function() self.HeistMusic:Stop() end)', 1, true) ~= nil and lin:find('self:StopSound("music/hl2_song20_submix0.mp3")', 1, true) ~= nil, "сервер: StopHeistMusic безопасен + StopSound (находка 179q)")
 local lcl = assert(io.open("lua/autorun/client/cl_grm_heist.lua", "rb")):read("*a")
 ok(lcl:find('local function startMusic', 1, true) == nil, "клиент: нет startMusic (музыка с сервера)")
 ok(lcl:find('GRMHeist_Banner', 1, true) ~= nil and lcl:find('ОГРАБЛЕНИЕ', 1, true) ~= nil, "клиент: баннер и отсчёт")
