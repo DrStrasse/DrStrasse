@@ -65,7 +65,7 @@ net.Receive("GRM_Heist_Open", function()
     if IsValid(menuFrame) then menuFrame:Remove() end
     menuFrame = vgui.Create("DFrame")
     menuFrame:SetTitle("")
-    menuFrame:SetSize(480, 430)
+    menuFrame:SetSize(480, 560)
     menuFrame:Center()
     menuFrame:MakePopup()
     menuFrame.Paint = function(_, w, h)
@@ -81,7 +81,7 @@ net.Receive("GRM_Heist_Open", function()
 
     local info = vgui.Create("DPanel", body)
     info:Dock(TOP)
-    info:SetTall(120)
+    info:SetTall(140)
     info:DockMargin(0, 0, 0, 10)
     info.Paint = function(_, w, h)
         draw.RoundedBox(8, 0, 0, w, h, C.panel)
@@ -91,6 +91,10 @@ net.Receive("GRM_Heist_Open", function()
         draw.SimpleText("Участники: " .. tostring(d.participantCount or 0) .. " / минимум " .. tostring(d.minParticipants or 2), "GRMLaunder_Normal", 14, 46, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         draw.SimpleText("Сдано отмывщику: " .. money(d.moneyHeld or 0) .. " / " .. money(d.goalMoney or 0), "GRMLaunder_Normal", 14, 70, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         draw.SimpleText("Ваша фракция: " .. tostring(d.myFaction or "—") .. (d.factionAllowed and "  (доступна)" or "  (НЕ доступна)"), "GRMLaunder_Small", 14, 96, d.factionAllowed and C.green or C.red, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        -- находка 179f: цель ивента
+        local tp = d.targetPos
+        local tTxt = tp and ("Цель: Рейхсбанк (" .. ("%.0f %.0f"):format(tp.x, tp.y) .. ")") or "Цель: авто (ближайшее хранилище)"
+        draw.SimpleText(tTxt, "GRMLaunder_Small", 14, 116, d.hasTarget and Color(255, 200, 120) or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
 
     local function addBtn(text, col, fn)
@@ -124,6 +128,13 @@ net.Receive("GRM_Heist_Open", function()
 
     -- Настройка (суперадмин)
     if d.canManage then
+        -- находка 179f: цель ивента (Рейхсбанк) — по прицелу
+        addBtn("⚑ ЦЕЛЬ: хранилище под прицелом (суперадмин)", C.yellow, function()
+            act(ent, "set_target")
+        end)
+        addBtn("✕ Сбросить цель (авто: ближайшее хранилище)", Color(120, 110, 130), function()
+            act(ent, "clear_target")
+        end)
         addBtn("⚙ НАСТРОЙКА (суперадмин)", C.blue, function()
             Derma_StringRequest("Отмывщик — минимум участников", "Минимальное число участников:", tostring(d.minParticipants or 2), function(val)
                 local minP = math.floor(tonumber(val) or 2)

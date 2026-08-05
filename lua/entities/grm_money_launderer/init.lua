@@ -39,6 +39,7 @@ function ENT:Initialize()
     self:SetParticipantCount(0)
     self:SetAllowedFactions("")
     self:SetWinnerFaction("")
+    self:SetHeistTargetPos(Vector(0, 0, 0))
     self.Participants = self.Participants or {}   -- [sid] = faction
     self.FactionDelivered = self.FactionDelivered or {} -- [faction] = amount
 
@@ -87,6 +88,57 @@ function ENT:IsParticipant(ply)
     return self.Participants[tostring(sid)] ~= nil
 end
 
+-- Находка 179f: цель ивента — установленная точка, иначе ближайшее
+-- хранилище (Рейхсбанк), иначе nil.
+function ENT:HeistTarget()
+    local tp = self:GetHeistTargetPos()
+    if tp and (tp.x ~= 0 or tp.y ~= 0 or tp.z ~= 0) then
+        return tp
+    end
+    local best, bestD = nil, math.huge
+    for _, ent in ipairs(ents.FindByClass("grm_bank_vault")) do
+        if IsValid(ent) then
+            local d = self:GetPos():DistToSqr(ent:GetPos())
+            if d < bestD then best, bestD = ent, d end
+        end
+    end
+    if IsValid(best) then return best:GetPos() end
+    return nil
+end
+
+function ENT:SetHeistTarget(pos)
+    self:SetHeistTargetPos(pos or Vector(0, 0, 0))
+    if GRM.PermData and GRM.PermData.UpdateEntry then GRM.PermData.UpdateEntry(self) end
+    return true
+end
+
+-- Раздать маркеры цели участникам (GPS-точка на мини-карте) + уведомление
+function ENT:SendHeistTargetMarkers()
+    local target = self:HeistTarget()
+    if not target then return end
+    local dur = math.max(60, tonumber(self.HeistDuration) or 3000)
+    local tName = "РЕЙХСБАНК — ЦЕЛЬ ОГРАБЛЕНИЯ"
+    local coord = ("X %.0f  Y %.0f"):format(target.x, target.y)
+    for sid in pairs(self.Participants) do
+        local p = nil
+        for _, pl in ipairs(player.GetAll()) do
+            if IsValid(pl) then
+                local key = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(pl)) or pl:SteamID64() or ""
+                if tostring(key) == tostring(sid) then p = pl break end
+            end
+        end
+        if IsValid(p) then
+            if GRM.Minimap and GRM.Minimap.AddTempPoint then
+                GRM.Minimap.AddTempPoint(tName, target, dur)
+                if GRM.Minimap.SendTo then GRM.Minimap.SendTo(p) end
+            end
+            if GRM.Notify then
+                GRM.Notify(p, "ЦЕЛЬ ОГРАБЛЕНИЯ: Рейхсбанк (хранилище) — " .. coord .. ". Двигайтесь к локации!", 255, 200, 100)
+            end
+        end
+    end
+end
+
 -- ══ ИВЕНТ ══════════════════════════════════════════════════
 function ENT:BroadcastEvent(state, title, subtitle, music)
     net.Start("GRM_Heist_Event")
@@ -108,9 +160,11 @@ function ENT:StartEvent()
     -- баннер на весь сервер + музыка robber_bank.wav
     self:BroadcastEvent("start", "НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ",
         "Участники: " .. self:GetParticipantCount() .. "  •  Цель: " .. money(self:GetGoalMoney()) ..
-        "  •  Время: 50 минут  •  Сдайте деньги отмывщику", true)
+        "  •  Время: 50 минут  •  Сдайте деньги отмывщику  •  ДВИГАЙТЕСЬ К ЛОКАЦИИ!", true)
     print(("[GRM Heist] ИВЕНТ ОГРАБЛЕНИЕ начат (отмывщик %s, участников %d, цель %s)")
         :format(self:EntIndex(), self:GetParticipantCount(), money(self:GetGoalMoney())))
+    -- Находка 179f: грабители получают GPS-маркер на Рейхсбанк (хранилище)
+    self:SendHeistTargetMarkers()
 end
 
 function ENT:EndEvent(criminalsWin, reason)
@@ -243,6 +297,9 @@ function ENT:SendMenu(ply)
             canManage = self:CanManage(ply),
             myFaction = tostring(self:FactionOf(ply) or ""),
             factionAllowed = self:IsFactionAllowed(self:FactionOf(ply)),
+            -- находка 179f: цель ивента (маркер GPS)
+            hasTarget = self:HeistTarget() ~= nil,
+            targetPos = self:HeistTarget(),
         })
     net.Send(ply)
 end
@@ -265,6 +322,21 @@ net.Receive("GRM_Heist_Action", function(_, ply)
         ent:TakeJob(ply)
     elseif action == "deposit" then
         ent:DepositFromBag(ply)
+    elseif action == "set_target" then
+        -- находка 179f: цель = то, на что смотрит суперадмин (хранилище)
+        if not ent:CanManage(ply) then notify(ply, "Только суперадмин.", 255, 100, 100) return end
+        local tr = ply:GetEyeTrace()
+        local hit = tr and tr.Entity
+        if IsValid(hit) then
+            ent:SetHeistTarget(hit:GetPos())
+            notify(ply, "Цель ивента установлена: " .. tostring(hit:GetClass() or "?") .. " (" .. ("%.0f %.0f %.0f"):format(hit:GetPos().x, hit:GetPos().y, hit:GetPos().z) .. ")", 100, 220, 130)
+        else
+            notify(ply, "Наведите прицел на хранилище/место цели.", 255, 190, 90)
+        end
+    elseif action == "clear_target" then
+        if not ent:CanManage(ply) then notify(ply, "Только суперадмин.", 255, 100, 100) return end
+        ent:SetHeistTarget(Vector(0, 0, 0))
+        notify(ply, "Цель ивента сброшена (авто: ближайшее хранилище).", 100, 220, 255)
     elseif action == "config" then
         if not ent:CanManage(ply) then notify(ply, "Только суперадмин.", 255, 100, 100) return end
         local minP = math.max(1, math.floor(tonumber(net.ReadUInt(8)) or 2))
@@ -280,23 +352,80 @@ net.Receive("GRM_Heist_Action", function(_, ply)
     ent:SendMenu(ply)
 end)
 
+-- ══ КОМАНДА ЦЕЛИ (находка 179f) ═══════════════════════════
+-- /heist_target — суперадмин целится в хранилище (или место), цель
+-- ставится ближайшему отмывщику. /heist_target_clear — сброс.
+local function heistTargetCmd(ply)
+    if not IsValid(ply) or not ply:IsSuperAdmin() then
+        if IsValid(ply) then notify(ply, "Только суперадмин.", 255, 100, 100) end
+        return
+    end
+    local tr = ply:GetEyeTrace()
+    local hit = tr and tr.Entity
+    local launderer = E and E.FindNearestLaunderer and E.FindNearestLaunderer(ply, 2000)
+    if not IsValid(launderer) then notify(ply, "Рядом нет отмывщика денег.", 255, 190, 90) return end
+    if IsValid(hit) then
+        launderer:SetHeistTarget(hit:GetPos())
+        notify(ply, "Цель ивента [" .. tostring(hit:GetClass() or "?") .. "] установлена отмывщику.", 100, 220, 130)
+    else
+        notify(ply, "Наведите прицел на хранилище/место цели.", 255, 190, 90)
+    end
+end
+local function heistTargetClearCmd(ply)
+    if not IsValid(ply) or not ply:IsSuperAdmin() then
+        if IsValid(ply) then notify(ply, "Только суперадмин.", 255, 100, 100) end
+        return
+    end
+    local launderer = E and E.FindNearestLaunderer and E.FindNearestLaunderer(ply, 2000)
+    if IsValid(launderer) then
+        launderer:SetHeistTarget(Vector(0, 0, 0))
+        notify(ply, "Цель ивента сброшена (авто: ближайшее хранилище).", 100, 220, 255)
+    end
+end
+concommand.Add("grm_heist_target", function(ply) heistTargetCmd(ply) end)
+concommand.Add("grm_heist_target_clear", function(ply) heistTargetClearCmd(ply) end)
+hook.Add("PlayerSayTransform", "GRM_Heist_TargetTransform", function(ply, datapack)
+    if not istable(datapack) then return end
+    local text = datapack[1]
+    if not isstring(text) then return end
+    local t = string.lower(string.Trim(text))
+    if t == "/heist_target" then
+        heistTargetCmd(ply)
+        datapack.SkipPlayerSay = true
+        datapack[1] = ""
+    elseif t == "/heist_target_clear" then
+        heistTargetClearCmd(ply)
+        datapack.SkipPlayerSay = true
+        datapack[1] = ""
+    end
+end)
+
 -- ══ ПЕРМ (конфиг переживает рестарт) ═══════════════════════
 GRM = GRM or {}
 GRM.PermData = GRM.PermData or { Extract = {}, Apply = {} }
 GRM.PermData.Extract = GRM.PermData.Extract or {}
 GRM.PermData.Apply = GRM.PermData.Apply or {}
 GRM.PermData.Extract["grm_money_launderer"] = function(ent)
-    return {
+    local rec = {
         minParticipants = math.floor(ent:GetMinParticipants() or 2),
         goalMoney = math.floor(ent:GetGoalMoney() or 500000),
         allowedFactions = tostring(ent:GetAllowedFactions() or ""),
     }
+    -- находка 179f: цель ивента (маркер GPS)
+    local tp = ent:GetHeistTargetPos()
+    if tp and (tp.x ~= 0 or tp.y ~= 0 or tp.z ~= 0) then
+        rec.heistTarget = { x = tp.x, y = tp.y, z = tp.z }
+    end
+    return rec
 end
 GRM.PermData.Apply["grm_money_launderer"] = function(ent, data)
     if not istable(data) then return end
     if data.minParticipants then ent:SetMinParticipants(math.max(1, math.floor(tonumber(data.minParticipants) or 2))) end
     if data.goalMoney then ent:SetGoalMoney(math.max(1000, math.floor(tonumber(data.goalMoney) or 500000))) end
     if data.allowedFactions ~= nil then ent:SetAllowedFactions(tostring(data.allowedFactions or "")) end
+    if istable(data.heistTarget) then
+        ent:SetHeistTargetPos(Vector(tonumber(data.heistTarget.x) or 0, tonumber(data.heistTarget.y) or 0, tonumber(data.heistTarget.z) or 0))
+    end
 end
 
 print("[GRM] Money Launderer entity loaded (находка 179e)")

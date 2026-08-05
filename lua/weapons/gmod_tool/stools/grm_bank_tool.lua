@@ -20,6 +20,8 @@ TOOL.ClientConVar = {
 
 -- Находка 178d: выбранный станок для установки точки выдачи (сервер)
 TOOL.PressEnt = nil
+-- Находка 179f: выбранный отмывщик для установки цели ивента (сервер)
+TOOL.LaundererEnt = nil
 
 if CLIENT then
     language.Add("tool.grm_bank_tool.name", "GRM Банковское оборудование")
@@ -33,6 +35,7 @@ local TYPES = {
     terminal    = { id = "terminal",    class = "grm_money_press_terminal", label = "Терминал станка" },
     spawnpoint  = { id = "spawnpoint",  class = "grm_money_press",          label = "Точка выдачи паллет" },
     launderer   = { id = "launderer",   class = "grm_money_launderer",      label = "Отмывщик денег (ивент)" },
+    heisttarget = { id = "heisttarget", class = "grm_money_launderer",      label = "Цель ивента (Рейхсбанк)" },
 }
 
 local function canUse(ply)
@@ -52,6 +55,33 @@ function TOOL:LeftClick(trace)
     if not (trace and trace.Hit) then return false end
 
     local t = TYPES[self:GetClientInfo("type") or "vault"] or TYPES.vault
+
+    -- Находка 179f: режим «Цель ивента» — ЛКМ по отмывщику выбирает его,
+    -- ЛКМ по хранилищу/месту ставит цель (только суперадмин).
+    if t.id == "heisttarget" then
+        local hit = trace.Entity
+        if IsValid(hit) and hit:GetClass() == "grm_money_launderer" then
+            if not ply:IsSuperAdmin() then
+                if GRM.Notify then GRM.Notify(ply, "Цель ивента может ставить только суперадмин.", 255, 120, 100) end
+                return false
+            end
+            self.LaundererEnt = hit
+            if GRM.Notify then GRM.Notify(ply, "Отмывщик выбран. Наведите на хранилище (Рейхсбанк) и нажмите ЛКМ — цель ивента.", 120, 220, 255) end
+            return true
+        end
+        if IsValid(self.LaundererEnt) then
+            if not ply:IsSuperAdmin() then
+                if GRM.Notify then GRM.Notify(ply, "Цель ивента может ставить только суперадмин.", 255, 120, 100) end
+                return false
+            end
+            self.LaundererEnt:SetHeistTarget(trace.HitPos)
+            if GRM.Notify then GRM.Notify(ply, "Цель ивента установлена: паллеты/Рейхсбанк здесь. Грабители получат GPS-маркер.", 100, 220, 130) end
+            self.LaundererEnt = nil
+            return true
+        end
+        if GRM.Notify then GRM.Notify(ply, "Сначала выберите отмывщика (ЛКМ по grm_money_launderer).", 255, 180, 90) end
+        return false
+    end
 
     -- Находка 178d: режим «Точка выдачи» — ЛКМ по станку выбирает его,
     -- ЛКМ по месту устанавливает точку (только суперадмин).
@@ -108,6 +138,15 @@ function TOOL:Reload(trace)
     local cls = ent:GetClass()
     -- Находка 178d: R по станку в режиме «Точка выдачи» — сброс точки
     local t = TYPES[self:GetClientInfo("type") or "vault"] or TYPES.vault
+    if t.id == "heisttarget" and cls == "grm_money_launderer" then
+        if not ply:IsSuperAdmin() then
+            if GRM.Notify then GRM.Notify(ply, "Цель ивента может ставить только суперадмин.", 255, 120, 100) end
+            return false
+        end
+        ent:SetHeistTarget(Vector(0, 0, 0))
+        if GRM.Notify then GRM.Notify(ply, "Цель ивента сброшена (авто: ближайшее хранилище).", 100, 220, 255) end
+        return true
+    end
     if t.id == "spawnpoint" and cls == "grm_money_press" then
         if not ply:IsSuperAdmin() then
             if GRM.Notify then GRM.Notify(ply, "Точку выдачи может ставить только суперадмин.", 255, 120, 100) end
@@ -140,6 +179,7 @@ if CLIENT then
         t:AddChoice("Терминал станка", "terminal")
         t:AddChoice("Точка выдачи паллет (суперадмин)", "spawnpoint")
         t:AddChoice("Отмывщик денег (ивент ограбление)", "launderer")
+        t:AddChoice("Цель ивента — Рейхсбанк (суперадмин)", "heisttarget")
 
         panel:Help(
             "ЛКМ — установить выбранное оборудование\n" ..
@@ -154,6 +194,10 @@ if CLIENT then
             "2. Ставите ПЕЧАТНЫЙ СТАНОК рядом — каждые 10 сек печатает 5000 GRM в гос.бюджет, при буфере 100.000 спавнит паллету в точке выдачи.\n" ..
             "3. Ставите ТЕРМИНАЛ в радиусе 600 от станка — запуск/остановка, прокачка скорости, охлаждение.\n" ..
             "4. Паллету подносите к хранилищу, E → «Загрузить».\n\n" ..
+            "ЦЕЛЬ ИВЕНТА (суперадмин):\n" ..
+            "1. Комбо → «Цель ивента — Рейхсбанк».\n" ..
+            "2. ЛКМ по отмывщику → выбрать; ЛКМ по хранилищу/месту — цель (грабители получат GPS-маркер).\n" ..
+            "3. Или команда /heist_target (целиться в хранилище) / /heist_target_clear.\n\n" ..
             "Вместимость хранилища: 500.000 GRM паллетами.\n" ..
             "Права: суперадмин или выданный доступ к экономике (/grm_admin → Экономика → Доступ к экономике)."
         )

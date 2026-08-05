@@ -37,4 +37,6 @@ function ENT:SetupDataTables()
     self:NetworkVar("Float", 0, "EventEndsAt")
     self:NetworkVar("String", 0, "AllowedFactions") -- список фракций через запятую (пусто = все)
     self:NetworkVar("String", 1, "WinnerFaction")
+    -- Находка 179f: цель ивента (Рейхсбанк/хранилище) — маркер GPS
+    self:NetworkVar("Vector", 0, "HeistTargetPos") -- Vector(0,0,0) = не задана (авто: ближайшее хранилище)
 end

@@ -59,7 +59,11 @@ Entity = function(idx) return _F[idx] end
 local spawnedClasses = {}
 ents = {
   Create = function(cls) return mkEnt(cls) end,
-  FindByClass = function(cls) return _G.__launderers or {} end,
+  FindByClass = function(cls)
+    if cls == "grm_money_launderer" then return _G.__launderers or {} end
+    if cls == "grm_bank_vault" then return _G.__vaults or {} end
+    return {}
+  end,
   FindInSphere = function() return _G.__near or {} end,
 }
 
@@ -75,6 +79,7 @@ local function mkPly(super, nick, sid, steam)
     GetPos = function() return Vector(0, 0, 0) end,
     GetShootPos = function() return Vector(0, 0, 60) end,
     GetAimVector = function() return Vector(1, 0, 0) end,
+    GetEyeTrace = function() return { Entity = _G.__aimEnt } end,
     Nick = function(self) return self.nick end,
     Alive = function() return true end,
   }
@@ -90,6 +95,11 @@ GRM = {
   GiveMoney = function() end, TakeMoney = function() return true end, HasMoney = function() return true end,
   GetAllBalances = function() return {} end,
   Identity = { CharacterKey = function(ply) return ply.sid64 .. ":char1" end, FactionMember = function(fData, ply) return fData.Members[ply:SteamID()] end },
+}
+local minimapLog = { points = 0, sentTo = {} }
+GRM.Minimap = {
+  AddTempPoint = function(name, pos, dur) minimapLog.points = minimapLog.points + 1 end,
+  SendTo = function(p) minimapLog.sentTo[#minimapLog.sentTo + 1] = p end,
 }
 
 -- ── мок энтити ──
@@ -161,10 +171,18 @@ ld.GetAllowedFactions = function() return ld.__allowed or "" end
 ld.SetAllowedFactions = function(_, v) ld.__allowed = v end
 ld.GetWinnerFaction = function() return ld.__winner or "" end
 ld.SetWinnerFaction = function(_, v) ld.__winner = v end
+ld.GetHeistTargetPos = function() return ld.__htp or Vector(0, 0, 0) end
+ld.SetHeistTargetPos = function(_, v) ld.__htp = v end
 ld.Participants = {} ld.FactionDelivered = {}
 ld:Initialize()
 
 ok(GRM.MoneyLaunderer ~= nil or true, "отмывщик: модуль загружен (класс)")
+-- мок хранилища (цель Рейхсбанк)
+local vaultEnt = mkEnt("grm_bank_vault")
+vaultEnt:SetPos(Vector(900, 900, 0))
+_G.__vaults = { vaultEnt }
+ld.GetHeistTargetPos = function() return ld.__htp or Vector(0, 0, 0) end
+ld.SetHeistTargetPos = function(_, v) ld.__htp = v end
 
 -- ══════════════ 1. Конфиг и TakeJob ══════════════
 ld:SetMinParticipants(2)
@@ -197,6 +215,34 @@ ok(ld:GetEventEndsAt() == _G.__now + 3000, "таймер 50 минут (3000 с�
 local startBc = false
 for _, m in ipairs(H.broadcasts) do if m == "GRM_Heist_Event" then startBc = true end end
 ok(startBc, "broadcast GRM_Heist_Event отправлен (баннер/музыка всем)")
+
+-- ══════════════ 2b. ЦЕЛЬ ИВЕНТА (находка 179f) ══════════════
+-- дефолт: ближайшее хранилище
+local ht = ld:HeistTarget()
+ok(ht and ht.x == 900 and ht.y == 900, "цель по умолчанию = ближайшее хранилище (Рейхсбанк)")
+-- маркеры участникам (в Participants — sid'ы maf1/maf2, они в player.GetAll)
+_G.__players = { maf1, maf2 }
+minimapLog.points = 0
+ld:SendHeistTargetMarkers()
+ok(minimapLog.points == 2, "участники получили GPS-маркер (AddTempPoint x2)")
+ok(#minimapLog.sentTo == 2, "маркеры отправлены точечно (SendTo x2)")
+-- установка цели суперадмином через action set_target (прицел = vault)
+_G.__aimEnt = vaultEnt
+local recvAction = H.netrecv["GRM_Heist_Action"]
+ok(recvAction ~= nil, "обработчик GRM_Heist_Action есть")
+local admin2 = mkPly(true, "Владелец", "76561198000000001")
+-- эмулируем приём: ent=ld, action=set_target
+_G.__readEnt = ld
+net.ReadEntity = function() return _G.__readEnt end
+net.ReadString = function() return _G.__readStr or "" end
+net.ReadUInt = function() return 0 end
+net.ReadFloat = function() return 0 end
+_G.__readStr = "set_target"
+recvAction(0, admin2)
+ok(ld:GetHeistTargetPos().x == 900, "set_target: цель установлена по прицелу (хранилище)")
+_G.__readStr = "clear_target"
+recvAction(0, admin2)
+ok(ld:GetHeistTargetPos().x == 0, "clear_target: цель сброшена (авто: хранилище)")
 
 -- ══════════════ 3. DepositFromBag → MoneyHeld → победа ══════════════
 GRM.Customization = {
@@ -260,6 +306,15 @@ local perm = assert(io.open("lua/autorun/sh_grm_perm_entities.lua", "rb")):read(
 ok(perm:find('grm_money_launderer     = true', 1, true) ~= nil, "PERM_CLASSES: отмывщик")
 local lsh = assert(io.open("lua/entities/grm_money_launderer/shared.lua", "rb")):read("*a")
 ok(lsh:find('HeistDuration = 3000', 1, true) ~= nil, "ивент: 50 минут (3000 сек)")
+ok(lsh:find('HeistTargetPos', 1, true) ~= nil, "отмывщик: NWVar цели ивента (находка 179f)")
+local lin2 = assert(io.open("lua/entities/grm_money_launderer/init.lua", "rb")):read("*a")
+ok(lin2:find('РЕЙХСБАНК — ЦЕЛЬ ОГРАБЛЕНИЯ', 1, true) ~= nil and lin2:find('Двигайтесь к локации', 1, true) ~= nil, "маркер: «РЕЙХСБАНК — ЦЕЛЬ ОГРАБЛЕНИЯ», «Двигайтесь к локации!»")
+ok(lin2:find('SendHeistTargetMarkers', 1, true) ~= nil, "отмывщик: раздача маркеров участникам")
+ok(lin2:find('heist_target', 1, true) ~= nil and lin2:find('grm_heist_target', 1, true) ~= nil, "команда /heist_target (и clear)")
+ok(lin2:find('heistTarget', 1, true) ~= nil, "перм: цель сохраняется (/permadd)")
+local tool2 = assert(io.open("lua/weapons/gmod_tool/stools/grm_bank_tool.lua", "rb")):read("*a")
+ok(tool2:find('heisttarget', 1, true) ~= nil and tool2:find('SetHeistTarget', 1, true) ~= nil, "тул: режим «Цель ивента — Рейхсбанк»")
+ok(tool2:find('Цель ивента — Рейхсбанк', 1, true) ~= nil, "тул: название режима")
 local lin = assert(io.open("lua/entities/grm_money_launderer/init.lua", "rb")):read("*a")
 ok(lin:find('НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ', 1, true) ~= nil, "баннер: «НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ»")
 ok(lin:find('robber_bank.wav', 1, true) ~= nil, "музыка: robber_bank.wav")
