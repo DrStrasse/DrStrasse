@@ -446,14 +446,15 @@ local function openEditor(catalog, loadout)
     editor.frame = frame
     frame.Paint = function(_, w, h)
         draw.RoundedBox(0, 0, 0, w, 54, UI.head)
-        draw.SimpleText("GRM  /  КАСТОМИЗАЦИЯ ПЕРСОНАЖА", "GRMCustom_Title", 22, 27, UI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText("ЛКМ по пустому месту — камера  •  тянуть стрелку/кольцо — правка  •  колесо — масштаб вида", "GRMCustom_Small", w/2, 27, UI.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("GRM  /  КАСТОМИЗАЦИЯ ПЕРСОНАЖА", "GRMCustom_Title", 22, 20, UI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("РЕДАКТОР ПОЛОЖЕНИЯ АКСЕССУАРОВ  //  СИНХРОНИЗИРОВАНО", "GRMCustom_Small", 22, 40, UI.green or Color(90,220,150), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("ЛКМ: камера  •  стрелки/кольца: позиция  •  колесо: масштаб", "GRMCustom_Small", w/2, 27, UI.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
 
     local left = vgui.Create("DPanel", frame); left:SetPos(16, 70); left:SetSize(270, ScrH()-90)
-    left.Paint = function(_, w, h) draw.RoundedBox(8,0,0,w,h,UI.panel) end
+    left.Paint = function(_, w, h) draw.RoundedBox(8,0,0,w,h,UI.panel); surface.SetDrawColor(UI.line or Color(55,117,151,190)); surface.DrawOutlinedRect(0,0,w,h,1) end
     local right = vgui.Create("DPanel", frame); right:SetPos(ScrW()-356,70); right:SetSize(340,ScrH()-90)
-    right.Paint = function(_, w,h) draw.RoundedBox(8,0,0,w,h,UI.panel) end
+    right.Paint = function(_, w,h) draw.RoundedBox(8,0,0,w,h,UI.panel); surface.SetDrawColor(UI.line or Color(55,117,151,190)); surface.DrawOutlinedRect(0,0,w,h,1) end
     local view = vgui.Create("DPanel", frame); view:SetPos(300,70); view:SetSize(ScrW()-672,ScrH()-90); view:SetCursor("sizeall")
     view.Paint = function() end
     view.OnMousePressed = function(self,key)
@@ -599,6 +600,8 @@ local function openEditor(catalog, loadout)
             local eq=C.ClientLoadouts[lp][slot]; self:SetText(def.name .. (eq and ("  •  "..tostring((C.Catalog[eq.accessoryID] or {}).name or eq.accessoryID)) or "  •  пусто"))
         end
     end
+    local freeze=btn(left,"ЗАМОРОЗИТЬ В Т-ПОЗЕ",UI.blue); freeze:SetPos(12,left:GetTall()-168); freeze:SetSize(246,34); freeze.DoClick=function() net.Start("GRM_Custom_Op"); net.WriteString("pose_freeze"); net.SendToServer() end
+    local unfreeze=btn(left,"РАЗМОРОЗИТЬ ПЕРСОНАЖА",UI.orange or UI.yellow); unfreeze:SetPos(12,left:GetTall()-128); unfreeze:SetSize(246,34); unfreeze.DoClick=function() net.Start("GRM_Custom_Op"); net.WriteString("pose_unfreeze"); net.SendToServer() end
     local accept=btn(left,"ГОТОВО",UI.green); accept:SetPos(12,left:GetTall()-92); accept:SetSize(246,34)
     accept.DoClick=function()
         feedback("click")
@@ -662,7 +665,7 @@ local function openAdmin(catalog)
     fields["Модель"].OnChange=function(self) local m=self:GetValue(); if util.IsValidModel(m) then preview:SetModel(m) end end
 
     local funcTitle=label(form,"ФУНКЦИОНАЛЬНОЕ ОБОРУДОВАНИЕ","GRMCustom_Head",UI.text); funcTitle:SetPos(12,382); funcTitle:SetSize(410,22)
-    local funcChecks={}; local functionOrder={"gasmask","backpack","radio","watch","armor"}
+    local funcChecks={}; local functionOrder={"gasmask","backpack","radio","watch","armor","artificial_eye","night_vision","neuro_link","prosthesis"}
     for i,functionID in ipairs(functionOrder) do
         local def=C.FunctionTypes[functionID] or {name=functionID}
         local check=vgui.Create("DCheckBoxLabel",form); check:SetPos(12,406+(i-1)*25); check:SetSize(410,22)

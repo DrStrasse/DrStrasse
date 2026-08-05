@@ -1500,3 +1500,57 @@ roundtrip 14/14. dist пересобран.
 
 Проверки: GLua 368/0; симы 36/36 (включая sim_augmentations 108/108,
 sim_augmentation_chips OK, sim_invphone 41/41). dist пересобран.
+
+---
+
+## Находка 163 (05.08.2026): аккуратный перенос остального с ветки 019fbd57
+
+Владелец: «019fbd57 из ветки остальное перенеси аккуратно, чтобы ничего не
+сломать и не испортить».
+
+Разбор: сравнение деревьев HEAD (база 019fb265 + фиксы) и 019fbd57 показало
+13 уникальных файлов + 2 архива + 23 общих lua-файла с отличиями. Из них
+большинство отличий — НАШИ более новые версии (фиксы находок 154-162), их
+не трогали. Перенесено только то, что у 019fbd57 строго новее/уникально:
+
+УНИКАЛЬНЫЕ:
+- `cl_grm_ui_theme.lua` — XUI-тема (GRM.UI.Theme, шрифты GRM_XUI_*, ApplyFrame);
+- `cl_grm_unified_admin.lua` — «Единый центр управления GRM» (grm_unified_admin/
+  grm_admin_center — лаунчер 6 панелей; все команды в сборке есть);
+- `sv_grm_computer_social.lua` — персистентная соцсеть компьютера
+  (grm_computer/social.json, посты/комнаты, антифлуд);
+- `entities/grm_citadel_core/` (ядро Цитадели — тёмная материя: Energy/Heat/
+  Stability) + `grm_citadel_core_terminal/` + тулы `grm_citadel_core`,
+  `grm_augmentation` (станции/капсулы аугментаций);
+- архивы `DoorAddons.zip`, `GTA IV all phones.zip`.
+
+ОБНОВЛЕНЫ (их версии строго новее наших базовых):
+- `sh_grm_news.lua` — UpdateArticle + канал GRM_News_Update (редактирование),
+  id статьи теперь макс+1 (не #+1);
+- `sh_grm_customization.lua`/`cl_grm_customization.lua` — новые типы функций
+  аксессуаров (artificial_eye/night_vision/neuro_link/prosthesis) с
+  интеграцией в аугментации (NWBool GRM_Accessory_*, хук
+  GRM_AccessoryAugmentationLink), кнопки «Заморозить в Т-позе»/«Разморозить»
+  (pose_freeze/pose_unfreeze);
+- `sv_grm_alarm.lua` — резервный позиционный звук сирены (с гардом isfunction
+  для стенда);
+- `grm_net_document/init.lua` — передача данных изображения документа;
+- `cl_grm_electronics.lua` — image_save (фоторобот/печать с изображением),
+  чтение изображения документа (net.ReadData).
+
+СОВМЕЩЕНО ВРУЧНУЮ:
+- `sh_grm_electronics.lua` — оставлена НАША v1.5.1 (автосейв по dirty, чистка
+  реестра) + добавлен обработчик op=="image_save" из их версии (сохранение
+  jpg в grm_computer/images/, запись файла с [ИЗОБРАЖЕНИЕ: ...]).
+
+НЕ ТРОНУТЫ (наши новее): cl_grm_hud, cl_grm_inventory_ui (кнопка Биоконтроль),
+sh_grm_inventory, sh_grm_admin_hub, sh_grm_ctx, sh_grm_doors, sh_grm_perm_entities,
+sh_grm_qmenu (панель параметров), sh_grm_vehicle_dealer (v3.1.3),
+sh_spawn_points (v157), grm_vendor (каталог electronics + Claim),
+vehicle_dealer_tool, roundtrip_test, chip/station cl_init (3D2D-фикс).
+
+Исправлено при переносе: 3D2D-метка терминала Цитадели (LocalPlayer():EyeAngles()
+→ Angle(0, EyeAngles().y-90, 90), контракт sim_world_labels).
+
+Проверки: GLua 379/0; симы 36/36 (включая sim_security, sim_world_labels,
+sim_customization, sim_electronics); roundtrip 14/14. dist пересобран.

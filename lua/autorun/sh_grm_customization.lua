@@ -36,7 +36,25 @@ C.FunctionTypes = C.FunctionTypes or {
     radio = { name = "Рация", description = "Заменяет включённый переносной радиомодулятор" },
     watch = { name = "Часы", description = "Показывает часы и дату на HUD" },
     armor = { name = "Защитное снаряжение", description = "Снижает пулевой/взрывной/режущий урон" },
+    artificial_eye = { name = "Искусственный глаз", description = "Связь с чипом зрения и автосканированием" },
+    night_vision = { name = "Очки ночного видения", description = "Включает ночной режим при активном чипе" },
+    neuro_link = { name = "Нейроинтерфейс", description = "Связь аксессуара с системой аугментаций" },
+    prosthesis = { name = "Функциональный протез", description = "Расширенный функционал конечности" },
 }
+
+-- Интеграция аксессуаров с аугментациями: функции не содержат Lua от клиента.
+local function accessoryFlag(ply, id, enabled)
+    if IsValid(ply) then ply:SetNWBool("GRM_Accessory_" .. id, enabled == true) end
+    hook.Run("GRM_AccessoryAugmentationLink", ply, id, enabled == true)
+end
+C.FunctionTypes.artificial_eye.OnEquip=function(ply) accessoryFlag(ply,"artificial_eye",true) end
+C.FunctionTypes.artificial_eye.OnUnequip=function(ply) accessoryFlag(ply,"artificial_eye",false) end
+C.FunctionTypes.night_vision.OnEquip=function(ply) accessoryFlag(ply,"night_vision",true) end
+C.FunctionTypes.night_vision.OnUnequip=function(ply) accessoryFlag(ply,"night_vision",false) end
+C.FunctionTypes.neuro_link.OnEquip=function(ply) accessoryFlag(ply,"neuro_link",true) end
+C.FunctionTypes.neuro_link.OnUnequip=function(ply) accessoryFlag(ply,"neuro_link",false) end
+C.FunctionTypes.prosthesis.OnEquip=function(ply) accessoryFlag(ply,"prosthesis",true) end
+C.FunctionTypes.prosthesis.OnUnequip=function(ply) accessoryFlag(ply,"prosthesis",false) end
 
 function C.RegisterFunctionType(id, data)
     id = string.lower(tostring(id or "")):gsub("[^%w_%-]", "")
@@ -478,6 +496,14 @@ if SERVER then
         if op == "close" then closeEditor(ply) return end
         if op == "ping" then
             if ply:GetNWBool("GRM_CustomEditing", false) then ply.GRM_CustomEditingUntil = CurTime() + 12 end
+            return
+        end
+        if op == "pose_freeze" or op == "pose_unfreeze" then
+            local frozen = op == "pose_freeze"
+            ply:SetNWBool("GRM_CustomPoseFrozen", frozen)
+            ply:Freeze(frozen)
+            if frozen then ply:SetSequence("pose_standing_01"); ply:SetPlaybackRate(0) else ply:ResetSequence(ply:LookupSequence("idle_all_01") or 0); ply:SetPlaybackRate(1) end
+            sendAck(ply,true,op,frozen and "Персонаж заморожен в Т-позе" or "Персонаж разморожен")
             return
         end
         if not rateOK(ply) then sendAck(ply, false, op, "Слишком частое действие") return end

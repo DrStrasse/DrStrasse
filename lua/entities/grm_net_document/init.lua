@@ -8,5 +8,6 @@ function ENT:Use(ply)
  net.WriteString(self:GetDocumentOwner())
  net.WriteString(self:GetDocumentImage())
  net.WriteString(self:GetDocumentCategory())
+ local path=self:GetDocumentImage() or ""; local data=(path~="" and file.Read(path,"DATA")) or ""; data=data or ""; net.WriteUInt(math.min(#data,4*1024*1024),24); if #data>0 then net.WriteData(data,math.min(#data,4*1024*1024)) end
  net.Send(ply)
 end

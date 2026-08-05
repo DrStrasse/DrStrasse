@@ -521,7 +521,7 @@ local function openComputer(ent,data)
     file.Write(filename,screenshot)
     -- Also save text description
     local text="ФОТОРОБОТ "..os.date("%d.%m.%Y %H:%M").."\nЭффект: "..effectNames[effectIdx].."\nИзображение: "..filename.."\n\n"..desc:GetText()
-    send(ent,"file_save",function()net.WriteString("");net.WriteString("Фоторобот_"..os.date("%d%m_%H%M"));net.WriteString(text);net.WriteString("photo")end)
+    send(ent,"image_save",function() net.WriteString("Фоторобот_"..os.date("%d%m_%H%M")); net.WriteString("photo"); net.WriteUInt(#screenshot,24); net.WriteData(screenshot,#screenshot) end)
     notification.AddLegacy("Изображение сохранено: "..filename,NOTIFY_GENERIC,4)
    else
     notification.AddLegacy("Ошибка захвата изображения",NOTIFY_ERROR,4)
@@ -547,7 +547,7 @@ local function openComputer(ent,data)
     file.Write(filename,screenshot)
     -- Save print job with image reference
     local text="[ИЗОБРАЖЕНИЕ: "..filename.."]\nФОТОРОБОТ "..os.date("%d.%m.%Y %H:%M").."\nЭффект: "..effectNames[effectIdx].."\n\n"..desc:GetText()
-    send(ent,"file_save",function()net.WriteString("");net.WriteString("Печать_"..os.date("%d%m_%H%M"));net.WriteString(text);net.WriteString("photo_print")end)
+    send(ent,"image_save",function() net.WriteString("Печать_"..os.date("%d%m_%H%M")); net.WriteString("photo_print"); net.WriteUInt(#screenshot,24); net.WriteData(screenshot,#screenshot) end)
     notification.AddLegacy("Печать: изображение сохранено",NOTIFY_GENERIC,4)
     surface.PlaySound("ambient/machines/combine_terminal_idle4.wav")
    else
@@ -596,6 +596,7 @@ local function openComputer(ent,data)
   local tabs = {}
   local activeTabIndex = 1
   local tabWidth = 150
+  local loadSite
   
   -- Tabs bar
   local tabsBar = vgui.Create("DPanel", body)
@@ -740,7 +741,7 @@ local function openComputer(ent,data)
   end
   
   -- Function to load a website
-  local function loadSite(site)
+  loadSite = function(site)
    -- Проверка на специальное действие
    if site.action == "news" then
     if GRM.News and GRM.News.OpenPortal then
@@ -845,6 +846,7 @@ local function openComputer(ent,data)
  
  -- Social Networks
  local function socialPage()
+  if GRM.Computer and GRM.Computer.Social then net.Start("GRM_Computer_Social_Request"); net.SendToServer() end
   clear()
   textLabel(body,"СОЦИАЛЬНЫЕ СЕТИ",18,10,300,28,"GRMNet_Title",C.text)
   textLabel(body,"GRM Social Network",18,38,400,20,"GRMNet_Small",C.dim)
@@ -857,13 +859,9 @@ local function openComputer(ent,data)
    draw.RoundedBox(8,0,0,w,h,Color(20,30,45))
   end
   
-  -- Sample posts
-  local posts={
-   {author="Admin",time="10:30",text="Добро пожаловать в GRM Social! Делитесь новостями и общайтесь с жителями города."},
-   {author="Player1",time="11:15",text="Открылся новый магазин в центре города! Рекомендую заглянуть."},
-   {author="Player2",time="12:45",text="Кто-нибудь знает где можно купить редкие материалы?"},
-   {author="Admin",time="14:20",text="Напоминание: завтра состоится городской фестиваль. Не пропустите!"}
-  }
+  -- Серверная лента; локальные демо-записи больше не используются.
+  local posts=(GRM.Computer and GRM.Computer.Social and GRM.Computer.Social.posts) or {}
+  if #posts==0 then posts={{author="Система",time="--:--",text="Подключение к серверной ленте..."}} end
   
   local y=20
   for i,post in ipairs(posts)do
@@ -904,7 +902,8 @@ local function openComputer(ent,data)
     notification.AddLegacy("Напишите что-нибудь!",NOTIFY_ERROR,3)
     return
    end
-   notification.AddLegacy("Запись опубликована!",NOTIFY_GENERIC,3)
+   net.Start("GRM_Computer_Social_Post"); net.WriteString(text); net.SendToServer()
+   notification.AddLegacy("Запись отправлена на сервер!",NOTIFY_GENERIC,3)
    postEntry:SetText("")
   end)
   
@@ -975,6 +974,7 @@ local function openComputer(ent,data)
    if text==""then return end
    local time=os.date("%H:%M")
    local user=current.data.logged or"Вы"
+   net.Start("GRM_Computer_Chat_Send"); net.WriteString("общий"); net.WriteString(text); net.SendToServer()
    messages:SetText(messages:GetText().."\n["..time.."] "..user..": "..text)
    msgInput:SetText("")
   end)
@@ -1448,6 +1448,8 @@ net.Receive("GRM_Net_Document",function()
  local owner=net.ReadString()
  local imgFile=net.ReadString()
  local category=net.ReadString()
+ local imageBytes=net.ReadUInt(24); local imageData=imageBytes>0 and net.ReadData(imageBytes) or nil
+ if imageData and imgFile~="" then file.CreateDir("grm_computer/images"); local localImage="grm_computer/images/"..string.GetFileFromFilename(imgFile); file.Write(localImage,imageData); imgFile=localImage end
  
  -- Check if this is a photo document with image
  if imgFile~=""and(category=="photo"or category=="photo_print")then
@@ -1524,3 +1526,22 @@ net.Receive("GRM_Net_Document",function()
 end)
 net.Receive("GRM_Net_MailSend",function()end)
 print("[GRM Electronics] client v1.5.0 loaded")
+
+-- Persistent social/chat snapshot bridge.
+GRM=GRM or {}; GRM.Computer=GRM.Computer or {}; GRM.Computer.Social=GRM.Computer.Social or {}
+net.Receive("GRM_Computer_Social_Snapshot",function()
+    GRM.Computer.Social=net.ReadTable() or {}
+    hook.Run("GRM_ComputerSocialUpdated",GRM.Computer.Social)
+end)
+concommand.Add("grm_social_refresh",function()
+    net.Start("GRM_Computer_Social_Request"); net.SendToServer()
+end)
+
+hook.Add("GRM_ComputerSocialUpdated", "GRM_ComputerSocial_Notify", function(state)
+    if not state then return end
+    GRM.Computer = GRM.Computer or {}
+    local total=0
+    for _, messages in pairs(state.messages or {}) do total=total + #messages end
+    GRM.Computer.UnreadMessages=total
+    if total>0 then notification.AddLegacy("GRM: синхронизированы публикации и сообщения ("..total..")",NOTIFY_GENERIC,3) end
+end)

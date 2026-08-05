@@ -193,6 +193,8 @@ function A.StartSiren(hub, reason, ply)
         patch:SetSoundLevel(tonumber(cfg.SirenLevel) or 80)
         patch:PlayEx(tonumber(cfg.SirenVolume) or 1, 100)
     end
+    -- Резервный позиционный импульс: слышен даже если CreateSound/динамик ещё не успел синхронизироваться.
+    if isfunction(hub.EmitSound) then hub:EmitSound(soundPath, tonumber(cfg.SirenLevel) or 80, 100, tonumber(cfg.SirenVolume) or 1, CHAN_AUTO) end
     local dur = tonumber(cfg.SirenDuration) or 45
     local stopAt = dur > 0 and (CurTime() + dur) or 0
     A.Sirens[hub:EntIndex()] = { patch = patch, stopAt = stopAt }
