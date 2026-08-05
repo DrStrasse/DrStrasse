@@ -100,6 +100,22 @@ CHIPS.Config = {
 CHIPS.PlayerChips = CHIPS.PlayerChips or {}
 CHIPS.ChipDatabase = CHIPS.ChipDatabase or {}
 
+-- Есть ли у игрока активный экспериментальный чип со взломом дверей
+-- (единая проверка для сервера и клиента: enabled / true / "включен" / DOOR в имени)
+function CHIPS.HasDoorHack(ply)
+    if not IsValid(ply) then return nil end
+    local list=CHIPS.GetPlayerChips(ply)
+    for _,c in ipairs(list) do
+        local m=c.modifiers or {}
+        if c.implanted and c.active ~= false and c.category=="experimental" and
+            (m.doorHack=="enabled" or m.doorHack==true or m.doorHack=="включен" or
+             string.find(string.upper(c.name or ""),"DOOR")) then
+            return c
+        end
+    end
+    return nil
+end
+
 -- Получение чипов игрока
 function CHIPS.GetPlayerChips(ply)
 	if not IsValid(ply) then return {} end
@@ -512,6 +528,9 @@ if SERVER then
 		net.Start("GRM_AugChip_Sync"); net.WriteTable(CHIPS.GetPlayerChips(ply)); net.Send(ply)
 	end
 	hook.Add("PlayerInitialSpawn", "GRM_AugChips_SyncJoin", function(ply) timer.Simple(2, function() CHIPS.SyncChips(ply) end) end)
+	net.Receive("GRM_AugChip_RequestSync", function(_, ply)
+		if IsValid(ply) then CHIPS.SyncChips(ply) end
+	end)
 	hook.Add("GRM_AugChips_SyncAfterSave", "GRM_AugChips_SyncAfterSave", function(ply) CHIPS.SyncChips(ply) end)
 
 	hook.Add("PlayerSpawn", "GRM_AugChips_Spawn", function(ply)
@@ -816,11 +835,7 @@ end
         local valid=(cls=="func_door" or cls=="func_door_rotating" or cls=="prop_door_rotating" or cls=="prop_physics")
         if not valid then return false end
         if ply:GetPos():DistToSqr(door:GetPos()) > 180*180 then return false end
-        local list=CHIPS.GetPlayerChips(ply); local chip
-        for _,c in ipairs(list) do
-            local m=c.modifiers or {}
-            if c.implanted and c.active ~= false and c.category=="experimental" and (m.doorHack=="enabled" or m.doorHack==true or m.doorHack=="включен" or string.find(string.upper(c.name or ""),"DOOR")) then chip=c break end
-        end
+        local chip=CHIPS.HasDoorHack(ply)
         if not chip then return false end
         if GRM.AugmentationAccess and not GRM.AugmentationAccess.Can(ply,"hack_door",door) then GRM.AugmentationAccess.Deny(ply); return true end
         if door.GRMHackUntil and door.GRMHackUntil>CurTime() then return true end

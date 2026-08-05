@@ -217,12 +217,27 @@ hook.Add("HUDPaint", "GRM_AugHUD_TacticalChrome", function()
 end)
 
 hook.Add("HUDPaint", "GRM_AugHUD_DoorPrompt", function()
-    if not HUD.IsActive() then return end
-    local tr=LocalPlayer():GetEyeTrace(); local e=tr.Entity
+    local lp=LocalPlayer()
+    if not IsValid(lp) then return end
+    -- Проверяем НАЛИЧИЕ чипа взлома напрямую (не зависит от HUD.IsActive):
+    -- подсказка должна появляться, если у игрока есть экспериментальный чип
+    -- с doorHack, даже если другие чипы неактивны.
+    local hasChip = false
+    if GRM.AugChips and GRM.AugChips.HasDoorHack then
+        hasChip = GRM.AugChips.HasDoorHack(lp) ~= nil
+    else
+        for _,c in ipairs(HUD.CachedChips or {}) do
+            if c.category=="experimental" and c.implanted and c.active ~= false and
+                ((c.modifiers or {}).doorHack=="enabled" or (c.modifiers or {}).doorHack==true or
+                 (c.modifiers or {}).doorHack=="включен" or string.find(string.upper(c.name or ""),"DOOR")) then
+                hasChip=true break
+            end
+        end
+    end
+    if not hasChip then return end
+    local tr=lp:GetEyeTrace(); local e=tr.Entity
     if not IsValid(e) or not ({func_door=true,func_door_rotating=true,prop_door_rotating=true,prop_physics=true})[e:GetClass()] then return end
-    if tr.HitPos:DistToSqr(LocalPlayer():EyePos()) > 10000 then return end
-    local has=false; for _,c in ipairs(HUD.GetActiveChips()) do if c.category=="experimental" and ((c.modifiers or {}).doorHack=="enabled" or (c.modifiers or {}).doorHack==true) then has=true end end
-    if not has then return end
+    if tr.HitPos:DistToSqr(lp:EyePos()) > 10000 then return end
     local w,h=470,64; local x,y=ScrW()/2-w/2,ScrH()*.43
     draw.RoundedBox(6,x,y,w,h,Color(8,18,28,225)); surface.SetDrawColor(70,210,255,220); surface.DrawOutlinedRect(x,y,w,h,2)
     draw.SimpleText("ДВЕРНОЙ ПРОТОКОЛ", "GRMAugHUD_Title", ScrW()/2,y+18,Color(80,220,255),TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
