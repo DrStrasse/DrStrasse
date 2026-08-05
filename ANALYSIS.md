@@ -1582,3 +1582,36 @@ sim_customization, sim_electronics); roundtrip 14/14. dist пересобран.
    HUD скрыт, работает био-интерфейс.
 
 Проверки: GLua 379/0; симы 36/36; roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 165 (05.08.2026): редактор аксессуаров — Yaw/Roll дублировались; фонарик (F) прятал аксессуар
+
+Владелец: «ползунки Угол Roll и Угол Yaw выполняют одну и ту же функцию
+в одном направлении» + «при включении на F фонарика визуально аксессуар
+исчезает».
+
+Причины:
+1. **Yaw=Roll.** Позиция/угол аксессуара считались через
+   `LocalToWorld(pos, angles, bonePos, boneAngles)`, а GMod применяет `angles`
+   как Yaw-Pitch-Roll вокруг МИРОВЫХ осей. Для аксессуара на кости (голова/
+   рука) локальная ось модели часто не совпадает с мировой — поворот вокруг
+   Y (yaw) и Z (roll) визуально давал ОДНО и то же вращение.
+2. **Фонарик прятал аксессуар.** Аксессуар — `ClientsideModel` с
+   `SetNoDraw(true)` + ручной `DrawModel()` в `PostPlayerDraw`. При включённом
+   фонарике (F) движок переключает рендер в отдельный световой проход, и
+   модель в этом проходе не рисуется — «исчезает».
+
+Фиксы (lua/autorun/client/cl_grm_customization.lua):
+1. **Новый `boneLocalAngles(boneAng, offs)`** — поворот вокруг ОСЕЙ КОСТИ
+   (yaw вокруг Up кости, roll вокруг Forward, pitch вокруг Right) через
+   последовательные вращения базиса + `AngleEx`. Теперь Yaw и Roll — РАЗНЫЕ
+   вращения, как и ожидается. Применён в `drawAccessories` и
+   `selectedAccessoryWorld` (гизмо тоже считает по тем же осям).
+2. **Резервный проход `PostDrawOpaqueRenderables`** (`GRM_Customization_
+   DrawAccessoriesOpaque`) — рисует аксессуар в основном проходе независимо
+   от фонарика (FrameNumber-guard от двойного DrawModel в кадре). В редакторе
+   не дублирует (там отдельный third-person проход).
+
+Проверки: GLua 379/0; симы 36/36 (включая sim_customization,
+sim_customization_runtime, sim_world_labels). dist пересобран.

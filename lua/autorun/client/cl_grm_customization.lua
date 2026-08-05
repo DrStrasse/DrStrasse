@@ -41,6 +41,31 @@ end)
 local function deepCopy(t) return istable(t) and table.Copy(t) or {} end
 local function v3(t) return Vector(tonumber(t and t.x) or 0, tonumber(t and t.y) or 0, tonumber(t and t.z) or 0) end
 local function a3(t) return Angle(tonumber(t and t.p) or 0, tonumber(t and t.y) or 0, tonumber(t and t.r) or 0) end
+
+-- Поворот угла вокруг оси (как Source-порядок: pitch→yaw→roll), но вокруг
+-- ЛОКАЛЬНЫХ осей кости, чтобы Yaw (вокруг Up кости) и Roll (вокруг Forward
+-- кости) давали РАЗНЫЕ вращения. GMod LocalToWorld так не умеет — он крутит
+-- вокруг мировых осей и yaw/roll сливаются в одно.
+local function boneLocalAngles(boneAng, offs)
+    local p = math.rad(tonumber(offs and offs.p) or 0)
+    local y = math.rad(tonumber(offs and offs.y) or 0)
+    local r = math.rad(tonumber(offs and offs.r) or 0)
+    -- базис кости
+    local f, rt, up = boneAng:Forward(), boneAng:Right(), boneAng:Up()
+    -- поворот вокруг Up кости (yaw)
+    local cosY, sinY = math.cos(y), math.sin(y)
+    local f2 = f * cosY + rt * sinY
+    local rt2 = -f * sinY + rt * cosY
+    -- поворот вокруг Forward (roll) — уже в новом базисе
+    local cosR, sinR = math.cos(r), math.sin(r)
+    local rt3 = rt2 * cosR + up * sinR
+    local up3 = -rt2 * sinR + up * cosR
+    -- поворот вокруг Right (pitch)
+    local cosP, sinP = math.cos(p), math.sin(p)
+    local f4 = f2 * cosP - up3 * sinP
+    local up4 = f2 * sinP + up3 * cosP
+    return f4:AngleEx(up4)
+end
 local function btn(parent, text, color)
     local b = vgui.Create("DButton", parent)
     b:SetText(text); b:SetFont("GRMCustom_Body"); b:SetTextColor(color_white)
@@ -207,7 +232,9 @@ local function drawAccessories(ply, forceEditorDraw)
                         entry.ent:SetModelScale(entry.smoothScale, 0)
                         entry.scale = entry.smoothScale
                     end
-                    local pos, ang = LocalToWorld(entry.smoothPos, entry.smoothAng, matrix:GetTranslation(), matrix:GetAngles())
+                    local boneAng = matrix:GetAngles()
+                    local pos = matrix:GetTranslation() + boneAng:Forward() * entry.smoothPos.x + boneAng:Right() * entry.smoothPos.y + boneAng:Up() * entry.smoothPos.z
+                    local ang = boneLocalAngles(boneAng, entry.smoothAng)
                     entry.ent:SetRenderOrigin(pos)
                     entry.ent:SetRenderAngles(ang)
                     entry.ent:SetupBones()
@@ -233,6 +260,18 @@ end)
 -- для LocalPlayer даже при drawviewer=true. В редакторе делаем поздний
 -- fallback после SetupBones. FrameNumber guard гарантирует, что второго
 -- DrawModel в том же кадре не будет.
+-- Резервный проход для НЕПРОЗРАЧНЫХ аксессуаров: при включённом фонарике (F)
+-- движок переключает рендер в отдельный световой проход, и PostPlayerDraw +
+-- ручной DrawModel() может не отрисовать модель (аксессуар «исчезает»).
+-- PostDrawOpaqueRenderables рисуется в основном проходе независимо от
+-- фонарика — дублируем туда же отрисовку с FrameNumber-guard.
+hook.Add("PostDrawOpaqueRenderables", "GRM_Customization_DrawAccessoriesOpaque", function(drawingDepth, drawingSkybox, drawing3DSkybox)
+    if C.EditorActive and LocalPlayer() then return end
+    if drawingDepth or drawingSkybox or drawing3DSkybox then return end
+    local lp = LocalPlayer()
+    if IsValid(lp) then drawAccessories(lp) end
+end)
+
 hook.Add("PostDrawTranslucentRenderables", "GRM_Customization_EditorPreviewFallback", function(drawingDepth, drawingSkybox, drawing3DSkybox)
     if not C.EditorActive or drawingDepth or drawingSkybox or drawing3DSkybox then return end
     local lp = LocalPlayer()
@@ -289,8 +328,11 @@ local function selectedAccessoryWorld()
     if not boneIndex then return end
     local matrix = lp:GetBoneMatrix(boneIndex)
     if not matrix then return end
-    local pos, ang = LocalToWorld(v3(equipped.position), a3(equipped.angles), matrix:GetTranslation(), matrix:GetAngles())
-    return pos, matrix:GetAngles(), equipped, ang
+    local boneAng = matrix:GetAngles()
+    local p3 = v3(equipped.position)
+    local pos = matrix:GetTranslation() + boneAng:Forward() * p3.x + boneAng:Right() * p3.y + boneAng:Up() * p3.z
+    local ang = boneLocalAngles(boneAng, a3(equipped.angles))
+    return pos, boneAng, equipped, ang
 end
 
 local GIZMO_AXES = {
