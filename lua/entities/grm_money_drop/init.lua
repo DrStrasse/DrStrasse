@@ -29,6 +29,26 @@ function ENT:Use(ply)
     self._grmUseT = CurTime() + 0.4
     local amt = math.max(0, math.floor(tonumber(self:GetAmount()) or 0))
     if amt <= 0 then self:Remove() return end
+
+    -- Находка 178f: сумка ограбления — поэтапный сбор (порциями)
+    if GRM.Customization and GRM.Customization.HasFunction and GRM.Customization.HasFunction(ply, "loot_bag") then
+        local taken = GRM.Customization.LootBagAdd and GRM.Customization.LootBagAdd(ply, amt) or 0
+        if taken > 0 then
+            local left = amt - taken
+            if left > 0 then
+                self:SetAmount(left)
+            else
+                self:Remove()
+            end
+            if GRM.Notify then
+                local cur = GRM.Customization.LootBagGet and GRM.Customization.LootBagGet(ply) or 0
+                local maxM = GRM.Customization.LootBagMax and GRM.Customization.LootBagMax(ply) or 100000
+                GRM.Notify(ply, "В сумку ограбления: " .. (GRM.Format and GRM.Format(taken) or tostring(taken)) .. "  (в сумке: " .. (GRM.Format and GRM.Format(cur) or tostring(cur)) .. " / " .. (GRM.Format and GRM.Format(maxM) or tostring(maxM)) .. ")", 255, 210, 100)
+            end
+            return
+        end
+    end
+
     if not (GRM and GRM.GiveMoney) then return end
     GRM.GiveMoney(ply, amt, "Подобраны деньги с земли")
     if GRM.Notify then

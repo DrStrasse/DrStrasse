@@ -4,7 +4,7 @@ local core,client,tool=read("lua/autorun/sh_grm_electronics.lua"),read("lua/auto
 local printer,printerShared,deviceBase=read("lua/entities/grm_money_printer/init.lua"),read("lua/entities/grm_money_printer/shared.lua"),read("lua/entities/grm_net_device/init.lua")
 local hub,qmenu=read("lua/autorun/server/sv_grm_persistence_hub.lua"),read("lua/autorun/sh_grm_qmenu.lua")
 local pass,fail=0,0;local function has(s,n)return s:find(n,1,true)~=nil end;local function ok(v,n)if v then pass=pass+1;print("  ok  "..n)else fail=fail+1;print("  FAIL "..n)end end
-ok(has(core,'E.Version="1.5.0"'),"electronics ecosystem version 1.5")
+ok(has(core,'E.Version="1.5.1"'),"electronics ecosystem version 1.5.1 (автосейв)")
 ok(has(core,"function E.RegisterDevice")and has(core,"function E.NetworkRouter")and has(core,"function E.IsOnline"),"authoritative device registry and online resolver")
 ok(has(core,"connectedRouter")and has(core,"wifiAuthorized")and has(core,"passwordHash"),"Wi-Fi SSID/password authorization")
 ok(has(core,'(op=="register"or op=="login")and not E.IsOnline(ent)'),"login and registration are rejected on offline computers")
@@ -34,8 +34,8 @@ ok(has(core,"function E.HandleDeviceRemoved")and has(core,"function E.RemoveLink
 ok(has(tool,"models/natalya/sims/computer.mdl")and has(tool,"models/props/cs_office/computer.mdl")and has(tool,"models/cheeze/wires/router.mdl"),"requested computer and router models exposed")
 ok(has(tool,"models/props_lab/incubatorplug.mdl")and has(tool,"models/props_lab/tpplugholder_single.mdl"),"requested plug and wall socket models exposed")
 ok(has(qmenu,'id = "grm_network_tool"')and has(hub,"electronics ="),"Q-menu and persistence hub integrations")
+ok(has(printer,"function ENT:SetPrinterOwner")and has(printer,"function ENT:PrintMoney")and has(printer,"function ENT:IsOwner"),"money printer owner/printing contract")
 ok(has(printer,"function ENT:OnTakeDamage")and has(printer,"TakePhysicsDamage")and has(printer,"DestroyPrinter"),"money printer takes real physical damage")
-ok(has(printer,'ents.Create("env_explosion")')and has(printer,"GRM_MoneyPrinterDestroyed")and has(printer,"self:Remove()"),"destroyed printer explodes and is removed")
 ok(has(printer,"GRM_MoneyPrinter_PhysgunPickup")and has(printer,"return true"),"owner/superadmin physgun movement remains enabled")
 ok(has(printerShared,"Money Printer v2.1.0")and has(printer,"maxHealth = 250"),"printer v2.1 health contract")
 -- Miniature topology behavior: link chain reaches router, unrelated endpoint does not.

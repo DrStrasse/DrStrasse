@@ -369,48 +369,14 @@ if CLIENT then
         
         tabs:AddSheet("Игроки", playersPanel, "icon16/user.png")
     end)
-    
-    -- Хук для добавления вкладки в /factions
-    hook.Add("GRM_FactionsAdmin_BuildTabs", "GRM_FecoAdmin_Tab", function(tabs)
-        if not IsValid(tabs) then return end
-        if not LocalPlayer():IsSuperAdmin() then return end
-        
-        local panel = vgui.Create("DPanel")
-        panel:SetPaintBackground(false)
-        panel:DockPadding(10, 10, 10, 10)
-        
-        local info = vgui.Create("DLabel", panel)
-        info:Dock(TOP)
-        info:SetTall(60)
-        info:SetFont("GRMFeco_Normal")
-        info:SetTextColor(CUI.text)
-        info:SetText("Управление экономикой сервера:\n• Гос.бюджет (пополнение/снятие)\n• Бюджеты фракций\n• Налоги\n• Балансы игроков")
-        info:SetWrap(true)
-        info:DockMargin(0, 0, 0, 10)
-        
-        local btnOpen = vgui.Create("DButton", panel)
-        btnOpen:Dock(TOP)
-        btnOpen:SetTall(40)
-        btnOpen:SetText("Открыть панель экономики")
-        btnOpen:SetFont("GRMFeco_Title")
-        btnOpen:DockMargin(0, 0, 0, 5)
-        btnOpen.DoClick = function()
-            openFecoAdmin()
-        end
-        
-        local btnMenu = vgui.Create("DButton", panel)
-        btnMenu:Dock(TOP)
-        btnMenu:SetTall(30)
-        btnMenu:SetText("Открыть старое меню (!grmmenu)")
-        btnMenu:SetFont("GRMFeco_Normal")
-        btnMenu:DockMargin(0, 0, 0, 5)
-        btnMenu.DoClick = function()
-            RunConsoleCommand("say", "!grmmenu")
-        end
-        
-        tabs:AddSheet("Экономика", panel, "icon16/money_dollar.png")
-    end)
-    
+
+    -- Находка 177: вкладка «Экономика» в /factions больше НЕ добавляется
+    -- этим модулем — её добавляет полная панель из sh_faction_fixes.lua
+    -- (hook GRM_FactionsAdmin_BuildTabs → FactionsExt_EconomyTab). Раньше
+    -- тут была вторая вкладка с тем же именем (обёртка с кнопками), из-за
+    -- чего в меню появлялись ДВЕ вкладки «Экономика». Сам модуль (отдельное
+    -- окно через grm_feco / grmmenu) остаётся рабочим.
+
     -- Консольная команда
     concommand.Add("grm_feco", function()
         if LocalPlayer():IsSuperAdmin() then

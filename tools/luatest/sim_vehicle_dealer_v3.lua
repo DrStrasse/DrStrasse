@@ -2,13 +2,13 @@
 local function read(p)local f=assert(io.open(p,"rb"));local s=f:read("*a");f:close();return s end
 local core,ent,cl,tool,q,doors,perm = read("lua/autorun/sh_grm_vehicle_dealer.lua"),read("lua/entities/sent_vehicle_dealer/init.lua"),read("lua/entities/sent_vehicle_dealer/cl_init.lua"),read("lua/weapons/gmod_tool/stools/vehicle_dealer_tool.lua"),read("lua/autorun/sh_grm_qmenu.lua"),read("lua/autorun/sh_grm_doors.lua"),read("lua/autorun/sh_grm_perm_entities.lua")
 local checks,failed=0,0;local function has(s,n)return s:find(n,1,true)~=nil end;local function ok(v,n)checks=checks+1;if v then print("  ok "..checks..". "..n)else failed=failed+1;print("  FAIL "..checks..". "..n)end end
-ok(has(core,'VD.Version="3.1.0"'),"dealer v3.1 unified delivery pad core")
+ok(has(core,'VD.Version="3.1.3"'),"dealer v3.1.3 lift applied AFTER DropToFloor")
 ok(has(core,"VD.GarageFile")and has(core,"CharacterKey"),"garage persists per CharacterKey")
 ok(has(core,"function VD.VehicleInfo")and has(core,'list.Get("simfphys_vehicles")')and has(core,'list.Get("LVS_Vehicles")'),"Source simfphys and LVS registries")
 ok(has(core,"SpawnVehicleSimple")and has(core,"simfphys fallback")and has(core,"LVS SpawnFunction")and has(core,"scripted entity"),"legacy-compatible multi-stage vehicle spawn fallbacks")
-ok(has(core,"function VD.FindDeliveryPosition")and has(core,"function VD.FindSpawnPoint")and has(core,"TraceHull")and has(core,"Площадка выдачи занята"),"unified delivery pad searches safe unoccupied points")
-ok(has(core,"hasSpawnZone")and has(core,"spawnZoneMin")and has(core,"spawnZoneMax")and has(core,"Старую отдельную «точку выдачи»"),"persistence migrates legacy points into visible pads")
-ok(has(tool,"GRM_VD_ZoneRequest")and has(tool,"DrawWireframeBox")and has(tool,"SetSpawnZone")and has(tool,"ПЛОЩАДКА ВЫДАЧИ"),"dealer tool owns pad setup and visualization")
+ok(has(core,"function VD.FindDeliveryPosition")and has(core,"function VD.FindSpawnPoint")and has(core,"TraceHull")and has(core,"Площадка выдачи занята"),"delivery point/zone searches safe unoccupied points")
+ok(has(core,"hasSpawnZone")and has(core,"spawnZoneMin")and has(core,"spawnZoneMax")and has(core,"SetSpawnPos(hasPad and((padMin+padMax)*.5)or legacyPoint)"),"zone persisted; legacy point stays a point (v3.1.2)")
+ok(has(tool,"GRM_VD_ZoneRequest")and has(tool,"DrawWireframeBox")and has(tool,"hasPoint"),"dealer tool requests and draws spawn points/zones")
 ok(has(cl,"self:GetDealerName()")and has(cl,"OBBMaxs().z")and has(cl,"ДИЛЕР / ГАРАЖ"),"configured dealer name is rendered above NPC")
 ok(has(core,'op=="buy"')and has(core,'op=="retrieve"')and has(core,'op=="store"')and has(core,'op=="sell"'),"buy retrieve store and sell operations")
 ok(has(core,"saveGarage()")and has(core,"PlayerDisconnected"),"garage saves and stores vehicles on disconnect")
@@ -23,4 +23,10 @@ ok(has(q,'id = "vehicle_dealer_tool"')and not has(q,'id = "grm_vehicle_spawn_zon
 ok(not has(perm,"sent_vehicle_dealer = true"),"generic perm cannot duplicate dedicated dealers")
 ok(has(doors,"GRM_Doors_SuppressDuplicateHUD"),"door HUD duplicate suppression is persistent")
 ok(has(core,"vehicle_dealers")or has(read("lua/autorun/server/sv_grm_persistence_hub.lua"),"vehicle_dealers"),"unified persistence includes dealers")
+ok(has(core,"function VD.SetSpawnPoint")and has(core,"function VD.ClearSpawnPoint"),"spawn point API (set/clear)")
+ok(has(core,"Точка выдачи занята")and has(core,"dealer:GetSpawnAngle()"),"spawn point fallback and occupied message")
+ok(has(tool,"vehicle_dealer_tool_direction")and has(tool,"placeSpawnPoint")and has(tool,"SetSpawnPoint"),"direction selector and point placement in tool")
+ok(has(tool,"ТОЧКА: ")and has(tool,"высота "),"point marker and lift label drawn")
+ok(has(tool,"По взгляду при установке")and has(tool,"Влево от дилера")and has(tool,"Вправо от дилера"),"direction choices: look/left/right")
+ok(has(core,"ent:SetPos(base+Vector(0,0,lift))")and has(core,"b2+Vector(0,0,lift)"),"lift re-applied after drop and after async simfphys settle")
 print(("VEHICLE DEALER V3: %d/%d failures=%d"):format(checks-failed,checks,failed));if failed>0 then os.exit(1)end

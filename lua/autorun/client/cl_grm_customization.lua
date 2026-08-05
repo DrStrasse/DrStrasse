@@ -41,6 +41,31 @@ end)
 local function deepCopy(t) return istable(t) and table.Copy(t) or {} end
 local function v3(t) return Vector(tonumber(t and t.x) or 0, tonumber(t and t.y) or 0, tonumber(t and t.z) or 0) end
 local function a3(t) return Angle(tonumber(t and t.p) or 0, tonumber(t and t.y) or 0, tonumber(t and t.r) or 0) end
+
+-- Поворот угла вокруг оси (как Source-порядок: pitch→yaw→roll), но вокруг
+-- ЛОКАЛЬНЫХ осей кости, чтобы Yaw (вокруг Up кости) и Roll (вокруг Forward
+-- кости) давали РАЗНЫЕ вращения. GMod LocalToWorld так не умеет — он крутит
+-- вокруг мировых осей и yaw/roll сливаются в одно.
+local function boneLocalAngles(boneAng, offs)
+    local p = math.rad(tonumber(offs and offs.p) or 0)
+    local y = math.rad(tonumber(offs and offs.y) or 0)
+    local r = math.rad(tonumber(offs and offs.r) or 0)
+    -- базис кости
+    local f, rt, up = boneAng:Forward(), boneAng:Right(), boneAng:Up()
+    -- поворот вокруг Up кости (yaw)
+    local cosY, sinY = math.cos(y), math.sin(y)
+    local f2 = f * cosY + rt * sinY
+    local rt2 = -f * sinY + rt * cosY
+    -- поворот вокруг Forward (roll) — уже в новом базисе
+    local cosR, sinR = math.cos(r), math.sin(r)
+    local rt3 = rt2 * cosR + up * sinR
+    local up3 = -rt2 * sinR + up * cosR
+    -- поворот вокруг Right (pitch)
+    local cosP, sinP = math.cos(p), math.sin(p)
+    local f4 = f2 * cosP - up3 * sinP
+    local up4 = f2 * sinP + up3 * cosP
+    return f4:AngleEx(up4)
+end
 local function btn(parent, text, color)
     local b = vgui.Create("DButton", parent)
     b:SetText(text); b:SetFont("GRMCustom_Body"); b:SetTextColor(color_white)
@@ -145,6 +170,25 @@ net.Receive("GRM_Custom_Sync", function()
     hook.Run("GRM_CustomizationUpdated", ply)
 end)
 
+-- Находка 179z: фонарик (F) вырублен на клиенте. 1) блокируем сам бинд
+-- +flashlight (движок даже не попытается включить), 2) принудительно гасим
+-- уже включённый (мог быть включён до хука/другим аддоном). Причина:
+-- при включённом освещении движок уводит рендер в световой проход, где
+-- аксессуары перестают отрисовываться.
+hook.Add("PlayerBindPress", "GRM_Customization_NoFlashlightBind", function(ply, bind)
+    if bind == "+flashlight" then return true end
+end)
+hook.Add("Think", "GRM_Customization_FlashlightForceOff", function()
+    -- Находка 180b: правильный метод проверки фонарика — FlashlightIsOn().
+    -- Оба метода под isfunction-гардом (проверка существования до вызова).
+    local lp = LocalPlayer()
+    if IsValid(lp) then
+        if isfunction(lp.FlashlightIsOn) and lp:FlashlightIsOn() then
+            if isfunction(lp.SetFlashlight) then lp:SetFlashlight(false) end
+        end
+    end
+end)
+
 hook.Add("EntityRemoved", "GRM_Customization_CacheCleanup", function(ent)
     if ent:IsPlayer() then clearPlayerCache(ent); C.ClientLoadouts[ent] = nil end
 end)
@@ -183,6 +227,13 @@ end
 local function drawAccessories(ply, forceEditorDraw)
     if not IsValid(ply) or not ply:Alive() or ply:IsDormant() then return end
     local lp = LocalPlayer()
+    -- Находка 175: свои аксессуары от ПЕРВОГО лица не рисуем НИКОГДА.
+    -- Когда камера в 1-м лице, движок не рисует модель игрока — кость
+    -- всё равно анимируется, и аксессуар висел бы «в воздухе» в обзоре.
+    -- Рисуем себя только когда движок реально отрисовывает модель игрока
+    -- (3-е лицо / drawviewer: ShouldDrawLocalPlayer() == true) либо
+    -- принудительно в редакторе (forceEditorDraw, камера-орбита).
+    if IsValid(lp) and ply == lp and not forceEditorDraw and not lp:ShouldDrawLocalPlayer() then return end
     if IsValid(lp) and lp:GetPos():DistToSqr(ply:GetPos()) > 2500 * 2500 then return end
     local loadout = C.ClientLoadouts[ply]
     if not istable(loadout) then return end
@@ -207,7 +258,9 @@ local function drawAccessories(ply, forceEditorDraw)
                         entry.ent:SetModelScale(entry.smoothScale, 0)
                         entry.scale = entry.smoothScale
                     end
-                    local pos, ang = LocalToWorld(entry.smoothPos, entry.smoothAng, matrix:GetTranslation(), matrix:GetAngles())
+                    local boneAng = matrix:GetAngles()
+                    local pos = matrix:GetTranslation() + boneAng:Forward() * entry.smoothPos.x + boneAng:Right() * entry.smoothPos.y + boneAng:Up() * entry.smoothPos.z
+                    local ang = boneLocalAngles(boneAng, entry.smoothAng)
                     entry.ent:SetRenderOrigin(pos)
                     entry.ent:SetRenderAngles(ang)
                     entry.ent:SetupBones()
@@ -233,6 +286,25 @@ end)
 -- для LocalPlayer даже при drawviewer=true. В редакторе делаем поздний
 -- fallback после SetupBones. FrameNumber guard гарантирует, что второго
 -- DrawModel в том же кадре не будет.
+-- Резервный проход для НЕПРОЗРАЧНЫХ аксессуаров: при включённом фонарике (F)
+-- движок переключает рендер в отдельный световой проход, и PostPlayerDraw +
+-- ручной DrawModel() может не отрисовать модель (аксессуар «исчезает»).
+-- PostDrawOpaqueRenderables рисуется в основном проходе независимо от
+-- фонарика — дублируем туда же отрисовку с FrameNumber-guard.
+-- Находка 175: раньше здесь рисовался ТОЛЬКО LocalPlayer, поэтому при
+-- фонарике аксессуары ВСЕХ ОСТАЛЬНЫХ игроков исчезали. Теперь проходим по
+-- всем игрокам (guard не даст второму DrawModel, если PostPlayerDraw уже
+-- сработал; свои аксессуары от 1-го лица отсекает drawAccessories).
+hook.Add("PostDrawOpaqueRenderables", "GRM_Customization_DrawAccessoriesOpaque", function(drawingDepth, drawingSkybox, drawing3DSkybox)
+    if C.EditorActive and LocalPlayer() then return end
+    if drawingDepth or drawingSkybox or drawing3DSkybox then return end
+    local lp = LocalPlayer()
+    if not IsValid(lp) then return end
+    for _, ply in ipairs(player.GetAll()) do
+        if IsValid(ply) then drawAccessories(ply) end
+    end
+end)
+
 hook.Add("PostDrawTranslucentRenderables", "GRM_Customization_EditorPreviewFallback", function(drawingDepth, drawingSkybox, drawing3DSkybox)
     if not C.EditorActive or drawingDepth or drawingSkybox or drawing3DSkybox then return end
     local lp = LocalPlayer()
@@ -268,6 +340,18 @@ hook.Add("HUDPaint", "GRM_Customization_FunctionHUD", function()
         draw.RoundedBox(5, ScrW()/2 - 105, 64, 210, 25, Color(12, 20, 24, 195))
         draw.SimpleText(text, "GRMCustom_Small", ScrW()/2, 76, Color(115, 225, 155), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
+    -- Находка 178f: сумка ограбления — счётчик и выгрузка
+    if C.LocalHasFunction("loot_bag") and IsValid(LocalPlayer()) then
+        local cur = LocalPlayer():GetNWInt("GRM_LootBag", 0) or 0
+        local maxM = C.LocalFunctionValue("loot_bag", "lootMaxMoney", "max")
+        if maxM <= 0 then maxM = 100000 end
+        local text = ("СУМКА ОГРАБЛЕНИЯ: %s / %s"):format(
+            GRM and GRM.Format and GRM.Format(cur) or tostring(cur),
+            GRM and GRM.Format and GRM.Format(maxM) or tostring(maxM))
+        draw.RoundedBox(6, ScrW()/2 - 130, 96, 260, 26, Color(20, 14, 8, 205))
+        draw.SimpleText(text, "GRMCustom_Small", ScrW()/2, 102, Color(255, 200, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("/bag_unload — выгрузить в кошелёк", "GRMCustom_Small", ScrW()/2, 118, Color(150, 130, 100), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
 end)
 
 -- ============================================================
@@ -289,8 +373,11 @@ local function selectedAccessoryWorld()
     if not boneIndex then return end
     local matrix = lp:GetBoneMatrix(boneIndex)
     if not matrix then return end
-    local pos, ang = LocalToWorld(v3(equipped.position), a3(equipped.angles), matrix:GetTranslation(), matrix:GetAngles())
-    return pos, matrix:GetAngles(), equipped, ang
+    local boneAng = matrix:GetAngles()
+    local p3 = v3(equipped.position)
+    local pos = matrix:GetTranslation() + boneAng:Forward() * p3.x + boneAng:Right() * p3.y + boneAng:Up() * p3.z
+    local ang = boneLocalAngles(boneAng, a3(equipped.angles))
+    return pos, boneAng, equipped, ang
 end
 
 local GIZMO_AXES = {
@@ -446,14 +533,15 @@ local function openEditor(catalog, loadout)
     editor.frame = frame
     frame.Paint = function(_, w, h)
         draw.RoundedBox(0, 0, 0, w, 54, UI.head)
-        draw.SimpleText("GRM  /  КАСТОМИЗАЦИЯ ПЕРСОНАЖА", "GRMCustom_Title", 22, 27, UI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText("ЛКМ по пустому месту — камера  •  тянуть стрелку/кольцо — правка  •  колесо — масштаб вида", "GRMCustom_Small", w/2, 27, UI.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("GRM  /  КАСТОМИЗАЦИЯ ПЕРСОНАЖА", "GRMCustom_Title", 22, 20, UI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("РЕДАКТОР ПОЛОЖЕНИЯ АКСЕССУАРОВ  //  СИНХРОНИЗИРОВАНО", "GRMCustom_Small", 22, 40, UI.green or Color(90,220,150), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("ЛКМ: камера  •  стрелки/кольца: позиция  •  колесо: масштаб", "GRMCustom_Small", w/2, 27, UI.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
 
     local left = vgui.Create("DPanel", frame); left:SetPos(16, 70); left:SetSize(270, ScrH()-90)
-    left.Paint = function(_, w, h) draw.RoundedBox(8,0,0,w,h,UI.panel) end
+    left.Paint = function(_, w, h) draw.RoundedBox(8,0,0,w,h,UI.panel); surface.SetDrawColor(UI.line or Color(55,117,151,190)); surface.DrawOutlinedRect(0,0,w,h,1) end
     local right = vgui.Create("DPanel", frame); right:SetPos(ScrW()-356,70); right:SetSize(340,ScrH()-90)
-    right.Paint = function(_, w,h) draw.RoundedBox(8,0,0,w,h,UI.panel) end
+    right.Paint = function(_, w,h) draw.RoundedBox(8,0,0,w,h,UI.panel); surface.SetDrawColor(UI.line or Color(55,117,151,190)); surface.DrawOutlinedRect(0,0,w,h,1) end
     local view = vgui.Create("DPanel", frame); view:SetPos(300,70); view:SetSize(ScrW()-672,ScrH()-90); view:SetCursor("sizeall")
     view.Paint = function() end
     view.OnMousePressed = function(self,key)
@@ -599,6 +687,8 @@ local function openEditor(catalog, loadout)
             local eq=C.ClientLoadouts[lp][slot]; self:SetText(def.name .. (eq and ("  •  "..tostring((C.Catalog[eq.accessoryID] or {}).name or eq.accessoryID)) or "  •  пусто"))
         end
     end
+    local freeze=btn(left,"ЗАМОРОЗИТЬ В Т-ПОЗЕ",UI.blue); freeze:SetPos(12,left:GetTall()-168); freeze:SetSize(246,34); freeze.DoClick=function() net.Start("GRM_Custom_Op"); net.WriteString("pose_freeze"); net.SendToServer() end
+    local unfreeze=btn(left,"РАЗМОРОЗИТЬ ПЕРСОНАЖА",UI.orange or UI.yellow); unfreeze:SetPos(12,left:GetTall()-128); unfreeze:SetSize(246,34); unfreeze.DoClick=function() net.Start("GRM_Custom_Op"); net.WriteString("pose_unfreeze"); net.SendToServer() end
     local accept=btn(left,"ГОТОВО",UI.green); accept:SetPos(12,left:GetTall()-92); accept:SetSize(246,34)
     accept.DoClick=function()
         feedback("click")
@@ -632,9 +722,22 @@ end)
 -- ============================================================
 -- АДМИНСКИЙ КАТАЛОГ
 -- ============================================================
+-- Находка 179c: повторные открытия (сервер шлёт AdminOpen после каждого
+-- сохранения) НЕ должны плодить новые окна/панели — старое окно
+-- переиспользуется, иначе DScrollPanel из удалённого окна остаётся в
+-- раскладке → «Tried to use a NULL Panel!» (dscrollpanel.lua:111).
+local adminFrame = nil
+
 local function openAdmin(catalog)
     C.Catalog = catalog or C.Catalog
+    if IsValid(adminFrame) then
+        -- уже открыто: просто обновляем каталог и список
+        adminFrame:InvalidateLayout()
+        return
+    end
     local f=vgui.Create("DFrame"); GRM.UI.Track("accessories_admin",f); f:SetSize(1120,720); f:Center(); f:MakePopup(); f:SetTitle("GRM — Каталог аксессуаров")
+    adminFrame = f
+    f.OnRemove = function() if adminFrame == f then adminFrame = nil end end
     local list=vgui.Create("DScrollPanel",f); list:SetPos(10,34); list:SetSize(390,640)
     local form=vgui.Create("DPanel",f); form:SetPos(410,34); form:SetSize(700,640); form.Paint=function(_,w,h) draw.RoundedBox(7,0,0,w,h,UI.panel) end
     local fields={}; local selected=""
@@ -661,21 +764,35 @@ local function openAdmin(catalog)
     local preview=vgui.Create("DModelPanel",form); preview:SetPos(450,360); preview:SetSize(230,220); preview:SetFOV(35); preview.LayoutEntity=function() end
     fields["Модель"].OnChange=function(self) local m=self:GetValue(); if util.IsValidModel(m) then preview:SetModel(m) end end
 
+    -- Находка 179b: аккуратная сетка функциональных чекбоксов — 2 колонки × 5
+    -- строк (шаг 24px), не наезжают друг на друга и не уходят за форму.
     local funcTitle=label(form,"ФУНКЦИОНАЛЬНОЕ ОБОРУДОВАНИЕ","GRMCustom_Head",UI.text); funcTitle:SetPos(12,382); funcTitle:SetSize(410,22)
-    local funcChecks={}; local functionOrder={"gasmask","backpack","radio","watch","armor"}
-    for i,functionID in ipairs(functionOrder) do
-        local def=C.FunctionTypes[functionID] or {name=functionID}
-        local check=vgui.Create("DCheckBoxLabel",form); check:SetPos(12,406+(i-1)*25); check:SetSize(410,22)
-        check:SetText(def.name); check:SetFont("GRMCustom_Body"); check:SetTextColor(UI.text); funcChecks[functionID]=check
+    local funcChecks={}
+    local funcCols={
+        {"gasmask","backpack","radio","watch","armor"},
+        {"artificial_eye","night_vision","neuro_link","prosthesis","loot_bag"},
+    }
+    for ci,col in ipairs(funcCols) do
+        for ri,functionID in ipairs(col) do
+            local def=C.FunctionTypes[functionID] or {name=functionID}
+            local x = ci == 1 and 12 or 230
+            local y = 406 + (ri-1)*24
+            local check=vgui.Create("DCheckBoxLabel",form); check:SetPos(x,y); check:SetSize(200,22)
+            check:SetText(def.name); check:SetFont("GRMCustom_Body"); check:SetTextColor(UI.text); funcChecks[functionID]=check
+        end
     end
+    -- Числовые параметры функций — 2 ряда по 3/2 поля (y 536 и 580)
     local functionNum={}
-    local function functionNumber(labelText,key,x,default,min,max)
-        local l=label(form,labelText,"GRMCustom_Small",UI.dim); l:SetPos(x,536); l:SetSize(125,18)
-        local n=vgui.Create("DNumberWang",form); n:SetPos(x,555); n:SetSize(125,25); n:SetDecimals(2); n:SetMin(min); n:SetMax(max); n:SetValue(default); functionNum[key]=n
+    local function functionNumber(labelText,key,x,y,default,min,max)
+        local l=label(form,labelText,"GRMCustom_Small",UI.dim); l:SetPos(x,y); l:SetSize(140,18)
+        local n=vgui.Create("DNumberWang",form); n:SetPos(x,y+19); n:SetSize(140,25); n:SetDecimals(2); n:SetMin(min); n:SetMax(max); n:SetValue(default); functionNum[key]=n
     end
-    functionNumber("Защита газа 0..0.98","gasProtection",12,0.85,0,0.98)
-    functionNumber("Рюкзак +кг","backpackCapacity",150,20,0,100)
-    functionNumber("Снижение урона","armorReduction",288,0.2,0,0.75)
+    functionNumber("Защита газа 0..0.98","gasProtection",12,536,0.85,0,0.98)
+    functionNumber("Рюкзак +кг","backpackCapacity",160,536,20,0,100)
+    functionNumber("Снижение урона","armorReduction",300,536,0.2,0,0.75)
+    -- находка 178f: параметры сумки ограбления
+    functionNumber("Сумка: макс. GRM","lootMaxMoney",12,580,100000,1000,1000000)
+    functionNumber("Сумка: за подход","lootPerUse",160,580,25000,1000,100000)
 
     local function setForm(id,item)
         selected=id or ""; item=item or {}; fields.ID:SetText(id or ""); fields["Название"]:SetText(item.name or ""); fields["Категория"]:SetText(item.category or ""); fields["Модель"]:SetText(item.model or ""); fields["Описание"]:SetText(item.description or ""); fields["Цена"]:SetText(tostring(item.price or 0))
@@ -683,6 +800,7 @@ local function openAdmin(catalog)
         local p=item.position or {}; local a=item.angles or {}; local vals={p.x or 0,p.y or 0,p.z or 0,a.p or 0,a.y or 0,a.r or 0,item.scale or 1}; for i,v in ipairs(vals) do nums[i]:SetValue(v) end
         for functionID,check in pairs(funcChecks) do check:SetValue(item.functions and item.functions[functionID] == true) end
         local cfg=item.functionConfig or {}; functionNum.gasProtection:SetValue(cfg.gasProtection or 0.85); functionNum.backpackCapacity:SetValue(cfg.backpackCapacity or 20); functionNum.armorReduction:SetValue(cfg.armorReduction or 0.2)
+        functionNum.lootMaxMoney:SetValue(cfg.lootMaxMoney or 100000); functionNum.lootPerUse:SetValue(cfg.lootPerUse or 25000)
         if util.IsValidModel(item.model or "") then preview:SetModel(item.model) end
     end
     slotCombo.OnSelect=function(_,_,_,slot) slotCombo._slot=slot; fillBones(slot) end
@@ -702,7 +820,7 @@ local function openAdmin(catalog)
             position={x=nums[1]:GetValue(),y=nums[2]:GetValue(),z=nums[3]:GetValue()},
             angles={p=nums[4]:GetValue(),y=nums[5]:GetValue(),r=nums[6]:GetValue()}, scale=nums[7]:GetValue(),
             functions=functions,
-            functionConfig={gasProtection=functionNum.gasProtection:GetValue(),backpackCapacity=functionNum.backpackCapacity:GetValue(),armorReduction=functionNum.armorReduction:GetValue()},
+            functionConfig={gasProtection=functionNum.gasProtection:GetValue(),backpackCapacity=functionNum.backpackCapacity:GetValue(),armorReduction=functionNum.armorReduction:GetValue(),lootMaxMoney=functionNum.lootMaxMoney:GetValue(),lootPerUse=functionNum.lootPerUse:GetValue()},
         }
         net.Start("GRM_Custom_AdminOp") net.WriteString("save") net.WriteString(id) net.WriteTable(payload) net.SendToServer()
     end

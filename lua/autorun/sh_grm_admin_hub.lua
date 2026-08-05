@@ -126,6 +126,8 @@ if SERVER then
         v("Доска набора", GRM.Board and GRM.Board.Version)
         v("Аугментации", GRM.Augmentations and "2.0.0")
         v("Чипы аугментаций", GRM.AugChips and "1.0.0")
+        v("Электроника/сеть", GRM.Electronics and GRM.Electronics.Version)
+        v("Торгаши", GRM.Vendor and GRM.Vendor.Version)
         v("Валюта", "2.0.3")
         v("Экономика", "3.0.4")
         local posts = 0
@@ -143,6 +145,7 @@ if SERVER then
                 { name = "Записей ачивок", val = (GRM.Ach and GRM.Ach.Records) and table.Count(GRM.Ach.Records) or 0 },
                 { name = "Игроков с аугментациями", val = (GRM.Augmentations and GRM.Augmentations.PlayerData) and table.Count(GRM.Augmentations.PlayerData) or 0 },
                 { name = "Созданных чипов", val = (GRM.AugChips and GRM.AugChips.PlayerChips) and (function() local count = 0 for _, chips in pairs(GRM.AugChips.PlayerChips) do count = count + #chips end return count end)() or 0 },
+                { name = "Устройств сети", val = (GRM.Electronics and GRM.Electronics.Devices) and table.Count(GRM.Electronics.Devices) or 0 },
             },
             factions = factionsList(),
         }
@@ -214,6 +217,15 @@ if SERVER then
         if istable(Factions) then
             for name in pairs(Factions) do
                 local info = GRM.Economy and GRM.Economy.FactionInfo and GRM.Economy.FactionInfo(name)
+                local f = Factions[name]
+                local roles = {}
+                if istable(f) and istable(f.Roles) then
+                    for _, r in ipairs(f.Roles) do roles[#roles + 1] = tostring(r) end
+                end
+                local depts = {}
+                if istable(f) and istable(f.Departments) then
+                    for _, dd in ipairs(f.Departments) do depts[#depts + 1] = tostring(dd) end
+                end
                 factions[#factions + 1] = {
                     name = name,
                     budget = (info and info.budget) or (GRM.FactionBudgetGet and GRM.FactionBudgetGet(name)) or 0,
@@ -221,6 +233,10 @@ if SERVER then
                     baseSalary = (info and info.baseSalary) or 0,
                     salaryInterval = (info and info.salaryInterval) or 0,
                     payFromBudget = (info and info.payFromBudget) == true,
+                    leader = (istable(f) and tostring(f.Leader or "")) or "",
+                    leaderRole = (istable(f) and tostring(f.LeaderRoleName or "")) or "",
+                    roles = roles,
+                    departments = depts,
                 }
             end
             table.sort(factions, function(a, b) return a.name:lower() < b.name:lower() end)
@@ -422,11 +438,15 @@ if SERVER then
 
     local function openHub(ply)
         if not IsValid(ply) then return false end
-        if not ply:IsSuperAdmin() then
+        local isSuper = ply:IsSuperAdmin() == true
+        local econAccess = isSuper or (GRM.Economy and GRM.Economy.CanManageEconomy and GRM.Economy.CanManageEconomy(ply) == true)
+        if not isSuper and not econAccess then
             ply:PrintMessage(HUD_PRINTTALK, "[Хаб] Единая админ-панель — только суперадмин.")
             return true
         end
         net.Start(NET_OPEN)
+            net.WriteBool(econAccess == true)  -- доступ к вкладке «Экономика» (находка 172)
+            net.WriteBool(isSuper)
         net.Send(ply)
         return true
     end
@@ -561,6 +581,18 @@ if CLIENT then
             local r = vgui.Create("DLabel", b4)
             r:SetPos(12, 26 + (i - 1) * 24) r:SetSize(900, 22) r:SetFont("GRMHub_Normal") r:SetTextColor(C.text)
             r:SetText(tostring(f.name) .. "   •   лидер: " .. tostring(f.leader) .. "   •   состав: " .. tostring(f.members))
+        end
+
+        -- Находка 179h (в /grm_admin): настройка фракций оповещения сигнализации
+        local bAlarm = block(sc, 58, "Сигнализация:", C.orange)
+        local lAlarm = vgui.Create("DLabel", bAlarm)
+        lAlarm:SetPos(12, 26) lAlarm:SetSize(700, 22) lAlarm:SetFont("GRMHub_Normal") lAlarm:SetTextColor(C.text)
+        lAlarm:SetText("Оповещение о взломах кейпадов/сканеров/дверей — выберите фракции.")
+        local bOpen = mkBtn(bAlarm, "Фракции для оповещения", C.orange, 200, 24)
+        bOpen:SetPos(520, 24)
+        bOpen.DoClick = function()
+            net.Start("GRM_AlarmNotify_Open")
+            net.SendToServer()
         end
     end
 
@@ -728,6 +760,8 @@ if CLIENT then
         { "Радиосеть: диагностика", "/rn_status", "Стойки/антенны/передатчики/громкоговорители — что в сети, покрытие" },
         { "Аугментации", "grm_augmentations_admin", "Настройка типов аугментаций, категорий, прав доступа и стоимости" },
         { "Программатор чипов", "grm_chips", "Создание, имплантация и управление чипами аугментаций" },
+        { "Точки спавна", "/spawnmenu", "Глобальные/фракционные/роли/отделы — выбор из factions.json, редизайн" },
+        { "Дилеры и гаражи", "grm_garage", "Гараж персонажа: выдача/сдача транспорта; настройка дилера — тулганом (Shift = площадка)" },
         { "Спавн транспорта (ТАБ)", "ТАБ → игрок", "ТАБ → клик по игроку → «Спавн транспорта»: у ближайшего дилера, без цены/лимита", true },
     }
     -- ==== вкладка ЭКОНОМИКА (Код 82) ====
@@ -737,6 +771,16 @@ if CLIENT then
         hint:Dock(TOP) hint:SetTall(30) hint:SetFont("GRMHub_Small") hint:SetTextColor(C.dim)
         hint:SetText("Полная экономическая панель (зарплаты, налоги, штрафы, банк, настройки): /feco_admin.  Здесь — быстрые денежные операции.")
         hint:SetWrap(true) hint:SetAutoStretchVertical(true)
+
+        -- Доступ к экономике (находка 172): суперадмин выдаёт полномочия фракциям
+        if HB._isSuper then
+            local accBtn = mkBtn(sc, "Доступ к экономике (фракции/роли/отделы)", C.acc, 0, 0)
+            accBtn:Dock(TOP) accBtn:SetTall(34) accBtn:DockMargin(0, 2, 0, 6)
+            accBtn.DoClick = function()
+                net.Start("GRM_EcoAccess_Request")
+                net.SendToServer()
+            end
+        end
 
         -- ГОС.БЮДЖЕТ
         local b1 = block(sc, 118, "Гос.бюджет: " .. fmtMoney(d.state or 0), C.yellow)
@@ -920,6 +964,12 @@ if CLIENT then
 
     -- ==== главное окно ====
     net.Receive(NET_OPEN, function()
+        -- флаги доступа (находка 172): econAccess — не-суперадмин с правом
+        -- управления экономикой (лидер Нацбанка и т.п.); isSuper — суперадмин
+        local econAccess = net.ReadBool()
+        local isSuper = net.ReadBool()
+        HB._econOnly = (econAccess == true and isSuper ~= true)
+        HB._isSuper = isSuper == true
         if IsValid(HB._frame) then HB._frame:Remove() end
         local f = vgui.Create("DFrame")
         HB._frame = f
@@ -963,13 +1013,18 @@ if CLIENT then
             return sc
         end
 
-        mkPage("server", "Сервер", "icon16/server.png")
-        mkPage("access", "Доступы", "icon16/key.png")
-        mkPage("econ", "Экономика", "icon16/money.png")
-        mkPage("tools", "Инструменты", "icon16/wrench.png")
-        mkPage("jobs", "Биржа", "icon16/bricks.png")
-        mkPage("players", "Игроки", "icon16/group.png")
-        mkPage("menu", "Меню", "icon16/application_view_tile.png")
+        if HB._econOnly then
+            -- не-суперадмин с доступом к экономике: только вкладка «Экономика»
+            mkPage("econ", "Экономика", "icon16/money.png")
+        else
+            mkPage("server", "Сервер", "icon16/server.png")
+            mkPage("access", "Доступы", "icon16/key.png")
+            mkPage("econ", "Экономика", "icon16/money.png")
+            mkPage("tools", "Инструменты", "icon16/wrench.png")
+            mkPage("jobs", "Биржа", "icon16/bricks.png")
+            mkPage("players", "Игроки", "icon16/group.png")
+            mkPage("menu", "Меню", "icon16/application_view_tile.png")
+        end
 
         -- Единый тёмный стиль вкладок: стандартный серый DPropertySheet
         -- выбивается из GRM-дизайна и визуально сжимает рабочую область.
@@ -1007,9 +1062,99 @@ if CLIENT then
             elseif tab == "players" then buildPlayers(sc, d) end
         end)
 
-        buildMenu(pages["menu"])
-        timer.Simple(0.15, function() if IsValid(f) then askTab("server") end end)
+        if HB._econOnly then
+            timer.Simple(0.15, function() if IsValid(f) then askTab("econ") end end)
+        else
+            buildMenu(pages["menu"])
+            timer.Simple(0.15, function() if IsValid(f) then askTab("server") end end)
+        end
     end)
+
+    -- Окно настройки доступа к экономике (находка 172)
+    net.Receive("GRM_EcoAccess_Data", function()
+        local access = net.ReadTable() or {}
+        if not (HB._isSuper == true) then return end
+        local w = vgui.Create("DFrame")
+        GRM.UI.Track("econ_access", w)
+        w:SetTitle(""); w:SetSize(860, 620); w:Center(); w:MakePopup(); w:ShowCloseButton(false)
+        w.Paint = function(self, pw, ph)
+            draw.RoundedBox(9, 0, 0, pw, ph, C.bg)
+            draw.RoundedBoxEx(9, 0, 0, pw, 52, C.head, true, true, false, false)
+            draw.SimpleText("ДОСТУП К ЭКОНОМИКЕ", "GRMHub_Title", 16, 26, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("выдача полномочий фракциям (Нацбанк и др.)", "GRMHub_Small", pw - 16, 26, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        end
+        local close = vgui.Create("DButton", w)
+        close:SetPos(w:GetWide() - 40, 12); close:SetSize(28, 28); close:SetText("X"); close:SetTextColor(C.text)
+        close.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.red or C.panel2) end
+        close.DoClick = function() w:Close() end
+
+        local list = vgui.Create("DScrollPanel", w)
+        list:SetPos(12, 62); list:SetSize(836, 500)
+
+        -- спросить сервер: список фракций и их ролей/отделов (из econ-данных хаба)
+        local factionRows = {}
+        -- заполним из последнего payload (askTab("econ") уже был вызван)
+        if HB._lastEconPayload and HB._lastEconPayload.factions then
+            for _, f in ipairs(HB._lastEconPayload.factions) do
+                local acc = access[f.name] or { enabled = false, roles = {}, departments = {} }
+                local row = vgui.Create("DPanel", list)
+                row:Dock(TOP); row:SetTall(110); row:DockMargin(0, 0, 0, 8)
+                row.Paint = function(_, pw, ph) draw.RoundedBox(6, 0, 0, pw, ph, C.panel) end
+                local en = vgui.Create("DCheckBoxLabel", row)
+                en:SetPos(12, 8); en:SetSize(280, 24); en:SetText("Выдать доступ фракции «" .. f.name .. "»"); en:SetTextColor(C.text); en:SetFont("GRMHub_Normal")
+                en:SetValue(acc.enabled == true and 1 or 0)
+                en.roleList = acc.roles or {}; en.deptList = acc.departments or {}
+                local roleCombo = vgui.Create("DComboBox", row)
+                roleCombo:SetPos(320, 8); roleCombo:SetSize(240, 26)
+                local deptCombo = vgui.Create("DComboBox", row)
+                deptCombo:SetPos(320, 40); deptCombo:SetSize(240, 26)
+                -- чекбоксы ролей/отделов (мультивыбор через меню не сделать просто — используем список с переключателями)
+                local roleScroll = vgui.Create("DScrollPanel", row)
+                roleScroll:SetPos(580, 6); roleScroll:SetSize(120, 96)
+                local deptScroll = vgui.Create("DScrollPanel", row)
+                deptScroll:SetPos(708, 6); deptScroll:SetSize(120, 96)
+                local roleChecks, deptChecks = {}, {}
+                for _, r in ipairs(f.roles or {}) do
+                    local c = vgui.Create("DCheckBoxLabel", roleScroll)
+                    c:Dock(TOP); c:SetTall(20); c:SetText(r); c:SetTextColor(C.text); c:SetFont("GRMHub_Small")
+                    c:SetValue((en.roleList or {})[r] == true and 1 or 0)
+                    roleChecks[r] = c
+                end
+                for _, dd in ipairs(f.departments or {}) do
+                    local c = vgui.Create("DCheckBoxLabel", deptScroll)
+                    c:Dock(TOP); c:SetTall(20); c:SetText(dd); c:SetTextColor(C.text); c:SetFont("GRMHub_Small")
+                    c:SetValue((en.deptList or {})[dd] == true and 1 or 0)
+                    deptChecks[dd] = c
+                end
+                local save = mkBtn(row, "Сохранить", C.green, 100, 28)
+                save:SetPos(12, 70)
+                save.DoClick = function()
+                    local rolesOut, deptsOut = {}, {}
+                    for r, c in pairs(roleChecks) do if c:GetChecked() then rolesOut[r] = true end end
+                    for dd, c in pairs(deptChecks) do if c:GetChecked() then deptsOut[dd] = true end end
+                    net.Start("GRM_EcoAccess_Save")
+                        net.WriteString(f.name)
+                        net.WriteBool(en:GetChecked())
+                        net.WriteTable(rolesOut)
+                        net.WriteTable(deptsOut)
+                    net.SendToServer()
+                end
+                local hint = vgui.Create("DLabel", row)
+                hint:SetPos(320, 72); hint:SetSize(400, 30); hint:SetText("Роли приоритетны: если выбраны — доступ только по ним; иначе по отделам; если ничего — вся фракция."); hint:SetFont("GRMHub_Small"); hint:SetTextColor(C.dim); hint:SetWrap(true)
+            end
+        else
+            local l = vgui.Create("DLabel", list)
+            l:Dock(TOP); l:SetTall(40); l:SetText("Нет данных фракций — обновите вкладку «Экономика»."); l:SetFont("GRMHub_Normal"); l:SetTextColor(C.dim)
+        end
+        w:MakePopup()
+    end)
+
+    -- запоминаем payload экономики для окна доступа
+    local _origEconBuild = buildEcon
+    buildEcon = function(sc, d)
+        HB._lastEconPayload = d
+        _origEconBuild(sc, d)
+    end
 
     print("[GRM Hub] Клиент единой админ-панели v" .. HB.Version .. " загружен")
 end

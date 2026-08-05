@@ -254,7 +254,8 @@ if SERVER then
         local doors = GRM.FFDLink.Resolve(ctrl, true)
         local n = 0
         for _, d in ipairs(doors) do
-            if IsValid(d) and d.isFadingDoor then
+            -- Находка 173: раздвижные двери (isSlidingDoor) тоже открываются
+            if IsValid(d) and (d.isFadingDoor or d.isSlidingDoor) then
                 if activate and d.FadeActivate then
                     d:FadeActivate()
                     n = n + 1

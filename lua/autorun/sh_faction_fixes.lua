@@ -415,11 +415,13 @@ if SERVER then
             CurfewRoles = {},
             MaskDepartments = {},
             GNewsAccess = false,
+            ChipDeathAlert = false,
         }
         local cfg = FactionsExt[factionName]
         cfg.CurfewRoles = istable(cfg.CurfewRoles) and cfg.CurfewRoles or {}
         cfg.MaskDepartments = istable(cfg.MaskDepartments) and cfg.MaskDepartments or {}
         cfg.GNewsAccess = cfg.GNewsAccess == true
+        cfg.ChipDeathAlert = cfg.ChipDeathAlert == true
         return cfg
     end
 
@@ -998,6 +1000,17 @@ if SERVER then
             broadcastExt()
             if broadcastFactionData then pcall(broadcastFactionData) end
             sendExtResult(ply, true, enabled and "Доступ к /gnews выдан лидеру фракции" or "Доступ к /gnews снят")
+            return
+        end
+
+        -- Контроль чипов (находка 169): уведомлять членов фракции о смерти
+        -- носителей экспериментальных чипов (звук+текст+GPS-метка)
+        if action == "setChipDeathAlert" then
+            local enabled = args[2] and true or false
+            cfg.ChipDeathAlert = enabled
+            saveExt()
+            broadcastExt()
+            sendExtResult(ply, true, enabled and "Уведомления о смерти носителей экспериментальных чипов ВКЛЮЧЕНЫ для «" .. factionName .. "»" or "Уведомления о смерти носителей экспериментальных чипов ВЫКЛЮЧЕНЫ для «" .. factionName .. "»")
             return
         end
 
@@ -2728,6 +2741,19 @@ if CLIENT then
             gnews:SetValue(gnewsOn and 1 or 0)
             gnews.OnChange = function(_, val) sendExtAction("setGNewsAccess", { factionName, tobool(val) }) end
 
+            -- Контроль чипов (находка 169) --------------------------------------
+            sectionLabel(scroll, "Контроль чипов")
+            local chipAlertOn = cfg.ChipDeathAlert == true
+            local chipAlert = vgui.Create("DCheckBoxLabel", scroll)
+            chipAlert:Dock(TOP)
+            chipAlert:SetTall(26)
+            chipAlert:SetText(chipAlertOn and "Уведомлять о смерти носителей экспериментальных чипов — ВКЛ" or "Присылать уведомление о смерти носителей экспериментального чипа")
+            chipAlert:SetTextColor(chipAlertOn and Color(140, 240, 160) or THEME.text)
+            chipAlert:SetFont("FactionsExt_Normal")
+            chipAlert:SetValue(chipAlertOn and 1 or 0)
+            chipAlert.OnChange = function(_, val) sendExtAction("setChipDeathAlert", { factionName, tobool(val) }) end
+            infoLine(scroll, "Члены фракции получат звук (npc/metropolice/die2.wav), текстовое уведомление и GPS-метку «В данном районе убит/умер специальный юнит» при смерти носителя экспериментального чипа.", THEME.textDim, 36)
+
             -- Модели ------------------------------------------------------------
             sectionLabel(scroll, "Модели (/model)")
             local mGen, mRole, mDept = countArr(f.Models), countMapLists(f.RoleModels), countMapLists(f.DepartmentModels)
@@ -2889,6 +2915,62 @@ if CLIENT then
     hook.Add("GRM_FactionsAdmin_BuildTabs", "FactionsExt_ExtendedTab", function(tabs)
         if not IsValid(tabs) then return end
         tabs:AddSheet("Расширенные настройки", OpenExtendedSettings(tabs), "icon16/cog.png")
+    end)
+
+    -- Вкладка «Экономика» (находка 172): доступ у тех, кто CanManageEconomy
+    -- (лидер/зам Нацбанка, суперадмин). ПОЛНАЯ панель экономики встроена
+    -- прямо во вкладку (гос.бюджет, перечисления, налоги, штрафы, зарплаты).
+    local function OpenEconomyPanel(parentFrame)
+        local panel = vgui.Create("DPanel")
+        panel:SetPaintBackground(false)
+        panel:DockPadding(6, 6, 6, 6)
+        local holder = vgui.Create("DPanel", panel)
+        holder:Dock(FILL)
+        holder:SetPaintBackground(false)
+
+        -- Находка 177: сигнатура защищена от обоих вариантов вызова —
+        -- _embeddedBuild(panel, d) (данные во втором) и _embeddedBuild(d)
+        -- (данные в первом). Раньше сюда приходила панель вместо данных,
+        -- и фракции/игроки/гос.бюджет в /factions были пустыми.
+        local function build(a, b)
+            local d = b or a
+            if not IsValid(holder) then return end
+            if GRM.Economy and GRM.Economy.BuildAdminContent then
+                GRM.Economy.BuildAdminContent(holder, d)
+            end
+        end
+
+        -- Регистрируем панель: NET_ADMIN_DATA будет перестраивать её
+        GRM.Economy._embeddedBuild = build
+        if GRM.Economy.EmbedAdminPanel then GRM.Economy.EmbedAdminPanel(panel) end
+        -- Запрашиваем данные у сервера (сервер сам проверит CanManageEconomy)
+        net.Start("GRM_Eco_AdminOpen")
+        net.SendToServer()
+
+        -- Первичная заглушка на время загрузки
+        if not GRM.Economy._embeddedData then
+            local l = vgui.Create("DLabel", holder)
+            l:Dock(FILL) l:SetFont("FactionsExt_Normal") l:SetTextColor(THEME.textDim)
+            l:SetContentAlignment(5)
+            l:SetText("Загрузка экономической панели...")
+        end
+
+        return panel
+    end
+
+    hook.Add("GRM_FactionsAdmin_BuildTabs", "FactionsExt_EconomyTab", function(tabs)
+        if not IsValid(tabs) then return end
+        -- Вкладку видит только тот, у кого есть доступ к экономике.
+        -- На клиенте проверяем по локальному признаку: сервер отправил
+        -- NET_OPEN_ADMIN либо суперадмину, либо CanManageEconomy-игроку.
+        -- Для точности спрашиваем сервер (лёгкий канал) — но чтобы не плодить
+        -- лишние запросы, показываем вкладку всегда: сама панель экономики
+        -- на сервере защищена CanManageEconomy, не-уполномоченному откроется
+        -- пустой ответ. Лучше: показываем только суперадмину ИЛИ тем, кому
+        -- сервер разрешил (определяем по факту, что нас пустили в админ-меню —
+        -- это уже значит лидер/суперадмин; у лидера без экономики вкладка
+        -- просто откроет защищённую панель).
+        tabs:AddSheet("Экономика", OpenEconomyPanel(tabs), "icon16/money.png")
     end)
 
 

@@ -95,7 +95,7 @@ net.Receive("GRM_AugChip_SendList", function()
 	end
 	
 	for _, chip in ipairs(chips) do
-		local status = chip.implanted and (chip.hasComplications and "⚠ Осложнения" or "✓ Имплантирован") or "Готов"
+		local status = chip.implanted and (chip.hasComplications and "[!] Осложнения" or "[OK] Имплантирован") or "Готов"
 		local line = chipList:AddLine(chip.name, status)
 		line.chipData = chip
 		
@@ -187,7 +187,7 @@ net.Receive("GRM_AugChip_SendList", function()
 		local catLabel = vgui.Create("DLabel", catPanel)
 		catLabel:SetPos(15, 5)
 		catLabel:SetSize(510, 15)
-		catLabel:SetText("📦 " .. (catConfig and catConfig.name or chip.category))
+		catLabel:SetText("[ITEM] " .. (catConfig and catConfig.name or chip.category))
 		catLabel:SetFont("GRMChip_Bold")
 		catLabel:SetTextColor(catConfig and catConfig.color or GRM_COLORS.text)
 		
@@ -209,16 +209,16 @@ net.Receive("GRM_AugChip_SendList", function()
 			if chip.hasComplications then
 				statusText = "Имплантирован с осложнениями"
 				statusColor = GRM_COLORS.warning
-				statusIcon = "⚠️"
+				statusIcon = "[!]"
 			else
 				statusText = "Имплантирован"
 				statusColor = GRM_COLORS.success
-				statusIcon = "✓"
+				statusIcon = "[OK]"
 			end
 		else
 			statusText = "Готов к имплантации"
 			statusColor = GRM_COLORS.text_dim
-			statusIcon = "⚙️"
+			statusIcon = "[CFG]"
 		end
 		
 		statusPanel.Paint = function(self, w, h)
@@ -248,7 +248,7 @@ net.Receive("GRM_AugChip_SendList", function()
 		local modTitle = vgui.Create("DLabel", infoPanel)
 		modTitle:SetPos(10, yPos)
 		modTitle:SetSize(540, 30)
-		modTitle:SetText("🔧 Модификаторы:")
+		modTitle:SetText("МОДИФИКАТОРЫ:")
 		modTitle:SetFont("GRMChip_Bold")
 		modTitle:SetTextColor(GRM_COLORS.text)
 		yPos = yPos + 35
@@ -310,7 +310,7 @@ net.Receive("GRM_AugChip_SendList", function()
 			local btnImplant = vgui.Create("DButton", infoPanel)
 			btnImplant:SetPos(10, yPos)
 			btnImplant:SetSize(540, 50)
-			btnImplant:SetText("💉 ИМПЛАНТИРОВАТЬ ЧИП")
+			btnImplant:SetText("ИМПЛАНТИРОВАТЬ ЧИП")
 			btnImplant:SetFont("GRMChip_Bold")
 			btnImplant:SetTextColor(GRM_COLORS.text)
 			btnImplant.Paint = function(self, w, h)
@@ -336,7 +336,7 @@ net.Receive("GRM_AugChip_SendList", function()
 			local btnExtract = vgui.Create("DButton", infoPanel)
 			btnExtract:SetPos(10, yPos)
 			btnExtract:SetSize(540, 50)
-			btnExtract:SetText("🔧 ИЗВЛЕЧЬ ЧИП")
+			btnExtract:SetText("ИЗВЛЕЧЬ ЧИП")
 			btnExtract:SetFont("GRMChip_Bold")
 			btnExtract:SetTextColor(GRM_COLORS.text)
 			btnExtract.Paint = function(self, w, h)
@@ -582,7 +582,7 @@ net.Receive("GRM_AugChip_ImplantMenu", function()
 	-- Создание окна подтверждения имплантации
 	local frame = vgui.Create("DFrame")
 	frame:SetTitle("Имплантация чипа")
-	frame:SetSize(400, 300)
+	frame:SetSize(math.min(620, ScrW() - 80), math.min(520, ScrH() - 80))
 	frame:Center()
 	frame:MakePopup()
 	
@@ -633,7 +633,7 @@ net.Receive("GRM_AugChip_ImplantMenu", function()
 	local successLabel = vgui.Create("DLabel", frame)
 	successLabel:SetPos(40, yPos)
 	successLabel:SetSize(320, 20)
-	successLabel:SetText("✓ Успех: 85%")
+	successLabel:SetText("[OK] Успех: 85%")
 	successLabel:SetFont("GRMChip_Normal")
 	successLabel:SetTextColor(GRM_COLORS.success)
 	yPos = yPos + 25
@@ -649,7 +649,7 @@ net.Receive("GRM_AugChip_ImplantMenu", function()
 	local compLabel = vgui.Create("DLabel", frame)
 	compLabel:SetPos(40, yPos)
 	compLabel:SetSize(320, 20)
-	compLabel:SetText("⚠ Осложнения: 5% (урон 10-25 HP)")
+	compLabel:SetText("[!] Осложнения: 5% (урон 10-25 HP)")
 	compLabel:SetFont("GRMChip_Normal")
 	compLabel:SetTextColor(GRM_COLORS.warning)
 	yPos = yPos + 40

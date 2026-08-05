@@ -121,6 +121,8 @@ QM.ToolCatalog = {
     { id = "grm_quest_tool", label = "GRM: конструктор квестов", desc = "Квестовые NPC, зоны целей и точки кат-сцен.", cat = "ui" },
     { id = "grm_network_tool", label = "GRM: электроника и интернет", desc = "Компьютеры, роутеры, принтеры, розетки и кабели связи.", cat = "ui" },
     { id = "grm_door_admin", label = "GRM: двери", desc = "Канонические двери, владельцы и доступы без дублей.", cat = "ui" },
+    { id = "grm_sliding_door", label = "GRM: раздвижная дверь", desc = "Проп → раздвижная дверь (сдвиг, скорость, плавность) + FFD Link.", cat = "ui" },
+    { id = "grm_bank_tool", label = "GRM: банковское оборудование", desc = "Хранилище, печатный станок (5000/10с), терминал, точка выдачи, отмывщик денег (ивент ограбление).", cat = "ui" },
     -- Оформление
     { id = "colour",     label = "Цвет пропа",                      desc = "Перекраска и прозрачность.",             cat = "decor" },
     { id = "material",   label = "Материал пропа",                  desc = "Смена материала/текстуры.",              cat = "decor" },
@@ -943,6 +945,13 @@ if CLIENT then
     QM._activeTool = QM._activeTool or nil
 
     function QM.CloseMenu()
+        -- отвязать панель настроек тула, чтобы ванильное Q могло использовать её
+        if QM._toolCP and IsValid(QM._toolCP) then
+            QM._toolCP:SetParent(nil)
+            QM._toolCP:SetVisible(false)
+            QM._toolCP = nil
+        end
+        QM._settingsBody = nil
         if IsValid(QM._frame) then QM._frame:Remove() end
         QM._frame = nil
     end
@@ -954,17 +963,18 @@ if CLIENT then
         if not admin and QM._tab ~= "catalog" then QM._tab = "catalog" end
 
         -- размер окна: адаптив от экрана (гарды для стендов без ScrW/ScrH)
-        local FW, FH = 1360, 860
+        local FW, FH = 1680, 860
         if isfunction(ScrW) and isfunction(ScrH) then
             local sw, sh = ScrW(), ScrH()
             if isnumber(sw) and isnumber(sh) and sw > 0 and sh > 0 then
-                FW = math.Clamp(math.floor(sw * 0.80), 1200, 1560)
+                FW = math.Clamp(math.floor(sw * 0.94), 1500, 1920)
                 FH = math.Clamp(math.floor(sh * 0.88), 720, 980)
             end
         end
-        local HEAD_H, PAD, SIDE_W, FOOT_H = 46, 10, 238, 64
-        local CW = FW - PAD * 2 - 10 - SIDE_W          -- ширина левой (контентной) зоны
-        local toolsX = FW - PAD - SIDE_W
+        local HEAD_H, PAD, SIDE_W, SET_W, FOOT_H = 46, 10, 238, 330, 64
+        local toolsX = FW - PAD - SET_W - SIDE_W      -- колонка инструментов
+        local settingsX = FW - PAD - SET_W            -- колонка параметров инструмента
+        local CW = toolsX - PAD * 2 - 10              -- ширина левой (контентной) зоны
         local tabsY, tabsH = HEAD_H + PAD, 30
         local contY = tabsY + tabsH + 6                -- 92 при шапке 46
         local footY = FH - PAD - FOOT_H
@@ -1070,6 +1080,77 @@ if CLIENT then
         local toolsScroll = vgui.Create("DScrollPanel", toolsPane)
         toolsScroll:SetPos(4, 34) toolsScroll:SetSize(SIDE_W - 8, FH - HEAD_H - PAD - PAD - 38)
 
+        -- ── КОЛОНКА ПАРАМЕТРОВ ИНСТРУМЕНТА (как в ванильном Q) ──
+        local settingsPane = vgui.Create("DPanel", f)
+        settingsPane:SetPos(settingsX, HEAD_H + PAD) settingsPane:SetSize(SET_W, FH - HEAD_H - PAD - PAD)
+        settingsPane.Paint = function(_, pw, ph)
+            draw.RoundedBox(6, 0, 0, pw, ph, QC.panel)
+            draw.RoundedBoxEx(6, 0, 0, pw, 30, QC.head, true, true, false, false)
+            draw.SimpleText("ПАРАМЕТРЫ ИНСТРУМЕНТА", "GRMQ_Small", 10, 15, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
+        local settingsBody = vgui.Create("DScrollPanel", settingsPane)
+        settingsBody:SetPos(4, 34) settingsBody:SetSize(SET_W - 8, FH - HEAD_H - PAD - PAD - 38)
+        QM._settingsBody = settingsBody
+
+        -- Показ панели настроек выбранного тула (строит ControlPanel как ванильный Q).
+        -- Гарды на движковые API — для тест-стендов без vgui/controlpanel.
+        local function showToolSettings(toolId)
+            -- отвязать старую панель (чтобы не конфликтовать с ванильным Q)
+            if QM._toolCP and IsValid(QM._toolCP) then
+                QM._toolCP:SetParent(nil)
+                QM._toolCP:SetVisible(false)
+                QM._toolCP = nil
+            end
+            if IsValid(settingsBody) then
+                for _, ch in ipairs(settingsBody:GetChildren()) do ch:Remove() end
+            end
+            local name = tostring(toolId or "")
+            if name == "" then
+                local l = vgui.Create("DLabel", settingsBody)
+                l:Dock(TOP) l:SetTall(48) l:SetFont("GRMQ_Text") l:SetTextColor(QC.dim) l:SetWrap(true)
+                l:SetText("Выберите инструмент в списке справа — здесь появятся его параметры (например, яркость/размер источника света).")
+                return
+            end
+            local built = false
+            if isfunction(controlpanel) and isfunction(controlpanel.Get)
+                and istable(weapons) and isfunction(weapons.GetStored) then
+                local ToolObj = weapons.GetStored("gmod_tool")
+                local tool = istable(ToolObj) and istable(ToolObj.Tool) and ToolObj.Tool[name] or nil
+                local CP = controlpanel.Get(name)
+                if IsValid(CP) then
+                    pcall(function() CP:Clear() end)
+                    if tool and isfunction(tool.BuildCPanel) then
+                        local okB, errB = pcall(tool.BuildCPanel, tool, CP)
+                        if okB then built = true else print("[GRM QMenu] BuildCPanel error for " .. name .. ": " .. tostring(errB)) end
+                    end
+                    CP:SetParent(settingsBody)
+                    CP:SetPos(0, 0)
+                    CP:SetSize(settingsBody:GetWide() - 8, 300)
+                    CP:SetVisible(true)
+                    CP:Dock(TOP)
+                    pcall(function()
+                        CP:InvalidateLayout(true)
+                        CP:PerformLayout()
+                    end)
+                    -- автовысота по содержимому (контролы ControlPanel раскладываются вниз)
+                    local bottom = 0
+                    for _, ch in ipairs(CP:GetChildren()) do
+                        if isfunction(ch.GetBottom) then
+                            local b = ch:GetBottom()
+                            if isnumber(b) then bottom = math.max(bottom, b) end
+                        end
+                    end
+                    CP:SetTall(math.max(240, bottom + 12))
+                    QM._toolCP = CP
+                end
+            end
+            if not built then
+                local l = vgui.Create("DLabel", settingsBody)
+                l:Dock(TOP) l:SetTall(48) l:SetFont("GRMQ_Text") l:SetTextColor(QC.dim) l:SetWrap(true)
+                l:SetText("У инструмента «" .. name .. "» нет настраиваемых параметров.")
+            end
+        end
+
         local buildToolsPane
         local function scrollAdd(sc, pnl, mTop, mLeft)
             pnl:Dock(TOP) -- КЛЮЧЕВО: без Dock(TOP) строки скролла ложатся стопкой (баг н112)
@@ -1137,6 +1218,7 @@ if CLIENT then
                                 net.Start("GRM_QMenu_SetTool")
                                     net.WriteString(tid)
                                 net.SendToServer()
+                                if showToolSettings then showToolSettings(tid) end
                             end
                             scrollAdd(toolsScroll, row, 1, 12)
                         end
@@ -1150,6 +1232,9 @@ if CLIENT then
             end
         end
         buildToolsPane()
+
+        -- при открытии меню показываем параметры уже выбранного тула
+        if QM._activeTool and showToolSettings then showToolSettings(QM._activeTool) end
 
         -- ── ФУТЕР: действия + счётчик + активный тул + тосты ─
         local foot = vgui.Create("DPanel", f)

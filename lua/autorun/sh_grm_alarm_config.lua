@@ -37,6 +37,13 @@ A.Config = A.Config or {
     TriggerCooldown = 4,
     -- Длительность сирены (0 = пока не сбросят)
     SirenDuration = 45,
+    -- Звук сирены (зацикливается автоматически — EnableLooping в StartSiren/динамиках).
+    -- Проверенные стоковые HL2-сирены (все есть в базовом контенте GMod):
+    --   ambient/alarms/combine_bank_alarm_loop1.wav .. loop4.wav  — электронная тревога (текущая — loop4)
+    --   ambient/alarms/citadel_alarm1.wav                        — тревога Цитадели
+    --   ambient/alarms/alarm1.wav .. alarm4.wav                  — классическая сирена HL2
+    --   ambient/alarms/klaxon1.wav                               — клаксон
+    --   ambient/alarms/klaxon2.wav
     SirenSound = "ambient/alarms/combine_bank_alarm_loop4.wav",
     SirenLevel = 80,
     SirenVolume = 1,

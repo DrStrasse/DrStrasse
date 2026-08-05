@@ -79,7 +79,7 @@ function NEWS.CreateArticle(author, title, content, category)
 	end
 	
 	local article = {
-		id = #NEWS.Articles + 1,
+		id = (function() local m=0 for _,a in ipairs(NEWS.Articles) do m=math.max(m,tonumber(a.id) or 0) end return m+1 end)(),
 		author = author,
 		title = title,
 		content = content,
@@ -107,6 +107,20 @@ function NEWS.DeleteArticle(articleId)
 end
 
 -- Получение всех статей
+function NEWS.UpdateArticle(articleId, title, content, category, editor)
+    if #tostring(title or "") == 0 or #tostring(content or "") == 0 then return false, "Пустой заголовок или текст" end
+    for _, a in ipairs(NEWS.Articles) do
+        if a.id == articleId then
+            a.title = string.sub(tostring(title), 1, NEWS.Config.MaxTitleLength)
+            a.content = string.sub(tostring(content), 1, NEWS.Config.MaxContentLength)
+            a.category = string.sub(tostring(category or a.category), 1, 32)
+            a.edited = os.time(); a.editedBy = editor or "Администратор"
+            NEWS.SaveData(); return true, a
+        end
+    end
+    return false, "Статья не найдена"
+end
+
 function NEWS.GetAllArticles()
 	return NEWS.Articles
 end
@@ -131,6 +145,7 @@ if SERVER then
 	util.AddNetworkString("GRM_News_SendArticle")
 	util.AddNetworkString("GRM_News_Create")
 	util.AddNetworkString("GRM_News_Delete")
+	util.AddNetworkString("GRM_News_Update")
 	util.AddNetworkString("GRM_News_Result")
 	
 	NEWS.LoadData()
@@ -176,6 +191,13 @@ if SERVER then
 		net.Send(ply)
 	end)
 	
+	net.Receive("GRM_News_Update", function(_, ply)
+        if not ply:IsAdmin() then net.Start("GRM_News_Result"); net.WriteBool(false); net.WriteString("Нет прав"); net.Send(ply); return end
+        local id,title,content,category=net.ReadUInt(16),net.ReadString(),net.ReadString(),net.ReadString()
+        local ok,msg=NEWS.UpdateArticle(id,title,content,category,ply:Nick())
+        net.Start("GRM_News_Result"); net.WriteBool(ok); net.WriteString(ok and "Статья обновлена" or msg); net.Send(ply)
+    end)
+
 	-- Удаление статьи
 	net.Receive("GRM_News_Delete", function(len, ply)
 		local articleId = net.ReadUInt(16)
@@ -338,16 +360,28 @@ if CLIENT then
 		articleMeta:SetFont("GRMNews_Small")
 		articleMeta:SetTextColor(GRM_COLORS.text_dim)
 		
+        local selectedArticle
 		local articleContent = vgui.Create("DTextEntry", rightPanel)
 		articleContent:SetPos(20, 95)
-		articleContent:SetSize(480, 470)
+		articleContent:SetSize(480, 420)
 		articleContent:SetMultiline(true)
 		articleContent:SetEditable(false)
 		articleContent:SetFont("GRMNews_Article")
 		articleContent:SetText("")
-		
+        local editButton=vgui.Create("DButton",rightPanel); editButton:SetPos(20,530); editButton:SetSize(150,34); editButton:SetText("РЕДАКТИРОВАТЬ")
+        local deleteButton=vgui.Create("DButton",rightPanel); deleteButton:SetPos(185,530); deleteButton:SetSize(150,34); deleteButton:SetText("УДАЛИТЬ")
+        editButton:SetEnabled(false); deleteButton:SetEnabled(false)
+        editButton.DoClick=function() if not selectedArticle then return end; articleContent:SetEditable(true); articleContent:RequestFocus(); editButton:SetText("СОХРАНИТЬ") end
+        editButton.DoClick=function()
+            if not selectedArticle then return end
+            if articleContent:IsEditable() then
+                net.Start("GRM_News_Update"); net.WriteUInt(selectedArticle.id,16); net.WriteString(selectedArticle.title); net.WriteString(articleContent:GetText()); net.WriteString(selectedArticle.category or "Общее"); net.SendToServer(); articleContent:SetEditable(false); editButton:SetText("РЕДАКТИРОВАТЬ")
+            else articleContent:SetEditable(true); articleContent:RequestFocus(); editButton:SetText("СОХРАНИТЬ") end
+        end
+        deleteButton.DoClick=function() if not selectedArticle then return end; Derma_Query("Удалить статью «"..selectedArticle.title.."»?","GRM News","Удалить",function() net.Start("GRM_News_Delete"); net.WriteUInt(selectedArticle.id,16); net.SendToServer() end,"Отмена") end
 		articleList.OnRowSelected = function(lst, rowIndex, line)
 			local article = line.articleData
+            selectedArticle=article; editButton:SetEnabled(true); deleteButton:SetEnabled(true); articleContent:SetEditable(false); editButton:SetText("РЕДАКТИРОВАТЬ")
 			
 			articleTitle:SetText(article.title)
 			articleMeta:SetText("Автор: " .. article.author .. " | Категория: " .. article.category .. " | Просмотров: " .. article.views .. " | " .. os.date("%d.%m.%Y %H:%M", article.created))

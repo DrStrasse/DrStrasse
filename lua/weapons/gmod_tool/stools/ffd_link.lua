@@ -33,7 +33,8 @@ end
 
 local function isDoor(ent)
     if not IsValid(ent) then return false end
-    if ent.isFadingDoor == true then return true end -- серверное поле
+    -- Находка 173: раздвижные двери (isSlidingDoor) — тоже двери для FFD Link
+    if ent.isFadingDoor == true or ent.isSlidingDoor == true then return true end -- серверные поля
     if CLIENT then return ent:GetNWBool("FFD_IsDoor", false) == true end
     return false
 end

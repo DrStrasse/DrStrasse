@@ -140,7 +140,7 @@ function ENT:ProcessGrant(ply, fac)
             numpad.Deactivate(self.ScannerOwner, self.KeyGranted)
         end
         for _, prop in ipairs(doorList or {}) do
-            if IsValid(prop) and prop.isFadingDoor and prop.FadeDeactivate then
+            if IsValid(prop) and (prop.isFadingDoor or prop.isSlidingDoor) and prop.FadeDeactivate then
                 prop:FadeDeactivate()
             end
         end
@@ -151,6 +151,8 @@ function ENT:ProcessDeny(ply, fac)
     self:SetStatus(2)
     self:SetScannedFac(tostring(fac or ""))
     self:EmitSound("buttons/button10.wav", 75, 100)
+    -- Находка 179h: событие «отказ доступа» для сигнализации
+    hook.Run("GRM_ScannerDenied", ply, self)
 
     if IsValid(self.ScannerOwner) then
         numpad.Activate(self.ScannerOwner, self.KeyDenied)

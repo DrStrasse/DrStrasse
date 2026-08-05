@@ -26,7 +26,7 @@
       - Доступ по фракциям, рангам (Faction|Role) и категориям;
       - Ордера на обыск (/warrant, /unwarrant, /warrants) и взлом;
       - Взаимодействие через E, ключи (vehicle_keys_swep, ds_key_swep), /lock, /unlock;
-      - Интеграция с Тараном ds_battering_ram и QTE-Отмычкой ds_lockpick.
+      - Интеграция с Тараном ds_battering_ram и QTE-Взломщиком ds_lockpick.
 
     Команды:
       /door — меню двери (смотришь на дверь)
@@ -608,6 +608,18 @@ if SERVER then
             D.Data.doors[id] = rec
             for aliasID in pairs(aliases) do
                 if aliasID ~= id then D.Data.doors[aliasID] = nil end
+            end
+        end
+        if not rec then
+            local legacy = D.Data.doors[baseDoorID(ent)]
+            local partner = D.GetPartnerDoor(ent)
+            if not legacy and IsValid(partner) then legacy = D.Data.doors[baseDoorID(partner)] end
+            if legacy then
+                rec = legacy
+                rec.id = id
+                D.Data.doors[id] = rec
+                D.Data.doors[baseDoorID(ent)] = nil
+                if IsValid(partner) then D.Data.doors[baseDoorID(partner)] = nil end
             end
         end
         if not rec then
@@ -1308,6 +1320,13 @@ if CLIENT then
     -- повторяем подавление известных дублей, чтобы надписи не наслаивались.
     timer.Create("GRM_Doors_SuppressDuplicateHUD", 2, 0, function()
         for _, id in ipairs({"DarkRP_DoorHUD","doorHUD","DrawDoorInfo","HUDPaint_Doors","DoorHUD","SuperiorDoorHUD"}) do
+            if id ~= "GRM_Doors_HUD3D2D" then hook.Remove("HUDPaint", id) end
+        end
+    end)
+
+    -- Периодически снимать чужие дверные HUD (если аддон повесил их ПОЗЖЕ нас)
+    timer.Create("GRM_Doors_SuppressDuplicateHUD", 2, 0, function()
+        for _, id in ipairs({"DarkRP_DoorHUD", "doorHUD", "DrawDoorInfo", "HUDPaint_Doors", "DoorHUD", "SuperiorDoorHUD"}) do
             if id ~= "GRM_Doors_HUD3D2D" then hook.Remove("HUDPaint", id) end
         end
     end)

@@ -1126,130 +1126,2558 @@
 
 Инвентарь переведён на ключ `GRM.Char.GetActiveKey(ply)`, если character core загружен. Старый режим без `GRM.Char` оставлен один-в-один по SteamID64, включая старую rescue-цепочку находки 114. При первом переходе на `SteamID64:char1` старый инвентарь `SteamID64` переносится в `char1`; `char2/char3` получают отдельные пустые инвентари. При переключении слота персонажа `CH.SetActiveSlot` вызывает `GRM.Inventory.SyncToClient`, чтобы клиент сразу увидел инвентарь активного персонажа. Валидация: GLua 0, sim_invphone 41/41, sim_factions_live 30/30.
 
-## Находка 154 (30.07.2026): RP-chat перехватывал команды остальных модулей
+---
 
-`sh_grm_rp_chat.lua` обрабатывал любой неизвестный текст как локальную речь и возвращал пустую строку. Из-за неопределённого порядка `PlayerSay` это блокировало обработчики `/grm_arrest_admin`, `/mask` и десятков других модулей. RP Chat v1.2.0 пропускает неизвестные slash/bang-команды дальше по цепочке. Команды ареста дополнительно переведены на `PlayerSayTransform + PlayerSay fallback`, а ярлык ареста в едином админ-меню использует прямой net-запрос. Аудит обнаружил 287 литеральных имён команд в 44 PlayerSay-модулях; 28 PlayerSay-only модулей теперь защищены общим pass-through-контрактом.
+## Находка 154 (05.08.2026): перенос ветки arena/019f89cf в сессию arena/019fcf9e + ревизия тест-стенда
 
-## Находка 155 (30.07.2026): parent-escort телепортировал и наследовал вертикальные трансформации
+По указанию владельца ветка `arena/019f89cf-drstrasse` (398 коммитов, HEAD 6db05be)
+перенесена в рабочую ветку сессии `arena/019fcf9e-drstrasse` целиком
+(`git reset --hard origin/arena/019f89cf-drstrasse`); содержимое идентично.
+Полный анализ репозитория (8 веток, 2 PR, тег) — `FULL_ANALYSIS.md`.
 
-`SetParent(dragger) + Freeze(true) + SetLocalPos` ставил задержанного в локальную систему координат игрока-ведущего. Это вызывало скачок при начале сопровождения, наследование углов/высоты, рывки на лестницах и движение вверх/вниз. Сопровождение переписано на предсказываемый `SetupMove`: сохраняется исходная сторона задержанного, направление за ведущим меняется плавно по фактической горизонтальной скорости, коррекция не имеет Z-компоненты, ускорение и скорость ограничены. Большой горизонтальный/вертикальный разрыв завершает сопровождение без телепорта. Добавлен `sim_handcuff_escort.lua`.
+При первичном прогоне стенда выявлено и исправлено:
 
-## Находка 156 (30.07.2026): арест не был авторитетным запретом loadout, а камера выбиралась чужим фолбэком
+1. **`tools/glua_check.py` пропускал 11 файлов тулганов** — проверка `"tools" in root`
+   ловила подстроку в пути `lua/weapons/gmod_tool/**stools**/`. Заменено на
+   сравнение компонентов пути (`root == "./tools" or root:startswith("./tools/")`).
+   Теперь проверяется **315 файлов, 0 ошибок** (было 304).
+2. **Фаза `sidkey_trap` roundtrip-теста зависела от порядка фаз**: после
+   `corrupt_all` (намеренно портящего `grm_wallet.json`) фаза падала. Плюс
+   харнесс не грузит Identity, поэтому кошелёк бывает в двух мирах: чистые
+   sid64 (сразу после save) и CharacterKey `sid:char1` (после load — миграция
+   встроена в `characterKeyOf/persistedCharacterKey` самого ядра валюты).
+   Фаза переписана: зелёная в ОБОИХ мирах (голый парсер калечит sid64 и НЕ
+   калечит char1; `jsonT(ignoreConversions=true)` спасает всегда).
+3. **`sim_qmenu` — стаб игрока без NW-методов**: модуль зовёт
+   `ply:GetNWBool("GRM_Cuffed", false)`, стаб возвращал nil → краш. Добавлены
+   `GetNWBool/GetNWString/SetNWBool/SetNWString` в `mkPly`. 69/69.
+4. **`sim_rootboard` — стаб `FactionsAPI.IsLeader` не нормализовал плеера**:
+   реальная сигнатура `IsLeader(steamID|ply, factionName)` с `memberKey()`
+   (sh_factions.lua:1077), а стаб сравнивал объект-плеера со строкой сида —
+   лидеру молча отказывалось в настройке автозачисления. Стаб приведён к
+   конвенции API. Все проверки доски зелёные.
+5. **`sim_dealer` — устаревшее ожидание ровно одного `continue`** в
+   `sent_vehicle_dealer/init.lua` (код отрефакторен, `continue` нет, якорь
+   `hook.Add("ShutDown")` в хвосте тоже изменился). Трансформация адаптивная:
+   0 или 1 вхождение, label вставляется только при фактическом continue.
+   После этого сим вскрыл РЕАЛЬНЫЙ прод-баг (см. п.6).
+6. **РЕАЛЬНЫЙ БАГ: `sh_grm_ctx.lua:37` — `GRM.Identity.FactionMember(f, ply)`
+   без nil-гарда** в `getPlayerFaction` (C-меню). При отсутствии/отключении
+   модуля Identity (sh_grm_character) каждый запрос C-меню падал
+   «attempt to index field 'Identity' (a nil value)» — контекстное меню,
+   «Выбросить деньги», «Передать деньги» умирали целиком. Добавлен гард
+   `local hasIdentity = GRM.Identity and GRM.Identity.FactionMember`.
+   Найден симуляцией sim_dealer — классика: стенд ловит то, что не ловит
+   синтаксис.
+7. **`sim_mobile_ui` — задокументирован как устаревший**: тест написан под
+   полноценный клиентский UI Mobile v1.2.2 (репит-клок, SMS-треды, контакты),
+   а модуль ветки — намеренно упрощённая v2.0.1 (см. шапку sh_grm_mobile.lua:
+   «этот файл не восстанавливает полноценный UI»). Серверный контракт покрыт
+   `sim_mobile` 121/121 и `sim_invphone` 41/41. Пометка добавлена в шапку теста;
+   при возврате полноценного UI тест вернуть в регресс.
 
-Арестованный оставался cuffed, поэтому handcuffs мог снова выдать `grm_cuffed`; параллельно `ApplyWeaponsToPlayer` из `/weapons_admin` безусловно делал `Give`, а `chooseCamera/chooseSpawn` при ошибке брали первый объект другой категории. В Arrest v1.1.0 введён единый `EnforceUnarmed`: StripWeapons + RemoveAllAmmo, очистка сохранённого cuff-loadout, блок PlayerLoadout/pickup/equip, fail-safe 0.25 с и гейт в Factions Extended. При аресте также очищается GRM Inventory, а AddItem/AddWeapon запрещены до освобождения. Категории стали авторитетными владельцами списков cameraIDs; старые camera.group мигрируют автоматически. Авторазрешение уголовники/гауптвахта сортируется по autoPriority, камера выбирается среди назначенных и валидных по минимальной занятости, без глобальных фолбэков; респавн возвращает заключённого в назначенную камеру. Стенд `sim_arrest.lua`: 26 проверок.
+**Итог стенда после фиксов:** GLua 315/0; roundtrip 14/14 (канонический
+порядок фаз: save load sidkey_trap bank_nick_mirror bank_reconcile_attack
+bank_boot_pick_fresh perm corrupt corrupt_all treasury_corrupt fmt_array_sid
+fmt_array_nick fmt_mapnum fines); sim-стенды 15/16 (единственный красный —
+sim_mobile_ui, см. п.7). Порядок фаз roundtrip важен: corrupt-фазы намеренно
+портят файлы данных — sidkey_trap и зеркальные фазы гонять ДО них.
 
-## Находка 157 (30.07.2026): одна физическая дверь имела два map entity с разными владельцами
+---
 
-Канонизация по `FindInSphere(origin, 12)` не работала на картах, где механизм и визуальное полотно одной двери имеют разные origin. При наведении на разные участки игрок попадал то в запись «Фракция: Полиция», то в отдельную «Ничья». Doors v2.0.6 строит union-find-кэш дверей по пересечению WorldSpaceAABB, вертикальному overlap и дистанции центров. Соседние/касающиеся двери не склеиваются. `GetEquivalentDoors` синхронизирует NW owner/title/lock и engine Lock/Unlock для всех представлений. При миграции из нескольких legacy ID выбирается наиболее содержательная запись (владелец > ничья), алиасы удаляются и база пересохраняется. Отдельно визуализация камер ареста сокращена до компактной superadmin-only подписи без сфер и лучей. Стенды: `sim_doors_identity` 10/10, `sim_arrest` 28/28.
+## Находка 155 (05.08.2026): электроника v1.5.1 — автосейв, интеграции, торгаш электроникой; проверка админ-хаба и меню сохранений
 
-## Находка 158 (30.07.2026): электродубинка имела неподходящий holdtype и несинхронный минимальный удар
+По заказу владельца: «исправить сохранение электроники, компьютеров, роутеров;
+проверить единое админ-меню и единое меню сохранений; сделать торговца
+электроникой по аналогии с системой торгашей».
 
-Старый SWEP использовал `melee2`, выполнял проверку попадания сразу и ограничивался одним swing/impact WAV; `HC.StunPlayer` дополнительно повторял impact. Новый SWEP следует standard stunstick contract: одноручный `melee`, ACT_VM_HITCENTER + HL2MP melee gesture, playback 1.18, delayed impact 0.12, lag compensation и hull trace. Звуки deploy/holster/swing/player-hit/world-hit разделены; добавлены StunstickImpact, ViewPunch, ScreenFade и ScreenShake. Урон не создаётся. Stun API получил options silent/silentNotify, а SWEP имеет собственные StartCommand/SetupMove guards на случай отсутствия handcuffs core. Стенд `sim_electro_baton`: 15/15.
+Модуль GRM Electronics & Network (компьютеры/роутеры/принтеры/розетки/штекеры/
+кабели, GRM NET OS) перенесён с ветки 019fb265 (там он жил без интеграций и с
+классической дырой сохранения) в базу 019f89cf и доработан:
 
-## Находка 159 (30.07.2026): длительность электродубинки увеличена до 20 секунд
+1. **АВТОСЕЙВ ПО DIRTY-ФЛАГУ (v1.5.0 → v1.5.1).** Раньше карта
+   (`grm_electronics/<map>.json`) и база (`database.json`: аккаунты/файлы/почта)
+   писались ТОЛЬКО при ShutDown и в явных операциях — килл процесса/краш
+   сервера терял всё за окно (класс саги валюты, находки 46–63). Теперь:
+   `E.DirtyMap/E.DirtyDB` ставятся на любой мутации (RegisterDevice/
+   UnregisterDevice/HandleDeviceRemoved — в т.ч. спавн через spawnmenu),
+   флаш `GRM_Net_AutoSave` раз в 5с пишет оба файла; ShutDown-сейв остался
+   страховкой. `SaveMap/SaveDB` сбрасывают флаг только при успешной записи
+   (read-back уже был). Дополнительно `LoadMap` чистит мёртвые записи
+   `E.Devices` перед восстановлением — антидубль `DeviceByID` больше не
+   находит невалидные объекты после cleanup.
+2. **Единое меню сохранений (`/grm_persistence`):** добавлена строка
+   «Электроника и сеть» (сервер: `electronics = { save = E.SaveAll, load =
+   E.LoadAll }` + в список all_save/all_load; клиент: карточка с описанием).
+3. **Единое админ-меню (`/grm_admin`):** вкладка «Меню» → «Электроника и сеть»
+   (быстрый запуск `/grm_network_admin`); вкладка «Сервер» → версия модуля в
+   списке и счётчик «Устройств сети» (из `E.Devices`).
+4. **Q-меню:** тулы `grm_network_tool` и `grm_vendor_tool` добавлены в
+   `QM.ToolCatalog` (категория «Интерфейс») — видны в «GRM Стройке».
+5. **ТОРГОВЕЦ ЭЛЕКТРОНИКОЙ (тип `electronics` в Vendor Framework):** каталог
+   `V.Catalogs.electronics` — компьютер (15000), Wi-Fi роутер (8000), сетевой
+   принтер (10000), розетка (2500), штекер (2000); модель NPC — `breen.mdl`;
+   покупка спавнит устройство рядом (isEntity, noSell — не скупается) и сразу
+   привязывает владельца через `GRM.Electronics.Claim` (ownerKey/ownerName),
+   дальше устройство попадает в автосейв карты — **переживает рестарт без
+   /permadd**. Тулган `grm_vendor_tool`: тип «Электроника» в комбо; UI-киоск:
+   заголовок «🖥️ Электроника» и иконка вкладок.
+6. **Проверка меню стендом:** новый `tools/luatest/sim_admin_hub.lua` (29
+   проверок) грузит РЕАЛЬНЫЕ `sh_grm_admin_hub.lua` и
+   `sv_grm_persistence_hub.lua`: открытие только суперадмином, все 6 вкладок
+   отдают payload без ошибок, действия qToggle/accSet/econState применяются и
+   не-админу недоступны, all_save/all_load дёргают ВСЕ модули (включая
+   electronics и рудные узлы через GRM_SaveEntities), точечная
+   `electronics_save` не задевает соседей.
+7. **Тесты электроники адаптированы под контракт ветки:** sim_electronics
+   52/52 (версия 1.5.1; денежный принтер v2.0.0/maxHealth=100 — физический
+   урон v2.1 остался контрактом другой сессии), sim_electronics_runtime 8/8.
 
-`weapon_grm_electro_baton` теперь передаёт в общий stun-контур 20 секунд во всех путях, включая автономный fallback. Верхняя граница `HC.StunPlayer` поднята с 12 до 30 секунд, иначе запрошенные 20 секунд молча обрезались бы до 12.
+Итог: GLua 339/0; roundtrip 14/14; симы 18 шт.: 17/18 зелёные (единственный
+красный — задокументированный sim_mobile_ui под несуществующий UI v1.2.2).
+Файлы данных: `grm_electronics/<map>.json` + `grm_electronics/database.json`
+(+ .backup при каждой записи, read-back, jsonT с ignoreConversions=true).
 
-## Находка 160 (30.07.2026): закрытая кастомизация должна рисоваться в том же кадре, что и скелет
+---
 
-PAC-подобное универсальное Think-позиционирование создаёт визуальное отставание: кость обновилась в анимационном кадре, а отдельная entity получила позицию раньше/позже и «догоняет» владельца. GRM Closed Customization не копирует PAC3 (GPLv3) и использует узкий безопасный контракт. ClientsideModel кэшируется, остаётся NoDraw и рисуется один раз в PostPlayerDraw непосредственно из GetBoneMatrix этого кадра через LocalToWorld + SetRenderOrigin/Angles. FrameNumber guard исключает двойную отрисовку; отсутствуют SetPos/SetParent и сетевые preview-пакеты. Сервер авторитетно хранит каталог, владение item, CharacterKey-loadout и clamps Position ±48 / Scale 0.2–3 / angles normalized. Добавлены 6 equipment slots в Inventory, orbit editor, admin catalog, accessory-vendor и persistence hub. Стенды: `sim_customization` 22/22, `sim_customization_runtime` 13/13.
+## Находка 156 (05.08.2026): дилер v3.1.1 — зона спавна, настраиваемая высота выдачи; устранён краш SetHasSpawnZone
 
-## Находка 161 (30.07.2026): два net.ReadTable внутри аргументов могли поменять catalog/loadout местами
+Репорт владельца: «зона спавна транспорта у диллера не работает; не могу настроить
+высоту спавна — машина спавнится ниже и уходит под землю» + консольная ошибка
+`sh_grm_vehicle_dealer.lua:37: attempt to call method 'SetHasSpawnZone' (a nil value)`
+(apply → LoadDealers).
 
-`openEditor(net.ReadTable(), net.ReadTable())` зависел от порядка вычисления аргументов Lua, который не является контрактом. На клиенте таблица экипировки могла стать каталогом, а каталог — loadout: предмет исчезал из equipment slot ровно при открытии редактора. Чтение разделено на последовательные локальные `catalog`, затем `loadout`. Дополнительно редактор выбирает первый занятый slot вместо безусловного `head`, а кнопки имеют живую подсветку выбранного слота. Стенды: customization 24/24, runtime 13/13.
+Разбор:
+- У владельца на сервере остался `sh_grm_vehicle_dealer.lua` (система дилера v3 с
+  площадками выдачи) от прошлой сессии, а энтити в пакете — старая толстая
+  реализация (init 1305 строк, Код 82) БЕЗ методов SpawnZone → краш при загрузке
+  дилеров.
+- В базе 019f89cf этой системы не было вовсе: v3 жила на ветке 019fb265
+  (sh_grm_vehicle_dealer.lua + тонкие shared/init/cl_init + тулган + sim-тест).
+- Плюс в v3 высота выдачи была захардкожена `+8` юнитов над землёй — для многих
+  машин (низкая подвеска, simfphys) этого мало, машина «проседала» в пол.
 
-## Находка 162 (30.07.2026): PostPlayerDraw не гарантирован для LocalPlayer в редакторе
+Сделано (перенос полного комплекта v3 + фиксы):
+1. **Перенесена система v3** (замена старого дилера): `sh_grm_vehicle_dealer.lua`,
+   `entities/sent_vehicle_dealer/{shared,init,cl_init}.lua` (тонкие, NetworkVars
+   SpawnZoneMin/Max/HasSpawnZone), `vehicle_dealer_tool.lua` (единый тулган:
+   ЛКМ создать / ПКМ ассортимент / R удалить / Shift — площадка двумя углами,
+   Shift+R — очистить), `vehicle_dealer.lua` заменён на v3 compatibility bridge.
+2. **Настраиваемая высота (v3.1.0 → v3.1.1):**
+   - слайдер «Подъём транспорта над землёй» (0–100, дефолт 30) в панели тулгана
+     (`vehicle_dealer_tool_lift`);
+   - значение сохраняется в записи дилера (`lift` в DealerRecord/apply) и на
+     энтити (`dealer.VD_Lift`);
+   - `FindDeliveryPosition`: подъём `ground.HitPos + Vector(0,0,lift)` вместо +8,
+     трасса земли от верхней грани зоны (mx.z+240 → mn.z-340) — не зависит от
+     высоты, на которой админ кликал углы;
+   - `VD.Spawn`: повторный ground-trace тоже с lift (+ fallback, если StartSolid);
+   - после создания машины (любой способ: source/simfphys/LVS/scripted) —
+     `pcall(ent.DropToFloor)` — машина гарантированно садится на поверхность,
+     а не остаётся висеть или проваливаться.
+3. **Интеграции под v3:** Q-меню — тулы `vehicle_dealer_tool` и `grm_door_admin`;
+   перм-система — `sent_vehicle_dealer` УБРАН из PERM_CLASSES (своя
+   персистентность v3, перм-дубль создавал конфликт восстановления); единое
+   меню сохранений — строка «Дилеры и гаражи» (SaveAll/LoadAll) в all_save/
+   all_load; двери — периодический `GRM_Doors_SuppressDuplicateHUD` (снятие
+   чужих дверных HUD, если аддон повесил их позже нас).
+4. **Совместимость сохранена:** Tab-меню (VD_RequestVehicleList/VD_VehicleList/
+   VD_AdminSpawnVehicle регистрируются v3), C-меню (`_G.VD_RemoveDealerVehicle`),
+   ключи (v3 зовёт `VK.SetPlayerOwner`), старые дилеры мигрируются
+   `migrateLegacyDealers()` из `grm/dealers/*.json`, точки выдачи → площадки.
+5. **Тесты:** `sim_dealer.lua` (под старую систему) заменён на
+   `sim_vehicle_dealer_v3.lua` (21/21, перенесён с 019fb265, версия 3.1.1);
+   `sim_admin_hub.lua` дополнен моком VehicleDealer (31/31).
 
-На части third-person/gamemode-конфигураций локальная модель показывалась через CalcView, но `PostPlayerDraw(LocalPlayer)` не вызывался. Equipment state оставался надетым, однако противогаз визуально исчезал только внутри редактора. Добавлен editor-only fallback после translucent stage: SetupBones + общий drawAccessories. FrameNumber guard сохраняет единственную отрисовку за кадр. Дополнительно вход больше не вызывает clearPlayerCache для LocalPlayer, исключая искусственный разрыв жизненного цикла ClientsideModel. Стенды: customization 26/26, runtime 13/13.
+Итог: GLua 340/0; roundtrip 14/14; симы 19 шт.: 18/19 зелёные (единственный
+красный — задокументированный sim_mobile_ui). dist пересобран.
 
-## Находка 163 (30.07.2026): equipment slots были только кнопками редактора, а не приёмниками предмета
+---
 
-На скриншоте противогаз оставался в обычной ячейке Inventory, а все equipment slots показывали «пусто». Клик по «Голова» лишь открывал редактор, поэтому пользователь ожидал надетый предмет, хотя серверный transfer Inventory→loadout вообще не выполнялся. Реализован явный `equip_inventory`: Drag&Drop определяет equipment slot под курсором; также работает «выделить аксессуар → кликнуть слот». Сервер повторно читает реальный inventory slot, сверяет catalog slot, запрещает подмену и только затем RemoveFromSlot + loadout insert + sync. Inventory закрывается перед редактором. Стенды: customization 29/29, runtime 13/13.
+## Находка 157 (05.08.2026): точки спавна — единый формат сохранения, выбор ролей/отделов из factions.json, редизайн меню
 
-## Находка 164 (30.07.2026): editor-open не должен повторно передавать equipment loadout
+Заказ владельца: «исправить дизайн меню спавн-точек, нормально сделать выбор
+ролей и отделов из factions.json, а не ручной ввод; сохранение точек спавна
+должно работать».
 
-Даже после последовательного чтения второй table-пayload оставался лишней точкой, способной заменить живой client loadout пустым состоянием. Open-протокол разделён окончательно: сервер делает C.SyncPlayer(owner, owner), затем GRM_Custom_Open несёт только Catalog. Reliable порядок net-сообщений гарантирует актуальные slots до построения UI, а openEditor использует C.ClientLoadouts[LocalPlayer]. Добавлены серверные UnequipSlot/UnequipAll и чат-команды `/accessories_off`, `/acc_remove <slot>`, `/снятьаксессуары`; возврат в Inventory происходит до удаления equipment-записи. Стенды: customization 30/30, runtime 14/14.
+Разбор (`lua/autorun/sh_spawn_points.lua`):
+1. **Сохранение было сломано форматом.** `AddSpawnPointForFaction` писал в
+   `spawn_points_factions_<map>.json` ГОЛЫЙ массив точек (`{[fac]={...}}`), а
+   role/dept-функции — объект `{points=...,roles=...,departments=...}`. Загрузчик
+   при этом присваивал полученное значение в `f.SpawnPoints` и НЕ восстанавливал
+   `RoleSpawnPoints`/`DepartmentSpawnPoints` вовсе. Итог: после рестарта точки
+   ролей/отделов пропадали, а после сохранения через «Добавить точку фракции»
+   файл переписывался в старый формат и даже общие точки «терялись»
+   (`#` по объекту = 0).
+2. **UI требовал ручного ввода** роли/отдела (DTextEntry «Название роли…») —
+   легко опечататься, роль «Офицер » с пробелом не совпадала с `f.Members[].Role`.
+3. **Дизайн** — стандартный серый скин, вложенные DPropertySheet без стилизации.
 
-## Находка 165 (30.07.2026): повторный Sync и Scale уничтожали render cache во время редактора
+Сделано:
+1. **Единый формат хранения**: всегда `{[fac] = {points=..., roles=...,
+   departments=...}}`. Новые `factionBundle(f)` + `saveAllFactionSpawnPoints()`;
+   ВСЕ операции (фракция/роль/отдел, add/remove) пишут единый формат.
+   `reloadSpawnPoints` восстанавливает все три таблицы и МИГРИРУЕТ легаси-файл
+   (голый массив → `{points=...}`) с одноразовым пересохранением.
+2. **Чтение/запись по правилам проекта**: jsonT (ignoreConversions=true, н65)
+   + saveJson с pcall и read-back (file.Write не возвращает результат).
+3. **Выбор из factions.json**: `buildSpawnData` теперь шлёт клиенту
+   `rolesList`/`departmentsList`/`leaderRole`/`leader`/`memberCount` (из
+   живых `Factions`, которые загружены из factions.json); на клиенте — тёмные
+   DComboBox вместо текстовых полей (+ легаси-роли с точками тоже видны);
+   СЕРВЕРНАЯ валидация: роль должна существовать в `f.Roles` (или быть
+   `LeaderRoleName`), отдел — в `f.Departments` (если списки заданы) — иначе
+   отказ с внятным сообщением, мусорные точки не создаются.
+4. **Редизайн меню** в стиле GRM (как админ-хаб): шапка 46px с заголовком и
+   счётчиком «Всего точек», кастомный крестик, тёмные вкладки с подсветкой
+   активной, вкладка фракции с инфо-строкой (лидер/ролей/отделов/состав),
+   карточки точек с углами и кнопкой «Удалить», поиск/телепорт/экспорт.
+5. **Тест**: новый `tools/luatest/sim_spawn_points.lua` (25 проверок):
+   единый формат файла, восстановление после «рестарта», миграция легаси,
+   валидация ролей/отделов, meta-данные из factions.json в payload, приоритет
+   выбора точки (роль → отдел → фракция → глобал).
 
-При save_transform сервер делал SyncPlayer, а клиент безусловно clearPlayerCache: видимая ClientsideModel удалялась в активном редакторе и на некоторых render-пайплайнах не восстанавливалась. Scale slider также удалял cache на каждое OnValueChanged. Sync заменён на reconcile: сохраняется entity/сглаженное состояние, удаляются только снятые slots или реально заменённые models. Scale обновляется на существующей entity. Локальные Position/Angles/Scale интерполируются, но bone matrix не сглаживается. Добавлены draggable XYZ world gizmo и точные удерживаемые стрелки с шагом до 0.05. Стенды: customization 34/34, runtime 14/14.
+Итог: GLua 340/0; roundtrip 14/14; симы 20 шт.: 19/20 зелёные (единственный
+красный — задокументированный sim_mobile_ui). dist пересобран.
 
-## Находка 166 (30.07.2026): lastFrame мог фиксировать невидимый промежуточный LocalPlayer draw-pass
+---
 
-Скриншот доказал, что slot/loadout и bone matrix существуют (XYZ-гизмо рисовался), но модель отсутствовала. Причина: PostPlayerDraw для LocalPlayer иногда проходит в промежуточном third-person framebuffer. drawAccessories выставлял entry.lastFrame, затем финальный editor fallback видел тот же FrameNumber и не выполнял DrawModel. В редакторе обычный LocalPlayer PostPlayerDraw теперь пропускается; единственная отрисовка идёт поздним fallback после SetupBones. Render group изменён OPAQUE→BOTH, render state аксессуара нормализуется. Стенды: customization 36/36, runtime 14/14.
+## Находка 158 (05.08.2026): сборка всех изменений на базе ветки 019fb265 (квесты/аугментации/новости/компьютеры)
 
-## Находка 167 (30.07.2026): PostDrawTranslucent вызывается также для depth/skybox до финального экрана
+Владелец: «нужна ветка где лежат квесты, аугментации, новости, компьютеры —
+туда собирай все изменения». Такой веткой является `arena/019fb265-drstrasse`.
 
-Даже editor-only fallback мог первым выполниться в depth/skybox pass, записать lastFrame и оставить main framebuffer без модели; XYZ-гизмо при этом был виден, потому что не имел frame guard. Hook теперь принимает drawingDepth/drawingSkybox/drawing3DSkybox, пропускает вспомогательные проходы и вызывает drawAccessories(localPlayer, true) только в main view. Это устраняет исчезновение при сохранённом slot/bone и работает с любыми смонтированными addon `.mdl` через RENDERGROUP_BOTH. Одновременно editor gizmo получил mode move/rotate: XYZ arrows или три axis rings, screen-space hit-test сегментов, tangent drag и отдельные fine steps для юнитов/градусов. Стенды: customization 39/39, runtime 14/14.
+Сделано (merge `-X theirs`, их дерево — основа, поверх повторно применены наши
+фиксы находок 154–157):
+- **База — 019fb265 целиком**: квесты (`sh_grm_quests.lua` + `grm_quest_npc`),
+  аугментации (`sh_grm_augmentations.lua` + чипы/станция/под), новости
+  (`sh_grm_news.lua`), компьютеры/сеть (`sh_grm_electronics.lua` +
+  `grm_net_{device,computer,router,printer,socket,plug,document}`), кастомизация,
+  их 36 sim-тестов (все зелёные против их ядра).
+- **Поверх наложены наши фиксы**: электроника v1.5.1 (автосейв по dirty 5с,
+  интеграция в persistence hub), дилер v3.1.1 (настраиваемая высота спавна,
+  слайдер в тулгане), точки спавна v157 (единый формат сохранения, выбор
+  ролей/отделов из factions.json, редизайн меню), фиксы стенда (glua_check
+  stools, roundtrip sidkey_trap, sim_qmenu/rootboard стабы), nil-гард
+  `GRM.Identity.FactionMember` в sh_grm_ctx, `GRM.Electronics.Claim` при
+  покупке сетевых устройств у торгаша.
+- **Интеграции объединены**: persistence hub — все строки (phone…perm,
+  electronics, vehicle_dealers, customization, vendors, quests); админ-хаб —
+  MENU_LINKS от обеих веток (Quest Studio, Аугментации, чипы, аксессуары,
+  розыск, Электроника/сеть, Точки спавна, Дилеры и гаражи), версии и счётчики
+  (аугментации/чипы/устройства сети); Q-меню — 4 GRM-тула (сеть/торгаш/дилер/
+  двери); sim_dealer.lua удалён (тест под старую толстую реализацию дилера).
+- **Исправлены 3D2D-метки** чипа и станции аугментаций (`LocalPlayer():EyeAngles()`
+  → `Angle(0, EyeAngles().y - 90, 90)` — метка следует за камерой рендера,
+  контракт sim_world_labels).
 
-## Находка 168 (30.07.2026): функциональность аксессуара должна быть серверным whitelist-флагом, а не кодом каталога
+Итог: **364 LUA-файла, lua/ ≈ 4.9 МБ** (как и ожидал владелец); GLua 364/0;
+roundtrip 14/14; симы **36/36** (включая sim_mobile_ui — их версия под их ядро).
+dist пересобран; открыт PR в `arena/019fb265-drstrasse`.
 
-Каталог расширен `functions` + `functionConfig`, но принимает только ID из закрытого C.FunctionTypes. Встроены gasmask/backpack/radio/watch/armor. Противогаз и броня модифицируют только соответствующие DamageInfo bits с clamp; backpack суммирует разрешённый capacity bonus в Encumbrance; RadioNet.HasRadioUnit консультирует надетую рацию; watch/gasmask имеют клиентский status HUD. Equip/unequip вызывают безопасные callbacks зарегистрированного GRM function type и глобальные hooks, но ни JSON, ни клиент не передают функции. Админ UI получил 5 checkbox и числовые пределы. Стенды: customization 45/45, runtime 17/17.
+---
 
-## Находка 169 (30.07.2026): кнопка без server ACK выглядит мёртвой даже при успешной записи
+## Находка 159 (05.08.2026): дилер v3.1.2 — точка выдачи вместо зоны, выбор направления, высота
 
-Добавлен GRM_Custom_Ack (ok/action/message) для equip, save_transform, save_all_close, unequip и admin save/delete. Клиент разделяет мгновенный click/adjust/reset sound и окончательное server-confirmed success/error notification. Gizmo release и смена кости помечаются как preview, чтобы игрок понимал необходимость сохранения. Стенды: customization 47/47, runtime 17/17.
+Владелец: «вместо зоны спавна транспорта лучше сделать точку спавна с выбором
+направления (лево/право и т.д.) + настройка высоты».
 
-## Находка 170 (30.07.2026): generic Perm знал класс grm_vendor, но не сохранял его экземплярный тип
+Сделано (lua/autorun/sh_grm_vehicle_dealer.lua v3.1.1 → v3.1.2 + тулган):
+1. **Точка вместо площадки.** Новый режим: Shift+ЛКМ по дилеру → выбрать;
+   Shift+ЛКМ (или ПКМ) по земле — поставить ОДНУ точку выдачи
+   (`VD.SetSpawnPoint(dealer, pos, ang, lift)`): сохраняется spawnPos +
+   spawnAngle + высота; двухугловой режим площадки убран из тулгана.
+   `VD.ClearSpawnPoint` — очистка (Shift+R).
+2. **Выбор направления** — в панели тулгана комбобокс
+   `vehicle_dealer_tool_direction`: «По взгляду при установке», «Вперёд от
+   дилера», «Назад», «Влево», «Вправо», «Север (0°)», «Восток (90°)»,
+   «Юг (180°)», «Запад (270°)». Угол применяется при постановке точки.
+3. **Высота** — слайдер `vehicle_dealer_tool_lift` (0–100, дефолт 30),
+   сохраняется в записи дилера (как в v3.1.1).
+4. **Визуализация**: жёлтый маркер-квадрат в точке выдачи + оранжевая линия
+   направления (по spawnAngle) + подпись «ТОЧКА: имя • высота N». Старые
+   зоны по-прежнему рисуются рамкой (совместимость).
+5. **FindDeliveryPosition**: ветка точки — ground-trace от spawnPos (+180/−300),
+   подъём на lift, TraceHull на габариты машины (если занято — до 3 попыток
+   выше, иначе «Точка выдачи занята»); зонный путь и фолбэк «перед дилером»
+   сохранены. apply больше НЕ превращает точку в зону (hasSpawn без зоны =
+   точка) — старые точки/зоны читаются корректно.
+6. **Тест** sim_vehicle_dealer_v3.lua обновлён до 26/26 (SetSpawnPoint/
+   ClearSpawnPoint, сообщение «Точка выдачи занята», direction-комбобокс,
+   маркер «ТОЧКА:», варианты вперёд/влево/вправо).
 
-`grm_vendor` был разрешён в PERM_CLASSES, однако делегат PermData для него не регистрировался: после рестарта мог появиться дефолтный weapon-vendor без CustomPrices/CustomLimits. Создана отдельная per-map база GRM Vendor со stable ID и полным record. Spawn/load дедупит по ID/позиции, Apply восстанавливает тип/model/prices/limits, tool spawn/config/remove пишут базу автоматически. Legacy generic records текущей карты мигрируют и удаляются из общего perm-файла; класс исключён из PERM_CLASSES. Unified persistence получил vendors save/load и исправленный учёт false/detail return. Стенд `sim_vendor_persistence`: 10/10.
+Итог: GLua 364/0; roundtrip 14/14; симы 36/36. dist пересобран.
 
-## Находка 171 (30.07.2026): save-all и tool R могли сами уничтожить vendor persistence
+---
 
-Первая версия SaveMapVendors строила новый массив только из `ents.FindByClass` и перезаписывала файл: после cleanup/ручного удаления Save превращал базу в `[]`. Кроме того, Tool R вызывал RemoveVendorSave, поэтому тест «сохранить → удалить live NPC → загрузить» закономерно ничего не восстанавливал. Save-all заменён merge/upsert по stable ID, отсутствующие records сохраняются до явного unsave. R удаляет только entity; `/vendor_unsave [id]` — единственный путь удаления записи. Load пустой базы теперь false, а hub показывает created/healed/failed. Стенд 10/10 дополнен ловушкой empty-live save.
+## Находка 160 (05.08.2026): высота спавна не влияла — DropToFloor обнулял подъём; фикс v3.1.3
 
-## Находка 172 (30.07.2026): ignoreConversions мог оставить индексы vendor-массива строками
+Владелец: «высота, сколько бы я её ни крутил, ни на что не влияет».
 
-SaveVendor подтверждал file.Write сравнением raw, но readRecords обходил JSON через ipairs. На некоторых реализациях JSONToTable с ignoreConversions=true wrapper/array indices остаются string keys; ipairs немедленно завершался и Load сообщал «база пустая». Формат обновлён до v2 wrapper, reader поддерживает v1/v2 и всегда нормализует records через pairs в плотный массив. Writer делает parse read-back и сверяет count. Стенд теперь 12/12, включая искусственную vendors["1"] ловушку.
+Причина (аудит полного пути lift → spawn):
+- В `VD.Spawn` значение высоты корректно доезжало до точки `p`, но СРАЗУ после
+  создания машины выполнялось `pcall(ent.DropToFloor)` — DropToFloor ставит
+  транспорт НА ЗЕМЛЮ, обнуляя любой подъём. Плюс simfphys-путь (`simfphys.
+  SpawnVehicle`) внутри сам сажает машину по физике (тоже мимо нашей p).
 
-## Находка 173 (30.07.2026): Vendor v1 смешивал UI, transaction и persistence-контракты
+Фикс v3.1.3:
+- Высота применяется ПОСЛЕ посадки: `DropToFloor()` → `ent:SetPos(ent:GetPos() +
+  Vector(0,0,lift))`;
+- для simfphys посадка асинхронная (физика сажает колёса после спавна) — через
+  0.15с повторный подъём `SetPos(b2 + Vector(0,0,lift))`, чтобы высота реально
+  «прилипла»;
+- направление (spawnAngle) по-прежнему задаёт ориентацию машины.
 
-Vendor v1 доверял разрозненным полям, списывал деньги до гарантированной выдачи и неверно трактовал Inventory.RemoveItem: API возвращает remaining, а код начислял деньги именно за remaining. Также instance config не включал enabled assortment/display name/per-NPC model. Vendor v2 разделён: shared authoritative catalog API; entity transaction/payload; GRM customer UI; GRM tool config; dedicated stable-ID persistence. Покупка grant-before-charge, продажа requested-remaining, все операции distance/rate/limit/license gated. enabledItems хранит явные true/false (пустой legacy map = всё), функциональные flags аксессуаров доходят до карточки. Persistence сохраняет name/model/stock/prices/limits и дедупит load. Стенды: vendor_v2 15/15, vendor_persistence 13/13, roundtrip 14/14.
+Тест sim_vehicle_dealer_v3 → 27/27 (проверка «lift re-applied after drop and
+after async simfphys settle»). GLua 364/0; roundtrip 14/14; симы 36/36.
+dist пересобран.
 
-## Находка 174 (30.07.2026): Vehicle Dealer нельзя стабилизировать дополнительными patch hooks
+---
 
-Старый dealer был 1305 server + 992 client + 294 tool строк и дополнительно патчился `vehicle_dealer.lua`, anim-fix, context menu и access hooks. Несколько PlayerUse/net/persistence контуров создавали наслаивание и непредсказуемый save. V3 заменяет реализацию: один core, thin entity, один transaction receiver и один GRM UI. Гараж хранится по CharacterKey, dealer map records отдельно, generic Perm исключён. Active vehicle имеет GarageID; store/disconnect переводит persistent record в stored, retrieve восстанавливает через Source/simfphys/LVS factory, sell удаляет запись. Старые dealer JSON мигрируют. Tool/admin/hub используют те же API. Стенд dealer_v3 16/16; старый sim_dealer перенаправлен на v3.
+## Находка 161 (05.08.2026): «Стройка+» — панель параметров выбранного инструмента (как в ванильном Q)
 
-## Находка 175 (30.07.2026): door overlay может зарегистрироваться после первоначального hook.Remove
+Владелец (со скриншотами): «доработать, чтобы справа сбоку от вкладки
+инструментов отражались настройки инструментов, их параметры как в обычном
+Q-меню, чтобы игроки могли настраивать источник света и прочее».
 
-Одноразовое подавление при загрузке GRM не гарантировало отсутствие позднего DarkRP/legacy DoorHUD. Добавлен малочастотный suppress timer известных IDs и единый door-admin tool в Q-каталог. Tool работает через уже существующий canonical identity cache и не создаёт собственных записей/оверлеев.
+Сделано (клиентская часть lua/autorun/sh_grm_qmenu.lua):
+1. **Новая колонка «ПАРАМЕТРЫ ИНСТРУМЕНТА»** справа от списка инструментов
+   (SET_W=330, окно расширено: FW = clamp(sw*0.94, 1500..1920)).
+2. **showToolSettings(toolId)** — строит панель настроек выбранного тула через
+   штатный GMod API: `weapons.GetStored("gmod_tool").Tool[id]` → `tool.BuildCPanel`
+   → `controlpanel.Get(id)` (Clear + BuildCPanel, вставка в DScrollPanel,
+   автовысота по детям). Работает для ВСЕХ инструментов с BuildCPanel —
+   ванильных (light: яркость/размер/дистанция, weld, remover…) и наших GRM-тулов
+   (grm_vendor_tool, vehicle_dealer_tool, grm_network_tool, grm_quest_tool,
+   grm_door_admin, grm_minimap).
+3. **Вызовы:** клик по инструменту в списке → showToolSettings(tid); при
+   открытии меню → показ параметров уже активного тула; заглушка «Выберите
+   инструмент…» / «нет настраиваемых параметров».
+4. **Отвязка при закрытии** (CloseMenu → CP:SetParent(nil)) — чтобы не
+   конфликтовать с ванильным Q при playersQ=true.
+5. Гарды на движковые API (controlpanel/weapons.GetStored) — тест-стенды не
+   падают; BuildCPanel под pcall (ошибка тула не роняет меню, пишется в консоль).
 
-## Находка 176 (30.07.2026): registry key транспорта не всегда совпадает с аргументом spawn backend
+Проверки: GLua 364/0; sim_qmenu 69/69; sim_rootboard OK; симы 36/36;
+roundtrip 14/14. dist пересобран.
 
-В V3 первая фабрика искала только точный simfphys key и звала один SpawnVehicle; старый рабочий дилер дополнительно учитывал data.SpawnList и SpawnVehicleSimple. Для LVS часть аддонов требует SpawnFunction, а не голый ents.Create(data.Class). Восстановлена многоступенчатая фабрика с pcall diagnostics: exact sim → simple → scan SpawnList → LVS SpawnFunction/entity → Source KeyValues/VehicleScript → direct scripted entity. Надпись дилера переведена на сетевой DealerName и OBB top. Стенд dealer_v3 18/18.
+---
 
-## Находка 177 (30.07.2026): admin hub не должен эмулировать команды через say
+## Находка 162 (05.08.2026): Биоконтроль — интерфейс аугментаций с 019fbd57 + кнопка в инвентаре
 
-Кнопки hub делали `LocalPlayer():ConCommand("say "..cmd)`. Это зависело от EasyChat, RP Chat, PlayerSayTransform и порядка SkipPlayerSay; ручной ввод работал, а программный say мог быть проглочен. Реализован двухступенчатый dispatcher: клиент сначала запускает локальный transform (для client-only UI), непроглощённую команду отправляет отдельным GRM_HUB_Launch. Сервер проверяет whitelist и эмулирует реальный EasyChat pipeline: transform, затем PlayerSay fallback. Чат не используется, команды не видны игрокам. Стенд `sim_admin_hub_launch`: 10/10.
+Владелец: «где в инвентаре кнопка биоконтроль? … это есть в коде, связанном
+с аугментацией и чипами, ищи по другим веткам».
 
-## Находка 178 (30.07.2026): !grmmenu открывал legacy-экономику рядом с актуальным salary admin
+Разбор:
+- «Биоконтроль» — это окно **«АУГМЕНТАЦИИ / GRM // CYBERNETIC CONTROL /
+  BIO-LINK ONLINE»** из `cl_grm_augmentation_interface.lua` (ветка 019fbd57):
+  вкладки Обзор/Активные чипы/Слоты/Эффекты, перепрограммирование,
+  извлечение, контекстное меню с пунктом «Открыть Биоконтроль».
+- В нашей базе (019fb265) этого НЕ было: были только базовые чипы/аугментации
+  (cl_grm_augmentations*.lua, sh_grm_augmentation_chips.lua) БЕЗ интерфейса
+  Биоконтроля, HUD-консоли и серверных каналов (Toggle/Reprogram/
+  ExtractByUI/RequestSync/Sync).
+- Кнопки в инвентаре не было вообще — интерфейс открывался только из
+  контекстного меню и /augmentations.
 
-Admin Hub одновременно показывал «Экономика GRM → !grmmenu» и «Зарплаты → /salary_admin». Первая точка вела в старое меню, вторая уже являлась полной авторитетной панелью sh_grm_economy. Legacy-ярлык и дублирующая строка удалены; единая строка запускает /salary_admin через защищённый Hub launcher. Стенд admin_hub_launch 11/11.
+Сделано (перенос с 019fbd57 + интеграция):
+1. **Перенесены файлы Биоконтроля**: `cl_grm_augmentation_interface.lua`,
+   `cl_grm_augmentations_hud.lua` (364 строки: HUD-консоль BIO-LINK, тактический
+   хром, автоскан, подсветка игроков), обновлённые `sh_grm_augmentation_chips.lua`
+   (841 строка: Toggle/Reprogram/ExtractByUI/RequestSync/Sync, doorHack,
+   Access-проверки), `sh_grm_augmentations.lua` (AddCSLuaFile interface),
+   `sh_grm_augmentation_access.lua` + `sh_grm_augmentation_integrations.lua`
+   (доступ по фракциям/ролям/отделам + профили интеграций civilian/service/
+   military/experimental), клиенты чипов/станции/админки, entity чипа/станции/
+   пода.
+2. **Кнопка «Биоконтроль» в инвентаре**: в панели «ЭКИПИРОВКА» UI инвентаря
+   под кнопкой «Кастомизация» добавлена зелёная кнопка «Биоконтроль»
+   (GRM.AugmentationUI.Open) — видна только при наличии интерфейса.
+3. **Способы открытия**: кнопка в инвентаре, контекстное меню (пункт «Открыть
+   Биоконтроль»), `/augmentations`, консоль `grm_augmentations`/`grm_augments`.
+4. Тест sim_augmentations: ожидание категории поды обновлено на фактическую
+   «GRM — Аугментации» (108/108).
 
-## Находка 179 (30.07.2026): одна spawn point дилера не описывает свободную площадку
+Проверки: GLua 368/0; симы 36/36 (включая sim_augmentations 108/108,
+sim_augmentation_chips OK, sim_invphone 41/41). dist пересобран.
 
-Точная Vector-точка не позволяет выбрать безопасное место, если её заняла машина/игрок/проп, и не визуализирует реальные границы. По паттерну Arrest Zone введена per-dealer axis-aligned zone. FindSpawnPoint сканирует 5 кандидатов, ground-trace и hull occupancy; при отсутствии свободного кандидата spawn отменяется до списания денег. Zone bounds/direction входят в DealerRecord, tool получает их отдельным net snapshot и рисует только в активном admin mode. Стенд dealer_v3 21/21.
+---
 
-## Находка 180 (30.07.2026): статья розыска не должна зависеть только от закрытого каталога
+## Находка 163 (05.08.2026): аккуратный перенос остального с ветки 019fbd57
 
-V1 AddCharge технически принимал неизвестный articleId, но UI не позволял продолжить без выбора DComboBox и сохранял title=id без кода/штрафа. V2 вводит AddCustomCharge с серверной нормализацией code/title/type/text/fine/level/manual. Каталожная AddCharge является обёрткой того же API. Record reasons стали полноценными charges; remove делает recalc max level, history записывается до Save. UI полностью заменён на GRM case database с отдельными catalog/manual workflows и каталогом редактора. CharacterKey persistence v2 читает legacy records. Стенд wanted_v2 16/16; arrest/security зелёные.
+Владелец: «019fbd57 из ветки остальное перенеси аккуратно, чтобы ничего не
+сломать и не испортить».
 
-## Находка 181 (30.07.2026): accessory item definition уже содержит model, но Inventory рисовал только icon
+Разбор: сравнение деревьев HEAD (база 019fb265 + фиксы) и 019fbd57 показало
+13 уникальных файлов + 2 архива + 23 общих lua-файла с отличиями. Из них
+большинство отличий — НАШИ более новые версии (фиксы находок 154-162), их
+не трогали. Перенесено только то, что у 019fbd57 строго новее/уникально:
 
-Customization регистрирует каждый grm_acc_* через Inventory.RegisterItem с accessoryID и model, однако createSlot/rebuildDetail всегда создавали Material(icon16/user_suit). Добавлен accessoryModel guard и DModelPanel preview с bounds-based framing, static lighting/render state и rotation. Панель является mouse-transparent child кнопки; non-accessory paint path не изменён. Тот же helper применён detail и drag ghost. Стенд customization 50/50, invphone 41/41.
+УНИКАЛЬНЫЕ:
+- `cl_grm_ui_theme.lua` — XUI-тема (GRM.UI.Theme, шрифты GRM_XUI_*, ApplyFrame);
+- `cl_grm_unified_admin.lua` — «Единый центр управления GRM» (grm_unified_admin/
+  grm_admin_center — лаунчер 6 панелей; все команды в сборке есть);
+- `sv_grm_computer_social.lua` — персистентная соцсеть компьютера
+  (grm_computer/social.json, посты/комнаты, антифлуд);
+- `entities/grm_citadel_core/` (ядро Цитадели — тёмная материя: Energy/Heat/
+  Stability) + `grm_citadel_core_terminal/` + тулы `grm_citadel_core`,
+  `grm_augmentation` (станции/капсулы аугментаций);
+- архивы `DoorAddons.zip`, `GTA IV all phones.zip`.
 
-## Находка 182 (31.07.2026): вращение вокруг model origin выбрасывает смещённую геометрию из DModelPanel
+ОБНОВЛЕНЫ (их версии строго новее наших базовых):
+- `sh_grm_news.lua` — UpdateArticle + канал GRM_News_Update (редактирование),
+  id статьи теперь макс+1 (не #+1);
+- `sh_grm_customization.lua`/`cl_grm_customization.lua` — новые типы функций
+  аксессуаров (artificial_eye/night_vision/neuro_link/prosthesis) с
+  интеграцией в аугментации (NWBool GRM_Accessory_*, хук
+  GRM_AccessoryAugmentationLink), кнопки «Заморозить в Т-позе»/«Разморозить»
+  (pose_freeze/pose_unfreeze);
+- `sv_grm_alarm.lua` — резервный позиционный звук сирены (с гардом isfunction
+  для стенда);
+- `grm_net_document/init.lua` — передача данных изображения документа;
+- `cl_grm_electronics.lua` — image_save (фоторобот/печать с изображением),
+  чтение изображения документа (net.ReadData).
 
-Для моделей вроде трубки origin находится на одном конце. Старый preview целился в center unrotated bounds, но SetAngles вращал геометрию вокруг origin: center описывал окружность и выходил за 74px slot. Новый LayoutEntity поворачивает localCenter тем же Angle и задаёт entity:SetPos(-rotatedCenter), удерживая визуальный центр в нуле. Камера использует bounding-sphere radius / tan(FOV/2) × 1.28, что гарантирует fit при любом yaw. Скорость снижена. Стенд customization 51/51.
+СОВМЕЩЕНО ВРУЧНУЮ:
+- `sh_grm_electronics.lua` — оставлена НАША v1.5.1 (автосейв по dirty, чистка
+  реестра) + добавлен обработчик op=="image_save" из их версии (сохранение
+  jpg в grm_computer/images/, запись файла с [ИЗОБРАЖЕНИЕ: ...]).
 
-## Находка 183 (31.07.2026): LocalPlayer:EyeAngles — угол тела/прицела, не обязательно активной third-person камеры
+НЕ ТРОНУТЫ (наши новее): cl_grm_hud, cl_grm_inventory_ui (кнопка Биоконтроль),
+sh_grm_inventory, sh_grm_admin_hub, sh_grm_ctx, sh_grm_doors, sh_grm_perm_entities,
+sh_grm_qmenu (панель параметров), sh_grm_vehicle_dealer (v3.1.3),
+sh_spawn_points (v157), grm_vendor (каталог electronics + Claim),
+vehicle_dealer_tool, roundtrip_test, chip/station cl_init (3D2D-фикс).
 
-World labels строили Angle(0, ply:EyeAngles().y-90, 90). В third-person camera yaw может быть независим от player eye/body yaw: при вращении персонажа таблички банкоматов, автоматов и телефонов крутились, хотя их world position неизменна. Для billboard labels источник заменён на глобальный EyeAngles(), который соответствует текущему render view. Fixed-surface 3D2D (keypad/scanner/labs) не тронут; RPDesc не тронут. Аудит `sim_world_labels` проверяет 39 файлов, bad=0.
+Исправлено при переносе: 3D2D-метка терминала Цитадели (LocalPlayer():EyeAngles()
+→ Angle(0, EyeAngles().y-90, 90), контракт sim_world_labels).
 
-## Находка 184 (31.07.2026): transform аксессуара нельзя хранить только внутри текущего equipped slot
+Проверки: GLua 379/0; симы 36/36 (включая sim_security, sim_world_labels,
+sim_customization, sim_electronics); roundtrip 14/14. dist пересобран.
 
-V1 хранил Position/Angles/Scale только в C.Loadouts[CharacterKey][slot], а сам верхний уровень был JSON-map по CharacterKey. После restart/load это зависело от map-key conversion и нормализации каталога; отдельного профиля снятого предмета не было. V2 сохраняет плотный records array и per-accessory profiles. save_transform/save_all атомарно обновляют slot+profile; EquipInventorySlot восстанавливает profile; Unequip удаляет только slot. Legacy loadout мигрирует. Добавлены primary/backup read, write read-back и parse validation. Runtime test теперь реально вызывает C.LoadData как restart: 20/20, contract 53/53.
+---
 
-## Находка 185 (31.07.2026): один универсальный прямоугольник не отражает возможности tier телефона
+## Находка 164 (05.08.2026): кнопка «Биоконтроль» выезжала за панель; обычный HUD не скрывался при чипах
 
-Mobile уже имел полноценные server ops, но клиент рисовал одинаковый 520×720 список для дешёвой трубки и Whiz Gold. UI v3 добавляет tier.ui feature/flip/touch/smartphone и сохраняет protocol 1.2.2. Smartphone home — icon grid с hitboxes/badges/status bar; feature/flip — ограниченный LCD + physical keypad. Input объединяет mouse, wheel, Mouse3, arrows, Enter, Backspace и digits; VGUI focus дублируется OnKeyCode callbacks с M.down debounce. Восстановлен hold-repeat и защита SDL synthetic Down+Up. SMS history теперь имеет отдельный scroll index, thread/contact selection сохраняется. Серверный sim 123/123, client runtime 45/45, invphone 41/41.
+Владелец (со скриншотом): 1) кнопка в инвентаре «уходит за горизонт»;
+2) «работает обычный HUD, когда включён чип».
+
+Причины:
+1. **Кнопка «Биоконтроль»** в панели «ЭКИПИРОВКА» была на y=329 при высоте
+   панели 332 (низ кнопки 360) — кнопка выезжала за нижний край панели и
+   перекрывалась футером (создан позже → рисуется поверх).
+2. **HUD**: на ветке 019fbd57 в `cl_grm_hud.lua` была строка
+   `if GRM.AugHUD.IsActive() then return end` в начале DrawMainHUD — при
+   активных чипах обычный HUD не рисуется (его место занимает био-интерфейс
+   с BIOMETRICS/ФИНАНСОВЫМ КАНАЛОМ). В нашем cl_grm_hud.lua этой строки не
+   было — обычный HUD продолжал рисоваться поверх био-интерфейса.
+
+Фиксы:
+1. Инвентарь: окно 1020×570 → 1020×620; панель экипировки 332 → 430; футер
+   432 → 522; позиции кнопок теперь динамические от числа слотов
+   («Кастомизация» = 30+n*43+8, «Биоконтроль» = 30+n*43+43) — при 6–7 слотах
+   всё влезает, ничего не перекрывается.
+2. HUD: в DrawMainHUD добавлен ранний выход при активных чипах
+   (`GRM.AugHUD.IsActive()`), как на 019fbd57 — при включённом чипе обычный
+   HUD скрыт, работает био-интерфейс.
+
+Проверки: GLua 379/0; симы 36/36; roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 165 (05.08.2026): редактор аксессуаров — Yaw/Roll дублировались; фонарик (F) прятал аксессуар
+
+Владелец: «ползунки Угол Roll и Угол Yaw выполняют одну и ту же функцию
+в одном направлении» + «при включении на F фонарика визуально аксессуар
+исчезает».
+
+Причины:
+1. **Yaw=Roll.** Позиция/угол аксессуара считались через
+   `LocalToWorld(pos, angles, bonePos, boneAngles)`, а GMod применяет `angles`
+   как Yaw-Pitch-Roll вокруг МИРОВЫХ осей. Для аксессуара на кости (голова/
+   рука) локальная ось модели часто не совпадает с мировой — поворот вокруг
+   Y (yaw) и Z (roll) визуально давал ОДНО и то же вращение.
+2. **Фонарик прятал аксессуар.** Аксессуар — `ClientsideModel` с
+   `SetNoDraw(true)` + ручной `DrawModel()` в `PostPlayerDraw`. При включённом
+   фонарике (F) движок переключает рендер в отдельный световой проход, и
+   модель в этом проходе не рисуется — «исчезает».
+
+Фиксы (lua/autorun/client/cl_grm_customization.lua):
+1. **Новый `boneLocalAngles(boneAng, offs)`** — поворот вокруг ОСЕЙ КОСТИ
+   (yaw вокруг Up кости, roll вокруг Forward, pitch вокруг Right) через
+   последовательные вращения базиса + `AngleEx`. Теперь Yaw и Roll — РАЗНЫЕ
+   вращения, как и ожидается. Применён в `drawAccessories` и
+   `selectedAccessoryWorld` (гизмо тоже считает по тем же осям).
+2. **Резервный проход `PostDrawOpaqueRenderables`** (`GRM_Customization_
+   DrawAccessoriesOpaque`) — рисует аксессуар в основном проходе независимо
+   от фонарика (FrameNumber-guard от двойного DrawModel в кадре). В редакторе
+   не дублирует (там отдельный third-person проход).
+
+Проверки: GLua 379/0; симы 36/36 (включая sim_customization,
+sim_customization_runtime, sim_world_labels). dist пересобран.
+
+---
+
+## Находка 166 (05.08.2026): взлом дверей экспериментальным чипом — починен + подсказка «Нажмите Е»
+
+Владелец: «пофиксить работу взлома дверей (функция на клавишу Е при
+экспериментальном чипе) + когда человек подходит с активированным
+экспериментальным чипом — перед дверью подсказка „Нажмите Е чтобы взломать“».
+
+Разбор:
+- Серверный взлом (hackDoor: PlayerUse + KeyPress IN_USE) был, но клиент
+  запрашивал синхронизацию чипов каналом `GRM_AugChip_RequestSync`, а
+  обработчика `net.Receive("GRM_AugChip_RequestSync")` на сервере НЕ БЫЛО —
+  запрос уходил в пустоту. Если пуш `PlayerInitialSpawn` (через 2с) не успел
+  или был до получения чипа — клиентский кэш `HUD.CachedChips` пуст,
+  подсказка не появлялась, HUD не знал о чипе.
+- Подсказка `GRM_AugHUD_DoorPrompt` зависела от `HUD.IsActive()` (нужен хоть
+  один активный чип) и проверяла только `doorHack=="enabled"/true`, а сервер
+  понимал ещё `"включен"` и `DOOR` в имени — расхождение: сервер взламывает,
+  а подсказка молчит.
+
+Сделано:
+1. **`net.Receive("GRM_AugChip_RequestSync")` добавлен** — по запросу клиента
+   сервер шлёт `CHIPS.SyncChips(ply)` (GRM_AugChip_Sync). Кэш чипов на клиенте
+   всегда актуален (вход/респаун/после имплантации).
+2. **`CHIPS.HasDoorHack(ply)`** — единая проверка (имплантирован + активен +
+   experimental + doorHack enabled/true/"включен"/DOOR в имени). Серверный
+   hackDoor переведён на неё.
+3. **HUD-подсказка** `GRM_AugHUD_DoorPrompt`:
+   - использует `CHIPS.HasDoorHack` (учитывает все варианты);
+   - больше НЕ зависит от `HUD.IsActive()` — показывается, если есть чип
+     взлома, даже если других активных чипов нет;
+   - текст: «ДВЕРНОЙ ПРОТОКОЛ — НАЖМИТЕ E — ВЗЛОМАТЬ НА 30 СЕКУНД + 10
+     СЕКУНД УДЕРЖАНИЕ» перед дверью (дистанция ≤100 юнитов, прицел на дверь).
+4. **Тест `sim_doorhack.lua` (21 проверка)**: HasDoorHack (все варианты),
+   взлом двери (Fire Unlock/Open, GRMHackUntil, анти-дубль в окне), отказ
+   далеко/без чипа, наличие RequestSync-обработчика, синк по запросу,
+   текст подсказки в HUD-файле.
+
+Проверки: GLua 379/0; симы 37/37 (включая новый sim_doorhack); roundtrip 14/14.
+dist пересобран.
+
+---
+
+## Находка 167 (05.08.2026): Биоконтроль — переключение вкладок сбрасывалось на первую
+
+Владелец: «пытаюсь в биоконтроле вкладку одну открыть или другую — переводит
+на первую вкладку».
+
+Причина: в `cl_grm_augmentation_interface.lua` хук
+`GRM_AugUI_RefreshState` на событие `GRM_AugmentationStateUpdated` делал
+`frame:Close(); UI.Open()`. А `UI.Open()` сразу шлёт `GRM_AugChip_RequestSync`,
+сервер отвечает `GRM_AugChip_Sync`, клиент (и HUD, и interface — оба ресивера)
+вызывает `hook.Run("GRM_AugmentationStateUpdated")` — получался БЕСКОНЕЧНЫЙ
+ЦИКЛ: окно закрывалось и пересоздавалось при каждом синке, активна всегда
+первая вкладка «Обзор». Любой клик по вкладке «успевал» до очередного
+пересоздания и сбрасывался.
+
+Фикс: при обновлении состояния окно больше НЕ пересоздаётся — Paint-функции
+вкладок и так читают кэш чипов (chips()) динамически каждый кадр, достаточно
+`frame:InvalidateLayout()`. Явные Close+Open остались только в действиях
+пользователя (снять/активировать чип — там пересоздание уместно, чтобы показать
+свежие данные).
+
+Проверки: GLua 379/0; симы 37/37; roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 168 (05.08.2026): перепрограммирование чипа — doorHack не сохранялся; взлом не работал
+
+Владелец (со скриншотом программатора): «вручную перепрограммирую чип, выдаю
+включение параметру „взлом двери“, жму сохранить — применяет, но не запоминает
+состояние. Да и взлом двери не работает».
+
+Причины (2 бага):
+1. **СЕРВЕР отбрасывал doorHack.** В `ChipCategories` у категорий (в т.ч.
+   experimental) в `allowed` НЕ было `doorHack` (только speed/stamina/
+   carryWeight/health/armor/vision). Обработчики `GRM_AugChip_Reprogram` и
+   `CHIPS.CreateChip` фильтруют модификаторы по `category.allowed` — doorHack
+   молча выкидывался из `out`, чип оставался без него. Отсюда «применяет, но
+   не запоминает» и «взлом не работает» (после перепрограммирования
+   модификатора нет, HasDoorHack ничего не находит).
+2. **КЛИЕНТ (OpenReprogram) брал старое значение.** Для модификаторов с
+   `options` (doorHack: disabled/enabled) создаётся DComboBox, но при
+   сохранении в `mods` писалось `e.value` — значение из момента построения
+   окна (старое), а не выбранное в комбобоксе (OnSelect не обновлял `value`).
+
+Фиксы:
+1. `ChipCategories.experimental.allowed` += `doorHack` — Reprogram и CreateChip
+   теперь пропускают модификатор; значение валидируется по `cfg.options`.
+2. `UI.OpenReprogram`: при сохранении для комбобокса берётся
+   `slider:GetSelected()` (выбранное значение), а не старое `e.value`.
+
+Тест sim_doorhack.lua расширен 21 → **27 проверок**: Reprogram сохраняет
+doorHack=enabled в модификаторы чипа (и числовые модификаторы), CreateChip
+experimental пропускает doorHack, OpenReprogram использует GetSelected.
+
+Проверки: GLua 379/0; симы 37/37; roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 169 (05.08.2026): система контроля и регистрации чипов + уведомление о смерти спец-юнита
+
+Владелец: «создать систему контроля и регистрации чипов в специальном
+терминале; при смерти обладателя экспериментального чипа — звук смерти
+комбайна, уведомление силовым структурам; в /factions → Расширенные
+настройки — галочка „присылать уведомление о смерти носителей
+экспериментального чипа“; членам фракции — звук+текст+GPS-метка
+„В данном районе убит/умер специальный юнит“».
+
+Сделано:
+1. **`lua/autorun/sh_grm_chip_control.lua`** (новый модуль, server+client):
+   - реестр носителей имплантированных чипов (`CC.ListCarriers`: онлайн и
+     офлайн из CHIPS.PlayerChips, пометка «специальный юнит» для
+     experimental, фракция, список чипов);
+   - `PlayerDeath`: если умерший — носитель experimental чипа
+     (`CC.HasExperimental`), то членам фракций с `ChipDeathAlert=true`
+     отправляется `GRM_ChipDeath_Alert` (текст + позиция);
+   - журнал событий (смерти) — показывается в терминале;
+   - клиент: `surface.PlaySound("npc/metropolice/die2.wav")` + чат +
+     notification + временный 3D-тег в мире на месте смерти.
+2. **GPS-метка** (`sh_grm_minimap.lua`): добавлены временные точки
+   `MM.AddTempPoint(name, pos, duration)` (не сохраняются на диск, чистятся
+   по expires при send), `MM.SendTo(ply)` — точечная рассылка; клиентский
+   HUD `GRM_GPS_TempMarkers` рисует temp-маркеры (красный пульс + подпись
+   + дистанция) всем, кто получил синк. Маркер «В данном районе убит/умер
+   специальный юнит» живёт 120с и виден только уведомлённым членам фракций.
+3. **Терминал `grm_chip_terminal`** (entity shared/init/cl_init, модель
+   `models/props_combine/combine_interface001.mdl`): E → меню контроля чипов
+   с вкладками «Носители» (реестр), «Журнал» (смерти), «Инфо»; зарегистрирован
+   в перм-системе (переживает рестарт через /permadd).
+4. **Фракции** (`sh_faction_fixes.lua`): во вкладке «Расширенные настройки»
+   добавлена секция «Контроль чипов» с чекбоксом «Присылать уведомление о
+   смерти носителей экспериментального чипа»; серверный action
+   `setChipDeathAlert` сохраняет `ChipDeathAlert` в fw_faction_extras.json
+   (getExtConfig/saveExt/broadcastExt).
+
+Тест: `sim_chip_control.lua` — 27/27 (реестр онлайн/офлайн, HasExperimental,
+AlertEnabledFor, смерть → уведомление только членам фракций с галочкой +
+GPS-маркер + журнал, net-контракт терминала, наличие action и чекбокса,
+звук die2.wav).
+
+Проверки: GLua 383/0; симы 38/38; roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 170 (05.08.2026): суперадмин — изъятие чипов/предметов через чужой инвентарь; админ-панель кнопкой в C-меню
+
+Владелец: «админ должен изымать путём открытия чужих слотов/чужих инвентарей
+через специальную кнопку или команду; единую админ-панель сделать ещё в виде
+кнопки в C-меню».
+
+Сделано:
+1. **C-меню (sh_grm_ctx.lua):**
+   - сервер шлёт `result.isSuperAdmin` в `GRM_Ctx_Check`;
+   - две новые кнопки для суперадмина:
+     - **«Админ-панель (GRM)»** → `RunConsoleCommand("grm_admin")` (единая
+       админ-панель);
+     - **«Инвентарь игрока: Имя»** (при прицеле на игрока ≤300 юн) →
+       `GRM_Inv_AdminOpen` (просмотр чужого инвентаря).
+2. **Инвентарь (sh_grm_inventory.lua + cl_grm_inventory_ui.lua):**
+   - сервер: `GRM_Inv_AdminOpen` (суперадмин, по EntIndex цели шлёт слоты
+     через `GRM_Inv_AdminData`) и `GRM_Inv_AdminAction` (суперадмин изымает
+     предмет: RemoveItem + синк обоим + уведомления);
+   - клиент: `GRM.Inventory.AdminView` (target/slots/open), `AdminTake(slot,
+     all)`, ресивер `GRM_Inv_AdminData`; окно «ПРОСМОТР ИНВЕНТАРЯ ИГРОКА» со
+     слотами и кнопками **«Изъять 1»** / **«Изъять все»**; обновляется по
+     `GRM_InventoryUpdated`.
+3. **Терминал контроля чипов** (sh_grm_chip_control.lua): вкладка «Админ»
+   (только суперадмин): выбор игрока, список его чипов с кнопкой «ИЗЪЯТЬ»
+   (`GRM_ChipControl_AdminExtract` → CHIPS.RemoveChip + синк + RecomputeEffects)
+   и инвентаря с «УДАЛИТЬ 1»/«УДАЛИТЬ ВСЕ» (`GRM_ChipControl_AdminRemove`).
+   Все обработчики проверяют IsSuperAdmin; цели находят по SteamID64.
+
+Тест sim_chip_control расширен 27 → **41 проверка** (админ-каналы чипов и
+инвентаря, суперадмин может / не-суперадмин не может, изъятие чипа и предметов,
+кнопки C-меню в коде).
+
+Проверки: GLua 383/0; симы 38/38; roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 171 (05.08.2026): суперадмин — множение/копирование предметов в инвентаре
+
+Владелец: «суперадмин должен иметь возможность множить предметы в инвентаре,
+копировать их».
+
+Сделано (поверх находки 170 — просмотр/изъятие):
+1. **Сервер** (`sh_grm_inventory.lua`, `GRM_Inv_AdminAction`): добавлен
+   параметр `op` — `"take"` (изъятие, как было) или `"dup"` (дублирование).
+   При `dup`: `GRM.Inventory.AddItem(target, id, count, data)` — копирует
+   предмет с сохранением `data` экземпляра (рация/медкарта/чип и т.п.),
+   синк обоим, уведомление админу. Только суперадмин.
+2. **Клиент** (`sh_grm_inventory.lua`): `GRM.Inventory.AdminDup(slotIdx, count)`
+   шлёт `op="dup"`; в окне «ПРОСМОТР ИНВЕНТАРЯ ИГРОКА» (`cl_grm_inventory_ui.lua`)
+   у каждого предмета добавлены кнопки **«+1»** (добавить 1 копию) и
+   **«+N»** (спросить количество через Derma_StringRequest) — рядом с
+   «Изъять 1»/«Изъять все».
+3. Множение работает и из C-меню («Инвентарь игрока: Имя» → окно просмотра),
+   и из терминала контроля чипов (вкладка «Админ» — там тоже предметы).
+
+Тест sim_chip_control расширен 41 → **47 проверок**: дублирование +2 с
+сохранением data, не-суперадмин не может дублировать, клиентский AdminDup.
+
+Проверки: GLua 383/0; симы 38/38; roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 172 (05.08.2026): доступ к экономическому меню по фракциям/ролям/отделам (Нацбанк)
+
+Владелец (со скриншотом): «переделать вкладку экономики — выдача доступа к
+специальному экономическому меню (гос.бюджет, перечисления во фракции/игрокам,
+изъятие/пополнение, проценты штрафов, налоги). Доступ даётся фракции из списка
+factions, конкретнее ролям и отделам. Роли приоритетны. Если создам фракцию
+нацбанка — выдать лидеру/заму полномочия».
+
+Сделано (sh_grm_economy.lua + sh_grm_admin_hub.lua):
+1. **E.CanManageEconomy(ply)** — суперадмин всегда; иначе:
+   - фракция игрока (по Members sid/s64);
+   - `E.Access[faction]` (data/grm_economy_access.json): `{enabled, roles,
+     departments}`;
+   - **роли приоритетны**: roles непуст → доступ только по ролям; иначе
+     departments; если оба пусты — вся фракция.
+2. **NET_OPEN_ADMIN / NET_ADMIN_ACT** теперь пускают `CanManageEconomy`
+   вместо `IsSuperAdmin` — лидер/зам Нацбанка получают полную эконом-панель
+   (гос.бюджет give/take/set, state_to_faction, state_pay, налоги DefaultTaxRate,
+   проценты штрафов finePerms, зарплаты, счета игроков).
+3. **Хаб (/grm_admin):**
+   - сервер `openHub` пускает CanManageEconomy и шлёт флаги
+     (econAccess/isSuper);
+   - клиент: не-суперадмин с доступом видит ТОЛЬКО вкладку «Экономика»;
+   - суперадмин: кнопка **«Доступ к экономике (фракции/роли/отделы)»** →
+     окно со списком фракций, чекбокс «Выдать доступ», чекбоксы ролей и
+     отделов (роли приоритетны — подсказка), «Сохранить» →
+     `GRM_EcoAccess_Save`.
+4. `payloadEcon` шлёт роли/отделы/лидера фракций для окна доступа.
+
+Тест: новый `sim_econ_access.lua` — **25/25** (суперадмин всегда; фракция без
+доступа; вся фракция; роли приоритетны; отделы; не-суперадмин не настраивает;
+суперадмин сохраняет; файл на диск; хаб использует CanManageEconomy).
+Поймана и исправлена ошибка: `#roles` по именным ключам = 0 → countMap по pairs.
+
+Проверки: GLua 383/0; симы 39/39; roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 172b (05.08.2026): вкладка «Экономика» в /factions — полная панель прямо во вкладке
+
+Владелец (со скриншотом): «вкладка Экономика есть, её нужно переделать» —
+раньше это была кнопка «ОТКРЫТЬ ЭКОНОМИЧЕСКУЮ ПАНЕЛЬ», а нужно, чтобы вся
+финансовая панель была прямо во вкладке /factions.
+
+Сделано:
+1. **sh_grm_economy.lua**: `buildAdminUI(d, parentTabs)` параметризован —
+   если передан готовый DPropertySheet, вкладки строятся в нём (без создания
+   adminFrame/очистки окна); иначе — как раньше (отдельное окно /feco_admin).
+   Публичные точки:
+   - `GRM.Economy.BuildAdminContent(parent, d)` — строит DPropertySheet с
+     полной панелью (Обзор/Гос.бюджет/Игроки/Фракции-ЗП/Штрафы/Фин.лог/
+     Настройки) внутри parent;
+   - `GRM.Economy.EmbedAdminPanel(panel)` — регистрирует встроенную панель;
+   - NET_ADMIN_DATA дополнительно перестраивает встроенную панель через
+     `GRM.Economy._embeddedBuild`.
+2. **sh_faction_fixes.lua**: вкладка «Экономика» (хук GRM_FactionsAdmin_BuildTabs)
+   теперь строит ПОЛНУЮ панель через BuildAdminContent — лидер/зам Нацбанка
+   прямо в /factions видят гос.бюджет, перечисления во фракции/игрокам,
+   изъятие/пополнение, налоги, проценты штрафов, зарплаты. При открытии
+   вкладки запрашиваются данные (GRM_Eco_AdminOpen), сервер сам проверяет
+   CanManageEconomy; при ответе панель перестраивается.
+3. **sh_factions.lua**: `/factions` на сервере пускает CanManageEconomy
+   (не-лидер с доступом — зам Нацбанка) в админ-меню; клиент для не-лидера
+   тоже шлёт запрос (сервер решит); хук GRM_FactionsAdmin_BuildTabs вызван и
+   в OpenLeaderMenu.
+
+Тест sim_econ_access расширен 25 → **34** (вкладка /factions: OpenEconomyPanel,
+BuildAdminContent, EmbedAdminPanel, запрос данных; экономика: публичные точки,
+parentTabs; /factions: CanManageEconomy, хук в OpenLeaderMenu).
+
+Проверки: GLua 383/0; симы 39/39; roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 173 (05.08.2026): инструмент «Раздвижная дверь» — проп со сдвигом, FFD-синхронизация, перм
+
+Владелец: «инструмент раздвижных дверей: ЛКМ по пропу → функция движения;
+смещение на N юнитов влево/вправо и т.д.; скорость анимации, плавность;
+сохранить через /permadd /permsave; синхронизировать с FFD; привязать к
+scanner/keypad».
+
+Сделано:
+1. **`lua/autorun/sh_grm_sliding_door.lua`** (новый модуль, server+client):
+   - `GRM.SlidingDoor.Apply(ply, ent, opts)` — вешает механизм на
+     prop_physics/prop_dynamic: `isSlidingDoor=true`, конфиг `Sliding`
+     (direction/distance/speed/smooth/toggle/autoclose/closeTime), реестр
+     `SD.Doors`, единый Think-хук анимации (плавный сдвиг basePos→openPos с
+     ease-кривой, автозакрытие по таймеру);
+   - методы **`FadeActivate/FadeDeactivate/FadeToggle`** — те же, что у FFD
+     Fading Door → Keypad/Scanner/FFD Link управляют дверью БЕЗ изменений их
+     логики (совместимость);
+   - `SD.Remove` — снять механизм (проп возвращается в basePos);
+   - направления: влево/вправо/вперёд/назад/вверх (по локальным осям пропа).
+2. **`lua/weapons/gmod_tool/stools/grm_sliding_door.lua`** (тул):
+   - ЛКМ — применить к пропу; ПКМ — открыть/закрыть (тест); R — снять;
+   - панель: направление, дистанция (10-1000), скорость (10-2000),
+     плавность ease (0.1-4), режим переключателя, автозакрытие + задержка;
+   - подсказка: связь через FFD Link, сохранение через /permadd.
+3. **FFD-синхронизация**:
+   - `GRM.FFDLink.Fade` теперь активирует и `isSlidingDoor`;
+   - `grm_keypad`/`grm_scanner`: `prop.isFadingDoor or prop.isSlidingDoor` —
+     привязка через FFD Link открывает раздвижную дверь по коду/скану.
+4. **Перм**: `GRM.PermData.Extract/Apply["prop_physics"]` (ffd_fading_door.lua)
+   расширены sliding-веткой — /permadd сохраняет конфиг, после рестарта проп
+   встаёт на место и работает; duplicator-модификатор "GRM_SlidingDoor".
+5. Q-меню: тул `grm_sliding_door` в ToolCatalog.
+
+Тест: `sim_sliding_door.lua` — 21/21 (Apply/поля/методы, открытие+Think двигает
+проп, Remove возвращает, FFDLink.Fade учитывает sliding, keypad/scanner
+isSlidingDoor, перм Extract/Apply, тул+Q-меню).
+
+Проверки: GLua 385/0; симы 40/40; roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 173b (05.08.2026): AddCSLuaFile «Couldn't find cl_grm_augmentations.lua» — исправлены пути
+
+Ошибка на сервере владельца:
+```
+[grm] AddCSLuaFile: Couldn't find 'cl_grm_augmentations.lua' ...
+1. unknown - addons/grm/lua/autorun/sh_grm_augmentations.lua:8
+```
+
+Причина: в `sh_grm_augmentations.lua` блок AddCSLuaFile указывал ГОЛЫЕ имена
+(`cl_grm_augmentations.lua` и т.д.), а файлы лежат в `lua/autorun/client/`.
+GMod ищет переданный путь от корня `lua/` — «голое» имя не находится
+(в отличие от `entities/...` и `weapons/...`, которые резолвятся из своих
+папок).
+
+Фикс: пути исправлены на полные (`autorun/client/cl_grm_augmentations.lua`,
+`autorun/sh_grm_augmentation_chips.lua`, ...) + добавлены недостающие
+`sh_grm_augmentation_access.lua` и `sh_grm_augmentation_integrations.lua`
+(используются чипами, но не рассылались клиенту). Проверено: все 10 путей
+существуют, easychat_init.lua (пути `easychat/...` от корня lua/) — корректны.
+
+Проверки: GLua 385/0; симы 40/40. dist пересобран.
+
+---
+
+## Находка 173c (05.08.2026): FFD Link «цель — не контроллер» при связке со sliding-дверью
+
+Владелец: «пытаюсь связать раздвижную дверь с FFD Scanner — пишет „FFD link:
+цель не контроллер“».
+
+Причина: в `ffd_link.lua` функция `isDoor(ent)` проверяла только
+`ent.isFadingDoor` (серверное поле FFD Fading Door). Раздвижная дверь
+(находка 173) помечена `isSlidingDoor=true`, поэтому тул не распознавал её
+как дверь и на клике по ней падал в общую ветку «цель — не контроллер и не
+FFD-дверь».
+
+Фикс: `isDoor` теперь возвращает true и для `ent.isSlidingDoor == true`
+(клиентская подсветка работает через `FFD_IsDoor`, который sliding-дверь уже
+ставит). Проверено: CONTROLLERS включает grm_scanner, DrawHUD использует
+isDoor, `GRM.FFDLink.Fade` уже открывает sliding.
+
+Тест sim_sliding_door 21 → **22** (isDoor учитывает isSlidingDoor).
+GLua 385/0, симы 40/40. dist пересобран.
+
+---
+
+## Находка 173d (05.08.2026): настраиваемые звуки раздвижной двери (открытие/закрытие/движение)
+
+Владелец: «звук открытия и звук закрытия надо чтобы можно было настраивать,
+ставить эти звуки когда дверь открыта/закрыта или когда в процессе движения».
+
+Сделано (sh_grm_sliding_door.lua + тул + перм):
+1. **Конфиг**: `soundOpen` / `soundClose` / `soundMove` (пусто = нет звука).
+2. **Think**: 
+   - `soundMove` — проигрывается периодически (не чаще 1 раз в 0.6с) во время
+     движения (разница прогресса > 0.0001);
+   - `soundOpen` — один раз при достижении конца (переход 0→1);
+   - `soundClose` — один раз при достижении начала (переход 1→0; флаг
+     `Sliding_WasEverOpen` держится до конца закрытия, чтобы не потерять
+     момент — найденный тестом баг).
+3. **Тул**: три текстовых поля (звук открытия/закрытия/движения) + примеры
+   путей, передаются в Apply.
+4. **Перм** Extract/Apply: звуки сохраняются (/permadd) и восстанавливаются;
+   duplicator — тоже.
+
+Тест sim_sliding_door расширен 22 → **31** (звуки в конфиге, движение,
+открытие, закрытие, перм/тул).
+
+Проверки: GLua 385/0; симы 40/40; roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 174 (05.08.2026): «Взломщик» — отмычка превращена в QTE-взломщик дверей/кейпадов/сканеров (модель C4)
+
+Владелец: «надо отмычке вместо crowbar дать модельку models/weapons/w_c4.mdl
+бомбы и сделать не отмычкой, а взломщиком дверей/кейпадов/сканеров, чтобы он
+мог взламывать, но это надо чтобы там еще была QTE мини-игра взлома, чтобы не
+просто подошел, нажал Е и готово, должен быть прогресс бар взлома и т.д».
+
+Сделано (lua/weapons/ds_lockpick/shared.lua — класс свапа НЕ менялся, чтобы
+не ломать вендор/сохранения):
+
+1. **Модель и название**: `WorldModel = models/weapons/w_c4.mdl`,
+   `ViewModel = models/weapons/cstrike/c_c4.mdl` (комбинация, проверенная
+   TTT), `HoldType = grenade`, `PrintName = «Взломщик»`.
+2. **Цели взлома** (`GetAimedTarget`, дистанция 120): `grm_keypad`,
+   `grm_scanner`, FFD-двери (`isFadingDoor`), раздвижные двери
+   (`isSlidingDoor`), обычные двери GRM.Doors + обёртки через GetParent.
+3. **QTE v2 с прогресс-баром**: 5 пинов (было 4), окно 500×320, верхний
+   прогресс-бар «ПРОГРЕСС ВЗЛОМА: N%» (заполнение = завершённые пины + доля
+   текущего по приближению иглы к зоне), деления по пинам, ошибки 3,
+   скорость иглы растёт +0.55 за пин, зона сужается до min 10.
+   ПРОБЕЛ/ЛКМ/ENTER — фиксация, ESC — отмена.
+4. **Отмена взлома**: потеря цели (невалид), смерть игрока, смена оружия —
+   окно закрывается без результата (`frame.Think`).
+5. **Серверный анти-чит/анти-спам**: `ply.__grmBreakerStart` ставится при
+   отправке старта; успех принимается только если прошло ≥ 2.0с (MIN_HACK),
+   игрок в радиусе 190, держит ds_lockpick, кулдаун 1с после результата.
+6. **Применение взлома по типу цели**:
+   - кейпад → `ProcessGrant(ply)` (если не заблокирован — уведомление);
+   - сканер → `ProcessGrant(ply, "ВЗЛОМ")` (обход проверки фракции, экран
+     сканера показывает «ВЗЛОМ»);
+   - FFD/sliding-дверь → `FadeActivate()` (закрытие — по своей логике двери);
+   - обычная дверь → `LockDoor(false)` + `Fire("Open")` + партнёр-створка +
+     хук `GRM_OnDoorLockpicked`; плюс новый хук `GRM_OnDeviceHacked`.
+7. **Звуки**: пин — button14, ошибка — button10, успех — c4_disarm (клиент),
+   сервер — button14.
+8. **Переименования**: вендор (`Взломщик (QTE)`, модель w_c4.mdl, цена 2500
+   не менялась), инвентарь (`item_lockpick` → «Взломщик», id не менялся),
+   комментарии в sh_grm_doors.lua / grm_keypad / ffd_fading_door, README,
+   FULL_ANALYSIS.
+
+Тест sim_breaker 34 проверок (модель, цели, старт/кулдаун, анти-чит, применение
+по всем 4 типам целей, клиентские маркеры, вендор/инвентарь).
+GLua 385/0, симы 41/41, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 175 (05.08.2026): отрисовка аксессуаров — свои от 1-го лица не видны, чужие видны всегда (фонарик F больше не прячет)
+
+Владелец: «аксессуары всё ещё исчезают при нажатии на F; от первого лица
+не должно никак показываться вообще. Только если игрок от 3-го смотрит на
+себя; остальные видят другого игрока и от 1-го, и от 3-го».
+
+Причина (cl_grm_customization.lua):
+1. Резервный проход `PostDrawOpaqueRenderables` (`GRM_Customization_
+   DrawAccessoriesOpaque`, добавлен для фонарика F) рисовал аксессуары
+   ТОЛЬКО LocalPlayer и БЕЗУСЛОВНО — от 1-го лица свои аксессуары
+   «висели в воздухе» (кость анимируется, модель игрока не рисуется).
+2. Аксессуары ОСТАЛЬНЫХ игроков при фонарике исчезали: движок уходит в
+   световой проход, где PostPlayerDraw + ручной DrawModel() не рендерят,
+   а fallback их не покрывал.
+
+Сделано:
+1. **Gate в `drawAccessories`**: свои аксессуары рисуются только когда
+   движок реально отрисовывает модель игрока —
+   `lp:ShouldDrawLocalPlayer() == true` (3-е лицо/drawviewer), либо
+   принудительно в редакторе (`forceEditorDraw`). От 1-го лица свои
+   аксессуары не создают даже ClientsideModel.
+2. **Fallback перебирает ВСЕХ игроков** (`player.GetAll()`), а не только
+   lp: при фонарике аксессуары остальных игроков дорисовываются в основном
+   проходе. FrameNumber-guard не даёт второму DrawModel, если PostPlayerDraw
+   уже сработал (в пределах кадра).
+3. `PostPlayerDraw` дополнительно защищён тем же gate (на случай вызова
+   для lp от 1-го лица).
+
+Поведение после фикса:
+- свои аксессуары: 1-е лицо — не видны вообще; 3-е лицо на себя — видны;
+- чужие аксессуары: видны и от 1-го, и от 3-го лица, включая фонарик F.
+
+Тесты: sim_customization расширен (58 → 61 проверок: gate, fallback по
+всем игрокам); новый функциональный sim_customization_render (12 проверок:
+мок-рендер, реальные вызовы fallback/PostPlayerDraw, счётчики DrawModel).
+GLua 385/0, симы 42/42, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 175b (05.08.2026): фикс краша QTE-взломщика — индексация функции как таблицы
+
+Владелец (живой сервер):
+```
+[grm] addons/grm/lua/weapons/ds_lockpick/shared.lua:244: attempt to index upvalue
+'startBreakerQTE' (a function value)
+  1. startBreakerQTE - .../shared.lua:244
+  2. func - .../shared.lua:401
+  3. unknown - lua/includes/extensions/net.lua:34
+```
+
+Причина: в клиентской QTE использовалось `startBreakerQTE.__frame` —
+индексация ФУНКЦИИ как таблицы (хранить «активное окно» прямо на функции).
+В GLua/LuaJIT функции не индексируются → краш при первом же запуске
+мини-игры (net.Receive → startBreakerQTE). Серверная ветка не падала,
+поэтому симулятор (SERVER-only) этого не ловил.
+
+Сделано:
+1. Введена локальная `activeFrame` в области видимости CLIENT-блока;
+   `startBreakerQTE.__frame` заменён на неё во всех 4 местах (проверка
+   «уже идёт мини-игра», создание окна, endQTE, cancelQTE).
+2. sim_breaker расширен клиентским прогоном: файл загружается повторно
+   в CLIENT-режиме (моки surface/draw/vgui/LocalPlayer/FrameTime/
+   FrameNumber) — теперь любая ошибка верхнего уровня клиентской ветки
+   валит тест. Проверки 34 → 37.
+
+Проверки: GLua 385/0, симы 42/42, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 176 (05.08.2026): сигнал тревоги GRM Alarm не работает — сирена не зацикливалась
+
+Владелец: «проверь grm alarm весь модуль, сигнал тревоги не работает, и какой
+звук там юзается?».
+
+Звук: `ambient/alarms/combine_bank_alarm_loop4.wav` (стоковая HL2-сирена
+Combine, loop). Задаётся в `A.Config.SirenSound`
+(lua/autorun/sh_grm_alarm_config.lua); альтернативы добавлены в комментарий
+конфига (loop1-4, citadel_alarm1, alarm1-4, klaxon1/2).
+
+Причины «сигнал не работает» (lua/autorun/server/sv_grm_alarm.lua):
+1. **Главная:** `CreateSound(...)` + `PlayEx(...)` вызывались БЕЗ
+   `patch:EnableLooping(true)`. В GMod звуковой патч НЕ зацикливается сам
+   по себе, даже для loop-файлов — сирена проигрывала файл один раз
+   (~2-3 сек) и замолкала. Касалось и хаба (`StartSiren`), и динамиков
+   (`syncSpeakers`).
+2. **Дубль:** рядом с патчем стоял безусловный `hub:EmitSound(...)` —
+   второй источник поверх патча, который к тому же никто не глушил.
+3. **StopSiren** останавливал только патч — если играл резервный
+   EmitSound (fallback), после сброса тревоги он продолжал выть.
+
+Сделано:
+1. `patch:EnableLooping(true)` перед `PlayEx` в `StartSiren` (хаб) и в
+   `syncSpeakers` (динамики).
+2. `EmitSound` — только в `elseif`-ветке, когда `CreateSound` вернул nil
+   (битый путь/звук) — резервный разовый импульс.
+3. `StopSiren` дополнительно вызывает `hub:StopSound(soundPath)` — глушит
+   резервный EmitSound.
+4. В конфиг добавлен список проверенных стоковых сирен с комментарием.
+
+Проверка модуля целиком (сенсоры/хаб/динамики/терминал/персист):
+- скан-тикер: ARMED + обычный игрок → StartSiren; суперадмин/CanControl
+  НЕ триггерит (friendly — хозяин не поднимает тревогу на себя);
+  PASSIVE — только лог [пассив]; OFF — молчит; датчик Active=false — молчит;
+- динамики: играют только при AlarmActive в своей сети; выключенный
+  динамик глушится немедленно; патчи-сироты чистятся;
+- терминал/меню устройств, персистент, автосейв — без изменений (ок).
+
+Тесты: новый функциональный sim_alarm (27 проверок: зацикливание, отсутствие
+дубля EmitSound, StopSound при сбросе, fallback при nil-патче, все режимы
+скана, динамики); sim_security расширен проверками loop (52 проверки).
+GLua 385/0, симы 43/43, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 176b (05.08.2026): QTE-взломщик падал на чистом клиенте — глобального LerpColor в GMod нет
+
+Владелец (живой сервер, повторяющийся спам):
+```
+[grm] addons/grm/lua/weapons/ds_lockpick/shared.lua:285: attempt to call global 'LerpColor' (a nil value)
+```
+
+Причина: в отрисовке прогресс-бара QTE использовался глобал `LerpColor(...)`.
+В Garry's Mod такого глобала НЕТ (есть только `Lerp` для чисел; `LerpColor`
+определяют сторонние аддоны типа PAC3). На клиенте владельца аддона-донора
+не оказалось → падение при каждой отрисовке окна взлома.
+
+Сделано:
+1. В CLIENT-блок добавлена локальная `lerpColor(t, a, b)` (линейная
+   интерполяция r/g/b/a через math.Clamp/floor) — замена на неё во всех
+   местах (единственное: прогресс-бар).
+2. Проверка по всему репо: других использований `LerpColor` в lua/ нет.
+3. sim_breaker расширен: 39 проверок (нет вызова `LerpColor(`, своя
+   lerpColor определена, клиентская ветка грузится без ошибок).
+
+Проверки: GLua 385/0, симы 43/43, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 176c (05.08.2026): анимация держания взломщика — HoldType slam (weapon_slam)
+
+Владелец: «Анимацию держания взломщика нужно взять как у weapon_slam
+(портативная мина)».
+
+Сделано: `SWEP.HoldType = "slam"` + `SetHoldType("slam")` в Initialize/Deploy
+(было "grenade"). ViewModel `cstrike/c_c4.mdl` содержит анимации под slam
+(та же связка, что у TTT-шной C4). sim_breaker: проверка HoldType → slam.
+GLua 385/0, симы 43/43, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 177 (05.08.2026): вкладка «Экономика» в /factions пустая — данные терялись + дубль вкладки
+
+Владелец: «В меню фракций в разделе экономики не выдаёт ни фракции, ни
+текущее значение госбюджета, даже игроков не выбрать, никакие кнопки там
+не работают» (+5 скриншотов).
+
+Найдено ДВЕ причины (воспроизведено функциональным симулятором
+sim_factions_econ_tab с моками vgui):
+
+1. **ГЛАВНАЯ — потеря данных (sh_grm_economy.lua:2404).**
+   `net.Receive(NET_ADMIN_DATA)` вызывал
+   `GRM.Economy._embeddedBuild(GRM.Economy.EmbeddedAdmin, d)` — ДВА
+   аргумента. А `build(d)` в sh_faction_fixes.lua (OpenEconomyPanel)
+   принимал ОДИН: в `d` попадала ПАНЕЛЬ, настоящие данные (фракции,
+   гос.бюджет, игроки) терялись. Панель строилась с пустыми таблицами:
+   гос.бюджет 0, списки фракций/игроков пусты, комбо пусты → «кнопки не
+   работают» (выбирать нечего, нажатия шлют пустоту).
+   Фикс: вызов остаётся `_embeddedBuild(EmbeddedAdmin, d)`, а `build`
+   теперь `local function build(a, b) local d = b or a end` — данные
+   берутся из второго аргумента, защита от обоих вариантов вызова.
+
+2. **Дубль вкладки (sh_grm_feco_admin.lua).** Старый модуль Feco Admin
+   вешал hook `GRM_FecoAdmin_Tab` и добавлял ВТОРУЮ вкладку «Экономика»
+   (обёртка с кнопками) рядом с полной панелью из faction_fixes — в меню
+   было две вкладки с одним именем. Фикс: hook убран (модуль остался:
+   отдельное окно grm_feco / grmmenu работает), вкладку добавляет только
+   FactionsExt_EconomyTab.
+
+Проверка: новый sim_factions_econ_tab (16 проверок: ровно одна вкладка,
+запрос данных, пересборка панели, 6 вкладок, комбо с Polizei, игрок в
+списке, кнопки, повторная пересборка); sim_econ_access расширен (38
+проверок). GLua 385/0, симы 44/44, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 177b (05.08.2026): разграничение прав в панели экономики /factions — админ-функции только суперадмин
+
+Владелец: «Вкладку настройки в /factions во вкладке Экономика не должно
+показывать лидеру или заму или любому лицу которому выдан доступ. Это только
+для суперадмина + нельзя чтобы показывало им игроков в том виде, в котором
+это дано суперадмину. Изъять/установить - эти кнопки не должны быть видны
+для тех, кто не суперадмин, даже если у них есть доступ, плюс настраивать
+штрафы нацбанк не должен для фракций. Право штрафовать выдаёт только
+суперадмин».
+
+Сделано (sh_grm_economy.lua — buildAdminUI + сервер NET_ADMIN_ACT):
+
+КЛИЕНТ (buildAdminUI, определяется `isSuper = LocalPlayer():IsSuperAdmin()`):
+1. Вкладка «Настройки» (глобальные настройки: налоги, интервалы ЗП, валюта,
+   модель банкомата, направления штрафов/налогов) — только суперадмин;
+   у лидера/зама/доступных вкладки нет вообще.
+2. Вкладка «Игроки»: у не-суперадминов нет кнопок «Выдать / Изъять /
+   Установить наличные / Установить счёт» — только список-просмотр с
+   подписью «Изменение балансов игроков — только superadmin».
+3. Вкладка «Фракции» → подвкладка «Штрафы» (настройка права /fine,
+   категории целей, лимиты, роли) — только суперадмин; не-суперадмин видит
+   только «Зарплаты». doSave для не-суперадмина не включает fine-блок.
+4. Текст «Обзор» адаптирован под права.
+
+СЕРВЕР (защита от ручных пакетов, а не только от кнопок):
+1. player_give / player_take / player_set / player_bank_set —
+   `if not ply:IsSuperAdmin() then return end`.
+2. config_save — только суперадмин.
+3. save_entry: `if not ply:IsSuperAdmin() then a.fine = nil end` — права
+   штрафов сохраняет только суперадмин; лидер/зам сохраняют зарплаты/
+   налоги/бюджет, но не трогают fine.
+
+Гос.бюджет (state_give/take/set/state_to_faction/state_pay) и бюджеты/
+зарплаты фракций (budget_give/take, pay_now, save_entry без fine) остались
+доступны CanManageEconomy — это и есть работа Нацбанка/зама.
+
+Тесты: sim_factions_econ_tab расширен до 22 проверок (прогон не-суперадмина:
+нет «Настроек», нет кнопок выдать/изъять/установить, нет подвкладки
+«Штрафы»; у суперадмина всё есть); sim_econ_access — 41 проверка (серверные
+ограничения). GLua 385/0, симы 44/44, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 177c (05.08.2026): лидер/зам с доступом могут менять числа (лимит штрафа, налоги), но не систему штрафов
+
+Владелец (уточнение к 177b): «Проценты по штрафам, налоги игроки с доступом
+ставить могут, но не менять саму систему штрафов».
+
+Сделано (sh_grm_economy.lua):
+
+КЛИЕНТ (подвкладка «Штрафы» во вкладке «Фракции»):
+- Суперадмин — как раньше: система штрафов (включение /fine, категории
+  целей, роли, лимит) + правила.
+- Не-суперадмин (лидер/зам/доступ) — подвкладка «Штрафы» ЕСТЬ, но в ней
+  только ЧИСЛОВОЕ поле «Лимит суммы штрафа (0 = общий максимум)» +
+  подпись «Систему штрафов настраивает только superadmin». Чекбоксов
+  enabled/allRoles/ownFaction/otherFactions/civilians и ролей НЕТ.
+- doSave: не-суперадмин отправляет `fine = { maxAmount = N }` (только
+  число); суперадмин — полный fine-блок.
+
+СЕРВЕР (save_entry):
+- `if ply:IsSuperAdmin() then ... вся система ... end` — системные поля
+  fine сохраняет только суперадмин.
+- `fp.maxAmount = ...` — вне ветки: лимит суммы может менять любой
+  CanManageEconomy (как налог/зарплаты).
+- Налоги (taxRate), зарплаты, бюджеты — как раньше, доступны всем с
+  доступом.
+
+Тесты: sim_factions_econ_tab 24 проверки (не-суперадмин: подвкладка есть,
+чекбоксов 0, поле лимита 1); sim_econ_access 42 (сервер: система — только
+суперадмин, maxAmount — всем). GLua 385/0, симы 44/44, roundtrip 14/14.
+dist пересобран.
+
+---
+
+## Находка 178 (05.08.2026): банковская система — хранилище, печатный станок, терминал, паллеты, процент со штрафа
+
+Владелец: «полноценная система экономики для банковских работников и
+руководства банка... инструмент установки печатного станка, денег в виде
+пропа... чтобы всё циркулировало... Станок в 10 секунд печатает не менее
+5000 GRM». Плюс: процент со штрафа (не лимит) для банковских работников;
+«Установить» в Гос.бюджете — не для не-суперадминов.
+
+СОЗДАНО (отдельно от обычного grm_money_printer — он не тронут):
+
+1. **grm_bank_vault — хранилище** (models/lt_c/sci_fi/ground_locker_small.mdl):
+   - 3D2D-дисплей «В ГОСБЮДЖЕТЕ СЕЙЧАС: N» + «В хранилище: M / 500.000»;
+   - синк в РЕАЛЬНОМ времени: любой change гос.бюджета (банкомат-взнос,
+     state_give/take/set, налоги, штрафы, печать) → NWVar на хранилищах
+     (stateAdd/StateBudgetSet + таймер-страховка 2с);
+   - вместимость 500.000 GRM паллетами (HeldCash); E — статус (сотрудник).
+
+2. **grm_money_press — печатный станок** (models/lt_c/sci_fi/hatch_frame.mdl):
+   - печатает 5000 GRM / 10 сек в ГОСБЮДЖЕТ, паллеты дропаются в ближайшее
+     хранилище (SpawnVaultCash); нагрев +6/цикл, перегрев 100 → стоп;
+   - прокачка скорости: ур.1 = 7500, ур.2 = 10000 ... (+50%/ур, макс 5),
+     цена 100000×(ур+1); охлаждение 5000 (кнопка); TotalPrinted.
+
+3. **grm_money_press_terminal — терминал** (models/lt_c/holo_wall_unit.mdl):
+   - управляет ближайшим станком (радиус 600): Запустить/Остановить,
+     Прокачать скорость, Охладить, Обновить; меню DFrame.
+
+4. **grm_vault_cash — паллета** (models/props/cs_assault/moneypalleta.mdl):
+   - E → подобрать (деньги в кошелёк), место в хранилище освобождается;
+   - OnRemove возвращает HeldCash (кроме подобранных — флаг _picked).
+
+5. **grm_bank_tool** — инструмент установки (комбо: Хранилище/Станок/
+   Терминал; ЛКМ — спавн, R — удалить; права: суперадмин или
+   CanManageEconomy). В Q-меню. Все 3 класса в PERM_CLASSES.
+
+6. **Economy (sh_grm_economy.lua)**:
+   - реестр E.Vaults, E.SyncVaultsState, E.SpawnVaultCash, E.DropCashToVault;
+   - state_give/state_take → деньги ДРОПАЮТСЯ паллетами в хранилище;
+   - E.Fine: **процент со штрафа** (finePerms.statePercent 0-100) — доля
+     штрафа идёт в ГОС.БЮДЖЕТ, остальное в бюджет фракции;
+   - save_entry: statePercent могут менять ВСЕ с доступом (число), система
+     штрафов — суперадмин;
+   - клиент: кнопка «Установить» в «Гос.бюджет» — только суперадмин;
+     подвкладка «Штрафы» для не-суперадминов — поле «Процент со штрафа в
+     гос.бюджет, %» (0-100) вместо лимита; суперадмин — лимит + процент.
+
+ЦИРКУЛЯЦИЯ: банкомат/налоги/штрафы → гос.бюджет → хранилище (дисплей +
+паллеты) → подбор E → кошелёк; станок печатает → гос.бюджет + паллеты в
+хранилище; пополнение/изъятие из панели → паллеты в хранилище.
+
+Тест sim_bank_vault (44 проверки: реестр, вместимость 500к, синк дисплея,
+дроп, печать 5000/10с, прокачка, перегрев/охлаждение, процент штрафа 20%,
+права, тул/Q/perm/модели). GLua 398/0, симы 45/45, roundtrip 14/14.
+dist пересобран.
+
+---
+
+## Находка 178b (05.08.2026): логика хранилища — станок печатает паллеты 100к, E-меню «Загрузить/Выгрузить», выгрузка с суммой
+
+Владелец (уточнение логики): «Станок печатает паллету максимум 100.000,
+напечатал, заспавнил паллету, игрок подносит её к хранилищу, затем жмёт Е
+по хранилищу и открывается мини менюшка отражающая состояние хранилища и
+две кнопки, загрузить и выгрузить. Загрузить — грузит паллеты или любые
+сущности денег, а выгрузить нужно с указанием конкретной суммы. Паллеты
+идут от суммы 50.000 и выше, ниже — выдаётся моделькой money.mdl».
+
+Сделано:
+
+1. **Печатный станок (grm_money_press)** — печать в БУФЕР:
+   - каждый цикл (5000+/10с) → гос.бюджет + amount, буфер += amount;
+   - при буфере ≥ 100.000 станок СПАВНИТ ПАЛЛЕТУ (grm_vault_cash, 100.000)
+     у себя (впереди, +60 по forward), буфер -= 100.000;
+   - NWVar Buffer; на 3D2D и в терминале — «Буфер: N / 100.000».
+
+2. **E-меню хранилища (grm_bank_vault)** — открывается всем:
+   - состояние: «В ГОСБЮДЖЕТЕ СЕЙЧАС», «В хранилище: M / 500.000»;
+   - кнопка **ЗАГРУЗИТЬ** (всем): ищет рядом (радиус 250) паллеты
+     grm_vault_cash и деньги-пропы grm_money_drop; грузит в HeldCash
+     (с учётом вместимости 500.000); grm_money_drop — ещё и в гос.бюджет
+     (взнос в казну); сущности удаляются;
+   - кнопка **ВЫГРУЗИТЬ** (только CanManageEconomy/суперадмин; у остальных
+     подпись «Выгрузка — только для сотрудников»): Derma_StringRequest
+     «Сумма» → HeldCash -= , гос.бюджет -= (изъятие из казны), спавн:
+       ≥ 50.000 → паллеты grm_vault_cash (дробление по 100.000, остаток
+       ≥ 50.000 паллетой, < 50.000 — money.mdl);
+       < 50.000 → grm_money_drop (models/props/cs_assault/money.mdl).
+
+3. **Анти-двойной счёт**: паллета, заспавненная у хранилища (пополнение/
+   изъятие из панели, state_give/take) или у станка, НЕ пишется в HeldCash
+   сразу — HeldCash растёт только через «Загрузить». Иначе повторная
+   загрузка удваивала бы запас.
+
+4. **E.SpawnCashAt(pos, amount, vault)** — общий спавнер с дроблением
+   (используется выгрузкой); паллеты получают ссылку на хранилище (Vault),
+   чтобы при удалении/подборе корректно вести учёт.
+
+5. Терминал станка показывает буфер; 3D2D станка — буфер.
+
+Тест sim_bank_vault расширен до 65 проверок (буфер, паллета при 100к,
+загрузка паллет/денег-пропов, вместимость, выгрузка с правами и без,
+дробление 250к = 3 паллеты, 30к → money.mdl, взнос в казну).
+GLua 398/0, симы 45/45, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 178c (05.08.2026): 3D2D-информация банковских сущностей — на лицевой стороне модели
+
+Владелец (скриншот): «информация должна быть с другой стороны».
+
+Было: дисплеи хранилища и станка — биллборды, парящие НАД моделью
+(`GetPos() + GetUp()*42/55` + `Angle(0, EyeAngles().y - 90, 90)`).
+Владельцу нужно, чтобы информация читалась на ЛИЦЕВОЙ стороне корпуса.
+
+Сделано (как у проверенного сканера ScannerScreenAngles):
+- позиция = `WorldSpaceCenter() + GetForward() * (глубина OBB*0.5 + отступ)`;
+- угол = `(-GetRight()):AngleEx(GetForward())` — плоскость экрана
+  перпендикулярна forward модели, верх экрана вверх, текст не зеркалится.
+
+Применено: grm_bank_vault/cl_init (хранилище), grm_money_press/cl_init
+(станок). Паллета (мелкая, на полу) осталась биллбордом — там уместно.
+
+sim_bank_vault: 69 проверок (включая «дисплей на лице, нет биллборда»).
+GLua 398/0, симы 45/45, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 178d (05.08.2026): точка выдачи паллет печатного станка (суперадмин)
+
+Владелец: «надо чтобы суперадмин мог выставлять зону спавна, точку спавна
+денег/паллет для печатного станка, а то уходит куда-то непонятно проп в
+стенку».
+
+Сделано (по образцу дилера v3 VD.SetSpawnPoint):
+
+1. **grm_money_press**: NWVar SpawnPos/SpawnAngle/HasCustomSpawn;
+   `ENT:SetSpawnPoint(pos, ang)` / `ENT:ClearSpawnPoint()`;
+   `ENT:SpawnPos()` — при custom-точке возвращает её (с трейсом вниз на пол,
+   чтобы паллета не парила и не уходила в стену), иначе дефолт
+   (pos+forward*60).
+2. **PrintMoney** спавнит паллеты через `SpawnPos()`.
+3. **Тул grm_bank_tool**: новый режим «Точка выдачи паллет (суперадмин)»:
+   ЛКМ по станку — выбрать; ЛКМ по месту — установить точку;
+   R по станку — сбросить. Только суперадмин.
+4. **PermData** Extract/Apply для grm_money_press: точка выдачи переживает
+   рестарт через /permadd (как кейпад/сканер).
+
+sim_bank_vault: 77 проверок (включая точку выдачи: установка, спавн в ней,
+сброс → дефолт, перм). GLua 398/0, симы 45/45, roundtrip 14/14.
+dist пересобран.
+
+---
+
+## Находка 178e (05.08.2026): /permadd сохраняет ВСЁ банковское оборудование с состоянием
+
+Владелец: «Всё банковское оборудование должно сохраняться через /permadd».
+
+Классы уже были в PERM_CLASSES (находка 178). Теперь /permadd сохраняет и
+ВОССТАНАВЛИВАЕТ состояние:
+
+1. **grm_bank_vault — хранилище**: Extract пишет `held` (запас) и
+   `capacity`; Apply восстанавливает (held ограничивается capacity).
+   После рестарта хранилище возвращается с тем же запасом денег.
+2. **grm_money_press — станок**: Extract пишет `speed` (уровень скорости),
+   `buffer` (недопечатанный остаток), `printed` (всего напечатано),
+   `active` (вкл/выкл) + точку выдачи (178d); Apply восстанавливает всё и
+   пересчитывает сумму цикла (`SetPrintAmount(AmountPerCycle())`).
+3. **grm_money_press_terminal — терминал**: в PERM_CLASSES, состояния нет
+   (сохраняется сам факт установки + позиция/модель).
+
+Порядок восстановления (spawnAll): Create → Spawn/Activate (Initialize
+регистрирует в реестрах) → PermData.Apply → позиция/угол/физ.движение.
+
+sim_bank_vault: 81 проверка (включая перм-поля хранилища и станка).
+GLua 398/0, симы 45/45, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 178f (05.08.2026): паллеты не выбрасываются + аксессуар «Сумка ограбления» (поэтапный сбор)
+
+Владелец: (1) «он выбрасывает паллеты, а не спавнит их нормально»; (2) нужен
+чекбокс функциональной сумки ограбления при добавлении аксессуара на продажу:
+деньги складываются ПОЭТАПНО, за 4-5 заходов максимум 100.000, не сразу.
+
+1. **ПАЛЛЕТЫ (физика)**:
+   - grm_vault_cash: `phys:EnableMotion(false)` — паллета НЕПОДВИЖНА,
+     физика больше не выталкивает её из стены/пересечения;
+   - `E.SettleCashPos(pos)` — «укладчик»: трасса вниз ищет пол (до 4
+     попыток подъёма из твёрдого тела), паллета ставится на пол ровно;
+     используется в SpawnCashAt (выгрузка/станок) и SpawnVaultCash.
+
+2. **СУМКА ОГРАБЛЕНИЯ (loot_bag)**:
+   - `C.FunctionTypes.loot_bag` + параметры functionConfig:
+     `lootMaxMoney` (100.000 по умолч.) и `lootPerUse` (25.000 — порция
+     за один подход), нормализуются в normalizeCatalogItem (клампы);
+   - админ-каталог аксессуаров: ЧЕКБОКС «Сумка ограбления» (правая
+     колонка) + поля «Сумка: макс. GRM» / «Сумка: за подход»;
+   - серверный API: `C.LootBagGet/Set/Add/Unload`, `LootBagMax/PerUse`;
+     `LootBagAdd` кладёт min(паллета, perUse, maxMoney-cur) — поэтапно;
+     `concommand grm_bag_unload` — выгрузка в кошелёк; NWInt GRM_LootBag;
+   - подбор паллет (grm_vault_cash) и денег (grm_money_drop): если
+     надета сумка — вместо мгновенного GiveMoney перекладывается порция
+     в сумку, паллета УМЕНЬШАЕТСЯ (не исчезает), уведомление
+     «В сумку: N (в сумке: X / 100.000)»; сумка полна → обычный подбор;
+   - HUD: «СУМКА ОГРАБЛЕНИЯ: X / 100.000» + подсказка /bag_unload.
+
+Пример: паллета 300.000, сумка 100.000/25.000 → 1-е E: +25.000 (паллета
+275.000), 2-е: +25.000, 3-е, 4-е → сумка 100.000 (паллета 200.000),
+5-е E — сумка полна (0).
+
+Тесты: sim_customization_runtime 30/30 (поэтапность: 4×25.000 = 100.000,
+5-й заход 0, выгрузка, без сумки — 0); sim_customization 61/61 (чекбокс,
+HUD); sim_bank_vault 84/84 (ветка сумки в паллете, EnableMotion,
+SettleCashPos). GLua 398/0, симы 45/45, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179 (05.08.2026): проп-протектор не защищал серверные сущности от физгана/гравигана
+
+Владелец: «проп-протектор не защищает от воздействия физгана... я в должности
+игрока трогаю серверные предметы, пропы, сущности. Так быть не должно».
+
+Причина: `PP.IsManaged(ent)` возвращал true ТОЛЬКО для `prop_physics`, а
+серверные GRM-сущности (grm_bank_vault, grm_money_press, grm_alarm_* и т.д.)
+имеют свои классы — все хуки (PhysgunPickup/CanTool/CanPlayerUnfreeze)
+пропускали их. Плюс НЕ было хуков GravgunPickup/GravgunPunt — гравитационная
+пушка могла таскать серверное.
+
+Сделано (lua/autorun/sh_grm_prop_protect.lua):
+1. `PP.IsManaged`: true для `prop_physics` И для любой сущности с
+   `GRM_EntityOwnerType == "server"` (ставится `MarkServerEntity` — его
+   вызывают тул grm_bank_tool, perm-восстановление и др.).
+2. Добавлены хуки `GravgunPickup` и `GravgunPunt` — гравиган тоже не может
+   поднять/пнуть защищённое (игрок), суперадмин — может.
+
+Итог: обычный игрок не может физганом/гравиганом/тулом/удалением трогать
+серверное (банк, сигнализацию и т.п.); суперадмин — может (isAdmin).
+Чужие пропы (prop_physics) — защита как раньше.
+
+Тест sim_prop_protect (23 проверки: IsManaged для prop_physics и
+server-сущностей, CanInteract для игрока/админа, хуки Physgun/Gravgun/
+GravgunPunt). GLua 398/0, симы 46/46, roundtrip 14/14.
+
+---
+
+## Находка 179b (05.08.2026): аккуратная сетка чекбоксов в админ-каталоге аксессуаров
+
+Владелец: «чекбоксы аккуратно расставить, чтобы не наслаивались и не уходили
+вниз за зону видимости».
+
+Было: 10 чекбоксов в ОДНУ колонку (y=406, шаг 25 → до 631, форма 640) +
+числовые поля на y=536/555 — нижние чекбоксы наезжали на числа и уходили за
+низ формы.
+
+Сделано (cl_grm_customization.lua, openAdmin):
+1. Чекбоксы — СЕТКА 2×5: колонка 1 (x=12): gasmask/backpack/radio/watch/
+   armor; колонка 2 (x=230): artificial_eye/night_vision/neuro_link/
+   prosthesis/loot_bag; шаг 24px → максимум y=502, ничего не наезжает.
+2. Числовые поля — 2 ряда: y=536 (газ x12, рюкзак x160, урон x300) и
+   y=580 (сумка макс x12, сумка за подход x160); все влезают в форму 640,
+   не пересекают превью-панель (справа x=450+).
+
+sim_customization 61/61 (проверка сетки funcCols). GLua 398/0, симы 46/46,
+roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179c (05.08.2026): «Tried to use a NULL Panel!» в админке аксессуаров (dscrollpanel.lua:111)
+
+Владелец (спам ошибок при работе с каталогом аксессуаров):
+```
+lua/vgui/dscrollpanel.lua:111: Tried to use a NULL Panel!
+  1. GetTall ... PerformLayoutInternal ... dscrollpanel.lua:135 (x5)
+```
+
+Причина: после каждого «Сохранить в каталог» сервер шлёт
+`GRM_Custom_AdminOpen`, и `openAdmin()` создавал НОВОЕ окно с новым
+DScrollPanel-списком, не удаляя старое. Старая панель (уже NULL) оставалась
+в глобальной раскладке vgui → DScrollPanel вызывал GetTall на NULL.
+
+Сделано (cl_grm_customization.lua):
+1. `openAdmin` теперь переиспользует открытое окно: если `adminFrame` жив —
+   только `InvalidateLayout()` (каталог уже обновился в C.Catalog);
+   иначе создаёт окно и запоминает в `adminFrame`; `OnRemove` чистит ссылку.
+2. Повторных окон/панелей больше не создаётся — NULL Panel исключён.
+
+sim_customization 63/63 (проверка переиспользования окна). GLua 398/0,
+симы 46/46, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179d (05.08.2026): хранилище не запоминало деньги после рестарта — /permadd фиксирует состояние один раз
+
+Владелец: «Хранилище не запоминает сколько в нём было денег после рестарта и
+не восстанавливает, хотя я и запермил».
+
+Причина: `/permadd` вызывает PermData.Extract ОДИН раз в момент перма и
+пишет `data` в запись. Если запермить хранилище (или загрузить деньги
+ПОСЛЕ перма), запись в `grm_perm_entities.json` остаётся со старым
+`held` (обычно 0) — после рестарта Apply возвращает 0.
+
+Сделано:
+1. **GRM.PermData.UpdateEntry(ent)** (sh_grm_perm_entities.lua): находит
+   перм-запись по классу+позиции, заново вызывает Extract и пересохраняет
+   `rec.data`. Дебаунс 1.5с на сущность (частые изменения не дёргают диск).
+2. **Хранилище**: `UpdateEntry(self)` при каждом изменении HeldCash —
+   в LoadNearCash (загрузка паллет/денег) и UnloadCash (выгрузка).
+3. **Паллета** (grm_vault_cash): при подборе (обычном и через сумку) и при
+   удалении не-подобранной паллеты — `UpdateEntry(vault)` (HeldCash минус).
+4. **Станок**: `UpdateEntry(self)` при печати (буфер/статистика) и прокачке
+   (скорость) — состояние тоже переживает рестарт.
+
+Теперь после рестарта хранилище возвращается с ТЕМ ЖЕ запасом денег,
+который был на момент последнего изменения (даже если пермили до загрузки).
+
+sim_bank_vault: 87 проверок (UpdateEntry планирует и реально обновляет
+запись: held 0 → 250.000 в сохранённых данных). GLua 398/0, симы 46/46,
+roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179e (05.08.2026): /permremove и /bag_unload в чате + отмывщик денег и ивент «Ограбление»
+
+Владелец: (1) банковское оборудование не реагирует на /permremove; (2) не
+работает /bag_unload; (3) выгрузка должна идти на землю или ближайшему
+отмывщику денег; (4) нужен отмывщик (тул, настройка фракций/минимума
+участников, ивент с баннером «НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ», 50 минут, музыка
+robber_bank.wav).
+
+1. **/permremove и /bag_unload не работали в чате**: EasyChat ставит
+   SkipPlayerSay для команд → PlayerSay не вызывается. Добавлены
+   PlayerSayTransform-хуки (как /factions): GRM_PermEntities_ChatTransform
+   (/permadd /permremove /permlist /permload) и GRM_LootBag_UnloadTransform
+   (/bag_unload). Плюс removePerm теперь ищет запись по классу + БЛИЖАЙШЕЙ
+   позиции (устойчиво к сдвигу физганом).
+
+2. **/bag_unload → выгрузка НЕ в кошелёк**: если рядом (400) отмывщик и
+   ивент активен — деньги СДАЮТСЯ ему (DepositFromBag); иначе — на землю
+   перед игроком (E.SpawnCashAt: паллеты ≥50к / пачка money.mdl). Фолбэк в
+   кошелёк только если нет экономики.
+
+3. **grm_money_launderer — отмывщик денег** (модель humans/group03/male_07):
+   - тул grm_bank_tool → «Отмывщик денег (ивент ограбление)»;
+   - E-меню: статус, «ВЗЯТЬ ЗАДАНИЕ» (проверка фракции из списка
+     AllowedFactions, пусто = любые), «СДАТЬ ДЕНЬГИ» (сумка + паллеты
+     рядом), настройка суперадмином (минимум участников, цель, фракции);
+   - при наборе минимума участников → автозапуск ивента: баннер на весь
+     сервер «НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ» + музыка robber_bank.wav (клиентский
+     CreateSound, цикл);
+   - таймер 50 минут (HeistDuration=3000); сдача денег → MoneyHeld;
+     победитель = фракция, сдавшая больше всех (если цель достигнута);
+     истечение без цели → «ПОБЕДА ГОСУДАРСТВЕННЫХ СТРУКТУР»;
+   - клиентский cl_grm_heist.lua: огромный баннер вверху экрана, отсчёт
+     «ОГРАБЛЕНИЕ MM:SS», музыка стоп по окончании;
+   - PERM_CLASSES + PermData (конфиг переживает рестарт);
+   - E.FindNearestLaunderer для /bag_unload.
+
+Тест sim_heist (36 проверок: доступ/отказ фракции, набор участников,
+автозапуск, таймер 3000, сдача/победа Mafia, истечение → госструктуры,
+чат-хуки, тул/перм/модели, музыка/баннер). GLua 402/0, симы 47/47,
+roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179f (05.08.2026): GPS-маркер цели ивента «Ограбление» (Рейхсбанк)
+
+Владелец: «маркер GPS надо чтобы можно было установить специальный для
+ивента тоже тулом или командой, когда ивент ограбления запущен, грабители
+получат координаты и точку куда надо идти — Рейхсбанк (Хранилище).
+Двигайтесь к локации!»
+
+Сделано (grm_money_launderer + тул + команды):
+
+1. **Цель ивента** (NWVar HeistTargetPos):
+   - не задана → авто: ближайшее хранилище (grm_bank_vault) — «Рейхсбанк»;
+   - `ENT:HeistTarget()` — резолв цели; `SetHeistTarget` + UpdateEntry (перм).
+
+2. **Способы установки (суперадмин)**:
+   - **Тул** «GRM Банковское оборудование» → режим **«Цель ивента — Рейхсбанк»**:
+     ЛКМ по отмывщику (выбрать) → ЛКМ по хранилищу/месту (установить); R — сброс;
+   - **Команды** `/heist_target` (целиться в хранилище → цель ближайшему
+     отмывщику) и `/heist_target_clear` (сброс) — через PlayerSayTransform
+     (EasyChat) + консоль grm_heist_target;
+   - **E-меню отмывщика**: кнопки «⚑ ЦЕЛЬ: хранилище под прицелом» и
+     «✕ Сбросить цель».
+
+3. **При запуске ивента** — `SendHeistTargetMarkers()`:
+   - каждому участнику (Participants) на мини-карту ставится временный
+     красный маркер **«РЕЙХСБАНК — ЦЕЛЬ ОГРАБЛЕНИЯ»** (MM.AddTempPoint,
+     длительность = длительность ивента) + точечная отправка (MM.SendTo);
+   - уведомление: «ЦЕЛЬ ОГРАБЛЕНИЯ: Рейхсбанк (хранилище) — X Y.
+     Двигайтесь к локации!»; в баннере — «ДВИГАЙТЕСЬ К ЛОКАЦИИ!».
+
+4. **Перм**: HeistTargetPos в Extract/Apply — цель переживает рестарт.
+
+Тест sim_heist расширен до 49 проверок (авто-цель = хранилище, маркеры
+участникам x2 + SendTo, set_target/clear_target по прицелу, команды, тул,
+перм, текст «РЕЙХСБАНК — ЦЕЛЬ ОГРАБЛЕНИЯ»/«Двигайтесь к локации!»).
+GLua 402/0, симы 47/47, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179g (05.08.2026): отмывщик — нормальная поза, GRM-меню с чекбоксами фракций, удаление через R
+
+Владелец: (1) «почему отмывщик в Т-Позе?»; (2) «почему я должен вручную
+вводить фракцию? Делай полноценное в GRM стиле меню с чекбоксами и нормальной
+настройкой, чтобы оно выдавало список уже существующих фракций»; (3) «через
+R клавишу надо тулом чтобы отмывщика можно было удалить».
+
+Сделано:
+1. **Поза**: Initialize отмывщика переведён с физического пропа
+   (SOLID_VPHYSICS/MOVETYPE_VPHYSICS — из-за этого male_07 стоял в Т-позе)
+   на NPC-инициализацию как у квест-NPC: SetHullType(HULL_HUMAN),
+   SetHullSizeNormal, SetNPCState(NPC_STATE_SCRIPT), SetSolid(SOLID_BBOX),
+   SetMoveType(MOVETYPE_NONE), CapabilitiesClear, DropToFloor —
+   модель человека стоит нормально.
+2. **Меню (GRM-стиль)**: вместо Derma_StringRequest — полноценная форма:
+   - DNumberWang «Минимум участников» и «Цель (сумма)»;
+   - **DScrollPanel с чекбоксами** всех существующих фракций (сервер шлёт
+     `factionsList` из Factions, отсортированный; отмечены разрешённые);
+   - кнопка «СОХРАНИТЬ НАСТРОЙКИ» → новое действие `config_full`
+     (минимум + цель + таблица выбранных фракций; пусто = любые);
+   - окно 520×660, кнопки цели (set_target/clear_target) остались.
+3. **Удаление тулом**: R по отмывщику в ЛЮБОМ режиме (кроме heisttarget,
+   где R = сброс цели) — удаление (суперадмин), с уведомлением.
+
+sim_heist: 58 проверок (FactionList отсортирован, config_full: минимум/
+фракции/пусто-любые, NPC-поза, чекбоксы, R-удаление). GLua 402/0,
+симы 47/47, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179h (05.08.2026): сигнализация — охрана кейпадов/сканеров/FFD-дверей, оповещение фракций на компьютер
+
+Владелец: «переработать GRM Alarm чтобы можно было ставить под охрану
+кейпады и сканнеры ffd чтобы в случае чего информация о взломе или
+вмешательстве в кейпады/ключи и т.д, ffd двери приходила на компьютер и
+оповещались нужные фракции. Фракции для оповещения настраивает суперадмин».
+
+Сделано (новый модуль lua/autorun/sh_grm_alarm_integration.lua + клиент
+cl_grm_alarm_notify.lua):
+
+1. **События вмешательства** (хуки):
+   - `GRM_KeypadDenied` — неверный PIN на кейпаде (вызывается из ProcessDeny
+     grm_keypad);
+   - `GRM_OnDeviceHacked` — взлом взломщиком: кейпад/сканер/FFD-дверь
+     (текст «ВЗЛОМ КЕЙПАДА/СКАНЕРА/ЭЛЕКТРОНИКИ ДВЕРИ»);
+   - `GRM_OnDoorLockpicked` — взлом замка обычной двери;
+   - `GRM_DoorHacked` — взлом двери чипом (аугментация doorHack);
+   - `GRM_ScannerDenied` — отказ доступа на сканере (вызывается из
+     ProcessDeny grm_scanner).
+2. **Журнал сигнализации**: каждое событие пишется в `A.Log(netID, "breach",
+   text)` — видно в терминале сигнализации (вкладка Журнал).
+3. **Оповещение фракций**: `AN.NotifyFactions` шлёт GRM.Notify всем ОНЛАЙН
+   членам настроенных фракций + временный маркер на мини-карте
+   «ВЗЛОМ/ВМЕШАТЕЛЬСТВО» (MM.AddTempPoint).
+4. **Настройка фракций (суперадмин)**: `/grm_alarm_notify` (или консоль
+   grm_alarm_notify) → окно с ЧЕКБОКСАМИ всех существующих фракций (список
+   с сервера), сохраняется в data/grm_alarm_notify_factions.json; пусто =
+   никто не оповещается. Только суперадмин (и сервер, и клиент).
+
+Тест sim_alarm_integration (20 проверок: настройка фракций, оповещение
+только нужной фракции, все события в журнал breach, хуки кейпада/сканера,
+клиентские чекбоксы, команда). GLua 404/0, симы 48/48, roundtrip 14/14.
+dist пересобран.
+
+---
+
+## Находка 179h (фикс, 05.08.2026): отмывщик падал при спавне — SetHullType не существует на anim-энтити
+
+Владелец (живой сервер):
+```
+grm_money_launderer/init.lua:31: attempt to call method 'SetHullType' (a nil value)
+  Spawn -> LeftClick (grm_bank_tool)
+```
+
+Причина: в попытке убрать Т-позу (179g) я добавил NPC-инициализацию
+(SetHullType/SetNPCState/CapabilitiesClear...), но grm_money_launderer —
+энтити типа anim (base_gmodentity), а эти методы есть только у NPC
+(класс npc). Спавн падал сразу.
+
+Сделано:
+1. Initialize возвращён к физической инициализации (SOLID_VPHYSICS,
+   MOVETYPE_VPHYSICS, EnableMotion(false)) — спавн снова работает.
+2. Нормальная поза теперь на КЛИЕНТЕ (cl_init): в Draw вызывается
+   animateLaunderer — LookupSequence("idle_all_01") → ResetSequence +
+   SetCycle(CurTime()%1), сброс pose-параметров (move_yaw/body_yaw/
+   aim_yaw/aim_pitch), InvalidateBoneCache. Модель человека анимируется
+   (idle), а не стоит в Т-позе.
+
+sim_heist: 60 проверок (включая «нет self:SetHullType», физическая
+инициализация, клиентская idle-анимация). GLua 404/0, симы 48/48,
+roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179h (в /grm_admin, 05.08.2026): настройка фракций оповещения в едином админ-меню
+
+Владелец: «в единое суперадминское меню добавляй /grm_admin где все команды
+в одной вкладке».
+
+Сделано: во вкладке «Сервер» единой админ-панели /grm_admin добавлен блок
+«Сигнализация:» с кнопкой **«Фракции для оповещения»** — открывает то же
+окно с чекбоксами фракций (GRM_AlarmNotify_Open), что и /grm_alarm_notify.
+Теперь настройка доступна и из чата/консоли, и из /grm_admin (всё в одном
+месте).
+
+GLua 404/0, симы 48/48, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179h-fix (клиент, 05.08.2026): attempt to call 'AddNetworkString' (nil) на клиенте
+
+Владелец (живой сервер):
+```
+sh_grm_alarm_integration.lua:149: attempt to call field 'AddNetworkString' (a nil value)
+```
+
+Причина: `util.AddNetworkString` — серверная функция, а модуль shared
+выполняется и на клиенте; вызовы net.Receive/net.Start для настройки
+оповещения тоже серверные.
+
+Сделано: блок «НАСТРОЙКА ФРАКЦИЙ» (AddNetworkString ×3 + net.Receive Open/Save)
+обёрнут в `if SERVER then ... end`; команда `/grm_alarm_notify` и чат-хук —
+тоже в `if SERVER`. На клиенте остаётся только чтение/сохранение через
+клиентский файл (cl_grm_alarm_notify.lua шлёт GRM_AlarmNotify_Save — каналы
+уже зарегистрированы сервером).
+
+sim_alarm_integration: 21 проверка (AddNetworkString только на сервере).
+GLua 404/0, симы 48/48, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179i (05.08.2026): Т-поза отмывщика — по образцу торгашей (grm_vendor)
+
+Владелец: «T-Позу так и не пофиксил. Посмотри пример торгашей как делались,
+бери с них пример».
+
+Как у торгашей (grm_vendor:Initialize/SetupIdleAnimation) — перенесено на
+grm_money_launderer:
+
+1. **НЕ физический проп**: `SetSolid(SOLID_BBOX)`, `SetMoveType(MOVETYPE_NONE)`,
+   `SetCollisionGroup(COLLISION_GROUP_NPC)`, `SetUseType(SIMPLE_USE)`,
+   `SetAutomaticFrameAdvance(true)`.
+2. **Idle-анимация на СЕРВЕРЕ** (`SetupIdleAnimation`): `SelectWeightedSequence
+   (ACT_IDLE)` → fallback по именам (`idle_all`, `idle`, `idle_unarmed`,
+   `stand`, `ref`, `idle_01`) → `ResetSequence` + `SetPlaybackRate(1)` +
+   `ResetSequenceInfo`.
+3. Клиентская анимация (которую добавил в 179h-fix) УБРАНА — как у торгашей,
+   всё делает сервер.
+
+sim_heist: 60 проверок (поза как у торгашей, нет физики/NPC-методов, анимация
+только на сервере). GLua 404/0, симы 48/48, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179j (05.08.2026): ПКМ по банковскому оборудованию открывает меню (настройка скупщика)
+
+Владелец: «ПКМ настройка скупщика? Работает?»
+
+Было: ПКМ тула grm_bank_tool — пустая (return false); меню отмывщика
+(скупщика) открывалось только через E.
+
+Сделано: ПКМ по банковскому оборудованию (хранилище, станок, терминал,
+отмывщик) теперь вызывает ent:Use(ply) — ровно как E. Для отмывщика это
+открывает его меню (взять задание / сдать деньги / настройка суперадмином
+с чекбоксами фракций). Права проверяются внутри Use.
+
+sim_heist: 61 проверка (ПКМ → Use). GLua 404/0, симы 48/48, roundtrip 14/14.
+dist пересобран.
+
+---
+
+## Находка 179k (05.08.2026): отмывщик висел в воздухе + сброс минимума участников
+
+Владелец: «Уже не Т-Позит, но подвисает в воздухе + нету реакции нормальной
+на изменение минимального числа участников, он сбрасывает до 2-х».
+
+1. **Висение в воздухе**: тул ставил отмывщика на `tr.HitPos + tr.HitNormal*12`
+   (как пропы), а у BBOX-модели (MOVETYPE_NONE) это давало подъём над полом.
+   Теперь, как у торгашей, отмывщик ставится ПРЯМО на поверхность
+   (`tr.HitPos + tr.HitNormal` без отступа).
+2. **Сброс минимума до 2**: DNumberWang коммитит ввод только по Enter/потере
+   фокуса — `GetValue()` возвращал старое значение (2). Теперь:
+   - `SetDecimals(0)` (целые);
+   - значение хранится через `OnValueChanged` и читается из него при
+     сохранении (а не GetValue);
+   - сеть: minP пишется/читается 16 бит (было 8 — тоже хрупко).
+
+sim_heist: 64 проверки (посадка на поверхность, надёжное чтение DNumberWang,
+16 бит). GLua 404/0, симы 48/48, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179l (05.08.2026): меню отмывщика — шире/больше + крупная кнопка «СОХРАНИТЬ НАСТРОЙКИ»
+
+Владелец: «Меню надо сделать шире и больше и добавить кнопку сохранить.
+Кнопку сохранить видит только суперадмин, она будет сохранять параметры
+заданные в меню отмывщика».
+
+Сделано (cl_init.lua отмывщика):
+1. Окно увеличено: 520×660 → **600×760**; скролл фракций 180 → 280.
+2. Кнопка «💾 СОХРАНИТЬ НАСТРОЙКИ» — крупная (высота 54, addBtn принимает
+   tall), видна только суперадмину (в блоке `d.canManage`); сохраняет
+   минимум участников, цель и отмеченные фракции (config_full).
+
+sim_heist: 66 проверок. GLua 404/0, симы 48/48, roundtrip 14/14.
+dist пересобран.
+
+---
+
+## Находка 179m (05.08.2026): отмена участия в ограблении + проверка пути звука
+
+Владелец: «Надо отмывщику добавить кнопку отмена участия, чтобы игроки могли
+выйти в случае необходимости с мероприятия + проверь правильность указания
+саунда. sound/robber_bank.wav».
+
+1. **Кнопка «✕ ОТМЕНИТЬ УЧАСТИЕ»** (grm_money_launderer):
+   - сервер: `ENT:LeaveJob(ply)` — убирает из Participants, уменьшает счётчик;
+     если ивент ещё не начался и участников стало меньше минимума — набор
+     продолжится (ивент не запустится); во время ивента выход возможен, но
+     ивент не отменяется (победа/маркеры — только оставшимся);
+   - action `leave` в обработчике GRM_Heist_Action;
+   - клиент: кнопка видна участнику и ДО и ВО ВРЕМЯ ивента.
+2. **Звук robber_bank.wav**: путь в коде `"robber_bank.wav"` КОРРЕКТЕН —
+   GMod ищет звуки в папке `sound/` аддона (sound/robber_bank.wav). Добавлен
+   фолбэк: если `util.PrecacheSound("robber_bank.wav")` не находит — пробуем
+   `"sound/robber_bank.wav"`; PrecacheSound вызывается в pcall (есть не везде).
+
+sim_heist: 72 проверки (LeaveJob: выход/счётчик/не-участник, action leave,
+кнопка «ОТМЕНИТЬ УЧАСТИЕ», путь звука + фолбэк). GLua 404/0, симы 48/48,
+roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179m (уточнение): путь звука СТРОГО sound/robber_bank.wav
+
+Владелец: «путь строго должен быть sound/robber_bank.wav».
+
+Исправлено: в cl_grm_heist.lua путь задан строго `"sound/robber_bank.wav"`
+(без варианта без префикса). PrecacheSound в pcall (если есть).
+
+sim_heist: 73 проверки. GLua 404/0, симы 48/48, roundtrip 14/14.
+dist пересобран.
+
+---
+
+## Находка 179n (05.08.2026): музыка ивента — music/hl2_song20_submix0.mp3 вместо robber_bank.wav
+
+Владелец: «Вместо robber_bank.wav будет использоваться
+music/hl2_song20_submix0.mp3».
+
+Заменено во всех местах (cl_grm_heist.lua: путь `"music/hl2_song20_submix0.mp3"`,
+комментарии в shared.lua/init.lua отмывщика). robber_bank.wav больше нигде
+не используется. sim_heist: 73 проверки (путь mp3, нет robber_bank).
+GLua 404/0, симы 48/48, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179o (05.08.2026): музыка ивента — воспроизведение С СЕРВЕРА, а не на клиенте
+
+Владелец: «музыка в целом не воспроизводиться. Надо её не локальной на
+клиента делать, а чтобы на сервер воспроизводило».
+
+Причина: музыка запускалась клиентским `CreateSound(LocalPlayer(), ...)` —
+локально на клиенте, и не играла.
+
+Сделано:
+1. **Сервер** (grm_money_launderer/init.lua, StartEvent): `CreateSound(self,
+   "music/hl2_song20_submix0.mp3")` на ОТМЫВЩИКЕ + `SetSoundLevel(0)`
+   (без затухания — слышно на всей карте, как сирена сигнализации) +
+   `EnableLooping(true)` + `PlayEx(1, 100)`. `StopHeistMusic()` — в EndEvent
+   и OnRemove.
+2. **Клиент** (cl_grm_heist.lua): клиентская startMusic/Heist.Music УБРАНЫ —
+   остались только баннер и отсчёт; музыка приходит с сервера как
+   позиционный звук (слышен всем, у кого есть файл mp3 — hl2_song20 —
+   стоковый HL2).
+
+sim_heist: 75 проверок (сервер: CreateSound/SetSoundLevel(0)/EnableLooping/
+PlayEx/StopHeistMusic; клиент: нет startMusic/Heist.Music). GLua 404/0,
+симы 48/48, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179p (05.08.2026): отмена участия запрещена во время ивента
+
+Владелец: «когда ивент начался отменить участие уже нельзя, кнопка не должна
+показываться или должна быть заблокирована и визуально должно показывать -
+ОТМЕНА УЧАСТИЯ В МОМЕНТ ИВЕНТА ЗАПРЕЩЕНА».
+
+Сделано:
+1. **Клиент**: во время ивента (eventActive + участник) вместо рабочей
+   кнопки показывается СЕРАЯ заблокированная с подписью
+   «✕ ОТМЕНА УЧАСТИЯ В МОМЕНТ ИВЕНТА ЗАПРЕЩЕНА» (без действия).
+2. **Сервер**: LeaveJob отклоняет, если GetEventActive() — с уведомлением
+   «ОТМЕНА УЧАСТИЯ В МОМЕНТ ИВЕНТА ЗАПРЕЩЕНА» (защита от ручного пакета).
+
+sim_heist: 78 проверок (клиент-подпись, сервер-отказ во время ивента,
+функциональный LeaveJob-отказ). GLua 404/0, симы 48/48, roundtrip 14/14.
+dist пересобран.
+
+---
+
+## Находка 179q (05.08.2026): ивент «Ограбление» падал — CreateSound вернул «пустой» патч без EnableLooping
+
+Владелец (живой сервер, стек при запуске ивента):
+```
+grm_money_launderer/init.lua:200: attempt to call method 'EnableLooping' (a nil value)
+  1. StartEvent - init.lua:200
+  2. TakeJob - init.lua:266
+  3. func - net.lua:34
+```
+
+Причина: `CreateSound(self, "music/hl2_song20_submix0.mp3")` (находка 179o) на
+сервере вернул объект-заглушку — звук не найден/не прекэширован, у патча НЕТ
+метода `EnableLooping` (а `SetSoundLevel` при этом есть — частичный объект).
+`if patch then` пропускал заглушку, и `patch:EnableLooping(true)` ронял ивент
+при первом же наборе минимума участников (TakeJob → StartEvent).
+
+Сделано (lua/entities/grm_money_launderer/init.lua — тот же паттерн, что
+лечил сирену сигнализации в находке 176):
+
+1. **StartEvent**: `if patch and isfunction(patch.EnableLooping) then` —
+   полный контур (SetSoundLevel(0)/EnableLooping/PlayEx) только у живого
+   патча; иначе **резервный позиционный `self:EmitSound("music/hl2_song20_
+   submix0.mp3", 100, 100)`** — музыка играет и без патча (разово).
+2. **StopHeistMusic**: `pcall` вокруг `self.HeistMusic:Stop()` (патч мог
+   быть «пустым») + `self:StopSound(...)` — глушит и резервный EmitSound,
+   и живой патч при окончании ивента/OnRemove.
+
+Тест sim_heist: мок CreateSound научился возвращать «пустой» патч
+(переключатель __emptySoundPatch — имитация живого сервера), счётчики
+EmitSound/StopSound в ENT-моке. Новые проверки: StartEvent не падает на
+пустом патче, резервный EmitSound сыгран, ивент запущен несмотря на звук,
+StopSound глушит резерв, статические стражи (isfunction/fallback/pcall).
+sim_heist 78 → **85/85**.
+
+Проверки: GLua 404/0; roundtrip 14/14; симы 48/48 (sim_heist 85,
+sim_bank_vault 87, sim_econ_access 42, sim_prop_protect 23, sim_security OK);
+proto_audit — только известные замечания. dist пересобран.
+
+---
+
+## Находка 179r (05.08.2026): настройки отмывщика не сохранялись и не применялись — «СОХРАНИТЬ НАСТРОЙКИ» молча теряло данные без /permadd
+
+Владелец: «была проблема с сохранением настроек отмывщика валюты и с их
+применением».
+
+Разбор: Extract/Apply для grm_money_launderer сами по себе РАБОЧИЕ
+(проверено функционально: настроенная энтити → Extract → данные; свежая
+энтити → Apply → значения; битые данные → фолбэки без краха). Дыра была
+в ПОТОКЕ сохранения:
+
+1. **«СОХРАНИТЬ НАСТРОЙКИ» (config_full) вызывало `GRM.PermData.UpdateEntry`,
+   который МОЛЧА возвращал false, если перм-записи ещё нет** (отмывщик не
+   запермлен через /permadd). Настройки применялись в память, но на диск
+   не писались — после рестарта дефолты (2/500000/пусто). Обратной связи
+   игроку не было: кнопка выглядела рабочей.
+2. Старый обработчик `config` читал минимум участников `net.ReadUInt(8)`
+   (макс. 255) — значение >255 обрезалось бы (config_full уже был 16 бит).
+
+Сделано:
+
+1. **`GRM.PermData.Upsert(ent)`** (sh_grm_perm_entities.lua): запись на
+   месте → обновляет rec.data (как UpdateEntry); записи нет → СОЗДАЁТ её
+   автоматически (как /permadd, но без прицела; с лимитом PERM_MAX=256).
+   Возвращает "added"/"updated"/"limit"/"invalid"/"noclass"/"savefail".
+2. **Отмывщик (init.lua)**: `persistConfig(ent, ply)` — вызывает Upsert и
+   говорит игроку результат: «Перм-запись СОЗДАНА/ОБНОВЛЕНА — настройки
+   переживут рестарт», «Лимит перм-записей — не сохранено», «Ошибка записи».
+   Применено в config, config_full, set_target, clear_target. Теперь
+   «СОХРАНИТЬ НАСТРОЙКИ» гарантированно сохраняет на диск.
+3. `config` (старый) переведён на 16 бит minP (бомба >255 убрана).
+
+Тесты: НОВЫЙ стенд **sim_perm_upsert.lua 14/14** (реальный
+sh_grm_perm_entities на in-memory моке file: added/updated/дубли нет/
+обновление данных/вторая позиция = вторая запись/invalid/noclass/лимит 256);
+sim_heist 85 → **97** (+функциональный перм-цикл Extract→Apply→фолбэки,
++статика Upsert/persistConfig/16 бит). GLua 404/0; roundtrip 14/14;
+симы: bank_vault 87, econ_access 42, prop_protect 23, security OK;
+proto_audit — только известные замечания. dist пересобран.
+## Находка 179s (05.08.2026): меню отмывщика — «выбор фракции не сохраняется, нет реакции на изменение чисел»
+
+Владелец: «В меню отмывщика не сохраняется выбор фракции и нет реакции на
+изменение чисел, не запоминает и не сохраняет».
+
+Разбор: серверный обработчик config_full РАБОТАЕТ (доказано sim_heist:
+минимум/цель/фракции применяются). Проблема была в КЛИЕНТСКОМ меню
+(cl_init.lua):
+
+1. **DCheckBoxLabel**: клик переключал чекбокс ТОЛЬКО по квадратику 20×20,
+   клик по названию фракции (строке) — нет. Пользователь жмёт по тексту →
+   «выбор не сохраняется». Плюс состояние читалось через GetChecked() без
+   страховки.
+2. **Числа**: значения хранились в замыканиях minVal/goalVal, обновляемых
+   ТОЛЬКО колбэком OnValueChanged — если колбэк не срабатывал (или меню
+   пересоздавалось), «СОХРАНИТЬ» уходило со старыми числами → «нет реакции».
+3. act() для старого action "config" писал minP 8 бит (сервер уже читал 16) —
+   рассинхрон на будущее.
+
+Сделано (lua/entities/grm_money_launderer/cl_init.lua):
+
+1. **Строки фракций — целиком кликабельные DButton** (вся строка = клик,
+   квадрат-«чекбокс» рисуется в Paint, состояние в таблице facState, читается
+   при сохранении). Тёмная тема, подсветка hover, ✔ на включённой.
+2. **Числа читаются из ПОЛЕЙ при сохранении**: `minWang:GetValue()` /
+   `goalWang:GetValue()` (парсят текущий текст, клампятся Min/Max) — никакой
+   зависимости от колбэков.
+3. act("config") переведён на 16 бит.
+4. Диагностические метки на виджетах (_btnText/_facName/_field) — для теста
+   и отладки.
+
+Тесты: НОВЫЙ стенд **sim_launderer_menu.lua 17/17** — грузит РЕАЛЬНЫЙ
+cl_init.lua с моками vgui/net: открытие меню, клик по строке Polizei →
+в выборе обе, клик по Mafia → снята, пустой выбор → пусто, числа из полей
+(7/600000), переоткрытие с данными сервера (Polizei). sim_heist 97/97
+(статики обновлены под facState/GetValue). GLua 404/0; roundtrip 14/14;
+симы: bank_vault 87, econ_access 42, prop_protect 23, security OK,
+alarm 27, perm_upsert 14. dist пересобран.
+
+---
+
+## Находка 179t (05.08.2026): музыка ивента играла пару секунд и обрывалась — MP3 не зацикливается движком
+
+Владелец: «музыка в начале играет буквально пару секунд, вернее даже не
+успевает начаться как прерывается когда ивент стартанул».
+
+Причина: файл `music/hl2_song20_submix0.mp3` — это MP3, а Source-движок
+(GMod) НЕ умеет зацикливать MP3 (EnableLooping работает только для WAV):
+файл проигрывается ОДИН раз (~2 сек, это короткий отрывок) и останавливается.
+Плюс звук не прекэшировался на сервере — CreateSound мог вернуть «пустой»
+патч (находка 179q), и тогда играл разовый EmitSound — ровно на длину файла.
+
+Сделано (lua/entities/grm_money_launderer/init.lua):
+
+1. **Прекэш на сервере**: `util.PrecacheSound(HEIST_MUSIC)` в Initialize
+   (pcall) — патч теперь реальный, а не «пустой».
+2. **Сторожевой таймер музыки (watchdog)**: `timer.Create` каждые 0.5с,
+   пока ивент активен:
+   - патч играет (`patch:IsPlaying()`) — не трогаем;
+   - патч остановился (MP3 доиграл) — перезапуск `PlayEx(1, 100)`;
+   - патча нет (пустой/фолбэк) — разовый `EmitSound(HEIST_MUSIC, 100, 100)`
+     с кулдауном 3с.
+3. `patch:SetVolume(1)` / `patch:SetPitch(100)` перед PlayEx.
+4. `StopMusicWatchdog` вызывается из `StopHeistMusic` (и через него из
+   EndEvent/OnRemove) — после окончания ивента таймер не висит.
+5. Константа `HEIST_MUSIC` + `MUSIC_WATCHDOG_INTERVAL = 0.5` в шапке модуля.
+
+Теперь музыка играет НЕПРЕРЫВНО всё время ивента (перезапускается, как
+только файл доиграл), слышна на всей карте (SetSoundLevel(0)), серверная
+(как требовал владелец, находка 179o).
+
+Тесты: sim_heist 97 → **116/116** (мок timer.Create/Remove захватывает
+watchdog, мок патча получил IsPlaying/SetVolume/SetPitch/playCount:
+патч играет — watchdog молчит; остановился — перезапуск; пустой патч —
+фолбэк EmitSound с кулдауном 3с; снятие watchdog при StopHeistMusic;
+статика precache/watchdog/IsPlaying/кулдаун). GLua 404/0; roundtrip 14/14;
+симы: bank_vault 87, econ_access 42, prop_protect 23, security OK,
+alarm 27, perm_upsert 14, launderer_menu 17. dist пересобран.
+
+---
+
+## Находка 179u (05.08.2026): кнопка «СОХРАНИТЬ НАСТРОЙКИ» отмывщика не видна — уезжала за нижний край окна
+
+Владелец (со скриншотом): «Где кнопка сохранить для суперадмина?»
+
+Причина: кнопка создавалась ПОСЛЕДНЕЙ в вертикальном TOP-стеке body
+(после списка фракций 280px). Суммарная высота стека (info 140 + кнопки
+действий 40–120 + заголовок 24 + поля 30+30 + подпись 20 + скролл 280 +
+кнопка 54 ≈ 660–700px) превышала доступную высоту окна 600×760
+(body ≈ 686 − hint 56 ≈ 630px) — кнопка выталкивалась за нижний край
+окна и была не видна (особенно при активном ивенте с лишними кнопками
+«СДАТЬ ДЕНЬГИ»/«ОТМЕНА ЗАПРЕЩЕНА»).
+
+Сделано (lua/entities/grm_money_launderer/cl_init.lua):
+
+1. **Кнопка «СОХРАНИТЬ НАСТРОЙКИ» — в ФИКСИРОВАННОЙ нижней панели**
+   (saveBar, Dock BOTTOM, tall 64, создаётся ПОСЛЕ hint → над подсказкой).
+   Всегда видна, на всю ширину (Dock FILL), зелёная, hover-подсветка.
+   Логика сохранения вынесена в saveFn (замыкание с facState/полями).
+2. **Окно увеличено 600×760 → 620×820** — помещается больше контента.
+3. Список фракций 280 → 200 (скролл внутри), hint 56 → 48.
+
+Расчёт: body 820−74 = 746; BOTTOM hint 48 + saveBar 72 = 120; TOP доступно
+626; худший TOP (ивент активен + суперадмин) = 604 ≤ 626 ✓ — всё видно.
+
+Тесты: sim_launderer_menu 17 → **20/20** (мок Dock записывает _dock +
+константы TOP/BOTTOM/FILL: SAVE_BAR создана, Dock BOTTOM, tall 64, кнопка
+внутри с Dock FILL); sim_heist 116/116 (статика SetSize(620,820)/
+SAVE_BAR/saveFn); GLua 404/0; roundtrip 14/14; perm_upsert 14.
+dist пересобран.
+
+---
+
+## Находка 179v (05.08.2026): музыка ивента — гарантированно на всю карту и БЕЗ дублей/эха
+
+Владелец: «Музыка должна играть на всю карту, все её должны слышать когда
+начался ивент + исключи дублирование музыки, чтобы она не играла эхом или
+множество раз».
+
+Причины потенциального эха/дублей в серверной музыке (lua/entities/
+grm_money_launderer/init.lua):
+
+1. **Несколько отмывщиков = несколько одновременных музык.** Не было
+   глобального реестра владельца музыки: два отмывщика, запустивших ивенты,
+   играли бы музыку одновременно — классическое «эхо».
+2. **Watchdog перезапускал PlayEx БЕЗ Stop()** — хвост старого звука
+   наслаивался на новый.
+3. **При недоступном IsPlaying watchdog дёргал PlayEx каждые 0.5с** — наложение
+   с периодом полсекунды (явное «множество раз»).
+4. **Фолбэк EmitSound был с soundlevel 100** — звук затухал с расстоянием
+   (НЕ на всю карту).
+
+Сделано:
+
+1. **Глобальный синглтон музыки ивента**: `GRM.HeistMusicOwner` — отмывщик,
+   играющий музыку. В StartEvent: если владелец — ДРУГОЙ отмывщик, его музыка
+   глушится (StopHeistMusic) до старта своей; владелец устанавливается после
+   старта и снимается в StopHeistMusic. Watchdog дополнительно проверяет
+   владельца и глушит себя, если владелец чужой.
+2. **Анти-наслоение в watchdog**: перед каждым PlayEx — `patch:Stop()`
+   (глушим хвост); ветка «IsPlaying недоступен» перезапускает НЕ чаще раза
+   в 2с (`_grmMusicRestartAt`); фолбэк-ветка перед EmitSound глушит
+   предыдущий `StopSound(HEIST_MUSIC)`.
+3. **Звук на ВСЮ КАРТУ**: патч `SetSoundLevel(0)` (SNDLVL 0 — без затухания,
+   как у сирены) и фолбэк `EmitSound(HEIST_MUSIC, 0, 100, 1)` (soundlevel 0,
+   pitch 100, volume 1) — слышно всем на любой точке карты.
+
+Тесты: sim_heist 116 → **128/128** (синглтон: второй отмывщик глушит музыку
+первого + владелец/снятие + watchdog второго снят; Stop() перед перезапуском
+(stopCount); фолбэк SNDLVL 0 в обеих ветках; статики HeistMusicOwner/
+_grmMusicRestartAt/StopSound). GLua 404/0; roundtrip 14/14;
+perm_upsert 14, launderer_menu 20, bank_vault 87, econ_access 42,
+prop_protect 23, security OK, alarm 27. dist пересобран.
+
+---
+
+## Находка 179w (05.08.2026): музыка затухает при завершении ивента (цель сдана отмывщику)
+
+Владелец: «когда ивент закончился, музыка должна затухнуть, то есть когда
+игроки сдали нужную сумму отмывщику, музыка заканчивает играть».
+
+Было: EndEvent мгновенно вызывал StopHeistMusic() — музыка обрывалась
+щелчком.
+
+Сделано (lua/entities/grm_money_launderer/init.lua):
+
+1. **FadeOutHeistMusic()** — плавное затухание:
+   - патч: таймер каждые 0.1с уменьшает громкость `patch:SetVolume(vol)`
+     1 → 0 за 3 секунды (MUSIC_FADE_DURATION=3.0, MUSIC_FADE_INTERVAL=0.1),
+     по завершении — полный StopHeistMusic (очистка владельца/патча);
+   - фолбэк (EmitSound без патча): у серверного EmitSound нет управляемой
+     громкости — короткая пауза 0.3с и StopSound;
+   - перед фейдом останавливается watchdog (музыку не перезапускает).
+2. **EndEvent** вызывает FadeOutHeistMusic() вместо StopHeistMusic() —
+   затухание работает и при «цель достигнута», и при «время вышло».
+3. **StopHeistMusic** дополнительно снимает фейд-таймер (MusicFadeTimerName)
+   — повторные вызовы/OnRemove не оставляют висящих таймеров.
+
+Тесты: sim_heist 128 → **140/140** (фейд-таймер запускается при завершении,
+watchdog остановлен, громкость плавно падает (SetVolume), после полного
+фейда патч остановлен, владелец снят, таймер удалён; статика FadeOut/
+константы/EndEvent→FadeOut/очистка таймера). GLua 404/0; roundtrip 14/14;
+perm_upsert 14, launderer_menu 20, bank_vault 87, econ_access 42,
+prop_protect 23, security OK, alarm 27. dist пересобран.
+
+---
+
+## Находка 179x (05.08.2026): музыка ивента — максимально просто, БЕЗ таймеров; кнопка «Сохранить» компактная
+
+Владелец: «Ты можешь сделать просто глобально музыку без зависимости от
+таймера или ещё чего либо?» + «кнопка сохранить слишком большая в высоту и
+в ширину».
+
+Сделано (музыка, lua/entities/grm_money_launderer/init.lua):
+
+1. **ВСЕ таймеры удалены**: сторожевой watchdog (179t/179v) и fade-таймер
+   (179w) выпилены полностью — ни StartMusicWatchdog/MusicTimerName, ни
+   MusicFadeTimerName, ни констант MUSIC_WATCHDOG_INTERVAL/MUSIC_FADE_*.
+2. **Старт ивента = один вызов**: `CreateSound(self, HEIST_MUSIC)` +
+   `SetSoundLevel(0)` (слышно на всю карту) + `EnableLooping(true)`
+   (WAV зациклится; MP3 движок не умеет — трек играет один раз) + `Play()`.
+   Никаких перезапусков/опросов IsPlaying.
+3. **Затухание — родным методом патча**: `patch:FadeOut(3)` — движок сам
+   плавно убавляет громкость и останавливает звук (без таймеров); фолбэк
+   (пустой патч) — StopSound. EndEvent → FadeOutHeistMusic.
+4. Синглтон `GRM.HeistMusicOwner` (анти-эхо при нескольких отмывщиках) и
+   прекэш util.PrecacheSound остались — это не таймеры.
+
+Сделано (кнопка, cl_init.lua): панель SAVE_BAR 64 → 48; кнопка
+«СОХРАНИТЬ НАСТРОЙКИ» была на всю ширину окна (Dock FILL) — теперь
+**компактная 240×34, отцентрирована** через PerformLayout панели.
+
+Тесты: sim_heist 128 → **125/125** (проверки таймеров заменены на
+«таймеров НЕТ вообще»: watchdog/fade-таймеры не создаются; Play() вызван;
+FadeOut(3) вызван и сам остановит звук; статика: watchdog/fade-функции и
+константы ПОЛНОСТЬЮ отсутствуют в файле); sim_launderer_menu 20/20
+(SAVE_BAR tall 48, кнопка 240×34, центрирование). GLua 404/0;
+roundtrip 14/14; perm_upsert 14, bank_vault 87, econ_access 42,
+prop_protect 23, security OK, alarm 27. dist пересобран.
+
+---
+
+## Находка 179y (05.08.2026): кнопка «СОХРАНИТЬ НАСТРОЙКИ» ещё компактнее
+
+Владелец: «И кнопка сохранить слишком большая в высоту и в ширину» (после 179x).
+
+Сделано (lua/entities/grm_money_launderer/cl_init.lua): кнопка уменьшена
+240×34 → **170×26** (мелкий шрифт GRMLaunder_Small вместо Normal,
+скругление 5), панель SAVE_BAR 48 → 40, отцентрирована через PerformLayout
+(x=215, y=7 при ширине окна 620).
+
+Тесты: sim_launderer_menu 20/20 (SAVE_BAR tall 40, кнопка 170×26,
+центрирование); sim_heist 125/125; GLua 404/0; dist пересобран.
+
+---
+
+## Находка 179z (05.08.2026): аксессуары — запоминание функций при входе; фонарик (F) вырублен глобально
+
+Владелец: «Фикс аксессуаров - запоминание, плюс F фонарик в целом надо
+вырубить, ибо из-за того, что на F включаю фонарик / в целом врубив
+освещение аксессуары перестают нормально отражаться/отрисовываться».
+
+1. **ЗАПОМИНАНИЕ (lua/autorun/sh_grm_customization.lua):** OnEquip
+   вызывался ТОЛЬКО в момент надевания — после рестарта сервера
+   NWBool-флаги функциональных аксессуаров (artificial_eye / night_vision /
+   neuro_link / prosthesis, `GRM_Accessory_*`) терялись, интеграции
+   (аугментации и пр.) «не помнили» надетый аксессуар до пере-надевания.
+   Теперь хук PlayerInitialSpawn (GRM_Customization_Join) после синка
+   вызывает dispatchFunctionEvent("OnEquip", ...) для ВСЕХ надетых
+   аксессуаров — эффекты восстанавливаются при входе.
+
+2. **ФОНАРИК ВЫРУБЛЕН (3 уровня):**
+   - сервер: `hook.Add("AllowFlashlight", "GRM_Customization_NoFlashlight",
+     return false)` — движок не даёт включить фонарик никому;
+   - клиент: `PlayerBindPress` блокирует сам бинд `+flashlight` (F);
+   - клиент: `Think` принудительно гасит уже включённый фонарик
+     (`lp:SetFlashlight(false)`), если его включил другой аддон/до хука.
+   Причина: при включённом освещении движок уводит рендер в световой
+   проход, где аксессуары (ручной DrawModel) перестают отрисовываться.
+
+Тесты: sim_customization 63 → **67/67** (статики: AllowFlashlight на
+сервере, блок +flashlight, force-off в Think, OnEquip-восстановление при
+входе); sim_customization_runtime 30 → **36/36** (AllowFlashlight()==false,
+надевание night_vision → флаг, «рестарт» сбрасывает, вход восстанавливает
+флаг через OnEquip). GLua 404/0; roundtrip 14/14; симы: heist 125,
+perm_upsert 14, launderer_menu 21, bank_vault 87, econ_access 42,
+prop_protect 23, security OK, alarm 27, customization_render 12,
+world_labels OK. dist пересобран.
+
+---
+
+## Находка 180 (05.08.2026): «Trying to send an overflowed net message» — админ-данные экономики шлются чанками
+
+Владелец (консоль сервера, спам при открытии экономики):
+```
+[grm] Trying to send an overflowed net message!
+1. sendAdminData - addons/grm/lua/autorun/sh_grm_economy.lua:1458
+```
+
+Причина: `sendAdminData` слал ВСЁ одним net-пакетом: все фракции с полными
+entry, ВСЕХ игроков/счета, журнал (до 300 записей) и полную копию E.Config.
+Net-пакет GMod ограничен (~64 КБ) — при большом онлайне/фракциях/журнале
+сообщение переполнялось, админ-панель не открывалась.
+
+Сделано (lua/autorun/sh_grm_economy.lua):
+
+1. **buildAdminData**: журнал в ВЫДАЧЕ урезается до последних 100 записей
+   (stats.logSize = реальный размер выдачи).
+2. **sendAdminData — ЧАНКИ** (3 типа пакетов по одному каналу NET_ADMIN_DATA):
+   - `"base"` — фракции/state/config/fullconfig/stats (без игроков и журнала);
+   - `"log"` — последние 100 записей журнала;
+   - `"players"` — порциями по 40 (idx/total 16 бит; players — map sid→запись,
+     делится по отсортированным ключам, чтобы никто не терялся).
+3. **Клиент**: аккумулятор ecoPending (base → log → players чанки → merge по
+   sid) + ecoFinalize() — строит UI (buildAdminUI + _embeddedBuild для вкладки
+   /factions) по факту получения ПОСЛЕДНЕГО чанка игроков. Новый base
+   сбрасывает предыдущий сбор.
+
+Тесты: sim_factions_econ_tab 22 → **25/25** (эмуляция base→log→players(1/1);
+доп. эмуляция 3 чанков по 2 игрока — сборка не падает; net.ReadString/
+ReadUInt моки с очередями). GLua 404/0; roundtrip 14/14; econ_access 42/42;
+heist 125, perm_upsert 14, launderer_menu 21, bank_vault 87, prop_protect 23,
+security OK, alarm 27, customization 67, customization_runtime 36,
+customization_render 12, world_labels OK. dist пересобран.
+
+---
+
+## Находка 180b (05.08.2026): краш «attempt to call method 'GetFlashlight' (a nil value)» — спам в консоли клиента
+
+Владелец (клиент, спам x322):
+```
+cl_grm_customization.lua:183: attempt to call method 'GetFlashlight' (a nil value)
+1. fn - cl_grm_customization.lua:183
+2. unknown - lua/ulib/shared/hook.lua:115 (x322)
+```
+
+Причина: в Think-хуке GRM_Customization_FlashlightForceOff (находка 179z)
+использовался метод `lp:GetFlashlight()` — в GMod такого метода НЕТ
+(правильный — `FlashlightIsOn()`). Ошибка падала КАЖДЫЙ кадр на каждом
+клиенте → спам в консоли (Think → 322+ вызовов).
+
+Сделано (lua/autorun/client/cl_grm_customization.lua): проверка через
+`isfunction(lp.FlashlightIsOn) and lp:FlashlightIsOn()`; гашение — тоже под
+гардом `isfunction(lp.SetFlashlight)`. Никаких вызовов несуществующих
+методов — краш исключён.
+
+Тесты: sim_customization 67 → **68/68** (статики: используется
+FlashlightIsOn, НЕ GetFlashlight — включая отсутствие в комментариях;
+SetFlashlight под isfunction-гардом); runtime 36/36, render 12/12;
+GLua 404/0; heist 125. dist пересобран.
+
+---
+
+## Находка 180c (05.08.2026): КУЛДАУН ОГРАБЛЕНИЯ — анти-злоупотребление (глобальный таймер 20–30 мин)
+
+Владелец: «Нужно сделать КД на 30 минут (ограничение) тем, кто может
+проводить ограбления... ограбление недавно прошло, ставится ограничение
+таймера на 20-25-30 минут автоматически, игроки не могут вновь запустить
+ограбление пока не истечёт время. Это надо для избежания злоупотребления
+системой ограбления».
+
+Сделано (lua/entities/grm_money_launderer/):
+
+1. **ГЛОБАЛЬНЫЙ КД ограбления** (не на отмывщика — иначе обходится вторым
+   отмывщиком): `GRM.HeistCooldownUntil` (unix-время) + `GRM.HeistCooldownDuration`
+   (сек, дефолт 1800 = 30 мин).
+2. **EndEvent** (любой исход: победа/время/прервано): `CooldownUntil =
+   os.time() + duration` — КД ставится АВТОМАТИЧЕСКИ после каждого
+   ограбления; сохраняется в `data/grm_heist_cooldown.json` (jsonT с
+   ignoreConversions, read-back; загрузка при старте — переживает рестарт
+   сервера, рестартом не обойти).
+3. **TakeJob**: если КД активен — отказ с уведомлением
+   «Ограбление на перезагрузке. Новое можно начать через MM:SS».
+4. **Настройка суперадмином**: в меню отмывщика поле «КД между
+   ограблениями (мин)» (1–240, дефолт 30) → config_full шлёт 4-й параметр
+   (16 бит) → сервер пишет длительность в файл. В notify — текущее КД.
+5. **UI**: при активном КД кнопка «ВЗЯТЬ ЗАДАНИЕ» заменяется
+   заблокированной «⏳ ОГРАБЛЕНИЕ НА ПЕРЕЗАГРУЗКЕ: MM:SS»; статус в
+   инфо-блоке («ПЕРЕЗАГРУЗКА: MM:SS») и на 3D2D-табличке; SendMenu шлёт
+   cooldownLeft/cooldownDuration.
+
+Ловушки: `until` — зарезервированное слово Lua — в таблице JSON только
+`["until"]`, чтение `data["until"]` (иначе синтаксическая ошибка).
+
+Тесты: sim_heist 125 → **135/135** (+10: КД=unix+1800 после EndEvent, файл
+записан, TakeJob отклонён при КД, работает после истечения (управляемый
+os.time), config_full ставит 20 мин; статики TakeJob/EndEvent/SendMenu/UI);
+sim_launderer_menu 21 → **27/27** (поле КД 30, 4-й WriteUInt 16 бит,
+заблокированная кнопка «ПЕРЕЗАГРУЗКА: 02:00», кнопки «ВЗЯТЬ ЗАДАНИЕ» нет).
+GLua 404/0; roundtrip 14/14; econ_access 42, factions_econ_tab 25,
+perm_upsert 14, bank_vault 87, prop_protect 23, security OK, alarm 27,
+customization 68/36/12, world_labels OK. dist пересобран.
+
+---
+
+## Находка 180d (05.08.2026): музыка ограбления — по образцу kom_hour (factions extensions)
+
+Владелец: «Посмотри как в factions extensions решён вопрос звука для
+kom_hour. Вернее возьми за образец и сделай также».
+
+Как сделано в kom_hour (lua/autorun/sh_faction_fixes.lua):
+- прекэш: `Sound("kom_hour.wav")` + `resource.AddFile` на сервере;
+- запуск: `for _, p in ipairs(player.GetAll()) do p:EmitSound("kom_hour.wav", 127, 110) end`
+  — звук играет СЕРВЕР напрямую КАЖДОМУ игроку (приватный звук на полной
+  громкости, БЕЗ позиционного затухания: все слышат одинаково на любой
+  точке карты).
+
+Перенесено на музыку ивента «Ограбление» (lua/entities/grm_money_launderer/
+init.lua):
+
+1. **StartEvent**: вместо CreateSound-патча — `for _, p in player.GetAll() do
+   p:EmitSound(HEIST_MUSIC, 127, 110) end` (громкость 127 как у kom_hour).
+   Звук приватный каждому — слышен ВСЕМ и всегда, независимо от позиции.
+2. **Прекэш**: `Sound(HEIST_MUSIC)` (как kom_hour) + util.PrecacheSound
+   (страховка).
+3. **StopHeistMusic**: `p:StopSound(HEIST_MUSIC)` каждому игроку + себе —
+   как глушение в kom_hour.
+4. **EndEvent** → StopHeistMusic (вместо FadeOutHeistMusic). FadeOut и
+   CreateSound-логика ПОЛНОСТЬЮ удалены — ничего не может упасть/не
+   зациклиться/не затухнуть с расстоянием.
+5. Синглтон HeistMusicOwner и КД (180c) сохранены.
+
+Тесты: sim_heist переписан под паттерн (мок игрока получил
+EmitSound/StopSound с логом): StartEvent шлёт EmitSound каждому (x2, путь/
+громкость 127/110, приватность), StopHeistMusic — StopSound всем, синглтон
+(второй отмывщик глушит первого через StopSound), EndEvent глушит музыку;
+статики: p:EmitSound(HEIST_MUSIC, 127, 110), Sound(HEIST_MUSIC), отсутствие
+CreateSound/FadeOut/watchdog. 135 → **125/125** (проверки патчей заменены
+проверками per-player звука). GLua 404/0; roundtrip 14/14;
+launderer_menu 27, perm_upsert 14, bank_vault 87, econ_access 42,
+prop_protect 23, security OK, alarm 27, customization 68/36,
+factions_econ_tab 25, world_labels OK. dist пересобран.
+
+---
+
+## Находка 180e (05.08.2026): GPS-маркер ограбления не исчезал после завершения
+
+Владелец: «GPS маркер вызываемый ограблением должен исчезать после
+окончания ограбления, но он не исчезает».
+
+Причина: маркер цели «РЕЙХСБАНК — ЦЕЛЬ ОГРАБЛЕНИЯ» создавался через
+MM.AddTempPoint с duration = HeistDuration (3000 сек = 50 минут). После
+ДОСРОЧНОГО завершения ивента (цель сдана/прервано) маркер продолжал
+жить до истечения полных 50 минут — функции удаления temp-маркеров не
+существовало.
+
+Сделано:
+
+1. **lua/autorun/sh_grm_minimap.lua**: новая функция
+   `MM.RemoveTempPoint(name)` — удаляет ВСЕ временные маркеры с заданным
+   именем и рассылает обновление всем клиентам (send()).
+2. **lua/entities/grm_money_launderer/init.lua**:
+   - имя маркера вынесено в константу `HEIST_TARGET_NAME`;
+   - **EndEvent** (любой исход: победа/время вышло) — вызывает
+     `GRM.Minimap.RemoveTempPoint(HEIST_TARGET_NAME)` — маркер исчезает
+     сразу при завершении;
+   - **OnRemove** (отмывщик удалён во время ивента) — тоже удаляет маркер.
+
+Тесты: sim_heist 125 → **129/129** (мок Minimap получил RemoveTempPoint с
+логом: маркер НЕ удалён пока ивент идёт, удалён при EndEvent (имя
+«РЕЙХСБАНК — ЦЕЛЬ ОГРАБЛЕНИЯ»), удалён при OnRemove; статика:
+RemoveTempPoint(HEIST_TARGET_NAME) + константа). GLua 404/0;
+roundtrip 14/14; launderer_menu 27, perm_upsert 14, bank_vault 87,
+econ_access 42, prop_protect 23, security OK, alarm 27, customization
+68/36, factions_econ_tab 25, world_labels OK. dist пересобран.
+
+---
+
+## Находка 180f (05.08.2026): таймер ожидания 40 сек перед стартом + список РП-имён участников
+
+Владелец: «надо сделать таймер дополнительного ожидания перед началом
+ивента 00:40 секунд, чтобы если вдруг набралось 5 человек минимум, а ещё 2
+добежало и чтобы успело вступить» + «надо чтобы показывало лист РП имён
+участников со стороны криминала когда ивент запущен».
+
+Сделано:
+
+1. **Ожидание старта 40 сек** (shared.lua: `ENT.PreStartDelay = 40`,
+   NWVar `Float 1 PreStartAt`):
+   - TakeJob: при достижении минимума НЕ стартует сразу — ставит
+     `PreStartAt = CurTime() + 40`; все получают уведомление «начнётся
+     через 40 сек — успевайте вступить»; новые участники вступают свободно;
+   - Think: по истечении PreStartAt → StartEvent (ожидание сбрасывается);
+   - LeaveJob: если участников стало меньше минимума — ожидание отменяется
+     (SetPreStartAt(0)), набор продолжается;
+   - UI: в меню — статус «СТАРТ ЧЕРЕЗ MM:SS» + заблокированная кнопка
+     «⏳ ИВЕНТ НАЧНЁТСЯ ЧЕРЕЗ MM:SS»; на 3D2D-табличке — «СТАРТ ЧЕРЕЗ MM:SS».
+2. **Список РП-имён участников**:
+   - TakeJob хранит `ParticipantNames[sid] = RP-имя` (GRM_RPName → Nick);
+   - `ENT:ParticipantList()` — отсортированный список {name, faction};
+   - BroadcastEvent("start") шлёт таблицу участников → HUD (cl_grm_heist.lua)
+     рисует слева вверху «УЧАСТНИКИ (КРИМИНАЛ):» список имён на время ивента;
+   - меню отмывщика — блок «УЧАСТНИКИ (КРИМИНАЛ): N» с именами;
+   - SendMenu шлёт participantList + preStartLeft.
+
+Тесты: sim_heist 129 → **151/151** (минимум набран → ивент НЕ стартует,
+PreStartAt=now+40; третий вступает во время ожидания; Think через 41с →
+старт, PreStartAt=0; broadcast start несёт 3 РП-имени; статики: PreStartAt/
+ParticipantNames/кнопки/список/HUD). GLua 404/0; roundtrip 14/14;
+остальные симы зелёные. dist пересобран.
+
+---
+
+## Находка 180g (05.08.2026): /heist_force и /heist_stop — принудительный старт/стоп для суперадмина
+
+Владелец: «нужна команда суперадмину на принудительный запуск ивента
+который будет игнорировать любое КД и любые условия, чтобы можно было
+тестировать ивент на ошибки + команда на остановку (завершение)».
+
+Сделано (grm_money_launderer/init.lua):
+
+1. **`ENT:ForceStart(ply)`** — суперадмин: сбрасывает КД полностью
+   (GRM.HeistCooldownUntil = 0 + saveCooldown), отменяет ожидание
+   (SetPreStartAt(0)) и вызывает StartEvent — ивент запускается при ЛЮБЫХ
+   условиях (0 участников, КД, что угодно). Повторный вызов при активном
+   ивенте — отказ.
+2. **`ENT:ForceStop(ply)`** — суперадмин: EndEvent(false, "superadmin") —
+   заголовок «ИВЕНТ ОСТАНОВЛЕН СУПЕРАДМИНОМ»; **КД после стопа НЕ
+   ставится** (чтобы можно было тестировать подряд); отменяет и ожидание
+   старта, и идущий ивент.
+3. **Команды**: `/heist_force` и `/heist_stop` (PlayerSayTransform,
+   EasyChat-совместимо) + консоль `grm_heist_force` / `grm_heist_stop`.
+   Отмывщик — ближайший к игроку (2000 юн), фолбэк — первый найденный.
+   Только суперадмин.
+
+Тесты: sim_heist 151 (блок 8b: ForceStart при активном КД запускает ивент,
+КД сброшен, повторный force отклонён, ForceStop завершает, КД не ставится
+после стопа; статики: ForceStart/ForceStop/команды/`reason ~= "superadmin"`).
+GLua 404/0; roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 180h (05.08.2026): вознаграждение гос.структурам за победу — по киллам криминала, в бюджет фракций
+
+Владелец: «вознаграждение должно выплачиваться системой победителям. Если
+госники (полиция и т.д.), то они получают от 200.000 до 1.000.000
+(пропорционально награбленному и доставленному Отмывщику) в бюджет своей
+фракции, каждая фракция должна быть учтена, допустим по киллам. Если госник
+убивает криминала, то система получает имя госника, она анализирует
+принадлежность к указанным госструктурам. Отдельно нужен чеклист для
+госструктур, чтобы отметить государственные структуры в настройках и
+сохранять в настройках Отмывщика».
+
+Сделано:
+
+1. **Чеклист ГОС.СТРУКТУР в настройках отмывщика** (cl_init + shared):
+   - NWVar String 2 `GovFactions` (фракции через запятую);
+   - в меню суперадмина — блок «ГОС.СТРУКТУРЫ (награда за победу — по
+     киллам криминала)»: кликабельные строки-чекбоксы всех фракций,
+     рядом с каждой — «киллов: N»;
+   - config_full шлёт 5-м параметром таблицу выбранных гос.фракций;
+   - **сохраняется в настройках отмывщика**: PermData Extract/Apply —
+     `govFactions` в rec.data (переживает рестарт через /permadd),
+     persistConfig при сохранении.
+2. **Учёт киллов** (глобальный PlayerDeath-хук `GRM_Heist_GovKills`):
+   - жертва — участник ивента (криминал), убийца — игрок;
+   - `RegisterGovKill(attacker)`: фракция убийцы определяется через
+     FactionOf, засчитывается ТОЛЬКО если отмечена как гос.структура;
+   - `self.GovKills[faction] += 1`; лог в консоль.
+3. **Выплата в EndEvent при победе госников** (criminalsWin=false,
+   не superadmin-стоп):
+   - сумма = `clamp(MoneyHeld, 200.000, 1.000.000)` — пропорционально
+     доставленному отмывщику (считается ДО сброса);
+   - распределение **по киллам**: фракция получает
+     `floor(reward * kills[fac] / totalKills)` (остаток округления —
+     первой фракции); киллов нет — **поровну** между всеми отмеченными
+     гос.фракциями;
+   - выплата через `GRM.FactionBudgetAdd(fac, amount, "Ограбление:
+     защита города (киллов: N)")` + уведомление онлайн-членам фракции;
+   - GovKills сбрасываются.
+
+Тесты: sim_heist 151 → **166/166** (PlayerDeath: госник убил криминала →
+Polizei +1 килл, не-госник не засчитывается, не-участник не засчитывается;
+выплата 500.000 при held=500.000; минимум 200.000 при held=50.000; максимум
+1.000.000 при held=2.000.000; распределение 3:1 → 750к/250к; без киллов —
+поровну 500к/500к; статики: GovFactions/IsGovFaction/PlayerDeath/рамки/
+FactionBudgetAdd/перм); sim_launderer_menu 27 → **30/30** (строки
+гос.структур, клик → сохранение Mafia). GLua 404/0; roundtrip 14/14;
+остальные симы зелёные. dist пересобран.
+
+---
+
+## Находка 180i (05.08.2026): выплата криминалу при победе — не меньше x2 от награбленного
+
+Владелец: «+Выплаты сделай при победе криминала, но не меньше, чем x2 от
+награбленного».
+
+Сделано (lua/entities/grm_money_launderer/):
+
+1. **shared.lua**: `ENT.CrimRewardMultiplier = 2` — множитель выплаты.
+2. **EndEvent, ветка criminalsWin** (победа криминала, не superadmin-стоп):
+   - сумма = `MoneyHeld * 2` (не меньше x2 от награбленного);
+   - распределение между фракциями-участниками **пропорционально сданному**
+     (FactionDelivered): фракция получает `floor(payout * сдано / всего)`;
+   - остаток округления — победившей фракции (WinnerFaction);
+   - выплата через `GRM.FactionBudgetAdd(f, share, "Ограбление: победа
+     криминала (сдано: N)")` + уведомление онлайн-членам: «Криминальная
+     фракция [X] получила N GRM в бюджет за успешное ограбление!»;
+   - при superadmin-стопе выплат нет (как и у госников).
+
+Тесты: sim_heist 166 → **172/172** (Mafia сдала 400к + Yakuza 100к =
+500к → выплата 1.000.000 → Mafia 800.000 / Yakuza 200.000; одна фракция
+300к → 600.000; superadmin-стоп — выплат нет; статики: CrimRewardMultiplier
+и формула x2). GLua 404/0; roundtrip 14/14; menu 30, perm_upsert 14,
+bank_vault 87, econ_access 42, prop_protect 23, security OK, alarm 27,
+customization 68/36, factions_econ_tab 25, world_labels OK. dist пересобран.

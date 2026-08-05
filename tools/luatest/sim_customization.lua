@@ -27,6 +27,11 @@ ok(has(tool,'accessory="Аксессуары"') and has(tool,'grm_vendor_tool_ty
 ok(has(core,"GRM_Custom_AdminOp") and has(core,"grm_accessories_admin"),"closed superadmin catalog editor")
 ok(has(client,"GRM — Каталог аксессуаров") and has(client,"Категория") and has(client,"Цена"),"admin edits category and price")
 ok(has(client,"ФУНКЦИОНАЛЬНОЕ ОБОРУДОВАНИЕ") and has(client,"gasProtection") and has(client,"backpackCapacity"),"admin enables functions and configures their strength")
+ok(has(client,'"loot_bag"') and has(core,"Сумка ограбления") and has(client,"lootMaxMoney") and has(client,"lootPerUse"),"admin: чекбокс сумки ограбления + параметры (находка 178f)")
+ok(has(client,"funcCols") and has(client,"406 + (ri-1)*24") and has(client,"ci == 1 and 12 or 230"),"admin: чекбоксы в аккуратной сетке 2x5 без наложения (находка 179b)")
+ok(has(client,"if IsValid(adminFrame) then") and has(client,"adminFrame:InvalidateLayout()") and has(client,"adminFrame = nil"),"admin: повторное открытие не плодит окна/панели (NULL Panel fix, находка 179c)")
+ok(has(client,"СУМКА ОГРАБЛЕНИЯ") and has(client,"/bag_unload"),"клиент: HUD сумки и подсказка выгрузки (находка 178f)")
+ok(has(core,"loot_bag") and has(core,"LootBagAdd") and has(core,"grm_bag_unload"),"сервер: API сумки ограбления (находка 178f)")
 ok(has(core,"GRM_Custom_Ack") and has(client,'net.Receive("GRM_Custom_Ack"') and has(client,"notification.AddLegacy"),"server acknowledgements produce visible success/error feedback")
 ok(has(client,"FEEDBACK_SOUNDS") and has(client,"surface.PlaySound") and has(client,"Положение изменено в предпросмотре"),"editor controls provide immediate sounds and preview notices")
 ok(has(core,"function C.HasFunction") and has(core,"function C.GetFunctionValue") and has(core,"RegisterFunctionType"),"closed function registry is extensible by GRM modules")
@@ -52,6 +57,9 @@ ok(has(client,'Не уничтожаем уже видимую ClientsideModel �
 ok(has(client,'hook.Add("CalcView", "GRM_Customization_OrbitCamera"'),"free orbit character camera")
 ok(has(core,'hook.Add("StartCommand", "GRM_Customization_Freeze"'),"server freezes editor movement")
 ok(has(client,'hook.Add("PostPlayerDraw", "GRM_Customization_DrawAccessories"'),"accessories render after current player skeleton")
+ok(has(client,"not forceEditorDraw and not lp:ShouldDrawLocalPlayer()"),"own accessories never render in first person (ShouldDrawLocalPlayer gate)")
+ok(has(client,"for _, ply in ipairs(player.GetAll())"),"opaque fallback covers ALL players, not only LocalPlayer")
+ok(has(client,"if IsValid(ply) then drawAccessories(ply) end"),"opaque fallback draws every visible player")
 ok(has(client,"entry.lastFrame ~= FrameNumber()"),"single draw per frame prevents flicker")
 ok(has(client,"LerpVector") and has(client,"LerpAngle") and has(client,"FrameTime() * 14"),"local transform changes are visually smoothed")
 ok(has(client,"GRM_Customization_TransformGizmo") and has(client,"pickGizmoAxis"),"visible XYZ move gizmo arrows can be dragged")
@@ -67,6 +75,13 @@ ok(has(radionet,'HasFunction(ply, "radio")'),"functional radio integrates with R
 ok(has(client,'GRM_Customization_FunctionHUD') and has(client,'LocalHasFunction("watch")') and has(client,'LocalHasFunction("gasmask")'),"watch and gasmask expose client HUD functionality")
 ok(has(arrest,"GRM.Customization.Confiscate"),"arrest confiscates worn accessories")
 ok(not has(core,"pac.") and not has(client,"pac."),"implementation has no PAC3 runtime/code dependency")
+-- Находка 179z: фонарик (F) вырублен — серверный AllowFlashlight=false,
+-- клиент блокирует бинд и принудительно гасит; запоминание функций при входе
+ok(has(core,'hook.Add("AllowFlashlight", "GRM_Customization_NoFlashlight"'),"flashlight banned on server (AllowFlashlight=false)")
+ok(has(core,'dispatchFunctionEvent("OnEquip", ply, slot, item, equipped)') and has(core,"C.GetLoadout(ply)"),"rejoin restores OnEquip for worn accessories (memory fix)")
+ok(has(client,'bind == "+flashlight"'),"client blocks +flashlight bind (PlayerBindPress)")
+ok(has(client,"FlashlightIsOn") and not has(client,"GetFlashlight"),"client force-off uses FlashlightIsOn, not non-existent GetFlashlight (находка 180b)")
+ok(has(client,"isfunction(lp.SetFlashlight)") and has(client,"lp:SetFlashlight(false)"),"client force-off guards SetFlashlight with isfunction (находка 180b)")
 
 -- Numeric transform normalization contract.
 local function clamp(v,a,b) return math.max(a,math.min(b,v)) end

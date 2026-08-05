@@ -3,7 +3,7 @@ AddCSLuaFile("cl_init.lua")
 include("shared.lua")
 
 function ENT:Initialize()
-	self:SetModel("models/props_c17/FurnitureFridge001a.mdl")
+	self:SetModel("models/lt_c/holograms/console_hr.mdl")
 	self:PhysicsInit(SOLID_BBOX)
 	self:SetMoveType(MOVETYPE_NONE)
 	self:SetSolid(SOLID_BBOX)
@@ -11,7 +11,7 @@ function ENT:Initialize()
 	self:SetCollisionBounds(Vector(-30, -30, 0), Vector(30, 30, 100))
 	
 	self:SetActive(true)
-	self:SetStationName("Augmentation Station")
+	self:SetStationName("Станция аугментаций")
 	
 	local phys = self:GetPhysicsObject()
 	if IsValid(phys) then

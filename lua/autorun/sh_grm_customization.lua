@@ -36,7 +36,27 @@ C.FunctionTypes = C.FunctionTypes or {
     radio = { name = "Рация", description = "Заменяет включённый переносной радиомодулятор" },
     watch = { name = "Часы", description = "Показывает часы и дату на HUD" },
     armor = { name = "Защитное снаряжение", description = "Снижает пулевой/взрывной/режущий урон" },
+    artificial_eye = { name = "Искусственный глаз", description = "Связь с чипом зрения и автосканированием" },
+    night_vision = { name = "Очки ночного видения", description = "Включает ночной режим при активном чипе" },
+    neuro_link = { name = "Нейроинтерфейс", description = "Связь аксессуара с системой аугментаций" },
+    prosthesis = { name = "Функциональный протез", description = "Расширенный функционал конечности" },
+    -- Находка 178f: сумка ограбления — поэтапный сбор денег с паллет
+    loot_bag = { name = "Сумка ограбления", description = "Поэтапный сбор денег с паллет (до 100.000, порциями за подход)" },
 }
+
+-- Интеграция аксессуаров с аугментациями: функции не содержат Lua от клиента.
+local function accessoryFlag(ply, id, enabled)
+    if IsValid(ply) then ply:SetNWBool("GRM_Accessory_" .. id, enabled == true) end
+    hook.Run("GRM_AccessoryAugmentationLink", ply, id, enabled == true)
+end
+C.FunctionTypes.artificial_eye.OnEquip=function(ply) accessoryFlag(ply,"artificial_eye",true) end
+C.FunctionTypes.artificial_eye.OnUnequip=function(ply) accessoryFlag(ply,"artificial_eye",false) end
+C.FunctionTypes.night_vision.OnEquip=function(ply) accessoryFlag(ply,"night_vision",true) end
+C.FunctionTypes.night_vision.OnUnequip=function(ply) accessoryFlag(ply,"night_vision",false) end
+C.FunctionTypes.neuro_link.OnEquip=function(ply) accessoryFlag(ply,"neuro_link",true) end
+C.FunctionTypes.neuro_link.OnUnequip=function(ply) accessoryFlag(ply,"neuro_link",false) end
+C.FunctionTypes.prosthesis.OnEquip=function(ply) accessoryFlag(ply,"prosthesis",true) end
+C.FunctionTypes.prosthesis.OnUnequip=function(ply) accessoryFlag(ply,"prosthesis",false) end
 
 function C.RegisterFunctionType(id, data)
     id = string.lower(tostring(id or "")):gsub("[^%w_%-]", "")
@@ -99,6 +119,9 @@ local function normalizeCatalogItem(id, input)
         gasProtection = math.Clamp(finite(cfg.gasProtection, 0.85), 0, 0.98),
         backpackCapacity = math.Clamp(finite(cfg.backpackCapacity, 20), 0, 100),
         armorReduction = math.Clamp(finite(cfg.armorReduction, 0.2), 0, 0.75),
+        -- Находка 178f: сумка ограбления (макс. запас и порция за подход)
+        lootMaxMoney = math.Clamp(math.floor(finite(cfg.lootMaxMoney, 100000)), 1000, 1000000),
+        lootPerUse = math.Clamp(math.floor(finite(cfg.lootPerUse, 25000)), 1000, 100000),
     }
     return {
         id = id,
@@ -480,6 +503,14 @@ if SERVER then
             if ply:GetNWBool("GRM_CustomEditing", false) then ply.GRM_CustomEditingUntil = CurTime() + 12 end
             return
         end
+        if op == "pose_freeze" or op == "pose_unfreeze" then
+            local frozen = op == "pose_freeze"
+            ply:SetNWBool("GRM_CustomPoseFrozen", frozen)
+            ply:Freeze(frozen)
+            if frozen then ply:SetSequence("pose_standing_01"); ply:SetPlaybackRate(0) else ply:ResetSequence(ply:LookupSequence("idle_all_01") or 0); ply:SetPlaybackRate(1) end
+            sendAck(ply,true,op,frozen and "Персонаж заморожен в Т-позе" or "Персонаж разморожен")
+            return
+        end
         if not rateOK(ply) then sendAck(ply, false, op, "Слишком частое действие") return end
         if op == "equip_inventory" then
             local inventorySlot = net.ReadUInt(8)
@@ -550,7 +581,29 @@ if SERVER then
         timer.Simple(0, function() if IsValid(ply) then C.SyncPlayer(ply) end end)
     end)
     hook.Add("PlayerInitialSpawn", "GRM_Customization_Join", function(ply)
-        timer.Simple(3, function() if IsValid(ply) then C.SyncAllTo(ply); C.SyncPlayer(ply) end end)
+        timer.Simple(3, function()
+            if IsValid(ply) then
+                C.SyncAllTo(ply); C.SyncPlayer(ply)
+                -- Находка 179z: запоминание функциональных эффектов надетых
+                -- аксессуаров. OnEquip раньше вызывался только в момент
+                -- надевания — после рестарта NWBool-флаги (artificial_eye /
+                -- night_vision / neuro_link / prosthesis) терялись, и
+                -- аксессуар «не запоминался» до пере-надевания. Восстанавливаем
+                -- эффекты для всего надетого при входе.
+                local loadout = C.GetLoadout(ply)
+                for slot, equipped in pairs(loadout) do
+                    local item = C.Catalog[equipped.accessoryID]
+                    if item then dispatchFunctionEvent("OnEquip", ply, slot, item, equipped) end
+                end
+            end
+        end)
+    end)
+    -- Находка 179z: фонарик (F) ВЫРУБЛЕН глобально. При включённом
+    -- освещении движок уводит рендер в отдельный световой проход, где
+    -- аксессуары перестают отрисовываться. AllowFlashlight=false — движок
+    -- не даёт включить фонарик никому.
+    hook.Add("AllowFlashlight", "GRM_Customization_NoFlashlight", function()
+        return false
     end)
     hook.Add("ShutDown", "GRM_Customization_Save", function() saveCatalog(); saveLoadouts() end)
 
@@ -662,6 +715,128 @@ if SERVER then
         sendAck(ply, true, op == "delete" and "admin_delete" or "admin_save", op == "delete" and "Аксессуар удалён из каталога" or "Аксессуар сохранён в каталоге")
         adminOpen(ply)
     end)
+
+    -- ── СУМКА ОГРАБЛЕНИЯ (находка 178f) ─────────────────────
+    -- Деньги с паллет собираются ПОЭТАПНО: за один подход в сумку
+    -- уходит perUse (по умолчанию 25.000), максимум maxMoney (100.000).
+    -- Выгрузка: /bag_unload (деньги в кошелёк).
+    C.LootBagDefaults = { maxMoney = 100000, perUse = 25000 }
+    local function lootBagCfg(ply, key)
+        local v = math.floor(tonumber(C.GetFunctionValue(ply, "loot_bag", key, "max")) or 0)
+        if v <= 0 then v = C.LootBagDefaults[key] or 0 end
+        return v
+    end
+    function C.LootBagMax(ply) return lootBagCfg(ply, "maxMoney") end
+    function C.LootBagPerUse(ply) return lootBagCfg(ply, "perUse") end
+    function C.LootBagGet(ply)
+        if not IsValid(ply) then return 0 end
+        return math.max(0, math.floor(tonumber(ply._grmLootBag) or 0))
+    end
+    function C.LootBagSet(ply, amount)
+        if not IsValid(ply) then return 0 end
+        amount = math.max(0, math.floor(tonumber(amount) or 0))
+        ply._grmLootBag = amount
+        ply:SetNWInt("GRM_LootBag", amount)
+        return amount
+    end
+    -- Попытка положить amt в сумку. Возвращает: сколько реально взято
+    -- (0 = сумка полна/нет сумки).
+    function C.LootBagAdd(ply, amt)
+        if not IsValid(ply) then return 0 end
+        if not C.HasFunction(ply, "loot_bag") then return 0 end
+        amt = math.max(0, math.floor(tonumber(amt) or 0))
+        if amt <= 0 then return 0 end
+        local maxMoney = C.LootBagMax(ply)
+        local cur = C.LootBagGet(ply)
+        if cur >= maxMoney then return 0 end
+        local perUse = math.max(1, C.LootBagPerUse(ply))
+        local take = math.min(amt, perUse, maxMoney - cur)
+        if take <= 0 then return 0 end
+        C.LootBagSet(ply, cur + take)
+        return take
+    end
+    -- Находка 179e: выгрузка сумки НЕ в кошелёк, а на землю (пачками/
+    -- паллетами) ЛИБО ближайшему отмывщику денег (если рядом и идёт ивент).
+    function C.LootBagUnload(ply)
+        if not IsValid(ply) then return 0, "Нет игрока" end
+        local cur = C.LootBagGet(ply)
+        if cur <= 0 then return 0, "Сумка пуста" end
+
+        -- 1) отмывщик денег рядом (радиус 400) и ивент активен → сдать ему
+        local launderer = nil
+        if GRM.Economy and GRM.Economy.FindNearestLaunderer then
+            launderer = GRM.Economy.FindNearestLaunderer(ply, 400)
+        end
+        if IsValid(launderer) and launderer.GetEventActive and launderer:GetEventActive() and launderer.DepositFromBag then
+            local deposited = launderer:DepositFromBag(ply)
+            if deposited > 0 then
+                C.LootBagSet(ply, math.max(0, C.LootBagGet(ply) - deposited))
+                hook.Run("GRM_LootBagUnloaded", ply, deposited)
+                return deposited
+            end
+        end
+
+        -- 2) иначе — на землю перед игроком (паллеты ≥50к / пачка money.mdl)
+        if GRM.Economy and GRM.Economy.SpawnCashAt then
+            local pos = ply:GetPos() + ply:GetForward() * 60 + Vector(0, 0, 10)
+            local spawned = GRM.Economy.SpawnCashAt(pos, cur, nil)
+            C.LootBagSet(ply, math.max(0, C.LootBagGet(ply) - spawned))
+            if GRM.Notify then
+                GRM.Notify(ply, "Выгружено на землю: " .. (GRM.Format and GRM.Format(spawned) or tostring(spawned)) .. " (E — подобрать)", 100, 220, 130)
+            end
+            hook.Run("GRM_LootBagUnloaded", ply, spawned)
+            return spawned
+        end
+
+        -- 3) фолбэк (нет экономики) — в кошелёк
+        if not (GRM and GRM.GiveMoney) then return 0, "Модуль валюты не загружен" end
+        C.LootBagSet(ply, 0)
+        GRM.GiveMoney(ply, cur, "Сумка ограбления: выгрузка")
+        if GRM.Notify then GRM.Notify(ply, "Из сумки в кошелёк: " .. (GRM.Format and GRM.Format(cur) or tostring(cur)), 100, 220, 130) end
+        hook.Run("GRM_LootBagUnloaded", ply, cur)
+        return cur
+    end
+
+    concommand.Add("grm_bag_unload", function(ply)
+        if not IsValid(ply) then return end
+        local _, err = C.LootBagUnload(ply)
+        if err ~= nil and err ~= "" and GRM.Notify then
+            GRM.Notify(ply, err, 255, 190, 90)
+        end
+    end)
+
+    -- Находка 179e: /bag_unload в чате (EasyChat перехватывает PlayerSay)
+    local function bagUnloadChat(ply, datapack)
+        if not istable(datapack) then return end
+        local text = datapack[1]
+        if not isstring(text) then return end
+        if string.lower(string.Trim(text)) ~= "/bag_unload" then return end
+        if not IsValid(ply) then return end
+        local _, err = C.LootBagUnload(ply)
+        if err ~= nil and err ~= "" and GRM.Notify then
+            GRM.Notify(ply, err, 255, 190, 90)
+        end
+        datapack.SkipPlayerSay = true
+        datapack[1] = ""
+    end
+    hook.Add("PlayerSayTransform", "GRM_LootBag_UnloadTransform", bagUnloadChat)
+    hook.Add("PlayerSay", "GRM_LootBag_UnloadSay", function(ply, text)
+        if not isstring(text) then return end
+        if string.lower(string.Trim(text)) ~= "/bag_unload" then return end
+        if IsValid(ply) then
+            local _, err = C.LootBagUnload(ply)
+            if err ~= nil and err ~= "" and GRM.Notify then
+                GRM.Notify(ply, err, 255, 190, 90)
+            end
+        end
+        return ""
+    end)
+
+    -- Сумка снимается — деньги остаются в сумке (персонально), но
+    -- подсказку не показываем: NWInt сбрасывается на клиенте автоматически.
+    C.FunctionTypes.loot_bag.OnUnequip = function(ply)
+        if IsValid(ply) then ply:SetNWInt("GRM_LootBag", math.max(0, math.floor(tonumber(ply._grmLootBag) or 0))) end
+    end
 
     print("[GRM Customization] server v" .. C.Version .. " loaded")
 else

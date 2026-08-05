@@ -26,9 +26,11 @@ net.Receive("GRM_Augmentation_Update", function()
 	local augType = net.ReadString()
 	local enabled = net.ReadBool()
 	
-	if augType == "InfraredVision" then
-		infraredEnabled = enabled
-	elseif augType == "HUDOverlay" then
+    if augType == "InfraredVision" or augType == "infrared" then
+        infraredEnabled = enabled
+    elseif augType == "nightvision" or augType == "NightVision" then
+        nightVisionEnabled = enabled
+    elseif augType == "HUDOverlay" then
 		hudEnabled = enabled
 	elseif augType == "NightVision" then
 		nightVisionEnabled = enabled
@@ -37,7 +39,7 @@ end)
 
 -- Инфракрасное зрение
 hook.Add("RenderScreenspaceEffects", "GRM_Augmentations_Infrared", function()
-	if not infraredEnabled then return end
+	if not infraredEnabled and not LocalPlayer():GetNWBool("GRM_Accessory_artificial_eye", false) then return end
 	
 	-- Тепловизор эффект
 	local tab = {
@@ -57,7 +59,7 @@ end)
 
 -- Ночное зрение
 hook.Add("RenderScreenspaceEffects", "GRM_Augmentations_NightVision", function()
-	if not nightVisionEnabled then return end
+	if not nightVisionEnabled and not LocalPlayer():GetNWBool("GRM_Accessory_night_vision", false) then return end
 	
 	local tab = {
 		["$pp_colour_addr"] = 0,

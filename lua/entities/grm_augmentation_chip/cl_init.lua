@@ -5,11 +5,8 @@ function ENT:Draw()
 	
 	-- Отображение информации о чипе
 	local pos = self:GetPos() + Vector(0, 0, 15)
-	local ang = LocalPlayer():EyeAngles()
-	ang:RotateAroundAxis(ang:Up(), -90)
-	ang:RotateAroundAxis(ang:Forward(), 90)
-	
-	cam.Start3D2D(pos, ang, 0.1)
+	-- Метка следует за камерой рендера, а не за поворотом игрока
+	cam.Start3D2D(pos, Angle(0, EyeAngles().y - 90, 90), 0.1)
 		draw.SimpleTextOutlined(
 			self:GetChipName() or "Unknown Chip",
 			"DermaDefault",

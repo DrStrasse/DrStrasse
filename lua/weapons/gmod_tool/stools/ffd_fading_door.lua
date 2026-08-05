@@ -140,7 +140,7 @@ if SERVER then
         -- Регистрация нумпад связи. Без живого плеера (перм-восстановление
         -- Кода 105 с офлайн-владельцем) бинд пропускаем — внутри
         -- numpad.OnDown движок дёргает ply:ConCommand и роняется на NULL;
-        -- дверь всё равно остаётся рабочей через кейпад/отмычку.
+        -- дверь всё равно остаётся рабочей через кейпад/взломщик.
         if IsValid(ply) then
             ent.FFD_NumDown = numpad.OnDown(ply, key, "FFD_Fade_On", ent)
             ent.FFD_NumUp = numpad.OnUp(ply, key, "FFD_Fade_Off", ent)
@@ -190,6 +190,25 @@ if SERVER then
     GRM.PermData.Extract = GRM.PermData.Extract or {}
     GRM.PermData.Apply = GRM.PermData.Apply or {}
     GRM.PermData.Extract["prop_physics"] = function(ent)
+        -- Находка 173: раздвижная дверь (сдвиг) — сохраняем свой конфиг
+        if ent.isSlidingDoor and ent.Sliding then
+            local s = ent.Sliding
+            return {
+                sliding = {
+                    direction = tostring(s.direction or "left"),
+                    distance = tonumber(s.distance) or 100,
+                    speed = tonumber(s.speed) or 120,
+                    smooth = tonumber(s.smooth) or 1,
+                    toggle = s.toggle == true,
+                    autoclose = s.autoclose == true,
+                    closeTime = tonumber(s.closeTime) or 5,
+                    owner = tostring(s.owner or ""),
+                    soundOpen = tostring(s.soundOpen or ""),
+                    soundClose = tostring(s.soundClose or ""),
+                    soundMove = tostring(s.soundMove or ""),
+                },
+            }
+        end
         if not ent.isFadingDoor then return nil end
         return {
             ffd = {
@@ -203,6 +222,27 @@ if SERVER then
         }
     end
     GRM.PermData.Apply["prop_physics"] = function(ent, t)
+        if not istable(t) then return end
+        -- Находка 173: раздвижная дверь восстанавливается со сдвигом
+        if istable(t.sliding) then
+            local d = t.sliding
+            local ownerPly = nil
+            local want = tostring(d.owner or "")
+            if want ~= "" then
+                for _, p in ipairs(player.GetAll()) do
+                    if IsValid(p) and tostring((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64() or "") == want then ownerPly = p break end
+                end
+            end
+            if GRM.SlidingDoor and GRM.SlidingDoor.Apply then
+                GRM.SlidingDoor.Apply(ownerPly, ent, {
+                    direction = d.direction, distance = d.distance,
+                    speed = d.speed, smooth = d.smooth,
+                    toggle = d.toggle, autoclose = d.autoclose, closeTime = d.closeTime,
+                    soundOpen = d.soundOpen, soundClose = d.soundClose, soundMove = d.soundMove,
+                })
+            end
+            return
+        end
         if not (istable(t) and istable(t.ffd)) then return end
         local d = t.ffd
         local ownerPly = nil

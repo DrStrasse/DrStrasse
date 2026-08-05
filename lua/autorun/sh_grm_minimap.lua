@@ -11,7 +11,15 @@ if SERVER then
     util.AddNetworkString("GRM_Minimap_Action")
     MM.Data = MM.Data or { districts = {}, points = {}, overview = nil }
 
-    local function save() file.Write(MM.File, util.TableToJSON(MM.Data, true)) end
+    local function save()
+        -- Временные (temp) точки не пишутся на диск — это разовые маркеры
+        -- (например, смерть спец-юнита), они живут только в памяти сессии.
+        local persisted = { districts = MM.Data.districts, overview = MM.Data.overview, points = {} }
+        for _, p in ipairs(MM.Data.points or {}) do
+            if not p.temp then persisted.points[#persisted.points + 1] = p end
+        end
+        file.Write(MM.File, util.TableToJSON(persisted, true))
+    end
     local function load()
         if file.Exists(MM.File, "DATA") then
             local ok, d = pcall(util.JSONToTable, file.Read(MM.File, "DATA") or "")
@@ -23,12 +31,53 @@ if SERVER then
     end
     local function pos(t) return { x = t.x, y = t.y, z = t.z } end
     local function send(ply)
+        -- Чистим истёкшие временные маркеры и не отправляем их клиентам
+        local now = CurTime()
+        for i = #(MM.Data.points or {}), 1, -1 do
+            local p = MM.Data.points[i]
+            if p and p.temp and (tonumber(p.expires) or 0) <= now then
+                table.remove(MM.Data.points, i)
+            end
+        end
         net.Start("GRM_Minimap_Data") net.WriteTable(MM.Data) if IsValid(ply) then net.Send(ply) else net.Broadcast() end
     end
     local function nextID(prefix) return prefix .. "_" .. os.time() .. "_" .. math.random(100, 999) end
     function MM.AddPoint(ply, name, pointPos, radius)
         MM.Data.points[#MM.Data.points + 1] = { id = nextID("point"), name = string.sub(string.Trim(name or "GPS-точка"), 1, 48), pos = { x = pointPos.x, y = pointPos.y, z = pointPos.z }, radius = math.Clamp(tonumber(radius) or 180, 100, 2000), capture = 0, capturing = "", owner = "", allowedFactions = {} }
         save(); send(); return true
+    end
+    -- Временный маркер: живёт duration секунд, не сохраняется на диск.
+    -- Используется для событий (смерть спец-юнита) и рассылается точечно.
+    -- Точечная отправка данных minimap конкретному игроку (для адресных маркеров)
+    function MM.SendTo(ply)
+        if IsValid(ply) then send(ply) end
+    end
+    function MM.AddTempPoint(name, pointPos, duration)
+        local p = {
+            id = nextID("temp"), name = string.sub(string.Trim(name or "Метка"), 1, 64),
+            pos = { x = pointPos.x, y = pointPos.y, z = pointPos.z },
+            radius = 0, capture = 0, capturing = "", owner = "", allowedFactions = {},
+            temp = true, expires = CurTime() + (tonumber(duration) or 120),
+        }
+        MM.Data.points[#MM.Data.points + 1] = p
+        return p.id
+    end
+    -- Находка 180e: принудительное удаление временных маркеров по имени
+    -- (маркер цели ограбления должен исчезать при завершении ивента,
+    -- а не жить до expires). Рассылает обновление всем.
+    function MM.RemoveTempPoint(name)
+        name = string.Trim(tostring(name or ""))
+        if name == "" then return false end
+        local removed = false
+        for i = #(MM.Data.points or {}), 1, -1 do
+            local p = MM.Data.points[i]
+            if p and p.temp and string.Trim(tostring(p.name or "")) == name then
+                table.remove(MM.Data.points, i)
+                removed = true
+            end
+        end
+        if removed then send() end
+        return removed
     end
     function MM.AddDistrict(ply, name, center, radius)
         MM.Data.districts[#MM.Data.districts + 1] = { id = nextID("district"), name = string.sub(string.Trim(name or "Район"), 1, 48), center = { x = center.x, y = center.y, z = center.z }, radius = math.Clamp(tonumber(radius) or 500, 100, 10000), color = { r = 70, g = 150, b = 240 }, polygon = {}, owner = "" }
@@ -325,6 +374,42 @@ else
                 draw.SimpleTextOutlined(tostring(point.name), "GRMMM_Body", textX, y - 10, color_white, align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
                 draw.SimpleTextOutlined(distance .. " юн.", "GRMMM_Small", textX, y + 10, Color(255, 215, 70), align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
                 break
+            end
+        end
+    end)
+
+    -- Временные маркеры (temp): рисуются ВСЕГДА, пока не истекли (смерть спец-юнита).
+    hook.Add("HUDPaint", "GRM_GPS_TempMarkers", function()
+        local lp = LocalPlayer()
+        if not IsValid(lp) then return end
+        local now = CurTime()
+        for _, point in ipairs(data.points or {}) do
+            if point and point.temp and (tonumber(point.expires) or 0) > now then
+                local target = Vector(point.pos.x, point.pos.y, point.pos.z or lp:GetPos().z)
+                local screen = target:ToScreen()
+                local distance = math.floor(lp:GetPos():Distance(target))
+                local sw, sh = ScrW(), ScrH()
+                local visible = screen.visible == true and screen.x > 0 and screen.x < sw and screen.y > 0 and screen.y < sh
+                local x, y = screen.x or sw / 2, screen.y or sh / 2
+                local radius = math.Clamp(9 + distance / 450, 10, 22)
+                if not visible then
+                    local dx, dy = x - sw / 2, y - sh / 2
+                    local len = math.max(1, math.sqrt(dx * dx + dy * dy))
+                    dx, dy = dx / len, dy / len
+                    x = math.Clamp(sw / 2 + dx * (sw / 2 - 40), 24, sw - 24)
+                    y = math.Clamp(sh / 2 + dy * (sh / 2 - 40), 24, sh - 24)
+                    surface.SetDrawColor(255, 90, 70, 255)
+                    surface.DrawPoly({ { x = x + dx * 18, y = y + dy * 18 }, { x = x - dx * 10 - dy * 10, y = y - dy * 10 + dx * 10 }, { x = x - dx * 10 + dy * 10, y = y - dy * 10 - dx * 10 } })
+                end
+                local pulse = math.sin(CurTime() * 5) * 3
+                surface.SetDrawColor(255, 90, 70, 255)
+                surface.DrawCircle(x, y, radius + pulse, 255, 90, 70, 255)
+                surface.SetDrawColor(8, 14, 23, 240)
+                surface.DrawCircle(x, y, math.max(3, radius - 4), 8, 14, 23, 240)
+                local textX = math.Clamp(x + radius + 12, 12, sw - 12)
+                local align = textX > sw - 240 and TEXT_ALIGN_RIGHT or TEXT_ALIGN_LEFT
+                draw.SimpleTextOutlined(tostring(point.name), "GRMMM_Body", textX, y - 10, Color(255, 170, 150), align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
+                draw.SimpleTextOutlined(distance .. " юн.", "GRMMM_Small", textX, y + 10, Color(255, 90, 70), align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
             end
         end
     end)

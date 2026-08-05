@@ -31,9 +31,10 @@ if SERVER then
         if not Factions then return nil, nil end
         local sid = ply:SteamID()
         local s64 = ply:SteamID64()
+        local hasIdentity = GRM.Identity and GRM.Identity.FactionMember
         local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or s64
         for name, f in pairs(Factions) do
-            if istable(f) and GRM.Identity.FactionMember(f, ply) then
+            if istable(f) and hasIdentity and hasIdentity(f, ply) then
                 return name, f
             end
         end
@@ -100,6 +101,7 @@ if SERVER then
         result.factionName = factionName or ""
         result.veh = vehInfo(ply)
         result.aimPly = aimPlyInfo(ply)
+        result.isSuperAdmin = ply:IsSuperAdmin() == true
         result.hasMaskAccess = false
         if factionName and FactionsExt and FactionsExt[factionName] then
             local cfg = FactionsExt[factionName]
@@ -259,6 +261,15 @@ local tp = false
 
 local function actTicket()    RunConsoleCommand("grm_ticket") end
 local function actInv()       RunConsoleCommand("grm_inventory") end
+-- Суперадмин: открыть инвентарь игрока в прицеле (просмотр/изъятие)
+local function actAdminInv()
+    local ap = istable(data.aimPly) and data.aimPly or nil
+    if not ap then return end
+    -- idx = EntIndex цели — шлём запрос просмотра чужого инвентаря
+    net.Start("GRM_Inv_AdminOpen")
+        net.WriteUInt(tonumber(ap.idx) or 0, 16)
+    net.SendToServer()
+end
 local function actTp()
     tp = not tp
     RunConsoleCommand("simple_thirdperson_enable_toggle")
@@ -359,6 +370,19 @@ local BTNS = {
     { id = "laws",       l = "Законы государства", fn = actLaws, c = Color(200, 180, 100), ch = Color(220, 200, 120), ok = function() return true end },
     { id = "faction",    l = "Меню фракций", fn = actFactions,   c = CC.faction, ch = CC.factionH, ok = function() return data.isLeaderOrAdmin == true or data.isFactionMember == true end },
     { id = "mask",       l = "Маскировка",   fn = actMask,       c = CC.mask,    ch = CC.maskH,    ok = function() return data.hasMaskAccess == true end },
+    -- Суперадмин (находка 170): единая админ-панель + инвентарь игрока в прицеле
+    { id = "admin",      l = "Админ-панель (GRM)", fn = function() RunConsoleCommand("grm_admin") end,
+      c = Color(150, 90, 200), ch = Color(170, 110, 220), ok = function() return data.isSuperAdmin == true end },
+    { id = "admin_inv",  l = function()
+          if istable(data.aimPly) then
+              local n = tostring(data.aimPly.name or "игроку")
+              if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
+              return "Инвентарь игрока: " .. n
+          end
+          return "Инвентарь игрока (прицел)"
+      end,
+      fn = actAdminInv,
+      c = Color(200, 130, 60), ch = Color(220, 150, 80), ok = function() return data.isSuperAdmin == true and istable(data.aimPly) end },
 }
 
 req = function()

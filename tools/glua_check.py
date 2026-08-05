@@ -42,7 +42,9 @@ def check_glua(path):
 
 lua_files = []
 for root, dirs, files in os.walk("."):
-    if ".luabuild" in root or ".git" in root or "tools" in root:
+    # Проверяем именно КОМПОНЕНТ пути, а не подстроку: "stools" (тулганы)
+    # содержит подстроку "tools" и не должен пропускаться.
+    if ".luabuild" in root or ".git" in root or root == "./tools" or root.startswith("./tools/"):
         continue
     for f in files:
         if f.endswith(".lua"):

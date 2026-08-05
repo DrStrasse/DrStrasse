@@ -49,6 +49,7 @@ end
 net.Receive("GRM_Augmentation_Admin_SendList", function()
 	local augList = net.ReadTable()
 	local categories = net.ReadTable()
+    local factionData = net.ReadTable() or {}
 	
 	-- Создание окна
 	local frame = vgui.Create("DFrame")
@@ -275,8 +276,8 @@ net.Receive("GRM_Augmentation_Admin_SendList", function()
 		
 		-- Получение списка фракций
 		local factionsList = {}
-		if Factions then
-			for factionName, _ in pairs(Factions) do
+		if factionData then
+			for factionName, _ in pairs(factionData) do
 				table.insert(factionsList, factionName)
 			end
 			table.sort(factionsList)
@@ -325,8 +326,8 @@ net.Receive("GRM_Augmentation_Admin_SendList", function()
 		
 		-- Получение списка ролей из всех фракций
 		local rolesList = {}
-		if Factions then
-			for _, faction in pairs(Factions) do
+		if factionData then
+			for _, faction in pairs(factionData) do
 				if faction.Roles then
 					for roleName, _ in pairs(faction.Roles) do
 						if not table.HasValue(rolesList, roleName) then
