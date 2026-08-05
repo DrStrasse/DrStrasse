@@ -18,6 +18,9 @@ TOOL.ClientConVar = {
     toggle = "1",
     autoclose = "0",
     closetime = "5",
+    soundopen = "",
+    soundclose = "",
+    soundmove = "",
 }
 
 if CLIENT then
@@ -46,6 +49,9 @@ function TOOL:LeftClick(trace)
         toggle = self:GetClientNumber("toggle") == 1,
         autoclose = self:GetClientNumber("autoclose") == 1,
         closeTime = tonumber(self:GetClientInfo("closetime")) or 5,
+        soundOpen = self:GetClientInfo("soundopen") or "",
+        soundClose = self:GetClientInfo("soundclose") or "",
+        soundMove = self:GetClientInfo("soundmove") or "",
     })
     if ok then
         GRM.Notify(ply, "Раздвижная дверь настроена. Свяжите с Keypad/Scanner через FFD Link, сохраните /permadd.", 100, 220, 130)
@@ -102,6 +108,12 @@ if CLIENT then
         panel:CheckBox("Режим переключателя (открыть/закрыть)", "grm_sliding_door_toggle")
         panel:CheckBox("Автозакрытие", "grm_sliding_door_autoclose")
         panel:NumSlider("Задержка автозакрытия (сек)", "grm_sliding_door_closetime", 0.5, 30, 1)
+
+        panel:AddControl("Header", { Description = "ЗВУКИ (пусто = нет звука)" })
+        panel:TextEntry("Звук открытия (sound path)", "grm_sliding_door_soundopen")
+        panel:TextEntry("Звук закрытия (sound path)", "grm_sliding_door_soundclose")
+        panel:TextEntry("Звук движения (sound path)", "grm_sliding_door_soundmove")
+        panel:Help("Примеры: doors/door_metal_open1.wav, doors/door_metal_close1.wav, doors/door_move1.wav. Срабатывают: открытие/закрытие — в конце движения; движение — периодически во время сдвига.")
 
         panel:Help(
             "ЛКМ — применить к пропу (prop_physics/prop_dynamic)\n" ..

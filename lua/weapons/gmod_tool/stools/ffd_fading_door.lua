@@ -203,6 +203,9 @@ if SERVER then
                     autoclose = s.autoclose == true,
                     closeTime = tonumber(s.closeTime) or 5,
                     owner = tostring(s.owner or ""),
+                    soundOpen = tostring(s.soundOpen or ""),
+                    soundClose = tostring(s.soundClose or ""),
+                    soundMove = tostring(s.soundMove or ""),
                 },
             }
         end
@@ -235,6 +238,7 @@ if SERVER then
                     direction = d.direction, distance = d.distance,
                     speed = d.speed, smooth = d.smooth,
                     toggle = d.toggle, autoclose = d.autoclose, closeTime = d.closeTime,
+                    soundOpen = d.soundOpen, soundClose = d.soundClose, soundMove = d.soundMove,
                 })
             end
             return

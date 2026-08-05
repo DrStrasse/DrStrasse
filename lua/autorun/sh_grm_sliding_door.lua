@@ -70,6 +70,11 @@ function SD.Apply(ply, ent, opts)
         autoclose  = opts.autoclose == true or opts.autoclose == 1,
         closeTime  = math.max(0.5, tonumber(opts.closeTime) or 5),
         owner      = IsValid(ply) and charKey(ply) or "",
+        -- Звуки (находка 173d): пусто = нет звука; "открытие/закрытие" —
+        -- когда дверь достигла конца/начала, "движение" — во время движения.
+        soundOpen   = tostring(opts.soundOpen or ""),
+        soundClose  = tostring(opts.soundClose or ""),
+        soundMove   = tostring(opts.soundMove or ""),
     }
 
     ent.isSlidingDoor = true
@@ -94,6 +99,7 @@ function SD.Apply(ply, ent, opts)
             direction = data.direction, distance = data.distance,
             speed = data.speed, smooth = data.smooth,
             toggle = data.toggle, autoclose = data.autoclose, closeTime = data.closeTime,
+            soundOpen = data.soundOpen, soundClose = data.soundClose, soundMove = data.soundMove,
         })
     end
 
@@ -189,6 +195,29 @@ if SERVER then
                     local e = ease(next, data.smooth)
                     ent:SetPos(base + (openPos - base) * e)
 
+                    -- Звуки (находка 173d): в движении, при открытии, при закрытии
+                    local moving = math.abs(next - cur) > 0.0001
+                    local soundOpen = tostring(data.soundOpen or "")
+                    local soundClose = tostring(data.soundClose or "")
+                    local soundMove = tostring(data.soundMove or "")
+                    if moving and soundMove ~= "" then
+                        if (ent.Sliding_SndMove or 0) <= now then
+                            ent.Sliding_SndMove = now + 0.6  -- не чаще 1.6/сек
+                            ent:EmitSound(soundMove, 70, 100)
+                        end
+                    end
+                    -- Открытие: один раз при достижении конца (переход 0→1)
+                    if next >= 1 and not ent.Sliding_WasOpen and soundOpen ~= "" then
+                        ent:EmitSound(soundOpen, 75, 100)
+                    end
+                    -- Закрытие: один раз при достижении начала (переход 1→0),
+                    -- флаг «был открыт» держим до самого конца, чтобы не потерять момент
+                    if next <= 0 and ent.Sliding_WasEverOpen and soundClose ~= "" then
+                        ent:EmitSound(soundClose, 75, 100)
+                    end
+                    if next >= 1 then ent.Sliding_WasOpen = true ent.Sliding_WasEverOpen = true
+                    elseif next <= 0 then ent.Sliding_WasOpen = false ent.Sliding_WasEverOpen = false end
+
                     -- автозакрытие
                     if ent.Sliding_Open and data.autoclose then
                         if ent.Sliding_CloseAt == 0 and next >= 1 then
@@ -216,6 +245,7 @@ if SERVER then
                 direction = data.direction, distance = data.distance,
                 speed = data.speed, smooth = data.smooth,
                 toggle = data.toggle, autoclose = data.autoclose, closeTime = data.closeTime,
+                soundOpen = data.soundOpen, soundClose = data.soundClose, soundMove = data.soundMove,
             })
         end
     end)

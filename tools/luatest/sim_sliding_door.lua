@@ -85,6 +85,7 @@ PMT.__index = function(t, k)
   elseif k == "IsNPC" then return function() return false end
   elseif k == "IsWorld" then return function() return false end
   elseif k == "GetModel" then return function() return "models/x.mdl" end
+  elseif k == "EmitSound" then return function(s, snd) s._sounds = s._sounds or {} s._sounds[#s._sounds + 1] = snd end
   end
   return nil
 end
@@ -172,6 +173,39 @@ ok(qCode:find('grm_sliding_door', 1, true) ~= nil, "Q-меню: тул разд�
 local fl = assert(io.open("lua/weapons/gmod_tool/stools/ffd_link.lua", "rb"))
 local flCode = fl:read("*a") fl:close()
 ok(flCode:find('ent.isFadingDoor == true or ent.isSlidingDoor == true', 1, true) ~= nil, "FFD Link: isDoor учитывает isSlidingDoor")
+
+-- ══════════════ 8. ЗВУКИ (находка 173d) ══════════════
+local sp = mkProp()
+GRM.SlidingDoor.Apply(ply, sp, { direction = "right", distance = 100, speed = 120, smooth = 1, soundOpen = "doors/door_metal_open1.wav", soundClose = "doors/door_metal_close1.wav", soundMove = "doors/door_move1.wav" })
+ok(sp.Sliding.soundOpen ~= "" and sp.Sliding.soundClose ~= "" and sp.Sliding.soundMove ~= "", "звуки сохранены в конфиге")
+sp.FadeActivate()
+local thinkFn2 = H.hooks["Think"]["GRM_SlidingDoor_Think"]
+local oldT = _G.CurTime
+local ft = 2000
+_G.CurTime = function() return ft end
+thinkFn2()
+ft = ft + 0.5
+thinkFn2()  -- в движении: soundMove
+ok(sp._sounds and #sp._sounds > 0, "звук движения проигран в процессе")
+-- догнать до открытия
+for _ = 1, 20 do ft = ft + 0.5 thinkFn2() end
+ok(sp.Sliding_Progress >= 1, "дверь открылась")
+local hadOpen = false
+for _, s in ipairs(sp._sounds or {}) do if s == "doors/door_metal_open1.wav" then hadOpen = true end end
+ok(hadOpen, "звук ОТКРЫТИЯ проигран при достижении конца")
+sp._sounds = {}
+sp.FadeDeactivate()
+for _ = 1, 20 do ft = ft + 0.5 thinkFn2() end
+ok(sp.Sliding_Progress <= 0, "дверь закрылась")
+local hadClose = false
+for _, s in ipairs(sp._sounds or {}) do if s == "doors/door_metal_close1.wav" then hadClose = true end end
+ok(hadClose, "звук ЗАКРЫТИЯ проигран при достижении начала")
+_G.CurTime = oldT
+
+-- перм/тул: звуки
+ok(ffdCode:find('soundOpen', 1, true) ~= nil and ffdCode:find('soundMove', 1, true) ~= nil, "перм Extract/Apply хранит звуки")
+ok(toolCode:find('grm_sliding_door_soundopen', 1, true) ~= nil, "тул: поле звука открытия")
+ok(toolCode:find('grm_sliding_door_soundmove', 1, true) ~= nil, "тул: поле звука движения")
 
 print(("SLIDING DOOR: %d/%d failures=%d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end
