@@ -1013,6 +1013,7 @@ if SERVER then
         local idx = net.ReadUInt(16)
         local slotIdx = net.ReadUInt(8)
         local count = math.max(1, math.floor(tonumber(net.ReadUInt(16)) or 1))
+        local op = net.ReadString()
         local target = nil
         for _, p in ipairs(player.GetAll()) do
             if IsValid(p) and p:EntIndex() == idx then target = p break end
@@ -1022,16 +1023,37 @@ if SERVER then
         local slot = inv and inv.slots[slotIdx] or nil
         if not slot then return end
         local id = slot.id
-        local have = tonumber(slot.count) or 1
-        local remove = math.min(count, have)
-        local left = GRM.Inventory.RemoveItem(target, id, remove)
-        local removed = remove - (tonumber(left) or 0)
-        if removed > 0 then
-            GRM.Inventory.SyncToClient(target)
-            if GRM.Inventory.SyncToClient then GRM.Inventory.SyncToClient(admin) end
-            if GRM.Notify then
-                GRM.Notify(target, "Администрация изъяла: " .. tostring(id) .. " x" .. tostring(removed), 255, 120, 100)
-                GRM.Notify(admin, "Изъято у " .. target:Nick() .. ": " .. tostring(id) .. " x" .. tostring(removed), 100, 220, 130)
+
+        if op == "dup" then
+            -- МНОЖЕНИЕ/КОПИРОВАНИЕ (находка 171): добавить столько же предметов
+            -- с сохранением data экземпляра (рация/медкарта/чип и т.п.)
+            local have = tonumber(slot.count) or 1
+            local addCount = math.max(1, count)
+            local data = istable(slot.data) and table.Copy(slot.data) or nil
+            local left = GRM.Inventory.AddItem(target, id, addCount, data)
+            local added = addCount - (tonumber(left) or 0)
+            if added > 0 then
+                GRM.Inventory.SyncToClient(target)
+                if GRM.Inventory.SyncToClient then GRM.Inventory.SyncToClient(admin) end
+                if GRM.Notify then
+                    GRM.Notify(admin, "Дублировано у " .. target:Nick() .. ": " .. tostring(id) .. " x" .. tostring(added), 100, 220, 130)
+                end
+            else
+                if GRM.Notify then GRM.Notify(admin, "Не удалось добавить (инвентарь полон?)", 255, 150, 90) end
+            end
+        else
+            -- ИЗЪЯТИЕ
+            local have = tonumber(slot.count) or 1
+            local remove = math.min(count, have)
+            local left = GRM.Inventory.RemoveItem(target, id, remove)
+            local removed = remove - (tonumber(left) or 0)
+            if removed > 0 then
+                GRM.Inventory.SyncToClient(target)
+                if GRM.Inventory.SyncToClient then GRM.Inventory.SyncToClient(admin) end
+                if GRM.Notify then
+                    GRM.Notify(target, "Администрация изъяла: " .. tostring(id) .. " x" .. tostring(removed), 255, 120, 100)
+                    GRM.Notify(admin, "Изъято у " .. target:Nick() .. ": " .. tostring(id) .. " x" .. tostring(removed), 100, 220, 130)
+                end
             end
         end
         -- обновить данные админу
@@ -1255,6 +1277,21 @@ if CLIENT then
             net.WriteUInt(AV.target, 16)
             net.WriteUInt(slotIdx, 8)
             net.WriteUInt(count, 16)
+            net.WriteString("take")
+        net.SendToServer()
+    end
+
+    -- МНОЖЕНИЕ/КОПИРОВАНИЕ (находка 171): дублировать предмет цели
+    function GRM.Inventory.AdminDup(slotIdx, count)
+        if not AV.open or not AV.target then return end
+        local slot = AV.slots[slotIdx]
+        if not slot or not slot.id then return end
+        local c = math.max(1, math.floor(tonumber(count) or 1))
+        net.Start("GRM_Inv_AdminAction")
+            net.WriteUInt(AV.target, 16)
+            net.WriteUInt(slotIdx, 8)
+            net.WriteUInt(c, 16)
+            net.WriteString("dup")
         net.SendToServer()
     end
 

@@ -518,12 +518,23 @@ local function openAdminView()
                 draw.SimpleText((def and def.name) or slot.id, "GRMInv2_Normal", 10, 10, C.text)
                 draw.SimpleText("x" .. tostring(slot.count or 1), "GRMInv2_Small", 10, 30, C.dim)
             end
-            local takeAll = btn(row, "Изъять все", C.red, 108, 28)
-            takeAll:Dock(RIGHT); takeAll:DockMargin(4, 8, 6, 8)
+            local takeAll = btn(row, "Изъять все", C.red, 100, 26)
+            takeAll:Dock(RIGHT); takeAll:DockMargin(4, 9, 6, 9)
             takeAll.DoClick = function() if INV.AdminTake then INV.AdminTake(i, true) end end
-            local take1 = btn(row, "Изъять 1", C.yellow, 90, 28)
-            take1:Dock(RIGHT); take1:DockMargin(4, 8, 4, 8)
+            local take1 = btn(row, "Изъять 1", C.yellow, 84, 26)
+            take1:Dock(RIGHT); take1:DockMargin(4, 9, 4, 9)
             take1.DoClick = function() if INV.AdminTake then INV.AdminTake(i, false) end end
+            local dup1 = btn(row, "+1", C.green, 52, 26)
+            dup1:Dock(RIGHT); dup1:DockMargin(4, 9, 4, 9)
+            dup1.DoClick = function() if INV.AdminDup then INV.AdminDup(i, 1) end end
+            local dupN = btn(row, "+N", C.accent, 52, 26)
+            dupN:Dock(RIGHT); dupN:DockMargin(4, 9, 4, 9)
+            dupN.DoClick = function()
+                Derma_StringRequest("Дублировать предмет", "Сколько добавить игроку?", "1", function(v)
+                    local c = tonumber(v) or 1
+                    if c > 0 and INV.AdminDup then INV.AdminDup(i, math.floor(c)) end
+                end)
+            end
         end
     end
     if found == 0 then

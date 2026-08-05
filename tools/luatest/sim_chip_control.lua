@@ -11,6 +11,13 @@ local function ok(v, n) if v then pass = pass + 1 print("  ok  " .. n) else fail
 SERVER, CLIENT = true, false
 function AddCSLuaFile() end
 function isstring(v) return type(v) == "string" end
+function isfunction(v) return type(v) == "function" end
+function isnumber(v) return type(v) == "number" end
+function isentity(v) return false end
+function isvector(v) return false end
+function isangle(v) return false end
+function tobool(v) return v == true end
+function Angle() return { p = 0, y = 0, r = 0 } end
 function istable(v) return type(v) == "table" end
 function IsValid(v) return v ~= nil and (type(v) == "table" and v.__valid ~= false or type(v) == "userdata") end
 function CurTime() return 1000 end
@@ -19,6 +26,7 @@ function os.time() return 1700000000 end
 function math.random() return 1 end
 function table.Count(t) local n = 0 for _ in pairs(t or {}) do n = n + 1 end return n end
 function table.HasValue(t, v) for _, x in pairs(t or {}) do if x == v then return true end end return false end
+function table.Copy(t) local o = {} for k, v in pairs(t or {}) do o[k] = type(v) == "table" and table.Copy(v) or v end return o end
 math.Clamp = math.Clamp or function(v, a, b) return math.max(a, math.min(b, v)) end
 function print(...) local a = {} for i = 1, select("#", ...) do a[i] = tostring(select(i, ...)) end io.write(table.concat(a, " "), "\n") end
 string.Trim = string.Trim or function(s) return tostring(s or ""):match("^%s*(.-)%s*$") end
@@ -65,7 +73,12 @@ PMT.__index = function(t, k)
   elseif k == "SteamID64" then return function(s) return s.s64 end
   elseif k == "Nick" then return function(s) return s.nick end
   elseif k == "IsPlayer" then return function() return true end
+  elseif k == "EntIndex" then return function(s) return s.idx or 1 end
   elseif k == "IsSuperAdmin" then return function(s) return s.super == true end
+  elseif k == "GetNWBool" then return function() return false end
+  elseif k == "GetNWInt" then return function() return 0 end
+  elseif k == "GetNWFloat" then return function() return 0 end
+  elseif k == "GetNWString" then return function() return "" end
   elseif k == "GetPos" then return function(s) return s.pos or { x = 0, y = 0, z = 0 } end
   elseif k == "EmitSound" then return function() end
   elseif k == "ChatPrint" then return function() end
@@ -289,6 +302,57 @@ local ctxCode = ctxSrc:read("*a") ctxSrc:close()
 ok(ctxCode:find('"admin"', 1, true) ~= nil and ctxCode:find('Админ-панель (GRM)', 1, true) ~= nil, "C-меню: кнопка «Админ-панель (GRM)»")
 ok(ctxCode:find('Инвентарь игрока', 1, true) ~= nil, "C-меню: кнопка «Инвентарь игрока»")
 ok(ctxCode:find('GRM_Inv_AdminOpen', 1, true) ~= nil, "C-меню: запрос просмотра чужого инвентаря")
+
+-- ══════════════ 9. ДУБЛИРОВАНИЕ ПРЕДМЕТОВ (находка 171) ══════════════
+-- Грузим sh_grm_inventory (сервер), чтобы были обработчики GRM_Inv_AdminAction
+dofile("lua/autorun/sh_grm_inventory.lua")
+ok(H.netrecv["GRM_Inv_AdminAction"] ~= nil, "GRM_Inv_AdminAction зарегистрирован (инвентарь)")
+-- реальный инвентарь требует ItemDefs; подложим определение radio_modulator
+GRM.Inventory.ItemDefs = GRM.Inventory.ItemDefs or {}
+GRM.Inventory.ItemDefs["radio_modulator"] = { name = "Модулятор рации", type = "item", maxStack = 1 }
+GRM.Inventory.Config = GRM.Inventory.Config or {}
+GRM.Inventory.Config.MaxSlots = 24
+GRM.Inventory.Config.MaxStack = 5
+GRM.Inventory.SyncSlot = function() end
+GRM.Inventory.SyncToClient = function() end
+-- Перенаправим GetPlayerInv на наш мок-склад, чтобы тест не зависел от реального хранилища
+local realGetPlayerInv = GRM.Inventory.GetPlayerInv
+GRM.Inventory.GetPlayerInv = function(ply)
+  local k = ply.s64 .. ":char1"
+  GRM.Inventory.Inventories = GRM.Inventory.Inventories or {}
+  GRM.Inventory.Inventories[k] = GRM.Inventory.Inventories[k] or { slots = {} }
+  return GRM.Inventory.Inventories[k]
+end
+-- серверный обработчик читает op ("take"/"dup"); AddItem с data
+local dupTarget = mkPly("Цель2", "STEAM_0:1:66", "76561198000000066")
+local dupInv = GRM.Inventory.GetPlayerInv(dupTarget)
+dupInv.slots[3] = { id = "radio_modulator", count = 1, data = { on = true } }
+player.GetAll = function() return { super, dupTarget } end
+
+-- дублирование 2 шт (idx=2 для dupTarget)
+dupTarget.idx = 2
+local realInv = GRM.Inventory.GetPlayerInv(dupTarget)
+realInv.slots[3] = { id = "radio_modulator", count = 1, data = { on = true } }
+local before = realInv.slots[3].count
+H.seq = { 2, 3, 2, "dup" }
+H.netrecv["GRM_Inv_AdminAction"](0, super)
+local after = 0
+for i = 1, 24 do if realInv.slots[i] and realInv.slots[i].id == "radio_modulator" then after = after + (realInv.slots[i].count or 1) end end
+ok(after == before + 2, "дублирование: +2 предмета добавлено (было " .. tostring(before) .. ", стало " .. tostring(after) .. ")")
+ok(realInv.slots[3].data and realInv.slots[3].data.on == true, "дублирование: data экземпляра сохранено")
+
+-- не-суперадмин не может дублировать
+local before2 = 0
+for i = 1, 24 do if realInv.slots[i] and realInv.slots[i].id == "radio_modulator" then before2 = before2 + (realInv.slots[i].count or 1) end end
+H.seq = { 2, 3, 5, "dup" }
+H.netrecv["GRM_Inv_AdminAction"](0, cop)
+local after2 = 0
+for i = 1, 24 do if realInv.slots[i] and realInv.slots[i].id == "radio_modulator" then after2 = after2 + (realInv.slots[i].count or 1) end end
+ok(after2 == before2, "не-суперадмин НЕ может дублировать")
+
+-- клиентский AdminDup существует
+ok(invCode:find("AdminDup", 1, true) ~= nil, "клиент: GRM.Inventory.AdminDup")
+ok(invCode:find('WriteString("dup")', 1, true) ~= nil, "клиент: AdminDup шлёт op dup")
 
 print(("CHIP CONTROL: %d/%d failures=%d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end
