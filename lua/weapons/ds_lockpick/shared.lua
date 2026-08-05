@@ -1,23 +1,29 @@
 --[[--------------------------------------------------------------------
-    ds_lockpick — Интерактивная QTE-Отмычка для взлома дверей и Кейпадов (Код 68)
+    ds_lockpick — «Взломщик» (QTE-взлом дверей/кейпадов/сканеров, Код 174)
 
-    Назначение: Интерактивный взлом замка дверей и FFD Keypad с мини-игрой QTE.
-    Игрок подбирает 4 пина защёлки, нажимая ПРОБЕЛ или ЛКМ в "зелёной зоне".
+    Заказ владельца: вместо отмычки-монтировки — взломщик в виде бомбы
+    (models/weapons/w_c4.mdl). Взламывает:
+      • двери (prop_door_rotating/func_door — GRM.Doors),
+      • FFD-двери и раздвижные двери (isFadingDoor/isSlidingDoor),
+      • кейпады grm_keypad,
+      • сканеры grm_scanner.
+    Взлом НЕ мгновенный: QTE-мини-игра с прогресс-баром (5 пинов защёлки,
+    ошибки, ускоряющаяся игла). Успех — доступ/открытие цели.
 ----------------------------------------------------------------------]]
 
 AddCSLuaFile()
 
-SWEP.PrintName = "Отмычка"
+SWEP.PrintName = "Взломщик"
 SWEP.Author = "GRM"
-SWEP.Instructions = "ЛКМ: Начать QTE-взлом двери или кейпада (подберите 4 пина защёлки)"
+SWEP.Instructions = "ЛКМ: начать QTE-взлом двери, кейпада или сканера (зафиксируйте иглу в зелёной зоне ПРОБЕЛОМ/ЛКМ)"
 SWEP.Category = "GRM"
 SWEP.Spawnable = true
 SWEP.AdminSpawnable = true
 SWEP.DrawWeaponSelection = true
-SWEP.ViewModel = "models/weapons/c_crowbar.mdl"
-SWEP.WorldModel = "models/weapons/w_crowbar.mdl"
+SWEP.ViewModel = "models/weapons/cstrike/c_c4.mdl"
+SWEP.WorldModel = "models/weapons/w_c4.mdl"
 SWEP.UseHands = true
-SWEP.HoldType = "crowbar"
+SWEP.HoldType = "grenade"
 
 SWEP.Primary.ClipSize = -1
 SWEP.Primary.DefaultClip = -1
@@ -29,41 +35,64 @@ SWEP.Secondary.DefaultClip = -1
 SWEP.Secondary.Automatic = false
 SWEP.Secondary.Ammo = "none"
 
+local AIM_RANGE   = 120    -- дальность прицеливания на цель
+local HACK_RANGE  = 190    -- серверная дистанция применения взлома
+local MIN_HACK    = 2.0    -- минимальное время QTE (анти-чит: мгновенно не взломать)
+
+SWEP.AimRange = AIM_RANGE
+SWEP.HackRange = HACK_RANGE
+SWEP.MinHackTime = MIN_HACK
+
 if SERVER then
-    util.AddNetworkString("GRM_Lockpick_StartQTE")
-    util.AddNetworkString("GRM_Lockpick_FinishQTE")
+    util.AddNetworkString("GRM_Breaker_StartQTE")
+    util.AddNetworkString("GRM_Breaker_FinishQTE")
 end
 
 function SWEP:Initialize()
-    self:SetHoldType("crowbar")
+    self:SetHoldType("grenade")
 end
 
 function SWEP:Deploy()
-    self:SetHoldType("crowbar")
+    self:SetHoldType("grenade")
     return true
 end
 
+-- Цель взлома под прицелом: кейпад, сканер, FFD/раздвижная дверь или обычная дверь
 function SWEP:GetAimedTarget()
     local ply = self:GetOwner()
     if not IsValid(ply) then return nil end
 
     local tr = util.TraceLine({
         start = ply:GetShootPos(),
-        endpos = ply:GetShootPos() + ply:GetAimVector() * 110,
+        endpos = ply:GetShootPos() + ply:GetAimVector() * self.AimRange,
         filter = ply,
         mask = MASK_SHOT,
     })
 
     local ent = tr.Entity
     if IsValid(ent) then
-        if ent:GetClass() == "grm_keypad" then
+        local cls = ent:GetClass()
+        if cls == "grm_keypad" or cls == "grm_scanner" then
+            return ent
+        end
+        if ent.isFadingDoor or ent.isSlidingDoor then
             return ent
         end
         if GRM and GRM.Doors and GRM.Doors.IsDoor and GRM.Doors.IsDoor(ent) then
             return ent
         end
-        if IsValid(ent:GetParent()) and GRM and GRM.Doors and GRM.Doors.IsDoor and GRM.Doors.IsDoor(ent:GetParent()) then
-            return ent:GetParent()
+        if IsValid(ent:GetParent()) then
+            local par = ent:GetParent()
+            local pcls = par:GetClass()
+            if pcls == "grm_keypad" or pcls == "grm_scanner" then
+                return par
+            end
+            if par.isFadingDoor or par.isSlidingDoor then
+                return par
+            end
+            if GRM and GRM.Doors and GRM.Doors.IsDoor and GRM.Doors.IsDoor(par) then
+                return par
+            end
         end
     end
     return nil
@@ -78,8 +107,12 @@ function SWEP:PrimaryAttack()
     local ply = self:GetOwner()
     if not IsValid(target) or not IsValid(ply) then return end
 
+    -- клиент уже в мини-игре — повторный запуск не нужен
+    if self.__qteActive then return end
+
     if SERVER then
-        net.Start("GRM_Lockpick_StartQTE")
+        ply.__grmBreakerStart = CurTime()
+        net.Start("GRM_Breaker_StartQTE")
             net.WriteEntity(target)
         net.Send(ply)
     end
@@ -93,82 +126,177 @@ end
 -- СЕРВЕРНАЯ ОБРАБОТКА РЕЗУЛЬТАТА QTE
 -- ============================================================
 if SERVER then
-    net.Receive("GRM_Lockpick_FinishQTE", function(_, ply)
+    -- применить успешный взлом к цели
+    local function applyBreakerHack(ply, target)
+        local cls = target:GetClass()
+
+        if cls == "grm_keypad" then
+            if target:IsKeypadLocked() then
+                if GRM.Notify then
+                    GRM.Notify(ply, "Кейпад уже открыт или занят.", 255, 200, 90)
+                end
+                return false
+            end
+            if target.ProcessGrant then target:ProcessGrant(ply) end
+            if GRM.Notify then
+                GRM.Notify(ply, "Кейпад успешно взломан! Доступ разрешён.", 100, 220, 100)
+            end
+            return true
+        end
+
+        if cls == "grm_scanner" then
+            if target.ProcessGrant then target:ProcessGrant(ply, "ВЗЛОМ") end
+            if GRM.Notify then
+                GRM.Notify(ply, "Сканер успешно взломан! Доступ разрешён.", 100, 220, 100)
+            end
+            return true
+        end
+
+        if target.isFadingDoor or target.isSlidingDoor then
+            if target.FadeActivate then target:FadeActivate() end
+            ply:EmitSound("buttons/button14.wav", 75, 100)
+            if GRM.Notify then
+                GRM.Notify(ply, "Электроника двери успешно взломана!", 100, 220, 100)
+            end
+            return true
+        end
+
+        if GRM and GRM.Doors and GRM.Doors.IsDoor and GRM.Doors.IsDoor(target) then
+            GRM.Doors.LockDoor(target, false)
+            target:Fire("Open", "", 0.1)
+
+            local partner = GRM.Doors.GetPartnerDoor and GRM.Doors.GetPartnerDoor(target)
+            if IsValid(partner) then partner:Fire("Open", "", 0.1) end
+
+            ply:EmitSound("buttons/button14.wav", 75, 100)
+            hook.Run("GRM_OnDoorLockpicked", ply, target)
+
+            if GRM.Notify then
+                GRM.Notify(ply, "Замок двери успешно взломан!", 100, 220, 100)
+            end
+            return true
+        end
+
+        return false
+    end
+
+    net.Receive("GRM_Breaker_FinishQTE", function(_, ply)
         if not IsValid(ply) then return end
         local target = net.ReadEntity()
         local success = net.ReadBool()
 
         if not IsValid(target) then return end
-        if ply:GetPos():DistToSqr(target:GetPos()) > 180 * 180 then return end
+        if ply:GetPos():DistToSqr(target:GetPos()) > HACK_RANGE * HACK_RANGE then return end
+
+        -- взломщик должен быть в руках
+        local wep = ply:GetActiveWeapon()
+        if not (IsValid(wep) and wep:GetClass() == "ds_lockpick") then return end
+
+        -- анти-спам и анти-чит: успех требует минимального времени QTE
+        local now = CurTime()
+        if (ply.__grmBreakerNext or 0) > now then return end
+        ply.__grmBreakerNext = now + 1.0
 
         if success then
-            if target:GetClass() == "grm_keypad" and target.ProcessGrant then
-                target:ProcessGrant(ply)
+            if now - (ply.__grmBreakerStart or 0) < MIN_HACK then
                 if GRM.Notify then
-                    GRM.Notify(ply, "Кейпад успешно взломан! Доступ разрешён.", 100, 220, 100)
+                    GRM.Notify(ply, "Взлом сорван: сигнатура не подтверждена.", 255, 100, 100)
                 end
-            elseif GRM and GRM.Doors and GRM.Doors.IsDoor and GRM.Doors.IsDoor(target) then
-                GRM.Doors.LockDoor(target, false)
-                target:Fire("Open", "", 0.1)
-
-                local partner = GRM.Doors.GetPartnerDoor and GRM.Doors.GetPartnerDoor(target)
-                if IsValid(partner) then partner:Fire("Open", "", 0.1) end
-
-                ply:EmitSound("buttons/button14.wav", 75, 100)
-                hook.Run("GRM_OnDoorLockpicked", ply, target)
-
-                if GRM.Notify then
-                    GRM.Notify(ply, "Замок двери успешно взломан!", 100, 220, 100)
-                end
+                return
             end
+            applyBreakerHack(ply, target)
+            hook.Run("GRM_OnDeviceHacked", ply, target)
         else
-            ply:EmitSound("weapons/crowbar/crowbar_impact1.wav", 75, 90)
+            ply:EmitSound("buttons/button10.wav", 75, 90)
             if GRM.Notify then
-                GRM.Notify(ply, "Отмычка соскочила! Взлом не удался.", 255, 100, 100)
+                GRM.Notify(ply, "Взлом не удался! Попробуйте снова.", 255, 100, 100)
             end
         end
+    end)
+
+    -- метка начала QTE (для минимального времени взлома)
+    hook.Add("PlayerSwitchWeapon", "GRM_Breaker_CancelQTE", function(ply, old, new)
+        if not IsValid(ply) then return end
+        ply.__grmBreakerStart = nil
     end)
 end
 
 -- ============================================================
--- КЛИЕНТСКАЯ QTE МИНИ-ИГРА ВЗЛОМА
+-- КЛИЕНТСКАЯ QTE МИНИ-ИГРА ВЗЛОМА (прогресс-бар)
 -- ============================================================
 if CLIENT then
     surface.CreateFont("QTE_Title", { font = "Roboto", size = 18, weight = 800, extended = true })
     surface.CreateFont("QTE_Sub",   { font = "Roboto", size = 13, weight = 600, extended = true })
+    surface.CreateFont("QTE_Big",   { font = "Roboto", size = 26, weight = 800, extended = true })
 
-    local function startLockpickQTE(target)
+    local function targetLabel(target)
+        if not IsValid(target) then return "ЦЕЛЬ ПОТЕРЯНА" end
+        local cls = target:GetClass()
+        if cls == "grm_keypad" then return "ВЗЛОМ КЕЙПАДА"
+        elseif cls == "grm_scanner" then return "ВЗЛОМ СКАНЕРА"
+        elseif target.isFadingDoor or target.isSlidingDoor then return "ВЗЛОМ ЭЛЕКТРОНИКИ ДВЕРИ"
+        else return "ВЗЛОМ ЗАМКА ДВЕРИ" end
+    end
+
+    local function startBreakerQTE(target)
         if not IsValid(target) then return end
+        -- уже идёт мини-игра — не плодим окна
+        if IsValid(startBreakerQTE.__frame) then return end
 
         local pinCurrent = 1
-        local maxPins = 4
+        local maxPins = 5
         local mistakes = 0
         local maxMistakes = 3
         local active = true
 
-        local targetMin = math.random(20, 60)
+        local targetMin = math.random(15, 60)
         local targetWidth = 22
-        local speed = 1.8
+        local speed = 1.6
+
+        local wep = LocalPlayer():GetActiveWeapon()
+        if IsValid(wep) then wep.__qteActive = true end
 
         local frame = vgui.Create("DFrame")
         frame:SetTitle("")
-        frame:SetSize(460, 250)
+        frame:SetSize(500, 320)
         frame:Center()
         frame:MakePopup()
         frame:ShowCloseButton(false)
+        startBreakerQTE.__frame = frame
 
-        local isKeypad = (target:GetClass() == "grm_keypad")
+        local title = targetLabel(target)
 
         frame.Paint = function(_, w, h)
             draw.RoundedBox(8, 0, 0, w, h, Color(16, 20, 28, 252))
-            draw.RoundedBoxEx(8, 0, 0, w, 38, Color(28, 34, 46), true, true, false, false)
-            draw.SimpleText(isKeypad and "ВЗЛОМ КЕЙПАДА — QTE МИНИ-ИГРА" or "ВЗЛОМ ЗАМКА — QTE МИНИ-ИГРА", "QTE_Title", 14, 19, Color(240, 245, 250), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.RoundedBoxEx(8, 0, 0, w, 42, Color(28, 34, 46), true, true, false, false)
+            draw.SimpleText("ВЗЛОМЩИК — QTE МИНИ-ИГРА", "QTE_Title", 14, 12, Color(240, 245, 250), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(title, "QTE_Sub", w - 14, 21, Color(255, 190, 90), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
 
-            draw.SimpleText("Пин: " .. pinCurrent .. " / " .. maxPins, "QTE_Sub", 16, 54, Color(80, 180, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText("Ошибки: " .. mistakes .. " / " .. maxMistakes, "QTE_Sub", w - 16, 54, mistakes > 0 and Color(255, 90, 90) or Color(160, 170, 185), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            -- === ПРОГРЕСС-БАР ВЗЛОМА ===
+            local pbX, pbY, pbW, pbH = 20, 58, 460, 20
+            draw.RoundedBox(5, pbX, pbY, pbW, pbH, Color(24, 30, 42))
+            local t = CurTime() * speed
+            local posPct = (math.sin(t) + 1) / 2
+            -- заполнение: завершённые пины + доля текущего пина (по приближению к зоне)
+            local partial = math.Clamp((posPct * 100 - (targetMin - 8)) / (targetWidth + 16), 0, 1)
+            local fillPct = ((pinCurrent - 1) + partial) / maxPins
+            local fillCol = LerpColor(fillPct, Color(60, 200, 110), Color(255, 190, 60))
+            draw.RoundedBox(4, pbX + 2, pbY + 2, (pbW - 4) * fillPct, pbH - 4, fillCol)
+            -- деления по пинам
+            surface.SetDrawColor(16, 20, 28, 160)
+            for i = 1, maxPins - 1 do
+                local sx = pbX + (pbW * i / maxPins)
+                surface.DrawRect(sx - 1, pbY + 2, 2, pbH - 4)
+            end
+            draw.SimpleText(string.format("ПРОГРЕСС ВЗЛОМА: %d%%", math.floor(fillPct * 100 + 0.5)), "QTE_Sub", w / 2, pbY + 10, Color(235, 240, 245), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 
-            local barX, barY = 20, 92
-            local barW, barH = 420, 38
+            -- === СТРОКА ПИНОВ/ОШИБОК ===
+            draw.SimpleText("Пин: " .. pinCurrent .. " / " .. maxPins, "QTE_Sub", 22, 94, Color(80, 180, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("Ошибки: " .. mistakes .. " / " .. maxMistakes, "QTE_Sub", w - 22, 94, mistakes > 0 and Color(255, 90, 90) or Color(160, 170, 185), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+
+            -- === ИГЛА И ЗЕЛЁНАЯ ЗОНА ===
+            local barX, barY = 20, 118
+            local barW, barH = 460, 42
             draw.RoundedBox(6, barX, barY, barW, barH, Color(28, 34, 46))
 
             local zoneX = barX + (barW * (targetMin / 100))
@@ -177,15 +305,35 @@ if CLIENT then
             surface.SetDrawColor(80, 230, 130)
             surface.DrawOutlinedRect(zoneX, barY + 3, zoneW, barH - 6, 2)
 
-            local t = CurTime() * speed
-            local posPct = (math.sin(t) + 1) / 2
             local pinX = barX + (barW * posPct)
-
             surface.SetDrawColor(255, 220, 80)
-            surface.DrawRect(pinX - 2, barY - 4, 5, barH + 8)
+            surface.DrawRect(pinX - 2, barY - 5, 5, barH + 10)
 
-            draw.SimpleText("Нажмите ПРОБЕЛ или КЛИКНИТЕ когда игла в зелёной зоне!", "QTE_Sub", w / 2, 162, Color(200, 210, 225), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-            draw.SimpleText("ESC — Отменить взлом", "QTE_Sub", w / 2, 195, Color(140, 150, 165), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            -- === ПОДСКАЗКИ ===
+            draw.SimpleText("ПРОБЕЛ / ЛКМ — зафиксировать иглу в зелёной зоне", "QTE_Sub", w / 2, 190, Color(200, 210, 225), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            draw.SimpleText("ESC — отменить взлом", "QTE_Sub", w / 2, 226, Color(140, 150, 165), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+
+        local function endQTE(success)
+            if not active then return end
+            active = false
+            startBreakerQTE.__frame = nil
+            frame:Close()
+            local wep = LocalPlayer():GetActiveWeapon()
+            if IsValid(wep) then wep.__qteActive = nil end
+            net.Start("GRM_Breaker_FinishQTE")
+                net.WriteEntity(target)
+                net.WriteBool(success)
+            net.SendToServer()
+        end
+
+        local function cancelQTE()
+            if not active then return end
+            active = false
+            startBreakerQTE.__frame = nil
+            frame:Close()
+            local wep = LocalPlayer():GetActiveWeapon()
+            if IsValid(wep) then wep.__qteActive = nil end
         end
 
         local function checkPin()
@@ -199,43 +347,46 @@ if CLIENT then
                 pinCurrent = pinCurrent + 1
 
                 if pinCurrent > maxPins then
-                    active = false
-                    frame:Close()
-                    net.Start("GRM_Lockpick_FinishQTE")
-                        net.WriteEntity(target)
-                        net.WriteBool(true)
-                    net.SendToServer()
+                    surface.PlaySound("weapons/c4/c4_disarm.wav")
+                    endQTE(true)
                     return
                 end
 
                 targetMin = math.random(15, 68)
-                targetWidth = math.max(12, targetWidth - 2.5)
-                speed = speed + 0.6
+                targetWidth = math.max(10, targetWidth - 2)
+                speed = speed + 0.55
             else
-                surface.PlaySound("weapons/crowbar/crowbar_impact1.wav")
+                surface.PlaySound("buttons/button10.wav")
                 mistakes = mistakes + 1
 
                 if mistakes >= maxMistakes then
-                    active = false
-                    frame:Close()
-                    net.Start("GRM_Lockpick_FinishQTE")
-                        net.WriteEntity(target)
-                        net.WriteBool(false)
-                    net.SendToServer()
+                    endQTE(false)
                 end
             end
         end
 
         frame.OnKeyCodePressed = function(_, key)
-            if key == KEY_SPACE or key == MOUSE_LEFT or key == MOUSE_FIRST then
+            if key == KEY_SPACE or key == KEY_ENTER or key == MOUSE_LEFT then
                 checkPin()
             elseif key == KEY_ESCAPE then
-                frame:Close()
+                cancelQTE()
             end
         end
 
+        -- отмена при потере цели/смерти/смене оружия/выходе
+        frame.Think = function(self)
+            if not active then return end
+            local lp = LocalPlayer()
+            local ok = IsValid(target) and IsValid(lp) and lp:Alive() and lp:Health() > 0
+            if ok then
+                local cur = lp:GetActiveWeapon()
+                ok = IsValid(cur) and cur:GetClass() == "ds_lockpick"
+            end
+            if not ok then cancelQTE() end
+        end
+
         local bgBtn = vgui.Create("DButton", frame)
-        bgBtn:SetSize(460, 250)
+        bgBtn:SetSize(500, 320)
         bgBtn:SetText("")
         bgBtn:SetPaintBackground(false)
         bgBtn.DoClick = function()
@@ -243,8 +394,10 @@ if CLIENT then
         end
     end
 
-    net.Receive("GRM_Lockpick_StartQTE", function()
+    net.Receive("GRM_Breaker_StartQTE", function()
         local ent = net.ReadEntity()
-        startLockpickQTE(ent)
+        if not IsValid(ent) then return end
+        -- отметка старта на клиенте для сервера не нужна; сервер сам ставит метку
+        startBreakerQTE(ent)
     end)
 end

@@ -140,7 +140,7 @@ if SERVER then
         -- Регистрация нумпад связи. Без живого плеера (перм-восстановление
         -- Кода 105 с офлайн-владельцем) бинд пропускаем — внутри
         -- numpad.OnDown движок дёргает ply:ConCommand и роняется на NULL;
-        -- дверь всё равно остаётся рабочей через кейпад/отмычку.
+        -- дверь всё равно остаётся рабочей через кейпад/взломщик.
         if IsValid(ply) then
             ent.FFD_NumDown = numpad.OnDown(ply, key, "FFD_Fade_On", ent)
             ent.FFD_NumUp = numpad.OnUp(ply, key, "FFD_Fade_Off", ent)

@@ -90,8 +90,8 @@
 
 ### 4.3 `arena/019f6cb8` (58 коммитов) — двери v2.0.0 + FFD
 Всё из 019f69c8 + **переработанная дверная система v2.0.0**:
-- `sh_grm_doors.lua` — FFD Fading Door + FFD Keypad с интерактивным 3D2D-дисплеем, платный проход (toll), фракционный доступ, QTE-взлом отмычкой;
-- SWEP'ы: `ds_key_swep` (ключи), `ds_battering_ram` (полицейский таран по ордеру), `ds_lockpick` (QTE-отмычка);
+- `sh_grm_doors.lua` — FFD Fading Door + FFD Keypad с интерактивным 3D2D-дисплеем, платный проход (toll), фракционный доступ, QTE-взлом;
+- SWEP'ы: `ds_key_swep` (ключи), `ds_battering_ram` (полицейский таран по ордеру), `ds_lockpick` (QTE-взломщик, модель C4);
 - перехват F1–F4 гейммода, фиксы замков (CLOSED vs OPEN), персистентность оружейных шкафов, гибкие права ордеров по фракциям/рангам/отделам;
 - `lua/weapons/gmod_tool/stools/ffd_fading_door.lua`, `ffd_keypad.lua`, `keypad.lua`, `fading_door.lua`.
 

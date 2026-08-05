@@ -26,7 +26,7 @@
       - Доступ по фракциям, рангам (Faction|Role) и категориям;
       - Ордера на обыск (/warrant, /unwarrant, /warrants) и взлом;
       - Взаимодействие через E, ключи (vehicle_keys_swep, ds_key_swep), /lock, /unlock;
-      - Интеграция с Тараном ds_battering_ram и QTE-Отмычкой ds_lockpick.
+      - Интеграция с Тараном ds_battering_ram и QTE-Взломщиком ds_lockpick.
 
     Команды:
       /door — меню двери (смотришь на дверь)

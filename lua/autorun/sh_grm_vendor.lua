@@ -85,7 +85,7 @@ V.Catalogs.electronics = V.Catalogs.electronics or {
 -- isWeapon=true → выдаётся через ply:Give() (SWEP), иначе через GRM.Inventory.AddItem()
 V.Catalogs.rare = V.Catalogs.rare or {
     -- SWEP (оружие) — продаются через ply:Give()
-    ["ds_lockpick"]          = { name = "Отмычка (QTE)",       price = 2500,  model = "models/weapons/w_crowbar.mdl",       desc = "Взлом замков через QTE-мини-игру", maxStack = 1, isWeapon = true },
+    ["ds_lockpick"]          = { name = "Взломщик (QTE)",        price = 2500,  model = "models/weapons/w_c4.mdl",            desc = "Взлом дверей, кейпадов и сканеров через QTE-мини-игру", maxStack = 1, isWeapon = true },
     ["ds_key_swep"]          = { name = "Дверные ключи",       price = 500,   model = "models/weapons/w_keys.mdl",          desc = "Блокировка/разблокировка дверей",   maxStack = 1, isWeapon = true },
     ["ds_battering_ram"]     = { name = "Полицейский таран",   price = 5000,  model = "models/weapons/w_rocket_launcher.mdl", desc = "Вскрытие дверей по ордеру",         maxStack = 1, isWeapon = true, license = "police" },
     ["grm_handcuffs"]        = { name = "Наручники",           price = 1500,  model = "models/weapons/w_cuffs.mdl",         desc = "Задержание подозреваемых",           maxStack = 1, isWeapon = true, license = "police" },

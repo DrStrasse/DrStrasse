@@ -178,8 +178,8 @@ GRM.Inventory.ItemDefs = {
     },
     ["item_lockpick"] = {
         type = "item",
-        name = "Отмычка",
-        desc = "Позволяет вскрывать замки",
+        name = "Взломщик",
+        desc = "Позволяет вскрывать замки, кейпады и сканеры",
         icon = "icon16/key.png",
         maxStack = 3,
         weight = 0.5,
