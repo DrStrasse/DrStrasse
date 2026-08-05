@@ -27,19 +27,12 @@ end
 
 local function startMusic()
     stopMusic()
-    -- Находка 179m: путь КОРРЕКТЕН — файл sound/robber_bank.wav в аддоне
-    -- (GMod ищет звуки по имени в папке sound/). Для надёжности пробуем
-    -- и вариант с префиксом "sound/", если простого имени нет.
+    -- Находка 179m: путь СТРОГО sound/robber_bank.wav (как указал владелец)
     local lp = LocalPlayer()
     if not IsValid(lp) then return end
-    local path = "robber_bank.wav"
-    -- util.PrecacheSound есть не во всех окружениях; если нет — просто пробуем имя
+    local path = "sound/robber_bank.wav"
     if util and util.PrecacheSound then
-        local ok, found = pcall(util.PrecacheSound, path)
-        if not (ok and found) then
-            path = "sound/robber_bank.wav"
-            pcall(util.PrecacheSound, path)
-        end
+        pcall(util.PrecacheSound, path)
     end
     local snd = CreateSound(lp, path)
     if IsValid(snd) then

@@ -354,7 +354,8 @@ ok(lin4:find('function ENT:LeaveJob', 1, true) ~= nil and lin4:find('action == "
 local lcl6 = assert(io.open("lua/entities/grm_money_launderer/cl_init.lua", "rb")):read("*a")
 ok(lcl6:find('ОТМЕНИТЬ УЧАСТИЕ', 1, true) ~= nil and lcl6:find('act(ent, "leave")', 1, true) ~= nil, "клиент: кнопка «ОТМЕНИТЬ УЧАСТИЕ» (находка 179m)")
 local heistCl = assert(io.open("lua/autorun/client/cl_grm_heist.lua", "rb")):read("*a")
-ok(heistCl:find('robber_bank.wav', 1, true) ~= nil and heistCl:find('sound/robber_bank.wav', 1, true) ~= nil, "звук: путь sound/robber_bank.wav корректен (находка 179m)")
+ok(heistCl:find('local path = "sound/robber_bank.wav"', 1, true) ~= nil, "звук: путь СТРОГО sound/robber_bank.wav (находка 179m)")
+ok(heistCl:find('local path = "robber_bank.wav"', 1, true) == nil, "звук: нет варианта без префикса sound/")
 
 -- ══════════════ 7. Тул + перм + модели ══════════════
 local tool = assert(io.open("lua/weapons/gmod_tool/stools/grm_bank_tool.lua", "rb")):read("*a")

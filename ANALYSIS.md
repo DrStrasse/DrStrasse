@@ -2946,3 +2946,15 @@ dist пересобран.
 sim_heist: 72 проверки (LeaveJob: выход/счётчик/не-участник, action leave,
 кнопка «ОТМЕНИТЬ УЧАСТИЕ», путь звука + фолбэк). GLua 404/0, симы 48/48,
 roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179m (уточнение): путь звука СТРОГО sound/robber_bank.wav
+
+Владелец: «путь строго должен быть sound/robber_bank.wav».
+
+Исправлено: в cl_grm_heist.lua путь задан строго `"sound/robber_bank.wav"`
+(без варианта без префикса). PrecacheSound в pcall (если есть).
+
+sim_heist: 73 проверки. GLua 404/0, симы 48/48, roundtrip 14/14.
+dist пересобран.
