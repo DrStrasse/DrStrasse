@@ -2091,3 +2091,33 @@ GLua 385/0, симы 41/41, roundtrip 14/14. dist пересобран.
 всем игрокам); новый функциональный sim_customization_render (12 проверок:
 мок-рендер, реальные вызовы fallback/PostPlayerDraw, счётчики DrawModel).
 GLua 385/0, симы 42/42, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 175b (05.08.2026): фикс краша QTE-взломщика — индексация функции как таблицы
+
+Владелец (живой сервер):
+```
+[grm] addons/grm/lua/weapons/ds_lockpick/shared.lua:244: attempt to index upvalue
+'startBreakerQTE' (a function value)
+  1. startBreakerQTE - .../shared.lua:244
+  2. func - .../shared.lua:401
+  3. unknown - lua/includes/extensions/net.lua:34
+```
+
+Причина: в клиентской QTE использовалось `startBreakerQTE.__frame` —
+индексация ФУНКЦИИ как таблицы (хранить «активное окно» прямо на функции).
+В GLua/LuaJIT функции не индексируются → краш при первом же запуске
+мини-игры (net.Receive → startBreakerQTE). Серверная ветка не падала,
+поэтому симулятор (SERVER-only) этого не ловил.
+
+Сделано:
+1. Введена локальная `activeFrame` в области видимости CLIENT-блока;
+   `startBreakerQTE.__frame` заменён на неё во всех 4 местах (проверка
+   «уже идёт мини-игра», создание окна, endQTE, cancelQTE).
+2. sim_breaker расширен клиентским прогоном: файл загружается повторно
+   в CLIENT-режиме (моки surface/draw/vgui/LocalPlayer/FrameTime/
+   FrameNumber) — теперь любая ошибка верхнего уровня клиентской ветки
+   валит тест. Проверки 34 → 37.
+
+Проверки: GLua 385/0, симы 42/42, roundtrip 14/14. dist пересобран.

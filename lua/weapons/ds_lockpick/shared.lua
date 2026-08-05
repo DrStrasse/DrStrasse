@@ -238,10 +238,12 @@ if CLIENT then
         else return "ВЗЛОМ ЗАМКА ДВЕРИ" end
     end
 
+    local activeFrame = nil -- активное окно QTE (индексировать функцию нельзя — GLua!)
+
     local function startBreakerQTE(target)
         if not IsValid(target) then return end
         -- уже идёт мини-игра — не плодим окна
-        if IsValid(startBreakerQTE.__frame) then return end
+        if IsValid(activeFrame) then return end
 
         local pinCurrent = 1
         local maxPins = 5
@@ -262,7 +264,7 @@ if CLIENT then
         frame:Center()
         frame:MakePopup()
         frame:ShowCloseButton(false)
-        startBreakerQTE.__frame = frame
+        activeFrame = frame
 
         local title = targetLabel(target)
 
@@ -317,7 +319,7 @@ if CLIENT then
         local function endQTE(success)
             if not active then return end
             active = false
-            startBreakerQTE.__frame = nil
+            activeFrame = nil
             frame:Close()
             local wep = LocalPlayer():GetActiveWeapon()
             if IsValid(wep) then wep.__qteActive = nil end
@@ -330,7 +332,7 @@ if CLIENT then
         local function cancelQTE()
             if not active then return end
             active = false
-            startBreakerQTE.__frame = nil
+            activeFrame = nil
             frame:Close()
             local wep = LocalPlayer():GetActiveWeapon()
             if IsValid(wep) then wep.__qteActive = nil end

@@ -234,5 +234,20 @@ local inv = assert(io.open("lua/autorun/sh_grm_inventory.lua", "rb"))
 local invCode = inv:read("*a") inv:close()
 ok(invCode:find('name = "Взломщик"', 1, true) ~= nil, "инвентарь: предмет переименован")
 
+-- ── КЛИЕНТСКАЯ ВЕТКА: файл должен загружаться без ошибок и в CLIENT-режиме
+-- (ловит индексацию upvalue-функций, найденную владельцем на живом сервере)
+SERVER, CLIENT = false, true
+surface = { CreateFont = function() end, PlaySound = function() end, SetDrawColor = function() end, DrawRect = function() end, DrawOutlinedRect = function() end, SetFont = function() end, GetTextSize = function() return 10, 10 end }
+draw = { RoundedBox = function() end, RoundedBoxEx = function() end, SimpleText = function() end }
+vgui = { Create = function() return { __valid = true, SetTitle = function() end, SetSize = function() end, Center = function() end, MakePopup = function() end, ShowCloseButton = function() end, Close = function() end, Paint = function() end, OnKeyCodePressed = function() end, Think = function() end } end }
+LocalPlayer = function() return mkPly(wep) end
+function FrameTime() return 0.1 end
+function FrameNumber() return 1 end
+SWEP = { Primary = {}, Secondary = {} }
+local cliOK, cliErr = pcall(dofile, "lua/weapons/ds_lockpick/shared.lua")
+ok(cliOK, "клиентская ветка загружается без ошибок" .. (cliErr and (" (" .. tostring(cliErr) .. ")") or ""))
+ok(netLog.recv and netLog.recv["GRM_Breaker_StartQTE"] ~= nil, "клиент зарегистрировал приём старта QTE")
+ok(netLog.recv and netLog.recv["GRM_Breaker_FinishQTE"] ~= nil, "серверный обработчик результата на месте")
+
 print(string.format("sim_breaker: %d ok, %d fail", pass, fail))
 if fail > 0 then os.exit(1) end
