@@ -185,6 +185,8 @@ function ENT:PrintMoney()
             self:EmitSound("physics/wood/wood_crate_impact_hard1.wav", 65, 100)
         end
     end
+    -- Находка 179d: автообновление перм-записи (буфер/статистика)
+    if GRM.PermData and GRM.PermData.UpdateEntry then GRM.PermData.UpdateEntry(self) end
 end
 
 function ENT:OwnerPlayer()
@@ -232,6 +234,8 @@ function ENT:PressUpgrade(ply)
     if GRM.TakeMoney then GRM.TakeMoney(ply, cost, "Прокачка печатного станка") end
     self:SetSpeedLevel(lvl + 1)
     self:SetPrintAmount(self:AmountPerCycle())
+    -- Находка 179d: автообновление перм-записи (скорость)
+    if GRM.PermData and GRM.PermData.UpdateEntry then GRM.PermData.UpdateEntry(self) end
     self:EmitSound("buttons/button14.wav", 65, 115)
     notify(ply, "Скорость станка: ур. " .. (lvl + 1) .. " — " .. (GRM.Format and GRM.Format(self:AmountPerCycle()) or tostring(self:AmountPerCycle())) .. " GRM / " .. self:GetPrintInterval() .. " сек.", 100, 220, 130)
     return true

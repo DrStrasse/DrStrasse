@@ -51,7 +51,12 @@ hook = { Add = function(n, id, fn) H.hooks[n] = H.hooks[n] or {} H.hooks[n][id] 
 timer = { Create = function(n, _, _, fn) H.timers[n] = fn end, Simple = function() end }
 concommand = { Add = function(n, fn) H.cmds[n] = fn end }
 util = { AddNetworkString = function() end, TableToJSON = function() return "{}" end, JSONToTable = function() return nil end, IsValidModel = function() return true end, TraceLine = function() return { Hit = false } end }
-file = { IsDir = function() return true end, CreateDir = function() end, Exists = function() return false end, Read = function() return nil end, Write = function() end, Find = function() return {} end }
+local FILES = {}
+_G.__lastJson = nil
+_G.__permBase = nil
+file = { IsDir = function() return true end, CreateDir = function() end, Exists = function(p) return FILES[p] ~= nil end, Read = function(p) return FILES[p] end, Write = function(p, v) FILES[p] = v end, Find = function() return {} end }
+util.TableToJSON = function(v) _G.__lastJson = v return "json" end
+util.JSONToTable = function() return _G.__permBase end
 os = { time = function() return 1700000000 end, date = function() return "2026-08-05" end }
 game = { GetMap = function() return "rp_test" end }
 player = { GetAll = function() return _G.__players or {} end }
@@ -435,6 +440,36 @@ ok(vcl2:find("EyeAngles().y - 90", 1, true) == nil, "хранилище: нет 
 local pcl = assert(io.open("lua/entities/grm_money_press/cl_init.lua", "rb")):read("*a")
 ok(pcl:find("AngleEx(self:GetForward())", 1, true) ~= nil, "станок: дисплей на лицевой стороне (AngleEx GetForward, находка 178c)")
 ok(pcl:find("EyeAngles().y - 90", 1, true) == nil, "станок: нет биллборда-надписи над моделью")
+
+-- ══════════════ 10. UpdateEntry: автообновление перм-записи (находка 179d) ══════════════
+-- грузим перм-модуль (нужен мок ents.FindByClass и пр.)
+local realEmit = entClasses
+-- заглушки для perm-модуля
+local permEnts = { GetAll = function() return {} end }
+local oldPly = ply
+-- перм-база: запись с data.held=0 (как при /permadd ДО загрузки денег)
+_G.__permBase = { { map = "rp_test", class = "grm_bank_vault", pos = { x = 0, y = 0, z = 0 }, data = { held = 0, capacity = 500000 } } }
+FILES["grm_perm_entities.json"] = "json"
+-- грузим модуль пермов (его concommand не трогаем)
+local oldCon = concommand
+concommand = { Add = function() end }
+pcall(dofile, "lua/autorun/sh_grm_perm_entities.lua")
+concommand = oldCon
+-- загружаем деньги и проверяем, что UpdateEntry обновил запись
+vault:SetHeldCash(250000)
+-- перехватим timer.Simple, чтобы выполнить отложенное обновление
+local deferred = {}
+local oldTimerSimple = timer.Simple
+timer.Simple = function(_, fn) deferred[#deferred + 1] = fn end
+local okUpd = GRM.PermData.UpdateEntry and GRM.PermData.UpdateEntry(vault)
+ok(okUpd == true, "UpdateEntry вызван (дебаунс принял)")
+ok(#deferred == 1, "UpdateEntry запланировал отложенное обновление")
+deferred[1]() -- выполняем
+timer.Simple = oldTimerSimple
+-- проверяем, что сохранённая запись содержит обновлённый held
+local saved = _G.__lastJson or {}
+local rec = saved[1]
+ok(rec and rec.data and rec.data.held == 250000, "перм-запись обновлена: held = 250.000 (находка 179d)")
 
 print(string.format("sim_bank_vault: %d ok, %d fail", pass, fail))
 if fail > 0 then os.exit(1) end

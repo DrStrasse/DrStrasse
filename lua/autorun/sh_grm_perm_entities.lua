@@ -329,6 +329,40 @@ if SERVER then
         tell(ply, "В радиусе " .. PERM_RANGE .. " юнитов перм-записи для этого энтити нет.", 255, 200, 80)
     end
 
+    -- Находка 179d: автообновление перм-записи при изменении состояния
+    -- сущности (HeldCash хранилища, буфер/скорость станка и т.п.).
+    -- /permadd фиксирует состояние ОДИН раз — без этого после загрузки
+    -- денег в хранилище запись остаётся со старым (0) значением.
+    GRM.PermData.UpdateEntry = function(ent)
+        if not IsValid(ent) then return false end
+        local class = tostring(ent:GetClass() or "")
+        if not PERM_CLASSES[class] then return false end
+        local extractFn = GRM.PermData and GRM.PermData.Extract and GRM.PermData.Extract[class]
+        if not extractFn then return false end
+        local idx = ent:EntIndex()
+        -- дебаунс: частые вызовы (подбор паллет) пишут файл не каждый раз
+        if ent._grmPermSaveAt and CurTime() < ent._grmPermSaveAt then return false end
+        ent._grmPermSaveAt = CurTime() + 1.5
+        timer.Simple(1.5, function()
+            if not IsValid(ent) then return end
+            local list = loadList()
+            local map = game.GetMap()
+            local pos = ent:GetPos()
+            local np = { x = pos.x, y = pos.y, z = pos.z }
+            for _, rec in ipairs(list) do
+                if rec.map == map and rec.class == class and sameSpot(rec.pos, np, rec.class, class) then
+                    local okX, data = pcall(extractFn, ent)
+                    if okX and istable(data) then
+                        rec.data = data
+                        saveList(list)
+                    end
+                    break
+                end
+            end
+        end)
+        return true
+    end
+
     local function loadPerm(ply)
         local spawned, skipped = spawnAll("ручная загрузка")
         if spawned == 0 and skipped == 0 then

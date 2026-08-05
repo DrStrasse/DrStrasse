@@ -103,6 +103,8 @@ function ENT:LoadNearCash(ply)
                     loaded = loaded + take
                     ent:Remove()
                     self:SetHeldCash(held)
+                    -- Находка 179d: автообновление перм-записи (HeldCash)
+                    if GRM.PermData and GRM.PermData.UpdateEntry then GRM.PermData.UpdateEntry(self) end
                 end
             end
         end
@@ -135,6 +137,8 @@ function ENT:UnloadCash(ply, amount)
         return false
     end
     self:SetHeldCash(held - amount)
+    -- Находка 179d: автообновление перм-записи (HeldCash)
+    if GRM.PermData and GRM.PermData.UpdateEntry then GRM.PermData.UpdateEntry(self) end
     -- выгрузка из хранилища = изъятие из казны
     if GRM.Economy and GRM.Economy.StateBudgetAdd then
         GRM.Economy.StateBudgetAdd(-amount, "Выгрузка из хранилища: " .. ply:Nick())

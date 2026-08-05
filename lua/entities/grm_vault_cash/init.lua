@@ -32,6 +32,7 @@ function ENT:OnRemove()
     if not self._picked and IsValid(self.Vault) and self.Vault.GetHeldCash and self.Vault.SetHeldCash then
         local held = math.max(0, math.floor(self.Vault:GetHeldCash() or 0) - math.floor(self:GetAmount() or 0))
         self.Vault:SetHeldCash(held)
+        if GRM.PermData and GRM.PermData.UpdateEntry then GRM.PermData.UpdateEntry(self.Vault) end
     end
 end
 
@@ -55,6 +56,7 @@ function ENT:Use(ply)
                 if IsValid(self.Vault) and self.Vault.GetHeldCash and self.Vault.SetHeldCash then
                     local held = math.max(0, math.floor(self.Vault:GetHeldCash() or 0) - amt)
                     self.Vault:SetHeldCash(held)
+                    if GRM.PermData and GRM.PermData.UpdateEntry then GRM.PermData.UpdateEntry(self.Vault) end
                 end
                 self:Remove()
             end
@@ -75,6 +77,7 @@ function ENT:Use(ply)
     if IsValid(self.Vault) and self.Vault.GetHeldCash and self.Vault.SetHeldCash then
         local held = math.max(0, math.floor(self.Vault:GetHeldCash() or 0) - amt)
         self.Vault:SetHeldCash(held)
+        if GRM.PermData and GRM.PermData.UpdateEntry then GRM.PermData.UpdateEntry(self.Vault) end
     end
     if GRM.Notify then
         GRM.Notify(ply, "Подобрано из хранилища: " .. (GRM.Format and GRM.Format(amt) or tostring(amt)), 100, 220, 100)
