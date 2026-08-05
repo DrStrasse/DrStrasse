@@ -119,6 +119,13 @@ EMT.__index = function(t, k)
   elseif k == "SetMoveType" then return function() end
   elseif k == "SetSolid" then return function() end
   elseif k == "SetUseType" then return function() end
+  elseif k == "SetCollisionGroup" then return function() end
+  elseif k == "SetAutomaticFrameAdvance" then return function() end
+  elseif k == "SelectWeightedSequence" then return function() return -1 end
+  elseif k == "LookupSequence" then return function() return -1 end
+  elseif k == "ResetSequence" then return function() end
+  elseif k == "SetPlaybackRate" then return function() end
+  elseif k == "ResetSequenceInfo" then return function() end
   elseif k == "GetPhysicsObject" then return function() return { EnableMotion = function() end, Wake = function() end } end
   elseif k == "Spawn" then return function(s) spawnedClasses[s.__cls] = (spawnedClasses[s.__cls] or 0) + 1 end
   elseif k == "Activate" then return function() end
@@ -317,10 +324,10 @@ recvA(0, admin2)
 ok(ld:GetAllowedFactions() == "", "config_full: пустой список = любые")
 
 local lin3 = assert(io.open("lua/entities/grm_money_launderer/init.lua", "rb")):read("*a")
-ok(lin3:find('SOLID_VPHYSICS', 1, true) ~= nil, "поза: физическая инициализация сохранена")
-ok(lin3:find('self:SetHullType', 1, true) == nil, "поза: вызова self:SetHullType НЕТ (не падает, находка 179h)")
+ok(lin3:find('SelectWeightedSequence(ACT_IDLE)', 1, true) ~= nil and lin3:find('SetAutomaticFrameAdvance(true)', 1, true) ~= nil and lin3:find('MOVETYPE_NONE', 1, true) ~= nil and lin3:find('SOLID_BBOX', 1, true) ~= nil and lin3:find('COLLISION_GROUP_NPC', 1, true) ~= nil, "поза: как у торгашей (BBOX/MOVETYPE_NONE/NPC-коллизия/автокадры/idle, находка 179i)")
+ok(lin3:find('self:SetHullType', 1, true) == nil and lin3:find('SOLID_VPHYSICS', 1, true) == nil, "поза: нет физики и NPC-методов (не падает)")
 local lcl4 = assert(io.open("lua/entities/grm_money_launderer/cl_init.lua", "rb")):read("*a")
-ok(lcl4:find('idle_all_01', 1, true) ~= nil and lcl4:find('ResetSequence', 1, true) ~= nil and lcl4:find('InvalidateBoneCache', 1, true) ~= nil, "поза: клиентская idle-анимация (не Т-поза, находка 179h)")
+ok(lcl4:find('ResetSequence', 1, true) == nil, "поза: анимация только на сервере (как у торгашей)")
 ok(lin3:find('FactionList', 1, true) ~= nil and lin3:find('config_full', 1, true) ~= nil, "сервер: список фракций + config_full")
 local lcl3 = assert(io.open("lua/entities/grm_money_launderer/cl_init.lua", "rb")):read("*a")
 ok(lcl3:find('DCheckBoxLabel', 1, true) ~= nil and lcl3:find('factionsList', 1, true) ~= nil, "клиент: чекбоксы фракций (находка 179g)")

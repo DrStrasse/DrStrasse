@@ -2844,3 +2844,26 @@ sh_grm_alarm_integration.lua:149: attempt to call field 'AddNetworkString' (a ni
 
 sim_alarm_integration: 21 проверка (AddNetworkString только на сервере).
 GLua 404/0, симы 48/48, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179i (05.08.2026): Т-поза отмывщика — по образцу торгашей (grm_vendor)
+
+Владелец: «T-Позу так и не пофиксил. Посмотри пример торгашей как делались,
+бери с них пример».
+
+Как у торгашей (grm_vendor:Initialize/SetupIdleAnimation) — перенесено на
+grm_money_launderer:
+
+1. **НЕ физический проп**: `SetSolid(SOLID_BBOX)`, `SetMoveType(MOVETYPE_NONE)`,
+   `SetCollisionGroup(COLLISION_GROUP_NPC)`, `SetUseType(SIMPLE_USE)`,
+   `SetAutomaticFrameAdvance(true)`.
+2. **Idle-анимация на СЕРВЕРЕ** (`SetupIdleAnimation`): `SelectWeightedSequence
+   (ACT_IDLE)` → fallback по именам (`idle_all`, `idle`, `idle_unarmed`,
+   `stand`, `ref`, `idle_01`) → `ResetSequence` + `SetPlaybackRate(1)` +
+   `ResetSequenceInfo`.
+3. Клиентская анимация (которую добавил в 179h-fix) УБРАНА — как у торгашей,
+   всё делает сервер.
+
+sim_heist: 60 проверок (поза как у торгашей, нет физики/NPC-методов, анимация
+только на сервере). GLua 404/0, симы 48/48, roundtrip 14/14. dist пересобран.

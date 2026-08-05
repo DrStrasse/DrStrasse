@@ -26,13 +26,15 @@ function ENT:Initialize()
         print("[GRM Launderer] ВНИМАНИЕ: модель не найдена, фолбэк '" .. tostring(mdl) .. "'")
     end
     self:SetModel(mdl)
-    -- Находка 179g/179h: энтити типа anim (base_gmodentity) — методов NPC
-    -- (SetHullType/SetNPCState) у него НЕТ. Оставляем физику (как раньше),
-    -- нормальную позу даёт клиентская анимация idle (см. cl_init).
-    self:PhysicsInit(SOLID_VPHYSICS)
-    self:SetMoveType(MOVETYPE_VPHYSICS)
-    self:SetSolid(SOLID_VPHYSICS)
+    -- Находка 179g/179i: как у ТОРГАШЕЙ (grm_vendor) — НЕ физический проп,
+    -- а «стоящая» энтити: BBOX + MOVETYPE_NONE + NPC-коллизия + автопрокачка
+    -- кадров анимации + idle-последовательность (иначе модель человека
+    -- стоит в Т-позе).
+    self:SetSolid(SOLID_BBOX)
+    self:SetMoveType(MOVETYPE_NONE)
+    self:SetCollisionGroup(COLLISION_GROUP_NPC)
     self:SetUseType(SIMPLE_USE)
+    self:SetAutomaticFrameAdvance(true)
 
     self:SetEnabled(true)
     self:SetEventActive(false)
@@ -46,8 +48,23 @@ function ENT:Initialize()
     self.Participants = self.Participants or {}   -- [sid] = faction
     self.FactionDelivered = self.FactionDelivered or {} -- [faction] = amount
 
-    local phys = self:GetPhysicsObject()
-    if IsValid(phys) then phys:Wake() phys:EnableMotion(false) end
+    self:SetupIdleAnimation()
+end
+
+-- Находка 179i: idle-анимация как у торгашей (grm_vendor:SetupIdleAnimation)
+function ENT:SetupIdleAnimation()
+    local sequence = self:SelectWeightedSequence(ACT_IDLE)
+    if not sequence or sequence < 0 then
+        for _, name in ipairs({ "idle_all", "idle", "idle_unarmed", "stand", "ref", "idle_01" }) do
+            sequence = self:LookupSequence(name)
+            if sequence and sequence >= 0 then break end
+        end
+    end
+    if sequence and sequence >= 0 then
+        self:ResetSequence(sequence)
+        self:SetPlaybackRate(1)
+        self:ResetSequenceInfo()
+    end
 end
 
 function ENT:OnRemove()
