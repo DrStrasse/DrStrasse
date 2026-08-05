@@ -151,6 +151,8 @@ function ENT:ProcessDeny(ply, fac)
     self:SetStatus(2)
     self:SetScannedFac(tostring(fac or ""))
     self:EmitSound("buttons/button10.wav", 75, 100)
+    -- Находка 179h: событие «отказ доступа» для сигнализации
+    hook.Run("GRM_ScannerDenied", ply, self)
 
     if IsValid(self.ScannerOwner) then
         numpad.Activate(self.ScannerOwner, self.KeyDenied)

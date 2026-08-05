@@ -167,6 +167,8 @@ function ENT:ProcessDeny(ply)
     self:SetStatus(2) -- Denied
     self.CurrentInput = ""
     self:EmitSound("buttons/button10.wav", 75, 100)
+    -- Находка 179h: событие «неверный PIN» для сигнализации
+    hook.Run("GRM_KeypadDenied", ply, self)
 
     if self.KeypadOwner and IsValid(self.KeypadOwner) then
         numpad.Activate(self.KeypadOwner, self.KeyDenied)
