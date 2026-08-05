@@ -127,7 +127,7 @@ ok(has(admin, "grm_augmentations_admin"), "admin console command name exists")
 -- Pod entity tests
 ok(has(pod, "ENT.Type"), "entity type defined")
 ok(has(pod, "ENT.Category"), "entity category defined")
-ok(has(pod, "GRM - Augmentations"), "correct category")
+ok(has(pod, "GRM — Аугментации"), "correct category (GRM — Аугментации)")
 ok(has(pod, "function ENT:Initialize"), "initialize function exists")
 ok(has(pod, "function ENT:Use"), "use function exists")
 ok(has(pod, "function ENT:Think"), "think function exists")

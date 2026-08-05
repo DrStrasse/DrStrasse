@@ -57,10 +57,17 @@ net.Receive("GRM_AugStation_Open", function()
 		armor = {name = "Броня", description = "Увеличение максимальной брони", minValue = 0, maxValue = 200, defaultValue = 0, unit = "AP"}
 	}
 	
+	-- Гарантируем полный набор контролов даже если сервер прислал старый конфиг.
+	config.Modifiers.carryWeight = config.Modifiers.carryWeight or {name="Грузоподъемность", description="Увеличение максимального веса", minValue=0, maxValue=100, defaultValue=0, unit="kg"}
+	config.Modifiers.vision = config.Modifiers.vision or {name="Зрение", description="Инфракрасное / ночное / тактическое зрение", options={"обычное","инфракрасное","ночное","увеличение","рентген"}, defaultValue="normal"}
+	config.Modifiers.doorHack = config.Modifiers.doorHack or {name="Взлом дверей", description="Временно открывает запертую дверь на 60 секунд", options={"отключен","включен"}, defaultValue="отключен"}
+	local allowedByCategory = {civilian={"speed","stamina","carryWeight","health"}, service={"speed","stamina","carryWeight","health","armor","vision"}, military={"speed","stamina","carryWeight","health","armor","vision"}, experimental={"speed","stamina","carryWeight","health","armor","vision","doorHack"}}
+	for key, cat in pairs(config.ChipCategories) do cat.allowed = cat.allowed or allowedByCategory[key] or allowedByCategory.civilian end
+
 	-- Создание окна
 	local frame = vgui.Create("DFrame")
-	frame:SetTitle("Augmentation Station")
-	frame:SetSize(800, 600)
+	frame:SetTitle("Станция аугментаций")
+	frame:SetSize(math.min(1100, ScrW() - 80), math.min(820, ScrH() - 80))
 	frame:Center()
 	frame:MakePopup()
 	
@@ -70,7 +77,7 @@ net.Receive("GRM_AugStation_Open", function()
 		surface.SetDrawColor(GRM_COLORS.border)
 		surface.DrawLine(0, 46, w, 46)
 		
-		draw.SimpleText("AUGMENTATION STATION", "GRMStation_Title", 14, 23, GRM_COLORS.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+		draw.SimpleText("СТАНЦИЯ АУГМЕНТАЦИЙ", "GRMStation_Title", 14, 23, GRM_COLORS.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 		draw.SimpleText(station:GetStationName() or "Station", "GRMStation_Normal", w - 20, 23, GRM_COLORS.text_dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
 	end
 	
@@ -146,7 +153,7 @@ net.Receive("GRM_AugStation_Open", function()
 	levelSlider:SetPos(10, yPos)
 	levelSlider:SetSize(760, 30)
 	levelSlider:SetMin(1)
-	levelSlider:SetMax(5)
+	levelSlider:SetMax(10)
 	levelSlider:SetDecimals(0)
 	levelSlider:SetValue(1)
 	levelSlider:SetText("")
@@ -210,11 +217,34 @@ net.Receive("GRM_AugStation_Open", function()
 				valueControl:SetText("")
 			end
 			
-			modEntries[modKey] = { checkbox = chk, control = valueControl, config = modConfig }
+			modEntries[modKey] = { panel = modPanel, checkbox = chk, control = valueControl, config = modConfig }
 			yPos = yPos + 70
 		end
 	end
 	
+	-- Категория определяет доступные параметры и предел уровня.
+	local function refreshCategory()
+		local selectedID = catCombo:GetSelectedID()
+		local key = selectedID and catCombo:GetOptionData(selectedID)
+		local category = key and config.ChipCategories[key]
+		if category then
+			levelSlider:SetMax(category.maxLevel or 5)
+			levelSlider:SetValue(math.min(levelSlider:GetValue(), category.maxLevel or 5))
+		end
+		local allowed = {}
+        local fallbackAllowed = {speed=true, stamina=true, carryWeight=true, health=true, armor=true, vision=true}
+		for _, modKey in ipairs((category and category.allowed) or {}) do allowed[modKey] = true end
+        if not category or not category.allowed then allowed = fallbackAllowed end
+		for modKey, entry in pairs(modEntries) do
+			entry.checkbox:SetEnabled(allowed[modKey] == true)
+			entry.panel:SetVisible(allowed[modKey] == true)
+			if not allowed[modKey] then entry.checkbox:SetChecked(false) end
+		end
+		scrollPanel:GetCanvas():InvalidateLayout(true)
+	end
+	catCombo.OnSelect = refreshCategory
+	timer.Simple(0, refreshCategory)
+
 	-- Кнопка создания
 	yPos = yPos + 10
 	local btnCreate = vgui.Create("DButton", scrollPanel)
@@ -229,7 +259,12 @@ net.Receive("GRM_AugStation_Open", function()
 	end
 	btnCreate.DoClick = function()
 		local selectedID = catCombo:GetSelectedID()
-		local selectedCategory = selectedID and catCombo:GetOptionData(selectedID) or "civilian"
+		local selectedCategory = selectedID and catCombo:GetOptionData(selectedID)
+		if not selectedCategory or not config.ChipCategories[selectedCategory] then
+            local selectedText = catCombo:GetSelected() or ""
+            for key, cat in pairs(config.ChipCategories) do if cat.name == selectedText then selectedCategory = key break end end
+        end
+        selectedCategory = selectedCategory or "civilian"
 		local chipData = {
 			name = nameEntry:GetValue(),
 			category = selectedCategory,

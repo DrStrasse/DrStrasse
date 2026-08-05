@@ -1,5 +1,5 @@
 --[[
-	GRM Augmentation Pod
+	GRM Капсула аугментации
 	Капсула для кибернетических аугментаций
 ]]
 
@@ -7,8 +7,8 @@ AddCSLuaFile()
 
 ENT.Type = "anim"
 ENT.Base = "base_gmodentity"
-ENT.Category = "GRM - Augmentations"
-ENT.PrintName = "Augmentation Pod"
+ENT.Category = "GRM — Аугментации"
+ENT.PrintName = "Капсула аугментации"
 ENT.Author = "GRM Team"
 ENT.Spawnable = true
 ENT.AdminOnly = true
@@ -42,7 +42,7 @@ if SERVER then
 		if not IsValid(caller) or not caller:IsPlayer() then return end
 		
 		if not self:GetActive() then
-			caller:ChatPrint("[Augmentation Pod] Система неактивна.")
+			caller:ChatPrint("[Капсула аугментации] Система неактивна.")
 			return
 		end
 		
@@ -52,9 +52,9 @@ if SERVER then
 				-- Освобождение капсулы
 				self:SetOccupied(false)
 				self:SetOccupant(nil)
-				caller:ChatPrint("[Augmentation Pod] Вы покинули капсулу.")
+				caller:ChatPrint("[Капсула аугментации] Вы покинули капсулу.")
 			else
-				caller:ChatPrint("[Augmentation Pod] Капсула занята.")
+				caller:ChatPrint("[Капсула аугментации] Капсула занята.")
 			end
 			return
 		end
@@ -62,7 +62,7 @@ if SERVER then
 		-- Занятие капсулы
 		self:SetOccupied(true)
 		self:SetOccupant(caller)
-		caller:ChatPrint("[Augmentation Pod] Добро пожаловать! Используйте меню для выбора аугментаций.")
+		caller:ChatPrint("[Капсула аугментации] Добро пожаловать! Используйте меню для выбора аугментаций.")
 		
 		-- Отправка меню аугментаций
 		net.Start("GRM_AugmentationPod_Open")
@@ -82,6 +82,7 @@ if SERVER then
 	
 	-- Обработка запросов на аугментацию из капсулы
 	net.Receive("GRM_AugmentationPod_Apply", function(len, ply)
+        if GRM.AugmentationAccess and not GRM.AugmentationAccess.Can(ply,"implant") then GRM.AugmentationAccess.Deny(ply); return end
 		local augType = net.ReadString()
 		
 		-- Проверка что игрок в капсуле
@@ -94,13 +95,13 @@ if SERVER then
 		end
 		
 		if not inPod then
-			ply:ChatPrint("[Augmentation Pod] Вы должны находиться в капсуле для аугментации.")
+			ply:ChatPrint("[Капсула аугментации] Вы должны находиться в капсуле для аугментации.")
 			return
 		end
 		
 		-- Проверка прав доступа
 		if not GRM.Augmentations.CanAccessAugmentation(ply, augType) then
-			ply:ChatPrint("[Augmentation Pod] У вас нет прав доступа к этой аугментации.")
+			ply:ChatPrint("[Капсула аугментации] У вас нет прав доступа к этой аугментации.")
 			return
 		end
 		
@@ -109,7 +110,7 @@ if SERVER then
 		
 		if success then
 			local augConfig = GRM.Augmentations.Config[augType]
-			ply:ChatPrint("[Augmentation Pod] Аугментация '" .. (augConfig and augConfig.name or augType) .. "' успешно применена!")
+			ply:ChatPrint("[Капсула аугментации] Аугментация '" .. (augConfig and augConfig.name or augType) .. "' успешно применена!")
 			
 			-- Визуальный эффект
 			local effect = EffectData()
@@ -121,7 +122,7 @@ if SERVER then
 			-- Звук
 			ply:EmitSound("items/suitchargeok1.wav", 75, 100)
 		else
-			ply:ChatPrint("[Augmentation Pod] Ошибка: " .. (errorMsg or "Не удалось применить аугментацию."))
+			ply:ChatPrint("[Капсула аугментации] Ошибка: " .. (errorMsg or "Не удалось применить аугментацию."))
 		end
 	end)
 	
@@ -178,7 +179,7 @@ else
 		
 		local screenPos = ent:GetPos():ToScreen()
 		
-		draw.SimpleText("AUGMENTATION POD", "DermaDefaultBold", screenPos.x, screenPos.y - 40, Color(0, 255, 200), TEXT_ALIGN_CENTER)
+		draw.SimpleText("КАПСУЛА АУГМЕНТАЦИИ", "DermaDefaultBold", screenPos.x, screenPos.y - 40, Color(0, 255, 200), TEXT_ALIGN_CENTER)
 		
 		if ent:GetOccupied() then
 			draw.SimpleText("ЗАНЯТО", "DermaDefault", screenPos.x, screenPos.y - 20, Color(255, 100, 100), TEXT_ALIGN_CENTER)
@@ -193,7 +194,7 @@ else
 		local availableAugs = GRM.Augmentations.GetAvailableAugmentations(LocalPlayer())
 		
 		local frame = vgui.Create("DFrame")
-		frame:SetTitle("Augmentation Pod - Выбор аугментаций")
+		frame:SetTitle("Капсула аугментации - Выбор аугментаций")
 		frame:SetSize(650, 500)
 		frame:Center()
 		frame:MakePopup()
@@ -205,7 +206,7 @@ else
 			surface.SetDrawColor(Color(60, 80, 110, 150))
 			surface.DrawLine(0, 40, w, 40)
 			
-			draw.SimpleText("AUGMENTATION POD", "DermaLarge", 20, 20, Color(0, 150, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+			draw.SimpleText("КАПСУЛА АУГМЕНТАЦИИ", "DermaLarge", 20, 20, Color(0, 150, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 			draw.SimpleText("v2.0", "DermaDefault", w - 20, 20, Color(140, 150, 170), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
 		end
 		

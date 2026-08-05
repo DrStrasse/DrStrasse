@@ -11,6 +11,7 @@ if SERVER then
 	AddCSLuaFile("cl_grm_augmentation_chips.lua")
 	AddCSLuaFile("cl_grm_augmentation_station.lua")
 	AddCSLuaFile("cl_grm_augmentations_hud.lua")
+	AddCSLuaFile("cl_grm_augmentation_interface.lua")
 	AddCSLuaFile("sh_grm_news.lua")
 end
 
@@ -158,6 +159,8 @@ end
 -- Проверка прав доступа к аугментации
 function AUG.CanAccessAugmentation(ply, augType)
 	if not IsValid(ply) then return false end
+    local action = (augType == "HealthBoost" or augType == "EnhancedArmor") and "implant" or "implant"
+    if GRM.AugmentationAccess and not GRM.AugmentationAccess.Can(ply, action) then return false end
 	
 	-- Суперадмин имеет доступ ко всему
 	if ply:IsSuperAdmin() then return true end
@@ -489,6 +492,7 @@ if SERVER then
 		net.Start("GRM_Augmentation_Admin_SendList")
 		net.WriteTable(augList)
 		net.WriteTable(AUG.Config.Categories)
+        net.WriteTable(Factions or FactionsData or {})
 		net.Send(ply)
 	end)
 	

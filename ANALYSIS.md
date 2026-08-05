@@ -1460,3 +1460,43 @@ Q-меню, чтобы игроки могли настраивать источ
 
 Проверки: GLua 364/0; sim_qmenu 69/69; sim_rootboard OK; симы 36/36;
 roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 162 (05.08.2026): Биоконтроль — интерфейс аугментаций с 019fbd57 + кнопка в инвентаре
+
+Владелец: «где в инвентаре кнопка биоконтроль? … это есть в коде, связанном
+с аугментацией и чипами, ищи по другим веткам».
+
+Разбор:
+- «Биоконтроль» — это окно **«АУГМЕНТАЦИИ / GRM // CYBERNETIC CONTROL /
+  BIO-LINK ONLINE»** из `cl_grm_augmentation_interface.lua` (ветка 019fbd57):
+  вкладки Обзор/Активные чипы/Слоты/Эффекты, перепрограммирование,
+  извлечение, контекстное меню с пунктом «Открыть Биоконтроль».
+- В нашей базе (019fb265) этого НЕ было: были только базовые чипы/аугментации
+  (cl_grm_augmentations*.lua, sh_grm_augmentation_chips.lua) БЕЗ интерфейса
+  Биоконтроля, HUD-консоли и серверных каналов (Toggle/Reprogram/
+  ExtractByUI/RequestSync/Sync).
+- Кнопки в инвентаре не было вообще — интерфейс открывался только из
+  контекстного меню и /augmentations.
+
+Сделано (перенос с 019fbd57 + интеграция):
+1. **Перенесены файлы Биоконтроля**: `cl_grm_augmentation_interface.lua`,
+   `cl_grm_augmentations_hud.lua` (364 строки: HUD-консоль BIO-LINK, тактический
+   хром, автоскан, подсветка игроков), обновлённые `sh_grm_augmentation_chips.lua`
+   (841 строка: Toggle/Reprogram/ExtractByUI/RequestSync/Sync, doorHack,
+   Access-проверки), `sh_grm_augmentations.lua` (AddCSLuaFile interface),
+   `sh_grm_augmentation_access.lua` + `sh_grm_augmentation_integrations.lua`
+   (доступ по фракциям/ролям/отделам + профили интеграций civilian/service/
+   military/experimental), клиенты чипов/станции/админки, entity чипа/станции/
+   пода.
+2. **Кнопка «Биоконтроль» в инвентаре**: в панели «ЭКИПИРОВКА» UI инвентаря
+   под кнопкой «Кастомизация» добавлена зелёная кнопка «Биоконтроль»
+   (GRM.AugmentationUI.Open) — видна только при наличии интерфейса.
+3. **Способы открытия**: кнопка в инвентаре, контекстное меню (пункт «Открыть
+   Биоконтроль»), `/augmentations`, консоль `grm_augmentations`/`grm_augments`.
+4. Тест sim_augmentations: ожидание категории поды обновлено на фактическую
+   «GRM — Аугментации» (108/108).
+
+Проверки: GLua 368/0; симы 36/36 (включая sim_augmentations 108/108,
+sim_augmentation_chips OK, sim_invphone 41/41). dist пересобран.

@@ -1,7 +1,7 @@
 ENT.Type = "anim"
 ENT.Base = "base_gmodentity"
-ENT.Category = "GRM - Augmentations"
-ENT.PrintName = "Augmentation Station"
+ENT.Category = "GRM — Аугментации"
+ENT.PrintName = "Станция аугментаций"
 ENT.Author = "GRM Team"
 ENT.Spawnable = true
 ENT.AdminOnly = true

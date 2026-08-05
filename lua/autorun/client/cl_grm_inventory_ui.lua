@@ -412,6 +412,14 @@ local function rebuildEquipment()
     end
     local open = btn(equipmentPanel, "Кастомизация", C.accent, 126, 31)
     open:SetPos(7, 294); open.DoClick = function() if custom and custom.RequestEditor then custom.RequestEditor() end end
+
+    -- Биоконтроль: окно аугментаций/чипов (GRM.AugmentationUI.Open)
+    local augUI = GRM.AugmentationUI
+    if augUI and isfunction(augUI.Open) then
+        local bio = btn(equipmentPanel, "Биоконтроль", C.green, 126, 31)
+        bio:SetPos(7, 294 + 35)
+        bio.DoClick = function() augUI.Open() end
+    end
 end
 
 function INV.OpenGUI()

@@ -1,7 +1,7 @@
 ENT.Type = "anim"
 ENT.Base = "base_gmodentity"
-ENT.Category = "GRM - Augmentations"
-ENT.PrintName = "Augmentation Chip"
+ENT.Category = "GRM — Аугментации"
+ENT.PrintName = "Чип аугментации"
 ENT.Author = "GRM Team"
 ENT.Spawnable = true
 ENT.AdminOnly = true
