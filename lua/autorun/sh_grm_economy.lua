@@ -364,6 +364,9 @@ if SERVER then
     end
 
     -- Спавн паллеты денег у хранилища (с учётом вместимости).
+    -- Находка 178b: паллета НЕ пишется в HeldCash сразу — её надо
+    -- ЗАГРУЗИТЬ через E-меню хранилища («Загрузить»). Так исключён
+    -- двойной счёт (загрузка уже учтённой паллеты).
     -- Возвращает: сколько реально заспавнено (0 — хранилище заполнено).
     function E.SpawnVaultCash(vault, amount)
         if not IsValid(vault) then return 0 end
@@ -383,9 +386,45 @@ if SERVER then
         ent.Vault = vault
         ent:Spawn()
         ent:Activate()
-        vault:SetHeldCash(held + spawnAmt)
         if vault.EmitSound then vault:EmitSound("physics/wood/wood_crate_impact_hard1.wav", 60, 100) end
         return spawnAmt
+    end
+
+    -- Спавн денег у точки (выгрузка из хранилища, находка 178b):
+    --   ≥ 50.000 → паллеты grm_vault_cash (дробление по 100.000, остаток
+    --   ≥ 50.000 тоже паллетой, < 50.000 — пачкой money.mdl);
+    --   < 50.000 → пачка grm_money_drop (models/props/cs_assault/money.mdl).
+    function E.SpawnCashAt(pos, amount, vault)
+        if not pos then return 0 end
+        amount = math.max(1, math.floor(tonumber(amount) or 0))
+        local spawned = 0
+        local PALLET_MAX = 100000
+        local PALLET_MIN = 50000
+        local function mk(class, amt)
+            local ent = ents.Create(class)
+            if not IsValid(ent) then return end
+            ent:SetPos(pos)
+            ent:SetAngles(Angle(0, math.random(0, 359), 0))
+            ent:SetAmount(amt)
+            if vault and class == "grm_vault_cash" then ent.Vault = vault end
+            ent:Spawn()
+            ent:Activate()
+            spawned = spawned + amt
+        end
+        if amount >= PALLET_MIN then
+            while amount >= PALLET_MAX do
+                mk("grm_vault_cash", PALLET_MAX)
+                amount = amount - PALLET_MAX
+            end
+            if amount >= PALLET_MIN then
+                mk("grm_vault_cash", amount)
+                amount = 0
+            end
+            if amount > 0 then mk("grm_money_drop", amount) end
+        else
+            mk("grm_money_drop", amount)
+        end
+        return spawned
     end
 
     -- Дроп денег в БЛИЖАЙШЕЕ к игроку хранилище (пополнение/изъятие из панели).

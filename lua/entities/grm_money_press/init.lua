@@ -33,6 +33,7 @@ function ENT:Initialize()
     self:SetPrintInterval(self.BaseInterval)
     self:SetPrintAmount(self.BaseAmount)
     self:SetTotalPrinted(0)
+    self:SetBuffer(0)
     self.NextPrint = CurTime() + self:GetPrintInterval()
     self.NextCool = CurTime() + 1
 
@@ -97,23 +98,23 @@ function ENT:PrintMoney()
     self:SetHeat(math.min(120, self:GetHeat() + self.HeatPerPrint))
     self:EmitSound("buttons/button17.wav", 58, math.random(95, 110))
 
-    -- деньги (паллеты) дропаются в ближайшее хранилище
-    local spawned = 0
-    if GRM.Economy.SpawnVaultCash and GRM.Economy.Vaults then
-        local best, bestD = nil, math.huge
-        for _, v in pairs(GRM.Economy.Vaults) do
-            if IsValid(v) then
-                local d = self:GetPos():DistToSqr(v:GetPos())
-                if d < bestD then best, bestD = v, d end
-            end
+    -- Находка 178b: копим в БУФЕР; при достижении 100.000 спавним ПАЛЛЕТУ
+    -- у станка. Игрок подносит её к хранилищу и загружает через E-меню.
+    local buffer = math.floor(self:GetBuffer() or 0) + amount
+    self:SetBuffer(buffer)
+    local palletMax = math.floor(tonumber(self.BasePalletMax) or 100000)
+    if buffer >= palletMax and GRM.Economy.SpawnCashAt then
+        local pos = self:GetPos() + self:GetForward() * 60 + Vector(0, 0, 12)
+        local n = math.floor(buffer / palletMax)
+        local spawned = 0
+        for _ = 1, n do
+            spawned = spawned + GRM.Economy.SpawnCashAt(pos, palletMax, nil)
         end
-        if IsValid(best) then
-            spawned = GRM.Economy.SpawnVaultCash(best, amount)
+        buffer = buffer - n * palletMax
+        self:SetBuffer(buffer)
+        if spawned > 0 then
+            self:EmitSound("physics/wood/wood_crate_impact_hard1.wav", 65, 100)
         end
-    end
-    if spawned <= 0 and GRM.Economy.Vaults and next(GRM.Economy.Vaults) == nil then
-        -- нет хранилищ: деньги всё равно в бюджете, но отметим
-        print("[GRM Money Press] Печать: хранилище не найдено, деньги в бюджете (паллеты не спавнились)")
     end
 end
 

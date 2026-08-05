@@ -72,6 +72,7 @@ function ENT:SendMenu(ply, press)
             printAmount = press:GetPrintAmount(),
             printInterval = press:GetPrintInterval(),
             totalPrinted = press:GetTotalPrinted(),
+            buffer = press:GetBuffer(),
             upgradeCost = press.UpgradeBaseCost * (math.floor(press:GetSpeedLevel() or 0) + 1),
             coolCost = press.CoolCost,
             maxSpeedLevel = press.MaxSpeedLevel,

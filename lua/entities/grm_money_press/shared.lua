@@ -25,6 +25,9 @@ ENT.OverheatAt    = 100
 ENT.CoolPerSec    = 1
 ENT.UpgradeBaseCost = 100000
 ENT.CoolCost      = 5000
+-- Находка 178b: станок печатает в БУФЕР и спавнит паллеты по 100.000
+-- (максимум), игрок подносит паллету к хранилищу и загружает через E-меню.
+ENT.BasePalletMax = 100000
 
 function ENT:SetupDataTables()
     self:NetworkVar("Bool", 0, "Active")
@@ -34,5 +37,6 @@ function ENT:SetupDataTables()
     self:NetworkVar("Int", 2, "PrintAmount")
     self:NetworkVar("Int", 3, "TotalPrinted")
     self:NetworkVar("Int", 4, "PrintInterval")
+    self:NetworkVar("Int", 5, "Buffer")
     self:NetworkVar("String", 0, "OwnerSID64")
 end
