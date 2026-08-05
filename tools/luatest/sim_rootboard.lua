@@ -118,7 +118,12 @@ _G.FactionsAPI = {
     AddMember = function(f, sid) apiCalls.add = { f, sid } return true end,
     RemoveMember = function() return true end,
     GetFactionOf = function() return nil end,
-    IsLeader = function(sid, f) return sid == BossSid and f == "Полиция" end,
+    -- Реальная сигнатура API: IsLeader(steamID|ply, factionName) — плеер
+    -- нормализуется через memberKey() (sh_factions.lua). Стаб повторяет это.
+    IsLeader = function(ply, f)
+        local sid = (type(ply) == "table" and ply:SteamID()) or ply
+        return sid == BossSid and f == "Полиция"
+    end,
     GetLeader = function(f) return BossSid end,
     PrimeRole = function() return "Кадет" end,
     Save = function() end, List = function() return Factions end,

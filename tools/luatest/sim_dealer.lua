@@ -215,16 +215,20 @@ end
 GRM.Trunk = { RequestToggle = function(ply) trunkCalls = trunkCalls + 1 end }
 
 -- ── дилер (реальный init.lua) ────────────────────────────────
--- В файле ровно один GLua-токен `continue` (LuaJIT его не знает):
--- трансформируем в goto/label — семантика 1:1.
+-- Раньше в файле был ровно один GLua-токен `continue` (LuaJIT его не знает) —
+-- трансформировали в goto/label 1:1. Код отрефакторен: continue больше нет,
+-- поэтому трансформация адаптивная (0 или 1 вхождение; label вставляется
+-- только при фактическом continue).
 ENT = {}
 do
     local fh = assert(io.open("lua/entities/sent_vehicle_dealer/init.lua", "r"))
     local src = fh:read("*a") fh:close()
     local n1; src, n1 = src:gsub("\n%s-continue\n", "\n            goto vd_skip\n")
-    assert(n1 == 1, "ожидался ровно один continue в init.lua диллера (было " .. n1 .. ")")
-    local n2; src, n2 = src:gsub("(\n    end\nend%)\n\nhook%.Add%(\"ShutDown\")", "\n    ::vd_skip::\nend\nend)\n\nhook.Add(\"ShutDown\"")
-    assert(n2 == 1, "якорь цикла восстановления дилеров не найден")
+    assert(n1 <= 1, "ожидался 0 или 1 continue в init.lua диллера (было " .. n1 .. ")")
+    if n1 == 1 then
+        local n2; src, n2 = src:gsub("(\n    end\nend%)\n\nhook%.Add%(\"ShutDown\")", "\n    ::vd_skip::\nend\nend)\n\nhook.Add(\"ShutDown\"")
+        assert(n2 == 1, "якорь цикла восстановления дилеров не найден")
+    end
     assert(load(src, "dealer_init"))()
 end
 

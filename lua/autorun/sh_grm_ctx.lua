@@ -31,9 +31,10 @@ if SERVER then
         if not Factions then return nil, nil end
         local sid = ply:SteamID()
         local s64 = ply:SteamID64()
+        local hasIdentity = GRM.Identity and GRM.Identity.FactionMember
         local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or s64
         for name, f in pairs(Factions) do
-            if istable(f) and GRM.Identity.FactionMember(f, ply) then
+            if istable(f) and hasIdentity and hasIdentity(f, ply) then
                 return name, f
             end
         end

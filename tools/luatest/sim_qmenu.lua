@@ -87,6 +87,10 @@ local function mkPly(id, sa)
     if k == "Alive" then return function() return true end end
     if k == "SteamID" then return function() return "STEAM_0:1:" .. tostring(id) end end
     if k == "SteamID64" then return function() return "765611980000000" .. tostring(10 + id) end end
+    if k == "GetNWBool" then return function() return false end end
+    if k == "GetNWString" then return function() return "" end end
+    if k == "SetNWBool" then return function() end end
+    if k == "SetNWString" then return function() end end
     if k == "Nick" then return function() return "P" .. tostring(id) end end
     if k == "EyePos" then return function() return self.__pos + V(0, 0, 64) end end
     if k == "GetAimVector" then return function() return V(0, 0, -1) end end

@@ -1125,3 +1125,60 @@
 ## Находка 153 (22.07.2026): Inventory CharacterKey v1 — отдельные инвентари персонажей без поломки SteamID-режима
 
 Инвентарь переведён на ключ `GRM.Char.GetActiveKey(ply)`, если character core загружен. Старый режим без `GRM.Char` оставлен один-в-один по SteamID64, включая старую rescue-цепочку находки 114. При первом переходе на `SteamID64:char1` старый инвентарь `SteamID64` переносится в `char1`; `char2/char3` получают отдельные пустые инвентари. При переключении слота персонажа `CH.SetActiveSlot` вызывает `GRM.Inventory.SyncToClient`, чтобы клиент сразу увидел инвентарь активного персонажа. Валидация: GLua 0, sim_invphone 41/41, sim_factions_live 30/30.
+
+---
+
+## Находка 154 (05.08.2026): перенос ветки arena/019f89cf в сессию arena/019fcf9e + ревизия тест-стенда
+
+По указанию владельца ветка `arena/019f89cf-drstrasse` (398 коммитов, HEAD 6db05be)
+перенесена в рабочую ветку сессии `arena/019fcf9e-drstrasse` целиком
+(`git reset --hard origin/arena/019f89cf-drstrasse`); содержимое идентично.
+Полный анализ репозитория (8 веток, 2 PR, тег) — `FULL_ANALYSIS.md`.
+
+При первичном прогоне стенда выявлено и исправлено:
+
+1. **`tools/glua_check.py` пропускал 11 файлов тулганов** — проверка `"tools" in root`
+   ловила подстроку в пути `lua/weapons/gmod_tool/**stools**/`. Заменено на
+   сравнение компонентов пути (`root == "./tools" or root:startswith("./tools/")`).
+   Теперь проверяется **315 файлов, 0 ошибок** (было 304).
+2. **Фаза `sidkey_trap` roundtrip-теста зависела от порядка фаз**: после
+   `corrupt_all` (намеренно портящего `grm_wallet.json`) фаза падала. Плюс
+   харнесс не грузит Identity, поэтому кошелёк бывает в двух мирах: чистые
+   sid64 (сразу после save) и CharacterKey `sid:char1` (после load — миграция
+   встроена в `characterKeyOf/persistedCharacterKey` самого ядра валюты).
+   Фаза переписана: зелёная в ОБОИХ мирах (голый парсер калечит sid64 и НЕ
+   калечит char1; `jsonT(ignoreConversions=true)` спасает всегда).
+3. **`sim_qmenu` — стаб игрока без NW-методов**: модуль зовёт
+   `ply:GetNWBool("GRM_Cuffed", false)`, стаб возвращал nil → краш. Добавлены
+   `GetNWBool/GetNWString/SetNWBool/SetNWString` в `mkPly`. 69/69.
+4. **`sim_rootboard` — стаб `FactionsAPI.IsLeader` не нормализовал плеера**:
+   реальная сигнатура `IsLeader(steamID|ply, factionName)` с `memberKey()`
+   (sh_factions.lua:1077), а стаб сравнивал объект-плеера со строкой сида —
+   лидеру молча отказывалось в настройке автозачисления. Стаб приведён к
+   конвенции API. Все проверки доски зелёные.
+5. **`sim_dealer` — устаревшее ожидание ровно одного `continue`** в
+   `sent_vehicle_dealer/init.lua` (код отрефакторен, `continue` нет, якорь
+   `hook.Add("ShutDown")` в хвосте тоже изменился). Трансформация адаптивная:
+   0 или 1 вхождение, label вставляется только при фактическом continue.
+   После этого сим вскрыл РЕАЛЬНЫЙ прод-баг (см. п.6).
+6. **РЕАЛЬНЫЙ БАГ: `sh_grm_ctx.lua:37` — `GRM.Identity.FactionMember(f, ply)`
+   без nil-гарда** в `getPlayerFaction` (C-меню). При отсутствии/отключении
+   модуля Identity (sh_grm_character) каждый запрос C-меню падал
+   «attempt to index field 'Identity' (a nil value)» — контекстное меню,
+   «Выбросить деньги», «Передать деньги» умирали целиком. Добавлен гард
+   `local hasIdentity = GRM.Identity and GRM.Identity.FactionMember`.
+   Найден симуляцией sim_dealer — классика: стенд ловит то, что не ловит
+   синтаксис.
+7. **`sim_mobile_ui` — задокументирован как устаревший**: тест написан под
+   полноценный клиентский UI Mobile v1.2.2 (репит-клок, SMS-треды, контакты),
+   а модуль ветки — намеренно упрощённая v2.0.1 (см. шапку sh_grm_mobile.lua:
+   «этот файл не восстанавливает полноценный UI»). Серверный контракт покрыт
+   `sim_mobile` 121/121 и `sim_invphone` 41/41. Пометка добавлена в шапку теста;
+   при возврате полноценного UI тест вернуть в регресс.
+
+**Итог стенда после фиксов:** GLua 315/0; roundtrip 14/14 (канонический
+порядок фаз: save load sidkey_trap bank_nick_mirror bank_reconcile_attack
+bank_boot_pick_fresh perm corrupt corrupt_all treasury_corrupt fmt_array_sid
+fmt_array_nick fmt_mapnum fines); sim-стенды 15/16 (единственный красный —
+sim_mobile_ui, см. п.7). Порядок фаз roundtrip важен: corrupt-фазы намеренно
+портят файлы данных — sidkey_trap и зеркальные фазы гонять ДО них.
