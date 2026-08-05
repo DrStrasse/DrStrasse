@@ -16,6 +16,9 @@ util.AddNetworkString("GRM_Heist_Event")    -- баннер/музыка на в
 -- (перезапускает, как только патч перестал играть), пока идёт ивент.
 local HEIST_MUSIC = "music/hl2_song20_submix0.mp3"
 local MUSIC_WATCHDOG_INTERVAL = 0.5 -- сек: проверка «патч ещё играет?»
+-- Находка 179w: затухание музыки при завершении ивента (цель сдана/время)
+local MUSIC_FADE_INTERVAL = 0.1 -- шаг фейда (сек)
+local MUSIC_FADE_DURATION = 3.0 -- полное затухание за 3 секунды
 
 -- Находка 179v: анти-дубль музыки НА СЕРВЕРЕ. Отмывщиков может быть
 -- несколько — глобальный реестр владельца музыки ивента: новый ивент
@@ -311,12 +314,49 @@ function ENT:StopMusicWatchdog()
     timer.Remove(self:MusicTimerName())
 end
 
+-- Находка 179w: имя таймера затухания
+function ENT:MusicFadeTimerName()
+    return "grm_heist_fade_" .. tostring(self:EntIndex())
+end
+
+-- Находка 179w: музыка плавно ЗАТУХАЕТ при завершении ивента (цель сдана
+-- отмывщику / время вышло) — не обрывается щелчком. Патч: громкость
+-- SetVolume плавно уходит 1 → 0 за MUSIC_FADE_DURATION, затем полный Stop.
+-- Фолбэк (EmitSound без патча): управляемой громкости у серверного
+-- EmitSound нет — короткая пауза и StopSound.
+function ENT:FadeOutHeistMusic()
+    self:StopMusicWatchdog() -- больше НЕ перезапускаем музыку
+    local patch = self.HeistMusic
+    local fadeName = self:MusicFadeTimerName()
+    timer.Remove(fadeName)
+    if patch and isfunction(patch.SetVolume) then
+        local steps = math.max(1, math.floor(MUSIC_FADE_DURATION / MUSIC_FADE_INTERVAL))
+        local step = 0
+        timer.Create(fadeName, MUSIC_FADE_INTERVAL, steps, function()
+            step = step + 1
+            if not IsValid(self) then return end
+            local vol = math.max(0, 1 - step / steps)
+            pcall(function() patch:SetVolume(vol) end)
+            if step >= steps then
+                timer.Remove(fadeName)
+                self:StopHeistMusic()
+            end
+        end)
+    else
+        -- фолбэк: лёгкая задержка перед полным глушением
+        timer.Simple(0.3, function()
+            if IsValid(self) then self:StopHeistMusic() end
+        end)
+    end
+end
+
 -- Находка 179o: остановка серверной музыки
 -- Находка 179q: Stop под pcall (патч мог быть «пустым»), плюс StopSound
 -- гасит резервный EmitSound из StartEvent.
 -- Находка 179t: watchdog тоже останавливается.
 function ENT:StopHeistMusic()
     self:StopMusicWatchdog()
+    timer.Remove(self:MusicFadeTimerName()) -- находка 179w: и фейд-таймер
     -- Находка 179v: этот отмывщик больше не владеет музыкой ивента
     if GRM.HeistMusicOwner == self then GRM.HeistMusicOwner = nil end
     if self.HeistMusic then
@@ -341,7 +381,8 @@ function ENT:EndEvent(criminalsWin, reason)
         sub = tostring(reason or "Деньги не доставлены отмывщику за отведённое время")
     end
     self:BroadcastEvent("end", title, sub, false)
-    self:StopHeistMusic()
+    -- Находка 179w: музыка ЗАТУХАЕТ (не обрывается) при завершении ивента
+    self:FadeOutHeistMusic()
     print(("[GRM Heist] ИВЕНТ ОГРАБЛЕНИЕ окончен: %s (%s)"):format(title, sub))
     self:SetEventActive(false)
     self:SetEventEndsAt(0)

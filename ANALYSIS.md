@@ -3248,3 +3248,34 @@ grm_money_launderer/init.lua):
 _grmMusicRestartAt/StopSound). GLua 404/0; roundtrip 14/14;
 perm_upsert 14, launderer_menu 20, bank_vault 87, econ_access 42,
 prop_protect 23, security OK, alarm 27. dist пересобран.
+
+---
+
+## Находка 179w (05.08.2026): музыка затухает при завершении ивента (цель сдана отмывщику)
+
+Владелец: «когда ивент закончился, музыка должна затухнуть, то есть когда
+игроки сдали нужную сумму отмывщику, музыка заканчивает играть».
+
+Было: EndEvent мгновенно вызывал StopHeistMusic() — музыка обрывалась
+щелчком.
+
+Сделано (lua/entities/grm_money_launderer/init.lua):
+
+1. **FadeOutHeistMusic()** — плавное затухание:
+   - патч: таймер каждые 0.1с уменьшает громкость `patch:SetVolume(vol)`
+     1 → 0 за 3 секунды (MUSIC_FADE_DURATION=3.0, MUSIC_FADE_INTERVAL=0.1),
+     по завершении — полный StopHeistMusic (очистка владельца/патча);
+   - фолбэк (EmitSound без патча): у серверного EmitSound нет управляемой
+     громкости — короткая пауза 0.3с и StopSound;
+   - перед фейдом останавливается watchdog (музыку не перезапускает).
+2. **EndEvent** вызывает FadeOutHeistMusic() вместо StopHeistMusic() —
+   затухание работает и при «цель достигнута», и при «время вышло».
+3. **StopHeistMusic** дополнительно снимает фейд-таймер (MusicFadeTimerName)
+   — повторные вызовы/OnRemove не оставляют висящих таймеров.
+
+Тесты: sim_heist 128 → **140/140** (фейд-таймер запускается при завершении,
+watchdog остановлен, громкость плавно падает (SetVolume), после полного
+фейда патч остановлен, владелец снят, таймер удалён; статика FadeOut/
+константы/EndEvent→FadeOut/очистка таймера). GLua 404/0; roundtrip 14/14;
+perm_upsert 14, launderer_menu 20, bank_vault 87, econ_access 42,
+prop_protect 23, security OK, alarm 27. dist пересобран.

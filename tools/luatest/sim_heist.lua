@@ -402,6 +402,26 @@ dep = ld:DepositFromBag(maf2)
 ok(dep == 200000, "сдано ещё 200.000")
 ok(ld:GetEventActive() == false, "ивент завершён досрочно (цель достигнута)")
 
+-- ══════════════ 3b. ЗАТУХАНИЕ МУЗЫКИ при завершении (находка 179w) ══════════════
+-- Музыка должна плавно затухнуть, когда цель сдана, а не обрываться.
+ld:SetEventActive(false)
+ld:StartEvent() -- музыка снова играет (свежий патч)
+local fadePatch = heistPatches[#heistPatches]
+ok(fadePatch and fadePatch.played == true, "затухание: музыка играет после рестарта")
+local fadeName = "grm_heist_fade_" .. tostring(ld:EntIndex())
+ok(H.timers[fadeName] == nil, "затухание: fade-таймера ещё нет (ивент активен)")
+ld:EndEvent(true, "Цель достигнута")
+ok(H.timers[fadeName] ~= nil, "затухание: fade-таймер запущен при завершении (находка 179w)")
+ok(H.timers["grm_heist_music_" .. tostring(ld:EntIndex())] == nil, "затухание: watchdog остановлен (находка 179w)")
+local vol0 = fadePatch.volume
+local fadeCb = H.timers[fadeName]
+fadeCb()
+ok(fadePatch.volume < vol0, "затухание: громкость снижается (SetVolume), находка 179w")
+for _ = 1, 40 do fadeCb() end
+ok(fadePatch.stopped == true, "затухание: после полного фейда патч остановлен (находка 179w)")
+ok(GRM.HeistMusicOwner == nil, "затухание: владелец снят после фейда (находка 179w)")
+ok(H.timers[fadeName] == nil, "затухание: fade-таймер удалён по завершении (находка 179w)")
+
 -- ══════════════ 4. Таймер: истечение без цели → госструктуры ══════════════
 ld:SetEventActive(true)
 ld:SetEventEndsAt(_G.__now + 3000)
@@ -545,6 +565,10 @@ ok(lin:find('patch:Stop()', 1, true) ~= nil and lin:find('_grmMusicRestartAt', 1
 ok(lin:find('selfRef:StopSound(HEIST_MUSIC)', 1, true) ~= nil, "сервер: фолбэк глушит предыдущий EmitSound (находка 179v)")
 ok(lin:find('MUSIC_WATCHDOG_INTERVAL = 0.5', 1, true) ~= nil, "сервер: интервал watchdog 0.5с (находка 179t)")
 ok(lin:find('function ENT:StopHeistMusic', 1, true) ~= nil and lin:find('self.HeistMusic:Stop()', 1, true) ~= nil, "сервер: StopHeistMusic в EndEvent/OnRemove")
+ok(lin:find('function ENT:FadeOutHeistMusic', 1, true) ~= nil and lin:find('patch:SetVolume', 1, true) ~= nil, "сервер: FadeOutHeistMusic — плавный SetVolume (находка 179w)")
+ok(lin:find('MUSIC_FADE_DURATION = 3.0', 1, true) ~= nil and lin:find('MUSIC_FADE_INTERVAL = 0.1', 1, true) ~= nil, "сервер: фейд 3с шагом 0.1с (находка 179w)")
+ok(lin:find('self:FadeOutHeistMusic()', 1, true) ~= nil and lin:find('function ENT:EndEvent', 1, true) ~= nil, "сервер: EndEvent вызывает затухание (находка 179w)")
+ok(lin:find('MusicFadeTimerName', 1, true) ~= nil and lin:find('timer.Remove(self:MusicFadeTimerName())', 1, true) ~= nil, "сервер: StopHeistMusic чистит фейд-таймер (находка 179w)")
 ok(lin:find('pcall(function() self.HeistMusic:Stop() end)', 1, true) ~= nil and lin:find('self:StopSound(HEIST_MUSIC)', 1, true) ~= nil, "сервер: StopHeistMusic безопасен + StopSound (находка 179q)")
 local lcl = assert(io.open("lua/autorun/client/cl_grm_heist.lua", "rb")):read("*a")
 ok(lcl:find('local function startMusic', 1, true) == nil, "клиент: нет startMusic (музыка с сервера)")
