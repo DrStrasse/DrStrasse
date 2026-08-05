@@ -1,0 +1,110 @@
+--[[--------------------------------------------------------------------
+    GRM Bank Tool (находка 178)
+    Установка банковского оборудования:
+      • Хранилище (grm_bank_vault) — ground_locker_small.mdl, отражает
+        гос.бюджет, вмещает 500.000 GRM паллетами;
+      • Печатный станок (grm_money_press) — hatch_frame.mdl, печатает
+        5000 GRM / 10 сек в гос.бюджет, паллеты дропает в хранилище;
+      • Терминал станка (grm_money_press_terminal) — holo_wall_unit.mdl,
+        запуск/остановка, прокачка скорости, охлаждение.
+    Права: суперадмин или доступ к экономике (CanManageEconomy).
+----------------------------------------------------------------------]]
+TOOL.Category = "GRM"
+TOOL.Name = "#tool.grm_bank_tool.name"
+TOOL.Command = nil
+TOOL.ConfigName = ""
+
+TOOL.ClientConVar = {
+    type = "vault",
+}
+
+if CLIENT then
+    language.Add("tool.grm_bank_tool.name", "GRM Банковское оборудование")
+    language.Add("tool.grm_bank_tool.desc", "Хранилище, печатный станок и терминал банка")
+    language.Add("tool.grm_bank_tool.0", "ЛКМ: установить выбранное оборудование | Права: суперадмин или доступ к экономике")
+end
+
+local TYPES = {
+    vault    = { class = "grm_bank_vault",          label = "Хранилище" },
+    press    = { class = "grm_money_press",         label = "Печатный станок" },
+    terminal = { class = "grm_money_press_terminal", label = "Терминал станка" },
+}
+
+local function canUse(ply)
+    if not IsValid(ply) then return false end
+    if ply:IsSuperAdmin() then return true end
+    return GRM.Economy and GRM.Economy.CanManageEconomy and GRM.Economy.CanManageEconomy(ply) == true
+end
+
+function TOOL:LeftClick(trace)
+    if CLIENT then return true end
+    local ply = self:GetOwner()
+    if not IsValid(ply) then return false end
+    if not canUse(ply) then
+        if GRM.Notify then GRM.Notify(ply, "Нет доступа: нужно право управления экономикой (суперадмин или выдано фракции).", 255, 120, 100) end
+        return false
+    end
+    if not (trace and trace.Hit) then return false end
+
+    local t = TYPES[self:GetClientInfo("type") or "vault"] or TYPES.vault
+    local ent = ents.Create(t.class)
+    if not IsValid(ent) then return false end
+    ent:SetPos(trace.HitPos + trace.HitNormal * 12)
+    ent:SetAngles(Angle(0, IsValid(ply) and ply:EyeAngles().y or 0, 0))
+    ent:Spawn()
+    ent:Activate()
+    if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
+    if t.class == "grm_money_press" and ent.SetPressOwner then ent:SetPressOwner(ply) end
+    if GRM.Notify then
+        GRM.Notify(ply, "Установлено: " .. t.label .. ". Сохраните /permadd (наведите прицел, /permadd).", 100, 220, 130)
+    end
+    return true
+end
+
+function TOOL:RightClick(trace)
+    -- ПКМ: ничего (зарезервировано)
+    return false
+end
+
+function TOOL:Reload(trace)
+    if CLIENT then return true end
+    local ply = self:GetOwner()
+    if not IsValid(ply) or not IsValid(trace.Entity) then return false end
+    local ent = trace.Entity
+    local cls = ent:GetClass()
+    if cls ~= "grm_bank_vault" and cls ~= "grm_money_press" and cls ~= "grm_money_press_terminal" then
+        if GRM.Notify then GRM.Notify(ply, "Наведите на банковское оборудование.", 255, 180, 90) end
+        return false
+    end
+    if not canUse(ply) then
+        if GRM.Notify then GRM.Notify(ply, "Нет доступа.", 255, 120, 100) end
+        return false
+    end
+    ent:Remove()
+    if GRM.Notify then GRM.Notify(ply, "Оборудование удалено.", 100, 220, 130) end
+    return true
+end
+
+if CLIENT then
+    function TOOL.BuildCPanel(panel)
+        panel:AddControl("Header", { Description = "Банковское оборудование: хранилище (гос.бюджет + паллеты), печатный станок (5000 GRM/10 сек в гос.бюджет) и терминал управления станком." })
+
+        local t = panel:ComboBox("Тип", "grm_bank_tool_type")
+        t:AddChoice("Хранилище (гос.бюджет)", "vault")
+        t:AddChoice("Печатный станок (5000/10с)", "press")
+        t:AddChoice("Терминал станка", "terminal")
+
+        panel:Help(
+            "ЛКМ — установить выбранное оборудование\n" ..
+            "R по оборудованию — удалить\n\n" ..
+            "СХЕМА РАБОТЫ:\n" ..
+            "1. Ставите ХРАНИЛИЩЕ — на нём дисплей «В ГОСБЮДЖЕТЕ СЕЙЧАС: N» (обновляется в реальном времени).\n" ..
+            "2. Ставите ПЕЧАТНЫЙ СТАНОК рядом — каждые 10 сек печатает 5000 GRM в гос.бюджет, паллеты дропаются в ближайшее хранилище.\n" ..
+            "3. Ставите ТЕРМИНАЛ в радиусе 600 от станка — запуск/остановка, прокачка скорости, охлаждение.\n" ..
+            "4. В панели «Экономика» (вкладка Гос.бюджет) Пополнить/Изъять дропают деньги паллетами в хранилище.\n" ..
+            "5. Паллеты подбираются клавишей E (деньги в кошелёк).\n\n" ..
+            "Вместимость хранилища: 500.000 GRM паллетами.\n" ..
+            "Права: суперадмин или выданный доступ к экономике (/grm_admin → Экономика → Доступ к экономике)."
+        )
+    end
+end

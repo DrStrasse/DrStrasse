@@ -101,6 +101,10 @@ if SERVER then
         -- Здесь намеренно НЕ регистрируется: два механизма создавали дубли.
         -- Денежный принтер (Код 115)
         grm_money_printer    = true,
+        -- Банковская система (находка 178): хранилище, печатный станок, терминал
+        grm_bank_vault          = true,
+        grm_money_press         = true,
+        grm_money_press_terminal = true,
         -- Лаборатории (Код 120)
         grm_narc_lab         = true,
         grm_med_lab          = true,

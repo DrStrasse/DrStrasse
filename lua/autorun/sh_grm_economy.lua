@@ -310,6 +310,8 @@ if SERVER then
         fp.otherFactions = fp.otherFactions == true -- цели: другие фракции
         fp.civilians     = fp.civilians ~= false  -- цели: граждане
         fp.maxAmount     = math.max(0, math.floor(tonumber(fp.maxAmount) or 0))
+        -- Находка 178: процент со штрафа → гос.бюджет (0-100)
+        fp.statePercent  = math.Clamp(math.floor(tonumber(fp.statePercent) or 0), 0, 100)
         return e
     end
 
@@ -334,7 +336,75 @@ if SERVER then
         st.budget = math.max(0, math.floor((tonumber(st.budget) or 0) + delta))
         dirty = true
         if reason then stateHist(reason) end
+        -- Находка 178: банковские хранилища отражают гос.бюджет в реальном
+        -- времени (NWVar на каждом хранилище + таймер-страховка).
+        if E.SyncVaultsState then E.SyncVaultsState() end
         return st.budget
+    end
+
+    -- ── БАНКОВСКИЕ ХРАНИЛИЩА (находка 178) ──────────────────
+    -- Реестр живых хранилищ; дисплей хранилища показывает гос.бюджет.
+    E.Vaults = E.Vaults or {}
+    E.VaultCapacity = 500000 -- каждое хранилище вмещает 500.000 GRM
+
+    function E.RegisterVault(ent)
+        if IsValid(ent) then E.Vaults[ent:EntIndex()] = ent end
+    end
+    function E.UnregisterVault(ent)
+        if IsValid(ent) then E.Vaults[ent:EntIndex()] = nil end
+    end
+
+    function E.SyncVaultsState()
+        local budget = math.floor(tonumber(E.Data and E.Data.state and E.Data.state.budget) or 0)
+        for _, v in pairs(E.Vaults) do
+            if IsValid(v) and v.SetStateBudget then
+                v:SetStateBudget(budget)
+            end
+        end
+    end
+
+    -- Спавн паллеты денег у хранилища (с учётом вместимости).
+    -- Возвращает: сколько реально заспавнено (0 — хранилище заполнено).
+    function E.SpawnVaultCash(vault, amount)
+        if not IsValid(vault) then return 0 end
+        amount = math.max(1, math.floor(tonumber(amount) or 0))
+        local held = math.floor(tonumber(vault:GetHeldCash()) or 0)
+        local cap = math.max(1, math.floor(tonumber(vault:GetCapacity()) or E.VaultCapacity))
+        local free = math.max(0, cap - held)
+        if free <= 0 then return 0 end
+        local spawnAmt = math.min(amount, free)
+        local ent = ents.Create("grm_vault_cash")
+        if not IsValid(ent) then return 0 end
+        local pos = vault:GetPos() + Vector(0, 0, 12)
+        local ang = Angle(0, math.random(0, 359), 0)
+        ent:SetPos(pos)
+        ent:SetAngles(ang)
+        ent:SetAmount(spawnAmt)
+        ent.Vault = vault
+        ent:Spawn()
+        ent:Activate()
+        vault:SetHeldCash(held + spawnAmt)
+        if vault.EmitSound then vault:EmitSound("physics/wood/wood_crate_impact_hard1.wav", 60, 100) end
+        return spawnAmt
+    end
+
+    -- Дроп денег в БЛИЖАЙШЕЕ к игроку хранилище (пополнение/изъятие из панели).
+    -- Возвращает: сколько заспавнено.
+    function E.DropCashToVault(ply, amount)
+        if not IsValid(ply) or amount <= 0 then return 0 end
+        local best, bestD = nil, math.huge
+        for _, v in pairs(E.Vaults) do
+            if IsValid(v) then
+                local d = ply:GetPos():DistToSqr(v:GetPos())
+                if d < bestD then best, bestD = v, d end
+            end
+        end
+        if not IsValid(best) then return 0 end
+        local spawned = E.SpawnVaultCash(best, amount)
+        if spawned < amount and IsValid(ply) and GRM.Notify then
+            GRM.Notify(ply, "Хранилище заполнено: вместимость " .. (GRM.Format and GRM.Format(E.VaultCapacity) or tostring(E.VaultCapacity)) .. ". Часть денег не поместилась.", 255, 190, 90)
+        end
+        return spawned
     end
 
     local function addLog(text)
@@ -856,6 +926,8 @@ if SERVER then
         E.Data.state.budget = math.max(0, math.floor(tonumber(value) or 0))
         dirty = true
         if reason then stateHist(reason) end
+        -- Находка 178: синк дисплеев хранилищ
+        if E.SyncVaultsState then E.SyncVaultsState() end
         return E.Data.state.budget
     end
 
@@ -1107,6 +1179,10 @@ if SERVER then
         return true
     end
     timer.Create("GRM_Economy_Reconcile", 15, 0, function() reconcileEconomy("тик 15с") end)
+    -- Находка 178: страховочный синк дисплеев банковских хранилищ (2с)
+    timer.Create("GRM_Economy_VaultSync", 2, 0, function()
+        if E.SyncVaultsState then E.SyncVaultsState() end
+    end)
     concommand.Add("grm_economy_check", function(ply)
         if IsValid(ply) and not ply:IsSuperAdmin() then return end
         local ok = reconcileEconomy("команда")
@@ -1166,10 +1242,26 @@ if SERVER then
         local issued = math.min(amount, GRM.GetBalance(target))
         GRM.TakeMoney(target, issued, "Штраф: " .. tostring(reason or "нарушение"))
 
+        -- Находка 178: процент со штрафа (finePerms.statePercent) — доля,
+        -- которая уходит в ГОС.БЮДЖЕТ (банковская система); остальное —
+        -- в бюджет штрафующей фракции (по настройке FineToBudget).
         local receiptName = factionOf(issuer)
+        local stateShare = 0
         if receiptName and E.Config.FineToBudget then
-            GRM.FactionBudgetAdd(receiptName, issued,
-                ("Штраф %s от %s: %s"):format(target:Nick(), IsValid(issuer) and issuer:Nick() or "система", money(issued)))
+            local fp = entry(receiptName).finePerms
+            local pct = math.Clamp(tonumber(fp and fp.statePercent) or 0, 0, 100)
+            if pct > 0 then
+                stateShare = math.floor(issued * pct / 100)
+            end
+            local toFac = issued - stateShare
+            if toFac > 0 then
+                GRM.FactionBudgetAdd(receiptName, toFac,
+                    ("Штраф %s от %s: %s"):format(target:Nick(), IsValid(issuer) and issuer:Nick() or "система", money(toFac)))
+            end
+            if stateShare > 0 then
+                stateAdd(stateShare, ("Штраф %s от %s (доля гос-ва %d%%)"):format(
+                    target:Nick(), IsValid(issuer) and issuer:Nick() or "система", math.floor(pct)))
+            end
         elseif E.Config.FinesToState then
             stateAdd(issued, ("Штраф %s от %s"):format(target:Nick(), IsValid(issuer) and issuer:Nick() or "система"))
         end
@@ -1180,7 +1272,9 @@ if SERVER then
             255, 80, 70)
         if IsValid(issuer) and issuer ~= target then
             local dest = " (деньги сгорают)"
-            if receiptName and E.Config.FineToBudget then dest = " → бюджет [" .. receiptName .. "]"
+            if receiptName and E.Config.FineToBudget then
+                dest = " → бюджет [" .. receiptName .. "]"
+                if stateShare > 0 then dest = dest .. " + " .. money(stateShare) .. " в гос. (" .. math.floor(stateShare / math.max(1, issued) * 100) .. "%)" end
             elseif E.Config.FinesToState then dest = " → гос.бюджет" end
             notify(issuer, "Штраф выписан: " .. target:Nick() .. " -" .. money(issued) .. dest, 100, 220, 100)
         end
@@ -1333,8 +1427,10 @@ if SERVER then
                         for k, v in pairs(a.fine.roles) do if v == true then fp.roles[tostring(k)] = true end end
                     end
                 end
-                -- не-суперадмин: только лимит суммы (система не трогается)
+                -- Находка 178: числа (лимит суммы и ПРОЦЕНТ со штрафа в гос.)
+                -- могут менять все с доступом к экономике; система — суперадмин.
                 fp.maxAmount = math.max(0, math.floor(tonumber(a.fine.maxAmount) or fp.maxAmount))
+                fp.statePercent = math.Clamp(math.floor(tonumber(a.fine.statePercent) or (fp.statePercent or 0)), 0, 100)
             end
             dirty = true
             save(true, "админ: настройки фракции")
@@ -1364,16 +1460,21 @@ if SERVER then
             local v = amt(a.amount)
             if v <= 0 then return end
             stateAdd(v, ("Админ %s пополнил гос.бюджет: +%s"):format(ply:Nick(), money(v)))
+            -- Находка 178: деньги физически дропаются в хранилище (паллеты)
+            if E.DropCashToVault then E.DropCashToVault(ply, v) end
             notify(ply, "Гос.бюджет: " .. money(E.Data.state.budget), 235, 180, 60)
         elseif a.action == "state_take" then
             local v = math.min(amt(a.amount), E.Data.state.budget)
             if v <= 0 then return end
             stateAdd(-v, ("Админ %s изъял из гос.бюджета: -%s"):format(ply:Nick(), money(v)))
+            -- Находка 178: изъятые деньги дропаются в хранилище (их можно подобрать)
+            if E.DropCashToVault then E.DropCashToVault(ply, v) end
             notify(ply, "Гос.бюджет: " .. money(E.Data.state.budget), 235, 180, 60)
         elseif a.action == "state_set" then
             E.Data.state.budget = amt(a.amount)
             dirty = true
             stateHist("Админ " .. ply:Nick() .. " установил гос.бюджет: " .. money(E.Data.state.budget))
+            if E.SyncVaultsState then E.SyncVaultsState() end
             notify(ply, "Гос.бюджет: " .. money(E.Data.state.budget), 235, 180, 60)
         elseif a.action == "state_to_faction" then
             if name == "" then return end
@@ -1974,8 +2075,13 @@ if CLIENT then
             bg.DoClick = function() act({ action = "state_give", amount = getAmt(amt) }) end
             local bt = btn(p, "Изъять", CUI.red, 100, 26) bt:SetPos(296, 66)
             bt.DoClick = function() act({ action = "state_take", amount = getAmt(amt) }) end
-            local bs = btn(p, "Установить", CUI.accent, 110, 26) bs:SetPos(402, 66)
-            bs.DoClick = function() act({ action = "state_set", amount = getAmt(amt) }) end
+            -- Находка 178: «Установить» гос.бюджет — только суперадмин
+            -- (лидер/зам/доступные могут пополнять и изымать, но не
+            -- назначать сумму произвольно).
+            if isSuper then
+                local bs = btn(p, "Установить", CUI.accent, 110, 26) bs:SetPos(402, 66)
+                bs.DoClick = function() act({ action = "state_set", amount = getAmt(amt) }) end
+            end
 
             lbl(p, "Перечислить фракции:", CUI.text, 12, 106, 150)
             local cmb = vgui.Create("DComboBox", p)
@@ -2202,15 +2308,16 @@ if CLIENT then
                 end
 
                 -- ── ПОДВКЛАДКА: ШТРАФЫ (доступ фракции к /fine) ──
-                -- Находка 177b/177c: СИСТЕМУ штрафов (включение, категории
+                -- Находка 177b/177c/178: СИСТЕМУ штрафов (включение, категории
                 -- целей, роли) настраивает только суперадмин; лидер/зам/
-                -- доступные видят подвкладку, но могут менять только ЧИСЛО —
-                -- лимит суммы штрафа (как налоги/зарплаты).
+                -- доступные могут менять только ЧИСЛА: ПРОЦЕНТ со штрафа в
+                -- гос.бюджет (банковская система) и лимит (суперадмин).
                 local pf = vgui.Create("DPanel", sub)
                 pf:SetPaintBackground(false)
                 sub:AddSheet("Штрафы", pf, "icon16/accept.png")
 
-                local maxW = nil -- лимит суммы штрафа (доступен всем с доступом; система — только суперадмин)
+                local maxW = nil  -- лимит суммы (только суперадмин)
+                local pctW = nil  -- процент со штрафа в гос.бюджет (все с доступом)
                 if isSuper then
                     label(pf, "Доступ фракции [" .. name .. "] к системе штрафов", 10, 8, CUI.text, 560)
 
@@ -2242,9 +2349,12 @@ if CLIENT then
                     label(pf, "Лимит суммы штрафа (0 = общий максимум):", 10, 174)
                     maxW = wang(pf, 330, 172, 110, fp.maxAmount or 0, 100000000)
 
-                    label(pf, "Роли с правом штрафовать:", 10, 206, CUI.text, 340)
+                    label(pf, "Процент со штрафа в ГОС.БЮДЖЕТ, % (0-100):", 10, 206)
+                    pctW = wang(pf, 330, 204, 110, fp.statePercent or 0, 100)
+
+                    label(pf, "Роли с правом штрафовать:", 10, 240, CUI.text, 340)
                     local rolesFine = vgui.Create("DScrollPanel", pf)
-                    rolesFine:SetPos(10, 230) rolesFine:SetSize(340, 240)
+                    rolesFine:SetPos(10, 264) rolesFine:SetSize(340, 200)
                     rolesFine.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
                     for _, rName in ipairs(fd.roles or {}) do
                         local c = vgui.Create("DCheckBoxLabel", rolesFine)
@@ -2254,18 +2364,19 @@ if CLIENT then
                         fineChks[rName] = c
                     end
 
-                    label(pf, "Правила: superadmin может всегда. Лидер фракции —", 370, 230, CUI.dim, 340)
-                    label(pf, "всегда, если включён сам доступ. Отмеченные роли", 370, 252, CUI.dim, 340)
-                    label(pf, "штрафуют дополнительно к лидеру. Категории целей", 370, 274, CUI.dim, 340)
-                    label(pf, "(свои / другие фракции / граждане) настраиваются", 370, 296, CUI.dim, 340)
-                    label(pf, "отдельно. Лимит суммы перекрывает общий лимит.", 370, 318, CUI.dim, 340)
+                    label(pf, "Правила: superadmin может всегда. Лидер фракции —", 370, 264, CUI.dim, 340)
+                    label(pf, "всегда, если включён сам доступ. Отмеченные роли", 370, 286, CUI.dim, 340)
+                    label(pf, "штрафуют дополнительно к лидеру. Категории целей", 370, 308, CUI.dim, 340)
+                    label(pf, "(свои / другие фракции / граждане) настраиваются", 370, 330, CUI.dim, 340)
+                    label(pf, "отдельно. Процент со штрафа идёт в гос.бюджет.", 370, 352, CUI.dim, 340)
                 else
-                    -- не-суперадмин: только лимит суммы (число), система не трогается
-                    label(pf, "Фракция [" .. name .. "] и система штрафов", 10, 8, CUI.text, 560)
+                    -- не-суперадмин (банковский работник): ПРОЦЕНТ со штрафа
+                    label(pf, "Фракция [" .. name .. "] — процент со штрафа", 10, 8, CUI.text, 560)
                     label(pf, "Систему штрафов (включение /fine, категории целей, роли) настраивает только superadmin.", 10, 34, CUI.dim, 560)
-                    label(pf, "Лимит суммы штрафа (0 = общий максимум):", 10, 66)
-                    maxW = wang(pf, 330, 64, 110, fp.maxAmount or 0, 100000000)
-                    label(pf, "Изменение лимита применяется к фракции и сохраняется.", 10, 98, CUI.dim, 560)
+                    label(pf, "Процент со штрафа в ГОС.БЮДЖЕТ, % (0-100):", 10, 66)
+                    pctW = wang(pf, 330, 64, 110, fp.statePercent or 0, 100)
+                    label(pf, "Указанный процент каждого штрафа фракции уходит в гос.бюджет (хранилище), остальное — в бюджет фракции.", 10, 98, CUI.dim, 560)
+                    label(pf, "Пополнение/изъятие гос.бюджета дропает деньги в хранилище банка.", 10, 122, CUI.dim, 560)
                 end
 
                 -- ЕДИНОЕ сохранение: зарплаты + (для суперадмина) права штрафов
@@ -2293,12 +2404,13 @@ if CLIENT then
                             otherFactions = chOther:GetChecked(),
                             civilians = chCiv:GetChecked(),
                             maxAmount = math.max(0, math.floor(tonumber(maxW:GetValue()) or 0)),
+                            statePercent = math.Clamp(math.floor(tonumber(pctW:GetValue()) or 0), 0, 100),
                             roles = froles,
                         }
-                    elseif maxW then
-                        -- находка 177c: не-суперадмин меняет только ЛИМИТ (число)
+                    elseif pctW then
+                        -- находка 178: не-суперадмин меняет ПРОЦЕНТ со штрафа (число)
                         payload.fine = {
-                            maxAmount = math.max(0, math.floor(tonumber(maxW:GetValue()) or 0)),
+                            statePercent = math.Clamp(math.floor(tonumber(pctW:GetValue()) or 0), 0, 100),
                         }
                     end
                     act(payload)
