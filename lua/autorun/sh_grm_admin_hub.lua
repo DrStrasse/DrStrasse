@@ -126,6 +126,8 @@ if SERVER then
         v("Доска набора", GRM.Board and GRM.Board.Version)
         v("Аугментации", GRM.Augmentations and "2.0.0")
         v("Чипы аугментаций", GRM.AugChips and "1.0.0")
+        v("Электроника/сеть", GRM.Electronics and GRM.Electronics.Version)
+        v("Торгаши", GRM.Vendor and GRM.Vendor.Version)
         v("Валюта", "2.0.3")
         v("Экономика", "3.0.4")
         local posts = 0
@@ -143,6 +145,7 @@ if SERVER then
                 { name = "Записей ачивок", val = (GRM.Ach and GRM.Ach.Records) and table.Count(GRM.Ach.Records) or 0 },
                 { name = "Игроков с аугментациями", val = (GRM.Augmentations and GRM.Augmentations.PlayerData) and table.Count(GRM.Augmentations.PlayerData) or 0 },
                 { name = "Созданных чипов", val = (GRM.AugChips and GRM.AugChips.PlayerChips) and (function() local count = 0 for _, chips in pairs(GRM.AugChips.PlayerChips) do count = count + #chips end return count end)() or 0 },
+                { name = "Устройств сети", val = (GRM.Electronics and GRM.Electronics.Devices) and table.Count(GRM.Electronics.Devices) or 0 },
             },
             factions = factionsList(),
         }
@@ -728,6 +731,8 @@ if CLIENT then
         { "Радиосеть: диагностика", "/rn_status", "Стойки/антенны/передатчики/громкоговорители — что в сети, покрытие" },
         { "Аугментации", "grm_augmentations_admin", "Настройка типов аугментаций, категорий, прав доступа и стоимости" },
         { "Программатор чипов", "grm_chips", "Создание, имплантация и управление чипами аугментаций" },
+        { "Точки спавна", "/spawnmenu", "Глобальные/фракционные/роли/отделы — выбор из factions.json, редизайн" },
+        { "Дилеры и гаражи", "grm_garage", "Гараж персонажа: выдача/сдача транспорта; настройка дилера — тулганом (Shift = площадка)" },
         { "Спавн транспорта (ТАБ)", "ТАБ → игрок", "ТАБ → клик по игроку → «Спавн транспорта»: у ближайшего дилера, без цены/лимита", true },
     }
     -- ==== вкладка ЭКОНОМИКА (Код 82) ====

@@ -6,6 +6,7 @@ TOOL.ConfigName = ""
 TOOL.ClientConVar = {
     model = "models/Humans/Group01/Male_02.mdl",
     name = "Дилер транспорта",
+    lift = "30",
 }
 
 local function isDealer(ent)
@@ -111,7 +112,7 @@ function TOOL:RightClick(trace)
             return false
         end
         local dealer = self.PadDealer
-        local ok, reason = GRM.VehicleDealer.SetSpawnZone(dealer, self.PadFirstCorner, trace.HitPos)
+        local ok, reason = GRM.VehicleDealer.SetSpawnZone(dealer, self.PadFirstCorner, trace.HitPos, tonumber(self:GetClientInfo("lift")) or 30)
         if ok then
             dealer:SetSpawnAngle(Angle(0, ply:EyeAngles().y, 0))
             GRM.VehicleDealer.SaveDealer(dealer)
@@ -172,5 +173,7 @@ if CLIENT then
         panel:Help("ОБЫЧНЫЙ РЕЖИМ\nЛКМ — создать дилера\nПКМ по дилеру — ассортимент и цены\nR по дилеру — удалить")
         panel:Help("ПЛОЩАДКА ВЫДАЧИ (держите Shift)\n1. ЛКМ по дилеру — выбрать\n2. ЛКМ по земле — первый угол\n3. ПКМ по земле — противоположный угол\nShift+R по дилеру — очистить площадку")
         panel:Help("Транспорт ищет свободное безопасное место внутри площадки. Синяя линия показывает направление появления.")
+        panel:NumSlider("Подъём транспорта над землёй", "vehicle_dealer_tool_lift", 0, 100, 0)
+        panel:Help("Высота появления машины над поверхностью (юниты). Если машина уходит под землю — увеличьте значение (обычно 20–50).")
     end
 end
