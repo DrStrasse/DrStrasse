@@ -2190,3 +2190,15 @@ GLua 385/0, симы 43/43, roundtrip 14/14. dist пересобран.
    lerpColor определена, клиентская ветка грузится без ошибок).
 
 Проверки: GLua 385/0, симы 43/43, roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 176c (05.08.2026): анимация держания взломщика — HoldType slam (weapon_slam)
+
+Владелец: «Анимацию держания взломщика нужно взять как у weapon_slam
+(портативная мина)».
+
+Сделано: `SWEP.HoldType = "slam"` + `SetHoldType("slam")` в Initialize/Deploy
+(было "grenade"). ViewModel `cstrike/c_c4.mdl` содержит анимации под slam
+(та же связка, что у TTT-шной C4). sim_breaker: проверка HoldType → slam.
+GLua 385/0, симы 43/43, roundtrip 14/14. dist пересобран.

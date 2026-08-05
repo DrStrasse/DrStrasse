@@ -94,7 +94,7 @@ local SW = SWEP
 ok(SW.WorldModel == "models/weapons/w_c4.mdl", "WorldModel = w_c4.mdl (бомба)")
 ok(SW.ViewModel:find("c_c4", 1, true) ~= nil, "ViewModel = c_c4")
 ok(SW.PrintName == "Взломщик", "PrintName = Взломщик")
-ok(SW.HoldType == "grenade", "HoldType = grenade")
+ok(SW.HoldType == "slam", "HoldType = slam (как у weapon_slam, находка 176c)")
 
 -- ── GetAimedTarget ──
 local wep = setmetatable({}, { __index = SW })

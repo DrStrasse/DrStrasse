@@ -23,7 +23,7 @@ SWEP.DrawWeaponSelection = true
 SWEP.ViewModel = "models/weapons/cstrike/c_c4.mdl"
 SWEP.WorldModel = "models/weapons/w_c4.mdl"
 SWEP.UseHands = true
-SWEP.HoldType = "grenade"
+SWEP.HoldType = "slam"
 
 SWEP.Primary.ClipSize = -1
 SWEP.Primary.DefaultClip = -1
@@ -49,11 +49,11 @@ if SERVER then
 end
 
 function SWEP:Initialize()
-    self:SetHoldType("grenade")
+    self:SetHoldType("slam")
 end
 
 function SWEP:Deploy()
-    self:SetHoldType("grenade")
+    self:SetHoldType("slam")
     return true
 end
 
