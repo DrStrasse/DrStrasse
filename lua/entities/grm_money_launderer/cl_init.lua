@@ -69,7 +69,7 @@ net.Receive("GRM_Heist_Open", function()
     if IsValid(menuFrame) then menuFrame:Remove() end
     menuFrame = vgui.Create("DFrame")
     menuFrame:SetTitle("")
-    menuFrame:SetSize(520, 660)
+    menuFrame:SetSize(600, 760)
     menuFrame:Center()
     menuFrame:MakePopup()
     menuFrame.Paint = function(_, w, h)
@@ -101,10 +101,10 @@ net.Receive("GRM_Heist_Open", function()
         draw.SimpleText(tTxt, "GRMLaunder_Small", 14, 116, d.hasTarget and Color(255, 200, 120) or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
 
-    local function addBtn(text, col, fn)
+    local function addBtn(text, col, fn, tall)
         local b = vgui.Create("DButton", body)
         b:Dock(TOP)
-        b:SetTall(40)
+        b:SetTall(tall or 40)
         b:DockMargin(0, 0, 0, 8)
         b:SetText("")
         b.Paint = function(self, w, h)
@@ -190,7 +190,7 @@ net.Receive("GRM_Heist_Open", function()
 
         local facScroll = vgui.Create("DScrollPanel", body)
         facScroll:Dock(TOP)
-        facScroll:SetTall(180)
+        facScroll:SetTall(280)
         facScroll:DockMargin(0, 0, 0, 4)
         facScroll.Paint = function(_, w, h)
             draw.RoundedBox(6, 0, 0, w, h, C.panel)
@@ -224,7 +224,8 @@ net.Receive("GRM_Heist_Open", function()
         end
 
         -- сохранить
-        addBtn("СОХРАНИТЬ НАСТРОЙКИ", C.green, function()
+        -- Находка 179l: крупная заметная кнопка сохранения (суперадмин)
+        addBtn("💾 СОХРАНИТЬ НАСТРОЙКИ", C.green, function()
             local selected = {}
             for fname, c in pairs(facChecks) do
                 if c:GetChecked() then selected[#selected + 1] = fname end
@@ -234,7 +235,7 @@ net.Receive("GRM_Heist_Open", function()
             local mv = tonumber(minVal) or 2
             local gv = tonumber(goalVal) or 500000
             act(ent, "config_full", mv, gv, selected)
-        end)
+        end, 54)
     end
 
     local hint = vgui.Create("DLabel", body)

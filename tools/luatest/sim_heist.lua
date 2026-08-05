@@ -338,6 +338,8 @@ ok(tool3:find('ПКМ по банковскому оборудованию = о�
 ok(tool3:find('trace.HitPos + trace.HitNormal)', 1, true) ~= nil, "тул: отмывщик ставится прямо на поверхность (не в воздухе, находка 179k)")
 local lcl5 = assert(io.open("lua/entities/grm_money_launderer/cl_init.lua", "rb")):read("*a")
 ok(lcl5:find('SetDecimals(0)', 1, true) ~= nil and lcl5:find('OnValueChanged', 1, true) ~= nil and lcl5:find('tonumber(minVal)', 1, true) ~= nil, "клиент: DNumberWang читается надёжно (не сбрасывается на 2, находка 179k)")
+ok(lcl5:find('SetSize(600, 760)', 1, true) ~= nil, "клиент: меню шире и больше (600x760, находка 179l)")
+ok(lcl5:find('СОХРАНИТЬ НАСТРОЙКИ', 1, true) ~= nil and lcl5:find('tall or 40', 1, true) ~= nil and lcl5:find(', 54)', 1, true) ~= nil, "клиент: крупная кнопка «СОХРАНИТЬ НАСТРОЙКИ» (находка 179l)")
 local lin4 = assert(io.open("lua/entities/grm_money_launderer/init.lua", "rb")):read("*a")
 ok(lin4:find('net.ReadUInt(16)', 1, true) ~= nil, "сервер: чтение minP 16 бит (находка 179k)")
 
