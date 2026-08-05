@@ -270,9 +270,14 @@ function ENT:TakeJob(ply)
     return true
 end
 
--- Находка 179m: отмена участия — игрок выходит из ивента
+-- Находка 179m/179p: отмена участия — игрок выходит из ивента.
+-- Находка 179p: во время ивента отмена ЗАПРЕЩЕНА (сервер тоже отклоняет).
 function ENT:LeaveJob(ply)
     if not IsValid(ply) then return false end
+    if self:GetEventActive() then
+        notify(ply, "ОТМЕНА УЧАСТИЯ В МОМЕНТ ИВЕНТА ЗАПРЕЩЕНА.", 255, 120, 100)
+        return false
+    end
     local sid = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64() or ""
     sid = tostring(sid)
     if not self.Participants[sid] then

@@ -129,10 +129,9 @@ net.Receive("GRM_Heist_Open", function()
             end)
         end
     elseif d.eventActive and d.isParticipant then
-        -- во время ивента участник тоже может выйти
-        addBtn("✕ ОТМЕНИТЬ УЧАСТИЕ (выйти из ивента)", C.red, function()
-            act(ent, "leave")
-        end)
+        -- Находка 179p: во время ивента отмена ЗАПРЕЩЕНА — кнопка
+        -- заблокирована (серая), с понятной подписью
+        addBtn("✕ ОТМЕНА УЧАСТИЯ В МОМЕНТ ИВЕНТА ЗАПРЕЩЕНА", Color(80, 80, 90), function() end, 40)
     end
     -- Сдать деньги (во время ивента)
     if d.eventActive then

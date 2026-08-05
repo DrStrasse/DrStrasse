@@ -222,6 +222,11 @@ ok(ld:GetEventActive() == false, "ивент ещё не начат (1 < 2)")
 -- повторное взятие
 ok(ld:TakeJob(maf1) == false, "повторное взятие отклонено")
 
+-- Находка 179p: во время ивента отмена запрещена
+ld:SetEventActive(true)
+ok(ld:LeaveJob(maf1) == false, "LeaveJob: во время ивента отклонено (находка 179p)")
+ld:SetEventActive(false)
+
 -- Находка 179m: отмена участия
 ld:SetParticipantCount(1)
 ok(ld:LeaveJob(maf1) == true, "LeaveJob: участник вышел")
@@ -361,8 +366,10 @@ ok(lcl5:find('СОХРАНИТЬ НАСТРОЙКИ', 1, true) ~= nil and lcl5:f
 local lin4 = assert(io.open("lua/entities/grm_money_launderer/init.lua", "rb")):read("*a")
 ok(lin4:find('net.ReadUInt(16)', 1, true) ~= nil, "сервер: чтение minP 16 бит (находка 179k)")
 ok(lin4:find('function ENT:LeaveJob', 1, true) ~= nil and lin4:find('action == "leave"', 1, true) ~= nil, "сервер: LeaveJob + action leave (находка 179m)")
+ok(lin4:find('ОТМЕНА УЧАСТИЯ В МОМЕНТ ИВЕНТА ЗАПРЕЩЕНА', 1, true) ~= nil and lin4:find('if self:GetEventActive() then', 1, true) ~= nil, "сервер: LeaveJob запрещён во время ивента (находка 179p)")
 local lcl6 = assert(io.open("lua/entities/grm_money_launderer/cl_init.lua", "rb")):read("*a")
 ok(lcl6:find('ОТМЕНИТЬ УЧАСТИЕ', 1, true) ~= nil and lcl6:find('act(ent, "leave")', 1, true) ~= nil, "клиент: кнопка «ОТМЕНИТЬ УЧАСТИЕ» (находка 179m)")
+ok(lcl6:find('ОТМЕНА УЧАСТИЯ В МОМЕНТ ИВЕНТА ЗАПРЕЩЕНА', 1, true) ~= nil and lcl6:find('Color(80, 80, 90)', 1, true) ~= nil, "клиент: во время ивента кнопка заблокирована с подписью (находка 179p)")
 local heistCl = assert(io.open("lua/autorun/client/cl_grm_heist.lua", "rb")):read("*a")
 ok(heistCl:find('local function startMusic', 1, true) == nil and heistCl:find('Heist.Music', 1, true) == nil, "клиент: музыку сам НЕ запускает (играет с сервера, находка 179o)")
 ok(heistCl:find('играет С СЕРВЕРА', 1, true) ~= nil, "клиент: комментарий «музыка с сервера»")
