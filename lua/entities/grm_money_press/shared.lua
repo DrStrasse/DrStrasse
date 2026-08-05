@@ -39,4 +39,8 @@ function ENT:SetupDataTables()
     self:NetworkVar("Int", 4, "PrintInterval")
     self:NetworkVar("Int", 5, "Buffer")
     self:NetworkVar("String", 0, "OwnerSID64")
+    -- Находка 178d: точка выдачи паллет (суперадмин ставит тулом)
+    self:NetworkVar("Vector", 0, "SpawnPos")
+    self:NetworkVar("Angle", 0, "SpawnAngle")
+    self:NetworkVar("Bool", 2, "HasCustomSpawn")
 end

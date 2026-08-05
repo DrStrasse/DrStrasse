@@ -18,6 +18,9 @@ TOOL.ClientConVar = {
     type = "vault",
 }
 
+-- Находка 178d: выбранный станок для установки точки выдачи (сервер)
+TOOL.PressEnt = nil
+
 if CLIENT then
     language.Add("tool.grm_bank_tool.name", "GRM Банковское оборудование")
     language.Add("tool.grm_bank_tool.desc", "Хранилище, печатный станок и терминал банка")
@@ -25,9 +28,10 @@ if CLIENT then
 end
 
 local TYPES = {
-    vault    = { class = "grm_bank_vault",          label = "Хранилище" },
-    press    = { class = "grm_money_press",         label = "Печатный станок" },
-    terminal = { class = "grm_money_press_terminal", label = "Терминал станка" },
+    vault       = { id = "vault",       class = "grm_bank_vault",           label = "Хранилище" },
+    press       = { id = "press",       class = "grm_money_press",          label = "Печатный станок" },
+    terminal    = { id = "terminal",    class = "grm_money_press_terminal", label = "Терминал станка" },
+    spawnpoint  = { id = "spawnpoint",  class = "grm_money_press",          label = "Точка выдачи паллет" },
 }
 
 local function canUse(ply)
@@ -47,6 +51,35 @@ function TOOL:LeftClick(trace)
     if not (trace and trace.Hit) then return false end
 
     local t = TYPES[self:GetClientInfo("type") or "vault"] or TYPES.vault
+
+    -- Находка 178d: режим «Точка выдачи» — ЛКМ по станку выбирает его,
+    -- ЛКМ по месту устанавливает точку (только суперадмин).
+    if t.id == "spawnpoint" then
+        local hit = trace.Entity
+        if IsValid(hit) and hit:GetClass() == "grm_money_press" then
+            if not ply:IsSuperAdmin() then
+                if GRM.Notify then GRM.Notify(ply, "Точку выдачи может ставить только суперадмин.", 255, 120, 100) end
+                return false
+            end
+            self.PressEnt = hit
+            if GRM.Notify then GRM.Notify(ply, "Станок выбран. Наведите на место и нажмите ЛКМ — точка выдачи паллет.", 120, 220, 255) end
+            return true
+        end
+        if IsValid(self.PressEnt) then
+            if not ply:IsSuperAdmin() then
+                if GRM.Notify then GRM.Notify(ply, "Точку выдачи может ставить только суперадмин.", 255, 120, 100) end
+                return false
+            end
+            local ang = Angle(0, IsValid(ply) and ply:EyeAngles().y or 0, 0)
+            self.PressEnt:SetSpawnPoint(trace.HitPos + trace.HitNormal * 4, ang)
+            if GRM.Notify then GRM.Notify(ply, "Точка выдачи установлена: паллеты будут спавниться здесь.", 100, 220, 130) end
+            self.PressEnt = nil
+            return true
+        end
+        if GRM.Notify then GRM.Notify(ply, "Сначала выберите станок (ЛКМ по grm_money_press).", 255, 180, 90) end
+        return false
+    end
+
     local ent = ents.Create(t.class)
     if not IsValid(ent) then return false end
     ent:SetPos(trace.HitPos + trace.HitNormal * 12)
@@ -72,6 +105,17 @@ function TOOL:Reload(trace)
     if not IsValid(ply) or not IsValid(trace.Entity) then return false end
     local ent = trace.Entity
     local cls = ent:GetClass()
+    -- Находка 178d: R по станку в режиме «Точка выдачи» — сброс точки
+    local t = TYPES[self:GetClientInfo("type") or "vault"] or TYPES.vault
+    if t.id == "spawnpoint" and cls == "grm_money_press" then
+        if not ply:IsSuperAdmin() then
+            if GRM.Notify then GRM.Notify(ply, "Точку выдачи может ставить только суперадмин.", 255, 120, 100) end
+            return false
+        end
+        ent:ClearSpawnPoint()
+        if GRM.Notify then GRM.Notify(ply, "Точка выдачи сброшена (паллеты снова у станка).", 100, 220, 130) end
+        return true
+    end
     if cls ~= "grm_bank_vault" and cls ~= "grm_money_press" and cls ~= "grm_money_press_terminal" then
         if GRM.Notify then GRM.Notify(ply, "Наведите на банковское оборудование.", 255, 180, 90) end
         return false
@@ -93,16 +137,21 @@ if CLIENT then
         t:AddChoice("Хранилище (гос.бюджет)", "vault")
         t:AddChoice("Печатный станок (5000/10с)", "press")
         t:AddChoice("Терминал станка", "terminal")
+        t:AddChoice("Точка выдачи паллет (суперадмин)", "spawnpoint")
 
         panel:Help(
             "ЛКМ — установить выбранное оборудование\n" ..
             "R по оборудованию — удалить\n\n" ..
+            "ТОЧКА ВЫДАЧИ ПАЛЛЕТ (суперадмин):\n" ..
+            "1. В комбо выберите «Точка выдачи паллет».\n" ..
+            "2. ЛКМ по печатному станку — выбрать его.\n" ..
+            "3. ЛКМ по месту (полу/площадке) — паллеты будут спавниться ТАМ, а не уходить в стену.\n" ..
+            "4. R по станку — сбросить точку (паллеты снова у станка).\n\n" ..
             "СХЕМА РАБОТЫ:\n" ..
             "1. Ставите ХРАНИЛИЩЕ — на нём дисплей «В ГОСБЮДЖЕТЕ СЕЙЧАС: N» (обновляется в реальном времени).\n" ..
-            "2. Ставите ПЕЧАТНЫЙ СТАНОК рядом — каждые 10 сек печатает 5000 GRM в гос.бюджет, паллеты дропаются в ближайшее хранилище.\n" ..
+            "2. Ставите ПЕЧАТНЫЙ СТАНОК рядом — каждые 10 сек печатает 5000 GRM в гос.бюджет, при буфере 100.000 спавнит паллету в точке выдачи.\n" ..
             "3. Ставите ТЕРМИНАЛ в радиусе 600 от станка — запуск/остановка, прокачка скорости, охлаждение.\n" ..
-            "4. В панели «Экономика» (вкладка Гос.бюджет) Пополнить/Изъять дропают деньги паллетами в хранилище.\n" ..
-            "5. Паллеты подбираются клавишей E (деньги в кошелёк).\n\n" ..
+            "4. Паллету подносите к хранилищу, E → «Загрузить».\n\n" ..
             "Вместимость хранилища: 500.000 GRM паллетами.\n" ..
             "Права: суперадмин или выданный доступ к экономике (/grm_admin → Экономика → Доступ к экономике)."
         )

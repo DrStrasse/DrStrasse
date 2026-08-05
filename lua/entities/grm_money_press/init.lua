@@ -47,6 +47,61 @@ function ENT:OnRemove()
     GRM.MoneyPress[self:EntIndex()] = nil
 end
 
+-- Находка 178d: точка выдачи паллет (как у дилера v3).
+-- Суперадмин ставит тулом grm_bank_tool (режим «Точка выдачи»).
+function ENT:SetSpawnPoint(pos, ang)
+    if not pos then return false end
+    self:SetSpawnPos(pos)
+    self:SetSpawnAngle(ang or Angle(0, self:GetAngles().y + 90, 0))
+    self:SetHasCustomSpawn(true)
+    return true
+end
+
+function ENT:ClearSpawnPoint()
+    self:SetHasCustomSpawn(false)
+    self:SetSpawnPos(self:GetPos() + self:GetForward() * 60 + Vector(0, 0, 12))
+    return true
+end
+
+-- позиция спавна паллеты (точка выдачи или дефолт впереди станка)
+function ENT:SpawnPos()
+    if self:GetHasCustomSpawn() then
+        local p = self:GetSpawnPos() or (self:GetPos() + Vector(0, 0, 12))
+        -- опустить на пол (трейс вниз), чтобы паллета не парила в воздухе
+        local ground = util.TraceLine({ start = p + Vector(0, 0, 180), endpos = p - Vector(0, 0, 300), filter = { self } })
+        if ground.Hit and not ground.StartSolid then
+            return ground.HitPos + Vector(0, 0, 12)
+        end
+        return p
+    end
+    return self:GetPos() + self:GetForward() * 60 + Vector(0, 0, 12)
+end
+
+-- Находка 178d: точка выдачи переживает рестарт через /permadd (PermData)
+GRM = GRM or {}
+GRM.PermData = GRM.PermData or { Extract = {}, Apply = {} }
+GRM.PermData.Extract = GRM.PermData.Extract or {}
+GRM.PermData.Apply = GRM.PermData.Apply or {}
+GRM.PermData.Extract["grm_money_press"] = function(ent)
+    local rec = {}
+    if ent:GetHasCustomSpawn() then
+        local p = ent:GetSpawnPos()
+        local a = ent:GetSpawnAngle()
+        rec.spawn = {
+            x = p and p.x or 0, y = p and p.y or 0, z = p and p.z or 0,
+            p = a and a.p or 0, y = a and a.y or 0, r = a and a.r or 0,
+        }
+    end
+    return rec
+end
+GRM.PermData.Apply["grm_money_press"] = function(ent, data)
+    if istable(data) and istable(data.spawn) then
+        ent:SetSpawnPos(Vector(tonumber(data.spawn.x) or 0, tonumber(data.spawn.y) or 0, tonumber(data.spawn.z) or 0))
+        ent:SetSpawnAngle(Angle(tonumber(data.spawn.p) or 0, tonumber(data.spawn.y) or 0, tonumber(data.spawn.r) or 0))
+        ent:SetHasCustomSpawn(true)
+    end
+end
+
 function ENT:CanManage(ply)
     if not IsValid(ply) then return false end
     if ply:IsSuperAdmin() then return true end
@@ -98,13 +153,14 @@ function ENT:PrintMoney()
     self:SetHeat(math.min(120, self:GetHeat() + self.HeatPerPrint))
     self:EmitSound("buttons/button17.wav", 58, math.random(95, 110))
 
-    -- Находка 178b: копим в БУФЕР; при достижении 100.000 спавним ПАЛЛЕТУ
-    -- у станка. Игрок подносит её к хранилищу и загружает через E-меню.
+    -- Находка 178b/178d: копим в БУФЕР; при достижении 100.000 спавним
+    -- ПАЛЛЕТУ в точке выдачи станка (дефолт — впереди; суперадмин может
+    -- поставить свою точку тулом). Игрок подносит её к хранилищу.
     local buffer = math.floor(self:GetBuffer() or 0) + amount
     self:SetBuffer(buffer)
     local palletMax = math.floor(tonumber(self.BasePalletMax) or 100000)
     if buffer >= palletMax and GRM.Economy.SpawnCashAt then
-        local pos = self:GetPos() + self:GetForward() * 60 + Vector(0, 0, 12)
+        local pos = self:SpawnPos()
         local n = math.floor(buffer / palletMax)
         local spawned = 0
         for _ = 1, n do

@@ -38,6 +38,8 @@ local VMT = {
     return nil
   end,
   __add = function(a, b) return Vector(a.x + b.x, a.y + b.y, a.z + b.z) end,
+  __sub = function(a, b) return Vector(a.x - b.x, a.y - b.y, a.z - b.z) end,
+  __unm = function(a) return Vector(-a.x, -a.y, -a.z) end,
   __mul = function(a, b) if isnumber(a) then return Vector(a * b.x, a * b.y, a * b.z) end return Vector(a.x * b, a.y * b, a.z * b) end,
 }
 function Vector(x, y, z) return setmetatable({ x = x or 0, y = y or 0, z = z or 0 }, VMT) end
@@ -48,7 +50,7 @@ local H = { hooks = {}, timers = {}, netrecv = {}, cmds = {} }
 hook = { Add = function(n, id, fn) H.hooks[n] = H.hooks[n] or {} H.hooks[n][id] = fn end, Run = function() end }
 timer = { Create = function(n, _, _, fn) H.timers[n] = fn end, Simple = function() end }
 concommand = { Add = function(n, fn) H.cmds[n] = fn end }
-util = { AddNetworkString = function() end, TableToJSON = function() return "{}" end, JSONToTable = function() return nil end, IsValidModel = function() return true end }
+util = { AddNetworkString = function() end, TableToJSON = function() return "{}" end, JSONToTable = function() return nil end, IsValidModel = function() return true end, TraceLine = function() return { Hit = false } end }
 file = { IsDir = function() return true end, CreateDir = function() end, Exists = function() return false end, Read = function() return nil end, Write = function() end, Find = function() return {} end }
 os = { time = function() return 1700000000 end, date = function() return "2026-08-05" end }
 game = { GetMap = function() return "rp_test" end }
@@ -289,6 +291,12 @@ press.GetTotalPrinted = function() return press.__tp or 0 end
 press.SetTotalPrinted = function(_, v) press.__tp = v end
 press.GetBuffer = function() return press.__buf or 0 end
 press.SetBuffer = function(_, v) press.__buf = v end
+press.GetHasCustomSpawn = function() return press.__customSpawn == true end
+press.SetHasCustomSpawn = function(_, v) press.__customSpawn = v end
+press.GetSpawnPos = function() return press.__sp or Vector(0, 0, 0) end
+press.SetSpawnPos = function(_, v) press.__sp = v end
+press.GetSpawnAngle = function() return press.__sa or Angle(0, 0, 0) end
+press.SetSpawnAngle = function(_, v) press.__sa = v end
 press.OwnerPlayer = function() return nil end
 press:Initialize()
 press:SetActive(true) press:SetBroken(false) press:SetSpeedLevel(0) press:SetHeat(0)
@@ -315,6 +323,21 @@ press:PrintMoney()
 ok(press:GetBuffer() == 0, "буфер обнулён после паллеты")
 ok(spawnedClasses["grm_vault_cash"] == 1, "паллета на 100.000 заспавнена у станка")
 ok(E.StateBudgetGet() == beforePrint + 10000, "бюджет: итого +10.000 (5000+5000)")
+
+-- точка выдачи (находка 178d): SetSpawnPoint → паллета спавнится там
+press:SetSpawnPoint(Vector(500, 500, 0), Angle(0, 90, 0))
+ok(press:GetHasCustomSpawn() == true, "точка выдачи установлена (HasCustomSpawn)")
+print("    debug sp=" .. tostring(press.__sp and press.__sp.x or "nil") .. "," .. tostring(press.__sp and press.__sp.y or "nil") .. " mt=" .. tostring(getmetatable(press.__sp)))
+local sp = press:SpawnPos()
+ok(sp.x == 500 and sp.y == 500, "SpawnPos() возвращает точку выдачи")
+press:SetBuffer(95000)
+spawnedClasses = {}
+press:PrintMoney()
+ok(press:GetBuffer() == 0 and spawnedClasses["grm_vault_cash"] == 1, "паллета спавнится в точке выдачи")
+press:ClearSpawnPoint()
+ok(press:GetHasCustomSpawn() == false, "точка выдачи сброшена (ClearSpawnPoint)")
+local sp2 = press:SpawnPos()
+ok(sp2.x == 110 and sp2.y == 50, "после сброса паллеты снова у станка (default forward: pos+forward*60)")
 
 -- прокачка скорости: ур.1 → 7500
 press:PressUpgrade(admin)
@@ -373,6 +396,8 @@ ok(vin:find('UnloadCash', 1, true) ~= nil and vin:find('CanManage', 1, true) ~= 
 -- ══════════════ 9. ТУЛ + Q-МЕНЮ + PERM + МОДЕЛИ ══════════════
 local tool = assert(io.open("lua/weapons/gmod_tool/stools/grm_bank_tool.lua", "rb")):read("*a")
 ok(tool:find('TOOL.Name = "#tool.grm_bank_tool.name"', 1, true) ~= nil, "тул grm_bank_tool существует")
+ok(tool:find('spawnpoint', 1, true) ~= nil and tool:find('SetSpawnPoint', 1, true) ~= nil, "тул: режим «Точка выдачи» (находка 178d)")
+ok(tool:find('ClearSpawnPoint', 1, true) ~= nil, "тул: R сбрасывает точку")
 ok(tool:find('grm_bank_vault', 1, true) ~= nil and tool:find('grm_money_press', 1, true) ~= nil and tool:find('grm_money_press_terminal', 1, true) ~= nil, "тул: все три типа")
 ok(tool:find('CanManageEconomy', 1, true) ~= nil, "тул: права CanManageEconomy")
 local q = assert(io.open("lua/autorun/sh_grm_qmenu.lua", "rb")):read("*a")
@@ -382,6 +407,8 @@ ok(perm:find('grm_bank_vault', 1, true) ~= nil and perm:find('grm_money_press', 
 
 local vsh = assert(io.open("lua/entities/grm_bank_vault/shared.lua", "rb")):read("*a")
 ok(vsh:find('ground_locker_small.mdl', 1, true) ~= nil, "хранилище: модель ground_locker_small.mdl")
+local pin2 = assert(io.open("lua/entities/grm_money_press/init.lua", "rb")):read("*a")
+ok(pin2:find('PermData.Extract["grm_money_press"]', 1, true) ~= nil and pin2:find('PermData.Apply["grm_money_press"]', 1, true) ~= nil, "перм: точка выдачи переживает рестарт (находка 178d)")
 local psh = assert(io.open("lua/entities/grm_money_press/shared.lua", "rb")):read("*a")
 ok(psh:find('hatch_frame.mdl', 1, true) ~= nil, "станок: модель hatch_frame.mdl")
 ok(psh:find('BaseAmount    = 5000', 1, true) ~= nil and psh:find('BaseInterval  = 10', 1, true) ~= nil, "станок: 5000 GRM / 10 сек")
