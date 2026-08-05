@@ -129,6 +129,12 @@ hook.Add("OnContextMenu", "GRM_Augmentation_ContextActions", function()
 end)
 
 
+-- Обновление состояния НЕ пересоздаёт окно (иначе цикл: Open → RequestSync →
+-- Sync → hook.Run → Close+Open → ... — окно вечно пересоздаётся и всегда
+-- показывает первую вкладку). Paint-функции вкладок читают кэш чипов
+-- (chips()) динамически каждый кадр — достаточно просто перерисовать.
 hook.Add("GRM_AugmentationStateUpdated", "GRM_AugUI_RefreshState", function()
-    if IsValid(frame) then frame:Close(); timer.Simple(0, function() if GRM.AugmentationUI then GRM.AugmentationUI.Open() end end) end
+    if IsValid(frame) then
+        pcall(function() frame:InvalidateLayout() end)
+    end
 end)
