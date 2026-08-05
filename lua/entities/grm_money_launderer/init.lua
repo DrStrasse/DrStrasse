@@ -189,7 +189,7 @@ function ENT:StartEvent()
     self:SetMoneyHeld(0)
     self.FactionDelivered = {}
     self:SetWinnerFaction("")
-    -- баннер на весь сервер + музыка robber_bank.wav
+    -- баннер на весь сервер + музыка music/hl2_song20_submix0.mp3
     self:BroadcastEvent("start", "НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ",
         "Участники: " .. self:GetParticipantCount() .. "  •  Цель: " .. money(self:GetGoalMoney()) ..
         "  •  Время: 50 минут  •  Сдайте деньги отмывщику  •  ДВИГАЙТЕСЬ К ЛОКАЦИИ!", true)

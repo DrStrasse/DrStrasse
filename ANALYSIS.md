@@ -2958,3 +2958,15 @@ roundtrip 14/14. dist пересобран.
 
 sim_heist: 73 проверки. GLua 404/0, симы 48/48, roundtrip 14/14.
 dist пересобран.
+
+---
+
+## Находка 179n (05.08.2026): музыка ивента — music/hl2_song20_submix0.mp3 вместо robber_bank.wav
+
+Владелец: «Вместо robber_bank.wav будет использоваться
+music/hl2_song20_submix0.mp3».
+
+Заменено во всех местах (cl_grm_heist.lua: путь `"music/hl2_song20_submix0.mp3"`,
+комментарии в shared.lua/init.lua отмывщика). robber_bank.wav больше нигде
+не используется. sim_heist: 73 проверки (путь mp3, нет robber_bank).
+GLua 404/0, симы 48/48, roundtrip 14/14. dist пересобран.

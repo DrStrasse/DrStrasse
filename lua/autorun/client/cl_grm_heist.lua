@@ -2,7 +2,7 @@
     GRM Heist — клиент ивента «Ограбление» (находка 179e)
     • Огромный баннер вверху экрана: «НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ» и итоги;
     • обратный отсчёт до конца ивента (50 минут);
-    • музыка robber_bank.wav (звук из папки sound аддона) на время ивента.
+    • музыка music/hl2_song20_submix0.mp3 на время ивента.
 ----------------------------------------------------------------------]]
 if not CLIENT then return end
 
@@ -27,10 +27,10 @@ end
 
 local function startMusic()
     stopMusic()
-    -- Находка 179m: путь СТРОГО sound/robber_bank.wav (как указал владелец)
+    -- Находка 179m: музыка ивента — music/hl2_song20_submix0.mp3
     local lp = LocalPlayer()
     if not IsValid(lp) then return end
-    local path = "sound/robber_bank.wav"
+    local path = "music/hl2_song20_submix0.mp3"
     if util and util.PrecacheSound then
         pcall(util.PrecacheSound, path)
     end
