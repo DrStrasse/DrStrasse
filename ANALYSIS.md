@@ -1237,3 +1237,57 @@ sim_mobile_ui, см. п.7). Порядок фаз roundtrip важен: corrupt-
 красный — задокументированный sim_mobile_ui под несуществующий UI v1.2.2).
 Файлы данных: `grm_electronics/<map>.json` + `grm_electronics/database.json`
 (+ .backup при каждой записи, read-back, jsonT с ignoreConversions=true).
+
+---
+
+## Находка 156 (05.08.2026): дилер v3.1.1 — зона спавна, настраиваемая высота выдачи; устранён краш SetHasSpawnZone
+
+Репорт владельца: «зона спавна транспорта у диллера не работает; не могу настроить
+высоту спавна — машина спавнится ниже и уходит под землю» + консольная ошибка
+`sh_grm_vehicle_dealer.lua:37: attempt to call method 'SetHasSpawnZone' (a nil value)`
+(apply → LoadDealers).
+
+Разбор:
+- У владельца на сервере остался `sh_grm_vehicle_dealer.lua` (система дилера v3 с
+  площадками выдачи) от прошлой сессии, а энтити в пакете — старая толстая
+  реализация (init 1305 строк, Код 82) БЕЗ методов SpawnZone → краш при загрузке
+  дилеров.
+- В базе 019f89cf этой системы не было вовсе: v3 жила на ветке 019fb265
+  (sh_grm_vehicle_dealer.lua + тонкие shared/init/cl_init + тулган + sim-тест).
+- Плюс в v3 высота выдачи была захардкожена `+8` юнитов над землёй — для многих
+  машин (низкая подвеска, simfphys) этого мало, машина «проседала» в пол.
+
+Сделано (перенос полного комплекта v3 + фиксы):
+1. **Перенесена система v3** (замена старого дилера): `sh_grm_vehicle_dealer.lua`,
+   `entities/sent_vehicle_dealer/{shared,init,cl_init}.lua` (тонкие, NetworkVars
+   SpawnZoneMin/Max/HasSpawnZone), `vehicle_dealer_tool.lua` (единый тулган:
+   ЛКМ создать / ПКМ ассортимент / R удалить / Shift — площадка двумя углами,
+   Shift+R — очистить), `vehicle_dealer.lua` заменён на v3 compatibility bridge.
+2. **Настраиваемая высота (v3.1.0 → v3.1.1):**
+   - слайдер «Подъём транспорта над землёй» (0–100, дефолт 30) в панели тулгана
+     (`vehicle_dealer_tool_lift`);
+   - значение сохраняется в записи дилера (`lift` в DealerRecord/apply) и на
+     энтити (`dealer.VD_Lift`);
+   - `FindDeliveryPosition`: подъём `ground.HitPos + Vector(0,0,lift)` вместо +8,
+     трасса земли от верхней грани зоны (mx.z+240 → mn.z-340) — не зависит от
+     высоты, на которой админ кликал углы;
+   - `VD.Spawn`: повторный ground-trace тоже с lift (+ fallback, если StartSolid);
+   - после создания машины (любой способ: source/simfphys/LVS/scripted) —
+     `pcall(ent.DropToFloor)` — машина гарантированно садится на поверхность,
+     а не остаётся висеть или проваливаться.
+3. **Интеграции под v3:** Q-меню — тулы `vehicle_dealer_tool` и `grm_door_admin`;
+   перм-система — `sent_vehicle_dealer` УБРАН из PERM_CLASSES (своя
+   персистентность v3, перм-дубль создавал конфликт восстановления); единое
+   меню сохранений — строка «Дилеры и гаражи» (SaveAll/LoadAll) в all_save/
+   all_load; двери — периодический `GRM_Doors_SuppressDuplicateHUD` (снятие
+   чужих дверных HUD, если аддон повесил их позже нас).
+4. **Совместимость сохранена:** Tab-меню (VD_RequestVehicleList/VD_VehicleList/
+   VD_AdminSpawnVehicle регистрируются v3), C-меню (`_G.VD_RemoveDealerVehicle`),
+   ключи (v3 зовёт `VK.SetPlayerOwner`), старые дилеры мигрируются
+   `migrateLegacyDealers()` из `grm/dealers/*.json`, точки выдачи → площадки.
+5. **Тесты:** `sim_dealer.lua` (под старую систему) заменён на
+   `sim_vehicle_dealer_v3.lua` (21/21, перенесён с 019fb265, версия 3.1.1);
+   `sim_admin_hub.lua` дополнен моком VehicleDealer (31/31).
+
+Итог: GLua 340/0; roundtrip 14/14; симы 19 шт.: 18/19 зелёные (единственный
+красный — задокументированный sim_mobile_ui). dist пересобран.

@@ -24,6 +24,9 @@ function ENT:SetupDataTables()
     self:NetworkVar("String", 1, "DealerName")   -- отображаемое имя
     self:NetworkVar("String", 2, "DealerModel")  -- путь к модели дилера
     self:NetworkVar("Vector", 0, "SpawnPos")     -- точка спавна транспорта
+    self:NetworkVar("Vector", 1, "SpawnZoneMin") -- зона безопасной выдачи
+    self:NetworkVar("Vector", 2, "SpawnZoneMax")
     self:NetworkVar("Angle", 0, "SpawnAngle")    -- угол спавна транспорта
-    self:NetworkVar("Bool", 0, "HasCustomSpawn") -- есть ли кастомная точка спавна
+    self:NetworkVar("Bool", 0, "HasCustomSpawn") -- legacy-точка
+    self:NetworkVar("Bool", 1, "HasSpawnZone")
 end

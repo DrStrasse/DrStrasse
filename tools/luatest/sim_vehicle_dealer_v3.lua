@@ -1,0 +1,26 @@
+-- Contracts for GRM Vehicle Dealer & Garage v3.
+local function read(p)local f=assert(io.open(p,"rb"));local s=f:read("*a");f:close();return s end
+local core,ent,cl,tool,q,doors,perm = read("lua/autorun/sh_grm_vehicle_dealer.lua"),read("lua/entities/sent_vehicle_dealer/init.lua"),read("lua/entities/sent_vehicle_dealer/cl_init.lua"),read("lua/weapons/gmod_tool/stools/vehicle_dealer_tool.lua"),read("lua/autorun/sh_grm_qmenu.lua"),read("lua/autorun/sh_grm_doors.lua"),read("lua/autorun/sh_grm_perm_entities.lua")
+local checks,failed=0,0;local function has(s,n)return s:find(n,1,true)~=nil end;local function ok(v,n)checks=checks+1;if v then print("  ok "..checks..". "..n)else failed=failed+1;print("  FAIL "..checks..". "..n)end end
+ok(has(core,'VD.Version="3.1.1"'),"dealer v3.1.1 unified delivery pad core with lift")
+ok(has(core,"VD.GarageFile")and has(core,"CharacterKey"),"garage persists per CharacterKey")
+ok(has(core,"function VD.VehicleInfo")and has(core,'list.Get("simfphys_vehicles")')and has(core,'list.Get("LVS_Vehicles")'),"Source simfphys and LVS registries")
+ok(has(core,"SpawnVehicleSimple")and has(core,"simfphys fallback")and has(core,"LVS SpawnFunction")and has(core,"scripted entity"),"legacy-compatible multi-stage vehicle spawn fallbacks")
+ok(has(core,"function VD.FindDeliveryPosition")and has(core,"function VD.FindSpawnPoint")and has(core,"TraceHull")and has(core,"Площадка выдачи занята"),"unified delivery pad searches safe unoccupied points")
+ok(has(core,"hasSpawnZone")and has(core,"spawnZoneMin")and has(core,"spawnZoneMax")and has(core,"Старую отдельную «точку выдачи»"),"persistence migrates legacy points into visible pads")
+ok(has(tool,"GRM_VD_ZoneRequest")and has(tool,"DrawWireframeBox")and has(tool,"SetSpawnZone")and has(tool,"ПЛОЩАДКА ВЫДАЧИ"),"dealer tool owns pad setup and visualization")
+ok(has(cl,"self:GetDealerName()")and has(cl,"OBBMaxs().z")and has(cl,"ДИЛЕР / ГАРАЖ"),"configured dealer name is rendered above NPC")
+ok(has(core,'op=="buy"')and has(core,'op=="retrieve"')and has(core,'op=="store"')and has(core,'op=="sell"'),"buy retrieve store and sell operations")
+ok(has(core,"saveGarage()")and has(core,"PlayerDisconnected"),"garage saves and stores vehicles on disconnect")
+ok(has(core,"function _G.VD_RemoveDealerVehicle"),"context-menu compatibility stores vehicles in garage")
+ok(has(core,"GRM_VD_GarageCommand")and has(core,'"/garage"'),"garage chat command opens nearest dealer")
+ok(has(core,"function VD.SaveDealer")and has(core,"function VD.LoadDealers")and has(core,"migrateLegacyDealers"),"dealer persistence and legacy migration")
+ok(has(ent,"GRM.VehicleDealer.Push")and #ent<2500,"dealer entity is thin and authoritative")
+ok(has(cl,"GRM / ТРАНСПОРТНЫЙ ЦЕНТР")and has(cl,"Мой гараж")and has(cl,"GRM_VD_Result"),"GRM-styled dealer and garage UI")
+ok(has(cl,"GRM_VD_AdminOpen")and has(cl,"СОХРАНИТЬ ДИЛЕРА, АССОРТИМЕНТ И ГАРАЖ"),"GRM admin assortment UI")
+ok(has(tool,"GRM Дилер и площадка выдачи")and has(tool,"SaveDealer"),"unified dealer tool auto-saves")
+ok(has(q,'id = "vehicle_dealer_tool"')and not has(q,'id = "grm_vehicle_spawn_zone"')and has(q,'id = "grm_door_admin"'),"Q-menu exposes one dealer/pad tool without duplicate zone")
+ok(not has(perm,"sent_vehicle_dealer = true"),"generic perm cannot duplicate dedicated dealers")
+ok(has(doors,"GRM_Doors_SuppressDuplicateHUD"),"door HUD duplicate suppression is persistent")
+ok(has(core,"vehicle_dealers")or has(read("lua/autorun/server/sv_grm_persistence_hub.lua"),"vehicle_dealers"),"unified persistence includes dealers")
+print(("VEHICLE DEALER V3: %d/%d failures=%d"):format(checks-failed,checks,failed));if failed>0 then os.exit(1)end

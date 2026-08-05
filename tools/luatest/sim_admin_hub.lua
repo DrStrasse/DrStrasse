@@ -181,6 +181,7 @@ GRM.Doors.LoadCategories = function() return true end
 GRM.Doors.LoadWarrants = function() return true end
 GRM.Arrest = mkMod("arrest", { "SaveConfig" }, { "LoadConfig" })
 GRM.Electronics = mkMod("electronics", { "SaveAll" }, { "LoadAll" })
+GRM.VehicleDealer = mkMod("vehicle_dealers", { "SaveAll" }, { "LoadAll" })
 function _G.GRM_SaveEntities() calls["mining_save"] = (calls["mining_save"] or 0) + 1 return true end
 function _G.GRM_LoadEntities() calls["mining_load"] = (calls["mining_load"] or 0) + 1 return true end
 
@@ -197,6 +198,7 @@ calls = {}
 H.seq = { "all_save" }
 H.netrecv["GRM_Persistence_Action"](0, Admin)
 ok(calls["electronics_save"] == 1, "all_save: электроника сохранена (SaveAll вызван)")
+ok(calls["vehicle_dealers_save"] == 1, "all_save: дилеры и гаражи сохранены (SaveAll вызван)")
 ok(calls["phone_save"] == 1 and calls["doors_save"] == 1 and calls["arrest_save"] == 1, "all_save: остальные модули сохранены")
 ok(calls["mining_save"] ~= nil, "all_save: рудные узлы сохранены (GRM_SaveEntities; вызывается и для perm)")
 local allOk = false
@@ -210,6 +212,7 @@ calls = {}
 H.seq = { "all_load" }
 H.netrecv["GRM_Persistence_Action"](0, Admin)
 ok(calls["electronics_load"] == 1, "all_load: электроника загружена (LoadAll вызван)")
+ok(calls["vehicle_dealers_load"] == 1, "all_load: дилеры загружены (LoadAll вызван)")
 ok(calls["phone_load"] == 1 and calls["mining_load"] ~= nil, "all_load: остальные модули загружены")
 
 -- точечная операция electronics_save

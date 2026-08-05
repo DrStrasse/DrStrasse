@@ -1191,6 +1191,13 @@ if CLIENT then
     hook.Remove("HUDPaint", "DoorHUD")
     hook.Remove("HUDPaint", "SuperiorDoorHUD")
 
+    -- Периодически снимать чужие дверные HUD (если аддон повесил их ПОЗЖЕ нас)
+    timer.Create("GRM_Doors_SuppressDuplicateHUD", 2, 0, function()
+        for _, id in ipairs({"DarkRP_DoorHUD", "doorHUD", "DrawDoorInfo", "HUDPaint_Doors", "DoorHUD", "SuperiorDoorHUD"}) do
+            if id ~= "GRM_Doors_HUD3D2D" then hook.Remove("HUDPaint", id) end
+        end
+    end)
+
     -- Перехват биндов клавиш F1-F4 на дверях
     local function handleDoorBindOverride()
         local ply = LocalPlayer()

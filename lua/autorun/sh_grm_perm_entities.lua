@@ -115,8 +115,9 @@ if SERVER then
         -- Рудная ветка (Код 89)
         grm_ore_node       = true,
         grm_ore_buyer      = true,
-        -- Дилер транспорта (Код 89)
-        sent_vehicle_dealer = true,
+        -- Дилер транспорта НЕ в пермах: у GRM VehicleDealer v3 собственная
+        -- персистентность (grm_vehicle_dealers/<map>.json + гаражи), перм-дубль
+        -- создавал бы конфликт восстановления.
     }
 
     -- JSON только без конверсии ключей (находка 65)
