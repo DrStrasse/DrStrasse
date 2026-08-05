@@ -115,6 +115,8 @@ if SERVER then
         -- Рудная ветка (Код 89)
         grm_ore_node       = true,
         grm_ore_buyer      = true,
+        -- Терминал контроля чипов (находка 169)
+        grm_chip_terminal  = true,
         -- sent_vehicle_dealer имеет собственный GRM VehicleDealer v3 persistence.
         -- Здесь намеренно отсутствует, чтобы не создавать второго NPC.
     }

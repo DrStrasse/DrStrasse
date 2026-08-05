@@ -415,11 +415,13 @@ if SERVER then
             CurfewRoles = {},
             MaskDepartments = {},
             GNewsAccess = false,
+            ChipDeathAlert = false,
         }
         local cfg = FactionsExt[factionName]
         cfg.CurfewRoles = istable(cfg.CurfewRoles) and cfg.CurfewRoles or {}
         cfg.MaskDepartments = istable(cfg.MaskDepartments) and cfg.MaskDepartments or {}
         cfg.GNewsAccess = cfg.GNewsAccess == true
+        cfg.ChipDeathAlert = cfg.ChipDeathAlert == true
         return cfg
     end
 
@@ -998,6 +1000,17 @@ if SERVER then
             broadcastExt()
             if broadcastFactionData then pcall(broadcastFactionData) end
             sendExtResult(ply, true, enabled and "Доступ к /gnews выдан лидеру фракции" or "Доступ к /gnews снят")
+            return
+        end
+
+        -- Контроль чипов (находка 169): уведомлять членов фракции о смерти
+        -- носителей экспериментальных чипов (звук+текст+GPS-метка)
+        if action == "setChipDeathAlert" then
+            local enabled = args[2] and true or false
+            cfg.ChipDeathAlert = enabled
+            saveExt()
+            broadcastExt()
+            sendExtResult(ply, true, enabled and "Уведомления о смерти носителей экспериментальных чипов ВКЛЮЧЕНЫ для «" .. factionName .. "»" or "Уведомления о смерти носителей экспериментальных чипов ВЫКЛЮЧЕНЫ для «" .. factionName .. "»")
             return
         end
 
@@ -2727,6 +2740,19 @@ if CLIENT then
             gnews:SetFont("FactionsExt_Normal")
             gnews:SetValue(gnewsOn and 1 or 0)
             gnews.OnChange = function(_, val) sendExtAction("setGNewsAccess", { factionName, tobool(val) }) end
+
+            -- Контроль чипов (находка 169) --------------------------------------
+            sectionLabel(scroll, "Контроль чипов")
+            local chipAlertOn = cfg.ChipDeathAlert == true
+            local chipAlert = vgui.Create("DCheckBoxLabel", scroll)
+            chipAlert:Dock(TOP)
+            chipAlert:SetTall(26)
+            chipAlert:SetText(chipAlertOn and "Уведомлять о смерти носителей экспериментальных чипов — ВКЛ" or "Присылать уведомление о смерти носителей экспериментального чипа")
+            chipAlert:SetTextColor(chipAlertOn and Color(140, 240, 160) or THEME.text)
+            chipAlert:SetFont("FactionsExt_Normal")
+            chipAlert:SetValue(chipAlertOn and 1 or 0)
+            chipAlert.OnChange = function(_, val) sendExtAction("setChipDeathAlert", { factionName, tobool(val) }) end
+            infoLine(scroll, "Члены фракции получат звук (npc/metropolice/die2.wav), текстовое уведомление и GPS-метку «В данном районе убит/умер специальный юнит» при смерти носителя экспериментального чипа.", THEME.textDim, 36)
 
             -- Модели ------------------------------------------------------------
             sectionLabel(scroll, "Модели (/model)")
