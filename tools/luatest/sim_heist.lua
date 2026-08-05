@@ -75,7 +75,7 @@ CreateSound = function(owner, path)
     return p
   end
   local p = { owner = owner, path = path, stopped = false, loop = nil, played = false, level = nil, volume = nil, pitch = nil, playing = true }
-  p.Stop = function() p.stopped = true end
+  p.Stop = function() p.stopped = true; p.stopCount = (p.stopCount or 0) + 1 end
   p.SetSoundLevel = function(_, l) p.level = l end
   p.EnableLooping = function(_, b) p.loop = b end
   p.PlayEx = function() p.played = true; p.playCount = (p.playCount or 0) + 1 end
@@ -159,7 +159,7 @@ EMT.__index = function(t, k)
   elseif k == "Spawn" then return function(s) spawnedClasses[s.__cls] = (spawnedClasses[s.__cls] or 0) + 1 end
   elseif k == "Activate" then return function() end
   elseif k == "Remove" then return function(s) s.__valid = false end
-  elseif k == "EmitSound" then return function(s, path) emitLog[#emitLog + 1] = tostring(path) end
+  elseif k == "EmitSound" then return function(s, path, lvl, pitch, vol) emitLog[#emitLog + 1] = { path = path, lvl = lvl, pitch = pitch, vol = vol } end
   elseif k == "StopSound" then return function(s, path) stopLog[#stopLog + 1] = tostring(path) end
   elseif k == "IsPlayer" then return function() return false end
   elseif k == "IsNPC" then return function() return false end
@@ -283,6 +283,7 @@ ok((realPatch.playCount or 0) == before, "музыка: патч играет �
 _G.__patchPlaying = false
 wd()
 ok((realPatch.playCount or 0) == before + 1, "музыка: патч остановился (MP3) — watchdog перезапустил (находка 179t)")
+ok((realPatch.stopCount or 0) >= 1, "музыка: ПЕРЕД перезапуском — Stop() (анти-наслоение, находка 179v)")
 _G.__patchPlaying = true
 wd()
 ok((realPatch.playCount or 0) == before + 1, "музыка: после перезапуска играет — снова не трогает")
@@ -300,6 +301,7 @@ ld:SetEventActive(false)
 local okStartEmpty = pcall(function() ld:StartEvent() end)
 ok(okStartEmpty, "пустой патч: StartEvent не падает (находка 179q)")
 ok(#emitLog > 0, "пустой патч: резервный EmitSound сыгран (находка 179q)")
+ok(emitLog[1] and emitLog[1].lvl == 0, "пустой патч: EmitSound SNDLVL 0 — слышен на всю карту (находка 179v)")
 ok(ld:GetEventActive() == true, "пустой патч: ивент запущен несмотря на звук")
 -- watchdog в фолбэк-режиме: разовый EmitSound с кулдауном 3с
 local wdEmpty = H.timers["grm_heist_music_" .. tostring(ld:EntIndex())]
@@ -313,11 +315,40 @@ ok(#emitLog == 0, "пустой патч: кулдаун фолбэка 3с ра
 _G.__now = _G.__now + 4
 wdEmpty()
 ok(#emitLog > 0, "пустой патч: после кулдауна EmitSound снова (находка 179t)")
+ok(emitLog[1] and emitLog[1].lvl == 0, "пустой патч: watchdog-фолбэк тоже SNDLVL 0 (находка 179v)")
 stopLog = {}
 ld:StopHeistMusic()
 ok(#stopLog > 0, "StopHeistMusic: StopSound глушит резервный EmitSound (находка 179q)")
 ok(H.timers["grm_heist_music_" .. tostring(ld:EntIndex())] == nil, "пустой патч: watchdog снят при StopHeistMusic (находка 179t)")
 _G.__emptySoundPatch = nil
+
+-- ══════════════ 2a1. СИНГЛТОН МУЗЫКИ (находка 179v) ══════════════
+-- Второй отмывщик, запустивший ивент, глушит музыку первого (нет эха).
+ok(GRM.HeistMusicOwner == nil, "синглтон: после StopHeistMusic владелец снят")
+local ld2 = mkEnt("grm_money_launderer")
+ld2:SetPos(Vector(0, 0, 0))
+ld2.GetEventActive = function() return ld2.__ea == true end
+ld2.SetEventActive = function(_, v) ld2.__ea = v end
+ld2.SetEventEndsAt = function() end
+ld2.GetEventEndsAt = function() return 0 end
+ld2.SetMoneyHeld = function() end
+ld2.SetWinnerFaction = function() end
+ld2.GetParticipantCount = function() return 2 end
+ld2.GetGoalMoney = function() return 500000 end
+ld2.GetHeistTargetPos = function() return Vector(0, 0, 0) end
+ld2.SetHeistTargetPos = function() end
+ld2.Participants = {} ld2.FactionDelivered = {}
+ld2:StartEvent()
+ok(GRM.HeistMusicOwner == ld2, "синглтон: владелец = второй отмывщик")
+local p2 = heistPatches[#heistPatches]
+ok(p2 ~= nil and p2.stopped == false, "синглтон: музыка второго играет")
+-- первый отмывщик снова запускает ивент → глушит второго
+ld:SetEventActive(false)
+ld:StartEvent()
+ok(p2.stopped == true, "синглтон: музыка первого ЗАГЛУШИЛА второго (находка 179v)")
+ok(GRM.HeistMusicOwner == ld, "синглтон: владелец снова первый отмывщик")
+ok(H.timers["grm_heist_music_" .. tostring(ld2:EntIndex())] == nil, "синглтон: watchdog второго снят")
+ld:StopHeistMusic()
 
 -- ══════════════ 2b. ЦЕЛЬ ИВЕНТА (находка 179f) ══════════════
 -- дефолт: ближайшее хранилище
@@ -503,12 +534,15 @@ ok(lin:find('НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ', 1, true) ~= nil, "б�
 ok(lin:find('local patch = CreateSound(self, HEIST_MUSIC)', 1, true) ~= nil and lin:find('HEIST_MUSIC = "music/hl2_song20_submix0.mp3"', 1, true) ~= nil, "сервер: CreateSound(HEIST_MUSIC) на отмывщике (находка 179o)")
 ok(lin:find('patch:SetSoundLevel(0)', 1, true) ~= nil and lin:find('patch:EnableLooping(true)', 1, true) ~= nil and lin:find('patch:PlayEx(1, 100)', 1, true) ~= nil, "сервер: SetSoundLevel(0)=везде + цикл + PlayEx (находка 179o)")
 ok(lin:find('isfunction(patch.EnableLooping)', 1, true) ~= nil, "сервер: guard isfunction для патча (находка 179q)")
-ok(lin:find('self:EmitSound(HEIST_MUSIC, 100, 100)', 1, true) ~= nil, "сервер: резервный EmitSound при пустом патче (находка 179q)")
+ok(lin:find('self:EmitSound(HEIST_MUSIC, 0, 100, 1)', 1, true) ~= nil, "сервер: резервный EmitSound SNDLVL 0 — вся карта (находка 179q/179v)")
 ok(lin:find('util.PrecacheSound(HEIST_MUSIC)', 1, true) ~= nil, "сервер: прекэш музыки на сервере (находка 179t)")
 ok(lin:find('patch:SetVolume(1)', 1, true) ~= nil and lin:find('patch:SetPitch(100)', 1, true) ~= nil, "сервер: SetVolume(1)/SetPitch(100) (находка 179t)")
 ok(lin:find('function ENT:StartMusicWatchdog', 1, true) ~= nil and lin:find('function ENT:StopMusicWatchdog', 1, true) ~= nil, "сервер: watchdog музыки старт/стоп (находка 179t)")
 ok(lin:find('isfunction(patch.IsPlaying)', 1, true) ~= nil and lin:find('patch.PlayEx, patch, 1, 100', 1, true) ~= nil, "сервер: IsPlaying-проверка + перезапуск PlayEx (находка 179t)")
 ok(lin:find('_grmMusicFallbackAt', 1, true) ~= nil and lin:find('CurTime() + 3', 1, true) ~= nil, "сервер: фолбэк EmitSound с кулдауном 3с (находка 179t)")
+ok(lin:find('GRM.HeistMusicOwner', 1, true) ~= nil and lin:find('GRM.HeistMusicOwner ~= self', 1, true) ~= nil, "сервер: синглтон музыки HeistMusicOwner (находка 179v)")
+ok(lin:find('patch:Stop()', 1, true) ~= nil and lin:find('_grmMusicRestartAt', 1, true) ~= nil and lin:find('CurTime() + 2', 1, true) ~= nil, "сервер: анти-наслоение — Stop перед PlayEx + кулдаун 2с (находка 179v)")
+ok(lin:find('selfRef:StopSound(HEIST_MUSIC)', 1, true) ~= nil, "сервер: фолбэк глушит предыдущий EmitSound (находка 179v)")
 ok(lin:find('MUSIC_WATCHDOG_INTERVAL = 0.5', 1, true) ~= nil, "сервер: интервал watchdog 0.5с (находка 179t)")
 ok(lin:find('function ENT:StopHeistMusic', 1, true) ~= nil and lin:find('self.HeistMusic:Stop()', 1, true) ~= nil, "сервер: StopHeistMusic в EndEvent/OnRemove")
 ok(lin:find('pcall(function() self.HeistMusic:Stop() end)', 1, true) ~= nil and lin:find('self:StopSound(HEIST_MUSIC)', 1, true) ~= nil, "сервер: StopHeistMusic безопасен + StopSound (находка 179q)")

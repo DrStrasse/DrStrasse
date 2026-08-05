@@ -17,6 +17,13 @@ util.AddNetworkString("GRM_Heist_Event")    -- баннер/музыка на в
 local HEIST_MUSIC = "music/hl2_song20_submix0.mp3"
 local MUSIC_WATCHDOG_INTERVAL = 0.5 -- сек: проверка «патч ещё играет?»
 
+-- Находка 179v: анти-дубль музыки НА СЕРВЕРЕ. Отмывщиков может быть
+-- несколько — глобальный реестр владельца музыки ивента: новый ивент
+-- глушит музыку предыдущего (иначе несколько музык = эхо/наложение).
+-- Звук — SNDLVL 0 (soundlevel 0): без затухания, слышен НА ВСЮ КАРТУ.
+GRM = GRM or {}
+GRM.HeistMusicOwner = GRM.HeistMusicOwner or nil -- ent, играющий музыку ивента
+
 local function notify(ply, msg, r, g, b)
     if IsValid(ply) and GRM and GRM.Notify then
         GRM.Notify(ply, msg, r or 200, g or 200, b or 200)
@@ -215,20 +222,26 @@ function ENT:StartEvent()
     -- Находка 179t: MP3 не зацикливается движком — включаем сторожевой
     -- таймер, который перезапускает музыку, как только она остановилась.
     self:StopHeistMusic()
+    -- Находка 179v: музыку ивента уже играет ДРУГОЙ отмывщик — глушим её
+    -- (глобальный реестр HeistMusicOwner; иначе несколько музык = эхо).
+    if GRM.HeistMusicOwner and IsValid(GRM.HeistMusicOwner) and GRM.HeistMusicOwner ~= self then
+        pcall(function() GRM.HeistMusicOwner:StopHeistMusic() end)
+    end
     local patch = CreateSound(self, HEIST_MUSIC)
     if patch and isfunction(patch.EnableLooping) then
-        patch:SetSoundLevel(0)
+        patch:SetSoundLevel(0)   -- SNDLVL 0: без затухания — вся карта
         patch:EnableLooping(true)
         patch:SetVolume(1)
         patch:SetPitch(100)
         patch:PlayEx(1, 100)
         self.HeistMusic = patch
     else
-        -- Звук недоступен как патч — играем позиционным EmitSound
-        -- (глушится в StopHeistMusic через StopSound).
-        self:EmitSound(HEIST_MUSIC, 100, 100)
+        -- Звук недоступен как патч — EmitSound SNDLVL 0 (на всю карту,
+        -- глушится в StopHeistMusic через StopSound).
+        self:EmitSound(HEIST_MUSIC, 0, 100, 1)
     end
     self:StartMusicWatchdog()
+    GRM.HeistMusicOwner = self
     -- баннер на весь сервер
     self:BroadcastEvent("start", "НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ",
         "Участники: " .. self:GetParticipantCount() .. "  •  Цель: " .. money(self:GetGoalMoney()) ..
@@ -256,24 +269,39 @@ function ENT:StartMusicWatchdog()
             selfRef:StopMusicWatchdog()
             return
         end
+        -- Находка 179v: реестр держит ТОЛЬКО один источник — если владелец
+        -- музыки другой отмывщик, этот глушится (нет наложения/эха).
+        if GRM.HeistMusicOwner and GRM.HeistMusicOwner ~= selfRef then
+            selfRef:StopHeistMusic()
+            return
+        end
         local patch = selfRef.HeistMusic
         if patch and isfunction(patch.IsPlaying) then
             local ok, playing = pcall(patch.IsPlaying, patch)
             if ok and playing then return end -- играет — не трогаем
-            -- остановился: перезапускаем (MP3 проиграл файл до конца)
+            -- остановился (MP3 доиграл): СНАЧАЛА Stop — глушим хвост
+            -- старого звука, ПОТОМ PlayEx — без наслоения
             if isfunction(patch.EnableLooping) then
+                pcall(function() patch:Stop() end)
                 pcall(patch.PlayEx, patch, 1, 100)
             end
             return
         end
         if patch and isfunction(patch.EnableLooping) then
-            -- патч есть, но IsPlaying недоступен — перезапуск на всякий случай
-            pcall(patch.PlayEx, patch, 1, 100)
+            -- патч есть, но IsPlaying недоступен — перезапуск НЕ чаще раза
+            -- в 2с, всегда через Stop (иначе PlayEx наслаивался каждые 0.5с)
+            if (selfRef._grmMusicRestartAt or 0) <= CurTime() then
+                pcall(function() patch:Stop() end)
+                pcall(patch.PlayEx, patch, 1, 100)
+                selfRef._grmMusicRestartAt = CurTime() + 2
+            end
             return
         end
-        -- патча нет вообще (фолбэк-режим): разовый EmitSound с кулдауном
+        -- патча нет вообще (фолбэк-режим): EmitSound SNDLVL 0 — НА ВСЮ
+        -- КАРТУ, с кулдауном; перед повтором глушим предыдущий
         if (selfRef._grmMusicFallbackAt or 0) <= CurTime() then
-            pcall(function() selfRef:EmitSound(HEIST_MUSIC, 100, 100) end)
+            pcall(function() selfRef:StopSound(HEIST_MUSIC) end)
+            pcall(function() selfRef:EmitSound(HEIST_MUSIC, 0, 100, 1) end)
             selfRef._grmMusicFallbackAt = CurTime() + 3
         end
     end)
@@ -289,6 +317,8 @@ end
 -- Находка 179t: watchdog тоже останавливается.
 function ENT:StopHeistMusic()
     self:StopMusicWatchdog()
+    -- Находка 179v: этот отмывщик больше не владеет музыкой ивента
+    if GRM.HeistMusicOwner == self then GRM.HeistMusicOwner = nil end
     if self.HeistMusic then
         pcall(function() self.HeistMusic:Stop() end)
         self.HeistMusic = nil
