@@ -29,6 +29,9 @@ TEXT_ALIGN_CENTER = 1
 TEXT_ALIGN_LEFT = 2
 
 -- ── мок vgui ──
+TOP = "TOP"
+BOTTOM = "BOTTOM"
+FILL = "FILL"
 local allWidgets = {}
 local function mkWidget(type, parent)
   local w = {
@@ -41,7 +44,7 @@ local function mkWidget(type, parent)
   w.Center = function() end
   w.MakePopup = function() end
   w.Remove = function() end
-  w.Dock = function() end
+  w.Dock = function(_, d) w._dock = d end
   w.DockMargin = function() end
   w.SetTall = function(_, t) w._tall = t end
   w.SetPaintBackground = function() end
@@ -108,8 +111,14 @@ H.netrecv["GRM_Heist_Open"]()
 
 local frame = findWidget(function(w) return w._type == "DFrame" end)
 ok(frame ~= nil, "меню: DFrame создан (GRM_Heist_Open)")
-local saveBtn = findWidget(function(w) return w._type == "DButton" and w._btnText == "💾 СОХРАНИТЬ НАСТРОЙКИ" end)
-ok(saveBtn ~= nil and saveBtn._tall == 54, "меню: кнопка СОХРАНИТЬ НАСТРОЙКИ (tall 54)")
+-- Находка 179u: кнопка сохранения в ФИКСИРОВАННОЙ нижней панели (SAVE_BAR,
+-- Dock BOTTOM), а не в конце TOP-стека — всегда видна
+local saveBar = findWidget(function(w) return w._btnText == "SAVE_BAR" end)
+ok(saveBar ~= nil, "меню: панель SAVE_BAR создана (находка 179u)")
+ok(saveBar ~= nil and saveBar._dock == "BOTTOM" and saveBar._tall == 64, "меню: SAVE_BAR внизу (Dock BOTTOM, tall 64)")
+local saveBtn = findWidget(function(w) return w._type == "DButton" and w._btnText == "💾 СОХРАНИТЬ НАСТРОЙКИ" and w._parent == saveBar end)
+ok(saveBtn ~= nil, "меню: кнопка СОХРАНИТЬ НАСТРОЙКИ внутри SAVE_BAR (находка 179u)")
+ok(saveBtn ~= nil and saveBtn._dock == "FILL", "меню: кнопка на всю ширину панели (Dock FILL)")
 local minWang = findWidget(function(w) return w._type == "DNumberWang" and w._field == "min" end)
 local goalWang = findWidget(function(w) return w._type == "DNumberWang" and w._field == "goal" end)
 ok(minWang ~= nil and goalWang ~= nil, "меню: поля DNumberWang (минимум/цель)")

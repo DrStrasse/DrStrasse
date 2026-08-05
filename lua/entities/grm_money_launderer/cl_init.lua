@@ -65,11 +65,12 @@ net.Receive("GRM_Heist_Open", function()
     local ent = net.ReadEntity()
     local d = net.ReadTable() or {}
     if not IsValid(ent) then return end
+    local saveFn = nil -- заполняется в canManage-блоке (находка 179u)
 
     if IsValid(menuFrame) then menuFrame:Remove() end
     menuFrame = vgui.Create("DFrame")
     menuFrame:SetTitle("")
-    menuFrame:SetSize(600, 760)
+    menuFrame:SetSize(620, 820)
     menuFrame:Center()
     menuFrame:MakePopup()
     menuFrame.Paint = function(_, w, h)
@@ -199,7 +200,7 @@ net.Receive("GRM_Heist_Open", function()
 
         local facScroll = vgui.Create("DScrollPanel", body)
         facScroll:Dock(TOP)
-        facScroll:SetTall(280)
+        facScroll:SetTall(200)
         facScroll:DockMargin(0, 0, 0, 4)
         facScroll.Paint = function(_, w, h)
             draw.RoundedBox(6, 0, 0, w, h, C.panel)
@@ -248,27 +249,51 @@ net.Receive("GRM_Heist_Open", function()
             end
         end
 
-        -- сохранить
-        -- Находка 179l: крупная заметная кнопка сохранения (суперадмин)
-        -- Находка 179s: числа читаются из полей (GetValue) — всегда текущее
-        -- значение, независимо от колбэков; фракции — из facState.
-        addBtn("💾 СОХРАНИТЬ НАСТРОЙКИ", C.green, function()
+        -- сохранить: кнопка вынесена в ФИКСИРОВАННУЮ нижнюю панель
+        -- (находка 179u: в TOP-стеке она уезжала за нижний край окна
+        -- и была не видна — особенно при активном ивенте с лишними
+        -- кнопками). saveFn вызывается из панели внизу окна.
+        saveFn = function()
             local selected = {}
             for fname, on in pairs(facState) do
                 if on then selected[#selected + 1] = fname end
             end
             table.sort(selected)
+            -- Находка 179s: числа читаются из полей (GetValue) — всегда
+            -- текущее значение, независимо от колбэков.
             local mv = math.max(1, math.floor(tonumber(minWang:GetValue()) or 2))
             local gv = math.max(1000, math.floor(tonumber(goalWang:GetValue()) or 500000))
             act(ent, "config_full", mv, gv, selected)
-        end, 54)
+        end
     end
 
     local hint = vgui.Create("DLabel", body)
     hint:Dock(BOTTOM)
-    hint:SetTall(56)
+    hint:SetTall(48)
     hint:SetFont("GRMLaunder_Small")
     hint:SetTextColor(C.dim)
     hint:SetWrap(true)
     hint:SetText("Когда участников станет достаточно — автоматически начнётся ивент «ОГРАБЛЕНИЕ» (50 минут, баннер на весь сервер, музыка). Деньги сдаются отмывщику: сумка ограбления / паллеты рядом / /bag_unload рядом с ним.")
+
+    -- Находка 179u: кнопка «СОХРАНИТЬ НАСТРОЙКИ» — в ФИКСИРОВАННОЙ нижней
+    -- панели (создаётся ПОСЛЕ hint → Dock(BOTTOM) ставит её над подсказкой).
+    -- Раньше кнопка была последней в TOP-стеке и уезжала за край окна.
+    if saveFn then
+        local saveBar = vgui.Create("DPanel", body)
+        saveBar:Dock(BOTTOM)
+        saveBar:SetTall(64)
+        saveBar:DockMargin(0, 0, 0, 8)
+        saveBar:SetPaintBackground(false)
+        saveBar._btnText = "SAVE_BAR" -- диагн. метка (тесты/отладка)
+        local sb = vgui.Create("DButton", saveBar)
+        sb:Dock(FILL)
+        sb:SetText("")
+        sb._btnText = "💾 СОХРАНИТЬ НАСТРОЙКИ" -- диагн. метка (тесты/отладка)
+        sb.Paint = function(self, w, h)
+            local c = self:IsHovered() and Color(110, 240, 160) or C.green
+            draw.RoundedBox(7, 0, 0, w, h, c)
+            draw.SimpleText("💾 СОХРАНИТЬ НАСТРОЙКИ", "GRMLaunder_Normal", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+        sb.DoClick = saveFn
+    end
 end)
