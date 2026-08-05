@@ -238,6 +238,18 @@ if CLIENT then
         else return "ВЗЛОМ ЗАМКА ДВЕРИ" end
     end
 
+    -- Находка 176b: глобального LerpColor в GMod НЕТ (его добавляют только
+    -- сторонние аддоны) — на чистом клиенте QTE падала с nil. Своя версия.
+    local function lerpColor(t, a, b)
+        t = math.Clamp(tonumber(t) or 0, 0, 1)
+        return Color(
+            math.floor((a.r or 0) + ((b.r or 0) - (a.r or 0)) * t + 0.5),
+            math.floor((a.g or 0) + ((b.g or 0) - (a.g or 0)) * t + 0.5),
+            math.floor((a.b or 0) + ((b.b or 0) - (a.b or 0)) * t + 0.5),
+            math.floor((a.a or 255) + ((b.a or 255) - (a.a or 255)) * t + 0.5)
+        )
+    end
+
     local activeFrame = nil -- активное окно QTE (индексировать функцию нельзя — GLua!)
 
     local function startBreakerQTE(target)
@@ -282,7 +294,7 @@ if CLIENT then
             -- заполнение: завершённые пины + доля текущего пина (по приближению к зоне)
             local partial = math.Clamp((posPct * 100 - (targetMin - 8)) / (targetWidth + 16), 0, 1)
             local fillPct = ((pinCurrent - 1) + partial) / maxPins
-            local fillCol = LerpColor(fillPct, Color(60, 200, 110), Color(255, 190, 60))
+            local fillCol = lerpColor(fillPct, Color(60, 200, 110), Color(255, 190, 60))
             draw.RoundedBox(4, pbX + 2, pbY + 2, (pbW - 4) * fillPct, pbH - 4, fillCol)
             -- деления по пинам
             surface.SetDrawColor(16, 20, 28, 160)

@@ -225,6 +225,8 @@ ok(code:find("GRM_Breaker_FinishQTE", 1, true) ~= nil, "клиент: шлёт �
 ok(code:find("cancelQTE", 1, true) ~= nil, "клиент: отмена взлома")
 ok(code:find("ВЗЛОМ СКАНЕРА", 1, true) ~= nil, "клиент: заголовок для сканера")
 ok(code:find("c4_disarm", 1, true) ~= nil, "клиент: звук c4_disarm при успехе")
+ok(not code:find("LerpColor(", 1, true), "клиент: нет вызова глобального LerpColor (находка 176b)")
+ok(code:find("local function lerpColor", 1, true) ~= nil, "клиент: своя функция lerpColor определена")
 
 -- ── Вендор/инвентарь ──
 local v = assert(io.open("lua/autorun/sh_grm_vendor.lua", "rb"))
