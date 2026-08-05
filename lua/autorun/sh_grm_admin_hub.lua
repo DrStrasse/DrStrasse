@@ -582,6 +582,18 @@ if CLIENT then
             r:SetPos(12, 26 + (i - 1) * 24) r:SetSize(900, 22) r:SetFont("GRMHub_Normal") r:SetTextColor(C.text)
             r:SetText(tostring(f.name) .. "   •   лидер: " .. tostring(f.leader) .. "   •   состав: " .. tostring(f.members))
         end
+
+        -- Находка 179h (в /grm_admin): настройка фракций оповещения сигнализации
+        local bAlarm = block(sc, 58, "Сигнализация:", C.orange)
+        local lAlarm = vgui.Create("DLabel", bAlarm)
+        lAlarm:SetPos(12, 26) lAlarm:SetSize(700, 22) lAlarm:SetFont("GRMHub_Normal") lAlarm:SetTextColor(C.text)
+        lAlarm:SetText("Оповещение о взломах кейпадов/сканеров/дверей — выберите фракции.")
+        local bOpen = mkBtn(bAlarm, "Фракции для оповещения", C.orange, 200, 24)
+        bOpen:SetPos(520, 24)
+        bOpen.DoClick = function()
+            net.Start("GRM_AlarmNotify_Open")
+            net.SendToServer()
+        end
     end
 
     -- ==== вкладка ДОСТУПЫ ====
