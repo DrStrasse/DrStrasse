@@ -3314,3 +3314,17 @@ FadeOut(3) вызван и сам остановит звук; статика: w
 (SAVE_BAR tall 48, кнопка 240×34, центрирование). GLua 404/0;
 roundtrip 14/14; perm_upsert 14, bank_vault 87, econ_access 42,
 prop_protect 23, security OK, alarm 27. dist пересобран.
+
+---
+
+## Находка 179y (05.08.2026): кнопка «СОХРАНИТЬ НАСТРОЙКИ» ещё компактнее
+
+Владелец: «И кнопка сохранить слишком большая в высоту и в ширину» (после 179x).
+
+Сделано (lua/entities/grm_money_launderer/cl_init.lua): кнопка уменьшена
+240×34 → **170×26** (мелкий шрифт GRMLaunder_Small вместо Normal,
+скругление 5), панель SAVE_BAR 48 → 40, отцентрирована через PerformLayout
+(x=215, y=7 при ширине окна 620).
+
+Тесты: sim_launderer_menu 20/20 (SAVE_BAR tall 40, кнопка 170×26,
+центрирование); sim_heist 125/125; GLua 404/0; dist пересобран.

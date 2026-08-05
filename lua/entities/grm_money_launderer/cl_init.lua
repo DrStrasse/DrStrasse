@@ -275,27 +275,27 @@ net.Receive("GRM_Heist_Open", function()
     hint:SetWrap(true)
     hint:SetText("Когда участников станет достаточно — автоматически начнётся ивент «ОГРАБЛЕНИЕ» (50 минут, баннер на весь сервер, музыка). Деньги сдаются отмывщику: сумка ограбления / паллеты рядом / /bag_unload рядом с ним.")
 
-    -- Находка 179u/179x: кнопка «СОХРАНИТЬ НАСТРОЙКИ» — в нижней панели,
-    -- но КОМПАКТНАЯ (240×34, по центру), а не на всю ширину окна.
+    -- Находка 179u/179x/179y: кнопка «СОХРАНИТЬ НАСТРОЙКИ» — в нижней
+    -- панели, КОМПАКТНАЯ (170×26, мелкий шрифт), по центру.
     if saveFn then
         local saveBar = vgui.Create("DPanel", body)
         saveBar:Dock(BOTTOM)
-        saveBar:SetTall(48)
+        saveBar:SetTall(40)
         saveBar:DockMargin(0, 0, 0, 6)
         saveBar:SetPaintBackground(false)
         saveBar._btnText = "SAVE_BAR" -- диагн. метка (тесты/отладка)
         local sb = vgui.Create("DButton", saveBar)
-        sb:SetSize(240, 34)
+        sb:SetSize(170, 26)
         sb._btnText = "💾 СОХРАНИТЬ НАСТРОЙКИ" -- диагн. метка (тесты/отладка)
         sb.Paint = function(self, w, h)
             local c = self:IsHovered() and Color(110, 240, 160) or C.green
-            draw.RoundedBox(7, 0, 0, w, h, c)
-            draw.SimpleText("💾 СОХРАНИТЬ НАСТРОЙКИ", "GRMLaunder_Normal", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            draw.RoundedBox(5, 0, 0, w, h, c)
+            draw.SimpleText("💾 СОХРАНИТЬ НАСТРОЙКИ", "GRMLaunder_Small", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
         sb.DoClick = saveFn
         function saveBar:PerformLayout()
-            sb:SetSize(240, 34)
-            sb:SetPos(math.max(0, (self:GetWide() - 240) / 2), math.max(0, (self:GetTall() - 34) / 2))
+            sb:SetSize(170, 26)
+            sb:SetPos(math.max(0, (self:GetWide() - 170) / 2), math.max(0, (self:GetTall() - 26) / 2))
         end
     end
 end)

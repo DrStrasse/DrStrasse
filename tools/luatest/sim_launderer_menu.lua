@@ -113,16 +113,16 @@ H.netrecv["GRM_Heist_Open"]()
 
 local frame = findWidget(function(w) return w._type == "DFrame" end)
 ok(frame ~= nil, "меню: DFrame создан (GRM_Heist_Open)")
--- Находка 179u/179x: кнопка сохранения в нижней панели (SAVE_BAR,
--- Dock BOTTOM) — всегда видна; КОМПАКТНАЯ 240×34, по центру
+-- Находка 179u/179x/179y: кнопка сохранения в нижней панели (SAVE_BAR,
+-- Dock BOTTOM) — всегда видна; КОМПАКТНАЯ 170×26, по центру
 local saveBar = findWidget(function(w) return w._btnText == "SAVE_BAR" end)
 ok(saveBar ~= nil, "меню: панель SAVE_BAR создана (находка 179u)")
-ok(saveBar ~= nil and saveBar._dock == "BOTTOM" and saveBar._tall == 48, "меню: SAVE_BAR внизу (Dock BOTTOM, tall 48)")
+ok(saveBar ~= nil and saveBar._dock == "BOTTOM" and saveBar._tall == 40, "меню: SAVE_BAR внизу (Dock BOTTOM, tall 40)")
 local saveBtn = findWidget(function(w) return w._type == "DButton" and w._btnText == "💾 СОХРАНИТЬ НАСТРОЙКИ" and w._parent == saveBar end)
 ok(saveBtn ~= nil, "меню: кнопка СОХРАНИТЬ НАСТРОЙКИ внутри SAVE_BAR (находка 179u)")
-ok(saveBtn ~= nil and saveBtn._w == 240 and saveBtn._h == 34, "меню: кнопка КОМПАКТНАЯ 240x34 (находка 179x)")
-saveBar.PerformLayout()
-ok(saveBtn ~= nil and saveBtn._x == 180 and saveBtn._y == 7, "меню: кнопка отцентрована в панели (находка 179x)")
+ok(saveBtn ~= nil and saveBtn._w == 170 and saveBtn._h == 26, "меню: кнопка КОМПАКТНАЯ 170x26 (находка 179y)")
+saveBar:PerformLayout()
+ok(saveBtn ~= nil and saveBtn._x == 215 and saveBtn._y == 7, "меню: кнопка отцентрована в панели (находка 179y)")
 local minWang = findWidget(function(w) return w._type == "DNumberWang" and w._field == "min" end)
 local goalWang = findWidget(function(w) return w._type == "DNumberWang" and w._field == "goal" end)
 ok(minWang ~= nil and goalWang ~= nil, "меню: поля DNumberWang (минимум/цель)")
