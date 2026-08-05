@@ -131,13 +131,6 @@ EMT.__index = function(t, k)
   elseif k == "IsValid" then return function(s) return s.__valid ~= false end
   elseif k == "GetModel" then return function() return "models/x.mdl" end
   elseif k == "GetNWString" then return function() return "" end
-  elseif k == "SetHullType" then return function() end
-  elseif k == "SetHullSizeNormal" then return function() end
-  elseif k == "SetNPCState" then return function() end
-  elseif k == "CapabilitiesClear" then return function() end
-  elseif k == "SetMaxHealth" then return function() end
-  elseif k == "SetHealth" then return function() end
-  elseif k == "DropToFloor" then return function() end
   end
   return nil
 end
@@ -324,7 +317,10 @@ recvA(0, admin2)
 ok(ld:GetAllowedFactions() == "", "config_full: пустой список = любые")
 
 local lin3 = assert(io.open("lua/entities/grm_money_launderer/init.lua", "rb")):read("*a")
-ok(lin3:find('SetHullType(HULL_HUMAN)', 1, true) ~= nil and lin3:find('NPC_STATE_SCRIPT', 1, true) ~= nil and lin3:find('DropToFloor()', 1, true) ~= nil, "поза: NPC-инициализация (не Т-поза, находка 179g)")
+ok(lin3:find('SOLID_VPHYSICS', 1, true) ~= nil, "поза: физическая инициализация сохранена")
+ok(lin3:find('self:SetHullType', 1, true) == nil, "поза: вызова self:SetHullType НЕТ (не падает, находка 179h)")
+local lcl4 = assert(io.open("lua/entities/grm_money_launderer/cl_init.lua", "rb")):read("*a")
+ok(lcl4:find('idle_all_01', 1, true) ~= nil and lcl4:find('ResetSequence', 1, true) ~= nil and lcl4:find('InvalidateBoneCache', 1, true) ~= nil, "поза: клиентская idle-анимация (не Т-поза, находка 179h)")
 ok(lin3:find('FactionList', 1, true) ~= nil and lin3:find('config_full', 1, true) ~= nil, "сервер: список фракций + config_full")
 local lcl3 = assert(io.open("lua/entities/grm_money_launderer/cl_init.lua", "rb")):read("*a")
 ok(lcl3:find('DCheckBoxLabel', 1, true) ~= nil and lcl3:find('factionsList', 1, true) ~= nil, "клиент: чекбоксы фракций (находка 179g)")

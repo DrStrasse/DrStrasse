@@ -11,8 +11,25 @@ local function money(n)
     return GRM and GRM.Format and GRM.Format(tonumber(n) or 0) or (tostring(math.floor(tonumber(n) or 0)) .. " GRM")
 end
 
+-- Находка 179g/179h: модель человека на физической энтити стоит в Т-позе.
+-- Анимируем на клиенте: ставим idle-последовательность и обновляем кости.
+local function animateLaunderer(ent)
+    if not IsValid(ent) then return end
+    local seq = ent:LookupSequence("idle_all_01")
+    if seq and seq > 0 then
+        ent:ResetSequence(seq)
+        ent:SetCycle(CurTime() % 1)
+    end
+    ent:SetPoseParameter("move_yaw", 0)
+    ent:SetPoseParameter("body_yaw", 0)
+    ent:SetPoseParameter("aim_yaw", 0)
+    ent:SetPoseParameter("aim_pitch", 0)
+    ent:InvalidateBoneCache()
+end
+
 function ENT:Draw()
     self:DrawModel()
+    animateLaunderer(self)
     local ply = LocalPlayer()
     if not IsValid(ply) then return end
     if ply:GetPos():DistToSqr(self:GetPos()) > 700 * 700 then return end

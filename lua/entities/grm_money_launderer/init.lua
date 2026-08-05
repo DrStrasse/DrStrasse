@@ -26,18 +26,13 @@ function ENT:Initialize()
         print("[GRM Launderer] ВНИМАНИЕ: модель не найдена, фолбэк '" .. tostring(mdl) .. "'")
     end
     self:SetModel(mdl)
-    -- Находка 179g: НЕ физический проп (иначе модель человека стоит в
-    -- Т-позе) — инициализация как у квест-NPC: «человек» с нормальной позой.
-    self:SetHullType(HULL_HUMAN)
-    self:SetHullSizeNormal()
-    self:SetNPCState(NPC_STATE_SCRIPT)
-    self:SetSolid(SOLID_BBOX)
-    self:SetMoveType(MOVETYPE_NONE)
+    -- Находка 179g/179h: энтити типа anim (base_gmodentity) — методов NPC
+    -- (SetHullType/SetNPCState) у него НЕТ. Оставляем физику (как раньше),
+    -- нормальную позу даёт клиентская анимация idle (см. cl_init).
+    self:PhysicsInit(SOLID_VPHYSICS)
+    self:SetMoveType(MOVETYPE_VPHYSICS)
+    self:SetSolid(SOLID_VPHYSICS)
     self:SetUseType(SIMPLE_USE)
-    self:CapabilitiesClear()
-    self:SetMaxHealth(1000000)
-    self:SetHealth(1000000)
-    self:DropToFloor()
 
     self:SetEnabled(true)
     self:SetEventActive(false)
@@ -50,6 +45,9 @@ function ENT:Initialize()
     self:SetHeistTargetPos(Vector(0, 0, 0))
     self.Participants = self.Participants or {}   -- [sid] = faction
     self.FactionDelivered = self.FactionDelivered or {} -- [faction] = amount
+
+    local phys = self:GetPhysicsObject()
+    if IsValid(phys) then phys:Wake() phys:EnableMotion(false) end
 end
 
 function ENT:OnRemove()

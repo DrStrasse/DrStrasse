@@ -2779,3 +2779,31 @@ cl_grm_alarm_notify.lua):
 только нужной фракции, все события в журнал breach, хуки кейпада/сканера,
 клиентские чекбоксы, команда). GLua 404/0, симы 48/48, roundtrip 14/14.
 dist пересобран.
+
+---
+
+## Находка 179h (фикс, 05.08.2026): отмывщик падал при спавне — SetHullType не существует на anim-энтити
+
+Владелец (живой сервер):
+```
+grm_money_launderer/init.lua:31: attempt to call method 'SetHullType' (a nil value)
+  Spawn -> LeftClick (grm_bank_tool)
+```
+
+Причина: в попытке убрать Т-позу (179g) я добавил NPC-инициализацию
+(SetHullType/SetNPCState/CapabilitiesClear...), но grm_money_launderer —
+энтити типа anim (base_gmodentity), а эти методы есть только у NPC
+(класс npc). Спавн падал сразу.
+
+Сделано:
+1. Initialize возвращён к физической инициализации (SOLID_VPHYSICS,
+   MOVETYPE_VPHYSICS, EnableMotion(false)) — спавн снова работает.
+2. Нормальная поза теперь на КЛИЕНТЕ (cl_init): в Draw вызывается
+   animateLaunderer — LookupSequence("idle_all_01") → ResetSequence +
+   SetCycle(CurTime()%1), сброс pose-параметров (move_yaw/body_yaw/
+   aim_yaw/aim_pitch), InvalidateBoneCache. Модель человека анимируется
+   (idle), а не стоит в Т-позе.
+
+sim_heist: 60 проверок (включая «нет self:SetHullType», физическая
+инициализация, клиентская idle-анимация). GLua 404/0, симы 48/48,
+roundtrip 14/14. dist пересобран.
