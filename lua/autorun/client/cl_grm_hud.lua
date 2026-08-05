@@ -293,6 +293,9 @@ end)
 
 -- ОТРИСОВКА
 local function DrawMainHUD()
+    -- При активных чипах аугментаций обычный HUD не рисуется: его место
+    -- занимает био-интерфейс (BIOMETRICS/ФИНАНСОВЫЙ КАНАЛ в cl_grm_augmentations_hud.lua)
+    if GRM.AugHUD and GRM.AugHUD.IsActive and GRM.AugHUD.IsActive() then return end
     UpdateValues()
     AnimateValues()
     if not actual.alive then return end

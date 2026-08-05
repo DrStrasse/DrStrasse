@@ -411,13 +411,13 @@ local function rebuildEquipment()
         end
     end
     local open = btn(equipmentPanel, "Кастомизация", C.accent, 126, 31)
-    open:SetPos(7, 294); open.DoClick = function() if custom and custom.RequestEditor then custom.RequestEditor() end end
+    open:SetPos(7, 30 + #order * 43 + 8); open.DoClick = function() if custom and custom.RequestEditor then custom.RequestEditor() end end
 
     -- Биоконтроль: окно аугментаций/чипов (GRM.AugmentationUI.Open)
     local augUI = GRM.AugmentationUI
     if augUI and isfunction(augUI.Open) then
         local bio = btn(equipmentPanel, "Биоконтроль", C.green, 126, 31)
-        bio:SetPos(7, 294 + 35)
+        bio:SetPos(7, 30 + #order * 43 + 43)
         bio.DoClick = function() augUI.Open() end
     end
 end
@@ -426,7 +426,7 @@ function INV.OpenGUI()
     if IsValid(frame) then frame:MakePopup(); rebuildSlots(); rebuildDetail(); rebuildEquipment(); return end
     local f = vgui.Create("DFrame")
     GRM.UI.Track("inventory", f)
-    f:SetTitle(""); f:SetSize(1020, 570); f:Center(); f:MakePopup()
+    f:SetTitle(""); f:SetSize(1020, 620); f:Center(); f:MakePopup()
     frame = f
     f.OnRemove = function() frame = nil; INV.SelectedSlot = nil; dragData = nil; if IsValid(dragImage) then dragImage:Remove(); dragImage = nil end end
     f.Paint = function(_, w, h)
@@ -441,7 +441,7 @@ function INV.OpenGUI()
     drawWeight()
 
     equipmentPanel = vgui.Create("DPanel", f)
-    equipmentPanel:SetPos(16, 78); equipmentPanel:SetSize(140, 332)
+    equipmentPanel:SetPos(16, 78); equipmentPanel:SetSize(140, 430)
     equipmentPanel.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, C.panel) end
 
     slotsPanel = vgui.Create("DPanel", f)
@@ -463,7 +463,7 @@ function INV.OpenGUI()
     dropWep.DoClick = function() if INV.DropWeapon then INV.DropWeapon() end end
 
     local footer = vgui.Create("DLabel", f)
-    footer:SetPos(16, 432); footer:SetSize(987, 70); footer:SetWrap(true)
+    footer:SetPos(16, 522); footer:SetSize(987, 70); footer:SetWrap(true)
     footer:SetFont("GRMInv2_Small"); footer:SetTextColor(C.dim)
     footer:SetText("Перегруз: после 50 кг бег не ускоряет игрока. После 62.5 кг нельзя поднимать новые предметы. Вес учитывает содержимое инвентаря, оружие и боеприпасы.\n/drop — выбросить оружие из рук  |  /store — убрать в инвентарь  |  /inv — открыть инвентарь")
 
