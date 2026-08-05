@@ -111,10 +111,17 @@ function TOOL:LeftClick(trace)
         return false
     end
 
+    -- Находка 179k: отмывщик — НЕ проп, ставим ПРЯМО на поверхность
+    -- (как торгаш: tr.HitPos + tr.HitNormal), иначе BBOX-модель висит в воздухе
     local ent = ents.Create(t.class)
     if not IsValid(ent) then return false end
-    ent:SetPos(trace.HitPos + trace.HitNormal * 12)
-    ent:SetAngles(Angle(0, IsValid(ply) and ply:EyeAngles().y or 0, 0))
+    if t.class == "grm_money_launderer" then
+        ent:SetPos(trace.HitPos + trace.HitNormal)
+        ent:SetAngles(Angle(0, IsValid(ply) and ply:EyeAngles().y or 0, 0))
+    else
+        ent:SetPos(trace.HitPos + trace.HitNormal * 12)
+        ent:SetAngles(Angle(0, IsValid(ply) and ply:EyeAngles().y or 0, 0))
+    end
     ent:Spawn()
     ent:Activate()
     if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end

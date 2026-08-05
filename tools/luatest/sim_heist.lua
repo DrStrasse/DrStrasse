@@ -335,6 +335,11 @@ ok(lcl3:find('config_full', 1, true) ~= nil and lcl3:find('DNumberWang', 1, true
 local tool3 = assert(io.open("lua/weapons/gmod_tool/stools/grm_bank_tool.lua", "rb")):read("*a")
 ok(tool3:find('cls == "grm_money_launderer" and t.id ~= "heisttarget"', 1, true) ~= nil and tool3:find('Отмывщик удалён', 1, true) ~= nil, "тул: R удаляет отмывщика (находка 179g)")
 ok(tool3:find('ПКМ по банковскому оборудованию = открыть его меню', 1, true) ~= nil and tool3:find('if ent.Use then ent:Use(ply) end', 1, true) ~= nil, "тул: ПКМ открывает меню (настройка скупщика, находка 179j)")
+ok(tool3:find('trace.HitPos + trace.HitNormal)', 1, true) ~= nil, "тул: отмывщик ставится прямо на поверхность (не в воздухе, находка 179k)")
+local lcl5 = assert(io.open("lua/entities/grm_money_launderer/cl_init.lua", "rb")):read("*a")
+ok(lcl5:find('SetDecimals(0)', 1, true) ~= nil and lcl5:find('OnValueChanged', 1, true) ~= nil and lcl5:find('tonumber(minVal)', 1, true) ~= nil, "клиент: DNumberWang читается надёжно (не сбрасывается на 2, находка 179k)")
+local lin4 = assert(io.open("lua/entities/grm_money_launderer/init.lua", "rb")):read("*a")
+ok(lin4:find('net.ReadUInt(16)', 1, true) ~= nil, "сервер: чтение minP 16 бит (находка 179k)")
 
 -- ══════════════ 7. Тул + перм + модели ══════════════
 local tool = assert(io.open("lua/weapons/gmod_tool/stools/grm_bank_tool.lua", "rb")):read("*a")

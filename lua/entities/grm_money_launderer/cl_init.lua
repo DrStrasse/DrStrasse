@@ -54,7 +54,7 @@ local function act(ent, action, a, b, c)
             net.WriteUInt(math.max(1000, math.floor(tonumber(b) or 500000)), 32)
             net.WriteString(tostring(c or ""))
         elseif action == "config_full" then
-            net.WriteUInt(math.max(1, math.floor(tonumber(a) or 2)), 8)
+            net.WriteUInt(math.max(1, math.floor(tonumber(a) or 2)), 16)
             net.WriteUInt(math.max(1000, math.floor(tonumber(b) or 500000)), 32)
             net.WriteTable(istable(c) and c or {})
         end
@@ -155,9 +155,15 @@ net.Receive("GRM_Heist_Open", function()
         local minLbl = vgui.Create("DLabel", minRow)
         minLbl:SetPos(4, 6) minLbl:SetSize(180, 20) minLbl:SetFont("GRMLaunder_Small")
         minLbl:SetTextColor(C.text) minLbl:SetText("Минимум участников:")
+        -- Находка 179k: DNumberWang коммитит ввод только по Enter/потере
+        -- фокуса — GetValue() мог вернуть старое (2). Читаем из ТЕКСТА
+        -- и храним через OnValueChanged.
+        local minVal = d.minParticipants or 2
         local minWang = vgui.Create("DNumberWang", minRow)
-        minWang:SetPos(190, 2) minWang:SetSize(90, 24) minWang:SetMin(1) minWang:SetMax(32)
-        minWang:SetValue(d.minParticipants or 2)
+        minWang:SetPos(190, 2) minWang:SetSize(90, 24)
+        minWang:SetMin(1) minWang:SetMax(32) minWang:SetDecimals(0)
+        minWang:SetValue(minVal)
+        minWang.OnValueChanged = function(_, v) minVal = tonumber(v) or minVal end
 
         -- цель (сумма)
         local goalRow = vgui.Create("DPanel", body)
@@ -167,9 +173,12 @@ net.Receive("GRM_Heist_Open", function()
         local goalLbl = vgui.Create("DLabel", goalRow)
         goalLbl:SetPos(4, 6) goalLbl:SetSize(180, 20) goalLbl:SetFont("GRMLaunder_Small")
         goalLbl:SetTextColor(C.text) goalLbl:SetText("Цель (сумма):")
+        local goalVal = d.goalMoney or 500000
         local goalWang = vgui.Create("DNumberWang", goalRow)
-        goalWang:SetPos(190, 2) goalWang:SetSize(140, 24) goalWang:SetMin(1000) goalWang:SetMax(100000000)
-        goalWang:SetValue(d.goalMoney or 500000)
+        goalWang:SetPos(190, 2) goalWang:SetSize(140, 24)
+        goalWang:SetMin(1000) goalWang:SetMax(100000000) goalWang:SetDecimals(0)
+        goalWang:SetValue(goalVal)
+        goalWang.OnValueChanged = function(_, v) goalVal = tonumber(v) or goalVal end
 
         -- фракции: чекбоксы в скролле (список существующих)
         local facLbl = vgui.Create("DLabel", body)
@@ -221,7 +230,10 @@ net.Receive("GRM_Heist_Open", function()
                 if c:GetChecked() then selected[#selected + 1] = fname end
             end
             table.sort(selected)
-            act(ent, "config_full", math.floor(minWang:GetValue() or 2), math.floor(goalWang:GetValue() or 500000), selected)
+            -- находка 179k: берём из OnValueChanged-переменных (надёжно)
+            local mv = tonumber(minVal) or 2
+            local gv = tonumber(goalVal) or 500000
+            act(ent, "config_full", mv, gv, selected)
         end)
     end
 

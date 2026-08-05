@@ -385,7 +385,7 @@ net.Receive("GRM_Heist_Action", function(_, ply)
     elseif action == "config_full" then
         -- Находка 179g: полная настройка — минимум, цель, СПИСОК фракций (чекбоксы)
         if not ent:CanManage(ply) then notify(ply, "Только суперадмин.", 255, 100, 100) return end
-        local minP = math.max(1, math.floor(tonumber(net.ReadUInt(8)) or 2))
+        local minP = math.max(1, math.floor(tonumber(net.ReadUInt(16)) or 2))
         local goal = math.max(1000, math.floor(tonumber(net.ReadUInt(32)) or 500000))
         local allowedTbl = net.ReadTable() or {}
         local names = {}
