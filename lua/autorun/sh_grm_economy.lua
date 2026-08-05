@@ -123,9 +123,100 @@ if SERVER then
     util.AddNetworkString(NET_INFO)
     util.AddNetworkString("GRM_Bank_Sync")    -- строка «НА СЧЁТУ» в HUD (Код 48)
     util.AddNetworkString("GRM_Bank_Request")
+    util.AddNetworkString("GRM_EcoAccess_Request")  -- настройка доступа (суперадмин)
+    util.AddNetworkString("GRM_EcoAccess_Data")     -- данные доступа
+    util.AddNetworkString("GRM_EcoAccess_Save")     -- сохранить доступ
 
     E.Data = E.Data or { version = 2, factions = {} }
     local dirty = false
+
+    -- ── ДОСТУП К ЭКОНОМИЧЕСКОМУ МЕНЮ (находка 172) ─────────────
+    -- Фракция «Нацбанк» (или любая) получает полномочия: лидер/зам/роли/отделы.
+    -- Хранилище: data/grm_economy_access.json
+    --   { [factionName] = { enabled=true, roles={}, departments={} } }
+    -- Роли ПРИОРИТЕТНЫ: если roles непуст — доступ только по ролям;
+    -- иначе (roles пуст) — по отделам; если оба пусты — вся фракция.
+    local ACCESS_FILE = "grm_economy_access.json"
+    E.Access = E.Access or {}
+    local function loadAccess()
+        if file.Exists(ACCESS_FILE, "DATA") then
+            local ok, t = pcall(util.JSONToTable, file.Read(ACCESS_FILE, "DATA") or "", false, true)
+            if ok and istable(t) then E.Access = t end
+        end
+    end
+    local function saveAccess()
+        file.CreateDir("grm_economy")
+        file.Write(ACCESS_FILE, util.TableToJSON(E.Access, true))
+    end
+    loadAccess()
+
+    -- Фракция игрока (имя) — как в остальной экономике
+    local function economyFactionOf(ply)
+        if not IsValid(ply) then return "" end
+        local sid, s64 = ply:SteamID(), ply:SteamID64()
+        if istable(Factions) then
+            for name, f in pairs(Factions) do
+                if istable(f) and istable(f.Members) and (f.Members[sid] or f.Members[s64]) then return name end
+            end
+        end
+        return ""
+    end
+    -- Роль/отдел игрока во фракции
+    local function economyMemberInfo(ply, factionName)
+        if not IsValid(ply) or factionName == "" then return nil end
+        local f = Factions and Factions[factionName]
+        if not istable(f) or not istable(f.Members) then return nil end
+        local sid, s64 = ply:SteamID(), ply:SteamID64()
+        return f.Members[sid] or f.Members[s64]
+    end
+
+    -- Может ли игрок управлять экономикой (суперадмин — всегда)
+    function E.CanManageEconomy(ply)
+        if not IsValid(ply) then return false end
+        if ply:IsSuperAdmin() then return true end
+        local factionName = economyFactionOf(ply)
+        if factionName == "" then return false end
+        local acc = E.Access[factionName]
+        if not acc or acc.enabled ~= true then return false end
+        local member = economyMemberInfo(ply, factionName)
+        if not istable(member) then return false end
+        local role = tostring(member.Role or "")
+        local dept = tostring(member.Department or "")
+        local roles = istable(acc.roles) and acc.roles or {}
+        local depts = istable(acc.departments) and acc.departments or {}
+        local function countMap(t) local n = 0 for _ in pairs(t or {}) do n = n + 1 end return n end
+        -- Роли приоритетны (считаем по pairs — ключи именные, не массив)
+        if countMap(roles) > 0 then
+            return roles[role] == true
+        end
+        if countMap(depts) > 0 then
+            return depts[dept] == true
+        end
+        -- ни ролей, ни отделов — вся фракция
+        return true
+    end
+
+    -- ── Сеть настройки доступа (только суперадмин) ──────────
+    net.Receive("GRM_EcoAccess_Request", function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        net.Start("GRM_EcoAccess_Data")
+            net.WriteTable(E.Access)
+        net.Send(ply)
+    end)
+    net.Receive("GRM_EcoAccess_Save", function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        local factionName = net.ReadString()
+        local enabled = net.ReadBool()
+        local roles = net.ReadTable() or {}
+        local depts = net.ReadTable() or {}
+        if factionName == "" then return end
+        E.Access[factionName] = { enabled = enabled == true, roles = roles, departments = depts }
+        saveAccess()
+        net.Start("GRM_EcoAccess_Data")
+            net.WriteTable(E.Access)
+        net.Send(ply)
+        if GRM.Notify then GRM.Notify(ply, "Доступ к экономике [" .. factionName .. "] сохранён", 100, 220, 130) end
+    end)
 
     -- ── Хелперы ─────────────────────────────────────────────
     local function notify(ply, msg, r, g, b)
@@ -1198,12 +1289,12 @@ if SERVER then
     end
 
     net.Receive(NET_OPEN_ADMIN, function(_, ply)
-        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        if not IsValid(ply) or not E.CanManageEconomy(ply) then return end
         sendAdminData(ply)
     end)
 
     net.Receive(NET_ADMIN_ACT, function(_, ply)
-        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        if not IsValid(ply) or not E.CanManageEconomy(ply) then return end
         local a = net.ReadTable() or {}
         local name = tostring(a.faction or "")
         local function amt(v) return math.max(0, math.floor(tonumber(v) or 0)) end
