@@ -191,6 +191,10 @@ ok(ffCode:find('local function build(a, b)', 1, true) ~= nil and ffCode:find('lo
 
 local econSrc = assert(io.open("lua/autorun/sh_grm_economy.lua", "rb"))
 local econCode = econSrc:read("*a") econSrc:close()
+-- Находка 177b: серверные ограничения административных действий
+ok(econCode:find('if not ply:IsSuperAdmin() then a.fine = nil end', 1, true) ~= nil, "сервер: save_entry отбрасывает fine для не-суперадмина (находка 177b)")
+ok(econCode:find('elseif a.action == "player_give" or a.action == "player_take" or a.action == "player_set" then', 1, true) ~= nil and econCode:find('if not ply:IsSuperAdmin() then return end', 1, true) ~= nil, "сервер: изменение балансов игроков — только суперадмин (находка 177b)")
+ok(econCode:find('elseif a.action == "config_save" and istable(a.config) then', 1, true) ~= nil and econCode:find('if not ply:IsSuperAdmin() then return end', 1, true) ~= nil, "сервер: config_save — только суперадмин (находка 177b)")
 ok(econCode:find('function GRM.Economy.BuildAdminContent', 1, true) ~= nil, "экономика: BuildAdminContent публичная")
 ok(econCode:find('function GRM.Economy.EmbedAdminPanel', 1, true) ~= nil, "экономика: EmbedAdminPanel публичная")
 ok(econCode:find('parentTabs', 1, true) ~= nil, "экономика: buildAdminUI параметризован (parentTabs)")

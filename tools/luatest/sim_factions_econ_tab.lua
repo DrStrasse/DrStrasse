@@ -72,7 +72,7 @@ net = {
 local vguiObjs = {}
 local function mkPanel(parent, cls)
   local p = { __valid = true, __cls = cls or "DPanel", __parent = parent, children = {}, props = {}, _paintFns = {} }
-  function p:SetPos() end function p:SetSize() end function p:SetText() end function p:SetFont() end
+  function p:SetPos() end function p:SetSize() end function p:SetText(t) p.__text = t end function p:SetFont() end
   function p:SetTextColor() end function p:SetColor() end function p:SetPaintBackground() end
   function p:SetWide() end function p:SetTall() end function p:SetValue() end function p:GetValue() return 0 end
   function p:SetMin() end function p:SetMax() end function p:SetDecimals() end function p:SetNumeric() end
@@ -296,6 +296,59 @@ end
 -- ── server: GRM_Eco_AdminOpen пускает суперадмина (статическая проверка) ──
 local ecoCode = assert(io.open("lua/autorun/sh_grm_economy.lua", "rb")):read("*a")
 ok(ecoCode:find("not E.CanManageEconomy(ply) then return end", 1, true) ~= nil, "сервер проверяет CanManageEconomy перед отправкой данных")
+
+-- ══════════════ НЕ-СУПЕРАДМИН (лидер/зам с доступом, находка 177b) ══════════════
+_G.__lp = { __valid = true, IsSuperAdmin = function() return false end, Nick = function() return "Зам" end, SteamID64 = function() return "76561198000000009" end }
+_G.__nextTable = testData
+recvData()
+local sheet2 = nil
+for _, ep in ipairs(econTabs) do
+  sheet2 = findSheet(ep.page, 0)
+  if sheet2 then break end
+end
+ok(IsValid(sheet2), "не-суперадмин: панель перестроена")
+
+if IsValid(sheet2) then
+  local names2 = {}
+  for _, sh in ipairs(sheet2.children) do names2[#names2 + 1] = sh.name end
+  ok(not table.HasValue(names2, "Настройки"), "не-суперадмин: вкладки «Настройки» НЕТ (находка 177b)")
+  ok(table.HasValue(names2, "Гос.бюджет") and table.HasValue(names2, "Игроки") and table.HasValue(names2, "Фракции"), "не-суперадмин: остальные вкладки на месте")
+
+  -- «Игроки»: нет кнопок Изъять/Установить
+  local playersPage2 = nil
+  for _, sh in ipairs(sheet2.children) do if sh.name == "Игроки" then playersPage2 = sh.page break end end
+  local hasTakeBtn = false
+  local function scanButtons(pnl)
+    for _, ch in ipairs(pnl.children or {}) do
+      if ch.__cls == "DButton" and (ch.__text == "Изъять" or ch.__text == "Установить наличные" or ch.__text == "Установить счёт" or ch.__text == "Выдать") then hasTakeBtn = true end
+      scanButtons(ch)
+    end
+  end
+  if playersPage2 then scanButtons(playersPage2) end
+  ok(not hasTakeBtn, "не-суперадмин: в «Игроки» нет кнопок выдать/изъять/установить (находка 177b)")
+
+  -- «Фракции»: нет подвкладки «Штрафы»
+  local facPage2 = nil
+  for _, sh in ipairs(sheet2.children) do if sh.name == "Фракции" then facPage2 = sh.page break end end
+  local hasFinesSub = false
+  if facPage2 then
+    local function scanSub(pnl)
+      for _, ch in ipairs(pnl.children or {}) do
+        if ch.__cls == "DPropertySheet" then
+          for _, sub in ipairs(ch.children or {}) do if sub.name == "Штрафы" then hasFinesSub = true end end
+        end
+        scanSub(ch)
+      end
+    end
+    scanSub(facPage2)
+  end
+  ok(not hasFinesSub, "не-суперадмин: подвкладки «Штрафы» НЕТ (находка 177b)")
+
+  -- у суперадмина всё это было (обратная проверка по прошлому sheet)
+  local namesSuper = {}
+  for _, sh in ipairs(sheet.children) do namesSuper[#namesSuper + 1] = sh.name end
+  ok(table.HasValue(namesSuper, "Настройки"), "суперадмин: вкладка «Настройки» есть")
+end
 
 print(string.format("sim_factions_econ_tab: %d ok, %d fail", pass, fail))
 if fail > 0 then os.exit(1) end

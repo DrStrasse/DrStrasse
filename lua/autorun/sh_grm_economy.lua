@@ -1302,6 +1302,10 @@ if SERVER then
 
         if a.action == "save_entry" then
             if name == "" then return end
+            -- Находка 177b: настройку ШТРАФОВ (право штрафовать фракции)
+            -- шлёт только суперадмин; лидер/зам/доступные сохраняют только
+            -- зарплаты/налоги/бюджет. Сервер отбрасывает fine-блок.
+            if not ply:IsSuperAdmin() then a.fine = nil end
             local e = entry(name)
             e.taxRate        = math.Clamp(tonumber(a.taxRate) or e.taxRate, 0, E.Config.MaxTaxRate)
             e.baseSalary     = math.max(0, math.floor(tonumber(a.baseSalary) or 0))
@@ -1390,7 +1394,11 @@ if SERVER then
             notify(ply, "Выплачено " .. money(v) .. " игроку " .. sid, 100, 220, 100)
 
         -- ── ИГРОКИ: балансы наличных и счетов ───────────────
+        -- Находка 177b: изменение балансов игроков — ТОЛЬКО суперадмин
+        -- (лидер/зам с доступом к экономике управляют бюджетом, а не
+        -- чужими деньгами).
         elseif a.action == "player_give" or a.action == "player_take" or a.action == "player_set" then
+            if not ply:IsSuperAdmin() then return end
             local sid, v = sidArg(), amt(a.amount)
             if sid == "" then return end
             if a.action == "player_give" then
@@ -1403,6 +1411,7 @@ if SERVER then
             local rec = GRM.GetAllBalances and GRM.GetAllBalances()[sid]
             notify(ply, "Баланс обновлён: " .. money(rec and rec.balance or 0), 100, 220, 100)
         elseif a.action == "player_bank_set" then
+            if not ply:IsSuperAdmin() then return end
             local sid, v = sidArg(), amt(a.amount)
             if sid == "" then return end
             local acc = account(sid)
@@ -1414,6 +1423,8 @@ if SERVER then
 
         -- ── ОБЩИЕ НАСТРОЙКИ ─────────────────────────────────
         elseif a.action == "config_save" and istable(a.config) then
+            -- Находка 177b: глобальные настройки — только суперадмин.
+            if not ply:IsSuperAdmin() then return end
             local c = a.config
             local out = istable(E.Data.config) and E.Data.config or {}
             local function num(key, mn, mx)
@@ -1851,6 +1862,12 @@ if CLIENT then
     local function buildAdminUI(d, parentTabs)
         -- parentTabs (находка 172): встроить панель в чужие вкладки (/factions).
         -- Если не задан — строим в собственном окне adminFrame.
+        -- Находка 177b: доступ к экономике может быть у лидера/зама (Нацбанк),
+        -- но АДМИНИСТРАТИВНЫЕ функции — только у суперадмина:
+        --   • вкладка «Настройки» — суперадмин;
+        --   • «Игроки»: без кнопок изъять/установить (просмотр);
+        --   • «Фракции» → «Штрафы»: настройка прав штрафов — только суперадмин.
+        local isSuper = IsValid(LocalPlayer()) and LocalPlayer():IsSuperAdmin() == true
         local tabs
         local f
         if IsValid(parentTabs) then
@@ -1927,7 +1944,8 @@ if CLIENT then
         do
             local p = sheetPanel("Обзор", "icon16/chart_bar.png")
             lbl(p, "Единая панель управления экономикой сервера", CUI.text, 12, 10, 800, "GRM_Eco_Title")
-            lbl(p, "Доступ: только superadmin. Изменения сохраняются сразу и пишутся в фин.лог.", CUI.dim, 12, 36, 900)
+            lbl(p, isSuper and "Доступ: только superadmin. Изменения сохраняются сразу и пишутся в фин.лог."
+                or "Режим: доступ к экономике фракции. Административные функции (игроки, штрафы, настройки) — только superadmin.", CUI.dim, 12, 36, 900)
 
             lbl(p, "ГОС.БЮДЖЕТ: " .. money(st.budget or 0), CUI.yellow, 12, 70, 800, "GRM_Eco_Title")
             lbl(p, ("Счетов игроков: %d | Наличными на руках: %s | На банковских счетах: %s"):format(
@@ -2004,21 +2022,28 @@ if CLIENT then
             end
 
             local sel = lbl(p, "Выберите игрока в таблице", CUI.text, 12, 414, 920)
-            local amt = amtEntry(p, 12, 442, 140)
-            local function forSel(mk)
-                return function()
-                    if not f._playerSid then return end
-                    act(mk(f._playerSid, getAmt(amt)))
+            -- Находка 177b: кнопки изменения балансов игроков (выдать/изъять/
+            -- установить) — ТОЛЬКО суперадмин. Лидер/зам с доступом к экономике
+            -- видят список (просмотр), но менять балансы не могут.
+            if isSuper then
+                local amt = amtEntry(p, 12, 442, 140)
+                local function forSel(mk)
+                    return function()
+                        if not f._playerSid then return end
+                        act(mk(f._playerSid, getAmt(amt)))
+                    end
                 end
+                local b1 = btn(p, "Выдать", CUI.green, 100, 26) b1:SetPos(160, 442)
+                b1.DoClick = forSel(function(sid, v) return { action = "player_give", sid = sid, amount = v } end)
+                local b2 = btn(p, "Изъять", CUI.red, 100, 26) b2:SetPos(266, 442)
+                b2.DoClick = forSel(function(sid, v) return { action = "player_take", sid = sid, amount = v } end)
+                local b3 = btn(p, "Установить наличные", CUI.accent, 180, 26) b3:SetPos(372, 442)
+                b3.DoClick = forSel(function(sid, v) return { action = "player_set", sid = sid, amount = v } end)
+                local b4 = btn(p, "Установить счёт", CUI.yellow, 160, 26) b4:SetPos(558, 442)
+                b4.DoClick = forSel(function(sid, v) return { action = "player_bank_set", sid = sid, amount = v } end)
+            else
+                lbl(p, "Просмотр балансов. Изменение балансов игроков — только superadmin.", CUI.dim, 12, 448, 920)
             end
-            local b1 = btn(p, "Выдать", CUI.green, 100, 26) b1:SetPos(160, 442)
-            b1.DoClick = forSel(function(sid, v) return { action = "player_give", sid = sid, amount = v } end)
-            local b2 = btn(p, "Изъять", CUI.red, 100, 26) b2:SetPos(266, 442)
-            b2.DoClick = forSel(function(sid, v) return { action = "player_take", sid = sid, amount = v } end)
-            local b3 = btn(p, "Установить наличные", CUI.accent, 180, 26) b3:SetPos(372, 442)
-            b3.DoClick = forSel(function(sid, v) return { action = "player_set", sid = sid, amount = v } end)
-            local b4 = btn(p, "Установить счёт", CUI.yellow, 160, 26) b4:SetPos(558, 442)
-            b4.DoClick = forSel(function(sid, v) return { action = "player_bank_set", sid = sid, amount = v } end)
 
             local function showSel(sid)
                 local rec = (d.players or {})[sid]
@@ -2173,73 +2198,82 @@ if CLIENT then
                 end
 
                 -- ── ПОДВКЛАДКА: ШТРАФЫ (доступ фракции к /fine) ──
-                local pf = vgui.Create("DPanel", sub)
-                pf:SetPaintBackground(false)
-                sub:AddSheet("Штрафы", pf, "icon16/accept.png")
+                -- Находка 177b: право настраивать штрафы — ТОЛЬКО суперадмин.
+                -- Лидер/зам/доступные видят только «Зарплаты».
+                local pf = nil
+                if isSuper then
+                    pf = vgui.Create("DPanel", sub)
+                    pf:SetPaintBackground(false)
+                    sub:AddSheet("Штрафы", pf, "icon16/accept.png")
 
-                label(pf, "Доступ фракции [" .. name .. "] к системе штрафов", 10, 8, CUI.text, 560)
+                    label(pf, "Доступ фракции [" .. name .. "] к системе штрафов", 10, 8, CUI.text, 560)
 
-                local chEn = vgui.Create("DCheckBoxLabel", pf)
-                chEn:SetPos(10, 36) chEn:SetSize(560, 22)
-                chEn:SetText("Фракции РАЗРЕШЕНО штрафовать (команда /fine)")
-                chEn:SetTextColor(CUI.text) chEn:SetValue(fp.enabled and 1 or 0)
+                    local chEn = vgui.Create("DCheckBoxLabel", pf)
+                    chEn:SetPos(10, 36) chEn:SetSize(560, 22)
+                    chEn:SetText("Фракции РАЗРЕШЕНО штрафовать (команда /fine)")
+                    chEn:SetTextColor(CUI.text) chEn:SetValue(fp.enabled and 1 or 0)
 
-                local chAll = vgui.Create("DCheckBoxLabel", pf)
-                chAll:SetPos(10, 62) chAll:SetSize(560, 22)
-                chAll:SetText("Штрафовать могут ВСЕ члены фракции (выкл — лидер + роли ниже)")
-                chAll:SetTextColor(CUI.text) chAll:SetValue(fp.allRoles and 1 or 0)
+                    local chAll = vgui.Create("DCheckBoxLabel", pf)
+                    chAll:SetPos(10, 62) chAll:SetSize(560, 22)
+                    chAll:SetText("Штрафовать могут ВСЕ члены фракции (выкл — лидер + роли ниже)")
+                    chAll:SetTextColor(CUI.text) chAll:SetValue(fp.allRoles and 1 or 0)
 
-                local chOwn = vgui.Create("DCheckBoxLabel", pf)
-                chOwn:SetPos(10, 88) chOwn:SetSize(560, 22)
-                chOwn:SetText("Можно штрафовать СВОИХ членов фракции")
-                chOwn:SetTextColor(CUI.text) chOwn:SetValue(fp.ownFaction and 1 or 0)
+                    local chOwn = vgui.Create("DCheckBoxLabel", pf)
+                    chOwn:SetPos(10, 88) chOwn:SetSize(560, 22)
+                    chOwn:SetText("Можно штрафовать СВОИХ членов фракции")
+                    chOwn:SetTextColor(CUI.text) chOwn:SetValue(fp.ownFaction and 1 or 0)
 
-                local chOther = vgui.Create("DCheckBoxLabel", pf)
-                chOther:SetPos(10, 114) chOther:SetSize(560, 22)
-                chOther:SetText("Можно штрафовать членов ДРУГИХ ФРАКЦИЙ")
-                chOther:SetTextColor(CUI.text) chOther:SetValue(fp.otherFactions and 1 or 0)
+                    local chOther = vgui.Create("DCheckBoxLabel", pf)
+                    chOther:SetPos(10, 114) chOther:SetSize(560, 22)
+                    chOther:SetText("Можно штрафовать членов ДРУГИХ ФРАКЦИЙ")
+                    chOther:SetTextColor(CUI.text) chOther:SetValue(fp.otherFactions and 1 or 0)
 
-                local chCiv = vgui.Create("DCheckBoxLabel", pf)
-                chCiv:SetPos(10, 140) chCiv:SetSize(560, 22)
-                chCiv:SetText("Можно штрафовать ГРАЖДАН (игроков без фракции)")
-                chCiv:SetTextColor(CUI.text) chCiv:SetValue(fp.civilians and 1 or 0)
+                    local chCiv = vgui.Create("DCheckBoxLabel", pf)
+                    chCiv:SetPos(10, 140) chCiv:SetSize(560, 22)
+                    chCiv:SetText("Можно штрафовать ГРАЖДАН (игроков без фракции)")
+                    chCiv:SetTextColor(CUI.text) chCiv:SetValue(fp.civilians and 1 or 0)
 
-                label(pf, "Лимит суммы штрафа (0 = общий максимум):", 10, 174)
-                local maxW = wang(pf, 330, 172, 110, fp.maxAmount or 0, 100000000)
+                    label(pf, "Лимит суммы штрафа (0 = общий максимум):", 10, 174)
+                    local maxW = wang(pf, 330, 172, 110, fp.maxAmount or 0, 100000000)
 
-                label(pf, "Роли с правом штрафовать:", 10, 206, CUI.text, 340)
-                local rolesFine = vgui.Create("DScrollPanel", pf)
-                rolesFine:SetPos(10, 230) rolesFine:SetSize(340, 240)
-                rolesFine.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
-                for _, rName in ipairs(fd.roles or {}) do
-                    local c = vgui.Create("DCheckBoxLabel", rolesFine)
-                    c:Dock(TOP) c:SetTall(20) c:DockMargin(8, 1, 4, 1)
-                    c:SetText(rName) c:SetTextColor(CUI.text)
-                    c:SetValue((fp.roles or {})[rName] and 1 or 0)
-                    fineChks[rName] = c
+                    label(pf, "Роли с правом штрафовать:", 10, 206, CUI.text, 340)
+                    local rolesFine = vgui.Create("DScrollPanel", pf)
+                    rolesFine:SetPos(10, 230) rolesFine:SetSize(340, 240)
+                    rolesFine.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
+                    for _, rName in ipairs(fd.roles or {}) do
+                        local c = vgui.Create("DCheckBoxLabel", rolesFine)
+                        c:Dock(TOP) c:SetTall(20) c:DockMargin(8, 1, 4, 1)
+                        c:SetText(rName) c:SetTextColor(CUI.text)
+                        c:SetValue((fp.roles or {})[rName] and 1 or 0)
+                        fineChks[rName] = c
+                    end
+
+                    label(pf, "Правила: superadmin может всегда. Лидер фракции —", 370, 230, CUI.dim, 340)
+                    label(pf, "всегда, если включён сам доступ. Отмеченные роли", 370, 252, CUI.dim, 340)
+                    label(pf, "штрафуют дополнительно к лидеру. Категории целей", 370, 274, CUI.dim, 340)
+                    label(pf, "(свои / другие фракции / граждане) настраиваются", 370, 296, CUI.dim, 340)
+                    label(pf, "отдельно. Лимит суммы перекрывает общий лимит.", 370, 318, CUI.dim, 340)
                 end
 
-                label(pf, "Правила: superadmin может всегда. Лидер фракции —", 370, 230, CUI.dim, 340)
-                label(pf, "всегда, если включён сам доступ. Отмеченные роли", 370, 252, CUI.dim, 340)
-                label(pf, "штрафуют дополнительно к лидеру. Категории целей", 370, 274, CUI.dim, 340)
-                label(pf, "(свои / другие фракции / граждане) настраиваются", 370, 296, CUI.dim, 340)
-                label(pf, "отдельно. Лимит суммы перекрывает общий лимит.", 370, 318, CUI.dim, 340)
-
-                -- ЕДИНОЕ сохранение: зарплаты + права штрафов одним пакетом
+                -- ЕДИНОЕ сохранение: зарплаты + (для суперадмина) права штрафов
+                -- Находка 177b: настройку штрафов (fine) лидер/зам/доступные НЕ
+                -- отправляют — сервер её тоже игнорирует для не-суперадминов.
                 local function doSave()
                     local roles, depts = {}, {}
                     for k, wn in pairs(rolesTbl) do roles[k] = math.floor(tonumber(wn:GetValue()) or 0) end
                     for k, wn in pairs(deptsTbl) do depts[k] = math.floor(tonumber(wn:GetValue()) or 0) end
-                    local froles = {}
-                    for k, c in pairs(fineChks) do if c:GetChecked() then froles[k] = true end end
-                    act({
+                    local payload = {
                         action = "save_entry", faction = name,
                         taxRate = math.Clamp((tonumber(taxW:GetValue()) or 0) / 100, 0, 1),
                         baseSalary = math.floor(tonumber(baseW:GetValue()) or 0),
                         salaryInterval = math.floor(tonumber(intW:GetValue()) or 600),
                         payFromBudget = pfb:GetChecked(),
                         roles = roles, departments = depts,
-                        fine = {
+                    }
+                    if isSuper then
+                        local froles = {}
+                        for k, c in pairs(fineChks) do if c:GetChecked() then froles[k] = true end end
+                        payload.fine = {
                             enabled = chEn:GetChecked(),
                             allRoles = chAll:GetChecked(),
                             ownFaction = chOwn:GetChecked(),
@@ -2247,8 +2281,9 @@ if CLIENT then
                             civilians = chCiv:GetChecked(),
                             maxAmount = math.max(0, math.floor(tonumber(maxW:GetValue()) or 0)),
                             roles = froles,
-                        },
-                    })
+                        }
+                    end
+                    act(payload)
                     -- окно НЕ переоткрываем: сервер пришлёт свежие данные,
                     -- и этот же фрейм пересоберётся через buildAdminUI.
                 end
@@ -2262,9 +2297,11 @@ if CLIENT then
                     act({ action = "pay_now", faction = name })
                 end
 
-                local saveF = btn(pf, "Сохранить", CUI.green, 150, 32)
-                saveF:SetPos(10, 520)
-                saveF.DoClick = doSave
+                if isSuper and IsValid(pf) then
+                    local saveF = btn(pf, "Сохранить", CUI.green, 150, 32)
+                    saveF:SetPos(10, 520)
+                    saveF.DoClick = doSave
+                end
 
                 -- GRM-FIX: применяем РЕАЛЬНЫЕ размеры страниц при раскладке
                 pz.PerformLayout = function(_, w, h)
@@ -2279,9 +2316,11 @@ if CLIENT then
                     if IsValid(saveZ)    then saveZ:SetPos(10, h - 42) end
                     if IsValid(payNow)   then payNow:SetPos(170, h - 42) end
                 end
-                pf.PerformLayout = function(_, w, h)
-                    if IsValid(rolesFine) then rolesFine:SetSize(340, math.max(80, h - 230 - 56)) end
-                    if IsValid(saveF)     then saveF:SetPos(10, h - 42) end
+                if isSuper and IsValid(pf) then
+                    pf.PerformLayout = function(_, w, h)
+                        if IsValid(rolesFine) then rolesFine:SetSize(340, math.max(80, h - 230 - 56)) end
+                        if IsValid(saveF)     then saveF:SetPos(10, h - 42) end
+                    end
                 end
             end
 
@@ -2304,8 +2343,10 @@ if CLIENT then
             histBox(p, d.log or {}, 12, 40, 932, 480)
         end
 
-        -- ═══ ВКЛАДКА 6: НАСТРОЙКИ ═══
-        do
+        -- ═══ ВКЛАДКА 6: НАСТРОЙКИ (ТОЛЬКО СУПЕРАДМИН, находка 177b) ═══
+        -- Лидер/зам/доступные её не видят: глобальные настройки экономики —
+        -- прерогатива владельца сервера.
+        if isSuper then do
             local p = sheetPanel("Настройки", "icon16/cog.png")
             lbl(p, "Общие настройки экономики — применяются сразу, хранятся в grm_economy.json", CUI.text, 12, 8, 920)
 
@@ -2368,7 +2409,7 @@ if CLIENT then
                 if mdl ~= "" then out.BankTerminalModel = mdl end
                 act({ action = "config_save", config = out })
             end
-        end
+        end end -- if isSuper (вкладка «Настройки»)
     end
 
     -- Встраивание панели экономики в другие меню (находка 172: /factions)
