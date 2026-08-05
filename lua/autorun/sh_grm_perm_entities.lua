@@ -380,6 +380,53 @@ if SERVER then
         return true
     end
 
+    -- Находка 179r: «СОХРАНИТЬ НАСТРОЙКИ» отмывщика (и любых сущностей)
+    -- молча теряло настройки, если перм-записи ещё не было: UpdateEntry
+    -- no-op, и после рестарта — дефолты. Upsert: запись есть → обновляет
+    -- data (как UpdateEntry), нет → создаёт (как /permadd, но без прицела).
+    -- Возвращает: "added" / "updated" / "limit" / "invalid" / "noclass" / "savefail".
+    GRM.PermData.Upsert = function(ent)
+        if not IsValid(ent) then return "invalid" end
+        local class = tostring(ent:GetClass() or "")
+        if not PERM_CLASSES[class] then return "noclass" end
+        local extractFn = GRM.PermData and GRM.PermData.Extract and GRM.PermData.Extract[class]
+        local map = game.GetMap()
+        local pos = ent:GetPos()
+        local np = { x = pos.x, y = pos.y, z = pos.z }
+        local list = loadList()
+        -- запись уже есть на месте — обновляем данные экземпляра
+        for _, rec in ipairs(list) do
+            if rec.map == map and rec.class == class and sameSpot(rec.pos, np, rec.class, class) then
+                if extractFn then
+                    local okX, data = pcall(extractFn, ent)
+                    if okX and istable(data) then rec.data = data end
+                end
+                saveList(list)
+                return "updated"
+            end
+        end
+        -- записи нет — создаём (лимит как в /permadd)
+        if countForMap(list, map) >= PERM_MAX then return "limit" end
+        local ang = ent:GetAngles()
+        local model = ""
+        pcall(function() model = tostring(ent:GetModel() or "") end)
+        local rec = {
+            map = map, class = class, model = model,
+            pos = np,
+            ang = { p = ang.p, y = ang.y, r = ang.r },
+        }
+        if extractFn then
+            local okX, data = pcall(extractFn, ent)
+            if okX and istable(data) then rec.data = data end
+        end
+        list[#list + 1] = rec
+        if saveList(list) then
+            print(("[GRM Perm] Upsert: создана запись %s @ %d %d %d"):format(class, np.x, np.y, np.z))
+            return "added"
+        end
+        return "savefail"
+    end
+
     local function loadPerm(ply)
         local spawned, skipped = spawnAll("ручная загрузка")
         if spawned == 0 and skipped == 0 then

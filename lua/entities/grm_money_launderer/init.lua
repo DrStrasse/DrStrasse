@@ -406,6 +406,27 @@ function ENT:Use(ply)
     self:SendMenu(ply)
 end
 
+-- Находка 179r: сохранение настроек в перм-базу с ОБРАТНОЙ СВЯЗЬЮ.
+-- Раньше «СОХРАНИТЬ НАСТРОЙКИ» молча ничего не писал, если перм-записи
+-- нет (UpdateEntry no-op) — после рестарта настройки слетали. Теперь
+-- Upsert сам создаёт запись, если её нет, и игрок ВИДИТ результат.
+local function persistConfig(ent, ply)
+    if not (GRM.PermData and GRM.PermData.Upsert) then
+        notify(ply, "Перм-система недоступна — настройки не переживут рестарт!", 255, 190, 90)
+        return
+    end
+    local res = GRM.PermData.Upsert(ent)
+    if res == "added" then
+        notify(ply, "Перм-запись СОЗДАНА — настройки переживут рестарт.", 100, 220, 130)
+    elseif res == "updated" then
+        notify(ply, "Перм-запись ОБНОВЛЕНА — настройки переживут рестарт.", 100, 220, 130)
+    elseif res == "limit" then
+        notify(ply, "Лимит перм-записей на карту — настройки НЕ сохранены. Снимите лишние (/permremove).", 255, 120, 100)
+    elseif res == "savefail" then
+        notify(ply, "Ошибка записи перм-базы — смотри консоль сервера.", 255, 120, 100)
+    end
+end
+
 net.Receive("GRM_Heist_Action", function(_, ply)
     if not IsValid(ply) then return end
     local ent = net.ReadEntity()
@@ -427,6 +448,7 @@ net.Receive("GRM_Heist_Action", function(_, ply)
         local hit = tr and tr.Entity
         if IsValid(hit) then
             ent:SetHeistTarget(hit:GetPos())
+            persistConfig(ent, ply)
             notify(ply, "Цель ивента установлена: " .. tostring(hit:GetClass() or "?") .. " (" .. ("%.0f %.0f %.0f"):format(hit:GetPos().x, hit:GetPos().y, hit:GetPos().z) .. ")", 100, 220, 130)
         else
             notify(ply, "Наведите прицел на хранилище/место цели.", 255, 190, 90)
@@ -434,17 +456,18 @@ net.Receive("GRM_Heist_Action", function(_, ply)
     elseif action == "clear_target" then
         if not ent:CanManage(ply) then notify(ply, "Только суперадмин.", 255, 100, 100) return end
         ent:SetHeistTarget(Vector(0, 0, 0))
+        persistConfig(ent, ply)
         notify(ply, "Цель ивента сброшена (авто: ближайшее хранилище).", 100, 220, 255)
     elseif action == "config" then
         if not ent:CanManage(ply) then notify(ply, "Только суперадмин.", 255, 100, 100) return end
-        local minP = math.max(1, math.floor(tonumber(net.ReadUInt(8)) or 2))
+        -- Находка 179r: 16 бит (было 8 — минимум >255 обрезался)
+        local minP = math.max(1, math.floor(tonumber(net.ReadUInt(16)) or 2))
         local goal = math.max(1000, math.floor(tonumber(net.ReadUInt(32)) or 500000))
         local allowed = string.sub(string.Trim(net.ReadString() or ""), 1, 200)
         ent:SetMinParticipants(minP)
         ent:SetGoalMoney(goal)
         ent:SetAllowedFactions(allowed)
-        -- автообновление перм-записи (конфиг переживает рестарт)
-        if GRM.PermData and GRM.PermData.UpdateEntry then GRM.PermData.UpdateEntry(ent) end
+        persistConfig(ent, ply)
         notify(ply, "Отмывщик настроен: минимум " .. minP .. ", цель " .. money(goal) .. ", фракции [" .. allowed .. "]", 100, 220, 130)
     elseif action == "config_full" then
         -- Находка 179g: полная настройка — минимум, цель, СПИСОК фракций (чекбоксы)
@@ -461,7 +484,7 @@ net.Receive("GRM_Heist_Action", function(_, ply)
         ent:SetMinParticipants(minP)
         ent:SetGoalMoney(goal)
         ent:SetAllowedFactions(allowed)
-        if GRM.PermData and GRM.PermData.UpdateEntry then GRM.PermData.UpdateEntry(ent) end
+        persistConfig(ent, ply)
         notify(ply, "Отмывщик настроен: минимум " .. minP .. ", цель " .. money(goal) .. ", фракций: " .. #names, 100, 220, 130)
     end
     ent:SendMenu(ply)

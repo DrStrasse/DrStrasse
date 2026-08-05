@@ -372,6 +372,38 @@ _G.__readTbl = {}
 recvA(0, admin2)
 ok(ld:GetAllowedFactions() == "", "config_full: пустой список = любые")
 
+-- ══════════════ 5b. ПЕРМ-ЦИКЛ Extract/Apply (находка 179r) ══════════════
+-- Настроенная энтити -> Extract -> данные; свежая энтити -> Apply -> значения.
+local function mkPermEnt(minP, goal, allowed, htpx)
+  local e = { __minP = minP, __goal = goal, __allowed = allowed, __htp = htpx and Vector(htpx, 900, 50) or Vector(0, 0, 0) }
+  e.GetMinParticipants = function(s) return s.__minP or 2 end
+  e.SetMinParticipants = function(s, v) s.__minP = v end
+  e.GetGoalMoney = function(s) return s.__goal or 500000 end
+  e.SetGoalMoney = function(s, v) s.__goal = v end
+  e.GetAllowedFactions = function(s) return s.__allowed or "" end
+  e.SetAllowedFactions = function(s, v) s.__allowed = v end
+  e.GetHeistTargetPos = function(s) return s.__htp or Vector(0, 0, 0) end
+  e.SetHeistTargetPos = function(s, v) s.__htp = v end
+  return e
+end
+local srcA = mkPermEnt(5, 900000, "Mafia,Polizei", 900)
+local dataA = GRM.PermData.Extract["grm_money_launderer"](srcA)
+ok(dataA and dataA.minParticipants == 5 and dataA.goalMoney == 900000, "перм: Extract сохраняет минимум/цель (находка 179r)")
+ok(dataA and dataA.allowedFactions == "Mafia,Polizei", "перм: Extract сохраняет фракции")
+ok(dataA and dataA.heistTarget and dataA.heistTarget.x == 900, "перм: Extract сохраняет цель ивента")
+local dstA = mkPermEnt(nil, nil, nil, nil)
+GRM.PermData.Apply["grm_money_launderer"](dstA, dataA)
+ok(dstA:GetMinParticipants() == 5 and dstA:GetGoalMoney() == 900000, "перм: Apply применяет минимум/цель")
+ok(dstA:GetAllowedFactions() == "Mafia,Polizei", "перм: Apply применяет фракции")
+ok(dstA:GetHeistTargetPos().x == 900, "перм: Apply применяет цель ивента")
+local srcB = mkPermEnt(nil, nil, nil, nil)
+local dataB = GRM.PermData.Extract["grm_money_launderer"](srcB)
+ok(dataB.minParticipants == 2 and dataB.goalMoney == 500000 and dataB.allowedFactions == "" and dataB.heistTarget == nil, "перм: Extract свежей энтити = дефолты, без цели")
+pcall(GRM.PermData.Apply["grm_money_launderer"], dstA, { minParticipants = "abc", goalMoney = "zzz" })
+ok(dstA:GetMinParticipants() == 2 and dstA:GetGoalMoney() == 500000, "перм: битые данные не падают — фолбэк 2/500000")
+pcall(GRM.PermData.Apply["grm_money_launderer"], dstA, nil)
+ok(dstA:GetMinParticipants() == 2, "перм: Apply(nil) не падает")
+
 local lin3 = assert(io.open("lua/entities/grm_money_launderer/init.lua", "rb")):read("*a")
 ok(lin3:find('SelectWeightedSequence(ACT_IDLE)', 1, true) ~= nil and lin3:find('SetAutomaticFrameAdvance(true)', 1, true) ~= nil and lin3:find('MOVETYPE_NONE', 1, true) ~= nil and lin3:find('SOLID_BBOX', 1, true) ~= nil and lin3:find('COLLISION_GROUP_NPC', 1, true) ~= nil, "поза: как у торгашей (BBOX/MOVETYPE_NONE/NPC-коллизия/автокадры/idle, находка 179i)")
 ok(lin3:find('self:SetHullType', 1, true) == nil and lin3:find('SOLID_VPHYSICS', 1, true) == nil, "поза: нет физики и NPC-методов (не падает)")
@@ -391,6 +423,9 @@ ok(lcl5:find('SetSize(600, 760)', 1, true) ~= nil, "клиент: меню ши�
 ok(lcl5:find('СОХРАНИТЬ НАСТРОЙКИ', 1, true) ~= nil and lcl5:find('tall or 40', 1, true) ~= nil and lcl5:find(', 54)', 1, true) ~= nil, "клиент: крупная кнопка «СОХРАНИТЬ НАСТРОЙКИ» (находка 179l)")
 local lin4 = assert(io.open("lua/entities/grm_money_launderer/init.lua", "rb")):read("*a")
 ok(lin4:find('net.ReadUInt(16)', 1, true) ~= nil, "сервер: чтение minP 16 бит (находка 179k)")
+ok(lin4:find('GRM.PermData.Upsert', 1, true) ~= nil and lin4:find('persistConfig', 1, true) ~= nil, "сервер: сохранение через Upsert + persistConfig (находка 179r)")
+ok(lin4:find('Перм-запись СОЗДАНА', 1, true) ~= nil and lin4:find('Перм-запись ОБНОВЛЕНА', 1, true) ~= nil, "сервер: обратная связь о сохранении настроек (находка 179r)")
+ok(lin4:find('action == "config" then', 1, true) ~= nil and not lin4:find('ReadUInt(8)', 1, true), "сервер: старый config тоже 16 бит (нет ReadUInt(8), находка 179r)")
 ok(lin4:find('function ENT:LeaveJob', 1, true) ~= nil and lin4:find('action == "leave"', 1, true) ~= nil, "сервер: LeaveJob + action leave (находка 179m)")
 ok(lin4:find('ОТМЕНА УЧАСТИЯ В МОМЕНТ ИВЕНТА ЗАПРЕЩЕНА', 1, true) ~= nil and lin4:find('if self:GetEventActive() then', 1, true) ~= nil, "сервер: LeaveJob запрещён во время ивента (находка 179p)")
 local lcl6 = assert(io.open("lua/entities/grm_money_launderer/cl_init.lua", "rb")):read("*a")
