@@ -1858,3 +1858,39 @@ factions, конкретнее ролям и отделам. Роли приор
 Поймана и исправлена ошибка: `#roles` по именным ключам = 0 → countMap по pairs.
 
 Проверки: GLua 383/0; симы 39/39; roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 172b (05.08.2026): вкладка «Экономика» в /factions — полная панель прямо во вкладке
+
+Владелец (со скриншотом): «вкладка Экономика есть, её нужно переделать» —
+раньше это была кнопка «ОТКРЫТЬ ЭКОНОМИЧЕСКУЮ ПАНЕЛЬ», а нужно, чтобы вся
+финансовая панель была прямо во вкладке /factions.
+
+Сделано:
+1. **sh_grm_economy.lua**: `buildAdminUI(d, parentTabs)` параметризован —
+   если передан готовый DPropertySheet, вкладки строятся в нём (без создания
+   adminFrame/очистки окна); иначе — как раньше (отдельное окно /feco_admin).
+   Публичные точки:
+   - `GRM.Economy.BuildAdminContent(parent, d)` — строит DPropertySheet с
+     полной панелью (Обзор/Гос.бюджет/Игроки/Фракции-ЗП/Штрафы/Фин.лог/
+     Настройки) внутри parent;
+   - `GRM.Economy.EmbedAdminPanel(panel)` — регистрирует встроенную панель;
+   - NET_ADMIN_DATA дополнительно перестраивает встроенную панель через
+     `GRM.Economy._embeddedBuild`.
+2. **sh_faction_fixes.lua**: вкладка «Экономика» (хук GRM_FactionsAdmin_BuildTabs)
+   теперь строит ПОЛНУЮ панель через BuildAdminContent — лидер/зам Нацбанка
+   прямо в /factions видят гос.бюджет, перечисления во фракции/игрокам,
+   изъятие/пополнение, налоги, проценты штрафов, зарплаты. При открытии
+   вкладки запрашиваются данные (GRM_Eco_AdminOpen), сервер сам проверяет
+   CanManageEconomy; при ответе панель перестраивается.
+3. **sh_factions.lua**: `/factions` на сервере пускает CanManageEconomy
+   (не-лидер с доступом — зам Нацбанка) в админ-меню; клиент для не-лидера
+   тоже шлёт запрос (сервер решит); хук GRM_FactionsAdmin_BuildTabs вызван и
+   в OpenLeaderMenu.
+
+Тест sim_econ_access расширен 25 → **34** (вкладка /factions: OpenEconomyPanel,
+BuildAdminContent, EmbedAdminPanel, запрос данных; экономика: публичные точки,
+parentTabs; /factions: CanManageEconomy, хук в OpenLeaderMenu).
+
+Проверки: GLua 383/0; симы 39/39; roundtrip 14/14. dist пересобран.

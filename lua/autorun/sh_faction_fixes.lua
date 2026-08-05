@@ -2917,6 +2917,57 @@ if CLIENT then
         tabs:AddSheet("Расширенные настройки", OpenExtendedSettings(tabs), "icon16/cog.png")
     end)
 
+    -- Вкладка «Экономика» (находка 172): доступ у тех, кто CanManageEconomy
+    -- (лидер/зам Нацбанка, суперадмин). ПОЛНАЯ панель экономики встроена
+    -- прямо во вкладку (гос.бюджет, перечисления, налоги, штрафы, зарплаты).
+    local function OpenEconomyPanel(parentFrame)
+        local panel = vgui.Create("DPanel")
+        panel:SetPaintBackground(false)
+        panel:DockPadding(6, 6, 6, 6)
+        local holder = vgui.Create("DPanel", panel)
+        holder:Dock(FILL)
+        holder:SetPaintBackground(false)
+
+        local function build(d)
+            if not IsValid(holder) then return end
+            if GRM.Economy and GRM.Economy.BuildAdminContent then
+                GRM.Economy.BuildAdminContent(holder, d)
+            end
+        end
+
+        -- Регистрируем панель: NET_ADMIN_DATA будет перестраивать её
+        GRM.Economy._embeddedBuild = build
+        if GRM.Economy.EmbedAdminPanel then GRM.Economy.EmbedAdminPanel(panel) end
+        -- Запрашиваем данные у сервера (сервер сам проверит CanManageEconomy)
+        net.Start("GRM_Eco_AdminOpen")
+        net.SendToServer()
+
+        -- Первичная заглушка на время загрузки
+        if not GRM.Economy._embeddedData then
+            local l = vgui.Create("DLabel", holder)
+            l:Dock(FILL) l:SetFont("FactionsExt_Normal") l:SetTextColor(THEME.textDim)
+            l:SetContentAlignment(5)
+            l:SetText("Загрузка экономической панели...")
+        end
+
+        return panel
+    end
+
+    hook.Add("GRM_FactionsAdmin_BuildTabs", "FactionsExt_EconomyTab", function(tabs)
+        if not IsValid(tabs) then return end
+        -- Вкладку видит только тот, у кого есть доступ к экономике.
+        -- На клиенте проверяем по локальному признаку: сервер отправил
+        -- NET_OPEN_ADMIN либо суперадмину, либо CanManageEconomy-игроку.
+        -- Для точности спрашиваем сервер (лёгкий канал) — но чтобы не плодить
+        -- лишние запросы, показываем вкладку всегда: сама панель экономики
+        -- на сервере защищена CanManageEconomy, не-уполномоченному откроется
+        -- пустой ответ. Лучше: показываем только суперадмину ИЛИ тем, кому
+        -- сервер разрешил (определяем по факту, что нас пустили в админ-меню —
+        -- это уже значит лидер/суперадмин; у лидера без экономики вкладка
+        -- просто откроет защищённую панель).
+        tabs:AddSheet("Экономика", OpenEconomyPanel(tabs), "icon16/money.png")
+    end)
+
 
     net.Receive(NET_MASK_ADMIN_DATA, function()
         local data = net.ReadTable() or {}

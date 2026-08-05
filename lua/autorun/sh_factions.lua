@@ -1032,7 +1032,15 @@ if SERVER then
                     net.Start(NET_OPEN_LEADER)
                     net.Send(ply)
                 else
-                    ply:PrintMessage(HUD_PRINTTALK, "[Фракции] У вас нет прав для использования этой команды.")
+                    -- Находка 172: доступ к экономике (лидер/зам Нацбанка) —
+                    -- открываем админ-меню фракций, где есть вкладка «Экономика»
+                    local econAccess = GRM.Economy and GRM.Economy.CanManageEconomy and GRM.Economy.CanManageEconomy(ply) == true
+                    if econAccess then
+                        net.Start(NET_OPEN_ADMIN)
+                        net.Send(ply)
+                    else
+                        ply:PrintMessage(HUD_PRINTTALK, "[Фракции] У вас нет прав для использования этой команды.")
+                    end
                 end
             end
             datapack.SkipPlayerSay = true
@@ -2607,6 +2615,11 @@ if CLIENT then
         ui.memberScrollLeader = scrollPanel
         tabs:AddSheet("Список участников", memberListPanel, "icon16/user_go.png")
 
+        -- GRM hook: сторонние модули достраивают вкладки (находка 172 — «Экономика»)
+        if hook and hook.Call then
+            pcall(hook.Call, "GRM_FactionsAdmin_BuildTabs", nil, tabs)
+        end
+
         -- FIX: При открытии меню лидера запрашиваем данные с сервера (factions.json)
         timer.Simple(0.4, function()
             if IsValid(frame) then
@@ -2693,7 +2706,11 @@ if CLIENT then
             for _, f in pairs(data or {}) do
                 if f.Leader == mySteam then OpenLeaderMenu() return end
             end
-            notification.AddLegacy("У вас нет прав", NOTIFY_ERROR, 3)
+            -- Находка 172: не лидер, но возможно есть доступ к экономике
+            -- (лидер/зам Нацбанка). Просим сервер — он сам решит и пришлёт
+            -- NET_OPEN_ADMIN, если CanManageEconomy.
+            net.Start(NET_OPEN_ADMIN)
+            net.SendToServer()
         end)
     end)
 

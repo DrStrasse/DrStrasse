@@ -1848,23 +1848,31 @@ if CLIENT then
         net.SendToServer()
     end
 
-    local function buildAdminUI(d)
-        if not IsValid(adminFrame) then return end
-        -- GRM-FIX: НЕ adminFrame:Clear() — он удалял служебные дети DFrame
-        -- (btnClose/btnMaxim/btnMinim/lblTitle), из-за чего PerformLayout
-        -- падал с "Tried to use a NULL Panel!" (dframe.lua, SetPos).
-        -- Снимаем только наши панели, потомки DFrame не трогаем.
-        for _, ch in ipairs(adminFrame:GetChildren()) do
-            if ch ~= adminFrame.btnClose and ch ~= adminFrame.btnMaxim
-                and ch ~= adminFrame.btnMinim and ch ~= adminFrame.lblTitle
-                and ch ~= adminFrame.imgIcon and not ch._grmChrome then
-                ch:Remove()
+    local function buildAdminUI(d, parentTabs)
+        -- parentTabs (находка 172): встроить панель в чужие вкладки (/factions).
+        -- Если не задан — строим в собственном окне adminFrame.
+        local tabs
+        local f
+        if IsValid(parentTabs) then
+            tabs = parentTabs
+            f = parentTabs
+        else
+            if not IsValid(adminFrame) then return end
+            -- GRM-FIX: НЕ adminFrame:Clear() — он удалял служебные дети DFrame
+            -- (btnClose/btnMaxim/btnMinim/lblTitle), из-за чего PerformLayout
+            -- падал с "Tried to use a NULL Panel!" (dframe.lua, SetPos).
+            -- Снимаем только наши панели, потомки DFrame не трогаем.
+            for _, ch in ipairs(adminFrame:GetChildren()) do
+                if ch ~= adminFrame.btnClose and ch ~= adminFrame.btnMaxim
+                    and ch ~= adminFrame.btnMinim and ch ~= adminFrame.lblTitle
+                    and ch ~= adminFrame.imgIcon and not ch._grmChrome then
+                    ch:Remove()
+                end
             end
+            f = adminFrame
+            tabs = vgui.Create("DPropertySheet", f)
+            tabs:Dock(FILL) tabs:DockMargin(8, 44, 8, 8)
         end
-
-        local f = adminFrame
-        local tabs = vgui.Create("DPropertySheet", f)
-        tabs:Dock(FILL) tabs:DockMargin(8, 44, 8, 8)
 
         -- запоминаем активную вкладку, чтобы пересборка свежими данными
         -- возвращала админа на ту же вкладку (без переоткрытия окна)
@@ -2363,12 +2371,37 @@ if CLIENT then
         end
     end
 
+    -- Встраивание панели экономики в другие меню (находка 172: /factions)
+    GRM.Economy.EmbeddedAdmin = nil
+    function GRM.Economy.BuildAdminContent(parent, d)
+        if not IsValid(parent) then return end
+        parent:Clear()
+        local tabs = vgui.Create("DPropertySheet", parent)
+        tabs:Dock(FILL)
+        buildAdminUI(d or {}, tabs)
+        return tabs
+    end
+    function GRM.Economy.EmbedAdminPanel(panel)
+        if IsValid(panel) then
+            GRM.Economy.EmbeddedAdmin = panel
+            panel.OnRemove = function()
+                if GRM.Economy.EmbeddedAdmin == panel then GRM.Economy.EmbeddedAdmin = nil end
+            end
+        else
+            GRM.Economy.EmbeddedAdmin = nil
+        end
+    end
+
     net.Receive(NET_ADMIN_DATA, function()
         local d = net.ReadTable() or {}
         if IsValid(adminFrame) then
             -- окно НЕ переоткрывается; UI пересобирается на месте,
             -- выбранная фракция восстанавливается через _restoreFaction.
             buildAdminUI(d)
+        end
+        -- обновить встроенную панель (/factions → «Экономика»)
+        if IsValid(GRM.Economy.EmbeddedAdmin) and isfunction(GRM.Economy._embeddedBuild) then
+            GRM.Economy._embeddedBuild(GRM.Economy.EmbeddedAdmin, d)
         end
     end)
 

@@ -179,5 +179,24 @@ ok(hubCode:find("CanManageEconomy", 1, true) ~= nil, "хаб используе�
 ok(hubCode:find("econAccess", 1, true) ~= nil, "хаб шлёт флаг econAccess")
 ok(hubCode:find("GRM_EcoAccess_Request", 1, true) ~= nil, "хаб: кнопка запроса доступа")
 
+-- ══════════════ 8. ВКЛАДКА «ЭКОНОМИКА» В /factions (находка 172) ══════════════
+local ffSrc = assert(io.open("lua/autorun/sh_faction_fixes.lua", "rb"))
+local ffCode = ffSrc:read("*a") ffSrc:close()
+ok(ffCode:find('OpenEconomyPanel', 1, true) ~= nil, "/factions: вкладка «Экономика» (OpenEconomyPanel)")
+ok(ffCode:find('BuildAdminContent', 1, true) ~= nil, "/factions: вкладка встраивает BuildAdminContent (полная панель)")
+ok(ffCode:find('GRM_Eco_AdminOpen', 1, true) ~= nil, "/factions: вкладка запрашивает данные экономики")
+ok(ffCode:find('EmbedAdminPanel', 1, true) ~= nil, "/factions: вкладка регистрируется для обновления")
+
+local econSrc = assert(io.open("lua/autorun/sh_grm_economy.lua", "rb"))
+local econCode = econSrc:read("*a") econSrc:close()
+ok(econCode:find('function GRM.Economy.BuildAdminContent', 1, true) ~= nil, "экономика: BuildAdminContent публичная")
+ok(econCode:find('function GRM.Economy.EmbedAdminPanel', 1, true) ~= nil, "экономика: EmbedAdminPanel публичная")
+ok(econCode:find('parentTabs', 1, true) ~= nil, "экономика: buildAdminUI параметризован (parentTabs)")
+
+local facSrc = assert(io.open("lua/autorun/sh_factions.lua", "rb"))
+local facCode = facSrc:read("*a") facSrc:close()
+ok(facCode:find('CanManageEconomy', 1, true) ~= nil, "/factions: сервер пускает CanManageEconomy")
+ok(facCode:find('GRM_FactionsAdmin_BuildTabs', 1, true) ~= nil, "/factions: хук вкладок в OpenLeaderMenu")
+
 print(("ECON ACCESS: %d/%d failures=%d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end
