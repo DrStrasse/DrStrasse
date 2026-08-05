@@ -208,6 +208,13 @@ end
 local function drawAccessories(ply, forceEditorDraw)
     if not IsValid(ply) or not ply:Alive() or ply:IsDormant() then return end
     local lp = LocalPlayer()
+    -- Находка 175: свои аксессуары от ПЕРВОГО лица не рисуем НИКОГДА.
+    -- Когда камера в 1-м лице, движок не рисует модель игрока — кость
+    -- всё равно анимируется, и аксессуар висел бы «в воздухе» в обзоре.
+    -- Рисуем себя только когда движок реально отрисовывает модель игрока
+    -- (3-е лицо / drawviewer: ShouldDrawLocalPlayer() == true) либо
+    -- принудительно в редакторе (forceEditorDraw, камера-орбита).
+    if IsValid(lp) and ply == lp and not forceEditorDraw and not lp:ShouldDrawLocalPlayer() then return end
     if IsValid(lp) and lp:GetPos():DistToSqr(ply:GetPos()) > 2500 * 2500 then return end
     local loadout = C.ClientLoadouts[ply]
     if not istable(loadout) then return end
@@ -265,11 +272,18 @@ end)
 -- ручной DrawModel() может не отрисовать модель (аксессуар «исчезает»).
 -- PostDrawOpaqueRenderables рисуется в основном проходе независимо от
 -- фонарика — дублируем туда же отрисовку с FrameNumber-guard.
+-- Находка 175: раньше здесь рисовался ТОЛЬКО LocalPlayer, поэтому при
+-- фонарике аксессуары ВСЕХ ОСТАЛЬНЫХ игроков исчезали. Теперь проходим по
+-- всем игрокам (guard не даст второму DrawModel, если PostPlayerDraw уже
+-- сработал; свои аксессуары от 1-го лица отсекает drawAccessories).
 hook.Add("PostDrawOpaqueRenderables", "GRM_Customization_DrawAccessoriesOpaque", function(drawingDepth, drawingSkybox, drawing3DSkybox)
     if C.EditorActive and LocalPlayer() then return end
     if drawingDepth or drawingSkybox or drawing3DSkybox then return end
     local lp = LocalPlayer()
-    if IsValid(lp) then drawAccessories(lp) end
+    if not IsValid(lp) then return end
+    for _, ply in ipairs(player.GetAll()) do
+        if IsValid(ply) then drawAccessories(ply) end
+    end
 end)
 
 hook.Add("PostDrawTranslucentRenderables", "GRM_Customization_EditorPreviewFallback", function(drawingDepth, drawingSkybox, drawing3DSkybox)
