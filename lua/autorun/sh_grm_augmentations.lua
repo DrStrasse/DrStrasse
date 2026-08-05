@@ -5,14 +5,16 @@
 
 if SERVER then
 	AddCSLuaFile()
-	AddCSLuaFile("cl_grm_augmentations.lua")
-	AddCSLuaFile("cl_grm_augmentations_admin.lua")
-	AddCSLuaFile("sh_grm_augmentation_chips.lua")
-	AddCSLuaFile("cl_grm_augmentation_chips.lua")
-	AddCSLuaFile("cl_grm_augmentation_station.lua")
-	AddCSLuaFile("cl_grm_augmentations_hud.lua")
-	AddCSLuaFile("cl_grm_augmentation_interface.lua")
-	AddCSLuaFile("sh_grm_news.lua")
+	AddCSLuaFile("autorun/client/cl_grm_augmentations.lua")
+	AddCSLuaFile("autorun/client/cl_grm_augmentations_admin.lua")
+	AddCSLuaFile("autorun/sh_grm_augmentation_chips.lua")
+	AddCSLuaFile("autorun/client/cl_grm_augmentation_chips.lua")
+	AddCSLuaFile("autorun/client/cl_grm_augmentation_station.lua")
+	AddCSLuaFile("autorun/client/cl_grm_augmentations_hud.lua")
+	AddCSLuaFile("autorun/client/cl_grm_augmentation_interface.lua")
+	AddCSLuaFile("autorun/sh_grm_augmentation_access.lua")
+	AddCSLuaFile("autorun/sh_grm_augmentation_integrations.lua")
+	AddCSLuaFile("autorun/sh_grm_news.lua")
 end
 
 GRM = GRM or {}

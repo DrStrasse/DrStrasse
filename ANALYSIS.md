@@ -1935,3 +1935,27 @@ scanner/keypad».
 isSlidingDoor, перм Extract/Apply, тул+Q-меню).
 
 Проверки: GLua 385/0; симы 40/40; roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 173b (05.08.2026): AddCSLuaFile «Couldn't find cl_grm_augmentations.lua» — исправлены пути
+
+Ошибка на сервере владельца:
+```
+[grm] AddCSLuaFile: Couldn't find 'cl_grm_augmentations.lua' ...
+1. unknown - addons/grm/lua/autorun/sh_grm_augmentations.lua:8
+```
+
+Причина: в `sh_grm_augmentations.lua` блок AddCSLuaFile указывал ГОЛЫЕ имена
+(`cl_grm_augmentations.lua` и т.д.), а файлы лежат в `lua/autorun/client/`.
+GMod ищет переданный путь от корня `lua/` — «голое» имя не находится
+(в отличие от `entities/...` и `weapons/...`, которые резолвятся из своих
+папок).
+
+Фикс: пути исправлены на полные (`autorun/client/cl_grm_augmentations.lua`,
+`autorun/sh_grm_augmentation_chips.lua`, ...) + добавлены недостающие
+`sh_grm_augmentation_access.lua` и `sh_grm_augmentation_integrations.lua`
+(используются чипами, но не рассылались клиенту). Проверено: все 10 путей
+существуют, easychat_init.lua (пути `easychat/...` от корня lua/) — корректны.
+
+Проверки: GLua 385/0; симы 40/40. dist пересобран.
