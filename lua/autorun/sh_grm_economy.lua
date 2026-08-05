@@ -1436,26 +1436,70 @@ if SERVER then
         fullcfg.StartBalance = GRM.StartBalance or 1000
         fullcfg.CurrencyName = GRM.CurrencyName or "GRM"
 
+        -- Находка 180: журнал в ВЫДАЧЕ урезаем до последних 100 записей
+        -- (клиенту для вкладки «Фин.лог» больше не нужно; полный журнал
+        -- живёт на сервере). Раньше слались все 300 — при большом онлайне
+        -- пакет переполнялся (Trying to send an overflowed net message).
+        local lg = E.Data.log or {}
+        local logOut = {}
+        for i = math.max(1, #lg - 99), #lg do logOut[#logOut + 1] = lg[i] end
+
         return {
             factions = factions,
             state = E.Data.state,
             players = players,
-            log = E.Data.log,
+            log = logOut,
             config = {
                 maxTax = E.Config.MaxTaxRate, minInterval = E.Config.MinSalaryInterval,
             },
             fullconfig = fullcfg,
             stats = {
                 players = table.Count(players), cash = cashSum, bank = bankSum,
-                factions = table.Count(E.Data.factions), logSize = #(E.Data.log or {}),
+                factions = table.Count(E.Data.factions), logSize = #logOut,
             },
         }
     end
 
+    -- Находка 180: отправка админ-данных ЧАНКАМИ. Один net-пакет GMod
+    -- ограничен (~64 КБ): при большом онлайне/фракциях/журнале старая
+    -- sendAdminData падала с «Trying to send an overflowed net message».
+    -- Теперь: base (фракции/конфиги/статы) → log (последние 100) → players
+    -- порциями по ECO_PLAYERS_CHUNK. Клиент собирает и строит UI по факту
+    -- получения последнего чанка игроков.
+    local ECO_PLAYERS_CHUNK = 40
     local function sendAdminData(ply)
+        local data = buildAdminData()
+        local players = data.players or {}
+        local log = data.log or {}
+        data.players = nil
+        data.log = nil
+        -- 1) база: всё кроме игроков и журнала
         net.Start(NET_ADMIN_DATA)
-            net.WriteTable(buildAdminData())
+            net.WriteString("base")
+            net.WriteTable(data)
         net.Send(ply)
+        -- 2) журнал (уже ≤100)
+        net.Start(NET_ADMIN_DATA)
+            net.WriteString("log")
+            net.WriteTable(log)
+        net.Send(ply)
+        -- 3) игроки чанками (players — map sid→запись; делим по ключам)
+        local keys = {}
+        for sid in pairs(players) do keys[#keys + 1] = sid end
+        table.sort(keys)
+        local total = math.max(1, math.ceil(#keys / ECO_PLAYERS_CHUNK))
+        for i = 1, total do
+            local part = {}
+            for j = (i - 1) * ECO_PLAYERS_CHUNK + 1, math.min(i * ECO_PLAYERS_CHUNK, #keys) do
+                part[keys[j]] = players[keys[j]]
+            end
+            net.Start(NET_ADMIN_DATA)
+                net.WriteString("players")
+                net.WriteUInt(i, 16)
+                net.WriteUInt(total, 16)
+                net.WriteTable(part)
+            net.Send(ply)
+        end
     end
 
     net.Receive(NET_OPEN_ADMIN, function(_, ply)
@@ -2639,8 +2683,16 @@ if CLIENT then
         end
     end
 
-    net.Receive(NET_ADMIN_DATA, function()
-        local d = net.ReadTable() or {}
+    -- Находка 180: приём админ-данных ЧАНКАМИ (сервер шлёт base → log →
+    -- players порциями). Собираем в ecoPending и строим UI по факту
+    -- получения последнего чанка игроков.
+    local ecoPending = nil
+    local ecoPlayersTotal = nil
+    local function ecoFinalize()
+        local d = ecoPending
+        ecoPending = nil
+        ecoPlayersTotal = nil
+        if not d then return end
         if IsValid(adminFrame) then
             -- окно НЕ переоткрывается; UI пересобирается на месте,
             -- выбранная фракция восстанавливается через _restoreFaction.
@@ -2654,6 +2706,27 @@ if CLIENT then
         -- вызова с одним аргументом).
         if IsValid(GRM.Economy.EmbeddedAdmin) and isfunction(GRM.Economy._embeddedBuild) then
             GRM.Economy._embeddedBuild(GRM.Economy.EmbeddedAdmin, d)
+        end
+    end
+
+    net.Receive(NET_ADMIN_DATA, function()
+        local kind = net.ReadString()
+        if kind == "base" then
+            local d = net.ReadTable() or {}
+            d.players = {}
+            d.log = {}
+            ecoPending = d
+            ecoPlayersTotal = nil
+        elseif kind == "log" then
+            if ecoPending then ecoPending.log = net.ReadTable() or {} end
+        elseif kind == "players" then
+            if not ecoPending then return end
+            local idx = net.ReadUInt(16)
+            local total = net.ReadUInt(16)
+            if not ecoPlayersTotal then ecoPlayersTotal = total end
+            local part = net.ReadTable() or {}
+            for sid, rec in pairs(part) do ecoPending.players[sid] = rec end
+            if idx >= ecoPlayersTotal then ecoFinalize() end
         end
     end)
 

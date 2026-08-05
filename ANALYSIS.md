@@ -3363,3 +3363,39 @@ prop_protect 23, security OK, alarm 27. dist пересобран.
 perm_upsert 14, launderer_menu 21, bank_vault 87, econ_access 42,
 prop_protect 23, security OK, alarm 27, customization_render 12,
 world_labels OK. dist пересобран.
+
+---
+
+## Находка 180 (05.08.2026): «Trying to send an overflowed net message» — админ-данные экономики шлются чанками
+
+Владелец (консоль сервера, спам при открытии экономики):
+```
+[grm] Trying to send an overflowed net message!
+1. sendAdminData - addons/grm/lua/autorun/sh_grm_economy.lua:1458
+```
+
+Причина: `sendAdminData` слал ВСЁ одним net-пакетом: все фракции с полными
+entry, ВСЕХ игроков/счета, журнал (до 300 записей) и полную копию E.Config.
+Net-пакет GMod ограничен (~64 КБ) — при большом онлайне/фракциях/журнале
+сообщение переполнялось, админ-панель не открывалась.
+
+Сделано (lua/autorun/sh_grm_economy.lua):
+
+1. **buildAdminData**: журнал в ВЫДАЧЕ урезается до последних 100 записей
+   (stats.logSize = реальный размер выдачи).
+2. **sendAdminData — ЧАНКИ** (3 типа пакетов по одному каналу NET_ADMIN_DATA):
+   - `"base"` — фракции/state/config/fullconfig/stats (без игроков и журнала);
+   - `"log"` — последние 100 записей журнала;
+   - `"players"` — порциями по 40 (idx/total 16 бит; players — map sid→запись,
+     делится по отсортированным ключам, чтобы никто не терялся).
+3. **Клиент**: аккумулятор ecoPending (base → log → players чанки → merge по
+   sid) + ecoFinalize() — строит UI (buildAdminUI + _embeddedBuild для вкладки
+   /factions) по факту получения ПОСЛЕДНЕГО чанка игроков. Новый base
+   сбрасывает предыдущий сбор.
+
+Тесты: sim_factions_econ_tab 22 → **25/25** (эмуляция base→log→players(1/1);
+доп. эмуляция 3 чанков по 2 игрока — сборка не падает; net.ReadString/
+ReadUInt моки с очередями). GLua 404/0; roundtrip 14/14; econ_access 42/42;
+heist 125, perm_upsert 14, launderer_menu 21, bank_vault 87, prop_protect 23,
+security OK, alarm 27, customization 67, customization_runtime 36,
+customization_render 12, world_labels OK. dist пересобран.

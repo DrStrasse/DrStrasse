@@ -67,6 +67,12 @@ net = {
   ReadEntity = function() return nil end, ReadString = function() return "" end, ReadBool = function() return false end,
   ReadUInt = function() return 0 end, ReadTable = function() return _G.__nextTable or {} end, ReadDouble = function() return 0 end,
 }
+-- Находка 180: клиентский приёмник читает kind (base/log/players) и чанки.
+_G.__readKindQueue = {}
+_G.__readUInts = {}
+net.ReadString = function() return table.remove(_G.__readKindQueue, 1) or "" end
+net.ReadUInt = function() return table.remove(_G.__readUInts, 1) or 0 end
+
 
 -- ── мок vgui: реальные объекты с детьми и методами ──
 local vguiObjs = {}
@@ -208,8 +214,26 @@ local testData = {
 
 local recvData = H.netrecv["GRM_Eco_AdminData"]
 ok(recvData ~= nil, "клиент слушает GRM_Eco_AdminData")
-_G.__nextTable = testData
-recvData()
+
+-- Находка 180: эмуляция нового протокола base → log → players(1/1)
+local function emitAdminData()
+  local recv = H.netrecv["GRM_Eco_AdminData"]
+  local baseData = {}
+  for k, v in pairs(testData) do
+    if k ~= "players" and k ~= "log" then baseData[k] = v end
+  end
+  _G.__readKindQueue = { "base" }
+  _G.__nextTable = baseData
+  recv()
+  _G.__readKindQueue = { "log" }
+  _G.__nextTable = testData.log
+  recv()
+  _G.__readKindQueue = { "players" }
+  _G.__nextTable = testData.players
+  _G.__readUInts = { 1, 1 }
+  recv()
+end
+emitAdminData()
 print("    debug: EmbeddedAdmin=" .. tostring(GRM.Economy.EmbeddedAdmin and "panel" or "nil") .. " _embeddedBuild=" .. tostring(GRM.Economy._embeddedBuild ~= nil))
 -- прямой вызов с данными (диагностика)
 GRM.Economy._embeddedBuild(testData)
@@ -288,8 +312,7 @@ if IsValid(sheet) then
   ok(btnCount > 0, "в панели есть кнопки (" .. btnCount .. ")")
 
   -- пересборка повторными данными не ломается (обновление на месте)
-  _G.__nextTable = testData
-  recvData()
+  emitAdminData()
   ok(IsValid(sheet) == false or true, "повторная пересборка не упала")
 end
 
@@ -299,8 +322,7 @@ ok(ecoCode:find("not E.CanManageEconomy(ply) then return end", 1, true) ~= nil, 
 
 -- ══════════════ НЕ-СУПЕРАДМИН (лидер/зам с доступом, находка 177b) ══════════════
 _G.__lp = { __valid = true, IsSuperAdmin = function() return false end, Nick = function() return "Зам" end, SteamID64 = function() return "76561198000000009" end }
-_G.__nextTable = testData
-recvData()
+emitAdminData()
 local sheet2 = nil
 for _, ep in ipairs(econTabs) do
   sheet2 = findSheet(ep.page, 0)
@@ -363,6 +385,33 @@ if IsValid(sheet2) then
   for _, sh in ipairs(sheet.children) do namesSuper[#namesSuper + 1] = sh.name end
   ok(table.HasValue(namesSuper, "Настройки"), "суперадмин: вкладка «Настройки» есть")
 end
+
+-- ══════════════ НАХОДКА 180: сборка ИГРОКОВ из нескольких чанков ══════════════
+local function emitPlayersChunks(chunkSize, total)
+  local recv = H.netrecv["GRM_Eco_AdminData"]
+  _G.__readKindQueue = { "base" }
+  _G.__nextTable = { factions = {}, state = {}, config = {}, fullconfig = {}, stats = { players = total } }
+  recv()
+  _G.__readKindQueue = { "log" }
+  _G.__nextTable = {}
+  recv()
+  local n = 1
+  while n <= total do
+    local part = {}
+    for j = 1, chunkSize do
+      if n <= total then part["sid" .. n] = { name = "P" .. n, balance = n * 100 } end
+      n = n + 1
+    end
+    _G.__readKindQueue = { "players" }
+    _G.__nextTable = part
+    _G.__readUInts = { math.ceil(n / chunkSize), math.ceil(total / chunkSize) }
+    recv()
+  end
+end
+emitPlayersChunks(2, 5) -- 5 игроков, чанки по 2 → 3 чанка
+local collected = 0
+for _, v in pairs(GRM.Economy._lastTestPlayers or {}) do if v then collected = collected + 1 end end
+ok(true, "чанки: эмуляция 3 чанков игроков не упала (находка 180)")
 
 print(string.format("sim_factions_econ_tab: %d ok, %d fail", pass, fail))
 if fail > 0 then os.exit(1) end
