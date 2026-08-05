@@ -287,6 +287,9 @@ if SERVER then
 
     util.AddNetworkString("grm_inv_sync")
     util.AddNetworkString("grm_inv_update_slot")
+    util.AddNetworkString("GRM_Inv_AdminOpen")     -- суперадмин: просмотр чужого инвентаря
+    util.AddNetworkString("GRM_Inv_AdminData")     -- данные чужого инвентаря админу
+    util.AddNetworkString("GRM_Inv_AdminAction")   -- суперадмин: изъять предмет
     util.AddNetworkString("grm_inv_action")
     util.AddNetworkString("grm_inv_result")
     util.AddNetworkString("grm_inv_open")
@@ -984,6 +987,61 @@ if SERVER then
 
     -- ── Сетевые обработчики ──────────────────────────────────────
     -- Открытие инвентаря
+    -- ── АДМИН: просмотр и изъятие предметов из чужого инвентаря (находка 170) ──
+    -- Админ смотрит на игрока и через C-меню открывает его инвентарь.
+    net.Receive("GRM_Inv_AdminOpen", function(_, admin)
+        if not IsValid(admin) or not admin:IsSuperAdmin() then return end
+        local idx = net.ReadUInt(16)
+        local target = nil
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and p:EntIndex() == idx then target = p break end
+        end
+        if not IsValid(target) then
+            net.Start("GRM_Inv_AdminData") net.WriteUInt(0, 16) net.WriteTable({}) net.Send(admin)
+            return
+        end
+        local inv = GRM.Inventory.GetPlayerInv(target)
+        net.Start("GRM_Inv_AdminData")
+            net.WriteUInt(idx, 16)
+            net.WriteTable(inv and inv.slots or {})
+        net.Send(admin)
+    end)
+
+    -- Админ изымает предмет: удаляем из инвентаря цели, синкаем обоим
+    net.Receive("GRM_Inv_AdminAction", function(_, admin)
+        if not IsValid(admin) or not admin:IsSuperAdmin() then return end
+        local idx = net.ReadUInt(16)
+        local slotIdx = net.ReadUInt(8)
+        local count = math.max(1, math.floor(tonumber(net.ReadUInt(16)) or 1))
+        local target = nil
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and p:EntIndex() == idx then target = p break end
+        end
+        if not IsValid(target) then return end
+        local inv = GRM.Inventory.GetPlayerInv(target)
+        local slot = inv and inv.slots[slotIdx] or nil
+        if not slot then return end
+        local id = slot.id
+        local have = tonumber(slot.count) or 1
+        local remove = math.min(count, have)
+        local left = GRM.Inventory.RemoveItem(target, id, remove)
+        local removed = remove - (tonumber(left) or 0)
+        if removed > 0 then
+            GRM.Inventory.SyncToClient(target)
+            if GRM.Inventory.SyncToClient then GRM.Inventory.SyncToClient(admin) end
+            if GRM.Notify then
+                GRM.Notify(target, "Администрация изъяла: " .. tostring(id) .. " x" .. tostring(removed), 255, 120, 100)
+                GRM.Notify(admin, "Изъято у " .. target:Nick() .. ": " .. tostring(id) .. " x" .. tostring(removed), 100, 220, 130)
+            end
+        end
+        -- обновить данные админу
+        local inv2 = GRM.Inventory.GetPlayerInv(target)
+        net.Start("GRM_Inv_AdminData")
+            net.WriteUInt(idx, 16)
+            net.WriteTable(inv2 and inv2.slots or {})
+        net.Send(admin)
+    end)
+
     net.Receive("grm_inv_open", function(_, ply)
         GRM.Inventory.SyncToClient(ply)
         net.Start("grm_inv_open")
@@ -1158,6 +1216,47 @@ if CLIENT then
     net.Receive("grm_inv_open", function()
         GRM.Inventory.OpenGUI()
     end)
+
+    -- ── АДМИН: просмотр чужого инвентаря (находка 170) ──
+    -- Суперадмин через C-меню открывает инвентарь игрока: видит слоты и
+    -- может изымать предметы кнопками «Изъять 1» / «Изъять все».
+    GRM.Inventory.AdminView = GRM.Inventory.AdminView or { target = nil, slots = {}, open = false }
+    local AV = GRM.Inventory.AdminView
+
+    function GRM.Inventory.OpenAdminView(targetIdx)
+        AV.target = targetIdx
+        AV.open = true
+        -- показываем поверх обычного инвентаря отдельное окно
+        if GRM.Inventory.OpenGUI then GRM.Inventory.OpenGUI() end
+    end
+
+    function GRM.Inventory.CloseAdminView()
+        AV.open = false
+        AV.target = nil
+        AV.slots = {}
+    end
+
+    net.Receive("GRM_Inv_AdminData", function()
+        local idx = net.ReadUInt(16)
+        local slots = net.ReadTable() or {}
+        AV.target = idx
+        AV.slots = slots
+        AV.open = true
+        hook.Run("GRM_InventoryUpdated")
+    end)
+
+    -- Админ изымает предмет (1 шт или все)
+    function GRM.Inventory.AdminTake(slotIdx, all)
+        if not AV.open or not AV.target then return end
+        local slot = AV.slots[slotIdx]
+        if not slot or not slot.id then return end
+        local count = all and (tonumber(slot.count) or 1) or 1
+        net.Start("GRM_Inv_AdminAction")
+            net.WriteUInt(AV.target, 16)
+            net.WriteUInt(slotIdx, 8)
+            net.WriteUInt(count, 16)
+        net.SendToServer()
+    end
 
     -- Запрос открытия
     function GRM.Inventory.RequestOpen()

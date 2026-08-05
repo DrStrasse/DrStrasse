@@ -65,7 +65,7 @@ PMT.__index = function(t, k)
   elseif k == "SteamID64" then return function(s) return s.s64 end
   elseif k == "Nick" then return function(s) return s.nick end
   elseif k == "IsPlayer" then return function() return true end
-  elseif k == "IsSuperAdmin" then return function() return false end
+  elseif k == "IsSuperAdmin" then return function(s) return s.super == true end
   elseif k == "GetPos" then return function(s) return s.pos or { x = 0, y = 0, z = 0 } end
   elseif k == "EmitSound" then return function() end
   elseif k == "ChatPrint" then return function() end
@@ -76,7 +76,7 @@ PMT.__index = function(t, k)
   end
   return nil
 end
-local function mkPly(nick, sid, s64) return setmetatable({ nick = nick, sid = sid, s64 = s64, pos = { x = 0, y = 0, z = 0 } }, PMT) end
+local function mkPly(nick, sid, s64, isSuper) return setmetatable({ nick = nick, sid = sid, s64 = s64, pos = { x = 0, y = 0, z = 0 }, super = isSuper == true }, PMT) end
 
 -- ── фракции ──
 local CopSid = "STEAM_0:1:10"
@@ -102,18 +102,56 @@ GRM.AugChips = {
     GRM.AugChips.PlayerChips[k] = GRM.AugChips.PlayerChips[k] or {}
     return GRM.AugChips.PlayerChips[k]
   end,
+  RemoveChip = function(ply, chipId)
+    local list = GRM.AugChips.GetPlayerChips(ply)
+    for i, c in ipairs(list) do
+      if c.id == chipId then
+        table.remove(list, i)
+        return true
+      end
+    end
+    return false
+  end,
+  SyncChips = function() end,
+  RecomputeEffects = function() end,
 }
 GRM.Minimap = {
   AddTempPoint = function(name, pos, dur) GRM.Minimap._temp = { name = name, pos = pos, dur = dur } return "temp_1" end,
   SendTo = function() GRM.Minimap._sentTo = (GRM.Minimap._sentTo or 0) + 1 end,
 }
+GRM.Inventory = {
+  Config = { MaxSlots = 24 },
+  Inventories = {},
+  GetPlayerInv = function(ply)
+    local k = ply.s64 .. ":char1"
+    GRM.Inventory.Inventories[k] = GRM.Inventory.Inventories[k] or { slots = {} }
+    return GRM.Inventory.Inventories[k]
+  end,
+  RemoveItem = function(ply, itemID, count)
+    local inv = GRM.Inventory.GetPlayerInv(ply)
+    local left = count or 1
+    for i = 1, GRM.Inventory.Config.MaxSlots do
+      if left <= 0 then break end
+      local slot = inv.slots[i]
+      if slot and slot.id == itemID then
+        local rm = math.min(left, slot.count or 1)
+        slot.count = (slot.count or 1) - rm
+        left = left - rm
+        if slot.count <= 0 then inv.slots[i] = nil end
+      end
+    end
+    return left
+  end,
+  SyncToClient = function() end,
+}
 
 -- игроки
+local super = mkPly("Главный", "STEAM_0:1:99", "76561198000000099", true)
 local cop = mkPly("Офицер", CopSid, CopS64)                 -- член Полиции (ChipDeathAlert=ВКЛ)
 local mayor = mkPly("Мэр", "STEAM_0:1:20", "76561198000000020") -- член Мэрии (ВЫКЛ)
 local carrier = mkPly("Носитель", "STEAM_0:1:30", "76561198000000030")
 local civ = mkPly("Гражданин", "STEAM_0:1:40", "76561198000000040")
-player = { GetAll = function() return { cop, mayor, carrier, civ } end }
+player = { GetAll = function() return { super, cop, mayor, carrier, civ } end }
 
 -- ══════════════ ЗАГРУЗКА ══════════════
 dofile("lua/autorun/sh_grm_chip_control.lua")
@@ -141,13 +179,13 @@ end
 ok(foundCarrier, "носитель найден в реестре ListCarriers")
 
 -- офлайн-носитель в хранилище чипов
-GRM.AugChips.PlayerChips["76561198000000099:char1"] = {
+GRM.AugChips.PlayerChips["76561198000000077:char1"] = {
   { id = "c9", name = "Эксперимент", category = "experimental", implanted = true, active = true },
 }
 local carriers2 = GRM.ChipControl.ListCarriers()
 local foundOffline = false
 for _, c in ipairs(carriers2) do
-  if c.key == "76561198000000099:char1" then foundOffline = true; ok(c.special == true and c.online == false, "офлайн-носитель в реестре, special") end
+  if c.key == "76561198000000077:char1" then foundOffline = true; ok(c.special == true and c.online == false, "офлайн-носитель в реестре, special") end
 end
 ok(foundOffline, "офлайн-носитель найден")
 
@@ -192,6 +230,65 @@ ok(GRM.ChipControl.DeathSound == "npc/metropolice/die2.wav", "звук смер�
 local cc = assert(io.open("lua/autorun/sh_grm_chip_control.lua", "rb"))
 local ccSrc = cc:read("*a") cc:close()
 ok(ccSrc:find("surface.PlaySound", 1, true) ~= nil, "клиент проигрывает звук (surface.PlaySound)")
+
+-- ══════════════ 7. АДМИН: изъятие чипов и предметов ══════════════
+ok(H.netrecv["GRM_ChipControl_AdminData"] ~= nil, "net.Receive AdminData зарегистрирован")
+ok(H.netrecv["GRM_ChipControl_AdminExtract"] ~= nil, "net.Receive AdminExtract зарегистрирован")
+ok(H.netrecv["GRM_ChipControl_AdminRemove"] ~= nil, "net.Receive AdminRemove зарегистрирован")
+
+-- данные цели: чипы + инвентарь
+local target = mkPly("Жертва", "STEAM_0:1:55", "76561198000000055")
+local tchips = GRM.AugChips.GetPlayerChips(target)
+tchips[1] = { id = "tc1", name = "Взлом", category = "experimental", implanted = true, active = true }
+local tInv = GRM.Inventory.GetPlayerInv(target)
+tInv.slots[1] = { id = "item_healthkit", count = 3 }
+tInv.slots[2] = { id = "arccw_ak47", count = 1 }
+player.GetAll = function() return { super, target } end
+
+-- запрос данных (суперадмин)
+H.netlog = {}
+H.seq = { target.s64 }
+H.netrecv["GRM_ChipControl_AdminData"](0, super)
+ok(netCount("GRM_ChipControl_AdminData") == 1, "суперадмин получил AdminData")
+
+-- изъятие чипа
+H.seq = { target.s64, "tc1" }
+H.netrecv["GRM_ChipControl_AdminExtract"](0, super)
+local remaining = false
+for _, c in ipairs(GRM.AugChips.GetPlayerChips(target)) do if c.id == "tc1" then remaining = true end end
+ok(remaining == false, "чип изъят (запись удалена)")
+
+-- удаление предмета (1 шт)
+H.seq = { target.s64, "item_healthkit", 1 }
+H.netrecv["GRM_ChipControl_AdminRemove"](0, super)
+ok(tInv.slots[1] ~= nil and tInv.slots[1].count == 2, "удалён 1 предмет (осталось 2)")
+
+-- удаление всех (ak47)
+H.seq = { target.s64, "arccw_ak47", 5 }
+H.netrecv["GRM_ChipControl_AdminRemove"](0, super)
+ok(tInv.slots[2] == nil, "предмет удалён полностью (УДАЛИТЬ ВСЕ)")
+
+-- не-суперадмин НЕ может изымать
+local copChips = GRM.AugChips.GetPlayerChips(cop)
+copChips[1] = { id = "cc1", name = "Чип", category = "civilian", implanted = true, active = true }
+H.seq = { cop.s64, "cc1" }
+H.netrecv["GRM_ChipControl_AdminExtract"](0, cop)
+local still = false
+for _, c in ipairs(GRM.AugChips.GetPlayerChips(cop)) do if c.id == "cc1" then still = true end end
+ok(still == true, "не-суперадмин НЕ может изымать чипы")
+
+-- ══════════════ 8. АДМИН: просмотр/изъятие чужого инвентаря ══════════════
+local invSrc = assert(io.open("lua/autorun/sh_grm_inventory.lua", "rb"))
+local invCode = invSrc:read("*a") invSrc:close()
+ok(invCode:find('GRM_Inv_AdminOpen', 1, true) ~= nil and invCode:find('GRM_Inv_AdminAction', 1, true) ~= nil, "инвентарь: серверные каналы AdminOpen/AdminAction")
+ok(invCode:find('admin:IsSuperAdmin()', 1, true) ~= nil, "инвентарь: проверка суперадмина на сервере")
+ok(invCode:find('GRM.Inventory.AdminTake', 1, true) ~= nil, "инвентарь: клиентский AdminTake")
+
+local ctxSrc = assert(io.open("lua/autorun/sh_grm_ctx.lua", "rb"))
+local ctxCode = ctxSrc:read("*a") ctxSrc:close()
+ok(ctxCode:find('"admin"', 1, true) ~= nil and ctxCode:find('Админ-панель (GRM)', 1, true) ~= nil, "C-меню: кнопка «Админ-панель (GRM)»")
+ok(ctxCode:find('Инвентарь игрока', 1, true) ~= nil, "C-меню: кнопка «Инвентарь игрока»")
+ok(ctxCode:find('GRM_Inv_AdminOpen', 1, true) ~= nil, "C-меню: запрос просмотра чужого инвентаря")
 
 print(("CHIP CONTROL: %d/%d failures=%d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

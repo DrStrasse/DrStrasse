@@ -477,6 +477,76 @@ timer.Create("GRMInv2_KeepOpenGUI", 1, 0, function()
     if INV.OpenGUI ~= ModernOpenGUI then INV.OpenGUI = ModernOpenGUI end
 end)
 
+-- ── АДМИН: просмотр чужого инвентаря (находка 170) ──
+-- Суперадмин открывает инвентарь игрока (C-меню → «Инвентарь игрока: Имя»):
+-- видит его слоты и изымает предметы кнопками.
+local adminFrame
+local function openAdminView()
+    local AV = INV.AdminView
+    if not AV or not AV.open then return end
+    if IsValid(adminFrame) then adminFrame:Remove() end
+    adminFrame = vgui.Create("DFrame")
+    adminFrame:SetTitle("")
+    adminFrame:SetSize(520, 540)
+    adminFrame:Center()
+    adminFrame:MakePopup()
+    adminFrame:ShowCloseButton(false)
+    adminFrame.Paint = function(self, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, C.bg)
+        draw.RoundedBoxEx(8, 0, 0, w, 42, C.header, true, true, false, false)
+        draw.SimpleText("ПРОСМОТР ИНВЕНТАРЯ ИГРОКА", "GRMInv2_Normal", 14, 21, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("суперадмин • изъятие предметов", "GRMInv2_Small", w - 14, 21, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+    end
+    local close = btn(adminFrame, "×", C.red, 30, 26)
+    close:SetPos(adminFrame:GetWide() - 38, 8)
+    close.DoClick = function() adminFrame:Close() if INV.CloseAdminView then INV.CloseAdminView() end end
+
+    local scroll = vgui.Create("DScrollPanel", adminFrame)
+    scroll:SetPos(12, 52); scroll:SetSize(496, 440)
+
+    local slots = AV.slots or {}
+    local found = 0
+    for i = 1, (INV.Config and INV.Config.MaxSlots) or 24 do
+        local slot = slots[i]
+        if slot and slot.id then
+            found = found + 1
+            local row = vgui.Create("DPanel", scroll)
+            row:Dock(TOP); row:SetTall(44); row:DockMargin(0, 0, 0, 6)
+            row.Paint = function(_, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, Color(33, 42, 56, 245))
+                local def = INV.ItemDefs and INV.ItemDefs[slot.id] or nil
+                draw.SimpleText((def and def.name) or slot.id, "GRMInv2_Normal", 10, 10, C.text)
+                draw.SimpleText("x" .. tostring(slot.count or 1), "GRMInv2_Small", 10, 30, C.dim)
+            end
+            local takeAll = btn(row, "Изъять все", C.red, 108, 28)
+            takeAll:Dock(RIGHT); takeAll:DockMargin(4, 8, 6, 8)
+            takeAll.DoClick = function() if INV.AdminTake then INV.AdminTake(i, true) end end
+            local take1 = btn(row, "Изъять 1", C.yellow, 90, 28)
+            take1:Dock(RIGHT); take1:DockMargin(4, 8, 4, 8)
+            take1.DoClick = function() if INV.AdminTake then INV.AdminTake(i, false) end end
+        end
+    end
+    if found == 0 then
+        local l = vgui.Create("DLabel", scroll)
+        l:Dock(TOP); l:SetTall(40); l:SetFont("GRMInv2_Normal"); l:SetTextColor(C.dim); l:SetText("Инвентарь игрока пуст.")
+    end
+end
+
+hook.Add("GRM_InventoryUpdated", "GRMInv2_AdminView", function()
+    local AV = INV.AdminView
+    if AV and AV.open and not IsValid(adminFrame) then
+        openAdminView()
+    elseif AV and AV.open and IsValid(adminFrame) then
+        -- обновить содержимое (слоты могли измениться после изъятия)
+        openAdminView()
+    end
+end)
+
+-- Хук на открытие чужого инвентаря: ресивер ставит AV.open и шлёт уведомление
+hook.Add("GRM_AdminViewRequested", "GRMInv2_AdminViewOpen", function()
+    openAdminView()
+end)
+
 hook.Add("GRM_InventoryUpdated", "GRMInv2_Refresh", function()
     if IsValid(frame) then rebuildSlots(); rebuildDetail() end
 end)

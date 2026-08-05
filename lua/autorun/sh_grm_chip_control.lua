@@ -147,11 +147,106 @@ if SERVER then
     util.AddNetworkString("GRM_ChipControl_Open")     -- терминал: открыть меню
     util.AddNetworkString("GRM_ChipControl_Data")     -- терминал: данные (реестр+журнал)
     util.AddNetworkString("GRM_ChipDeath_Alert")      -- уведомление членам фракций
+    util.AddNetworkString("GRM_ChipControl_AdminData")   -- админ: данные цели (чипы+инвентарь)
+    util.AddNetworkString("GRM_ChipControl_AdminExtract")-- админ: изъять чип
+    util.AddNetworkString("GRM_ChipControl_AdminRemove") -- админ: удалить предмет из инвентаря
 
     local function logEvent(ev)
         CC.Events[#CC.Events + 1] = ev
         if #CC.Events > CC.MaxEvents then table.remove(CC.Events, 1) end
     end
+
+    -- ── АДМИН (суперадмин): изъятие чипов и предметов ──────────────
+    local function targetBySID(sid64)
+        if not sid64 or sid64 == "" then return nil end
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and p:SteamID64() == sid64 then return p end
+        end
+        return nil
+    end
+
+    -- Пакет данных цели: имплантированные чипы + содержимое инвентаря
+    local function adminPayload(target)
+        local chips = {}
+        if GRM.AugChips and GRM.AugChips.GetPlayerChips then
+            for _, c in ipairs(GRM.AugChips.GetPlayerChips(target) or {}) do
+                if c and c.implanted then
+                    chips[#chips + 1] = { id = c.id, name = c.name, category = c.category, active = c.active ~= false }
+                end
+            end
+        end
+        local items = {}
+        if GRM.Inventory and GRM.Inventory.GetPlayerInv then
+            local inv = GRM.Inventory.GetPlayerInv(target)
+            if inv and istable(inv.slots) then
+                for i = 1, (GRM.Inventory.Config and GRM.Inventory.Config.MaxSlots) or 24 do
+                    local slot = inv.slots[i]
+                    if slot and slot.id then
+                        items[#items + 1] = { slot = i, id = slot.id, count = tonumber(slot.count) or 1 }
+                    end
+                end
+            end
+        end
+        return { chips = chips, items = items }
+    end
+
+    net.Receive("GRM_ChipControl_AdminData", function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        local sid64 = net.ReadString()
+        local target = targetBySID(sid64)
+        if not IsValid(target) then return end
+        net.Start("GRM_ChipControl_AdminData")
+            net.WriteString(sid64)
+            net.WriteTable(adminPayload(target))
+        net.Send(ply)
+    end)
+
+    -- Изъятие (конфискация) чипа: снятие эффектов + полное удаление записи
+    net.Receive("GRM_ChipControl_AdminExtract", function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        local sid64 = net.ReadString()
+        local chipId = net.ReadString()
+        local target = targetBySID(sid64)
+        if not IsValid(target) or chipId == "" then return end
+        if GRM.AugChips and GRM.AugChips.RemoveChip then
+            if GRM.AugChips.RemoveChip(target, chipId) then
+                if GRM.AugChips.SyncChips then GRM.AugChips.SyncChips(target) end
+                if GRM.AugChips.RecomputeEffects then GRM.AugChips.RecomputeEffects(target) end
+                if GRM.Notify then GRM.Notify(target, "Ваш чип изъят администрацией.", 255, 120, 100) end
+                if GRM.Notify then GRM.Notify(ply, "Чип изъят у " .. target:Nick() .. ".", 100, 220, 130) end
+                logEvent({ time = os.time(), type = "extract", name = target:Nick(), sid = sid64, faction = CC.FactionOf(target), pos = { x = 0, y = 0, z = 0 } })
+            end
+        end
+        net.Start("GRM_ChipControl_AdminData")
+            net.WriteString(sid64)
+            net.WriteTable(adminPayload(target))
+        net.Send(ply)
+    end)
+
+    -- Удаление/изъятие предметов из инвентаря цели
+    net.Receive("GRM_ChipControl_AdminRemove", function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        local sid64 = net.ReadString()
+        local itemID = net.ReadString()
+        local count = math.max(1, math.floor(tonumber(net.ReadUInt(16)) or 1))
+        local target = targetBySID(sid64)
+        if not IsValid(target) or itemID == "" then return end
+        if GRM.Inventory and GRM.Inventory.RemoveItem then
+            local left = GRM.Inventory.RemoveItem(target, itemID, count)
+            local removed = count - (tonumber(left) or 0)
+            if removed > 0 then
+                if GRM.Inventory.SyncToClient then GRM.Inventory.SyncToClient(target) end
+                if GRM.Notify then GRM.Notify(target, "Администрация изъяла: " .. itemID .. " x" .. removed, 255, 120, 100) end
+                if GRM.Notify then GRM.Notify(ply, "Изъято у " .. target:Nick() .. ": " .. itemID .. " x" .. removed, 100, 220, 130) end
+            else
+                if GRM.Notify then GRM.Notify(ply, "Предмет не найден у игрока: " .. itemID, 255, 150, 90) end
+            end
+        end
+        net.Start("GRM_ChipControl_AdminData")
+            net.WriteString(sid64)
+            net.WriteTable(adminPayload(target))
+        net.Send(ply)
+    end)
 
     -- Прямой доступ к чипам офлайн-носителя (для терминала: показать все)
     function CC.PushTerminalData(ply)
@@ -346,7 +441,111 @@ if CLIENT then
         il("• GPS-метка временная (120 секунд) и видна только уведомлённым.", C.dim)
         sheet:AddSheet("Инфо", infoPanel, "icon16/information.png")
 
+        -- ── ВКЛАДКА «АДМИН» (только суперадмин): изъятие чипов и предметов ──
+        local lp = LocalPlayer()
+        if IsValid(lp) and lp:IsSuperAdmin() then
+            local adminPanel = vgui.Create("DPanel"); adminPanel:SetPaintBackground(false)
+            local topBar = vgui.Create("DPanel", adminPanel); topBar:Dock(TOP); topBar:SetTall(40); topBar:DockMargin(4, 4, 4, 4); topBar:SetPaintBackground(false)
+            local playerCombo = vgui.Create("DComboBox", topBar)
+            playerCombo:SetPos(0, 4); playerCombo:SetSize(320, 30); playerCombo:SetFont("GRMCC_Text")
+            local playersList = {}
+            for _, p in ipairs(player.GetAll()) do
+                if IsValid(p) then
+                    playersList[#playersList + 1] = { nick = p:Nick(), sid64 = p:SteamID64() }
+                end
+            end
+            table.sort(playersList, function(a, b) return a.nick:lower() < b.nick:lower() end)
+            for _, pl in ipairs(playersList) do
+                playerCombo:AddChoice(pl.nick .. "  [" .. pl.sid64 .. "]", pl.sid64)
+            end
+            local showBtn = vgui.Create("DButton", topBar)
+            showBtn:SetPos(330, 4); showBtn:SetSize(140, 30); showBtn:SetText("ПОКАЗАТЬ"); showBtn:SetFont("GRMCC_Text"); showBtn:SetTextColor(C.text)
+            showBtn.Paint = function(self, w, h) draw.RoundedBox(5, 0, 0, w, h, self:IsHovered() and Color(80, 190, 255) or C.accent) end
+            local adminScroll = vgui.Create("DScrollPanel", adminPanel); adminScroll:Dock(FILL); adminScroll:DockMargin(4, 0, 4, 4)
+
+            local function adminRender(data)
+                adminScroll:Clear()
+                local t = data or { chips = {}, items = {} }
+                local chips = t.chips or {}
+                local items = t.items or {}
+                local function head(text, col)
+                    local l = vgui.Create("DLabel", adminScroll); l:Dock(TOP); l:SetTall(24); l:SetFont("GRMCC_Head"); l:SetTextColor(col or C.accent); l:SetText(text)
+                end
+                head("ЧИПЫ (" .. #chips .. "):", C.accent)
+                if #chips == 0 then
+                    local l = vgui.Create("DLabel", adminScroll); l:Dock(TOP); l:SetTall(20); l:SetFont("GRMCC_Small"); l:SetTextColor(C.dim); l:SetText("Имплантированных чипов нет.")
+                end
+                for _, c in ipairs(chips) do
+                    local row = vgui.Create("DPanel", adminScroll); row:Dock(TOP); row:SetTall(40); row:DockMargin(0, 0, 0, 4)
+                    row.Paint = function(_, w, h) draw.RoundedBox(5, 0, 0, w, h, C.card); draw.SimpleText(c.name or c.id, "GRMCC_Text", 10, 10, C.text); draw.SimpleText(tostring(c.category) .. (c.active ~= false and " • ONLINE" or " • OFF"), "GRMCC_Small", 10, 26, c.active ~= false and C.green or C.dim) end
+                    local extract = vgui.Create("DButton", row); extract:Dock(RIGHT); extract:SetWide(110); extract:DockMargin(4, 6, 6, 6); extract:SetText("ИЗЪЯТЬ"); extract:SetFont("GRMCC_Small"); extract:SetTextColor(C.text)
+                    extract.Paint = function(self, w, h) draw.RoundedBox(4, 0, 0, w, h, self:IsHovered() and Color(230, 100, 90) or C.red) end
+                    extract.DoClick = function()
+                        net.Start("GRM_ChipControl_AdminExtract")
+                            net.WriteString(playerCombo:GetSelected() or "")
+                            net.WriteString(c.id or "")
+                        net.SendToServer()
+                    end
+                end
+                head("ИНВЕНТАРЬ (" .. #items .. "):", C.green)
+                if #items == 0 then
+                    local l = vgui.Create("DLabel", adminScroll); l:Dock(TOP); l:SetTall(20); l:SetFont("GRMCC_Small"); l:SetTextColor(C.dim); l:SetText("Инвентарь пуст.")
+                end
+                for _, it in ipairs(items) do
+                    local row = vgui.Create("DPanel", adminScroll); row:Dock(TOP); row:SetTall(38); row:DockMargin(0, 0, 0, 4)
+                    row.Paint = function(_, w, h) draw.RoundedBox(5, 0, 0, w, h, C.card); draw.SimpleText(it.id .. "  x" .. tostring(it.count), "GRMCC_Text", 10, 10, C.text) end
+                    local del1 = vgui.Create("DButton", row); del1:Dock(RIGHT); del1:SetWide(96); del1:DockMargin(4, 6, 6, 6); del1:SetText("УДАЛИТЬ 1"); del1:SetFont("GRMCC_Small"); del1:SetTextColor(C.text)
+                    del1.Paint = function(self, w, h) draw.RoundedBox(4, 0, 0, w, h, self:IsHovered() and Color(230, 110, 90) or C.red) end
+                    del1.DoClick = function()
+                        net.Start("GRM_ChipControl_AdminRemove")
+                            net.WriteString(playerCombo:GetSelected() or "")
+                            net.WriteString(it.id or "")
+                            net.WriteUInt(1, 16)
+                        net.SendToServer()
+                    end
+                    local delAll = vgui.Create("DButton", row); delAll:Dock(RIGHT); delAll:SetWide(110); delAll:DockMargin(4, 6, 6, 6); delAll:SetText("УДАЛИТЬ ВСЕ"); delAll:SetFont("GRMCC_Small"); delAll:SetTextColor(C.text)
+                    delAll.Paint = function(self, w, h) draw.RoundedBox(4, 0, 0, w, h, self:IsHovered() and Color(180, 80, 70) or Color(150, 60, 55)) end
+                    delAll.DoClick = function()
+                        net.Start("GRM_ChipControl_AdminRemove")
+                            net.WriteString(playerCombo:GetSelected() or "")
+                            net.WriteString(it.id or "")
+                            net.WriteUInt(math.max(1, tonumber(it.count) or 1), 16)
+                        net.SendToServer()
+                    end
+                end
+            end
+
+            showBtn.DoClick = function()
+                local sid64 = playerCombo:GetSelected() or ""
+                if sid64 == "" then return end
+                net.Start("GRM_ChipControl_AdminData")
+                    net.WriteString(sid64)
+                net.SendToServer()
+            end
+
+            -- выбор игрока сразу показывает его данные
+            playerCombo.OnSelect = function(_, _, _, data)
+                net.Start("GRM_ChipControl_AdminData")
+                    net.WriteString(tostring(data or ""))
+                net.SendToServer()
+            end
+
+            sheet:AddSheet("Админ", adminPanel, "icon16/star.png")
+            -- хук обновления данных админ-вкладки
+            GRM.ChipControl._adminRender = adminRender
+            GRM.ChipControl._adminCombo = playerCombo
+        end
+
         frame:MakePopup()
+    end)
+
+    -- Админ-данные цели (обновление вкладки «Админ»)
+    net.Receive("GRM_ChipControl_AdminData", function()
+        local sid64 = net.ReadString()
+        local data = net.ReadTable() or {}
+        if GRM.ChipControl and GRM.ChipControl._adminRender then
+            GRM.ChipControl._adminRender(data)
+        end
     end)
 
     print("[GRM ChipControl] client v" .. CC.Version .. " loaded")
