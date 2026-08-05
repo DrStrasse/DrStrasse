@@ -178,6 +178,11 @@ function A.StopSiren(hub)
         s.patch = nil
     end
     A.Sirens[idx] = nil
+    -- Находка 176: глушим и резервный позиционный импульс (EmitSound),
+    -- иначе после сброса тревоги сирена продолжает выть до конца карты.
+    local cfg = CFG()
+    local soundPath = cfg.SirenSound or "ambient/alarms/combine_bank_alarm_loop4.wav"
+    if isfunction(hub.StopSound) then hub:StopSound(soundPath) end
     hub:SetAlarmActive(false)
     if syncSpeakers then syncSpeakers(hub:GetNetworkID()) end
 end
@@ -191,10 +196,16 @@ function A.StartSiren(hub, reason, ply)
     local patch = CreateSound(hub, soundPath)
     if patch then
         patch:SetSoundLevel(tonumber(cfg.SirenLevel) or 80)
+        -- Находка 176: без EnableLooping(true) звуковой патч проигрывает
+        -- файл ОДИН раз и замолкает — «сигнал не работает». Зацикливание
+        -- в GMod включается только явно, даже для loop-файлов.
+        patch:EnableLooping(true)
         patch:PlayEx(tonumber(cfg.SirenVolume) or 1, 100)
+    elseif isfunction(hub.EmitSound) then
+        -- Резервный позиционный импульс ТОЛЬКО если патч не создался
+        -- (битый путь/звук): слышен даже без синхронизации звукового движка.
+        hub:EmitSound(soundPath, tonumber(cfg.SirenLevel) or 80, 100, tonumber(cfg.SirenVolume) or 1, CHAN_AUTO)
     end
-    -- Резервный позиционный импульс: слышен даже если CreateSound/динамик ещё не успел синхронизироваться.
-    if isfunction(hub.EmitSound) then hub:EmitSound(soundPath, tonumber(cfg.SirenLevel) or 80, 100, tonumber(cfg.SirenVolume) or 1, CHAN_AUTO) end
     local dur = tonumber(cfg.SirenDuration) or 45
     local stopAt = dur > 0 and (CurTime() + dur) or 0
     A.Sirens[hub:EntIndex()] = { patch = patch, stopAt = stopAt }
@@ -255,6 +266,9 @@ syncSpeakers = function(networkID)
             local patch = CreateSound(ent, soundPath)
             if patch then
                 patch:SetSoundLevel(tonumber(cfg.SirenLevel) or 80)
+                -- Находка 176: без EnableLooping(true) динамик проиграет
+                -- файл один раз и замолчит — сирена «не работает».
+                patch:EnableLooping(true)
                 patch:PlayEx(tonumber(cfg.SirenVolume) or 1, 100)
                 A.SpeakerPatches[idx] = patch
             end

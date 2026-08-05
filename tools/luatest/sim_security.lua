@@ -162,10 +162,11 @@ net.ReadTable = function() local v = table.remove(H.seq, 1) return istable(v) an
 
 -- CreateSound: записываем патчи, чтобы проверять Play/Stop -------------
 CreateSound = function(ent, path)
-  local p = { ent = ent, path = path, playing = false, stopped = false, level = 0 }
+  local p = { ent = ent, path = path, playing = false, stopped = false, level = 0, loop = nil }
   function p:SetSoundLevel(l) self.level = l end
   function p:Play() self.playing = true end
   function p:PlayEx() self.playing = true end
+  function p:EnableLooping(b) self.loop = b end
   function p:Stop() self.playing = false self.stopped = true end
   H.sounds[#H.sounds + 1] = p
   return p
@@ -261,8 +262,10 @@ fireThink()
 ok(hub:GetAlarmActive() == true, "тревога активна после движения в зоне")
 local hubPatch = patchFor(hub)
 ok(hubPatch ~= nil and hubPatch.playing and not hubPatch.stopped, "сирена хаба играет")
+ok(hubPatch.loop == true, "сирена хаба ЗАЦИКЛЕНА (находка 176: EnableLooping)")
 local spkPatch = patchFor(spk)
 ok(spkPatch ~= nil and spkPatch.playing and not spkPatch.stopped, "сирена ДИНАМИКА играет (Код 89)")
+ok(spkPatch.loop == true, "сирена динамика ЗАЦИКЛЕНА (находка 176)")
 ok(spkPatch ~= nil and spkPatch.path == "ambient/alarms/combine_bank_alarm_loop4.wav", "динамик играет тот же луп сирены")
 A.ResetAlarm("main", admin)
 ok(hub:GetAlarmActive() == false, "сброс тревоги: AlarmActive=false")
