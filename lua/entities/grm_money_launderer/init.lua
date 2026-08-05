@@ -249,6 +249,31 @@ function ENT:TakeJob(ply)
     return true
 end
 
+-- Находка 179m: отмена участия — игрок выходит из ивента
+function ENT:LeaveJob(ply)
+    if not IsValid(ply) then return false end
+    local sid = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64() or ""
+    sid = tostring(sid)
+    if not self.Participants[sid] then
+        notify(ply, "Вы не участвуете в ограблении.", 200, 220, 255)
+        return false
+    end
+    self.Participants[sid] = nil
+    self:SetParticipantCount(math.max(0, self:GetParticipantCount() - 1))
+    notify(ply, "Вы вышли из ограбления. Участников: " .. self:GetParticipantCount(), 255, 190, 90)
+
+    -- если ивент ещё не начался и участников стало меньше минимума — ничего,
+    -- набор продолжится; если ивент УЖЕ идёт — выход не отменяет ивент,
+    -- но игрок больше не участник (победа/маркеры — только оставшимся).
+    if not self:GetEventActive() then
+        local minP = math.max(1, self:GetMinParticipants())
+        if self:GetParticipantCount() < minP then
+            notify(ply, "Участников меньше минимума (" .. minP .. ") — ивент не запустится, пока не наберётся.", 200, 220, 255)
+        end
+    end
+    return true
+end
+
 -- Сдать деньги отмывщику (сумка + паллеты рядом). Возвращает сумму.
 function ENT:DepositFromBag(ply)
     if not IsValid(ply) then return 0 end
@@ -354,6 +379,9 @@ net.Receive("GRM_Heist_Action", function(_, ply)
 
     if action == "job" then
         ent:TakeJob(ply)
+    elseif action == "leave" then
+        -- Находка 179m: отмена участия
+        ent:LeaveJob(ply)
     elseif action == "deposit" then
         ent:DepositFromBag(ply)
     elseif action == "set_target" then

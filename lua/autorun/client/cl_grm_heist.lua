@@ -27,8 +27,21 @@ end
 
 local function startMusic()
     stopMusic()
-    -- robber_bank.wav лежит в sound/ аддона; клиентский звук, цикл
-    local snd = CreateSound(LocalPlayer(), "robber_bank.wav")
+    -- Находка 179m: путь КОРРЕКТЕН — файл sound/robber_bank.wav в аддоне
+    -- (GMod ищет звуки по имени в папке sound/). Для надёжности пробуем
+    -- и вариант с префиксом "sound/", если простого имени нет.
+    local lp = LocalPlayer()
+    if not IsValid(lp) then return end
+    local path = "robber_bank.wav"
+    -- util.PrecacheSound есть не во всех окружениях; если нет — просто пробуем имя
+    if util and util.PrecacheSound then
+        local ok, found = pcall(util.PrecacheSound, path)
+        if not (ok and found) then
+            path = "sound/robber_bank.wav"
+            pcall(util.PrecacheSound, path)
+        end
+    end
+    local snd = CreateSound(lp, path)
     if IsValid(snd) then
         snd:EnableLooping(true)
         snd:Play()

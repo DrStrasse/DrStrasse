@@ -212,6 +212,14 @@ ok(ld:GetEventActive() == false, "ивент ещё не начат (1 < 2)")
 -- повторное взятие
 ok(ld:TakeJob(maf1) == false, "повторное взятие отклонено")
 
+-- Находка 179m: отмена участия
+ld:SetParticipantCount(1)
+ok(ld:LeaveJob(maf1) == true, "LeaveJob: участник вышел")
+ok(ld:GetParticipantCount() == 0, "LeaveJob: счётчик уменьшен")
+ok(ld:LeaveJob(maf1) == false, "LeaveJob: не-участник не может выйти")
+-- вернём участника для теста автозапуска
+ld:TakeJob(maf1)
+
 -- второй участник → автозапуск ивента
 local maf2 = mkPly(false, "Мафиози2", "76561198000000003")
 ok(ld:TakeJob(maf2) == true, "второй мафиози принят")
@@ -342,6 +350,11 @@ ok(lcl5:find('SetSize(600, 760)', 1, true) ~= nil, "клиент: меню ши�
 ok(lcl5:find('СОХРАНИТЬ НАСТРОЙКИ', 1, true) ~= nil and lcl5:find('tall or 40', 1, true) ~= nil and lcl5:find(', 54)', 1, true) ~= nil, "клиент: крупная кнопка «СОХРАНИТЬ НАСТРОЙКИ» (находка 179l)")
 local lin4 = assert(io.open("lua/entities/grm_money_launderer/init.lua", "rb")):read("*a")
 ok(lin4:find('net.ReadUInt(16)', 1, true) ~= nil, "сервер: чтение minP 16 бит (находка 179k)")
+ok(lin4:find('function ENT:LeaveJob', 1, true) ~= nil and lin4:find('action == "leave"', 1, true) ~= nil, "сервер: LeaveJob + action leave (находка 179m)")
+local lcl6 = assert(io.open("lua/entities/grm_money_launderer/cl_init.lua", "rb")):read("*a")
+ok(lcl6:find('ОТМЕНИТЬ УЧАСТИЕ', 1, true) ~= nil and lcl6:find('act(ent, "leave")', 1, true) ~= nil, "клиент: кнопка «ОТМЕНИТЬ УЧАСТИЕ» (находка 179m)")
+local heistCl = assert(io.open("lua/autorun/client/cl_grm_heist.lua", "rb")):read("*a")
+ok(heistCl:find('robber_bank.wav', 1, true) ~= nil and heistCl:find('sound/robber_bank.wav', 1, true) ~= nil, "звук: путь sound/robber_bank.wav корректен (находка 179m)")
 
 -- ══════════════ 7. Тул + перм + модели ══════════════
 local tool = assert(io.open("lua/weapons/gmod_tool/stools/grm_bank_tool.lua", "rb")):read("*a")

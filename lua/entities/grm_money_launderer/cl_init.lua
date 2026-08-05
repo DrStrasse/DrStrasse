@@ -116,11 +116,22 @@ net.Receive("GRM_Heist_Open", function()
         return b
     end
 
-    -- Взять задание
+    -- Взять задание / отменить участие (находка 179m)
     if not d.eventActive then
-        local jobTxt = d.isParticipant and "✓ ВЫ В СПИСКЕ УЧАСТНИКОВ" or "ВЗЯТЬ ЗАДАНИЕ НА ОГРАБЛЕНИЕ"
-        addBtn(jobTxt, d.isParticipant and Color(90, 100, 120) or C.green, function()
-            if not d.isParticipant then act(ent, "job") end
+        if d.isParticipant then
+            addBtn("✓ ВЫ В СПИСКЕ УЧАСТНИКОВ", Color(90, 100, 120), function() end)
+            addBtn("✕ ОТМЕНИТЬ УЧАСТИЕ", C.red, function()
+                act(ent, "leave")
+            end)
+        else
+            addBtn("ВЗЯТЬ ЗАДАНИЕ НА ОГРАБЛЕНИЕ", C.green, function()
+                act(ent, "job")
+            end)
+        end
+    elseif d.eventActive and d.isParticipant then
+        -- во время ивента участник тоже может выйти
+        addBtn("✕ ОТМЕНИТЬ УЧАСТИЕ (выйти из ивента)", C.red, function()
+            act(ent, "leave")
         end)
     end
     -- Сдать деньги (во время ивента)
