@@ -126,8 +126,18 @@ function TOOL:LeftClick(trace)
 end
 
 function TOOL:RightClick(trace)
-    -- ПКМ: ничего (зарезервировано)
-    return false
+    -- Находка 179j: ПКМ по банковскому оборудованию = открыть его меню (как E)
+    if CLIENT then return true end
+    local ply = self:GetOwner()
+    if not IsValid(ply) or not trace or not IsValid(trace.Entity) then return false end
+    local ent = trace.Entity
+    local cls = ent:GetClass()
+    if cls ~= "grm_bank_vault" and cls ~= "grm_money_press" and cls ~= "grm_money_press_terminal" and cls ~= "grm_money_launderer" then
+        return false
+    end
+    -- как E: сам Use внутри проверяет права (загрузка/выгрузка/настройка)
+    if ent.Use then ent:Use(ply) end
+    return true
 end
 
 function TOOL:Reload(trace)
@@ -193,7 +203,8 @@ if CLIENT then
 
         panel:Help(
             "ЛКМ — установить выбранное оборудование\n" ..
-            "R по оборудованию — удалить\n\n" ..
+            "ПКМ по оборудованию — открыть его меню (настройка скупщика/хранилища)\n" ..
+            "R по оборудованию — удалить (скупщик: R в режиме «Цель» = сброс цели)\n\n" ..
             "ТОЧКА ВЫДАЧИ ПАЛЛЕТ (суперадмин):\n" ..
             "1. В комбо выберите «Точка выдачи паллет».\n" ..
             "2. ЛКМ по печатному станку — выбрать его.\n" ..

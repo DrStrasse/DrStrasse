@@ -334,6 +334,7 @@ ok(lcl3:find('DCheckBoxLabel', 1, true) ~= nil and lcl3:find('factionsList', 1, 
 ok(lcl3:find('config_full', 1, true) ~= nil and lcl3:find('DNumberWang', 1, true) ~= nil, "клиент: config_full + поля минимум/цель")
 local tool3 = assert(io.open("lua/weapons/gmod_tool/stools/grm_bank_tool.lua", "rb")):read("*a")
 ok(tool3:find('cls == "grm_money_launderer" and t.id ~= "heisttarget"', 1, true) ~= nil and tool3:find('Отмывщик удалён', 1, true) ~= nil, "тул: R удаляет отмывщика (находка 179g)")
+ok(tool3:find('ПКМ по банковскому оборудованию = открыть его меню', 1, true) ~= nil and tool3:find('if ent.Use then ent:Use(ply) end', 1, true) ~= nil, "тул: ПКМ открывает меню (настройка скупщика, находка 179j)")
 
 -- ══════════════ 7. Тул + перм + модели ══════════════
 local tool = assert(io.open("lua/weapons/gmod_tool/stools/grm_bank_tool.lua", "rb")):read("*a")
