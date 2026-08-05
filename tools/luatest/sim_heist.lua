@@ -47,13 +47,22 @@ timer = {
 }
 concommand = { Add = function() end }
 util = { AddNetworkString = function() end, TableToJSON = function() return "{}" end, JSONToTable = function() return nil end, IsValidModel = function() return true end, TraceLine = function() return { Hit = false } end }
-file = { IsDir = function() return true end, CreateDir = function() end, Exists = function() return false end, Read = function() return nil end, Write = function() end, Find = function() return {} end }
-os = { time = function() return 1700000000 end, date = function() return "2026-08-05" end, exit = function(c) error("os.exit(" .. tostring(c) .. ")") end }
+-- Находка 180c: мок file хранит КД-файл (saveCooldown/loadCooldown)
+local __fmem = {}
+file = { IsDir = function() return true end, CreateDir = function() end,
+         Exists = function(p) return __fmem[p] ~= nil end,
+         Read = function(p) return __fmem[p] end,
+         Write = function(p, s) __fmem[p] = s end, Find = function() return {} end }
+-- Находка 180c: os.time управляемый (для КД)
+os = { time = function() return _G.__osNow or 1700000000 end, date = function() return "2026-08-05" end, exit = function(c) error("os.exit(" .. tostring(c) .. ")") end }
 game = { GetMap = function() return "rp_test" end }
 player = { GetAll = function() return _G.__players or {} end }
 net = {
   Start = function(n) net.current = n end, WriteEntity = function() end, WriteString = function() end, WriteBool = function() end,
-  WriteUInt = function() end, WriteFloat = function() end, WriteTable = function() end, Send = function() end,
+  WriteUInt = function() end, WriteFloat = function() end,
+  -- Находка 180f: логируем таблицы (участники в broadcast)
+  WriteTable = function(t) H.tables = H.tables or {} H.tables[#H.tables + 1] = t end,
+  Send = function() end,
   Broadcast = function() H.broadcasts[#H.broadcasts + 1] = net.current end,
   Receive = function(n, fn) H.netrecv[n] = fn end, ReadEntity = function() return nil end, ReadString = function() return "" end,
   ReadBool = function() return false end, ReadTable = function() return {} end, ReadUInt = function() return 0 end, ReadFloat = function() return 0 end,
@@ -109,12 +118,15 @@ local function mkPly(super, nick, sid, steam)
     GetEyeTrace = function() return { Entity = _G.__aimEnt } end,
     Nick = function(self) return self.nick end,
     Alive = function() return true end,
+    -- Находка 180d: приватный звук как у kom_hour (p:EmitSound / p:StopSound)
+    EmitSound = function(self, path, lvl, pitch) emitLog[#emitLog + 1] = { path = path, lvl = lvl, pitch = pitch, player = self } end,
+    StopSound = function(self, path) stopLog[#stopLog + 1] = { path = tostring(path), player = self } end,
   }
 end
 
 Factions = {
   Mafia = { Members = { ["STEAM_0:1:1"] = { Role = "Boss" } }, Leader = "STEAM_0:1:1", Roles = { "Boss" }, Departments = {} },
-  Polizei = { Members = {}, Leader = "STEAM_0:1:2", Roles = {}, Departments = {} },
+  Polizei = { Members = { ["STEAM_0:1:50"] = { Role = "Chief" } }, Leader = "STEAM_0:1:2", Roles = { "Chief" }, Departments = {} },
 }
 GRM = {
   Notify = function() end,
@@ -123,10 +135,12 @@ GRM = {
   GetAllBalances = function() return {} end,
   Identity = { CharacterKey = function(ply) return ply.sid64 .. ":char1" end, FactionMember = function(fData, ply) return fData.Members[ply:SteamID()] end },
 }
-local minimapLog = { points = 0, sentTo = {} }
+local minimapLog = { points = 0, sentTo = {}, removed = 0, removedName = "" }
 GRM.Minimap = {
   AddTempPoint = function(name, pos, dur) minimapLog.points = minimapLog.points + 1 end,
   SendTo = function(p) minimapLog.sentTo[#minimapLog.sentTo + 1] = p end,
+  -- Находка 180e: удаление маркера
+  RemoveTempPoint = function(name) minimapLog.removed = minimapLog.removed + 1; minimapLog.removedName = name end,
 }
 
 -- ── мок энтити ──
@@ -208,7 +222,13 @@ ld.GetWinnerFaction = function() return ld.__winner or "" end
 ld.SetWinnerFaction = function(_, v) ld.__winner = v end
 ld.GetHeistTargetPos = function() return ld.__htp or Vector(0, 0, 0) end
 ld.SetHeistTargetPos = function(_, v) ld.__htp = v end
-ld.Participants = {} ld.FactionDelivered = {}
+-- Находка 180f: PreStartAt (ожидание старта)
+ld.GetPreStartAt = function() return ld.__pre or 0 end
+ld.SetPreStartAt = function(_, v) ld.__pre = v end
+-- Находка 180h: GovFactions
+ld.GetGovFactions = function() return ld.__gov or "" end
+ld.SetGovFactions = function(_, v) ld.__gov = v end
+ld.Participants = {} ld.ParticipantNames = {} ld.FactionDelivered = {}
 ld:Initialize()
 
 ok(GRM.MoneyLaunderer ~= nil or true, "отмывщик: модуль загружен (класс)")
@@ -253,10 +273,23 @@ ok(ld:LeaveJob(maf1) == false, "LeaveJob: не-участник не может 
 -- вернём участника для теста автозапуска
 ld:TakeJob(maf1)
 
--- второй участник → автозапуск ивента
+-- второй участник → минимум набран → ОЖИДАНИЕ старта 40 сек (находка 180f)
 local maf2 = mkPly(false, "Мафиози2", "76561198000000003")
 ok(ld:TakeJob(maf2) == true, "второй мафиози принят")
-ok(ld:GetEventActive() == true, "ИВЕНТ ЗАПУЩЕН при наборе минимума (2)")
+ok(ld:GetEventActive() == false, "ИВЕНТ НЕ запущен сразу — идёт ожидание (находка 180f)")
+ok(ld:GetPreStartAt() == _G.__now + 40, "ожидание: PreStartAt = now+40 сек (находка 180f)")
+
+-- третий участник успевает вступить во время ожидания
+local maf3 = mkPly(false, "Мафиози3", "76561198000000004")
+ok(ld:TakeJob(maf3) == true, "третий мафиози вступил во время ожидания (находка 180f)")
+ok(ld:GetParticipantCount() == 3, "участников = 3")
+ok(ld:GetEventActive() == false, "ивент всё ещё ждёт старта (находка 180f)")
+
+-- по истечении 40 сек Think запускает ивент
+_G.__now = _G.__now + 41
+ld:Think()
+ok(ld:GetEventActive() == true, "ИВЕНТ ЗАПУЩЕН после ожидания 40 сек (находка 180f)")
+ok(ld:GetPreStartAt() == 0, "ожидание сброшено при старте (находка 180f)")
 ok(ld:GetEventEndsAt() == _G.__now + 3000, "таймер 50 минут (3000 сек)")
 
 -- ══════════════ 2. Баннер и музыка (broadcast) ══════════════
@@ -264,34 +297,42 @@ local startBc = false
 for _, m in ipairs(H.broadcasts) do if m == "GRM_Heist_Event" then startBc = true end end
 ok(startBc, "broadcast GRM_Heist_Event отправлен (баннер/музыка всем)")
 
--- ══════════════ 2aa. МУЗЫКА: ГЛОБАЛЬНО, БЕЗ ТАЙМЕРОВ (находка 179x) ══════════════
--- Никаких watchdog/фейд-таймеров: CreateSound + Play один раз, движок сам
--- играет файл (WAV зациклится, MP3 сыграет один раз).
-local musicTimerName = "grm_heist_music_" .. tostring(ld:EntIndex())
-local realPatch = heistPatches[#heistPatches]
-ok(realPatch and realPatch.loop == true, "музыка: патч зациклен (EnableLooping true)")
-ok(realPatch and realPatch.level == 0, "музыка: SetSoundLevel(0) — вся карта")
-ok(realPatch and realPatch.played == true and (realPatch.playCount or 0) >= 1, "музыка: Play() вызван")
-ok(H.timers[musicTimerName] == nil, "музыка: НЕТ watchdog-таймера (находка 179x)")
-ok(H.timers["grm_heist_fade_" .. tostring(ld:EntIndex())] == nil, "музыка: НЕТ fade-таймера (находка 179x)")
-ok(realPatch and realPatch.faded == nil, "музыка: FadeOut ещё не вызван (ивент активен)")
+-- Находка 180f: broadcast содержит список РП-имён участников («криминал»)
+local lastTbl = H.tables and H.tables[#H.tables] or nil
+local namesOk = lastTbl and #lastTbl == 3
+if namesOk then
+    local found = 0
+    for _, r in ipairs(lastTbl) do
+        if r.name == "Мафиози1" or r.name == "Мафиози2" or r.name == "Мафиози3" then found = found + 1 end
+    end
+    namesOk = found == 3
+end
+ok(namesOk, "список: broadcast start несёт 3 РП-имени участников (находка 180f)")
 
--- ══════════════ 2a. ПУСТОЙ ЗВУКОВОЙ ПАТЧ (находка 179q) ══════════════
--- Живой сервер: CreateSound вернул объект-заглушку без EnableLooping
--- (звук не найден/не прекэширован) — StartEvent не должен падать.
-_G.__emptySoundPatch = true
+-- ══════════════ 2aa. МУЗЫКА: КАК kom_hour — КАЖДОМУ ИГРОКУ (находка 180d) ══════════════
+-- Звук идёт приватно каждому игроку (p:EmitSound 127/110) — все слышат
+-- одинаково на любой точке карты. Без патчей и таймеров.
+_G.__players = { maf1, maf2 }
 emitLog = {}
 ld:SetEventActive(false)
-local okStartEmpty = pcall(function() ld:StartEvent() end)
-ok(okStartEmpty, "пустой патч: StartEvent не падает (находка 179q)")
-ok(#emitLog > 0, "пустой патч: резервный EmitSound сыгран (находка 179q)")
-ok(emitLog[1] and emitLog[1].lvl == 0, "пустой патч: EmitSound SNDLVL 0 — слышен на всю карту (находка 179v)")
-ok(ld:GetEventActive() == true, "пустой патч: ивент запущен несмотря на звук")
-ok(H.timers["grm_heist_music_" .. tostring(ld:EntIndex())] == nil, "пустой патч: НЕТ watchdog-таймера (находка 179x)")
+ld:StartEvent()
+ok(#emitLog == 2, "музыка: EmitSound отправлен КАЖДОМУ игроку (x2, находка 180d)")
+ok(emitLog[1] and emitLog[1].path == "music/hl2_song20_submix0.mp3", "музыка: путь HEIST_MUSIC")
+ok(emitLog[1] and emitLog[1].lvl == 127 and emitLog[1].pitch == 110, "музыка: громкость 127/110 как у kom_hour (находка 180d)")
+ok(emitLog[1] and emitLog[1].player == maf1 and emitLog[2] and emitLog[2].player == maf2, "музыка: звук приватный каждому (находка 180d)")
+ok(H.timers["grm_heist_music_" .. tostring(ld:EntIndex())] == nil, "музыка: НЕТ таймеров (находка 179x)")
+
+-- ══════════════ 2a. СТАРТ БЕЗ ПАТЧЕЙ (находка 180d) ══════════════
+-- CreateSound не используется вовсе — патчу негде падать.
+ld:SetEventActive(false)
+emitLog = {}
+local okStart2 = pcall(function() ld:StartEvent() end)
+ok(okStart2, "музыка: StartEvent не падает (нет патчей — нечему падать)")
+ok(#emitLog == 2, "музыка: снова EmitSound каждому (x2)")
 stopLog = {}
 ld:StopHeistMusic()
-ok(#stopLog > 0, "StopHeistMusic: StopSound глушит резервный EmitSound (находка 179q)")
-_G.__emptySoundPatch = nil
+ok(#stopLog >= 2, "StopHeistMusic: StopSound каждому игроку + себе (находка 180d)")
+ok(stopLog[1] and stopLog[1].path == "music/hl2_song20_submix0.mp3", "StopHeistMusic: правильный путь")
 
 -- ══════════════ 2a1. СИНГЛТОН МУЗЫКИ (находка 179v) ══════════════
 -- Второй отмывщик, запустивший ивент, глушит музыку первого (нет эха).
@@ -308,29 +349,41 @@ ld2.GetParticipantCount = function() return 2 end
 ld2.GetGoalMoney = function() return 500000 end
 ld2.GetHeistTargetPos = function() return Vector(0, 0, 0) end
 ld2.SetHeistTargetPos = function() end
-ld2.Participants = {} ld2.FactionDelivered = {}
+ld2.GetPreStartAt = function() return ld2.__pre or 0 end
+ld2.SetPreStartAt = function(_, v) ld2.__pre = v end
+ld2.Participants = {} ld2.ParticipantNames = {} ld2.FactionDelivered = {}
+emitLog = {}
 ld2:StartEvent()
 ok(GRM.HeistMusicOwner == ld2, "синглтон: владелец = второй отмывщик")
-local p2 = heistPatches[#heistPatches]
-ok(p2 ~= nil and p2.stopped == false, "синглтон: музыка второго играет")
+ok(#emitLog == 2, "синглтон: музыка второго сыграна всем (x2)")
 -- первый отмывщик снова запускает ивент → глушит второго
+stopLog = {}
 ld:SetEventActive(false)
 ld:StartEvent()
-ok(p2.stopped == true, "синглтон: музыка первого ЗАГЛУШИЛА второго (находка 179v)")
+ok(#stopLog >= 2, "синглтон: музыка ПЕРВОГО заглушила второго (StopSound всем, находка 179v)")
 ok(GRM.HeistMusicOwner == ld, "синглтон: владелец снова первый отмывщик")
 ok(H.timers["grm_heist_music_" .. tostring(ld2:EntIndex())] == nil, "синглтон: таймеров музыки нет вообще (находка 179x)")
 ld:StopHeistMusic()
+
+-- ══════════════ 2a2. МАРКЕР ИСЧЕЗАЕТ ПРИ ПРЕРЫВАНИИ (находка 180e) ══════════════
+minimapLog.removed = 0
+minimapLog.removedName = ""
+ld2:OnRemove()
+ok(minimapLog.removed == 1 and minimapLog.removedName == "РЕЙХСБАНК — ЦЕЛЬ ОГРАБЛЕНИЯ", "маркер: удалён при OnRemove (прерывание, находка 180e)")
 
 -- ══════════════ 2b. ЦЕЛЬ ИВЕНТА (находка 179f) ══════════════
 -- дефолт: ближайшее хранилище
 local ht = ld:HeistTarget()
 ok(ht and ht.x == 900 and ht.y == 900, "цель по умолчанию = ближайшее хранилище (Рейхсбанк)")
--- маркеры участникам (в Participants — sid'ы maf1/maf2, они в player.GetAll)
-_G.__players = { maf1, maf2 }
+-- маркеры участникам (в Participants — sid'ы maf1/maf2/maf3)
+_G.__players = { maf1, maf2, maf3 }
 minimapLog.points = 0
+minimapLog.sentTo = {}
 ld:SendHeistTargetMarkers()
-ok(minimapLog.points == 2, "участники получили GPS-маркер (AddTempPoint x2)")
-ok(#minimapLog.sentTo == 2, "маркеры отправлены точечно (SendTo x2)")
+ok(minimapLog.points == 3, "участники получили GPS-маркер (AddTempPoint x3)")
+ok(#minimapLog.sentTo == 3, "маркеры отправлены точечно (SendTo x3)")
+minimapLog.removed = 0
+ok(minimapLog.removed == 0, "маркер: ещё не удалён (ивент идёт)")
 -- установка цели суперадмином через action set_target (прицел = vault)
 _G.__aimEnt = vaultEnt
 local recvAction = H.netrecv["GRM_Heist_Action"]
@@ -373,20 +426,21 @@ dep = ld:DepositFromBag(maf2)
 ok(dep == 200000, "сдано ещё 200.000")
 ok(ld:GetEventActive() == false, "ивент завершён досрочно (цель достигнута)")
 
--- ══════════════ 3b. ЗАТУХАНИЕ МУЗЫКИ при завершении (находка 179w/179x) ══════════════
--- Родной FadeOut(3): движок сам плавно затухает и останавливает — БЕЗ таймеров.
+-- ══════════════ 3b. ОСТАНОВКА МУЗЫКИ при завершении (находка 180d) ══════════════
+-- Как у kom_hour: при завершении ивента звук глушится StopSound всем игрокам.
 ld:SetEventActive(false)
-ld:StartEvent() -- музыка снова играет (свежий патч)
-local fadePatch = heistPatches[#heistPatches]
-ok(fadePatch and fadePatch.played == true, "затухание: музыка играет после рестарта")
-ok(fadePatch.faded == nil, "затухание: FadeOut ещё не вызван (ивент активен)")
-ok(H.timers["grm_heist_fade_" .. tostring(ld:EntIndex())] == nil, "затухание: нет fade-таймера (находка 179x)")
+_G.__players = { maf1, maf2 }
+emitLog = {}
+ld:StartEvent()
+ok(#emitLog == 2, "остановка: музыка играет после рестарта (x2)")
+stopLog = {}
+minimapLog.removed = 0
+minimapLog.removedName = ""
 ld:EndEvent(true, "Цель достигнута")
-ok(fadePatch.faded == 3, "затухание: вызван РОДНОЙ FadeOut(3) — плавно за 3с (находка 179w)")
-ok(fadePatch.stopped == true, "затухание: FadeOut сам остановит звук по завершении (находка 179w)")
-ok(ld.HeistMusic == nil, "затухание: ссылка на патч очищена")
-ok(GRM.HeistMusicOwner == nil, "затухание: владелец снят")
-ok(H.timers["grm_heist_fade_" .. tostring(ld:EntIndex())] == nil, "затухание: fade-таймера нет вообще (находка 179x)")
+ok(#stopLog >= 2, "остановка: EndEvent глушит музыку всем игрокам (находка 180d)")
+ok(GRM.HeistMusicOwner == nil, "остановка: владелец снят")
+ok(minimapLog.removed == 1 and minimapLog.removedName == "РЕЙХСБАНК — ЦЕЛЬ ОГРАБЛЕНИЯ", "маркер: удалён при завершении ивента (находка 180e)")
+ok(H.timers["grm_heist_fade_" .. tostring(ld:EntIndex())] == nil, "остановка: fade-таймера нет вообще (находка 179x)")
 
 -- ══════════════ 4. Таймер: истечение без цели → госструктуры ══════════════
 ld:SetEventActive(true)
@@ -448,6 +502,8 @@ local function mkPermEnt(minP, goal, allowed, htpx)
   e.SetAllowedFactions = function(s, v) s.__allowed = v end
   e.GetHeistTargetPos = function(s) return s.__htp or Vector(0, 0, 0) end
   e.SetHeistTargetPos = function(s, v) s.__htp = v end
+  e.GetGovFactions = function(s) return s.__gov or "" end
+  e.SetGovFactions = function(s, v) s.__gov = v end
   return e
 end
 local srcA = mkPermEnt(5, 900000, "Mafia,Polizei", 900)
@@ -483,7 +539,7 @@ ok(tool3:find('ПКМ по банковскому оборудованию = о�
 ok(tool3:find('trace.HitPos + trace.HitNormal)', 1, true) ~= nil, "тул: отмывщик ставится прямо на поверхность (не в воздухе, находка 179k)")
 local lcl5 = assert(io.open("lua/entities/grm_money_launderer/cl_init.lua", "rb")):read("*a")
 ok(lcl5:find('SetDecimals(0)', 1, true) ~= nil and lcl5:find('GetValue()', 1, true) ~= nil, "клиент: числа читаются из полей GetValue при сохранении (находка 179s)")
-ok(lcl5:find('SetSize(620, 820)', 1, true) ~= nil, "клиент: меню больше (620x820, находка 179u)")
+ok(lcl5:find('SetSize(620, 880)', 1, true) ~= nil, "клиент: меню больше (620x880, находка 179u)")
 ok(lcl5:find('СОХРАНИТЬ НАСТРОЙКИ', 1, true) ~= nil and lcl5:find('SAVE_BAR', 1, true) ~= nil and lcl5:find('saveFn', 1, true) ~= nil, "клиент: кнопка «СОХРАНИТЬ НАСТРОЙКИ» в фикс. нижней панели SAVE_BAR (находка 179u)")
 local lin4 = assert(io.open("lua/entities/grm_money_launderer/init.lua", "rb")):read("*a")
 ok(lin4:find('net.ReadUInt(16)', 1, true) ~= nil, "сервер: чтение minP 16 бит (находка 179k)")
@@ -510,6 +566,7 @@ ok(lsh:find('HeistTargetPos', 1, true) ~= nil, "отмывщик: NWVar цели
 local lin2 = assert(io.open("lua/entities/grm_money_launderer/init.lua", "rb")):read("*a")
 ok(lin2:find('РЕЙХСБАНК — ЦЕЛЬ ОГРАБЛЕНИЯ', 1, true) ~= nil and lin2:find('Двигайтесь к локации', 1, true) ~= nil, "маркер: «РЕЙХСБАНК — ЦЕЛЬ ОГРАБЛЕНИЯ», «Двигайтесь к локации!»")
 ok(lin2:find('SendHeistTargetMarkers', 1, true) ~= nil, "отмывщик: раздача маркеров участникам")
+ok(lin2:find('RemoveTempPoint(HEIST_TARGET_NAME)', 1, true) ~= nil and lin2:find('HEIST_TARGET_NAME = "РЕЙХСБАНК — ЦЕЛЬ ОГРАБЛЕНИЯ"', 1, true) ~= nil, "отмывщик: маркер удаляется при завершении/прерывании (находка 180e)")
 ok(lin2:find('heist_target', 1, true) ~= nil and lin2:find('grm_heist_target', 1, true) ~= nil, "команда /heist_target (и clear)")
 ok(lin2:find('heistTarget', 1, true) ~= nil, "перм: цель сохраняется (/permadd)")
 local tool2 = assert(io.open("lua/weapons/gmod_tool/stools/grm_bank_tool.lua", "rb")):read("*a")
@@ -517,21 +574,241 @@ ok(tool2:find('heisttarget', 1, true) ~= nil and tool2:find('SetHeistTarget', 1,
 ok(tool2:find('Цель ивента — Рейхсбанк', 1, true) ~= nil, "тул: название режима")
 local lin = assert(io.open("lua/entities/grm_money_launderer/init.lua", "rb")):read("*a")
 ok(lin:find('НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ', 1, true) ~= nil, "баннер: «НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ»")
-ok(lin:find('local patch = CreateSound(self, HEIST_MUSIC)', 1, true) ~= nil and lin:find('HEIST_MUSIC = "music/hl2_song20_submix0.mp3"', 1, true) ~= nil, "сервер: CreateSound(HEIST_MUSIC) на отмывщике (находка 179o)")
-ok(lin:find('patch:SetSoundLevel(0)', 1, true) ~= nil and lin:find('patch:EnableLooping(true)', 1, true) ~= nil and lin:find('patch:Play()', 1, true) ~= nil, "сервер: SetSoundLevel(0) + EnableLooping + Play() (находка 179o/179x)")
-ok(lin:find('isfunction(patch.EnableLooping)', 1, true) ~= nil, "сервер: guard isfunction для патча (находка 179q)")
-ok(lin:find('self:EmitSound(HEIST_MUSIC, 0, 100, 1)', 1, true) ~= nil, "сервер: резервный EmitSound SNDLVL 0 — вся карта (находка 179q/179v)")
-ok(lin:find('util.PrecacheSound(HEIST_MUSIC)', 1, true) ~= nil, "сервер: прекэш музыки на сервере (находка 179t)")
-ok(lin:find('patch:Play()', 1, true) ~= nil, "сервер: Play() — один запуск, без таймеров (находка 179x)")
+ok(lin:find('HEIST_MUSIC = "music/hl2_song20_submix0.mp3"', 1, true) ~= nil, "сервер: константа HEIST_MUSIC")
+ok(lin:find('for _, p in ipairs(player.GetAll()) do', 1, true) ~= nil and lin:find('p:EmitSound(HEIST_MUSIC, 127, 110)', 1, true) ~= nil, "сервер: музыка КАЖДОМУ игроку p:EmitSound 127/110 (находка 180d)")
+ok(lin:find('Sound(HEIST_MUSIC)', 1, true) ~= nil, "сервер: прекэш Sound() как у kom_hour (находка 180d)")
+ok(lin:find('util.PrecacheSound(HEIST_MUSIC)', 1, true) ~= nil, "сервер: прекэш util.PrecacheSound (страховка)")
+ok(lin:find('CreateSound', 1, true) == nil and lin:find('FadeOutHeistMusic', 1, true) == nil, "сервер: CreateSound/FadeOut ПОЛНОСТЬЮ удалены (находка 180d)")
 ok(lin:find('StartMusicWatchdog', 1, true) == nil and lin:find('MusicFadeTimerName', 1, true) == nil and lin:find('MUSIC_WATCHDOG_INTERVAL', 1, true) == nil and lin:find('_grmMusicRestartAt', 1, true) == nil, "сервер: watchdog/fade-таймеры ПОЛНОСТЬЮ удалены (находка 179x)")
 ok(lin:find('GRM.HeistMusicOwner', 1, true) ~= nil and lin:find('GRM.HeistMusicOwner ~= self', 1, true) ~= nil, "сервер: синглтон музыки HeistMusicOwner (находка 179v)")
-ok(lin:find('function ENT:StopHeistMusic', 1, true) ~= nil and lin:find('self.HeistMusic:Stop()', 1, true) ~= nil, "сервер: StopHeistMusic в EndEvent/OnRemove")
-ok(lin:find('function ENT:FadeOutHeistMusic', 1, true) ~= nil and lin:find('patch:FadeOut(3)', 1, true) ~= nil, "сервер: затухание родным FadeOut(3), без таймеров (находка 179w/179x)")
-ok(lin:find('self:FadeOutHeistMusic()', 1, true) ~= nil and lin:find('function ENT:EndEvent', 1, true) ~= nil, "сервер: EndEvent вызывает затухание (находка 179w)")
-ok(lin:find('pcall(function() self.HeistMusic:Stop() end)', 1, true) ~= nil and lin:find('self:StopSound(HEIST_MUSIC)', 1, true) ~= nil, "сервер: StopHeistMusic безопасен + StopSound (находка 179q)")
+ok(lin:find('function ENT:StopHeistMusic', 1, true) ~= nil and lin:find('p:StopSound(HEIST_MUSIC)', 1, true) ~= nil, "сервер: StopHeistMusic — StopSound каждому игроку (находка 180d)")
+ok(lin:find('self:StopHeistMusic()', 1, true) ~= nil and lin:find('function ENT:EndEvent', 1, true) ~= nil, "сервер: EndEvent останавливает музыку (находка 180d)")
 local lcl = assert(io.open("lua/autorun/client/cl_grm_heist.lua", "rb")):read("*a")
 ok(lcl:find('local function startMusic', 1, true) == nil, "клиент: нет startMusic (музыка с сервера)")
 ok(lcl:find('GRMHeist_Banner', 1, true) ~= nil and lcl:find('ОГРАБЛЕНИЕ', 1, true) ~= nil, "клиент: баннер и отсчёт")
+ok(lcl:find('Heist.Participants', 1, true) ~= nil and lcl:find('УЧАСТНИКИ (КРИМИНАЛ)', 1, true) ~= nil, "клиент: HUD-список РП-имён участников (находка 180f)")
+-- Находка 180c: КД ограбления
+ok(lin4:find('GRM.HeistCooldownUntil', 1, true) ~= nil and lin4:find('grm_heist_cooldown.json', 1, true) ~= nil, "сервер: глобальный КД + файл персистентности (находка 180c)")
+ok(lin4:find('Ограбление на перезагрузке', 1, true) ~= nil and lin4:find('cdLeft', 1, true) ~= nil, "сервер: TakeJob отклоняется при КД с таймером (находка 180c)")
+ok(lin4:find('GRM.HeistCooldownUntil = os.time() + math.max(60, GRM.HeistCooldownDuration or 1800)', 1, true) ~= nil, "сервер: КД ставится в EndEvent (находка 180c)")
+ok(lcl3:find('ОГРАБЛЕНИЕ НА ПЕРЕЗАГРУЗКЕ', 1, true) ~= nil and lcl3:find('cooldownLeft', 1, true) ~= nil, "клиент: кнопка-блокировка при КД (находка 180c)")
+-- Находка 180f: ожидание старта + список участников
+ok(lcl3:find('ИВЕНТ НАЧНЁТСЯ ЧЕРЕЗ', 1, true) ~= nil and lcl3:find('preStartLeft', 1, true) ~= nil, "клиент: кнопка-статус ожидания старта (находка 180f)")
+ok(lcl3:find('УЧАСТНИКИ (КРИМИНАЛ)', 1, true) ~= nil and lcl3:find('participantList', 1, true) ~= nil, "клиент: список РП-имён участников в меню (находка 180f)")
+ok(lin4:find('PreStartAt', 1, true) ~= nil and lin4:find('PreStartDelay or 40', 1, true) ~= nil, "сервер: ожидание старта PreStartAt 40 сек (находка 180f)")
+ok(lin4:find('ParticipantNames', 1, true) ~= nil and lin4:find('GRM_RPName', 1, true) ~= nil, "сервер: хранение РП-имён участников (находка 180f)")
+ok(lin4:find('function ENT:ForceStart', 1, true) ~= nil and lin4:find('HeistCooldownUntil = 0', 1, true) ~= nil, "сервер: ForceStart игнорирует КД (находка 180g)")
+ok(lin4:find('function ENT:ForceStop', 1, true) ~= nil and lin4:find('reason ~= "superadmin"', 1, true) ~= nil, "сервер: ForceStop без КД (находка 180g)")
+ok(lin4:find('"/heist_force"', 1, true) ~= nil and lin4:find('"/heist_stop"', 1, true) ~= nil, "сервер: команды /heist_force и /heist_stop (находка 180g)")
+-- Находка 180h: награда гос.структурам
+ok(lin4:find('GovFactions', 1, true) ~= nil and lin4:find('IsGovFaction', 1, true) ~= nil, "сервер: чеклист гос.структур GovFactions (находка 180h)")
+ok(lin4:find('PlayerDeath", "GRM_Heist_GovKills', 1, true) ~= nil and lin4:find('RegisterGovKill', 1, true) ~= nil, "сервер: учёт киллов криминала через PlayerDeath (находка 180h)")
+ok(lsh:find('GovRewardMin = 200000', 1, true) ~= nil and lsh:find('GovRewardMax = 1000000', 1, true) ~= nil, "сервер: рамки награды 200к–1М (находка 180h)")
+ok(lin4:find('GRM.FactionBudgetAdd', 1, true) ~= nil and lin4:find('kills[f] or 0', 1, true) ~= nil, "сервер: выплата в бюджет фракции по киллам (находка 180h)")
+ok(lin4:find('govFactions = tostring(ent:GetGovFactions() or "")', 1, true) ~= nil and lin4:find('if data.govFactions ~= nil then', 1, true) ~= nil, "сервер: govFactions сохраняется в перм Extract/Apply (находка 180h)")
+ok(lcl3:find('ГОС.СТРУКТУРЫ', 1, true) ~= nil and lcl3:find('govState', 1, true) ~= nil, "клиент: чеклист гос.структур в меню (находка 180h)")
+-- Находка 180i: выплата криминалу x2
+ok(lsh:find('CrimRewardMultiplier = 2', 1, true) ~= nil, "сервер: множитель выплаты криминалу x2 (находка 180i)")
+ok(lin4:find('победа криминала', 1, true) ~= nil and lin4:find('held * (self.CrimRewardMultiplier or 2)', 1, true) ~= nil, "сервер: выплата криминалу = x2 от награбленного (находка 180i)")
+ok(lcl3:find('КД между ограблениями', 1, true) ~= nil and lcl3:find('cdWang', 1, true) ~= nil, "клиент: поле настройки КД для суперадмина (находка 180c)")
+
+-- ══════════════ 8. КУЛДАУН ОГРАБЛЕНИЯ (находка 180c) ══════════════
+-- После завершения ивента ставится ГЛОБАЛЬНЫЙ КД (30 мин по умолчанию) —
+-- взять задание нельзя, пока не истёк таймер.
+_G.__osNow = 1700000000
+ok(GRM.HeistCooldownUntil == _G.__osNow + 1800, "КД: после EndEvent установлен unix+1800 (30 мин)")
+ok(__fmem["grm_heist_cooldown.json"] ~= nil, "КД: файл grm_heist_cooldown.json записан")
+-- свежий отмывщик (без участников), ивент не активен
+local ldCD = mkEnt("grm_money_launderer")
+ldCD:SetPos(Vector(0, 0, 0))
+ldCD.GetEnabled = function() return true end
+ldCD.GetEventActive = function() return false end
+ldCD.GetParticipantCount = function() return 0 end
+ldCD.SetParticipantCount = function() end
+ldCD.GetMinParticipants = function() return 2 end
+ldCD.GetGoalMoney = function() return 500000 end
+ldCD.GetAllowedFactions = function() return "" end
+ldCD.GetPreStartAt = function() return ldCD.__pre or 0 end
+ldCD.SetPreStartAt = function(_, v) ldCD.__pre = v end
+ldCD.GetGovFactions = function() return ldCD.__gov or "" end
+ldCD.SetGovFactions = function(_, v) ldCD.__gov = v end
+ldCD.Participants = {} ldCD.ParticipantNames = {}
+-- КД активен → отказ
+ok(ldCD:TakeJob(maf1) == false, "КД: TakeJob отклонён пока КД активен")
+-- истечение КД → задание снова можно взять
+_G.__osNow = _G.__osNow + 1801
+ok(ldCD:TakeJob(maf1) == true, "КД: после истечения TakeJob снова работает")
+ldCD.Participants = {} ldCD.ParticipantNames = {}
+ldCD:SetPreStartAt(0)
+
+-- ══════════════ 8b. ПРИНУДИТЕЛЬНЫЙ СТАРТ/СТОП (находка 180g) ══════════════
+-- /heist_force: суперадмин запускает ивент, игнорируя КД и все условия.
+_G.__osNow = _G.__osNow + 1
+GRM.HeistCooldownUntil = _G.__osNow + 1800 -- КД активен
+local ldF = mkEnt("grm_money_launderer")
+ldF:SetPos(Vector(0, 0, 0))
+ldF.GetEventActive = function() return ldF.__ea == true end
+ldF.SetEventActive = function(_, v) ldF.__ea = v end
+ldF.SetEventEndsAt = function() end
+ldF.GetEventEndsAt = function() return 0 end
+ldF.SetMoneyHeld = function() end
+ldF.SetWinnerFaction = function() end
+ldF.GetWinnerFaction = function() return "" end
+ldF.GetParticipantCount = function() return 0 end
+ldF.SetParticipantCount = function() end
+ldF.GetMinParticipants = function() return 2 end
+ldF.GetGoalMoney = function() return 500000 end
+ldF.GetPreStartAt = function() return ldF.__pre or 0 end
+ldF.SetPreStartAt = function(_, v) ldF.__pre = v end
+ldF.GetHeistTargetPos = function() return Vector(0, 0, 0) end
+ldF.SetHeistTargetPos = function() end
+ldF.Participants = {} ldF.ParticipantNames = {} ldF.FactionDelivered = {}
+ok(ldF:ForceStart(admin2) == true, "force: ForceStart запустил ивент (находка 180g)")
+ok(ldF:GetEventActive() == true, "force: ивент активен несмотря на КД (находка 180g)")
+ok(GRM.HeistCooldownUntil == 0, "force: КД сброшен (находка 180g)")
+-- повторный force при активном ивенте — отказ
+ok(ldF:ForceStart(admin2) == false, "force: повторный запуск при активном ивенте отклонён")
+-- /heist_stop: принудительное завершение
+ok(ldF:ForceStop(admin2) == true, "force: ForceStop завершил ивент (находка 180g)")
+ok(ldF:GetEventActive() == false, "force: ивент завершён (находка 180g)")
+-- после superadmin-стопа КД НЕ ставится (можно тестировать снова)
+ok(GRM.HeistCooldownUntil == 0, "force: после стопа КД не установлен (находка 180g)")
+-- длительность КД настраивается через config_full (cdMin=20 → 1200 сек)
+_G.__readTbl = {}
+_G.__readUInt = 20
+_G.__readStr = "config_full"
+_G.__readTbl = { "Mafia" }
+local recvCD = H.netrecv["GRM_Heist_Action"]
+-- эмуляция: minP=2, goal=500000, фракции, cdMin=20
+net.ReadUInt = function() return 2 end
+local oldReadTable = net.ReadTable
+net.ReadTable = function() return { "Mafia" } end
+-- читаем по порядку: 16 бит minP, 32 бит goal, таблица, 16 бит cdMin
+local callN = 0
+net.ReadUInt = function()
+    callN = callN + 1
+    if callN == 1 then return 2 end
+    if callN == 2 then return 500000 end
+    if callN == 3 then return 20 end
+    return 0
+end
+recvCD(0, admin2)
+ok(GRM.HeistCooldownDuration == 1200, "КД: config_full установил длительность 20 мин (1200 сек)")
+GRM.HeistCooldownUntil = 0
+
+-- ══════════════ 9. НАГРАДА ГОС.СТРУКТУРАМ (находка 180h) ══════════════
+-- dofile экономики переопределил GRM.FactionBudgetAdd — ставим свой мок
+local budgetLog = {}
+GRM.FactionBudgetAdd = function(name, delta, reason) budgetLog[name] = (budgetLog[name] or 0) + (delta or 0) end
+GRM.FactionBudgetGet = function(name) return budgetLog[name] or 0 end
+-- Победа госников: 200к–1М в бюджет фракций, пропорционально доставленному
+-- отмывщику, распределение по киллам криминала (учёт через PlayerDeath).
+local gov1 = mkPly(false, "Полицейский", "76561198000000010", "STEAM_0:1:50") -- Polizei (гос.структура)
+local ldG = mkEnt("grm_money_launderer")
+ldG:SetPos(Vector(0, 0, 0))
+ldG.GetEventActive = function() return ldG.__ea == true end
+ldG.SetEventActive = function(_, v) ldG.__ea = v end
+ldG.SetEventEndsAt = function() end
+ldG.GetEventEndsAt = function() return 0 end
+ldG.SetMoneyHeld = function(_, v) ldG.__held = v end
+ldG.GetMoneyHeld = function() return ldG.__held or 0 end
+ldG.SetWinnerFaction = function() end
+ldG.GetWinnerFaction = function() return "" end
+ldG.GetParticipantCount = function() return 1 end
+ldG.SetParticipantCount = function() end
+ldG.GetMinParticipants = function() return 2 end
+ldG.GetGoalMoney = function() return 500000 end
+ldG.GetPreStartAt = function() return ldG.__pre or 0 end
+ldG.SetPreStartAt = function(_, v) ldG.__pre = v end
+ldG.GetHeistTargetPos = function() return Vector(0, 0, 0) end
+ldG.SetHeistTargetPos = function() end
+ldG.GetGovFactions = function() return ldG.__gov or "" end
+ldG.SetGovFactions = function(_, v) ldG.__gov = v end
+ldG.Participants = {} ldG.ParticipantNames = {} ldG.FactionDelivered = {} ldG.GovKills = {}
+_G.__launderers = { ldG } -- PlayerDeath-хук ищет активный отмывщик по классу
+
+-- отмечаем Polizei как гос.структуру + делаем maf1 участником
+ldG:SetGovFactions("Polizei")
+local sidMaf1 = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(maf1)) or maf1:SteamID64() or ""
+ldG.Participants[tostring(sidMaf1)] = "Mafia"
+ldG:SetEventActive(true)
+_G.__players = { maf1, gov1 }
+-- госник убивает криминала → килл фракции (PlayerDeath hook)
+local deathHook = H.hooks.PlayerDeath and H.hooks.PlayerDeath.GRM_Heist_GovKills
+ok(deathHook ~= nil, "награда: PlayerDeath-хук учёта киллов зарегистрирован (находка 180h)")
+deathHook(maf1, nil, gov1)
+ok(ldG.GovKills["Polizei"] == 1, "награда: госник убил криминала → Polizei +1 килл (находка 180h)")
+-- убийство НЕ госником (Mafia по Mafia) не засчитывается
+local mafKiller = mkPly(false, "Киллер", "76561198000000020", "STEAM_0:1:77")
+Factions.Mafia.Members["STEAM_0:1:77"] = { Role = "Soldier" }
+deathHook(maf1, nil, mafKiller)
+ok(ldG.GovKills["Mafia"] == nil and ldG.GovKills["Polizei"] == 1, "награда: килл не-госника не засчитан (находка 180h)")
+-- победа госников: доставлено 500.000 → награда 500.000 в бюджет Polizei
+budgetLog = {}
+ldG:SetMoneyHeld(500000)
+ldG:EndEvent(false, "Время вышло")
+print("    debug: held=" .. tostring(ldG:GetMoneyHeld()) .. " gov=" .. tostring(ldG:GetGovFactions()) .. " budget Polizei=" .. tostring(budgetLog["Polizei"]))
+ok(budgetLog["Polizei"] == 500000, "награда: Polizei получила 500.000 в бюджет (пропорционально, находка 180h)")
+-- минимум: доставлено 50.000 → 200.000
+budgetLog = {}
+ldG:SetMoneyHeld(50000)
+ldG:SetEventActive(true)
+ldG:EndEvent(false, "Время вышло")
+ok(budgetLog["Polizei"] == 200000, "награда: минимум 200.000 (находка 180h)")
+-- максимум: доставлено 2.000.000 → 1.000.000
+budgetLog = {}
+ldG:SetMoneyHeld(2000000)
+ldG:SetEventActive(true)
+ldG:EndEvent(false, "Время вышло")
+ok(budgetLog["Polizei"] == 1000000, "награда: максимум 1.000.000 (находка 180h)")
+-- распределение по киллам: Polizei 3 килла, Gov 1 килл, reward 1.000.000 → 750.000/250.000
+ldG:SetGovFactions("Polizei,Gov")
+Factions.Gov = { Members = { ["STEAM_0:1:99"] = { Role = "Agent" } }, Leader = "STEAM_0:1:98", Roles = { "Agent" }, Departments = {} }
+local gov2 = mkPly(false, "Агент", "76561198000000030", "STEAM_0:1:99")
+budgetLog = {}
+ldG.GovKills = { Polizei = 3, Gov = 1 }
+ldG:SetMoneyHeld(2000000)
+ldG:SetEventActive(true)
+ldG:EndEvent(false, "Время вышло")
+ok(budgetLog["Polizei"] == 750000 and budgetLog["Gov"] == 250000, "награда: распределение по киллам 3:1 (750к/250к, находка 180h)")
+-- без киллов — поровну
+budgetLog = {}
+ldG.GovKills = {}
+ldG:SetMoneyHeld(2000000)
+ldG:SetEventActive(true)
+ldG:EndEvent(false, "Время вышло")
+ok(budgetLog["Polizei"] == 500000 and budgetLog["Gov"] == 500000, "награда: без киллов — поровну (находка 180h)")
+-- килл не-участника не засчитывается
+ldG.GovKills = {}
+ldG.Participants = {}
+ldG:SetEventActive(true)
+deathHook(mafKiller, nil, gov1) -- жертва не участник
+ok(ldG.GovKills["Polizei"] == nil, "награда: килл не-участника не засчитан (находка 180h)")
+
+-- ══════════════ 9i. ВЫПЛАТА КРИМИНАЛУ ПРИ ПОБЕДЕ — x2 (находка 180i) ══════════════
+ldG.GetWinnerFaction = function() return ldG.__winner or "" end
+ldG.SetWinnerFaction = function(_, v) ldG.__winner = v end
+budgetLog = {}
+ldG.FactionDelivered = { Mafia = 400000, Yakuza = 100000 }
+ldG:SetMoneyHeld(500000)
+ldG:SetWinnerFaction("Mafia")
+ldG:SetEventActive(true)
+ldG:EndEvent(true, "Цель достигнута")
+ok(budgetLog["Mafia"] == 800000 and budgetLog["Yakuza"] == 200000, "криминал: выплата x2 распределена по сданному 400к/100к → 800к/200к (находка 180i)")
+ok((budgetLog["Mafia"] or 0) + (budgetLog["Yakuza"] or 0) == 1000000, "криминал: сумма = x2 от награбленного (1.000.000, находка 180i)")
+budgetLog = {}
+ldG.FactionDelivered = { Mafia = 300000 }
+ldG:SetMoneyHeld(300000)
+ldG:SetWinnerFaction("Mafia")
+ldG:SetEventActive(true)
+ldG:EndEvent(true, "Цель достигнута")
+ok(budgetLog["Mafia"] == 600000, "криминал: одна фракция — вся выплата x2 (600.000, находка 180i)")
+budgetLog = {}
+ldG.FactionDelivered = { Mafia = 300000 }
+ldG:SetMoneyHeld(300000)
+ldG:SetEventActive(true)
+ldG:EndEvent(false, "superadmin")
+ok(budgetLog["Mafia"] == nil, "криминал: при superadmin-стопе выплат нет (находка 180i)")
 
 print(string.format("sim_heist: %d ok, %d fail", pass, fail))
 if fail > 0 then os.exit(1) end

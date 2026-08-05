@@ -79,7 +79,7 @@ net = {
   WriteEntity = function(e) netLog.ent = e end,
   WriteString = function(s) netLog.str = s end,
   WriteUInt = function(v, b) netLog.uint = netLog.uint or {} netLog.uint[#netLog.uint + 1] = { v, b } end,
-  WriteTable = function(t) netLog.tbl = t end,
+  WriteTable = function(t) netLog.tbls = netLog.tbls or {} netLog.tbls[#netLog.tbls + 1] = t end,
   SendToServer = function() netLog.sent = true end,
   Receive = function(n, fn) H.netrecv[n] = fn end,
   ReadEntity = function() return testEnt end,
@@ -90,7 +90,7 @@ net = {
 }
 local function resetNet()
   netLog.start = nil; netLog.ent = nil; netLog.str = nil
-  netLog.uint = nil; netLog.tbl = nil; netLog.sent = nil
+  netLog.uint = nil; netLog.tbls = nil; netLog.sent = nil
 end
 
 -- ── загрузка реальных файлов ──
@@ -108,6 +108,8 @@ menuData = {
   canManage = true, myFaction = "Mafia", factionAllowed = true,
   hasTarget = false, targetPos = nil,
   factionsList = { "Mafia", "Polizei" },
+  cooldownLeft = 0, cooldownDuration = 1800,
+  govFactions = "Polizei", govKills = { Polizei = 2 },
 }
 H.netrecv["GRM_Heist_Open"]()
 
@@ -123,6 +125,17 @@ ok(saveBtn ~= nil, "меню: кнопка СОХРАНИТЬ НАСТРОЙКИ
 ok(saveBtn ~= nil and saveBtn._w == 170 and saveBtn._h == 26, "меню: кнопка КОМПАКТНАЯ 170x26 (находка 179y)")
 saveBar:PerformLayout()
 ok(saveBtn ~= nil and saveBtn._x == 215 and saveBtn._y == 7, "меню: кнопка отцентрована в панели (находка 179y)")
+-- Находка 180h: чеклист гос.структур
+local govRowP = findWidget(function(w) return w._type == "DButton" and w._govName == "Polizei" end)
+ok(govRowP ~= nil, "меню: строка гос.структуры Polizei создана (находка 180h)")
+local govRowM = findWidget(function(w) return w._type == "DButton" and w._govName == "Mafia" end)
+ok(govRowM ~= nil, "меню: строка гос.структуры Mafia создана (находка 180h)")
+-- Polizei отмечена из данных (govFactions="Polizei"), Mafia нет
+govRowP.DoClick() -- снять Polizei
+govRowM.DoClick() -- отметить Mafia
+resetNet()
+saveBtn.DoClick()
+ok(netLog.tbls and netLog.tbls[2] and #netLog.tbls[2] == 1 and netLog.tbls[2][1] == "Mafia", "меню: гос.структуры сохранены (Mafia, находка 180h)")
 local minWang = findWidget(function(w) return w._type == "DNumberWang" and w._field == "min" end)
 local goalWang = findWidget(function(w) return w._type == "DNumberWang" and w._field == "goal" end)
 ok(minWang ~= nil and goalWang ~= nil, "меню: поля DNumberWang (минимум/цель)")
@@ -137,25 +150,28 @@ saveBtn.DoClick()
 ok(netLog.start == "GRM_Heist_Action" and netLog.str == "config_full" and netLog.sent == true, "сохранение: net.Start GRM_Heist_Action, action config_full")
 ok(netLog.uint and netLog.uint[1][1] == 2 and netLog.uint[1][2] == 16, "сохранение: minP=2 (16 бит)")
 ok(netLog.uint and netLog.uint[2][1] == 500000 and netLog.uint[2][2] == 32, "сохранение: goal=500000 (32 бита)")
-ok(netLog.tbl and #netLog.tbl == 1 and netLog.tbl[1] == "Mafia", "сохранение: выбрана Mafia (из данных)")
+local cdWang = findWidget(function(w) return w._type == "DNumberWang" and w._field == "cd" end)
+ok(cdWang ~= nil and cdWang._value == 30, "меню: поле КД (мин) со значением 30 (находка 180c)")
+ok(netLog.uint and netLog.uint[3] and netLog.uint[3][1] == 30 and netLog.uint[3][2] == 16, "сохранение: КД 30 мин отправлено (16 бит, находка 180c)")
+ok(netLog.tbls and netLog.tbls[1] and #netLog.tbls[1] == 1 and netLog.tbls[1][1] == "Mafia", "сохранение: выбрана Mafia (из данных)")
 
 -- ── 2. Клик по строке Polizei → добавится ──
 polizeiRow.DoClick()
 resetNet()
 saveBtn.DoClick()
-ok(netLog.tbl and #netLog.tbl == 2 and netLog.tbl[1] == "Mafia" and netLog.tbl[2] == "Polizei", "клик по строке Polizei → в выборе обе (находка 179s)")
+ok(netLog.tbls and netLog.tbls[1] and #netLog.tbls[1] == 2 and netLog.tbls[1][1] == "Mafia" and netLog.tbls[1][2] == "Polizei", "клик по строке Polizei → в выборе обе (находка 179s)")
 
 -- ── 3. Клик по Mafia → снимается ──
 mafiaRow.DoClick()
 resetNet()
 saveBtn.DoClick()
-ok(netLog.tbl and #netLog.tbl == 1 and netLog.tbl[1] == "Polizei", "клик по Mafia → снята, осталась Polizei")
+ok(netLog.tbls and netLog.tbls[1] and #netLog.tbls[1] == 1 and netLog.tbls[1][1] == "Polizei", "клик по Mafia → снята, осталась Polizei")
 
 -- ── 4. Снять всё → пустой список (любые) ──
 polizeiRow.DoClick()
 resetNet()
 saveBtn.DoClick()
-ok(netLog.tbl and #netLog.tbl == 0, "пустой выбор → пустой список (любые фракции)")
+ok(netLog.tbls and netLog.tbls[1] and #netLog.tbls[1] == 0, "пустой выбор → пустой список (любые фракции)")
 
 -- ── 5. Числа: изменение в полях видно при сохранении (GetValue) ──
 minWang._value = 7
@@ -165,7 +181,7 @@ resetNet()
 saveBtn.DoClick()
 ok(netLog.uint and netLog.uint[1][1] == 7 and netLog.uint[1][2] == 16, "числа: minP=7 из поля (GetValue, находка 179s)")
 ok(netLog.uint and netLog.uint[2][1] == 600000 and netLog.uint[2][2] == 32, "числа: goal=600000 из поля (GetValue, находка 179s)")
-ok(netLog.tbl and #netLog.tbl == 1 and netLog.tbl[1] == "Mafia", "числа: Mafia всё ещё в выборе")
+ok(netLog.tbls and netLog.tbls[1] and #netLog.tbls[1] == 1 and netLog.tbls[1][1] == "Mafia", "числа: Mafia всё ещё в выборе")
 
 -- ── 6. Переоткрытие меню с новыми данными сервера ──
 -- (в проде старое окно удаляется menuFrame:Remove() — имитируем сбросом реестра)
@@ -182,10 +198,30 @@ H.netrecv["GRM_Heist_Open"]()
 local minWang2 = findWidget(function(w) return w._type == "DNumberWang" and w._field == "min" end)
 local goalWang2 = findWidget(function(w) return w._type == "DNumberWang" and w._field == "goal" end)
 ok(minWang2 and minWang2._value == 7 and goalWang2 and goalWang2._value == 600000, "переоткрытие: значения 7/600000 из данных сервера")
+local cdWang2 = findWidget(function(w) return w._type == "DNumberWang" and w._field == "cd" end)
+ok(cdWang2 ~= nil and cdWang2._value == 30, "переоткрытие: поле КД на месте (находка 180c)")
 resetNet()
 saveBtn = findWidget(function(w) return w._type == "DButton" and w._btnText == "💾 СОХРАНИТЬ НАСТРОЙКИ" end)
 saveBtn.DoClick()
-ok(netLog.tbl and #netLog.tbl == 1 and netLog.tbl[1] == "Polizei", "переоткрытие: выбрана Polizei (сохранённая на сервере)")
+ok(netLog.tbls and netLog.tbls[1] and #netLog.tbls[1] == 1 and netLog.tbls[1][1] == "Polizei", "переоткрытие: выбрана Polizei (сохранённая на сервере)")
+
+-- ══════════════ 7. КД АКТИВЕН (находка 180c) ══════════════
+allWidgets = {}
+menuData = {
+  enabled = true, eventActive = false,
+  minParticipants = 2, participantCount = 0, goalMoney = 500000, moneyHeld = 0,
+  allowedFactions = "", eventEndsAt = 0, isParticipant = false,
+  canManage = false, myFaction = "Mafia", factionAllowed = true,
+  hasTarget = false, targetPos = nil,
+  factionsList = { "Mafia", "Polizei" },
+  cooldownLeft = 120, cooldownDuration = 1800,
+}
+H.netrecv["GRM_Heist_Open"]()
+local cdBlocked = findWidget(function(w) return w._type == "DButton" and w._btnText and w._btnText:find("ОГРАБЛЕНИЕ НА ПЕРЕЗАГРУЗКЕ", 1, true) end)
+ok(cdBlocked ~= nil, "КД: заблокированная кнопка «ПЕРЕЗАГРУЗКА» видна (находка 180c)")
+local takeBtn = findWidget(function(w) return w._type == "DButton" and w._btnText == "ВЗЯТЬ ЗАДАНИЕ НА ОГРАБЛЕНИЕ" end)
+ok(takeBtn == nil, "КД: кнопки «ВЗЯТЬ ЗАДАНИЕ» НЕТ (находка 180c)")
+ok(cdBlocked ~= nil and cdBlocked._btnText:find("02:00", 1, true) ~= nil, "КД: на кнопке таймер 02:00 (находка 180c)")
 
 print(string.format("sim_launderer_menu: %d ok, %d fail", pass, fail))
 os.exit(fail > 0 and 1 or 0)

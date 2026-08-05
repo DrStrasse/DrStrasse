@@ -24,15 +24,19 @@ net.Receive("GRM_Heist_Event", function()
     local subtitle = net.ReadString()
     local music = net.ReadBool()
     local endsAt = net.ReadFloat()
+    -- Находка 180f: список РП-имён участников («криминал») для HUD
+    local participants = net.ReadTable() or {}
 
     if state == "start" then
         Heist.Banner = { text = title, sub = subtitle, ["until"] = CurTime() + 10 }
         Heist.EventEndsAt = endsAt
+        Heist.Participants = participants
         -- музыка уже играет с сервера (см. StartEvent отмывщика)
         surface.PlaySound("buttons/button15.wav")
     elseif state == "end" then
         Heist.Banner = { text = title, sub = subtitle, ["until"] = CurTime() + 12 }
         Heist.EventEndsAt = 0
+        Heist.Participants = nil
     end
 end)
 
@@ -61,5 +65,18 @@ hook.Add("HUDPaint", "GRM_Heist_HUD", function()
         local txt = ("ОГРАБЛЕНИЕ  •  %02d:%02d"):format(mm, ss)
         draw.RoundedBox(6, ScrW()/2 - 130, 8, 260, 34, Color(20, 10, 10, 210))
         draw.SimpleText(txt, "GRMHeist_Timer", ScrW()/2, 25, Color(255, 150, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+
+    -- Находка 180f: список РП-имён участников («криминал») слева вверху
+    if Heist.Participants and #Heist.Participants > 0 and Heist.EventEndsAt > 0 and CurTime() < Heist.EventEndsAt then
+        local names = {}
+        for _, r in ipairs(Heist.Participants) do
+            local f = tostring(r.faction or "")
+            names[#names + 1] = tostring(r.name or "?") .. (f ~= "" and (" [" .. f .. "]") or "")
+        end
+        local text = "УЧАСТНИКИ (КРИМИНАЛ):\n" .. table.concat(names, "\n")
+        local x, y = 12, 56
+        draw.RoundedBox(6, x, y, 240, 18 + #Heist.Participants * 17, Color(15, 10, 10, 185))
+        draw.SimpleText(text, "GRMHeist_Sub", x + 12, y + 10, Color(255, 200, 120), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
     end
 end)

@@ -80,7 +80,8 @@ ok(not has(core,"pac.") and not has(client,"pac."),"implementation has no PAC3 r
 ok(has(core,'hook.Add("AllowFlashlight", "GRM_Customization_NoFlashlight"'),"flashlight banned on server (AllowFlashlight=false)")
 ok(has(core,'dispatchFunctionEvent("OnEquip", ply, slot, item, equipped)') and has(core,"C.GetLoadout(ply)"),"rejoin restores OnEquip for worn accessories (memory fix)")
 ok(has(client,'bind == "+flashlight"'),"client blocks +flashlight bind (PlayerBindPress)")
-ok(has(client,"lp:GetFlashlight()") and has(client,"lp:SetFlashlight(false)"),"client force-off already-lit flashlight (Think)")
+ok(has(client,"FlashlightIsOn") and not has(client,"GetFlashlight"),"client force-off uses FlashlightIsOn, not non-existent GetFlashlight (находка 180b)")
+ok(has(client,"isfunction(lp.SetFlashlight)") and has(client,"lp:SetFlashlight(false)"),"client force-off guards SetFlashlight with isfunction (находка 180b)")
 
 -- Numeric transform normalization contract.
 local function clamp(v,a,b) return math.max(a,math.min(b,v)) end

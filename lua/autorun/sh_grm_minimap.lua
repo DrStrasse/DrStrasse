@@ -62,6 +62,23 @@ if SERVER then
         MM.Data.points[#MM.Data.points + 1] = p
         return p.id
     end
+    -- Находка 180e: принудительное удаление временных маркеров по имени
+    -- (маркер цели ограбления должен исчезать при завершении ивента,
+    -- а не жить до expires). Рассылает обновление всем.
+    function MM.RemoveTempPoint(name)
+        name = string.Trim(tostring(name or ""))
+        if name == "" then return false end
+        local removed = false
+        for i = #(MM.Data.points or {}), 1, -1 do
+            local p = MM.Data.points[i]
+            if p and p.temp and string.Trim(tostring(p.name or "")) == name then
+                table.remove(MM.Data.points, i)
+                removed = true
+            end
+        end
+        if removed then send() end
+        return removed
+    end
     function MM.AddDistrict(ply, name, center, radius)
         MM.Data.districts[#MM.Data.districts + 1] = { id = nextID("district"), name = string.sub(string.Trim(name or "Район"), 1, 48), center = { x = center.x, y = center.y, z = center.z }, radius = math.Clamp(tonumber(radius) or 500, 100, 10000), color = { r = 70, g = 150, b = 240 }, polygon = {}, owner = "" }
         save(); send(); return true

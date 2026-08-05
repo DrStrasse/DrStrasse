@@ -26,6 +26,17 @@ ENT.ModelFallback = "models/props_c17/consolebox01a.mdl"
 ENT.HeistDuration = 3000   -- 50 минут
 ENT.JobRadius     = 250    -- радиус E-взаимодействия
 ENT.DepositRadius = 400    -- радиус сдачи денег (/bag_unload)
+ENT.PreStartDelay = 40     -- Находка 180f: ожидание 40 сек перед стартом (вступить ещё успеют)
+
+-- Находка 180h: вознаграждение гос.структурам за победу (защиту города).
+-- Сумма — пропорционально доставленному отмывщику (MoneyHeld), в рамках
+-- [MIN..MAX]; распределяется между гос.фракциями по киллам криминала.
+ENT.GovRewardMin = 200000  -- минимум за победу госников
+ENT.GovRewardMax = 1000000 -- максимум
+-- Находка 180i: множитель выплаты при победе КРИМИНАЛА — не меньше x2
+-- от награбленного (MoneyHeld); распределяется между фракциями-
+-- участниками пропорционально сданному (FactionDelivered).
+ENT.CrimRewardMultiplier = 2
 
 function ENT:SetupDataTables()
     self:NetworkVar("Bool", 0, "Enabled")        -- отмывщик включён
@@ -35,8 +46,14 @@ function ENT:SetupDataTables()
     self:NetworkVar("Int", 2, "MoneyHeld")       -- сколько сдано
     self:NetworkVar("Int", 3, "ParticipantCount")
     self:NetworkVar("Float", 0, "EventEndsAt")
+    -- Находка 180f: время (CurTime) старта ивента после набора минимума;
+    -- 0 = ожидание не идёт. Даёт игрокам 40 сек добежать и вступить.
+    self:NetworkVar("Float", 1, "PreStartAt")
     self:NetworkVar("String", 0, "AllowedFactions") -- список фракций через запятую (пусто = все)
     self:NetworkVar("String", 1, "WinnerFaction")
+    -- Находка 180h: ГОС.СТРУКТУРЫ (чеклист суперадмина) — фракции через
+    -- запятую; их победа = награда за защиту города (по киллам).
+    self:NetworkVar("String", 2, "GovFactions")
     -- Находка 179f: цель ивента (Рейхсбанк/хранилище) — маркер GPS
     self:NetworkVar("Vector", 0, "HeistTargetPos") -- Vector(0,0,0) = не задана (авто: ближайшее хранилище)
 end

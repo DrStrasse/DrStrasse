@@ -179,8 +179,14 @@ hook.Add("PlayerBindPress", "GRM_Customization_NoFlashlightBind", function(ply, 
     if bind == "+flashlight" then return true end
 end)
 hook.Add("Think", "GRM_Customization_FlashlightForceOff", function()
+    -- Находка 180b: правильный метод проверки фонарика — FlashlightIsOn().
+    -- Оба метода под isfunction-гардом (проверка существования до вызова).
     local lp = LocalPlayer()
-    if IsValid(lp) and lp:GetFlashlight() then lp:SetFlashlight(false) end
+    if IsValid(lp) then
+        if isfunction(lp.FlashlightIsOn) and lp:FlashlightIsOn() then
+            if isfunction(lp.SetFlashlight) then lp:SetFlashlight(false) end
+        end
+    end
 end)
 
 hook.Add("EntityRemoved", "GRM_Customization_CacheCleanup", function(ent)
