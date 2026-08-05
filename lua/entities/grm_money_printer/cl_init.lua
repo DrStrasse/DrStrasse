@@ -22,9 +22,10 @@ function ENT:Draw()
     self:DrawModel()
 
     local pos = self:GetPos() + Vector(0, 0, 28)
-    local ang = Angle(0, LocalPlayer():EyeAngles().y - 90, 90)
+    local ang = Angle(0, EyeAngles().y - 90, 90)
     local printed, maxMoney = self:GetPrinted(), self:GetMaxMoney()
     local heat, hp = self:GetHeat(), self:GetPrinterHealth()
+    local hpPercent = math.floor(math.Clamp(hp / 250, 0, 1) * 100)
     local broken = self:GetBroken()
     local active = self:GetActive()
 
@@ -44,7 +45,7 @@ function ENT:Draw()
         y = 42
         draw.RoundedBox(4, -barW/2, y, barW, 8, Color(25, 30, 42, 255))
         draw.RoundedBox(4, -barW/2, y, barW * pct(heat, 100), 8, heat >= 75 and C.red or C.yellow)
-        draw.SimpleText("Нагрев: " .. tostring(math.floor(heat)) .. "%   Состояние: " .. tostring(math.floor(hp)) .. "%", "GRM_Printer_Small", 0, y + 18, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Нагрев: " .. tostring(math.floor(heat)) .. "%   Состояние: " .. tostring(hpPercent) .. "%", "GRM_Printer_Small", 0, y + 18, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     cam.End3D2D()
 end
 
@@ -102,7 +103,7 @@ net.Receive("GRM_Printer_Open", function()
         draw.SimpleText("Накоплено: " .. money(data.printed or 0) .. " / " .. money(data.maxMoney or 0), "GRM_Printer_Normal", 14, 24, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         draw.SimpleText("Печать: " .. money(data.printAmount or 0) .. " каждые " .. tostring(data.printInterval or 0) .. " сек", "GRM_Printer_Small", 14, 50, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         draw.SimpleText("Нагрев: " .. tostring(data.heat or 0) .. "%", "GRM_Printer_Small", 14, 74, (data.heat or 0) >= 75 and C.red or C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText("Состояние: " .. tostring(data.health or 0) .. "%", "GRM_Printer_Small", 14, 98, (data.broken and C.red or C.green), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Состояние: " .. tostring(math.floor(100 * (data.health or 0) / math.max(1, data.maxHealth or 250))) .. "%", "GRM_Printer_Small", 14, 98, (data.broken and C.red or C.green), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         draw.SimpleText(data.broken and "СЛОМАН" or (data.active and "РАБОТАЕТ" or "ВЫКЛЮЧЕН"), "GRM_Printer_Normal", w - 14, 24, data.broken and C.red or (data.active and C.green or C.yellow), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
     end
 

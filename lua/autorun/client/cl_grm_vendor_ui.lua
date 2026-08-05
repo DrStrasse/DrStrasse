@@ -1,306 +1,59 @@
---[[--------------------------------------------------------------------
-    GRM Vendor Client UI v1.1 (Код 111)
-    Исправления:
-    - Dock вместо SetPos (кнопки не съезжают)
-    - Правильный DModelPanel с LayoutEntity
-    - Проверка GRM.HasMoney/Format перед использованием
-    - Нормальная сетка товаров
-----------------------------------------------------------------------]]
-
+-- GRM Vendor UI v2.0 — unified GRM storefront
 if not CLIENT then return end
-
-GRM = GRM or {}
-GRM.Vendor = GRM.Vendor or {}
-GRM.Vendor.UI = GRM.Vendor.UI or {}
-
--- ========== ЦВЕТОВАЯ СХЕМА (в стиле HUD v10.2) ==========
-local CUI = {
-    bg         = Color(19, 24, 33, 248),
-    panel      = Color(33, 42, 56, 245),
-    accent     = Color(70, 155, 255),
-    green      = Color(55, 185, 105),
-    red        = Color(205, 70, 65),
-    yellow     = Color(235, 180, 60),
-    text       = Color(240, 244, 250),
-    dim        = Color(166, 176, 191),
-    slotBg     = Color(20, 22, 30, 220),
-    slotBorder = Color(60, 65, 80, 200),
-    header     = Color(27, 35, 48),
-}
-
--- ========== ШРИФТЫ ==========
-surface.CreateFont("GRM_Vendor_Title", {
-    font = "Roboto", size = 22, weight = 800, extended = true,
-})
-surface.CreateFont("GRM_Vendor_Item", {
-    font = "Roboto", size = 14, weight = 500, extended = true,
-})
-surface.CreateFont("GRM_Vendor_Small", {
-    font = "Roboto", size = 12, weight = 400, extended = true,
-})
-surface.CreateFont("GRM_Vendor_Price", {
-    font = "Roboto", size = 14, weight = 700, extended = true,
-})
-surface.CreateFont("GRM_Vendor_Button", {
-    font = "Roboto", size = 13, weight = 600, extended = true,
-})
-
--- ========== ХЕЛПЕРЫ ==========
-local function money(n)
-    return GRM.Format and GRM.Format(n) or (tostring(n) .. " GRM")
+GRM=GRM or{}; GRM.Vendor=GRM.Vendor or{}; GRM.Vendor.UI=GRM.Vendor.UI or{}
+local UI={bg=Color(11,16,24,252),head=Color(21,29,42),side=Color(17,24,35),card=Color(27,37,51),card2=Color(33,45,61),line=Color(57,76,99),text=Color(238,244,250),dim=Color(151,169,190),blue=Color(66,147,242),green=Color(61,190,117),red=Color(215,73,79),orange=Color(237,158,67),yellow=Color(239,198,81)}
+surface.CreateFont("GRMVendor2_Title",{font="Roboto",size=23,weight=900,extended=true})
+surface.CreateFont("GRMVendor2_Head",{font="Roboto",size=16,weight=800,extended=true})
+surface.CreateFont("GRMVendor2_Body",{font="Roboto",size=13,weight=550,extended=true})
+surface.CreateFont("GRMVendor2_Small",{font="Roboto",size=11,weight=500,extended=true})
+local current={ent=nil,kind="",name="",catalog={}}
+local function money(n)return GRM.Format and GRM.Format(n)or(tostring(n).." GRM")end
+local function balance()return tonumber(GRM.PlayerBalance)or(GRM.GetBalance and tonumber(GRM.GetBalance(LocalPlayer())))or 0 end
+local function button(parent,text,color)
+ local b=vgui.Create("DButton",parent);b:SetText(text);b:SetFont("GRMVendor2_Body");b:SetTextColor(color_white)
+ b.Paint=function(self,w,h)local c=color or UI.blue;if self:IsHovered()then c=Color(math.min(c.r+18,255),math.min(c.g+18,255),math.min(c.b+18,255))end;draw.RoundedBox(6,0,0,w,h,c)end;return b
+end
+local function functionText(item)
+ local names={gasmask="Противогаз",backpack="Рюкзак",radio="Рация",watch="Часы",armor="Защита"};local out={}
+ for id,on in pairs(item.functions or{})do if on then out[#out+1]=names[id]or id end end;table.sort(out);return table.concat(out," • ")
+end
+local function setupPreview(panel,model)
+ if not util.IsValidModel(model or"")then return end
+ panel:SetModel(model);local ent=panel:GetEntity();if not IsValid(ent)then return end
+ local mn,mx=ent:GetRenderBounds();local size=math.max((mx-mn):Length(),12);panel:SetFOV(34);panel:SetCamPos(Vector(size,size,size*.55));panel:SetLookAt((mn+mx)*.5)
+ panel.LayoutEntity=function(self,e)e:SetAngles(Angle(0,(RealTime()*20)%360,0))end
 end
 
-local function hasMoney(amount)
-    return GRM.HasMoney and GRM.HasMoney(LocalPlayer(), amount) or true
+local function openStore(ent,kind,name,catalog)
+ current={ent=ent,kind=kind,name=name,catalog=catalog}
+ if IsValid(GRM.Vendor.UI.Frame)then GRM.Vendor.UI.Frame:Remove()end
+ local f=vgui.Create("DFrame");GRM.UI.Track("vendor",f);GRM.Vendor.UI.Frame=f;f:SetSize(math.Clamp(ScrW()*.78,980,1380),math.Clamp(ScrH()*.82,680,900));f:Center();f:MakePopup();f:SetTitle("");f:ShowCloseButton(false)
+ f.Paint=function(_,w,h)draw.RoundedBox(10,0,0,w,h,UI.bg);draw.RoundedBoxEx(10,0,0,w,64,UI.head,true,true,false,false);draw.SimpleText("GRM / ТОРГОВАЯ СИСТЕМА","GRMVendor2_Small",22,17,UI.blue);draw.SimpleText(name,"GRMVendor2_Title",22,42,UI.text,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER);draw.SimpleText("Наличные: "..money(balance()),"GRMVendor2_Head",w-62,32,UI.green,TEXT_ALIGN_RIGHT,TEXT_ALIGN_CENTER)end
+ local close=button(f,"×",UI.red);close:SetPos(f:GetWide()-44,16);close:SetSize(30,30);close.DoClick=function()f:Close()end
+ local search=vgui.Create("DTextEntry",f);search:SetPos(18,78);search:SetSize(f:GetWide()-36,34);search:SetFont("GRMVendor2_Body");search:SetPlaceholderText("Поиск по названию, описанию или функции...")
+ local side=vgui.Create("DScrollPanel",f);side:SetPos(18,124);side:SetSize(210,f:GetTall()-142)
+ local content=vgui.Create("DScrollPanel",f);content:SetPos(240,124);content:SetSize(f:GetWide()-258,f:GetTall()-142)
+ local selectedCategory="Все"
+ local categories={Все=true};for _,item in pairs(catalog)do categories[item.category or"Прочее"]=true end
+ local function rebuild()
+  content:Clear();local query=string.lower(string.Trim(search:GetValue()or""));local count=0
+  local ids={};for id in pairs(catalog)do ids[#ids+1]=id end;table.sort(ids,function(a,b)return tostring(catalog[a].name)<tostring(catalog[b].name)end)
+  for _,id in ipairs(ids)do local item=catalog[id];local category=item.category or"Прочее";local hay=string.lower(table.concat({item.name or"",item.desc or"",category,functionText(item)}," "))
+   if(selectedCategory=="Все"or selectedCategory==category)and(query==""or string.find(hay,query,1,true))then
+    count=count+1;local row=vgui.Create("DPanel",content);row:Dock(TOP);row:SetTall(112);row:DockMargin(0,0,6,7);row.Paint=function(self,w,h)draw.RoundedBox(8,0,0,w,h,self:IsHovered()and UI.card2 or UI.card);surface.SetDrawColor(UI.line);surface.DrawOutlinedRect(0,0,w,h,1);draw.SimpleText(item.name or id,"GRMVendor2_Head",112,12,UI.text);draw.SimpleText(category.."  •  "..money(item.price),"GRMVendor2_Body",112,37,UI.yellow);draw.SimpleText(item.desc or"","GRMVendor2_Small",112,62,UI.dim);local ft=functionText(item);if ft~=""then draw.SimpleText("Функции: "..ft,"GRMVendor2_Small",112,84,UI.green)end end
+    local model=vgui.Create("DModelPanel",row);model:SetPos(7,7);model:SetSize(96,96);setupPreview(model,item.model)
+    local actions=vgui.Create("DPanel",row);actions:Dock(RIGHT);actions:SetWide(126);actions:DockMargin(6,8,8,8);actions:SetPaintBackground(false)
+    local buy=button(actions,"КУПИТЬ",UI.green);buy:Dock(TOP);buy:SetTall(42);buy.DoClick=function()surface.PlaySound("buttons/button15.wav");net.Start("GRM_Vendor_Buy")net.WriteEntity(ent)net.WriteString(id)net.SendToServer()end
+    if(tonumber(item.sellPrice)or 0)>0 then local sell=button(actions,"Продать",UI.orange);sell:Dock(BOTTOM);sell:SetTall(35);sell.DoClick=function()Derma_StringRequest("Продажа","Количество:","1",function(v)net.Start("GRM_Vendor_Sell")net.WriteEntity(ent)net.WriteString(id)net.WriteUInt(math.Clamp(math.floor(tonumber(v)or 1),1,1000),16)net.SendToServer()end)end end
+   end
+  end
+  if count==0 then local empty=vgui.Create("DLabel",content);empty:Dock(TOP);empty:SetTall(90);empty:SetFont("GRMVendor2_Head");empty:SetTextColor(UI.dim);empty:SetContentAlignment(5);empty:SetText("Товары не найдены")end
+ end
+ local cats={};for cat in pairs(categories)do cats[#cats+1]=cat end;table.sort(cats,function(a,b)if a=="Все"then return true elseif b=="Все"then return false end return a<b end)
+ for _,cat in ipairs(cats)do local b=button(side,cat,UI.card);b:Dock(TOP);b:SetTall(36);b:DockMargin(0,0,5,5);b.Paint=function(self,w,h)local c=selectedCategory==cat and UI.blue or(self:IsHovered()and UI.card2 or UI.card);draw.RoundedBox(6,0,0,w,h,c)end;b.DoClick=function()selectedCategory=cat;surface.PlaySound("buttons/button14.wav");rebuild()end end
+ search.OnChange=rebuild;rebuild()
 end
 
-local TITLES = {
-    weapon     = "🔫 Арсенал",
-    ore        = "⛏️ Скупка руды",
-    food       = " Ларёк еды",
-    rare       = "💎 Редкости",
-    electronics = "🖥️ Электроника",
-}
-
--- ========== ПЕРЕМЕННЫЕ СОСТОЯНИЯ ==========
-local vendorEnt  = nil
-local vendorType = nil
-local catalog    = {}
-
--- ========== ОТКРЫТИЕ ОКНА ==========
-net.Receive("GRM_Vendor_Open", function()
-    vendorEnt  = net.ReadEntity()
-    vendorType = net.ReadString()
-    catalog    = net.ReadTable() or {}
-
-    -- Закрыть предыдущее окно
-    if IsValid(GRM.Vendor.UI.Frame) then
-        GRM.Vendor.UI.Frame:Close()
-    end
-
-    -- Главный фрейм
-    local frame = vgui.Create("DFrame")
-    GRM.UI.Track("vendor", frame)
-    frame:SetTitle("")
-    frame:SetSize(780, 580)
-    frame:Center()
-    frame:MakePopup()
-    frame:ShowCloseButton(false)
-    GRM.Vendor.UI.Frame = frame
-
-    -- Рисование фона
-    frame.Paint = function(_, w, h)
-        draw.RoundedBox(8, 0, 0, w, h, CUI.bg)
-        -- Шапка
-        draw.RoundedBoxEx(8, 0, 0, w, 44, CUI.header, true, true, false, false)
-        -- Заголовок
-        draw.SimpleText(
-            TITLES[vendorType] or "🏪 Торгаш",
-            "GRM_Vendor_Title", 16, 22, CUI.text,
-            TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER
-        )
-        -- Баланс
-        local bal = GRM.PlayerBalance or 0
-        draw.SimpleText(
-            "Наличные: " .. money(bal),
-            "GRM_Vendor_Price", w - 16, 22, CUI.green,
-            TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER
-        )
-    end
-
-    -- Кнопка закрытия
-    local closeBtn = vgui.Create("DButton", frame)
-    closeBtn:SetPos(frame:GetWide() - 38, 8)
-    closeBtn:SetSize(24, 24)
-    closeBtn:SetText("")
-    closeBtn.DoClick = function() frame:Close() end
-    closeBtn.Paint = function(s, w, h)
-        draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(196, 62, 62) or Color(46, 56, 74))
-        surface.SetDrawColor(240, 242, 246)
-        surface.DrawLine(7, 7, w - 7, h - 7)
-        surface.DrawLine(7, h - 7, w - 7, 7)
-    end
-
-    -- Группировка товаров по категориям
-    local cats = {}
-    for id, item in pairs(catalog) do
-        local cat = item.category or "Прочее"
-        cats[cat] = cats[cat] or {}
-        cats[cat][id] = item
-    end
-
-    -- PropertySheet с вкладками категорий
-    local sheet = vgui.Create("DPropertySheet", frame)
-    sheet:Dock(FILL)
-    sheet:DockMargin(8, 52, 8, 8)
-    sheet.tabHeight = 28
-
-    -- Создаём вкладки
-    for catName, items in pairs(cats) do
-        local panel = vgui.Create("DScrollPanel", sheet)
-        panel:Dock(FILL)
-        panel:DockMargin(4, 4, 4, 4)
-        panel.Paint = function(_, w, h)
-            draw.RoundedBox(4, 0, 0, w, h, CUI.panel)
-        end
-
-        local canvas = panel:GetCanvas()
-        local yOffset = 6
-
-        -- Создаём строки товаров
-        for id, item in pairs(items) do
-            local row = CreateVendorRow(canvas, panel, id, item, vendorType, vendorEnt, yOffset)
-            yOffset = yOffset + row:GetTall() + 4
-        end
-
-        -- Обновление при ресайзе
-        panel.OnSizeChanged = function(_, w)
-            for _, row in ipairs(canvas:GetChildren()) do
-                if row._isVendorRow then
-                    row:SetWide(w - 16)
-                    -- Перераспределяем кнопки через Dock
-                end
-            end
-        end
-
-        -- Добавляем вкладку
-        local tabIcon = "icon16/box.png"
-        if vendorType == "weapon" then tabIcon = "icon16/bomb.png"
-        elseif vendorType == "ore" then tabIcon = "icon16/database.png"
-        elseif vendorType == "food" then tabIcon = "icon16/heart.png"
-        elseif vendorType == "rare" then tabIcon = "icon16/star.png"
-        elseif vendorType == "electronics" then tabIcon = "icon16/computer.png"
-        end
-
-        local sh = sheet:AddSheet(catName, panel, tabIcon)
-        if sh and sh.Tab then
-            sh.Tab:SetFont("GRM_Vendor_Item")
-        end
-    end
-end)
-
--- ========== СОЗДАНИЕ СТРОКИ ТОВАРА ==========
-function CreateVendorRow(parent, scrollPanel, id, item, vType, ent, yPos)
-    local row = vgui.Create("DPanel", parent)
-    row:SetTall(76)
-    row:SetWide(parent:GetWide() - 16)
-    row:Dock(TOP)
-    row:DockMargin(4, 2, 4, 2)
-    row._isVendorRow = true
-
-    row.Paint = function(_, w, h)
-        draw.RoundedBox(6, 0, 0, w, h, CUI.slotBg)
-        surface.SetDrawColor(CUI.slotBorder)
-        surface.DrawOutlinedRect(0, 0, w, h, 1)
-
-        -- Название товара
-        draw.SimpleText(item.name, "GRM_Vendor_Item", 82, 8, CUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-        -- Описание
-        draw.SimpleText(item.desc or "", "GRM_Vendor_Small", 82, 28, CUI.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-        -- Цена
-        draw.SimpleText("Цена: " .. money(item.price), "GRM_Vendor_Price", w - 120, 8, CUI.yellow, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
-
-        -- Доп. информация
-        local infoY = 48
-        if item.hunger then
-            draw.SimpleText("Сытость: +" .. item.hunger .. "  HP: +" .. (item.health or 0), "GRM_Vendor_Small", 82, infoY, CUI.green, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-        end
-        if item.isEntity then
-            draw.SimpleText("Покупка создаёт объект рядом с вами", "GRM_Vendor_Small", 82, infoY, CUI.green, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-        elseif item.maxStack then
-            draw.SimpleText("Макс. стак: " .. item.maxStack, "GRM_Vendor_Small", 82, infoY, CUI.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-        end
-        if item.license and item.license ~= "gun" then
-            local licText = item.license == "police" and " Только полиция" or "🔒 Только админ"
-            draw.SimpleText(licText, "GRM_Vendor_Small", 82, infoY + (item.hunger and 14 or 0), Color(255, 160, 60), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-        end
-    end
-
-    -- DModelPanel с правильной моделью
-    if item.model and item.model ~= "" and util.IsValidModel(item.model) then
-        local mdl = vgui.Create("DModelPanel", row)
-        mdl:SetPos(4, 4)
-        mdl:SetSize(70, 68)
-        mdl:SetModel(item.model)
-        mdl:SetCamPos(Vector(25, 25, 15))
-        mdl:SetLookAt(Vector(0, 0, 0))
-        mdl:SetFOV(30)
-        -- ВАЖНО: LayoutEntity должен быть пустым для статичной модели
-        function mdl:LayoutEntity(ent) end
-        mdl.Entity:SetAngles(Angle(0, CurTime() * 30 % 360, 0)) -- медленное вращение
-    else
-        -- Фолбэк: иконка предмета (если есть)
-        local icon = vgui.Create("SpawnIcon", row)
-        icon:SetPos(4, 4)
-        icon:SetSize(70, 68)
-        icon:SetModel(item.model or "models/props_junk/garbage_metalcan001a.mdl")
-    end
-
-    -- Правая панель с кнопками (Dock)
-    local rightPanel = vgui.Create("DPanel", row)
-    rightPanel:Dock(RIGHT)
-    rightPanel:SetWide(110)
-    rightPanel:DockMargin(4, 4, 8, 4)
-    rightPanel:SetPaintBackground(false)
-
-    -- Кнопка КУПИТЬ
-    local buyBtn = vgui.Create("DButton", rightPanel)
-    buyBtn:Dock(TOP)
-    buyBtn:SetTall(30)
-    buyBtn:DockMargin(0, 4, 0, 0)
-    buyBtn:SetText("")
-    buyBtn.DoClick = function()
-        if not hasMoney(item.price) then
-            GRM.Notify(LocalPlayer(), "Недостаточно средств!", 255, 100, 100)
-            return
-        end
-        net.Start("GRM_Vendor_Buy")
-            net.WriteEntity(ent)
-            net.WriteString(id)
-        net.SendToServer()
-    end
-    buyBtn.Paint = function(s, w, h)
-        local can = hasMoney(item.price)
-        local col = not can and Color(70, 75, 84) or (s:IsHovered() and Color(75, 170, 95) or CUI.green)
-        draw.RoundedBox(5, 0, 0, w, h, col)
-        draw.SimpleText("Купить", "GRM_Vendor_Button", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-    end
-
-    -- Кнопка ПРОДАТЬ (если есть скупочная цена)
-    local sellPrice = GRM.Vendor and GRM.Vendor.GetSellPrice and GRM.Vendor.GetSellPrice(LocalPlayer(), vType, id) or 0
-    if sellPrice > 0 then
-        local sellBtn = vgui.Create("DButton", rightPanel)
-        sellBtn:Dock(TOP)
-        sellBtn:SetTall(24)
-        sellBtn:DockMargin(0, 4, 0, 0)
-        sellBtn:SetText("")
-        sellBtn.DoClick = function()
-            Derma_StringRequest("Сколько продать?", "Введите количество:", "1", function(val)
-                local c = math.max(1, math.floor(tonumber(val) or 1))
-                net.Start("GRM_Vendor_Sell")
-                    net.WriteEntity(ent)
-                    net.WriteString(id)
-                    net.WriteUInt(c, 16)
-                net.SendToServer()
-            end)
-        end
-        sellBtn.Paint = function(s, w, h)
-            local col = s:IsHovered() and Color(180, 90, 80) or CUI.red
-            draw.RoundedBox(5, 0, 0, w, h, col)
-            draw.SimpleText("Продать", "GRM_Vendor_Small", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        end
-
-        -- Цена скупки под кнопкой
-        local priceLabel = vgui.Create("DLabel", rightPanel)
-        priceLabel:Dock(TOP)
-        priceLabel:DockMargin(0, 2, 0, 0)
-        priceLabel:SetText("Скупка: " .. money(sellPrice))
-        priceLabel:SetFont("GRM_Vendor_Small")
-        priceLabel:SetTextColor(CUI.dim)
-        priceLabel:SetContentAlignment(5)
-    end
-
-    return row
-end
-
-print("[GRM Vendor] Client UI v1.1 loaded (Code 111)")
+net.Receive("GRM_Vendor_Open",function()local ent=net.ReadEntity();local kind=net.ReadString();local name=net.ReadString();local catalog=net.ReadTable()or{};openStore(ent,kind,name,catalog)end)
+net.Receive("GRM_Vendor_Result",function()local ok,text=net.ReadBool(),net.ReadString();notification.AddLegacy(text,ok and NOTIFY_GENERIC or NOTIFY_ERROR,4);surface.PlaySound(ok and"buttons/button9.wav"or"buttons/button10.wav")end)
+print("[GRM Vendor] Client UI v2.0 loaded")

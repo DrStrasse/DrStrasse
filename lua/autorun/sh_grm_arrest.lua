@@ -1,6 +1,6 @@
 --[[
-    GRM Arrest System v1.0.0
-    Камеры ареста, группы заключённых, точки камер, /arrest и /unarrest.
+    GRM Arrest System v1.1.0
+    Категории заключённых, назначаемые камеры и полный режим без оружия.
 ]]
 
 if SERVER then AddCSLuaFile() end
@@ -8,14 +8,14 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Arrest = GRM.Arrest or {}
 local A = GRM.Arrest
-A.Version = "1.0.0"
+A.Version = "1.1.0"
 A.File = "grm_arrest.json"
 A.Cfg = A.Cfg or {
     model = "models/player/Group03/male_07.mdl",
     groups = {
-        criminals = { name = "Уголовники", model = "models/player/Group03/male_07.mdl" },
-        political = { name = "Политические", model = "models/player/Group03/male_04.mdl" },
-        guardhouse = { name = "Гауптвахта", model = "models/player/Group01/male_07.mdl" },
+        criminals = { name = "Уголовники", model = "models/player/Group03/male_07.mdl", cameraIDs = {}, autoPriority = 1000 },
+        political = { name = "Политические", model = "models/player/Group03/male_04.mdl", cameraIDs = {}, autoPriority = 20 },
+        guardhouse = { name = "Гауптвахта", model = "models/player/Group01/male_07.mdl", cameraIDs = {}, autoPriority = 10 },
     },
     cameras = {},
     spawns = {},
@@ -35,22 +35,59 @@ local function save()
     if SERVER then file.Write(A.File, util.TableToJSON(A.Cfg, true)) end
 end
 
-local function load()
-    if not SERVER or not file.Exists(A.File, "DATA") then return end
-    local ok, t = pcall(util.JSONToTable, file.Read(A.File, "DATA") or "", false, true)
-    if ok and istable(t) then
-        for k, v in pairs(t) do A.Cfg[k] = v end
-    end
+local function normalizeConfig()
     A.Cfg.groups = istable(A.Cfg.groups) and A.Cfg.groups or {}
     A.Cfg.cameras = istable(A.Cfg.cameras) and A.Cfg.cameras or {}
     A.Cfg.spawns = istable(A.Cfg.spawns) and A.Cfg.spawns or {}
     A.Cfg.access = istable(A.Cfg.access) and A.Cfg.access or { mode = "all", factions = {} }
     A.Cfg.access.mode = A.Cfg.access.mode == "allowlist" and "allowlist" or "all"
-        A.Cfg.access.factions = istable(A.Cfg.access.factions) and A.Cfg.access.factions or {}
+    A.Cfg.access.factions = istable(A.Cfg.access.factions) and A.Cfg.access.factions or {}
     A.Cfg.prisonZones = istable(A.Cfg.prisonZones) and A.Cfg.prisonZones or {}
-    for _, g in pairs(A.Cfg.groups) do
-        if istable(g) then g.allowedFactions = istable(g.allowedFactions) and g.allowedFactions or {} end
+
+    A.Cfg.groups.criminals = istable(A.Cfg.groups.criminals) and A.Cfg.groups.criminals
+        or { name = "Уголовники", model = "models/player/Group03/male_07.mdl" }
+    A.Cfg.groups.guardhouse = istable(A.Cfg.groups.guardhouse) and A.Cfg.groups.guardhouse
+        or { name = "Гауптвахта", model = "models/player/Group01/male_07.mdl" }
+
+    local linked = {}
+    for groupID, g in pairs(A.Cfg.groups) do
+        if istable(g) then
+            g.allowedFactions = istable(g.allowedFactions) and g.allowedFactions or {}
+            g.autoPriority = math.floor(tonumber(g.autoPriority) or (groupID == "guardhouse" and 10 or groupID == "criminals" and 1000 or 100))
+            local clean, seen = {}, {}
+            for _, cameraID in ipairs(istable(g.cameraIDs) and g.cameraIDs or {}) do
+                cameraID = tostring(cameraID or "")
+                if cameraID ~= "" and not seen[cameraID] then
+                    clean[#clean + 1] = cameraID
+                    seen[cameraID], linked[cameraID] = true, true
+                end
+            end
+            g.cameraIDs = clean
+        end
     end
+
+    -- Одноразовая миграция старой схемы «group лежит в camera» в новую
+    -- «категория содержит список камер». Уже назначенные списки не трогаем.
+    for _, camera in ipairs(A.Cfg.cameras) do
+        local cameraID = tostring(camera.id or "")
+        local legacyGroup = tostring(camera.group or "criminals")
+        if cameraID ~= "" and not linked[cameraID] and istable(A.Cfg.groups[legacyGroup]) then
+            local list = A.Cfg.groups[legacyGroup].cameraIDs
+            list[#list + 1] = cameraID
+            linked[cameraID] = true
+        end
+    end
+end
+
+local function load()
+    if not SERVER then return end
+    if file.Exists(A.File, "DATA") then
+        local ok, t = pcall(util.JSONToTable, file.Read(A.File, "DATA") or "", false, true)
+        if ok and istable(t) then
+            for k, v in pairs(t) do A.Cfg[k] = v end
+        end
+    end
+    normalizeConfig()
 end
 
     local function group(id)
@@ -115,13 +152,28 @@ end
     end
 
     function A.ResolveGroupForTarget(target, requested)
+        requested = string.lower(string.Trim(tostring(requested or "auto")))
+        if requested ~= "" and requested ~= "auto" then
+            return A.Cfg.groups[requested] and requested or nil
+        end
+
         local factionName = A.FactionOf(target)
         if factionName == "" then return "criminals" end
-        if requested and requested ~= "" and requested ~= "criminals" then return requested end
+
+        -- Автораспределение детерминировано: категории сортируются по
+        -- autoPriority, затем ID. Поэтому «Гауптвахта» не зависит от pairs().
+        local candidates = {}
         for groupID, g in pairs(A.Cfg.groups or {}) do
-            if groupID ~= "criminals" and istable(g.allowedFactions) and g.allowedFactions[factionName] == true then return groupID end
+            if groupID ~= "criminals" and istable(g) and istable(g.allowedFactions)
+                and g.allowedFactions[factionName] == true then
+                candidates[#candidates + 1] = { id = tostring(groupID), priority = tonumber(g.autoPriority) or 100 }
+            end
         end
-        return "criminals"
+        table.sort(candidates, function(a, b)
+            if a.priority == b.priority then return a.id < b.id end
+            return a.priority < b.priority
+        end)
+        return candidates[1] and candidates[1].id or "criminals"
     end
 
     function A.CanUseGroup(target, groupID)
@@ -213,18 +265,95 @@ end
         return best
     end
 
-    local function chooseCamera(groupID)
+    local function cameraByID(cameraID)
+        cameraID = tostring(cameraID or "")
         for _, rec in ipairs(A.Cfg.cameras or {}) do
-            if tostring(rec.group or "criminals") == tostring(groupID) then return rec end
+            if tostring(rec.id or "") == cameraID then return rec end
         end
-        return A.Cfg.cameras[1]
+    end
+
+    local function spawnByID(spawnID)
+        spawnID = tostring(spawnID or "")
+        for _, rec in ipairs(A.Cfg.spawns or {}) do
+            if tostring(rec.id or "") == spawnID then return rec end
+        end
+    end
+
+    local function chooseCamera(groupID)
+        local g = A.Cfg.groups[tostring(groupID or "")]
+        if not istable(g) then return nil end
+
+        local candidates = {}
+        for _, cameraID in ipairs(g.cameraIDs or {}) do
+            local rec = cameraByID(cameraID)
+            -- Камера без собственной точки не участвует в размещении.
+            if rec and spawnByID(rec.spawnID) then
+                candidates[#candidates + 1] = { camera = rec, occupied = 0 }
+            end
+        end
+        if #candidates == 0 then return nil end
+
+        -- Выбираем наименее занятую камеру категории. Так уголовники и
+        -- гауптвахта не сваливаются всегда в первую точку.
+        for _, ply in ipairs(player.GetAll()) do
+            if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false)
+                and ply:GetNWString("GRM_ArrestGroup", "") == tostring(groupID) then
+                local occupiedID = ply:GetNWString("GRM_ArrestCameraID", "")
+                for _, item in ipairs(candidates) do
+                    if tostring(item.camera.id) == occupiedID then item.occupied = item.occupied + 1 end
+                end
+            end
+        end
+        table.sort(candidates, function(a, b)
+            if a.occupied == b.occupied then return tostring(a.camera.id) < tostring(b.camera.id) end
+            return a.occupied < b.occupied
+        end)
+        return candidates[1].camera
     end
 
     local function chooseSpawn(camera)
-        if camera and camera.spawnID then
-            for _, rec in ipairs(A.Cfg.spawns or {}) do if rec.id == camera.spawnID then return rec end end
+        return camera and spawnByID(camera.spawnID) or nil
+    end
+
+    local function confiscateInventory(target)
+        local invAPI = GRM.Inventory
+        if not (invAPI and invAPI.GetPlayerInv and invAPI.RemoveFromSlot) then return 0 end
+        local inv = invAPI.GetPlayerInv(target)
+        if not inv or not istable(inv.slots) then return 0 end
+
+        local removed = 0
+        local indexes = {}
+        for slotIndex, slot in pairs(inv.slots) do
+            if istable(slot) and slot.id then
+                indexes[#indexes + 1] = tonumber(slotIndex) or slotIndex
+                removed = removed + math.max(1, tonumber(slot.count) or 1)
+            end
         end
-        return A.Cfg.spawns[1]
+        for _, slotIndex in ipairs(indexes) do
+            invAPI.RemoveFromSlot(target, slotIndex, math.huge)
+        end
+        if invAPI.SyncToClient then invAPI.SyncToClient(target) end
+        return removed
+    end
+
+    function A.EnforceUnarmed(target)
+        if not IsValid(target) or not target:GetNWBool("GRM_Arrested", false) then return false end
+        target:StripWeapons()
+        if target.RemoveAllAmmo then target:RemoveAllAmmo() end
+        -- Наручники хранят прежний loadout для возврата. При оформленном
+        -- аресте это хранилище уничтожается: конфискованное не воскреснет.
+        target.GRM_CuffStoredWeapons = nil
+        return true
+    end
+
+    function A.Confiscate(target)
+        if not IsValid(target) then return 0 end
+        A.EnforceUnarmed(target)
+        local removed = confiscateInventory(target)
+        if GRM.Customization and GRM.Customization.Confiscate then
+            removed = removed + (tonumber(GRM.Customization.Confiscate(target)) or 0)
+        end
+        return removed
     end
 
     local applyArrestAppearance
@@ -238,14 +367,15 @@ end
         if wanted <= 0 then return false, "Сначала объявите игрока в розыск" end
         if not A.IsInPrisonZone(target) then return false, "Доставьте задержанного в тюрьму или на гауптвахту" end
         groupID = A.ResolveGroupForTarget(target, groupID)
-        local cam = chooseCamera(groupID)
-        if not cam then return false, "Для этой группы не настроена камера ареста" end
-        local sp = chooseSpawn(cam)
-        if not sp then return false, "Для камеры не назначена точка арестованного" end
+        if not groupID or not A.Cfg.groups[groupID] then return false, "Категория ареста не существует" end
         local g = group(groupID)
         if not A.CanUseGroup(target, groupID) then
             return false, "Эта категория недоступна для фракции задержанного"
         end
+        local cam = chooseCamera(groupID)
+        if not cam then return false, "Категории не назначена ни одна камера с точкой размещения" end
+        local sp = chooseSpawn(cam)
+        if not sp then return false, "Для выбранной камеры не назначена точка арестованного" end
         target.GRM_ArrestOriginalModel = target:GetModel()
         target.GRM_ArrestOriginalSkin = target:GetSkin()
         target.GRM_ArrestOriginalBodygroups = {}
@@ -253,12 +383,23 @@ end
         target:SetNWBool("GRM_Arrested", true)
         target:SetNWString("GRM_ArrestGroup", groupID or "criminals")
         target:SetNWString("GRM_ArrestGroupName", g.name or groupID or "Арестованный")
+        target:SetNWString("GRM_ArrestCameraID", tostring(cam.id or ""))
+
+        -- Сначала прекращаем сопровождение, затем окончательно конфискуем
+        -- оружие, инструменты, патроны и содержимое GRM Inventory.
+        if HC and HC.StopDragging then
+            local dragger = target:GetNWEntity("GRM_CuffDragger")
+            HC.StopDragging(IsValid(dragger) and dragger or actor, target)
+        end
+        local confiscated = A.Confiscate(target)
+
         if applyArrestAppearance then applyArrestAppearance(target, g) end
         target:SetPos(vec(sp.pos))
         target:SetEyeAngles(ang(sp.ang or { p = 0, y = 0, r = 0 }))
         target:Freeze(false)
         if GRM.Notify then GRM.Notify(target, "Вы арестованы: " .. tostring(g.name), 255, 150, 100) end
-        actor:ChatPrint("[Арест] Арестованный отправлен в: " .. tostring(g.name))
+        actor:ChatPrint("[Арест] Арестованный отправлен в «" .. tostring(g.name)
+            .. "», камера «" .. tostring(cam.name or cam.id) .. "». Изъято предметов: " .. tostring(confiscated))
         announce("arrest", target:Nick(), g.name or groupID or "Арестованный")
         return true
     end
@@ -268,6 +409,7 @@ end
         target:SetNWBool("GRM_Arrested", false)
         target:SetNWString("GRM_ArrestGroup", "")
         target:SetNWString("GRM_ArrestGroupName", "")
+        target:SetNWString("GRM_ArrestCameraID", "")
         if target.GRM_ArrestOriginalModel and util.IsValidModel(target.GRM_ArrestOriginalModel) then target:SetModel(target.GRM_ArrestOriginalModel) end
         target:SetSkin(tonumber(target.GRM_ArrestOriginalSkin) or 0)
         for group, value in pairs(target.GRM_ArrestOriginalBodygroups or {}) do target:SetBodygroup(tonumber(group) or 0, tonumber(value) or 0) end
@@ -291,30 +433,89 @@ end
         end
     end)
 
-    hook.Add("PlayerSay", "GRM_Arrest_Commands", function(ply, text)
+    -- Арестованный не получает оружие ни из sandbox/gamemode, ни из
+    -- /weapons_admin, ни от стороннего аддона. Таймер — последний fail-safe.
+    hook.Add("PlayerLoadout", "GRM_Arrest_BlockLoadout", function(ply)
+        if not IsValid(ply) or not ply:GetNWBool("GRM_Arrested", false) then return end
+        timer.Simple(0, function() if IsValid(ply) then A.EnforceUnarmed(ply) end end)
+        return true
+    end)
+    hook.Add("PlayerCanPickupWeapon", "GRM_Arrest_BlockWeaponPickup", function(ply)
+        if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then return false end
+    end)
+    hook.Add("PlayerCanPickupItem", "GRM_Arrest_BlockItemPickup", function(ply)
+        if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then return false end
+    end)
+    hook.Add("PlayerGiveSWEP", "GRM_Arrest_BlockGiveSWEP", function(ply)
+        if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then return false end
+    end)
+    hook.Add("PlayerSpawnSWEP", "GRM_Arrest_BlockSpawnSWEP", function(ply)
+        if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then return false end
+    end)
+    hook.Add("WeaponEquip", "GRM_Arrest_RemoveEquippedWeapon", function(weapon, ply)
+        if not IsValid(ply) or not ply:GetNWBool("GRM_Arrested", false) then return end
+        timer.Simple(0, function()
+            if IsValid(weapon) then weapon:Remove() end
+            if IsValid(ply) then A.EnforceUnarmed(ply) end
+        end)
+    end)
+    timer.Create("GRM_Arrest_EnforceUnarmed", 0.25, 0, function()
+        for _, ply in ipairs(player.GetAll()) do
+            if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then A.EnforceUnarmed(ply) end
+        end
+    end)
+
+    local function handleArrestChatCommand(ply, text)
+        if not IsValid(ply) or not ply:IsPlayer() then return false end
         local msg = string.Trim(text or "")
         local low = string.lower(msg)
-        if low == "/arrest" or low:sub(1, 8) == "/arrest " then
+
+        if low == "/grm_arrest_admin" or low == "!grm_arrest_admin" then
+            if not ply:IsSuperAdmin() then
+                ply:ChatPrint("[Арест] Админ-панель доступна только суперадмину.")
+            else
+                A.OpenAdmin(ply)
+            end
+            return true
+        end
+
+        if low == "/arrest" or low == "!arrest" or low:sub(1, 8) == "/arrest " or low:sub(1, 8) == "!arrest " then
             if not A.CanArrest(ply) then
                 ply:ChatPrint("[Арест] Ваша фракция не имеет доступа к системе ареста.")
-                return ""
+                return true
             end
             local gid = string.Trim(msg:sub(8))
-            if gid == "" then gid = "criminals" end
+            if gid == "" then gid = "auto" end
             local target = nearestPlayer(ply)
             local ok, err = A.ArrestPlayer(ply, target, gid)
             if not ok then ply:ChatPrint("[Арест] " .. tostring(err)) end
-            return ""
+            return true
         end
-        if low == "/unarrest" then
+
+        if low == "/unarrest" or low == "!unarrest" then
             if not A.CanArrest(ply) then
                 ply:ChatPrint("[Арест] Ваша фракция не имеет доступа к системе ареста.")
-                return ""
+                return true
             end
             local target = nearestPlayer(ply)
             if not A.UnarrestPlayer(ply, target) then ply:ChatPrint("[Арест] Цель не арестована.") end
-            return ""
+            return true
         end
+
+        return false
+    end
+
+    -- EasyChat вызывает transform до PlayerSay. Обрабатываем команды здесь,
+    -- а PlayerSay сохраняем fallback-ом для стандартного чата.
+    hook.Add("PlayerSayTransform", "GRM_Arrest_Commands", function(ply, datapack)
+        if not istable(datapack) or not isstring(datapack[1]) then return end
+        if not handleArrestChatCommand(ply, datapack[1]) then return end
+        datapack[1] = ""
+        datapack.SkipPlayerSay = true
+    end)
+
+    hook.Add("PlayerSay", "GRM_Arrest_CommandsFallback", function(ply, text)
+        if handleArrestChatCommand(ply, text) then return "" end
     end)
 
     net.Receive("GRM_Arrest_ZoneRequest", function(_, ply)
@@ -331,6 +532,8 @@ end
             local tr = ply:GetEyeTrace()
             local rec = { id = id ~= "" and id or ("cam_" .. os.time()), name = id ~= "" and id or ("Камера " .. tostring(#A.Cfg.cameras + 1)), group = "criminals", pos = vdata(tr.HitPos), ang = adata(Angle(0, ply:EyeAngles().y, 0)), spawnID = "" }
             A.Cfg.cameras[#A.Cfg.cameras + 1] = rec
+            local defaultGroup = A.Cfg.groups.criminals
+            if defaultGroup then defaultGroup.cameraIDs[#defaultGroup.cameraIDs + 1] = rec.id end
             spawnCamera(rec) save()
         elseif action == "delete_camera" then
             for i = #A.Cfg.cameras, 1, -1 do
@@ -340,6 +543,13 @@ end
                         if ent.GRMArrestID == cam.id then ent:Remove() end
                     end
                     table.remove(A.Cfg.cameras, i)
+                    for _, g in pairs(A.Cfg.groups or {}) do
+                        if istable(g) then
+                            for j = #(g.cameraIDs or {}), 1, -1 do
+                                if tostring(g.cameraIDs[j]) == id then table.remove(g.cameraIDs, j) end
+                            end
+                        end
+                    end
                     break
                 end
             end
@@ -364,6 +574,9 @@ end
             if id:match("^[%w_%-]+$") and name ~= "" then
                 A.Cfg.groups[id] = A.Cfg.groups[id] or {}
                 A.Cfg.groups[id].name = name
+                A.Cfg.groups[id].allowedFactions = A.Cfg.groups[id].allowedFactions or {}
+                A.Cfg.groups[id].cameraIDs = A.Cfg.groups[id].cameraIDs or {}
+                A.Cfg.groups[id].autoPriority = tonumber(A.Cfg.groups[id].autoPriority) or 100
                 if model ~= "" and util.IsValidModel(model) then A.Cfg.groups[id].model = model end
                 save()
             end
@@ -394,8 +607,33 @@ end
             end
         elseif action == "set_camera_group" then
             local groupID = string.Trim(net.ReadString() or "")
-            if A.Cfg.groups[groupID] then
-                for _, cam in ipairs(A.Cfg.cameras) do if cam.id == id then cam.group = groupID end end
+            if A.Cfg.groups[groupID] and cameraByID(id) then
+                -- Старый UI назначает одну категорию камере. Синхронизируем
+                -- его с новой авторитетной схемой category.cameraIDs.
+                for _, g in pairs(A.Cfg.groups) do
+                    for i = #(g.cameraIDs or {}), 1, -1 do
+                        if tostring(g.cameraIDs[i]) == id then table.remove(g.cameraIDs, i) end
+                    end
+                end
+                A.Cfg.groups[groupID].cameraIDs[#A.Cfg.groups[groupID].cameraIDs + 1] = id
+                local cam = cameraByID(id)
+                if cam then cam.group = groupID end -- legacy-зеркало
+                save()
+            end
+        elseif action == "set_group_cameras" then
+            local incoming = net.ReadTable() or {}
+            local g = A.Cfg.groups[id]
+            if istable(g) then
+                local selected, seen = {}, {}
+                for _, cameraID in ipairs(incoming) do
+                    cameraID = tostring(cameraID or "")
+                    if cameraID ~= "" and cameraByID(cameraID) and not seen[cameraID] then
+                        selected[#selected + 1] = cameraID
+                        seen[cameraID] = true
+                    end
+                end
+                table.sort(selected)
+                g.cameraIDs = selected
                 save()
             end
         elseif action == "assign_camera_spawn" then
@@ -447,12 +685,6 @@ end
     end)
 
     concommand.Add("grm_arrest_admin", function(ply) A.OpenAdmin(ply) end)
-    hook.Add("PlayerSay", "GRM_Arrest_AdminChatCommand", function(ply, text)
-        if IsValid(ply) and ply:IsSuperAdmin() and string.lower(string.Trim(text or "")) == "/grm_arrest_admin" then
-            A.OpenAdmin(ply)
-            return ""
-        end
-    end)
     concommand.Add("grm_arrest_reload", function(ply) if not IsValid(ply) or ply:IsSuperAdmin() then loadCameras() end end)
     hook.Add("InitPostEntity", "GRM_Arrest_LoadCameras", function() timer.Simple(2, loadCameras) end)
     hook.Add("ShutDown", "GRM_Arrest_Save", save)
@@ -483,8 +715,24 @@ end
     -- is needed and the model cannot visibly flicker.
     hook.Add("PlayerSpawn", "GRM_Arrest_AppearanceAfterSpawn", function(ply)
         timer.Simple(0.2, function()
-            if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) and applyArrestAppearance then
-                applyArrestAppearance(ply, group(ply:GetNWString("GRM_ArrestGroup", "criminals")))
+            if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then
+                A.EnforceUnarmed(ply)
+                local groupID = ply:GetNWString("GRM_ArrestGroup", "criminals")
+                local g = group(groupID)
+                local cameraID = ply:GetNWString("GRM_ArrestCameraID", "")
+                local cam = cameraByID(cameraID)
+                local allowed = false
+                for _, assignedID in ipairs(g.cameraIDs or {}) do
+                    if tostring(assignedID) == cameraID then allowed = true break end
+                end
+                if not cam or not allowed or not chooseSpawn(cam) then cam = chooseCamera(groupID) end
+                local sp = chooseSpawn(cam)
+                if cam and sp then
+                    ply:SetNWString("GRM_ArrestCameraID", tostring(cam.id or ""))
+                    ply:SetPos(vec(sp.pos))
+                    ply:SetEyeAngles(ang(sp.ang or { p = 0, y = 0, r = 0 }))
+                end
+                if applyArrestAppearance then applyArrestAppearance(ply, g) end
             end
         end)
     end)
@@ -703,6 +951,43 @@ if CLIENT then
         end
     end
 
+    local function openGroupCameraEditor(gid, source, cameras)
+        local selected = {}
+        for _, cameraID in ipairs(source.cameraIDs or {}) do selected[tostring(cameraID)] = true end
+        local w = vgui.Create("DFrame")
+        GRM.UI.Track("arrest_category_cameras", w)
+        w:SetSize(600, 560) w:Center() w:MakePopup()
+        w:SetTitle("Камеры категории: " .. tostring(source.name or gid))
+        local hint = label(w,
+            "Отметьте камеры, в которые разрешено помещать эту категорию. У камеры обязательно должна быть назначена точка арестованного.",
+            "GRMArrestSmall", UI.dim)
+        hint:SetPos(16, 36) hint:SetSize(560, 48)
+        local list = vgui.Create("DScrollPanel", w) list:SetPos(16, 90) list:SetSize(568, 390)
+        for _, cam in ipairs(cameras or {}) do
+            local cameraID = tostring(cam.id or "")
+            local check = vgui.Create("DCheckBoxLabel", list)
+            check:Dock(TOP) check:SetTall(38)
+            local hasSpawn = tostring(cam.spawnID or "") ~= ""
+            check:SetText(tostring(cam.name or cameraID) .. "  [" .. cameraID .. "]  •  точка: " .. tostring(hasSpawn and cam.spawnID or "НЕ НАЗНАЧЕНА"))
+            check:SetFont("GRMArrestBody") check:SetTextColor(hasSpawn and UI.text or UI.red)
+            check:SetValue(selected[cameraID] == true)
+            check.OnChange = function(_, value) selected[cameraID] = value == true end
+        end
+        if #(cameras or {}) == 0 then
+            local empty = label(list, "Сначала создайте хотя бы одну камеру.", "GRMArrestBody", UI.dim)
+            empty:Dock(TOP) empty:SetTall(40)
+        end
+        local saveCameras = button(w, "СОХРАНИТЬ КАМЕРЫ КАТЕГОРИИ", UI.green, 40)
+        saveCameras:SetPos(16, 500) saveCameras:SetSize(568, 40)
+        saveCameras.DoClick = function()
+            local out = {}
+            for cameraID, enabled in pairs(selected) do if enabled then out[#out + 1] = cameraID end end
+            table.sort(out)
+            sendAction("set_group_cameras", gid, function() net.WriteTable(out) end)
+            w:Close()
+        end
+    end
+
     net.Receive("GRM_Arrest_AdminData", function()
         local data = net.ReadTable() or {}
         local f = vgui.Create("DFrame")
@@ -735,25 +1020,36 @@ if CLIENT then
 
         sectionTitle(canvas, "Группы и доступ категорий", "Нажмите «Внешность и доступ фракций»: там задаются модель, bodygroups и фракции, которым разрешена эта категория.")
         for gid, g in pairs(data.groups or {}) do
-            local p = card(canvas, 96)
+            local p = card(canvas, 132)
             local name = label(p, tostring(g.name or gid), "GRMArrestHeading", UI.text) name:SetPos(20, 13) name:SetSize(350, 24)
             local allowedNames = {}
             for factionName, enabled in pairs(g.allowedFactions or {}) do if enabled then allowedNames[#allowedNames + 1] = tostring(factionName) end end
             table.sort(allowedNames)
-            local accessText = #allowedNames > 0 and ("   •   Допуск: " .. table.concat(allowedNames, ", ")) or "   •   Допуск: все фракции"
-            local id = label(p, tostring(gid) .. "   •   " .. tostring(g.model or "модель не задана") .. accessText, "GRMArrestSmall", UI.dim) id:SetPos(20, 42) id:SetSize(550, 22)
+            local accessText = #allowedNames > 0 and ("Допуск: " .. table.concat(allowedNames, ", ")) or "Допуск: все; авто → только при явной фракции"
+            local id = label(p, tostring(gid) .. "   •   " .. tostring(g.model or "модель не задана"), "GRMArrestSmall", UI.dim) id:SetPos(20, 42) id:SetSize(470, 22)
+            local accessInfo = label(p, accessText, "GRMArrestSmall", UI.dim) accessInfo:SetPos(20, 67) accessInfo:SetSize(470, 22)
+            local camerasInfo = label(p, "Камер категории: " .. tostring(#(g.cameraIDs or {})), "GRMArrestSmall", #(g.cameraIDs or {}) > 0 and UI.green or UI.red) camerasInfo:SetPos(20, 92) camerasInfo:SetSize(470, 22)
             local edit = button(p, "Внешность / bodygroups", UI.accent, 30) edit:SetPos(535, 10) edit:SetSize(250, 30) edit.DoClick = function() openGroupEditor(gid, g) end
-            local access = button(p, "ДОСТУП ФРАКЦИЙ К КАТЕГОРИИ", UI.orange, 30) access:SetPos(535, 48) access:SetSize(250, 30) access.DoClick = function() openGroupAccessEditor(gid, g) end
+            local access = button(p, "ДОСТУП ФРАКЦИЙ", UI.orange, 30) access:SetPos(535, 48) access:SetSize(250, 30) access.DoClick = function() openGroupAccessEditor(gid, g) end
+            local cameras = button(p, "КАМЕРЫ КАТЕГОРИИ", UI.green, 30) cameras:SetPos(535, 86) cameras:SetSize(250, 30) cameras.DoClick = function() openGroupCameraEditor(gid, g, data.cameras or {}) end
         end
 
-        sectionTitle(canvas, "Камеры и точки содержания", "Камера определяет категорию, точка — место появления арестованного.")
+        sectionTitle(canvas, "Камеры и точки содержания", "Категория может использовать несколько камер; одна камера также может входить в несколько категорий.")
         for _, cam in ipairs(data.cameras or {}) do
             local p = card(canvas, 150)
             local title = label(p, "КАМЕРА  " .. tostring(cam.id), "GRMArrestHeading", UI.text) title:SetPos(20, 12) title:SetSize(300, 24)
-            local meta = label(p, "Группа: " .. tostring(cam.group or "criminals") .. "   •   Точка: " .. tostring(cam.spawnID or "не назначена"), "GRMArrestSmall", UI.dim) meta:SetPos(20, 40) meta:SetSize(470, 22)
-            local combo = vgui.Create("DComboBox", p) combo:SetPos(505, 12) combo:SetSize(280, 32) combo:SetValue("Выбрать группу")
+            local assigned = {}
+            for gid, g in pairs(data.groups or {}) do
+                for _, cameraID in ipairs(g.cameraIDs or {}) do
+                    if tostring(cameraID) == tostring(cam.id) then assigned[#assigned + 1] = tostring(g.name or gid) end
+                end
+            end
+            table.sort(assigned)
+            local categoryText = #assigned > 0 and table.concat(assigned, ", ") or "НЕ НАЗНАЧЕНА"
+            local meta = label(p, "Категории: " .. categoryText .. "   •   Точка: " .. tostring(tostring(cam.spawnID or "") ~= "" and cam.spawnID or "не назначена"), "GRMArrestSmall", #assigned > 0 and UI.dim or UI.red) meta:SetPos(20, 40) meta:SetSize(470, 44)
+            local combo = vgui.Create("DComboBox", p) combo:SetPos(505, 12) combo:SetSize(280, 32) combo:SetValue("Быстро назначить одну категорию")
             for gid, g in pairs(data.groups or {}) do combo:AddChoice(tostring(g.name or gid) .. "  [" .. gid .. "]", gid) end
-            local setGroup = button(p, "Назначить группу", UI.accent, 30) setGroup:SetPos(505, 52) setGroup:SetSize(135, 30)
+            local setGroup = button(p, "Только эта категория", UI.accent, 30) setGroup:SetPos(505, 52) setGroup:SetSize(135, 30)
             setGroup.DoClick = function() local gid = combo:GetOptionData(combo:GetSelectedID()) or cam.group or "criminals"; sendAction("set_camera_group", cam.id, function() net.WriteString(gid) end) end
             local setSpawn = button(p, "Привязать точку", UI.green, 30) setSpawn:SetPos(650, 52) setSpawn:SetSize(135, 30)
             setSpawn.DoClick = function()
@@ -908,21 +1204,24 @@ if CLIENT then
         timer.Simple(0.6, function() rebuildArrestAccessPanel() rebuildArrestCategoryPanel() end)
     end)
 
+    -- Камеры больше не рисуют огромные сферы/лучи для всех игроков.
+    -- Только суперадмин видит компактную полупрозрачную метку вблизи.
     hook.Add("PostDrawTranslucentRenderables", "GRM_Arrest_Zones", function()
         local lp = LocalPlayer()
-        if not IsValid(lp) then return end
+        if not IsValid(lp) or not lp:IsSuperAdmin() then return end
         for _, camEnt in ipairs(ents.FindByClass("grm_arrest_camera")) do
-            if IsValid(camEnt) and lp:GetPos():DistToSqr(camEnt:GetPos()) <= 900 * 900 then
-                local pos = camEnt:GetPos()
-                local color = Color(240, 150, 70, 180)
-                render.DrawWireframeSphere(pos, 52, 16, 8, color, true)
-                render.DrawLine(pos + Vector(0, 0, 2), pos + Vector(0, 0, 72), color, true)
-                local ang = Angle(0, lp:EyeAngles().y - 90, 90)
-                cam.Start3D2D(pos + Vector(0, 0, 78), ang, 0.08)
-                    draw.RoundedBox(5, -125, -25, 250, 50, Color(12, 17, 25, 220))
-                    draw.SimpleText("ЗОНА АРЕСТА", "GRMArrestSmall", 0, -9, color, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                    draw.SimpleText(camEnt:GetCameraName() or "Камера", "GRMArrestSmall", 0, 10, UI.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                cam.End3D2D()
+            if IsValid(camEnt) then
+                local distSqr = lp:GetPos():DistToSqr(camEnt:GetPos())
+                if distSqr <= 500 * 500 then
+                    local alpha = math.Clamp(170 - math.sqrt(distSqr) * 0.22, 45, 150)
+                    local pos = camEnt:GetPos() + Vector(0, 0, 34)
+                    local ang = Angle(0, EyeAngles().y - 90, 90)
+                    cam.Start3D2D(pos, ang, 0.055)
+                        draw.RoundedBox(4, -90, -14, 180, 28, Color(12, 17, 25, alpha))
+                        draw.SimpleText("КАМЕРА • " .. tostring(camEnt:GetCameraName() or camEnt:GetCameraID() or "без имени"),
+                            "GRMArrestSmall", 0, 0, Color(235, 170, 95, alpha + 60), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    cam.End3D2D()
+                end
             end
         end
     end)

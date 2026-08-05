@@ -10,7 +10,7 @@ function ENT:Draw()
     local amt = math.max(0, tonumber(self:GetAmount()) or 0)
     local sum = (GRM and GRM.Format) and GRM.Format(amt) or tostring(amt)
     local pos = self:GetPos() + Vector(0, 0, 14)
-    local ang = Angle(0, ply:EyeAngles().y - 90, 90)
+    local ang = Angle(0, EyeAngles().y - 90, 90)
     cam.Start3D2D(pos, ang, 0.09)
         draw.SimpleTextOutlined("Деньги: " .. sum, "GRMMoneyDrop_T", 0, 0,
             Color(120, 230, 130), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, color_black)

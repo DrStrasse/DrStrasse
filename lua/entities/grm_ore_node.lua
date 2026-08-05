@@ -98,6 +98,7 @@ end
 
 function ENT:OnDestroyed(attacker)
     local pos = self:GetPos()
+    if IsValid(attacker) then hook.Run("GRM_QuestEvent", attacker, "mining", tostring(self.OreType or "ore"), 1, { entity = self }) end
     for i = 1, math.random(4, 7) do
         local chunk = ents.Create("grm_ore_chunk")
         if IsValid(chunk) then

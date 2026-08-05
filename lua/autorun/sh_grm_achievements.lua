@@ -34,7 +34,7 @@ GRM = GRM or {}
 GRM.Ach = GRM.Ach or {}
 local AC = GRM.Ach
 
-AC.Version   = "1.0.1"   -- +API AC.SaveNow/AdminReset для единой админ-панели (Код 79)
+AC.Version   = "1.1.0"   -- +API AC.SaveNow/AdminReset для единой админ-панели (Код 79)
 AC.DataFile  = "grm_achievements.json"
 
 -- ежедневный бонус
@@ -57,6 +57,9 @@ function AC.Register(def)
     if AC.Defs[def.id] then AC.Defs[def.id] = def return end
     AC.Defs[def.id] = def
     AC.Order[#AC.Order + 1] = def.id
+end
+function AC.Unregister(id)
+    id=tostring(id or"");if id==""or not AC.Defs[id]then return false end;AC.Defs[id]=nil;for i=#AC.Order,1,-1 do if AC.Order[i]==id then table.remove(AC.Order,i)end end;return true
 end
 
 -- экономика
@@ -344,6 +347,18 @@ if SERVER then
         if not sid then return false end
         AC.Records[sid] = { sid = sid, c = {}, u = {}, earned = 0, streak = 0, lastDaily = "" }
         saveAll("admin reset " .. tostring(sid))
+        return true
+    end
+    function AC.ResetUnlock(plyOrSid, achievementID, deferSave)
+        local sid = achievementKey(plyOrSid)
+        local id = tostring(achievementID or "")
+        local rec = sid and AC.Records[sid] or nil
+        if not rec or id == "" or not rec.u[id] then return false end
+        rec.u[id] = nil
+        local def = AC.Defs[id]
+        rec.earned = math.max(0, (tonumber(rec.earned) or 0) - (tonumber(def and def.reward) or 0))
+        if not deferSave then saveAll("reset unlock " .. id .. " / " .. tostring(sid)) else dirty=true end
+        if IsValid(plyOrSid) and plyOrSid:IsPlayer() then pushData(plyOrSid) end
         return true
     end
 

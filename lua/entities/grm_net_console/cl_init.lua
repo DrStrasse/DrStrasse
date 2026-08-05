@@ -14,7 +14,7 @@ function ENT:Draw()
     local pos = self:GetPos() + ang:Up() * ((maxs and maxs.z or 24) + 12)
     local blink = on and ((math.sin(CurTime() * 4) + 1) * 0.5) or 0
     local id = self:GetNWString("GRM_NetID", "")
-    cam.Start3D2D(pos, Angle(0, lp:EyeAngles().y - 90, 90), 0.07)
+    cam.Start3D2D(pos, Angle(0, EyeAngles().y - 90, 90), 0.07)
         draw.RoundedBox(6, -150, -46, 300, (id ~= "" and 106 or 92), Color(14, 18, 26, 225))
         surface.SetDrawColor(on and 70 or 200, on and (170 + blink * 70) or 70, on and 140 or 70, 190)
         surface.DrawOutlinedRect(-150, -46, 300, (id ~= "" and 106 or 92), 2)

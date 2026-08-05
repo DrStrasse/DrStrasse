@@ -50,6 +50,7 @@ KEY_PAD_0 = 90 for i = 1, 9 do _G["KEY_PAD_" .. i] = 90 + i end
 KEY_PAD_ENTER, KEY_PAD_DIVIDE, KEY_PAD_MULTIPLY, KEY_PAD_MINUS, KEY_PAD_PLUS = 100, 101, 102, 103, 104
 KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT = 200, 201, 202, 203
 KEY_ENTER, KEY_BACKSPACE, KEY_DELETE, KEY_E, KEY_N = 64, 66, 67, 30, 45
+MOUSE_LEFT, MOUSE_RIGHT, MOUSE_MIDDLE = 107, 108, 109
 
 -- ---------- surface/draw ----------
 surface = {
@@ -120,7 +121,7 @@ local function mkPanel()
         SetVisible = function(s, v) s._vis = v end,
         IsVisible = function(s) return s._vis end,
         Remove = function(s) s._removed = true end,
-        CursorPos = function() return -1, -1 end,
+        CursorPos = function(s) return s._cx or -1, s._cy or -1 end,
     }
     PANELS[#PANELS + 1] = p
     return p
@@ -130,7 +131,12 @@ vgui = {
     GetKeyboardFocus = function() return vgui._focus end,
 }
 function IsValid(e) return e ~= nil and not (istable(e) and e._removed == true) end
-gui = { IsGameUIVisible = function() return false end, IsConsoleVisible = function() return false end }
+gui = {
+    _mx = 0, _my = 0,
+    IsGameUIVisible = function() return false end,
+    IsConsoleVisible = function() return false end,
+    MousePos = function() return gui._mx, gui._my end,
+}
 notification = { AddLegacy = function() notification._n = (notification._n or 0) + 1 end }
 local STR_ANSWERS = {}
 local STR_CALLS = 0
@@ -178,7 +184,9 @@ local okr, rerr = pcall(chunk)
 ok(okr, "выполняется без ошибок: " .. tostring(rerr))
 local MB = GRM.Mobile
 ok(MB ~= nil, "GRM.Mobile зарегистрирован")
-ok(MB.Version == "1.2.2", "версия 1.2.2 (Код 100: анти-скачок выбора)")
+ok(MB.Version == "1.2.2" and MB.UIVersion == "3.2.1", "protocol 1.2.2 / UI 3.2.1 (блокировка открытия во время ввода)")
+ok(MB.Tiers.crappy.ui == "feature" and MB.Tiers.lost.ui == "flip", "кнопочная трубка и раскладушка имеют отдельный дизайн")
+ok(MB.Tiers.tinkle.ui == "smartphone" and MB.Tiers.whiz_gold.ui == "smartphone", "смартфоны используют app-grid дизайн")
 
 -- ---------- хелперы симуляции ----------
 local function tap(k)                      -- короткое нажатие (темп человека: 0.09с — Код 100 дебаунс 0.07 пропускает)
@@ -241,9 +249,21 @@ sendToClient("GRM_Mob_Data", "fac", { data = {
     },
 } })
 sendToClient("GRM_Mob_Data", "forum", { rows = {
-    { id = 1, author = "Вася", text = "продам гараж у порта, дёшево", ts = os.time() - 60 },
-    { id = 2, author = "Гриша", text = "кто видел мой мопед? угнали возле больницы, звоните", ts = os.time() },
+    { id = 1, author = "Вася", text = "продам гараж у порта, дёшево", time = os.time() - 60, likes = 4, liked = false, replies = 1 },
+    { id = 2, author = "Гриша", text = "кто видел мой мопед? угнали возле больницы, звоните", time = os.time(), likes = 2, liked = true, replies = 0 },
 } })
+
+-- ---------- чат не должен открывать телефон ----------
+sect("стрелка вверх игнорируется, пока игрок печатает в чате")
+NET_SENT = {}
+fireHook("StartChat")
+tap(KEY_UP)
+ok(#PANELS == 0 and lastAct() == nil, "KEY_UP в открытом чате не создаёт и не открывает телефон")
+fireHook("FinishChat")
+vgui._focus = {}
+tap(KEY_UP)
+ok(#PANELS == 0, "KEY_UP игнорируется при активном поле ввода стороннего чата")
+vgui._focus = nil
 
 -- ---------- открытие ----------
 sect("открытие по СТРЕЛКЕ ВВЕРХ")
@@ -255,6 +275,31 @@ ok(PANELS[#PANELS]._vis == true, "панель видима")
 local dHome = DRAWS.texts
 paintPhone()
 ok(DRAWS.texts > dHome, "домашний экран рисуется (текстов: " .. DRAWS.texts .. ")")
+local navActions = {}
+for _,box in ipairs(MB._devUI.hitboxes or {}) do if box.navAction then navActions[box.navAction] = true end end
+ok(navActions.back and navActions.home and navActions.close, "нижняя панель содержит «Назад», «Домой» и «Убрать»")
+
+-- ---------- левая мышь не является Mouse3 ----------
+sect("клик мышью: одно физическое нажатие открывает ровно одно приложение")
+NET_SENT = {}
+local clickPanel = PANELS[#PANELS]
+clickPanel._cx, clickPanel._cy = 130, 130                    -- вторая плитка: SMS
+paintPhone()
+ok((MB._devUI.hoverAnim["home:2"] or 0) > 0, "наведение запускает плавную hover-анимацию плитки")
+gui._mx, gui._my = clickPanel._x + 130, clickPanel._y + 130
+fireHook("PlayerButtonDown", LP, MOUSE_LEFT)                 -- реальный GMod также шлёт button hook
+clickPanel:OnMousePressed(MOUSE_LEFT)
+clickPanel:OnMousePressed(MOUSE_LEFT)                       -- дребезг того же кадра обязан игнорироваться
+fireHook("PlayerButtonUp", LP, MOUSE_LEFT)
+local smsReads = 0
+for _, sent in ipairs(NET_SENT) do
+    local payload = sent.name == "GRM_Mob_Act" and sent.writes[1] or nil
+    if payload and payload.op == "sms_read" then smsReads = smsReads + 1 end
+end
+ok(smsReads == 1 and lastAct() and lastAct().op == "sms_read", "ЛКМ=107 не считается Mouse3: SMS открыт один раз")
+ok(MB._devUI.pointerPulse and MB._devUI.pointerPulse.id == "2", "клик создаёт отдельную pressed-анимацию")
+clickPanel._cx, clickPanel._cy = -1, -1
+tap(KEY_BACKSPACE)
 
 -- ---------- OS-шторм: ровно один шаг ----------
 sect("антидребезг: OS-авторепит не двигает выбор (фикс 88.2)")
@@ -326,11 +371,11 @@ paintPhone()
 ok(DRAWS.texts > dB, "пузырьковый диалог отрисован")
 tap(KEY_UP)                                       -- листаем историю
 paintPhone()
-STR_ANSWERS = { "54321", "уже иду" }
+STR_ANSWERS = { "уже иду" }
 STR_CALLS = 0
-tap(KEY_ENTER)                                    -- ответить
+tap(KEY_ENTER)                                    -- ответить в текущий тред
 act = lastAct()
-ok(STR_CALLS >= 2, "Derma-запросы номера/текста показаны (" .. STR_CALLS .. ")")
+ok(STR_CALLS >= 1, "Derma-запрос текста показан (" .. STR_CALLS .. ")")
 ok(act ~= nil and act.op == "sms" and act.num == "54321", "ответ ушёл: op=sms → 54321")
 tap(KEY_BACKSPACE)                                -- назад к тредам
 -- возврат в диалог сохраняет позицию треда (88.3b): идём на тред №2 (11111),
@@ -341,7 +386,7 @@ tap(KEY_BACKSPACE)                                -- назад; sel обяза�
 STR_ANSWERS = { "x", "y" }                        -- номер перезабьём префиллом… нет: префилл = threadNum
 NET_SENT = {}
 tap(KEY_ENTER)                                    -- снова тред №2 (если позиция не сбросилась)
-STR_ANSWERS = { "11111", "проверка треда" }
+STR_ANSWERS = { "проверка треда" }
 tap(KEY_ENTER)                                    -- ответить внутри треда
 act = lastAct()
 ok(act ~= nil and act.op == "sms" and act.num == "11111", "BACKSPACE из диалога сохраняет позицию треда (№2 = 11111)")
@@ -353,14 +398,15 @@ tap(KEY_BACKSPACE)                                -- домой
 tap(KEY_DOWN) tap(KEY_DOWN)                       -- sel 3 = contacts
 tap(KEY_ENTER)
 paintPhone()
-tap(KEY_ENTER)                                    -- меню первого контакта (Анна 11111)
-ok(#MENU_OPTS >= 2, "меню контакта открыто (опций: " .. #MENU_OPTS .. ")")
+tap(KEY_ENTER)                                    -- экран действий первого контакта (Анна 11111)
+paintPhone()
 NET_SENT = {}
-MENU_OPTS[1].fn()                                 -- «Позвонить …»
+tap(KEY_ENTER)                                    -- первое действие: позвонить
 act = lastAct()
 ok(act ~= nil and act.op == "dial" and act.number == "11111", "звонок из контакта → op=dial 11111")
 feedIdle()
-tap(KEY_BACKSPACE)                                -- call idle → домой
+tap(KEY_BACKSPACE)                                -- действия контакта → контакты
+tap(KEY_BACKSPACE)                                -- контакты → домой
 
 -- ---------- заметки ----------
 sect("заметки: удаление выбранной")
@@ -395,7 +441,15 @@ NET_SENT = {}
 tap(KEY_N)
 act = lastAct()
 ok(act ~= nil and act.op == "forum_post", "N на форуме → op=forum_post")
-tap(KEY_BACKSPACE)
+NET_SENT = {}
+tap(KEY_DOWN) tap(KEY_DOWN) tap(KEY_DOWN)          -- toolbar 1 → первая современная карточка (4)
+tap(KEY_ENTER)                                    -- открыть публикацию
+paintPhone()
+tap(KEY_ENTER)                                    -- интерактивная реакция
+act = lastAct()
+ok(act ~= nil and act.op == "forum_like" and tonumber(act.id) and act.id > 0, "карточка открывается, кнопка «Нравится» отправляет forum_like")
+tap(KEY_BACKSPACE)                                -- к ленте
+tap(KEY_BACKSPACE)                                -- домой
 
 -- ---------- калькулятор ----------
 sect("калькулятор: 7 + 8 = 15")
@@ -432,10 +486,10 @@ act = lastAct()
 ok(act ~= nil and act.op == "sms_read", "колесо сдвинуло выбор на №2 (SMS)")
 tap(KEY_BACKSPACE)
 NET_SENT = {}
-bindRet("invprev", true) bindRet("invprev", true)  -- вверх дважды: 1→8→7 (forum)
+bindRet("invprev", true) bindRet("invprev", true) bindRet("invprev", true) -- 1→9 deactivate→8 calc→7 forum
 tap(KEY_ENTER)
 act = lastAct()
-ok(act ~= nil and act.op == "forum_query", "колесо вверх дважды → №7 Форум")
+ok(act ~= nil and act.op == "forum_query", "колесо вверх трижды → №7 Форум")
 tap(KEY_BACKSPACE)
 
 -- ---------- E: диктовка ----------
@@ -469,23 +523,20 @@ act = lastAct()
 ok(act ~= nil and act.op == "jobs_query", "человеческий темп 0.09с: все 4 шага приняты → №5 Биржа")
 tap(KEY_BACKSPACE)
 
-sect("Код 100: кольцевой перепрыг — плашка снапится на место, список не пролетает")
-paintPhone()                                      -- selY успокоена на строке 1
+sect("Код 100: кольцевой перепрыг в сетке смартфона")
 DRAWS.log = {}
-tap(KEY_UP)                                       -- 1 → 8 (кольцевой вверх)
+tap(KEY_UP)                                       -- 1 → последний app tile
 paintPhone()
-local hb
-for _, b in ipairs(DRAWS.log) do if b.w == 312 and b.h == 39 then hb = b break end end
-ok(hb ~= nil and hb.y >= 370, "перепрыг 1→8: плашка сразу на строке 8 (y=" .. tostring(hb and hb.y) .. ", без пролёта списка)")
-DRAWS.log = nil
+local tiles=0
+for _,b in ipairs(DRAWS.log)do if b.w>=80 and b.w<=120 and b.h==b.w then tiles=tiles+1 end end
+ok(tiles>=6,"кольцевой выбор рисует стабильную сетку приложений (tiles="..tiles..")")
+DRAWS.log={}
+tap(KEY_DOWN)                                     -- последний → первый
 paintPhone()
-DRAWS.log = {}
-tap(KEY_DOWN)                                     -- 8 → 1 (кольцевой вниз)
-paintPhone()
-local hb2
-for _, b in ipairs(DRAWS.log) do if b.w == 312 and b.h == 39 then hb2 = b break end end
-DRAWS.log = nil
-ok(hb2 ~= nil and hb2.y <= 86, "перепрыг 8→1: плашка сразу на строке 1 (y=" .. tostring(hb2 and hb2.y) .. ")")
+local tiles2=0
+for _,b in ipairs(DRAWS.log)do if b.w>=80 and b.w<=120 and b.h==b.w then tiles2=tiles2+1 end end
+DRAWS.log=nil
+ok(tiles2>=6,"обратный перепрыг сохраняет сетку без пролёта списка")
 
 -- ---------- закрытие и потеря трубки ----------
 sect("закрытие телефона и потеря трубки (op=close/ping)")
@@ -509,6 +560,24 @@ ok(act ~= nil and act.op == "close", "смерть с открытым теле�
 LP._alive = true
 -- слоты НЕ заблокированы, когда телефон закрыт
 ok(bindRet("slot1", true) == false, "после смертельного закрытия slot1 свободен")
+
+sect("управление питанием: убрать отдельно от деактивации")
+feedIdle()
+tap(KEY_UP)                                       -- открыть
+NET_SENT = {}
+tap(KEY_UP) tap(KEY_ENTER)                        -- последняя плитка «Управление»
+tap(KEY_ENTER)                                    -- «Убрать телефон»
+act = lastAct()
+ok(act ~= nil and act.op == "close", "«Убрать телефон» только закрывает UI, связь остаётся активной")
+tap(KEY_UP)                                       -- открыть снова
+NET_SENT = {}
+tap(KEY_UP) tap(KEY_ENTER)                        -- Управление
+tap(KEY_DOWN) tap(KEY_ENTER)                      -- Деактивировать → подтверждение
+ok(lastAct() == nil or lastAct().op ~= "deactivate", "первое нажатие деактивацию не выполняет — показано подтверждение")
+tap(KEY_ENTER)                                    -- Да, деактивировать
+act = lastAct()
+ok(act ~= nil and act.op == "deactivate", "подтверждение отправляет op=deactivate")
+
 sendToClient("GRM_Mob_State", { has = false, lineState = "idle", unread = 0 })
 if timer._t and timer._t["GRM_Mob_Tick"] then timer._t["GRM_Mob_Tick"]() end
 ok(true, "state has=false + тикер: телефон сам закрылся без ошибок")

@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM CCTV — client v1.2.0
+    GRM CCTV — client v1.3.2
     UI, live view, pan, zoom, freeze local input, screenshots, help HUD.
 ----------------------------------------------------------------------]]
 
@@ -24,6 +24,8 @@ local NET_SHOT_OK    = "GRM_CCTV_ShotOk"
 local ViewState = {
     active = false,
     cam = NULL,
+    camID = "",
+    basePos = Vector(0, 0, 0),
     monitor = NULL,
     label = "",
     network = "",
@@ -242,13 +244,24 @@ local function buildMonitorUI(monitor, netID, hasSrv, canCfg, cams)
         local line = list:AddLine(tostring(i), cam.label or "Камера", cam.active and "ONLINE" or "OFF",
             tostring(cam.fov or 75), string.sub(cam.id or "", 1, 16))
         line._camEnt = cam.ent
+        line._camID = tostring(cam.id or "")
         line._active = cam.active
     end
 
     local function selectedCam()
-        local lines = list:GetSelected()
-        if not lines or not lines[1] then return nil end
-        return lines[1]._camEnt, lines[1]._active
+        -- GetSelectedLine/GetLine стабилен и при одиночном выборе. GetSelected()
+        -- в разных версиях Derma возвращает разные формы таблицы.
+        local index = list:GetSelectedLine()
+        local line = index and list:GetLine(index) or nil
+        if not IsValid(line) then return nil, "", false end
+        return line._camEnt, tostring(line._camID or ""), line._active == true
+    end
+
+    local function requestView(cam, camID)
+        sendAction("view_cam", monitor, function()
+            net.WriteEntity(IsValid(cam) and cam or NULL)
+            net.WriteString(tostring(camID or ""))
+        end)
     end
 
     addBtn(f, 15, f:GetTall() - 85, 140, 30, "Смотреть", Color(100, 200, 255), function()
@@ -256,8 +269,8 @@ local function buildMonitorUI(monitor, netID, hasSrv, canCfg, cams)
             chat.AddText(Color(255, 140, 100), "[CCTV] ", color_white, "Нет ONLINE-сервера сети.")
             return
         end
-        local cam, active = selectedCam()
-        if not IsValid(cam) then
+        local cam, camID, active = selectedCam()
+        if camID == "" then
             chat.AddText(Color(255, 200, 100), "[CCTV] ", color_white, "Выбери камеру.")
             return
         end
@@ -265,7 +278,9 @@ local function buildMonitorUI(monitor, netID, hasSrv, canCfg, cams)
             chat.AddText(Color(255, 140, 100), "[CCTV] ", color_white, "Камера выключена.")
             return
         end
-        sendAction("view_cam", monitor, function() net.WriteEntity(cam) end)
+        -- Камера может быть вне PVS и потому быть NULL на клиенте. Сервер находит
+        -- её по постоянному DeviceID и остаётся единственным авторитетом.
+        requestView(cam, camID)
         f:Close()
     end)
     addBtn(f, 165, f:GetTall() - 85, 110, 30, "Обновить", nil, function()
@@ -288,9 +303,9 @@ local function buildMonitorUI(monitor, netID, hasSrv, canCfg, cams)
     addBtn(f, f:GetWide() - 115, f:GetTall() - 85, 100, 30, "Закрыть", nil, function() f:Close() end)
     list.DoDoubleClick = function()
         if not hasSrv then return end
-        local cam, active = selectedCam()
-        if IsValid(cam) and active then
-            sendAction("view_cam", monitor, function() net.WriteEntity(cam) end)
+        local cam, camID, active = selectedCam()
+        if camID ~= "" and active then
+            requestView(cam, camID)
             f:Close()
         end
     end
@@ -334,23 +349,57 @@ local function resetPan()
     ViewState.pitchOff = 0
     if IsValid(ViewState.cam) then
         ViewState.baseAng = ViewState.cam:GetAngles()
-    else
+        ViewState.basePos = ViewState.cam:GetPos()
+    elseif not ViewState.baseAng then
         ViewState.baseAng = Angle(0, 0, 0)
     end
 end
 
+function CCTV.IsViewing()
+    return ViewState.active == true
+end
+
+-- HUDPaint не подчиняется cl_drawhud/HUDShouldDraw. Поэтому на время просмотра
+-- снимаем все сторонние HUDPaint hooks и точно возвращаем их при любом выходе.
+local suppressedHUDPaint = {}
+local function suppressOtherHUDPaint()
+    local hooks = hook.GetTable and hook.GetTable().HUDPaint or nil
+    if not hooks then return end
+    local remove = {}
+    for id, fn in pairs(hooks) do
+        if id ~= "GRM_CCTV_Overlay" then
+            if suppressedHUDPaint[id] == nil then suppressedHUDPaint[id] = fn end
+            remove[#remove + 1] = id
+        end
+    end
+    for _, id in ipairs(remove) do hook.Remove("HUDPaint", id) end
+end
+
+local function restoreOtherHUDPaint()
+    for id, fn in pairs(suppressedHUDPaint) do
+        local hooks = hook.GetTable and hook.GetTable().HUDPaint or {}
+        if hooks[id] == nil then hook.Add("HUDPaint", id, fn) end
+    end
+    suppressedHUDPaint = {}
+end
+
 local function restoreGameHUD()
+    restoreOtherHUDPaint()
     if ViewState._hudHidden then
-        LocalPlayer():ConCommand("cl_drawhud 1")
+        LocalPlayer():ConCommand(ViewState._drawHUDWasEnabled == false and "cl_drawhud 0" or "cl_drawhud 1")
+        ViewState._drawHUDWasEnabled = nil
         ViewState._hudHidden = false
     end
 end
 
 local function hideGameHUD()
     if not ViewState._hudHidden then
+        local cvar = GetConVar and GetConVar("cl_drawhud") or nil
+        ViewState._drawHUDWasEnabled = not cvar or cvar:GetBool()
         LocalPlayer():ConCommand("cl_drawhud 0")
         ViewState._hudHidden = true
     end
+    suppressOtherHUDPaint()
 end
 
 local function stopView()
@@ -358,6 +407,7 @@ local function stopView()
     sendAction("stop_view", ViewState.monitor)
     ViewState.active = false
     ViewState.cam = NULL
+    ViewState.camID = ""
     ViewState.monitor = NULL
     ViewState.yawOff = 0
     ViewState.pitchOff = 0
@@ -381,13 +431,14 @@ end
 -- часто даёт ЧЁРНЫЙ кадр (буфер viewentity не тот). Рендерим вид камеры сами.
 local function getShotView()
     local cam = ViewState.cam
-    if not IsValid(cam) then return nil end
-    local base = ViewState.baseAng or cam:GetAngles()
+    local base = ViewState.baseAng or (IsValid(cam) and cam:GetAngles())
+    local cameraPos = IsValid(cam) and cam:GetPos() or ViewState.basePos
+    if not base or not cameraPos then return nil end
     local viewAng = Angle(base.p, base.y, base.r)
     viewAng:RotateAroundAxis(viewAng:Up(), ViewState.yawOff or 0)
     viewAng:RotateAroundAxis(viewAng:Right(), ViewState.pitchOff or 0)
-    local origin = cam:GetPos() + viewAng:Forward() * 6 + viewAng:Up() * 2
-    return origin, viewAng, ViewState.fov or cam:GetCamFOV() or 75
+    local origin = cameraPos + viewAng:Forward() * 6 + viewAng:Up() * 2
+    return origin, viewAng, ViewState.fov or (IsValid(cam) and cam:GetCamFOV()) or 75
 end
 
 local function getShotRT(w, h)
@@ -438,7 +489,7 @@ local function takeScreenshot()
         chat.AddText(Color(255, 200, 100), "[CCTV] ", color_white, "Подождите перед следующим снимком.")
         return
     end
-    if not IsValid(ViewState.cam) then return end
+    if not getShotView() then return end
 
     ViewState.lastShot = now
     ViewState.pendingShot = true
@@ -449,7 +500,7 @@ end
 -- Так на скрин попадают REC / имя / правая колонка подсказок (не только «голый» 3D).
 hook.Add("PostRender", "GRM_CCTV_CaptureShot", function()
     if not ViewState.pendingShot then return end
-    if not ViewState.active or not IsValid(ViewState.cam) then
+    if not ViewState.active then
         ViewState.pendingShot = false
         ViewState.hideOverlay = false
         return
@@ -557,9 +608,14 @@ net.Receive(NET_VIEW, function()
     local shotCooldown = net.ReadFloat()
     local shotMap = net.ReadString()
     local shotCamId = net.ReadString()
+    local basePos = net.ReadVector()
+    local baseAng = net.ReadAngle()
 
     ViewState.active = true
     ViewState.cam = cam
+    ViewState.camID = shotCamId
+    ViewState.basePos = basePos
+    ViewState.baseAng = baseAng
     ViewState.monitor = mon
     ViewState.label = label
     ViewState.network = network
@@ -592,6 +648,7 @@ end)
 net.Receive(NET_VIEW_STOP, function()
     ViewState.active = false
     ViewState.cam = NULL
+    ViewState.camID = ""
     ViewState.monitor = NULL
     ViewState.yawOff = 0
     ViewState.pitchOff = 0
@@ -602,7 +659,6 @@ end)
 
 hook.Add("InputMouseApply", "GRM_CCTV_MousePan", function(cmd, x, y, ang)
     if not ViewState.active or not ViewState.allowPan then return end
-    if not IsValid(ViewState.cam) then return end
     local sens = ViewState.sens or 0.06
     ViewState.yawOff = math.Clamp((ViewState.yawOff or 0) - x * sens, -(ViewState.yawMax or 55), (ViewState.yawMax or 55))
     ViewState.pitchOff = math.Clamp((ViewState.pitchOff or 0) + y * sens, -(ViewState.pitchMax or 35), (ViewState.pitchMax or 35))
@@ -633,17 +689,14 @@ end)
 
 hook.Add("CalcView", "GRM_CCTV_CalcView", function(ply, pos, ang, fov)
     if not ViewState.active then return end
-    local cam = ViewState.cam
-    if not IsValid(cam) then return end
-    local base = ViewState.baseAng or cam:GetAngles()
-    local viewAng = Angle(base.p, base.y, base.r)
-    viewAng:RotateAroundAxis(viewAng:Up(), ViewState.yawOff or 0)
-    viewAng:RotateAroundAxis(viewAng:Right(), ViewState.pitchOff or 0)
-    local origin = cam:GetPos() + viewAng:Forward() * 6 + viewAng:Up() * 2
+    local origin, viewAng, cameraFov = getShotView()
+    if not origin then return end
     return {
         origin = origin,
         angles = viewAng,
-        fov = ViewState.fov or cam:GetCamFOV() or 75,
+        fov = cameraFov,
+        znear = 2,
+        zfar = 32768,
         drawviewer = false,
     }
 end)
@@ -670,16 +723,9 @@ hook.Add("HUDShouldDraw", "GRM_CCTV_HideHUD", function(name)
     if HIDE_VANILLA[name] then return false end
 end)
 
--- Гасим чужие HUDPaint (вес/еда/HP GRM и т.п.) пока в камере — наш оверлей рисуем отдельно.
-local _oldHUDPaintHooks
+-- Подхватываем даже HUD hooks, которые другой аддон зарегистрировал уже после входа.
 hook.Add("Think", "GRM_CCTV_SuppressOtherHUD", function()
-    if not ViewState.active then
-        if _oldHUDPaintHooks then
-            -- hooks restored automatically when not suppressing via early-return list
-            _oldHUDPaintHooks = nil
-        end
-        return
-    end
+    if ViewState.active then suppressOtherHUDPaint() end
 end)
 
 surface.CreateFont("GRM_CCTV_Title", { font = "Roboto", size = 22, weight = 700, extended = true })
@@ -922,9 +968,18 @@ hook.Add("Think", "GRM_CCTV_ExitThink", function()
 end)
 
 hook.Add("Think", "GRM_CCTV_CamValid", function()
-    if ViewState.active and not IsValid(ViewState.cam) then
+    if not ViewState.active then return end
+    local ply = LocalPlayer()
+    if not IsValid(ply) or not ply:Alive() then stopView() return end
+    if IsValid(ViewState.cam) then
+        ViewState.basePos = ViewState.cam:GetPos()
+    elseif tostring(ViewState.camID or "") == "" then
         stopView()
     end
+end)
+
+hook.Add("PlayerDeath", "GRM_CCTV_ClientDeathExit", function(ply)
+    if ViewState.active and ply == LocalPlayer() then stopView() end
 end)
 
 concommand.Add("grm_cctv_stop", function() stopView() end)

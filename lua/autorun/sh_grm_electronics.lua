@@ -1,14 +1,7 @@
 --[[ GRM Electronics & Network Ecosystem v1.4.0 ]]
 if SERVER then AddCSLuaFile();AddCSLuaFile("autorun/client/cl_grm_electronics.lua")end
 GRM=GRM or{};GRM.Electronics=GRM.Electronics or{};local E=GRM.Electronics
-E.Version="1.5.1";E.Devices=E.Devices or{};E.Configs=E.Configs or{};E.Links=E.Links or{};E.Accounts=E.Accounts or{};E.Files=E.Files or{};E.Sessions=E.Sessions or{};E.Mailbox=E.Mailbox or{}
--- v1.5.1 (находка 155): автосейв по dirty-флагу — раньше карта и база писались
--- только при ShutDown/явных операциях, и любое падение/килл процесса в окне
--- между изменениями теряло устройства, файлы и почту (класс саги валюты,
--- находки 46-63). Теперь: любая мутация ставит Dirty*, флаш раз в 5с пишет
--- оба файла; ShutDown-сейв сохранён как страховка. Плюс LoadMap чистит
--- мёртвые записи E.Devices перед восстановлением.
-E.DirtyMap=false;E.DirtyDB=false
+E.Version="1.5.0";E.Devices=E.Devices or{};E.Configs=E.Configs or{};E.Links=E.Links or{};E.Accounts=E.Accounts or{};E.Files=E.Files or{};E.Sessions=E.Sessions or{};E.Mailbox=E.Mailbox or{}
 E.Kinds={router="Wi-Fi роутер",computer="Компьютер",printer="Сетевой принтер",socket="Сетевая розетка",plug="Кабельный штекер"}
 local function trim(v,n)return string.sub(string.Trim(tostring(v or"")),1,n or 128)end
 local function charKey(p)if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(p)end;return tostring(p:SteamID64())..":char1"end
@@ -16,8 +9,8 @@ local function vecT(v)return{x=v.x,y=v.y,z=v.z}end;local function angT(a)return{
 local function vec(t)t=istable(t)and t or{};return Vector(tonumber(t.x)or 0,tonumber(t.y)or 0,tonumber(t.z)or 0)end
 local function ang(t)t=istable(t)and t or{};return Angle(tonumber(t.p)or 0,tonumber(t.y)or 0,tonumber(t.r)or 0)end
 function E.DeviceByID(id)for _,d in pairs(E.Devices)do if IsValid(d)and d:GetDeviceID()==id then return d end end end
-function E.RegisterDevice(ent)if not IsValid(ent)then return end;if ent:GetDeviceID()==""then ent:SetDeviceID("net_"..util.CRC(game.GetMap()..":"..ent:EntIndex()..":"..SysTime()))end;E.Devices[ent:EntIndex()]=ent;E.Configs[ent:GetDeviceID()]=E.Configs[ent:GetDeviceID()]or{range=900,ssid="GRM-NET",passwordHash="",allowFaction=true,allowArrest=false,allowFines=false,allowCCTV=false,allowRoomTap=false,faction="",osType="civilian"};E.DirtyMap=true end
-function E.UnregisterDevice(ent)if IsValid(ent)then E.Devices[ent:EntIndex()]=nil;E.DirtyMap=true end end
+function E.RegisterDevice(ent)if not IsValid(ent)then return end;if ent:GetDeviceID()==""then ent:SetDeviceID("net_"..util.CRC(game.GetMap()..":"..ent:EntIndex()..":"..SysTime()))end;E.Devices[ent:EntIndex()]=ent;E.Configs[ent:GetDeviceID()]=E.Configs[ent:GetDeviceID()]or{range=900,ssid="GRM-NET",passwordHash="",allowFaction=true,allowArrest=false,allowFines=false,allowCCTV=false,allowRoomTap=false,faction="",osType="civilian"}end
+function E.UnregisterDevice(ent)if IsValid(ent)then E.Devices[ent:EntIndex()]=nil end end
 function E.IsLinked(a,b)for _,l in pairs(E.Links)do if(l.a==a and l.b==b)or(l.a==b and l.b==a)then return true end end return false end
 function E.NetworkRouter(ent)
  if not IsValid(ent)or not ent:GetDeviceActive()then return nil end;if ent:GetDeviceKind()=="router"then return ent end
@@ -50,7 +43,7 @@ if SERVER then
   local accounts={};for _,r in pairs(E.Accounts)do accounts[#accounts+1]=r end
   local allFiles={};for devID,store in pairs(E.Files)do local arr={};for _,r in pairs(store)do arr[#arr+1]=r end;allFiles[devID]=arr end
   local mailbox={};for _,r in pairs(E.Mailbox)do mailbox[#mailbox+1]=r end
-  local ok=write(E.DBFile,{version=2,accounts=accounts,files=allFiles,mailbox=mailbox});if ok then E.DirtyDB=false end;return ok
+  return write(E.DBFile,{version=2,accounts=accounts,files=allFiles,mailbox=mailbox})
  end
  function E.EnsureAdminTelecom()
   local username="admintelecom";local salt="GRM_ADMIN_TELECOM_V1";local account=E.Accounts[username]or{};account.username=username;account.displayName="AdminTelecom";account.salt=salt;account.passwordHash=hash("AdminTelecom",salt);account.ownerKey="SYSTEM";account.faction="";account.role="root";account.created=account.created or os.time();E.Accounts[username]=account;return account
@@ -68,19 +61,16 @@ if SERVER then
  end
  function E.SaveMap()
   local devices={};for _,d in pairs(E.Devices)do if IsValid(d)then devices[#devices+1]={class=d:GetClass(),id=d:GetDeviceID(),name=d:GetDisplayName(),network=d:GetNetworkID(),ownerKey=d:GetOwnerKey(),ownerName=d:GetOwnerName(),active=d:GetDeviceActive(),model=d:GetModel(),pos=vecT(d:GetPos()),ang=angT(d:GetAngles()),config=E.Configs[d:GetDeviceID()]or{}}end end
-  local links={};for _,l in pairs(E.Links)do links[#links+1]={id=l.id,a=l.a,b=l.b}end;local ok=write(E.MapFile,{version=1,devices=devices,links=links});if ok then E.DirtyMap=false end;return ok
+  local links={};for _,l in pairs(E.Links)do links[#links+1]={id=l.id,a=l.a,b=l.b}end;return write(E.MapFile,{version=1,devices=devices,links=links})
  end
  function E.LoadMap()
-  -- v1.5.1: вычистить мёртвые записи реестра (после cleanup/удаления), чтобы
-  -- DeviceByID не находил невалидные объекты и антидубль работал честно.
-  for k,d in pairs(E.Devices)do if not IsValid(d)then E.Devices[k]=nil end end
   local d=read(E.MapFile)or{};E.Links={};for _,l in pairs(d.links or{})do if l.a and l.b then E.Links[l.id or util.CRC(l.a..l.b)]={id=l.id or util.CRC(l.a..l.b),a=l.a,b=l.b}end end
   for _,r in pairs(d.devices or{})do if scripted_ents.GetStored(r.class or"")then local existing=E.DeviceByID(r.id);if not IsValid(existing)then existing=ents.Create(r.class);if IsValid(existing)then existing:SetPos(vec(r.pos));existing:SetAngles(ang(r.ang));existing:SetDeviceID(r.id or"");if util.IsValidModel(r.model or"")then existing:SetModel(r.model)end;existing:Spawn();existing:Activate()end end;if IsValid(existing)then existing:SetDisplayName(r.name or E.Kinds[existing:GetDeviceKind()]or"Устройство");existing:SetNetworkID(r.network or"");existing:SetOwnerKey(r.ownerKey or"");existing:SetOwnerName(r.ownerName or"");existing:SetDeviceActive(r.active~=false);E.Configs[existing:GetDeviceID()]=istable(r.config)and r.config or{};E.RegisterDevice(existing)end end end
-  for _,link in pairs(E.Links)do createCable(link)end;E.DirtyMap=false;E.PushTopology();return true
+  for _,link in pairs(E.Links)do createCable(link)end;E.PushTopology();return true
  end
  function E.HandleDeviceRemoved(ent)
   if E.SuppressRemovalPersistence then return end;local id=ent.GetDeviceID and ent:GetDeviceID()or"";if id==""then return end
-  if E.UnlinkDevice then E.UnlinkDevice(id)else for key,l in pairs(E.Links)do if l.a==id or l.b==id then E.Links[key]=nil end end end;E.Configs[id]=nil;E.Files[id]=nil;E.DirtyMap=true;E.DirtyDB=true
+  if E.UnlinkDevice then E.UnlinkDevice(id)else for key,l in pairs(E.Links)do if l.a==id or l.b==id then E.Links[key]=nil end end end;E.Configs[id]=nil;E.Files[id]=nil
   timer.Simple(0,function()if not E.SuppressRemovalPersistence then E.SaveMap();E.SaveDB();E.PushTopology()end end)
  end
  function E.SaveAll()return E.SaveMap()and E.SaveDB(),"электроника и база сохранены"end
@@ -211,8 +201,5 @@ end
  net.Receive("GRM_Net_MailSend",function(_,ply)if not IsValid(ply)or not E.IsNetworkAdmin(ply)then return end;local subject=trim(net.ReadString(),120);local bodyText=string.sub(net.ReadString()or"",1,8192);local from=E.Sessions[ply]and E.Sessions[ply].username or ply:Nick();for user,_ in pairs(E.Accounts)do if user~=from then local id="msg_"..util.CRC(from..user..SysTime()..math.random());E.Mailbox[id]={id=id,from=from,to=user,subject="[РАССЫЛКА] "..(subject~=""and subject or"Уведомление"),body=bodyText,date=os.time(),read=false}end end;E.SaveDB();result(ply,true,"Рассылка отправлена всем пользователям")end)
  hook.Add("PlayerDisconnected","GRM_Net_SessionClose",function(p)E.Sessions[p]=nil end);hook.Add("InitPostEntity","GRM_Net_Load",function()timer.Simple(2,function()E.LoadDB();E.LoadMap()end)end);hook.Add("PreCleanupMap","GRM_Net_CleanupGuard",function()E.SuppressRemovalPersistence=true end);hook.Add("PostCleanupMap","GRM_Net_Reload",function()timer.Simple(1,function()E.SuppressRemovalPersistence=false;E.LoadMap()end)end);hook.Add("ShutDown","GRM_Net_Save",function()E.SuppressRemovalPersistence=true;E.SaveAll()end)
  timer.Create("GRM_Net_TopologyTick",5,0,function()E.PushTopology()end)
- -- v1.5.1: автосейв по dirty — любые изменения (устройство/кабель/файл/почта/
- -- конфиг) попадают на диск не позже чем через 5 секунд, даже без ShutDown.
- timer.Create("GRM_Net_AutoSave",5,0,function()if E.DirtyMap or E.DirtyDB then E.SaveAll()end end)
  print("[GRM Electronics] server v"..E.Version.." loaded")
 end

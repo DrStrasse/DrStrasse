@@ -97,8 +97,8 @@ if SERVER then
         grm_roomtap_chip     = true,
         grm_roomtap_server   = true,
         grm_roomtap_terminal = true,
-        -- GRM Vendor / Торгаш (Код 111)
-        grm_vendor           = true,
+        -- GRM Vendor имеет собственный data/grm_vendors/<map>.json.
+        -- Здесь намеренно НЕ регистрируется: два механизма создавали дубли.
         -- Денежный принтер (Код 115)
         grm_money_printer    = true,
         -- Лаборатории (Код 120)
@@ -115,9 +115,8 @@ if SERVER then
         -- Рудная ветка (Код 89)
         grm_ore_node       = true,
         grm_ore_buyer      = true,
-        -- Дилер транспорта НЕ в пермах: у GRM VehicleDealer v3 собственная
-        -- персистентность (grm_vehicle_dealers/<map>.json + гаражи), перм-дубль
-        -- создавал бы конфликт восстановления.
+        -- sent_vehicle_dealer имеет собственный GRM VehicleDealer v3 persistence.
+        -- Здесь намеренно отсутствует, чтобы не создавать второго NPC.
     }
 
     -- JSON только без конверсии ключей (находка 65)

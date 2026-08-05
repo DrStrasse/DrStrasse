@@ -385,13 +385,10 @@ if PHASE == "bank_boot_pick_fresh" then
     print("PHASE bank_boot_pick_fresh: OK — loader предпочёл свежее зеркало старому основному файлу")
 end
 
--- sidkey_trap: ловушка числовых ключей GMod против CharacterKey.
--- Харнесс не грузит Identity, поэтому фаза save пишет кошелёк чистыми sid64,
--- а фаза load мигрирует их в CharacterKey (sid:charN) и переписывает файл.
--- Фаза обязана быть зелёной в ОБОИХ мирах:
---   • sid64-мир (сразу после save): голый JSONToTable калечит ключ (strKeys==0);
---   • char1-мир (после load): голый JSONToTable НЕ калечит «sid:char1» (strKeys>0);
---   • jsonT (ignoreConversions=true) спасает ключ в любом мире.
+-- sidkey_trap: CharacterKey намеренно содержит нечисловой суффикс.
+-- После перехода на CharacterKey новый wallet не попадает в старую ловушку
+-- числового JSON-ключа, но legacy numeric SteamID64 parser behaviour всё
+-- равно проверяется отдельной assert-веткой ниже.
 if PHASE == "sidkey_trap" then
     local sample = '{"76561199385153957":1000,"76561199385153957:char1":2000}'
     local bareS = util.JSONToTable(sample)
@@ -399,21 +396,14 @@ if PHASE == "sidkey_trap" then
         "sidkey_trap: CharacterKey потерян голым парсером (нечисловой суффикс должен выживать)")
     local w = file.Read("grm_wallet.json") or ""
     assert(#w > 0, "sidkey_trap: нет файла кошелька (сначала фаза save)")
-    local bareW  = util.JSONToTable(w)
-    local fixedW = util.JSONToTable(w, false, true)
-    local strKeys = 0
-    for k in pairs(bareW or {}) do if isstring(k) then strKeys = strKeys + 1 end end
-    if fixedW and fixedW["76561199385153957:char1"] ~= nil then
-        -- char1-мир (после load): миграция прошла, ловушка к ключу не применима
-        assert(strKeys > 0, "sidkey_trap: char1-ключ потерян голым парсером")
-        print("PHASE sidkey_trap: OK — wallet в char1-мире, ловушка числовых ключей не применима, jsonT спасает")
-    else
-        -- sid64-мир (сразу после save): голый парсер обязан скалечить ключ
-        assert(fixedW and fixedW["76561199385153957"] ~= nil,
-            "sidkey_trap: ignoreConversions не спас sid64-ключ wallet")
-        assert(strKeys == 0, "sidkey_trap: голый парсер не сымитировал калечение числового sid64-ключа")
-        print("PHASE sidkey_trap: OK — sid64 калечится голым парсером, jsonT(ignoreConversions=true) спасает")
-    end
+    local bare  = util.JSONToTable(w)
+    local fixed = util.JSONToTable(w, false, true)
+    local key = "76561199385153957:char1"
+    local recognized = 0
+    for k in pairs(bare or {}) do if isstring(k) then recognized = recognized + 1 end end
+    assert(recognized > 0, "sidkey_trap: CharacterKey неожиданно потерян голым парсером")
+    assert(fixed and fixed[key] ~= nil, "sidkey_trap: CharacterKey с ignoreConversions потерян!")
+    print("PHASE sidkey_trap: OK — wallet использует CharacterKey, числовая SteamID64-ловушка больше не применяется")
 end
 
 -- bank_nick_mirror: treasury откачены (счета пустые), но есть зеркало

@@ -19,7 +19,7 @@ local DEFAULT = {
     maxMoney = 10000,
     printAmount = 250,
     printInterval = 20,
-    maxHealth = 100,
+    maxHealth = 250,
     heatPerPrint = 9,
     coolPerSecond = 1,
     overheatAt = 100,
@@ -190,6 +190,32 @@ function ENT:Break(reason)
     net.Broadcast()
 end
 
+function ENT:DestroyPrinter(attacker)
+    if self.GRM_Destroying then return end
+    self.GRM_Destroying = true
+    self:SetBroken(true)
+    self:SetActive(false)
+    self:SetPrinterHealth(0)
+    local pos = self:WorldSpaceCenter()
+    local effect = EffectData(); effect:SetOrigin(pos); effect:SetScale(1.2); util.Effect("Explosion", effect, true, true)
+    local blast = ents.Create("env_explosion")
+    if IsValid(blast) then blast:SetPos(pos);blast:SetOwner(IsValid(attacker) and attacker or self);blast:SetKeyValue("iMagnitude","70");blast:SetKeyValue("iRadiusOverride","180");blast:Spawn();blast:Fire("Explode","",0) end
+    emit(self, "ambient/explosions/explode_4.wav", 90, 100)
+    hook.Run("GRM_MoneyPrinterDestroyed", self, attacker, self:GetPrinted())
+    timer.Simple(0, function() if IsValid(self) then self:Remove() end end)
+end
+
+function ENT:OnTakeDamage(dmg)
+    if self.GRM_Destroying then return end
+    self:TakePhysicsDamage(dmg)
+    local amount = math.max(0, dmg:GetDamage())
+    if amount <= 0 then return end
+    local health = math.max(0, self:GetPrinterHealth() - math.ceil(amount))
+    self:SetPrinterHealth(health)
+    if health <= 0 then self:DestroyPrinter(dmg:GetAttacker())
+    elseif amount >= 15 and math.random() < 0.35 then emit(self, "ambient/energy/spark" .. math.random(1, 6) .. ".wav", 68, 100) end
+end
+
 function ENT:CollectMoney(ply)
     ply = IsValid(ply) and ply or self:OwnerPlayer()
     local amount = math.floor(self:GetPrinted())
@@ -252,7 +278,7 @@ function ENT:SendMenu(ply)
         net.WriteEntity(self)
         net.WriteTable({
             printed = self:GetPrinted(), maxMoney = self:GetMaxMoney(), heat = self:GetHeat(),
-            health = self:GetPrinterHealth(), active = self:GetActive(), broken = self:GetBroken(),
+            health = self:GetPrinterHealth(), maxHealth = DEFAULT.maxHealth, active = self:GetActive(), broken = self:GetBroken(),
             printAmount = self:GetPrintAmount(), printInterval = self:GetPrintInterval(),
             owner = self:GetOwnerName(), repairCost = DEFAULT.repairCost,
             upgradeCapacityCost = DEFAULT.upgradeCapacityCost, upgradeRateCost = DEFAULT.upgradeRateCost,
@@ -308,4 +334,4 @@ hook.Add("PhysgunDrop", "GRM_MoneyPrinter_PhysgunDrop", function(ply, ent)
     if IsValid(phys) then phys:Wake() end
 end)
 
-print("[GRM] Money Printer v2.0.0 entity loaded")
+print("[GRM] Money Printer v2.1.0 entity loaded")

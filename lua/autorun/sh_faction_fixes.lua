@@ -565,6 +565,7 @@ if SERVER then
     end
 
     function GetWeaponsForPlayer(ply)
+        if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then return {} end
         local factionName, member, f = getFactionMemberByPlayer(ply)
         if not factionName or not f then return DEFAULT_WEAPONS end
         local role = member.Role
@@ -582,6 +583,10 @@ if SERVER then
     function ApplyWeaponsToPlayer(ply)
         if not IsValid(ply) then return end
         ply:StripWeapons()
+        if ply:GetNWBool("GRM_Arrested", false) then
+            if ply.RemoveAllAmmo then ply:RemoveAllAmmo() end
+            return
+        end
         for _, class in ipairs(GetWeaponsForPlayer(ply)) do
             if isstring(class) and class ~= "" then
                 ply:Give(class)
@@ -1089,8 +1094,34 @@ if SERVER then
         end
     end)
 
+    local function handleMaskChatCommand(ply, text)
+        local lower = safeLower(trim(text))
+
+        if lower == "/mask" or lower == "!mask" then
+            sendMaskMenu(ply)
+            return true
+        end
+
+        if lower == "/mask off" or lower == "!mask off" then
+            removeMask(ply)
+            ply:PrintMessage(HUD_PRINTTALK, "[Маскировка] Снята.")
+            return true
+        end
+
+        return false
+    end
+
+    hook.Add("PlayerSayTransform", "FactionsExt_MaskCommands", function(ply, datapack)
+        if not istable(datapack) or not isstring(datapack[1]) then return end
+        if not handleMaskChatCommand(ply, datapack[1]) then return end
+        datapack[1] = ""
+        datapack.SkipPlayerSay = true
+    end)
+
     hook.Add("PlayerSay", "FactionsExt_Commands", function(ply, text)
         local lower = safeLower(trim(text))
+
+        if handleMaskChatCommand(ply, text) then return "" end
 
         if string.sub(lower, 1, 9) == "/kom_hour" then
             local arg = trim(string.sub(text, 10))
@@ -1130,17 +1161,6 @@ if SERVER then
 
         if lower == "/maskdesc" or lower == "!maskdesc" then
             ply:PrintMessage(HUD_PRINTTALK, "[Маскировка] Установить описание: /maskdesc текст")
-            return ""
-        end
-
-        if lower == "/mask" or lower == "!mask" then
-            sendMaskMenu(ply)
-            return ""
-        end
-
-        if lower == "/mask off" or lower == "!mask off" then
-            removeMask(ply)
-            ply:PrintMessage(HUD_PRINTTALK, "[Маскировка] Снята.")
             return ""
         end
 

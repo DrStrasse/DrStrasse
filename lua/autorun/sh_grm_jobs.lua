@@ -1112,7 +1112,7 @@ if CLIENT then
         render.DrawWireframeSphere(tracker.target, radius, 32, 12, Color(70, 180, 255, 90), true)
         local pos = tracker.target + Vector(0, 0, 46 + math.sin(CurTime() * 2.5) * 6)
         local dist = math.floor(lp:GetPos():Distance(tracker.target))
-        local ang = Angle(0, lp:EyeAngles().y - 90, 90)
+        local ang = Angle(0, EyeAngles().y - 90, 90)
         cam.Start3D2D(pos, ang, 0.14)
             draw.RoundedBox(8, -130, -46, 260, 66, Color(16, 20, 28, 215))
             surface.SetDrawColor(C.yellow.r, C.yellow.g, C.yellow.b, 220)

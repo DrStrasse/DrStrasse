@@ -686,7 +686,7 @@ if CLIENT then
                 local mins, maxs = veh:OBBMins(), veh:OBBMaxs()
                 local back = (mins and mins.y) and mins.y or -60
                 local pos = veh:LocalToWorld(Vector(0, back - 8, (maxs and maxs.z or 60) * 0.5 + 30 + math.sin(CurTime() * 3) * 3))
-                local ang = Angle(0, lp:EyeAngles().y - 90, 90)
+                local ang = Angle(0, EyeAngles().y - 90, 90)
                 cam.Start3D2D(pos, ang, 0.1)
                     draw.RoundedBox(6, -110, -20, 220, 40, Color(14, 18, 26, 215))
                     surface.SetDrawColor(C.yellow.r, C.yellow.g, C.yellow.b, 220)

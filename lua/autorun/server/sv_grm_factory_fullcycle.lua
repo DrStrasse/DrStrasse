@@ -627,7 +627,11 @@ local function beginCraft(ply, ent, recipe, recipeID, kind, removedInputs)
             end
         end
 
-        if IsValid(owner) then owner:EmitSound("buttons/button14.wav") end
+        if IsValid(owner) then
+            local outputID = tostring(recipe.output or recipe.weapon or recipeID or kind)
+            hook.Run("GRM_QuestEvent", owner, "factory_produce", outputID, math.max(1, tonumber(recipe.outputCount) or 1), { kind=kind, recipe=recipeID })
+            owner:EmitSound("buttons/button14.wav")
+        end
         stopCraft(ent)
     end)
 

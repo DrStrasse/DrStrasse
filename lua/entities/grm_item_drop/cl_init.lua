@@ -6,7 +6,7 @@ function ENT:Draw()
     if not IsValid(ply) then return end
     if ply:GetPos():DistToSqr(self:GetPos()) > 200 * 200 then return end
     local pos = self:GetPos() + Vector(0, 0, 12)
-    local ang = Angle(0, ply:EyeAngles().y - 90, 90)
+    local ang = Angle(0, EyeAngles().y - 90, 90)
     local name = self:GetDisplayName()
     if name == "" then name = self:GetItemID() end
     cam.Start3D2D(pos, ang, 0.08)

@@ -1126,216 +1126,130 @@
 
 Инвентарь переведён на ключ `GRM.Char.GetActiveKey(ply)`, если character core загружен. Старый режим без `GRM.Char` оставлен один-в-один по SteamID64, включая старую rescue-цепочку находки 114. При первом переходе на `SteamID64:char1` старый инвентарь `SteamID64` переносится в `char1`; `char2/char3` получают отдельные пустые инвентари. При переключении слота персонажа `CH.SetActiveSlot` вызывает `GRM.Inventory.SyncToClient`, чтобы клиент сразу увидел инвентарь активного персонажа. Валидация: GLua 0, sim_invphone 41/41, sim_factions_live 30/30.
 
----
+## Находка 154 (30.07.2026): RP-chat перехватывал команды остальных модулей
 
-## Находка 154 (05.08.2026): перенос ветки arena/019f89cf в сессию arena/019fcf9e + ревизия тест-стенда
+`sh_grm_rp_chat.lua` обрабатывал любой неизвестный текст как локальную речь и возвращал пустую строку. Из-за неопределённого порядка `PlayerSay` это блокировало обработчики `/grm_arrest_admin`, `/mask` и десятков других модулей. RP Chat v1.2.0 пропускает неизвестные slash/bang-команды дальше по цепочке. Команды ареста дополнительно переведены на `PlayerSayTransform + PlayerSay fallback`, а ярлык ареста в едином админ-меню использует прямой net-запрос. Аудит обнаружил 287 литеральных имён команд в 44 PlayerSay-модулях; 28 PlayerSay-only модулей теперь защищены общим pass-through-контрактом.
 
-По указанию владельца ветка `arena/019f89cf-drstrasse` (398 коммитов, HEAD 6db05be)
-перенесена в рабочую ветку сессии `arena/019fcf9e-drstrasse` целиком
-(`git reset --hard origin/arena/019f89cf-drstrasse`); содержимое идентично.
-Полный анализ репозитория (8 веток, 2 PR, тег) — `FULL_ANALYSIS.md`.
+## Находка 155 (30.07.2026): parent-escort телепортировал и наследовал вертикальные трансформации
 
-При первичном прогоне стенда выявлено и исправлено:
+`SetParent(dragger) + Freeze(true) + SetLocalPos` ставил задержанного в локальную систему координат игрока-ведущего. Это вызывало скачок при начале сопровождения, наследование углов/высоты, рывки на лестницах и движение вверх/вниз. Сопровождение переписано на предсказываемый `SetupMove`: сохраняется исходная сторона задержанного, направление за ведущим меняется плавно по фактической горизонтальной скорости, коррекция не имеет Z-компоненты, ускорение и скорость ограничены. Большой горизонтальный/вертикальный разрыв завершает сопровождение без телепорта. Добавлен `sim_handcuff_escort.lua`.
 
-1. **`tools/glua_check.py` пропускал 11 файлов тулганов** — проверка `"tools" in root`
-   ловила подстроку в пути `lua/weapons/gmod_tool/**stools**/`. Заменено на
-   сравнение компонентов пути (`root == "./tools" or root:startswith("./tools/")`).
-   Теперь проверяется **315 файлов, 0 ошибок** (было 304).
-2. **Фаза `sidkey_trap` roundtrip-теста зависела от порядка фаз**: после
-   `corrupt_all` (намеренно портящего `grm_wallet.json`) фаза падала. Плюс
-   харнесс не грузит Identity, поэтому кошелёк бывает в двух мирах: чистые
-   sid64 (сразу после save) и CharacterKey `sid:char1` (после load — миграция
-   встроена в `characterKeyOf/persistedCharacterKey` самого ядра валюты).
-   Фаза переписана: зелёная в ОБОИХ мирах (голый парсер калечит sid64 и НЕ
-   калечит char1; `jsonT(ignoreConversions=true)` спасает всегда).
-3. **`sim_qmenu` — стаб игрока без NW-методов**: модуль зовёт
-   `ply:GetNWBool("GRM_Cuffed", false)`, стаб возвращал nil → краш. Добавлены
-   `GetNWBool/GetNWString/SetNWBool/SetNWString` в `mkPly`. 69/69.
-4. **`sim_rootboard` — стаб `FactionsAPI.IsLeader` не нормализовал плеера**:
-   реальная сигнатура `IsLeader(steamID|ply, factionName)` с `memberKey()`
-   (sh_factions.lua:1077), а стаб сравнивал объект-плеера со строкой сида —
-   лидеру молча отказывалось в настройке автозачисления. Стаб приведён к
-   конвенции API. Все проверки доски зелёные.
-5. **`sim_dealer` — устаревшее ожидание ровно одного `continue`** в
-   `sent_vehicle_dealer/init.lua` (код отрефакторен, `continue` нет, якорь
-   `hook.Add("ShutDown")` в хвосте тоже изменился). Трансформация адаптивная:
-   0 или 1 вхождение, label вставляется только при фактическом continue.
-   После этого сим вскрыл РЕАЛЬНЫЙ прод-баг (см. п.6).
-6. **РЕАЛЬНЫЙ БАГ: `sh_grm_ctx.lua:37` — `GRM.Identity.FactionMember(f, ply)`
-   без nil-гарда** в `getPlayerFaction` (C-меню). При отсутствии/отключении
-   модуля Identity (sh_grm_character) каждый запрос C-меню падал
-   «attempt to index field 'Identity' (a nil value)» — контекстное меню,
-   «Выбросить деньги», «Передать деньги» умирали целиком. Добавлен гард
-   `local hasIdentity = GRM.Identity and GRM.Identity.FactionMember`.
-   Найден симуляцией sim_dealer — классика: стенд ловит то, что не ловит
-   синтаксис.
-7. **`sim_mobile_ui` — задокументирован как устаревший**: тест написан под
-   полноценный клиентский UI Mobile v1.2.2 (репит-клок, SMS-треды, контакты),
-   а модуль ветки — намеренно упрощённая v2.0.1 (см. шапку sh_grm_mobile.lua:
-   «этот файл не восстанавливает полноценный UI»). Серверный контракт покрыт
-   `sim_mobile` 121/121 и `sim_invphone` 41/41. Пометка добавлена в шапку теста;
-   при возврате полноценного UI тест вернуть в регресс.
+## Находка 156 (30.07.2026): арест не был авторитетным запретом loadout, а камера выбиралась чужим фолбэком
 
-**Итог стенда после фиксов:** GLua 315/0; roundtrip 14/14 (канонический
-порядок фаз: save load sidkey_trap bank_nick_mirror bank_reconcile_attack
-bank_boot_pick_fresh perm corrupt corrupt_all treasury_corrupt fmt_array_sid
-fmt_array_nick fmt_mapnum fines); sim-стенды 15/16 (единственный красный —
-sim_mobile_ui, см. п.7). Порядок фаз roundtrip важен: corrupt-фазы намеренно
-портят файлы данных — sidkey_trap и зеркальные фазы гонять ДО них.
+Арестованный оставался cuffed, поэтому handcuffs мог снова выдать `grm_cuffed`; параллельно `ApplyWeaponsToPlayer` из `/weapons_admin` безусловно делал `Give`, а `chooseCamera/chooseSpawn` при ошибке брали первый объект другой категории. В Arrest v1.1.0 введён единый `EnforceUnarmed`: StripWeapons + RemoveAllAmmo, очистка сохранённого cuff-loadout, блок PlayerLoadout/pickup/equip, fail-safe 0.25 с и гейт в Factions Extended. При аресте также очищается GRM Inventory, а AddItem/AddWeapon запрещены до освобождения. Категории стали авторитетными владельцами списков cameraIDs; старые camera.group мигрируют автоматически. Авторазрешение уголовники/гауптвахта сортируется по autoPriority, камера выбирается среди назначенных и валидных по минимальной занятости, без глобальных фолбэков; респавн возвращает заключённого в назначенную камеру. Стенд `sim_arrest.lua`: 26 проверок.
 
----
+## Находка 157 (30.07.2026): одна физическая дверь имела два map entity с разными владельцами
 
-## Находка 155 (05.08.2026): электроника v1.5.1 — автосейв, интеграции, торгаш электроникой; проверка админ-хаба и меню сохранений
+Канонизация по `FindInSphere(origin, 12)` не работала на картах, где механизм и визуальное полотно одной двери имеют разные origin. При наведении на разные участки игрок попадал то в запись «Фракция: Полиция», то в отдельную «Ничья». Doors v2.0.6 строит union-find-кэш дверей по пересечению WorldSpaceAABB, вертикальному overlap и дистанции центров. Соседние/касающиеся двери не склеиваются. `GetEquivalentDoors` синхронизирует NW owner/title/lock и engine Lock/Unlock для всех представлений. При миграции из нескольких legacy ID выбирается наиболее содержательная запись (владелец > ничья), алиасы удаляются и база пересохраняется. Отдельно визуализация камер ареста сокращена до компактной superadmin-only подписи без сфер и лучей. Стенды: `sim_doors_identity` 10/10, `sim_arrest` 28/28.
 
-По заказу владельца: «исправить сохранение электроники, компьютеров, роутеров;
-проверить единое админ-меню и единое меню сохранений; сделать торговца
-электроникой по аналогии с системой торгашей».
+## Находка 158 (30.07.2026): электродубинка имела неподходящий holdtype и несинхронный минимальный удар
 
-Модуль GRM Electronics & Network (компьютеры/роутеры/принтеры/розетки/штекеры/
-кабели, GRM NET OS) перенесён с ветки 019fb265 (там он жил без интеграций и с
-классической дырой сохранения) в базу 019f89cf и доработан:
+Старый SWEP использовал `melee2`, выполнял проверку попадания сразу и ограничивался одним swing/impact WAV; `HC.StunPlayer` дополнительно повторял impact. Новый SWEP следует standard stunstick contract: одноручный `melee`, ACT_VM_HITCENTER + HL2MP melee gesture, playback 1.18, delayed impact 0.12, lag compensation и hull trace. Звуки deploy/holster/swing/player-hit/world-hit разделены; добавлены StunstickImpact, ViewPunch, ScreenFade и ScreenShake. Урон не создаётся. Stun API получил options silent/silentNotify, а SWEP имеет собственные StartCommand/SetupMove guards на случай отсутствия handcuffs core. Стенд `sim_electro_baton`: 15/15.
 
-1. **АВТОСЕЙВ ПО DIRTY-ФЛАГУ (v1.5.0 → v1.5.1).** Раньше карта
-   (`grm_electronics/<map>.json`) и база (`database.json`: аккаунты/файлы/почта)
-   писались ТОЛЬКО при ShutDown и в явных операциях — килл процесса/краш
-   сервера терял всё за окно (класс саги валюты, находки 46–63). Теперь:
-   `E.DirtyMap/E.DirtyDB` ставятся на любой мутации (RegisterDevice/
-   UnregisterDevice/HandleDeviceRemoved — в т.ч. спавн через spawnmenu),
-   флаш `GRM_Net_AutoSave` раз в 5с пишет оба файла; ShutDown-сейв остался
-   страховкой. `SaveMap/SaveDB` сбрасывают флаг только при успешной записи
-   (read-back уже был). Дополнительно `LoadMap` чистит мёртвые записи
-   `E.Devices` перед восстановлением — антидубль `DeviceByID` больше не
-   находит невалидные объекты после cleanup.
-2. **Единое меню сохранений (`/grm_persistence`):** добавлена строка
-   «Электроника и сеть» (сервер: `electronics = { save = E.SaveAll, load =
-   E.LoadAll }` + в список all_save/all_load; клиент: карточка с описанием).
-3. **Единое админ-меню (`/grm_admin`):** вкладка «Меню» → «Электроника и сеть»
-   (быстрый запуск `/grm_network_admin`); вкладка «Сервер» → версия модуля в
-   списке и счётчик «Устройств сети» (из `E.Devices`).
-4. **Q-меню:** тулы `grm_network_tool` и `grm_vendor_tool` добавлены в
-   `QM.ToolCatalog` (категория «Интерфейс») — видны в «GRM Стройке».
-5. **ТОРГОВЕЦ ЭЛЕКТРОНИКОЙ (тип `electronics` в Vendor Framework):** каталог
-   `V.Catalogs.electronics` — компьютер (15000), Wi-Fi роутер (8000), сетевой
-   принтер (10000), розетка (2500), штекер (2000); модель NPC — `breen.mdl`;
-   покупка спавнит устройство рядом (isEntity, noSell — не скупается) и сразу
-   привязывает владельца через `GRM.Electronics.Claim` (ownerKey/ownerName),
-   дальше устройство попадает в автосейв карты — **переживает рестарт без
-   /permadd**. Тулган `grm_vendor_tool`: тип «Электроника» в комбо; UI-киоск:
-   заголовок «🖥️ Электроника» и иконка вкладок.
-6. **Проверка меню стендом:** новый `tools/luatest/sim_admin_hub.lua` (29
-   проверок) грузит РЕАЛЬНЫЕ `sh_grm_admin_hub.lua` и
-   `sv_grm_persistence_hub.lua`: открытие только суперадмином, все 6 вкладок
-   отдают payload без ошибок, действия qToggle/accSet/econState применяются и
-   не-админу недоступны, all_save/all_load дёргают ВСЕ модули (включая
-   electronics и рудные узлы через GRM_SaveEntities), точечная
-   `electronics_save` не задевает соседей.
-7. **Тесты электроники адаптированы под контракт ветки:** sim_electronics
-   52/52 (версия 1.5.1; денежный принтер v2.0.0/maxHealth=100 — физический
-   урон v2.1 остался контрактом другой сессии), sim_electronics_runtime 8/8.
+## Находка 159 (30.07.2026): длительность электродубинки увеличена до 20 секунд
 
-Итог: GLua 339/0; roundtrip 14/14; симы 18 шт.: 17/18 зелёные (единственный
-красный — задокументированный sim_mobile_ui под несуществующий UI v1.2.2).
-Файлы данных: `grm_electronics/<map>.json` + `grm_electronics/database.json`
-(+ .backup при каждой записи, read-back, jsonT с ignoreConversions=true).
+`weapon_grm_electro_baton` теперь передаёт в общий stun-контур 20 секунд во всех путях, включая автономный fallback. Верхняя граница `HC.StunPlayer` поднята с 12 до 30 секунд, иначе запрошенные 20 секунд молча обрезались бы до 12.
 
----
+## Находка 160 (30.07.2026): закрытая кастомизация должна рисоваться в том же кадре, что и скелет
 
-## Находка 156 (05.08.2026): дилер v3.1.1 — зона спавна, настраиваемая высота выдачи; устранён краш SetHasSpawnZone
+PAC-подобное универсальное Think-позиционирование создаёт визуальное отставание: кость обновилась в анимационном кадре, а отдельная entity получила позицию раньше/позже и «догоняет» владельца. GRM Closed Customization не копирует PAC3 (GPLv3) и использует узкий безопасный контракт. ClientsideModel кэшируется, остаётся NoDraw и рисуется один раз в PostPlayerDraw непосредственно из GetBoneMatrix этого кадра через LocalToWorld + SetRenderOrigin/Angles. FrameNumber guard исключает двойную отрисовку; отсутствуют SetPos/SetParent и сетевые preview-пакеты. Сервер авторитетно хранит каталог, владение item, CharacterKey-loadout и clamps Position ±48 / Scale 0.2–3 / angles normalized. Добавлены 6 equipment slots в Inventory, orbit editor, admin catalog, accessory-vendor и persistence hub. Стенды: `sim_customization` 22/22, `sim_customization_runtime` 13/13.
 
-Репорт владельца: «зона спавна транспорта у диллера не работает; не могу настроить
-высоту спавна — машина спавнится ниже и уходит под землю» + консольная ошибка
-`sh_grm_vehicle_dealer.lua:37: attempt to call method 'SetHasSpawnZone' (a nil value)`
-(apply → LoadDealers).
+## Находка 161 (30.07.2026): два net.ReadTable внутри аргументов могли поменять catalog/loadout местами
 
-Разбор:
-- У владельца на сервере остался `sh_grm_vehicle_dealer.lua` (система дилера v3 с
-  площадками выдачи) от прошлой сессии, а энтити в пакете — старая толстая
-  реализация (init 1305 строк, Код 82) БЕЗ методов SpawnZone → краш при загрузке
-  дилеров.
-- В базе 019f89cf этой системы не было вовсе: v3 жила на ветке 019fb265
-  (sh_grm_vehicle_dealer.lua + тонкие shared/init/cl_init + тулган + sim-тест).
-- Плюс в v3 высота выдачи была захардкожена `+8` юнитов над землёй — для многих
-  машин (низкая подвеска, simfphys) этого мало, машина «проседала» в пол.
+`openEditor(net.ReadTable(), net.ReadTable())` зависел от порядка вычисления аргументов Lua, который не является контрактом. На клиенте таблица экипировки могла стать каталогом, а каталог — loadout: предмет исчезал из equipment slot ровно при открытии редактора. Чтение разделено на последовательные локальные `catalog`, затем `loadout`. Дополнительно редактор выбирает первый занятый slot вместо безусловного `head`, а кнопки имеют живую подсветку выбранного слота. Стенды: customization 24/24, runtime 13/13.
 
-Сделано (перенос полного комплекта v3 + фиксы):
-1. **Перенесена система v3** (замена старого дилера): `sh_grm_vehicle_dealer.lua`,
-   `entities/sent_vehicle_dealer/{shared,init,cl_init}.lua` (тонкие, NetworkVars
-   SpawnZoneMin/Max/HasSpawnZone), `vehicle_dealer_tool.lua` (единый тулган:
-   ЛКМ создать / ПКМ ассортимент / R удалить / Shift — площадка двумя углами,
-   Shift+R — очистить), `vehicle_dealer.lua` заменён на v3 compatibility bridge.
-2. **Настраиваемая высота (v3.1.0 → v3.1.1):**
-   - слайдер «Подъём транспорта над землёй» (0–100, дефолт 30) в панели тулгана
-     (`vehicle_dealer_tool_lift`);
-   - значение сохраняется в записи дилера (`lift` в DealerRecord/apply) и на
-     энтити (`dealer.VD_Lift`);
-   - `FindDeliveryPosition`: подъём `ground.HitPos + Vector(0,0,lift)` вместо +8,
-     трасса земли от верхней грани зоны (mx.z+240 → mn.z-340) — не зависит от
-     высоты, на которой админ кликал углы;
-   - `VD.Spawn`: повторный ground-trace тоже с lift (+ fallback, если StartSolid);
-   - после создания машины (любой способ: source/simfphys/LVS/scripted) —
-     `pcall(ent.DropToFloor)` — машина гарантированно садится на поверхность,
-     а не остаётся висеть или проваливаться.
-3. **Интеграции под v3:** Q-меню — тулы `vehicle_dealer_tool` и `grm_door_admin`;
-   перм-система — `sent_vehicle_dealer` УБРАН из PERM_CLASSES (своя
-   персистентность v3, перм-дубль создавал конфликт восстановления); единое
-   меню сохранений — строка «Дилеры и гаражи» (SaveAll/LoadAll) в all_save/
-   all_load; двери — периодический `GRM_Doors_SuppressDuplicateHUD` (снятие
-   чужих дверных HUD, если аддон повесил их позже нас).
-4. **Совместимость сохранена:** Tab-меню (VD_RequestVehicleList/VD_VehicleList/
-   VD_AdminSpawnVehicle регистрируются v3), C-меню (`_G.VD_RemoveDealerVehicle`),
-   ключи (v3 зовёт `VK.SetPlayerOwner`), старые дилеры мигрируются
-   `migrateLegacyDealers()` из `grm/dealers/*.json`, точки выдачи → площадки.
-5. **Тесты:** `sim_dealer.lua` (под старую систему) заменён на
-   `sim_vehicle_dealer_v3.lua` (21/21, перенесён с 019fb265, версия 3.1.1);
-   `sim_admin_hub.lua` дополнен моком VehicleDealer (31/31).
+## Находка 162 (30.07.2026): PostPlayerDraw не гарантирован для LocalPlayer в редакторе
 
-Итог: GLua 340/0; roundtrip 14/14; симы 19 шт.: 18/19 зелёные (единственный
-красный — задокументированный sim_mobile_ui). dist пересобран.
+На части third-person/gamemode-конфигураций локальная модель показывалась через CalcView, но `PostPlayerDraw(LocalPlayer)` не вызывался. Equipment state оставался надетым, однако противогаз визуально исчезал только внутри редактора. Добавлен editor-only fallback после translucent stage: SetupBones + общий drawAccessories. FrameNumber guard сохраняет единственную отрисовку за кадр. Дополнительно вход больше не вызывает clearPlayerCache для LocalPlayer, исключая искусственный разрыв жизненного цикла ClientsideModel. Стенды: customization 26/26, runtime 13/13.
 
----
+## Находка 163 (30.07.2026): equipment slots были только кнопками редактора, а не приёмниками предмета
 
-## Находка 157 (05.08.2026): точки спавна — единый формат сохранения, выбор ролей/отделов из factions.json, редизайн меню
+На скриншоте противогаз оставался в обычной ячейке Inventory, а все equipment slots показывали «пусто». Клик по «Голова» лишь открывал редактор, поэтому пользователь ожидал надетый предмет, хотя серверный transfer Inventory→loadout вообще не выполнялся. Реализован явный `equip_inventory`: Drag&Drop определяет equipment slot под курсором; также работает «выделить аксессуар → кликнуть слот». Сервер повторно читает реальный inventory slot, сверяет catalog slot, запрещает подмену и только затем RemoveFromSlot + loadout insert + sync. Inventory закрывается перед редактором. Стенды: customization 29/29, runtime 13/13.
 
-Заказ владельца: «исправить дизайн меню спавн-точек, нормально сделать выбор
-ролей и отделов из factions.json, а не ручной ввод; сохранение точек спавна
-должно работать».
+## Находка 164 (30.07.2026): editor-open не должен повторно передавать equipment loadout
 
-Разбор (`lua/autorun/sh_spawn_points.lua`):
-1. **Сохранение было сломано форматом.** `AddSpawnPointForFaction` писал в
-   `spawn_points_factions_<map>.json` ГОЛЫЙ массив точек (`{[fac]={...}}`), а
-   role/dept-функции — объект `{points=...,roles=...,departments=...}`. Загрузчик
-   при этом присваивал полученное значение в `f.SpawnPoints` и НЕ восстанавливал
-   `RoleSpawnPoints`/`DepartmentSpawnPoints` вовсе. Итог: после рестарта точки
-   ролей/отделов пропадали, а после сохранения через «Добавить точку фракции»
-   файл переписывался в старый формат и даже общие точки «терялись»
-   (`#` по объекту = 0).
-2. **UI требовал ручного ввода** роли/отдела (DTextEntry «Название роли…») —
-   легко опечататься, роль «Офицер » с пробелом не совпадала с `f.Members[].Role`.
-3. **Дизайн** — стандартный серый скин, вложенные DPropertySheet без стилизации.
+Даже после последовательного чтения второй table-пayload оставался лишней точкой, способной заменить живой client loadout пустым состоянием. Open-протокол разделён окончательно: сервер делает C.SyncPlayer(owner, owner), затем GRM_Custom_Open несёт только Catalog. Reliable порядок net-сообщений гарантирует актуальные slots до построения UI, а openEditor использует C.ClientLoadouts[LocalPlayer]. Добавлены серверные UnequipSlot/UnequipAll и чат-команды `/accessories_off`, `/acc_remove <slot>`, `/снятьаксессуары`; возврат в Inventory происходит до удаления equipment-записи. Стенды: customization 30/30, runtime 14/14.
 
-Сделано:
-1. **Единый формат хранения**: всегда `{[fac] = {points=..., roles=...,
-   departments=...}}`. Новые `factionBundle(f)` + `saveAllFactionSpawnPoints()`;
-   ВСЕ операции (фракция/роль/отдел, add/remove) пишут единый формат.
-   `reloadSpawnPoints` восстанавливает все три таблицы и МИГРИРУЕТ легаси-файл
-   (голый массив → `{points=...}`) с одноразовым пересохранением.
-2. **Чтение/запись по правилам проекта**: jsonT (ignoreConversions=true, н65)
-   + saveJson с pcall и read-back (file.Write не возвращает результат).
-3. **Выбор из factions.json**: `buildSpawnData` теперь шлёт клиенту
-   `rolesList`/`departmentsList`/`leaderRole`/`leader`/`memberCount` (из
-   живых `Factions`, которые загружены из factions.json); на клиенте — тёмные
-   DComboBox вместо текстовых полей (+ легаси-роли с точками тоже видны);
-   СЕРВЕРНАЯ валидация: роль должна существовать в `f.Roles` (или быть
-   `LeaderRoleName`), отдел — в `f.Departments` (если списки заданы) — иначе
-   отказ с внятным сообщением, мусорные точки не создаются.
-4. **Редизайн меню** в стиле GRM (как админ-хаб): шапка 46px с заголовком и
-   счётчиком «Всего точек», кастомный крестик, тёмные вкладки с подсветкой
-   активной, вкладка фракции с инфо-строкой (лидер/ролей/отделов/состав),
-   карточки точек с углами и кнопкой «Удалить», поиск/телепорт/экспорт.
-5. **Тест**: новый `tools/luatest/sim_spawn_points.lua` (25 проверок):
-   единый формат файла, восстановление после «рестарта», миграция легаси,
-   валидация ролей/отделов, meta-данные из factions.json в payload, приоритет
-   выбора точки (роль → отдел → фракция → глобал).
+## Находка 165 (30.07.2026): повторный Sync и Scale уничтожали render cache во время редактора
 
-Итог: GLua 340/0; roundtrip 14/14; симы 20 шт.: 19/20 зелёные (единственный
-красный — задокументированный sim_mobile_ui). dist пересобран.
+При save_transform сервер делал SyncPlayer, а клиент безусловно clearPlayerCache: видимая ClientsideModel удалялась в активном редакторе и на некоторых render-пайплайнах не восстанавливалась. Scale slider также удалял cache на каждое OnValueChanged. Sync заменён на reconcile: сохраняется entity/сглаженное состояние, удаляются только снятые slots или реально заменённые models. Scale обновляется на существующей entity. Локальные Position/Angles/Scale интерполируются, но bone matrix не сглаживается. Добавлены draggable XYZ world gizmo и точные удерживаемые стрелки с шагом до 0.05. Стенды: customization 34/34, runtime 14/14.
+
+## Находка 166 (30.07.2026): lastFrame мог фиксировать невидимый промежуточный LocalPlayer draw-pass
+
+Скриншот доказал, что slot/loadout и bone matrix существуют (XYZ-гизмо рисовался), но модель отсутствовала. Причина: PostPlayerDraw для LocalPlayer иногда проходит в промежуточном third-person framebuffer. drawAccessories выставлял entry.lastFrame, затем финальный editor fallback видел тот же FrameNumber и не выполнял DrawModel. В редакторе обычный LocalPlayer PostPlayerDraw теперь пропускается; единственная отрисовка идёт поздним fallback после SetupBones. Render group изменён OPAQUE→BOTH, render state аксессуара нормализуется. Стенды: customization 36/36, runtime 14/14.
+
+## Находка 167 (30.07.2026): PostDrawTranslucent вызывается также для depth/skybox до финального экрана
+
+Даже editor-only fallback мог первым выполниться в depth/skybox pass, записать lastFrame и оставить main framebuffer без модели; XYZ-гизмо при этом был виден, потому что не имел frame guard. Hook теперь принимает drawingDepth/drawingSkybox/drawing3DSkybox, пропускает вспомогательные проходы и вызывает drawAccessories(localPlayer, true) только в main view. Это устраняет исчезновение при сохранённом slot/bone и работает с любыми смонтированными addon `.mdl` через RENDERGROUP_BOTH. Одновременно editor gizmo получил mode move/rotate: XYZ arrows или три axis rings, screen-space hit-test сегментов, tangent drag и отдельные fine steps для юнитов/градусов. Стенды: customization 39/39, runtime 14/14.
+
+## Находка 168 (30.07.2026): функциональность аксессуара должна быть серверным whitelist-флагом, а не кодом каталога
+
+Каталог расширен `functions` + `functionConfig`, но принимает только ID из закрытого C.FunctionTypes. Встроены gasmask/backpack/radio/watch/armor. Противогаз и броня модифицируют только соответствующие DamageInfo bits с clamp; backpack суммирует разрешённый capacity bonus в Encumbrance; RadioNet.HasRadioUnit консультирует надетую рацию; watch/gasmask имеют клиентский status HUD. Equip/unequip вызывают безопасные callbacks зарегистрированного GRM function type и глобальные hooks, но ни JSON, ни клиент не передают функции. Админ UI получил 5 checkbox и числовые пределы. Стенды: customization 45/45, runtime 17/17.
+
+## Находка 169 (30.07.2026): кнопка без server ACK выглядит мёртвой даже при успешной записи
+
+Добавлен GRM_Custom_Ack (ok/action/message) для equip, save_transform, save_all_close, unequip и admin save/delete. Клиент разделяет мгновенный click/adjust/reset sound и окончательное server-confirmed success/error notification. Gizmo release и смена кости помечаются как preview, чтобы игрок понимал необходимость сохранения. Стенды: customization 47/47, runtime 17/17.
+
+## Находка 170 (30.07.2026): generic Perm знал класс grm_vendor, но не сохранял его экземплярный тип
+
+`grm_vendor` был разрешён в PERM_CLASSES, однако делегат PermData для него не регистрировался: после рестарта мог появиться дефолтный weapon-vendor без CustomPrices/CustomLimits. Создана отдельная per-map база GRM Vendor со stable ID и полным record. Spawn/load дедупит по ID/позиции, Apply восстанавливает тип/model/prices/limits, tool spawn/config/remove пишут базу автоматически. Legacy generic records текущей карты мигрируют и удаляются из общего perm-файла; класс исключён из PERM_CLASSES. Unified persistence получил vendors save/load и исправленный учёт false/detail return. Стенд `sim_vendor_persistence`: 10/10.
+
+## Находка 171 (30.07.2026): save-all и tool R могли сами уничтожить vendor persistence
+
+Первая версия SaveMapVendors строила новый массив только из `ents.FindByClass` и перезаписывала файл: после cleanup/ручного удаления Save превращал базу в `[]`. Кроме того, Tool R вызывал RemoveVendorSave, поэтому тест «сохранить → удалить live NPC → загрузить» закономерно ничего не восстанавливал. Save-all заменён merge/upsert по stable ID, отсутствующие records сохраняются до явного unsave. R удаляет только entity; `/vendor_unsave [id]` — единственный путь удаления записи. Load пустой базы теперь false, а hub показывает created/healed/failed. Стенд 10/10 дополнен ловушкой empty-live save.
+
+## Находка 172 (30.07.2026): ignoreConversions мог оставить индексы vendor-массива строками
+
+SaveVendor подтверждал file.Write сравнением raw, но readRecords обходил JSON через ipairs. На некоторых реализациях JSONToTable с ignoreConversions=true wrapper/array indices остаются string keys; ipairs немедленно завершался и Load сообщал «база пустая». Формат обновлён до v2 wrapper, reader поддерживает v1/v2 и всегда нормализует records через pairs в плотный массив. Writer делает parse read-back и сверяет count. Стенд теперь 12/12, включая искусственную vendors["1"] ловушку.
+
+## Находка 173 (30.07.2026): Vendor v1 смешивал UI, transaction и persistence-контракты
+
+Vendor v1 доверял разрозненным полям, списывал деньги до гарантированной выдачи и неверно трактовал Inventory.RemoveItem: API возвращает remaining, а код начислял деньги именно за remaining. Также instance config не включал enabled assortment/display name/per-NPC model. Vendor v2 разделён: shared authoritative catalog API; entity transaction/payload; GRM customer UI; GRM tool config; dedicated stable-ID persistence. Покупка grant-before-charge, продажа requested-remaining, все операции distance/rate/limit/license gated. enabledItems хранит явные true/false (пустой legacy map = всё), функциональные flags аксессуаров доходят до карточки. Persistence сохраняет name/model/stock/prices/limits и дедупит load. Стенды: vendor_v2 15/15, vendor_persistence 13/13, roundtrip 14/14.
+
+## Находка 174 (30.07.2026): Vehicle Dealer нельзя стабилизировать дополнительными patch hooks
+
+Старый dealer был 1305 server + 992 client + 294 tool строк и дополнительно патчился `vehicle_dealer.lua`, anim-fix, context menu и access hooks. Несколько PlayerUse/net/persistence контуров создавали наслаивание и непредсказуемый save. V3 заменяет реализацию: один core, thin entity, один transaction receiver и один GRM UI. Гараж хранится по CharacterKey, dealer map records отдельно, generic Perm исключён. Active vehicle имеет GarageID; store/disconnect переводит persistent record в stored, retrieve восстанавливает через Source/simfphys/LVS factory, sell удаляет запись. Старые dealer JSON мигрируют. Tool/admin/hub используют те же API. Стенд dealer_v3 16/16; старый sim_dealer перенаправлен на v3.
+
+## Находка 175 (30.07.2026): door overlay может зарегистрироваться после первоначального hook.Remove
+
+Одноразовое подавление при загрузке GRM не гарантировало отсутствие позднего DarkRP/legacy DoorHUD. Добавлен малочастотный suppress timer известных IDs и единый door-admin tool в Q-каталог. Tool работает через уже существующий canonical identity cache и не создаёт собственных записей/оверлеев.
+
+## Находка 176 (30.07.2026): registry key транспорта не всегда совпадает с аргументом spawn backend
+
+В V3 первая фабрика искала только точный simfphys key и звала один SpawnVehicle; старый рабочий дилер дополнительно учитывал data.SpawnList и SpawnVehicleSimple. Для LVS часть аддонов требует SpawnFunction, а не голый ents.Create(data.Class). Восстановлена многоступенчатая фабрика с pcall diagnostics: exact sim → simple → scan SpawnList → LVS SpawnFunction/entity → Source KeyValues/VehicleScript → direct scripted entity. Надпись дилера переведена на сетевой DealerName и OBB top. Стенд dealer_v3 18/18.
+
+## Находка 177 (30.07.2026): admin hub не должен эмулировать команды через say
+
+Кнопки hub делали `LocalPlayer():ConCommand("say "..cmd)`. Это зависело от EasyChat, RP Chat, PlayerSayTransform и порядка SkipPlayerSay; ручной ввод работал, а программный say мог быть проглочен. Реализован двухступенчатый dispatcher: клиент сначала запускает локальный transform (для client-only UI), непроглощённую команду отправляет отдельным GRM_HUB_Launch. Сервер проверяет whitelist и эмулирует реальный EasyChat pipeline: transform, затем PlayerSay fallback. Чат не используется, команды не видны игрокам. Стенд `sim_admin_hub_launch`: 10/10.
+
+## Находка 178 (30.07.2026): !grmmenu открывал legacy-экономику рядом с актуальным salary admin
+
+Admin Hub одновременно показывал «Экономика GRM → !grmmenu» и «Зарплаты → /salary_admin». Первая точка вела в старое меню, вторая уже являлась полной авторитетной панелью sh_grm_economy. Legacy-ярлык и дублирующая строка удалены; единая строка запускает /salary_admin через защищённый Hub launcher. Стенд admin_hub_launch 11/11.
+
+## Находка 179 (30.07.2026): одна spawn point дилера не описывает свободную площадку
+
+Точная Vector-точка не позволяет выбрать безопасное место, если её заняла машина/игрок/проп, и не визуализирует реальные границы. По паттерну Arrest Zone введена per-dealer axis-aligned zone. FindSpawnPoint сканирует 5 кандидатов, ground-trace и hull occupancy; при отсутствии свободного кандидата spawn отменяется до списания денег. Zone bounds/direction входят в DealerRecord, tool получает их отдельным net snapshot и рисует только в активном admin mode. Стенд dealer_v3 21/21.
+
+## Находка 180 (30.07.2026): статья розыска не должна зависеть только от закрытого каталога
+
+V1 AddCharge технически принимал неизвестный articleId, но UI не позволял продолжить без выбора DComboBox и сохранял title=id без кода/штрафа. V2 вводит AddCustomCharge с серверной нормализацией code/title/type/text/fine/level/manual. Каталожная AddCharge является обёрткой того же API. Record reasons стали полноценными charges; remove делает recalc max level, history записывается до Save. UI полностью заменён на GRM case database с отдельными catalog/manual workflows и каталогом редактора. CharacterKey persistence v2 читает legacy records. Стенд wanted_v2 16/16; arrest/security зелёные.
+
+## Находка 181 (30.07.2026): accessory item definition уже содержит model, но Inventory рисовал только icon
+
+Customization регистрирует каждый grm_acc_* через Inventory.RegisterItem с accessoryID и model, однако createSlot/rebuildDetail всегда создавали Material(icon16/user_suit). Добавлен accessoryModel guard и DModelPanel preview с bounds-based framing, static lighting/render state и rotation. Панель является mouse-transparent child кнопки; non-accessory paint path не изменён. Тот же helper применён detail и drag ghost. Стенд customization 50/50, invphone 41/41.
+
+## Находка 182 (31.07.2026): вращение вокруг model origin выбрасывает смещённую геометрию из DModelPanel
+
+Для моделей вроде трубки origin находится на одном конце. Старый preview целился в center unrotated bounds, но SetAngles вращал геометрию вокруг origin: center описывал окружность и выходил за 74px slot. Новый LayoutEntity поворачивает localCenter тем же Angle и задаёт entity:SetPos(-rotatedCenter), удерживая визуальный центр в нуле. Камера использует bounding-sphere radius / tan(FOV/2) × 1.28, что гарантирует fit при любом yaw. Скорость снижена. Стенд customization 51/51.
+
+## Находка 183 (31.07.2026): LocalPlayer:EyeAngles — угол тела/прицела, не обязательно активной third-person камеры
+
+World labels строили Angle(0, ply:EyeAngles().y-90, 90). В third-person camera yaw может быть независим от player eye/body yaw: при вращении персонажа таблички банкоматов, автоматов и телефонов крутились, хотя их world position неизменна. Для billboard labels источник заменён на глобальный EyeAngles(), который соответствует текущему render view. Fixed-surface 3D2D (keypad/scanner/labs) не тронут; RPDesc не тронут. Аудит `sim_world_labels` проверяет 39 файлов, bad=0.
+
+## Находка 184 (31.07.2026): transform аксессуара нельзя хранить только внутри текущего equipped slot
+
+V1 хранил Position/Angles/Scale только в C.Loadouts[CharacterKey][slot], а сам верхний уровень был JSON-map по CharacterKey. После restart/load это зависело от map-key conversion и нормализации каталога; отдельного профиля снятого предмета не было. V2 сохраняет плотный records array и per-accessory profiles. save_transform/save_all атомарно обновляют slot+profile; EquipInventorySlot восстанавливает profile; Unequip удаляет только slot. Legacy loadout мигрирует. Добавлены primary/backup read, write read-back и parse validation. Runtime test теперь реально вызывает C.LoadData как restart: 20/20, contract 53/53.
+
+## Находка 185 (31.07.2026): один универсальный прямоугольник не отражает возможности tier телефона
+
+Mobile уже имел полноценные server ops, но клиент рисовал одинаковый 520×720 список для дешёвой трубки и Whiz Gold. UI v3 добавляет tier.ui feature/flip/touch/smartphone и сохраняет protocol 1.2.2. Smartphone home — icon grid с hitboxes/badges/status bar; feature/flip — ограниченный LCD + physical keypad. Input объединяет mouse, wheel, Mouse3, arrows, Enter, Backspace и digits; VGUI focus дублируется OnKeyCode callbacks с M.down debounce. Восстановлен hold-repeat и защита SDL synthetic Down+Up. SMS history теперь имеет отдельный scroll index, thread/contact selection сохраняется. Серверный sim 123/123, client runtime 45/45, invphone 41/41.

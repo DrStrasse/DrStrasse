@@ -1,6 +1,6 @@
 # CharacterKey migration status
 
-Дата: 2026-07-22  
+Дата: 2026-07-22
 Ветка: `arena/019f89cf-drstrasse`
 
 ## Готово

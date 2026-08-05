@@ -1029,6 +1029,8 @@ if SERVER then
     -- выбрасываешь — теряешь связь, подбираешь — она как была.
     function RN.HasRadioUnit(ply)
         if not IsValid(ply) then return false end
+        if GRM.Customization and GRM.Customization.HasFunction
+            and GRM.Customization.HasFunction(ply, "radio") then return true end
         if not (GRM.Inventory and GRM.Inventory.GetPlayerInv) then return false end
         local inv = GRM.Inventory.GetPlayerInv(ply)
         if not (istable(inv) and istable(inv.slots)) then return false end
@@ -1659,7 +1661,7 @@ if CLIENT then
                     local ang = e:GetAngles()
                     local maxs = e:OBBMaxs()
                     local pos = e:GetPos() + ang:Up() * ((maxs and maxs.z or 40) + 26)
-                    cam.Start3D2D(pos, Angle(0, lp:EyeAngles().y - 90, 90), 0.055)
+                    cam.Start3D2D(pos, Angle(0, EyeAngles().y - 90, 90), 0.055)
                         local tw = 40 + #id * 9
                         draw.RoundedBox(6, -tw, -12, tw * 2, 24, Color(12, 16, 22, 210))
                         surface.SetDrawColor(90, 170, 250, 160)

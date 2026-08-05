@@ -1,389 +1,44 @@
---[[--------------------------------------------------------------------
-    GRM Wanted — client UI (Код 61)
-----------------------------------------------------------------------]]
-
+-- GRM Wanted client v2.0
 if not CLIENT then return end
-
-include("autorun/sh_grm_wanted_config.lua")
-
-GRM = GRM or {}
-GRM.Wanted = GRM.Wanted or {}
-local W = GRM.Wanted
-
-local NET_OPEN = "GRM_Wanted_Open"
-local NET_DATA = "GRM_Wanted_Data"
-local NET_ACT  = "GRM_Wanted_Act"
-local NET_SYNC = "GRM_Wanted_Sync"
-local NET_INFO = "GRM_Wanted_Info"
-local NET_LIST = "GRM_Wanted_List"
-
-local THEME = {
-    bg = Color(22, 24, 32, 250),
-    panel = Color(32, 36, 48, 245),
-    text = Color(230, 235, 242),
-    dim = Color(150, 160, 175),
-    green = Color(70, 180, 110),
-    accent = Color(70, 140, 220),
-    yellow = Color(220, 180, 70),
-    red = Color(220, 80, 80),
-}
-
-surface.CreateFont("GRMWanted_Title", { font = "Roboto", size = 20, weight = 800, extended = true })
-surface.CreateFont("GRMWanted_Normal", { font = "Roboto", size = 14, weight = 500, extended = true })
-surface.CreateFont("GRMWanted_Small", { font = "Roboto", size = 12, weight = 400, extended = true })
-
-W.LocalLevel = W.LocalLevel or 0
-
-local function money(n)
-    if GRM.Format then return GRM.Format(n) end
-    return tostring(n) .. " GRM"
+include("autorun/sh_grm_wanted_config.lua");GRM=GRM or{};GRM.Wanted=GRM.Wanted or{};local W=GRM.Wanted
+local OPEN,DATA,ACT,SYNC,INFO,DETAIL="GRM_Wanted_Open","GRM_Wanted_Data","GRM_Wanted_Act","GRM_Wanted_Sync","GRM_Wanted_Info","GRM_Wanted_List"
+local UI={bg=Color(11,16,24,252),head=Color(21,29,42),panel=Color(27,38,53),card=Color(34,47,64),text=Color(238,244,250),dim=Color(151,169,190),blue=Color(65,145,240),green=Color(62,190,118),red=Color(218,75,80),orange=Color(239,159,68),yellow=Color(239,199,82)}
+surface.CreateFont("GRMW2_Title",{font="Roboto",size=23,weight=900,extended=true});surface.CreateFont("GRMW2_Head",{font="Roboto",size=16,weight=800,extended=true});surface.CreateFont("GRMW2_Body",{font="Roboto",size=13,weight=550,extended=true});surface.CreateFont("GRMW2_Small",{font="Roboto",size=11,weight=500,extended=true})
+W.LocalLevel=W.LocalLevel or 0
+local function money(n)return GRM.Format and GRM.Format(n)or tostring(n)end
+local function btn(p,t,c)local b=vgui.Create("DButton",p);b:SetText(t);b:SetFont("GRMW2_Body");b:SetTextColor(color_white);b.Paint=function(self,w,h)local x=self:IsHovered()and Color(math.min(c.r+18,255),math.min(c.g+18,255),math.min(c.b+18,255))or c;draw.RoundedBox(6,0,0,w,h,x)end;return b end
+local function act(t)net.Start(ACT)net.WriteTable(t)net.SendToServer();surface.PlaySound("buttons/button15.wav")end
+local function targetPicker(p,players,y)
+ local combo=vgui.Create("DComboBox",p);combo:SetPos(14,y);combo:SetSize(430,30);combo:SetValue("Игрок онлайн...");for _,x in ipairs(players)do combo:AddChoice(x.nick.." • ур."..x.level,x.sid64)end
+ local manual=vgui.Create("DTextEntry",p);manual:SetPos(454,y);manual:SetSize(300,30);manual:SetPlaceholderText("CharacterKey / SteamID64")
+ local function get()local _,id=combo:GetSelected();return(id and id~="")and id or string.Trim(manual:GetValue()or"")end;return get
 end
-
-local function btn(parent, text, col, w, h)
-    local b = vgui.Create("DButton", parent)
-    b:SetSize(w or 120, h or 28)
-    b:SetText(text)
-    b:SetFont("GRMWanted_Normal")
-    b:SetTextColor(color_white)
-    b.Paint = function(self, ww, hh)
-        local c = col or THEME.accent
-        if self:IsHovered() then c = Color(math.min(255, c.r + 25), math.min(255, c.g + 25), math.min(255, c.b + 25)) end
-        draw.RoundedBox(6, 0, 0, ww, hh, c)
-    end
-    return b
+local function open(canEdit,records,catalog,players,history,levels,maxLevel)
+ if IsValid(W.Frame)then W.Frame:Remove()end;local f=vgui.Create("DFrame");W.Frame=f;GRM.UI.Track("wanted",f);f:SetSize(math.Clamp(ScrW()*.84,1120,1520),math.Clamp(ScrH()*.86,720,940));f:Center();f:MakePopup();f:SetTitle("");f:ShowCloseButton(false);f.Paint=function(_,w,h)draw.RoundedBox(10,0,0,w,h,UI.bg);draw.RoundedBoxEx(10,0,0,w,62,UI.head,true,true,false,false);draw.SimpleText("GRM / ЕДИНАЯ БАЗА РОЗЫСКА","GRMW2_Title",20,31,UI.text,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER);draw.SimpleText(canEdit and"РЕДАКТИРОВАНИЕ"or"ТОЛЬКО ПРОСМОТР","GRMW2_Body",w-60,31,canEdit and UI.green or UI.dim,TEXT_ALIGN_RIGHT,TEXT_ALIGN_CENTER)end
+ local close=btn(f,"×",UI.red);close:SetPos(f:GetWide()-44,15);close:SetSize(30,30);close.DoClick=function()f:Close()end;local tabs=vgui.Create("DPropertySheet",f);tabs:Dock(FILL);tabs:DockMargin(12,72,12,12)
+ -- Records
+ local cases=vgui.Create("DPanel");cases:SetPaintBackground(false);tabs:AddSheet("Дела и розыск",cases,"icon16/exclamation.png");local left=vgui.Create("DPanel",cases);left:Dock(LEFT);left:SetWide(470);left.Paint=function(_,w,h)draw.RoundedBox(7,0,0,w,h,UI.panel)end;local search=vgui.Create("DTextEntry",left);search:Dock(TOP);search:SetTall(30);search:DockMargin(7,7,7,4);search:SetPlaceholderText("Поиск по имени или ID...");local lv=vgui.Create("DListView",left);lv:Dock(FILL);lv:DockMargin(7,0,7,7);lv:AddColumn("Ур."):SetFixedWidth(40);lv:AddColumn("Гражданин");lv:AddColumn("Статей"):SetFixedWidth(55);lv:AddColumn("Штрафы"):SetFixedWidth(100)
+ local function fill()lv:Clear();local q=string.lower(search:GetValue()or"");for _,r in ipairs(records)do if q==""or string.find(string.lower((r.name or"").." "..r.sid),q,1,true)then local line=lv:AddLine(r.level,r.name,r.reasons,money(r.totalFine or 0));line.sid=r.sid end end end;search.OnChange=fill;fill()
+ local right=vgui.Create("DPanel",cases);right:Dock(FILL);right:DockMargin(8,0,0,0);right.Paint=function(_,w,h)draw.RoundedBox(7,0,0,w,h,UI.panel)end;local info=vgui.Create("DLabel",right);info:Dock(TOP);info:SetTall(55);info:DockMargin(10,8,10,3);info:SetFont("GRMW2_Body");info:SetTextColor(UI.text);info:SetWrap(true);info:SetText("Выберите дело слева")
+ local charges=vgui.Create("DListView",right);charges:Dock(FILL);charges:DockMargin(8,2,8,6);charges:AddColumn("Код"):SetFixedWidth(75);charges:AddColumn("Статья");charges:AddColumn("Обстоятельства");charges:AddColumn("Тип"):SetFixedWidth(65);charges:AddColumn("Штраф"):SetFixedWidth(85);charges:AddColumn("Ур."):SetFixedWidth(35);charges:AddColumn("Кем"):SetFixedWidth(110)
+ local selectedSid;lv.OnRowSelected=function(_,_,line)selectedSid=line.sid;act({action="get",sid=selectedSid})end
+ net.Receive(DETAIL,function()local r=net.ReadTable()or{};charges:Clear();if not r.sid then return end;selectedSid=r.sid;info:SetText(("%s • уровень %d\n%s"):format(r.name or"?",r.level or 0,r.sid));for i,c in ipairs(r.reasons or{})do local line=charges:AddLine(c.code or c.id,c.title,c.text or"",c.type,money(c.fine or 0),c.level,c.byNick or"?");line.index=i end end)
+ if canEdit then local bar=vgui.Create("DPanel",right);bar:Dock(BOTTOM);bar:SetTall(42);bar:SetPaintBackground(false);local clear=btn(bar,"Снять розыск",UI.green);clear:Dock(LEFT);clear:SetWide(150);clear:DockMargin(8,5,4,5);clear.DoClick=function()if selectedSid then act({action="clear",sid=selectedSid,text="Снято через UI"})end end;local remove=btn(bar,"Удалить статью",UI.orange);remove:Dock(LEFT);remove:SetWide(155);remove:DockMargin(4,5,4,5);remove.DoClick=function()local rows=charges:GetSelected();if selectedSid and rows[1]then act({action="remove_reason",sid=selectedSid,index=rows[1].index})end end end
+ if canEdit then
+  -- Assign
+  local assign=vgui.Create("DPanel");assign:SetPaintBackground(false);tabs:AddSheet("Вменить статью",assign,"icon16/add.png");local getTarget=targetPicker(assign,players,14);local mode=vgui.Create("DPropertySheet",assign);mode:SetPos(14,58);mode:SetSize(assign:GetWide()-28,560);mode:Dock(FILL);mode:DockMargin(14,58,14,14)
+  local fromCat=vgui.Create("DPanel");fromCat:SetPaintBackground(false);local ac=vgui.Create("DComboBox",fromCat);ac:SetPos(12,15);ac:SetSize(620,30);ac:SetValue("Выберите статью каталога...");for _,a in ipairs(catalog)do ac:AddChoice((a.code or a.id).." • "..a.title.." • ур."..a.defaultLevel.." • "..money(a.fine),a.id)end;local note=vgui.Create("DTextEntry",fromCat);note:SetPos(12,58);note:SetSize(620,30);note:SetPlaceholderText("Комментарий / обстоятельства");local level=vgui.Create("DNumberWang",fromCat);level:SetPos(645,15);level:SetSize(80,30);level:SetMin(0);level:SetMax(maxLevel);level:SetValue(0);local add=btn(fromCat,"ВМЕНИТЬ ИЗ КАТАЛОГА",UI.red);add:SetPos(12,104);add:SetSize(713,38);add.DoClick=function()local sid=getTarget();local _,id=ac:GetSelected();if sid~=""and id then act({action="add_charge",sid=sid,article=id,text=note:GetValue(),level=level:GetValue()})end end;mode:AddSheet("Из каталога",fromCat,"icon16/book.png")
+  local custom=vgui.Create("DPanel");custom:SetPaintBackground(false);local function field(ph,x,y,w)local e=vgui.Create("DTextEntry",custom);e:SetPos(x,y);e:SetSize(w,30);e:SetPlaceholderText(ph);return e end;local code=field("Номер / код статьи",12,15,180);local title=field("Название статьи вручную",202,15,430);local text=field("Описание обстоятельств",12,58,620);local typeBox=vgui.Create("DComboBox",custom);typeBox:SetPos(645,15);typeBox:SetSize(140,30);typeBox:AddChoice("Уголовная","crime",true);typeBox:AddChoice("Административная","admin");local fine=vgui.Create("DNumberWang",custom);fine:SetPos(645,58);fine:SetSize(140,30);fine:SetMin(0);fine:SetMax(100000000);fine:SetValue(0);local lvl=vgui.Create("DNumberWang",custom);lvl:SetPos(12,104);lvl:SetSize(90,30);lvl:SetMin(1);lvl:SetMax(maxLevel);lvl:SetValue(1);local addCustom=btn(custom,"ВМЕНИТЬ РУЧНУЮ СТАТЬЮ",UI.orange);addCustom:SetPos(115,104);addCustom:SetSize(670,38);addCustom.DoClick=function()local sid=getTarget();local _,typ=typeBox:GetSelected();if sid~=""then act({action="add_custom",sid=sid,code=code:GetValue(),title=title:GetValue(),text=text:GetValue(),type=typ or"crime",fine=fine:GetValue(),level=lvl:GetValue()})end end;mode:AddSheet("Ручная статья",custom,"icon16/pencil.png")
+  -- Catalog editor
+  if LocalPlayer():IsSuperAdmin()then local cp=vgui.Create("DPanel");cp:SetPaintBackground(false);local list=vgui.Create("DListView",cp);list:Dock(LEFT);list:SetWide(560);list:AddColumn("Код"):SetFixedWidth(85);list:AddColumn("Название");list:AddColumn("Ур."):SetFixedWidth(40);list:AddColumn("Штраф"):SetFixedWidth(90);local work=table.Copy(catalog);local function refill()list:Clear();for i,a in ipairs(work)do local l=list:AddLine(a.code or a.id,a.title,a.defaultLevel,money(a.fine));l.index=i end end;refill();local form=vgui.Create("DPanel",cp);form:Dock(FILL);form:DockMargin(8,0,0,0);form:SetPaintBackground(false);local c=field -- dummy avoidance
+   local function fe(ph,y)local e=vgui.Create("DTextEntry",form);e:SetPos(8,y);e:SetSize(390,28);e:SetPlaceholderText(ph);return e end;local id=fe("ID латиницей",8);local cd=fe("Код статьи",42);local ti=fe("Название",76);local ds=fe("Описание",110);local fi=vgui.Create("DNumberWang",form);fi:SetPos(8,146);fi:SetSize(180,28);fi:SetMin(0);fi:SetMax(100000000);local le=vgui.Create("DNumberWang",form);le:SetPos(198,146);le:SetSize(80,28);le:SetMin(1);le:SetMax(maxLevel);local addRow=btn(form,"Добавить / заменить",UI.green);addRow:SetPos(8,185);addRow:SetSize(270,32);addRow.DoClick=function()local row={id=id:GetValue(),code=cd:GetValue(),title=ti:GetValue(),description=ds:GetValue(),fine=fi:GetValue(),defaultLevel=le:GetValue(),type="crime"};work[#work+1]=row;refill()end;local del=btn(form,"Удалить выбранную",UI.red);del:SetPos(8,225);del:SetSize(270,32);del.DoClick=function()local s=list:GetSelected();if s[1]then table.remove(work,s[1].index);refill()end end;local save=btn(form,"СОХРАНИТЬ КАТАЛОГ",UI.blue);save:SetPos(8,275);save:SetSize(390,36);save.DoClick=function()act({action="save_catalog",catalog=work})end;tabs:AddSheet("Каталог статей",cp,"icon16/book_edit.png")end
+ end
+ -- History
+ local hp=vgui.Create("DPanel");hp:SetPaintBackground(false);local hv=vgui.Create("DListView",hp);hv:Dock(FILL);hv:AddColumn("Время"):SetFixedWidth(140);hv:AddColumn("Сотрудник"):SetFixedWidth(150);hv:AddColumn("Событие");for i=#history,math.max(1,#history-199),-1 do local h=history[i];hv:AddLine(os.date("%d.%m.%Y %H:%M",h.t or os.time()),h.actorName or"Система",h.s or"")end;tabs:AddSheet("История",hp,"icon16/time.png")
 end
-
-local function act(tbl)
-    net.Start(NET_ACT)
-        net.WriteTable(tbl or {})
-    net.SendToServer()
-end
-
-local function levelName(levels, lvl)
-    local info = istable(levels) and levels[lvl]
-    if istable(info) then return info.name or ("Ур." .. lvl) end
-    local _, i = GRM.Wanted.GetLevelInfo and GRM.Wanted.GetLevelInfo(lvl)
-    return (i and i.name) or ("Ур." .. tostring(lvl))
-end
-
-local function openWantedUI(canEdit, list, catalog, players, history, levels, maxLevel)
-    if IsValid(W._frame) then W._frame:Remove() end
-    local f = vgui.Create("DFrame")
-    W._frame = f
-    f:SetTitle("")
-    f:SetSize(960, 640)
-    f:Center()
-    f:MakePopup()
-    f.Paint = function(_, w, h)
-        draw.RoundedBox(8, 0, 0, w, h, THEME.bg)
-        draw.RoundedBoxEx(8, 0, 0, w, 36, Color(36, 40, 54), true, true, false, false)
-        draw.SimpleText("База розыска GRM", "GRMWanted_Title", 14, 18, THEME.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText(canEdit and "режим: редактирование" or "режим: только просмотр", "GRMWanted_Small", w - 14, 18, canEdit and THEME.green or THEME.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-    end
-
-    local sheet = vgui.Create("DPropertySheet", f)
-    sheet:Dock(FILL)
-    sheet:DockMargin(8, 42, 8, 8)
-
-    local selectedSid
-
-    -- ═══ РОЗЫСК ═══
-    do
-        local p = vgui.Create("DPanel")
-        p:SetPaintBackground(false)
-
-        local left = vgui.Create("DPanel", p)
-        left:Dock(LEFT)
-        left:SetWide(420)
-        left:DockMargin(4, 4, 4, 4)
-        left.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, THEME.panel) end
-
-        local lbl = vgui.Create("DLabel", left)
-        lbl:Dock(TOP)
-        lbl:SetTall(24)
-        lbl:DockMargin(8, 6, 8, 2)
-        lbl:SetText("Активный розыск (уровень > 0)")
-        lbl:SetFont("GRMWanted_Normal")
-        lbl:SetTextColor(THEME.text)
-
-        local listView = vgui.Create("DListView", left)
-        listView:Dock(FILL)
-        listView:DockMargin(6, 2, 6, 6)
-        listView:AddColumn("Ур."):SetFixedWidth(36)
-        listView:AddColumn("Игрок")
-        listView:AddColumn("Статей"):SetFixedWidth(50)
-        listView:AddColumn("SID"):SetFixedWidth(120)
-        listView:SetMultiSelect(false)
-
-        for _, row in ipairs(list or {}) do
-            local line = listView:AddLine(tostring(row.level or 0), tostring(row.name or "?"), tostring(row.reasons or 0), string.sub(tostring(row.sid or ""), 1, 17))
-            line._sid = row.sid
-            line._level = row.level
-        end
-
-        local right = vgui.Create("DPanel", p)
-        right:Dock(FILL)
-        right:DockMargin(4, 4, 4, 4)
-        right.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, THEME.panel) end
-
-        local detail = vgui.Create("DLabel", right)
-        detail:Dock(TOP)
-        detail:SetTall(48)
-        detail:DockMargin(10, 8, 10, 4)
-        detail:SetWrap(true)
-        detail:SetFont("GRMWanted_Normal")
-        detail:SetTextColor(THEME.text)
-        detail:SetText("Выберите запись слева или игрока онлайн ниже.")
-
-        local reasons = vgui.Create("DListView", right)
-        reasons:Dock(FILL)
-        reasons:DockMargin(8, 4, 8, 8)
-        reasons:AddColumn("#"):SetFixedWidth(28)
-        reasons:AddColumn("Тип"):SetFixedWidth(70)
-        reasons:AddColumn("Статья")
-        reasons:AddColumn("Кем"):SetFixedWidth(100)
-        reasons:AddColumn("Ур."):SetFixedWidth(36)
-
-        local function showRecord(sid)
-            selectedSid = sid
-            act({ action = "get", sid = sid })
-        end
-
-        listView.OnRowSelected = function(_, _, ln)
-            if ln and ln._sid then showRecord(ln._sid) end
-        end
-
-        net.Receive(NET_LIST, function()
-            local full = net.ReadTable() or {}
-            if not full.sid then
-                detail:SetText("Запись не найдена.")
-                reasons:Clear()
-                return
-            end
-            selectedSid = full.sid
-            local _, info = W.GetLevelInfo(full.level or 0)
-            detail:SetText(string.format("%s  |  %s (ур. %d)  |  %s\nобновлено: %s",
-                tostring(full.name), info and info.name or "?", tonumber(full.level) or 0, tostring(full.sid),
-                os.date("%d.%m.%Y %H:%M", tonumber(full.updated) or os.time())))
-            reasons:Clear()
-            for i, r in ipairs(full.reasons or {}) do
-                local line = reasons:AddLine(tostring(i), tostring(r.type or "?"), tostring(r.title or r.id or "?"),
-                    tostring(r.byNick or "?"), tostring(r.level or 0))
-                line._index = i
-            end
-        end)
-
-        if canEdit then
-            local bar = vgui.Create("DPanel", right)
-            bar:Dock(BOTTOM)
-            bar:SetTall(40)
-            bar:SetPaintBackground(false)
-            local clr = btn(bar, "Снять с розыска", THEME.green, 150, 30)
-            clr:Dock(LEFT)
-            clr:DockMargin(8, 5, 4, 5)
-            clr.DoClick = function()
-                if not selectedSid then return end
-                act({ action = "clear", sid = selectedSid, text = "UI clear" })
-            end
-            local rm = btn(bar, "Удалить статью", THEME.yellow, 140, 30)
-            rm:Dock(LEFT)
-            rm:DockMargin(4, 5, 4, 5)
-            rm.DoClick = function()
-                if not selectedSid then return end
-                local lines = reasons:GetSelected()
-                if not lines or not lines[1] or not lines[1]._index then return end
-                act({ action = "remove_reason", sid = selectedSid, index = lines[1]._index })
-            end
-        end
-
-        sheet:AddSheet("Розыск", p, "icon16/exclamation.png")
-    end
-
-    -- ═══ ВЫПИСАТЬ ═══
-    if canEdit then
-        local p = vgui.Create("DPanel")
-        p:SetPaintBackground(false)
-
-        local y = 12
-        local function label(txt, yy)
-            local l = vgui.Create("DLabel", p)
-            l:SetPos(16, yy)
-            l:SetSize(500, 20)
-            l:SetText(txt)
-            l:SetFont("GRMWanted_Normal")
-            l:SetTextColor(THEME.text)
-        end
-
-        label("Игрок (онлайн) или SteamID64:", y)
-        local combo = vgui.Create("DComboBox", p)
-        combo:SetPos(16, y + 22)
-        combo:SetSize(360, 28)
-        combo:SetValue("Выберите игрока…")
-        for _, pl in ipairs(players or {}) do
-            combo:AddChoice(string.format("%s  [ур.%d]  %s", pl.nick, pl.level or 0, pl.sid64), pl.sid64)
-        end
-        local sidEntry = vgui.Create("DTextEntry", p)
-        sidEntry:SetPos(390, y + 22)
-        sidEntry:SetSize(240, 28)
-        sidEntry:SetPlaceholderText("или SID64 вручную")
-
-        y = y + 64
-        label("Статья из каталога:", y)
-        local artCombo = vgui.Create("DComboBox", p)
-        artCombo:SetPos(16, y + 22)
-        artCombo:SetSize(500, 28)
-        artCombo:SetValue("Статья…")
-        for _, art in ipairs(catalog or {}) do
-            artCombo:AddChoice(string.format("[%s] %s (ур.%s, штраф %s)",
-                art.type or "?", art.title or art.id, tostring(art.defaultLevel or 1), money(art.fine or 0)), art.id)
-        end
-
-        y = y + 64
-        label("Комментарий / обстоятельства:", y)
-        local note = vgui.Create("DTextEntry", p)
-        note:SetPos(16, y + 22)
-        note:SetSize(614, 28)
-        note:SetPlaceholderText("Необязательно")
-
-        y = y + 64
-        label("Принудительный уровень (0 = по статье):", y)
-        local lvl = vgui.Create("DNumberWang", p)
-        lvl:SetPos(16, y + 22)
-        lvl:SetSize(80, 28)
-        lvl:SetMin(0)
-        lvl:SetMax(maxLevel or 5)
-        lvl:SetValue(0)
-
-        local add = btn(p, "Выписать статью", THEME.red, 180, 32)
-        add:SetPos(110, y + 20)
-        add.DoClick = function()
-            local _, sid = combo:GetSelected()
-            if not sid or sid == "" then sid = string.Trim(sidEntry:GetValue() or "") end
-            if sid == "" then return end
-            local _, artId = artCombo:GetSelected()
-            if not artId then return end
-            local force = math.floor(tonumber(lvl:GetValue()) or 0)
-            act({
-                action = "add_charge",
-                sid = sid,
-                article = artId,
-                text = note:GetValue(),
-                level = force > 0 and force or nil,
-            })
-        end
-
-        local setL = btn(p, "Поставить уровень", THEME.accent, 160, 32)
-        setL:SetPos(300, y + 20)
-        setL.DoClick = function()
-            local _, sid = combo:GetSelected()
-            if not sid or sid == "" then sid = string.Trim(sidEntry:GetValue() or "") end
-            if sid == "" then return end
-            act({
-                action = "set_level",
-                sid = sid,
-                level = math.floor(tonumber(lvl:GetValue()) or 0),
-                text = note:GetValue(),
-            })
-        end
-
-        sheet:AddSheet("Выписать", p, "icon16/pencil.png")
-    end
-
-    -- ═══ КАТАЛОГ ═══
-    do
-        local p = vgui.Create("DPanel")
-        p:SetPaintBackground(false)
-        local lv = vgui.Create("DListView", p)
-        lv:Dock(FILL)
-        lv:DockMargin(8, 8, 8, 8)
-        lv:AddColumn("ID")
-        lv:AddColumn("Тип"):SetFixedWidth(70)
-        lv:AddColumn("Название")
-        lv:AddColumn("Ур."):SetFixedWidth(40)
-        lv:AddColumn("Штраф"):SetFixedWidth(90)
-        for _, art in ipairs(catalog or {}) do
-            lv:AddLine(tostring(art.id), tostring(art.type), tostring(art.title),
-                tostring(art.defaultLevel or 1), money(art.fine or 0))
-        end
-        sheet:AddSheet("Статьи", p, "icon16/book.png")
-    end
-
-    -- ═══ ИСТОРИЯ ═══
-    do
-        local p = vgui.Create("DPanel")
-        p:SetPaintBackground(false)
-        local scroll = vgui.Create("DScrollPanel", p)
-        scroll:Dock(FILL)
-        scroll:DockMargin(8, 8, 8, 8)
-        local h = history or {}
-        for i = #h, math.max(1, #h - 80), -1 do
-            local rec = h[i]
-            local l = vgui.Create("DLabel", scroll)
-            l:Dock(TOP)
-            l:SetTall(18)
-            l:DockMargin(4, 1, 4, 1)
-            l:SetFont("GRMWanted_Small")
-            l:SetTextColor(THEME.dim)
-            l:SetText(os.date("%d.%m %H:%M", rec.t or 0) .. " — " .. tostring(rec.s or ""))
-        end
-        sheet:AddSheet("Журнал", p, "icon16/time.png")
-    end
-
-    local refresh = btn(f, "Обновить", THEME.accent, 100, 26)
-    refresh:SetPos(f:GetWide() - 120, 5)
-    refresh.DoClick = function() act({ action = "refresh" }) end
-end
-
-net.Receive(NET_DATA, function()
-    local canEdit = net.ReadBool()
-    local list = net.ReadTable() or {}
-    local catalog = net.ReadTable() or {}
-    local players = net.ReadTable() or {}
-    local history = net.ReadTable() or {}
-    local levels = net.ReadTable() or {}
-    local maxLevel = net.ReadUInt(4)
-    openWantedUI(canEdit, list, catalog, players, history, levels, maxLevel)
-end)
-
-net.Receive(NET_SYNC, function()
-    W.LocalLevel = net.ReadUInt(4)
-    local name = net.ReadString()
-    hook.Run("GRM_WantedLevelChanged", W.LocalLevel, name)
-end)
-
-net.Receive(NET_INFO, function()
-    local msg = net.ReadString()
-    local r, g, b = net.ReadUInt(8), net.ReadUInt(8), net.ReadUInt(8)
-    chat.AddText(Color(r, g, b), "[Розыск] ", color_white, msg)
-end)
-
-function W.OpenMenu()
-    net.Start(NET_OPEN)
-    net.SendToServer()
-end
-
-concommand.Add("grm_wanted", W.OpenMenu)
-
-hook.Add("OnPlayerChat", "GRM_Wanted_ClientChat", function(ply, text)
-    if ply ~= LocalPlayer() then return end
-    local msg = string.lower(string.Trim(text or ""))
-    if msg == "/wanted" or msg == "!wanted" or msg == "/розыск" or msg == "!розыск" then
-        W.OpenMenu()
-        return true
-    end
-end)
-
--- лёгкий индикатор своего уровня (не перекрывает HP — справа сверху под краем)
-hook.Add("HUDPaint", "GRM_Wanted_SelfBadge", function()
-    local lvl = tonumber(W.LocalLevel) or LocalPlayer():GetNW2Int("GRM_WantedLevel", 0)
-    if not lvl or lvl <= 0 then return end
-    if GRM.CCTV and GRM.CCTV._viewActive then return end -- optional
-    local _, info = W.GetLevelInfo(lvl)
-    local col = (info and info.color) or Color(230, 120, 50)
-    local w = ScrW()
-    draw.SimpleTextOutlined(
-        "РОЗЫСК " .. (info and info.short or tostring(lvl)) .. "  " .. (info and info.name or ""),
-        "GRMWanted_Normal", w - 16, 56, col, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP, 1, Color(0, 0, 0, 200))
-end)
-
-print("[GRM Wanted] client v1.0.0")
+net.Receive(DATA,function()open(net.ReadBool(),net.ReadTable()or{},net.ReadTable()or{},net.ReadTable()or{},net.ReadTable()or{},net.ReadTable()or{},net.ReadUInt(4))end)
+net.Receive(SYNC,function()W.LocalLevel=net.ReadUInt(4);net.ReadString();hook.Run("GRM_WantedLevelChanged",W.LocalLevel)end)
+net.Receive(INFO,function()notification.AddLegacy(net.ReadString(),NOTIFY_GENERIC,4)end)
+function W.OpenMenu()net.Start(OPEN)net.SendToServer()end;concommand.Add("grm_wanted",W.OpenMenu)
+hook.Add("HUDPaint","GRM_Wanted_BadgeV2",function()local l=tonumber(W.LocalLevel)or LocalPlayer():GetNW2Int("GRM_WantedLevel",0);if l<=0 then return end;local _,i=W.GetLevelInfo(l);draw.RoundedBox(6,18,ScrH()-176,180,30,Color(35,12,18,220));draw.SimpleText((i.short or"").." "..i.name,"GRMW2_Body",108,ScrH()-161,i.color,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)end)
+print("[GRM Wanted] client v2.0 loaded")

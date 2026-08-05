@@ -225,6 +225,18 @@ GRM.Inventory.ItemDefs = {
         model = "models/props_lab/reciever01b.mdl",
         useFunc = "radio_toggle",
     },
+
+    -- === ЧИПЫ АУГМЕНТАЦИЙ ===
+    ["augmentation_chip"] = {
+        type = "item",
+        name = "Чип аугментации",
+        desc = "Программируемый чип для аугментаций. Использовать для имплантации.",
+        icon = "icon16/cog.png",
+        maxStack = 5,
+        weight = 0.1,
+        model = "models/bull/gates/logic.mdl",
+        useFunc = "augment_chip_implant",
+    },
 }
 
 -- Функция регистрации нового предмета (для аддонов)
@@ -463,6 +475,7 @@ if SERVER then
     -- данные жертвы не трогает — они остаются у стака-приёмника).
     function GRM.Inventory.AddItem(ply, itemID, count, data)
         if not IsValid(ply) then return count end
+        if ply:GetNWBool("GRM_Arrested", false) then return count or 1 end
         local inv = GRM.Inventory.GetPlayerInv(ply)
         if not inv then return count end
 
@@ -511,6 +524,8 @@ if SERVER then
             GRM.Inventory.SyncSlot(ply, emptySlot)
         end
 
+        local added = math.max(0, (tonumber(count) or 1) - remaining)
+        if added > 0 then hook.Run("GRM_QuestEvent", ply, "inventory_gain", tostring(itemID), added, { source = "inventory" }) end
         saveSoon("add " .. tostring(itemID))
         return remaining
     end
@@ -518,6 +533,7 @@ if SERVER then
     -- ── Добавить оружие в инвентарь ──────────────────────────────
     function GRM.Inventory.AddWeapon(ply, weaponClass, clip1, clip2)
         if not IsValid(ply) then return false end
+        if ply:GetNWBool("GRM_Arrested", false) then return false end
         local inv = GRM.Inventory.GetPlayerInv(ply)
         if not inv then return false end
 
@@ -777,6 +793,18 @@ if SERVER then
             GRM.Medical.ViewIssued(ply, slot.data)
         else
             GRM.Notify(ply, "Модуль медкарт не загружен", 255, 140, 110)
+        end
+    end)
+    GRM.Inventory.RegisterUseHandler("augment_chip_implant", function(ply, slotIdx, slot, def)
+        -- Чип аугментации: использование открывает меню имплантации
+        if GRM.AugChips and GRM.AugChips.OpenImplantMenu then
+            -- Передаем slotIdx в chipData для последующего удаления из инвентаря
+            local chipData = slot.data or {}
+            chipData.slotIdx = slotIdx
+            GRM.AugChips.OpenImplantMenu(ply, chipData)
+            -- Предмет НЕ тратится при открытии меню, тратится при успешной имплантации
+        else
+            GRM.Notify(ply, "Модуль аугментаций не загружен", 255, 140, 110)
         end
     end)
 

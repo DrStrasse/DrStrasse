@@ -59,4 +59,4 @@ function W.ClampLevel(level)
     return math.Clamp(math.floor(tonumber(level) or 0), 0, maxL)
 end
 
-print("[GRM Wanted] config v1.0.0")
+print("[GRM Wanted] config v2.0.0")

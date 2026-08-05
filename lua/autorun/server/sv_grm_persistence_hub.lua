@@ -16,9 +16,10 @@ end
 
 local function call(label, fn, ply)
     if not isfunction(fn) then return false, label .. ": модуль не загружен" end
-    local ok, err = pcall(fn, ply)
-    if not ok then return false, label .. ": " .. tostring(err) end
-    return true, label .. ": операция выполнена"
+    local ok, result, detail = pcall(fn, ply)
+    if not ok then return false, label .. ": " .. tostring(result) end
+    if result == false then return false, label .. ": " .. tostring(detail or "операция не выполнена") end
+    return true, label .. ": " .. tostring(detail or "операция выполнена")
 end
 
 local function operation(id, ply)
@@ -37,9 +38,12 @@ local function operation(id, ply)
         mining = { save = function() return isfunction(GRM_SaveEntities) and GRM_SaveEntities() end, load = function() return isfunction(GRM_LoadEntities) and GRM_LoadEntities() end },
         doors = { save = function() if not GRM.Doors then return false end; GRM.Doors.SaveDoors(); GRM.Doors.SaveCategories(); GRM.Doors.SaveWarrants(); return true end, load = function() if not GRM.Doors then return false end; GRM.Doors.LoadDoors(); GRM.Doors.LoadCategories(); GRM.Doors.LoadWarrants(); return true end },
         arrest = { save = function() return GRM.Arrest and GRM.Arrest.SaveConfig() end, load = function() return GRM.Arrest and GRM.Arrest.LoadConfig() end },
-        perm = { save = function() return isfunction(GRM_SaveEntities) and GRM_SaveEntities() end, load = function() return isfunction(GRM_LoadEntities) and GRM_LoadEntities() end },
-        electronics = { save = function() return GRM.Electronics and GRM.Electronics.SaveAll() end, load = function() return GRM.Electronics and GRM.Electronics.LoadAll() end },
+        customization = { save = function() return GRM.Customization and GRM.Customization.SaveData() end, load = function() return GRM.Customization and GRM.Customization.LoadData() end },
+        vendors = { save = function() return GRM.Vendor and GRM.Vendor.SaveMapVendors() end, load = function() return GRM.Vendor and GRM.Vendor.LoadMapVendors() end },
         vehicle_dealers = { save = function() return GRM.VehicleDealer and GRM.VehicleDealer.SaveAll() end, load = function() return GRM.VehicleDealer and GRM.VehicleDealer.LoadAll() end },
+        quests = { save = function() return GRM.Quests and GRM.Quests.SaveAll() end, load = function() return GRM.Quests and GRM.Quests.LoadAll() end },
+        electronics = { save = function() return GRM.Electronics and GRM.Electronics.SaveAll() end, load = function() return GRM.Electronics and GRM.Electronics.LoadAll() end },
+        perm = { save = function() return isfunction(GRM_SaveEntities) and GRM_SaveEntities() end, load = function() return isfunction(GRM_LoadEntities) and GRM_LoadEntities() end },
     }
     if not save and not load then return false, "Неизвестная операция" end
     local mod = ops[base]
@@ -48,7 +52,7 @@ local function operation(id, ply)
 end
 
 local function all(ply, mode)
-    local ids = { "phone", "cctv", "alarm", "factory", "logistics", "vending", "roomtap", "wanted", "mining", "doors", "arrest", "perm", "electronics", "vehicle_dealers" }
+    local ids = { "phone", "cctv", "alarm", "factory", "logistics", "vending", "roomtap", "wanted", "mining", "doors", "arrest", "customization", "vendors", "vehicle_dealers", "quests", "electronics", "perm" }
     local done, errors = 0, {}
     for _, id in ipairs(ids) do
         local ok, msg = operation(id .. "_" .. mode, ply)

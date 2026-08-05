@@ -229,6 +229,7 @@ local function mkPly(money)
         if k == "IsSuperAdmin" then return function() return true end end
         if k == "IsPlayer" then return function() return true end end
         if k == "GetPos" then return function() return self.__pos end end
+        if k == "GetNWBool" then return function(_, _, default) return default or false end end
         if k == "PrintMessage" then return function(_, _, txt) H.chatlog[#H.chatlog + 1] = tostring(txt) end end
         if k == "ChatPrint" then return function(_, txt) H.chatlog[#H.chatlog + 1] = tostring(txt) end end
         if k == "Health" then return function() return self.__hp end end

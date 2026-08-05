@@ -38,7 +38,7 @@ function ENT:Draw()
     -- табличка строго над шкафом: считаем высоту от габаритов модели
     local maxs = self:OBBMaxs()
     local pos = self:GetPos() + ang:Up() * ((maxs and maxs.z or 60) + 16)
-    cam.Start3D2D(pos, Angle(0, LocalPlayer():EyeAngles().y - 90, 90), 0.08)
+    cam.Start3D2D(pos, Angle(0, EyeAngles().y - 90, 90), 0.08)
         draw.RoundedBox(6, -150, -30, 300, 60, Color(16, 20, 28, 220))
         surface.SetDrawColor(70, 150, 240, 230)
         surface.DrawOutlinedRect(-150, -30, 300, 60, 2)

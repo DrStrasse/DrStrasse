@@ -43,7 +43,7 @@ function ENT:Draw()
         }
     end
 
-    cam.Start3D2D(pos, Angle(0, lp:EyeAngles().y - 90, 90), 0.06)
+    cam.Start3D2D(pos, Angle(0, EyeAngles().y - 90, 90), 0.06)
         local w = 380
         draw.RoundedBox(8, -w / 2, -20, w, 24 + #lines * 30 - 4, Color(12, 16, 22, 215))
         surface.SetDrawColor(120, 230, 140, 170)

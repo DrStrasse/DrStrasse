@@ -11,7 +11,7 @@ function ENT:Draw()
     local col = (GRM.Alarm.ModeColors and GRM.Alarm.ModeColors[mode]) or Color(200, 200, 200)
     if self:GetAlarmActive() then col = Color(255, 60, 60) end
     local pos = self:GetPos() + self:GetUp() * 40
-    local ang = Angle(0, ply:EyeAngles().y - 90, 90)
+    local ang = Angle(0, EyeAngles().y - 90, 90)
     cam.Start3D2D(pos, ang, 0.09)
         draw.SimpleTextOutlined(self:GetLabel() ~= "" and self:GetLabel() or "Коммутация",
             "DermaDefaultBold", 0, 0, col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, color_black)

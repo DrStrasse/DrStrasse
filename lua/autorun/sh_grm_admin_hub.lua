@@ -34,6 +34,20 @@ local NET_GET  = "GRM_HUB_Get"
 local NET_DATA = "GRM_HUB_Data"
 local NET_ACT  = "GRM_HUB_Act"
 local NET_OPEN = "GRM_HUB_Open"
+local NET_LAUNCH = "GRM_HUB_Launch"
+local NET_LAUNCH_RESULT = "GRM_HUB_LaunchResult"
+
+local LAUNCH_WHITELIST = {
+    ["/factions"] = true, ["/salary_admin"] = true, ["/feco_admin"] = true, ["/door_access"] = true,
+    ["/models_admin"] = true, ["/weapons_admin"] = true, ["/mask_admin"] = true,
+    ["/logistics_admin"] = true, ["/vshop_admin"] = true,
+    ["/scanvehicles"] = true, ["/phoneshop_admin"] = true, ["/phone_access"] = true,
+    ["/grm_persistence"] = true, ["/grm_minimap_admin"] = true, ["/grm_arrest_admin"] = true,
+    ["/grm_accessories_admin"] = true, ["/grm_quests_admin"] = true, ["/grm_network_admin"] = true, ["/tickets"] = true, ["/wanted"] = true, ["/wanted_access"] = true, ["/warrants"] = true,
+    ["/bcasters"] = true, ["/alert"] = true, ["/rn_status"] = true,
+    ["grm_augmentations_admin"] = true,
+    ["grm_chips"] = true,
+}
 
 -- ============================================================
 -- СЕРВЕР
@@ -43,6 +57,37 @@ if SERVER then
     util.AddNetworkString(NET_DATA)
     util.AddNetworkString(NET_ACT)
     util.AddNetworkString(NET_OPEN)
+    util.AddNetworkString(NET_LAUNCH)
+    util.AddNetworkString(NET_LAUNCH_RESULT)
+
+    local function sendLaunchResult(ply, ok, message)
+        net.Start(NET_LAUNCH_RESULT)
+            net.WriteBool(ok == true)
+            net.WriteString(tostring(message or ""))
+        net.Send(ply)
+    end
+
+    net.Receive(NET_LAUNCH, function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        local command = string.lower(string.Trim(net.ReadString() or ""))
+        if not LAUNCH_WHITELIST[command] then
+            sendLaunchResult(ply, false, "Команда не разрешена единым админ-меню")
+            return
+        end
+
+        -- Повторяем реальный контракт EasyChat, но без `say`: сначала
+        -- PlayerSayTransform, затем PlayerSay только если команда не была
+        -- поглощена transform-хуком. Поэтому кнопки и ручной ввод идентичны.
+        local pack = { command, false, false }
+        local transformed = hook.Run("PlayerSayTransform", ply, pack, false, false)
+        if transformed == false then
+            sendLaunchResult(ply, false, "Команда отклонена обработчиком")
+            return
+        end
+        local consumed = pack.SkipPlayerSay == true or not isstring(pack[1]) or string.Trim(pack[1]) == ""
+        if not consumed then hook.Run("PlayerSay", ply, pack[1], false, false) end
+        sendLaunchResult(ply, true, "Запущено: " .. command)
+    end)
 
     local function accTable(kind)
         if kind == "board" then
@@ -79,8 +124,8 @@ if SERVER then
         v("Q-меню/инструменты", GRM.QMenu and GRM.QMenu.Version)
         v("Радио/оповещение", GRM.Broadcast and GRM.Broadcast.Version)
         v("Доска набора", GRM.Board and GRM.Board.Version)
-        v("Электроника/сеть", GRM.Electronics and GRM.Electronics.Version)
-        v("Торгаши", GRM.Vendor and GRM.Vendor.Version)
+        v("Аугментации", GRM.Augmentations and "2.0.0")
+        v("Чипы аугментаций", GRM.AugChips and "1.0.0")
         v("Валюта", "2.0.3")
         v("Экономика", "3.0.4")
         local posts = 0
@@ -96,7 +141,8 @@ if SERVER then
                 { name = "Публикаций на бирже", val = posts },
                 { name = "Багажников в базе", val = (GRM.Trunk and GRM.Trunk.Store) and table.Count(GRM.Trunk.Store) or 0 },
                 { name = "Записей ачивок", val = (GRM.Ach and GRM.Ach.Records) and table.Count(GRM.Ach.Records) or 0 },
-                { name = "Устройств сети", val = (GRM.Electronics and GRM.Electronics.Devices) and table.Count(GRM.Electronics.Devices) or 0 },
+                { name = "Игроков с аугментациями", val = (GRM.Augmentations and GRM.Augmentations.PlayerData) and table.Count(GRM.Augmentations.PlayerData) or 0 },
+                { name = "Созданных чипов", val = (GRM.AugChips and GRM.AugChips.PlayerChips) and (function() local count = 0 for _, chips in pairs(GRM.AugChips.PlayerChips) do count = count + #chips end return count end)() or 0 },
             },
             factions = factionsList(),
         }
@@ -657,12 +703,11 @@ if CLIENT then
     -- m[1] название, m[2] команда, m[3] подсказка, m[4]==true → только подпись (без нажатия)
     local MENU_LINKS = {
         { "Фракции (админ)", "/factions", "Создание, лидеры, роли, доступы, двери и ордера" },
-        { "Экономика GRM", "!grmmenu", "Балансы, бюджеты, налоги, переводы, журнал" },
+        { "Единая экономика", "/salary_admin", "Зарплаты, налоги, штрафы, банк, бюджеты и настройки экономики" },
         { "Доступ к дверям", "/door_access", "Матрица доступов дверей, категории и фракции" },
         { "Модели фракций", "/models_admin", "Фракционные модели и превью" },
         { "Оружие фракций", "/weapons_admin", "Выдача оружия по фракциям" },
         { "Маски", "/mask_admin", "Настройки масок" },
-        { "Зарплаты", "/salary_admin", "Ставки ЗП фракций" },
         { "Логистика", "/logistics_admin", "Склады и логистика фракций" },
         { "Магазин транспорта", "/vshop_admin", "Цены доступа к транспорту" },
         { "Скан транспорта", "/scanvehicles", "Все машины на карте" },
@@ -671,12 +716,18 @@ if CLIENT then
         { "Единое сохранение карты", "/grm_persistence", "Сохранить/загрузить телефоны, CCTV, завод, логистику и остальные модули" },
         { "GPS и точки", "/grm_minimap_admin", "GPS-точки, подписи и навигация" },
         { "Система ареста", "/grm_arrest_admin", "Камеры, точки содержания, категории, модели и доступы" },
+        { "Каталог аксессуаров", "/grm_accessories_admin", "Модели, категории, цены, слоты, кости и стандартные положения" },
+        { "Quest Studio", "/grm_quests_admin", "Квесты, этапы, NPC, награды, диалоги, зоны и кат-сцены" },
+        { "Network Control Center", "/grm_network_admin", "Компьютеры, роутеры, кабели, аккаунты, файлы и сетевые доступы" },
         { "Тикеты", "/tickets", "Очередь обращений игроков и ответы администрации" },
+        { "База розыска", "/wanted", "Дела, ручные и каталожные статьи, уровни, штрафы и история" },
+        { "Доступ к розыску", "/wanted_access", "Права просмотра и редактирования базы" },
         { "Ордера", "/warrants", "Активные ордера на обыск" },
         { "Каналы эфира/оповещения", "/bcasters", "Печать в чат: фракции с доступами эфира и оповещения" },
         { "Оповещение: синтаксис", "/alert", "Сервер ответит подсказкой: /alert текст (район) или /alertall текст (весь город)" },
         { "Радиосеть: диагностика", "/rn_status", "Стойки/антенны/передатчики/громкоговорители — что в сети, покрытие" },
-        { "Электроника и сеть", "/grm_network_admin", "Компьютеры, роутеры, принтеры, кабели: топология, конфиги, удаление" },
+        { "Аугментации", "grm_augmentations_admin", "Настройка типов аугментаций, категорий, прав доступа и стоимости" },
+        { "Программатор чипов", "grm_chips", "Создание, имплантация и управление чипами аугментаций" },
         { "Спавн транспорта (ТАБ)", "ТАБ → игрок", "ТАБ → клик по игроку → «Спавн транспорта»: у ближайшего дилера, без цены/лимита", true },
     }
     -- ==== вкладка ЭКОНОМИКА (Код 82) ====
@@ -812,6 +863,39 @@ if CLIENT then
         end
     end
 
+    local function launchAdminCommand(command)
+        command = string.lower(string.Trim(tostring(command or "")))
+        if not LAUNCH_WHITELIST[command] then
+            notification.AddLegacy("Команда недоступна в едином меню", NOTIFY_ERROR, 3)
+            surface.PlaySound("buttons/button10.wav")
+            return
+        end
+
+        -- Сначала даём клиентским PlayerSayTransform-командам открыть их
+        -- локальные окна (/models_admin, /weapons_admin, /mask_admin и т.п.).
+        local pack = { command, false, false }
+        local result = hook.Run("PlayerSayTransform", LocalPlayer(), pack, false, false)
+        local consumed = result == false or pack.SkipPlayerSay == true
+            or not isstring(pack[1]) or string.Trim(pack[1]) == ""
+        if consumed then
+            chat.AddText(C.acc, "[Хаб] ", C.green, "Открыто: ", C.text, command)
+            surface.PlaySound("buttons/button14.wav")
+            return
+        end
+
+        -- Серверные команды запускаются защищённым протоколом, а не say.
+        net.Start(NET_LAUNCH)
+            net.WriteString(command)
+        net.SendToServer()
+        surface.PlaySound("buttons/button15.wav")
+    end
+
+    net.Receive(NET_LAUNCH_RESULT, function()
+        local ok, message = net.ReadBool(), net.ReadString()
+        notification.AddLegacy(message, ok and NOTIFY_GENERIC or NOTIFY_ERROR, 3)
+        surface.PlaySound(ok and "buttons/button14.wav" or "buttons/button10.wav")
+    end)
+
     local function buildMenu(sc)
         sc:Clear()
         local b1 = block(sc, 30 + #MENU_LINKS * 36 + 8, "Быстрый запуск админ-меню сборки:", C.yellow)
@@ -828,8 +912,7 @@ if CLIENT then
             if not m[4] then
                 local cmd = m[2]
                 b.DoClick = function()
-                    LocalPlayer():ConCommand("say " .. cmd)
-                    chat.AddText(C.acc, "[Хаб] ", C.text, "Запуск: ", C.green, cmd)
+                    launchAdminCommand(cmd)
                 end
             end
         end

@@ -24,8 +24,17 @@ GRM.Handcuffs.Config = GRM.Handcuffs.Config or {
 
     CuffedWalkSpeedMultiplier = 0.45,
     CuffedRunSpeedMultiplier = 0.35,
-    DragFollowDistance = 32,
-    DragHardDistance = 110,
+    -- Сопровождение без parent/Freeze/SetPos: задержанный идёт за ведущим
+    -- обычным движением игрока, сохраняя собственную высоту и коллизии мира.
+    DragFollowDistance = 52,
+    DragHardDistance = 110, -- legacy; оставлен для совместимости конфигов
+    EscortDeadZone = 10,
+    EscortCorrectionGain = 5.5,
+    EscortAcceleration = 8,
+    EscortTurnRate = 5,
+    EscortMaxSpeed = 300,
+    EscortBreakDistance = 420,
+    EscortBreakVerticalDistance = 120,
     MaxDraggedPlayers = 1,
 
     -- Транспорт: посадка только на пассажирские места, не на водительское.
@@ -72,6 +81,14 @@ GRM.Handcuffs.Config.StripWeaponsOnCuff = GRM.Handcuffs.Config.StripWeaponsOnCuf
 GRM.Handcuffs.Config.RestoreWeaponsOnUncuff = GRM.Handcuffs.Config.RestoreWeaponsOnUncuff == nil and true or GRM.Handcuffs.Config.RestoreWeaponsOnUncuff
 GRM.Handcuffs.Config.EnforceNoWeaponsWhileCuffed = GRM.Handcuffs.Config.EnforceNoWeaponsWhileCuffed == nil and true or GRM.Handcuffs.Config.EnforceNoWeaponsWhileCuffed
 GRM.Handcuffs.Config.EnableBehindBackPose = false
+GRM.Handcuffs.Config.DragFollowDistance = GRM.Handcuffs.Config.DragFollowDistance or 52
+GRM.Handcuffs.Config.EscortDeadZone = GRM.Handcuffs.Config.EscortDeadZone or 10
+GRM.Handcuffs.Config.EscortCorrectionGain = GRM.Handcuffs.Config.EscortCorrectionGain or 5.5
+GRM.Handcuffs.Config.EscortAcceleration = GRM.Handcuffs.Config.EscortAcceleration or 8
+GRM.Handcuffs.Config.EscortTurnRate = GRM.Handcuffs.Config.EscortTurnRate or 5
+GRM.Handcuffs.Config.EscortMaxSpeed = GRM.Handcuffs.Config.EscortMaxSpeed or 300
+GRM.Handcuffs.Config.EscortBreakDistance = GRM.Handcuffs.Config.EscortBreakDistance or 420
+GRM.Handcuffs.Config.EscortBreakVerticalDistance = GRM.Handcuffs.Config.EscortBreakVerticalDistance or 120
 GRM.Handcuffs.Config.VehicleUseDistance = GRM.Handcuffs.Config.VehicleUseDistance or 170
 GRM.Handcuffs.Config.VehicleSeatSearchRadius = GRM.Handcuffs.Config.VehicleSeatSearchRadius or 420
 GRM.Handcuffs.Config.VehicleExitOffset = GRM.Handcuffs.Config.VehicleExitOffset or 80

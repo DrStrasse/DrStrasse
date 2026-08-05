@@ -457,13 +457,21 @@ ok(#MB.Data[p4:SteamID64()].notes == 0, "badger: заметки закрыты �
 P("== 7. Форум ==")
 MB.HandleAction(p1, { op = "forum_post", text = "продаю гараж недорого" })
 ok(#MB.Forum.posts == 1, "первый пост прошёл")
+local firstForumID = tonumber(MB.Forum.posts[1] and MB.Forum.posts[1].id)
+ok(firstForumID and firstForumID > 0, "публикация получила серверный ID")
+MB.HandleAction(p1, { op = "forum_like", id = firstForumID })
+ok(#(MB.Forum.posts[1].likes or {}) == 1, "реакция добавлена сервером по CharacterKey")
+TT = TT + 0.5
+MB.HandleAction(p1, { op = "forum_like", id = firstForumID })
+ok(#(MB.Forum.posts[1].likes or {}) == 0, "повторная реакция корректно снимается")
 MB.HandleAction(p1, { op = "forum_post", text = "сразу второй" })
 ok(#MB.Forum.posts == 1, "рейт-лимит: второй подряд отклонён")
 MB.HandleAction(p4, { op = "forum_post", text = "пост от badger" })
 ok(#MB.Forum.posts == 1, "badger не может постить (apps закрыт)")
 p1._grmMobForumTs = os.time() - 10
-MB.HandleAction(p1, { op = "forum_post", text = "после паузы можно" })
+MB.HandleAction(p1, { op = "forum_post", text = "после паузы можно", replyTo = firstForumID })
 ok(#MB.Forum.posts == 2, "после паузы пост проходит")
+ok(tonumber(MB.Forum.posts[1].replyTo) == firstForumID and MB.Forum.posts[1].replyAuthor ~= "", "ответ привязан сервером к существующей публикации")
 for i = 1, 200 do p1._grmMobForumTs = nil MB.HandleAction(p1, { op = "forum_post", text = "спам " .. i }) end
 ok(#MB.Forum.posts <= MB.ForumCap, "кап форума " .. MB.ForumCap)
 MB.HandleAction(p1, { op = "forum_query" })
@@ -567,6 +575,8 @@ P("== 10. Подсказка «никто не слышит» ==")
 local p7 = addPlayer(mkPly(7, 5000, false))
 local rp = H.hooks["PlayerSay"]["GRM_RPChat_PlayerSay"]
 clearLogs()
+ok(rp(p7, "/grm_arrest_admin", false) == nil, "чужая slash-команда проходит дальше по PlayerSay")
+ok(rp(p7, "!grm_persistence", false) == nil, "чужая bang-команда проходит дальше по PlayerSay")
 TT = CurTime() + 10
 ok(rp(p7, "кто-нибудь тут есть?", false) == "", "обычный текст всеяден: RP-chat забирает")
 local hintHits = netlog(function(e)
