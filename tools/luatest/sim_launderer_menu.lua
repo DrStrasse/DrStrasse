@@ -40,7 +40,9 @@ local function mkWidget(type, parent)
     Paint = nil, DoClick = nil, OnValueChanged = nil,
   }
   w.SetTitle = function() end
-  w.SetSize = function() end
+  w.SetSize = function(_, ww, hh) w._w, w._h = ww, hh end
+  w.GetWide = function() return w._w or 600 end
+  w.GetTall = function() return w._tall end
   w.Center = function() end
   w.MakePopup = function() end
   w.Remove = function() end
@@ -48,7 +50,7 @@ local function mkWidget(type, parent)
   w.DockMargin = function() end
   w.SetTall = function(_, t) w._tall = t end
   w.SetPaintBackground = function() end
-  w.SetPos = function() end
+  w.SetPos = function(_, x, y) w._x, w._y = x, y end
   w.SetFont = function() end
   w.SetTextColor = function() end
   w.SetText = function(_, t) w._text = tostring(t or "") end
@@ -111,14 +113,16 @@ H.netrecv["GRM_Heist_Open"]()
 
 local frame = findWidget(function(w) return w._type == "DFrame" end)
 ok(frame ~= nil, "меню: DFrame создан (GRM_Heist_Open)")
--- Находка 179u: кнопка сохранения в ФИКСИРОВАННОЙ нижней панели (SAVE_BAR,
--- Dock BOTTOM), а не в конце TOP-стека — всегда видна
+-- Находка 179u/179x: кнопка сохранения в нижней панели (SAVE_BAR,
+-- Dock BOTTOM) — всегда видна; КОМПАКТНАЯ 240×34, по центру
 local saveBar = findWidget(function(w) return w._btnText == "SAVE_BAR" end)
 ok(saveBar ~= nil, "меню: панель SAVE_BAR создана (находка 179u)")
-ok(saveBar ~= nil and saveBar._dock == "BOTTOM" and saveBar._tall == 64, "меню: SAVE_BAR внизу (Dock BOTTOM, tall 64)")
+ok(saveBar ~= nil and saveBar._dock == "BOTTOM" and saveBar._tall == 48, "меню: SAVE_BAR внизу (Dock BOTTOM, tall 48)")
 local saveBtn = findWidget(function(w) return w._type == "DButton" and w._btnText == "💾 СОХРАНИТЬ НАСТРОЙКИ" and w._parent == saveBar end)
 ok(saveBtn ~= nil, "меню: кнопка СОХРАНИТЬ НАСТРОЙКИ внутри SAVE_BAR (находка 179u)")
-ok(saveBtn ~= nil and saveBtn._dock == "FILL", "меню: кнопка на всю ширину панели (Dock FILL)")
+ok(saveBtn ~= nil and saveBtn._w == 240 and saveBtn._h == 34, "меню: кнопка КОМПАКТНАЯ 240x34 (находка 179x)")
+saveBar.PerformLayout()
+ok(saveBtn ~= nil and saveBtn._x == 180 and saveBtn._y == 7, "меню: кнопка отцентрована в панели (находка 179x)")
 local minWang = findWidget(function(w) return w._type == "DNumberWang" and w._field == "min" end)
 local goalWang = findWidget(function(w) return w._type == "DNumberWang" and w._field == "goal" end)
 ok(minWang ~= nil and goalWang ~= nil, "меню: поля DNumberWang (минимум/цель)")

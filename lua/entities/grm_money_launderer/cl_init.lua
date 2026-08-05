@@ -275,19 +275,17 @@ net.Receive("GRM_Heist_Open", function()
     hint:SetWrap(true)
     hint:SetText("Когда участников станет достаточно — автоматически начнётся ивент «ОГРАБЛЕНИЕ» (50 минут, баннер на весь сервер, музыка). Деньги сдаются отмывщику: сумка ограбления / паллеты рядом / /bag_unload рядом с ним.")
 
-    -- Находка 179u: кнопка «СОХРАНИТЬ НАСТРОЙКИ» — в ФИКСИРОВАННОЙ нижней
-    -- панели (создаётся ПОСЛЕ hint → Dock(BOTTOM) ставит её над подсказкой).
-    -- Раньше кнопка была последней в TOP-стеке и уезжала за край окна.
+    -- Находка 179u/179x: кнопка «СОХРАНИТЬ НАСТРОЙКИ» — в нижней панели,
+    -- но КОМПАКТНАЯ (240×34, по центру), а не на всю ширину окна.
     if saveFn then
         local saveBar = vgui.Create("DPanel", body)
         saveBar:Dock(BOTTOM)
-        saveBar:SetTall(64)
-        saveBar:DockMargin(0, 0, 0, 8)
+        saveBar:SetTall(48)
+        saveBar:DockMargin(0, 0, 0, 6)
         saveBar:SetPaintBackground(false)
         saveBar._btnText = "SAVE_BAR" -- диагн. метка (тесты/отладка)
         local sb = vgui.Create("DButton", saveBar)
-        sb:Dock(FILL)
-        sb:SetText("")
+        sb:SetSize(240, 34)
         sb._btnText = "💾 СОХРАНИТЬ НАСТРОЙКИ" -- диагн. метка (тесты/отладка)
         sb.Paint = function(self, w, h)
             local c = self:IsHovered() and Color(110, 240, 160) or C.green
@@ -295,5 +293,9 @@ net.Receive("GRM_Heist_Open", function()
             draw.SimpleText("💾 СОХРАНИТЬ НАСТРОЙКИ", "GRMLaunder_Normal", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
         sb.DoClick = saveFn
+        function saveBar:PerformLayout()
+            sb:SetSize(240, 34)
+            sb:SetPos(math.max(0, (self:GetWide() - 240) / 2), math.max(0, (self:GetTall() - 34) / 2))
+        end
     end
 end)

@@ -3279,3 +3279,38 @@ watchdog остановлен, громкость плавно падает (Set
 константы/EndEvent→FadeOut/очистка таймера). GLua 404/0; roundtrip 14/14;
 perm_upsert 14, launderer_menu 20, bank_vault 87, econ_access 42,
 prop_protect 23, security OK, alarm 27. dist пересобран.
+
+---
+
+## Находка 179x (05.08.2026): музыка ивента — максимально просто, БЕЗ таймеров; кнопка «Сохранить» компактная
+
+Владелец: «Ты можешь сделать просто глобально музыку без зависимости от
+таймера или ещё чего либо?» + «кнопка сохранить слишком большая в высоту и
+в ширину».
+
+Сделано (музыка, lua/entities/grm_money_launderer/init.lua):
+
+1. **ВСЕ таймеры удалены**: сторожевой watchdog (179t/179v) и fade-таймер
+   (179w) выпилены полностью — ни StartMusicWatchdog/MusicTimerName, ни
+   MusicFadeTimerName, ни констант MUSIC_WATCHDOG_INTERVAL/MUSIC_FADE_*.
+2. **Старт ивента = один вызов**: `CreateSound(self, HEIST_MUSIC)` +
+   `SetSoundLevel(0)` (слышно на всю карту) + `EnableLooping(true)`
+   (WAV зациклится; MP3 движок не умеет — трек играет один раз) + `Play()`.
+   Никаких перезапусков/опросов IsPlaying.
+3. **Затухание — родным методом патча**: `patch:FadeOut(3)` — движок сам
+   плавно убавляет громкость и останавливает звук (без таймеров); фолбэк
+   (пустой патч) — StopSound. EndEvent → FadeOutHeistMusic.
+4. Синглтон `GRM.HeistMusicOwner` (анти-эхо при нескольких отмывщиках) и
+   прекэш util.PrecacheSound остались — это не таймеры.
+
+Сделано (кнопка, cl_init.lua): панель SAVE_BAR 64 → 48; кнопка
+«СОХРАНИТЬ НАСТРОЙКИ» была на всю ширину окна (Dock FILL) — теперь
+**компактная 240×34, отцентрирована** через PerformLayout панели.
+
+Тесты: sim_heist 128 → **125/125** (проверки таймеров заменены на
+«таймеров НЕТ вообще»: watchdog/fade-таймеры не создаются; Play() вызван;
+FadeOut(3) вызван и сам остановит звук; статика: watchdog/fade-функции и
+константы ПОЛНОСТЬЮ отсутствуют в файле); sim_launderer_menu 20/20
+(SAVE_BAR tall 48, кнопка 240×34, центрирование). GLua 404/0;
+roundtrip 14/14; perm_upsert 14, bank_vault 87, econ_access 42,
+prop_protect 23, security OK, alarm 27. dist пересобран.
