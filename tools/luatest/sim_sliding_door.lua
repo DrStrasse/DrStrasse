@@ -168,5 +168,10 @@ local q = assert(io.open("lua/autorun/sh_grm_qmenu.lua", "rb"))
 local qCode = q:read("*a") q:close()
 ok(qCode:find('grm_sliding_door', 1, true) ~= nil, "Q-меню: тул раздвижной двери")
 
+-- ══════════════ 7. FFD Link: isDoor распознаёт sliding-дверь (находка 173c) ══════════════
+local fl = assert(io.open("lua/weapons/gmod_tool/stools/ffd_link.lua", "rb"))
+local flCode = fl:read("*a") fl:close()
+ok(flCode:find('ent.isFadingDoor == true or ent.isSlidingDoor == true', 1, true) ~= nil, "FFD Link: isDoor учитывает isSlidingDoor")
+
 print(("SLIDING DOOR: %d/%d failures=%d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end
