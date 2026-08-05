@@ -3133,3 +3133,43 @@ cl_init.lua с моками vgui/net: открытие меню, клик по �
 (статики обновлены под facState/GetValue). GLua 404/0; roundtrip 14/14;
 симы: bank_vault 87, econ_access 42, prop_protect 23, security OK,
 alarm 27, perm_upsert 14. dist пересобран.
+
+---
+
+## Находка 179t (05.08.2026): музыка ивента играла пару секунд и обрывалась — MP3 не зацикливается движком
+
+Владелец: «музыка в начале играет буквально пару секунд, вернее даже не
+успевает начаться как прерывается когда ивент стартанул».
+
+Причина: файл `music/hl2_song20_submix0.mp3` — это MP3, а Source-движок
+(GMod) НЕ умеет зацикливать MP3 (EnableLooping работает только для WAV):
+файл проигрывается ОДИН раз (~2 сек, это короткий отрывок) и останавливается.
+Плюс звук не прекэшировался на сервере — CreateSound мог вернуть «пустой»
+патч (находка 179q), и тогда играл разовый EmitSound — ровно на длину файла.
+
+Сделано (lua/entities/grm_money_launderer/init.lua):
+
+1. **Прекэш на сервере**: `util.PrecacheSound(HEIST_MUSIC)` в Initialize
+   (pcall) — патч теперь реальный, а не «пустой».
+2. **Сторожевой таймер музыки (watchdog)**: `timer.Create` каждые 0.5с,
+   пока ивент активен:
+   - патч играет (`patch:IsPlaying()`) — не трогаем;
+   - патч остановился (MP3 доиграл) — перезапуск `PlayEx(1, 100)`;
+   - патча нет (пустой/фолбэк) — разовый `EmitSound(HEIST_MUSIC, 100, 100)`
+     с кулдауном 3с.
+3. `patch:SetVolume(1)` / `patch:SetPitch(100)` перед PlayEx.
+4. `StopMusicWatchdog` вызывается из `StopHeistMusic` (и через него из
+   EndEvent/OnRemove) — после окончания ивента таймер не висит.
+5. Константа `HEIST_MUSIC` + `MUSIC_WATCHDOG_INTERVAL = 0.5` в шапке модуля.
+
+Теперь музыка играет НЕПРЕРЫВНО всё время ивента (перезапускается, как
+только файл доиграл), слышна на всей карте (SetSoundLevel(0)), серверная
+(как требовал владелец, находка 179o).
+
+Тесты: sim_heist 97 → **116/116** (мок timer.Create/Remove захватывает
+watchdog, мок патча получил IsPlaying/SetVolume/SetPitch/playCount:
+патч играет — watchdog молчит; остановился — перезапуск; пустой патч —
+фолбэк EmitSound с кулдауном 3с; снятие watchdog при StopHeistMusic;
+статика precache/watchdog/IsPlaying/кулдаун). GLua 404/0; roundtrip 14/14;
+симы: bank_vault 87, econ_access 42, prop_protect 23, security OK,
+alarm 27, perm_upsert 14, launderer_menu 17. dist пересобран.

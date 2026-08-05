@@ -9,6 +9,14 @@ util.AddNetworkString("GRM_Heist_Open")     -- меню отмывщика
 util.AddNetworkString("GRM_Heist_Action")   -- действия
 util.AddNetworkString("GRM_Heist_Event")    -- баннер/музыка на весь сервер
 
+-- Находка 179t: музыка ивента. Файл — MP3 (music/hl2_song20_submix0.mp3),
+-- а Source-движок НЕ умеет зацикливать MP3 (EnableLooping работает только
+-- для WAV) — файл проигрывался один раз (~2 сек) и обрывался. Лечение:
+-- прекэш звука + «сторожевой» таймер, который держит музыку непрерывно
+-- (перезапускает, как только патч перестал играть), пока идёт ивент.
+local HEIST_MUSIC = "music/hl2_song20_submix0.mp3"
+local MUSIC_WATCHDOG_INTERVAL = 0.5 -- сек: проверка «патч ещё играет?»
+
 local function notify(ply, msg, r, g, b)
     if IsValid(ply) and GRM and GRM.Notify then
         GRM.Notify(ply, msg, r or 200, g or 200, b or 200)
@@ -47,6 +55,14 @@ function ENT:Initialize()
     self:SetHeistTargetPos(Vector(0, 0, 0))
     self.Participants = self.Participants or {}   -- [sid] = faction
     self.FactionDelivered = self.FactionDelivered or {} -- [faction] = amount
+
+    -- Находка 179t: прекэш музыки НА СЕРВЕРЕ — без этого CreateSound может
+    -- вернуть «пустой» патч (см. находку 179q) и музыка не играет/обрывается.
+    if SERVER then
+        pcall(function()
+            if util.PrecacheSound then util.PrecacheSound(HEIST_MUSIC) end
+        end)
+    end
 
     self:SetupIdleAnimation()
 end
@@ -196,18 +212,23 @@ function ENT:StartEvent()
     -- Находка 179q: CreateSound может вернуть «пустой» патч без методов
     -- (звук не найден/не прекэширован) — `patch:EnableLooping` = nil и
     -- ивент падал. Проверяем isfunction; иначе резервный EmitSound.
+    -- Находка 179t: MP3 не зацикливается движком — включаем сторожевой
+    -- таймер, который перезапускает музыку, как только она остановилась.
     self:StopHeistMusic()
-    local patch = CreateSound(self, "music/hl2_song20_submix0.mp3")
+    local patch = CreateSound(self, HEIST_MUSIC)
     if patch and isfunction(patch.EnableLooping) then
         patch:SetSoundLevel(0)
         patch:EnableLooping(true)
+        patch:SetVolume(1)
+        patch:SetPitch(100)
         patch:PlayEx(1, 100)
         self.HeistMusic = patch
     else
         -- Звук недоступен как патч — играем позиционным EmitSound
         -- (глушится в StopHeistMusic через StopSound).
-        self:EmitSound("music/hl2_song20_submix0.mp3", 100, 100)
+        self:EmitSound(HEIST_MUSIC, 100, 100)
     end
+    self:StartMusicWatchdog()
     -- баннер на весь сервер
     self:BroadcastEvent("start", "НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ",
         "Участники: " .. self:GetParticipantCount() .. "  •  Цель: " .. money(self:GetGoalMoney()) ..
@@ -218,15 +239,61 @@ function ENT:StartEvent()
     self:SendHeistTargetMarkers()
 end
 
+-- Находка 179t: сторожевой таймер музыки. MP3 не зацикливается движком —
+-- каждые 0.5с проверяем, играет ли патч; если остановился — перезапускаем.
+-- Если патча нет (пустой CreateSound) — периодический EmitSound (кулдаун 3с).
+function ENT:MusicTimerName()
+    return "grm_heist_music_" .. tostring(self:EntIndex())
+end
+
+function ENT:StartMusicWatchdog()
+    self:StopMusicWatchdog()
+    if not self:GetEventActive() then return end
+    local selfRef = self
+    timer.Create(self:MusicTimerName(), MUSIC_WATCHDOG_INTERVAL, 0, function()
+        if not IsValid(selfRef) then return end
+        if not selfRef:GetEventActive() then
+            selfRef:StopMusicWatchdog()
+            return
+        end
+        local patch = selfRef.HeistMusic
+        if patch and isfunction(patch.IsPlaying) then
+            local ok, playing = pcall(patch.IsPlaying, patch)
+            if ok and playing then return end -- играет — не трогаем
+            -- остановился: перезапускаем (MP3 проиграл файл до конца)
+            if isfunction(patch.EnableLooping) then
+                pcall(patch.PlayEx, patch, 1, 100)
+            end
+            return
+        end
+        if patch and isfunction(patch.EnableLooping) then
+            -- патч есть, но IsPlaying недоступен — перезапуск на всякий случай
+            pcall(patch.PlayEx, patch, 1, 100)
+            return
+        end
+        -- патча нет вообще (фолбэк-режим): разовый EmitSound с кулдауном
+        if (selfRef._grmMusicFallbackAt or 0) <= CurTime() then
+            pcall(function() selfRef:EmitSound(HEIST_MUSIC, 100, 100) end)
+            selfRef._grmMusicFallbackAt = CurTime() + 3
+        end
+    end)
+end
+
+function ENT:StopMusicWatchdog()
+    timer.Remove(self:MusicTimerName())
+end
+
 -- Находка 179o: остановка серверной музыки
 -- Находка 179q: Stop под pcall (патч мог быть «пустым»), плюс StopSound
 -- гасит резервный EmitSound из StartEvent.
+-- Находка 179t: watchdog тоже останавливается.
 function ENT:StopHeistMusic()
+    self:StopMusicWatchdog()
     if self.HeistMusic then
         pcall(function() self.HeistMusic:Stop() end)
         self.HeistMusic = nil
     end
-    self:StopSound("music/hl2_song20_submix0.mp3")
+    self:StopSound(HEIST_MUSIC)
 end
 
 function ENT:EndEvent(criminalsWin, reason)
