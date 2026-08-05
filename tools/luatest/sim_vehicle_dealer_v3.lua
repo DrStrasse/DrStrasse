@@ -2,7 +2,7 @@
 local function read(p)local f=assert(io.open(p,"rb"));local s=f:read("*a");f:close();return s end
 local core,ent,cl,tool,q,doors,perm = read("lua/autorun/sh_grm_vehicle_dealer.lua"),read("lua/entities/sent_vehicle_dealer/init.lua"),read("lua/entities/sent_vehicle_dealer/cl_init.lua"),read("lua/weapons/gmod_tool/stools/vehicle_dealer_tool.lua"),read("lua/autorun/sh_grm_qmenu.lua"),read("lua/autorun/sh_grm_doors.lua"),read("lua/autorun/sh_grm_perm_entities.lua")
 local checks,failed=0,0;local function has(s,n)return s:find(n,1,true)~=nil end;local function ok(v,n)checks=checks+1;if v then print("  ok "..checks..". "..n)else failed=failed+1;print("  FAIL "..checks..". "..n)end end
-ok(has(core,'VD.Version="3.1.2"'),"dealer v3.1.2 spawn point + direction + lift core")
+ok(has(core,'VD.Version="3.1.3"'),"dealer v3.1.3 lift applied AFTER DropToFloor")
 ok(has(core,"VD.GarageFile")and has(core,"CharacterKey"),"garage persists per CharacterKey")
 ok(has(core,"function VD.VehicleInfo")and has(core,'list.Get("simfphys_vehicles")')and has(core,'list.Get("LVS_Vehicles")'),"Source simfphys and LVS registries")
 ok(has(core,"SpawnVehicleSimple")and has(core,"simfphys fallback")and has(core,"LVS SpawnFunction")and has(core,"scripted entity"),"legacy-compatible multi-stage vehicle spawn fallbacks")
@@ -28,4 +28,5 @@ ok(has(core,"Точка выдачи занята")and has(core,"dealer:GetSpawn
 ok(has(tool,"vehicle_dealer_tool_direction")and has(tool,"placeSpawnPoint")and has(tool,"SetSpawnPoint"),"direction selector and point placement in tool")
 ok(has(tool,"ТОЧКА: ")and has(tool,"высота "),"point marker and lift label drawn")
 ok(has(tool,"По взгляду при установке")and has(tool,"Влево от дилера")and has(tool,"Вправо от дилера"),"direction choices: look/left/right")
+ok(has(core,"ent:SetPos(base+Vector(0,0,lift))")and has(core,"b2+Vector(0,0,lift)"),"lift re-applied after drop and after async simfphys settle")
 print(("VEHICLE DEALER V3: %d/%d failures=%d"):format(checks-failed,checks,failed));if failed>0 then os.exit(1)end

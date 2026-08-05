@@ -1,7 +1,7 @@
 -- GRM Vehicle Dealer & Garage v3.0.0
 if SERVER then AddCSLuaFile() end
 GRM=GRM or{};GRM.VehicleDealer=GRM.VehicleDealer or{};local VD=GRM.VehicleDealer
-VD.Version="3.1.2";VD.DealerFile="grm_vehicle_dealers/";VD.GarageFile="grm_vehicle_garages.json";VD.MaxActive=3;VD.UseDistance=180;VD.DefaultLift=30
+VD.Version="3.1.3";VD.DealerFile="grm_vehicle_dealers/";VD.GarageFile="grm_vehicle_garages.json";VD.MaxActive=3;VD.UseDistance=180;VD.DefaultLift=30
 VD.Dealers=VD.Dealers or{};VD.Garages=VD.Garages or{};VD.Active=VD.Active or{}
 local function jsonT(s)local ok,t=pcall(util.JSONToTable,s or"",false,true);return ok and istable(t)and t or nil end
 local function ensureDir()if SERVER and not file.IsDir("grm_vehicle_dealers","DATA")then file.CreateDir("grm_vehicle_dealers")end end
@@ -139,7 +139,24 @@ if SERVER then
   if not IsValid(ent)and source then attempt("Source vehicle",function()local e=ents.Create(tostring(source.Class or"prop_vehicle_jeep"));if not IsValid(e)then return end;e:SetModel(source.Model or"models/buggy.mdl");local kv=source.KeyValues or{};for k,v in pairs(kv)do e:SetKeyValue(k,tostring(v))end;if kv.VehicleScript then e:SetKeyValue("vehiclescript",tostring(kv.VehicleScript))end;e:SetPos(p);e:SetAngles(a);e:Spawn();e:Activate();if e.SetVehicleClass then e:SetVehicleClass(class)end;return e end)end
   if not IsValid(ent)and scripted_ents.GetStored(class)then attempt("scripted entity",function()local e=ents.Create(class);if not IsValid(e)then return end;e:SetPos(p);e:SetAngles(a);e:Spawn();e:Activate();return e end)end
   if not IsValid(ent)then print("[GRM VehicleDealer] spawn failed "..class.." | "..table.concat(errors," | "))end
-  if IsValid(ent)then pcall(function()if ent.DropToFloor then ent:DropToFloor()end end)end
+  if IsValid(ent)then
+   -- v3.1.3: применяем ВЫСОТУ ПОСЛЕ посадки. DropToFloor ставит машину на землю
+   -- (и simfphys внутри тоже сажает сам), поэтому сначала опускаем на поверхность,
+   -- затем поднимаем на lift. Для simfphys посадка асинхронная (физика) — догоняем
+   -- таймером, чтобы высота реально применилась.
+   local lift=tonumber(dealer.VD_Lift)or VD.DefaultLift
+   pcall(function()if ent.DropToFloor then ent:DropToFloor()end end)
+   if lift>0 then
+    local base=ent:GetPos()
+    ent:SetPos(base+Vector(0,0,lift))
+    timer.Simple(0.15,function()
+     if not IsValid(ent)then return end
+     local b2=ent:GetPos()
+     -- simfphys после посадки мог снова опустить — поднимаем ещё раз поверх
+     ent:SetPos(b2+Vector(0,0,lift))
+    end)
+   end
+  end
   return IsValid(ent)and ent or nil,info,errors
  end
  local function garage(ply)local k=key(ply);VD.Garages[k]=VD.Garages[k]or{};return VD.Garages[k],k end
