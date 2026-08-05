@@ -53,6 +53,10 @@ local function act(ent, action, a, b, c)
             net.WriteUInt(math.max(1, math.floor(tonumber(a) or 2)), 8)
             net.WriteUInt(math.max(1000, math.floor(tonumber(b) or 500000)), 32)
             net.WriteString(tostring(c or ""))
+        elseif action == "config_full" then
+            net.WriteUInt(math.max(1, math.floor(tonumber(a) or 2)), 8)
+            net.WriteUInt(math.max(1000, math.floor(tonumber(b) or 500000)), 32)
+            net.WriteTable(istable(c) and c or {})
         end
     net.SendToServer()
 end
@@ -65,7 +69,7 @@ net.Receive("GRM_Heist_Open", function()
     if IsValid(menuFrame) then menuFrame:Remove() end
     menuFrame = vgui.Create("DFrame")
     menuFrame:SetTitle("")
-    menuFrame:SetSize(480, 560)
+    menuFrame:SetSize(520, 660)
     menuFrame:Center()
     menuFrame:MakePopup()
     menuFrame.Paint = function(_, w, h)
@@ -126,24 +130,98 @@ net.Receive("GRM_Heist_Open", function()
         end)
     end
 
-    -- Настройка (суперадмин)
+    -- Настройка (суперадмин) — находка 179g: полноценное меню с чекбоксами
     if d.canManage then
-        -- находка 179f: цель ивента (Рейхсбанк) — по прицелу
-        addBtn("⚑ ЦЕЛЬ: хранилище под прицелом (суперадмин)", C.yellow, function()
+        addBtn("⚑ ЦЕЛЬ: хранилище под прицелом", C.yellow, function()
             act(ent, "set_target")
         end)
-        addBtn("✕ Сбросить цель (авто: ближайшее хранилище)", Color(120, 110, 130), function()
+        addBtn("✕ Сбросить цель (авто: хранилище)", Color(120, 110, 130), function()
             act(ent, "clear_target")
         end)
-        addBtn("⚙ НАСТРОЙКА (суперадмин)", C.blue, function()
-            Derma_StringRequest("Отмывщик — минимум участников", "Минимальное число участников:", tostring(d.minParticipants or 2), function(val)
-                local minP = math.floor(tonumber(val) or 2)
-                Derma_StringRequest("Отмывщик — цель", "Цель (сумма денег для победы):", tostring(d.goalMoney or 500000), function(goal)
-                    Derma_StringRequest("Отмывщик — фракции", "Фракции, которым можно брать задание (через запятую; пусто = любые):", tostring(d.allowedFactions or ""), function(allowed)
-                        act(ent, "config", minP, math.floor(tonumber(goal) or 500000), allowed)
-                    end)
-                end)
-            end)
+
+        -- заголовок настройки
+        local cfgTitle = vgui.Create("DLabel", body)
+        cfgTitle:Dock(TOP)
+        cfgTitle:SetTall(24)
+        cfgTitle:SetFont("GRMLaunder_Title")
+        cfgTitle:SetTextColor(C.text)
+        cfgTitle:SetText("НАСТРОЙКА (суперадмин)")
+
+        -- минимум участников
+        local minRow = vgui.Create("DPanel", body)
+        minRow:Dock(TOP)
+        minRow:SetTall(30)
+        minRow:SetPaintBackground(false)
+        local minLbl = vgui.Create("DLabel", minRow)
+        minLbl:SetPos(4, 6) minLbl:SetSize(180, 20) minLbl:SetFont("GRMLaunder_Small")
+        minLbl:SetTextColor(C.text) minLbl:SetText("Минимум участников:")
+        local minWang = vgui.Create("DNumberWang", minRow)
+        minWang:SetPos(190, 2) minWang:SetSize(90, 24) minWang:SetMin(1) minWang:SetMax(32)
+        minWang:SetValue(d.minParticipants or 2)
+
+        -- цель (сумма)
+        local goalRow = vgui.Create("DPanel", body)
+        goalRow:Dock(TOP)
+        goalRow:SetTall(30)
+        goalRow:SetPaintBackground(false)
+        local goalLbl = vgui.Create("DLabel", goalRow)
+        goalLbl:SetPos(4, 6) goalLbl:SetSize(180, 20) goalLbl:SetFont("GRMLaunder_Small")
+        goalLbl:SetTextColor(C.text) goalLbl:SetText("Цель (сумма):")
+        local goalWang = vgui.Create("DNumberWang", goalRow)
+        goalWang:SetPos(190, 2) goalWang:SetSize(140, 24) goalWang:SetMin(1000) goalWang:SetMax(100000000)
+        goalWang:SetValue(d.goalMoney or 500000)
+
+        -- фракции: чекбоксы в скролле (список существующих)
+        local facLbl = vgui.Create("DLabel", body)
+        facLbl:Dock(TOP)
+        facLbl:SetTall(20)
+        facLbl:SetFont("GRMLaunder_Small")
+        facLbl:SetTextColor(C.text)
+        facLbl:SetText("Фракции, которым можно брать задание (пусто = любые):")
+
+        local facScroll = vgui.Create("DScrollPanel", body)
+        facScroll:Dock(TOP)
+        facScroll:SetTall(180)
+        facScroll:DockMargin(0, 0, 0, 4)
+        facScroll.Paint = function(_, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, C.panel)
+        end
+
+        local allowedSet = {}
+        if istable(d.allowedFactions) then
+            for _, f in ipairs(d.allowedFactions) do allowedSet[f] = true end
+        elseif isstring(d.allowedFactions) then
+            for f in string.gmatch(d.allowedFactions or "", "([^,]+)") do
+                allowedSet[string.Trim(f)] = true
+            end
+        end
+        local facChecks = {}
+        local facList = istable(d.factionsList) and d.factionsList or {}
+        if #facList == 0 then
+            local l = vgui.Create("DLabel", facScroll)
+            l:Dock(TOP) l:SetTall(24) l:SetFont("GRMLaunder_Small") l:SetTextColor(C.dim)
+            l:SetText("Фракций пока нет — создайте их в /factions.")
+        end
+        for _, fname in ipairs(facList) do
+            local c = vgui.Create("DCheckBoxLabel", facScroll)
+            c:Dock(TOP)
+            c:SetTall(24)
+            c:DockMargin(6, 1, 4, 1)
+            c:SetText(fname)
+            c:SetFont("GRMLaunder_Small")
+            c:SetTextColor(C.text)
+            c:SetValue(allowedSet[fname] and 1 or 0)
+            facChecks[fname] = c
+        end
+
+        -- сохранить
+        addBtn("СОХРАНИТЬ НАСТРОЙКИ", C.green, function()
+            local selected = {}
+            for fname, c in pairs(facChecks) do
+                if c:GetChecked() then selected[#selected + 1] = fname end
+            end
+            table.sort(selected)
+            act(ent, "config_full", math.floor(minWang:GetValue() or 2), math.floor(goalWang:GetValue() or 500000), selected)
         end)
     end
 

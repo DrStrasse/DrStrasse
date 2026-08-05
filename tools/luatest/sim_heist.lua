@@ -131,6 +131,13 @@ EMT.__index = function(t, k)
   elseif k == "IsValid" then return function(s) return s.__valid ~= false end
   elseif k == "GetModel" then return function() return "models/x.mdl" end
   elseif k == "GetNWString" then return function() return "" end
+  elseif k == "SetHullType" then return function() end
+  elseif k == "SetHullSizeNormal" then return function() end
+  elseif k == "SetNPCState" then return function() end
+  elseif k == "CapabilitiesClear" then return function() end
+  elseif k == "SetMaxHealth" then return function() end
+  elseif k == "SetHealth" then return function() end
+  elseif k == "DropToFloor" then return function() end
   end
   return nil
 end
@@ -298,6 +305,32 @@ ok(ecoSrc:find('FindNearestLaunderer', 1, true) ~= nil and ecoSrc:find('ents.Fin
 local permSrc = assert(io.open("lua/autorun/sh_grm_perm_entities.lua", "rb")):read("*a")
 ok(permSrc:find('PlayerSayTransform", "GRM_PermEntities_ChatTransform', 1, true) ~= nil, "perm: PlayerSayTransform для /permadd /permremove (EasyChat)")
 ok(permSrc:find('bestRec, bestDist = nil, math.huge', 1, true) ~= nil, "perm: removePerm ищет ближайшую запись по классу (устойчиво)")
+
+-- ══════════════ 6b. Меню: FactionList + config_full + поза + R-удаление (находка 179g) ══════════════
+local fl = ld:FactionList()
+ok(#fl == 2 and fl[1] == "Mafia" and fl[2] == "Polizei", "FactionList: список существующих фракций (отсортирован)")
+-- config_full: таблица выбранных
+local recvA = H.netrecv["GRM_Heist_Action"]
+net.ReadTable = function() return _G.__readTbl or {} end
+_G.__readStr = "config_full"
+_G.__readUInt = 3
+net.ReadUInt = function() local v = _G.__readUInt or 0; _G.__readUInt = nil; return v end
+_G.__readTbl = { "Polizei" }
+recvA(0, admin2)
+ok(ld:GetMinParticipants() == 3, "config_full: минимум = 3")
+ok(ld:GetAllowedFactions() == "Polizei", "config_full: фракции из чекбоксов (Polizei)")
+_G.__readTbl = {}
+recvA(0, admin2)
+ok(ld:GetAllowedFactions() == "", "config_full: пустой список = любые")
+
+local lin3 = assert(io.open("lua/entities/grm_money_launderer/init.lua", "rb")):read("*a")
+ok(lin3:find('SetHullType(HULL_HUMAN)', 1, true) ~= nil and lin3:find('NPC_STATE_SCRIPT', 1, true) ~= nil and lin3:find('DropToFloor()', 1, true) ~= nil, "поза: NPC-инициализация (не Т-поза, находка 179g)")
+ok(lin3:find('FactionList', 1, true) ~= nil and lin3:find('config_full', 1, true) ~= nil, "сервер: список фракций + config_full")
+local lcl3 = assert(io.open("lua/entities/grm_money_launderer/cl_init.lua", "rb")):read("*a")
+ok(lcl3:find('DCheckBoxLabel', 1, true) ~= nil and lcl3:find('factionsList', 1, true) ~= nil, "клиент: чекбоксы фракций (находка 179g)")
+ok(lcl3:find('config_full', 1, true) ~= nil and lcl3:find('DNumberWang', 1, true) ~= nil, "клиент: config_full + поля минимум/цель")
+local tool3 = assert(io.open("lua/weapons/gmod_tool/stools/grm_bank_tool.lua", "rb")):read("*a")
+ok(tool3:find('cls == "grm_money_launderer" and t.id ~= "heisttarget"', 1, true) ~= nil and tool3:find('Отмывщик удалён', 1, true) ~= nil, "тул: R удаляет отмывщика (находка 179g)")
 
 -- ══════════════ 7. Тул + перм + модели ══════════════
 local tool = assert(io.open("lua/weapons/gmod_tool/stools/grm_bank_tool.lua", "rb")):read("*a")

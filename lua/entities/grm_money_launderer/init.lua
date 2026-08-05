@@ -26,10 +26,18 @@ function ENT:Initialize()
         print("[GRM Launderer] ВНИМАНИЕ: модель не найдена, фолбэк '" .. tostring(mdl) .. "'")
     end
     self:SetModel(mdl)
-    self:PhysicsInit(SOLID_VPHYSICS)
-    self:SetMoveType(MOVETYPE_VPHYSICS)
-    self:SetSolid(SOLID_VPHYSICS)
+    -- Находка 179g: НЕ физический проп (иначе модель человека стоит в
+    -- Т-позе) — инициализация как у квест-NPC: «человек» с нормальной позой.
+    self:SetHullType(HULL_HUMAN)
+    self:SetHullSizeNormal()
+    self:SetNPCState(NPC_STATE_SCRIPT)
+    self:SetSolid(SOLID_BBOX)
+    self:SetMoveType(MOVETYPE_NONE)
     self:SetUseType(SIMPLE_USE)
+    self:CapabilitiesClear()
+    self:SetMaxHealth(1000000)
+    self:SetHealth(1000000)
+    self:DropToFloor()
 
     self:SetEnabled(true)
     self:SetEventActive(false)
@@ -42,9 +50,6 @@ function ENT:Initialize()
     self:SetHeistTargetPos(Vector(0, 0, 0))
     self.Participants = self.Participants or {}   -- [sid] = faction
     self.FactionDelivered = self.FactionDelivered or {} -- [faction] = amount
-
-    local phys = self:GetPhysicsObject()
-    if IsValid(phys) then phys:Wake() phys:EnableMotion(false) end
 end
 
 function ENT:OnRemove()
@@ -56,6 +61,18 @@ end
 
 function ENT:CanManage(ply)
     return IsValid(ply) and ply:IsSuperAdmin()
+end
+
+-- Находка 179g: список имён ВСЕХ существующих фракций (для чекбоксов)
+function ENT:FactionList()
+    local out = {}
+    if istable(Factions) then
+        for name in pairs(Factions) do
+            if istable(Factions[name]) then out[#out + 1] = tostring(name) end
+        end
+    end
+    table.sort(out)
+    return out
 end
 
 -- фракция игрока (через Factions/Identity, как в сканере)
@@ -300,6 +317,8 @@ function ENT:SendMenu(ply)
             -- находка 179f: цель ивента (маркер GPS)
             hasTarget = self:HeistTarget() ~= nil,
             targetPos = self:HeistTarget(),
+            -- находка 179g: список ВСЕХ существующих фракций для чекбоксов
+            factionsList = self:FactionList(),
         })
     net.Send(ply)
 end
@@ -348,6 +367,23 @@ net.Receive("GRM_Heist_Action", function(_, ply)
         -- автообновление перм-записи (конфиг переживает рестарт)
         if GRM.PermData and GRM.PermData.UpdateEntry then GRM.PermData.UpdateEntry(ent) end
         notify(ply, "Отмывщик настроен: минимум " .. minP .. ", цель " .. money(goal) .. ", фракции [" .. allowed .. "]", 100, 220, 130)
+    elseif action == "config_full" then
+        -- Находка 179g: полная настройка — минимум, цель, СПИСОК фракций (чекбоксы)
+        if not ent:CanManage(ply) then notify(ply, "Только суперадмин.", 255, 100, 100) return end
+        local minP = math.max(1, math.floor(tonumber(net.ReadUInt(8)) or 2))
+        local goal = math.max(1000, math.floor(tonumber(net.ReadUInt(32)) or 500000))
+        local allowedTbl = net.ReadTable() or {}
+        local names = {}
+        for _, n in ipairs(allowedTbl) do
+            if isstring(n) and string.Trim(n) ~= "" then names[#names + 1] = string.Trim(n) end
+        end
+        table.sort(names)
+        local allowed = table.concat(names, ",")
+        ent:SetMinParticipants(minP)
+        ent:SetGoalMoney(goal)
+        ent:SetAllowedFactions(allowed)
+        if GRM.PermData and GRM.PermData.UpdateEntry then GRM.PermData.UpdateEntry(ent) end
+        notify(ply, "Отмывщик настроен: минимум " .. minP .. ", цель " .. money(goal) .. ", фракций: " .. #names, 100, 220, 130)
     end
     ent:SendMenu(ply)
 end)

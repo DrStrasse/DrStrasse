@@ -147,6 +147,16 @@ function TOOL:Reload(trace)
         if GRM.Notify then GRM.Notify(ply, "Цель ивента сброшена (авто: ближайшее хранилище).", 100, 220, 255) end
         return true
     end
+    -- Находка 179g: R по отмывщику в ЛЮБОМ режиме — УДАЛИТЬ (суперадмин)
+    if cls == "grm_money_launderer" and t.id ~= "heisttarget" then
+        if not ply:IsSuperAdmin() then
+            if GRM.Notify then GRM.Notify(ply, "Удаление отмывщика — только суперадмин.", 255, 120, 100) end
+            return false
+        end
+        ent:Remove()
+        if GRM.Notify then GRM.Notify(ply, "Отмывщик удалён.", 100, 220, 130) end
+        return true
+    end
     if t.id == "spawnpoint" and cls == "grm_money_press" then
         if not ply:IsSuperAdmin() then
             if GRM.Notify then GRM.Notify(ply, "Точку выдачи может ставить только суперадмин.", 255, 120, 100) end
