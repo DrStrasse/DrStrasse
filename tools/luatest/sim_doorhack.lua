@@ -15,6 +15,7 @@ function CurTime() return 1000 end
 function SysTime() return 1000 end
 function math.random() return 1 end
 function table.Count(t) local n = 0 for _ in pairs(t or {}) do n = n + 1 end return n end
+function table.HasValue(t, v) for _, x in pairs(t or {}) do if x == v then return true end end return false end
 math.Clamp = math.Clamp or function(v, a, b) return math.max(a, math.min(b, v)) end
 function print(...) local a = {} for i = 1, select("#", ...) do a[i] = tostring(select(i, ...)) end io.write(table.concat(a, " "), "\n") end
 string.Trim = string.Trim or function(s) return tostring(s or ""):match("^%s*(.-)%s*$") end
@@ -30,7 +31,13 @@ timer = {
   Remove = function() end,
 }
 concommand = { Add = function() end }
-util = { AddNetworkString = function() end, CRC = function(s) return tostring(#s) end }
+util = {
+  AddNetworkString = function() end,
+  CRC = function(s) return tostring(#s) end,
+  TableToJSON = function() return "{}" end,
+  JSONToTable = function() return nil end,
+  IsValidModel = function() return true end,
+}
 net = {
   Start = function(m) H.netlog.cur = { msg = m } end,
   WriteString = function() end, WriteTable = function() end, WriteEntity = function() end,
@@ -40,8 +47,17 @@ net = {
   Receive = function(m, fn) H.netrecv[m] = fn end,
   ReadString = function() return tostring(table.remove(H.seq, 1) or "") end,
   ReadEntity = function() return table.remove(H.seq, 1) end,
+  ReadTable = function() return table.remove(H.seq, 1) or {} end,
   ReadUInt = function() return tonumber(table.remove(H.seq, 1) or 0) end,
   ReadData = function() return "" end,
+}
+local __files = {}
+file = {
+  CreateDir = function() end,
+  Exists = function(p) return __files[p] ~= nil end,
+  Read = function(p) return __files[p] end,
+  Write = function(p, s) __files[p] = s end,
+  Find = function() return {} end,
 }
 game = { GetMap = function() return "gm_test" end }
 player = { GetAll = function() return {} end }
@@ -62,6 +78,27 @@ PMT.__index = function(t, k)
   elseif k == "Notify" then return function() end
   elseif k == "ChatPrint" then return function() end
   elseif k == "TakeDamage" then return function() end
+  elseif k == "SetWalkSpeed" or k == "SetRunSpeed" or k == "SetMaxHealth" or k == "SetHealth"
+      or k == "SetArmor" or k == "SetNWInt" or k == "SetNWFloat" or k == "SetNWString"
+      or k == "SetNWBool" or k == "Freeze" or k == "SetSequence" or k == "ResetSequence"
+      or k == "SetPlaybackRate" or k == "SetModelScale" or k == "SetModel" or k == "SetSkin"
+      or k == "SetColor" or k == "SetMaterial" or k == "SetRenderMode" or k == "SetLOD"
+      or k == "DrawShadow" or k == "SetNoDraw" or k == "SetPos" or k == "SetAngles" then
+    return function() end
+  elseif k == "GetMaxHealth" then return function() return 100 end
+  elseif k == "Health" then return function() return 100 end
+  elseif k == "Armor" then return function() return 0 end
+  elseif k == "GetNWInt" then return function() return 0 end
+  elseif k == "GetNWFloat" then return function() return 0 end
+  elseif k == "GetNWString" then return function() return "" end
+  elseif k == "GetNWBool" then return function() return false end
+  elseif k == "AccountID" then return function() return 1 end
+  elseif k == "UserID" then return function() return 1 end
+  elseif k == "LookupBone" then return function() return 0 end
+  elseif k == "GetBoneMatrix" then return function() return nil end
+  elseif k == "Alive" then return function() return true end
+  elseif k == "IsDormant" then return function() return false end
+  elseif k == "IsValid" then return function() return true end
   end
   return nil
 end
@@ -178,6 +215,35 @@ local cl = f:read("*a") f:close()
 ok(cl:find("HasDoorHack", 1, true) ~= nil, "HUD-подсказка использует CHIPS.HasDoorHack")
 ok(cl:find("НАЖМИТЕ E — ВЗЛОМАТЬ", 1, true) ~= nil, "текст подсказки «НАЖМИТЕ E — ВЗЛОМАТЬ» на месте")
 ok(cl:find("включен", 1, true) ~= nil, "подсказка учитывает doorHack=включен (рус.)")
+
+-- ══════════════ 3.5 ПЕРЕПРОГРАММИРОВАНИЕ: doorHack сохраняется ══════════════
+-- Серверный Reprogram фильтрует модификаторы по category.allowed — раньше
+-- doorHack не был в allowed у experimental и ОТБРАСЫВАЛСЯ («применяет, но не
+-- запоминает»). Проверяем, что теперь проходит.
+local chipsR = GRM.AugChips.PlayerChips[charKey]
+local chipR = chipsR[2]
+chipR.modifiers = { speed = 1.5 } -- без doorHack
+chipR.category = "experimental"
+local recvReprogram = H.netrecv["GRM_AugChip_Reprogram"]
+ok(recvReprogram ~= nil, "net.Receive GRM_AugChip_Reprogram зарегистрирован")
+-- эмулируем запрос: id + modifiers с doorHack="enabled"
+H.seq = { chipR.id, { doorHack = "enabled", speed = 1.5 } }
+recvReprogram(0, ply)
+ok(chipR.modifiers.doorHack == "enabled", "Reprogram сохраняет doorHack=enabled в модификаторы чипа")
+ok(chipR.modifiers.speed == 1.5, "Reprogram сохраняет числовые модификаторы")
+
+-- CreateChip: experimental с doorHack проходит
+H.seq = { "Чип взлома", "experimental", { doorHack = "enabled" }, 1 }
+local recvCreate = H.netrecv["GRM_AugChip_Create"]
+ok(recvCreate ~= nil, "net.Receive GRM_AugChip_Create зарегистрирован")
+-- (CreateChip вызывается через net; просто проверим прямо)
+local okC, chipC = GRM.AugChips.CreateChip(ply, { name = "Взломщик2", category = "experimental", modifiers = { doorHack = "enabled" } })
+ok(okC == true and chipC and chipC.modifiers and chipC.modifiers.doorHack == "enabled", "CreateChip experimental: doorHack проходит в чип")
+
+-- Клиентский OpenReprogram берёт ВЫБРАННОЕ значение комбобокса (не старое)
+local fint = assert(io.open("lua/autorun/client/cl_grm_augmentation_interface.lua", "rb"))
+local intf = fint:read("*a") fint:close()
+ok(intf:find("GetSelected", 1, true) ~= nil, "OpenReprogram использует GetSelected для комбобокса (не старое значение)")
 
 -- ══════════════ 4. SyncChips по запросу ══════════════
 H.netlog = {}

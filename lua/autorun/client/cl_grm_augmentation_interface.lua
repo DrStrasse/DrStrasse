@@ -46,7 +46,10 @@ function UI.OpenReprogram(chip)
         end
     end
     local save=vgui.Create("DButton",f); save:SetPos(20,450); save:SetSize(570,40); save:SetText("СОХРАНИТЬ И ПРИМЕНИТЬ")
-    save.DoClick=function() local mods={}; for k,e in pairs(controls) do mods[k]=e.cfg.options and e.value or e.slider:GetValue() end; net.Start("GRM_AugChip_Reprogram"); net.WriteString(chip.id or ""); net.WriteTable(mods); net.SendToServer(); f:Close() end
+    save.DoClick=function() local mods={}; for k,e in pairs(controls) do
+        -- Для комбобокса (options) берём ВЫБРАННОЕ значение, а не старое из chip.modifiers
+        mods[k] = e.cfg.options and (isfunction(e.slider.GetSelected) and e.slider:GetSelected() or e.value) or e.slider:GetValue()
+    end; net.Start("GRM_AugChip_Reprogram"); net.WriteString(chip.id or ""); net.WriteTable(mods); net.SendToServer(); f:Close() end
 end
 
 net.Receive("GRM_AugChip_Sync", function()

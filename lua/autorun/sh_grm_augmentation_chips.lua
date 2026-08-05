@@ -91,7 +91,7 @@ CHIPS.Config = {
 			name = "Экспериментальные",
 			maxLevel = 10,
 			color = Color(255, 80, 80),
-			allowed = {"speed", "stamina", "carryWeight", "health", "armor", "vision"}
+			allowed = {"speed", "stamina", "carryWeight", "health", "armor", "vision", "doorHack"}
 		}
 	}
 }

@@ -1680,3 +1680,36 @@ dist пересобран.
 свежие данные).
 
 Проверки: GLua 379/0; симы 37/37; roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 168 (05.08.2026): перепрограммирование чипа — doorHack не сохранялся; взлом не работал
+
+Владелец (со скриншотом программатора): «вручную перепрограммирую чип, выдаю
+включение параметру „взлом двери“, жму сохранить — применяет, но не запоминает
+состояние. Да и взлом двери не работает».
+
+Причины (2 бага):
+1. **СЕРВЕР отбрасывал doorHack.** В `ChipCategories` у категорий (в т.ч.
+   experimental) в `allowed` НЕ было `doorHack` (только speed/stamina/
+   carryWeight/health/armor/vision). Обработчики `GRM_AugChip_Reprogram` и
+   `CHIPS.CreateChip` фильтруют модификаторы по `category.allowed` — doorHack
+   молча выкидывался из `out`, чип оставался без него. Отсюда «применяет, но
+   не запоминает» и «взлом не работает» (после перепрограммирования
+   модификатора нет, HasDoorHack ничего не находит).
+2. **КЛИЕНТ (OpenReprogram) брал старое значение.** Для модификаторов с
+   `options` (doorHack: disabled/enabled) создаётся DComboBox, но при
+   сохранении в `mods` писалось `e.value` — значение из момента построения
+   окна (старое), а не выбранное в комбобоксе (OnSelect не обновлял `value`).
+
+Фиксы:
+1. `ChipCategories.experimental.allowed` += `doorHack` — Reprogram и CreateChip
+   теперь пропускают модификатор; значение валидируется по `cfg.options`.
+2. `UI.OpenReprogram`: при сохранении для комбобокса берётся
+   `slider:GetSelected()` (выбранное значение), а не старое `e.value`.
+
+Тест sim_doorhack.lua расширен 21 → **27 проверок**: Reprogram сохраняет
+doorHack=enabled в модификаторы чипа (и числовые модификаторы), CreateChip
+experimental пропускает doorHack, OpenReprogram использует GetSelected.
+
+Проверки: GLua 379/0; симы 37/37; roundtrip 14/14. dist пересобран.
