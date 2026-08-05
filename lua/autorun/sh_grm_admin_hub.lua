@@ -79,6 +79,8 @@ if SERVER then
         v("Q-меню/инструменты", GRM.QMenu and GRM.QMenu.Version)
         v("Радио/оповещение", GRM.Broadcast and GRM.Broadcast.Version)
         v("Доска набора", GRM.Board and GRM.Board.Version)
+        v("Электроника/сеть", GRM.Electronics and GRM.Electronics.Version)
+        v("Торгаши", GRM.Vendor and GRM.Vendor.Version)
         v("Валюта", "2.0.3")
         v("Экономика", "3.0.4")
         local posts = 0
@@ -94,6 +96,7 @@ if SERVER then
                 { name = "Публикаций на бирже", val = posts },
                 { name = "Багажников в базе", val = (GRM.Trunk and GRM.Trunk.Store) and table.Count(GRM.Trunk.Store) or 0 },
                 { name = "Записей ачивок", val = (GRM.Ach and GRM.Ach.Records) and table.Count(GRM.Ach.Records) or 0 },
+                { name = "Устройств сети", val = (GRM.Electronics and GRM.Electronics.Devices) and table.Count(GRM.Electronics.Devices) or 0 },
             },
             factions = factionsList(),
         }
@@ -673,6 +676,7 @@ if CLIENT then
         { "Каналы эфира/оповещения", "/bcasters", "Печать в чат: фракции с доступами эфира и оповещения" },
         { "Оповещение: синтаксис", "/alert", "Сервер ответит подсказкой: /alert текст (район) или /alertall текст (весь город)" },
         { "Радиосеть: диагностика", "/rn_status", "Стойки/антенны/передатчики/громкоговорители — что в сети, покрытие" },
+        { "Электроника и сеть", "/grm_network_admin", "Компьютеры, роутеры, принтеры, кабели: топология, конфиги, удаление" },
         { "Спавн транспорта (ТАБ)", "ТАБ → игрок", "ТАБ → клик по игроку → «Спавн транспорта»: у ближайшего дилера, без цены/лимита", true },
     }
     -- ==== вкладка ЭКОНОМИКА (Код 82) ====

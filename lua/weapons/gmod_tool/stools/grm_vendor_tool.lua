@@ -18,12 +18,13 @@ TOOL.ClientConVar = {
     type = "weapon",
 }
 
-local VENDOR_TYPES = { "weapon", "ore", "food", "rare" }
+local VENDOR_TYPES = { "weapon", "ore", "food", "rare", "electronics" }
 local VENDOR_LABELS = {
-    weapon = "Оружие",
-    ore    = "Руда",
-    food   = "Еда",
-    rare   = "Редкости",
+    weapon     = "Оружие",
+    ore        = "Руда",
+    food       = "Еда",
+    rare       = "Редкости",
+    electronics = "Электроника",
 }
 
 -- ========== ЛОКАЛИЗАЦИЯ ==========
@@ -259,10 +260,11 @@ if CLIENT then
         CPanel:AddControl("ComboBox", {
             Label    = "Тип торгаша",
             Options  = {
-                ["Оружие"]    = { grm_vendor_tool_type = "weapon" },
-                ["Руда"]      = { grm_vendor_tool_type = "ore" },
-                ["Еда"]       = { grm_vendor_tool_type = "food" },
-                ["Редкости"]  = { grm_vendor_tool_type = "rare" },
+                ["Оружие"]     = { grm_vendor_tool_type = "weapon" },
+                ["Руда"]       = { grm_vendor_tool_type = "ore" },
+                ["Еда"]        = { grm_vendor_tool_type = "food" },
+                ["Редкости"]   = { grm_vendor_tool_type = "rare" },
+                ["Электроника"] = { grm_vendor_tool_type = "electronics" },
             }
         })
 

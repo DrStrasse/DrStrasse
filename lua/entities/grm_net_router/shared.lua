@@ -1,0 +1,1 @@
+ENT.Type="anim";ENT.Base="grm_net_device";ENT.PrintName="Wi-Fi роутер";ENT.Category="GRM — Electronics";ENT.Spawnable=true;ENT.AdminOnly=true;ENT.DeviceKind="router";ENT.DefaultModel="models/cheeze/wires/router.mdl"

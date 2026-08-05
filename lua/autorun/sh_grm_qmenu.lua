@@ -116,6 +116,8 @@ QM.ToolCatalog = {
     { id = "camera",     label = "Камера",                          desc = "Камера наблюдателя.",                    cat = "ui" },
     { id = "textscreen", label = "Текстовый экран",                 desc = "Табличка с текстом на карте.",           cat = "ui" },
     { id = "grm_minimap", label = "GRM: районы и точки",             desc = "Районы, точки захвата и мини-карта.",      cat = "ui" },
+    { id = "grm_network_tool", label = "GRM: электроника и сеть",    desc = "Компьютеры, роутеры, принтеры, розетки и кабели.", cat = "ui" },
+    { id = "grm_vendor_tool", label = "GRM: торгаш",                 desc = "Спавн и настройка торгашей.",              cat = "ui" },
     -- Оформление
     { id = "colour",     label = "Цвет пропа",                      desc = "Перекраска и прозрачность.",             cat = "decor" },
     { id = "material",   label = "Материал пропа",                  desc = "Смена материала/текстуры.",              cat = "decor" },

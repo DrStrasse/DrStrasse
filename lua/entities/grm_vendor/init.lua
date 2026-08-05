@@ -163,7 +163,14 @@ net.Receive("GRM_Vendor_Buy", function(_, ply)
         spawned:SetAngles(Angle(0, ply:EyeAngles().y, 0))
         spawned:Spawn()
         spawned:Activate()
-        if spawned.SetPrinterOwner then spawned:SetPrinterOwner(ply) else spawned:SetOwner(ply) end
+        if GRM.Electronics and GRM.Electronics.Claim and spawned.GetDeviceKind then
+            -- Сетевое устройство: сразу привязываем владельца (ownerKey/ownerName)
+            GRM.Electronics.Claim(spawned, ply)
+        elseif spawned.SetPrinterOwner then
+            spawned:SetPrinterOwner(ply)
+        else
+            spawned:SetOwner(ply)
+        end
         local phys = spawned:GetPhysicsObject()
         if IsValid(phys) then phys:Wake() end
         GRM.Notify(ply, "Куплено и установлено рядом: " .. item.name .. " за " .. GRM.Format(price), 100, 220, 100)

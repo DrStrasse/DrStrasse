@@ -55,10 +55,11 @@ local function hasMoney(amount)
 end
 
 local TITLES = {
-    weapon = "🔫 Арсенал",
-    ore    = "⛏️ Скупка руды",
-    food   = " Ларёк еды",
-    rare   = "💎 Редкости",
+    weapon     = "🔫 Арсенал",
+    ore        = "⛏️ Скупка руды",
+    food       = " Ларёк еды",
+    rare       = "💎 Редкости",
+    electronics = "🖥️ Электроника",
 }
 
 -- ========== ПЕРЕМЕННЫЕ СОСТОЯНИЯ ==========
@@ -168,6 +169,7 @@ net.Receive("GRM_Vendor_Open", function()
         elseif vendorType == "ore" then tabIcon = "icon16/database.png"
         elseif vendorType == "food" then tabIcon = "icon16/heart.png"
         elseif vendorType == "rare" then tabIcon = "icon16/star.png"
+        elseif vendorType == "electronics" then tabIcon = "icon16/computer.png"
         end
 
         local sh = sheet:AddSheet(catName, panel, tabIcon)
