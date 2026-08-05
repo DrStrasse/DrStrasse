@@ -50,7 +50,7 @@ local function act(ent, action, a, b, c)
         net.WriteEntity(ent)
         net.WriteString(action)
         if action == "config" then
-            net.WriteUInt(math.max(1, math.floor(tonumber(a) or 2)), 8)
+            net.WriteUInt(math.max(1, math.floor(tonumber(a) or 2)), 16)
             net.WriteUInt(math.max(1000, math.floor(tonumber(b) or 500000)), 32)
             net.WriteString(tostring(c or ""))
         elseif action == "config_full" then
@@ -107,6 +107,7 @@ net.Receive("GRM_Heist_Open", function()
         b:SetTall(tall or 40)
         b:DockMargin(0, 0, 0, 8)
         b:SetText("")
+        b._btnText = text -- диагн. метка (тесты/отладка)
         b.Paint = function(self, w, h)
             local c = self:IsHovered() and Color(math.min(col.r + 25, 255), math.min(col.g + 25, 255), math.min(col.b + 25, 255)) or col
             draw.RoundedBox(7, 0, 0, w, h, c)
@@ -165,15 +166,14 @@ net.Receive("GRM_Heist_Open", function()
         local minLbl = vgui.Create("DLabel", minRow)
         minLbl:SetPos(4, 6) minLbl:SetSize(180, 20) minLbl:SetFont("GRMLaunder_Small")
         minLbl:SetTextColor(C.text) minLbl:SetText("Минимум участников:")
-        -- Находка 179k: DNumberWang коммитит ввод только по Enter/потере
-        -- фокуса — GetValue() мог вернуть старое (2). Читаем из ТЕКСТА
-        -- и храним через OnValueChanged.
-        local minVal = d.minParticipants or 2
+        -- Находка 179s: значение читается из ПОЛЯ (GetValue) в момент
+        -- сохранения — не из замыкания, обновляемого колбэком (OnValueChanged
+        -- мог не срабатывать, и уходили старые числа).
         local minWang = vgui.Create("DNumberWang", minRow)
         minWang:SetPos(190, 2) minWang:SetSize(90, 24)
         minWang:SetMin(1) minWang:SetMax(32) minWang:SetDecimals(0)
-        minWang:SetValue(minVal)
-        minWang.OnValueChanged = function(_, v) minVal = tonumber(v) or minVal end
+        minWang:SetValue(d.minParticipants or 2)
+        minWang._field = "min" -- диагн. метка (тесты/отладка)
 
         -- цель (сумма)
         local goalRow = vgui.Create("DPanel", body)
@@ -183,12 +183,11 @@ net.Receive("GRM_Heist_Open", function()
         local goalLbl = vgui.Create("DLabel", goalRow)
         goalLbl:SetPos(4, 6) goalLbl:SetSize(180, 20) goalLbl:SetFont("GRMLaunder_Small")
         goalLbl:SetTextColor(C.text) goalLbl:SetText("Цель (сумма):")
-        local goalVal = d.goalMoney or 500000
         local goalWang = vgui.Create("DNumberWang", goalRow)
         goalWang:SetPos(190, 2) goalWang:SetSize(140, 24)
         goalWang:SetMin(1000) goalWang:SetMax(100000000) goalWang:SetDecimals(0)
-        goalWang:SetValue(goalVal)
-        goalWang.OnValueChanged = function(_, v) goalVal = tonumber(v) or goalVal end
+        goalWang:SetValue(d.goalMoney or 500000)
+        goalWang._field = "goal" -- диагн. метка (тесты/отладка)
 
         -- фракции: чекбоксы в скролле (список существующих)
         local facLbl = vgui.Create("DLabel", body)
@@ -214,7 +213,11 @@ net.Receive("GRM_Heist_Open", function()
                 allowedSet[string.Trim(f)] = true
             end
         end
-        local facChecks = {}
+        -- Находка 179s: строки фракций — ЦЕЛИКОМ кликабельные кнопки
+        -- (у DCheckBoxLabel клик работал только по квадратику 20×20, по
+        -- названию — нет; «выбор не сохранялся»). Состояние хранится в
+        -- facState и читается при сохранении.
+        local facState = {}
         local facList = istable(d.factionsList) and d.factionsList or {}
         if #facList == 0 then
             local l = vgui.Create("DLabel", facScroll)
@@ -222,28 +225,41 @@ net.Receive("GRM_Heist_Open", function()
             l:SetText("Фракций пока нет — создайте их в /factions.")
         end
         for _, fname in ipairs(facList) do
-            local c = vgui.Create("DCheckBoxLabel", facScroll)
-            c:Dock(TOP)
-            c:SetTall(24)
-            c:DockMargin(6, 1, 4, 1)
-            c:SetText(fname)
-            c:SetFont("GRMLaunder_Small")
-            c:SetTextColor(C.text)
-            c:SetValue(allowedSet[fname] and 1 or 0)
-            facChecks[fname] = c
+            facState[fname] = allowedSet[fname] == true
+            local row = vgui.Create("DButton", facScroll)
+            row:Dock(TOP)
+            row:SetTall(26)
+            row:DockMargin(2, 1, 2, 1)
+            row:SetText("")
+            row._facName = fname -- диагн. метка (тесты/отладка)
+            row.Paint = function(self, w, h)
+                local on = facState[fname]
+                local bg = self:IsHovered() and Color(48, 62, 84, 245) or Color(32, 44, 62, 245)
+                draw.RoundedBox(4, 0, 0, w, h, bg)
+                -- квадрат-«чекбокс»
+                draw.RoundedBox(3, 8, h / 2 - 7, 14, 14, on and C.blue or Color(18, 26, 38, 255))
+                if on then
+                    draw.SimpleText("✔", "GRMLaunder_Small", 15, h / 2 + 1, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                end
+                draw.SimpleText(fname, "GRMLaunder_Small", 30, h / 2 + 1, on and C.text or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+            row.DoClick = function()
+                facState[fname] = not facState[fname]
+            end
         end
 
         -- сохранить
         -- Находка 179l: крупная заметная кнопка сохранения (суперадмин)
+        -- Находка 179s: числа читаются из полей (GetValue) — всегда текущее
+        -- значение, независимо от колбэков; фракции — из facState.
         addBtn("💾 СОХРАНИТЬ НАСТРОЙКИ", C.green, function()
             local selected = {}
-            for fname, c in pairs(facChecks) do
-                if c:GetChecked() then selected[#selected + 1] = fname end
+            for fname, on in pairs(facState) do
+                if on then selected[#selected + 1] = fname end
             end
             table.sort(selected)
-            -- находка 179k: берём из OnValueChanged-переменных (надёжно)
-            local mv = tonumber(minVal) or 2
-            local gv = tonumber(goalVal) or 500000
+            local mv = math.max(1, math.floor(tonumber(minWang:GetValue()) or 2))
+            local gv = math.max(1000, math.floor(tonumber(goalWang:GetValue()) or 500000))
             act(ent, "config_full", mv, gv, selected)
         end, 54)
     end
