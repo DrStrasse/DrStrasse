@@ -40,7 +40,13 @@ local function ownerOf(ent)
 end
 
 function PP.IsManaged(ent)
-    return IsValid(ent) and ent:GetClass() == "prop_physics"
+    if not IsValid(ent) then return false end
+    if ent:GetClass() == "prop_physics" then return true end
+    -- Находка 179: серверные GRM-сущности (помеченные MarkServerEntity)
+    -- тоже под защитой — иначе игрок физганом двигал бы банк/сигнализацию
+    local ot = ""
+    if ent.GetNWString then ot = ent:GetNWString("GRM_EntityOwnerType", "") or "" end
+    return ot == "server"
 end
 
 function PP.MarkServerEntity(ent)
@@ -162,6 +168,16 @@ if SERVER then
             return true
         end
         return false
+    end)
+
+    -- Находка 179: гравитационная пушка тоже не должна трогать защищённое
+    hook.Add("GravgunPickup", "GRM_PropProtect_Gravgun", function(ply, ent)
+        if not PP.IsManaged(ent) then return end
+        if PP.CanInteract(ply, ent, "physgun") then return true end
+        return false
+    end)
+    hook.Add("GravgunPunt", "GRM_PropProtect_GravgunPunt", function(ply, ent)
+        if PP.IsManaged(ent) and not PP.CanInteract(ply, ent, "physgun") then return false end
     end)
 
     hook.Add("PhysgunDrop", "GRM_PropProtect_PhysgunDrop", function(_, ent)

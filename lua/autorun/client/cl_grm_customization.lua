@@ -732,26 +732,35 @@ local function openAdmin(catalog)
     local preview=vgui.Create("DModelPanel",form); preview:SetPos(450,360); preview:SetSize(230,220); preview:SetFOV(35); preview.LayoutEntity=function() end
     fields["Модель"].OnChange=function(self) local m=self:GetValue(); if util.IsValidModel(m) then preview:SetModel(m) end end
 
+    -- Находка 179b: аккуратная сетка функциональных чекбоксов — 2 колонки × 5
+    -- строк (шаг 24px), не наезжают друг на друга и не уходят за форму.
     local funcTitle=label(form,"ФУНКЦИОНАЛЬНОЕ ОБОРУДОВАНИЕ","GRMCustom_Head",UI.text); funcTitle:SetPos(12,382); funcTitle:SetSize(410,22)
-    local funcChecks={}; local functionOrder={"gasmask","backpack","radio","watch","armor","artificial_eye","night_vision","neuro_link","prosthesis","loot_bag"}
-    for i,functionID in ipairs(functionOrder) do
-        local def=C.FunctionTypes[functionID] or {name=functionID}
-        -- находка 178f: сумка ограбления — чекбокс в правой колонке
-        local x = functionID == "loot_bag" and 430 or 12
-        local check=vgui.Create("DCheckBoxLabel",form); check:SetPos(x,406+(i-1)*25); check:SetSize(300,22)
-        check:SetText(def.name); check:SetFont("GRMCustom_Body"); check:SetTextColor(UI.text); funcChecks[functionID]=check
+    local funcChecks={}
+    local funcCols={
+        {"gasmask","backpack","radio","watch","armor"},
+        {"artificial_eye","night_vision","neuro_link","prosthesis","loot_bag"},
+    }
+    for ci,col in ipairs(funcCols) do
+        for ri,functionID in ipairs(col) do
+            local def=C.FunctionTypes[functionID] or {name=functionID}
+            local x = ci == 1 and 12 or 230
+            local y = 406 + (ri-1)*24
+            local check=vgui.Create("DCheckBoxLabel",form); check:SetPos(x,y); check:SetSize(200,22)
+            check:SetText(def.name); check:SetFont("GRMCustom_Body"); check:SetTextColor(UI.text); funcChecks[functionID]=check
+        end
     end
+    -- Числовые параметры функций — 2 ряда по 3/2 поля (y 536 и 580)
     local functionNum={}
-    local function functionNumber(labelText,key,x,default,min,max)
-        local l=label(form,labelText,"GRMCustom_Small",UI.dim); l:SetPos(x,536); l:SetSize(125,18)
-        local n=vgui.Create("DNumberWang",form); n:SetPos(x,555); n:SetSize(125,25); n:SetDecimals(2); n:SetMin(min); n:SetMax(max); n:SetValue(default); functionNum[key]=n
+    local function functionNumber(labelText,key,x,y,default,min,max)
+        local l=label(form,labelText,"GRMCustom_Small",UI.dim); l:SetPos(x,y); l:SetSize(140,18)
+        local n=vgui.Create("DNumberWang",form); n:SetPos(x,y+19); n:SetSize(140,25); n:SetDecimals(2); n:SetMin(min); n:SetMax(max); n:SetValue(default); functionNum[key]=n
     end
-    functionNumber("Защита газа 0..0.98","gasProtection",12,0.85,0,0.98)
-    functionNumber("Рюкзак +кг","backpackCapacity",150,20,0,100)
-    functionNumber("Снижение урона","armorReduction",288,0.2,0,0.75)
+    functionNumber("Защита газа 0..0.98","gasProtection",12,536,0.85,0,0.98)
+    functionNumber("Рюкзак +кг","backpackCapacity",160,536,20,0,100)
+    functionNumber("Снижение урона","armorReduction",300,536,0.2,0,0.75)
     -- находка 178f: параметры сумки ограбления
-    functionNumber("Сумка: макс. GRM","lootMaxMoney",430,100000,1000,1000000)
-    functionNumber("Сумка: за подход","lootPerUse",560,25000,1000,100000)
+    functionNumber("Сумка: макс. GRM","lootMaxMoney",12,580,100000,1000,1000000)
+    functionNumber("Сумка: за подход","lootPerUse",160,580,25000,1000,100000)
 
     local function setForm(id,item)
         selected=id or ""; item=item or {}; fields.ID:SetText(id or ""); fields["Название"]:SetText(item.name or ""); fields["Категория"]:SetText(item.category or ""); fields["Модель"]:SetText(item.model or ""); fields["Описание"]:SetText(item.description or ""); fields["Цена"]:SetText(tostring(item.price or 0))
