@@ -1431,3 +1431,32 @@ dist пересобран; открыт PR в `arena/019fb265-drstrasse`.
 Тест sim_vehicle_dealer_v3 → 27/27 (проверка «lift re-applied after drop and
 after async simfphys settle»). GLua 364/0; roundtrip 14/14; симы 36/36.
 dist пересобран.
+
+---
+
+## Находка 161 (05.08.2026): «Стройка+» — панель параметров выбранного инструмента (как в ванильном Q)
+
+Владелец (со скриншотами): «доработать, чтобы справа сбоку от вкладки
+инструментов отражались настройки инструментов, их параметры как в обычном
+Q-меню, чтобы игроки могли настраивать источник света и прочее».
+
+Сделано (клиентская часть lua/autorun/sh_grm_qmenu.lua):
+1. **Новая колонка «ПАРАМЕТРЫ ИНСТРУМЕНТА»** справа от списка инструментов
+   (SET_W=330, окно расширено: FW = clamp(sw*0.94, 1500..1920)).
+2. **showToolSettings(toolId)** — строит панель настроек выбранного тула через
+   штатный GMod API: `weapons.GetStored("gmod_tool").Tool[id]` → `tool.BuildCPanel`
+   → `controlpanel.Get(id)` (Clear + BuildCPanel, вставка в DScrollPanel,
+   автовысота по детям). Работает для ВСЕХ инструментов с BuildCPanel —
+   ванильных (light: яркость/размер/дистанция, weld, remover…) и наших GRM-тулов
+   (grm_vendor_tool, vehicle_dealer_tool, grm_network_tool, grm_quest_tool,
+   grm_door_admin, grm_minimap).
+3. **Вызовы:** клик по инструменту в списке → showToolSettings(tid); при
+   открытии меню → показ параметров уже активного тула; заглушка «Выберите
+   инструмент…» / «нет настраиваемых параметров».
+4. **Отвязка при закрытии** (CloseMenu → CP:SetParent(nil)) — чтобы не
+   конфликтовать с ванильным Q при playersQ=true.
+5. Гарды на движковые API (controlpanel/weapons.GetStored) — тест-стенды не
+   падают; BuildCPanel под pcall (ошибка тула не роняет меню, пишется в консоль).
+
+Проверки: GLua 364/0; sim_qmenu 69/69; sim_rootboard OK; симы 36/36;
+roundtrip 14/14. dist пересобран.
