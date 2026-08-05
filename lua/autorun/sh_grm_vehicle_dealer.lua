@@ -1,7 +1,7 @@
 -- GRM Vehicle Dealer & Garage v3.0.0
 if SERVER then AddCSLuaFile() end
 GRM=GRM or{};GRM.VehicleDealer=GRM.VehicleDealer or{};local VD=GRM.VehicleDealer
-VD.Version="3.1.1";VD.DealerFile="grm_vehicle_dealers/";VD.GarageFile="grm_vehicle_garages.json";VD.MaxActive=3;VD.UseDistance=180;VD.DefaultLift=30
+VD.Version="3.1.2";VD.DealerFile="grm_vehicle_dealers/";VD.GarageFile="grm_vehicle_garages.json";VD.MaxActive=3;VD.UseDistance=180;VD.DefaultLift=30
 VD.Dealers=VD.Dealers or{};VD.Garages=VD.Garages or{};VD.Active=VD.Active or{}
 local function jsonT(s)local ok,t=pcall(util.JSONToTable,s or"",false,true);return ok and istable(t)and t or nil end
 local function ensureDir()if SERVER and not file.IsDir("grm_vehicle_dealers","DATA")then file.CreateDir("grm_vehicle_dealers")end end
@@ -32,10 +32,11 @@ if SERVER then
   ent:SetDealerID(r.id);ent:SetDealerName(r.name or"Дилер транспорта");ent:SetDealerModel(util.IsValidModel(r.model or"")and r.model or"models/Humans/Group01/Male_02.mdl");ent:SetModel(ent:GetDealerModel())
   local legacyPoint=vec(r.spawnPos or r.pos);local hasPad=r.hasSpawnZone==true
   local padMin=vec(r.spawnZoneMin or r.spawnPos or r.pos);local padMax=vec(r.spawnZoneMax or r.spawnPos or r.pos)
-  -- Старую отдельную «точку выдачи» автоматически превращаем в единую видимую площадку.
-  if not hasPad and r.hasSpawn==true then hasPad=true;padMin=legacyPoint-Vector(140,190,16);padMax=legacyPoint+Vector(140,190,16)end
-  ent:SetHasSpawnZone(hasPad);ent:SetSpawnZoneMin(padMin);ent:SetSpawnZoneMax(padMax);ent.VD_Lift=tonumber(r.lift)or VD.DefaultLift
-  ent:SetSpawnPos(hasPad and((padMin+padMax)*.5)or legacyPoint);ent:SetHasCustomSpawn(hasPad);ent:SetSpawnAngle(ang(r.spawnAng or r.ang))
+  -- v3.1.2: точка выдачи (hasSpawn без зоны) больше НЕ превращается в площадку —
+  -- остаётся точкой с направлением и высотой. Зоны (hasSpawnZone) сохранены для совместимости.
+  if hasPad then ent:SetSpawnZoneMin(padMin);ent:SetSpawnZoneMax(padMax)end
+  ent:SetHasSpawnZone(hasPad);ent.VD_Lift=tonumber(r.lift)or VD.DefaultLift
+  ent:SetSpawnPos(hasPad and((padMin+padMax)*.5)or legacyPoint);ent:SetHasCustomSpawn(r.hasSpawn==true or hasPad);ent:SetSpawnAngle(ang(r.spawnAng or r.ang))
   ent.VD_Vehicles=table.Copy(r.vehicles or{});VD.Dealers[r.id]=ent
  end
  function VD.LoadDealers()
@@ -70,7 +71,24 @@ if SERVER then
    end
    return nil,a,"Площадка выдачи занята или не имеет безопасной поверхности"
   end
-  return dealer:GetPos()+dealer:GetForward()*220,a,"У дилера не задана площадка — используется временное место перед NPC"
+  if dealer:GetHasCustomSpawn()then
+   local lift=tonumber(dealer.VD_Lift)or VD.DefaultLift
+   local base=dealer:GetSpawnPos()
+   local ground=util.TraceLine({start=base+Vector(0,0,180),endpos=base-Vector(0,0,300),filter=dealer,mask=MASK_SOLID})
+   local p=base
+   if ground.Hit and not ground.StartSolid then p=ground.HitPos+Vector(0,0,lift)else p=p+Vector(0,0,lift)end
+   local blocked=util.TraceHull({start=p+Vector(0,0,48),endpos=p+Vector(0,0,48),mins=Vector(-60,-105,-42),maxs=Vector(60,105,58),filter=dealer,mask=MASK_SOLID})
+   if blocked.Hit or blocked.StartSolid then
+    for i=1,3 do
+     local cand=p+Vector(0,0,45*i)
+     local b2=util.TraceHull({start=cand+Vector(0,0,48),endpos=cand+Vector(0,0,48),mins=Vector(-60,-105,-42),maxs=Vector(60,105,58),filter=dealer,mask=MASK_SOLID})
+     if not b2.Hit and not b2.StartSolid then return cand,dealer:GetSpawnAngle()end
+    end
+    return nil,dealer:GetSpawnAngle(),"Точка выдачи занята"
+   end
+   return p,dealer:GetSpawnAngle()
+  end
+  return dealer:GetPos()+dealer:GetForward()*220,a,"У дилера не задана точка выдачи — используется временное место перед NPC"
  end
  function VD.FindSpawnPoint(dealer)return VD.FindDeliveryPosition(dealer)end -- compatibility API
  local function spawnPos(dealer)return VD.FindDeliveryPosition(dealer)end
@@ -84,6 +102,17 @@ if SERVER then
   return VD.SaveDealer(dealer)
  end
  function VD.ClearSpawnZone(dealer)
+  if not IsValid(dealer)then return false end
+  dealer:SetHasSpawnZone(false);dealer:SetHasCustomSpawn(false);dealer:SetSpawnPos(dealer:GetPos()+dealer:GetForward()*220)
+  return VD.SaveDealer(dealer)
+ end
+ -- v3.1.2: единая ТОЧКА выдачи (позиция + направление + высота)
+ function VD.SetSpawnPoint(dealer,pos,ang,lift)
+  if not IsValid(dealer)then return false,"Дилер не найден"end
+  dealer:SetSpawnPos(pos);dealer:SetSpawnAngle(ang or Angle(0,dealer:GetAngles().y+90,0));dealer:SetHasCustomSpawn(true);dealer:SetHasSpawnZone(false);dealer.VD_Lift=math.Clamp(math.floor(tonumber(lift)or VD.DefaultLift),0,100)
+  return VD.SaveDealer(dealer)
+ end
+ function VD.ClearSpawnPoint(dealer)
   if not IsValid(dealer)then return false end
   dealer:SetHasSpawnZone(false);dealer:SetHasCustomSpawn(false);dealer:SetSpawnPos(dealer:GetPos()+dealer:GetForward()*220)
   return VD.SaveDealer(dealer)
@@ -124,7 +153,7 @@ if SERVER then
   elseif op=="store"then local id=net.ReadString();local g=garage(ply);local r=g[id];local ent=VD.Active[id];if not r or not IsValid(ent)or ent.GRMGarageOwner~=ply then result(ply,false,"Активный транспорт не найден")return end;if ply:GetPos():DistToSqr(ent:GetPos())>700*700 then result(ply,false,"Подгоните транспорт ближе")return end;ent:Remove();VD.Active[id]=nil;r.stored=true;saveGarage();result(ply,true,"Транспорт помещён в гараж");VD.Push(ply,dealer)
   elseif op=="sell"then local id=net.ReadString();local g=garage(ply);local r=g[id];if not r then return end;local ent=VD.Active[id];if IsValid(ent)then ent:Remove()end;VD.Active[id]=nil;g[id]=nil;local refund=math.floor((r.price or 0)*.5);if refund>0 and GRM.GiveMoney then GRM.GiveMoney(ply,refund,"Продажа транспорта")end;saveGarage();result(ply,true,"Транспорт продан, возврат: "..(GRM.Format and GRM.Format(refund)or refund));VD.Push(ply,dealer)end
  end)
- net.Receive("GRM_VD_ZoneRequest",function(_,ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;local out={}for _,d in ipairs(ents.FindByClass("sent_vehicle_dealer"))do if IsValid(d)then out[#out+1]={id=d:GetDealerID(),name=d:GetDealerName(),pos=vd(d:GetPos()),hasZone=d:GetHasSpawnZone(),min=vd(d:GetSpawnZoneMin()),max=vd(d:GetSpawnZoneMax()),ang=ad(d:GetSpawnAngle())}end end;net.Start("GRM_VD_ZoneData")net.WriteTable(out)net.Send(ply)end)
+ net.Receive("GRM_VD_ZoneRequest",function(_,ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;local out={}for _,d in ipairs(ents.FindByClass("sent_vehicle_dealer"))do if IsValid(d)then out[#out+1]={id=d:GetDealerID(),name=d:GetDealerName(),pos=vd(d:GetPos()),hasZone=d:GetHasSpawnZone(),min=vd(d:GetSpawnZoneMin()),max=vd(d:GetSpawnZoneMax()),ang=ad(d:GetSpawnAngle()),hasPoint=d:GetHasCustomSpawn(),spawnPos=vd(d:GetSpawnPos()),spawnAng=ad(d:GetSpawnAngle()),lift=tonumber(d.VD_Lift)or VD.DefaultLift}end end;net.Start("GRM_VD_ZoneData")net.WriteTable(out)net.Send(ply)end)
  net.Receive("VD_RequestVehicleList",function(_,ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;local out={}for _,v in ipairs(VD.AllVehicleClasses())do out[#out+1]={class=v.class,name=v.name,dealer="GRM v3"}end;net.Start("VD_VehicleList")net.WriteTable(out)net.Send(ply)end)
  net.Receive("VD_AdminSpawnVehicle",function(_,ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;local sid,class=net.ReadString(),net.ReadString();local target;for _,p in ipairs(player.GetAll())do if p:SteamID64()==sid then target=p break end end;if not IsValid(target)then return end;local d,best=nil,math.huge;for _,candidate in ipairs(ents.FindByClass("sent_vehicle_dealer"))do local distance=target:GetPos():DistToSqr(candidate:GetPos());if distance<best then d,best=candidate,distance end end;if not IsValid(d)then return end;local ent=VD.Spawn(class,d,target);if IsValid(ent)then local id=makeID("admin_vehicle");ent.GRMGarageID=id;ent.GRMGarageOwner=target;ent.VD_Owner=target;ent.VD_Class=class;VD.Active[id]=ent end end)
  net.Receive("GRM_VD_AdminSave",function(_,ply)

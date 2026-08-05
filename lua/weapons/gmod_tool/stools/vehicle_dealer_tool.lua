@@ -7,6 +7,7 @@ TOOL.ClientConVar = {
     model = "models/Humans/Group01/Male_02.mdl",
     name = "Дилер транспорта",
     lift = "30",
+    direction = "look",
 }
 
 local function isDealer(ent)
@@ -16,7 +17,7 @@ end
 if CLIENT then
     language.Add("tool.vehicle_dealer_tool.name", "GRM Дилер и площадка выдачи")
     language.Add("tool.vehicle_dealer_tool.desc", "Единая настройка дилера, гаража и безопасной площадки")
-    language.Add("tool.vehicle_dealer_tool.0", "ЛКМ: создать • ПКМ по дилеру: настроить • Shift+ЛКМ по дилеру: выбрать площадку • Shift+ЛКМ по земле: 1-й угол • Shift+ПКМ: 2-й угол • Shift+R: очистить площадку")
+    language.Add("tool.vehicle_dealer_tool.0", "ЛКМ: создать дилера | ПКМ по дилеру: настроить | Shift+ЛКМ по дилеру: выбрать | Shift+ЛКМ/ПКМ по земле: поставить ТОЧКУ выдачи | R: удалить | Shift+R: убрать точку")
 
     local zones = {}
     net.Receive("GRM_VD_ZoneData", function() zones = net.ReadTable() or {} end)
@@ -53,6 +54,15 @@ if CLIENT then
                     draw.RoundedBox(5, -150, -20, 300, 40, Color(12, 17, 25, 230))
                     draw.SimpleText("ПЛОЩАДКА: " .. tostring(pad.name or pad.id), "DermaDefaultBold", 0, 0, Color(120, 235, 165), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                 cam.End3D2D()
+            elseif pad.hasPoint and pad.spawnPos then
+                local p = Vector(pad.spawnPos.x, pad.spawnPos.y, pad.spawnPos.z)
+                local pa = Angle(pad.spawnAng and pad.spawnAng.p or 0, pad.spawnAng and pad.spawnAng.y or 0, pad.spawnAng and pad.spawnAng.r or 0)
+                render.DrawWireframeBox(p + Vector(0, 0, 10), angle_zero, Vector(-14, -14, 0), Vector(14, 14, 6), Color(255, 185, 70, 235), true)
+                render.DrawLine(p + Vector(0, 0, 14), p + pa:Forward() * 110 + Vector(0, 0, 14), Color(255, 160, 50, 245), true)
+                cam.Start3D2D(p + Vector(0, 0, 24), Angle(0, EyeAngles().y - 90, 90), 0.08)
+                    draw.RoundedBox(5, -160, -18, 320, 36, Color(12, 17, 25, 230))
+                    draw.SimpleText("ТОЧКА: " .. tostring(pad.name or pad.id) .. "  •  высота " .. tostring(pad.lift or 30), "DermaDefaultBold", 0, 0, Color(255, 205, 120), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                cam.End3D2D()
             end
         end
     end)
@@ -62,6 +72,36 @@ local function resetPadSetup(tool)
     tool.PadDealer = nil
     tool.PadFirstCorner = nil
     tool:SetStage(0)
+end
+
+-- v3.1.2: постановка ТОЧКИ выдачи (позиция + направление + высота)
+local function placeSpawnPoint(tool, ply, hitPos)
+    local dealer = tool.PadDealer
+    if not isDealer(dealer) then
+        GRM.Notify(ply, "Сначала Shift+ЛКМ по нужному дилеру.", 255, 165, 90)
+        return false
+    end
+    local dir = tool:GetClientInfo("direction") or "look"
+    local dy = dealer:GetAngles().y
+    local angY
+    if dir == "look" then angY = ply:EyeAngles().y
+    elseif dir == "forward" then angY = dy
+    elseif dir == "back" then angY = dy + 180
+    elseif dir == "left" then angY = dy - 90
+    elseif dir == "right" then angY = dy + 90
+    elseif dir == "north" then angY = 0
+    elseif dir == "east" then angY = 90
+    elseif dir == "south" then angY = 180
+    elseif dir == "west" then angY = 270
+    else angY = ply:EyeAngles().y end
+    local ok, reason = GRM.VehicleDealer.SetSpawnPoint(dealer, hitPos, Angle(0, angY, 0), tonumber(tool:GetClientInfo("lift")) or 30)
+    if ok then
+        GRM.Notify(ply, "Точка спавна для «" .. dealer:GetDealerName() .. "» сохранена (направление и высота применены).", 100, 220, 130)
+    else
+        GRM.Notify(ply, tostring(reason or "Не удалось сохранить точку"), 255, 130, 90)
+    end
+    tool:SetStage(0)
+    return ok == true
 end
 
 function TOOL:LeftClick(trace)
@@ -74,17 +114,10 @@ function TOOL:LeftClick(trace)
             self.PadDealer = trace.Entity
             self.PadFirstCorner = nil
             self:SetStage(1)
-            GRM.Notify(ply, "Выбран дилер «" .. trace.Entity:GetDealerName() .. "». Shift+ЛКМ по земле — первый угол площадки.", 100, 190, 255)
+            GRM.Notify(ply, "Выбран дилер «" .. trace.Entity:GetDealerName() .. "». Shift+ЛКМ по земле — поставить точку спавна.", 100, 190, 255)
             return true
         end
-        if not isDealer(self.PadDealer) then
-            GRM.Notify(ply, "Сначала Shift+ЛКМ по нужному дилеру.", 255, 165, 90)
-            return false
-        end
-        self.PadFirstCorner = trace.HitPos
-        self:SetStage(2)
-        GRM.Notify(ply, "Первый угол задан. Shift+ПКМ по противоположному углу — сохранить площадку.", 100, 220, 130)
-        return true
+        return placeSpawnPoint(self, ply, trace.HitPos)
     end
 
     local ent = ents.Create("sent_vehicle_dealer")
@@ -107,21 +140,7 @@ function TOOL:RightClick(trace)
     if not ply:IsSuperAdmin() then return false end
 
     if ply:KeyDown(IN_SPEED) then
-        if not isDealer(self.PadDealer) or not self.PadFirstCorner then
-            GRM.Notify(ply, "Сначала выберите дилера и первый угол через Shift+ЛКМ.", 255, 165, 90)
-            return false
-        end
-        local dealer = self.PadDealer
-        local ok, reason = GRM.VehicleDealer.SetSpawnZone(dealer, self.PadFirstCorner, trace.HitPos, tonumber(self:GetClientInfo("lift")) or 30)
-        if ok then
-            dealer:SetSpawnAngle(Angle(0, ply:EyeAngles().y, 0))
-            GRM.VehicleDealer.SaveDealer(dealer)
-            GRM.Notify(ply, "Площадка выдачи сохранена для «" .. dealer:GetDealerName() .. "».", 100, 220, 130)
-        else
-            GRM.Notify(ply, tostring(reason or "Не удалось сохранить площадку"), 255, 130, 90)
-        end
-        resetPadSetup(self)
-        return ok == true
+        return placeSpawnPoint(self, ply, trace.HitPos)
     end
 
     local ent = trace.Entity
@@ -149,9 +168,9 @@ function TOOL:Reload(trace)
             GRM.Notify(ply, "Наведитесь на дилера, площадку которого нужно очистить.", 255, 165, 90)
             return false
         end
-        local ok = GRM.VehicleDealer.ClearSpawnZone(ent)
+        local ok = GRM.VehicleDealer.ClearSpawnPoint(ent)
         resetPadSetup(self)
-        GRM.Notify(ply, ok and "Площадка очищена. Временно используется место перед дилером." or "Не удалось очистить площадку", ok and 100 or 255, ok and 220 or 120, 100)
+        GRM.Notify(ply, ok and "Точка выдачи очищена. Временно используется место перед дилером." or "Не удалось очистить точку", ok and 100 or 255, ok and 220 or 120, 100)
         return ok == true
     end
 
@@ -167,13 +186,22 @@ end
 
 if CLIENT then
     function TOOL.BuildCPanel(panel)
-        panel:AddControl("Header", { Description = "Один инструмент для дилера и площадки выдачи. Отдельных «точки» и «зоны» больше нет." })
+        panel:AddControl("Header", { Description = "Точка выдачи транспорта: одна точка + направление появления + высота." })
         panel:TextEntry("Название", "vehicle_dealer_tool_name")
         panel:TextEntry("Модель NPC", "vehicle_dealer_tool_model")
+        local dir = panel:ComboBox("Направление появления", "vehicle_dealer_tool_direction")
+        dir:AddChoice("По взгляду при установке", "look")
+        dir:AddChoice("Вперёд от дилера", "forward")
+        dir:AddChoice("Назад от дилера", "back")
+        dir:AddChoice("Влево от дилера", "left")
+        dir:AddChoice("Вправо от дилера", "right")
+        dir:AddChoice("Север (0°)", "north")
+        dir:AddChoice("Восток (90°)", "east")
+        dir:AddChoice("Юг (180°)", "south")
+        dir:AddChoice("Запад (270°)", "west")
+        panel:NumSlider("Высота над землёй", "vehicle_dealer_tool_lift", 0, 100, 0)
         panel:Help("ОБЫЧНЫЙ РЕЖИМ\nЛКМ — создать дилера\nПКМ по дилеру — ассортимент и цены\nR по дилеру — удалить")
-        panel:Help("ПЛОЩАДКА ВЫДАЧИ (держите Shift)\n1. ЛКМ по дилеру — выбрать\n2. ЛКМ по земле — первый угол\n3. ПКМ по земле — противоположный угол\nShift+R по дилеру — очистить площадку")
-        panel:Help("Транспорт ищет свободное безопасное место внутри площадки. Синяя линия показывает направление появления.")
-        panel:NumSlider("Подъём транспорта над землёй", "vehicle_dealer_tool_lift", 0, 100, 0)
-        panel:Help("Высота появления машины над поверхностью (юниты). Если машина уходит под землю — увеличьте значение (обычно 20–50).")
+        panel:Help("ТОЧКА ВЫДАЧИ (держите Shift)\n1. ЛКМ по дилеру — выбрать дилера\n2. ЛКМ (или ПКМ) по земле — поставить точку\nShift+R по дилеру — убрать точку\nНаправление — из списка выше; высота — ползунком")
+        panel:Help("Жёлтый маркер — точка выдачи, оранжевая линия — направление появления машины. Машина ставится на землю (плюс высота) и разворачивается по направлению.")
     end
 end
