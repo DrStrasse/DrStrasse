@@ -2928,7 +2928,12 @@ if CLIENT then
         holder:Dock(FILL)
         holder:SetPaintBackground(false)
 
-        local function build(d)
+        -- Находка 177: сигнатура защищена от обоих вариантов вызова —
+        -- _embeddedBuild(panel, d) (данные во втором) и _embeddedBuild(d)
+        -- (данные в первом). Раньше сюда приходила панель вместо данных,
+        -- и фракции/игроки/гос.бюджет в /factions были пустыми.
+        local function build(a, b)
+            local d = b or a
             if not IsValid(holder) then return end
             if GRM.Economy and GRM.Economy.BuildAdminContent then
                 GRM.Economy.BuildAdminContent(holder, d)

@@ -2400,6 +2400,11 @@ if CLIENT then
             buildAdminUI(d)
         end
         -- обновить встроенную панель (/factions → «Экономика»)
+        -- Находка 177: раньше вызывалось _embeddedBuild(EmbeddedAdmin, d) —
+        -- build(d) принимал ОДИН аргумент, и в d попадала панель, а данные
+        -- терялись: фракции/игроки/гос.бюджет в /factions были пустыми.
+        -- Теперь данные всегда во втором аргументе (build защищён и от
+        -- вызова с одним аргументом).
         if IsValid(GRM.Economy.EmbeddedAdmin) and isfunction(GRM.Economy._embeddedBuild) then
             GRM.Economy._embeddedBuild(GRM.Economy.EmbeddedAdmin, d)
         end

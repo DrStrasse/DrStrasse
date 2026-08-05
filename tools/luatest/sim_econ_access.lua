@@ -186,12 +186,22 @@ ok(ffCode:find('OpenEconomyPanel', 1, true) ~= nil, "/factions: вкладка �
 ok(ffCode:find('BuildAdminContent', 1, true) ~= nil, "/factions: вкладка встраивает BuildAdminContent (полная панель)")
 ok(ffCode:find('GRM_Eco_AdminOpen', 1, true) ~= nil, "/factions: вкладка запрашивает данные экономики")
 ok(ffCode:find('EmbedAdminPanel', 1, true) ~= nil, "/factions: вкладка регистрируется для обновления")
+-- Находка 177: build принимает данные и из 1-го, и из 2-го аргумента
+ok(ffCode:find('local function build(a, b)', 1, true) ~= nil and ffCode:find('local d = b or a', 1, true) ~= nil, "/factions: build защищён от лишнего аргумента (находка 177)")
 
 local econSrc = assert(io.open("lua/autorun/sh_grm_economy.lua", "rb"))
 local econCode = econSrc:read("*a") econSrc:close()
 ok(econCode:find('function GRM.Economy.BuildAdminContent', 1, true) ~= nil, "экономика: BuildAdminContent публичная")
 ok(econCode:find('function GRM.Economy.EmbedAdminPanel', 1, true) ~= nil, "экономика: EmbedAdminPanel публичная")
 ok(econCode:find('parentTabs', 1, true) ~= nil, "экономика: buildAdminUI параметризован (parentTabs)")
+-- Находка 177: данные передаются во втором аргументе (панель — в первом)
+ok(econCode:find('GRM.Economy._embeddedBuild(GRM.Economy.EmbeddedAdmin, d)', 1, true) ~= nil, "экономика: _embeddedBuild(panel, d) — данные не теряются (находка 177)")
+
+-- Находка 177: вкладку «Экономика» больше НЕ добавляет старый feco_admin (дубль)
+local fecoSrc = assert(io.open("lua/autorun/sh_grm_feco_admin.lua", "rb"))
+local fecoCode = fecoSrc:read("*a") fecoSrc:close()
+ok(fecoCode:find('GRM_FecoAdmin_Tab', 1, true) == nil, "feco_admin: дублирующая вкладка убрана (находка 177)")
+ok(fecoCode:find('Консольная команда', 1, true) ~= nil, "feco_admin: модуль (окно/команды) сохранён")
 
 local facSrc = assert(io.open("lua/autorun/sh_factions.lua", "rb"))
 local facCode = facSrc:read("*a") facSrc:close()
