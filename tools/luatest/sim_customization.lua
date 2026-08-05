@@ -29,6 +29,7 @@ ok(has(client,"GRM — Каталог аксессуаров") and has(client,"�
 ok(has(client,"ФУНКЦИОНАЛЬНОЕ ОБОРУДОВАНИЕ") and has(client,"gasProtection") and has(client,"backpackCapacity"),"admin enables functions and configures their strength")
 ok(has(client,'"loot_bag"') and has(core,"Сумка ограбления") and has(client,"lootMaxMoney") and has(client,"lootPerUse"),"admin: чекбокс сумки ограбления + параметры (находка 178f)")
 ok(has(client,"funcCols") and has(client,"406 + (ri-1)*24") and has(client,"ci == 1 and 12 or 230"),"admin: чекбоксы в аккуратной сетке 2x5 без наложения (находка 179b)")
+ok(has(client,"if IsValid(adminFrame) then") and has(client,"adminFrame:InvalidateLayout()") and has(client,"adminFrame = nil"),"admin: повторное открытие не плодит окна/панели (NULL Panel fix, находка 179c)")
 ok(has(client,"СУМКА ОГРАБЛЕНИЯ") and has(client,"/bag_unload"),"клиент: HUD сумки и подсказка выгрузки (находка 178f)")
 ok(has(core,"loot_bag") and has(core,"LootBagAdd") and has(core,"grm_bag_unload"),"сервер: API сумки ограбления (находка 178f)")
 ok(has(core,"GRM_Custom_Ack") and has(client,'net.Receive("GRM_Custom_Ack"') and has(client,"notification.AddLegacy"),"server acknowledgements produce visible success/error feedback")

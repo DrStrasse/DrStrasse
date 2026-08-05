@@ -703,9 +703,22 @@ end)
 -- ============================================================
 -- АДМИНСКИЙ КАТАЛОГ
 -- ============================================================
+-- Находка 179c: повторные открытия (сервер шлёт AdminOpen после каждого
+-- сохранения) НЕ должны плодить новые окна/панели — старое окно
+-- переиспользуется, иначе DScrollPanel из удалённого окна остаётся в
+-- раскладке → «Tried to use a NULL Panel!» (dscrollpanel.lua:111).
+local adminFrame = nil
+
 local function openAdmin(catalog)
     C.Catalog = catalog or C.Catalog
+    if IsValid(adminFrame) then
+        -- уже открыто: просто обновляем каталог и список
+        adminFrame:InvalidateLayout()
+        return
+    end
     local f=vgui.Create("DFrame"); GRM.UI.Track("accessories_admin",f); f:SetSize(1120,720); f:Center(); f:MakePopup(); f:SetTitle("GRM — Каталог аксессуаров")
+    adminFrame = f
+    f.OnRemove = function() if adminFrame == f then adminFrame = nil end end
     local list=vgui.Create("DScrollPanel",f); list:SetPos(10,34); list:SetSize(390,640)
     local form=vgui.Create("DPanel",f); form:SetPos(410,34); form:SetSize(700,640); form.Paint=function(_,w,h) draw.RoundedBox(7,0,0,w,h,UI.panel) end
     local fields={}; local selected=""

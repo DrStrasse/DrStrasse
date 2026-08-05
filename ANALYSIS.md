@@ -2578,3 +2578,27 @@ GravgunPunt). GLua 398/0, симы 46/46, roundtrip 14/14.
 
 sim_customization 61/61 (проверка сетки funcCols). GLua 398/0, симы 46/46,
 roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 179c (05.08.2026): «Tried to use a NULL Panel!» в админке аксессуаров (dscrollpanel.lua:111)
+
+Владелец (спам ошибок при работе с каталогом аксессуаров):
+```
+lua/vgui/dscrollpanel.lua:111: Tried to use a NULL Panel!
+  1. GetTall ... PerformLayoutInternal ... dscrollpanel.lua:135 (x5)
+```
+
+Причина: после каждого «Сохранить в каталог» сервер шлёт
+`GRM_Custom_AdminOpen`, и `openAdmin()` создавал НОВОЕ окно с новым
+DScrollPanel-списком, не удаляя старое. Старая панель (уже NULL) оставалась
+в глобальной раскладке vgui → DScrollPanel вызывал GetTall на NULL.
+
+Сделано (cl_grm_customization.lua):
+1. `openAdmin` теперь переиспользует открытое окно: если `adminFrame` жив —
+   только `InvalidateLayout()` (каталог уже обновился в C.Catalog);
+   иначе создаёт окно и запоминает в `adminFrame`; `OnRemove` чистит ссылку.
+2. Повторных окон/панелей больше не создаётся — NULL Panel исключён.
+
+sim_customization 63/63 (проверка переиспользования окна). GLua 398/0,
+симы 46/46, roundtrip 14/14. dist пересобран.
