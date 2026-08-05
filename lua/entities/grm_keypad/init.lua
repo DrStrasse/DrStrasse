@@ -154,7 +154,7 @@ function ENT:ProcessGrant(ply)
         end
 
         for _, prop in ipairs(doorList) do
-            if IsValid(prop) and prop.isFadingDoor and prop.FadeDeactivate then
+            if IsValid(prop) and (prop.isFadingDoor or prop.isSlidingDoor) and prop.FadeDeactivate then
                 prop:FadeDeactivate()
             end
         end

@@ -121,6 +121,7 @@ QM.ToolCatalog = {
     { id = "grm_quest_tool", label = "GRM: конструктор квестов", desc = "Квестовые NPC, зоны целей и точки кат-сцен.", cat = "ui" },
     { id = "grm_network_tool", label = "GRM: электроника и интернет", desc = "Компьютеры, роутеры, принтеры, розетки и кабели связи.", cat = "ui" },
     { id = "grm_door_admin", label = "GRM: двери", desc = "Канонические двери, владельцы и доступы без дублей.", cat = "ui" },
+    { id = "grm_sliding_door", label = "GRM: раздвижная дверь", desc = "Проп → раздвижная дверь (сдвиг, скорость, плавность) + FFD Link.", cat = "ui" },
     -- Оформление
     { id = "colour",     label = "Цвет пропа",                      desc = "Перекраска и прозрачность.",             cat = "decor" },
     { id = "material",   label = "Материал пропа",                  desc = "Смена материала/текстуры.",              cat = "decor" },

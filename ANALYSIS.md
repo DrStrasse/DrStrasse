@@ -1894,3 +1894,44 @@ BuildAdminContent, EmbedAdminPanel, запрос данных; экономик�
 parentTabs; /factions: CanManageEconomy, хук в OpenLeaderMenu).
 
 Проверки: GLua 383/0; симы 39/39; roundtrip 14/14. dist пересобран.
+
+---
+
+## Находка 173 (05.08.2026): инструмент «Раздвижная дверь» — проп со сдвигом, FFD-синхронизация, перм
+
+Владелец: «инструмент раздвижных дверей: ЛКМ по пропу → функция движения;
+смещение на N юнитов влево/вправо и т.д.; скорость анимации, плавность;
+сохранить через /permadd /permsave; синхронизировать с FFD; привязать к
+scanner/keypad».
+
+Сделано:
+1. **`lua/autorun/sh_grm_sliding_door.lua`** (новый модуль, server+client):
+   - `GRM.SlidingDoor.Apply(ply, ent, opts)` — вешает механизм на
+     prop_physics/prop_dynamic: `isSlidingDoor=true`, конфиг `Sliding`
+     (direction/distance/speed/smooth/toggle/autoclose/closeTime), реестр
+     `SD.Doors`, единый Think-хук анимации (плавный сдвиг basePos→openPos с
+     ease-кривой, автозакрытие по таймеру);
+   - методы **`FadeActivate/FadeDeactivate/FadeToggle`** — те же, что у FFD
+     Fading Door → Keypad/Scanner/FFD Link управляют дверью БЕЗ изменений их
+     логики (совместимость);
+   - `SD.Remove` — снять механизм (проп возвращается в basePos);
+   - направления: влево/вправо/вперёд/назад/вверх (по локальным осям пропа).
+2. **`lua/weapons/gmod_tool/stools/grm_sliding_door.lua`** (тул):
+   - ЛКМ — применить к пропу; ПКМ — открыть/закрыть (тест); R — снять;
+   - панель: направление, дистанция (10-1000), скорость (10-2000),
+     плавность ease (0.1-4), режим переключателя, автозакрытие + задержка;
+   - подсказка: связь через FFD Link, сохранение через /permadd.
+3. **FFD-синхронизация**:
+   - `GRM.FFDLink.Fade` теперь активирует и `isSlidingDoor`;
+   - `grm_keypad`/`grm_scanner`: `prop.isFadingDoor or prop.isSlidingDoor` —
+     привязка через FFD Link открывает раздвижную дверь по коду/скану.
+4. **Перм**: `GRM.PermData.Extract/Apply["prop_physics"]` (ffd_fading_door.lua)
+   расширены sliding-веткой — /permadd сохраняет конфиг, после рестарта проп
+   встаёт на место и работает; duplicator-модификатор "GRM_SlidingDoor".
+5. Q-меню: тул `grm_sliding_door` в ToolCatalog.
+
+Тест: `sim_sliding_door.lua` — 21/21 (Apply/поля/методы, открытие+Think двигает
+проп, Remove возвращает, FFDLink.Fade учитывает sliding, keypad/scanner
+isSlidingDoor, перм Extract/Apply, тул+Q-меню).
+
+Проверки: GLua 385/0; симы 40/40; roundtrip 14/14. dist пересобран.
