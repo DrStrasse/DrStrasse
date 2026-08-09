@@ -30,8 +30,8 @@ print("[Реле] Ожидание сигнала 'citadel_grid'...")
 
 # --- Приём широковещательных таблиц от ядра ----------------------------------
 event remote(Sender:entity, Ply:entity, T:table) {
-    if (Ply != Owner)            { return }   # чужие сети игнорируем
-    if (!T["citadel_grid", number]) { return }   # не наша метка — игнор
+    if (Ply != Owner)            { exit() }   # чужие сети игнорируем
+    if (!T["citadel_grid", number]) { exit() }   # не наша метка — игнор
 
     Power     = T["power", number]
     EnergyPct = T["pct", number]

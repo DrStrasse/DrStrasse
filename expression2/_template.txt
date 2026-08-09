@@ -25,7 +25,7 @@ event tick() {
 
 # --- Чат-команды вида "!команда аргументы" от владельца ----------------------
 event chat(Ply:entity, Msg:string, Team:number) {
-    if (Ply != Owner | Msg[1] != "!") { return }
+    if (Ply != Owner | Msg[1] != "!") { exit() }
 
     let Args = Msg:sub(2):explode(" ")
     switch (Args[1, string]) {

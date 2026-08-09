@@ -201,7 +201,7 @@ timer("holo_init", 0.2, 0, function() {
 #  ВИЗУАЛ: пульсация, свечение, орбитальные спутники (каждый тик)
 # ============================================================================
 event tick() {
-    if (!HoloOK) { return }
+    if (!HoloOK) { exit() }
 
     # частота и амплитуда пульса зависят от состояния реактора
     let Freq = (State == ST_ON ? 0.8 : State == ST_BOOT ? 0.5 :
@@ -380,9 +380,9 @@ timer("egp", 0.5, 0, function() {
 #  ЧАТ-КОМАНДЫ (только владелец)
 # ============================================================================
 event chat(Ply:entity, Msg:string, Team:number) {
-    if (Ply != Owner) { return }
+    if (Ply != Owner) { exit() }
     let Args = Msg:explode(" ")
-    if (Args[1, string] != "!core") { return }
+    if (Args[1, string] != "!core") { exit() }
     hideChat(1)                                  # не засорять чат командами
 
     let Cmd = (Args:count() >= 2 ? Args[2, string]:lower() : "")

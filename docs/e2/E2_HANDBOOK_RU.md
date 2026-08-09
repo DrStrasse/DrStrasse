@@ -232,7 +232,7 @@ event readCell(Addr:number) / writeCell(Addr:number, Val:number)  # hi-speed
 Owner = owner()
 
 event chat(Ply:entity, Msg:string, _:number) {
-    if (Ply != Owner | Msg[1] != "!") { return }   # return в event просто выходит
+    if (Ply != Owner | Msg[1] != "!") { exit() }   # в event — exit() (return тут запрещён!)
     let Args = Msg:sub(2):explode(" ")
     switch (Args[1, string]) {
         case "ping", print("pong")  break
