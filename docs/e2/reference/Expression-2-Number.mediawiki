@@ -1,0 +1,339 @@
+'''''[[Expression 2 Features#Datatypes|<< Go back to Expression 2: Features]]'''''
+
+This is a full list of functions provided by E2's number extension.
+It will also include syntax for comparison operations and bitwise ops.
+
+==Comparison==
+{|style="background:#E6E6FA"
+!align="left" width="200"| Syntax
+!align="left" width="800"| Example
+!align="left" width="1100"| Description
+|-
+| > || if ( A>8 ) {} || ''Greater than'' comparison. Returns 1 when the left value is greater than the right value.
+|-
+| < || if ( A<4 ) {} || ''Less than'' comparison. Returns 1 when the left value is less than the right value.
+|-
+| >= || if ( A>=6 ) {} || Returns 1 when the right value is either ''greater than or equal to'' the left value.
+|-
+| <= || if ( A<=14 ) {} || Returns 1 when the right value is either ''less than or equal to'' the left value.
+|}
+
+{|style="background:#E6E6FA"
+!align="left" width="150"| Function
+!align="left" width="60"| Returns
+!align="left" width="1000"| Description
+|-
+|inrange(N₁,N₂,N₃) || [[Type-Number.png]] || Returns 1 when the value N₁ is in between the arguments N₂ and N₃.
+|}
+
+====Selection====
+These functions pick the highest or lowest value of a set of numbers, and returns that.
+
+{|style="background:#E6E6FA"
+!align="left" width="150"| Function
+!align="left" width="60"| Returns
+!align="left" width="1000"| Description
+|-
+|min(N,N[,N,N]) || [[Type-Number.png]] || Selects the closest number to negative infinity and returns it.<br>'''Requires 2 arguments, maximum of 4 arguments.'''
+|-
+|max(N,N[,N,N]) || [[Type-Number.png]] || Selects the closest number to positive infinity and returns it.<br>'''Requires 2 arguments, maximum of 4 arguments.'''
+|-
+|clamp(N₁,N₂,N₃) || [[Type-Number.png]] || Clamps the value N₁ to a minimum and maximum amount N₂ and N₃, and returns the clamped amount.
+|}
+
+====Infinity====
+Pray you don't have to use these.
+
+{|style="background:#E6E6FA"
+!align="left" width="150"| Function
+!align="left" width="60"| Returns
+!align="left" width="1000"| Description
+|-
+|isfinite(N) || [[Type-Number.png]] || Returns 1 (true) if the given value is a finite number.
+|-
+|isinf(N) || [[Type-Number.png]] || Returns 1 if the number is positive infinity, or -1 when it is negative infinity. Finite numbers return 0.
+|-
+|isnan(N) || [[Type-Number.png]] || Returns 1 when the given value is not a number (NaN).
+|}
+
+====Random numbers====
+Surprisingly not banned in 55 countries in regard to gambling regulations.
+
+{|style="background:#E6E6FA"
+!align="left" width="150"| Function
+!align="left" width="60"| Returns
+!align="left" width="1000"| Description
+|-
+|random([N]) || [[Type-Number.png]] || Returns a random float between 0-1. Optionally, multiply the result by the argument N.
+|-
+|random(N₁,N₂) || [[Type-Number.png]] || Returns a random floating value between the arguments N₁ and N₂.
+|-
+|randint(N) || [[Type-Number.png]] || Returns a random integer between 1 and the given value. (Seems to behave weirdly when given negative values...)
+|-
+|randint(N₁,N₂) || [[Type-Number.png]] || Returns a random integer between the values N₁ and N₂ inclusively.
+|}
+
+==Arithmetic==
+haha numbers go wheeeeeeee
+
+{|style="background:#E6E6FA"
+!align="left" width="200"| Syntax
+!align="left" width="800"| Example
+!align="left" width="1100"| Description
+|-
+| + || 3 + 8 || Adds two values together and returns the result.
+|-
+| - || A - B || Subtracts the right value from the left value, and returns the result.
+|-
+| <nowiki>*</nowiki> || C * D || Multiplies the right and left values together, and returns the result. ''This can also multiply vectors as a scalar magnitude!''
+|-
+| / || E / F || Divides the left value over the right value and returns an exact decimal answer.
+|-
+| % || E % F || Divides the left value over the right value, and returns the remainder of the division.
+|-
+| ^ || 4 ^ N || Raises the left value to the Nth power exponent, and returns the result.
+|}
+
+====Assignment====
+Number variables can be reassigned a new value based on one of the basic arithmetic operators by simply appending an equal sign after it.<br/>The format <code>A += B</code>, is equivalent to doing <code>A = A + B</code>. This works for any arithmetic operation.
+
+There is also a shorthand form of this to increment/decrement a variable by just 1.
+
+{|style="background:#E6E6FA"
+!align="left" width="200"| Syntax
+!align="left" width="800"| Example
+!align="left" width="1100"| Description
+|-
+| ++ || A++ || Increments variable A by 1 directly.
+|-
+| -- || B-- || Decrements variable B by 1 directly.
+|-
+| += || A += B - C || Sets the variable A equal to itself, plus B-C.
+|-
+| -= || A -= B + C || Sets the variable A equal to itself, minus B+C.
+|-
+| <nowiki>*=</nowiki> || A *= D || Sets A equal to A * D.
+|-
+| /= || A /= E || Sets A equal to A / E.
+|-
+| %= || A %= G || Sets A equal to A % G.
+|-
+| ^= || A ^= H || Sets A equal to A to the power of H.
+|}
+
+====Advanced arithmetic functions====
+
+{|style="background:#E6E6FA"
+!align="left" width="150"| Function
+!align="left" width="60"| Returns
+!align="left" width="1000"| Description
+|-
+|abs(N) || [[Type-Number.png]] || Returns the positive form (magnitude) of the value, aka, the absolute value of the number.
+|-
+|sign(N) || [[Type-Number.png]] || Returns the sign of the given value. 1 for positive values, -1 for negative values, and 0 for anything else.
+|-
+|sqrt(N) || [[Type-Number.png]] || Returns the square root of the given value.
+|-
+|cbrt(N) || [[Type-Number.png]] || Returns the cubic root of the given value.
+|-
+|root(N₁,N₂) || [[Type-Number.png]] || Returns the N₂th root of the value N₁
+|-
+|ln(N) || [[Type-Number.png]] || Performs a logarithm with base '''''e''''' on the given value.
+|-
+|log(N₁,N₂) || [[Type-Number.png]] || Performs a logarithm with an N₂th base on the given value N₁.
+|-
+|log2(N) || [[Type-Number.png]] || Performs a logarithm based 2 on the given value.
+|-
+|log10(N) || [[Type-Number.png]] || Performs a logarithm based 10 on the given value.
+|-
+|frexp(N) || [[Type-Vector2.png]] || Returns the mantissa and exponent of the given floating-point number as a vector2 (X component holds a mantissa, and Y component holds an exponent)
+|-
+|wrap(N₁,N₂) || [[Type-Number.png]] || Performs (N₁+N₂) % (N₂*2) - N₂.<br>Performs a wrapping calculation around 0 with a range of N₂.<br>''wrap(89,90) returns 89, wrap(92,90) returns -88.''
+|}
+
+====Rounding====
+Rounds to the nearest integer.
+
+{|style="background:#E6E6FA"
+!align="left" width="150"| Function
+!align="left" width="60"| Returns
+!align="left" width="1000"| Description
+|-
+|round(N₁[,N₂]) || [[Type-Number.png]] || Rounds to the nearest integer, optionally up to N₂ number of decimal places, from .5 up and anything below down.
+|-
+|floor(N₁[,N₂]) || [[Type-Number.png]] || Rounds a number down towards -infinity, optionally up to N₂ number of decimal places.<br>''-1.4 returns -2, 2.6 returns 2.''
+|-
+|ceil(N₁[,N₂]) || [[Type-Number.png]] || Rounds a number up towards +infinity, optionally up to N₂ number of decimal places.<br>''-1.4 returns -1, 2.6 returns 3.''
+|-
+|int(N) || [[Type-Number.png]] || Rounds a number towards 0 to the nearest integer.<br>-1.4 returns -1, 2.6 returns 2.
+|-
+|frac(N) || [[Type-Number.png]] || Returns the decimal (fractional) component of a number.<br>-1.4 returns -0.4, 2.6 returns 0.6. 
+|}
+
+==Trigonometric/Geometric==
+Scattah. A gift! For you!
+
+(Note that trig functions in E2 work with degree-based values unless using the radian functions suffixed with "r".)
+
+{|style="background:#E6E6FA"
+!align="left" width="150"| Function
+!align="left" width="60"| Returns
+!align="left" width="1000"| Description
+|-
+|toRad(N) || [[Type-Number.png]] || Converts the value's unit from degrees into radians. 90° == 𝜋/2
+|-
+|toDeg(N) || [[Type-Number.png]] || Converts the value's unit from radians into degrees. 𝜋 radians == 180°
+|-
+|sin(N) || [[Type-Number.png]] || Returns the sine of value N. ''sin(90) = 1''
+|-
+|cos(N) || [[Type-Number.png]] || Returns the cosine of value N. ''cos(0) = 1''
+|-
+|tan(N) || [[Type-Number.png]] || Returns the tangent of value N. ''tan(45) = 1''
+|-
+|asin(N) || [[Type-Number.png]] || Returns the sine inverse angle (arc sine) of value N.
+|-
+|acos(N) || [[Type-Number.png]] || Returns the cosine inverse angle (arc cosine) of value N.
+|-
+|atan(N) || [[Type-Number.png]] || Returns the tangent inverse angle (arc tangent) of value N.
+|-
+|atan(N₁,N₂) || [[Type-Number.png]] || Returns the tangent inverse (arc tangent) of the values N₁/N₂. This function accounts for positive/negative values as appropriate, and arguments at or close to 0.
+|-
+|csc(N) || [[Type-Number.png]] || Returns the cosecant of the value N. ''(csc(A)=B/C : sin(A)=C/B)''
+|-
+|sec(N) || [[Type-Number.png]] || Returns the secant of the value N. ''(sec(A)=B/C : cos(A)=C/B)''
+|-
+|cot(N) || [[Type-Number.png]] || Returns the cotangent of the value N. ''(cot(A)=B/C : tan(A)=C/B)''
+|-
+|sinh(N) || [[Type-Number.png]] || Returns the hyperbolic sine of the value N.
+|-
+|cosh(N) || [[Type-Number.png]] || Returns the hyperbolic cosine of the value N.
+|-
+|tanh(N) || [[Type-Number.png]] || Returns the hyperbolic tangent of the value N.
+|-
+|csch(N) || [[Type-Number.png]] || Returns the hyperbolic cosecant of the value N.
+|-
+|sech(N) || [[Type-Number.png]] || Returns the hyperbolic secant of the value N.
+|-
+|coth(N) || [[Type-Number.png]] || Returns the hyperbolic cotangent of the value N.
+|}
+====Radian measure====
+{|style="background:#E6E6FA"
+!align="left" width="150"| Function
+!align="left" width="60"| Returns
+!align="left" width="1000"| Description
+|-
+|sinr(N) || [[Type-Number.png]] || Returns the sine of value N using radians. ''sinr(pi()/2) = 1''
+|-
+|cosr(N) || [[Type-Number.png]] || Returns the cosine of value N using radians. ''cosr(0) = 1''
+|-
+|tanr(N) || [[Type-Number.png]] || Returns the tangent of value N using radians. ''tanr(pi()/4) = 1''
+|-
+|asinr(N) || [[Type-Number.png]] || Returns the sine inverse angle (arc sine) of value N using radians.
+|-
+|acosr(N) || [[Type-Number.png]] || Returns the cosine inverse angle (arc cosine) of value N using radians.
+|-
+|atanr(N) || [[Type-Number.png]] || Returns the tangent inverse angle (arc tangent) of value N using radians.
+|-
+|atanr(N₁,N₂) || [[Type-Number.png]] || Returns the tangent inverse angle (arc tangent) of the values N₁/N₂, in radian measurement. This function accounts for positive/negative values as appropriate, and arguments at or close to 0.
+|-
+|cscr(N) || [[Type-Number.png]] || Returns the cosecant of the value N using radians. ''(csc(A)=B/C : sin(A)=C/B)''
+|-
+|secr(N) || [[Type-Number.png]] || Returns the secant of the value N using radians. ''(sec(A)=B/C : cos(A)=C/B)''
+|-
+|cotr(N) || [[Type-Number.png]] || Returns the cotangent of the value N using radians. ''(cot(A)=B/C : tan(A)=C/B)''
+|-
+|sinhr(N) || [[Type-Number.png]] || Returns the hyperbolic sine of the value N using radians.
+|-
+|coshr(N) || [[Type-Number.png]] || Returns the hyperbolic cosine of the value N using radians.
+|-
+|tanhr(N) || [[Type-Number.png]] || Returns the hyperbolic tangent of the value N using radians.
+|-
+|cschr(N) || [[Type-Number.png]] || Returns the hyperbolic cosecant of the value N using radians.
+|-
+|sechr(N) || [[Type-Number.png]] || Returns the hyperbolic secant of the value N using radians.
+|-
+|cothr(N) || [[Type-Number.png]] || Returns the hyperbolic cotangent of the value N using radians.
+|}
+
+==Mathematical Constants==
+{|style="background:#E6E6FA"
+!align="left" width="150"| Function
+!align="left" width="60"| Returns
+!align="left" width="1000"| Description
+|-
+|inf() || [[Type-Number.png]] || '''∞''' ''(equivalent to '''math.Huge()''')''
+|-
+|pi() || [[Type-Number.png]] || '''𝜋''' ''(equivalent to '''3.141592653589793₂₃₈₄₆₂₆₄₃₃...''')''
+|-
+|_PI || [[Type-Number.png]] || Same as pi() but as a constant enumeration.
+|-
+|exp(N) || [[Type-Number.png]] || Returns Euler's constant '''''e''''' to the power of the Argument (same as '''e()'''^N but shorter and faster this way)
+|-
+|_E || [[Type-Number.png]] || Same as e() but as a constant enumeration.
+|-
+|_PHI || [[Type-Number.png]] || '''φ''' ''(equivalent to the golden ratio '''1+sqrt(5) divided by 2''')''
+|}
+
+==Bitwise==
+'''Developed by:''' asiekierka, TomyLobo (made xor), and Divran (added operators)
+
+Bitwise operators act on numbers as if they were decimal-represented binary numbers.The individual bits of a number have operations taken against them.
+
+For example, with 8 binary bits in a word, <code>00000000</code>, they can be either <code>0</code> or <code>1</code> each.<br>By performing bitwise operations, you're working on a logical level with each respective bit in an 8 bit word, compared with another word.
+
+{|style="background:#E6E6FA"
+!align="left" width="50"| Binary Operation
+!align="left" width="150"| Word 1
+!align="left" width="250"| Word 2
+!align="left" width="350"| Result
+!align="left" width="450"| Description
+|-
+|AND || 11111100 ''(252)'' || 00111111 ''(63)'' || 00111100 ''(60)''
+|| AND operation. Maintains a bit level of 1 when both bits at that register are 1. Otherwise, flips bits to 0.
+|-
+|OR || 11111100 ''(252)'' || 00111111 ''(63)'' || 11111111 ''(255)''
+|| OR operation. If there is a 1 on either word at that bit register, the resulting bit will be 1. Both bits must be 0 for a 0 bit.
+|-
+|XOR || 11111100 ''(252)'' || 00111111 ''(63)'' || 11000011 ''(195)''
+|| Exclusive OR operation. Checks if there's a difference between the bits. A word's bit register must be 1, and the other 0, for a 1 bit to result. However, a 0 bit occurs when both bits are 0 or when both bits are 1.
+|-
+|BSR || 11111100 ''(252)'' || - || 01111110 ''(126)''
+|| Bit shift right. Physically moves the bit registers one digit to the right.
+|-
+|BSL || 11111100 ''(252)'' || - || 111111000 ''(504)''
+|| Bit shift left. Physically moves the bit registers one digit to the left. Note that in E2, this is not limited to only 8 bits! In fact, E2 uses a 32 bit register. You will need to carry over the extra 256 to the ones place or discard it if you want to remain on 8 bits. It's up to your own implementation.
+|-
+|NOT || 11111100 ''(252)'' || - || 00000011 ''(3)''
+|| Binary NOT. Simply flips 1 bits to 0, and 0 bits to 1.
+|-
+|}
+
+Tip: You can also use N:toString(2) and S:toNumber(2) to perform bitwise manipulation using the string functions.
+{|style="background:#E6E6FA"
+!align="left" width="150"| Function
+!align="left" width="60"| Returns
+!align="left" width="1000"| Description
+|-
+|bOr(N,N) || [[Type-Number.png]] || Performs bitwise OR against the two numbers (Operator: N <nowiki>||</nowiki> N)
+|-
+|bAnd(N,N) || [[Type-Number.png]] || Performs bitwise AND against the two numbers (Operator: N && N)
+|-
+|bXor(N,N) || [[Type-Number.png]] || Performs bitwise XOR against the two numbers (Operator: N ^^ N)
+|-
+|bShl(N,N) || [[Type-Number.png]] || Performs bitwise shift left on the first number by the amount of the second (Operator: N << N)
+|-
+|bShr(N,N) || [[Type-Number.png]] || Performs bitwise shift right on the first number by the amount of the second (Operator: N >> N)
+|-
+|bNot(N) || [[Type-Number.png]] || Performs a binary Not
+|-
+|bNot(N,N) || [[Type-Number.png]] || Performs a binary Not. The second argument is the length of the number you wish to perform Not on in bits.
+|}
+
+==General function list==
+{|style="background:#E6E6FA"
+!align="left" width="150"| Function
+!align="left" width="60"| Returns
+!align="left" width="1000"| Description
+|-
+|toString(N,N) || [[Type-String.png]] || See [[Expression 2 String]].
+|}

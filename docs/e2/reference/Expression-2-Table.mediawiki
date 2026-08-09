@@ -1,0 +1,58 @@
+==Syntax==
+Tables and Arrays are used to store variables into an ordered, accessible type of variable. They make up a special case of variable access and assignment.
+
+Arrays are functionally similar to tables, in particular being slightly more efficient, but they cannot store arrays or tables themselves, and do not have string key indices.
+
+{|style="background:#E6E6FA"
+!align="left" width="800"| Syntax
+!align="left" width="1100"| Description
+|-
+| TableVar["test",bone] || This will return the value at the table's "test" string key, with the explicit type "bone"
+|-
+| TableVar[4,bone] || This will return the value at the table's 4th numeric index, with the explicit type "bone"
+|-
+| TableVar[8,vector] = Vec || This assigns the variable Vec to TableVar's 8th index.
+|-
+| VarArray["beef",vector] = Vec || This assignment is invalid, as arrays do not have string keys.
+|}
+
+==Shared functions==
+Below is a function list from the Table core and Array core extensions. Any functions that are supported only by either an array or a table are listed further down below.
+
+{|style="background:#E6E6FA"
+!align="left" width="100"| Function
+!align="left" width="200"| Return
+!align="left" width="1200"| Example
+!align="left" width="1400"| Print
+|-
+| T:concat([S,N,N]) || [[Type-String.png]] || T=table(2,3), T["a",number]=4, print(T:concat()) || 23
+|-
+|colspan="4" align="left"| Concatenates the elements of the table/array's numeric indices to a string in order.<br/>Optionally, a string delimiter may be used, which separates the concatenated elements in the returned string. You may also define the index to start at, and an index to end at, inclusively.<br/>'''Starts at index 1 by default. Nonexistent consecutive elements will concatenate to the string "nil".'''
+|-
+| T:concat()<br/>A:concat() || [[Type-String.png]] || T=table(2,3), T["a",number]=4, print(T:concat()) || 23
+|-
+!colspan="4" align="left"| Concatenates the elements of the table/array's numeric indices to a string.
+|}
+
+==Lookup Tables==
+A common optimization trick using Tables involves the use of T:exists([[Type-String.png]]) to check if a table contains a string key [[Type-String.png]]. This avoids having to do long elseif chains to find one particular string in a set of referenced strings.
+
+For example, say you have an E2 door that only allows people on your friends list. How do know who to let through the door?<br/>We'll add yourself in to start.
+<pre>Table = table()
+Table["STEAM_0:0:0",number] = 1</pre>
+The element in this case doesn't really matter, since we only need the string key.
+Now if you want to add anyone to your friends list, you can add their Steam ID as a key to the table just as easily,
+<pre>Table[Player:steamID(),number] = 1</pre>
+and reference them later more efficiently.
+<pre>local ID = Target:steamID()
+if(Table:exists(ID)){
+    Door:open()
+}</pre>
+You can even do neat tricks like returning different values for different keys. Just in case you wanted to have a list of people your doorside turret will automatically set to kill.
+<pre>if(!Table[ID,number]){
+    if(TargetModeNeutral & Table:exists(ID)){ #Check if we have the target on the blacklist (0 return on steamID)
+        Turret:shootAt(Target:pos())
+    }elseif(!TargetModeNeutral){ #We're not neutral, target everyone that isn't our friend.
+        Turret:shootAt(Target:pos())
+    } #else do nothing
+}</pre>

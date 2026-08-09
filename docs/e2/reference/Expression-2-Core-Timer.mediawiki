@@ -1,0 +1,123 @@
+'''''[[Expression 2 Features#Core extensions|<< Go back to Expression 2: Features]]'''''
+
+Timers in E2 are used to schedule ahead another execution. Whenever '''''anything''''' tells the expression to update itself, '''all of its code runs at once.'''
+
+How do you get it to only run certain pieces of your code? To do that, '''you'll want to check if the current execution was caused by a certain trigger or timer, using clk() functions.''' (Click, clock, whatever your preference.)
+
+'''To that end, it is impossible to get an expression 2 to "sleep," "wait," or "pause" for code in-line.''' Everything must have a scheduled trigger.
+
+==Basic Triggers==
+At the very core of E2, it must be triggered by something in order to run after it initially spawns. This can be from either what was previously scheduled, or by external means, such as a wired input that was updated and changed.
+
+'''By default, ''all inputs'' will trigger an E2 to run its entire code.''' To change this, you can use the '''[[Expression 2: Features#Directives|@trigger directive]]''' to only allow certain inputs to trigger the expression, or use '''@trigger none''' to disable input triggering altogether.
+
+{|style="background:#E6E6FA"
+!align="left" width="150"| Function
+!align="left" width="60"| Returns
+!align="left" width="1000"| Description
+|-
+|~InVar || [[Type-Number.png]] || ''if(~InVar){doThings()}.'' Input update operator, returns 1 if the current execution was caused by the input named '''InVar.''' ''Shorthand of if(inputClk()&inputClkName()=="InVar")).''
+|-
+|inputClk() || [[Type-Number.png]] || Returns 1 if the current execution was caused an input (Any of them)
+|-
+|inputClkName() || [[Type-String.png]] || Returns the name of the input which caused the current execution, if any.
+|-
+|runOnTick(N) || - || Sets the expression to run every physics tick. 1 to enable, and 0 to disable. Persists between executions.
+|-
+|tickClk() || [[Type-Number.png]] || Returns 1 if the current execution was caused by the tick clock.
+|-
+|first() || [[Type-Number.png]] || Returns 1 if this is the first time the E2 has executed (Just spawned in). Persists across duplication.
+|-
+|last() || [[Type-Number.png]] || Returns 1 if this is the last time the E2 will execute. Requires runOnLast() to have been enabled.
+|-
+|runOnLast(N) || - || Schedules an E2 to run its code when it is about to be removed, undone, or otherwise. 1 to enable, 0 to disable.
+|}
+
+More triggers can be found throughout the various extensions. Really, it's easier just to search for "runOn" and "clk" in the E2 helper.
+
+==Timer Functions==
+Timers in E2 are interesting as, once they're called, they're analogous to a lua timer.Simple. In other words, you don't tell an E2 to run every 1500ms. What you're doing when you give it an interval(1500) instruction, you tell it to run again only once in 1500 milliseconds, and once only. If it finds the interval again in that next execution, it'll tell it to go again still after 1500ms, giving you an interval loop.
+
+This is why it's important to keep track of where and how you're scheduling your timers.
+
+{|style="background:#E6E6FA"
+!align="left" width="150"| Function
+!align="left" width="60"| Returns
+!align="left" width="1000"| Description
+|-
+|interval(N) || - || Runs the E2 again in '''N''' milliseconds. Rounds up to the nearest game tick. (EG. 66 tick will round in 15ms increments) ''Same as using '''timer("interval",N)'''''
+|-
+|timer(S,N) || - || Schedules a timer with the name '''S''' to run the E2 after '''N''' milliseconds.
+|-
+|stoptimer(S) || - || When called before a timer is executed, stops and cancels the timer. '''Note timer priorities below.'''
+|-
+|stopAllTimers() || - || Cancels all active timers. (including interval, if called before executing)
+|-
+|clk() || [[Type-Number.png]] || Returns 1 if the current execution was caused by the interval timer. ''Same as using '''clk("interval")'''''
+|-
+|clk(S) || [[Type-Number.png]] || Returns 1 if the current execution was caused by the timer named '''S.'''
+|-
+|clkName() || [[Type-String.png]] || Returns the name of the timer that executed the E2.
+|-
+|getTimers() || [[Type-Array.png]] || Returns a list of all currently scheduled, active timers.
+|}
+
+====Timer priority====
+If you have a case where two or more timers are set to execute on the same tick, they'll run in alphabetical order. However, interval has a higher priority than a named timer.
+
+For example:
+<pre>if(first()){timer("testa",100),timer("testb",100),interval(100)}else{
+    if(clk("testa")){stoptimer("testb"),print("Clked on test2. Stopped test1.")}
+    if(clk("testb")){stoptimer("testa"),print("Clked on test1. Stopped test2.")}
+    if(clk("interval")){print("Clked interval.")}
+}</pre>
+With this code, three timers execute in 100ms. "testa," "testb," and "interval." When it runs, <code>Clked interval.</code> is the first to print. Then, the timer named "testa" executes, stopping "testb" from executing. Switching "testb" with a character further behind sequence than "testa," such as the character <code>1</code>, will cause what was previously "testb" to execute first instead.
+
+==Realtime-related functions==
+These functions don't really have anything to do with the timers system in E2, but they do return values related to time.
+
+{|style="background:#E6E6FA"
+!align="left" width="150"| Function
+!align="left" width="60"| Returns
+!align="left" width="1000"| Description
+|-
+|curTime() || [[Type-Number.png]] || Returns the current game world time since the map loaded. This scales with things such as game lag and host_timescale.
+|-
+|realTime() || [[Type-Number.png]] || Returns the real world time since the server has started. Only updates whenever the server processes a frame.
+|-
+|sysTime() || [[Type-Number.png]] || Returns a highly accurate system time since the server started, ideal for benchmarking. Unlike realtime, this will recall whatever the real value is, the moment it is called.
+|-
+|date([N]) || [[Type-Table.png]] || Returns a table describing the current date. The keys of this table can be previewed further below.<br>When given a number, it will return the values of the table for the number of seconds passed since 6:00PM, 31st Dec 1969.
+|-
+|dateUTC([N]) || [[Type-Table.png]] || Same as ''date()'' but adjusted to the UTC standard, instead of being based in the server's timezone.
+|-
+|time(S) || [[Type-Number.png]] || Precursor to ''date().'' Returns the same values as the strings of the table keys returned by that function, but used differently. Not really deprecated per-se.
+|-
+|time() || [[Type-Number.png]] || Returns the number of seconds passed since 6:00PM, 31st Dec 1969 using the server's timezone.
+|-
+|time(T) || [[Type-Number.png]] || Accepts a table containing date keys described below. Returns the number of seconds passed since 6:00PM, 31st Dec 1969 at the specified date in the table. '''Requires year, month, and day.'''
+|}
+
+====Date Table====
+{|style="background:#E6E6FA"
+!align="left" width="150"| String key
+!align="left" width="60"| Description
+|-
+|year|| The current year, A.D.
+|-
+|month|| The current month of the year
+|-
+|day|| The current day of the month
+|-
+|hour|| The current hour of the day
+|-
+|wday|| The current day of the week, numeric, starting from 1 on Sunday.
+|-
+|isdst|| Boolean. Returns 1 when Daylight Savings Time is in effect in this timezone.
+|-
+|min|| The number of minutes on the hour
+|-
+|sec|| The number of seconds on the minute
+|-
+|yday|| The number of days passed in the year
+|}
