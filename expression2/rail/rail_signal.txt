@@ -38,7 +38,7 @@ Occupied = 0  Block = BlockID
 rangerFilter(array(entity()))          # себя из луча исключаем
 
 print("[Свет] Светофор готов. Блок: " +
-      (BlockID > 0 ? BlockID : "НЕ ЗАДАН (!sig block 1-4)"))
+      (BlockID > 0 ? BlockID:toString() : "НЕ ЗАДАН (!sig block 1-4)"))
 
 # --- Голограмма-огонёк над чипом --------------------------------------------
 timer("holo_init", 0.3, 0, function() {

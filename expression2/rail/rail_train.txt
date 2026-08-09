@@ -38,7 +38,7 @@ Block = BlockID
 rangerFilter(array(entity(), entity():isWeldedTo()))
 
 print("[Поезд] Звено готово. Блок: " +
-      (BlockID > 0 ? BlockID : "НЕ ЗАДАН (!train block 1-4)"))
+      (BlockID > 0 ? BlockID:toString() : "НЕ ЗАДАН (!train block 1-4)"))
 
 # --- Глаз препятствий: каждые 0.25 с ------------------------------------------
 timer("eye", 0.25, 0, function() {
