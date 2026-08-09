@@ -1,0 +1,470 @@
+@name Ядро Цитадели
+@inputs Load Boost Stabilize Screen:wirelink
+@outputs Power Energy EnergyPct Stability Gen Net Status:string Alarm
+@persist Owner:entity State GenRate LoadManual LoadEff BaseScale
+@persist Blackout CollapseT StabCd Muted HoloOK HoloStep EgInit PrevStab
+@persist Col1:vector Col2:vector Grid:table
+@trigger none
+@strict
+@model models/props_combine/coreball.mdl
+
+#[ ==========================================================================
+   ЯДРО ЦИТАДЕЛИ — реактор тёмной энергии (Half-Life 2, Combine Citadel).
+
+   Чип сам выглядит как models/props_combine/coreball.mdl, вокруг него
+   строится пульсирующая голографическая оболочка. Ядро вырабатывает
+   энергию, отдаёт её в «сеть», реагирует на перегрузки вплоть до коллапса.
+   Работает ТОЛЬКО на дефолтных расширениях Wiremod (propcore не нужен).
+
+   ПОДКЛЮЧЕНИЕ (входы):
+     Load      — number: суммарная нагрузка сети от потребителей
+     Boost     — number: не 0 = форсаж (выработка x1.5, плавит стабильность)
+     Stabilize — number: фронт 0->1 = аварийная стабилизация
+     Screen    — wirelink: опциональный EGP-экран (статус-панель)
+
+   ВЫХОДЫ:
+     Power     — 1 = сеть запитана          Energy/EnergyPct — заряд ядра
+     Stability — 0..100 (< 25 = критика)    Gen — выработка, Net = Gen - Load
+     Status    — строка состояния           Alarm — 1 при критике/коллапсе
+
+   ЧАТ-КОМАНДЫ владельца:
+     !core on / off / status / rate N / load N / stabilize /
+     mute / scale N / redraw / help
+
+   СЕТЬ: раз в секунду чип рассылает remote-таблицу "citadel_grid" —
+   принимающий чип-пример: citadel_power_relay.txt
+   ========================================================================== ]#
+
+# --- Настройки реактора (правь под себя) --------------------------------------
+const Capacity  = 1000   # ёмкость накопителя ядра
+const BootRate  = 60     # скорость заряда при запуске, в секунду
+const MaxGen    = 150    # потолок выработки (!core rate)
+const BaseLoad  = 10     # собственные нужды ядра
+const SimDt     = 0.1    # шаг симуляции, секунд
+const CritLevel = 25     # стабильность ниже = критика
+const MeltdownT = 15     # секунд обратного отсчёта в критике
+
+# --- Состояния реактора --------------------------------------------------------
+const ST_OFF  = 0   # выключен
+const ST_BOOT = 1   # запуск/зарядка
+const ST_ON   = 2   # стабильная работа
+const ST_OVER = 3   # перегрузка (нагрузка > выработки)
+const ST_CRIT = 4   # обратный отсчёт до коллапса
+const ST_DEAD = 5   # коллапс
+
+# --- Модели голограмм (все из стандартного «белого» списка Wiremod) -----------
+const M_CORE  = "models/holograms/hq_icosphere.mdl"   # тёмное ядро
+const M_GLOW  = "models/holograms/hq_icosphere.mdl"   # свечение
+const M_ORBIT = "models/holograms/hq_sphere.mdl"      # спутники
+const M_RING  = "models/holograms/hq_torus_thin.mdl"  # кольцо
+
+# --- Звуки (стандартный контент HL2, монтируется всегда) ----------------------
+const SND_HUM   = "ambient/levels/citadel/citadel_hub_ambient1.mp3"
+const SND_ALARM = "ambient/alarms/klaxon1.wav"
+const SND_BOOM  = "ambient/explosions/explode_1.wav"
+const SND_FLASH = "ambient/energy/whiteflash.wav"
+const SND_BLIP  = "buttons/button9.wav"
+
+# ============================================================================
+#  ПОЛЬЗОВАТЕЛЬСКИЕ ФУНКЦИИ
+# ============================================================================
+function string stateName(S) {
+    if (S == ST_BOOT) { return "BOOTING"   }
+    if (S == ST_ON)   { return "ONLINE"    }
+    if (S == ST_OVER) { return "OVERLOAD"  }
+    if (S == ST_CRIT) { return "CRITICAL"  }
+    if (S == ST_DEAD) { return "COLLAPSED" }
+    return "OFFLINE"
+}
+
+# --- Аварийная стабилизация: 10% энергии -> +35 стабильности, кулдаун 10 с ---
+function doStabilize() {
+    if (StabCd > 0) {
+        print("[Ядро] Стабилизатор на перезарядке (" + ceil(StabCd) + " с).")
+        return
+    }
+    if (Energy < Capacity * 0.1) {
+        print("[Ядро] Не хватает энергии для стабилизации!")
+        return
+    }
+    Energy   -= Capacity * 0.1
+    Stability = min(100, Stability + 35)
+    StabCd    = 10
+    print("[Ядро] Принудительная стабилизация выполнена.")
+    entity():soundPlay("blip", 1, SND_BLIP)
+}
+
+# --- Коллапс ядра --------------------------------------------------------------
+function doCollapse() {
+    State    = ST_DEAD
+    Energy   = 0
+    Blackout = 1
+    entity():soundPlay("boom", 4, SND_BOOM)
+    entity():soundPlay("flash", 4, SND_FLASH)
+    print("[Ядро] *** КОЛЛАПС ТЁМНОЙ МАТЕРИИ. Реактор уничтожен. ***")
+    timer("reboot", 8, 1, function() {
+        State = ST_OFF  Stability = 50  Blackout = 0
+        print("[Ядро] Контур остыл. Повторный запуск: !core on")
+    })
+}
+
+# --- Разовая отрисовка статики на EGP-экране ----------------------------------
+function egpInit() {
+    Screen:egpClear()
+    # фон
+    Screen:egpRoundedBox(1, vec2(256, 256), vec2(470, 330))
+    Screen:egpColor(1, vec4(12, 10, 22, 255))
+    # заголовок
+    Screen:egpText(2, "CITADEL // DARK ENERGY CORE", vec2(256, 105))
+    Screen:egpAlign(2, 1, 1)   Screen:egpSize(2, 20)
+    Screen:egpColor(2, vec4(90, 140, 255, 255))
+    # статус крупно
+    Screen:egpText(3, "OFFLINE", vec2(256, 150))
+    Screen:egpAlign(3, 1, 1)   Screen:egpSize(3, 30)
+    # подписи шкал (латиница — у EGP-шрифтов нет кириллицы)
+    Screen:egpText(4, "ENERGY",    vec2(50, 195))
+    Screen:egpText(5, "STABILITY", vec2(50, 250))
+    Screen:egpAlign(4, 0, 1)  Screen:egpAlign(5, 0, 1)
+    Screen:egpSize(4, 15)     Screen:egpSize(5, 15)
+    Screen:egpColor(4, vec4(150, 150, 170, 255))
+    Screen:egpColor(5, vec4(150, 150, 170, 255))
+    # подложки шкал
+    Screen:egpBox(6, vec2(256, 195), vec2(400, 22))
+    Screen:egpBox(7, vec2(256, 250), vec2(400, 22))
+    Screen:egpColor(6, vec4(40, 40, 55, 255))
+    Screen:egpColor(7, vec4(40, 40, 55, 255))
+    # заливки шкал (размер/позиция обновляются в egp-таймере)
+    Screen:egpBox(8, vec2(256, 195), vec2(1, 22))
+    Screen:egpBox(9, vec2(256, 250), vec2(1, 22))
+    # числовые строки
+    Screen:egpText(10, "", vec2(256, 300))
+    Screen:egpText(11, "", vec2(256, 328))
+    Screen:egpAlign(10, 1, 1)  Screen:egpAlign(11, 1, 1)
+    Screen:egpSize(10, 18)     Screen:egpSize(11, 16)
+    Screen:egpText(12, "GRID: remote 'citadel_grid'  //  !core help", vec2(256, 385))
+    Screen:egpAlign(12, 1, 1)  Screen:egpSize(12, 12)
+    Screen:egpColor(12, vec4(110, 110, 130, 255))
+}
+
+# ============================================================================
+#  ИНИЦИАЛИЗАЦИЯ (один раз при компиляции/пасте дюпа)
+# ============================================================================
+Owner = owner()
+if (BaseScale == 0) { BaseScale = 5 }      # размер оболочки по умолчанию
+if (GenRate   == 0) { GenRate   = 100 }    # выработка по умолчанию
+State     = ST_OFF
+Energy    = 0        Stability = 100      Blackout = 0
+Gen       = 0        Net = 0              Power = 0    Alarm = 0
+Status    = "OFFLINE"
+Col1 = vec(45, 20, 90)     # тёмная материя
+Col2 = vec(120, 60, 255)   # свечение
+
+print("[Ядро] Реактор собран. Команды: !core help")
+entity():soundPlay("blip", 1, SND_BLIP)
+
+# ============================================================================
+#  ГОЛОГРАММЫ — создаём по одной за прогон (спавн поквотный, с ретраями)
+# ============================================================================
+timer("holo_init", 0.2, 0, function() {
+    if (!holoCanCreate()) { exit() }        # квота занята — ждём
+    try {
+        if (HoloStep == 1) {
+            holoCreate(1)  holoModel(1, M_CORE)
+            holoParent(1, entity())
+            holoColor(1, Col1)
+        }
+        elseif (HoloStep == 2) {
+            holoCreate(2)  holoModel(2, M_GLOW)
+            holoParent(2, 1)  holoAlpha(2, 60)
+        }
+        elseif (HoloStep == 3 | HoloStep == 4) {
+            holoCreate(HoloStep)  holoModel(HoloStep, M_ORBIT)
+            holoParent(HoloStep, 1)
+            holoColor(HoloStep, vec(160, 90, 255))
+            holoScale(HoloStep, vec(1.2, 1.2, 1.2))
+        }
+        elseif (HoloStep == 5) {
+            holoCreate(5)  holoModel(5, M_RING)
+            holoParent(5, 1)
+            holoColor(5, vec(70, 30, 140))
+            HoloOK = 1
+            stoptimer("holo_init")
+            print("[Ядро] Оболочка стабилизирована.")
+        }
+        HoloStep++
+    } catch (Err:string) {
+        # модель не из белого списка или временный сбой — повторим позже
+    }
+})
+
+# ============================================================================
+#  ВИЗУАЛ: пульсация, свечение, орбитальные спутники (каждый тик)
+# ============================================================================
+event tick() {
+    if (!HoloOK) { return }
+
+    # частота и амплитуда пульса зависят от состояния реактора
+    let Freq = (State == ST_ON ? 0.8 : State == ST_BOOT ? 0.5 :
+                State == ST_OVER ? 2.0 : State == ST_CRIT ? 3.5 :
+                State == ST_DEAD ? 0 : 0.25)
+    let Amp = (State == ST_CRIT ? 0.35 : State == ST_OVER ? 0.25 : 0.15)
+
+    let Phase = curtime() * Freq
+    let S = BaseScale * (1 + Amp * sin(360 * Phase))     # sin в E2 — в градусах
+    holoScale(1, vec(S, S, S))
+    holoScale(2, vec(S * 1.18, S * 1.18, S * 1.18))
+    holoScale(5, vec(S * 1.5, S * 1.5, S * 1.5))
+
+    # целевые цвета по состоянию: перегруз — янтарный, критика — красный
+    let T1 = (State == ST_CRIT ? vec(200, 30, 30) : State == ST_OVER ?
+              vec(170, 80, 40) : vec(45, 20, 90))
+    let T2 = (State == ST_CRIT ? vec(255, 60, 60) : State == ST_OVER ?
+              vec(255, 120, 30) : vec(120, 60, 255))
+    Col1 += (T1 - Col1) * 0.08                 # плавный лерп к целевому цвету
+    Col2 += (T2 - Col2) * 0.08
+    if (State == ST_OFF | State == ST_DEAD) {
+        Col1 *= 0.92  Col2 *= 0.92             # погасшее ядро затухает
+    }
+    holoColor(1, Col1)
+    holoColor(2, Col2)
+    holoAlpha(2, State == ST_CRIT ? 60 + 40 * sin(720 * Phase) : 60)
+
+    # спутники на орбите (локальные координаты — едут вместе с ядром)
+    let R = BaseScale * 14
+    holoLocalPos(3, vec( cos(360 * Phase) * R, sin(360 * Phase) * R,
+                         sin(720 * Phase) * R * 0.25))
+    holoLocalPos(4, vec(-cos(360 * Phase) * R, -sin(360 * Phase) * R,
+                        -sin(720 * Phase) * R * 0.25))
+    # экваториальное кольцо медленно крутится
+    holoAng(5, ang(20 * sin(180 * Phase), 360 * Phase * 0.3, 0))
+}
+
+# ============================================================================
+#  СИМУЛЯЦИЯ РЕАКТОРА — 10 раз в секунду
+# ============================================================================
+timer("sim", SimDt, 0, function() {
+    # фронт входа Stabilize (0 -> 1)
+    if (Stabilize & !PrevStab & State >= ST_ON) { doStabilize() }
+    PrevStab = Stabilize
+
+    let GenEff = GenRate * (Boost > 0 & State >= ST_ON ? 1.5 : 1)
+    LoadEff = BaseLoad + max(0, Load) + LoadManual
+    Gen = (State >= ST_ON ? GenEff : 0)
+
+    if (State == ST_BOOT) {
+        Energy += BootRate * SimDt
+        if (Energy >= Capacity * 0.2) {
+            State = ST_ON
+            print("[Ядро] Реактор вышел на рабочий режим.")
+        }
+    }
+    elseif (State == ST_ON | State == ST_OVER | State == ST_CRIT) {
+        # баланс: выработка минус потребление
+        Energy = clamp(Energy + (GenEff - LoadEff) * SimDt, 0, Capacity)
+
+        # блэкаут сети при полном истощении накопителя
+        if (Energy <= 0)                       { Blackout = 1 }
+        elseif (Energy >= Capacity * 0.05)     { Blackout = 0 }
+
+        # стабильность: перегруз и форсаж плавят, иначе — восстановление
+        let Sev = (GenEff > 0 ? (LoadEff - GenEff) / GenEff : 0)
+        if (Sev > 0) {
+            Stability -= Sev * 6 * SimDt
+            if (State == ST_ON) {
+                State = ST_OVER
+                print("[Ядро] ВНИМАНИЕ: нагрузка превышает выработку!")
+                entity():soundPlay("blip", 1, SND_BLIP)
+            }
+        } else {
+            Stability = min(100, Stability + 1.2 * SimDt)
+            if (State == ST_OVER & !Blackout) { State = ST_ON }
+        }
+        if (Boost > 0) { Stability -= 2 * SimDt }
+        Stability = clamp(Stability, 0, 100)
+        if (StabCd > 0) { StabCd -= SimDt }
+
+        # критическая зона -> обратный отсчёт до коллапса
+        if (Stability <= CritLevel & State != ST_CRIT) {
+            State = ST_CRIT  CollapseT = MeltdownT
+            print("[Ядро] !!! КРИТИЧЕСКАЯ ДЕСТАБИЛИЗАЦИЯ — " +
+                  MeltdownT + " с до коллапса !!!")
+        }
+        if (State == ST_CRIT) {
+            CollapseT -= SimDt
+            if (Stability > 45) {
+                State = ST_ON
+                print("[Ядро] Стабильность восстановлена.")
+            } elseif (CollapseT <= 0) {
+                doCollapse()
+            }
+        }
+    }
+
+    # выходы в провода
+    Power     = (State >= ST_ON & State <= ST_CRIT & !Blackout ? 1 : 0)
+    EnergyPct = 100 * Energy / Capacity
+    Net       = Gen - LoadEff
+    Status    = stateName(State) + (Blackout ? " + BLACKOUT" : "")
+    Alarm     = (State == ST_CRIT | State == ST_DEAD ? 1 : 0)
+})
+
+# ============================================================================
+#  ЗВУК: фоновый гул реактора + сирена при критике
+# ============================================================================
+timer("hum", 28, 0, function() {
+    if (!Muted & State != ST_OFF) {
+        entity():soundPlay("hum", 30, SND_HUM)
+        soundVolume("hum", State >= ST_ON ? 0.7 : 0.35)
+        soundPitch("hum", 100 + (State == ST_OVER ? 12 : 0)
+                          + (State == ST_CRIT ? 30 : 0)
+                          + (State == ST_BOOT ? -10 : 0))
+    }
+})
+timer("alarm", 2.2, 0, function() {
+    if (!Muted & State == ST_CRIT) {
+        entity():soundPlay("alarm", 2.4, SND_ALARM)
+    }
+})
+
+# ============================================================================
+#  СЕТЬ: широковещательная remote-таблица "citadel_grid" (1 раз в секунду)
+# ============================================================================
+timer("grid", 1, 0, function() {
+    Grid["citadel_grid", number] = 1
+    Grid["power",     number] = Power
+    Grid["pct",       number] = EnergyPct
+    Grid["stability", number] = Stability
+    Grid["gen",       number] = Gen
+    Grid["net",       number] = Net
+    Grid["status",    string] = Status
+    broadcastRemoteEvent(Grid)
+})
+
+# ============================================================================
+#  EGP-ЭКРАН (если подключён): статус-панель 2 раза в секунду
+# ============================================================================
+timer("egp", 0.5, 0, function() {
+    if (!->Screen) { exit() }               # экран не подключён проводом
+    if (!EgInit) { egpInit()  EgInit = 1 }  # при замене экрана: !core redraw
+
+    # статусная строка с цветом состояния
+    let SC = (State == ST_ON ? vec4(90, 255, 140, 255) :
+              State == ST_OVER ? vec4(255, 170, 60, 255) :
+              State >= ST_CRIT ? vec4(255, 70, 70, 255) :
+              State == ST_BOOT ? vec4(120, 180, 255, 255) :
+              vec4(150, 150, 160, 255))
+    Screen:egpSetText(3, Status)
+    Screen:egpColor(3, SC)
+
+    # заливка шкал (шкала 400 ед. от x=56, ширину/позицию пересчитываем)
+    let WE = max(1, 400 * EnergyPct / 100)
+    Screen:egpSize(8, vec2(WE, 22))
+    Screen:egpPos(8, vec2(56 + WE / 2, 195))
+    Screen:egpColor(8, (Blackout ? vec4(255, 60, 60, 255)
+                                 : vec4(140, 70, 255, 255)))
+    let WS = max(1, 400 * Stability / 100)
+    Screen:egpSize(9, vec2(WS, 22))
+    Screen:egpPos(9, vec2(56 + WS / 2, 250))
+    Screen:egpColor(9, (Stability > 60 ? vec4(90, 220, 140, 255) :
+                        Stability > CritLevel ? vec4(230, 200, 60, 255)
+                                              : vec4(255, 70, 70, 255)))
+
+    # числа
+    Screen:egpSetText(10, format("ENERGY %.0f/%.0f   GEN %.0f   NET %+.0f",
+                                 Energy, Capacity, Gen, Net))
+    Screen:egpSetText(11, format("LOAD %.0f   STABILITY %.0f%%",
+                                 LoadEff, Stability))
+})
+
+# ============================================================================
+#  ЧАТ-КОМАНДЫ (только владелец)
+# ============================================================================
+event chat(Ply:entity, Msg:string, Team:number) {
+    if (Ply != Owner) { return }
+    let Args = Msg:explode(" ")
+    if (Args[1, string] != "!core") { return }
+    hideChat(1)                                  # не засорять чат командами
+
+    let Cmd = (Args:count() >= 2 ? Args[2, string]:lower() : "")
+    let Arg3 = (Args:count() >= 3 ? Args[3, string]:toNumber() : -1)
+
+    if (Cmd == "on") {
+        if (State == ST_OFF | State == ST_DEAD) {
+            State = ST_BOOT
+            print("[Ядро] Последовательность запуска инициирована...")
+        } else {
+            print("[Ядро] Реактор уже работает (" + stateName(State) + ").")
+        }
+    }
+    elseif (Cmd == "off") {
+        if (State != ST_OFF) {
+            State = ST_OFF  Blackout = 0
+            print("[Ядро] Реактор заглушен.")
+        } else {
+            print("[Ядро] Реактор и так выключен.")
+        }
+    }
+    elseif (Cmd == "status") {
+        print("[Ядро] " + stateName(State)
+            + " | энергия " + round(Energy) + "/" + Capacity
+            + " (" + round(EnergyPct) + "%)"
+            + " | выработка " + round(Gen)
+            + " | баланс " + round(Net)
+            + " | стабильность " + round(Stability) + "%"
+            + (Blackout ? " | БЛЭКАУТ СЕТИ" : ""))
+    }
+    elseif (Cmd == "rate") {
+        if (Arg3 < 0) { print("[Ядро] Формат: !core rate 0-" + MaxGen) }
+        else {
+            GenRate = clamp(Arg3, 0, MaxGen)
+            print("[Ядро] Выработка установлена: " + round(GenRate))
+        }
+    }
+    elseif (Cmd == "load") {
+        if (Arg3 < 0) { print("[Ядро] Формат: !core load 0-500 (тест нагрузки)") }
+        else {
+            LoadManual = clamp(Arg3, 0, 500)
+            print("[Ядро] Ручная нагрузка: " + round(LoadManual))
+        }
+    }
+    elseif (Cmd == "stabilize") { doStabilize() }
+    elseif (Cmd == "mute") {
+        Muted = !Muted
+        if (Muted) { soundStop("hum")  soundStop("alarm") }
+        print("[Ядро] Звук: " + (Muted ? "ВЫКЛ" : "ВКЛ"))
+    }
+    elseif (Cmd == "scale") {
+        if (Arg3 < 0) { print("[Ядро] Формат: !core scale 1-12") }
+        else {
+            BaseScale = clamp(Arg3, 1, 12)
+            print("[Ядро] Размер оболочки: " + BaseScale)
+        }
+    }
+    elseif (Cmd == "redraw") { EgInit = 0  print("[Ядро] Экран перерисован.") }
+    elseif (Cmd == "help" | Cmd == "") {
+        print("[Ядро] on off status | rate N | load N | stabilize | " +
+              "mute | scale N | redraw")
+    }
+    else {
+        print("[Ядро] Неизвестная команда. См. !core help")
+    }
+}
+
+# --- Кнопка E на чипе: запуск/останов только для владельца -------------------
+event chipUsed(Ply:entity) {
+    if (Ply != Owner) { exit() }              # чужим — без реакции
+    if (State == ST_OFF | State == ST_DEAD) {
+        State = ST_BOOT
+        print("[Ядро] Запуск по кнопке.")
+    } else {
+        State = ST_OFF
+        print("[Ядро] Заглушено по кнопке.")
+    }
+}
+
+# --- Уборка при удалении/перекомпиляции чипа ---------------------------------
+event removed(Resetting:number) {
+    holoDeleteAll()
+    soundStop("hum")  soundStop("alarm")
+    HoloOK = 0  HoloStep = 1
+}

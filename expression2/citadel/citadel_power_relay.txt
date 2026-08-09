@@ -1,0 +1,61 @@
+@name Сетевое реле Цитадели
+@inputs
+@outputs Power EnergyPct Net Status:string
+@persist Owner:entity Online LastBeat
+@trigger none
+@strict
+@model models/props_lab/powerbox02b.mdl
+
+#[ ==========================================================================
+   СЕТЕВОЕ РЕЛЕ — пример потребителя энергии Ядра Цитадели.
+
+   Чип слушает широковещательные remote-таблицы "citadel_grid" от ядра
+   (citadel_core.txt) и отдаёт состояние сети в провода:
+     Power     — 1 = сеть под напряжением (лампы, двери, турели…)
+     EnergyPct — заряд ядра в %
+     Net       — баланс сети (выработка - нагрузка)
+     Status    — строка состояния реактора
+
+   Вотчдог: если ядро молчит дольше 4 секунд (удалено/коллапс/вне зоны),
+   Power сбрасывается — потребители обесточиваются.
+
+   Способ применения: поставь рядом с citadel_core (того же владельца),
+   подключи Power к лампам/дверям — они будут жить по законам реактора.
+   ========================================================================== ]#
+
+Owner = owner()
+Power = 0  EnergyPct = 0  Net = 0  Status = "NO GRID"
+LastBeat = 0
+print("[Реле] Ожидание сигнала 'citadel_grid'...")
+
+# --- Приём широковещательных таблиц от ядра ----------------------------------
+event remote(Sender:entity, Ply:entity, T:table) {
+    if (Ply != Owner)            { return }   # чужие сети игнорируем
+    if (!T["citadel_grid", number]) { return }   # не наша метка — игнор
+
+    Power     = T["power", number]
+    EnergyPct = T["pct", number]
+    Net       = T["net", number]
+    Status    = T["status", string] ?: "GRID"
+    LastBeat  = curtime()
+
+    if (!Online) {
+        Online = 1
+        print("[Реле] Сеть найдена: " + Status +
+              ", заряд " + round(EnergyPct) + "%")
+    }
+}
+
+# --- Вотчдог: потеря сети -> обесточить потребителей -------------------------
+timer("watchdog", 1, 0, function() {
+    if (Online & curtime() - LastBeat > 4) {
+        Online = 0
+        Power = 0  Status = "GRID LOST"
+        print("[Реле] Потеряна связь с ядром — сеть обесточена!")
+    }
+})
+
+# --- Уборка ------------------------------------------------------------------
+event removed(Resetting:number) {
+    Power = 0
+}
