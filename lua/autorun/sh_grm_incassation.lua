@@ -1136,7 +1136,7 @@ end)
 print("[GRM Incass] CLIENT: модуль Код 126 v" .. I.Version .. " загружен")
 end -- if SERVER/CLIENT
 
--- ── Серверные concommand-открывалки меню (ставим после if/else чтобы были на сервере) ──
+-- Серверные concommand-открывалки меню терминала/вольта (триггер по G)
 if SERVER then
     concommand.Add("grm_incass_term_use", function(ply)
         if not isPly(ply) then return end

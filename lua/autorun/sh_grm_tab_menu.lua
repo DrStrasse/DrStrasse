@@ -1,5 +1,8 @@
 --[[--------------------------------------------------------------------
-    GRM Tab Menu v1.8 — Полная синхронизация баланса (исправлено)
+    GRM Tab Menu v1.9 — Игровые (RP) имена вместо Steam-ников
+    v1.9: в списке и карточке игрока показывается RP-имя (NWString
+          GRM_RPName, Код 72); если RP-имени нет — фолбэк на Steam-ник;
+          исходный Steam-ник виден мелкой строкой в карточке деталей.
     v1.8: серверный fallback grm_request_bal больше не перекрывает
           обработчик ядра валюты (маркер GRM._currencyReqBalRcv)
     - Используется GRM.PlayerBalance вместо локальной _myBalance
@@ -101,9 +104,11 @@ if SERVER then
                         bal = GRM.GetBalance(ply)
                     end
                 end
+                local rpName = string.Trim(tostring(ply:GetNWString("GRM_RPName", "") or ""))
                 table.insert(players, {
                     sid64    = sid,
-                    nick     = ply:Nick(),
+                    nick     = (rpName ~= "" and rpName) or ply:Nick(),
+                    steam    = ply:Nick(),
                     rank     = getPlayerRank(ply),
                     faction  = GRM.TabMenu.ShowFaction and getPlayerFaction(ply) or "",
                     balance  = bal,
@@ -353,9 +358,11 @@ if CLIENT then
                     bal     = GRM.PlayerBalance or 0
                     showBal = true
                 end
+                local rpName = string.Trim(tostring(ply:GetNWString("GRM_RPName", "") or ""))
                 table.insert(list, {
                     sid64    = ply:SteamID64(),
-                    nick     = ply:Nick(),
+                    nick     = (rpName ~= "" and rpName) or ply:Nick(),
+                    steam    = ply:Nick(),
                     rank     = rank,
                     faction  = "",
                     balance  = bal,
@@ -580,6 +587,14 @@ if CLIENT then
         nameLbl:SetPos(68, y+2); nameLbl:SetSize(dw - 80, 20)
         nameLbl:SetText(pd.nick); nameLbl:SetFont("GRMT_Head"); nameLbl:SetTextColor(C.WHITE)
         y = y + 28
+
+        -- исходный Steam-ник (если RP-имя заменило его в списке)
+        if pd.steam and pd.steam ~= "" and pd.steam ~= pd.nick then
+            local stLbl = vgui.Create("DLabel", sp)
+            stLbl:SetPos(12, y - 4); stLbl:SetSize(dw - 24, 14)
+            stLbl:SetText("Steam: " .. pd.steam); stLbl:SetFont("GRMT_Small"); stLbl:SetTextColor(C.GREY)
+            y = y + 14
+        end
 
         local sidLbl = vgui.Create("DLabel", sp)
         sidLbl:SetPos(12, y); sidLbl:SetSize(dw - 24, 14)

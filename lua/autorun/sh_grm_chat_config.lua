@@ -7,6 +7,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Chat = GRM.Chat or {}
 
+-- Ролевые команды: sh_grm_rp_chat.lua (/me /do /it /try /roll /w /y /looc /ooc)
 GRM.Chat.Config = {
     -- ── Радиусы ──────────────────────────────────────────────
     LocalRadius = 355,
