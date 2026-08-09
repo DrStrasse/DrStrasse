@@ -1,0 +1,954 @@
+@name CMB-OS // MAINFRAME
+@inputs Screen:wirelink Text:string Entered TextUser:entity
+@outputs Online Terminals Sensors Occupied Alarm Dirty Status:string
+@persist Owner:entity Accounts:table Notes:table SensorCfg:table ManualAsp:table SwitchCfg:table
+@persist SensorEnts:table SensorHit:table SensorClear:table Occ:table Asp:table Sessions:table Terms:table TermLast:table
+@persist Configured NextNote Initialized LoadAsked RestoreActive RestoreCursor SensorCursor SaveDirty
+@persist ScreenInit ScreenMsg:string ScreenMsgUntil GridSeq
+@trigger none
+@strict
+@model models/props_combine/combine_interface001.mdl
+
+#ifndef propSpawn(svan)
+    #error CMB-OS MAINFRAME requires PropCore. Enable the propcore E2 extension.
+#endif
+#ifndef fileWrite(ss)
+    #error CMB-OS MAINFRAME requires the Files E2 extension for persistent notes and accounts.
+#endif
+#ifndef jsonEncode(t)
+    #error CMB-OS MAINFRAME requires the Serialization E2 extension.
+#endif
+#ifndef broadcastRemoteEvent(t)
+    #error CMB-OS MAINFRAME requires the Remote E2 extension.
+#endif
+#ifndef egpClear(xwl:)
+    #error CMB-OS MAINFRAME requires the EGP E2 extension.
+#endif
+#ifndef rangerOffsetHull(nvvv)
+    #error CMB-OS MAINFRAME requires the Ranger E2 extension.
+#endif
+
+#[ ============================================================================
+   CMB-OS // MAINFRAME
+
+   Центральный административный компьютер Альянса.
+   Это НОВАЯ инфраструктура, независимая от прежнего rail_core:
+     * роли, логин по PIN, заметки и журнал сообщений;
+     * база онлайн-игроков и калькулятор;
+     * до 10 удалённых терминалов CMB-OS;
+     * создание и наблюдение рельсовых датчиков;
+     * команды светофорам и стрелкам через CMB-OS SIGNAL NODE.
+
+   Физическое подключение локальной консоли:
+     Text Entry.Text    -> Text
+     Text Entry.User    -> TextUser
+     Text Entry.Entered -> Entered
+     EGP Screen         -> Screen (wirelink)
+
+   Все CMB-OS чипы одной сети должен ставить один владелец. Значение SystemID
+   ниже обязано совпадать в mainframe, terminal и signal_node.
+
+   Первое включение: владелец вводит через Text Entry:
+     BOOTSTRAP <новый-PIN>
+   Затем: LOGIN root <PIN>
+   ========================================================================== ]#
+
+# --- Общие настройки сети ------------------------------------------------------
+const SystemID = "CAOS-A01"          # поменять одинаково во ВСЕХ CMB-OS файлах
+const StoreFile = "caos_mainframe_a01.json"
+
+# --- Лимиты и параметры пути ---------------------------------------------------
+const MaxTerms = 10
+const MaxSensors = 32
+const ScanPerPulse = 8                # датчиков за 0.10 с; полный обход ~= 0.4 с
+const SensorDebounce = 2              # сколько одинаковых сканов нужно для смены
+const SensorHeight = 84               # вертикальная зона над кубом, units
+const SensorHalfWidth = 13            # полуразмер сканирующего hull, units
+const TermTimeout = 5                 # секунд без heartbeat -> терминал offline
+const SessionTime = 900               # сессия логина: 15 минут
+
+const M_SENSOR = "models/hunter/blocks/cube025x025x025.mdl"
+
+# Состояние инициализируем до объявления функций: @strict тогда не даёт
+# ложных предупреждений о доступе к таблицам из обработчиков.
+Owner = owner()
+Accounts = table()
+Notes = table()
+SensorCfg = table()
+ManualAsp = table()
+SwitchCfg = table()
+SensorEnts = table()
+SensorHit = table()
+SensorClear = table()
+Occ = table()
+Asp = table()
+Sessions = table()
+Terms = table()
+TermLast = table()
+Configured = 0
+NextNote = 1
+Initialized = 0
+LoadAsked = 0
+RestoreActive = 0
+RestoreCursor = 1
+SensorCursor = 1
+SaveDirty = 0
+ScreenInit = 0
+ScreenMsg = "BOOT: waiting for persistent storage"
+ScreenMsgUntil = 0
+GridSeq = 0
+
+# --- Вспомогательные функции ---------------------------------------------------
+function string sensorKey(I:number) {
+    return "s" + I:toString()
+}
+
+function string noteKey(I:number) {
+    return "n" + I:toString()
+}
+
+function string termKey(I:number) {
+    return "t" + I:toString()
+}
+
+function string sessionKey(Term:number, Ply:entity) {
+    return Term:toString() + "|" + Ply:steamID64()
+}
+
+function string roleName(Role:number) {
+    if (Role >= 4) { return "ROOT" }
+    if (Role == 3) { return "TECH" }
+    if (Role == 2) { return "DISPATCH" }
+    if (Role == 1) { return "GUEST" }
+    return "NONE"
+}
+
+function number roleFromWord(Name:string) {
+    let R = Name:lower()
+    if (R == "root") { return 4 }
+    if (R == "tech") { return 3 }
+    if (R == "dispatch") { return 2 }
+    if (R == "guest") { return 1 }
+    return 0
+}
+
+function string argsText(Args:array, First:number) {
+    if (Args:count() < First) { return "" }
+    return Args:concat(" ", First)
+}
+
+function setScreenMessage(Msg:string) {
+    ScreenMsg = Msg
+    ScreenMsgUntil = curtime() + 10
+}
+
+function number countSensors() {
+    let N = 0
+    for (I = 1, MaxSensors) {
+        if (SensorCfg:exists(sensorKey(I))) { N++ }
+    }
+    return N
+}
+
+function number countOccupied() {
+    let N = 0
+    for (I = 1, MaxSensors) {
+        if (Occ[sensorKey(I), number]) { N++ }
+    }
+    return N
+}
+
+function number countOnlineTerms() {
+    let N = 0
+    for (I = 1, MaxTerms) {
+        let K = termKey(I)
+        if (Terms:exists(K) & curtime() - TermLast[K, number] <= TermTimeout) { N++ }
+    }
+    return N
+}
+
+function setupEmptyData() {
+    Accounts = table()
+    Notes = table()
+    SensorCfg = table()
+    ManualAsp = table()
+    SwitchCfg = table()
+    NextNote = 1
+    Configured = 0
+}
+
+function queueSensorRestore() {
+    SensorEnts = table()
+    SensorHit = table()
+    SensorClear = table()
+    Occ = table()
+    Asp = table()
+    RestoreCursor = 1
+    RestoreActive = 1
+}
+
+function markDirty() {
+    SaveDirty = 1
+    Dirty = 1
+}
+
+function spawnSensor(I:number) {
+    let K = sensorKey(I)
+    if (!SensorCfg:exists(K)) { return }
+
+    let Old = SensorEnts[K, entity]
+    if (Old:isValid()) { Old:propDelete() }
+    if (!propCanCreate()) {
+        setScreenMessage("PROP LIMIT: sensor " + I + " queued")
+        return
+    }
+
+    let Cfg = SensorCfg[K, table]
+    let P = vec(Cfg["x", number], Cfg["y", number], Cfg["z", number])
+    try {
+        let E = propSpawn(M_SENSOR, P + vec(0, 0, 13), ang(0, 0, 0), 1)
+        E:propNotSolid(1)
+        E:propShadow(0)
+        SensorEnts[K, entity] = E
+    } catch (Err:string) {
+        print("[CMB-OS] Не удалось создать датчик " + I + ": " + Err)
+    }
+}
+
+function removeSensor(I:number) {
+    let K = sensorKey(I)
+    let E = SensorEnts[K, entity]
+    if (E:isValid()) { E:propDelete() }
+    SensorCfg:unset(K)
+    SensorEnts:unset(K)
+    SensorHit:unset(K)
+    SensorClear:unset(K)
+    Occ:unset(K)
+    Asp:unset(K)
+    ManualAsp:unset(K)
+    SwitchCfg:unset(K)
+    markDirty()
+}
+
+function scanSensor(I:number) {
+    let K = sensorKey(I)
+    if (!SensorCfg:exists(K)) { return }
+
+    let E = SensorEnts[K, entity]
+    if (!E:isValid()) {
+        spawnSensor(I)
+        return
+    }
+
+    let Cfg = SensorCfg[K, table]
+    let Height = clamp(Cfg["height", number] ?: SensorHeight, 12, 512)
+    let Width = clamp(Cfg["width", number] ?: SensorHalfWidth, 4, 64)
+
+    # Фильтр задаётся непосредственно перед trace: ranger сбрасывает его после trace.
+    rangerFilter(E)
+    let R = rangerOffsetHull(Height, E:pos() + vec(0, 0, 14),
+                             vec(0, 0, 1), vec(Width, Width, 1))
+    let Hit = R:hit()
+
+    if (Hit) {
+        SensorHit[K, number] = SensorHit[K, number] + 1
+        SensorClear[K, number] = 0
+        if (SensorHit[K, number] >= SensorDebounce & !Occ[K, number]) {
+            Occ[K, number] = 1
+            setScreenMessage("TRACK " + I + ": OCCUPIED")
+        }
+    } else {
+        SensorClear[K, number] = SensorClear[K, number] + 1
+        SensorHit[K, number] = 0
+        if (SensorClear[K, number] >= SensorDebounce & Occ[K, number]) {
+            Occ[K, number] = 0
+            setScreenMessage("TRACK " + I + ": CLEAR")
+        }
+    }
+}
+
+function refreshAspects() {
+    for (I = 1, MaxSensors) {
+        let K = sensorKey(I)
+        if (!SensorCfg:exists(K)) { continue }
+
+        if (ManualAsp:exists(K)) {
+            Asp[K, number] = ManualAsp[K, number]
+        } else {
+            let NextOcc = 0
+            if (I < MaxSensors) { NextOcc = Occ[sensorKey(I + 1), number] }
+            # Трёхзначная логика: свой блок занят -> RED, следующий -> YELLOW.
+            Asp[K, number] = (Occ[K, number] ? 0 : NextOcc ? 1 : 2)
+        }
+    }
+}
+
+function sendReply(Term:number, Actor:entity, Msg:string, Role:number) {
+    setScreenMessage(Msg)
+    let Packet = table("caos" = 1, "system" = SystemID, "kind" = "reply",
+                       "target" = Term, "actor" = Actor, "text" = Msg,
+                       "role" = Role)
+    broadcastRemoteEvent(Packet)
+}
+
+function sendTerminalControl(Term:number, Op:string, Msg:string) {
+    let Packet = table("caos" = 1, "system" = SystemID, "kind" = "term_control",
+                       "target" = Term, "op" = Op, "text" = Msg)
+    broadcastRemoteEvent(Packet)
+}
+
+function number sessionRole(Term:number, Actor:entity) {
+    let K = sessionKey(Term, Actor)
+    if (!Sessions:exists(K)) { return 0 }
+    let S = Sessions[K, table]
+    if (curtime() > S["until", number]) {
+        Sessions:unset(K)
+        return 0
+    }
+    return S["role", number]
+}
+
+function string sessionLogin(Term:number, Actor:entity) {
+    let K = sessionKey(Term, Actor)
+    if (!Sessions:exists(K)) { return "" }
+    return Sessions[K, table]["login", string]
+}
+
+function grantSession(Term:number, Actor:entity, Login:string, Role:number) {
+    let K = sessionKey(Term, Actor)
+    Sessions[K, table] = table("login" = Login, "role" = Role,
+                               "until" = curtime() + SessionTime)
+}
+
+function number requireRole(Term:number, Actor:entity, Have:number, Need:number) {
+    if (Have >= Need) { return 1 }
+    sendReply(Term, Actor, "ACCESS DENIED // required " + roleName(Need), Have)
+    return 0
+}
+
+function addNote(Author:string, Body:string) {
+    let K = noteKey(NextNote)
+    Notes[K, table] = table("author" = Author, "body" = Body,
+                            "time" = curtime())
+    NextNote++
+    markDirty()
+}
+
+function string listNotes() {
+    let Out = "NOTES:"
+    let Shown = 0
+    for (I = 1, NextNote - 1) {
+        let K = noteKey(I)
+        if (Notes:exists(K)) {
+            let N = Notes[K, table]
+            Out += "\n#" + I + " [" + N["author", string] + "] "
+                + N["body", string]:sub(1, 46)
+            Shown++
+            if (Shown >= 6) { break }
+        }
+    }
+    if (!Shown) { Out += " none" }
+    return Out
+}
+
+function string listTerms() {
+    let Out = "TERMINALS:"
+    for (I = 1, MaxTerms) {
+        let K = termKey(I)
+        let State = (Terms:exists(K) & curtime() - TermLast[K, number] <= TermTimeout
+            ? "ONLINE" : "OFFLINE")
+        Out += "\nT" + I + " " + State
+    }
+    return Out
+}
+
+function string listSensors() {
+    let Out = "SENSORS:"
+    let Shown = 0
+    for (I = 1, MaxSensors) {
+        let K = sensorKey(I)
+        if (SensorCfg:exists(K)) {
+            let Mode = (ManualAsp:exists(K) ? "MAN" : "AUTO")
+            Out += "\nS" + I + " " + (Occ[K, number] ? "OCC" : "CLEAR")
+                + " A" + Asp[K, number] + " " + Mode
+            Shown++
+            if (Shown >= 12) { Out += "\n..."  break }
+        }
+    }
+    if (!Shown) { Out += " none" }
+    return Out
+}
+
+function string listPlayers() {
+    let Plys = players()
+    let Out = "PLAYERS " + Plys:count() + ":"
+    for (I = 1, min(8, Plys:count())) {
+        let P = Plys[I, entity]
+        Out += "\n" + P:name() + " | " + teamName(P:team())
+            + " | HP " + round(P:health()) + " AR " + round(P:armor())
+            + " | " + round(P:ping()) + "ms"
+    }
+    if (Plys:count() > 8) { Out += "\n..." }
+    return Out
+}
+
+function string playerInfo(Query:string) {
+    let Needle = Query:trim():lower()
+    if (!Needle:length()) { return "FORMAT: PLAYER <name>" }
+    let Plys = players()
+    for (I = 1, Plys:count()) {
+        let P = Plys[I, entity]
+        if (P:name():lower():find(Needle)) {
+            return "PLAYER: " + P:name()
+                + "\nSTEAM: " + P:steamID()
+                + "\nTEAM: " + teamName(P:team())
+                + "\nHP " + round(P:health()) + " / AR " + round(P:armor())
+                + " / PING " + round(P:ping()) + "ms"
+        }
+    }
+    return "PLAYER NOT FOUND"
+}
+
+function string calculate(Args:array) {
+    if (Args:count() < 4) { return "FORMAT: CALC <A> <+|-|*|/|%|^> <B>" }
+    let A = Args[2, string]:toNumber()
+    let Op = Args[3, string]
+    let B = Args[4, string]:toNumber()
+    let R = 0
+
+    if (Op == "+") { R = A + B }
+    elseif (Op == "-") { R = A - B }
+    elseif (Op == "*") { R = A * B }
+    elseif (Op == "/") {
+        if (B == 0) { return "MATH ERROR: division by zero" }
+        R = A / B
+    }
+    elseif (Op == "%") {
+        if (B == 0) { return "MATH ERROR: modulo by zero" }
+        R = A % B
+    }
+    elseif (Op == "^") { R = A ^ B }
+    else { return "CALC: unknown operator" }
+
+    return format("CALC: %.4f", R)
+}
+
+function showHelp(Term:number, Actor:entity, Role:number) {
+    let Help = "COMMANDS: LOGIN/LOGOUT, WHO, PLAYER name, CALC A OP B, NOTE, MSG, TERM, SENSOR, SIGNAL, SWITCH"
+    if (Role >= 4) { Help += ", USER" }
+    sendReply(Term, Actor, Help, Role)
+}
+
+# --- Командный процессор -------------------------------------------------------
+function processCommand(Term:number, Actor:entity, Raw:string) {
+    if (!Actor:isValid() | !Actor:isPlayer()) { return }
+
+    let Clean = Raw:trim()
+    let Args = Clean:explode(" ")
+    let Op = Args[1, string]:lower()
+
+    if (Op == "" | Op == "help") {
+        showHelp(Term, Actor, sessionRole(Term, Actor))
+        return
+    }
+
+    # Первый запуск может выполнить только владелец главного компьютера.
+    if (!Configured) {
+        if (Op != "bootstrap" | Actor != Owner | Args:count() < 2) {
+            sendReply(Term, Actor, "SYSTEM NOT INITIALIZED // owner: BOOTSTRAP <PIN>", 0)
+            return
+        }
+        let Pin = Args[2, string]
+        if (Pin:length() < 4) {
+            sendReply(Term, Actor, "BOOTSTRAP: PIN must contain at least 4 characters", 0)
+            return
+        }
+        Accounts["root", table] = table("role" = 4, "hash" = hashSHA256(Pin))
+        Configured = 1
+        markDirty()
+        grantSession(Term, Actor, "root", 4)
+        sendReply(Term, Actor, "ROOT ACCOUNT CREATED // session active", 4)
+        return
+    }
+
+    if (Op == "login") {
+        if (Args:count() < 3) {
+            sendReply(Term, Actor, "FORMAT: LOGIN <account> <PIN>", 0)
+            return
+        }
+        let Login = Args[2, string]:lower()
+        if (!Accounts:exists(Login)) {
+            sendReply(Term, Actor, "LOGIN FAILED", 0)
+            return
+        }
+        let Account = Accounts[Login, table]
+        if (Account["hash", string] != hashSHA256(Args[3, string])) {
+            sendReply(Term, Actor, "LOGIN FAILED", 0)
+            return
+        }
+        let Role = Account["role", number]
+        grantSession(Term, Actor, Login, Role)
+        sendReply(Term, Actor, "ACCESS GRANTED // " + Login + " // " + roleName(Role), Role)
+        return
+    }
+
+    if (Op == "logout") {
+        Sessions:unset(sessionKey(Term, Actor))
+        sendReply(Term, Actor, "SESSION CLOSED", 0)
+        return
+    }
+
+    let Role = sessionRole(Term, Actor)
+    if (!Role) {
+        sendReply(Term, Actor, "LOGIN REQUIRED", 0)
+        return
+    }
+
+    if (Op == "whoami") {
+        sendReply(Term, Actor, "SESSION: " + sessionLogin(Term, Actor)
+            + " // " + roleName(Role), Role)
+    }
+    elseif (Op == "who" | Op == "players") {
+        sendReply(Term, Actor, listPlayers(), Role)
+    }
+    elseif (Op == "player") {
+        if (!requireRole(Term, Actor, Role, 2)) { return }
+        sendReply(Term, Actor, playerInfo(argsText(Args, 2)), Role)
+    }
+    elseif (Op == "calc") {
+        sendReply(Term, Actor, calculate(Args), Role)
+    }
+    elseif (Op == "note") {
+        let Sub = Args[2, string]:lower()
+        if (Sub == "list" | Sub == "") {
+            sendReply(Term, Actor, listNotes(), Role)
+        }
+        elseif (Sub == "read") {
+            let N = Args[3, string]:toNumber()
+            let K = noteKey(N)
+            if (!Notes:exists(K)) { sendReply(Term, Actor, "NOTE NOT FOUND", Role) }
+            else {
+                let Note = Notes[K, table]
+                sendReply(Term, Actor, "NOTE #" + N + " [" + Note["author", string]
+                    + "]\n" + Note["body", string], Role)
+            }
+        }
+        elseif (Sub == "add") {
+            if (!requireRole(Term, Actor, Role, 2)) { return }
+            let Body = argsText(Args, 3)
+            if (!Body:length()) { sendReply(Term, Actor, "FORMAT: NOTE ADD <text>", Role) }
+            else {
+                addNote(sessionLogin(Term, Actor), Body)
+                sendReply(Term, Actor, "NOTE #" + (NextNote - 1) + " SAVED", Role)
+            }
+        }
+        elseif (Sub == "del") {
+            if (!requireRole(Term, Actor, Role, 3)) { return }
+            let N = Args[3, string]:toNumber()
+            let K = noteKey(N)
+            if (!Notes:exists(K)) { sendReply(Term, Actor, "NOTE NOT FOUND", Role) }
+            else {
+                Notes:unset(K)
+                markDirty()
+                sendReply(Term, Actor, "NOTE #" + N + " DELETED", Role)
+            }
+        }
+        else { sendReply(Term, Actor, "NOTE: LIST | READ N | ADD text | DEL N", Role) }
+    }
+    elseif (Op == "msg") {
+        if (!requireRole(Term, Actor, Role, 1)) { return }
+        let TargetWord = Args[2, string]:lower()
+        let Body = argsText(Args, 3)
+        if (!Body:length()) {
+            sendReply(Term, Actor, "FORMAT: MSG <terminal|ALL> <text>", Role)
+            return
+        }
+        let Target = (TargetWord == "all" ? 0 : TargetWord:toNumber())
+        if (Target < 0 | Target > MaxTerms) {
+            sendReply(Term, Actor, "MSG: terminal must be 1-" + MaxTerms + " or ALL", Role)
+            return
+        }
+        let Packet = table("caos" = 1, "system" = SystemID, "kind" = "message",
+                           "target" = Target, "from" = sessionLogin(Term, Actor),
+                           "text" = Body)
+        broadcastRemoteEvent(Packet)
+        sendReply(Term, Actor, "MESSAGE SENT", Role)
+    }
+    elseif (Op == "term" | Op == "terminal") {
+        let Sub = Args[2, string]:lower()
+        if (Sub == "list" | Sub == "") {
+            sendReply(Term, Actor, listTerms(), Role)
+        }
+        elseif (Sub == "lock" | Sub == "unlock") {
+            if (!requireRole(Term, Actor, Role, 3)) { return }
+            let Target = Args[3, string]:toNumber()
+            if (Target < 1 | Target > MaxTerms) {
+                sendReply(Term, Actor, "TERM: id 1-" + MaxTerms, Role)
+            } else {
+                sendTerminalControl(Target, Sub, "CONTROL FROM " + sessionLogin(Term, Actor))
+                sendReply(Term, Actor, "TERMINAL " + Target + " " + Sub:upper(), Role)
+            }
+        }
+        elseif (Sub == "page") {
+            if (!requireRole(Term, Actor, Role, 2)) { return }
+            let Target = Args[3, string]:toNumber()
+            let Body = argsText(Args, 4)
+            if (Target < 1 | Target > MaxTerms | !Body:length()) {
+                sendReply(Term, Actor, "FORMAT: TERM PAGE <id> <text>", Role)
+            } else {
+                sendTerminalControl(Target, "page", Body)
+                sendReply(Term, Actor, "PAGE SENT", Role)
+            }
+        }
+        else { sendReply(Term, Actor, "TERM: LIST | LOCK id | UNLOCK id | PAGE id text", Role) }
+    }
+    elseif (Op == "sensor") {
+        if (!requireRole(Term, Actor, Role, 3)) { return }
+        let Sub = Args[2, string]:lower()
+        if (Sub == "list" | Sub == "") {
+            refreshAspects()
+            sendReply(Term, Actor, listSensors(), Role)
+        }
+        elseif (Sub == "add") {
+            let I = Args[3, string]:toNumber()
+            if (I < 1 | I > MaxSensors) {
+                sendReply(Term, Actor, "SENSOR: id 1-" + MaxSensors, Role)
+                return
+            }
+            let Trace = Actor:eyeTrace()
+            if (!Trace:hit()) {
+                sendReply(Term, Actor, "SENSOR: aim at track surface first", Role)
+                return
+            }
+            let P = Trace:pos()
+            let K = sensorKey(I)
+            SensorCfg[K, table] = table("x" = P:x(), "y" = P:y(), "z" = P:z(),
+                                        "height" = SensorHeight, "width" = SensorHalfWidth)
+            Occ[K, number] = 0
+            SensorHit[K, number] = 0
+            SensorClear[K, number] = 0
+            spawnSensor(I)
+            markDirty()
+            sendReply(Term, Actor, "SENSOR " + I + " DEPLOYED", Role)
+        }
+        elseif (Sub == "del" | Sub == "remove") {
+            let I = Args[3, string]:toNumber()
+            if (I < 1 | I > MaxSensors | !SensorCfg:exists(sensorKey(I))) {
+                sendReply(Term, Actor, "SENSOR NOT FOUND", Role)
+            } else {
+                removeSensor(I)
+                sendReply(Term, Actor, "SENSOR " + I + " REMOVED", Role)
+            }
+        }
+        else { sendReply(Term, Actor, "SENSOR: LIST | ADD id | DEL id", Role) }
+    }
+    elseif (Op == "signal") {
+        if (!requireRole(Term, Actor, Role, 2)) { return }
+        let I = Args[2, string]:toNumber()
+        let Mode = Args[3, string]:lower()
+        let K = sensorKey(I)
+        if (I < 1 | I > MaxSensors | !SensorCfg:exists(K)) {
+            sendReply(Term, Actor, "SIGNAL: configured sensor id required", Role)
+        }
+        elseif (Mode == "auto") {
+            ManualAsp:unset(K)
+            markDirty()
+            sendReply(Term, Actor, "SIGNAL " + I + " AUTO", Role)
+        }
+        else {
+            let A = (Mode == "red" ? 0 : Mode == "yellow" ? 1 : Mode == "green" ? 2 : -1)
+            if (A < 0) { sendReply(Term, Actor, "SIGNAL: AUTO | RED | YELLOW | GREEN", Role) }
+            else {
+                ManualAsp[K, number] = A
+                markDirty()
+                sendReply(Term, Actor, "SIGNAL " + I + " MANUAL " + Mode:upper(), Role)
+            }
+        }
+    }
+    elseif (Op == "switch") {
+        if (!requireRole(Term, Actor, Role, 2)) { return }
+        let I = Args[2, string]:toNumber()
+        let Mode = Args[3, string]:lower()
+        let K = sensorKey(I)
+        if (I < 1 | I > MaxSensors) {
+            sendReply(Term, Actor, "SWITCH: id 1-" + MaxSensors, Role)
+        }
+        elseif (Mode == "left" | Mode == "0") {
+            SwitchCfg[K, number] = 0
+            markDirty()
+            sendReply(Term, Actor, "SWITCH " + I + " LEFT", Role)
+        }
+        elseif (Mode == "right" | Mode == "1") {
+            SwitchCfg[K, number] = 1
+            markDirty()
+            sendReply(Term, Actor, "SWITCH " + I + " RIGHT", Role)
+        }
+        elseif (Mode == "toggle") {
+            SwitchCfg[K, number] = !SwitchCfg[K, number]
+            markDirty()
+            sendReply(Term, Actor, "SWITCH " + I + " TOGGLED", Role)
+        }
+        else { sendReply(Term, Actor, "SWITCH: LEFT | RIGHT | TOGGLE", Role) }
+    }
+    elseif (Op == "user") {
+        if (!requireRole(Term, Actor, Role, 4)) { return }
+        let Sub = Args[2, string]:lower()
+        if (Sub == "add") {
+            let Login = Args[3, string]:lower()
+            let NewRole = roleFromWord(Args[4, string])
+            let Pin = Args[5, string]
+            if (!Login:length() | !NewRole | Pin:length() < 4 | Login == "root") {
+                sendReply(Term, Actor, "FORMAT: USER ADD <non-root login> <root|tech|dispatch|guest> <PIN>", Role)
+            } else {
+                Accounts[Login, table] = table("role" = NewRole, "hash" = hashSHA256(Pin))
+                markDirty()
+                sendReply(Term, Actor, "USER " + Login + " CREATED", Role)
+            }
+        }
+        elseif (Sub == "del") {
+            let Login = Args[3, string]:lower()
+            if (Login == "root" | !Accounts:exists(Login)) {
+                sendReply(Term, Actor, "USER: root cannot be deleted", Role)
+            } else {
+                Accounts:unset(Login)
+                markDirty()
+                sendReply(Term, Actor, "USER " + Login + " DELETED", Role)
+            }
+        }
+        elseif (Sub == "pass") {
+            let Login = Args[3, string]:lower()
+            let Pin = Args[4, string]
+            if (!Accounts:exists(Login) | Pin:length() < 4) {
+                sendReply(Term, Actor, "FORMAT: USER PASS <login> <new PIN>", Role)
+            } else {
+                let Account = Accounts[Login, table]
+                Account["hash", string] = hashSHA256(Pin)
+                Accounts[Login, table] = Account
+                markDirty()
+                sendReply(Term, Actor, "PASSWORD UPDATED", Role)
+            }
+        }
+        elseif (Sub == "list" | Sub == "") {
+            let Names = Accounts:keys()
+            let Out = "USERS:"
+            for (I = 1, Names:count()) {
+                let Login = Names[I, string]
+                Out += "\n" + Login + " // " + roleName(Accounts[Login, table]["role", number])
+            }
+            sendReply(Term, Actor, Out, Role)
+        }
+        else { sendReply(Term, Actor, "USER: LIST | ADD | DEL | PASS", Role) }
+    }
+    else {
+        sendReply(Term, Actor, "UNKNOWN COMMAND // HELP", Role)
+    }
+}
+
+# --- Локальная EGP-панель mainframe -------------------------------------------
+function egpInit() {
+    Screen:egpClear()
+    Screen:egpRoundedBox(1, vec2(256, 256), vec2(490, 350))
+    Screen:egpColor(1, vec4(8, 18, 13, 255))
+    Screen:egpText(2, "CMB-OS // ALLIANCE MAINFRAME", vec2(256, 74))
+    Screen:egpAlign(2, 1, 1)
+    Screen:egpSize(2, 22)
+    Screen:egpColor(2, vec4(110, 255, 155, 255))
+    Screen:egpText(3, "BOOT", vec2(256, 112))
+    Screen:egpAlign(3, 1, 1)
+    Screen:egpSize(3, 25)
+    Screen:egpText(4, "", vec2(42, 155))
+    Screen:egpAlign(4, 0, 0)
+    Screen:egpSize(4, 16)
+    Screen:egpColor(4, vec4(185, 230, 195, 255))
+    Screen:egpTextLayout(5, "", vec2(42, 245), vec2(430, 125))
+    Screen:egpAlign(5, 0, 0)
+    Screen:egpSize(5, 15)
+    Screen:egpColor(5, vec4(110, 255, 155, 255))
+    Screen:egpText(6, "Text Entry: BOOTSTRAP <PIN> / LOGIN root <PIN>", vec2(256, 445))
+    Screen:egpAlign(6, 1, 1)
+    Screen:egpSize(6, 12)
+    Screen:egpColor(6, vec4(100, 145, 110, 255))
+}
+
+# --- Инициализация выходов и PropCore ------------------------------------------
+Online = 0
+Terminals = 0
+Sensors = 0
+Occupied = 0
+Alarm = 0
+Dirty = 0
+Status = "BOOT"
+propSpawnUndo(0)
+print("[CMB-OS] Mainframe assembled. Awaiting persistent storage.")
+
+# --- Загрузка и сохранение базы ------------------------------------------------
+timer("boot_storage", 0.35, 0, function() {
+    if (Initialized | LoadAsked) { exit() }
+    if (!fileCanLoad()) { exit() }
+    if (fileLoad(StoreFile)) {
+        LoadAsked = 1
+        print("[CMB-OS] Loading " + StoreFile)
+    }
+})
+
+event fileLoaded(Path:string, Payload:string) {
+    if (Path != StoreFile | Initialized) { exit() }
+    let Saved = jsonDecode(Payload)
+    if (jsonError() != "" | !Saved) {
+        print("[CMB-OS] Storage is invalid; creating a new database.")
+        setupEmptyData()
+        markDirty()
+    } else {
+        Accounts = Saved["accounts", table] ?: table()
+        Notes = Saved["notes", table] ?: table()
+        SensorCfg = Saved["sensors", table] ?: table()
+        ManualAsp = Saved["manual", table] ?: table()
+        SwitchCfg = Saved["switches", table] ?: table()
+        NextNote = max(1, Saved["nextnote", number])
+        Configured = Saved["configured", number]
+        print("[CMB-OS] Persistent database loaded.")
+    }
+    Initialized = 1
+    queueSensorRestore()
+}
+
+event fileErrored(Path:string, Err:number) {
+    if (Path != StoreFile | Initialized) { exit() }
+    print("[CMB-OS] Storage unavailable/new (error " + Err + "). Creating database.")
+    setupEmptyData()
+    Initialized = 1
+    queueSensorRestore()
+    markDirty()
+}
+
+timer("save_storage", 2, 0, function() {
+    if (!Initialized | !SaveDirty | !fileCanWrite()) { exit() }
+    let Saved = table("version" = 1, "configured" = Configured,
+                      "nextnote" = NextNote)
+    Saved["accounts", table] = Accounts
+    Saved["notes", table] = Notes
+    Saved["sensors", table] = SensorCfg
+    Saved["manual", table] = ManualAsp
+    Saved["switches", table] = SwitchCfg
+    let Payload = jsonEncode(Saved)
+    if (jsonError() != "") {
+        print("[CMB-OS] Storage encode error: " + jsonError())
+        exit()
+    }
+    if (fileWrite(StoreFile, Payload)) {
+        SaveDirty = 0
+        Dirty = 0
+    }
+})
+
+# --- Восстановление видимых кубов датчиков после загрузки ---------------------
+timer("restore_sensors", 0.25, 0, function() {
+    if (!Initialized | !RestoreActive) { exit() }
+    if (RestoreCursor > MaxSensors) {
+        RestoreActive = 0
+        exit()
+    }
+    let I = RestoreCursor
+    RestoreCursor++
+    if (SensorCfg:exists(sensorKey(I))) { spawnSensor(I) }
+})
+
+# --- Опрос рельсовых датчиков --------------------------------------------------
+timer("scan_tracks", 0.10, 0, function() {
+    if (!Initialized) { exit() }
+    for (_ = 1, ScanPerPulse) {
+        if (SensorCursor > MaxSensors) { SensorCursor = 1 }
+        scanSensor(SensorCursor)
+        SensorCursor++
+    }
+})
+
+# --- Рассылка состояния всем терминалам и узлам светофоров --------------------
+timer("grid", 0.25, 0, function() {
+    if (!Initialized) { exit() }
+    refreshAspects()
+    GridSeq++
+    let Packet = table("caos" = 1, "system" = SystemID, "kind" = "state",
+                       "seq" = GridSeq, "configured" = Configured,
+                       "terms" = countOnlineTerms(), "sensors" = countSensors(),
+                       "occupied" = countOccupied())
+    Packet["occ", table] = Occ:clone()
+    Packet["aspect", table] = Asp:clone()
+    Packet["switches", table] = SwitchCfg:clone()
+    broadcastRemoteEvent(Packet)
+})
+
+# --- Выходы и локальный экран --------------------------------------------------
+timer("outputs", 0.5, 0, function() {
+    Online = Initialized
+    Terminals = countOnlineTerms()
+    Sensors = countSensors()
+    Occupied = countOccupied()
+    Alarm = (Occupied > 0 ? 1 : 0)
+    Status = (!Initialized ? "BOOT / STORAGE" : !Configured ? "SETUP REQUIRED" : "ONLINE")
+
+    if (!->Screen) { exit() }
+    if (!ScreenInit) { egpInit()  ScreenInit = 1 }
+    let State = Status + " // NET " + SystemID
+    Screen:egpSetText(3, State)
+    Screen:egpColor(3, (!Initialized | !Configured ? vec4(255, 180, 65, 255)
+        : Occupied ? vec4(255, 95, 75, 255) : vec4(110, 255, 155, 255)))
+    Screen:egpSetText(4, "TERMINALS  " + Terminals + "/" + MaxTerms
+        + "\nSENSORS    " + Sensors + "/" + MaxSensors
+        + "\nOCCUPIED  " + Occupied
+        + "\nSTORAGE   " + (SaveDirty ? "PENDING WRITE" : "SYNCHRONIZED"))
+    let Message = (curtime() <= ScreenMsgUntil ? ScreenMsg :
+        "SYSTEM READY. Use Wire Text Entry for commands.\nHELP for command list.")
+    Screen:egpSetText(5, Message)
+})
+
+# --- Ввод локального Wire Text Entry ------------------------------------------
+event input(InputName:string) {
+    if (InputName == "Screen") {
+        ScreenInit = 0
+        exit()
+    }
+    if (InputName == "Entered" & Entered & TextUser:isValid()) {
+        processCommand(0, TextUser, Text)
+    }
+}
+
+# --- Радио: терминалы присылают heartbeat и команды ---------------------------
+event remote(Sender:entity, Ply:entity, T:table) {
+    if (Ply != Owner) { exit() }
+    if (!T["caos", number] | T["system", string] != SystemID) { exit() }
+
+    let Kind = T["kind", string]
+    if (Kind == "terminal_hello") {
+        let Term = T["terminal", number]
+        if (Term >= 1 & Term <= MaxTerms) {
+            let K = termKey(Term)
+            Terms[K, entity] = Sender
+            TermLast[K, number] = curtime()
+        }
+    }
+    elseif (Kind == "command") {
+        let Term = T["terminal", number]
+        let Actor = T["actor", entity]
+        if (Term >= 1 & Term <= MaxTerms) {
+            let K = termKey(Term)
+            Terms[K, entity] = Sender
+            TermLast[K, number] = curtime()
+            processCommand(Term, Actor, T["text", string])
+        }
+    }
+}
+
+# --- Резервная локальная команда владельца ------------------------------------
+event chat(Ply:entity, Msg:string, Team:number) {
+    if (Ply != Owner) { exit() }
+    let Prefix = "!caos "
+    if (Msg:sub(1, Prefix:length()):lower() != Prefix) { exit() }
+    hideChat(1)
+    processCommand(0, Ply, Msg:sub(Prefix:length() + 1))
+}
+
+# --- Уборка созданных датчиков -------------------------------------------------
+event removed(Resetting:number) {
+    propDeleteAll()
+}

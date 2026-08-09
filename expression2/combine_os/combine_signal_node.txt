@@ -1,0 +1,120 @@
+@name CMB-OS // SIGNAL NODE
+@inputs SignalID
+@outputs Red Yellow Green Switch SwitchLeft SwitchRight Occupied Aspect Online Alarm Status:string
+@persist Owner:entity LastBeat Linked OccState AspState SwitchState
+@trigger none
+@strict
+@model models/props_combine/combine_interface001.mdl
+
+#ifndef broadcastRemoteEvent(t)
+    #error CMB-OS SIGNAL NODE requires the Remote E2 extension.
+#endif
+
+#[ ============================================================================
+   CMB-OS // SIGNAL NODE
+
+   Локальный безопасный исполнитель для одного номера пути/светофора.
+
+   Подключение:
+     SignalID  <- Wire Constant (номер 1..32, как SENSOR ADD N)
+     Red       -> Wire Lamp / Wire Light красного цвета
+     Yellow    -> Wire Lamp / Wire Light жёлтого цвета
+     Green     -> Wire Lamp / Wire Light зелёного цвета
+     Switch    -> привод стрелки или логическая схема
+     SwitchLeft/SwitchRight -> раздельные линии привода (опционально)
+
+   При потере mainframe более чем на LinkTimeout все огни переходят в RED,
+   а выход стрелки сбрасывается в LEFT. Это fail-safe, а не старый rail_core.
+   ========================================================================== ]#
+
+const SystemID = "CAOS-A01"
+const MaxSensors = 32
+const LinkTimeout = 2
+
+function number signalNumber() {
+    if (!->SignalID) { return 0 }
+    let ID = round(SignalID)
+    if (ID < 1 | ID > MaxSensors) { return 0 }
+    return ID
+}
+
+function string sensorKey(I:number) {
+    return "s" + I:toString()
+}
+
+Owner = owner()
+LastBeat = 0
+Linked = 0
+OccState = 0
+AspState = 0
+SwitchState = 0
+Red = 1
+Yellow = 0
+Green = 0
+Switch = 0
+SwitchLeft = 1
+SwitchRight = 0
+Occupied = 0
+Aspect = 0
+Online = 0
+Alarm = 1
+Status = "CONFIGURE SIGNAL ID"
+print("[CMB-OS] Signal node assembled. Wire SignalID to its sensor number.")
+
+event remote(Sender:entity, Ply:entity, T:table) {
+    if (Ply != Owner) { exit() }
+    if (!T["caos", number] | T["system", string] != SystemID) { exit() }
+    if (T["kind", string] != "state") { exit() }
+
+    let ID = signalNumber()
+    if (!ID) { exit() }
+    let K = sensorKey(ID)
+    let Occupancy = T["occ", table]
+    let Aspects = T["aspect", table]
+    let Switches = T["switches", table]
+
+    OccState = Occupancy[K, number]
+    AspState = clamp(Aspects[K, number], 0, 2)
+    SwitchState = (Switches[K, number] != 0)
+    LastBeat = curtime()
+    Linked = 1
+}
+
+timer("outputs", 0.2, 0, function() {
+    let ID = signalNumber()
+    if (!ID) {
+        Linked = 0
+        Online = 0
+        Alarm = 1
+        Status = "CONFIGURE SIGNAL ID"
+    } elseif (!Linked | curtime() - LastBeat > LinkTimeout) {
+        Online = 0
+        Alarm = 1
+        Status = "FAILSAFE // LINK LOST"
+        Aspect = 0
+        Occupied = 0
+        Switch = 0
+    } else {
+        Online = 1
+        Alarm = 0
+        Status = "ONLINE // SENSOR " + ID
+        Aspect = AspState
+        Occupied = OccState
+        Switch = SwitchState
+    }
+
+    Red = (Aspect == 0)
+    Yellow = (Aspect == 1)
+    Green = (Aspect == 2)
+    SwitchLeft = !Switch
+    SwitchRight = Switch
+})
+
+event removed(Resetting:number) {
+    Red = 0
+    Yellow = 0
+    Green = 0
+    Switch = 0
+    SwitchLeft = 0
+    SwitchRight = 0
+}

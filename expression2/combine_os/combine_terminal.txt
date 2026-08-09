@@ -1,0 +1,259 @@
+@name CMB-OS // REMOTE TERMINAL
+@inputs TerminalID Screen:wirelink Text:string Entered TextUser:entity
+@outputs BlockInput Online Role Alarm Status:string
+@persist Owner:entity LastBeat Linked LockInput Configured GridTerms GridSensors GridOccupied
+@persist ScreenInit CurrentLogin:string Log1:string Log2:string Log3:string Log4:string Log5:string Log6:string
+@trigger none
+@strict
+@model models/props_combine/combine_intmonitor001.mdl
+
+#ifndef broadcastRemoteEvent(t)
+    #error CMB-OS TERMINAL requires the Remote E2 extension.
+#endif
+#ifndef egpClear(xwl:)
+    #error CMB-OS TERMINAL requires the EGP E2 extension.
+#endif
+
+#[ ============================================================================
+   CMB-OS // REMOTE TERMINAL
+
+   Удалённая консоль для CMB-OS MAINFRAME. Подключение:
+     Text Entry.Text    -> Text
+     Text Entry.User    -> TextUser
+     Text Entry.Entered -> Entered
+     TerminalID         <- Wire Constant 1..10
+     EGP Screen         -> Screen (wirelink)
+     BlockInput         -> Text Entry.Block Input (необязательно, для TERM LOCK)
+
+   Игрок нажимает E НА САМОМ Wire Text Entry: именно он передаёт User и
+   позволяет мейнфрейму вести отдельную сессию логина для реального игрока.
+
+   SystemID должен совпадать с mainframe и signal node.
+   ========================================================================== ]#
+
+const SystemID = "CAOS-A01"
+const MaxTerms = 10
+const LinkTimeout = 3
+
+# Инициализация до функций для чистой @strict-компиляции.
+Owner = owner()
+LastBeat = 0
+Linked = 0
+LockInput = 0
+Configured = 0
+GridTerms = 0
+GridSensors = 0
+GridOccupied = 0
+ScreenInit = 0
+CurrentLogin = ""
+Log1 = ""
+Log2 = ""
+Log3 = ""
+Log4 = ""
+Log5 = ""
+Log6 = "Terminal online. Waiting for mainframe."
+
+function number terminalNumber() {
+    if (!->TerminalID) { return 0 }
+    let ID = round(TerminalID)
+    if (ID < 1 | ID > MaxTerms) { return 0 }
+    return ID
+}
+
+function string roleName(R:number) {
+    if (R >= 4) { return "ROOT" }
+    if (R == 3) { return "TECH" }
+    if (R == 2) { return "DISPATCH" }
+    if (R == 1) { return "GUEST" }
+    return "LOCKED"
+}
+
+function addLog(Line:string) {
+    Log1 = Log2
+    Log2 = Log3
+    Log3 = Log4
+    Log4 = Log5
+    Log5 = Log6
+    Log6 = Line:sub(1, 82)
+}
+
+function string logText() {
+    let Out = ""
+    if (Log1:length()) { Out += Log1 + "\n" }
+    if (Log2:length()) { Out += Log2 + "\n" }
+    if (Log3:length()) { Out += Log3 + "\n" }
+    if (Log4:length()) { Out += Log4 + "\n" }
+    if (Log5:length()) { Out += Log5 + "\n" }
+    if (Log6:length()) { Out += Log6 }
+    return (Out:length() ? Out : "Awaiting command. Type HELP.")
+}
+
+# Не выводим PIN на EGP-журнал, даже если Text Entry его передал.
+function string safeCommandLog(Command:string) {
+    let Args = Command:trim():explode(" ")
+    let Op = Args[1, string]:lower()
+    let Sub = Args[2, string]:lower()
+    if (Op == "login" | Op == "bootstrap") { return "> AUTH COMMAND" }
+    if (Op == "user" & (Sub == "add" | Sub == "pass")) { return "> ACCOUNT COMMAND" }
+    return "> " + Command:sub(1, 66)
+}
+
+function egpInit() {
+    Screen:egpClear()
+    Screen:egpRoundedBox(1, vec2(256, 256), vec2(490, 350))
+    Screen:egpColor(1, vec4(8, 18, 13, 255))
+    Screen:egpText(2, "CMB-OS // REMOTE TERMINAL", vec2(256, 68))
+    Screen:egpAlign(2, 1, 1)
+    Screen:egpSize(2, 22)
+    Screen:egpColor(2, vec4(110, 255, 155, 255))
+    Screen:egpText(3, "OFFLINE", vec2(256, 104))
+    Screen:egpAlign(3, 1, 1)
+    Screen:egpSize(3, 24)
+    Screen:egpText(4, "", vec2(40, 142))
+    Screen:egpAlign(4, 0, 0)
+    Screen:egpSize(4, 15)
+    Screen:egpColor(4, vec4(185, 230, 195, 255))
+    Screen:egpTextLayout(5, "", vec2(40, 245), vec2(435, 132))
+    Screen:egpAlign(5, 0, 0)
+    Screen:egpSize(5, 14)
+    Screen:egpColor(5, vec4(110, 255, 155, 255))
+    Screen:egpText(6, "Use the attached Wire Text Entry // HELP", vec2(256, 445))
+    Screen:egpAlign(6, 1, 1)
+    Screen:egpSize(6, 12)
+    Screen:egpColor(6, vec4(100, 145, 110, 255))
+}
+
+BlockInput = 0
+Online = 0
+Role = 0
+Alarm = 1
+Status = "CONFIGURE TERMINAL ID"
+print("[CMB-OS] Remote terminal assembled. Wire TerminalID 1-10.")
+
+# Каждый терминал заявляет себя раз в секунду; мейнфрейм держит не более 10 ID.
+timer("hello", 1, 0, function() {
+    let ID = terminalNumber()
+    if (!ID) { exit() }
+    let Packet = table("caos" = 1, "system" = SystemID, "kind" = "terminal_hello",
+                       "terminal" = ID)
+    broadcastRemoteEvent(Packet)
+})
+
+# Команда приходит только по фронту Text Entry. Поле User передаёт настоящего игрока.
+event input(InputName:string) {
+    if (InputName == "Screen") {
+        ScreenInit = 0
+        exit()
+    }
+    if (InputName != "Entered" | !Entered | !TextUser:isValid()) { exit() }
+    let ID = terminalNumber()
+    if (!ID) {
+        addLog("CONFIG ERROR: wire TerminalID 1-10")
+        exit()
+    }
+    if (LockInput) {
+        addLog("TERMINAL LOCKED BY CONTROL")
+        exit()
+    }
+
+    let Command = Text:trim()
+    if (!Command:length()) { exit() }
+    let Packet = table("caos" = 1, "system" = SystemID, "kind" = "command",
+                       "terminal" = ID, "actor" = TextUser, "text" = Command)
+    broadcastRemoteEvent(Packet)
+    addLog(safeCommandLog(Command))
+}
+
+# Пакеты mainframe: общая телеметрия, ответ команде, чат и управление терминалом.
+event remote(Sender:entity, Ply:entity, T:table) {
+    if (Ply != Owner) { exit() }
+    if (!T["caos", number] | T["system", string] != SystemID) { exit() }
+
+    let Kind = T["kind", string]
+    let ID = terminalNumber()
+    if (!ID) { exit() }
+
+    if (Kind == "state") {
+        LastBeat = curtime()
+        Linked = 1
+        Configured = T["configured", number]
+        GridTerms = T["terms", number]
+        GridSensors = T["sensors", number]
+        GridOccupied = T["occupied", number]
+    }
+    elseif (Kind == "reply" & T["target", number] == ID) {
+        let ReplyRole = T["role", number]
+        Role = ReplyRole
+        if (ReplyRole > 0 & T["actor", entity]:isValid()) {
+            CurrentLogin = T["actor", entity]:name()
+        }
+        if (!ReplyRole & T["text", string] == "SESSION CLOSED") {
+            CurrentLogin = ""
+        }
+        addLog(T["text", string])
+    }
+    elseif (Kind == "message") {
+        let Target = T["target", number]
+        if (Target == 0 | Target == ID) {
+            addLog("MSG [" + T["from", string] + "]: " + T["text", string])
+        }
+    }
+    elseif (Kind == "term_control" & T["target", number] == ID) {
+        let Op = T["op", string]
+        if (Op == "lock") {
+            LockInput = 1
+            BlockInput = 1
+            addLog("CONTROL: TERMINAL LOCKED")
+        }
+        elseif (Op == "unlock") {
+            LockInput = 0
+            BlockInput = 0
+            addLog("CONTROL: TERMINAL UNLOCKED")
+        }
+        elseif (Op == "page") {
+            addLog("PAGE: " + T["text", string])
+        }
+    }
+}
+
+# Fail-safe link watchdog and EGP refresh.
+timer("display", 0.5, 0, function() {
+    let ID = terminalNumber()
+    if (!ID) {
+        Online = 0
+        Alarm = 1
+        Status = "CONFIGURE TERMINAL ID"
+    } elseif (!Linked | curtime() - LastBeat > LinkTimeout) {
+        Online = 0
+        Alarm = 1
+        Status = "MAINFRAME LINK LOST"
+    } else {
+        Online = 1
+        Alarm = 0
+        Status = (!Configured ? "MAINFRAME SETUP REQUIRED" :
+            LockInput ? "TERMINAL LOCKED" : "ONLINE")
+    }
+    BlockInput = LockInput
+
+    if (!->Screen) { exit() }
+    if (!ScreenInit) { egpInit()  ScreenInit = 1 }
+    Screen:egpSetText(3, "T" + ID + " // " + Status)
+    Screen:egpColor(3, (Alarm ? vec4(255, 90, 70, 255)
+        : LockInput ? vec4(255, 190, 60, 255) : vec4(110, 255, 155, 255)))
+    Screen:egpSetText(4, "USER       " + (CurrentLogin:length() ? CurrentLogin : "NOT LOGGED IN")
+        + "\nROLE       " + roleName(Role)
+        + "\nTERMINALS  " + GridTerms + "/" + MaxTerms
+        + "\nTRACK      " + GridSensors + " SENSORS / " + GridOccupied + " OCCUPIED")
+    Screen:egpSetText(5, logText())
+})
+
+event chat(Ply:entity, Msg:string, Team:number) {
+    if (Ply != Owner | Msg:lower() != "!caos-term clear") { exit() }
+    hideChat(1)
+    Log1 = ""
+    Log2 = ""
+    Log3 = ""
+    Log4 = ""
+    Log5 = ""
+    Log6 = "LOG CLEARED"
+}
