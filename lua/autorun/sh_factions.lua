@@ -157,7 +157,12 @@ if SERVER then
                     Tag            = f.Tag,
                     Color          = f.Color,
                     DepAccess      = f.DepAccess,
-                    LeaderRoleName = f.LeaderRoleName
+                    LeaderRoleName = f.LeaderRoleName,
+                    IncassoSettings = istable(f.IncassoSettings) and f.IncassoSettings or {
+                        Enabled = false,
+                        Roles = {},
+                        Vehicles = {},
+                    },
                 }
             end
         end
@@ -980,7 +985,8 @@ if CLIENT then
             ui.factionComboList,
             ui.factionComboRanks,
             ui.factionComboDepts,
-            ui.factionComboDepWave
+            ui.factionComboDepWave,
+            ui.factionComboIncasso,
         }
         for _, combo in ipairs(combos) do
             if IsValid(combo) then
@@ -1576,6 +1582,171 @@ if CLIENT then
     end
 
     -- ============================================================
+    -- ИНКАССАЦИЯ: ПАНЕЛЬ АДМИНКИ
+    -- ============================================================
+    function updateIncassoPanel(factionName, data)
+        if not IsValid(ui.incassoScroll) then return end
+        local scroll = ui.incassoScroll
+        scroll:Clear()
+
+        data = data or FactionsData
+        if not factionName or not data or not data[factionName] then
+            local lbl = vgui.Create("DLabel", scroll)
+            lbl:Dock(TOP) lbl:SetTall(30) lbl:SetText("Выберите фракцию")
+            lbl:SetTextColor(THEME.textDim) lbl:SetFont("Factions_Normal")
+            return
+        end
+
+        local f = data[factionName]
+        local incasso = f.IncassoSettings or { Enabled = false, Roles = {}, Vehicles = {} }
+
+        -- Раздел: Общие настройки
+        local section1 = vgui.Create("DPanel", scroll)
+        section1:Dock(TOP) section1:SetTall(80) section1:DockMargin(0, 5, 0, 10)
+        function section1:Paint(w, h)
+            draw.RoundedBox(6, 0, 0, w, h, THEME.bgLight)
+        end
+
+        local lblTitle = vgui.Create("DLabel", section1)
+        lblTitle:SetText("Инкассация: " .. factionName)
+        lblTitle:SetPos(10, 5) lblTitle:SetSize(400, 20)
+        lblTitle:SetTextColor(THEME.text) lblTitle:SetFont("Factions_Title")
+
+        local chkEnabled = vgui.Create("DCheckBoxLabel", section1)
+        chkEnabled:SetText("Включить инкассацию")
+        chkEnabled:SetPos(10, 35) chkEnabled:SetSize(200, 20)
+        chkEnabled:SetFont("Factions_Normal") chkEnabled:SetTextColor(THEME.text)
+        chkEnabled:SetValue(incasso.Enabled and true or false)
+
+        -- Раздел: Роли
+        local section2 = vgui.Create("DPanel", scroll)
+        section2:Dock(TOP) section2:SetTall(30) section2:DockMargin(0, 10, 0, 5)
+        section2.Paint = function() end
+        local lblRoles = vgui.Create("DLabel", section2)
+        lblRoles:SetText("Разрешённые роли:")
+        lblRoles:SetFont("Factions_Normal") lblRoles:SetTextColor(THEME.accent)
+
+        for _, roleName in ipairs(f.Roles or {}) do
+            local row = vgui.Create("DPanel", scroll)
+            row:Dock(TOP) row:SetTall(32) row:DockMargin(0, 2, 0, 2)
+            row.Paint = function() end
+
+            local chk = vgui.Create("DCheckBoxLabel", row)
+            chk:SetText(roleName)
+            chk:SetPos(10, 6) chk:SetSize(200, 20)
+            chk:SetFont("Factions_Normal") chk:SetTextColor(THEME.text)
+            chk:SetValue(table.HasValue(incasso.Roles or {}, roleName) and true or false)
+            chk.OnChange = function(_, val)
+                ui.incassoDirty = true
+            end
+
+            row.chk = chk
+        end
+
+        -- Раздел: Транспорт
+        local section3 = vgui.Create("DPanel", scroll)
+        section3:Dock(TOP) section3:SetTall(30) section3:DockMargin(0, 15, 0, 5)
+        section3.Paint = function() end
+        local lblVehicles = vgui.Create("DLabel", section3)
+        lblVehicles:SetText("Разрешённый транспорт (spawn name):")
+        lblVehicles:SetFont("Factions_Normal") lblVehicles:SetTextColor(THEME.accent)
+
+        ui.incassoVehicles = {}
+        for _, vehicleClass in ipairs(incasso.Vehicles or {}) do
+            local row = vgui.Create("DPanel", scroll)
+            row:Dock(TOP) row:SetTall(32) row:DockMargin(0, 2, 0, 2)
+            function row:Paint(w, h)
+                draw.RoundedBox(4, 0, 0, w, h, THEME.bgLight)
+            end
+
+            local entry = vgui.Create("DTextEntry", row)
+            entry:SetPos(10, 3) entry:SetSize(300, 26)
+            entry:SetText(vehicleClass)
+            entry:SetFont("Factions_Normal")
+
+            local btnRemove = styledButton(row, "✕", THEME.danger, THEME.dangerHover)
+            btnRemove:SetPos(320, 3) btnRemove:SetSize(30, 26)
+            btnRemove.DoClick = function()
+                row:Remove()
+                ui.incassoDirty = true
+            end
+
+            ui.incassoVehicles[#ui.incassoVehicles + 1] = { row = row, entry = entry }
+        end
+
+        -- Добавление транспорта
+        local addVehicleRow = vgui.Create("DPanel", scroll)
+        addVehicleRow:Dock(TOP) addVehicleRow:SetTall(40) addVehicleRow:DockMargin(0, 5, 0, 5)
+        addVehicleRow.Paint = function() end
+
+        local vehicleEntry = vgui.Create("DTextEntry", addVehicleRow)
+        vehicleEntry:SetPos(10, 7) vehicleEntry:SetSize(300, 26)
+        vehicleEntry:SetPlaceholderText("Введите spawn name транспорта...")
+        vehicleEntry:SetFont("Factions_Normal")
+
+        local btnAddVehicle = styledButton(addVehicleRow, "+ Добавить", THEME.success, Color(40, 160, 80))
+        btnAddVehicle:SetPos(320, 7) btnAddVehicle:SetSize(120, 26)
+        btnAddVehicle.DoClick = function()
+            local class = vehicleEntry:GetText()
+            if class == "" then return end
+            vehicleEntry:SetText("")
+            ui.incassoDirty = true
+            updateIncassoPanel(factionName, data)
+            -- Добавляем в список (без пересоздания)
+            local row = vgui.Create("DPanel", addVehicleRow)
+            row:Dock(TOP) row:SetTall(32) row:DockMargin(0, 2, 0, 2)
+            function row:Paint(w, h)
+                draw.RoundedBox(4, 0, 0, w, h, THEME.bgLight)
+            end
+            local entry = vgui.Create("DTextEntry", row)
+            entry:SetPos(10, 3) entry:SetSize(300, 26)
+            entry:SetText(class)
+            entry:SetFont("Factions_Normal")
+            local btnRemove = styledButton(row, "✕", THEME.danger, THEME.dangerHover)
+            btnRemove:SetPos(320, 3) btnRemove:SetSize(30, 26)
+            btnRemove.DoClick = function()
+                row:Remove()
+                ui.incassoDirty = true
+            end
+            ui.incassoVehicles[#ui.incassoVehicles + 1] = { row = row, entry = entry }
+        end
+
+        -- Кнопка сохранения
+        local sectionSave = vgui.Create("DPanel", scroll)
+        sectionSave:Dock(TOP) sectionSave:SetTall(50) sectionSave:DockMargin(0, 15, 0, 5)
+        sectionSave.Paint = function() end
+
+        local btnSave = styledButton(sectionSave, "Сохранить настройки инкассации", THEME.success, Color(40, 160, 80))
+        btnSave:SetPos(10, 10) btnSave:SetSize(300, 30)
+        btnSave.DoClick = function()
+            local enabled = chkEncoder:GetChecked()
+            local roles = {}
+            -- Собираем роли из чекбоксов
+            for _, child in ipairs(scroll:GetChildren()) do
+                if child.chk and child.chk:GetChecked() then
+                    roles[#roles + 1] = child.chk:GetText()
+                end
+            end
+            local vehicles = {}
+            for _, v in ipairs(ui.incassoVehicles or {}) do
+                if IsValid(v.entry) and v.entry:GetText() ~= "" then
+                    vehicles[#vehicles + 1] = v.entry:GetText()
+                end
+            end
+            net.Start("GRM_Incasso_Save")
+                net.WriteString(factionName)
+                net.WriteBool(enabled)
+                net.WriteTable(roles)
+                net.WriteTable(vehicles)
+            net.SendToServer()
+            notification.AddLegacy("Настройки инкассации сохранены", NOTIFY_GENERIC, 3)
+            ui.incassoDirty = false
+        end
+
+        ui.incassoDirty = false
+    end
+
+    -- ============================================================
     -- ОСНОВНОЕ МЕНЮ АДМИНА (FIX: запрос данных при открытии)
     -- ============================================================
     function OpenAdminMenu()
@@ -1973,6 +2144,27 @@ if CLIENT then
         depWaveScroll:Dock(FILL)
         ui.depWaveScroll = depWaveScroll
         tabs:AddSheet("Волна департамента", depWavePanel, "icon16/transmit.png")
+
+        -- Инкассация
+        local incassoPanel = vgui.Create("DPanel")
+        incassoPanel:SetPaintBackground(false) incassoPanel:DockPadding(10, 10, 10, 10)
+
+        local lblI = vgui.Create("DLabel", incassoPanel)
+        lblI:SetText("Фракция:") lblI:SetPos(10, 10) lblI:SetSize(80, 20)
+        lblI:SetFont("Factions_Normal") lblI:SetTextColor(THEME.text)
+
+        local factionComboIncasso = vgui.Create("DComboBox", incassoPanel)
+        factionComboIncasso:SetPos(100, 7) factionComboIncasso:SetSize(240, 26)
+        ui.factionComboIncasso = factionComboIncasso
+
+        local incassoScroll = vgui.Create("DScrollPanel", incassoPanel)
+        incassoScroll:SetPos(10, 42) incassoScroll:SetSize(1230, 720)
+        ui.incassoScroll = incassoScroll
+
+        factionComboIncasso.OnSelect = function(_, _, factionName)
+            getData(function(data) updateIncassoPanel(factionName, data) end)
+        end
+        tabs:AddSheet("Инкассация", incassoPanel, "icon16/money.png")
 
         -- FIX: При открытии меню запрашиваем данные с сервера (factions.json)
         timer.Simple(0.4, function()
