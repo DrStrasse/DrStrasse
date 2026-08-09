@@ -1,0 +1,338 @@
+@name ЯДРО-ДИСПЕТЧЕР
+@inputs [Occ1 Occ2 Occ3 Occ4]:number Emergency Auto TrainSpeed Kb:wirelink Screen:wirelink
+@outputs [S1 S2 S3 S4]:number BlocksOcc ActiveTrains Alarm Eta Status:string
+@persist Owner:entity On AutoOn Emg BlockLen
+@persist OccArr:array SigArr:array ManSig:array PrevOcc:array PrevK:array
+@persist HoloOK HoloStep EgInit HumLen Muted Grid:table
+@trigger none
+@strict
+@model models/props_combine/coreball.mdl
+
+#[ ==========================================================================
+   ЯДРО-ДИСПЕТЧЕР — разумный компьютер железнодорожного узла.
+   Управляет блок-участками и светофорами по классике 3-значной АБ
+   (автоматическая блокировка):
+     блок ЗАНЯТ      -> его сигнал КРАСНЫЙ (0)
+     занят СЛЕДУЮЩИЙ -> этот сигнал ЖЁЛТЫЙ (1, приближайся с осторожностью)
+     пути свободны   -> ЗЕЛЁНЫЙ (2)
+
+   ВХОДЫ:
+     Occ1..Occ4  — занятость блоков 1..4 от датчиков (0/1). Если провод
+                   не подключён — берётся радио-датчик (remote "rail_sensor").
+     Emergency   — не 0 = все сигналы в красный (провод-кнопка).
+     Auto        — провод: не 0 = автоматика. Если не подключён — из !rail auto.
+     TrainSpeed  — (опц.) скорость поезда u/s => расчёт ETA (см. BlockLen).
+     Kb          — wirelink Numpad Input: клавиши 1..4 (ручной режим) и 0 (стоп).
+     Screen      — wirelink EGP-экран: пульт диспетчера.
+
+   ВЫХОДЫ:
+     S1..S4      — аспект светофоров блоков (0/1/2) -> на светофоры.
+     BlocksOcc   — число занятых блоков.    ActiveTrains — то же (поездов на участке).
+     Alarm       — 1 при аварийном стопе.   Eta — расчётное время до блока (сек, -1 = нет данных).
+     Status      — строка состояния.
+
+   РАДИО (без проводов!): раз в секунду ядро шлёт remote-таблицу "rail_grid"
+   (аспекты, занятость, авария, ETA). Принимают светофоры (rail_signal.txt)
+   и поезда (rail_train.txt) того же владельца.
+
+   ЧАТ (владелец): !rail on off status auto estop reset blocklen N mute redraw help
+   ========================================================================== ]#
+
+# --- Настройки -----------------------------------------------------------------
+const Blocks = 4          # блок-участков (пока фиксировано 4)
+
+const M_BALL  = "models/holograms/hq_icosphere.mdl"     # оболочка-мозг
+const MAT_IN  = "models/props_combine/stasisshield_sheet"
+const MAT_OUT = "models/props_combine/portalball001_sheet"
+const SND_HUM   = "plats/talkmove2.wav"              # гул «разума»
+const SND_BLIP  = "buttons/button9.wav"
+const SND_ALARM = "ambient/alarms/klaxon1.wav"
+
+# ============================================================================
+#  ИНИЦИАЛИЗАЦИЯ
+# ============================================================================
+Owner = owner()
+if (BlockLen == 0) { BlockLen = 2000 }    # длина блока в юнитах (для ETA)
+if (AutoOn == 0)   { AutoOn = 1 }          # автоматика включена по умолчанию
+On = 0  Emg = 0  Muted = 0  Eta = -1  Alarm = 0  Status = "OFFLINE"
+OccArr  = array(0, 0, 0, 0)
+SigArr  = array(0, 0, 0, 0)   # при старте все сигналы КРАСНЫЕ (безопасность!)
+ManSig  = array(0, 0, 0, 0)
+PrevOcc = array(0, 0, 0, 0)
+PrevK   = array(0, 0, 0, 0, 0)
+HumLen  = clamp(soundDuration(SND_HUM), 2, 30)
+
+print("[Ядро-Д] Диспетчер собран. Команды: !rail help")
+
+# ============================================================================
+#  ОБОЛОЧКА-МОЗГ: два энерго-шара с ледяным голубым переливом
+# ============================================================================
+timer("holo_init", 0.2, 0, function() {
+    if (!holoCanCreate()) { exit() }
+    try {
+        if (HoloStep == 1) {
+            holoCreate(1)  holoModel(1, M_BALL)
+            holoParent(1, entity())
+            holoMaterial(1, MAT_IN)
+        }
+        elseif (HoloStep == 2) {
+            holoCreate(2)  holoModel(2, M_BALL)
+            holoParent(2, 1)
+            holoMaterial(2, MAT_OUT)
+            holoAlpha(2, 130)
+            HoloOK = 1
+            stoptimer("holo_init")
+            print("[Ядро-Д] Мыслительная оболочка активна.")
+        }
+        HoloStep++
+    } catch (Err:string) { }
+})
+
+event tick() {
+    if (!HoloOK) { exit() }
+    let Freq = (On ? (Alarm ? 2.5 : 0.6) : 0.2)
+    let Phase = curtime() * Freq
+    let S = 5 * (1 + 0.15 * sin(360 * Phase))
+    holoScale(1, vec(S, S, S))
+    holoScale(2, vec(S * 1.5, S * 1.5, S * 1.5))
+
+    # оттенок: ледяной голубой, дышащий 160<->210°; авария — красный
+    let Hue = (Alarm ? 0 : 185 + 25 * sin(curtime() * 20))
+    let Bright = (!On ? 0.12 : Alarm ? 0.8 + 0.2 * sin(720 * Phase) : 1)
+    holoColor(1, hsv2rgb(Hue, 1, Bright))
+    holoColor(2, hsv2rgb((Hue + 20) % 360, 1, Bright * 0.9))
+    holoAlpha(2, Alarm ? 120 + 80 * sin(720 * Phase) : 130)
+}
+
+# ============================================================================
+#  EGP-ПУЛЬТ ДИСПЕТЧЕРА
+# ============================================================================
+function egpInit() {
+    Screen:egpClear()
+    Screen:egpRoundedBox(1, vec2(256, 256), vec2(470, 340))
+    Screen:egpColor(1, vec4(12, 12, 20, 255))
+    Screen:egpText(2, "RAIL CORE // TRAIN DISPATCHER", vec2(256, 100))
+    Screen:egpAlign(2, 1, 1)  Screen:egpSize(2, 20)
+    Screen:egpColor(2, vec4(90, 190, 255, 255))
+    Screen:egpText(3, "OFFLINE", vec2(256, 130))
+    Screen:egpAlign(3, 1, 1)  Screen:egpSize(3, 26)
+    # строки блоков: метка + лампа занятости + лампа сигнала (id 10+)
+    for (I = 1, Blocks) {
+        let Y = 160 + (I - 1) * 40
+        let B = 10 + (I - 1) * 3
+        Screen:egpText(B, "BLOCK " + I, vec2(60, Y))
+        Screen:egpAlign(B, 0, 1)  Screen:egpSize(B, 17)
+        Screen:egpCircle(B + 1, vec2(230, Y), vec2(12, 12))
+        Screen:egpCircle(B + 2, vec2(340, Y), vec2(12, 12))
+    }
+    Screen:egpText(30, "", vec2(256, 350))   Screen:egpAlign(30, 1, 1)
+    Screen:egpSize(30, 17)
+    Screen:egpText(31, "grid: rail_grid // !rail help", vec2(256, 400))
+    Screen:egpAlign(31, 1, 1)  Screen:egpSize(31, 12)
+    Screen:egpColor(31, vec4(110, 110, 130, 255))
+}
+
+function vector4 sigColor(A) {
+    if (A == 2) { return vec4(90, 255, 140, 255) }
+    if (A == 1) { return vec4(255, 210, 40, 255) }
+    return vec4(255, 70, 70, 255)
+}
+
+timer("egp", 0.5, 0, function() {
+    if (!->Screen) { exit() }
+    if (!EgInit) { egpInit()  EgInit = 1 }
+    Screen:egpSetText(3, Status)
+    Screen:egpColor(3, (Alarm ? vec4(255, 70, 70, 255) :
+                        On ? vec4(90, 255, 140, 255) : vec4(150, 150, 160, 255)))
+    for (I = 1, Blocks) {
+        let B = 10 + (I - 1) * 3
+        Screen:egpColor(B + 1, (OccArr[I, number]
+            ? vec4(230, 60, 60, 255) : vec4(60, 60, 75, 255)))
+        Screen:egpColor(B + 2, sigColor(SigArr[I, number]))
+    }
+    Screen:egpSetText(30, format("TRAINS %d   ETA %s   AUTO %s   ESTOP %s",
+        ActiveTrains, (Eta >= 0 ? format("%.0f", Eta) : "--"),
+        (AutoOn ? "ON" : "OFF"), (Emg ? "ON" : "OFF")))
+})
+
+# ============================================================================
+#  МОЗГ: 2 раза в секунду
+# ============================================================================
+timer("sim", 0.5, 0, function() {
+    # 0) эффективные режимы
+    let AutoEff = (->Auto ? (Auto != 0) : AutoOn)
+    let EmgEff  = (Emergency | Emg)
+
+    # 1) занятость: проводные входы имеют приоритет; иначе — радио уже записало
+    if (->Occ1) { OccArr[1, number] = (Occ1 != 0) }
+    if (->Occ2) { OccArr[2, number] = (Occ2 != 0) }
+    if (->Occ3) { OccArr[3, number] = (Occ3 != 0) }
+    if (->Occ4) { OccArr[4, number] = (Occ4 != 0) }
+
+    # фронт занятости -> объявление
+    for (I = 1, Blocks) {
+        if (OccArr[I, number] & !PrevOcc[I, number]) {
+            print("[Ядро-Д] Блок " + I + " ЗАНЯТ. Сигнал закрыт.")
+            if (!Muted) { entity():soundPlay("blipo", 1, SND_BLIP) }
+        }
+        PrevOcc[I, number] = OccArr[I, number]
+    }
+
+    # 2) ручное управление с numpad (1..4 — аспект блока, 0 — аварийный стоп)
+    if (->Kb) {
+        let Names = array("1", "2", "3", "4", "0")
+        for (I = 1, Blocks) {
+            let V = Kb[Names[I, string], number]
+            if (V & !PrevK[I, number]) {
+                ManSig[I, number] = (ManSig[I, number] + 1) % 3
+                print("[Ядро-Д] Ручной: сигнал блока " + I + " = " + ManSig[I, number])
+            }
+            PrevK[I, number] = V
+        }
+        let V0 = Kb["0", number]
+        if (V0 & !PrevK[5, number]) { Emg = !Emg  print("[Ядро-Д] Е-стоп: " + Emg) }
+        PrevK[5, number] = V0
+    }
+
+    # 3) аспекты сигналов
+    if (EmgEff | !On) {
+        for (I = 1, Blocks) { SigArr[I, number] = 0 }   # все в красный
+    } elseif (AutoEff) {
+        # 3-значная автоблокировка
+        for (I = 1, Blocks) {
+            if (OccArr[I, number]) {
+                SigArr[I, number] = 0
+            } elseif (I < Blocks & OccArr[I + 1, number]) {
+                SigArr[I, number] = 1
+            } else {
+                SigArr[I, number] = 2
+            }
+        }
+    } else {
+        for (I = 1, Blocks) { SigArr[I, number] = ManSig[I, number] }
+    }
+
+    # 4) выходы
+    S1 = SigArr[1, number]  S2 = SigArr[2, number]
+    S3 = SigArr[3, number]  S4 = SigArr[4, number]
+    BlocksOcc = 0
+    for (I = 1, Blocks) { BlocksOcc += OccArr[I, number] }
+    ActiveTrains = BlocksOcc
+    Alarm = (EmgEff ? 1 : 0)
+    Status = (!On ? "OFFLINE" : Alarm ? "EMERGENCY STOP" : "ONLINE")
+
+    # 5) простой расчёт ETA по скорости, если провод TrainSpeed подключён
+    if (->TrainSpeed & TrainSpeed > 5) {
+        Eta = BlockLen / TrainSpeed
+    } else { Eta = -1 }
+})
+
+# ============================================================================
+#  РАДИО-КАНАЛ
+# ============================================================================
+timer("grid", 1, 0, function() {
+    Grid["rail_grid",  number] = 1
+    Grid["emergency",  number] = Alarm
+    Grid["eta",        number] = Eta
+    Grid["status",     string] = Status
+    Grid["sig", array]  = array(SigArr[1, number], SigArr[2, number],
+                                SigArr[3, number], SigArr[4, number])
+    Grid["occ", array]  = array(OccArr[1, number], OccArr[2, number],
+                                OccArr[3, number], OccArr[4, number])
+    broadcastRemoteEvent(Grid)
+})
+
+# приём от радио-датчиков: светофор-датчики пишут занятость сюда
+event remote(Sender:entity, Ply:entity, T:table) {
+    if (Ply != Owner) { exit() }
+    if (!T["rail_sensor", number]) { exit() }
+    let B = T["block", number]
+    if (B >= 1 & B <= Blocks) {
+        OccArr[B, number] = (T["occ", number] != 0)
+    }
+}
+
+# ============================================================================
+#  ЗВУК
+# ============================================================================
+timer("hum", HumLen, 0, function() {
+    if (!Muted & On) {
+        entity():soundPlay("hum", HumLen + 1, SND_HUM)
+        soundVolume("hum", Alarm ? 0.9 : 0.6)
+        soundPitch("hum", Alarm ? 125 : 100)
+    }
+})
+timer("alarm", 2.2, 0, function() {
+    if (!Muted & Alarm) { entity():soundPlay("alarm", 2.4, SND_ALARM) }
+})
+
+# ============================================================================
+#  ЧАТ-КОМАНДЫ (владелец)
+# ============================================================================
+event chat(Ply:entity, Msg:string, Team:number) {
+    if (Ply != Owner) { exit() }
+    let Args = Msg:explode(" ")
+    if (Args[1, string] != "!rail") { exit() }
+    hideChat(1)
+
+    let Cmd  = (Args:count() >= 2 ? Args[2, string]:lower() : "")
+    let Arg3 = (Args:count() >= 3 ? Args[3, string]:toNumber() : -1)
+
+    if (Cmd == "on") {
+        On = 1
+        print("[Ядро-Д] Диспетчер ВКЛЮЧЁН. Автоблокировка активна: " + AutoOn)
+    }
+    elseif (Cmd == "off") {
+        On = 0
+        print("[Ядро-Д] Диспетчер выключен. Все сигналы — КРАСНЫЕ.")
+    }
+    elseif (Cmd == "status") {
+        print("[Ядро-Д] " + Status
+            + " | занято блоков: " + BlocksOcc
+            + " | сигналы: " + S1 + S2 + S3 + S4   # 0к 1ж 2з
+            + " | авто: " + AutoOn + " | е-стоп: " + Emg
+            + " | ETA: " + (Eta >= 0 ? round(Eta) + " с" : "нет данных"))
+    }
+    elseif (Cmd == "auto") {
+        AutoOn = !AutoOn
+        print("[Ядро-Д] Автоматика: " + (AutoOn ? "ВКЛ" : "ВЫКЛ (ручной режим, numpad)"))
+    }
+    elseif (Cmd == "estop") {
+        Emg = !Emg
+        print("[Ядро-Д] АВАРИЙНЫЙ СТОП: " + (Emg ? "ВКЛ — все красные!" : "снят"))
+    }
+    elseif (Cmd == "reset") {
+        Emg = 0
+        OccArr = array(0, 0, 0, 0)
+        print("[Ядро-Д] Сброс: е-стоп снят, занятость очищена.")
+    }
+    elseif (Cmd == "blocklen") {
+        if (Arg3 <= 0) { print("[Ядро-Д] Формат: !rail blocklen <юнитов, сейчас " + BlockLen + ">") }
+        else { BlockLen = Arg3  print("[Ядро-Д] Длина блока: " + BlockLen) }
+    }
+    elseif (Cmd == "mute") {
+        Muted = !Muted
+        if (Muted) { soundStop("hum")  soundStop("alarm") }
+        print("[Ядро-Д] Звук: " + (Muted ? "ВЫКЛ" : "ВКЛ"))
+    }
+    elseif (Cmd == "redraw") { EgInit = 0  print("[Ядро-Д] Пульт перерисован.") }
+    elseif (Cmd == "help" | Cmd == "") {
+        print("[Ядро-Д] on off status | auto | estop | reset | blocklen N | mute | redraw")
+    }
+    else {
+        print("[Ядро-Д] Неизвестная команда. См. !rail help")
+    }
+}
+
+# --- E на чипе: вкл/выкл диспетчера -------------------------------------------
+event chipUsed(Ply:entity) {
+    if (Ply != Owner) { exit() }
+    On = !On
+    print("[Ядро-Д] Диспетчер: " + (On ? "ВКЛ" : "ВЫКЛ (все красные)"))
+}
+
+event removed(Resetting:number) {
+    holoDeleteAll()
+    soundStop("hum")  soundStop("alarm")
+    HoloOK = 0  HoloStep = 1
+}

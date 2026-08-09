@@ -1,0 +1,110 @@
+@name Рельсовый поезд (звено ядра)
+@inputs Active
+@outputs Run MaxSpeed Obstacle Alarm Dist Block
+@persist Owner:entity BlockID LastBeat Linked NoLinkNote
+@persist PrevOcc
+@trigger none
+@strict
+
+#[ ==========================================================================
+   ЗВЕНО РЕЛЬСОВОГО ПОЕЗДА — чип-приёмник для пропового поезда.
+   Слушает ядро-диспетчер по радио (rail_grid, тот же владелец) и отдаёт
+   разрешения на движение в провода:
+
+     Run      — 1 = можно двигаться (аспект жёлтый или зелёный, нет аварии,
+                активен, путь впереди чист). 0 = СТОП.
+     MaxSpeed — 100 (зелёный) / 40 (жёлтый) / 0 (красный/авария/нет связи).
+                Подай на вход Force трaстера напрямую или через гейты.
+     Obstacle — 1 = собственный глаз видит препятствие ВПЕРЕДИ (луч по ходу).
+     Alarm    — 1 = аварийный стоп от ядра или потеря связи (>4 с).
+     Dist     — дистанция до препятствия впереди (юниты, -1 = чисто).
+
+     Active   — вход: 0 = стоянка (спит). Не подключён — считается ВКЛ.
+
+   Блок, К КОТОРОМУ привязан поезд: !train block N (совпадает со светофором).
+   Направление луча-глаза: ВПЕРЁД по оси чипа (entity():forward()) — поставь
+   чип носом по ходу движения! Сам чип и объект сварки из луча исключены.
+
+   ЧАТ (владелец): !train block N status
+   ========================================================================== ]#
+
+const EyeRange  = 350      # дальность глаза вперёд (юнитов)
+const EyeUp     = 15       # высота луча над чипом
+
+Owner = owner()
+Run = 0  MaxSpeed = 0  Obstacle = 0  Alarm = 0  Dist = -1
+Block = BlockID
+# из луча исключаем сам чип и то, к чему он приварен (вагон)
+rangerFilter(array(entity(), entity():isWeldedTo()))
+
+print("[Поезд] Звено готово. Блок: " +
+      (BlockID > 0 ? BlockID : "НЕ ЗАДАН (!train block 1-4)"))
+
+# --- Глаз препятствий: каждые 0.25 с ------------------------------------------
+timer("eye", 0.25, 0, function() {
+    let E = entity()
+    let R = rangerOffset(EyeRange, E:pos() + vec(0, 0, EyeUp), E:forward())
+    Obstacle = (R:hit() & R:entity():isValid())
+    Dist = (Obstacle ? R:distance() : -1)
+    if (Obstacle & !PrevOcc) {
+        print("[Поезд] Препятствие впереди! " + round(Dist) + " ед. — СТОП.")
+    }
+    PrevOcc = Obstacle
+})
+
+# --- Радио от ядра: аспекты моего блока + авария ------------------------------
+event remote(Sender:entity, Ply:entity, T:table) {
+    if (Ply != Owner) { exit() }
+    if (!T["rail_grid", number]) { exit() }
+    LastBeat = curtime()
+    if (!Linked) {
+        Linked = 1
+        print("[Поезд] Связь с ядром-диспетчером установлена.")
+    }
+    if (BlockID > 0) {
+        let Sig = T["sig", array]
+        let A = Sig[BlockID, number]
+        if (T["emergency", number]) { A = 0 }
+        let ActEff = (->Active ? Active : 1)
+        Run      = (A >= 1 & ActEff & !Obstacle)
+        MaxSpeed = (A == 2 ? 100 : A == 1 ? 40 : 0)
+        Alarm    = T["emergency", number]
+    }
+}
+
+# --- Вотчдог связи: ядро молчит > 4 с -> стоянка ------------------------------
+timer("watchdog", 1, 0, function() {
+    if (Linked & curtime() - LastBeat > 4) {
+        Linked = 0  Run = 0  MaxSpeed = 0  Alarm = 1
+        print("[Поезд] Связь с ядром потеряна — стоянка!")
+        NoLinkNote = 1
+    }
+})
+
+# --- Чат ----------------------------------------------------------------------
+event chat(Ply:entity, Msg:string, Team:number) {
+    if (Ply != Owner) { exit() }
+    let Args = Msg:explode(" ")
+    if (Args[1, string] != "!train") { exit() }
+    hideChat(1)
+    let Cmd = (Args:count() >= 2 ? Args[2, string]:lower() : "")
+    let N   = (Args:count() >= 3 ? Args[3, string]:toNumber() : 0)
+
+    if (Cmd == "block") {
+        if (N >= 1 & N <= 4) {
+            BlockID = N  Block = N
+            print("[Поезд] Мой блок: " + N)
+        } else { print("[Поезд] Формат: !train block 1-4") }
+    }
+    elseif (Cmd == "status" | Cmd == "") {
+        print("[Поезд] блок " + BlockID + " | Run " + Run
+            + " | MaxSpeed " + MaxSpeed
+            + " | препятствие " + Obstacle + " (" + round(Dist) + ")"
+            + " | связь " + Linked + " | авария " + Alarm)
+    }
+    else { print("[Поезд] Команды: block N | status") }
+}
+
+event removed(Resetting:number) {
+    Run = 0  MaxSpeed = 0
+}

@@ -1,0 +1,135 @@
+@name Рельсовый светофор+датчик
+@inputs Aspect
+@outputs Red Yellow Green Occupied Block
+@persist Owner:entity BlockID AspRem Muted HoloOK PrevAsp PrevOcc
+@trigger none
+@strict
+
+#[ ==========================================================================
+   РЕЛЬСОВЫЙ СВЕТОФОР со встроенным датчиком занятости пути.
+   Две роли в одном чипе:
+
+   1) СВЕТОФОР. Аспект 0/1/2 (красный/жёлтый/зелёный) берёт:
+      - из провода Aspect (от ядра S1..S4), ЕСЛИ он подключён;
+      - иначе — по радио из rail_grid от ядра-диспетчера (тот же владелец),
+        по номеру блока из `!sig block N`.
+      Лампочки: выходы Red/Yellow/Green -> на wire-лампы, плюс своя
+      голограмма-огонёк над чипом (меняет цвет сама).
+
+   2) ДАТЧИК ЗАНЯТОСТИ ПУТИ. Каждые 0.25 с чип стреляет невидимым лучом
+      ВПРАВО от себя (entity():right()) на высоте SensorUp над полотном.
+      Попал любой проп/поезд -> блок занят. Занятость:
+      - выходит проводом Occupied (подключи к ядру Occ1..Occ4),
+      - летит по радио в ядро (remote "rail_sensor", блок из !sig block N).
+      Луч виден при отладке: rangerDefaultZero? Нет — см. !sig test.
+      Чип сам из луча исключён. Привари рядом с путями, "правый" бок — вдоль пути!
+
+   ЧАТ (владелец): !sig block N mute status
+   ========================================================================== ]#
+
+const SensorRange = 140     # длина луча датчика (поперёк путей)
+const SensorUp    = 20      # высота луча над чипом
+
+Owner = owner()
+if (BlockID > 4 | BlockID < 0) { BlockID = 0 }
+Aspect = 0
+Red = 1  Yellow = 0  Green = 0
+Occupied = 0  Block = BlockID
+rangerFilter(array(entity()))          # себя из луча исключаем
+
+print("[Свет] Светофор готов. Блок: " +
+      (BlockID > 0 ? BlockID : "НЕ ЗАДАН (!sig block 1-4)"))
+
+# --- Голограмма-огонёк над чипом --------------------------------------------
+timer("holo_init", 0.3, 0, function() {
+    if (!holoCanCreate()) { exit() }
+    try {
+        holoCreate(1)
+        holoModel(1, "models/holograms/hq_icosphere.mdl")
+        holoParent(1, entity())
+        holoLocalPos(1, vec(0, 0, 55))
+        holoScale(1, vec(3, 3, 3))
+        HoloOK = 1
+        stoptimer("holo_init")
+    } catch (Err:string) { }
+})
+
+# --- Аспект -> лампы/голограмма ----------------------------------------------
+timer("sig", 0.2, 0, function() {
+    let A = (->Aspect ? Aspect : AspRem)      # провод приоритетнее радио
+    Red    = (A == 0)
+    Yellow = (A == 1)
+    Green  = (A == 2)
+    if (HoloOK) {
+        holoColor(1, A == 2 ? vec(60, 255, 120) :
+                     A == 1 ? vec(255, 200, 40) : vec(255, 60, 60))
+    }
+    if (A != PrevAsp) {
+        PrevAsp = A
+        if (!Muted) { entity():soundPlay("clk", 0.5, "buttons/button9.wav") }
+    }
+})
+
+# --- Датчик занятости: луч ВПРАВО от чипа -------------------------------------
+timer("sensor", 0.25, 0, function() {
+    let E = entity()
+    let R = rangerOffset(SensorRange, E:pos() + vec(0, 0, SensorUp), E:right())
+    let Occ = (R:hit() & R:entity():isValid())
+    if (Occ != PrevOcc) {
+        PrevOcc = Occ  Occupied = Occ
+        if (BlockID > 0) {                 # по радио — ядру
+            broadcastRemoteEvent(table("rail_sensor" = 1,
+                "block" = BlockID, "occ" = Occ))
+        }
+        if (!Muted) { entity():soundPlay("clk2", 0.5, "buttons/button9.wav") }
+    }
+})
+
+# heartbeat: каждые 2 с продлеваем отметку у ядра (на случай потери фронта)
+timer("hb", 2, 0, function() {
+    if (BlockID > 0) {
+        broadcastRemoteEvent(table("rail_sensor" = 1,
+            "block" = BlockID, "occ" = Occupied))
+    }
+})
+
+# --- Радио от ядра (когда провод Aspect не подключён) -------------------------
+event remote(Sender:entity, Ply:entity, T:table) {
+    if (Ply != Owner) { exit() }
+    if (!T["rail_grid", number]) { exit() }
+    if (->Aspect | BlockID == 0) { exit() }        # есть провод — радио не надо
+    let Sig = T["sig", array]
+    AspRem = Sig[BlockID, number]
+    if (T["emergency", number]) { AspRem = 0 }     # авария — всем красный
+}
+
+# --- Чат ---------------------------------------------------------------------
+event chat(Ply:entity, Msg:string, Team:number) {
+    if (Ply != Owner) { exit() }
+    let Args = Msg:explode(" ")
+    if (Args[1, string] != "!sig") { exit() }
+    hideChat(1)
+    let Cmd = (Args:count() >= 2 ? Args[2, string]:lower() : "")
+    let N   = (Args:count() >= 3 ? Args[3, string]:toNumber() : 0)
+
+    if (Cmd == "block") {
+        if (N >= 1 & N <= 4) {
+            BlockID = N  Block = N
+            print("[Свет] Мой блок теперь: " + N)
+        } else { print("[Свет] Формат: !sig block 1-4") }
+    }
+    elseif (Cmd == "mute") {
+        Muted = !Muted
+        print("[Свет] Звук: " + (Muted ? "ВЫКЛ" : "ВКЛ"))
+    }
+    elseif (Cmd == "status" | Cmd == "") {
+        print("[Свет] блок " + BlockID + " | аспект " + (->Aspect ? Aspect : AspRem)
+            + " | занятость " + Occupied
+            + " | канал: " + (->Aspect ? "провод" : "радио"))
+    }
+    else { print("[Свет] Команды: block N | mute | status") }
+}
+
+event removed(Resetting:number) {
+    holoDeleteAll()
+}
