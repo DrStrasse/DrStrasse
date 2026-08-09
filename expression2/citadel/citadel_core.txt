@@ -3,7 +3,7 @@
 @outputs Power Energy EnergyPct Stability Gen Net Status:string Alarm
 @persist Owner:entity State GenRate LoadManual LoadEff BaseScale
 @persist Blackout CollapseT StabCd Muted HoloOK HoloStep EgInit PrevStab
-@persist Col1:vector Col2:vector Grid:table
+@persist Grid:table HumLen
 @trigger none
 @strict
 @model models/props_combine/coreball.mdl
@@ -52,14 +52,15 @@ const ST_OVER = 3   # перегрузка (нагрузка > выработк�
 const ST_CRIT = 4   # обратный отсчёт до коллапса
 const ST_DEAD = 5   # коллапс
 
-# --- Модели голограмм (все из стандартного «белого» списка Wiremod) -----------
-const M_CORE  = "models/holograms/hq_icosphere.mdl"   # тёмное ядро
-const M_GLOW  = "models/holograms/hq_icosphere.mdl"   # свечение
-const M_ORBIT = "models/holograms/hq_sphere.mdl"      # спутники
-const M_RING  = "models/holograms/hq_torus_thin.mdl"  # кольцо
+# --- Оболочка: два вложенных энерго-шара (модель из белого списка) ------------
+const M_BALL  = "models/holograms/hq_icosphere.mdl"
+# материал внутреннего шара (стазис-щит Альянса)
+const MAT_IN  = "models/props_combine/stasisshield_sheet"
+# материал внешнего шара (портальная энергия), внешний шар ровно в 1.5 раза больше
+const MAT_OUT = "models/props_combine/portalball001_sheet"
 
 # --- Звуки (стандартный контент HL2, монтируется всегда) ----------------------
-const SND_HUM   = "ambient/levels/citadel/citadel_hub_ambient1.mp3"
+const SND_HUM   = "plats/talkmove2.wav"
 const SND_ALARM = "ambient/alarms/klaxon1.wav"
 const SND_BOOM  = "ambient/explosions/explode_1.wav"
 const SND_FLASH = "ambient/energy/whiteflash.wav"
@@ -156,8 +157,7 @@ State     = ST_OFF
 Energy    = 0        Stability = 100      Blackout = 0
 Gen       = 0        Net = 0              Power = 0    Alarm = 0
 Status    = "OFFLINE"
-Col1 = vec(45, 20, 90)     # тёмная материя
-Col2 = vec(120, 60, 255)   # свечение
+HumLen = clamp(soundDuration(SND_HUM), 2, 30)   # длительность гула для цикла
 
 print("[Ядро] Реактор собран. Команды: !core help")
 entity():soundPlay("blip", 1, SND_BLIP)
@@ -169,31 +169,24 @@ timer("holo_init", 0.2, 0, function() {
     if (!holoCanCreate()) { exit() }        # квота занята — ждём
     try {
         if (HoloStep == 1) {
-            holoCreate(1)  holoModel(1, M_CORE)
+            holoCreate(1)                       # внутренний шар (стазис-щит)
+            holoModel(1, M_BALL)
             holoParent(1, entity())
-            holoColor(1, Col1)
+            holoMaterial(1, MAT_IN)
         }
         elseif (HoloStep == 2) {
-            holoCreate(2)  holoModel(2, M_GLOW)
-            holoParent(2, 1)  holoAlpha(2, 60)
-        }
-        elseif (HoloStep == 3 | HoloStep == 4) {
-            holoCreate(HoloStep)  holoModel(HoloStep, M_ORBIT)
-            holoParent(HoloStep, 1)
-            holoColor(HoloStep, vec(160, 90, 255))
-            holoScale(HoloStep, vec(1.2, 1.2, 1.2))
-        }
-        elseif (HoloStep == 5) {
-            holoCreate(5)  holoModel(5, M_RING)
-            holoParent(5, 1)
-            holoColor(5, vec(70, 30, 140))
+            holoCreate(2)                       # внешний шар x1.5 (портал)
+            holoModel(2, M_BALL)
+            holoParent(2, 1)
+            holoMaterial(2, MAT_OUT)
+            holoAlpha(2, 130)
             HoloOK = 1
             stoptimer("holo_init")
             print("[Ядро] Оболочка стабилизирована.")
         }
         HoloStep++
     } catch (Err:string) {
-        # модель не из белого списка или временный сбой — повторим позже
+        # модель/материал недоступны или временный сбой — повторим позже
     }
 })
 
@@ -211,32 +204,23 @@ event tick() {
 
     let Phase = curtime() * Freq
     let S = BaseScale * (1 + Amp * sin(360 * Phase))     # sin в E2 — в градусах
-    holoScale(1, vec(S, S, S))
-    holoScale(2, vec(S * 1.18, S * 1.18, S * 1.18))
-    holoScale(5, vec(S * 1.5, S * 1.5, S * 1.5))
+    holoScale(1, vec(S, S, S))                            # внутренний шар
+    holoScale(2, vec(S * 1.5, S * 1.5, S * 1.5))          # внешний — ровно x1.5
 
-    # целевые цвета по состоянию: перегруз — янтарный, критика — красный
-    let T1 = (State == ST_CRIT ? vec(200, 30, 30) : State == ST_OVER ?
-              vec(170, 80, 40) : vec(45, 20, 90))
-    let T2 = (State == ST_CRIT ? vec(255, 60, 60) : State == ST_OVER ?
-              vec(255, 120, 30) : vec(120, 60, 255))
-    Col1 += (T1 - Col1) * 0.08                 # плавный лерп к целевому цвету
-    Col2 += (T2 - Col2) * 0.08
-    if (State == ST_OFF | State == ST_DEAD) {
-        Col1 *= 0.92  Col2 *= 0.92             # погасшее ядро затухает
-    }
-    holoColor(1, Col1)
-    holoColor(2, Col2)
-    holoAlpha(2, State == ST_CRIT ? 60 + 40 * sin(720 * Phase) : 60)
-
-    # спутники на орбите (локальные координаты — едут вместе с ядром)
-    let R = BaseScale * 14
-    holoLocalPos(3, vec( cos(360 * Phase) * R, sin(360 * Phase) * R,
-                         sin(720 * Phase) * R * 0.25))
-    holoLocalPos(4, vec(-cos(360 * Phase) * R, -sin(360 * Phase) * R,
-                        -sin(720 * Phase) * R * 0.25))
-    # экваториальное кольцо медленно крутится
-    holoAng(5, ang(20 * sin(180 * Phase), 360 * Phase * 0.3, 0))
+    # перелив цвета: оттенок непрерывно плывёт по кругу (HSV -> RGB)
+    let HueSpeed = (State == ST_ON ? 40 : State == ST_OVER ? 90 :
+                    State == ST_CRIT ? 160 : 25)
+    let Hue = (curtime() * HueSpeed) % 360
+    # яркость: выключен/мёртв — едва тлеет, запуск — нарастает
+    let Bright = (State == ST_OFF | State == ST_DEAD ? 0.12 :
+                  State == ST_BOOT ? 0.7 + 0.3 * sin(360 * Phase) : 1)
+    # критика — принудительно красный с резким мерцанием
+    let HueIn  = (State == ST_CRIT ? 0 : Hue)
+    let HueOut = (State == ST_CRIT ? 0 : (Hue + 45) % 360)
+    holoColor(1, hsv2rgb(HueIn, 1, Bright))
+    holoColor(2, hsv2rgb(HueOut, 1, Bright *
+                 (State == ST_CRIT ? 0.6 + 0.4 * sin(720 * Phase) : 0.9)))
+    holoAlpha(2, State == ST_CRIT ? 120 + 80 * sin(720 * Phase) : 130)
 }
 
 # ============================================================================
@@ -311,13 +295,13 @@ timer("sim", SimDt, 0, function() {
 # ============================================================================
 #  ЗВУК: фоновый гул реактора + сирена при критике
 # ============================================================================
-timer("hum", 28, 0, function() {
+timer("hum", HumLen, 0, function() {
     if (!Muted & State != ST_OFF) {
-        entity():soundPlay("hum", 30, SND_HUM)
-        soundVolume("hum", State >= ST_ON ? 0.7 : 0.35)
-        soundPitch("hum", 100 + (State == ST_OVER ? 12 : 0)
-                          + (State == ST_CRIT ? 30 : 0)
-                          + (State == ST_BOOT ? -10 : 0))
+        entity():soundPlay("hum", HumLen + 1, SND_HUM)
+        soundVolume("hum", State >= ST_ON ? 0.8 : 0.4)
+        soundPitch("hum", 100 + (State == ST_OVER ? 10 : 0)
+                          + (State == ST_CRIT ? 25 : 0)
+                          + (State == ST_BOOT ? -8 : 0))
     }
 })
 timer("alarm", 2.2, 0, function() {
