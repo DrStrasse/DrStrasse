@@ -385,17 +385,35 @@ if PHASE == "bank_boot_pick_fresh" then
     print("PHASE bank_boot_pick_fresh: OK — loader предпочёл свежее зеркало старому основному файлу")
 end
 
--- sidkey_trap: живая демонстрация ЛОВУШКИ GMod (корень всей саги потерь)
+-- sidkey_trap: ловушка числовых ключей GMod против CharacterKey.
+-- Харнесс не грузит Identity, поэтому фаза save пишет кошелёк чистыми sid64,
+-- а фаза load мигрирует их в CharacterKey (sid:charN) и переписывает файл.
+-- Фаза обязана быть зелёной в ОБОИХ мирах:
+--   • sid64-мир (сразу после save): голый JSONToTable калечит ключ (strKeys==0);
+--   • char1-мир (после load): голый JSONToTable НЕ калечит «sid:char1» (strKeys>0);
+--   • jsonT (ignoreConversions=true) спасает ключ в любом мире.
 if PHASE == "sidkey_trap" then
+    local sample = '{"76561199385153957":1000,"76561199385153957:char1":2000}'
+    local bareS = util.JSONToTable(sample)
+    assert(bareS and bareS["76561199385153957:char1"] ~= nil,
+        "sidkey_trap: CharacterKey потерян голым парсером (нечисловой суффикс должен выживать)")
     local w = file.Read("grm_wallet.json") or ""
     assert(#w > 0, "sidkey_trap: нет файла кошелька (сначала фаза save)")
-    local bare  = util.JSONToTable(w)               -- как делали ВСЕ версии до v2.0.2
-    local fixed = util.JSONToTable(w, false, true)  -- как делает jsonT() в v2.0.2+
-    local recognized = 0
-    for k in pairs(bare or {}) do if isstring(k) then recognized = recognized + 1 end end
-    assert(recognized == 0, "sidkey_trap: эмуляция отклонилась: строковых ключей " .. recognized)
-    assert(fixed and fixed["76561199385153957"] ~= nil, "sidkey_trap: с ignoreConversions ключ потерян!")
-    print("PHASE sidkey_trap: OK — голый JSONToTable калечит sid64-ключ (0 строковых), флаг спасает запись")
+    local bareW  = util.JSONToTable(w)
+    local fixedW = util.JSONToTable(w, false, true)
+    local strKeys = 0
+    for k in pairs(bareW or {}) do if isstring(k) then strKeys = strKeys + 1 end end
+    if fixedW and fixedW["76561199385153957:char1"] ~= nil then
+        -- char1-мир (после load): миграция прошла, ловушка к ключу не применима
+        assert(strKeys > 0, "sidkey_trap: char1-ключ потерян голым парсером")
+        print("PHASE sidkey_trap: OK — wallet в char1-мире, ловушка числовых ключей не применима, jsonT спасает")
+    else
+        -- sid64-мир (сразу после save): голый парсер обязан скалечить ключ
+        assert(fixedW and fixedW["76561199385153957"] ~= nil,
+            "sidkey_trap: ignoreConversions не спас sid64-ключ wallet")
+        assert(strKeys == 0, "sidkey_trap: голый парсер не сымитировал калечение числового sid64-ключа")
+        print("PHASE sidkey_trap: OK — sid64 калечится голым парсером, jsonT(ignoreConversions=true) спасает")
+    end
 end
 
 -- bank_nick_mirror: treasury откачены (счета пустые), но есть зеркало
@@ -531,4 +549,95 @@ if PHASE == "perm" then
 
     file.Write("grm_perm_entities.json", "[]") -- убираем за фазой
     print("PHASE perm: OK — перм пишется/дедупится/воскресает после cleanup/снимается, /permload с антидублем, чат и консоль равнозначны")
+end
+
+-- ======================= ФАЗА 14: ШТРАФЫ (заказ «/fines») =====================
+if PHASE == "fines" then
+    GRM = GRM or {}
+    dofile("lua/autorun/sh_grm_currency.lua")
+    dofile("lua/autorun/sh_grm_economy.lua")
+    local E = GRM.Economy
+
+    -- кастомные игроки: НЕ суперадмины (mkPly всегда суперадмин)
+    local function mkUser(nick, sid64, sid)
+        local p = mkPly(nick, sid64, sid)
+        p.IsSuperAdmin = function() return false end
+        p.__msgs = {}
+        p.PrintMessage = function(_, _, m) p.__msgs[#p.__msgs + 1] = tostring(m) end
+        p.GetEyeTrace = function() return { Entity = nil } end
+        return p
+    end
+    local officer = mkUser("Otto Officer", "76561198000000100", "STEAM_0:1:100")   -- Polizei (sid-ключ)
+    local medic64 = mkUser("Maria Medic",    "76561198000000200", "STEAM_0:1:200")   -- Medic (s64-ключ!)
+    local civ     = mkUser("Karl Buerger",   "76561198000000300", "STEAM_0:1:300")   -- без фракции
+    _G.__PLAYERS = { officer, medic64, civ }
+
+    Factions.Medics = {
+        Members = { ["76561198000000200"] = { Role = "Санитар", Department = "Основной" } }, -- ключ SteamID64
+        Leader = "STEAM_0:9:999", Roles = { "Санитар" }, Departments = { "Основной" },
+    }
+
+    -- 1. finePerms выключены по умолчанию → штрафовать нельзя
+    local ok, why = E.CanFine(officer, civ)
+    assert(ok == false and tostring(why):find("не имеет доступа"), "fines: доступ по умолчанию должен быть закрыт, а: " .. tostring(why))
+
+    -- 2. включаем Polizei: все роли, граждан можно, свои — нельзя
+    local fp = E._dev_entry("Polizei").finePerms
+    fp.enabled = true fp.allRoles = true fp.ownFaction = false fp.otherFactions = true fp.civilians = true fp.maxAmount = 5000
+
+    ok = E.CanFine(officer, civ)
+    assert(ok == true, "fines: officer → гражданин должно быть можно")
+
+    -- 3. нельзя штрафовать своих (ownFaction=false)
+    local colleague = mkUser("Paul Officer", "76561198000000400", "STEAM_0:1:400")
+    Factions.Polizei.Members["STEAM_0:1:400"] = { Role = "Officer", Department = "Основной" }
+    _G.__PLAYERS[#_G.__PLAYERS + 1] = colleague
+    ok, why = E.CanFine(officer, colleague)
+    assert(ok == false and tostring(why):find("своих"), "fines: ownFaction=false должно резать коллег, а: " .. tostring(why))
+
+    -- 4. член по ключу SteamID64 ТОЖЕ распознаётся (н101 — корневой фикс)
+    ok, why = E.CanFine(medic64, civ)
+    assert(ok == false and tostring(why):find("Фракция"), "fines: Medic без enabled — отказ, но фракция должна распознаться, а: " .. tostring(why))
+    local fm = E._dev_entry("Medics").finePerms
+    fm.enabled = true fm.allRoles = true fm.civilians = true
+    ok = E.CanFine(medic64, civ)
+    assert(ok == true, "fines: s64-ключ: медик теперь может штрафовать граждан")
+
+    -- 5. ранговое ограничение (allRoles=false)
+    fm.allRoles = false fm.roles = { ["Санитар"] = true }
+    ok = E.CanFine(medic64, civ)
+    assert(ok == true, "fines: ранг Санитар в списке — можно")
+    Factions.Medics.Members["76561198000000200"].Role = "Пациент"
+    ok, why = E.CanFine(medic64, civ)
+    assert(ok == false and tostring(why):find("роль"), "fines: чужой ранг — нельзя, а: " .. tostring(why))
+    Factions.Medics.Members["76561198000000200"].Role = "Санитар"
+
+    -- 6. сам факт штрафа: деньги — цели минус, бюджет фракции плюс
+    GRM.SetBalance(civ, 9000, "тест")
+    local poor = mkUser("Poor Peter", "76561198000000500", "STEAM_0:1:500")
+    GRM.SetBalance(poor, 0, "тест")
+    local b0 = GRM.FactionBudgetGet("Polizei")
+    -- суперадминский обход тоже существует (канон mkPly)
+    local admin = mkPly("Boss", "76561198000000999", "STEAM_0:9:999")
+    local okF, issued = E.Fine(officer, civ, 8000, "проверка") -- лимит 5000 → кап
+    assert(okF == true and issued == 5000, "fines: кап по maxAmount не сработал: " .. tostring(issued))
+    assert(GRM.GetBalance(civ) == 4000, "fines: неверный баланс цели: " .. GRM.GetBalance(civ))
+    assert(GRM.FactionBudgetGet("Polizei") == b0 + 5000, "fines: бюджет фракции не вырос")
+    okF, issued = E.Fine(officer, poor, 100, "пустой карман")
+    assert(okF == false, "fines: пустой карман должен отказать")
+    local okA = E.Fine(admin, colleague, 100, "админ")
+    assert(okA == true, "fines: суперадмин обходит права")
+
+    -- 7. /fines (PlayerSay): гражданин — отказ, офицер — статус в чат (PrintMessage)
+    _G.__PLAYERS = { officer, medic64, civ }
+    local okC, whyC = E.CanFine(civ, officer) -- цель не issuer, иначе ветка "нельзя себя" сработает раньше
+    assert(okC == false and tostring(whyC):find("не имеет доступа"), "fines: гражданин не должен иметь доступа: " .. tostring(whyC))
+    fireHook("PlayerSay", civ, "/fine 100 тест") -- не должно падать и штрафовать
+    assert(GRM.GetBalance(civ) == 4000, "fines: /fine от гражданина прошёл?!")
+    fireHook("PlayerSay", officer, "/fines")
+    local joined = table.concat(officer.__msgs, " ")
+    assert(joined:find("Доступ штрафов"), "fines: /fines не напечатал статус: " .. joined)
+
+    print("PHASE fines: OK — права/ключи sid+s64/кап/бюджет/пустой карман/админ-байпас//fines-статус")
+    return
 end
