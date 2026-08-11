@@ -617,7 +617,12 @@ if SERVER then
     end
     DOC.SendOwnDoc = sendOwnDoc
 
-    -- Трансляция RP-действия в чат всем игрокам поблизости
+    -- Трансляция RP-действия в чат всем игрокам поблизости.
+    -- Используем ЕДИНЫЙ канал доставки (как sendTo в sh_grm_rp_chat.lua):
+    --   1. EasyChat      -> если установлен,
+    --   2. GRM RPChat-net-> иначе,
+    --   3. ChatPrint     -> последний резерв.
+    -- Раньше отыгровка шла всеми тремя сразу и дублировалась в чат.
     local function broadcastDocAction(ply, meText)
         if not IsValid(ply) then return end
         local senderName = getPlayerRPName(ply)
@@ -626,13 +631,11 @@ if SERVER then
 
         for _, p in ipairs(player.GetAll()) do
             if IsValid(p) and p:GetPos():DistToSqr(origin) <= 400 * 400 then
-                -- 1. EasyChat
                 if EasyChat and EasyChat.PlayerAddText then
+                    -- EasyChat сам рисует сообщение — других каналов не трогаем.
                     EasyChat.PlayerAddText(p, Color(200, 160, 255), fullText)
-                end
-
-                -- 2. GRM RPChat сетевое сообщение
-                if util.NetworkStringToID("GRM_RPChat_Msg") ~= 0 then
+                elseif util.NetworkStringToID("GRM_RPChat_Msg") ~= 0 then
+                    -- Клиент GRM RPChat рисует это через chat.AddText (см. sh_grm_rp_chat.lua).
                     net.Start("GRM_RPChat_Msg")
                         net.WriteUInt(2, 8)
                         net.WriteBool(true)
@@ -642,10 +645,10 @@ if SERVER then
                         net.WriteBool(false)
                         net.WriteString(fullText)
                     net.Send(p)
+                else
+                    -- Резерв без EasyChat и без GRM RPChat.
+                    p:ChatPrint(fullText)
                 end
-
-                -- 3. Резервный ChatPrint
-                p:ChatPrint(fullText)
             end
         end
     end
