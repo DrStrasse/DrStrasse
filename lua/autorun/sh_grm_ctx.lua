@@ -128,9 +128,14 @@ if SERVER then
         result.hasPassport = (pass == nil or pass.status == "Действителен")
 
         local hasCover = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.coverBadges and GRM.Documents.Registry.coverBadges[key] and GRM.Documents.Registry.coverBadges[key].status == "Действителен"
+        local coverRec = hasCover and GRM.Documents.Registry.coverBadges[key] or nil
         local badge = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.badges and GRM.Documents.Registry.badges[key]
         local hasOfficial = (factionName ~= nil and (badge == nil or badge.status == "Действителен"))
         result.hasBadge = (hasCover == true or hasOfficial == true)
+        result.hasOfficialBadge = (hasOfficial == true)
+        result.hasCoverBadge = (hasCover == true)
+        result.officialBadgeFac = hasOfficial and (badge and badge.faction or factionName) or ""
+        result.coverBadgeFac = hasCover and (coverRec and coverRec.faction or "") or ""
 
         local card = GRM.Medical and GRM.Medical.Cards and (GRM.Medical.Cards[key] or GRM.Medical.Cards[ply:SteamID64()])
         result.hasMedCard = (card ~= nil)
@@ -337,10 +342,35 @@ end
 
 local function actShowBadge()
     local ap = istable(data.aimPly) and data.aimPly or nil
-    net.Start("GRM_Doc_ShowDoc")
-        net.WriteString("badge")
-        net.WriteEntity(Entity(ap and ap.idx or 0))
-    net.SendToServer()
+    local targetEnt = Entity(ap and ap.idx or 0)
+
+    -- Если у игрока есть и официальное удостоверение, и прикрытие — даём выбор!
+    if data.hasOfficialBadge and data.hasCoverBadge then
+        local menu = DermaMenu()
+        menu:AddOption("🛡 Служебное: " .. tostring(data.officialBadgeFac or "Ведомство"), function()
+            net.Start("GRM_Doc_ShowDoc")
+                net.WriteString("badge")
+                net.WriteEntity(targetEnt)
+                net.WriteString("official")
+            net.SendToServer()
+        end):SetIcon("icon16/shield.png")
+
+        menu:AddOption("🎭 Документ прикрытия: " .. tostring(data.coverBadgeFac or "Прикрытие"), function()
+            net.Start("GRM_Doc_ShowDoc")
+                net.WriteString("badge")
+                net.WriteEntity(targetEnt)
+                net.WriteString("cover")
+            net.SendToServer()
+        end):SetIcon("icon16/user_suit.png")
+
+        menu:Open()
+    else
+        net.Start("GRM_Doc_ShowDoc")
+            net.WriteString("badge")
+            net.WriteEntity(targetEnt)
+            net.WriteString(data.hasCoverBadge and "cover" or "official")
+        net.SendToServer()
+    end
 end
 
 local function actShowMedCard()
@@ -358,9 +388,30 @@ local function actOwnPassport()
 end
 
 local function actOwnBadge()
-    net.Start("GRM_Doc_OpenDoc")
-        net.WriteString("badge")
-    net.SendToServer()
+    -- Если у игрока есть и официальное, и прикрытие — выбор для личного просмотра
+    if data.hasOfficialBadge and data.hasCoverBadge then
+        local menu = DermaMenu()
+        menu:AddOption("🛡 Служебное: " .. tostring(data.officialBadgeFac or "Ведомство"), function()
+            net.Start("GRM_Doc_OpenDoc")
+                net.WriteString("badge")
+                net.WriteString("official")
+            net.SendToServer()
+        end):SetIcon("icon16/shield.png")
+
+        menu:AddOption("🎭 Документ прикрытия: " .. tostring(data.coverBadgeFac or "Прикрытие"), function()
+            net.Start("GRM_Doc_OpenDoc")
+                net.WriteString("badge")
+                net.WriteString("cover")
+            net.SendToServer()
+        end):SetIcon("icon16/user_suit.png")
+
+        menu:Open()
+    else
+        net.Start("GRM_Doc_OpenDoc")
+            net.WriteString("badge")
+            net.WriteString(data.hasCoverBadge and "cover" or "official")
+        net.SendToServer()
+    end
 end
 
 local function actOwnMedCard()

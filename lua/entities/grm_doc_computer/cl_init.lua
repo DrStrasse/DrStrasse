@@ -78,11 +78,18 @@ net.Receive("GRM_DocComp_Open", function()
     passPnl:DockPadding(16, 16, 16, 16)
     passPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
 
+    local lblState = vgui.Create("DLabel", passPnl)
+    lblState:SetPos(16, 12) lblState:SetText("Название государства:") lblState:SetTextColor(CC.gold) lblState:SetFont("DermaDefaultBold") lblState:SizeToContents()
+    local entStateTitle = vgui.Create("DTextEntry", passPnl)
+    entStateTitle:SetPos(16, 32) entStateTitle:SetSize(360, 26)
+    entStateTitle:SetText(tpls.passport and tpls.passport.stateTitle or "РЕСПУБЛИКА ГРАНД")
+    entStateTitle:SetEnabled(isSuperAdmin)
+
     local lblP1 = vgui.Create("DLabel", passPnl)
-    lblP1:SetPos(16, 16) lblP1:SetText("Выберите гражданина:") lblP1:SetFont("DermaDefaultBold") lblP1:SetTextColor(CC.accent) lblP1:SizeToContents()
+    lblP1:SetPos(16, 68) lblP1:SetText("Выберите гражданина:") lblP1:SetFont("DermaDefaultBold") lblP1:SetTextColor(CC.accent) lblP1:SizeToContents()
 
     local comboPassTarget = vgui.Create("DComboBox", passPnl)
-    comboPassTarget:SetPos(16, 36) comboPassTarget:SetSize(420, 28)
+    comboPassTarget:SetPos(16, 88) comboPassTarget:SetSize(420, 28)
     comboPassTarget:AddChoice("— Выберите гражданина онлайн —", "")
 
     for _, pData in ipairs(onlineList) do
@@ -91,36 +98,36 @@ net.Receive("GRM_DocComp_Open", function()
     end
 
     local lblP2 = vgui.Create("DLabel", passPnl)
-    lblP2:SetPos(16, 75) lblP2:SetText("ФИО гражданина (ручное редактирование):") lblP2:SetTextColor(CC.text) lblP2:SizeToContents()
+    lblP2:SetPos(16, 124) lblP2:SetText("ФИО гражданина (ручное редактирование):") lblP2:SetTextColor(CC.text) lblP2:SizeToContents()
     local entPassName = vgui.Create("DTextEntry", passPnl)
-    entPassName:SetPos(16, 95) entPassName:SetSize(350, 26)
+    entPassName:SetPos(16, 144) entPassName:SetSize(350, 26)
 
     local lblP3 = vgui.Create("DLabel", passPnl)
-    lblP3:SetPos(380, 75) lblP3:SetText("Пол:") lblP3:SetTextColor(CC.text) lblP3:SizeToContents()
+    lblP3:SetPos(380, 124) lblP3:SetText("Пол:") lblP3:SetTextColor(CC.text) lblP3:SizeToContents()
     local comboGender = vgui.Create("DComboBox", passPnl)
-    comboGender:SetPos(380, 95) comboGender:SetSize(150, 26)
+    comboGender:SetPos(380, 144) comboGender:SetSize(150, 26)
     comboGender:AddChoice("Мужской") comboGender:AddChoice("Женский")
     comboGender:SetValue("Мужской")
 
     local lblP4 = vgui.Create("DLabel", passPnl)
-    lblP4:SetPos(16, 130) lblP4:SetText("Дата рождения / Возраст:") lblP4:SetTextColor(CC.text) lblP4:SizeToContents()
+    lblP4:SetPos(16, 178) lblP4:SetText("Дата рождения / Возраст:") lblP4:SetTextColor(CC.text) lblP4:SizeToContents()
     local entPassBirth = vgui.Create("DTextEntry", passPnl)
-    entPassBirth:SetPos(16, 150) entPassBirth:SetSize(180, 26) entPassBirth:SetText("12.04.1988")
+    entPassBirth:SetPos(16, 198) entPassBirth:SetSize(180, 26) entPassBirth:SetText("12.04.1988")
 
     local lblP5 = vgui.Create("DLabel", passPnl)
-    lblP5:SetPos(220, 130) lblP5:SetText("Серия паспорта:") lblP5:SetTextColor(CC.text) lblP5:SizeToContents()
+    lblP5:SetPos(220, 178) lblP5:SetText("Серия паспорта:") lblP5:SetTextColor(CC.text) lblP5:SizeToContents()
     local entPassSeries = vgui.Create("DTextEntry", passPnl)
-    entPassSeries:SetPos(220, 150) entPassSeries:SetSize(140, 26) entPassSeries:SetText(tpls.passport and tpls.passport.defaultSeries or "GRM")
+    entPassSeries:SetPos(220, 198) entPassSeries:SetSize(140, 26) entPassSeries:SetText(tpls.passport and tpls.passport.defaultSeries or "GRM")
 
     local lblP6 = vgui.Create("DLabel", passPnl)
-    lblP6:SetPos(380, 130) lblP6:SetText("Номер паспорта:") lblP6:SetTextColor(CC.text) lblP6:SizeToContents()
+    lblP6:SetPos(380, 178) lblP6:SetText("Номер паспорта:") lblP6:SetTextColor(CC.text) lblP6:SizeToContents()
     local entPassNumber = vgui.Create("DTextEntry", passPnl)
-    entPassNumber:SetPos(380, 150) entPassNumber:SetSize(180, 26) entPassNumber:SetText("428901")
+    entPassNumber:SetPos(380, 198) entPassNumber:SetSize(180, 26) entPassNumber:SetText("428901")
 
     local lblP7 = vgui.Create("DLabel", passPnl)
-    lblP7:SetPos(16, 185) lblP7:SetText("Кем выдан (орган выдачи):") lblP7:SetTextColor(CC.text) lblP7:SizeToContents()
+    lblP7:SetPos(16, 232) lblP7:SetText("Кем выдан (орган выдачи):") lblP7:SetTextColor(CC.text) lblP7:SizeToContents()
     local entPassIssuer = vgui.Create("DTextEntry", passPnl)
-    entPassIssuer:SetPos(16, 205) entPassIssuer:SetSize(400, 26) entPassIssuer:SetText("Паспортный стол Центрального района")
+    entPassIssuer:SetPos(16, 252) entPassIssuer:SetSize(400, 26) entPassIssuer:SetText("Паспортный стол Центрального района")
 
     local selectedCharKey = ""
     local selectedSid64 = "0"
@@ -148,7 +155,7 @@ net.Receive("GRM_DocComp_Open", function()
     end
 
     local btnIssuePass = vgui.Create("DButton", passPnl)
-    btnIssuePass:SetPos(16, 260)
+    btnIssuePass:SetPos(16, 300)
     btnIssuePass:SetSize(300, 36)
     btnIssuePass:SetText("✔ Оформить и выдать паспорт")
     btnIssuePass:SetFont("DermaDefaultBold")
@@ -165,6 +172,16 @@ net.Receive("GRM_DocComp_Open", function()
             notification.AddLegacy("Выберите гражданина из списка!", NOTIFY_ERROR, 3)
             return
         end
+
+        -- Если суперадмин изменил название страны, сохраняем шаблон
+        if isSuperAdmin and entStateTitle:GetText() ~= "" then
+            tpls.passport = tpls.passport or {}
+            tpls.passport.stateTitle = entStateTitle:GetText()
+            net.Start("GRM_Doc_AdminSave")
+                net.WriteTable(tpls)
+            net.SendToServer()
+        end
+
         local pack = {
             fullName    = entPassName:GetText(),
             gender      = comboGender:GetValue(),
@@ -266,18 +283,22 @@ net.Receive("GRM_DocComp_Open", function()
             entBadgeName:SetText(pData.rpName or "")
             entBadgeFac:SetText(pData.faction or myFaction or "")
             entBadgeRole:SetText(pData.role or "Сотрудник")
-            entBadgeDept:SetText((pData.department and pData.department ~= "") and pData.department or "Главное Управление")
 
             local facTpl = (tpls.factions and tpls.factions[pData.faction]) or {}
             local pfx = facTpl.prefix or (pData.faction and (pData.faction:sub(1, 3):upper() .. "-") or "ОРД-")
             entBadgeNum:SetText(pfx .. selectedBadgeSid64:sub(-4))
+
+            local currentDept = pData.department
+            if currentDept == "Основной" or currentDept == "—" or not currentDept then currentDept = "" end
 
             if registry.badges and registry.badges[selectedBadgeKey] then
                 local ex = registry.badges[selectedBadgeKey]
                 entBadgeName:SetText(ex.fullName or pData.rpName or "")
                 entBadgeFac:SetText(ex.faction or pData.faction or "")
                 entBadgeRole:SetText(ex.role or pData.role or "")
-                entBadgeDept:SetText(ex.department or pData.department or "")
+                if ex.department and ex.department ~= "" and ex.department ~= "Основной" and ex.department ~= "—" then
+                    currentDept = ex.department
+                end
                 entBadgeNum:SetText(ex.number or (pfx .. selectedBadgeSid64:sub(-4)))
                 if istable(ex.permissions) then
                     for pId, cb in pairs(chkBoxes) do
@@ -285,6 +306,9 @@ net.Receive("GRM_DocComp_Open", function()
                     end
                 end
             end
+
+            if currentDept == "" then currentDept = "Главное Управление" end
+            entBadgeDept:SetText(currentDept)
         end
     end
 
@@ -308,11 +332,16 @@ net.Receive("GRM_DocComp_Open", function()
             curPerms[pId] = cb:GetChecked()
         end
 
+        local chosenDept = string.Trim(entBadgeDept:GetText())
+        if chosenDept == "" or chosenDept == "Основной" or chosenDept == "—" then
+            chosenDept = "Главное Управление"
+        end
+
         local pack = {
             fullName    = entBadgeName:GetText(),
             faction     = entBadgeFac:GetText(),
             role        = entBadgeRole:GetText(),
-            department  = entBadgeDept:GetText(),
+            department  = chosenDept,
             number      = entBadgeNum:GetText(),
             permissions = curPerms,
             issuedBy    = "Руководство ведомства " .. entBadgeFac:GetText(),

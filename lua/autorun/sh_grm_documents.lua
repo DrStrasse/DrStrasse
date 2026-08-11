@@ -177,6 +177,9 @@ if SERVER then
                 if istable(t.access)   then DOC.Templates.access   = t.access end
             end
         end
+        if SetGlobalString and DOC.Templates.passport then
+            SetGlobalString("GRM_StateTitle", tostring(DOC.Templates.passport.stateTitle or "РЕСПУБЛИКА ГРАНД"))
+        end
         return DOC.Templates
     end
 
@@ -184,6 +187,12 @@ if SERVER then
         local ok, txt = pcall(util.TableToJSON, DOC.Templates or defaultTemplates(), true)
         if ok and txt then
             file.Write(DOC.TemplatesFile, txt)
+            if SetGlobalString and DOC.Templates.passport then
+                SetGlobalString("GRM_StateTitle", tostring(DOC.Templates.passport.stateTitle or "РЕСПУБЛИКА ГРАНД"))
+            end
+            net.Start(NET_ADMIN_GET)
+                net.WriteTable(DOC.Templates)
+            net.Broadcast()
             print("[GRM Documents] SAVE ok templates (" .. tostring(why or "?") .. ")")
         end
     end
@@ -264,7 +273,9 @@ if SERVER then
         DOC.Registry.badges = DOC.Registry.badges or {}
         local b = DOC.Registry.badges[key]
         local role = ply:GetNWString("GRM_Role", "Сотрудник")
-        local dept = ply:GetNWString("GRM_Department", "—")
+        local dept = ply:GetNWString("GRM_Department", "")
+        if dept == "Основной" or dept == "—" then dept = "" end
+
         local tpl = (DOC.Templates.factions and DOC.Templates.factions[factionName]) or {}
         local prefix = tpl.prefix or (factionName:sub(1, 3):upper() .. "-")
         local shortSid = (ply:SteamID64() or "0"):sub(-4)
@@ -289,10 +300,12 @@ if SERVER then
             DOC.Registry.badges[key] = b
             DOC.SaveRegistry("auto badge " .. key)
         else
-            b.fullName   = getPlayerRPName(ply)
-            b.role       = role
-            b.department = dept
-            b.updated    = os.time()
+            -- Сохраняем оформленные в компьютере данные!
+            if not b.department or b.department == "" or b.department == "Основной" or b.department == "—" then
+                b.department = dept ~= "" and dept or "Главное Управление"
+            end
+            if not b.role or b.role == "" then b.role = role end
+            if not b.fullName or b.fullName == "" then b.fullName = getPlayerRPName(ply) end
         end
         return b
     end
@@ -329,7 +342,7 @@ if SERVER then
     end
 
     -- Отправка документа игроку на экран
-    local function sendOwnDoc(ply, docType)
+    local function sendOwnDoc(ply, docType, subType)
         if not IsValid(ply) then return end
         local payload = nil
         local tpl = nil
@@ -338,19 +351,35 @@ if SERVER then
             payload = ensurePassport(ply)
             tpl = DOC.Templates.passport
         elseif docType == "badge" then
-            -- Проверяем: возможно у игрока активен документ прикрытия
             local key = getCharKey(ply)
-            local cover = DOC.Registry.coverBadges and DOC.Registry.coverBadges[key]
-            if istable(cover) and cover.status == "Действителен" then
-                payload = cover
+            if subType == "cover" then
+                payload = DOC.Registry.coverBadges and DOC.Registry.coverBadges[key]
+                if not (istable(payload) and payload.status == "Действителен") then
+                    if GRM.Notify then GRM.Notify(ply, "У вас нет активного документа прикрытия.", 255, 140, 110) end
+                    return
+                end
                 tpl = (DOC.Templates.factions and DOC.Templates.factions[payload.faction]) or {}
-            else
+            elseif subType == "official" then
                 payload = ensureBadge(ply)
                 if not payload then
                     if GRM.Notify then GRM.Notify(ply, "У вас нет служебного удостоверения (вы не состоите во фракции).", 255, 140, 110) end
                     return
                 end
                 tpl = (DOC.Templates.factions and DOC.Templates.factions[payload.faction]) or {}
+            else
+                -- По умолчанию: если есть прикрытие — показываем его, иначе официальное
+                local cover = DOC.Registry.coverBadges and DOC.Registry.coverBadges[key]
+                if istable(cover) and cover.status == "Действителен" then
+                    payload = cover
+                    tpl = (DOC.Templates.factions and DOC.Templates.factions[payload.faction]) or {}
+                else
+                    payload = ensureBadge(ply)
+                    if not payload then
+                        if GRM.Notify then GRM.Notify(ply, "У вас нет служебного удостоверения (вы не состоите во фракции).", 255, 140, 110) end
+                        return
+                    end
+                    tpl = (DOC.Templates.factions and DOC.Templates.factions[payload.faction]) or {}
+                end
             end
         elseif docType == "medcard" then
             if GRM.Medical and GRM.Medical.CardOf then
@@ -373,7 +402,7 @@ if SERVER then
     DOC.SendOwnDoc = sendOwnDoc
 
     -- Показ документа целевому игроку (в прицеле или явная цель)
-    local function showDocToTarget(ply, docType, explicitTarget)
+    local function showDocToTarget(ply, docType, explicitTarget, subType)
         if not IsValid(ply) then return end
         local target = explicitTarget
         if not (IsValid(target) and target:IsPlayer() and target:Alive()) then
@@ -415,8 +444,16 @@ if SERVER then
 
         elseif docType == "badge" then
             local key = getCharKey(ply)
-            local badge = (DOC.Registry.coverBadges and DOC.Registry.coverBadges[key] and DOC.Registry.coverBadges[key].status == "Действителен" and DOC.Registry.coverBadges[key])
-                or ensureBadge(ply)
+            local badge = nil
+
+            if subType == "cover" then
+                badge = DOC.Registry.coverBadges and DOC.Registry.coverBadges[key]
+            elseif subType == "official" then
+                badge = ensureBadge(ply)
+            else
+                badge = (DOC.Registry.coverBadges and DOC.Registry.coverBadges[key] and DOC.Registry.coverBadges[key].status == "Действителен" and DOC.Registry.coverBadges[key])
+                    or ensureBadge(ply)
+            end
 
             if not badge then
                 if GRM.Notify then GRM.Notify(ply, "У вас нет служебного удостоверения (вы не состоите во фракции).", 255, 140, 110) end
@@ -492,13 +529,15 @@ if SERVER then
     -- Сетевые обработчики
     net.Receive(NET_OPEN_DOC, function(_, ply)
         local docType = net.ReadString()
-        sendOwnDoc(ply, docType)
+        local subType = net.ReadString()
+        sendOwnDoc(ply, docType, subType)
     end)
 
     net.Receive(NET_SHOW_DOC, function(_, ply)
         local docType = net.ReadString()
         local target = net.ReadEntity()
-        showDocToTarget(ply, docType, target)
+        local subType = net.ReadString()
+        showDocToTarget(ply, docType, target, subType)
     end)
 
     -- Админ-настройка шаблонов
