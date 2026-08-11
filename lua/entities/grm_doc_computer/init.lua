@@ -41,14 +41,15 @@ function ENT:CanManage(ply)
         return true
     end
 
-    -- Доступ к оформлению паспортов
+    -- Доступы из шаблонов
     if GRM.Documents and GRM.Documents.Templates and GRM.Documents.Templates.access then
         local acc = GRM.Documents.Templates.access
         if acc.passports and acc.passports[fName] == true then return true end
+        if acc.badges and acc.badges[fName] == true then return true end
+        if acc.military and acc.military[fName] == true then return true end
         if acc.coverDocs and acc.coverDocs[fName] == true then return true end
     end
 
-    -- Любой участник государственной фракции (просмотр / отдел кадров)
     return true
 end
 
@@ -84,11 +85,12 @@ function ENT:Use(ply)
     end
 
     local tpls = GRM.Documents and GRM.Documents.Templates or {}
-    local reg  = GRM.Documents and GRM.Documents.Registry or { passports = {}, badges = {}, coverBadges = {} }
+    local reg  = GRM.Documents and GRM.Documents.Registry or { passports = {}, badges = {}, coverBadges = {}, military = {} }
     local myFac = ply:GetNWString("GRM_Faction", "")
     local isLeader = (_G.FactionsAPI and _G.FactionsAPI.IsLeader and myFac ~= "" and _G.FactionsAPI.IsLeader(ply, myFac)) == true
     local hasCover = (ply:IsSuperAdmin() or (tpls.access and tpls.access.coverDocs and tpls.access.coverDocs[myFac] == true)) == true
     local hasPassport = (ply:IsSuperAdmin() or (tpls.access and tpls.access.passports and tpls.access.passports[myFac] == true)) == true
+    local hasMilitary = (ply:IsSuperAdmin() or (tpls.access and tpls.access.military and tpls.access.military[myFac] == true)) == true
 
     net.Start("GRM_DocComp_Open")
         net.WriteEntity(self)
@@ -100,5 +102,6 @@ function ENT:Use(ply)
         net.WriteBool(isLeader)
         net.WriteBool(hasCover)
         net.WriteBool(hasPassport)
+        net.WriteBool(hasMilitary)
     net.Send(ply)
 end

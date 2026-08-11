@@ -126,14 +126,18 @@ function SWEP:CheckDocuments(searcher, target)
     local badge = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.badges and GRM.Documents.Registry.badges[charKey]
     local badgeStr = badge and string.format("%s (Звание: %s, Отдел: %s, Жетон: %s)", badge.faction or "Ведомство", badge.role or "—", badge.department or "—", badge.number or "—") or "Отсутствует"
 
-    -- 3. Медкарта
+    -- 3. Военный билет
+    local mil = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.military and GRM.Documents.Registry.military[charKey]
+    local milStr = mil and string.format("№ %s (Звание: %s, Часть: %s, %s)", mil.number or "—", mil.rank or "—", mil.formation or "—", mil.status or "Действителен") or "Не выдан"
+
+    -- 4. Медкарта
     local card = GRM.Medical and GRM.Medical.Cards and (GRM.Medical.Cards[charKey] or GRM.Medical.Cards[target:SteamID64()])
     local medStr = card and string.format("Группа: %s | Категория: %s", (card.blood ~= "" and card.blood or "—"), (card.fitnessCategory or "А")) or "Не заведена"
 
-    -- 4. Оружие
+    -- 5. Оружие
     local wepCount = #target:GetWeapons()
 
-    local msg = string.format("══════════ [ДОКУМЕНТЫ: %s] ══════════\n• Паспорт: %s\n• Удостоверение: %s\n• Медкарта: %s\n• Оружие при себе: %d ед.", targetName, passStr, badgeStr, medStr, wepCount)
+    local msg = string.format("══════════ [ДОКУМЕНТЫ: %s] ══════════\n• Паспорт: %s\n• Удостоверение: %s\n• Военный билет: %s\n• Медкарта: %s\n• Оружие при себе: %d ед.", targetName, passStr, badgeStr, milStr, medStr, wepCount)
     searcher:ChatPrint(msg)
     if GRM.Notify then GRM.Notify(searcher, "Документы проверены: " .. targetName, 120, 200, 255) end
 end

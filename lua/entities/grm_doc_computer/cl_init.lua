@@ -18,7 +18,6 @@ local CC = {
 function ENT:Draw()
     self:DrawModel()
 
-    -- 3D2D экран над монитором
     local pos = self:GetPos() + self:GetUp() * 24 + self:GetForward() * 2
     local ang = self:GetAngles()
     ang:RotateAroundAxis(ang:Up(), 90)
@@ -26,7 +25,7 @@ function ENT:Draw()
 
     cam.Start3D2D(pos, ang, 0.08)
         draw.RoundedBox(6, -140, -50, 280, 100, Color(15, 18, 24, 240))
-        draw.SimpleText("ОТДЕЛ КАДРОВ И ПАСПОРТОВ", "DermaDefaultBold", 0, -25, Color(80, 160, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("ОТДЕЛ КАДРОВ, ПАСПОРТОВ И ВОЕНКОМАТ", "DermaDefaultBold", 0, -25, Color(80, 160, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         draw.SimpleText("Служебный Компьютер", "DermaDefault", 0, -5, Color(220, 225, 235), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         draw.SimpleText("Нажмите [E] для входа в систему", "DermaDefault", 0, 20, Color(160, 170, 185), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     cam.End3D2D()
@@ -36,15 +35,16 @@ net.Receive("GRM_DocComp_Open", function()
     local ent          = net.ReadEntity()
     local onlineList   = net.ReadTable() or {}
     local tpls         = net.ReadTable() or {}
-    local registry     = net.ReadTable() or { passports = {}, badges = {}, coverBadges = {} }
+    local registry     = net.ReadTable() or { passports = {}, badges = {}, coverBadges = {}, military = {} }
     local myFaction    = net.ReadString()
     local isSuperAdmin = net.ReadBool()
     local isLeader     = net.ReadBool()
     local hasCover     = net.ReadBool()
     local hasPassport  = net.ReadBool()
+    local hasMilitary  = net.ReadBool()
 
     local frame = vgui.Create("DFrame")
-    frame:SetSize(920, 650)
+    frame:SetSize(940, 680)
     frame:Center()
     frame:SetTitle("")
     frame:MakePopup()
@@ -72,7 +72,7 @@ net.Receive("GRM_DocComp_Open", function()
     tabs:DockMargin(4, 38, 4, 4)
 
     -- ══════════════════════════════════════════════════════════════
-    -- ВКЛАДКА 1: ПАСПОРТНЫЙ СТОЛ (Оформление паспортов)
+    -- ВКЛАДКА 1: ПАСПОРТНЫЙ СТОЛ
     -- ══════════════════════════════════════════════════════════════
     local passPnl = vgui.Create("DPanel", tabs)
     passPnl:DockPadding(16, 16, 16, 16)
@@ -173,7 +173,6 @@ net.Receive("GRM_DocComp_Open", function()
             return
         end
 
-        -- Если суперадмин изменил название страны, сохраняем шаблон
         if isSuperAdmin and entStateTitle:GetText() ~= "" then
             tpls.passport = tpls.passport or {}
             tpls.passport.stateTitle = entStateTitle:GetText()
@@ -235,12 +234,12 @@ net.Receive("GRM_DocComp_Open", function()
     entBadgeFac:SetPos(330, 95) entBadgeFac:SetSize(300, 26)
 
     local lblB4 = vgui.Create("DLabel", badgePnl)
-    lblB4:SetPos(16, 130) lblB4:SetText("Должность / Звание:") lblB4:SetTextColor(CC.text) lblB4:SizeToContents()
+    lblB4:SetPos(16, 130) lblB4:SetText("Должность / Звание (ручное):") lblB4:SetTextColor(CC.text) lblB4:SizeToContents()
     local entBadgeRole = vgui.Create("DTextEntry", badgePnl)
     entBadgeRole:SetPos(16, 150) entBadgeRole:SetSize(250, 26)
 
     local lblB5 = vgui.Create("DLabel", badgePnl)
-    lblB5:SetPos(280, 130) lblB5:SetText("Подразделение / Отдел:") lblB5:SetTextColor(CC.text) lblB5:SizeToContents()
+    lblB5:SetPos(280, 130) lblB5:SetText("Подразделение / Отдел (ручное):") lblB5:SetTextColor(CC.text) lblB5:SizeToContents()
     local entBadgeDept = vgui.Create("DTextEntry", badgePnl)
     entBadgeDept:SetPos(280, 150) entBadgeDept:SetSize(250, 26)
 
@@ -363,7 +362,163 @@ net.Receive("GRM_DocComp_Open", function()
     tabs:AddSheet("Отдел кадров / Удостоверения", badgePnl, "icon16/shield.png")
 
     -- ══════════════════════════════════════════════════════════════
-    -- ВКЛАДКА 3: ДОКУМЕНТЫ ПРИКРЫТИЯ (Спецслужбы)
+    -- ВКЛАДКА 3: ВОЕНКОМАТ / ВОЕННЫЙ БИЛЕТ
+    -- ══════════════════════════════════════════════════════════════
+    local milPnl = vgui.Create("DPanel", tabs)
+    milPnl:DockPadding(16, 16, 16, 16)
+    milPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
+
+    local lblMilTarget = vgui.Create("DLabel", milPnl)
+    lblMilTarget:SetPos(16, 16) lblMilTarget:SetText("Выберите военнообязанного гражданина:") lblMilTarget:SetFont("DermaDefaultBold") lblMilTarget:SetTextColor(Color(120, 220, 140)) lblMilTarget:SizeToContents()
+
+    local comboMilTarget = vgui.Create("DComboBox", milPnl)
+    comboMilTarget:SetPos(16, 36) comboMilTarget:SetSize(420, 28)
+    comboMilTarget:AddChoice("— Выберите гражданина онлайн —", "")
+
+    for _, pData in ipairs(onlineList) do
+        local label = string.format("%s  [%s]  (%s)", pData.rpName or "?", pData.nick or "?", pData.key or "")
+        comboMilTarget:AddChoice(label, pData)
+    end
+
+    local lblMName = vgui.Create("DLabel", milPnl)
+    lblMName:SetPos(16, 75) lblMName:SetText("ФИО военнослужащего (ручное):") lblMName:SetTextColor(CC.text) lblMName:SizeToContents()
+    local entMilName = vgui.Create("DTextEntry", milPnl)
+    entMilName:SetPos(16, 95) entMilName:SetSize(280, 26)
+
+    local lblMRank = vgui.Create("DLabel", milPnl)
+    lblMRank:SetPos(310, 75) lblMRank:SetText("Воинское звание (выбор / ручной ввод):") lblMRank:SetTextColor(CC.text) lblMRank:SizeToContents()
+    local comboMilRank = vgui.Create("DComboBox", milPnl)
+    comboMilRank:SetPos(310, 95) comboMilRank:SetSize(220, 26)
+    for _, r in ipairs(GRM.Documents.MilitaryRanks or {}) do comboMilRank:AddChoice(r) end
+    comboMilRank:SetValue("Рядовой")
+
+    local entMilRankCustom = vgui.Create("DTextEntry", milPnl)
+    entMilRankCustom:SetPos(540, 95) entMilRankCustom:SetSize(180, 26) entMilRankCustom:SetPlaceholderText("или своё звание")
+
+    local lblMVUS = vgui.Create("DLabel", milPnl)
+    lblMVUS:SetPos(16, 130) lblMVUS:SetText("Военно-учётная специальность (ВУС):") lblMVUS:SetTextColor(CC.text) lblMVUS:SizeToContents()
+    local comboMilVUS = vgui.Create("DComboBox", milPnl)
+    comboMilVUS:SetPos(16, 150) comboMilVUS:SetSize(320, 26)
+    for _, vus in ipairs(GRM.Documents.MilitaryVUS or {}) do comboMilVUS:AddChoice(vus) end
+    comboMilVUS:SetValue("ВУС-100 (Стрелковая подготовка)")
+
+    local entMilVUSCustom = vgui.Create("DTextEntry", milPnl)
+    entMilVUSCustom:SetPos(345, 150) entMilVUSCustom:SetSize(200, 26) entMilVUSCustom:SetPlaceholderText("или свой ВУС")
+
+    local lblMFac = vgui.Create("DLabel", milPnl)
+    lblMFac:SetPos(16, 185) lblMFac:SetText("Воинское формирование / Часть (выбор / ввод):") lblMFac:SetTextColor(CC.text) lblMFac:SizeToContents()
+    local comboMilFac = vgui.Create("DComboBox", milPnl)
+    comboMilFac:SetPos(16, 205) comboMilFac:SetSize(260, 26)
+    for fname in pairs(Factions or FactionsData or {}) do if isstring(fname) then comboMilFac:AddChoice(fname) end end
+    comboMilFac:SetValue("Вооружённые силы")
+
+    local entMilFacCustom = vgui.Create("DTextEntry", milPnl)
+    entMilFacCustom:SetPos(285, 205) entMilFacCustom:SetSize(240, 26) entMilFacCustom:SetText("Войсковая часть №4289")
+
+    local lblMDept = vgui.Create("DLabel", milPnl)
+    lblMDept:SetPos(16, 240) lblMDept:SetText("Подразделение / Отдел (выбор / ввод):") lblMDept:SetTextColor(CC.text) lblMDept:SizeToContents()
+    local entMilDept = vgui.Create("DTextEntry", milPnl)
+    entMilDept:SetPos(16, 260) entMilDept:SetSize(260, 26) entMilDept:SetText("Штаб")
+
+    local lblMPos = vgui.Create("DLabel", milPnl)
+    lblMPos:SetPos(285, 240) lblMPos:SetText("Занимаемая должность (ручной ввод):") lblMPos:SetTextColor(CC.text) lblMPos:SizeToContents()
+    local entMilPos = vgui.Create("DTextEntry", milPnl)
+    entMilPos:SetPos(285, 260) entMilPos:SetSize(240, 26) entMilPos:SetText("Старший стрелок")
+
+    local lblMNum = vgui.Create("DLabel", milPnl)
+    lblMNum:SetPos(540, 185) lblMNum:SetText("Военный билет №:") lblMNum:SetTextColor(CC.text) lblMNum:SizeToContents()
+    local entMilNum = vgui.Create("DTextEntry", milPnl)
+    entMilNum:SetPos(540, 205) entMilNum:SetSize(180, 26) entMilNum:SetText("ВБ-428901")
+
+    local lblMFit = vgui.Create("DLabel", milPnl)
+    lblMFit:SetPos(540, 240) lblMFit:SetText("Категория годности:") lblMFit:SetTextColor(CC.text) lblMFit:SizeToContents()
+    local comboMilFit = vgui.Create("DComboBox", milPnl)
+    comboMilFit:SetPos(540, 260) comboMilFit:SetSize(200, 26)
+    if GRM.Medical and GRM.Medical.FitnessCategories then
+        for _, fit in ipairs(GRM.Medical.FitnessCategories) do comboMilFit:AddChoice(fit) end
+    else
+        comboMilFit:AddChoice("А — Годен к военной службе")
+        comboMilFit:AddChoice("Б — Годен с ограничениями")
+        comboMilFit:AddChoice("В — Ограниченно годен")
+        comboMilFit:AddChoice("Д — Не годен к службе")
+    end
+    comboMilFit:SetValue("А — Годен к военной службе")
+
+    local selMilKey = ""
+    local selMilSid64 = "0"
+    comboMilTarget.OnSelect = function(_, _, _, pData)
+        if istable(pData) then
+            selMilKey = pData.key or ""
+            selMilSid64 = pData.steamID64 or "0"
+            entMilName:SetText(pData.rpName or "")
+
+            local pfx = (tpls.military and tpls.military.defaultPrefix) or "ВБ-"
+            entMilNum:SetText(pfx .. selMilSid64:sub(-5))
+
+            if registry.military and registry.military[selMilKey] then
+                local ex = registry.military[selMilKey]
+                entMilName:SetText(ex.fullName or pData.rpName or "")
+                entMilNum:SetText(ex.number or (pfx .. selMilSid64:sub(-5)))
+                entMilRankCustom:SetText(ex.rank or "Рядовой")
+                entMilVUSCustom:SetText(ex.vus or "ВУС-100")
+                entMilFacCustom:SetText(ex.formation or "Вооружённые силы")
+                entMilDept:SetText(ex.department or "Штаб")
+                entMilPos:SetText(ex.position or "Стрелок")
+                comboMilFit:SetValue(ex.fitness or "А — Годен к службе")
+            end
+        end
+    end
+
+    local btnIssueMil = vgui.Create("DButton", milPnl)
+    btnIssueMil:SetPos(16, 320)
+    btnIssueMil:SetSize(340, 36)
+    btnIssueMil:SetText("✔ Оформить и выдать военный билет")
+    btnIssueMil:SetFont("DermaDefaultBold")
+    btnIssueMil:SetTextColor(color_white)
+    btnIssueMil.Paint = function(s, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(40, 160, 80) or Color(35, 130, 65))
+    end
+    btnIssueMil.DoClick = function()
+        if not hasMilitary then
+            notification.AddLegacy("У вашей фракции нет допуска к выдаче военных билетов!", NOTIFY_ERROR, 3)
+            return
+        end
+        if selMilKey == "" then
+            notification.AddLegacy("Выберите военнообязанного из списка!", NOTIFY_ERROR, 3)
+            return
+        end
+
+        local rankChosen = entMilRankCustom:GetText() ~= "" and entMilRankCustom:GetText() or comboMilRank:GetValue()
+        local vusChosen  = entMilVUSCustom:GetText() ~= "" and entMilVUSCustom:GetText() or comboMilVUS:GetValue()
+        local facChosen  = entMilFacCustom:GetText() ~= "" and entMilFacCustom:GetText() or comboMilFac:GetValue()
+
+        local pack = {
+            fullName    = entMilName:GetText(),
+            rank        = rankChosen,
+            vus         = vusChosen,
+            formation   = facChosen,
+            department  = entMilDept:GetText() ~= "" and entMilDept:GetText() or "Штаб",
+            position    = entMilPos:GetText() ~= "" and entMilPos:GetText() or "Военнослужащий",
+            number      = entMilNum:GetText(),
+            fitness     = comboMilFit:GetValue(),
+            issuedBy    = (tpls.military and tpls.military.defaultIssuer) or "Военный комиссариат",
+            issueDate   = os.date("%d.%m.%Y"),
+            status      = "Действителен",
+            steamID64   = selMilSid64,
+        }
+
+        net.Start("GRM_Doc_ComputerIssue")
+            net.WriteString("military")
+            net.WriteString(selMilKey)
+            net.WriteTable(pack)
+        net.SendToServer()
+        frame:Close()
+    end
+
+    tabs:AddSheet("Военкомат / Военный билет", milPnl, "icon16/book_open.png")
+
+    -- ══════════════════════════════════════════════════════════════
+    -- ВКЛАДКА 4: ДОКУМЕНТЫ ПРИКРЫТИЯ (Спецслужбы)
     -- ══════════════════════════════════════════════════════════════
     if hasCover or isSuperAdmin then
         local coverPnl = vgui.Create("DPanel", tabs)
@@ -519,7 +674,7 @@ net.Receive("GRM_DocComp_Open", function()
     end
 
     -- ══════════════════════════════════════════════════════════════
-    -- ВКЛАДКА 4: РЕЕСТР ВЫДАННЫХ ДОКУМЕНТОВ
+    -- ВКЛАДКА 5: РЕЕСТР ВЫДАННЫХ ДОКУМЕНТОВ
     -- ══════════════════════════════════════════════════════════════
     local regPnl = vgui.Create("DPanel", tabs)
     regPnl:DockPadding(10, 10, 10, 10)
@@ -531,7 +686,7 @@ net.Receive("GRM_DocComp_Open", function()
     listDocs:AddColumn("Тип"):SetFixedWidth(100)
     listDocs:AddColumn("ФИО гражданина / сотрудника"):SetFixedWidth(200)
     listDocs:AddColumn("Номер / Серия"):SetFixedWidth(120)
-    listDocs:AddColumn("Организация / Ведомство"):SetFixedWidth(180)
+    listDocs:AddColumn("Организация / Формирование"):SetFixedWidth(180)
     listDocs:AddColumn("Статус"):SetFixedWidth(110)
     listDocs:AddColumn("CharacterKey")
 
@@ -548,6 +703,13 @@ net.Receive("GRM_DocComp_Open", function()
             if istable(b) then
                 local line = listDocs:AddLine("Удостоверение", b.fullName or "?", b.number or "?", b.faction or "—", b.status or "Действителен", k)
                 line._docType = "badge"
+                line._docKey = k
+            end
+        end
+        for k, m in pairs(registry.military or {}) do
+            if istable(m) then
+                local line = listDocs:AddLine("Военный билет", m.fullName or "?", m.number or "?", m.formation or "ВС", m.status or "Действителен", k)
+                line._docType = "military"
                 line._docKey = k
             end
         end
@@ -590,7 +752,7 @@ net.Receive("GRM_DocComp_Open", function()
     tabs:AddSheet("Реестр и архив", regPnl, "icon16/folder_table.png")
 
     -- ══════════════════════════════════════════════════════════════
-    -- ВКЛАДКА 5: НАСТРОЙКА КОРОЧКИ ВЕДОМСТВА (Лидер / Админ)
+    -- ВКЛАДКА 6: НАСТРОЙКА КОРОЧКИ ВЕДОМСТВА (Лидер / Админ)
     -- ══════════════════════════════════════════════════════════════
     if isLeader or isSuperAdmin then
         local customPnl = vgui.Create("DPanel", tabs)

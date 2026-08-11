@@ -906,7 +906,20 @@ if PHASE == "documents" then
     assert(badge.number:find("POL-"), "documents: префикс ведомства отсутствует в жетоне")
     assert(badge.permissions.weapon == true and badge.permissions.arrest == true, "documents: спецдопуски не применились")
 
-    -- 3. Сохранение и персистентность (переживает рестарт)
+    -- 3. Выдача военного билета
+    DOC.Registry.military = DOC.Registry.military or {}
+    DOC.Registry.military["76561199000000001:char1"] = {
+        fullName  = "Hans Schmidt",
+        rank      = "Сержант",
+        vus       = "ВУС-100",
+        formation = "Национальная гвардия",
+        department= "Штаб",
+        position  = "Командир отделения",
+        number    = "ВБ-428901",
+        status    = "Действителен",
+    }
+
+    -- 4. Сохранение и персистентность (переживает рестарт)
     DOC.SaveRegistry("test save")
     DOC.Registry = nil
     DOC.LoadRegistry()
@@ -917,6 +930,9 @@ if PHASE == "documents" then
     local badgeAfter = DOC.Registry.badges["76561199000000002:char1"]
     assert(istable(badgeAfter) and badgeAfter.faction == "OrdnungPolizei", "documents: удостоверение не пережило рестарт")
 
-    print("PHASE documents: OK — паспорта/служебные удостоверения/префиксы/спецдопуски/персистентность")
+    local milAfter = DOC.Registry.military["76561199000000001:char1"]
+    assert(istable(milAfter) and milAfter.rank == "Сержант" and milAfter.number == "ВБ-428901", "documents: военный билет не пережил рестарт")
+
+    print("PHASE documents: OK — паспорта/служебные удостоверения/военные билеты/префиксы/спецдопуски/персистентность")
     return
 end

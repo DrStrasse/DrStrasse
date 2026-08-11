@@ -140,6 +140,9 @@ if SERVER then
         local card = GRM.Medical and GRM.Medical.Cards and (GRM.Medical.Cards[key] or GRM.Medical.Cards[ply:SteamID64()])
         result.hasMedCard = (card ~= nil)
 
+        local mil = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.military and GRM.Documents.Registry.military[key]
+        result.hasMilitary = (mil ~= nil and mil.status ~= "Аннулирован")
+
         if factionName and FactionsExt and FactionsExt[factionName] then
             local cfg = FactionsExt[factionName]
             local member = faction and GRM.Identity.FactionMember(faction, ply)
@@ -381,6 +384,14 @@ local function actShowMedCard()
     net.SendToServer()
 end
 
+local function actShowMilitary()
+    local ap = istable(data.aimPly) and data.aimPly or nil
+    net.Start("GRM_Doc_ShowDoc")
+        net.WriteString("military")
+        net.WriteEntity(Entity(ap and ap.idx or 0))
+    net.SendToServer()
+end
+
 local function actOwnPassport()
     net.Start("GRM_Doc_OpenDoc")
         net.WriteString("passport")
@@ -412,6 +423,12 @@ local function actOwnBadge()
             net.WriteString(data.hasCoverBadge and "cover" or "official")
         net.SendToServer()
     end
+end
+
+local function actOwnMilitary()
+    net.Start("GRM_Doc_OpenDoc")
+        net.WriteString("military")
+    net.SendToServer()
 end
 
 local function actOwnMedCard()
@@ -492,6 +509,14 @@ local BTNS = {
       fn = actShowBadge,
       c = Color(35, 75, 135), ch = Color(50, 100, 170),
       ok = function() return istable(data.aimPly) and data.hasBadge == true end },
+    { id = "doc_mil", l = function()
+          local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
+          if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
+          return "🪖 Показать военный билет: " .. n
+      end,
+      fn = actShowMilitary,
+      c = Color(38, 90, 45), ch = Color(55, 120, 60),
+      ok = function() return istable(data.aimPly) and data.hasMilitary == true end },
     { id = "doc_med", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
           if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
@@ -509,6 +534,10 @@ local BTNS = {
       fn = actOwnBadge,
       c = Color(35, 75, 135), ch = Color(50, 100, 170),
       ok = function() return not istable(data.aimPly) and data.hasBadge == true end },
+    { id = "doc_self_mil", l = "🪖 Мой военный билет",
+      fn = actOwnMilitary,
+      c = Color(38, 90, 45), ch = Color(55, 120, 60),
+      ok = function() return not istable(data.aimPly) and data.hasMilitary == true end },
     { id = "doc_self_med", l = "🩺 Моя медкарта",
       fn = actOwnMedCard,
       c = Color(35, 120, 95), ch = Color(45, 150, 120),
