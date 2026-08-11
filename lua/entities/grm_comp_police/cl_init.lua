@@ -1,0 +1,427 @@
+--[[--------------------------------------------------------------------
+    grm_comp_police — cl_init.lua (Интерфейс Полиции Порядка)
+----------------------------------------------------------------------]]
+include("shared.lua")
+
+local CC = {
+    bg      = Color(18, 24, 36, 250),
+    panel   = Color(25, 34, 50, 245),
+    header  = Color(28, 42, 68, 255),
+    accent  = Color(70, 150, 255),
+    success = Color(60, 190, 100),
+    danger  = Color(220, 70, 70),
+    text    = Color(230, 238, 250),
+    dim     = Color(150, 165, 185),
+    gold    = Color(245, 205, 80),
+}
+
+function ENT:Draw()
+    self:DrawModel()
+
+    local pos = self:GetPos() + self:GetUp() * 24 + self:GetForward() * 2
+    local ang = self:GetAngles()
+    ang:RotateAroundAxis(ang:Up(), 90)
+    ang:RotateAroundAxis(ang:Forward(), 90)
+
+    cam.Start3D2D(pos, ang, 0.08)
+        draw.RoundedBox(6, -150, -50, 300, 100, Color(12, 18, 30, 240))
+        draw.SimpleText("ПОЛИЦИЯ ПОРЯДКА", "DermaDefaultBold", 0, -25, Color(80, 160, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("OrdnungPolizei Terminal", "DermaDefault", 0, -5, Color(220, 230, 245), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Нажмите [E] для входа в систему", "DermaDefault", 0, 20, Color(150, 170, 200), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    cam.End3D2D()
+end
+
+net.Receive("GRM_CompPolice_Open", function()
+    local ent          = net.ReadEntity()
+    local onlineList   = net.ReadTable() or {}
+    local tpls         = net.ReadTable() or {}
+    local registry     = net.ReadTable() or {}
+    local wantedRecs   = net.ReadTable() or {}
+    local myFaction    = net.ReadString()
+    local isSuperAdmin = net.ReadBool()
+
+    local frame = vgui.Create("DFrame")
+    frame:SetSize(960, 700)
+    frame:Center()
+    frame:SetTitle("")
+    frame:MakePopup()
+    frame:ShowCloseButton(false)
+
+    frame.Paint = function(_, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, CC.bg)
+        draw.RoundedBoxEx(8, 0, 0, w, 40, CC.header, true, true, false, false)
+        draw.SimpleText("ТЕРМИНАЛ УПРАВЛЕНИЯ • ПОЛИЦИЯ ПОРЯДКА (OrdnungPolizei)", "DermaDefaultBold", 16, 20, CC.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    end
+
+    local btnClose = vgui.Create("DButton", frame)
+    btnClose:SetSize(28, 24)
+    btnClose:SetPos(frame:GetWide() - 36, 8)
+    btnClose:SetText("✕")
+    btnClose:SetTextColor(CC.dim)
+    btnClose.Paint = function(s, w, h)
+        draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and CC.danger or Color(45, 55, 75))
+        if s:IsHovered() then s:SetTextColor(color_white) else s:SetTextColor(CC.dim) end
+    end
+    btnClose.DoClick = function() frame:Close() end
+
+    local tabs = vgui.Create("DPropertySheet", frame)
+    tabs:Dock(FILL)
+    tabs:DockMargin(4, 38, 4, 4)
+
+    -- ══════════════════════════════════════════════════════════════
+    -- ВКЛАДКА 1: ОБЩАЯ БАЗА РОЗЫСКА (WANTED)
+    -- ══════════════════════════════════════════════════════════════
+    local wantPnl = vgui.Create("DPanel", tabs)
+    wantPnl:DockPadding(12, 12, 12, 12)
+    wantPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
+
+    local lblWTarget = vgui.Create("DLabel", wantPnl)
+    lblWTarget:SetPos(16, 12) lblWTarget:SetText("Объявление гражданина в розыск:") lblWTarget:SetFont("DermaDefaultBold") lblWTarget:SetTextColor(Color(255, 120, 100)) lblWTarget:SizeToContents()
+
+    local comboWTarget = vgui.Create("DComboBox", wantPnl)
+    comboWTarget:SetPos(16, 32) comboWTarget:SetSize(340, 26)
+    comboWTarget:AddChoice("— Выберите гражданина онлайн —", "")
+    for _, pData in ipairs(onlineList) do
+        comboWTarget:AddChoice(string.format("%s  [%s]", pData.rpName or "?", pData.nick or "?"), pData)
+    end
+
+    local lblWReason = vgui.Create("DLabel", wantPnl)
+    lblWReason:SetPos(366, 12) lblWReason:SetText("Статья / Причина розыска:") lblWReason:SetTextColor(CC.text) lblWReason:SizeToContents()
+    local entWReason = vgui.Create("DTextEntry", wantPnl)
+    entWReason:SetPos(366, 32) entWReason:SetSize(300, 26) entWReason:SetText("Нарушение общественного порядка")
+
+    local lblWStars = vgui.Create("DLabel", wantPnl)
+    lblWStars:SetPos(676, 12) lblWStars:SetText("Уровень опасности:") lblWStars:SetTextColor(CC.text) lblWStars:SizeToContents()
+    local comboWStars = vgui.Create("DComboBox", wantPnl)
+    comboWStars:SetPos(676, 32) comboWStars:SetSize(120, 26)
+    comboWStars:AddChoice("★☆☆☆☆ (1 ур.)", 1)
+    comboWStars:AddChoice("★★☆☆☆ (2 ур.)", 2)
+    comboWStars:AddChoice("★★★☆☆ (3 ур.)", 3)
+    comboWStars:AddChoice("★★★★☆ (4 ур.)", 4)
+    comboWStars:AddChoice("★★★★★ (5 ур.)", 5)
+    comboWStars:SetValue("★★☆☆☆ (2 ур.)")
+
+    local selWKey = ""
+    comboWTarget.OnSelect = function(_, _, _, pData)
+        if istable(pData) then selWKey = pData.key or pData.steamID64 or "" end
+    end
+
+    local btnAddWanted = vgui.Create("DButton", wantPnl)
+    btnAddWanted:SetPos(806, 32) btnAddWanted:SetSize(120, 26)
+    btnAddWanted:SetText("🚨 В розыск")
+    btnAddWanted:SetFont("DermaDefaultBold")
+    btnAddWanted:SetTextColor(color_white)
+    btnAddWanted.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(230, 60, 60) or Color(180, 40, 40)) end
+    btnAddWanted:SetEnabled(true)
+    btnAddWanted.DoClick = function()
+        if selWKey == "" then notification.AddLegacy("Выберите гражданина!", NOTIFY_ERROR, 3) return end
+        local _, lvl = comboWStars:GetSelected()
+        net.Start("GRM_CompPolice_WantedAct")
+            net.WriteString("add")
+            net.WriteString(selWKey)
+            net.WriteString(entWReason:GetText())
+            net.WriteUInt(tonumber(lvl) or 2, 4)
+        net.SendToServer()
+        notification.AddLegacy("Ориентировка передана патрульным экипажам!", NOTIFY_GENERIC, 3)
+        frame:Close()
+    end
+
+    local listWanted = vgui.Create("DListView", wantPnl)
+    listWanted:SetPos(16, 75)
+    listWanted:SetSize(910, 480)
+    listWanted:AddColumn("Уровень"):SetFixedWidth(100)
+    listWanted:AddColumn("Разыскиваемый"):SetFixedWidth(240)
+    listWanted:AddColumn("Статьи и ориентировки"):SetFixedWidth(420)
+    listWanted:AddColumn("Ключ")
+
+    for k, r in pairs(wantedRecs) do
+        if istable(r) and (r.level or 0) > 0 then
+            local starStr = string.rep("★", math.Clamp(r.level or 1, 1, 5))
+            local reas = {}
+            for _, rc in ipairs(r.reasons or {}) do reas[#reas+1] = (rc.code or "") .. " " .. (rc.title or "") end
+            local line = listWanted:AddLine(starStr, r.name or k, table.concat(reas, ", "), k)
+            line._targetKey = k
+        end
+    end
+
+    local btnClearWanted = vgui.Create("DButton", wantPnl)
+    btnClearWanted:SetPos(16, 565)
+    btnClearWanted:SetSize(300, 34)
+    btnClearWanted:SetText("✔ Снять с розыска (Задержан / Оправдан)")
+    btnClearWanted:SetFont("DermaDefaultBold")
+    btnClearWanted:SetTextColor(color_white)
+    btnClearWanted.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and CC.success or Color(35, 140, 75)) end
+    btnClearWanted.DoClick = function()
+        local line = listWanted:GetSelectedLine()
+        if not line then notification.AddLegacy("Выберите запись из списка!", NOTIFY_ERROR, 3) return end
+        local row = listWanted:GetLine(line)
+        if row and row._targetKey then
+            net.Start("GRM_CompPolice_WantedAct")
+                net.WriteString("clear")
+                net.WriteString(row._targetKey)
+                net.WriteString("Снят с розыска в терминале OrdnungPolizei")
+                net.WriteUInt(0, 4)
+            net.SendToServer()
+            listWanted:RemoveLine(line)
+            notification.AddLegacy("Гражданин снят с розыска.", NOTIFY_GENERIC, 3)
+        end
+    end
+
+    tabs:AddSheet("База розыска", wantPnl, "icon16/exclamation.png")
+
+    -- ══════════════════════════════════════════════════════════════
+    -- ВКЛАДКА 2: ОБЩАЯ БАЗА ШТРАФОВ (FINES)
+    -- ══════════════════════════════════════════════════════════════
+    local finePnl = vgui.Create("DPanel", tabs)
+    finePnl:DockPadding(16, 16, 16, 16)
+    finePnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
+
+    local lblFTarget = vgui.Create("DLabel", finePnl)
+    lblFTarget:SetPos(16, 16) lblFTarget:SetText("Оформление протокола о штрафе:") lblFTarget:SetFont("DermaDefaultBold") lblFTarget:SetTextColor(CC.gold) lblFTarget:SizeToContents()
+
+    local comboFTarget = vgui.Create("DComboBox", finePnl)
+    comboFTarget:SetPos(16, 38) comboFTarget:SetSize(360, 28)
+    comboFTarget:AddChoice("— Выберите нарушителя онлайн —", "")
+    for _, pData in ipairs(onlineList) do
+        comboFTarget:AddChoice(string.format("%s  [%s]", pData.rpName or "?", pData.nick or "?"), pData)
+    end
+
+    local lblFAmount = vgui.Create("DLabel", finePnl)
+    lblFAmount:SetPos(390, 16) lblFAmount:SetText("Сумма штрафа (GRM):") lblFAmount:SetTextColor(CC.text) lblFAmount:SizeToContents()
+    local entFAmount = vgui.Create("DTextEntry", finePnl)
+    entFAmount:SetPos(390, 38) entFAmount:SetSize(160, 28) entFAmount:SetText("2500")
+
+    local lblFReason = vgui.Create("DLabel", finePnl)
+    lblFReason:SetPos(16, 80) lblFReason:SetText("Основание / Статья правонарушения:") lblFReason:SetTextColor(CC.text) lblFReason:SizeToContents()
+    local entFReason = vgui.Create("DTextEntry", finePnl)
+    entFReason:SetPos(16, 102) entFReason:SetSize(534, 28) entFReason:SetText("Нарушение правил общественного порядка")
+
+    local selFNick = ""
+    comboFTarget.OnSelect = function(_, _, _, pData)
+        if istable(pData) then selFNick = pData.nick or "" end
+    end
+
+    local btnIssueFine = vgui.Create("DButton", finePnl)
+    btnIssueFine:SetPos(16, 150) btnIssueFine:SetSize(320, 36)
+    btnIssueFine:SetText("📝 Выписать электронный штраф")
+    btnIssueFine:SetFont("DermaDefaultBold")
+    btnIssueFine:SetTextColor(color_white)
+    btnIssueFine.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(35, 140, 190) or Color(25, 110, 160)) end
+    btnIssueFine.DoClick = function()
+        if selFNick == "" then notification.AddLegacy("Выберите нарушителя!", NOTIFY_ERROR, 3) return end
+        local amt = tonumber(entFAmount:GetText()) or 1000
+        LocalPlayer():ConCommand(string.format("say /fine %d %s %s", amt, selFNick, entFReason:GetText()))
+        frame:Close()
+    end
+
+    tabs:AddSheet("База штрафов", finePnl, "icon16/money.png")
+
+    -- ══════════════════════════════════════════════════════════════
+    -- ВКЛАДКА 3: ПАСПОРТНЫЙ СТОЛ
+    -- ══════════════════════════════════════════════════════════════
+    local passPnl = vgui.Create("DPanel", tabs)
+    passPnl:DockPadding(16, 16, 16, 16)
+    passPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
+
+    local lblP1 = vgui.Create("DLabel", passPnl)
+    lblP1:SetPos(16, 16) lblP1:SetText("Оформление паспорта гражданина:") lblP1:SetFont("DermaDefaultBold") lblP1:SetTextColor(CC.accent) lblP1:SizeToContents()
+
+    local comboPassTarget = vgui.Create("DComboBox", passPnl)
+    comboPassTarget:SetPos(16, 38) comboPassTarget:SetSize(420, 28)
+    comboPassTarget:AddChoice("— Выберите гражданина онлайн —", "")
+    for _, pData in ipairs(onlineList) do
+        comboPassTarget:AddChoice(string.format("%s  [%s]  (%s)", pData.rpName or "?", pData.nick or "?", pData.key or ""), pData)
+    end
+
+    local lblPName = vgui.Create("DLabel", passPnl)
+    lblPName:SetPos(16, 75) lblPName:SetText("ФИО (ручной ввод):") lblPName:SetTextColor(CC.text) lblPName:SizeToContents()
+    local entPassName = vgui.Create("DTextEntry", passPnl)
+    entPassName:SetPos(16, 95) entPassName:SetSize(320, 26)
+
+    local lblPGender = vgui.Create("DLabel", passPnl)
+    lblPGender:SetPos(350, 75) lblPGender:SetText("Пол:") lblPGender:SetTextColor(CC.text) lblPGender:SizeToContents()
+    local comboPassGender = vgui.Create("DComboBox", passPnl)
+    comboPassGender:SetPos(350, 95) comboPassGender:SetSize(120, 26)
+    comboPassGender:AddChoice("Мужской") comboPassGender:AddChoice("Женский") comboPassGender:SetValue("Мужской")
+
+    local lblPBirth = vgui.Create("DLabel", passPnl)
+    lblPBirth:SetPos(485, 75) lblPBirth:SetText("Дата рождения:") lblPBirth:SetTextColor(CC.text) lblPBirth:SizeToContents()
+    local entPassBirth = vgui.Create("DTextEntry", passPnl)
+    entPassBirth:SetPos(485, 95) entPassBirth:SetSize(140, 26) entPassBirth:SetText("12.04.1988")
+
+    local lblPSeries = vgui.Create("DLabel", passPnl)
+    lblPSeries:SetPos(16, 135) lblPSeries:SetText("Серия паспорта:") lblPSeries:SetTextColor(CC.text) lblPSeries:SizeToContents()
+    local entPassSeries = vgui.Create("DTextEntry", passPnl)
+    entPassSeries:SetPos(16, 155) entPassSeries:SetSize(120, 26) entPassSeries:SetText(tpls.passport and tpls.passport.defaultSeries or "GRM")
+
+    local lblPNum = vgui.Create("DLabel", passPnl)
+    lblPNum:SetPos(150, 135) lblPNum:SetText("Номер паспорта:") lblPNum:SetTextColor(CC.text) lblPNum:SizeToContents()
+    local entPassNum = vgui.Create("DTextEntry", passPnl)
+    entPassNum:SetPos(150, 155) entPassNum:SetSize(180, 26) entPassNum:SetText("01428901")
+
+    local lblPIssuer = vgui.Create("DLabel", passPnl)
+    lblPIssuer:SetPos(350, 135) lblPIssuer:SetText("Орган выдачи:") lblPIssuer:SetTextColor(CC.text) lblPIssuer:SizeToContents()
+    local entPassIssuer = vgui.Create("DTextEntry", passPnl)
+    entPassIssuer:SetPos(350, 155) entPassIssuer:SetSize(360, 26) entPassIssuer:SetText("Паспортный стол OrdnungPolizei")
+
+    local selectedPassKey = ""
+    local selectedPassSid64 = "0"
+    comboPassTarget.OnSelect = function(_, _, _, pData)
+        if istable(pData) then
+            selectedPassKey = pData.key or ""
+            selectedPassSid64 = pData.steamID64 or "0"
+            entPassName:SetText(pData.rpName or "")
+            local shortSid = selectedPassSid64:sub(-6)
+            entPassNum:SetText("01" .. shortSid)
+
+            if registry.passports and registry.passports[selectedPassKey] then
+                local ex = registry.passports[selectedPassKey]
+                entPassName:SetText(ex.fullName or pData.rpName or "")
+                entPassBirth:SetText(ex.birthDate or "12.04.1988")
+                comboPassGender:SetValue(ex.gender or "Мужской")
+                entPassSeries:SetText(ex.series or "GRM")
+                entPassNum:SetText(ex.number or ("01" .. shortSid))
+                entPassIssuer:SetText(ex.issuedBy or "Паспортный стол OrdnungPolizei")
+            end
+        end
+    end
+
+    local btnIssuePass = vgui.Create("DButton", passPnl)
+    btnIssuePass:SetPos(16, 205) btnIssuePass:SetSize(320, 36)
+    btnIssuePass:SetText("✔ Оформить и выдать паспорт")
+    btnIssuePass:SetFont("DermaDefaultBold")
+    btnIssuePass:SetTextColor(color_white)
+    btnIssuePass.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and CC.success or Color(35, 140, 75)) end
+    btnIssuePass.DoClick = function()
+        if selectedPassKey == "" then notification.AddLegacy("Выберите гражданина!", NOTIFY_ERROR, 3) return end
+        local pack = {
+            fullName    = entPassName:GetText(),
+            gender      = comboPassGender:GetValue(),
+            birthDate   = entPassBirth:GetText(),
+            nationality = "Гражданин Республики",
+            series      = entPassSeries:GetText(),
+            number      = entPassNum:GetText(),
+            issuedBy    = entPassIssuer:GetText(),
+            issueDate   = os.date("%d.%m.%Y"),
+            validUntil  = "Бессрочно",
+            status      = "Действителен",
+            steamID64   = selectedPassSid64,
+        }
+        net.Start("GRM_Doc_ComputerIssue")
+            net.WriteString("passport")
+            net.WriteString(selectedPassKey)
+            net.WriteTable(pack)
+        net.SendToServer()
+        frame:Close()
+    end
+
+    tabs:AddSheet("Паспортный стол", passPnl, "icon16/book.png")
+
+    -- ══════════════════════════════════════════════════════════════
+    -- ВКЛАДКА 4: ОТДЕЛ КАДРОВ ORDNUNGPOLIZEI
+    -- ══════════════════════════════════════════════════════════════
+    local badgePnl = vgui.Create("DPanel", tabs)
+    badgePnl:DockPadding(16, 16, 16, 16)
+    badgePnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
+
+    local lblBTarget = vgui.Create("DLabel", badgePnl)
+    lblBTarget:SetPos(16, 16) lblBTarget:SetText("Служебные удостоверения сотрудников OrdnungPolizei:") lblBTarget:SetFont("DermaDefaultBold") lblBTarget:SetTextColor(CC.accent) lblBTarget:SizeToContents()
+
+    local comboBadgeTarget = vgui.Create("DComboBox", badgePnl)
+    comboBadgeTarget:SetPos(16, 36) comboBadgeTarget:SetSize(420, 28)
+    comboBadgeTarget:AddChoice("— Выберите сотрудника полиции —", "")
+    for _, pData in ipairs(onlineList) do
+        if (pData.faction or ""):lower():find("ordnung") or (pData.faction or ""):lower():find("polizei") or isSuperAdmin then
+            comboBadgeTarget:AddChoice(string.format("%s  [%s]  — %s", pData.rpName or "?", pData.nick or "?", pData.role or "Сотрудник"), pData)
+        end
+    end
+
+    local lblBName = vgui.Create("DLabel", badgePnl)
+    lblBName:SetPos(16, 75) lblBName:SetText("ФИО сотрудника:") lblBName:SetTextColor(CC.text) lblBName:SizeToContents()
+    local entBadgeName = vgui.Create("DTextEntry", badgePnl)
+    entBadgeName:SetPos(16, 95) entBadgeName:SetSize(280, 26)
+
+    local lblBRole = vgui.Create("DLabel", badgePnl)
+    lblBRole:SetPos(310, 75) lblBRole:SetText("Звание / Должность:") lblBRole:SetTextColor(CC.text) lblBRole:SizeToContents()
+    local entBadgeRole = vgui.Create("DTextEntry", badgePnl)
+    entBadgeRole:SetPos(310, 95) entBadgeRole:SetSize(200, 26)
+
+    local lblBDept = vgui.Create("DLabel", badgePnl)
+    lblBDept:SetPos(16, 135) lblBDept:SetText("Отдел полиции:") lblBDept:SetTextColor(CC.text) lblBDept:SizeToContents()
+    local entBadgeDept = vgui.Create("DTextEntry", badgePnl)
+    entBadgeDept:SetPos(16, 155) entBadgeDept:SetSize(280, 26) entBadgeDept:SetText("Патрульно-постовая служба")
+
+    local lblBNum = vgui.Create("DLabel", badgePnl)
+    lblBNum:SetPos(310, 135) lblBNum:SetText("Номер жетона:") lblBNum:SetTextColor(CC.text) lblBNum:SizeToContents()
+    local entBadgeNum = vgui.Create("DTextEntry", badgePnl)
+    entBadgeNum:SetPos(310, 155) entBadgeNum:SetSize(200, 26) entBadgeNum:SetText("POL-0001")
+
+    local chkBoxes = {}
+    local yPos = 210
+    local xPos = 16
+    for i, pDef in ipairs(GRM.Documents and GRM.Documents.PermissionsList or {}) do
+        local chk = vgui.Create("DCheckBoxLabel", badgePnl)
+        chk:SetPos(xPos, yPos) chk:SetText(pDef.title) chk:SetTextColor(CC.text) chk:SetValue(true) chk:SizeToContents()
+        chkBoxes[pDef.id] = chk
+        if i % 2 == 1 then xPos = 420 else xPos = 16 yPos = yPos + 24 end
+    end
+
+    local selectedBadgeKey = ""
+    local selectedBadgeSid64 = "0"
+    comboBadgeTarget.OnSelect = function(_, _, _, pData)
+        if istable(pData) then
+            selectedBadgeKey = pData.key or ""
+            selectedBadgeSid64 = pData.steamID64 or "0"
+            entBadgeName:SetText(pData.rpName or "")
+            entBadgeRole:SetText(pData.role or "Офицер полиции")
+            entBadgeDept:SetText(pData.department or "Патрульная служба")
+            local shortSid = selectedBadgeSid64:sub(-4)
+            entBadgeNum:SetText("POL-" .. shortSid)
+
+            if registry.badges and registry.badges[selectedBadgeKey] then
+                local ex = registry.badges[selectedBadgeKey]
+                entBadgeName:SetText(ex.fullName or pData.rpName or "")
+                entBadgeRole:SetText(ex.role or pData.role or "")
+                entBadgeDept:SetText(ex.department or "Патрульная служба")
+                entBadgeNum:SetText(ex.number or ("POL-" .. shortSid))
+                if istable(ex.permissions) then
+                    for pId, cb in pairs(chkBoxes) do cb:SetValue(ex.permissions[pId] == true) end
+                end
+            end
+        end
+    end
+
+    local btnIssueBadge = vgui.Create("DButton", badgePnl)
+    btnIssueBadge:SetPos(16, yPos + 180) btnIssueBadge:SetSize(320, 36)
+    btnIssueBadge:SetText("✔ Выдать удостоверение OrdnungPolizei")
+    btnIssueBadge:SetFont("DermaDefaultBold")
+    btnIssueBadge:SetTextColor(color_white)
+    btnIssueBadge.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and CC.success or Color(35, 140, 75)) end
+    btnIssueBadge.DoClick = function()
+        if selectedBadgeKey == "" then notification.AddLegacy("Выберите сотрудника!", NOTIFY_ERROR, 3) return end
+        local curPerms = {}
+        for pId, cb in pairs(chkBoxes) do curPerms[pId] = cb:GetChecked() end
+        local pack = {
+            fullName    = entBadgeName:GetText(),
+            faction     = "OrdnungPolizei",
+            role        = entBadgeRole:GetText(),
+            department  = entBadgeDept:GetText(),
+            number      = entBadgeNum:GetText(),
+            permissions = curPerms,
+            issuedBy    = "Руководство OrdnungPolizei",
+            issueDate   = os.date("%d.%m.%Y"),
+            validUntil  = "Бессрочно",
+            status      = "Действителен",
+            steamID64   = selectedBadgeSid64,
+            isCover     = false,
+        }
+        net.Start("GRM_Doc_ComputerIssue")
+            net.WriteString("badge")
+            net.WriteString(selectedBadgeKey)
+            net.WriteTable(pack)
+        net.SendToServer()
+        frame:Close()
+    end
+
+    tabs:AddSheet("Отдел кадров OrdnungPolizei", badgePnl, "icon16/shield.png")
+end)
