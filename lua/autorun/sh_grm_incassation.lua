@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Incassation (Код 126 — «Инкассация») v2.1.0 — ДВУНАПРАВЛЕННАЯ + 3D2D
+    GRM Incassation (Код 126 — «Инкассация») v2.2.0 — ПЕРСИСТЕНТНОСТЬ БАНКОМАТОВ
 
     Полный цикл работы по ТЗ:
       1. Игрок садится в служебную машину фракции, за рулём пишет /incass —
@@ -10,6 +10,8 @@
            банкомат переходит в режим «ИНКАССАЦИЯ» (3D2D индикатор, блокировка от гражданских).
          • В меню банкомата: «Забрать указанную сумму» / «Забрать ВСЁ» —
            деньги списываются из банкомата, выдаётся чемодан (weapon_grm_incass_bag).
+         • Баланс банкомата ПЕРСИСТЕНТЕН: сохраняется в data/grm_atm_cash.json
+           и переживает любые рестарты карты и сервера!
          • Подходит к инкасс-машине — [G] — «ЗАГРУЗИТЬ» (чемодан → багажник).
          • Подъехав к хранилищу банка (grm_bank_vault) — [G] на машину — «РАЗГРУЗИТЬ»
            (багажник → чемодан в руку; разгрузка доступна в любом месте).
@@ -36,7 +38,7 @@ GRM = GRM or {}
 GRM.Incass = GRM.Incass or {}
 local I = GRM.Incass
 
-I.Version    = "2.1.0"
+I.Version    = "2.2.0"
 I.Code       = 126
 I.ModuleName = "incassation"
 
@@ -96,9 +98,19 @@ I._carAliasCache      = {}
 local function isstring(v)   return type(v) == "string" end
 local function istable(v)    return type(v) == "table" end
 local function isfunction(v) return type(v) == "function" end
+local function mRound(n)
+    if math.Round then return math.Round(n) end
+    return math.floor((tonumber(n) or 0) + 0.5)
+end
 
 local function isPly(p)
     return IsValid(p) and p:IsPlayer()
+end
+
+local function jsonT(txt)
+    if not isstring(txt) or txt == "" then return nil end
+    local ok, t = pcall(util.JSONToTable, txt, false, true)
+    return (ok and istable(t)) and t or nil
 end
 
 local function notify(ply, msg, r, g, b)
@@ -475,9 +487,132 @@ function I.TakeBagWeapon(ply)
 end
 
 -- ==================================================================
--- СЕРВЕРНАЯ ЧАСТЬ (SERVER)
+-- СЕРВЕРНАЯ ЧАСТЬ (SERVER) — ПЕРСИСТЕНТНОСТЬ И ЛОГИКА
 -- ==================================================================
 if SERVER then
+
+local CASH_FILE    = "grm_atm_cash.json"
+local CASH_BACKUP  = "grm_atm_cash_backup.json"
+
+local function curMapName()
+    return (game and isfunction(game.GetMap) and game.GetMap()) or _G.__MAP or "unknown"
+end
+
+-- ── Персистентная база балансов банкоматов ────────────────────────
+function I.LoadTerminalCashDatabase()
+    local t = nil
+    if file.Exists(CASH_FILE, "DATA") then
+        t = jsonT(file.Read(CASH_FILE, "DATA") or "")
+    end
+    if not istable(t) and file.Exists(CASH_BACKUP, "DATA") then
+        t = jsonT(file.Read(CASH_BACKUP, "DATA") or "")
+    end
+    return istable(t) and t or {}
+end
+
+function I.SaveTerminalCashDatabase(force, why)
+    local curMap = curMapName()
+    local records = I.LoadTerminalCashDatabase()
+
+    -- 1. Собрать живые банкоматы на текущей карте
+    for _, ent in ipairs(ents.FindByClass("grm_bank_terminal")) do
+        if IsValid(ent) then
+            local eid = ent:EntIndex()
+            local cash = math.max(0, math.floor(tonumber(I.TerminalCash[eid]) or 0))
+            local pos = ent:GetPos()
+            local np = { x = mRound(pos.x), y = mRound(pos.y), z = mRound(pos.z) }
+            local lastC = math.floor(tonumber(I.TerminalLastCollect[eid]) or 0)
+            local name = isfunction(ent.GetTerminalName) and ent:GetTerminalName() or "Банк GRM"
+
+            -- Поиск существующей записи на этой точке
+            local found = false
+            for _, rec in ipairs(records) do
+                if rec.map == curMap and rec.pos and (math.abs(rec.pos.x - np.x) <= 16 and math.abs(rec.pos.y - np.y) <= 16 and math.abs(rec.pos.z - np.z) <= 16) then
+                    rec.cash = cash
+                    rec.name = name
+                    rec.last_collect = lastC
+                    rec.updated = os.time()
+                    found = true
+                    break
+                end
+            end
+            if not found then
+                records[#records + 1] = {
+                    map = curMap,
+                    pos = np,
+                    name = name,
+                    cash = cash,
+                    last_collect = lastC,
+                    updated = os.time(),
+                }
+            end
+        end
+    end
+
+    local txt = util.TableToJSON(records, true)
+    if not isstring(txt) or txt == "" then return false end
+
+    file.Write(CASH_FILE, txt)
+    file.Write(CASH_BACKUP, txt)
+
+    local chk = file.Read(CASH_FILE, "DATA")
+    if chk == txt then
+        print(("[GRM Incass] SAVE ATM cash ok: записей %d, %d байт -> data/%s [%s]")
+            :format(#records, #txt, CASH_FILE, tostring(why or "автосейв")))
+        return true
+    end
+    return false
+end
+
+function I.RestoreTerminalCash(terminal)
+    if not IsValid(terminal) or terminal:GetClass() ~= "grm_bank_terminal" then return end
+    local eid = terminal:EntIndex()
+    local curMap = curMapName()
+    local pos = terminal:GetPos()
+    local np = { x = mRound(pos.x), y = mRound(pos.y), z = mRound(pos.z) }
+
+    local records = I.LoadTerminalCashDatabase()
+    for _, rec in ipairs(records) do
+        if rec.map == curMap and rec.pos and (math.abs(rec.pos.x - np.x) <= 16 and math.abs(rec.pos.y - np.y) <= 16 and math.abs(rec.pos.z - np.z) <= 16) then
+            local cash = math.max(0, math.floor(tonumber(rec.cash) or 0))
+            I.TerminalCash[eid] = cash
+            I.TerminalLastCollect[eid] = tonumber(rec.last_collect) or 0
+            if isfunction(terminal.SetNWInt) then
+                terminal:SetNWInt("GRM_TerminalCash", cash)
+            end
+            if isfunction(terminal.SetTerminalName) and rec.name then
+                terminal:SetTerminalName(rec.name)
+            end
+            print(("[GRM Incass] Банкомат #%d @ %d %d %d: восстановлен баланс %s (%s)")
+                :format(eid, np.x, np.y, np.z, formatMoney(cash), tostring(rec.name or "Банк GRM")))
+            return cash
+        end
+    end
+    return 0
+end
+
+function I.SetTerminalCash(terminal, amount, why)
+    if not IsValid(terminal) then return end
+    local eid = terminal:EntIndex()
+    local cash = math.max(0, math.floor(tonumber(amount) or 0))
+    I.TerminalCash[eid] = cash
+    if isfunction(terminal.SetNWInt) then
+        terminal:SetNWInt("GRM_TerminalCash", cash)
+    end
+    I.SaveTerminalCashDatabase(true, why or "SetTerminalCash")
+    if GRM.PermData and GRM.PermData.UpdateEntry then
+        GRM.PermData.UpdateEntry(terminal)
+    end
+end
+
+function I.GetTerminalCash(terminal)
+    if not IsValid(terminal) then return 0 end
+    local eid = terminal:EntIndex()
+    if I.TerminalCash[eid] == nil then
+        I.RestoreTerminalCash(terminal)
+    end
+    return math.max(0, math.floor(tonumber(I.TerminalCash[eid]) or 0))
+end
 
 local function unlockTerminalsOfRun(runID)
     for eid, rid in pairs(I.LockedTerminals) do
@@ -485,8 +620,8 @@ local function unlockTerminalsOfRun(runID)
             I.LockedTerminals[eid] = nil
             for _, ent in ipairs(ents.FindByClass("grm_bank_terminal")) do
                 if IsValid(ent) and ent:EntIndex() == eid then
-                    ent:SetNWBool("GRM_IncassLocked", false)
-                    ent:SetNWInt("GRM_IncassLockRun", 0)
+                    if isfunction(ent.SetNWBool) then ent:SetNWBool("GRM_IncassLocked", false) end
+                    if isfunction(ent.SetNWInt) then ent:SetNWInt("GRM_IncassLockRun", 0) end
                 end
             end
         end
@@ -606,7 +741,7 @@ function I.StartRun(ply)
     veh:SetNWString("GRM_IncassUID", tostring(veh.GRM_IncassUID))
     ply:SetNWEntity("GRM_IncassMyCar", veh)
 
-    notify(ply, "Рейс #" .. runID .. " начат (" .. tostring(spawnName) .. "). Доступен забор и развозка средств по банкоматам. G — взаимодействие.", 100, 220, 130)
+    notify(ply, "Рейс #" .. runID .. " начат (" .. tostring(spawnName) .. "). Доступен забор и развозка средств по банкоматам. G — меню.", 100, 220, 130)
 
     for _, p in ipairs(player.GetAll()) do
         if IsValid(p) and p ~= ply and (isfunction(p.IsAdmin) and p:IsAdmin() or isfunction(p.IsSuperAdmin) and p:IsSuperAdmin())
@@ -637,7 +772,7 @@ function I.CollectFromTerminal(ply, terminal, amount)
     end
 
     local eid = terminal:EntIndex()
-    local cash = math.floor(tonumber(I.TerminalCash[eid]) or 0)
+    local cash = I.GetTerminalCash(terminal)
     if cash <= 0 then return false, "В банкомате нет наличных для изъятия" end
 
     local lastT = I.TerminalLastCollect[eid] or 0
@@ -658,9 +793,8 @@ function I.CollectFromTerminal(ply, terminal, amount)
     amount = math.Clamp(amount, 1, math.min(cash, free, I.Config.BagChunk))
     if amount <= 0 then return false, "Некорректная сумма" end
 
-    I.TerminalCash[eid] = cash - amount
     I.TerminalLastCollect[eid] = CurTime()
-    if isfunction(terminal.SetNWInt) then terminal:SetNWInt("GRM_TerminalCash", I.TerminalCash[eid]) end
+    I.SetTerminalCash(terminal, cash - amount, "изъятие инкассатором")
 
     if I.Config.LockTerminalOnCollect then
         I.LockedTerminals[eid] = runID
@@ -670,8 +804,7 @@ function I.CollectFromTerminal(ply, terminal, amount)
 
     local w = I.GiveBagWeapon(ply, amount)
     if not IsValid(w) then
-        I.TerminalCash[eid] = I.TerminalCash[eid] + amount
-        if isfunction(terminal.SetNWInt) then terminal:SetNWInt("GRM_TerminalCash", I.TerminalCash[eid]) end
+        I.SetTerminalCash(terminal, cash, "откат изъятия")
         return false, "Не удалось выдать чемодан"
     end
 
@@ -702,16 +835,16 @@ function I.LoadBagIntoTerminal(ply, terminal)
     if amt <= 0 then return false, "В руках нет чемодана с деньгами" end
 
     local eid = terminal:EntIndex()
-    local curCash = math.floor(tonumber(I.TerminalCash[eid]) or 0)
-    I.TerminalCash[eid] = curCash + amt
-    if isfunction(terminal.SetNWInt) then terminal:SetNWInt("GRM_TerminalCash", I.TerminalCash[eid]) end
+    local curCash = I.GetTerminalCash(terminal)
+    I.SetTerminalCash(terminal, curCash + amt, "пополнение инкассатором")
+
     if isfunction(terminal.SetNWBool) then terminal:SetNWBool("GRM_IncassLocked", true) end
     if isfunction(terminal.SetNWInt) then terminal:SetNWInt("GRM_IncassLockRun", runID) end
     I.LockedTerminals[eid] = runID
 
     I.TakeBagWeapon(ply)
     terminal:EmitSound("ambient/levels/labs/coinslot1.wav", 65, 95)
-    notify(ply, "Загружено в банкомат: " .. formatMoney(amt) .. ". Всего в банкомате: " .. formatMoney(I.TerminalCash[eid]), 100, 220, 130)
+    notify(ply, "Загружено в банкомат: " .. formatMoney(amt) .. ". Всего в банкомате: " .. formatMoney(curCash + amt), 100, 220, 130)
     return true, amt
 end
 
@@ -868,24 +1001,23 @@ end
 
 -- ── Хуки сервера ─────────────────────────────────────────────────
 
--- Комиссия 5% от взносов игроков оседает в ячейке инкассации банкомата
+-- Комиссия 5% от взносов игроков оседает в ячейке инкассации банкомата и сохраняется на диск
 hook.Add("GRM_Incass_TerminalDeposit", "GRM_Incass_TerminalDeposit", function(ply, amount, terminal)
     if not IsValid(terminal) or terminal:GetClass() ~= "grm_bank_terminal" then return end
     local cut = math.floor((tonumber(amount) or 0) * (I.Config.TerminalDepositCut or 0.05))
     if cut <= 0 then return end
-    local eid = terminal:EntIndex()
-    I.TerminalCash[eid] = (I.TerminalCash[eid] or 0) + cut
-    terminal:SetNWInt("GRM_TerminalCash", I.TerminalCash[eid])
+    local cur = I.GetTerminalCash(terminal)
+    I.SetTerminalCash(terminal, cur + cut, "взнос игрока")
 end)
 
 -- Блокировка банкомата от обычных игроков во время режима инкассации
 hook.Add("PlayerUse", "GRM_Incass_TermLock", function(ply, ent)
     if not isPly(ply) or not IsValid(ent) then return end
     if ent:GetClass() ~= "grm_bank_terminal" then return end
-    local isLocked = ent:GetNWBool("GRM_IncassLocked", false) or (I.LockedTerminals[ent:EntIndex()] ~= nil)
+    local isLocked = (isfunction(ent.GetNWBool) and ent:GetNWBool("GRM_IncassLocked", false)) or (I.LockedTerminals[ent:EntIndex()] ~= nil)
     if not isLocked then return end
 
-    local rid = I.LockedTerminals[ent:EntIndex()] or ent:GetNWInt("GRM_IncassLockRun", 0)
+    local rid = I.LockedTerminals[ent:EntIndex()] or (isfunction(ent.GetNWInt) and ent:GetNWInt("GRM_IncassLockRun", 0)) or 0
     local myRun = nil
     for r2, r in pairs(I.ActiveRuns) do
         if IsValid(r.driver) and r.driver == ply then
@@ -921,10 +1053,32 @@ hook.Add("EntityRemoved", "GRM_Incass_CarRemoved", function(ent)
     end
     if ent:GetClass() == "grm_bank_terminal" then
         local eid = ent:EntIndex()
+        I.SaveTerminalCashDatabase(true, "удаление банкомата")
         I.TerminalCash[eid] = nil
         I.TerminalLastCollect[eid] = nil
         I.LockedTerminals[eid] = nil
     end
+end)
+
+-- Восстановление балансов банкоматов при загрузке карты
+local function restoreAllATMsOnMap()
+    for _, ent in ipairs(ents.FindByClass("grm_bank_terminal")) do
+        if IsValid(ent) then
+            I.RestoreTerminalCash(ent)
+        end
+    end
+end
+
+hook.Add("InitPostEntity", "GRM_Incass_RestoreATMs", function()
+    timer.Simple(1.5, restoreAllATMsOnMap)
+end)
+
+hook.Add("PostCleanupMap", "GRM_Incass_RestoreATMsCleanup", function()
+    timer.Simple(1.0, restoreAllATMsOnMap)
+end)
+
+hook.Add("ShutDown", "GRM_Incass_ShutDown", function()
+    I.SaveTerminalCashDatabase(true, "ShutDown сервера")
 end)
 
 -- Дисконнект игрока
@@ -991,18 +1145,18 @@ local function sendTerminalMenu(ply, terminal)
 
     -- Автоматический переход в режим инкассации при открытии меню инкассатором
     local eid = terminal:EntIndex()
-    terminal:SetNWBool("GRM_IncassLocked", true)
-    terminal:SetNWInt("GRM_IncassLockRun", myRun.id)
+    if isfunction(terminal.SetNWBool) then terminal:SetNWBool("GRM_IncassLocked", true) end
+    if isfunction(terminal.SetNWInt) then terminal:SetNWInt("GRM_IncassLockRun", myRun.id) end
     I.LockedTerminals[eid] = myRun.id
 
-    local cash = math.floor(tonumber(I.TerminalCash[eid]) or 0)
+    local cash = I.GetTerminalCash(terminal)
     net.Start(NET_TERM_MENU)
         net.WriteEntity(terminal)
         net.WriteInt(cash, 32)
         net.WriteInt(myRun.carCash or 0, 32)
         net.WriteInt(I.Config.MaxCarryPerCar, 32)
         net.WriteInt(I.PlayerBagAmount(ply), 32)
-        net.WriteBool(terminal:GetNWBool("GRM_IncassLocked", false))
+        net.WriteBool(true)
     net.Send(ply)
 end
 

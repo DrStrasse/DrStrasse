@@ -841,6 +841,25 @@ if PHASE == "incass" then
     assert(car:GetNWInt("GRM_IncassRun") == 0, "incass: car runID не сброшен")
     assert(incassator:GetNWEntity("GRM_IncassMyCar") == nil or incassator:GetNWEntity("GRM_IncassMyCar") == NULL, "incass: MyCar не сброшен")
 
-    print("PHASE incass: OK — старт рейса/двунаправленная инкассация/свободная разгрузка/пополнение банкомата/блокировка и снятие/финиш рейса")
+    -- 10. Персистентность балансов банкоматов (переживает рестарт!)
+    -- Имитируем рестарт сервера: память очищена
+    I.TerminalCash = {}
+    local atmAfterRestart = ents.Create("grm_bank_terminal")
+    atmAfterRestart:SetPos(Vector(500, 0, 0))
+    local restored = I.RestoreTerminalCash(atmAfterRestart)
+    assert(restored == 50000 and I.GetTerminalCash(atmAfterRestart) == 50000, "incass: баланс банкомата не пережил рестарт: " .. tostring(restored))
+
+    -- Проводим 20 000 000 GRM через банкомат
+    fireHook("GRM_Incass_TerminalDeposit", civ, 400000000, atmAfterRestart) -- 5% от 400 млн = 20 млн
+    assert(I.GetTerminalCash(atmAfterRestart) == 20050000, "incass: 20 млн не начислились в банкомат")
+
+    -- Снова рестарт
+    I.TerminalCash = {}
+    local atmAfterRestart2 = ents.Create("grm_bank_terminal")
+    atmAfterRestart2:SetPos(Vector(500, 0, 0))
+    local restored2 = I.RestoreTerminalCash(atmAfterRestart2)
+    assert(restored2 == 20050000 and I.GetTerminalCash(atmAfterRestart2) == 20050000, "incass: 20 млн не пережили рестарт: " .. tostring(restored2))
+
+    print("PHASE incass: OK — старт рейса/двунаправленная инкассация/персистентность баланса банкоматов (20 млн)/свободная разгрузка/финиш рейса")
     return
 end
