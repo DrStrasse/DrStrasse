@@ -48,6 +48,7 @@ function ENT:CanManage(ply)
         if acc.badges and acc.badges[fName] == true then return true end
         if acc.military and acc.military[fName] == true then return true end
         if acc.licenses and acc.licenses[fName] == true then return true end
+        if acc.milLicenses and acc.milLicenses[fName] == true then return true end
         if acc.coverDocs and acc.coverDocs[fName] == true then return true end
     end
 
@@ -86,13 +87,14 @@ function ENT:Use(ply)
     end
 
     local tpls = GRM.Documents and GRM.Documents.Templates or {}
-    local reg  = GRM.Documents and GRM.Documents.Registry or { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {} }
+    local reg  = GRM.Documents and GRM.Documents.Registry or { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {}, milLicenses = {} }
     local myFac = ply:GetNWString("GRM_Faction", "")
     local isLeader = (_G.FactionsAPI and _G.FactionsAPI.IsLeader and myFac ~= "" and _G.FactionsAPI.IsLeader(ply, myFac)) == true
     local hasCover = (ply:IsSuperAdmin() or (tpls.access and tpls.access.coverDocs and tpls.access.coverDocs[myFac] == true)) == true
     local hasPassport = (ply:IsSuperAdmin() or (tpls.access and tpls.access.passports and tpls.access.passports[myFac] == true)) == true
     local hasMilitary = (ply:IsSuperAdmin() or (tpls.access and tpls.access.military and tpls.access.military[myFac] == true)) == true
     local hasLicense  = (ply:IsSuperAdmin() or (tpls.access and tpls.access.licenses and tpls.access.licenses[myFac] == true)) == true
+    local hasMilLicense = (ply:IsSuperAdmin() or (tpls.access and tpls.access.milLicenses and tpls.access.milLicenses[myFac] == true) or (tpls.access and tpls.access.military and tpls.access.military[myFac] == true)) == true
 
     net.Start("GRM_DocComp_Open")
         net.WriteEntity(self)
@@ -106,5 +108,6 @@ function ENT:Use(ply)
         net.WriteBool(hasPassport)
         net.WriteBool(hasMilitary)
         net.WriteBool(hasLicense)
+        net.WriteBool(hasMilLicense)
     net.Send(ply)
 end

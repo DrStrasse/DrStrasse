@@ -1,7 +1,8 @@
 --[[--------------------------------------------------------------------
-    GRM Documents & Identity Core v1.2.0 (Код 87)
+    GRM Documents & Identity Core v1.3.0 (Код 87)
     Паспорта, Служебные Удостоверения, Ксивы, Военные Билеты,
-    Водительские Удостоверения (Категории вождения), Прикрытие, Реестр
+    Водительские Удостоверения (Гражданские ГАИ и Военные ВАИ),
+    Специальные Военные Допуски, Прикрытие, Реестр
 
     • Паспорт гражданина: ФИО, пол, дата рождения, гражданство, серия, номер,
       орган выдачи, дата, подпись, фото, MRZ.
@@ -12,14 +13,18 @@
     • Военный билет: серия/номер, ФИО, воинское звание, ВУС, воинское
       формирование (выбор/ручной), подразделение/отдел (выбор/ручной),
       должность (ручной ввод), категория годности (А–Д), кем выдан.
-    • Водительское удостоверение: категории вождения (A, B, C, D, E, Спецтранспорт),
-      номер В/У, ФИО, дата рождения, орган выдачи, особые отметки (стаж, очки),
-      статус (действительно / лишено).
+    • Водительское удостоверение (Гражданское ГАИ): категории вождения
+      (A, B, C, D, E, СПЕЦ), номер В/У, ФИО, дата рождения, орган выдачи,
+      особые отметки (стаж, очки, трансмиссия), статус.
+    • Удостоверение военного водителя (ВАИ / ВС): тактический военный бланк,
+      воинское звание, воинская часть/гарнизон, ВУС военного водителя (837/838/843),
+      военные категории (A-В, B-В, C-В, D-В, E-В, СПЕЦ-В), специальные допуски
+      (колонны, спецсигналы, марш 500 км, опасные грузы, перевозка л/с, бронетехника).
     • Документы прикрытия: спецслужбы с CoverDocsAccess фабрикуют 100% аутентичные
       удостоверения любых ведомств для маскировки.
     • Двухфазный интерактивный просмотр: Закрытая обложка ⇄ Раскрытый разворот.
-    • Показ документов: /showpassport, /showbadge, /showmilitary, /showlicense, /showmedcard
-      с RP /me в чат и интерактивным окном у цели.
+    • Показ документов: /showpassport, /showbadge, /showmilitary, /showlicense,
+      /showmillicense, /showmedcard с RP /me в чат и интерактивным окном у цели.
     • Полные и сокращённые команды (рус/англ).
     • Единая админ-панель: /doc_admin (настройка дизайна, префиксов и доступов).
 ----------------------------------------------------------------------]]
@@ -44,7 +49,7 @@ GRM = GRM or {}
 GRM.Documents = GRM.Documents or {}
 local DOC = GRM.Documents
 
-DOC.Version       = "1.2.0"
+DOC.Version       = "1.3.0"
 DOC.RegistryFile  = "grm_documents.json"
 DOC.TemplatesFile = "grm_doc_templates.json"
 
@@ -88,7 +93,7 @@ DOC.BadgeIcons = {
     med      = "✚ Медицинский крест",
 }
 
--- Список специальных допусков для удостоверения
+-- Список специальных допусков для служебного удостоверения
 DOC.PermissionsList = {
     { id = "weapon",    title = "Ношение табельного оружия", desc = "Право на скрытое/открытое ношение спецвооружения" },
     { id = "arrest",    title = "Проведение задержаний",     desc = "Право на арест и применение спецсредств" },
@@ -98,14 +103,34 @@ DOC.PermissionsList = {
     { id = "warrant",   title = "Исполнение ордеров",        desc = "Право на принудительное вскрытие дверей" },
 }
 
--- Категории водительского удостоверения
+-- Категории гражданского водительского удостоверения (ГАИ)
 DOC.DriveCategories = {
     { id = "A",    name = "Категория A", desc = "Мототранспорт и легкие мотоциклы", icon = "🏍" },
-    { id = "B",    name = "Категория B", desc = "Легковые автомобили (до 3.5т)",     icon = "🚗" },
+    { id = "B",    name = "Категория B", desc = "Легковые автомобили (до 3.5т, до 8 мест)", icon = "🚗" },
     { id = "C",    name = "Категория C", desc = "Грузовой автотранспорт (> 3.5т)",  icon = "🚛" },
     { id = "D",    name = "Категория D", desc = "Автобусы и пассажирский транспорт", icon = "🚌" },
-    { id = "E",    name = "Категория E", desc = "Тягачи с прицепами и автопоезда",   icon = "🚚" },
-    { id = "SPEC", name = "Спец. допуск",desc = "Оперативный спецтранспорт (СГУ)",  icon = "🚨" },
+    { id = "E",    name = "Категория E", desc = "Тягачи с прицепами и автопоезда (BE/CE/DE)", icon = "🚚" },
+    { id = "SPEC", name = "Спецтехника", desc = "Тракторы, самоходные машины, погрузчики", icon = "🚜" },
+}
+
+-- Военные категории водительского удостоверения (ВАИ)
+DOC.MilDriveCategories = {
+    { id = "A-В",    name = "Категория A-В", desc = "Армейские мотоциклы, квадроциклы и разведбагги", icon = "🏍" },
+    { id = "B-В",    name = "Категория B-В", desc = "Штабные и оперативные легковые внедорожники", icon = "🚙" },
+    { id = "C-В",    name = "Категория C-В", desc = "Военные грузовые автомобили и тягачи (КамАЗ, Урал)", icon = "🚛" },
+    { id = "D-В",    name = "Категория D-В", desc = "Войсковой пассажирский транспорт и автоколонны", icon = "🚌" },
+    { id = "E-В",    name = "Категория E-В", desc = "Артиллерийские тягачи и тяжелые платформы", icon = "🚚" },
+    { id = "СПЕЦ-В", name = "Категория СПЕЦ-В", desc = "Колёсная и гусеничная бронетехника (БТР, БМП, МТ-ЛБ)", icon = "🛡" },
+}
+
+-- Специальные допуски военного водителя (Endorsements)
+DOC.MilEndorsements = {
+    { id = "sirens",     title = "Спецсигналы (СГУ/Маяки)",     desc = "Управление Т/С с проблесковыми маяками и сиренами ВАИ/ВП", icon = "🚨" },
+    { id = "convoy",     title = "Войсковые автоколонны",       desc = "Движение и руководство в составе организованных войсковых колонн", icon = "🚛" },
+    { id = "march",      title = "Марш 500 км (Стажировка)",   desc = "Пройден обязательный норматив марша войскового водителя", icon = "🎖" },
+    { id = "passengers", title = "Перевозка личного состава",   desc = "Допуск к перевозке военнослужащих в кузовах и автобусах", icon = "👥" },
+    { id = "hazmat",     title = "Опасные и военные грузы",     desc = "Перевозка боеприпасов, вооружения и ГСМ (ADR/ВВ)", icon = "☢" },
+    { id = "armor",      title = "Управление бронетехникой",    desc = "Допуск к управлению бронированными боевыми машинами", icon = "🛡" },
 }
 
 -- Воинские звания
@@ -128,6 +153,16 @@ DOC.MilitaryVUS = {
     "ВУС-878 (Медицинская служба)",
     "ВУС-900 (Штабная и командная служба)",
     "ВУС-999 (Не годен к военной службе)",
+}
+
+-- ВУС специально для военных водителей
+DOC.MilitaryDriverVUS = {
+    "ВУС-837 (Водитель транспортных средств категории C)",
+    "ВУС-838 (Водитель-автомеханик автомобильных подразделений)",
+    "ВУС-843 (Механик-водитель боевых колёсных машин / БТР)",
+    "ВУС-845 (Водитель тяжелых тягачей и танковозов)",
+    "ВУС-124 (Водитель оперативно-штабного спецтранспорта)",
+    "ВУС-166 (Механик-водитель инженерных машин разграждения)",
 }
 
 -- Хелпер ключа персонажа
@@ -197,6 +232,14 @@ if SERVER then
                 defaultPrefix = "ВУ-",
                 defaultIssuer = "Отдел дорожной полиции и экзаменации",
             },
+            militaryLicense = {
+                stateTitle    = "ВОЕННАЯ АВТОМОБИЛЬНАЯ ИНСПЕКЦИЯ",
+                docTitle      = "УДОСТОВЕРЕНИЕ ВОЕННОГО ВОДИТЕЛЯ",
+                coverColor    = { r = 38, g = 58, b = 36 },
+                foilStyle     = "gold",
+                defaultPrefix = "ВАИ-",
+                defaultIssuer = "101-я Военная автомобильная инспекция (ВАИ)",
+            },
             factions = {
                 ["OrdnungPolizei"] = {
                     coverTitle   = "ORDNUNGSPOLIZEI",
@@ -216,11 +259,12 @@ if SERVER then
                 },
             },
             access = {
-                passports = { ["Department of Labour and Social Protection"] = true },
-                badges    = { ["OrdnungPolizei"] = true, ["Department of Labour and Social Protection"] = true },
-                military  = { ["OrdnungPolizei"] = true, ["Department of Labour and Social Protection"] = true },
-                licenses  = { ["OrdnungPolizei"] = true, ["Department of Labour and Social Protection"] = true },
-                coverDocs = {},
+                passports   = { ["Department of Labour and Social Protection"] = true },
+                badges      = { ["OrdnungPolizei"] = true, ["Department of Labour and Social Protection"] = true },
+                military    = { ["OrdnungPolizei"] = true, ["Department of Labour and Social Protection"] = true },
+                licenses    = { ["OrdnungPolizei"] = true, ["Department of Labour and Social Protection"] = true },
+                milLicenses = { ["OrdnungPolizei"] = true, ["Department of Labour and Social Protection"] = true },
+                coverDocs   = {},
             }
         }
     end
@@ -230,11 +274,12 @@ if SERVER then
         if file.Exists(DOC.TemplatesFile, "DATA") then
             local t = jsonT(file.Read(DOC.TemplatesFile, "DATA") or "")
             if istable(t) then
-                if istable(t.passport) then DOC.Templates.passport = t.passport end
-                if istable(t.military) then DOC.Templates.military = t.military end
-                if istable(t.license)  then DOC.Templates.license  = t.license end
-                if istable(t.factions) then DOC.Templates.factions = t.factions end
-                if istable(t.access)   then DOC.Templates.access   = t.access end
+                if istable(t.passport)        then DOC.Templates.passport        = t.passport end
+                if istable(t.military)        then DOC.Templates.military        = t.military end
+                if istable(t.license)         then DOC.Templates.license         = t.license end
+                if istable(t.militaryLicense) then DOC.Templates.militaryLicense = t.militaryLicense end
+                if istable(t.factions)        then DOC.Templates.factions        = t.factions end
+                if istable(t.access)          then DOC.Templates.access          = t.access end
             end
         end
         if SetGlobalString and DOC.Templates.passport then
@@ -259,7 +304,7 @@ if SERVER then
 
     -- Загрузка базы выданных документов
     function DOC.LoadRegistry()
-        DOC.Registry = { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {} }
+        DOC.Registry = { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {}, milLicenses = {} }
         if file.Exists(DOC.RegistryFile, "DATA") then
             local t = jsonT(file.Read(DOC.RegistryFile, "DATA") or "")
             if istable(t) then
@@ -268,6 +313,7 @@ if SERVER then
                 DOC.Registry.coverBadges = istable(t.coverBadges) and t.coverBadges or {}
                 DOC.Registry.military    = istable(t.military) and t.military or {}
                 DOC.Registry.licenses    = istable(t.licenses) and t.licenses or {}
+                DOC.Registry.milLicenses = istable(t.milLicenses) and t.milLicenses or {}
             end
         end
         return DOC.Registry
@@ -277,7 +323,7 @@ if SERVER then
         local ok, txt = pcall(util.TableToJSON, DOC.Registry or {}, true)
         if ok and txt then
             file.Write(DOC.RegistryFile, txt)
-            print("[GRM Documents] SAVE ok registry (" .. tostring(why or "?") .. "), паспортов: " .. table.Count(DOC.Registry.passports or {}) .. ", удостоверений: " .. table.Count(DOC.Registry.badges or {}) .. ", прав: " .. table.Count(DOC.Registry.licenses or {}))
+            print("[GRM Documents] SAVE ok registry (" .. tostring(why or "?") .. "), паспортов: " .. table.Count(DOC.Registry.passports or {}) .. ", удостоверений: " .. table.Count(DOC.Registry.badges or {}) .. ", прав ГАИ: " .. table.Count(DOC.Registry.licenses or {}) .. ", прав ВАИ: " .. table.Count(DOC.Registry.milLicenses or {}))
         end
     end
 
@@ -298,75 +344,71 @@ if SERVER then
             local tpl = DOC.Templates.passport or {}
 
             p = {
-                charKey     = key,
-                steamID64   = sid64,
                 fullName    = getPlayerRPName(ply),
                 gender      = "Мужской",
                 birthDate   = "12.04.1988",
-                nationality = "Гражданин Республики",
+                nationality = "Гражданин",
                 series      = tpl.defaultSeries or "GRM",
-                number      = tostring(shortSid) .. "-" .. tostring(slotNum ~= "" and slotNum or "1"),
-                issuedBy    = "Паспортный стол Центрального района",
+                number      = string.format("%02d%s", tonumber(slotNum) or 1, shortSid),
+                issuedBy    = "Паспортный стол Центрального округа",
                 issueDate   = os.date("%d.%m.%Y"),
+                validUntil  = "Бессрочно",
                 status      = "Действителен",
+                steamID64   = sid64,
                 created     = os.time(),
                 updated     = os.time(),
             }
             DOC.Registry.passports[key] = p
-            DOC.SaveRegistry("auto passport " .. key)
-        else
-            local curName = getPlayerRPName(ply)
-            if curName ~= "" and curName ~= "?" and p.fullName ~= curName then
-                p.fullName = curName
-                p.updated = os.time()
-            end
+            DOC.SaveRegistry("auto create passport for " .. key)
         end
         return p
     end
     DOC.EnsurePassport = ensurePassport
 
-    -- Авто-создание / получение служебного удостоверения
+    -- Получение служебного удостоверения персонажа
     local function ensureBadge(ply)
         local key = getCharKey(ply)
         if key == "" then return nil end
+        DOC.Registry.badges = DOC.Registry.badges or {}
+        local b = DOC.Registry.badges[key]
+
         local factionName = ply:GetNWString("GRM_Faction", "")
         if factionName == "" then return nil end
 
-        DOC.Registry.badges = DOC.Registry.badges or {}
-        local b = DOC.Registry.badges[key]
-        local role = ply:GetNWString("GRM_Role", "Сотрудник")
-        local dept = ply:GetNWString("GRM_Department", "")
-        if dept == "Основной" or dept == "—" then dept = "" end
+        local roleName = ply:GetNWString("GRM_Role", "")
+        local deptName = ply:GetNWString("GRM_Department", "")
+        if deptName == "" then deptName = "Главное Управление" end
 
         local tpl = (DOC.Templates.factions and DOC.Templates.factions[factionName]) or {}
-        local prefix = tpl.prefix or (factionName:sub(1, 3):upper() .. "-")
-        local shortSid = (ply:SteamID64() or "0"):sub(-4)
+        local pfx = tpl.prefix or (factionName:sub(1, 3):upper() .. "-")
+        local sid64 = ply:SteamID64() or "0"
+        local shortSid = sid64:sub(-4)
 
-        if not istable(b) or b.faction ~= factionName then
+        if not istable(b) then
             b = {
-                charKey     = key,
-                steamID64   = ply:SteamID64() or "0",
                 fullName    = getPlayerRPName(ply),
                 faction     = factionName,
-                department  = dept ~= "" and dept or "Главное Управление",
-                role        = role ~= "" and role or "Сотрудник",
-                number      = prefix .. tostring(shortSid),
+                role        = roleName,
+                department  = deptName,
+                number      = pfx .. shortSid,
+                permissions = tblCopy(tpl.defaultPerms or { weapon = true, transport = true }),
                 issuedBy    = "Руководство ведомства " .. factionName,
                 issueDate   = os.date("%d.%m.%Y"),
                 validUntil  = "Бессрочно",
-                permissions = tblCopy(tpl.defaultPerms or { weapon = true, access = true }),
                 status      = "Действителен",
+                steamID64   = sid64,
+                isCover     = false,
                 created     = os.time(),
                 updated     = os.time(),
             }
             DOC.Registry.badges[key] = b
-            DOC.SaveRegistry("auto badge " .. key)
+            DOC.SaveRegistry("auto create badge for " .. key)
         else
+            b.faction = factionName
+            b.role = roleName
             if not b.department or b.department == "" or b.department == "Основной" or b.department == "—" then
-                b.department = dept ~= "" and dept or "Главное Управление"
+                b.department = deptName
             end
-            if not b.role or b.role == "" then b.role = role end
-            if not b.fullName or b.fullName == "" then b.fullName = getPlayerRPName(ply) end
         end
         return b
     end
@@ -381,15 +423,23 @@ if SERVER then
     end
     DOC.EnsureMilitary = ensureMilitary
 
-    -- Получение водительского удостоверения
+    -- Получение гражданского водительского удостоверения (ГАИ)
     local function ensureLicense(ply)
         local key = getCharKey(ply)
         if key == "" then return nil end
         DOC.Registry.licenses = DOC.Registry.licenses or {}
-        local l = DOC.Registry.licenses[key]
-        return l
+        return DOC.Registry.licenses[key]
     end
     DOC.EnsureLicense = ensureLicense
+
+    -- Получение удостоверения военного водителя (ВАИ)
+    local function ensureMilLicense(ply)
+        local key = getCharKey(ply)
+        if key == "" then return nil end
+        DOC.Registry.milLicenses = DOC.Registry.milLicenses or {}
+        return DOC.Registry.milLicenses[key]
+    end
+    DOC.EnsureMilLicense = ensureMilLicense
 
     -- Проверка прав игрока на выдачу документов
     function DOC.CanIssuePassports(ply)
@@ -442,6 +492,24 @@ if SERVER then
         return false
     end
 
+    function DOC.CanIssueMilLicenses(ply)
+        if not IsValid(ply) then return false end
+        if ply:IsSuperAdmin() then return true end
+        local fac = ply:GetNWString("GRM_Faction", "")
+        if fac ~= "" and DOC.Templates.access then
+            if DOC.Templates.access.milLicenses and DOC.Templates.access.milLicenses[fac] == true then
+                return true
+            end
+            if DOC.Templates.access.military and DOC.Templates.access.military[fac] == true then
+                return true
+            end
+            if DOC.Templates.access.licenses and DOC.Templates.access.licenses[fac] == true then
+                return true
+            end
+        end
+        return false
+    end
+
     -- Отправка документа игроку на экран
     local function sendOwnDoc(ply, docType, subType)
         if not IsValid(ply) then return end
@@ -488,13 +556,29 @@ if SERVER then
                 return
             end
             tpl = DOC.Templates.military or {}
-        elseif docType == "license" then
+        elseif docType == "license" or docType == "civilian_license" then
+            if subType == "military" then
+                return sendOwnDoc(ply, "milLicense")
+            end
             payload = ensureLicense(ply)
-            if not payload or payload.status == "Аннулировано" then
-                if GRM.Notify then GRM.Notify(ply, "У вас нет водительского удостоверения (оформляется в автошколе / полиции через Компьютер).", 255, 140, 110) end
-                return
+            if not payload or payload.status == "Аннулировано" or payload.status == "Лишён права управления" then
+                local mil = ensureMilLicense(ply)
+                if mil and mil.status ~= "Аннулировано" and mil.status ~= "Лишён ВАИ" and subType ~= "civilian" then
+                    return sendOwnDoc(ply, "milLicense")
+                end
+                if not payload then
+                    if GRM.Notify then GRM.Notify(ply, "У вас нет гражданского водительского удостоверения (оформляется в автошколе / ГАИ через Компьютер).", 255, 140, 110) end
+                    return
+                end
             end
             tpl = DOC.Templates.license or {}
+        elseif docType == "milLicense" or docType == "military_license" then
+            payload = ensureMilLicense(ply)
+            if not payload or payload.status == "Аннулировано" or payload.status == "Лишён ВАИ" then
+                if GRM.Notify then GRM.Notify(ply, "У вас нет оформленного удостоверения военного водителя (выдаётся в ВАИ / войсковой части через Компьютер).", 255, 140, 110) end
+                return
+            end
+            tpl = DOC.Templates.militaryLicense or {}
         elseif docType == "medcard" then
             if GRM.Medical and GRM.Medical.CardOf then
                 local cardKey = getCharKey(ply)
@@ -613,15 +697,24 @@ if SERVER then
                 net.WriteString(senderName)
             net.Send({ ply, target })
 
-        elseif docType == "license" then
+        elseif docType == "license" or docType == "civilian_license" then
+            if subType == "military" then
+                return showDocToTarget(ply, "milLicense", target, "military")
+            end
             local lic = ensureLicense(ply)
             if not lic or lic.status == "Аннулировано" then
-                if GRM.Notify then GRM.Notify(ply, "У вас нет водительского удостоверения (оформляется в автошколе через Компьютер).", 255, 140, 110) end
-                return
+                local mil = ensureMilLicense(ply)
+                if mil and mil.status ~= "Аннулировано" and subType ~= "civilian" then
+                    return showDocToTarget(ply, "milLicense", target, "military")
+                end
+                if not lic then
+                    if GRM.Notify then GRM.Notify(ply, "У вас нет гражданского водительского удостоверения (оформляется в автошколе через Компьютер).", 255, 140, 110) end
+                    return
+                end
             end
             local tpl = DOC.Templates.license or {}
 
-            local meText = string.format("показал(а) водительское удостоверение игроку %s (№%s, Категории: %s)", targetName, lic.number or "—", lic.categoriesStr or "B")
+            local meText = string.format("показал(а) водительское удостоверение ГАИ игроку %s (№%s, Категории: %s)", targetName, lic.number or "—", lic.categoriesStr or "B")
             for _, p in ipairs(player.GetAll()) do
                 if IsValid(p) and p:GetPos():DistToSqr(ply:GetPos()) <= 400 * 400 then
                     p:ChatPrint(string.format("[RP] %s %s", senderName, meText))
@@ -631,6 +724,29 @@ if SERVER then
             net.Start(NET_RECEIVE_VIEW)
                 net.WriteString("license")
                 net.WriteTable(lic)
+                net.WriteTable(tpl)
+                net.WriteBool(true)
+                net.WriteString(senderName)
+            net.Send({ ply, target })
+
+        elseif docType == "milLicense" or docType == "military_license" then
+            local milLic = ensureMilLicense(ply)
+            if not milLic or milLic.status == "Аннулировано" then
+                if GRM.Notify then GRM.Notify(ply, "У вас нет оформленного удостоверения военного водителя (выдаётся в ВАИ / войсковой части через Компьютер).", 255, 140, 110) end
+                return
+            end
+            local tpl = DOC.Templates.militaryLicense or {}
+
+            local meText = string.format("предъявил(а) удостоверение военного водителя ВАИ игроку %s (№%s, Звание: %s, ВУС: %s, Категории: %s)", targetName, milLic.number or "—", milLic.rank or "Рядовой", milLic.vus or "ВУС-837", milLic.categoriesStr or "B-В C-В")
+            for _, p in ipairs(player.GetAll()) do
+                if IsValid(p) and p:GetPos():DistToSqr(ply:GetPos()) <= 400 * 400 then
+                    p:ChatPrint(string.format("[RP] %s %s", senderName, meText))
+                end
+            end
+
+            net.Start(NET_RECEIVE_VIEW)
+                net.WriteString("milLicense")
+                net.WriteTable(milLic)
                 net.WriteTable(tpl)
                 net.WriteBool(true)
                 net.WriteString(senderName)
@@ -659,14 +775,14 @@ if SERVER then
     end
     DOC.ShowDocToTarget = showDocToTarget
 
-    -- Регистрация предметов инвентаря
+    -- Регистрация предметов инвентаря для быстрого открытия
     local function regInventoryItems()
         if not (GRM.Inventory and GRM.Inventory.RegisterItem) then return end
         GRM.Inventory.RegisterItem("passport", {
             type     = "item",
             name     = "Паспорт гражданина",
-            desc     = "Удостоверение личности гражданина. «Использовать» — открыть свой паспорт.",
-            icon     = "icon16/vcard.png",
+            desc     = "Главный документ, удостоверяющий личность гражданина. «Использовать» — открыть паспорт.",
+            icon     = "icon16/book.png",
             maxStack = 1,
             weight   = 0.1,
             model    = "models/props_lab/clipboard.mdl",
@@ -694,14 +810,32 @@ if SERVER then
         })
         GRM.Inventory.RegisterItem("driver_license", {
             type     = "item",
-            name     = "Водительское удостоверение",
-            desc     = "Водительские права на управление ТС. «Использовать» — открыть водительское удостоверение.",
+            name     = "Водительское удостоверение (ГАИ)",
+            desc     = "Государственные водительские права на управление ТС. «Использовать» — открыть удостоверение.",
             icon     = "icon16/car.png",
             maxStack = 1,
-            weight   = 0.1,
+            weight   = 0.05,
             model    = "models/props_lab/clipboard.mdl",
             useFunc  = "doc_license_view",
         })
+        GRM.Inventory.RegisterItem("military_license", {
+            type     = "item",
+            name     = "Удостоверение военного водителя (ВАИ)",
+            desc     = "Военное водительское удостоверение ВАИ с допусками к управлению военной техникой. «Использовать» — открыть.",
+            icon     = "icon16/car.png",
+            maxStack = 1,
+            weight   = 0.05,
+            model    = "models/props_lab/clipboard.mdl",
+            useFunc  = "doc_mil_license_view",
+        })
+
+        if GRM.Inventory.RegisterUseHandler then
+            GRM.Inventory.RegisterUseHandler("doc_passport_view", function(ply) sendOwnDoc(ply, "passport") return true end)
+            GRM.Inventory.RegisterUseHandler("doc_badge_view", function(ply) sendOwnDoc(ply, "badge") return true end)
+            GRM.Inventory.RegisterUseHandler("doc_military_view", function(ply) sendOwnDoc(ply, "military") return true end)
+            GRM.Inventory.RegisterUseHandler("doc_license_view", function(ply) sendOwnDoc(ply, "license", "civilian") return true end)
+            GRM.Inventory.RegisterUseHandler("doc_mil_license_view", function(ply) sendOwnDoc(ply, "milLicense", "military") return true end)
+        end
     end
     regInventoryItems()
     timer.Simple(2, regInventoryItems)
@@ -720,7 +854,6 @@ if SERVER then
         showDocToTarget(ply, docType, target, subType)
     end)
 
-    -- Админ-настройка шаблонов
     net.Receive(NET_ADMIN_GET, function(_, ply)
         if not (IsValid(ply) and ply:IsSuperAdmin()) then return end
         net.Start(NET_ADMIN_GET)
@@ -732,150 +865,194 @@ if SERVER then
         if not (IsValid(ply) and ply:IsSuperAdmin()) then return end
         local tpl = net.ReadTable()
         if istable(tpl) then
-            if istable(tpl.passport) then DOC.Templates.passport = tpl.passport end
-            if istable(tpl.military) then DOC.Templates.military = tpl.military end
-            if istable(tpl.license)  then DOC.Templates.license  = tpl.license end
-            if istable(tpl.factions) then DOC.Templates.factions = tpl.factions end
-            if istable(tpl.access)   then DOC.Templates.access   = tpl.access end
+            if istable(tpl.passport)        then DOC.Templates.passport        = tpl.passport end
+            if istable(tpl.military)        then DOC.Templates.military        = tpl.military end
+            if istable(tpl.license)         then DOC.Templates.license         = tpl.license end
+            if istable(tpl.militaryLicense) then DOC.Templates.militaryLicense = tpl.militaryLicense end
+            if istable(tpl.factions)        then DOC.Templates.factions        = tpl.factions end
+            if istable(tpl.access)          then DOC.Templates.access          = tpl.access end
             DOC.SaveTemplates("admin edit by " .. ply:Nick())
-            if GRM.Notify then GRM.Notify(ply, "Шаблоны документов успешно сохранены.", 120, 220, 140) end
         end
     end)
 
-    -- Выдача документов через Компьютер
     net.Receive(NET_COMPUTER_ISSUE, function(_, ply)
         if not IsValid(ply) then return end
         local docType = net.ReadString()
         local targetKey = net.ReadString()
-        local data = net.ReadTable() or {}
+        local data = net.ReadTable()
 
-        if targetKey == "" then return end
+        if not isstring(targetKey) or targetKey == "" or not istable(data) then return end
 
         if docType == "passport" then
-            if not DOC.CanIssuePassports(ply) then
-                if GRM.Notify then GRM.Notify(ply, "У вашей фракции нет допуска к оформлению паспортов.", 255, 120, 100) end
-                return
-            end
-
+            if not DOC.CanIssuePassports(ply) then return end
             DOC.Registry.passports[targetKey] = data
-            data.charKey = targetKey
-            data.updated = os.time()
             DOC.SaveRegistry("issue passport " .. targetKey .. " by " .. ply:Nick())
-            if GRM.Notify then GRM.Notify(ply, "Паспорт успешно оформлен: " .. tostring(data.fullName), 120, 220, 140) end
-
-            local targetPly = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(targetKey))
-            if IsValid(targetPly) and GRM.Notify then
-                GRM.Notify(targetPly, "Вам оформлен и выдан паспорт гражданина (" .. tostring(data.series) .. " №" .. tostring(data.number) .. ").", 120, 200, 255)
-            end
 
         elseif docType == "badge" then
-            local isCover = data.isCover == true
-            if isCover then
-                local myFac = ply:GetNWString("GRM_Faction", "")
+            local myFac = ply:GetNWString("GRM_Faction", "")
+            if data.isCover == true then
                 if not (ply:IsSuperAdmin() or (DOC.Templates.access and DOC.Templates.access.coverDocs and DOC.Templates.access.coverDocs[myFac] == true)) then
-                    if GRM.Notify then GRM.Notify(ply, "У вас нет допуска к фабрикации документов прикрытия.", 255, 120, 100) end
+                    if GRM.Notify then GRM.Notify(ply, "У вашей фракции нет допуска к оформлению документов прикрытия!", 255, 100, 100) end
                     return
                 end
                 DOC.Registry.coverBadges[targetKey] = data
-                data.charKey = targetKey
-                data.updated = os.time()
-                DOC.SaveRegistry("issue cover badge " .. targetKey .. " by " .. ply:Nick())
-                if GRM.Notify then GRM.Notify(ply, "Документ прикрытия (" .. tostring(data.faction) .. ") успешно выдан: " .. tostring(data.fullName), 120, 220, 140) end
+                DOC.SaveRegistry("issue cover doc " .. targetKey .. " by " .. ply:Nick())
             else
                 if not DOC.CanIssueBadges(ply, data.faction) then
-                    if GRM.Notify then GRM.Notify(ply, "Вы можете выдавать удостоверения только своего ведомства.", 255, 120, 100) end
+                    if GRM.Notify then GRM.Notify(ply, "У вас нет права выдавать удостоверения этой организации!", 255, 100, 100) end
                     return
                 end
                 DOC.Registry.badges[targetKey] = data
-                data.charKey = targetKey
-                data.updated = os.time()
                 DOC.SaveRegistry("issue badge " .. targetKey .. " by " .. ply:Nick())
-                if GRM.Notify then GRM.Notify(ply, "Служебное удостоверение оформлено: " .. tostring(data.fullName), 120, 220, 140) end
-            end
-
-            local targetPly = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(targetKey))
-            if IsValid(targetPly) and GRM.Notify then
-                GRM.Notify(targetPly, "Вам выдано служебное удостоверение " .. tostring(data.faction) .. " (Жетон: " .. tostring(data.number) .. ").", 120, 200, 255)
             end
 
         elseif docType == "military" then
             if not DOC.CanIssueMilitary(ply) then
-                if GRM.Notify then GRM.Notify(ply, "У вашей фракции нет допуска к выдаче военных билетов.", 255, 120, 100) end
+                if GRM.Notify then GRM.Notify(ply, "У вашей фракции нет допуска к оформлению военных билетов!", 255, 100, 100) end
                 return
             end
-
             DOC.Registry.military[targetKey] = data
-            data.charKey = targetKey
-            data.updated = os.time()
             DOC.SaveRegistry("issue military " .. targetKey .. " by " .. ply:Nick())
-            if GRM.Notify then GRM.Notify(ply, "Военный билет оформлен: " .. tostring(data.fullName), 120, 220, 140) end
 
-            local targetPly = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(targetKey))
-            if IsValid(targetPly) and GRM.Notify then
-                GRM.Notify(targetPly, "Вам выдан военный билет №" .. tostring(data.number) .. " (" .. tostring(data.rank) .. ").", 120, 200, 255)
-            end
-
-        elseif docType == "license" then
+        elseif docType == "license" or docType == "civilian_license" then
             if not DOC.CanIssueLicenses(ply) then
-                if GRM.Notify then GRM.Notify(ply, "У вашей фракции нет допуска к выдаче водительских удостоверений.", 255, 120, 100) end
+                if GRM.Notify then GRM.Notify(ply, "У вашей фракции нет допуска к выдаче гражданских водительских прав!", 255, 100, 100) end
                 return
             end
-
             DOC.Registry.licenses[targetKey] = data
-            data.charKey = targetKey
-            data.updated = os.time()
-            DOC.SaveRegistry("issue license " .. targetKey .. " by " .. ply:Nick())
-            if GRM.Notify then GRM.Notify(ply, "Водительское удостоверение оформлено: " .. tostring(data.fullName), 120, 220, 140) end
+            DOC.SaveRegistry("issue civilian license " .. targetKey .. " by " .. ply:Nick())
 
-            local targetPly = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(targetKey))
-            if IsValid(targetPly) and GRM.Notify then
-                GRM.Notify(targetPly, "Вам выдано водительское удостоверение №" .. tostring(data.number) .. " (Категории: " .. tostring(data.categoriesStr) .. ").", 120, 200, 255)
+        elseif docType == "milLicense" or docType == "license_mil" or docType == "military_license" then
+            if not DOC.CanIssueMilLicenses(ply) then
+                if GRM.Notify then GRM.Notify(ply, "У вашей фракции нет допуска к выдаче военных водительских удостоверений (ВАИ)!", 255, 100, 100) end
+                return
             end
+            DOC.Registry.milLicenses[targetKey] = data
+            DOC.SaveRegistry("issue military license " .. targetKey .. " by " .. ply:Nick())
         end
+
+        if GRM.Notify then GRM.Notify(ply, "Документ успешно оформлен и внесён в базу данных.", 100, 220, 120) end
     end)
 
     net.Receive(NET_COMPUTER_REVOKE, function(_, ply)
         if not IsValid(ply) then return end
         local docType = net.ReadString()
         local targetKey = net.ReadString()
+        if not isstring(targetKey) or targetKey == "" then return end
+
         if docType == "passport" and DOC.Registry.passports[targetKey] then
             if not DOC.CanIssuePassports(ply) then return end
             DOC.Registry.passports[targetKey].status = "Аннулирован"
             DOC.Registry.passports[targetKey].updated = os.time()
             DOC.SaveRegistry("revoke passport " .. targetKey)
-            if GRM.Notify then GRM.Notify(ply, "Паспорт аннулирован.", 220, 100, 100) end
+
         elseif docType == "badge" and DOC.Registry.badges[targetKey] then
-            if not DOC.CanIssueBadges(ply) then return end
+            if not DOC.CanIssueBadges(ply, DOC.Registry.badges[targetKey].faction) then return end
             DOC.Registry.badges[targetKey].status = "Аннулирован / Изъят"
             DOC.Registry.badges[targetKey].updated = os.time()
             DOC.SaveRegistry("revoke badge " .. targetKey)
-            if GRM.Notify then GRM.Notify(ply, "Служебное удостоверение изъято / аннулировано.", 220, 100, 100) end
+
         elseif docType == "cover" and DOC.Registry.coverBadges[targetKey] then
             DOC.Registry.coverBadges[targetKey].status = "Аннулирован"
             DOC.Registry.coverBadges[targetKey].updated = os.time()
-            DOC.SaveRegistry("revoke cover badge " .. targetKey)
-            if GRM.Notify then GRM.Notify(ply, "Документ прикрытия аннулирован.", 220, 100, 100) end
+            DOC.SaveRegistry("revoke cover " .. targetKey)
+
         elseif docType == "military" and DOC.Registry.military[targetKey] then
             if not DOC.CanIssueMilitary(ply) then return end
             DOC.Registry.military[targetKey].status = "Аннулирован"
             DOC.Registry.military[targetKey].updated = os.time()
             DOC.SaveRegistry("revoke military " .. targetKey)
-            if GRM.Notify then GRM.Notify(ply, "Военный билет аннулирован.", 220, 100, 100) end
-        elseif docType == "license" and DOC.Registry.licenses[targetKey] then
+
+        elseif (docType == "license" or docType == "civilian_license") and DOC.Registry.licenses[targetKey] then
             if not DOC.CanIssueLicenses(ply) then return end
             DOC.Registry.licenses[targetKey].status = "Лишён права управления"
             DOC.Registry.licenses[targetKey].updated = os.time()
-            DOC.SaveRegistry("revoke license " .. targetKey)
-            if GRM.Notify then GRM.Notify(ply, "Водительское удостоверение аннулировано (лишение прав).", 220, 100, 100) end
+            DOC.SaveRegistry("revoke civilian license " .. targetKey)
+
+        elseif (docType == "milLicense" or docType == "license_mil" or docType == "military_license") and DOC.Registry.milLicenses[targetKey] then
+            if not DOC.CanIssueMilLicenses(ply) then return end
+            DOC.Registry.milLicenses[targetKey].status = "Лишён ВАИ"
+            DOC.Registry.milLicenses[targetKey].updated = os.time()
+            DOC.SaveRegistry("revoke military license " .. targetKey)
+        end
+
+        if GRM.Notify then GRM.Notify(ply, "Статус документа изменён (аннулирован / лишён прав).", 255, 140, 100) end
+    end)
+
+    -- Инспекция водительских прав при посадке за руль
+    local playerVehicleCooldowns = {}
+    hook.Add("PlayerEnteredVehicle", "GRM_Doc_VehicleDriverCheck", function(ply, veh, role)
+        if not IsValid(ply) or not ply:IsPlayer() then return end
+        if not IsValid(veh) then return end
+        if role and role ~= 0 then return end
+
+        local now = CurTime()
+        local sid = ply:SteamID64() or "0"
+        if playerVehicleCooldowns[sid] and (now - playerVehicleCooldowns[sid]) < 8 then
+            return
+        end
+        playerVehicleCooldowns[sid] = now
+
+        local charKey = getCharKey(ply)
+        local civLic = DOC.Registry.licenses and DOC.Registry.licenses[charKey]
+        local milLic = DOC.Registry.milLicenses and DOC.Registry.milLicenses[charKey]
+
+        local mdl = string.lower(veh:GetModel() or "")
+        local cl = string.lower(veh:GetClass() or "")
+
+        local reqCatCiv = "B"
+        local reqCatMil = "B-В"
+        local catName = "B (Легковой автотранспорт)"
+
+        if mdl:find("moto") or mdl:find("bike") or mdl:find("quad") or cl:find("moto") or cl:find("bicycle") then
+            reqCatCiv = "A"
+            reqCatMil = "A-В"
+            catName = "A (Мототранспорт)"
+        elseif mdl:find("bus") or mdl:find("coach") or mdl:find("transit") then
+            reqCatCiv = "D"
+            reqCatMil = "D-В"
+            catName = "D (Автобусы и пассажирский транспорт)"
+        elseif mdl:find("btr") or mdl:find("bmp") or mdl:find("tank") or mdl:find("apc") or mdl:find("armored") or mdl:find("mtlb") then
+            reqCatCiv = "SPEC"
+            reqCatMil = "СПЕЦ-В"
+            catName = "СПЕЦ-В (Бронетехника / Спецмашины)"
+        elseif mdl:find("truck") or mdl:find("kamaz") or mdl:find("ural") or mdl:find("zil") or mdl:find("semi") or mdl:find("tractor") or mdl:find("trailer") then
+            reqCatCiv = "C"
+            reqCatMil = "C-В"
+            catName = "C (Грузовой автотранспорт)"
+        end
+
+        local hasCiv = civLic and civLic.status == "Действительно" and istable(civLic.categories) and (civLic.categories[reqCatCiv] == true or civLic.categories["SPEC"] == true)
+        local hasMil = milLic and (milLic.status == "Действительно" or milLic.status == "Действительно (на службе)") and istable(milLic.categories) and (milLic.categories[reqCatMil] == true or milLic.categories["СПЕЦ-В"] == true)
+
+        if hasMil then
+            if GRM.Notify then
+                GRM.Notify(ply, "Удостоверение военного водителя ВАИ проверено (Категория " .. reqCatMil .. " действительна).", 100, 200, 120)
+            end
+        elseif hasCiv then
+            if GRM.Notify then
+                GRM.Notify(ply, "Водительское удостоверение ГАИ проверено (Категория " .. reqCatCiv .. " действительна).", 100, 200, 120)
+            end
+        else
+            if (civLic and civLic.status == "Лишён права управления") or (milLic and milLic.status == "Лишён ВАИ") then
+                if GRM.Notify then
+                    GRM.Notify(ply, "ВНИМАНИЕ: Вы лишены права управления транспортными средствами!", 255, 80, 80)
+                end
+                ply:ChatPrint("[ГАИ / ВАИ] Внимание: Вы лишены водительских прав и управляете Т/С незаконно!")
+            else
+                if GRM.Notify then
+                    GRM.Notify(ply, "Внимание: У вас отсутствует водительское удостоверение категории " .. catName .. "!", 255, 160, 60)
+                end
+                ply:ChatPrint("[ГАИ / ВАИ] Предупреждение: У вас нет прав категории " .. catName .. " (оформляются в Автошколе / ВАИ).")
+            end
         end
     end)
 
-    -- Чат-команды на сервере (резервный перехват)
-    hook.Add("PlayerSayTransform", "GRM_Docs_ServerCommands", function(ply, datapack)
-        if not istable(datapack) then return end
-        local text = datapack[1]
-        if not isstring(text) then return end
-        local low = string.lower(string.Trim(text))
+    -- Обработка чат-команд на сервере
+    hook.Add("PlayerSayTransform", "GRM_Doc_Commands", function(ply, datapack)
+        if not IsValid(ply) or not istable(datapack) then return end
+        local txt = datapack[1] or ""
+        local low = string.lower(string.Trim(txt))
 
         -- Паспорт
         if low == "/passport" or low == "/pass" or low == "/myid" or low == "/id" or low == "/mypasport" or low == "/паспорт" or low == "/пас" then
@@ -919,7 +1096,35 @@ if SERVER then
             return
         end
 
-        -- Водительские права
+        -- Водительские права (Гражданские ГАИ)
+        if low == "/civlicense" or low == "/civprava" or low == "/гражданскиеправа" or low == "/граждправа" then
+            sendOwnDoc(ply, "license", "civilian")
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
+            return
+        end
+        if low == "/showcivlicense" or low == "/showcivprava" or low == "/показатьгражданскиеправа" or low == "/покграждправа" then
+            showDocToTarget(ply, "license", nil, "civilian")
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
+            return
+        end
+
+        -- Военные водительские права (ВАИ)
+        if low == "/millicense" or low == "/milprava" or low == "/mallicense" or low == "/военныеправа" or low == "/ваиправа" or low == "/вуваи" or low == "/увв" or low == "/военноеву" or low == "/прававаи" or low == "/военныеводправа" then
+            sendOwnDoc(ply, "milLicense", "military")
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
+            return
+        end
+        if low == "/showmillicense" or low == "/showmilprava" or low == "/показатьваи" or low == "/показатьвоенныеправа" or low == "/покваи" or low == "/покувв" or low == "/показатьувв" or low == "/поквоенправа" then
+            showDocToTarget(ply, "milLicense", nil, "military")
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
+            return
+        end
+
+        -- Водительские права (Общая команда)
         if low == "/license" or low == "/prava" or low == "/mylicense" or low == "/driverlicense" or low == "/права" or low == "/водправа" or low == "/водительское" or low == "/ву" then
             sendOwnDoc(ply, "license")
             datapack.SkipPlayerSay = true
@@ -978,13 +1183,95 @@ if CLIENT then
     local function safeClearFrame(f)
         if not IsValid(f) then return end
         for _, ch in ipairs(f:GetChildren() or {}) do
-            if IsValid(ch) and ch ~= f.btnClose and ch ~= f.btnMaxim and ch ~= f.btnMinim and ch ~= f.lblTitle and not ch._grmChrome then
+            if IsValid(ch) and ch ~= f.btnClose and ch ~= f.btnMaxim and ch ~= f.btnMinim and ch ~= f.lblTitle then
                 ch:Remove()
             end
         end
     end
 
-    -- ── ДВУХФАЗНЫЙ РЕНДЕР ПАСПОРТА ────────────────────────────
+    -- Меню выбора водительских прав при наличии обоих документов
+    function DOC.ShowLicenseChoiceDialog(targetEnt, isShow)
+        local frame = vgui.Create("DFrame")
+        frame:SetSize(440, 220)
+        frame:Center()
+        frame:SetTitle("")
+        frame:MakePopup()
+        frame:ShowCloseButton(false)
+
+        frame.Paint = function(s, w, h)
+            draw.RoundedBox(8, 0, 0, w, h, Color(24, 28, 38, 250))
+            draw.RoundedBox(6, 2, 2, w - 4, 34, Color(35, 45, 60))
+            draw.SimpleText("ВЫБОР ВОДИТЕЛЬСКОГО УДОСТОВЕРЕНИЯ", "GRMDoc_Bold", w / 2, 17, Color(240, 245, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+
+            local sub = isShow and "Выберите удостоверение для предъявления игроку:" or "Выберите удостоверение для личного просмотра:"
+            draw.SimpleText(sub, "GRMDoc_Small", w / 2, 50, Color(180, 190, 205), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+        end
+
+        local btnCiv = vgui.Create("DButton", frame)
+        btnCiv:SetSize(400, 44)
+        btnCiv:SetPos(20, 75)
+        btnCiv:SetText("🚗 Гражданское ВУ (Госавтоинспекция ГАИ)")
+        btnCiv:SetFont("GRMDoc_Bold")
+        btnCiv:SetTextColor(color_white)
+        btnCiv.Paint = function(s, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(35, 90, 180) or Color(25, 70, 140))
+            surface.SetDrawColor(80, 140, 240, 180)
+            surface.DrawOutlinedRect(0, 0, w, h)
+        end
+        btnCiv.DoClick = function()
+            frame:Close()
+            if isShow then
+                net.Start(NET_SHOW_DOC)
+                    net.WriteString("license")
+                    net.WriteEntity(IsValid(targetEnt) and targetEnt or LocalPlayer():GetEyeTrace().Entity)
+                    net.WriteString("civilian")
+                net.SendToServer()
+            else
+                net.Start(NET_OPEN_DOC)
+                    net.WriteString("license")
+                    net.WriteString("civilian")
+                net.SendToServer()
+            end
+        end
+
+        local btnMil = vgui.Create("DButton", frame)
+        btnMil:SetSize(400, 44)
+        btnMil:SetPos(20, 130)
+        btnMil:SetText("🪖 Удостоверение военного водителя (ВАИ / ВС)")
+        btnMil:SetFont("GRMDoc_Bold")
+        btnMil:SetTextColor(color_white)
+        btnMil.Paint = function(s, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(45, 110, 50) or Color(35, 85, 40))
+            surface.SetDrawColor(100, 200, 110, 180)
+            surface.DrawOutlinedRect(0, 0, w, h)
+        end
+        btnMil.DoClick = function()
+            frame:Close()
+            if isShow then
+                net.Start(NET_SHOW_DOC)
+                    net.WriteString("milLicense")
+                    net.WriteEntity(IsValid(targetEnt) and targetEnt or LocalPlayer():GetEyeTrace().Entity)
+                    net.WriteString("military")
+                net.SendToServer()
+            else
+                net.Start(NET_OPEN_DOC)
+                    net.WriteString("milLicense")
+                    net.WriteString("military")
+                net.SendToServer()
+            end
+        end
+
+        local btnClose = vgui.Create("DButton", frame)
+        btnClose:SetSize(28, 22)
+        btnClose:SetPos(frame:GetWide() - 34, 6)
+        btnClose:SetText("✕")
+        btnClose:SetTextColor(Color(200, 210, 225))
+        btnClose:SetFont("GRMDoc_Bold")
+        btnClose.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(210, 80, 80) or Color(0, 0, 0, 0)) end
+        btnClose.DoClick = function() frame:Close() end
+    end
+
+    -- ── ДВУХФАЗНЫЙ РЕНДЕР ПАСПОРТА ─────────────────────────────
     local function openPassportUI(data, tpl, isShown, senderName)
         tpl = tpl or {}
         local coverCol = tpl.coverColor and Color(tpl.coverColor.r or 85, tpl.coverColor.g or 20, tpl.coverColor.b or 25) or Color(85, 20, 25)
@@ -1077,95 +1364,83 @@ if CLIENT then
 
                 local halfW = 400
 
-                -- Левая страница
+                -- Левая страница (Герб и орган выдачи)
                 local leftPnl = vgui.Create("DPanel", frame)
                 leftPnl:SetPos(16, 32)
                 leftPnl:SetSize(halfW, 460)
                 leftPnl:SetPaintBackground(false)
 
                 leftPnl.Paint = function(_, w, h)
-                    draw.SimpleText(tpl.stateTitle or "РЕСПУБЛИКА ГРАНД", "GRMDoc_Header", w / 2, 16, Color(50, 45, 40), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-                    draw.SimpleText(tpl.docTitle or "ПАСПОРТ ГРАЖДАНИНА", "GRMDoc_Small", w / 2, 36, Color(120, 50, 50), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    draw.SimpleText(tpl.stateTitle or "РЕСПУБЛИКА ГРАНД", "GRMDoc_Header", w / 2, 20, Color(40, 35, 30), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    draw.SimpleText("🦅", "GRMDoc_CoverTitle", w / 2, 70, Color(60, 50, 40), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 
-                    draw.RoundedBox(4, 30, 70, 130, 160, Color(210, 205, 195))
-                    draw.SimpleText("ФОТОГРАФИЯ", "GRMDoc_Small", 95, 150, Color(150, 145, 135), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("Паспорт выдан государственным органом:", "GRMDoc_Small", w / 2, 115, Color(100, 95, 85), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    draw.SimpleText(tostring(data.issuedBy or "Паспортный стол"), "GRMDoc_Bold", w / 2, 135, Color(30, 25, 20), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
 
-                    surface.SetDrawColor(160, 40, 40, 160)
-                    surface.DrawOutlinedRect(120, 180, 70, 70)
-                    draw.SimpleText("МВД", "GRMDoc_Small", 155, 215, Color(160, 40, 40, 180), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("Дата выдачи: " .. tostring(data.issueDate or os.date("%d.%m.%Y")), "GRMDoc_Normal", w / 2, 175, Color(50, 45, 40), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    draw.SimpleText("Код подразделения: " .. tostring(data.series or "GRM") .. "-770", "GRMDoc_Normal", w / 2, 195, Color(50, 45, 40), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
 
-                    draw.SimpleText("Национальность / Статус:", "GRMDoc_Small", 180, 80, Color(110, 105, 95), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    draw.SimpleText(data.nationality or "Гражданин", "GRMDoc_Bold", 180, 96, Color(40, 35, 30), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    surface.SetDrawColor(120, 40, 40, 180)
+                    surface.DrawOutlinedRect(w / 2 - 70, 240, 140, 70)
+                    draw.SimpleText("М.П.", "GRMDoc_Bold", w / 2, 260, Color(120, 40, 40, 180), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("ГОСУДАРСТВЕННАЯ", "GRMDoc_Small", w / 2, 280, Color(120, 40, 40, 180), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("ПЕЧАТЬ", "GRMDoc_Small", w / 2, 295, Color(120, 40, 40, 180), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 
-                    draw.SimpleText("Статус документа:", "GRMDoc_Small", 180, 125, Color(110, 105, 95), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    local statCol = (data.status == "Действителен") and Color(30, 140, 60) or Color(180, 40, 40)
-                    draw.SimpleText(data.status or "Действителен", "GRMDoc_Bold", 180, 141, statCol, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-
-                    draw.SimpleText("Личная подпись владельца:", "GRMDoc_Small", 30, 260, Color(110, 105, 95), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    surface.SetDrawColor(80, 75, 65, 180)
-                    surface.DrawLine(30, 310, 220, 310)
-                    draw.SimpleText(tostring(data.fullName or ""), "GRMDoc_Header", 40, 285, Color(25, 45, 110), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-
-                    draw.SimpleText("Владелец паспорта находится под защитой закона.", "GRMDoc_Small", w / 2, 420, Color(130, 125, 115), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("Личная подпись владельца:", "GRMDoc_Small", w / 2, 350, Color(100, 95, 85), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    surface.SetDrawColor(60, 55, 50, 180)
+                    surface.DrawLine(w / 2 - 90, 390, w / 2 + 90, 390)
+                    draw.SimpleText(tostring(data.fullName or ""), "GRMDoc_Small", w / 2, 375, Color(30, 45, 110), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
                 end
 
-                local avatar = vgui.Create("AvatarImage", leftPnl)
-                avatar:SetPos(35, 75)
-                avatar:SetSize(120, 150)
-                local sid64 = data.steamID64 or (LocalPlayer():SteamID64())
-                avatar:SetSteamID(sid64, 184)
-
-                -- Правая страница
+                -- Правая страница (Персональные данные и фото)
                 local rightPnl = vgui.Create("DPanel", frame)
                 rightPnl:SetPos(halfW + 24, 32)
                 rightPnl:SetSize(halfW - 8, 460)
                 rightPnl:SetPaintBackground(false)
 
                 rightPnl.Paint = function(_, w, h)
-                    local numStr = "СЕРИЯ " .. tostring(data.series or "GRM") .. "   № " .. tostring(data.number or "000000")
-                    draw.SimpleText(numStr, "GRMDoc_Header", w / 2, 16, Color(160, 40, 40), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    draw.SimpleText("РОССИЙСКАЯ ФЕДЕРАЦИЯ / PASSPORT", "GRMDoc_Header", w / 2, 10, Color(40, 35, 30), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
 
-                    local y = 50
+                    draw.SimpleText("Серия и номер: " .. tostring(data.series or "GRM") .. " № " .. tostring(data.number or "000000"), "GRMDoc_Bold", w - 10, 34, Color(160, 30, 30), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+
+                    local y = 65
                     local function drawField(title, val)
-                        draw.SimpleText(title, "GRMDoc_Small", 10, y, Color(110, 105, 95), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                        draw.SimpleText(val or "—", "GRMDoc_Bold", 10, y + 16, Color(35, 30, 25), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                        surface.SetDrawColor(200, 195, 185)
-                        surface.DrawLine(10, y + 36, w - 20, y + 36)
-                        y = y + 44
+                        draw.SimpleText(title, "GRMDoc_Small", 145, y, Color(110, 105, 95), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                        draw.SimpleText(val or "—", "GRMDoc_Bold", 145, y + 15, Color(25, 20, 15), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                        y = y + 42
                     end
 
-                    drawField("ФАМИЛИЯ, ИМЯ, ОТЧЕСТВО:", data.fullName or "Гражданин")
-                    drawField("ПОЛ:", data.gender or "Мужской")
+                    drawField("ФАМИЛИЯ, ИМЯ, ОТЧЕСТВО:", data.fullName)
+                    drawField("ПОЛ / SEX:", data.gender or "Мужской")
                     drawField("ДАТА РОЖДЕНИЯ:", data.birthDate or "12.04.1988")
-                    drawField("КЕМ ВЫДАН:", data.issuedBy or "Паспортный стол")
-                    drawField("ДАТА ВЫДАЧИ:", data.issueDate or os.date("%d.%m.%Y"))
+                    drawField("МЕСТО РОЖДЕНИЯ:", "г. Приморск, Республика Гранд")
+                    drawField("ГРАЖДАНСТВО:", data.nationality or "Гражданин Республики")
 
-                    draw.RoundedBox(4, 6, 390, w - 16, 50, Color(230, 225, 215))
-                    local line1 = string.format("P<GRM%s<<%s<<<<<<<<<<<<<<<<<<", (data.series or "GRM"), (data.fullName or "CITIZEN"):gsub("%s+", "<"):upper())
-                    local line2 = string.format("%s4M8804128GRM<<<<<<<<<<<<<<02", (data.number or "000000"):gsub("%D", ""))
-                    draw.SimpleText(line1:sub(1, 38), "GRMDoc_MRZ", 14, 396, Color(50, 45, 40), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    draw.SimpleText(line2:sub(1, 38), "GRMDoc_MRZ", 14, 416, Color(50, 45, 40), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    -- MRZ машиночитаемая зона
+                    surface.SetDrawColor(220, 215, 205)
+                    surface.DrawRect(10, 380, w - 20, 60)
+                    local mrz1 = string.format("P<GRM%s<<%s<<<<<<<<<<<<<<<<<<<", (data.series or "GRM"), (data.fullName or "CITIZEN"):gsub("%s+", "<"):upper())
+                    local mrz2 = string.format("%s4RUS8804128M2801017<<<<<<<<<<<<<<02", data.number or "000000")
+                    draw.SimpleText(mrz1:sub(1, 38), "GRMDoc_MRZ", 18, 390, Color(30, 30, 35), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText(mrz2:sub(1, 38), "GRMDoc_MRZ", 18, 412, Color(30, 30, 35), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                 end
+
+                local avatar = vgui.Create("AvatarImage", rightPnl)
+                avatar:SetPos(15, 65)
+                avatar:SetSize(115, 145)
+                local sid64 = data.steamID64 or (LocalPlayer():SteamID64())
+                avatar:SetSteamID(sid64, 184)
             end
         end
 
         setPhase(false)
     end
 
-    -- ── ДВУХФАЗНЫЙ РЕНДЕР СЛУЖЕБНОГО УДОСТОВЕРЕНИЯ (Ксива) ─────
+    -- ── ДВУХФАЗНЫЙ РЕНДЕР СЛУЖЕБНОГО УДОСТОВЕРЕНИЯ (КСИВА) ─────
     local function openBadgeUI(data, tpl, isShown, senderName)
         tpl = tpl or {}
         local coverCol = tpl.coverColor and Color(tpl.coverColor.r or 18, tpl.coverColor.g or 32, tpl.coverColor.b or 60) or Color(18, 32, 60)
         local foil = DOC.FoilStyles[tpl.foilStyle or "gold"] or DOC.FoilStyles.gold
-        local badgeIconName = tpl.badgeIcon or "star"
-        local badgeSymbol = (badgeIconName == "star" and "★")
-            or (badgeIconName == "shield" and "🛡")
-            or (badgeIconName == "eagle" and "🦅")
-            or (badgeIconName == "swords" and "⚔")
-            or (badgeIconName == "military" and "🪖")
-            or (badgeIconName == "scales" and "⚖")
-            or (badgeIconName == "bank" and "🏛")
-            or (badgeIconName == "med" and "✚") or "★"
 
         local frame = vgui.Create("DFrame")
         frame:SetTitle("")
@@ -1175,28 +1450,26 @@ if CLIENT then
         local function setPhase(expanded)
             if not expanded then
                 safeClearFrame(frame)
-                frame:SetSize(360, 480)
+                frame:SetSize(420, 290)
                 frame:Center()
 
                 frame.Paint = function(_, w, h)
                     draw.RoundedBox(10, 0, 0, w, h, coverCol)
-                    draw.RoundedBox(6, 10, 10, w - 20, h - 20, Color(coverCol.r + 8, coverCol.g + 8, coverCol.b + 8))
+                    draw.RoundedBox(8, 8, 8, w - 16, h - 16, Color(coverCol.r + 8, coverCol.g + 8, coverCol.b + 8))
 
-                    local coverText = tpl.coverTitle or data.faction or "СЛУЖЕБНОЕ УДОСТОВЕРЕНИЕ"
-                    draw.SimpleText(coverText, "GRMDoc_CoverTitle", w / 2, 70, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    local title = tpl.coverTitle or data.faction or "СЛУЖЕБНОЕ УДОСТОВЕРЕНИЕ"
+                    draw.SimpleText(title, "GRMDoc_Foil", w / 2, 70, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    draw.SimpleText("★", "GRMDoc_CoverTitle", w / 2, 120, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("УДОСТОВЕРЕНИЕ", "GRMDoc_CoverTitle", w / 2, 150, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
 
-                    draw.SimpleText(badgeSymbol, "GRMDoc_CoverTitle", w / 2, 160, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                    draw.SimpleText("СЛУЖЕБНОЕ УДОСТОВЕРЕНИЕ", "GRMDoc_Small", w / 2, 260, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-                    draw.SimpleText("SERVICE ID", "GRMDoc_Small", w / 2, 280, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-
-                    local topTitle = isShown and ("Вам предъявили удостоверение: " .. tostring(senderName)) or "Ваше удостоверение"
-                    draw.SimpleText(topTitle, "GRMDoc_Small", w / 2, 20, Color(220, 220, 230), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    local topTitle = isShown and ("Вам предъявили удостоверение: " .. tostring(senderName)) or "Ваше служебное удостоверение"
+                    draw.SimpleText(topTitle, "GRMDoc_Small", w / 2, 16, Color(200, 200, 210), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
                 end
 
                 local btnExpand = vgui.Create("DButton", frame)
-                btnExpand:SetSize(300, 40)
-                btnExpand:SetPos(30, 400)
-                btnExpand:SetText("📖 Кликните, чтобы развернуть корочку")
+                btnExpand:SetSize(360, 36)
+                btnExpand:SetPos(30, 230)
+                btnExpand:SetText("📖 Кликните, чтобы раскрыть удостоверение")
                 btnExpand:SetFont("GRMDoc_Bold")
                 btnExpand:SetTextColor(foil.col)
                 btnExpand.Paint = function(s, w, h)
@@ -1217,34 +1490,32 @@ if CLIENT then
 
             else
                 safeClearFrame(frame)
-                frame:SetSize(860, 480)
+                frame:SetSize(780, 320)
                 frame:Center()
 
                 frame.Paint = function(_, w, h)
                     draw.RoundedBox(10, 0, 0, w, h, coverCol)
-                    draw.RoundedBox(6, 6, 6, w / 2 - 10, h - 12, Color(245, 245, 248))
-                    draw.RoundedBox(6, w / 2 + 4, 6, w / 2 - 10, h - 12, Color(245, 245, 248))
+                    draw.RoundedBox(8, 6, 6, w - 12, h - 12, Color(248, 246, 242))
 
-                    surface.SetDrawColor(30, 30, 35, 220)
-                    surface.DrawLine(w / 2 - 2, 0, w / 2 - 2, h)
-                    surface.DrawLine(w / 2 + 2, 0, w / 2 + 2, h)
+                    surface.SetDrawColor(180, 175, 160, 180)
+                    surface.DrawLine(w / 2, 8, w / 2, h - 8)
 
-                    local topTitle = isShown and ("Вам предъявили удостоверение: " .. tostring(senderName)) or "Служебное удостоверение сотрудника"
-                    draw.SimpleText(topTitle, "GRMDoc_Small", 16, 8, Color(120, 120, 130), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    local topTitle = isShown and ("Вам предъявили удостоверение: " .. tostring(senderName)) or "Служебное удостоверение"
+                    draw.SimpleText(topTitle, "GRMDoc_Small", 14, 8, Color(110, 105, 95), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                 end
 
                 local btnFold = vgui.Create("DButton", frame)
-                btnFold:SetSize(140, 24)
-                btnFold:SetPos(frame:GetWide() - 180, 8)
-                btnFold:SetText("📁 Сложить обложку")
+                btnFold:SetSize(130, 22)
+                btnFold:SetPos(frame:GetWide() - 170, 8)
+                btnFold:SetText("📁 Сложить корочку")
                 btnFold:SetFont("GRMDoc_Small")
                 btnFold:SetTextColor(Color(80, 75, 65))
                 btnFold.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(210, 205, 195) or Color(225, 220, 210)) end
                 btnFold.DoClick = function() surface.PlaySound("garrysmod/ui_click.wav") setPhase(false) end
 
                 local btnClose = vgui.Create("DButton", frame)
-                btnClose:SetSize(28, 24)
-                btnClose:SetPos(frame:GetWide() - 36, 8)
+                btnClose:SetSize(28, 22)
+                btnClose:SetPos(frame:GetWide() - 34, 8)
                 btnClose:SetText("✕")
                 btnClose:SetTextColor(Color(90, 85, 75))
                 btnClose:SetFont("GRMDoc_Bold")
@@ -1254,87 +1525,61 @@ if CLIENT then
                 end
                 btnClose.DoClick = function() frame:Close() end
 
-                local halfW = 410
+                local halfW = 370
 
-                -- Левая створка: Металлический жетон и спецдопуски
+                -- Левая створка (Спецдопуски и жетон)
                 local leftPnl = vgui.Create("DPanel", frame)
-                leftPnl:SetPos(12, 30)
-                leftPnl:SetSize(halfW, 436)
+                leftPnl:SetPos(14, 30)
+                leftPnl:SetSize(halfW, 275)
                 leftPnl:SetPaintBackground(false)
 
                 leftPnl.Paint = function(_, w, h)
-                    local coverText = tpl.coverTitle or data.faction or "СЛУЖЕБНОЕ УДОСТОВЕРЕНИЕ"
-                    draw.SimpleText(coverText, "GRMDoc_Header", w / 2, 10, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    draw.SimpleText(tostring(data.faction or "ВЕДОМСТВО"):upper(), "GRMDoc_Bold", w / 2, 6, Color(25, 45, 80), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    draw.SimpleText("СЛУЖЕБНЫЕ ДОПУСКИ И ПОЛНОМОЧИЯ:", "GRMDoc_Small", 10, 30, Color(110, 110, 120), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
 
-                    draw.RoundedBox(12, w / 2 - 60, 45, 120, 130, Color(40, 45, 55))
-                    draw.RoundedBox(10, w / 2 - 56, 49, 112, 122, foil.col)
-                    draw.RoundedBox(8, w / 2 - 50, 55, 100, 110, Color(30, 35, 45))
-
-                    draw.SimpleText(badgeSymbol, "GRMDoc_CoverTitle", w / 2, 70, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-                    draw.SimpleText("ЖЕТОН", "GRMDoc_Small", w / 2, 110, Color(180, 185, 195), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-                    draw.SimpleText(tostring(data.number or "0000"), "GRMDoc_Bold", w / 2, 130, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-
-                    draw.SimpleText("СПЕЦИАЛЬНЫЕ ДОПУСКИ:", "GRMDoc_Small", 20, 195, Color(100, 105, 115), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    local y = 215
+                    local y = 50
                     local perms = data.permissions or {}
-                    for _, pDef in ipairs(DOC.PermissionsList) do
+                    for _, pDef in ipairs(DOC.PermissionsList or {}) do
                         local has = perms[pDef.id] == true
-                        local col = has and Color(35, 140, 60) or Color(160, 165, 175)
-                        local mark = has and "✔ " or "✖ "
-                        draw.SimpleText(mark .. pDef.title, "GRMDoc_Small", 24, y, col, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                        y = y + 18
+                        local boxCol = has and Color(220, 245, 225) or Color(238, 238, 240)
+                        local txtCol = has and Color(20, 100, 40) or Color(140, 140, 150)
+                        local icon = has and "✔ " or "✖ "
+
+                        draw.RoundedBox(4, 10, y, w - 20, 22, boxCol)
+                        draw.SimpleText(icon .. pDef.title, "GRMDoc_Small", 16, y + 11, txtCol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                        y = y + 26
                     end
 
-                    surface.SetDrawColor(160, 40, 40, 180)
-                    surface.DrawOutlinedRect(w - 110, 335, 80, 80)
-                    draw.SimpleText("ПЕЧАТЬ", "GRMDoc_Small", w - 70, 370, Color(160, 40, 40, 200), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-
-                    draw.SimpleText("Руководитель ведомства:", "GRMDoc_Small", 20, 360, Color(110, 105, 95), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    surface.SetDrawColor(60, 60, 70, 180)
-                    surface.DrawLine(20, 400, 180, 400)
-                    draw.SimpleText(tostring(data.issuedBy or "Личная подпись"), "GRMDoc_Small", 20, 382, Color(25, 45, 110), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("ЖЕТОН: " .. tostring(data.number or "0000"), "GRMDoc_Bold", w / 2, 245, Color(140, 30, 30), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
                 end
 
-                -- Правая створка: Фото и реквизиты сотрудника
+                -- Правая створка (ФИО, фото, должность, отдел)
                 local rightPnl = vgui.Create("DPanel", frame)
-                rightPnl:SetPos(frame:GetWide() / 2 + 10, 30)
-                rightPnl:SetSize(halfW, 436)
+                rightPnl:SetPos(halfW + 26, 30)
+                rightPnl:SetSize(halfW, 275)
                 rightPnl:SetPaintBackground(false)
 
                 rightPnl.Paint = function(_, w, h)
-                    draw.RoundedBox(4, 10, 8, w - 20, 32, coverCol)
-                    draw.SimpleText(tostring(data.faction or "ГОСУДАРСТВЕННАЯ СЛУЖБА"), "GRMDoc_Bold", w / 2, 24, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("СЛУЖЕБНОЕ УДОСТОВЕРЕНИЕ", "GRMDoc_Bold", w / 2, 6, Color(30, 30, 35), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    draw.SimpleText("№ " .. tostring(data.number or "POL-0001"), "GRMDoc_Bold", w - 10, 6, Color(160, 30, 30), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
 
-                    draw.RoundedBox(4, 15, 52, 110, 135, Color(210, 205, 195))
-
-                    draw.SimpleText("УДОСТОВЕРЕНИЕ №:", "GRMDoc_Small", 135, 54, Color(110, 105, 95), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    draw.SimpleText(tostring(data.number or "—"), "GRMDoc_Bold", 135, 70, Color(180, 40, 40), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-
-                    draw.SimpleText("ДЕЙСТВИТЕЛЬНО ДО:", "GRMDoc_Small", 135, 95, Color(110, 105, 95), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    draw.SimpleText(tostring(data.validUntil or "Бессрочно"), "GRMDoc_Bold", 135, 111, Color(30, 35, 45), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-
-                    draw.SimpleText("СТАТУС:", "GRMDoc_Small", 135, 138, Color(110, 105, 95), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    local statCol = (data.status == "Действителен") and Color(30, 140, 60) or Color(180, 40, 40)
-                    draw.SimpleText(tostring(data.status or "Действителен"), "GRMDoc_Bold", 135, 154, statCol, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-
-                    local y = 200
-                    local function drawField(title, val)
-                        draw.SimpleText(title, "GRMDoc_Small", 15, y, Color(110, 105, 95), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                        draw.SimpleText(val or "—", "GRMDoc_Bold", 15, y + 16, Color(35, 30, 25), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                        surface.SetDrawColor(210, 205, 195)
-                        surface.DrawLine(15, y + 36, w - 20, y + 36)
-                        y = y + 42
+                    local y = 35
+                    local function drawField(title, val, col)
+                        draw.SimpleText(title, "GRMDoc_Small", 115, y, Color(110, 110, 120), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                        draw.SimpleText(val or "—", "GRMDoc_Bold", 115, y + 14, col or Color(25, 25, 30), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                        y = y + 36
                     end
 
-                    drawField("СОТРУДНИК (ФИО):", data.fullName or "Сотрудник")
-                    drawField("ДОЛЖНОСТЬ / ЗВАНИЕ:", data.role or "Сотрудник")
+                    drawField("ФИО СОТРУДНИКА:", data.fullName or "Сотрудник")
+                    drawField("СПЕЦИАЛЬНОЕ ЗВАНИЕ / ЧИН:", data.role or "Служащий", Color(25, 65, 140))
                     drawField("ПОДРАЗДЕЛЕНИЕ / ОТДЕЛ:", data.department or "Главное Управление")
-                    drawField("ДАТА ВЫДАЧИ:", data.issueDate or os.date("%d.%m.%Y"))
+                    drawField("ВЫДАНО:", (data.issueDate or os.date("%d.%m.%Y")) .. " (Бессрочно)")
+                    drawField("СТАТУС:", data.status or "Действителен", (data.status == "Действителен" and Color(20, 140, 50) or Color(180, 40, 40)))
                 end
 
                 local avatar = vgui.Create("AvatarImage", rightPnl)
-                avatar:SetPos(18, 55)
-                avatar:SetSize(104, 129)
+                avatar:SetPos(10, 35)
+                avatar:SetSize(95, 120)
                 local sid64 = data.steamID64 or (LocalPlayer():SteamID64())
                 avatar:SetSteamID(sid64, 184)
             end
@@ -1343,7 +1588,7 @@ if CLIENT then
         setPhase(false)
     end
 
-    -- ── ДВУХФАЗНЫЙ РЕНДЕР ВОЕННОГО БИЛЕТА ──────────────────────
+    -- ── ДВУХФАЗНЫЙ РЕНДЕР ВОЕННОГО БИЛЕТА ─────────────────────
     local function openMilitaryUI(data, tpl, isShown, senderName)
         tpl = tpl or {}
         local coverCol = tpl.coverColor and Color(tpl.coverColor.r or 38, tpl.coverColor.g or 58, tpl.coverColor.b or 36) or Color(38, 58, 36)
@@ -1357,26 +1602,28 @@ if CLIENT then
         local function setPhase(expanded)
             if not expanded then
                 safeClearFrame(frame)
-                frame:SetSize(360, 480)
+                frame:SetSize(380, 520)
                 frame:Center()
 
                 frame.Paint = function(_, w, h)
                     draw.RoundedBox(10, 0, 0, w, h, coverCol)
-                    draw.RoundedBox(6, 10, 10, w - 20, h - 20, Color(coverCol.r + 8, coverCol.g + 8, coverCol.b + 8))
+                    draw.RoundedBox(6, 12, 12, w - 24, h - 24, Color(coverCol.r + 10, coverCol.g + 10, coverCol.b + 10))
 
-                    draw.SimpleText(tpl.stateTitle or "ВООРУЖЁННЫЕ СИЛЫ", "GRMDoc_Header", w / 2, 70, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-                    draw.SimpleText("🪖", "GRMDoc_CoverTitle", w / 2, 160, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                    draw.SimpleText("ВОЕННЫЙ БИЛЕТ", "GRMDoc_Foil", w / 2, 260, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-                    draw.SimpleText("MILITARY ID", "GRMDoc_Small", w / 2, 285, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    draw.SimpleText(tpl.stateTitle or "ВООРУЖЁННЫЕ СИЛЫ", "GRMDoc_CoverTitle", w / 2, 60, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    draw.SimpleText("🪖", "GRMDoc_CoverTitle", w / 2, 140, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("МИНИСТЕРСТВО ОБОРОНЫ", "GRMDoc_Small", w / 2, 175, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+
+                    draw.SimpleText(tpl.docTitle or "ВОЕННЫЙ БИЛЕТ", "GRMDoc_Foil", w / 2, 320, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    draw.SimpleText("MILITARY ID", "GRMDoc_Small", w / 2, 345, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
 
                     local topTitle = isShown and ("Вам показали военный билет: " .. tostring(senderName)) or "Ваш военный билет"
-                    draw.SimpleText(topTitle, "GRMDoc_Small", w / 2, 20, Color(220, 225, 220), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    draw.SimpleText(topTitle, "GRMDoc_Small", w / 2, 20, Color(210, 225, 210), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
                 end
 
                 local btnExpand = vgui.Create("DButton", frame)
-                btnExpand:SetSize(300, 40)
-                btnExpand:SetPos(30, 400)
-                btnExpand:SetText("📖 Кликните, чтобы открыть военный билет")
+                btnExpand:SetSize(320, 42)
+                btnExpand:SetPos(30, 440)
+                btnExpand:SetText("📖 Кликните, чтобы развернуть военный билет")
                 btnExpand:SetFont("GRMDoc_Bold")
                 btnExpand:SetTextColor(foil.col)
                 btnExpand.Paint = function(s, w, h)
@@ -1397,18 +1644,18 @@ if CLIENT then
 
             else
                 safeClearFrame(frame)
-                frame:SetSize(840, 500)
+                frame:SetSize(840, 520)
                 frame:Center()
 
                 frame.Paint = function(_, w, h)
                     draw.RoundedBox(10, 0, 0, w, h, coverCol)
-                    draw.RoundedBox(8, 6, 6, w - 12, h - 12, Color(246, 244, 238))
+                    draw.RoundedBox(8, 6, 6, w - 12, h - 12, Color(242, 244, 238))
 
-                    surface.SetDrawColor(180, 185, 175, 180)
+                    surface.SetDrawColor(165, 175, 160, 180)
                     surface.DrawLine(w / 2, 8, w / 2, h - 8)
 
                     local topTitle = isShown and ("Вам предъявили военный билет: " .. tostring(senderName)) or "Военный билет военнослужащего"
-                    draw.SimpleText(topTitle, "GRMDoc_Small", 14, 10, Color(90, 100, 90), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText(topTitle, "GRMDoc_Small", 14, 10, Color(90, 105, 90), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                 end
 
                 local btnFold = vgui.Create("DButton", frame)
@@ -1416,19 +1663,19 @@ if CLIENT then
                 btnFold:SetPos(frame:GetWide() - 180, 10)
                 btnFold:SetText("📁 Сложить обложку")
                 btnFold:SetFont("GRMDoc_Small")
-                btnFold:SetTextColor(Color(80, 75, 65))
-                btnFold.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(210, 205, 195) or Color(225, 220, 210)) end
+                btnFold:SetTextColor(Color(70, 85, 70))
+                btnFold.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(205, 215, 200) or Color(220, 228, 215)) end
                 btnFold.DoClick = function() surface.PlaySound("garrysmod/ui_click.wav") setPhase(false) end
 
                 local btnClose = vgui.Create("DButton", frame)
                 btnClose:SetSize(28, 24)
                 btnClose:SetPos(frame:GetWide() - 36, 10)
                 btnClose:SetText("✕")
-                btnClose:SetTextColor(Color(90, 85, 75))
+                btnClose:SetTextColor(Color(80, 95, 80))
                 btnClose:SetFont("GRMDoc_Bold")
                 btnClose.Paint = function(s, w, h)
-                    draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(210, 80, 80) or Color(220, 215, 205))
-                    if s:IsHovered() then s:SetTextColor(color_white) else s:SetTextColor(Color(90, 85, 75)) end
+                    draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(210, 80, 80) or Color(215, 225, 210))
+                    if s:IsHovered() then s:SetTextColor(color_white) else s:SetTextColor(Color(80, 95, 80)) end
                 end
                 btnClose.DoClick = function() frame:Close() end
 
@@ -1437,15 +1684,12 @@ if CLIENT then
                 -- Левая страница
                 local leftPnl = vgui.Create("DPanel", frame)
                 leftPnl:SetPos(16, 32)
-                leftPnl:SetSize(halfW, 440)
+                leftPnl:SetSize(halfW, 460)
                 leftPnl:SetPaintBackground(false)
 
                 leftPnl.Paint = function(_, w, h)
-                    draw.SimpleText(tpl.stateTitle or "ВООРУЖЁННЫЕ СИЛЫ", "GRMDoc_Header", w / 2, 12, Color(40, 60, 40), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-                    draw.SimpleText("ВОЕННЫЙ БИЛЕТ № " .. tostring(data.number or "ВБ-000000"), "GRMDoc_Bold", w / 2, 32, Color(160, 40, 40), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-
-                    draw.RoundedBox(4, 20, 65, 120, 150, Color(215, 215, 205))
-                    draw.SimpleText("ФОТО", "GRMDoc_Small", 80, 140, Color(140, 140, 130), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("ВООРУЖЁННЫЕ СИЛЫ", "GRMDoc_Header", w / 2, 10, Color(30, 45, 30), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    draw.SimpleText("ВОЕННЫЙ БИЛЕТ № " .. tostring(data.number or "ВБ-000000"), "GRMDoc_Bold", w / 2, 30, Color(160, 30, 30), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
 
                     draw.SimpleText("ФИО ВОЕННОСЛУЖАЩЕГО:", "GRMDoc_Small", 155, 65, Color(100, 105, 95), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                     draw.SimpleText(tostring(data.fullName or "Военнослужащий"), "GRMDoc_Bold", 155, 82, Color(30, 40, 30), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
@@ -1507,7 +1751,7 @@ if CLIENT then
         setPhase(false)
     end
 
-    -- ── ДВУХФАЗНЫЙ РЕНДЕР ВОДИТЕЛЬСКОГО УДОСТОВЕРЕНИЯ ─────────
+    -- ── ДВУХФАЗНЫЙ РЕНДЕР ГРАЖДАНСКОГО ВОДИТЕЛЬСКОГО УДОСТОВЕРЕНИЯ (ГАИ) ──
     local function openLicenseUI(data, tpl, isShown, senderName)
         tpl = tpl or {}
         local coverCol = tpl.coverColor and Color(tpl.coverColor.r or 35, tpl.coverColor.g or 60, tpl.coverColor.b or 95) or Color(35, 60, 95)
@@ -1520,9 +1764,9 @@ if CLIENT then
 
         local function setPhase(expanded)
             if not expanded then
-                -- Фаза 1: Лицевая сторона пластиковой карты (480×300)
+                -- Фаза 1: Лицевая сторона пластиковой карты (500×310)
                 safeClearFrame(frame)
-                frame:SetSize(480, 300)
+                frame:SetSize(500, 310)
                 frame:Center()
 
                 frame.Paint = function(_, w, h)
@@ -1538,21 +1782,31 @@ if CLIENT then
                     draw.RoundedBox(4, 16, 52, 90, 115, Color(210, 215, 225))
 
                     -- Реквизиты
-                    draw.SimpleText("ВОДИТЕЛЬСКОЕ УДОСТОВЕРЕНИЕ", "GRMDoc_Small", 120, 52, Color(100, 110, 130), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    draw.SimpleText("№ " .. tostring(data.number or "ВУ-000000"), "GRMDoc_Bold", 120, 68, Color(180, 40, 40), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("ВОДИТЕЛЬСКОЕ УДОСТОВЕРЕНИЕ", "GRMDoc_Small", 120, 50, Color(100, 110, 130), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("№ " .. tostring(data.number or "ВУ-000000"), "GRMDoc_Bold", 120, 66, Color(180, 40, 40), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
 
-                    draw.SimpleText("1. ФИО: " .. tostring(data.fullName or "Водитель"), "GRMDoc_Bold", 120, 94, Color(25, 30, 40), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    draw.SimpleText("2. Дата рожд.: " .. tostring(data.birthDate or "12.04.1988"), "GRMDoc_Normal", 120, 116, Color(40, 45, 55), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    draw.SimpleText("3. Выдано: " .. tostring(data.issueDate or os.date("%d.%m.%Y")), "GRMDoc_Normal", 120, 136, Color(40, 45, 55), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    draw.SimpleText("4. Срок: " .. tostring(data.validUntil or "10 лет"), "GRMDoc_Normal", 120, 156, Color(40, 45, 55), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("1. ФИО: " .. tostring(data.fullName or "Водитель"), "GRMDoc_Bold", 120, 90, Color(25, 30, 40), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("2. Дата рожд.: " .. tostring(data.birthDate or "12.04.1988"), "GRMDoc_Normal", 120, 112, Color(40, 45, 55), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("3. Выдано: " .. tostring(data.issueDate or os.date("%d.%m.%Y")) .. "  •  Срок: " .. tostring(data.validUntil or "10 лет"), "GRMDoc_Normal", 120, 132, Color(40, 45, 55), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("4. Орган: " .. tostring(data.issuedBy or "Госавтоинспекция"), "GRMDoc_Small", 120, 152, Color(90, 100, 115), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
 
                     -- Значки категорий внизу
-                    draw.RoundedBox(4, 8, 185, w - 16, 40, Color(230, 236, 245))
-                    draw.SimpleText("ОТКРЫТЫЕ КАТЕГОРИИ:", "GRMDoc_Small", 16, 190, Color(100, 110, 130), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    draw.SimpleText(tostring(data.categoriesStr or "B"), "GRMDoc_Bold", 16, 206, Color(20, 90, 180), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.RoundedBox(4, 8, 185, w - 16, 55, Color(230, 236, 245))
+                    draw.SimpleText("РАЗРЕШЁННЫЕ КАТЕГОРИИ:", "GRMDoc_Small", 16, 190, Color(100, 110, 130), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+
+                    local cats = data.categories or {}
+                    local cx = 16
+                    for _, cat in ipairs(DOC.DriveCategories or {}) do
+                        local has = (cats[cat.id] == true)
+                        local boxCol = has and Color(35, 110, 190) or Color(205, 212, 222)
+                        local txtCol = has and color_white or Color(125, 135, 145)
+                        draw.RoundedBox(4, cx, 208, 65, 24, boxCol)
+                        draw.SimpleText(cat.id, "GRMDoc_Bold", cx + 32, 220, txtCol, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                        cx = cx + 70
+                    end
 
                     local statCol = (data.status == "Действительно") and Color(30, 140, 60) or Color(180, 40, 40)
-                    draw.SimpleText("СТАТУС: " .. tostring(data.status or "Действительно"), "GRMDoc_Bold", w - 16, 206, statCol, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("СТАТУС: " .. tostring(data.status or "Действительно"), "GRMDoc_Bold", w - 16, 190, statCol, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
                 end
 
                 local avatar = vgui.Create("AvatarImage", frame)
@@ -1562,8 +1816,8 @@ if CLIENT then
                 avatar:SetSteamID(sid64, 184)
 
                 local btnTurn = vgui.Create("DButton", frame)
-                btnTurn:SetSize(300, 32)
-                btnTurn:SetPos(w / 2 - 150 or 90, 250)
+                btnTurn:SetSize(320, 32)
+                btnTurn:SetPos(frame:GetWide() / 2 - 160, 260)
                 btnTurn:SetText("🔄 Перевернуть карту (таблица категорий)")
                 btnTurn:SetFont("GRMDoc_Bold")
                 btnTurn:SetTextColor(Color(25, 45, 75))
@@ -1584,9 +1838,9 @@ if CLIENT then
                 btnClose.DoClick = function() frame:Close() end
 
             else
-                -- Фаза 2: Оборотная сторона пластиковой карты (480×380)
+                -- Фаза 2: Оборотная сторона пластиковой карты (500×400)
                 safeClearFrame(frame)
-                frame:SetSize(480, 380)
+                frame:SetSize(500, 400)
                 frame:Center()
 
                 frame.Paint = function(_, w, h)
@@ -1600,7 +1854,7 @@ if CLIENT then
                     for _, cat in ipairs(DOC.DriveCategories or {}) do
                         local has = cats[cat.id] == true
                         draw.RoundedBox(4, 12, y, w - 24, 26, has and Color(225, 242, 230) or Color(236, 238, 242))
-                        draw.SimpleText(cat.icon .. "  " .. cat.name, "GRMDoc_Normal", 20, y + 13, Color(30, 35, 45), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                        draw.SimpleText(cat.icon .. "  " .. cat.name .. " (" .. cat.desc .. ")", "GRMDoc_Small", 20, y + 13, Color(30, 35, 45), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                         local mark = has and "✔ РАЗРЕШЕНО" or "—"
                         local markCol = has and Color(30, 140, 60) or Color(150, 155, 165)
                         draw.SimpleText(mark, "GRMDoc_Bold", w - 24, y + 13, markCol, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
@@ -1614,7 +1868,7 @@ if CLIENT then
 
                 local btnTurn = vgui.Create("DButton", frame)
                 btnTurn:SetSize(200, 28)
-                btnTurn:SetPos(16, 336)
+                btnTurn:SetPos(16, 356)
                 btnTurn:SetText("🔄 Лицевая сторона")
                 btnTurn:SetFont("GRMDoc_Bold")
                 btnTurn:SetTextColor(Color(25, 45, 75))
@@ -1627,7 +1881,184 @@ if CLIENT then
 
                 local btnClose = vgui.Create("DButton", frame)
                 btnClose:SetSize(120, 28)
-                btnClose:SetPos(frame:GetWide() - 136, 336)
+                btnClose:SetPos(frame:GetWide() - 136, 356)
+                btnClose:SetText("✕ Закрыть")
+                btnClose:SetTextColor(color_white)
+                btnClose:SetFont("GRMDoc_Bold")
+                btnClose.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(210, 80, 80) or Color(150, 50, 50)) end
+                btnClose.DoClick = function() frame:Close() end
+            end
+        end
+
+        setPhase(false)
+    end
+
+    -- ── ДВУХФАЗНЫЙ РЕНДЕР ВОЕННОГО ВОДИТЕЛЬСКОГО УДОСТОВЕРЕНИЯ (ВАИ) ──
+    local function openMilLicenseUI(data, tpl, isShown, senderName)
+        data = data or {}
+        tpl = tpl or {}
+        local coverCol = tpl.coverColor and Color(tpl.coverColor.r or 38, tpl.coverColor.g or 58, tpl.coverColor.b or 36) or Color(38, 58, 36)
+        local foil = DOC.FoilStyles[tpl.foilStyle or "gold"] or DOC.FoilStyles.gold
+
+        local frame = vgui.Create("DFrame")
+        frame:SetTitle("")
+        frame:MakePopup()
+        frame:ShowCloseButton(false)
+
+        local function setPhase(expanded)
+            if not expanded then
+                -- Фаза 1: Лицевая сторона военного удостоверения водителя (520×320)
+                safeClearFrame(frame)
+                frame:SetSize(520, 320)
+                frame:Center()
+
+                frame.Paint = function(_, w, h)
+                    draw.RoundedBox(10, 0, 0, w, h, coverCol)
+                    draw.RoundedBox(8, 4, 4, w - 8, h - 8, Color(240, 244, 238))
+
+                    -- Шапка
+                    draw.RoundedBox(4, 8, 8, w - 16, 32, coverCol)
+                    draw.SimpleText(tpl.stateTitle or "ВОЕННАЯ АВТОМОБИЛЬНАЯ ИНСПЕКЦИЯ", "GRMDoc_Bold", 20, 24, foil.col, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("MILITARY DRIVER", "GRMDoc_Small", w - 20, 24, Color(210, 225, 205), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+
+                    -- Фото
+                    draw.RoundedBox(4, 16, 52, 90, 115, Color(200, 210, 195))
+
+                    -- Реквизиты
+                    draw.SimpleText("УДОСТОВЕРЕНИЕ ВОЕННОГО ВОДИТЕЛЯ", "GRMDoc_Small", 120, 50, Color(80, 100, 75), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("№ " .. tostring(data.number or "ВАИ-000000"), "GRMDoc_Bold", 120, 66, Color(180, 35, 35), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+
+                    draw.SimpleText("1. ФИО: " .. tostring(data.fullName or "Военнослужащий"), "GRMDoc_Bold", 120, 90, Color(25, 35, 25), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("2. Звание: " .. tostring(data.rank or "Рядовой"), "GRMDoc_Bold", 120, 110, Color(40, 75, 45), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("3. В/Ч (Часть): " .. tostring(data.formation or "Автобат"), "GRMDoc_Normal", 120, 130, Color(45, 55, 45), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("4. ВУС: " .. tostring(data.vus or "ВУС-837 (Водитель спецтранспорта)"), "GRMDoc_Normal", 120, 150, Color(45, 55, 45), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("5. Выдано: " .. tostring(data.issueDate or os.date("%d.%m.%Y")) .. "  •  Срок: " .. tostring(data.validUntil or "На срок службы"), "GRMDoc_Small", 120, 170, Color(80, 95, 80), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+
+                    -- Значки военных категорий внизу
+                    draw.RoundedBox(4, 8, 195, w - 16, 55, Color(226, 235, 222))
+                    draw.SimpleText("РАЗРЕШЁННЫЕ ВОЕННЫЕ КАТЕГОРИИ:", "GRMDoc_Small", 16, 200, Color(80, 100, 75), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+
+                    local cats = data.categories or {}
+                    local cx = 16
+                    for _, cat in ipairs(DOC.MilDriveCategories or {}) do
+                        local has = (cats[cat.id] == true)
+                        local boxCol = has and Color(45, 125, 60) or Color(195, 205, 195)
+                        local txtCol = has and color_white or Color(110, 125, 110)
+                        draw.RoundedBox(4, cx, 218, 65, 24, boxCol)
+                        draw.SimpleText(cat.id, "GRMDoc_Bold", cx + 32, 230, txtCol, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                        cx = cx + 70
+                    end
+
+                    local statCol = (data.status == "Действительно" or data.status == "Действительно (на службе)") and Color(30, 140, 60) or Color(180, 40, 40)
+                    draw.SimpleText("СТАТУС: " .. tostring(data.status or "Действительно (на службе)"), "GRMDoc_Bold", w - 16, 200, statCol, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+                end
+
+                local avatar = vgui.Create("AvatarImage", frame)
+                avatar:SetPos(20, 56)
+                avatar:SetSize(82, 107)
+                local sid64 = data.steamID64 or (LocalPlayer():SteamID64())
+                avatar:SetSteamID(sid64, 184)
+
+                -- Печать ВАИ
+                local pnlStamp = vgui.Create("DPanel", frame)
+                pnlStamp:SetPos(70, 125)
+                pnlStamp:SetSize(60, 45)
+                pnlStamp:SetPaintBackground(false)
+                pnlStamp.Paint = function(s, pw, ph)
+                    surface.SetDrawColor(180, 40, 40, 180)
+                    surface.DrawOutlinedRect(0, 0, pw, ph)
+                    draw.SimpleText("ВАИ МО", "GRMDoc_Small", pw / 2, 8, Color(180, 40, 40, 220), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("★ ПЕЧАТЬ ★", "GRMDoc_Small", pw / 2, 28, Color(180, 40, 40, 220), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                end
+
+                local btnTurn = vgui.Create("DButton", frame)
+                btnTurn:SetSize(320, 32)
+                btnTurn:SetPos(frame:GetWide() / 2 - 160, 270)
+                btnTurn:SetText("🔄 Перевернуть карту (Военные допуски и колонны)")
+                btnTurn:SetFont("GRMDoc_Bold")
+                btnTurn:SetTextColor(Color(25, 55, 30))
+                btnTurn.Paint = function(s, bw, bh)
+                    draw.RoundedBox(4, 0, 0, bw, bh, s:IsHovered() and Color(205, 225, 195) or Color(220, 235, 215))
+                    surface.SetDrawColor(160, 190, 150)
+                    surface.DrawOutlinedRect(0, 0, bw, bh)
+                end
+                btnTurn.DoClick = function() surface.PlaySound("garrysmod/ui_click.wav") setPhase(true) end
+
+                local btnClose = vgui.Create("DButton", frame)
+                btnClose:SetSize(28, 24)
+                btnClose:SetPos(frame:GetWide() - 34, 8)
+                btnClose:SetText("✕")
+                btnClose:SetTextColor(Color(220, 230, 215))
+                btnClose:SetFont("GRMDoc_Bold")
+                btnClose.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(210, 80, 80) or Color(0, 0, 0, 80)) end
+                btnClose.DoClick = function() frame:Close() end
+
+            else
+                -- Фаза 2: Оборотная сторона военного удостоверения (520×430)
+                safeClearFrame(frame)
+                frame:SetSize(520, 430)
+                frame:Center()
+
+                frame.Paint = function(_, w, h)
+                    draw.RoundedBox(10, 0, 0, w, h, coverCol)
+                    draw.RoundedBox(8, 4, 4, w - 8, h - 8, Color(240, 244, 238))
+
+                    draw.SimpleText("ДОПУСКИ К УПРАВЛЕНИЮ ВОЕННОЙ ТЕХНИКОЙ И АВТОКОЛОННАМИ", "GRMDoc_Bold", w / 2, 14, Color(30, 55, 30), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+
+                    -- Таблица категорий (6 штук)
+                    local y = 38
+                    local cats = data.categories or {}
+                    for _, cat in ipairs(DOC.MilDriveCategories or {}) do
+                        local has = cats[cat.id] == true
+                        draw.RoundedBox(4, 12, y, w - 24, 22, has and Color(215, 238, 215) or Color(230, 235, 228))
+                        draw.SimpleText(cat.icon .. "  " .. cat.name .. " (" .. cat.desc .. ")", "GRMDoc_Small", 20, y + 11, Color(30, 40, 30), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                        local mark = has and "✔ РАЗРЕШЕНО" or "—"
+                        local markCol = has and Color(25, 130, 50) or Color(150, 160, 150)
+                        draw.SimpleText(mark, "GRMDoc_Bold", w - 24, y + 11, markCol, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                        y = y + 25
+                    end
+
+                    -- Спецдопуски (Endorsements)
+                    draw.SimpleText("СПЕЦИАЛЬНЫЕ ДОПУСКИ ВОЕННОГО ВОДИТЕЛЯ:", "GRMDoc_Bold", 16, y + 8, Color(35, 70, 40), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    y = y + 28
+
+                    local ends = data.endorsements or {}
+                    local colW = (w - 32) / 2
+                    for i, endDef in ipairs(DOC.MilEndorsements or {}) do
+                        local has = ends[endDef.id] == true
+                        local ex = (i % 2 == 1) and 16 or (16 + colW + 4)
+                        local ey = y + math.floor((i - 1) / 2) * 26
+
+                        draw.RoundedBox(4, ex, ey, colW - 4, 22, has and Color(210, 235, 215) or Color(232, 236, 230))
+                        draw.SimpleText(endDef.icon .. " " .. endDef.title, "GRMDoc_Small", ex + 6, ey + 11, Color(30, 40, 30), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                        local mark = has and "✔ ДОПУЩЕН" or "—"
+                        local markCol = has and Color(25, 130, 50) or Color(145, 155, 145)
+                        draw.SimpleText(mark, "GRMDoc_Small", ex + colW - 10, ey + 11, markCol, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                    end
+
+                    y = y + math.ceil(#(DOC.MilEndorsements or {}) / 2) * 26 + 10
+
+                    -- Особые отметки
+                    draw.SimpleText("12. Особые отметки: " .. tostring(data.restrictions or data.specialNotes or "Норматив вождения сдан. Стажировка пройдена."), "GRMDoc_Small", 16, y, Color(80, 95, 80), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("Кем выдано: " .. tostring(data.issuedBy or "101-я Военная автомобильная инспекция (ВАИ)"), "GRMDoc_Small", 16, y + 18, Color(80, 95, 80), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                end
+
+                local btnTurn = vgui.Create("DButton", frame)
+                btnTurn:SetSize(200, 28)
+                btnTurn:SetPos(16, 390)
+                btnTurn:SetText("🔄 Лицевая сторона")
+                btnTurn:SetFont("GRMDoc_Bold")
+                btnTurn:SetTextColor(Color(25, 55, 30))
+                btnTurn.Paint = function(s, bw, bh)
+                    draw.RoundedBox(4, 0, 0, bw, bh, s:IsHovered() and Color(205, 225, 195) or Color(220, 235, 215))
+                    surface.SetDrawColor(160, 190, 150)
+                    surface.DrawOutlinedRect(0, 0, bw, bh)
+                end
+                btnTurn.DoClick = function() surface.PlaySound("garrysmod/ui_click.wav") setPhase(false) end
+
+                local btnClose = vgui.Create("DButton", frame)
+                btnClose:SetSize(120, 28)
+                btnClose:SetPos(frame:GetWide() - 136, 390)
                 btnClose:SetText("✕ Закрыть")
                 btnClose:SetTextColor(color_white)
                 btnClose:SetFont("GRMDoc_Bold")
@@ -1820,47 +2251,52 @@ if CLIENT then
             openBadgeUI(data, tpl, isShown, senderName)
         elseif docType == "military" then
             openMilitaryUI(data, tpl, isShown, senderName)
-        elseif docType == "license" then
+        elseif docType == "license" or docType == "civilian_license" then
             openLicenseUI(data, tpl, isShown, senderName)
+        elseif docType == "milLicense" or docType == "license_mil" or docType == "military_license" then
+            openMilLicenseUI(data, tpl, isShown, senderName)
         elseif docType == "medcard" then
             openMedCardUI(data, tpl, isShown, senderName)
         end
     end)
 
     -- ── Админ-меню настройки шаблонов документов ──────────────
-    local function openAdminConfigUI(tpl)
+    local function openAdminUI(tpl)
         tpl = tpl or {}
-        tpl.passport = tpl.passport or {}
-        tpl.military = tpl.military or {}
-        tpl.license  = tpl.license  or {}
-        tpl.factions = tpl.factions or {}
-        tpl.access   = tpl.access   or { passports = {}, badges = {}, military = {}, licenses = {}, coverDocs = {} }
+        tpl.passport        = tpl.passport        or {}
+        tpl.military        = tpl.military        or {}
+        tpl.license         = tpl.license         or {}
+        tpl.militaryLicense = tpl.militaryLicense or {}
+        tpl.factions        = tpl.factions        or {}
+        tpl.access          = tpl.access          or { passports = {}, badges = {}, military = {}, licenses = {}, milLicenses = {}, coverDocs = {} }
 
         local frame = vgui.Create("DFrame")
-        frame:SetSize(880, 650)
+        frame:SetSize(720, 600)
         frame:Center()
-        frame:SetTitle("GRM — Настройка шаблонов документов и прав доступа")
+        frame:SetTitle("GRM — Настройка шаблонов бланков документов и прав доступа")
         frame:MakePopup()
+        frame.Paint = function(_, w, h) draw.RoundedBox(8, 0, 0, w, h, Color(22, 26, 34)) end
 
         local tabs = vgui.Create("DPropertySheet", frame)
         tabs:Dock(FILL)
+        tabs:DockMargin(8, 8, 8, 8)
 
-        -- Вкладка 1: Паспорта
+        -- Вкладка 1: Паспорт
         local passPnl = vgui.Create("DPanel", tabs)
         passPnl:DockPadding(16, 16, 16, 16)
         passPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(30, 35, 45)) end
 
-        local lbl1 = vgui.Create("DLabel", passPnl)
-        lbl1:SetPos(16, 16) lbl1:SetText("Название государства:") lbl1:SetFont("GRMDoc_Bold") lbl1:SizeToContents()
+        local lblS1 = vgui.Create("DLabel", passPnl)
+        lblS1:SetPos(16, 16) lblS1:SetText("Название государства в паспорте:") lblS1:SetFont("GRMDoc_Bold") lblS1:SizeToContents()
         local entState = vgui.Create("DTextEntry", passPnl)
         entState:SetPos(16, 38) entState:SetSize(350, 28) entState:SetText(tpl.passport.stateTitle or "РЕСПУБЛИКА ГРАНД")
 
-        local lbl2 = vgui.Create("DLabel", passPnl)
-        lbl2:SetPos(16, 76) lbl2:SetText("Серия паспортов по умолчанию:") lbl2:SetFont("GRMDoc_Bold") lbl2:SizeToContents()
+        local lblS2 = vgui.Create("DLabel", passPnl)
+        lblS2:SetPos(16, 76) lblS2:SetText("Серия паспорта по умолчанию:") lblS2:SetFont("GRMDoc_Bold") lblS2:SizeToContents()
         local entSeries = vgui.Create("DTextEntry", passPnl)
         entSeries:SetPos(16, 98) entSeries:SetSize(150, 28) entSeries:SetText(tpl.passport.defaultSeries or "GRM")
 
-        tabs:AddSheet("Паспорт гражданина", passPnl, "icon16/vcard.png")
+        tabs:AddSheet("Паспорт", passPnl, "icon16/book.png")
 
         -- Вкладка 2: Военный билет
         local milPnl = vgui.Create("DPanel", tabs)
@@ -1868,7 +2304,7 @@ if CLIENT then
         milPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(30, 35, 45)) end
 
         local lblM1 = vgui.Create("DLabel", milPnl)
-        lblM1:SetPos(16, 16) lblM1:SetText("Заголовок на обложке военного билета:") lblM1:SetFont("GRMDoc_Bold") lblM1:SizeToContents()
+        lblM1:SetPos(16, 16) lblM1:SetText("Заголовок бланка военного билета:") lblM1:SetFont("GRMDoc_Bold") lblM1:SizeToContents()
         local entMilTitle = vgui.Create("DTextEntry", milPnl)
         entMilTitle:SetPos(16, 38) entMilTitle:SetSize(350, 28) entMilTitle:SetText(tpl.military.stateTitle or "ВООРУЖЁННЫЕ СИЛЫ")
 
@@ -1884,29 +2320,51 @@ if CLIENT then
 
         tabs:AddSheet("Военный билет", milPnl, "icon16/book_open.png")
 
-        -- Вкладка 3: Водительские права
+        -- Вкладка 3: Гражданские водительские права (ГАИ)
         local licPnl = vgui.Create("DPanel", tabs)
         licPnl:DockPadding(16, 16, 16, 16)
         licPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(30, 35, 45)) end
 
         local lblL1 = vgui.Create("DLabel", licPnl)
-        lblL1:SetPos(16, 16) lblL1:SetText("Заголовок бланка водительского удостоверения:") lblL1:SetFont("GRMDoc_Bold") lblL1:SizeToContents()
+        lblL1:SetPos(16, 16) lblL1:SetText("Заголовок бланка прав ГАИ:") lblL1:SetFont("GRMDoc_Bold") lblL1:SizeToContents()
         local entLicTitle = vgui.Create("DTextEntry", licPnl)
         entLicTitle:SetPos(16, 38) entLicTitle:SetSize(350, 28) entLicTitle:SetText(tpl.license.stateTitle or "ГОСАВТОИНСПЕКЦИЯ")
 
         local lblL2 = vgui.Create("DLabel", licPnl)
-        lblL2:SetPos(16, 76) lblL2:SetText("Префикс номера водительских прав:") lblL2:SetFont("GRMDoc_Bold") lblL2:SizeToContents()
+        lblL2:SetPos(16, 76) lblL2:SetText("Префикс номера гражданских прав:") lblL2:SetFont("GRMDoc_Bold") lblL2:SizeToContents()
         local entLicPfx = vgui.Create("DTextEntry", licPnl)
         entLicPfx:SetPos(16, 98) entLicPfx:SetSize(150, 28) entLicPfx:SetText(tpl.license.defaultPrefix or "ВУ-")
 
         local lblL3 = vgui.Create("DLabel", licPnl)
-        lblL3:SetPos(16, 136) lblL3:SetText("Орган выдачи прав по умолчанию:") lblL3:SetFont("GRMDoc_Bold") lblL3:SizeToContents()
+        lblL3:SetPos(16, 136) lblL3:SetText("Орган выдачи прав ГАИ по умолчанию:") lblL3:SetFont("GRMDoc_Bold") lblL3:SizeToContents()
         local entLicIssuer = vgui.Create("DTextEntry", licPnl)
         entLicIssuer:SetPos(16, 158) entLicIssuer:SetSize(350, 28) entLicIssuer:SetText(tpl.license.defaultIssuer or "Отдел дорожной полиции и экзаменации")
 
-        tabs:AddSheet("Водительские права", licPnl, "icon16/car.png")
+        tabs:AddSheet("Права (ГАИ)", licPnl, "icon16/car.png")
 
-        -- Вкладка 4: Удостоверения фракций
+        -- Вкладка 4: Военные водительские права (ВАИ)
+        local milLicPnl = vgui.Create("DPanel", tabs)
+        milLicPnl:DockPadding(16, 16, 16, 16)
+        milLicPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(30, 35, 45)) end
+
+        local lblML1 = vgui.Create("DLabel", milLicPnl)
+        lblML1:SetPos(16, 16) lblML1:SetText("Заголовок бланка прав ВАИ:") lblML1:SetFont("GRMDoc_Bold") lblML1:SizeToContents()
+        local entMilLicTitle = vgui.Create("DTextEntry", milLicPnl)
+        entMilLicTitle:SetPos(16, 38) entMilLicTitle:SetSize(350, 28) entMilLicTitle:SetText(tpl.militaryLicense.stateTitle or "ВОЕННАЯ АВТОМОБИЛЬНАЯ ИНСПЕКЦИЯ")
+
+        local lblML2 = vgui.Create("DLabel", milLicPnl)
+        lblML2:SetPos(16, 76) lblML2:SetText("Префикс номера прав ВАИ:") lblML2:SetFont("GRMDoc_Bold") lblML2:SizeToContents()
+        local entMilLicPfx = vgui.Create("DTextEntry", milLicPnl)
+        entMilLicPfx:SetPos(16, 98) entMilLicPfx:SetSize(150, 28) entMilLicPfx:SetText(tpl.militaryLicense.defaultPrefix or "ВАИ-")
+
+        local lblML3 = vgui.Create("DLabel", milLicPnl)
+        lblML3:SetPos(16, 136) lblML3:SetText("Орган выдачи прав ВАИ по умолчанию:") lblML3:SetFont("GRMDoc_Bold") lblML3:SizeToContents()
+        local entMilLicIssuer = vgui.Create("DTextEntry", milLicPnl)
+        entMilLicIssuer:SetPos(16, 158) entMilLicIssuer:SetSize(350, 28) entMilLicIssuer:SetText(tpl.militaryLicense.defaultIssuer or "101-я Военная автомобильная инспекция (ВАИ)")
+
+        tabs:AddSheet("Права (ВАИ)", milLicPnl, "icon16/car.png")
+
+        -- Вкладка 5: Удостоверения фракций
         local facPnl = vgui.Create("DPanel", tabs)
         facPnl:DockPadding(16, 16, 16, 16)
         facPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(30, 35, 45)) end
@@ -1971,7 +2429,7 @@ if CLIENT then
 
         tabs:AddSheet("Служебные удостоверения", facPnl, "icon16/shield.png")
 
-        -- Вкладка 5: Права доступа к Компьютеру
+        -- Вкладка 6: Права доступа к Компьютеру
         local accPnl = vgui.Create("DPanel", tabs)
         accPnl:DockPadding(10, 10, 10, 10)
         accPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(30, 35, 45)) end
@@ -2023,8 +2481,8 @@ if CLIENT then
             milBoxes[fname] = chk
         end
 
-        -- 4. Водительские права
-        mkSection("4. Фракции с правом выдачи водительских прав (Автошкола / ГАИ):", Color(80, 190, 240))
+        -- 4. Гражданские водительские права
+        mkSection("4. Фракции с правом выдачи гражданских прав (Автошкола / ГАИ):", Color(80, 190, 240))
         local licBoxes = {}
         for _, fname in ipairs(names) do
             local chk = vgui.Create("DCheckBoxLabel", accScroll)
@@ -2034,8 +2492,19 @@ if CLIENT then
             licBoxes[fname] = chk
         end
 
-        -- 5. Документы прикрытия
-        mkSection("5. Фракции с допуском к документам прикрытия (Спецслужбы / Контрразведка):", Color(240, 120, 50))
+        -- 5. Военные водительские права
+        mkSection("5. Фракции с правом выдачи военных прав (ВАИ / ВС / Комендатура):", Color(100, 210, 120))
+        local milLicBoxes = {}
+        for _, fname in ipairs(names) do
+            local chk = vgui.Create("DCheckBoxLabel", accScroll)
+            chk:Dock(TOP) chk:DockMargin(12, 2, 0, 2)
+            chk:SetText(fname)
+            chk:SetValue(tpl.access.milLicenses and tpl.access.milLicenses[fname] == true)
+            milLicBoxes[fname] = chk
+        end
+
+        -- 6. Документы прикрытия
+        mkSection("6. Фракции с допуском к документам прикрытия (Спецслужбы / Контрразведка):", Color(240, 120, 50))
         local coverBoxes = {}
         for _, fname in ipairs(names) do
             local chk = vgui.Create("DCheckBoxLabel", accScroll)
@@ -2070,6 +2539,10 @@ if CLIENT then
             tpl.license.defaultPrefix = entLicPfx:GetText()
             tpl.license.defaultIssuer = entLicIssuer:GetText()
 
+            tpl.militaryLicense.stateTitle = entMilLicTitle:GetText()
+            tpl.militaryLicense.defaultPrefix = entMilLicPfx:GetText()
+            tpl.militaryLicense.defaultIssuer = entMilLicIssuer:GetText()
+
             local curFac = comboFac:GetValue()
             if curFac and curFac ~= "" then
                 tpl.factions = tpl.factions or {}
@@ -2103,6 +2576,9 @@ if CLIENT then
             tpl.access.licenses = {}
             for fn, cb in pairs(licBoxes) do if cb:GetChecked() then tpl.access.licenses[fn] = true end end
 
+            tpl.access.milLicenses = {}
+            for fn, cb in pairs(milLicBoxes) do if cb:GetChecked() then tpl.access.milLicenses[fn] = true end end
+
             tpl.access.coverDocs = {}
             for fn, cb in pairs(coverBoxes) do if cb:GetChecked() then tpl.access.coverDocs[fn] = true end end
 
@@ -2114,20 +2590,17 @@ if CLIENT then
     end
 
     net.Receive(NET_ADMIN_GET, function()
-        local tpl = net.ReadTable() or {}
-        openAdminConfigUI(tpl)
+        local tpl = net.ReadTable()
+        openAdminUI(tpl)
     end)
 
-    -- ============================================================
-    -- КЛИЕНТСКИЕ КОМАНДЫ ЧАТА (полные и сокращённые)
-    -- ============================================================
-    hook.Add("PlayerSayTransform", "GRM_Docs_ClientCommands", function(ply, datapack, is_team, is_local)
-        if ply ~= LocalPlayer() then return end
-        local msg = datapack[1]
-        if not isstring(msg) then return end
-        local low = msg:lower():Trim()
+    -- Быстрый вызов через клиентские хуки чата
+    hook.Add("PlayerSayTransform", "GRM_Doc_ClientTransform", function(ply, datapack)
+        if not istable(datapack) then return end
+        local txt = datapack[1] or ""
+        local low = string.lower(string.Trim(txt))
 
-        -- Паспорт гражданина
+        -- Паспорт
         if low == "/passport" or low == "/pass" or low == "/myid" or low == "/id" or low == "/mypasport" or low == "/паспорт" or low == "/пас" then
             net.Start(NET_OPEN_DOC)
             net.WriteString("passport")
@@ -2148,7 +2621,7 @@ if CLIENT then
             return
         end
 
-        -- Служебное удостоверение
+        -- Удостоверение
         if low == "/badge" or low == "/mybadge" or low == "/udost" or low == "/myudost" or low == "/ксива" or low == "/удостоверение" or low == "/удост" then
             net.Start(NET_OPEN_DOC)
             net.WriteString("badge")
@@ -2190,7 +2663,53 @@ if CLIENT then
             return
         end
 
-        -- Водительские права
+        -- Гражданские права (ГАИ)
+        if low == "/civlicense" or low == "/civprava" or low == "/гражданскиеправа" or low == "/граждправа" then
+            net.Start(NET_OPEN_DOC)
+                net.WriteString("license")
+                net.WriteString("civilian")
+            net.SendToServer()
+            datapack[1] = ""
+            datapack.SkipPlayerSay = true
+            return
+        end
+
+        if low == "/showcivlicense" or low == "/showcivprava" or low == "/показатьгражданскиеправа" or low == "/покграждправа" then
+            local tr = LocalPlayer():GetEyeTrace()
+            net.Start(NET_SHOW_DOC)
+                net.WriteString("license")
+                net.WriteEntity(tr.Entity)
+                net.WriteString("civilian")
+            net.SendToServer()
+            datapack[1] = ""
+            datapack.SkipPlayerSay = true
+            return
+        end
+
+        -- Военные права (ВАИ)
+        if low == "/millicense" or low == "/milprava" or low == "/mallicense" or low == "/военныеправа" or low == "/ваиправа" or low == "/вуваи" or low == "/увв" or low == "/военноеву" or low == "/прававаи" or low == "/военныеводправа" then
+            net.Start(NET_OPEN_DOC)
+                net.WriteString("milLicense")
+                net.WriteString("military")
+            net.SendToServer()
+            datapack[1] = ""
+            datapack.SkipPlayerSay = true
+            return
+        end
+
+        if low == "/showmillicense" or low == "/showmilprava" or low == "/показатьваи" or low == "/показатьвоенныеправа" or low == "/покваи" or low == "/покувв" or low == "/показатьувв" or low == "/поквоенправа" then
+            local tr = LocalPlayer():GetEyeTrace()
+            net.Start(NET_SHOW_DOC)
+                net.WriteString("milLicense")
+                net.WriteEntity(tr.Entity)
+                net.WriteString("military")
+            net.SendToServer()
+            datapack[1] = ""
+            datapack.SkipPlayerSay = true
+            return
+        end
+
+        -- Общие права
         if low == "/license" or low == "/prava" or low == "/mylicense" or low == "/driverlicense" or low == "/права" or low == "/водправа" or low == "/водительское" or low == "/ву" then
             net.Start(NET_OPEN_DOC)
             net.WriteString("license")
@@ -2249,6 +2768,7 @@ if CLIENT then
     concommand.Add("badge", function() net.Start(NET_OPEN_DOC) net.WriteString("badge") net.SendToServer() end)
     concommand.Add("military", function() net.Start(NET_OPEN_DOC) net.WriteString("military") net.SendToServer() end)
     concommand.Add("license", function() net.Start(NET_OPEN_DOC) net.WriteString("license") net.SendToServer() end)
+    concommand.Add("millicense", function() net.Start(NET_OPEN_DOC) net.WriteString("milLicense") net.WriteString("military") net.SendToServer() end)
     concommand.Add("medcard", function() net.Start(NET_OPEN_DOC) net.WriteString("medcard") net.SendToServer() end)
     concommand.Add("showpassport", function()
         local tr = LocalPlayer():GetEyeTrace()
@@ -2265,6 +2785,10 @@ if CLIENT then
     concommand.Add("showlicense", function()
         local tr = LocalPlayer():GetEyeTrace()
         net.Start(NET_SHOW_DOC) net.WriteString("license") net.WriteEntity(tr.Entity) net.SendToServer()
+    end)
+    concommand.Add("showmillicense", function()
+        local tr = LocalPlayer():GetEyeTrace()
+        net.Start(NET_SHOW_DOC) net.WriteString("milLicense") net.WriteEntity(tr.Entity) net.WriteString("military") net.SendToServer()
     end)
     concommand.Add("showmedcard", function()
         local tr = LocalPlayer():GetEyeTrace()

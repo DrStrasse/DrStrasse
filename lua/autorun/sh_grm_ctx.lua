@@ -143,6 +143,12 @@ if SERVER then
         local mil = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.military and GRM.Documents.Registry.military[key]
         result.hasMilitary = (mil ~= nil and mil.status ~= "Аннулирован")
 
+        local lic = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.licenses and GRM.Documents.Registry.licenses[key]
+        result.hasLicense = (lic ~= nil and lic.status ~= "Аннулировано" and lic.status ~= "Лишён права управления")
+
+        local milLic = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.milLicenses and GRM.Documents.Registry.milLicenses[key]
+        result.hasMilLicense = (milLic ~= nil and milLic.status ~= "Аннулировано" and milLic.status ~= "Лишён ВАИ")
+
         if factionName and FactionsExt and FactionsExt[factionName] then
             local cfg = FactionsExt[factionName]
             local member = faction and GRM.Identity.FactionMember(faction, ply)
@@ -392,6 +398,24 @@ local function actShowMilitary()
     net.SendToServer()
 end
 
+local function actShowLicense()
+    local ap = istable(data.aimPly) and data.aimPly or nil
+    net.Start("GRM_Doc_ShowDoc")
+        net.WriteString("license")
+        net.WriteEntity(Entity(ap and ap.idx or 0))
+        net.WriteString("civilian")
+    net.SendToServer()
+end
+
+local function actShowMilLicense()
+    local ap = istable(data.aimPly) and data.aimPly or nil
+    net.Start("GRM_Doc_ShowDoc")
+        net.WriteString("milLicense")
+        net.WriteEntity(Entity(ap and ap.idx or 0))
+        net.WriteString("military")
+    net.SendToServer()
+end
+
 local function actOwnPassport()
     net.Start("GRM_Doc_OpenDoc")
         net.WriteString("passport")
@@ -427,6 +451,20 @@ end
 
 local function actOwnMilitary()
     net.Start("GRM_Doc_OpenDoc")
+        net.WriteString("military")
+    net.SendToServer()
+end
+
+local function actOwnLicense()
+    net.Start("GRM_Doc_OpenDoc")
+        net.WriteString("license")
+        net.WriteString("civilian")
+    net.SendToServer()
+end
+
+local function actOwnMilLicense()
+    net.Start("GRM_Doc_OpenDoc")
+        net.WriteString("milLicense")
         net.WriteString("military")
     net.SendToServer()
 end
@@ -517,6 +555,22 @@ local BTNS = {
       fn = actShowMilitary,
       c = Color(38, 90, 45), ch = Color(55, 120, 60),
       ok = function() return istable(data.aimPly) and data.hasMilitary == true end },
+    { id = "doc_lic", l = function()
+          local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
+          if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
+          return "🚗 Показать права (ГАИ): " .. n
+      end,
+      fn = actShowLicense,
+      c = Color(35, 95, 165), ch = Color(50, 120, 195),
+      ok = function() return istable(data.aimPly) and data.hasLicense == true end },
+    { id = "doc_mil_lic", l = function()
+          local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
+          if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
+          return "🪖 Показать права (ВАИ): " .. n
+      end,
+      fn = actShowMilLicense,
+      c = Color(42, 105, 52), ch = Color(60, 135, 70),
+      ok = function() return istable(data.aimPly) and data.hasMilLicense == true end },
     { id = "doc_med", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
           if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
@@ -538,6 +592,14 @@ local BTNS = {
       fn = actOwnMilitary,
       c = Color(38, 90, 45), ch = Color(55, 120, 60),
       ok = function() return not istable(data.aimPly) and data.hasMilitary == true end },
+    { id = "doc_self_lic", l = "🚗 Мои права (ГАИ)",
+      fn = actOwnLicense,
+      c = Color(35, 95, 165), ch = Color(50, 120, 195),
+      ok = function() return not istable(data.aimPly) and data.hasLicense == true end },
+    { id = "doc_self_mil_lic", l = "🪖 Мои права (ВАИ)",
+      fn = actOwnMilLicense,
+      c = Color(42, 105, 52), ch = Color(60, 135, 70),
+      ok = function() return not istable(data.aimPly) and data.hasMilLicense == true end },
     { id = "doc_self_med", l = "🩺 Моя медкарта",
       fn = actOwnMedCard,
       c = Color(35, 120, 95), ch = Color(45, 150, 120),

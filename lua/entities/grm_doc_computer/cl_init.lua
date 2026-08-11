@@ -35,7 +35,7 @@ net.Receive("GRM_DocComp_Open", function()
     local ent          = net.ReadEntity()
     local onlineList   = net.ReadTable() or {}
     local tpls         = net.ReadTable() or {}
-    local registry     = net.ReadTable() or { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {} }
+    local registry     = net.ReadTable() or { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {}, milLicenses = {} }
     local myFaction    = net.ReadString()
     local isSuperAdmin = net.ReadBool()
     local isLeader     = net.ReadBool()
@@ -43,6 +43,7 @@ net.Receive("GRM_DocComp_Open", function()
     local hasPassport  = net.ReadBool()
     local hasMilitary  = net.ReadBool()
     local hasLicense   = net.ReadBool()
+    local hasMilLicense= net.ReadBool()
 
     local frame = vgui.Create("DFrame")
     frame:SetSize(960, 700)
@@ -98,66 +99,65 @@ net.Receive("GRM_DocComp_Open", function()
         comboPassTarget:AddChoice(label, pData)
     end
 
-    local lblP2 = vgui.Create("DLabel", passPnl)
-    lblP2:SetPos(16, 124) lblP2:SetText("ФИО гражданина (ручное редактирование):") lblP2:SetTextColor(CC.text) lblP2:SizeToContents()
+    local lblPName = vgui.Create("DLabel", passPnl)
+    lblPName:SetPos(16, 125) lblPName:SetText("ФИО (ручной ввод):") lblPName:SetTextColor(CC.text) lblPName:SizeToContents()
     local entPassName = vgui.Create("DTextEntry", passPnl)
-    entPassName:SetPos(16, 144) entPassName:SetSize(350, 26)
+    entPassName:SetPos(16, 145) entPassName:SetSize(320, 26)
 
-    local lblP3 = vgui.Create("DLabel", passPnl)
-    lblP3:SetPos(380, 124) lblP3:SetText("Пол:") lblP3:SetTextColor(CC.text) lblP3:SizeToContents()
-    local comboGender = vgui.Create("DComboBox", passPnl)
-    comboGender:SetPos(380, 144) comboGender:SetSize(150, 26)
-    comboGender:AddChoice("Мужской") comboGender:AddChoice("Женский")
-    comboGender:SetValue("Мужской")
+    local lblPGender = vgui.Create("DLabel", passPnl)
+    lblPGender:SetPos(350, 125) lblPGender:SetText("Пол:") lblPGender:SetTextColor(CC.text) lblPGender:SizeToContents()
+    local comboPassGender = vgui.Create("DComboBox", passPnl)
+    comboPassGender:SetPos(350, 145) comboPassGender:SetSize(120, 26)
+    comboPassGender:AddChoice("Мужской")
+    comboPassGender:AddChoice("Женский")
+    comboPassGender:SetValue("Мужской")
 
-    local lblP4 = vgui.Create("DLabel", passPnl)
-    lblP4:SetPos(16, 178) lblP4:SetText("Дата рождения / Возраст:") lblP4:SetTextColor(CC.text) lblP4:SizeToContents()
+    local lblPBirth = vgui.Create("DLabel", passPnl)
+    lblPBirth:SetPos(485, 125) lblPBirth:SetText("Дата рождения:") lblPBirth:SetTextColor(CC.text) lblPBirth:SizeToContents()
     local entPassBirth = vgui.Create("DTextEntry", passPnl)
-    entPassBirth:SetPos(16, 198) entPassBirth:SetSize(180, 26) entPassBirth:SetText("12.04.1988")
+    entPassBirth:SetPos(485, 145) entPassBirth:SetSize(140, 26) entPassBirth:SetText("12.04.1988")
 
-    local lblP5 = vgui.Create("DLabel", passPnl)
-    lblP5:SetPos(220, 178) lblP5:SetText("Серия паспорта:") lblP5:SetTextColor(CC.text) lblP5:SizeToContents()
+    local lblPSeries = vgui.Create("DLabel", passPnl)
+    lblPSeries:SetPos(16, 185) lblPSeries:SetText("Серия паспорта:") lblPSeries:SetTextColor(CC.text) lblPSeries:SizeToContents()
     local entPassSeries = vgui.Create("DTextEntry", passPnl)
-    entPassSeries:SetPos(220, 198) entPassSeries:SetSize(140, 26) entPassSeries:SetText(tpls.passport and tpls.passport.defaultSeries or "GRM")
+    entPassSeries:SetPos(16, 205) entPassSeries:SetSize(120, 26) entPassSeries:SetText(tpls.passport and tpls.passport.defaultSeries or "GRM")
 
-    local lblP6 = vgui.Create("DLabel", passPnl)
-    lblP6:SetPos(380, 178) lblP6:SetText("Номер паспорта:") lblP6:SetTextColor(CC.text) lblP6:SizeToContents()
-    local entPassNumber = vgui.Create("DTextEntry", passPnl)
-    entPassNumber:SetPos(380, 198) entPassNumber:SetSize(180, 26) entPassNumber:SetText("428901")
+    local lblPNum = vgui.Create("DLabel", passPnl)
+    lblPNum:SetPos(150, 185) lblPNum:SetText("Номер паспорта:") lblPNum:SetTextColor(CC.text) lblPNum:SizeToContents()
+    local entPassNum = vgui.Create("DTextEntry", passPnl)
+    entPassNum:SetPos(150, 205) entPassNum:SetSize(180, 26) entPassNum:SetText("01428901")
 
-    local lblP7 = vgui.Create("DLabel", passPnl)
-    lblP7:SetPos(16, 232) lblP7:SetText("Кем выдан (орган выдачи):") lblP7:SetTextColor(CC.text) lblP7:SizeToContents()
+    local lblPIssuer = vgui.Create("DLabel", passPnl)
+    lblPIssuer:SetPos(350, 185) lblPIssuer:SetText("Орган выдачи:") lblPIssuer:SetTextColor(CC.text) lblPIssuer:SizeToContents()
     local entPassIssuer = vgui.Create("DTextEntry", passPnl)
-    entPassIssuer:SetPos(16, 252) entPassIssuer:SetSize(400, 26) entPassIssuer:SetText("Паспортный стол Центрального района")
+    entPassIssuer:SetPos(350, 205) entPassIssuer:SetSize(360, 26) entPassIssuer:SetText("Паспортный стол Центрального округа")
 
-    local selectedCharKey = ""
-    local selectedSid64 = "0"
-
+    local selectedPassKey = ""
+    local selectedPassSid64 = "0"
     comboPassTarget.OnSelect = function(_, _, _, pData)
         if istable(pData) then
-            selectedCharKey = pData.key or ""
-            selectedSid64 = pData.steamID64 or "0"
+            selectedPassKey = pData.key or ""
+            selectedPassSid64 = pData.steamID64 or "0"
             entPassName:SetText(pData.rpName or "")
 
-            local short = selectedSid64:sub(-5)
-            local slotNum = (selectedCharKey:match(":char([1-3])$") or "1")
-            entPassNumber:SetText(short .. "-" .. slotNum)
+            local shortSid = selectedPassSid64:sub(-6)
+            entPassNum:SetText("01" .. shortSid)
 
-            if registry.passports and registry.passports[selectedCharKey] then
-                local ex = registry.passports[selectedCharKey]
+            if registry.passports and registry.passports[selectedPassKey] then
+                local ex = registry.passports[selectedPassKey]
                 entPassName:SetText(ex.fullName or pData.rpName or "")
                 entPassBirth:SetText(ex.birthDate or "12.04.1988")
-                entPassSeries:SetText(ex.series or "GRM")
-                entPassNumber:SetText(ex.number or short)
-                entPassIssuer:SetText(ex.issuedBy or "Паспортный стол")
-                comboGender:SetValue(ex.gender or "Мужской")
+                comboPassGender:SetValue(ex.gender or "Мужской")
+                entPassSeries:SetText(ex.series or (tpls.passport and tpls.passport.defaultSeries) or "GRM")
+                entPassNum:SetText(ex.number or ("01" .. shortSid))
+                entPassIssuer:SetText(ex.issuedBy or "Паспортный стол Центрального округа")
             end
         end
     end
 
     local btnIssuePass = vgui.Create("DButton", passPnl)
-    btnIssuePass:SetPos(16, 300)
-    btnIssuePass:SetSize(300, 36)
+    btnIssuePass:SetPos(16, 255)
+    btnIssuePass:SetSize(320, 36)
     btnIssuePass:SetText("✔ Оформить и выдать паспорт")
     btnIssuePass:SetFont("DermaDefaultBold")
     btnIssuePass:SetTextColor(color_white)
@@ -166,217 +166,154 @@ net.Receive("GRM_DocComp_Open", function()
     end
     btnIssuePass.DoClick = function()
         if not hasPassport then
-            notification.AddLegacy("У вашей фракции нет допуска к оформлению паспортов!", NOTIFY_ERROR, 3)
+            notification.AddLegacy("У вашей фракции нет допуска к выдаче паспортов!", NOTIFY_ERROR, 3)
             return
         end
-        if selectedCharKey == "" then
+        if selectedPassKey == "" then
             notification.AddLegacy("Выберите гражданина из списка!", NOTIFY_ERROR, 3)
             return
         end
 
-        if isSuperAdmin and entStateTitle:GetText() ~= "" then
-            tpls.passport = tpls.passport or {}
-            tpls.passport.stateTitle = entStateTitle:GetText()
-            net.Start("GRM_Doc_AdminSave")
-                net.WriteTable(tpls)
-            net.SendToServer()
-        end
-
         local pack = {
             fullName    = entPassName:GetText(),
-            gender      = comboGender:GetValue(),
+            gender      = comboPassGender:GetValue(),
             birthDate   = entPassBirth:GetText(),
+            nationality = "Гражданин Республики",
             series      = entPassSeries:GetText(),
-            number      = entPassNumber:GetText(),
+            number      = entPassNum:GetText(),
             issuedBy    = entPassIssuer:GetText(),
             issueDate   = os.date("%d.%m.%Y"),
+            validUntil  = "Бессрочно",
             status      = "Действителен",
-            steamID64   = selectedSid64,
+            steamID64   = selectedPassSid64,
         }
+
         net.Start("GRM_Doc_ComputerIssue")
             net.WriteString("passport")
-            net.WriteString(selectedCharKey)
+            net.WriteString(selectedPassKey)
             net.WriteTable(pack)
         net.SendToServer()
         frame:Close()
     end
 
-    tabs:AddSheet("Паспортный стол", passPnl, "icon16/vcard.png")
+    tabs:AddSheet("Паспортный стол", passPnl, "icon16/book.png")
 
     -- ══════════════════════════════════════════════════════════════
-    -- ВКЛАДКА 2: СЛУЖЕБНЫЕ УДОСТОВЕРЕНИЯ (с встроенной настройкой дизайна)
+    -- ВКЛАДКА 2: ОТДЕЛ КАДРОВ / СЛУЖЕБНЫЕ УДОСТОВЕРЕНИЯ
     -- ══════════════════════════════════════════════════════════════
     local badgePnl = vgui.Create("DPanel", tabs)
     badgePnl:DockPadding(16, 16, 16, 16)
     badgePnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
 
-    local lblB1 = vgui.Create("DLabel", badgePnl)
-    lblB1:SetPos(16, 12) lblB1:SetText("Выберите сотрудника ведомства:") lblB1:SetFont("DermaDefaultBold") lblB1:SetTextColor(CC.accent) lblB1:SizeToContents()
+    local lblBTarget = vgui.Create("DLabel", badgePnl)
+    lblBTarget:SetPos(16, 16) lblBTarget:SetText("Выберите сотрудника для оформления удостоверения:") lblBTarget:SetFont("DermaDefaultBold") lblBTarget:SetTextColor(CC.accent) lblBTarget:SizeToContents()
 
     local comboBadgeTarget = vgui.Create("DComboBox", badgePnl)
-    comboBadgeTarget:SetPos(16, 32) comboBadgeTarget:SetSize(420, 28)
-    comboBadgeTarget:AddChoice("— Выберите сотрудника —", "")
+    comboBadgeTarget:SetPos(16, 36) comboBadgeTarget:SetSize(420, 28)
+    comboBadgeTarget:AddChoice("— Выберите сотрудника онлайн —", "")
 
     for _, pData in ipairs(onlineList) do
-        if pData.faction and pData.faction ~= "" and (isSuperAdmin or pData.faction == myFaction) then
-            local label = string.format("%s  [%s]  •  %s  (%s)", pData.rpName or "?", pData.role or "?", pData.faction, pData.key or "")
-            comboBadgeTarget:AddChoice(label, pData)
+        local label = string.format("%s  [%s]  (%s)  — %s", pData.rpName or "?", pData.nick or "?", pData.key or "", pData.faction or "Без фракции")
+        comboBadgeTarget:AddChoice(label, pData)
+    end
+
+    local lblBName = vgui.Create("DLabel", badgePnl)
+    lblBName:SetPos(16, 75) lblBName:SetText("ФИО сотрудника (ручное):") lblBName:SetTextColor(CC.text) lblBName:SizeToContents()
+    local entBadgeName = vgui.Create("DTextEntry", badgePnl)
+    entBadgeName:SetPos(16, 95) entBadgeName:SetSize(280, 26)
+
+    local lblBFac = vgui.Create("DLabel", badgePnl)
+    lblBFac:SetPos(310, 75) lblBFac:SetText("Организация / Ведомство:") lblBFac:SetTextColor(CC.text) lblBFac:SizeToContents()
+    local entBadgeFac = vgui.Create("DTextEntry", badgePnl)
+    entBadgeFac:SetPos(310, 95) entBadgeFac:SetSize(200, 26) entBadgeFac:SetText(myFaction)
+    entBadgeFac:SetEnabled(isSuperAdmin)
+
+    local lblBRole = vgui.Create("DLabel", badgePnl)
+    lblBRole:SetPos(525, 75) lblBRole:SetText("Служебное звание / Должность:") lblBRole:SetTextColor(CC.text) lblBRole:SizeToContents()
+    local entBadgeRole = vgui.Create("DTextEntry", badgePnl)
+    entBadgeRole:SetPos(525, 95) entBadgeRole:SetSize(180, 26)
+
+    local lblBDept = vgui.Create("DLabel", badgePnl)
+    lblBDept:SetPos(16, 135) lblBDept:SetText("Подразделение / Отдел (выбор / ручной ввод):") lblBDept:SetTextColor(CC.text) lblBDept:SizeToContents()
+
+    local comboBadgeDept = vgui.Create("DComboBox", badgePnl)
+    comboBadgeDept:SetPos(16, 155) comboBadgeDept:SetSize(240, 26)
+
+    local entBadgeDept = vgui.Create("DTextEntry", badgePnl)
+    entBadgeDept:SetPos(265, 155) entBadgeDept:SetSize(245, 26)
+    entBadgeDept:SetText("Главное Управление")
+
+    comboBadgeDept.OnSelect = function(_, _, val)
+        if val and val ~= "" and val ~= "— Другой отдел (ручной ввод) —" then
+            entBadgeDept:SetText(val)
         end
     end
 
-    local lblB2 = vgui.Create("DLabel", badgePnl)
-    lblB2:SetPos(16, 68) lblB2:SetText("ФИО сотрудника (ручное редактирование):") lblB2:SetTextColor(CC.text) lblB2:SizeToContents()
-    local entBadgeName = vgui.Create("DTextEntry", badgePnl)
-    entBadgeName:SetPos(16, 88) entBadgeName:SetSize(300, 26)
-
-    local lblB3 = vgui.Create("DLabel", badgePnl)
-    lblB3:SetPos(330, 68) lblB3:SetText("Организация / Ведомство:") lblB3:SetTextColor(CC.text) lblB3:SizeToContents()
-    local entBadgeFac = vgui.Create("DTextEntry", badgePnl)
-    entBadgeFac:SetPos(330, 88) entBadgeFac:SetSize(300, 26)
-
-    local lblB4 = vgui.Create("DLabel", badgePnl)
-    lblB4:SetPos(16, 120) lblB4:SetText("Должность / Звание (ручное):") lblB4:SetTextColor(CC.text) lblB4:SizeToContents()
-    local entBadgeRole = vgui.Create("DTextEntry", badgePnl)
-    entBadgeRole:SetPos(16, 140) entBadgeRole:SetSize(250, 26)
-
-    local lblB5 = vgui.Create("DLabel", badgePnl)
-    lblB5:SetPos(280, 120) lblB5:SetText("Подразделение / Отдел (ручное):") lblB5:SetTextColor(CC.text) lblB5:SizeToContents()
-    local entBadgeDept = vgui.Create("DTextEntry", badgePnl)
-    entBadgeDept:SetPos(280, 140) entBadgeDept:SetSize(250, 26)
-
-    local lblB6 = vgui.Create("DLabel", badgePnl)
-    lblB6:SetPos(545, 120) lblB6:SetText("Номер жетона (с префиксом):") lblB6:SetTextColor(CC.text) lblB6:SizeToContents()
+    local lblBNum = vgui.Create("DLabel", badgePnl)
+    lblBNum:SetPos(525, 135) lblBNum:SetText("Номер удостоверения / жетона:") lblBNum:SetTextColor(CC.text) lblBNum:SizeToContents()
     local entBadgeNum = vgui.Create("DTextEntry", badgePnl)
-    entBadgeNum:SetPos(545, 140) entBadgeNum:SetSize(160, 26)
+    entBadgeNum:SetPos(525, 155) entBadgeNum:SetSize(180, 26) entBadgeNum:SetText("POL-0001")
 
-    local lblPerms = vgui.Create("DLabel", badgePnl)
-    lblPerms:SetPos(16, 175) lblPerms:SetText("Специальные служебные допуски:") lblPerms:SetFont("DermaDefaultBold") lblPerms:SetTextColor(CC.gold) lblPerms:SizeToContents()
+    local lblBPerms = vgui.Create("DLabel", badgePnl)
+    lblBPerms:SetPos(16, 195) lblBPerms:SetText("Служебные допуски и права (чекбоксы):") lblBPerms:SetFont("DermaDefaultBold") lblBPerms:SetTextColor(CC.gold) lblBPerms:SizeToContents()
 
     local chkBoxes = {}
-    local yPos = 198
+    local yPos = 218
     local xPos = 16
-
     for i, pDef in ipairs(GRM.Documents.PermissionsList or {}) do
         local chk = vgui.Create("DCheckBoxLabel", badgePnl)
         chk:SetPos(xPos, yPos)
-        chk:SetText(pDef.title)
+        chk:SetText(pDef.title .. " (" .. pDef.desc .. ")")
         chk:SetTextColor(CC.text)
         chk:SetValue(true)
         chk:SizeToContents()
         chkBoxes[pDef.id] = chk
 
         if i % 2 == 1 then
-            xPos = 380
+            xPos = 420
         else
             xPos = 16
-            yPos = yPos + 22
+            yPos = yPos + 24
         end
-    end
-
-    -- ── Встроенный блок оформления и дизайна корочки (Лидер / Админ) ──
-    local designBox = vgui.Create("DPanel", badgePnl)
-    designBox:SetPos(16, yPos + 26)
-    designBox:SetSize(720, 140)
-    designBox.Paint = function(_, w, h)
-        draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 230))
-        surface.SetDrawColor(45, 55, 75)
-        surface.DrawOutlinedRect(0, 0, w, h)
-        draw.SimpleText("⚙ НАСТРОЙКА ДИЗАЙНА КОРОЧКИ И СЛУЖЕБНОГО ПРЕФИКСА ВЕДОМСТВА", "DermaDefaultBold", 12, 8, CC.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-    end
-
-    local entCoverTitle = vgui.Create("DTextEntry", designBox)
-    entCoverTitle:SetPos(12, 48) entCoverTitle:SetSize(250, 26)
-    local lblDC1 = vgui.Create("DLabel", designBox)
-    lblDC1:SetPos(12, 30) lblDC1:SetText("Надпись на обложке:") lblDC1:SetTextColor(CC.dim) lblDC1:SizeToContents()
-
-    local entPfxCustom = vgui.Create("DTextEntry", designBox)
-    entPfxCustom:SetPos(275, 48) entPfxCustom:SetSize(130, 26)
-    local lblDC2 = vgui.Create("DLabel", designBox)
-    lblDC2:SetPos(275, 30) lblDC2:SetText("Префикс номера:") lblDC2:SetTextColor(CC.dim) lblDC2:SizeToContents()
-
-    local comboCoverCol = vgui.Create("DComboBox", designBox)
-    comboCoverCol:SetPos(420, 48) comboCoverCol:SetSize(180, 26)
-    for _, cDef in ipairs(GRM.Documents.CoverColors or {}) do comboCoverCol:AddChoice(cDef.name, cDef) end
-    local lblDC3 = vgui.Create("DLabel", designBox)
-    lblDC3:SetPos(420, 30) lblDC3:SetText("Цвет кожи:") lblDC3:SetTextColor(CC.dim) lblDC3:SizeToContents()
-
-    local comboFoilStyle = vgui.Create("DComboBox", designBox)
-    comboFoilStyle:SetPos(12, 98) comboFoilStyle:SetSize(200, 26)
-    for fId, fDef in pairs(GRM.Documents.FoilStyles or {}) do comboFoilStyle:AddChoice(fDef.name, fId) end
-    local lblDC4 = vgui.Create("DLabel", designBox)
-    lblDC4:SetPos(12, 80) lblDC4:SetText("Стиль тиснения:") lblDC4:SetTextColor(CC.dim) lblDC4:SizeToContents()
-
-    local comboBadgeIcon = vgui.Create("DComboBox", designBox)
-    comboBadgeIcon:SetPos(225, 98) comboBadgeIcon:SetSize(220, 26)
-    for icId, icName in pairs(GRM.Documents.BadgeIcons or {}) do comboBadgeIcon:AddChoice(icName, icId) end
-    local lblDC5 = vgui.Create("DLabel", designBox)
-    lblDC5:SetPos(225, 80) lblDC5:SetText("Значок жетона:") lblDC5:SetTextColor(CC.dim) lblDC5:SizeToContents()
-
-    local targetFac = myFaction ~= "" and myFaction or "OrdnungPolizei"
-    local curCfg = (tpls.factions and tpls.factions[targetFac]) or {}
-    entCoverTitle:SetText(curCfg.coverTitle or targetFac)
-    entPfxCustom:SetText(curCfg.prefix or (targetFac:sub(1, 3):upper() .. "-"))
-    comboCoverCol:SetValue("Выбрать цвет")
-    comboFoilStyle:SetValue(GRM.Documents.FoilStyles[curCfg.foilStyle or "gold"] and GRM.Documents.FoilStyles[curCfg.foilStyle or "gold"].name or "Золотое тиснение")
-    comboBadgeIcon:SetValue(GRM.Documents.BadgeIcons[curCfg.badgeIcon or "star"] or "★ Звезда")
-
-    local btnSaveDesign = vgui.Create("DButton", designBox)
-    btnSaveDesign:SetPos(460, 96)
-    btnSaveDesign:SetSize(245, 28)
-    btnSaveDesign:SetText("✔ Применить дизайн корочки")
-    btnSaveDesign:SetFont("DermaDefaultBold")
-    btnSaveDesign:SetTextColor(color_white)
-    btnSaveDesign.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and CC.accent or Color(35, 90, 160)) end
-    btnSaveDesign.DoClick = function()
-        local saveFac = entBadgeFac:GetText() ~= "" and entBadgeFac:GetText() or targetFac
-        tpls.factions = tpls.factions or {}
-        local fCfg = tpls.factions[saveFac] or {}
-        fCfg.coverTitle = entCoverTitle:GetText()
-        fCfg.prefix = entPfxCustom:GetText()
-
-        local _, colData = comboCoverCol:GetSelected()
-        if istable(colData) and colData.col then fCfg.coverColor = { r = colData.col.r, g = colData.col.g, b = colData.col.b } end
-
-        local _, foilId = comboFoilStyle:GetSelected()
-        if isstring(foilId) then fCfg.foilStyle = foilId end
-
-        local _, iconId = comboBadgeIcon:GetSelected()
-        if isstring(iconId) then fCfg.badgeIcon = iconId end
-
-        tpls.factions[saveFac] = fCfg
-        net.Start("GRM_Doc_AdminSave")
-            net.WriteTable(tpls)
-        net.SendToServer()
-        notification.AddLegacy("Дизайн удостоверения ведомства сохранён!", NOTIFY_GENERIC, 3)
     end
 
     local selectedBadgeKey = ""
     local selectedBadgeSid64 = "0"
-
     comboBadgeTarget.OnSelect = function(_, _, _, pData)
         if istable(pData) then
             selectedBadgeKey = pData.key or ""
             selectedBadgeSid64 = pData.steamID64 or "0"
             entBadgeName:SetText(pData.rpName or "")
-            entBadgeFac:SetText(pData.faction or myFaction or "")
-            entBadgeRole:SetText(pData.role or "Сотрудник")
+            entBadgeFac:SetText(pData.faction or myFaction)
+            entBadgeRole:SetText(pData.role or "Служащий")
 
-            local facTpl = (tpls.factions and tpls.factions[pData.faction]) or {}
-            local pfx = facTpl.prefix or (pData.faction and (pData.faction:sub(1, 3):upper() .. "-") or "ОРД-")
-            entBadgeNum:SetText(pfx .. selectedBadgeSid64:sub(-4))
+            comboBadgeDept:Clear()
+            comboBadgeDept:AddChoice("Главное Управление")
+            comboBadgeDept:AddChoice("Штаб и Командование")
+            comboBadgeDept:AddChoice("Патрульно-постовая служба")
+            comboBadgeDept:AddChoice("Следственный отдел")
+            comboBadgeDept:AddChoice("Отдел специального назначения")
+            comboBadgeDept:AddChoice("Служба безопасности и надзора")
+            comboBadgeDept:AddChoice("— Другой отдел (ручной ввод) —")
 
-            local currentDept = pData.department
-            if currentDept == "Основной" or currentDept == "—" or not currentDept then currentDept = "" end
+            local currentDept = pData.department or ""
+            if currentDept == "" or currentDept == "Основной" or currentDept == "—" then
+                currentDept = "Главное Управление"
+            end
+
+            local shortSid = selectedBadgeSid64:sub(-4)
+            local tplFac = (tpls.factions and tpls.factions[pData.faction or myFaction]) or {}
+            local pfx = tplFac.prefix or ((pData.faction or myFaction):sub(1, 3):upper() .. "-")
+            entBadgeNum:SetText(pfx .. shortSid)
 
             if registry.badges and registry.badges[selectedBadgeKey] then
                 local ex = registry.badges[selectedBadgeKey]
                 entBadgeName:SetText(ex.fullName or pData.rpName or "")
-                entBadgeFac:SetText(ex.faction or pData.faction or "")
                 entBadgeRole:SetText(ex.role or pData.role or "")
                 if ex.department and ex.department ~= "" and ex.department ~= "Основной" and ex.department ~= "—" then
                     currentDept = ex.department
                 end
-                entBadgeNum:SetText(ex.number or (pfx .. selectedBadgeSid64:sub(-4)))
+                entBadgeNum:SetText(ex.number or (pfx .. shortSid))
                 if istable(ex.permissions) then
                     for pId, cb in pairs(chkBoxes) do
                         cb:SetValue(ex.permissions[pId] == true)
@@ -440,178 +377,433 @@ net.Receive("GRM_DocComp_Open", function()
     tabs:AddSheet("Отдел кадров / Удостоверения", badgePnl, "icon16/shield.png")
 
     -- ══════════════════════════════════════════════════════════════
-    -- ВКЛАДКА 3: ВОДИТЕЛЬСКИЕ ПРАВА (Автошкола / ГАИ)
+    -- ВКЛАДКА 3: ВОДИТЕЛЬСКИЕ ПРАВА (Автошкола ГАИ и ВАИ)
     -- ══════════════════════════════════════════════════════════════
     local licPnl = vgui.Create("DPanel", tabs)
-    licPnl:DockPadding(16, 16, 16, 16)
+    licPnl:DockPadding(12, 12, 12, 12)
     licPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
 
-    local lblLTarget = vgui.Create("DLabel", licPnl)
-    lblLTarget:SetPos(16, 16) lblLTarget:SetText("Выберите гражданина для выдачи прав:") lblLTarget:SetFont("DermaDefaultBold") lblLTarget:SetTextColor(Color(80, 190, 240)) lblLTarget:SizeToContents()
+    -- Переключатель режима: Гражданские права (ГАИ) / Военные права (ВАИ)
+    local isMilLicMode = false
 
-    local comboLicTarget = vgui.Create("DComboBox", licPnl)
-    comboLicTarget:SetPos(16, 36) comboLicTarget:SetSize(420, 28)
-    comboLicTarget:AddChoice("— Выберите гражданина онлайн —", "")
+    local btnCivMode = vgui.Create("DButton", licPnl)
+    btnCivMode:SetPos(16, 12)
+    btnCivMode:SetSize(340, 32)
+    btnCivMode:SetText("🚗 Гражданское ВУ (Госавтоинспекция ГАИ)")
+    btnCivMode:SetFont("DermaDefaultBold")
 
-    for _, pData in ipairs(onlineList) do
-        local label = string.format("%s  [%s]  (%s)", pData.rpName or "?", pData.nick or "?", pData.key or "")
-        comboLicTarget:AddChoice(label, pData)
-    end
+    local btnMilMode = vgui.Create("DButton", licPnl)
+    btnMilMode:SetPos(366, 12)
+    btnMilMode:SetSize(340, 32)
+    btnMilMode:SetText("🪖 Удостоверение военного водителя (ВАИ / ВС)")
+    btnMilMode:SetFont("DermaDefaultBold")
 
-    local lblLName = vgui.Create("DLabel", licPnl)
-    lblLName:SetPos(16, 75) lblLName:SetText("ФИО водителя (ручное редактирование):") lblLName:SetTextColor(CC.text) lblLName:SizeToContents()
-    local entLicName = vgui.Create("DTextEntry", licPnl)
-    entLicName:SetPos(16, 95) entLicName:SetSize(320, 26)
+    local formContainer = vgui.Create("DPanel", licPnl)
+    formContainer:SetPos(16, 52)
+    formContainer:SetSize(900, 570)
+    formContainer:SetPaintBackground(false)
 
-    local lblLBirth = vgui.Create("DLabel", licPnl)
-    lblLBirth:SetPos(355, 75) lblLBirth:SetText("Дата рождения:") lblLBirth:SetTextColor(CC.text) lblLBirth:SizeToContents()
-    local entLicBirth = vgui.Create("DTextEntry", licPnl)
-    entLicBirth:SetPos(355, 95) entLicBirth:SetSize(160, 26) entLicBirth:SetText("12.04.1988")
-
-    local lblLNum = vgui.Create("DLabel", licPnl)
-    lblLNum:SetPos(530, 75) lblLNum:SetText("Водительское удостоверение №:") lblLNum:SetTextColor(CC.text) lblLNum:SizeToContents()
-    local entLicNum = vgui.Create("DTextEntry", licPnl)
-    entLicNum:SetPos(530, 95) entLicNum:SetSize(180, 26) entLicNum:SetText("ВУ-428901")
-
-    local lblLCats = vgui.Create("DLabel", licPnl)
-    lblLCats:SetPos(16, 132) lblLCats:SetText("Открытые категории транспортных средств:") lblLCats:SetFont("DermaDefaultBold") lblLCats:SetTextColor(CC.gold) lblLCats:SizeToContents()
-
-    local chkCats = {}
-    local yLicPos = 155
-    local xLicPos = 16
-
-    for i, cat in ipairs(GRM.Documents.DriveCategories or {}) do
-        local chk = vgui.Create("DCheckBoxLabel", licPnl)
-        chk:SetPos(xLicPos, yLicPos)
-        chk:SetText(cat.icon .. " " .. cat.name .. " (" .. cat.desc .. ")")
-        chk:SetTextColor(CC.text)
-        chk:SetValue(cat.id == "B")
-        chk:SizeToContents()
-        chkCats[cat.id] = chk
-
-        if i % 2 == 1 then
-            xLicPos = 420
-        else
-            xLicPos = 16
-            yLicPos = yLicPos + 24
-        end
-    end
-
-    local lblLRestr = vgui.Create("DLabel", licPnl)
-    lblLRestr:SetPos(16, yLicPos + 10) lblLRestr:SetText("12. Особые отметки / ограничения:") lblLRestr:SetTextColor(CC.text) lblLRestr:SizeToContents()
-    local entLicRestr = vgui.Create("DTextEntry", licPnl)
-    entLicRestr:SetPos(16, yLicPos + 30) entLicRestr:SetSize(390, 26) entLicRestr:SetText("Стаж вождения подтверждён")
-
-    local lblLOrg = vgui.Create("DLabel", licPnl)
-    lblLOrg:SetPos(420, yLicPos + 10) lblLOrg:SetText("Орган выдачи (пресет ВАИ / ГАИ / ручной ввод):") lblLOrg:SetTextColor(CC.text) lblLOrg:SizeToContents()
-
-    local comboLOrg = vgui.Create("DComboBox", licPnl)
-    comboLOrg:SetPos(420, yLicPos + 30) comboLOrg:SetSize(320, 26)
-    comboLOrg:AddChoice("ВАИ (Военная автомобильная инспекция)", "ВАИ (Военная автомобильная инспекция)")
-    comboLOrg:AddChoice("ГАИ / Дорожная полиция", "Отдел дорожной полиции и экзаменации")
-    comboLOrg:AddChoice("Экзаменационный отдел автошколы", "Экзаменационный отдел автошколы")
-    comboLOrg:SetValue("ВАИ (Военная автомобильная инспекция)")
-
-    local entLicIssuer = vgui.Create("DTextEntry", licPnl)
-    entLicIssuer:SetPos(420, yLicPos + 60) entLicIssuer:SetSize(320, 26)
-    entLicIssuer:SetText("ВАИ (Военная автомобильная инспекция)")
-
-    comboLOrg.OnSelect = function(_, _, dataVal)
-        if isstring(dataVal) and dataVal ~= "" then
-            entLicIssuer:SetText(dataVal)
-            if dataVal:find("ВАИ") then
-                entLicNum:SetText("ВАИ-" .. selLicSid64:sub(-5))
-            else
-                entLicNum:SetText("ВУ-" .. selLicSid64:sub(-5))
+    local function refreshLicModeButtons()
+        btnCivMode.Paint = function(s, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, not isMilLicMode and Color(35, 110, 190) or Color(45, 52, 65))
+            if not isMilLicMode then
+                surface.SetDrawColor(100, 180, 255)
+                surface.DrawOutlinedRect(0, 0, w, h)
             end
         end
+        btnCivMode:SetTextColor(not isMilLicMode and color_white or CC.dim)
+
+        btnMilMode.Paint = function(s, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, isMilLicMode and Color(45, 120, 55) or Color(45, 52, 65))
+            if isMilLicMode then
+                surface.SetDrawColor(120, 220, 130)
+                surface.DrawOutlinedRect(0, 0, w, h)
+            end
+        end
+        btnMilMode:SetTextColor(isMilLicMode and color_white or CC.dim)
     end
 
-    local selLicKey = ""
-    local selLicSid64 = "0"
-    comboLicTarget.OnSelect = function(_, _, _, pData)
-        if istable(pData) then
-            selLicKey = pData.key or ""
-            selLicSid64 = pData.steamID64 or "0"
-            entLicName:SetText(pData.rpName or "")
+    local function buildCivForm()
+        formContainer:Clear()
 
-            local isMil = (pData.faction and (pData.faction:lower():find("воен") or pData.faction:lower():find("арми") or pData.faction:lower():find("гвард") or pData.faction:lower():find("gendarmerie")))
-            local pfx = isMil and "ВАИ-" or ((tpls.license and tpls.license.defaultPrefix) or "ВУ-")
-            entLicNum:SetText(pfx .. selLicSid64:sub(-5))
+        local lblTarget = vgui.Create("DLabel", formContainer)
+        lblTarget:SetPos(0, 4) lblTarget:SetText("Выберите гражданина для выдачи гражданских прав (ГАИ):") lblTarget:SetFont("DermaDefaultBold") lblTarget:SetTextColor(Color(80, 190, 240)) lblTarget:SizeToContents()
 
-            if isMil then
-                comboLOrg:SetValue("ВАИ (Военная автомобильная инспекция)")
-                entLicIssuer:SetText("ВАИ (Военная автомобильная инспекция)")
-            else
-                comboLOrg:SetValue("ГАИ / Дорожная полиция")
-                entLicIssuer:SetText("Отдел дорожной полиции и экзаменации")
-            end
+        local comboTarget = vgui.Create("DComboBox", formContainer)
+        comboTarget:SetPos(0, 24) comboTarget:SetSize(460, 28)
+        comboTarget:AddChoice("— Выберите гражданина онлайн —", "")
+        for _, pData in ipairs(onlineList) do
+            comboTarget:AddChoice(string.format("%s  [%s]  (%s)", pData.rpName or "?", pData.nick or "?", pData.key or ""), pData)
+        end
 
-            if registry.licenses and registry.licenses[selLicKey] then
-                local ex = registry.licenses[selLicKey]
-                entLicName:SetText(ex.fullName or pData.rpName or "")
-                entLicBirth:SetText(ex.birthDate or "12.04.1988")
-                entLicNum:SetText(ex.number or (pfx .. selLicSid64:sub(-5)))
-                entLicRestr:SetText(ex.restrictions or "Стаж подтверждён")
-                entLicIssuer:SetText(ex.issuedBy or "ВАИ (Военная автомобильная инспекция)")
-                if istable(ex.categories) then
-                    for cId, cb in pairs(chkCats) do
-                        cb:SetValue(ex.categories[cId] == true)
+        -- Быстрые пресеты категорий
+        local lblPre = vgui.Create("DLabel", formContainer)
+        lblPre:SetPos(480, 4) lblPre:SetText("Быстрые пресеты категорий:") lblPre:SetTextColor(CC.gold) lblPre:SetFont("DermaDefaultBold") lblPre:SizeToContents()
+
+        local pfx = (tpls.license and tpls.license.defaultPrefix) or "ВУ-"
+        local selKey = ""
+        local selSid64 = "0"
+
+        local lblName = vgui.Create("DLabel", formContainer)
+        lblName:SetPos(0, 60) lblName:SetText("ФИО водителя:") lblName:SetTextColor(CC.text) lblName:SizeToContents()
+        local entName = vgui.Create("DTextEntry", formContainer)
+        entName:SetPos(0, 80) entName:SetSize(320, 26)
+
+        local lblBirth = vgui.Create("DLabel", formContainer)
+        lblBirth:SetPos(335, 60) lblBirth:SetText("Дата рождения:") lblBirth:SetTextColor(CC.text) lblBirth:SizeToContents()
+        local entBirth = vgui.Create("DTextEntry", formContainer)
+        entBirth:SetPos(335, 80) entBirth:SetSize(140, 26) entBirth:SetText("12.04.1988")
+
+        local lblNum = vgui.Create("DLabel", formContainer)
+        lblNum:SetPos(490, 60) lblNum:SetText("Номер бланка ВУ:") lblNum:SetTextColor(CC.text) lblNum:SizeToContents()
+        local entNum = vgui.Create("DTextEntry", formContainer)
+        entNum:SetPos(490, 80) entNum:SetSize(180, 26) entNum:SetText(pfx .. "000000")
+
+        local lblOrg = vgui.Create("DLabel", formContainer)
+        lblOrg:SetPos(0, 116) lblOrg:SetText("Орган выдачи прав (выбор / ручной ввод):") lblOrg:SetTextColor(CC.text) lblOrg:SizeToContents()
+
+        local comboOrg = vgui.Create("DComboBox", formContainer)
+        comboOrg:SetPos(0, 136) comboOrg:SetSize(280, 26)
+        comboOrg:AddChoice("Отдел дорожной полиции и экзаменации")
+        comboOrg:AddChoice("Госавтоинспекция (ГАИ / МРЭО)")
+        comboOrg:AddChoice("Экзаменационный отдел Автошколы")
+        comboOrg:SetValue("Отдел дорожной полиции и экзаменации")
+
+        local entIssuer = vgui.Create("DTextEntry", formContainer)
+        entIssuer:SetPos(290, 136) entIssuer:SetSize(380, 26)
+        entIssuer:SetText((tpls.license and tpls.license.defaultIssuer) or "Отдел дорожной полиции и экзаменации")
+
+        comboOrg.OnSelect = function(_, _, v) if v and v ~= "" then entIssuer:SetText(v) end end
+
+        local lblCats = vgui.Create("DLabel", formContainer)
+        lblCats:SetPos(0, 175) lblCats:SetText("Разрешённые категории транспортных средств:") lblCats:SetFont("DermaDefaultBold") lblCats:SetTextColor(CC.gold) lblCats:SizeToContents()
+
+        local chkCats = {}
+        local yCat = 198
+        local xCat = 0
+        for i, cat in ipairs(GRM.Documents.DriveCategories or {}) do
+            local chk = vgui.Create("DCheckBoxLabel", formContainer)
+            chk:SetPos(xCat, yCat)
+            chk:SetText(cat.icon .. " " .. cat.name .. " (" .. cat.desc .. ")")
+            chk:SetTextColor(CC.text)
+            chk:SetValue(cat.id == "B")
+            chk:SizeToContents()
+            chkCats[cat.id] = chk
+
+            if i % 2 == 1 then xCat = 440 else xCat = 0 yCat = yCat + 24 end
+        end
+
+        local btnP1 = vgui.Create("DButton", formContainer)
+        btnP1:SetPos(480, 24) btnP1:SetSize(110, 28) btnP1:SetText("Кат. B (Легк.)")
+        btnP1.DoClick = function() for id, cb in pairs(chkCats) do cb:SetValue(id == "B") end end
+
+        local btnP2 = vgui.Create("DButton", formContainer)
+        btnP2:SetPos(596, 24) btnP2:SetSize(120, 28) btnP2:SetText("Кат. B + C (Груз.)")
+        btnP2.DoClick = function() for id, cb in pairs(chkCats) do cb:SetValue(id == "B" or id == "C") end end
+
+        local btnP3 = vgui.Create("DButton", formContainer)
+        btnP3:SetPos(722, 24) btnP3:SetSize(150, 28) btnP3:SetText("Все категории (A-E+Спец)")
+        btnP3.DoClick = function() for _, cb in pairs(chkCats) do cb:SetValue(true) end end
+
+        local lblRestr = vgui.Create("DLabel", formContainer)
+        lblRestr:SetPos(0, yCat + 10) lblRestr:SetText("12. Особые отметки / ограничения / стаж:") lblRestr:SetTextColor(CC.text) lblRestr:SizeToContents()
+        local entRestr = vgui.Create("DTextEntry", formContainer)
+        entRestr:SetPos(0, yCat + 30) entRestr:SetSize(520, 26) entRestr:SetText("Стаж вождения подтверждён")
+
+        comboTarget.OnSelect = function(_, _, _, pData)
+            if istable(pData) then
+                selKey = pData.key or ""
+                selSid64 = pData.steamID64 or "0"
+                entName:SetText(pData.rpName or "")
+                entNum:SetText(pfx .. selSid64:sub(-5))
+
+                if registry.licenses and registry.licenses[selKey] then
+                    local ex = registry.licenses[selKey]
+                    entName:SetText(ex.fullName or pData.rpName or "")
+                    entBirth:SetText(ex.birthDate or "12.04.1988")
+                    entNum:SetText(ex.number or (pfx .. selSid64:sub(-5)))
+                    entRestr:SetText(ex.restrictions or "Стаж вождения подтверждён")
+                    entIssuer:SetText(ex.issuedBy or ((tpls.license and tpls.license.defaultIssuer) or "Отдел дорожной полиции и экзаменации"))
+                    if istable(ex.categories) then
+                        for cId, cb in pairs(chkCats) do cb:SetValue(ex.categories[cId] == true) end
                     end
                 end
             end
         end
+
+        local btnIssue = vgui.Create("DButton", formContainer)
+        btnIssue:SetPos(0, yCat + 75)
+        btnIssue:SetSize(360, 36)
+        btnIssue:SetText("✔ Оформить и выдать гражданское ВУ (ГАИ)")
+        btnIssue:SetFont("DermaDefaultBold")
+        btnIssue:SetTextColor(color_white)
+        btnIssue.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(35, 150, 180) or Color(25, 120, 150)) end
+        btnIssue.DoClick = function()
+            if not hasLicense then
+                notification.AddLegacy("У вашей фракции нет допуска к выдаче водительских прав!", NOTIFY_ERROR, 3)
+                return
+            end
+            if selKey == "" then
+                notification.AddLegacy("Выберите гражданина из списка!", NOTIFY_ERROR, 3)
+                return
+            end
+
+            local curCats = {}
+            local catStrList = {}
+            for cId, cb in pairs(chkCats) do
+                curCats[cId] = cb:GetChecked()
+                if cb:GetChecked() then catStrList[#catStrList + 1] = cId end
+            end
+
+            local pack = {
+                fullName      = entName:GetText(),
+                birthDate     = entBirth:GetText(),
+                number        = entNum:GetText(),
+                categories    = curCats,
+                categoriesStr = table.concat(catStrList, " "),
+                restrictions  = entRestr:GetText(),
+                issuedBy      = entIssuer:GetText(),
+                issueDate     = os.date("%d.%m.%Y"),
+                validUntil    = "10 лет",
+                status        = "Действительно",
+                steamID64     = selSid64,
+            }
+
+            net.Start("GRM_Doc_ComputerIssue")
+                net.WriteString("license")
+                net.WriteString(selKey)
+                net.WriteTable(pack)
+            net.SendToServer()
+            frame:Close()
+        end
     end
 
-    local btnIssueLic = vgui.Create("DButton", licPnl)
-    btnIssueLic:SetPos(16, yLicPos + 95)
-    btnIssueLic:SetSize(340, 36)
-    btnIssueLic:SetText("✔ Оформить и выдать водительские права")
-    btnIssueLic:SetFont("DermaDefaultBold")
-    btnIssueLic:SetTextColor(color_white)
-    btnIssueLic.Paint = function(s, w, h)
-        draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(35, 150, 180) or Color(25, 120, 150))
+    local function buildMilForm()
+        formContainer:Clear()
+
+        local lblTarget = vgui.Create("DLabel", formContainer)
+        lblTarget:SetPos(0, 4) lblTarget:SetText("Выберите военнослужащего для выдачи удостоверения водителя ВАИ:") lblTarget:SetFont("DermaDefaultBold") lblTarget:SetTextColor(Color(120, 220, 140)) lblTarget:SizeToContents()
+
+        local comboTarget = vgui.Create("DComboBox", formContainer)
+        comboTarget:SetPos(0, 24) comboTarget:SetSize(460, 28)
+        comboTarget:AddChoice("— Выберите военнослужащего онлайн —", "")
+        for _, pData in ipairs(onlineList) do
+            comboTarget:AddChoice(string.format("%s  [%s]  (%s)  — %s", pData.rpName or "?", pData.nick or "?", pData.key or "", pData.faction or "ВС"), pData)
+        end
+
+        -- Быстрые военные пресеты
+        local lblPre = vgui.Create("DLabel", formContainer)
+        lblPre:SetPos(480, 4) lblPre:SetText("Военные допуски и пресеты:") lblPre:SetTextColor(CC.gold) lblPre:SetFont("DermaDefaultBold") lblPre:SizeToContents()
+
+        local pfx = (tpls.militaryLicense and tpls.militaryLicense.defaultPrefix) or "ВАИ-"
+        local selKey = ""
+        local selSid64 = "0"
+
+        local lblName = vgui.Create("DLabel", formContainer)
+        lblName:SetPos(0, 60) lblName:SetText("ФИО водителя:") lblName:SetTextColor(CC.text) lblName:SizeToContents()
+        local entName = vgui.Create("DTextEntry", formContainer)
+        entName:SetPos(0, 80) entName:SetSize(250, 26)
+
+        local lblRank = vgui.Create("DLabel", formContainer)
+        lblRank:SetPos(260, 60) lblRank:SetText("Воинское звание:") lblRank:SetTextColor(CC.text) lblRank:SizeToContents()
+        local comboRank = vgui.Create("DComboBox", formContainer)
+        comboRank:SetPos(260, 80) comboRank:SetSize(160, 26)
+        for _, r in ipairs(GRM.Documents.MilitaryRanks or {}) do comboRank:AddChoice(r) end
+        comboRank:SetValue("Рядовой")
+
+        local lblUnit = vgui.Create("DLabel", formContainer)
+        lblUnit:SetPos(430, 60) lblUnit:SetText("Воинская часть / Подразделение:") lblUnit:SetTextColor(CC.text) lblUnit:SizeToContents()
+        local entUnit = vgui.Create("DTextEntry", formContainer)
+        entUnit:SetPos(430, 80) entUnit:SetSize(190, 26) entUnit:SetText("В/Ч 00000 (Автобат)")
+
+        local lblNum = vgui.Create("DLabel", formContainer)
+        lblNum:SetPos(630, 60) lblNum:SetText("Номер бланка ВАИ:") lblNum:SetTextColor(CC.text) lblNum:SizeToContents()
+        local entNum = vgui.Create("DTextEntry", formContainer)
+        entNum:SetPos(630, 80) entNum:SetSize(150, 26) entNum:SetText(pfx .. "000000")
+
+        local lblVus = vgui.Create("DLabel", formContainer)
+        lblVus:SetPos(0, 116) lblVus:SetText("ВУС военного водителя:") lblVus:SetTextColor(CC.text) lblVus:SizeToContents()
+        local comboVus = vgui.Create("DComboBox", formContainer)
+        comboVus:SetPos(0, 136) comboVus:SetSize(340, 26)
+        for _, v in ipairs(GRM.Documents.MilitaryDriverVUS or {}) do comboVus:AddChoice(v) end
+        comboVus:SetValue("ВУС-837 (Водитель транспортных средств категории C)")
+
+        local entVusCustom = vgui.Create("DTextEntry", formContainer)
+        entVusCustom:SetPos(350, 136) entVusCustom:SetSize(170, 26)
+        entVusCustom:SetPlaceholderText("или свой ВУС")
+
+        comboVus.OnSelect = function(_, _, v) if v and v ~= "" then entVusCustom:SetText(v) end end
+
+        local lblOrg = vgui.Create("DLabel", formContainer)
+        lblOrg:SetPos(530, 116) lblOrg:SetText("Орган выдачи ВАИ:") lblOrg:SetTextColor(CC.text) lblOrg:SizeToContents()
+        local entIssuer = vgui.Create("DTextEntry", formContainer)
+        entIssuer:SetPos(530, 136) entIssuer:SetSize(320, 26)
+        entIssuer:SetText((tpls.militaryLicense and tpls.militaryLicense.defaultIssuer) or "101-я Военная автомобильная инспекция (ВАИ)")
+
+        local lblCats = vgui.Create("DLabel", formContainer)
+        lblCats:SetPos(0, 172) lblCats:SetText("Военные категории транспортных средств (ВАИ):") lblCats:SetFont("DermaDefaultBold") lblCats:SetTextColor(Color(120, 220, 140)) lblCats:SizeToContents()
+
+        local chkCats = {}
+        local yCat = 192
+        local xCat = 0
+        for i, cat in ipairs(GRM.Documents.MilDriveCategories or {}) do
+            local chk = vgui.Create("DCheckBoxLabel", formContainer)
+            chk:SetPos(xCat, yCat)
+            chk:SetText(cat.icon .. " " .. cat.name .. " (" .. cat.desc .. ")")
+            chk:SetTextColor(CC.text)
+            chk:SetValue(cat.id == "B-В" or cat.id == "C-В")
+            chk:SizeToContents()
+            chkCats[cat.id] = chk
+
+            if i % 2 == 1 then xCat = 440 else xCat = 0 yCat = yCat + 22 end
+        end
+
+        local lblEnd = vgui.Create("DLabel", formContainer)
+        lblEnd:SetPos(0, yCat + 8) lblEnd:SetText("Специальные войсковые допуски водителя (Endorsements):") lblEnd:SetFont("DermaDefaultBold") lblEnd:SetTextColor(CC.gold) lblEnd:SizeToContents()
+
+        local chkEnds = {}
+        local yEnd = yCat + 28
+        local xEnd = 0
+        for i, endDef in ipairs(GRM.Documents.MilEndorsements or {}) do
+            local chk = vgui.Create("DCheckBoxLabel", formContainer)
+            chk:SetPos(xEnd, yEnd)
+            chk:SetText(endDef.icon .. " " .. endDef.title .. " (" .. endDef.desc .. ")")
+            chk:SetTextColor(CC.text)
+            chk:SetValue(endDef.id == "convoy" or endDef.id == "march")
+            chk:SizeToContents()
+            chkEnds[endDef.id] = chk
+
+            if i % 2 == 1 then xEnd = 440 else xEnd = 0 yEnd = yEnd + 22 end
+        end
+
+        local btnP1 = vgui.Create("DButton", formContainer)
+        btnP1:SetPos(480, 24) btnP1:SetSize(120, 28) btnP1:SetText("Штабной (B-В)")
+        btnP1.DoClick = function()
+            for id, cb in pairs(chkCats) do cb:SetValue(id == "B-В") end
+            for id, cb in pairs(chkEnds) do cb:SetValue(id == "sirens" or id == "convoy") end
+        end
+
+        local btnP2 = vgui.Create("DButton", formContainer)
+        btnP2:SetPos(606, 24) btnP2:SetSize(130, 28) btnP2:SetText("Автобат (C-В + Марш)")
+        btnP2.DoClick = function()
+            for id, cb in pairs(chkCats) do cb:SetValue(id == "B-В" or id == "C-В") end
+            for id, cb in pairs(chkEnds) do cb:SetValue(id == "convoy" or id == "march" or id == "passengers") end
+        end
+
+        local btnP3 = vgui.Create("DButton", formContainer)
+        btnP3:SetPos(742, 24) btnP3:SetSize(140, 28) btnP3:SetText("Полный допуск ВС")
+        btnP3.DoClick = function()
+            for _, cb in pairs(chkCats) do cb:SetValue(true) end
+            for _, cb in pairs(chkEnds) do cb:SetValue(true) end
+        end
+
+        local lblRestr = vgui.Create("DLabel", formContainer)
+        lblRestr:SetPos(0, yEnd + 8) lblRestr:SetText("12. Особые отметки военной автоинспекции:") lblRestr:SetTextColor(CC.text) lblRestr:SizeToContents()
+        local entRestr = vgui.Create("DTextEntry", formContainer)
+        entRestr:SetPos(0, yEnd + 26) entRestr:SetSize(520, 26) entRestr:SetText("Норматив вождения сдан. Стажировка пройдена.")
+
+        comboTarget.OnSelect = function(_, _, _, pData)
+            if istable(pData) then
+                selKey = pData.key or ""
+                selSid64 = pData.steamID64 or "0"
+                entName:SetText(pData.rpName or "")
+                entNum:SetText(pfx .. selSid64:sub(-5))
+                entUnit:SetText(pData.faction or "В/Ч 00000 (Автобат)")
+
+                if registry.milLicenses and registry.milLicenses[selKey] then
+                    local ex = registry.milLicenses[selKey]
+                    entName:SetText(ex.fullName or pData.rpName or "")
+                    comboRank:SetValue(ex.rank or "Рядовой")
+                    entUnit:SetText(ex.formation or pData.faction or "В/Ч 00000 (Автобат)")
+                    entNum:SetText(ex.number or (pfx .. selSid64:sub(-5)))
+                    entVusCustom:SetText(ex.vus or "ВУС-837 (Водитель спецтранспорта)")
+                    entRestr:SetText(ex.restrictions or ex.specialNotes or "Норматив вождения сдан. Стажировка пройдена.")
+                    entIssuer:SetText(ex.issuedBy or ((tpls.militaryLicense and tpls.militaryLicense.defaultIssuer) or "101-я Военная автомобильная инспекция (ВАИ)"))
+                    if istable(ex.categories) then
+                        for cId, cb in pairs(chkCats) do cb:SetValue(ex.categories[cId] == true) end
+                    end
+                    if istable(ex.endorsements) then
+                        for eId, cb in pairs(chkEnds) do cb:SetValue(ex.endorsements[eId] == true) end
+                    end
+                end
+            end
+        end
+
+        local btnIssue = vgui.Create("DButton", formContainer)
+        btnIssue:SetPos(0, yEnd + 60)
+        btnIssue:SetSize(380, 36)
+        btnIssue:SetText("✔ Оформить и выдать удостоверение водителя ВАИ")
+        btnIssue:SetFont("DermaDefaultBold")
+        btnIssue:SetTextColor(color_white)
+        btnIssue.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(45, 145, 65) or Color(35, 115, 50)) end
+        btnIssue.DoClick = function()
+            if not hasMilLicense then
+                notification.AddLegacy("У вашей фракции нет допуска к выдаче военных водительских прав (ВАИ)!", NOTIFY_ERROR, 3)
+                return
+            end
+            if selKey == "" then
+                notification.AddLegacy("Выберите военнослужащего из списка!", NOTIFY_ERROR, 3)
+                return
+            end
+
+            local curCats = {}
+            local catStrList = {}
+            for cId, cb in pairs(chkCats) do
+                curCats[cId] = cb:GetChecked()
+                if cb:GetChecked() then catStrList[#catStrList + 1] = cId end
+            end
+
+            local curEnds = {}
+            for eId, cb in pairs(chkEnds) do
+                curEnds[eId] = cb:GetChecked()
+            end
+
+            local chosenVus = string.Trim(entVusCustom:GetText())
+            if chosenVus == "" then chosenVus = comboVus:GetValue() end
+
+            local pack = {
+                fullName      = entName:GetText(),
+                rank          = comboRank:GetValue(),
+                formation     = entUnit:GetText(),
+                vus           = chosenVus,
+                number        = entNum:GetText(),
+                categories    = curCats,
+                categoriesStr = table.concat(catStrList, " "),
+                endorsements  = curEnds,
+                specialNotes  = entRestr:GetText(),
+                restrictions  = entRestr:GetText(),
+                issuedBy      = entIssuer:GetText(),
+                issueDate     = os.date("%d.%m.%Y"),
+                validUntil    = "На срок военной службы",
+                status        = "Действительно (на службе)",
+                steamID64     = selSid64,
+            }
+
+            net.Start("GRM_Doc_ComputerIssue")
+                net.WriteString("milLicense")
+                net.WriteString(selKey)
+                net.WriteTable(pack)
+            net.SendToServer()
+            frame:Close()
+        end
     end
-    btnIssueLic.DoClick = function()
-        if not hasLicense then
-            notification.AddLegacy("У вашей фракции нет допуска к выдаче водительских прав!", NOTIFY_ERROR, 3)
-            return
-        end
-        if selLicKey == "" then
-            notification.AddLegacy("Выберите гражданина из списка!", NOTIFY_ERROR, 3)
-            return
-        end
 
-        local curCats = {}
-        local catStrList = {}
-        for cId, cb in pairs(chkCats) do
-            curCats[cId] = cb:GetChecked()
-            if cb:GetChecked() then catStrList[#catStrList + 1] = cId end
-        end
-
-        local pack = {
-            fullName      = entLicName:GetText(),
-            birthDate     = entLicBirth:GetText(),
-            number        = entLicNum:GetText(),
-            categories    = curCats,
-            categoriesStr = table.concat(catStrList, " "),
-            restrictions  = entLicRestr:GetText(),
-            issuedBy      = entLicIssuer:GetText(),
-            issueDate     = os.date("%d.%m.%Y"),
-            validUntil    = "10 лет",
-            status        = "Действительно",
-            steamID64     = selLicSid64,
-        }
-
-        net.Start("GRM_Doc_ComputerIssue")
-            net.WriteString("license")
-            net.WriteString(selLicKey)
-            net.WriteTable(pack)
-        net.SendToServer()
-        frame:Close()
+    btnCivMode.DoClick = function()
+        isMilLicMode = false
+        refreshLicModeButtons()
+        buildCivForm()
     end
 
-    tabs:AddSheet("Автошкола / Права", licPnl, "icon16/car.png")
+    btnMilMode.DoClick = function()
+        isMilLicMode = true
+        refreshLicModeButtons()
+        buildMilForm()
+    end
+
+    refreshLicModeButtons()
+    buildCivForm()
+
+    tabs:AddSheet("Автошкола и ВАИ / Права", licPnl, "icon16/car.png")
 
     -- ══════════════════════════════════════════════════════════════
     -- ВКЛАДКА 4: ВОЕНКОМАТ / ВОЕННЫЙ БИЛЕТ
@@ -648,120 +840,124 @@ net.Receive("GRM_DocComp_Open", function()
     entMilRankCustom:SetPos(540, 95) entMilRankCustom:SetSize(180, 26) entMilRankCustom:SetPlaceholderText("или своё звание")
 
     local lblMVUS = vgui.Create("DLabel", milPnl)
-    lblMVUS:SetPos(16, 130) lblMVUS:SetText("Военно-учётная специальность (ВУС):") lblMVUS:SetTextColor(CC.text) lblMVUS:SizeToContents()
+    lblMVUS:SetPos(16, 135) lblMVUS:SetText("Военно-учётная специальность (ВУС):") lblMVUS:SetTextColor(CC.text) lblMVUS:SizeToContents()
     local comboMilVUS = vgui.Create("DComboBox", milPnl)
-    comboMilVUS:SetPos(16, 150) comboMilVUS:SetSize(320, 26)
-    for _, vus in ipairs(GRM.Documents.MilitaryVUS or {}) do comboMilVUS:AddChoice(vus) end
+    comboMilVUS:SetPos(16, 155) comboMilVUS:SetSize(340, 26)
+    for _, v in ipairs(GRM.Documents.MilitaryVUS or {}) do comboMilVUS:AddChoice(v) end
     comboMilVUS:SetValue("ВУС-100 (Стрелковая подготовка)")
 
     local entMilVUSCustom = vgui.Create("DTextEntry", milPnl)
-    entMilVUSCustom:SetPos(345, 150) entMilVUSCustom:SetSize(200, 26) entMilVUSCustom:SetPlaceholderText("или свой ВУС")
+    entMilVUSCustom:SetPos(365, 155) entMilVUSCustom:SetSize(220, 26) entMilVUSCustom:SetPlaceholderText("или свой ВУС")
 
-    local lblMFac = vgui.Create("DLabel", milPnl)
-    lblMFac:SetPos(16, 185) lblMFac:SetText("Воинское формирование / Часть (выбор / ввод):") lblMFac:SetTextColor(CC.text) lblMFac:SizeToContents()
-    local comboMilFac = vgui.Create("DComboBox", milPnl)
-    comboMilFac:SetPos(16, 205) comboMilFac:SetSize(260, 26)
-    for fname in pairs(Factions or FactionsData or {}) do if isstring(fname) then comboMilFac:AddChoice(fname) end end
-    comboMilFac:SetValue("Вооружённые силы")
+    comboMilVUS.OnSelect = function(_, _, v) if v and v ~= "" then entMilVUSCustom:SetText(v) end end
 
-    local entMilFacCustom = vgui.Create("DTextEntry", milPnl)
-    entMilFacCustom:SetPos(285, 205) entMilFacCustom:SetSize(240, 26) entMilFacCustom:SetText("Войсковая часть №4289")
+    local lblMForm = vgui.Create("DLabel", milPnl)
+    lblMForm:SetPos(600, 135) lblMForm:SetText("Воинское формирование:") lblMForm:SetTextColor(CC.text) lblMForm:SizeToContents()
+    local entMilForm = vgui.Create("DTextEntry", milPnl)
+    entMilForm:SetPos(600, 155) entMilForm:SetSize(190, 26) entMilForm:SetText("Вооружённые Силы")
 
     local lblMDept = vgui.Create("DLabel", milPnl)
-    lblMDept:SetPos(16, 240) lblMDept:SetText("Подразделение / Отдел (выбор / ввод):") lblMDept:SetTextColor(CC.text) lblMDept:SizeToContents()
+    lblMDept:SetPos(16, 195) lblMDept:SetText("Подразделение / Рота:") lblMDept:SetTextColor(CC.text) lblMDept:SizeToContents()
     local entMilDept = vgui.Create("DTextEntry", milPnl)
-    entMilDept:SetPos(16, 260) entMilDept:SetSize(260, 26) entMilDept:SetText("Штаб")
+    entMilDept:SetPos(16, 215) entMilDept:SetSize(240, 26) entMilDept:SetText("Штабная рота")
 
     local lblMPos = vgui.Create("DLabel", milPnl)
-    lblMPos:SetPos(285, 240) lblMPos:SetText("Занимаемая должность (ручной ввод):") lblMPos:SetTextColor(CC.text) lblMPos:SizeToContents()
+    lblMPos:SetPos(270, 195) lblMPos:SetText("Должность:") lblMPos:SetTextColor(CC.text) lblMPos:SizeToContents()
     local entMilPos = vgui.Create("DTextEntry", milPnl)
-    entMilPos:SetPos(285, 260) entMilPos:SetSize(240, 26) entMilPos:SetText("Старший стрелок")
-
-    local lblMNum = vgui.Create("DLabel", milPnl)
-    lblMNum:SetPos(540, 185) lblMNum:SetText("Военный билет №:") lblMNum:SetTextColor(CC.text) lblMNum:SizeToContents()
-    local entMilNum = vgui.Create("DTextEntry", milPnl)
-    entMilNum:SetPos(540, 205) entMilNum:SetSize(180, 26) entMilNum:SetText("ВБ-428901")
+    entMilPos:SetPos(270, 215) entMilPos:SetSize(240, 26) entMilPos:SetText("Стрелок")
 
     local lblMFit = vgui.Create("DLabel", milPnl)
-    lblMFit:SetPos(540, 240) lblMFit:SetText("Категория годности:") lblMFit:SetTextColor(CC.text) lblMFit:SizeToContents()
+    lblMFit:SetPos(525, 195) lblMFit:SetText("Категория годности:") lblMFit:SetTextColor(CC.text) lblMFit:SizeToContents()
     local comboMilFit = vgui.Create("DComboBox", milPnl)
-    comboMilFit:SetPos(540, 260) comboMilFit:SetSize(200, 26)
-    if GRM.Medical and GRM.Medical.FitnessCategories then
-        for _, fit in ipairs(GRM.Medical.FitnessCategories) do comboMilFit:AddChoice(fit) end
-    else
-        comboMilFit:AddChoice("А — Годен к военной службе")
-        comboMilFit:AddChoice("Б — Годен с ограничениями")
-        comboMilFit:AddChoice("В — Ограниченно годен")
-        comboMilFit:AddChoice("Д — Не годен к службе")
-    end
-    comboMilFit:SetValue("А — Годен к военной службе")
+    comboMilFit:SetPos(525, 215) comboMilFit:SetSize(265, 26)
+    comboMilFit:AddChoice("А — Годен к военной службе без ограничений")
+    comboMilFit:AddChoice("Б — Годен к военной службе с незначительными ограничениями")
+    comboMilFit:AddChoice("В — Ограниченно годен к военной службе (запас)")
+    comboMilFit:AddChoice("Г — Временно не годен к военной службе (отсрочка)")
+    comboMilFit:AddChoice("Д — Не годен к военной службе (освобождён)")
+    comboMilFit:SetValue("А — Годен к военной службе без ограничений")
 
-    local selMilKey = ""
-    local selMilSid64 = "0"
+    local lblMNum = vgui.Create("DLabel", milPnl)
+    lblMNum:SetPos(16, 255) lblMNum:SetText("Номер военного билета:") lblMNum:SetTextColor(CC.text) lblMNum:SizeToContents()
+    local entMilNum = vgui.Create("DTextEntry", milPnl)
+    entMilNum:SetPos(16, 275) entMilNum:SetSize(180, 26) entMilNum:SetText("ВБ-014289")
+
+    local lblMIssuer = vgui.Create("DLabel", milPnl)
+    lblMIssuer:SetPos(210, 255) lblMIssuer:SetText("Орган выдачи (Военкомат):") lblMIssuer:SetTextColor(CC.text) lblMIssuer:SizeToContents()
+    local entMilIssuer = vgui.Create("DTextEntry", milPnl)
+    entMilIssuer:SetPos(210, 275) entMilIssuer:SetSize(380, 26) entMilIssuer:SetText((tpls.military and tpls.military.defaultIssuer) or "Военный комиссариат Центрального округа")
+
+    local selectedMilKey = ""
+    local selectedMilSid64 = "0"
     comboMilTarget.OnSelect = function(_, _, _, pData)
         if istable(pData) then
-            selMilKey = pData.key or ""
-            selMilSid64 = pData.steamID64 or "0"
+            selectedMilKey = pData.key or ""
+            selectedMilSid64 = pData.steamID64 or "0"
             entMilName:SetText(pData.rpName or "")
 
-            local pfx = (tpls.military and tpls.military.defaultPrefix) or "ВБ-"
-            entMilNum:SetText(pfx .. selMilSid64:sub(-5))
+            local shortSid = selectedMilSid64:sub(-5)
+            local pfxM = (tpls.military and tpls.military.defaultPrefix) or "ВБ-"
+            entMilNum:SetText(pfxM .. shortSid)
 
-            if registry.military and registry.military[selMilKey] then
-                local ex = registry.military[selMilKey]
+            if registry.military and registry.military[selectedMilKey] then
+                local ex = registry.military[selectedMilKey]
                 entMilName:SetText(ex.fullName or pData.rpName or "")
-                entMilNum:SetText(ex.number or (pfx .. selMilSid64:sub(-5)))
-                entMilRankCustom:SetText(ex.rank or "Рядовой")
-                entMilVUSCustom:SetText(ex.vus or "ВУС-100")
-                entMilFacCustom:SetText(ex.formation or "Вооружённые силы")
-                entMilDept:SetText(ex.department or "Штаб")
+                comboMilRank:SetValue(ex.rank or "Рядовой")
+                entMilVUSCustom:SetText(ex.vus or "ВУС-100 (Стрелковая подготовка)")
+                entMilForm:SetText(ex.formation or "Вооружённые Силы")
+                entMilDept:SetText(ex.department or "Штабная рота")
                 entMilPos:SetText(ex.position or "Стрелок")
-                comboMilFit:SetValue(ex.fitness or "А — Годен к службе")
+                comboMilFit:SetValue(ex.fitness or "А — Годен к военной службе без ограничений")
+                entMilNum:SetText(ex.number or (pfxM .. shortSid))
+                entMilIssuer:SetText(ex.issuedBy or "Военный комиссариат Центрального округа")
             end
         end
     end
 
     local btnIssueMil = vgui.Create("DButton", milPnl)
-    btnIssueMil:SetPos(16, 320)
-    btnIssueMil:SetSize(340, 36)
+    btnIssueMil:SetPos(16, 325)
+    btnIssueMil:SetSize(320, 36)
     btnIssueMil:SetText("✔ Оформить и выдать военный билет")
     btnIssueMil:SetFont("DermaDefaultBold")
     btnIssueMil:SetTextColor(color_white)
     btnIssueMil.Paint = function(s, w, h)
-        draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(40, 160, 80) or Color(35, 130, 65))
+        draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and CC.success or Color(35, 140, 75))
     end
     btnIssueMil.DoClick = function()
         if not hasMilitary then
-            notification.AddLegacy("У вашей фракции нет допуска к выдаче военных билетов!", NOTIFY_ERROR, 3)
+            notification.AddLegacy("У вашей фракции нет допуска к оформлению военных билетов!", NOTIFY_ERROR, 3)
             return
         end
-        if selMilKey == "" then
+        if selectedMilKey == "" then
             notification.AddLegacy("Выберите военнообязанного из списка!", NOTIFY_ERROR, 3)
             return
         end
 
-        local rankChosen = entMilRankCustom:GetText() ~= "" and entMilRankCustom:GetText() or comboMilRank:GetValue()
-        local vusChosen  = entMilVUSCustom:GetText() ~= "" and entMilVUSCustom:GetText() or comboMilVUS:GetValue()
-        local facChosen  = entMilFacCustom:GetText() ~= "" and entMilFacCustom:GetText() or comboMilFac:GetValue()
+        local chosenRank = string.Trim(entMilRankCustom:GetText())
+        if chosenRank == "" then chosenRank = comboMilRank:GetValue() end
+
+        local chosenVus = string.Trim(entMilVUSCustom:GetText())
+        if chosenVus == "" then chosenVus = comboMilVUS:GetValue() end
 
         local pack = {
             fullName    = entMilName:GetText(),
-            rank        = rankChosen,
-            vus         = vusChosen,
-            formation   = facChosen,
-            department  = entMilDept:GetText() ~= "" and entMilDept:GetText() or "Штаб",
-            position    = entMilPos:GetText() ~= "" and entMilPos:GetText() or "Военнослужащий",
-            number      = entMilNum:GetText(),
+            rank        = chosenRank,
+            vus         = chosenVus,
+            formation   = entMilForm:GetText(),
+            department  = entMilDept:GetText(),
+            position    = entMilPos:GetText(),
             fitness     = comboMilFit:GetValue(),
-            issuedBy    = (tpls.military and tpls.military.defaultIssuer) or "Военный комиссариат",
+            number      = entMilNum:GetText(),
+            issuedBy    = entMilIssuer:GetText(),
             issueDate   = os.date("%d.%m.%Y"),
-            status      = "Действителен",
-            steamID64   = selMilSid64,
+            validUntil  = "Бессрочно",
+            status      = "Действителен (в запасе)",
+            steamID64   = selectedMilSid64,
         }
 
         net.Start("GRM_Doc_ComputerIssue")
             net.WriteString("military")
-            net.WriteString(selMilKey)
+            net.WriteString(selectedMilKey)
             net.WriteTable(pack)
         net.SendToServer()
         frame:Close()
@@ -770,24 +966,19 @@ net.Receive("GRM_DocComp_Open", function()
     tabs:AddSheet("Военкомат / Военный билет", milPnl, "icon16/book_open.png")
 
     -- ══════════════════════════════════════════════════════════════
-    -- ВКЛАДКА 5: ДОКУМЕНТЫ ПРИКРЫТИЯ (Спецслужбы)
+    -- ВКЛАДКА 5: ДОКУМЕНТЫ ПРИКРЫТИЯ (Для спецслужб)
     -- ══════════════════════════════════════════════════════════════
-    if hasCover or isSuperAdmin then
+    if hasCover then
         local coverPnl = vgui.Create("DPanel", tabs)
         coverPnl:DockPadding(16, 16, 16, 16)
         coverPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
 
-        local lblCInfo = vgui.Create("DLabel", coverPnl)
-        lblCInfo:SetPos(16, 10)
-        lblCInfo:SetText("ОПЕРАТИВНОЕ ЛЕГЕНДИРОВАНИЕ: Фабрикация удостоверений любых ведомств")
-        lblCInfo:SetFont("DermaDefaultBold")
-        lblCInfo:SetTextColor(Color(240, 140, 60))
-        lblCInfo:SizeToContents()
-
         local lblCTarget = vgui.Create("DLabel", coverPnl)
-        lblCTarget:SetPos(16, 36) lblCTarget:SetText("Оперативный сотрудник (агент):") lblCTarget:SetTextColor(CC.text) lblCTarget:SizeToContents()
+        lblCTarget:SetPos(16, 16) lblCTarget:SetText("Выберите оперативного сотрудника под прикрытием:") lblCTarget:SetFont("DermaDefaultBold") lblCTarget:SetTextColor(CC.accent) lblCTarget:SizeToContents()
+
         local comboCoverTarget = vgui.Create("DComboBox", coverPnl)
-        comboCoverTarget:SetPos(16, 56) comboCoverTarget:SetSize(380, 26)
+        comboCoverTarget:SetPos(16, 36) comboCoverTarget:SetSize(420, 28)
+        comboCoverTarget:AddChoice("— Выберите агента онлайн —", "")
 
         for _, pData in ipairs(onlineList) do
             local label = string.format("%s  [%s]  (%s)", pData.rpName or "?", pData.nick or "?", pData.key or "")
@@ -795,104 +986,101 @@ net.Receive("GRM_DocComp_Open", function()
         end
 
         local lblCFac = vgui.Create("DLabel", coverPnl)
-        lblCFac:SetPos(410, 36) lblCFac:SetText("Организация прикрытия:") lblCFac:SetTextColor(CC.text) lblCFac:SizeToContents()
-        local comboCoverFac = vgui.Create("DComboBox", coverPnl)
-        comboCoverFac:SetPos(410, 56) comboCoverFac:SetSize(340, 26)
+        lblCFac:SetPos(16, 75) lblCFac:SetText("Легендированная организация / Ведомство прикрытия:") lblCFac:SetTextColor(CC.text) lblCFac:SizeToContents()
 
-        for fname in pairs(Factions or FactionsData or {}) do
-            if isstring(fname) then comboCoverFac:AddChoice(fname) end
-        end
+        local comboCoverFac = vgui.Create("DComboBox", coverPnl)
+        comboCoverFac:SetPos(16, 95) comboCoverFac:SetSize(280, 26)
+
+        local entCoverFacManual = vgui.Create("DTextEntry", coverPnl)
+        entCoverFacManual:SetPos(310, 95) entCoverFacManual:SetSize(240, 26)
+        entCoverFacManual:SetPlaceholderText("или ручное название ведомства")
+
+        local fNames = {}
+        for fn in pairs(Factions or FactionsData or {}) do if isstring(fn) then fNames[#fNames+1] = fn end end
+        table.sort(fNames)
+        for _, fn in ipairs(fNames) do comboCoverFac:AddChoice(fn) end
 
         local lblCName = vgui.Create("DLabel", coverPnl)
-        lblCName:SetPos(16, 90) lblCName:SetText("Легендированное ФИО (ручное):") lblCName:SetTextColor(CC.text) lblCName:SizeToContents()
+        lblCName:SetPos(16, 135) lblCName:SetText("ФИО по легенде:") lblCName:SetTextColor(CC.text) lblCName:SizeToContents()
         local entCoverName = vgui.Create("DTextEntry", coverPnl)
-        entCoverName:SetPos(16, 110) entCoverName:SetSize(280, 26)
+        entCoverName:SetPos(16, 155) entCoverName:SetSize(280, 26)
 
         local lblCRole = vgui.Create("DLabel", coverPnl)
-        lblCRole:SetPos(310, 90) lblCRole:SetText("Должность / Звание:") lblCRole:SetTextColor(CC.text) lblCRole:SizeToContents()
+        lblCRole:SetPos(310, 135) lblCRole:SetText("Легендированная должность:") lblCRole:SetTextColor(CC.text) lblCRole:SizeToContents()
         local entCoverRole = vgui.Create("DTextEntry", coverPnl)
-        entCoverRole:SetPos(310, 110) entCoverRole:SetSize(220, 26) entCoverRole:SetText("Специальный инспектор")
+        entCoverRole:SetPos(310, 155) entCoverRole:SetSize(240, 26) entCoverRole:SetText("Инспектор")
 
         local lblCDept = vgui.Create("DLabel", coverPnl)
-        lblCDept:SetPos(545, 90) lblCDept:SetText("Подразделение / Отдел:") lblCDept:SetTextColor(CC.text) lblCDept:SizeToContents()
+        lblCDept:SetPos(16, 195) lblCDept:SetText("Подразделение прикрытия:") lblCDept:SetTextColor(CC.text) lblCDept:SizeToContents()
         local entCoverDept = vgui.Create("DTextEntry", coverPnl)
-        entCoverDept:SetPos(545, 110) entCoverDept:SetSize(200, 26) entCoverDept:SetText("Главное Управление")
+        entCoverDept:SetPos(16, 215) entCoverDept:SetSize(280, 26) entCoverDept:SetText("Оперативный отдел")
 
         local lblCNum = vgui.Create("DLabel", coverPnl)
-        lblCNum:SetPos(16, 144) lblCNum:SetText("Номер жетона (с префиксом):") lblCNum:SetTextColor(CC.text) lblCNum:SizeToContents()
+        lblCNum:SetPos(310, 195) lblCNum:SetText("Номер служебного жетона прикрытия:") lblCNum:SetTextColor(CC.text) lblCNum:SizeToContents()
         local entCoverNum = vgui.Create("DTextEntry", coverPnl)
-        entCoverNum:SetPos(16, 164) entCoverNum:SetSize(180, 26) entCoverNum:SetText("ОРД-7701")
-
-        local lblCIssuer = vgui.Create("DLabel", coverPnl)
-        lblCIssuer:SetPos(210, 144) lblCIssuer:SetText("Кем выдано / подпись:") lblCIssuer:SetTextColor(CC.text) lblCIssuer:SizeToContents()
-        local entCoverIssuer = vgui.Create("DTextEntry", coverPnl)
-        entCoverIssuer:SetPos(210, 164) entCoverIssuer:SetSize(320, 26) entCoverIssuer:SetText("Руководство ведомства")
-
-        local lblCValid = vgui.Create("DLabel", coverPnl)
-        lblCValid:SetPos(545, 144) lblCValid:SetText("Срок действия:") lblCValid:SetTextColor(CC.text) lblCValid:SizeToContents()
-        local entCoverValid = vgui.Create("DTextEntry", coverPnl)
-        entCoverValid:SetPos(545, 164) entCoverValid:SetSize(200, 26) entCoverValid:SetText("Бессрочно")
+        entCoverNum:SetPos(310, 215) entCoverNum:SetSize(240, 26) entCoverNum:SetText("SEC-0042")
 
         local lblCPerms = vgui.Create("DLabel", coverPnl)
-        lblCPerms:SetPos(16, 200) lblCPerms:SetText("Специальные допуски в легендированной ксиве:") lblCPerms:SetFont("DermaDefaultBold") lblCPerms:SetTextColor(CC.gold) lblCPerms:SizeToContents()
+        lblCPerms:SetPos(16, 255) lblCPerms:SetText("Служебные допуски в фальшивом удостоверении:") lblCPerms:SetFont("DermaDefaultBold") lblCPerms:SetTextColor(CC.gold) lblCPerms:SizeToContents()
 
         local chkCoverBoxes = {}
-        local yCover = 222
-        local xCover = 16
-
+        local yCPos = 278
+        local xCPos = 16
         for i, pDef in ipairs(GRM.Documents.PermissionsList or {}) do
             local chk = vgui.Create("DCheckBoxLabel", coverPnl)
-            chk:SetPos(xCover, yCover)
-            chk:SetText(pDef.title)
+            chk:SetPos(xCPos, yCPos)
+            chk:SetText(pDef.title .. " (" .. pDef.desc .. ")")
             chk:SetTextColor(CC.text)
             chk:SetValue(true)
             chk:SizeToContents()
             chkCoverBoxes[pDef.id] = chk
 
-            if i % 2 == 1 then
-                xCover = 380
-            else
-                xCover = 16
-                yCover = yCover + 24
-            end
+            if i % 2 == 1 then xCPos = 420 else xCPos = 16 yCPos = yCPos + 24 end
         end
 
-        local selCovKey = ""
-        local selCovSid64 = "0"
+        local selectedCoverKey = ""
+        local selectedCoverSid64 = "0"
         comboCoverTarget.OnSelect = function(_, _, _, pData)
             if istable(pData) then
-                selCovKey = pData.key or ""
-                selCovSid64 = pData.steamID64 or "0"
+                selectedCoverKey = pData.key or ""
+                selectedCoverSid64 = pData.steamID64 or "0"
                 entCoverName:SetText(pData.rpName or "")
-            end
-        end
 
-        comboCoverFac.OnSelect = function(_, _, fname)
-            local facTpl = (tpls.factions and tpls.factions[fname]) or {}
-            local pfx = facTpl.prefix or (fname:sub(1, 3):upper() .. "-")
-            entCoverNum:SetText(pfx .. "00" .. math.random(10, 99))
-            entCoverIssuer:SetText("Руководство ведомства " .. fname)
+                if registry.coverBadges and registry.coverBadges[selectedCoverKey] then
+                    local ex = registry.coverBadges[selectedCoverKey]
+                    entCoverName:SetText(ex.fullName or pData.rpName or "")
+                    entCoverRole:SetText(ex.role or "Инспектор")
+                    entCoverDept:SetText(ex.department or "Оперативный отдел")
+                    entCoverNum:SetText(ex.number or "SEC-0042")
+                    entCoverFacManual:SetText(ex.faction or "")
+                    comboCoverFac:SetValue(ex.faction or "")
+                    if istable(ex.permissions) then
+                        for pId, cb in pairs(chkCoverBoxes) do
+                            cb:SetValue(ex.permissions[pId] == true)
+                        end
+                    end
+                end
+            end
         end
 
         local btnIssueCover = vgui.Create("DButton", coverPnl)
-        btnIssueCover:SetPos(16, yCover + 28)
-        btnIssueCover:SetSize(380, 36)
-        btnIssueCover:SetText("🎭 Оформить и выдать удостоверение прикрытия")
+        btnIssueCover:SetPos(16, yCPos + 20)
+        btnIssueCover:SetSize(360, 36)
+        btnIssueCover:SetText("✔ Сфабриковать удостоверение прикрытия")
         btnIssueCover:SetFont("DermaDefaultBold")
         btnIssueCover:SetTextColor(color_white)
         btnIssueCover.Paint = function(s, w, h)
-            draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(210, 120, 40) or Color(180, 90, 30))
+            draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(200, 90, 40) or Color(160, 70, 30))
         end
         btnIssueCover.DoClick = function()
-            if selCovKey == "" then
-                notification.AddLegacy("Выберите сотрудника!", NOTIFY_ERROR, 3)
+            if selectedCoverKey == "" then
+                notification.AddLegacy("Выберите сотрудника из списка!", NOTIFY_ERROR, 3)
                 return
             end
-            local chosenFac = comboCoverFac:GetValue()
-            if not chosenFac or chosenFac == "" then
-                notification.AddLegacy("Выберите организацию прикрытия!", NOTIFY_ERROR, 3)
-                return
-            end
+
+            local chosenFac = string.Trim(entCoverFacManual:GetText())
+            if chosenFac == "" then chosenFac = comboCoverFac:GetValue() end
+            if chosenFac == "" then chosenFac = "Служба Государственной Безопасности" end
 
             local curPerms = {}
             for pId, cb in pairs(chkCoverBoxes) do
@@ -903,30 +1091,30 @@ net.Receive("GRM_DocComp_Open", function()
                 fullName    = entCoverName:GetText(),
                 faction     = chosenFac,
                 role        = entCoverRole:GetText(),
-                department  = entCoverDept:GetText() ~= "" and entCoverDept:GetText() or "Главное Управление",
+                department  = entCoverDept:GetText(),
                 number      = entCoverNum:GetText(),
                 permissions = curPerms,
-                issuedBy    = entCoverIssuer:GetText(),
+                issuedBy    = "Руководство ведомства " .. chosenFac,
                 issueDate   = os.date("%d.%m.%Y"),
-                validUntil  = entCoverValid:GetText(),
+                validUntil  = "Бессрочно",
                 status      = "Действителен",
-                steamID64   = selCovSid64,
+                steamID64   = selectedCoverSid64,
                 isCover     = true,
             }
 
             net.Start("GRM_Doc_ComputerIssue")
                 net.WriteString("badge")
-                net.WriteString(selCovKey)
+                net.WriteString(selectedCoverKey)
                 net.WriteTable(pack)
             net.SendToServer()
             frame:Close()
         end
 
-        tabs:AddSheet("Документы прикрытия", coverPnl, "icon16/user_suit.png")
+        tabs:AddSheet("Документы прикрытия", coverPnl, "icon16/mask.png")
     end
 
     -- ══════════════════════════════════════════════════════════════
-    -- ВКЛАДКА 6: РЕЕСТР ВЫДАННЫХ ДОКУМЕНТОВ
+    -- ВКЛАДКА 6: РЕЕСТР И АРХИВ ВЫДАННЫХ ДОКУМЕНТОВ
     -- ══════════════════════════════════════════════════════════════
     local regPnl = vgui.Create("DPanel", tabs)
     regPnl:DockPadding(10, 10, 10, 10)
@@ -935,18 +1123,18 @@ net.Receive("GRM_DocComp_Open", function()
     local listDocs = vgui.Create("DListView", regPnl)
     listDocs:Dock(FILL)
     listDocs:SetMultiSelect(false)
-    listDocs:AddColumn("Тип"):SetFixedWidth(100)
-    listDocs:AddColumn("ФИО гражданина / сотрудника"):SetFixedWidth(200)
-    listDocs:AddColumn("Номер / Серия"):SetFixedWidth(120)
-    listDocs:AddColumn("Организация / Орган"):SetFixedWidth(180)
-    listDocs:AddColumn("Статус"):SetFixedWidth(110)
-    listDocs:AddColumn("CharacterKey")
+    listDocs:AddColumn("Тип"):SetFixedWidth(110)
+    listDocs:AddColumn("Владелец (ФИО)"):SetFixedWidth(200)
+    listDocs:AddColumn("Номер бланка"):SetFixedWidth(130)
+    listDocs:AddColumn("Орган / Фракция / Категории"):SetFixedWidth(260)
+    listDocs:AddColumn("Статус"):SetFixedWidth(140)
+    listDocs:AddColumn("Ключ персонажа")
 
     local function populateRegistry()
         listDocs:Clear()
         for k, p in pairs(registry.passports or {}) do
             if istable(p) then
-                local line = listDocs:AddLine("Паспорт", p.fullName or "?", (p.series or "GRM") .. " №" .. (p.number or "?"), "Гражданский", p.status or "Действителен", k)
+                local line = listDocs:AddLine("Паспорт", p.fullName or "?", (p.series or "") .. " " .. (p.number or "?"), p.issuedBy or "МВД", p.status or "Действителен", k)
                 line._docType = "passport"
                 line._docKey = k
             end
@@ -967,8 +1155,15 @@ net.Receive("GRM_DocComp_Open", function()
         end
         for k, l in pairs(registry.licenses or {}) do
             if istable(l) then
-                local line = listDocs:AddLine("Вод. права", l.fullName or "?", l.number or "?", "Кат: " .. (l.categoriesStr or "B"), l.status or "Действительно", k)
+                local line = listDocs:AddLine("Права (ГАИ)", l.fullName or "?", l.number or "?", "Кат: " .. (l.categoriesStr or "B"), l.status or "Действительно", k)
                 line._docType = "license"
+                line._docKey = k
+            end
+        end
+        for k, ml in pairs(registry.milLicenses or {}) do
+            if istable(ml) then
+                local line = listDocs:AddLine("Права (ВАИ)", ml.fullName or "?", ml.number or "?", "ВУС: " .. (ml.vus or "837") .. " (Кат: " .. (ml.categoriesStr or "B-В") .. ")", ml.status or "Действительно", k)
+                line._docType = "milLicense"
                 line._docKey = k
             end
         end
