@@ -140,7 +140,7 @@ function TOOL:RightClick(trace)
     if not IsValid(ply) or not trace or not IsValid(trace.Entity) then return false end
     local ent = trace.Entity
     local cls = ent:GetClass()
-    if cls ~= "grm_bank_vault" and cls ~= "grm_money_press" and cls ~= "grm_money_press_terminal" and cls ~= "grm_money_launderer" then
+    if cls ~= "grm_bank_vault" and cls ~= "grm_bank_computer" and cls ~= "grm_money_press" and cls ~= "grm_money_press_terminal" and cls ~= "grm_money_launderer" then
         return false
     end
     -- как E: сам Use внутри проверяет права (загрузка/выгрузка/настройка)
@@ -184,7 +184,7 @@ function TOOL:Reload(trace)
         if GRM.Notify then GRM.Notify(ply, "Точка выдачи сброшена (паллеты снова у станка).", 100, 220, 130) end
         return true
     end
-    if cls ~= "grm_bank_vault" and cls ~= "grm_money_press" and cls ~= "grm_money_press_terminal" and cls ~= "grm_money_launderer" then
+    if cls ~= "grm_bank_vault" and cls ~= "grm_bank_computer" and cls ~= "grm_money_press" and cls ~= "grm_money_press_terminal" and cls ~= "grm_money_launderer" then
         if GRM.Notify then GRM.Notify(ply, "Наведите на банковское оборудование.", 255, 180, 90) end
         return false
     end

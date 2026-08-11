@@ -1292,6 +1292,7 @@ if CLIENT then
     local THEME = {
         bg = Color(25, 25, 30, 245),
         bgLight = Color(35, 35, 42, 240),
+        panel = Color(30, 35, 48, 240),
         bgHover = Color(50, 50, 60, 250),
         accent = Color(80, 160, 255),
         accentDark = Color(50, 120, 200),
