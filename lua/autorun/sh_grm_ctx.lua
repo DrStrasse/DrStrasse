@@ -356,7 +356,7 @@ local function actShowBadge()
     -- Если у игрока есть и официальное удостоверение, и прикрытие — даём выбор!
     if data.hasOfficialBadge and data.hasCoverBadge then
         local menu = DermaMenu()
-        menu:AddOption("🛡 Служебное: " .. tostring(data.officialBadgeFac or "Ведомство"), function()
+        menu:AddOption("Служебное: " .. tostring(data.officialBadgeFac or "Ведомство"), function()
             net.Start("GRM_Doc_ShowDoc")
                 net.WriteString("badge")
                 net.WriteEntity(targetEnt)
@@ -364,7 +364,7 @@ local function actShowBadge()
             net.SendToServer()
         end):SetIcon("icon16/shield.png")
 
-        menu:AddOption("🎭 Документ прикрытия: " .. tostring(data.coverBadgeFac or "Прикрытие"), function()
+        menu:AddOption("Документ прикрытия: " .. tostring(data.coverBadgeFac or "Прикрытие"), function()
             net.Start("GRM_Doc_ShowDoc")
                 net.WriteString("badge")
                 net.WriteEntity(targetEnt)
@@ -426,14 +426,14 @@ local function actOwnBadge()
     -- Если у игрока есть и официальное, и прикрытие — выбор для личного просмотра
     if data.hasOfficialBadge and data.hasCoverBadge then
         local menu = DermaMenu()
-        menu:AddOption("🛡 Служебное: " .. tostring(data.officialBadgeFac or "Ведомство"), function()
+        menu:AddOption("Служебное: " .. tostring(data.officialBadgeFac or "Ведомство"), function()
             net.Start("GRM_Doc_OpenDoc")
                 net.WriteString("badge")
                 net.WriteString("official")
             net.SendToServer()
         end):SetIcon("icon16/shield.png")
 
-        menu:AddOption("🎭 Документ прикрытия: " .. tostring(data.coverBadgeFac or "Прикрытие"), function()
+        menu:AddOption("Документ прикрытия: " .. tostring(data.coverBadgeFac or "Прикрытие"), function()
             net.Start("GRM_Doc_OpenDoc")
                 net.WriteString("badge")
                 net.WriteString("cover")
@@ -534,7 +534,7 @@ local BTNS = {
     { id = "doc_pass", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
           if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
-          return "📄 Показать паспорт: " .. n
+          return "Показать паспорт: " .. n
       end,
       fn = actShowPassport,
       c = Color(140, 45, 55), ch = Color(170, 60, 70),
@@ -542,7 +542,7 @@ local BTNS = {
     { id = "doc_badge", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
           if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
-          return "🛡 Предъявить удостоверение: " .. n
+          return "Предъявить удостоверение: " .. n
       end,
       fn = actShowBadge,
       c = Color(35, 75, 135), ch = Color(50, 100, 170),
@@ -550,7 +550,7 @@ local BTNS = {
     { id = "doc_mil", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
           if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
-          return "🪖 Показать военный билет: " .. n
+          return "Показать военный билет: " .. n
       end,
       fn = actShowMilitary,
       c = Color(38, 90, 45), ch = Color(55, 120, 60),
@@ -558,7 +558,7 @@ local BTNS = {
     { id = "doc_lic", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
           if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
-          return "🚗 Показать права (ГАИ): " .. n
+          return "Показать права (Дорожная Инспекция): " .. n
       end,
       fn = actShowLicense,
       c = Color(35, 95, 165), ch = Color(50, 120, 195),
@@ -566,7 +566,7 @@ local BTNS = {
     { id = "doc_mil_lic", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
           if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
-          return "🪖 Показать права (ВАИ): " .. n
+          return "Показать права (ВАИ): " .. n
       end,
       fn = actShowMilLicense,
       c = Color(42, 105, 52), ch = Color(60, 135, 70),
@@ -574,33 +574,33 @@ local BTNS = {
     { id = "doc_med", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
           if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
-          return "🩺 Показать медкарту: " .. n
+          return "Показать медкарту: " .. n
       end,
       fn = actShowMedCard,
       c = Color(35, 120, 95), ch = Color(45, 150, 120),
       ok = function() return istable(data.aimPly) and data.hasMedCard == true end },
     -- ── документы: личный просмотр (Код 87) ───────────────────
-    { id = "doc_self_pass", l = "📄 Мой паспорт",
+    { id = "doc_self_pass", l = "Мой паспорт",
       fn = actOwnPassport,
       c = Color(140, 45, 55), ch = Color(170, 60, 70),
       ok = function() return not istable(data.aimPly) and data.hasPassport == true end },
-    { id = "doc_self_badge", l = "🛡 Моё удостоверение",
+    { id = "doc_self_badge", l = "Моё удостоверение",
       fn = actOwnBadge,
       c = Color(35, 75, 135), ch = Color(50, 100, 170),
       ok = function() return not istable(data.aimPly) and data.hasBadge == true end },
-    { id = "doc_self_mil", l = "🪖 Мой военный билет",
+    { id = "doc_self_mil", l = "Мой военный билет",
       fn = actOwnMilitary,
       c = Color(38, 90, 45), ch = Color(55, 120, 60),
       ok = function() return not istable(data.aimPly) and data.hasMilitary == true end },
-    { id = "doc_self_lic", l = "🚗 Мои права (ГАИ)",
+    { id = "doc_self_lic", l = "Мои права (Дорожная Инспекция)",
       fn = actOwnLicense,
       c = Color(35, 95, 165), ch = Color(50, 120, 195),
       ok = function() return not istable(data.aimPly) and data.hasLicense == true end },
-    { id = "doc_self_mil_lic", l = "🪖 Мои права (ВАИ)",
+    { id = "doc_self_mil_lic", l = "Мои права (ВАИ)",
       fn = actOwnMilLicense,
       c = Color(42, 105, 52), ch = Color(60, 135, 70),
       ok = function() return not istable(data.aimPly) and data.hasMilLicense == true end },
-    { id = "doc_self_med", l = "🩺 Моя медкарта",
+    { id = "doc_self_med", l = "Моя медкарта",
       fn = actOwnMedCard,
       c = Color(35, 120, 95), ch = Color(45, 150, 120),
       ok = function() return not istable(data.aimPly) and data.hasMedCard == true end },

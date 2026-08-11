@@ -108,7 +108,8 @@ net.Receive("GRM_CompPolice_Open", function()
 
     local btnAddWanted = vgui.Create("DButton", wantPnl)
     btnAddWanted:SetPos(806, 32) btnAddWanted:SetSize(120, 26)
-    btnAddWanted:SetText("🚨 В розыск")
+    btnAddWanted:SetText("[!] В розыск")
+    btnAddWanted:SetIcon("icon16/exclamation.png")
     btnAddWanted:SetFont("DermaDefaultBold")
     btnAddWanted:SetTextColor(color_white)
     btnAddWanted.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(230, 60, 60) or Color(180, 40, 40)) end
@@ -203,7 +204,8 @@ net.Receive("GRM_CompPolice_Open", function()
 
     local btnIssueFine = vgui.Create("DButton", finePnl)
     btnIssueFine:SetPos(16, 150) btnIssueFine:SetSize(320, 36)
-    btnIssueFine:SetText("📝 Выписать электронный штраф")
+    btnIssueFine:SetText("Выписать электронный штраф")
+    btnIssueFine:SetIcon("icon16/money.png")
     btnIssueFine:SetFont("DermaDefaultBold")
     btnIssueFine:SetTextColor(color_white)
     btnIssueFine.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(35, 140, 190) or Color(25, 110, 160)) end

@@ -130,7 +130,7 @@ function SWEP:CheckDocuments(searcher, target)
     local mil = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.military and GRM.Documents.Registry.military[charKey]
     local milStr = mil and string.format("№ %s (Звание: %s, Часть: %s, %s)", mil.number or "—", mil.rank or "—", mil.formation or "—", mil.status or "Действителен") or "Не выдан"
 
-    -- 4. Гражданские водительские права (ГАИ)
+    -- 4. Водительские права (Дорожная Инспекция)
     local lic = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.licenses and GRM.Documents.Registry.licenses[charKey]
     local licStr = lic and string.format("№ %s (Категории: %s, %s)", lic.number or "—", lic.categoriesStr or "B", lic.status or "Действительно") or "Не получены"
 
@@ -145,7 +145,7 @@ function SWEP:CheckDocuments(searcher, target)
     -- 7. Оружие
     local wepCount = #target:GetWeapons()
 
-    local msg = string.format("══════════ [ДОСЬЕ ДОКУМЕНТОВ: %s] ══════════\n• Паспорт: %s\n• Удостоверение: %s\n• Военный билет: %s\n• Права (ГАИ): %s\n• Права (ВАИ): %s\n• Медкарта: %s\n• Оружие при себе: %d ед.", targetName, passStr, badgeStr, milStr, licStr, milLicStr, medStr, wepCount)
+    local msg = string.format("══════════ [ДОСЬЕ ДОКУМЕНТОВ: %s] ══════════\n• Паспорт: %s\n• Удостоверение: %s\n• Военный билет: %s\n• Права (Дорожная Инспекция): %s\n• Права (ВАИ): %s\n• Медкарта: %s\n• Оружие при себе: %d ед.", targetName, passStr, badgeStr, milStr, licStr, milLicStr, medStr, wepCount)
     searcher:ChatPrint(msg)
     if GRM.Notify then GRM.Notify(searcher, "Досье документов проверено: " .. targetName, 120, 200, 255) end
 end
