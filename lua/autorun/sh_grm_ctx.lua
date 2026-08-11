@@ -327,13 +327,47 @@ local function actFactions()
 end
 local function actMask()      RunConsoleCommand("say", "/mask") end
 
-local function actShowPassport() RunConsoleCommand("say", "/showpassport") end
-local function actShowBadge()    RunConsoleCommand("say", "/showbadge") end
-local function actShowMedCard()  RunConsoleCommand("say", "/showmedcard") end
+local function actShowPassport()
+    local ap = istable(data.aimPly) and data.aimPly or nil
+    net.Start("GRM_Doc_ShowDoc")
+        net.WriteString("passport")
+        net.WriteEntity(Entity(ap and ap.idx or 0))
+    net.SendToServer()
+end
 
-local function actOwnPassport()  RunConsoleCommand("say", "/passport") end
-local function actOwnBadge()     RunConsoleCommand("say", "/badge") end
-local function actOwnMedCard()   RunConsoleCommand("say", "/medcard") end
+local function actShowBadge()
+    local ap = istable(data.aimPly) and data.aimPly or nil
+    net.Start("GRM_Doc_ShowDoc")
+        net.WriteString("badge")
+        net.WriteEntity(Entity(ap and ap.idx or 0))
+    net.SendToServer()
+end
+
+local function actShowMedCard()
+    local ap = istable(data.aimPly) and data.aimPly or nil
+    net.Start("GRM_Doc_ShowDoc")
+        net.WriteString("medcard")
+        net.WriteEntity(Entity(ap and ap.idx or 0))
+    net.SendToServer()
+end
+
+local function actOwnPassport()
+    net.Start("GRM_Doc_OpenDoc")
+        net.WriteString("passport")
+    net.SendToServer()
+end
+
+local function actOwnBadge()
+    net.Start("GRM_Doc_OpenDoc")
+        net.WriteString("badge")
+    net.SendToServer()
+end
+
+local function actOwnMedCard()
+    net.Start("GRM_Doc_OpenDoc")
+        net.WriteString("medcard")
+    net.SendToServer()
+end
 
 -- Деньги в C-меню (по заказу: «выбросить деньги / передать деньги игроку»)
 local function actDropMoney()

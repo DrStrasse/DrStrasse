@@ -352,6 +352,12 @@ if SERVER then
                 end
                 tpl = (DOC.Templates.factions and DOC.Templates.factions[payload.faction]) or {}
             end
+        elseif docType == "medcard" then
+            if GRM.Medical and GRM.Medical.CardOf then
+                local cardKey = getCharKey(ply)
+                payload = GRM.Medical.CardOf(cardKey)
+                tpl = { patientName = getPlayerRPName(ply) }
+            end
         end
 
         if payload then
@@ -366,18 +372,21 @@ if SERVER then
     end
     DOC.SendOwnDoc = sendOwnDoc
 
-    -- Показ документа целевому игроку (в прицеле)
-    local function showDocToTarget(ply, docType)
+    -- Показ документа целевому игроку (в прицеле или явная цель)
+    local function showDocToTarget(ply, docType, explicitTarget)
         if not IsValid(ply) then return end
-        local tr = ply:GetEyeTrace()
-        local target = tr.Entity
+        local target = explicitTarget
+        if not (IsValid(target) and target:IsPlayer() and target:Alive()) then
+            local tr = ply:GetEyeTrace()
+            target = tr.Entity
+        end
 
         if not (IsValid(target) and target:IsPlayer() and target:Alive()) then
-            if GRM.Notify then GRM.Notify(ply, "Наведитесь на игрока перед собой (дистанция до 130 юнитов).", 255, 180, 90) end
+            if GRM.Notify then GRM.Notify(ply, "Наведитесь на игрока перед собой (дистанция до 200 юнитов).", 255, 180, 90) end
             return
         end
 
-        if ply:GetPos():DistToSqr(target:GetPos()) > 130 * 130 then
+        if ply:GetPos():DistToSqr(target:GetPos()) > 200 * 200 then
             if GRM.Notify then GRM.Notify(ply, "Игрок слишком далеко — подойдите ближе.", 255, 180, 90) end
             return
         end
@@ -488,7 +497,8 @@ if SERVER then
 
     net.Receive(NET_SHOW_DOC, function(_, ply)
         local docType = net.ReadString()
-        showDocToTarget(ply, docType)
+        local target = net.ReadEntity()
+        showDocToTarget(ply, docType, target)
     end)
 
     -- Админ-настройка шаблонов
