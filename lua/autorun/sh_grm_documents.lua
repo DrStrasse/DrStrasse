@@ -1481,5 +1481,122 @@ if CLIENT then
         openAdminConfigUI(tpl)
     end)
 
+    -- ============================================================
+    -- КЛИЕНТСКИЕ КОМАНДЫ ЧАТА (как в Factions)
+    -- ============================================================
+    hook.Add("PlayerSayTransform", "GRM_Docs_ClientCommands", function(ply, datapack, is_team, is_local)
+        if ply ~= LocalPlayer() then return end
+        local msg = datapack[1]
+        if not isstring(msg) then return end
+        local low = msg:lower():Trim()
+
+        if low == "/passport" or low == "/pass" or low == "/myid" or low == "/id" then
+            net.Start(NET_OPEN_DOC)
+            net.WriteString("passport")
+            net.SendToServer()
+            datapack[1] = ""
+            datapack.SkipPlayerSay = true
+            return
+        end
+
+        if low == "/showpassport" or low == "/showpass" or low == "/showid" then
+            local tr = LocalPlayer():GetEyeTrace()
+            net.Start(NET_SHOW_DOC)
+                net.WriteString("passport")
+                net.WriteEntity(tr.Entity)
+            net.SendToServer()
+            datapack[1] = ""
+            datapack.SkipPlayerSay = true
+            return
+        end
+
+        if low == "/badge" or low == "/mybadge" or low == "/udost" then
+            net.Start(NET_OPEN_DOC)
+            net.WriteString("badge")
+            net.SendToServer()
+            datapack[1] = ""
+            datapack.SkipPlayerSay = true
+            return
+        end
+
+        if low == "/showbadge" or low == "/showudost" then
+            local tr = LocalPlayer():GetEyeTrace()
+            net.Start(NET_SHOW_DOC)
+                net.WriteString("badge")
+                net.WriteEntity(tr.Entity)
+            net.SendToServer()
+            datapack[1] = ""
+            datapack.SkipPlayerSay = true
+            return
+        end
+
+        if low == "/medcard" or low == "/mycard" then
+            net.Start(NET_OPEN_DOC)
+            net.WriteString("medcard")
+            net.SendToServer()
+            datapack[1] = ""
+            datapack.SkipPlayerSay = true
+            return
+        end
+
+        if low == "/showmedcard" or low == "/showmed" then
+            local tr = LocalPlayer():GetEyeTrace()
+            net.Start(NET_SHOW_DOC)
+                net.WriteString("medcard")
+                net.WriteEntity(tr.Entity)
+            net.SendToServer()
+            datapack[1] = ""
+            datapack.SkipPlayerSay = true
+            return
+        end
+
+        if low == "/doc_admin" or low == "/doccfg" or low == "!doc_admin" then
+            if LocalPlayer():IsSuperAdmin() then
+                net.Start(NET_ADMIN_GET)
+                net.SendToServer()
+            end
+            datapack[1] = ""
+            datapack.SkipPlayerSay = true
+            return
+        end
+    end)
+
+    concommand.Add("passport", function()
+        net.Start(NET_OPEN_DOC)
+        net.WriteString("passport")
+        net.SendToServer()
+    end)
+    concommand.Add("badge", function()
+        net.Start(NET_OPEN_DOC)
+        net.WriteString("badge")
+        net.SendToServer()
+    end)
+    concommand.Add("medcard", function()
+        net.Start(NET_OPEN_DOC)
+        net.WriteString("medcard")
+        net.SendToServer()
+    end)
+    concommand.Add("showpassport", function()
+        local tr = LocalPlayer():GetEyeTrace()
+        net.Start(NET_SHOW_DOC)
+        net.WriteString("passport")
+        net.WriteEntity(tr.Entity)
+        net.SendToServer()
+    end)
+    concommand.Add("showbadge", function()
+        local tr = LocalPlayer():GetEyeTrace()
+        net.Start(NET_SHOW_DOC)
+        net.WriteString("badge")
+        net.WriteEntity(tr.Entity)
+        net.SendToServer()
+    end)
+    concommand.Add("showmedcard", function()
+        local tr = LocalPlayer():GetEyeTrace()
+        net.Start(NET_SHOW_DOC)
+        net.WriteString("medcard")
+        net.WriteEntity(tr.Entity)
+        net.SendToServer()
+    end)
+
     print("[GRM Documents] Core v" .. DOC.Version .. " (Client) loaded")
 end
