@@ -161,6 +161,8 @@ if SERVER then
             access = {
                 -- Фракции с доступом к оформлению паспортов (Паспортный стол)
                 passports = { ["Department of Labour and Social Protection"] = true },
+                -- Фракции с доступом к выдаче служебных удостоверений (Отдел кадров)
+                badges    = { ["OrdnungPolizei"] = true, ["Department of Labour and Social Protection"] = true },
                 -- Фракции с допуском к документам прикрытия (Спецслужбы / Контрразведка)
                 coverDocs = {},
             }
@@ -328,8 +330,11 @@ if SERVER then
         local fac = ply:GetNWString("GRM_Faction", "")
         if fac == "" then return false end
 
-        -- Лидер своей фракции
-        if _G.FactionsAPI and _G.FactionsAPI.IsLeader and _G.FactionsAPI.IsLeader(ply, fac) then
+        -- Проверяем допуск фракции к выдаче удостоверений (Отдел кадров)
+        local hasBadgeAccess = (DOC.Templates.access and DOC.Templates.access.badges and DOC.Templates.access.badges[fac] == true)
+        local isLead = (_G.FactionsAPI and _G.FactionsAPI.IsLeader and _G.FactionsAPI.IsLeader(ply, fac)) == true
+
+        if isLead or hasBadgeAccess then
             if targetFaction == nil or targetFaction == fac then return true end
         end
 
@@ -1424,37 +1429,54 @@ if CLIENT then
 
         -- Вкладка: Права доступа к Компьютеру
         local accPnl = vgui.Create("DPanel", tabs)
-        accPnl:DockPadding(16, 16, 16, 16)
+        accPnl:DockPadding(10, 10, 10, 10)
         accPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(30, 35, 45)) end
 
-        local lblAcc1 = vgui.Create("DLabel", accPnl)
-        lblAcc1:Dock(TOP)
-        lblAcc1:SetText("Фракции с правом оформления паспортов (Паспортный стол):")
-        lblAcc1:SetFont("GRMDoc_Bold")
-        lblAcc1:SetTall(24)
+        local accScroll = vgui.Create("DScrollPanel", accPnl)
+        accScroll:Dock(FILL)
 
+        local function mkSection(title, col)
+            local lbl = vgui.Create("DLabel", accScroll)
+            lbl:Dock(TOP)
+            lbl:DockMargin(0, 10, 0, 4)
+            lbl:SetText(title)
+            lbl:SetFont("GRMDoc_Bold")
+            lbl:SetTextColor(col or Color(80, 160, 255))
+            lbl:SetTall(22)
+            return lbl
+        end
+
+        -- 1. Паспорта
+        mkSection("1. Фракции с правом оформления паспортов (Паспортный стол):", Color(245, 200, 70))
         local passBoxes = {}
         for _, fname in ipairs(names) do
-            local chk = vgui.Create("DCheckBoxLabel", accPnl)
+            local chk = vgui.Create("DCheckBoxLabel", accScroll)
             chk:Dock(TOP)
-            chk:DockMargin(10, 2, 0, 2)
+            chk:DockMargin(12, 2, 0, 2)
             chk:SetText(fname)
             chk:SetValue(tpl.access.passports and tpl.access.passports[fname] == true)
             passBoxes[fname] = chk
         end
 
-        local lblAcc2 = vgui.Create("DLabel", accPnl)
-        lblAcc2:Dock(TOP)
-        lblAcc2:DockMargin(0, 16, 0, 0)
-        lblAcc2:SetText("Фракции с допуском к документам прикрытия (Спецслужбы / Контрразведка):")
-        lblAcc2:SetFont("GRMDoc_Bold")
-        lblAcc2:SetTall(24)
+        -- 2. Служебные удостоверения
+        mkSection("2. Фракции с правом выдачи служебных удостоверений (Отдел кадров):", Color(80, 160, 255))
+        local badgeBoxes = {}
+        for _, fname in ipairs(names) do
+            local chk = vgui.Create("DCheckBoxLabel", accScroll)
+            chk:Dock(TOP)
+            chk:DockMargin(12, 2, 0, 2)
+            chk:SetText(fname)
+            chk:SetValue(tpl.access.badges and tpl.access.badges[fname] == true)
+            badgeBoxes[fname] = chk
+        end
 
+        -- 3. Документы прикрытия
+        mkSection("3. Фракции с допуском к документам прикрытия (Спецслужбы / Контрразведка):", Color(240, 120, 50))
         local coverBoxes = {}
         for _, fname in ipairs(names) do
-            local chk = vgui.Create("DCheckBoxLabel", accPnl)
+            local chk = vgui.Create("DCheckBoxLabel", accScroll)
             chk:Dock(TOP)
-            chk:DockMargin(10, 2, 0, 2)
+            chk:DockMargin(12, 2, 0, 2)
             chk:SetText(fname)
             chk:SetValue(tpl.access.coverDocs and tpl.access.coverDocs[fname] == true)
             coverBoxes[fname] = chk
@@ -1501,6 +1523,11 @@ if CLIENT then
             tpl.access.passports = {}
             for fn, cb in pairs(passBoxes) do
                 if cb:GetChecked() then tpl.access.passports[fn] = true end
+            end
+
+            tpl.access.badges = {}
+            for fn, cb in pairs(badgeBoxes) do
+                if cb:GetChecked() then tpl.access.badges[fn] = true end
             end
 
             tpl.access.coverDocs = {}
