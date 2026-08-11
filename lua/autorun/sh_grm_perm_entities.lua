@@ -106,6 +106,8 @@ if SERVER then
         grm_bank_computer       = true,
         grm_money_press         = true,
         grm_money_press_terminal = true,
+        -- Служебный Компьютер Оформления Документов (Код 87)
+        grm_doc_computer        = true,
         -- Отмывщик денег / ивент «Ограбление» (находка 179e)
         grm_money_launderer     = true,
         -- Лаборатории (Код 120)

@@ -313,6 +313,10 @@ local function actFactions()
 end
 local function actMask()      RunConsoleCommand("say", "/mask") end
 
+local function actShowPassport() RunConsoleCommand("say", "/showpassport") end
+local function actShowBadge()    RunConsoleCommand("say", "/showbadge") end
+local function actShowMedCard()  RunConsoleCommand("say", "/showmedcard") end
+
 -- Деньги в C-меню (по заказу: «выбросить деньги / передать деньги игроку»)
 local function actDropMoney()
     Derma_StringRequest("Выбросить наличные", "Сумма (пачка упадёт перед вами):", "",
@@ -367,6 +371,31 @@ local BTNS = {
       end,
       fn = actGiveMoney,
       c = Color(90, 170, 90), ch = Color(110, 190, 110),
+      ok = function() return istable(data.aimPly) end },
+    -- ── документы: показ игроку перед собой (Код 87) ──────────
+    { id = "doc_pass", l = function()
+          local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
+          if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
+          return "📄 Показать паспорт: " .. n
+      end,
+      fn = actShowPassport,
+      c = Color(140, 45, 55), ch = Color(170, 60, 70),
+      ok = function() return istable(data.aimPly) end },
+    { id = "doc_badge", l = function()
+          local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
+          if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
+          return "🛡 Предъявить удостоверение: " .. n
+      end,
+      fn = actShowBadge,
+      c = Color(35, 75, 135), ch = Color(50, 100, 170),
+      ok = function() return istable(data.aimPly) and data.isFactionMember == true end },
+    { id = "doc_med", l = function()
+          local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
+          if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
+          return "🩺 Показать медкарту: " .. n
+      end,
+      fn = actShowMedCard,
+      c = Color(35, 120, 95), ch = Color(45, 150, 120),
       ok = function() return istable(data.aimPly) end },
     -- ── транспорт (Код 82): только когда смотрим на машину ──
     { id = "veh_lock",   l = function() return (istable(data.veh) and data.veh.locked) and "Открыть замок Т/С" or "Закрыть Т/С на замок" end,

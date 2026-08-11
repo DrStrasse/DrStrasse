@@ -32,6 +32,7 @@ end
 table.Count = table.Count or function(t) local n = 0 for _ in pairs(t or {}) do n = n + 1 end return n end
 CurTime = CurTime or function() return os.clock() end
 isfunction = isfunction or function(v) return type(v) == "function" end
+Color = Color or function(r, g, b, a) return { r = r or 255, g = g or 255, b = b or 255, a = a or 255 } end
 function AddCSLuaFile() end
 
 -- ── JSON ───────────────────────────────────────────────────
@@ -861,5 +862,61 @@ if PHASE == "incass" then
     assert(restored2 == 20050000 and I.GetTerminalCash(atmAfterRestart2) == 20050000, "incass: 20 млн не пережили рестарт: " .. tostring(restored2))
 
     print("PHASE incass: OK — старт рейса/двунаправленная инкассация/персистентность баланса банкоматов (20 млн)/свободная разгрузка/финиш рейса")
+    return
+end
+
+-- ======================= ФАЗА 16: ДОКУМЕНТЫ (Паспорта, Ксивы, Прикрытие) =====================
+if PHASE == "documents" then
+    GRM = GRM or {}
+    dofile("lua/autorun/sh_grm_documents.lua")
+    local DOC = GRM.Documents
+
+    local function mkUser(nick, sid64, sid, slot)
+        local p = mkPly(nick, sid64, sid)
+        p.IsSuperAdmin = function() return false end
+        p.__msgs = {}
+        p.PrintMessage = function(_, _, m) p.__msgs[#p.__msgs + 1] = tostring(m) end
+        p.GetNWString = function(_, k, d)
+            if k == "GRM_RPName" then return nick end
+            if k == "GRM_CharacterID" then return slot or "char1" end
+            if k == "GRM_Faction" then return p.__fac or "" end
+            if k == "GRM_Role" then return p.__role or "" end
+            if k == "GRM_Department" then return p.__dept or "" end
+            return d or ""
+        end
+        return p
+    end
+
+    local citizen = mkUser("Hans Schmidt", "76561199000000001", "STEAM_0:1:1", "char1")
+    local officer = mkUser("Klaus Bauer",   "76561199000000002", "STEAM_0:1:2", "char1")
+    officer.__fac = "OrdnungPolizei"
+    officer.__role = "Инспектор"
+    officer.__dept = "ДПС"
+
+    -- 1. Создание и получение паспорта
+    local pass = DOC.EnsurePassport(citizen)
+    assert(istable(pass), "documents: паспорт не создан")
+    assert(pass.charKey == "76561199000000001:char1", "documents: неверный charKey в паспорте")
+    assert(pass.fullName == "Hans Schmidt", "documents: неверное ФИО в паспорте")
+
+    -- 2. Создание и получение служебного удостоверения
+    local badge = DOC.EnsureBadge(officer)
+    assert(istable(badge), "documents: удостоверение не создано")
+    assert(badge.faction == "OrdnungPolizei", "documents: неверная фракция в удостоверении")
+    assert(badge.number:find("POL-"), "documents: префикс ведомства отсутствует в жетоне")
+    assert(badge.permissions.weapon == true and badge.permissions.arrest == true, "documents: спецдопуски не применились")
+
+    -- 3. Сохранение и персистентность (переживает рестарт)
+    DOC.SaveRegistry("test save")
+    DOC.Registry = nil
+    DOC.LoadRegistry()
+
+    local passAfter = DOC.Registry.passports["76561199000000001:char1"]
+    assert(istable(passAfter) and passAfter.fullName == "Hans Schmidt", "documents: паспорт не пережил рестарт")
+
+    local badgeAfter = DOC.Registry.badges["76561199000000002:char1"]
+    assert(istable(badgeAfter) and badgeAfter.faction == "OrdnungPolizei", "documents: удостоверение не пережило рестарт")
+
+    print("PHASE documents: OK — паспорта/служебные удостоверения/префиксы/спецдопуски/персистентность")
     return
 end

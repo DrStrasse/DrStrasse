@@ -32,6 +32,7 @@ end
 local TYPES = {
     vault       = { id = "vault",       class = "grm_bank_vault",           label = "Хранилище" },
     computer    = { id = "computer",    class = "grm_bank_computer",        label = "Компьютер Управления (Банк)" },
+    doc_comp    = { id = "doc_comp",    class = "grm_doc_computer",         label = "Компьютер оформления документов" },
     press       = { id = "press",       class = "grm_money_press",          label = "Печатный станок" },
     terminal    = { id = "terminal",    class = "grm_money_press_terminal", label = "Терминал станка" },
     spawnpoint  = { id = "spawnpoint",  class = "grm_money_press",          label = "Точка выдачи паллет" },
@@ -204,6 +205,7 @@ if CLIENT then
         local t = panel:ComboBox("Тип", "grm_bank_tool_type")
         t:AddChoice("Хранилище (гос.бюджет)", "vault")
         t:AddChoice("Компьютер Управления (Банк)", "computer")
+        t:AddChoice("Компьютер оформления документов", "doc_comp")
         t:AddChoice("Печатный станок (5000/10с)", "press")
         t:AddChoice("Терминал станка", "terminal")
         t:AddChoice("Точка выдачи паллет (суперадмин)", "spawnpoint")

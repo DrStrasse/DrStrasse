@@ -31,7 +31,7 @@ GRM = GRM or {}
 GRM.Medical = GRM.Medical or {}
 local MD = GRM.Medical
 
-MD.Version   = "1.1.0"
+MD.Version   = "2.0.0"
 MD.ConfigFile = "grm_medcfg.json"
 MD.CardsFile  = "grm_medcards.json"
 MD.MaxEntries = 60
@@ -39,6 +39,14 @@ MD.MaxEntries = 60
 MD.BloodTypes = {
     "O(I) Rh+", "O(I) Rh−", "A(II) Rh+", "A(II) Rh−",
     "B(III) Rh+", "B(III) Rh−", "AB(IV) Rh+", "AB(IV) Rh−",
+}
+
+MD.FitnessCategories = {
+    "А — Годен к военной службе и работе",
+    "Б — Годен с незначительными ограничениями",
+    "В — Ограниченно годен к службе",
+    "Г — Временно не годен (на период лечения)",
+    "Д — Не годен к военной службе",
 }
 
 MD.EntryKinds = {
@@ -200,10 +208,22 @@ if SERVER then
         if sid64 == "" then return nil end
         local c = MD.Cards[sid64]
         if not istable(c) then
-            c = { name = "?", blood = "", allergies = "", chronic = "", entries = {}, created = os.time(), updated = 0 }
+            c = {
+                name = "?",
+                blood = "",
+                allergies = "",
+                chronic = "",
+                fitnessCategory = "А — Годен к военной службе и работе",
+                entries = {},
+                created = os.time(),
+                updated = 0
+            }
             MD.Cards[sid64] = c
         end
         c.entries = istable(c.entries) and c.entries or {}
+        if not c.fitnessCategory or c.fitnessCategory == "" then
+            c.fitnessCategory = "А — Годен к военной службе и работе"
+        end
         return c
     end
     MD.CardOf = cardOf
@@ -320,9 +340,12 @@ if SERVER then
         local myFac = factionOf(ply) or "—"
 
         if op == "vitals" then
-            local blood = tostring(net.ReadString() or "")
-            card.allergies = string.sub(string.Trim(tostring(net.ReadString() or "")), 1, 300)
-            card.chronic   = string.sub(string.Trim(tostring(net.ReadString() or "")), 1, 300)
+            local blood   = tostring(net.ReadString() or "")
+            card.allergies= string.sub(string.Trim(tostring(net.ReadString() or "")), 1, 300)
+            card.chronic  = string.sub(string.Trim(tostring(net.ReadString() or "")), 1, 300)
+            local fitness = tostring(net.ReadString() or "")
+            if fitness ~= "" then card.fitnessCategory = fitness end
+
             local okBlood = false
             for _, b in ipairs(MD.BloodTypes) do if b == blood then okBlood = true break end end
             card.blood = okBlood and blood or ""
@@ -537,6 +560,19 @@ if CLIENT then
         bsel:SetValue(card.blood ~= "" and card.blood or "— не указана —")
         for _, b in ipairs(MD.BloodTypes) do bsel:AddChoice(b, b, card.blood == b) end
         bsel:SetEnabled(canEdit == true)
+        y = y + 30
+
+        -- категория годности
+        local fl = vgui.Create("DLabel", parent)
+        fl._medCardDyn = true
+        fl:SetPos(x0, y) fl:SetSize(150, 22) fl:SetFont("GRMMed_Sub") fl:SetTextColor(MC.dim)
+        fl:SetText("Категория годности:")
+        local fsel = vgui.Create("DComboBox", parent)
+        fsel._medCardDyn = true
+        fsel:SetPos(x0 + 150, y - 2) fsel:SetSize(340, 26) fsel:SetFont("GRMMed_Text")
+        fsel:SetValue(card.fitnessCategory or "А — Годен к военной службе и работе")
+        for _, fit in ipairs(MD.FitnessCategories) do fsel:AddChoice(fit, fit, card.fitnessCategory == fit) end
+        fsel:SetEnabled(canEdit == true)
         y = y + 34
 
         local function mkEditBlock(title, key, val)
@@ -562,12 +598,14 @@ if CLIENT then
             bVit:SetPos(x0, y)
             bVit.DoClick = function()
                 local _, blood = bsel:GetSelected()
+                local _, fitness = fsel:GetSelected()
                 net.Start(NET_EDIT)
                     net.WriteString("vitals")
                     net.WriteString(_cardSid or "")
                     net.WriteString(tostring(blood or ""))
                     net.WriteString(eAllerg:GetValue() or "")
                     net.WriteString(eChron:GetValue() or "")
+                    net.WriteString(tostring(fitness or ""))
                 net.SendToServer()
             end
         end
