@@ -17,8 +17,6 @@ function ENT:Draw()
     if not IsValid(ply) then return end
     if ply:GetPos():DistToSqr(self:GetPos()) > 900 * 900 then return end
 
-    -- Находка 178c: информация на ЛИЦЕВОЙ стороне модели (по GetForward),
-    -- а не парящим биллбордом сверху — как у сканера (ScreenAngles).
     local mins, maxs = self:OBBMins(), self:OBBMaxs()
     local depth = (maxs and mins and (maxs.x - mins.x) > 0.1) and (maxs.x - mins.x) or 40
     local pos = self:WorldSpaceCenter() + self:GetForward() * (depth * 0.5 + 6)
@@ -31,7 +29,7 @@ function ENT:Draw()
         draw.SimpleText("В ГОСБЮДЖЕТЕ СЕЙЧАС: " .. money(self:GetStateBudget() or 0), "GRMVault_Title", 0, -20, Color(255, 220, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         draw.SimpleText("В хранилище: " .. money(self:GetHeldCash() or 0) .. " / " .. money(self:GetCapacity() or 0), "GRMVault_Normal", 0, 12, Color(200, 220, 240), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         draw.SimpleText("E — меню: загрузить паллеты / выгрузить", "GRMVault_Small", 0, 36, Color(140, 155, 175), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        draw.SimpleText("Паллеты от станка и пополнений грузятся сюда", "GRMVault_Small", 0, 52, Color(110, 130, 150), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Распределение в госбюджет — через Компьютер Банка", "GRMVault_Small", 0, 52, Color(110, 130, 150), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     cam.End3D2D()
 end
 
@@ -119,7 +117,8 @@ net.Receive("GRM_VaultMenu_Open", function()
     else
         local l = vgui.Create("DLabel", body)
         l:Dock(TOP)
-        l:SetTall(30)
+        l:DockMargin(0, 0, 0, 8)
+        l:SetTall(25)
         l:SetFont("GRMVault_Small")
         l:SetTextColor(C.dim)
         l:SetText("Выгрузка — только для сотрудников с доступом к экономике.")
@@ -131,5 +130,5 @@ net.Receive("GRM_VaultMenu_Open", function()
     hint:SetFont("GRMVault_Small")
     hint:SetTextColor(C.dim)
     hint:SetWrap(true)
-    hint:SetText("Загруженные паллеты пополняют запас хранилища; обычные деньги-пропы — ещё и гос.бюджет (взнос в казну).")
+    hint:SetText("Деньги в хранилище хранятся автономно. Распределение в гос.бюджет / бюджеты фракций — через Компьютер Управления (Банк).")
 end)

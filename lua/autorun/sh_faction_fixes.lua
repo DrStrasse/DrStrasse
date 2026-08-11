@@ -2917,43 +2917,117 @@ if CLIENT then
         tabs:AddSheet("Расширенные настройки", OpenExtendedSettings(tabs), "icon16/cog.png")
     end)
 
-    -- Вкладка «Экономика» (находка 172): доступ у тех, кто CanManageEconomy
-    -- (лидер/зам Нацбанка, суперадмин). ПОЛНАЯ панель экономики встроена
-    -- прямо во вкладку (гос.бюджет, перечисления, налоги, штрафы, зарплаты).
+    -- Вкладка «Экономика» в /factions (v3.2.0): чистый информационный режим.
+    -- Любые читерские кнопки убраны: только отображение госбюджета и
+    -- бюджетов/налогов фракций. Управление — строго через банкомат/компьютер.
     local function OpenEconomyPanel(parentFrame)
         local panel = vgui.Create("DPanel")
         panel:SetPaintBackground(false)
-        panel:DockPadding(6, 6, 6, 6)
-        local holder = vgui.Create("DPanel", panel)
-        holder:Dock(FILL)
-        holder:SetPaintBackground(false)
+        panel:DockPadding(10, 10, 10, 10)
 
-        -- Находка 177: сигнатура защищена от обоих вариантов вызова —
-        -- _embeddedBuild(panel, d) (данные во втором) и _embeddedBuild(d)
-        -- (данные в первом). Раньше сюда приходила панель вместо данных,
-        -- и фракции/игроки/гос.бюджет в /factions были пустыми.
-        local function build(a, b)
-            local d = b or a
-            if not IsValid(holder) then return end
-            if GRM.Economy and GRM.Economy.BuildAdminContent then
-                GRM.Economy.BuildAdminContent(holder, d)
+        local header = vgui.Create("DPanel", panel)
+        header:Dock(TOP)
+        header:SetTall(64)
+        header:DockMargin(0, 0, 0, 12)
+        header.Paint = function(self, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, THEME.panel)
+            local st = (GRM.Economy and GRM.Economy.StateBudgetGet and GRM.Economy.StateBudgetGet())
+                or (GRM.Economy and GRM.Economy.Data and GRM.Economy.Data.state and GRM.Economy.Data.state.budget)
+                or 0
+            local stTxt = GRM.Format and GRM.Format(st) or (tostring(st) .. " GRM")
+            draw.SimpleText("ГОСУДАРСТВЕННЫЙ БЮДЖЕТ СЕРВЕРА", "FactionsExt_Small", 14, 16, THEME.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(stTxt, "FactionsExt_Title", 14, 42, Color(245, 190, 60), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
+
+        local content = vgui.Create("DPanel", panel)
+        content:Dock(FILL)
+        content:DockPadding(12, 12, 12, 12)
+        content.Paint = function(self, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, THEME.panel)
+        end
+
+        local lblChoose = vgui.Create("DLabel", content)
+        lblChoose:Dock(TOP)
+        lblChoose:SetTall(24)
+        lblChoose:SetFont("FactionsExt_Normal")
+        lblChoose:SetTextColor(THEME.text)
+        lblChoose:SetText("Выберите организацию для просмотра финансового состояния:")
+
+        local factionCombo = vgui.Create("DComboBox", content)
+        factionCombo:Dock(TOP)
+        factionCombo:DockMargin(0, 6, 0, 14)
+        factionCombo:SetTall(32)
+        factionCombo:SetFont("FactionsExt_Normal")
+        factionCombo:SetSortItems(true)
+
+        local detailsCard = vgui.Create("DPanel", content)
+        detailsCard:Dock(FILL)
+        detailsCard:DockMargin(0, 0, 0, 10)
+        detailsCard.Paint = function(self, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, Color(20, 26, 36, 200))
+        end
+
+        local function updateDetails(fName)
+            detailsCard:Clear()
+            if not fName or fName == "" then return end
+
+            local f = Factions and Factions[fName]
+            local b = (GRM.FactionBudgetGet and GRM.FactionBudgetGet(fName)) or (f and f.Budget or 0)
+            local tax = (GRM.Economy and GRM.Economy.TaxRateGet and GRM.Economy.TaxRateGet(fName)) or 0.05
+            local bTxt = GRM.Format and GRM.Format(b) or (tostring(b) .. " GRM")
+            local taxPct = math.floor(tax * 100)
+
+            local p = vgui.Create("DPanel", detailsCard)
+            p:Dock(FILL)
+            p:DockMargin(16, 16, 16, 16)
+            p:SetPaintBackground(false)
+
+            local function addRow(title, val, col)
+                local row = vgui.Create("DPanel", p)
+                row:Dock(TOP)
+                row:SetTall(36)
+                row:DockMargin(0, 0, 0, 8)
+                row.Paint = function(self, w, h)
+                    draw.RoundedBox(4, 0, 0, w, h, Color(28, 36, 50, 220))
+                    draw.SimpleText(title, "FactionsExt_Normal", 12, h / 2, THEME.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    draw.SimpleText(val, "FactionsExt_Normal", w - 12, h / 2, col or THEME.text, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                end
+            end
+
+            addRow("Организация:", fName, THEME.accent)
+            addRow("Текущий бюджет фракции:", bTxt, Color(70, 220, 130))
+            addRow("Установленная налоговая ставка:", tostring(taxPct) .. "%", Color(245, 190, 60))
+        end
+
+        local function populateFactions()
+            factionCombo:Clear()
+            local list = FactionsData or Factions or {}
+            local first = nil
+            for name, _ in pairs(list) do
+                if isstring(name) and name ~= "" then
+                    factionCombo:AddChoice(name)
+                    if not first then first = name end
+                end
+            end
+            if first then
+                factionCombo:SetValue(first)
+                updateDetails(first)
             end
         end
 
-        -- Регистрируем панель: NET_ADMIN_DATA будет перестраивать её
-        GRM.Economy._embeddedBuild = build
-        if GRM.Economy.EmbedAdminPanel then GRM.Economy.EmbedAdminPanel(panel) end
-        -- Запрашиваем данные у сервера (сервер сам проверит CanManageEconomy)
-        net.Start("GRM_Eco_AdminOpen")
-        net.SendToServer()
-
-        -- Первичная заглушка на время загрузки
-        if not GRM.Economy._embeddedData then
-            local l = vgui.Create("DLabel", holder)
-            l:Dock(FILL) l:SetFont("FactionsExt_Normal") l:SetTextColor(THEME.textDim)
-            l:SetContentAlignment(5)
-            l:SetText("Загрузка экономической панели...")
+        factionCombo.OnSelect = function(_, _, fName)
+            updateDetails(fName)
         end
+
+        populateFactions()
+
+        local note = vgui.Create("DLabel", content)
+        note:Dock(BOTTOM)
+        note:SetTall(36)
+        note:SetFont("FactionsExt_Small")
+        note:SetTextColor(THEME.textDim)
+        note:SetWrap(true)
+        note:SetText("ℹ Управление налогами, финансовыми перечислениями и бюджетами осуществляется строго через Банкомат (терминал) или Компьютер Управления Банком.")
 
         return panel
     end

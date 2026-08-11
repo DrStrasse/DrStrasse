@@ -2,8 +2,9 @@
     grm_bank_vault — init (находка 178/178b)
     E → мини-меню хранилища: состояние + «Загрузить» / «Выгрузить».
       Загрузить: все паллеты (grm_vault_cash) и деньги-пропы
-                 (grm_money_drop) рядом (радиус 250) грузятся в HeldCash;
-                 обычные деньги-пропы — ещё и в гос.бюджет (взнос в казну).
+                 (grm_money_drop) рядом (радиус 250) грузятся в HeldCash
+                 (деньги остаются в хранилище, НЕ переводятся автоматически
+                 в госбюджет).
       Выгрузить: с указанием суммы; ≥ 50.000 → паллеты (по 100.000),
                  < 50.000 → пачка money.mdl. Право: CanManageEconomy/суперадмин.
 ----------------------------------------------------------------------]]
@@ -52,7 +53,7 @@ function ENT:CanManage(ply)
     return GRM.Economy and GRM.Economy.CanManageEconomy and GRM.Economy.CanManageEconomy(ply) == true
 end
 
--- Находка 178e: запас хранилища (HeldCash) переживает рестарт через /permadd
+-- Запас хранилища (HeldCash) переживает рестарт через /permadd
 GRM = GRM or {}
 GRM.PermData = GRM.PermData or { Extract = {}, Apply = {} }
 GRM.PermData.Extract = GRM.PermData.Extract or {}
@@ -72,14 +73,14 @@ GRM.PermData.Apply["grm_bank_vault"] = function(ent, data)
     end
 end
 
--- ── Загрузить: паллеты и деньги-пропы рядом → в хранилище ──
+-- ── Загрузить: паллеты и деньги-пропы рядом → в хранилище (HeldCash) ──
 function ENT:LoadNearCash(ply)
     if not IsValid(ply) then return 0 end
     local held = math.floor(self:GetHeldCash() or 0)
     local cap = math.max(1, math.floor(self:GetCapacity() or 500000))
     local free = math.max(0, cap - held)
     if free <= 0 then
-        if GRM.Notify then GRM.Notify(ply, "Хранилище заполнено (вместимость 500.000).", 255, 190, 90) end
+        if GRM.Notify then GRM.Notify(ply, "Хранилище заполнено (вместимость " .. cap .. ").", 255, 190, 90) end
         return 0
     end
     local r = math.max(64, tonumber(self.LoadRadius) or 250)
@@ -93,17 +94,12 @@ function ENT:LoadNearCash(ply)
                 local amt = math.max(0, math.floor(tonumber(ent:GetAmount() or 0)))
                 if amt > 0 then
                     local take = math.min(amt, free)
-                    -- паллета от станка/панели уже учтена в гос.бюджете;
-                    -- обычные деньги-пропы — взнос в казну (бюджет +)
-                    if cls == "grm_money_drop" and GRM.Economy and GRM.Economy.StateBudgetAdd then
-                        GRM.Economy.StateBudgetAdd(take, "Взнос в казну: " .. ply:Nick())
-                    end
                     held = held + take
                     free = free - take
                     loaded = loaded + take
                     ent:Remove()
                     self:SetHeldCash(held)
-                    -- Находка 179d: автообновление перм-записи (HeldCash)
+                    -- Автообновление перм-записи (HeldCash)
                     if GRM.PermData and GRM.PermData.UpdateEntry then GRM.PermData.UpdateEntry(self) end
                 end
             end
@@ -137,12 +133,9 @@ function ENT:UnloadCash(ply, amount)
         return false
     end
     self:SetHeldCash(held - amount)
-    -- Находка 179d: автообновление перм-записи (HeldCash)
+    -- Автообновление перм-записи (HeldCash)
     if GRM.PermData and GRM.PermData.UpdateEntry then GRM.PermData.UpdateEntry(self) end
-    -- выгрузка из хранилища = изъятие из казны
-    if GRM.Economy and GRM.Economy.StateBudgetAdd then
-        GRM.Economy.StateBudgetAdd(-amount, "Выгрузка из хранилища: " .. ply:Nick())
-    end
+
     local pos = self:GetPos() + self:GetForward() * 70 + Vector(0, 0, 12)
     if GRM.Economy and GRM.Economy.SpawnCashAt then
         GRM.Economy.SpawnCashAt(pos, amount, self)
@@ -156,6 +149,9 @@ end
 
 function ENT:SendMenu(ply)
     if not IsValid(ply) then return end
+    if GRM.Economy and GRM.Economy.StateBudgetGet then
+        self:SetStateBudget(GRM.Economy.StateBudgetGet())
+    end
     net.Start("GRM_VaultMenu_Open")
         net.WriteEntity(self)
         net.WriteTable({
@@ -190,4 +186,4 @@ net.Receive("GRM_VaultMenu_Action", function(_, ply)
     vault:SendMenu(ply)
 end)
 
-print("[GRM] Bank Vault entity loaded (находка 178/178b)")
+print("[GRM] Bank Vault entity loaded (v2.0)")

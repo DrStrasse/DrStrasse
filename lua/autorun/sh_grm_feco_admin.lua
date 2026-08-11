@@ -77,58 +77,10 @@ if SERVER then
         net.Send(ply)
     end)
     
-    -- Обработчик действий
+    -- Обработчик действий (управление только через банкомат/компьютер банка)
     net.Receive(NET_ACTION, function(_, ply)
         if not IsValid(ply) or not ply:IsSuperAdmin() then return end
-        
-        local action = net.ReadString()
-        local target = net.ReadString()
-        local amount = net.ReadUInt(32)
-        local rate = net.ReadFloat()
-        
-        if action == "state_add" then
-            -- Пополнить гос.бюджет
-            if GRM.Economy and GRM.Economy.Data and GRM.Economy.Data.state then
-                GRM.Economy.Data.state.budget = (GRM.Economy.Data.state.budget or 0) + amount
-                GRM.Economy.Dirty = true
-                GRM.Economy.Save(true, "admin: state_add " .. amount)
-                ply:ChatPrint("[GRM Feco] Гос.бюджет пополнен на " .. (GRM.Format and GRM.Format(amount) or amount))
-            end
-            
-        elseif action == "state_remove" then
-            -- Снять с гос.бюджета
-            if GRM.Economy and GRM.Economy.Data and GRM.Economy.Data.state then
-                GRM.Economy.Data.state.budget = math.max(0, (GRM.Economy.Data.state.budget or 0) - amount)
-                GRM.Economy.Dirty = true
-                GRM.Economy.Save(true, "admin: state_remove " .. amount)
-                ply:ChatPrint("[GRM Feco] С гос.бюджета снято " .. (GRM.Format and GRM.Format(amount) or amount))
-            end
-            
-        elseif action == "faction_budget" then
-            -- Установить бюджет фракции
-            if GRM.Economy and GRM.Economy.Data and GRM.Economy.Data.factions and GRM.Economy.Data.factions[target] then
-                GRM.Economy.Data.factions[target].budget = amount
-                GRM.Economy.Dirty = true
-                GRM.Economy.Save(true, "admin: faction_budget " .. target .. " = " .. amount)
-                ply:ChatPrint("[GRM Feco] Бюджет фракции " .. target .. " установлен: " .. (GRM.Format and GRM.Format(amount) or amount))
-            end
-            
-        elseif action == "faction_tax" then
-            -- Установить налог фракции
-            if GRM.Economy and GRM.Economy.Data and GRM.Economy.Data.factions and GRM.Economy.Data.factions[target] then
-                GRM.Economy.Data.factions[target].taxRate = math.Clamp(rate, 0, 0.5)
-                GRM.Economy.Dirty = true
-                GRM.Economy.Save(true, "admin: faction_tax " .. target .. " = " .. rate)
-                ply:ChatPrint("[GRM Feco] Налог фракции " .. target .. " установлен: " .. math.floor(rate * 100) .. "%")
-            end
-            
-        elseif action == "player_balance" then
-            -- Установить баланс игрока
-            if GRM and GRM.SetBalance then
-                GRM.SetBalance(target, amount)
-                ply:ChatPrint("[GRM Feco] Баланс игрока " .. target .. " установлен: " .. (GRM.Format and GRM.Format(amount) or amount))
-            end
-        end
+        ply:ChatPrint("[GRM Feco] Прямое изменение отключено. Управление финансами осуществляется через Банкомат и Компьютер Управления.")
     end)
 end
 
