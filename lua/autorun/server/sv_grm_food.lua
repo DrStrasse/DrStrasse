@@ -267,6 +267,10 @@ local function createPermanentVending(pos, ang)
         phys:EnableMotion(false)
     end
 
+    if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then
+        GRM.PropProtect.MarkServerEntity(ent)
+    end
+
     return ent
 end
 
