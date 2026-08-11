@@ -617,6 +617,39 @@ if SERVER then
     end
     DOC.SendOwnDoc = sendOwnDoc
 
+    -- Трансляция RP-действия в чат всем игрокам поблизости
+    local function broadcastDocAction(ply, meText)
+        if not IsValid(ply) then return end
+        local senderName = getPlayerRPName(ply)
+        local fullText = "* " .. senderName .. " " .. meText
+        local origin = ply:GetPos()
+
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and p:GetPos():DistToSqr(origin) <= 400 * 400 then
+                -- 1. EasyChat
+                if EasyChat and EasyChat.PlayerAddText then
+                    EasyChat.PlayerAddText(p, Color(200, 160, 255), fullText)
+                end
+
+                -- 2. GRM RPChat сетевое сообщение
+                if util.NetworkStringToID("GRM_RPChat_Msg") ~= 0 then
+                    net.Start("GRM_RPChat_Msg")
+                        net.WriteUInt(2, 8)
+                        net.WriteBool(true)
+                        net.WriteUInt(200, 8)
+                        net.WriteUInt(160, 8)
+                        net.WriteUInt(255, 8)
+                        net.WriteBool(false)
+                        net.WriteString(fullText)
+                    net.Send(p)
+                end
+
+                -- 3. Резервный ChatPrint
+                p:ChatPrint(fullText)
+            end
+        end
+    end
+
     -- Показ документа целевому игроку (в прицеле или явная цель)
     local function showDocToTarget(ply, docType, explicitTarget, subType)
         if not IsValid(ply) then return end
@@ -644,11 +677,7 @@ if SERVER then
             local tpl = DOC.Templates.passport or {}
 
             local meText = string.format("показал(а) паспорт гражданина игроку %s (Серия %s №%s, ФИО: %s)", targetName, pass.series or "GRM", pass.number or "—", pass.fullName or senderName)
-            for _, p in ipairs(player.GetAll()) do
-                if IsValid(p) and p:GetPos():DistToSqr(ply:GetPos()) <= 400 * 400 then
-                    p:ChatPrint(string.format("[RP] %s %s", senderName, meText))
-                end
-            end
+            broadcastDocAction(ply, meText)
 
             net.Start(NET_RECEIVE_VIEW)
                 net.WriteString("passport")
@@ -656,7 +685,9 @@ if SERVER then
                 net.WriteTable(tpl)
                 net.WriteBool(true)
                 net.WriteString(senderName)
-            net.Send({ ply, target })
+            net.Send(target)
+
+            if GRM.Notify then GRM.Notify(ply, "Вы показали паспорт гражданина игроку " .. targetName .. ".", 100, 220, 130) end
 
         elseif docType == "badge" then
             local key = getCharKey(ply)
@@ -678,11 +709,7 @@ if SERVER then
             local tpl = (DOC.Templates.factions and DOC.Templates.factions[badge.faction]) or {}
 
             local meText = string.format("предъявил(а) служебное удостоверение %s игроку %s (Жетон: %s, Должность: %s)", badge.faction or "организации", targetName, badge.number or "—", badge.role or "—")
-            for _, p in ipairs(player.GetAll()) do
-                if IsValid(p) and p:GetPos():DistToSqr(ply:GetPos()) <= 400 * 400 then
-                    p:ChatPrint(string.format("[RP] %s %s", senderName, meText))
-                end
-            end
+            broadcastDocAction(ply, meText)
 
             net.Start(NET_RECEIVE_VIEW)
                 net.WriteString("badge")
@@ -690,7 +717,9 @@ if SERVER then
                 net.WriteTable(tpl)
                 net.WriteBool(true)
                 net.WriteString(senderName)
-            net.Send({ ply, target })
+            net.Send(target)
+
+            if GRM.Notify then GRM.Notify(ply, "Вы предъявили служебное удостоверение игроку " .. targetName .. ".", 100, 220, 130) end
 
         elseif docType == "military" then
             local mil = ensureMilitary(ply)
@@ -701,11 +730,7 @@ if SERVER then
             local tpl = DOC.Templates.military or {}
 
             local meText = string.format("показал(а) военный билет игроку %s (Военный билет №%s, Звание: %s, Формирование: %s)", targetName, mil.number or "—", mil.rank or "—", mil.formation or "—")
-            for _, p in ipairs(player.GetAll()) do
-                if IsValid(p) and p:GetPos():DistToSqr(ply:GetPos()) <= 400 * 400 then
-                    p:ChatPrint(string.format("[RP] %s %s", senderName, meText))
-                end
-            end
+            broadcastDocAction(ply, meText)
 
             net.Start(NET_RECEIVE_VIEW)
                 net.WriteString("military")
@@ -713,7 +738,9 @@ if SERVER then
                 net.WriteTable(tpl)
                 net.WriteBool(true)
                 net.WriteString(senderName)
-            net.Send({ ply, target })
+            net.Send(target)
+
+            if GRM.Notify then GRM.Notify(ply, "Вы показали военный билет игроку " .. targetName .. ".", 100, 220, 130) end
 
         elseif docType == "license" or docType == "civilian_license" then
             if subType == "military" then
@@ -733,11 +760,7 @@ if SERVER then
             local tpl = DOC.Templates.license or {}
 
             local meText = string.format("показал(а) водительское удостоверение Дорожной Инспекции игроку %s (№%s, Категории: %s)", targetName, lic.number or "—", lic.categoriesStr or "B")
-            for _, p in ipairs(player.GetAll()) do
-                if IsValid(p) and p:GetPos():DistToSqr(ply:GetPos()) <= 400 * 400 then
-                    p:ChatPrint(string.format("[RP] %s %s", senderName, meText))
-                end
-            end
+            broadcastDocAction(ply, meText)
 
             net.Start(NET_RECEIVE_VIEW)
                 net.WriteString("license")
@@ -745,7 +768,9 @@ if SERVER then
                 net.WriteTable(tpl)
                 net.WriteBool(true)
                 net.WriteString(senderName)
-            net.Send({ ply, target })
+            net.Send(target)
+
+            if GRM.Notify then GRM.Notify(ply, "Вы показали водительские права игроку " .. targetName .. ".", 100, 220, 130) end
 
         elseif docType == "milLicense" or docType == "military_license" then
             local milLic = ensureMilLicense(ply)
@@ -756,11 +781,7 @@ if SERVER then
             local tpl = DOC.Templates.militaryLicense or {}
 
             local meText = string.format("предъявил(а) удостоверение военного водителя ВАИ игроку %s (№%s, Звание: %s, ВУС: %s, Категории: %s)", targetName, milLic.number or "—", milLic.rank or "Рядовой", milLic.vus or "ВУС-837", milLic.categoriesStr or "B-В C-В")
-            for _, p in ipairs(player.GetAll()) do
-                if IsValid(p) and p:GetPos():DistToSqr(ply:GetPos()) <= 400 * 400 then
-                    p:ChatPrint(string.format("[RP] %s %s", senderName, meText))
-                end
-            end
+            broadcastDocAction(ply, meText)
 
             net.Start(NET_RECEIVE_VIEW)
                 net.WriteString("milLicense")
@@ -768,18 +789,16 @@ if SERVER then
                 net.WriteTable(tpl)
                 net.WriteBool(true)
                 net.WriteString(senderName)
-            net.Send({ ply, target })
+            net.Send(target)
+
+            if GRM.Notify then GRM.Notify(ply, "Вы предъявили удостоверение военного водителя ВАИ игроку " .. targetName .. ".", 100, 220, 130) end
 
         elseif docType == "medcard" then
             if GRM.Medical and GRM.Medical.CardOf then
                 local cardKey = getCharKey(ply)
                 local card = GRM.Medical.CardOf(cardKey)
                 local meText = string.format("передал(а) медицинскую карту на имя %s игроку %s", getPlayerRPName(ply), targetName)
-                for _, p in ipairs(player.GetAll()) do
-                    if IsValid(p) and p:GetPos():DistToSqr(ply:GetPos()) <= 400 * 400 then
-                        p:ChatPrint(string.format("[RP] %s %s", senderName, meText))
-                    end
-                end
+                broadcastDocAction(ply, meText)
 
                 net.Start(NET_RECEIVE_VIEW)
                     net.WriteString("medcard")
@@ -787,7 +806,9 @@ if SERVER then
                     net.WriteTable({ patientName = getPlayerRPName(ply) })
                     net.WriteBool(true)
                     net.WriteString(senderName)
-                net.Send({ ply, target })
+                net.Send(target)
+
+                if GRM.Notify then GRM.Notify(ply, "Вы передали медицинскую карту игроку " .. targetName .. ".", 100, 220, 130) end
             end
         end
     end
