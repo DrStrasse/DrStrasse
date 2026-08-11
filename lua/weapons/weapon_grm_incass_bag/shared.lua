@@ -51,7 +51,41 @@ function SWEP:Deploy()
 end
 
 function SWEP:Holster() return true end
-function SWEP:PrimaryAttack() self:SetNextPrimaryFire(CurTime() + 0.5) end
+
+function SWEP:PrimaryAttack()
+    self:SetNextPrimaryFire(CurTime() + 0.6)
+    if CLIENT then return end
+
+    local ply = self:GetOwner()
+    if not IsValid(ply) or not ply:IsPlayer() then return end
+
+    local tr = ply:GetEyeTrace()
+    local hit = IsValid(tr.Entity) and tr.Entity or nil
+    local pPos = ply:GetPos()
+
+    -- 1. Сдача в хранилище банка (grm_bank_vault)
+    local vault = (IsValid(hit) and hit:GetClass() == "grm_bank_vault") and hit or nil
+    if not IsValid(vault) and GRM.Incass and GRM.Incass.FindNearestVault then
+        vault = GRM.Incass.FindNearestVault(pPos, 300)
+    end
+    if IsValid(vault) and GRM.Incass and GRM.Incass.LoadBagIntoVault then
+        GRM.Incass.LoadBagIntoVault(ply, vault)
+        return
+    end
+
+    -- 2. Загрузка в инкассаторскую машину
+    if IsValid(hit) and GRM.Incass and GRM.Incass.LoadBagIntoCar then
+        local ok, _ = GRM.Incass.LoadBagIntoCar(ply, hit)
+        if ok then return end
+    end
+
+    -- 3. Загрузка в банкомат
+    if IsValid(hit) and hit:GetClass() == "grm_bank_terminal" and GRM.Incass and GRM.Incass.LoadBagIntoTerminal then
+        GRM.Incass.LoadBagIntoTerminal(ply, hit)
+        return
+    end
+end
+
 function SWEP:SecondaryAttack() self:SetNextSecondaryFire(CurTime() + 0.5) end
 function SWEP:Reload() end
 

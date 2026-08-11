@@ -51,16 +51,17 @@ local NET_TERM_UNLOCK   = "GRM_Incass_TermUnlock"
 local NET_CAR_MENU      = "GRM_Incass_CarMenu"
 local NET_CAR_LOAD      = "GRM_Incass_CarLoad"
 local NET_CAR_UNLOAD    = "GRM_Incass_CarUnload"
-local NET_VAULT_MENU    = "GRM_Incass_VaultMenu"
-local NET_VAULT_LOAD    = "GRM_Incass_VaultLoad"
-local NET_VAULT_UNLOAD  = "GRM_Incass_VaultUnload"
+local NET_VAULT_MENU        = "GRM_Incass_VaultMenu"
+local NET_VAULT_LOAD        = "GRM_Incass_VaultLoad"
+local NET_VAULT_UNLOAD      = "GRM_Incass_VaultUnload"
+local NET_VAULT_DELIVER_RUN = "GRM_Incass_VaultDeliverRun"
 
 if SERVER then
     for _, s in ipairs({
         NET_NOTIFY, NET_TERM_MENU, NET_TERM_TAKE,
         NET_TERM_LOAD, NET_TERM_UNLOCK,
         NET_CAR_MENU, NET_CAR_LOAD, NET_CAR_UNLOAD,
-        NET_VAULT_MENU, NET_VAULT_LOAD, NET_VAULT_UNLOAD,
+        NET_VAULT_MENU, NET_VAULT_LOAD, NET_VAULT_UNLOAD, NET_VAULT_DELIVER_RUN,
     }) do
         util.AddNetworkString(s)
     end
@@ -444,9 +445,17 @@ end
 -- ── Работа с чемоданом инкассатора в руках ───────────────────────
 function I.PlayerBagAmount(ply)
     if not isPly(ply) then return 0 end
+    local nw = (ply.GetNWInt and ply:GetNWInt("GRMIncass_BagAmount", 0)) or 0
+    if nw > 0 then return nw end
     for _, wp in ipairs(ply:GetWeapons() or {}) do
-        if IsValid(wp) and wp:GetClass() == I.Config.BagWeaponClass and isfunction(wp.GetCarriedAmount) then
-            return math.max(0, math.floor(wp:GetCarriedAmount() or 0))
+        if IsValid(wp) and wp:GetClass() == I.Config.BagWeaponClass then
+            if isfunction(wp.GetCarriedAmount) then
+                local a = math.max(0, math.floor(wp:GetCarriedAmount() or 0))
+                if a > 0 then return a end
+            elseif wp._grmAmount then
+                local a = math.max(0, math.floor(wp._grmAmount or 0))
+                if a > 0 then return a end
+            end
         end
     end
     return 0
@@ -933,20 +942,26 @@ end
 function I.LoadBagIntoVault(ply, vault)
     if not isPly(ply) then return false, "Нет игрока" end
     if not IsValid(vault) or vault:GetClass() ~= "grm_bank_vault" then
+        vault = I.FindNearestVault(ply:GetPos(), I.Config.VaultRadius or 350)
+    end
+    if not IsValid(vault) or vault:GetClass() ~= "grm_bank_vault" then
         return false, "Это не банковское хранилище"
     end
-    if ply:GetPos():DistToSqr(vault:GetPos()) > (I.Config.VaultRadius ^ 2) then
+    if ply:GetPos():DistToSqr(vault:GetPos()) > (((I.Config.VaultRadius or 350) * 1.5) ^ 2) then
         return false, "Слишком далеко от хранилища"
     end
 
     local amt = I.PlayerBagAmount(ply)
-    if amt <= 0 then return false, "В руках нет чемодана" end
+    if amt <= 0 then
+        -- Проверим, возможно игрок сдает весь рейс из машины
+        return I.DeliverFullRunIntoVault(ply, vault)
+    end
     if not (vault.SetHeldCash and vault.GetHeldCash) then
         return false, "Хранилище не принимает деньги"
     end
 
     local cap = isfunction(vault.GetCapacity) and math.floor(vault:GetCapacity() or 500000) or 500000
-    local curHeld = math.floor(vault:GetHeldCash() or 0)
+    local curHeld = isfunction(vault.GetHeldCash) and math.floor(vault:GetHeldCash() or 0) or 0
     if curHeld + amt > cap then
         return false, "Хранилище переполнено (вместимость " .. formatMoney(cap) .. ")"
     end
@@ -962,13 +977,75 @@ function I.LoadBagIntoVault(ply, vault)
     return true, amt
 end
 
+-- ── Сдача всей собранной инкассации из машины и рук в хранилище ───
+function I.DeliverFullRunIntoVault(ply, vault)
+    if not isPly(ply) then return false, "Нет игрока" end
+    if not IsValid(vault) or vault:GetClass() ~= "grm_bank_vault" then
+        vault = I.FindNearestVault(ply:GetPos(), (I.Config.VaultRadius or 350) * 1.5)
+    end
+    if not IsValid(vault) or vault:GetClass() ~= "grm_bank_vault" then
+        return false, "Подъезжайте к банковскому хранилищу (grm_bank_vault)"
+    end
+
+    local runID = nil
+    for rid, r in pairs(I.ActiveRuns) do
+        if IsValid(r.driver) and r.driver == ply then
+            runID = rid
+            break
+        end
+    end
+
+    local bagAmt = I.PlayerBagAmount(ply)
+    local carAmt = 0
+    local myRun = runID and I.ActiveRuns[runID]
+    if myRun and IsValid(myRun.car) then
+        carAmt = math.max(0, math.floor(myRun.carCash or 0))
+    end
+
+    local total = bagAmt + carAmt
+    if total <= 0 then
+        return false, "В руках и машине нет собранных денег для сдачи"
+    end
+
+    local cap = isfunction(vault.GetCapacity) and math.floor(vault:GetCapacity() or 500000) or 500000
+    local curHeld = isfunction(vault.GetHeldCash) and math.floor(vault:GetHeldCash() or 0) or 0
+    local free = math.max(0, cap - curHeld)
+    if total > free then
+        return false, "В хранилище недостаточно места (свободно " .. formatMoney(free) .. ")"
+    end
+
+    vault:SetHeldCash(curHeld + total)
+    if GRM.PermData and GRM.PermData.UpdateEntry then
+        GRM.PermData.UpdateEntry(vault)
+    end
+
+    if bagAmt > 0 then
+        I.TakeBagWeapon(ply)
+    end
+    if myRun and IsValid(myRun.car) then
+        myRun.carCash = 0
+        myRun.car:SetNWInt("GRM_IncassCarCash", 0)
+    end
+
+    vault:EmitSound("ambient/levels/labs/coinslot1.wav", 75, 95)
+    notify(ply, "Успешно сдано в хранилище банка: " .. formatMoney(total) .. "! Всего в хранилище: " .. formatMoney(curHeld + total), 100, 220, 130)
+
+    if runID then
+        I.FinishRun(runID, "сдача инкассации в банк (" .. formatMoney(total) .. ")")
+    end
+    return true, total
+end
+
 -- ── Выгрузка чемодана из хранилища (обратная операция) ───────────
 function I.UnloadBagFromVault(ply, vault)
     if not isPly(ply) then return false, "Нет игрока" end
     if not IsValid(vault) or vault:GetClass() ~= "grm_bank_vault" then
+        vault = I.FindNearestVault(ply:GetPos(), I.Config.VaultRadius or 350)
+    end
+    if not IsValid(vault) or vault:GetClass() ~= "grm_bank_vault" then
         return false, "Это не банковское хранилище"
     end
-    if ply:GetPos():DistToSqr(vault:GetPos()) > (I.Config.VaultRadius ^ 2) then
+    if ply:GetPos():DistToSqr(vault:GetPos()) > (((I.Config.VaultRadius or 350) * 1.5) ^ 2) then
         return false, "Слишком далеко от хранилища"
     end
     if not (vault.SetHeldCash and vault.GetHeldCash) then
@@ -1027,20 +1104,6 @@ hook.Add("PlayerUse", "GRM_Incass_TermLock", function(ply, ent)
     end
     if myRun and (myRun == rid or rid == 0) then return end -- инкассатор рейса не блокируется
     notify(ply, "Этот банкомат переведён в режим инкассации. Попробуйте позже.", 255, 180, 80)
-    return false
-end)
-
--- Запрет посторонним садиться в машину с активным рейсом
-hook.Add("CanPlayerEnterVehicle", "GRM_Incass_NoEntry", function(ply, veh)
-    if not isPly(ply) or not IsValid(veh) then return end
-    local root = getRootVehicle(veh)
-    if not IsValid(root) then return end
-    local rid = I.CarToRun[root:EntIndex()]
-    if not rid then return end
-    local run = I.ActiveRuns[rid]
-    if not run then return end
-    if IsValid(run.driver) and run.driver == ply then return end
-    notify(ply, "В инкассаторскую машину во время рейса нельзя садиться посторонним.", 255, 100, 100)
     return false
 end)
 
@@ -1107,10 +1170,16 @@ hook.Add("PlayerSay", "GRM_Incass_Cmds", function(ply, text)
         if not ok then notify(ply, err, 255, 100, 100) end
         return ""
     end
+    if t == "/incass_delivery" or t == "!incass_delivery" or t == "/incass_deliver" or t == "/сдать" then
+        local ok, err = I.DeliverFullRunIntoVault(ply)
+        if not ok and err then
+            notify(ply, err, 255, 100, 100)
+        end
+        return ""
+    end
+
     if t == "/incass_off" or t == "!incass_off" or t == "/incass_end"
-       or t == "/инкасс_офф" or t == "/инкасс_стоп"
-       or t == "/incass_delivery" or t == "!incass_delivery"
-       or t == "/incass_deliver" or t == "/сдать" then
+       or t == "/инкасс_офф" or t == "/инкасс_стоп" then
         local runID = nil
         for rid, r in pairs(I.ActiveRuns) do
             if IsValid(r.driver) and r.driver == ply then
@@ -1119,9 +1188,9 @@ hook.Add("PlayerSay", "GRM_Incass_Cmds", function(ply, text)
             end
         end
         if not runID then
-            notify(ply, "У вас нет активного рейса инкассации", 255, 100, 100)
+            notify(ply, "У вас нет активного рейса инкассации.", 255, 100, 100)
         else
-            I.CancelRun(ply, runID, "завершение по команде (" .. t .. ")")
+            I.CancelRun(ply, runID, "отмена рейса инкассации")
         end
         return ""
     end
@@ -1237,29 +1306,50 @@ end)
 
 net.Receive(NET_VAULT_MENU, function(_, ply)
     local vault = net.ReadEntity()
-    if not isPly(ply) or not IsValid(vault) then return end
-    if vault:GetClass() ~= "grm_bank_vault" then return end
-    if ply:GetPos():DistToSqr(vault:GetPos()) > (I.Config.VaultRadius ^ 2) then return end
+    if not isPly(ply) then return end
+    if not IsValid(vault) or vault:GetClass() ~= "grm_bank_vault" then
+        vault = I.FindNearestVault(ply:GetPos(), (I.Config.VaultRadius or 350) * 1.5)
+    end
+    if not IsValid(vault) or vault:GetClass() ~= "grm_bank_vault" then return end
+    if ply:GetPos():DistToSqr(vault:GetPos()) > (((I.Config.VaultRadius or 350) * 1.5) ^ 2) then return end
 
     local held = 0
     if isfunction(vault.GetHeldCash) then held = math.floor(vault:GetHeldCash() or 0) end
+
+    local carCash = 0
+    local myCar = ply:GetNWEntity("GRM_IncassMyCar", NULL)
+    if IsValid(myCar) and ply:GetPos():DistToSqr(myCar:GetPos()) <= (450 * 450) then
+        local rid = I.CarToRun[myCar:EntIndex()]
+        if rid and I.ActiveRuns[rid] then
+            carCash = math.max(0, math.floor(I.ActiveRuns[rid].carCash or 0))
+        end
+    end
+
     net.Start(NET_VAULT_MENU)
         net.WriteEntity(vault)
         net.WriteInt(held, 32)
         net.WriteInt(I.PlayerBagAmount(ply), 32)
+        net.WriteInt(carCash, 32)
     net.Send(ply)
 end)
 
 net.Receive(NET_VAULT_LOAD, function(_, ply)
     local vault = net.ReadEntity()
-    if not isPly(ply) or not IsValid(vault) then return end
+    if not isPly(ply) then return end
     local ok, err = I.LoadBagIntoVault(ply, vault)
+    if not ok and err then notify(ply, err, 255, 100, 100) end
+end)
+
+net.Receive(NET_VAULT_DELIVER_RUN, function(_, ply)
+    local vault = net.ReadEntity()
+    if not isPly(ply) then return end
+    local ok, err = I.DeliverFullRunIntoVault(ply, vault)
     if not ok and err then notify(ply, err, 255, 100, 100) end
 end)
 
 net.Receive(NET_VAULT_UNLOAD, function(_, ply)
     local vault = net.ReadEntity()
-    if not isPly(ply) or not IsValid(vault) then return end
+    if not isPly(ply) then return end
     local ok, err = I.UnloadBagFromVault(ply, vault)
     if not ok and err then notify(ply, err, 255, 100, 100) end
 end)
@@ -1267,22 +1357,47 @@ end)
 concommand.Add("grm_incass_term_use", function(ply)
     if not isPly(ply) then return end
     local tr = ply:GetEyeTrace()
-    if IsValid(tr.Entity) and tr.Entity:GetClass() == "grm_bank_terminal" then
-        sendTerminalMenu(ply, tr.Entity)
+    local ent = tr.Entity
+    if not (IsValid(ent) and ent:GetClass() == "grm_bank_terminal") then
+        for _, t in ipairs(ents.FindByClass("grm_bank_terminal")) do
+            if IsValid(t) and ply:GetPos():DistToSqr(t:GetPos()) <= (250 * 250) then
+                ent = t
+                break
+            end
+        end
+    end
+    if IsValid(ent) and ent:GetClass() == "grm_bank_terminal" then
+        sendTerminalMenu(ply, ent)
     end
 end)
 
 concommand.Add("grm_incass_vault_use", function(ply)
     if not isPly(ply) then return end
     local tr = ply:GetEyeTrace()
-    if not IsValid(tr.Entity) or tr.Entity:GetClass() ~= "grm_bank_vault" then return end
-    local v = tr.Entity
-    if ply:GetPos():DistToSqr(v:GetPos()) > (I.Config.VaultRadius ^ 2) then return end
+    local v = (IsValid(tr.Entity) and tr.Entity:GetClass() == "grm_bank_vault") and tr.Entity or nil
+    if not IsValid(v) then
+        v = I.FindNearestVault(ply:GetPos(), (I.Config.VaultRadius or 350) * 1.5)
+    end
+    if not IsValid(v) or v:GetClass() ~= "grm_bank_vault" then return end
+    if ply:GetPos():DistToSqr(v:GetPos()) > (((I.Config.VaultRadius or 350) * 1.5) ^ 2) then return end
+
     local held = isfunction(v.GetHeldCash) and math.floor(v:GetHeldCash() or 0) or 0
+    local bagAmt = I.PlayerBagAmount(ply)
+
+    local carCash = 0
+    local myCar = ply:GetNWEntity("GRM_IncassMyCar", NULL)
+    if IsValid(myCar) and ply:GetPos():DistToSqr(myCar:GetPos()) <= (450 * 450) then
+        local rid = I.CarToRun[myCar:EntIndex()]
+        if rid and I.ActiveRuns[rid] then
+            carCash = math.max(0, math.floor(I.ActiveRuns[rid].carCash or 0))
+        end
+    end
+
     net.Start(NET_VAULT_MENU)
         net.WriteEntity(v)
         net.WriteInt(held, 32)
-        net.WriteInt(I.PlayerBagAmount(ply), 32)
+        net.WriteInt(bagAmt, 32)
+        net.WriteInt(carCash, 32)
     net.Send(ply)
 end)
 
@@ -1555,14 +1670,15 @@ end)
 
 -- ── МЕНЮ ХРАНИЛИЩА ───────────────────────────────────────────────
 net.Receive(NET_VAULT_MENU, function()
-    local vault = net.ReadEntity()
-    local held  = net.ReadInt(32)
-    local bag   = net.ReadInt(32)
+    local vault   = net.ReadEntity()
+    local held    = net.ReadInt(32)
+    local bag     = net.ReadInt(32)
+    local carCash = net.ReadInt(32)
 
     closeFrame(GRM_INC_VAULT_FRAME)
     local f = vgui.Create("DFrame")
     GRM_INC_VAULT_FRAME = f
-    f:SetSize(440, 250)
+    f:SetSize(460, 310)
     f:Center()
     f:SetTitle("")
     f:MakePopup()
@@ -1570,7 +1686,7 @@ net.Receive(NET_VAULT_MENU, function()
     f.Paint = function(self, w, h)
         draw.RoundedBox(8, 0, 0, w, h, INC_UI.bg)
         draw.RoundedBoxEx(8, 0, 0, w, 38, INC_UI.header, true, true, false, false)
-        draw.SimpleText("Банк-хранилище", "GRMInc_Title", 12, 19, INC_UI.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Банковское хранилище (Сдача инкассации)", "GRMInc_Title", 12, 19, INC_UI.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
 
     local body = vgui.Create("DPanel", f)
@@ -1589,21 +1705,24 @@ net.Receive(NET_VAULT_MENU, function()
         return l
     end
 
-    line("В хранилище: " .. fmtClient(held), INC_UI.accent, 6)
+    line("В хранилище сейчас: " .. fmtClient(held), INC_UI.accent, 4)
     if bag > 0 then
-        line("В руках чемодан: " .. fmtClient(bag), Color(120, 200, 255))
+        line("Чемодан в руках: " .. fmtClient(bag), Color(120, 220, 140), 2)
+    end
+    if carCash > 0 then
+        line("Собрано в инкассаторской машине: " .. fmtClient(carCash), Color(255, 205, 80), 2)
     end
 
     local function mkBtn(text, enabled, color, fn)
         local b = vgui.Create("DButton", body)
         b:Dock(BOTTOM)
-        b:DockMargin(4, 6, 4, 4)
-        b:SetTall(38)
+        b:DockMargin(4, 4, 4, 2)
+        b:SetTall(34)
         b:SetFont("GRMInc_Normal")
         b:SetText(text)
         b:SetEnabled(enabled)
         b.Paint = function(self, w, h)
-            local c = self:IsEnabled() and (self:IsHovered() and INC_UI.accentDk or (color or INC_UI.accent)) or Color(80, 80, 90)
+            local c = self:IsEnabled() and (self:IsHovered() and INC_UI.accentDk or (color or INC_UI.accent)) or Color(70, 75, 85)
             draw.RoundedBox(4, 0, 0, w, h, c)
         end
         b.DoClick = function(self)
@@ -1612,14 +1731,23 @@ net.Receive(NET_VAULT_MENU, function()
         return b
     end
 
-    mkBtn("⬆ ЗАГРУЗИТЬ в хранилище (чемодан из руки → хранилище)", bag > 0, INC_UI.success, function()
+    mkBtn("⬆ ЗАГРУЗИТЬ ЧЕМОДАН (из рук → в хранилище)", bag > 0, INC_UI.success, function()
         net.Start(NET_VAULT_LOAD)
             net.WriteEntity(vault)
         net.SendToServer()
         closeFrame(f)
     end)
 
-    mkBtn("⬇ ВЫГРУЗИТЬ из хранилища (хранилище → чемодан в руку)", held > 0 and bag <= 0, INC_UI.accent, function()
+    if carCash > 0 then
+        mkBtn("⬆ СДАТЬ ВЕСЬ РЕЙС ИЗ МАШИНЫ (" .. fmtClient(carCash) .. ")", true, Color(35, 140, 190), function()
+            net.Start(NET_VAULT_DELIVER_RUN)
+                net.WriteEntity(vault)
+            net.SendToServer()
+            closeFrame(f)
+        end)
+    end
+
+    mkBtn("⬇ ВЫГРУЗИТЬ (хранилище → чемодан в руку для развозки)", held > 0 and bag <= 0, INC_UI.accent, function()
         net.Start(NET_VAULT_UNLOAD)
             net.WriteEntity(vault)
         net.SendToServer()
@@ -1702,22 +1830,43 @@ hook.Add("PlayerButtonDown", "GRM_Incass_GKey", function(ply, button)
 
     local tr = ply:GetEyeTrace()
     local hit = IsValid(tr.Entity) and tr.Entity or nil
+    local pPos = ply:GetPos()
 
-    -- 1. Банкомат под прицелом
-    if IsValid(hit) and hit:GetClass() == "grm_bank_terminal"
-       and ply:GetPos():DistToSqr(hit:GetPos()) <= ((I.Config and I.Config.TerminalRadius or 220) ^ 2) then
+    -- 1. Банкомат под прицелом или рядом
+    local nearTerm = hit
+    if not (IsValid(nearTerm) and nearTerm:GetClass() == "grm_bank_terminal") then
+        for _, ent in ipairs(ents.FindByClass("grm_bank_terminal")) do
+            if IsValid(ent) and pPos:DistToSqr(ent:GetPos()) <= (250 * 250) then
+                nearTerm = ent
+                break
+            end
+        end
+    end
+
+    if IsValid(nearTerm) and nearTerm:GetClass() == "grm_bank_terminal"
+       and pPos:DistToSqr(nearTerm:GetPos()) <= ((I.Config and I.Config.TerminalRadius or 250) ^ 2) then
         RunConsoleCommand("grm_incass_term_use")
         return true
     end
 
-    -- 2. Хранилище под прицелом
-    if IsValid(hit) and hit:GetClass() == "grm_bank_vault"
-       and ply:GetPos():DistToSqr(hit:GetPos()) <= ((I.Config and I.Config.VaultRadius or 320) ^ 2) then
+    -- 2. Хранилище под прицелом или рядом
+    local nearVault = hit
+    if not (IsValid(nearVault) and nearVault:GetClass() == "grm_bank_vault") then
+        for _, ent in ipairs(ents.FindByClass("grm_bank_vault")) do
+            if IsValid(ent) and pPos:DistToSqr(ent:GetPos()) <= (350 * 350) then
+                nearVault = ent
+                break
+            end
+        end
+    end
+
+    if IsValid(nearVault) and nearVault:GetClass() == "grm_bank_vault"
+       and pPos:DistToSqr(nearVault:GetPos()) <= (((I.Config and I.Config.VaultRadius or 350) * 1.5) ^ 2) then
         RunConsoleCommand("grm_incass_vault_use")
         return true
     end
 
-    -- 3. Машина под прицелом или текущее ТС
+    -- 3. Машина под прицелом или рядом
     local car = nil
     local ec = IsValid(hit) and (hit:GetClass() or "") or ""
     if IsValid(hit) and (hit:IsVehicle() or string.StartWith(ec, "simfphys_")
@@ -1729,8 +1878,15 @@ hook.Add("PlayerButtonDown", "GRM_Incass_GKey", function(ply, button)
         local veh = ply:GetVehicle()
         if IsValid(veh) then car = getRootVehicle(veh) end
     end
+    if not IsValid(car) then
+        local myCar = getMyIncassCarClient(ply)
+        if IsValid(myCar) and pPos:DistToSqr(myCar:GetPos()) <= (300 * 300) then
+            car = myCar
+        end
+    end
+
     if IsValid(car) and car:GetNWInt("GRM_IncassRun", 0) > 0
-       and ply:GetPos():DistToSqr(car:GetPos()) <= (250 * 250) then
+       and pPos:DistToSqr(car:GetPos()) <= (300 * 300) then
         RunConsoleCommand("grm_incass_car_use")
         return true
     end
@@ -1774,14 +1930,25 @@ hook.Add("HUDPaint", "GRM_Incass_HUD", function()
     end
 
     local tr = ply:GetEyeTrace()
-    if IsValid(tr.Entity) then
-        local pos = tr.Entity:GetPos()
-        local d = ply:GetPos():DistToSqr(pos)
-        if tr.Entity:GetClass() == "grm_bank_terminal" and d <= (250 * 250) and IsValid(car) then
+    local pPos = ply:GetPos()
+    local targetEnt = IsValid(tr.Entity) and tr.Entity or nil
+    if not IsValid(targetEnt) then
+        for _, ent in ipairs(ents.FindByClass("grm_bank_vault")) do
+            if IsValid(ent) and pPos:DistToSqr(ent:GetPos()) <= (350 * 350) then
+                targetEnt = ent
+                break
+            end
+        end
+    end
+
+    if IsValid(targetEnt) then
+        local pos = targetEnt:GetPos()
+        local d = pPos:DistToSqr(pos)
+        if targetEnt:GetClass() == "grm_bank_terminal" and d <= (250 * 250) and IsValid(car) then
             draw.SimpleText("[G] — открыть меню банкомата (изъять / загрузить)", "GRMInc_Normal",
                 ScrW() / 2, ScrH() / 2 + 40, Color(255, 220, 120, 230), TEXT_ALIGN_CENTER)
-        elseif tr.Entity:GetClass() == "grm_bank_vault" and d <= (250 * 250) then
-            draw.SimpleText("[G] — открыть меню хранилища (сдать / взять)", "GRMInc_Normal",
+        elseif targetEnt:GetClass() == "grm_bank_vault" and d <= (350 * 350) then
+            draw.SimpleText("[G] — сдать инкассацию в хранилище банка", "GRMInc_Normal",
                 ScrW() / 2, ScrH() / 2 + 40, Color(120, 255, 160, 230), TEXT_ALIGN_CENTER)
         end
     end

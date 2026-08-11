@@ -73,7 +73,7 @@ GRM.PermData.Apply["grm_bank_vault"] = function(ent, data)
     end
 end
 
--- ── Загрузить: паллеты и деньги-пропы рядом → в хранилище (HeldCash) ──
+-- ── Загрузить: паллеты, деньги-пропы и инкасс-чемодан → в хранилище (HeldCash) ──
 function ENT:LoadNearCash(ply)
     if not IsValid(ply) then return 0 end
     local held = math.floor(self:GetHeldCash() or 0)
@@ -83,9 +83,24 @@ function ENT:LoadNearCash(ply)
         if GRM.Notify then GRM.Notify(ply, "Хранилище заполнено (вместимость " .. cap .. ").", 255, 190, 90) end
         return 0
     end
+
+    local loaded = 0
+
+    -- Проверяем чемодан инкассации в руках игрока
+    if GRM.Incass and GRM.Incass.PlayerBagAmount and GRM.Incass.PlayerBagAmount(ply) > 0 then
+        local bagAmt = GRM.Incass.PlayerBagAmount(ply)
+        if free >= bagAmt then
+            held = held + bagAmt
+            free = free - bagAmt
+            loaded = loaded + bagAmt
+            GRM.Incass.TakeBagWeapon(ply)
+            self:SetHeldCash(held)
+            if GRM.PermData and GRM.PermData.UpdateEntry then GRM.PermData.UpdateEntry(self) end
+        end
+    end
+
     local r = math.max(64, tonumber(self.LoadRadius) or 250)
     local found = ents.FindInSphere(self:GetPos(), r)
-    local loaded = 0
     for _, ent in ipairs(found) do
         if free <= 0 then break end
         if IsValid(ent) and not ent:IsPlayer() and not ent:IsNPC() and not ent:IsWorld() then
