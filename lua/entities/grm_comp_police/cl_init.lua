@@ -236,35 +236,59 @@ net.Receive("GRM_CompPolice_Open", function()
     end
 
     local lblPName = vgui.Create("DLabel", passPnl)
-    lblPName:SetPos(16, 75) lblPName:SetText("ФИО (ручной ввод):") lblPName:SetTextColor(CC.text) lblPName:SizeToContents()
+    lblPName:SetPos(16, 75) lblPName:SetText("1. ФИО (ручной ввод):") lblPName:SetTextColor(CC.text) lblPName:SizeToContents()
     local entPassName = vgui.Create("DTextEntry", passPnl)
     entPassName:SetPos(16, 95) entPassName:SetSize(320, 26)
 
     local lblPGender = vgui.Create("DLabel", passPnl)
-    lblPGender:SetPos(350, 75) lblPGender:SetText("Пол:") lblPGender:SetTextColor(CC.text) lblPGender:SizeToContents()
+    lblPGender:SetPos(350, 75) lblPGender:SetText("2. Пол:") lblPGender:SetTextColor(CC.text) lblPGender:SizeToContents()
     local comboPassGender = vgui.Create("DComboBox", passPnl)
     comboPassGender:SetPos(350, 95) comboPassGender:SetSize(120, 26)
     comboPassGender:AddChoice("Мужской") comboPassGender:AddChoice("Женский") comboPassGender:SetValue("Мужской")
 
     local lblPBirth = vgui.Create("DLabel", passPnl)
-    lblPBirth:SetPos(485, 75) lblPBirth:SetText("Дата рождения:") lblPBirth:SetTextColor(CC.text) lblPBirth:SizeToContents()
+    lblPBirth:SetPos(485, 75) lblPBirth:SetText("3. Дата рождения:") lblPBirth:SetTextColor(CC.text) lblPBirth:SizeToContents()
     local entPassBirth = vgui.Create("DTextEntry", passPnl)
     entPassBirth:SetPos(485, 95) entPassBirth:SetSize(140, 26) entPassBirth:SetText("12.04.1988")
 
+    local lblPNat = vgui.Create("DLabel", passPnl)
+    lblPNat:SetPos(16, 135) lblPNat:SetText("4. Гражданство (выбор / ручной ввод):") lblPNat:SetTextColor(CC.text) lblPNat:SizeToContents()
+    local comboPassNat = vgui.Create("DComboBox", passPnl)
+    comboPassNat:SetPos(16, 155) comboPassNat:SetSize(220, 26)
+    comboPassNat:AddChoice("Гражданин Республики")
+    comboPassNat:AddChoice("Иностранный гражданин")
+    comboPassNat:AddChoice("Лицо без гражданства")
+    comboPassNat:AddChoice("Подданный Королевства")
+    comboPassNat:SetValue("Гражданин Республики")
+
+    local entPassNat = vgui.Create("DTextEntry", passPnl)
+    entPassNat:SetPos(245, 155) entPassNat:SetSize(225, 26)
+    entPassNat:SetText("Гражданин Республики")
+
+    comboPassNat.OnSelect = function(_, _, v)
+        if v and v ~= "" then entPassNat:SetText(v) end
+    end
+
+    local lblPBPlace = vgui.Create("DLabel", passPnl)
+    lblPBPlace:SetPos(485, 135) lblPBPlace:SetText("5. Место рождения (город / регион):") lblPBPlace:SetTextColor(CC.text) lblPBPlace:SizeToContents()
+    local entPassBPlace = vgui.Create("DTextEntry", passPnl)
+    entPassBPlace:SetPos(485, 155) entPassBPlace:SetSize(430, 26)
+    entPassBPlace:SetText("г. Приморск, Республика Гранд")
+
     local lblPSeries = vgui.Create("DLabel", passPnl)
-    lblPSeries:SetPos(16, 135) lblPSeries:SetText("Серия паспорта:") lblPSeries:SetTextColor(CC.text) lblPSeries:SizeToContents()
+    lblPSeries:SetPos(16, 195) lblPSeries:SetText("6. Серия паспорта:") lblPSeries:SetTextColor(CC.text) lblPSeries:SizeToContents()
     local entPassSeries = vgui.Create("DTextEntry", passPnl)
-    entPassSeries:SetPos(16, 155) entPassSeries:SetSize(120, 26) entPassSeries:SetText(tpls.passport and tpls.passport.defaultSeries or "GRM")
+    entPassSeries:SetPos(16, 215) entPassSeries:SetSize(120, 26) entPassSeries:SetText(tpls.passport and tpls.passport.defaultSeries or "GRM")
 
     local lblPNum = vgui.Create("DLabel", passPnl)
-    lblPNum:SetPos(150, 135) lblPNum:SetText("Номер паспорта:") lblPNum:SetTextColor(CC.text) lblPNum:SizeToContents()
+    lblPNum:SetPos(150, 195) lblPNum:SetText("7. Номер паспорта:") lblPNum:SetTextColor(CC.text) lblPNum:SizeToContents()
     local entPassNum = vgui.Create("DTextEntry", passPnl)
-    entPassNum:SetPos(150, 155) entPassNum:SetSize(180, 26) entPassNum:SetText("01428901")
+    entPassNum:SetPos(150, 215) entPassNum:SetSize(180, 26) entPassNum:SetText("01428901")
 
     local lblPIssuer = vgui.Create("DLabel", passPnl)
-    lblPIssuer:SetPos(350, 135) lblPIssuer:SetText("Орган выдачи:") lblPIssuer:SetTextColor(CC.text) lblPIssuer:SizeToContents()
+    lblPIssuer:SetPos(350, 195) lblPIssuer:SetText("8. Орган выдачи:") lblPIssuer:SetTextColor(CC.text) lblPIssuer:SizeToContents()
     local entPassIssuer = vgui.Create("DTextEntry", passPnl)
-    entPassIssuer:SetPos(350, 155) entPassIssuer:SetSize(360, 26) entPassIssuer:SetText("Паспортный стол OrdnungPolizei")
+    entPassIssuer:SetPos(350, 215) entPassIssuer:SetSize(565, 26) entPassIssuer:SetText("Паспортный стол OrdnungPolizei")
 
     local selectedPassKey = ""
     local selectedPassSid64 = "0"
@@ -281,6 +305,8 @@ net.Receive("GRM_CompPolice_Open", function()
                 entPassName:SetText(ex.fullName or pData.rpName or "")
                 entPassBirth:SetText(ex.birthDate or "12.04.1988")
                 comboPassGender:SetValue(ex.gender or "Мужской")
+                entPassNat:SetText(ex.nationality or "Гражданин Республики")
+                entPassBPlace:SetText(ex.birthPlace or "г. Приморск, Республика Гранд")
                 entPassSeries:SetText(ex.series or "GRM")
                 entPassNum:SetText(ex.number or ("01" .. shortSid))
                 entPassIssuer:SetText(ex.issuedBy or "Паспортный стол OrdnungPolizei")
@@ -289,7 +315,7 @@ net.Receive("GRM_CompPolice_Open", function()
     end
 
     local btnIssuePass = vgui.Create("DButton", passPnl)
-    btnIssuePass:SetPos(16, 205) btnIssuePass:SetSize(320, 36)
+    btnIssuePass:SetPos(16, 265) btnIssuePass:SetSize(360, 36)
     btnIssuePass:SetText("✔ Оформить и выдать паспорт")
     btnIssuePass:SetFont("DermaDefaultBold")
     btnIssuePass:SetTextColor(color_white)
@@ -300,7 +326,8 @@ net.Receive("GRM_CompPolice_Open", function()
             fullName    = entPassName:GetText(),
             gender      = comboPassGender:GetValue(),
             birthDate   = entPassBirth:GetText(),
-            nationality = "Гражданин Республики",
+            nationality = entPassNat:GetText(),
+            birthPlace  = entPassBPlace:GetText(),
             series      = entPassSeries:GetText(),
             number      = entPassNum:GetText(),
             issuedBy    = entPassIssuer:GetText(),

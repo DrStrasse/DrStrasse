@@ -115,7 +115,7 @@ net.Receive("GRM_CompSecurity_Open", function()
                 string.format("  ТЕКУЩАЯ ФРАКЦИЯ: %s  |  ДОЛЖНОСТЬ: %s  |  ОТДЕЛ: %s", pData.faction or "Гражданский", pData.role or "—", pData.department or "—"),
                 "",
                 "1. ПАСПОРТ ГРАЖДАНИНА:",
-                pass and string.format("   • Серия и №: %s №%s | ФИО: %s | Пол: %s | Рождение: %s | Кем выдан: %s | Статус: %s", pass.series or "GRM", pass.number or "—", pass.fullName or "—", pass.gender or "—", pass.birthDate or "—", pass.issuedBy or "—", pass.status or "Действителен") or "   • Паспорт в реестре НЕ ОФОРМЛЕН",
+                pass and string.format("   • Серия и №: %s №%s | ФИО: %s | Гражданство: %s | Место рожд.: %s | Пол: %s | Дата рожд.: %s | Кем выдан: %s | Статус: %s", pass.series or "GRM", pass.number or "—", pass.fullName or "—", pass.nationality or "Гражданин", pass.birthPlace or "г. Приморск", pass.gender or "—", pass.birthDate or "—", pass.issuedBy or "—", pass.status or "Действителен") or "   • Паспорт в реестре НЕ ОФОРМЛЕН",
                 "",
                 "2. СЛУЖЕБНОЕ УДОСТОВЕРЕНИЕ (КСИВА):",
                 badge and string.format("   • Ведомство: %s | Звание: %s | Отдел: %s | Жетон: %s | Статус: %s", badge.faction or "—", badge.role or "—", badge.department or "—", badge.number or "—", badge.status or "Действителен") or "   • Служебное удостоверение отсутствует",

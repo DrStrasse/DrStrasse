@@ -209,11 +209,13 @@ if SERVER then
     local function defaultTemplates()
         return {
             passport = {
-                stateTitle    = "РЕСПУБЛИКА ГРАНД",
-                docTitle      = "ПАСПОРТ ГРАЖДАНИНА",
-                coverColor    = { r = 85, g = 20, b = 25 },
-                foilStyle     = "gold",
-                defaultSeries = "GRM",
+                stateTitle         = "РЕСПУБЛИКА ГРАНД",
+                docTitle           = "ПАСПОРТ ГРАЖДАНИНА",
+                coverColor         = { r = 85, g = 20, b = 25 },
+                foilStyle          = "gold",
+                defaultSeries      = "GRM",
+                defaultNationality = "Гражданин Республики",
+                defaultBirthPlace  = "г. Приморск, Республика Гранд",
             },
             military = {
                 stateTitle    = "ВООРУЖЁННЫЕ СИЛЫ",
@@ -362,7 +364,8 @@ if SERVER then
                 fullName    = getPlayerRPName(ply),
                 gender      = "Мужской",
                 birthDate   = "12.04.1988",
-                nationality = "Гражданин",
+                nationality = tpl.defaultNationality or "Гражданин Республики",
+                birthPlace  = tpl.defaultBirthPlace or "г. Приморск, Республика Гранд",
                 series      = tpl.defaultSeries or "GRM",
                 number      = string.format("%02d%s", tonumber(slotNum) or 1, shortSid),
                 issuedBy    = "Паспортный стол Центрального округа",
@@ -1465,7 +1468,7 @@ if CLIENT then
                     drawField("ФАМИЛИЯ, ИМЯ, ОТЧЕСТВО:", data.fullName)
                     drawField("ПОЛ / SEX:", data.gender or "Мужской")
                     drawField("ДАТА РОЖДЕНИЯ:", data.birthDate or "12.04.1988")
-                    drawField("МЕСТО РОЖДЕНИЯ:", "г. Приморск, Республика Гранд")
+                    drawField("МЕСТО РОЖДЕНИЯ:", data.birthPlace or "г. Приморск, Республика Гранд")
                     drawField("ГРАЖДАНСТВО:", data.nationality or "Гражданин Республики")
 
                     -- MRZ машиночитаемая зона
@@ -2348,6 +2351,16 @@ if CLIENT then
         local entSeries = vgui.Create("DTextEntry", passPnl)
         entSeries:SetPos(16, 98) entSeries:SetSize(150, 28) entSeries:SetText(tpl.passport.defaultSeries or "GRM")
 
+        local lblS3 = vgui.Create("DLabel", passPnl)
+        lblS3:SetPos(16, 136) lblS3:SetText("Гражданство по умолчанию:") lblS3:SetFont("GRMDoc_Bold") lblS3:SizeToContents()
+        local entNat = vgui.Create("DTextEntry", passPnl)
+        entNat:SetPos(16, 158) entNat:SetSize(350, 28) entNat:SetText(tpl.passport.defaultNationality or "Гражданин Республики")
+
+        local lblS4 = vgui.Create("DLabel", passPnl)
+        lblS4:SetPos(16, 196) lblS4:SetText("Место рождения по умолчанию:") lblS4:SetFont("GRMDoc_Bold") lblS4:SizeToContents()
+        local entBPlace = vgui.Create("DTextEntry", passPnl)
+        entBPlace:SetPos(16, 218) entBPlace:SetSize(350, 28) entBPlace:SetText(tpl.passport.defaultBirthPlace or "г. Приморск, Республика Гранд")
+
         tabs:AddSheet("Паспорт", passPnl, "icon16/book.png")
 
         -- Вкладка 2: Военный билет
@@ -2582,6 +2595,8 @@ if CLIENT then
         btnSave.DoClick = function()
             tpl.passport.stateTitle = entState:GetText()
             tpl.passport.defaultSeries = entSeries:GetText()
+            tpl.passport.defaultNationality = entNat:GetText()
+            tpl.passport.defaultBirthPlace = entBPlace:GetText()
 
             tpl.military.stateTitle = entMilTitle:GetText()
             tpl.military.defaultPrefix = entMilPfx:GetText()
