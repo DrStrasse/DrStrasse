@@ -532,6 +532,8 @@ ents = ents or {
         function e:IsVehicle() return self._isVeh == true end
         function e:GetDriver() return self._driver end
         function e:GetChildren() return {} end
+        function e:SetNWBool(k, v) self.__nw[k] = v end
+        function e:GetNWBool(k, d) return self.__nw[k] ~= nil and self.__nw[k] or (d or false) end
         function e:SetNWInt(k, v) self.__nw[k] = v end
         function e:GetNWInt(k, d) return self.__nw[k] ~= nil and self.__nw[k] or (d or 0) end
         function e:SetNWString(k, v) self.__nw[k] = v end
@@ -785,33 +787,60 @@ if PHASE == "incass" then
     assert(I.PlayerBagAmount(incassator) == 0, "incass: чемодан остался в руке после загрузки")
     assert(car:GetNWInt("GRM_IncassCarCash") == 50000, "incass: в багажнике не 50000")
 
-    -- 6. Разгрузка из машины доступна ТОЛЬКО у вольта
-    local okUnloadFar, errUnloadFar = I.UnloadBagFromCar(incassator, car)
-    assert(okUnloadFar == false and tostring(errUnloadFar):find("хранилищ"), "incass: разгрузка вдали от вольта должна отказать")
+    -- 6. Разгрузка из машины доступна в ЛЮБОМ месте (не привязана к вольту)
+    local okUnloadAny, unloadAmt = I.UnloadBagFromCar(incassator, car)
+    assert(okUnloadAny == true and unloadAmt == 50000, "incass: свободная разгрузка машины не удалась: " .. tostring(unloadAmt))
+    assert(I.PlayerBagAmount(incassator) == 50000, "incass: чемодан не выдан при свободной разгрузке")
+    assert(car:GetNWInt("GRM_IncassCarCash") == 0, "incass: багажник не опустел")
 
-    -- Создаём вольт рядом
+    -- Создаём вольт и сдаём чемодан
     local vault = ents.Create("grm_bank_vault")
     vault:SetPos(Vector(100, 0, 0))
     incassator:SetPos(Vector(90, 0, 0))
     car:SetPos(Vector(80, 0, 0))
 
-    local okUnloadNear, unloadAmt = I.UnloadBagFromCar(incassator, car)
-    assert(okUnloadNear == true and unloadAmt == 50000, "incass: разгрузка у вольта не удалась: " .. tostring(unloadAmt))
-    assert(I.PlayerBagAmount(incassator) == 50000, "incass: чемодан не выдан при разгрузке")
-    assert(car:GetNWInt("GRM_IncassCarCash") == 0, "incass: багажник не опустел")
-
-    -- 7. Сдача чемодана в хранилище банка
+    -- 7. Сдача чемодана в хранилище банка (Направление А)
     local okVault, vaultAmt = I.LoadBagIntoVault(incassator, vault)
     assert(okVault == true and vaultAmt == 50000, "incass: сдача в вольт не удалась: " .. tostring(vaultAmt))
     assert(vault:GetHeldCash() == 50000, "incass: в вольте не 50000")
     assert(I.PlayerBagAmount(incassator) == 0, "incass: чемодан остался в руке после сдачи в вольт")
 
-    -- 8. Завершение рейса /incass_off
+    -- 8. Развозка денег: забор из хранилища -> машина -> загрузка в банкомат (Направление Б)
+    local okUnloadVault, fromVaultAmt = I.UnloadBagFromVault(incassator, vault)
+    assert(okUnloadVault == true and fromVaultAmt == 50000, "incass: выгрузка из вольта не удалась")
+    assert(vault:GetHeldCash() == 0, "incass: в вольте остались деньги после выгрузки")
+    assert(I.PlayerBagAmount(incassator) == 50000, "incass: чемодан не в руке после выгрузки из вольта")
+
+    -- Грузим в машину
+    local okLoad2 = I.LoadBagIntoCar(incassator, car)
+    assert(okLoad2 == true and car:GetNWInt("GRM_IncassCarCash") == 50000, "incass: повторная загрузка в машину не удалась")
+
+    -- Едем к другому банкомату в городе и выгружаем
+    local atm2 = ents.Create("grm_bank_terminal")
+    atm2:SetPos(Vector(500, 0, 0))
+    car:SetPos(Vector(490, 0, 0))
+    incassator:SetPos(Vector(495, 0, 0))
+
+    local okUnloadAtm2, unloadAmt2 = I.UnloadBagFromCar(incassator, car)
+    assert(okUnloadAtm2 == true and unloadAmt2 == 50000, "incass: разгрузка у банкомата не удалась")
+
+    -- Загружаем деньги из чемодана в банкомат
+    local okLoadAtm, loadAtmAmt = I.LoadBagIntoTerminal(incassator, atm2)
+    assert(okLoadAtm == true and loadAtmAmt == 50000, "incass: загрузка в банкомат не удалась: " .. tostring(loadAtmAmt))
+    assert(I.TerminalCash[atm2:EntIndex()] == 50000, "incass: банкомат 2 не пополнился")
+    assert(atm2:GetNWBool("GRM_IncassLocked") == true, "incass: банкомат 2 не заблокирован в режиме инкассации")
+
+    -- Снимаем режим инкассации с банкомата
+    local okUnlock = I.UnlockTerminal(incassator, atm2)
+    assert(okUnlock == true, "incass: разблокировка банкомата не удалась")
+    assert(atm2:GetNWBool("GRM_IncassLocked") == false, "incass: банкомат 2 остался заблокирован")
+
+    -- 9. Завершение рейса /incass_off
     fireHook("PlayerSay", incassator, "/incass_off")
     assert(I.ActiveRuns[rid] == nil, "incass: рейс не закрылся")
     assert(car:GetNWInt("GRM_IncassRun") == 0, "incass: car runID не сброшен")
     assert(incassator:GetNWEntity("GRM_IncassMyCar") == nil or incassator:GetNWEntity("GRM_IncassMyCar") == NULL, "incass: MyCar не сброшен")
 
-    print("PHASE incass: OK — старт рейса/5% комиссия терминала/чемодан в руке/багажник/гард у вольта/сдача в вольт/завершение рейса")
+    print("PHASE incass: OK — старт рейса/двунаправленная инкассация/свободная разгрузка/пополнение банкомата/блокировка и снятие/финиш рейса")
     return
 end

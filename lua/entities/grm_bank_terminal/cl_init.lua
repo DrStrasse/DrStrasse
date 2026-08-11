@@ -7,10 +7,19 @@ function ENT:Draw()
     ang:RotateAroundAxis(ang:Forward(), 90)
     ang:RotateAroundAxis(ang:Right(), 90)
 
+    local isIncass = self:GetNWBool("GRM_IncassLocked", false)
+
     cam.Start3D2D(pos, Angle(0, ang.y, 90), 0.09)
-        draw.SimpleTextOutlined("БАНК GRM", "DermaLarge", 0, 0, Color(100, 220, 120),
-            TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, color_black)
-        draw.SimpleTextOutlined("[E] Операции со счетами", "DermaDefaultBold", 0, 30,
-            Color(220, 220, 230), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, color_black)
+        if isIncass then
+            draw.SimpleTextOutlined("[!] ИНКАССАЦИЯ", "DermaLarge", 0, 0, Color(245, 180, 50),
+                TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, color_black)
+            draw.SimpleTextOutlined("Терминал на обслуживании", "DermaDefaultBold", 0, 30,
+                Color(255, 120, 120), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, color_black)
+        else
+            draw.SimpleTextOutlined("БАНК GRM", "DermaLarge", 0, 0, Color(100, 220, 120),
+                TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, color_black)
+            draw.SimpleTextOutlined("[E] Операции со счетами", "DermaDefaultBold", 0, 30,
+                Color(220, 220, 230), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, color_black)
+        end
     cam.End3D2D()
 end

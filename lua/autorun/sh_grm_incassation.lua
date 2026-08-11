@@ -1,24 +1,28 @@
 --[[--------------------------------------------------------------------
-    GRM Incassation (Код 126 — «Инкассация») v2.0.0 — ПЕРЕПИСАНО С НУЛЯ
+    GRM Incassation (Код 126 — «Инкассация») v2.1.0 — ДВУНАПРАВЛЕННАЯ + 3D2D
 
     Полный цикл работы по ТЗ:
       1. Игрок садится в служебную машину фракции, за рулём пишет /incass —
          старт рейса, машина помечается NW'ами, игроку присваивается инкасс-машина.
-      2. Подъехав к банкомату (grm_bank_terminal) и выйдя из машины — нажимает [G],
-         открывается меню терминала: баланс банкомата, поле суммы,
-         «Забрать указанную сумму» / «Забрать ВСЁ».
-         Деньги НЕ идут в кошелёк/наличку игрока — выдаётся чемодан
-         (weapon_grm_incass_bag, holdtype=pistol).
-         Банкомат получает кулдаун и блокируется от гражданских на время сбора.
-      3. Подходит к инкасс-машине — нажимает [G] — меню машины:
-         «ЗАГРУЗИТЬ» (чемодан из руки → багажник, лимит MaxCarryPerCar) /
-         «РАЗГРУЗИТЬ» (багажник → чемодан в руку; доступно ТОЛЬКО у вольта).
-      4. Подъехав к банку — выходит, [G] на машину → «РАЗГРУЗИТЬ» (порциями по 50к).
-      5. Подходит к grm_bank_vault (хранилище банка) — [G] — меню хранилища:
-         «Загрузить в хранилище» (чемодан → HeldCash вольта, автообновление перма) /
-         «Выгрузить из хранилища» (для сотрудников с доступом/суперадмина).
-      6. Команда /incass_off (/incass_end, /инкасс_стоп, /инкасс_офф, /сдать) —
-         завершение рейса, сброс меток ТС/игрока, снятие блокировок терминалов.
+         Над машиной активируется 3D2D-индикатор с суммой в багажнике.
+      2. НАПРАВЛЕНИЕ А (Сбор денег: Банкомат → Хранилище):
+         • Подъехав к банкомату (grm_bank_terminal) — нажимает [G],
+           банкомат переходит в режим «ИНКАССАЦИЯ» (3D2D индикатор, блокировка от гражданских).
+         • В меню банкомата: «Забрать указанную сумму» / «Забрать ВСЁ» —
+           деньги списываются из банкомата, выдаётся чемодан (weapon_grm_incass_bag).
+         • Подходит к инкасс-машине — [G] — «ЗАГРУЗИТЬ» (чемодан → багажник).
+         • Подъехав к хранилищу банка (grm_bank_vault) — [G] на машину — «РАЗГРУЗИТЬ»
+           (багажник → чемодан в руку; разгрузка доступна в любом месте).
+         • Подходит к вольту — [G] — «ЗАГРУЗИТЬ в хранилище» (HeldCash += N).
+      3. НАПРАВЛЕНИЕ Б (Развозка денег: Хранилище → Банкоматы):
+         • У вольта (grm_bank_vault) — [G] — «ВЫГРУЗИТЬ из хранилища» (вольт → чемодан 50к).
+         • Подходит к машине — [G] — «ЗАГРУЗИТЬ» (чемодан → багажник).
+         • Развозит по городу к любым банкоматам.
+         • У банкомата — [G] на машину — «РАЗГРУЗИТЬ» (чемодан в руке).
+         • Подходит к банкомату — [G] — «ЗАГРУЗИТЬ в банкомат» (чемодан → банкомат).
+         • Снимает блокировку банкомата кнопкой «Завершить обслуживание».
+      4. Команда /incass_off (/incass_end, /инкасс_стоп, /инкасс_офф, /сдать) —
+         завершение рейса, сброс меток ТС/игрока, автоматическое снятие блокировок.
 
     Зависимости:
       - Код 42 (sh_grm_currency.lua)   — GRM.Notify / GRM.Format
@@ -32,7 +36,7 @@ GRM = GRM or {}
 GRM.Incass = GRM.Incass or {}
 local I = GRM.Incass
 
-I.Version    = "2.0.0"
+I.Version    = "2.1.0"
 I.Code       = 126
 I.ModuleName = "incassation"
 
@@ -40,6 +44,8 @@ I.ModuleName = "incassation"
 local NET_NOTIFY        = "GRM_Incass_Notify"
 local NET_TERM_MENU     = "GRM_Incass_TermMenu"
 local NET_TERM_TAKE     = "GRM_Incass_TermTake"
+local NET_TERM_LOAD     = "GRM_Incass_TermLoad"
+local NET_TERM_UNLOCK   = "GRM_Incass_TermUnlock"
 local NET_CAR_MENU      = "GRM_Incass_CarMenu"
 local NET_CAR_LOAD      = "GRM_Incass_CarLoad"
 local NET_CAR_UNLOAD    = "GRM_Incass_CarUnload"
@@ -50,6 +56,7 @@ local NET_VAULT_UNLOAD  = "GRM_Incass_VaultUnload"
 if SERVER then
     for _, s in ipairs({
         NET_NOTIFY, NET_TERM_MENU, NET_TERM_TAKE,
+        NET_TERM_LOAD, NET_TERM_UNLOCK,
         NET_CAR_MENU, NET_CAR_LOAD, NET_CAR_UNLOAD,
         NET_VAULT_MENU, NET_VAULT_LOAD, NET_VAULT_UNLOAD,
     }) do
@@ -63,7 +70,7 @@ I.Config = I.Config or {
     BagChunk                = 50000,  -- макс. номинал одного чемодана (50 тыс. GRM)
     TerminalDepositCut      = 0.05,   -- 5% от взносов игроков оседает в банкомате
     TerminalMinCollect      = 100,    -- минимум наличных для изъятия
-    TerminalCollectCooldown = 120,    -- секунд кулдауна опустошённого банкомата
+    TerminalCollectCooldown = 120,    -- секунд кулдауна после изъятия
     TerminalRadius          = 220,    -- радиус взаимодействия с банкоматом
     CarInteractRadius       = 250,    -- радиус взаимодействия с машиной
     VaultRadius             = 320,    -- радиус взаимодействия с хранилищем
@@ -476,6 +483,12 @@ local function unlockTerminalsOfRun(runID)
     for eid, rid in pairs(I.LockedTerminals) do
         if rid == runID then
             I.LockedTerminals[eid] = nil
+            for _, ent in ipairs(ents.FindByClass("grm_bank_terminal")) do
+                if IsValid(ent) and ent:EntIndex() == eid then
+                    ent:SetNWBool("GRM_IncassLocked", false)
+                    ent:SetNWInt("GRM_IncassLockRun", 0)
+                end
+            end
         end
     end
 end
@@ -593,7 +606,7 @@ function I.StartRun(ply)
     veh:SetNWString("GRM_IncassUID", tostring(veh.GRM_IncassUID))
     ply:SetNWEntity("GRM_IncassMyCar", veh)
 
-    notify(ply, "Рейс #" .. runID .. " начат (" .. tostring(spawnName) .. "). Порядок: G у терминала → меню/забрать → чемодан в руке → G у машины → ЗАГРУЗИТЬ → до вольта → G у машины → РАЗГРУЗИТЬ → G у вольта → Загрузить.", 100, 220, 130)
+    notify(ply, "Рейс #" .. runID .. " начат (" .. tostring(spawnName) .. "). Доступен забор и развозка средств по банкоматам. G — взаимодействие.", 100, 220, 130)
 
     for _, p in ipairs(player.GetAll()) do
         if IsValid(p) and p ~= ply and (isfunction(p.IsAdmin) and p:IsAdmin() or isfunction(p.IsSuperAdmin) and p:IsSuperAdmin())
@@ -625,7 +638,7 @@ function I.CollectFromTerminal(ply, terminal, amount)
 
     local eid = terminal:EntIndex()
     local cash = math.floor(tonumber(I.TerminalCash[eid]) or 0)
-    if cash <= 0 then return false, "В терминале нет наличных для инкассации" end
+    if cash <= 0 then return false, "В банкомате нет наличных для изъятия" end
 
     local lastT = I.TerminalLastCollect[eid] or 0
     if lastT > 0 and (lastT + I.Config.TerminalCollectCooldown) > CurTime() then
@@ -647,19 +660,80 @@ function I.CollectFromTerminal(ply, terminal, amount)
 
     I.TerminalCash[eid] = cash - amount
     I.TerminalLastCollect[eid] = CurTime()
+    if isfunction(terminal.SetNWInt) then terminal:SetNWInt("GRM_TerminalCash", I.TerminalCash[eid]) end
+
     if I.Config.LockTerminalOnCollect then
         I.LockedTerminals[eid] = runID
+        if isfunction(terminal.SetNWBool) then terminal:SetNWBool("GRM_IncassLocked", true) end
+        if isfunction(terminal.SetNWInt) then terminal:SetNWInt("GRM_IncassLockRun", runID) end
     end
 
     local w = I.GiveBagWeapon(ply, amount)
     if not IsValid(w) then
         I.TerminalCash[eid] = I.TerminalCash[eid] + amount
+        if isfunction(terminal.SetNWInt) then terminal:SetNWInt("GRM_TerminalCash", I.TerminalCash[eid]) end
         return false, "Не удалось выдать чемодан"
     end
 
     terminal:EmitSound("buttons/blip1.wav", 55, 100)
-    notify(ply, "Чемодан " .. formatMoney(amount) .. " в руке. Подойдите к машине → G → ЗАГРУЗИТЬ.", 100, 220, 130)
+    notify(ply, "Чемодан " .. formatMoney(amount) .. " в руке. Загрузите в машину или вольт.", 100, 220, 130)
     return true, amount
+end
+
+-- ── Загрузка чемодана из руки в банкомат (пополнение банкомата) ──
+function I.LoadBagIntoTerminal(ply, terminal)
+    if not isPly(ply) or not IsValid(terminal) or terminal:GetClass() ~= "grm_bank_terminal" then
+        return false, "Нет терминала"
+    end
+    local runID = nil
+    for rid, r in pairs(I.ActiveRuns) do
+        if IsValid(r.driver) and r.driver == ply then
+            runID = rid
+            break
+        end
+    end
+    if not runID then return false, "У вас нет активного рейса" end
+
+    if ply:GetPos():DistToSqr(terminal:GetPos()) > (I.Config.TerminalRadius ^ 2) then
+        return false, "Слишком далеко от терминала"
+    end
+
+    local amt = I.PlayerBagAmount(ply)
+    if amt <= 0 then return false, "В руках нет чемодана с деньгами" end
+
+    local eid = terminal:EntIndex()
+    local curCash = math.floor(tonumber(I.TerminalCash[eid]) or 0)
+    I.TerminalCash[eid] = curCash + amt
+    if isfunction(terminal.SetNWInt) then terminal:SetNWInt("GRM_TerminalCash", I.TerminalCash[eid]) end
+    if isfunction(terminal.SetNWBool) then terminal:SetNWBool("GRM_IncassLocked", true) end
+    if isfunction(terminal.SetNWInt) then terminal:SetNWInt("GRM_IncassLockRun", runID) end
+    I.LockedTerminals[eid] = runID
+
+    I.TakeBagWeapon(ply)
+    terminal:EmitSound("ambient/levels/labs/coinslot1.wav", 65, 95)
+    notify(ply, "Загружено в банкомат: " .. formatMoney(amt) .. ". Всего в банкомате: " .. formatMoney(I.TerminalCash[eid]), 100, 220, 130)
+    return true, amt
+end
+
+-- ── Снятие режима блокировки банкомата ────────────────────────────
+function I.UnlockTerminal(ply, terminal)
+    if not isPly(ply) or not IsValid(terminal) or terminal:GetClass() ~= "grm_bank_terminal" then
+        return false, "Нет терминала"
+    end
+    local eid = terminal:EntIndex()
+    local rid = I.LockedTerminals[eid]
+    if rid then
+        local run = I.ActiveRuns[rid]
+        if run and run.driver ~= ply and not (isfunction(ply.IsSuperAdmin) and ply:IsSuperAdmin()) then
+            return false, "Этот терминал заблокирован другим инкассатором"
+        end
+        I.LockedTerminals[eid] = nil
+    end
+    if isfunction(terminal.SetNWBool) then terminal:SetNWBool("GRM_IncassLocked", false) end
+    if isfunction(terminal.SetNWInt) then terminal:SetNWInt("GRM_IncassLockRun", 0) end
+    terminal:EmitSound("buttons/button14.wav", 55, 100)
+    notify(ply, "Обслуживание банкомата завершено (блокировка снята).", 100, 220, 130)
+    return true
 end
 
 -- ── Загрузка чемодана в багажник машины ──────────────────────────
@@ -684,11 +758,11 @@ function I.LoadBagIntoCar(ply, car)
     run.carCash = run.carCash + amt
     car:SetNWInt("GRM_IncassCarCash", run.carCash)
     car:EmitSound("physics/metal/metal_solid_impact_hard" .. math.random(1, 3) .. ".wav", 50, 100)
-    notify(ply, "Загружено: " .. formatMoney(amt) .. " (в машине " .. formatMoney(run.carCash) .. " / " .. formatMoney(I.Config.MaxCarryPerCar) .. ")", 100, 220, 130)
+    notify(ply, "Загружено в машину: " .. formatMoney(amt) .. " (в машине " .. formatMoney(run.carCash) .. " / " .. formatMoney(I.Config.MaxCarryPerCar) .. ")", 100, 220, 130)
     return true, amt
 end
 
--- ── Выгрузка чемодана из багажника машины (только у вольта) ───────
+-- ── Выгрузка чемодана из багажника машины (в любом месте!) ───────
 function I.UnloadBagFromCar(ply, car)
     if not isPly(ply) or not IsValid(car) then return false, "Нет машины" end
     local runID = I.CarToRun[car:EntIndex()]
@@ -699,14 +773,11 @@ function I.UnloadBagFromCar(ply, car)
     if ply:GetPos():DistToSqr(car:GetPos()) > (I.Config.CarInteractRadius ^ 2) then
         return false, "Подойдите ближе к машине"
     end
-    if not I.NearbyVault(ply) then
-        return false, "Разгрузка доступна только рядом с банк-хранилищем"
-    end
     if run.carCash <= 0 then
         return false, "В багажнике машины нет денег"
     end
     if I.PlayerBagAmount(ply) > 0 then
-        return false, "В руках уже есть чемодан — сдайте его в хранилище"
+        return false, "В руках уже есть чемодан — загрузите его в банкомат или хранилище"
     end
 
     local take = math.min(I.Config.BagChunk, run.carCash)
@@ -721,7 +792,7 @@ function I.UnloadBagFromCar(ply, car)
     end
 
     car:EmitSound("physics/metal/metal_solid_impact_hard" .. math.random(1, 3) .. ".wav", 50, 100)
-    notify(ply, "Чемодан " .. formatMoney(take) .. " в руке. Подойдите к хранилищу → G → Загрузить в хранилище.", 120, 200, 255)
+    notify(ply, "Чемодан " .. formatMoney(take) .. " в руке. Доставьте в банкомат или банк-хранилище.", 120, 200, 255)
     return true, take
 end
 
@@ -791,7 +862,7 @@ function I.UnloadBagFromVault(ply, vault)
     end
 
     vault:EmitSound("ambient/levels/labs/coinslot1.wav", 65, 95)
-    notify(ply, "Из хранилища выгружено: " .. formatMoney(take) .. " (в руке). Осталось: " .. formatMoney(math.floor(vault:GetHeldCash() or 0)), 120, 200, 255)
+    notify(ply, "Из хранилища выгружено: " .. formatMoney(take) .. " (в руке). Погрузите в машину для развозки.", 120, 200, 255)
     return true, take
 end
 
@@ -804,15 +875,17 @@ hook.Add("GRM_Incass_TerminalDeposit", "GRM_Incass_TerminalDeposit", function(pl
     if cut <= 0 then return end
     local eid = terminal:EntIndex()
     I.TerminalCash[eid] = (I.TerminalCash[eid] or 0) + cut
+    terminal:SetNWInt("GRM_TerminalCash", I.TerminalCash[eid])
 end)
 
--- Блокировка банкомата от обычных игроков во время сбора
+-- Блокировка банкомата от обычных игроков во время режима инкассации
 hook.Add("PlayerUse", "GRM_Incass_TermLock", function(ply, ent)
     if not isPly(ply) or not IsValid(ent) then return end
     if ent:GetClass() ~= "grm_bank_terminal" then return end
-    local rid = I.LockedTerminals[ent:EntIndex()]
-    if not rid then return end
+    local isLocked = ent:GetNWBool("GRM_IncassLocked", false) or (I.LockedTerminals[ent:EntIndex()] ~= nil)
+    if not isLocked then return end
 
+    local rid = I.LockedTerminals[ent:EntIndex()] or ent:GetNWInt("GRM_IncassLockRun", 0)
     local myRun = nil
     for r2, r in pairs(I.ActiveRuns) do
         if IsValid(r.driver) and r.driver == ply then
@@ -820,8 +893,8 @@ hook.Add("PlayerUse", "GRM_Incass_TermLock", function(ply, ent)
             break
         end
     end
-    if myRun == rid then return end -- водитель рейса не блокируется
-    notify(ply, "Этот банкомат обслуживается инкассацией. Попробуйте позже.", 255, 180, 80)
+    if myRun and (myRun == rid or rid == 0) then return end -- инкассатор рейса не блокируется
+    notify(ply, "Этот банкомат переведён в режим инкассации. Попробуйте позже.", 255, 180, 80)
     return false
 end)
 
@@ -916,13 +989,20 @@ local function sendTerminalMenu(ply, terminal)
         return
     end
 
-    local cash = math.floor(tonumber(I.TerminalCash[terminal:EntIndex()]) or 0)
+    -- Автоматический переход в режим инкассации при открытии меню инкассатором
+    local eid = terminal:EntIndex()
+    terminal:SetNWBool("GRM_IncassLocked", true)
+    terminal:SetNWInt("GRM_IncassLockRun", myRun.id)
+    I.LockedTerminals[eid] = myRun.id
+
+    local cash = math.floor(tonumber(I.TerminalCash[eid]) or 0)
     net.Start(NET_TERM_MENU)
         net.WriteEntity(terminal)
         net.WriteInt(cash, 32)
         net.WriteInt(myRun.carCash or 0, 32)
         net.WriteInt(I.Config.MaxCarryPerCar, 32)
         net.WriteInt(I.PlayerBagAmount(ply), 32)
+        net.WriteBool(terminal:GetNWBool("GRM_IncassLocked", false))
     net.Send(ply)
 end
 
@@ -931,6 +1011,23 @@ net.Receive(NET_TERM_TAKE, function(_, ply)
     local amt = net.ReadInt(32)
     if not isPly(ply) or not IsValid(ent) then return end
     local ok, err = I.CollectFromTerminal(ply, ent, amt)
+    if not ok and err then notify(ply, err, 255, 100, 100) end
+end)
+
+net.Receive(NET_TERM_LOAD, function(_, ply)
+    local ent = net.ReadEntity()
+    if not isPly(ply) or not IsValid(ent) then return end
+    local ok, err = I.LoadBagIntoTerminal(ply, ent)
+    if not ok and err then notify(ply, err, 255, 100, 100) end
+    if ok then
+        sendTerminalMenu(ply, ent)
+    end
+end)
+
+net.Receive(NET_TERM_UNLOCK, function(_, ply)
+    local ent = net.ReadEntity()
+    if not isPly(ply) or not IsValid(ent) then return end
+    local ok, err = I.UnlockTerminal(ply, ent)
     if not ok and err then notify(ply, err, 255, 100, 100) end
 end)
 
@@ -951,11 +1048,10 @@ concommand.Add("grm_incass_car_use", function(ply)
     end
     if ply:GetPos():DistToSqr(run.car:GetPos()) > (I.Config.CarInteractRadius ^ 2) then return end
 
-    local vault = I.NearbyVault(ply)
     net.Start(NET_CAR_MENU)
         net.WriteEntity(run.car)
         net.WriteInt(run.carCash, 32)
-        net.WriteBool(IsValid(vault))
+        net.WriteBool(true)
         net.WriteInt(I.PlayerBagAmount(ply), 32)
     net.Send(ply)
 end)
@@ -971,7 +1067,7 @@ net.Receive(NET_CAR_LOAD, function(_, ply)
             net.Start(NET_CAR_MENU)
                 net.WriteEntity(car)
                 net.WriteInt(I.ActiveRuns[runID].carCash, 32)
-                net.WriteBool(IsValid(I.NearbyVault(ply)))
+                net.WriteBool(true)
                 net.WriteInt(I.PlayerBagAmount(ply), 32)
             net.Send(ply)
         end
@@ -1062,6 +1158,8 @@ else
 surface.CreateFont("GRMInc_Title",  { font = "Roboto", size = 18, weight = 700, extended = true })
 surface.CreateFont("GRMInc_Normal", { font = "Roboto", size = 14, weight = 500, extended = true })
 surface.CreateFont("GRMInc_Small",  { font = "Roboto", size = 12, weight = 400, extended = true })
+surface.CreateFont("GRMInc_3DHead", { font = "Roboto", size = 20, weight = 900, extended = true })
+surface.CreateFont("GRMInc_3DSub",  { font = "Roboto", size = 14, weight = 700, extended = true })
 
 local INC_UI = {
     bg       = Color(25, 28, 36, 245),
@@ -1093,16 +1191,17 @@ end
 
 -- ── МЕНЮ ТЕРМИНАЛА ───────────────────────────────────────────────
 net.Receive(NET_TERM_MENU, function()
-    local term  = net.ReadEntity()
-    local cash  = net.ReadInt(32)
-    local inCar = net.ReadInt(32)
-    local cap   = net.ReadInt(32)
-    local bag   = net.ReadInt(32)
+    local term     = net.ReadEntity()
+    local cash     = net.ReadInt(32)
+    local inCar    = net.ReadInt(32)
+    local cap      = net.ReadInt(32)
+    local bag      = net.ReadInt(32)
+    local isLocked = net.ReadBool()
 
     closeFrame(GRM_INC_TERM_FRAME)
     local f = vgui.Create("DFrame")
     GRM_INC_TERM_FRAME = f
-    f:SetSize(420, 300)
+    f:SetSize(440, 370)
     f:Center()
     f:SetTitle("")
     f:MakePopup()
@@ -1121,7 +1220,7 @@ net.Receive(NET_TERM_MENU, function()
     local function line(text, color, dy)
         local l = vgui.Create("DLabel", body)
         l:Dock(TOP)
-        l:DockMargin(4, dy or 4, 4, 0)
+        l:DockMargin(4, dy or 3, 4, 0)
         l:SetFont("GRMInc_Normal")
         l:SetTextColor(color or INC_UI.text)
         l:SetText(tostring(text))
@@ -1129,18 +1228,16 @@ net.Receive(NET_TERM_MENU, function()
         return l
     end
 
-    line("Наличных в терминале: " .. fmtClient(cash), INC_UI.accent, 6)
+    line("В банкомате: " .. fmtClient(cash), INC_UI.accent, 4)
     line("В машине: " .. fmtClient(inCar) .. " / " .. fmtClient(cap), INC_UI.dim)
     if bag > 0 then
-        line("В руках чемодан: " .. fmtClient(bag), INC_UI.danger)
+        line("В руках чемодан: " .. fmtClient(bag), Color(120, 200, 255))
     end
-    if cash < (I.Config and I.Config.TerminalMinCollect or 100) then
-        line("В терминале недостаточно наличных для изъятия.", INC_UI.dim)
-    end
+    line("Режим инкассации: " .. (isLocked and "АКТИВЕН (терминал заблокирован для гражданских)" or "ВЫКЛЮЧЕН"), isLocked and Color(255, 180, 70) or INC_UI.dim, 6)
 
     local amountEntry = vgui.Create("DTextEntry", body)
     amountEntry:Dock(TOP)
-    amountEntry:DockMargin(4, 14, 4, 6)
+    amountEntry:DockMargin(4, 10, 4, 6)
     amountEntry:SetTall(28)
     amountEntry:SetFont("GRMInc_Normal")
     amountEntry:SetNumeric(true)
@@ -1156,10 +1253,10 @@ net.Receive(NET_TERM_MENU, function()
 
     local btnTake = vgui.Create("DButton", body)
     btnTake:Dock(TOP)
-    btnTake:DockMargin(4, 8, 4, 4)
-    btnTake:SetTall(34)
+    btnTake:DockMargin(4, 4, 4, 3)
+    btnTake:SetTall(32)
     btnTake:SetFont("GRMInc_Normal")
-    btnTake:SetText("Забрать указанную сумму")
+    btnTake:SetText("⬇ Забрать указанную сумму (в чемодан)")
     btnTake:SetEnabled(cash > 0 and bag <= 0)
     btnTake.Paint = function(self, w, h)
         local c = self:IsEnabled() and (self:IsHovered() and INC_UI.accentDk or INC_UI.accent) or Color(80, 80, 90)
@@ -1175,7 +1272,7 @@ net.Receive(NET_TERM_MENU, function()
     btnTakeAll:DockMargin(4, 2, 4, 4)
     btnTakeAll:SetTall(28)
     btnTakeAll:SetFont("GRMInc_Normal")
-    btnTakeAll:SetText("Забрать ВСЁ")
+    btnTakeAll:SetText("⬇ Забрать ВСЁ из банкомата")
     btnTakeAll:SetEnabled(cash > 0 and bag <= 0)
     btnTakeAll.Paint = function(self, w, h)
         local c = self:IsEnabled() and (self:IsHovered() and Color(50, 160, 80) or INC_UI.success) or Color(80, 80, 90)
@@ -1184,19 +1281,55 @@ net.Receive(NET_TERM_MENU, function()
     btnTakeAll.DoClick = function()
         take(math.max(0, cash))
     end
+
+    -- Загрузка чемодана в банкомат (пополнение банкомата деньгами из хранилища)
+    local btnLoad = vgui.Create("DButton", body)
+    btnLoad:Dock(TOP)
+    btnLoad:DockMargin(4, 4, 4, 4)
+    btnLoad:SetTall(32)
+    btnLoad:SetFont("GRMInc_Normal")
+    btnLoad:SetText("⬆ ЗАГРУЗИТЬ в банкомат (чемодан из руки → баланс банкомата)")
+    btnLoad:SetEnabled(bag > 0)
+    btnLoad.Paint = function(self, w, h)
+        local c = self:IsEnabled() and (self:IsHovered() and Color(40, 150, 220) or Color(55, 125, 210)) or Color(80, 80, 90)
+        draw.RoundedBox(4, 0, 0, w, h, c)
+    end
+    btnLoad.DoClick = function()
+        net.Start(NET_TERM_LOAD)
+            net.WriteEntity(term)
+        net.SendToServer()
+    end
+
+    -- Завершение обслуживания и снятие блокировки с банкомата
+    local btnUnlock = vgui.Create("DButton", body)
+    btnUnlock:Dock(BOTTOM)
+    btnUnlock:DockMargin(4, 6, 4, 2)
+    btnUnlock:SetTall(30)
+    btnUnlock:SetFont("GRMInc_Normal")
+    btnUnlock:SetText("✔ Завершить обслуживание банкомата (снять блокировку)")
+    btnUnlock.Paint = function(self, w, h)
+        local c = self:IsHovered() and Color(60, 65, 80) or Color(45, 50, 64)
+        draw.RoundedBox(4, 0, 0, w, h, c)
+    end
+    btnUnlock.DoClick = function()
+        net.Start(NET_TERM_UNLOCK)
+            net.WriteEntity(term)
+        net.SendToServer()
+        closeFrame(f)
+    end
 end)
 
 -- ── МЕНЮ МАШИНЫ ──────────────────────────────────────────────────
 net.Receive(NET_CAR_MENU, function()
-    local car       = net.ReadEntity()
-    local cash      = net.ReadInt(32)
-    local nearVault = net.ReadBool()
-    local bag       = net.ReadInt(32)
+    local car   = net.ReadEntity()
+    local cash  = net.ReadInt(32)
+    local _     = net.ReadBool()
+    local bag   = net.ReadInt(32)
 
     closeFrame(GRM_INC_CAR_FRAME)
     local f = vgui.Create("DFrame")
     GRM_INC_CAR_FRAME = f
-    f:SetSize(420, 260)
+    f:SetSize(440, 270)
     f:Center()
     f:SetTitle("")
     f:MakePopup()
@@ -1227,9 +1360,6 @@ net.Receive(NET_CAR_MENU, function()
     if bag > 0 then
         line("В руках чемодан: " .. fmtClient(bag), Color(120, 200, 255))
     end
-    if not nearVault then
-        line("Разгрузка доступна только у банк-хранилища.", INC_UI.danger)
-    end
 
     local function mkBtn(text, enabled, color, fn)
         local b = vgui.Create("DButton", body)
@@ -1249,14 +1379,14 @@ net.Receive(NET_CAR_MENU, function()
         return b
     end
 
-    mkBtn("ЗАГРУЗИТЬ (чемодан из руки → багажник)", bag > 0, INC_UI.success, function()
+    mkBtn("⬆ ЗАГРУЗИТЬ (чемодан из руки → багажник)", bag > 0, INC_UI.success, function()
         net.Start(NET_CAR_LOAD)
             net.WriteEntity(car)
         net.SendToServer()
         closeFrame(f)
     end)
 
-    mkBtn("РАЗГРУЗИТЬ (багажник → чемодан в руку)", nearVault and cash > 0 and bag <= 0, INC_UI.accent, function()
+    mkBtn("⬇ РАЗГРУЗИТЬ (багажник → чемодан в руку)", cash > 0 and bag <= 0, INC_UI.accent, function()
         net.Start(NET_CAR_UNLOAD)
             net.WriteEntity(car)
         net.SendToServer()
@@ -1273,7 +1403,7 @@ net.Receive(NET_VAULT_MENU, function()
     closeFrame(GRM_INC_VAULT_FRAME)
     local f = vgui.Create("DFrame")
     GRM_INC_VAULT_FRAME = f
-    f:SetSize(420, 240)
+    f:SetSize(440, 250)
     f:Center()
     f:SetTitle("")
     f:MakePopup()
@@ -1323,14 +1453,14 @@ net.Receive(NET_VAULT_MENU, function()
         return b
     end
 
-    mkBtn("ЗАГРУЗИТЬ в хранилище (чемодан из руки → хранилище)", bag > 0, INC_UI.success, function()
+    mkBtn("⬆ ЗАГРУЗИТЬ в хранилище (чемодан из руки → хранилище)", bag > 0, INC_UI.success, function()
         net.Start(NET_VAULT_LOAD)
             net.WriteEntity(vault)
         net.SendToServer()
         closeFrame(f)
     end)
 
-    mkBtn("ВЫГРУЗИТЬ из хранилища (хранилище → чемодан в руку)", held > 0 and bag <= 0, INC_UI.accent, function()
+    mkBtn("⬇ ВЫГРУЗИТЬ из хранилища (хранилище → чемодан в руку)", held > 0 and bag <= 0, INC_UI.accent, function()
         net.Start(NET_VAULT_UNLOAD)
             net.WriteEntity(vault)
         net.SendToServer()
@@ -1347,6 +1477,63 @@ net.Receive(NET_NOTIFY, function()
     chat.AddText(Color(r, g, b), "[ИНКАСС] " .. m)
     notification.AddLegacy(m, NOTIFY_GENERIC, 5)
     surface.PlaySound("buttons/lightswitch2.wav")
+end)
+
+-- ── 3D2D индикаторы над машиной и банкоматом ─────────────────────
+hook.Add("PostDrawTranslucentRenderables", "GRM_Incass_3D2D", function(depth, skybox)
+    if skybox then return end
+    local ply = LocalPlayer()
+    if not IsValid(ply) then return end
+    local myPos = ply:GetPos()
+
+    -- 1. Индикатор над инкассаторской машиной в рейсе
+    for _, ent in ipairs(ents.GetAll()) do
+        if IsValid(ent) and ent:GetNWInt("GRM_IncassRun", 0) > 0 then
+            local epos = ent:GetPos()
+            local d2 = myPos:DistToSqr(epos)
+            if d2 <= (500 * 500) then
+                local obbMax = isfunction(ent.OBBMaxs) and ent:OBBMaxs() or nil
+                local pos = ent:LocalToWorld(Vector(0, 0, (obbMax and obbMax.z or 50) + 20))
+                local ang = EyeAngles()
+                ang:RotateAroundAxis(ang:Forward(), 90)
+                ang:RotateAroundAxis(ang:Right(), 90)
+
+                local carCash = ent:GetNWInt("GRM_IncassCarCash", 0)
+                local faction = ent:GetNWString("GRM_IncassFaction", "")
+                local cap = I.Config and I.Config.MaxCarryPerCar or 250000
+
+                cam.Start3D2D(pos, Angle(0, ang.y, 90), 0.08)
+                    draw.RoundedBox(6, -170, -32, 340, 64, Color(20, 24, 32, 230))
+                    draw.RoundedBox(4, -168, -30, 336, 26, Color(35, 42, 56, 245))
+                    local title = "ИНКАССАЦИЯ" .. (faction ~= "" and (" • " .. faction) or "")
+                    draw.SimpleText(title, "GRMInc_3DHead", 0, -17, Color(245, 185, 65), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    local sub = "В багажнике: " .. fmtClient(carCash) .. " / " .. fmtClient(cap)
+                    draw.SimpleText(sub, "GRMInc_3DSub", 0, 16, Color(230, 235, 245), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                cam.End3D2D()
+            end
+        end
+    end
+
+    -- 2. Индикатор над банкоматом в режиме обслуживания
+    for _, ent in ipairs(ents.FindByClass("grm_bank_terminal")) do
+        if IsValid(ent) and ent:GetNWBool("GRM_IncassLocked", false) then
+            local epos = ent:GetPos()
+            local d2 = myPos:DistToSqr(epos)
+            if d2 <= (450 * 450) then
+                local pos = epos + Vector(0, 0, 75)
+                local ang = EyeAngles()
+                ang:RotateAroundAxis(ang:Forward(), 90)
+                ang:RotateAroundAxis(ang:Right(), 90)
+
+                cam.Start3D2D(pos, Angle(0, ang.y, 90), 0.08)
+                    draw.RoundedBox(6, -150, -28, 300, 56, Color(25, 20, 20, 235))
+                    draw.RoundedBox(4, -148, -26, 296, 24, Color(65, 32, 32, 245))
+                    draw.SimpleText("⚠ РЕЖИМ ИНКАССАЦИИ", "GRMInc_3DHead", 0, -14, Color(255, 195, 60), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("Идёт загрузка / изъятие средств", "GRMInc_3DSub", 0, 14, Color(255, 130, 130), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                cam.End3D2D()
+            end
+        end
+    end
 end)
 
 -- ── Единая клавиша [G] на клиенте ────────────────────────────────
@@ -1413,7 +1600,7 @@ hook.Add("HUDPaint", "GRM_Incass_HUD", function()
     if carrying and bagAmt > 0 then
         draw.SimpleText("ИНКАСС: в руке чемодан " .. fmtClient(bagAmt),
             "GRMInc_Normal", ScrW() / 2, ScrH() - 120, Color(120, 200, 255, 230), TEXT_ALIGN_CENTER)
-        draw.SimpleText("[G на машину = загрузить / G на хранилище = сдать]",
+        draw.SimpleText("[G на машину = загрузить / G на банкомат или хранилище = сдать]",
             "GRMInc_Small", ScrW() / 2, ScrH() - 98, Color(180, 210, 255, 210), TEXT_ALIGN_CENTER)
     elseif IsValid(car) then
         local rid = car:GetNWInt("GRM_IncassRun", 0)
@@ -1432,10 +1619,10 @@ hook.Add("HUDPaint", "GRM_Incass_HUD", function()
         local pos = tr.Entity:GetPos()
         local d = ply:GetPos():DistToSqr(pos)
         if tr.Entity:GetClass() == "grm_bank_terminal" and d <= (250 * 250) and IsValid(car) then
-            draw.SimpleText("[G] — открыть меню терминала (изъять деньги)", "GRMInc_Normal",
+            draw.SimpleText("[G] — открыть меню банкомата (изъять / загрузить)", "GRMInc_Normal",
                 ScrW() / 2, ScrH() / 2 + 40, Color(255, 220, 120, 230), TEXT_ALIGN_CENTER)
         elseif tr.Entity:GetClass() == "grm_bank_vault" and d <= (250 * 250) then
-            draw.SimpleText("[G] — открыть меню хранилища", "GRMInc_Normal",
+            draw.SimpleText("[G] — открыть меню хранилища (сдать / взять)", "GRMInc_Normal",
                 ScrW() / 2, ScrH() / 2 + 40, Color(120, 255, 160, 230), TEXT_ALIGN_CENTER)
         end
     end
