@@ -121,6 +121,20 @@ if SERVER then
         result.aimPly = aimPlyInfo(ply)
         result.isSuperAdmin = ply:IsSuperAdmin() == true
         result.hasMaskAccess = false
+
+        -- Проверка наличия документов у персонажа (Код 87)
+        local key = (GRM.Identity and isfunction(GRM.Identity.CharacterKey) and GRM.Identity.CharacterKey(ply)) or (ply:SteamID64() .. ":char1")
+        local pass = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.passports and GRM.Documents.Registry.passports[key]
+        result.hasPassport = (pass == nil or pass.status == "Действителен")
+
+        local hasCover = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.coverBadges and GRM.Documents.Registry.coverBadges[key] and GRM.Documents.Registry.coverBadges[key].status == "Действителен"
+        local badge = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.badges and GRM.Documents.Registry.badges[key]
+        local hasOfficial = (factionName ~= nil and (badge == nil or badge.status == "Действителен"))
+        result.hasBadge = (hasCover == true or hasOfficial == true)
+
+        local card = GRM.Medical and GRM.Medical.Cards and (GRM.Medical.Cards[key] or GRM.Medical.Cards[ply:SteamID64()])
+        result.hasMedCard = (card ~= nil)
+
         if factionName and FactionsExt and FactionsExt[factionName] then
             local cfg = FactionsExt[factionName]
             local member = faction and GRM.Identity.FactionMember(faction, ply)
@@ -380,7 +394,7 @@ local BTNS = {
       end,
       fn = actShowPassport,
       c = Color(140, 45, 55), ch = Color(170, 60, 70),
-      ok = function() return istable(data.aimPly) end },
+      ok = function() return istable(data.aimPly) and data.hasPassport == true end },
     { id = "doc_badge", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
           if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
@@ -388,7 +402,7 @@ local BTNS = {
       end,
       fn = actShowBadge,
       c = Color(35, 75, 135), ch = Color(50, 100, 170),
-      ok = function() return istable(data.aimPly) and data.isFactionMember == true end },
+      ok = function() return istable(data.aimPly) and data.hasBadge == true end },
     { id = "doc_med", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
           if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
@@ -396,7 +410,7 @@ local BTNS = {
       end,
       fn = actShowMedCard,
       c = Color(35, 120, 95), ch = Color(45, 150, 120),
-      ok = function() return istable(data.aimPly) end },
+      ok = function() return istable(data.aimPly) and data.hasMedCard == true end },
     -- ── транспорт (Код 82): только когда смотрим на машину ──
     { id = "veh_lock",   l = function() return (istable(data.veh) and data.veh.locked) and "Открыть замок Т/С" or "Закрыть Т/С на замок" end,
       fn = vehAct("lock"),   c = Color(90, 140, 200), ch = Color(110, 160, 220), ok = vehOk("canManage") },
