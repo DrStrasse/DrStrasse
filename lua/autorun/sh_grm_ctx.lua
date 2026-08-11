@@ -41,6 +41,22 @@ if SERVER then
         return nil, nil
     end
 
+    local function isPlyLeader(ply, f)
+        if not IsValid(ply) or not istable(f) then return false end
+        if _G.FactionsAPI and _G.FactionsAPI.IsLeader then
+            for fname, fac in pairs(Factions or {}) do
+                if fac == f then
+                    return _G.FactionsAPI.IsLeader(ply, fname)
+                end
+            end
+        end
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64()
+        if f.Leader and f.Leader == ck then return true end
+        local member = f.Members and GRM.Identity and GRM.Identity.FactionMember and GRM.Identity.FactionMember(f, ply)
+        local leaderRole = f.LeaderRoleName or "Лидер"
+        return istable(member) and (member.Role == leaderRole or member.Role == "Лидер")
+    end
+
     local function openFactionsMenu(ply)
         if not IsValid(ply) then return end
         if ply:IsSuperAdmin() then
@@ -49,13 +65,16 @@ if SERVER then
             return
         end
 
-        local sid, sid64 = ply:SteamID(), ply:SteamID64()
-        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
         local isLeader = false
-        for _, f in pairs(Factions or {}) do
-            if istable(f) and (f.Leader == ck or f.Leader == sid or f.Leader == sid64) then
-                isLeader = true
-                break
+        if _G.FactionsAPI and _G.FactionsAPI.GetFactionOfLeader then
+            isLeader = _G.FactionsAPI.GetFactionOfLeader(ply) ~= nil
+        end
+        if not isLeader and Factions then
+            for _, f in pairs(Factions) do
+                if istable(f) and isPlyLeader(ply, f) then
+                    isLeader = true
+                    break
+                end
             end
         end
 
@@ -96,8 +115,7 @@ if SERVER then
         local result = {}
         local factionName, faction = getPlayerFaction(ply)
         result.isFactionMember = (factionName ~= nil)
-        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64()
-        result.isLeaderOrAdmin = (faction and (faction.Leader == ck or faction.Leader == ply:SteamID() or faction.Leader == ply:SteamID64())) or ply:IsSuperAdmin()
+        result.isLeaderOrAdmin = (faction and isPlyLeader(ply, faction)) or ply:IsSuperAdmin()
         result.factionName = factionName or ""
         result.veh = vehInfo(ply)
         result.aimPly = aimPlyInfo(ply)

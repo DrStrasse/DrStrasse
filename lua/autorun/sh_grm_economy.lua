@@ -273,8 +273,12 @@ if SERVER then
     end
 
     local function isLeaderOf(ply, f)
-        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID()
-        return IsValid(ply) and istable(f) and (tostring(f.Leader or "") == ck or tostring(f.Leader or "") == ply:SteamID())
+        if not IsValid(ply) or not istable(f) then return false end
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64()
+        if tostring(f.Leader or "") == ck then return true end
+        local mem = GRM.Identity and GRM.Identity.FactionMember and GRM.Identity.FactionMember(f, ply)
+        local leaderRole = f.LeaderRoleName or "Лидер"
+        return istable(mem) and (mem.Role == leaderRole or mem.Role == "Лидер")
     end
 
     local function onlineMembers(name, f)

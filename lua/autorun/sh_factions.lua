@@ -201,7 +201,28 @@ if SERVER then
         if f.DepAccess == nil then f.DepAccess = false end
 
         if f.Leader and not f.Members[f.Leader] then
-            f.Leader = nil
+            -- Если лидер сохранён как старый SteamID64 или не найден напрямую,
+            -- ищем реального персонажа с ролью лидера в f.Members
+            local found = nil
+            local rawLdr = tostring(f.Leader or "")
+            local s64 = (util.SteamIDTo64 and util.SteamIDTo64(rawLdr)) or rawLdr
+            for mKey, mRec in pairs(f.Members) do
+                if isstring(mKey) and (mKey:find(s64, 1, true) or (rawLdr ~= "" and mKey:find(rawLdr, 1, true))) then
+                    if istable(mRec) and (mRec.Role == leaderRoleName or mRec.Role == "Лидер") then
+                        found = mKey
+                        break
+                    end
+                end
+            end
+            if not found then
+                for mKey, mRec in pairs(f.Members) do
+                    if istable(mRec) and (mRec.Role == leaderRoleName or mRec.Role == "Лидер") then
+                        found = mKey
+                        break
+                    end
+                end
+            end
+            f.Leader = found
         end
         if f.Leader and f.Members[f.Leader] then
             f.Members[f.Leader].Role = f.LeaderRoleName
@@ -329,6 +350,8 @@ if SERVER then
         for name, f in pairs(Factions) do
             if type(f) == "table" then
                 ensureDefaults(f)
+                local b = (GRM.FactionBudgetGet and GRM.FactionBudgetGet(name)) or f.Budget or 0
+                local tax = (GRM.Economy and GRM.Economy.TaxRateGet and GRM.Economy.TaxRateGet(name)) or 0.05
                 data[name] = {
                     Leader           = f.Leader,
                     Roles            = f.Roles,
@@ -338,6 +361,8 @@ if SERVER then
                     Color            = f.Color,
                     DepAccess        = f.DepAccess,
                     LeaderRoleName   = f.LeaderRoleName,
+                    Budget           = b,
+                    TaxRate          = tax,
                     -- v3.1.1: зеркалируем доступ-модели/оружие/госновости для
                     -- вкладки «Расширенные настройки» (синк с /models_admin,
                     -- /weapons_admin, setGNewsAccess — те же серверные поля)
@@ -352,42 +377,46 @@ if SERVER then
                 }
             end
         end
+        local st = (GRM.Economy and GRM.Economy.StateBudgetGet and GRM.Economy.StateBudgetGet())
+            or (GRM.Economy and GRM.Economy.Data and GRM.Economy.Data.state and GRM.Economy.Data.state.budget)
+            or 0
+        data._stateBudget = st
         return data
     end
 
     local function isCharacterLeaderOfFaction(ply, f)
         if not IsValid(ply) or not istable(f) then return false end
         local ldr = tostring(f.Leader or "")
-        if ldr == "" then return false end
-
         local charKey = (GRM.Identity and isfunction(GRM.Identity.CharacterKey) and GRM.Identity.CharacterKey(ply)) or ""
         local sid = ply:SteamID() or ""
         local sid64 = (ply.SteamID64 and ply:SteamID64()) or ""
 
-        -- Если активна система мультиперсонажей (CharacterKey: sid64:charN)
+        -- 1. Если активна система мультиперсонажей (CharacterKey: sid64:charN)
         if charKey ~= "" then
-            if ldr == charKey then return true end
-            if ldr == sid or ldr == sid64 then
-                if istable(f.Members) then
-                    local mem = rawget(f.Members, charKey)
-                    if istable(mem) and (mem.Role == f.LeaderRoleName or mem.Role == "Лидер") then
-                        return true
-                    end
-                end
-                if charKey == (sid64 .. ":char1") or charKey == (sid .. ":char1") then
-                    return true
-                end
-            end
+            -- Прямое точное совпадение ключа персонажа с лидером фракции
+            if ldr ~= "" and ldr == charKey then return true end
+            -- Проверка по списку участников: активный персонаж имеет роль лидера
             if istable(f.Members) then
                 local mem = rawget(f.Members, charKey)
                 if istable(mem) and (mem.Role == f.LeaderRoleName or mem.Role == "Лидер") then
                     return true
                 end
             end
+            -- Если лидер сохранён как старый/немигрированный SteamID/SteamID64:
+            -- лидерство даётся ТОЛЬКО если данный персонаж charKey числится в f.Members с ролью лидера!
+            if ldr ~= "" and (ldr == sid or ldr == sid64) then
+                if istable(f.Members) then
+                    local mem = rawget(f.Members, charKey)
+                    if istable(mem) and (mem.Role == f.LeaderRoleName or mem.Role == "Лидер") then
+                        return true
+                    end
+                end
+            end
             return false
         end
 
-        if ldr == sid or (sid64 ~= "" and ldr == sid64) then return true end
+        -- 2. Режим одного аккаунта (без мультиперсонажей)
+        if ldr ~= "" and (ldr == sid or (sid64 ~= "" and ldr == sid64)) then return true end
         if istable(f.Members) then
             local mem = rawget(f.Members, sid) or (sid64 ~= "" and rawget(f.Members, sid64)) or f.Members[sid]
             if istable(mem) and (mem.Role == f.LeaderRoleName or mem.Role == "Лидер") then
@@ -828,16 +857,19 @@ if SERVER then
     -- --------------------
     -- ПРИГЛАШЕНИЯ
     -- --------------------
-    local function sendInvite(fromSteam, toSteam, factionName)
+    local function sendInvite(fromPlayerOrKey, toSteam, factionName)
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
 
-        local fromPlayer   = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(fromSteam)) or player.GetBySteamID(fromSteam) or player.GetBySteamID64(fromSteam)
-        local fromKey      = memberKey(fromPlayer or fromSteam)
+        local fromPlayer   = (isentity(fromPlayerOrKey) and IsValid(fromPlayerOrKey) and fromPlayerOrKey)
+            or (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(fromPlayerOrKey))
+            or player.GetBySteamID(tostring(fromPlayerOrKey or ""))
+            or player.GetBySteamID64(tostring(fromPlayerOrKey or ""))
+        local fromKey      = memberKey(fromPlayer or fromPlayerOrKey)
         local targetKey    = memberKey(toSteam)
         local isSuperAdmin = IsValid(fromPlayer) and fromPlayer:IsSuperAdmin()
-        local isLeader     = (f.Leader == fromKey)
+        local isLeader     = (f.Leader == fromKey) or (IsValid(fromPlayer) and isCharacterLeaderOfFaction(fromPlayer, f))
         if not isSuperAdmin and not isLeader then return false, "Недостаточно прав" end
         if getFactionOfPlayer(targetKey) then return false, "Игрок уже состоит во фракции" end
 
@@ -1025,7 +1057,7 @@ if SERVER then
         elseif action == "inviteMember" then
             local faction, shift = getFactionAndShift()
             if not faction then return end
-            local ok, err = sendInvite(steam, args[1 + shift], faction)
+            local ok, err = sendInvite(ply, args[1 + shift], faction)
             done(ok, err)
         elseif action == "removeMember" then
             local faction, shift = getFactionAndShift()
@@ -1243,9 +1275,15 @@ if SERVER then
     _G.FactionsAPI.AddMember      = function(factionName, steamID) return addMember(factionName, steamID) end
     _G.FactionsAPI.RemoveMember   = function(factionName, steamID) return removeMember(factionName, steamID) end
     _G.FactionsAPI.GetFactionOf   = function(steamID) return getFactionOfPlayer(steamID) end
-    _G.FactionsAPI.IsLeader       = function(steamID, factionName)
+    _G.FactionsAPI.GetFactionOfLeader = function(ply) return getFactionOfLeader(ply) end
+    _G.FactionsAPI.IsLeader       = function(playerOrKey, factionName)
         local f = Factions[factionName]
-        return istable(f) and f.Leader == memberKey(steamID) or false
+        if not istable(f) then return false end
+        if isentity(playerOrKey) and IsValid(playerOrKey) and playerOrKey:IsPlayer() then
+            return isCharacterLeaderOfFaction(playerOrKey, f)
+        end
+        local key = memberKey(playerOrKey)
+        return f.Leader == key
     end
     _G.FactionsAPI.IsMember       = function(factionName, playerOrKey)
         local f = Factions[factionName]

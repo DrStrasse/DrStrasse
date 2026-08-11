@@ -1195,13 +1195,11 @@ if SERVER then
     -- ============================================================
     local function isFactionLeader(ply, f)
         if not IsValid(ply) or not istable(f) then return false end
-        local sid = ply:SteamID()
-        local sid64 = ply:SteamID64()
-        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
-        if f.Leader and (f.Leader == ck or f.Leader == sid or f.Leader == sid64) then return true end
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64()
+        if f.Leader and f.Leader == ck then return true end
         local member = f.Members and GRM.Identity.FactionMember(f, ply)
         local leaderRole = f.LeaderRoleName or "Лидер"
-        return istable(member) and member.Role == leaderRole
+        return istable(member) and (member.Role == leaderRole or member.Role == "Лидер")
     end
 
     local function hasGNewsAccess(ply)
@@ -2930,7 +2928,8 @@ if CLIENT then
         header:DockMargin(0, 0, 0, 12)
         header.Paint = function(self, w, h)
             draw.RoundedBox(6, 0, 0, w, h, THEME.panel)
-            local st = (GRM.Economy and GRM.Economy.StateBudgetGet and GRM.Economy.StateBudgetGet())
+            local st = (FactionsData and FactionsData._stateBudget)
+                or (GRM.Economy and GRM.Economy.StateBudgetGet and GRM.Economy.StateBudgetGet())
                 or (GRM.Economy and GRM.Economy.Data and GRM.Economy.Data.state and GRM.Economy.Data.state.budget)
                 or 0
             local stTxt = GRM.Format and GRM.Format(st) or (tostring(st) .. " GRM")
@@ -2970,9 +2969,10 @@ if CLIENT then
             detailsCard:Clear()
             if not fName or fName == "" then return end
 
+            local fd = FactionsData and FactionsData[fName]
             local f = Factions and Factions[fName]
-            local b = (GRM.FactionBudgetGet and GRM.FactionBudgetGet(fName)) or (f and f.Budget or 0)
-            local tax = (GRM.Economy and GRM.Economy.TaxRateGet and GRM.Economy.TaxRateGet(fName)) or 0.05
+            local b = (fd and fd.Budget) or (GRM.FactionBudgetGet and GRM.FactionBudgetGet(fName)) or (f and f.Budget or 0)
+            local tax = (fd and fd.TaxRate) or (GRM.Economy and GRM.Economy.TaxRateGet and GRM.Economy.TaxRateGet(fName)) or 0.05
             local bTxt = GRM.Format and GRM.Format(b) or (tostring(b) .. " GRM")
             local taxPct = math.floor(tax * 100)
 
@@ -3001,11 +3001,16 @@ if CLIENT then
         local function populateFactions()
             factionCombo:Clear()
             local list = FactionsData or Factions or {}
+            local myFaction = (LocalPlayer().GetNWString and LocalPlayer():GetNWString("GRM_Faction", "")) or ""
             local first = nil
             for name, _ in pairs(list) do
-                if isstring(name) and name ~= "" then
+                if isstring(name) and name ~= "" and not name:StartWith("_") then
                     factionCombo:AddChoice(name)
-                    if not first then first = name end
+                    if myFaction ~= "" and name == myFaction then
+                        first = name
+                    elseif not first then
+                        first = name
+                    end
                 end
             end
             if first then
