@@ -371,16 +371,16 @@ net.Receive("GRM_DocComp_Open", function()
         coverPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
 
         local lblCInfo = vgui.Create("DLabel", coverPnl)
-        lblCInfo:SetPos(16, 12)
+        lblCInfo:SetPos(16, 10)
         lblCInfo:SetText("ОПЕРАТИВНОЕ ЛЕГЕНДИРОВАНИЕ: Фабрикация удостоверений любых ведомств")
         lblCInfo:SetFont("DermaDefaultBold")
         lblCInfo:SetTextColor(Color(240, 140, 60))
         lblCInfo:SizeToContents()
 
         local lblCTarget = vgui.Create("DLabel", coverPnl)
-        lblCTarget:SetPos(16, 42) lblCTarget:SetText("Оперативный сотрудник (агент):") lblCTarget:SetTextColor(CC.text) lblCTarget:SizeToContents()
+        lblCTarget:SetPos(16, 36) lblCTarget:SetText("Оперативный сотрудник (агент):") lblCTarget:SetTextColor(CC.text) lblCTarget:SizeToContents()
         local comboCoverTarget = vgui.Create("DComboBox", coverPnl)
-        comboCoverTarget:SetPos(16, 62) comboCoverTarget:SetSize(380, 26)
+        comboCoverTarget:SetPos(16, 56) comboCoverTarget:SetSize(380, 26)
 
         for _, pData in ipairs(onlineList) do
             local label = string.format("%s  [%s]  (%s)", pData.rpName or "?", pData.nick or "?", pData.key or "")
@@ -388,28 +388,67 @@ net.Receive("GRM_DocComp_Open", function()
         end
 
         local lblCFac = vgui.Create("DLabel", coverPnl)
-        lblCFac:SetPos(410, 42) lblCFac:SetText("Организация прикрытия:") lblCFac:SetTextColor(CC.text) lblCFac:SizeToContents()
+        lblCFac:SetPos(410, 36) lblCFac:SetText("Организация прикрытия:") lblCFac:SetTextColor(CC.text) lblCFac:SizeToContents()
         local comboCoverFac = vgui.Create("DComboBox", coverPnl)
-        comboCoverFac:SetPos(410, 62) comboCoverFac:SetSize(340, 26)
+        comboCoverFac:SetPos(410, 56) comboCoverFac:SetSize(340, 26)
 
         for fname in pairs(Factions or FactionsData or {}) do
             if isstring(fname) then comboCoverFac:AddChoice(fname) end
         end
 
         local lblCName = vgui.Create("DLabel", coverPnl)
-        lblCName:SetPos(16, 100) lblCName:SetText("Легендированное ФИО:") lblCName:SetTextColor(CC.text) lblCName:SizeToContents()
+        lblCName:SetPos(16, 90) lblCName:SetText("Легендированное ФИО (ручное):") lblCName:SetTextColor(CC.text) lblCName:SizeToContents()
         local entCoverName = vgui.Create("DTextEntry", coverPnl)
-        entCoverName:SetPos(16, 120) entCoverName:SetSize(280, 26)
+        entCoverName:SetPos(16, 110) entCoverName:SetSize(280, 26)
 
         local lblCRole = vgui.Create("DLabel", coverPnl)
-        lblCRole:SetPos(310, 100) lblCRole:SetText("Должность прикрытия:") lblCRole:SetTextColor(CC.text) lblCRole:SizeToContents()
+        lblCRole:SetPos(310, 90) lblCRole:SetText("Должность / Звание:") lblCRole:SetTextColor(CC.text) lblCRole:SizeToContents()
         local entCoverRole = vgui.Create("DTextEntry", coverPnl)
-        entCoverRole:SetPos(310, 120) entCoverRole:SetSize(240, 26) entCoverRole:SetText("Специальный инспектор")
+        entCoverRole:SetPos(310, 110) entCoverRole:SetSize(220, 26) entCoverRole:SetText("Специальный инспектор")
+
+        local lblCDept = vgui.Create("DLabel", coverPnl)
+        lblCDept:SetPos(545, 90) lblCDept:SetText("Подразделение / Отдел:") lblCDept:SetTextColor(CC.text) lblCDept:SizeToContents()
+        local entCoverDept = vgui.Create("DTextEntry", coverPnl)
+        entCoverDept:SetPos(545, 110) entCoverDept:SetSize(200, 26) entCoverDept:SetText("Главное Управление")
 
         local lblCNum = vgui.Create("DLabel", coverPnl)
-        lblCNum:SetPos(565, 100) lblCNum:SetText("Номер жетона:") lblCNum:SetTextColor(CC.text) lblCNum:SizeToContents()
+        lblCNum:SetPos(16, 144) lblCNum:SetText("Номер жетона (с префиксом):") lblCNum:SetTextColor(CC.text) lblCNum:SizeToContents()
         local entCoverNum = vgui.Create("DTextEntry", coverPnl)
-        entCoverNum:SetPos(565, 120) entCoverNum:SetSize(180, 26) entCoverNum:SetText("ОРД-7701")
+        entCoverNum:SetPos(16, 164) entCoverNum:SetSize(180, 26) entCoverNum:SetText("ОРД-7701")
+
+        local lblCIssuer = vgui.Create("DLabel", coverPnl)
+        lblCIssuer:SetPos(210, 144) lblCIssuer:SetText("Кем выдано / подпись:") lblCIssuer:SetTextColor(CC.text) lblCIssuer:SizeToContents()
+        local entCoverIssuer = vgui.Create("DTextEntry", coverPnl)
+        entCoverIssuer:SetPos(210, 164) entCoverIssuer:SetSize(320, 26) entCoverIssuer:SetText("Руководство ведомства")
+
+        local lblCValid = vgui.Create("DLabel", coverPnl)
+        lblCValid:SetPos(545, 144) lblCValid:SetText("Срок действия:") lblCValid:SetTextColor(CC.text) lblCValid:SizeToContents()
+        local entCoverValid = vgui.Create("DTextEntry", coverPnl)
+        entCoverValid:SetPos(545, 164) entCoverValid:SetSize(200, 26) entCoverValid:SetText("Бессрочно")
+
+        local lblCPerms = vgui.Create("DLabel", coverPnl)
+        lblCPerms:SetPos(16, 200) lblCPerms:SetText("Специальные допуски в легендированной ксиве:") lblCPerms:SetFont("DermaDefaultBold") lblCPerms:SetTextColor(CC.gold) lblCPerms:SizeToContents()
+
+        local chkCoverBoxes = {}
+        local yCover = 222
+        local xCover = 16
+
+        for i, pDef in ipairs(GRM.Documents.PermissionsList or {}) do
+            local chk = vgui.Create("DCheckBoxLabel", coverPnl)
+            chk:SetPos(xCover, yCover)
+            chk:SetText(pDef.title)
+            chk:SetTextColor(CC.text)
+            chk:SetValue(true)
+            chk:SizeToContents()
+            chkCoverBoxes[pDef.id] = chk
+
+            if i % 2 == 1 then
+                xCover = 380
+            else
+                xCover = 16
+                yCover = yCover + 24
+            end
+        end
 
         local selCovKey = ""
         local selCovSid64 = "0"
@@ -425,12 +464,13 @@ net.Receive("GRM_DocComp_Open", function()
             local facTpl = (tpls.factions and tpls.factions[fname]) or {}
             local pfx = facTpl.prefix or (fname:sub(1, 3):upper() .. "-")
             entCoverNum:SetText(pfx .. "00" .. math.random(10, 99))
+            entCoverIssuer:SetText("Руководство ведомства " .. fname)
         end
 
         local btnIssueCover = vgui.Create("DButton", coverPnl)
-        btnIssueCover:SetPos(16, 200)
-        btnIssueCover:SetSize(360, 36)
-        btnIssueCover:SetText("🎭 Выдать аутентичное удостоверение прикрытия")
+        btnIssueCover:SetPos(16, yCover + 28)
+        btnIssueCover:SetSize(380, 36)
+        btnIssueCover:SetText("🎭 Оформить и выдать удостоверение прикрытия")
         btnIssueCover:SetFont("DermaDefaultBold")
         btnIssueCover:SetTextColor(color_white)
         btnIssueCover.Paint = function(s, w, h)
@@ -447,16 +487,21 @@ net.Receive("GRM_DocComp_Open", function()
                 return
             end
 
+            local curPerms = {}
+            for pId, cb in pairs(chkCoverBoxes) do
+                curPerms[pId] = cb:GetChecked()
+            end
+
             local pack = {
                 fullName    = entCoverName:GetText(),
                 faction     = chosenFac,
                 role        = entCoverRole:GetText(),
-                department  = "Главное Управление",
+                department  = entCoverDept:GetText() ~= "" and entCoverDept:GetText() or "Главное Управление",
                 number      = entCoverNum:GetText(),
-                permissions = { weapon = true, arrest = true, access = true, search = true },
-                issuedBy    = "Руководство ведомства " .. chosenFac,
+                permissions = curPerms,
+                issuedBy    = entCoverIssuer:GetText(),
                 issueDate   = os.date("%d.%m.%Y"),
-                validUntil  = "Бессрочно",
+                validUntil  = entCoverValid:GetText(),
                 status      = "Действителен",
                 steamID64   = selCovSid64,
                 isCover     = true,
