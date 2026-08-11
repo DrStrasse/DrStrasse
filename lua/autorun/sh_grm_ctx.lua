@@ -331,6 +331,10 @@ local function actShowPassport() RunConsoleCommand("say", "/showpassport") end
 local function actShowBadge()    RunConsoleCommand("say", "/showbadge") end
 local function actShowMedCard()  RunConsoleCommand("say", "/showmedcard") end
 
+local function actOwnPassport()  RunConsoleCommand("say", "/passport") end
+local function actOwnBadge()     RunConsoleCommand("say", "/badge") end
+local function actOwnMedCard()   RunConsoleCommand("say", "/medcard") end
+
 -- Деньги в C-меню (по заказу: «выбросить деньги / передать деньги игроку»)
 local function actDropMoney()
     Derma_StringRequest("Выбросить наличные", "Сумма (пачка упадёт перед вами):", "",
@@ -411,6 +415,19 @@ local BTNS = {
       fn = actShowMedCard,
       c = Color(35, 120, 95), ch = Color(45, 150, 120),
       ok = function() return istable(data.aimPly) and data.hasMedCard == true end },
+    -- ── документы: личный просмотр (Код 87) ───────────────────
+    { id = "doc_self_pass", l = "📄 Мой паспорт",
+      fn = actOwnPassport,
+      c = Color(140, 45, 55), ch = Color(170, 60, 70),
+      ok = function() return not istable(data.aimPly) and data.hasPassport == true end },
+    { id = "doc_self_badge", l = "🛡 Моё удостоверение",
+      fn = actOwnBadge,
+      c = Color(35, 75, 135), ch = Color(50, 100, 170),
+      ok = function() return not istable(data.aimPly) and data.hasBadge == true end },
+    { id = "doc_self_med", l = "🩺 Моя медкарта",
+      fn = actOwnMedCard,
+      c = Color(35, 120, 95), ch = Color(45, 150, 120),
+      ok = function() return not istable(data.aimPly) and data.hasMedCard == true end },
     -- ── транспорт (Код 82): только когда смотрим на машину ──
     { id = "veh_lock",   l = function() return (istable(data.veh) and data.veh.locked) and "Открыть замок Т/С" or "Закрыть Т/С на замок" end,
       fn = vehAct("lock"),   c = Color(90, 140, 200), ch = Color(110, 160, 220), ok = vehOk("canManage") },

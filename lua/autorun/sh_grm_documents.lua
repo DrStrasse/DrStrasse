@@ -674,6 +674,15 @@ if CLIENT then
     surface.CreateFont("GRMDoc_Small",      { font = "Roboto", size = 11, weight = 400, extended = true })
     surface.CreateFont("GRMDoc_MRZ",        { font = "Courier New", size = 12, weight = 700, extended = true })
 
+    local function safeClearFrame(f)
+        if not IsValid(f) then return end
+        for _, ch in ipairs(f:GetChildren() or {}) do
+            if IsValid(ch) and ch ~= f.btnClose and ch ~= f.btnMaxim and ch ~= f.btnMinim and ch ~= f.lblTitle and not ch._grmChrome then
+                ch:Remove()
+            end
+        end
+    end
+
     -- ── ДВУХФАЗНЫЙ РЕНДЕР ПАСПОРТА (Обложка ⇄ Разворот) ──────────
     local function openPassportUI(data, tpl, isShown, senderName)
         tpl = tpl or {}
@@ -691,9 +700,9 @@ if CLIENT then
             isExpanded = expanded
             if not expanded then
                 -- Фаза 1: Закрытая обложка (вертикальная книжка 380×520)
+                safeClearFrame(frame)
                 frame:SetSize(380, 520)
                 frame:Center()
-                frame:Clear()
 
                 frame.Paint = function(_, w, h)
                     draw.RoundedBox(10, 0, 0, w, h, coverCol)
@@ -740,9 +749,9 @@ if CLIENT then
 
             else
                 -- Фаза 2: Раскрытый разворот (широкий вид 840×520)
+                safeClearFrame(frame)
                 frame:SetSize(840, 520)
                 frame:Center()
-                frame:Clear()
 
                 frame.Paint = function(_, w, h)
                     draw.RoundedBox(10, 0, 0, w, h, coverCol)
@@ -884,9 +893,9 @@ if CLIENT then
             isExpanded = expanded
             if not expanded then
                 -- Фаза 1: Закрытая кожаная корочка удостоверения (вертикальная 360×480)
+                safeClearFrame(frame)
                 frame:SetSize(360, 480)
                 frame:Center()
-                frame:Clear()
 
                 frame.Paint = function(_, w, h)
                     draw.RoundedBox(10, 0, 0, w, h, coverCol)
@@ -933,9 +942,9 @@ if CLIENT then
 
             else
                 -- Фаза 2: Раскрытая ксива (широкий разворот 860×480)
+                safeClearFrame(frame)
                 frame:SetSize(860, 480)
                 frame:Center()
-                frame:Clear()
 
                 frame.Paint = function(_, w, h)
                     draw.RoundedBox(10, 0, 0, w, h, coverCol)
@@ -1080,9 +1089,9 @@ if CLIENT then
             isExpanded = expanded
             if not expanded then
                 -- Фаза 1: Закрытая медицинская книжка (360×480)
+                safeClearFrame(frame)
                 frame:SetSize(360, 480)
                 frame:Center()
-                frame:Clear()
 
                 frame.Paint = function(_, w, h)
                     draw.RoundedBox(10, 0, 0, w, h, Color(30, 65, 55))
@@ -1126,9 +1135,9 @@ if CLIENT then
 
             else
                 -- Фаза 2: Раскрытая медицинская книжка (840×520)
+                safeClearFrame(frame)
                 frame:SetSize(840, 520)
                 frame:Center()
-                frame:Clear()
 
                 frame.Paint = function(_, w, h)
                     draw.RoundedBox(10, 0, 0, w, h, Color(30, 65, 55))
