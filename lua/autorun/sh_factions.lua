@@ -355,30 +355,45 @@ if SERVER then
         return data
     end
 
-    local function serverIsLeaderOfFaction(ply, f)
+    local function isCharacterLeaderOfFaction(ply, f)
         if not IsValid(ply) or not istable(f) then return false end
         local ldr = tostring(f.Leader or "")
+        if ldr == "" then return false end
+
+        local charKey = (GRM.Identity and isfunction(GRM.Identity.CharacterKey) and GRM.Identity.CharacterKey(ply)) or ""
         local sid = ply:SteamID() or ""
         local sid64 = (ply.SteamID64 and ply:SteamID64()) or ""
-        local charKey = (GRM.Identity and isfunction(GRM.Identity.CharacterKey)) and GRM.Identity.CharacterKey(ply) or ""
-        local accKey = (GRM.Identity and isfunction(GRM.Identity.AccountKey)) and GRM.Identity.AccountKey(ply) or ""
 
-        if ldr ~= "" then
-            if ldr == sid or (sid64 ~= "" and ldr == sid64) or (charKey ~= "" and ldr == charKey) or (accKey ~= "" and ldr == accKey) then
-                return true
+        -- Если активна система мультиперсонажей (CharacterKey: sid64:charN)
+        if charKey ~= "" then
+            if ldr == charKey then return true end
+            if ldr == sid or ldr == sid64 then
+                if istable(f.Members) then
+                    local mem = rawget(f.Members, charKey)
+                    if istable(mem) and (mem.Role == f.LeaderRoleName or mem.Role == "Лидер") then
+                        return true
+                    end
+                end
+                if charKey == (sid64 .. ":char1") or charKey == (sid .. ":char1") then
+                    return true
+                end
             end
-            if sid64 ~= "" and ldr:find(sid64, 1, true) then return true end
-            if sid ~= "" and ldr:find(sid, 1, true) then return true end
+            if istable(f.Members) then
+                local mem = rawget(f.Members, charKey)
+                if istable(mem) and (mem.Role == f.LeaderRoleName or mem.Role == "Лидер") then
+                    return true
+                end
+            end
+            return false
         end
 
+        if ldr == sid or (sid64 ~= "" and ldr == sid64) then return true end
         if istable(f.Members) then
-            local leaderRole = f.LeaderRoleName or "Лидер"
-            local mem = (charKey ~= "" and f.Members[charKey]) or (sid ~= "" and f.Members[sid]) or (sid64 ~= "" and f.Members[sid64])
-            if istable(mem) and (mem.Role == leaderRole or mem.Role == "Лидер") then
+            local mem = rawget(f.Members, sid) or (sid64 ~= "" and rawget(f.Members, sid64)) or f.Members[sid]
+            if istable(mem) and (mem.Role == f.LeaderRoleName or mem.Role == "Лидер") then
                 return true
             end
         end
-
         return false
     end
 
@@ -387,7 +402,7 @@ if SERVER then
         for name, f in pairs(Factions) do
             if type(f) == "table" then
                 ensureDefaults(f)
-                if serverIsLeaderOfFaction(ply, f) then return name end
+                if isCharacterLeaderOfFaction(ply, f) then return name end
             end
         end
         return nil
@@ -396,7 +411,7 @@ if SERVER then
     local function getPlayerFactionData(plyOrKey)
         if not istable(Factions) then return nil, nil, "", {r=255,g=200,b=50}, false, "" end
         local ply = (isentity(plyOrKey) and IsValid(plyOrKey) and plyOrKey:IsPlayer() and plyOrKey) or nil
-        local sid = ply and ply:SteamID() or (isstring(plyOrKey) and plyOrKey or "")
+        local sid = ply and (ply:SteamID() or "") or (isstring(plyOrKey) and plyOrKey or "")
         local sid64 = (ply and ply.SteamID64 and ply:SteamID64()) or (util.SteamIDTo64 and util.SteamIDTo64(sid)) or ""
         local charKey = (ply and GRM.Identity and isfunction(GRM.Identity.CharacterKey) and GRM.Identity.CharacterKey(ply))
             or (isstring(plyOrKey) and plyOrKey:find(":char[1-3]$") and plyOrKey) or ""
@@ -413,48 +428,38 @@ if SERVER then
             end
         end
 
-        -- 2. Если игрок лидер фракции
+        -- 2. Если персонаж лидер фракции
         if ply then
             for name, f in pairs(Factions) do
-                if istable(f) and serverIsLeaderOfFaction(ply, f) then
+                if istable(f) and isCharacterLeaderOfFaction(ply, f) then
                     local leaderRole = f.LeaderRoleName or "Лидер"
-                    local mem = (charKey ~= "" and rawget(f.Members, charKey)) or (sid ~= "" and rawget(f.Members, sid)) or (sid64 ~= "" and rawget(f.Members, sid64)) or (f.Members and f.Members[sid])
+                    local mem = (charKey ~= "" and rawget(f.Members, charKey)) or (charKey == "" and (rawget(f.Members, sid) or (sid64 ~= "" and rawget(f.Members, sid64))))
                     local dept = istable(mem) and mem.Department or ""
                     return name, leaderRole, f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, dept
                 end
             end
         end
 
-        -- 3. Точное совпадение SteamID
-        if sid ~= "" then
-            for name, f in pairs(Factions) do
-                if istable(f) and istable(f.Members) then
-                    local rec = rawget(f.Members, sid)
-                    if istable(rec) then
-                        return name, rec.Role or "Участник", f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, rec.Department or ""
+        -- 3. Режим одиночного аккаунта (только если charKey пустой)
+        if charKey == "" then
+            if sid ~= "" then
+                for name, f in pairs(Factions) do
+                    if istable(f) and istable(f.Members) then
+                        local rec = rawget(f.Members, sid)
+                        if istable(rec) then
+                            return name, rec.Role or "Участник", f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, rec.Department or ""
+                        end
                     end
                 end
             end
-        end
-
-        -- 4. Точное совпадение SteamID64
-        if sid64 ~= "" then
-            for name, f in pairs(Factions) do
-                if istable(f) and istable(f.Members) then
-                    local rec = rawget(f.Members, sid64)
-                    if istable(rec) then
-                        return name, rec.Role or "Участник", f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, rec.Department or ""
+            if sid64 ~= "" then
+                for name, f in pairs(Factions) do
+                    if istable(f) and istable(f.Members) then
+                        local rec = rawget(f.Members, sid64)
+                        if istable(rec) then
+                            return name, rec.Role or "Участник", f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, rec.Department or ""
+                        end
                     end
-                end
-            end
-        end
-
-        -- 5. Фолбэк через f.Members alias
-        for name, f in pairs(Factions) do
-            if istable(f) and istable(f.Members) then
-                local rec = (charKey ~= "" and f.Members[charKey]) or (sid ~= "" and f.Members[sid]) or (sid64 ~= "" and f.Members[sid64])
-                if istable(rec) then
-                    return name, rec.Role or "Участник", f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, rec.Department or ""
                 end
             end
         end
@@ -1356,31 +1361,18 @@ if CLIENT then
     local function clientIsLeaderOfFaction(f)
         local ply = LocalPlayer()
         if not IsValid(ply) or not istable(f) then return false end
-        if ply:IsSuperAdmin() then return true end
+        return isCharacterLeaderOfFaction(ply, f)
+    end
 
-        local ldr = tostring(f.Leader or "")
-        local sid = ply:SteamID() or ""
-        local sid64 = ply.SteamID64 and ply:SteamID64() or ""
-        local charKey = (GRM.Identity and isfunction(GRM.Identity.CharacterKey)) and GRM.Identity.CharacterKey(ply) or ""
-        local accKey = (GRM.Identity and isfunction(GRM.Identity.AccountKey)) and GRM.Identity.AccountKey(ply) or ""
-
-        if ldr ~= "" then
-            if ldr == sid or (sid64 ~= "" and ldr == sid64) or (charKey ~= "" and ldr == charKey) or (accKey ~= "" and ldr == accKey) then
-                return true
-            end
-            if sid64 ~= "" and ldr:find(sid64, 1, true) then return true end
-            if sid ~= "" and ldr:find(sid, 1, true) then return true end
-        end
-
-        if istable(f.Members) then
-            local leaderRole = f.LeaderRoleName or "Лидер"
-            local mem = (charKey ~= "" and f.Members[charKey]) or (sid ~= "" and f.Members[sid]) or (sid64 ~= "" and f.Members[sid64])
-            if istable(mem) and (mem.Role == leaderRole or mem.Role == "Лидер") then
-                return true
+    local function clientGetLeaderFaction(data)
+        local ply = LocalPlayer()
+        if not IsValid(ply) then return nil end
+        for name, f in pairs(data or FactionsData or {}) do
+            if istable(f) and isCharacterLeaderOfFaction(ply, f) then
+                return name, f
             end
         end
-
-        return false
+        return nil
     end
 
     local function safeScrollClear(scroll)
@@ -1660,10 +1652,7 @@ if CLIENT then
 
         -- лидерская вкладка «Участники»: фракция — его собственная
         if IsValid(ui.roleComboLeader) and IsValid(ui.deptComboLeader) then
-            local myLead = nil
-            for name, fdata in pairs(data or {}) do
-                if clientIsLeaderOfFaction(fdata) then myLead = name break end
-            end
+            local myLead = clientGetLeaderFaction(data)
             rebuildRoleDeptCombos(myLead, ui.roleComboLeader, ui.deptComboLeader)
         end
     end
@@ -1676,10 +1665,7 @@ if CLIENT then
         local scroll = ui.ranksScrollLeader
         safeScrollClear(scroll)
 
-        local factionName, f = nil, nil
-        for name, fdata in pairs(data or {}) do
-            if clientIsLeaderOfFaction(fdata) then factionName = name f = fdata break end
-        end
+        local factionName, f = clientGetLeaderFaction(data)
         if not factionName or not f then return end
 
         local roles = f.Roles or {}
@@ -1775,10 +1761,7 @@ if CLIENT then
         local scroll = ui.deptsScrollLeader
         safeScrollClear(scroll)
 
-        local factionName, f = nil, nil
-        for name, fdata in pairs(data or {}) do
-            if clientIsLeaderOfFaction(fdata) then factionName = name f = fdata break end
-        end
+        local factionName, f = clientGetLeaderFaction(data)
         if not factionName or not f then return end
 
         local departments = f.Departments or {}
@@ -1866,10 +1849,7 @@ if CLIENT then
         local scroll = ui.memberScrollLeader
         safeScrollClear(scroll)
 
-        local factionName, f = nil, nil
-        for name, fdata in pairs(data or {}) do
-            if clientIsLeaderOfFaction(fdata) then factionName = name f = fdata break end
-        end
+        local factionName, f = clientGetLeaderFaction(data)
         if not f then
             if IsValid(ui.leaderTitleLabel) then ui.leaderTitleLabel:SetText("Вы не лидер") end
             return
@@ -3207,7 +3187,11 @@ if CLIENT then
         end
 
         -- FIX: При открытии меню лидера запрашиваем данные с сервера (factions.json)
-        timer.Simple(0.4, function()
+        getData(function(data)
+            FactionsData = data or {}
+            refreshAllUI(FactionsData)
+        end)
+        timer.Simple(0.2, function()
             if IsValid(frame) then
                 getData(function(data)
                     FactionsData = data or {}
