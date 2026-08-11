@@ -195,11 +195,8 @@ local function normalizeExtDefaults()
 
             -- Миграция старого формата MaskRoles/MaskModels.
             if istable(cfg.MaskRoles) and istable(cfg.MaskModels) and #cfg.MaskModels > 0 then
-                local firstDept = "Основной"
-                if Factions and Factions[factionName] and istable(Factions[factionName].Departments) and Factions[factionName].Departments[1] then
-                    firstDept = Factions[factionName].Departments[1]
-                end
-                if not cfg.MaskDepartments[firstDept] then
+                local firstDept = (Factions and Factions[factionName] and istable(Factions[factionName].Departments) and Factions[factionName].Departments[1]) or ""
+                if firstDept ~= "" and not cfg.MaskDepartments[firstDept] then
                     cfg.MaskDepartments[firstDept] = {
                         Roles = cfg.MaskRoles,
                         Models = cfg.MaskModels,

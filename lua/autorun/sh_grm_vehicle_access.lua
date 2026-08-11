@@ -129,7 +129,7 @@ if SERVER then
         for name, f in pairs(Factions) do
             local info = istable(f) and GRM.Identity.FactionMember(f, ply) or nil
             if info then
-                return name, info.Role or "Участник", info.Department or "Основной"
+                return name, info.Role or "Участник", info.Department or ""
             end
         end
         return nil, nil, nil

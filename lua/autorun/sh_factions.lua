@@ -217,11 +217,10 @@ if SERVER then
         inc.Vehicles = istable(inc.Vehicles) and inc.Vehicles or {}
     end
 
-    -- Отдел по умолчанию для новых участников (Код 108): первый реальный
-    -- отдел фракции; литерал «Основной» — лишь крайний фолбэк пустого списка.
+    -- Отдел по умолчанию для новых участников: первый реальный отдел или пустая строка
     local function getDefaultDepartment(f)
         ensureDefaults(f)
-        return (istable(f.Departments) and f.Departments[1]) or "Основной"
+        return (istable(f.Departments) and f.Departments[1]) or ""
     end
 
     -- Возвращает роль по умолчанию для новых участников:
@@ -390,14 +389,14 @@ if SERVER then
         local leader  = nil
         if leaderSteamID and leaderSteamID ~= "" then
             leader = memberKey(leaderSteamID)
-            members[leader] = { Role = defaultLeaderRole, Department = "Основной" }
+            members[leader] = { Role = defaultLeaderRole, Department = "" }
         end
 
         Factions[name] = {
             Leader         = leader,
             Roles          = { defaultLeaderRole, "Участник" },
             LeaderRoleName = defaultLeaderRole,
-            Departments    = { "Основной" },
+            Departments    = {},
             Members        = members,
             Tag            = "",
             Color          = { r = 255, g = 200, b = 50 },
@@ -541,11 +540,10 @@ if SERVER then
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
-        if #f.Departments <= 1 then return false, "Нельзя удалить последний отдел" end
         for i, d in ipairs(f.Departments) do
             if d == deptName then
                 table.remove(f.Departments, i)
-                local firstDept = f.Departments[1] or "Основной"
+                local firstDept = (istable(f.Departments) and f.Departments[1]) or ""
                 for _, info in pairs(f.Members) do
                     if info.Department == deptName then info.Department = firstDept end
                 end
@@ -1801,7 +1799,7 @@ if CLIENT then
             lblRole:SetFont("Factions_Normal") lblRole:SetTextColor(THEME.accent)
 
             local lblDept = vgui.Create("DLabel", row)
-            lblDept:SetPos(360, 6) lblDept:SetSize(130, 20) lblDept:SetText(info.Department or "Основной")
+            lblDept:SetPos(360, 6) lblDept:SetSize(130, 20) lblDept:SetText((info.Department and info.Department ~= "") and info.Department or "—")
             lblDept:SetFont("Factions_Normal") lblDept:SetTextColor(THEME.textDim)
 
             if not info._rpName then
@@ -2032,7 +2030,7 @@ if CLIENT then
 
             -- FIX: было lblRole:SetSize вместо lblDept:SetSize
             local lblDept = vgui.Create("DLabel", row)
-            lblDept:SetPos(380, 6) lblDept:SetSize(130, 20) lblDept:SetText(info.Department or "Основной")
+            lblDept:SetPos(380, 6) lblDept:SetSize(130, 20) lblDept:SetText((info.Department and info.Department ~= "") and info.Department or "—")
             lblDept:SetFont("Factions_Normal") lblDept:SetTextColor(THEME.textDim)
 
             if not info._rpName then
