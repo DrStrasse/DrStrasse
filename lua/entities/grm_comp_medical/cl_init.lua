@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    grm_comp_medical — cl_init.lua (Интерфейс Медицинской службы)
+    grm_comp_medical — cl_init.lua (Интерфейс Медицинской службы и Госпиталя)
 ----------------------------------------------------------------------]]
 include("shared.lua")
 
@@ -8,10 +8,10 @@ local CC = {
     panel   = Color(24, 38, 32, 245),
     header  = Color(30, 52, 42, 255),
     accent  = Color(90, 220, 150),
-    success = Color(60, 190, 100),
+    success = Color(50, 180, 95),
     danger  = Color(220, 70, 70),
     text    = Color(235, 248, 240),
-    dim     = Color(155, 185, 170),
+    dim     = Color(160, 190, 175),
     gold    = Color(245, 205, 80),
 }
 
@@ -74,47 +74,131 @@ net.Receive("GRM_CompMedical_Open", function()
     medPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
 
     local lblTarget = vgui.Create("DLabel", medPnl)
-    lblTarget:SetPos(16, 14) lblTarget:SetText("Выберите пациента для ведения медицинской карты:") lblTarget:SetFont("DermaDefaultBold") lblTarget:SetTextColor(CC.accent) lblTarget:SizeToContents()
+    lblTarget:SetPos(16, 12)
+    lblTarget:SetText("Выберите пациента из списка онлайн:")
+    lblTarget:SetFont("DermaDefaultBold")
+    lblTarget:SetTextColor(CC.accent)
+    lblTarget:SizeToContents()
 
     local comboTarget = vgui.Create("DComboBox", medPnl)
-    comboTarget:SetPos(16, 34) comboTarget:SetSize(420, 28)
+    comboTarget:SetPos(16, 32)
+    comboTarget:SetSize(460, 28)
     comboTarget:AddChoice("— Выберите пациента онлайн —", "")
     for _, pData in ipairs(onlineList) do
-        comboTarget:AddChoice(string.format("%s  [%s]", pData.rpName or "?", pData.nick or "?"), pData)
+        comboTarget:AddChoice(string.format("%s  [%s]  (%s)", pData.rpName or "?", pData.nick or "?", pData.faction or "Гражданский"), pData)
     end
 
-    local entName = vgui.Create("DTextEntry", medPnl) entName:SetPos(16, 95) entName:SetSize(280, 26)
-    local comboBlood = vgui.Create("DComboBox", medPnl) comboBlood:SetPos(310, 95) comboBlood:SetSize(160, 26)
-    comboBlood:AddChoice("I (0) Rh+") comboBlood:AddChoice("I (0) Rh-")
-    comboBlood:AddChoice("II (A) Rh+") comboBlood:AddChoice("II (A) Rh-")
-    comboBlood:AddChoice("III (B) Rh+") comboBlood:AddChoice("III (B) Rh-")
-    comboBlood:AddChoice("IV (AB) Rh+") comboBlood:AddChoice("IV (AB) Rh-")
+    -- Ряд 1: ФИО, Группа крови, Категория годности
+    local lblName = vgui.Create("DLabel", medPnl)
+    lblName:SetPos(16, 68)
+    lblName:SetText("1. ФИО пациента (ручное):")
+    lblName:SetTextColor(CC.text)
+    lblName:SizeToContents()
+    local entName = vgui.Create("DTextEntry", medPnl)
+    entName:SetPos(16, 88)
+    entName:SetSize(270, 26)
+
+    local lblBlood = vgui.Create("DLabel", medPnl)
+    lblBlood:SetPos(300, 68)
+    lblBlood:SetText("2. Группа крови и резус-фактор:")
+    lblBlood:SetTextColor(CC.text)
+    lblBlood:SizeToContents()
+    local comboBlood = vgui.Create("DComboBox", medPnl)
+    comboBlood:SetPos(300, 88)
+    comboBlood:SetSize(170, 26)
+    comboBlood:AddChoice("I (0) Rh+")
+    comboBlood:AddChoice("I (0) Rh-")
+    comboBlood:AddChoice("II (A) Rh+")
+    comboBlood:AddChoice("II (A) Rh-")
+    comboBlood:AddChoice("III (B) Rh+")
+    comboBlood:AddChoice("III (B) Rh-")
+    comboBlood:AddChoice("IV (AB) Rh+")
+    comboBlood:AddChoice("IV (AB) Rh-")
     comboBlood:SetValue("I (0) Rh+")
 
-    local comboFit = vgui.Create("DComboBox", medPnl) comboFit:SetPos(485, 95) comboFit:SetSize(320, 26)
-    comboFit:AddChoice("А — Годен к военной службе и работе без ограничений")
-    comboFit:AddChoice("Б — Годен к военной службе с незначительными ограничениями")
+    local lblFit = vgui.Create("DLabel", medPnl)
+    lblFit:SetPos(485, 68)
+    lblFit:SetText("3. Категория годности к службе / работе (ВВК):")
+    lblFit:SetTextColor(CC.text)
+    lblFit:SizeToContents()
+    local comboFit = vgui.Create("DComboBox", medPnl)
+    comboFit:SetPos(485, 88)
+    comboFit:SetSize(430, 26)
+    comboFit:AddChoice("А — Годен к военной службе и работе")
+    comboFit:AddChoice("Б — Годен с незначительными ограничениями")
     comboFit:AddChoice("В — Ограниченно годен к службе (запас)")
     comboFit:AddChoice("Г — Временно не годен (отсрочка на лечение)")
     comboFit:AddChoice("Д — Не годен к военной службе (освобождён)")
-    comboFit:SetValue("А — Годен к военной службе и работе без ограничений")
+    comboFit:SetValue("А — Годен к военной службе и работе")
 
-    local entAllergies = vgui.Create("DTextEntry", medPnl) entAllergies:SetPos(16, 155) entAllergies:SetSize(380, 26) entAllergies:SetText("Не выявлено")
-    local entChronic = vgui.Create("DTextEntry", medPnl) entChronic:SetPos(410, 155) entChronic:SetSize(395, 26) entChronic:SetText("Отсутствуют")
+    -- Ряд 2: Аллергии и Хронические заболевания
+    local lblAllergies = vgui.Create("DLabel", medPnl)
+    lblAllergies:SetPos(16, 122)
+    lblAllergies:SetText("4. Аллергические реакции / непереносимость препаратов:")
+    lblAllergies:SetTextColor(CC.text)
+    lblAllergies:SizeToContents()
+    local entAllergies = vgui.Create("DTextEntry", medPnl)
+    entAllergies:SetPos(16, 142)
+    entAllergies:SetSize(440, 26)
+    entAllergies:SetText("Не выявлено")
 
-    local entNewEntry = vgui.Create("DTextEntry", medPnl) entNewEntry:SetPos(16, 215) entNewEntry:SetSize(620, 26) entNewEntry:SetPlaceholderText("Текст новой записи осмотра / диагноз / назначение врача...")
-    local comboEntryKind = vgui.Create("DComboBox", medPnl) comboEntryKind:SetPos(645, 215) comboEntryKind:SetSize(160, 26)
-    comboEntryKind:AddChoice("Осмотр терапевта") comboEntryKind:AddChoice("Хирургическая перевязка")
-    comboEntryKind:AddChoice("Вакцинация") comboEntryKind:AddChoice("Заключение ВВК") comboEntryKind:AddChoice("Выписка")
+    local lblChronic = vgui.Create("DLabel", medPnl)
+    lblChronic:SetPos(470, 122)
+    lblChronic:SetText("5. Хронические заболевания и патологии:")
+    lblChronic:SetTextColor(CC.text)
+    lblChronic:SizeToContents()
+    local entChronic = vgui.Create("DTextEntry", medPnl)
+    entChronic:SetPos(470, 142)
+    entChronic:SetSize(445, 26)
+    entChronic:SetText("Отсутствуют")
+
+    -- Ряд 3: Добавление новой записи
+    local lblNewEntry = vgui.Create("DLabel", medPnl)
+    lblNewEntry:SetPos(16, 178)
+    lblNewEntry:SetText("Добавление новой записи осмотра / диагноза:")
+    lblNewEntry:SetFont("DermaDefaultBold")
+    lblNewEntry:SetTextColor(CC.gold)
+    lblNewEntry:SizeToContents()
+
+    local entNewEntry = vgui.Create("DTextEntry", medPnl)
+    entNewEntry:SetPos(16, 198)
+    entNewEntry:SetSize(570, 26)
+    entNewEntry:SetPlaceholderText("Текст записи осмотра, диагноз, назначение лекарств...")
+
+    local comboEntryKind = vgui.Create("DComboBox", medPnl)
+    comboEntryKind:SetPos(595, 198)
+    comboEntryKind:SetSize(200, 26)
+    comboEntryKind:AddChoice("Осмотр терапевта")
+    comboEntryKind:AddChoice("Хирургическая перевязка")
+    comboEntryKind:AddChoice("Вакцинация")
+    comboEntryKind:AddChoice("Заключение ВВК")
+    comboEntryKind:AddChoice("Выписка рецепта")
+    comboEntryKind:AddChoice("Клинический диагноз")
     comboEntryKind:SetValue("Осмотр терапевта")
 
+    local btnAddEntry = vgui.Create("DButton", medPnl)
+    btnAddEntry:SetPos(805, 198)
+    btnAddEntry:SetSize(110, 26)
+    btnAddEntry:SetText("+ Запись")
+    btnAddEntry:SetFont("DermaDefaultBold")
+    btnAddEntry:SetTextColor(color_white)
+    btnAddEntry.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(40, 170, 100) or Color(30, 135, 80)) end
+
+    -- Ряд 4: Журнал записей
+    local lblHistory = vgui.Create("DLabel", medPnl)
+    lblHistory:SetPos(16, 234)
+    lblHistory:SetText("Журнал записей приёмов и истории болезни пациента:")
+    lblHistory:SetFont("DermaDefaultBold")
+    lblHistory:SetTextColor(CC.accent)
+    lblHistory:SizeToContents()
+
     local listEntries = vgui.Create("DListView", medPnl)
-    listEntries:SetPos(16, 255)
-    listEntries:SetSize(910, 310)
+    listEntries:SetPos(16, 254)
+    listEntries:SetSize(900, 275)
     listEntries:AddColumn("Дата и время"):SetFixedWidth(140)
-    listEntries:AddColumn("Тип записи"):SetFixedWidth(180)
+    listEntries:AddColumn("Тип записи"):SetFixedWidth(160)
     listEntries:AddColumn("Заключение врача и назначения"):SetFixedWidth(420)
-    listEntries:AddColumn("Врач"):SetFixedWidth(150)
+    listEntries:AddColumn("Лечащий врач"):SetFixedWidth(160)
 
     local currentEntries = {}
     local selKey = ""
@@ -132,7 +216,7 @@ net.Receive("GRM_CompMedical_Open", function()
             if istable(card) then
                 entName:SetText(card.name or pData.rpName or "")
                 comboBlood:SetValue(card.blood or "I (0) Rh+")
-                comboFit:SetValue(card.fitnessCategory or "А — Годен к военной службе и работе без ограничений")
+                comboFit:SetValue(card.fitnessCategory or "А — Годен к военной службе и работе")
                 entAllergies:SetText(card.allergies or "Не выявлено")
                 entChronic:SetText(card.chronic or "Отсутствуют")
 
@@ -141,18 +225,20 @@ net.Receive("GRM_CompMedical_Open", function()
                     local dStr = os.date("%d.%m.%Y %H:%M", e.ts or os.time())
                     listEntries:AddLine(dStr, e.kind or "Осмотр", e.text or "—", e.doctor or "Врач")
                 end
+            else
+                comboBlood:SetValue("I (0) Rh+")
+                comboFit:SetValue("А — Годен к военной службе и работе")
+                entAllergies:SetText("Не выявлено")
+                entChronic:SetText("Отсутствуют")
             end
         end
     end
 
-    local btnAddEntry = vgui.Create("DButton", medPnl)
-    btnAddEntry:SetPos(815, 215) btnAddEntry:SetSize(110, 26)
-    btnAddEntry:SetText("+ Запись")
-    btnAddEntry:SetFont("DermaDefaultBold")
-    btnAddEntry:SetTextColor(color_white)
-    btnAddEntry.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(40, 160, 100) or Color(30, 130, 80)) end
     btnAddEntry.DoClick = function()
-        if string.Trim(entNewEntry:GetText()) == "" then notification.AddLegacy("Введите текст записи!", NOTIFY_ERROR, 3) return end
+        if string.Trim(entNewEntry:GetText()) == "" then
+            notification.AddLegacy("Введите текст медицинской записи!", NOTIFY_ERROR, 3)
+            return
+        end
         local newE = {
             ts     = os.time(),
             kind   = comboEntryKind:GetValue(),
@@ -163,17 +249,25 @@ net.Receive("GRM_CompMedical_Open", function()
         local dStr = os.date("%d.%m.%Y %H:%M", newE.ts)
         listEntries:AddLine(dStr, newE.kind, newE.text, newE.doctor)
         entNewEntry:SetText("")
-        notification.AddLegacy("Запись добавлена в карточку.", NOTIFY_GENERIC, 3)
+        notification.AddLegacy("Запись добавлена в список. Нажмите «Сохранить медкарту».", NOTIFY_GENERIC, 3)
     end
 
+    -- Ряд 5: Кнопки сохранения и выдачи на руки
     local btnSaveCard = vgui.Create("DButton", medPnl)
-    btnSaveCard:SetPos(16, 580) btnSaveCard:SetSize(360, 36)
-    btnSaveCard:SetText("✔ Сохранить медицинскую карту пациента")
+    btnSaveCard:SetPos(16, 545)
+    btnSaveCard:SetSize(440, 38)
+    btnSaveCard:SetText("✔ Сохранить медицинскую карту пациента в базу")
     btnSaveCard:SetFont("DermaDefaultBold")
     btnSaveCard:SetTextColor(color_white)
-    btnSaveCard.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and CC.success or Color(30, 140, 80)) end
+    btnSaveCard.Paint = function(s, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(40, 175, 100) or Color(30, 140, 80))
+    end
     btnSaveCard.DoClick = function()
-        if selKey == "" then notification.AddLegacy("Выберите пациента!", NOTIFY_ERROR, 3) return end
+        if selKey == "" then
+            notification.AddLegacy("Выберите пациента из списка!", NOTIFY_ERROR, 3)
+            return
+        end
+
         local pack = {
             name            = entName:GetText(),
             blood           = comboBlood:GetValue(),
@@ -182,13 +276,63 @@ net.Receive("GRM_CompMedical_Open", function()
             chronic         = entChronic:GetText(),
             entries         = currentEntries,
             updated         = os.time(),
+            created         = (medCards[selKey] and medCards[selKey].created) or os.time(),
         }
+
+        medCards[selKey] = pack
+        if selSid64 ~= "" then medCards[selSid64] = pack end
+
         net.Start("GRM_CompMedical_SaveCard")
             net.WriteString(selKey)
             net.WriteTable(pack)
         net.SendToServer()
-        frame:Close()
+
+        notification.AddLegacy("Медицинская карта успешно сохранена в базу данных!", NOTIFY_GENERIC, 3)
+    end
+
+    local btnIssueCard = vgui.Create("DButton", medPnl)
+    btnIssueCard:SetPos(470, 545)
+    btnIssueCard:SetSize(445, 38)
+    btnIssueCard:SetText("📋 Выдать физическую медкарту пациенту на руки")
+    btnIssueCard:SetFont("DermaDefaultBold")
+    btnIssueCard:SetTextColor(color_white)
+    btnIssueCard.Paint = function(s, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(35, 120, 190) or Color(25, 95, 155))
+    end
+    btnIssueCard.DoClick = function()
+        if selKey == "" then
+            notification.AddLegacy("Выберите пациента из списка!", NOTIFY_ERROR, 3)
+            return
+        end
+
+        net.Start("GRM_CompMedical_IssuePhysical")
+            net.WriteString(selKey)
+        net.SendToServer()
     end
 
     tabs:AddSheet("Картотека пациентов", medPnl, "icon16/heart.png")
+
+    -- ══════════════════════════════════════════════════════════════
+    -- ВКЛАДКА 2: АРХИВ И РЕЕСТР МЕДКАРТ ГОСПИТАЛЯ
+    -- ══════════════════════════════════════════════════════════════
+    local archPnl = vgui.Create("DPanel", tabs)
+    archPnl:DockPadding(10, 10, 10, 10)
+    archPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
+
+    local listArch = vgui.Create("DListView", archPnl)
+    listArch:Dock(FILL)
+    listArch:AddColumn("Пациент (ФИО)"):SetFixedWidth(240)
+    listArch:AddColumn("Группа крови"):SetFixedWidth(140)
+    listArch:AddColumn("Категория годности"):SetFixedWidth(240)
+    listArch:AddColumn("Записей"):SetFixedWidth(90)
+    listArch:AddColumn("Ключ слота"):SetFixedWidth(200)
+
+    for k, c in pairs(medCards) do
+        if istable(c) and isstring(k) and (k:find(":char") or not k:find(":")) then
+            local cnt = istable(c.entries) and #c.entries or 0
+            listArch:AddLine(c.name or "Пациент", c.blood or "—", c.fitnessCategory or "А", tostring(cnt), k)
+        end
+    end
+
+    tabs:AddSheet("Реестр пациентов госпиталя", archPnl, "icon16/folder_table.png")
 end)

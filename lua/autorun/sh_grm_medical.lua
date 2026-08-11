@@ -170,7 +170,11 @@ if SERVER then
             print("[GRM Medical] SAVE ok cards (" .. tostring(why or "?") .. "), записей: " .. tostring(table.Count(MD.Cards or {})) .. ", read-back: " .. tostring(rb ~= nil))
         end
     end
+    MD.Save = MD.SaveCards
+    GRM.Medical.SaveCards = MD.SaveCards
+    GRM.Medical.Save = MD.SaveCards
     loadCards()
+    GRM.Medical.Cards = MD.Cards
 
     local function rpName(ply)
         if not IsValid(ply) then return "?" end
