@@ -673,7 +673,7 @@ if PHASE == "fines" then
 
     -- 4. член по ключу SteamID64 ТОЖЕ распознаётся (н101 — корневой фикс)
     ok, why = E.CanFine(medic64, civ)
-    assert(ok == false and (tostring(why):find("Фракция") or tostring(why):find("фракция")), "fines: Medic без enabled — отказ, но фракция должна распознаться, а: " .. tostring(why))
+    assert(ok == false and tostring(why):find("Фракция"), "fines: Medic без enabled — отказ, но фракция должна распознаться, а: " .. tostring(why))
     local fm = E._dev_entry("Medics").finePerms
     fm.enabled = true fm.allRoles = true fm.civilians = true
     ok = E.CanFine(medic64, civ)

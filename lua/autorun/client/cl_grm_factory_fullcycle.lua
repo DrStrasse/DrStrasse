@@ -57,6 +57,7 @@ end
 
 local function frame(title, w, h)
     local f = vgui.Create("DFrame")
+    GRM.UI.Track("factory", f)
     f:SetTitle("")
     f:SetSize(w, h)
     f:Center()

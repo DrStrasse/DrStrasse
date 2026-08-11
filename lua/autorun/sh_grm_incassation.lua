@@ -234,7 +234,7 @@ function I.GetPlayerIncassoInfo(ply)
     if not isPly(ply) then return nil, nil, nil, nil end
     if not Factions then return nil, nil, nil, nil end
     local sid = ply:SteamID()
-    local sid64 = ply:SteamID64()
+    local sid64 = ply.SteamID64 and ply:SteamID64() or nil
     local charKey = (GRM.Identity and isfunction(GRM.Identity.CharacterKey)) and GRM.Identity.CharacterKey(ply) or nil
 
     for fname, f in pairs(Factions) do
@@ -262,8 +262,7 @@ end
 
 function I.CanPlayerIncass(ply)
     if not isPly(ply) then return false, "Невалидный игрок" end
-    if ply:IsSuperAdmin() then
-        -- Суперадмин может начать рейс всегда (для тестирования и администрирования)
+    if isfunction(ply.IsSuperAdmin) and ply:IsSuperAdmin() then
         local inc, roleName, fname = I.GetPlayerIncassoInfo(ply)
         return true, fname or "Администрация", inc or { Enabled = true, Roles = {}, Vehicles = {} }, roleName or "Суперадмин"
     end
@@ -449,7 +448,9 @@ function I.GiveBagWeapon(ply, amount)
     if isfunction(w.SetCarriedAmount) then
         w:SetCarriedAmount(amount)
     end
-    ply:SelectWeapon(I.Config.BagWeaponClass)
+    if isfunction(ply.SelectWeapon) then
+        ply:SelectWeapon(I.Config.BagWeaponClass)
+    end
     ply:SetNWBool("GRMIncass_Carrying", true)
     ply:SetNWInt("GRMIncass_BagAmount", amount)
     return w
@@ -553,7 +554,7 @@ function I.StartRun(ply)
         end
     end
 
-    if I.Config.CarClassCheck and not ply:IsSuperAdmin() and not I.IsIncassCarForFaction(veh, fnameOrErr) then
+    if I.Config.CarClassCheck and not (isfunction(ply.IsSuperAdmin) and ply:IsSuperAdmin()) and not I.IsIncassCarForFaction(veh, fnameOrErr) then
         local spawnNm = getVehicleSpawnName(veh) or veh:GetClass()
         return false, "Этот класс ТС («" .. tostring(veh:GetClass())
             .. (spawnNm and spawnNm ~= veh:GetClass() and "/" .. tostring(spawnNm) or "")
@@ -1036,7 +1037,7 @@ concommand.Add("grm_incass_vault_use", function(ply)
 end)
 
 concommand.Add("grm_incass_debug", function(ply)
-    if not isPly(ply) or not ply:IsSuperAdmin() then return end
+    if not isPly(ply) or not (isfunction(ply.IsSuperAdmin) and ply:IsSuperAdmin()) then return end
     local veh = ply:GetVehicle()
     if not IsValid(veh) then ply:PrintMessage(HUD_PRINTCONSOLE, "[INCASS DEBUG] Вы не в ТС"); return end
     local root = getRootVehicle(veh)

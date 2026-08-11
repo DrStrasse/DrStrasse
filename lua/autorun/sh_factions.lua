@@ -20,8 +20,9 @@ local NET_RADIO               = "Factions_Radio"
 local NET_RADIO_MSG           = "Factions_RadioMessage"
 local NET_OPEN_ADMIN          = "Factions_OpenAdminMenu"
 local NET_OPEN_LEADER         = "Factions_OpenLeaderMenu"
-local NET_DEP                 = "Factions_Dep"
-local NET_DEPB                = "Factions_Depb"
+local NET_DEP                  = "Factions_Dep"
+local NET_DEPB                 = "Factions_Depb"
+local NET_CHARACTER_CHOICES    = "Factions_CharacterChoices"
 local NET_DEP_MSG             = "Factions_DepMsg"
 local NET_DEPB_MSG            = "Factions_DepbMsg"
 
@@ -43,6 +44,7 @@ if SERVER then
     util.AddNetworkString(NET_OPEN_LEADER)
     util.AddNetworkString(NET_DEP)
     util.AddNetworkString(NET_DEPB)
+    util.AddNetworkString(NET_CHARACTER_CHOICES)
     util.AddNetworkString(NET_DEP_MSG)
     util.AddNetworkString(NET_DEPB_MSG)
 
@@ -52,7 +54,7 @@ if SERVER then
     Invites       = nil
 
     local function safeJSONToTable(data)
-        local ok, tbl = pcall(util.JSONToTable, data or "")
+        local ok, tbl = pcall(util.JSONToTable, data or "", false, true)
         if ok and istable(tbl) then return tbl end
         return {}
     end
@@ -79,6 +81,92 @@ if SERVER then
         file.Write(INVITES_FILE, util.TableToJSON(tbl, true))
     end
 
+    -- Character migration: faction membership is stored by CharacterKey.
+    -- SteamID/SteamID64 remain readable as compatibility aliases only.
+    local function canonicalMemberKey(value)
+        if IsValid(value) and value.IsPlayer and value:IsPlayer() then
+            return (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(value)) or (value:SteamID64() .. ":char1")
+        end
+        local raw = tostring(value or "")
+        if raw:match(":char[1-3]$") then return raw end
+        if raw:match("^%d+$") then return raw .. ":char1" end
+        -- A raw SteamID string may be an offline/legacy target. Keep it
+        -- readable here; online callers pass the Player object and therefore
+        -- resolve to the active CharacterKey. Disk migration below converts
+        -- legacy SteamID records deterministically.
+        return raw
+    end
+
+    local function persistedMemberKey(value)
+        local raw = tostring(value or "")
+        if raw:match(":char[1-3]$") then return raw end
+        if raw:match("^%d+$") then return raw .. ":char1" end
+        if util.SteamIDTo64 then
+            local s64 = util.SteamIDTo64(raw)
+            if s64 and s64 ~= "0" then return tostring(s64) .. ":char1" end
+        end
+        return raw
+    end
+
+    local function legacyAccountKey(value)
+        local raw = tostring(value or "")
+        if raw:match(":char[1-3]$") then return raw:gsub(":char[1-3]$", "") end
+        return raw
+    end
+
+    local function installMemberAliases(members)
+        if not istable(members) then return end
+        local oldIndex = getmetatable(members) and getmetatable(members).__index
+        setmetatable(members, { __index = function(t, key)
+            if oldIndex then
+                local old = type(oldIndex) == "function" and oldIndex(t, key) or oldIndex[key]
+                if old ~= nil then return old end
+            end
+            local ck = persistedMemberKey(key)
+            return rawget(t, ck)
+        end })
+    end
+
+    local function migrateFactionMembers()
+        local changed = false
+        for _, f in pairs(Factions or {}) do
+            if istable(f) then
+                f.Members = istable(f.Members) and f.Members or {}
+                local moved = {}
+                for key, rec in pairs(f.Members) do
+                    local ck = persistedMemberKey(key)
+                    if ck ~= key then
+                        if not rawget(f.Members, ck) then moved[ck] = rec end
+                        f.Members[key] = nil
+                        changed = true
+                    end
+                end
+                for ck, rec in pairs(moved) do f.Members[ck] = rec end
+                if f.Leader then
+                    local leaderKey = canonicalMemberKey(f.Leader)
+                    if leaderKey ~= f.Leader then f.Leader = leaderKey changed = true end
+                end
+                installMemberAliases(f.Members)
+            end
+        end
+        return changed
+    end
+
+    local function memberKey(value)
+        if IsValid(value) and value.IsPlayer and value:IsPlayer() then
+            return canonicalMemberKey(value)
+        end
+        local raw = tostring(value or "")
+        if player and player.GetAll then
+            for _, ply in ipairs(player.GetAll()) do
+                if IsValid(ply) and (ply:SteamID() == raw or ply:SteamID64() == raw) then
+                    return canonicalMemberKey(ply)
+                end
+            end
+        end
+        return canonicalMemberKey(raw)
+    end
+
     local function ensureDefaults(f)
         if not f or type(f) ~= "table" then return end
 
@@ -97,9 +185,13 @@ if SERVER then
         -- Убрано: автоматическое добавление "Участник" при каждом ensureDefaults
         -- вызывало баг — при переименовании ранга создавался дубликат.
         -- Роль по умолчанию теперь определяется через getDefaultMemberRole()
-        if not table.HasValue(f.Departments, "Основной") then
-            table.insert(f.Departments, 1, "Основной")
-        end
+        --
+        -- Код 108 (заказ владельца): «Основной» отдел больше НЕ воскресает
+        -- сам. Раньше этот блок вставлял его при КАЖДОМ ensureDefaults, а он
+        -- вызывается из каждого действия и каждой рассылки — стоило админу
+        -- удалить «Основной», как очередной sync тут же создавал его заново.
+        -- Отдел по умолчанию теперь — getDefaultDepartment() (первый реальный
+        -- отдел фракции, литерал «Основной» — лишь крайний фолбэк).
 
         if type(f.Tag) ~= "string" then f.Tag = "" end
         if not istable(f.Color) then f.Color = { r = 255, g = 200, b = 50 } end
@@ -114,6 +206,22 @@ if SERVER then
         if f.Leader and f.Members[f.Leader] then
             f.Members[f.Leader].Role = f.LeaderRoleName
         end
+
+        -- Код 126 (Инкассация): настройки допуска фракции к инкассации
+        if not istable(f.IncassoSettings) then
+            f.IncassoSettings = { Enabled = false, Roles = {}, Vehicles = {} }
+        end
+        local inc = f.IncassoSettings
+        inc.Enabled = inc.Enabled == true
+        inc.Roles    = istable(inc.Roles)    and inc.Roles    or {}
+        inc.Vehicles = istable(inc.Vehicles) and inc.Vehicles or {}
+    end
+
+    -- Отдел по умолчанию для новых участников (Код 108): первый реальный
+    -- отдел фракции; литерал «Основной» — лишь крайний фолбэк пустого списка.
+    local function getDefaultDepartment(f)
+        ensureDefaults(f)
+        return (istable(f.Departments) and f.Departments[1]) or "Основной"
     end
 
     -- Возвращает роль по умолчанию для новых участников:
@@ -142,7 +250,80 @@ if SERVER then
 
     Factions = loadFactions()
     Invites  = loadInvites()
+    local factionMigrationChanged = migrateFactionMembers()
     ensureAllDefaults()
+    if factionMigrationChanged then saveFactions(Factions) end
+
+    local function characterDisplay(key)
+        key = tostring(key or "")
+        local p = GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(key) or nil
+        if IsValid(p) then
+            local n = p:GetNWString("GRM_RPName", "")
+            return n ~= "" and n or p:Nick(), true, p:Nick()
+        end
+        local account, slot = key:match("^(.-):(char[1-3])$")
+        local rec = account and GRM.Char and GRM.Char.Data and GRM.Char and GRM.Char.Data[account]
+        local c = rec and rec.slots and rec.slots[slot]
+        return (c and c.name and c.name ~= "" and c.name or key), false, "offline"
+    end
+
+    local function buildMemberSync(f)
+        local out = {}
+        for key, rec in pairs(f.Members or {}) do
+            if istable(rec) then
+                local rp, online, steamNick = characterDisplay(key)
+                out[key] = {
+                    Role = rec.Role,
+                    Department = rec.Department,
+                    _characterKey = key,
+                    _rpName = rp,
+                    _online = online,
+                    _steamNick = steamNick,
+                }
+            end
+        end
+        return out
+    end
+
+    local function buildCharacterChoices()
+        local out = {}
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and p:IsPlayer() then
+                local account = p:SteamID64()
+                local chars = GRM.Char and GRM.Char.Data and GRM.Char and GRM.Char.Data[account] and GRM.Char and GRM.Char.Data[account].slots or {}
+                for i = 1, (GRM.Char and GRM.Char.MaxSlots or 3) do
+                    local id = "char" .. i
+                    local c = chars and chars[id]
+                    if istable(c) and tostring(c.name or "") ~= "" then
+                        local key = account .. ":" .. id
+                        out[#out + 1] = {
+                            key = key,
+                            rpName = tostring(c.name),
+                            steamNick = p:Nick(),
+                            slot = id,
+                            active = GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p) == key or false,
+                            faction = (function()
+                                for fname, f in pairs(Factions or {}) do
+                                    if istable(f) and rawget(f.Members or {}, key) then return fname end
+                                end
+                                return ""
+                            end)(),
+                        }
+                    end
+                end
+            end
+        end
+        table.sort(out, function(a, b)
+            return (a.rpName .. a.key):lower() < (b.rpName .. b.key):lower()
+        end)
+        return out
+    end
+
+    local function sendCharacterChoices(ply)
+        net.Start(NET_CHARACTER_CHOICES)
+            net.WriteTable(buildCharacterChoices())
+        if ply then net.Send(ply) else net.Broadcast() end
+    end
 
     local function buildSyncData()
         local data = {}
@@ -150,14 +331,25 @@ if SERVER then
             if type(f) == "table" then
                 ensureDefaults(f)
                 data[name] = {
-                    Leader         = f.Leader,
-                    Roles          = f.Roles,
-                    Departments    = f.Departments,
-                    Members        = f.Members,
-                    Tag            = f.Tag,
-                    Color          = f.Color,
-                    DepAccess      = f.DepAccess,
-                    LeaderRoleName = f.LeaderRoleName
+                    Leader           = f.Leader,
+                    Roles            = f.Roles,
+                    Departments      = f.Departments,
+                    Members          = buildMemberSync(f),
+                    Tag              = f.Tag,
+                    Color            = f.Color,
+                    DepAccess        = f.DepAccess,
+                    LeaderRoleName   = f.LeaderRoleName,
+                    -- v3.1.1: зеркалируем доступ-модели/оружие/госновости для
+                    -- вкладки «Расширенные настройки» (синк с /models_admin,
+                    -- /weapons_admin, setGNewsAccess — те же серверные поля)
+                    Models           = f.Models,
+                    RoleModels       = f.RoleModels,
+                    DepartmentModels = f.DepartmentModels,
+                    Weapons          = f.Weapons,
+                    RoleWeapons      = f.RoleWeapons,
+                    DepartmentWeapons= f.DepartmentWeapons,
+                    GNewsAccess      = f.GNewsAccess == true,
+                    IncassoSettings  = f.IncassoSettings
                 }
             end
         end
@@ -168,13 +360,22 @@ if SERVER then
         net.Start(NET_SYNC_ALL)
         net.WriteTable(buildSyncData())
         net.Broadcast()
+        sendCharacterChoices()
     end
 
+    hook.Add("GRM_CharacterChanged", "Factions_CharacterSync", function(ply)
+        if not IsValid(ply) then return end
+        timer.Simple(0, function()
+            if IsValid(ply) then broadcastFactionData() end
+        end)
+    end)
+
     local function getFactionOfPlayer(steamID)
+        local key = memberKey(steamID)
         for name, f in pairs(Factions) do
             if type(f) == "table" then
                 ensureDefaults(f)
-                if f.Members[steamID] then return name end
+                if f.Members[key] or f.Members[steamID] then return name end
             end
         end
         return nil
@@ -188,8 +389,8 @@ if SERVER then
         local members = {}
         local leader  = nil
         if leaderSteamID and leaderSteamID ~= "" then
-            leader = leaderSteamID
-            members[leaderSteamID] = { Role = defaultLeaderRole, Department = "Основной" }
+            leader = memberKey(leaderSteamID)
+            members[leader] = { Role = defaultLeaderRole, Department = "Основной" }
         end
 
         Factions[name] = {
@@ -391,13 +592,17 @@ if SERVER then
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
-        if f.Members[steamID] then return false, "Игрок уже во фракции" end
-        local existing = getFactionOfPlayer(steamID)
+        local key = memberKey(steamID)
+        if f.Members[key] then return false, "Игрок уже во фракции" end
+        local existing = getFactionOfPlayer(key)
         if existing then return false, "Игрок уже состоит во фракции " .. existing end
         if role == f.LeaderRoleName then return false, "Лидер назначается только отдельно" end
         if role and not table.HasValue(f.Roles, role) then return false, "Такого ранга нет" end
         if dept and not table.HasValue(f.Departments, dept) then return false, "Такого отдела нет" end
-        f.Members[steamID] = { Role = role or getDefaultMemberRole(f), Department = dept or "Основной" }
+        -- Код 108: дефолтный отдел — первый реальный (а не «Основной» из воздуха)
+        local rec = { Role = role or getDefaultMemberRole(f), Department = dept or getDefaultDepartment(f) }
+        if isstring(steamID) and not steamID:match(":char[1-3]$") then rec.LegacyKey = steamID end
+        f.Members[key] = rec
         saveFactions(Factions)
         return true
     end
@@ -406,14 +611,15 @@ if SERVER then
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
-        if not f.Members[steamID] then return false, "Игрок не состоит во фракции" end
-        if steamID == f.Leader then
-            f.Members[steamID] = nil
+        local key = memberKey(steamID)
+        if not f.Members[key] then return false, "Игрок не состоит во фракции" end
+        if key == f.Leader then
+            f.Members[key] = nil
             f.Leader = nil
             saveFactions(Factions)
             return true, "Лидер удалён, фракция сохранена без лидера"
         end
-        f.Members[steamID] = nil
+        f.Members[key] = nil
         saveFactions(Factions)
         return true, "Участник удалён"
     end
@@ -422,15 +628,16 @@ if SERVER then
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
-        if not f.Members[steamID] then return false, "Игрок не состоит во фракции" end
+        local key = memberKey(steamID)
+        if not f.Members[key] then return false, "Игрок не состоит во фракции" end
         if not table.HasValue(f.Roles, newRole) then return false, "Такого ранга нет" end
-        if newRole == f.LeaderRoleName and steamID ~= f.Leader then
+        if newRole == f.LeaderRoleName and key ~= f.Leader then
             return false, "Лидер назначается только через смену лидера"
         end
-        if steamID == f.Leader and newRole ~= f.LeaderRoleName then
+        if key == f.Leader and newRole ~= f.LeaderRoleName then
             return false, "Нельзя изменить роль текущего лидера отдельно"
         end
-        f.Members[steamID].Role = newRole
+        f.Members[key].Role = newRole
         saveFactions(Factions)
         return true
     end
@@ -439,9 +646,10 @@ if SERVER then
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
-        if not f.Members[steamID] then return false, "Игрок не состоит во фракции" end
+        local key = memberKey(steamID)
+        if not f.Members[key] then return false, "Игрок не состоит во фракции" end
         if not table.HasValue(f.Departments, newDept) then return false, "Такого отдела нет" end
-        f.Members[steamID].Department = newDept
+        f.Members[key].Department = newDept
         saveFactions(Factions)
         return true
     end
@@ -450,16 +658,17 @@ if SERVER then
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
-        if not f.Members[newLeaderSteamID] then
-            local existing = getFactionOfPlayer(newLeaderSteamID)
+        local key = memberKey(newLeaderSteamID)
+        if not f.Members[key] then
+            local existing = getFactionOfPlayer(key)
             if existing then return false, "Игрок уже состоит во фракции " .. existing end
-            f.Members[newLeaderSteamID] = { Role = getDefaultMemberRole(f), Department = "Основной" }
+            f.Members[key] = { Role = getDefaultMemberRole(f), Department = getDefaultDepartment(f) }
         end
         if f.Leader and f.Members[f.Leader] then
             f.Members[f.Leader].Role = getDefaultMemberRole(f)
         end
-        f.Leader = newLeaderSteamID
-        f.Members[newLeaderSteamID].Role = f.LeaderRoleName
+        f.Leader = key
+        f.Members[key].Role = f.LeaderRoleName
         saveFactions(Factions)
         return true
     end
@@ -472,16 +681,18 @@ if SERVER then
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
 
-        local fromPlayer   = player.GetBySteamID(fromSteam)
+        local fromPlayer   = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(fromSteam)) or player.GetBySteamID(fromSteam) or player.GetBySteamID64(fromSteam)
+        local fromKey      = memberKey(fromPlayer or fromSteam)
+        local targetKey    = memberKey(toSteam)
         local isSuperAdmin = IsValid(fromPlayer) and fromPlayer:IsSuperAdmin()
-        local isLeader     = (f.Leader == fromSteam)
+        local isLeader     = (f.Leader == fromKey)
         if not isSuperAdmin and not isLeader then return false, "Недостаточно прав" end
-        if getFactionOfPlayer(toSteam) then return false, "Игрок уже состоит во фракции" end
+        if getFactionOfPlayer(targetKey) then return false, "Игрок уже состоит во фракции" end
 
-        Invites[toSteam] = { faction = factionName, from = fromSteam, time = os.time() }
+        Invites[targetKey] = { faction = factionName, from = fromKey, time = os.time() }
         saveInvites(Invites)
 
-        local target = player.GetBySteamID(toSteam)
+        local target = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(targetKey)) or player.GetBySteamID(toSteam) or player.GetBySteamID64(toSteam)
         if IsValid(target) then
             target:PrintMessage(HUD_PRINTTALK, "Вы приглашены во фракцию " .. factionName .. "! Для принятия напишите /fjoin " .. factionName)
         end
@@ -489,42 +700,45 @@ if SERVER then
     end
 
     local function acceptInvite(steamID, factionName)
-        local inv = Invites[steamID]
+        local key = memberKey(steamID)
+        local inv = Invites[key]
         if not inv then return false, "У вас нет активных приглашений" end
         if factionName ~= "" and inv.faction:lower() ~= factionName:lower() then
             return false, "У вас нет приглашения в эту фракцию. Ваше приглашение: /fjoin " .. inv.faction
         end
         factionName = inv.faction
-        if getFactionOfPlayer(steamID) then return false, "Вы уже состоите во фракции" end
+        if getFactionOfPlayer(key) then return false, "Вы уже состоите во фракции" end
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
-        f.Members[steamID] = { Role = getDefaultMemberRole(f), Department = "Основной" }
+        f.Members[key] = { Role = getDefaultMemberRole(f), Department = getDefaultDepartment(f) }
         saveFactions(Factions)
-        Invites[steamID] = nil
+        Invites[key] = nil
         saveInvites(Invites)
-        local ply = player.GetBySteamID(steamID)
+        local ply = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(key)) or player.GetBySteamID(steamID) or player.GetBySteamID64(steamID)
         if IsValid(ply) then ply:PrintMessage(HUD_PRINTTALK, "Вы вступили во фракцию " .. factionName) end
         return true
     end
 
     local function declineInvite(steamID, factionName)
-        local inv = Invites[steamID]
+        local key = memberKey(steamID)
+        local inv = Invites[key]
         if not inv then return false, "У вас нет активных приглашений" end
         if inv.faction ~= factionName then return false, "У вас нет приглашения в эту фракцию" end
-        Invites[steamID] = nil
+        Invites[key] = nil
         saveInvites(Invites)
         return true
     end
 
     local function leaveFaction(steamID)
-        local factionName = getFactionOfPlayer(steamID)
+        local key = memberKey(steamID)
+        local factionName = getFactionOfPlayer(key)
         if not factionName then return false, "Вы не состоите ни в одной фракции" end
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
-        if f.Leader == steamID then return false, "Лидер не может покинуть фракцию, используйте увольнение" end
-        f.Members[steamID] = nil
+        if f.Leader == key then return false, "Лидер не может покинуть фракцию, используйте увольнение" end
+        f.Members[key] = nil
         saveFactions(Factions)
         return true
     end
@@ -540,14 +754,17 @@ if SERVER then
         net.Start(NET_SEND_DATA)
         net.WriteTable(buildSyncData())
         net.Send(ply)
+        sendCharacterChoices(ply)
     end
 
     local function getFactionInfoForPlayer(steamID)
+        local key = memberKey(steamID)
         for name, f in pairs(Factions) do
             if type(f) == "table" then
                 ensureDefaults(f)
-                if f.Members[steamID] then
-                    return name, f.Members[steamID].Role, f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess
+                local rec = f.Members[key] or f.Members[steamID]
+                if rec then
+                    return name, rec.Role, f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess
                 end
             end
         end
@@ -562,7 +779,7 @@ if SERVER then
     net.Receive(NET_ACTION, function(_, ply)
         local action       = net.ReadString()
         local args         = net.ReadTable() or {}
-        local steam        = ply:SteamID()
+        local steam        = memberKey(ply)
         local isSuperAdmin = ply:IsSuperAdmin()
 
         local leaderFaction = nil
@@ -601,6 +818,17 @@ if SERVER then
             done(ok, err)
         elseif action == "deleteFaction" then
             if not isSuperAdmin then done(false, "Только суперадмин") return end
+            -- Root Guard (Код 84): не-root суперадмину удаление исполняется
+            -- ТОЛЬКО после подтверждения владельцем сервера (fail-closed).
+            if GRM and GRM.Root and GRM.Root.Request then
+                local allowedNow = GRM.Root.Request(ply, "faction_delete",
+                    "Удаление фракции «" .. tostring(args[1]) .. "»",
+                    { faction = args[1] })
+                if not allowedNow then
+                    respondTo(ply, true, "Запрос на удаление «" .. tostring(args[1]) .. "» отправлен владельцу сервера — исполнится после его подтверждения.")
+                    return -- НЕ удаляем и НЕ вещаем: фракция остаётся жить
+                end
+            end
             local ok, err = deleteFaction(args[1])
             done(ok, err)
         elseif action == "changeLeader" then
@@ -683,6 +911,40 @@ if SERVER then
             if not faction then return end
             local ok, err = setMemberDepartment(faction, args[1 + shift], args[2 + shift])
             done(ok, err)
+        elseif action == "saveIncasso" then
+            -- Код 126: сохранение настроек инкассации фракции (только суперадмин)
+            if not isSuperAdmin then done(false, "Только суперадмин") return end
+            local factionName = args[1]
+            if not factionName or not Factions[factionName] then done(false, "Фракция не существует") return end
+            local f = Factions[factionName]
+            ensureDefaults(f)
+            local enabled = args[2] == true
+            local roles   = istable(args[3]) and args[3] or {}
+            local vehicles= istable(args[4]) and args[4] or {}
+            -- Нормализация: МАССИВЫ, не карты
+            local cleanRoles, cleanVeh = {}, {}
+            local seenR, seenV = {}, {}
+            for _, r in ipairs(roles) do
+                if type(r) == "string" and r ~= "" and not seenR[r] then
+                    seenR[r] = true
+                    cleanRoles[#cleanRoles + 1] = r
+                end
+            end
+            for _, v in ipairs(vehicles) do
+                if type(v) == "string" and v ~= "" and not seenV[v] then
+                    seenV[v] = true
+                    cleanVeh[#cleanVeh + 1] = v
+                end
+            end
+            f.IncassoSettings = { Enabled = enabled, Roles = cleanRoles, Vehicles = cleanVeh }
+            saveFactions(Factions)
+            -- SAVE ok read-back (находка 65/стандарт GRM)
+            local rb = file.Read(FACTIONS_FILE, "DATA")
+            print("[GRM Incasso] SAVE ok: настройки инкассации фракции '" .. factionName .. "' сохранены [Код 126 — " .. #cleanRoles .. " ролей, " .. #cleanVeh .. " ТС]")
+            if not rb or rb == "" then
+                print("[GRM Incasso][!] SAVE read-back ПУСТ для factions.json — возможно проблема с правами data/")
+            end
+            done(true, "Настройки инкассации сохранены для «" .. factionName .. "»")
         else
             done(false, "Неизвестное действие")
         end
@@ -690,7 +952,7 @@ if SERVER then
 
     net.Receive(NET_JOIN, function(_, ply)
         local factionName = net.ReadString()
-        local ok, err = acceptInvite(ply:SteamID(), factionName)
+        local ok, err = acceptInvite(ply, factionName)
         if ok then
             ply:PrintMessage(HUD_PRINTTALK, "Вы вступили во фракцию " .. factionName)
             broadcastFactionData()
@@ -701,13 +963,13 @@ if SERVER then
 
     net.Receive(NET_DECLINE, function(_, ply)
         local factionName = net.ReadString()
-        local ok, err = declineInvite(ply:SteamID(), factionName)
+        local ok, err = declineInvite(ply, factionName)
         if ok then ply:PrintMessage(HUD_PRINTTALK, "Вы отклонили приглашение во фракцию " .. factionName)
         else ply:PrintMessage(HUD_PRINTTALK, "Ошибка: " .. err) end
     end)
 
     net.Receive(NET_LEAVE, function(_, ply)
-        local ok, err = leaveFaction(ply:SteamID())
+        local ok, err = leaveFaction(ply)
         if ok then ply:PrintMessage(HUD_PRINTTALK, "Вы покинули фракцию") broadcastFactionData()
         else ply:PrintMessage(HUD_PRINTTALK, "Ошибка: " .. err) end
     end)
@@ -715,7 +977,7 @@ if SERVER then
     net.Receive(NET_RADIO, function(_, ply)
         local text = net.ReadString()
         if not text or text == "" then return end
-        local steam = ply:SteamID()
+        local steam = memberKey(ply)
 
         local factionName, role = nil, nil
         for name, f in pairs(Factions) do
@@ -732,7 +994,7 @@ if SERVER then
 
         local recipients = {}
         for memberSteam, _ in pairs(Factions[factionName].Members) do
-            local target = player.GetBySteamID(memberSteam)
+            local target = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(memberSteam)) or player.GetBySteamID(memberSteam) or player.GetBySteamID64(memberSteam)
             if IsValid(target) then recipients[#recipients + 1] = target end
         end
         if #recipients > 0 then
@@ -743,23 +1005,32 @@ if SERVER then
     net.Receive(NET_DEP, function(_, ply)
         local text = net.ReadString()
         if not text or text == "" then return end
-        local steam = ply:SteamID()
+        local steam = memberKey(ply)
         local factionName, role, tag, color, depAccess = getFactionInfoForPlayer(steam)
         if not factionName then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Вы не состоите ни в одной фракции.") return end
         if not depAccess then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Ваша фракция не имеет доступа к волне департамента.") return end
         local displayTag = (tag and tag ~= "") and tag or factionName
         local msgText = string.format("[%s] %s (%s): - %s", displayTag, ply:Nick(), role or "Участник", text)
 
-        net.Start(NET_DEP_MSG)
-        net.WriteUInt(color.r, 8) net.WriteUInt(color.g, 8) net.WriteUInt(color.b, 8)
-        net.WriteString(msgText)
-        net.Broadcast()
+        local recipients = {}
+        for _, target in ipairs(player.GetAll()) do
+            if IsValid(target) then
+                local targetFaction, _, _, _, targetAccess = getFactionInfoForPlayer(memberKey(target))
+                if targetFaction and targetAccess then recipients[#recipients + 1] = target end
+            end
+        end
+        if #recipients > 0 then
+            net.Start(NET_DEP_MSG)
+            net.WriteUInt(color.r, 8) net.WriteUInt(color.g, 8) net.WriteUInt(color.b, 8)
+            net.WriteString(msgText)
+            net.Send(recipients)
+        end
     end)
 
     net.Receive(NET_DEPB, function(_, ply)
         local text = net.ReadString()
         if not text or text == "" then return end
-        local steam = ply:SteamID()
+        local steam = memberKey(ply)
         local factionName, role, tag, color, depAccess = getFactionInfoForPlayer(steam)
         if not factionName then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Вы не состоите ни в одной фракции.") return end
         if not depAccess then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Ваша фракция не имеет доступа к волне департамента.") return end
@@ -778,8 +1049,14 @@ if SERVER then
 
     -- ============================================================
     -- ЧАТ-КОМАНДА /factions (для суперадмина и лидера)
+    -- ВАЖНО: регистрируем в PlayerSayTransform потому что EasyChat
+    -- устанавливает SkipPlayerSay=true для команд и PlayerSay не вызывается!
     -- ============================================================
-    hook.Add("PlayerSay", "Factions_ChatCommand", function(ply, text)
+    hook.Add("PlayerSayTransform", "Factions_ChatCommand", function(ply, datapack)
+        if not istable(datapack) then return end
+        local text = datapack[1]
+        if not isstring(text) then return end
+        
         local lower = string.lower(string.Trim(text))
         if lower == "/factions" then
             if ply:IsSuperAdmin() then
@@ -787,7 +1064,7 @@ if SERVER then
                 net.Send(ply)
             else
                 -- Проверяем, является ли игрок лидером
-                local steam = ply:SteamID()
+                local steam = memberKey(ply)
                 local isLeader = false
                 for _, f in pairs(Factions) do
                     if type(f) == "table" and f.Leader == steam then
@@ -799,10 +1076,20 @@ if SERVER then
                     net.Start(NET_OPEN_LEADER)
                     net.Send(ply)
                 else
-                    ply:PrintMessage(HUD_PRINTTALK, "[Фракции] У вас нет прав для использования этой команды.")
+                    -- Находка 172: доступ к экономике (лидер/зам Нацбанка) —
+                    -- открываем админ-меню фракций, где есть вкладка «Экономика»
+                    local econAccess = GRM.Economy and GRM.Economy.CanManageEconomy and GRM.Economy.CanManageEconomy(ply) == true
+                    if econAccess then
+                        net.Start(NET_OPEN_ADMIN)
+                        net.Send(ply)
+                    else
+                        ply:PrintMessage(HUD_PRINTTALK, "[Фракции] У вас нет прав для использования этой команды.")
+                    end
                 end
             end
-            return ""  -- Скрываем команду из чата
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
+            return
         end
     end)
 
@@ -819,7 +1106,7 @@ if SERVER then
         cmdFactions:defaultAccess(ULib.ACCESS_SUPERADMIN)
 
         local cmdLeader = ulx.command("Utility", "ulx factions_leader", function(ply)
-            local steam = ply:SteamID()
+            local steam = memberKey(ply)
             local isLeader = false
             for _, f in pairs(Factions) do
                 if type(f) == "table" and f.Leader == steam then isLeader = true break end
@@ -830,6 +1117,70 @@ if SERVER then
         cmdLeader:defaultAccess(ULib.ACCESS_ALL)
     end
 
+    -- ============================================================
+    -- Публичный API для модулей GRM (доска набора Код 76, радио Код 75 и др.)
+    -- Только экспорт ссылок на уже существующие локальные функции —
+    -- логика/сейв/формат данных НЕ меняются.
+    -- ============================================================
+    _G.FactionsAPI = _G.FactionsAPI or {}
+    _G.FactionsAPI.AddMember      = function(factionName, steamID) return addMember(factionName, steamID) end
+    _G.FactionsAPI.RemoveMember   = function(factionName, steamID) return removeMember(factionName, steamID) end
+    _G.FactionsAPI.GetFactionOf   = function(steamID) return getFactionOfPlayer(steamID) end
+    _G.FactionsAPI.IsLeader       = function(steamID, factionName)
+        local f = Factions[factionName]
+        return istable(f) and f.Leader == memberKey(steamID) or false
+    end
+    _G.FactionsAPI.IsMember       = function(factionName, playerOrKey)
+        local f = Factions[factionName]
+        if not istable(f) then return false end
+        local key = memberKey(playerOrKey)
+        return f.Members[key] ~= nil or f.Members[playerOrKey] ~= nil
+    end
+    _G.FactionsAPI.GetMember      = function(factionName, playerOrKey)
+        local f = Factions[factionName]
+        if not istable(f) then return nil end
+        local key = memberKey(playerOrKey)
+        return f.Members[key] or f.Members[playerOrKey]
+    end
+    _G.FactionsAPI.GetLeader      = function(factionName)
+        local f = Factions[factionName]
+        return istable(f) and f.Leader or nil
+    end
+    _G.FactionsAPI.PrimeRole      = function(factionName)
+        local f = Factions[factionName]
+        return istable(f) and getDefaultMemberRole(f) or nil
+    end
+    _G.FactionsAPI.Save           = function() saveFactions(Factions) end
+    _G.FactionsAPI.List           = function()
+        -- Compatibility view for older GRM modules. The persisted table keeps
+        -- only CharacterKey records; legacy keys exist only in this snapshot.
+        local out = {}
+        for name, src in pairs(Factions or {}) do
+            if istable(src) then
+                local dst = {}
+                for k, v in pairs(src) do
+                    if k ~= "Members" then dst[k] = v end
+                end
+                dst.Members = {}
+                for key, rec in pairs(src.Members or {}) do
+                    dst.Members[key] = rec
+                    if istable(rec) and isstring(rec.LegacyKey) and rec.LegacyKey ~= key then
+                        dst.Members[rec.LegacyKey] = rec
+                    end
+                end
+                out[name] = dst
+            end
+        end
+        return out
+    end
+    -- Код 84 (Root Guard): прямое удаление — ВЫЗЫВАТЬ ТОЛЬКО из одобренного
+    -- исполнителя Root Guard (обходной путь для уже подтверждённых заявок).
+    _G.FactionsAPI.DeleteFaction  = function(factionName) return deleteFaction(factionName) end
+    _G.FactionsAPI.Broadcast      = function() broadcastFactionData() end
+    -- Код 76 v1.1.0 (доска: автоназначение отдела/должности при вступлении):
+    _G.FactionsAPI.SetMemberRole       = function(factionName, steamID, role) return setMemberRole(factionName, steamID, role) end
+    _G.FactionsAPI.SetMemberDepartment = function(factionName, steamID, dept) return setMemberDepartment(factionName, steamID, dept) end
+
     print("[Factions] Серверная часть загружена (v3 fixed + чат-команда /factions)")
 end
 
@@ -839,6 +1190,7 @@ end
 if CLIENT then
     ui           = ui           or {}
     FactionsData = FactionsData or {}
+    FactionCharacterChoices = FactionCharacterChoices or {}
     local pendingActionCallback = nil
     local pendingDataCallback   = nil
     local nameCache             = nameCache or {}
@@ -864,9 +1216,38 @@ if CLIENT then
     surface.CreateFont("Factions_Small",  { font = "Roboto", size = 12, weight = 400, antialias = true })
     surface.CreateFont("Factions_HUD",    { font = "Roboto", size = 16, weight = 700, antialias = true })
 
+    local function installClientFactionAliases(data)
+        for _, f in pairs(data or {}) do
+            if istable(f) and istable(f.Members) then
+                local raw = f.Members
+                setmetatable(raw, { __index = function(t, key)
+                    local ck = tostring(key or "")
+                    if not ck:match(":char[1-3]$") then
+                        if ck:match("^%d+$") then ck = ck .. ":char1"
+                        elseif util.SteamIDTo64 then
+                            local s64 = util.SteamIDTo64(ck)
+                            if s64 and s64 ~= "0" then ck = tostring(s64) .. ":char1" end
+                        end
+                    end
+                    return rawget(t, ck)
+                end })
+            end
+        end
+        return data
+    end
+
+    local function clientMemberKey(ply)
+        if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
+        return IsValid(ply) and ply:SteamID() or ""
+    end
+
     net.Receive(NET_SYNC_ALL, function()
-        FactionsData = net.ReadTable() or {}
+        FactionsData = installClientFactionAliases(net.ReadTable() or {})
         refreshAllUI(FactionsData)
+    end)
+
+    net.Receive(NET_CHARACTER_CHOICES, function()
+        FactionCharacterChoices = net.ReadTable() or {}
     end)
 
     net.Receive(NET_RADIO_MSG, function()
@@ -897,7 +1278,7 @@ if CLIENT then
     end)
 
     net.Receive(NET_SEND_DATA, function()
-        local data = net.ReadTable() or {}
+        local data = installClientFactionAliases(net.ReadTable() or {})
         FactionsData = data
         if pendingDataCallback then
             local cb = pendingDataCallback
@@ -980,14 +1361,28 @@ if CLIENT then
             ui.factionComboList,
             ui.factionComboRanks,
             ui.factionComboDepts,
-            ui.factionComboDepWave
+            ui.factionComboDepWave,
+            ui.factionComboIncasso
         }
+        -- Сортируем имена фракций по алфавиту
+        local names = {}
+        for n, _ in pairs(data or {}) do names[#names+1] = n end
+        table.sort(names)
         for _, combo in ipairs(combos) do
             if IsValid(combo) then
                 local selected = combo:GetValue()
+                -- Важно: блокируем OnSelect на время Clear+AddChoice, чтобы он
+                -- не дёргал updateIncassoPanel в процессе заполнения.
+                local oldOnSelect = combo.OnSelect
+                combo.OnSelect = nil
                 combo:Clear()
-                for name, _ in pairs(data or {}) do combo:AddChoice(name) end
-                if selected and data and data[selected] then combo:SetValue(selected) end
+                for _, name in ipairs(names) do combo:AddChoice(name) end
+                combo.OnSelect = oldOnSelect
+                if selected and data and data[selected] then
+                    combo:SetValue(selected)
+                elseif #names > 0 and not selected then
+                    combo:SetValue(names[1])
+                end
                 combo:InvalidateLayout(true)
             end
         end
@@ -1025,6 +1420,90 @@ if CLIENT then
         updateLeaderDepartments(data)
         updateLeaderMemberList(data)
         updateDepWavePanel(data)
+
+        -- Код 126: обновляем вкладку Инкассации если открыта; если фракция не выбрана — берём первую
+        if IsValid(ui.factionComboIncasso) and ui.updateIncassoPanel then
+            local fName = ui.factionComboIncasso:GetValue()
+            if (not fName or fName == "" or not data[fName]) then
+                -- Автовыбор первой фракции из отсортированного списка
+                local names = {}
+                for n, _ in pairs(data or {}) do names[#names + 1] = n end
+                table.sort(names)
+                if #names > 0 then
+                    fName = names[1]
+                    ui.factionComboIncasso:SetValue(fName)
+                end
+            end
+            if fName and fName ~= "" and data[fName] then
+                ui.updateIncassoPanel(fName, data)
+            end
+        end
+
+        -- ══════════════════════════════════════════════════════════════
+        -- Код 108 (заказ владельца): «живые» вкладки. Раньше админские
+        -- «Ранги»/«Отделы»/«Список» и комбо ролей/отделов строились ОДИН
+        -- раз при выборе фракции — пока не перевыбраешь/не перезапустишь
+        -- меню, изменения (свои же и чужие, прилетевшие SYNC_ALL-рассылкой)
+        -- на экране не появлялись. Теперь ВСЯКИЙ refreshAllUI перестраивает
+        -- текущие вкладки по свежим данным — меню закрывать не надо.
+        -- ══════════════════════════════════════════════════════════════
+        local function selOf(combo)
+            if not IsValid(combo) then return nil end
+            local v = combo:GetValue()
+            if isstring(v) and v ~= "" and data and data[v] then return v end
+            return nil
+        end
+
+        -- админская вкладка «Ранги»
+        local rFac = selOf(ui.factionComboRanks)
+        if IsValid(ui.ranksScroll) then
+            if rFac then updateRanksList(rFac, data) else ui.ranksScroll:Clear() end
+        end
+        -- админская вкладка «Отделы»
+        local dFac = selOf(ui.factionComboDepts)
+        if IsValid(ui.deptsScroll) then
+            if dFac then updateDepartmentsList(dFac, data) else ui.deptsScroll:Clear() end
+        end
+        -- админская вкладка «Список» (участники фракции)
+        local lFac = selOf(ui.factionComboList)
+        if IsValid(ui.memberScroll) then
+            if lFac then updateMemberListForFaction(lFac, data) else ui.memberScroll:Clear() end
+        end
+
+        -- комбо ролей/отделов во вкладках «Участники» — тоже живые:
+        -- пересобираем списки, выбранное значение сохраняем, если осталось
+        local function rebuildRoleDeptCombos(facName, roleCombo, deptCombo)
+            if not (IsValid(roleCombo) and IsValid(deptCombo)) then return end
+            local f = (facName and data) and data[facName] or nil
+            local selR = roleCombo:GetValue()
+            local selD = deptCombo:GetValue()
+            roleCombo:Clear()
+            deptCombo:Clear()
+            if istable(f) then
+                for _, r in ipairs(f.Roles or {}) do roleCombo:AddChoice(r) end
+                for _, d in ipairs(f.Departments or {}) do deptCombo:AddChoice(d) end
+                -- выбор сохраняем, если ещё жив; умер — поле гасим явно
+                -- (DComboBox:Clear может держать старый текст — находка 125)
+                if isstring(selR) and table.HasValue(f.Roles or {}, selR) then roleCombo:SetValue(selR)
+                else roleCombo:SetValue("") end
+                if isstring(selD) and table.HasValue(f.Departments or {}, selD) then deptCombo:SetValue(selD)
+                else deptCombo:SetValue("") end
+            else
+                roleCombo:SetValue("")
+                deptCombo:SetValue("")
+            end
+        end
+        rebuildRoleDeptCombos(selOf(ui.factionCombo3), ui.roleCombo3, ui.deptCombo3)
+
+        -- лидерская вкладка «Участники»: фракция — его собственная
+        if IsValid(ui.roleComboLeader) and IsValid(ui.deptComboLeader) then
+            local mySteam = IsValid(LocalPlayer()) and clientMemberKey(LocalPlayer()) or nil
+            local myLead = nil
+            for name, fdata in pairs(data or {}) do
+                if fdata.Leader == mySteam then myLead = name break end
+            end
+            rebuildRoleDeptCombos(myLead, ui.roleComboLeader, ui.deptComboLeader)
+        end
     end
 
     -- ============================================================
@@ -1035,7 +1514,7 @@ if CLIENT then
         local scroll = ui.ranksScrollLeader
         scroll:Clear()
 
-        local mySteam = LocalPlayer():SteamID()
+        local mySteam = clientMemberKey(LocalPlayer())
         local factionName, f = nil, nil
         for name, fdata in pairs(data or {}) do
             if fdata.Leader == mySteam then factionName = name f = fdata break end
@@ -1135,7 +1614,7 @@ if CLIENT then
         local scroll = ui.deptsScrollLeader
         scroll:Clear()
 
-        local mySteam = LocalPlayer():SteamID()
+        local mySteam = clientMemberKey(LocalPlayer())
         local factionName, f = nil, nil
         for name, fdata in pairs(data or {}) do
             if fdata.Leader == mySteam then factionName = name f = fdata break end
@@ -1227,7 +1706,7 @@ if CLIENT then
         local scroll = ui.memberScrollLeader
         scroll:Clear()
 
-        local mySteam = LocalPlayer():SteamID()
+        local mySteam = clientMemberKey(LocalPlayer())
         local factionName, f = nil, nil
         for name, fdata in pairs(data or {}) do
             if fdata.Leader == mySteam then factionName = name f = fdata break end
@@ -1270,7 +1749,7 @@ if CLIENT then
             end
 
             local lblSteam = vgui.Create("DLabel", row)
-            lblSteam:SetPos(8, 6) lblSteam:SetSize(200, 20) lblSteam:SetText(steam)
+            lblSteam:SetPos(8, 6) lblSteam:SetSize(200, 20) lblSteam:SetText((info._rpName or steam) .. " [" .. steam .. "]")
             lblSteam:SetFont("Factions_Normal")
             if isLeaderMember then lblSteam:SetTextColor(Color(255, 220, 80)) end
 
@@ -1282,9 +1761,11 @@ if CLIENT then
             lblDept:SetPos(360, 6) lblDept:SetSize(130, 20) lblDept:SetText(info.Department or "Основной")
             lblDept:SetFont("Factions_Normal") lblDept:SetTextColor(THEME.textDim)
 
-            getPlayerName(steam, function(name)
-                if IsValid(lblSteam) then lblSteam:SetText(name .. " (" .. steam .. ")") end
-            end)
+            if not info._rpName then
+                getPlayerName(steam, function(name)
+                    if IsValid(lblSteam) then lblSteam:SetText(name .. " [" .. steam .. "]") end
+                end)
+            end
         end
     end
 
@@ -1498,7 +1979,7 @@ if CLIENT then
             end
 
             local lblSteam = vgui.Create("DLabel", row)
-            lblSteam:SetPos(8, 6) lblSteam:SetSize(220, 20) lblSteam:SetText(steam)
+            lblSteam:SetPos(8, 6) lblSteam:SetSize(220, 20) lblSteam:SetText((info._rpName or steam) .. " [" .. steam .. "]")
             lblSteam:SetFont("Factions_Normal")
             if steam == f.Leader then lblSteam:SetTextColor(Color(255, 220, 80)) end
 
@@ -1511,9 +1992,11 @@ if CLIENT then
             lblDept:SetPos(380, 6) lblDept:SetSize(130, 20) lblDept:SetText(info.Department or "Основной")
             lblDept:SetFont("Factions_Normal") lblDept:SetTextColor(THEME.textDim)
 
-            getPlayerName(steam, function(name)
-                if IsValid(lblSteam) then lblSteam:SetText(name .. " (" .. steam .. ")") end
-            end)
+            if not info._rpName then
+                getPlayerName(steam, function(name)
+                    if IsValid(lblSteam) then lblSteam:SetText(name .. " [" .. steam .. "]") end
+                end)
+            end
         end
     end
 
@@ -1542,35 +2025,36 @@ if CLIENT then
 
         for _, factionName in ipairs(sortedNames) do
             local f = data[factionName]
-            if not f then continue end
+            -- Код 108: continue→if-обёртка (ванильный Lua, стенды парсят файл напрямую)
+            if f then
+                local row = vgui.Create("DPanel", scroll)
+                row:Dock(TOP) row:SetTall(44) row:DockMargin(0, 2, 0, 2)
 
-            local row = vgui.Create("DPanel", scroll)
-            row:Dock(TOP) row:SetTall(44) row:DockMargin(0, 2, 0, 2)
+                local fCol = f.Color or { r = 60, g = 60, b = 60 }
+                function row:Paint(w, h)
+                    draw.RoundedBox(4, 0, 0, w, h, Color(fCol.r * 0.15, fCol.g * 0.15, fCol.b * 0.15, 200))
+                    surface.SetDrawColor(fCol.r, fCol.g, fCol.b, 180)
+                    surface.DrawRect(0, 0, 4, h)
+                end
 
-            local fCol = f.Color or { r = 60, g = 60, b = 60 }
-            function row:Paint(w, h)
-                draw.RoundedBox(4, 0, 0, w, h, Color(fCol.r * 0.15, fCol.g * 0.15, fCol.b * 0.15, 200))
-                surface.SetDrawColor(fCol.r, fCol.g, fCol.b, 180)
-                surface.DrawRect(0, 0, 4, h)
-            end
+                local tagStr = (f.Tag and f.Tag ~= "") and ("[" .. f.Tag .. "] ") or ""
+                local nameLbl = vgui.Create("DLabel", row)
+                nameLbl:SetPos(14, 12) nameLbl:SetSize(300, 20)
+                nameLbl:SetText(tagStr .. factionName)
+                nameLbl:SetTextColor(Color(fCol.r, fCol.g, fCol.b))
+                nameLbl:SetFont("Factions_Normal")
 
-            local tagStr = (f.Tag and f.Tag ~= "") and ("[" .. f.Tag .. "] ") or ""
-            local nameLbl = vgui.Create("DLabel", row)
-            nameLbl:SetPos(14, 12) nameLbl:SetSize(300, 20)
-            nameLbl:SetText(tagStr .. factionName)
-            nameLbl:SetTextColor(Color(fCol.r, fCol.g, fCol.b))
-            nameLbl:SetFont("Factions_Normal")
-
-            local chkDep = vgui.Create("DCheckBoxLabel", row)
-            chkDep:SetPos(360, 12) chkDep:SetSize(250, 20)
-            chkDep:SetText("Доступ к волне (/dep, /depb)")
-            chkDep:SetFont("Factions_Normal")
-            chkDep:SetValue(f.DepAccess and true or false)
-            chkDep.OnChange = function(_, val)
-                sendAction("setDepAccess", { factionName, tobool(val) }, function(ok, msg)
-                    if ok then notification.AddLegacy("Настройка обновлена", NOTIFY_GENERIC, 3) refreshAllUI()
-                    else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) chkDep:SetValue(not tobool(val)) end
-                end)
+                local chkDep = vgui.Create("DCheckBoxLabel", row)
+                chkDep:SetPos(360, 12) chkDep:SetSize(250, 20)
+                chkDep:SetText("Доступ к волне (/dep, /depb)")
+                chkDep:SetFont("Factions_Normal")
+                chkDep:SetValue(f.DepAccess and true or false)
+                chkDep.OnChange = function(_, val)
+                    sendAction("setDepAccess", { factionName, tobool(val) }, function(ok, msg)
+                        if ok then notification.AddLegacy("Настройка обновлена", NOTIFY_GENERIC, 3) refreshAllUI()
+                        else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) chkDep:SetValue(not tobool(val)) end
+                    end)
+                end
             end
         end
     end
@@ -1681,14 +2165,65 @@ if CLIENT then
         btnChangeLeader.DoClick = function()
             local faction = factionCombo:GetValue()
             if not faction or faction == "" then return end
-            Derma_StringRequest("Смена лидера", "SteamID нового лидера:", "", function(steam)
-                if steam and steam ~= "" then
-                    sendAction("changeLeader", { faction, steam }, function(ok, msg)
-                        if ok then notification.AddLegacy("Лидер изменён", NOTIFY_GENERIC, 3) refreshAllUI()
-                        else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) end
-                    end)
+
+            local pick = vgui.Create("DFrame")
+            pick:SetTitle("Смена лидера — " .. faction)
+            pick:SetSize(620, 300)
+            pick:Center()
+            pick:MakePopup()
+
+            local help = vgui.Create("DLabel", pick)
+            help:Dock(TOP)
+            help:DockMargin(12, 10, 12, 4)
+            help:SetTall(32)
+            help:SetWrap(true)
+            help:SetText("Выберите персонажа онлайн или укажите его CharacterKey. SteamID аккаунта больше не используется как лидерский ключ.")
+
+            local combo = vgui.Create("DComboBox", pick)
+            combo:Dock(TOP)
+            combo:DockMargin(12, 4, 12, 4)
+            combo:SetTall(30)
+            combo:SetValue("Онлайн-персонажи")
+            local selectedKey = nil
+            function combo:OnSelect(_, _, data) selectedKey = data end
+            combo:SetSortItems(false)
+            for _, choice in ipairs(FactionCharacterChoices or {}) do
+                local active = choice.active and " • АКТИВЕН" or " • неактивен"
+                local fac = choice.faction ~= "" and (" • " .. choice.faction) or " • гражданский"
+                combo:AddChoice(
+                    tostring(choice.rpName or "?") .. "  — игрок: " .. tostring(choice.steamNick or "?") ..
+                    "  [" .. tostring(choice.slot or "char?") .. "]" .. active .. fac,
+                    tostring(choice.key or "")
+                )
+            end
+
+            local entry = vgui.Create("DTextEntry", pick)
+            entry:Dock(TOP)
+            entry:DockMargin(12, 4, 12, 4)
+            entry:SetTall(28)
+            entry:SetPlaceholderText("CharacterKey для офлайн-персонажа: SteamID64:charN")
+
+            local confirm = styledButton(pick, "Назначить лидером", THEME.accent, THEME.accentDark)
+            confirm:Dock(BOTTOM)
+            confirm:DockMargin(12, 6, 12, 10)
+            confirm:SetTall(32)
+            confirm.DoClick = function()
+                local key = string.Trim(entry:GetValue() or "")
+                key = key ~= "" and key or selectedKey
+                if not key or key == "" or not key:match(":char[1-3]$") then
+                    notification.AddLegacy("Нужен CharacterKey формата SteamID64:char1/char2/char3", NOTIFY_ERROR, 3)
+                    return
                 end
-            end)
+                sendAction("changeLeader", { faction, key }, function(ok, msg)
+                    if ok then
+                        notification.AddLegacy("Лидер изменён", NOTIFY_GENERIC, 3)
+                        pick:Close()
+                        refreshAllUI()
+                    else
+                        notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3)
+                    end
+                end)
+            end
         end
         Y = Y + 50
 
@@ -1872,6 +2407,7 @@ if CLIENT then
 
         local roleCombo = vgui.Create("DComboBox", memberPanel)
         roleCombo:SetPos(100, Y) roleCombo:SetSize(200, 26)
+        ui.roleCombo3 = roleCombo -- Код 108: живое комбо (пересборка в refreshAllUI)
         Y = Y + 40
 
         local lblDeptM = vgui.Create("DLabel", memberPanel)
@@ -1880,6 +2416,7 @@ if CLIENT then
 
         local deptCombo = vgui.Create("DComboBox", memberPanel)
         deptCombo:SetPos(100, Y) deptCombo:SetSize(200, 26)
+        ui.deptCombo3 = deptCombo -- Код 108: живое комбо
         Y = Y + 45
 
         factionCombo3.OnSelect = function(_, _, value)
@@ -1974,6 +2511,320 @@ if CLIENT then
         ui.depWaveScroll = depWaveScroll
         tabs:AddSheet("Волна департамента", depWavePanel, "icon16/transmit.png")
 
+        -- ============================================================
+
+        -- ============================================================
+        -- Код 126 — вкладка «Инкассация» (упрощённая вертикальная раскладка, без DHorizontalDivider)
+        -- ============================================================
+        local incassoPanel = vgui.Create("DPanel")
+        incassoPanel:SetPaintBackground(false)
+        incassoPanel:DockPadding(12, 12, 12, 12)
+
+        -- Шапка: лейбл + комбо фракции + подсказка (все элементы — через Dock, не абсолют!)
+        local incTop = vgui.Create("DPanel", incassoPanel)
+        incTop:Dock(TOP) incTop:SetTall(34) incTop:SetPaintBackground(true)
+        function incTop:Paint(w, h)
+            -- Рисуем фон как остальные панели в админке, чтобы DComboBox мог корректно отобразить выпадающее меню
+            draw.RoundedBox(4, 0, 0, w, h, THEME.bgLight)
+        end
+
+        local lblIncF = vgui.Create("DLabel", incTop)
+        lblIncF:Dock(LEFT) lblIncF:DockMargin(4, 8, 8, 0)
+        lblIncF:SetFont("Factions_Normal") lblIncF:SetTextColor(THEME.text)
+        lblIncF:SetText("Фракция:")
+        lblIncF:SizeToContents()
+
+        local factionComboIncasso = vgui.Create("DComboBox", incTop)
+        factionComboIncasso:Dock(LEFT) factionComboIncasso:SetWide(320)
+        factionComboIncasso:SetFont("Factions_Normal")
+        factionComboIncasso:SetSortItems(false)
+        factionComboIncasso:SetZPos(500)
+        -- Форсируем обновление списка при открытии
+        local oldDoClick = factionComboIncasso.DoClick
+        function factionComboIncasso:DoClick()
+            -- Перезаполним вариантами из кэша (если список пуст)
+            if #self.Choices == 0 and FactionsData then
+                self:Clear()
+                local names = {}
+                for n, _ in pairs(FactionsData) do names[#names+1] = n end
+                table.sort(names)
+                for _, n in ipairs(names) do self:AddChoice(n) end
+            end
+            return oldDoClick and oldDoClick(self)
+        end
+        ui.factionComboIncasso = factionComboIncasso
+
+        local incSaveHint = vgui.Create("DLabel", incTop)
+        incSaveHint:Dock(RIGHT) incSaveHint:DockMargin(8, 10, 4, 0)
+        incSaveHint:SetFont("Factions_Small") incSaveHint:SetTextColor(THEME.textDim)
+        incSaveHint:SetText("Настройки сохраняются в factions.json (Код 126)")
+        incSaveHint:SizeToContents()
+
+        -- Заголовок ролей
+        local lblRolesHead = vgui.Create("DLabel", incassoPanel)
+        lblRolesHead:Dock(TOP) lblRolesHead:DockMargin(4, 12, 4, 4) lblRolesHead:SetTall(22)
+        lblRolesHead:SetFont("Factions_Normal") lblRolesHead:SetTextColor(THEME.accent)
+        lblRolesHead:SetText("Роли, которым разрешено инкассировать:")
+
+        -- Большой скролл с чекбоксом включения + ролями (левая часть, на всю ширину, высотой ~300)
+        local incLeft = vgui.Create("DScrollPanel", incassoPanel)
+        incLeft:Dock(TOP) incLeft:SetTall(300) incLeft:DockMargin(0, 0, 0, 8)
+        incLeft:SetPaintBackground(false)
+        ui.incassoScroll = incLeft
+
+        -- Заголовок секции ТС
+        local lblVehHead = vgui.Create("DLabel", incassoPanel)
+        lblVehHead:Dock(TOP) lblVehHead:DockMargin(4, 8, 4, 4) lblVehHead:SetTall(22)
+        lblVehHead:SetFont("Factions_Normal") lblVehHead:SetTextColor(THEME.accent)
+        lblVehHead:SetText("Разрешённые инкассаторские ТС (spawn-name / vehicle class):")
+
+        -- Список добавленных ТС
+        local incVehScroll = vgui.Create("DScrollPanel", incassoPanel)
+        incVehScroll:Dock(TOP) incVehScroll:SetTall(180) incVehScroll:DockMargin(0, 0, 0, 6)
+        ui.incassoVehScroll = incVehScroll
+
+        -- Панель добавления ТС (поле ввода + кнопка) — всё на Dock
+        local incVehAdd = vgui.Create("DPanel", incassoPanel)
+        incVehAdd:Dock(TOP) incVehAdd:SetTall(34) incVehAdd:DockMargin(0, 2, 0, 2) incVehAdd:SetPaintBackground(false)
+
+        local btnIncassoAddVeh = styledButton(incVehAdd, "+ Добавить ТС", THEME.success, Color(40, 160, 80))
+        btnIncassoAddVeh:Dock(LEFT) btnIncassoAddVeh:SetWide(150)
+
+        local incVehCombo = vgui.Create("DComboBox", incVehAdd)
+        incVehCombo:Dock(RIGHT) incVehCombo:SetWide(300)
+        incVehCombo:SetSortItems(false)
+        ui.incassoVehCombo = incVehCombo
+
+        local incVehEntry = vgui.Create("DTextEntry", incVehAdd)
+        incVehEntry:Dock(FILL) incVehEntry:DockMargin(8, 2, 8, 2)
+        incVehEntry:SetFont("Factions_Normal")
+        incVehEntry:SetPlaceholderText("spawn-name класса, напр. simfphys_van")
+        ui.incassoVehEntry = incVehEntry
+
+        -- Футер: грязный маркер + кнопка сохранить
+        local incFooter = vgui.Create("DPanel", incassoPanel)
+        incFooter:Dock(TOP) incFooter:SetTall(40) incFooter:DockMargin(0, 10, 0, 0)
+        incFooter:SetPaintBackground(false)
+
+        local btnIncassoSave = styledButton(incFooter, "Сохранить настройки инкассации", THEME.accent, THEME.accentDark)
+        btnIncassoSave:Dock(RIGHT) btnIncassoSave:SetWide(280)
+
+        local incDirtyLbl = vgui.Create("DLabel", incFooter)
+        incDirtyLbl:Dock(LEFT) incDirtyLbl:DockMargin(6, 12, 0, 0)
+        incDirtyLbl:SetFont("Factions_Small")
+        incDirtyLbl:SetTextColor(THEME.danger) incDirtyLbl:SetText("")
+        incDirtyLbl:SizeToContents()
+
+        ui.incassoVehicles = {}
+        ui.incassoDirty = false
+
+        local function setIncassoDirty(v)
+            ui.incassoDirty = v and true or false
+            if IsValid(incDirtyLbl) then
+                incDirtyLbl:SetText(ui.incassoDirty and "● Есть несохранённые изменения" or "")
+                incDirtyLbl:SizeToContents()
+            end
+        end
+        local function markIncassoDirty() setIncassoDirty(true) end
+
+        -- Заполнение списка доступных ТС во всех трёх листах
+        local function fillVehicleCombo()
+            if not IsValid(incVehCombo) then return end
+            incVehCombo:Clear()
+            incVehCombo:AddChoice("— быстрый выбор ТС (из списка) —", nil, false)
+            local added = {}
+            for _, listName in ipairs({ "Vehicles", "simfphys_vehicles", "LVS_Vehicles" }) do
+                local lst = list.Get(listName)
+                if istable(lst) then
+                    for clsName in pairs(lst) do
+                        if type(clsName) == "string" and clsName ~= "" and not added[clsName] then
+                            added[clsName] = true
+                            incVehCombo:AddChoice(listName .. ": " .. clsName, clsName)
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Функция рендера содержимого вкладки для выбранной фракции
+        local function updateIncassoPanel(factionName, data)
+            if not IsValid(incLeft) or not IsValid(incVehScroll) then return end
+            -- Очищаем детей, не трогая DScrollBar-ы (используем флаг _grmChrome)
+            for _, child in ipairs(incLeft:GetChildren() or {}) do
+                if IsValid(child) and child._grmChrome then child:Remove() end
+            end
+            for _, child in ipairs(incVehScroll:GetChildren() or {}) do
+                if IsValid(child) and child._grmChrome then child:Remove() end
+            end
+            ui.incassoVehicles = {}
+            ui.incassoRoleBoxes = {}
+            ui.chkIncassoEnabled = nil
+            setIncassoDirty(false)
+
+            local f = data and data[factionName]
+            if not f then
+                local err = vgui.Create("DLabel", incLeft)
+                err._grmChrome = true
+                err:Dock(TOP) err:DockMargin(8, 16, 8, 8)
+                err:SetText("Фракция «" .. tostring(factionName) .. "» не найдена в данных")
+                err:SetFont("Factions_Normal") err:SetTextColor(THEME.danger)
+                err:SizeToContents()
+                fillVehicleCombo()
+                return
+            end
+            local inc = istable(f.IncassoSettings) and f.IncassoSettings or { Enabled = false, Roles = {}, Vehicles = {} }
+            local roles = f.Roles or {}
+            local vehList = inc.Vehicles or {}
+
+            -- Включение инкассации
+            local chkEnabled = vgui.Create("DCheckBoxLabel", incLeft)
+            chkEnabled._grmChrome = true
+            chkEnabled:Dock(TOP) chkEnabled:DockMargin(4, 4, 4, 10)
+            chkEnabled:SetText("Включить инкассацию для фракции «" .. factionName .. "»")
+            chkEnabled:SetFont("Factions_Normal") chkEnabled:SetTextColor(THEME.text)
+            chkEnabled:SetValue(inc.Enabled == true)
+            chkEnabled.OnChange = markIncassoDirty
+            ui.chkIncassoEnabled = chkEnabled
+
+            -- Заголовок ролей внутри скролла
+            local rSub = vgui.Create("DLabel", incLeft)
+            rSub._grmChrome = true
+            rSub:Dock(TOP) rSub:DockMargin(4, 8, 4, 6)
+            rSub:SetFont("Factions_Small") rSub:SetTextColor(THEME.textDim)
+            rSub:SetText("Поставьте галочки напротив ролей, которым разрешено заниматься инкассацией (напр. «Инкассатор», а НЕ «Аудитор»):")
+            rSub:SetWrap(true) rSub:SetTall(32)
+
+            for _, roleName in ipairs(roles) do
+                local chk = vgui.Create("DCheckBoxLabel", incLeft)
+                chk._grmChrome = true
+                chk:Dock(TOP) chk:DockMargin(24, 2, 4, 2)
+                chk:SetText(roleName)
+                chk:SetFont("Factions_Small") chk:SetTextColor(THEME.text)
+                local checked = false
+                for _, r in ipairs(inc.Roles or {}) do if r == roleName then checked = true break end end
+                chk:SetValue(checked)
+                chk.OnChange = markIncassoDirty
+                ui.incassoRoleBoxes[roleName] = chk
+            end
+
+            -- Список ТС
+            local function renderVehRow(className)
+                local row = vgui.Create("DPanel", incVehScroll)
+                row._grmChrome = true
+                row:Dock(TOP) row:SetTall(28) row:DockMargin(0, 0, 0, 2)
+                function row:Paint(w, h) draw.RoundedBox(4, 0, 0, w, h, THEME.bgLight) end
+                local lbl = vgui.Create("DLabel", row)
+                lbl:Dock(LEFT) lbl:DockMargin(8, 6, 8, 0)
+                lbl:SetFont("Factions_Small") lbl:SetTextColor(THEME.text)
+                lbl:SetText(className) lbl:SizeToContents()
+                local btnDel = styledButton(row, "✕", THEME.danger, THEME.dangerHover)
+                btnDel:Dock(RIGHT) btnDel:SetWide(36) btnDel:DockMargin(4, 3, 4, 3)
+                btnDel.DoClick = function()
+                    row:Remove()
+                    for i, v in ipairs(ui.incassoVehicles) do
+                        if v.entry == className then table.remove(ui.incassoVehicles, i) break end
+                    end
+                    markIncassoDirty()
+                end
+                ui.incassoVehicles[#ui.incassoVehicles + 1] = { row = row, entry = className }
+            end
+
+            for _, v in ipairs(vehList) do
+                if type(v) == "string" and v ~= "" then renderVehRow(v) end
+            end
+
+            btnIncassoAddVeh.DoClick = function()
+                local val = string.Trim(incVehEntry:GetText() or "")
+                if val == "" then notification.AddLegacy("Введите spawn-name класса ТС", NOTIFY_ERROR, 3) return end
+                for _, ex in ipairs(ui.incassoVehicles) do
+                    if ex.entry == val then notification.AddLegacy("Такой класс уже добавлен", NOTIFY_ERROR, 3) return end
+                end
+                renderVehRow(val)
+                incVehEntry:SetText("")
+                markIncassoDirty()
+            end
+            incVehEntry.OnEnter = function() btnIncassoAddVeh:DoClick() end
+
+            fillVehicleCombo()
+            function incVehCombo:OnSelect(_, _, _, data)
+                if not data then return end
+                for _, ex in ipairs(ui.incassoVehicles) do if ex.entry == data then return end end
+                renderVehRow(data)
+                markIncassoDirty()
+                incVehCombo:ChooseOptionID(1)
+            end
+        end
+        ui.updateIncassoPanel = updateIncassoPanel
+
+        btnIncassoSave.DoClick = function()
+            local fName = factionComboIncasso:GetValue()
+            if not fName or fName == "" then
+                notification.AddLegacy("Выберите фракцию", NOTIFY_ERROR, 3); return
+            end
+            local enabled = IsValid(ui.chkIncassoEnabled) and ui.chkIncassoEnabled:GetChecked() or false
+            local roles = {}
+            for rn, cb in pairs(ui.incassoRoleBoxes or {}) do
+                if IsValid(cb) and cb:GetChecked() then roles[#roles + 1] = rn end
+            end
+            local vehicles = {}
+            local seen = {}
+            for _, v in ipairs(ui.incassoVehicles or {}) do
+                if type(v.entry) == "string" and v.entry ~= "" and not seen[v.entry] then
+                    seen[v.entry] = true; vehicles[#vehicles + 1] = v.entry
+                end
+            end
+            sendAction("saveIncasso", { fName, enabled, roles, vehicles }, function(ok, msg)
+                if ok then
+                    setIncassoDirty(false)
+                    notification.AddLegacy(msg or "Сохранено", NOTIFY_GENERIC, 4)
+                    getData(function(d) FactionsData = d or {} refreshAllUI(FactionsData) end)
+                else
+                    notification.AddLegacy("Ошибка: " .. tostring(msg), NOTIFY_ERROR, 4)
+                end
+            end)
+        end
+
+        factionComboIncasso.OnSelect = function(_, idx, fName)
+            -- Используем локальный кэш, а не идём в сеть (сеть приходит с задержкой
+            -- и может перетереть выбор старым ответом). Если кэша нет — запрашиваем.
+            local function apply(d)
+                if ui.updateIncassoPanel then ui.updateIncassoPanel(fName, d or FactionsData or {}) end
+            end
+            if FactionsData and FactionsData[fName] then
+                apply(FactionsData)
+            else
+                getData(function(data) FactionsData = data or {}; apply(data) end)
+            end
+        end
+
+        ui.incassoPanel = incassoPanel
+        local incSheet = tabs:AddSheet("Инкассация", incassoPanel, "icon16/money.png")
+        -- При активации вкладки «Инкассация» — если фракция не выбрана, авто-выбираем первую
+        -- и запрашиваем данные. Это спасает от ситуации «открыл вкладку, а там пусто».
+        function incassoPanel:PerformLayout()
+            if self._incassoFirstInit then return end
+            self._incassoFirstInit = true
+            timer.Simple(0, function()
+                if not IsValid(ui.factionComboIncasso) or not IsValid(incassoPanel) then return end
+                local cur = ui.factionComboIncasso:GetValue()
+                if cur and cur ~= "" then return end
+                local first = ui.factionComboIncasso:GetOptionData(1)
+                local firstName = ui.factionComboIncasso:GetOptionText(1)
+                if firstName and firstName ~= "" then
+                    ui.factionComboIncasso:SetValue(firstName)
+                    getData(function(data)
+                        if ui.updateIncassoPanel then ui.updateIncassoPanel(firstName, data or FactionsData or {}) end
+                    end)
+                end
+            end)
+        end
+
+        -- GRM hook: сторонние модули достраивают вкладки админки (Коды 75/76 — доступы к эфиру, оповещению, доске)
+        if hook and hook.Call then
+            pcall(hook.Call, "GRM_FactionsAdmin_BuildTabs", nil, tabs)
+        end
+
+
         -- FIX: При открытии меню запрашиваем данные с сервера (factions.json)
         timer.Simple(0.4, function()
             if IsValid(frame) then
@@ -1989,6 +2840,29 @@ if CLIENT then
             ui.depWaveScroll = nil
             ui.editTagEntry = nil
             ui.editColorPreview = nil
+            -- Код 108: гасим все ссылки «живых» вкладок админки
+            ui.listView = nil
+            ui.factionCombo = nil
+            ui.factionComboRanks = nil
+            ui.ranksScroll = nil
+            ui.factionComboDepts = nil
+            ui.deptsScroll = nil
+            ui.factionCombo3 = nil
+            ui.roleCombo3 = nil
+            ui.deptCombo3 = nil
+            ui.factionComboList = nil
+            ui.memberScroll = nil
+            -- Код 126
+            ui.factionComboIncasso = nil
+            ui.incassoScroll = nil
+            ui.incassoVehScroll = nil
+            ui.incassoVehEntry = nil
+            ui.incassoVehCombo = nil
+            ui.incassoVehicles = nil
+            ui.incassoRoleBoxes = nil
+            ui.chkIncassoEnabled = nil
+            ui.updateIncassoPanel = nil
+            ui.incassoPanel = nil
         end
 
         frame:Show()
@@ -2052,6 +2926,7 @@ if CLIENT then
 
         local roleCombo = vgui.Create("DComboBox", memberPanel)
         roleCombo:SetPos(100, Y) roleCombo:SetSize(200, 26)
+        ui.roleComboLeader = roleCombo -- Код 108: живое комбо (пересборка в refreshAllUI)
         Y = Y + 40
 
         local lblDeptL = vgui.Create("DLabel", memberPanel)
@@ -2060,10 +2935,11 @@ if CLIENT then
 
         local deptCombo = vgui.Create("DComboBox", memberPanel)
         deptCombo:SetPos(100, Y) deptCombo:SetSize(200, 26)
+        ui.deptComboLeader = deptCombo -- Код 108: живое комбо
         Y = Y + 45
 
         getData(function(data)
-            local mySteam = LocalPlayer():SteamID()
+            local mySteam = clientMemberKey(LocalPlayer())
             for _, f in pairs(data) do
                 if f.Leader == mySteam then
                     for _, role in ipairs(f.Roles or {}) do roleCombo:AddChoice(role) end
@@ -2135,6 +3011,11 @@ if CLIENT then
         ui.memberScrollLeader = scrollPanel
         tabs:AddSheet("Список участников", memberListPanel, "icon16/user_go.png")
 
+        -- GRM hook: сторонние модули достраивают вкладки (находка 172 — «Экономика»)
+        if hook and hook.Call then
+            pcall(hook.Call, "GRM_FactionsAdmin_BuildTabs", nil, tabs)
+        end
+
         -- FIX: При открытии меню лидера запрашиваем данные с сервера (factions.json)
         timer.Simple(0.4, function()
             if IsValid(frame) then
@@ -2152,6 +3033,8 @@ if CLIENT then
             ui.deptsScrollLeader = nil
             ui.memberScrollLeader = nil
             ui.leaderTitleLabel = nil
+            ui.roleComboLeader = nil -- Код 108: живые комбо лидера
+            ui.deptComboLeader = nil
         end
 
         frame:Show()
@@ -2215,11 +3098,15 @@ if CLIENT then
         if LocalPlayer():IsSuperAdmin() then OpenAdminMenu() return end
 
         getData(function(data)
-            local mySteam = LocalPlayer():SteamID()
+            local mySteam = clientMemberKey(LocalPlayer())
             for _, f in pairs(data or {}) do
                 if f.Leader == mySteam then OpenLeaderMenu() return end
             end
-            notification.AddLegacy("У вас нет прав", NOTIFY_ERROR, 3)
+            -- Находка 172: не лидер, но возможно есть доступ к экономике
+            -- (лидер/зам Нацбанка). Просим сервер — он сам решит и пришлёт
+            -- NET_OPEN_ADMIN, если CanManageEconomy.
+            net.Start(NET_OPEN_ADMIN)
+            net.SendToServer()
         end)
     end)
 
@@ -2232,43 +3119,46 @@ if CLIENT then
         local radius = GetConVarNumber("rpdesc_radius") or 5000
 
         for _, ply in ipairs(player.GetAll()) do
-            if not IsValid(ply) or not ply:Alive() or ply == lp then continue end
-            if lp:GetPos():Distance(ply:GetPos()) > radius then continue end
+            -- Код 108: continue→инвертированное условие (ванильный Lua)
+            if IsValid(ply) and ply:Alive() and ply ~= lp
+                and lp:GetPos():Distance(ply:GetPos()) <= radius then
+                local steam = clientMemberKey(ply)
+                local faction, role = nil, nil
+                local fColor = Color(255, 200, 50)
+                local fTag = ""
 
-            local steam = ply:SteamID()
-            local faction, role = nil, nil
-            local fColor = Color(255, 200, 50)
-            local fTag = ""
+                for fname, fdata in pairs(FactionsData or {}) do
+                    if fdata.Members and fdata.Members[steam] then
+                        faction = fname
+                        role = fdata.Members[steam].Role
+                        if fdata.Color then fColor = Color(fdata.Color.r or 255, fdata.Color.g or 200, fdata.Color.b or 50) end
+                        fTag = (fdata.Tag and fdata.Tag ~= "") and fdata.Tag or ""
+                        break
+                    end
+                end
 
-            for fname, fdata in pairs(FactionsData or {}) do
-                if fdata.Members and fdata.Members[steam] then
-                    faction = fname
-                    role = fdata.Members[steam].Role
-                    if fdata.Color then fColor = Color(fdata.Color.r or 255, fdata.Color.g or 200, fdata.Color.b or 50) end
-                    fTag = (fdata.Tag and fdata.Tag ~= "") and fdata.Tag or ""
-                    break
+                if faction then
+                    local pos = ply:GetPos() + Vector(0, 0, 100)
+                    local screenPos = pos:ToScreen()
+                    if screenPos.visible then
+                        local x, y = screenPos.x, screenPos.y
+
+                        local displayFaction = (fTag ~= "") and ("[" .. fTag .. "] " .. faction) or faction
+                        local text = displayFaction .. (role and (" [" .. role .. "]") or "")
+
+                        surface.SetFont("Factions_HUD")
+                        local tw, th = surface.GetTextSize(text)
+                        local padding = 8
+                        local w = tw + padding * 2
+                        local h = th + padding * 2
+
+                        draw.RoundedBox(4, x - w / 2, y - h / 2, w, h, Color(15, 15, 20, 180))
+                        surface.SetDrawColor(fColor.r, fColor.g, fColor.b, 220)
+                        surface.DrawRect(x - w / 2, y + h / 2 - 3, w, 3)
+                        draw.SimpleText(text, "Factions_HUD", x, y, fColor, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    end
                 end
             end
-            if not faction then continue end
-
-            local pos = ply:GetPos() + Vector(0, 0, 100)
-            local screenPos = pos:ToScreen()
-            if not screenPos.visible then continue end
-            local x, y = screenPos.x, screenPos.y
-
-            local displayFaction = (fTag ~= "") and ("[" .. fTag .. "] " .. faction) or faction
-            local text = displayFaction .. (role and (" [" .. role .. "]") or "")
-
-            surface.SetFont("Factions_HUD")
-            local tw, th = surface.GetTextSize(text)
-            local padding = 8
-            local w = tw + padding * 2
-            local h = th + padding * 2
-
-            draw.RoundedBox(4, x - w / 2, y - h / 2, w, h, Color(15, 15, 20, 180))
-            surface.SetDrawColor(fColor.r, fColor.g, fColor.b, 220)
-            surface.DrawRect(x - w / 2, y + h / 2 - 3, w, 3)
-            draw.SimpleText(text, "Factions_HUD", x, y, fColor, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
     end)
 

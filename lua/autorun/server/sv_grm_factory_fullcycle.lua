@@ -627,7 +627,11 @@ local function beginCraft(ply, ent, recipe, recipeID, kind, removedInputs)
             end
         end
 
-        if IsValid(owner) then owner:EmitSound("buttons/button14.wav") end
+        if IsValid(owner) then
+            local outputID = tostring(recipe.output or recipe.weapon or recipeID or kind)
+            hook.Run("GRM_QuestEvent", owner, "factory_produce", outputID, math.max(1, tonumber(recipe.outputCount) or 1), { kind=kind, recipe=recipeID })
+            owner:EmitSound("buttons/button14.wav")
+        end
         stopCraft(ent)
     end)
 
@@ -823,6 +827,8 @@ net.Receive(NET_QTE_ABORT, function(_, ply)
     if session and session.owner == ply then finishQTE(session, false, "Мини-игра прервана") end
 end)
 
+local scheduleFactorySave
+
 local function scrapTake(ply, bin, amount)
     if not canUse(ply, bin) then return end
     amount = math.Clamp(math.floor(tonumber(amount) or 1), 1, 10)
@@ -830,6 +836,7 @@ local function scrapTake(ply, bin, amount)
     local ok, reason = inventoryAdd(ply, "scrap_metal", amount)
     if not ok then notify(ply, false, reason) return end
     bin:SetStock(bin:GetStock() - amount)
+    scheduleFactorySave("scrap take")
     notify(ply, true, "Собрано металлолома: " .. amount)
 end
 
@@ -1015,6 +1022,15 @@ net.Receive(NET_ACTION, function(_, ply)
     end
 end)
 
+-- Единая автоперсистентность оборудования завода. Factory entities не входят
+-- в универсальный /permadd: здесь сохраняется ещё и stock/nextRefill.
+scheduleFactorySave = function(reason)
+    if FC.LoadingMap then return end
+    timer.Create("GRM_FC_SaveSoon", 1, 1, function()
+        if not FC.LoadingMap and FC.SaveMap then FC.SaveMap(nil, reason or "mutation") end
+    end)
+end
+
 -- Scrap bins replenish their finite stock over time.
 timer.Create("GRM_FC_ScrapRefill", 2, 0, function()
     local now = CurTime()
@@ -1022,6 +1038,7 @@ timer.Create("GRM_FC_ScrapRefill", 2, 0, function()
         if bin:GetNextRefill() <= now then
             bin:SetStock(math.min(CFG.ScrapBinMax or 50, bin:GetStock() + (CFG.ScrapRefillAmount or 5)))
             bin:SetNextRefill(now + (CFG.ScrapRefillEvery or 60))
+            scheduleFactorySave("scrap refill")
         end
     end
 end)
@@ -1030,12 +1047,17 @@ end)
 local function entityRecord(ent)
     local record = { class = ent:GetClass(), kind = ent.FactoryKind, id = ent:GetFactoryID(), pos = vecTable(ent:GetPos()), ang = angTable(ent:GetAngles()), model = ent:GetModel() }
     if ent.FactoryKind == "storage" then record.items = table.Copy(FC.GetStorage(ent)) end
-    if ent.FactoryKind == "scrap_bin" then record.stock = ent:GetStock(); record.nextRefill = ent:GetNextRefill() end
+    if ent.FactoryKind == "scrap_bin" then
+        record.stock = ent:GetStock()
+        -- CurTime() обнуляется после рестарта сервера, поэтому нельзя
+        -- сохранять абсолютное значение nextRefill между сессиями.
+        record.refillIn = math.max(0, (ent:GetNextRefill() or CurTime()) - CurTime())
+    end
     if ent.FactoryKind == "weapon_buyer" then record.weaponStock = table.Copy(FC.GetBuyerData(ent).stock) end
     return record
 end
 
-function FC.SaveMap(ply)
+function FC.SaveMap(ply, reason)
     if IsValid(ply) and not ply:IsSuperAdmin() then notify(ply, false, "Только superadmin может сохранять завод.") return 0 end
     ensureDirectories()
     local records = {}
@@ -1066,12 +1088,20 @@ function FC.LoadMap(ply)
             local ent = ents.Create(record.class)
             if IsValid(ent) then
                 ent:SetPos(toVec(record.pos)); ent:SetAngles(toAng(record.ang)); ent:Spawn(); ent:Activate()
+                if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
                 ent:SetFactoryID(record.id or newID(record.kind))
 
                 if record.kind == "storage" then FC.StorageData[ent:GetFactoryID()] = istable(record.items) and record.items or {} end
                 if record.kind == "scrap_bin" then
                     ent:SetStock(math.Clamp(tonumber(record.stock) or CFG.ScrapBinStart, 0, CFG.ScrapBinMax or 40))
-                    ent:SetNextRefill(tonumber(record.nextRefill) or (CurTime() + (CFG.ScrapRefillEvery or 60)))
+                    local refillIn = tonumber(record.refillIn)
+                    if not refillIn then
+                        -- Совместимость со старыми сейвами, где записывался
+                        -- абсолютный CurTime(). После рестарта ограничиваем
+                        -- ожидание одним стандартным интервалом.
+                        refillIn = math.min(math.max(0, tonumber(record.nextRefill) or 0), CFG.ScrapRefillEvery or 60)
+                    end
+                    ent:SetNextRefill(CurTime() + math.max(0, refillIn))
                 elseif record.kind == "weapon_buyer" then
                     -- Отдельный файл buyer data свежее ручного сохранения карты.
                     if not FC.WeaponBuyerData[ent:GetFactoryID()] then
@@ -1093,11 +1123,23 @@ function FC.LoadMap(ply)
     return count
 end
 
-concommand.Add("grm_fc_save", function(ply) FC.SaveMap(ply) end)
+hook.Add("OnEntityCreated", "GRM_FC_AutoSaveCreated", function(ent)
+    timer.Simple(0, function()
+        if IsValid(ent) and EQUIPMENT_CLASSES[ent:GetClass()] then scheduleFactorySave("entity created") end
+    end)
+end)
+hook.Add("EntityRemoved", "GRM_FC_AutoSaveRemoved", function(ent)
+    if ent and EQUIPMENT_CLASSES[ent:GetClass()] then scheduleFactorySave("entity removed") end
+end)
+hook.Add("PostCleanupMap", "GRM_FC_RestoreAfterCleanup", function()
+    timer.Simple(1, function() if FC.LoadMap then FC.LoadMap(nil) end end)
+end)
+
+concommand.Add("grm_fc_save", function(ply) FC.SaveMap(ply, "manual") end)
 concommand.Add("grm_fc_load", function(ply) FC.LoadMap(ply) end)
 
 hook.Add("InitPostEntity", "GRM_FC_LoadMap", function() timer.Simple(5, function() FC.LoadMap(nil) end) end)
-if CFG.SaveOnShutdown then hook.Add("ShutDown", "GRM_FC_SaveShutdown", function() FC.SaveMap(nil) end) end
+hook.Add("ShutDown", "GRM_FC_SaveShutdown", function() FC.SaveMap(nil, "shutdown") end)
 
 -- Локеры сохраняются независимо от ручного сохранения карты, поэтому
 -- положенное оружие не теряется при выходе игрока или рестарте сервера.

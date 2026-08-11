@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Unified Economy v3.0.2 (Код 43) — ПЕРЕПИСАНО С НУЛЯ
+    GRM Unified Economy v3.0.4 (Код 43) — ПЕРЕПИСАНО С НУЛЯ
 
     v3.0.2 (КОРЕНЬ ВСЕЙ САГИ): голый util.JSONToTable калечил числовые
     ключи-строки (wiki: «keys are converted to numbers wherever possible.
@@ -111,7 +111,7 @@ if SERVER then
         return
     end
     GRM._economyCoreActive = true
-    GRM._economyCoreVer = "3.0.2"
+    GRM._economyCoreVer = "3.0.4"
     GRM._economyCoreSrc = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
     util.AddNetworkString(NET_OPEN_ADMIN)
@@ -123,9 +123,100 @@ if SERVER then
     util.AddNetworkString(NET_INFO)
     util.AddNetworkString("GRM_Bank_Sync")    -- строка «НА СЧЁТУ» в HUD (Код 48)
     util.AddNetworkString("GRM_Bank_Request")
+    util.AddNetworkString("GRM_EcoAccess_Request")  -- настройка доступа (суперадмин)
+    util.AddNetworkString("GRM_EcoAccess_Data")     -- данные доступа
+    util.AddNetworkString("GRM_EcoAccess_Save")     -- сохранить доступ
 
     E.Data = E.Data or { version = 2, factions = {} }
     local dirty = false
+
+    -- ── ДОСТУП К ЭКОНОМИЧЕСКОМУ МЕНЮ (находка 172) ─────────────
+    -- Фракция «Нацбанк» (или любая) получает полномочия: лидер/зам/роли/отделы.
+    -- Хранилище: data/grm_economy_access.json
+    --   { [factionName] = { enabled=true, roles={}, departments={} } }
+    -- Роли ПРИОРИТЕТНЫ: если roles непуст — доступ только по ролям;
+    -- иначе (roles пуст) — по отделам; если оба пусты — вся фракция.
+    local ACCESS_FILE = "grm_economy_access.json"
+    E.Access = E.Access or {}
+    local function loadAccess()
+        if file.Exists(ACCESS_FILE, "DATA") then
+            local ok, t = pcall(util.JSONToTable, file.Read(ACCESS_FILE, "DATA") or "", false, true)
+            if ok and istable(t) then E.Access = t end
+        end
+    end
+    local function saveAccess()
+        file.CreateDir("grm_economy")
+        file.Write(ACCESS_FILE, util.TableToJSON(E.Access, true))
+    end
+    loadAccess()
+
+    -- Фракция игрока (имя) — как в остальной экономике
+    local function economyFactionOf(ply)
+        if not IsValid(ply) then return "" end
+        local sid, s64 = ply:SteamID(), ply:SteamID64()
+        if istable(Factions) then
+            for name, f in pairs(Factions) do
+                if istable(f) and istable(f.Members) and (f.Members[sid] or f.Members[s64]) then return name end
+            end
+        end
+        return ""
+    end
+    -- Роль/отдел игрока во фракции
+    local function economyMemberInfo(ply, factionName)
+        if not IsValid(ply) or factionName == "" then return nil end
+        local f = Factions and Factions[factionName]
+        if not istable(f) or not istable(f.Members) then return nil end
+        local sid, s64 = ply:SteamID(), ply:SteamID64()
+        return f.Members[sid] or f.Members[s64]
+    end
+
+    -- Может ли игрок управлять экономикой (суперадмин — всегда)
+    function E.CanManageEconomy(ply)
+        if not IsValid(ply) then return false end
+        if ply:IsSuperAdmin() then return true end
+        local factionName = economyFactionOf(ply)
+        if factionName == "" then return false end
+        local acc = E.Access[factionName]
+        if not acc or acc.enabled ~= true then return false end
+        local member = economyMemberInfo(ply, factionName)
+        if not istable(member) then return false end
+        local role = tostring(member.Role or "")
+        local dept = tostring(member.Department or "")
+        local roles = istable(acc.roles) and acc.roles or {}
+        local depts = istable(acc.departments) and acc.departments or {}
+        local function countMap(t) local n = 0 for _ in pairs(t or {}) do n = n + 1 end return n end
+        -- Роли приоритетны (считаем по pairs — ключи именные, не массив)
+        if countMap(roles) > 0 then
+            return roles[role] == true
+        end
+        if countMap(depts) > 0 then
+            return depts[dept] == true
+        end
+        -- ни ролей, ни отделов — вся фракция
+        return true
+    end
+
+    -- ── Сеть настройки доступа (только суперадмин) ──────────
+    net.Receive("GRM_EcoAccess_Request", function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        net.Start("GRM_EcoAccess_Data")
+            net.WriteTable(E.Access)
+        net.Send(ply)
+    end)
+    net.Receive("GRM_EcoAccess_Save", function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        local factionName = net.ReadString()
+        local enabled = net.ReadBool()
+        local roles = net.ReadTable() or {}
+        local depts = net.ReadTable() or {}
+        if factionName == "" then return end
+        E.Access[factionName] = { enabled = enabled == true, roles = roles, departments = depts }
+        saveAccess()
+        net.Start("GRM_EcoAccess_Data")
+            net.WriteTable(E.Access)
+        net.Send(ply)
+        if GRM.Notify then GRM.Notify(ply, "Доступ к экономике [" .. factionName .. "] сохранён", 100, 220, 130) end
+    end)
 
     -- ── Хелперы ─────────────────────────────────────────────
     local function notify(ply, msg, r, g, b)
@@ -135,25 +226,55 @@ if SERVER then
 
     local function money(n) return GRM.Format and GRM.Format(n) or (tostring(n) .. " GRM") end
 
+    local function characterKeyOf(value)
+        if IsValid(value) and value:IsPlayer() then
+            if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(value) end
+            return tostring(value:SteamID64() or "") .. ":char1"
+        end
+        local raw = tostring(value or "")
+        if raw:match(":char[1-3]$") then return raw end
+        if player and player.GetAll then
+            for _, p in ipairs(player.GetAll()) do
+                if IsValid(p) and (p:SteamID() == raw or p:SteamID64() == raw) then return characterKeyOf(p) end
+            end
+        end
+        if raw:match("^%d+$") then return raw .. ":char1" end
+        return raw
+    end
+
+    local function persistedCharacterKey(value)
+        local raw = tostring(value or "")
+        if raw:match(":char[1-3]$") then return raw end
+        if raw:match("^%d+$") then return raw .. ":char1" end
+        if util.SteamIDTo64 then
+            local s64 = util.SteamIDTo64(raw)
+            if s64 and s64 ~= "0" then return tostring(s64) .. ":char1" end
+        end
+        return raw
+    end
+
+    -- членство игрока в записи фракции: ключи Members исторически бывают
+    -- и SteamID, и SteamID64 (старые данные/модули) — проверяем ОБА (н101)
+    local function memberRec(f, ply)
+        if not (istable(f) and istable(f.Members) and IsValid(ply)) then return nil end
+        local key = characterKeyOf(ply)
+        if GRM.Identity and GRM.Identity.FactionMember then return GRM.Identity.FactionMember(f, ply) end
+        return f.Members[ply:SteamID()] or f.Members[ply:SteamID64()]
+    end
+
     local function factionOf(ply)
         if not Factions or not IsValid(ply) then return nil end
-        local sid = ply:SteamID()
-        local sid64 = ply.SteamID64 and ply:SteamID64() or nil
-        local charKey = (GRM.Identity and isfunction(GRM.Identity.CharacterKey)) and GRM.Identity.CharacterKey(ply) or nil
         for name, f in pairs(Factions) do
-            if istable(f) and istable(f.Members) then
-                if f.Members[sid] or (sid64 and f.Members[sid64]) or (charKey and f.Members[charKey]) then
-                    return name, f
-                end
+            if istable(f) and memberRec(f, ply) then
+                return name, f
             end
         end
         return nil
     end
 
     local function isLeaderOf(ply, f)
-        if not IsValid(ply) or not istable(f) then return false end
-        local ldr = tostring(f.Leader or "")
-        return ldr == ply:SteamID() or (ply.SteamID64 and ldr == ply:SteamID64())
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID()
+        return IsValid(ply) and istable(f) and (tostring(f.Leader or "") == ck or tostring(f.Leader or "") == ply:SteamID())
     end
 
     local function onlineMembers(name, f)
@@ -161,13 +282,7 @@ if SERVER then
         f = f or (Factions and Factions[name])
         if not istable(f) or not istable(f.Members) then return out end
         for _, p in ipairs(player.GetAll()) do
-            if IsValid(p) then
-                local sid = p:SteamID()
-                local sid64 = p.SteamID64 and p:SteamID64() or nil
-                if f.Members[sid] or (sid64 and f.Members[sid64]) then
-                    out[#out + 1] = p
-                end
-            end
+            if IsValid(p) and memberRec(f, p) then out[#out + 1] = p end
         end
         return out
     end
@@ -195,6 +310,8 @@ if SERVER then
         fp.otherFactions = fp.otherFactions == true -- цели: другие фракции
         fp.civilians     = fp.civilians ~= false  -- цели: граждане
         fp.maxAmount     = math.max(0, math.floor(tonumber(fp.maxAmount) or 0))
+        -- Находка 178: процент со штрафа → гос.бюджет (0-100)
+        fp.statePercent  = math.Clamp(math.floor(tonumber(fp.statePercent) or 0), 0, 100)
         return e
     end
 
@@ -219,7 +336,151 @@ if SERVER then
         st.budget = math.max(0, math.floor((tonumber(st.budget) or 0) + delta))
         dirty = true
         if reason then stateHist(reason) end
+        -- Находка 178: банковские хранилища отражают гос.бюджет в реальном
+        -- времени (NWVar на каждом хранилище + таймер-страховка).
+        if E.SyncVaultsState then E.SyncVaultsState() end
         return st.budget
+    end
+
+    -- ── БАНКОВСКИЕ ХРАНИЛИЩА (находка 178) ──────────────────
+    -- Реестр живых хранилищ; дисплей хранилища показывает гос.бюджет.
+    E.Vaults = E.Vaults or {}
+    E.VaultCapacity = 500000 -- каждое хранилище вмещает 500.000 GRM
+
+    function E.RegisterVault(ent)
+        if IsValid(ent) then E.Vaults[ent:EntIndex()] = ent end
+    end
+    function E.UnregisterVault(ent)
+        if IsValid(ent) then E.Vaults[ent:EntIndex()] = nil end
+    end
+
+    function E.SyncVaultsState()
+        local budget = math.floor(tonumber(E.Data and E.Data.state and E.Data.state.budget) or 0)
+        for _, v in pairs(E.Vaults) do
+            if IsValid(v) and v.SetStateBudget then
+                v:SetStateBudget(budget)
+            end
+        end
+    end
+
+    -- Спавн паллеты денег у хранилища (с учётом вместимости).
+    -- Находка 178b: паллета НЕ пишется в HeldCash сразу — её надо
+    -- ЗАГРУЗИТЬ через E-меню хранилища («Загрузить»). Так исключён
+    -- двойной счёт (загрузка уже учтённой паллеты).
+    -- Возвращает: сколько реально заспавнено (0 — хранилище заполнено).
+    function E.SpawnVaultCash(vault, amount)
+        if not IsValid(vault) then return 0 end
+        amount = math.max(1, math.floor(tonumber(amount) or 0))
+        local held = math.floor(tonumber(vault:GetHeldCash()) or 0)
+        local cap = math.max(1, math.floor(tonumber(vault:GetCapacity()) or E.VaultCapacity))
+        local free = math.max(0, cap - held)
+        if free <= 0 then return 0 end
+        local spawnAmt = math.min(amount, free)
+        local ent = ents.Create("grm_vault_cash")
+        if not IsValid(ent) then return 0 end
+        local pos = E.SettleCashPos(vault:GetPos() + Vector(0, 0, 12)) or (vault:GetPos() + Vector(0, 0, 12))
+        local ang = Angle(0, math.random(0, 359), 0)
+        ent:SetPos(pos)
+        ent:SetAngles(ang)
+        ent:SetAmount(spawnAmt)
+        ent.Vault = vault
+        ent:Spawn()
+        ent:Activate()
+        if vault.EmitSound then vault:EmitSound("physics/wood/wood_crate_impact_hard1.wav", 60, 100) end
+        return spawnAmt
+    end
+
+    -- Ближайший к игроку отмывщик денег (находка 179e)
+    function E.FindNearestLaunderer(ply, radius)
+        if not IsValid(ply) then return nil end
+        radius = math.max(1, tonumber(radius) or 400)
+        local best, bestD = nil, math.huge
+        for _, ent in ipairs(ents.FindByClass("grm_money_launderer")) do
+            if IsValid(ent) then
+                local d = ply:GetPos():DistToSqr(ent:GetPos())
+                if d <= radius * radius and d < bestD then best, bestD = ent, d end
+            end
+        end
+        return best
+    end
+
+    -- «Укладчик» точки: трасса вниз ищет пол, чтобы паллета/деньги стояли
+    -- ровно и не улетали/проваливались (находка 178f).
+    function E.SettleCashPos(p)
+        if not p then return nil end
+        for i = 0, 3 do
+            local probe = p + Vector(0, 0, i * 24)
+            local tr = util.TraceLine({
+                start = probe + Vector(0, 0, 300),
+                endpos = probe - Vector(0, 0, 100),
+                mask = MASK_SOLID,
+            })
+            if tr.Hit and not tr.StartSolid then
+                return tr.HitPos + Vector(0, 0, 10)
+            end
+            if not tr.StartSolid then
+                return probe + Vector(0, 0, 10)
+            end
+        end
+        return p + Vector(0, 0, 60)
+    end
+
+    -- Спавн денег у точки (выгрузка из хранилища, находка 178b/178f):
+    --   ≥ 50.000 → паллеты grm_vault_cash (дробление по 100.000, остаток
+    --   ≥ 50.000 тоже паллетой, < 50.000 — пачкой money.mdl);
+    --   < 50.000 → пачка grm_money_drop (models/props/cs_assault/money.mdl).
+    function E.SpawnCashAt(pos, amount, vault)
+        if not pos then return 0 end
+        amount = math.max(1, math.floor(tonumber(amount) or 0))
+        local spawned = 0
+        local PALLET_MAX = 100000
+        local PALLET_MIN = 50000
+
+        local function mk(class, amt)
+            local ent = ents.Create(class)
+            if not IsValid(ent) then return end
+            local p = E.SettleCashPos(pos)
+            ent:SetPos(p)
+            ent:SetAngles(Angle(0, math.random(0, 359), 0))
+            ent:SetAmount(amt)
+            if vault and class == "grm_vault_cash" then ent.Vault = vault end
+            ent:Spawn()
+            ent:Activate()
+            spawned = spawned + amt
+        end
+        if amount >= PALLET_MIN then
+            while amount >= PALLET_MAX do
+                mk("grm_vault_cash", PALLET_MAX)
+                amount = amount - PALLET_MAX
+            end
+            if amount >= PALLET_MIN then
+                mk("grm_vault_cash", amount)
+                amount = 0
+            end
+            if amount > 0 then mk("grm_money_drop", amount) end
+        else
+            mk("grm_money_drop", amount)
+        end
+        return spawned
+    end
+
+    -- Дроп денег в БЛИЖАЙШЕЕ к игроку хранилище (пополнение/изъятие из панели).
+    -- Возвращает: сколько заспавнено.
+    function E.DropCashToVault(ply, amount)
+        if not IsValid(ply) or amount <= 0 then return 0 end
+        local best, bestD = nil, math.huge
+        for _, v in pairs(E.Vaults) do
+            if IsValid(v) then
+                local d = ply:GetPos():DistToSqr(v:GetPos())
+                if d < bestD then best, bestD = v, d end
+            end
+        end
+        if not IsValid(best) then return 0 end
+        local spawned = E.SpawnVaultCash(best, amount)
+        if spawned < amount and IsValid(ply) and GRM.Notify then
+            GRM.Notify(ply, "Хранилище заполнено: вместимость " .. (GRM.Format and GRM.Format(E.VaultCapacity) or tostring(E.VaultCapacity)) .. ". Часть денег не поместилась.", 255, 190, 90)
+        end
+        return spawned
     end
 
     local function addLog(text)
@@ -231,7 +492,6 @@ if SERVER then
         dirty = true
     end
     E.Log = addLog -- публично: другие системы могут писать в фин.лог
-    E._dev_entry = entry -- dev-доступ к нормализованной записи фракции
 
     -- Фин.лог: зарплатный спам и строки сверки НЕ пишем
     hook.Add("GRM_MoneyChanged", "GRM_Economy_FinLog", function(ply, newBalance, delta, reason)
@@ -470,13 +730,22 @@ if SERVER then
         -- ЖЁСТКИЕ РАМКИ: поднятые счета приводим к целым [0 .. GRM.MaxBalance]
         do
             local cap = math.max(0, math.floor(tonumber(GRM.MaxBalance) or 2000000000))
+            local moved = {}
             for sid, a in pairs(E.Data.accounts) do
                 if istable(a) then
                     a.balance = math.Clamp(math.floor(tonumber(a.balance) or 0), 0, cap)
                 else
                     E.Data.accounts[sid] = { balance = math.Clamp(math.floor(tonumber(a) or 0), 0, cap), name = "?" }
                 end
+                local ck = persistedCharacterKey(sid)
+                if ck ~= sid then
+                    if E.Data.accounts[ck] == nil and moved[ck] == nil then moved[ck] = E.Data.accounts[sid] end
+                    E.Data.accounts[sid] = nil
+                    dirty = true
+                end
             end
+            for ck, a in pairs(moved) do E.Data.accounts[ck] = a end
+            if next(moved) ~= nil then print("[GRM Economy] старые банковские счета мигрированы в CharacterKey/char1") end
         end
         E.Data.state = istable(E.Data.state) and E.Data.state or { budget = 0, history = {} }
         E.Data.state.budget = math.max(0, math.floor(tonumber(E.Data.state.budget) or 0))
@@ -501,11 +770,12 @@ if SERVER then
                         local rbal = math.Clamp(math.floor(tonumber(rec.electro_balance) or 0), 0, cap)
                         local rsid = isstring(rec.sid) and rec.sid or nil
                         if rsid and rsid ~= "" then
-                            if E.Data.accounts[rsid] == nil then
-                                E.Data.accounts[rsid] = { balance = rbal, name = tostring(rec.name or "?") }
+                            local rkey = persistedCharacterKey(rsid)
+                            if E.Data.accounts[rkey] == nil then
+                                E.Data.accounts[rkey] = { balance = rbal, name = tostring(rec.name or "?") }
                                 restored = restored + 1
                                 print(("[GRM Economy] счёт %s восстановлен из зеркала electro_balance: %d (%s)")
-                                    :format(rsid, rbal, tostring(rec.name or "?")))
+                                    :format(rkey, rbal, tostring(rec.name or "?")))
                             end
                         else
                             local nick = tostring(rec.name or "")
@@ -545,8 +815,17 @@ if SERVER then
     -- ЛИЧНЫЕ БАНКОВСКИЕ СЧЕТА (банкомат для всех игроков)
     -- ========================================================
     local function account(sid, nick)
-        sid = tostring(sid or "")
-        if sid == "" then return nil end
+        sid = characterKeyOf(sid)
+        if sid == "" or sid == "0" then return nil end
+        E.Data.accounts = istable(E.Data.accounts) and E.Data.accounts or {}
+        -- Склеиваем возможный дубль number-key (наследие до jsonT) в string-key
+        local numKey = tonumber(sid)
+        if numKey ~= nil and E.Data.accounts[numKey] ~= nil and E.Data.accounts[sid] == nil then
+            E.Data.accounts[sid] = E.Data.accounts[numKey]
+            E.Data.accounts[numKey] = nil
+            dirty = true
+            print("[GRM Economy] account: склеен number-key → string-key для " .. sid)
+        end
         local acc = E.Data.accounts[sid]
         if not acc then
             acc = { balance = 0, name = nick or "?" }
@@ -561,56 +840,96 @@ if SERVER then
     end
 
     local function bankBalOf(sid)
-        local acc = E.Data.accounts[tostring(sid or "")]
+        local acc = E.Data.accounts[characterKeyOf(sid)]
         return math.max(0, math.floor(acc and acc.balance or 0))
     end
 
     local function pushBank(ply)
         if not IsValid(ply) or not ply:IsPlayer() then return end
         net.Start("GRM_Bank_Sync")
-            net.WriteDouble(bankBalOf(ply:SteamID64())) -- Double: UInt32 ломал счета > 4.29 млрд
+            net.WriteDouble(bankBalOf(characterKeyOf(ply))) -- Double: UInt32 ломал счета > 4.29 млрд
         net.Send(ply)
     end
     net.Receive("GRM_Bank_Request", function(_, ply) pushBank(ply) end)
 
     local function pushBankBySid(sid)
         for _, p in ipairs(player.GetAll()) do
-            if IsValid(p) and p:SteamID64() == tostring(sid) then pushBank(p) return end
+            if IsValid(p) and characterKeyOf(p) == tostring(sid) then pushBank(p) return end
         end
     end
 
     function E.BankBalance(ply)
-        local sid = isstring(ply) and ply or (IsValid(ply) and ply:SteamID64())
+        local sid = characterKeyOf(ply)
         if not sid then return 0 end
         local acc = E.Data.accounts[sid]
         return acc and acc.balance or 0
     end
 
-    -- «Электронный баланс»: публичный псевдоним счёта (как GRM.GetBalance у налички)
+    hook.Add("GRM_CharacterChanged", "GRM_Economy_CharacterSync", function(ply)
+        if not IsValid(ply) then return end
+        account(characterKeyOf(ply), ply:Nick())
+        dirty = true
+        save(true, "смена персонажа")
+        pushBank(ply)
+    end)
+
+    -- «Электронный баланс»:  публичный псевдоним счёта (как GRM.GetBalance у налички)
     E.GetElectroBalance = E.BankBalance
     if not GRM.GetElectroBalance then GRM.GetElectroBalance = E.BankBalance end
 
+    -- Кулдаун банковских операций (анти-даблклик / двойной net)
+    local bankOpCD = {} -- sid -> CurTime until
+
     function E.BankDeposit(ply, amount)
         amount = math.max(0, math.floor(tonumber(amount) or 0))
-        if not IsValid(ply) or amount <= 0 then return false end
-        if not (GRM.HasMoney and GRM.HasMoney(ply, amount)) then return false end
-        GRM.TakeMoney(ply, amount, "Банкомат: взнос на счёт")
-        local acc = account(ply:SteamID64(), ply:Nick())
-        acc.balance = acc.balance + amount
+        if not IsValid(ply) or amount <= 0 then return false, "bad" end
+        local sid = characterKeyOf(ply)
+        if sid == "" or sid == "0" then return false, "sid" end
+        local now = (CurTime and CurTime()) or os.time()
+        if (bankOpCD[sid] or 0) > now then return false, "cd" end
+        if not (GRM.HasMoney and GRM.HasMoney(ply, amount)) then return false, "cash" end
+        local acc = account(sid, ply:Nick())
+        if not acc then return false, "acc" end
+        local before = acc.balance
+        -- Сначала снимаем нал; если не вышло — банк не трогаем
+        if not GRM.TakeMoney(ply, amount, "Банкомат: взнос на счёт") then
+            return false, "take"
+        end
+        local cap = math.max(0, math.floor(tonumber(GRM.MaxBalance) or 2000000000))
+        acc.balance = math.Clamp(before + amount, 0, cap)
         dirty = true
-        save(true, "взнос на счёт") -- банк пишется на диск СРАЗУ, не ждём флаш
+        bankOpCD[sid] = now + 0.35
+        save(true, "взнос на счёт")
+        print(("[GRM Economy] DEPOSIT %s (%s): bank %d → %d (+%d), cash taken %d")
+            :format(ply:Nick(), sid, before, acc.balance, amount, amount))
         return true, acc.balance
     end
 
     function E.BankWithdraw(ply, amount)
         amount = math.max(0, math.floor(tonumber(amount) or 0))
-        if not IsValid(ply) or amount <= 0 then return false end
-        local acc = account(ply:SteamID64(), ply:Nick())
-        if acc.balance < amount then return false end
-        acc.balance = acc.balance - amount
+        if not IsValid(ply) or amount <= 0 then return false, "bad" end
+        local sid = characterKeyOf(ply)
+        if sid == "" or sid == "0" then return false, "sid" end
+        local now = (CurTime and CurTime()) or os.time()
+        if (bankOpCD[sid] or 0) > now then return false, "cd" end
+        local acc = account(sid, ply:Nick())
+        if not acc then return false, "acc" end
+        local before = acc.balance
+        if before < amount then return false, "funds" end
+        -- Сначала банк, потом нал: иначе при сбое сейва легко «размножить» деньги
+        local cap = math.max(0, math.floor(tonumber(GRM.MaxBalance) or 2000000000))
+        acc.balance = math.Clamp(before - amount, 0, cap)
         dirty = true
+        bankOpCD[sid] = now + 0.35
+        -- Помечаем «недавно меняли банк» — сверка не имеет права поднять старый больший баланс
+        ply._grmBankTouch = now
         GRM.GiveMoney(ply, amount, "Банкомат: снятие со счёта")
         save(true, "снятие со счёта")
+        print(("[GRM Economy] WITHDRAW %s (%s): bank %d → %d (-%d), cash +%d")
+            :format(ply:Nick(), sid, before, acc.balance, amount, amount))
+        if acc.balance ~= before - amount and not (before - amount < 0) then
+            print("[GRM Economy][!] WITHDRAW anomaly: expected " .. tostring(before - amount) .. " got " .. tostring(acc.balance))
+        end
         return true, acc.balance
     end
 
@@ -618,17 +937,26 @@ if SERVER then
     function E.BankTransfer(ply, toSid, amount)
         amount = math.max(0, math.floor(tonumber(amount) or 0))
         if not IsValid(ply) or amount <= 0 then return false end
+        local fromSid = characterKeyOf(ply)
         toSid = tostring(toSid or "")
-        if toSid == "" or toSid == ply:SteamID64() then return false end
-        local from = account(ply:SteamID64(), ply:Nick())
-        if from.balance < amount then return false end
+        if fromSid == "" or toSid == "" or toSid == fromSid then return false end
+        local now = (CurTime and CurTime()) or os.time()
+        if (bankOpCD[fromSid] or 0) > now then return false end
+        local from = account(fromSid, ply:Nick())
+        if not from or from.balance < amount then return false end
         local to = account(toSid)
         if not to then return false end
-        from.balance = from.balance - amount
-        to.balance = to.balance + amount
+        local cap = math.max(0, math.floor(tonumber(GRM.MaxBalance) or 2000000000))
+        local fb, tb = from.balance, to.balance
+        from.balance = math.Clamp(fb - amount, 0, cap)
+        to.balance = math.Clamp(tb + amount, 0, cap)
         dirty = true
+        bankOpCD[fromSid] = now + 0.35
+        ply._grmBankTouch = now
         addLog(("Перевод счёт→счёт: %s → %s: %s"):format(ply:Nick(), toSid, money(amount)))
         save(true, "перевод счёт→счёт")
+        print(("[GRM Economy] TRANSFER %s → %s: %d; from %d→%d to %d→%d")
+            :format(fromSid, toSid, amount, fb, from.balance, tb, to.balance))
         return true, from.balance
     end
 
@@ -661,6 +989,37 @@ if SERVER then
         hook.Run("GRM_FactionBudgetChanged", name, e.budget, 0)
     end
 
+    -- ── Гос.бюджет (публичный доступ для единой админ-панели, Код 82) ──
+    function E.StateBudgetGet()
+        return math.floor(tonumber(E.Data.state and E.Data.state.budget) or 0)
+    end
+
+    function E.StateBudgetAdd(delta, reason)
+        return stateAdd(math.floor(tonumber(delta) or 0), reason)
+    end
+
+    function E.StateBudgetSet(value, reason)
+        E.Data.state.budget = math.max(0, math.floor(tonumber(value) or 0))
+        dirty = true
+        if reason then stateHist(reason) end
+        -- Находка 178: синк дисплеев хранилищ
+        if E.SyncVaultsState then E.SyncVaultsState() end
+        return E.Data.state.budget
+    end
+
+    -- Сводка по фракции для админ-панелей (не мутирует запись)
+    function E.FactionInfo(name)
+        local e = E.Data.factions[name]
+        if not istable(e) then return nil end
+        return {
+            budget = math.floor(tonumber(e.budget) or 0),
+            taxRate = tonumber(e.taxRate) or 0,
+            baseSalary = math.floor(tonumber(e.baseSalary) or 0),
+            salaryInterval = math.floor(tonumber(e.salaryInterval) or 0),
+            payFromBudget = e.payFromBudget == true,
+        }
+    end
+
     function GRM.FactionTaxGet(name)
         if not name then return E.Config.DefaultTaxRate end
         local e = E.Data.factions[name]
@@ -678,7 +1037,7 @@ if SERVER then
         local name, f = factionOf(ply)
         if not name then return 0, nil end
         local e = entry(name)
-        local info = f.Members[ply:SteamID()] or {}
+        local info = GRM.Identity.FactionMember(f, ply) or {}
         local gross = (info.Role and math.floor(tonumber(e.roleSalaries[info.Role]) or 0) or 0)
         if gross <= 0 and info.Department then
             gross = math.floor(tonumber(e.departmentSalaries[info.Department]) or 0)
@@ -748,7 +1107,7 @@ if SERVER then
             local want = pendingNickBank[nick]
             if want ~= nil then
                 pendingNickBank[nick] = nil
-                local sid = ply:SteamID64()
+                local sid = characterKeyOf(ply)
                 if isstring(sid) and E.Data.accounts[sid] == nil then
                     E.Data.accounts[sid] = { balance = want, name = nick }
                     dirty = true
@@ -830,6 +1189,23 @@ if SERVER then
             return false
         end
         local oldAccounts = E.Data.accounts
+        -- Снимок банков онлайн-игроков: их счёт НЕ перебиваем диском.
+        -- Иначе после снятия «воскресший» treasury с БОЛЬШИМ balance
+        -- поднимался сверкой (анти-потеря ловит только уменьшение) →
+        -- нал уже выдан, счёт снова вырос = «умножение».
+        local onlineBank = {}
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and p:IsPlayer() then
+                local sid = characterKeyOf(p)
+                if sid ~= "" and istable(oldAccounts) and istable(oldAccounts[sid]) then
+                    onlineBank[sid] = {
+                        balance = math.floor(tonumber(oldAccounts[sid].balance) or 0),
+                        name = tostring(oldAccounts[sid].name or p:Nick()),
+                        touch = tonumber(p._grmBankTouch) or 0,
+                    }
+                end
+            end
+        end
         E.Data = t
         E.Data.version = 2
         E.Data.factions = istable(E.Data.factions) and E.Data.factions or {}
@@ -841,21 +1217,48 @@ if SERVER then
         E.Data.config = istable(E.Data.config) and E.Data.config or {}
         if applyConfig then pcall(applyConfig) end
         for name in pairs(E.Data.factions) do entry(name) end
+        -- Восстанавливаем online-счета из памяти (авторитет сессии)
+        local kept, inflated = 0, 0
+        local cap = math.max(0, math.floor(tonumber(GRM.MaxBalance) or 2000000000))
+        for sid, mem in pairs(onlineBank) do
+            local fileAcc = E.Data.accounts[sid]
+            local fileBal = istable(fileAcc) and math.floor(tonumber(fileAcc.balance) or 0) or 0
+            local memBal = math.Clamp(mem.balance, 0, cap)
+            if fileBal > memBal then
+                inflated = inflated + 1
+                print(("[GRM Economy] DB↔MEM: онлайн %s — диск %d > память %d, оставляем память (анти-раздутие)")
+                    :format(sid, fileBal, memBal))
+            end
+            E.Data.accounts[sid] = {
+                balance = memBal,
+                name = mem.name or (istable(fileAcc) and fileAcc.name) or "?",
+            }
+            kept = kept + 1
+        end
         lastDiskTxt = txt
+        -- Если правили online-счета — сразу материализуем правду на диск
+        if inflated > 0 then
+            dirty = true
+            save(true, "сверка: анти-раздутие online-счетов")
+        end
         local pushed = 0
         for _, p in ipairs(player.GetAll()) do
             if IsValid(p) and p:IsPlayer() then
-                local sid = p:SteamID64()
+                local sid = characterKeyOf(p)
                 local oldBal = oldAccounts and oldAccounts[sid] and oldAccounts[sid].balance or 0
                 local newBal = E.Data.accounts[sid] and E.Data.accounts[sid].balance or 0
                 if oldBal ~= newBal then pushBank(p) pushed = pushed + 1 end
             end
         end
-        print(("[GRM Economy] DB↔MEM [%s]: данные подняты из %s, счетов обновлено онлайн: %d")
-            :format(tostring(reason), DATA_FILE, pushed))
+        print(("[GRM Economy] DB↔MEM [%s]: файл поднят, online-счетов сохранено: %d (анти-раздутие: %d), push: %d")
+            :format(tostring(reason), kept, inflated, pushed))
         return true
     end
     timer.Create("GRM_Economy_Reconcile", 15, 0, function() reconcileEconomy("тик 15с") end)
+    -- Находка 178: страховочный синк дисплеев банковских хранилищ (2с)
+    timer.Create("GRM_Economy_VaultSync", 2, 0, function()
+        if E.SyncVaultsState then E.SyncVaultsState() end
+    end)
     concommand.Add("grm_economy_check", function(ply)
         if IsValid(ply) and not ply:IsSuperAdmin() then return end
         local ok = reconcileEconomy("команда")
@@ -878,10 +1281,7 @@ if SERVER then
             return false, "Фракция [" .. iname .. "] не имеет доступа к системе штрафов"
         end
         if not isLeaderOf(issuer, ifac) and not fp.allRoles then
-            local sid = issuer:SteamID()
-            local sid64 = issuer.SteamID64 and issuer:SteamID64() or nil
-            local charKey = (GRM.Identity and isfunction(GRM.Identity.CharacterKey)) and GRM.Identity.CharacterKey(issuer) or nil
-            local info = (charKey and ifac.Members[charKey]) or ifac.Members[sid] or (sid64 and ifac.Members[sid64]) or {}
+            local info = memberRec(ifac, issuer) or {}
             if not fp.roles[tostring(info.Role or "")] then
                 return false, "Ваша роль во фракции не имеет права штрафовать"
             end
@@ -918,10 +1318,26 @@ if SERVER then
         local issued = math.min(amount, GRM.GetBalance(target))
         GRM.TakeMoney(target, issued, "Штраф: " .. tostring(reason or "нарушение"))
 
+        -- Находка 178: процент со штрафа (finePerms.statePercent) — доля,
+        -- которая уходит в ГОС.БЮДЖЕТ (банковская система); остальное —
+        -- в бюджет штрафующей фракции (по настройке FineToBudget).
         local receiptName = factionOf(issuer)
+        local stateShare = 0
         if receiptName and E.Config.FineToBudget then
-            GRM.FactionBudgetAdd(receiptName, issued,
-                ("Штраф %s от %s: %s"):format(target:Nick(), IsValid(issuer) and issuer:Nick() or "система", money(issued)))
+            local fp = entry(receiptName).finePerms
+            local pct = math.Clamp(tonumber(fp and fp.statePercent) or 0, 0, 100)
+            if pct > 0 then
+                stateShare = math.floor(issued * pct / 100)
+            end
+            local toFac = issued - stateShare
+            if toFac > 0 then
+                GRM.FactionBudgetAdd(receiptName, toFac,
+                    ("Штраф %s от %s: %s"):format(target:Nick(), IsValid(issuer) and issuer:Nick() or "система", money(toFac)))
+            end
+            if stateShare > 0 then
+                stateAdd(stateShare, ("Штраф %s от %s (доля гос-ва %d%%)"):format(
+                    target:Nick(), IsValid(issuer) and issuer:Nick() or "система", math.floor(pct)))
+            end
         elseif E.Config.FinesToState then
             stateAdd(issued, ("Штраф %s от %s"):format(target:Nick(), IsValid(issuer) and issuer:Nick() or "система"))
         end
@@ -932,7 +1348,9 @@ if SERVER then
             255, 80, 70)
         if IsValid(issuer) and issuer ~= target then
             local dest = " (деньги сгорают)"
-            if receiptName and E.Config.FineToBudget then dest = " → бюджет [" .. receiptName .. "]"
+            if receiptName and E.Config.FineToBudget then
+                dest = " → бюджет [" .. receiptName .. "]"
+                if stateShare > 0 then dest = dest .. " + " .. money(stateShare) .. " в гос. (" .. math.floor(stateShare / math.max(1, issued) * 100) .. "%)" end
             elseif E.Config.FinesToState then dest = " → гос.бюджет" end
             notify(issuer, "Штраф выписан: " .. target:Nick() .. " -" .. money(issued) .. dest, 100, 220, 100)
         end
@@ -943,6 +1361,10 @@ if SERVER then
         hook.Run("GRM_FineIssued", issuer, target, issued, tostring(reason or ""))
         return true, issued
     end
+
+    -- тестовая поверхность для сим-стендов (живая настройка finePerms
+    -- идёт через /feco_admin; прямой доступ к записи — ТОЛЬКО для тестов)
+    E._dev_entry = entry
 
     -- ── СИНХРОНИЗАЦИЯ клиентов ──────────────────────────────
     local function syncPlayer(ply)
@@ -987,6 +1409,23 @@ if SERVER then
         local players, cashSum, bankSum = {}, 0, 0
         if GRM.GetAllBalances then players = GRM.GetAllBalances() end
         for sid, rec in pairs(players) do
+            local slot = tostring(sid):match(":(char[1-3])$")
+            local slotNo = slot and tonumber(slot:sub(5)) or nil
+            rec.characterLabel = slotNo and ("Персонаж " .. slotNo) or "Аккаунт"
+            local online = GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(sid) or nil
+            if IsValid(online) then
+                rec.rpName = online:GetNWString("GRM_RPName", "")
+                if rec.rpName == "" then rec.rpName = rec.name end
+                rec.accountName = online:Nick()
+            elseif slot and GRM.Char and GRM.Char.Data then
+                local account, slotID = tostring(sid):match("^(.-):(char[1-3])$")
+                local c = account and GRM.Char.Data[account] and GRM.Char.Data[account].slots and GRM.Char.Data[account].slots[slotID]
+                rec.rpName = c and c.name or rec.name
+                rec.accountName = rec.name
+            else
+                rec.rpName = rec.name
+                rec.accountName = rec.name
+            end
             cashSum = cashSum + (tonumber(rec.balance) or 0)
             local acc = E.Data.accounts[sid]
             rec.bank = acc and acc.balance or 0
@@ -997,35 +1436,79 @@ if SERVER then
         fullcfg.StartBalance = GRM.StartBalance or 1000
         fullcfg.CurrencyName = GRM.CurrencyName or "GRM"
 
+        -- Находка 180: журнал в ВЫДАЧЕ урезаем до последних 100 записей
+        -- (клиенту для вкладки «Фин.лог» больше не нужно; полный журнал
+        -- живёт на сервере). Раньше слались все 300 — при большом онлайне
+        -- пакет переполнялся (Trying to send an overflowed net message).
+        local lg = E.Data.log or {}
+        local logOut = {}
+        for i = math.max(1, #lg - 99), #lg do logOut[#logOut + 1] = lg[i] end
+
         return {
             factions = factions,
             state = E.Data.state,
             players = players,
-            log = E.Data.log,
+            log = logOut,
             config = {
                 maxTax = E.Config.MaxTaxRate, minInterval = E.Config.MinSalaryInterval,
             },
             fullconfig = fullcfg,
             stats = {
                 players = table.Count(players), cash = cashSum, bank = bankSum,
-                factions = table.Count(E.Data.factions), logSize = #(E.Data.log or {}),
+                factions = table.Count(E.Data.factions), logSize = #logOut,
             },
         }
     end
 
+    -- Находка 180: отправка админ-данных ЧАНКАМИ. Один net-пакет GMod
+    -- ограничен (~64 КБ): при большом онлайне/фракциях/журнале старая
+    -- sendAdminData падала с «Trying to send an overflowed net message».
+    -- Теперь: base (фракции/конфиги/статы) → log (последние 100) → players
+    -- порциями по ECO_PLAYERS_CHUNK. Клиент собирает и строит UI по факту
+    -- получения последнего чанка игроков.
+    local ECO_PLAYERS_CHUNK = 40
     local function sendAdminData(ply)
+        local data = buildAdminData()
+        local players = data.players or {}
+        local log = data.log or {}
+        data.players = nil
+        data.log = nil
+        -- 1) база: всё кроме игроков и журнала
         net.Start(NET_ADMIN_DATA)
-            net.WriteTable(buildAdminData())
+            net.WriteString("base")
+            net.WriteTable(data)
         net.Send(ply)
+        -- 2) журнал (уже ≤100)
+        net.Start(NET_ADMIN_DATA)
+            net.WriteString("log")
+            net.WriteTable(log)
+        net.Send(ply)
+        -- 3) игроки чанками (players — map sid→запись; делим по ключам)
+        local keys = {}
+        for sid in pairs(players) do keys[#keys + 1] = sid end
+        table.sort(keys)
+        local total = math.max(1, math.ceil(#keys / ECO_PLAYERS_CHUNK))
+        for i = 1, total do
+            local part = {}
+            for j = (i - 1) * ECO_PLAYERS_CHUNK + 1, math.min(i * ECO_PLAYERS_CHUNK, #keys) do
+                part[keys[j]] = players[keys[j]]
+            end
+            net.Start(NET_ADMIN_DATA)
+                net.WriteString("players")
+                net.WriteUInt(i, 16)
+                net.WriteUInt(total, 16)
+                net.WriteTable(part)
+            net.Send(ply)
+        end
     end
 
     net.Receive(NET_OPEN_ADMIN, function(_, ply)
-        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        if not IsValid(ply) or not E.CanManageEconomy(ply) then return end
         sendAdminData(ply)
     end)
 
     net.Receive(NET_ADMIN_ACT, function(_, ply)
-        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        if not IsValid(ply) or not E.CanManageEconomy(ply) then return end
         local a = net.ReadTable() or {}
         local name = tostring(a.faction or "")
         local function amt(v) return math.max(0, math.floor(tonumber(v) or 0)) end
@@ -1033,6 +1516,11 @@ if SERVER then
 
         if a.action == "save_entry" then
             if name == "" then return end
+            -- Находка 177b/177c: СИСТЕМУ штрафов (включение, категории целей,
+            -- роли) настраивает только суперадмин; лидер/зам/доступные могут
+            -- менять лишь ЧИСЛОВОЕ значение (лимит/«процент» штрафа) — как и
+            -- налоги/зарплаты. Поэтому fine-блок не отбрасывается целиком:
+            -- не-суперадмин сохраняет только maxAmount.
             local e = entry(name)
             e.taxRate        = math.Clamp(tonumber(a.taxRate) or e.taxRate, 0, E.Config.MaxTaxRate)
             e.baseSalary     = math.max(0, math.floor(tonumber(a.baseSalary) or 0))
@@ -1048,16 +1536,21 @@ if SERVER then
             end
             if istable(a.fine) then
                 local fp = e.finePerms
-                fp.enabled       = a.fine.enabled == true
-                fp.allRoles      = a.fine.allRoles == true
-                fp.ownFaction    = a.fine.ownFaction ~= false
-                fp.otherFactions = a.fine.otherFactions == true
-                fp.civilians     = a.fine.civilians ~= false
-                fp.maxAmount     = math.max(0, math.floor(tonumber(a.fine.maxAmount) or 0))
-                if istable(a.fine.roles) then
-                    fp.roles = {}
-                    for k, v in pairs(a.fine.roles) do if v == true then fp.roles[tostring(k)] = true end end
+                if ply:IsSuperAdmin() then
+                    fp.enabled       = a.fine.enabled == true
+                    fp.allRoles      = a.fine.allRoles == true
+                    fp.ownFaction    = a.fine.ownFaction ~= false
+                    fp.otherFactions = a.fine.otherFactions == true
+                    fp.civilians     = a.fine.civilians ~= false
+                    if istable(a.fine.roles) then
+                        fp.roles = {}
+                        for k, v in pairs(a.fine.roles) do if v == true then fp.roles[tostring(k)] = true end end
+                    end
                 end
+                -- Находка 178: числа (лимит суммы и ПРОЦЕНТ со штрафа в гос.)
+                -- могут менять все с доступом к экономике; система — суперадмин.
+                fp.maxAmount = math.max(0, math.floor(tonumber(a.fine.maxAmount) or fp.maxAmount))
+                fp.statePercent = math.Clamp(math.floor(tonumber(a.fine.statePercent) or (fp.statePercent or 0)), 0, 100)
             end
             dirty = true
             save(true, "админ: настройки фракции")
@@ -1087,16 +1580,21 @@ if SERVER then
             local v = amt(a.amount)
             if v <= 0 then return end
             stateAdd(v, ("Админ %s пополнил гос.бюджет: +%s"):format(ply:Nick(), money(v)))
+            -- Находка 178: деньги физически дропаются в хранилище (паллеты)
+            if E.DropCashToVault then E.DropCashToVault(ply, v) end
             notify(ply, "Гос.бюджет: " .. money(E.Data.state.budget), 235, 180, 60)
         elseif a.action == "state_take" then
             local v = math.min(amt(a.amount), E.Data.state.budget)
             if v <= 0 then return end
             stateAdd(-v, ("Админ %s изъял из гос.бюджета: -%s"):format(ply:Nick(), money(v)))
+            -- Находка 178: изъятые деньги дропаются в хранилище (их можно подобрать)
+            if E.DropCashToVault then E.DropCashToVault(ply, v) end
             notify(ply, "Гос.бюджет: " .. money(E.Data.state.budget), 235, 180, 60)
         elseif a.action == "state_set" then
             E.Data.state.budget = amt(a.amount)
             dirty = true
             stateHist("Админ " .. ply:Nick() .. " установил гос.бюджет: " .. money(E.Data.state.budget))
+            if E.SyncVaultsState then E.SyncVaultsState() end
             notify(ply, "Гос.бюджет: " .. money(E.Data.state.budget), 235, 180, 60)
         elseif a.action == "state_to_faction" then
             if name == "" then return end
@@ -1113,7 +1611,7 @@ if SERVER then
             stateAdd(-v, ("Выплата игроку %s (админ %s)"):format(sid, ply:Nick()))
             GRM.GiveMoney(sid, v, "Выплата из гос.бюджета")
             for _, p in ipairs(player.GetAll()) do
-                if IsValid(p) and p:SteamID64() == sid then
+                if IsValid(p) and characterKeyOf(p) == sid then
                     notify(p, "Вам выплачено из гос.бюджета: " .. money(v), 100, 220, 100)
                     break
                 end
@@ -1121,7 +1619,11 @@ if SERVER then
             notify(ply, "Выплачено " .. money(v) .. " игроку " .. sid, 100, 220, 100)
 
         -- ── ИГРОКИ: балансы наличных и счетов ───────────────
+        -- Находка 177b: изменение балансов игроков — ТОЛЬКО суперадмин
+        -- (лидер/зам с доступом к экономике управляют бюджетом, а не
+        -- чужими деньгами).
         elseif a.action == "player_give" or a.action == "player_take" or a.action == "player_set" then
+            if not ply:IsSuperAdmin() then return end
             local sid, v = sidArg(), amt(a.amount)
             if sid == "" then return end
             if a.action == "player_give" then
@@ -1134,6 +1636,7 @@ if SERVER then
             local rec = GRM.GetAllBalances and GRM.GetAllBalances()[sid]
             notify(ply, "Баланс обновлён: " .. money(rec and rec.balance or 0), 100, 220, 100)
         elseif a.action == "player_bank_set" then
+            if not ply:IsSuperAdmin() then return end
             local sid, v = sidArg(), amt(a.amount)
             if sid == "" then return end
             local acc = account(sid)
@@ -1145,6 +1648,8 @@ if SERVER then
 
         -- ── ОБЩИЕ НАСТРОЙКИ ─────────────────────────────────
         elseif a.action == "config_save" and istable(a.config) then
+            -- Находка 177b: глобальные настройки — только суперадмин.
+            if not ply:IsSuperAdmin() then return end
             local c = a.config
             local out = istable(E.Data.config) and E.Data.config or {}
             local function num(key, mn, mx)
@@ -1191,7 +1696,7 @@ if SERVER then
         local players = {}
         for _, p in ipairs(player.GetAll()) do
             if IsValid(p) and p ~= ply then
-                players[#players + 1] = { nick = p:Nick(), sid64 = p:SteamID64() }
+                players[#players + 1] = { nick = p:Nick(), sid64 = characterKeyOf(p), characterKey = characterKeyOf(p) }
             end
         end
         net.Start(NET_OPEN_BANK)
@@ -1217,13 +1722,28 @@ if SERVER then
 
         if a.type == "bank_deposit" then
             if amt <= 0 then return end
+            -- потолок разумной операции за клик (анти-мусор net)
+            if amt > 2000000000 then return end
             local ok, newbal = E.BankDeposit(ply, amt)
-            if not ok then notify(ply, "Недостаточно наличных.", 255, 100, 100) return end
+            if not ok then
+                local why = newbal -- second return is error tag when false
+                if why == "cd" then notify(ply, "Слишком быстро. Подождите долю секунды.", 255, 180, 80)
+                else notify(ply, "Недостаточно наличных.", 255, 100, 100) end
+                return
+            end
             notify(ply, ("Внесено на счёт: %s (счёт: %s)"):format(money(amt), money(newbal)), 100, 220, 100)
+            -- Код 126 (Инкассация): терминал получает комиссию в инкасс-ячейку
+            local termEnt = a.ent
+            hook.Run("GRM_Incass_TerminalDeposit", ply, amt, IsValid(termEnt) and termEnt or nil)
         elseif a.type == "bank_withdraw" then
             if amt <= 0 then return end
+            if amt > 2000000000 then return end
             local ok, newbal = E.BankWithdraw(ply, amt)
-            if not ok then notify(ply, "На счёте только: " .. money(E.BankBalance(ply)), 255, 100, 100) return end
+            if not ok then
+                if newbal == "cd" then notify(ply, "Слишком быстро. Подождите долю секунды.", 255, 180, 80)
+                else notify(ply, "На счёте только: " .. money(E.BankBalance(ply)), 255, 100, 100) end
+                return
+            end
             notify(ply, ("Снято со счёта: %s (остаток: %s)"):format(money(amt), money(newbal)), 100, 220, 100)
         elseif a.type == "bank_transfer" then
             if amt <= 0 then return end
@@ -1232,7 +1752,7 @@ if SERVER then
             if not ok then notify(ply, "Перевод не выполнен: недостаточно средств на счёте.", 255, 100, 100) return end
             local target
             for _, p in ipairs(player.GetAll()) do
-                if IsValid(p) and p:SteamID64() == toSid then target = p break end
+                if IsValid(p) and characterKeyOf(p) == toSid then target = p break end
             end
             notify(ply, ("Переведено %s → %s"):format(money(amt), IsValid(target) and target:Nick() or toSid), 255, 180, 80)
             if IsValid(target) then
@@ -1261,7 +1781,7 @@ if SERVER then
             if amt <= 0 then return end
             local target
             for _, p in ipairs(player.GetAll()) do
-                if IsValid(p) and p:SteamID64() == tostring(a.to or "") then target = p break end
+                if IsValid(p) and characterKeyOf(p) == tostring(a.to or "") then target = p break end
             end
             if not IsValid(target) then notify(ply, "Получатель не в сети.", 255, 100, 100) return end
             if not GRM.HasMoney(ply, amt) then notify(ply, "Недостаточно средств.", 255, 100, 100) return end
@@ -1368,39 +1888,73 @@ if SERVER then
             return ""
         end
 
-        if cmd == "/fines" or cmd == "!fines" then
-            local iname = factionOf(ply)
-            if not iname then
-                notify(ply, "Доступ штрафов: граждане без фракции не могут штрафовать", 255, 100, 100)
-                return ""
-            end
-            local fp = entry(iname).finePerms
-            if not fp.enabled then
-                notify(ply, "Доступ штрафов: для фракции [" .. iname .. "] штрафы отключены", 255, 100, 100)
-                return ""
-            end
-            local mx = E.FineMaxFor and E.FineMaxFor(ply) or E.Config.FineMaxAmount
-            local msg = ("Доступ штрафов [%s]: включены, лимит %s, свои: %s, чужие: %s, граждане: %s"):format(
-                iname, money(mx), fp.ownFaction and "да" or "нет", fp.otherFactions and "да" or "нет", fp.civilians and "да" or "нет"
-            )
-            notify(ply, msg, 100, 220, 255)
-            return ""
-        end
-
         if cmd == "/fine" or cmd == "!fine" then
             local amt = math.floor(tonumber(args[2]) or 0)
-            local reason = table.concat(args, " ", 3)
-            if amt <= 0 then notify(ply, "/fine <сумма> [причина]", 255, 100, 100) return "" end
-            local tr = ply:GetEyeTrace()
-            local target = tr.Entity
-            if not (IsValid(target) and target:IsPlayer() and target:GetPos():DistToSqr(ply:GetPos()) <= 250 * 250) then
-                notify(ply, "Смотрите на игрока (до 250 юнитов).", 255, 100, 100)
-                return ""
+            if amt <= 0 then notify(ply, "/fine <сумма> [причина] — цель в прицеле, или /fine <сумма> <ник> [причина]", 255, 100, 100) return "" end
+            -- цель №1: по нику (часть ника, единственное совпадение)
+            local target, reason = nil, ""
+            local tail = string.Trim(table.concat(args, " ", 3))
+            if tail ~= "" then
+                local low = string.lower(tail)
+                local matches = {}
+                for _, p in ipairs(player.GetAll()) do
+                    if IsValid(p) and p ~= ply and string.find(string.lower(p:Nick()), low, 1, true) then
+                        matches[#matches + 1] = p
+                    end
+                end
+                if #matches == 1 then
+                    target = matches[1]
+                end
+            end
+            -- цель №2: игрок в прицеле (остаток строки — причина)
+            if not IsValid(target) then
+                reason = tail
+                local tr = ply:GetEyeTrace()
+                target = tr.Entity
+                if not (IsValid(target) and target:IsPlayer() and target:GetPos():DistToSqr(ply:GetPos()) <= 250 * 250) then
+                    notify(ply, "Смотрите на игрока (до 250 юнитов) или укажите ник: /fine <сумма> <ник> [причина]", 255, 100, 100)
+                    return ""
+                end
+                if target == ply then
+                    notify(ply, "Нельзя штрафовать себя.", 255, 100, 100)
+                    return ""
+                end
             end
             local ok, why = E.CanFine(ply, target)
             if not ok then notify(ply, why or "Нет доступа к системе штрафов.", 255, 100, 100) return "" end
             local okFine, issued = E.Fine(ply, target, amt, reason ~= "" and reason or "нарушение")
             if not okFine and issued then notify(ply, tostring(issued), 255, 100, 100) end
+            return ""
+        end
+
+        if cmd == "/fines" or cmd == "!fines" then
+            -- статус моих полномочий и последние штрафы фракции
+            if ply:IsSuperAdmin() then
+                notify(ply, "Суперадмин: штрафовать можете любого, лимит " .. money(E.Config.FineMaxAmount) .. ". Настройка доступов фракций: /feco_admin → вкладка фракции → «Штрафы»", 120, 200, 255)
+                return ""
+            end
+            local iname, ifac = factionOf(ply)
+            if not iname then notify(ply, "Вы не во фракции — система штрафов недоступна.", 255, 140, 100) return "" end
+            local fp = entry(iname).finePerms
+            if not fp.enabled then
+                notify(ply, "Фракция [" .. iname .. "] не имеет доступа к системе штрафов (включить: /feco_admin суперадмином).", 255, 140, 100)
+                return ""
+            end
+            local mine = {}
+            for _, h in ipairs(istable(entry(iname).history) and entry(iname).history or {}) do
+                if isstring(h.s) and string.find(h.s, "Штраф", 1, true) then mine[#mine + 1] = os.date("%d.%m %H:%M ", h.t or 0) .. h.s end
+            end
+            local lines = {
+                ("Доступ штрафов [%s]: %s | лимит вашего штрафа: %s"):format(
+                    iname,
+                    (fp.allRoles and "все роли" or "по ролям") .. (isLeaderOf(ply, ifac) and " (вы лидер — без ограничений)" or ""),
+                    money(E.FineMaxFor(ply))),
+                "Цели: свои=" .. tostring(fp.ownFaction) .. ", другие фракции=" .. tostring(fp.otherFactions) .. ", граждане=" .. tostring(fp.civilians),
+                "Недавние штрафы фракции: " .. (#mine > 0 and "" or "(пусто)"),
+            }
+            for i = math.max(1, #mine - 4), #mine do lines[#lines + 1] = "  " .. mine[i] end
+            for _, ln in ipairs(lines) do ply:PrintMessage(HUD_PRINTTALK, "[Штрафы] " .. ln) end
+            notify(ply, "Статус системы штрафов — в чате.", 120, 200, 255)
             return ""
         end
     end)
@@ -1533,23 +2087,37 @@ if CLIENT then
         net.SendToServer()
     end
 
-    local function buildAdminUI(d)
-        if not IsValid(adminFrame) then return end
-        -- GRM-FIX: НЕ adminFrame:Clear() — он удалял служебные дети DFrame
-        -- (btnClose/btnMaxim/btnMinim/lblTitle), из-за чего PerformLayout
-        -- падал с "Tried to use a NULL Panel!" (dframe.lua, SetPos).
-        -- Снимаем только наши панели, потомки DFrame не трогаем.
-        for _, ch in ipairs(adminFrame:GetChildren()) do
-            if ch ~= adminFrame.btnClose and ch ~= adminFrame.btnMaxim
-                and ch ~= adminFrame.btnMinim and ch ~= adminFrame.lblTitle
-                and ch ~= adminFrame.imgIcon and not ch._grmChrome then
-                ch:Remove()
+    local function buildAdminUI(d, parentTabs)
+        -- parentTabs (находка 172): встроить панель в чужие вкладки (/factions).
+        -- Если не задан — строим в собственном окне adminFrame.
+        -- Находка 177b: доступ к экономике может быть у лидера/зама (Нацбанк),
+        -- но АДМИНИСТРАТИВНЫЕ функции — только у суперадмина:
+        --   • вкладка «Настройки» — суперадмин;
+        --   • «Игроки»: без кнопок изъять/установить (просмотр);
+        --   • «Фракции» → «Штрафы»: настройка прав штрафов — только суперадмин.
+        local isSuper = IsValid(LocalPlayer()) and LocalPlayer():IsSuperAdmin() == true
+        local tabs
+        local f
+        if IsValid(parentTabs) then
+            tabs = parentTabs
+            f = parentTabs
+        else
+            if not IsValid(adminFrame) then return end
+            -- GRM-FIX: НЕ adminFrame:Clear() — он удалял служебные дети DFrame
+            -- (btnClose/btnMaxim/btnMinim/lblTitle), из-за чего PerformLayout
+            -- падал с "Tried to use a NULL Panel!" (dframe.lua, SetPos).
+            -- Снимаем только наши панели, потомки DFrame не трогаем.
+            for _, ch in ipairs(adminFrame:GetChildren()) do
+                if ch ~= adminFrame.btnClose and ch ~= adminFrame.btnMaxim
+                    and ch ~= adminFrame.btnMinim and ch ~= adminFrame.lblTitle
+                    and ch ~= adminFrame.imgIcon and not ch._grmChrome then
+                    ch:Remove()
+                end
             end
+            f = adminFrame
+            tabs = vgui.Create("DPropertySheet", f)
+            tabs:Dock(FILL) tabs:DockMargin(8, 44, 8, 8)
         end
-
-        local f = adminFrame
-        local tabs = vgui.Create("DPropertySheet", f)
-        tabs:Dock(FILL) tabs:DockMargin(8, 44, 8, 8)
 
         -- запоминаем активную вкладку, чтобы пересборка свежими данными
         -- возвращала админа на ту же вкладку (без переоткрытия окна)
@@ -1604,7 +2172,8 @@ if CLIENT then
         do
             local p = sheetPanel("Обзор", "icon16/chart_bar.png")
             lbl(p, "Единая панель управления экономикой сервера", CUI.text, 12, 10, 800, "GRM_Eco_Title")
-            lbl(p, "Доступ: только superadmin. Изменения сохраняются сразу и пишутся в фин.лог.", CUI.dim, 12, 36, 900)
+            lbl(p, isSuper and "Доступ: только superadmin. Изменения сохраняются сразу и пишутся в фин.лог."
+                or "Режим: доступ к экономике фракции. Административные функции (игроки, штрафы, настройки) — только superadmin.", CUI.dim, 12, 36, 900)
 
             lbl(p, "ГОС.БЮДЖЕТ: " .. money(st.budget or 0), CUI.yellow, 12, 70, 800, "GRM_Eco_Title")
             lbl(p, ("Счетов игроков: %d | Наличными на руках: %s | На банковских счетах: %s"):format(
@@ -1629,8 +2198,13 @@ if CLIENT then
             bg.DoClick = function() act({ action = "state_give", amount = getAmt(amt) }) end
             local bt = btn(p, "Изъять", CUI.red, 100, 26) bt:SetPos(296, 66)
             bt.DoClick = function() act({ action = "state_take", amount = getAmt(amt) }) end
-            local bs = btn(p, "Установить", CUI.accent, 110, 26) bs:SetPos(402, 66)
-            bs.DoClick = function() act({ action = "state_set", amount = getAmt(amt) }) end
+            -- Находка 178: «Установить» гос.бюджет — только суперадмин
+            -- (лидер/зам/доступные могут пополнять и изымать, но не
+            -- назначать сумму произвольно).
+            if isSuper then
+                local bs = btn(p, "Установить", CUI.accent, 110, 26) bs:SetPos(402, 66)
+                bs.DoClick = function() act({ action = "state_set", amount = getAmt(amt) }) end
+            end
 
             lbl(p, "Перечислить фракции:", CUI.text, 12, 106, 150)
             local cmb = vgui.Create("DComboBox", p)
@@ -1648,7 +2222,7 @@ if CLIENT then
             cmb2:SetPos(170, 138) cmb2:SetSize(250, 26)
             cmb2:SetValue("Игрок (все известные)...")
             for sid, rec in pairs(d.players or {}) do
-                cmb2:AddChoice(tostring(rec.name or sid) .. " (" .. sid .. ")", sid)
+                cmb2:AddChoice(tostring(rec.rpName or rec.name or sid) .. " (" .. tostring(rec.characterLabel or "Персонаж") .. ")", sid)
             end
             local bp = btn(p, "Выплатить из гос.", CUI.green, 180, 26) bp:SetPos(430, 138)
             bp.DoClick = function()
@@ -1666,35 +2240,43 @@ if CLIENT then
             local list = vgui.Create("DListView", p)
             list:SetPos(4, 4) list:SetSize(940, 400)
             list:SetMultiSelect(false)
-            list:AddColumn("Ник") list:AddColumn("Наличные") list:AddColumn("Счёт в банке") list:AddColumn("SteamID64")
+            list:AddColumn("Игрок / персонаж") list:AddColumn("Наличные") list:AddColumn("Счёт в банке")
 
             local sids = {}
             for sid in pairs(d.players or {}) do sids[#sids + 1] = sid end
             table.sort(sids, function(a1, b1)
-                return tostring((d.players[a1] or {}).name or a1):lower() < tostring((d.players[b1] or {}).name or b1):lower()
+                return tostring((d.players[a1] or {}).rpName or (d.players[a1] or {}).name or a1):lower() < tostring((d.players[b1] or {}).rpName or (d.players[b1] or {}).name or b1):lower()
             end)
             for _, sid in ipairs(sids) do
                 local rec = d.players[sid]
-                local ln = list:AddLine(tostring(rec.name or "?"), money(rec.balance or 0), money(rec.bank or 0), sid)
+                local display = tostring(rec.rpName or rec.name or "?") .. "  (" .. tostring(rec.characterLabel or "Персонаж") .. ")"
+                local ln = list:AddLine(display, money(rec.balance or 0), money(rec.bank or 0))
                 ln.Sid = sid
             end
 
             local sel = lbl(p, "Выберите игрока в таблице", CUI.text, 12, 414, 920)
-            local amt = amtEntry(p, 12, 442, 140)
-            local function forSel(mk)
-                return function()
-                    if not f._playerSid then return end
-                    act(mk(f._playerSid, getAmt(amt)))
+            -- Находка 177b: кнопки изменения балансов игроков (выдать/изъять/
+            -- установить) — ТОЛЬКО суперадмин. Лидер/зам с доступом к экономике
+            -- видят список (просмотр), но менять балансы не могут.
+            if isSuper then
+                local amt = amtEntry(p, 12, 442, 140)
+                local function forSel(mk)
+                    return function()
+                        if not f._playerSid then return end
+                        act(mk(f._playerSid, getAmt(amt)))
+                    end
                 end
+                local b1 = btn(p, "Выдать", CUI.green, 100, 26) b1:SetPos(160, 442)
+                b1.DoClick = forSel(function(sid, v) return { action = "player_give", sid = sid, amount = v } end)
+                local b2 = btn(p, "Изъять", CUI.red, 100, 26) b2:SetPos(266, 442)
+                b2.DoClick = forSel(function(sid, v) return { action = "player_take", sid = sid, amount = v } end)
+                local b3 = btn(p, "Установить наличные", CUI.accent, 180, 26) b3:SetPos(372, 442)
+                b3.DoClick = forSel(function(sid, v) return { action = "player_set", sid = sid, amount = v } end)
+                local b4 = btn(p, "Установить счёт", CUI.yellow, 160, 26) b4:SetPos(558, 442)
+                b4.DoClick = forSel(function(sid, v) return { action = "player_bank_set", sid = sid, amount = v } end)
+            else
+                lbl(p, "Просмотр балансов. Изменение балансов игроков — только superadmin.", CUI.dim, 12, 448, 920)
             end
-            local b1 = btn(p, "Выдать", CUI.green, 100, 26) b1:SetPos(160, 442)
-            b1.DoClick = forSel(function(sid, v) return { action = "player_give", sid = sid, amount = v } end)
-            local b2 = btn(p, "Изъять", CUI.red, 100, 26) b2:SetPos(266, 442)
-            b2.DoClick = forSel(function(sid, v) return { action = "player_take", sid = sid, amount = v } end)
-            local b3 = btn(p, "Установить наличные", CUI.accent, 180, 26) b3:SetPos(372, 442)
-            b3.DoClick = forSel(function(sid, v) return { action = "player_set", sid = sid, amount = v } end)
-            local b4 = btn(p, "Установить счёт", CUI.yellow, 160, 26) b4:SetPos(558, 442)
-            b4.DoClick = forSel(function(sid, v) return { action = "player_bank_set", sid = sid, amount = v } end)
 
             local function showSel(sid)
                 local rec = (d.players or {})[sid]
@@ -1849,82 +2431,112 @@ if CLIENT then
                 end
 
                 -- ── ПОДВКЛАДКА: ШТРАФЫ (доступ фракции к /fine) ──
+                -- Находка 177b/177c/178: СИСТЕМУ штрафов (включение, категории
+                -- целей, роли) настраивает только суперадмин; лидер/зам/
+                -- доступные могут менять только ЧИСЛА: ПРОЦЕНТ со штрафа в
+                -- гос.бюджет (банковская система) и лимит (суперадмин).
                 local pf = vgui.Create("DPanel", sub)
                 pf:SetPaintBackground(false)
                 sub:AddSheet("Штрафы", pf, "icon16/accept.png")
 
-                label(pf, "Доступ фракции [" .. name .. "] к системе штрафов", 10, 8, CUI.text, 560)
+                local maxW = nil  -- лимит суммы (только суперадмин)
+                local pctW = nil  -- процент со штрафа в гос.бюджет (все с доступом)
+                if isSuper then
+                    label(pf, "Доступ фракции [" .. name .. "] к системе штрафов", 10, 8, CUI.text, 560)
 
-                local chEn = vgui.Create("DCheckBoxLabel", pf)
-                chEn:SetPos(10, 36) chEn:SetSize(560, 22)
-                chEn:SetText("Фракции РАЗРЕШЕНО штрафовать (команда /fine)")
-                chEn:SetTextColor(CUI.text) chEn:SetValue(fp.enabled and 1 or 0)
+                    local chEn = vgui.Create("DCheckBoxLabel", pf)
+                    chEn:SetPos(10, 36) chEn:SetSize(560, 22)
+                    chEn:SetText("Фракции РАЗРЕШЕНО штрафовать (команда /fine)")
+                    chEn:SetTextColor(CUI.text) chEn:SetValue(fp.enabled and 1 or 0)
 
-                local chAll = vgui.Create("DCheckBoxLabel", pf)
-                chAll:SetPos(10, 62) chAll:SetSize(560, 22)
-                chAll:SetText("Штрафовать могут ВСЕ члены фракции (выкл — лидер + роли ниже)")
-                chAll:SetTextColor(CUI.text) chAll:SetValue(fp.allRoles and 1 or 0)
+                    local chAll = vgui.Create("DCheckBoxLabel", pf)
+                    chAll:SetPos(10, 62) chAll:SetSize(560, 22)
+                    chAll:SetText("Штрафовать могут ВСЕ члены фракции (выкл — лидер + роли ниже)")
+                    chAll:SetTextColor(CUI.text) chAll:SetValue(fp.allRoles and 1 or 0)
 
-                local chOwn = vgui.Create("DCheckBoxLabel", pf)
-                chOwn:SetPos(10, 88) chOwn:SetSize(560, 22)
-                chOwn:SetText("Можно штрафовать СВОИХ членов фракции")
-                chOwn:SetTextColor(CUI.text) chOwn:SetValue(fp.ownFaction and 1 or 0)
+                    local chOwn = vgui.Create("DCheckBoxLabel", pf)
+                    chOwn:SetPos(10, 88) chOwn:SetSize(560, 22)
+                    chOwn:SetText("Можно штрафовать СВОИХ членов фракции")
+                    chOwn:SetTextColor(CUI.text) chOwn:SetValue(fp.ownFaction and 1 or 0)
 
-                local chOther = vgui.Create("DCheckBoxLabel", pf)
-                chOther:SetPos(10, 114) chOther:SetSize(560, 22)
-                chOther:SetText("Можно штрафовать членов ДРУГИХ ФРАКЦИЙ")
-                chOther:SetTextColor(CUI.text) chOther:SetValue(fp.otherFactions and 1 or 0)
+                    local chOther = vgui.Create("DCheckBoxLabel", pf)
+                    chOther:SetPos(10, 114) chOther:SetSize(560, 22)
+                    chOther:SetText("Можно штрафовать членов ДРУГИХ ФРАКЦИЙ")
+                    chOther:SetTextColor(CUI.text) chOther:SetValue(fp.otherFactions and 1 or 0)
 
-                local chCiv = vgui.Create("DCheckBoxLabel", pf)
-                chCiv:SetPos(10, 140) chCiv:SetSize(560, 22)
-                chCiv:SetText("Можно штрафовать ГРАЖДАН (игроков без фракции)")
-                chCiv:SetTextColor(CUI.text) chCiv:SetValue(fp.civilians and 1 or 0)
+                    local chCiv = vgui.Create("DCheckBoxLabel", pf)
+                    chCiv:SetPos(10, 140) chCiv:SetSize(560, 22)
+                    chCiv:SetText("Можно штрафовать ГРАЖДАН (игроков без фракции)")
+                    chCiv:SetTextColor(CUI.text) chCiv:SetValue(fp.civilians and 1 or 0)
 
-                label(pf, "Лимит суммы штрафа (0 = общий максимум):", 10, 174)
-                local maxW = wang(pf, 330, 172, 110, fp.maxAmount or 0, 100000000)
+                    label(pf, "Лимит суммы штрафа (0 = общий максимум):", 10, 174)
+                    maxW = wang(pf, 330, 172, 110, fp.maxAmount or 0, 100000000)
 
-                label(pf, "Роли с правом штрафовать:", 10, 206, CUI.text, 340)
-                local rolesFine = vgui.Create("DScrollPanel", pf)
-                rolesFine:SetPos(10, 230) rolesFine:SetSize(340, 240)
-                rolesFine.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
-                for _, rName in ipairs(fd.roles or {}) do
-                    local c = vgui.Create("DCheckBoxLabel", rolesFine)
-                    c:Dock(TOP) c:SetTall(20) c:DockMargin(8, 1, 4, 1)
-                    c:SetText(rName) c:SetTextColor(CUI.text)
-                    c:SetValue((fp.roles or {})[rName] and 1 or 0)
-                    fineChks[rName] = c
+                    label(pf, "Процент со штрафа в ГОС.БЮДЖЕТ, % (0-100):", 10, 206)
+                    pctW = wang(pf, 330, 204, 110, fp.statePercent or 0, 100)
+
+                    label(pf, "Роли с правом штрафовать:", 10, 240, CUI.text, 340)
+                    local rolesFine = vgui.Create("DScrollPanel", pf)
+                    rolesFine:SetPos(10, 264) rolesFine:SetSize(340, 200)
+                    rolesFine.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(22, 28, 38, 240)) end
+                    for _, rName in ipairs(fd.roles or {}) do
+                        local c = vgui.Create("DCheckBoxLabel", rolesFine)
+                        c:Dock(TOP) c:SetTall(20) c:DockMargin(8, 1, 4, 1)
+                        c:SetText(rName) c:SetTextColor(CUI.text)
+                        c:SetValue((fp.roles or {})[rName] and 1 or 0)
+                        fineChks[rName] = c
+                    end
+
+                    label(pf, "Правила: superadmin может всегда. Лидер фракции —", 370, 264, CUI.dim, 340)
+                    label(pf, "всегда, если включён сам доступ. Отмеченные роли", 370, 286, CUI.dim, 340)
+                    label(pf, "штрафуют дополнительно к лидеру. Категории целей", 370, 308, CUI.dim, 340)
+                    label(pf, "(свои / другие фракции / граждане) настраиваются", 370, 330, CUI.dim, 340)
+                    label(pf, "отдельно. Процент со штрафа идёт в гос.бюджет.", 370, 352, CUI.dim, 340)
+                else
+                    -- не-суперадмин (банковский работник): ПРОЦЕНТ со штрафа
+                    label(pf, "Фракция [" .. name .. "] — процент со штрафа", 10, 8, CUI.text, 560)
+                    label(pf, "Систему штрафов (включение /fine, категории целей, роли) настраивает только superadmin.", 10, 34, CUI.dim, 560)
+                    label(pf, "Процент со штрафа в ГОС.БЮДЖЕТ, % (0-100):", 10, 66)
+                    pctW = wang(pf, 330, 64, 110, fp.statePercent or 0, 100)
+                    label(pf, "Указанный процент каждого штрафа фракции уходит в гос.бюджет (хранилище), остальное — в бюджет фракции.", 10, 98, CUI.dim, 560)
+                    label(pf, "Пополнение/изъятие гос.бюджета дропает деньги в хранилище банка.", 10, 122, CUI.dim, 560)
                 end
 
-                label(pf, "Правила: superadmin может всегда. Лидер фракции —", 370, 230, CUI.dim, 340)
-                label(pf, "всегда, если включён сам доступ. Отмеченные роли", 370, 252, CUI.dim, 340)
-                label(pf, "штрафуют дополнительно к лидеру. Категории целей", 370, 274, CUI.dim, 340)
-                label(pf, "(свои / другие фракции / граждане) настраиваются", 370, 296, CUI.dim, 340)
-                label(pf, "отдельно. Лимит суммы перекрывает общий лимит.", 370, 318, CUI.dim, 340)
-
-                -- ЕДИНОЕ сохранение: зарплаты + права штрафов одним пакетом
+                -- ЕДИНОЕ сохранение: зарплаты + (для суперадмина) права штрафов
+                -- Находка 177b: настройку штрафов (fine) лидер/зам/доступные НЕ
+                -- отправляют — сервер её тоже игнорирует для не-суперадминов.
                 local function doSave()
                     local roles, depts = {}, {}
                     for k, wn in pairs(rolesTbl) do roles[k] = math.floor(tonumber(wn:GetValue()) or 0) end
                     for k, wn in pairs(deptsTbl) do depts[k] = math.floor(tonumber(wn:GetValue()) or 0) end
-                    local froles = {}
-                    for k, c in pairs(fineChks) do if c:GetChecked() then froles[k] = true end end
-                    act({
+                    local payload = {
                         action = "save_entry", faction = name,
                         taxRate = math.Clamp((tonumber(taxW:GetValue()) or 0) / 100, 0, 1),
                         baseSalary = math.floor(tonumber(baseW:GetValue()) or 0),
                         salaryInterval = math.floor(tonumber(intW:GetValue()) or 600),
                         payFromBudget = pfb:GetChecked(),
                         roles = roles, departments = depts,
-                        fine = {
+                    }
+                    if isSuper then
+                        local froles = {}
+                        for k, c in pairs(fineChks) do if c:GetChecked() then froles[k] = true end end
+                        payload.fine = {
                             enabled = chEn:GetChecked(),
                             allRoles = chAll:GetChecked(),
                             ownFaction = chOwn:GetChecked(),
                             otherFactions = chOther:GetChecked(),
                             civilians = chCiv:GetChecked(),
                             maxAmount = math.max(0, math.floor(tonumber(maxW:GetValue()) or 0)),
+                            statePercent = math.Clamp(math.floor(tonumber(pctW:GetValue()) or 0), 0, 100),
                             roles = froles,
-                        },
-                    })
+                        }
+                    elseif pctW then
+                        -- находка 178: не-суперадмин меняет ПРОЦЕНТ со штрафа (число)
+                        payload.fine = {
+                            statePercent = math.Clamp(math.floor(tonumber(pctW:GetValue()) or 0), 0, 100),
+                        }
+                    end
+                    act(payload)
                     -- окно НЕ переоткрываем: сервер пришлёт свежие данные,
                     -- и этот же фрейм пересоберётся через buildAdminUI.
                 end
@@ -1938,9 +2550,11 @@ if CLIENT then
                     act({ action = "pay_now", faction = name })
                 end
 
-                local saveF = btn(pf, "Сохранить", CUI.green, 150, 32)
-                saveF:SetPos(10, 520)
-                saveF.DoClick = doSave
+                if isSuper and IsValid(pf) then
+                    local saveF = btn(pf, "Сохранить", CUI.green, 150, 32)
+                    saveF:SetPos(10, 520)
+                    saveF.DoClick = doSave
+                end
 
                 -- GRM-FIX: применяем РЕАЛЬНЫЕ размеры страниц при раскладке
                 pz.PerformLayout = function(_, w, h)
@@ -1955,9 +2569,11 @@ if CLIENT then
                     if IsValid(saveZ)    then saveZ:SetPos(10, h - 42) end
                     if IsValid(payNow)   then payNow:SetPos(170, h - 42) end
                 end
-                pf.PerformLayout = function(_, w, h)
-                    if IsValid(rolesFine) then rolesFine:SetSize(340, math.max(80, h - 230 - 56)) end
-                    if IsValid(saveF)     then saveF:SetPos(10, h - 42) end
+                if isSuper and IsValid(pf) then
+                    pf.PerformLayout = function(_, w, h)
+                        if IsValid(rolesFine) then rolesFine:SetSize(340, math.max(80, h - 230 - 56)) end
+                        if IsValid(saveF)     then saveF:SetPos(10, h - 42) end
+                    end
                 end
             end
 
@@ -1980,8 +2596,10 @@ if CLIENT then
             histBox(p, d.log or {}, 12, 40, 932, 480)
         end
 
-        -- ═══ ВКЛАДКА 6: НАСТРОЙКИ ═══
-        do
+        -- ═══ ВКЛАДКА 6: НАСТРОЙКИ (ТОЛЬКО СУПЕРАДМИН, находка 177b) ═══
+        -- Лидер/зам/доступные её не видят: глобальные настройки экономики —
+        -- прерогатива владельца сервера.
+        if isSuper then do
             local p = sheetPanel("Настройки", "icon16/cog.png")
             lbl(p, "Общие настройки экономики — применяются сразу, хранятся в grm_economy.json", CUI.text, 12, 8, 920)
 
@@ -2044,15 +2662,74 @@ if CLIENT then
                 if mdl ~= "" then out.BankTerminalModel = mdl end
                 act({ action = "config_save", config = out })
             end
+        end end -- if isSuper (вкладка «Настройки»)
+    end
+
+    -- Встраивание панели экономики в другие меню (находка 172: /factions)
+    GRM.Economy.EmbeddedAdmin = nil
+    function GRM.Economy.BuildAdminContent(parent, d)
+        if not IsValid(parent) then return end
+        parent:Clear()
+        local tabs = vgui.Create("DPropertySheet", parent)
+        tabs:Dock(FILL)
+        buildAdminUI(d or {}, tabs)
+        return tabs
+    end
+    function GRM.Economy.EmbedAdminPanel(panel)
+        if IsValid(panel) then
+            GRM.Economy.EmbeddedAdmin = panel
+            panel.OnRemove = function()
+                if GRM.Economy.EmbeddedAdmin == panel then GRM.Economy.EmbeddedAdmin = nil end
+            end
+        else
+            GRM.Economy.EmbeddedAdmin = nil
         end
     end
 
-    net.Receive(NET_ADMIN_DATA, function()
-        local d = net.ReadTable() or {}
+    -- Находка 180: приём админ-данных ЧАНКАМИ (сервер шлёт base → log →
+    -- players порциями). Собираем в ecoPending и строим UI по факту
+    -- получения последнего чанка игроков.
+    local ecoPending = nil
+    local ecoPlayersTotal = nil
+    local function ecoFinalize()
+        local d = ecoPending
+        ecoPending = nil
+        ecoPlayersTotal = nil
+        if not d then return end
         if IsValid(adminFrame) then
             -- окно НЕ переоткрывается; UI пересобирается на месте,
             -- выбранная фракция восстанавливается через _restoreFaction.
             buildAdminUI(d)
+        end
+        -- обновить встроенную панель (/factions → «Экономика»)
+        -- Находка 177: раньше вызывалось _embeddedBuild(EmbeddedAdmin, d) —
+        -- build(d) принимал ОДИН аргумент, и в d попадала панель, а данные
+        -- терялись: фракции/игроки/гос.бюджет в /factions были пустыми.
+        -- Теперь данные всегда во втором аргументе (build защищён и от
+        -- вызова с одним аргументом).
+        if IsValid(GRM.Economy.EmbeddedAdmin) and isfunction(GRM.Economy._embeddedBuild) then
+            GRM.Economy._embeddedBuild(GRM.Economy.EmbeddedAdmin, d)
+        end
+    end
+
+    net.Receive(NET_ADMIN_DATA, function()
+        local kind = net.ReadString()
+        if kind == "base" then
+            local d = net.ReadTable() or {}
+            d.players = {}
+            d.log = {}
+            ecoPending = d
+            ecoPlayersTotal = nil
+        elseif kind == "log" then
+            if ecoPending then ecoPending.log = net.ReadTable() or {} end
+        elseif kind == "players" then
+            if not ecoPending then return end
+            local idx = net.ReadUInt(16)
+            local total = net.ReadUInt(16)
+            if not ecoPlayersTotal then ecoPlayersTotal = total end
+            local part = net.ReadTable() or {}
+            for sid, rec in pairs(part) do ecoPending.players[sid] = rec end
+            if idx >= ecoPlayersTotal then ecoFinalize() end
         end
     end)
 
@@ -2073,13 +2750,23 @@ if CLIENT then
         sheet:Dock(FILL)
         sheet:DockMargin(8, 34, 8, 8)
 
+        local bankBusy = false
         local function bankAction(t, amtEntry, extra)
-            local a = math.floor(tonumber(amtEntry:GetValue()) or 0)
+            if bankBusy then return end
+            local raw = string.Trim(tostring(amtEntry:GetValue() or ""))
+            -- только цифры (без "1e6" / мусора)
+            if raw == "" or string.match(raw, "[^0-9]") then return end
+            local a = math.floor(tonumber(raw) or 0)
             if a <= 0 then return end
+            bankBusy = true
             net.Start(NET_BANK_ACT)
-                net.WriteTable({ type = t, amount = a, to = extra })
+                -- Код 126: передаём ent (банкомат), чтобы сервер знал, какой терминал пополняется комиссией
+                net.WriteTable({ type = t, amount = a, to = extra, ent = ent })
             net.SendToServer()
-            f:Close()
+            -- не закрываем мгновенно — даём серверу ответить; закрытие через 0.2
+            timer.Simple(0.2, function()
+                if IsValid(f) then f:Close() end
+            end)
         end
 
         local function tabLabel(p, txt, col, x, y)
@@ -2180,5 +2867,5 @@ if CLIENT then
         net.Start(NET_OPEN_ADMIN) net.SendToServer()
     end)
 
-    print("[GRM Economy] Unified Economy v3.0.2 — клиент загружен")
+    print("[GRM Economy] Unified Economy v3.0.3 — клиент загружен")
 end

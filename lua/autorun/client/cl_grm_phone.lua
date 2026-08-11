@@ -58,6 +58,38 @@ net.Receive(NET_INFO, function()
     surface.PlaySound(bad and "buttons/button10.wav" or "buttons/button17.wav")
 end)
 
+-- NET_SYNC: сервер рассылает актуальное состояние сущностей линий
+-- (P.SyncEntity → broadcast). Приёмника раньше не было — пакеты падали
+-- в никуда (аудит протоколов). Сообщение самодостаточно: нижнечтение
+-- безопасно. Кэшируем без изменения поведения — пригодится UI телефона.
+local NET_SYNC_PH = "GRM_Phone_Sync"
+net.Receive(NET_SYNC_PH, function()
+    local ent = net.ReadEntity()
+    local class = net.ReadString()
+    if not IsValid(ent) then return end
+    local rec = { class = class }
+    local ok = pcall(function()
+        if class == "grm_phone" or class == "grm_payphone" then
+            rec.number = net.ReadString()
+            rec.displayName = net.ReadString()
+            rec.exchange = net.ReadString()
+            rec.lineState = net.ReadString()
+            rec.callId = net.ReadUInt(16)
+        elseif class == "grm_pbx_station" then
+            rec.exchange = net.ReadString()
+            rec.active = net.ReadBool()
+            rec.maxLines = net.ReadUInt(12)
+        elseif class == "grm_phone_wiretap" then
+            rec.targetNumber = net.ReadString()
+            rec.exchange = net.ReadString()
+            rec.active = net.ReadBool()
+        end
+    end)
+    if not ok then return end
+    GRM.Phone._syncCache = GRM.Phone._syncCache or {}
+    GRM.Phone._syncCache[ent] = rec
+end)
+
 net.Receive(NET_TEXT, function()
     local speaker = net.ReadEntity()
     local callID = net.ReadUInt(16)
@@ -84,6 +116,7 @@ net.Receive(NET_OPEN_PHONE, function()
     local callID = net.ReadUInt(16)
 
     local f = vgui.Create("DFrame")
+    GRM.UI.Track("phone", f)
     f:SetTitle("")
     f:SetSize(360, 310)
     f:Center()
@@ -131,6 +164,7 @@ net.Receive(NET_OPEN_PBX, function()
     local maxLines = net.ReadUInt(12)
 
     local f = vgui.Create("DFrame")
+    GRM.UI.Track("phone_pbx", f)
     f:SetTitle("АТС")
     f:SetSize(380, 230)
     f:Center(); f:MakePopup()
@@ -170,6 +204,7 @@ net.Receive(NET_OPEN_WIRETAP, function()
     local active = net.ReadBool()
 
     local f = vgui.Create("DFrame")
+    GRM.UI.Track("phone_wiretap", f)
     f:SetTitle("Оборудование прослушки")
     f:SetSize(400, 250)
     f:Center(); f:MakePopup()
@@ -203,6 +238,7 @@ net.Receive(NET_OPEN_TERMINAL, function()
     local data = net.ReadTable() or { phones = {}, exchanges = {}, calls = {} }
 
     local f = vgui.Create("DFrame")
+    GRM.UI.Track("phone_terminal", f)
     f:SetTitle("Компьютер мониторинга связи")
     f:SetSize(760, 560)
     f:Center()

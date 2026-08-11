@@ -46,6 +46,51 @@ local function register(class, name, kind, spawnable)
                 return true
             end
         end
+
+        -- PERM-DATA (Код 112): сохранение настроек для /permadd
+        function ENT:GetPermData()
+            local d = {}
+            d.factionName = self:GetFactionName()
+            d.networkID   = self:GetNetworkID()
+            d.pointName   = self:GetPointName()
+            d.factionMode = self:GetFactionMode()
+            d.cargoKind   = self:GetCargoKind()
+            d.cargoID     = self:GetCargoID()
+            d.cargoAmount = self:GetCargoAmount()
+            d.capacity    = self:GetCapacity()
+            -- Дополнительные данные из GRM.Logistics
+            if GRM.Logistics then
+                if self.LogisticsKind == "warehouse" then
+                    local wd = GRM.Logistics.GetWarehouseData and GRM.Logistics.GetWarehouseData(self)
+                    if wd then d.warehouseData = wd end
+                elseif self.LogisticsKind == "armory" then
+                    local ad = GRM.Logistics.GetArmoryData and GRM.Logistics.GetArmoryData(self)
+                    if ad then d.armoryData = ad end
+                end
+            end
+            return d
+        end
+
+        function ENT:ApplyPermData(data)
+            if not data then return end
+            if data.factionName then self:SetFactionName(data.factionName) end
+            if data.networkID then self:SetNetworkID(data.networkID) end
+            if data.pointName then self:SetPointName(data.pointName) end
+            if data.factionMode ~= nil then self:SetFactionMode(data.factionMode) end
+            if data.cargoKind then self:SetCargoKind(data.cargoKind) end
+            if data.cargoID then self:SetCargoID(data.cargoID) end
+            if data.cargoAmount then self:SetCargoAmount(data.cargoAmount) end
+            if data.capacity then self:SetCapacity(data.capacity) end
+            -- Восстановление данных склада/шкафа
+            if GRM.Logistics then
+                if data.warehouseData and GRM.Logistics.RestoreWarehouseData then
+                    GRM.Logistics.RestoreWarehouseData(self, data.warehouseData)
+                end
+                if data.armoryData and GRM.Logistics.RestoreArmoryData then
+                    GRM.Logistics.RestoreArmoryData(self, data.armoryData)
+                end
+            end
+        end
     else
         function ENT:Draw() self:DrawModel() end
     end
