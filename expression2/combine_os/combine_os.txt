@@ -1,0 +1,920 @@
+@name CMB-OS // UNIFIED OPERATING SYSTEM
+@inputs Screen:wirelink Text:string Entered TextUser:entity
+@outputs Online Devices Terminals Monitors Sensors Occupied Alarm Dirty Status:string
+@outputs [Red1 Red2 Red3 Red4 Red5 Red6 Red7 Red8 Red9 Red10]:number
+@outputs [Yellow1 Yellow2 Yellow3 Yellow4 Yellow5 Yellow6 Yellow7 Yellow8 Yellow9 Yellow10]:number
+@outputs [Green1 Green2 Green3 Green4 Green5 Green6 Green7 Green8 Green9 Green10]:number
+@outputs [Switch1 Switch2 Switch3 Switch4 Switch5 Switch6 Switch7 Switch8 Switch9 Switch10]:number
+@persist Owner:entity Accounts:table Notes:table LinkCfg:table ManualAsp:table SwitchCfg:table Mail:table
+@persist TermLink:table MonitorLink:table SensorLink:table FoundTerms:array FoundMonitors:array FoundSensors:array
+@persist SensorHit:table SensorClear:table Occ:table Asp:table Sessions:table
+@persist Configured NextNote Initialized LoadAsked SaveDirty DiscoverStep SensorCursor
+@persist ScreenInit ScreenMsg:string ScreenMsgUntil
+@trigger none
+@strict
+
+#ifndef fileWrite(ss)
+    #error CMB-OS requires the Files E2 extension for persistent notes and accounts.
+#endif
+#ifndef jsonEncode(t)
+    #error CMB-OS requires the Serialization E2 extension.
+#endif
+#ifndef egpClear(xwl:)
+    #error CMB-OS requires the EGP E2 extension.
+#endif
+#ifndef findByModel(s)
+    #error CMB-OS requires the Find E2 extension.
+#endif
+#ifndef rangerOffsetHull(nvvv)
+    #error CMB-OS requires the Ranger E2 extension.
+#endif
+#ifndef entity:setSkin(number)
+    #error CMB-OS requires the default Entity skin API.
+#endif
+
+#[ ============================================================================
+   CMB-OS // UNIFIED OPERATING SYSTEM
+
+   ОДИН E2-чип без @model. Он не спавнит и не заменяет собой Combine-пропы.
+   Вместо этого ОС обнаруживает уже существующие пропы:
+
+     TERMINAL  models/props_combine/combine_interface001.mdl
+     MONITOR   models/props_combine/combine_intmonitor001.mdl
+     SENSOR    models/hunter/blocks/cube025x025x025.mdl
+
+   Text Entry / EGP Screen подключаются проводом только к этому единственному
+   E2. Обычные prop не имеют Wire-портов, поэтому связь с нужным prop делается
+   командой LINK при наведении на него. После этого SKIN меняет его skin 0/1.
+
+   Физический E2 всё равно существует в движке, но @model здесь намеренно нет:
+   чип не становится терминалом, монитором и не создаёт их.
+
+   Первое включение владельцем через Text Entry:
+     BOOTSTRAP <PIN>
+   Затем:
+     LOGIN root <PIN>
+   ========================================================================== ]#
+
+# --- Настройки -----------------------------------------------------------------
+const StoreFile = "caos_unified_a01.json"
+const MaxSlots = 10                    # максимум связанных terminal/monitor/sensor
+const SensorHeight = 84                # зона контроля над внешним кубом, units
+const SensorHalfWidth = 13             # полуразмер hull, units
+const SensorDebounce = 2               # одинаковых скана для смены Occupied
+const LinkRadius = 72                  # поиск prop у сохранённой позиции после рестарта
+
+const M_TERMINAL = "models/props_combine/combine_interface001.mdl"
+const M_MONITOR = "models/props_combine/combine_intmonitor001.mdl"
+const M_SENSOR = "models/hunter/blocks/cube025x025x025.mdl"
+
+# --- Явная инициализация до функций для чистой @strict-компиляции -------------
+Owner = owner()
+Accounts = table()
+Notes = table()
+LinkCfg = table()
+ManualAsp = table()
+SwitchCfg = table()
+Mail = table()
+TermLink = table()
+MonitorLink = table()
+SensorLink = table()
+FoundTerms = array()
+FoundMonitors = array()
+FoundSensors = array()
+SensorHit = table()
+SensorClear = table()
+Occ = table()
+Asp = table()
+Sessions = table()
+Configured = 0
+NextNote = 1
+Initialized = 0
+LoadAsked = 0
+SaveDirty = 0
+DiscoverStep = 1
+SensorCursor = 1
+ScreenInit = 0
+ScreenMsg = "BOOT: waiting for persistent storage"
+ScreenMsgUntil = 0
+
+# --- Ключи и роли --------------------------------------------------------------
+function string slotKey(Kind:string, I:number) {
+    return Kind + I:toString()
+}
+
+function string sensorKey(I:number) {
+    return "S" + I:toString()
+}
+
+function string noteKey(I:number) {
+    return "N" + I:toString()
+}
+
+function string mailKey(I:number) {
+    return "M" + I:toString()
+}
+
+function string roleName(Role:number) {
+    if (Role >= 4) { return "ROOT" }
+    if (Role == 3) { return "TECH" }
+    if (Role == 2) { return "DISPATCH" }
+    if (Role == 1) { return "GUEST" }
+    return "NONE"
+}
+
+function number roleFromWord(Name:string) {
+    let R = Name:lower()
+    if (R == "root") { return 4 }
+    if (R == "tech") { return 3 }
+    if (R == "dispatch") { return 2 }
+    if (R == "guest") { return 1 }
+    return 0
+}
+
+function string argsText(Args:array, First:number) {
+    if (Args:count() < First) { return "" }
+    return Args:concat(" ", First)
+}
+
+function setScreenMessage(Msg:string) {
+    ScreenMsg = Msg
+    ScreenMsgUntil = curtime() + 10
+}
+
+function markDirty() {
+    SaveDirty = 1
+    Dirty = 1
+}
+
+# --- Постоянная база -----------------------------------------------------------
+function setupEmptyData() {
+    Accounts = table()
+    Notes = table()
+    LinkCfg = table()
+    ManualAsp = table()
+    SwitchCfg = table()
+    Mail = table()
+    NextNote = 1
+    Configured = 0
+}
+
+function addNote(Author:string, Body:string) {
+    Notes[noteKey(NextNote), table] = table("author" = Author, "body" = Body,
+                                             "time" = curtime())
+    NextNote++
+    markDirty()
+}
+
+function string listNotes() {
+    let Out = "NOTES:"
+    let Shown = 0
+    for (I = 1, NextNote - 1) {
+        let K = noteKey(I)
+        if (Notes:exists(K)) {
+            let N = Notes[K, table]
+            Out += "\n#" + I + " [" + N["author", string] + "] "
+                + N["body", string]:sub(1, 46)
+            Shown++
+            if (Shown >= 6) { break }
+        }
+    }
+    if (!Shown) { Out += " none" }
+    return Out
+}
+
+# --- Ссылки на существующие prop ------------------------------------------------
+function entity getLinked(Kind:string, I:number) {
+    let K = slotKey(Kind, I)
+    if (Kind == "TERM") { return TermLink[K, entity] }
+    if (Kind == "MON") { return MonitorLink[K, entity] }
+    if (Kind == "SENSOR") { return SensorLink[K, entity] }
+    return noentity()
+}
+
+function setLinked(Kind:string, I:number, E:entity) {
+    let K = slotKey(Kind, I)
+    if (Kind == "TERM") { TermLink[K, entity] = E }
+    elseif (Kind == "MON") { MonitorLink[K, entity] = E }
+    elseif (Kind == "SENSOR") { SensorLink[K, entity] = E }
+}
+
+function clearLinked(Kind:string, I:number) {
+    let K = slotKey(Kind, I)
+    if (Kind == "TERM") { TermLink:unset(K) }
+    elseif (Kind == "MON") { MonitorLink:unset(K) }
+    elseif (Kind == "SENSOR") { SensorLink:unset(K) }
+}
+
+function string expectedModel(Kind:string) {
+    if (Kind == "TERM") { return M_TERMINAL }
+    if (Kind == "MON") { return M_MONITOR }
+    return M_SENSOR
+}
+
+function number countValidLinks(Kind:string) {
+    let N = 0
+    for (I = 1, MaxSlots) {
+        if (getLinked(Kind, I):isValid()) { N++ }
+    }
+    return N
+}
+
+function bindNearest(Kind:string, Candidates:array) {
+    for (I = 1, MaxSlots) {
+        let K = slotKey(Kind, I)
+        if (!LinkCfg:exists(K) | getLinked(Kind, I):isValid()) { continue }
+
+        let Cfg = LinkCfg[K, table]
+        let P = vec(Cfg["x", number], Cfg["y", number], Cfg["z", number])
+        let Best = noentity()
+        let BestDist = LinkRadius
+        for (J = 1, Candidates:count()) {
+            let E = Candidates[J, entity]
+            if (E:isValid()) {
+                let D = E:pos():distance(P)
+                if (D < BestDist) {
+                    Best = E
+                    BestDist = D
+                }
+            }
+        }
+        if (Best:isValid()) { setLinked(Kind, I, Best) }
+    }
+}
+
+function number linkLookedProp(Kind:string, I:number, Actor:entity) {
+    if (I < 1 | I > MaxSlots) { return 0 }
+    let Trace = Actor:eyeTrace()
+    let E = Trace:entity()
+    if (!Trace:hit() | !E:isValid() | E:model() != expectedModel(Kind)) {
+        return 0
+    }
+
+    let K = slotKey(Kind, I)
+    LinkCfg[K, table] = table("x" = E:pos():x(), "y" = E:pos():y(),
+                              "z" = E:pos():z())
+    setLinked(Kind, I, E)
+    if (Kind == "SENSOR") {
+        SensorHit[sensorKey(I), number] = 0
+        SensorClear[sensorKey(I), number] = 0
+        Occ[sensorKey(I), number] = 0
+    }
+    markDirty()
+    return 1
+}
+
+function unlinkProp(Kind:string, I:number) {
+    let K = slotKey(Kind, I)
+    LinkCfg:unset(K)
+    clearLinked(Kind, I)
+    if (Kind == "SENSOR") {
+        SensorHit:unset(sensorKey(I))
+        SensorClear:unset(sensorKey(I))
+        Occ:unset(sensorKey(I))
+        Asp:unset(sensorKey(I))
+        ManualAsp:unset(sensorKey(I))
+        SwitchCfg:unset(sensorKey(I))
+    }
+    markDirty()
+}
+
+function number applySkin(Kind:string, I:number, Mode:string) {
+    let E = getLinked(Kind, I)
+    if (!E:isValid()) { return -1 }
+
+    let M = Mode:lower()
+    let Target = (M == "toggle" ? !E:getSkin() : M:toNumber())
+    if (Target != 0 & Target != 1) { return -2 }
+    if (Target == 1 & E:getSkinCount() < 2) { return -4 }
+
+    let Result = -3
+    try {
+        E:setSkin(Target)
+        Result = Target
+    } catch (Err:string) {
+        print("[CMB-OS] Skin error: " + Err)
+    }
+    return Result
+}
+
+function setSlotSkin(I:number, Skin:number) {
+    let T = getLinked("TERM", I)
+    let M = getLinked("MON", I)
+    try { if (T:isValid()) { T:setSkin(Skin) } } catch (_:string) { }
+    try { if (M:isValid()) { M:setSkin(Skin) } } catch (_:string) { }
+}
+
+function string reportFound(Kind:string, Candidates:array) {
+    let Out = Kind + " FOUND " + Candidates:count() + ":"
+    for (I = 1, min(8, Candidates:count())) {
+        let E = Candidates[I, entity]
+        Out += "\n#" + E:id() + " skin " + E:getSkin()
+    }
+    if (Candidates:count() > 8) { Out += "\n..." }
+    return Out
+}
+
+function string reportLinks() {
+    let Out = "LINKS:"
+    for (I = 1, MaxSlots) {
+        let T = getLinked("TERM", I)
+        let M = getLinked("MON", I)
+        let S = getLinked("SENSOR", I)
+        Out += "\n" + I + " T:" + (T:isValid() ? T:id():toString() : "-")
+            + " M:" + (M:isValid() ? M:id():toString() : "-")
+            + " S:" + (S:isValid() ? S:id():toString() : "-")
+    }
+    return Out
+}
+
+# --- Внешние кубы-датчики и проводные выходы ----------------------------------
+function scanSensor(I:number) {
+    let E = getLinked("SENSOR", I)
+    if (!E:isValid()) { return }
+    let K = sensorKey(I)
+
+    # Ranger-фильтр одноразовый: задаём его прямо перед trace.
+    rangerFilter(E)
+    let R = rangerOffsetHull(SensorHeight, E:pos() + vec(0, 0, 14),
+                             vec(0, 0, 1), vec(SensorHalfWidth, SensorHalfWidth, 1))
+    let Hit = R:hit()
+
+    if (Hit) {
+        SensorHit[K, number] = SensorHit[K, number] + 1
+        SensorClear[K, number] = 0
+        if (SensorHit[K, number] >= SensorDebounce & !Occ[K, number]) {
+            Occ[K, number] = 1
+            setScreenMessage("TRACK " + I + ": OCCUPIED")
+        }
+    } else {
+        SensorClear[K, number] = SensorClear[K, number] + 1
+        SensorHit[K, number] = 0
+        if (SensorClear[K, number] >= SensorDebounce & Occ[K, number]) {
+            Occ[K, number] = 0
+            setScreenMessage("TRACK " + I + ": CLEAR")
+        }
+    }
+}
+
+function refreshAspects() {
+    for (I = 1, MaxSlots) {
+        let K = sensorKey(I)
+        if (!getLinked("SENSOR", I):isValid()) { continue }
+        if (ManualAsp:exists(K)) {
+            Asp[K, number] = ManualAsp[K, number]
+        } else {
+            let NextOcc = (I < MaxSlots ? Occ[sensorKey(I + 1), number] : 0)
+            Asp[K, number] = (Occ[K, number] ? 0 : NextOcc ? 1 : 2)
+        }
+    }
+}
+
+function driveChannel(I:number, A:number, Sw:number) {
+    let R = (A == 0)
+    let Y = (A == 1)
+    let G = (A == 2)
+
+    if (I == 1) { Red1 = R  Yellow1 = Y  Green1 = G  Switch1 = Sw }
+    elseif (I == 2) { Red2 = R  Yellow2 = Y  Green2 = G  Switch2 = Sw }
+    elseif (I == 3) { Red3 = R  Yellow3 = Y  Green3 = G  Switch3 = Sw }
+    elseif (I == 4) { Red4 = R  Yellow4 = Y  Green4 = G  Switch4 = Sw }
+    elseif (I == 5) { Red5 = R  Yellow5 = Y  Green5 = G  Switch5 = Sw }
+    elseif (I == 6) { Red6 = R  Yellow6 = Y  Green6 = G  Switch6 = Sw }
+    elseif (I == 7) { Red7 = R  Yellow7 = Y  Green7 = G  Switch7 = Sw }
+    elseif (I == 8) { Red8 = R  Yellow8 = Y  Green8 = G  Switch8 = Sw }
+    elseif (I == 9) { Red9 = R  Yellow9 = Y  Green9 = G  Switch9 = Sw }
+    elseif (I == 10) { Red10 = R  Yellow10 = Y  Green10 = G  Switch10 = Sw }
+}
+
+function number countOccupied() {
+    let N = 0
+    for (I = 1, MaxSlots) {
+        if (Occ[sensorKey(I), number]) { N++ }
+    }
+    return N
+}
+
+# --- Игроки, сообщения и калькулятор ------------------------------------------
+function string listPlayers() {
+    let Plys = players()
+    let Out = "PLAYERS " + Plys:count() + ":"
+    for (I = 1, min(8, Plys:count())) {
+        let P = Plys[I, entity]
+        Out += "\n" + P:name() + " | " + teamName(P:team())
+            + " | HP " + round(P:health()) + " AR " + round(P:armor())
+            + " | " + round(P:ping()) + "ms"
+    }
+    if (Plys:count() > 8) { Out += "\n..." }
+    return Out
+}
+
+function string playerInfo(Query:string) {
+    let Needle = Query:trim():lower()
+    if (!Needle:length()) { return "FORMAT: PLAYER <name>" }
+    let Plys = players()
+    for (I = 1, Plys:count()) {
+        let P = Plys[I, entity]
+        if (P:name():lower():find(Needle)) {
+            return "PLAYER: " + P:name()
+                + "\nSTEAM: " + P:steamID()
+                + "\nTEAM: " + teamName(P:team())
+                + "\nHP " + round(P:health()) + " / AR " + round(P:armor())
+                + " / PING " + round(P:ping()) + "ms"
+        }
+    }
+    return "PLAYER NOT FOUND"
+}
+
+function string calculate(Args:array) {
+    if (Args:count() < 4) { return "FORMAT: CALC <A> <+|-|*|/|%|^> <B>" }
+    let A = Args[2, string]:toNumber()
+    let Op = Args[3, string]
+    let B = Args[4, string]:toNumber()
+    let R = 0
+
+    if (Op == "+") { R = A + B }
+    elseif (Op == "-") { R = A - B }
+    elseif (Op == "*") { R = A * B }
+    elseif (Op == "/") {
+        if (B == 0) { return "MATH ERROR: division by zero" }
+        R = A / B
+    }
+    elseif (Op == "%") {
+        if (B == 0) { return "MATH ERROR: modulo by zero" }
+        R = A % B
+    }
+    elseif (Op == "^") { R = A ^ B }
+    else { return "CALC: unknown operator" }
+    return format("CALC: %.4f", R)
+}
+
+# --- Сессии одного физического Text Entry -------------------------------------
+
+function string sessionKey(Ply:entity) {
+    return Ply:steamID64()
+}
+
+function number sessionRole(Ply:entity) {
+    let K = sessionKey(Ply)
+    if (!Sessions:exists(K)) { return 0 }
+    return Sessions[K, table]["role", number]
+}
+
+function string sessionLogin(Ply:entity) {
+    let K = sessionKey(Ply)
+    if (!Sessions:exists(K)) { return "" }
+    return Sessions[K, table]["login", string]
+}
+
+function grantSession(Ply:entity, Login:string, Role:number) {
+    Sessions[sessionKey(Ply), table] = table("login" = Login, "role" = Role)
+}
+
+function number requireRole(_:entity, Have:number, Need:number) {
+    if (Have >= Need) { return 1 }
+    setScreenMessage("ACCESS DENIED // required " + roleName(Need))
+    return 0
+}
+
+function showHelp(Role:number) {
+    let Text = "LOGIN/LOGOUT, WHO, CALC, NOTE, SCAN, LINK, UNLINK, SKIN, MSG, MAIL, SENSOR, SIGNAL, SWITCH"
+    if (Role >= 4) { Text += ", USER" }
+    setScreenMessage(Text)
+}
+
+# --- Единый командный процессор ------------------------------------------------
+function processCommand(Actor:entity, Raw:string) {
+    if (!Actor:isValid() | !Actor:isPlayer()) { return }
+    let Clean = Raw:trim()
+    let Args = Clean:explode(" ")
+    let Op = Args[1, string]:lower()
+
+    if (Op == "" | Op == "help") {
+        showHelp(sessionRole(Actor))
+        return
+    }
+
+    if (!Configured) {
+        if (Op != "bootstrap" | Actor != Owner | Args:count() < 2) {
+            setScreenMessage("SYSTEM NOT INITIALIZED // owner: BOOTSTRAP <PIN>")
+            return
+        }
+        let Pin = Args[2, string]
+        if (Pin:length() < 4) {
+            setScreenMessage("BOOTSTRAP: PIN must contain at least 4 characters")
+            return
+        }
+        Accounts["root", table] = table("role" = 4, "hash" = hashSHA256(Pin))
+        Configured = 1
+        grantSession(Actor, "root", 4)
+        markDirty()
+        setScreenMessage("ROOT ACCOUNT CREATED // session active")
+        return
+    }
+
+    if (Op == "login") {
+        if (Args:count() < 3) { setScreenMessage("FORMAT: LOGIN <account> <PIN>")  return }
+        let Login = Args[2, string]:lower()
+        if (!Accounts:exists(Login) | Accounts[Login, table]["hash", string] != hashSHA256(Args[3, string])) {
+            setScreenMessage("LOGIN FAILED")
+            return
+        }
+        let Role = Accounts[Login, table]["role", number]
+        grantSession(Actor, Login, Role)
+        setScreenMessage("ACCESS GRANTED // " + Login + " // " + roleName(Role))
+        return
+    }
+
+    if (Op == "logout") {
+        Sessions:unset(sessionKey(Actor))
+        setScreenMessage("SESSION CLOSED")
+        return
+    }
+
+    let Role = sessionRole(Actor)
+    if (!Role) { setScreenMessage("LOGIN REQUIRED")  return }
+
+    if (Op == "whoami") {
+        setScreenMessage("SESSION: " + sessionLogin(Actor) + " // " + roleName(Role))
+    }
+    elseif (Op == "who" | Op == "players") {
+        setScreenMessage(listPlayers())
+    }
+    elseif (Op == "player") {
+        if (!requireRole(Actor, Role, 2)) { return }
+        setScreenMessage(playerInfo(argsText(Args, 2)))
+    }
+    elseif (Op == "calc") {
+        setScreenMessage(calculate(Args))
+    }
+    elseif (Op == "note") {
+        let Sub = Args[2, string]:lower()
+        if (Sub == "list" | Sub == "") { setScreenMessage(listNotes()) }
+        elseif (Sub == "read") {
+            let I = Args[3, string]:toNumber()
+            let K = noteKey(I)
+            if (!Notes:exists(K)) { setScreenMessage("NOTE NOT FOUND") }
+            else {
+                let N = Notes[K, table]
+                setScreenMessage("NOTE #" + I + " [" + N["author", string] + "]\n" + N["body", string])
+            }
+        }
+        elseif (Sub == "add") {
+            if (!requireRole(Actor, Role, 2)) { return }
+            let Body = argsText(Args, 3)
+            if (!Body:length()) { setScreenMessage("FORMAT: NOTE ADD <text>") }
+            else {
+                addNote(sessionLogin(Actor), Body)
+                setScreenMessage("NOTE #" + (NextNote - 1) + " SAVED")
+            }
+        }
+        elseif (Sub == "del") {
+            if (!requireRole(Actor, Role, 3)) { return }
+            let I = Args[3, string]:toNumber()
+            if (!Notes:exists(noteKey(I))) { setScreenMessage("NOTE NOT FOUND") }
+            else { Notes:unset(noteKey(I))  markDirty()  setScreenMessage("NOTE #" + I + " DELETED") }
+        }
+        else { setScreenMessage("NOTE: LIST | READ N | ADD text | DEL N") }
+    }
+    elseif (Op == "scan") {
+        let Kind = Args[2, string]:lower()
+        if (Kind == "term" | Kind == "terminal") { setScreenMessage(reportFound("TERMINALS", FoundTerms)) }
+        elseif (Kind == "monitor" | Kind == "mon") { setScreenMessage(reportFound("MONITORS", FoundMonitors)) }
+        elseif (Kind == "sensor") { setScreenMessage(reportFound("SENSORS", FoundSensors)) }
+        elseif (Kind == "links" | Kind == "") { setScreenMessage(reportLinks()) }
+        else { setScreenMessage("SCAN: TERM | MONITOR | SENSOR | LINKS") }
+    }
+    elseif (Op == "link") {
+        if (!requireRole(Actor, Role, 3)) { return }
+        let KindWord = Args[2, string]:lower()
+        let I = Args[3, string]:toNumber()
+        let Kind = (KindWord == "term" | KindWord == "terminal" ? "TERM" :
+                    KindWord == "monitor" | KindWord == "mon" ? "MON" :
+                    KindWord == "sensor" ? "SENSOR" : "")
+        if (Kind == "" | I < 1 | I > MaxSlots) {
+            setScreenMessage("FORMAT: LINK TERM|MONITOR|SENSOR <1-10> // aim at prop")
+        } elseif (linkLookedProp(Kind, I, Actor)) {
+            setScreenMessage(Kind + " " + I + " LINKED")
+        } else {
+            setScreenMessage("LINK FAILED: aim at matching prop model")
+        }
+    }
+    elseif (Op == "unlink") {
+        if (!requireRole(Actor, Role, 3)) { return }
+        let KindWord = Args[2, string]:lower()
+        let I = Args[3, string]:toNumber()
+        let Kind = (KindWord == "term" | KindWord == "terminal" ? "TERM" :
+                    KindWord == "monitor" | KindWord == "mon" ? "MON" :
+                    KindWord == "sensor" ? "SENSOR" : "")
+        if (Kind == "" | I < 1 | I > MaxSlots) { setScreenMessage("FORMAT: UNLINK TERM|MONITOR|SENSOR <1-10>") }
+        else { unlinkProp(Kind, I)  setScreenMessage(Kind + " " + I + " UNLINKED") }
+    }
+    elseif (Op == "skin") {
+        if (!requireRole(Actor, Role, 2)) { return }
+        let KindWord = Args[2, string]:lower()
+        let I = Args[3, string]:toNumber()
+        let Mode = Args[4, string]
+        let Kind = (KindWord == "term" | KindWord == "terminal" ? "TERM" :
+                    KindWord == "monitor" | KindWord == "mon" ? "MON" :
+                    KindWord == "sensor" ? "SENSOR" : "")
+        if (Kind == "" | I < 1 | I > MaxSlots) { setScreenMessage("FORMAT: SKIN TERM|MONITOR|SENSOR <id> 0|1|TOGGLE") }
+        else {
+            let Result = applySkin(Kind, I, Mode)
+            if (Result >= 0) { setScreenMessage(Kind + " " + I + " SKIN " + Result) }
+            elseif (Result == -1) { setScreenMessage("SKIN: linked prop not found") }
+            elseif (Result == -4) { setScreenMessage("SKIN: this model has no skin 1") }
+            elseif (Result == -3) { setScreenMessage("SKIN: permission/engine error; prop must belong to OS owner") }
+            else { setScreenMessage("SKIN: use 0, 1 or TOGGLE") }
+        }
+    }
+    elseif (Op == "msg") {
+        if (!requireRole(Actor, Role, 1)) { return }
+        let TargetWord = Args[2, string]:lower()
+        let Body = argsText(Args, 3)
+        let Target = (TargetWord == "all" ? 0 : TargetWord:toNumber())
+        if (!Body:length() | Target < 0 | Target > MaxSlots) {
+            setScreenMessage("FORMAT: MSG <slot|ALL> <text>")
+        } else {
+            if (Target == 0) {
+                for (I = 1, MaxSlots) {
+                    Mail[mailKey(I), table] = table("from" = sessionLogin(Actor), "text" = Body)
+                    setSlotSkin(I, 1)
+                }
+            } else {
+                Mail[mailKey(Target), table] = table("from" = sessionLogin(Actor), "text" = Body)
+                setSlotSkin(Target, 1)
+            }
+            markDirty()
+            setScreenMessage("MESSAGE STORED // skin 1 = unread")
+        }
+    }
+    elseif (Op == "mail") {
+        let I = Args[2, string]:toNumber()
+        if (I < 1 | I > MaxSlots | !Mail:exists(mailKey(I))) {
+            setScreenMessage("MAIL: no message in slot")
+        } else {
+            let M = Mail[mailKey(I), table]
+            setSlotSkin(I, 0)
+            setScreenMessage("MAIL " + I + " FROM " + M["from", string] + "\n" + M["text", string])
+        }
+    }
+    elseif (Op == "sensor") {
+        if (!requireRole(Actor, Role, 3)) { return }
+        let Sub = Args[2, string]:lower()
+        if (Sub == "list" | Sub == "") {
+            let Out = "SENSORS:"
+            for (I = 1, MaxSlots) {
+                let E = getLinked("SENSOR", I)
+                Out += "\n" + I + " " + (E:isValid() ? (Occ[sensorKey(I), number] ? "OCC" : "CLEAR") : "UNLINKED")
+                    + " A" + Asp[sensorKey(I), number]
+            }
+            setScreenMessage(Out)
+        } else { setScreenMessage("Link cubes with LINK SENSOR <id>; then SENSOR LIST") }
+    }
+    elseif (Op == "signal") {
+        if (!requireRole(Actor, Role, 2)) { return }
+        let I = Args[2, string]:toNumber()
+        let Mode = Args[3, string]:lower()
+        let K = sensorKey(I)
+        if (I < 1 | I > MaxSlots | !getLinked("SENSOR", I):isValid()) {
+            setScreenMessage("SIGNAL: linked SENSOR id required")
+        } elseif (Mode == "auto") {
+            ManualAsp:unset(K)
+            markDirty()
+            setScreenMessage("SIGNAL " + I + " AUTO")
+        } else {
+            let A = (Mode == "red" ? 0 : Mode == "yellow" ? 1 : Mode == "green" ? 2 : -1)
+            if (A < 0) { setScreenMessage("SIGNAL: AUTO | RED | YELLOW | GREEN") }
+            else { ManualAsp[K, number] = A  markDirty()  setScreenMessage("SIGNAL " + I + " MANUAL") }
+        }
+    }
+    elseif (Op == "switch") {
+        if (!requireRole(Actor, Role, 2)) { return }
+        let I = Args[2, string]:toNumber()
+        let Mode = Args[3, string]:lower()
+        let K = sensorKey(I)
+        if (I < 1 | I > MaxSlots) { setScreenMessage("SWITCH: id 1-10") }
+        elseif (Mode == "left" | Mode == "0") { SwitchCfg[K, number] = 0  markDirty()  setScreenMessage("SWITCH " + I + " LEFT") }
+        elseif (Mode == "right" | Mode == "1") { SwitchCfg[K, number] = 1  markDirty()  setScreenMessage("SWITCH " + I + " RIGHT") }
+        elseif (Mode == "toggle") { SwitchCfg[K, number] = !SwitchCfg[K, number]  markDirty()  setScreenMessage("SWITCH " + I + " TOGGLED") }
+        else { setScreenMessage("SWITCH: LEFT | RIGHT | TOGGLE") }
+    }
+    elseif (Op == "user") {
+        if (!requireRole(Actor, Role, 4)) { return }
+        let Sub = Args[2, string]:lower()
+        if (Sub == "add") {
+            let Login = Args[3, string]:lower()
+            let NewRole = roleFromWord(Args[4, string])
+            let Pin = Args[5, string]
+            if (!Login:length() | !NewRole | Pin:length() < 4 | Login == "root") {
+                setScreenMessage("FORMAT: USER ADD <non-root login> <root|tech|dispatch|guest> <PIN>")
+            } else {
+                Accounts[Login, table] = table("role" = NewRole, "hash" = hashSHA256(Pin))
+                markDirty()
+                setScreenMessage("USER " + Login + " CREATED")
+            }
+        }
+        elseif (Sub == "del") {
+            let Login = Args[3, string]:lower()
+            if (Login == "root" | !Accounts:exists(Login)) { setScreenMessage("USER: root cannot be deleted") }
+            else { Accounts:unset(Login)  markDirty()  setScreenMessage("USER " + Login + " DELETED") }
+        }
+        elseif (Sub == "pass") {
+            let Login = Args[3, string]:lower()
+            let Pin = Args[4, string]
+            if (!Accounts:exists(Login) | Pin:length() < 4) { setScreenMessage("FORMAT: USER PASS <login> <new PIN>") }
+            else {
+                let Account = Accounts[Login, table]
+                Account["hash", string] = hashSHA256(Pin)
+                Accounts[Login, table] = Account
+                markDirty()
+                setScreenMessage("PASSWORD UPDATED")
+            }
+        }
+        elseif (Sub == "list" | Sub == "") {
+            let Names = Accounts:keys()
+            let Out = "USERS:"
+            for (I = 1, Names:count()) {
+                let Login = Names[I, string]
+                Out += "\n" + Login + " // " + roleName(Accounts[Login, table]["role", number])
+            }
+            setScreenMessage(Out)
+        }
+        else { setScreenMessage("USER: LIST | ADD | DEL | PASS") }
+    }
+    else { setScreenMessage("UNKNOWN COMMAND // HELP") }
+}
+
+# --- EGP экран единой ОС -------------------------------------------------------
+function egpInit() {
+    Screen:egpClear()
+    Screen:egpRoundedBox(1, vec2(256, 256), vec2(490, 350))
+    Screen:egpColor(1, vec4(8, 18, 13, 255))
+    Screen:egpText(2, "CMB-OS // UNIFIED OPERATING SYSTEM", vec2(256, 68))
+    Screen:egpAlign(2, 1, 1)
+    Screen:egpSize(2, 21)
+    Screen:egpColor(2, vec4(110, 255, 155, 255))
+    Screen:egpText(3, "BOOT", vec2(256, 105))
+    Screen:egpAlign(3, 1, 1)
+    Screen:egpSize(3, 24)
+    Screen:egpText(4, "", vec2(40, 142))
+    Screen:egpAlign(4, 0, 0)
+    Screen:egpSize(4, 15)
+    Screen:egpColor(4, vec4(185, 230, 195, 255))
+    Screen:egpTextLayout(5, "", vec2(40, 245), vec2(435, 132))
+    Screen:egpAlign(5, 0, 0)
+    Screen:egpSize(5, 14)
+    Screen:egpColor(5, vec4(110, 255, 155, 255))
+    Screen:egpText(6, "Wire Text Entry: HELP // LINK while aiming at a prop", vec2(256, 445))
+    Screen:egpAlign(6, 1, 1)
+    Screen:egpSize(6, 12)
+    Screen:egpColor(6, vec4(100, 145, 110, 255))
+}
+
+# --- Выходы по умолчанию: все сигналы красные ---------------------------------
+Online = 0
+Devices = 0
+Terminals = 0
+Monitors = 0
+Sensors = 0
+Occupied = 0
+Alarm = 0
+Dirty = 0
+Status = "BOOT"
+Red1 = 1  Red2 = 1  Red3 = 1  Red4 = 1  Red5 = 1
+Red6 = 1  Red7 = 1  Red8 = 1  Red9 = 1  Red10 = 1
+Yellow1 = 0  Yellow2 = 0  Yellow3 = 0  Yellow4 = 0  Yellow5 = 0
+Yellow6 = 0  Yellow7 = 0  Yellow8 = 0  Yellow9 = 0  Yellow10 = 0
+Green1 = 0  Green2 = 0  Green3 = 0  Green4 = 0  Green5 = 0
+Green6 = 0  Green7 = 0  Green8 = 0  Green9 = 0  Green10 = 0
+Switch1 = 0  Switch2 = 0  Switch3 = 0  Switch4 = 0  Switch5 = 0
+Switch6 = 0  Switch7 = 0  Switch8 = 0  Switch9 = 0  Switch10 = 0
+print("[CMB-OS] Unified model-less OS assembled.")
+
+# --- Persistent storage --------------------------------------------------------
+timer("boot_storage", 0.35, 0, function() {
+    if (Initialized | LoadAsked) { exit() }
+    if (!fileCanLoad()) { exit() }
+    if (fileLoad(StoreFile)) { LoadAsked = 1 }
+})
+
+event fileLoaded(Path:string, Payload:string) {
+    if (Path != StoreFile | Initialized) { exit() }
+    let Saved = jsonDecode(Payload)
+    if (jsonError() != "" | !Saved) {
+        setupEmptyData()
+        markDirty()
+        print("[CMB-OS] Invalid storage; new database created.")
+    } else {
+        Accounts = Saved["accounts", table] ?: table()
+        Notes = Saved["notes", table] ?: table()
+        LinkCfg = Saved["links", table] ?: table()
+        ManualAsp = Saved["manual", table] ?: table()
+        SwitchCfg = Saved["switches", table] ?: table()
+        Mail = Saved["mail", table] ?: table()
+        NextNote = max(1, Saved["nextnote", number])
+        Configured = Saved["configured", number]
+    }
+    Initialized = 1
+}
+
+event fileErrored(Path:string, Err:number) {
+    if (Path != StoreFile | Initialized) { exit() }
+    setupEmptyData()
+    Initialized = 1
+    markDirty()
+    print("[CMB-OS] New/unavailable storage (" + Err + ").")
+}
+
+timer("save_storage", 2, 0, function() {
+    if (!Initialized | !SaveDirty | !fileCanWrite()) { exit() }
+    let Saved = table("version" = 2, "configured" = Configured, "nextnote" = NextNote)
+    Saved["accounts", table] = Accounts
+    Saved["notes", table] = Notes
+    Saved["links", table] = LinkCfg
+    Saved["manual", table] = ManualAsp
+    Saved["switches", table] = SwitchCfg
+    Saved["mail", table] = Mail
+    let Payload = jsonEncode(Saved)
+    if (jsonError() != "") { print("[CMB-OS] Storage encode error: " + jsonError())  exit() }
+    if (fileWrite(StoreFile, Payload)) { SaveDirty = 0  Dirty = 0 }
+})
+
+# --- Обнаружение внешних моделей ------------------------------------------------
+timer("discover_models", 0.35, 0, function() {
+    if (!findCanQuery()) { exit() }
+    findAllowBlockedClasses(1)     # включает prop_dynamic в результатах Find
+
+    if (DiscoverStep == 1) {
+        findByModel(M_TERMINAL)
+        FoundTerms = findToArray()
+        bindNearest("TERM", FoundTerms)
+    }
+    elseif (DiscoverStep == 2) {
+        findByModel(M_MONITOR)
+        FoundMonitors = findToArray()
+        bindNearest("MON", FoundMonitors)
+    }
+    else {
+        findByModel(M_SENSOR)
+        FoundSensors = findToArray()
+        bindNearest("SENSOR", FoundSensors)
+    }
+    DiscoverStep = (DiscoverStep % 3) + 1
+})
+
+# --- Опрос внешних датчиков -----------------------------------------------------
+timer("scan_sensors", 0.10, 0, function() {
+    if (!Initialized) { exit() }
+    for (_ = 1, MaxSlots) {
+        if (SensorCursor > MaxSlots) { SensorCursor = 1 }
+        scanSensor(SensorCursor)
+        SensorCursor++
+    }
+})
+
+# --- Выходы и EGP --------------------------------------------------------------
+timer("outputs", 0.25, 0, function() {
+    refreshAspects()
+    for (I = 1, MaxSlots) {
+        driveChannel(I, Asp[sensorKey(I), number], SwitchCfg[sensorKey(I), number])
+    }
+
+    Online = Initialized
+    Terminals = FoundTerms:count()
+    Monitors = FoundMonitors:count()
+    Sensors = FoundSensors:count()
+    Devices = Terminals + Monitors + Sensors
+    Occupied = countOccupied()
+    Alarm = (Occupied > 0 ? 1 : 0)
+    Status = (!Initialized ? "BOOT / STORAGE" : !Configured ? "SETUP REQUIRED" : "ONLINE")
+
+    if (!->Screen) { exit() }
+    if (!ScreenInit) { egpInit()  ScreenInit = 1 }
+    Screen:egpSetText(3, Status)
+    Screen:egpColor(3, (!Initialized | !Configured ? vec4(255, 180, 65, 255)
+        : Occupied ? vec4(255, 95, 75, 255) : vec4(110, 255, 155, 255)))
+    Screen:egpSetText(4, "TERMINAL PROPS  " + Terminals + " / LINKED " + countValidLinks("TERM")
+        + "\nMONITOR PROPS   " + Monitors + " / LINKED " + countValidLinks("MON")
+        + "\nSENSOR CUBES    " + Sensors + " / LINKED " + countValidLinks("SENSOR")
+        + "\nTRACK OCCUPIED  " + Occupied + " / " + MaxSlots)
+    Screen:egpSetText(5, (curtime() <= ScreenMsgUntil ? ScreenMsg :
+        "READY. Use HELP, SCAN and LINK while aiming at an external prop."))
+})
+
+# --- Единый Wire Text Entry ----------------------------------------------------
+event input(InputName:string) {
+    if (InputName == "Screen") { ScreenInit = 0  exit() }
+    if (InputName == "Entered" & Entered & TextUser:isValid()) {
+        processCommand(TextUser, Text)
+    }
+}
+
+# Резервный путь настройки владельцем: !caos <команда>
+event chat(Ply:entity, Msg:string, Team:number) {
+    if (Ply != Owner) { exit() }
+    let Prefix = "!caos "
+    if (Msg:sub(1, Prefix:length()):lower() != Prefix) { exit() }
+    hideChat(1)
+    processCommand(Ply, Msg:sub(Prefix:length() + 1))
+}
