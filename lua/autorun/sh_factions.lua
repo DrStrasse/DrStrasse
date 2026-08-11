@@ -27,6 +27,51 @@ local NET_DEP_MSG             = "Factions_DepMsg"
 local NET_DEPB_MSG            = "Factions_DepbMsg"
 
 -- ============================================================
+-- SHARED ЛИДЕРСКИЙ ХЕЛПЕР (изоляция слотов персонажей)
+-- ============================================================
+local function isCharacterLeaderOfFaction(ply, f)
+    if not IsValid(ply) or not istable(f) then return false end
+    local ldr = tostring(f.Leader or "")
+    local charKey = (GRM.Identity and isfunction(GRM.Identity.CharacterKey) and GRM.Identity.CharacterKey(ply)) or ""
+    local sid = (ply.SteamID and ply:SteamID()) or ""
+    local sid64 = (ply.SteamID64 and ply:SteamID64()) or ""
+
+    -- 1. Если активна система мультиперсонажей (CharacterKey: sid64:charN)
+    if charKey ~= "" then
+        -- Прямое точное совпадение ключа персонажа с лидером фракции
+        if ldr ~= "" and ldr == charKey then return true end
+        -- Проверка по списку участников: активный персонаж имеет роль лидера
+        if istable(f.Members) then
+            local mem = rawget(f.Members, charKey) or f.Members[charKey]
+            if istable(mem) and (mem.Role == f.LeaderRoleName or mem.Role == "Лидер") then
+                return true
+            end
+        end
+        -- Если лидер сохранён как старый/немигрированный SteamID/SteamID64:
+        -- лидерство даётся ТОЛЬКО если данный персонаж charKey числится в f.Members с ролью лидера!
+        if ldr ~= "" and (ldr == sid or ldr == sid64) then
+            if istable(f.Members) then
+                local mem = rawget(f.Members, charKey) or f.Members[charKey]
+                if istable(mem) and (mem.Role == f.LeaderRoleName or mem.Role == "Лидер") then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    -- 2. Режим одного аккаунта (без мультиперсонажей)
+    if ldr ~= "" and (ldr == sid or (sid64 ~= "" and ldr == sid64)) then return true end
+    if istable(f.Members) then
+        local mem = rawget(f.Members, sid) or (sid64 ~= "" and rawget(f.Members, sid64)) or f.Members[sid] or (sid64 ~= "" and f.Members[sid64])
+        if istable(mem) and (mem.Role == f.LeaderRoleName or mem.Role == "Лидер") then
+            return true
+        end
+    end
+    return false
+end
+
+-- ============================================================
 -- SERVER
 -- ============================================================
 if SERVER then
@@ -378,48 +423,6 @@ if SERVER then
             end
         end
         return data
-    end
-
-    local function isCharacterLeaderOfFaction(ply, f)
-        if not IsValid(ply) or not istable(f) then return false end
-        local ldr = tostring(f.Leader or "")
-        local charKey = (GRM.Identity and isfunction(GRM.Identity.CharacterKey) and GRM.Identity.CharacterKey(ply)) or ""
-        local sid = ply:SteamID() or ""
-        local sid64 = (ply.SteamID64 and ply:SteamID64()) or ""
-
-        -- 1. Если активна система мультиперсонажей (CharacterKey: sid64:charN)
-        if charKey ~= "" then
-            -- Прямое точное совпадение ключа персонажа с лидером фракции
-            if ldr ~= "" and ldr == charKey then return true end
-            -- Проверка по списку участников: активный персонаж имеет роль лидера
-            if istable(f.Members) then
-                local mem = rawget(f.Members, charKey)
-                if istable(mem) and (mem.Role == f.LeaderRoleName or mem.Role == "Лидер") then
-                    return true
-                end
-            end
-            -- Если лидер сохранён как старый/немигрированный SteamID/SteamID64:
-            -- лидерство даётся ТОЛЬКО если данный персонаж charKey числится в f.Members с ролью лидера!
-            if ldr ~= "" and (ldr == sid or ldr == sid64) then
-                if istable(f.Members) then
-                    local mem = rawget(f.Members, charKey)
-                    if istable(mem) and (mem.Role == f.LeaderRoleName or mem.Role == "Лидер") then
-                        return true
-                    end
-                end
-            end
-            return false
-        end
-
-        -- 2. Режим одного аккаунта (без мультиперсонажей)
-        if ldr ~= "" and (ldr == sid or (sid64 ~= "" and ldr == sid64)) then return true end
-        if istable(f.Members) then
-            local mem = rawget(f.Members, sid) or (sid64 ~= "" and rawget(f.Members, sid64)) or f.Members[sid]
-            if istable(mem) and (mem.Role == f.LeaderRoleName or mem.Role == "Лидер") then
-                return true
-            end
-        end
-        return false
     end
 
     local function getFactionOfLeader(ply)
