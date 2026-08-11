@@ -532,6 +532,7 @@ if SERVER then
             net.WriteUInt(gg, 8)
             net.WriteUInt(bb, 8)
         net.Send(ply)
+        if ply.PrintMessage then pcall(ply.PrintMessage, ply, HUD_PRINTTALK or 2, tostring(msg or "")) end
     end
 
     -- ========================================================

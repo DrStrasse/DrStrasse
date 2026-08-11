@@ -30,6 +30,8 @@ string.Explode = string.Explode or function(sep, s)
     return out
 end
 table.Count = table.Count or function(t) local n = 0 for _ in pairs(t or {}) do n = n + 1 end return n end
+CurTime = CurTime or function() return os.clock() end
+isfunction = isfunction or function(v) return type(v) == "function" end
 function AddCSLuaFile() end
 
 -- ── JSON ───────────────────────────────────────────────────
@@ -211,21 +213,60 @@ concommand = { Add = function(name, fn) concommand[name] = fn end }
 player = { GetAll = function() return _G.__PLAYERS or {} end }
 
 -- ── фейковый игрок ─────────────────────────────────────────
+local NEXT_PID = 1
 local function mkPly(nick, sid64, sid)
+    NEXT_PID = NEXT_PID + 1
     local p = {
-        __ent = true, __valid = true,
+        __ent = true, __valid = true, _eid = NEXT_PID,
         SteamID64 = function() return sid64 end,
         SteamID = function() return sid end,
         Nick = function() return nick end,
         IsPlayer = function() return true end,
         IsBot = function() return false end,
         IsSuperAdmin = function() return true end,
+        EntIndex = function(s) return s._eid end,
         SetNW2Int = function() end,
-        GetPos = function() return { DistToSqr = function() return 0 end } end,
+        GetPos = function(s) return s._pos or Vector(0, 0, 0) end,
+        SetPos = function(s, v) s._pos = v end,
         GetShootPos = function() return Vector(0, 0, 60) end,
         GetAimVector = function() return Vector(1, 0, 0) end,
         PrintMessage = function() end,
+        __nw = {},
+        __weps = {},
     }
+    function p:SetNWBool(k, v) self.__nw[k] = v end
+    function p:GetNWBool(k, d) return self.__nw[k] ~= nil and self.__nw[k] or d end
+    function p:SetNWInt(k, v) self.__nw[k] = v end
+    function p:GetNWInt(k, d) return self.__nw[k] ~= nil and self.__nw[k] or (d or 0) end
+    function p:SetNWString(k, v) self.__nw[k] = v end
+    function p:GetNWString(k, d) return self.__nw[k] ~= nil and self.__nw[k] or (d or "") end
+    function p:SetNWEntity(k, v) self.__nw[k] = v end
+    function p:GetNWEntity(k, d) return self.__nw[k] ~= nil and self.__nw[k] or d end
+    function p:GetWeapons() return self.__weps end
+    function p:GetWeapon(cls)
+        for _, w in ipairs(self.__weps) do if w:GetClass() == cls then return w end end
+        return nil
+    end
+    function p:Give(cls)
+        local w = {
+            __valid = true,
+            _class = cls,
+            _amt = 0,
+            GetClass = function(s) return s._class end,
+            SetCarriedAmount = function(s, a) s._amt = a end,
+            GetCarriedAmount = function(s) return s._amt end,
+        }
+        self.__weps[#self.__weps + 1] = w
+        return w
+    end
+    function p:StripWeapon(cls)
+        for i = #self.__weps, 1, -1 do
+            if self.__weps[i]:GetClass() == cls then table.remove(self.__weps, i) end
+        end
+    end
+    function p:SelectWeapon() end
+    function p:GetVehicle() return self._veh end
+    function p:InVehicle() return self._veh ~= nil end
     p.__mt = { __index = function(t, k) return rawget(t, k) end }
     return p
 end
@@ -450,6 +491,14 @@ local VMT = {
         if type(a) == "number" then a, k = k, a end
         return Vector(a.x * k, a.y * k, a.z * k)
     end,
+    __index = {
+        DistToSqr = function(self, other)
+            local dx = (self.x or 0) - (other.x or 0)
+            local dy = (self.y or 0) - (other.y or 0)
+            local dz = (self.z or 0) - (other.z or 0)
+            return dx * dx + dy * dy + dz * dz
+        end,
+    },
 }
 function Vector(x, y, z) return setmetatable({ x = x or 0, y = y or 0, z = z or 0 }, VMT) end
 function Angle(p, y, r) return { p = p or 0, y = y or 0, r = r or 0 } end
@@ -457,22 +506,42 @@ HUD_PRINTTALK = HUD_PRINTTALK or 2
 util.TraceLine = function() return { Entity = _G.__AIM_ENT } end
 local SPAWNED_ENTS = {}
 local CREATED_ENTS = {}
+local NEXT_EID = 100
 ents = ents or {
     Create = function(class)
-        local e = { __ent = true, __valid = true, _class = class }
+        NEXT_EID = NEXT_EID + 1
+        local e = {
+            __ent = true, __valid = true, _class = class, _eid = NEXT_EID,
+            __nw = {}, _heldCash = 0, _capacity = 500000,
+        }
+        function e:EntIndex() return self._eid end
         function e:GetClass() return self._class end
         function e:SetModel(m) self._model = m end
         function e:GetModel() return self._model end
         function e:SetPos(v) self._pos = v end
-        function e:GetPos() return self._pos end
+        function e:GetPos() return self._pos or Vector(0,0,0) end
         function e:SetAngles(a) self._ang = a end
-        function e:GetAngles() return self._ang end
+        function e:GetAngles() return self._ang or Angle(0,0,0) end
         function e:Spawn() self._spawned = true SPAWNED_ENTS[#SPAWNED_ENTS + 1] = self end
         function e:Activate() self._active = true end
         function e:GetPhysicsObject()
             return { IsValid = function() return true end, EnableMotion = function() end }
         end
         function e:Remove() self.__valid = false end
+        function e:EmitSound() end
+        function e:IsVehicle() return self._isVeh == true end
+        function e:GetDriver() return self._driver end
+        function e:GetChildren() return {} end
+        function e:SetNWInt(k, v) self.__nw[k] = v end
+        function e:GetNWInt(k, d) return self.__nw[k] ~= nil and self.__nw[k] or (d or 0) end
+        function e:SetNWString(k, v) self.__nw[k] = v end
+        function e:GetNWString(k, d) return self.__nw[k] ~= nil and self.__nw[k] or (d or "") end
+        function e:SetNWEntity(k, v) self.__nw[k] = v end
+        function e:GetNWEntity(k, d) return self.__nw[k] ~= nil and self.__nw[k] or d end
+        function e:GetHeldCash() return self._heldCash end
+        function e:SetHeldCash(n) self._heldCash = n end
+        function e:GetCapacity() return self._capacity end
+        function e:SetCapacity(n) self._capacity = n end
         CREATED_ENTS[#CREATED_ENTS + 1] = e
         return e
     end,
@@ -480,9 +549,16 @@ ents = ents or {
         local out = {}
         for _, e in ipairs(CREATED_ENTS) do
             if e.__valid ~= false and e._pos then
-                local dx, dy, dz = e._pos.x - pos.x, e._pos.y - pos.y, e._pos.z - pos.z
-                if dx * dx + dy * dy + dz * dz <= (r or 1) * (r or 1) then out[#out + 1] = e end
+                local d2 = pos:DistToSqr(e._pos)
+                if d2 <= (r or 1) * (r or 1) then out[#out + 1] = e end
             end
+        end
+        return out
+    end,
+    FindByClass = function(cls)
+        local out = {}
+        for _, e in ipairs(CREATED_ENTS) do
+            if e.__valid ~= false and e:GetClass() == cls then out[#out + 1] = e end
         end
         return out
     end,
@@ -597,7 +673,7 @@ if PHASE == "fines" then
 
     -- 4. член по ключу SteamID64 ТОЖЕ распознаётся (н101 — корневой фикс)
     ok, why = E.CanFine(medic64, civ)
-    assert(ok == false and tostring(why):find("Фракция"), "fines: Medic без enabled — отказ, но фракция должна распознаться, а: " .. tostring(why))
+    assert(ok == false and (tostring(why):find("Фракция") or tostring(why):find("фракция")), "fines: Medic без enabled — отказ, но фракция должна распознаться, а: " .. tostring(why))
     local fm = E._dev_entry("Medics").finePerms
     fm.enabled = true fm.allRoles = true fm.civilians = true
     ok = E.CanFine(medic64, civ)
@@ -639,5 +715,103 @@ if PHASE == "fines" then
     assert(joined:find("Доступ штрафов"), "fines: /fines не напечатал статус: " .. joined)
 
     print("PHASE fines: OK — права/ключи sid+s64/кап/бюджет/пустой карман/админ-байпас//fines-статус")
+    return
+end
+
+-- ======================= ФАЗА 15: ИНКАССАЦИЯ (Код 126 v2.0.0) =================
+if PHASE == "incass" then
+    GRM = GRM or {}
+    dofile("lua/autorun/sh_grm_currency.lua")
+    dofile("lua/autorun/sh_grm_economy.lua")
+    dofile("lua/autorun/sh_grm_incassation.lua")
+    local I = GRM.Incass
+
+    local function mkUser(nick, sid64, sid)
+        local p = mkPly(nick, sid64, sid)
+        p.IsSuperAdmin = function() return false end
+        p.__msgs = {}
+        p.PrintMessage = function(_, _, m) p.__msgs[#p.__msgs + 1] = tostring(m) end
+        p.GetEyeTrace = function() return { Entity = _G.__AIM_ENT } end
+        return p
+    end
+
+    local incassator = mkUser("Hans Incass", "76561198000000700", "STEAM_0:1:700")
+    local civ = mkUser("Karl Civ", "76561198000000300", "STEAM_0:1:300")
+    _G.__PLAYERS = { incassator, civ }
+
+    Factions.Polizei = {
+        Members = { ["STEAM_0:1:700"] = { Role = "Officer", Department = "Основной" } },
+        Leader = "STEAM_0:1:100", Roles = { "Officer" }, Departments = { "Основной" },
+        IncassoSettings = { Enabled = true, Roles = { "Officer" }, Vehicles = { "simfphys_van" } },
+    }
+
+    -- 1. CanPlayerIncass: гражданин — отказ, инкассатор — OK
+    local ok, err = I.CanPlayerIncass(civ)
+    assert(ok == false, "incass: гражданин не должен иметь доступа")
+    ok, err = I.CanPlayerIncass(incassator)
+    assert(ok == true, "incass: офицер должен иметь доступ, а: " .. tostring(err))
+
+    -- 2. Старт рейса в машине
+    local car = ents.Create("prop_vehicle_jeep")
+    car._isVeh = true
+    car.GRM_IncassSpawnName = "simfphys_van"
+    car._driver = incassator
+    car:SetPos(Vector(0, 0, 0))
+    incassator._veh = car
+
+    local okRun, rid = I.StartRun(incassator)
+    assert(okRun == true and rid, "incass: рейс не стартовал: " .. tostring(rid))
+    assert(car:GetNWInt("GRM_IncassRun") == rid, "incass: NW runID не записан в машину")
+    assert(incassator:GetNWEntity("GRM_IncassMyCar") == car, "incass: GRM_IncassMyCar не записан игроку")
+
+    -- 3. Накопление денег в банкомате (5% от депозита)
+    local atm = ents.Create("grm_bank_terminal")
+    atm:SetPos(Vector(50, 0, 0))
+    fireHook("GRM_Incass_TerminalDeposit", civ, 2000000, atm) -- 5% от 2 млн = 100 000 в банкомате
+    local cashInAtm = I.TerminalCash[atm:EntIndex()] or 0
+    assert(cashInAtm == 100000, "incass: 5% депозит не начислился в банкомат: " .. tostring(cashInAtm))
+
+    -- 4. Изъятие из банкомата в чемодан (порция 50 000)
+    incassator:SetPos(Vector(60, 0, 0))
+    local okCol, colAmt = I.CollectFromTerminal(incassator, atm, 50000)
+    assert(okCol == true and colAmt == 50000, "incass: сбор не удался: " .. tostring(colAmt))
+    assert(I.PlayerBagAmount(incassator) == 50000, "incass: в руке нет чемодана 50000")
+    assert(I.TerminalCash[atm:EntIndex()] == 50000, "incass: остаток в терминале не 50000")
+
+    -- 5. Загрузка чемодана в машину
+    incassator:SetPos(Vector(10, 0, 0))
+    local okLoad, loadAmt = I.LoadBagIntoCar(incassator, car)
+    assert(okLoad == true and loadAmt == 50000, "incass: загрузка в машину не удалась: " .. tostring(loadAmt))
+    assert(I.PlayerBagAmount(incassator) == 0, "incass: чемодан остался в руке после загрузки")
+    assert(car:GetNWInt("GRM_IncassCarCash") == 50000, "incass: в багажнике не 50000")
+
+    -- 6. Разгрузка из машины доступна ТОЛЬКО у вольта
+    local okUnloadFar, errUnloadFar = I.UnloadBagFromCar(incassator, car)
+    assert(okUnloadFar == false and tostring(errUnloadFar):find("хранилищ"), "incass: разгрузка вдали от вольта должна отказать")
+
+    -- Создаём вольт рядом
+    local vault = ents.Create("grm_bank_vault")
+    vault:SetPos(Vector(100, 0, 0))
+    incassator:SetPos(Vector(90, 0, 0))
+    car:SetPos(Vector(80, 0, 0))
+
+    local okUnloadNear, unloadAmt = I.UnloadBagFromCar(incassator, car)
+    assert(okUnloadNear == true and unloadAmt == 50000, "incass: разгрузка у вольта не удалась: " .. tostring(unloadAmt))
+    assert(I.PlayerBagAmount(incassator) == 50000, "incass: чемодан не выдан при разгрузке")
+    assert(car:GetNWInt("GRM_IncassCarCash") == 0, "incass: багажник не опустел")
+
+    -- 7. Сдача чемодана в хранилище банка
+    local okVault, vaultAmt = I.LoadBagIntoVault(incassator, vault)
+    assert(okVault == true and vaultAmt == 50000, "incass: сдача в вольт не удалась: " .. tostring(vaultAmt))
+    assert(vault:GetHeldCash() == 50000, "incass: в вольте не 50000")
+    assert(I.PlayerBagAmount(incassator) == 0, "incass: чемодан остался в руке после сдачи в вольт")
+
+    -- 8. Завершение рейса /incass_off
+    fireHook("PlayerSay", incassator, "/incass_off")
+    assert(I.ActiveRuns[rid] == nil, "incass: рейс не закрылся")
+    assert(car:GetNWInt("GRM_IncassRun") == 0, "incass: car runID не сброшен")
+    assert(incassator:GetNWEntity("GRM_IncassMyCar") == nil or incassator:GetNWEntity("GRM_IncassMyCar") == NULL, "incass: MyCar не сброшен")
+
+    print("PHASE incass: OK — старт рейса/5% комиссия терминала/чемодан в руке/багажник/гард у вольта/сдача в вольт/завершение рейса")
     return
 end

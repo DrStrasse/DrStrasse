@@ -138,16 +138,22 @@ if SERVER then
     local function factionOf(ply)
         if not Factions or not IsValid(ply) then return nil end
         local sid = ply:SteamID()
+        local sid64 = ply.SteamID64 and ply:SteamID64() or nil
+        local charKey = (GRM.Identity and isfunction(GRM.Identity.CharacterKey)) and GRM.Identity.CharacterKey(ply) or nil
         for name, f in pairs(Factions) do
-            if istable(f) and istable(f.Members) and f.Members[sid] then
-                return name, f
+            if istable(f) and istable(f.Members) then
+                if f.Members[sid] or (sid64 and f.Members[sid64]) or (charKey and f.Members[charKey]) then
+                    return name, f
+                end
             end
         end
         return nil
     end
 
     local function isLeaderOf(ply, f)
-        return IsValid(ply) and istable(f) and tostring(f.Leader or "") == ply:SteamID()
+        if not IsValid(ply) or not istable(f) then return false end
+        local ldr = tostring(f.Leader or "")
+        return ldr == ply:SteamID() or (ply.SteamID64 and ldr == ply:SteamID64())
     end
 
     local function onlineMembers(name, f)
@@ -155,7 +161,13 @@ if SERVER then
         f = f or (Factions and Factions[name])
         if not istable(f) or not istable(f.Members) then return out end
         for _, p in ipairs(player.GetAll()) do
-            if IsValid(p) and f.Members[p:SteamID()] then out[#out + 1] = p end
+            if IsValid(p) then
+                local sid = p:SteamID()
+                local sid64 = p.SteamID64 and p:SteamID64() or nil
+                if f.Members[sid] or (sid64 and f.Members[sid64]) then
+                    out[#out + 1] = p
+                end
+            end
         end
         return out
     end
@@ -219,6 +231,7 @@ if SERVER then
         dirty = true
     end
     E.Log = addLog -- публично: другие системы могут писать в фин.лог
+    E._dev_entry = entry -- dev-доступ к нормализованной записи фракции
 
     -- Фин.лог: зарплатный спам и строки сверки НЕ пишем
     hook.Add("GRM_MoneyChanged", "GRM_Economy_FinLog", function(ply, newBalance, delta, reason)
@@ -865,7 +878,10 @@ if SERVER then
             return false, "Фракция [" .. iname .. "] не имеет доступа к системе штрафов"
         end
         if not isLeaderOf(issuer, ifac) and not fp.allRoles then
-            local info = ifac.Members[issuer:SteamID()] or {}
+            local sid = issuer:SteamID()
+            local sid64 = issuer.SteamID64 and issuer:SteamID64() or nil
+            local charKey = (GRM.Identity and isfunction(GRM.Identity.CharacterKey)) and GRM.Identity.CharacterKey(issuer) or nil
+            local info = (charKey and ifac.Members[charKey]) or ifac.Members[sid] or (sid64 and ifac.Members[sid64]) or {}
             if not fp.roles[tostring(info.Role or "")] then
                 return false, "Ваша роль во фракции не имеет права штрафовать"
             end
@@ -1349,6 +1365,25 @@ if SERVER then
             notify(ply, ("[%s] Налог установлен: %d%%"):format(name, math.floor(GRM.FactionTaxGet(name) * 100)), 100, 220, 100)
             addHistory(name, ("Лидер %s установил налог %d%%"):format(ply:Nick(), math.floor(GRM.FactionTaxGet(name) * 100)))
             syncPlayer(ply)
+            return ""
+        end
+
+        if cmd == "/fines" or cmd == "!fines" then
+            local iname = factionOf(ply)
+            if not iname then
+                notify(ply, "Доступ штрафов: граждане без фракции не могут штрафовать", 255, 100, 100)
+                return ""
+            end
+            local fp = entry(iname).finePerms
+            if not fp.enabled then
+                notify(ply, "Доступ штрафов: для фракции [" .. iname .. "] штрафы отключены", 255, 100, 100)
+                return ""
+            end
+            local mx = E.FineMaxFor and E.FineMaxFor(ply) or E.Config.FineMaxAmount
+            local msg = ("Доступ штрафов [%s]: включены, лимит %s, свои: %s, чужие: %s, граждане: %s"):format(
+                iname, money(mx), fp.ownFaction and "да" or "нет", fp.otherFactions and "да" or "нет", fp.civilians and "да" or "нет"
+            )
+            notify(ply, msg, 100, 220, 255)
             return ""
         end
 

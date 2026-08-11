@@ -32,6 +32,7 @@ if SERVER then
     -- классы, которым разрешён перм (расширяется здесь)
     local PERM_CLASSES = {
         grm_bank_terminal  = true,
+        grm_bank_vault     = true,
         grm_payphone       = true,
         grm_pbx_station    = true,
         grm_phone_terminal = true,
