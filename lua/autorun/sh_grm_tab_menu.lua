@@ -82,11 +82,33 @@ if SERVER then
     end
 
     local function getPlayerFaction(ply)
-        if not Factions then return "" end
-        local sid = ply:SteamID()
-        for name, f in pairs(Factions) do
-            if istable(f) and istable(f.Members) and f.Members[sid] then
-                return name
+        if not IsValid(ply) then return "" end
+        local fac = ply:GetNWString("GRM_Faction", "")
+        if fac ~= "" then return fac end
+        fac = ply:GetNWString("Faction", "")
+        if fac ~= "" then return fac end
+        if _G.FactionsAPI and isfunction(_G.FactionsAPI.GetFactionOf) then
+            local f = _G.FactionsAPI.GetFactionOf(ply)
+            if isstring(f) and f ~= "" then return f end
+        end
+        if Factions then
+            local ck = (GRM.Identity and isfunction(GRM.Identity.CharacterKey) and GRM.Identity.CharacterKey(ply)) or ""
+            local sid = ply:SteamID() or ""
+            local sid64 = (ply.SteamID64 and ply:SteamID64()) or ""
+            if ck ~= "" then
+                for name, f in pairs(Factions) do
+                    if istable(f) and istable(f.Members) and rawget(f.Members, ck) then return name end
+                end
+            end
+            if sid ~= "" then
+                for name, f in pairs(Factions) do
+                    if istable(f) and istable(f.Members) and (rawget(f.Members, sid) or (f.Leader == sid)) then return name end
+                end
+            end
+            if sid64 ~= "" then
+                for name, f in pairs(Factions) do
+                    if istable(f) and istable(f.Members) and (rawget(f.Members, sid64) or (f.Leader == sid64)) then return name end
+                end
             end
         end
         return ""

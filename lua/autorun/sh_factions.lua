@@ -355,7 +355,147 @@ if SERVER then
         return data
     end
 
+    local function serverIsLeaderOfFaction(ply, f)
+        if not IsValid(ply) or not istable(f) then return false end
+        local ldr = tostring(f.Leader or "")
+        local sid = ply:SteamID() or ""
+        local sid64 = (ply.SteamID64 and ply:SteamID64()) or ""
+        local charKey = (GRM.Identity and isfunction(GRM.Identity.CharacterKey)) and GRM.Identity.CharacterKey(ply) or ""
+        local accKey = (GRM.Identity and isfunction(GRM.Identity.AccountKey)) and GRM.Identity.AccountKey(ply) or ""
+
+        if ldr ~= "" then
+            if ldr == sid or (sid64 ~= "" and ldr == sid64) or (charKey ~= "" and ldr == charKey) or (accKey ~= "" and ldr == accKey) then
+                return true
+            end
+            if sid64 ~= "" and ldr:find(sid64, 1, true) then return true end
+            if sid ~= "" and ldr:find(sid, 1, true) then return true end
+        end
+
+        if istable(f.Members) then
+            local leaderRole = f.LeaderRoleName or "Лидер"
+            local mem = (charKey ~= "" and f.Members[charKey]) or (sid ~= "" and f.Members[sid]) or (sid64 ~= "" and f.Members[sid64])
+            if istable(mem) and (mem.Role == leaderRole or mem.Role == "Лидер") then
+                return true
+            end
+        end
+
+        return false
+    end
+
+    local function getFactionOfLeader(ply)
+        if not IsValid(ply) or not istable(Factions) then return nil end
+        for name, f in pairs(Factions) do
+            if type(f) == "table" then
+                ensureDefaults(f)
+                if serverIsLeaderOfFaction(ply, f) then return name end
+            end
+        end
+        return nil
+    end
+
+    local function getPlayerFactionData(plyOrKey)
+        if not istable(Factions) then return nil, nil, "", {r=255,g=200,b=50}, false, "" end
+        local ply = (isentity(plyOrKey) and IsValid(plyOrKey) and plyOrKey:IsPlayer() and plyOrKey) or nil
+        local sid = ply and ply:SteamID() or (isstring(plyOrKey) and plyOrKey or "")
+        local sid64 = (ply and ply.SteamID64 and ply:SteamID64()) or (util.SteamIDTo64 and util.SteamIDTo64(sid)) or ""
+        local charKey = (ply and GRM.Identity and isfunction(GRM.Identity.CharacterKey) and GRM.Identity.CharacterKey(ply))
+            or (isstring(plyOrKey) and plyOrKey:find(":char[1-3]$") and plyOrKey) or ""
+
+        -- 1. Точное совпадение активного персонажа CharacterKey (rawget первым делом)
+        if charKey ~= "" then
+            for name, f in pairs(Factions) do
+                if istable(f) and istable(f.Members) then
+                    local rec = rawget(f.Members, charKey)
+                    if istable(rec) then
+                        return name, rec.Role or "Участник", f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, rec.Department or ""
+                    end
+                end
+            end
+        end
+
+        -- 2. Если игрок лидер фракции
+        if ply then
+            for name, f in pairs(Factions) do
+                if istable(f) and serverIsLeaderOfFaction(ply, f) then
+                    local leaderRole = f.LeaderRoleName or "Лидер"
+                    local mem = (charKey ~= "" and rawget(f.Members, charKey)) or (sid ~= "" and rawget(f.Members, sid)) or (sid64 ~= "" and rawget(f.Members, sid64)) or (f.Members and f.Members[sid])
+                    local dept = istable(mem) and mem.Department or ""
+                    return name, leaderRole, f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, dept
+                end
+            end
+        end
+
+        -- 3. Точное совпадение SteamID
+        if sid ~= "" then
+            for name, f in pairs(Factions) do
+                if istable(f) and istable(f.Members) then
+                    local rec = rawget(f.Members, sid)
+                    if istable(rec) then
+                        return name, rec.Role or "Участник", f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, rec.Department or ""
+                    end
+                end
+            end
+        end
+
+        -- 4. Точное совпадение SteamID64
+        if sid64 ~= "" then
+            for name, f in pairs(Factions) do
+                if istable(f) and istable(f.Members) then
+                    local rec = rawget(f.Members, sid64)
+                    if istable(rec) then
+                        return name, rec.Role or "Участник", f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, rec.Department or ""
+                    end
+                end
+            end
+        end
+
+        -- 5. Фолбэк через f.Members alias
+        for name, f in pairs(Factions) do
+            if istable(f) and istable(f.Members) then
+                local rec = (charKey ~= "" and f.Members[charKey]) or (sid ~= "" and f.Members[sid]) or (sid64 ~= "" and f.Members[sid64])
+                if istable(rec) then
+                    return name, rec.Role or "Участник", f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, rec.Department or ""
+                end
+            end
+        end
+
+        return nil, nil, "", {r=255,g=200,b=50}, false, ""
+    end
+
+    local function getFactionOfPlayer(steamID)
+        return select(1, getPlayerFactionData(steamID))
+    end
+
+    local function getFactionInfoForPlayer(steamID)
+        return getPlayerFactionData(steamID)
+    end
+
+    local function syncPlayerFactionNW(ply)
+        if not IsValid(ply) or not ply:IsPlayer() then return end
+        local fname, role, tag, col, dep, dept = getPlayerFactionData(ply)
+        fname = fname or ""
+        role = role or ""
+        tag = tag or ""
+        dept = dept or ""
+
+        ply:SetNWString("GRM_Faction", fname)
+        ply:SetNWString("Faction", fname)
+        ply:SetNWString("GRM_Role", role)
+        ply:SetNWString("FactionRole", role)
+        ply:SetNWString("GRM_FactionTag", tag)
+        ply:SetNWString("FactionTag", tag)
+        ply:SetNWString("GRM_Department", dept)
+        ply:SetNWString("Department", dept)
+    end
+
+    local function syncAllPlayersFactionNW()
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) then syncPlayerFactionNW(p) end
+        end
+    end
+
     function broadcastFactionData()
+        syncAllPlayersFactionNW()
         net.Start(NET_SYNC_ALL)
         net.WriteTable(buildSyncData())
         net.Broadcast()
@@ -365,20 +505,29 @@ if SERVER then
     hook.Add("GRM_CharacterChanged", "Factions_CharacterSync", function(ply)
         if not IsValid(ply) then return end
         timer.Simple(0, function()
-            if IsValid(ply) then broadcastFactionData() end
+            if IsValid(ply) then
+                syncPlayerFactionNW(ply)
+                broadcastFactionData()
+            end
         end)
     end)
 
-    local function getFactionOfPlayer(steamID)
-        local key = memberKey(steamID)
-        for name, f in pairs(Factions) do
-            if type(f) == "table" then
-                ensureDefaults(f)
-                if f.Members[key] or f.Members[steamID] then return name end
+    hook.Add("PlayerInitialSpawn", "Factions_SyncOnJoin", function(ply)
+        timer.Simple(1.0, function()
+            if IsValid(ply) then
+                sendFactionDataTo(ply)
+                syncPlayerFactionNW(ply)
             end
-        end
-        return nil
-    end
+        end)
+    end)
+
+    hook.Add("PlayerSpawn", "Factions_SyncOnSpawn", function(ply)
+        timer.Simple(0.2, function()
+            if IsValid(ply) then
+                syncPlayerFactionNW(ply)
+            end
+        end)
+    end)
 
     local function createFaction(name, leaderSteamID)
         if not name or name == "" then return false, "Не указано название" end
@@ -753,58 +902,6 @@ if SERVER then
         net.WriteTable(buildSyncData())
         net.Send(ply)
         sendCharacterChoices(ply)
-    end
-
-    local function getFactionInfoForPlayer(steamID)
-        local key = memberKey(steamID)
-        for name, f in pairs(Factions) do
-            if type(f) == "table" then
-                ensureDefaults(f)
-                local rec = f.Members[key] or f.Members[steamID]
-                if rec then
-                    return name, rec.Role, f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess
-                end
-            end
-        end
-        return nil, nil, "", {r=255,g=200,b=50}, false
-    end
-
-    local function serverIsLeaderOfFaction(ply, f)
-        if not IsValid(ply) or not istable(f) then return false end
-        local ldr = tostring(f.Leader or "")
-        local sid = ply:SteamID() or ""
-        local sid64 = (ply.SteamID64 and ply:SteamID64()) or ""
-        local charKey = (GRM.Identity and isfunction(GRM.Identity.CharacterKey)) and GRM.Identity.CharacterKey(ply) or ""
-        local accKey = (GRM.Identity and isfunction(GRM.Identity.AccountKey)) and GRM.Identity.AccountKey(ply) or ""
-
-        if ldr ~= "" then
-            if ldr == sid or (sid64 ~= "" and ldr == sid64) or (charKey ~= "" and ldr == charKey) or (accKey ~= "" and ldr == accKey) then
-                return true
-            end
-            if sid64 ~= "" and ldr:find(sid64, 1, true) then return true end
-            if sid ~= "" and ldr:find(sid, 1, true) then return true end
-        end
-
-        if istable(f.Members) then
-            local leaderRole = f.LeaderRoleName or "Лидер"
-            local mem = (charKey ~= "" and f.Members[charKey]) or (sid ~= "" and f.Members[sid]) or (sid64 ~= "" and f.Members[sid64])
-            if istable(mem) and (mem.Role == leaderRole or mem.Role == "Лидер") then
-                return true
-            end
-        end
-
-        return false
-    end
-
-    local function getFactionOfLeader(ply)
-        if not IsValid(ply) or not istable(Factions) then return nil end
-        for name, f in pairs(Factions) do
-            if type(f) == "table" then
-                ensureDefaults(f)
-                if serverIsLeaderOfFaction(ply, f) then return name end
-            end
-        end
-        return nil
     end
 
     -- --------------------
