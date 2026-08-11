@@ -500,12 +500,32 @@ net.Receive("GRM_DocComp_Open", function()
     local lblLRestr = vgui.Create("DLabel", licPnl)
     lblLRestr:SetPos(16, yLicPos + 10) lblLRestr:SetText("12. Особые отметки / ограничения:") lblLRestr:SetTextColor(CC.text) lblLRestr:SizeToContents()
     local entLicRestr = vgui.Create("DTextEntry", licPnl)
-    entLicRestr:SetPos(16, yLicPos + 30) entLicRestr:SetSize(400, 26) entLicRestr:SetText("Стаж вождения подтверждён")
+    entLicRestr:SetPos(16, yLicPos + 30) entLicRestr:SetSize(390, 26) entLicRestr:SetText("Стаж вождения подтверждён")
 
-    local lblLIssuer = vgui.Create("DLabel", licPnl)
-    lblLIssuer:SetPos(430, yLicPos + 10) lblLIssuer:SetText("Кем выдано (орган ГАИ):") lblLIssuer:SetTextColor(CC.text) lblLIssuer:SizeToContents()
+    local lblLOrg = vgui.Create("DLabel", licPnl)
+    lblLOrg:SetPos(420, yLicPos + 10) lblLOrg:SetText("Орган выдачи (пресет ВАИ / ГАИ / ручной ввод):") lblLOrg:SetTextColor(CC.text) lblLOrg:SizeToContents()
+
+    local comboLOrg = vgui.Create("DComboBox", licPnl)
+    comboLOrg:SetPos(420, yLicPos + 30) comboLOrg:SetSize(320, 26)
+    comboLOrg:AddChoice("ВАИ (Военная автомобильная инспекция)", "ВАИ (Военная автомобильная инспекция)")
+    comboLOrg:AddChoice("ГАИ / Дорожная полиция", "Отдел дорожной полиции и экзаменации")
+    comboLOrg:AddChoice("Экзаменационный отдел автошколы", "Экзаменационный отдел автошколы")
+    comboLOrg:SetValue("ВАИ (Военная автомобильная инспекция)")
+
     local entLicIssuer = vgui.Create("DTextEntry", licPnl)
-    entLicIssuer:SetPos(430, yLicPos + 30) entLicIssuer:SetSize(300, 26) entLicIssuer:SetText((tpls.license and tpls.license.defaultIssuer) or "Отдел дорожной полиции и экзаменации")
+    entLicIssuer:SetPos(420, yLicPos + 60) entLicIssuer:SetSize(320, 26)
+    entLicIssuer:SetText("ВАИ (Военная автомобильная инспекция)")
+
+    comboLOrg.OnSelect = function(_, _, dataVal)
+        if isstring(dataVal) and dataVal ~= "" then
+            entLicIssuer:SetText(dataVal)
+            if dataVal:find("ВАИ") then
+                entLicNum:SetText("ВАИ-" .. selLicSid64:sub(-5))
+            else
+                entLicNum:SetText("ВУ-" .. selLicSid64:sub(-5))
+            end
+        end
+    end
 
     local selLicKey = ""
     local selLicSid64 = "0"
@@ -515,8 +535,17 @@ net.Receive("GRM_DocComp_Open", function()
             selLicSid64 = pData.steamID64 or "0"
             entLicName:SetText(pData.rpName or "")
 
-            local pfx = (tpls.license and tpls.license.defaultPrefix) or "ВУ-"
+            local isMil = (pData.faction and (pData.faction:lower():find("воен") or pData.faction:lower():find("арми") or pData.faction:lower():find("гвард") or pData.faction:lower():find("gendarmerie")))
+            local pfx = isMil and "ВАИ-" or ((tpls.license and tpls.license.defaultPrefix) or "ВУ-")
             entLicNum:SetText(pfx .. selLicSid64:sub(-5))
+
+            if isMil then
+                comboLOrg:SetValue("ВАИ (Военная автомобильная инспекция)")
+                entLicIssuer:SetText("ВАИ (Военная автомобильная инспекция)")
+            else
+                comboLOrg:SetValue("ГАИ / Дорожная полиция")
+                entLicIssuer:SetText("Отдел дорожной полиции и экзаменации")
+            end
 
             if registry.licenses and registry.licenses[selLicKey] then
                 local ex = registry.licenses[selLicKey]
@@ -524,7 +553,7 @@ net.Receive("GRM_DocComp_Open", function()
                 entLicBirth:SetText(ex.birthDate or "12.04.1988")
                 entLicNum:SetText(ex.number or (pfx .. selLicSid64:sub(-5)))
                 entLicRestr:SetText(ex.restrictions or "Стаж подтверждён")
-                entLicIssuer:SetText(ex.issuedBy or "Отдел ГАИ")
+                entLicIssuer:SetText(ex.issuedBy or "ВАИ (Военная автомобильная инспекция)")
                 if istable(ex.categories) then
                     for cId, cb in pairs(chkCats) do
                         cb:SetValue(ex.categories[cId] == true)
@@ -535,7 +564,7 @@ net.Receive("GRM_DocComp_Open", function()
     end
 
     local btnIssueLic = vgui.Create("DButton", licPnl)
-    btnIssueLic:SetPos(16, yLicPos + 75)
+    btnIssueLic:SetPos(16, yLicPos + 95)
     btnIssueLic:SetSize(340, 36)
     btnIssueLic:SetText("✔ Оформить и выдать водительские права")
     btnIssueLic:SetFont("DermaDefaultBold")
