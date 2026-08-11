@@ -771,6 +771,44 @@ if SERVER then
         return nil, nil, "", {r=255,g=200,b=50}, false
     end
 
+    local function serverIsLeaderOfFaction(ply, f)
+        if not IsValid(ply) or not istable(f) then return false end
+        local ldr = tostring(f.Leader or "")
+        local sid = ply:SteamID() or ""
+        local sid64 = (ply.SteamID64 and ply:SteamID64()) or ""
+        local charKey = (GRM.Identity and isfunction(GRM.Identity.CharacterKey)) and GRM.Identity.CharacterKey(ply) or ""
+        local accKey = (GRM.Identity and isfunction(GRM.Identity.AccountKey)) and GRM.Identity.AccountKey(ply) or ""
+
+        if ldr ~= "" then
+            if ldr == sid or (sid64 ~= "" and ldr == sid64) or (charKey ~= "" and ldr == charKey) or (accKey ~= "" and ldr == accKey) then
+                return true
+            end
+            if sid64 ~= "" and ldr:find(sid64, 1, true) then return true end
+            if sid ~= "" and ldr:find(sid, 1, true) then return true end
+        end
+
+        if istable(f.Members) then
+            local leaderRole = f.LeaderRoleName or "Лидер"
+            local mem = (charKey ~= "" and f.Members[charKey]) or (sid ~= "" and f.Members[sid]) or (sid64 ~= "" and f.Members[sid64])
+            if istable(mem) and (mem.Role == leaderRole or mem.Role == "Лидер") then
+                return true
+            end
+        end
+
+        return false
+    end
+
+    local function getFactionOfLeader(ply)
+        if not IsValid(ply) or not istable(Factions) then return nil end
+        for name, f in pairs(Factions) do
+            if type(f) == "table" then
+                ensureDefaults(f)
+                if serverIsLeaderOfFaction(ply, f) then return name end
+            end
+        end
+        return nil
+    end
+
     -- --------------------
     -- СЕТЕВЫЕ ОБРАБОТЧИКИ
     -- --------------------
@@ -779,16 +817,9 @@ if SERVER then
     net.Receive(NET_ACTION, function(_, ply)
         local action       = net.ReadString()
         local args         = net.ReadTable() or {}
-        local steam        = memberKey(ply)
         local isSuperAdmin = ply:IsSuperAdmin()
 
-        local leaderFaction = nil
-        for name, f in pairs(Factions) do
-            if type(f) == "table" then
-                ensureDefaults(f)
-                if f.Leader == steam then leaderFaction = name break end
-            end
-        end
+        local leaderFaction = getFactionOfLeader(ply)
         local isLeader = leaderFaction ~= nil
 
         local function done(success, msg)
@@ -1063,21 +1094,11 @@ if SERVER then
                 net.Start(NET_OPEN_ADMIN)
                 net.Send(ply)
             else
-                -- Проверяем, является ли игрок лидером
-                local steam = memberKey(ply)
-                local isLeader = false
-                for _, f in pairs(Factions) do
-                    if type(f) == "table" and f.Leader == steam then
-                        isLeader = true
-                        break
-                    end
-                end
-                if isLeader then
+                local leaderFaction = getFactionOfLeader(ply)
+                if leaderFaction then
                     net.Start(NET_OPEN_LEADER)
                     net.Send(ply)
                 else
-                    -- Находка 172: доступ к экономике (лидер/зам Нацбанка) —
-                    -- открываем админ-меню фракций, где есть вкладка «Экономика»
                     local econAccess = GRM.Economy and GRM.Economy.CanManageEconomy and GRM.Economy.CanManageEconomy(ply) == true
                     if econAccess then
                         net.Start(NET_OPEN_ADMIN)
@@ -1106,12 +1127,8 @@ if SERVER then
         cmdFactions:defaultAccess(ULib.ACCESS_SUPERADMIN)
 
         local cmdLeader = ulx.command("Utility", "ulx factions_leader", function(ply)
-            local steam = memberKey(ply)
-            local isLeader = false
-            for _, f in pairs(Factions) do
-                if type(f) == "table" and f.Leader == steam then isLeader = true break end
-            end
-            if not isLeader then ply:PrintMessage(HUD_PRINTTALK, "Вы не являетесь лидером.") return end
+            local leaderFaction = getFactionOfLeader(ply)
+            if not leaderFaction then ply:PrintMessage(HUD_PRINTTALK, "Вы не являетесь лидером.") return end
             net.Start(NET_OPEN_LEADER) net.Send(ply)
         end, "factions_leader")
         cmdLeader:defaultAccess(ULib.ACCESS_ALL)
@@ -1239,6 +1256,36 @@ if CLIENT then
     local function clientMemberKey(ply)
         if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
         return IsValid(ply) and ply:SteamID() or ""
+    end
+
+    local function clientIsLeaderOfFaction(f)
+        local ply = LocalPlayer()
+        if not IsValid(ply) or not istable(f) then return false end
+        if ply:IsSuperAdmin() then return true end
+
+        local ldr = tostring(f.Leader or "")
+        local sid = ply:SteamID() or ""
+        local sid64 = ply.SteamID64 and ply:SteamID64() or ""
+        local charKey = (GRM.Identity and isfunction(GRM.Identity.CharacterKey)) and GRM.Identity.CharacterKey(ply) or ""
+        local accKey = (GRM.Identity and isfunction(GRM.Identity.AccountKey)) and GRM.Identity.AccountKey(ply) or ""
+
+        if ldr ~= "" then
+            if ldr == sid or (sid64 ~= "" and ldr == sid64) or (charKey ~= "" and ldr == charKey) or (accKey ~= "" and ldr == accKey) then
+                return true
+            end
+            if sid64 ~= "" and ldr:find(sid64, 1, true) then return true end
+            if sid ~= "" and ldr:find(sid, 1, true) then return true end
+        end
+
+        if istable(f.Members) then
+            local leaderRole = f.LeaderRoleName or "Лидер"
+            local mem = (charKey ~= "" and f.Members[charKey]) or (sid ~= "" and f.Members[sid]) or (sid64 ~= "" and f.Members[sid64])
+            if istable(mem) and (mem.Role == leaderRole or mem.Role == "Лидер") then
+                return true
+            end
+        end
+
+        return false
     end
 
     net.Receive(NET_SYNC_ALL, function()
@@ -1497,10 +1544,9 @@ if CLIENT then
 
         -- лидерская вкладка «Участники»: фракция — его собственная
         if IsValid(ui.roleComboLeader) and IsValid(ui.deptComboLeader) then
-            local mySteam = IsValid(LocalPlayer()) and clientMemberKey(LocalPlayer()) or nil
             local myLead = nil
             for name, fdata in pairs(data or {}) do
-                if fdata.Leader == mySteam then myLead = name break end
+                if clientIsLeaderOfFaction(fdata) then myLead = name break end
             end
             rebuildRoleDeptCombos(myLead, ui.roleComboLeader, ui.deptComboLeader)
         end
@@ -1514,12 +1560,11 @@ if CLIENT then
         local scroll = ui.ranksScrollLeader
         scroll:Clear()
 
-        local mySteam = clientMemberKey(LocalPlayer())
         local factionName, f = nil, nil
         for name, fdata in pairs(data or {}) do
-            if fdata.Leader == mySteam then factionName = name f = fdata break end
+            if clientIsLeaderOfFaction(fdata) then factionName = name f = fdata break end
         end
-        if not factionName then return end
+        if not factionName or not f then return end
 
         local roles = f.Roles or {}
         for _, roleName in ipairs(roles) do
@@ -1614,12 +1659,11 @@ if CLIENT then
         local scroll = ui.deptsScrollLeader
         scroll:Clear()
 
-        local mySteam = clientMemberKey(LocalPlayer())
         local factionName, f = nil, nil
         for name, fdata in pairs(data or {}) do
-            if fdata.Leader == mySteam then factionName = name f = fdata break end
+            if clientIsLeaderOfFaction(fdata) then factionName = name f = fdata break end
         end
-        if not factionName then return end
+        if not factionName or not f then return end
 
         local departments = f.Departments or {}
         for _, deptName in ipairs(departments) do
@@ -1706,17 +1750,16 @@ if CLIENT then
         local scroll = ui.memberScrollLeader
         scroll:Clear()
 
-        local mySteam = clientMemberKey(LocalPlayer())
         local factionName, f = nil, nil
         for name, fdata in pairs(data or {}) do
-            if fdata.Leader == mySteam then factionName = name f = fdata break end
+            if clientIsLeaderOfFaction(fdata) then factionName = name f = fdata break end
         end
         if not f then
             if IsValid(ui.leaderTitleLabel) then ui.leaderTitleLabel:SetText("Вы не лидер") end
             return
         end
         if IsValid(ui.leaderTitleLabel) then
-            ui.leaderTitleLabel:SetText("Фракция: " .. factionName)
+            ui.leaderTitleLabel:SetText("Фракция: " .. tostring(factionName))
         end
 
         local members     = f.Members     or {}
@@ -2939,9 +2982,8 @@ if CLIENT then
         Y = Y + 45
 
         getData(function(data)
-            local mySteam = clientMemberKey(LocalPlayer())
-            for _, f in pairs(data) do
-                if f.Leader == mySteam then
+            for _, f in pairs(data or {}) do
+                if clientIsLeaderOfFaction(f) then
                     for _, role in ipairs(f.Roles or {}) do roleCombo:AddChoice(role) end
                     for _, dept in ipairs(f.Departments or {}) do deptCombo:AddChoice(dept) end
                     break
@@ -3098,9 +3140,8 @@ if CLIENT then
         if LocalPlayer():IsSuperAdmin() then OpenAdminMenu() return end
 
         getData(function(data)
-            local mySteam = clientMemberKey(LocalPlayer())
             for _, f in pairs(data or {}) do
-                if f.Leader == mySteam then OpenLeaderMenu() return end
+                if clientIsLeaderOfFaction(f) then OpenLeaderMenu() return end
             end
             -- Находка 172: не лидер, но возможно есть доступ к экономике
             -- (лидер/зам Нацбанка). Просим сервер — он сам решит и пришлёт

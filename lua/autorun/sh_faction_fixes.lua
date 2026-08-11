@@ -2912,9 +2912,10 @@ if CLIENT then
         return panel
     end
 
-    -- Точка расширения вместо мёртвого обезьяньего патча OpenAdminMenu (v3.1.1)
+    -- Точка расширения: вкладка «Расширенные настройки» доступна ТОЛЬКО суперадмину
     hook.Add("GRM_FactionsAdmin_BuildTabs", "FactionsExt_ExtendedTab", function(tabs)
         if not IsValid(tabs) then return end
+        if not (IsValid(LocalPlayer()) and LocalPlayer():IsSuperAdmin()) then return end
         tabs:AddSheet("Расширенные настройки", OpenExtendedSettings(tabs), "icon16/cog.png")
     end)
 
