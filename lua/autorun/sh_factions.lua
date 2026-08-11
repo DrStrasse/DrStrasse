@@ -1286,6 +1286,27 @@ if CLIENT then
         return false
     end
 
+    local function safeScrollClear(scroll)
+        if IsValid(scroll) and isfunction(scroll.GetCanvas) and IsValid(scroll:GetCanvas()) then
+            scroll:Clear()
+        end
+    end
+
+    local function populateOnlinePlayerCombo(combo, targetEntry)
+        if not IsValid(combo) then return end
+        combo:Clear()
+        combo:AddChoice("-- Выберите активного персонажа онлайн --", "")
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and not p:IsBot() then
+                local rpName = (p.GetNWString and p:GetNWString("GRM_RPName", ""))
+                if not isstring(rpName) or rpName == "" then rpName = p:Nick() end
+                local charKey = (GRM.Identity and isfunction(GRM.Identity.CharacterKey) and GRM.Identity.CharacterKey(p)) or p:SteamID()
+                local label = tostring(rpName) .. " [" .. tostring(p:Nick()) .. "] (" .. tostring(p:SteamID()) .. ")"
+                combo:AddChoice(label, charKey)
+            end
+        end
+    end
+
     net.Receive(NET_SYNC_ALL, function()
         FactionsData = installClientFactionAliases(net.ReadTable() or {})
         refreshAllUI(FactionsData)
@@ -1502,17 +1523,17 @@ if CLIENT then
         -- админская вкладка «Ранги»
         local rFac = selOf(ui.factionComboRanks)
         if IsValid(ui.ranksScroll) then
-            if rFac then updateRanksList(rFac, data) else ui.ranksScroll:Clear() end
+            if rFac then updateRanksList(rFac, data) else safeScrollClear(ui.ranksScroll) end
         end
         -- админская вкладка «Отделы»
         local dFac = selOf(ui.factionComboDepts)
         if IsValid(ui.deptsScroll) then
-            if dFac then updateDepartmentsList(dFac, data) else ui.deptsScroll:Clear() end
+            if dFac then updateDepartmentsList(dFac, data) else safeScrollClear(ui.deptsScroll) end
         end
         -- админская вкладка «Список» (участники фракции)
         local lFac = selOf(ui.factionComboList)
         if IsValid(ui.memberScroll) then
-            if lFac then updateMemberListForFaction(lFac, data) else ui.memberScroll:Clear() end
+            if lFac then updateMemberListForFaction(lFac, data) else safeScrollClear(ui.memberScroll) end
         end
 
         -- комбо ролей/отделов во вкладках «Участники» — тоже живые:
@@ -1556,7 +1577,7 @@ if CLIENT then
     function updateLeaderRanks(data)
         if not IsValid(ui.ranksScrollLeader) then return end
         local scroll = ui.ranksScrollLeader
-        scroll:Clear()
+        safeScrollClear(scroll)
 
         local factionName, f = nil, nil
         for name, fdata in pairs(data or {}) do
@@ -1655,7 +1676,7 @@ if CLIENT then
     function updateLeaderDepartments(data)
         if not IsValid(ui.deptsScrollLeader) then return end
         local scroll = ui.deptsScrollLeader
-        scroll:Clear()
+        safeScrollClear(scroll)
 
         local factionName, f = nil, nil
         for name, fdata in pairs(data or {}) do
@@ -1746,7 +1767,7 @@ if CLIENT then
     function updateLeaderMemberList(data)
         if not IsValid(ui.memberScrollLeader) then return end
         local scroll = ui.memberScrollLeader
-        scroll:Clear()
+        safeScrollClear(scroll)
 
         local factionName, f = nil, nil
         for name, fdata in pairs(data or {}) do
@@ -1816,7 +1837,7 @@ if CLIENT then
     function updateRanksList(factionName, data)
         if not IsValid(ui.ranksScroll) then return end
         local scroll = ui.ranksScroll
-        scroll:Clear()
+        safeScrollClear(scroll)
         if not factionName or not data or not data[factionName] then return end
 
         local f = data[factionName]
@@ -1909,7 +1930,7 @@ if CLIENT then
     function updateDepartmentsList(factionName, data)
         if not IsValid(ui.deptsScroll) then return end
         local scroll = ui.deptsScroll
-        scroll:Clear()
+        safeScrollClear(scroll)
         if not factionName or not data or not data[factionName] then return end
 
         local f = data[factionName]
@@ -1992,7 +2013,7 @@ if CLIENT then
     function updateMemberListForFaction(factionName, data)
         if not IsValid(ui.memberScroll) then return end
         local scroll = ui.memberScroll
-        scroll:Clear()
+        safeScrollClear(scroll)
         if not factionName or not data or not data[factionName] then return end
 
         local f = data[factionName]
@@ -2047,7 +2068,7 @@ if CLIENT then
     function updateDepWavePanel(data)
         if not IsValid(ui.depWaveScroll) then return end
         local scroll = ui.depWaveScroll
-        scroll:Clear()
+        safeScrollClear(scroll)
 
         data = data or FactionsData
 
@@ -2430,17 +2451,33 @@ if CLIENT then
         lblF3:SetFont("Factions_Normal") lblF3:SetTextColor(THEME.text)
 
         local factionCombo3 = vgui.Create("DComboBox", memberPanel)
-        factionCombo3:SetPos(100, Y) factionCombo3:SetSize(240, 26)
+        factionCombo3:SetPos(100, Y) factionCombo3:SetSize(280, 26)
         ui.factionCombo3 = factionCombo3
-        Y = Y + 40
+        Y = Y + 36
+
+        local lblOnline = vgui.Create("DLabel", memberPanel)
+        lblOnline:SetText("Онлайн:") lblOnline:SetPos(15, Y + 3) lblOnline:SetSize(80, 20)
+        lblOnline:SetFont("Factions_Normal") lblOnline:SetTextColor(THEME.text)
+
+        local onlineCombo = vgui.Create("DComboBox", memberPanel)
+        onlineCombo:SetPos(100, Y) onlineCombo:SetSize(280, 26)
+        onlineCombo:SetFont("Factions_Normal")
+        populateOnlinePlayerCombo(onlineCombo)
+        Y = Y + 36
 
         local lblTarget = vgui.Create("DLabel", memberPanel)
-        lblTarget:SetText("SteamID:") lblTarget:SetPos(15, Y + 3) lblTarget:SetSize(80, 20)
-        lblTarget:SetFont("Factions_Normal") lblTarget:SetTextColor(THEME.text)
+        lblTarget:SetText("Ключ/ID:") lblTarget:SetPos(15, Y + 3) lblTarget:SetSize(80, 20)
+        lblTarget:SetFont("Factions_Normal") lblTarget:SetTextColor(THEME.textDim)
 
         local targetEntry = vgui.Create("DTextEntry", memberPanel)
-        targetEntry:SetPos(100, Y) targetEntry:SetSize(260, 26) targetEntry:SetFont("Factions_Normal")
+        targetEntry:SetPos(100, Y) targetEntry:SetSize(280, 26) targetEntry:SetFont("Factions_Normal")
         Y = Y + 40
+
+        onlineCombo.OnSelect = function(_, _, _, dataKey)
+            if isstring(dataKey) and dataKey ~= "" then
+                targetEntry:SetText(dataKey)
+            end
+        end
 
         local lblRoleM = vgui.Create("DLabel", memberPanel)
         lblRoleM:SetText("Роль:") lblRoleM:SetPos(15, Y + 3) lblRoleM:SetSize(80, 20)
@@ -2953,13 +2990,29 @@ if CLIENT then
         memberPanel:SetPaintBackground(false) memberPanel:DockPadding(15, 10, 15, 10)
         local Y = 10
 
+        local lblOnline = vgui.Create("DLabel", memberPanel)
+        lblOnline:SetText("Онлайн:") lblOnline:SetPos(15, Y + 3) lblOnline:SetSize(80, 20)
+        lblOnline:SetFont("Factions_Normal") lblOnline:SetTextColor(THEME.text)
+
+        local onlineCombo = vgui.Create("DComboBox", memberPanel)
+        onlineCombo:SetPos(100, Y) onlineCombo:SetSize(280, 26)
+        onlineCombo:SetFont("Factions_Normal")
+        populateOnlinePlayerCombo(onlineCombo)
+        Y = Y + 36
+
         local lblTarget = vgui.Create("DLabel", memberPanel)
-        lblTarget:SetText("SteamID:") lblTarget:SetPos(15, Y + 3) lblTarget:SetSize(80, 20)
-        lblTarget:SetFont("Factions_Normal") lblTarget:SetTextColor(THEME.text)
+        lblTarget:SetText("Ключ/ID:") lblTarget:SetPos(15, Y + 3) lblTarget:SetSize(80, 20)
+        lblTarget:SetFont("Factions_Normal") lblTarget:SetTextColor(THEME.textDim)
 
         local targetEntry = vgui.Create("DTextEntry", memberPanel)
-        targetEntry:SetPos(100, Y) targetEntry:SetSize(260, 26) targetEntry:SetFont("Factions_Normal")
+        targetEntry:SetPos(100, Y) targetEntry:SetSize(280, 26) targetEntry:SetFont("Factions_Normal")
         Y = Y + 40
+
+        onlineCombo.OnSelect = function(_, _, _, dataKey)
+            if isstring(dataKey) and dataKey ~= "" then
+                targetEntry:SetText(dataKey)
+            end
+        end
 
         local lblRoleL = vgui.Create("DLabel", memberPanel)
         lblRoleL:SetText("Роль:") lblRoleL:SetPos(15, Y + 3) lblRoleL:SetSize(80, 20)
