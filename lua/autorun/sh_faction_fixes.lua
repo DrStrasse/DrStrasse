@@ -2928,9 +2928,9 @@ if CLIENT then
         header:DockMargin(0, 0, 0, 12)
         header.Paint = function(self, w, h)
             draw.RoundedBox(6, 0, 0, w, h, THEME.panel)
-            local st = (FactionsData and FactionsData._stateBudget)
+            local st = (GRM.StateBudgetGet and GRM.StateBudgetGet())
                 or (GRM.Economy and GRM.Economy.StateBudgetGet and GRM.Economy.StateBudgetGet())
-                or (GRM.Economy and GRM.Economy.Data and GRM.Economy.Data.state and GRM.Economy.Data.state.budget)
+                or (GetGlobalDouble and GetGlobalDouble("GRM_StateBudget", 0))
                 or 0
             local stTxt = GRM.Format and GRM.Format(st) or (tostring(st) .. " GRM")
             draw.SimpleText("ГОСУДАРСТВЕННЫЙ БЮДЖЕТ СЕРВЕРА", "FactionsExt_Small", 14, 16, THEME.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)

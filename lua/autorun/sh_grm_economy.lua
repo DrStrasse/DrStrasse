@@ -339,6 +339,7 @@ if SERVER then
         local st = E.Data.state
         st.budget = math.max(0, math.floor((tonumber(st.budget) or 0) + delta))
         dirty = true
+        if SetGlobalDouble then SetGlobalDouble("GRM_StateBudget", st.budget) end
         if reason then stateHist(reason) end
         -- Находка 178: банковские хранилища отражают гос.бюджет в реальном
         -- времени (NWVar на каждом хранилище + таймер-страховка).
@@ -1005,10 +1006,17 @@ if SERVER then
     function E.StateBudgetSet(value, reason)
         E.Data.state.budget = math.max(0, math.floor(tonumber(value) or 0))
         dirty = true
+        if SetGlobalDouble then SetGlobalDouble("GRM_StateBudget", E.Data.state.budget) end
         if reason then stateHist(reason) end
         -- Находка 178: синк дисплеев хранилищ
         if E.SyncVaultsState then E.SyncVaultsState() end
         return E.Data.state.budget
+    end
+
+    function GRM.StateBudgetGet()
+        if SERVER and E.StateBudgetGet then return E.StateBudgetGet() end
+        if GetGlobalDouble then return GetGlobalDouble("GRM_StateBudget", 0) end
+        return 0
     end
 
     -- Сводка по фракции для админ-панелей (не мутирует запись)
@@ -2006,6 +2014,9 @@ if SERVER then
     -- СТАРТ
     -- ========================================================
     load()
+    if SetGlobalDouble and E.Data and E.Data.state then
+        SetGlobalDouble("GRM_StateBudget", tonumber(E.Data.state.budget) or 0)
+    end
     lastDiskTxt = file.Exists(DATA_FILE, "DATA") and (file.Read(DATA_FILE, "DATA") or "") or nil
     print(("[GRM Economy] Unified Economy v3.0.2 (переписано с нуля) загружена (путь: %s, база: data/%s): фракций %d, счетов %d"):format(
         tostring(debug.getinfo(1, "S").short_src), DATA_FILE,
@@ -2014,6 +2025,10 @@ end
 
 if CLIENT then
     E.Local = E.Local or { faction = "", data = {} }
+
+    function GRM.StateBudgetGet()
+        return GetGlobalDouble and GetGlobalDouble("GRM_StateBudget", 0) or 0
+    end
 
     surface.CreateFont("GRM_Eco_Title",  { font = "Roboto", size = 19, weight = 800, extended = true })
     surface.CreateFont("GRM_Eco_Normal", { font = "Roboto", size = 14, weight = 500, extended = true })

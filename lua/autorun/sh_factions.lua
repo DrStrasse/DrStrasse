@@ -377,10 +377,6 @@ if SERVER then
                 }
             end
         end
-        local st = (GRM.Economy and GRM.Economy.StateBudgetGet and GRM.Economy.StateBudgetGet())
-            or (GRM.Economy and GRM.Economy.Data and GRM.Economy.Data.state and GRM.Economy.Data.state.budget)
-            or 0
-        data._stateBudget = st
         return data
     end
 
@@ -1559,7 +1555,9 @@ if CLIENT then
         }
         -- Сортируем имена фракций по алфавиту
         local names = {}
-        for n, _ in pairs(data or {}) do names[#names+1] = n end
+        for n, f in pairs(data or {}) do
+            if isstring(n) and n ~= "" and istable(f) then names[#names+1] = n end
+        end
         table.sort(names)
         for _, combo in ipairs(combos) do
             if IsValid(combo) then
@@ -1571,7 +1569,7 @@ if CLIENT then
                 combo:Clear()
                 for _, name in ipairs(names) do combo:AddChoice(name) end
                 combo.OnSelect = oldOnSelect
-                if selected and data and data[selected] then
+                if selected and data and istable(data[selected]) then
                     combo:SetValue(selected)
                 elseif #names > 0 and not selected then
                     combo:SetValue(names[1])
@@ -1601,11 +1599,13 @@ if CLIENT then
 
         if IsValid(ui.listView) then
             ui.listView:Clear()
-            for name, f in pairs(data) do
-                local leaderStr = f.Leader or "Нет"
-                local count = table.Count(f.Members or {})
-                local tagStr = (f.Tag and f.Tag ~= "") and ("[" .. f.Tag .. "] ") or ""
-                ui.listView:AddLine(tagStr .. name, leaderStr, count)
+            for name, f in pairs(data or {}) do
+                if isstring(name) and istable(f) then
+                    local leaderStr = f.Leader or "Нет"
+                    local count = table.Count(f.Members or {})
+                    local tagStr = (f.Tag and f.Tag ~= "") and ("[" .. f.Tag .. "] ") or ""
+                    ui.listView:AddLine(tagStr .. name, leaderStr, count)
+                end
             end
         end
 
@@ -1617,17 +1617,19 @@ if CLIENT then
         -- Код 126: обновляем вкладку Инкассации если открыта; если фракция не выбрана — берём первую
         if IsValid(ui.factionComboIncasso) and ui.updateIncassoPanel then
             local fName = ui.factionComboIncasso:GetValue()
-            if (not fName or fName == "" or not data[fName]) then
+            if (not fName or fName == "" or not data[fName] or not istable(data[fName])) then
                 -- Автовыбор первой фракции из отсортированного списка
                 local names = {}
-                for n, _ in pairs(data or {}) do names[#names + 1] = n end
+                for n, f in pairs(data or {}) do
+                    if isstring(n) and n ~= "" and istable(f) then names[#names + 1] = n end
+                end
                 table.sort(names)
                 if #names > 0 then
                     fName = names[1]
                     ui.factionComboIncasso:SetValue(fName)
                 end
             end
-            if fName and fName ~= "" and data[fName] then
+            if fName and fName ~= "" and data[fName] and istable(data[fName]) then
                 ui.updateIncassoPanel(fName, data)
             end
         end
@@ -2197,13 +2199,17 @@ if CLIENT then
         infoLbl:SetTextColor(THEME.text)
 
         local sortedNames = {}
-        for name, _ in pairs(data or {}) do sortedNames[#sortedNames + 1] = name end
+        for name, f in pairs(data or {}) do
+            if isstring(name) and name ~= "" and istable(f) then
+                sortedNames[#sortedNames + 1] = name
+            end
+        end
         table.sort(sortedNames)
 
         for _, factionName in ipairs(sortedNames) do
             local f = data[factionName]
             -- Код 108: continue→if-обёртка (ванильный Lua, стенды парсят файл напрямую)
-            if f then
+            if istable(f) then
                 local row = vgui.Create("DPanel", scroll)
                 row:Dock(TOP) row:SetTall(44) row:DockMargin(0, 2, 0, 2)
 
@@ -3149,7 +3155,7 @@ if CLIENT then
 
         getData(function(data)
             for _, f in pairs(data or {}) do
-                if clientIsLeaderOfFaction(f) then
+                if istable(f) and clientIsLeaderOfFaction(f) then
                     for _, role in ipairs(f.Roles or {}) do roleCombo:AddChoice(role) end
                     for _, dept in ipairs(f.Departments or {}) do deptCombo:AddChoice(dept) end
                     break
@@ -3311,7 +3317,7 @@ if CLIENT then
 
         getData(function(data)
             for _, f in pairs(data or {}) do
-                if clientIsLeaderOfFaction(f) then OpenLeaderMenu() return end
+                if istable(f) and clientIsLeaderOfFaction(f) then OpenLeaderMenu() return end
             end
             -- Находка 172: не лидер, но возможно есть доступ к экономике
             -- (лидер/зам Нацбанка). Просим сервер — он сам решит и пришлёт
