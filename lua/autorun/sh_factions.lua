@@ -244,6 +244,10 @@ if SERVER then
         f.Color.g = tonumber(f.Color.g) or 200
         f.Color.b = tonumber(f.Color.b) or 50
         if f.DepAccess == nil then f.DepAccess = false end
+        -- Код 127: доступы к государственным услугам, счетам и дипломам
+        if f.ServiceAccess == nil then f.ServiceAccess = false end
+        if f.InvoiceAccess == nil then f.InvoiceAccess = false end
+        if f.DiplomaAccess == nil then f.DiplomaAccess = false end
 
         if f.Leader and not f.Members[f.Leader] then
             -- Если лидер сохранён как старый SteamID64 или не найден напрямую,
@@ -405,6 +409,9 @@ if SERVER then
                     Tag              = f.Tag,
                     Color            = f.Color,
                     DepAccess        = f.DepAccess,
+                    ServiceAccess    = f.ServiceAccess,
+                    InvoiceAccess    = f.InvoiceAccess,
+                    DiplomaAccess    = f.DiplomaAccess,
                     LeaderRoleName   = f.LeaderRoleName,
                     Budget           = b,
                     TaxRate          = tax,
@@ -582,7 +589,10 @@ if SERVER then
             Members        = members,
             Tag            = "",
             Color          = { r = 255, g = 200, b = 50 },
-            DepAccess      = false
+            DepAccess      = false,
+            ServiceAccess  = false,
+            InvoiceAccess  = false,
+            DiplomaAccess  = false
         }
         saveFactions(Factions)
         return true
@@ -637,6 +647,31 @@ if SERVER then
         ensureDefaults(f)
         f.DepAccess = enabled and true or false
         saveFactions(Factions)
+        return true
+    end
+
+    --[[ Код 127: доступы организации к государственным услугам.
+         Флаг во фракции — «рубильник», подробная настройка (категории,
+         предел суммы счёта, официальное название учреждения) живёт в
+         GRM.Services.Access и правится в банкомате суперадмином. ]]
+    local function setFactionServiceAccess(factionName, kind, enabled)
+        local f = Factions[factionName]
+        if not f then return false, "Фракция не найдена" end
+        ensureDefaults(f)
+        enabled = enabled and true or false
+        local field = ({ service = "ServiceAccess", invoice = "InvoiceAccess", diploma = "DiplomaAccess" })[tostring(kind)]
+        if not field then return false, "Неизвестный вид доступа" end
+        f[field] = enabled
+        saveFactions(Factions)
+        -- держим реестр услуг в согласии с флагом
+        local S = GRM and GRM.Services
+        if S and isfunction(S.SetAccess) then
+            local patch = {}
+            if kind == "service" then patch.canService = enabled
+            elseif kind == "invoice" then patch.canInvoice = enabled
+            else patch.canDiploma = enabled end
+            S.SetAccess(factionName, patch)
+        end
         return true
     end
 
@@ -1012,6 +1047,11 @@ if SERVER then
             if not isSuperAdmin then done(false, "Только суперадмин") return end
             if not args[1] then done(false, "Не указана фракция") return end
             local ok, err = setFactionDepAccess(args[1], args[2])
+            done(ok, err)
+        elseif action == "setServiceAccess" then
+            if not isSuperAdmin then done(false, "Только суперадмин") return end
+            if not args[1] or not args[2] then done(false, "Не указаны параметры") return end
+            local ok, err = setFactionServiceAccess(args[1], args[2], args[3])
             done(ok, err)
         elseif action == "addRole" then
             local faction, shift = getFactionAndShift()
@@ -2197,7 +2237,7 @@ if CLIENT then
 
         local infoLbl = vgui.Create("DLabel", hdr)
         infoLbl:Dock(FILL) infoLbl:DockMargin(5, 5, 5, 5) infoLbl:SetWrap(true)
-        infoLbl:SetText("Отметьте фракции, которым разрешено использовать команды:\n/dep — РП чат | /depb (/db) — OOC чат")
+        infoLbl:SetText("Доступы организаций. Волна: /dep — РП чат, /depb (/db) — OOC чат.\nГосуслуги: оказание услуг, выставление счетов, выдача дипломов (детали — в банкомате).")
         infoLbl:SetFont("Factions_Normal")
         infoLbl:SetTextColor(THEME.text)
 
@@ -2214,7 +2254,7 @@ if CLIENT then
             -- Код 108: continue→if-обёртка (ванильный Lua, стенды парсят файл напрямую)
             if istable(f) then
                 local row = vgui.Create("DPanel", scroll)
-                row:Dock(TOP) row:SetTall(44) row:DockMargin(0, 2, 0, 2)
+                row:Dock(TOP) row:SetTall(74) row:DockMargin(0, 2, 0, 2)
 
                 local fCol = f.Color or { r = 60, g = 60, b = 60 }
                 function row:Paint(w, h)
@@ -2240,6 +2280,26 @@ if CLIENT then
                         if ok then notification.AddLegacy("Настройка обновлена", NOTIFY_GENERIC, 3) refreshAllUI()
                         else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) chkDep:SetValue(not tobool(val)) end
                     end)
+                end
+
+                -- Код 127: доступы к госуслугам, счетам и дипломам
+                local svcKinds = {
+                    { kind = "service", field = "ServiceAccess", text = "Оказание услуг",     x = 14 },
+                    { kind = "invoice", field = "InvoiceAccess", text = "Выставление счетов", x = 200 },
+                    { kind = "diploma", field = "DiplomaAccess", text = "Выдача дипломов",    x = 400 },
+                }
+                for _, sk in ipairs(svcKinds) do
+                    local chk = vgui.Create("DCheckBoxLabel", row)
+                    chk:SetPos(sk.x, 44) chk:SetSize(190, 20)
+                    chk:SetText(sk.text)
+                    chk:SetFont("Factions_Normal")
+                    chk:SetValue(f[sk.field] and true or false)
+                    chk.OnChange = function(_, val)
+                        sendAction("setServiceAccess", { factionName, sk.kind, tobool(val) }, function(ok, msg)
+                            if ok then notification.AddLegacy("Доступ обновлён", NOTIFY_GENERIC, 3) refreshAllUI()
+                            else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) chk:SetValue(not tobool(val)) end
+                        end)
+                    end
                 end
             end
         end

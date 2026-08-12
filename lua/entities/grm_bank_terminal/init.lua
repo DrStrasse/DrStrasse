@@ -27,7 +27,11 @@ function ENT:Initialize()
 end
 
 function ENT:Use(ply)
-    if GRM and GRM.Economy and GRM.Economy.OpenBankTerminal then
+    -- Новое меню банкомата (Код 127): счёт, задолженность, услуги, дипломы.
+    -- Старое окно экономики остаётся запасным вариантом, если модуль не загружен.
+    if GRM and GRM.ATM and GRM.ATM.Open then
+        GRM.ATM.Open(ply, self)
+    elseif GRM and GRM.Economy and GRM.Economy.OpenBankTerminal then
         GRM.Economy.OpenBankTerminal(ply, self)
     end
 end

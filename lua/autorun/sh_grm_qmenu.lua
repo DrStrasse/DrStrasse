@@ -1031,7 +1031,20 @@ if CLIENT then
                 if QM._frame == f then QM._frame = nil end
             end
         end
-        f.OnRemove = function() if QM._frame == f then QM._frame = nil end end
+        -- Панель настроек тула (controlpanel.Get) — ГЛОБАЛЬНАЯ и общая с
+        -- ванильным Q-меню. Если фрейм умирает не через CloseMenu (таймер
+        -- кликера, смерть игрока, SetDeleteOnClose), панель уедет в могилу
+        -- вместе с ним, и следующее обращение к ней даст «NULL Panel».
+        -- Поэтому отвязываем её в OnRemove — он срабатывает при любом пути.
+        f.OnRemove = function()
+            if QM._toolCP and IsValid(QM._toolCP) then
+                QM._toolCP:SetParent(nil)
+                QM._toolCP:SetVisible(false)
+            end
+            QM._toolCP = nil
+            QM._settingsBody = nil
+            if QM._frame == f then QM._frame = nil end
+        end
         local x = mkBtn(f, "✕", QC.red) x:SetPos(FW - 44, 8) x:SetSize(32, 28)
         x.DoClick = function() QM.CloseMenu() end
 
@@ -1101,8 +1114,23 @@ if CLIENT then
                 QM._toolCP:SetVisible(false)
                 QM._toolCP = nil
             end
+            -- settingsBody — это DScrollPanel. Его GetChildren() возвращает
+            -- служебные панели самого скролла (холст pnlCanvas и полосу
+            -- прокрутки VBar), а НЕ добавленные элементы. Удаление детей
+            -- сносило холст, после чего PerformLayoutInternal падал на
+            -- self.pnlCanvas:GetTall() → «Tried to use a NULL Panel!».
+            -- Чистить нужно холст через :Clear().
             if IsValid(settingsBody) then
-                for _, ch in ipairs(settingsBody:GetChildren()) do ch:Remove() end
+                if isfunction(settingsBody.Clear) then
+                    settingsBody:Clear()
+                else
+                    local canvas = isfunction(settingsBody.GetCanvas) and settingsBody:GetCanvas() or settingsBody
+                    if IsValid(canvas) then
+                        for _, ch in ipairs(canvas:GetChildren()) do
+                            if IsValid(ch) then ch:Remove() end
+                        end
+                    end
+                end
             end
             local name = tostring(toolId or "")
             if name == "" then
@@ -1123,11 +1151,19 @@ if CLIENT then
                         local okB, errB = pcall(tool.BuildCPanel, tool, CP)
                         if okB then built = true else print("[GRM QMenu] BuildCPanel error for " .. name .. ": " .. tostring(errB)) end
                     end
-                    CP:SetParent(settingsBody)
-                    CP:SetPos(0, 0)
-                    CP:SetSize(settingsBody:GetWide() - 8, 300)
+                    -- Внутри DScrollPanel элемент обязан лежать на холсте:
+                    -- AddItem парентит его в pnlCanvas и включает Dock(TOP).
+                    -- Прямой SetParent(scroll) + Dock(TOP) ломает раскладку
+                    -- скролла и мешает корректно посчитать высоту канвы.
                     CP:SetVisible(true)
-                    CP:Dock(TOP)
+                    CP:SetSize(settingsBody:GetWide() - 8, 300)
+                    if isfunction(settingsBody.AddItem) then
+                        settingsBody:AddItem(CP)
+                    else
+                        CP:SetParent(settingsBody)
+                        CP:SetPos(0, 0)
+                        CP:Dock(TOP)
+                    end
                     pcall(function()
                         CP:InvalidateLayout(true)
                         CP:PerformLayout()

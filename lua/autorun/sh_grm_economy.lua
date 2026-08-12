@@ -983,6 +983,46 @@ if SERVER then
         return true, from.balance
     end
 
+    -- ── Безналичное списание / зачисление (Код 127: госуслуги, счета) ──
+    -- BankWithdraw превращает деньги в наличные, а для оплаты услуг нужно
+    -- именно снять со счёта, никому ничего не выдавая на руки.
+    -- @return true, новый остаток | false, причина
+    function E.BankTake(ply, amount, reason)
+        amount = math.max(0, math.floor(tonumber(amount) or 0))
+        if not IsValid(ply) or amount <= 0 then return false, "bad" end
+        local sid = characterKeyOf(ply)
+        if sid == "" or sid == "0" then return false, "sid" end
+        local acc = account(sid, ply:Nick())
+        if not acc then return false, "acc" end
+        local before = acc.balance
+        if before < amount then return false, "funds" end
+        local cap = math.max(0, math.floor(tonumber(GRM.MaxBalance) or 2000000000))
+        acc.balance = math.Clamp(before - amount, 0, cap)
+        dirty = true
+        ply._grmBankTouch = (CurTime and CurTime()) or os.time()
+        save(true, reason or "безналичное списание")
+        addLog(("Безнал: %s -%s (%s)"):format(ply:Nick(), money(amount), tostring(reason or "оплата")))
+        pushBank(ply)
+        return true, acc.balance
+    end
+
+    function E.BankGive(ply, amount, reason)
+        amount = math.max(0, math.floor(tonumber(amount) or 0))
+        if not IsValid(ply) or amount <= 0 then return false, "bad" end
+        local sid = characterKeyOf(ply)
+        if sid == "" or sid == "0" then return false, "sid" end
+        local acc = account(sid, ply:Nick())
+        if not acc then return false, "acc" end
+        local cap = math.max(0, math.floor(tonumber(GRM.MaxBalance) or 2000000000))
+        acc.balance = math.Clamp(acc.balance + amount, 0, cap)
+        dirty = true
+        ply._grmBankTouch = (CurTime and CurTime()) or os.time()
+        save(true, reason or "безналичное зачисление")
+        addLog(("Безнал: %s +%s (%s)"):format(ply:Nick(), money(amount), tostring(reason or "зачисление")))
+        pushBank(ply)
+        return true, acc.balance
+    end
+
     -- ========================================================
     -- ПУБЛИЧНОЕ API (совместимость с Кодом 13 и др.)
     -- ========================================================

@@ -122,7 +122,7 @@ local function openComputer(ent,data)
   body._fileName=name;body._fileContent=content
  end
  -- Modules
- local function modulesPage()clear();textLabel(body,"Сетевые модули",18,10,300,28,"GRMNet_Title",C.text);textLabel(body,"Интеграция с системами сервера",18,38,400,20,"GRMNet_Small",C.dim);local modules={{"Фракция","Состав и принадлежность","faction","icon16/group.png",C.blue},{"Аресты","Текущие задержанные","arrest","icon16/lock.png",C.red},{"Розыск / штрафы","Объявление в розыск","fines","icon16/money.png",C.yellow},{"CCTV","Камеры и сети","cctv","icon16/camera.png",C.green},{"Прослушка","RoomTap интеграция","roomtap","icon16/sound.png",C.purple}};for i,m in ipairs(modules)do local col=(i-1)%3;local row=math.floor((i-1)/3);appTile(body,m[1],m[2],m[4],18+col*204,64+row*122,m[5],function()
+ local function modulesPage()clear();textLabel(body,"Сетевые модули",18,10,300,28,"GRMNet_Title",C.text);textLabel(body,"Интеграция с системами сервера",18,38,400,20,"GRMNet_Small",C.dim);local modules={{"Фракция","Состав и принадлежность","faction","icon16/group.png",C.blue},{"Аресты","Текущие задержанные","arrest","icon16/lock.png",C.red},{"Розыск / штрафы","Объявление в розыск","fines","icon16/money.png",C.yellow},{"CCTV","Камеры и сети","cctv","icon16/camera.png",C.green},{"Прослушка","RoomTap интеграция","roomtap","icon16/sound.png",C.purple},{"Госуслуги","Счета, услуги, дипломы","services","icon16/report.png",C.blue}};for i,m in ipairs(modules)do local col=(i-1)%3;local row=math.floor((i-1)/3);appTile(body,m[1],m[2],m[4],18+col*204,64+row*122,m[5],function()
     if m[3]=="fines"then
      -- Open existing wanted system
      if GRM.Wanted and GRM.Wanted.OpenMenu then
@@ -155,6 +155,10 @@ local function openComputer(ent,data)
     elseif m[3]=="roomtap"then
      -- Open existing roomtap system
      RunConsoleCommand("roomtap_access")
+     if IsValid(E.ActiveFrame)then E.ActiveFrame:Close()end
+    elseif m[3]=="services"then
+     -- Код 127: банковский терминал прямо из компьютера — счета, услуги, дипломы
+     RunConsoleCommand("grm_atm")
      if IsValid(E.ActiveFrame)then E.ActiveFrame:Close()end
     else
      send(ent,"module",function()net.WriteString(m[3])end)
