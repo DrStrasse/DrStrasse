@@ -94,6 +94,32 @@ function ENT:Use(ply)
     local reg  = GRM.Documents and GRM.Documents.Registry or {}
     local medCards = GRM.Medical and GRM.Medical.Cards or {}
 
+    -- Образование субъектов учёта: диплом — такой же установочный
+    -- признак, как военный билет. Шлём только по онлайн-списку, чтобы
+    -- не упереться в лимит net-сообщения.
+    local diplomas = {}
+    local D = GRM.Diplomas
+    if D and isfunction(D.For) then
+        for _, pd in ipairs(onlineList) do
+            local recs = D.For(pd.key, true) or {}
+            if #recs > 0 then
+                local out = {}
+                for _, r in ipairs(recs) do
+                    out[#out + 1] = {
+                        number      = r.number,
+                        institution = r.institution,
+                        specialty   = r.specialty,
+                        levelName   = isfunction(D.LevelName) and D.LevelName(r.level) or tostring(r.level or ""),
+                        formName    = isfunction(D.FormName) and D.FormName(r.form) or tostring(r.form or ""),
+                        issued      = r.issued,
+                        revoked     = r.revoked == true,
+                    }
+                end
+                diplomas[pd.key] = out
+            end
+        end
+    end
+
     net.Start("GRM_CompSecurity_Open")
         net.WriteEntity(self)
         net.WriteTable(onlineList)
@@ -101,6 +127,9 @@ function ENT:Use(ply)
         net.WriteTable(reg)
         net.WriteTable(wantedRecords)
         net.WriteTable(medCards)
+        net.WriteTable(diplomas)
+        net.WriteTable((GRM.SpecialService and isfunction(GRM.SpecialService.CaseRows))
+            and GRM.SpecialService.CaseRows() or {})
         net.WriteString(ply:GetNWString("GRM_Faction", "Gestapo"))
         net.WriteBool(ply:IsSuperAdmin())
     net.Send(ply)

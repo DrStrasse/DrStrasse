@@ -38,8 +38,16 @@ net.Receive("GRM_CompSecurity_Open", function()
     local registry     = net.ReadTable() or {}
     local wantedRecs   = net.ReadTable() or {}
     local medCards     = net.ReadTable() or {}
+    local diplomas     = net.ReadTable() or {}
+    local caseRows     = net.ReadTable() or {}
     local myFaction    = net.ReadString()
     local isSuperAdmin = net.ReadBool()
+
+    -- Дела по ключу субъекта — для быстрого поиска в редакторе
+    local casesByKey = {}
+    for _, c in ipairs(caseRows) do
+        if istable(c) and c.key then casesByKey[c.key] = c end
+    end
 
     local frame = vgui.Create("DFrame")
     frame:SetSize(980, 720)
@@ -132,12 +140,228 @@ net.Receive("GRM_CompSecurity_Open", function()
                 "",
                 "6. КРИМИНАЛЬНЫЙ СТАТУС И ОРИЕНТИРОВКИ РОЗЫСКА:",
                 (w and (w.level or 0) > 0) and string.format("   • ВНИМАНИЕ: СУБЪЕКТ НАХОДИТСЯ В РОЗЫСКЕ! Уровень опасности: %d звёзд", w.level or 1) or "   • В розыске не числится (чист перед законом)",
+                "",
+                "7. ОБРАЗОВАНИЕ И КВАЛИФИКАЦИЯ:",
             }
+
+            -- Образование: диплом — установочный признак не хуже военного билета
+            local dips = diplomas[k]
+            if istable(dips) and #dips > 0 then
+                for _, dp in ipairs(dips) do
+                    lines[#lines + 1] = string.format(
+                        "   • %s | %s | Специальность: %s | Уровень: %s | Форма: %s | Выдан: %s%s",
+                        dp.number or "—", dp.institution or "—", dp.specialty or "—",
+                        dp.levelName or "—", dp.formName or "—",
+                        dp.issued and os.date("%d.%m.%Y", dp.issued) or "—",
+                        dp.revoked and "  [АННУЛИРОВАН]" or "")
+                end
+            else
+                lines[#lines + 1] = "   • Сведения о дипломах отсутствуют"
+            end
+
+            -- Оперативное дело: фабула и последние пометки
+            local kase = casesByKey[k]
+            lines[#lines + 1] = ""
+            lines[#lines + 1] = "8. ОПЕРАТИВНОЕ ДЕЛО:"
+            if istable(kase) then
+                lines[#lines + 1] = string.format("   • Статус: %s | Уровень угрозы: %d/5 | Обновлено: %s",
+                    kase.statusName or "—", kase.threat or 0,
+                    kase.updated and os.date("%d.%m.%Y %H:%M", kase.updated) or "—")
+                if kase.summary and kase.summary ~= "" then
+                    lines[#lines + 1] = "   • Фабула: " .. kase.summary
+                end
+                local notes = istable(kase.notes) and kase.notes or {}
+                if #notes > 0 then
+                    lines[#lines + 1] = "   • Пометки (последние):"
+                    for i = math.max(1, #notes - 9), #notes do
+                        local nt = notes[i]
+                        lines[#lines + 1] = string.format("      [%s] %s: %s",
+                            nt.t and os.date("%d.%m.%Y %H:%M", nt.t) or "—",
+                            nt.authorName or "—", nt.text or "")
+                    end
+                end
+            else
+                lines[#lines + 1] = "   • Дело не заводилось"
+            end
+
             dText:SetText(table.concat(lines, "\n"))
         end
     end
 
     tabs:AddSheet("Оперативное досье", dosPnl, "icon16/magnifier.png")
+
+    -- ══════════════════════════════════════════════════════════════
+    -- ВКЛАДКА: РЕДАКТОР ОПЕРАТИВНОГО ДЕЛА
+    --
+    -- Сотрудник выбирает субъекта, правит фабулу/статус/угрозу и
+    -- вносит пометки. Всё уходит в базу спецслужбы (special.json)
+    -- и становится видно остальным агентам.
+    -- ══════════════════════════════════════════════════════════════
+    local casePnl = vgui.Create("DPanel", tabs)
+    casePnl:DockPadding(16, 16, 16, 16)
+    casePnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
+
+    local caseKey = ""
+
+    local lblCaseT = vgui.Create("DLabel", casePnl)
+    lblCaseT:SetPos(16, 16)
+    lblCaseT:SetText("Субъект оперативного учёта:")
+    lblCaseT:SetFont("DermaDefaultBold") lblCaseT:SetTextColor(CC.accent) lblCaseT:SizeToContents()
+
+    local comboCase = vgui.Create("DComboBox", casePnl)
+    comboCase:SetPos(16, 36) comboCase:SetSize(420, 28)
+    comboCase:SetValue("— Выберите субъекта —")
+    for _, pd in ipairs(onlineList) do
+        comboCase:AddChoice(string.format("%s  [%s]  — %s",
+            pd.rpName or "?", pd.nick or "?", pd.faction or "Гражданский"), pd.key)
+    end
+    -- Дела на офлайн-субъектов тоже должны открываться
+    for _, c in ipairs(caseRows) do
+        local online = false
+        for _, pd in ipairs(onlineList) do
+            if pd.key == c.key then online = true break end
+        end
+        if not online then comboCase:AddChoice((c.name or c.key) .. " [дело, офлайн]", c.key) end
+    end
+
+    local lblCaseStatus = vgui.Create("DLabel", casePnl)
+    lblCaseStatus:SetPos(452, 16)
+    lblCaseStatus:SetText("Статус дела:")
+    lblCaseStatus:SetFont("DermaDefaultBold") lblCaseStatus:SetTextColor(CC.accent) lblCaseStatus:SizeToContents()
+
+    local comboStatus = vgui.Create("DComboBox", casePnl)
+    comboStatus:SetPos(452, 36) comboStatus:SetSize(200, 28)
+    comboStatus:SetValue("В работе")
+    local statuses = (GRM.SpecialService and GRM.SpecialService.CaseStatuses) or {
+        { id = "open", name = "В работе" }, { id = "watch", name = "Наблюдение" },
+        { id = "suspended", name = "Приостановлено" }, { id = "closed", name = "Закрыто" },
+        { id = "archived", name = "В архиве" },
+    }
+    for _, s in ipairs(statuses) do comboStatus:AddChoice(s.name, s.id) end
+
+    local lblThreat = vgui.Create("DLabel", casePnl)
+    lblThreat:SetPos(668, 16)
+    lblThreat:SetText("Уровень угрозы (0-5):")
+    lblThreat:SetFont("DermaDefaultBold") lblThreat:SetTextColor(CC.accent) lblThreat:SizeToContents()
+
+    local numThreat = vgui.Create("DNumSlider", casePnl)
+    numThreat:SetPos(660, 32) numThreat:SetSize(280, 28)
+    numThreat:SetMin(0) numThreat:SetMax(5) numThreat:SetDecimals(0)
+    numThreat:SetText("")
+    numThreat:SetValue(0)
+
+    local lblSummary = vgui.Create("DLabel", casePnl)
+    lblSummary:SetPos(16, 74)
+    lblSummary:SetText("Фабула дела (основания разработки, установленные связи, задачи):")
+    lblSummary:SetFont("DermaDefaultBold") lblSummary:SetTextColor(CC.accent) lblSummary:SizeToContents()
+
+    local caseSummary = vgui.Create("DTextEntry", casePnl)
+    caseSummary:SetPos(16, 94) caseSummary:SetSize(924, 150)
+    caseSummary:SetMultiline(true)
+    caseSummary:SetFont("DermaDefault")
+    caseSummary:SetDrawLanguageID(false)
+
+    local lblNotes = vgui.Create("DLabel", casePnl)
+    lblNotes:SetPos(16, 254)
+    lblNotes:SetText("Хронология пометок:")
+    lblNotes:SetFont("DermaDefaultBold") lblNotes:SetTextColor(CC.accent) lblNotes:SizeToContents()
+
+    local notesList = vgui.Create("DListView", casePnl)
+    notesList:SetPos(16, 274) notesList:SetSize(924, 220)
+    notesList:AddColumn("Дата"):SetFixedWidth(130)
+    notesList:AddColumn("Сотрудник"):SetFixedWidth(200)
+    notesList:AddColumn("Содержание пометки")
+
+    local entryNote = vgui.Create("DTextEntry", casePnl)
+    entryNote:SetPos(16, 504) entryNote:SetSize(700, 28)
+    entryNote:SetPlaceholderText("Новая пометка: наблюдение, контакт, результат мероприятия…")
+
+    local function ssAct(a, target, text, num, extra)
+        if GRM.SpecialService and isfunction(GRM.SpecialService.Act) then
+            GRM.SpecialService.Act(a, target, text, num, extra)
+            return true
+        end
+        return false
+    end
+
+    local function fillCase(key)
+        caseKey = key or ""
+        local c = casesByKey[caseKey]
+        notesList:Clear()
+        if istable(c) then
+            caseSummary:SetText(c.summary or "")
+            comboStatus:SetValue(c.statusName or "В работе")
+            numThreat:SetValue(c.threat or 0)
+            for _, nt in ipairs(istable(c.notes) and c.notes or {}) do
+                notesList:AddLine(
+                    nt.t and os.date("%d.%m.%Y %H:%M", nt.t) or "—",
+                    nt.authorName or "—", nt.text or "")
+            end
+        else
+            caseSummary:SetText("")
+            comboStatus:SetValue("В работе")
+            numThreat:SetValue(0)
+        end
+    end
+
+    comboCase.OnSelect = function(_, _, _, key) fillCase(key) end
+
+    local function mkCaseBtn(label, x, y, w, col, fn)
+        local b = vgui.Create("DButton", casePnl)
+        b:SetPos(x, y) b:SetSize(w, 30)
+        b:SetText(label) b:SetFont("DermaDefaultBold") b:SetTextColor(CC.text)
+        b.Paint = function(self, bw, bh)
+            draw.RoundedBox(4, 0, 0, bw, bh, self:IsHovered() and CC.accent or col)
+        end
+        b.DoClick = fn
+        return b
+    end
+
+    mkCaseBtn("ДОБАВИТЬ ПОМЕТКУ", 724, 504, 216, CC.success, function()
+        if caseKey == "" then
+            chat.AddText(CC.danger, "[СГБ] Не выбран субъект оперативного учёта.")
+            return
+        end
+        local txt = string.Trim(entryNote:GetValue() or "")
+        if txt == "" then
+            chat.AddText(CC.danger, "[СГБ] Пометка пуста.")
+            return
+        end
+        if ssAct("case_note", caseKey, txt) then
+            -- Локально показываем сразу; сервер пришлёт канонический список
+            notesList:AddLine(os.date("%d.%m.%Y %H:%M"), LocalPlayer():Nick(), txt)
+            entryNote:SetText("")
+        end
+    end)
+
+    mkCaseBtn("СОХРАНИТЬ ДЕЛО В БАЗУ СПЕЦСЛУЖБЫ", 16, 542, 380, CC.success, function()
+        if caseKey == "" then
+            chat.AddText(CC.danger, "[СГБ] Не выбран субъект оперативного учёта.")
+            return
+        end
+        local _, statusID = comboStatus:GetSelected()
+        ssAct("case_save", caseKey, "", math.floor(numThreat:GetValue() or 0), {
+            summary = caseSummary:GetValue() or "",
+            status  = statusID or "open",
+            threat  = math.floor(numThreat:GetValue() or 0),
+        })
+    end)
+
+    mkCaseBtn("ОБНОВИТЬ ИЗ БАЗЫ", 404, 542, 200, CC.header, function()
+        ssAct("refresh", "", "", 0)
+        chat.AddText(CC.accent, "[СГБ] Запрошены актуальные данные. Переоткройте терминал.")
+    end)
+
+    if isSuperAdmin then
+        mkCaseBtn("УДАЛИТЬ ДЕЛО", 612, 542, 180, CC.danger, function()
+            if caseKey == "" then return end
+            Derma_Query("Удалить оперативное дело безвозвратно?", "Подтверждение",
+                "Удалить", function() ssAct("case_delete", caseKey, "", 0) end,
+                "Отмена", function() end)
+        end)
+    end
+
+    tabs:AddSheet("Редактор дела", casePnl, "icon16/report_edit.png")
 
     -- ══════════════════════════════════════════════════════════════
     -- ВКЛАДКА 2: ДОКУМЕНТЫ ПРИКРЫТИЯ (COVER LAB)

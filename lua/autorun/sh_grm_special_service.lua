@@ -83,6 +83,21 @@ local function charKey(v)
 end
 SS.CharKey = charKey
 
+-- Статусы оперативных дел нужны обеим сторонам: сервер валидирует,
+-- клиент рисует выпадающий список в редакторе дела.
+SS.CaseStatuses = {
+    { id = "open",      name = "В работе" },
+    { id = "watch",     name = "Наблюдение" },
+    { id = "suspended", name = "Приостановлено" },
+    { id = "closed",    name = "Закрыто" },
+    { id = "archived",  name = "В архиве" },
+}
+
+function SS.CaseStatusName(id)
+    for _, s in ipairs(SS.CaseStatuses) do if s.id == id then return s.name end end
+    return "В работе"
+end
+
 if SERVER then
     for _, n in ipairs({ NET_OPEN, NET_DATA, NET_ACT, NET_RESULT }) do util.AddNetworkString(n) end
 
@@ -117,6 +132,24 @@ if SERVER then
         a.Steam       = istable(a.Steam) and a.Steam or {}
         d.journal = istable(d.journal) and d.journal or {}
         d.covers  = istable(d.covers) and d.covers or {}
+        -- Оперативные дела. Ключ — CharacterKey субъекта учёта.
+        -- Появились позже covers/journal: у старых файлов поля нет,
+        -- поэтому просто создаём пустое — миграция без потери данных.
+        d.cases   = istable(d.cases) and d.cases or {}
+        for key, c in pairs(d.cases) do
+            if istable(c) then
+                c.key     = c.key or key
+                c.name    = tostring(c.name or "")
+                c.status  = tostring(c.status or "open")
+                c.threat  = math.Clamp(math.floor(tonumber(c.threat) or 0), 0, 5)
+                c.summary = tostring(c.summary or "")
+                c.notes   = istable(c.notes) and c.notes or {}
+                c.created = tonumber(c.created) or os.time()
+                c.updated = tonumber(c.updated) or c.created
+            else
+                d.cases[key] = nil
+            end
+        end
         return d
     end
 
@@ -139,7 +172,8 @@ if SERVER then
         while #d.journal > (SS.Config.MaxJournal or 500) do table.remove(d.journal, 1) end
         SS.Data = d
         return write(FILE, {
-            version = 1, agents = d.agents, journal = d.journal, covers = d.covers,
+            version = 2, agents = d.agents, journal = d.journal, covers = d.covers,
+            cases = d.cases,
         })
     end
 
@@ -388,6 +422,158 @@ if SERVER then
     SS.CoversOf = coversOf
 
     --- Список легенд персонажа (для UI).
+    -------------------------------------------------------------------
+    -- ОПЕРАТИВНЫЕ ДЕЛА
+    --
+    -- Сотрудник ведёт дело на субъекта учёта: краткая фабула, уровень
+    -- угрозы, статус и хронологические пометки. Дело хранится в общей
+    -- базе спецслужбы (special.json) — то есть видно всем агентам,
+    -- а не только автору, и переживает перезаход.
+    -------------------------------------------------------------------
+    local function subjectName(key)
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and charKey(p) == key then
+                local rp = p:GetNWString("GRM_RPName", "")
+                if rp ~= "" then return rp end
+                return p:Nick()
+            end
+        end
+        local reg = GRM.Documents and GRM.Documents.Registry
+        local pass = reg and reg.passports and reg.passports[key]
+        if istable(pass) and isstring(pass.fullName) and pass.fullName ~= "" then
+            return pass.fullName
+        end
+        if GRM.Services and isfunction(GRM.Services.CharacterName) then
+            return GRM.Services.CharacterName(key)
+        end
+        return key
+    end
+    SS.SubjectName = subjectName
+
+    --- Получить дело (создав пустое при необходимости).
+    function SS.CaseOf(key)
+        key = charKey(key)
+        if key == "" then return nil end
+        local d = data()
+        local c = d.cases[key]
+        if not istable(c) then
+            c = {
+                key = key, name = subjectName(key), status = "open", threat = 0,
+                summary = "", notes = {}, created = os.time(), updated = os.time(),
+            }
+            d.cases[key] = c
+        end
+        return c
+    end
+
+    --- Сохранить фабулу/статус/угрозу.
+    function SS.CaseSave(actor, key, fields)
+        if not SS.IsAgent(actor) then return false, "Доступ запрещён" end
+        key = charKey(key)
+        if key == "" then return false, "Не указан субъект" end
+        fields = istable(fields) and fields or {}
+
+        local c = SS.CaseOf(key)
+        if not c then return false, "Дело не создано" end
+
+        if isstring(fields.summary) then c.summary = string.sub(fields.summary, 1, 4000) end
+        if isstring(fields.status) then
+            for _, s in ipairs(SS.CaseStatuses) do
+                if s.id == fields.status then c.status = s.id break end
+            end
+        end
+        if fields.threat ~= nil then
+            c.threat = math.Clamp(math.floor(tonumber(fields.threat) or 0), 0, 5)
+        end
+        c.name = subjectName(key)
+        c.updated = os.time()
+
+        SS.Note(actor, "case_save", key, "дело обновлено: " .. SS.CaseStatusName(c.status))
+        if not SS.Save() then return false, "Не удалось записать базу" end
+        hook.Run("GRM_SS_CaseSaved", key, c, actor)
+        return true, "Дело сохранено в базе спецслужбы"
+    end
+
+    --- Добавить пометку в дело.
+    function SS.CaseAddNote(actor, key, text)
+        if not SS.IsAgent(actor) then return false, "Доступ запрещён" end
+        key = charKey(key)
+        if key == "" then return false, "Не указан субъект" end
+        text = string.Trim(tostring(text or ""))
+        if text == "" then return false, "Пустая пометка" end
+
+        local c = SS.CaseOf(key)
+        if not c then return false, "Дело не создано" end
+
+        local name = IsValid(actor) and (actor:GetNWString("GRM_RPName", "") ~= ""
+            and actor:GetNWString("GRM_RPName", "") or actor:Nick()) or "СИСТЕМА"
+
+        c.notes[#c.notes + 1] = {
+            t = os.time(), author = charKey(actor), authorName = name,
+            text = string.sub(text, 1, 1000),
+        }
+        while #c.notes > 200 do table.remove(c.notes, 1) end
+        c.updated = os.time()
+
+        SS.Note(actor, "case_note", key, string.sub(text, 1, 120))
+        if not SS.Save() then return false, "Не удалось записать базу" end
+        hook.Run("GRM_SS_CaseNoteAdded", key, c, actor)
+        return true, "Пометка внесена в дело"
+    end
+
+    --- Удалить пометку (только суперадмин: чистка ошибочных записей).
+    function SS.CaseRemoveNote(actor, key, index)
+        if not (IsValid(actor) and actor:IsSuperAdmin()) then
+            return false, "Удалять пометки может только суперадмин"
+        end
+        key = charKey(key)
+        local d = data()
+        local c = d.cases[key]
+        if not istable(c) then return false, "Дело не найдено" end
+        index = math.floor(tonumber(index) or 0)
+        if not c.notes[index] then return false, "Пометка не найдена" end
+
+        table.remove(c.notes, index)
+        c.updated = os.time()
+        SS.Note(actor, "case_note_del", key, "удалена пометка №" .. index)
+        if not SS.Save() then return false, "Не удалось записать базу" end
+        return true, "Пометка удалена"
+    end
+
+    --- Удалить дело целиком (суперадмин).
+    function SS.CaseDelete(actor, key)
+        if not (IsValid(actor) and actor:IsSuperAdmin()) then
+            return false, "Удалять дело может только суперадмин"
+        end
+        key = charKey(key)
+        local d = data()
+        if not istable(d.cases[key]) then return false, "Дело не найдено" end
+        d.cases[key] = nil
+        SS.Note(actor, "case_delete", key, "дело удалено")
+        if not SS.Save() then return false, "Не удалось записать базу" end
+        return true, "Дело удалено из базы"
+    end
+
+    --- Срез дел для терминалов (без полного текста пометок).
+    function SS.CaseRows(limit)
+        limit = math.floor(tonumber(limit) or (SS.Config.MaxRowsSent or 150))
+        local d = data()
+        local out = {}
+        for key, c in pairs(d.cases) do
+            if istable(c) then
+                out[#out + 1] = {
+                    key = key, name = c.name, status = c.status,
+                    statusName = SS.CaseStatusName(c.status),
+                    threat = c.threat, summary = c.summary,
+                    notes = c.notes, updated = c.updated, created = c.created,
+                }
+                if #out >= limit then break end
+            end
+        end
+        table.sort(out, function(a, b) return (a.updated or 0) > (b.updated or 0) end)
+        return out
+    end
+
     function SS.ListCovers(key)
         local entry = coversOf(key)
         local out = {}
@@ -615,6 +801,7 @@ if SERVER then
             net.WriteTable(journalRows())
             net.WriteTable(onlineRows())
             net.WriteTable(SS.ListCovers(charKey(ply)))
+            net.WriteTable(SS.CaseRows())
         net.Send(ply)
     end
 
@@ -644,6 +831,10 @@ if SERVER then
         local target = string.sub(net.ReadString(), 1, 64)
         local text   = string.sub(net.ReadString(), 1, 200)
         local num    = net.ReadInt(32)
+        -- Пятое поле добавлено вместе с оперативными делами: длинная
+        -- фабула не влезает в 200-символьный text. Пишется всегда,
+        -- поэтому рассинхрона со старым клиентом быть не может.
+        local extra  = net.ReadTable() or {}
 
         if not SS.IsAgent(ply) then return result(ply, false, "Доступ запрещён") end
 
@@ -668,6 +859,19 @@ if SERVER then
             ok, msg = SS.SetActiveCover(ply, target ~= "" and target or charKey(ply), num)
         elseif act == "cover_revoke" then
             ok, msg = SS.RevokeCover(ply, target ~= "" and target or charKey(ply), num)
+        elseif act == "case_save" then
+            -- extra: { summary = ..., status = ..., threat = n }
+            ok, msg = SS.CaseSave(ply, target, {
+                summary = extra and extra.summary or text,
+                status  = extra and extra.status or nil,
+                threat  = extra and extra.threat or num,
+            })
+        elseif act == "case_note" then
+            ok, msg = SS.CaseAddNote(ply, target, text)
+        elseif act == "case_note_del" then
+            ok, msg = SS.CaseRemoveNote(ply, target, num)
+        elseif act == "case_delete" then
+            ok, msg = SS.CaseDelete(ply, target)
         elseif act == "refresh" then
             SS.Send(ply)
             return
@@ -849,14 +1053,16 @@ if CLIENT then
     surface.CreateFont("GRM_SS_Row",   { font = "Roboto", size = 13, weight = 500, extended = true })
 
     SS.Wanted, SS.Fines, SS.Arrests, SS.Journal, SS.Online, SS.Covers = {}, {}, {}, {}, {}, {}
+    SS.Cases = {}
     local frame, tabs, selected = nil, nil, ""
 
-    local function act(a, target, text, num)
+    local function act(a, target, text, num, extra)
         net.Start(NET_ACT)
             net.WriteString(a)
             net.WriteString(tostring(target or ""))
             net.WriteString(tostring(text or ""))
             net.WriteInt(math.floor(tonumber(num) or 0), 32)
+            net.WriteTable(istable(extra) and extra or {})
         net.SendToServer()
     end
     SS.Act = act
@@ -1163,6 +1369,7 @@ if CLIENT then
         SS.Journal = net.ReadTable() or {}
         SS.Online  = net.ReadTable() or {}
         SS.Covers  = net.ReadTable() or {}
+        SS.Cases   = net.ReadTable() or {}
         refreshSecurityTerminal(SS.Wanted)
 
         if IsValid(frame) then

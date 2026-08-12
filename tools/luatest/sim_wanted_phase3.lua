@@ -461,7 +461,7 @@ print("\n=== ТЕСТ 13: персист спецслужбы ===")
 SS.Save()
 local ssSaved = util.JSONToTable(files["grm_wanted/special.json"])
 check("special.json создан", ssSaved ~= nil)
-check("version=1", ssSaved and ssSaved.version == 1)
+check("version=2 (добавлены оперативные дела)", ssSaved and ssSaved.version == 2, ssSaved and ssSaved.version)
 check("реестр агентов сохранён", ssSaved and ssSaved.agents and ssSaved.agents.Factions
     and ssSaved.agents.Factions["Komitet"] == true)
 check("закрытый журнал сохранён", ssSaved and istable(ssSaved.journal) and #ssSaved.journal > 0)
@@ -486,6 +486,98 @@ if fine then
     check("штрафа больше нет", F.ByID(fine.id) == nil)
     check("посторонний штраф не изымет", SS.CovertWipeFine(cop, 999, "") == false)
 end
+
+print("\n=== ТЕСТ 16: редактор оперативных дел ===")
+-- Заведение дела и правка фабулы
+local okC, msgC = SS.CaseSave(spy, civ.key, {
+    summary = "Установлены контакты с подпольем; ведётся разработка.",
+    status = "watch", threat = 3,
+})
+check("агент сохранил дело", okC == true, msgC)
+local kase = SS.CaseOf(civ.key)
+check("фабула записана", kase and kase.summary:find("подпольем", 1, true) ~= nil)
+check("статус применён", kase and kase.status == "watch", kase and kase.status)
+check("уровень угрозы применён", kase and kase.threat == 3, kase and kase.threat)
+check("имя субъекта подставлено", kase and kase.name ~= "" and kase.name ~= nil, kase and kase.name)
+
+check("посторонний дело не сохранит", select(1, SS.CaseSave(cop, civ.key, { summary = "x" })) == false)
+check("дело без субъекта не создаётся", select(1, SS.CaseSave(spy, "", { summary = "x" })) == false)
+
+-- Уровень угрозы зажимается в 0..5
+SS.CaseSave(spy, civ.key, { threat = 99 })
+check("угроза зажата сверху", SS.CaseOf(civ.key).threat == 5, SS.CaseOf(civ.key).threat)
+SS.CaseSave(spy, civ.key, { threat = -4 })
+check("угроза зажата снизу", SS.CaseOf(civ.key).threat == 0)
+-- Неизвестный статус не затирает текущий
+SS.CaseSave(spy, civ.key, { status = "чепуха" })
+check("неизвестный статус отвергнут", SS.CaseOf(civ.key).status == "watch", SS.CaseOf(civ.key).status)
+
+print("\n=== ТЕСТ 17: пометки в деле ===")
+local okN, msgN = SS.CaseAddNote(spy, civ.key, "18:40 — контакт у вокзала, фото приложены.")
+check("пометка внесена", okN == true, msgN)
+check("пометка в деле", #SS.CaseOf(civ.key).notes == 1, #SS.CaseOf(civ.key).notes)
+check("автор пометки записан", SS.CaseOf(civ.key).notes[1].authorName == "Herr Muller",
+    SS.CaseOf(civ.key).notes[1].authorName)
+check("время пометки записано", (SS.CaseOf(civ.key).notes[1].t or 0) > 0)
+check("пустая пометка отвергнута", select(1, SS.CaseAddNote(spy, civ.key, "   ")) == false)
+check("посторонний пометку не внесёт", select(1, SS.CaseAddNote(cop, civ.key, "тест")) == false)
+
+-- Пометка попадает в закрытый журнал спецслужбы
+local jrn = SS.Get().journal
+local noteLogged = false
+for _, e in ipairs(jrn) do if e.op == "case_note" then noteLogged = true end end
+check("пометка отражена в закрытом журнале", noteLogged)
+
+-- Удаление пометок — только суперадмин
+check("агент не удалит пометку", select(1, SS.CaseRemoveNote(spy, civ.key, 1)) == false)
+local admin = mkPlayer("76561198000000099:char1", "Root", "Gestapo", true)
+check("суперадмин удалил пометку", select(1, SS.CaseRemoveNote(admin, civ.key, 1)) == true)
+check("пометок не осталось", #SS.CaseOf(civ.key).notes == 0)
+check("удаление несуществующей пометки безопасно",
+    select(1, SS.CaseRemoveNote(admin, civ.key, 7)) == false)
+
+print("\n=== ТЕСТ 18: срез дел и передача в базу ===")
+SS.CaseAddNote(spy, civ.key, "Повторный контакт зафиксирован.")
+SS.CaseSave(spy, sold.key, { summary = "Проверка по линии военной контрразведки.", status = "open", threat = 1 })
+local rows = SS.CaseRows()
+check("срез содержит оба дела", #rows == 2, #rows)
+local byKey = {}
+for _, r in ipairs(rows) do byKey[r.key] = r end
+check("в срезе есть человекочитаемый статус", byKey[civ.key] and byKey[civ.key].statusName == "Наблюдение",
+    byKey[civ.key] and byKey[civ.key].statusName)
+check("в срезе есть пометки", byKey[civ.key] and #byKey[civ.key].notes == 1)
+check("срез отсортирован по свежести", (rows[1].updated or 0) >= (rows[2].updated or 0))
+check("лимит среза соблюдается", #SS.CaseRows(1) == 1)
+
+-- Дело переживает перезапись/чтение файла
+SS.Save()
+local ssJSON = util.JSONToTable(files["grm_wanted/special.json"])
+check("дела попали в файл", ssJSON and istable(ssJSON.cases) and ssJSON.cases[civ.key] ~= nil)
+SS.Load()
+check("дело прочитано обратно", SS.CaseOf(civ.key).summary:find("подпольем", 1, true) ~= nil)
+check("пометки прочитаны обратно", #SS.CaseOf(civ.key).notes == 1, #SS.CaseOf(civ.key).notes)
+
+-- Удаление дела
+check("агент дело не удалит", select(1, SS.CaseDelete(spy, sold.key)) == false)
+check("суперадмин удалил дело", select(1, SS.CaseDelete(admin, sold.key)) == true)
+check("дело исчезло из среза", #SS.CaseRows() == 1, #SS.CaseRows())
+check("удаление несуществующего дела безопасно", select(1, SS.CaseDelete(admin, "нет:char1")) == false)
+
+print("\n=== ТЕСТ 19: миграция special.json v1 → v2 ===")
+-- Старый файл: ключа cases нет вовсе. Данные обязаны уцелеть.
+files["grm_wanted/special.json"] = util.TableToJSON({
+    version = 1,
+    agents = { Factions = { Komitet = true }, Departments = {}, Roles = {}, Steam = {} },
+    journal = { { t = 1, actor = "x", actorName = "X", op = "test", target = "y", detail = "старое" } },
+    covers = { ["76561198000000012:char1"] = { active = 0, list = {} } },
+})
+check("старый файл загружен", istable(SS.Load()))
+check("агенты уцелели после миграции", SS.Get().agents.Factions["Komitet"] == true)
+check("журнал уцелел после миграции", #SS.Get().journal == 1, #SS.Get().journal)
+check("легенды уцелели после миграции", istable(SS.Get().covers["76561198000000012:char1"]))
+check("cases создан пустым", istable(SS.Get().cases) and table.Count(SS.Get().cases) == 0)
+SS.Save()
+check("после сохранения version=2", util.JSONToTable(files["grm_wanted/special.json"]).version == 2)
 
 print("\n=== ТЕСТ 15: устойчивость к мусору ===")
 files["grm_wanted/exchange.json"] = "{это не json"

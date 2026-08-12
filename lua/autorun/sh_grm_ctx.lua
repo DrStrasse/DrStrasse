@@ -584,6 +584,18 @@ local BTNS = {
       fn = actShowMilLicense,
       c = Color(42, 105, 52), ch = Color(60, 135, 70),
       ok = function() return istable(data.aimPly) and data.hasMilLicense == true end },
+    { id = "doc_diploma", l = function()
+          local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
+          if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
+          return "Предъявить диплом: " .. n
+      end,
+      fn = function()
+          if GRM.Education and isfunction(GRM.Education.AskShow) then
+              GRM.Education.AskShow()
+          end
+      end,
+      c = Color(150, 120, 45), ch = Color(185, 150, 60),
+      ok = function() return istable(data.aimPly) and (tonumber(data.diplomaCount) or 0) > 0 end },
     { id = "doc_med", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
           if #n > 14 then n = string.sub(n, 1, 13) .. "…" end

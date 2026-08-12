@@ -64,6 +64,8 @@ util.AddNetworkString("GRM_Edu_Result")   -- сервер -> клиент: ит�
 util.AddNetworkString("GRM_Edu_Request")  -- клиент -> сервер: дай данные
 util.AddNetworkString("GRM_Edu_MyAsk")    -- клиент -> сервер: мои дипломы
 util.AddNetworkString("GRM_Edu_MyData")   -- сервер -> клиент: мои дипломы
+util.AddNetworkString("GRM_Edu_ShowAsk")  -- клиент -> сервер: показать диплом
+util.AddNetworkString("GRM_Edu_ShowView") -- сервер -> клиент: вам показали
 
 local nextAct = {}
 
@@ -307,6 +309,79 @@ function EDU.MyDiplomas(ply)
     end
     return out
 end
+
+--- Показ диплома игроку перед собой — как паспорт или военный билет.
+-- Дистанция 200 юнитов и объявление в /me на 400 — те же правила, что
+-- у остальных документов (sh_grm_documents.lua), чтобы поведение
+-- не отличалось от привычного игрокам.
+local function announce(ply, meText)
+    local name = ply:GetNWString("GRM_RPName", "")
+    if name == "" then name = ply:Nick() end
+    local full = "* " .. name .. " " .. meText
+    local origin = ply:GetPos()
+
+    for _, p in ipairs(player.GetAll()) do
+        if IsValid(p) and p:GetPos():DistToSqr(origin) <= 400 * 400 then
+            if EasyChat and EasyChat.PlayerAddText then
+                EasyChat.PlayerAddText(p, Color(200, 160, 255), full)
+            elseif util.NetworkStringToID("GRM_RPChat_Msg") ~= 0 then
+                net.Start("GRM_RPChat_Msg")
+                    net.WriteUInt(2, 8) net.WriteBool(true)
+                    net.WriteUInt(200, 8) net.WriteUInt(160, 8) net.WriteUInt(255, 8)
+                    net.WriteBool(false) net.WriteString(full)
+                net.Send(p)
+            else
+                p:ChatPrint(full)
+            end
+        end
+    end
+end
+
+net.Receive("GRM_Edu_ShowAsk", function(_, ply)
+    if not IsValid(ply) then return end
+    local now = CurTime()
+    if (nextAct[ply] or 0) > now then return end
+    nextAct[ply] = now + EDU.Config.RateLimit
+
+    local number = string.sub(net.ReadString() or "", 1, 32)
+
+    local target = ply:GetEyeTrace().Entity
+    if not (IsValid(target) and target:IsPlayer() and target:Alive()) then
+        if GRM.Notify then GRM.Notify(ply, "Наведитесь на игрока перед собой.", 255, 180, 90) end
+        return
+    end
+    if ply:GetPos():DistToSqr(target:GetPos()) > 200 * 200 then
+        if GRM.Notify then GRM.Notify(ply, "Игрок слишком далеко — подойдите ближе.", 255, 180, 90) end
+        return
+    end
+
+    -- Показать можно ТОЛЬКО свой бланк: ищем среди дипломов предъявителя.
+    local mine = EDU.MyDiplomas(ply)
+    local rec
+    if number ~= "" then
+        for _, d in ipairs(mine) do if d.number == number then rec = d break end end
+    else
+        for _, d in ipairs(mine) do if not d.revoked then rec = d break end end
+        rec = rec or mine[1]
+    end
+    if not rec then
+        if GRM.Notify then GRM.Notify(ply, "У вас нет такого диплома.", 255, 140, 110) end
+        return
+    end
+
+    local tName = target:GetNWString("GRM_RPName", "")
+    if tName == "" then tName = target:Nick() end
+
+    announce(ply, ("предъявил(а) диплом игроку %s (%s, %s)")
+        :format(tName, rec.number, rec.specialty ~= "" and rec.specialty or "специальность не указана"))
+
+    net.Start("GRM_Edu_ShowView")
+        net.WriteTable(rec)
+        net.WriteString((ply:GetNWString("GRM_RPName", "") ~= "" and ply:GetNWString("GRM_RPName", "")) or ply:Nick())
+    net.Send(target)
+
+    if GRM.Notify then GRM.Notify(ply, "Вы предъявили диплом игроку " .. tName .. ".", 100, 220, 130) end
+end)
 
 net.Receive("GRM_Edu_MyAsk", function(_, ply)
     if not IsValid(ply) then return end
@@ -996,8 +1071,87 @@ function EDU.OpenMine(list)
 end
 
 net.Receive("GRM_Edu_MyData", function()
-    EDU.OpenMine(net.ReadTable())
+    local list = net.ReadTable()
+    -- Режим «выбрать бланк для предъявления» — когда дипломов несколько
+    if EDU._pickForShow then
+        EDU._pickForShow = nil
+        EDU.PickForShow(list)
+        return
+    end
+    EDU.OpenMine(list)
 end)
+
+--- Окно предъявления: показывает, ЧЕЙ диплом и кто предъявил.
+function EDU.OpenShown(rec, senderName)
+    if not istable(rec) then return end
+
+    local W = 660
+    local frame = vgui.Create("DFrame")
+    frame:SetSize(W, 420)
+    frame:Center()
+    frame:SetTitle("")
+    frame:MakePopup()
+    frame:ShowCloseButton(false)
+    frame.Paint = function(_, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, UI.bg)
+        draw.RoundedBoxEx(8, 0, 0, w, 44, UI.panel, true, true, false, false)
+        draw.SimpleText("ВАМ ПРЕДЪЯВИЛИ ДИПЛОМ", "GRM_Edu_Title", 16, 22, UI.gold,
+            TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText(tostring(senderName or ""), "GRM_Edu_Small", w - 52, 22,
+            UI.muted, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+    end
+
+    local close = vgui.Create("DButton", frame)
+    close:SetSize(30, 26) close:SetPos(W - 40, 9) close:SetText("")
+    close.Paint = function(self, w, h)
+        draw.RoundedBox(4, 0, 0, w, h, self:IsHovered() and UI.red or Color(50, 62, 84))
+        draw.SimpleText("X", "GRM_Edu_Body", w / 2, h / 2, UI.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+    close.DoClick = function() frame:Close() end
+
+    local sc = scroll(frame)
+    sc:SetPos(12, 54) sc:SetSize(W - 24, 420 - 66)
+    sc:AddItem(diplomaBlank(sc, rec))
+    return frame
+end
+
+net.Receive("GRM_Edu_ShowView", function()
+    local rec = net.ReadTable()
+    local sender = net.ReadString()
+    EDU.OpenShown(rec, sender)
+end)
+
+--- Предъявить диплом игроку перед собой.
+function EDU.ShowTo(number)
+    net.Start("GRM_Edu_ShowAsk")
+        net.WriteString(tostring(number or ""))
+    net.SendToServer()
+end
+
+--- Если дипломов несколько — сначала спросить, какой предъявлять.
+function EDU.PickForShow(list)
+    list = istable(list) and list or {}
+    if #list == 0 then
+        if GRM.Notify then GRM.Notify("У вас нет дипломов.", 255, 140, 110) end
+        return
+    end
+    if #list == 1 then EDU.ShowTo(list[1].number) return end
+
+    local menu = DermaMenu()
+    for _, d in ipairs(list) do
+        local title = ("%s — %s%s"):format(d.number, d.specialty ~= "" and d.specialty or "—",
+            d.revoked and " (аннулирован)" or "")
+        menu:AddOption(title, function() EDU.ShowTo(d.number) end)
+    end
+    menu:Open()
+end
+
+--- Точка входа из C-меню: спросить список и выбрать бланк.
+function EDU.AskShow()
+    EDU._pickForShow = true
+    net.Start("GRM_Edu_MyAsk")
+    net.SendToServer()
+end
 
 --- Запрос своих дипломов (кнопка C-меню, консольная команда).
 function EDU.AskMine()
