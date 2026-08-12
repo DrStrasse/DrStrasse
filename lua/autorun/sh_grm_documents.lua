@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Documents & Identity Core v1.4.0 (Код 87)
+    GRM Documents & Identity Core v1.4.1 (Код 87)
     Паспорта, Служебные Удостоверения, Ксивы, Военные Билеты,
     Водительские Удостоверения (Дорожная Инспекция ПП и ВАИ),
     Специальные Военные Допуски, Прикрытие, Реестр
@@ -26,6 +26,13 @@
     • Показ документов: /showpassport, /showbadge, /showmilitary, /showlicense,
       /showmillicense, /showmedcard с RP /me в чат и интерактивным окном у цели.
     • Типографика GMod: 100% валидные BMP-символы, поддержка кириллицы, авто-перенос строк.
+
+    История версий:
+    • v1.4.1 — Убрана реальная государственность из паспорта: заголовок разворота
+      «РОССИЙСКАЯ ФЕДЕРАЦИЯ» заменён на настраиваемое название государства
+      (tpl.stateTitle, по умолчанию «РЕСПУБЛИКА ГРАНД»), код страны «RUS» в MRZ
+      заменён на настраиваемый countryCode (по умолчанию «GRM»). Код страны
+      редактируется в шаблонах документов, вкладка «Паспорт».
 ----------------------------------------------------------------------]]
 
 if SERVER then AddCSLuaFile() end
@@ -48,7 +55,7 @@ GRM = GRM or {}
 GRM.Documents = GRM.Documents or {}
 local DOC = GRM.Documents
 
-DOC.Version       = "1.4.0"
+DOC.Version       = "1.4.1"
 DOC.RegistryFile  = "grm_documents.json"
 DOC.TemplatesFile = "grm_doc_templates.json"
 
@@ -213,6 +220,7 @@ if SERVER then
                 docTitle           = "ПАСПОРТ ГРАЖДАНИНА",
                 coverColor         = { r = 85, g = 20, b = 25 },
                 foilStyle          = "gold",
+                countryCode        = "GRM",
                 defaultSeries      = "GRM",
                 defaultNationality = "Гражданин Республики",
                 defaultBirthPlace  = "г. Приморск, Республика Гранд",
@@ -1478,7 +1486,7 @@ if CLIENT then
                 rightPnl:SetPaintBackground(false)
 
                 rightPnl.Paint = function(_, w, h)
-                    draw.SimpleText("РОССИЙСКАЯ ФЕДЕРАЦИЯ / PASSPORT", "GRMDoc_Header", w / 2, 10, Color(40, 35, 30), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    draw.SimpleText(tostring(tpl.stateTitle or "РЕСПУБЛИКА ГРАНД") .. " / PASSPORT", "GRMDoc_Header", w / 2, 10, Color(40, 35, 30), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
 
                     draw.SimpleText("Серия и номер: " .. tostring(data.series or "GRM") .. " № " .. tostring(data.number or "000000"), "GRMDoc_Bold", w - 10, 34, Color(160, 30, 30), TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
 
@@ -1498,8 +1506,11 @@ if CLIENT then
                     -- MRZ машиночитаемая зона
                     surface.SetDrawColor(220, 215, 205)
                     surface.DrawRect(10, 380, w - 20, 60)
-                    local mrz1 = string.format("P<GRM%s<<%s<<<<<<<<<<<<<<<<<<<", (data.series or "GRM"), (data.fullName or "CITIZEN"):gsub("%s+", "<"):upper())
-                    local mrz2 = string.format("%s4RUS8804128M2801017<<<<<<<<<<<<<<02", data.number or "000000")
+                    local ctry = string.upper(tostring(tpl.countryCode or "GRM")):gsub("[^A-Z]", "")
+                    if #ctry < 3 then ctry = "GRM" end
+                    ctry = ctry:sub(1, 3)
+                    local mrz1 = string.format("P<%s%s<<%s<<<<<<<<<<<<<<<<<<<", ctry, (data.series or "GRM"), (data.fullName or "CITIZEN"):gsub("%s+", "<"):upper())
+                    local mrz2 = string.format("%s4%s8804128M2801017<<<<<<<<<<<<<<02", data.number or "000000", ctry)
                     draw.SimpleText(mrz1:sub(1, 38), "GRMDoc_MRZ", 18, 390, Color(30, 30, 35), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                     draw.SimpleText(mrz2:sub(1, 38), "GRMDoc_MRZ", 18, 412, Color(30, 30, 35), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                 end
@@ -2375,6 +2386,11 @@ if CLIENT then
         local entSeries = vgui.Create("DTextEntry", passPnl)
         entSeries:SetPos(16, 98) entSeries:SetSize(150, 28) entSeries:SetText(tpl.passport.defaultSeries or "GRM")
 
+        local lblS2b = vgui.Create("DLabel", passPnl)
+        lblS2b:SetPos(196, 76) lblS2b:SetText("Код страны в MRZ (3 буквы A-Z):") lblS2b:SetFont("GRMDoc_Bold") lblS2b:SizeToContents()
+        local entCountry = vgui.Create("DTextEntry", passPnl)
+        entCountry:SetPos(196, 98) entCountry:SetSize(170, 28) entCountry:SetText(tpl.passport.countryCode or "GRM")
+
         local lblS3 = vgui.Create("DLabel", passPnl)
         lblS3:SetPos(16, 136) lblS3:SetText("Гражданство по умолчанию:") lblS3:SetFont("GRMDoc_Bold") lblS3:SizeToContents()
         local entNat = vgui.Create("DTextEntry", passPnl)
@@ -2619,6 +2635,9 @@ if CLIENT then
         btnSave.DoClick = function()
             tpl.passport.stateTitle = entState:GetText()
             tpl.passport.defaultSeries = entSeries:GetText()
+
+            local cc = string.upper(entCountry:GetText() or ""):gsub("[^A-Z]", "")
+            tpl.passport.countryCode = (#cc >= 3) and cc:sub(1, 3) or "GRM"
             tpl.passport.defaultNationality = entNat:GetText()
             tpl.passport.defaultBirthPlace = entBPlace:GetText()
 
