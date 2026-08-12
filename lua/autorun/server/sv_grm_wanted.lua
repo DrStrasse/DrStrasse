@@ -13,27 +13,145 @@ local function key(v)if IsValid(v)and v:IsPlayer()then if GRM.Identity and GRM.I
 local function notify(p,m,r,g,b)if not IsValid(p)then return end;if GRM.Notify then GRM.Notify(p,m,r or 100,g or 220,b or 120)else p:ChatPrint("[Розыск] "..m)end end
 local function findPlayer(query)query=string.lower(tostring(query or""));for _,p in ipairs(player.GetAll())do if key(p)==query or p:SteamID64()==query or string.find(string.lower(p:Nick()),query,1,true)then return p end end end
 local function history(text,actor,target,kind)W.History[#W.History+1]={t=os.time(),s=text,actor=IsValid(actor)and key(actor)or"system",actorName=IsValid(actor)and actor:Nick()or"Система",target=target,kind=kind};while #W.History>(W.Config.HistorySize or 200)do table.remove(W.History,1)end end
-local function normalizeArticle(a,index)a=istable(a)and a or{};local id=string.lower(tostring(a.id or("article_"..index))):gsub("[^%w_%-]",""):sub(1,48);if id==""then return end;return{id=id,code=tostring(a.code or id):sub(1,32),type=(a.type=="admin"and"admin"or"crime"),title=tostring(a.title or id):sub(1,96),fine=math.Clamp(math.floor(tonumber(a.fine)or 0),0,100000000),defaultLevel=W.ClampLevel(a.defaultLevel or 1),description=tostring(a.description or""):sub(1,240)}end
-function W.LoadCatalog()ensure();local raw=file.Exists(CAT,"DATA")and jsonT(file.Read(CAT,"DATA"));local src=raw and(raw.articles or raw)or W.DefaultCatalog;W.Catalog={};for i,a in pairs(src or{})do local n=normalizeArticle(a,i);if n then W.Catalog[#W.Catalog+1]=n end end;if #W.Catalog==0 then for i,a in ipairs(W.DefaultCatalog or{})do W.Catalog[#W.Catalog+1]=normalizeArticle(a,i)end end;W.SaveCatalog()end
-function W.SaveCatalog()return write(CAT,{version=2,articles=W.Catalog})end
+local function normalizeArticle(a,index)a=istable(a)and a or{};local id=string.lower(tostring(a.id or("article_"..index))):gsub("[^%w_%-]",""):sub(1,48);if id==""then return end;return{id=id,code=tostring(a.code or id):sub(1,32),type=(a.type=="admin"and"admin"or"crime"),title=tostring(a.title or id):sub(1,96),fine=math.Clamp(math.floor(tonumber(a.fine)or 0),0,100000000),defaultLevel=W.ClampLevel(a.defaultLevel or 1),jurisdiction=(a.jurisdiction=="military" and "military" or "civil"),description=tostring(a.description or""):sub(1,240)}end
+-- Каталог v2 (до юрисдикций) не содержал полей jurisdiction и code.
+-- На работающих серверах он уже сохранён в data/grm_wanted/catalog.json,
+-- поэтому при загрузке недостающие поля восстанавливаются по эталонному
+-- W.DefaultCatalog (совпадение по id), а отсутствующие статьи — прежде
+-- всего воинские — дописываются. Ручные правки админов не затираются.
+local function defaultArticle(id,title,code)
+ id=tostring(id or""):lower()
+ for _,a in ipairs(W.DefaultCatalog or{})do if tostring(a.id):lower()==id then return a end end
+ -- id мог быть переименован админом: пробуем по коду и названию статьи
+ local t=string.lower(string.Trim(tostring(title or"")))
+ local c=string.lower(string.Trim(tostring(code or"")))
+ if t=="" and c=="" then return end
+ for _,a in ipairs(W.DefaultCatalog or{})do
+  if c~="" and string.lower(tostring(a.code or""))==c then return a end
+  if t~="" and string.lower(tostring(a.title or""))==t then return a end
+ end
+end
+function W.LoadCatalog()
+ ensure()
+ local raw=file.Exists(CAT,"DATA")and jsonT(file.Read(CAT,"DATA"))
+ local src=raw and(raw.articles or raw)or W.DefaultCatalog
+ local ver=tonumber(raw and raw.version)or 0
+ W.Catalog={}
+ local seen={}
+ for i,a in pairs(src or{})do
+  local hadJur=istable(a)and a.jurisdiction~=nil
+  local n=normalizeArticle(a,i)
+  if n and not seen[n.id]then
+   if not hadJur then
+    local d=defaultArticle(n.id,n.title,istable(a)and a.code or nil)
+    if d then
+     n.jurisdiction=d.jurisdiction=="military"and"military"or"civil"
+     if(not istable(a)or a.code==nil)and d.code then n.code=tostring(d.code):sub(1,32)end
+    end
+   end
+   seen[n.id]=true;W.Catalog[#W.Catalog+1]=n
+  end
+ end
+ -- дописываем эталонные статьи, которых нет в файле (воинский раздел)
+ for i,a in ipairs(W.DefaultCatalog or{})do
+  local n=normalizeArticle(a,i)
+  if n and not seen[n.id]then seen[n.id]=true;W.Catalog[#W.Catalog+1]=n end
+ end
+ if #W.Catalog==0 then for i,a in ipairs(W.DefaultCatalog or{})do W.Catalog[#W.Catalog+1]=normalizeArticle(a,i)end end
+ if ver<3 then print("[GRM Wanted] каталог статей мигрирован до v3: "..#W.Catalog.." статей")end
+ W.SaveCatalog()
+end
+function W.SaveCatalog()return write(CAT,{version=3,articles=W.Catalog})end
 local function catalog(id)for _,a in ipairs(W.Catalog)do if a.id==id then return a end end end
-function W.Save()ensure();local records={}for sid,r in pairs(W.Records)do records[#records+1]={sid=sid,name=r.name,level=W.ClampLevel(r.level),reasons=r.reasons or{},updated=r.updated or os.time()}end;table.sort(records,function(a,b)return a.sid<b.sid end);return write(DB,{version=2,records=records,history=W.History})end
-function W.Load()ensure();W.Records={};W.History={};if not file.Exists(DB,"DATA")then return true end;local t=jsonT(file.Read(DB,"DATA"));if not t then return false end;for _,r in pairs(t.records or t)do if istable(r)and r.sid then W.Records[key(r.sid)]={name=tostring(r.name or"?"),level=W.ClampLevel(r.level),reasons=istable(r.reasons)and r.reasons or{},updated=tonumber(r.updated)or os.time()}end end;W.History=istable(t.history)and t.history or{};return true end
-local function record(sid,name)local r=W.Records[sid];if not r then r={name=name or sid,level=0,reasons={},updated=os.time()};W.Records[sid]=r end;if name and name~=""then r.name=name end;return r end
+function W.Save()ensure();local records={}for sid,r in pairs(W.Records)do records[#records+1]={sid=sid,name=r.name,level=W.ClampLevel(r.level),reasons=r.reasons or{},jurisdiction=r.jurisdiction=="military"and"military"or"civil",updated=r.updated or os.time()}end;table.sort(records,function(a,b)return a.sid<b.sid end);return write(DB,{version=3,records=records,history=W.History})end
+-- МИГРАЦИЯ v2 → v3: записям без поля jurisdiction проставляется "civil".
+-- Старые базы читаются без потерь; повреждённый файл не затирается, а
+-- копируется в database.json.corrupt.<ts>, чтобы данные можно было спасти.
+function W.Load()ensure();W.Records={};W.History={};if not file.Exists(DB,"DATA")then return true end
+ local raw=file.Read(DB,"DATA");local t=jsonT(raw)
+ if not t then local bak=DB..".corrupt."..os.time();if raw then file.Write(bak,raw)end;ErrorNoHalt("[GRM Wanted] database.json повреждён, копия: "..bak.."\n");return false end
+ local srcVer=tonumber(t.version)or 2;local migrated=0
+ for _,r in pairs(t.records or t)do if istable(r)and r.sid then
+  local reasons=istable(r.reasons)and r.reasons or{}
+  local j=r.jurisdiction=="military"and"military"or(r.jurisdiction=="civil"and"civil"or nil)
+  if not j then j="civil";migrated=migrated+1 end
+  for _,c in ipairs(reasons)do if istable(c)and c.jurisdiction~="military"and c.jurisdiction~="civil"then c.jurisdiction=j end end
+  W.Records[key(r.sid)]={sid=key(r.sid),name=tostring(r.name or"?"),level=W.ClampLevel(r.level),reasons=reasons,jurisdiction=j,updated=tonumber(r.updated)or os.time()}
+ end end
+ W.History=istable(t.history)and t.history or{}
+ if migrated>0 then print(("[GRM Wanted] Миграция v%d→3: юрисдикция 'civil' проставлена %d записям"):format(srcVer,migrated));W.Save()end
+ return true end
+local function record(sid,name,jur)local r=W.Records[sid];if not r then r={sid=sid,name=name or sid,level=0,reasons={},jurisdiction=jur or"civil",updated=os.time()};W.Records[sid]=r end;if name and name~=""then r.name=name end;if not r.sid then r.sid=sid end;if jur and jur~=""then r.jurisdiction=jur end;if r.jurisdiction~="military"then r.jurisdiction="civil"end;return r end
 local function recalc(r)local level=0;for _,c in ipairs(r.reasons or{})do level=math.max(level,W.ClampLevel(c.level))end;r.level=level;r.updated=os.time()end
 function W.GetLevel(v)local r=W.Records[key(v)];return r and W.ClampLevel(r.level)or 0 end
 function W.GetRecord(v)return W.Records[key(v)]end
-local function push(p)local r=W.Records[key(p)];local l=r and r.level or 0;p:SetNW2Int("GRM_WantedLevel",l);net.Start(SYNC)net.WriteUInt(l,4)net.WriteString(r and r.name or"")net.Send(p)end
+-- Д4: HUD аугментаций читает булев GRM_Wanted, ядро писало только
+-- GRM_WantedLevel — индикатор всегда показывал «НЕТ». Пишем обе.
+local function push(p)local r=W.Records[key(p)];local l=r and r.level or 0;p:SetNW2Int("GRM_WantedLevel",l);p:SetNWInt("GRM_WantedLevel",l);p:SetNWBool("GRM_Wanted",l>0);p:SetNWString("GRM_WantedJurisdiction",r and r.jurisdiction or"civil");net.Start(SYNC)net.WriteUInt(l,4)net.WriteString(r and r.name or"")net.Send(p)end
 function W.CanView(p)if not IsValid(p)then return false end;if W.Config.SuperAdminBypass~=false and p:IsSuperAdmin()then return true end;return W.AccessManager and W.AccessManager.CanView and W.AccessManager.CanView(p)or false end
 function W.CanEdit(p)if not IsValid(p)then return false end;if W.Config.SuperAdminBypass~=false and p:IsSuperAdmin()then return true end;return W.AccessManager and W.AccessManager.CanEdit and W.AccessManager.CanEdit(p)or false end
 local function targetName(sid)local p=findPlayer(sid);return IsValid(p)and p:Nick()or(W.Records[sid]and W.Records[sid].name)or sid end
+
+-- ── Юрисдикции ───────────────────────────────────────────────────────
+-- "civil"    — Полиция Порядка (Ordnungspolizei), гражданские дела;
+-- "military" — Полевая жандармерия (Feldgendarmerie), воинские дела.
+-- Принадлежность персонажа определяется его фракцией: список военных
+-- фракций настраивается в W.Config.MilitaryFactions, дополнительно
+-- работает эвристика по названию (фолбэк для несконфигурированных).
+function W.JurisdictionOfPlayer(p)
+ if not(IsValid(p)and p:IsPlayer())then return"civil"end
+ local f=p:GetNWString("GRM_Faction","")
+ if f==""then return"civil"end
+ local list=W.Config and W.Config.MilitaryFactions
+ if istable(list)then
+  if list[f]==true then return"military"end
+  if list[f]==false then return"civil"end
+ end
+ local low=string.lower(f)
+ for _,pat in ipairs(W.Config and W.Config.MilitaryPatterns or{})do
+  if string.find(low,string.lower(pat),1,true)then return"military"end
+ end
+ return"civil"
+end
+-- Юрисдикция по ключу персонажа: онлайн — по фракции, офлайн — по записи.
+function W.JurisdictionOfKey(k)
+ k=key(k);local p=findPlayer(k)
+ if IsValid(p)then return W.JurisdictionOfPlayer(p)end
+ local r=W.Records[k]
+ return r and r.jurisdiction=="military"and"military"or"civil"
+end
+-- Может ли сотрудник вести дела указанной юрисдикции.
+-- Суперадмин и обладатели доступа "all" видят обе ветки.
+function W.CanUseJurisdiction(p,j)
+ if not IsValid(p)then return false end
+ if W.Config.SuperAdminBypass~=false and p:IsSuperAdmin()then return true end
+ if j~="military"and j~="civil"then return false end
+ local own=W.JurisdictionOfPlayer(p)
+ local AM=W.AccessManager
+ if AM and isfunction(AM.JurisdictionOf)then
+  local granted=AM.JurisdictionOf(p)
+  if granted=="all"then return true end
+  if granted=="civil"or granted=="military"then return granted==j end
+ end
+ return own==j
+end
 function W.AddCustomCharge(issuer,targetSid,data)
  targetSid=key(targetSid);if targetSid==""then return false,"Нет цели"end;if not W.CanEdit(issuer)then return false,"Нет прав"end;data=istable(data)and data or{};local title=string.Trim(tostring(data.title or"")):sub(1,96);if title==""then return false,"Введите название статьи"end
- local target=findPlayer(targetSid);local r=record(targetSid,IsValid(target)and target:Nick());local charge={id=tostring(data.id or"custom"):sub(1,48),code=tostring(data.code or"РУЧНАЯ"):sub(1,32),title=title,type=data.type=="admin"and"admin"or"crime",text=tostring(data.text or""):sub(1,300),fine=math.Clamp(math.floor(tonumber(data.fine)or 0),0,100000000),by=key(issuer),byNick=issuer:Nick(),t=os.time(),level=W.ClampLevel(data.level or 1),manual=data.manual==true}
+ -- Юрисдикция дела: явно переданная, иначе — по принадлежности цели.
+ local jur=data.jurisdiction=="military"and"military"or(data.jurisdiction=="civil"and"civil"or W.JurisdictionOfKey(targetSid))
+ if not W.CanUseJurisdiction(issuer,jur)then return false,jur=="military"and"Воинские дела ведёт только Feldgendarmerie"or"Гражданские дела ведёт только Полиция Порядка"end
+ local target=findPlayer(targetSid);local r=record(targetSid,IsValid(target)and target:Nick(),jur);local charge={id=tostring(data.id or"custom"):sub(1,48),code=tostring(data.code or"РУЧНАЯ"):sub(1,32),title=title,type=data.type=="admin"and"admin"or"crime",text=tostring(data.text or""):sub(1,300),fine=math.Clamp(math.floor(tonumber(data.fine)or 0),0,100000000),jurisdiction=jur,by=key(issuer),byNick=issuer:Nick(),t=os.time(),level=W.ClampLevel(data.level or 1),manual=data.manual==true}
  r.reasons[#r.reasons+1]=charge;while #r.reasons>(W.Config.MaxReasonsPerPlayer or 32)do table.remove(r.reasons,1)end;recalc(r);history(("%s: + %s %s (ур.%d)"):format(r.name,charge.code,charge.title,charge.level),issuer,targetSid,"charge");W.Save();if IsValid(target)then push(target);notify(target,"Вменена статья: "..charge.code.." "..charge.title.." • розыск "..r.level,235,125,70)end;hook.Run("GRM_WantedChargeAdded",issuer,target,charge,r);return true,r.level
 end
-function W.AddCharge(issuer,targetSid,articleId,text,forceLevel)local a=catalog(tostring(articleId or""));if not a then return false,"Статья каталога не найдена"end;return W.AddCustomCharge(issuer,targetSid,{id=a.id,code=a.code,title=a.title,type=a.type,text=text,fine=a.fine,level=(tonumber(forceLevel)or 0)>0 and forceLevel or a.defaultLevel})end
-function W.SetLevel(issuer,targetSid,level,note)targetSid=key(targetSid);if not W.CanEdit(issuer)then return false,"Нет прав"end;local p=findPlayer(targetSid);local r=record(targetSid,IsValid(p)and p:Nick());level=W.ClampLevel(level);r.level=level;r.updated=os.time();if level==0 then r.reasons={}elseif note and note~=""then r.reasons[#r.reasons+1]={id="manual_level",code="УРОВЕНЬ",title=tostring(note):sub(1,96),type="crime",text="",fine=0,by=key(issuer),byNick=issuer:Nick(),t=os.time(),level=level,manual=true}end;history(r.name..": уровень "..level,issuer,targetSid,"level");W.Save();if IsValid(p)then push(p)end;return true,level end
+-- Д1: терминалы вызывали AddCharge(ply, target, {таблица}) — сигнатура
+-- ждёт строковый id статьи, catalog(tostring(table)) не находил ничего и
+-- кнопка «В розыск» молча не работала. Теперь таблица принимается и
+-- перенаправляется в AddCustomCharge.
+function W.AddCharge(issuer,targetSid,articleId,text,forceLevel)
+ if istable(articleId)then local d=table.Copy(articleId);if text and text~=""and(d.text or"")==""then d.text=text end;if(tonumber(forceLevel)or 0)>0 then d.level=forceLevel end;return W.AddCustomCharge(issuer,targetSid,d)end
+ local a=catalog(tostring(articleId or""));if not a then return false,"Статья каталога не найдена"end
+ return W.AddCustomCharge(issuer,targetSid,{id=a.id,code=a.code,title=a.title,type=a.type,text=text,fine=a.fine,jurisdiction=a.jurisdiction,level=(tonumber(forceLevel)or 0)>0 and forceLevel or a.defaultLevel})end
+function W.SetLevel(issuer,targetSid,level,note)targetSid=key(targetSid);if not W.CanEdit(issuer)then return false,"Нет прав"end;local jur=W.JurisdictionOfKey(targetSid);if not W.CanUseJurisdiction(issuer,jur)then return false,jur=="military" and "Воинские дела ведёт только Feldgendarmerie" or "Гражданские дела ведёт только Полиция Порядка" end;local p=findPlayer(targetSid);local r=record(targetSid,IsValid(p)and p:Nick(),jur);level=W.ClampLevel(level);r.level=level;r.updated=os.time();if level==0 then r.reasons={}elseif note and note~=""then r.reasons[#r.reasons+1]={id="manual_level",code="УРОВЕНЬ",title=tostring(note):sub(1,96),type="crime",text="",fine=0,jurisdiction=jur,by=key(issuer),byNick=issuer:Nick(),t=os.time(),level=level,manual=true}end;history(r.name..": уровень "..level,issuer,targetSid,"level");W.Save();if IsValid(p)then push(p)end;return true,level end
 function W.Clear(i,s,n)return W.SetLevel(i,s,0,n)end
 function W.RemoveReason(issuer,sid,index)if not W.CanEdit(issuer)then return false,"Нет прав"end;sid=key(sid);local r=W.Records[sid];index=math.floor(tonumber(index)or 0);if not r or not r.reasons[index]then return false,"Статья не найдена"end;local c=table.remove(r.reasons,index);recalc(r);history(r.name..": удалена "..tostring(c.title),issuer,sid,"remove");W.Save();local p=findPlayer(sid);if IsValid(p)then push(p)end;return true,r.level end
 local function listPayload()local out={}for sid,r in pairs(W.Records)do if r.level>0 or #(r.reasons or{})>0 then out[#out+1]={sid=sid,name=r.name,level=r.level,reasons=#r.reasons,updated=r.updated,totalFine=(function()local n=0 for _,c in ipairs(r.reasons)do n=n+(tonumber(c.fine)or 0)end return n end)()}end end;table.sort(out,function(a,b)return a.level==b.level and a.name<b.name or a.level>b.level end);return out end

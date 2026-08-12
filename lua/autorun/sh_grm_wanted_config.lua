@@ -20,6 +20,18 @@ W.Config = W.Config or {
     SyncToClient = true,
     -- Суперадмин всегда может всё
     SuperAdminBypass = true,
+
+    -- ── Юрисдикции ──────────────────────────────────────────────
+    -- Явный список военных фракций: ["Точное имя фракции"] = true.
+    -- true  → персонажи фракции проходят по ВОЕННОЙ ветке (жандармерия);
+    -- false → принудительно гражданская ветка (перебивает эвристику).
+    MilitaryFactions = {},
+    -- Фолбэк-эвристика по подстроке в названии фракции, если фракция
+    -- не перечислена в MilitaryFactions.
+    MilitaryPatterns = {
+        "feldgendarmerie", "wehrmacht", "heer", "militar", "military",
+        "жандарм", "военн", "комендат", "вооруж", "гарнизон",
+    },
 }
 
 -- Уровни: index 0 = чист, 1..MaxLevel
@@ -32,18 +44,37 @@ W.Levels = W.Levels or {
     [5] = { name = "Федеральный",     color = Color(160, 40, 200),  short = "★★★★★" },
 }
 
--- Каталог статей по умолчанию (id → запись). type: "admin" | "crime"
+-- Каталог статей по умолчанию (id → запись).
+--   type:         "admin" | "crime"
+--   jurisdiction: "civil" (Полиция Порядка) | "military" (Feldgendarmerie)
 W.DefaultCatalog = W.DefaultCatalog or {
-    { id = "admin_noise",     type = "admin", title = "Нарушение общественного порядка", fine = 500,  defaultLevel = 1 },
-    { id = "admin_traffic",   type = "admin", title = "Нарушение ПДД",                   fine = 1000, defaultLevel = 1 },
-    { id = "admin_id",        type = "admin", title = "Отказ предъявить документы",     fine = 1500, defaultLevel = 1 },
-    { id = "crime_theft",     type = "crime", title = "Кража",                           fine = 5000, defaultLevel = 2 },
-    { id = "crime_assault",   type = "crime", title = "Нападение / побои",               fine = 8000, defaultLevel = 3 },
-    { id = "crime_robbery",   type = "crime", title = "Грабёж",                          fine = 15000, defaultLevel = 3 },
-    { id = "crime_weapon",    type = "crime", title = "Незаконное оружие",               fine = 20000, defaultLevel = 4 },
-    { id = "crime_murder",    type = "crime", title = "Убийство",                        fine = 0,     defaultLevel = 5 },
-    { id = "crime_escape",    type = "crime", title = "Побег / уклонение",               fine = 10000, defaultLevel = 4 },
-    { id = "crime_corrupt",   type = "crime", title = "Коррупция / взятка",              fine = 25000, defaultLevel = 4 },
+    -- ── Гражданская юрисдикция: Ordnungspolizei ─────────────────
+    { id = "admin_noise",     type = "admin", jurisdiction = "civil", code = "АК-1",  title = "Нарушение общественного порядка", fine = 500,  defaultLevel = 1 },
+    { id = "admin_traffic",   type = "admin", jurisdiction = "civil", code = "АК-2",  title = "Нарушение ПДД",                   fine = 1000, defaultLevel = 1 },
+    { id = "admin_id",        type = "admin", jurisdiction = "civil", code = "АК-3",  title = "Отказ предъявить документы",      fine = 1500, defaultLevel = 1 },
+    { id = "admin_curfew",    type = "admin", jurisdiction = "civil", code = "АК-4",  title = "Нарушение комендантского часа",   fine = 2500, defaultLevel = 1 },
+    { id = "crime_theft",     type = "crime", jurisdiction = "civil", code = "УК-1",  title = "Кража",                           fine = 5000, defaultLevel = 2 },
+    { id = "crime_assault",   type = "crime", jurisdiction = "civil", code = "УК-2",  title = "Нападение / побои",               fine = 8000, defaultLevel = 3 },
+    { id = "crime_robbery",   type = "crime", jurisdiction = "civil", code = "УК-3",  title = "Грабёж",                          fine = 15000, defaultLevel = 3 },
+    { id = "crime_weapon",    type = "crime", jurisdiction = "civil", code = "УК-4",  title = "Незаконное оружие",               fine = 20000, defaultLevel = 4 },
+    { id = "crime_murder",    type = "crime", jurisdiction = "civil", code = "УК-5",  title = "Убийство",                        fine = 0,     defaultLevel = 5 },
+    { id = "crime_escape",    type = "crime", jurisdiction = "civil", code = "УК-6",  title = "Побег / уклонение",               fine = 10000, defaultLevel = 4 },
+    { id = "crime_corrupt",   type = "crime", jurisdiction = "civil", code = "УК-7",  title = "Коррупция / взятка",              fine = 25000, defaultLevel = 4 },
+    { id = "crime_forgery",   type = "crime", jurisdiction = "civil", code = "УК-8",  title = "Подделка документов",             fine = 12000, defaultLevel = 3 },
+    { id = "crime_smuggling", type = "crime", jurisdiction = "civil", code = "УК-9",  title = "Контрабанда",                     fine = 18000, defaultLevel = 3 },
+    { id = "crime_riot",      type = "crime", jurisdiction = "civil", code = "УК-10", title = "Организация беспорядков",         fine = 22000, defaultLevel = 4 },
+
+    -- ── Военная юрисдикция: Feldgendarmerie / комендатура ───────
+    { id = "mil_ausgang",     type = "admin", jurisdiction = "military", code = "ДВ-1", title = "Нарушение формы одежды",              fine = 1500,  defaultLevel = 1 },
+    { id = "mil_disobey",     type = "admin", jurisdiction = "military", code = "ДВ-2", title = "Пререкание со старшим по званию",     fine = 2500,  defaultLevel = 1 },
+    { id = "mil_post",        type = "crime", jurisdiction = "military", code = "ВУ-1", title = "Нарушение караульной службы",         fine = 6000,  defaultLevel = 2 },
+    { id = "mil_awol",        type = "crime", jurisdiction = "military", code = "ВУ-2", title = "Самовольное оставление части (СОЧ)",  fine = 10000, defaultLevel = 3 },
+    { id = "mil_desert",      type = "crime", jurisdiction = "military", code = "ВУ-3", title = "Дезертирство",                        fine = 0,     defaultLevel = 5 },
+    { id = "mil_order",       type = "crime", jurisdiction = "military", code = "ВУ-4", title = "Неисполнение приказа",                fine = 8000,  defaultLevel = 3 },
+    { id = "mil_weaponloss",  type = "crime", jurisdiction = "military", code = "ВУ-5", title = "Утрата табельного оружия",            fine = 20000, defaultLevel = 3 },
+    { id = "mil_looting",     type = "crime", jurisdiction = "military", code = "ВУ-6", title = "Мародёрство",                         fine = 25000, defaultLevel = 4 },
+    { id = "mil_treason",     type = "crime", jurisdiction = "military", code = "ВУ-7", title = "Измена / переход к противнику",       fine = 0,     defaultLevel = 5 },
+    { id = "mil_sabotage",    type = "crime", jurisdiction = "military", code = "ВУ-8", title = "Саботаж / вредительство",             fine = 0,     defaultLevel = 5 },
 }
 
 function W.GetLevelInfo(level)

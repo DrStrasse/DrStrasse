@@ -347,6 +347,24 @@ if SERVER then
         return st.budget
     end
 
+    -- Публичные обёртки для внешних модулей (реестр штрафов
+    -- sh_grm_wanted_fines.lua): пополнение гос.бюджета и чтение доли
+    -- государства в штрафах фракции. Локальные stateAdd/entry наружу
+    -- не видны, поэтому нужен явный API.
+    function E.StateAdd(delta, reason)
+        delta = math.floor(tonumber(delta) or 0)
+        if delta == 0 then return E.Data and E.Data.state and E.Data.state.budget or 0 end
+        return stateAdd(delta, reason)
+    end
+
+    function E.FinePercentFor(factionName)
+        factionName = tostring(factionName or "")
+        if factionName == "" then return 0 end
+        if not (E.Data and E.Data.factions and E.Data.factions[factionName]) then return 0 end
+        local fp = entry(factionName).finePerms
+        return math.Clamp(tonumber(fp and fp.statePercent) or 0, 0, 100)
+    end
+
     -- ── БАНКОВСКИЕ ХРАНИЛИЩА (находка 178) ──────────────────
     -- Реестр живых хранилищ; дисплей хранилища показывает гос.бюджет.
     E.Vaults = E.Vaults or {}

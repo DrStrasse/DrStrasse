@@ -39,6 +39,12 @@ net.Receive("GRM_CompMilPolice_Open", function()
     local wantedRecs   = net.ReadTable() or {}
     local myFaction    = net.ReadString()
     local isSuperAdmin = net.ReadBool()
+    -- расширение протокола v1.1 (см. sv_grm_comp_terminal.lua)
+    local jurisdiction = net.ReadString()
+    local canEdit      = net.ReadBool()
+    local finesList    = net.ReadTable() or {}
+    local catalog      = net.ReadTable() or {}
+    GRM_CompTerminal_ActiveJur = jurisdiction
 
     local frame = vgui.Create("DFrame")
     frame:SetSize(960, 700)
@@ -112,7 +118,7 @@ net.Receive("GRM_CompMilPolice_Open", function()
     btnAddWanted.DoClick = function()
         if selWKey == "" then notification.AddLegacy("Выберите военнослужащего!", NOTIFY_ERROR, 3) return end
         local _, lvl = comboWStars:GetSelected()
-        net.Start("GRM_CompPolice_WantedAct")
+        net.Start("GRM_CompMilPolice_Act")
             net.WriteString("add")
             net.WriteString(selWKey)
             net.WriteString(entWReason:GetText())
@@ -130,15 +136,20 @@ net.Receive("GRM_CompMilPolice_Open", function()
     listWanted:AddColumn("Воинские статьи и ориентировки"):SetFixedWidth(420)
     listWanted:AddColumn("Ключ")
 
-    for k, r in pairs(wantedRecs) do
-        if istable(r) and (r.level or 0) > 0 then
-            local starStr = string.rep("★", math.Clamp(r.level or 1, 1, 5))
-            local reas = {}
-            for _, rc in ipairs(r.reasons or {}) do reas[#reas+1] = (rc.code or "") .. " " .. (rc.title or "") end
-            local line = listWanted:AddLine(starStr, r.name or k, table.concat(reas, ", "), k)
-            line._targetKey = k
+    local function fillWanted(recs)
+        listWanted:Clear()
+        for k, r in pairs(recs or {}) do
+            if istable(r) and (r.level or 0) > 0 then
+                local starStr = string.rep("★", math.Clamp(r.level or 1, 1, 5))
+                local reas = {}
+                for _, rc in ipairs(r.reasons or {}) do reas[#reas+1] = (rc.code or "") .. " " .. (rc.title or "") end
+                local line = listWanted:AddLine(starStr, r.name or k, table.concat(reas, ", "), k)
+                line._targetKey = k
+            end
         end
     end
+    fillWanted(wantedRecs)
+    frame._fillWanted = fillWanted
 
     local btnClearWanted = vgui.Create("DButton", wantPnl)
     btnClearWanted:SetPos(16, 565)
@@ -152,7 +163,7 @@ net.Receive("GRM_CompMilPolice_Open", function()
         if not line then notification.AddLegacy("Выберите запись!", NOTIFY_ERROR, 3) return end
         local row = listWanted:GetLine(line)
         if row and row._targetKey then
-            net.Start("GRM_CompPolice_WantedAct")
+            net.Start("GRM_CompMilPolice_Act")
                 net.WriteString("clear")
                 net.WriteString(row._targetKey)
                 net.WriteString("Снят с розыска комендатурой Feldgendarmerie")
@@ -192,24 +203,118 @@ net.Receive("GRM_CompMilPolice_Open", function()
     local entFReason = vgui.Create("DTextEntry", finePnl)
     entFReason:SetPos(16, 102) entFReason:SetSize(534, 28) entFReason:SetText("Нарушение формы одежды и воинской дисциплины")
 
-    local selFNick = ""
+    local selFKey, selFName = "", ""
     comboFTarget.OnSelect = function(_, _, _, pData)
-        if istable(pData) then selFNick = pData.nick or "" end
+        if istable(pData) then
+            selFKey  = pData.key or pData.steamID64 or ""
+            selFName = pData.rpName or pData.nick or ""
+        end
+    end
+
+    -- Статья каталога: сумма подставляется автоматически (Д12).
+    local lblFArticle = vgui.Create("DLabel", finePnl)
+    lblFArticle:SetPos(570, 16) lblFArticle:SetText("Статья каталога:") lblFArticle:SetTextColor(CC.text) lblFArticle:SizeToContents()
+    local comboFArticle = vgui.Create("DComboBox", finePnl)
+    comboFArticle:SetPos(570, 38) comboFArticle:SetSize(356, 28)
+    comboFArticle:SetValue("— Без статьи (произвольно) —")
+    comboFArticle:AddChoice("— Без статьи (произвольно) —", "")
+    for _, a in ipairs(catalog) do
+        comboFArticle:AddChoice(string.format("%s  %s", a.code or "", a.title or ""), a)
+    end
+    local selFArticle = ""
+    comboFArticle.OnSelect = function(_, _, _, aData)
+        if istable(aData) then
+            selFArticle = aData.id or ""
+            if (tonumber(aData.fine) or 0) > 0 then entFAmount:SetText(tostring(aData.fine)) end
+            entFReason:SetText(string.format("%s %s", aData.code or "", aData.title or ""))
+        else
+            selFArticle = ""
+        end
+    end
+
+    -- Реестр выписанных квитанций (Д3): раньше вкладка только слала
+    -- «say /fine» и ничего не показывала.
+    local listFines = vgui.Create("DListView", finePnl)
+    listFines:SetPos(16, 200)
+    listFines:SetSize(910, 330)
+    listFines:AddColumn("№"):SetFixedWidth(60)
+    listFines:AddColumn("Нарушитель"):SetFixedWidth(220)
+    listFines:AddColumn("Сумма"):SetFixedWidth(120)
+    listFines:AddColumn("Статус"):SetFixedWidth(120)
+    listFines:AddColumn("Основание")
+
+    local function fineStatus(s)
+        if s == "paid" then return "оплачен" end
+        if s == "cancelled" then return "аннулирован" end
+        return "не оплачен"
+    end
+
+    local function fillFines(rows)
+        listFines:Clear()
+        for _, r in ipairs(rows or {}) do
+            local line = listFines:AddLine(
+                tostring(r.id or "?"),
+                r.targetName or r.target or "?",
+                tostring(math.floor(tonumber(r.amount) or 0)),
+                fineStatus(r.status),
+                r.reason or "—")
+            line._fineID = r.id
+        end
+    end
+    fillFines(finesList)
+
+    local function sendAct(action, target, text, num, extra)
+        net.Start("GRM_CompTerminal_Act")
+            net.WriteString(action)
+            net.WriteString(jurisdiction)
+            net.WriteString(tostring(target or ""))
+            net.WriteString(tostring(text or ""))
+            net.WriteUInt(math.max(0, math.floor(tonumber(num) or 0)), 32)
+            net.WriteString(tostring(extra or ""))
+        net.SendToServer()
     end
 
     local btnIssueFine = vgui.Create("DButton", finePnl)
-    btnIssueFine:SetPos(16, 150) btnIssueFine:SetSize(340, 36)
+    btnIssueFine:SetPos(16, 150) btnIssueFine:SetSize(320, 36)
     btnIssueFine:SetText("Наложить комендантское взыскание")
     btnIssueFine:SetIcon("icon16/money.png")
     btnIssueFine:SetFont("DermaDefaultBold")
     btnIssueFine:SetTextColor(color_white)
     btnIssueFine.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(45, 140, 60) or Color(35, 110, 48)) end
     btnIssueFine.DoClick = function()
-        if selFNick == "" then notification.AddLegacy("Выберите нарушителя!", NOTIFY_ERROR, 3) return end
-        local amt = tonumber(entFAmount:GetText()) or 1000
-        LocalPlayer():ConCommand(string.format("say /fine %d %s %s", amt, selFNick, entFReason:GetText()))
-        frame:Close()
+        if not canEdit then notification.AddLegacy("Нет прав на выписку штрафов!", NOTIFY_ERROR, 3) return end
+        if selFKey == "" then notification.AddLegacy("Выберите нарушителя!", NOTIFY_ERROR, 3) return end
+        local amt = math.floor(tonumber(entFAmount:GetText()) or 0)
+        if amt <= 0 then notification.AddLegacy("Укажите сумму больше нуля!", NOTIFY_ERROR, 3) return end
+        sendAct("fine_issue", selFKey, entFReason:GetText(), amt, selFArticle)
     end
+
+    local btnCancelFine = vgui.Create("DButton", finePnl)
+    btnCancelFine:SetPos(350, 150) btnCancelFine:SetSize(240, 36)
+    btnCancelFine:SetText("Аннулировать выбранный")
+    btnCancelFine:SetIcon("icon16/cancel.png")
+    btnCancelFine:SetFont("DermaDefaultBold")
+    btnCancelFine:SetTextColor(color_white)
+    btnCancelFine.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(170, 70, 70) or Color(130, 50, 50)) end
+    btnCancelFine.DoClick = function()
+        if not canEdit then notification.AddLegacy("Нет прав!", NOTIFY_ERROR, 3) return end
+        local idx = listFines:GetSelectedLine()
+        if not idx then notification.AddLegacy("Выберите квитанцию в реестре!", NOTIFY_ERROR, 3) return end
+        local row = listFines:GetLine(idx)
+        if row and row._fineID then sendAct("fine_cancel", "", "решение органа", row._fineID, "") end
+    end
+
+    local btnRefresh = vgui.Create("DButton", finePnl)
+    btnRefresh:SetPos(604, 150) btnRefresh:SetSize(160, 36)
+    btnRefresh:SetText("Обновить реестр")
+    btnRefresh:SetIcon("icon16/arrow_refresh.png")
+    btnRefresh:SetFont("DermaDefaultBold")
+    btnRefresh:SetTextColor(color_white)
+    btnRefresh.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(60, 90, 120) or Color(45, 70, 95)) end
+    btnRefresh.DoClick = function() sendAct("refresh", "", "", 0, "") end
+
+    frame._fillFines = fillFines
+    GRM_CompTerminal_ActiveFrame = frame
 
     tabs:AddSheet("Взыскания комендатуры", finePnl, "icon16/money.png")
 

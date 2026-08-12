@@ -36,7 +36,18 @@ local function normalizeAccess(data)
     data.EditDepartments = istable(data.EditDepartments) and data.EditDepartments or {}
     data.ViewSteam = istable(data.ViewSteam) and data.ViewSteam or {}
     data.EditSteam = istable(data.EditSteam) and data.EditSteam or {}
+    -- Юрисдикции (добавлено в v1.1). Значения: "all" | "civil" | "military".
+    -- Старые access.json таких полей не содержат — они просто создаются
+    -- пустыми, поведение по умолчанию берётся из фракции игрока.
+    data.Jurisdictions = istable(data.Jurisdictions) and data.Jurisdictions or {}
+    data.JurisdictionSteam = istable(data.JurisdictionSteam) and data.JurisdictionSteam or {}
     return data
+end
+
+local function normJur(v)
+    v = tostring(v or "")
+    if v == "all" or v == "civil" or v == "military" then return v end
+    return nil
 end
 
 local function getFactionInfo(ply)
@@ -176,6 +187,31 @@ if SERVER then
     function AM.CanView(ply) return check(ply, "view") end
     function AM.CanEdit(ply) return check(ply, "edit") end
 
+    --- Юрисдикция, разрешённая игроку менеджером доступов.
+    -- Возвращает "all" | "civil" | "military" либо nil, если явного
+    -- назначения нет (тогда ядро розыска берёт юрисдикцию фракции).
+    -- Приоритет: персональное назначение по SteamID → назначение фракции.
+    function AM.JurisdictionOf(ply)
+        if not IsValid(ply) then return nil end
+        local cfg = AM.Config or {}
+        if cfg.SuperAdminBypass ~= false and ply:IsSuperAdmin() then return "all" end
+
+        local data = normalizeAccess(AM.Data or AM.Load())
+        local sid, sid64 = ply:SteamID(), ply:SteamID64()
+        local charKey = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or (sid64 .. ":char1")
+
+        local js = data.JurisdictionSteam
+        local personal = normJur(js[charKey] or js[sid64] or js[sid])
+        if personal then return personal end
+
+        local factionName = getFactionInfo(ply)
+        if factionName then
+            local byFaction = normJur(data.Jurisdictions[factionName])
+            if byFaction then return byFaction end
+        end
+        return nil
+    end
+
     function AM.Install()
         if not GRM.Wanted then return end
         GRM.Wanted.CanView = function(ply)
@@ -188,6 +224,9 @@ if SERVER then
             if ply:IsSuperAdmin() then return true end
             return AM.CanEdit(ply)
         end
+        -- Ядро розыска и терминалы спрашивают юрисдикцию через это поле:
+        -- если менеджер доступов не загружен, там срабатывает фолбэк по фракции.
+        GRM.Wanted.JurisdictionOf = AM.JurisdictionOf
     end
 
     AM.Install()

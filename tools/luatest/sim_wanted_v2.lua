@@ -12,7 +12,7 @@ ok(has(client,"fine:GetValue()")and has(client,"lvl:GetValue()"),"manual fine an
 ok(has(server,"fine=math.Clamp")and has(server,"title==\"\"then return false"),"server clamps and validates custom article")
 ok(has(server,"manual=data.manual==true"),"manual origin persisted in charge")
 ok(has(server,"function W.RemoveReason")and has(server,"recalc(r)"),"removing charge recalculates wanted level")
-ok(has(server,"version=2,records=records,history=W.History"),"versioned CharacterKey persistence")
+ok(has(server,"version=3,records=records,history=W.History"),"versioned CharacterKey persistence (schema v3)")
 ok(has(client,"GRM / ЕДИНАЯ БАЗА РОЗЫСКА")and has(client,"Дела и розыск")and has(client,"История"),"unified GRM interface")
 ok(has(client,"Каталог статей")and has(server,'action=="save_catalog"'),"editable catalog retained")
 ok(has(server,"GRM_WantedChargeAdded"),"external modules receive charge hook")
