@@ -304,4 +304,134 @@ net.Receive("GRM_CompSecurity_Open", function()
     end
 
     tabs:AddSheet("Отдел кадров Спецслужб", badgePnl, "icon16/shield.png")
+
+    -- ══════════════════════════════════════════════════════════════
+    -- ВКЛАДКА: ТАЙНЫЕ ОПЕРАЦИИ
+    -- Правки, которых не видят ведомства: обычная история розыска
+    -- не пополняется, ориентировки не рассылаются, всё пишется только
+    -- в закрытый журнал спецслужбы (см. sh_grm_special_service.lua).
+    -- ══════════════════════════════════════════════════════════════
+    local covPnl = vgui.Create("DPanel", tabs)
+    covPnl:DockPadding(12, 12, 12, 12)
+    covPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
+
+    local lblCov = vgui.Create("DLabel", covPnl)
+    lblCov:SetPos(16, 8)
+    lblCov:SetFont("DermaDefaultBold")
+    lblCov:SetTextColor(CC.accent)
+    lblCov:SetText("Оперативные материалы — обе юрисдикции. Правки в журнал ведомств не попадают.")
+    lblCov:SizeToContents()
+
+    local listCov = vgui.Create("DListView", covPnl)
+    listCov:SetPos(16, 32)
+    listCov:SetSize(930, 400)
+    listCov:AddColumn("Статус"):SetFixedWidth(120)
+    listCov:AddColumn("Фигурант"):SetFixedWidth(230)
+    listCov:AddColumn("Ур."):SetFixedWidth(44)
+    listCov:AddColumn("Статьи"):SetFixedWidth(400)
+    listCov:AddColumn("Ключ")
+
+    local function fillCovert(recs)
+        listCov:Clear()
+        for k, r in pairs(recs or {}) do
+            if istable(r) then
+                local status = (r.jurisdiction == "military") and "ВОЕННЫЙ" or "ГРАЖДАНСКИЙ"
+                if r.covert then status = "СКРЫТО • " .. status end
+                local reas = {}
+                for _, rc in ipairs(r.reasons or {}) do
+                    reas[#reas + 1] = tostring(rc.code or "") .. " " .. tostring(rc.title or "")
+                end
+                local line = listCov:AddLine(status, r.name or k, tostring(r.level or 0),
+                    table.concat(reas, ", "), k)
+                line._targetKey = k
+                line._covert = r.covert == true
+            end
+        end
+    end
+    fillCovert(wantedRecs)
+    frame._fillCovert = fillCovert
+    -- Модуль спецслужбы обновляет этот список после каждой операции.
+    _G.GRM_CompSecurity_ActiveFrame = frame
+    frame.OnClose = function() _G.GRM_CompSecurity_ActiveFrame = nil end
+
+    local entCovNote = vgui.Create("DTextEntry", covPnl)
+    entCovNote:SetPos(16, 440)
+    entCovNote:SetSize(500, 26)
+    entCovNote:SetPlaceholderText("Основание операции (пишется только в закрытый журнал)…")
+
+    local function covSelected()
+        local id = listCov:GetSelectedLine()
+        if not id then
+            notification.AddLegacy("Выберите материал из списка.", NOTIFY_ERROR, 3)
+            return nil
+        end
+        local row = listCov:GetLine(id)
+        return row and row._targetKey, row and row._covert
+    end
+
+    local function covAct(action, target, note, num)
+        net.Start("GRM_SpecService_Act")
+            net.WriteString(action)
+            net.WriteString(tostring(target or ""))
+            net.WriteString(tostring(note or ""))
+            net.WriteInt(math.floor(tonumber(num) or 0), 32)
+        net.SendToServer()
+    end
+
+    local function covBtn(label, x, y, w, col, fn)
+        local b = vgui.Create("DButton", covPnl)
+        b:SetPos(x, y) b:SetSize(w, 30)
+        b:SetText(label) b:SetFont("DermaDefaultBold") b:SetTextColor(color_white)
+        b.Paint = function(sf, bw, bh)
+            draw.RoundedBox(4, 0, 0, bw, bh, sf:IsHovered() and col
+                or Color(col.r * 0.7, col.g * 0.7, col.b * 0.7))
+        end
+        b.DoClick = function() surface.PlaySound("ui/buttonclick.wav") fn() end
+        return b
+    end
+
+    covBtn("Снять розыск тайно", 16, 474, 170, CC.success, function()
+        local key = covSelected()
+        if key then covAct("level", key, entCovNote:GetValue(), 0) end
+    end)
+
+    covBtn("Понизить уровень", 194, 474, 160, CC.gold, function()
+        local id = listCov:GetSelectedLine()
+        if not id then notification.AddLegacy("Выберите материал.", NOTIFY_ERROR, 3) return end
+        local row = listCov:GetLine(id)
+        local lvl = math.max(0, (tonumber(row:GetColumnText(3)) or 0) - 1)
+        covAct("level", row._targetKey, entCovNote:GetValue(), lvl)
+    end)
+
+    covBtn("Скрыть от ведомств", 362, 474, 170, Color(150, 110, 220), function()
+        local key, covert = covSelected()
+        if key then covAct("hide", key, entCovNote:GetValue(), covert and 0 or 1) end
+    end)
+
+    covBtn("Изъять дело", 540, 474, 150, CC.danger, function()
+        local key = covSelected()
+        if not key then return end
+        Derma_Query("Изъять материал из базы розыска без следа?", "Оперативная санкция",
+            "Изъять", function() covAct("wipe", key, entCovNote:GetValue(), 0) end,
+            "Отмена", function() end)
+    end)
+
+    covBtn("Обновить", 698, 474, 120, Color(70, 76, 96), function()
+        net.Start("GRM_SpecService_Open") net.SendToServer()
+    end)
+
+    covBtn("Полный терминал", 826, 474, 120, CC.accent, function()
+        net.Start("GRM_SpecService_Open") net.SendToServer()
+        frame:Close()
+    end)
+
+    local lblCovHint = vgui.Create("DLabel", covPnl)
+    lblCovHint:SetPos(16, 512)
+    lblCovHint:SetSize(930, 40)
+    lblCovHint:SetTextColor(CC.dim)
+    lblCovHint:SetWrap(true)
+    lblCovHint:SetText("«Полный терминал» открывает оперативную панель /spec: штрафы, аресты, "
+        .. "документы прикрытия и закрытый журнал операций.")
+
+    tabs:AddSheet("Тайные операции", covPnl, "icon16/user_gray.png")
 end)

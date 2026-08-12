@@ -33,6 +33,13 @@ ECONOMY_FILES = [
     "lua/autorun/sh_grm_wanted_config.lua",
     "lua/autorun/sh_grm_wanted_access.lua",
     "lua/autorun/sh_grm_wanted_fines.lua",
+    # фаза 3: лист розыска, ориентировки, обмен сведениями, спецслужбы
+    "lua/autorun/sh_grm_wanted_board.lua",
+    "lua/autorun/sh_grm_wanted_bulletins.lua",
+    "lua/autorun/sh_grm_wanted_exchange.lua",
+    "lua/autorun/sh_grm_special_service.lua",
+    "lua/autorun/client/cl_grm_ui_theme.lua",
+    "lua/autorun/sh_00_grm_ui.lua",
     "lua/autorun/server/sv_grm_wanted.lua",
     "lua/autorun/server/sv_grm_comp_terminal.lua",
     "lua/autorun/server/sv_grm_wanted_commands.lua",

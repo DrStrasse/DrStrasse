@@ -130,7 +130,7 @@ check("history сохранена", #W.History==1)
 print("\n=== ТЕСТ 2: сохранение в v3 ===")
 W.Save()
 local saved = util.JSONToTable(files["grm_wanted/database.json"])
-check("version=3", saved.version==3, saved.version)
+check("version=4 (обмен сведениями)", saved.version==4, saved.version)
 check("records — массив из 3", #saved.records==3, #saved.records)
 local found=0
 for _,r in ipairs(saved.records) do if r.jurisdiction then found=found+1 end end

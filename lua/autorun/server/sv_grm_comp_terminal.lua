@@ -144,17 +144,28 @@ end
 -- Возвращает МАП key -> запись: клиенты терминалов обходят его через
 -- pairs() и берут ключ как идентификатор цели, поэтому форму менять
 -- нельзя, иначе _targetKey станет числом.
-local function wantedSlice(jurisdiction, limit)
+-- @param includeCovert  показывать дела, скрытые спецслужбой (только для
+--                        её собственного терминала)
+local function wantedSlice(jurisdiction, limit, includeCovert)
     local out, n = {}, 0
     local W = GRM.Wanted
     if not (W and istable(W.Records)) then return out end
 
     -- Сортируем по времени обновления, чтобы срез был осмысленным.
+    local X = GRM.Wanted and GRM.Wanted.Exchange
     local keys = {}
     for k, r in pairs(W.Records) do
-        if istable(r) and (r.level or 0) > 0 then
-            local j = r.jurisdiction == "military" and "military" or "civil"
-            if jurisdiction == "all" or j == jurisdiction then
+        -- Дела, скрытые спецслужбой, ведомственным терминалам не видны.
+        if istable(r) and (r.level or 0) > 0 and (includeCovert == true or r.covert ~= true) then
+            -- Своя юрисдикция ИЛИ переданная копия сведений (Exchange).
+            local visible
+            if X and isfunction(X.VisibleTo) then
+                visible = X.VisibleTo(r, jurisdiction)
+            else
+                local j = r.jurisdiction == "military" and "military" or "civil"
+                visible = (jurisdiction == "all" or j == jurisdiction)
+            end
+            if visible then
                 keys[#keys + 1] = { k = k, u = tonumber(r.updated) or 0 }
             end
         end
@@ -172,13 +183,18 @@ local function wantedSlice(jurisdiction, limit)
             }
         end
         n = n + 1
+        local own = r.jurisdiction == "military" and "military" or "civil"
         out[e.k] = {
             key          = e.k,
             name         = r.name,
             level        = r.level,
-            jurisdiction = r.jurisdiction or "civil",
+            -- признак «гражданский / военный» для общего листа
+            jurisdiction = own,
+            -- дело чужой структуры, доступное нам по переданным сведениям
+            foreign      = (jurisdiction ~= "all" and own ~= jurisdiction) or nil,
             updated      = r.updated,
             reasons      = reasons,
+            covert       = r.covert == true or nil,
         }
     end
     return out
@@ -246,6 +262,30 @@ local function templatesSlice()
 end
 T.TemplatesSlice = templatesSlice
 
+--- Открытые заявки на передачу сведений, адресованные нашей структуре.
+local function requestSlice(jurisdiction)
+    local X = GRM.Wanted and GRM.Wanted.Exchange
+    if not (X and isfunction(X.Pending)) then return {} end
+    local okReq, list = pcall(X.Pending, jurisdiction)
+    if not (okReq and istable(list)) then return {} end
+    local out = {}
+    for _, r in ipairs(list) do
+        out[#out + 1] = {
+            id         = r.id,
+            fromName   = r.fromName,
+            fromJur    = r.fromJur,
+            targetKey  = r.targetKey,
+            targetName = r.targetName,
+            kind       = r.kind,
+            note       = r.note,
+            created    = r.created,
+        }
+        if #out >= 40 then break end
+    end
+    return out
+end
+T.RequestSlice = requestSlice
+
 local function catalogSlice(jurisdiction)
     local W = GRM.Wanted
     local out = {}
@@ -295,6 +335,8 @@ function T.Open(ent, ply, channel)
         net.WriteBool(T.CanEdit(ply, jur))
         net.WriteTable(finesSlice(jur, T.MaxFinesSent))
         net.WriteTable(catalogSlice(jur))
+        -- v1.2: заявки соседнего ведомства на передачу сведений
+        net.WriteTable(requestSlice(jur))
     net.Send(ply)
 end
 
@@ -415,11 +457,60 @@ net.Receive("GRM_CompTerminal_Act", function(_, ply)
         return result(ply, ok and true or false, ok and ("Штраф №" .. num .. " аннулирован") or tostring(err))
     end
 
+    -- ── Ориентировка по служебному каналу ─────────────────────────
+    -- Кнопки терминала «Сообщить своим» / «Передать на волну».
+    if act == "bulletin_fr" or act == "bulletin_dep" then
+        local BL = W and W.Bulletins
+        if not (BL and isfunction(BL.Announce)) then
+            return result(ply, false, "Модуль ориентировок недоступен")
+        end
+        local ch = act == "bulletin_dep" and "dep" or "fr"
+        local allowed, why = BL.CanUse(ply, ch)
+        if not allowed then return result(ply, false, tostring(why)) end
+        local ok, msg = BL.Announce(ply, ch, charKey(target), text)
+        return result(ply, ok and true or false, tostring(msg))
+    end
+
+    -- ── Межведомственная передача сведений ────────────────────────
+    if act == "case_transfer" or act == "case_share" or act == "case_request" then
+        local X = W and W.Exchange
+        if not (X and isfunction(X.Transfer)) then
+            return result(ply, false, "Модуль обмена недоступен")
+        end
+        local key = charKey(target)
+        if key == "" then return result(ply, false, "Не выбрано дело") end
+        local to = (W.Records and W.Records[key] and W.Records[key].jurisdiction == "military")
+            and "civil" or "military"
+
+        local ok, msg
+        if act == "case_transfer" then
+            ok, msg = X.Transfer(ply, key, to, text)
+        elseif act == "case_share" then
+            ok, msg = X.Share(ply, key, to, text)
+        else
+            ok, msg = X.Request(ply, key, extra == "share" and "share" or "transfer", text)
+        end
+        return result(ply, ok and true or false, tostring(msg))
+    end
+
+    -- ── Решение по заявке соседнего ведомства ─────────────────────
+    if act == "case_accept" or act == "case_decline" then
+        local X = W and W.Exchange
+        if not (X and isfunction(X.Accept)) then
+            return result(ply, false, "Модуль обмена недоступен")
+        end
+        local ok, msg
+        if act == "case_accept" then ok, msg = X.Accept(ply, num, text)
+        else ok, msg = X.Decline(ply, num, text) end
+        return result(ply, ok and true or false, tostring(msg))
+    end
+
     -- ── Обновить данные ───────────────────────────────────────────
     if act == "refresh" then
         net.Start("GRM_CompTerminal_Fines")
             net.WriteTable(wantedSlice(jur, T.MaxRecordsSent))
             net.WriteTable(finesSlice(jur, T.MaxFinesSent))
+            net.WriteTable(requestSlice(jur))
         net.Send(ply)
         return
     end

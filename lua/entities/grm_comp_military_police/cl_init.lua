@@ -44,6 +44,9 @@ net.Receive("GRM_CompMilPolice_Open", function()
     local canEdit      = net.ReadBool()
     local finesList    = net.ReadTable() or {}
     local catalog      = net.ReadTable() or {}
+    -- v1.2: заявки соседнего ведомства на передачу сведений.
+    -- Старый сервер их не шлёт — ReadTable вернёт пустую таблицу.
+    local requests     = net.ReadTable() or {}
     GRM_CompTerminal_ActiveJur = jurisdiction
 
     local frame = vgui.Create("DFrame")
@@ -131,9 +134,11 @@ net.Receive("GRM_CompMilPolice_Open", function()
     local listWanted = vgui.Create("DListView", wantPnl)
     listWanted:SetPos(16, 75)
     listWanted:SetSize(910, 480)
-    listWanted:AddColumn("Уровень"):SetFixedWidth(100)
-    listWanted:AddColumn("Военнослужащий / Гражданин"):SetFixedWidth(240)
-    listWanted:AddColumn("Воинские статьи и ориентировки"):SetFixedWidth(420)
+    listWanted:AddColumn("Уровень"):SetFixedWidth(84)
+    -- Общий список: у каждой записи явно указан статус фигуранта.
+    listWanted:AddColumn("Статус"):SetFixedWidth(104)
+    listWanted:AddColumn("Военнослужащий / Гражданин"):SetFixedWidth(210)
+    listWanted:AddColumn("Воинские статьи и ориентировки"):SetFixedWidth(370)
     listWanted:AddColumn("Ключ")
 
     local function fillWanted(recs)
@@ -143,7 +148,9 @@ net.Receive("GRM_CompMilPolice_Open", function()
                 local starStr = string.rep("★", math.Clamp(r.level or 1, 1, 5))
                 local reas = {}
                 for _, rc in ipairs(r.reasons or {}) do reas[#reas+1] = (rc.code or "") .. " " .. (rc.title or "") end
-                local line = listWanted:AddLine(starStr, r.name or k, table.concat(reas, ", "), k)
+                local status = (r.jurisdiction == "military") and "ВОЕННЫЙ" or "ГРАЖДАНСКИЙ"
+                if r.foreign then status = status .. " •перед." end
+                local line = listWanted:AddLine(starStr, status, r.name or k, table.concat(reas, ", "), k)
                 line._targetKey = k
             end
         end
@@ -433,4 +440,13 @@ net.Receive("GRM_CompMilPolice_Open", function()
     end
 
     tabs:AddSheet("Отдел кадров Feldgendarmerie", badgePnl, "icon16/shield.png")
+
+    -- ══════════════════════════════════════════════════════════════
+    -- ВКЛАДКА: МЕЖВЕДОМСТВЕННЫЙ ОБМЕН СВЕДЕНИЯМИ
+    -- Общий конструктор живёт в autorun/client/cl_grm_comp_terminal.lua,
+    -- чтобы оба терминала были одинаковыми и правились в одном месте.
+    -- ══════════════════════════════════════════════════════════════
+    if isfunction(GRM_CompTerminal_BuildExchangeTab) then
+        GRM_CompTerminal_BuildExchangeTab(tabs, frame, CC, wantedRecs, requests, jurisdiction, canEdit)
+    end
 end)

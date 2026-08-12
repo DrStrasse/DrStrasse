@@ -28,6 +28,11 @@ function ENT:CanManage(ply)
     if not (IsValid(ply) and ply:IsPlayer()) then return false end
     if ply:IsSuperAdmin() then return true end
 
+    -- Единый источник истины — реестр агентов спецслужбы. Он же покрывает
+    -- отделы, должности и персональные допуски, которых здесь не было.
+    local SS = GRM.SpecialService
+    if SS and isfunction(SS.IsAgent) and SS.IsAgent(ply) then return true end
+
     local fName = ply:GetNWString("GRM_Faction", "")
     if fName == "" then return false end
 
@@ -69,7 +74,22 @@ function ENT:Use(ply)
         end
     end
 
-    local wantedRecords = GRM.Wanted and GRM.Wanted.Records or {}
+    -- Спецслужба видит всё, но отдавать в net-сообщении базу целиком
+    -- нельзя: лимит 64 КБ. Берём срез обеих юрисдикций через общий
+    -- сборщик терминалов (он же прячет то, что прятать не нужно).
+    local wantedRecords = {}
+    local T = GRM.CompTerminal
+    if T and isfunction(T.WantedSlice) then
+        wantedRecords = T.WantedSlice("all", T.MaxRecordsSent or 150, true)
+    else
+        local n = 0
+        for k, r in pairs((GRM.Wanted and GRM.Wanted.Records) or {}) do
+            if n >= 150 then break end
+            wantedRecords[k] = r
+            n = n + 1
+        end
+    end
+
     local tpls = GRM.Documents and GRM.Documents.Templates or {}
     local reg  = GRM.Documents and GRM.Documents.Registry or {}
     local medCards = GRM.Medical and GRM.Medical.Cards or {}
