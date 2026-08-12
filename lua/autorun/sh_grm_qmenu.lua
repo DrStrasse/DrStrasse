@@ -1310,9 +1310,35 @@ if CLIENT then
         -- ── строители контента вкладок ──────────────────────
         local builders = {}
 
+        --[[ Заглушка «ничего не найдено».
+             ВАЖНО: подписи кладём НЕ прямым ребёнком DScrollPanel, а в его
+             холст через AddItem. Прямой ребёнок скролла минует pnlCanvas,
+             не учитывается в раскладке и не удаляется при чистке холста —
+             такие сироты копились при каждом поиске, а после смерти
+             родителя PerformLayoutInternal падал с «Tried to use a NULL
+             Panel!». Панель заглушки держим в sc._emptyBox, чтобы снимать
+             её перед каждой перестройкой. ]]
+        local function clearEmptyBox(sc)
+            if sc and IsValid(sc._emptyBox) then sc._emptyBox:Remove() end
+            if sc then sc._emptyBox = nil end
+        end
+
         local function emptyBox(sc, l1, l2)
-            lab(sc, l1, 12, 14, CW - 40, QC.dim, "GRMQ_Sub")
-            if l2 then lab(sc, l2, 12, 40, CW - 40, QC.dim2, "GRMQ_Text") end
+            clearEmptyBox(sc)
+            local box = vgui.Create("DPanel")
+            box:SetTall(l2 and 70 or 44)
+            box:SetPaintBackground(false)
+            lab(box, l1, 12, 14, CW - 40, QC.dim, "GRMQ_Sub")
+            if l2 then lab(box, l2, 12, 40, CW - 40, QC.dim2, "GRMQ_Text") end
+            if isfunction(sc.AddItem) then
+                box:Dock(TOP)
+                sc:AddItem(box)
+            else
+                box:SetParent(sc)
+                box:SetPos(0, 0)
+            end
+            sc._emptyBox = box
+            return box
         end
 
         builders.catalog = function()
@@ -1336,6 +1362,7 @@ if CLIENT then
 
             local function rebuildGrid()
                 lay:Clear()
+                clearEmptyBox(sc)   -- иначе заглушки копятся поверх сетки
                 if not propsAllowed then
                     emptyBox(sc, "Спавн пропов игрокам запрещён администрацией.")
                     return

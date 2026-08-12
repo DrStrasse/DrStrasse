@@ -690,9 +690,18 @@ local function button(parent, text, col, w, h)
     return b
 end
 
+--[[ Карточка списка.
+     Родителя НЕ назначаем: панель уходит в скролл через sc:AddItem(), а он
+     сам парентит её в холст (pnlCanvas) и докует сверху. Если создать
+     карточку сразу ребёнком DScrollPanel, а потом ещё раз позвать AddItem,
+     панель окажется прямым ребёнком скролла в обход холста: раскладка её
+     не учитывает, :Clear() не удаляет, а после смерти родителя
+     PerformLayoutInternal падает с «Tried to use a NULL Panel!».
+     Для обычных панелей-контейнеров родитель передаётся как обычно. ]]
 local function card(parent, h)
     local C = theme()
-    local p = vgui.Create("DPanel", parent)
+    local isScroll = istable(parent) and isfunction(parent.AddItem)
+    local p = vgui.Create("DPanel", (not isScroll) and parent or nil)
     p:SetTall(h or 64)
     p:Dock(TOP) p:DockMargin(0, 0, 0, 6)
     p.Paint = function(_, w, ph)

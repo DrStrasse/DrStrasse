@@ -219,3 +219,46 @@ rate-limit 0.35 с; права проверяются на сервере, кл�
 `sim_wanted_phase3`, `sim_wanted_migration`, `sim_wanted_v2` (16/16), `sim_arrest` (28/28),
 `sim_electronics` (52/52) — зелёные; `sim_econ_access` (38/42), `sim_bank_vault` (85/2),
 `sim_factions_live` (2 FAIL) — те же цифры, что и до правок.
+
+---
+
+## 11. Ошибка Q-меню `dscrollpanel.lua:111` — разбор и фикс
+
+**Симптом:** `[ERROR] lua/vgui/dscrollpanel.lua:111: Tried to use a NULL Panel!`
+в цепочке `GetTall → PerformLayoutInternal → dscrollpanel.lua:135`, повторяется
+пачками (раскладка вызывается каждый кадр, пока окно живо).
+
+**Корень.** `DScrollPanel` держит служебные панели: холст `pnlCanvas` и полосу
+`VBar`. Метод `GetChildren()` возвращает **их**, а не добавленные строки —
+элементы лежат внутри холста. `PerformLayoutInternal` читает
+`self.pnlCanvas:GetTall()`; если холст удалён, обращение к мёртвой панели роняет Lua.
+
+Найдено и закрыто четыре причины:
+
+1. **Очистка списка настроек тула** (`showToolSettings`) шла циклом
+   `for _, ch in ipairs(settingsBody:GetChildren()) do ch:Remove() end` — это
+   сносило холст. → `settingsBody:Clear()` с фолбэком через `GetCanvas()`.
+2. **Панель тула** добавлялась `SetParent(settingsBody) + Dock(TOP)`, минуя холст:
+   раскладка её не видела, `:Clear()` не удалял. → `settingsBody:AddItem(CP)`.
+3. **Общая панель `controlpanel.Get(name)`** делится с ванильным Q-меню. При смерти
+   фрейма в обход `CloseMenu()` (таймер кликера, смерть игрока, `SetDeleteOnClose(true)`)
+   она уезжала в могилу вместе с окном. → `f.OnRemove` отвязывает `QM._toolCP`
+   (`SetParent(nil)`, `SetVisible(false)`) и сбрасывает `QM._settingsBody`.
+4. **Заглушка «ничего не найдено»** во вкладке каталога добавлялась прямым ребёнком
+   `DScrollPanel`, а `rebuildGrid` чистил только `DIconLayout` — сироты копились при
+   каждом поиске. → заглушка уходит в холст через `AddItem` и снимается
+   `clearEmptyBox(sc)` перед перестройкой.
+
+Попутно в меню банкомата устранён тот же класс дефекта: `card()` создавал панель
+ребёнком скролла и **дополнительно** отдавался в `sc:AddItem()` — двойное родительство.
+Теперь `card()` не назначает родителя, если это скролл: парентит `AddItem`.
+
+**Правила** (закреплены тестом):
+* чистить `DScrollPanel` только `:Clear()` либо `GetCanvas():GetChildren()`;
+* добавлять элементы только `:AddItem()`, не `SetParent()+Dock(TOP)`;
+* общие панели (`controlpanel.Get`) отвязывать в `OnRemove`.
+
+**Тест:** `luajit tools/luatest/sim_qmenu_scroll.lua` — **32/32**. Модель VGUI
+повторяет поведение движка; тест 1 **воспроизводит падение** на старом способе
+очистки, тесты 2–6 подтверждают корректность нового, тест 7 сканирует исходники
+проекта на возврат запрещённых паттернов.
