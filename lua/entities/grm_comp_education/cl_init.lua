@@ -23,7 +23,10 @@ function ENT:Draw()
 
     cam.Start3D2D(pos, ang, 0.08)
         draw.RoundedBox(6, -150, -50, 300, 100, CC.bg)
-        draw.SimpleText("УЧРЕЖДЕНИЕ ОБРАЗОВАНИЯ", "DermaDefaultBold", 0, -25, CC.gold,
+        -- Заголовок задаётся инструментом «GRM Служебное оборудование»
+        local title = self:GetComputerName()
+        if title == "" then title = "УЧРЕЖДЕНИЕ ОБРАЗОВАНИЯ" end
+        draw.SimpleText(title, "DermaDefaultBold", 0, -25, CC.gold,
             TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         draw.SimpleText("Выписка государственных дипломов", "DermaDefault", 0, -5, CC.text,
             TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)

@@ -61,6 +61,7 @@ local SERVER_CLASSES = {
     grm_comp_military        = true,
     grm_comp_traffic         = true,
     grm_comp_medical         = true,
+    grm_comp_education       = true,
     -- Связь и телефония
     grm_payphone             = true,
     grm_pbx_station          = true,

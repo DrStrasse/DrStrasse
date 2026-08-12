@@ -521,8 +521,10 @@ function EDU.BuildWorkspace(parent)
         head.PerformLayout = function(_, w) sub:SetSize(math.max(200, w - 28), 16) end
         scIssue:AddItem(head)
 
-        -- Форма. Раскладка в PerformLayout: две колонки от фактической ширины.
-        local f = card(scIssue, 300)
+        -- Форма. Раскладка в PerformLayout: две колонки от фактической ширины,
+        -- высота карточки считается по факту (иначе нижний ряд с кнопкой
+        -- «ВЫДАТЬ ДИПЛОМ» уезжал за край карточки и обрезался VGUI).
+        local f = card(scIssue, 360)
 
         local lInst = label(f, "Учреждение образования", "GRM_Edu_Small", UI.muted, 14, 12, 260, 14)
         local inst  = entry(f, "Название учреждения...", false, 300, 28)
@@ -576,7 +578,7 @@ function EDU.BuildWorkspace(parent)
             "GRM_Edu_Small", UI.muted, 14, 12, 460, 16)
 
         -- Вся раскладка — от фактической ширины карточки (правый край не режется)
-        f.PerformLayout = function(_, w)
+        f.PerformLayout = function(self, w)
             local pad, gap = 14, 12
             local colW = math.max(160, math.floor((w - pad * 2 - gap) / 2))
             local xL, xR = pad, pad + colW + gap
@@ -608,6 +610,11 @@ function EDU.BuildWorkspace(parent)
 
             bIssue:SetPos(xL, y) bIssue:SetSize(math.min(220, colW), 32)
             hint:SetPos(xR, y + 8) hint:SetSize(colW, 16)
+
+            -- Высота — по фактическому содержимому. Без этого нижний ряд
+            -- (кнопка выдачи) оказывался ниже границы карточки и не рисовался.
+            local need = y + 32 + 14
+            if math.abs((self:GetTall() or 0) - need) > 1 then self:SetTall(need) end
         end
 
         bIssue.DoClick = function()

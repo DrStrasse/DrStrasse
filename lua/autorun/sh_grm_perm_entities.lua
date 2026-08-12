@@ -114,6 +114,7 @@ if SERVER then
         grm_comp_military        = true,
         grm_comp_traffic         = true,
         grm_comp_medical         = true,
+        grm_comp_education       = true,
         -- Отмывщик денег / ивент «Ограбление» (находка 179e)
         grm_money_launderer     = true,
         -- Лаборатории (Код 120)
@@ -507,6 +508,30 @@ if SERVER then
         else listPerm(ply) end
         return ""
     end)
+
+    -- Служебные компьютеры ведомств: заголовок на экране задаётся
+    -- инструментом «GRM Служебное оборудование». Без делегатов перм
+    -- сохранял только класс/позицию, и после рестарта пользовательский
+    -- заголовок сбрасывался на дефолтный из ENT:Initialize.
+    for _, class in ipairs({
+        "grm_doc_computer", "grm_comp_police", "grm_comp_military_police",
+        "grm_comp_security", "grm_comp_military", "grm_comp_traffic",
+        "grm_comp_medical", "grm_comp_education",
+    }) do
+        GRM.PermData.Extract[class] = function(ent)
+            if not IsValid(ent) or not isfunction(ent.GetComputerName) then return nil end
+            local name = tostring(ent:GetComputerName() or "")
+            if name == "" then return nil end
+            return { computerName = name }
+        end
+        GRM.PermData.Apply[class] = function(ent, data)
+            if not IsValid(ent) or not istable(data) then return end
+            if isstring(data.computerName) and data.computerName ~= ""
+                and isfunction(ent.SetComputerName) then
+                ent:SetComputerName(data.computerName)
+            end
+        end
+    end
 
     -- Делегаты для логистических entity (Код 112)
     -- GRM.PermData.Extract[class] = fn(ent) -> таблица
