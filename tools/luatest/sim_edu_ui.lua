@@ -45,6 +45,8 @@ _G.NOTIFY_ERROR, _G.NOTIFY_GENERIC = 1, 0
 _G.surface = setmetatable({}, { __index = function() return function() end end })
 _G.draw = setmetatable({}, { __index = function() return function() end end })
 _G.notification = { AddLegacy = function() end }
+_G.concommand = { Add = function() end }
+_G.RunConsoleCommand = function() end
 _G.timer = { Simple = function(_, f) if f then f() end end }
 _G.hook = { Add = function() end, Call = function() end, Remove = function() end }
 _G.net = setmetatable({}, { __index = function() return function() end end })
@@ -248,6 +250,93 @@ ok(entCl:find("GetComputerName"), "табличка должна показыв�
 -- Банкомат выписку больше не ведёт
 local atm = readFile("lua/autorun/sh_grm_atm.lua")
 ok(not atm:find('act%("issue_diploma"'), "в банкомате не должно остаться вызова выписки диплома")
+
+-- ----------------------------------------------------------------------
+-- «Мои дипломы»: личный просмотр документа игроком
+-- ----------------------------------------------------------------------
+ok(isfunction(EDU.OpenMine), "EDU.OpenMine должна открывать окно «Мои дипломы»")
+ok(isfunction(EDU.AskMine), "EDU.AskMine должна запрашивать дипломы у сервера")
+
+-- Окно с одним действующим и одним аннулированным бланком
+local mine = {
+    {
+        number = "ГД-2026-000123", institution = "Государственный университет",
+        graduateName = "Иван Петров", specialty = "Юриспруденция",
+        qualification = "Юрист", level = "bachelor", levelName = "Бакалавр",
+        form = "full", formName = "Очная", grade = "отлично", paid = true,
+        issued = 1770000000, issuerName = "Декан", signedBy = "Декан",
+        note = "", revoked = false, revokeReason = "",
+    },
+    {
+        number = "ГД-2025-000007", institution = "Колледж",
+        graduateName = "Иван Петров", specialty = "Слесарь",
+        qualification = "", level = "vocational", levelName = "Среднее спец.",
+        form = "part", formName = "Заочная", grade = "", paid = false,
+        issued = 1740000000, issuerName = "Директор", signedBy = "",
+        note = "", revoked = true, revokeReason = "подделка",
+    },
+}
+
+local before = #allPanels
+local frame = EDU.OpenMine(mine)
+ok(frame ~= nil, "окно «Мои дипломы» должно создаваться")
+
+-- Бланки: ищем панели, появившиеся после открытия окна, с раскладкой
+local blanks = {}
+for i = before + 1, #allPanels do
+    local p = allPanels[i]
+    if p.__class == "DPanel" and isfunction(p.PerformLayout) and #p:GetChildren() >= 10 then
+        blanks[#blanks + 1] = p
+    end
+end
+ok(#blanks == 2, ("должно быть 2 бланка, найдено %d"):format(#blanks))
+
+-- Содержимое бланка не должно вылезать за его границы
+for bi, b in ipairs(blanks) do
+    b:SetWide(600)
+    b:PerformLayout(600)
+    local bad = 0
+    for _, ch in ipairs(b:GetChildren()) do
+        local cx, cy = ch:GetPos()
+        if cx + ch:GetWide() > 600 + 1 or cy + ch:GetTall() > b:GetTall() + 1 then bad = bad + 1 end
+    end
+    ok(bad == 0, ("бланк %d: %d полей выходят за границы"):format(bi, bad))
+    ok(b:GetTall() > 50, ("бланк %d должен иметь осмысленную высоту"):format(bi))
+end
+
+-- Номер бланка обязан быть на виду
+local seenNumber = false
+for i = before + 1, #allPanels do
+    if allPanels[i]:GetText() == "ГД-2026-000123" then seenNumber = true break end
+end
+ok(seenNumber, "номер бланка должен отображаться в окне")
+
+-- Аннулированный бланк показывает причину
+local seenReason = false
+for i = before + 1, #allPanels do
+    if allPanels[i]:GetText() == "подделка" then seenReason = true break end
+end
+ok(seenReason, "причина аннулирования должна отображаться")
+
+-- Пустой список не должен падать
+ok(pcall(EDU.OpenMine, {}), "окно без дипломов не должно падать")
+ok(pcall(EDU.OpenMine), "окно без аргумента не должно падать")
+
+-- Кнопка в C-меню
+local ctx = readFile("lua/autorun/sh_grm_ctx.lua")
+ok(ctx:find("doc_self_diploma"), "в C-меню должна быть кнопка личного просмотра диплома")
+ok(ctx:find("diplomaCount"), "сервер должен сообщать C-меню число дипломов")
+ok(ctx:find("GRM%.Education%.AskMine") or ctx:find("AskMine"),
+    "кнопка C-меню должна вызывать EDU.AskMine")
+
+-- Кнопка показывается только владельцу диплома и только без прицела на игрока
+local edu = readFile("lua/autorun/sh_grm_education.lua")
+ok(edu:find("GRM_Edu_MyAsk") and edu:find("GRM_Edu_MyData"),
+    "должны быть сетевые строки личного просмотра")
+ok(edu:find("D%.For%(ply, true%)"),
+    "личный список должен включать аннулированные бланки")
+ok(edu:find("concommand%.Add%(\"grm_mydiplomas\""),
+    "должна быть консольная команда grm_mydiplomas")
 
 io.write(("\nsim_edu_ui: %d/%d failures=%d\n"):format(pass, pass + fail, fail))
 os.exit(fail == 0 and 0 or 1)

@@ -62,6 +62,8 @@ util.AddNetworkString("GRM_Edu_Data")     -- сервер -> клиент: об�
 util.AddNetworkString("GRM_Edu_Act")      -- клиент -> сервер: действие
 util.AddNetworkString("GRM_Edu_Result")   -- сервер -> клиент: итог
 util.AddNetworkString("GRM_Edu_Request")  -- клиент -> сервер: дай данные
+util.AddNetworkString("GRM_Edu_MyAsk")    -- клиент -> сервер: мои дипломы
+util.AddNetworkString("GRM_Edu_MyData")   -- сервер -> клиент: мои дипломы
 
 local nextAct = {}
 
@@ -271,6 +273,50 @@ net.Receive("GRM_Edu_Request", function(_, ply)
     nextAct[ply] = now + EDU.Config.RateLimit
     -- Данные шлём всем, у кого есть доступ; вкладка сама решает, что рисовать.
     push(ply)
+end)
+
+--- Личные дипломы игрока.
+-- Доступно ВСЕМ без каких-либо прав: это собственный документ персонажа,
+-- как паспорт или права. Аннулированные тоже отдаём — владелец должен
+-- видеть, что бланк аннулирован, а не думать, что документ потерялся.
+function EDU.MyDiplomas(ply)
+    local out = {}
+    local D = GRM.Diplomas
+    if not (IsValid(ply) and D and isfunction(D.For)) then return out end
+
+    for _, rec in ipairs(D.For(ply, true) or {}) do
+        out[#out + 1] = {
+            number        = rec.number,
+            institution   = rec.institution,
+            graduateName  = rec.graduateName,
+            specialty     = rec.specialty,
+            qualification = rec.qualification,
+            level         = rec.level,
+            levelName     = isfunction(D.LevelName) and D.LevelName(rec.level) or tostring(rec.level or ""),
+            form          = rec.form,
+            formName      = isfunction(D.FormName) and D.FormName(rec.form) or tostring(rec.form or ""),
+            grade         = rec.grade,
+            paid          = rec.paid == true,
+            issued        = rec.issued,
+            issuerName    = rec.issuerName,
+            signedBy      = rec.signedBy,
+            note          = rec.note,
+            revoked       = rec.revoked == true,
+            revokeReason  = rec.revokeReason,
+        }
+    end
+    return out
+end
+
+net.Receive("GRM_Edu_MyAsk", function(_, ply)
+    if not IsValid(ply) then return end
+    local now = CurTime()
+    if (nextAct[ply] or 0) > now then return end
+    nextAct[ply] = now + EDU.Config.RateLimit
+
+    net.Start("GRM_Edu_MyData")
+        net.WriteTable(EDU.MyDiplomas(ply))
+    net.Send(ply)
 end)
 
 hook.Add("PlayerDisconnected", "GRM_Edu_Cleanup", function(ply)
@@ -837,5 +883,128 @@ net.Receive("GRM_Edu_Open", function()
     applySnap(net.ReadTable())
     EDU.OpenFrame()
 end)
+
+-----------------------------------------------------------------------
+-- «МОИ ДИПЛОМЫ» — личный просмотр для любого игрока
+--
+-- Диплом — такой же документ персонажа, как паспорт, поэтому смотрится
+-- он так же: кнопка в C-меню, без чата и без банкомата. Прав не нужно
+-- никаких: игрок видит только свои бланки.
+-----------------------------------------------------------------------
+
+--- Рисует один бланк дипломa в стиле документа (не строчку списка).
+local function diplomaBlank(parent, rec)
+    local revoked = rec.revoked == true
+    local p = card(parent, 250)
+    p.Paint = function(_, w, h)
+        -- «Бумага»: тёплый фон, рамка, цветной корешок слева
+        draw.RoundedBox(6, 0, 0, w, h, Color(30, 34, 44, 250))
+        surface.SetDrawColor(revoked and Color(120, 60, 60, 220) or Color(150, 125, 60, 220))
+        surface.DrawOutlinedRect(0, 0, w, h, 2)
+        draw.RoundedBoxEx(6, 0, 0, 6, h, revoked and UI.red or UI.gold, true, false, true, false)
+
+        draw.SimpleText("ГОСУДАРСТВЕННЫЙ ДИПЛОМ", "GRM_Edu_Head", w / 2, 20,
+            revoked and UI.red or UI.gold, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        surface.SetDrawColor(UI.line)
+        surface.DrawLine(20, 38, w - 20, 38)
+
+        if revoked then
+            draw.SimpleText("АННУЛИРОВАН", "GRM_Edu_Title", w / 2, h / 2,
+                Color(225, 90, 90, 45), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+    end
+
+    -- Поля бланка: слева подпись, справа значение
+    local rows = {
+        { "Бланк №",       rec.number or "—" },
+        { "Учреждение",    rec.institution or "—" },
+        { "Выпускник",     rec.graduateName or "—" },
+        { "Специальность", rec.specialty or "—" },
+        { "Квалификация",  (rec.qualification ~= "" and rec.qualification) or "—" },
+        { "Уровень",       rec.levelName or "—" },
+        { "Форма обучения",rec.formName or "—" },
+        { "Оценка",        (rec.grade ~= "" and rec.grade) or "—" },
+        { "Обучение",      rec.paid and "платное" or "бесплатное" },
+        { "Дата выдачи",   dateOf(rec.issued) },
+        { "Подпись",       (rec.signedBy ~= "" and rec.signedBy) or rec.issuerName or "—" },
+    }
+    if rec.note and rec.note ~= "" then rows[#rows + 1] = { "Примечание", rec.note } end
+    if revoked and rec.revokeReason and rec.revokeReason ~= "" then
+        rows[#rows + 1] = { "Причина аннулирования", rec.revokeReason }
+    end
+
+    local keys, vals = {}, {}
+    for i, r in ipairs(rows) do
+        keys[i] = label(p, r[1], "GRM_Edu_Small", UI.muted, 0, 0, 10, 18)
+        vals[i] = label(p, tostring(r[2]), "GRM_Edu_Body",
+            (i == 1) and (revoked and UI.red or UI.gold) or UI.text, 0, 0, 10, 18)
+    end
+
+    -- Раскладка от фактической ширины: правый край не режется
+    p.PerformLayout = function(self, w)
+        local pad, keyW = 20, 150
+        local y = 50
+        for i = 1, #rows do
+            keys[i]:SetPos(pad, y) keys[i]:SetSize(keyW, 18)
+            vals[i]:SetPos(pad + keyW, y)
+            vals[i]:SetSize(math.max(60, w - pad * 2 - keyW), 18)
+            y = y + 20
+        end
+        local need = y + 12
+        if math.abs((self:GetTall() or 0) - need) > 1 then self:SetTall(need) end
+    end
+    return p
+end
+
+--- Окно «Мои дипломы».
+function EDU.OpenMine(list)
+    list = istable(list) and list or {}
+
+    local W, H = 660, 620
+    local frame = vgui.Create("DFrame")
+    frame:SetSize(W, H)
+    frame:Center()
+    frame:SetTitle("")
+    frame:MakePopup()
+    frame:ShowCloseButton(false)
+    frame.Paint = function(_, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, UI.bg)
+        draw.RoundedBoxEx(8, 0, 0, w, 44, UI.panel, true, true, false, false)
+        draw.SimpleText("МОИ ДИПЛОМЫ", "GRM_Edu_Title", 16, 22, UI.gold,
+            TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText(("документов: %d"):format(#list), "GRM_Edu_Small", w - 52, 22,
+            UI.muted, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+    end
+
+    local close = vgui.Create("DButton", frame)
+    close:SetSize(30, 26) close:SetPos(W - 40, 9) close:SetText("")
+    close.Paint = function(self, w, h)
+        draw.RoundedBox(4, 0, 0, w, h, self:IsHovered() and UI.red or Color(50, 62, 84))
+        draw.SimpleText("X", "GRM_Edu_Body", w / 2, h / 2, UI.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+    close.DoClick = function() frame:Close() end
+
+    local sc = scroll(frame)
+    sc:SetPos(12, 54) sc:SetSize(W - 24, H - 66)
+
+    if #list == 0 then
+        empty(sc, "У вашего персонажа нет дипломов. Их выдаёт учреждение образования.")
+    else
+        for _, rec in ipairs(list) do sc:AddItem(diplomaBlank(sc, rec)) end
+    end
+    return frame
+end
+
+net.Receive("GRM_Edu_MyData", function()
+    EDU.OpenMine(net.ReadTable())
+end)
+
+--- Запрос своих дипломов (кнопка C-меню, консольная команда).
+function EDU.AskMine()
+    net.Start("GRM_Edu_MyAsk")
+    net.SendToServer()
+end
+
+concommand.Add("grm_mydiplomas", function() EDU.AskMine() end)
 
 end -- CLIENT

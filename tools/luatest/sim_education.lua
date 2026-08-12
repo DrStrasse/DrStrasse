@@ -350,5 +350,51 @@ local restored = D.ByNumber(recA.number)
 check("восстановленная запись сохранила ФИО",
     restored and restored.graduateName == "Клара Вебер", restored and restored.graduateName)
 
+print("\n=== ТЕСТ 11: «Мои дипломы» — личный просмотр игроком ===")
+-- Игрок смотрит свои дипломы как обычный документ: без прав фракции,
+-- без банкомата. Выпускник recD — офлайн-персонаж 76561198000000077:char1.
+local graduate = mkPlayer("76561198000000077:char1", "Johann", "", false, "Иоганн Мюллер")
+
+check("EDU.MyDiplomas существует", isfunction(EDU.MyDiplomas))
+
+local mine = EDU.MyDiplomas(graduate)
+check("выпускник видит свой диплом", #mine >= 1, #mine)
+check("в списке только свои бланки", (function()
+    for _, d in ipairs(mine) do
+        if d.graduateName ~= "Иоганн Мюллер" then return false end
+    end
+    return true
+end)())
+check("бланк отдан с номером", mine[1] and tostring(mine[1].number):match("^ГД%-") ~= nil,
+    mine[1] and mine[1].number)
+check("уровень отдан читаемым названием, а не кодом",
+    mine[1] and mine[1].levelName ~= nil and mine[1].levelName ~= "bachelor",
+    mine[1] and mine[1].levelName)
+check("форма обучения отдана названием",
+    mine[1] and mine[1].formName ~= nil and mine[1].formName ~= "full",
+    mine[1] and mine[1].formName)
+check("учреждение отдано", mine[1] and mine[1].institution ~= nil and mine[1].institution ~= "")
+
+-- Аннулированный бланк владелец обязан видеть — со статусом
+local revokedSeen = false
+for _, d in ipairs(mine) do if d.revoked then revokedSeen = true end end
+check("аннулированный бланк остаётся виден владельцу со статусом", revokedSeen)
+
+-- Чужие дипломы не подмешиваются
+local stranger = mkPlayer("76561198000000099:char1", "Stranger", "", false)
+check("посторонний не видит чужих дипломов", #EDU.MyDiplomas(stranger) == 0,
+    #EDU.MyDiplomas(stranger))
+
+-- Клара Вебер (recA) — отдельный персонаж, у неё свой бланк
+local klara = mkPlayer("76561198000000088:char3", "Klara", "", false, "Клара Вебер")
+local kmine = EDU.MyDiplomas(klara)
+check("второй выпускник видит ровно свой диплом", #kmine == 1, #kmine)
+check("бланк второго выпускника принадлежит ей",
+    kmine[1] and kmine[1].graduateName == "Клара Вебер", kmine[1] and kmine[1].graduateName)
+
+-- Прав фракции для личного просмотра не требуется
+check("для личного просмотра права canDiploma не нужны",
+    EDU.CanUse(graduate) == false and #EDU.MyDiplomas(graduate) >= 1)
+
 print(("\n=== ИТОГ: %d/%d, failures=%d ==="):format(total - fails, total, fails))
 if fails > 0 then os.exit(1) end

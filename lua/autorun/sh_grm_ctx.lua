@@ -140,6 +140,11 @@ if SERVER then
         local card = GRM.Medical and GRM.Medical.Cards and (GRM.Medical.Cards[key] or GRM.Medical.Cards[ply:SteamID64()])
         result.hasMedCard = (card ~= nil)
 
+        -- Дипломы: свои бланки игрок смотрит как любой другой документ.
+        -- Аннулированные учитываем тоже — владелец должен видеть их статус.
+        local dipl = GRM.Diplomas and isfunction(GRM.Diplomas.For) and GRM.Diplomas.For(ply, true)
+        result.diplomaCount = istable(dipl) and #dipl or 0
+
         local mil = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.military and GRM.Documents.Registry.military[key]
         result.hasMilitary = (mil ~= nil and mil.status ~= "Аннулирован")
 
@@ -475,6 +480,14 @@ local function actOwnMedCard()
     net.SendToServer()
 end
 
+local function actOwnDiplomas()
+    if GRM.Education and isfunction(GRM.Education.AskMine) then
+        GRM.Education.AskMine()
+    else
+        RunConsoleCommand("say", "/mydiplomas")
+    end
+end
+
 -- Деньги в C-меню (по заказу: «выбросить деньги / передать деньги игроку»)
 local function actDropMoney()
     Derma_StringRequest("Выбросить наличные", "Сумма (пачка упадёт перед вами):", "",
@@ -604,6 +617,13 @@ local BTNS = {
       fn = actOwnMedCard,
       c = Color(35, 120, 95), ch = Color(45, 150, 120),
       ok = function() return not istable(data.aimPly) and data.hasMedCard == true end },
+    { id = "doc_self_diploma", l = function()
+          local n = tonumber(data.diplomaCount) or 0
+          return (n > 1) and ("Мои дипломы (" .. n .. ")") or "Мой диплом"
+      end,
+      fn = actOwnDiplomas,
+      c = Color(150, 120, 45), ch = Color(185, 150, 60),
+      ok = function() return not istable(data.aimPly) and (tonumber(data.diplomaCount) or 0) > 0 end },
     -- ── транспорт (Код 82): только когда смотрим на машину ──
     { id = "veh_lock",   l = function() return (istable(data.veh) and data.veh.locked) and "Открыть замок Т/С" or "Закрыть Т/С на замок" end,
       fn = vehAct("lock"),   c = Color(90, 140, 200), ch = Color(110, 160, 220), ok = vehOk("canManage") },
