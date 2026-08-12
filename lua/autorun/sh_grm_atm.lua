@@ -32,6 +32,7 @@ A.Config = A.Config or {
     MaxInvoices  = 120,
     MaxFines     = 120,
     MaxDiplomas  = 150,
+    MaxCharacters = 400,    -- сколько персонажей (в т.ч. офлайн) отдаём в выбор
 }
 
 -----------------------------------------------------------------------
@@ -209,11 +210,25 @@ function A.Snapshot(ply, ent)
         end
     end
 
-    -- Список игроков онлайн: для переводов и адресатов счетов
+    -- Список игроков онлайн: для переводов (деньги можно слать только живой сессии)
     snap.players = {}
     for _, p in ipairs(player.GetAll()) do
         if IsValid(p) and p ~= ply then
             snap.players[#snap.players + 1] = { nick = p:Nick(), key = charKey(p) }
+        end
+    end
+
+    -- Реестр персонажей (онлайн + офлайн из паспортов и составов фракций).
+    -- Нужен там, где адресат — персонаж, а не сессия: счета и дипломы.
+    snap.characters = {}
+    if S and isfunction(S.CharacterRegistry) then
+        local n = 0
+        for _, rec in ipairs(S.CharacterRegistry()) do
+            snap.characters[#snap.characters + 1] = {
+                key = rec.key, name = rec.name, faction = rec.faction, online = rec.online,
+            }
+            n = n + 1
+            if n >= (A.Config.MaxCharacters or 400) then break end
         end
     end
 
@@ -712,6 +727,76 @@ local function card(parent, h)
     return p
 end
 
+--[[
+    Выбор ПЕРСОНАЖА (не сессии). Список приходит в snap.characters и
+    включает офлайн: паспорта и составы фракций. Персонажей на сервере
+    много, поэтому обычный DComboBox бесполезен — здесь поле поиска
+    фильтрует список по имени, ключу и фракции.
+
+    Возвращает панель со :GetKey() и :SetKey(); высота — 56.
+]]
+local function charPicker(parent, placeholder, w)
+    local C = theme()
+    local p = vgui.Create("DPanel", parent)
+    p:SetSize(w or 300, 56)
+    p.Paint = function() end
+    p._key = ""
+
+    local list = vgui.Create("DComboBox", p)
+    list:SetPos(0, 26) list:SetSize(w or 300, 28)
+    list:SetFont("GRM_ATM_Body")
+    list:SetValue(placeholder or "Выберите персонажа...")
+    list:SetTextColor(C.text)
+    list.Paint = function(_, cw, ch)
+        draw.RoundedBox(4, 0, 0, cw, ch, Color(12, 20, 32, 245))
+        surface.SetDrawColor(C.line)
+        surface.DrawOutlinedRect(0, 0, cw, ch, 1)
+    end
+
+    local find = vgui.Create("DTextEntry", p)
+    find:SetPos(0, 0) find:SetSize(w or 300, 22)
+    find:SetFont("GRM_ATM_Small")
+    find:SetPlaceholderText("Поиск по имени, фракции или ключу...")
+    find.Paint = function(self, ew, eh)
+        draw.RoundedBox(4, 0, 0, ew, eh, Color(10, 16, 26, 240))
+        surface.SetDrawColor(C.line)
+        surface.DrawOutlinedRect(0, 0, ew, eh, 1)
+        self:DrawTextEntryText(C.text, C.cyan, C.muted)
+    end
+
+    local function fill(filter)
+        filter = string.lower(string.Trim(filter or ""))
+        list:Clear()
+        list:SetValue(placeholder or "Выберите персонажа...")
+        local shown = 0
+        for _, ch in ipairs(snap.characters or {}) do
+            local name = tostring(ch.name or ch.key or "")
+            local fac  = tostring(ch.faction or "")
+            local hay  = string.lower(name .. " " .. fac .. " " .. tostring(ch.key or ""))
+            if filter == "" or string.find(hay, filter, 1, true) then
+                local mark = ch.online and "• " or "  "
+                local tail = fac ~= "" and ("  [" .. fac .. "]") or ""
+                list:AddChoice(mark .. name .. tail, ch.key)
+                shown = shown + 1
+                if shown >= 150 then break end
+            end
+        end
+        if shown == 0 then list:SetValue("Ничего не найдено") end
+    end
+    fill("")
+
+    find.OnChange = function(self) fill(self:GetValue()) end
+    list.OnSelect = function(_, _, _, data) p._key = tostring(data or "") end
+
+    p.GetKey = function(self) return self._key or "" end
+    p.SetKey = function(self, k) self._key = tostring(k or "") end
+    p.PerformLayout = function(self, pw)
+        find:SetSize(pw, 22)
+        list:SetSize(pw, 28)
+    end
+    return p
+end
+
 local function entry(parent, placeholder, numeric, w, h)
     local C = theme()
     local e = vgui.Create("DTextEntry", parent)
@@ -1042,23 +1127,22 @@ tabs.org = function(body)
     do
         local sc = scroll(pInv) sc:Dock(FILL)
         if acc.canInvoice or snap.isSuper then
-            local f = card(sc, 150)
+            local f = card(sc, 172)
             label(f, "ВЫСТАВИТЬ СЧЁТ", "GRM_ATM_Small", C.muted, 14, 10, 300, 16)
-            local who = combo(f, "Плательщик...", 260, 28)
-            who:SetParent(f) who:SetPos(14, 32)
-            for _, p in ipairs(snap.players or {}) do who:AddChoice(p.nick, p.key) end
+            local who = charPicker(f, "Плательщик...", 260)
+            who:SetParent(f) who:SetPos(14, 30)
 
             local svc = combo(f, "Услуга (необязательно)", 260, 28)
-            svc:SetParent(f) svc:SetPos(286, 32)
+            svc:SetParent(f) svc:SetPos(286, 56)
             svc:AddChoice("— без привязки —", "")
             for _, s in ipairs(org.services or {}) do
                 svc:AddChoice(("%s (%s)"):format(s.name, money(s.price or 0)), s.id)
             end
 
             local title = entry(f, "Назначение платежа...", false, 260, 28)
-            title:SetParent(f) title:SetPos(14, 68)
+            title:SetParent(f) title:SetPos(14, 92)
             local amt = entry(f, "Сумма...", true, 150, 28)
-            amt:SetParent(f) amt:SetPos(286, 68)
+            amt:SetParent(f) amt:SetPos(286, 92)
 
             svc.OnSelect = function(_, _, _, data)
                 for _, s in ipairs(org.services or {}) do
@@ -1070,12 +1154,15 @@ tabs.org = function(body)
             end
 
             local note = entry(f, "Примечание...", false, 260, 28)
-            note:SetParent(f) note:SetPos(14, 104)
+            note:SetParent(f) note:SetPos(14, 128)
             local bIss = button(f, "Выставить счёт", C.green, 170, 28)
-            bIss:SetParent(f) bIss:SetPos(286, 104)
+            bIss:SetParent(f) bIss:SetPos(286, 128)
             bIss.DoClick = function()
-                local _, key = who:GetSelected()
-                if not key then return end
+                local key = who:GetKey()
+                if not key or key == "" then
+                    notification.AddLegacy("Выберите плательщика", NOTIFY_ERROR, 3)
+                    return
+                end
                 local _, sid = svc:GetSelected()
                 act("issue_invoice", {
                     target = key, serviceID = sid or "",
@@ -1086,7 +1173,7 @@ tabs.org = function(body)
             end
             if acc.maxInvoice and acc.maxInvoice > 0 then
                 label(f, ("Предел суммы одного счёта: %s"):format(money(acc.maxInvoice)),
-                    "GRM_ATM_Small", C.muted, 470, 110, 260, 16)
+                    "GRM_ATM_Small", C.muted, 470, 134, 260, 16)
             end
             sc:AddItem(f)
         else
@@ -1141,6 +1228,20 @@ tabs.org = function(body)
             ds:SetParent(f) ds:SetPos(14, 68)
             local bAdd = button(f, "Сохранить услугу", C.green, 170, 28)
             bAdd:SetParent(f) bAdd:SetPos(504, 68)
+            -- Абсолютные координаты резали правый край на узком теле окна:
+            -- пересчитываем от фактической ширины карточки.
+            f.PerformLayout = function(_, w)
+                local pad = 14
+                local prW = 130
+                local nmW = math.max(140, math.floor((w - pad * 2 - 12 * 2 - prW) * 0.52))
+                local catW = math.max(120, w - pad * 2 - 12 * 2 - prW - nmW)
+                nm:SetPos(pad, 32)                      nm:SetSize(nmW, 28)
+                cat:SetPos(pad + nmW + 12, 32)          cat:SetSize(catW, 28)
+                pr:SetPos(pad + nmW + catW + 24, 32)    pr:SetSize(prW, 28)
+                local btnW = 170
+                ds:SetPos(pad, 68) ds:SetSize(math.max(160, w - pad * 2 - btnW - 12), 28)
+                bAdd:SetPos(w - pad - btnW, 68) bAdd:SetSize(btnW, 28)
+            end
             bAdd.DoClick = function()
                 local _, cid = cat:GetSelected()
                 act("upsert_service", {
@@ -1186,99 +1287,48 @@ tabs.org = function(body)
         end
     end
 
-    -- Дипломы учреждения
+    -- Дипломы: банкомат — это касса, а не деканат.
+    -- Выписка бланков переехала в рабочее место учреждения образования:
+    -- вкладка «Учреждение образования» в меню фракций и компьютер
+    -- grm_comp_education. Здесь остаётся только денежная часть и справка.
     if acc.canDiploma or snap.isSuper then
         local pDip = page()
-        sheet:AddSheet("Выдача дипломов", pDip, "icon16/user_suit.png")
+        sheet:AddSheet("Дипломы", pDip, "icon16/user_suit.png")
         local sc = scroll(pDip) sc:Dock(FILL)
 
-        local f = card(sc, 226)
-        label(f, "БЛАНК ДИПЛОМА — ЗАПОЛНЕНИЕ", "GRM_ATM_Small", C.muted, 14, 10, 400, 16)
-
-        label(f, "Учреждение образования", "GRM_ATM_Small", C.muted, 14, 32, 260, 14)
-        local inst = entry(f, "Название учреждения...", false, 340, 28)
-        inst:SetParent(f) inst:SetPos(14, 48)
-        inst:SetValue(tostring(acc.institution ~= "" and acc.institution or (org.name or "")))
-
-        label(f, "Выпускник", "GRM_ATM_Small", C.muted, 366, 32, 260, 14)
-        local grad = combo(f, "Выберите выпускника...", 300, 28)
-        grad:SetParent(f) grad:SetPos(366, 48)
-        for _, p in ipairs(snap.players or {}) do grad:AddChoice(p.nick, p.key) end
-
-        label(f, "Специальность", "GRM_ATM_Small", C.muted, 14, 82, 260, 14)
-        local spec = entry(f, "Например: юриспруденция", false, 340, 28)
-        spec:SetParent(f) spec:SetPos(14, 98)
-
-        label(f, "Квалификация", "GRM_ATM_Small", C.muted, 366, 82, 260, 14)
-        local qual = entry(f, "Например: юрист", false, 300, 28)
-        qual:SetParent(f) qual:SetPos(366, 98)
-
-        label(f, "Уровень образования", "GRM_ATM_Small", C.muted, 14, 132, 260, 14)
-        local lvl = combo(f, "Уровень...", 220, 28)
-        lvl:SetParent(f) lvl:SetPos(14, 148)
-        for _, l in ipairs(snap.levels or {}) do lvl:AddChoice(l.name, l.id) end
-
-        label(f, "Форма обучения", "GRM_ATM_Small", C.muted, 246, 132, 200, 14)
-        local frm = combo(f, "Форма...", 180, 28)
-        frm:SetParent(f) frm:SetPos(246, 148)
-        for _, l in ipairs(snap.forms or {}) do frm:AddChoice(l.name, l.id) end
-
-        label(f, "Оценка", "GRM_ATM_Small", C.muted, 436, 132, 200, 14)
-        local grade = entry(f, "отлично / с отличием", false, 180, 28)
-        grade:SetParent(f) grade:SetPos(436, 148)
-
-        local paidChk = vgui.Create("DCheckBoxLabel", f)
-        paidChk:SetPos(14, 188) paidChk:SetSize(220, 20)
-        paidChk:SetText("Обучение было платным")
-        paidChk:SetFont("GRM_ATM_Small")
-        paidChk:SetTextColor(C.muted)
-
-        local invID = entry(f, "Счёт об оплате (№)", true, 160, 28)
-        invID:SetParent(f) invID:SetPos(246, 184)
-
-        local bIssue = button(f, "Выдать диплом", C.green, 180, 30)
-        bIssue:SetParent(f) bIssue:SetPos(436, 184)
-        bIssue.DoClick = function()
-            local _, gkey = grad:GetSelected()
-            if not gkey then
-                notification.AddLegacy("Выберите выпускника", NOTIFY_ERROR, 3)
-                return
-            end
-            local _, lid = lvl:GetSelected()
-            local _, fid = frm:GetSelected()
-            act("issue_diploma", {
-                graduate = gkey, institution = inst:GetValue(),
-                specialty = spec:GetValue(), qualification = qual:GetValue(),
-                level = lid or "course", form = fid or "full",
-                grade = grade:GetValue(), paid = paidChk:GetChecked(),
-                invoiceID = tonumber(invID:GetValue()) or 0,
-            })
-            spec:SetValue("") qual:SetValue("") grade:SetValue("") invID:SetValue("")
+        local info = card(sc, 118)
+        local t1 = label(info, "ВЫПИСКА ДИПЛОМОВ ЗДЕСЬ НЕ ВЕДЁТСЯ", "GRM_ATM_Head", C.amber or C.cyan, 14, 10, 460, 22)
+        local t2 = label(info, "Банкомат принимает оплату обучения и проверяет бланки по реестру.",
+            "GRM_ATM_Small", C.muted, 14, 36, 620, 16)
+        local t3 = label(info, "Бланк выписывают в учреждении образования: компьютер деканата",
+            "GRM_ATM_Small", C.muted, 14, 56, 620, 16)
+        local t4 = label(info, "или вкладка «Учреждение образования» в меню фракций.",
+            "GRM_ATM_Small", C.muted, 14, 76, 620, 16)
+        info.PerformLayout = function(_, w)
+            local ww = math.max(200, w - 28)
+            t1:SetSize(ww, 22) t2:SetSize(ww, 16) t3:SetSize(ww, 16) t4:SetSize(ww, 16)
         end
-        sc:AddItem(f)
+        sc:AddItem(info)
 
         local hdr = card(sc, 34) hdr.Paint = function() end
-        label(hdr, "ВЫДАННЫЕ ДИПЛОМЫ", "GRM_ATM_Head", C.green, 4, 8, 400, 22)
+        label(hdr, "ВЫДАННЫЕ ДИПЛОМЫ УЧРЕЖДЕНИЯ", "GRM_ATM_Head", C.green, 4, 8, 460, 22)
         sc:AddItem(hdr)
 
         if #(org.diplomas or {}) == 0 then sc:AddItem(empty(sc, "Учреждение ещё не выдавало дипломов.")) end
         for _, d in ipairs(org.diplomas or {}) do
             local c = card(sc, 62)
-            label(c, tostring(d.number or ""), "GRM_ATM_Body", d.revoked and C.red or C.text, 14, 8, 220, 20)
-            label(c, ("%s — %s"):format(tostring(d.graduateName or "?"), tostring(d.specialty or "")),
-                "GRM_ATM_Small", C.muted, 14, 30, 460, 16)
-            label(c, dateOf(d.issued), "GRM_ATM_Small", C.muted, 480, 12, 150, 16)
-            label(c, d.revoked and "АННУЛИРОВАН" or "ДЕЙСТВИТЕЛЕН", "GRM_ATM_Small",
-                d.revoked and C.red or C.green, 480, 32, 150, 16)
-            if (snap.isLeader or snap.isSuper) and not d.revoked then
-                local b = button(c, "Аннулировать", C.red, 150, 26)
-                b:SetParent(c)
-                b.DoClick = function()
-                    Derma_StringRequest("Аннулирование диплома", "Причина:", "", function(txt)
-                        act("revoke_diploma", { number = d.number, reason = txt })
-                    end)
-                end
-                layoutRight(c, { b }, 18)
+            local lNum = label(c, tostring(d.number or ""), "GRM_ATM_Body", d.revoked and C.red or C.text, 14, 8, 220, 20)
+            local lWho = label(c, ("%s — %s"):format(tostring(d.graduateName or "?"), tostring(d.specialty or "")),
+                "GRM_ATM_Small", C.muted, 14, 30, 420, 16)
+            local lDate = label(c, dateOf(d.issued), "GRM_ATM_Small", C.muted, 0, 12, 150, 16)
+            local lStat = label(c, d.revoked and "АННУЛИРОВАН" or "ДЕЙСТВИТЕЛЕН", "GRM_ATM_Small",
+                d.revoked and C.red or C.green, 0, 32, 150, 16)
+            c.PerformLayout = function(_, w)
+                local right = math.max(140, w - 170)
+                lNum:SetSize(math.max(120, right), 20)
+                lWho:SetSize(math.max(120, right), 16)
+                lDate:SetPos(w - 158, 12) lDate:SetSize(150, 16)
+                lStat:SetPos(w - 158, 32) lStat:SetSize(150, 16)
             end
             sc:AddItem(c)
         end
@@ -1334,13 +1384,29 @@ tabs.admin = function(body)
             inst:SetParent(c) inst:SetPos(14, 74)
             inst:SetValue(tostring(fr.institution or ""))
 
-            label(c, "Предел счёта", "GRM_ATM_Small", C.muted, 346, 58, 200, 14)
+            local lblMax = label(c, "Предел счёта", "GRM_ATM_Small", C.muted, 346, 58, 200, 14)
             local mx = entry(c, "0 = без предела", true, 150, 26)
             mx:SetParent(c) mx:SetPos(346, 74)
             mx:SetValue(tostring(fr.maxInvoice or 0))
 
             local b = button(c, "Сохранить", C.green, 150, 28)
             b:SetParent(c) b:SetPos(510, 73)
+            -- Три чекбокса и поля не помещались по фиксированным X:
+            -- раскладываем от фактической ширины карточки.
+            c.PerformLayout = function(_, w)
+                local pad, gap = 14, 10
+                local colW = math.max(120, math.floor((w - pad * 2 - gap * 2) / 3))
+                chkS:SetPos(pad, 34)                         chkS:SetSize(colW, 18)
+                chkI:SetPos(pad + colW + gap, 34)            chkI:SetSize(colW, 18)
+                chkD:SetPos(pad + (colW + gap) * 2, 34)      chkD:SetSize(colW, 18)
+
+                local btnW, mxW = 150, 140
+                local instW = math.max(140, w - pad * 2 - btnW - mxW - gap * 2)
+                inst:SetPos(pad, 74)                         inst:SetSize(instW, 26)
+                lblMax:SetPos(pad + instW + gap, 58)         lblMax:SetSize(mxW, 14)
+                mx:SetPos(pad + instW + gap, 74)             mx:SetSize(mxW, 26)
+                b:SetPos(w - pad - btnW, 73)                 b:SetSize(btnW, 28)
+            end
             b.DoClick = function()
                 act("admin_set_access", {
                     faction = fr.name,

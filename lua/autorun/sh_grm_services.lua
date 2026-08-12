@@ -131,6 +131,113 @@ local function findPlayerByKey(k)
 end
 S.FindPlayer = findPlayerByKey
 
+-----------------------------------------------------------------------
+-- Реестр персонажей (не только онлайн)
+-----------------------------------------------------------------------
+--[[
+    Диплом выдаётся ПЕРСОНАЖУ, а не сессии игрока. Раньше выбор
+    выпускника строился из player.GetAll(), поэтому вручить документ
+    можно было только тому, кто прямо сейчас стоит рядом с терминалом,
+    а после перезахода в другого персонажа диплом «уезжал» не туда.
+
+    Источники, сливаемые в один список (ключ — CharacterKey):
+      1) онлайн-игроки          — самое свежее имя и признак online;
+      2) реестр паспортов       — GRM.Documents.Registry.passports,
+                                  здесь лежат офлайн-персонажи с ФИО;
+      3) составы фракций        — Members[CharacterKey], чтобы курсант
+                                  без паспорта тоже был виден.
+    Имя выбирается по приоритету: паспорт (ФИО) → RP-ник → Nick.
+]]
+function S.CharacterRegistry()
+    local out, byKey = {}, {}
+
+    local function put(key, data)
+        key = tostring(key or "")
+        if key == "" or not key:match(":char[1-3]$") then return end
+        local rec = byKey[key]
+        if not rec then
+            rec = { key = key, name = "", rpName = "", passport = "", faction = "", online = false }
+            byKey[key] = rec
+            out[#out + 1] = rec
+        end
+        for k, v in pairs(data or {}) do
+            if v ~= nil and v ~= "" and (rec[k] == nil or rec[k] == "" or rec[k] == false) then
+                rec[k] = v
+            end
+        end
+    end
+
+    -- 1) онлайн
+    for _, p in ipairs(player.GetAll()) do
+        if IsValid(p) and p:IsPlayer() then
+            local rp = p.GetNWString and p:GetNWString("GRM_RPName", "") or ""
+            put(charKey(p), {
+                rpName  = rp ~= "" and rp or p:Nick(),
+                name    = rp ~= "" and rp or p:Nick(),
+                online  = true,
+                steamID = tostring(p:SteamID64() or ""),
+            })
+        end
+    end
+
+    -- 2) паспорта (офлайн-персонажи)
+    local DOC = GRM.Documents
+    local passports = DOC and istable(DOC.Registry) and istable(DOC.Registry.passports) and DOC.Registry.passports
+    if passports then
+        for key, rec in pairs(passports) do
+            if istable(rec) then
+                local full = tostring(rec.fullName or "")
+                put(key, {
+                    passport = full,
+                    name     = full,
+                    steamID  = tostring(rec.steamID64 or ""),
+                })
+                -- паспортное ФИО важнее временного ника
+                local r = byKey[tostring(key)]
+                if r and full ~= "" then r.name = full end
+            end
+        end
+    end
+
+    -- 3) составы фракций
+    if Factions then
+        for fname, f in pairs(Factions) do
+            if istable(f) and istable(f.Members) then
+                for key, _ in pairs(f.Members) do
+                    put(key, { faction = fname })
+                    local r = byKey[tostring(key)]
+                    if r and (r.faction == "" or r.faction == nil) then r.faction = fname end
+                end
+            end
+        end
+    end
+
+    for _, rec in ipairs(out) do
+        if rec.name == "" then rec.name = rec.key end
+    end
+    table.sort(out, function(a, b)
+        if a.online ~= b.online then return a.online end
+        return tostring(a.name):lower() < tostring(b.name):lower()
+    end)
+    return out
+end
+
+--- Отображаемое имя персонажа по ключу (работает и для офлайн).
+function S.CharacterName(key)
+    key = tostring(key or "")
+    if key == "" then return "—" end
+    local p = findPlayerByKey(key)
+    local DOC = GRM.Documents
+    local pass = DOC and istable(DOC.Registry) and istable(DOC.Registry.passports)
+        and DOC.Registry.passports[key]
+    if istable(pass) and tostring(pass.fullName or "") ~= "" then return tostring(pass.fullName) end
+    if IsValid(p) then
+        local rp = p.GetNWString and p:GetNWString("GRM_RPName", "") or ""
+        return rp ~= "" and rp or p:Nick()
+    end
+    return key
+end
+
 local function notify(p, msg, r, g, b)
     if not IsValid(p) then return end
     if GRM.Notify then GRM.Notify(p, msg, r or 120, g or 200, b or 255)
@@ -642,8 +749,9 @@ function S.IssueInvoice(issuer, target, opts)
         note       = trim(opts.note, 200),
     }
     if rec.targetName == "" then
-        local tp = findPlayerByKey(tKey)
-        rec.targetName = IsValid(tp) and tp:Nick() or tKey
+        -- имя берём из реестра персонажей: для офлайн это ФИО паспорта,
+        -- а не сырой ключ вида 7656…:char1
+        rec.targetName = S.CharacterName(tKey)
     end
 
     S._nextInvoice = S._nextInvoice + 1

@@ -314,8 +314,15 @@ function D.Issue(issuer, data)
         note         = trim(data.note, 240),
     }
     if rec.graduateName == "" then
-        local gp = findPlayerByKey(gKey)
-        rec.graduateName = IsValid(gp) and gp:Nick() or gKey
+        -- ФИО выпускника: паспорт → RP-имя → ник. Диплом принадлежит
+        -- персонажу, поэтому офлайн-выдача обязана давать читаемое имя.
+        local S = GRM.Services
+        if S and isfunction(S.CharacterName) then
+            rec.graduateName = S.CharacterName(gKey)
+        else
+            local gp = findPlayerByKey(gKey)
+            rec.graduateName = IsValid(gp) and gp:Nick() or gKey
+        end
     end
     if rec.signedBy == "" then rec.signedBy = rec.issuerName end
 
