@@ -39,6 +39,7 @@ function TOOL:LeftClick(trace)
         pump:Spawn()
         pump:Activate()
         pump:AttachToVehicle(trace.Entity, Vector(0, -40, 20), Angle(0, 90, 0))
+        hook.Run("GRM_FireAddon_Placed", pump, ply)
         if ply.ChatPrint then ply:ChatPrint("[Пожар] Насос навешен на машину. 4 рукава.") end
         return true
     end
@@ -49,6 +50,7 @@ function TOOL:LeftClick(trace)
     ent:SetAngles(Angle(0, ply:EyeAngles().y, 0))
     ent:Spawn()
     ent:Activate()
+    hook.Run("GRM_FireAddon_Placed", ent, ply)
     if ply.ChatPrint then ply:ChatPrint("[Пожар] Поставлено: " .. t.label) end
     return true
 end

@@ -12,8 +12,8 @@ SWEP.Spawnable = true
 SWEP.AdminOnly = false
 SWEP.UseHands = true
 
-SWEP.ViewModel = "models/weapons/c_firehose.mdl"
-SWEP.WorldModel = "models/weapons/w_firehose.mdl"
+SWEP.ViewModel = "models/weapons/c_firehose_grm.mdl"
+SWEP.WorldModel = "models/weapons/w_firehose_grm.mdl"
 if not util.IsValidModel(SWEP.ViewModel) then
     SWEP.ViewModel = "models/weapons/c_slam.mdl"
 end

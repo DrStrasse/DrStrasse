@@ -52,6 +52,8 @@ vFire **не переписываем**. GRM потом зовёт его API.
 
 ## Оружие (из пака)
 
+Модели оружия (воркшоп): `c_firehose_grm`, `w_firehose_grm`, `c_fire_extinguisher_grm`, `w_fire_extinguisher_grm`.
+
 - `weapon_extinguisher` — баллон, 500, долив в воде.
 - `weapon_extinguisher_infinite` — админ.
 - `weapon_firehose` — рукав-SWEP, 500, **не привязан к гидранту** (это сделает GRM).

@@ -12,7 +12,7 @@ function ENT:Initialize()
         if typ == FA.NODE_JUNCTION then
             mdl = FA.SafeModel(FA.Models.coil)
         elseif typ == FA.NODE_NOZZLE then
-            mdl = util.IsValidModel("models/weapons/w_firehose.mdl") and "models/weapons/w_firehose.mdl" or FA.SafeModel(FA.Models.nozzle)
+            mdl = util.IsValidModel("models/weapons/w_firehose_grm.mdl") and "models/weapons/w_firehose_grm.mdl" or FA.SafeModel(FA.Models.nozzle)
         elseif typ == FA.NODE_SOURCE then
             mdl = FA.SafeModel(FA.Models.nozzle)
         else
