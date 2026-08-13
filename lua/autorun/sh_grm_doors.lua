@@ -1,5 +1,8 @@
 --[[--------------------------------------------------------------------
-    GRM Doors System v2.0.6 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
+    GRM Doors System v2.0.7 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
+    v2.0.7: вкладка «Администрирование» и смена принадлежности карты —
+            только SuperAdmin. AM.CanManage больше не открывает эту панель
+            обычному игроку по R (ключи / /door).
     v2.0.6: overlapping map entities of one physical door use one canonical
             record; adjacent cell/corridor doors remain independent by AABB.
     v2.0.4: авто-обновление меню больше не выбрасывает на первую вкладку —
@@ -70,6 +73,13 @@ D.Config = D.Config or {
 -- ============================================================
 local function mapName()
     return string.lower(game.GetMap() or "unknown")
+end
+
+--- Смена владельца карты (фракция / категория / приватизация).
+-- Только суперадмин. AM.CanManage открывает /door_access, но НЕ это меню:
+-- иначе любой член фракции из ManageFactions правил двери мира.
+function D.CanAdminDoors(ply)
+    return IsValid(ply) and ply.IsPlayer and ply:IsPlayer() and ply:IsSuperAdmin() == true
 end
 
 function D.IsDoor(ent)
@@ -945,7 +955,7 @@ if SERVER then
             rent_price = tonumber(rec.rent_price) or (D.Config.RentPrice or 5000),
             can_access = canAccess,
             is_owner = isOwner,
-            is_admin = ply:IsSuperAdmin(),
+            is_admin = D.CanAdminDoors(ply),
             factions = rec.factions or {},
             roles = rec.roles or {},
             categories = rec.categories or {},
@@ -981,7 +991,7 @@ if SERVER then
             net.WriteTable(doorData or {})
             net.WriteTable(catsList)
             net.WriteTable(facList)
-            net.WriteBool(D.AccessManager and D.AccessManager.CanManage and D.AccessManager.CanManage(ply) or ply:IsSuperAdmin())
+            net.WriteBool(D.CanAdminDoors(ply))
         net.Send(ply)
     end
 
@@ -1004,7 +1014,8 @@ if SERVER then
         local rec = select(1, getRecord(ent))
         if not rec then return end
         local isOwner = rec.owner_type == "player" and rec.owner_sid == steam64(ply)
-        local canManage = ply:IsSuperAdmin() or (D.AccessManager and D.AccessManager.CanManage and D.AccessManager.CanManage(ply))
+        local canAdmin = D.CanAdminDoors(ply)
+        local canManage = canAdmin
 
         if act == "claim_rent" then
             local ok, err = D.ClaimDoor(ply, ent, "rent")
@@ -1097,7 +1108,10 @@ if SERVER then
             D.OpenDoorMenu(ply)
 
         elseif act == "set_faction_owner" then
-            if not canManage then return end
+            if not canAdmin then
+                notify(ply, "Только суперадмин может менять принадлежность двери.", 255, 100, 100)
+                return
+            end
             rec.owner_type = "faction"
             rec.owner_faction = tostring(a.faction or "")
             rec.owner_sid = ""
@@ -1110,7 +1124,10 @@ if SERVER then
             D.OpenDoorMenu(ply)
 
         elseif act == "set_category_owner" then
-            if not canManage then return end
+            if not canAdmin then
+                notify(ply, "Только суперадмин может менять принадлежность двери.", 255, 100, 100)
+                return
+            end
             rec.owner_type = "category"
             rec.owner_category = tostring(a.category or "")
         rec.owner_faction = ""
@@ -1124,7 +1141,10 @@ if SERVER then
         D.OpenDoorMenu(ply)
 
         elseif act == "toggle_ownable" then
-            if not canManage then return end
+            if not canAdmin then
+                notify(ply, "Только суперадмин может менять статус приватизации.", 255, 100, 100)
+                return
+            end
             rec.ownable = not (rec.ownable ~= false)
             D.SaveDoors()
             notify(ply, rec.ownable and "Дверь сделана доступной для покупки/аренды" or "Дверь заблокирована от приватизации", 100, 220, 100)
@@ -1250,7 +1270,7 @@ if SERVER then
         D.LoadWarrants()
     end)
 
-    print("[GRM Doors] Серверная система дверей v2.0.6 загружена")
+    print("[GRM Doors] Серверная система дверей v2.0.7 загружена")
 end
 
 -- ============================================================
@@ -1632,7 +1652,8 @@ if CLIENT then
             end
         end
 
-        if canManage or d.is_admin then
+        -- Только суперадмин (сервер шлёт canManage = D.CanAdminDoors).
+        if d.is_admin == true or canManage == true then
             local p4 = vgui.Create("DPanel", sheet) p4:SetPaintBackground(false)
             sheet:AddSheet("Администрирование", p4, "icon16/shield.png")
 
@@ -1708,5 +1729,5 @@ if CLIENT then
         net.Start(NET_ACT) net.WriteTable({ action = "open_menu" }) net.SendToServer()
     end)
 
-    print("[GRM Doors] Клиентская система дверей v2.0.6 загружена")
+    print("[GRM Doors] Клиентская система дверей v2.0.7 загружена")
 end
