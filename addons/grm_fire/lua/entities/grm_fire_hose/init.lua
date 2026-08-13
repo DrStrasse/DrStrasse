@@ -158,8 +158,7 @@ function ENT:Remain()
     return math.max(0, (self:GetMaxLen() or 2200) - self:LaidDistance())
 end
 
-function ENT:TryRewind(ply)
-    if self:GetDocked() or not IsValid(ply) then return false end
+function ENT:CanPopLast()
     local nodes = self.Nodes or {}
     if #nodes < 2 then return false end
     local last = nodes[#nodes]
@@ -169,30 +168,59 @@ function ENT:TryRewind(ply)
     if FA and (typ == FA.NODE_SOURCE or typ == FA.NODE_JUNCTION or typ == FA.NODE_NOZZLE) then
         return false
     end
-    local prev = nodes[#nodes - 1]
-    if not IsValid(prev) then return false end
+    return true
+end
+
+-- Идём назад к источнику: ближе к предыдущему узлу, чем к последнему.
+function ENT:IsWalkingBack(ply)
+    if not IsValid(ply) then return false end
+    local nodes = self.Nodes or {}
+    if #nodes < 2 then return false end
+    local last, prev = nodes[#nodes], nodes[#nodes - 1]
+    if not IsValid(last) or not IsValid(prev) then return false end
     local ppos = self:GroundPos(ply)
-    local toLast = ppos:Distance(last:GetPos())
-    local toPrev = ppos:Distance(prev:GetPos())
-    if toPrev + 10 >= toLast then return false end
-    if toLast > ((cfg().LayStep or 70) * 1.25) then return false end
-    if constraint.RemoveConstraints then
-        constraint.RemoveConstraints(last, "Rope")
-        constraint.RemoveConstraints(prev, "Rope")
+    return ppos:Distance(prev:GetPos()) + 8 < ppos:Distance(last:GetPos())
+end
+
+-- Сервер: снять один или несколько узлов укладки, если игрок идёт назад по рукаву.
+function ENT:TryRewind(ply)
+    if self:GetDocked() or not IsValid(ply) then return false end
+    if not self:CanPopLast() then return false end
+    local step = cfg().LayStep or 70
+    local ppos = self:GroundPos(ply)
+    local popped = 0
+    for _ = 1, 24 do
+        if not self:CanPopLast() then break end
+        local nodes = self.Nodes
+        local last, prev = nodes[#nodes], nodes[#nodes - 1]
+        if not IsValid(prev) then break end
+        local toLast = ppos:Distance(last:GetPos())
+        local toPrev = ppos:Distance(prev:GetPos())
+        if toPrev + 8 >= toLast then break end
+        local span = last:GetPos():Distance(prev:GetPos())
+        -- далеко в сторону от линии рукава — не сматывать
+        if toLast > span + step * 2.5 and toPrev > step * 2.5 then break end
+        if constraint.RemoveConstraints then
+            pcall(constraint.RemoveConstraints, last, "Rope")
+            pcall(constraint.RemoveConstraints, prev, "Rope")
+        end
+        last:Remove()
+        local keep = {}
+        for _, n in ipairs(self.Nodes) do
+            if IsValid(n) then keep[#keep + 1] = n end
+        end
+        self.Nodes = keep
+        popped = popped + 1
+        local now = self:LastNode()
+        if IsValid(now) then
+            now:SetNextNode(ply)
+            self:SetEndNode(now)
+        end
+        ppos = self:GroundPos(ply)
     end
-    last:Remove()
-    local keep = {}
-    for _, n in ipairs(self.Nodes) do
-        if IsValid(n) then keep[#keep + 1] = n end
-    end
-    self.Nodes = keep
-    local now = self:LastNode()
-    if IsValid(now) then
-        now:SetNextNode(ply)
-        self:SetEndNode(now)
-    end
+    if popped <= 0 then return false end
     self:SetLaidLen(math.floor(self:LaidDistance()))
-    self:BroadcastPath()
+    if self.BroadcastPath then self:BroadcastPath() end
     return true
 end
 
@@ -347,6 +375,7 @@ function ENT:DockTo(target, ply)
     self:SetLaidLen(math.floor(self:LaidDistance()))
     self:EmitSound("buttons/lever7.wav", 65, 100)
     hook.Run("GRM_FireAddon_HoseDocked", self, target, ply)
+    if self.BroadcastPath then self:BroadcastPath() end
     return true
 end
 
@@ -443,13 +472,46 @@ function ENT:Rewind()
     self:Remove()
 end
 
+-- ALT: смотать один узел, если стоишь у рукава.
+function ENT:ReelIn(ply)
+    if self:GetDocked() or not IsValid(ply) or not self:CanPopLast() then return false end
+    local last = self:LastNode()
+    if not IsValid(last) then return false end
+    if self:GroundPos(ply):Distance(last:GetPos()) > 260 then return false end
+    local nodes = self.Nodes
+    local prev = nodes[#nodes - 1]
+    if constraint.RemoveConstraints then
+        pcall(constraint.RemoveConstraints, last, "Rope")
+        if IsValid(prev) then pcall(constraint.RemoveConstraints, prev, "Rope") end
+    end
+    last:Remove()
+    local keep = {}
+    for _, n in ipairs(self.Nodes) do
+        if IsValid(n) then keep[#keep + 1] = n end
+    end
+    self.Nodes = keep
+    local now = self:LastNode()
+    if IsValid(now) then
+        now:SetNextNode(ply)
+        self:SetEndNode(now)
+    end
+    self:SetLaidLen(math.floor(self:LaidDistance()))
+    if self.BroadcastPath then self:BroadcastPath() end
+    return true
+end
+
 function ENT:Think()
     local ply = self:GetHolder()
     if IsValid(ply) and not self:GetDocked() then
         if not ply:Alive() then
             self:DropNozzle()
         else
-            if not self:TryRewind(ply) then
+            local reeled = false
+            if ply.KeyDown and ply:KeyDown(IN_WALK) then
+                reeled = self:ReelIn(ply)
+            end
+            if not reeled then reeled = self:TryRewind(ply) end
+            if not reeled and not self:IsWalkingBack(ply) then
                 self:TryLay(ply)
             end
             self:Leash(ply)
@@ -458,6 +520,6 @@ function ENT:Think()
         end
     end
     self:RefreshPressure()
-    self:NextThink(CurTime() + 0.12)
+    self:NextThink(CurTime() + 0.10)
     return true
 end
