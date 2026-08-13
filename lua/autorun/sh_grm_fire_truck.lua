@@ -594,22 +594,35 @@ if SERVER then
         end
     end)
 
-    -- Машину снесли (remover / cleanup / рестарт) — сразу смотать рукава и снять бортовое.
+    -- Машину снесли — смотать рукава и снять бортовое.
+    -- Не требовать IsValid: в EntityRemoved ТС уже часто «невалидно».
     function F.DropTruckGear(veh)
-        if not IsValid(veh) then return 0 end
+        if not isentity(veh) then return 0 end
         local n = 0
         local A = GRM.FireAddon
         for _, e in ipairs(ents.FindByClass("grm_fire_pump")) do
-            if IsValid(e) and (e:GetParent() == veh or (e.GetHostVehicle and e:GetHostVehicle() == veh)) then
-                if A and A.ClearHosesOn then n = n + (A.ClearHosesOn(e) or 0) end
-                e:Remove()
-                n = n + 1
+            if IsValid(e) then
+                local host = e.GetHostVehicle and e:GetHostVehicle() or NULL
+                local par = e.GetParent and e:GetParent() or NULL
+                local match = (host == veh) or (par == veh)
+                if not match and (e._grmTruckGear or (e.GetNWBool and e:GetNWBool("GRM_TruckGear", false))) then
+                    if not IsValid(host) and not IsValid(par) then match = true end
+                end
+                if match then
+                    if A and A.ClearHosesOn then n = n + (A.ClearHosesOn(e) or 0) end
+                    e:Remove()
+                    n = n + 1
+                end
             end
         end
         for _, e in ipairs(ents.FindByClass("grm_fire_ladder")) do
-            if IsValid(e) and (e:GetParent() == veh or (e.GetHostVehicle and e:GetHostVehicle() == veh)) then
-                e:Remove()
-                n = n + 1
+            if IsValid(e) then
+                local host = e.GetHostVehicle and e:GetHostVehicle() or NULL
+                local par = e.GetParent and e:GetParent() or NULL
+                if host == veh or par == veh then
+                    e:Remove()
+                    n = n + 1
+                end
             end
         end
         for _, ply in ipairs(player.GetAll()) do
@@ -617,19 +630,51 @@ if SERVER then
                 ply:SetNWEntity("GRM_FireMyTruck", NULL)
             end
         end
+        if A and A.ClearOrphanHoses then n = n + (A.ClearOrphanHoses() or 0) end
         return n
     end
 
+    local function looksLikeTruck(ent)
+        if not isentity(ent) then return false end
+        local cls = ""
+        pcall(function() cls = ent:GetClass() or "" end)
+        if cls == "grm_fire_pump" or cls == "grm_fire_hose" or cls == "grm_fire_hose_node" then
+            return false
+        end
+        local marked = false
+        pcall(function()
+            marked = ent.GetNWBool and ent:GetNWBool("GRM_FireTruck", false)
+        end)
+        if marked then return true end
+        local veh = false
+        pcall(function() veh = ent.IsVehicle and ent:IsVehicle() end)
+        if veh then return true end
+        if string.StartWith(cls, "simfphys_") or string.StartWith(cls, "lvs_")
+            or string.StartWith(cls, "glide_") or string.StartWith(cls, "gmod_sent_vehicle")
+            or string.StartWith(cls, "prop_vehicle_") then
+            return true
+        end
+        if string.find(cls, "vehicle", 1, true) then return true end
+        return false
+    end
+
     hook.Add("EntityRemoved", "GRM_FireTruck_DropGear", function(ent)
-        if not IsValid(ent) then return end
-        local cls = ent:GetClass() or ""
+        if not isentity(ent) then return end
+        local cls = ""
+        pcall(function() cls = ent:GetClass() or "" end)
+        local A = GRM.FireAddon
         if cls == "grm_fire_pump" then
-            local A = GRM.FireAddon
             if A and A.ClearHosesOn then A.ClearHosesOn(ent) end
+            timer.Simple(0, function()
+                if A and A.ClearOrphanHoses then A.ClearOrphanHoses() end
+            end)
             return
         end
-        if not isCarEntity(ent) then return end
+        if not looksLikeTruck(ent) then return end
         F.DropTruckGear(ent)
+        timer.Simple(0, function()
+            if A and A.ClearOrphanHoses then A.ClearOrphanHoses() end
+        end)
     end)
 
     print("[GRM Fire] Truck v1.0 loaded")

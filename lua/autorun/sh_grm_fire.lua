@@ -10,7 +10,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Fire = GRM.Fire or {}
 local F = GRM.Fire
-F.Version = "1.3.5"
+F.Version = "1.3.6"
 
 F.Config = F.Config or {
     StoveEnabled = true,

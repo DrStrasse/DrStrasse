@@ -248,6 +248,21 @@ if SERVER then
         return n
     end
 
+    -- Рукава без живого насоса/гидранта — смотать немедленно.
+    function A.ClearOrphanHoses()
+        local n = 0
+        for _, h in ipairs(ents.FindByClass("grm_fire_hose")) do
+            if IsValid(h) then
+                local src = h.GetStartEnt and h:GetStartEnt() or NULL
+                if not IsValid(src) then
+                    if h.Rewind then h:Rewind() else h:Remove() end
+                    n = n + 1
+                end
+            end
+        end
+        return n
+    end
+
     function A.GiveHose(ply, src)
         if IsValid(src) then
             local h, err = A.TakeHose(ply, src)
@@ -466,8 +481,12 @@ if CLIENT then
     function A.DrawAllHoses()
         local drawn = {}
         for id, rec in pairs(A.HosePaths) do
-            drawPath(id, rec)
-            drawn[id] = true
+            if rec.id and not IsValid(Entity(rec.id)) then
+                A.HosePaths[id] = nil
+            else
+                drawPath(id, rec)
+                drawn[id] = true
+            end
         end
         local fromNodes = collectFromNodes()
         for id, pack in pairs(fromNodes) do
