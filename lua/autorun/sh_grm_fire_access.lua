@@ -428,6 +428,9 @@ if CLIENT then
                 local b2 = mkBtn(panel, "Фракции оповещения о пожаре", THEME.green)
                 b2:Dock(TOP) b2:SetTall(36) b2:DockMargin(12, 8, 12, 0)
                 b2.DoClick = function() net.Start(NET_NREQ) net.SendToServer() end
+                local b3 = mkBtn(panel, "Пожарные машины (список ТС)", Color(70, 140, 220))
+                b3:Dock(TOP) b3:SetTall(36) b3:DockMargin(12, 8, 12, 0)
+                b3.DoClick = function() RunConsoleCommand("grm_fire_trucks") end
                 sheet:AddSheet("Пожарные", panel, "icon16/fire.png")
             end)
         end
