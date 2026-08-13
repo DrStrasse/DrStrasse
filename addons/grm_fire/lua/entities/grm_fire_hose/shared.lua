@@ -15,4 +15,7 @@ function ENT:SetupDataTables()
     self:NetworkVar("Int", 1, "MaxLen")
     self:NetworkVar("Bool", 0, "Pressurized")
     self:NetworkVar("Bool", 1, "Docked")
+    -- Живые концы: не зависят от PVS насоса. Клиент рисует отсюда.
+    self:NetworkVar("Vector", 0, "SrcPos")
+    self:NetworkVar("Vector", 1, "TailPos")
 end

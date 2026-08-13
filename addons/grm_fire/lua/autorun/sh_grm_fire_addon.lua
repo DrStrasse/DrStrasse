@@ -8,7 +8,7 @@ GRM_FireAddon = true
 GRM = GRM or {}
 GRM.FireAddon = GRM.FireAddon or {}
 local A = GRM.FireAddon
-A.Version = "0.4.5"
+A.Version = "0.4.6"
 
 if SERVER then
     resource.AddFile("materials/grm/firehose.vmt")
@@ -126,5 +126,5 @@ hook.Add("SetupMove", "GRM_FireLadder_Climb", function(ply, mv)
 end)
 
 if SERVER then
-    print("[GRM Fire Addon] v" .. A.Version .. " loaded (рукава 2200, насос-призрак, лестница; огонь = vFire)")
+    print("[GRM Fire Addon] v" .. A.Version .. " loaded (катушка SrcPos, тяга за машиной, тонкий шланг; огонь = vFire)")
 end

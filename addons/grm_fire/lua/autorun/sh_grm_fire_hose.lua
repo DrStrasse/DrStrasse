@@ -29,10 +29,10 @@ A.HoseCfg = A.HoseCfg or {
     SprayDmgPowder   = 24,
 }
 if A.HoseCfg.MaxLength < 2000 then A.HoseCfg.MaxLength = 2200 end
-A.HoseCfg.LayStep = 52
+A.HoseCfg.LayStep = 40
 A.HoseCfg.Width = 3
-A.HoseBeamHalfW = 1.2
-A.HoseBeamHalfH = 0.9
+A.HoseBeamHalfW = 0.95
+A.HoseBeamHalfH = 0.7
 
 A.NODE_SOURCE    = 0
 A.NODE_LAY       = 1
@@ -68,7 +68,7 @@ end
 -- Тяга точки к якорю, если дальше maxSeg (2D, земля).
 function A.HoseDragPoint(px, py, ax, ay, maxSeg)
     px, py, ax, ay = tonumber(px) or 0, tonumber(py) or 0, tonumber(ax) or 0, tonumber(ay) or 0
-    maxSeg = tonumber(maxSeg) or 52
+    maxSeg = tonumber(maxSeg) or 40
     local dx, dy = px - ax, py - ay
     local d = math.sqrt(dx * dx + dy * dy)
     if d <= maxSeg or d < 0.001 then return px, py, false, d end
@@ -77,7 +77,7 @@ function A.HoseDragPoint(px, py, ax, ay, maxSeg)
 end
 
 function A.HoseShouldCompact(dist, step)
-    step = tonumber(step) or 52
+    step = tonumber(step) or 40
     return (tonumber(dist) or 999) < step * 0.42
 end
 
@@ -87,7 +87,7 @@ end
 -- lay   = ушли вперёд от последнего узла
 function A.HoseMoveHint(p, last, prev, opt)
     opt = opt or {}
-    local step = tonumber(opt.step) or 52
+    local step = tonumber(opt.step) or 40
     local px, py = xy(p)
     local lx, ly = xy(last)
     local rx, ry = xy(prev)
@@ -274,7 +274,7 @@ if SERVER then
         local startN = hose:MakeNode(A.NODE_SOURCE, a, src)
         if not IsValid(startN) then hose:Remove() return nil, "узел" end
         local last = startN
-        local step = math.max(48, A.HoseCfg.LayStep or 52)
+        local step = math.max(36, A.HoseCfg.LayStep or 40)
         local nsteps = math.max(0, math.floor(dist / step) - 1)
         for i = 1, nsteps do
             local p = LerpVector(i / (nsteps + 1), a, b)
@@ -335,28 +335,50 @@ if CLIENT then
         return src:WorldSpaceCenter() + Vector(0, 0, 6)
     end
 
-    -- Живые концы: насос/гидрант едут — первая точка едет с ними, не снимок.
+    -- Концы с NetworkVar рукава (не из PVS насоса). Иначе снимок пути залипает.
     local function livePts(rec)
         if not rec or not rec.pts then return nil end
         local pts = {}
         for i = 1, #rec.pts do pts[i] = rec.pts[i] end
         if #pts == 0 then return pts end
         local hose = rec.id and Entity(rec.id) or NULL
-        local src = rec.src
-        if not IsValid(src) and IsValid(hose) and hose.GetStartEnt then
-            src = hose:GetStartEnt()
+        local tip
+        if IsValid(hose) and hose.GetSrcPos then
+            local sp = hose:GetSrcPos()
+            if sp and (not sp.LengthSqr or sp:LengthSqr() > 4) then tip = sp end
         end
-        local tip = sourceTip(src)
+        if not tip then
+            local src = rec.src
+            if not IsValid(src) and IsValid(hose) and hose.GetStartEnt then src = hose:GetStartEnt() end
+            tip = sourceTip(src)
+        end
+        if not tip and IsValid(hose) then
+            for _, n in ipairs(ents.FindByClass("grm_fire_hose_node")) do
+                if IsValid(n) and n.GetHose and n:GetHose() == hose then
+                    local typ = n.GetNodeType and n:GetNodeType() or -1
+                    if typ == 0 or IsValid(n:GetParent()) then
+                        tip = n:GetPos() + Vector(0, 0, 6)
+                        break
+                    end
+                end
+            end
+        end
         if tip then pts[1] = tip end
         if rec.docked then
-            local tail = rec.tail
-            if not IsValid(tail) and IsValid(hose) and hose.GetEndNode then
-                tail = hose:GetEndNode()
+            local tail
+            if IsValid(hose) and hose.GetTailPos then
+                local tp = hose:GetTailPos()
+                if tp and (not tp.LengthSqr or tp:LengthSqr() > 4) then tail = tp end
             end
-            if IsValid(tail) then
-                local p = tail.GetParent and tail:GetParent() or NULL
-                pts[#pts] = (IsValid(p) and sourceTip(p) or (tail:GetPos() + Vector(0, 0, 6)))
+            if not tail then
+                local en = rec.tail
+                if not IsValid(en) and IsValid(hose) and hose.GetEndNode then en = hose:GetEndNode() end
+                if IsValid(en) then
+                    local p = en.GetParent and en:GetParent() or NULL
+                    tail = (IsValid(p) and sourceTip(p)) or (en:GetPos() + Vector(0, 0, 6))
+                end
             end
+            if tail then pts[#pts] = tail end
         elseif IsValid(rec.holder) then
             pts[#pts + 1] = handPos(rec.holder)
         end
@@ -375,8 +397,8 @@ if CLIENT then
         render.SetColorMaterial()
         local ang = dir:Angle()
         local mid = (a + b) * 0.5
-        local hw = A.HoseBeamHalfW or 1.2
-        local hh = A.HoseBeamHalfH or 0.9
+        local hw = A.HoseBeamHalfW or 0.95
+        local hh = A.HoseBeamHalfH or 0.7
         render.DrawBox(mid, ang, Vector(-len * 0.5, -hw, -hh), Vector(len * 0.5, hw, hh), col, true)
         render.DrawLine(a + Vector(0, 0, 0.8), b + Vector(0, 0, 0.8), COL_DARK, false)
     end

@@ -101,6 +101,7 @@ check("IN_WALK reel", init:find("IN_WALK", 1, true) ~= nil)
 check("нет лимита LayStep*1.25", init:find("LayStep or 70) * 1.25", 1, true) == nil)
 check("FollowHost на сервере", init:find("function ENT:FollowHost", 1, true) ~= nil)
 check("Think зовёт FollowHost", init:find("self:FollowHost()", 1, true) ~= nil)
+check("SyncAnchors SrcPos", init:find("function ENT:SyncAnchors", 1, true) ~= nil)
 
 print("\n=== тяга за машиной ===")
 local nx, ny, moved, d = A.HoseDragPoint(100, 0, 0, 0, 50)
