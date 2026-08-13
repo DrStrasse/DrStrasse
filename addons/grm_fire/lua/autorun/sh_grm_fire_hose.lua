@@ -212,62 +212,118 @@ if SERVER then
         if dst.SetHosesOut then dst:SetHosesOut(A.HoseCountOn(dst)) end
         hose:EmitSound("buttons/lever7.wav", 65, 100)
         hook.Run("GRM_FireAddon_HoseDocked", hose, dst, nil)
+        if hose.BroadcastPath then hose:BroadcastPath() end
         return hose
     end
 end
 
 if CLIENT then
-    local MAT
-    function A.HoseMaterial()
-        if MAT and not MAT:IsError() then return MAT end
-        MAT = Material("grm/firehose")
-        if not MAT or MAT:IsError() then MAT = Material("vgui/white") end
-        if not MAT or MAT:IsError() then MAT = Material("cable/cable") end
-        return MAT
-    end
+    -- Пути с сервера: не зависим от того, доехали ли узлы до клиента.
+    A.HosePaths = A.HosePaths or {}
 
-    local COL_CORE = Color(210, 48, 28, 255)
-    local COL_EDGE = Color(120, 18, 12, 255)
-    local COL_LIVE = Color(255, 90, 40, 255)
+    local COL = Color(205, 42, 28, 255)
+    local COL_DARK = Color(90, 14, 10, 255)
+    local COL_LIVE = Color(255, 95, 35, 255)
+
+    local function handPos(ply)
+        if not IsValid(ply) then return nil end
+        local att = ply:LookupAttachment("anim_attachment_RH")
+        local dat = att and att > 0 and ply:GetAttachment(att)
+        return (dat and dat.Pos) or (ply:WorldSpaceCenter() + Vector(0, 0, 18))
+    end
 
     local function nodeTip(ent)
         if not IsValid(ent) then return nil end
-        if ent:IsPlayer() then
-            local att = ent:LookupAttachment("anim_attachment_RH")
-            local dat = att and att > 0 and ent:GetAttachment(att)
-            return (dat and dat.Pos) or (ent:WorldSpaceCenter() + Vector(0, 0, 18))
-        end
-        return ent:GetPos() + Vector(0, 0, 5)
+        if ent:IsPlayer() then return handPos(ent) end
+        return ent:GetPos() + Vector(0, 0, 7)
     end
 
+    -- Лента без кабельного шейдера: ColorMaterial + коробка + линия.
+    -- DrawBeam(vgui/white) в GMod невидим — поэтому не используем его как основу.
     function A.DrawHoseBeam(a, b, live)
         if not a or not b then return end
-        local dist = a:Distance(b)
-        if dist < 2 or dist > 2600 then return end
-        local mat = A.HoseMaterial()
-        if not mat then return end
-        render.SetMaterial(mat)
-        render.DrawBeam(a, b, 14, 0, dist / 16, COL_EDGE)
-        render.DrawBeam(a, b, 9, 0, dist / 20, live and COL_LIVE or COL_CORE)
+        local dir = b - a
+        local len = dir:Length()
+        if len < 2 or len > 2600 then return end
+        dir:Normalize()
+        local col = live and COL_LIVE or COL
+        render.DrawLine(a, b, col, false)
+        render.DrawLine(a + Vector(0, 0, 1.5), b + Vector(0, 0, 1.5), COL_DARK, false)
+        render.SetColorMaterial()
+        local ang = dir:Angle()
+        local mid = (a + b) * 0.5
+        local hw, hh = 5, 4
+        render.DrawBox(mid, ang, Vector(-len * 0.5, -hw, -hh), Vector(len * 0.5, hw, hh), col, true)
     end
 
-    -- Запасной проход: все сегменты, не зависит от Draw узла и HL2-кабеля.
-    hook.Add("PostDrawOpaqueRenderables", "GRM_FireHose_Beams", function(depth, sky)
-        if sky or depth then return end
+    local function collectFromNodes()
+        local byHose = {}
         for _, n in ipairs(ents.FindByClass("grm_fire_hose_node")) do
-            if IsValid(n) and n.GetNextNode then
-                local nxt = n:GetNextNode()
-                A.DrawHoseBeam(nodeTip(n), nodeTip(nxt), IsValid(nxt) and nxt:IsPlayer())
+            if IsValid(n) and n.GetHose then
+                local hose = n:GetHose()
+                local id = IsValid(hose) and hose:EntIndex() or 0
+                if id > 0 then
+                    byHose[id] = byHose[id] or { hose = hose, segs = {} }
+                    local nxt = n.GetNextNode and n:GetNextNode() or NULL
+                    if IsValid(nxt) then
+                        byHose[id].segs[#byHose[id].segs + 1] = { nodeTip(n), nodeTip(nxt), nxt:IsPlayer() }
+                    end
+                end
             end
         end
+        return byHose
+    end
+
+    local function drawPath(id, rec)
+        if not rec or not rec.pts then return end
+        local pts = rec.pts
+        local holder = rec.holder
+        if IsValid(holder) and not rec.docked then
+            pts = {}
+            for i = 1, #rec.pts do pts[i] = rec.pts[i] end
+            pts[#pts + 1] = handPos(holder)
+        end
+        for i = 2, #pts do
+            A.DrawHoseBeam(pts[i - 1], pts[i], i == #pts and IsValid(holder))
+        end
+    end
+
+    function A.DrawAllHoses()
+        local drawn = {}
+        for id, rec in pairs(A.HosePaths) do
+            drawPath(id, rec)
+            drawn[id] = true
+        end
+        local fromNodes = collectFromNodes()
+        for id, pack in pairs(fromNodes) do
+            if not drawn[id] then
+                for _, seg in ipairs(pack.segs) do
+                    A.DrawHoseBeam(seg[1], seg[2], seg[3])
+                end
+            end
+        end
+    end
+
+    net.Receive("GRM_FireHose_Path", function()
+        local id = net.ReadUInt(16)
+        local n = net.ReadUInt(8)
+        local pts = {}
+        for i = 1, n do pts[i] = net.ReadVector() end
+        local holder = net.ReadEntity()
+        local docked = net.ReadBool()
+        if n == 0 then
+            A.HosePaths[id] = nil
+            return
+        end
+        A.HosePaths[id] = { pts = pts, holder = holder, docked = docked }
     end)
-    hook.Add("PostDrawTranslucentRenderables", "GRM_FireHose_Beams", function(depth, sky)
-        if sky or depth then return end
-        for _, n in ipairs(ents.FindByClass("grm_fire_hose_node")) do
-            if IsValid(n) and n.GetNextNode then
-                local nxt = n:GetNextNode()
-                A.DrawHoseBeam(nodeTip(n), nodeTip(nxt), IsValid(nxt) and nxt:IsPlayer())
-            end
-        end
+
+    hook.Add("PostDrawOpaqueRenderables", "GRM_FireHose_Vis", function(_, sky)
+        if sky then return end
+        A.DrawAllHoses()
+    end)
+    hook.Add("PostDrawTranslucentRenderables", "GRM_FireHose_Vis", function(_, sky)
+        if sky then return end
+        A.DrawAllHoses()
     end)
 end

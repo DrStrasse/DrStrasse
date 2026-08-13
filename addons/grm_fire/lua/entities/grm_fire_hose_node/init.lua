@@ -12,6 +12,10 @@ local function ghostBox(self)
     self:SetNotSolid(true)
 end
 
+function ENT:UpdateTransmitState()
+    return TRANSMIT_ALWAYS
+end
+
 function ENT:Initialize()
     local FA = A()
     local typ = self:GetNodeType() or 0
@@ -30,6 +34,7 @@ function ENT:Initialize()
         self:DrawShadow(false)
         self:SetRenderMode(RENDERMODE_NORMAL)
         self:SetColor(Color(220, 40, 30, 255))
+        self:SetRenderBounds(Vector(-96, -96, -16), Vector(96, 96, 32))
         return
     end
 

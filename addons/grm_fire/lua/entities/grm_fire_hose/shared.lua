@@ -5,7 +5,7 @@ ENT.Author = "GRM"
 ENT.Category = "GRM Fire"
 ENT.Spawnable = false
 ENT.AdminOnly = true
-ENT.RenderGroup = RENDERGROUP_OTHER
+ENT.RenderGroup = RENDERGROUP_BOTH
 
 function ENT:SetupDataTables()
     self:NetworkVar("Entity", 0, "StartEnt")

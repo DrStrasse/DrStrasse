@@ -11,17 +11,41 @@ end
 
 local function A() return GRM and GRM.FireAddon end
 
+util.AddNetworkString("GRM_FireHose_Path")
+
+function ENT:UpdateTransmitState()
+    return TRANSMIT_ALWAYS
+end
+
 function ENT:Initialize()
-    self:SetModel("models/hunter/blocks/cube025x025x025.mdl")
-    self:SetNoDraw(true)
+    self:SetModel("models/props_junk/PopCan01a.mdl")
     self:DrawShadow(false)
     self:SetSolid(SOLID_NONE)
     self:SetMoveType(MOVETYPE_NONE)
+    self:SetCollisionGroup(COLLISION_GROUP_IN_VEHICLE)
+    self:SetRenderMode(RENDERMODE_TRANSALPHA)
+    self:SetColor(Color(220, 40, 30, 1))
     self.Nodes = {}
     if self:GetMaxLen() <= 0 then self:SetMaxLen(cfg().MaxLength) end
     self:SetLaidLen(0)
     self:SetPressurized(false)
     self:SetDocked(false)
+end
+
+function ENT:BroadcastPath()
+    local pts = {}
+    for _, n in ipairs(self.Nodes or {}) do
+        if IsValid(n) then
+            pts[#pts + 1] = n:GetPos() + Vector(0, 0, 7)
+        end
+    end
+    net.Start("GRM_FireHose_Path")
+        net.WriteUInt(self:EntIndex(), 16)
+        net.WriteUInt(#pts, 8)
+        for i = 1, #pts do net.WriteVector(pts[i]) end
+        net.WriteEntity(self:GetHolder())
+        net.WriteBool(self:GetDocked() == true)
+    net.Broadcast()
 end
 
 function ENT:OnRemove()
@@ -34,6 +58,12 @@ function ENT:OnRemove()
     for _, n in ipairs(self.Nodes or {}) do
         if IsValid(n) then n:Remove() end
     end
+    net.Start("GRM_FireHose_Path")
+        net.WriteUInt(self:EntIndex(), 16)
+        net.WriteUInt(0, 8)
+        net.WriteEntity(NULL)
+        net.WriteBool(false)
+    net.Broadcast()
 end
 
 function ENT:LastNode()
@@ -92,6 +122,7 @@ function ENT:DeployTo(ply)
     ply:SelectWeapon("weapon_grm_hose")
     node:SetNextNode(ply)
     self:EmitSound("physics/rubber/rubber_tire_impact_soft1.wav", 60, 110)
+    self:BroadcastPath()
     return true
 end
 
@@ -161,6 +192,7 @@ function ENT:TryRewind(ply)
         self:SetEndNode(now)
     end
     self:SetLaidLen(math.floor(self:LaidDistance()))
+    self:BroadcastPath()
     return true
 end
 
@@ -189,6 +221,7 @@ function ENT:TryLay(ply)
     node:SetNextNode(ply)
     self:SetEndNode(node)
     self:SetLaidLen(math.floor(self:LaidDistance()))
+    self:BroadcastPath()
 end
 
 function ENT:Leash(ply)
@@ -226,6 +259,7 @@ function ENT:DropNozzle()
         if ply:HasWeapon("weapon_grm_hose") then ply:StripWeapon("weapon_grm_hose") end
     end
     self:SetLaidLen(math.floor(self:LaidDistance()))
+    self:BroadcastPath()
     return true
 end
 
@@ -249,6 +283,7 @@ function ENT:PickNozzle(ply)
     if ply.SetNW2Entity then ply:SetNW2Entity("GRM_FireHose", self) end
     if not ply:HasWeapon("weapon_grm_hose") then ply:Give("weapon_grm_hose") end
     ply:SelectWeapon("weapon_grm_hose")
+    self:BroadcastPath()
     return true
 end
 
@@ -273,6 +308,7 @@ function ENT:PlaceJunction(ply)
     end
     self:SetLaidLen(math.floor(self:LaidDistance()))
     self:EmitSound("physics/metal/metal_box_impact_soft1.wav", 65, 100)
+    self:BroadcastPath()
     return true
 end
 
