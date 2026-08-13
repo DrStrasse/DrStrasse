@@ -8,7 +8,7 @@ GRM_FireAddon = true
 GRM = GRM or {}
 GRM.FireAddon = GRM.FireAddon or {}
 local A = GRM.FireAddon
-A.Version = "0.1.0"
+A.Version = "0.2.0"
 
 A.Models = {
     hydrant  = { "models/props/cs_assault/FireHydrant.mdl", "models/props_pipes/valvewheel001.mdl" },
@@ -50,9 +50,10 @@ end
 
 function A.GiveHose(ply)
     if not IsValid(ply) or not ply:IsPlayer() then return false end
-    if ply:HasWeapon("weapon_firehose") then return true end
-    ply:Give("weapon_firehose")
-    return ply:HasWeapon("weapon_firehose")
+    if SERVER and IsValid(ply.GRM_FireHose) then return true end
+    if ply:HasWeapon("weapon_grm_hose") then return true end
+    ply:Give("weapon_grm_hose")
+    return ply:HasWeapon("weapon_grm_hose")
 end
 
 function A.Refill(ply, amount)
@@ -75,5 +76,5 @@ function A.Ready()
 end
 
 if SERVER then
-    print("[GRM Fire Addon] v" .. A.Version .. " loaded (сущности + API; огонь = vFire)")
+    print("[GRM Fire Addon] v" .. A.Version .. " loaded (рукава + гидрант/насос; огонь = vFire)")
 end

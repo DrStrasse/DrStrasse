@@ -11,5 +11,7 @@ function ENT:SetupDataTables()
     self:NetworkVar("Int", 0, "Tank")
     self:NetworkVar("Int", 1, "TankMax")
     self:NetworkVar("Int", 2, "MaxHose")
+    self:NetworkVar("Int", 3, "HosesOut")
+    self:NetworkVar("Int", 4, "HosesMax")
     self:NetworkVar("Entity", 0, "HostVehicle")
 end

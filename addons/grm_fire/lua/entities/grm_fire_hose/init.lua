@@ -1,0 +1,369 @@
+AddCSLuaFile("cl_init.lua")
+AddCSLuaFile("shared.lua")
+include("shared.lua")
+
+local function cfg()
+    return (GRM and GRM.FireAddon and GRM.FireAddon.HoseCfg) or {
+        MaxLength = 850, LayStep = 70, Width = 5,
+        Material = "cable/redcable", Sag = 14, SprayCost = 1, SprayDmg = 10,
+    }
+end
+
+local function A() return GRM and GRM.FireAddon end
+
+function ENT:Initialize()
+    self:SetModel("models/hunter/blocks/cube025x025x025.mdl")
+    self:SetNoDraw(true)
+    self:DrawShadow(false)
+    self:SetSolid(SOLID_NONE)
+    self:SetMoveType(MOVETYPE_NONE)
+    self.Nodes = {}
+    if self:GetMaxLen() <= 0 then self:SetMaxLen(cfg().MaxLength) end
+    self:SetLaidLen(0)
+    self:SetPressurized(false)
+    self:SetDocked(false)
+end
+
+function ENT:OnRemove()
+    local ply = self:GetHolder()
+    if IsValid(ply) and ply.GRM_FireHose == self then
+        ply.GRM_FireHose = nil
+        if ply.SetNW2Entity then ply:SetNW2Entity("GRM_FireHose", NULL) end
+        if ply:HasWeapon("weapon_grm_hose") then ply:StripWeapon("weapon_grm_hose") end
+    end
+    for _, n in ipairs(self.Nodes or {}) do
+        if IsValid(n) then n:Remove() end
+    end
+end
+
+function ENT:LastNode()
+    for i = #(self.Nodes or {}), 1, -1 do
+        if IsValid(self.Nodes[i]) then return self.Nodes[i] end
+    end
+end
+
+function ENT:MakeNode(typ, pos, parent)
+    local n = ents.Create("grm_fire_hose_node")
+    if not IsValid(n) then return nil end
+    n:SetPos(pos)
+    n:SetHose(self)
+    n:SetNodeType(typ)
+    if IsValid(parent) then
+        n:SetParent(parent)
+    end
+    n:Spawn()
+    n:Activate()
+    self.Nodes[#self.Nodes + 1] = n
+    return n
+end
+
+function ENT:Link(a, b, length)
+    if not IsValid(a) or not IsValid(b) then return end
+    local c = cfg()
+    local dist = a:GetPos():Distance(b:GetPos())
+    length = tonumber(length) or (dist + c.Sag)
+    if constraint.Rope then
+        local _, rope = constraint.Rope(
+            a, b, 0, 0,
+            Vector(0, 0, 2), Vector(0, 0, 2),
+            math.max(8, length), 0, 0,
+            c.Width, c.Material, false,
+            Color(200, 40, 40)
+        )
+        a.HoseRope = rope
+    end
+    a:SetNextNode(b)
+end
+
+function ENT:DeployTo(ply)
+    if not IsValid(ply) then return false, "игрок" end
+    local src = self:GetStartEnt()
+    if not IsValid(src) then return false, "источник" end
+    local FA = A()
+    local typ = FA and FA.NODE_SOURCE or 0
+    local origin = src:WorldSpaceCenter() + src:GetForward() * 8 + Vector(0, 0, 6)
+    local node = self:MakeNode(typ, origin, src)
+    if not IsValid(node) then return false, "узел" end
+    self:SetEndNode(node)
+    self:SetHolder(ply)
+    ply.GRM_FireHose = self
+    if ply.SetNW2Entity then ply:SetNW2Entity("GRM_FireHose", self) end
+    if not ply:HasWeapon("weapon_grm_hose") then ply:Give("weapon_grm_hose") end
+    ply:SelectWeapon("weapon_grm_hose")
+    node:SetNextNode(ply)
+    self:EmitSound("physics/rubber/rubber_tire_impact_soft1.wav", 60, 110)
+    return true
+end
+
+function ENT:GroundPos(ply)
+    local p = IsValid(ply) and ply:GetPos() or self:GetPos()
+    local tr = util.TraceLine({
+        start = p + Vector(0, 0, 24),
+        endpos = p - Vector(0, 0, 80),
+        filter = function(ent)
+            if not IsValid(ent) then return false end
+            if ent:IsPlayer() then return false end
+            local c = ent:GetClass()
+            if c == "grm_fire_hose" or c == "grm_fire_hose_node" then return false end
+            return true
+        end,
+    })
+    if tr.Hit then return tr.HitPos + tr.HitNormal * 3 end
+    return p + Vector(0, 0, 2)
+end
+
+function ENT:LaidDistance()
+    local sum = 0
+    local nodes = self.Nodes or {}
+    for i = 2, #nodes do
+        if IsValid(nodes[i - 1]) and IsValid(nodes[i]) then
+            sum = sum + nodes[i - 1]:GetPos():Distance(nodes[i]:GetPos())
+        end
+    end
+    return sum
+end
+
+function ENT:Remain()
+    return math.max(0, (self:GetMaxLen() or 850) - self:LaidDistance())
+end
+
+function ENT:TryLay(ply)
+    if self:GetDocked() then return end
+    local last = self:LastNode()
+    if not IsValid(last) or not IsValid(ply) then return end
+    local step = cfg().LayStep
+    local dest = self:GroundPos(ply)
+    local dist = last:GetPos():Distance(dest)
+    if dist < step then return end
+    if self:LaidDistance() + dist > (self:GetMaxLen() or 850) then return end
+    -- не класть сквозь стену
+    local wall = util.TraceLine({
+        start = last:GetPos() + Vector(0, 0, 8),
+        endpos = dest + Vector(0, 0, 8),
+        filter = { last, ply, self },
+        mask = MASK_SOLID_BRUSHONLY,
+    })
+    if wall.Hit then return end
+    local FA = A()
+    local node = self:MakeNode(FA and FA.NODE_LAY or 1, dest)
+    if not IsValid(node) then return end
+    last:SetNextNode(node)
+    self:Link(last, node, dist + cfg().Sag)
+    node:SetNextNode(ply)
+    self:SetEndNode(node)
+    self:SetLaidLen(math.floor(self:LaidDistance()))
+end
+
+function ENT:Leash(ply)
+    if not IsValid(ply) or self:GetDocked() then return end
+    local last = self:LastNode()
+    if not IsValid(last) then return end
+    local remain = self:Remain()
+    local pos = ply:GetPos()
+    local dest = last:GetPos()
+    dest.z = pos.z
+    local dist = pos:Distance(dest)
+    if dist <= remain + 8 then return end
+    local dir = (dest - pos)
+    dir.z = 0
+    if dir:LengthSqr() < 1 then return end
+    dir:Normalize()
+    ply:SetVelocity(dir * 280 + Vector(0, 0, 10))
+end
+
+function ENT:DropNozzle()
+    local ply = self:GetHolder()
+    local last = self:LastNode()
+    if not IsValid(last) then return false end
+    local FA = A()
+    local pos = IsValid(ply) and self:GroundPos(ply) or (last:GetPos() + last:GetForward() * 16)
+    local noz = self:MakeNode(FA and FA.NODE_NOZZLE or 3, pos)
+    if not IsValid(noz) then return false end
+    last:SetNextNode(noz)
+    self:Link(last, noz)
+    self:SetEndNode(noz)
+    self:SetHolder(NULL)
+    if IsValid(ply) then
+        ply.GRM_FireHose = nil
+        if ply.SetNW2Entity then ply:SetNW2Entity("GRM_FireHose", NULL) end
+        if ply:HasWeapon("weapon_grm_hose") then ply:StripWeapon("weapon_grm_hose") end
+    end
+    self:SetLaidLen(math.floor(self:LaidDistance()))
+    return true
+end
+
+function ENT:PickNozzle(ply)
+    if not IsValid(ply) or IsValid(ply.GRM_FireHose) then return false end
+    if not A() or not A().CanHose(ply, self:GetStartEnt(), "pick") then return false end
+    local last = self:LastNode()
+    if not IsValid(last) or last:GetNodeType() ~= (A() and A().NODE_NOZZLE or 3) then return false end
+    if constraint.RemoveConstraints then constraint.RemoveConstraints(last, "Rope") end
+    last:Remove()
+    -- выкинуть мёртвые
+    local keep = {}
+    for _, n in ipairs(self.Nodes or {}) do
+        if IsValid(n) then keep[#keep + 1] = n end
+    end
+    self.Nodes = keep
+    local now = self:LastNode()
+    if IsValid(now) then now:SetNextNode(ply) end
+    self:SetHolder(ply)
+    ply.GRM_FireHose = self
+    if ply.SetNW2Entity then ply:SetNW2Entity("GRM_FireHose", self) end
+    if not ply:HasWeapon("weapon_grm_hose") then ply:Give("weapon_grm_hose") end
+    ply:SelectWeapon("weapon_grm_hose")
+    return true
+end
+
+function ENT:PlaceJunction(ply)
+    if self:GetDocked() then return false end
+    local last = self:LastNode()
+    if not IsValid(last) then return false end
+    if self:LaidDistance() < 80 then return false end
+    local FA = A()
+    local pos = IsValid(ply) and self:GroundPos(ply) or last:GetPos()
+    local j = self:MakeNode(FA and FA.NODE_JUNCTION or 2, pos)
+    if not IsValid(j) then return false end
+    last:SetNextNode(j)
+    self:Link(last, j)
+    self:SetEndNode(j)
+    self:SetHolder(NULL)
+    self:SetDocked(true)
+    if IsValid(ply) then
+        ply.GRM_FireHose = nil
+        if ply.SetNW2Entity then ply:SetNW2Entity("GRM_FireHose", NULL) end
+        if ply:HasWeapon("weapon_grm_hose") then ply:StripWeapon("weapon_grm_hose") end
+    end
+    self:SetLaidLen(math.floor(self:LaidDistance()))
+    self:EmitSound("physics/metal/metal_box_impact_soft1.wav", 65, 100)
+    return true
+end
+
+function ENT:DockTo(target, ply)
+    if not IsValid(target) or self:GetDocked() then return false, "нельзя" end
+    if target == self:GetStartEnt() then return false, "тот же источник" end
+    local cls = target:GetClass()
+    if cls ~= "grm_fire_hydrant" and cls ~= "grm_fire_pump" and not (cls == "grm_fire_hose_node" and target:GetNodeType() == (A() and A().NODE_JUNCTION or 2)) then
+        return false, "не стык"
+    end
+    if A() and not A().SourceHasFreeSlot(target) and cls ~= "grm_fire_hose_node" then
+        -- стыковка конца занимает порт цели
+        local used, max = A().SourceSlots(target)
+        if used >= max then return false, "нет порта" end
+    end
+    if cls == "grm_fire_hydrant" and target.GetOpen and not target:GetOpen() then
+        return false, "гидрант закрыт"
+    end
+    local last = self:LastNode()
+    if not IsValid(last) then return false end
+    local FA = A()
+    local pos = target:WorldSpaceCenter() + Vector(0, 0, 6)
+    local dock = self:MakeNode(FA and FA.NODE_SOURCE or 0, pos, target)
+    if not IsValid(dock) then return false end
+    last:SetNextNode(dock)
+    self:Link(last, dock)
+    self:SetEndNode(dock)
+    self:SetDocked(true)
+    self:SetHolder(NULL)
+    if IsValid(ply) then
+        ply.GRM_FireHose = nil
+        if ply.SetNW2Entity then ply:SetNW2Entity("GRM_FireHose", NULL) end
+        if ply:HasWeapon("weapon_grm_hose") then ply:StripWeapon("weapon_grm_hose") end
+    end
+    if target.SetPumpOn then target:SetPumpOn(true) end
+    self:SetLaidLen(math.floor(self:LaidDistance()))
+    self:EmitSound("buttons/lever7.wav", 65, 100)
+    hook.Run("GRM_FireAddon_HoseDocked", self, target, ply)
+    return true
+end
+
+local function walkPressure(ent, seen)
+    if not IsValid(ent) then return false, nil end
+    if seen[ent] then return false, nil end
+    seen[ent] = true
+    local cls = ent:GetClass()
+    if cls == "grm_fire_hydrant" and ent.GetOpen and ent:GetOpen() then
+        return true, nil
+    end
+    if cls == "grm_fire_pump" and ent.GetPumpOn and ent:GetPumpOn() and (ent:GetTank() or 0) > 0 then
+        return true, ent
+    end
+    -- рукава, стартующие здесь или пристыкованные сюда
+    for _, h in ipairs(ents.FindByClass("grm_fire_hose")) do
+        if IsValid(h) and (h:GetStartEnt() == ent or h:GetEndNode() == ent) then
+            local other = h:GetStartEnt()
+            if other == ent then
+                local endN = h:GetEndNode()
+                if IsValid(endN) then
+                    local p = endN:GetParent()
+                    if IsValid(p) then
+                        local ok, pump = walkPressure(p, seen)
+                        if ok then return true, pump end
+                    end
+                    local ok, pump = walkPressure(endN, seen)
+                    if ok then return true, pump end
+                end
+            else
+                local ok, pump = walkPressure(other, seen)
+                if ok then return true, pump end
+            end
+        end
+        if IsValid(h:GetEndNode()) and h:GetEndNode():GetParent() == ent then
+            local ok, pump = walkPressure(h:GetStartEnt(), seen)
+            if ok then return true, pump end
+        end
+    end
+    if cls == "grm_fire_hose_node" then
+        local hose = ent:GetHose()
+        if IsValid(hose) then
+            local ok, pump = walkPressure(hose:GetStartEnt(), seen)
+            if ok then return true, pump end
+        end
+    end
+    return false, nil
+end
+
+function ENT:RefreshPressure()
+    local ok, pump = walkPressure(self:GetStartEnt(), {})
+    if not ok then
+        local endN = self:GetEndNode()
+        if IsValid(endN) then
+            ok, pump = walkPressure(endN:GetParent(), {})
+        end
+    end
+    self:SetPressurized(ok == true)
+    self._SupplyPump = pump
+    return ok == true
+end
+
+function ENT:SupplyPump()
+    self:RefreshPressure()
+    return self._SupplyPump
+end
+
+function ENT:Rewind()
+    local ply = self:GetHolder()
+    if IsValid(ply) then
+        ply.GRM_FireHose = nil
+        if ply.SetNW2Entity then ply:SetNW2Entity("GRM_FireHose", NULL) end
+        if ply:HasWeapon("weapon_grm_hose") then ply:StripWeapon("weapon_grm_hose") end
+    end
+    self:Remove()
+end
+
+function ENT:Think()
+    local ply = self:GetHolder()
+    if IsValid(ply) and not self:GetDocked() then
+        if not ply:Alive() then
+            self:DropNozzle()
+        else
+            self:TryLay(ply)
+            self:Leash(ply)
+            local last = self:LastNode()
+            if IsValid(last) then last:SetNextNode(ply) end
+        end
+    end
+    self:RefreshPressure()
+    self:NextThink(CurTime() + 0.12)
+    return true
+end
