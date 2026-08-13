@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Doors System v3.0.0 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
+    GRM Doors System v3.0.1 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
 
     Слои допуска — CONCEPT_DOORS_V3.md:
       0 SuperAdmin  — всё, включая назначение владельца карты;
@@ -24,7 +24,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Doors = GRM.Doors or {}
 local D = GRM.Doors
-D.Version = "3.0.0"
+D.Version = "3.0.1"
 
 D.Config = D.Config or {
     UseDistance = 180,
@@ -224,6 +224,29 @@ function D.EvaluateAccess(rec, actor)
         is_owner = isOwner,
         has_key = hasKey,
     }
+end
+
+--- Один тост «дверь заперта» на одно нажатие E / одну физическую дверь.
+function D.ShouldNotifyLockDeny(state, doorId, now, holdingUse, cooldown)
+    state = istable(state) and state or {}
+    doorId = tostring(doorId or "")
+    now = tonumber(now) or 0
+    cooldown = tonumber(cooldown) or 1.5
+    if doorId == "" then return false, state end
+    if state.burst and now < state.burst then return false, state end
+    if state.id == doorId and (state.held == true or (state.expires and now < state.expires)) then
+        return false, state
+    end
+    state.id = doorId
+    state.held = holdingUse == true
+    state.expires = now + cooldown
+    state.burst = now + 0.35
+    return true, state
+end
+
+function D.ClearLockDenyHold(state)
+    if istable(state) then state.held = false end
+    return state
 end
 
 hook.Add("InitPostEntity", "GRM_Doors_BuildIdentityCache", function()
@@ -862,8 +885,22 @@ if SERVER then
         local rec = select(1, getRecord(ent))
         local acc = D.EvaluateAccess(rec, actorOf(ply, rec))
         if not acc.walk_locked then
-            notify(ply, "Дверь заперта на замок. У вас нет доступа.", 255, 90, 90)
+            local id = D.GetDoorID(ent) or ("e" .. tostring(ent:EntIndex()))
+            ply.GRM_DoorLockTold = ply.GRM_DoorLockTold or {}
+            local show, st = D.ShouldNotifyLockDeny(
+                ply.GRM_DoorLockTold, id, CurTime(),
+                ply.KeyDown and ply:KeyDown(IN_USE) or true,
+                (D.Config and D.Config.LockNotifyCooldown) or 1.5
+            )
+            ply.GRM_DoorLockTold = st
+            if show then notify(ply, "Дверь заперта на замок. У вас нет доступа.", 255, 90, 90) end
             return false
+        end
+    end)
+
+    hook.Add("KeyRelease", "GRM_Doors_LockDenyRelease", function(ply, key)
+        if key == IN_USE and IsValid(ply) then
+            D.ClearLockDenyHold(ply.GRM_DoorLockTold)
         end
     end)
 

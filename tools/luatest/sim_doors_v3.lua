@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    sim_doors_v3 — контракт переписи дверей v3.0.0
+    sim_doors_v3 — контракт переписи дверей v3.0.1
     Запуск: ./.luabuild/lj/src/luajit tools/luatest/sim_doors_v3.lua
 ----------------------------------------------------------------------]]
 local function read(p)
@@ -17,9 +17,12 @@ local function check(name, cond, extra)
 end
 local function has(n) return src:find(n, 1, true) ~= nil end
 
-print("\n=== ИСТОЧНИКИ v3.0.0 ===")
-check("версия 3.0.0", has('D.Version = "3.0.0"'))
+print("\n=== ИСТОЧНИКИ v3.0.1 ===")
+check("версия 3.0.1", has('D.Version = "3.0.1"'))
 check("EvaluateAccess — единая матрица", has("function D.EvaluateAccess"))
+check("антиспам тоста замка", has("function D.ShouldNotifyLockDeny"))
+check("сброс удержания E", has("function D.ClearLockDenyHold"))
+check("PlayerUse зовёт ShouldNotifyLockDeny", has("D.ShouldNotifyLockDeny("))
 check("CanAdminDoors SuperAdmin", has("function D.CanAdminDoors") and has("IsSuperAdmin() == true"))
 check("net-флаг админки = CanAdminDoors", has("net.WriteBool(D.CanAdminDoors(ply))"))
 check("jsonT ignoreConversions", has("util.JSONToTable, txt, false, true"))
@@ -88,6 +91,24 @@ check("совладелец имеет ключ, не хозяйство", E({
 }, civ).has_key == true and E({
     owner_type = "player", owner_key = "3:char1", co_owners = { "1:char1" },
 }, civ).own == false)
+
+print("\n=== РАНТАЙМ тост замка один раз ===")
+local N = GRM.Doors.ShouldNotifyLockDeny
+local C = GRM.Doors.ClearLockDenyHold
+local st = {}
+local a, st = N(st, "door_a", 1.0, true, 1.5)
+check("первое нажатие — показать", a == true)
+local b, st = N(st, "door_a", 1.05, true, 1.5)
+check("удержание E — молчать", b == false)
+local c, st = N(st, "door_b", 1.10, true, 1.5)
+check("вторая половинка в том же тике — молчать (burst)", c == false)
+st = C(st)
+local d, st = N(st, "door_a", 1.20, true, 1.5)
+check("повтор до кулдауна после отпускания — молчать", d == false)
+local e, st = N(st, "door_a", 3.0, true, 1.5)
+check("новое нажатие после кулдауна — показать", e == true)
+local f, st = N({}, "", 1.0, true, 1.5)
+check("пустой id — не слать", f == false)
 
 print("")
 if fails == 0 then print("ВСЕ ТЕСТЫ ПРОЙДЕНЫ (doors v3)")
