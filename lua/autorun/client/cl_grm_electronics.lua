@@ -1,4 +1,4 @@
--- GRM Electronics client v1.5.0
+-- GRM Electronics client v2.0.0 — OS 2.0 RT photorobot
 if not CLIENT then return end
 GRM=GRM or{};GRM.Electronics=GRM.Electronics or{};local E=GRM.Electronics;E.Topology=E.Topology or{devices={},links={}}
 surface.CreateFont("GRMNet_Title",{font="Roboto",size=24,weight=800,extended=true});surface.CreateFont("GRMNet_Head",{font="Roboto",size=17,weight=700,extended=true});surface.CreateFont("GRMNet_Body",{font="Roboto",size=14,weight=500,extended=true});surface.CreateFont("GRMNet_Small",{font="Roboto",size=12,weight=500,extended=true});surface.CreateFont("GRMNet_Calc",{font="Roboto",size=36,weight=700,extended=true});surface.CreateFont("GRMNet_CalcHist",{font="Roboto",size=14,weight=400,extended=true});surface.CreateFont("GRMNet_Tiny",{font="Roboto",size=10,weight=500,extended=true});surface.CreateFont("GRMNet_BigIcon",{font="Roboto",size=48,weight=300,extended=true});surface.CreateFont("GRMNet_Status",{font="Roboto",size=11,weight=600,extended=true});surface.CreateFont("GRMNet_Bold",{font="Roboto",size=14,weight=700,extended=true});surface.CreateFont("GRMNet_Normal",{font="Roboto",size=13,weight=500,extended=true});surface.CreateFont("GRMNet_Bold",{font="Roboto",size=14,weight=700,extended=true})
@@ -220,83 +220,185 @@ local function openComputer(ent,data)
   body._editorArea=area;body._editorName=docName
  end
  -- Photo Robot (drawn composite sketch)
+
  local function photoGallery()
-  -- Show gallery of saved photo robots first
   clear()
-  textLabel(body,"ФОТОРОБОТ",18,10,200,28,"GRMNet_Title",C.text)
-  textLabel(body,"Галерея сохранённых фотороботов",18,38,400,20,"GRMNet_Small",C.dim)
+  textLabel(body,"ФОТОРОБОТ 2.0",18,10,220,28,"GRMNet_Title",C.text)
+  textLabel(body,"Галерея сохранённых фотороботов и фото",18,38,520,20,"GRMNet_Small",C.dim)
   
-  -- Gallery list
-  local list=darkList(body,18,70,500,480,{{"Название",240},{"Дата",100},{"Размер",80},{"Тип",70}})
+  local list=darkList(body,18,70,500,440,{{"Название",200},{"Дата",90},{"КБ",50},{"Тип",70},{"Владелец",80}})
   
-  -- Load saved photos
   local function loadGallery()
    list:Clear()
    for _,r in ipairs(current.files)do
-    if r.category=="photo"or r.category=="photo_print"then
-     local line=addLine(list,r.name,os.date("%d.%m",r.updated),math.ceil((r.size or 0)/1024).."KB",r.category=="photo"and"Сохранён"or"Печать")
+    local cat=r.category or ""
+    if cat=="photo"or cat=="photo_print"or cat=="drawing"or cat=="import" then
+     local typeName = cat=="photo" and "Фоторобот" or cat=="photo_print" and "Печать" or cat=="drawing" and "Рисунок" or "Импорт"
+     local line=addLine(list,r.name,os.date("%d.%m",r.updated),math.ceil((r.size or 0)/1024),typeName,r.owner)
      line._file=r
     end
    end
   end
   
-  -- Selected photo
   local selectedFile=nil
   list.OnRowSelected=function(_,_,line)selectedFile=line._file end
   
-  -- Action buttons
-  btn(body,"НОВЫЙ ФОТОРОБОТ",534,70,280,40,C.blue,function()
-   -- Open editor
+  -- Right panel container
+  local rightPanel=vgui.Create("DPanel",body)
+  rightPanel:SetPos(530,70)
+  rightPanel:SetSize(286,440)
+  rightPanel.Paint=function(_,w,h)draw.RoundedBox(8,0,0,w,h,Color(14,22,38))end
+  
+  btn(rightPanel,"НОВЫЙ ФОТОРОБОТ",6,6,274,36,C.blue,function()
    if E._photoEditor then E._photoEditor() end
   end)
   
-  btn(body,"ОТКРЫТЬ",534,120,280,36,C.green,function()
-   if not selectedFile then notification.AddLegacy("Выберите фоторобот из списка",NOTIFY_ERROR,3)return end
-   -- Open the selected photo
+  btn(rightPanel,"ОТКРЫТЬ",6,48,132,32,C.green,function()
+   if not selectedFile then notification.AddLegacy("Выберите файл",NOTIFY_ERROR,3)return end
    send(ent,"file_open",function()net.WriteString(selectedFile.id)end)
   end)
   
-  btn(body,"УДАЛИТЬ",534,166,280,36,C.red,function()
-   if not selectedFile then notification.AddLegacy("Выберите фоторобот из списка",NOTIFY_ERROR,3)return end
+  btn(rightPanel,"УДАЛИТЬ",148,48,132,32,C.red,function()
+   if not selectedFile then notification.AddLegacy("Выберите файл",NOTIFY_ERROR,3)return end
    send(ent,"file_delete",function()net.WriteString(selectedFile.id)end)
-   timer.Simple(0.5,loadGallery)
+   timer.Simple(0.6,loadGallery)
   end)
   
-  btn(body,"Обновить список",534,212,280,32,C.card,loadGallery)
+  -- Print panel inside rightPanel
+  local printLbl=vgui.Create("DLabel",rightPanel)
+  printLbl:SetPos(6,90)
+  printLbl:SetSize(274,20)
+  printLbl:SetText("Печать выбранного:")
+  printLbl:SetFont("GRMNet_Small")
+  printLbl:SetTextColor(C.dim)
   
-  -- Info panel
+  local printerCombo=vgui.Create("DComboBox",rightPanel)
+  printerCombo:SetPos(6,112)
+  printerCombo:SetSize(274,28)
+  printerCombo.PrinterID=""
+  for _,d in ipairs(E.Topology.devices or{})do
+   if d.kind=="printer" and d.online then
+    printerCombo:AddChoice("🖨 "..d.name, d.id)
+   end
+  end
+  printerCombo.OnSelect=function(_,_,_,id)printerCombo.PrinterID=id end
+  
+  local paperCombo=vgui.Create("DComboBox",rightPanel)
+  paperCombo:SetPos(6,146)
+  paperCombo:SetSize(132,26)
+  paperCombo:AddChoice("A4","A4")
+  paperCombo:AddChoice("A5","A5")
+  paperCombo:ChooseOptionID(1)
+  
+  local orientCombo=vgui.Create("DComboBox",rightPanel)
+  orientCombo:SetPos(148,146)
+  orientCombo:SetSize(132,26)
+  orientCombo:AddChoice("Книжная","portrait")
+  orientCombo:AddChoice("Альбом","landscape")
+  orientCombo:ChooseOptionID(1)
+  
+  local copiesWang=vgui.Create("DNumberWang",rightPanel)
+  copiesWang:SetPos(6,178)
+  copiesWang:SetSize(132,26)
+  copiesWang:SetMin(1)
+  copiesWang:SetMax(5)
+  copiesWang:SetValue(1)
+  
+  btn(rightPanel,"🖨 ПЕЧАТЬ",148,178,132,26,C.yellow,function()
+   if not selectedFile then notification.AddLegacy("Выберите файл для печати",NOTIFY_ERROR,3)return end
+   if printerCombo.PrinterID=="" then notification.AddLegacy("Выберите принтер",NOTIFY_ERROR,3)return end
+   local _,pd=paperCombo:GetSelected()
+   local _,od=orientCombo:GetSelected()
+   send(ent,"print",function()
+    net.WriteString(selectedFile.id)
+    net.WriteString(printerCombo.PrinterID)
+    net.WriteString(pd or "A4")
+    net.WriteString(od or "portrait")
+    net.WriteUInt(copiesWang:GetValue(),4)
+    net.WriteString("normal")
+   end)
+  end)
+  
+  -- Import panel
+  local importLbl=vgui.Create("DLabel",rightPanel)
+  importLbl:SetPos(6,218)
+  importLbl:SetSize(274,20)
+  importLbl:SetText("Импорт из grm_import/:")
+  importLbl:SetFont("GRMNet_Small")
+  importLbl:SetTextColor(C.dim)
+  
+  local importList=vgui.Create("DComboBox",rightPanel)
+  importList:SetPos(6,238)
+  importList:SetSize(274,26)
+  importList:SetText("Поиск файлов...")
+  -- async find
+  timer.Simple(0.1,function()
+   if not IsValid(importList) then return end
+   importList:Clear()
+   local files,_ = file.Find("grm_import/*.jpg","DATA")
+   for _,fn in ipairs(files)do importList:AddChoice(fn, "grm_import/"..fn) end
+   local files2,_ = file.Find("grm_import/*.png","DATA")
+   for _,fn in ipairs(files2)do importList:AddChoice(fn, "grm_import/"..fn) end
+   if importList:GetOptionText(1)==nil then importList:SetText("Нет файлов в grm_import/") end
+  end)
+  
+  local importSelected=""
+  importList.OnSelect=function(_,_,txt,data)importSelected=data or txt end
+  
+  btn(rightPanel,"📥 ИМПОРТИРОВАТЬ",6,270,274,28,C.purple,function()
+   if importSelected=="" then notification.AddLegacy("Выберите файл импорта",NOTIFY_ERROR,3)return end
+   if not file.Exists(importSelected,"DATA") then notification.AddLegacy("Файл не найден",NOTIFY_ERROR,3)return end
+   local data=file.Read(importSelected,"DATA")
+   if not data or #data==0 then notification.AddLegacy("Пустой файл",NOTIFY_ERROR,3)return end
+   if #data>200*1024 then notification.AddLegacy("Файл >200Кб, сожмите",NOTIFY_ERROR,4)return end
+   local name=string.GetFileFromFilename(importSelected)
+   send(ent,"image_save",function()
+    net.WriteString("Импорт_"..name)
+    net.WriteString("photo")
+    net.WriteUInt(#data,24)
+    net.WriteData(data,#data)
+   end)
+  end)
+  
+  btn(rightPanel,"🔄 Обновить",6,304,274,26,C.card,function()
+   loadGallery()
+   -- refresh import list
+   importList:Clear()
+   local files,_ = file.Find("grm_import/*.jpg","DATA")
+   for _,fn in ipairs(files)do importList:AddChoice(fn, "grm_import/"..fn) end
+   local files2,_ = file.Find("grm_import/*.png","DATA")
+   for _,fn in ipairs(files2)do importList:AddChoice(fn, "grm_import/"..fn) end
+  end)
+  
+  -- Info
   local infoPanel=vgui.Create("DPanel",body)
-  infoPanel:SetPos(534,254)
-  infoPanel:SetSize(280,296)
+  infoPanel:SetPos(530,520)
+  infoPanel:SetSize(286,90)
   infoPanel.Paint=function(_,w,h)
    draw.RoundedBox(8,0,0,w,h,Color(14,22,38))
-   draw.SimpleText("ИНФОРМАЦИЯ","GRMNet_Head",w/2,16,C.text,TEXT_ALIGN_CENTER)
+   draw.SimpleText("ИНФО",w/2,14,C.text,TEXT_ALIGN_CENTER)
    if selectedFile then
-    draw.SimpleText("Название: "..selectedFile.name,"GRMNet_Body",20,50,C.text)
-    draw.SimpleText("Владелец: "..selectedFile.owner,"GRMNet_Small",20,74,C.dim)
-    draw.SimpleText("Дата: "..os.date("%d.%m.%Y %H:%M",selectedFile.updated),"GRMNet_Small",20,94,C.dim)
-    draw.SimpleText("Тип: "..(selectedFile.category=="photo"and"Сохранён"or"Печать"),"GRMNet_Small",20,114,C.dim)
-    draw.SimpleText("Размер: "..math.ceil((selectedFile.size or 0)/1024).." KB","GRMNet_Small",20,134,C.dim)
+    draw.SimpleText(selectedFile.name,20,32,C.text)
+    draw.SimpleText("Владелец: "..selectedFile.owner,20,50,C.dim)
+    draw.SimpleText("Размер: "..math.ceil((selectedFile.size or 0)/1024).." КБ",20,68,C.dim)
    else
-    draw.SimpleText("Выберите фоторобот","GRMNet_Body",w/2,140,C.dim,TEXT_ALIGN_CENTER)
-    draw.SimpleText("из списка слева","GRMNet_Small",w/2,164,C.dim,TEXT_ALIGN_CENTER)
+    draw.SimpleText("Выберите файл",w/2,50,C.dim,TEXT_ALIGN_CENTER)
    end
   end
   
-  -- Stats
-  local statsPanel=vgui.Create("DPanel",body)
-  statsPanel:SetPos(18,560)
-  statsPanel:SetSize(500,22)
-  statsPanel.Paint=function(_,w,h)
+  local stats=vgui.Create("DPanel",body)
+  stats:SetPos(18,520)
+  stats:SetSize(500,22)
+  stats.Paint=function(_,w,h)
    draw.RoundedBox(4,0,0,w,h,Color(14,22,38))
-   local count=0
+   local cnt=0
    for _,r in ipairs(current.files)do
-    if r.category=="photo"or r.category=="photo_print"then count=count+1 end
+    local c=r.category or ""
+    if c=="photo"or c=="photo_print"or c=="drawing" then cnt=cnt+1 end
    end
-   draw.SimpleText("Всего фотороботов: "..count,"GRMNet_Small",12,11,C.dim,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+   draw.SimpleText("Всего фото/рисунков: "..cnt,12,11,C.dim)
   end
   
-  -- Load gallery with current files
   loadGallery()
  end
  
@@ -304,29 +406,21 @@ local function openComputer(ent,data)
  E._photoGallery = photoGallery
  
  local function photoPage()
-  -- Request files first, then show gallery
   net.Start("GRM_Net_Action")
   net.WriteEntity(ent)
   net.WriteString("files")
   net.SendToServer()
-  
-  -- Set flag to show gallery instead of files page
   E._showPhotoGallery=true
-  
-  -- Show gallery immediately with current files (will update when response arrives)
   photoGallery()
  end
  
+
  local function photoEditor()
-  clear();textLabel(body,"РЕДАКТОР ФОТОРОБОТА",18,10,300,28,"GRMNet_Title",C.text);textLabel(body,"Система составления фоторобота · GRM Police Sketch",18,38,500,20,"GRMNet_Small",C.dim)
+  clear();textLabel(body,"РЕДАКТОР ФОТОРОБОТА 2.0",18,10,340,28,"GRMNet_Title",C.text);textLabel(body,"GRM Police Sketch · OS 2.0 RT-рендер + печать",18,38,520,20,"GRMNet_Small",C.dim)
   
-  -- Back button
-  btn(body,"◄ К ГАЛЕРЕЕ",650,10,164,28,C.card,function()
-   photoGallery()
-  end)
-  -- State
-  local state={face=1,hair=1,eyes=1,brows=1,nose=1,mouth=1,chin=1,extras=0,gender="male",effect="normal"}
-  -- Drawn face parts database (styled after GMod citizens)
+  btn(body,"◄ К ГАЛЕРЕЕ",650,10,164,28,C.card,function() photoGallery() end)
+
+  local state={face=1,hair=1,eyes=1,brows=1,nose=1,mouth=1,chin=1,extras=0}
   local faceParts={
    face={
     {name="Овальное",draw=function(cx,cy,s,col)draw.RoundedBox(90*s,cx-55*s,cy-70*s,110*s,150*s,col)end},
@@ -393,72 +487,67 @@ local function openComputer(ent,data)
     {name="Серёжка",draw=function(cx,cy,s,col)draw.RoundedBox(3*s,cx-55*s,cy-5*s,5*s,8*s,Color(200,180,50))end}
    }
   }
-  -- Skin colors
   local skinColors={Color(245,215,190),Color(230,195,165),Color(210,175,140),Color(185,150,115),Color(155,120,85),Color(120,85,60),Color(85,60,40)}
   local hairColors={Color(60,40,25),Color(40,25,15),Color(160,130,60),Color(190,80,25),Color(140,140,140),Color(25,25,25),Color(180,50,30)}
   local eyeColors={Color(60,90,140),Color(50,120,60),Color(120,80,40),Color(40,40,40),Color(80,130,150)}
   local skinIdx,hairIdx,eyeIdx=2,1,1
-  -- Photo effects
   local effects={"normal","bw","sepia","vintage","grain","highcontrast"}
   local effectIdx=1
-  -- 3D model panel (hidden, for reference) + Canvas for drawing
-  local canvas=vgui.Create("DPanel",body);canvas:SetPos(18,64);canvas:SetSize(400,520)
-  canvas.Paint=function(self,w,h)
-   -- Background (paper texture)
-   draw.RoundedBox(6,0,0,w,h,Color(235,225,210))
-   -- Paper grain
-   for i=1,40 do draw.RoundedBox(1,math.random(w),math.random(h),math.random(2,4),math.random(1,2),Color(200,190,175,40))end
-   local cx,cy=w/2,h/2-10;local s=1.5
+  local effectNames={"Обычный","Ч/Б","Сепия","Винтаж","Зерно","Контраст"}
+
+  -- Unified draw function for RT and canvas
+  local function drawRobotContent(w,h)
+   local cx,cy=w/2,h/2-10
+   local s=1.5
    local skinCol=skinColors[skinIdx]or skinColors[2]
    local hairCol=hairColors[hairIdx]or hairColors[1]
    local eyeCol=eyeColors[eyeIdx]or eyeColors[1]
-   -- Draw face parts in order
-   -- Ears
+   -- bg
+   draw.RoundedBox(6,0,0,w,h,Color(235,225,210))
+   for i=1,40 do draw.RoundedBox(1,math.random(w),math.random(h),math.random(2,4),math.random(1,2),Color(200,190,175,40))end
+   -- ears
    draw.RoundedBox(12*s,cx-68*s,cy-15*s,14*s,30*s,skinCol)
    draw.RoundedBox(12*s,cx+54*s,cy-15*s,14*s,30*s,skinCol)
-   -- Neck
    draw.RoundedBox(4*s,cx-18*s,cy+70*s,36*s,40*s,skinCol)
-   -- Face shape
    local fp=faceParts.face[state.face]or faceParts.face[1];fp.draw(cx,cy,s,skinCol)
-   -- Chin
    local cp=faceParts.chin[state.chin]or faceParts.chin[1];cp.draw(cx,cy,s,skinCol)
-   -- Eyes
    local ep=faceParts.eyes[state.eyes]or faceParts.eyes[1];ep.draw(cx,cy,s,eyeCol)
-   -- Brows
    local bp=faceParts.brows[state.brows]or faceParts.brows[1];bp.draw(cx,cy,s,hairCol)
-   -- Nose
    local np=faceParts.nose[state.nose]or faceParts.nose[1];np.draw(cx,cy,s,skinCol)
-   -- Mouth
    local mp=faceParts.mouth[state.mouth]or faceParts.mouth[1];mp.draw(cx,cy,s,Color(185,75,75))
-   -- Hair (on top)
    local hp=faceParts.hair[state.hair]or faceParts.hair[1];hp.draw(cx,cy,s,hairCol)
-   -- Extras
    if state.extras>0 then local xp=faceParts.extras[state.extras]or faceParts.extras[1];xp.draw(cx,cy,s,skinCol)end
-   -- Photo effects
    local eff=effects[effectIdx]
-   if eff=="bw"then
-    draw.RoundedBox(0,0,0,w,h,Color(0,0,0,120))
-    draw.RoundedBox(0,0,0,w,h,Color(255,255,255,40))
-   elseif eff=="sepia"then
-    draw.RoundedBox(0,0,0,w,h,Color(112,66,20,70))
-   elseif eff=="vintage"then
-    draw.RoundedBox(0,0,0,w,h,Color(90,60,30,80))
-    for i=1,20 do surface.SetDrawColor(0,0,0,math.random(10,30));surface.DrawLine(math.random(w),0,math.random(w),h)end
-   elseif eff=="grain"then
-    for i=1,200 do draw.RoundedBox(1,math.random(w),math.random(h),1,1,Color(0,0,0,math.random(20,60)))end
-   elseif eff=="highcontrast"then
-    draw.RoundedBox(0,0,0,w,h,Color(0,0,0,50))
-   end
-   -- Vignette (always)
+   if eff=="bw"then draw.RoundedBox(0,0,0,w,h,Color(0,0,0,120));draw.RoundedBox(0,0,0,w,h,Color(255,255,255,40))
+   elseif eff=="sepia"then draw.RoundedBox(0,0,0,w,h,Color(112,66,20,70))
+   elseif eff=="vintage"then draw.RoundedBox(0,0,0,w,h,Color(90,60,30,80));for i=1,20 do surface.SetDrawColor(0,0,0,math.random(10,30));surface.DrawLine(math.random(w),0,math.random(w),h)end
+   elseif eff=="grain"then for i=1,200 do draw.RoundedBox(1,math.random(w),math.random(h),1,1,Color(0,0,0,math.random(20,60)))end
+   elseif eff=="highcontrast"then draw.RoundedBox(0,0,0,w,h,Color(0,0,0,50)) end
    for i=1,12 do local a=i*6;draw.RoundedBox(0,0,0,w,i,Color(0,0,0,a));draw.RoundedBox(0,0,h-i,w,i,Color(0,0,0,a));draw.RoundedBox(0,0,0,i,h,Color(0,0,0,a));draw.RoundedBox(0,w-i,0,i,h,Color(0,0,0,a))end
-   -- Footer
    draw.RoundedBox(4,0,h-26,w,26,Color(0,0,0,100))
    draw.SimpleText("GRM ФОТОРОБОТ · "..os.date("%d.%m.%Y %H:%M"),"GRMNet_Small",w/2,h-13,Color(220,220,220),TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
   end
-  -- Controls panel (right side, compact)
+
+  local function captureRT()
+   local w,h=400,520
+   local rtName="GRM_PhotoRobot_RT"
+   local rt=GetRenderTarget(rtName,w,h)
+   local oldRT=render.GetRenderTarget()
+   render.PushRenderTarget(rt)
+   render.Clear(235,225,210,255)
+   cam.Start2D()
+   drawRobotContent(w,h)
+   cam.End2D()
+   render.PopRenderTarget()
+   local data=render.Capture({format="jpeg",quality=80,x=0,y=0,w=w,h=h})
+   return data
+  end
+
+  local canvas=vgui.Create("DPanel",body);canvas:SetPos(18,64);canvas:SetSize(400,520)
+  canvas.Paint=function(self,w,h) drawRobotContent(w,h) end
+
   local ctrlPanel=vgui.Create("DPanel",body);ctrlPanel:SetPos(434,64);ctrlPanel:SetSize(378,520);ctrlPanel.Paint=function(_,w,h)draw.RoundedBox(8,0,0,w,h,Color(14,22,38))end
   local cy=12
-  -- Part categories with cycling buttons
   local parts={
    {name="Лицо",key="face",max=#faceParts.face},
    {name="Причёска",key="hair",max=#faceParts.hair},
@@ -481,106 +570,119 @@ local function openComputer(ent,data)
    cy=cy+24
   end
   cy=cy+6
-  -- Color pickers
-  textLabel(ctrlPanel,"Цвет кожи:",14,cy,90,18,"GRMNet_Small",C.dim)
-  for i,col in ipairs(skinColors)do local bx=110+(i-1)*26;local p=vgui.Create("DButton",ctrlPanel);p:SetPos(bx,cy);p:SetSize(22,18);p:SetText("");p.Paint=function(_,w,h)draw.RoundedBox(4,0,0,w,h,col);if skinIdx==i then surface.SetDrawColor(255,255,255);surface.DrawOutlinedRect(0,0,w,h,2)end end;p.DoClick=function()skinIdx=i end end
+  textLabel(ctrlPanel,"Кожа:",14,cy,60,18,"GRMNet_Small",C.dim)
+  for i,col in ipairs(skinColors)do local bx=90+(i-1)*26;local p=vgui.Create("DButton",ctrlPanel);p:SetPos(bx,cy);p:SetSize(22,18);p:SetText("");p.Paint=function(_,w,h)draw.RoundedBox(4,0,0,w,h,col);if skinIdx==i then surface.SetDrawColor(255,255,255);surface.DrawOutlinedRect(0,0,w,h,2)end end;p.DoClick=function()skinIdx=i end end
   cy=cy+24
-  textLabel(ctrlPanel,"Цвет волос:",14,cy,90,18,"GRMNet_Small",C.dim)
-  for i,col in ipairs(hairColors)do local bx=110+(i-1)*26;local p=vgui.Create("DButton",ctrlPanel);p:SetPos(bx,cy);p:SetSize(22,18);p:SetText("");p.Paint=function(_,w,h)draw.RoundedBox(4,0,0,w,h,col);if hairIdx==i then surface.SetDrawColor(255,255,255);surface.DrawOutlinedRect(0,0,w,h,2)end end;p.DoClick=function()hairIdx=i end end
+  textLabel(ctrlPanel,"Волосы:",14,cy,60,18,"GRMNet_Small",C.dim)
+  for i,col in ipairs(hairColors)do local bx=90+(i-1)*26;local p=vgui.Create("DButton",ctrlPanel);p:SetPos(bx,cy);p:SetSize(22,18);p:SetText("");p.Paint=function(_,w,h)draw.RoundedBox(4,0,0,w,h,col);if hairIdx==i then surface.SetDrawColor(255,255,255);surface.DrawOutlinedRect(0,0,w,h,2)end end;p.DoClick=function()hairIdx=i end end
   cy=cy+24
-  textLabel(ctrlPanel,"Цвет глаз:",14,cy,90,18,"GRMNet_Small",C.dim)
-  for i,col in ipairs(eyeColors)do local bx=110+(i-1)*26;local p=vgui.Create("DButton",ctrlPanel);p:SetPos(bx,cy);p:SetSize(22,18);p:SetText("");p.Paint=function(_,w,h)draw.RoundedBox(4,0,0,w,h,col);if eyeIdx==i then surface.SetDrawColor(255,255,255);surface.DrawOutlinedRect(0,0,w,h,2)end end;p.DoClick=function()eyeIdx=i end end
+  textLabel(ctrlPanel,"Глаза:",14,cy,60,18,"GRMNet_Small",C.dim)
+  for i,col in ipairs(eyeColors)do local bx=90+(i-1)*26;local p=vgui.Create("DButton",ctrlPanel);p:SetPos(bx,cy);p:SetSize(22,18);p:SetText("");p.Paint=function(_,w,h)draw.RoundedBox(4,0,0,w,h,col);if eyeIdx==i then surface.SetDrawColor(255,255,255);surface.DrawOutlinedRect(0,0,w,h,2)end end;p.DoClick=function()eyeIdx=i end end
   cy=cy+24
-  -- Effects
-  textLabel(ctrlPanel,"Эффект:",14,cy,70,18,"GRMNet_Small",C.dim)
-  local effectNames={"Обычный","Ч/Б","Сепия","Винтаж","Зерно","Контраст"}
-  local effectLbl=vgui.Create("DLabel",ctrlPanel);effectLbl:SetPos(90,cy);effectLbl:SetSize(180,18);effectLbl:SetFont("GRMNet_Small");effectLbl:SetTextColor(C.text);effectLbl:SetText(effectNames[1])
-  local effPrev=vgui.Create("DButton",ctrlPanel);effPrev:SetPos(280,cy);effPrev:SetSize(36,18);effPrev:SetText("◄");effPrev:SetFont("GRMNet_Small");effPrev:SetTextColor(C.text);effPrev.Paint=function(self,w,h)draw.RoundedBox(3,0,0,w,h,self:IsHovered()and C.hover or C.card)end
-  effPrev.DoClick=function()effectIdx=effectIdx-1;if effectIdx<1 then effectIdx=#effects end;effectLbl:SetText(effectNames[effectIdx])end
-  local effNext=vgui.Create("DButton",ctrlPanel);effNext:SetPos(320,cy);effNext:SetSize(36,18);effNext:SetText("►");effNext:SetFont("GRMNet_Small");effNext:SetTextColor(C.text);effNext.Paint=function(self,w,h)draw.RoundedBox(3,0,0,w,h,self:IsHovered()and C.hover or C.card)end
-  effNext.DoClick=function()effectIdx=effectIdx+1;if effectIdx>#effects then effectIdx=1 end;effectLbl:SetText(effectNames[effectIdx])end
+  textLabel(ctrlPanel,"Эффект:",14,cy,60,18,"GRMNet_Small",C.dim)
+  local effectLbl=vgui.Create("DLabel",ctrlPanel);effectLbl:SetPos(84,cy);effectLbl:SetSize(170,18);effectLbl:SetFont("GRMNet_Small");effectLbl:SetTextColor(C.text);effectLbl:SetText(effectNames[1])
+  local effPrev=vgui.Create("DButton",ctrlPanel);effPrev:SetPos(260,cy);effPrev:SetSize(36,18);effPrev:SetText("◄");effPrev:SetFont("GRMNet_Small");effPrev:SetTextColor(C.text);effPrev.Paint=function(self,w,h)draw.RoundedBox(3,0,0,w,h,self:IsHovered()and C.hover or C.card)end
+  effPrev.DoClick=function()effectIdx=effectIdx-1;if effectIdx<1 then effectIdx=#effectNames end;effectLbl:SetText(effectNames[effectIdx])end
+  local effNext=vgui.Create("DButton",ctrlPanel);effNext:SetPos(304,cy);effNext:SetSize(36,18);effNext:SetText("►");effNext:SetFont("GRMNet_Small");effNext:SetTextColor(C.text);effNext.Paint=function(self,w,h)draw.RoundedBox(3,0,0,w,h,self:IsHovered()and C.hover or C.card)end
+  effNext.DoClick=function()effectIdx=effectIdx+1;if effectIdx>#effectNames then effectIdx=1 end;effectLbl:SetText(effectNames[effectIdx])end
   cy=cy+28
-  -- Description
-  textLabel(ctrlPanel,"Подпись:",14,cy,70,18,"GRMNet_Small",C.dim)
-  local desc=entry(ctrlPanel,"Описание, приметы...",90,cy,274,44,true);desc:SetMultiline(true)
-  cy=cy+52
-  -- Action buttons
-  btn(ctrlPanel,"💾 СОХРАНИТЬ",14,cy,114,30,C.green,function()
-   -- Capture canvas as image (grm_photorobot)
-   local x,y=canvas:LocalToScreen(0,0)
-   local w,h=canvas:GetSize()
-   local captureData={
-    format="jpeg",
-    quality=95,
-    x=x,
-    y=y,
-    w=w,
-    h=h
-   }
-   local screenshot=render.Capture(captureData)
-   if screenshot then
-    -- Save to subfolder
-    if not file.IsDir("grm_photos","DATA")then file.CreateDir("grm_photos")end
-    local filename="grm_photos/photorobot_"..os.date("%Y%m%d_%H%M%S")..".jpg"
-    file.Write(filename,screenshot)
-    -- Also save text description
-    local text="ФОТОРОБОТ "..os.date("%d.%m.%Y %H:%M").."\nЭффект: "..effectNames[effectIdx].."\nИзображение: "..filename.."\n\n"..desc:GetText()
-    send(ent,"image_save",function() net.WriteString("Фоторобот_"..os.date("%d%m_%H%M")); net.WriteString("photo"); net.WriteUInt(#screenshot,24); net.WriteData(screenshot,#screenshot) end)
-    notification.AddLegacy("Изображение сохранено: "..filename,NOTIFY_GENERIC,4)
+  textLabel(ctrlPanel,"Подпись:",14,cy,60,18,"GRMNet_Small",C.dim)
+  local desc=entry(ctrlPanel,"Приметы...",80,cy,284,36,true);desc:SetMultiline(true)
+  cy=cy+44
+  
+  -- Printer selection for direct print
+  textLabel(ctrlPanel,"Принтер:",14,cy,60,18,"GRMNet_Small",C.dim)
+  local printerCombo=vgui.Create("DComboBox",ctrlPanel)
+  printerCombo:SetPos(80,cy)
+  printerCombo:SetSize(180,22)
+  printerCombo.PrinterID=""
+  for _,d in ipairs(E.Topology.devices or{})do
+   if d.kind=="printer" and d.online then printerCombo:AddChoice("🖨 "..d.name, d.id) end
+  end
+  printerCombo.OnSelect=function(_,_,_,id)printerCombo.PrinterID=id end
+  local copiesW=vgui.Create("DNumberWang",ctrlPanel)
+  copiesW:SetPos(270,cy)
+  copiesW:SetSize(50,22)
+  copiesW:SetMin(1)
+  copiesW:SetMax(5)
+  copiesW:SetValue(1)
+  cy=cy+28
+  
+  btn(ctrlPanel,"💾 СОХРАНИТЬ",14,cy,110,28,C.green,function()
+   local data=captureRT()
+   if not data or #data==0 then
+    -- fallback to screen capture
+    local x,y=canvas:LocalToScreen(0,0)
+    local w,h=canvas:GetSize()
+    data=render.Capture({format="jpeg",quality=80,x=x,y=y,w=w,h=h})
+   end
+   if data and #data>0 then
+    if #data>200*1024 then notification.AddLegacy("Картинка >200Кб, уменьшите детали",NOTIFY_ERROR,3) return end
+    send(ent,"image_save",function()
+     net.WriteString("Фоторобот_"..os.date("%d%m_%H%M"))
+     net.WriteString("photo")
+     net.WriteUInt(#data,24)
+     net.WriteData(data,#data)
+    end)
    else
-    notification.AddLegacy("Ошибка захвата изображения",NOTIFY_ERROR,4)
+    notification.AddLegacy("Ошибка захвата RT",NOTIFY_ERROR,3)
    end
   end)
-  btn(ctrlPanel,"🖨️ ПЕЧАТЬ",134,cy,114,30,C.yellow,function()
-   -- Capture canvas as image for printing
-   local x,y=canvas:LocalToScreen(0,0)
-   local w,h=canvas:GetSize()
-   local captureData={
-    format="jpeg",
-    quality=90,
-    x=x,
-    y=y,
-    w=w,
-    h=h
-   }
-   local screenshot=render.Capture(captureData)
-   if screenshot then
-    -- Save to subfolder
-    if not file.IsDir("grm_photos","DATA")then file.CreateDir("grm_photos")end
-    local filename="grm_photos/print_"..os.date("%Y%m%d_%H%M%S")..".jpg"
-    file.Write(filename,screenshot)
-    -- Save print job with image reference
-    local text="[ИЗОБРАЖЕНИЕ: "..filename.."]\nФОТОРОБОТ "..os.date("%d.%m.%Y %H:%M").."\nЭффект: "..effectNames[effectIdx].."\n\n"..desc:GetText()
-    send(ent,"image_save",function() net.WriteString("Печать_"..os.date("%d%m_%H%M")); net.WriteString("photo_print"); net.WriteUInt(#screenshot,24); net.WriteData(screenshot,#screenshot) end)
-    notification.AddLegacy("Печать: изображение сохранено",NOTIFY_GENERIC,4)
-    surface.PlaySound("ambient/machines/combine_terminal_idle4.wav")
-   else
-    notification.AddLegacy("Ошибка захвата изображения",NOTIFY_ERROR,4)
+  btn(ctrlPanel,"🖨 ПЕЧАТЬ",132,cy,110,28,C.yellow,function()
+   if printerCombo.PrinterID=="" then notification.AddLegacy("Выберите принтер",NOTIFY_ERROR,3)return end
+   local data=captureRT()
+   if not data or #data==0 then
+    local x,y=canvas:LocalToScreen(0,0)
+    local w,h=canvas:GetSize()
+    data=render.Capture({format="jpeg",quality=80,x=x,y=y,w=w,h=h})
    end
+   if not data or #data==0 then notification.AddLegacy("Ошибка захвата",NOTIFY_ERROR,3)return end
+   if #data>200*1024 then notification.AddLegacy("Картинка >200Кб",NOTIFY_ERROR,3)return end
+   -- set pending print
+   E._pendingPrint={
+    printerID=printerCombo.PrinterID,
+    paper="A4",
+    orient="portrait",
+    copies=copiesW:GetValue(),
+    quality="normal"
+   }
+   send(ent,"image_save",function()
+    net.WriteString("Печать_"..os.date("%d%m_%H%M"))
+    net.WriteString("photo_print")
+    net.WriteUInt(#data,24)
+    net.WriteData(data,#data)
+   end)
   end)
-  btn(ctrlPanel,"📧 РАССЫЛКА",254,cy,114,30,C.purple,function()
-   local mf=frame("РАССЫЛКА ФОТОРОБОТА",420,300);local toEntry=entry(mf,"Кому",18,60,384,28);local bodyEntry=entry(mf,"Текст",18,100,384,120,true);bodyEntry:SetText("Фоторобот "..os.date("%d.%m.%Y").."\n"..desc:GetText())
-   btn(mf,"ОТПРАВИТЬ",18,230,384,36,C.blue,function()send(ent,"mail_send",function()net.WriteString(toEntry:GetText());net.WriteString("Фоторобот");net.WriteString(bodyEntry:GetText())end);mf:Close()end)
+  btn(ctrlPanel,"📧 РАССЫЛКА",250,cy,110,28,C.purple,function()
+   local mf=frame("РАССЫЛКА ФОТОРОБОТА",420,300)
+   local toEntry=entry(mf,"Кому",18,60,384,28)
+   local bodyEntry=entry(mf,"Текст",18,100,384,120,true)
+   bodyEntry:SetText("Фоторобот "..os.date("%d.%m.%Y").."\n"..desc:GetText())
+   btn(mf,"ОТПРАВИТЬ",18,230,384,36,C.blue,function()
+    send(ent,"mail_send",function()net.WriteString(toEntry:GetText());net.WriteString("Фоторобот");net.WriteString(bodyEntry:GetText())end)
+    mf:Close()
+   end)
   end)
-  cy=cy+38
-  -- Presets
-  textLabel(ctrlPanel,"Быстрые шаблоны:",14,cy,150,18,"GRMNet_Small",C.dim);cy=cy+22
+  cy=cy+36
+  textLabel(ctrlPanel,"Шаблоны:",14,cy,80,18,"GRMNet_Small",C.dim);cy=cy+20
   local presetBtns={
-   {name="Подозреваемый 1",data={face=1,hair=1,eyes=1,brows=2,nose=1,mouth=1,chin=1,extras=0}},
-   {name="Подозреваемый 2",data={face=2,hair=4,eyes=3,brows=4,nose=3,mouth=4,chin=2,extras=4}},
-   {name="Подозреваемый 3",data={face=3,hair=6,eyes=5,brows=1,nose=2,mouth=2,chin=1,extras=6}},
-   {name="Подозреваемый 4",data={face=5,hair=2,eyes=2,brows=3,nose=5,mouth=6,chin=3,extras=1}}
+   {name="Подозр. 1",data={face=1,hair=1,eyes=1,brows=2,nose=1,mouth=1,chin=1,extras=0}},
+   {name="Подозр. 2",data={face=2,hair=4,eyes=3,brows=4,nose=3,mouth=4,chin=2,extras=4}},
+   {name="Подозр. 3",data={face=3,hair=6,eyes=5,brows=1,nose=2,mouth=2,chin=1,extras=6}},
+   {name="Подозр. 4",data={face=5,hair=2,eyes=2,brows=3,nose=5,mouth=6,chin=3,extras=1}}
   }
   for i,preset in ipairs(presetBtns)do
-   local bx=14+((i-1)%2)*182;local by=cy+math.floor((i-1)/2)*30
-   btn(ctrlPanel,preset.name,bx,by,176,26,C.card,function()
-    for k,v in pairs(preset.data)do state[k]=v end;effectIdx=math.random(1,3);effectLbl:SetText(effectNames[effectIdx])
+   local bx=14+((i-1)%2)*182;local by=cy+math.floor((i-1)/2)*28
+   btn(ctrlPanel,preset.name,bx,by,176,24,C.card,function()
+    for k,v in pairs(preset.data)do state[k]=v end
+    effectIdx=math.random(1,3);effectLbl:SetText(effectNames[effectIdx])
    end)
   end
  end
  
  -- Save reference for use in photoGallery
  E._photoEditor = photoEditor
+
  
  -- Internet Browser
  local function internetPage()
@@ -1332,7 +1434,7 @@ local function openComputer(ent,data)
  if canShow("files") then appTile(body,"Печать","Файл на принтер","icon16/printer.png",18,488,C.yellow,function()send(ent,"files")end) end
  if data.canConfigure then appTile(body,"Администрирование","Управление сетью и доступы","icon16/cog.png",218,488,C.red,function()send(ent,"control_center")end)end
   -- Footer
-  local footer=vgui.Create("DPanel",body);footer:SetPos(0,618);footer:SetSize(830,22);footer.Paint=function(_,w,h)draw.RoundedBox(4,0,0,w,h,Color(12,18,30));draw.SimpleText("GRM NET OS v1.5.0 · Electronics Ecosystem","GRMNet_Tiny",12,11,C.dim,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER);draw.SimpleText("Файлов на устройстве: "..#current.files,"GRMNet_Tiny",w-12,11,C.dim,TEXT_ALIGN_RIGHT,TEXT_ALIGN_CENTER)end
+  local footer=vgui.Create("DPanel",body);footer:SetPos(0,618);footer:SetSize(830,22);footer.Paint=function(_,w,h)draw.RoundedBox(4,0,0,w,h,Color(12,18,30));draw.SimpleText("GRM NET OS v2.0.0 RT · Electronics Ecosystem","GRMNet_Tiny",12,11,C.dim,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER);draw.SimpleText("Файлов на устройстве: "..#current.files,"GRMNet_Tiny",w-12,11,C.dim,TEXT_ALIGN_RIGHT,TEXT_ALIGN_CENTER)end
  end
  -- Side navigation
  btn(side,"Главная",12,80,166,40,C.card,homePage)
@@ -1366,6 +1468,30 @@ net.Receive("GRM_Net_Open",function()openDevice(net.ReadEntity(),net.ReadTable()
 local function formatModule(data)local out={tostring(data.title or"Сетевой модуль"),string.rep("—",42)};for _,row in ipairs(data.rows or{})do local parts={};for key,value in pairs(row)do parts[#parts+1]=tostring(key)..": "..tostring(value)end;table.sort(parts);out[#out+1]=table.concat(parts,"   ")end;if#(data.rows or{})==0 then out[#out+1]="Нет записей"end;return table.concat(out,"\n\n")end
 net.Receive("GRM_Net_Result",function()local ok=net.ReadBool();local msg=net.ReadString();local payload=net.ReadTable()or{};notification.AddLegacy(msg,ok and NOTIFY_GENERIC or NOTIFY_ERROR,4);surface.PlaySound(ok and"buttons/button14.wav"or"buttons/button10.wav");if not ok then return end
  if payload.files and IsValid(E.ActiveFrame)then
+  if E._pendingPrint then
+   -- find newest photo file
+   local newest=nil
+   for _,r in ipairs(payload.files or{})do
+    local c=r.category or ""
+    if c=="photo"or c=="photo_print"or c=="drawing"or c=="import" then
+     if not newest or (r.updated or 0) > (newest.updated or 0) then newest=r end
+    end
+   end
+   if newest and E._pendingPrint.printerID and E._pendingPrint.printerID~="" then
+    local pp=E._pendingPrint
+    send(current.ent,"print",function()
+     net.WriteString(newest.id)
+     net.WriteString(pp.printerID)
+     net.WriteString(pp.paper or "A4")
+     net.WriteString(pp.orient or "portrait")
+     net.WriteUInt(pp.copies or 1,4)
+     net.WriteString(pp.quality or "normal")
+    end)
+    E._pendingPrint=nil
+   else
+    if newest then E._pendingPrint=nil end
+   end
+  end
   if E._showPhotoGallery then
    E._showPhotoGallery=false
    current.files=payload.files
@@ -1380,25 +1506,42 @@ net.Receive("GRM_Net_Result",function()local ok=net.ReadBool();local msg=net.Rea
  if payload.file and IsValid(E.ActiveFrame)then local b=E.ActiveBody;if IsValid(b)then
   if IsValid(b._fileName)then b._fileName:SetText(payload.file.name or"")end
   if IsValid(b._fileContent)then
-   -- Check if this is a photo file with image reference
    local content=payload.file.content or""
    local imgFile=content:match("%[ИЗОБРАЖЕНИЕ: ([^%]]+)%]")or content:match("Изображение: ([%w_%.%-]+)")
-   if imgFile and(payload.file.category=="photo"or payload.file.category=="photo_print")then
-    -- Load and display image
+   local cat=payload.file.category or ""
+   if imgFile and (cat=="photo"or cat=="photo_print"or cat=="drawing"or cat=="import") then
     local imgPath=imgFile
-    if not imgFile:find("/")then imgPath=imgFile end
     if file.Exists(imgPath,"DATA")then
-     b._fileContent:SetText("[ФОТО ИЗОБРАЖЕНИЕ]\n\nФайл: "..imgFile.."\n\n"..content)
-     -- Create image viewer window
+     b._fileContent:SetText("[ФОТО ИЗОБРАЖЕНИЕ]\nФайл: "..imgFile.."\nРазмер: "..math.ceil((payload.file.size or 0)/1024).." КБ\n\n"..content:gsub("%[ИЗОБРАЖЕНИЕ: [^%]]+%]",""))
+     -- Viewer with Material (more reliable than file://)
      local imgFrame=vgui.Create("DFrame",E.ActiveFrame)
-     imgFrame:SetTitle("Просмотр фоторобота")
-     imgFrame:SetSize(420,540)
+     imgFrame:SetTitle("Просмотр: "..(payload.file.name or "Фото"))
+     imgFrame:SetSize(460,560)
      imgFrame:Center()
      imgFrame:MakePopup()
-     local html=vgui.Create("DHTML",imgFrame)
-     html:SetPos(10,30)
-     html:SetSize(400,500)
-     html:SetHTML([[<html><body style="margin:0;padding:10px;background:#2a2a2a;"><img src="file://]]..imgPath..[[" style="max-width:100%;max-height:480px;border:2px solid #444;"></body></html>]])
+     local imgPanel=vgui.Create("DPanel",imgFrame)
+     imgPanel:SetPos(10,30)
+     imgPanel:SetSize(440,480)
+     imgPanel.Paint=function(_,w,h)
+      draw.RoundedBox(6,0,0,w,h,Color(30,30,30))
+     end
+     local dimg=vgui.Create("DImage",imgPanel)
+     dimg:SetPos(10,10)
+     dimg:SetSize(420,460)
+     -- Try Material from data folder
+     local matPath="data/"..imgPath
+     -- For compatibility, also try ../data/
+     local ok=false
+     if file.Exists(imgPath,"DATA") then
+      -- Material path must be without extension? No, with
+      -- Use DImage SetImage with material path
+      local tryPath="../data/"..imgPath
+      dimg:SetImage(tryPath)
+      ok=true
+     end
+     if not ok then
+      dimg:SetImage("vgui/error")
+     end
     else
      b._fileContent:SetText(content)
     end
@@ -1455,45 +1598,28 @@ net.Receive("GRM_Net_Document",function()
  local imageBytes=net.ReadUInt(24); local imageData=imageBytes>0 and net.ReadData(imageBytes) or nil
  if imageData and imgFile~="" then file.CreateDir("grm_computer/images"); local localImage="grm_computer/images/"..string.GetFileFromFilename(imgFile); file.Write(localImage,imageData); imgFile=localImage end
  
- -- Check if this is a photo document with image
- if imgFile~=""and(category=="photo"or category=="photo_print")then
-  -- Photo document viewer
-  local f=frame("ФОТОРОБОТ · "..title,520,680)
-  
-  -- Image panel
+ if imgFile~="" and (category=="photo"or category=="photo_print"or category=="drawing"or category=="import") then
+  local f=frame("ФОТОРОБОТ · "..title,520,700)
   local imgPanel=vgui.Create("DPanel",f)
   imgPanel:SetPos(20,60)
   imgPanel:SetSize(480,480)
-  imgPanel.Paint=function(_,w,h)
-   draw.RoundedBox(8,0,0,w,h,Color(235,225,210))
-   -- Paper texture
-   for i=1,30 do
-    draw.RoundedBox(1,math.random(w),math.random(h),math.random(2,4),math.random(1,2),Color(200,190,175,40))
-   end
-  end
-  
-  -- Try to load image using DImage with correct path
+  imgPanel.Paint=function(_,w,h) draw.RoundedBox(8,0,0,w,h,Color(235,225,210)); for i=1,30 do draw.RoundedBox(1,math.random(w),math.random(h),math.random(2,4),math.random(1,2),Color(200,190,175,40)) end end
   local img=vgui.Create("DImage",imgPanel)
   img:SetPos(20,20)
   img:SetSize(440,440)
-  
-  -- Check if file exists and load
-  if file.Exists(imgFile,"DATA")then
-   -- Use ../data/ path for DImage
+  if file.Exists(imgFile,"DATA") then
    img:SetImage("../data/"..imgFile)
   else
-   -- Try without subfolder
    local altFile=imgFile:match("([^/]+)$")
-   if file.Exists("grm_photos/"..altFile,"DATA")then
+   if altFile and file.Exists("grm_photos/"..altFile,"DATA") then
     img:SetImage("../data/grm_photos/"..altFile)
+   elseif altFile and file.Exists("grm_computer/images/"..altFile,"DATA") then
+    img:SetImage("../data/grm_computer/images/"..altFile)
    else
-    -- Fallback to error image
     img:SetImage("vgui/error")
    end
   end
-  
-  -- Description
-  local desc=content:gsub("%[ИЗОБРАЖЕНИЕ: [^%]]+%]",""):gsub("ФОТОРОБОТ[^\n]*\n",""):gsub("Эффект:[^\n]*\n",""):gsub("^%s+","")
+  local desc=content:gsub("%[ИЗОБРАЖЕНИЕ: [^%]]+%]", ""):gsub("ФОТОРОБОТ[^\n]*\n",""):gsub("Эффект:[^\n]*\n",""):gsub("^%s+","")
   local descLabel=vgui.Create("DLabel",f)
   descLabel:SetPos(20,550)
   descLabel:SetSize(480,80)
@@ -1501,8 +1627,6 @@ net.Receive("GRM_Net_Document",function()
   descLabel:SetTextColor(C.text)
   descLabel:SetWrap(true)
   descLabel:SetText(desc)
-  
-  -- Owner
   local ownerLabel=vgui.Create("DLabel",f)
   ownerLabel:SetPos(20,640)
   ownerLabel:SetSize(480,20)
@@ -1529,7 +1653,7 @@ net.Receive("GRM_Net_Document",function()
  end
 end)
 net.Receive("GRM_Net_MailSend",function()end)
-print("[GRM Electronics] client v1.5.0 loaded")
+print("[GRM Electronics] client v2.0.0 — OS 2.0 RT photorobot loaded")
 
 -- Persistent social/chat snapshot bridge.
 GRM=GRM or {}; GRM.Computer=GRM.Computer or {}; GRM.Computer.Social=GRM.Computer.Social or {}
