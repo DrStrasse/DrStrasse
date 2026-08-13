@@ -913,21 +913,74 @@ if CLIENT then
 
     --- Укоротить текст под ширину в пикселях (чтобы подпись не налезала
     --- на [идентификатор] справа, как было на длинных именах GRM-тулов).
+    --[[ ЗАВИСАНИЕ (v3.2.2). Здесь было два порока, и оба били по кадру:
+
+         1. Цикл сокращения полагался на то, что GRM.Utf8Sub обязательно
+            укоротит строку. Это верно только для корректного UTF-8. Подпись
+            приходит из language.GetPhrase, то есть из ЧУЖИХ аддонов, и может
+            быть в CP1251 или с оборванным символом. На такой строке Utf8Sub
+            возвращает её же — `cut` не уменьшается, `while #cut > 1` крутится
+            вечно, клиент встаёт НАМЕРТВО без ошибки Lua.
+            Лечение: прогресс гарантируем сами — если после обрезки длина в
+            байтах не уменьшилась, режем байтом (плюс жёсткий предел итераций).
+
+         2. fitText звался из row.Paint, то есть ДЛЯ КАЖДОЙ строки КАЖДЫЙ кадр,
+            и внутри делал до десятков surface.GetTextSize. При отрицательном
+            maxW (узкая колонка) цикл каждый раз проходил всю строку целиком.
+            Лечение: результат кешируем по ключу «текст|шрифт|ширина». ]]
+    --[[ Рубильник для поиска виновника зависания (см. showToolSettings).
+         grm_qmenu_safe 1 — не строить панели настроек инструментов. ]]
+    if isfunction(CreateClientConVar) then
+        CreateClientConVar("grm_qmenu_safe", "0", true, false,
+            "1 — не строить панели настроек инструментов в Q-меню GRM (поиск зависания)")
+    end
+
+    local fitCache = {}
     local function fitText(txt, font, maxW)
         txt = tostring(txt or "")
-        if not (isfunction(surface) or istable(surface)) then return txt end
+        if not istable(surface) then return txt end
         if not (isfunction(surface.SetFont) and isfunction(surface.GetTextSize)) then return txt end
+        maxW = isnumber(maxW) and maxW or 0
+        -- отрицательная/нулевая ширина: сокращать бессмысленно и опасно
+        if maxW <= 8 then return "" end
+
+        local key = txt .. "|" .. tostring(font) .. "|" .. math.floor(maxW)
+        local hit = fitCache[key]
+        if hit ~= nil then return hit end
+
         surface.SetFont(font)
         local w = select(1, surface.GetTextSize(txt))
-        if not isnumber(w) or w <= maxW then return txt end
-        local cut = txt
-        while #cut > 1 do
-            cut = (GRM and GRM.Utf8Sub) and GRM.Utf8Sub(cut, (GRM.Utf8Len(cut) - 1)) or string.sub(cut, 1, #cut - 1)
-            local ww = select(1, surface.GetTextSize(cut .. "…"))
-            if not isnumber(ww) or ww <= maxW then return cut .. "…" end
+        if not isnumber(w) or w <= maxW then
+            fitCache[key] = txt
+            return txt
         end
-        return txt
+
+        local cut, out, guard = txt, txt, 0
+        while #cut > 1 do
+            guard = guard + 1
+            if guard > 256 then break end -- страховка: цикл обязан кончиться
+            local prevLen = #cut
+            local nxt
+            if GRM and isfunction(GRM.Utf8Sub) and isfunction(GRM.Utf8Len) then
+                nxt = GRM.Utf8Sub(cut, GRM.Utf8Len(cut) - 1)
+            end
+            -- КЛЮЧЕВОЕ: если символьная обрезка не дала прогресса
+            -- (битая кодировка), отступаем на байт — прогресс гарантирован
+            if not isstring(nxt) or #nxt >= prevLen then
+                nxt = string.sub(cut, 1, prevLen - 1)
+            end
+            cut = nxt
+            local ww = select(1, surface.GetTextSize(cut .. "…"))
+            if not isnumber(ww) or ww <= maxW then
+                out = cut .. "…"
+                fitCache[key] = out
+                return out
+            end
+        end
+        fitCache[key] = out
+        return out
     end
+    QM.FitText = fitText
 
     local function canToolLocal(id)
         if isAdmin() then return true end
@@ -1214,7 +1267,27 @@ if CLIENT then
                  false и весь блок построения панели не выполнялся НИ РАЗУ:
                  built оставался false и любой инструмент показывал заглушку
                  «нет настраиваемых параметров». Проверяем таблицу. ]]
-            if istable(controlpanel) and isfunction(controlpanel.Get)
+            --[[ ДИАГНОСТИКА ЗАВИСАНИЯ. Панели настроек строит ЧУЖОЙ код:
+                 BuildCPanel каждого установленного stool. До 0cc9b99 этот
+                 блок не выполнялся никогда (условие было isfunction на
+                 таблице), поэтому чужой код и не запускался. Сейчас
+                 запускается — и если какой-то аддон в своей BuildCPanel
+                 уходит в цикл, клиент встанет намертво без ошибки Lua.
+                 Рубильник, чтобы это проверить за минуту прямо в игре:
+                     grm_qmenu_safe 1   → настройки не строим (заглушка)
+                     grm_qmenu_safe 0   → как обычно
+                 Если при 1 меню открывается, виноват BuildCPanel стороннего
+                 инструмента — его имя печатается в консоль ниже. ]]
+            local safeMode = false
+            if ConVarExists and ConVarExists("grm_qmenu_safe") then
+                local cv = GetConVar("grm_qmenu_safe")
+                safeMode = cv and cv:GetBool() or false
+            end
+            if safeMode then
+                print("[GRM QMenu] grm_qmenu_safe=1: пропускаю BuildCPanel для " .. tostring(name))
+            end
+            if (not safeMode)
+                and istable(controlpanel) and isfunction(controlpanel.Get)
                 and istable(weapons) and isfunction(weapons.GetStored) then
                 local ToolObj = weapons.GetStored("gmod_tool")
                 local tool = istable(ToolObj) and istable(ToolObj.Tool) and ToolObj.Tool[name] or nil
@@ -1243,7 +1316,12 @@ if CLIENT then
                          аргументом — делаем так же. Colon-варианты
                          (TOOL:BuildCPanel) в проекте не встречаются, но
                          поддерживаем их запасным вызовом. ]]
+                    --[[ Печатаем имя ДО вызова: если клиент зависнет внутри
+                         чужой BuildCPanel, последняя строка в консоли назовёт
+                         виновника. После — «ok», чтобы видеть, что прошло. ]]
+                    print("[GRM QMenu] BuildCPanel → " .. tostring(name))
                     local okB, errB = QM.BuildToolPanel(tool, CP)
+                    print("[GRM QMenu] BuildCPanel ← " .. tostring(name) .. (okB and " ok" or " пусто"))
                     if okB then built = true
                     elseif errB then
                         print("[GRM QMenu] BuildCPanel error for " .. name .. ": " .. tostring(errB))
