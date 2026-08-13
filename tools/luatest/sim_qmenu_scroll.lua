@@ -238,16 +238,12 @@ do
     local qmenu = read("lua/autorun/sh_grm_qmenu.lua")
     check("sh_grm_qmenu.lua читается", qmenu ~= nil)
     if qmenu then
-        check("settingsBody чистится через :Clear()",
-            qmenu:find("settingsBody:Clear()", 1, true) ~= nil)
-        check("панель тула добавляется через AddItem",
-            qmenu:find("settingsBody:AddItem(CP)", 1, true) ~= nil)
-        check("OnRemove отвязывает общую панель тула",
-            qmenu:find("f.OnRemove", 1, true) ~= nil
-            and qmenu:find("QM._toolCP:SetParent(nil)", 1, true) ~= nil)
         check("заглушка каталога снимается перед перестройкой",
             qmenu:find("clearEmptyBox(sc)", 1, true) ~= nil)
-        -- запрещённый паттерн: удаление детей скролл-панели циклом
+        check("окно имеет OnRemove",
+            qmenu:find("f.OnRemove", 1, true) ~= nil)
+        check("v4 не встраивает чужой ControlPanel",
+            qmenu:find("settingsBody:AddItem(CP)", 1, true) == nil)
         local bad = qmenu:find("for _, ch in ipairs(settingsBody:GetChildren()) do", 1, true)
         check("старый опасный обход GetChildren() удалён", bad == nil)
     end

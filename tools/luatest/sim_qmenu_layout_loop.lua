@@ -151,8 +151,10 @@ if src then
     local direct = bare:match("CP:PerformLayout%s*%(")
     check("нет прямого вызова CP:PerformLayout()", direct == nil,
           "найден прямой вызов")
-    check("есть защита от повторного входа (_grmFitting)",
-          code:find("_grmFitting", 1, true) ~= nil)
+    check("UI не зовёт BuildToolPanel",
+          not bare:find("QM.BuildToolPanel(tool, CP)", 1, true))
+    check("нет самозаказа раскладки (SetTall по ControlPanel)",
+          not bare:find("CP:SetTall", 1, true))
 else
     check("исходник sh_grm_qmenu.lua найден", false, "файл не открылся")
 end

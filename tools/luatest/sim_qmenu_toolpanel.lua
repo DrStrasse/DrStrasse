@@ -241,27 +241,22 @@ io.write("\n--- 7. Подписи как в ванильном Q ---\n")
 local src = io.open("lua/autorun/sh_grm_qmenu.lua", "rb"):read("*a")
 ok(src:find("language.GetPhrase", 1, true) ~= nil,
     "подпись инструмента берётся из language.GetPhrase")
-ok(src:find("local tid, tlabel = t.id, toolLabel(t)", 1, true) ~= nil,
+ok(src:find("toolLabel(t)", 1, true) ~= nil,
     "строка списка использует toolLabel, а не сырой t.label")
-ok(src:find("controlpanel.Create", 1, true) ~= nil,
-    "панель создаётся, если ванильное Q её ещё не строило")
+ok(src:find("fillSchema", 1, true) ~= nil,
+    "настройки строятся из схемы, не из чужого BuildCPanel")
 ok(src:find("pcall(bcp, panel)", 1, true) ~= nil,
     "BuildCPanel зовётся с одним аргументом")
--- Ищем ИСПОЛНЯЕМЫЙ старый вызов, а не упоминание в комментарии-объяснении.
 local codeOnly = src:gsub("%-%-%[%[.-%]%]", ""):gsub("%-%-[^\n]*", "")
 ok(codeOnly:find("pcall(tool.BuildCPanel, tool, CP)", 1, true) == nil,
     "старого ошибочного вызова не осталось в коде")
 
 io.write("\n--- 8. Библиотеки проверяются как таблицы ---\n")
 
--- Второй независимый блокировщик той же заглушки: условие входа в блок
--- построения было isfunction(controlpanel). controlpanel — таблица-библиотека,
--- поэтому проверка всегда давала false и панель не строилась даже с
--- правильным вызовом BuildCPanel.
 ok(codeOnly:find("isfunction(controlpanel)", 1, true) == nil,
     "controlpanel не проверяется как функция (он таблица)")
-ok(codeOnly:find("istable(controlpanel)", 1, true) ~= nil,
-    "controlpanel проверяется как таблица")
+ok(src:find("ResolveSchema", 1, true) ~= nil,
+    "схема резолвится без controlpanel")
 for _, lib in ipairs({ "weapons", "language", "spawnmenu", "net", "draw", "hook", "util" }) do
     ok(codeOnly:find("isfunction(" .. lib .. ")", 1, true) == nil,
         "библиотека " .. lib .. " не проверяется как функция")

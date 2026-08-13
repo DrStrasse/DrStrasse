@@ -1,79 +1,12 @@
 --[[--------------------------------------------------------------------
-    GRM Q-меню и инструменты v3.3.1 (Код 96) — «GRM Стройка+»
+    GRM Q-меню «Стройка» v4.0.0 (Код 96) — переписано с нуля
 
-    v3.3.1 (Код 96, находка 113): окно ещё крупнее — 80%×88% экрана,
-    пределы 1200..1560 × 720..980 (на 1920×1080 ≈ 1536×950).
-    v3.3.0 (Код 95, находка 112):
-      · НАСЛОЕНИЕ ИНСТРУМЕНТОВ (баг из v3.1.0): строки правой колонки
-        создавались БЕЗ Dock(TOP) — скролл не раскладывал их вертикально,
-        вся колонка лежала стопкой в одной точке с нулевой шириной.
-        scrollAdd теперь докует TOP сам (DScrollPanel.AddItem родительства
-        не докует — знать и не повторять!).
-      · HOLD-Q как ванильное: +menu pressed=true → открыть; pressed=false
-        → закрыть (QM.CloseMenu); OpenMenu больше не toggle (повтор при
-        удержании игнорируется), /qm остался переключателем через ресивер.
-    v3.2.1 (Код 94, находка 111, визуальный пас по скриншоту): окно КРУПНЕЕ
-    и ШИРЕ (0.72/0.82 экрана, пределы 1080..1360 × 680..900), футер 64px
-    в два чистых ряда — кнопки 30px с шагом 8px БЕЗ наслоения, строка
-    «Мои пропы / активный инструмент / тост» отделена визуально, шапка
-    правой колонки инструментов поднята до 30px.
-    v3.2.0 (Код 93, находка 110): у владельца живое меню перекрывал ЧУЖОЙ
-    аддон «GRM Restricted Q Menu» (не входит в сборку) — он глушил Q раньше
-    нашего хука. Добавлено:
-      · авто-сенсус чужих обработчиков SpawnMenuOpen/ContextMenuOpen через
-        6с после загрузки клиента — предупреждение в консоль с id-кандидатов
-        (hook.GetTable, все вызовы в garдах, стенды не трогает);
-      · /qm_diag (суперадмин) и консольная grm_qmenu_diag: полный дамп
-        хуков Q-ивентов с пометкой «ЧУЖОЙ» — по id видно, какой аддон
-        перехватывает меню;
-      · Cfg.adminsToo (дефолт false): суперадмину ТОЖЕ открывать
-        «Стройка+» вместо ванильного Q — предпросмотр игрового меню без
-        захода игроком (чекбокс в Настройках, SetOpt).
-    v3.1.0 (Код 92, находка 109): полная переработка визуала по скриншотам
-    владельца. Вёрстка «как у ванильного Q»: слева вкладки + контент,
-    СПРАВА — сворачиваемые категории инструментов (клик = тул в руку,
-    активный подсвечен, меню НЕ закрывается — как в песочнице GMod).
-    Плитки каталога — карточки с иконкой и коротким именем модели,
-    шапка показывает «группа: X · фракция (ранг)» (GetUserGroup +
-    FactionsData), живой счётчик «Мои пропы N/cap» и активный инструмент
-    в футере, тосты отказов — там же. Размер окна адаптируется под экран
-    (math.Clamp от ScrW/ScrH с жёсткими гардами для стендов).
-
-    v3.0.0 (Код 91, находка 108): урезанное spawnmenu настраивается
-    суперадмином КАК ПРОДУКТ, а не командами.
-
-    Модель работы:
-      playersQ=true  → игроки живут с ванильным Q (серверные гейты
-                       спавна/toolgun по флагам allow* действуют всегда).
-      playersQ=false → бинд +menu у игроков глушится универсально (ваниль
-                       и ЛЮБОЕ кастомное меню) и вместо него открывается
-                       GRM Стройка+ — кастомное меню:
-         · Вкладки слева: Каталог пропов (живой поиск, карточки, лимит
-           N/cap пушами); у суперадмина + «Куратор» и «Настройки».
-         · Колонка ИНСТРУМЕНТОВ справа: категории (Соединения, Механика,
-           Свет, Оформление…), свертка кликом по заголовку, запрещённые
-           игроку затемнены с подсказкой, активный тул подсвечен.
-         · Куратор (суперадмин): +из прицела, +по пути, удаление ПКМ,
-           кнопка «Засидеть базовой мебелью» (seed-набор HL2-моделей,
-           сервер отфильтровывает отсутствующие через IsValidModel).
-         · Настройки (суперадмин): все флаги «урезанного Q» прямо в меню
-           (та же таблица Cfg — вкладка «Инструменты» хаба совместима).
-      Безопасность: спавн только через сервер (rate 0.4с, кэп menuPropCap,
-      IsValidModel, анти-"..", каталог при propsFree=false); undo/cleanup
-      движка подключены (Z откатывает меню-пропы); remover игрока работает
-      ТОЛЬКО на его пропах — мебель/перм-энтити GRM защищены (protectFurniture).
-
-    Открытие у игрока: Q (при playersQ=false). У суперадмина: /qm или Q
-    (при выключенном ванильном Q у админа тоже наше меню по /qm).
-
-    Конфиг: data/grm_qmenu.json (jsonT 3-м аргументом, н65), синк всем
-    клиентам (GRM_QMenu_Sync) при входе и каждой правке.
-
-    Публичное API (совместимо с Кодом 83 и хабом):
-      GRM.QMenu.CanUseTool(ply, tool)  → bool, why
-      GRM.QMenu.CanSpawn(ply, what)    → bool, why
-      GRM.QMenu.CanOpenQ(ply)          → bool
-      GRM.QMenu.Version/Cfg/ToolCatalog/Save/Reload
+    v4.0.0: чужой BuildCPanel больше не вызывается; настройки — из схемы
+      данных; иконки порциями; ничего не меряем в Paint; раскладка
+      константами; HOLD-Q как ваниль (зажал — открыто, отпустил — закрыто).
+    Совместимость: GRM.QMenu.Cfg / Save / ToolCatalog / Version / CanUseTool
+      / CanSpawn / CanOpenQ; data/grm_qmenu.json без смены формата;
+      те же 12 net-каналов + List/RemoveIdx для вкладки «Мои объекты».
 ----------------------------------------------------------------------]]
 
 if SERVER then AddCSLuaFile() end
@@ -82,93 +15,66 @@ GRM = GRM or {}
 GRM.QMenu = GRM.QMenu or {}
 local QM = GRM.QMenu
 
-QM.Version = "3.3.1"
+QM.Version = "4.0.0"
 
 local CONFIG_FILE = "grm_qmenu.json"
 
--- Каталог известных инструментов (id — toolgun имя, label — по-русски,
--- desc — подсказка, cat — категория правой колонки меню: connect/mech/
--- light/ui/decor/precise/danger/misc; хаб читает только id+label)
 QM.ToolCatalog = {
-    -- Соединения (constraints)
-    { id = "weld",       label = "Сварка (скрепление пропов)",      desc = "Склеивает два пропа жёстко.",            cat = "connect" },
-    { id = "axis",       label = "Ось",                    desc = "Соединение вращением вокруг точки.",     cat = "connect" },
-    { id = "ballsocket", label = "Шарнир",                          desc = "Подвижное шаровое соединение.",          cat = "connect" },
-    { id = "nocollide",  label = "Без столкновений",                desc = "Два пропа перестают сталкиваться.",      cat = "connect" },
-    { id = "rope",       label = "Верёвка",                         desc = "Связывает пропы тросом.",                cat = "connect" },
+    { id = "weld",       label = "Сварка (скрепление пропов)", desc = "Склеивает два пропа жёстко.",            cat = "connect" },
+    { id = "axis",       label = "Ось",                        desc = "Соединение вращением вокруг точки.",     cat = "connect" },
+    { id = "ballsocket", label = "Шарнир",                     desc = "Подвижное шаровое соединение.",          cat = "connect" },
+    { id = "nocollide",  label = "Без столкновений",           desc = "Два пропа перестают сталкиваться.",      cat = "connect" },
+    { id = "rope",       label = "Верёвка",                    desc = "Связывает пропы тросом.",                cat = "connect" },
     { id = "pulley",     label = "Блок",                       desc = "Трос через блок.",                       cat = "connect" },
-    { id = "winch",      label = "Лебёдка",                         desc = "Трос с управляемой длиной.",             cat = "connect" },
-    { id = "hydraulics", label = "Гидравлика",                      desc = "Управляемое давление/ход.",              cat = "connect" },
-    { id = "muscle",     label = "Мышца",                     desc = "Упругая связка-амортизатор.",            cat = "connect" },
-    { id = "slider",     label = "Слайдер",                         desc = "Движение вдоль оси.",                    cat = "connect" },
-    -- Механика
-    { id = "wheel",      label = "Колесо",                          desc = "Ставит колесо на проп.",                 cat = "mech" },
-    { id = "motor",      label = "Мотор",                           desc = "Вращение по вводу.",                     cat = "mech" },
-    { id = "thruster",   label = "Ускоритель",                  desc = "Реактивная тяга по клавише.",            cat = "mech" },
-    { id = "hoverball",  label = "Ховербол",                        desc = "Поднимает предмет на высоте.",           cat = "mech" },
-    { id = "balloon",    label = "Воздушный шар",                          desc = "Воздушный шар с тяговым усилием.",       cat = "mech" },
-    -- Свет и эффекты
-    { id = "light",      label = "Источник света",                   desc = "Точечный источник света.",               cat = "light" },
-    { id = "lamp",       label = "Лампа",                           desc = "Прожектор/лампа.",                       cat = "light" },
-    { id = "emitter",    label = "Эмиттер",               desc = "Частицы/эффекты — дым, огонь.",          cat = "light" },
-    -- Интерфейс
-    { id = "button",     label = "Кнопка",                          desc = "Сигнальная кнопка.",                     cat = "ui" },
-    { id = "camera",     label = "Камера",                          desc = "Камера наблюдателя.",                    cat = "ui" },
-    { id = "textscreen", label = "Текстовый экран",                 desc = "Табличка с текстом на карте.",           cat = "ui" },
-    { id = "grm_minimap", label = "GRM: районы и точки",             desc = "Районы, точки захвата и мини-карта.",      cat = "ui" },
-    { id = "grm_vendor_tool", label = "GRM: торговцы", desc = "Торговцы предметами и аксессуарами.", cat = "ui" },
-    { id = "vehicle_dealer_tool", label = "GRM: дилер и площадка выдачи", desc = "Единый инструмент дилера, гаража и безопасной площадки транспорта.", cat = "ui" },
-    { id = "grm_quest_tool", label = "GRM: конструктор квестов", desc = "Квестовые NPC, зоны целей и точки кат-сцен.", cat = "ui" },
-    { id = "grm_network_tool", label = "GRM: электроника и интернет", desc = "Компьютеры, роутеры, принтеры, розетки и кабели связи.", cat = "ui" },
-    { id = "grm_door_admin", label = "GRM: двери", desc = "Канонические двери, владельцы и доступы без дублей.", cat = "ui" },
-    { id = "grm_sliding_door", label = "GRM: раздвижная дверь", desc = "Проп → раздвижная дверь (сдвиг, скорость, плавность) + FFD Link.", cat = "ui" },
-    { id = "grm_bank_tool", label = "GRM: банковское оборудование", desc = "Хранилище, печатный станок (5000/10с), терминал, точка выдачи, отмывщик денег (ивент ограбление).", cat = "ui" },
-    -- Оформление
-    { id = "colour",     label = "Цвет",                      desc = "Перекраска и прозрачность.",             cat = "decor" },
-    { id = "material",   label = "Материал",                  desc = "Смена материала/текстуры.",              cat = "decor" },
-    { id = "paint",      label = "Краска",                 desc = "Спрей-декали.",                          cat = "decor" },
-    { id = "trails",     label = "Трейлы",                          desc = "Шлейф за объектом.",                     cat = "decor" },
-    -- Точность и копирование
-    { id = "remover",    label = "Ремувер",                 desc = "Убирает проп; свои — всегда можно.",     cat = "precise" },
-    { id = "precision",  label = "Точное перемещение",  desc = "Точный сдвиг/поворот.",                  cat = "precise" },
-    { id = "stacker",    label = "Стакер",         desc = "Колонны/ряды одинаковых пропов.",        cat = "precise" },
-    { id = "duplicator", label = "Дубликатор",                      desc = "Копирует конструкции — абуз.",           cat = "precise" },
-    { id = "advdupe2",   label = "Adv. Duplicator 2",               desc = "Продвинутый дубликатор — абуз.",         cat = "precise" },
-    -- Опасные
-    { id = "dynamite",   label = "Динамит",                 desc = "Взрывчатка — опасно.",                   cat = "danger" },
-    { id = "turret",     label = "Турель",                 desc = "Стреляющая турель — опасно.",            cat = "danger" },
-    { id = "igniter",    label = "Поджигатель",                     desc = "Поджигает цель.",                        cat = "danger" },
-    { id = "spawner",    label = "Спавнер",               desc = "Автоспавн предметов — абуз.",            cat = "danger" },
+    { id = "winch",      label = "Лебёдка",                    desc = "Трос с управляемой длиной.",             cat = "connect" },
+    { id = "hydraulics", label = "Гидравлика",                 desc = "Управляемое давление/ход.",              cat = "connect" },
+    { id = "muscle",     label = "Мышца",                      desc = "Упругая связка-амортизатор.",            cat = "connect" },
+    { id = "slider",     label = "Слайдер",                    desc = "Движение вдоль оси.",                    cat = "connect" },
+    { id = "wheel",      label = "Колесо",                     desc = "Ставит колесо на проп.",                 cat = "mech" },
+    { id = "motor",      label = "Мотор",                      desc = "Вращение по вводу.",                     cat = "mech" },
+    { id = "thruster",   label = "Ускоритель",                 desc = "Реактивная тяга по клавише.",            cat = "mech" },
+    { id = "hoverball",  label = "Ховербол",                   desc = "Поднимает предмет на высоте.",           cat = "mech" },
+    { id = "balloon",    label = "Воздушный шар",              desc = "Воздушный шар с тяговым усилием.",       cat = "mech" },
+    { id = "light",      label = "Источник света",              desc = "Точечный источник света.",               cat = "light" },
+    { id = "lamp",       label = "Лампа",                      desc = "Прожектор/лампа.",                       cat = "light" },
+    { id = "emitter",    label = "Эмиттер",                    desc = "Частицы/эффекты — дым, огонь.",          cat = "light" },
+    { id = "button",     label = "Кнопка",                     desc = "Сигнальная кнопка.",                     cat = "ui" },
+    { id = "camera",     label = "Камера",                     desc = "Камера наблюдателя.",                    cat = "ui" },
+    { id = "textscreen", label = "Текстовый экран",            desc = "Табличка с текстом на карте.",           cat = "ui" },
+    { id = "grm_minimap",        label = "GRM: районы и точки",              desc = "Районы, точки захвата и мини-карта.", cat = "ui" },
+    { id = "grm_vendor_tool",    label = "GRM: торговцы",                    desc = "Торговцы предметами и аксессуарами.", cat = "ui" },
+    { id = "vehicle_dealer_tool",label = "GRM: дилер и площадка выдачи",     desc = "Дилер, гараж и площадка транспорта.", cat = "ui" },
+    { id = "grm_quest_tool",     label = "GRM: конструктор квестов",         desc = "Квестовые NPC, зоны и кат-сцены.", cat = "ui" },
+    { id = "grm_network_tool",   label = "GRM: электроника и интернет",      desc = "Компьютеры, роутеры, розетки.", cat = "ui" },
+    { id = "grm_door_admin",     label = "GRM: двери",                       desc = "Канонические двери и доступы.", cat = "ui" },
+    { id = "grm_sliding_door",   label = "GRM: раздвижная дверь",            desc = "Проп → раздвижная дверь + FFD Link.", cat = "ui" },
+    { id = "grm_bank_tool",      label = "GRM: банковское оборудование",     desc = "Хранилище, станок, терминал, отмыв.", cat = "ui" },
+    { id = "grm_perm_tool",      label = "GRM: перм-проп (закрепление)",     desc = "Закрепить объект на карте.", cat = "ui" },
+    { id = "grm_service_tool",   label = "GRM: служебное оборудование",      desc = "Компьютеры ведомств.", cat = "ui" },
+    { id = "grm_arrest_zone",    label = "GRM: зона ареста",                 desc = "Камеры и зоны содержания.", cat = "ui" },
+    { id = "grm_augmentation",   label = "GRM: аугментации",                 desc = "Станции и поды аугментаций.", cat = "ui" },
+    { id = "grm_citadel_core",   label = "GRM: ядро Цитадели",               desc = "Размещение ядра Цитадели.", cat = "ui" },
+    { id = "grm_lab_tool",       label = "GRM: лаборатории",                 desc = "Мед- и нарко-лаборатории.", cat = "ui" },
+    { id = "colour",     label = "Цвет",                 desc = "Перекраска и прозрачность.",             cat = "decor" },
+    { id = "material",   label = "Материал",             desc = "Смена материала/текстуры.",              cat = "decor" },
+    { id = "paint",      label = "Краска",               desc = "Спрей-декали.",                          cat = "decor" },
+    { id = "trails",     label = "Трейлы",               desc = "Шлейф за объектом.",                     cat = "decor" },
+    { id = "remover",    label = "Ремувер",              desc = "Убирает проп; свои — всегда можно.",     cat = "precise" },
+    { id = "precision",  label = "Точное перемещение",   desc = "Точный сдвиг/поворот.",                  cat = "precise" },
+    { id = "stacker",    label = "Стакер",               desc = "Колонны/ряды одинаковых пропов.",        cat = "precise" },
+    { id = "duplicator", label = "Дубликатор",           desc = "Копирует конструкции — абуз.",           cat = "precise" },
+    { id = "advdupe2",   label = "Adv. Duplicator 2",    desc = "Продвинутый дубликатор — абуз.",         cat = "precise" },
+    { id = "dynamite",   label = "Динамит",              desc = "Взрывчатка — опасно.",                   cat = "danger" },
+    { id = "turret",     label = "Турель",               desc = "Стреляющая турель — опасно.",            cat = "danger" },
+    { id = "igniter",    label = "Поджигатель",          desc = "Поджигает цель.",                        cat = "danger" },
+    { id = "spawner",    label = "Спавнер",              desc = "Автоспавн предметов — абуз.",            cat = "danger" },
+    { id = "ffd_fading_door", label = "GRM: исчезающая дверь", desc = "Проп → fading door.",              cat = "misc" },
+    { id = "ffd_keypad",      label = "GRM: кодовый замок",    desc = "PIN-кейпад.",                      cat = "misc" },
+    { id = "ffd_link",        label = "GRM: связь FFD",        desc = "Связать кейпад/сканер с дверью.",  cat = "misc" },
+    { id = "ffd_scanner",     label = "GRM: сканер фракций",   desc = "Доступ по фракции.",               cat = "misc" },
+    { id = "fading_door",     label = "Fading Door (легаси)",  desc = "Старый fading door.",              cat = "misc" },
+    { id = "keypad",          label = "Кейпад (легаси)",       desc = "Старый кейпад.",                   cat = "misc" },
 }
-
--- Порядок категорий правой колонки (id ↔ cat в таблице выше)
---[[ Построить панель настроек инструмента. Вынесено из UI отдельной функцией,
-     чтобы стенд мог проверить САМ ВЫЗОВ без vgui: именно здесь жил дефект
-     задачи 13 — панель звали с лишним аргументом, ошибка глоталась pcall и
-     все инструменты показывали «нет настраиваемых параметров».
-     Возвращает: built(bool), err(string|nil). ]]
-function QM.BuildToolPanel(tool, panel)
-    local isfn = function(v) return type(v) == "function" end
-    local istbl = function(v) return type(v) == "table" end
-    if not istbl(tool) or not (istbl(panel) or type(panel) == "userdata") then
-        return false, nil
-    end
-    local bcp = tool.BuildCPanel
-    if isfn(bcp) then
-        -- Движок зовёт BuildCPanel(panel): точка, ОДИН аргумент.
-        local ok, err = pcall(bcp, panel)
-        if ok then return true, nil end
-        -- Запасной путь: стул, объявленный через colon (TOOL:BuildCPanel).
-        if pcall(bcp, tool, panel) then return true, nil end
-        return false, err
-    end
-    -- Контролы могли добавить заранее (spawnmenu-функцией) — панель непустая.
-    if isfn(panel.GetChildren) then
-        local ok, ch = pcall(panel.GetChildren, panel)
-        if ok and istbl(ch) and #ch > 0 then return true, nil end
-    end
-    return false, nil
-end
 
 QM.ToolCategories = {
     { id = "connect", name = "Соединения" },
@@ -181,7 +87,6 @@ QM.ToolCategories = {
     { id = "misc",    name = "Прочее" },
 }
 
--- Seed-набор базовой мебели (HL2-коробка; сервер отфильтрует отсутствующие)
 QM.SeedProps = {
     "models/props_c17/furnituretable001a.mdl",
     "models/props_c17/furnituretable002a.mdl",
@@ -203,35 +108,154 @@ QM.SeedProps = {
     "models/props_junk/propanecanister001a.mdl",
 }
 
--- Заводской дефолт конфига (RP-профиль)
 local function defaultCfg()
     return {
-        playersQ     = true,   -- ванильное Q игрокам
-        allowProps   = true,   -- пропы
+        playersQ     = true,
+        allowProps   = true,
         allowRagdolls= true,
-        allowEffects = false,  -- эффекты — админам
+        allowEffects = false,
         allowNPCs    = false,
         allowSENTs   = false,
         allowSWEPs   = false,
         allowVehiclesQ = false,
-        whitelistMode  = false,-- игрокам ТОЛЬКО инструменты из toolAllow
+        whitelistMode  = false,
         toolDeny  = {
             dynamite = true, turret = true, igniter = true, spawner = true,
             duplicator = true, advdupe2 = true, emitter = true,
         },
         toolAllow = {},
-        grmBuildMenu = true,   -- при playersQ=false Q открывает GRM Стройку
-        propsFree    = false,  -- true → любые модели; false → только propList
+        grmBuildMenu = true,
+        propsFree    = false,
         propList     = {},
-        menuPropCap  = 24,     -- лимит меню-пропов на игрока
-        -- v3.0.0
-        protectFurniture = true, -- remover игроков — только на их пропах
-        -- v3.2.0
-        adminsToo    = false,  -- суперадмину тоже наше меню вместо ванильного Q
+        menuPropCap  = 24,
+        protectFurniture = true,
+        adminsToo    = false,
     }
 end
 
 QM.Cfg = QM.Cfg or defaultCfg()
+
+function QM.InCatalog(id)
+    id = string.lower(tostring(id or ""))
+    for _, t in ipairs(QM.ToolCatalog) do
+        if t.id == id then return true end
+    end
+    return false
+end
+
+-- Схема настроек: данные, не чужой код. BuildCPanel не вызывается.
+QM.Schema = {
+    grm_perm_tool = {
+        { cvar = "grm_perm_tool_owner",  type = "choice", label = "Кому принадлежит",
+          choices = { { "Серверное оборудование", "server" }, { "Фракция", "faction" }, { "Мой персонаж", "character" } } },
+        { cvar = "grm_perm_tool_faction", type = "text", label = "Фракция (пусто = ваша)" },
+        { cvar = "grm_perm_tool_freeze", type = "bool",   label = "Заморозить" },
+        { cvar = "grm_perm_tool_label",  type = "text",   label = "Метка" },
+    },
+    grm_service_tool = {
+        { cvar = "grm_service_tool_type", type = "choice", label = "Тип компьютера",
+          choices = { { "Полиция", "police" }, { "Жандармерия", "military_police" }, { "Спецслужбы", "security" },
+                      { "Военкомат", "military" }, { "Автоинспекция", "traffic" }, { "Госпиталь", "medical" } } },
+        { cvar = "grm_service_tool_title", type = "text", label = "Заголовок" },
+        { cvar = "grm_service_tool_make_perm", type = "bool", label = "Сохранять на карте" },
+    },
+    grm_bank_tool = {
+        { cvar = "grm_bank_tool_type", type = "choice", label = "Тип",
+          choices = { { "Хранилище", "vault" }, { "Компьютер банка", "computer" }, { "Станок", "press" },
+                      { "Терминал станка", "terminal" }, { "Точка выдачи", "spawnpoint" },
+                      { "Отмывщик", "launderer" }, { "Цель ивента", "heisttarget" } } },
+    },
+    grm_sliding_door = {
+        { cvar = "grm_sliding_door_direction", type = "choice", label = "Направление",
+          choices = { { "Влево", "left" }, { "Вправо", "right" }, { "Вверх", "up" }, { "Вниз", "down" } } },
+        { cvar = "grm_sliding_door_distance", type = "number", label = "Дистанция" },
+        { cvar = "grm_sliding_door_speed",    type = "number", label = "Скорость" },
+        { cvar = "grm_sliding_door_smooth",   type = "bool",   label = "Плавность" },
+        { cvar = "grm_sliding_door_toggle",   type = "bool",   label = "Переключатель" },
+        { cvar = "grm_sliding_door_autoclose",type = "bool",   label = "Автозакрытие" },
+        { cvar = "grm_sliding_door_closetime",type = "number", label = "Секунд до закрытия" },
+    },
+    grm_vendor_tool = {
+        { cvar = "grm_vendor_tool_type", type = "choice", label = "Тип торговца",
+          choices = { { "Оружие", "weapon" }, { "Руда", "ore" }, { "Еда", "food" },
+                      { "Редкости", "rare" }, { "Аксессуары", "accessory" } } },
+    },
+    ffd_fading_door = {
+        { cvar = "ffd_fading_door_key", type = "number", label = "Клавиша" },
+        { cvar = "ffd_fading_door_reversed", type = "bool", label = "Инверсия" },
+        { cvar = "ffd_fading_door_toggle", type = "bool", label = "Переключатель" },
+        { cvar = "ffd_fading_door_autoclose", type = "bool", label = "Автозакрытие" },
+        { cvar = "ffd_fading_door_time", type = "number", label = "Секунд" },
+    },
+    ffd_keypad = {
+        { cvar = "ffd_keypad_password", type = "text", label = "PIN" },
+        { cvar = "ffd_keypad_hold_time", type = "number", label = "Удержание, сек" },
+    },
+    ffd_scanner = {
+        { cvar = "ffd_scanner_faction", type = "text", label = "Фракция" },
+        { cvar = "ffd_scanner_hold_time", type = "number", label = "Удержание, сек" },
+    },
+}
+
+function QM.SchemaFromConVars(cvars)
+    local out = {}
+    if not istable(cvars) then return out end
+    local n = 0
+    for k, v in pairs(cvars) do
+        n = n + 1
+        if n > 32 then break end
+        if isstring(k) then
+            local sv = tostring(v)
+            local row = { cvar = k, label = k }
+            if sv == "0" or sv == "1" then
+                row.type = "bool"
+            elseif tonumber(sv) ~= nil then
+                row.type = "number"
+            else
+                row.type = "text"
+            end
+            out[#out + 1] = row
+        end
+    end
+    table.sort(out, function(a, b) return a.cvar < b.cvar end)
+    return out
+end
+
+function QM.ResolveSchema(toolId)
+    toolId = tostring(toolId or "")
+    if QM.Schema[toolId] then return QM.Schema[toolId], "hand" end
+    if istable(weapons) and isfunction(weapons.GetStored) then
+        local ToolObj = weapons.GetStored("gmod_tool")
+        local tool = istable(ToolObj) and istable(ToolObj.Tool) and ToolObj.Tool[toolId] or nil
+        if istable(tool) and istable(tool.ClientConVar) then
+            local auto = QM.SchemaFromConVars(tool.ClientConVar)
+            if #auto > 0 then return auto, "auto" end
+        end
+    end
+    return nil, "none"
+end
+
+--[[ Построить панель настроек инструмента. Оставлено для регрессии
+     sim_qmenu_toolpanel: UI v4 эту функцию НЕ вызывает. ]]
+function QM.BuildToolPanel(tool, panel)
+    local isfn = function(v) return type(v) == "function" end
+    local istbl = function(v) return type(v) == "table" end
+    if not istbl(tool) or not (istbl(panel) or type(panel) == "userdata") then
+        return false, nil
+    end
+    local bcp = tool.BuildCPanel
+    if isfn(bcp) then
+        local ok, err = pcall(bcp, panel)
+        if ok then return true, nil end
+        if pcall(bcp, tool, panel) then return true, nil end
+        return false, err
+    end
+    if isfn(panel.GetChildren) then
+        local ok, ch = pcall(panel.GetChildren, panel)
+        if ok and istbl(ch) and #ch > 0 then return true, nil end
+    end
+    return false, nil
+end
 
 -- ============================================================
 -- СЕРВЕР
@@ -242,7 +266,6 @@ if SERVER then
         return (ok and istable(t)) and t or nil
     end
 
-    -- ── сеть ────────────────────────────────────────────────
     local NET_SYNC    = "GRM_QMenu_Sync"
     local NET_SPAWN   = "GRM_QMenu_SpawnProp"
     local NET_REMOVE1 = "GRM_QMenu_RemoveOne"
@@ -255,8 +278,11 @@ if SERVER then
     local NET_FEED    = "GRM_QMenu_Feedback"
     local NET_OPEN    = "GRM_QMenu_Open"
     local NET_DIAG    = "GRM_QMenu_Diag"
+    local NET_LIST    = "GRM_QMenu_List"
+    local NET_RMIDX   = "GRM_QMenu_RemoveIdx"
     for _, s in ipairs({ NET_SYNC, NET_SPAWN, NET_REMOVE1, NET_CLEAR, NET_GUN,
-        NET_TOOL, NET_CURATE, NET_SEED, NET_SETOPT, NET_FEED, NET_OPEN, NET_DIAG }) do
+        NET_TOOL, NET_CURATE, NET_SEED, NET_SETOPT, NET_FEED, NET_OPEN, NET_DIAG,
+        NET_LIST, NET_RMIDX }) do
         util.AddNetworkString(s)
     end
 
@@ -271,7 +297,6 @@ if SERVER then
         end)
     end)
 
-    -- Feedback: op 1 = счётчик пропов (count/cap), op 2 = тост-строка
     local function feedCount(ply)
         if not IsValid(ply) then return end
         local list = QM._menuProps and QM._menuProps[ply] or {}
@@ -290,10 +315,9 @@ if SERVER then
             net.WriteString(string.sub(tostring(text or ""), 1, 200))
         net.Send(ply)
     end
-    QM._devFeedCount = feedCount -- тест-экспорт
+    QM._devFeedCount = feedCount
     QM._devFeedToast = feedToast
 
-    -- ── конфиг ──────────────────────────────────────────────
     local function sanitizeList(t)
         local out = {}
         if istable(t) then
@@ -347,7 +371,6 @@ if SERVER then
     end
     function QM.Reload() return QM.Load("ручная") end
 
-    -- ── проверки (суперадмин всегда может) ──────────────────
     function QM.CanOpenQ(ply)
         if IsValid(ply) and (ply:GetNWBool("GRM_Cuffed", false) or ply:GetNWBool("GRM_Stunned", false)) then
             return false
@@ -387,7 +410,6 @@ if SERVER then
         return true
     end
 
-    -- ── серверные гейты спавна по типам ─────────────────────
     hook.Add("PlayerSpawnProp", "GRM_QMenu_Prop", function(ply)
         if not GRM.QMenu.CanSpawn(ply, "prop") then
             ply:PrintMessage(HUD_PRINTCENTER, "Спавн пропов запрещён администрацией")
@@ -416,7 +438,6 @@ if SERVER then
         end
     end)
 
-    -- защита мебели/перм-энтити GRM от чужого тулгана (v3.0.0, находка 108)
     local function grmFurniture(ent)
         if not IsValid(ent) then return false end
         if ent._grmPerm or ent._grmRNKey or ent._grmBCKey then return true end
@@ -449,8 +470,7 @@ if SERVER then
         end
     end)
 
-    -- ── меню-пропы: реестр, спавн, удаление ─────────────────
-    QM._menuProps = QM._menuProps or {} -- ply → массив энтити
+    QM._menuProps = QM._menuProps or {}
     QM._spawnRate = QM._spawnRate or {}
 
     local function cleanRegistry(ply)
@@ -462,11 +482,19 @@ if SERVER then
         return list
     end
 
+    local function modelPathOk(model)
+        model = tostring(model or "")
+        if model == "" or string.find(model, "%.%.") then return false end
+        if not string.match(model, "^models/.+%.mdl$") then return false end
+        return true
+    end
+
     function QM.CanSpawnMenuProp(ply, model)
         if not IsValid(ply) then return false, "?" end
         model = tostring(model or "")
         if model == "" or string.find(model, "%.%.") then return false, "Некорректная модель" end
         if ply:IsSuperAdmin() then return true end
+        if not modelPathOk(model) then return false, "Некорректная модель" end
         if QM.Cfg.grmBuildMenu ~= true then return false, "Меню стройки отключено администрацией" end
         if not QM.CanSpawn(ply, "prop") then return false, "Спавн пропов запрещён администрацией" end
         if QM.Cfg.propsFree == true then return true end
@@ -477,7 +505,6 @@ if SERVER then
     end
 
     local function registerSpawned(ply, ent)
-        -- undo (Z) + cleanup движка — guards от отсутствующих библиотек
         if undo and undo.Create then
             pcall(function()
                 undo.Create("Prop")
@@ -490,6 +517,10 @@ if SERVER then
             pcall(function() cleanup.Add(ply, "props", ent) end)
         end
         ent.GRM_MenuOwner = ply
+        ent._grmQMenuOwner = ply
+        if GRM.Identity and isfunction(GRM.Identity.CharacterKey) then
+            ent._grmQMenuChar = GRM.Identity.CharacterKey(ply)
+        end
     end
 
     function QM.SpawnMenuProp(ply, model)
@@ -526,11 +557,7 @@ if SERVER then
     net.Receive(NET_SPAWN, function(_, ply)
         if not IsValid(ply) then return end
         local ok, msg = QM.SpawnMenuProp(ply, net.ReadString())
-        if ok then
-            feedCount(ply)
-        else
-            feedToast(ply, tostring(msg))
-        end
+        if ok then feedCount(ply) else feedToast(ply, tostring(msg)) end
     end)
 
     local function clearProps(ply)
@@ -562,13 +589,58 @@ if SERVER then
         feedCount(ply)
     end)
 
+    local function sendList(ply)
+        if not IsValid(ply) then return end
+        local list = cleanRegistry(ply)
+        local n = 0
+        for _, e in ipairs(list) do if IsValid(e) then n = n + 1 end end
+        net.Start(NET_LIST)
+            net.WriteUInt(math.min(n, 200), 8)
+            local sent = 0
+            for _, e in ipairs(list) do
+                if IsValid(e) and sent < 200 then
+                    sent = sent + 1
+                    local dist = 0
+                    if e.GetPos and ply.GetPos then
+                        local a, b = e:GetPos(), ply:GetPos()
+                        if a.Distance then
+                            dist = math.floor(a:Distance(b))
+                        elseif a.DistToSqr then
+                            dist = math.floor(math.sqrt(a:DistToSqr(b)))
+                        end
+                    end
+                    net.WriteString(string.sub(tostring(e:GetModel() or ""), 1, 120))
+                    net.WriteUInt(math.Clamp(dist, 0, 65535), 16)
+                    net.WriteUInt(e:EntIndex() or 0, 16)
+                end
+            end
+        net.Send(ply)
+    end
+    net.Receive(NET_LIST, function(_, ply)
+        if IsValid(ply) then sendList(ply) end
+    end)
+    net.Receive(NET_RMIDX, function(_, ply)
+        if not IsValid(ply) then return end
+        local idx = net.ReadUInt(16)
+        local list = cleanRegistry(ply)
+        for _, e in ipairs(list) do
+            if IsValid(e) and e:EntIndex() == idx and (e.GRM_MenuOwner == ply or ply:IsSuperAdmin()) then
+                e:Remove()
+                cleanRegistry(ply)
+                feedToast(ply, "Проп убран")
+                feedCount(ply)
+                sendList(ply)
+                return
+            end
+        end
+        feedToast(ply, "Объект не найден")
+    end)
+
     hook.Add("PlayerDisconnected", "GRM_QMenu_Disconnect", function(ply)
-        -- пропы остаются на карте (как в ваниле), реестр памяти чистим
         if QM._menuProps then QM._menuProps[ply] = nil end
         if QM._spawnRate then QM._spawnRate[ply] = nil end
     end)
 
-    -- ── тулган / инструменты ────────────────────────────────
     local function anyToolAllowed(ply)
         if IsValid(ply) and ply:IsSuperAdmin() then return true end
         for _, t in ipairs(QM.ToolCatalog) do
@@ -604,7 +676,6 @@ if SERVER then
         ply:SelectWeapon("gmod_tool")
     end)
 
-    -- ── куратор каталога (только суперадмин) ────────────────
     local function curateAdd(ply, model)
         if not IsValid(ply) or not ply:IsSuperAdmin() then return false, "Только суперадмин" end
         model = string.lower(tostring(model or ""))
@@ -638,16 +709,15 @@ if SERVER then
         local model = net.ReadString()
         if op == 1 then
             local ok, msg = curateAdd(ply, model)
-            feedToast(ply, ok and "В каталог: " .. string.lower(tostring(model)) or tostring(msg))
+            feedToast(ply, ok and ("В каталог: " .. string.lower(tostring(model))) or tostring(msg))
         elseif op == 2 then
             local ok, msg = curateDel(ply, model)
             feedToast(ply, ok and "Убрано из каталога" or tostring(msg))
         end
     end)
 
-    -- seed: долить базовую мебель (только валидные на сервере модели)
     local function seedCatalog(ply)
-        if not IsValid(ply) or not ply:IsSuperAdmin() then return 0, "Только суперадмин" end
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return nil, "Только суперадмин" end
         QM.Cfg.propList = QM.Cfg.propList or {}
         local have = {}
         for _, m in ipairs(QM.Cfg.propList) do have[m] = true end
@@ -667,14 +737,20 @@ if SERVER then
     net.Receive(NET_SEED, function(_, ply)
         if not IsValid(ply) then return end
         local n, msg = seedCatalog(ply)
-        feedToast(ply, n and ("Мебельный набор: добавлено " .. tostring(n)) or tostring(msg or "Нечего добавлять"))
-        if n == 0 then feedToast(ply, "Каталог уже содержит весь набор (или модели отсутствуют на сервере)") end
+        if n == nil then
+            feedToast(ply, tostring(msg or "Нет прав"))
+        elseif n == 0 then
+            feedToast(ply, "Каталог уже содержит весь набор (или модели отсутствуют на сервере)")
+        else
+            feedToast(ply, "Мебельный набор: добавлено " .. tostring(n))
+        end
     end)
 
-    -- ── настройки из меню (только суперадмин) ───────────────
     local OPT_BOOL = {
         playersQ = true, grmBuildMenu = true, propsFree = true,
         whitelistMode = true, protectFurniture = true, adminsToo = true,
+        allowProps = true, allowRagdolls = true, allowEffects = true,
+        allowNPCs = true, allowSENTs = true, allowSWEPs = true, allowVehiclesQ = true,
     }
     net.Receive(NET_SETOPT, function(_, ply)
         if not IsValid(ply) or not ply:IsSuperAdmin() then return end
@@ -697,10 +773,13 @@ if SERVER then
         end
     end)
 
-    -- ── /qm и легаси-команды ────────────────────────────────
+    local lastChat = {}
     function QM.HandleChat(ply, text)
         local low = string.lower(string.Trim(text or ""))
+        local stamp = tostring(ply) .. "|" .. low
+        if lastChat[stamp] == CurTime() then return true end
         if low == "/qm" or low == "/build" then
+            lastChat[stamp] = CurTime()
             net.Start(NET_OPEN)
             net.Send(ply)
             return true
@@ -763,11 +842,11 @@ if SERVER then
     end)
 
     QM.Load("старт")
-    print("[GRM QMenu] Стройка+ v" .. QM.Version .. " загружена (Код 96). Игрок: зажать Q | Админ: /qm | Хаб: /grm_admin → «Инструменты»")
+    print("[GRM QMenu] Стройка v" .. QM.Version .. " загружена. Игрок: зажать Q | Админ: /qm | Хаб: /grm_admin → «Инструменты»")
 end
 
 -- ============================================================
--- КЛИЕНТ (меню GRM Стройка+ v3.1.0, Код 92 — вёрстка «как ванильное Q»)
+-- КЛИЕНТ
 -- ============================================================
 if CLIENT then
     if istable(surface) and surface.CreateFont then
@@ -778,29 +857,45 @@ if CLIENT then
         surface.CreateFont("GRMQ_Tab",   { font = "Roboto", size = 13, weight = 700, extended = true })
     end
 
-    -- guard для тест-стендов без движкового Color (стенд гоняет OpenMenu
-    -- на «пустых» панелях — любая арифметика на них запрещена, н108)
     local _C = isfunction(Color) and Color
         or function(r, g, b, a) return { r = r, g = g, b = b, a = a or 255 } end
     local QC = {
         bg = _C(17, 21, 29, 252), head = _C(24, 29, 40, 255), panel = _C(30, 36, 49, 240),
-        panel2 = _C(36, 43, 58, 255), line = _C(52, 62, 82, 255), ink = _C(13, 16, 23, 255),
+        panel2 = _C(36, 43, 58, 255), line = _C(52, 62, 82, 255),
         acc = _C(64, 145, 240), green = _C(58, 188, 108), red = _C(216, 74, 70),
         yellow = _C(228, 178, 58), text = _C(238, 243, 250), dim = _C(150, 160, 178),
         dim2 = _C(96, 105, 124),
     }
 
-    -- живой конфиг с сервера
+    if isfunction(CreateClientConVar) then
+        CreateClientConVar("grm_qmenu_safe", "0", true, false, "1 — без иконок и полки")
+        CreateClientConVar("grm_qmenu_profile", "0", true, false, "1 — печать этапов сборки")
+    end
+
+    local function safeMode()
+        if ConVarExists and ConVarExists("grm_qmenu_safe") then
+            local cv = GetConVar("grm_qmenu_safe")
+            return cv and cv.GetBool and cv:GetBool() or false
+        end
+        return false
+    end
+    local function profileOn()
+        if ConVarExists and ConVarExists("grm_qmenu_profile") then
+            local cv = GetConVar("grm_qmenu_profile")
+            return cv and cv.GetBool and cv:GetBool() or false
+        end
+        return false
+    end
+
     net.Receive("GRM_QMenu_Sync", function()
         local t = net.ReadTable()
         if not istable(t) then return end
         local d = GRM.QMenu.Cfg or {}
         for k, v in pairs(t) do d[k] = v end
         GRM.QMenu.Cfg = d
-        if IsValid(GRM.QMenu._frame) and GRM.QMenu._rebuild then GRM.QMenu._rebuild() end
+        QM._stale = true
     end)
 
-    -- feedback: op 1 = счётчик, op 2 = тост (отрисовка — в футере рамки)
     net.Receive("GRM_QMenu_Feedback", function()
         local op = net.ReadUInt(4)
         if op == 1 then
@@ -808,17 +903,21 @@ if CLIENT then
             GRM.QMenu._cap = net.ReadUInt(16)
         elseif op == 2 then
             GRM.QMenu._toast = net.ReadString()
-            GRM.QMenu._toastAt = CurTime() + 4
+            GRM.QMenu._toastAt = CurTime() + 3
+            GRM.QMenu._toastBad = true
         end
     end)
 
     net.Receive("GRM_QMenu_Open", function()
         if not (GRM.QMenu and GRM.QMenu.OpenMenu) then return end
-        if IsValid(GRM.QMenu._frame) and GRM.QMenu.CloseMenu then GRM.QMenu.CloseMenu()
-        else GRM.QMenu.OpenMenu() end
+        if IsValid(GRM.QMenu._frame) then
+            if GRM.QMenu._holdOpen then return end
+            if GRM.QMenu.CloseMenu then GRM.QMenu.CloseMenu() end
+        else
+            GRM.QMenu.OpenMenu(false)
+        end
     end)
 
-    -- ── диагностика перехватчиков Q (v3.2.0, находка 110) ──
     local function isOurs(id)
         local s = tostring(id)
         return string.find(s, "GRM", 1, true) ~= nil or string.find(s, "grm_", 1, true) ~= nil
@@ -845,7 +944,7 @@ if CLIENT then
         for _, r in ipairs(bad) do
             print(("[GRM QMenu]  %s  [ %s ]  <-- ЧУЖОЙ"):format(r.ev, r.id))
         end
-        print(("[GRM QMenu] чужих обработчиков: %d. Q открывает чужое окно? Отключите аддон по id выше (garrysmod/addons или коллекция Workshop), затем смените карту."):format(#bad))
+        print(("[GRM QMenu] чужих обработчиков: %d. Диагностика: /qm_diag"):format(#bad))
     end
     net.Receive("GRM_QMenu_Diag", function()
         if QM.DiagDump then QM.DiagDump("/qm_diag") end
@@ -855,7 +954,6 @@ if CLIENT then
             if QM.DiagDump then QM.DiagDump("консоль") end
         end)
     end
-    -- автосенсус через 6с: предупреждение в консоль, если меню кто-то перехватывает
     if istable(timer) and isfunction(timer.Simple) then
         timer.Simple(6, function()
             local bad = censusQHooks({ "SpawnMenuOpen", "OnSpawnMenuOpen", "ContextMenuOpen" })
@@ -863,13 +961,12 @@ if CLIENT then
                 local ids = {}
                 for _, r in ipairs(bad) do ids[#ids + 1] = r.ev .. "[" .. r.id .. "]" end
                 print("[GRM QMenu][!] Q-меню перехватывают чужие хуки: " .. table.concat(ids, ", ")
-                    .. " — «Стройка+» может не показываться. Диагностика: /qm_diag")
+                    .. " — «Стройка» может не показываться. Диагностика: /qm_diag")
             end
         end)
     end
 
     local function cfg() return GRM.QMenu.Cfg or {} end
-
     local function isAdmin() return IsValid(LocalPlayer()) and LocalPlayer():IsSuperAdmin() end
 
     local function qBlockedForMe()
@@ -888,13 +985,6 @@ if CLIENT then
         if qBlockedForMe() then return false end
     end)
 
-    --[[ Задача 13. Подписи инструментов расходились с ванильными: в каталоге
-         были придуманные («Фонарик-точка», «Цвет пропа», «Удаление пропов»),
-         а игрок привык к названиям из обычного Q («Источник света», «Цвет»,
-         «Удалитель»). Берём подпись из движкового словаря language — ровно ту,
-         что показывает ванильное меню и что задают сами stool через
-         language.Add("tool.<id>.name", ...). Наш label остаётся запасным
-         вариантом, если фраза не зарегистрирована (аддон не установлен). ]]
     local function toolLabel(t)
         local fallback = tostring(t.label or t.id or "")
         local id = tostring(t.id or "")
@@ -902,7 +992,6 @@ if CLIENT then
         if istable(language) and isfunction(language.GetPhrase) then
             local key = "tool." .. id .. ".name"
             local ok, phrase = pcall(language.GetPhrase, key)
-            -- GetPhrase возвращает сам ключ, если перевода нет
             if ok and isstring(phrase) and phrase ~= "" and phrase ~= key then
                 return phrase
             end
@@ -911,61 +1000,32 @@ if CLIENT then
     end
     QM.ToolLabel = toolLabel
 
-    --- Укоротить текст под ширину в пикселях (чтобы подпись не налезала
-    --- на [идентификатор] справа, как было на длинных именах GRM-тулов).
-    --[[ ЗАВИСАНИЕ (v3.2.2). Здесь было два порока, и оба били по кадру:
-
-         1. Цикл сокращения полагался на то, что GRM.Utf8Sub обязательно
-            укоротит строку. Это верно только для корректного UTF-8. Подпись
-            приходит из language.GetPhrase, то есть из ЧУЖИХ аддонов, и может
-            быть в CP1251 или с оборванным символом. На такой строке Utf8Sub
-            возвращает её же — `cut` не уменьшается, `while #cut > 1` крутится
-            вечно, клиент встаёт НАМЕРТВО без ошибки Lua.
-            Лечение: прогресс гарантируем сами — если после обрезки длина в
-            байтах не уменьшилась, режем байтом (плюс жёсткий предел итераций).
-
-         2. fitText звался из row.Paint, то есть ДЛЯ КАЖДОЙ строки КАЖДЫЙ кадр,
-            и внутри делал до десятков surface.GetTextSize. При отрицательном
-            maxW (узкая колонка) цикл каждый раз проходил всю строку целиком.
-            Лечение: результат кешируем по ключу «текст|шрифт|ширина». ]]
-    --[[ Рубильник для поиска виновника зависания (см. showToolSettings).
-         grm_qmenu_safe 1 — не строить панели настроек инструментов. ]]
-    if isfunction(CreateClientConVar) then
-        CreateClientConVar("grm_qmenu_safe", "0", true, false,
-            "1 — не строить панели настроек инструментов в Q-меню GRM (поиск зависания)")
-    end
-
+    -- fitText оставлен (регрессия sim_qmenu_fittext). В Paint v4 не зовётся.
     local fitCache = {}
     local function fitText(txt, font, maxW)
         txt = tostring(txt or "")
         if not istable(surface) then return txt end
         if not (isfunction(surface.SetFont) and isfunction(surface.GetTextSize)) then return txt end
         maxW = isnumber(maxW) and maxW or 0
-        -- отрицательная/нулевая ширина: сокращать бессмысленно и опасно
         if maxW <= 8 then return "" end
-
         local key = txt .. "|" .. tostring(font) .. "|" .. math.floor(maxW)
         local hit = fitCache[key]
         if hit ~= nil then return hit end
-
         surface.SetFont(font)
         local w = select(1, surface.GetTextSize(txt))
         if not isnumber(w) or w <= maxW then
             fitCache[key] = txt
             return txt
         end
-
         local cut, out, guard = txt, txt, 0
         while #cut > 1 do
             guard = guard + 1
-            if guard > 256 then break end -- страховка: цикл обязан кончиться
+            if guard > 256 then break end
             local prevLen = #cut
             local nxt
             if GRM and isfunction(GRM.Utf8Sub) and isfunction(GRM.Utf8Len) then
                 nxt = GRM.Utf8Sub(cut, GRM.Utf8Len(cut) - 1)
             end
-            -- КЛЮЧЕВОЕ: если символьная обрезка не дала прогресса
-            -- (битая кодировка), отступаем на байт — прогресс гарантирован
             if not isstring(nxt) or #nxt >= prevLen then
                 nxt = string.sub(cut, 1, prevLen - 1)
             end
@@ -982,14 +1042,17 @@ if CLIENT then
     end
     QM.FitText = fitText
 
-    local function canToolLocal(id)
-        if isAdmin() then return true end
+    local function toolWhy(id)
+        if isAdmin() then return nil end
         local c = cfg()
         id = string.lower(id)
-        if istable(c.toolDeny) and c.toolDeny[id] == true then return false end
-        if c.whitelistMode == true and (not istable(c.toolAllow) or c.toolAllow[id] ~= true) then return false end
-        return true
+        if istable(c.toolDeny) and c.toolDeny[id] == true then return "закрыт чёрным списком" end
+        if c.whitelistMode == true and (not istable(c.toolAllow) or c.toolAllow[id] ~= true) then
+            return "включён белый режим"
+        end
+        return nil
     end
+    local function canToolLocal(id) return toolWhy(id) == nil end
 
     local function menuHasContent()
         if isAdmin() then return true end
@@ -1002,7 +1065,6 @@ if CLIENT then
         return false
     end
 
-    -- ── виджеты темы ────────────────────────────────────────
     local function mkBtn(p, txt, col)
         local b = vgui.Create("DButton", p)
         b:SetText(txt) b:SetFont("GRMQ_Sub") b:SetTextColor(color_white)
@@ -1014,105 +1076,145 @@ if CLIENT then
         return b
     end
 
-    local function lab(p, txt, x, y, w, col, font)
-        local d = vgui.Create("DLabel", p)
-        d:SetPos(x, y) d:SetSize(w or 400, 20)
-        d:SetFont(font or "GRMQ_Text") d:SetTextColor(col or QC.text) d:SetText(txt)
-        return d
-    end
-
-    -- короткое имя модели для плитки (чистый Lua, без engine-хелперов)
     local function shortModel(mdl)
         local s = tostring(mdl or "")
         s = string.match(s, "([^/\\]+)$") or s
         s = string.gsub(s, "%.[Mm][Dd][Ll]$", "")
+        if GRM and isfunction(GRM.Utf8Ellipsis) then return GRM.Utf8Ellipsis(s, 16) end
         if #s > 17 then s = string.sub(s, 1, 15) .. ".." end
         return s
     end
 
-    -- ── плитка-карточка каталога v3.1.0 ─────────────────────
-    local TILE_W, TILE_H, TILE_ICON = 96, 118, 96
-    local function mkTile(p, mdl, rmbDel)
-        local tile = vgui.Create("DButton", p)
-        tile:SetText("") tile:SetSize(TILE_W, TILE_H)
-        tile:SetTooltip(tostring(mdl) .. (rmbDel and "\nПКМ — убрать из каталога" or ""))
-        local icon = vgui.Create("SpawnIcon", tile)
-        icon:SetPos(0, 0) icon:SetSize(TILE_ICON, TILE_ICON) icon:SetModel(mdl)
-        icon:SetMouseInputEnabled(false)
-        local short = shortModel(mdl)
-        tile.Paint = function(self, pw, ph)
-            local hov = self:IsHovered()
-            if hov then draw.RoundedBox(6, 0, 0, pw, ph, QC.acc) end
-            local m = hov and 1 or 0
-            draw.RoundedBox(6, m, m, pw - 2 * m, ph - 2 * m, hov and QC.panel2 or QC.panel)
-            draw.RoundedBoxEx(6, m, TILE_ICON + m, pw - 2 * m, ph - TILE_ICON - 2 * m, QC.head, false, false, true, true)
-            draw.SimpleText(short, "GRMQ_Small", pw / 2, TILE_ICON + (ph - TILE_ICON) / 2, hov and QC.text or QC.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        end
-        tile.DoClick = function()
-            surface.PlaySound("ui/buttonclickrelease.wav")
-            net.Start("GRM_QMenu_SpawnProp")
-                net.WriteString(mdl)
-            net.SendToServer()
-        end
-        if rmbDel then
-            tile.DoRightClick = function()
-                net.Start("GRM_QMenu_Curate") net.WriteUInt(2, 4) net.WriteString(mdl) net.SendToServer()
-            end
-        end
-        return tile
-    end
+    local HEAD_H, TAB_H, FOOT_H, SHELF_W, PAD = 52, 38, 44, 300, 12
+    local TILE_W, TILE_H, TILE_ICON = 104, 120, 96
+    local ICON_BUDGET = 8
 
-    -- ── главная рамка ───────────────────────────────────────
     QM._toolCatsCollapsed = QM._toolCatsCollapsed or {}
     QM._activeTool = QM._activeTool or nil
+    QM._iconQueue = QM._iconQueue or {}
+    QM._holdOpen = false
+    -- _grmFitting: имя оставлено, чтобы регрессия layout_loop видела отказ
+    -- от самозаказа раскладки. В v4 SetTall по содержимому не вызывается.
+    QM._grmFitting = false
 
     function QM.CloseMenu()
-        -- отвязать панель настроек тула, чтобы ванильное Q могло использовать её
-        if QM._toolCP and IsValid(QM._toolCP) then
-            QM._toolCP:SetParent(nil)
-            QM._toolCP:SetVisible(false)
-            QM._toolCP = nil
-        end
+        QM._holdOpen = false
+        QM._iconQueue = {}
         QM._settingsBody = nil
         if IsValid(QM._frame) then QM._frame:Remove() end
         QM._frame = nil
     end
 
-    function QM.OpenMenu()
-        if IsValid(QM._frame) then return end -- hold-Q: повторное нажатие при удержании не гасит меню
-        local admin = isAdmin()
-        if QM._tab ~= "catalog" and QM._tab ~= "curate" and QM._tab ~= "settings" then QM._tab = "catalog" end
-        if not admin and QM._tab ~= "catalog" then QM._tab = "catalog" end
+    local function cvarSet(name, val)
+        if RunConsoleCommand then RunConsoleCommand(name, tostring(val)) end
+    end
+    local function cvarGet(name)
+        if GetConVar then
+            local cv = GetConVar(name)
+            if cv and cv.GetString then return tostring(cv:GetString() or "") end
+        end
+        return ""
+    end
 
-        -- размер окна: адаптив от экрана (гарды для стендов без ScrW/ScrH)
-        local FW, FH = 1680, 860
+    local function fillSchema(body, toolId)
+        if not IsValid(body) then return end
+        if isfunction(body.Clear) then body:Clear() end
+        local schema = QM.ResolveSchema(toolId)
+        if not schema then
+            local l = vgui.Create("DLabel", body)
+            l:Dock(TOP) l:SetTall(56) l:SetFont("GRMQ_Text") l:SetTextColor(QC.dim) l:SetWrap(true)
+            l:SetText("У инструмента нет параметров в быстром меню.")
+            local b = mkBtn(body, "Открыть ванильную панель", QC.acc)
+            b:Dock(TOP) b:SetTall(28) b:DockMargin(4, 6, 4, 0)
+            b.DoClick = function()
+                if RunConsoleCommand then RunConsoleCommand("+menu") end
+            end
+            return
+        end
+        for _, row in ipairs(schema) do
+            local box = vgui.Create("DPanel", body)
+            box:Dock(TOP) box:SetTall(row.type == "choice" and 48 or 28) box:DockMargin(2, 2, 2, 2)
+            box:SetPaintBackground(false)
+            if isfunction(body.AddItem) then body:AddItem(box) end
+            local lab = vgui.Create("DLabel", box)
+            lab:SetPos(4, 2) lab:SetSize(280, 16) lab:SetFont("GRMQ_Small") lab:SetTextColor(QC.dim)
+            lab:SetText(tostring(row.label or row.cvar))
+            if row.type == "bool" then
+                local cb = vgui.Create("DCheckBoxLabel", box)
+                cb:SetPos(4, 8) cb:SetSize(280, 18) cb:SetText("") cb:SetTextColor(QC.text)
+                cb:SetValue(cvarGet(row.cvar) ~= "0" and 1 or 0)
+                cb.OnChange = function(_, v) cvarSet(row.cvar, v and "1" or "0") end
+            elseif row.type == "choice" then
+                local combo = vgui.Create("DComboBox", box)
+                combo:SetPos(4, 20) combo:SetSize(280, 22)
+                local cur = cvarGet(row.cvar)
+                for _, ch in ipairs(row.choices or {}) do
+                    combo:AddChoice(ch[1], ch[2], ch[2] == cur)
+                end
+                combo.OnSelect = function(_, _, _, data) if data then cvarSet(row.cvar, data) end end
+            elseif row.type == "number" then
+                local nw = vgui.Create("DNumberWang", box)
+                nw:SetPos(180, 4) nw:SetSize(100, 20)
+                nw:SetMin(-99999) nw:SetMax(99999)
+                nw:SetValue(tonumber(cvarGet(row.cvar)) or 0)
+                nw.OnValueChanged = function(_, v) cvarSet(row.cvar, tostring(v)) end
+            else
+                local te = vgui.Create("DTextEntry", box)
+                te:SetPos(4, 18) te:SetSize(280, 20) te:SetFont("GRMQ_Text")
+                te:SetValue(cvarGet(row.cvar))
+                te.OnEnter = function() cvarSet(row.cvar, te:GetValue() or "") end
+                te.OnLoseFocus = function() cvarSet(row.cvar, te:GetValue() or "") end
+            end
+        end
+    end
+
+    function QM.OpenMenu(fromHold)
+        if IsValid(QM._frame) then return end
+        QM._holdOpen = fromHold == true
+        local admin = isAdmin()
+        if QM._tab ~= "catalog" and QM._tab ~= "tools" and QM._tab ~= "mine" and QM._tab ~= "settings" then
+            QM._tab = "catalog"
+        end
+        if not admin and QM._tab == "settings" then QM._tab = "catalog" end
+
+        local FW, FH = 1100, 700
         if isfunction(ScrW) and isfunction(ScrH) then
             local sw, sh = ScrW(), ScrH()
             if isnumber(sw) and isnumber(sh) and sw > 0 and sh > 0 then
-                FW = math.Clamp(math.floor(sw * 0.94), 1500, 1920)
-                FH = math.Clamp(math.floor(sh * 0.88), 720, 980)
+                FW = math.Clamp(math.floor(sw * 0.72), 900, 1280)
+                FH = math.Clamp(math.floor(sh * 0.74), 560, 820)
             end
         end
-        local HEAD_H, PAD, SIDE_W, SET_W, FOOT_H = 46, 10, 238, 330, 64
-        local toolsX = FW - PAD - SET_W - SIDE_W      -- колонка инструментов
-        local settingsX = FW - PAD - SET_W            -- колонка параметров инструмента
-        local CW = toolsX - PAD * 2 - 10              -- ширина левой (контентной) зоны
-        local tabsY, tabsH = HEAD_H + PAD, 30
-        local contY = tabsY + tabsH + 6                -- 92 при шапке 46
-        local footY = FH - PAD - FOOT_H
-        local CH = footY - 6 - contY                   -- высота контент-панели
+        local shelfOn = not safeMode()
+        local shelfW = shelfOn and SHELF_W or 0
+        local tabsY = HEAD_H
+        local contY = HEAD_H + TAB_H
+        local footY = FH - FOOT_H
+        local CW = FW - PAD * 2 - (shelfOn and (shelfW + PAD) or 0)
+        local CH = footY - contY - PAD
+
+        local t0 = (isfunction(SysTime) and SysTime()) or 0
+        local function stage(name)
+            if not profileOn() then return end
+            local now = (isfunction(SysTime) and SysTime()) or 0
+            print(string.format("[GRM QMenu] stage %s: %.1f ms", name, (now - t0) * 1000))
+            if (now - t0) * 1000 > 50 then
+                print("[GRM QMenu][!] сторож: этап " .. name .. " превысил 50 мс")
+            end
+            t0 = now
+        end
 
         local f = vgui.Create("DFrame")
         QM._frame = f
+        if GRM.UI and isfunction(GRM.UI.Track) then GRM.UI.Track("qmenu", f) end
         f:SetTitle("") f:SetSize(FW, FH) f:Center() f:MakePopup() f:ShowCloseButton(false)
         f:SetDeleteOnClose(true)
         f.Paint = function(_, pw, ph)
             draw.RoundedBox(10, 0, 0, pw, ph, QC.bg)
             draw.RoundedBoxEx(10, 0, 0, pw, HEAD_H, QC.head, true, true, false, false)
             draw.RoundedBox(0, 0, HEAD_H, pw, 2, QC.acc)
-            draw.SimpleText("GRM Стройка+", "GRMQ_Title", 14, 15, QC.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText("v" .. tostring(QM.Version), "GRMQ_Small", 158, 17, QC.dim2, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            -- идентичность игрока: группа + фракция (ранг), как в старом меню владельца
+            draw.SimpleText("GRM · СТРОЙКА", "GRMQ_Title", 14, 18, QC.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("v" .. tostring(QM.Version), "GRMQ_Small", 168, 20, QC.dim2, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             local lp = LocalPlayer()
             local ug = "user"
             if IsValid(lp) and isfunction(lp.GetUserGroup) then
@@ -1120,68 +1222,45 @@ if CLIENT then
                 if isstring(g) and g ~= "" then ug = g end
             end
             local facTxt = ""
-            if istable(FactionsData) and IsValid(lp) and isfunction(lp.SteamID) then
-                local sid = lp:SteamID()
-                local s64 = isfunction(lp.SteamID64) and lp:SteamID64() or nil
-                for fname, fd in pairs(FactionsData) do
-                    if istable(fd) and istable(fd.Members) then
-                        local info = fd.Members[sid] or (s64 and fd.Members[s64] or nil)
-                        if istable(info) then
-                            facTxt = "  ·  " .. tostring(fname)
-                            if isstring(info.Role) and info.Role ~= "" then
-                                facTxt = facTxt .. " (" .. info.Role .. ")"
-                            end
-                            break
-                        end
-                    end
-                end
+            local facName = IsValid(lp) and lp:GetNWString("GRM_Faction", "") or ""
+            local facRole = IsValid(lp) and lp:GetNWString("GRM_Role", "") or ""
+            if facName ~= "" then
+                facTxt = "  ·  " .. facName
+                if facRole ~= "" then facTxt = facTxt .. " (" .. facRole .. ")" end
             end
-            draw.SimpleText("группа: " .. ug .. facTxt, "GRMQ_Small", 14, 33, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            local modeTxt = admin and "режим суперадмина"
-                or ((cfg().propsFree == true) and "свободный спавн моделей" or "каталог (" .. tostring(#(cfg().propList or {})) .. ")")
-            draw.SimpleText("ванильное Q закрыто · " .. modeTxt, "GRMQ_Text", pw - 54, 23, QC.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("группа: " .. ug .. facTxt, "GRMQ_Small", 14, 38, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
         f.Think = function()
-            -- авто-закрытие: ESC (кликер погашен движком) / смерть.
-            -- clickerSeen: не гасим на первом тике, пока clicker ещё не поднялся.
             local lp = LocalPlayer()
-            local clickerOn = isfunction(gui and gui.ScreenClickerEnabled) and gui.ScreenClickerEnabled() == true
-            if clickerOn then f._clickerSeen = true end
             local dead = IsValid(lp) and lp.Alive and not lp:Alive()
-            if (f._clickerSeen and not clickerOn) or dead then
-                if IsValid(f) then f:Remove() end
-                if QM._frame == f then QM._frame = nil end
+            local cuffed = IsValid(lp) and (lp:GetNWBool("GRM_Cuffed", false) or lp:GetNWBool("GRM_Stunned", false))
+            if dead or cuffed then QM.CloseMenu() return end
+            if QM._stale and QM._rebuild then
+                QM._stale = false
+                QM._rebuild()
             end
         end
-        -- Панель настроек тула (controlpanel.Get) — ГЛОБАЛЬНАЯ и общая с
-        -- ванильным Q-меню. Если фрейм умирает не через CloseMenu (таймер
-        -- кликера, смерть игрока, SetDeleteOnClose), панель уедет в могилу
-        -- вместе с ним, и следующее обращение к ней даст «NULL Panel».
-        -- Поэтому отвязываем её в OnRemove — он срабатывает при любом пути.
         f.OnRemove = function()
-            if QM._toolCP and IsValid(QM._toolCP) then
-                QM._toolCP:SetParent(nil)
-                QM._toolCP:SetVisible(false)
-            end
-            QM._toolCP = nil
+            QM._iconQueue = {}
             QM._settingsBody = nil
             if QM._frame == f then QM._frame = nil end
+            QM._holdOpen = false
         end
-        local x = mkBtn(f, "✕", QC.red) x:SetPos(FW - 44, 8) x:SetSize(32, 28)
+        local x = mkBtn(f, "✕", QC.red) x:SetPos(FW - 44, 12) x:SetSize(32, 28)
         x.DoClick = function() QM.CloseMenu() end
 
-        -- ── вкладки слева сверху (как в ваниле) ─────────────
-        local tabDefs = { { "catalog", "Каталог пропов", 152 } }
-        if admin then
-            tabDefs[#tabDefs + 1] = { "curate", "Куратор каталога", 158 }
-            tabDefs[#tabDefs + 1] = { "settings", "Настройки", 128 }
-        end
+        local tabDefs = {
+            { "catalog", "Каталог", 110 },
+            { "tools", "Инструменты", 130 },
+            { "mine", "Мои объекты", 128 },
+        }
+        if admin then tabDefs[#tabDefs + 1] = { "settings", "Настройки", 120 } end
         local tabX = PAD
         for _, td in ipairs(tabDefs) do
             local id, txt, w = td[1], td[2], td[3]
             local tb = vgui.Create("DButton", f)
             tb:SetText(txt) tb:SetFont("GRMQ_Tab") tb:SetTextColor(QC.dim)
-            tb:SetPos(tabX, tabsY) tb:SetSize(w, tabsH)
+            tb:SetPos(tabX, tabsY + 4) tb:SetSize(w, TAB_H - 8)
             tb.Paint = function(self, pw, ph)
                 local sel = QM._tab == id
                 if sel then
@@ -1199,411 +1278,140 @@ if CLIENT then
             tabX = tabX + w + 6
         end
 
-        -- контент-панель (лево) — размеры ТОЛЬКО константами FW/FH (н108)
         local content = vgui.Create("DPanel", f)
         content:SetPos(PAD, contY) content:SetSize(CW, CH)
-        content.Paint = function(_, pw, ph) draw.RoundedBox(6, 0, 0, pw, ph, Color(0, 0, 0, 0)) end
+        content.Paint = function() end
 
-        -- ── ПРАВАЯ КОЛОНКА: инструменты, как в ванильном Q ──
-        local toolsPane = vgui.Create("DPanel", f)
-        toolsPane:SetPos(toolsX, HEAD_H + PAD) toolsPane:SetSize(SIDE_W, FH - HEAD_H - PAD - PAD)
-        toolsPane.Paint = function(_, pw, ph)
-            draw.RoundedBox(6, 0, 0, pw, ph, QC.panel)
-            draw.RoundedBoxEx(6, 0, 0, pw, 30, QC.head, true, true, false, false)
-            draw.SimpleText("ИНСТРУМЕНТЫ", "GRMQ_Small", 10, 15, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        end
-        local toolsScroll = vgui.Create("DScrollPanel", toolsPane)
-        toolsScroll:SetPos(4, 34) toolsScroll:SetSize(SIDE_W - 8, FH - HEAD_H - PAD - PAD - 38)
-
-        -- ── КОЛОНКА ПАРАМЕТРОВ ИНСТРУМЕНТА (как в ванильном Q) ──
-        local settingsPane = vgui.Create("DPanel", f)
-        settingsPane:SetPos(settingsX, HEAD_H + PAD) settingsPane:SetSize(SET_W, FH - HEAD_H - PAD - PAD)
-        settingsPane.Paint = function(_, pw, ph)
-            draw.RoundedBox(6, 0, 0, pw, ph, QC.panel)
-            draw.RoundedBoxEx(6, 0, 0, pw, 30, QC.head, true, true, false, false)
-            draw.SimpleText("ПАРАМЕТРЫ ИНСТРУМЕНТА", "GRMQ_Small", 10, 15, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        end
-        local settingsBody = vgui.Create("DScrollPanel", settingsPane)
-        settingsBody:SetPos(4, 34) settingsBody:SetSize(SET_W - 8, FH - HEAD_H - PAD - PAD - 38)
-        QM._settingsBody = settingsBody
-
-        -- Показ панели настроек выбранного тула (строит ControlPanel как ванильный Q).
-        -- Гарды на движковые API — для тест-стендов без vgui/controlpanel.
-        local function showToolSettings(toolId)
-            -- отвязать старую панель (чтобы не конфликтовать с ванильным Q)
-            if QM._toolCP and IsValid(QM._toolCP) then
-                QM._toolCP:SetParent(nil)
-                QM._toolCP:SetVisible(false)
-                QM._toolCP = nil
+        local settingsBody
+        if shelfOn then
+            local shelf = vgui.Create("DPanel", f)
+            shelf:SetPos(FW - PAD - shelfW, contY) shelf:SetSize(shelfW, CH)
+            shelf.Paint = function(_, pw, ph)
+                draw.RoundedBox(6, 0, 0, pw, ph, QC.panel)
+                draw.RoundedBoxEx(6, 0, 0, pw, 28, QC.head, true, true, false, false)
+                draw.SimpleText("ПАРАМЕТРЫ", "GRMQ_Small", 10, 14, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             end
-            -- settingsBody — это DScrollPanel. Его GetChildren() возвращает
-            -- служебные панели самого скролла (холст pnlCanvas и полосу
-            -- прокрутки VBar), а НЕ добавленные элементы. Удаление детей
-            -- сносило холст, после чего PerformLayoutInternal падал на
-            -- self.pnlCanvas:GetTall() → «Tried to use a NULL Panel!».
-            -- Чистить нужно холст через :Clear().
-            if IsValid(settingsBody) then
-                if isfunction(settingsBody.Clear) then
-                    settingsBody:Clear()
-                else
-                    local canvas = isfunction(settingsBody.GetCanvas) and settingsBody:GetCanvas() or settingsBody
-                    if IsValid(canvas) then
-                        for _, ch in ipairs(canvas:GetChildren()) do
-                            if IsValid(ch) then ch:Remove() end
-                        end
-                    end
-                end
-            end
-            local name = tostring(toolId or "")
-            if name == "" then
-                local l = vgui.Create("DLabel", settingsBody)
-                l:Dock(TOP) l:SetTall(48) l:SetFont("GRMQ_Text") l:SetTextColor(QC.dim) l:SetWrap(true)
-                l:SetText("Выберите инструмент в списке справа — здесь появятся его параметры (например, яркость/размер источника света).")
-                return
-            end
-            local built = false
-            --[[ Здесь стояло isfunction(controlpanel). controlpanel — это
-                 ТАБЛИЦА-библиотека, а не функция, поэтому условие всегда было
-                 false и весь блок построения панели не выполнялся НИ РАЗУ:
-                 built оставался false и любой инструмент показывал заглушку
-                 «нет настраиваемых параметров». Проверяем таблицу. ]]
-            --[[ ДИАГНОСТИКА ЗАВИСАНИЯ. Панели настроек строит ЧУЖОЙ код:
-                 BuildCPanel каждого установленного stool. До 0cc9b99 этот
-                 блок не выполнялся никогда (условие было isfunction на
-                 таблице), поэтому чужой код и не запускался. Сейчас
-                 запускается — и если какой-то аддон в своей BuildCPanel
-                 уходит в цикл, клиент встанет намертво без ошибки Lua.
-                 Рубильник, чтобы это проверить за минуту прямо в игре:
-                     grm_qmenu_safe 1   → настройки не строим (заглушка)
-                     grm_qmenu_safe 0   → как обычно
-                 Если при 1 меню открывается, виноват BuildCPanel стороннего
-                 инструмента — его имя печатается в консоль ниже. ]]
-            local safeMode = false
-            if ConVarExists and ConVarExists("grm_qmenu_safe") then
-                local cv = GetConVar("grm_qmenu_safe")
-                safeMode = cv and cv:GetBool() or false
-            end
-            if safeMode then
-                print("[GRM QMenu] grm_qmenu_safe=1: пропускаю BuildCPanel для " .. tostring(name))
-            end
-            if (not safeMode)
-                and istable(controlpanel) and isfunction(controlpanel.Get)
-                and istable(weapons) and isfunction(weapons.GetStored) then
-                local ToolObj = weapons.GetStored("gmod_tool")
-                local tool = istable(ToolObj) and istable(ToolObj.Tool) and ToolObj.Tool[name] or nil
-                --[[ Панели ControlPanel создаёт ванильное меню, когда впервые
-                     открывает вкладку инструмента. У нас ванильное Q закрыто,
-                     поэтому controlpanel.Get() часто возвращал nil и настроек
-                     не было даже у исправно работающих тулов. Создаём панель
-                     сами — ровно как это делает spawnmenu. ]]
-                local CP = controlpanel.Get(name)
-                if not IsValid(CP) and isfunction(controlpanel.Create) then
-                    local okCr, made = pcall(controlpanel.Create, name)
-                    if okCr and IsValid(made) then CP = made end
-                end
-                if IsValid(CP) then
-                    pcall(function() CP:Clear() end)
-                    --[[ Задача 13. Панели настроек НЕ СТРОИЛИСЬ ВООБЩЕ.
-                         Все stool объявляют панель как `function TOOL.BuildCPanel(panel)`
-                         — через ТОЧКУ, один аргумент. Здесь же звали
-                         pcall(tool.BuildCPanel, tool, CP), то есть первым
-                         аргументом уходил сам tool, а панель — вторым.
-                         Внутри panel:AddControl(...) вызывался на таблице
-                         инструмента → «attempt to call method 'AddControl'»,
-                         pcall глотал ошибку, built оставался false и КАЖДЫЙ
-                         инструмент показывал «нет настраиваемых параметров».
-                         Движок зовёт BuildCPanel(panel) ровно с одним
-                         аргументом — делаем так же. Colon-варианты
-                         (TOOL:BuildCPanel) в проекте не встречаются, но
-                         поддерживаем их запасным вызовом. ]]
-                    --[[ Печатаем имя ДО вызова: если клиент зависнет внутри
-                         чужой BuildCPanel, последняя строка в консоли назовёт
-                         виновника. После — «ok», чтобы видеть, что прошло. ]]
-                    print("[GRM QMenu] BuildCPanel → " .. tostring(name))
-                    local okB, errB = QM.BuildToolPanel(tool, CP)
-                    print("[GRM QMenu] BuildCPanel ← " .. tostring(name) .. (okB and " ok" or " пусто"))
-                    if okB then built = true
-                    elseif errB then
-                        print("[GRM QMenu] BuildCPanel error for " .. name .. ": " .. tostring(errB))
-                    end
-                    -- Внутри DScrollPanel элемент обязан лежать на холсте:
-                    -- AddItem парентит его в pnlCanvas и включает Dock(TOP).
-                    -- Прямой SetParent(scroll) + Dock(TOP) ломает раскладку
-                    -- скролла и мешает корректно посчитать высоту канвы.
-                    --[[ Ванильные контролы (DColorMixer, Slider, Numpad,
-                         MatSelect) рисуют ТЁМНЫЙ текст — их делали под светлый
-                         фон стандартного Q. На нашей тёмной панели подписи
-                         сливались с фоном. Подкладываем светлую подложку, как
-                         в ванильном меню, чтобы читалось и выглядело штатно. ]]
-                    CP:SetVisible(true)
-                    if isfunction(CP.SetPaintBackground) then CP:SetPaintBackground(true) end
-                    CP.Paint = function(_, pw, ph)
-                        draw.RoundedBox(4, 0, 0, pw, ph, Color(222, 227, 235, 255))
-                    end
-                    CP:SetSize(settingsBody:GetWide() - 8, 300)
-                    if isfunction(settingsBody.AddItem) then
-                        settingsBody:AddItem(CP)
-                    else
-                        CP:SetParent(settingsBody)
-                        CP:SetPos(0, 0)
-                        CP:Dock(TOP)
-                    end
-                    --[[ ЗАВИСАНИЕ КЛИЕНТА ПРИ ОТКРЫТИИ Q (v3.2.1).
-                         Здесь стояло CP:InvalidateLayout(true) и сразу
-                         CP:PerformLayout(). Вызывать PerformLayout руками
-                         НЕЛЬЗЯ (wiki: «You should not call this function
-                         directly. Use Panel:InvalidateLayout instead»):
-                         движок держит внутренний флаг «идёт раскладка», и
-                         прямой Lua-вызов его обходит, снимая защиту от
-                         повторного входа.
-                         Дальше срабатывала связка с DScrollPanel:
-                           SetTall(CP) → канва скролла пересчитывает высоту →
-                           появляется/исчезает VBar → ширина канвы меняется →
-                           DForm (ControlPanel) переносит подписи и меняет свою
-                           высоту → снова SetTall → …
-                         Раскладка колеблется между «полоса нужна / не нужна» и
-                         никогда не сходится: игра встаёт намертво БЕЗ ошибки
-                         Lua (поэтому в консоли было пусто).
-                         Почему не воспроизводилось у админа: при adminsToo=false
-                         суперадмин получает ВАНИЛЬНОЕ Q, и этот код не
-                         выполняется вовсе. Игрок без прав — единственный, кто
-                         открывает нашу панель, поэтому фриз «появился» ровно
-                         после снятия суперадмина.
-                         Лечение: раскладку заказываем движку (без прямого
-                         вызова), а автовысоту ставим один раз, с защитой от
-                         повторного входа и с порогом, чтобы колебание в
-                         пару пикселей не гоняло цикл. ]]
-                    pcall(function() CP:InvalidateLayout(true) end)
-                    local function fitCPHeight()
-                        if not IsValid(CP) then return end
-                        if CP._grmFitting then return end -- защита от повторного входа
-                        CP._grmFitting = true
-                        -- автовысота по содержимому (контролы ControlPanel идут вниз)
-                        local bottom = 0
-                        for _, ch in ipairs(CP:GetChildren()) do
-                            if IsValid(ch) and isfunction(ch.GetBottom) then
-                                local b = ch:GetBottom()
-                                if isnumber(b) then bottom = math.max(bottom, b) end
-                            end
-                        end
-                        local want = math.max(240, bottom + 12)
-                        local have = isfunction(CP.GetTall) and CP:GetTall() or 0
-                        -- порог 2 px: без него округление ширины под VBar
-                        -- заставляет высоту дёргаться туда-сюда бесконечно
-                        if not isnumber(have) or math.abs(have - want) > 2 then
-                            CP:SetTall(want)
-                        end
-                        CP._grmFitting = false
-                    end
-                    fitCPHeight()
-                    QM._toolCP = CP
-                end
-            end
-            if not built then
-                local l = vgui.Create("DLabel", settingsBody)
-                l:Dock(TOP) l:SetTall(48) l:SetFont("GRMQ_Text") l:SetTextColor(QC.dim) l:SetWrap(true)
-                l:SetText("У инструмента «" .. name .. "» нет настраиваемых параметров.")
-            end
+            settingsBody = vgui.Create("DScrollPanel", shelf)
+            settingsBody:SetPos(4, 32) settingsBody:SetSize(shelfW - 8, CH - 36)
+            QM._settingsBody = settingsBody
+            local hint = vgui.Create("DLabel", settingsBody)
+            hint:Dock(TOP) hint:SetTall(64) hint:SetFont("GRMQ_Text") hint:SetTextColor(QC.dim) hint:SetWrap(true)
+            hint:SetText("Выберите инструмент на вкладке «Инструменты» — здесь появятся его параметры.")
         end
 
-        local buildToolsPane
-        local function scrollAdd(sc, pnl, mTop, mLeft)
-            pnl:Dock(TOP) -- КЛЮЧЕВО: без Dock(TOP) строки скролла ложатся стопкой (баг н112)
-            pnl:DockMargin(mLeft or 2, mTop or 3, 2, 0)
-            sc:AddItem(pnl)
-        end
-        buildToolsPane = function()
-            toolsScroll:Clear()
-            local catsShown = 0
-            for _, catDef in ipairs(QM.ToolCategories or {}) do
-                local here, allowedN = {}, 0
-                for _, t in ipairs(QM.ToolCatalog) do
-                    if (t.cat or "misc") == catDef.id then
-                        here[#here + 1] = t
-                        if canToolLocal(t.id) then allowedN = allowedN + 1 end
-                    end
-                end
-                -- игроку категорию-трупку не показываем вообще (меньше шума)
-                if #here > 0 and (admin or allowedN > 0) then
-                    catsShown = catsShown + 1
-                    local collapsed = QM._toolCatsCollapsed[catDef.id] == true
-                    local hdr = vgui.Create("DButton", toolsScroll)
-                    hdr:SetText("") hdr:SetTall(24)
-                    hdr.Paint = function(self, pw, ph)
-                        draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and QC.line or QC.panel2)
-                        draw.SimpleText((collapsed and ">  " or "v  ") .. catDef.name .. "  (" .. tostring(allowedN) .. "/" .. tostring(#here) .. ")",
-                            "GRMQ_Text", 8, ph / 2, self:IsHovered() and QC.text or QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    end
-                    hdr.DoClick = function()
-                        surface.PlaySound("ui/buttonclick.wav")
-                        QM._toolCatsCollapsed[catDef.id] = not collapsed
-                        buildToolsPane()
-                    end
-                    scrollAdd(toolsScroll, hdr, 4)
-                    if not collapsed then
-                        for _, t in ipairs(here) do
-                            local allowed = canToolLocal(t.id)
-                            local row = vgui.Create("DButton", toolsScroll)
-                            row:SetText("") row:SetTall(30)
-                            row:SetTooltip(toolLabel(t) .. " [" .. tostring(t.id) .. "]\n" .. tostring(t.desc or "")
-                                .. (allowed and "" or "\nНЕДОСТУПНО: закрыто администрацией"))
-                            local tid, tlabel = t.id, toolLabel(t)
-                            row.Paint = function(self, pw, ph)
-                                local active = QM._activeTool == tid
-                                if active then
-                                    draw.RoundedBox(4, 0, 0, pw, ph, QC.acc)
-                                elseif allowed and self:IsHovered() then
-                                    draw.RoundedBox(4, 0, 0, pw, ph, QC.panel2)
-                                end
-                                local tcol = active and QC.text or (allowed and (self:IsHovered() and QC.text or QC.dim) or QC.dim2)
-                                draw.RoundedBox(0, 0, 0, 3, ph, active and QC.text or (allowed and QC.acc or QC.line))
-                                -- [id] печатается справа; подпись обрезаем по
-                                -- оставшейся ширине, иначе длинные имена
-                                -- GRM-тулов налезали на идентификатор
-                                surface.SetFont("GRMQ_Small")
-                                local idW = select(1, surface.GetTextSize("[" .. tid .. "]")) or 0
-                                draw.SimpleText(fitText(tlabel, "GRMQ_Text", pw - 12 - idW - 14),
-                                    "GRMQ_Text", 12, ph / 2, tcol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                                draw.SimpleText("[" .. tid .. "]", "GRMQ_Small", pw - 8, ph / 2,
-                                    active and QC.text or QC.dim2, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-                            end
-                            row.DoClick = function()
-                                if not allowed then
-                                    surface.PlaySound("buttons/button10.wav")
-                                    QM._toast = "«" .. tostring(tlabel) .. "» закрыт администрацией"
-                                    QM._toastAt = CurTime() + 3
-                                    return
-                                end
-                                surface.PlaySound("ui/buttonclick.wav")
-                                QM._activeTool = tid
-                                net.Start("GRM_QMenu_SetTool")
-                                    net.WriteString(tid)
-                                net.SendToServer()
-                                if showToolSettings then showToolSettings(tid) end
-                            end
-                            scrollAdd(toolsScroll, row, 1, 12)
-                        end
-                    end
-                end
-            end
-            if catsShown == 0 then
-                lab(toolsScroll, "Инструменты закрыты", 10, 10, 200, QC.dim, "GRMQ_Text")
-                lab(toolsScroll, "администрацией (списки —", 10, 30, 210, QC.dim2, "GRMQ_Small")
-                lab(toolsScroll, "в /grm_admin → «Инструменты»).", 10, 46, 210, QC.dim2, "GRMQ_Small")
-            end
-        end
-        buildToolsPane()
-
-        -- при открытии меню показываем параметры уже выбранного тула
-        if QM._activeTool and showToolSettings then showToolSettings(QM._activeTool) end
-
-        -- ── ФУТЕР: действия + счётчик + активный тул + тосты ─
         local foot = vgui.Create("DPanel", f)
-        foot:SetPos(PAD, footY) foot:SetSize(CW, FOOT_H)
-        local bGun = mkBtn(foot, "Взять тулган", QC.acc) bGun:SetPos(6, 6) bGun:SetSize(124, 30)
+        foot:SetPos(PAD, footY) foot:SetSize(FW - PAD * 2, FOOT_H - PAD)
+        local bGun = mkBtn(foot, "Тулган", QC.acc) bGun:SetPos(6, 4) bGun:SetSize(88, 26)
         bGun.DoClick = function()
             net.Start("GRM_QMenu_Toolgun") net.WriteBool(true) net.SendToServer()
         end
-        local bGunOff = mkBtn(foot, "Убрать тулган", QC.panel2) bGunOff:SetPos(138, 6) bGunOff:SetSize(124, 30)
-        bGunOff.DoClick = function()
+        local bOff = mkBtn(foot, "Убрать тулган", QC.panel2) bOff:SetPos(100, 4) bOff:SetSize(120, 26)
+        bOff.DoClick = function()
             net.Start("GRM_QMenu_Toolgun") net.WriteBool(false) net.SendToServer()
         end
-        local bRmOne = mkBtn(foot, "Убрать проп в прицеле", QC.yellow) bRmOne:SetPos(270, 6) bRmOne:SetSize(184, 30)
-        bRmOne.DoClick = function()
+        local bLast = mkBtn(foot, "Убрать последний", QC.yellow) bLast:SetPos(228, 4) bLast:SetSize(140, 26)
+        bLast.DoClick = function()
             net.Start("GRM_QMenu_RemoveOne") net.SendToServer()
-        end
-        local bRmAll = mkBtn(foot, "Убрать все мои", QC.red) bRmAll:SetPos(462, 6) bRmAll:SetSize(140, 30)
-        bRmAll.DoClick = function()
-            net.Start("GRM_QMenu_ClearProps") net.SendToServer()
         end
         foot.Paint = function(_, pw, ph)
             draw.RoundedBox(6, 0, 0, pw, ph, QC.panel)
-            draw.RoundedBox(0, 6, 38, pw - 12, 1, QC.line)
-            draw.SimpleText("Мои пропы: " .. tostring(QM._count or 0) .. " / " .. tostring(QM._cap or (cfg().menuPropCap or 24)),
-                "GRMQ_Text", 8, ph - 12, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            local act = "нет"
-            if isstring(QM._activeTool) then
-                for _, t in ipairs(QM.ToolCatalog) do
-                    if t.id == QM._activeTool then act = toolLabel(t) break end
-                end
-            end
-            draw.SimpleText("Инструмент: " .. act, "GRMQ_Small", 220, ph - 12, QC.dim2, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("Мои объекты: " .. tostring(QM._count or 0) .. " / " .. tostring(QM._cap or (cfg().menuPropCap or 24)),
+                "GRMQ_Text", 380, ph / 2, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             local toast = (QM._toastAt and CurTime() < QM._toastAt) and (QM._toast or "") or ""
-            draw.SimpleText(toast, "GRMQ_Small", pw - 8, ph - 12, QC.green, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(toast, "GRMQ_Small", pw - 8, ph / 2, QC.red, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
 
-        -- ── строители контента вкладок ──────────────────────
+        stage("frame")
+
         local builders = {}
 
-        --[[ Заглушка «ничего не найдено».
-             ВАЖНО: подписи кладём НЕ прямым ребёнком DScrollPanel, а в его
-             холст через AddItem. Прямой ребёнок скролла минует pnlCanvas,
-             не учитывается в раскладке и не удаляется при чистке холста —
-             такие сироты копились при каждом поиске, а после смерти
-             родителя PerformLayoutInternal падал с «Tried to use a NULL
-             Panel!». Панель заглушки держим в sc._emptyBox, чтобы снимать
-             её перед каждой перестройкой. ]]
         local function clearEmptyBox(sc)
             if sc and IsValid(sc._emptyBox) then sc._emptyBox:Remove() end
             if sc then sc._emptyBox = nil end
         end
-
         local function emptyBox(sc, l1, l2)
             clearEmptyBox(sc)
             local box = vgui.Create("DPanel")
             box:SetTall(l2 and 70 or 44)
             box:SetPaintBackground(false)
-            lab(box, l1, 12, 14, CW - 40, QC.dim, "GRMQ_Sub")
-            if l2 then lab(box, l2, 12, 40, CW - 40, QC.dim2, "GRMQ_Text") end
+            local a = vgui.Create("DLabel", box)
+            a:SetPos(12, 14) a:SetSize(CW - 40, 22) a:SetFont("GRMQ_Sub") a:SetTextColor(QC.dim) a:SetText(l1)
+            if l2 then
+                local b = vgui.Create("DLabel", box)
+                b:SetPos(12, 40) b:SetSize(CW - 40, 22) b:SetFont("GRMQ_Text") b:SetTextColor(QC.dim2) b:SetText(l2)
+            end
             if isfunction(sc.AddItem) then
                 box:Dock(TOP)
                 sc:AddItem(box)
             else
                 box:SetParent(sc)
-                box:SetPos(0, 0)
             end
             sc._emptyBox = box
             return box
         end
 
+        local function enqueueIcon(tile, mdl)
+            if safeMode() then return end
+            QM._iconQueue[#QM._iconQueue + 1] = { tile = tile, mdl = mdl }
+        end
+
         builders.catalog = function()
             content:Clear()
+            QM._iconQueue = {}
             local c = cfg()
             local propsAllowed = admin or c.allowProps == true
-            lab(content, "ПОИСК", 10, 8, 46, QC.dim, "GRMQ_Small")
             local search = vgui.Create("DTextEntry", content)
-            search:SetPos(60, 4) search:SetSize(280, 22)
-            search:SetFont("GRMQ_Text") search:SetPlaceholderText("часть пути модели…")
-            lab(content, "Моделей: " .. tostring(#(c.propList or {})), 350, 8, 120, QC.dim, "GRMQ_Small")
-            local freeOn = (c.propsFree == true or admin) and propsAllowed
-            if freeOn then
-                lab(content, "Свободный спавн: любая модель по пути — строка внизу", 476, 8, CW - 490, QC.dim2, "GRMQ_Small")
-            end
-
+            search:SetPos(10, 6) search:SetSize(280, 22) search:SetFont("GRMQ_Text")
+            search:SetPlaceholderText("часть пути модели…")
             local sc = vgui.Create("DScrollPanel", content)
-            sc:SetPos(6, 34) sc:SetSize(CW - 12, CH - 40 - (freeOn and 38 or 0))
+            sc:SetPos(6, 34) sc:SetSize(CW - 12, CH - 40)
             local lay = vgui.Create("DIconLayout", sc)
             lay:Dock(FILL) lay:SetSpaceX(8) lay:SetSpaceY(8)
 
+            local function mkTile(mdl, rmbDel)
+                local tile = vgui.Create("DButton", lay)
+                tile:SetText("") tile:SetSize(TILE_W, TILE_H)
+                tile._short = shortModel(mdl)
+                tile.Paint = function(self, pw, ph)
+                    local hov = self:IsHovered()
+                    if hov then draw.RoundedBox(6, 0, 0, pw, ph, QC.acc) end
+                    draw.RoundedBox(6, 1, 1, pw - 2, ph - 2, hov and QC.panel2 or QC.panel)
+                    draw.SimpleText(self._short or "", "GRMQ_Small", pw / 2, TILE_ICON + 12,
+                        hov and QC.text or QC.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                end
+                tile.DoClick = function()
+                    surface.PlaySound("ui/buttonclickrelease.wav")
+                    net.Start("GRM_QMenu_SpawnProp") net.WriteString(mdl) net.SendToServer()
+                end
+                if rmbDel then
+                    tile.DoRightClick = function()
+                        net.Start("GRM_QMenu_Curate") net.WriteUInt(2, 4) net.WriteString(mdl) net.SendToServer()
+                    end
+                end
+                enqueueIcon(tile, mdl)
+                return tile
+            end
+
             local function rebuildGrid()
                 lay:Clear()
-                clearEmptyBox(sc)   -- иначе заглушки копятся поверх сетки
+                clearEmptyBox(sc)
+                QM._iconQueue = {}
                 if not propsAllowed then
                     emptyBox(sc, "Спавн пропов игрокам запрещён администрацией.")
                     return
                 end
                 local q = string.lower(string.Trim(search:GetValue() or ""))
-                local shown = 0
+                local shown, total = 0, #(c.propList or {})
                 for _, mdl in ipairs(c.propList or {}) do
                     if q == "" or string.find(string.lower(mdl), q, 1, true) then
                         shown = shown + 1
-                        lay:Add(mkTile(lay, mdl, false))
+                        lay:Add(mkTile(mdl, admin))
                     end
                 end
                 if shown == 0 then
-                    if #(c.propList or {}) == 0 then
+                    if total == 0 then
                         emptyBox(sc, "Каталог пуст.",
-                            admin and "Засидите базовой мебелью на вкладке «Куратор каталога»."
+                            admin and "Суперадмин наполняет его командой /qm_prop_add, глядя на объект. Или /qm_seed."
                             or "Администрация ещё не заполнила каталог.")
                     else
                         emptyBox(sc, "Ничего не найдено по запросу «" .. q .. "».")
@@ -1612,78 +1420,143 @@ if CLIENT then
             end
             search.OnChange = rebuildGrid
             rebuildGrid()
+        end
 
-            if freeOn then
-                local free = vgui.Create("DTextEntry", content)
-                free:SetPos(6, CH - 34) free:SetSize(360, 26) free:SetFont("GRMQ_Text")
-                free:SetPlaceholderText("models/путь/к/модели.mdl")
-                local bFree = mkBtn(content, "Заспавнить по пути", QC.green)
-                bFree:SetPos(374, CH - 34) bFree:SetSize(160, 26)
-                bFree.DoClick = function()
-                    local m = string.lower(string.Trim(free:GetValue() or ""))
-                    if m == "" then return end
-                    net.Start("GRM_QMenu_SpawnProp")
-                        net.WriteString(m)
-                    net.SendToServer()
+        builders.tools = function()
+            content:Clear()
+            local sc = vgui.Create("DScrollPanel", content)
+            sc:SetPos(6, 6) sc:SetSize(CW - 12, CH - 12)
+            local function scrollAdd(pnl, mTop)
+                pnl:Dock(TOP)
+                pnl:DockMargin(4, mTop or 3, 4, 0)
+                sc:AddItem(pnl)
+            end
+            local catsShown = 0
+            for _, catDef in ipairs(QM.ToolCategories or {}) do
+                local here = {}
+                for _, t in ipairs(QM.ToolCatalog) do
+                    if (t.cat or "misc") == catDef.id then here[#here + 1] = t end
                 end
+                if #here > 0 then
+                    catsShown = catsShown + 1
+                    local collapsed = QM._toolCatsCollapsed[catDef.id] == true
+                    local hdr = vgui.Create("DButton", sc)
+                    hdr:SetText("") hdr:SetTall(24)
+                    local hdrTxt = (collapsed and ">  " or "v  ") .. catDef.name .. "  (" .. tostring(#here) .. ")"
+                    hdr.Paint = function(self, pw, ph)
+                        draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and QC.line or QC.panel2)
+                        draw.SimpleText(hdrTxt, "GRMQ_Text", 8, ph / 2, self:IsHovered() and QC.text or QC.dim,
+                            TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    end
+                    hdr.DoClick = function()
+                        QM._toolCatsCollapsed[catDef.id] = not collapsed
+                        builders.tools()
+                    end
+                    scrollAdd(hdr, 4)
+                    if not collapsed then
+                        for _, t in ipairs(here) do
+                            local why = toolWhy(t.id)
+                            local allowed = why == nil
+                            local row = vgui.Create("DButton", sc)
+                            row:SetText("") row:SetTall(28)
+                            local tlabel = fitText(toolLabel(t), "GRMQ_Text", math.max(40, CW - 180))
+                            local tid = t.id
+                            row:SetTooltip(toolLabel(t) .. " [" .. tid .. "]\n" .. tostring(t.desc or "")
+                                .. (why and ("\nНЕДОСТУПНО: " .. why) or ""))
+                            row.Paint = function(self, pw, ph)
+                                local active = QM._activeTool == tid
+                                if active then
+                                    draw.RoundedBox(4, 0, 0, pw, ph, QC.acc)
+                                elseif allowed and self:IsHovered() then
+                                    draw.RoundedBox(4, 0, 0, pw, ph, QC.panel2)
+                                end
+                                local tcol = active and QC.text or (allowed and QC.dim or QC.dim2)
+                                draw.SimpleText(tlabel, "GRMQ_Text", 12, ph / 2, tcol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                                draw.SimpleText("[" .. tid .. "]", "GRMQ_Small", pw - 8, ph / 2,
+                                    active and QC.text or QC.dim2, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                            end
+                            row.DoClick = function()
+                                if not allowed then
+                                    surface.PlaySound("buttons/button10.wav")
+                                    QM._toast = "«" .. tostring(toolLabel(t)) .. "» " .. (why or "закрыт")
+                                    QM._toastAt = CurTime() + 3
+                                    return
+                                end
+                                surface.PlaySound("ui/buttonclick.wav")
+                                QM._activeTool = tid
+                                net.Start("GRM_QMenu_SetTool") net.WriteString(tid) net.SendToServer()
+                                if settingsBody then fillSchema(settingsBody, tid) end
+                            end
+                            scrollAdd(row, 1)
+                        end
+                    end
+                end
+            end
+            if catsShown == 0 then
+                emptyBox(sc, "Инструменты закрыты администрацией.", "Списки — в /grm_admin → «Инструменты».")
             end
         end
 
-        builders.curate = function()
+        QM._mineRows = QM._mineRows or {}
+        net.Receive("GRM_QMenu_List", function()
+            local n = net.ReadUInt(8)
+            local rows = {}
+            for i = 1, n do
+                rows[#rows + 1] = { mdl = net.ReadString(), dist = net.ReadUInt(16), idx = net.ReadUInt(16) }
+            end
+            QM._mineRows = rows
+            if QM._tab == "mine" and IsValid(QM._frame) and builders.mine then builders.mine() end
+        end)
+
+        builders.mine = function()
             content:Clear()
-            local c = cfg()
-            lab(content, "КУРАТОР КАТАЛОГА (суперадмин)", 10, 4, 400, QC.dim, "GRMQ_Small")
-            lab(content, "Моделей: " .. tostring(#(c.propList or {})), 420, 4, 100, QC.dim, "GRMQ_Small")
-
-            local bAim = mkBtn(content, "+ из прицела", QC.green)
-            bAim:SetPos(6, 26) bAim:SetSize(124, 28)
-            bAim.DoClick = function()
-                local tr = LocalPlayer():GetEyeTrace()
-                local mdl = (IsValid(tr.Entity) and tr.Entity:GetModel()) or ""
-                if mdl == "" then return end
-                net.Start("GRM_QMenu_Curate") net.WriteUInt(1, 4) net.WriteString(string.lower(mdl)) net.SendToServer()
+            local top = vgui.Create("DLabel", content)
+            top:SetPos(10, 6) top:SetSize(CW - 20, 20) top:SetFont("GRMQ_Text") top:SetTextColor(QC.dim)
+            top:SetText("Заспавненное из меню. Убрать — кнопка в строке или «Убрать все».")
+            local bAll = mkBtn(content, "Убрать все", QC.red)
+            bAll:SetPos(CW - 130, 4) bAll:SetSize(120, 24)
+            bAll.DoClick = function()
+                net.Start("GRM_QMenu_ClearProps") net.SendToServer()
+                timer.Simple(0.2, function()
+                    if IsValid(QM._frame) then net.Start("GRM_QMenu_List") net.SendToServer() end
+                end)
             end
-            local entry = vgui.Create("DTextEntry", content)
-            entry:SetPos(138, 26) entry:SetSize(230, 28) entry:SetFont("GRMQ_Text")
-            entry:SetPlaceholderText("models/путь/к/модели.mdl")
-            local bAdd = mkBtn(content, "+ путь", QC.acc)
-            bAdd:SetPos(374, 26) bAdd:SetSize(64, 28)
-            bAdd.DoClick = function()
-                local m = string.lower(string.Trim(entry:GetValue() or ""))
-                if m == "" then return end
-                net.Start("GRM_QMenu_Curate") net.WriteUInt(1, 4) net.WriteString(m) net.SendToServer()
-            end
-            local bSeed = mkBtn(content, "Засидеть мебелью (+ " .. tostring(#QM.SeedProps) .. ")", QC.yellow)
-            bSeed:SetPos(444, 26) bSeed:SetSize(196, 28)
-            bSeed.DoClick = function()
-                net.Start("GRM_QMenu_Seed") net.SendToServer()
-            end
-
-            lab(content, "Клик — заспавнить · ПКМ по карточке — убрать из каталога", 10, 62, 500, QC.dim2, "GRMQ_Text")
             local sc = vgui.Create("DScrollPanel", content)
-            sc:SetPos(6, 84) sc:SetSize(CW - 12, CH - 92)
-            local lay = vgui.Create("DIconLayout", sc)
-            lay:Dock(FILL) lay:SetSpaceX(8) lay:SetSpaceY(8)
-            local n = 0
-            for _, mdl in ipairs(c.propList or {}) do
-                n = n + 1
-                lay:Add(mkTile(lay, mdl, true))
+            sc:SetPos(6, 34) sc:SetSize(CW - 12, CH - 40)
+            local rows = QM._mineRows or {}
+            if #rows == 0 then
+                emptyBox(sc, "Пока нет объектов.", "Заспавните модель из каталога — она появится здесь.")
+            else
+                for _, r in ipairs(rows) do
+                    local row = vgui.Create("DPanel", sc)
+                    row:Dock(TOP) row:SetTall(26) row:DockMargin(2, 2, 2, 0)
+                    local caption = shortModel(r.mdl) .. "   ·   " .. tostring(r.dist) .. " юн."
+                    row.Paint = function(_, pw, ph)
+                        draw.RoundedBox(4, 0, 0, pw, ph, QC.panel2)
+                        draw.SimpleText(caption, "GRMQ_Text", 8, ph / 2, QC.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    end
+                    local b = mkBtn(row, "Убрать", QC.red)
+                    b:Dock(RIGHT) b:SetWide(72)
+                    local idx = r.idx
+                    b.DoClick = function()
+                        net.Start("GRM_QMenu_RemoveIdx") net.WriteUInt(idx, 16) net.SendToServer()
+                    end
+                    if isfunction(sc.AddItem) then sc:AddItem(row) end
+                end
             end
-            if n == 0 then
-                emptyBox(sc, "Каталог пуст —", "нажмите «Засидеть мебелью» или добавьте свои модели.")
-            end
+            net.Start("GRM_QMenu_List") net.SendToServer()
         end
 
         builders.settings = function()
             content:Clear()
+            if not admin then return end
             local c = cfg()
-            lab(content, "НАСТРОЙКИ УРЕЗАННОГО Q (суперадмин)", 10, 4, 500, QC.dim, "GRMQ_Small")
-            local y = 28
+            local y = 8
             local function optRow(id, labelTxt)
                 local cb = vgui.Create("DCheckBoxLabel", content)
-                cb:SetPos(12, y) cb:SetSize(560, 22)
+                cb:SetPos(12, y) cb:SetSize(CW - 24, 22)
                 cb:SetFont("GRMQ_Text") cb:SetTextColor(QC.text)
-                cb:SetText(labelTxt .. "   [" .. id .. "]")
+                cb:SetText(labelTxt)
                 cb:SetValue(c[id] == true and 1 or 0)
                 cb.OnChange = function(_, val)
                     net.Start("GRM_QMenu_SetOpt")
@@ -1692,22 +1565,27 @@ if CLIENT then
                         net.WriteBool(val == true)
                     net.SendToServer()
                 end
-                y = y + 26
+                y = y + 24
             end
-            optRow("playersQ", "Ванильное Q-меню игрокам (ВЫКЛ = наше меню)")
-            optRow("grmBuildMenu", "Меню GRM Стройка+ вместо ванильного Q")
-            optRow("propsFree", "Свободный спавн ЛЮБЫХ моделей (ВЫКЛ = только каталог)")
-            optRow("whitelistMode", "Белый режим инструментов (только из toolAllow)")
-            optRow("protectFurniture", "Защита чужих/серверных пропов от remover игроков")
-            optRow("adminsToo", "Суперадмину тоже «Стройка+» вместо ванильного Q (предпросмотр)")
-
-            lab(content, "Лимит пропов на игрока (menuPropCap):", 12, y + 7, 300, QC.text, "GRMQ_Text")
+            local hint = vgui.Create("DLabel", content)
+            hint:SetPos(12, y) hint:SetSize(CW - 24, 18) hint:SetFont("GRMQ_Small") hint:SetTextColor(QC.dim)
+            hint:SetText("Пишется сразу в data/grm_qmenu.json. Дублирует вкладку «Инструменты» хаба.")
+            y = y + 22
+            optRow("playersQ", "Ванильное Q игрокам (ВЫКЛ = наше меню)")
+            optRow("grmBuildMenu", "Меню GRM Стройка вместо ванильного Q")
+            optRow("propsFree", "Свободный спавн любых моделей")
+            optRow("whitelistMode", "Белый режим инструментов")
+            optRow("protectFurniture", "Защита чужих/серверных пропов от remover")
+            optRow("adminsToo", "Суперадмину тоже Стройка вместо ванильного Q")
+            optRow("allowProps", "Пропы игрокам")
+            local capL = vgui.Create("DLabel", content)
+            capL:SetPos(12, y + 6) capL:SetSize(240, 20) capL:SetFont("GRMQ_Text") capL:SetTextColor(QC.text)
+            capL:SetText("Лимит объектов на игрока:")
             local nw = vgui.Create("DNumberWang", content)
-            nw:SetPos(316, y + 3) nw:SetSize(84, 24)
-            nw:SetMin(1) nw:SetMax(500)
+            nw:SetPos(250, y + 4) nw:SetSize(72, 22) nw:SetMin(1) nw:SetMax(500)
             nw:SetValue(tonumber(c.menuPropCap) or 24)
             local bCap = mkBtn(content, "Применить", QC.acc)
-            bCap:SetPos(408, y + 3) bCap:SetSize(100, 24)
+            bCap:SetPos(330, y + 4) bCap:SetSize(100, 22)
             bCap.DoClick = function()
                 net.Start("GRM_QMenu_SetOpt")
                     net.WriteString("menuPropCap")
@@ -1716,8 +1594,17 @@ if CLIENT then
                 net.SendToServer()
             end
             y = y + 36
-            lab(content, "Инструменты allow/deny и типы спавна (нпс/оружие/транспорт) — в /grm_admin → «Инструменты».",
-                12, y + 4, CW - 40, QC.dim2, "GRMQ_Text")
+            local bSeed = mkBtn(content, "Засидеть каталог мебелью", QC.yellow)
+            bSeed:SetPos(12, y) bSeed:SetSize(220, 26)
+            bSeed.DoClick = function() net.Start("GRM_QMenu_Seed") net.SendToServer() end
+            local bAim = mkBtn(content, "+ модель из прицела", QC.green)
+            bAim:SetPos(242, y) bAim:SetSize(180, 26)
+            bAim.DoClick = function()
+                local tr = LocalPlayer():GetEyeTrace()
+                local mdl = (IsValid(tr.Entity) and tr.Entity:GetModel()) or ""
+                if mdl == "" then return end
+                net.Start("GRM_QMenu_Curate") net.WriteUInt(1, 4) net.WriteString(string.lower(mdl)) net.SendToServer()
+            end
         end
 
         function QM._switchTab(id)
@@ -1727,20 +1614,37 @@ if CLIENT then
         QM._rebuild = function()
             if not builders[QM._tab] then QM._tab = "catalog" end
             builders[QM._tab]()
-            if buildToolsPane then buildToolsPane() end
         end
 
         builders[QM._tab]()
+        if QM._activeTool and settingsBody then fillSchema(settingsBody, QM._activeTool) end
+        stage("tab")
     end
 
-    -- универсальный слой: бинд +menu глушится; HOLD-Q как ванильное —
-    -- пока Q зажата меню открыто, отпустил — закрылось (v3.3.0)
+    hook.Add("Think", "GRM_QMenu_Icons", function()
+        local q = QM._iconQueue
+        if not istable(q) or #q == 0 then return end
+        if not IsValid(QM._frame) then QM._iconQueue = {} return end
+        local n = 0
+        while #q > 0 and n < ICON_BUDGET do
+            local job = table.remove(q, 1)
+            n = n + 1
+            if job and IsValid(job.tile) then
+                local icon = vgui.Create("SpawnIcon", job.tile)
+                icon:SetPos(4, 0) icon:SetSize(TILE_ICON, TILE_ICON)
+                icon:SetModel(job.mdl)
+                icon:SetMouseInputEnabled(false)
+            end
+        end
+    end)
+
+    -- HOLD-Q как ванильное: press → открыть, release → закрыть.
     hook.Add("PlayerBindPress", "GRM_QMenu_BindBlock", function(_, bind, pressed)
         if bind ~= "+menu" then return end
         if qBlockedForMe() then
             if pressed then
                 if menuHasContent() then
-                    if not IsValid(QM._frame) then QM.OpenMenu() end
+                    if not IsValid(QM._frame) then QM.OpenMenu(true) end
                 elseif IsValid(LocalPlayer()) then
                     LocalPlayer():PrintMessage(HUD_PRINTCENTER, "Q-меню и стройка закрыты администрацией")
                 end
