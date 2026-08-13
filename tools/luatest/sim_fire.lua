@@ -34,7 +34,7 @@ check("пак-шланг c_firehose_grm", has(packHose, "c_firehose_grm.mdl"))
 check("пак-шланг w_firehose_grm", has(packHose, "w_firehose_grm.mdl"))
 
 print("\n=== СЕРВЕР Код 58 ===")
-check("версия 1.3.7", has(core, 'F.Version = "1.3.7"'))
+check("версия 1.3.8", has(core, 'F.Version = "1.3.8"'))
 check("jsonT false,true", has(core, "util.JSONToTable, txt, false, true"))
 check("карантин", has(core, ".corrupt."))
 check("read-back", has(core, "SAVE read-back fail") or has(core, "chk ~= txt"))
@@ -135,6 +135,13 @@ check("инкассация G зовёт IsFireGContext", (function()
 end)())
 check("G насоса не по дежурству вдали", not pui:find("if not nearPump and not IsValid(duty) then return end", 1, true))
 check("G насоса через IsFireGContext", has(pui, "IsFireGContext"))
+check("инкассация G без рейса молчит", (function()
+    local inc = read("lua/autorun/sh_grm_incassation.lua")
+    return inc:find("onIncass", 1, true) ~= nil
+        and inc:find("без рейса и без чемодана", 1, true) ~= nil
+        and inc:find("молчим: G у пожарки", 1, true) ~= nil
+end)())
+check("своя пожарка в контексте G", has(core, "GRM_FireMyTruck"))
 check("укладка без SetNoDraw", not node:find("SetNoDraw(true)", 1, true))
 check("лестница aluminium", has(ladW, "ladderaluminium.mdl"))
 check("лестница ПКМ на машину", has(ladW, "AttachToVehicle"))

@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Incassation (Код 126 — «Инкассация») v2.2.1 — ПЕРСИСТЕНТНОСТЬ БАНКОМАТОВ
+    GRM Incassation (Код 126 — «Инкассация») v2.2.2 — ПЕРСИСТЕНТНОСТЬ БАНКОМАТОВ
 
     Полный цикл работы по ТЗ:
       1. Игрок садится в служебную машину фракции, за рулём пишет /incass —
@@ -38,7 +38,7 @@ GRM = GRM or {}
 GRM.Incass = GRM.Incass or {}
 local I = GRM.Incass
 
-I.Version    = "2.2.1"
+I.Version    = "2.2.2"
 I.Code       = 126
 I.ModuleName = "incassation"
 
@@ -1208,7 +1208,7 @@ local function sendTerminalMenu(ply, terminal)
         end
     end
     if not myRun then
-        notify(ply, "У вас нет активного рейса инкассации.", 255, 120, 120)
+        -- молчим: G у пожарки/случайный банкомат рядом не орёт инкассацией
         return
     end
 
@@ -1889,6 +1889,11 @@ hook.Add("PlayerButtonDown", "GRM_Incass_GKey", function(ply, button)
     if button ~= KEY_G then return end
     if ply ~= LocalPlayer() then return end
     if isFireGContextClient(ply) then return end
+    -- без рейса и без чемодана G инкассации нет — пожарка не ловит тост
+    local onIncass = getMyIncassCarClient(ply) ~= nil
+        or (ply.GetNWBool and ply:GetNWBool("GRMIncass_Carrying", false))
+        or ((ply.GetNWInt and ply:GetNWInt("GRMIncass_BagAmount", 0) or 0) > 0)
+    if not onIncass then return end
 
     local tr = ply:GetEyeTrace()
     local hit = IsValid(tr.Entity) and tr.Entity or nil

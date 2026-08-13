@@ -10,7 +10,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Fire = GRM.Fire or {}
 local F = GRM.Fire
-F.Version = "1.3.7"
+F.Version = "1.3.8"
 
 F.Config = F.Config or {
     StoveEnabled = true,
@@ -100,9 +100,16 @@ function F.IsFireGContext(ply)
         if F.IsFireEnt(p) then return true end
     end
     local pos = ply.GetPos and ply:GetPos() or nil
+    local duty = ply.GetNWEntity and ply:GetNWEntity("GRM_FireMyTruck") or nil
+    if IsValid(duty) and pos and duty.GetPos then
+        if pos:DistToSqr(duty:GetPos()) <= 420 * 420 then return true end
+    end
     if pos and ents and ents.FindInSphere then
-        for _, e in ipairs(ents.FindInSphere(pos, 280)) do
-            if IsValid(e) and e.GetClass and e:GetClass() == "grm_fire_pump" then
+        for _, e in ipairs(ents.FindInSphere(pos, 320)) do
+            if not IsValid(e) then
+            elseif e.GetClass and e:GetClass() == "grm_fire_pump" then
+                return true
+            elseif e.GetNWBool and e:GetNWBool("GRM_FireTruck", false) then
                 return true
             end
         end
