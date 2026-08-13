@@ -1,6 +1,6 @@
 --[[--------------------------------------------------------------------
     GRM Fire — панель насосной станции (G после /firetruck).
-    Баки: вода / пена / порошок. Закачка с гидранта, слив, прямая подача.
+    Одно окно, без пересборки. Баки читаются с насоса (NW), не через net-спам.
 ----------------------------------------------------------------------]]
 if SERVER then AddCSLuaFile() end
 
@@ -35,7 +35,7 @@ local function findPumpFor(ply)
     local tr = ply:GetEyeTrace()
     if IsValid(tr.Entity) then
         if tr.Entity:GetClass() == "grm_fire_pump" then
-            return tr.Entity, tr.Entity:GetHostVehicle()
+            return tr.Entity, tr.Entity.GetHostVehicle and tr.Entity:GetHostVehicle() or nil
         end
         if F.IsFireTruck and F.IsFireTruck(tr.Entity) and F.FindPumpOn then
             local pump = F.FindPumpOn(tr.Entity)
@@ -77,6 +77,8 @@ if SERVER then
     util.AddNetworkString(NET_DATA)
     util.AddNetworkString(NET_ACT)
 
+    local lastAct = {}
+
     local function send(ply, pump)
         if not IsValid(ply) or not IsValid(pump) then return end
         net.Start(NET_DATA)
@@ -106,8 +108,12 @@ if SERVER then
     net.Receive(NET_ACT, function(_, ply)
         if not IsValid(ply) then return end
         if not (F.CanFightPro and F.CanFightPro(ply)) then return end
+        local now = CurTime()
+        if (lastAct[ply] or 0) > now then return end
+        lastAct[ply] = now + 0.2
         local act = tostring(net.ReadString() or "")
         local extra = tostring(net.ReadString() or "")
+        if act == "refresh" or act == "" then return end
         local pump = select(1, findPumpFor(ply))
         if not IsValid(pump) then tell(ply, "насос не найден", 255, 140, 90) return end
         if ply:GetPos():DistToSqr(pump:GetPos()) > 360 * 360 then return end
@@ -127,12 +133,14 @@ if SERVER then
             if ag == "" then ag = "water" end
             if ag == "powder" then
                 if not IsValid(pump:FindLinkedCabinet()) then
-                    tell(ply, "Порошок: встаньте шкафом огнетушителей.", 255, 160, 80)
+                    tell(ply, "Порошок: встаньте у шкафа огнетушителей.", 255, 160, 80)
+                    send(ply, pump)
                     return
                 end
             else
                 if not IsValid(pump:FindLinkedHydrant()) then
                     tell(ply, "Нет связи с открытым гидрантом. Откройте колонку рядом или стыкуйте рукав.", 255, 160, 80)
+                    send(ply, pump)
                     return
                 end
             end
@@ -141,9 +149,9 @@ if SERVER then
         elseif act == "drain" then
             local ag = extra ~= "" and extra or (pump:GetAgent() ~= "" and pump:GetAgent() or "water")
             if pump.DrainAgent then pump:DrainAgent(ag, 99999) end
-            if pump.SyncHost then pump:SyncHost() end
             tell(ply, "Бак слит: " .. ag, 255, 180, 90)
-        elseif act == "refresh" then
+        else
+            return
         end
         if pump.SyncHost then pump:SyncHost() end
         send(ply, pump)
@@ -159,114 +167,193 @@ if SERVER then
 end
 
 if CLIENT then
-    surface.CreateFont("GRMFireTrk_Title", { font = "Roboto", size = 18, weight = 700, extended = true })
-    surface.CreateFont("GRMFireTrk_N", { font = "Roboto", size = 14, weight = 500, extended = true })
+    surface.CreateFont("GRMFirePump_T", { font = "Roboto", size = 18, weight = 700, extended = true })
+    surface.CreateFont("GRMFirePump_N", { font = "Roboto", size = 14, weight = 500, extended = true })
+
     local frame
+    local lastG = 0
+
+    local function closeUI()
+        if IsValid(frame) then frame:Remove() end
+        frame = nil
+        if GRM.UI and GRM.UI.Close then GRM.UI.Close("fire_pump") end
+    end
+
+    local function live(st)
+        st = st or {}
+        local pump = Entity(tonumber(st.idx) or -1)
+        if not (IsValid(pump) and pump:GetClass() == "grm_fire_pump") then
+            return st
+        end
+        local ag = pump.GetAgent and pump:GetAgent() or st.agent or "water"
+        if ag == "" then ag = "water" end
+        return {
+            water = pump:GetTank() or st.water or 0,
+            waterMax = pump:GetTankMax() or st.waterMax or 4000,
+            foam = pump:GetFoam() or st.foam or 0,
+            foamMax = pump:GetFoamMax() or st.foamMax or 500,
+            powder = pump:GetPowder() or st.powder or 0,
+            powderMax = pump:GetPowderMax() or st.powderMax or 250,
+            agent = ag,
+            pumpOn = pump:GetPumpOn() == true,
+            filling = pump:GetFilling() == true,
+            feed = pump:GetHydrantFeed() == true,
+            hydrant = st.hydrant == true,
+            cabinet = st.cabinet == true,
+            hoses = pump:GetHosesOut() or st.hoses or 0,
+            hosesMax = pump:GetHosesMax() or st.hosesMax or 4,
+            idx = st.idx,
+        }
+    end
 
     local function paintBar(x, y, w, h, frac, col, label, have, maxv)
         draw.RoundedBox(4, x, y, w, h, Color(18, 22, 30, 240))
         local fw = math.floor(w * math.Clamp(frac, 0, 1))
         if fw > 2 then draw.RoundedBox(4, x + 1, y + 1, fw - 2, h - 2, col) end
-        draw.SimpleText(string.format("%s  %d / %d", label, have, maxv), "GRMFireTrk_N", x + 8, y + h / 2, Color(235, 238, 242), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText(string.format("%s  %d / %d", label, have, maxv), "GRMFirePump_N", x + 8, y + h / 2, Color(235, 238, 242), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    end
+
+    local function applyFlags(fr, st)
+        if not IsValid(fr) then return end
+        local s = live(st)
+        if IsValid(fr._btnPump) then
+            fr._btnPump:SetText(s.pumpOn and "Насос: ВЫКЛЮЧИТЬ" or "Насос: ВКЛЮЧИТЬ")
+        end
+        if IsValid(fr._btnFill) then
+            fr._btnFill:SetText(s.filling and "Закачка: СТОП" or "Закачка с гидранта / шкафа")
+        end
+        if IsValid(fr._btnFeed) then
+            fr._btnFeed:SetText(s.feed and "Прямая подача с гидранта: ВКЛ" or "Прямая подача с гидранта: выкл")
+        end
     end
 
     local function openUI(st)
-        if IsValid(frame) then frame:Remove() end
-        local T = GRM.UI and GRM.UI.Theme
-        local C = T and T.Colors or {
+        if IsValid(frame) then
+            frame._st = st
+            applyFlags(frame, st)
+            return
+        end
+        local C = {
             bg = Color(8, 14, 23, 248), panel = Color(16, 27, 42, 245),
             text = Color(225, 238, 247), cyan = Color(48, 204, 255),
-            green = Color(64, 222, 147), amber = Color(250, 185, 63),
             red = Color(244, 78, 96), header = Color(10, 22, 37, 255),
         }
+        local T = GRM.UI and GRM.UI.Theme
+        if T and T.Colors then C = T.Colors end
+
         frame = vgui.Create("DFrame")
-        frame:SetSize(520, 520)
+        frame:SetSize(520, 500)
         frame:Center()
         frame:SetTitle("")
+        frame:ShowCloseButton(false)
+        frame:SetDraggable(true)
+        frame:SetSizable(false)
         frame:MakePopup()
         if GRM.UI and GRM.UI.Track then GRM.UI.Track("fire_pump", frame) end
-        frame.Paint = function(_, w, h)
+        frame._st = st
+        frame.OnRemove = function(self)
+            if frame == self then frame = nil end
+        end
+        frame.Paint = function(self, w, h)
             draw.RoundedBox(9, 0, 0, w, h, C.bg or Color(8, 14, 23, 248))
             draw.RoundedBoxEx(9, 0, 0, w, 52, C.header or Color(10, 22, 37, 255), true, true, false, false)
-            draw.SimpleText("НАСОСНАЯ СТАНЦИЯ", "GRMFireTrk_Title", 16, 18, C.text or color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText("вода · пена · порошок", "GRMFireTrk_N", 16, 38, C.cyan or Color(48, 204, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("НАСОСНАЯ СТАНЦИЯ", "GRMFirePump_T", 16, 18, C.text or color_white, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("вода · пена · порошок", "GRMFirePump_N", 16, 38, C.cyan or Color(48, 204, 255), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
+
         local close = vgui.Create("DButton", frame)
         close:SetPos(480, 12) close:SetSize(28, 28) close:SetText("X")
         close:SetTextColor(C.text or color_white)
         close.Paint = function(self, w, h)
             draw.RoundedBox(4, 0, 0, w, h, self:IsHovered() and (C.red or Color(244, 78, 96)) or (C.panel or Color(16, 27, 42)))
         end
-        close.DoClick = function() frame:Close() end
+        close.DoClick = closeUI
 
         local body = vgui.Create("DPanel", frame)
         body:Dock(FILL) body:DockMargin(14, 58, 14, 12)
         body:SetPaintBackground(false)
-
-        frame._st = st
         body.Paint = function(_, w, h)
-            local s = frame._st or st
+            local s = live(frame and frame._st)
             paintBar(0, 4, w, 28, s.water / math.max(1, s.waterMax), Color(50, 140, 230), "ВОДА", s.water, s.waterMax)
             paintBar(0, 38, w, 28, s.foam / math.max(1, s.foamMax), Color(230, 80, 70), "ПЕНА", s.foam, s.foamMax)
             paintBar(0, 72, w, 28, s.powder / math.max(1, s.powderMax), Color(200, 190, 80), "ПОРОШОК", s.powder, s.powderMax)
             local link = s.hydrant and "гидрант: СВЯЗАН (открыт)" or "гидрант: нет связи"
             local cab = s.cabinet and "  ·  шкаф рядом" or ""
-            draw.SimpleText(link .. cab, "GRMFireTrk_N", 0, 110, s.hydrant and Color(80, 220, 140) or Color(255, 170, 80))
-            draw.SimpleText("рукава " .. (s.hoses or 0) .. "/" .. (s.hosesMax or 4) .. "   ствол: " .. tostring(s.agent or "water"), "GRMFireTrk_N", 0, 130, Color(200, 205, 215))
+            draw.SimpleText(link .. cab, "GRMFirePump_N", 0, 110, s.hydrant and Color(80, 220, 140) or Color(255, 170, 80))
+            draw.SimpleText("рукава " .. (s.hoses or 0) .. "/" .. (s.hosesMax or 4) .. "   ствол: " .. tostring(s.agent or "water"), "GRMFirePump_N", 0, 130, Color(200, 205, 215))
         end
 
+        local busy = 0
         local function act(a, extra)
+            if CurTime() < busy then return end
+            busy = CurTime() + 0.25
             net.Start(NET_ACT)
                 net.WriteString(a)
                 net.WriteString(extra or "")
             net.SendToServer()
         end
 
-        local function mk(txt, col, fn)
+        local function mk(txt, col)
             local b = vgui.Create("DButton", body)
             b:Dock(TOP) b:SetTall(30) b:DockMargin(0, 4, 0, 0)
             b:SetText(txt) b:SetTextColor(color_white)
+            b._col = col
             b.Paint = function(self, w, h)
-                local c = col
+                local c = self._col or col
                 if self:IsHovered() then c = Color(math.min(255, c.r + 25), math.min(255, c.g + 25), math.min(255, c.b + 25)) end
                 draw.RoundedBox(5, 0, 0, w, h, c)
             end
-            b.DoClick = fn
             return b
         end
 
         local spacer = vgui.Create("DPanel", body)
         spacer:Dock(TOP) spacer:SetTall(148) spacer:SetPaintBackground(false)
 
-        mk("Ствол: ВОДА", Color(40, 110, 190), function() act("agent", "water") end)
-        mk("Ствол: ПЕНА", Color(170, 50, 50), function() act("agent", "foam") end)
-        mk("Ствол: ПОРОШОК", Color(150, 140, 40), function() act("agent", "powder") end)
-        mk(st.pumpOn and "Насос: ВЫКЛЮЧИТЬ" or "Насос: ВКЛЮЧИТЬ", st.pumpOn and Color(70, 160, 90) or Color(70, 90, 110), function() act("pump") end)
-        mk(st.filling and "Закачка: СТОП" or "Закачка С гидранта / шкафа", Color(50, 130, 160), function() act("fill") end)
-        mk(st.feed and "Прямая подача с гидранта: ВКЛ" or "Прямая подача с гидранта: выкл", Color(90, 70, 40), function() act("feed") end)
-        mk("Слить выбранный бак", Color(140, 50, 50), function() act("drain", st.agent) end)
+        local bW = mk("Ствол: ВОДА", Color(40, 110, 190))
+        bW.DoClick = function() act("agent", "water") end
+        local bF = mk("Ствол: ПЕНА", Color(170, 50, 50))
+        bF.DoClick = function() act("agent", "foam") end
+        local bP = mk("Ствол: ПОРОШОК", Color(150, 140, 40))
+        bP.DoClick = function() act("agent", "powder") end
 
-        frame.Think = function()
-            if (frame._next or 0) > CurTime() then return end
-            frame._next = CurTime() + 0.45
-            if not IsValid(frame) then return end
-            net.Start(NET_ACT) net.WriteString("refresh") net.WriteString("") net.SendToServer()
+        frame._btnPump = mk("Насос: ВКЛЮЧИТЬ", Color(70, 90, 110))
+        frame._btnPump.DoClick = function() act("pump") end
+        frame._btnFill = mk("Закачка с гидранта / шкафа", Color(50, 130, 160))
+        frame._btnFill.DoClick = function() act("fill") end
+        frame._btnFeed = mk("Прямая подача с гидранта: выкл", Color(90, 70, 40))
+        frame._btnFeed.DoClick = function() act("feed") end
+        local bD = mk("Слить выбранный бак", Color(140, 50, 50))
+        bD.DoClick = function()
+            local s = live(frame._st)
+            act("drain", s.agent or "water")
         end
+
+        applyFlags(frame, st)
     end
 
     net.Receive(NET_DATA, function()
         local st = net.ReadTable() or {}
         if IsValid(frame) then
-            -- rebuild to refresh numbers
-            openUI(st)
-        else
-            openUI(st)
+            frame._st = st
+            applyFlags(frame, st)
+            return
         end
+        openUI(st)
     end)
 
     hook.Add("PlayerButtonDown", "GRM_FirePump_GKey", function(ply, button)
         if button ~= KEY_G then return end
         if ply ~= LocalPlayer() then return end
+        if CurTime() < lastG then return end
+        lastG = CurTime() + 0.35
+        if gui.IsConsoleVisible and gui.IsConsoleVisible() then return end
+        if IsValid(vgui.GetKeyboardFocus()) and vgui.GetKeyboardFocus():GetClassName() == "DTextEntry" then return end
+
+        if IsValid(frame) then
+            closeUI()
+            return
+        end
+
         local tr = ply:GetEyeTrace()
         local hit = IsValid(tr.Entity) and tr.Entity or nil
         if IsValid(hit) then
@@ -284,7 +371,8 @@ if CLIENT then
             end
         end
         if not nearPump and not IsValid(duty) then return end
-        RunConsoleCommand("grm_fire_pump_ui")
+        net.Start(NET_OPEN)
+        net.SendToServer()
     end)
 
     print("[GRM Fire] Pump UI client loaded")
