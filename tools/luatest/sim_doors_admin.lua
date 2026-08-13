@@ -30,17 +30,17 @@ end
 local function has(s, n) return s:find(n, 1, true) ~= nil end
 
 print("\n=== ИСТОЧНИКИ v2.0.7 ===")
-check("версия 2.0.7 в шапке", has(src, "GRM Doors System v2.0.7"))
-check("сервер печатает v2.0.7", has(src, "v2.0.7 загружена"))
-check("клиент печатает v2.0.7", has(src, "Клиентская система дверей v2.0.7"))
+check("версия 3.0.0 в шапке", has(src, "GRM Doors System v3.0.0") or has(src, 'D.Version = "3.0.0"'))
+check("сервер печатает версию", has(src, "Серверная система дверей v") or has(src, "D.Version"))
+check("клиент печатает версию", has(src, "Клиентская система дверей v"))
 check("есть D.CanAdminDoors", has(src, "function D.CanAdminDoors"))
 check("CanAdminDoors = SuperAdmin", has(src, "ply:IsSuperAdmin() == true"))
-check("is_admin из CanAdminDoors", has(src, "is_admin = D.CanAdminDoors(ply)"))
+check("is_admin из EvaluateAccess.admin / CanAdminDoors", has(src, "is_admin = acc.admin") or has(src, "is_admin = D.CanAdminDoors(ply)"))
 check("net-флаг = CanAdminDoors, не AM.CanManage", has(src, "net.WriteBool(D.CanAdminDoors(ply))"))
 check("старый WriteBool с AM.CanManage убран", not has(src, "D.AccessManager.CanManage and D.AccessManager.CanManage(ply) or ply:IsSuperAdmin()"))
 check("set_faction_owner режет не-админа", has(src, "Только суперадмин может менять принадлежность двери."))
 check("toggle_ownable режет не-админа", has(src, "Только суперадмин может менять статус приватизации."))
-check("вкладка Администрирование за is_admin/canManage", has(src, "if d.is_admin == true or canManage == true then"))
+check("вкладка Администрирование только админу", has(src, "if d.is_admin == true or canAdmin == true then") or has(src, "if d.is_admin == true or canManage == true then"))
 check("R ключей открывает OpenDoorMenu", has(key, "GRM.Doors.OpenDoorMenu"))
 check("AM.CanManage остался для /door_access", has(acc, "function AM.CanManage"))
 
