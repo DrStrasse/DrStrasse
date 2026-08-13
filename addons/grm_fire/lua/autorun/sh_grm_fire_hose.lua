@@ -31,8 +31,8 @@ A.HoseCfg = A.HoseCfg or {
 if A.HoseCfg.MaxLength < 2000 then A.HoseCfg.MaxLength = 2200 end
 A.HoseCfg.LayStep = 40
 A.HoseCfg.Width = 3
-A.HoseBeamHalfW = 0.95
-A.HoseBeamHalfH = 0.7
+A.HoseBeamHalfW = 1.35
+A.HoseBeamHalfH = 0.28
 
 A.NODE_SOURCE    = 0
 A.NODE_LAY       = 1
@@ -335,7 +335,19 @@ if CLIENT then
         return src:WorldSpaceCenter() + Vector(0, 0, 6)
     end
 
-    -- Концы с NetworkVar рукава (не из PVS насоса). Иначе снимок пути залипает.
+    local function dropGround(v)
+        if not v then return nil end
+        local tr = util.TraceLine({
+            start = v + Vector(0, 0, 48),
+            endpos = v - Vector(0, 0, 160),
+            mask = MASK_SOLID_BRUSHONLY,
+        })
+        if tr.Hit then return tr.HitPos + Vector(0, 0, 3) end
+        return Vector(v.x, v.y, v.z)
+    end
+
+    -- Катушка (живо) → земля у машины → колышки как есть → ноги → рука.
+    -- Не спрямлять насос→рука по воздуху.
     local function livePts(rec)
         if not rec or not rec.pts then return nil end
         local pts = {}
@@ -352,18 +364,13 @@ if CLIENT then
             if not IsValid(src) and IsValid(hose) and hose.GetStartEnt then src = hose:GetStartEnt() end
             tip = sourceTip(src)
         end
-        if not tip and IsValid(hose) then
-            for _, n in ipairs(ents.FindByClass("grm_fire_hose_node")) do
-                if IsValid(n) and n.GetHose and n:GetHose() == hose then
-                    local typ = n.GetNodeType and n:GetNodeType() or -1
-                    if typ == 0 or IsValid(n:GetParent()) then
-                        tip = n:GetPos() + Vector(0, 0, 6)
-                        break
-                    end
-                end
+        if tip then
+            pts[1] = tip
+            local g = dropGround(tip)
+            if g and (not pts[2] or g:DistToSqr(pts[2]) > 36) then
+                table.insert(pts, 2, g)
             end
         end
-        if tip then pts[1] = tip end
         if rec.docked then
             local tail
             if IsValid(hose) and hose.GetTailPos then
@@ -380,12 +387,14 @@ if CLIENT then
             end
             if tail then pts[#pts] = tail end
         elseif IsValid(rec.holder) then
+            local feet = dropGround(rec.holder:GetPos())
+            if feet then pts[#pts + 1] = feet end
             pts[#pts + 1] = handPos(rec.holder)
         end
         return pts
     end
 
-    -- Тонкий шланг: одна коробка ~2.4×1.8, без второго хука (иначе «бревно»).
+    -- Плоская лента по земле, не балка в воздухе.
     function A.DrawHoseBeam(a, b, live)
         if not a or not b then return end
         local dir = b - a
@@ -397,10 +406,10 @@ if CLIENT then
         render.SetColorMaterial()
         local ang = dir:Angle()
         local mid = (a + b) * 0.5
-        local hw = A.HoseBeamHalfW or 0.95
-        local hh = A.HoseBeamHalfH or 0.7
+        local hw = A.HoseBeamHalfW or 1.35
+        local hh = A.HoseBeamHalfH or 0.28
         render.DrawBox(mid, ang, Vector(-len * 0.5, -hw, -hh), Vector(len * 0.5, hw, hh), col, true)
-        render.DrawLine(a + Vector(0, 0, 0.8), b + Vector(0, 0, 0.8), COL_DARK, false)
+        render.DrawLine(a + Vector(0, 0, 0.4), b + Vector(0, 0, 0.4), COL_DARK, false)
     end
 
     local function collectFromNodes()

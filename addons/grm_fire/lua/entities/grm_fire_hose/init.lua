@@ -119,14 +119,25 @@ function ENT:DeployTo(ply)
     local origin = src:WorldSpaceCenter() + src:GetForward() * 8 + Vector(0, 0, 6)
     local node = self:MakeNode(typ, origin, src)
     if not IsValid(node) then return false, "узел" end
-    self:SetEndNode(node)
+    -- Сразу колышек на земле: насос → асфальт, не балка по воздуху.
+    local gpos = self:GroundSnap(origin)
+    local gnode = self:MakeNode(FA and FA.NODE_LAY or 1, gpos)
+    if IsValid(gnode) then
+        node:SetNextNode(gnode)
+        self:Link(node, gnode)
+        gnode:SetNextNode(ply)
+        self:SetEndNode(gnode)
+    else
+        node:SetNextNode(ply)
+        self:SetEndNode(node)
+    end
     self:SetHolder(ply)
     ply.GRM_FireHose = self
     if ply.SetNW2Entity then ply:SetNW2Entity("GRM_FireHose", self) end
     if not ply:HasWeapon("weapon_grm_hose") then ply:Give("weapon_grm_hose") end
     ply:SelectWeapon("weapon_grm_hose")
-    node:SetNextNode(ply)
     self:EmitSound("physics/rubber/rubber_tire_impact_soft1.wav", 60, 110)
+    self:SetLaidLen(math.floor(self:LaidDistance()))
     self:BroadcastPath()
     return true
 end
@@ -584,72 +595,98 @@ function ENT:PopNodeAt(i)
     return true
 end
 
--- Машина/насос уехали: тянуть укладку за собой, слабину у катушки сматывать.
+-- Вставить колышек на земле (не в конец). Старые точки не двигаем.
+function ENT:InsertLayAt(idx, pos)
+    local FA = A()
+    local n = ents.Create("grm_fire_hose_node")
+    if not IsValid(n) then return nil end
+    n:SetPos(pos)
+    n:SetHose(self)
+    n:SetNodeType(FA and FA.NODE_LAY or 1)
+    n:Spawn()
+    n:Activate()
+    idx = math.max(2, math.min(idx, #(self.Nodes or {}) + 1))
+    table.insert(self.Nodes, idx, n)
+    local prev = self.Nodes[idx - 1]
+    local nxt = self.Nodes[idx + 1]
+    if IsValid(prev) then
+        if constraint.RemoveConstraints then pcall(constraint.RemoveConstraints, prev, "Rope") end
+        prev:SetNextNode(n)
+        self:Link(prev, n)
+    end
+    if IsValid(nxt) then
+        n:SetNextNode(nxt)
+        self:Link(n, nxt)
+    else
+        local ply = self:GetHolder()
+        if IsValid(ply) then n:SetNextNode(ply) end
+        self:SetEndNode(n)
+    end
+    return n
+end
+
+-- Машина уехала: досеять колышки от катушки по земле. Готовый путь не натягивать.
+function ENT:PayoutFromSource()
+    local srcPos = self:SourceAnchor()
+    if not srcPos then return false end
+    local dest = self:GroundSnap(srcPos)
+    local nodes = self.Nodes or {}
+    if #nodes < 1 then return false end
+    local FA = A()
+    local step = cfg().LayStep or 40
+    local changed = false
+    if #nodes == 1 then
+        if self:InsertLayAt(2, dest) then changed = true end
+        return changed
+    end
+    while #self.Nodes >= 3 and FA and FA.HoseShouldCompact
+        and FA.HoseShouldCompact(dest:Distance(self.Nodes[2]:GetPos()), step) do
+        if not self:PopNodeAt(2) then break end
+        changed = true
+    end
+    local first = self.Nodes[2]
+    if not IsValid(first) or self:IsFixedNode(first) then return changed end
+    local d = dest:Distance(first:GetPos())
+    if d >= step and self:LaidDistance() + d <= (self:GetMaxLen() or 2200) then
+        if self:InsertLayAt(2, dest) then changed = true end
+    end
+    return changed
+end
+
 function ENT:FollowHost()
     local srcPos, endPos = self:SyncAnchors()
-    local FA = A()
-    local nodes = self.Nodes or {}
     if not srcPos then return false end
 
     local lastSrc = self._LastSrcPos
     local lastEnd = self._LastEndPos
-    local srcMoved = (not lastSrc) or lastSrc:DistToSqr(srcPos) >= 4
-    local endMoved = endPos and ((not lastEnd) or lastEnd:DistToSqr(endPos) >= 4)
-    if lastSrc then
-        self._SrcDelta = math.sqrt(lastSrc:DistToSqr(srcPos))
-    else
-        self._SrcDelta = 0
-    end
+    local srcMoved = (not lastSrc) or lastSrc:DistToSqr(srcPos) >= 9
+    local endMoved = endPos and ((not lastEnd) or lastEnd:DistToSqr(endPos) >= 9)
     self._LastSrcPos = Vector(srcPos)
     if endPos then self._LastEndPos = Vector(endPos) end
     if lastSrc and not srcMoved and not endMoved then return false end
 
-    local step = cfg().LayStep or 40
-    local maxSeg = step * 1.15
     local moved = false
-
-    if #nodes >= 2 and FA and FA.HoseDragPoint then
-        if self:GetDocked() and endPos then
-            local lays = {}
-            for i = 2, #nodes - 1 do
-                if IsValid(nodes[i]) and not self:IsFixedNode(nodes[i]) then
-                    lays[#lays + 1] = nodes[i]
-                end
-            end
-            for k = 1, #lays do
-                local t = k / (#lays + 1)
-                lays[k]:SetPos(self:GroundSnap(LerpVector(t, srcPos, endPos)))
-                moved = true
-            end
-        else
-            local delta = tonumber(self._SrcDelta) or 0
-            local passes = 3
-            if delta > 40 then passes = 8 elseif delta > 16 then passes = 5 end
-            for _ = 1, passes do
-                local prevPos = srcPos
-                for i = 2, #nodes do
-                    local n = nodes[i]
-                    if not IsValid(n) then break end
-                    if self:IsFixedNode(n) then
-                        prevPos = n:GetPos()
-                    else
-                        if self:DragNode(n, prevPos, maxSeg) then moved = true end
-                        prevPos = n:GetPos()
-                    end
-                end
-            end
-            local n2 = nodes[2]
-            while IsValid(n2) and FA.HoseShouldCompact and FA.HoseShouldCompact(srcPos:Distance(n2:GetPos()), step) do
-                if not self:PopNodeAt(2) then break end
-                moved = true
-                n2 = self.Nodes[2]
+    if self:GetDocked() and endPos then
+        local nodes = self.Nodes or {}
+        local lays = {}
+        for i = 2, #nodes - 1 do
+            if IsValid(nodes[i]) and not self:IsFixedNode(nodes[i]) then
+                lays[#lays + 1] = nodes[i]
             end
         end
+        for k = 1, #lays do
+            local t = k / (#lays + 1)
+            lays[k]:SetPos(self:GroundSnap(LerpVector(t, srcPos, endPos)))
+            moved = true
+        end
+    else
+        if self:PayoutFromSource() then moved = true end
     end
 
-    -- Смещения катушки достаточно, чтобы клиент получил свежий путь.
-    self:SetLaidLen(math.floor(self:LaidDistance()))
-    if self.BroadcastPath then self:BroadcastPath() end
+    if moved or srcMoved then
+        self:SetLaidLen(math.floor(self:LaidDistance()))
+        if self.BroadcastPath then self:BroadcastPath() end
+    end
     return moved or srcMoved or endMoved
 end
 

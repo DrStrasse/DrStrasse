@@ -102,6 +102,13 @@ check("нет лимита LayStep*1.25", init:find("LayStep or 70) * 1.25", 1, 
 check("FollowHost на сервере", init:find("function ENT:FollowHost", 1, true) ~= nil)
 check("Think зовёт FollowHost", init:find("self:FollowHost()", 1, true) ~= nil)
 check("SyncAnchors SrcPos", init:find("function ENT:SyncAnchors", 1, true) ~= nil)
+check("PayoutFromSource", init:find("function ENT:PayoutFromSource", 1, true) ~= nil)
+check("InsertLayAt", init:find("function ENT:InsertLayAt", 1, true) ~= nil)
+check("нет натяжки DragNode в FollowHost", (function()
+    local a = init:find("function ENT:FollowHost", 1, true) or 0
+    local b = init:find("function ENT:Rewind", 1, true) or #init
+    return init:sub(a, b):find("DragNode", 1, true) == nil
+end)())
 
 print("\n=== тяга за машиной ===")
 local nx, ny, moved, d = A.HoseDragPoint(100, 0, 0, 0, 50)
