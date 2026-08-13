@@ -47,7 +47,7 @@ local function ply(sa)
 end
 local admin, user = ply(true), ply(false)
 
-ok(QM.Version == "4.0.0", "версия 4.0.0")
+ok(QM.Version == "4.1.0", "версия 4.1.0")
 ok(QM.CanUseTool(admin, "dynamite") == true, "суперадмин: динамит можно")
 ok(QM.CanUseTool(user, "dynamite") == false, "игрок: динамит в deny")
 ok(QM.CanUseTool(user, "weld") == true, "игрок: сварка можно")

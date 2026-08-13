@@ -23,6 +23,12 @@ ok(not bare:find("CP:SetTall", 1, true), "нет SetTall по ControlPanel")
 ok(src:find("function QM.OpenMenu", 1, true) ~= nil, "OpenMenu существует")
 ok(src:find("QM._holdOpen", 1, true) ~= nil, "флаг удержания есть")
 ok(not src:find("ScreenClickerEnabled", 1, true), "Think не гасит по кликеру")
+ok(not bare:find('{"tools", "Инструменты"', 1, true)
+    and not bare:find('{ "tools", "Инструменты"', 1, true),
+    "вкладки «Инструменты» нет")
+ok(src:find("fillToolList", 1, true) ~= nil, "список тулов на правой полке")
+ok(not bare:find('RunConsoleCommand("+menu")', 1, true), "нет кнопки +menu")
+ok(src:find("панели в Стройке нет", 1, true) ~= nil, "честная подсказка без схемы")
 
 print(("РЕЗУЛЬТАТ: %d/%d, fail=%d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

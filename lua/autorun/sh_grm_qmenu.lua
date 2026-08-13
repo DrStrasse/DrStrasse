@@ -1,6 +1,10 @@
 --[[--------------------------------------------------------------------
-    GRM Q-меню «Стройка» v4.0.0 (Код 96) — переписано с нуля
+    GRM Q-меню «Стройка» v4.1.0 (Код 96) — переписано с нуля
 
+    v4.1.0: инструменты справа (как ваниль / v3), не вкладкой;
+      панель параметров с нуля — только ручная схема с человеческими
+      подписями; авто-дамп ClientConVar в UI не используется
+      (это давало a1/b3 у 3D2D Textscreen); нет кнопки +menu.
     v4.0.0: чужой BuildCPanel больше не вызывается; настройки — из схемы
       данных; иконки порциями; ничего не меряем в Paint; раскладка
       константами; HOLD-Q как ваниль (зажал — открыто, отпустил — закрыто).
@@ -15,7 +19,7 @@ GRM = GRM or {}
 GRM.QMenu = GRM.QMenu or {}
 local QM = GRM.QMenu
 
-QM.Version = "4.0.0"
+QM.Version = "4.1.0"
 
 local CONFIG_FILE = "grm_qmenu.json"
 
@@ -195,6 +199,74 @@ QM.Schema = {
         { cvar = "ffd_scanner_faction", type = "text", label = "Фракция" },
         { cvar = "ffd_scanner_hold_time", type = "number", label = "Удержание, сек" },
     },
+    light = {
+        { cvar = "light_r", type = "number", label = "Красный" },
+        { cvar = "light_g", type = "number", label = "Зелёный" },
+        { cvar = "light_b", type = "number", label = "Синий" },
+        { cvar = "light_brightness", type = "number", label = "Яркость" },
+        { cvar = "light_size", type = "number", label = "Радиус" },
+        { cvar = "light_toggle", type = "bool", label = "Переключатель" },
+    },
+    lamp = {
+        { cvar = "lamp_r", type = "number", label = "Красный" },
+        { cvar = "lamp_g", type = "number", label = "Зелёный" },
+        { cvar = "lamp_b", type = "number", label = "Синий" },
+        { cvar = "lamp_brightness", type = "number", label = "Яркость" },
+        { cvar = "lamp_fov", type = "number", label = "Угол луча" },
+        { cvar = "lamp_distance", type = "number", label = "Дальность" },
+        { cvar = "lamp_toggle", type = "bool", label = "Переключатель" },
+    },
+    colour = {
+        { cvar = "colour_r", type = "number", label = "Красный" },
+        { cvar = "colour_g", type = "number", label = "Зелёный" },
+        { cvar = "colour_b", type = "number", label = "Синий" },
+        { cvar = "colour_a", type = "number", label = "Прозрачность" },
+    },
+    weld = {
+        { cvar = "weld_forcelimit", type = "number", label = "Предел силы (0 = без лимита)" },
+        { cvar = "weld_nocollide", type = "bool", label = "Не сталкиваться" },
+    },
+    grm_lab_tool = {
+        { cvar = "grm_lab_tool_type", type = "choice", label = "Тип лаборатории",
+          choices = { { "Лаборатория наркотиков", "narc" }, { "Медицинская лаборатория", "med" } } },
+    },
+    grm_network_tool = {
+        { cvar = "grm_network_tool_mode", type = "choice", label = "Режим",
+          choices = { { "Установка устройства", "spawn" }, { "Соединение кабелем", "link" } } },
+        { cvar = "grm_network_tool_kind", type = "choice", label = "Устройство",
+          choices = { { "Компьютер", "computer" }, { "Wi-Fi роутер", "router" },
+                      { "Сетевой принтер", "printer" }, { "Розетка", "socket" }, { "Штекер", "plug" } } },
+        { cvar = "grm_network_tool_name", type = "text", label = "Название" },
+        { cvar = "grm_network_tool_network", type = "text", label = "Сеть / SSID" },
+    },
+    grm_quest_tool = {
+        { cvar = "grm_quest_tool_mode", type = "choice", label = "Режим",
+          choices = { { "Квестовый NPC", "npc" }, { "Зона этапа", "zone" }, { "Точка кат-сцены", "cutscene" } } },
+        { cvar = "grm_quest_tool_npc_id", type = "text", label = "ID NPC" },
+        { cvar = "grm_quest_tool_npc_name", type = "text", label = "Имя NPC" },
+        { cvar = "grm_quest_tool_quest_id", type = "text", label = "ID квеста" },
+        { cvar = "grm_quest_tool_step", type = "number", label = "Номер этапа" },
+        { cvar = "grm_quest_tool_phase", type = "choice", label = "Фаза кат-сцены",
+          choices = { { "При принятии", "accept" }, { "При завершении", "complete" } } },
+    },
+    vehicle_dealer_tool = {
+        { cvar = "vehicle_dealer_tool_name", type = "text", label = "Название дилера" },
+        { cvar = "vehicle_dealer_tool_model", type = "text", label = "Модель NPC" },
+        { cvar = "vehicle_dealer_tool_direction", type = "choice", label = "Направление появления",
+          choices = { { "По взгляду", "look" }, { "Вперёд от дилера", "forward" }, { "Назад", "back" },
+                      { "Влево", "left" }, { "Вправо", "right" }, { "Север", "north" },
+                      { "Восток", "east" }, { "Юг", "south" }, { "Запад", "west" } } },
+        { cvar = "vehicle_dealer_tool_lift", type = "number", label = "Высота над землёй" },
+    },
+    grm_augmentation = {
+        { cvar = "grm_augmentation_type", type = "choice", label = "Оборудование",
+          choices = { { "Станция аугментаций", "station" }, { "Капсула аугментации", "pod" } } },
+    },
+    grm_citadel_core = {
+        { cvar = "grm_citadel_core_type", type = "choice", label = "Оборудование",
+          choices = { { "Ядро Цитадели", "core" }, { "Терминал Ядра", "terminal" },
+                      { "Связать терминал с ядром", "link" } } },
+    },
 }
 
 function QM.SchemaFromConVars(cvars)
@@ -221,17 +293,11 @@ function QM.SchemaFromConVars(cvars)
     return out
 end
 
+-- Только ручная схема. Авто из ClientConVar UI не использует
+-- (SchemaFromConVars оставлена для стенда sim_qmenu_v4_schema).
 function QM.ResolveSchema(toolId)
     toolId = tostring(toolId or "")
     if QM.Schema[toolId] then return QM.Schema[toolId], "hand" end
-    if istable(weapons) and isfunction(weapons.GetStored) then
-        local ToolObj = weapons.GetStored("gmod_tool")
-        local tool = istable(ToolObj) and istable(ToolObj.Tool) and ToolObj.Tool[toolId] or nil
-        if istable(tool) and istable(tool.ClientConVar) then
-            local auto = QM.SchemaFromConVars(tool.ClientConVar)
-            if #auto > 0 then return auto, "auto" end
-        end
-    end
     return nil, "none"
 end
 
@@ -868,7 +934,7 @@ if CLIENT then
     }
 
     if isfunction(CreateClientConVar) then
-        CreateClientConVar("grm_qmenu_safe", "0", true, false, "1 — без иконок и полки")
+        CreateClientConVar("grm_qmenu_safe", "0", true, false, "1 — без иконок моделей")
         CreateClientConVar("grm_qmenu_profile", "0", true, false, "1 — печать этапов сборки")
     end
 
@@ -1101,6 +1167,7 @@ if CLIENT then
         QM._holdOpen = false
         QM._iconQueue = {}
         QM._settingsBody = nil
+        QM._toolsBody = nil
         if IsValid(QM._frame) then QM._frame:Remove() end
         QM._frame = nil
     end
@@ -1119,51 +1186,71 @@ if CLIENT then
     local function fillSchema(body, toolId)
         if not IsValid(body) then return end
         if isfunction(body.Clear) then body:Clear() end
+        local function addHint(txt)
+            local l = vgui.Create("DLabel", body)
+            l:Dock(TOP) l:SetTall(78) l:SetFont("GRMQ_Text") l:SetTextColor(QC.dim) l:SetWrap(true)
+            l:DockMargin(6, 6, 6, 4)
+            l:SetText(txt)
+            if isfunction(body.AddItem) then body:AddItem(l) end
+        end
+        if not isstring(toolId) or toolId == "" then
+            addHint("Выберите инструмент выше. Параметры появятся здесь, если для него есть схема Стройки.")
+            return
+        end
+        -- Только ручная схема. Авто из ClientConVar сюда не попадает.
         local schema = QM.ResolveSchema(toolId)
         if not schema then
-            local l = vgui.Create("DLabel", body)
-            l:Dock(TOP) l:SetTall(56) l:SetFont("GRMQ_Text") l:SetTextColor(QC.dim) l:SetWrap(true)
-            l:SetText("У инструмента нет параметров в быстром меню.")
-            local b = mkBtn(body, "Открыть ванильную панель", QC.acc)
-            b:Dock(TOP) b:SetTall(28) b:DockMargin(4, 6, 4, 0)
-            b.DoClick = function()
-                if RunConsoleCommand then RunConsoleCommand("+menu") end
+            local name = toolId
+            for _, t in ipairs(QM.ToolCatalog) do
+                if t.id == toolId then name = toolLabel(t) break end
             end
+            addHint("«" .. tostring(name) .. "» — панели в Стройке нет. Инструмент уже выбран: работайте в мире.")
             return
         end
         for _, row in ipairs(schema) do
-            local box = vgui.Create("DPanel", body)
-            box:Dock(TOP) box:SetTall(row.type == "choice" and 48 or 28) box:DockMargin(2, 2, 2, 2)
-            box:SetPaintBackground(false)
-            if isfunction(body.AddItem) then body:AddItem(box) end
-            local lab = vgui.Create("DLabel", box)
-            lab:SetPos(4, 2) lab:SetSize(280, 16) lab:SetFont("GRMQ_Small") lab:SetTextColor(QC.dim)
-            lab:SetText(tostring(row.label or row.cvar))
-            if row.type == "bool" then
-                local cb = vgui.Create("DCheckBoxLabel", box)
-                cb:SetPos(4, 8) cb:SetSize(280, 18) cb:SetText("") cb:SetTextColor(QC.text)
-                cb:SetValue(cvarGet(row.cvar) ~= "0" and 1 or 0)
-                cb.OnChange = function(_, v) cvarSet(row.cvar, v and "1" or "0") end
-            elseif row.type == "choice" then
-                local combo = vgui.Create("DComboBox", box)
-                combo:SetPos(4, 20) combo:SetSize(280, 22)
-                local cur = cvarGet(row.cvar)
-                for _, ch in ipairs(row.choices or {}) do
-                    combo:AddChoice(ch[1], ch[2], ch[2] == cur)
+            local caption = row.label
+            if isstring(caption) and caption ~= "" and isstring(row.cvar) and row.cvar ~= "" then
+                local kind = row.type
+                local tall = 28
+                if kind == "choice" or kind == "text" then tall = 48
+                elseif kind == "bool" then tall = 24 end
+                local box = vgui.Create("DPanel", body)
+                box:Dock(TOP) box:SetTall(tall) box:DockMargin(2, 2, 2, 2)
+                box:SetPaintBackground(false)
+                if isfunction(body.AddItem) then body:AddItem(box) end
+                if kind == "bool" then
+                    local cb = vgui.Create("DCheckBoxLabel", box)
+                    cb:SetPos(4, 3) cb:SetSize(276, 18)
+                    cb:SetFont("GRMQ_Text") cb:SetTextColor(QC.text)
+                    cb:SetText(caption)
+                    cb:SetValue(cvarGet(row.cvar) ~= "0" and 1 or 0)
+                    cb.OnChange = function(_, v) cvarSet(row.cvar, v and "1" or "0") end
+                else
+                    local lab = vgui.Create("DLabel", box)
+                    lab:SetPos(4, 2) lab:SetSize(276, 16) lab:SetFont("GRMQ_Small") lab:SetTextColor(QC.dim)
+                    lab:SetText(caption)
+                    if kind == "choice" then
+                        local combo = vgui.Create("DComboBox", box)
+                        combo:SetPos(4, 20) combo:SetSize(276, 22)
+                        local cur = cvarGet(row.cvar)
+                        for _, ch in ipairs(row.choices or {}) do
+                            combo:AddChoice(ch[1], ch[2], ch[2] == cur)
+                        end
+                        combo.OnSelect = function(_, _, _, data) if data then cvarSet(row.cvar, data) end end
+                    elseif kind == "number" then
+                        local nw = vgui.Create("DNumberWang", box)
+                        nw:SetPos(176, 4) nw:SetSize(100, 20)
+                        nw:SetMin(-99999) nw:SetMax(99999)
+                        nw:SetValue(tonumber(cvarGet(row.cvar)) or 0)
+                        nw.OnValueChanged = function(_, v) cvarSet(row.cvar, tostring(v)) end
+                    else
+                        local te = vgui.Create("DTextEntry", box)
+                        te:SetPos(4, 20) te:SetSize(276, 22) te:SetFont("GRMQ_Text")
+                        te:SetValue(cvarGet(row.cvar))
+                        te.OnEnter = function() cvarSet(row.cvar, te:GetValue() or "") end
+                        te.OnLoseFocus = function() cvarSet(row.cvar, te:GetValue() or "") end
+                    end
                 end
-                combo.OnSelect = function(_, _, _, data) if data then cvarSet(row.cvar, data) end end
-            elseif row.type == "number" then
-                local nw = vgui.Create("DNumberWang", box)
-                nw:SetPos(180, 4) nw:SetSize(100, 20)
-                nw:SetMin(-99999) nw:SetMax(99999)
-                nw:SetValue(tonumber(cvarGet(row.cvar)) or 0)
-                nw.OnValueChanged = function(_, v) cvarSet(row.cvar, tostring(v)) end
-            else
-                local te = vgui.Create("DTextEntry", box)
-                te:SetPos(4, 18) te:SetSize(280, 20) te:SetFont("GRMQ_Text")
-                te:SetValue(cvarGet(row.cvar))
-                te.OnEnter = function() cvarSet(row.cvar, te:GetValue() or "") end
-                te.OnLoseFocus = function() cvarSet(row.cvar, te:GetValue() or "") end
             end
         end
     end
@@ -1172,7 +1259,8 @@ if CLIENT then
         if IsValid(QM._frame) then return end
         QM._holdOpen = fromHold == true
         local admin = isAdmin()
-        if QM._tab ~= "catalog" and QM._tab ~= "tools" and QM._tab ~= "mine" and QM._tab ~= "settings" then
+        if QM._tab == "tools" then QM._tab = "catalog" end
+        if QM._tab ~= "catalog" and QM._tab ~= "mine" and QM._tab ~= "settings" then
             QM._tab = "catalog"
         end
         if not admin and QM._tab == "settings" then QM._tab = "catalog" end
@@ -1185,8 +1273,10 @@ if CLIENT then
                 FH = math.Clamp(math.floor(sh * 0.74), 560, 820)
             end
         end
-        local shelfOn = not safeMode()
-        local shelfW = shelfOn and SHELF_W or 0
+        -- Полка справа — список инструментов. Иконки каталога в safe-режиме
+        -- отключаются отдельно; полку прятать нельзя, иначе тулы недоступны.
+        local shelfOn = true
+        local shelfW = SHELF_W
         local tabsY = HEAD_H
         local contY = HEAD_H + TAB_H
         local footY = FH - FOOT_H
@@ -1243,6 +1333,7 @@ if CLIENT then
         f.OnRemove = function()
             QM._iconQueue = {}
             QM._settingsBody = nil
+            QM._toolsBody = nil
             if QM._frame == f then QM._frame = nil end
             QM._holdOpen = false
         end
@@ -1251,10 +1342,9 @@ if CLIENT then
 
         local tabDefs = {
             { "catalog", "Каталог", 110 },
-            { "tools", "Инструменты", 130 },
             { "mine", "Мои объекты", 128 },
         }
-        if admin then tabDefs[#tabDefs + 1] = { "settings", "Настройки", 120 } end
+        if admin then tabDefs[#tabDefs + 1] = { "settings", "Настройки ⚙", 128 } end
         local tabX = PAD
         for _, td in ipairs(tabDefs) do
             local id, txt, w = td[1], td[2], td[3]
@@ -1282,21 +1372,28 @@ if CLIENT then
         content:SetPos(PAD, contY) content:SetSize(CW, CH)
         content.Paint = function() end
 
-        local settingsBody
-        if shelfOn then
+        local settingsBody, toolsBody
+        local SHELF_HEAD = 26
+        local toolsH = math.floor((CH - SHELF_HEAD * 2) * 0.58)
+        local paramsH = CH - SHELF_HEAD * 2 - toolsH
+        do
             local shelf = vgui.Create("DPanel", f)
             shelf:SetPos(FW - PAD - shelfW, contY) shelf:SetSize(shelfW, CH)
             shelf.Paint = function(_, pw, ph)
                 draw.RoundedBox(6, 0, 0, pw, ph, QC.panel)
-                draw.RoundedBoxEx(6, 0, 0, pw, 28, QC.head, true, true, false, false)
-                draw.SimpleText("ПАРАМЕТРЫ", "GRMQ_Small", 10, 14, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.RoundedBoxEx(6, 0, 0, pw, SHELF_HEAD, QC.head, true, true, false, false)
+                draw.SimpleText("ИНСТРУМЕНТЫ", "GRMQ_Small", 10, SHELF_HEAD / 2, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                local py = SHELF_HEAD + toolsH
+                draw.RoundedBox(0, 0, py, pw, SHELF_HEAD, QC.head)
+                draw.SimpleText("ПАРАМЕТРЫ", "GRMQ_Small", 10, py + SHELF_HEAD / 2, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             end
+            toolsBody = vgui.Create("DScrollPanel", shelf)
+            toolsBody:SetPos(4, SHELF_HEAD + 2) toolsBody:SetSize(shelfW - 8, toolsH - 4)
+            QM._toolsBody = toolsBody
             settingsBody = vgui.Create("DScrollPanel", shelf)
-            settingsBody:SetPos(4, 32) settingsBody:SetSize(shelfW - 8, CH - 36)
+            settingsBody:SetPos(4, SHELF_HEAD + toolsH + SHELF_HEAD + 2)
+            settingsBody:SetSize(shelfW - 8, paramsH - 4)
             QM._settingsBody = settingsBody
-            local hint = vgui.Create("DLabel", settingsBody)
-            hint:Dock(TOP) hint:SetTall(64) hint:SetFont("GRMQ_Text") hint:SetTextColor(QC.dim) hint:SetWrap(true)
-            hint:SetText("Выберите инструмент на вкладке «Инструменты» — здесь появятся его параметры.")
         end
 
         local foot = vgui.Create("DPanel", f)
@@ -1422,15 +1519,16 @@ if CLIENT then
             rebuildGrid()
         end
 
-        builders.tools = function()
-            content:Clear()
-            local sc = vgui.Create("DScrollPanel", content)
-            sc:SetPos(6, 6) sc:SetSize(CW - 12, CH - 12)
+        local function fillToolList()
+            local sc = toolsBody
+            if not IsValid(sc) then return end
+            if isfunction(sc.Clear) then sc:Clear() end
             local function scrollAdd(pnl, mTop)
                 pnl:Dock(TOP)
-                pnl:DockMargin(4, mTop or 3, 4, 0)
-                sc:AddItem(pnl)
+                pnl:DockMargin(2, mTop or 2, 2, 0)
+                if isfunction(sc.AddItem) then sc:AddItem(pnl) end
             end
+            local innerW = math.max(40, shelfW - 28)
             local catsShown = 0
             for _, catDef in ipairs(QM.ToolCategories or {}) do
                 local here = {}
@@ -1440,26 +1538,26 @@ if CLIENT then
                 if #here > 0 then
                     catsShown = catsShown + 1
                     local collapsed = QM._toolCatsCollapsed[catDef.id] == true
-                    local hdr = vgui.Create("DButton", sc)
-                    hdr:SetText("") hdr:SetTall(24)
+                    local hdr = vgui.Create("DButton")
+                    hdr:SetText("") hdr:SetTall(22)
                     local hdrTxt = (collapsed and ">  " or "v  ") .. catDef.name .. "  (" .. tostring(#here) .. ")"
                     hdr.Paint = function(self, pw, ph)
                         draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and QC.line or QC.panel2)
-                        draw.SimpleText(hdrTxt, "GRMQ_Text", 8, ph / 2, self:IsHovered() and QC.text or QC.dim,
+                        draw.SimpleText(hdrTxt, "GRMQ_Small", 8, ph / 2, self:IsHovered() and QC.text or QC.dim,
                             TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                     end
                     hdr.DoClick = function()
                         QM._toolCatsCollapsed[catDef.id] = not collapsed
-                        builders.tools()
+                        fillToolList()
                     end
-                    scrollAdd(hdr, 4)
+                    scrollAdd(hdr, 3)
                     if not collapsed then
                         for _, t in ipairs(here) do
                             local why = toolWhy(t.id)
                             local allowed = why == nil
-                            local row = vgui.Create("DButton", sc)
-                            row:SetText("") row:SetTall(28)
-                            local tlabel = fitText(toolLabel(t), "GRMQ_Text", math.max(40, CW - 180))
+                            local row = vgui.Create("DButton")
+                            row:SetText("") row:SetTall(22)
+                            local tlabel = fitText(toolLabel(t), "GRMQ_Text", innerW)
                             local tid = t.id
                             row:SetTooltip(toolLabel(t) .. " [" .. tid .. "]\n" .. tostring(t.desc or "")
                                 .. (why and ("\nНЕДОСТУПНО: " .. why) or ""))
@@ -1471,9 +1569,7 @@ if CLIENT then
                                     draw.RoundedBox(4, 0, 0, pw, ph, QC.panel2)
                                 end
                                 local tcol = active and QC.text or (allowed and QC.dim or QC.dim2)
-                                draw.SimpleText(tlabel, "GRMQ_Text", 12, ph / 2, tcol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                                draw.SimpleText("[" .. tid .. "]", "GRMQ_Small", pw - 8, ph / 2,
-                                    active and QC.text or QC.dim2, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                                draw.SimpleText(tlabel, "GRMQ_Text", 8, ph / 2, tcol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                             end
                             row.DoClick = function()
                                 if not allowed then
@@ -1493,8 +1589,9 @@ if CLIENT then
                 end
             end
             if catsShown == 0 then
-                emptyBox(sc, "Инструменты закрыты администрацией.", "Списки — в /grm_admin → «Инструменты».")
+                emptyBox(sc, "Инструменты закрыты.", "Списки — в /grm_admin.")
             end
+            if settingsBody then fillSchema(settingsBody, QM._activeTool) end
         end
 
         QM._mineRows = QM._mineRows or {}
@@ -1608,16 +1705,18 @@ if CLIENT then
         end
 
         function QM._switchTab(id)
+            if id == "tools" then id = "catalog" end
             QM._tab = id
             if builders[id] then builders[id]() end
         end
         QM._rebuild = function()
-            if not builders[QM._tab] then QM._tab = "catalog" end
+            if QM._tab == "tools" or not builders[QM._tab] then QM._tab = "catalog" end
             builders[QM._tab]()
+            fillToolList()
         end
 
         builders[QM._tab]()
-        if QM._activeTool and settingsBody then fillSchema(settingsBody, QM._activeTool) end
+        fillToolList()
         stage("tab")
     end
 

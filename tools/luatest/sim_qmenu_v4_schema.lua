@@ -49,5 +49,21 @@ ok(sch and #sch >= 3, "у перм-тула есть поля")
 local none, nk = QM.ResolveSchema("нет_такого_тула")
 ok(none == nil and nk == "none", "нет схемы и нет ClientConVar → none")
 
+local ts, tk = QM.ResolveSchema("textscreen")
+ok(ts == nil and tk == "none", "textscreen без ручной схемы — не дампить")
+local light, lk = QM.ResolveSchema("light")
+ok(lk == "hand" and light and #light >= 3, "light — ручная схема с подписями")
+ok(light[1].label ~= light[1].cvar, "у light человеческая подпись, не сырой cvar")
+
+-- UI не должен звать автосхему: ResolveSchema не смотрит weapons
+local src
+do
+    local fh = io.open("lua/autorun/sh_grm_qmenu.lua", "r")
+    src = fh:read("*a") fh:close()
+end
+local body = src:match("function QM%.ResolveSchema.-%sfunction QM%.")
+ok(body and not body:find("SchemaFromConVars", 1, true), "ResolveSchema не зовёт SchemaFromConVars")
+ok(body and not body:find("weapons.GetStored", 1, true), "ResolveSchema не лезет в weapons")
+
 print(("РЕЗУЛЬТАТ: %d/%d, fail=%d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end
