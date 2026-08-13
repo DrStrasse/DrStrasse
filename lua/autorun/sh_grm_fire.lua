@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Fire v1.3.9 (Код 58)
+    GRM Fire v1.4.0 (Код 58)
     Серверная обвязка аддона grm_fire + vFire.
     Не содержит моделей/рукава — они в аддоне.
     Права, персист очагов, рандом по точкам, плита, оповещение.
@@ -10,7 +10,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Fire = GRM.Fire or {}
 local F = GRM.Fire
-F.Version = "1.3.9"
+F.Version = "1.4.0"
 
 F.Config = F.Config or {
     StoveEnabled = true,

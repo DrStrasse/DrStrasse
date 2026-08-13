@@ -135,11 +135,15 @@ if SERVER then
         return select(1, getFactionInfo(ply))
     end
 
-    function F.NotifyFactions(text, pos)
+    function F.NotifyFactions(text, pos, r, g, b)
+        r = tonumber(r) or 255
+        g = tonumber(g) or 120
+        b = tonumber(b) or 80
         for facName in pairs(F.NotifyData.factions or {}) do
             for _, p in ipairs(player.GetAll()) do
                 if IsValid(p) and factionOf(p) == facName then
-                    if GRM.Notify then GRM.Notify(p, text, 255, 120, 80) end
+                    if GRM.Notify then GRM.Notify(p, text, r, g, b)
+                    else p:ChatPrint("[Пожар] " .. tostring(text)) end
                 end
             end
         end
