@@ -554,6 +554,145 @@ function D.RenderText(rec)
 end
 
 -----------------------------------------------------------------------
+-- Разовая починка записей, обрезанных байтовым string.sub (задача 12)
+-----------------------------------------------------------------------
+--[[ До перехода на GRM.Utf8Sub поля резались как БАЙТЫ: trim(s, 96)
+     оставлял ~48 кириллических букв и мог разорвать последний символ
+     пополам. Записи, сохранённые тогда, уже лежат в diplomas.json
+     обрезанными — новый код чинит будущие выдачи, но не прошлые.
+
+     Что реально можно восстановить, а что нет:
+       • битый хвост (незавершённый UTF-8) — убирается всегда, это чистый
+         мусор без информации;
+       • institution и graduateName — есть КАНОНИЧЕСКИЙ источник (реестр
+         услуг и паспорта), поэтому текст восстанавливается целиком;
+       • specialty, qualification, note, grade, signedBy, revokeReason —
+         источника нет, хвост уничтожен записью на диск. Такие поля мы
+         НЕ придумываем: чистим битый символ и сообщаем администратору,
+         что значение надо ввести заново.
+     Молча «додумывать» данные в госреестре нельзя, поэтому невосстановимое
+     честно попадает в отчёт отдельным списком. ]]
+
+-- Байтовые лимиты, которыми пользовался старый trim(). Совпадение длины
+-- строки с лимитом ровно в байтах — почерк обрезки байтами.
+D.FieldLimits = D.FieldLimits or {
+    number = 32, graduateName = 64, institution = 96, faction = 64,
+    specialty = 96, qualification = 96, grade = 32, issuerName = 64,
+    signedBy = 64, revokeReason = 160, note = 240,
+}
+
+--- Позиция начала незавершённого UTF-8 символа в конце строки (или nil).
+local function brokenTailAt(s)
+    local n = #s
+    local i = n
+    while i >= 1 and i > n - 4 do
+        local b = string.byte(s, i)
+        if b < 128 then return nil end            -- ASCII — символ целый
+        if b >= 192 then                          -- ведущий байт
+            local size = (b < 224 and 2) or (b < 240 and 3) or 4
+            if i + size - 1 > n then return i end -- байтов не хватило
+            return nil
+        end
+        i = i - 1                                 -- байт-продолжение
+    end
+    return nil
+end
+
+--- Убрать оборванный символ в конце строки.
+local function stripBrokenTail(s)
+    local at = brokenTailAt(s)
+    if at then return string.sub(s, 1, at - 1), true end
+    return s, false
+end
+
+--- Похоже ли поле на обрезанное байтами.
+local function looksTruncated(value, limit)
+    if not limit then return false end
+    -- Ровно лимит байт: старый string.sub(s, N) иначе бы не сработал.
+    return #value >= limit
+end
+
+--- Разовая починка реестра дипломов.
+-- @param actor кто чинит (для прав и уведомлений); nil — консоль сервера
+-- @param apply true — записать изменения; false/nil — только показать
+-- @return ok, отчёт { scanned, fixedTails, restored[], unrecoverable[], changed }
+function D.Repair(actor, apply)
+    if IsValid(actor) and not actor:IsSuperAdmin() then
+        return false, "Только суперадмин"
+    end
+
+    local S = GRM.Services
+    local report = {
+        scanned = 0, fixedTails = 0, changed = 0,
+        restored = {}, unrecoverable = {},
+    }
+
+    for _, rec in ipairs(D.List) do
+        report.scanned = report.scanned + 1
+
+        -- Канонические источники: учреждение — из доступа фракции,
+        -- ФИО выпускника — из паспорта/состава фракции.
+        local canon = {}
+        if isfunction(D.InstitutionOf) and tostring(rec.faction or "") ~= "" then
+            canon.institution = D.InstitutionOf(rec.faction)
+        end
+        if S and isfunction(S.CharacterName) and tostring(rec.graduate or "") ~= "" then
+            local nm = S.CharacterName(rec.graduate)
+            -- CharacterName возвращает сам ключ, если имени не нашлось.
+            if nm and nm ~= "—" and nm ~= rec.graduate then canon.graduateName = nm end
+        end
+
+        for field, limit in pairs(D.FieldLimits) do
+            local cur = rec[field]
+            if isstring(cur) and cur ~= "" then
+                local cleaned, hadTail = stripBrokenTail(cur)
+                if hadTail then report.fixedTails = report.fixedTails + 1 end
+
+                local full = canon[field]
+                local restoredHere = false
+                if full and full ~= "" and #cleaned < #full
+                    and string.sub(full, 1, #cleaned) == cleaned then
+                    -- Сохранённое — начало канонического значения: дописываем.
+                    if apply then rec[field] = full end
+                    report.restored[#report.restored + 1] = {
+                        number = rec.number, field = field, from = cur, to = full,
+                    }
+                    report.changed = report.changed + 1
+                    restoredHere = true
+                elseif hadTail then
+                    if apply then rec[field] = cleaned end
+                    report.changed = report.changed + 1
+                end
+
+                -- Значение уже совпало с каноническим — оно целое, даже если
+                -- его длина случайно упёрлась в старый лимит.
+                local matchesCanon = (full ~= nil and full ~= "" and cleaned == full)
+
+                if not restoredHere and not matchesCanon and looksTruncated(cur, limit) then
+                    -- Хвост уничтожен, канона нет — только сообщаем.
+                    report.unrecoverable[#report.unrecoverable + 1] = {
+                        number = rec.number, field = field,
+                        value = (hadTail and cleaned or cur),
+                    }
+                end
+            end
+        end
+    end
+
+    if apply and report.changed > 0 then
+        -- Миграция обязана быть обратимой: сначала бэкап исходного файла.
+        local raw = file.Read(FILE, "DATA")
+        if raw and raw ~= "" then
+            ensure()
+            file.Write(("%s/diplomas.bak.%d.json"):format(DIR, os.time()), raw)
+        end
+        D.Save()
+    end
+
+    return true, report
+end
+
+-----------------------------------------------------------------------
 -- Старт
 -----------------------------------------------------------------------
 local function boot()

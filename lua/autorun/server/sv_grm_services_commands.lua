@@ -281,6 +281,79 @@ CMD.diplomas_all = function(ply, args)
     end
 end
 
+--[[ Правка одного поля бланка. Нужна как ручное продолжение починки:
+     значения, чей хвост уничтожен обрезкой байтами, восстановить неоткуда,
+     их вводят заново. Права проверяет сам D.Edit (руководитель учреждения,
+     учреждение/выпускник — только суперадмин). ]]
+local EDITABLE = {
+    specialty = true, qualification = true, grade = true, note = true,
+    signedBy = true, level = true, form = true,
+    institution = true, graduateName = true, number = true,
+}
+CMD.diploma_edit = function(ply, args)
+    local d = D()
+    if not d then return end
+    local num, field = args[1], string.lower(tostring(args[2] or ""))
+    local value = args[3]
+    if not num or field == "" or value == nil then
+        return say(ply, 'Использование: /diploma_edit <номер> <поле> "<значение>"', 255, 200, 120)
+    end
+    if not EDITABLE[field] then
+        local keys = {}
+        for k in pairs(EDITABLE) do keys[#keys + 1] = k end
+        table.sort(keys)
+        return say(ply, "Поле можно менять только из списка: " .. table.concat(keys, ", "), 255, 200, 120)
+    end
+    local ok, res = d.Edit(ply, num, { [field] = value })
+    if not ok then return say(ply, tostring(res), 255, 140, 140) end
+    say(ply, ("%s | %s = «%s»"):format(res.number, field, tostring(res[field])), 120, 220, 140)
+end
+
+--[[ Разовая починка дипломов, обрезанных байтовым string.sub (задача 12).
+     По умолчанию — РЕЖИМ ПРОСМОТРА: показывает, что будет изменено, и
+     ничего не пишет. Запись только по явному «apply», потому что это
+     госреестр. Перед записью D.Repair кладёт бэкап diplomas.bak.<ts>.json. ]]
+CMD.diploma_repair = function(ply, args)
+    if IsValid(ply) and not ply:IsSuperAdmin() then return say(ply, "Только суперадмин", 255, 140, 140) end
+    local d = D()
+    if not d or not isfunction(d.Repair) then return say(ply, "Модуль дипломов не загружен", 255, 140, 140) end
+
+    local apply = tostring(args[1] or ""):lower()
+    apply = (apply == "apply" or apply == "1" or apply == "yes")
+
+    local ok, rep = d.Repair(ply, apply)
+    if not ok then return say(ply, tostring(rep), 255, 140, 140) end
+
+    chat(ply, ("── Починка дипломов (%s) ──"):format(apply and "ЗАПИСЬ" or "просмотр, изменений не внесено"))
+    chat(ply, ("Просмотрено записей: %d | битых хвостов: %d | к изменению: %d")
+        :format(rep.scanned, rep.fixedTails, rep.changed))
+
+    if #rep.restored == 0 and #rep.unrecoverable == 0 then
+        return say(ply, "Обрезанных записей не найдено — реестр в порядке.", 120, 220, 140)
+    end
+
+    if #rep.restored > 0 then
+        chat(ply, ("Восстановлено по канону (%d):"):format(#rep.restored))
+        for i, r in ipairs(rep.restored) do
+            if i > 20 then chat(ply, ("  …ещё %d"):format(#rep.restored - 20)) break end
+            chat(ply, ("  %s | %s: «%s» → «%s»"):format(r.number, r.field, r.from, r.to))
+        end
+    end
+
+    if #rep.unrecoverable > 0 then
+        chat(ply, ("Восстановить нельзя — хвост утрачен, введите заново (%d):"):format(#rep.unrecoverable))
+        for i, r in ipairs(rep.unrecoverable) do
+            if i > 20 then chat(ply, ("  …ещё %d"):format(#rep.unrecoverable - 20)) break end
+            chat(ply, ("  %s | %s: «%s»"):format(r.number, r.field, r.value))
+        end
+        chat(ply, "Правка: /diploma_edit <номер> <поле> <значение>")
+    end
+
+    if not apply and rep.changed > 0 then
+        say(ply, "Это предпросмотр. Для записи: /diploma_repair apply", 255, 200, 120)
+    end
+end
+
 -----------------------------------------------------------------------
 -- Регистрация
 -----------------------------------------------------------------------
