@@ -130,6 +130,18 @@ function A.Snapshot(ply, ent)
         forms      = D and D.Forms or {},
     }
 
+    -- Список организаций-исполнителей: нужен полю «Исполнитель» в каталоге
+    -- услуг и при выставлении счетов (задача 10).
+    snap.providers = {}
+    if S and isfunction(S.ProviderList) then
+        for _, p in ipairs(S.ProviderList()) do
+            snap.providers[#snap.providers + 1] = {
+                name = p.name, institution = p.institution,
+                canInvoice = p.canInvoice, maxInvoice = p.maxInvoice,
+            }
+        end
+    end
+
     -- Задолженность: штрафы + счета
     snap.fines = {}
     if F and isfunction(F.For) then
@@ -197,6 +209,7 @@ function A.Snapshot(ply, ent)
                 snap.org.services[#snap.org.services + 1] = {
                     id = rec.id, name = rec.name, category = rec.category,
                     price = rec.price, desc = rec.desc, enabled = rec.enabled,
+                    provider = rec.provider,
                 }
             end
         end
@@ -440,6 +453,10 @@ handlers.issue_invoice = function(ply, args)
         title     = args.title,
         amount    = args.amount,
         note      = args.note,
+        -- Организация-исполнитель, в бюджет которой уйдёт доля оплаты.
+        -- Для обычного сотрудника поле игнорируется: IssueInvoice подставит
+        -- его собственную фракцию. Смысл поля — выбор у суперадмина.
+        faction   = ply:IsSuperAdmin() and args.faction or nil,
     })
     if not ok then return false, res end
     return true, ("Счёт №%d выставлен на %s"):format(res.id, money(res.amount))
@@ -459,9 +476,12 @@ handlers.upsert_service = function(ply, args)
     local ok, res = S.UpsertService(ply, {
         id = args.id, name = args.name, category = args.category,
         price = args.price, desc = args.desc, enabled = args.enabled,
+        -- Исполнитель: у лидера подменится на его же организацию, суперадмин
+        -- вправе завести услугу за любую (задача 10).
+        provider = args.provider,
     })
     if not ok then return false, res end
-    return true, ("Услуга «%s» сохранена"):format(res.name)
+    return true, ("Услуга «%s» сохранена (исполнитель: %s)"):format(res.name, tostring(res.provider or "—"))
 end
 
 handlers.delete_service = function(ply, args)
@@ -851,9 +871,16 @@ end
      карточки, а не в замыканиях у кнопок. Замыкание держит ссылку на
      родителя и срабатывает, когда ширина ещё не готова, — так рождается
      «Tried to use a NULL Panel». ]]
+--[[ Прижать кнопки к правому краю карточки.
+     Задача 10: раньше функция ЗАТИРАЛА уже назначенный карточке
+     PerformLayout — тексты, разложенные по фактической ширине, теряли
+     свою раскладку и вылезали за край. Теперь прежний обработчик
+     сохраняется и вызывается первым. ]]
 local function layoutRight(pnl, buttons, y, gap)
     pnl._btns = buttons
-    pnl.PerformLayout = function(self, w)
+    local prev = pnl.PerformLayout
+    pnl.PerformLayout = function(self, w, h)
+        if prev then prev(self, w, h) end
         local x = w - 12
         for i = #self._btns, 1, -1 do
             local b = self._btns[i]
@@ -1012,11 +1039,27 @@ tabs.services = function(body)
     top:Dock(TOP) top:SetTall(40)
     top.Paint = function() end
 
-    local catFilter = ""
+    --[[ Задача 10: витрина теперь фильтруется не только по категории, но и
+         по исполнителю — игрок должен видеть, какая организация оказывает
+         услугу и заказать её именно у неё. Карточка перестала быть
+         фиксированной: цена и кнопка привязаны к правому краю, а название и
+         описание переносятся по строкам вместо обрезки. ]]
+    local catFilter, provFilter = "", ""
+
     local cat = combo(top, "Все категории", 240, 30)
     cat:SetParent(top) cat:SetPos(0, 4)
     cat:AddChoice("Все категории", "")
     for _, c in ipairs(snap.categories or {}) do cat:AddChoice(c.name, c.id) end
+
+    local prov = combo(top, "Любой исполнитель", 240, 30)
+    prov:SetParent(top) prov:SetPos(252, 4)
+    prov:AddChoice("Любой исполнитель", "")
+    -- Исполнитель идентифицируется именем фракции: в snap.providers и в
+    -- поле service.provider хранится одно и то же значение.
+    for _, p in ipairs(snap.providers or {}) do
+        local n = tostring(p.name or "")
+        if n ~= "" then prov:AddChoice(n, n) end
+    end
 
     local sc = scroll(body) sc:Dock(FILL)
 
@@ -1024,32 +1067,73 @@ tabs.services = function(body)
         sc:Clear()
         local shown = 0
         for _, s in ipairs(snap.services or {}) do
-            if catFilter == "" or s.category == catFilter then
+            local sProv = tostring(s.provider or "")
+            local okCat  = (catFilter  == "") or (s.category == catFilter)
+            local okProv = (provFilter == "") or (sProv == provFilter)
+            if okCat and okProv then
                 shown = shown + 1
-                local c = card(sc, 74)
-                label(c, tostring(s.name or ""), "GRM_ATM_Head", C.text, 14, 8, 440, 20)
-                label(c, ("%s | Исполнитель: %s"):format(
+                local c = card(sc, 84)
+
+                local name = label(c, tostring(s.name or ""), "GRM_ATM_Head", C.text, 14, 8, 400, 20)
+                name:SetWrap(true) name:SetAutoStretchVertical(true) name:SetContentAlignment(7)
+
+                local meta = label(c, ("Категория: %s     Исполнитель: %s"):format(
                     catName(s.category),
-                    tostring(s.provider or "—")), "GRM_ATM_Small", C.muted, 14, 30, 520, 16)
+                    sProv ~= "" and sProv or "не указан"),
+                    "GRM_ATM_Small", C.cyan, 14, 30, 400, 16)
+                meta:SetWrap(true) meta:SetAutoStretchVertical(true) meta:SetContentAlignment(7)
+
+                local desc
                 if s.desc and s.desc ~= "" then
-                    label(c, tostring(s.desc), "GRM_ATM_Small", C.muted, 14, 48, 520, 16)
+                    desc = label(c, tostring(s.desc), "GRM_ATM_Small", C.muted, 14, 48, 400, 16)
+                    desc:SetWrap(true) desc:SetAutoStretchVertical(true) desc:SetContentAlignment(7)
                 end
-                label(c, money(s.price or 0), "GRM_ATM_Head", C.cyan, 560, 26, 160, 22)
+
+                local price = label(c, money(s.price or 0), "GRM_ATM_Head", C.cyan, 0, 12, 160, 22)
+                price:SetContentAlignment(9) -- правый верх
+
                 local b = button(c, "Заказать", C.green, 130, 30)
                 b:SetParent(c)
                 b.DoClick = function()
-                    Derma_Query(("Заказать услугу «%s» за %s?"):format(tostring(s.name), money(s.price or 0)),
+                    Derma_Query(("Заказать услугу «%s» за %s?\nИсполнитель: %s"):format(
+                        tostring(s.name), money(s.price or 0), sProv ~= "" and sProv or "не указан"),
                         "Подтверждение",
                         "Да, оплатить", function() act("order_service", { id = s.id, source = "auto" }) end,
                         "Отмена", function() end)
                 end
-                layoutRight(c, { b }, 22)
+
+                c.PerformLayout = function(self, w)
+                    local pad, rightW = 14, 170
+                    local textW = math.max(120, w - pad * 2 - rightW)
+
+                    local y = 8
+                    for _, el in ipairs({ name, meta, desc }) do
+                        if IsValid(el) then
+                            el:SetPos(pad, y)
+                            el:SetWide(textW)
+                            el:InvalidateLayout(true)
+                            el:SizeToContentsY()
+                            y = y + math.max(16, el:GetTall() or 16) + 2
+                        end
+                    end
+
+                    price:SetPos(w - pad - 160, 10)
+                    b:SetPos(w - pad - 130, math.max(44, y - 34))
+
+                    local need = math.max(y + 10, 84)
+                    if math.abs((self:GetTall() or 0) - need) > 1 then self:SetTall(need) end
+                end
+
                 sc:AddItem(c)
             end
         end
-        if shown == 0 then sc:AddItem(empty(sc, "В этой категории услуг пока нет.")) end
+        if shown == 0 then
+            sc:AddItem(empty(sc, "По выбранным фильтрам услуг нет."))
+        end
     end
-    cat.OnSelect = function(_, _, _, data) catFilter = data or "" fill() end
+
+    cat.OnSelect  = function(_, _, _, data) catFilter  = data or "" fill() end
+    prov.OnSelect = function(_, _, _, data) provFilter = data or "" fill() end
     fill()
 end
 
@@ -1127,53 +1211,128 @@ tabs.org = function(body)
     do
         local sc = scroll(pInv) sc:Dock(FILL)
         if acc.canInvoice or snap.isSuper then
-            local f = card(sc, 172)
+            --[[ Форма счёта. Задача 10: каждое поле подписано, добавлена
+                 ячейка исполнителя (получателя денег), сумма явно помечена
+                 как «Сумма к оплате, GRM» — раньше по плейсхолдеру «Сумма...»
+                 было непонятно, куда её вписывать. Раскладка считается от
+                 фактической ширины, поэтому поля не режутся. ]]
+            local f = card(sc, 250)
             label(f, "ВЫСТАВИТЬ СЧЁТ", "GRM_ATM_Small", C.muted, 14, 10, 300, 16)
-            local who = charPicker(f, "Плательщик...", 260)
-            who:SetParent(f) who:SetPos(14, 30)
 
-            local svc = combo(f, "Услуга (необязательно)", 260, 28)
-            svc:SetParent(f) svc:SetPos(286, 56)
+            local lWho = label(f, "Плательщик", "GRM_ATM_Small", C.muted, 14, 30, 200, 14)
+            local who  = charPicker(f, "Начните вводить имя или выберите...", 260)
+            who:SetParent(f)
+
+            local lSvc = label(f, "Услуга из каталога", "GRM_ATM_Small", C.muted, 14, 30, 200, 14)
+            local svc  = combo(f, "— без привязки —", 260, 28)
+            svc:SetParent(f)
             svc:AddChoice("— без привязки —", "")
             for _, s in ipairs(org.services or {}) do
                 svc:AddChoice(("%s (%s)"):format(s.name, money(s.price or 0)), s.id)
             end
 
-            local title = entry(f, "Назначение платежа...", false, 260, 28)
-            title:SetParent(f) title:SetPos(14, 92)
-            local amt = entry(f, "Сумма...", true, 150, 28)
-            amt:SetParent(f) amt:SetPos(286, 92)
+            -- ── ЯЧЕЙКА ИСПОЛНИТЕЛЯ ────────────────────────────
+            local lProv = label(f, "Исполнитель (кому уйдут деньги)", "GRM_ATM_Small", C.muted, 14, 30, 300, 14)
+            local provFixed = tostring(org.name or "")
+            local provCombo, provLabel
+            if snap.isSuper then
+                provCombo = combo(f, provFixed ~= "" and provFixed or "Выберите организацию...", 260, 28)
+                provCombo:SetParent(f)
+                local has = false
+                for _, p in ipairs(snap.providers or {}) do
+                    if p.canInvoice then
+                        provCombo:AddChoice(p.name, p.name)
+                        if p.name == provFixed then has = true end
+                    end
+                end
+                if provFixed ~= "" and not has then provCombo:AddChoice(provFixed, provFixed) end
+                if provFixed ~= "" then provCombo:SetValue(provFixed) end
+            else
+                provLabel = label(f, provFixed ~= "" and provFixed or "—", "GRM_ATM_Body", C.cyan, 14, 30, 260, 20)
+            end
+
+            local lTitle = label(f, "Назначение платежа", "GRM_ATM_Small", C.muted, 14, 30, 200, 14)
+            local title  = entry(f, "За что выставлен счёт", false, 260, 28)
+            title:SetParent(f)
+            local lAmt = label(f, "Сумма к оплате, GRM", "GRM_ATM_Small", C.muted, 14, 30, 200, 14)
+            local amt  = entry(f, "0", true, 150, 28)
+            amt:SetParent(f)
 
             svc.OnSelect = function(_, _, _, data)
                 for _, s in ipairs(org.services or {}) do
                     if s.id == data then
                         if string.Trim(title:GetValue() or "") == "" then title:SetValue(s.name) end
                         amt:SetValue(tostring(s.price or 0))
+                        -- Услуга задаёт исполнителя: платит-то плательщик ей
+                        if IsValid(provCombo) and s.provider and s.provider ~= "" then
+                            provCombo:SetValue(s.provider)
+                        end
                     end
                 end
             end
 
-            local note = entry(f, "Примечание...", false, 260, 28)
-            note:SetParent(f) note:SetPos(14, 128)
+            local lNote = label(f, "Примечание (необязательно)", "GRM_ATM_Small", C.muted, 14, 30, 260, 14)
+            local note  = entry(f, "Комментарий для плательщика", false, 260, 28)
+            note:SetParent(f)
             local bIss = button(f, "Выставить счёт", C.green, 170, 28)
-            bIss:SetParent(f) bIss:SetPos(286, 128)
+            bIss:SetParent(f)
+            local lim = label(f, (acc.maxInvoice and acc.maxInvoice > 0)
+                    and ("Предел суммы одного счёта: %s"):format(money(acc.maxInvoice))
+                    or "Предел суммы счёта не установлен",
+                "GRM_ATM_Small", C.muted, 14, 30, 300, 14)
+
+            f.PerformLayout = function(self, w)
+                local pad, gap = 14, 12
+                local colW = math.max(150, math.floor((w - pad * 2 - gap) / 2))
+                local y = 30
+                lWho:SetPos(pad, y) lWho:SetSize(colW, 14)
+                lSvc:SetPos(pad + colW + gap, y) lSvc:SetSize(colW, 14)
+                y = y + 16
+                who:SetPos(pad, y) who:SetSize(colW, 28)
+                svc:SetPos(pad + colW + gap, y) svc:SetSize(colW, 28)
+                y = y + 34
+                lProv:SetPos(pad, y) lProv:SetSize(colW, 14)
+                lTitle:SetPos(pad + colW + gap, y) lTitle:SetSize(colW, 14)
+                y = y + 16
+                if IsValid(provCombo) then provCombo:SetPos(pad, y) provCombo:SetSize(colW, 28) end
+                if IsValid(provLabel) then provLabel:SetPos(pad, y) provLabel:SetSize(colW, 20) end
+                title:SetPos(pad + colW + gap, y) title:SetSize(colW, 28)
+                y = y + 34
+                lAmt:SetPos(pad, y) lAmt:SetSize(colW, 14)
+                lNote:SetPos(pad + colW + gap, y) lNote:SetSize(colW, 14)
+                y = y + 16
+                amt:SetPos(pad, y) amt:SetSize(colW, 28)
+                note:SetPos(pad + colW + gap, y) note:SetSize(colW, 28)
+                y = y + 36
+                lim:SetPos(pad, y + 8) lim:SetSize(math.max(120, w - pad * 2 - 182), 14)
+                bIss:SetPos(w - pad - 170, y) bIss:SetSize(170, 28)
+                local need = y + 28 + 14
+                if math.abs((self:GetTall() or 0) - need) > 1 then self:SetTall(need) end
+            end
+
             bIss.DoClick = function()
                 local key = who:GetKey()
                 if not key or key == "" then
                     notification.AddLegacy("Выберите плательщика", NOTIFY_ERROR, 3)
                     return
                 end
+                local sum = tonumber(amt:GetValue()) or 0
+                if sum <= 0 then
+                    notification.AddLegacy("Укажите сумму к оплате", NOTIFY_ERROR, 3)
+                    return
+                end
+                local prov = provFixed
+                if IsValid(provCombo) then
+                    local txt, data = provCombo:GetSelected()
+                    prov = tostring(data or txt or provCombo:GetValue() or "")
+                end
                 local _, sid = svc:GetSelected()
                 act("issue_invoice", {
                     target = key, serviceID = sid or "",
-                    title = title:GetValue(), amount = tonumber(amt:GetValue()) or 0,
-                    note = note:GetValue(),
+                    title = title:GetValue(), amount = sum,
+                    note = note:GetValue(), faction = prov,
                 })
                 title:SetValue("") amt:SetValue("") note:SetValue("")
-            end
-            if acc.maxInvoice and acc.maxInvoice > 0 then
-                label(f, ("Предел суммы одного счёта: %s"):format(money(acc.maxInvoice)),
-                    "GRM_ATM_Small", C.muted, 470, 134, 260, 16)
             end
             sc:AddItem(f)
         else
@@ -1215,38 +1374,112 @@ tabs.org = function(body)
     do
         local sc = scroll(pSrv) sc:Dock(FILL)
         if (acc.canService or snap.isSuper) and (snap.isLeader or snap.isSuper) then
-            local f = card(sc, 116)
+            --[[ Форма услуги. Задача 10: добавлена ЯВНАЯ ячейка исполнителя.
+                 Раньше исполнитель нигде не показывался — игрок не понимал,
+                 от чьего имени заводится услуга и куда пойдут деньги.
+                 Правило простое и написано прямо в форме:
+                   • сотрудник/лидер — исполнитель это его организация, поле
+                     показано, но заблокировано;
+                   • суперадмин — выбирает организацию из выпадающего списка. ]]
+            local f = card(sc, 196)
             label(f, "ДОБАВИТЬ / ИЗМЕНИТЬ УСЛУГУ", "GRM_ATM_Small", C.muted, 14, 10, 300, 16)
-            local nm = entry(f, "Название услуги...", false, 260, 28)
-            nm:SetParent(f) nm:SetPos(14, 32)
-            local cat = combo(f, "Категория...", 220, 28)
-            cat:SetParent(f) cat:SetPos(286, 32)
+
+            local lNm  = label(f, "Название", "GRM_ATM_Small", C.muted, 14, 32, 200, 14)
+            local nm   = entry(f, "Например: Выдача лицензии на оружие", false, 260, 28)
+            nm:SetParent(f)
+            local lCat = label(f, "Категория", "GRM_ATM_Small", C.muted, 14, 32, 200, 14)
+            local cat  = combo(f, "Выберите категорию...", 220, 28)
+            cat:SetParent(f)
             for _, c in ipairs(snap.categories or {}) do cat:AddChoice(c.name, c.id) end
-            local pr = entry(f, "Цена...", true, 140, 28)
-            pr:SetParent(f) pr:SetPos(516, 32)
-            local ds = entry(f, "Описание...", false, 480, 28)
-            ds:SetParent(f) ds:SetPos(14, 68)
+            local lPr  = label(f, "Цена, GRM", "GRM_ATM_Small", C.muted, 14, 32, 200, 14)
+            local pr   = entry(f, "0", true, 140, 28)
+            pr:SetParent(f)
+
+            -- ── ЯЧЕЙКА ИСПОЛНИТЕЛЯ ────────────────────────────
+            local lProv = label(f, "Исполнитель услуги", "GRM_ATM_Small", C.muted, 14, 32, 260, 14)
+            local provFixed = tostring(org.name or "")
+            local provCombo, provLabel
+            if snap.isSuper then
+                provCombo = combo(f, provFixed ~= "" and provFixed or "Выберите организацию...", 260, 28)
+                provCombo:SetParent(f)
+                local has = false
+                for _, p in ipairs(snap.providers or {}) do
+                    provCombo:AddChoice(p.name, p.name)
+                    if p.name == provFixed then has = true end
+                end
+                if provFixed ~= "" and not has then provCombo:AddChoice(provFixed, provFixed) end
+                if provFixed ~= "" then provCombo:SetValue(provFixed) end
+            else
+                provLabel = label(f, provFixed ~= "" and provFixed or "—",
+                    "GRM_ATM_Body", C.cyan, 14, 32, 260, 20)
+            end
+            local hint = label(f, snap.isSuper
+                    and "Суперадмин: услугу можно завести за любую организацию из списка."
+                    or "Услуга заводится от имени вашей организации — сменить исполнителя нельзя.",
+                "GRM_ATM_Small", C.muted, 14, 32, 520, 14)
+
+            local lDs = label(f, "Описание", "GRM_ATM_Small", C.muted, 14, 32, 200, 14)
+            local ds  = entry(f, "Что входит в услугу", false, 480, 28)
+            ds:SetParent(f)
             local bAdd = button(f, "Сохранить услугу", C.green, 170, 28)
-            bAdd:SetParent(f) bAdd:SetPos(504, 68)
+            bAdd:SetParent(f)
+
             -- Абсолютные координаты резали правый край на узком теле окна:
             -- пересчитываем от фактической ширины карточки.
-            f.PerformLayout = function(_, w)
+            f.PerformLayout = function(self, w)
                 local pad = 14
                 local prW = 130
                 local nmW = math.max(140, math.floor((w - pad * 2 - 12 * 2 - prW) * 0.52))
                 local catW = math.max(120, w - pad * 2 - 12 * 2 - prW - nmW)
-                nm:SetPos(pad, 32)                      nm:SetSize(nmW, 28)
-                cat:SetPos(pad + nmW + 12, 32)          cat:SetSize(catW, 28)
-                pr:SetPos(pad + nmW + catW + 24, 32)    pr:SetSize(prW, 28)
+                local y = 30
+                lNm:SetPos(pad, y)                    lNm:SetSize(nmW, 14)
+                lCat:SetPos(pad + nmW + 12, y)        lCat:SetSize(catW, 14)
+                lPr:SetPos(pad + nmW + catW + 24, y)  lPr:SetSize(prW, 14)
+                y = y + 16
+                nm:SetPos(pad, y)                     nm:SetSize(nmW, 28)
+                cat:SetPos(pad + nmW + 12, y)         cat:SetSize(catW, 28)
+                pr:SetPos(pad + nmW + catW + 24, y)   pr:SetSize(prW, 28)
+                y = y + 34
+                lProv:SetPos(pad, y) lProv:SetSize(math.max(160, w - pad * 2), 14)
+                y = y + 16
+                local provW = math.max(180, math.min(320, w - pad * 2))
+                if IsValid(provCombo) then provCombo:SetPos(pad, y) provCombo:SetSize(provW, 28) end
+                if IsValid(provLabel) then provLabel:SetPos(pad, y) provLabel:SetSize(provW, 20) end
+                hint:SetPos(pad + provW + 12, y + 6)
+                hint:SetSize(math.max(80, w - pad * 2 - provW - 12), 14)
+                y = y + 34
+                lDs:SetPos(pad, y) lDs:SetSize(math.max(160, w - pad * 2), 14)
+                y = y + 16
                 local btnW = 170
-                ds:SetPos(pad, 68) ds:SetSize(math.max(160, w - pad * 2 - btnW - 12), 28)
-                bAdd:SetPos(w - pad - btnW, 68) bAdd:SetSize(btnW, 28)
+                ds:SetPos(pad, y) ds:SetSize(math.max(160, w - pad * 2 - btnW - 12), 28)
+                bAdd:SetPos(w - pad - btnW, y) bAdd:SetSize(btnW, 28)
+                local need = y + 28 + 14
+                if math.abs((self:GetTall() or 0) - need) > 1 then self:SetTall(need) end
             end
+
             bAdd.DoClick = function()
                 local _, cid = cat:GetSelected()
+                local prov = provFixed
+                if IsValid(provCombo) then
+                    local txt, data = provCombo:GetSelected()
+                    prov = tostring(data or txt or provCombo:GetValue() or "")
+                end
+                if string.Trim(prov) == "" then
+                    notification.AddLegacy("Выберите исполнителя услуги", NOTIFY_ERROR, 3)
+                    return
+                end
+                if string.Trim(nm:GetValue() or "") == "" then
+                    notification.AddLegacy("Введите название услуги", NOTIFY_ERROR, 3)
+                    return
+                end
+                if not cid then
+                    notification.AddLegacy("Выберите категорию услуги", NOTIFY_ERROR, 3)
+                    return
+                end
                 act("upsert_service", {
                     name = nm:GetValue(), category = cid or "other",
-                    price = tonumber(pr:GetValue()) or 0, desc = ds:GetValue(), enabled = true,
+                    price = tonumber(pr:GetValue()) or 0, desc = ds:GetValue(),
+                    enabled = true, provider = prov,
                 })
                 nm:SetValue("") pr:SetValue("") ds:SetValue("")
             end
@@ -1257,13 +1490,28 @@ tabs.org = function(body)
 
         if #(org.services or {}) == 0 then sc:AddItem(empty(sc, "В каталоге организации пока нет услуг.")) end
         for _, s in ipairs(org.services or {}) do
-            local c = card(sc, 66)
-            label(c, tostring(s.name or ""), "GRM_ATM_Head", s.enabled ~= false and C.text or C.muted, 14, 8, 420, 20)
-            label(c, ("%s | %s"):format(
+            local c = card(sc, 84)
+            local lName = label(c, tostring(s.name or ""), "GRM_ATM_Head",
+                s.enabled ~= false and C.text or C.muted, 14, 8, 420, 20)
+            local lMeta = label(c, ("%s | %s"):format(
                 catName(s.category),
                 money(s.price or 0)), "GRM_ATM_Small", C.muted, 14, 30, 420, 16)
+            -- Исполнитель виден в каждой строке: у суперадмина в каталоге
+            -- могут лежать услуги разных организаций.
+            local lProv = label(c, ("Исполнитель: %s"):format(tostring(s.provider or org.name or "—")),
+                "GRM_ATM_Small", C.cyan, 14, 46, 420, 16)
+            local lDesc
             if s.desc and s.desc ~= "" then
-                label(c, tostring(s.desc), "GRM_ATM_Small", C.muted, 14, 46, 460, 16)
+                lDesc = label(c, tostring(s.desc), "GRM_ATM_Small", C.muted, 14, 62, 460, 16)
+            end
+            c.PerformLayout = function(self, w)
+                local right = math.max(160, w - 300)
+                lName:SetSize(right, 20)
+                lMeta:SetSize(right, 16)
+                lProv:SetSize(right, 16)
+                if IsValid(lDesc) then lDesc:SetSize(math.max(160, w - 28), 16) end
+                local need = (IsValid(lDesc) and 62 + 16 or 46 + 16) + 12
+                if math.abs((self:GetTall() or 0) - need) > 1 then self:SetTall(need) end
             end
             if snap.isLeader or snap.isSuper then
                 local bOff = button(c, s.enabled ~= false and "Отключить" or "Включить", C.amber, 130, 28)
@@ -1272,6 +1520,9 @@ tabs.org = function(body)
                     act("upsert_service", {
                         id = s.id, name = s.name, category = s.category,
                         price = s.price, desc = s.desc, enabled = not (s.enabled ~= false),
+                        -- без исполнителя суперадминская правка чужой услуги
+                        -- переписала бы её на «Администрацию»
+                        provider = s.provider or org.name,
                     })
                 end
                 local bDel = button(c, "Удалить", C.red, 110, 28)
@@ -1537,7 +1788,14 @@ local function openFrame()
     local C = theme()
     if IsValid(frame) then frame:Remove() end
 
-    local W, H = 900, 640
+    -- Задача 10: формы услуг и счетов стали выше (подписи полей + ячейка
+    -- исполнителя). Окно тянем от разрешения, чтобы прокрутка не была
+    -- единственным способом добраться до кнопки на 720p.
+    -- ScrW/ScrH есть только в живом клиенте; в стендах берём 1920x1080.
+    local sw = isfunction(ScrW) and ScrW() or 1920
+    local sh = isfunction(ScrH) and ScrH() or 1080
+    local W = math.min(980, math.max(760, math.floor(sw * 0.66)))
+    local H = math.min(700, math.max(520, math.floor(sh * 0.85)))
     frame = vgui.Create("DFrame")
     frame:SetSize(W, H)
     frame:Center()

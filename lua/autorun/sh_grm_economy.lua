@@ -867,10 +867,18 @@ if SERVER then
         return math.max(0, math.floor(acc and acc.balance or 0))
     end
 
+    -- Последнее отправленное клиенту значение счёта: ключ персонажа → сумма.
+    -- Нужен, чтобы сторож (ниже) видел расхождение «сервер ↔ HUD» и чинил его
+    -- даже там, где модуль поменял acc.balance напрямую, минуя API.
+    local lastPushedBank = {}
+
     local function pushBank(ply)
         if not IsValid(ply) or not ply:IsPlayer() then return end
+        local key = characterKeyOf(ply)
+        local bal = bankBalOf(key)
+        lastPushedBank[key] = bal
         net.Start("GRM_Bank_Sync")
-            net.WriteDouble(bankBalOf(characterKeyOf(ply))) -- Double: UInt32 ломал счета > 4.29 млрд
+            net.WriteDouble(bal) -- Double: UInt32 ломал счета > 4.29 млрд
         net.Send(ply)
     end
     net.Receive("GRM_Bank_Request", function(_, ply) pushBank(ply) end)
@@ -880,6 +888,36 @@ if SERVER then
             if IsValid(p) and characterKeyOf(p) == tostring(sid) then pushBank(p) return end
         end
     end
+
+    -- Публичный псевдоним: банкомат и сторонние модули могут явно попросить
+    -- пересинхронизировать строку «НА СЧЁТУ» после своей операции.
+    function E.PushBank(ply) pushBank(ply) end
+    function E.PushBankBySid(sid) pushBankBySid(sid) end
+
+    --[[ СТОРОЖ СИНХРОНИЗАЦИИ (задача 10).
+         Историческая причина рассинхрона: счёт меняли в десятке мест, а
+         GRM_Bank_Sync слали в двух. Игрок вносил деньги в банкомат и до
+         перезахода видел в HUD старую сумму. Чинить каждый вызов по
+         отдельности хрупко — любой новый модуль опять забудет пуш.
+         Поэтому раз в секунду сверяем «что на сервере» и «что ушло в HUD»
+         и досылаем разницу. Трафик копеечный: пуш идёт только при
+         фактическом расхождении. ]]
+    timer.Create("GRM_Economy_BankSyncWatch", 1, 0, function()
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and p:IsPlayer() then
+                local key = characterKeyOf(p)
+                if key and key ~= "" and key ~= "0" then
+                    local bal = bankBalOf(key)
+                    if lastPushedBank[key] ~= bal then pushBank(p) end
+                end
+            end
+        end
+    end)
+
+    hook.Add("PlayerDisconnected", "GRM_Economy_BankSyncForget", function(ply)
+        if not IsValid(ply) then return end
+        lastPushedBank[characterKeyOf(ply)] = nil
+    end)
 
     function E.BankBalance(ply)
         local sid = characterKeyOf(ply)
@@ -922,9 +960,14 @@ if SERVER then
         acc.balance = math.Clamp(before + amount, 0, cap)
         dirty = true
         bankOpCD[sid] = now + 0.35
+        -- Помечаем «недавно меняли банк»: сверка не имеет права откатить взнос
+        ply._grmBankTouch = now
         save(true, "взнос на счёт")
         print(("[GRM Economy] DEPOSIT %s (%s): bank %d → %d (+%d), cash taken %d")
             :format(ply:Nick(), sid, before, acc.balance, amount, amount))
+        -- HUD-строка «НА СЧЁТУ» живёт на GRM_Bank_Sync: без этого пуша игрок
+        -- видел старый счёт до самого перезахода (задача 10, дефект Б1).
+        pushBank(ply)
         return true, acc.balance
     end
 
@@ -953,6 +996,7 @@ if SERVER then
         if acc.balance ~= before - amount and not (before - amount < 0) then
             print("[GRM Economy][!] WITHDRAW anomaly: expected " .. tostring(before - amount) .. " got " .. tostring(acc.balance))
         end
+        pushBank(ply) -- задача 10, дефект Б1: HUD-строка «НА СЧЁТУ»
         return true, acc.balance
     end
 
@@ -980,6 +1024,9 @@ if SERVER then
         save(true, "перевод счёт→счёт")
         print(("[GRM Economy] TRANSFER %s → %s: %d; from %d→%d to %d→%d")
             :format(fromSid, toSid, amount, fb, from.balance, tb, to.balance))
+        -- Обе стороны перевода: отправитель и (если онлайн) получатель
+        pushBank(ply)
+        pushBankBySid(toSid)
         return true, from.balance
     end
 

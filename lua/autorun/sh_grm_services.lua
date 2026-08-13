@@ -380,6 +380,37 @@ function S.SetAccess(factionName, patch)
     return true, a
 end
 
+--[[ Список организаций, которые ВПРАВЕ быть исполнителем услуги.
+     Раньше исполнитель нигде не показывался: игрок не понимал, откуда он
+     берётся и как его сменить. Теперь список отдаётся в банкомат, где из
+     него выбирают явно (суперадмин) либо видят своё название (лидер).
+     @param category  необязательный фильтр по категории услуг
+     @return массив { name, institution, canService, canInvoice, maxInvoice } ]]
+function S.ProviderList(category)
+    local out = {}
+    if not Factions then return out end
+    for name, f in pairs(Factions) do
+        if istable(f) then
+            local a = S.AccessOf(name)
+            local fits = a.canService
+            if fits and category and category ~= "" then
+                fits = S.FactionCanService(name, category)
+            end
+            if fits then
+                out[#out + 1] = {
+                    name        = name,
+                    institution = a.institution or "",
+                    canService  = a.canService == true,
+                    canInvoice  = a.canInvoice == true,
+                    maxInvoice  = a.maxInvoice or 0,
+                }
+            end
+        end
+    end
+    table.sort(out, function(x, y) return x.name < y.name end)
+    return out
+end
+
 --- Может ли фракция оказывать услуги данной категории.
 function S.FactionCanService(factionName, category)
     local a = S.AccessOf(factionName)
@@ -566,7 +597,14 @@ function S.UpsertService(actor, data)
         end
         provider = fname -- от чужого имени услугу не завести
     end
-    if provider == "" then return false, "Не указан исполнитель услуги" end
+    if provider == "" then
+        return false, "Не указан исполнитель услуги: выберите организацию в поле «Исполнитель»"
+    end
+    -- Суперадмин заводит услуги за любую организацию, но не за несуществующую:
+    -- иначе в витрине появляется исполнитель, которому некуда платить.
+    if isSuper and Factions and not Factions[provider] then
+        return false, ("Организация «%s» не найдена: выберите исполнителя из списка"):format(provider)
+    end
 
     local id = trim(data.id, 48)
     local existing = id ~= "" and S.Catalog[id] or nil
@@ -704,8 +742,17 @@ function S.IssueInvoice(issuer, target, opts)
         return false, "Нельзя выставить счёт самому себе"
     end
 
+    --[[ Организация-исполнитель счёта: именно ей уйдёт доля оплаты.
+         Задача 10: раньше поле принималось от кого угодно — сотрудник мог
+         выставить счёт «от имени» чужой организации и увести туда деньги.
+         Теперь чужое имя вправе указать только суперадмин. ]]
+    local isSuperIssuer = IsValid(issuer) and issuer:IsSuperAdmin()
     local faction = trim(opts.faction, 64)
-    if faction == "" then faction = fname or "" end
+    if faction == "" then
+        faction = fname or ""
+    elseif not isSuperIssuer and faction ~= (fname or "") then
+        return false, "Счёт выставляется только от имени вашей организации"
+    end
 
     local svc = opts.serviceID and S.ServiceByID(opts.serviceID) or nil
     local amount = math.floor(tonumber(opts.amount) or (svc and svc.price) or 0)

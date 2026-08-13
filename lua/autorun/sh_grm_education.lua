@@ -427,6 +427,19 @@ surface.CreateFont("GRM_Edu_Head",  { font = "Roboto", size = 18, weight = 600, 
 surface.CreateFont("GRM_Edu_Body",  { font = "Roboto", size = 16, weight = 500, extended = true })
 surface.CreateFont("GRM_Edu_Small", { font = "Roboto", size = 13, weight = 500, extended = true })
 
+--[[ Задача 10: размеры окон считаются от разрешения экрана, но ScrW/ScrH
+     существуют только в живом клиенте — в тестовых стендах их нет. Хелпер
+     отдаёт запасное значение, чтобы раскладка была проверяема офлайн. ]]
+local function fitW(frac, minW, maxW)
+    local sw = isfunction(ScrW) and ScrW() or 1920
+    return math.min(maxW, math.max(minW, math.floor(sw * frac)))
+end
+
+local function fitH(frac, minH, maxH)
+    local sh = isfunction(ScrH) and ScrH() or 1080
+    return math.min(maxH, math.max(minH, math.floor(sh * frac)))
+end
+
 local function act(action, args)
     net.Start("GRM_Edu_Act")
         net.WriteString(action)
@@ -920,7 +933,8 @@ end)
 -- Отдельное окно рабочего места (компьютер деканата)
 -----------------------------------------------------------------------
 function EDU.OpenFrame()
-    local W, H = 940, 660
+    -- Задача 10: на 1280x720 и меньше окно 940x660 выходило за экран.
+    local W, H = fitW(0.72, 720, 940), fitH(0.85, 480, 660)
     local frame = vgui.Create("DFrame")
     frame:SetSize(W, H)
     frame:Center()
@@ -1008,22 +1022,42 @@ local function diplomaBlank(parent, rec)
         rows[#rows + 1] = { "Причина аннулирования", rec.revokeReason }
     end
 
+    --[[ Задача 10: длинные значения (специальность, примечание, причина
+         аннулирования, название учреждения) не помещались в одну строку и
+         обрезались по правому краю бланка. Теперь значение — переносимая
+         метка: SetWrap + SetAutoStretchVertical, а высота строки и всего
+         бланка считается по фактической высоте текста. Ключ поля прижат к
+         верху своей строки, чтобы подпись не «уезжала» от многострочного
+         значения. ]]
     local keys, vals = {}, {}
     for i, r in ipairs(rows) do
         keys[i] = label(p, r[1], "GRM_Edu_Small", UI.muted, 0, 0, 10, 18)
-        vals[i] = label(p, tostring(r[2]), "GRM_Edu_Body",
+        keys[i]:SetContentAlignment(7) -- левый верх
+
+        local v = label(p, tostring(r[2]), "GRM_Edu_Body",
             (i == 1) and (revoked and UI.red or UI.gold) or UI.text, 0, 0, 10, 18)
+        v:SetWrap(true)
+        v:SetAutoStretchVertical(true)
+        v:SetContentAlignment(7)
+        vals[i] = v
     end
 
     -- Раскладка от фактической ширины: правый край не режется
     p.PerformLayout = function(self, w)
-        local pad, keyW = 20, 150
+        local pad, keyW, gap = 20, 150, 6
+        local valW = math.max(80, w - pad * 2 - keyW)
         local y = 50
         for i = 1, #rows do
-            keys[i]:SetPos(pad, y) keys[i]:SetSize(keyW, 18)
-            vals[i]:SetPos(pad + keyW, y)
-            vals[i]:SetSize(math.max(60, w - pad * 2 - keyW), 18)
-            y = y + 20
+            local v = vals[i]
+            v:SetPos(pad + keyW, y)
+            v:SetWide(valW)
+            -- пересчёт высоты под перенос: без InvalidateLayout метка
+            -- сохраняет старую однострочную высоту
+            v:InvalidateLayout(true)
+            v:SizeToContentsY()
+            local rowH = math.max(18, v:GetTall() or 18)
+            keys[i]:SetPos(pad, y) keys[i]:SetSize(keyW - gap, rowH)
+            y = y + rowH + 4
         end
         local need = y + 12
         if math.abs((self:GetTall() or 0) - need) > 1 then self:SetTall(need) end
@@ -1035,7 +1069,10 @@ end
 function EDU.OpenMine(list)
     list = istable(list) and list or {}
 
-    local W, H = 660, 620
+    -- Задача 10: бланк с переносом строк стал выше и требует ширины,
+    -- иначе значения дробятся на много строк. Окно не должно вылезать
+    -- за пределы экрана на маленьких разрешениях.
+    local W, H = fitW(0.5, 560, 760), fitH(0.8, 420, 720)
     local frame = vgui.Create("DFrame")
     frame:SetSize(W, H)
     frame:Center()
@@ -1085,9 +1122,11 @@ end)
 function EDU.OpenShown(rec, senderName)
     if not istable(rec) then return end
 
-    local W = 660
+    -- Задача 10: жёсткие 420 px обрезали бланк — в нём 11–13 строк, а с
+    -- переносом длинных значений и того больше. Размер считаем от экрана.
+    local W, H = fitW(0.5, 560, 760), fitH(0.72, 400, 680)
     local frame = vgui.Create("DFrame")
-    frame:SetSize(W, 420)
+    frame:SetSize(W, H)
     frame:Center()
     frame:SetTitle("")
     frame:MakePopup()
@@ -1110,7 +1149,7 @@ function EDU.OpenShown(rec, senderName)
     close.DoClick = function() frame:Close() end
 
     local sc = scroll(frame)
-    sc:SetPos(12, 54) sc:SetSize(W - 24, 420 - 66)
+    sc:SetPos(12, 54) sc:SetSize(W - 24, H - 66)
     sc:AddItem(diplomaBlank(sc, rec))
     return frame
 end
