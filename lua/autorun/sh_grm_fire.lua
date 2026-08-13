@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Fire v1.3.4 (Код 58)
+    GRM Fire v1.3.7 (Код 58)
     Серверная обвязка аддона grm_fire + vFire.
     Не содержит моделей/рукава — они в аддоне.
     Права, персист очагов, рандом по точкам, плита, оповещение.
@@ -10,7 +10,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Fire = GRM.Fire or {}
 local F = GRM.Fire
-F.Version = "1.3.6"
+F.Version = "1.3.7"
 
 F.Config = F.Config or {
     StoveEnabled = true,
@@ -69,6 +69,45 @@ end
 function F.CanManage(ply)
     if not IsValid(ply) then return false end
     return ply:IsSuperAdmin() == true
+end
+
+-- Пожарная энтити / помеченная машина. Не банкомат.
+function F.IsFireEnt(ent)
+    if not IsValid(ent) then return false end
+    local cls = ent.GetClass and tostring(ent:GetClass() or "") or ""
+    if string.sub(cls, 1, 9) == "grm_fire_" then return true end
+    if ent.GetNWBool and ent:GetNWBool("GRM_FireTruck", false) then return true end
+    if ent.GetNWBool and ent:GetNWBool("GRM_TruckGear", false) then return true end
+    local p = ent.GetParent and ent:GetParent() or nil
+    if IsValid(p) and p.GetNWBool and p:GetNWBool("GRM_FireTruck", false) then return true end
+    return false
+end
+
+-- G у насоса/машины/гидранта — только пожарка. Смотришь на банкомат — инкассация.
+function F.IsFireGContext(ply)
+    if not IsValid(ply) then return false end
+    local tr = ply.GetEyeTrace and ply:GetEyeTrace() or nil
+    local hit = (tr and IsValid(tr.Entity)) and tr.Entity or nil
+    if IsValid(hit) then
+        local cls = hit.GetClass and tostring(hit:GetClass() or "") or ""
+        if cls == "grm_bank_terminal" or cls == "grm_bank_vault" then return false end
+        if F.IsFireEnt(hit) then return true end
+    end
+    local seat = ply.GetVehicle and ply:GetVehicle() or nil
+    if IsValid(seat) then
+        if F.IsFireEnt(seat) then return true end
+        local p = seat.GetParent and seat:GetParent() or nil
+        if F.IsFireEnt(p) then return true end
+    end
+    local pos = ply.GetPos and ply:GetPos() or nil
+    if pos and ents and ents.FindInSphere then
+        for _, e in ipairs(ents.FindInSphere(pos, 280)) do
+            if IsValid(e) and e.GetClass and e:GetClass() == "grm_fire_pump" then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 function F.IsBurning(pos)

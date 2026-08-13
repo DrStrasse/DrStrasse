@@ -34,7 +34,7 @@ check("пак-шланг c_firehose_grm", has(packHose, "c_firehose_grm.mdl"))
 check("пак-шланг w_firehose_grm", has(packHose, "w_firehose_grm.mdl"))
 
 print("\n=== СЕРВЕР Код 58 ===")
-check("версия 1.3.6", has(core, 'F.Version = "1.3.6"'))
+check("версия 1.3.7", has(core, 'F.Version = "1.3.7"'))
 check("jsonT false,true", has(core, "util.JSONToTable, txt, false, true"))
 check("карантин", has(core, ".corrupt."))
 check("read-back", has(core, "SAVE read-back fail") or has(core, "chk ~= txt"))
@@ -125,6 +125,16 @@ check("инкассация G не по гидранту", (function()
     local b = inc:find("GRM_Incass_GKey", 1, true) or 0
     return a > 0 and b > 0 and a < b and inc:find("grm_fire_", 1, true) ~= nil
 end)())
+check("IsFireGContext общий", has(core, "function F.IsFireGContext"))
+check("IsFireEnt общий", has(core, "function F.IsFireEnt"))
+check("инкассация G зовёт IsFireGContext", (function()
+    local inc = read("lua/autorun/sh_grm_incassation.lua")
+    return inc:find("isFireGContextClient", 1, true) ~= nil
+        and inc:find("if isFireGContext(ply) then return end", 1, true) ~= nil
+        and inc:find("GRM_FireTruck", 1, true) ~= nil
+end)())
+check("G насоса не по дежурству вдали", not pui:find("if not nearPump and not IsValid(duty) then return end", 1, true))
+check("G насоса через IsFireGContext", has(pui, "IsFireGContext"))
 check("укладка без SetNoDraw", not node:find("SetNoDraw(true)", 1, true))
 check("лестница aluminium", has(ladW, "ladderaluminium.mdl"))
 check("лестница ПКМ на машину", has(ladW, "AttachToVehicle"))

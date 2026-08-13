@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Incassation (Код 126 — «Инкассация») v2.2.0 — ПЕРСИСТЕНТНОСТЬ БАНКОМАТОВ
+    GRM Incassation (Код 126 — «Инкассация») v2.2.1 — ПЕРСИСТЕНТНОСТЬ БАНКОМАТОВ
 
     Полный цикл работы по ТЗ:
       1. Игрок садится в служебную машину фракции, за рулём пишет /incass —
@@ -38,7 +38,7 @@ GRM = GRM or {}
 GRM.Incass = GRM.Incass or {}
 local I = GRM.Incass
 
-I.Version    = "2.2.0"
+I.Version    = "2.2.1"
 I.Code       = 126
 I.ModuleName = "incassation"
 
@@ -1254,8 +1254,25 @@ net.Receive(NET_TERM_UNLOCK, function(_, ply)
     if not ok and err then notify(ply, err, 255, 100, 100) end
 end)
 
+local function isFireGContext(ply)
+    if GRM.Fire and isfunction(GRM.Fire.IsFireGContext) then
+        return GRM.Fire.IsFireGContext(ply) == true
+    end
+    if not IsValid(ply) then return false end
+    local tr = ply.GetEyeTrace and ply:GetEyeTrace()
+    local hit = tr and IsValid(tr.Entity) and tr.Entity or nil
+    if IsValid(hit) then
+        local cls = hit:GetClass() or ""
+        if cls == "grm_bank_terminal" or cls == "grm_bank_vault" then return false end
+        if string.sub(cls, 1, 9) == "grm_fire_" then return true end
+        if hit.GetNWBool and hit:GetNWBool("GRM_FireTruck", false) then return true end
+    end
+    return false
+end
+
 concommand.Add("grm_incass_car_use", function(ply)
     if not isPly(ply) then return end
+    if isFireGContext(ply) then return end
     local runID = nil
     for rid, r in pairs(I.ActiveRuns) do
         if IsValid(r.driver) and r.driver == ply then
@@ -1356,6 +1373,7 @@ end)
 
 concommand.Add("grm_incass_term_use", function(ply)
     if not isPly(ply) then return end
+    if isFireGContext(ply) then return end
     local tr = ply:GetEyeTrace()
     local ent = tr.Entity
     if not (IsValid(ent) and ent:GetClass() == "grm_bank_terminal") then
@@ -1373,6 +1391,7 @@ end)
 
 concommand.Add("grm_incass_vault_use", function(ply)
     if not isPly(ply) then return end
+    if isFireGContext(ply) then return end
     local tr = ply:GetEyeTrace()
     local v = (IsValid(tr.Entity) and tr.Entity:GetClass() == "grm_bank_vault") and tr.Entity or nil
     if not IsValid(v) then
@@ -1835,17 +1854,49 @@ local function getMyIncassCarClient(ply)
 end
 
 -- ── Единая клавиша [G] на клиенте ────────────────────────────────
+-- Пожарка живёт своим G. У насоса/машины/гидранта инкассацию не трогаем.
+local function isFireGContextClient(ply)
+    if GRM.Fire and isfunction(GRM.Fire.IsFireGContext) then
+        return GRM.Fire.IsFireGContext(ply) == true
+    end
+    if not IsValid(ply) then return false end
+    local tr = ply.GetEyeTrace and ply:GetEyeTrace()
+    local hit = tr and IsValid(tr.Entity) and tr.Entity or nil
+    if IsValid(hit) then
+        local cls = hit:GetClass() or ""
+        if cls == "grm_bank_terminal" or cls == "grm_bank_vault" then return false end
+        if string.sub(cls, 1, 9) == "grm_fire_" then return true end
+        if hit.GetNWBool and hit:GetNWBool("GRM_FireTruck", false) then return true end
+        local par = hit.GetParent and hit:GetParent()
+        if IsValid(par) and par.GetNWBool and par:GetNWBool("GRM_FireTruck", false) then return true end
+    end
+    local seat = ply.GetVehicle and ply:GetVehicle()
+    if IsValid(seat) then
+        if seat.GetNWBool and seat:GetNWBool("GRM_FireTruck", false) then return true end
+        local p = seat.GetParent and seat:GetParent()
+        if IsValid(p) and p.GetNWBool and p:GetNWBool("GRM_FireTruck", false) then return true end
+    end
+    local pos = ply.GetPos and ply:GetPos()
+    if pos then
+        for _, e in ipairs(ents.FindInSphere(pos, 280)) do
+            if IsValid(e) and e:GetClass() == "grm_fire_pump" then return true end
+        end
+    end
+    return false
+end
+
 hook.Add("PlayerButtonDown", "GRM_Incass_GKey", function(ply, button)
     if button ~= KEY_G then return end
     if ply ~= LocalPlayer() then return end
+    if isFireGContextClient(ply) then return end
 
     local tr = ply:GetEyeTrace()
     local hit = IsValid(tr.Entity) and tr.Entity or nil
     local pPos = ply:GetPos()
-    -- пожарные энтити — не инкассация (иначе G по гидранту валит хук)
     if IsValid(hit) then
         local cls = hit:GetClass() or ""
         if string.sub(cls, 1, 9) == "grm_fire_" then return end
+        if hit.GetNWBool and hit:GetNWBool("GRM_FireTruck", false) then return end
     end
 
     -- 1. Банкомат под прицелом или рядом

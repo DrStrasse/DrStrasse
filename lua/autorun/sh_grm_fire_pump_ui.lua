@@ -419,23 +419,31 @@ if CLIENT then
             return
         end
 
-        local tr = ply:GetEyeTrace()
-        local hit = IsValid(tr.Entity) and tr.Entity or nil
-        if IsValid(hit) then
-            local cls = hit:GetClass() or ""
-            if cls == "grm_bank_terminal" or cls == "grm_bank_vault" then return end
-        end
-        local duty = ply:GetNWEntity("GRM_FireMyTruck")
-        local nearPump = false
-        if IsValid(hit) and (hit:GetClass() == "grm_fire_pump" or hit:GetNWBool("GRM_FireTruck", false)) then
-            nearPump = true
-        end
-        if not nearPump then
-            for _, e in ipairs(ents.FindInSphere(ply:GetPos(), 260)) do
-                if IsValid(e) and e:GetClass() == "grm_fire_pump" then nearPump = true break end
+        -- Только у насоса / пожарной машины. Дежурство само по себе G не крадёт
+        -- (иначе у банкомата всплывает и насос, и ошибка инкассации).
+        if F.IsFireGContext then
+            if not F.IsFireGContext(ply) then return end
+        else
+            local tr = ply:GetEyeTrace()
+            local hit = IsValid(tr.Entity) and tr.Entity or nil
+            if IsValid(hit) then
+                local cls = hit:GetClass() or ""
+                if cls == "grm_bank_terminal" or cls == "grm_bank_vault" then return end
+                if cls ~= "grm_fire_pump" and not (hit.GetNWBool and hit:GetNWBool("GRM_FireTruck", false)) then
+                    local near = false
+                    for _, e in ipairs(ents.FindInSphere(ply:GetPos(), 260)) do
+                        if IsValid(e) and e:GetClass() == "grm_fire_pump" then near = true break end
+                    end
+                    if not near then return end
+                end
+            else
+                local near = false
+                for _, e in ipairs(ents.FindInSphere(ply:GetPos(), 260)) do
+                    if IsValid(e) and e:GetClass() == "grm_fire_pump" then near = true break end
+                end
+                if not near then return end
             end
         end
-        if not nearPump and not IsValid(duty) then return end
         net.Start(NET_OPEN)
         net.SendToServer()
     end)
