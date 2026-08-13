@@ -12,10 +12,10 @@ local A = GRM.FireAddon
 
 A.HoseCfg = A.HoseCfg or {
     MaxLength   = 2200,
-    LayStep     = 70,
-    Width       = 8,
+    LayStep     = 52,
+    Width       = 3,
     Material    = "grm/firehose",
-    Sag         = 14,
+    Sag         = 10,
     TruckSlots  = 4,
     HydrantPorts = 2,
     JunctionOut = 2,
@@ -29,6 +29,10 @@ A.HoseCfg = A.HoseCfg or {
     SprayDmgPowder   = 24,
 }
 if A.HoseCfg.MaxLength < 2000 then A.HoseCfg.MaxLength = 2200 end
+A.HoseCfg.LayStep = 52
+A.HoseCfg.Width = 3
+A.HoseBeamHalfW = 1.2
+A.HoseBeamHalfH = 0.9
 
 A.NODE_SOURCE    = 0
 A.NODE_LAY       = 1
@@ -61,13 +65,29 @@ function A.HoseSegProject(p, a, b)
     return t, math.sqrt(dx * dx + dy * dy)
 end
 
+-- Тяга точки к якорю, если дальше maxSeg (2D, земля).
+function A.HoseDragPoint(px, py, ax, ay, maxSeg)
+    px, py, ax, ay = tonumber(px) or 0, tonumber(py) or 0, tonumber(ax) or 0, tonumber(ay) or 0
+    maxSeg = tonumber(maxSeg) or 52
+    local dx, dy = px - ax, py - ay
+    local d = math.sqrt(dx * dx + dy * dy)
+    if d <= maxSeg or d < 0.001 then return px, py, false, d end
+    local s = maxSeg / d
+    return ax + dx * s, ay + dy * s, true, d
+end
+
+function A.HoseShouldCompact(dist, step)
+    step = tonumber(step) or 52
+    return (tonumber(dist) or 999) < step * 0.42
+end
+
 -- "reel" | "rewind" | "lay" | "idle"
 -- reel  = ALT, принудительная смотка
 -- rewind = шаг назад по линии / S / скорость к предыдущему узлу
 -- lay   = ушли вперёд от последнего узла
 function A.HoseMoveHint(p, last, prev, opt)
     opt = opt or {}
-    local step = tonumber(opt.step) or 70
+    local step = tonumber(opt.step) or 52
     local px, py = xy(p)
     local lx, ly = xy(last)
     local rx, ry = xy(prev)
@@ -81,11 +101,11 @@ function A.HoseMoveHint(p, last, prev, opt)
         end
     end
 
-    local along = (t <= 0.90 and off <= 140)
-        or (t < 0 and dPrev <= 220)
+    local along = (t <= 0.93 and off <= 170)
+        or (t < 0 and dPrev <= 240)
         or (dPrev + 8 < dLast)
 
-    if opt.back and (off <= 170 or dLast <= 200 or dPrev <= 200) then
+    if opt.back and (off <= 190 or dLast <= 220 or dPrev <= 220) then
         along = true
     end
 
@@ -95,9 +115,9 @@ function A.HoseMoveHint(p, last, prev, opt)
         if vlen > 40 then
             local tx, ty = rx - px, ry - py
             local tlen = math.sqrt(tx * tx + ty * ty)
-            if tlen > 1 and off <= 150 then
+            if tlen > 1 and off <= 170 then
                 local dot = (vx / vlen) * (tx / tlen) + (vy / vlen) * (ty / tlen)
-                if dot > 0.40 and t < 1.10 then along = true end
+                if dot > 0.35 and t < 1.12 then along = true end
             end
         end
     end
@@ -254,7 +274,7 @@ if SERVER then
         local startN = hose:MakeNode(A.NODE_SOURCE, a, src)
         if not IsValid(startN) then hose:Remove() return nil, "узел" end
         local last = startN
-        local step = math.max(60, A.HoseCfg.LayStep or 70)
+        local step = math.max(48, A.HoseCfg.LayStep or 52)
         local nsteps = math.max(0, math.floor(dist / step) - 1)
         for i = 1, nsteps do
             local p = LerpVector(i / (nsteps + 1), a, b)
@@ -310,8 +330,40 @@ if CLIENT then
         return ent:GetPos() + Vector(0, 0, 7)
     end
 
-    -- Лента без кабельного шейдера: ColorMaterial + коробка + линия.
-    -- DrawBeam(vgui/white) в GMod невидим — поэтому не используем его как основу.
+    local function sourceTip(src)
+        if not IsValid(src) then return nil end
+        return src:WorldSpaceCenter() + Vector(0, 0, 6)
+    end
+
+    -- Живые концы: насос/гидрант едут — первая точка едет с ними, не снимок.
+    local function livePts(rec)
+        if not rec or not rec.pts then return nil end
+        local pts = {}
+        for i = 1, #rec.pts do pts[i] = rec.pts[i] end
+        if #pts == 0 then return pts end
+        local hose = rec.id and Entity(rec.id) or NULL
+        local src = rec.src
+        if not IsValid(src) and IsValid(hose) and hose.GetStartEnt then
+            src = hose:GetStartEnt()
+        end
+        local tip = sourceTip(src)
+        if tip then pts[1] = tip end
+        if rec.docked then
+            local tail = rec.tail
+            if not IsValid(tail) and IsValid(hose) and hose.GetEndNode then
+                tail = hose:GetEndNode()
+            end
+            if IsValid(tail) then
+                local p = tail.GetParent and tail:GetParent() or NULL
+                pts[#pts] = (IsValid(p) and sourceTip(p) or (tail:GetPos() + Vector(0, 0, 6)))
+            end
+        elseif IsValid(rec.holder) then
+            pts[#pts + 1] = handPos(rec.holder)
+        end
+        return pts
+    end
+
+    -- Тонкий шланг: одна коробка ~2.4×1.8, без второго хука (иначе «бревно»).
     function A.DrawHoseBeam(a, b, live)
         if not a or not b then return end
         local dir = b - a
@@ -320,12 +372,13 @@ if CLIENT then
         dir:Normalize()
         local col = live and COL_LIVE or COL
         render.DrawLine(a, b, col, false)
-        render.DrawLine(a + Vector(0, 0, 1.5), b + Vector(0, 0, 1.5), COL_DARK, false)
         render.SetColorMaterial()
         local ang = dir:Angle()
         local mid = (a + b) * 0.5
-        local hw, hh = 5, 4
+        local hw = A.HoseBeamHalfW or 1.2
+        local hh = A.HoseBeamHalfH or 0.9
         render.DrawBox(mid, ang, Vector(-len * 0.5, -hw, -hh), Vector(len * 0.5, hw, hh), col, true)
+        render.DrawLine(a + Vector(0, 0, 0.8), b + Vector(0, 0, 0.8), COL_DARK, false)
     end
 
     local function collectFromNodes()
@@ -347,16 +400,11 @@ if CLIENT then
     end
 
     local function drawPath(id, rec)
-        if not rec or not rec.pts then return end
-        local pts = rec.pts
+        local pts = livePts(rec)
+        if not pts then return end
         local holder = rec.holder
-        if IsValid(holder) and not rec.docked then
-            pts = {}
-            for i = 1, #rec.pts do pts[i] = rec.pts[i] end
-            pts[#pts + 1] = handPos(holder)
-        end
         for i = 2, #pts do
-            A.DrawHoseBeam(pts[i - 1], pts[i], i == #pts and IsValid(holder))
+            A.DrawHoseBeam(pts[i - 1], pts[i], i == #pts and IsValid(holder) and not rec.docked)
         end
     end
 
@@ -383,17 +431,15 @@ if CLIENT then
         for i = 1, n do pts[i] = net.ReadVector() end
         local holder = net.ReadEntity()
         local docked = net.ReadBool()
+        local src = net.ReadEntity()
+        local tail = net.ReadEntity()
         if n == 0 then
             A.HosePaths[id] = nil
             return
         end
-        A.HosePaths[id] = { pts = pts, holder = holder, docked = docked }
+        A.HosePaths[id] = { id = id, pts = pts, holder = holder, docked = docked, src = src, tail = tail }
     end)
 
-    hook.Add("PostDrawOpaqueRenderables", "GRM_FireHose_Vis", function(_, sky)
-        if sky then return end
-        A.DrawAllHoses()
-    end)
     hook.Add("PostDrawTranslucentRenderables", "GRM_FireHose_Vis", function(_, sky)
         if sky then return end
         A.DrawAllHoses()

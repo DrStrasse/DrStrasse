@@ -143,6 +143,12 @@ check("hint геометрии HoseMoveHint", has(hoseLua, "function A.HoseMoveH
 check("Think зовёт MoveHint", has(hoseInit, "self:MoveHint"))
 check("S IN_BACK сматывает", has(hoseInit, "IN_BACK"))
 check("не класть при ходе назад", has(hoseInit, 'hint == "lay"') or has(hoseInit, "not self:IsWalkingBack"))
+check("FollowHost тянет за машиной", has(hoseInit, "function ENT:FollowHost"))
+check("HoseDragPoint", has(hoseLua, "function A.HoseDragPoint"))
+check("тонкий шланг HoseBeamHalfW", has(hoseLua, "HoseBeamHalfW = 1.2"))
+check("нет второго opaque-хука рукава", not hoseLua:find('PostDrawOpaqueRenderables", "GRM_FireHose_Vis"', 1, true))
+check("LayStep 52", has(hoseLua, "LayStep     = 52") or has(hoseLua, "A.HoseCfg.LayStep = 52"))
+check("livePts живые концы", has(hoseLua, "function livePts") or has(hoseLua, "local function livePts"))
 
 print("")
 if fails == 0 then print("ВСЕ ТЕСТЫ ПРОЙДЕНЫ (fire)")

@@ -4,7 +4,7 @@ include("shared.lua")
 
 local function cfg()
     return (GRM and GRM.FireAddon and GRM.FireAddon.HoseCfg) or {
-        MaxLength = 2200, LayStep = 70, Width = 5,
+        MaxLength = 2200, LayStep = 52, Width = 3,
         Material = "grm/firehose", Sag = 14, SprayCost = 8, SprayDmg = 10,
     }
 end
@@ -46,6 +46,8 @@ function ENT:BroadcastPath()
         for i = 1, #pts do net.WriteVector(pts[i]) end
         net.WriteEntity(self:GetHolder())
         net.WriteBool(self:GetDocked() == true)
+        net.WriteEntity(self:GetStartEnt())
+        net.WriteEntity(self:GetEndNode())
     net.Broadcast()
 end
 
@@ -64,6 +66,8 @@ function ENT:OnRemove()
         net.WriteUInt(0, 8)
         net.WriteEntity(NULL)
         net.WriteBool(false)
+        net.WriteEntity(NULL)
+        net.WriteEntity(NULL)
     net.Broadcast()
 end
 
@@ -175,7 +179,7 @@ end
 function ENT:MoveOpt(ply, reel)
     local vel = (ply.GetVelocity and ply:GetVelocity()) or nil
     return {
-        step = cfg().LayStep or 70,
+        step = cfg().LayStep or 52,
         vel = vel,
         back = ply.KeyDown and ply:KeyDown(IN_BACK) == true,
         reel = reel == true or (ply.KeyDown and ply:KeyDown(IN_WALK) == true),
@@ -488,6 +492,149 @@ function ENT:SupplyPump()
     return self._SupplyPump
 end
 
+function ENT:SourceAnchor()
+    local src = self:GetStartEnt()
+    if not IsValid(src) then return nil end
+    return src:WorldSpaceCenter() + src:GetForward() * 8 + Vector(0, 0, 6)
+end
+
+function ENT:GroundSnap(pos)
+    local tr = util.TraceLine({
+        start = pos + Vector(0, 0, 28),
+        endpos = pos - Vector(0, 0, 96),
+        mask = MASK_SOLID_BRUSHONLY,
+    })
+    if tr.Hit then return tr.HitPos + tr.HitNormal * 3 end
+    return pos
+end
+
+function ENT:IsFixedNode(n)
+    if not IsValid(n) then return true end
+    local FA = A()
+    local typ = n:GetNodeType() or 0
+    if FA and (typ == FA.NODE_SOURCE or typ == FA.NODE_JUNCTION) then return true end
+    return IsValid(n:GetParent())
+end
+
+function ENT:DragNode(n, anchor, maxSeg)
+    if not IsValid(n) or self:IsFixedNode(n) then return false end
+    local FA = A()
+    if not (FA and FA.HoseDragPoint) then return false end
+    local pos = n:GetPos()
+    local nx, ny, moved = FA.HoseDragPoint(pos.x, pos.y, anchor.x, anchor.y, maxSeg)
+    if not moved then return false end
+    n:SetPos(self:GroundSnap(Vector(nx, ny, pos.z)))
+    return true
+end
+
+function ENT:CanPopAt(i)
+    local nodes = self.Nodes or {}
+    if i < 2 or i > #nodes or #nodes < 3 then return false end
+    local n = nodes[i]
+    if not IsValid(n) then return false end
+    local FA = A()
+    local typ = n:GetNodeType() or 0
+    if FA and (typ == FA.NODE_SOURCE or typ == FA.NODE_JUNCTION or typ == FA.NODE_NOZZLE) then
+        return false
+    end
+    return true
+end
+
+function ENT:PopNodeAt(i)
+    if not self:CanPopAt(i) then return false end
+    local nodes = self.Nodes
+    local n = nodes[i]
+    local prev = nodes[i - 1]
+    local nxt = nodes[i + 1]
+    if constraint.RemoveConstraints then
+        pcall(constraint.RemoveConstraints, n, "Rope")
+        if IsValid(prev) then pcall(constraint.RemoveConstraints, prev, "Rope") end
+    end
+    n:Remove()
+    local keep = {}
+    for _, e in ipairs(nodes) do
+        if IsValid(e) then keep[#keep + 1] = e end
+    end
+    self.Nodes = keep
+    if IsValid(prev) and IsValid(nxt) then
+        prev:SetNextNode(nxt)
+        self:Link(prev, nxt)
+    end
+    local now = self:LastNode()
+    if IsValid(now) then self:SetEndNode(now) end
+    return true
+end
+
+-- Машина/насос уехали: тянуть укладку за собой, слабину у катушки сматывать.
+function ENT:FollowHost()
+    local FA = A()
+    local nodes = self.Nodes or {}
+    if #nodes < 2 or not (FA and FA.HoseDragPoint) then return false end
+    local src = self:GetStartEnt()
+    local srcPos = self:SourceAnchor()
+    if not (IsValid(src) and srcPos) then return false end
+
+    local endPos
+    local last = nodes[#nodes]
+    if self:GetDocked() and IsValid(last) then
+        local p = last.GetParent and last:GetParent() or NULL
+        endPos = IsValid(p) and (p:WorldSpaceCenter() + Vector(0, 0, 6)) or last:GetPos()
+    end
+
+    local lastSrc = self._LastSrcPos
+    local lastEnd = self._LastEndPos
+    local srcMoved = (not lastSrc) or lastSrc:DistToSqr(srcPos) >= 16
+    local endMoved = endPos and ((not lastEnd) or lastEnd:DistToSqr(endPos) >= 16)
+    self._LastSrcPos = Vector(srcPos)
+    if endPos then self._LastEndPos = Vector(endPos) end
+    if lastSrc and not srcMoved and not endMoved then return false end
+
+    local step = cfg().LayStep or 52
+    local maxSeg = step * 1.25
+    local moved = false
+
+    if self:GetDocked() and endPos then
+        local lays = {}
+        for i = 2, #nodes - 1 do
+            if IsValid(nodes[i]) and not self:IsFixedNode(nodes[i]) then
+                lays[#lays + 1] = nodes[i]
+            end
+        end
+        for k = 1, #lays do
+            local t = k / (#lays + 1)
+            local p = LerpVector(t, srcPos, endPos)
+            lays[k]:SetPos(self:GroundSnap(p))
+            moved = true
+        end
+    else
+        local passes = srcMoved and 2 or 1
+        for _ = 1, passes do
+            local prevPos = srcPos
+            for i = 2, #nodes do
+                local n = nodes[i]
+                if not IsValid(n) then break end
+                if self:IsFixedNode(n) then
+                    prevPos = n:GetPos()
+                else
+                    if self:DragNode(n, prevPos, maxSeg) then moved = true end
+                    prevPos = n:GetPos()
+                end
+            end
+        end
+        local n2 = nodes[2]
+        while IsValid(n2) and FA.HoseShouldCompact and FA.HoseShouldCompact(srcPos:Distance(n2:GetPos()), step) do
+            if not self:PopNodeAt(2) then break end
+            moved = true
+            n2 = self.Nodes[2]
+        end
+    end
+
+    if not moved then return false end
+    self:SetLaidLen(math.floor(self:LaidDistance()))
+    if self.BroadcastPath then self:BroadcastPath() end
+    return true
+end
+
 function ENT:Rewind()
     local ply = self:GetHolder()
     if IsValid(ply) then
@@ -526,6 +673,7 @@ function ENT:ReelIn(ply, maxn)
 end
 
 function ENT:Think()
+    self:FollowHost()
     local ply = self:GetHolder()
     if IsValid(ply) and not self:GetDocked() then
         if not ply:Alive() then
