@@ -55,8 +55,110 @@ GRM.PermData = GRM.PermData or { Extract = {}, Apply = {} }
 GRM.PermData.Extract = GRM.PermData.Extract or {}
 GRM.PermData.Apply = GRM.PermData.Apply or {}
 
+-- ── Цепочки делегатов (Perm Tool, П4) ───────────────────────────────
+-- Раньше слот на класс был ОДИН: `Extract[cls] = fn` затирал предыдущего
+-- регистранта. На prop_physics это било больно — FFD-двери (stools/
+-- ffd_fading_door.lua) и перм-тул обычных пропов претендуют на один класс,
+-- и «кто загрузился позже, тот и выиграл».
+--
+-- Решение без правки девяти существующих файлов-регистрантов: таблицы
+-- Extract/Apply подменяются прокси с метатаблицей. Привычный синтаксис
+-- `Extract[cls] = fn` продолжает работать, но теперь НАКАПЛИВАЕТ функции
+-- в цепочку:
+--   Extract[cls] -> композит: вызывает все fn, результаты МЕРЖИТ в одну
+--                   таблицу (ключи верхнего уровня не пересекаются:
+--                   ffd / sliding / prop / computerName / ...)
+--   Apply[cls]   -> композит: вызывает все fn по очереди, каждую в pcall
+-- Порядок загрузки перестаёт что-либо решать.
+do
+    local chains = { extract = {}, apply = {} }
+    GRM.PermData._chains = chains
+
+    -- Блок исполняется до объявления хелперов ниже по файлу и до того, как
+    -- некоторые стенды успевают определить глобальные istable/isfunction —
+    -- поэтому проверки типов здесь локальные и самодостаточные.
+    local function istable(v) return type(v) == "table" end
+    local function isstring(v) return type(v) == "string" end
+    local function isfunction(v) return type(v) == "function" end
+
+    local function composeExtract(list)
+        return function(ent)
+            local out = nil
+            for _, fn in ipairs(list) do
+                local okX, res = pcall(fn, ent)
+                if okX and istable(res) then
+                    out = out or {}
+                    for k, v in pairs(res) do out[k] = v end
+                end
+            end
+            return out
+        end
+    end
+
+    local function composeApply(list)
+        return function(ent, data)
+            for _, fn in ipairs(list) do pcall(fn, ent, data) end
+        end
+    end
+
+    local function mkProxy(kind, existing)
+        local compose = (kind == "extract") and composeExtract or composeApply
+        local proxy = setmetatable({}, {
+            __newindex = function(_, class, fn)
+                if not isstring(class) then return end
+                if fn == nil then chains[kind][class] = nil return end
+                if not isfunction(fn) then return end
+                local list = chains[kind][class]
+                if not list then list = {} chains[kind][class] = list end
+                -- повторная регистрация той же функции не дублируется
+                for _, f in ipairs(list) do if f == fn then return end end
+                list[#list + 1] = fn
+            end,
+            __index = function(_, class)
+                local list = chains[kind][class]
+                if not list or #list == 0 then return nil end
+                if #list == 1 then return list[1] end
+                return compose(list)
+            end,
+            -- ipairs/pairs по прокси: отдаём классы, у которых есть цепочка
+            __pairs = function(self)
+                local k
+                return function()
+                    local v
+                    k, v = next(chains[kind], k)
+                    if k == nil then return nil end
+                    return k, self[k]
+                end
+            end,
+        })
+        -- переносим то, что успели зарегистрировать до нас
+        if istable(existing) then
+            for class, fn in pairs(existing) do
+                if isstring(class) and isfunction(fn) then proxy[class] = fn end
+            end
+        end
+        return proxy
+    end
+
+    GRM.PermData.Extract = mkProxy("extract", GRM.PermData.Extract)
+    GRM.PermData.Apply   = mkProxy("apply", GRM.PermData.Apply)
+
+    -- Явные регистраторы (предпочтительны для нового кода)
+    GRM.PermData.AddExtract = function(class, fn) GRM.PermData.Extract[class] = fn end
+    GRM.PermData.AddApply   = function(class, fn) GRM.PermData.Apply[class] = fn end
+end
+
 if SERVER then
     local PERM_FILE  = "grm_perm_entities.json"
+    local PERM_QUOTA_FACTION = 32 -- записей на фракцию
+    local PERM_QUOTA_PLAYER  = 8  -- записей на персонажа (если разрешено конваром)
+
+    -- Обычным игрокам закрепление по умолчанию запрещено: иначе карта
+    -- за неделю зарастает вечными пропами, которые не чистит cleanup.
+    if CreateConVar then
+        CreateConVar("grm_perm_players", "0", FCVAR_ARCHIVE,
+            "Разрешить обычным игрокам закреплять свои объекты (0/1)")
+    end
     local PERM_MAX   = 256 -- Код 89: лимит пермов на карту (было 64)
     local PERM_RANGE = 6   -- юнитов: дедуп при добавлении / поиск при снятии
 
@@ -137,6 +239,30 @@ if SERVER then
         -- Здесь намеренно отсутствует, чтобы не создавать второго NPC.
     }
 
+    -- ── Чёрный список: классы, которые пермить НЕЛЬЗЯ ───────
+    -- Раньше отказ был молчаливым («класс не в PERM_CLASSES»), и админ
+    -- не понимал, это баг или так задумано. Теперь у каждого отказа есть
+    -- человеческая причина, она уходит в чат.
+    local PERM_BLACKLIST = {
+        -- Собственная система сохранения — двойной перм даёт дубли объектов
+        grm_cctv_camera   = "у CCTV собственное сохранение (CCTV.SavePermanent)",
+        grm_cctv_monitor  = "у CCTV собственное сохранение (CCTV.SavePermanent)",
+        grm_cctv_server   = "у CCTV собственное сохранение (CCTV.SavePermanent)",
+        grm_vendor        = "у торговца свой сейв (data/grm_vendors/<map>.json)",
+        sent_vehicle_dealer = "у дилера транспорта свой сейв (VehicleDealer v3)",
+        -- Автоперсистентные модули (Код 88.4) — сохраняются сами
+        grm_server_rack   = "модуль сохраняется сам (автоперсистент)",
+        grm_antenna       = "модуль сохраняется сам (автоперсистент)",
+        grm_radio_station = "модуль сохраняется сам (автоперсистент)",
+        grm_net_console   = "модуль сохраняется сам (автоперсистент)",
+        grm_loudspeaker   = "модуль сохраняется сам (автоперсистент)",
+        -- Временные по смыслу: перм превратил бы мусор в вечный мусор
+        grm_item_drop     = "временный объект (выброшенный предмет)",
+        grm_money_drop    = "временный объект (выброшенные деньги)",
+        grm_ore_chunk     = "временный объект (добытая руда)",
+        grm_mobile_line   = "виртуальная станция, не физический объект",
+    }
+
     -- JSON только без конверсии ключей (находка 65)
     local function jsonT(txt)
         local ok, t = pcall(util.JSONToTable, txt, false, true)
@@ -176,6 +302,85 @@ if SERVER then
         return out
     end
 
+    -- ── Формат v2: uid, владение, аудит ─────────────────────
+    local uidCounter = 0
+    local function newUID()
+        uidCounter = uidCounter + 1
+        return ("pm_%x_%x_%x"):format(os.time(), uidCounter, math.random(0, 0xFFFF))
+    end
+
+    -- Миграция v1 -> v2. Идемпотентна: если у всех записей есть uid, ничего
+    -- не делает. Формат файла НЕ меняется (тот же плоский массив) —
+    -- добавляются только поля записи, поэтому старый loadList его читает.
+    --
+    -- ownerKind = "server" для всех старых записей — это РОВНО сегодняшнее
+    -- поведение (spawnAll звал MarkServerEntity для всего подряд), поэтому
+    -- миграция не меняет поведение ни одного существующего перма.
+    local migrationDone = false
+    local function migrateList(list)
+        if not istable(list) then return list, false end
+        local need = false
+        for _, rec in ipairs(list) do
+            if istable(rec) and not isstring(rec.uid) then need = true break end
+        end
+        if not need then return list, false end
+
+        -- Бэкап ДО правок, с проверкой чтением. Не удался — миграцию отменяем
+        -- и работаем со старым форматом: терять боевую базу нельзя.
+        local bakName = ("grm_perm_entities.bak.%d.json"):format(os.time())
+        local okJ, raw = pcall(util.TableToJSON, list, true)
+        if not okJ or not isstring(raw) or raw == "" then
+            print("[GRM Perm][!] МИГРАЦИЯ ОТМЕНЕНА: не удалось сериализовать бэкап")
+            return list, false
+        end
+        file.Write(bakName, raw)
+        local chk = file.Read(bakName, "DATA")
+        if chk ~= raw then
+            print("[GRM Perm][!] МИГРАЦИЯ ОТМЕНЕНА: бэкап не подтвердился (" .. bakName .. ")")
+            return list, false
+        end
+
+        local n = 0
+        for _, rec in ipairs(list) do
+            if istable(rec) and not isstring(rec.uid) then
+                rec.uid       = newUID()
+                rec.ownerKind = isstring(rec.ownerKind) and rec.ownerKind or "server"
+                rec.owner     = isstring(rec.owner) and rec.owner or ""
+                rec.ownerName = isstring(rec.ownerName) and rec.ownerName or ""
+                rec.faction   = isstring(rec.faction) and rec.faction or ""
+                if rec.freeze == nil then rec.freeze = true end
+                rec.label     = isstring(rec.label) and rec.label or ""
+                rec.by        = isstring(rec.by) and rec.by or ""
+                rec.byName    = isstring(rec.byName) and rec.byName or "migration"
+                rec.at        = tonumber(rec.at) or os.time()
+                n = n + 1
+            end
+        end
+        print(("[GRM Perm] МИГРАЦИЯ v1->v2: обновлено записей: %d, бэкап: data/%s")
+            :format(n, bakName))
+        return list, true
+    end
+
+    -- Единая точка чтения: подтягивает миграцию при первом обращении
+    local function loadDB()
+        local list = loadList()
+        if not migrationDone then
+            local migrated, changed = migrateList(list)
+            list = migrated
+            migrationDone = true
+            if changed then
+                local okJ, txt = pcall(util.TableToJSON, list, true)
+                if okJ and isstring(txt) and txt ~= "" then
+                    file.Write(PERM_FILE, txt)
+                    if file.Read(PERM_FILE, "DATA") ~= txt then
+                        print("[GRM Perm][!] Миграция: запись основной базы не подтвердилась")
+                    end
+                end
+            end
+        end
+        return list
+    end
+
     local function saveList(list)
         local okJ, txt = pcall(util.TableToJSON, list, true)
         if not okJ or not isstring(txt) or txt == "" then
@@ -198,6 +403,82 @@ if SERVER then
         local dy = (tonumber(a.y) or 0) - (tonumber(b.y) or 0)
         local dz = (tonumber(a.z) or 0) - (tonumber(b.z) or 0)
         return (dx * dx + dy * dy + dz * dz) <= (PERM_RANGE * PERM_RANGE)
+    end
+
+    -- ── Владение, права, квоты ──────────────────────────────
+    local function charKeyOf(ply)
+        if not IsValid(ply) then return "" end
+        if GRM.Identity and GRM.Identity.CharacterKey then
+            local okK, k = pcall(GRM.Identity.CharacterKey, ply)
+            if okK and isstring(k) and k ~= "" then return k end
+        end
+        return tostring(ply.SteamID64 and ply:SteamID64() or "")
+    end
+
+    local function rpNameOf(ply)
+        if not IsValid(ply) then return "" end
+        local n = ply.GetNWString and ply:GetNWString("GRM_RPName", "") or ""
+        if n == "" and ply.Nick then n = ply:Nick() end
+        return tostring(n or "")
+    end
+
+    local function factionOf(ply)
+        if not IsValid(ply) then return "" end
+        return tostring(ply.GetNWString and ply:GetNWString("GRM_Faction", "") or "")
+    end
+
+    -- Право «закреплять объекты»: суперадмин, либо роль с perm_manage,
+    -- либо лидер фракции (совместимо с логикой grm_service_tool).
+    local function hasFactionPermRight(ply)
+        if not IsValid(ply) then return false end
+        if GRM.FactionPerms and GRM.FactionPerms.PlayerHasPermission then
+            local okP, res = pcall(GRM.FactionPerms.PlayerHasPermission, ply, "perm_manage")
+            if okP and res then return true end
+        end
+        local fac = factionOf(ply)
+        if fac ~= "" and _G.FactionsAPI and _G.FactionsAPI.IsLeader then
+            local okL, res = pcall(_G.FactionsAPI.IsLeader, ply, fac)
+            if okL and res then return true end
+        end
+        return false
+    end
+
+    local function playersAllowed()
+        local cv = GetConVar and GetConVar("grm_perm_players")
+        return cv and cv:GetInt() == 1 or false
+    end
+
+    local function countBy(list, map, field, value)
+        local n = 0
+        for _, rec in ipairs(list) do
+            if rec.map == map and tostring(rec[field] or "") == value then n = n + 1 end
+        end
+        return n
+    end
+
+    -- Может ли игрок управлять пермами вообще / этой конкретной записью
+    local function canManageRec(ply, rec)
+        if not IsValid(ply) then return false, "нет игрока" end
+        if ply.IsSuperAdmin and ply:IsSuperAdmin() then return true end
+        if not istable(rec) then
+            -- общий вопрос «может ли пермить хоть что-то»
+            if hasFactionPermRight(ply) then return true end
+            if playersAllowed() then return true end
+            return false, "нужны права суперадмина или руководства фракции"
+        end
+        local kind = tostring(rec.ownerKind or "server")
+        if kind == "faction" then
+            local fac = factionOf(ply)
+            if fac ~= "" and fac == tostring(rec.faction or "") and hasFactionPermRight(ply) then
+                return true
+            end
+            return false, "объект закреплён за фракцией «" .. tostring(rec.faction or "?") .. "»"
+        end
+        if kind == "character" then
+            if tostring(rec.owner or "") == charKeyOf(ply) then return true end
+            return false, "объект закреплён за другим персонажем"
+        end
+        return false, "объект закреплён как серверное оборудование"
     end
 
     local function aimEntity(ply)
@@ -225,7 +506,7 @@ if SERVER then
     local function spawnAll(reason)
         local map = game.GetMap()
         local done, skipped = 0, 0
-        for _, rec in ipairs(loadList()) do
+        for _, rec in ipairs(loadDB()) do
             if rec.map == map and PERM_CLASSES[rec.class] then
                 if isOccupied(rec.class, rec.pos) then
                     skipped = skipped + 1
@@ -239,10 +520,44 @@ if SERVER then
                         ent:SetAngles(Angle(tonumber(rec.ang.p) or 0, tonumber(rec.ang.y) or 0, tonumber(rec.ang.r) or 0))
                         ent:Spawn()
                         ent:Activate()
-                        if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
-                        local ph = ent:GetPhysicsObject()
-                        if IsValid(ph) then ph:EnableMotion(false) end -- перм не катается по карте
+                        -- Владение восстанавливается по записи (П1). Раньше
+                        -- ЛЮБОЙ перм безусловно становился «серверным», и
+                        -- запермленная дверь после рестарта уходила у
+                        -- владельца: PP.CanInteract проверяет IsServerEntity
+                        -- раньше IsOwner.
+                        local kind = tostring(rec.ownerKind or "server")
                         ent._grmPerm = true
+                        ent._grmPermKind = kind
+                        ent._grmPermUID = rec.uid
+                        if kind == "character" and isstring(rec.owner) and rec.owner ~= "" then
+                            ent.GRM_PropOwnerCharacterKey = rec.owner
+                            ent.GRM_EntityOwnerCharacterKey = rec.owner
+                            ent.GRM_EntityOwnerName = tostring(rec.ownerName or "")
+                            pcall(function()
+                                ent:SetNWString("GRM_PropOwnerCharacterKey", rec.owner)
+                                ent:SetNWString("GRM_EntityOwnerCharacterKey", rec.owner)
+                                ent:SetNWString("GRM_PropOwnerName", tostring(rec.ownerName or ""))
+                                ent:SetNWString("GRM_EntityOwnerName", tostring(rec.ownerName or ""))
+                            end)
+                        elseif kind == "faction" then
+                            ent.GRM_PermFaction = tostring(rec.faction or "")
+                            pcall(function()
+                                ent:SetNWString("GRM_PermFaction", tostring(rec.faction or ""))
+                                ent:SetNWString("GRM_EntityOwnerName", tostring(rec.faction or ""))
+                            end)
+                        elseif GRM.PropProtect and GRM.PropProtect.MarkServerEntity then
+                            GRM.PropProtect.MarkServerEntity(ent)
+                            ent._grmPermKind = "server"
+                        end
+                        pcall(function()
+                            ent:SetNWBool("GRM_IsPerm", true)
+                            ent:SetNWString("GRM_PermKind", ent._grmPermKind or "server")
+                        end)
+                        -- freeze=false — объект остаётся подвижным (тележки, качели)
+                        if rec.freeze ~= false then
+                            local ph = ent:GetPhysicsObject()
+                            if IsValid(ph) then ph:EnableMotion(false) end -- перм не катается по карте
+                        end
                         -- Код 105: данные экземпляра обратно (PIN кейпада,
                         -- конфиг FFD-двери и т.п.) — после Spawn, чтобы
                         -- NetworkVar'ы уже существовали
@@ -250,6 +565,9 @@ if SERVER then
                         if istable(rec.data) and applyFn then
                             pcall(applyFn, ent, rec.data)
                         end
+                        -- Модули (сигнализация, банк, электроника) доподключают
+                        -- воскрешённый объект к своим реестрам
+                        hook.Run("GRM_PermRestored", ent, rec)
                         done = done + 1
                     else
                         print("[GRM Perm][!] Не удалось создать класс " .. tostring(rec.class) .. " — запись пропущена")
@@ -283,7 +601,7 @@ if SERVER then
             tell(ply, "Класс [" .. class .. "] нельзя пермить (не GRM-разворачиваемое).", 255, 120, 120)
             return
         end
-        local list = loadList()
+        local list = loadDB()
         local map = game.GetMap()
         if countForMap(list, map) >= PERM_MAX then
             tell(ply, "Лимит пермов на карту: " .. PERM_MAX .. ".", 255, 120, 120)
@@ -304,6 +622,9 @@ if SERVER then
             map = map, class = class, model = model,
             pos = np,
             ang = { p = ang.p, y = ang.y, r = ang.r },
+            uid = newUID(), ownerKind = "server", owner = "", ownerName = "",
+            faction = "", freeze = true, label = "",
+            by = tostring(ply:SteamID64() or ""), byName = rpNameOf(ply), at = os.time(),
         }
         -- Код 105: данные экземпляра (PIN кейпада, конфиг двери и т.п.)
         local extractFn = GRM.PermData and GRM.PermData.Extract and GRM.PermData.Extract[class]
@@ -313,6 +634,17 @@ if SERVER then
         end
         list[#list + 1] = rec
         if saveList(list) then
+            ent._grmPerm = true
+            ent._grmPermKind = "server"
+            ent._grmPermUID = rec.uid
+            pcall(function()
+                ent:SetNWBool("GRM_IsPerm", true)
+                ent:SetNWString("GRM_PermKind", "server")
+            end)
+            if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then
+                GRM.PropProtect.MarkServerEntity(ent)
+            end
+            hook.Run("GRM_PermAdded", ent, rec, ply)
             tell(ply, "[ПЕРМ] " .. class .. " закреплён на карте. Переживёт рестарт и cleanup.", 100, 220, 100)
             print(("[GRM Perm] %s (%s) закрепил %s @ %d %d %d"):format(ply:Nick(), ply:SteamID64() or "?", class, np.x, np.y, np.z))
         else
@@ -324,7 +656,7 @@ if SERVER then
         local ent = aimEntity(ply)
         if not IsValid(ent) then tell(ply, "Наведи прицел на перм-энтити.", 255, 200, 80) return end
         local class = tostring(ent:GetClass() or "")
-        local list = loadList()
+        local list = loadDB()
         local map = game.GetMap()
         local pos = ent:GetPos()
         local np = { x = pos.x, y = pos.y, z = pos.z }
@@ -372,7 +704,7 @@ if SERVER then
         ent._grmPermSaveAt = CurTime() + 1.5
         timer.Simple(1.5, function()
             if not IsValid(ent) then return end
-            local list = loadList()
+            local list = loadDB()
             local map = game.GetMap()
             local pos = ent:GetPos()
             local np = { x = pos.x, y = pos.y, z = pos.z }
@@ -403,7 +735,7 @@ if SERVER then
         local map = game.GetMap()
         local pos = ent:GetPos()
         local np = { x = pos.x, y = pos.y, z = pos.z }
-        local list = loadList()
+        local list = loadDB()
         -- запись уже есть на месте — обновляем данные экземпляра
         for _, rec in ipairs(list) do
             if rec.map == map and rec.class == class and sameSpot(rec.pos, np, rec.class, class) then
@@ -424,6 +756,9 @@ if SERVER then
             map = map, class = class, model = model,
             pos = np,
             ang = { p = ang.p, y = ang.y, r = ang.r },
+            uid = newUID(), ownerKind = "server", owner = "", ownerName = "",
+            faction = "", freeze = true, label = "",
+            by = "", byName = "upsert", at = os.time(),
         }
         if extractFn then
             local okX, data = pcall(extractFn, ent)
@@ -431,11 +766,328 @@ if SERVER then
         end
         list[#list + 1] = rec
         if saveList(list) then
+            ent._grmPerm = true
+            ent._grmPermKind = "server"
+            ent._grmPermUID = rec.uid
             print(("[GRM Perm] Upsert: создана запись %s @ %d %d %d"):format(class, np.x, np.y, np.z))
             return "added"
         end
         return "savefail"
     end
+
+    -- ══════════════════════════════════════════════════════════
+    --  ПУБЛИЧНЫЙ API GRM.Perm (задача 9, Д17)
+    --  grm_service_tool.lua:156,210 уже вызывает GRM.Perm.Add(ply, ent)
+    --  и GRM.Perm.Remove(ply, ent) — сигнатуры подобраны под них, чтобы
+    --  галочка «сделать перманентным» заработала без правки того файла.
+    -- ══════════════════════════════════════════════════════════
+    GRM.Perm = GRM.Perm or {}
+    local P = GRM.Perm
+
+    P.MaxPerMap     = PERM_MAX
+    P.QuotaFaction  = PERM_QUOTA_FACTION
+    P.QuotaPlayer   = PERM_QUOTA_PLAYER
+    P.MatchRange    = PERM_RANGE
+
+    function P.Classes() return PERM_CLASSES end
+    function P.Blacklist() return PERM_BLACKLIST end
+
+    -- Модули регистрируют свои классы сами, без правки этого файла
+    function P.RegisterClass(class, allowed)
+        if not isstring(class) or class == "" then return false end
+        PERM_CLASSES[class] = (allowed ~= false)
+        return true
+    end
+
+    -- Можно ли пермить этот класс. Возвращает: ok, причина отказа
+    function P.IsPermable(ent)
+        if not IsValid(ent) then return false, "объект не найден" end
+        local class = tostring(ent:GetClass() or "")
+        if PERM_BLACKLIST[class] then return false, PERM_BLACKLIST[class] end
+        if not PERM_CLASSES[class] then
+            return false, "класс «" .. class .. "» не разрешён для закрепления"
+        end
+        return true
+    end
+
+    function P.CanManage(ply, ent)
+        local rec = nil
+        if IsValid(ent) then rec = P.Info(ent) end
+        return canManageRec(ply, rec)
+    end
+
+    -- Поиск записи по объекту: сначала по uid (надёжно), потом по
+    -- классу+позиции (для записей до миграции и после ручного сдвига)
+    local function findRec(list, ent)
+        if not IsValid(ent) then return nil end
+        local map = game.GetMap()
+        local class = tostring(ent:GetClass() or "")
+        local uid = ent._grmPermUID
+        if isstring(uid) and uid ~= "" then
+            for i, rec in ipairs(list) do
+                if rec.uid == uid then return i, rec end
+            end
+        end
+        local pos = ent:GetPos()
+        local np = { x = pos.x, y = pos.y, z = pos.z }
+        local bestI, bestRec, bestD = nil, nil, math.huge
+        for i, rec in ipairs(list) do
+            if rec.map == map and rec.class == class then
+                local dx = (tonumber(rec.pos and rec.pos.x) or 0) - np.x
+                local dy = (tonumber(rec.pos and rec.pos.y) or 0) - np.y
+                local dz = (tonumber(rec.pos and rec.pos.z) or 0) - np.z
+                local d2 = dx * dx + dy * dy + dz * dz
+                if d2 <= (PERM_RANGE * PERM_RANGE) and d2 < bestD then
+                    bestI, bestRec, bestD = i, rec, d2
+                end
+            end
+        end
+        return bestI, bestRec
+    end
+
+    function P.IsPerm(ent)
+        if not IsValid(ent) then return false end
+        if ent._grmPerm then return true end
+        local _, rec = findRec(loadDB(), ent)
+        return rec ~= nil
+    end
+
+    function P.Info(ent)
+        if not IsValid(ent) then return nil end
+        local _, rec = findRec(loadDB(), ent)
+        return rec
+    end
+
+    function P.ListForMap(map)
+        map = isstring(map) and map or game.GetMap()
+        local out = {}
+        for _, rec in ipairs(loadDB()) do
+            if rec.map == map then out[#out + 1] = rec end
+        end
+        return out
+    end
+
+    -- Пометить живой объект как перм (общая часть Add/spawnAll)
+    local function markEnt(ent, rec)
+        ent._grmPerm = true
+        ent._grmPermKind = tostring(rec.ownerKind or "server")
+        ent._grmPermUID = rec.uid
+        pcall(function()
+            ent:SetNWBool("GRM_IsPerm", true)
+            ent:SetNWString("GRM_PermKind", ent._grmPermKind)
+        end)
+        if ent._grmPermKind == "server" and GRM.PropProtect and GRM.PropProtect.MarkServerEntity then
+            GRM.PropProtect.MarkServerEntity(ent)
+        elseif ent._grmPermKind == "character" and isstring(rec.owner) and rec.owner ~= "" then
+            ent.GRM_PropOwnerCharacterKey = rec.owner
+            ent.GRM_EntityOwnerCharacterKey = rec.owner
+            pcall(function()
+                ent:SetNWString("GRM_PropOwnerCharacterKey", rec.owner)
+                ent:SetNWString("GRM_EntityOwnerCharacterKey", rec.owner)
+                ent:SetNWString("GRM_PropOwnerName", tostring(rec.ownerName or ""))
+            end)
+        elseif ent._grmPermKind == "faction" then
+            ent.GRM_PermFaction = tostring(rec.faction or "")
+            pcall(function() ent:SetNWString("GRM_PermFaction", tostring(rec.faction or "")) end)
+        end
+        if rec.freeze ~= false then
+            local ph = ent:GetPhysicsObject()
+            if IsValid(ph) then ph:EnableMotion(false) end
+        end
+    end
+
+    -- Закрепить объект. opts = {ownerKind, owner, ownerName, faction,
+    -- freeze, label}. Возвращает: ok(bool), код/сообщение, запись
+    function P.Add(ply, ent, opts)
+        opts = istable(opts) and opts or {}
+        if not IsValid(ent) then return false, "объект не найден" end
+
+        local okClass, whyClass = P.IsPermable(ent)
+        if not okClass then return false, whyClass end
+
+        local okRight, whyRight = canManageRec(ply, nil)
+        if not okRight then return false, whyRight end
+
+        local list = loadDB()
+        local map = game.GetMap()
+
+        -- уже в базе? тогда это обновление, а не дубль
+        local idx, exist = findRec(list, ent)
+        if exist then
+            local okOwn, whyOwn = canManageRec(ply, exist)
+            if not okOwn then return false, whyOwn end
+            return P.Update(ply, ent, opts)
+        end
+
+        if countForMap(list, map) >= PERM_MAX then
+            return false, ("лимит закреплённых объектов на карту: %d"):format(PERM_MAX)
+        end
+
+        -- Вид владения: по умолчанию серверное (как было), суперадмин может
+        -- явно выбрать фракционное или личное
+        local kind = tostring(opts.ownerKind or "server")
+        if kind ~= "server" and kind ~= "faction" and kind ~= "character" then kind = "server" end
+        local isSA = IsValid(ply) and ply.IsSuperAdmin and ply:IsSuperAdmin()
+        if not isSA then
+            -- без прав суперадмина закрепить «серверным» нельзя:
+            -- иначе лидер фракции сделал бы объект неприкасаемым для всех
+            if hasFactionPermRight(ply) then kind = (kind == "character") and "character" or "faction"
+            else kind = "character" end
+        end
+
+        local faction = tostring(opts.faction or "")
+        if kind == "faction" and faction == "" then faction = factionOf(ply) end
+        if kind == "faction" and faction == "" then
+            return false, "не удалось определить фракцию для закрепления"
+        end
+
+        local owner, ownerName = tostring(opts.owner or ""), tostring(opts.ownerName or "")
+        if kind == "character" and owner == "" then
+            owner, ownerName = charKeyOf(ply), rpNameOf(ply)
+        end
+
+        -- Квоты (защита от «запермил всю карту»)
+        if kind == "faction" and not isSA then
+            if countBy(list, map, "faction", faction) >= PERM_QUOTA_FACTION then
+                return false, ("лимит фракции: %d закреплённых объектов"):format(PERM_QUOTA_FACTION)
+            end
+        elseif kind == "character" and not isSA then
+            if not playersAllowed() then
+                return false, "закрепление объектов игроками отключено (grm_perm_players 0)"
+            end
+            if countBy(list, map, "owner", owner) >= PERM_QUOTA_PLAYER then
+                return false, ("лимит персонажа: %d закреплённых объектов"):format(PERM_QUOTA_PLAYER)
+            end
+        end
+
+        -- Вето для сторонних модулей (зоны, сюжетные ограничения)
+        local veto = hook.Run("GRM_PermCanAdd", ply, ent, kind)
+        if veto == false then return false, "закрепление запрещено другим модулем" end
+
+        local pos, ang = ent:GetPos(), ent:GetAngles()
+        local model = ""
+        pcall(function() model = tostring(ent:GetModel() or "") end)
+
+        local rec = {
+            map = map, class = tostring(ent:GetClass() or ""), model = model,
+            pos = { x = pos.x, y = pos.y, z = pos.z },
+            ang = { p = ang.p, y = ang.y, r = ang.r },
+            uid = newUID(),
+            ownerKind = kind, owner = owner, ownerName = ownerName, faction = faction,
+            freeze = (opts.freeze ~= false),
+            label = tostring(opts.label or ""),
+            by = IsValid(ply) and tostring(ply:SteamID64() or "") or "",
+            byName = IsValid(ply) and rpNameOf(ply) or "console",
+            at = os.time(),
+        }
+
+        local extractFn = GRM.PermData and GRM.PermData.Extract and GRM.PermData.Extract[rec.class]
+        if extractFn then
+            local okX, data = pcall(extractFn, ent)
+            if okX and istable(data) then rec.data = data end
+        end
+
+        list[#list + 1] = rec
+        if not saveList(list) then return false, "ошибка записи базы — смотри консоль сервера" end
+
+        markEnt(ent, rec)
+        hook.Run("GRM_PermAdded", ent, rec, ply)
+        print(("[GRM Perm] ADD %s uid=%s kind=%s by=%s")
+            :format(rec.class, rec.uid, kind, rec.byName))
+        return true, "added", rec
+    end
+
+    -- Снять закрепление. Объект НЕ удаляется (П2): админ снимает перм,
+    -- чтобы подвинуть постройку, а не чтобы её потерять.
+    function P.Remove(ply, ent, alsoDelete)
+        if not IsValid(ent) then return false, "объект не найден" end
+        local list = loadDB()
+        local idx, rec = findRec(list, ent)
+        if not rec then return false, "объект не закреплён" end
+
+        local okOwn, whyOwn = canManageRec(ply, rec)
+        if not okOwn then return false, whyOwn end
+
+        table.remove(list, idx)
+        if not saveList(list) then return false, "ошибка записи базы — смотри консоль сервера" end
+
+        ent._grmPerm = nil
+        ent._grmPermKind = nil
+        ent._grmPermUID = nil
+        pcall(function()
+            ent:SetNWBool("GRM_IsPerm", false)
+            ent:SetNWString("GRM_PermKind", "")
+        end)
+        local ph = ent:GetPhysicsObject()
+        if IsValid(ph) then ph:EnableMotion(true) end
+
+        hook.Run("GRM_PermRemoved", ent, rec, ply)
+        print(("[GRM Perm] REMOVE %s uid=%s by=%s")
+            :format(tostring(rec.class), tostring(rec.uid), IsValid(ply) and ply:Nick() or "console"))
+
+        if alsoDelete then ent:Remove() end
+        return true, "removed", rec
+    end
+
+    -- Обновить запись под текущее состояние объекта (позиция, данные,
+    -- владение, метка). Используется тулом и PhysgunDrop.
+    function P.Update(ply, ent, opts)
+        opts = istable(opts) and opts or {}
+        if not IsValid(ent) then return false, "объект не найден" end
+        local list = loadDB()
+        local _, rec = findRec(list, ent)
+        if not rec then return false, "объект не закреплён" end
+
+        local okOwn, whyOwn = canManageRec(ply, rec)
+        if not okOwn then return false, whyOwn end
+
+        local pos, ang = ent:GetPos(), ent:GetAngles()
+        rec.pos = { x = pos.x, y = pos.y, z = pos.z }
+        rec.ang = { p = ang.p, y = ang.y, r = ang.r }
+        pcall(function() rec.model = tostring(ent:GetModel() or rec.model or "") end)
+
+        if opts.freeze ~= nil then rec.freeze = (opts.freeze ~= false) end
+        if opts.label ~= nil then rec.label = tostring(opts.label) end
+        if isstring(opts.ownerKind) and IsValid(ply) and ply:IsSuperAdmin() then
+            local kind = opts.ownerKind
+            if kind == "server" or kind == "faction" or kind == "character" then
+                rec.ownerKind = kind
+                if kind == "faction" then
+                    rec.faction = tostring(opts.faction or rec.faction or factionOf(ply))
+                elseif kind == "character" then
+                    rec.owner = tostring(opts.owner or charKeyOf(ply))
+                    rec.ownerName = tostring(opts.ownerName or rpNameOf(ply))
+                end
+            end
+        end
+
+        local extractFn = GRM.PermData and GRM.PermData.Extract and GRM.PermData.Extract[rec.class]
+        if extractFn then
+            local okX, data = pcall(extractFn, ent)
+            if okX and istable(data) then rec.data = data end
+        end
+
+        if not saveList(list) then return false, "ошибка записи базы — смотри консоль сервера" end
+        markEnt(ent, rec)
+        hook.Run("GRM_PermUpdated", ent, rec, ply)
+        return true, "updated", rec
+    end
+
+    -- Перепривязка владения (для /permowner и панели тула)
+    function P.SetOwner(ply, ent, kind, value)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then
+            if not hasFactionPermRight(ply) then return false, "недостаточно прав" end
+        end
+        return P.Update(ply, ent, {
+            ownerKind = kind,
+            faction = (kind == "faction") and value or nil,
+            owner = (kind == "character") and value or nil,
+        })
+    end
+
+    -- Совместимость: старые вызовы Upsert/UpdateEntry остаются рабочими
+    P.Upsert      = function(ent) return GRM.PermData.Upsert(ent) end
+    P.UpdateEntry = function(ent) return GRM.PermData.UpdateEntry(ent) end
 
     local function loadPerm(ply)
         local spawned, skipped = spawnAll("ручная загрузка")
@@ -447,7 +1099,7 @@ if SERVER then
     end
 
     local function listPerm(ply)
-        local list = loadList()
+        local list = loadDB()
         local map = game.GetMap()
         local n = 0
         for _, rec in ipairs(list) do
@@ -507,6 +1159,104 @@ if SERVER then
         elseif t == "/permload" then loadPerm(ply)
         else listPerm(ply) end
         return ""
+    end)
+
+    -- ── /perminfo и /permowner <фракция|me|server> ──────────
+    -- Команды с аргументом: старые четыре разбирались точным сравнением,
+    -- поэтому обрабатываем отдельно.
+    local function infoPerm(ply)
+        local ent = aimEntity(ply)
+        if not IsValid(ent) then tell(ply, "Наведи прицел на объект.", 255, 200, 80) return end
+        local rec = P.Info(ent)
+        if not rec then
+            local ok, why = P.IsPermable(ent)
+            tell(ply, "Объект НЕ закреплён. " .. (ok and "Можно закрепить." or ("Причина: " .. tostring(why))), 255, 200, 80)
+            return
+        end
+        local kind = tostring(rec.ownerKind or "server")
+        local whose = (kind == "faction" and ("фракция " .. tostring(rec.faction or "?")))
+            or (kind == "character" and ("персонаж " .. tostring(rec.ownerName ~= "" and rec.ownerName or rec.owner)))
+            or "серверное оборудование"
+        tell(ply, ("[ПЕРМ] %s | %s | заморозка: %s | uid: %s")
+            :format(tostring(rec.class), whose, rec.freeze == false and "нет" or "да", tostring(rec.uid or "-")), 100, 220, 255)
+        tell(ply, ("Закрепил: %s (%s)"):format(tostring(rec.byName or "?"),
+            rec.at and os.date("%d.%m.%Y %H:%M", tonumber(rec.at)) or "?"), 160, 190, 210)
+    end
+
+    local function ownerPerm(ply, arg)
+        local ent = aimEntity(ply)
+        if not IsValid(ent) then tell(ply, "Наведи прицел на закреплённый объект.", 255, 200, 80) return end
+        arg = string.Trim(tostring(arg or ""))
+        local ok, msg
+        if arg == "" then
+            tell(ply, "Использование: /permowner <фракция> | me | server", 255, 200, 80)
+            return
+        elseif arg == "server" then
+            ok, msg = P.Update(ply, ent, { ownerKind = "server" })
+        elseif arg == "me" then
+            ok, msg = P.Update(ply, ent, { ownerKind = "character",
+                owner = charKeyOf(ply), ownerName = rpNameOf(ply) })
+        else
+            ok, msg = P.Update(ply, ent, { ownerKind = "faction", faction = arg })
+        end
+        if ok then tell(ply, "[ПЕРМ] Владение обновлено: " .. arg, 100, 220, 100)
+        else tell(ply, "[ПЕРМ] " .. tostring(msg), 255, 120, 120) end
+    end
+
+    local function handleArgCmd(ply, text)
+        local t = string.Trim(tostring(text or ""))
+        local low = string.lower(t)
+        if low == "/perminfo" then
+            if not IsValid(ply) then return false end
+            infoPerm(ply)
+            return true
+        end
+        if low:sub(1, 11) == "/permowner " or low == "/permowner" then
+            if not IsValid(ply) then return false end
+            if not ply:IsSuperAdmin() and not hasFactionPermRight(ply) then
+                tell(ply, "Недостаточно прав.", 255, 100, 100)
+                return true
+            end
+            ownerPerm(ply, t:sub(12))
+            return true
+        end
+        return false
+    end
+
+    hook.Add("PlayerSayTransform", "GRM_PermEntities_ChatArgs", function(ply, datapack)
+        if not istable(datapack) or not isstring(datapack[1]) then return end
+        if handleArgCmd(ply, datapack[1]) then
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
+        end
+    end)
+
+    hook.Add("PlayerSay", "GRM_PermEntities_ChatArgs", function(ply, text)
+        if handleArgCmd(ply, text) then return "" end
+    end)
+
+    -- Подвинул закреплённый объект физганом — запись едет следом.
+    -- Без этого после рестарта объект прыгал на старое место, и админ
+    -- считал, что перм «сломался».
+    hook.Add("PhysgunDrop", "GRM_PermEntities_FollowMove", function(ply, ent)
+        if not IsValid(ent) or not ent._grmPerm then return end
+        if ent._grmPermMoveAt and CurTime() < ent._grmPermMoveAt then return end
+        ent._grmPermMoveAt = CurTime() + 1.5
+        timer.Simple(1.5, function()
+            if not IsValid(ent) or not ent._grmPerm then return end
+            local list = loadDB()
+            local uid = ent._grmPermUID
+            for _, rec in ipairs(list) do
+                if isstring(uid) and rec.uid == uid then
+                    local pos, ang = ent:GetPos(), ent:GetAngles()
+                    rec.pos = { x = pos.x, y = pos.y, z = pos.z }
+                    rec.ang = { p = ang.p, y = ang.y, r = ang.r }
+                    saveList(list)
+                    hook.Run("GRM_PermUpdated", ent, rec, ply)
+                    break
+                end
+            end
+        end)
     end)
 
     -- Служебные компьютеры ведомств: заголовок на экране задаётся

@@ -131,6 +131,12 @@ end
 -- Проверка: объект является постоянным серверным оборудованием
 function PP.IsServerEntity(ent)
     if not IsValid(ent) then return false end
+    -- Закреплённый объект серверный только если у него нет живого владельца
+    -- (задача 9, П1). Раньше ЛЮБОЙ перм считался серверным, и после
+    -- рестарта владелец терял доступ к собственной запермленной двери.
+    if ent._grmPermKind ~= nil then
+        return ent._grmPermKind == "server"
+    end
     if ent._grmPerm == true or ent.GRMFoodPermanent == true then return true end
     if ent.GRM_EntityOwnerType == "server" or ent:GetNWString("GRM_EntityOwnerType", "") == "server" then return true end
 
@@ -184,6 +190,29 @@ function PP.CanInteract(ply, ent, action)
         return false -- Физган, тулган, свойства, удаление заблокированы для игроков
     end
 
+    -- 2.5. Закреплённые объекты фракции/персонажа (задача 9).
+    -- Удаление закреплённого объекта запрещено всем, кроме суперадмина:
+    -- сначала сними перм (/permremove или R инструментом), потом удаляй.
+    if ent._grmPermKind == "faction" or ent._grmPermKind == "character" then
+        if action == "use" then return true end
+        if action == "remove" then return false end
+
+        local allowed = false
+        if ent._grmPermKind == "character" then
+            allowed = PP.IsOwner(ply, ent)
+        elseif IsValid(ply) then
+            local fac = ply:GetNWString("GRM_Faction", "")
+            local entFac = tostring(ent.GRM_PermFaction or "")
+            if entFac == "" then entFac = ent:GetNWString("GRM_PermFaction", "") end
+            allowed = fac ~= "" and fac == entFac
+            if allowed and GRM.FactionPerms and GRM.FactionPerms.PlayerHasPermission then
+                local okP, res = pcall(GRM.FactionPerms.PlayerHasPermission, ply, "perm_manage")
+                allowed = (okP and res) and true or false
+            end
+        end
+        return allowed
+    end
+
     -- 3. Собственные пропы игрока
     if PP.IsOwner(ply, ent) then
         if action == "physgun" then return PP.Cfg.ownPhysgun ~= false end
@@ -231,7 +260,9 @@ if SERVER then
         local n = 0
         local key = charKey(ply)
         for _, ent in ipairs(ents.FindByClass("prop_physics")) do
-            if ownerOf(ent) == key then n = n + 1 end
+            -- Закреплённые объекты не занимают личную квоту (задача 9, П5):
+            -- иначе после десятка пермов игрок не может спавнить пропы вообще.
+            if ownerOf(ent) == key and not ent._grmPerm then n = n + 1 end
         end
         return n
     end
@@ -510,10 +541,24 @@ if CLIENT then
             return
         end
 
-        local w, h = 310, 30
+        -- Закреплённый объект видно сразу: без метки админы удаляли пермы,
+        -- не понимая, почему они возвращаются после рестарта.
+        local permLine = nil
+        if ent:GetNWBool("GRM_IsPerm", false) or ent._grmPerm then
+            local k = ent:GetNWString("GRM_PermKind", "server")
+            permLine = "★ ЗАКРЕПЛЁН НА КАРТЕ"
+                .. (k == "faction" and " (фракция)" or k == "character" and " (личный)" or "")
+        end
+
+        local w, h = 310, permLine and 50 or 30
         local x, y = ScrW() - w - 18, math.floor(ScrH() * 0.32)
         draw.RoundedBox(6, x, y, w, h, Color(12, 17, 25, 225))
-        draw.SimpleText(text, "GRMPP_Owner", x + 12, y + h / 2, col, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        if permLine then
+            draw.SimpleText(text, "GRMPP_Owner", x + 12, y + 15, col, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(permLine, "GRMPP_Owner", x + 12, y + 35, Color(245, 205, 80), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        else
+            draw.SimpleText(text, "GRMPP_Owner", x + 12, y + h / 2, col, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
     end)
 
     net.Receive("GRM_PropProtect_Data", function()
