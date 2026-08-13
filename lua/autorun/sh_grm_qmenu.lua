@@ -92,25 +92,25 @@ local CONFIG_FILE = "grm_qmenu.json"
 QM.ToolCatalog = {
     -- Соединения (constraints)
     { id = "weld",       label = "Сварка (скрепление пропов)",      desc = "Склеивает два пропа жёстко.",            cat = "connect" },
-    { id = "axis",       label = "Ось вращения",                    desc = "Соединение вращением вокруг точки.",     cat = "connect" },
+    { id = "axis",       label = "Ось",                    desc = "Соединение вращением вокруг точки.",     cat = "connect" },
     { id = "ballsocket", label = "Шарнир",                          desc = "Подвижное шаровое соединение.",          cat = "connect" },
     { id = "nocollide",  label = "Без столкновений",                desc = "Два пропа перестают сталкиваться.",      cat = "connect" },
     { id = "rope",       label = "Верёвка",                         desc = "Связывает пропы тросом.",                cat = "connect" },
-    { id = "pulley",     label = "Блок-трос",                       desc = "Трос через блок.",                       cat = "connect" },
+    { id = "pulley",     label = "Блок",                       desc = "Трос через блок.",                       cat = "connect" },
     { id = "winch",      label = "Лебёдка",                         desc = "Трос с управляемой длиной.",             cat = "connect" },
     { id = "hydraulics", label = "Гидравлика",                      desc = "Управляемое давление/ход.",              cat = "connect" },
-    { id = "muscle",     label = "Пневмомышца",                     desc = "Упругая связка-амортизатор.",            cat = "connect" },
+    { id = "muscle",     label = "Мышца",                     desc = "Упругая связка-амортизатор.",            cat = "connect" },
     { id = "slider",     label = "Слайдер",                         desc = "Движение вдоль оси.",                    cat = "connect" },
     -- Механика
-    { id = "wheel",      label = "Колёса",                          desc = "Ставит колесо на проп.",                 cat = "mech" },
+    { id = "wheel",      label = "Колесо",                          desc = "Ставит колесо на проп.",                 cat = "mech" },
     { id = "motor",      label = "Мотор",                           desc = "Вращение по вводу.",                     cat = "mech" },
-    { id = "thruster",   label = "Двигатель-тяга",                  desc = "Реактивная тяга по клавише.",            cat = "mech" },
+    { id = "thruster",   label = "Ускоритель",                  desc = "Реактивная тяга по клавише.",            cat = "mech" },
     { id = "hoverball",  label = "Ховербол",                        desc = "Поднимает предмет на высоте.",           cat = "mech" },
-    { id = "balloon",    label = "Шарики",                          desc = "Воздушный шар с тяговым усилием.",       cat = "mech" },
+    { id = "balloon",    label = "Воздушный шар",                          desc = "Воздушный шар с тяговым усилием.",       cat = "mech" },
     -- Свет и эффекты
-    { id = "light",      label = "Фонарик-точка",                   desc = "Точечный источник света.",               cat = "light" },
+    { id = "light",      label = "Источник света",                   desc = "Точечный источник света.",               cat = "light" },
     { id = "lamp",       label = "Лампа",                           desc = "Прожектор/лампа.",                       cat = "light" },
-    { id = "emitter",    label = "Эмиттер (эффекты)",               desc = "Частицы/эффекты — дым, огонь.",          cat = "light" },
+    { id = "emitter",    label = "Эмиттер",               desc = "Частицы/эффекты — дым, огонь.",          cat = "light" },
     -- Интерфейс
     { id = "button",     label = "Кнопка",                          desc = "Сигнальная кнопка.",                     cat = "ui" },
     { id = "camera",     label = "Камера",                          desc = "Камера наблюдателя.",                    cat = "ui" },
@@ -124,24 +124,52 @@ QM.ToolCatalog = {
     { id = "grm_sliding_door", label = "GRM: раздвижная дверь", desc = "Проп → раздвижная дверь (сдвиг, скорость, плавность) + FFD Link.", cat = "ui" },
     { id = "grm_bank_tool", label = "GRM: банковское оборудование", desc = "Хранилище, печатный станок (5000/10с), терминал, точка выдачи, отмывщик денег (ивент ограбление).", cat = "ui" },
     -- Оформление
-    { id = "colour",     label = "Цвет пропа",                      desc = "Перекраска и прозрачность.",             cat = "decor" },
-    { id = "material",   label = "Материал пропа",                  desc = "Смена материала/текстуры.",              cat = "decor" },
-    { id = "paint",      label = "Краска (декали)",                 desc = "Спрей-декали.",                          cat = "decor" },
+    { id = "colour",     label = "Цвет",                      desc = "Перекраска и прозрачность.",             cat = "decor" },
+    { id = "material",   label = "Материал",                  desc = "Смена материала/текстуры.",              cat = "decor" },
+    { id = "paint",      label = "Краска",                 desc = "Спрей-декали.",                          cat = "decor" },
     { id = "trails",     label = "Трейлы",                          desc = "Шлейф за объектом.",                     cat = "decor" },
     -- Точность и копирование
-    { id = "remover",    label = "Удаление пропов",                 desc = "Убирает проп; свои — всегда можно.",     cat = "precise" },
-    { id = "precision",  label = "Precision (точное перемещение)",  desc = "Точный сдвиг/поворот.",                  cat = "precise" },
-    { id = "stacker",    label = "Stacker (стопки пропов)",         desc = "Колонны/ряды одинаковых пропов.",        cat = "precise" },
+    { id = "remover",    label = "Ремувер",                 desc = "Убирает проп; свои — всегда можно.",     cat = "precise" },
+    { id = "precision",  label = "Точное перемещение",  desc = "Точный сдвиг/поворот.",                  cat = "precise" },
+    { id = "stacker",    label = "Стакер",         desc = "Колонны/ряды одинаковых пропов.",        cat = "precise" },
     { id = "duplicator", label = "Дубликатор",                      desc = "Копирует конструкции — абуз.",           cat = "precise" },
     { id = "advdupe2",   label = "Adv. Duplicator 2",               desc = "Продвинутый дубликатор — абуз.",         cat = "precise" },
     -- Опасные
-    { id = "dynamite",   label = "Динамит (ВЗРЫВ)",                 desc = "Взрывчатка — опасно.",                   cat = "danger" },
-    { id = "turret",     label = "Турель (ОРУЖИЕ)",                 desc = "Стреляющая турель — опасно.",            cat = "danger" },
+    { id = "dynamite",   label = "Динамит",                 desc = "Взрывчатка — опасно.",                   cat = "danger" },
+    { id = "turret",     label = "Турель",                 desc = "Стреляющая турель — опасно.",            cat = "danger" },
     { id = "igniter",    label = "Поджигатель",                     desc = "Поджигает цель.",                        cat = "danger" },
-    { id = "spawner",    label = "Спавнер предметов",               desc = "Автоспавн предметов — абуз.",            cat = "danger" },
+    { id = "spawner",    label = "Спавнер",               desc = "Автоспавн предметов — абуз.",            cat = "danger" },
 }
 
 -- Порядок категорий правой колонки (id ↔ cat в таблице выше)
+--[[ Построить панель настроек инструмента. Вынесено из UI отдельной функцией,
+     чтобы стенд мог проверить САМ ВЫЗОВ без vgui: именно здесь жил дефект
+     задачи 13 — панель звали с лишним аргументом, ошибка глоталась pcall и
+     все инструменты показывали «нет настраиваемых параметров».
+     Возвращает: built(bool), err(string|nil). ]]
+function QM.BuildToolPanel(tool, panel)
+    local isfn = function(v) return type(v) == "function" end
+    local istbl = function(v) return type(v) == "table" end
+    if not istbl(tool) or not (istbl(panel) or type(panel) == "userdata") then
+        return false, nil
+    end
+    local bcp = tool.BuildCPanel
+    if isfn(bcp) then
+        -- Движок зовёт BuildCPanel(panel): точка, ОДИН аргумент.
+        local ok, err = pcall(bcp, panel)
+        if ok then return true, nil end
+        -- Запасной путь: стул, объявленный через colon (TOOL:BuildCPanel).
+        if pcall(bcp, tool, panel) then return true, nil end
+        return false, err
+    end
+    -- Контролы могли добавить заранее (spawnmenu-функцией) — панель непустая.
+    if isfn(panel.GetChildren) then
+        local ok, ch = pcall(panel.GetChildren, panel)
+        if ok and istbl(ch) and #ch > 0 then return true, nil end
+    end
+    return false, nil
+end
+
 QM.ToolCategories = {
     { id = "connect", name = "Соединения" },
     { id = "mech",    name = "Механика" },
@@ -860,6 +888,47 @@ if CLIENT then
         if qBlockedForMe() then return false end
     end)
 
+    --[[ Задача 13. Подписи инструментов расходились с ванильными: в каталоге
+         были придуманные («Фонарик-точка», «Цвет пропа», «Удаление пропов»),
+         а игрок привык к названиям из обычного Q («Источник света», «Цвет»,
+         «Удалитель»). Берём подпись из движкового словаря language — ровно ту,
+         что показывает ванильное меню и что задают сами stool через
+         language.Add("tool.<id>.name", ...). Наш label остаётся запасным
+         вариантом, если фраза не зарегистрирована (аддон не установлен). ]]
+    local function toolLabel(t)
+        local fallback = tostring(t.label or t.id or "")
+        local id = tostring(t.id or "")
+        if id == "" then return fallback end
+        if istable(language) and isfunction(language.GetPhrase) then
+            local key = "tool." .. id .. ".name"
+            local ok, phrase = pcall(language.GetPhrase, key)
+            -- GetPhrase возвращает сам ключ, если перевода нет
+            if ok and isstring(phrase) and phrase ~= "" and phrase ~= key then
+                return phrase
+            end
+        end
+        return fallback
+    end
+    QM.ToolLabel = toolLabel
+
+    --- Укоротить текст под ширину в пикселях (чтобы подпись не налезала
+    --- на [идентификатор] справа, как было на длинных именах GRM-тулов).
+    local function fitText(txt, font, maxW)
+        txt = tostring(txt or "")
+        if not (isfunction(surface) or istable(surface)) then return txt end
+        if not (isfunction(surface.SetFont) and isfunction(surface.GetTextSize)) then return txt end
+        surface.SetFont(font)
+        local w = select(1, surface.GetTextSize(txt))
+        if not isnumber(w) or w <= maxW then return txt end
+        local cut = txt
+        while #cut > 1 do
+            cut = (GRM and GRM.Utf8Sub) and GRM.Utf8Sub(cut, (GRM.Utf8Len(cut) - 1)) or string.sub(cut, 1, #cut - 1)
+            local ww = select(1, surface.GetTextSize(cut .. "…"))
+            if not isnumber(ww) or ww <= maxW then return cut .. "…" end
+        end
+        return txt
+    end
+
     local function canToolLocal(id)
         if isAdmin() then return true end
         local c = cfg()
@@ -1140,22 +1209,59 @@ if CLIENT then
                 return
             end
             local built = false
-            if isfunction(controlpanel) and isfunction(controlpanel.Get)
+            --[[ Здесь стояло isfunction(controlpanel). controlpanel — это
+                 ТАБЛИЦА-библиотека, а не функция, поэтому условие всегда было
+                 false и весь блок построения панели не выполнялся НИ РАЗУ:
+                 built оставался false и любой инструмент показывал заглушку
+                 «нет настраиваемых параметров». Проверяем таблицу. ]]
+            if istable(controlpanel) and isfunction(controlpanel.Get)
                 and istable(weapons) and isfunction(weapons.GetStored) then
                 local ToolObj = weapons.GetStored("gmod_tool")
                 local tool = istable(ToolObj) and istable(ToolObj.Tool) and ToolObj.Tool[name] or nil
+                --[[ Панели ControlPanel создаёт ванильное меню, когда впервые
+                     открывает вкладку инструмента. У нас ванильное Q закрыто,
+                     поэтому controlpanel.Get() часто возвращал nil и настроек
+                     не было даже у исправно работающих тулов. Создаём панель
+                     сами — ровно как это делает spawnmenu. ]]
                 local CP = controlpanel.Get(name)
+                if not IsValid(CP) and isfunction(controlpanel.Create) then
+                    local okCr, made = pcall(controlpanel.Create, name)
+                    if okCr and IsValid(made) then CP = made end
+                end
                 if IsValid(CP) then
                     pcall(function() CP:Clear() end)
-                    if tool and isfunction(tool.BuildCPanel) then
-                        local okB, errB = pcall(tool.BuildCPanel, tool, CP)
-                        if okB then built = true else print("[GRM QMenu] BuildCPanel error for " .. name .. ": " .. tostring(errB)) end
+                    --[[ Задача 13. Панели настроек НЕ СТРОИЛИСЬ ВООБЩЕ.
+                         Все stool объявляют панель как `function TOOL.BuildCPanel(panel)`
+                         — через ТОЧКУ, один аргумент. Здесь же звали
+                         pcall(tool.BuildCPanel, tool, CP), то есть первым
+                         аргументом уходил сам tool, а панель — вторым.
+                         Внутри panel:AddControl(...) вызывался на таблице
+                         инструмента → «attempt to call method 'AddControl'»,
+                         pcall глотал ошибку, built оставался false и КАЖДЫЙ
+                         инструмент показывал «нет настраиваемых параметров».
+                         Движок зовёт BuildCPanel(panel) ровно с одним
+                         аргументом — делаем так же. Colon-варианты
+                         (TOOL:BuildCPanel) в проекте не встречаются, но
+                         поддерживаем их запасным вызовом. ]]
+                    local okB, errB = QM.BuildToolPanel(tool, CP)
+                    if okB then built = true
+                    elseif errB then
+                        print("[GRM QMenu] BuildCPanel error for " .. name .. ": " .. tostring(errB))
                     end
                     -- Внутри DScrollPanel элемент обязан лежать на холсте:
                     -- AddItem парентит его в pnlCanvas и включает Dock(TOP).
                     -- Прямой SetParent(scroll) + Dock(TOP) ломает раскладку
                     -- скролла и мешает корректно посчитать высоту канвы.
+                    --[[ Ванильные контролы (DColorMixer, Slider, Numpad,
+                         MatSelect) рисуют ТЁМНЫЙ текст — их делали под светлый
+                         фон стандартного Q. На нашей тёмной панели подписи
+                         сливались с фоном. Подкладываем светлую подложку, как
+                         в ванильном меню, чтобы читалось и выглядело штатно. ]]
                     CP:SetVisible(true)
+                    if isfunction(CP.SetPaintBackground) then CP:SetPaintBackground(true) end
+                    CP.Paint = function(_, pw, ph)
+                        draw.RoundedBox(4, 0, 0, pw, ph, Color(222, 227, 235, 255))
+                    end
                     CP:SetSize(settingsBody:GetWide() - 8, 300)
                     if isfunction(settingsBody.AddItem) then
                         settingsBody:AddItem(CP)
@@ -1226,9 +1332,9 @@ if CLIENT then
                             local allowed = canToolLocal(t.id)
                             local row = vgui.Create("DButton", toolsScroll)
                             row:SetText("") row:SetTall(30)
-                            row:SetTooltip(tostring(t.label) .. " [" .. tostring(t.id) .. "]\n" .. tostring(t.desc or "")
+                            row:SetTooltip(toolLabel(t) .. " [" .. tostring(t.id) .. "]\n" .. tostring(t.desc or "")
                                 .. (allowed and "" or "\nНЕДОСТУПНО: закрыто администрацией"))
-                            local tid, tlabel = t.id, t.label
+                            local tid, tlabel = t.id, toolLabel(t)
                             row.Paint = function(self, pw, ph)
                                 local active = QM._activeTool == tid
                                 if active then
@@ -1238,7 +1344,13 @@ if CLIENT then
                                 end
                                 local tcol = active and QC.text or (allowed and (self:IsHovered() and QC.text or QC.dim) or QC.dim2)
                                 draw.RoundedBox(0, 0, 0, 3, ph, active and QC.text or (allowed and QC.acc or QC.line))
-                                draw.SimpleText(tlabel, "GRMQ_Text", 12, ph / 2, tcol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                                -- [id] печатается справа; подпись обрезаем по
+                                -- оставшейся ширине, иначе длинные имена
+                                -- GRM-тулов налезали на идентификатор
+                                surface.SetFont("GRMQ_Small")
+                                local idW = select(1, surface.GetTextSize("[" .. tid .. "]")) or 0
+                                draw.SimpleText(fitText(tlabel, "GRMQ_Text", pw - 12 - idW - 14),
+                                    "GRMQ_Text", 12, ph / 2, tcol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                                 draw.SimpleText("[" .. tid .. "]", "GRMQ_Small", pw - 8, ph / 2,
                                     active and QC.text or QC.dim2, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
                             end
@@ -1299,7 +1411,7 @@ if CLIENT then
             local act = "нет"
             if isstring(QM._activeTool) then
                 for _, t in ipairs(QM.ToolCatalog) do
-                    if t.id == QM._activeTool then act = t.label break end
+                    if t.id == QM._activeTool then act = toolLabel(t) break end
                 end
             end
             draw.SimpleText("Инструмент: " .. act, "GRMQ_Small", 220, ph - 12, QC.dim2, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
