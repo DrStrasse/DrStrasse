@@ -34,7 +34,7 @@ check("пак-шланг c_firehose_grm", has(packHose, "c_firehose_grm.mdl"))
 check("пак-шланг w_firehose_grm", has(packHose, "w_firehose_grm.mdl"))
 
 print("\n=== СЕРВЕР Код 58 ===")
-check("версия 1.3.1", has(core, 'F.Version = "1.3.1"'))
+check("версия 1.3.2", has(core, 'F.Version = "1.3.2"'))
 check("jsonT false,true", has(core, "util.JSONToTable, txt, false, true"))
 check("карантин", has(core, ".corrupt."))
 check("read-back", has(core, "SAVE read-back fail") or has(core, "chk ~= txt"))
@@ -107,7 +107,17 @@ check("кнопка Связать с гидрантом", has(pui, "Связа�
 check("act link", has(pui, 'act == "link"'))
 check("LaySupplyLine", has(hoseLua, "function A.LaySupplyLine"))
 check("клиент рисует кабели", has(hoseLua, "GRM_FireHose_Beams"))
+check("материал grm/firehose", has(hoseLua, "grm/firehose"))
+check("нет redcable в HoseCfg", not hoseLua:find('Material    = "cable/redcable"', 1, true))
+check("TakeHoseFromTruck", has(truck, "function F.TakeHoseFromTruck"))
+check("EnsureTruckPump", has(truck, "function F.EnsureTruckPump"))
+check("чат /рукав", has(truck, '"/рукав"') or has(truck, "/рукав"))
 check("узлы без альфы 0", not node:find("Color(255, 255, 255, 0)", 1, true))
+check("файл материала рукава", (function()
+    local f = io.open("addons/grm_fire/materials/grm/firehose.vmt", "rb")
+    if f then f:close() return true end
+    return false
+end)())
 check("инкассация G не по гидранту", (function()
     local inc = read("lua/autorun/sh_grm_incassation.lua")
     local a = inc:find("function getMyIncassCarClient", 1, true) or 0

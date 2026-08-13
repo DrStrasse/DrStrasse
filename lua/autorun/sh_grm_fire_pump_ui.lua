@@ -89,11 +89,12 @@ if SERVER then
     function F.OpenPumpPanel(ply)
         if not IsValid(ply) then return false, "нет игрока" end
         if not (F.CanFightPro and F.CanFightPro(ply)) then
-            return false, "нет доступа пожарного"
+            return false, "нет доступа пожарного (галочка Control в /fire_access)"
         end
-        local pump = select(1, findPumpFor(ply))
-        if not IsValid(pump) then return false, "подойдите к пожарной машине или насосу" end
-        if ply:GetPos():DistToSqr(pump:GetPos()) > 360 * 360 then
+        local pump = F.EnsureTruckPump and select(1, F.EnsureTruckPump(ply)) or select(1, findPumpFor(ply))
+        if not IsValid(pump) then pump = select(1, findPumpFor(ply)) end
+        if not IsValid(pump) then return false, "подойдите к пожарной машине. Сядьте и /firetruck, либо /рукав" end
+        if ply:GetPos():DistToSqr(pump:GetPos()) > 420 * 420 then
             return false, "слишком далеко от насоса"
         end
         send(ply, pump)
@@ -151,10 +152,16 @@ if SERVER then
             if pump.DrainAgent then pump:DrainAgent(ag, 99999) end
             tell(ply, "Бак слит: " .. ag, 255, 180, 90)
         elseif act == "take" then
-            local A = GRM.FireAddon
-            if not (A and A.TakeHose) then tell(ply, "аддон рукава не загружен", 255, 140, 90) send(ply, pump) return end
-            local h, err = A.TakeHose(ply, pump)
-            if h then
+            local ok, err
+            if F.TakeHoseFromTruck then
+                ok, err = F.TakeHoseFromTruck(ply)
+            else
+                local A = GRM.FireAddon
+                if not (A and A.TakeHose) then tell(ply, "аддон рукава не загружен", 255, 140, 90) send(ply, pump) return end
+                local h, e = A.TakeHose(ply, pump)
+                ok, err = h ~= nil, e
+            end
+            if ok then
                 tell(ply, "Ствол в руках. ЛКМ — лить. Назад по рукаву — смотка. E на насос — вернуть.", 100, 220, 130)
             else
                 tell(ply, tostring(err or "не выдать ствол"), 255, 140, 90)
@@ -359,7 +366,8 @@ if CLIENT then
         local spacer = vgui.Create("DPanel", body)
         spacer:Dock(TOP) spacer:SetTall(148) spacer:SetPaintBackground(false)
 
-        local bTake = mk("ВЗЯТЬ РУКАВ / СТВОЛ С МАШИНЫ", Color(200, 70, 40))
+        local bTake = mk("ВЗЯТЬ РУКАВ / СТВОЛ С МАШИНЫ", Color(210, 55, 30))
+        bTake:SetTall(38)
         bTake.DoClick = function() act("take") end
         local bRew = mk("Смотать рукава на катушку", Color(90, 80, 50))
         bRew.DoClick = function() act("rewind") end

@@ -5,7 +5,7 @@ include("shared.lua")
 local function cfg()
     return (GRM and GRM.FireAddon and GRM.FireAddon.HoseCfg) or {
         MaxLength = 2200, LayStep = 70, Width = 5,
-        Material = "cable/redcable", Sag = 14, SprayCost = 8, SprayDmg = 10,
+        Material = "grm/firehose", Sag = 14, SprayCost = 8, SprayDmg = 10,
     }
 end
 

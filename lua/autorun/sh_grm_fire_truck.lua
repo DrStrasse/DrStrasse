@@ -254,6 +254,73 @@ function F.IsFireTruck(veh)
     return false
 end
 
+function F.GetRootVehicle(ent)
+    return getRootVehicle(ent)
+end
+
+function F.NearbyFireVehicle(ply)
+    if not IsValid(ply) then return nil end
+    local duty = ply.GetNWEntity and ply:GetNWEntity("GRM_FireMyTruck")
+    if IsValid(duty) then return getRootVehicle(duty) or duty end
+    local seat = ply.GetVehicle and ply:GetVehicle()
+    if IsValid(seat) then
+        local root = getRootVehicle(seat)
+        if IsValid(root) then return root end
+    end
+    local tr = ply.GetEyeTrace and ply:GetEyeTrace()
+    if tr and IsValid(tr.Entity) then
+        local root = getRootVehicle(tr.Entity)
+        if IsValid(root) and (F.IsFireTruck(root) or IsValid(F.FindPumpOn(root))) then return root end
+        if IsValid(root) then
+            local ok, fname = F.CanUseFireTruck(ply)
+            if ok and F.IsListedFireTruck(root, fname) then return root end
+        end
+        if tr.Entity:GetClass() == "grm_fire_pump" then
+            local host = tr.Entity.GetHostVehicle and tr.Entity:GetHostVehicle() or tr.Entity:GetParent()
+            if IsValid(host) then return getRootVehicle(host) or host end
+        end
+    end
+    for _, e in ipairs(ents.FindInSphere(ply:GetPos(), 320)) do
+        if not IsValid(e) then
+        elseif e:GetClass() == "grm_fire_pump" then
+            local host = e.GetHostVehicle and e:GetHostVehicle() or e:GetParent()
+            if IsValid(host) then return getRootVehicle(host) or host end
+        elseif F.IsFireTruck(e) then
+            return getRootVehicle(e) or e
+        end
+    end
+    return nil
+end
+
+function F.EnsureTruckPump(ply, veh)
+    if not IsValid(ply) then return nil, "нет игрока" end
+    local ok, errOrName = F.CanUseFireTruck(ply)
+    if not ok then return nil, errOrName end
+    veh = IsValid(veh) and (getRootVehicle(veh) or veh) or F.NearbyFireVehicle(ply)
+    if not IsValid(veh) then return nil, "подойдите к пожарной машине (или сядьте и /firetruck)" end
+    local listed = F.IsListedFireTruck(veh, errOrName)
+    local already = F.IsFireTruck(veh)
+    if not listed and not already and not ply:IsSuperAdmin() then
+        return nil, "это ТС не пожарное — /firetruck с водительского или внесите класс в /fire_trucks"
+    end
+    local pump, err = F.AttachPump(veh, ply)
+    if not IsValid(pump) then return nil, err or "насос не создался" end
+    veh:SetNWBool("GRM_FireTruck", true)
+    veh:SetNWString("GRM_FireFaction", tostring(errOrName or ""))
+    ply:SetNWEntity("GRM_FireMyTruck", veh)
+    return pump, veh
+end
+
+function F.TakeHoseFromTruck(ply)
+    local pump, err = F.EnsureTruckPump(ply)
+    if not IsValid(pump) then return false, err end
+    local A = GRM.FireAddon
+    if not (A and A.TakeHose) then return false, "аддон рукава не загружен (grm_fire_addon.zip)" end
+    local h, e = A.TakeHose(ply, pump)
+    if h then return true end
+    return false, e or "не выдать рукав"
+end
+
 function F.AttachPump(veh, ply)
     if not IsValid(veh) then return nil, "нет ТС" end
     local exist = F.FindPumpOn(veh)
@@ -467,6 +534,12 @@ if SERVER then
             openTrucks(ply)
             return true
         end
+        if t == "/рукав" or t == "/hose" or t == "/ствол" or t == "!hose" or t == "/пожарныйрукав" then
+            local ok, err = F.TakeHoseFromTruck(ply)
+            if ok then tell(ply, "Ствол в руках. ЛКМ — лить. Назад по рукаву — смотка.", 100, 220, 130)
+            else tell(ply, tostring(err or "не выдать"), 255, 120, 80) end
+            return true
+        end
         return false
     end
 
@@ -496,7 +569,8 @@ if SERVER then
             local ok, fname = F.CanUseFireTruck(ply)
             if not ok then return end
             if F.IsListedFireTruck(root, fname) or F.IsFireTruck(root) then
-                tell(ply, "Это пожарное ТС. /firetruck — насос. Потом G — баки и закачка.", 120, 200, 255)
+                F.EnsureTruckPump(ply, root)
+                tell(ply, "Пожарная машина. G — взять рукав / связать гидрант. Или /рукав. E по голубому насосу сбоку.", 120, 200, 255)
             end
         end)
     end)

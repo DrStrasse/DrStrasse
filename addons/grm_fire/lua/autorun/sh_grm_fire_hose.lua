@@ -13,8 +13,8 @@ local A = GRM.FireAddon
 A.HoseCfg = A.HoseCfg or {
     MaxLength   = 2200,
     LayStep     = 70,
-    Width       = 5,
-    Material    = "cable/redcable",
+    Width       = 8,
+    Material    = "grm/firehose",
     Sag         = 14,
     TruckSlots  = 4,
     HydrantPorts = 2,
@@ -218,13 +218,17 @@ end
 
 if CLIENT then
     local MAT
-    local function hoseMat()
+    function A.HoseMaterial()
         if MAT and not MAT:IsError() then return MAT end
-        MAT = Material("cable/redcable")
-        if not MAT or MAT:IsError() then MAT = Material("cable/cable_lit") end
-        if not MAT or MAT:IsError() then MAT = Material("sprites/physbeama") end
+        MAT = Material("grm/firehose")
+        if not MAT or MAT:IsError() then MAT = Material("vgui/white") end
+        if not MAT or MAT:IsError() then MAT = Material("cable/cable") end
         return MAT
     end
+
+    local COL_CORE = Color(210, 48, 28, 255)
+    local COL_EDGE = Color(120, 18, 12, 255)
+    local COL_LIVE = Color(255, 90, 40, 255)
 
     local function nodeTip(ent)
         if not IsValid(ent) then return nil end
@@ -233,26 +237,36 @@ if CLIENT then
             local dat = att and att > 0 and ent:GetAttachment(att)
             return (dat and dat.Pos) or (ent:WorldSpaceCenter() + Vector(0, 0, 18))
         end
-        return ent:GetPos() + Vector(0, 0, 4)
+        return ent:GetPos() + Vector(0, 0, 5)
     end
 
-    -- Запасной проход: рисуем ВСЕ сегменты, даже если у узла не вызвали Draw.
-    hook.Add("PostDrawTranslucentRenderables", "GRM_FireHose_Beams", function(depth, sky)
-        if sky or depth then return end
-        local mat = hoseMat()
+    function A.DrawHoseBeam(a, b, live)
+        if not a or not b then return end
+        local dist = a:Distance(b)
+        if dist < 2 or dist > 2600 then return end
+        local mat = A.HoseMaterial()
         if not mat then return end
         render.SetMaterial(mat)
+        render.DrawBeam(a, b, 14, 0, dist / 16, COL_EDGE)
+        render.DrawBeam(a, b, 9, 0, dist / 20, live and COL_LIVE or COL_CORE)
+    end
+
+    -- Запасной проход: все сегменты, не зависит от Draw узла и HL2-кабеля.
+    hook.Add("PostDrawOpaqueRenderables", "GRM_FireHose_Beams", function(depth, sky)
+        if sky or depth then return end
         for _, n in ipairs(ents.FindByClass("grm_fire_hose_node")) do
             if IsValid(n) and n.GetNextNode then
                 local nxt = n:GetNextNode()
-                local a, b = nodeTip(n), nodeTip(nxt)
-                if a and b then
-                    local dist = a:Distance(b)
-                    if dist > 2 and dist < 2600 then
-                        render.DrawBeam(a, b, 10, 0, dist / 18, Color(80, 8, 6, 255))
-                        render.DrawBeam(a, b, 6.5, 0, dist / 22, Color(230, 40, 28, 255))
-                    end
-                end
+                A.DrawHoseBeam(nodeTip(n), nodeTip(nxt), IsValid(nxt) and nxt:IsPlayer())
+            end
+        end
+    end)
+    hook.Add("PostDrawTranslucentRenderables", "GRM_FireHose_Beams", function(depth, sky)
+        if sky or depth then return end
+        for _, n in ipairs(ents.FindByClass("grm_fire_hose_node")) do
+            if IsValid(n) and n.GetNextNode then
+                local nxt = n:GetNextNode()
+                A.DrawHoseBeam(nodeTip(n), nodeTip(nxt), IsValid(nxt) and nxt:IsPlayer())
             end
         end
     end)
