@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Comp Terminal v1.0.0 — общая серверная логика служебных
+    GRM Comp Terminal v1.0.1 — общая серверная логика служебных
     терминалов Полиции Порядка и Полевой жандармерии.
 
     Закрывает дефекты аудита:
@@ -19,7 +19,7 @@ if CLIENT then return end
 GRM = GRM or {}
 GRM.CompTerminal = GRM.CompTerminal or {}
 local T = GRM.CompTerminal
-T.Version = "1.0.0"
+T.Version = "1.0.1"
 
 util.AddNetworkString("GRM_CompTerminal_Act")
 util.AddNetworkString("GRM_CompTerminal_Result")
@@ -415,6 +415,10 @@ net.Receive("GRM_CompTerminal_Act", function(_, ply)
             }
         end
 
+        -- T.CanEdit уже проверен выше. Ядро розыска без trusted режет
+        -- строгим W.CanEdit (AccessManager / access.json) — офицер
+        -- ведомства открывает терминал по фолбэку фракции и ловит «Нет прав».
+        data.trusted = true
         local ok, err = W.AddCustomCharge(ply, key, data)
         return result(ply, ok and true or false, ok and ("Ориентировка внесена: " .. data.title) or tostring(err))
     end
@@ -424,7 +428,7 @@ net.Receive("GRM_CompTerminal_Act", function(_, ply)
         if not (W and isfunction(W.Clear)) then return result(ply, false, "Модуль розыска недоступен") end
         local key = charKey(target)
         if key == "" then return result(ply, false, "Не выбрана запись") end
-        local ok, err = W.Clear(ply, key, text ~= "" and text or "Снят с розыска в терминале")
+        local ok, err = W.Clear(ply, key, text ~= "" and text or "Снят с розыска в терминале", true)
         return result(ply, ok and true or false, ok and "Розыск снят" or tostring(err))
     end
 
@@ -550,10 +554,11 @@ local function legacyAct(_, ply)
             title = reason ~= "" and reason or "Ориентировка",
             type = "crime", jurisdiction = jur,
             level = math.Clamp(level, 1, 5), manual = true,
+            trusted = true,
         })
         notify(ply, ok and "Ориентировка внесена." or tostring(err), ok and 120 or 255, ok and 220 or 120, ok and 140 or 100)
     elseif act == "clear" then
-        local ok, err = W.Clear(ply, key, reason ~= "" and reason or "Снят с розыска")
+        local ok, err = W.Clear(ply, key, reason ~= "" and reason or "Снят с розыска", true)
         notify(ply, ok and "Розыск снят." or tostring(err), ok and 120 or 255, ok and 220 or 120, ok and 140 or 100)
     end
 end

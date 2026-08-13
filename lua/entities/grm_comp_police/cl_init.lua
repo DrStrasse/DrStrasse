@@ -124,16 +124,13 @@ net.Receive("GRM_CompPolice_Open", function()
     btnAddWanted.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(230, 60, 60) or Color(180, 40, 40)) end
     btnAddWanted:SetEnabled(true)
     btnAddWanted.DoClick = function()
+        if not canEdit then notification.AddLegacy("Нет прав на изменение базы розыска!", NOTIFY_ERROR, 3) return end
         if selWKey == "" then notification.AddLegacy("Выберите гражданина!", NOTIFY_ERROR, 3) return end
         local _, lvl = comboWStars:GetSelected()
-        net.Start("GRM_CompPolice_WantedAct")
-            net.WriteString("add")
-            net.WriteString(selWKey)
-            net.WriteString(entWReason:GetText())
-            net.WriteUInt(tonumber(lvl) or 2, 4)
-        net.SendToServer()
-        notification.AddLegacy("Ориентировка передана патрульным экипажам!", NOTIFY_GENERIC, 3)
-        frame:Close()
+        -- Только серверный Result рисует тост. Раньше клиент сразу
+        -- писал «ориентировка передана» и закрывал окно — при отказе
+        -- ядра приходили два уведомления («нет прав» + «снят/передан»).
+        GRM_CompTerminal_Send("wanted_add", selWKey, entWReason:GetText(), tonumber(lvl) or 2, "")
     end
 
     local listWanted = vgui.Create("DListView", wantPnl)
@@ -171,18 +168,13 @@ net.Receive("GRM_CompPolice_Open", function()
     btnClearWanted:SetTextColor(color_white)
     btnClearWanted.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and CC.success or Color(35, 140, 75)) end
     btnClearWanted.DoClick = function()
+        if not canEdit then notification.AddLegacy("Нет прав на изменение базы розыска!", NOTIFY_ERROR, 3) return end
         local line = listWanted:GetSelectedLine()
         if not line then notification.AddLegacy("Выберите запись из списка!", NOTIFY_ERROR, 3) return end
         local row = listWanted:GetLine(line)
         if row and row._targetKey then
-            net.Start("GRM_CompPolice_WantedAct")
-                net.WriteString("clear")
-                net.WriteString(row._targetKey)
-                net.WriteString("Снят с розыска в терминале OrdnungPolizei")
-                net.WriteUInt(0, 4)
-            net.SendToServer()
-            listWanted:RemoveLine(line)
-            notification.AddLegacy("Гражданин снят с розыска.", NOTIFY_GENERIC, 3)
+            -- Не снимаем строку и не рисуем тост до ответа сервера.
+            GRM_CompTerminal_Send("wanted_clear", row._targetKey, "Снят с розыска в терминале OrdnungPolizei", 0, "")
         end
     end
 

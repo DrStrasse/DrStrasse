@@ -4,6 +4,9 @@ local server,client,config=read("lua/autorun/server/sv_grm_wanted.lua"),read("lu
 local checks,failed=0,0;local function has(s,n)return s:find(n,1,true)~=nil end;local function ok(v,n)checks=checks+1;if v then print("  ok "..checks..". "..n)else failed=failed+1;print("  FAIL "..checks..". "..n)end end
 ok(has(server,'W.Version="2.0.0"'),"wanted v2 server")
 ok(has(server,"function W.AddCustomCharge"),"manual custom charges API")
+ok(has(server,"data.trusted==true") or has(server,"data.trusted == true"),"terminal trusted path on AddCustomCharge")
+ok(has(server,"function W.SetLevel(issuer,targetSid,level,note,trusted)"),"SetLevel accepts trusted flag")
+ok(has(server,"function W.Clear(i,s,n,trusted)"),"Clear forwards trusted flag")
 ok(has(server,'action=="add_custom"')and has(client,'action="add_custom"'),"manual article network path")
 ok(has(client,"РУЧНАЯ СТАТЬЯ")or has(client,"Ручная статья"),"manual article GRM UI")
 ok(has(client,"Номер / код статьи")and has(client,"Название статьи вручную")and has(client,"Описание обстоятельств"),"manual code title and circumstances")
