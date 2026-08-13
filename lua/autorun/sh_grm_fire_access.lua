@@ -438,6 +438,9 @@ if CLIENT then
                 local b4 = mkBtn(panel, "Очаги и таймеры", Color(220, 110, 50))
                 b4:Dock(TOP) b4:SetTall(36) b4:DockMargin(12, 8, 12, 0)
                 b4.DoClick = function() RunConsoleCommand("grm_fire_spots") end
+                local b5 = mkBtn(panel, "Журнал тушения /fire_log", Color(60, 180, 130))
+                b5:Dock(TOP) b5:SetTall(36) b5:DockMargin(12, 8, 12, 0)
+                b5.DoClick = function() RunConsoleCommand("grm_fire_log") end
                 sheet:AddSheet("Пожарные", panel, "icon16/fire.png")
             end)
         end

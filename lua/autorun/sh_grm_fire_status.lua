@@ -1,8 +1,11 @@
 --[[--------------------------------------------------------------------
-    GRM Fire — учёт тушения.
+    GRM Fire — учёт тушения v1.4.1
     Кластер vFire = один пожар. Уведомления:
       «Пожар локализован» — очаг сжат и больше не растёт (после работы ствола).
       «Пожар потушен» — клеток не осталось.
+    v1.4.1: мягче локализован (2.5с без роста, peak>=1), всегда шлёт потушен,
+    оба события при тушении после ствола, toast+ChatPrint, SuperAdmin+Dispatch+FightPro+бойцы+рядом 1500,
+    скан живых vfire на boot, peak=min 1 если видели vfire, журнал /fire_log.
     Журнал data/grm_fire/log.json (массив). Не трогает Q / factions / FFD.
 ----------------------------------------------------------------------]]
 if SERVER then AddCSLuaFile() end
@@ -10,6 +13,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Fire = GRM.Fire or {}
 local F = GRM.Fire
+F.StatusVersion = "1.4.1"
 
 F.Incidents = F.Incidents or {}
 F._nextInc = F._nextInc or 1
@@ -38,23 +42,70 @@ local function plyNick(ply)
     return tostring(ply:Nick() or "?")
 end
 
-function F.NotifyFire(text, r, g, b, pos)
+-- Уведомление: тост + чат, широкие получатели
+function F.NotifyFire(text, r, g, b, pos, inc)
     r = tonumber(r) or 255
     g = tonumber(g) or 160
     b = tonumber(b) or 80
-    if F.NotifyFactions then
-        F.NotifyFactions(text, pos, r, g, b)
+
+    local notified = {}
+
+    local function tellPlayer(p)
+        if not IsValid(p) then return end
+        if notified[p] then return end
+        notified[p] = true
+        if GRM.Notify then GRM.Notify(p, text, r, g, b) end
+        -- всегда дубль в чат, чтобы не пропустить тост
+        p:ChatPrint("[Пожар] " .. tostring(text))
     end
+
+    -- фракции из /grm_fire_notify (legacy, но теперь с ChatPrint доп.)
+    if F.NotifyFactions then
+        -- старый метод шлёт только Notify; мы дублируем чатPrint отдельно для тех же фракций
+        F.NotifyFactions(text, pos, r, g, b)
+        -- доп-дубль в чат для них же соберём через общий проход ниже
+    end
+
+    -- 1. SuperAdmin + диспетчер + FightPro (галочка Control)
     for _, p in ipairs(player.GetAll()) do
-        if IsValid(p) and (p:IsSuperAdmin() or (F.CanDispatch and F.CanDispatch(p))) then
-            if GRM.Notify then GRM.Notify(p, text, r, g, b)
-            else p:ChatPrint("[Пожар] " .. text) end
+        if IsValid(p) then
+            if p:IsSuperAdmin() or (F.CanDispatch and F.CanDispatch(p)) or (F.CanFightPro and F.CanFightPro(p)) then
+                tellPlayer(p)
+            end
         end
     end
+
+    -- 2. Участники тушения (записаны через NoteFight)
+    if inc and istable(inc.fighters) then
+        for _, rec in ipairs(inc.fighters) do
+            if rec and rec.key then
+                for _, p in ipairs(player.GetAll()) do
+                    if IsValid(p) and plyKey(p) == rec.key then
+                        tellPlayer(p)
+                    end
+                end
+            end
+        end
+    end
+
+    -- 3. Рядом с очагом ~1500 юнитов (видели дым, должны знать)
+    if isvector(pos) then
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and not notified[p] then
+                if p:GetPos():DistToSqr(pos) <= 1500 * 1500 then
+                    tellPlayer(p)
+                end
+            end
+        end
+    end
+
     print("[GRM Fire] " .. tostring(text))
 end
 
 if SERVER then
+    util.AddNetworkString("GRM_FireLog_Req")
+    util.AddNetworkString("GRM_FireLog_Data")
+
     local function ensureDir()
         if not file.IsDir("grm_fire", "DATA") then file.CreateDir("grm_fire") end
     end
@@ -110,14 +161,18 @@ if SERVER then
     function F.OpenIncident(pos, source)
         if not pos then return nil end
         local exist = findInc(pos)
-        if exist then return exist end
+        if exist then
+            -- если уже есть, но peak был 0 (баг старых версий при open на remove) — чиним
+            if (exist.peak or 0) < 1 then exist.peak = 1 end
+            return exist
+        end
         local id = F._nextInc
         F._nextInc = F._nextInc + 1
         local inc = {
             id = id,
             origin = Vector(pos.x, pos.y, pos.z),
             source = tostring(source or "fire"),
-            peak = 0,
+            peak = 1, -- v1.4.1: минимум 1 если видели живой vfire, иначе потушен не сработает
             cells = 0,
             started = CurTime(),
             lastNew = CurTime(),
@@ -135,6 +190,10 @@ if SERVER then
         if not IsValid(ply) or not ply:IsPlayer() then return end
         pos = pos or (ply.GetEyeTrace and ply:GetEyeTrace().HitPos) or ply:GetPos()
         local inc = findInc(pos)
+        if not inc then
+            -- если тушат рядом но инцидент ещё не открыт (скан пропустил) — откроем
+            inc = F.OpenIncident(pos, "fire")
+        end
         if not inc then return end
         inc.fought = true
         inc.lastFight = CurTime()
@@ -147,15 +206,7 @@ if SERVER then
     end
 
     local function notifyCrew(inc, text, r, g, b)
-        F.NotifyFire(text, r, g, b, inc and inc.origin)
-        if not inc then return end
-        for _, rec in ipairs(inc.fighters or {}) do
-            for _, p in ipairs(player.GetAll()) do
-                if IsValid(p) and plyKey(p) == rec.key then
-                    if GRM.Notify then GRM.Notify(p, text, r, g, b) end
-                end
-            end
-        end
+        F.NotifyFire(text, r, g, b, inc and inc.origin, inc)
     end
 
     local function logEvent(inc, event)
@@ -191,12 +242,14 @@ if SERVER then
 
     function F.MarkExtinguished(inc)
         if not inc or inc.out then return false end
+        -- v1.4.1: если тушили стволом, но локализован ещё не слали — шлём оба, сначала локализован
+        if not inc.localized and inc.fought and (inc.peak or 0) >= 1 then
+            -- попытка локализовать перед тушением, но без выхода если не получилось (например out уже)
+            F.MarkLocalized(inc)
+        end
         inc.out = true
         inc.cells = 0
         inc.outAt = CurTime()
-        if not inc.localized and inc.fought and (inc.peak or 0) >= 2 then
-            inc.localized = true
-        end
         logEvent(inc, "out")
         hook.Run("GRM_FireExtinguished", inc.origin, inc)
         notifyCrew(inc, "Пожар потушен", 100, 220, 130)
@@ -208,7 +261,10 @@ if SERVER then
     end
 
     function F.RefreshIncidents(hintPos)
-        if hintPos then F.OpenIncident(hintPos, "fire") end
+        if hintPos then
+            local inc = F.OpenIncident(hintPos, "fire")
+            if inc then inc.peak = math.max(inc.peak or 0, 1) end
+        end
         local now = CurTime()
         for _, inc in ipairs(F.Incidents) do
             if inc and not inc.out then
@@ -217,17 +273,19 @@ if SERVER then
                 if n < (inc.cells or 0) then inc.lastKill = now end
                 inc.cells = n
                 if n > (inc.peak or 0) then inc.peak = n end
-                if n == 0 and (inc.peak or 0) > 0 then
+                if (inc.peak or 0) < 1 and n >= 1 then inc.peak = 1 end
+
+                if n == 0 and (inc.peak or 0) >= 1 then
                     F.MarkExtinguished(inc)
                 elseif not inc.localized and inc.fought
-                    and (inc.peak or 0) >= 3
+                    and (inc.peak or 0) >= 1
                     and n <= math.max(1, math.floor((inc.peak or 0) * 0.5))
-                    and (now - (inc.lastNew or now)) >= 6 then
+                    and (now - (inc.lastNew or now)) >= 2.5 then
                     F.MarkLocalized(inc)
                 end
             end
         end
-        -- вычистить старые закрытые, чтобы таблица не росла
+        -- вычистить старые закрытые
         if #F.Incidents > 24 then
             local keep = {}
             for _, inc in ipairs(F.Incidents) do
@@ -239,6 +297,25 @@ if SERVER then
         end
     end
 
+    -- Скан уже живущих vfire на буте / первом тике
+    function F.BuildFromExisting()
+        local found = 0
+        for _, fire in ipairs(ents.FindByClass("vfire")) do
+            if IsValid(fire) then
+                local pos = fire.GetPos and fire:GetPos() or nil
+                if pos then
+                    local inc = findInc(pos) or F.OpenIncident(pos, fire._grmSource or "fire")
+                    if inc then
+                        inc.peak = math.max(inc.peak or 0, 1)
+                        found = found + 1
+                    end
+                end
+            end
+        end
+        if found > 0 then F.RefreshIncidents() end
+        return found
+    end
+
     hook.Add("vFireCreated", "GRM_Fire_Status", function(fire)
         if not IsValid(fire) then return end
         local pos = fire.GetPos and fire:GetPos() or nil
@@ -248,6 +325,7 @@ if SERVER then
         if inc then
             inc.cells = countAround(inc.origin)
             if inc.cells > (inc.peak or 0) then inc.peak = inc.cells end
+            inc.peak = math.max(inc.peak or 0, 1)
             inc.lastNew = CurTime()
         end
     end)
@@ -256,6 +334,7 @@ if SERVER then
         local pos
         if IsValid(fire) and fire.GetPos then pos = fire:GetPos() end
         if pos then
+            -- записать бойца рядом если держит ствол
             for _, ply in ipairs(player.GetAll()) do
                 if IsValid(ply) and ply:GetPos():DistToSqr(pos) <= 320 * 320 then
                     local w = ply:GetActiveWeapon()
@@ -269,10 +348,20 @@ if SERVER then
         timer.Simple(0, function() F.RefreshIncidents(pos) end)
     end)
 
+    local scanDone = false
     hook.Add("Think", "GRM_Fire_StatusTick", function()
         if (F._statusAt or 0) > CurTime() then return end
         F._statusAt = CurTime() + 0.8
-        if #F.Incidents == 0 then return end
+        -- первый тик после загрузки: скан живых vfire если есть
+        if not scanDone then
+            scanDone = true
+            F.BuildFromExisting()
+        end
+        if #F.Incidents == 0 then
+            -- если инцидентов нет, но vfire появились (ранний спавн карты) — подберём
+            if #ents.FindByClass("vfire") > 0 then F.BuildFromExisting() end
+            return
+        end
         for _, ply in ipairs(player.GetAll()) do
             if IsValid(ply) and ply:KeyDown(IN_ATTACK) then
                 local w = ply:GetActiveWeapon()
@@ -286,5 +375,148 @@ if SERVER then
         F.RefreshIncidents()
     end)
 
-    print("[GRM Fire] Status: учёт тушения загружен")
+    hook.Add("InitPostEntity", "GRM_Fire_StatusBoot", function()
+        timer.Simple(1, function() F.BuildFromExisting() end)
+        timer.Simple(2, function() F.BuildFromExisting() end)
+    end)
+    hook.Add("PostCleanupMap", "GRM_Fire_StatusCleanup", function()
+        timer.Simple(1, function() F.BuildFromExisting() end)
+    end)
+
+    -- Журнал: сеть
+    local function canViewLog(ply)
+        if not IsValid(ply) then return false end
+        if ply:IsSuperAdmin() then return true end
+        if F.CanDispatch and F.CanDispatch(ply) then return true end
+        if F.CanFightPro and F.CanFightPro(ply) then return true end
+        return false
+    end
+
+    local function sendLog(ply)
+        local list = F.LoadFireLog()
+        -- ограничим 80 уже, но шлём не более 50 чтобы не упереться в лимит
+        local out = {}
+        for i = 1, math.min(#list, 50) do out[i] = list[i] end
+        net.Start("GRM_FireLog_Data")
+            net.WriteTable(out)
+        net.Send(ply)
+    end
+
+    net.Receive("GRM_FireLog_Req", function(_, ply)
+        if not IsValid(ply) then return end
+        if not canViewLog(ply) then
+            if GRM.Notify then GRM.Notify(ply, "Нет доступа к журналу тушения.", 255, 100, 100) end
+            return
+        end
+        sendLog(ply)
+    end)
+
+    local function handleLogChat(ply, low)
+        if not isstring(low) then return false end
+        low = string.lower(string.Trim(low))
+        if low == "/fire_log" or low == "!fire_log" or low == "/firelog" or low == "!firelog"
+            or low == "/журнал_пожаров" or low == "!журнал_пожаров" or low == "/журналпожаров" or low == "/пожары_лог" then
+            if canViewLog(ply) then sendLog(ply) else
+                if GRM.Notify then GRM.Notify(ply, "Нет доступа к журналу тушения.", 255, 100, 100) end
+            end
+            return true
+        end
+        return false
+    end
+
+    hook.Add("PlayerSay", "GRM_Fire_LogChat", function(ply, text)
+        local low = string.lower(string.Trim(tostring(text or "")))
+        if handleLogChat(ply, low) then return "" end
+    end)
+    -- поддержка EasyChat PlayerSayTransform
+    hook.Add("PlayerSayTransform", "GRM_Fire_LogChatTr", function(ply, pack)
+        if not istable(pack) then return end
+        local txt = tostring(pack[1] or "")
+        if handleLogChat(ply, txt) then pack[1] = "" pack.SkipPlayerSay = true end
+    end)
+
+    concommand.Add("grm_fire_log", function(ply)
+        if not IsValid(ply) then return end
+        if canViewLog(ply) then sendLog(ply) end
+    end)
+
+    print("[GRM Fire] Status v" .. F.StatusVersion .. " загружен")
+end
+
+if CLIENT then
+    local function formatTime(ts)
+        if not ts or ts == 0 then return "--:--" end
+        return os.date("%d.%m %H:%M", ts)
+    end
+    local function eventName(ev)
+        if ev == "localized" then return "ЛОКАЛИЗОВАН"
+        elseif ev == "out" then return "ПОТУШЕН"
+        elseif ev == "started" then return "ВОЗГОРАНИЕ"
+        else return tostring(ev or "?") end
+    end
+
+    function GRM.Fire.OpenLogPanel(list)
+        list = istable(list) and list or {}
+        if IsValid(GRM.Fire._logFrame) then GRM.Fire._logFrame:Remove() end
+        local frame = vgui.Create("DFrame")
+        GRM.Fire._logFrame = frame
+        frame:SetTitle("")
+        frame:SetSize(820, 520)
+        frame:Center()
+        frame:MakePopup()
+        frame.Paint = function(_, w, h)
+            draw.RoundedBox(10, 0, 0, w, h, Color(18, 22, 32, 252))
+            draw.RoundedBoxEx(10, 0, 0, w, 36, Color(28, 36, 52), true, true, false, false)
+            draw.SimpleText("ЖУРНАЛ ТУШЕНИЯ ПОЖАРОВ", "DermaLarge", 18, 18, Color(230, 235, 245))
+            draw.SimpleText("Всего записей: " .. #list, "DermaDefault", w - 18, 18, Color(140, 150, 170), TEXT_ALIGN_RIGHT)
+        end
+
+        local lv = vgui.Create("DListView", frame)
+        lv:Dock(FILL)
+        lv:DockMargin(10, 44, 10, 10)
+        lv:AddColumn("Время"):SetFixedWidth(110)
+        lv:AddColumn("Событие"):SetFixedWidth(110)
+        lv:AddColumn("Источник"):SetFixedWidth(80)
+        lv:AddColumn("Пик"):SetFixedWidth(50)
+        lv:AddColumn("Клеток"):SetFixedWidth(60)
+        lv:AddColumn("Длит."):SetFixedWidth(60)
+        lv:AddColumn("Коорд."):SetFixedWidth(120)
+        lv:AddColumn("Бойцы")
+
+        for _, rec in ipairs(list) do
+            local fighters = ""
+            if istable(rec.fighters) then
+                local names = {}
+                for _, f in ipairs(rec.fighters) do
+                    if f.nick and f.nick ~= "" then names[#names+1] = f.nick end
+                end
+                fighters = table.concat(names, ", ")
+            end
+            local coord = string.format("%d %d %d", rec.x or 0, rec.y or 0, rec.z or 0)
+            local dur = rec.sec and tostring(rec.sec) .. "с" or ""
+            lv:AddLine(formatTime(rec.t), eventName(rec.event), tostring(rec.source or ""), tostring(rec.peak or 0), tostring(rec.cells or 0), dur, coord, fighters)
+        end
+
+        local bot = vgui.Create("DPanel", frame)
+        bot:Dock(BOTTOM)
+        bot:SetTall(36)
+        bot:SetPaintBackground(false)
+        local btn = vgui.Create("DButton", bot)
+        btn:Dock(RIGHT)
+        btn:SetWide(140)
+        btn:DockMargin(6, 6, 10, 6)
+        btn:SetText("Обновить")
+        btn.DoClick = function()
+            net.Start("GRM_FireLog_Req") net.SendToServer()
+        end
+    end
+
+    net.Receive("GRM_FireLog_Data", function()
+        local list = net.ReadTable() or {}
+        GRM.Fire.OpenLogPanel(list)
+    end)
+
+    concommand.Add("grm_fire_log", function()
+        net.Start("GRM_FireLog_Req") net.SendToServer()
+    end)
 end

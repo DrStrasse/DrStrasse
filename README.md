@@ -75,7 +75,7 @@
 | 94 | `lua/entities/grm_comp_military/` | **Компьютер Военкомата:** Выдача военных билетов, картотека призывников и мобрезерва (повестки), комиссия ВВК |
 | 95 | `lua/entities/grm_comp_traffic/` | **Экзаменационный ПК Автоинспекции:** Дорожная Инспекция ПП (Права A–E+СПЕЦ), Военная Автоинспекция (ВАИ: права `A-В`–`СПЕЦ-В` и 6 спецдопусков) |
 | 96 | `lua/entities/grm_comp_medical/` | **Медицинский Компьютер Госпиталя:** Электронные медкарты пациентов, категории годности, история приёмов врачей, справки |
-| 58 | `lua/autorun/sh_grm_fire.lua` + `sh_grm_fire_access.lua` + `sh_grm_fire_truck.lua` + `sh_grm_fire_pump_ui.lua` + `sh_grm_fire_spots.lua` + `sh_grm_fire_status.lua` | **Пожары v1.4.0 / аддон 0.5.0 (Код 58):** учёт тушения — «Пожар локализован» / «Пожар потушен». Точки очага с тулом. G без рейса ≠ инкассация. Рукава/насос |
+| 58 | `lua/autorun/sh_grm_fire.lua` + `sh_grm_fire_access.lua` + `sh_grm_fire_truck.lua` + `sh_grm_fire_pump_ui.lua` + `sh_grm_fire_spots.lua` + `sh_grm_fire_status.lua` | **Пожары v1.4.1 / аддон 0.5.0 (Код 58):** учёт тушения — «Пожар локализован» / «Пожар потушен» (мягче 2.5с, peak≥1, оба при тушении), toast+ChatPrint SuperAdmin+Dispatch+FightPro+бойцы+рядом 1500, скан vfire на boot, журнал `data/grm_fire/log.json` + `/fire_log` `/журнал_пожаров` и кнопка «Журнал тушения», G без рейса ≠ инкассация. Рукава/насос |
 
 ## Зависимости, которых пока НЕТ в репозитории
 
