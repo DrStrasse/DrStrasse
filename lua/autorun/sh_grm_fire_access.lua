@@ -431,6 +431,9 @@ if CLIENT then
                 local b3 = mkBtn(panel, "Пожарные машины (список ТС)", Color(70, 140, 220))
                 b3:Dock(TOP) b3:SetTall(36) b3:DockMargin(12, 8, 12, 0)
                 b3.DoClick = function() RunConsoleCommand("grm_fire_trucks") end
+                local b4 = mkBtn(panel, "Очаги и таймеры", Color(220, 110, 50))
+                b4:Dock(TOP) b4:SetTall(36) b4:DockMargin(12, 8, 12, 0)
+                b4.DoClick = function() RunConsoleCommand("grm_fire_spots") end
                 sheet:AddSheet("Пожарные", panel, "icon16/fire.png")
             end)
         end

@@ -240,6 +240,9 @@ QM.Schema = {
               { "Шкаф огнетушителей", "cabinet" }, { "Точка очага", "spot" },
               { "Пожарная лестница", "ladder" },
           } },
+        { cvar = "grm_fire_place_weight", type = "number", label = "Вес точки (шанс)" },
+        { cvar = "grm_fire_place_label", type = "text", label = "Метка очага" },
+        { cvar = "grm_fire_place_feed", type = "number", label = "Сила воспламенения" },
     },
     grm_network_tool = {
         { cvar = "grm_network_tool_mode", type = "choice", label = "Режим",

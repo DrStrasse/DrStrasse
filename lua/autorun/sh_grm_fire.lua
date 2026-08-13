@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Fire v1.3.7 (Код 58)
+    GRM Fire v1.3.9 (Код 58)
     Серверная обвязка аддона grm_fire + vFire.
     Не содержит моделей/рукава — они в аддоне.
     Права, персист очагов, рандом по точкам, плита, оповещение.
@@ -10,7 +10,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Fire = GRM.Fire or {}
 local F = GRM.Fire
-F.Version = "1.3.8"
+F.Version = "1.3.9"
 
 F.Config = F.Config or {
     StoveEnabled = true,
@@ -137,6 +137,69 @@ if SERVER then
 
     local function activePath()
         return DIR .. "/active_" .. tostring(game.GetMap() or "nomap") .. ".json"
+    end
+
+    local CFG_FILE = DIR .. "/config.json"
+
+    local function clampCfg()
+        local c = F.Config
+        c.RandomEnabled = c.RandomEnabled ~= false
+        c.StoveEnabled = c.StoveEnabled ~= false
+        c.RandomMinSec = math.Clamp(math.floor(tonumber(c.RandomMinSec) or 480), 30, 7200)
+        c.RandomMaxSec = math.Clamp(math.floor(tonumber(c.RandomMaxSec) or 900), c.RandomMinSec, 10800)
+        c.SpotCooldownSec = math.Clamp(math.floor(tonumber(c.SpotCooldownSec) or 2700), 0, 86400)
+        c.MaxIncidents = math.Clamp(math.floor(tonumber(c.MaxIncidents) or 8), 1, 24)
+        c.PersistTTL = math.Clamp(math.floor(tonumber(c.PersistTTL) or 1800), 60, 86400)
+    end
+
+    function F.LoadConfig()
+        ensureDir()
+        if not file.Exists(CFG_FILE, "DATA") then clampCfg() return F.Config end
+        local raw = file.Read(CFG_FILE, "DATA") or ""
+        local t = jsonT(raw)
+        if not istable(t) then
+            local q = CFG_FILE .. ".corrupt." .. os.time()
+            file.Write(q, raw)
+            print("[GRM Fire] config битый — " .. q)
+            clampCfg()
+            return F.Config
+        end
+        if t.random ~= nil then F.Config.RandomEnabled = t.random == true end
+        if t.stove ~= nil then F.Config.StoveEnabled = t.stove == true end
+        if t.min_sec then F.Config.RandomMinSec = tonumber(t.min_sec) end
+        if t.max_sec then F.Config.RandomMaxSec = tonumber(t.max_sec) end
+        if t.cooldown then F.Config.SpotCooldownSec = tonumber(t.cooldown) end
+        if t.max_incidents then F.Config.MaxIncidents = tonumber(t.max_incidents) end
+        if t.ttl then F.Config.PersistTTL = tonumber(t.ttl) end
+        clampCfg()
+        print("[GRM Fire] LOAD config: random=" .. tostring(F.Config.RandomEnabled)
+            .. " " .. F.Config.RandomMinSec .. "-" .. F.Config.RandomMaxSec .. "с")
+        return F.Config
+    end
+
+    function F.SaveConfig(why)
+        ensureDir()
+        clampCfg()
+        local payload = {
+            version = 1,
+            random = F.Config.RandomEnabled == true,
+            stove = F.Config.StoveEnabled == true,
+            min_sec = F.Config.RandomMinSec,
+            max_sec = F.Config.RandomMaxSec,
+            cooldown = F.Config.SpotCooldownSec,
+            max_incidents = F.Config.MaxIncidents,
+            ttl = F.Config.PersistTTL,
+        }
+        local ok, txt = pcall(util.TableToJSON, payload, true)
+        if not ok or not isstring(txt) then return false end
+        file.Write(CFG_FILE, txt)
+        local chk = file.Read(CFG_FILE, "DATA")
+        if chk ~= txt then
+            print("[GRM Fire] SAVE read-back fail [config " .. tostring(why or "") .. "]")
+            return false
+        end
+        print("[GRM Fire] SAVE config ok [" .. tostring(why or "") .. "]")
+        return true
     end
 
     function F.Snapshot()
@@ -506,12 +569,21 @@ if SERVER then
                 if data.slots and ent.SetHosesMax then ent:SetHosesMax(tonumber(data.slots) or 4) end
             end
             GRM.PermData.Extract["grm_fire_spot"] = function(ent)
-                return { weight = ent.GetWeight and ent:GetWeight() or 1, label = ent.GetSpotLabel and ent:GetSpotLabel() or "" }
+                return {
+                    weight = ent.GetWeight and ent:GetWeight() or 1,
+                    label = ent.GetSpotLabel and ent:GetSpotLabel() or "",
+                    cool = ent.GetCoolSec and ent:GetCoolSec() or 0,
+                    feed = ent.GetFeed and ent:GetFeed() or 180,
+                    on = not (ent.GetSpotOn and ent:GetSpotOn() == false),
+                }
             end
             GRM.PermData.Apply["grm_fire_spot"] = function(ent, data)
                 if not istable(data) then return end
                 if data.weight and ent.SetWeight then ent:SetWeight(math.max(1, tonumber(data.weight) or 1)) end
                 if isstring(data.label) and ent.SetSpotLabel then ent:SetSpotLabel(data.label) end
+                if data.cool and ent.SetCoolSec then ent:SetCoolSec(math.max(0, tonumber(data.cool) or 0)) end
+                if data.feed and ent.SetFeed then ent:SetFeed(math.max(40, tonumber(data.feed) or 180)) end
+                if ent.SetSpotOn then ent:SetSpotOn(data.on ~= false) end
             end
         end
     end
@@ -524,9 +596,11 @@ if SERVER then
         local now = os.time()
         local cd = tonumber(F.Config.SpotCooldownSec) or 2700
         for _, ent in ipairs(ents.FindByClass("grm_fire_spot")) do
-            if IsValid(ent) and not F.IsBurning(ent:GetPos()) then
+            if IsValid(ent) and not (ent.GetSpotOn and ent:GetSpotOn() == false) and not F.IsBurning(ent:GetPos()) then
                 local last = ent.GetLastIgnite and tonumber(ent:GetLastIgnite()) or 0
-                if last == 0 or now - last >= cd then
+                local own = ent.GetCoolSec and tonumber(ent:GetCoolSec()) or 0
+                local need = (own and own > 0) and own or cd
+                if last == 0 or now - last >= need then
                     spots[#spots + 1] = ent
                     weights[#weights + 1] = math.max(1, ent.GetWeight and ent:GetWeight() or 1)
                 end
@@ -544,6 +618,7 @@ if SERVER then
     end
 
     local function scheduleRandom()
+        timer.Remove("GRM_Fire_Random")
         if not F.Config.RandomEnabled then return end
         local a = tonumber(F.Config.RandomMinSec) or 480
         local b = tonumber(F.Config.RandomMaxSec) or 900
@@ -555,7 +630,7 @@ if SERVER then
                     local spot = pickSpot()
                     if IsValid(spot) then
                         if spot.IgniteSpot then
-                            local fire = spot:IgniteSpot(180, "system")
+                            local fire = spot:IgniteSpot(spot.GetFeed and spot:GetFeed() or 180, "system")
                             if IsValid(fire) then
                                 fire._grmSource = "random"
                                 fire._grmStarted = os.time()
@@ -569,6 +644,8 @@ if SERVER then
             scheduleRandom()
         end)
     end
+    F.RescheduleRandom = scheduleRandom
+    F.PickSpot = pickSpot
 
     -- ── плита ───────────────────────────────────────────────
     timer.Create("GRM_Fire_Stove", 2, 0, function()
@@ -601,8 +678,11 @@ if SERVER then
     end)
 
     hook.Add("ShutDown", "GRM_Fire_Save", function() F.SaveActive("shutdown") end)
+    F.LoadConfig()
+
     hook.Add("InitPostEntity", "GRM_Fire_Boot", function()
         timer.Simple(3, function()
+            F.LoadConfig()
             F.LoadActive()
             scheduleRandom()
         end)
