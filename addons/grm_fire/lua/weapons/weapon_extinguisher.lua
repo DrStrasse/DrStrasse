@@ -13,8 +13,6 @@ end )
 AddCSLuaFile()
 AddCSLuaFile( "effects/rb655_extinguisher_effect.lua" )
 
-if ( SERVER ) then -- resource.AddWorkshop( "104607228" ) -- local _grm pack end
-
 SWEP.PrintName = "Extinguisher"
 SWEP.Author = "Robotboy655"
 SWEP.Category = "Robotboy655's Weapons"

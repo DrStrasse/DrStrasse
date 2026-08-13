@@ -28,6 +28,8 @@ check("ствол GRM w_firehose_grm", has(hose, "w_firehose_grm.mdl"))
 check("нет старого c_firehose.mdl в GRM SWEP", not hose:find("c_firehose.mdl", 1, true))
 check("огнетушитель c_fire_extinguisher_grm", has(ext, "c_fire_extinguisher_grm.mdl"))
 check("огнетушитель w_fire_extinguisher_grm", has(ext, "w_fire_extinguisher_grm.mdl"))
+check("огнетушитель без оборванного if SERVER", not ext:find("if ( SERVER ) then --", 1, true))
+check("огнетушитель без AddWorkshop", not has(ext, "AddWorkshop"))
 check("пак-шланг c_firehose_grm", has(packHose, "c_firehose_grm.mdl"))
 check("пак-шланг w_firehose_grm", has(packHose, "w_firehose_grm.mdl"))
 
