@@ -728,6 +728,11 @@ function ENT:ReelIn(ply, maxn)
 end
 
 function ENT:Think()
+    local src = self:GetStartEnt()
+    if not IsValid(src) then
+        self:Rewind()
+        return true
+    end
     self:FollowHost()
     local ply = self:GetHolder()
     if IsValid(ply) and not self:GetDocked() then

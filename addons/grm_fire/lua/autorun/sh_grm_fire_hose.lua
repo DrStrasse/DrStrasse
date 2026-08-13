@@ -224,6 +224,30 @@ if SERVER then
         return n
     end
 
+    -- Рукав стартует здесь или стыкован к этому насосу/гидранту.
+    function A.HoseTouches(h, src)
+        if not IsValid(h) or not IsValid(src) then return false end
+        if h.GetStartEnt and h:GetStartEnt() == src then return true end
+        local endN = h.GetEndNode and h:GetEndNode() or NULL
+        if not IsValid(endN) then return false end
+        if endN == src then return true end
+        local p = endN.GetParent and endN:GetParent() or NULL
+        return p == src
+    end
+
+    -- Сразу смотать все рукава источника (машина удалена / насос снят).
+    function A.ClearHosesOn(src)
+        local n = 0
+        for _, h in ipairs(ents.FindByClass("grm_fire_hose")) do
+            if IsValid(h) and A.HoseTouches(h, src) then
+                local ply = h.GetHolder and h:GetHolder() or NULL
+                if A.ReturnHose(IsValid(ply) and ply or nil, h) then n = n + 1
+                elseif IsValid(h) then h:Remove() n = n + 1 end
+            end
+        end
+        return n
+    end
+
     function A.GiveHose(ply, src)
         if IsValid(src) then
             local h, err = A.TakeHose(ply, src)

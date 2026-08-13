@@ -186,6 +186,11 @@ function ENT:Fill(amount)
     return self:FillAgent("water", amount)
 end
 
+function ENT:OnRemove()
+    local A = GRM and GRM.FireAddon
+    if A and A.ClearHosesOn then A.ClearHosesOn(self) end
+end
+
 function ENT:Think()
     if self._grmTruckGear or self:GetNWBool("GRM_TruckGear", false) then
         local host = self:GetHostVehicle()

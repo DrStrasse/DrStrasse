@@ -594,25 +594,42 @@ if SERVER then
         end
     end)
 
-    hook.Add("EntityRemoved", "GRM_FireTruck_DropGear", function(ent)
-        if not IsValid(ent) then return end
-        if not (ent.IsVehicle and ent:IsVehicle()) then
-            local cls = ent:GetClass() or ""
-            if not (string.StartWith(cls, "simfphys_") or string.StartWith(cls, "lvs_")
-                or string.StartWith(cls, "glide_")) then
-                return
-            end
-        end
+    -- Машину снесли (remover / cleanup / рестарт) — сразу смотать рукава и снять бортовое.
+    function F.DropTruckGear(veh)
+        if not IsValid(veh) then return 0 end
+        local n = 0
+        local A = GRM.FireAddon
         for _, e in ipairs(ents.FindByClass("grm_fire_pump")) do
-            if IsValid(e) and (e:GetParent() == ent or (e.GetHostVehicle and e:GetHostVehicle() == ent)) then
+            if IsValid(e) and (e:GetParent() == veh or (e.GetHostVehicle and e:GetHostVehicle() == veh)) then
+                if A and A.ClearHosesOn then n = n + (A.ClearHosesOn(e) or 0) end
                 e:Remove()
+                n = n + 1
             end
         end
         for _, e in ipairs(ents.FindByClass("grm_fire_ladder")) do
-            if IsValid(e) and (e:GetParent() == ent or (e.GetHostVehicle and e:GetHostVehicle() == ent)) then
+            if IsValid(e) and (e:GetParent() == veh or (e.GetHostVehicle and e:GetHostVehicle() == veh)) then
                 e:Remove()
+                n = n + 1
             end
         end
+        for _, ply in ipairs(player.GetAll()) do
+            if IsValid(ply) and ply.GetNWEntity and ply:GetNWEntity("GRM_FireMyTruck") == veh then
+                ply:SetNWEntity("GRM_FireMyTruck", NULL)
+            end
+        end
+        return n
+    end
+
+    hook.Add("EntityRemoved", "GRM_FireTruck_DropGear", function(ent)
+        if not IsValid(ent) then return end
+        local cls = ent:GetClass() or ""
+        if cls == "grm_fire_pump" then
+            local A = GRM.FireAddon
+            if A and A.ClearHosesOn then A.ClearHosesOn(ent) end
+            return
+        end
+        if not isCarEntity(ent) then return end
+        F.DropTruckGear(ent)
     end)
 
     print("[GRM Fire] Truck v1.0 loaded")
