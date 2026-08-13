@@ -24,6 +24,111 @@ net.Receive("GRM_KeypadPress", function()
     ent.__btnFlash[idx] = CurTime() + 0.25
 end)
 
+local function sendPin(ent, pin, isSet)
+    if not IsValid(ent) then return end
+    net.Start("GRM_KeypadPIN")
+        net.WriteEntity(ent)
+        net.WriteString(tostring(pin or ""))
+        net.WriteBool(isSet == true)
+    net.SendToServer()
+end
+
+function ENT:OpenPinMenu()
+    if IsValid(self._pinFrame) then self._pinFrame:MakePopup() return end
+    local ent, typed = self, ""
+    local f = vgui.Create("DFrame")
+    self._pinFrame = f
+    if GRM.UI and GRM.UI.Track then GRM.UI.Track("grm_keypad_pin", f) end
+    f:SetTitle("")
+    f:SetSize(280, 420)
+    f:Center()
+    f:MakePopup()
+    f:ShowCloseButton(false)
+    f.Paint = function(_, pw, ph)
+        draw.RoundedBox(8, 0, 0, pw, ph, Color(20, 24, 32, 250))
+        draw.RoundedBoxEx(8, 0, 0, pw, 36, Color(28, 34, 46), true, true, false, false)
+        draw.SimpleText("Кодовый замок", "Keypad_Screen", 14, 18, Color(240, 245, 250), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    end
+    local close = vgui.Create("DButton", f)
+    close:SetText("X") close:SetPos(244, 6) close:SetSize(28, 24) close:SetTextColor(color_white)
+    close.Paint = function(s, pw, ph)
+        draw.RoundedBox(4, 0, 0, pw, ph, s:IsHovered() and Color(220, 75, 70) or Color(45, 52, 68))
+    end
+    close.DoClick = function() f:Close() end
+
+    local disp = vgui.Create("DLabel", f)
+    disp:SetPos(16, 48) disp:SetSize(248, 32)
+    disp:SetFont("Keypad_Screen") disp:SetTextColor(Color(100, 200, 255))
+    disp:SetContentAlignment(5)
+    local function refresh()
+        disp:SetText(typed == "" and "Введите PIN" or string.rep("*", #typed))
+    end
+    refresh()
+
+    local layout = {
+        { "1", "2", "3" }, { "4", "5", "6" }, { "7", "8", "9" }, { "C", "0", "OK" },
+    }
+    for r, row in ipairs(layout) do
+        for c, label in ipairs(row) do
+            local b = vgui.Create("DButton", f)
+            b:SetPos(20 + (c - 1) * 80, 92 + (r - 1) * 52)
+            b:SetSize(72, 46)
+            b:SetText(label) b:SetFont("Keypad_Btn") b:SetTextColor(color_white)
+            local col = Color(38, 46, 62)
+            if label == "OK" then col = Color(40, 140, 80)
+            elseif label == "C" then col = Color(160, 60, 60) end
+            b.Paint = function(s, pw, ph)
+                local cc = col
+                if s:IsHovered() then cc = Color(math.min(255, cc.r + 30), math.min(255, cc.g + 30), math.min(255, cc.b + 30)) end
+                draw.RoundedBox(6, 0, 0, pw, ph, cc)
+            end
+            b.DoClick = function()
+                if not IsValid(ent) then f:Close() return end
+                if label == "C" then typed = "" refresh() return end
+                if label == "OK" then sendPin(ent, typed, false) f:Close() return end
+                if #typed < 10 then typed = typed .. label refresh() end
+            end
+        end
+    end
+
+    local lp = LocalPlayer()
+    local canSet = IsValid(lp) and ((ent.IsKeypadOwner and ent:IsKeypadOwner(lp)) or lp:IsSuperAdmin())
+    if canSet then
+        local entry = vgui.Create("DTextEntry", f)
+        entry:SetPos(20, 308) entry:SetSize(152, 28)
+        entry:SetPlaceholderText("Новый PIN")
+        entry:SetNumeric(true)
+        local save = vgui.Create("DButton", f)
+        save:SetPos(178, 308) save:SetSize(82, 28)
+        save:SetText("Задать") save:SetTextColor(color_white)
+        save.Paint = function(s, pw, ph)
+            draw.RoundedBox(6, 0, 0, pw, ph, s:IsHovered() and Color(80, 170, 255) or Color(70, 150, 240))
+        end
+        save.DoClick = function()
+            if not IsValid(ent) then f:Close() return end
+            sendPin(ent, entry:GetValue(), true)
+        end
+        local hint = vgui.Create("DLabel", f)
+        hint:SetPos(20, 342) hint:SetSize(240, 36)
+        hint:SetFont("Keypad_Small") hint:SetTextColor(Color(160, 170, 185))
+        hint:SetWrap(true)
+        hint:SetText("Владелец: задайте PIN здесь, если панель инструмента его не записала.")
+        f:SetTall(390)
+    else
+        f:SetTall(310)
+    end
+end
+
+hook.Add("KeyPress", "GRM_Keypad_OpenPinUI", function(ply, key)
+    if key ~= IN_USE or ply ~= LocalPlayer() then return end
+    local tr = ply:GetEyeTrace()
+    local ent = tr and tr.Entity
+    if not (IsValid(ent) and ent:GetClass() == "grm_keypad") then return end
+    if ply:GetShootPos():DistToSqr(ent:GetPos()) > (130 * 130) then return end
+    if ent.KeypadButtonAt and ent:KeypadButtonAt(tr.HitPos) then return end
+    if ent.OpenPinMenu then ent:OpenPinMenu() end
+end)
+
 local function lerpColor(cur, target, rate)
     local f = math.min(1, rate)
     cur.r = cur.r + (target.r - cur.r) * f
@@ -82,6 +187,8 @@ function ENT:Draw()
         elseif mode == 2 then
             statusText = tostring(self:GetCost()) .. " GRM"
             statusColor = Color(235, 180, 60)
+        elseif hoverIdx == nil and dist < 140 * 140 then
+            statusText = "E — ВВОД PIN"
         end
 
         self.__hdrCol = self.__hdrCol or Color(headerTarget.r, headerTarget.g, headerTarget.b)

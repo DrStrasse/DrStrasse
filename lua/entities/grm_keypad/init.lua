@@ -15,6 +15,7 @@ AddCSLuaFile("shared.lua")
 include("shared.lua")
 
 util.AddNetworkString("GRM_KeypadPress")
+util.AddNetworkString("GRM_KeypadPIN")
 
 -- ============================================================
 -- Код 105 (находка 122): админский ПЕРМ-кейпад. Данные кейпада едут в
@@ -33,7 +34,7 @@ util.AddNetworkString("GRM_KeypadPress")
 -- ============================================================
 local function keypadPermExtract(ent)
     local rec = {
-        password = tostring(ent:GetPassword() or "1234"),
+        password = ENT.SanitizePin(ent:GetPassword() or "1234"),
         mode     = 0, -- Код 107: сохраняем принудительно PIN
         cost     = 0,
         faction  = "",
@@ -51,7 +52,7 @@ end
 local function keypadPermApply(ent, t)
     -- находка 123-про: пароль со стены конвара может прийти с хвостовым
     -- пробелом — до Кода 106 это маскировал байпас и «верный PIN → отказ».
-    local pw = string.Trim(tostring(t.password or "1234"))
+    local pw = ENT.SanitizePin(t.password or "1234")
     ent:SetPassword(pw ~= "" and pw or "1234")
     ent:SetMode(0)  -- Код 107: только PIN, даже из старой базы с mode 1/2
     ent:SetCost(0)
@@ -102,6 +103,10 @@ function ENT:Initialize()
     self:SetMode(0)
     self:SetCost(0)
     self:SetFaction("")
+    if ENT.SanitizePin then
+        local pw = ENT.SanitizePin(self:GetPassword() or "")
+        self:SetPassword(pw ~= "" and pw or "1234")
+    end
 end
 
 function ENT:ProcessGrant(ply)
@@ -256,4 +261,31 @@ hook.Add("KeyPress", "GRM_Keypad_AimPress", function(ply, key)
         net.WriteEntity(ent)
         net.WriteUInt(idx, 8)
     net.Broadcast()
+end)
+
+-- Окно PIN (E по экрану) и смена кода владельцем. Цифры только.
+net.Receive("GRM_KeypadPIN", function(_, ply)
+    if not IsValid(ply) then return end
+    local now = CurTime()
+    if (ply.__grmKeypadPinNext or 0) > now then return end
+    ply.__grmKeypadPinNext = now + 0.35
+    local ent = net.ReadEntity()
+    local pin = ENT.SanitizePin(net.ReadString())
+    local isSet = net.ReadBool()
+    if not (IsValid(ent) and ent:GetClass() == "grm_keypad") then return end
+    if ply:GetShootPos():DistToSqr(ent:GetPos()) > (160 * 160) then return end
+    if isSet then
+        if not ((ent.IsKeypadOwner and ent:IsKeypadOwner(ply)) or ply:IsSuperAdmin()) then return end
+        if pin == "" then
+            if GRM.Notify then GRM.Notify(ply, "PIN пустой — не сохранён.", 255, 180, 80) end
+            return
+        end
+        ent:SetPassword(pin)
+        if GRM.Notify then
+            GRM.Notify(ply, "PIN кейпада задан (" .. #pin .. " цифр).", 100, 220, 100)
+        end
+        return
+    end
+    ent.CurrentInput = pin
+    ent:PressButton("OK", ply)
 end)

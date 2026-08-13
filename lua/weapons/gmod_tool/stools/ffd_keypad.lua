@@ -51,9 +51,7 @@ if SERVER then
         ent:Spawn()
         ent:Activate()
 
-        -- Код 107: пароль ТРИМИТСЯ (хвостовой пробел из поля ввода давал
-        -- «верный PIN → отказ», до Кода 106 маскировался байпасом)
-        local pw = string.Trim(tostring(pass or "1234"))
+        local pw = (ENT and ENT.SanitizePin and ENT.SanitizePin(pass)) or string.gsub(string.Trim(tostring(pass or "1234")), "%D", "")
         ent:SetPassword(pw ~= "" and pw or "1234")
         ent:SetMode(0) -- только PIN, навсегда
         ent:SetCost(0)
@@ -73,12 +71,46 @@ if SERVER then
     end
 end
 
+local function toolPin(tool, ply)
+    local function digits(s)
+        s = string.gsub(string.Trim(tostring(s or "")), "%D", "")
+        if #s > 10 then s = string.sub(s, 1, 10) end
+        return s
+    end
+    local a = digits(tool:GetClientInfo("password"))
+    local b = (IsValid(ply) and digits(ply:GetInfo("ffd_keypad_password"))) or ""
+    local c = (IsValid(ply) and digits(ply:GetInfo("keypad_password"))) or ""
+    if a ~= "" and a ~= "1234" then return a end
+    if b ~= "" and b ~= "1234" then return b end
+    if c ~= "" and c ~= "1234" then return c end
+    if a ~= "" then return a end
+    if b ~= "" then return b end
+    if c ~= "" then return c end
+    return "1234"
+end
+
 function TOOL:LeftClick(trace)
     if not trace.Hit then return false end
     if CLIENT then return true end
 
     local ply = self:GetOwner()
-    local pass = self:GetClientInfo("password")
+    local ent = trace.Entity
+    if IsValid(ent) and ent:GetClass() == "grm_keypad" then
+        local ownerOK = ent.KeypadOwner == ply
+        if ent.IsKeypadOwner then ownerOK = ent:IsKeypadOwner(ply) end
+        if not ownerOK and not ply:IsSuperAdmin() then
+            if GRM and GRM.Notify then GRM.Notify(ply, "Чужой кейпад: PIN сменить нельзя.", 255, 140, 110) end
+            return false
+        end
+        local pw = toolPin(self, ply)
+        ent:SetPassword(pw)
+        if GRM and GRM.Notify then
+            GRM.Notify(ply, "PIN кейпада обновлён (" .. #pw .. " цифр).", 100, 220, 100)
+        end
+        return true
+    end
+
+    local pass = toolPin(self, ply)
     local kGranted = self:GetClientNumber("key_granted", 1)
     local kDenied = self:GetClientNumber("key_denied", 2)
     local holdTime = self:GetClientNumber("hold_time", 5)
@@ -86,7 +118,7 @@ function TOOL:LeftClick(trace)
     local ok = self:SpawnKeypad(ply, trace, pass, kGranted, kDenied, holdTime)
 
     if ok and GRM and GRM.Notify then
-        GRM.Notify(ply, "FFD Keypad успешно установлен (режим: только PIN)!", 100, 220, 100)
+        GRM.Notify(ply, "FFD Keypad установлен. PIN: " .. #pass .. " цифр. E по экрану — ввод.", 100, 220, 100)
     end
 
     return ok

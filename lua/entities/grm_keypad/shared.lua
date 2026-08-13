@@ -90,19 +90,29 @@ function ENT:KeypadScreenScale()
     return self:KeypadScreenFrame().scale
 end
 
--- левая верхняя точка экрана в мире (текст-лево = +GetRight, верх = +GetUp)
+-- PIN: только цифры, без пробелов, максимум 10. Иначе «1234 » / «12 34»
+-- из поля ввода никогда не совпадёт с тем, что набрали на кнопках.
+function ENT.SanitizePin(s)
+    s = string.Trim(tostring(s or ""))
+    s = string.gsub(s, "%D", "")
+    if #s > 10 then s = string.sub(s, 1, 10) end
+    return s
+end
+
+-- левая верхняя точка экрана: X вправо (+GetRight), Y вниз (−GetUp).
+-- Раньше origin был справа, а 3D2D-Y шёл вверх — подпись «1» и попадание
+-- прицела жили в разных местах («верный PIN → отказ»).
 function ENT:KeypadScreenOrigin()
     local fr = self:KeypadScreenFrame()
     return fr.center
-        + self:GetRight() * ((tonumber(self.ScreenW) or 144) * fr.scale / 2)
+        - self:GetRight() * ((tonumber(self.ScreenW) or 144) * fr.scale / 2)
         + self:GetUp() * ((tonumber(self.ScreenH) or 220) * fr.scale / 2)
 end
 
--- угол плоскости 3D2D напрямую из базиса (без подбора пар поворотов):
--- Forward угла = вправо по экрану = -GetRight, Up угла = нормаль наружу =
--- GetForward; тогда экран-Y(вниз) = Right угла = -GetUp  (находка 122).
+-- Forward = вправо по экрану (+GetRight), Up = нормаль наружу (+GetForward)
+-- → 3D2D-Y = −Right = −GetUp (вниз). Совпадает с KeypadButtonAt.
 function ENT:KeypadScreenAngles()
-    return (-self:GetRight()):AngleEx(self:GetForward())
+    return self:GetRight():AngleEx(self:GetForward())
 end
 
 -- какая кнопка под мировой точкой (прицел): индекс, кнопка или nil
@@ -110,7 +120,7 @@ function ENT:KeypadButtonAt(hitPos)
     if not hitPos then return nil end
     local s = self:KeypadScreenScale()
     local rel = hitPos - self:KeypadScreenOrigin()
-    local x = rel:Dot(-self:GetRight()) / s
+    local x = rel:Dot(self:GetRight()) / s
     local y = rel:Dot(-self:GetUp()) / s
     for i, b in ipairs(self.Buttons or {}) do
         if x >= b.x and x <= b.x + b.w and y >= b.y and y <= b.y + b.h then

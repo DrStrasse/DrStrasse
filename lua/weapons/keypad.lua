@@ -92,7 +92,18 @@ function SWEP:PrimaryAttack()
     kat.HoldTime   = 5
     kat:Spawn()
     kat:Activate()
-    if kat.SetPassword then kat:SetPassword("1234") end
+    local pw = "1234"
+    if IsValid(ply) and ply.GetInfo then
+        local function digits(s)
+            s = string.gsub(string.Trim(tostring(s or "")), "%D", "")
+            if #s > 10 then s = string.sub(s, 1, 10) end
+            return s
+        end
+        local a = digits(ply:GetInfo("ffd_keypad_password"))
+        local b = digits(ply:GetInfo("keypad_password"))
+        if a ~= "" then pw = a elseif b ~= "" then pw = b end
+    end
+    if kat.SetPassword then kat:SetPassword(pw) end
     local phys = kat:GetPhysicsObject()
     if IsValid(phys) then phys:EnableMotion(false) end
 
