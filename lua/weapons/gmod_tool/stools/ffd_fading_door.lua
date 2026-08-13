@@ -9,7 +9,7 @@
 ----------------------------------------------------------------------]]
 
 TOOL.Category = "GRM"
-TOOL.Name = "FFD Fading Door"
+TOOL.Name = "#tool.ffd_fading_door.name"
 TOOL.Command = nil
 TOOL.ConfigName = ""
 
@@ -20,7 +20,7 @@ TOOL.ClientConVar["autoclose"] = "0"
 TOOL.ClientConVar["time"] = "5"
 
 if CLIENT then
-    language.Add("tool.ffd_fading_door.name", "FFD Fading Door (Исчезающая дверь)")
+    language.Add("tool.ffd_fading_door.name", "GRM Исчезающая дверь")
     language.Add("tool.ffd_fading_door.desc", "Превращает любой проп в исчезающую дверь с нумпадом и таймером")
     language.Add("tool.ffd_fading_door.0", "ЛКМ: Применить Fading Door | ПКМ: Снять с пропа | R: Скопировать настройки")
 end

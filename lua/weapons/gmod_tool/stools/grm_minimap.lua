@@ -1,10 +1,10 @@
 TOOL.Category = "GRM"
-TOOL.Name = "GRM: районы и точки"
+TOOL.Name = "#tool.grm_minimap.name"
 TOOL.Command = nil
 TOOL.ConfigName = ""
 
 if CLIENT then
-    language.Add("tool.grm_minimap.name", "GRM: районы и точки")
+    language.Add("tool.grm_minimap.name", "GRM Районы и точки карты")
     language.Add("tool.grm_minimap.desc", "Размещение GPS-точек, районов и точек захвата")
     language.Add("tool.grm_minimap.0", "ЛКМ: установить GPS-точку | R: открыть настройки GPS")
 end

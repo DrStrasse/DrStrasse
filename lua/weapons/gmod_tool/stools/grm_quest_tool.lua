@@ -1,7 +1,7 @@
-TOOL.Category="GRM";TOOL.Name="#tool.grm_quest_tool.name";TOOL.Command=nil;TOOL.ConfigName=""
+TOOL.Category = "GRM";TOOL.Name = "#tool.grm_quest_tool.name";TOOL.Command=nil;TOOL.ConfigName=""
 TOOL.ClientConVar={mode="npc",npc_id="guide",npc_name="Проводник",npc_model="models/Humans/Group01/Male_07.mdl",quest_id="intro",step="1",phase="accept"}
 if CLIENT then
- language.Add("tool.grm_quest_tool.name","GRM Квесты: конструктор");language.Add("tool.grm_quest_tool.desc","NPC, зоны целей и точки кат-сцен");language.Add("tool.grm_quest_tool.0","Режим выбирается в панели инструмента")
+ language.Add("tool.grm_quest_tool.name", "GRM Квесты — конструктор");language.Add("tool.grm_quest_tool.desc","NPC, зоны целей и точки кат-сцен");language.Add("tool.grm_quest_tool.0","Режим выбирается в панели инструмента")
  hook.Add("PostDrawTranslucentRenderables","GRM_QuestTool_Preview",function(depth,sky,sky3d)
   if depth or sky or sky3d then return end;local ply=LocalPlayer();local wep=IsValid(ply)and ply:GetActiveWeapon();if not IsValid(wep)or wep:GetClass()~="gmod_tool"or not wep.GetMode or wep:GetMode()~="grm_quest_tool"then return end
   local wanted=GetConVar("grm_quest_tool_quest_id")and GetConVar("grm_quest_tool_quest_id"):GetString()or"";for _,def in ipairs(GRM.Quests.AdminDefinitions or{})do if def.id==wanted then

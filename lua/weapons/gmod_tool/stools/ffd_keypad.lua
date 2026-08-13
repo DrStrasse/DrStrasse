@@ -9,7 +9,7 @@
 ----------------------------------------------------------------------]]
 
 TOOL.Category = "GRM"
-TOOL.Name = "FFD Keypad"
+TOOL.Name = "#tool.ffd_keypad.name"
 TOOL.Command = nil
 TOOL.ConfigName = ""
 
@@ -19,11 +19,11 @@ TOOL.ClientConVar["key_denied"] = "2"
 TOOL.ClientConVar["hold_time"] = "5"
 
 if CLIENT then
-    language.Add("tool.ffd_keypad.name", "FFD Keypad (Кодовый замок)")
+    language.Add("tool.ffd_keypad.name", "GRM Кодовый замок")
     language.Add("tool.ffd_keypad.desc", "Размещает электронный кейпад — доступ ТОЛЬКО по PIN-коду (фракции — у FFD Scanner)")
     language.Add("tool.ffd_keypad.0", "ЛКМ: Установить Кейпад | ПКМ: Скопировать настройки с объекта")
     -- алиас-стул «keypad» (include-обёртка) — те же подписи, иначе #tool.keypad.*
-    language.Add("tool.keypad.name", "FFD Keypad (Кодовый замок)")
+    language.Add("tool.keypad.name", "GRM Кодовый замок")
     language.Add("tool.keypad.desc", "Размещает электронный кейпад — доступ ТОЛЬКО по PIN-коду (фракции — у FFD Scanner)")
     language.Add("tool.keypad.0", "ЛКМ: Установить Кейпад | ПКМ: Скопировать настройки с объекта")
 end

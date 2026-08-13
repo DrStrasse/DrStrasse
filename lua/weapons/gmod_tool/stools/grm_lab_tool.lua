@@ -1,5 +1,5 @@
 TOOL.Category = "GRM"
-TOOL.Name = "Лаборатория"
+TOOL.Name = "#tool.grm_lab_tool.name"
 TOOL.Command = nil
 TOOL.ConfigName = ""
 

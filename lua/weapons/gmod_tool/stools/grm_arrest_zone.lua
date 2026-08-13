@@ -1,11 +1,11 @@
 TOOL.Category = "GRM"
-TOOL.Name = "GRM: Зона тюрьмы"
+TOOL.Name = "#tool.grm_arrest_zone.name"
 TOOL.Command = nil
 TOOL.ConfigName = ""
 
 if CLIENT then
     local zones = {}
-    language.Add("tool.grm_arrest_zone.name", "GRM: Зона тюрьмы")
+    language.Add("tool.grm_arrest_zone.name", "GRM Зона тюрьмы")
     language.Add("tool.grm_arrest_zone.desc", "Прямоугольная зона, внутри которой разрешён арест")
     language.Add("tool.grm_arrest_zone.0", "ЛКМ: первый угол | ПКМ: второй угол и сохранить")
     net.Receive("GRM_Arrest_ZoneData", function() zones = net.ReadTable() or {} end)

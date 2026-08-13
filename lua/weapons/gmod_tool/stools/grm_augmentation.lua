@@ -1,11 +1,11 @@
-TOOL.Category="GRM"
-TOOL.Name="Аугментационное оборудование"
+TOOL.Category = "GRM"
+TOOL.Name = "#tool.grm_augmentation.name"
 TOOL.Command=nil
 TOOL.ConfigName=""
 TOOL.ClientConVar={type="station"}
 local TYPES={station={name="Станция аугментаций",class="grm_augmentation_station"},pod={name="Капсула аугментации",class="grm_augmentation_pod"}}
 if CLIENT then
- language.Add("tool.grm_augmentation.name","Аугментационное оборудование")
+ language.Add("tool.grm_augmentation.name", "GRM Аугментационное оборудование")
  language.Add("tool.grm_augmentation.desc","Расстановка станций и капсул аугментации")
  language.Add("tool.grm_augmentation.0","ЛКМ: установить. ПКМ: удалить. R: отмена")
 end

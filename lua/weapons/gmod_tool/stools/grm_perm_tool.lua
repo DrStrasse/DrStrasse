@@ -14,8 +14,8 @@
     Вся логика прав, квот и записи — в GRM.Perm (sh_grm_perm_entities.lua).
     Инструмент только вызывает API и показывает результат.
 ----------------------------------------------------------------------]]
-TOOL.Category   = "GRM"
-TOOL.Name       = "#tool.grm_perm_tool.name"
+TOOL.Category = "GRM"
+TOOL.Name = "#tool.grm_perm_tool.name"
 TOOL.Command    = nil
 TOOL.ConfigName = ""
 

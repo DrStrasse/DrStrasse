@@ -15,13 +15,13 @@
     SWEP:DrawHUD тулгана — проверено по исходнику gmod_tool).
 ----------------------------------------------------------------------]]
 
-TOOL.Category   = "GRM"
-TOOL.Name       = "FFD Link (связь кейпад/сканер ↔ дверь)"
+TOOL.Category = "GRM"
+TOOL.Name = "#tool.ffd_link.name"
 TOOL.Command    = nil
 TOOL.ConfigName = ""
 
 if CLIENT then
-    language.Add("tool.ffd_link.name", "FFD Link (связь)")
+    language.Add("tool.ffd_link.name", "GRM Связь замка с дверью")
     language.Add("tool.ffd_link.desc", "Ручная связь FFD Keypad / Scanner с исчезающими дверями")
     language.Add("tool.ffd_link.0", "ЛКМ: контроллер — выбор, дверь — связать/отвязать | ПКМ: снять связи | R: сброс")
 end

@@ -1,8 +1,8 @@
 -- GRM Vendor Tool v2.0 — spawn, configure stock and autosave
-TOOL.Category="GRM";TOOL.Name="#tool.grm_vendor_tool.name";TOOL.Command=nil;TOOL.ConfigName=""
+TOOL.Category = "GRM";TOOL.Name = "#tool.grm_vendor_tool.name";TOOL.Command=nil;TOOL.ConfigName=""
 TOOL.ClientConVar={type="weapon"}
 local TYPES={weapon="Оружие",ore="Руда",food="Еда",rare="Редкости",accessory="Аксессуары"}
-if CLIENT then language.Add("tool.grm_vendor_tool.name","GRM Торгаш v2");language.Add("tool.grm_vendor_tool.desc","Создание, ассортимент, цены и сохранение торговцев");language.Add("tool.grm_vendor_tool.0","ЛКМ: поставить • ПКМ: настроить • R: убрать с карты")end
+if CLIENT then language.Add("tool.grm_vendor_tool.name", "GRM Торговец");language.Add("tool.grm_vendor_tool.desc","Создание, ассортимент, цены и сохранение торговцев");language.Add("tool.grm_vendor_tool.0","ЛКМ: поставить • ПКМ: настроить • R: убрать с карты")end
 
 function TOOL:LeftClick(tr)
  if not tr.Hit then return false end;if CLIENT then return true end

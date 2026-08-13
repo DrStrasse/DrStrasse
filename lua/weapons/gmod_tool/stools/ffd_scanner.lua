@@ -10,7 +10,7 @@
 ----------------------------------------------------------------------]]
 
 TOOL.Category = "GRM"
-TOOL.Name = "FFD Scanner"
+TOOL.Name = "#tool.ffd_scanner.name"
 TOOL.Command = nil
 TOOL.ConfigName = ""
 
@@ -20,7 +20,7 @@ TOOL.ClientConVar["hold_time"] = "4"
 TOOL.ClientConVar["faction"] = ""
 
 if CLIENT then
-    language.Add("tool.ffd_scanner.name", "FFD Scanner (Сканер фракций)")
+    language.Add("tool.ffd_scanner.name", "GRM Сканер фракций")
     language.Add("tool.ffd_scanner.desc", "Размещает сканер: человек жмёт [E] — сканер проверяет его фракцию по белому списку и открывает двери")
     language.Add("tool.ffd_scanner.0", "ЛКМ: Установить Сканер | ПКМ: Скопировать настройки с объекта")
 end
