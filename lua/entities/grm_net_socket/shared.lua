@@ -1,0 +1,1 @@
+ENT.Type="anim";ENT.Base="grm_net_device";ENT.PrintName="Сетевая розетка";ENT.Category="GRM — Electronics";ENT.Spawnable=true;ENT.AdminOnly=true;ENT.DeviceKind="socket";ENT.DefaultModel="models/props_lab/tpplugholder_single.mdl"

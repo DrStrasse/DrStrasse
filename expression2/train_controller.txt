@@ -1,0 +1,340 @@
+@name Поезд-Диспетчер
+@inputs Button1:number Button2:number Button3:number Button4:number
+@inputs ThrusterFwd:wirelink ThrusterBwd:wirelink PodCtrls:wirelink Screen:wirelink
+@outputs ThrusterFwdForce:vector ThrusterBwdForce:vector
+@outputs ThrusterFwdPower:number ThrusterBwdPower:number
+@outputs PodDoorOpen:number
+@persist Owner:entity Pos:vector Vel:vector Speed:number
+@persist Mode:number TargetSpeed:number CruiseSpeed:number MaxSpeed:number BrakeStartDist:number
+@persist StationPos:vector StationReached:number HoldTimer:number
+@persist Line1:string Line2:string Line3:string LineClr:vector
+@trigger none
+@strict
+@model models/props_vehicles/trailer01a.mdl
+
+# === КОНСТАНТЫ ===
+const STOPPED = 0
+const FORWARD = 1
+const BACKWARD = 2
+const EMERGENCY = 3
+const MAX_SPEED = 200
+const CRUISE_SPEED = 50
+const BRAKE_DIST = 150
+const STOP_HOLD = 3
+const EMERGENCY_DECEL = 120
+const FORCE_SCALE = 0.5
+
+# === ИНИЦИАЛИЗАЦИЯ ===
+Owner = owner()
+Mode = STOPPED
+TargetSpeed = 0
+CruiseSpeed = CRUISE_SPEED
+MaxSpeed = MAX_SPEED
+BrakeStartDist = BRAKE_DIST
+StationPos = vector(0, 0, 0)
+StationReached = 0
+HoldTimer = 0
+Speed = 0
+Pos = vector(0, 0, 0)
+Vel = vector(0, 0, 0)
+Line1 = "Поезд: готов"
+Line2 = "Команды: !train"
+Line3 = "вперед / назад / стоп"
+LineClr = vec4(200, 200, 200, 255)
+
+print("[Диспетчер] Поезд собран. Команды: !train help")
+
+# === ОСНОВНОЙ ЦИКЛ ===
+event tick() {
+    # === Обновление состояния поезда ===
+    if (IsValid(entity())) {
+        Pos = entity():position()
+        Vel = entity():velocity()
+        Speed = Vel:len()
+    } else {
+        Speed = 0
+    }
+    
+    # === Расчет целевой скорости ===
+    if (Mode == FORWARD) {
+        if (TargetSpeed < CruiseSpeed) {
+            TargetSpeed = TargetSpeed + 20 * GlobalDelay
+        } elseif (TargetSpeed > CruiseSpeed) {
+            TargetSpeed = TargetSpeed - 20 * GlobalDelay
+        }
+        TargetSpeed = clamp(TargetSpeed, 0, CruiseSpeed)
+        
+        if (StationPos != vector(0, 0, 0)) {
+            local dx = Pos.x - StationPos.x
+            local dy = Pos.y - StationPos.y
+            local dz = Pos.z - StationPos.z
+            local dist = sqrt(dx*dx + dy*dy + dz*dz)
+            if (dist < BrakeStartDist) {
+                local needVel = clamp(dist * 0.3, 0, CruiseSpeed)
+                if (TargetSpeed > needVel) {
+                    TargetSpeed = needVel
+                }
+            }
+            if (dist < 10) {
+                StationReached = 1
+                HoldTimer = STOP_HOLD
+            }
+        }
+        
+        if (StationReached) {
+            HoldTimer = HoldTimer - GlobalDelay
+            TargetSpeed = 0
+            if (HoldTimer <= 0) {
+                Mode = STOPPED
+                StationReached = 0
+                StationPos = vector(0, 0, 0)
+                Line2 = "На станции: остановка"
+            }
+        }
+    } elseif (Mode == BACKWARD) {
+        if (TargetSpeed > -CruiseSpeed) {
+            TargetSpeed = TargetSpeed - 20 * GlobalDelay
+        } elseif (TargetSpeed < -CruiseSpeed) {
+            TargetSpeed = TargetSpeed + 20 * GlobalDelay
+        }
+        TargetSpeed = clamp(TargetSpeed, -CruiseSpeed, 0)
+        
+        if (StationPos != vector(0, 0, 0)) {
+            local dx = Pos.x - StationPos.x
+            local dy = Pos.y - StationPos.y
+            local dz = Pos.z - StationPos.z
+            local dist = sqrt(dx*dx + dy*dy + dz*dz)
+            if (dist < BrakeStartDist) {
+                local needVel = clamp(dist * 0.3, -CruiseSpeed, 0)
+                if (TargetSpeed < needVel) {
+                    TargetSpeed = needVel
+                }
+            }
+            if (dist < 10) {
+                StationReached = 1
+                HoldTimer = STOP_HOLD
+            }
+        }
+        
+        if (StationReached) {
+            HoldTimer = HoldTimer - GlobalDelay
+            TargetSpeed = 0
+            if (HoldTimer <= 0) {
+                Mode = STOPPED
+                StationReached = 0
+                StationPos = vector(0, 0, 0)
+                Line2 = "На станции: остановка"
+            }
+        }
+    } elseif (Mode == EMERGENCY) {
+        if (TargetSpeed > 0) {
+            TargetSpeed = TargetSpeed - EMERGENCY_DECEL * GlobalDelay
+            if (TargetSpeed < 0) { TargetSpeed = 0 }
+        } elseif (TargetSpeed < 0) {
+            TargetSpeed = TargetSpeed + EMERGENCY_DECEL * GlobalDelay
+            if (TargetSpeed > 0) { TargetSpeed = 0 }
+        }
+        if (Speed < 1) {
+            Mode = STOPPED
+        }
+    }
+    
+    # === Управление трастерами ===
+    if (Mode == FORWARD) {
+        local fwdForce = entity():forward() * TargetSpeed * FORCE_SCALE
+        ThrusterFwdForce = fwdForce
+        ThrusterFwdPower = abs(TargetSpeed) / CruiseSpeed
+        
+        if (IsValid(ThrusterFwd)) {
+            ThrusterFwd:writeVector(1, fwdForce)
+        }
+        
+        ThrusterBwdForce = vector(0, 0, 0)
+        ThrusterBwdPower = 0
+        if (IsValid(ThrusterBwd)) {
+            ThrusterBwd:writeVector(1, vector(0, 0, 0))
+        }
+    } elseif (Mode == BACKWARD) {
+        local bwdForce = -entity():forward() * abs(TargetSpeed) * FORCE_SCALE
+        ThrusterBwdForce = bwdForce
+        ThrusterBwdPower = abs(TargetSpeed) / CruiseSpeed
+        
+        if (IsValid(ThrusterBwd)) {
+            ThrusterBwd:writeVector(1, bwdForce)
+        }
+        
+        ThrusterFwdForce = vector(0, 0, 0)
+        ThrusterFwdPower = 0
+        if (IsValid(ThrusterFwd)) {
+            ThrusterFwd:writeVector(1, vector(0, 0, 0))
+        }
+    } elseif (Mode == EMERGENCY) {
+        local brakeForce = -Vel:normalize() * abs(TargetSpeed) * 2
+        ThrusterFwdForce = brakeForce
+        ThrusterBwdForce = brakeForce
+        ThrusterFwdPower = 1
+        ThrusterBwdPower = 1
+        
+        if (IsValid(ThrusterFwd)) {
+            ThrusterFwd:writeVector(1, brakeForce)
+        }
+        if (IsValid(ThrusterBwd)) {
+            ThrusterBwd:writeVector(1, brakeForce)
+        }
+    } else {
+        ThrusterFwdForce = vector(0, 0, 0)
+        ThrusterBwdForce = vector(0, 0, 0)
+        ThrusterFwdPower = 0
+        ThrusterBwdPower = 0
+        if (IsValid(ThrusterFwd)) {
+            ThrusterFwd:writeVector(1, vector(0, 0, 0))
+        }
+        if (IsValid(ThrusterBwd)) {
+            ThrusterBwd:writeVector(1, vector(0, 0, 0))
+        }
+    }
+    
+    # === Pod Controller ===
+    if (IsValid(PodCtrls)) {
+        local doorOpen = (Mode != STOPPED && Mode != EMERGENCY) ? 1 : 0
+        PodCtrls:writeNumber(1, doorOpen)
+        PodDoorOpen = doorOpen
+    }
+    
+    # === Экран ===
+    if (IsValid(Screen)) {
+        if (Mode == STOPPED) {
+            LineClr = vec4(140, 150, 170, 255)
+        } elseif (Mode == EMERGENCY) {
+            LineClr = vec4(255, 80, 80, 255)
+        } elseif (Mode == FORWARD) {
+            LineClr = vec4(80, 255, 140, 255)
+        } elseif (Mode == BACKWARD) {
+            LineClr = vec4(255, 180, 80, 255)
+        }
+        
+        local spdStr = string.format("Скорость: %.0f u/s", Speed)
+        Line1 = string.format("[%s] %s", Mode == EMERGENCY ? "ЭВГЕНСИЯ" : Mode == FORWARD ? "ВПЕРЕД" : Mode == BACKWARD ? "НАЗАД" : "СТОП", spdStr)
+        
+        Line2 = sprintf("T_fwd:%d%%  T_bwd:%d%%  Door:%s", round(ThrusterFwdPower * 100), round(ThrusterBwdPower * 100), (Mode != STOPPED && Mode != EMERGENCY) ? "OPEN" : "CLOSED")
+        
+        if (Mode == FORWARD || Mode == BACKWARD || Mode == EMERGENCY) {
+            if (StationPos != vector(0, 0, 0)) {
+                local dx = Pos.x - StationPos.x
+                local dy = Pos.y - StationPos.y
+                local dz = Pos.z - StationPos.z
+                local dist = sqrt(dx*dx + dy*dy + dz*dz)
+                Line3 = string.format("Станция: %.0f ед. (%.0f%%)", dist, 100 - (dist / BrakeStartDist * 100))
+            } else {
+                Line3 = "Цель: не задана"
+            }
+        } elseif (Mode == STOPPED) {
+            Line3 = StationReached ? "На станции" : "Ожидание команды"
+        }
+        
+        Screen:writeString(1, Line1)
+        Screen:writeString(2, Line2)
+        Screen:writeString(3, Line3)
+        Screen:writeVector(1, LineClr)
+    }
+}
+
+# === Чат-команды ===
+event chat(Ply:entity, Msg:string, Team:number) {
+    if (Ply != Owner) { exit() }
+    hideChat(1)
+    
+    local Args = Msg:explode(" ")
+    local Cmd = Args[1]:lower()
+    
+    if (Cmd == "!train") {
+        local Sub = Args[2]:lower()
+        
+        if (Sub == "forward" || Sub == "fwd" || Sub == "вперед") {
+            if (Mode == STOPPED || Mode == EMERGENCY) {
+                Mode = FORWARD
+                TargetSpeed = CruiseSpeed
+                Line2 = "Режим: авто-вперед"
+                print("[Диспетчер] Поезд: вперед")
+            }
+        } elseif (Sub == "backward" || Sub == "bwd" || Sub == "назад") {
+            if (Mode == STOPPED || Mode == EMERGENCY) {
+                Mode = BACKWARD
+                TargetSpeed = -CruiseSpeed
+                Line2 = "Режим: авто-назад"
+                print("[Диспетчер] Поезд: назад")
+            }
+        } elseif (Sub == "stop" || Sub == "стоп" || Sub == "off") {
+            Mode = STOPPED
+            TargetSpeed = 0
+            StationReached = 0
+            StationPos = vector(0, 0, 0)
+            Line2 = "Остановка"
+            print("[Диспетчер] Поезд: стоп")
+        } elseif (Sub == "emergency" || Sub == "авария" || Sub == "emerg") {
+            Mode = EMERGENCY
+            Line2 = "АВАРИЙНОЕ ТОРМОЖЕНИЕ"
+            print("[Диспетчер] АВАРИЯ! Торможение!")
+        } elseif (Sub == "station" || Sub == "станция") {
+            if (Args:count() >= 4) {
+                local X = Args[2]:toNumber()
+                local Y = Args[3]:toNumber()
+                local Z = Args[4]:toNumber()
+                StationPos = vector(X, Y, Z)
+                BrakeStartDist = BRAKE_DIST
+                Line3 = string.format("Станция: %s", StationPos:toString())
+                print("[Диспетчер] Станция установлена")
+            } else {
+                print("[Диспетчер] !train station x y z")
+            }
+        } elseif (Sub == "speed" || Sub == "скорость") {
+            if (Args:count() >= 3) {
+                local newSpeed = Args[2]:toNumber()
+                if (newSpeed > 0 && newSpeed <= MaxSpeed) {
+                    CruiseSpeed = newSpeed
+                    Line2 = string.format("Круиз: %d u/s", CruiseSpeed)
+                    print("[Диспетчер] Круизная скорость: %d", CruiseSpeed)
+                }
+            }
+        } elseif (Sub == "status" || Sub == "статус" || Sub == "") {
+            print("[Диспетчер] Режим:%s Скорость:%.0f Цель:%s",
+                Mode == STOPPED ? "СТОП" :
+                Mode == EMERGENCY ? "ЭВГЕНСИЯ" :
+                Mode == FORWARD ? "ВПЕРЕД" :
+                Mode == BACKWARD ? "НАЗАД" : "РУЧНОЙ",
+                Speed,
+                StationPos != vector(0, 0, 0) ? string.format("(%.0f,%.0f,%.0f)", StationPos.x, StationPos.y, StationPos.z) : "нет"
+            )
+        } elseif (Sub == "help") {
+            print("[Диспетчер] !train forward/backward/stop/emergency/station x y z/speed N/status/help")
+        } else {
+            print("[Диспетчер] !train forward|backward|stop|emergency|station x y z|speed N|status|help")
+        }
+    }
+}
+
+# === Wire Buttons (4 кнопки) ===
+event wireReceive(Index:number, Value:number) {
+    if (Index != 1) { exit() }
+    
+    if (Value == 1) { if (Mode == STOPPED || Mode == EMERGENCY) { Mode = FORWARD; TargetSpeed = CruiseSpeed } }
+    elseif (Value == 2) { if (Mode == STOPPED || Mode == EMERGENCY) { Mode = BACKWARD; TargetSpeed = -CruiseSpeed } }
+    elseif (Value == 3) { Mode = STOPPED; TargetSpeed = 0; StationReached = 0 }
+    elseif (Value == 4) { Mode = EMERGENCY; Line2 = "АВАРИЯ" }
+}
+
+# === Кнопка E на чипе ===
+event chipUsed(Ply:entity) {
+    if (Ply != Owner) { exit() }
+    Mode = STOPPED
+    TargetSpeed = 0
+    StationReached = 0
+    print("[Диспетчер] Стоп по кнопке E")
+}
+
+# === Удаление чипа ===
+event removed(Resetting:number) {
+    if (IsValid(ThrusterFwd)) { ThrusterFwd:writeVector(1, vector(0, 0, 0)) }
+    if (IsValid(ThrusterBwd)) { ThrusterBwd:writeVector(1, vector(0, 0, 0)) }
+    if (IsValid(PodCtrls)) { PodCtrls:writeNumber(1, 0) }
+}

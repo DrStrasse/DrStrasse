@@ -1,0 +1,35 @@
+TOOL.Category = "GRM";TOOL.Name = "#tool.grm_quest_tool.name";TOOL.Command=nil;TOOL.ConfigName=""
+TOOL.ClientConVar={mode="npc",npc_id="guide",npc_name="Проводник",npc_model="models/Humans/Group01/Male_07.mdl",quest_id="intro",step="1",phase="accept"}
+if CLIENT then
+ language.Add("tool.grm_quest_tool.name", "GRM Квесты — конструктор");language.Add("tool.grm_quest_tool.desc","NPC, зоны целей и точки кат-сцен");language.Add("tool.grm_quest_tool.0","Режим выбирается в панели инструмента")
+ hook.Add("PostDrawTranslucentRenderables","GRM_QuestTool_Preview",function(depth,sky,sky3d)
+  if depth or sky or sky3d then return end;local ply=LocalPlayer();local wep=IsValid(ply)and ply:GetActiveWeapon();if not IsValid(wep)or wep:GetClass()~="gmod_tool"or not wep.GetMode or wep:GetMode()~="grm_quest_tool"then return end
+  local wanted=GetConVar("grm_quest_tool_quest_id")and GetConVar("grm_quest_tool_quest_id"):GetString()or"";for _,def in ipairs(GRM.Quests.AdminDefinitions or{})do if def.id==wanted then
+   for i,step in ipairs(def.steps or{})do if step.type=="visit"then local mn,mx;if step.min and step.max then mn=Vector(step.min.x,step.min.y,step.min.z);mx=Vector(step.max.x,step.max.y,step.max.z)elseif step.pos then local c=Vector(step.pos.x,step.pos.y,step.pos.z);local r=step.radius or 120;mn=c-Vector(r,r,32);mx=c+Vector(r,r,32)end;if mn then local c=(mn+mx)*.5;render.DrawWireframeBox(c,angle_zero,mn-c,mx-c,Color(242,190,75),true);cam.Start3D2D(c+Vector(0,0,12),Angle(0,EyeAngles().y-90,90),.08);draw.SimpleText("Этап "..i..": "..step.title,"DermaDefaultBold",0,0,Color(255,220,110),TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER);cam.End3D2D()end end end
+   for phase,nodes in pairs(def.cutscene or{})do local byID={};for i,node in ipairs(nodes or{})do byID[tostring(node.id or"")]=node end;for i,node in ipairs(nodes or{})do local p=Vector(node.pos.x,node.pos.y,node.pos.z);local a=Angle(node.ang.p,node.ang.y,node.ang.r);local col=i==1 and Color(255,205,70)or(phase=="accept"and Color(80,160,255)or Color(90,220,130));render.DrawWireframeSphere(p,i==1 and 18 or 12,10,10,col,true);render.DrawLine(p,p+a:Forward()*90,Color(255,255,255),true);render.Model({model="models/dav0r/camera.mdl",pos=p,angle=a,scale=i==1 and .5 or .35});local linked=byID[tostring(node.next or"")]or nodes[i+1];if linked and linked.pos then local lp=Vector(linked.pos.x,linked.pos.y,linked.pos.z);render.DrawLine(p,lp,linked.transition=="move"and Color(90,220,255)or Color(255,130,90),true)end;cam.Start3D2D(p+Vector(0,0,18),Angle(0,EyeAngles().y-90,90),.06);draw.RoundedBox(5,-150,-18,300,36,Color(10,16,25,235));draw.SimpleText((i==1 and"СТАРТ · "or"")..tostring(node.id or("camera_"..i)).." · "..(node.transition=="move"and"ПРОЛЁТ"or"СКЛЕЙКА"),"DermaDefaultBold",0,0,col,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER);cam.End3D2D()end end
+  end end
+ end)
+end
+local function questNPC(e)return IsValid(e)and e:GetClass()=="grm_quest_npc"end
+function TOOL:LeftClick(tr)
+ if CLIENT then return true end;local p=self:GetOwner();if not p:IsSuperAdmin()then return false end;local mode=self:GetClientInfo("mode")
+ if mode=="npc"then local e=GRM.Quests.SpawnNPC(self:GetClientInfo("npc_id"),self:GetClientInfo("npc_name"),self:GetClientInfo("npc_model"),tr.HitPos+tr.HitNormal,Angle(0,p:EyeAngles().y+180,0));if IsValid(e)then GRM.Notify(p,"Квестовый NPC создан",100,220,130)return true end
+ elseif mode=="zone"then self.ZoneFirst=tr.HitPos;self:SetStage(1);GRM.Notify(p,"Первый угол зоны задан. ПКМ — второй.",100,190,255)return true
+ elseif mode=="cutscene"then local ok,why=GRM.Quests.AddCutsceneNode(self:GetClientInfo("quest_id"),self:GetClientInfo("phase"),p);GRM.Notify(p,ok and"Точка кат-сцены добавлена"or why,ok and 100 or 255,ok and 220 or 120,100);return ok end
+ return false
+end
+function TOOL:RightClick(tr)
+ if CLIENT then return true end;local p=self:GetOwner();if not p:IsSuperAdmin()then return false end;local mode=self:GetClientInfo("mode")
+ if mode=="zone"and self.ZoneFirst then local ok,why=GRM.Quests.SetVisitZone(self:GetClientInfo("quest_id"),tonumber(self:GetClientInfo("step")),self.ZoneFirst,tr.HitPos);self.ZoneFirst=nil;self:SetStage(0);GRM.Notify(p,ok and"Зона этапа сохранена"or why,ok and 100 or 255,ok and 220 or 120,100);return ok end
+ if questNPC(tr.Entity)and GRM.Quests.OpenAdmin then GRM.Quests.OpenAdmin(p);return true end
+ return false
+end
+function TOOL:Reload(tr)if CLIENT then return true end;local p=self:GetOwner();if not p:IsSuperAdmin()or not questNPC(tr.Entity)then return false end;tr.Entity:Remove();GRM.Quests.SaveDefinitions();GRM.Notify(p,"Квестовый NPC удалён",255,160,90);return true end
+if CLIENT then function TOOL.BuildCPanel(p)
+ p:AddControl("Header",{Description="GRM Quest Studio: создайте квест в /grm_quests_admin, затем разместите NPC, зоны и кадры."})
+ local combo=p:ComboBox("Режим","grm_quest_tool_mode");combo:AddChoice("Квестовый NPC","npc");combo:AddChoice("Зона этапа visit","zone");combo:AddChoice("Точка кат-сцены","cutscene")
+ p:TextEntry("ID NPC","grm_quest_tool_npc_id");p:TextEntry("Имя NPC","grm_quest_tool_npc_name");p:TextEntry("Модель NPC","grm_quest_tool_npc_model")
+ p:TextEntry("ID квеста","grm_quest_tool_quest_id");p:NumSlider("Номер этапа","grm_quest_tool_step",1,64,0)
+ local phase=p:ComboBox("Фаза кат-сцены","grm_quest_tool_phase");phase:AddChoice("При принятии","accept");phase:AddChoice("При завершении","complete")
+ p:Help("NPC: ЛКМ создать, ПКМ открыть Studio, R удалить.\nЗона: ЛКМ первый угол, ПКМ второй.\nКат-сцена: встаньте в позицию камеры и нажмите ЛКМ.")
+ end end
