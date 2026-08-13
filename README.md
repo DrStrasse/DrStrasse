@@ -111,7 +111,7 @@
 
 **Лидер фракции:** `/vaccess` (доступ транспорта для рангов/отделов)
 
-**Админ:** `/factions`, `/salary_admin`, `/logistics_admin`, `/models_admin`,
+**Админ:** `/factions`, `/door_access`, `/door`, `/warrant`, `/salary_admin`, `/logistics_admin`, `/models_admin`,
 `/weapons_admin`, `/mask_admin`, `!grmmenu`/`!grmadmin`/`!econadmin`, `/scanvehicles`,
 `/spawnmenu`, `/vshop_admin`, `/phoneshop_admin`, `/phone_access`,
 `/phone_admin_remove`, консоль: `grm_logistics_place_*`, `grm_logistics_save/load`,

@@ -1,7 +1,7 @@
 # GRM Doors v3 — перепись с нуля
 
 **Дата:** 2026-08-13 · **Статус:** принято, код в `sh_grm_doors.lua` v3.0.0  
-**Не трогает:** FFD, Q-меню, `sh_grm_doors_access.lua` (матрица ордеров/тарана)
+**Не трогает:** FFD, Q-меню. Матрица `/door_access` — отдельно, `sh_grm_doors_access.lua` v3.0.0 (CONCEPT_DOORS_ACCESS_V3.md).
 
 ## 1. Зачем
 

@@ -80,12 +80,13 @@ function SWEP:PrimaryAttack()
         local ply = self:GetOwner()
         if not IsValid(ply) or not GRM or not GRM.Doors then return end
 
-        local rec = GRM.Doors.GetRecord and GRM.Doors.GetRecord(door)
+        local rec = GRM.Doors.GetRecord and select(1, GRM.Doors.GetRecord(door))
         local hasForce = GRM.Doors.AccessManager and GRM.Doors.AccessManager.CanForceDoor and GRM.Doors.AccessManager.CanForceDoor(ply)
         local hasWarrant = false
+        local ownerKey = rec and tostring(rec.owner_key or rec.owner_sid or "") or ""
 
-        if rec and rec.owner_type == "player" and rec.owner_sid ~= "" then
-            hasWarrant = GRM.Doors.HasWarrant and GRM.Doors.HasWarrant(rec.owner_sid)
+        if rec and rec.owner_type == "player" and ownerKey ~= "" then
+            hasWarrant = GRM.Doors.HasWarrant and GRM.Doors.HasWarrant(ownerKey)
         end
 
         if not hasForce and not hasWarrant and not ply:IsSuperAdmin() then
