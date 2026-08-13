@@ -30,3 +30,70 @@ function GRM.UI.IsOpen(key)
 end
 
 print("[GRM UI] lifecycle guard loaded")
+
+--[[--------------------------------------------------------------------
+    UTF-8 БЕЗОПАСНАЯ ОБРЕЗКА (задача 10, дефект «Дзержинског»)
+
+    string.sub режет БАЙТЫ. Кириллица в UTF-8 — 2 байта на символ, поэтому
+    trim(s, 96) обрубал «…Ф.Э.Дзержинского» до «…Ф.Э.Дзержинског» ровно на
+    48-м русском символе, а строку «Аналитико-прогностическое и социальное
+    управление (профиль ГБ)» — до «…управление (». Это выглядело как
+    «нет переноса строк», хотя перенос работал: до клиента просто доезжал
+    уже обрезанный текст.
+
+    Хуже того, обрубок мог прийтись на середину многобайтовой
+    последовательности — тогда получался битый символ.
+
+    GRM.Utf8Sub считает символы, а не байты, и никогда не рвёт символ
+    пополам. Ограничения храним в СИМВОЛАХ.
+----------------------------------------------------------------------]]
+
+--- Длина строки в символах UTF-8 (а не в байтах).
+function GRM.Utf8Len(s)
+    s = tostring(s or "")
+    if utf8 and utf8.len then
+        local ok, n = pcall(utf8.len, s)
+        if ok and n then return n end
+    end
+    -- Запасной счётчик: продолжения (10xxxxxx) не считаем за символ.
+    local n = 0
+    for i = 1, #s do
+        local b = string.byte(s, i)
+        if b < 128 or b >= 192 then n = n + 1 end
+    end
+    return n
+end
+
+--- Обрезать строку до maxChars СИМВОЛОВ, не разрывая символ пополам.
+function GRM.Utf8Sub(s, maxChars)
+    s = tostring(s or "")
+    maxChars = tonumber(maxChars) or 0
+    if maxChars <= 0 then return "" end
+    if #s <= maxChars then return s end -- байт не больше лимита ⇒ точно влезает
+
+    if utf8 and utf8.offset then
+        local ok, off = pcall(utf8.offset, s, maxChars + 1)
+        if ok and off then return string.sub(s, 1, off - 1) end
+        -- offset вернул nil ⇒ символов меньше лимита, строка целиком
+        if ok then return s end
+    end
+
+    local chars, i = 0, 1
+    while i <= #s do
+        local b = string.byte(s, i)
+        local size = (b < 128 and 1) or (b < 224 and 2) or (b < 240 and 3) or 4
+        if chars + 1 > maxChars then return string.sub(s, 1, i - 1) end
+        chars, i = chars + 1, i + size
+    end
+    return s
+end
+
+--- Обрезать до maxChars символов и добавить «…», если строка длиннее.
+-- Для подписей в интерфейсе: «Александр Фон Грённер» → «Александр Фон…».
+function GRM.Utf8Ellipsis(s, maxChars)
+    s = tostring(s or "")
+    maxChars = tonumber(maxChars) or 0
+    if maxChars <= 0 then return "" end
+    if GRM.Utf8Len(s) <= maxChars then return s end
+    return GRM.Utf8Sub(s, math.max(1, maxChars - 1)) .. "…"
+end

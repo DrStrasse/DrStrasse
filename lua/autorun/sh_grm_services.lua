@@ -251,9 +251,14 @@ local function money(v)
 end
 S.Money = money
 
+-- Задача 10: лимит в символах, а не в байтах — иначе кириллица режется
+-- пополам (названия услуг, назначения платежа, примечания к счетам).
 local function trim(s, n)
     s = string.Trim(tostring(s or ""))
-    if n then s = string.sub(s, 1, n) end
+    if n then
+        if GRM and GRM.Utf8Sub then s = GRM.Utf8Sub(s, n)
+        else s = string.sub(s, 1, n) end
+    end
     return s
 end
 

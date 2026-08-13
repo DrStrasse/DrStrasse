@@ -134,9 +134,16 @@ local function notify(p, msg, r, g, b)
     else p:ChatPrint("[Дипломы] " .. msg) end
 end
 
+--[[ Задача 10: лимит считается в СИМВОЛАХ, а не в байтах. string.sub резал
+     кириллицу пополам (2 байта на символ): «…Ф.Э.Дзержинского» приезжало на
+     клиент как «…Ф.Э.Дзержинског». Выглядело как отсутствие переноса строк,
+     хотя перенос работал — до бланка просто доезжал обрезанный текст. ]]
 local function trim(s, n)
     s = string.Trim(tostring(s or ""))
-    if n then s = string.sub(s, 1, n) end
+    if n then
+        if GRM and GRM.Utf8Sub then s = GRM.Utf8Sub(s, n)
+        else s = string.sub(s, 1, n) end
+    end
     return s
 end
 

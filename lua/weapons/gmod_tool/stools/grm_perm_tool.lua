@@ -27,8 +27,11 @@ TOOL.ClientConVar = {
 }
 
 if CLIENT then
-    language.Add("tool.grm_perm_tool.name", "GRM Закрепление объектов")
-    language.Add("tool.grm_perm_tool.desc", "Закрепляет объекты на карте: переживают рестарт сервера и cleanup")
+    -- Задача 12: после унификации названий инструмент стало не найти —
+    -- привычное слово «перм» пропало из подписи. Возвращаем его в имя,
+    -- сохраняя единый префикс «GRM ».
+    language.Add("tool.grm_perm_tool.name", "GRM Перм-проп (закрепление)")
+    language.Add("tool.grm_perm_tool.desc", "Перм пропов: закреплённые объекты переживают рестарт сервера и cleanup")
     language.Add("tool.grm_perm_tool.0", "ЛКМ: закрепить/обновить | Shift+ЛКМ: без заморозки | ПКМ: информация | R: снять закрепление")
 end
 

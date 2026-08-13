@@ -535,7 +535,7 @@ local BTNS = {
     { id = "money_give", l = function()
           if istable(data.aimPly) then
               local n = tostring(data.aimPly.name or "игроку")
-              if #n > 16 then n = string.sub(n, 1, 15) .. "…" end
+              n = GRM.Utf8Ellipsis(n, 16)
               return "Передать деньги: " .. n
           end
           return "Передать деньги игроку"
@@ -546,7 +546,7 @@ local BTNS = {
     -- ── документы: показ игроку перед собой (Код 87) ──────────
     { id = "doc_pass", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
-          if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
+          n = GRM.Utf8Ellipsis(n, 14)
           return "Показать паспорт: " .. n
       end,
       fn = actShowPassport,
@@ -554,7 +554,7 @@ local BTNS = {
       ok = function() return istable(data.aimPly) and data.hasPassport == true end },
     { id = "doc_badge", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
-          if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
+          n = GRM.Utf8Ellipsis(n, 14)
           return "Предъявить удостоверение: " .. n
       end,
       fn = actShowBadge,
@@ -562,7 +562,7 @@ local BTNS = {
       ok = function() return istable(data.aimPly) and data.hasBadge == true end },
     { id = "doc_mil", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
-          if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
+          n = GRM.Utf8Ellipsis(n, 14)
           return "Показать военный билет: " .. n
       end,
       fn = actShowMilitary,
@@ -570,7 +570,7 @@ local BTNS = {
       ok = function() return istable(data.aimPly) and data.hasMilitary == true end },
     { id = "doc_lic", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
-          if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
+          n = GRM.Utf8Ellipsis(n, 14)
           return "Показать права (Дорожная Инспекция): " .. n
       end,
       fn = actShowLicense,
@@ -578,7 +578,7 @@ local BTNS = {
       ok = function() return istable(data.aimPly) and data.hasLicense == true end },
     { id = "doc_mil_lic", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
-          if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
+          n = GRM.Utf8Ellipsis(n, 14)
           return "Показать права (ВАИ): " .. n
       end,
       fn = actShowMilLicense,
@@ -586,7 +586,7 @@ local BTNS = {
       ok = function() return istable(data.aimPly) and data.hasMilLicense == true end },
     { id = "doc_diploma", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
-          if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
+          n = GRM.Utf8Ellipsis(n, 14)
           return "Предъявить диплом: " .. n
       end,
       fn = function()
@@ -598,7 +598,7 @@ local BTNS = {
       ok = function() return istable(data.aimPly) and (tonumber(data.diplomaCount) or 0) > 0 end },
     { id = "doc_med", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
-          if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
+          n = GRM.Utf8Ellipsis(n, 14)
           return "Показать медкарту: " .. n
       end,
       fn = actShowMedCard,
@@ -662,7 +662,7 @@ local BTNS = {
     { id = "admin_inv",  l = function()
           if istable(data.aimPly) then
               local n = tostring(data.aimPly.name or "игроку")
-              if #n > 14 then n = string.sub(n, 1, 13) .. "…" end
+              n = GRM.Utf8Ellipsis(n, 14)
               return "Инвентарь игрока: " .. n
           end
           return "Инвентарь игрока (прицел)"
@@ -699,7 +699,7 @@ local function drawMenu()
     -- шапка с текущим Т/С (Код 82): имя + статус замка
     if vehBar > 0 then
         local vt = tostring(data.veh.name or "Т/С")
-        if #vt > 26 then vt = string.sub(vt, 1, 25) .. "…" end
+        vt = GRM.Utf8Ellipsis(vt, 26)
         local lockCol = data.veh.locked and Color(230, 120, 110) or Color(120, 220, 140)
         draw.SimpleText(vt .. "  •  " .. (data.veh.locked and "ЗАКРЫТА" or "ОТКРЫТА"),
             "GRMCtx_Normal", x + pad + bw / 2, y + pad + 9, lockCol, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)

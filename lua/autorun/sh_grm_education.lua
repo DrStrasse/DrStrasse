@@ -1060,7 +1060,20 @@ local function diplomaBlank(parent, rec)
             y = y + rowH + 4
         end
         local need = y + 12
-        if math.abs((self:GetTall() or 0) - need) > 1 then self:SetTall(need) end
+        if math.abs((self:GetTall() or 0) - need) > 1 then
+            self:SetTall(need)
+            --[[ Карточка приклеена через Dock(TOP): смена высоты изнутри
+                 PerformLayout не перестраивает docking сама по себе, поэтому
+                 бланк оставался ровно 250 px, а лишние строки уходили под
+                 нижний край. Просим родителя (и DScrollPanel-канвас)
+                 пересчитать раскладку. ]]
+            local par = self:GetParent()
+            if IsValid(par) then
+                par:InvalidateLayout()
+                local grand = par:GetParent()
+                if IsValid(grand) then grand:InvalidateLayout() end
+            end
+        end
     end
     return p
 end
