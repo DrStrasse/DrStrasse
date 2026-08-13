@@ -102,6 +102,14 @@ check("панель OpenPumpPanel", has(pui, "function F.OpenPumpPanel"))
 check("G KEY_G", has(pui, "KEY_G"))
 check("баки foam powder", has(pui, "foam") and has(pui, "powder"))
 check("закачка fill", has(pui, '"fill"'))
+check("кнопка взять ствол", has(pui, '"take"'))
+check("инкассация G не по гидранту", (function()
+    local inc = read("lua/autorun/sh_grm_incassation.lua")
+    local a = inc:find("function getMyIncassCarClient", 1, true) or 0
+    local b = inc:find("GRM_Incass_GKey", 1, true) or 0
+    return a > 0 and b > 0 and a < b and inc:find("grm_fire_", 1, true) ~= nil
+end)())
+check("укладка без SetNoDraw", not node:find("SetNoDraw(true)", 1, true))
 check("лестница aluminium", has(ladW, "ladderaluminium.mdl"))
 check("лестница ПКМ на машину", has(ladW, "AttachToVehicle"))
 check("насос Consume agent", has(pump, "function ENT:Consume"))

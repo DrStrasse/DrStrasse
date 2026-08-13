@@ -5,7 +5,6 @@ local COL = Color(210, 45, 40, 255)
 local COL_LIVE = Color(230, 80, 50, 255)
 
 function ENT:Draw()
-    if self:GetNoDraw() then return end
     local typ = self.GetNodeType and self:GetNodeType() or 0
     local FA = GRM and GRM.FireAddon
     if FA and (typ == FA.NODE_LAY or typ == FA.NODE_SOURCE) then return end
@@ -15,7 +14,7 @@ end
 function ENT:DrawTranslucent()
     local typ = self.GetNodeType and self:GetNodeType() or 0
     local FA = GRM and GRM.FireAddon
-    if not (self:GetNoDraw() or (FA and (typ == FA.NODE_LAY or typ == FA.NODE_SOURCE))) then
+    if not (FA and (typ == FA.NODE_LAY or typ == FA.NODE_SOURCE)) then
         self:DrawModel()
     end
     local nxt = self:GetNextNode()

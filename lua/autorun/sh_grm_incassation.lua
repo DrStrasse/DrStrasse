@@ -1823,6 +1823,17 @@ hook.Add("PostDrawTranslucentRenderables", "GRM_Incass_3D2D", function(depth, sk
     end
 end)
 
+local function getMyIncassCarClient(ply)
+    local my = ply:GetNWEntity("GRM_IncassMyCar", NULL)
+    if IsValid(my) and my:GetNWInt("GRM_IncassRun", 0) > 0 then return my end
+    local veh = ply:GetVehicle()
+    if IsValid(veh) then
+        local root = getRootVehicle(veh)
+        if IsValid(root) and root:GetNWInt("GRM_IncassRun", 0) > 0 then return root end
+    end
+    return nil
+end
+
 -- ── Единая клавиша [G] на клиенте ────────────────────────────────
 hook.Add("PlayerButtonDown", "GRM_Incass_GKey", function(ply, button)
     if button ~= KEY_G then return end
@@ -1831,6 +1842,11 @@ hook.Add("PlayerButtonDown", "GRM_Incass_GKey", function(ply, button)
     local tr = ply:GetEyeTrace()
     local hit = IsValid(tr.Entity) and tr.Entity or nil
     local pPos = ply:GetPos()
+    -- пожарные энтити — не инкассация (иначе G по гидранту валит хук)
+    if IsValid(hit) then
+        local cls = hit:GetClass() or ""
+        if string.sub(cls, 1, 9) == "grm_fire_" then return end
+    end
 
     -- 1. Банкомат под прицелом или рядом
     local nearTerm = hit
@@ -1891,17 +1907,6 @@ hook.Add("PlayerButtonDown", "GRM_Incass_GKey", function(ply, button)
         return true
     end
 end)
-
-local function getMyIncassCarClient(ply)
-    local my = ply:GetNWEntity("GRM_IncassMyCar", NULL)
-    if IsValid(my) and my:GetNWInt("GRM_IncassRun", 0) > 0 then return my end
-    local veh = ply:GetVehicle()
-    if IsValid(veh) then
-        local root = getRootVehicle(veh)
-        if IsValid(root) and root:GetNWInt("GRM_IncassRun", 0) > 0 then return root end
-    end
-    return nil
-end
 
 -- ── HUD инкассации ───────────────────────────────────────────────
 hook.Add("HUDPaint", "GRM_Incass_HUD", function()

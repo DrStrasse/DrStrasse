@@ -64,14 +64,6 @@ function ENT:Use(ply)
         return
     end
 
-    if A and A.RewindAtSource then
-        local n = A.RewindAtSource(self, ply)
-        if n > 0 then
-            if ply.ChatPrint then ply:ChatPrint("[Рукав] Смотано рукавов: " .. tostring(n)) end
-            return
-        end
-    end
-
     if A and A.TakeHose then
         local h, err = A.TakeHose(ply, self)
         if h then

@@ -150,6 +150,19 @@ if SERVER then
             local ag = extra ~= "" and extra or (pump:GetAgent() ~= "" and pump:GetAgent() or "water")
             if pump.DrainAgent then pump:DrainAgent(ag, 99999) end
             tell(ply, "Бак слит: " .. ag, 255, 180, 90)
+        elseif act == "take" then
+            local A = GRM.FireAddon
+            if not (A and A.TakeHose) then tell(ply, "аддон рукава не загружен", 255, 140, 90) send(ply, pump) return end
+            local h, err = A.TakeHose(ply, pump)
+            if h then
+                tell(ply, "Ствол в руках. ЛКМ — лить. Назад по рукаву — смотка. E на насос — вернуть.", 100, 220, 130)
+            else
+                tell(ply, tostring(err or "не выдать ствол"), 255, 140, 90)
+            end
+        elseif act == "rewind" then
+            local A = GRM.FireAddon
+            local n = (A and A.RewindAtSource) and A.RewindAtSource(pump, ply) or 0
+            tell(ply, n > 0 and ("Смотано рукавов: " .. n) or "Нет рукава на катушке.", n > 0 and 100 or 255, n > 0 and 220 or 140, n > 0 and 130 or 90)
         else
             return
         end
@@ -242,7 +255,7 @@ if CLIENT then
         if T and T.Colors then C = T.Colors end
 
         frame = vgui.Create("DFrame")
-        frame:SetSize(520, 500)
+        frame:SetSize(520, 560)
         frame:Center()
         frame:SetTitle("")
         frame:ShowCloseButton(false)

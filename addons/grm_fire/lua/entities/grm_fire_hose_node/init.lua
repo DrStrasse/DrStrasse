@@ -4,14 +4,6 @@ include("shared.lua")
 
 local function A() return GRM and GRM.FireAddon end
 
-local function noPhys(self)
-    self:SetSolid(SOLID_NONE)
-    self:SetMoveType(MOVETYPE_NONE)
-    self:SetCollisionGroup(COLLISION_GROUP_IN_VEHICLE)
-    self:DrawShadow(false)
-    self:SetNoDraw(true)
-end
-
 local function ghostBox(self)
     self:SetSolid(SOLID_BBOX)
     self:SetMoveType(MOVETYPE_NONE)
@@ -29,9 +21,14 @@ function ENT:Initialize()
     local noz = FA and FA.NODE_NOZZLE or 3
 
     if typ == lay or typ == src then
-        -- якоря укладки: идея точек нужна, модель — нет (ERROR/кубы)
+        -- якоря: модель не рисуем, но NoDraw нельзя — иначе кабель тоже гаснет
         self:SetModel("models/props_junk/PopCan01a.mdl")
-        noPhys(self)
+        self:SetSolid(SOLID_NONE)
+        self:SetMoveType(MOVETYPE_NONE)
+        self:SetCollisionGroup(COLLISION_GROUP_IN_VEHICLE)
+        self:DrawShadow(false)
+        self:SetRenderMode(RENDERMODE_TRANSALPHA)
+        self:SetColor(Color(255, 255, 255, 0))
         return
     end
 
