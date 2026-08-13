@@ -26,7 +26,9 @@ ok(not src:find("ScreenClickerEnabled", 1, true), "Think не гасит по к
 ok(not bare:find('{"tools", "Инструменты"', 1, true)
     and not bare:find('{ "tools", "Инструменты"', 1, true),
     "вкладки «Инструменты» нет")
-ok(src:find("fillToolList", 1, true) ~= nil, "список тулов на правой полке")
+ok(src:find("fillToolList", 1, true) ~= nil, "список тулов в средней колонке")
+ok(src:find("TOOLS_W", 1, true) ~= nil and src:find("PANEL_W", 1, true) ~= nil,
+    "две отдельные колонки: инструменты и панель")
 ok(not bare:find('RunConsoleCommand("+menu")', 1, true), "нет кнопки +menu")
 ok(src:find("панели в Стройке нет", 1, true) ~= nil, "честная подсказка без схемы")
 

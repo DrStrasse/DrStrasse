@@ -1,6 +1,8 @@
 --[[--------------------------------------------------------------------
     GRM Q-меню «Стройка» v4.1.0 (Код 96) — переписано с нуля
 
+    v4.1.1: три колонки — меню | инструменты | панель настроек;
+      окно шире и выше; параметры в отдельной правой колонке, не под тулами.
     v4.1.0: инструменты справа (как ваниль / v3), не вкладкой;
       панель параметров с нуля — только ручная схема с человеческими
       подписями; авто-дамп ClientConVar в UI не используется
@@ -19,7 +21,7 @@ GRM = GRM or {}
 GRM.QMenu = GRM.QMenu or {}
 local QM = GRM.QMenu
 
-QM.Version = "4.1.0"
+QM.Version = "4.1.1"
 
 local CONFIG_FILE = "grm_qmenu.json"
 
@@ -1151,7 +1153,7 @@ if CLIENT then
         return s
     end
 
-    local HEAD_H, TAB_H, FOOT_H, SHELF_W, PAD = 52, 38, 44, 300, 12
+    local HEAD_H, TAB_H, FOOT_H, TOOLS_W, PANEL_W, PAD = 52, 38, 44, 260, 300, 12
     local TILE_W, TILE_H, TILE_ICON = 104, 120, 96
     local ICON_BUDGET = 8
 
@@ -1194,7 +1196,7 @@ if CLIENT then
             if isfunction(body.AddItem) then body:AddItem(l) end
         end
         if not isstring(toolId) or toolId == "" then
-            addHint("Выберите инструмент выше. Параметры появятся здесь, если для него есть схема Стройки.")
+            addHint("Выберите инструмент слева. Параметры появятся здесь, если для него есть схема Стройки.")
             return
         end
         -- Только ручная схема. Авто из ClientConVar сюда не попадает.
@@ -1265,22 +1267,21 @@ if CLIENT then
         end
         if not admin and QM._tab == "settings" then QM._tab = "catalog" end
 
-        local FW, FH = 1100, 700
+        local FW, FH = 1400, 780
         if isfunction(ScrW) and isfunction(ScrH) then
             local sw, sh = ScrW(), ScrH()
             if isnumber(sw) and isnumber(sh) and sw > 0 and sh > 0 then
-                FW = math.Clamp(math.floor(sw * 0.72), 900, 1280)
-                FH = math.Clamp(math.floor(sh * 0.74), 560, 820)
+                FW = math.Clamp(math.floor(sw * 0.88), 1100, 1680)
+                FH = math.Clamp(math.floor(sh * 0.84), 640, 960)
             end
         end
-        -- Полка справа — список инструментов. Иконки каталога в safe-режиме
-        -- отключаются отдельно; полку прятать нельзя, иначе тулы недоступны.
-        local shelfOn = true
-        local shelfW = SHELF_W
+        -- Три колонки: меню | инструменты | панель. Иконки в safe-режиме
+        -- отключаются отдельно; колонки тулов прятать нельзя.
+        local toolsW, panelW = TOOLS_W, PANEL_W
         local tabsY = HEAD_H
         local contY = HEAD_H + TAB_H
         local footY = FH - FOOT_H
-        local CW = FW - PAD * 2 - (shelfOn and (shelfW + PAD) or 0)
+        local CW = FW - PAD * 4 - toolsW - panelW
         local CH = footY - contY - PAD
 
         local t0 = (isfunction(SysTime) and SysTime()) or 0
@@ -1373,26 +1374,28 @@ if CLIENT then
         content.Paint = function() end
 
         local settingsBody, toolsBody
-        local SHELF_HEAD = 26
-        local toolsH = math.floor((CH - SHELF_HEAD * 2) * 0.58)
-        local paramsH = CH - SHELF_HEAD * 2 - toolsH
+        local COL_HEAD = 26
         do
-            local shelf = vgui.Create("DPanel", f)
-            shelf:SetPos(FW - PAD - shelfW, contY) shelf:SetSize(shelfW, CH)
-            shelf.Paint = function(_, pw, ph)
+            local toolsCol = vgui.Create("DPanel", f)
+            toolsCol:SetPos(PAD + CW + PAD, contY) toolsCol:SetSize(toolsW, CH)
+            toolsCol.Paint = function(_, pw, ph)
                 draw.RoundedBox(6, 0, 0, pw, ph, QC.panel)
-                draw.RoundedBoxEx(6, 0, 0, pw, SHELF_HEAD, QC.head, true, true, false, false)
-                draw.SimpleText("ИНСТРУМЕНТЫ", "GRMQ_Small", 10, SHELF_HEAD / 2, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                local py = SHELF_HEAD + toolsH
-                draw.RoundedBox(0, 0, py, pw, SHELF_HEAD, QC.head)
-                draw.SimpleText("ПАРАМЕТРЫ", "GRMQ_Small", 10, py + SHELF_HEAD / 2, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                draw.RoundedBoxEx(6, 0, 0, pw, COL_HEAD, QC.head, true, true, false, false)
+                draw.SimpleText("ИНСТРУМЕНТЫ", "GRMQ_Small", 10, COL_HEAD / 2, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             end
-            toolsBody = vgui.Create("DScrollPanel", shelf)
-            toolsBody:SetPos(4, SHELF_HEAD + 2) toolsBody:SetSize(shelfW - 8, toolsH - 4)
+            toolsBody = vgui.Create("DScrollPanel", toolsCol)
+            toolsBody:SetPos(4, COL_HEAD + 2) toolsBody:SetSize(toolsW - 8, CH - COL_HEAD - 6)
             QM._toolsBody = toolsBody
-            settingsBody = vgui.Create("DScrollPanel", shelf)
-            settingsBody:SetPos(4, SHELF_HEAD + toolsH + SHELF_HEAD + 2)
-            settingsBody:SetSize(shelfW - 8, paramsH - 4)
+
+            local panelCol = vgui.Create("DPanel", f)
+            panelCol:SetPos(PAD + CW + PAD + toolsW + PAD, contY) panelCol:SetSize(panelW, CH)
+            panelCol.Paint = function(_, pw, ph)
+                draw.RoundedBox(6, 0, 0, pw, ph, QC.panel)
+                draw.RoundedBoxEx(6, 0, 0, pw, COL_HEAD, QC.head, true, true, false, false)
+                draw.SimpleText("ПАРАМЕТРЫ", "GRMQ_Small", 10, COL_HEAD / 2, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+            settingsBody = vgui.Create("DScrollPanel", panelCol)
+            settingsBody:SetPos(4, COL_HEAD + 2) settingsBody:SetSize(panelW - 8, CH - COL_HEAD - 6)
             QM._settingsBody = settingsBody
         end
 
@@ -1528,7 +1531,7 @@ if CLIENT then
                 pnl:DockMargin(2, mTop or 2, 2, 0)
                 if isfunction(sc.AddItem) then sc:AddItem(pnl) end
             end
-            local innerW = math.max(40, shelfW - 28)
+            local innerW = math.max(40, toolsW - 28)
             local catsShown = 0
             for _, catDef in ipairs(QM.ToolCategories or {}) do
                 local here = {}
