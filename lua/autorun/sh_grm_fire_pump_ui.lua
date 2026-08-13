@@ -163,6 +163,43 @@ if SERVER then
             local A = GRM.FireAddon
             local n = (A and A.RewindAtSource) and A.RewindAtSource(pump, ply) or 0
             tell(ply, n > 0 and ("Смотано рукавов: " .. n) or "Нет рукава на катушке.", n > 0 and 100 or 255, n > 0 and 220 or 140, n > 0 and 130 or 90)
+        elseif act == "link" then
+            local A = GRM.FireAddon
+            if not A then tell(ply, "аддон рукава не загружен", 255, 140, 90) send(ply, pump) return end
+            local held = ply.GRM_FireHose
+            if IsValid(held) then
+                local start = held.GetStartEnt and held:GetStartEnt() or NULL
+                if start == pump then
+                    local hyd = A.NearestHydrant and select(1, A.NearestHydrant(pump:GetPos(), 2200)) or nil
+                    if not IsValid(hyd) then tell(ply, "Гидрант не найден. Поставьте колонку тулом.", 255, 160, 80)
+                    else
+                        local ok, err = held:DockTo(hyd, ply)
+                        tell(ply, ok and "Рукав стыкован с гидрантом." or tostring(err or "стык не вышел"), ok and 100 or 255, ok and 220 or 140, ok and 130 or 90)
+                    end
+                elseif IsValid(start) and start:GetClass() == "grm_fire_hydrant" then
+                    local ok, err = held:DockTo(pump, ply)
+                    tell(ply, ok and "Рукав с гидранта стыкован к насосу." or tostring(err or "стык не вышел"), ok and 100 or 255, ok and 220 or 140, ok and 130 or 90)
+                else
+                    tell(ply, "Сначала сдайте чужой рукав.", 255, 160, 80)
+                end
+            else
+                local near = pump.FindLinkedHydrant and pump:FindLinkedHydrant() or nil
+                if IsValid(near) then
+                    tell(ply, "Уже связано: открытый гидрант рядом. Жмите «Закачка».", 100, 220, 130)
+                else
+                    local hyd, dist = A.NearestHydrant and A.NearestHydrant(pump:GetPos(), 2200) or nil
+                    if not IsValid(hyd) then
+                        tell(ply, "Гидранта нет в 2200 юн. Поставьте колонку и откройте E.", 255, 160, 80)
+                    elseif hyd.GetOpen and not hyd:GetOpen() then
+                        tell(ply, "Откройте гидрант (E), затем снова «Связать».", 255, 160, 80)
+                    elseif (dist or 9999) <= 380 then
+                        tell(ply, "Гидрант рядом — связь есть. Жмите «Закачка».", 100, 220, 130)
+                    else
+                        local h, err = A.LaySupplyLine(hyd, pump)
+                        tell(ply, h and ("Рукав проложен к гидранту (" .. math.floor(dist or 0) .. " юн.).") or tostring(err or "не связать"), h and 100 or 255, h and 220 or 140, h and 130 or 90)
+                    end
+                end
+            end
         else
             return
         end
@@ -255,7 +292,7 @@ if CLIENT then
         if T and T.Colors then C = T.Colors end
 
         frame = vgui.Create("DFrame")
-        frame:SetSize(520, 560)
+        frame:SetSize(520, 700)
         frame:Center()
         frame:SetTitle("")
         frame:ShowCloseButton(false)
@@ -290,7 +327,7 @@ if CLIENT then
             paintBar(0, 4, w, 28, s.water / math.max(1, s.waterMax), Color(50, 140, 230), "ВОДА", s.water, s.waterMax)
             paintBar(0, 38, w, 28, s.foam / math.max(1, s.foamMax), Color(230, 80, 70), "ПЕНА", s.foam, s.foamMax)
             paintBar(0, 72, w, 28, s.powder / math.max(1, s.powderMax), Color(200, 190, 80), "ПОРОШОК", s.powder, s.powderMax)
-            local link = s.hydrant and "гидрант: СВЯЗАН (открыт)" or "гидрант: нет связи"
+            local link = s.hydrant and "гидрант: СВЯЗАН — можно качать" or "гидрант: нет связи (откройте E рядом или «Связать»)"
             local cab = s.cabinet and "  ·  шкаф рядом" or ""
             draw.SimpleText(link .. cab, "GRMFirePump_N", 0, 110, s.hydrant and Color(80, 220, 140) or Color(255, 170, 80))
             draw.SimpleText("рукава " .. (s.hoses or 0) .. "/" .. (s.hosesMax or 4) .. "   ствол: " .. tostring(s.agent or "water"), "GRMFirePump_N", 0, 130, Color(200, 205, 215))
@@ -321,6 +358,13 @@ if CLIENT then
 
         local spacer = vgui.Create("DPanel", body)
         spacer:Dock(TOP) spacer:SetTall(148) spacer:SetPaintBackground(false)
+
+        local bTake = mk("ВЗЯТЬ РУКАВ / СТВОЛ С МАШИНЫ", Color(200, 70, 40))
+        bTake.DoClick = function() act("take") end
+        local bRew = mk("Смотать рукава на катушку", Color(90, 80, 50))
+        bRew.DoClick = function() act("rewind") end
+        local bLink = mk("Связать машину с гидрантом", Color(40, 120, 90))
+        bLink.DoClick = function() act("link") end
 
         local bW = mk("Ствол: ВОДА", Color(40, 110, 190))
         bW.DoClick = function() act("agent", "water") end

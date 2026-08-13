@@ -316,7 +316,7 @@ function F.CommissionTruck(ply)
     veh:SetNWInt("GRM_FireHoses", pump.GetHosesMax and pump:GetHosesMax() or 4)
     veh:SetNWInt("GRM_FireTank", pump.GetTank and pump:GetTank() or 0)
     ply:SetNWEntity("GRM_FireMyTruck", veh)
-    tell(ply, "Машина принята. G — панель насоса (вода/пена/порошок). E по насосу — рукав. Закачка только через G у открытого гидранта.", 100, 220, 130)
+    tell(ply, "Машина принята. G — панель (взять рукав, связать с гидрантом). E по машине/насосу — ствол. Гидрант: откройте E, подъезд ~6 м или кнопка «Связать».", 100, 220, 130)
     print("[GRM Fire] truck commissioned by " .. ply:Nick() .. " class=" .. veh:GetClass())
     return true, veh, pump
 end

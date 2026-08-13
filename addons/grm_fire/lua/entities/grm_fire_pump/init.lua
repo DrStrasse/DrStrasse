@@ -8,11 +8,12 @@ function ENT:Initialize()
     local A = GRM and GRM.FireAddon
     self:SetModel(A and A.SafeModel(A.Models.pump) or "models/props_lab/tpplugholder_single.mdl")
     self:SetSolid(SOLID_BBOX)
+    self:SetCollisionBounds(Vector(-18, -18, -10), Vector(18, 18, 20))
     self:SetMoveType(MOVETYPE_NONE)
-    self:SetCollisionGroup(COLLISION_GROUP_WORLD)
+    self:SetCollisionGroup(COLLISION_GROUP_WEAPON)
     self:SetUseType(SIMPLE_USE)
     self:DrawShadow(false)
-    self:SetNotSolid(true)
+    self:SetNotSolid(false)
     self:SetRenderMode(RENDERMODE_TRANSALPHA)
     self:SetColor(Color(70, 190, 255, 140))
     local tmax = self:GetTankMax()
@@ -40,9 +41,10 @@ function ENT:AttachToVehicle(veh, localPos, localAng)
     self:SetLocalPos(localPos or Vector(0, -46, 16))
     self:SetLocalAngles(localAng or Angle(0, 90, 0))
     self:SetSolid(SOLID_BBOX)
+    self:SetCollisionBounds(Vector(-18, -18, -10), Vector(18, 18, 20))
     self:SetMoveType(MOVETYPE_NONE)
-    self:SetCollisionGroup(COLLISION_GROUP_WORLD)
-    self:SetNotSolid(true)
+    self:SetCollisionGroup(COLLISION_GROUP_WEAPON)
+    self:SetNotSolid(false)
     self:DrawShadow(false)
     return true
 end
@@ -80,7 +82,7 @@ function ENT:Use(ply)
 end
 
 function ENT:FindLinkedHydrant()
-    for _, h in ipairs(ents.FindInSphere(self:GetPos(), 240)) do
+    for _, h in ipairs(ents.FindInSphere(self:GetPos(), 380)) do
         if IsValid(h) and h:GetClass() == "grm_fire_hydrant" and h.GetOpen and h:GetOpen() then
             return h
         end

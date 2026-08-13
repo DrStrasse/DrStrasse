@@ -25,6 +25,6 @@ function ENT:Draw()
     local txt = (on and "НАСОС  " or "насос выкл  ") .. label .. " " .. tostring(have) .. "/" .. tostring(maxv) .. "  " .. slots
     cam.Start3D2D(pos, ang, 0.07)
         draw.SimpleText(txt, "DermaDefaultBold", 0, 0, on and Color(80, 200, 255) or Color(180, 190, 200), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        draw.SimpleText("G — панель насоса", "DermaDefault", 0, 14, Color(255, 170, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("E — взять рукав   G — панель", "DermaDefault", 0, 14, Color(255, 170, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     cam.End3D2D()
 end

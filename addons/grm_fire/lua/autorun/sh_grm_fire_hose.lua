@@ -142,4 +142,118 @@ if SERVER then
         ply:Give("weapon_grm_hose")
         return ply:HasWeapon("weapon_grm_hose")
     end
+
+    function A.NearestHydrant(pos, maxd)
+        if not isvector(pos) then return nil end
+        maxd = tonumber(maxd) or 2200
+        local best, bestD
+        for _, h in ipairs(ents.FindByClass("grm_fire_hydrant")) do
+            if IsValid(h) then
+                local d = h:GetPos():Distance(pos)
+                if d <= maxd and (not best or d < bestD) then
+                    best, bestD = h, d
+                end
+            end
+        end
+        return best, bestD
+    end
+
+    -- Прямая линия насос ↔ гидрант (без игрока в руках).
+    function A.LaySupplyLine(src, dst)
+        if not IsValid(src) or not IsValid(dst) then return nil, "нет цели" end
+        if src == dst then return nil, "тот же объект" end
+        if not A.SourceHasFreeSlot(src) then return nil, "нет свободного порта на источнике" end
+        if not A.SourceHasFreeSlot(dst) then return nil, "нет свободного порта на насосе" end
+        if src:GetClass() == "grm_fire_hydrant" and src.GetOpen and not src:GetOpen() then
+            return nil, "гидрант закрыт — откройте E"
+        end
+        local a = src:WorldSpaceCenter() + Vector(0, 0, 6)
+        local b = dst:WorldSpaceCenter() + Vector(0, 0, 6)
+        local dist = a:Distance(b)
+        local maxL = A.HoseCfg.MaxLength or 2200
+        if dist > maxL then return nil, ("далеко (%.0f > %d)"):format(dist, maxL) end
+        local hose = ents.Create("grm_fire_hose")
+        if not IsValid(hose) then return nil, "не создался рукав" end
+        hose:SetPos(a)
+        hose:SetStartEnt(src)
+        hose:SetMaxLen(maxL)
+        hose:Spawn()
+        hose:Activate()
+        local startN = hose:MakeNode(A.NODE_SOURCE, a, src)
+        if not IsValid(startN) then hose:Remove() return nil, "узел" end
+        local last = startN
+        local step = math.max(60, A.HoseCfg.LayStep or 70)
+        local nsteps = math.max(0, math.floor(dist / step) - 1)
+        for i = 1, nsteps do
+            local p = LerpVector(i / (nsteps + 1), a, b)
+            local tr = util.TraceLine({
+                start = p + Vector(0, 0, 48),
+                endpos = p - Vector(0, 0, 96),
+                mask = MASK_SOLID_BRUSHONLY,
+            })
+            if tr.Hit then p = tr.HitPos + Vector(0, 0, 3) end
+            local node = hose:MakeNode(A.NODE_LAY, p)
+            if IsValid(node) then
+                last:SetNextNode(node)
+                hose:Link(last, node)
+                last = node
+            end
+        end
+        local dock = hose:MakeNode(A.NODE_SOURCE, b, dst)
+        if not IsValid(dock) then hose:Remove() return nil, "стык" end
+        last:SetNextNode(dock)
+        hose:Link(last, dock)
+        hose:SetEndNode(dock)
+        hose:SetDocked(true)
+        hose:SetHolder(NULL)
+        hose:SetLaidLen(math.floor(hose:LaidDistance()))
+        if dst.SetPumpOn then dst:SetPumpOn(true) end
+        if src.SetHosesOut then src:SetHosesOut(A.HoseCountOn(src)) end
+        if dst.SetHosesOut then dst:SetHosesOut(A.HoseCountOn(dst)) end
+        hose:EmitSound("buttons/lever7.wav", 65, 100)
+        hook.Run("GRM_FireAddon_HoseDocked", hose, dst, nil)
+        return hose
+    end
+end
+
+if CLIENT then
+    local MAT
+    local function hoseMat()
+        if MAT and not MAT:IsError() then return MAT end
+        MAT = Material("cable/redcable")
+        if not MAT or MAT:IsError() then MAT = Material("cable/cable_lit") end
+        if not MAT or MAT:IsError() then MAT = Material("sprites/physbeama") end
+        return MAT
+    end
+
+    local function nodeTip(ent)
+        if not IsValid(ent) then return nil end
+        if ent:IsPlayer() then
+            local att = ent:LookupAttachment("anim_attachment_RH")
+            local dat = att and att > 0 and ent:GetAttachment(att)
+            return (dat and dat.Pos) or (ent:WorldSpaceCenter() + Vector(0, 0, 18))
+        end
+        return ent:GetPos() + Vector(0, 0, 4)
+    end
+
+    -- Запасной проход: рисуем ВСЕ сегменты, даже если у узла не вызвали Draw.
+    hook.Add("PostDrawTranslucentRenderables", "GRM_FireHose_Beams", function(depth, sky)
+        if sky or depth then return end
+        local mat = hoseMat()
+        if not mat then return end
+        render.SetMaterial(mat)
+        for _, n in ipairs(ents.FindByClass("grm_fire_hose_node")) do
+            if IsValid(n) and n.GetNextNode then
+                local nxt = n:GetNextNode()
+                local a, b = nodeTip(n), nodeTip(nxt)
+                if a and b then
+                    local dist = a:Distance(b)
+                    if dist > 2 and dist < 2600 then
+                        render.DrawBeam(a, b, 10, 0, dist / 18, Color(80, 8, 6, 255))
+                        render.DrawBeam(a, b, 6.5, 0, dist / 22, Color(230, 40, 28, 255))
+                    end
+                end
+            end
+        end
+    end)
 end

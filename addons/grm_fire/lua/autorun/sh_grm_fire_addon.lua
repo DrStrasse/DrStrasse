@@ -8,7 +8,7 @@ GRM_FireAddon = true
 GRM = GRM or {}
 GRM.FireAddon = GRM.FireAddon or {}
 local A = GRM.FireAddon
-A.Version = "0.4.0"
+A.Version = "0.4.1"
 
 A.Models = {
     hydrant  = { "models/props/cs_assault/FireHydrant.mdl", "models/props_pipes/valvewheel001.mdl" },

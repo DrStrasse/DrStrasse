@@ -21,14 +21,15 @@ function ENT:Initialize()
     local noz = FA and FA.NODE_NOZZLE or 3
 
     if typ == lay or typ == src then
-        -- якоря: модель не рисуем, но NoDraw нельзя — иначе кабель тоже гаснет
+        -- якоря: модель в Draw не рисуем. Альфу 0 и NoDraw нельзя —
+        -- движок тогда не зовёт DrawTranslucent и кабель пропадает.
         self:SetModel("models/props_junk/PopCan01a.mdl")
         self:SetSolid(SOLID_NONE)
         self:SetMoveType(MOVETYPE_NONE)
         self:SetCollisionGroup(COLLISION_GROUP_IN_VEHICLE)
         self:DrawShadow(false)
-        self:SetRenderMode(RENDERMODE_TRANSALPHA)
-        self:SetColor(Color(255, 255, 255, 0))
+        self:SetRenderMode(RENDERMODE_NORMAL)
+        self:SetColor(Color(220, 40, 30, 255))
         return
     end
 
