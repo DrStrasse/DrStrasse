@@ -1,5 +1,9 @@
 --[[--------------------------------------------------------------------
-    GRM HUD v10.2 — Полноценный HUD для Sandbox
+    GRM HUD v10.3 — Полноценный HUD для Sandbox
+    v10.3: колесо/слоты/таймаут селектора НЕ сменяют оружие, пока
+           физган или гравиган держит проп (IN_ATTACK). Иначе при
+           вращении/подтягивании пропа бар открывался, через 3 с
+           input.SelectWeapon снимал физган — проп падал.
     v10.2: разделённые строки денег «НАЛИЧКА» (кошелёк, ядро валюты)
            и «НА СЧЁТУ» (банк, экономика → GRM_Bank_Sync)
     v10.1: ресивер grm_balance рассылает хук GRM_BalanceUpdated
@@ -235,6 +239,32 @@ local function GRM_HUD_MobileOpen()
     return GRM and GRM.Mobile and GRM.Mobile.ClientIsOpen and GRM.Mobile.ClientIsOpen() == true
 end
 
+-- Физган/гравиган: ЛКМ = луч/захват, E+мышь = вращение, колесо = дистанция.
+-- Селектор не должен в это время ни открываться, ни автовыбирать оружие.
+local BUILD_WEP = {
+    weapon_physgun = true,
+    weapon_physcannon = true,
+}
+
+function GRM.HUD.IsBuildWeapon(ply)
+    if not IsValid(ply) then return false end
+    local wep = ply.GetActiveWeapon and ply:GetActiveWeapon()
+    if not IsValid(wep) then return false end
+    local cls = wep.GetClass and wep:GetClass() or ""
+    return BUILD_WEP[cls] == true
+end
+
+function GRM.HUD.IsPropToolBusy(ply)
+    if not GRM.HUD.IsBuildWeapon(ply) then return false end
+    if not ply.KeyDown then return false end
+    return ply:KeyDown(IN_ATTACK) == true
+end
+
+local function AbortSelectorQuiet()
+    selector.active = false
+    selector.alpha = 0
+end
+
 hook.Add("PlayerBindPress", "GRM_HUD_Selector", function(ply, bind, pressed)
     if not pressed then return end
     if not IsValid(ply) or not ply:Alive() then return end
@@ -249,6 +279,21 @@ hook.Add("PlayerBindPress", "GRM_HUD_Selector", function(ply, bind, pressed)
         if bind == "+attack" or bind == "+attack2" or bind == "+reload" or bind == "+use" then return true end
         if bind == "+jump" or bind == "+duck" or bind == "+speed" or bind == "+walk" then return true end
         return true
+    end
+    local b = string.lower(tostring(bind or ""))
+    -- Пока луч физгана/гравигана держит проп: глотаем смену оружия,
+    -- бар не открываем, SelectWeapon не зовём. Дистанцию крутит сам
+    -- физган по дельте колеса (не через invnext).
+    if GRM.HUD.IsPropToolBusy(ply) then
+        if b == "invnext" or b == "invprev" or b == "lastinv" or b == "phys_swap"
+            or string.match(b, "^slot%d+$") then
+            AbortSelectorQuiet()
+            return true
+        end
+        if b == "+attack" or b == "+attack2" then
+            AbortSelectorQuiet()
+            return
+        end
     end
     if bind == "invnext" then
         RefreshWeapons()
@@ -357,6 +402,12 @@ end
 
 local function DrawWeaponSelector()
     if GRM_HUD_MobileOpen and GRM_HUD_MobileOpen() then selector.active = false; selector.alpha = 0; return end
+    local lpBusy = LocalPlayer()
+    -- Захват физганом: бар гасим сразу, таймаут НЕ вызывает SelectWeapon
+    if GRM.HUD.IsPropToolBusy(lpBusy) then
+        AbortSelectorQuiet()
+        return
+    end
     local cfg = GRM.HUD.Config
     if selector.active and CurTime() - selector.lastInput > cfg.selectorTimeout then SelectWeapon() end
     local targetAlpha = selector.active and 255 or 0
@@ -459,8 +510,8 @@ end)
 
 hook.Add("InitPostEntity", "GRM_HUD_Welcome", function()
     timer.Simple(4, function()
-        if IsValid(LocalPlayer()) then GRM.AddNotification("HUD v10.2 загружен — колёсико для выбора оружия", 5, Color(100, 180, 255)) end
+        if IsValid(LocalPlayer()) then GRM.AddNotification("HUD v10.3 загружен — колёсико для выбора оружия", 5, Color(100, 180, 255)) end
     end)
 end)
 
-print("[GRM] HUD v10.2 загружен")
+print("[GRM] HUD v10.3 загружен")
