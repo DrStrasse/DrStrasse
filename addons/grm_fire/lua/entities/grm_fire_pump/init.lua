@@ -187,6 +187,14 @@ function ENT:Fill(amount)
 end
 
 function ENT:Think()
+    if self._grmTruckGear or self:GetNWBool("GRM_TruckGear", false) then
+        local host = self:GetHostVehicle()
+        if not IsValid(host) then host = self:GetParent() end
+        if not IsValid(host) then
+            self:Remove()
+            return
+        end
+    end
     if self:GetFilling() then
         local agent = self:GetAgent()
         if agent == "" then agent = "water" end

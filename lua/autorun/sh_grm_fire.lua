@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Fire v1.3.3 (Код 58)
+    GRM Fire v1.3.4 (Код 58)
     Серверная обвязка аддона grm_fire + vFire.
     Не содержит моделей/рукава — они в аддоне.
     Права, персист очагов, рандом по точкам, плита, оповещение.
@@ -10,7 +10,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Fire = GRM.Fire or {}
 local F = GRM.Fire
-F.Version = "1.3.3"
+F.Version = "1.3.4"
 
 F.Config = F.Config or {
     StoveEnabled = true,
@@ -263,8 +263,42 @@ if SERVER then
         return false
     end)
 
+    local function isVehicleEnt(ent)
+        if not IsValid(ent) then return false end
+        if ent.IsVehicle and ent:IsVehicle() then return true end
+        local cls = ent:GetClass() or ""
+        return string.StartWith(cls, "simfphys_") or string.StartWith(cls, "lvs_")
+            or string.StartWith(cls, "glide_") or string.StartWith(cls, "prop_vehicle_")
+            or string.find(cls, "vehicle", 1, true) ~= nil
+    end
+
+    local function isTruckMounted(ent)
+        if not IsValid(ent) then return false end
+        if ent._grmTruckGear then return true end
+        if ent.GetNWBool and ent:GetNWBool("GRM_TruckGear", false) then return true end
+        if ent.GetHostVehicle and IsValid(ent:GetHostVehicle()) then return true end
+        local p = ent.GetParent and ent:GetParent() or NULL
+        return isVehicleEnt(p)
+    end
+
+    -- Бортовой насос/лестница живут с машиной. Перм их ставит в воздухе
+    -- после рестарта (ТС уже нет). Рукава — сессия, не карта.
+    hook.Add("GRM_PermCanAdd", "GRM_Fire_NoTruckPerm", function(_, ent)
+        if not IsValid(ent) then return end
+        local cls = ent:GetClass() or ""
+        if cls == "grm_fire_hose" or cls == "grm_fire_hose_node" then return false end
+        if (cls == "grm_fire_pump" or cls == "grm_fire_ladder") and isTruckMounted(ent) then
+            return false
+        end
+    end)
+
     hook.Add("GRM_FireAddon_Placed", "GRM_Fire_AutoPerm", function(ent, ply)
         if not IsValid(ent) then return end
+        local cls = ent:GetClass() or ""
+        if cls == "grm_fire_hose" or cls == "grm_fire_hose_node" then return end
+        if (cls == "grm_fire_pump" or cls == "grm_fire_ladder") and isTruckMounted(ent) then
+            return
+        end
         if GRM.Perm and GRM.Perm.RegisterClass then
             GRM.Perm.RegisterClass(ent:GetClass(), true)
         end
@@ -272,6 +306,98 @@ if SERVER then
             local ok, msg = GRM.Perm.Add(ply, ent, { ownerKind = "server", label = "fire" })
             if ok then tell(ply, "Закреплено на карте (перм).", 100, 220, 130)
             elseif msg then tell(ply, "Перм: " .. tostring(msg) .. " — поставьте /permadd.", 255, 190, 90) end
+        end
+    end)
+
+    local function isFloatingGear(ent)
+        if not IsValid(ent) then return false end
+        if isTruckMounted(ent) then
+            local host = (ent.GetHostVehicle and ent:GetHostVehicle()) or (ent.GetParent and ent:GetParent()) or NULL
+            return not IsValid(host)
+        end
+        local pos = ent:GetPos()
+        local tr = util.TraceLine({
+            start = pos,
+            endpos = pos - Vector(0, 0, 80),
+            filter = ent,
+            mask = MASK_SOLID_BRUSHONLY,
+        })
+        return not tr.Hit or pos:Distance(tr.HitPos) > 48
+    end
+
+    -- Снести призраков после рестарта и вычистить их из пермов.
+    function F.SweepOrphanGear(reason)
+        local n = 0
+        for _, cls in ipairs({ "grm_fire_hose", "grm_fire_hose_node" }) do
+            for _, ent in ipairs(ents.FindByClass(cls)) do
+                if IsValid(ent) then ent:Remove() n = n + 1 end
+            end
+        end
+        local dropPos = {}
+        for _, cls in ipairs({ "grm_fire_pump", "grm_fire_ladder" }) do
+            for _, ent in ipairs(ents.FindByClass(cls)) do
+                if IsValid(ent) and isFloatingGear(ent) then
+                    dropPos[#dropPos + 1] = { class = cls, pos = ent:GetPos() }
+                    if GRM.Perm and GRM.Perm.Remove then
+                        pcall(GRM.Perm.Remove, nil, ent, false)
+                    end
+                    ent:Remove()
+                    n = n + 1
+                end
+            end
+        end
+        if #dropPos > 0 and file.Exists("grm_perm_entities.json", "DATA") then
+            local raw = file.Read("grm_perm_entities.json", "DATA") or ""
+            local list = jsonT(raw)
+            if istable(list) then
+                local map = game.GetMap()
+                local keep = {}
+                for _, rec in ipairs(list) do
+                    local skip = false
+                    if istable(rec) and rec.map == map then
+                        if rec.class == "grm_fire_hose" or rec.class == "grm_fire_hose_node" then
+                            skip = true
+                        elseif rec.class == "grm_fire_pump" or rec.class == "grm_fire_ladder" then
+                            if istable(rec.data) and rec.data.mounted == true then
+                                skip = true
+                            else
+                                for _, d in ipairs(dropPos) do
+                                    if d.class == rec.class and istable(rec.pos) then
+                                        local dx = (tonumber(rec.pos.x) or 0) - d.pos.x
+                                        local dy = (tonumber(rec.pos.y) or 0) - d.pos.y
+                                        local dz = (tonumber(rec.pos.z) or 0) - d.pos.z
+                                        if dx * dx + dy * dy + dz * dz <= 36 then skip = true break end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    if not skip then keep[#keep + 1] = rec end
+                end
+                if #keep < #list then
+                    local ok, txt = pcall(util.TableToJSON, keep, true)
+                    if ok and isstring(txt) then
+                        file.Write("grm_perm_entities.json", txt)
+                        print(("[GRM Fire] перм-призраки: было %d, осталось %d"):format(#list, #keep))
+                    end
+                end
+            end
+        end
+        if n > 0 then
+            print(("[GRM Fire] SweepOrphanGear [%s]: снято %d"):format(tostring(reason or ""), n))
+        end
+        return n
+    end
+
+    hook.Add("GRM_PermRestored", "GRM_Fire_SkipMounted", function(ent, rec)
+        if not IsValid(ent) then return end
+        local cls = ent:GetClass() or ""
+        if cls == "grm_fire_hose" or cls == "grm_fire_hose_node" then
+            ent:Remove()
+            return
+        end
+        if (cls == "grm_fire_pump" or cls == "grm_fire_ladder") and istable(rec) and istable(rec.data) and rec.data.mounted then
+            ent:Remove()
         end
     end)
 
@@ -318,6 +444,9 @@ if SERVER then
                     powder = ent.GetPowder and ent:GetPowder() or 0,
                     powdermax = ent.GetPowderMax and ent:GetPowderMax() or 250,
                     slots = ent.GetHosesMax and ent:GetHosesMax() or 4,
+                    mounted = (ent._grmTruckGear == true)
+                        or (ent.GetNWBool and ent:GetNWBool("GRM_TruckGear", false))
+                        or false,
                 }
             end
             GRM.PermData.Apply["grm_fire_pump"] = function(ent, data)
@@ -431,9 +560,11 @@ if SERVER then
             F.LoadActive()
             scheduleRandom()
         end)
+        timer.Simple(5, function() F.SweepOrphanGear("boot") end)
     end)
     hook.Add("PostCleanupMap", "GRM_Fire_Cleanup", function()
         timer.Simple(2, function() F.LoadActive() end)
+        timer.Simple(4, function() F.SweepOrphanGear("cleanup") end)
     end)
 
     hook.Add("PlayerSay", "GRM_Fire_AdminChat", function(ply, text)

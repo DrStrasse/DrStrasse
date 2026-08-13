@@ -25,6 +25,8 @@ function ENT:AttachToVehicle(veh, localPos, localAng)
     self:SetMoveType(MOVETYPE_NONE)
     self:SetCollisionGroup(COLLISION_GROUP_WEAPON)
     self:SetNotSolid(true)
+    self._grmTruckGear = true
+    self:SetNWBool("GRM_TruckGear", true)
     return true
 end
 

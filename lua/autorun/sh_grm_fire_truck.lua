@@ -351,7 +351,9 @@ function F.AttachPump(veh, ply)
     if pump.SetAgent then pump:SetAgent("water") end
     if pump.SetPumpOn then pump:SetPumpOn(true) end
     if pump.SyncHost then pump:SyncHost() end
-    hook.Run("GRM_FireAddon_Placed", pump, ply)
+    pump._grmTruckGear = true
+    if pump.SetNWBool then pump:SetNWBool("GRM_TruckGear", true) end
+    -- не пермим: после рестарта ТС нет, насос остаётся в воздухе
     return pump
 end
 
@@ -588,6 +590,27 @@ if SERVER then
                         veh:SetNWInt("GRM_FireHoses", pump:GetHosesMax())
                     end
                 end
+            end
+        end
+    end)
+
+    hook.Add("EntityRemoved", "GRM_FireTruck_DropGear", function(ent)
+        if not IsValid(ent) then return end
+        if not (ent.IsVehicle and ent:IsVehicle()) then
+            local cls = ent:GetClass() or ""
+            if not (string.StartWith(cls, "simfphys_") or string.StartWith(cls, "lvs_")
+                or string.StartWith(cls, "glide_")) then
+                return
+            end
+        end
+        for _, e in ipairs(ents.FindByClass("grm_fire_pump")) do
+            if IsValid(e) and (e:GetParent() == ent or (e.GetHostVehicle and e:GetHostVehicle() == ent)) then
+                e:Remove()
+            end
+        end
+        for _, e in ipairs(ents.FindByClass("grm_fire_ladder")) do
+            if IsValid(e) and (e:GetParent() == ent or (e.GetHostVehicle and e:GetHostVehicle() == ent)) then
+                e:Remove()
             end
         end
     end)
