@@ -5,7 +5,7 @@ include("shared.lua")
 local function cfg()
     return (GRM and GRM.FireAddon and GRM.FireAddon.HoseCfg) or {
         MaxLength = 2200, LayStep = 70, Width = 5,
-        Material = "cable/redcable", Sag = 14, SprayCost = 1, SprayDmg = 10,
+        Material = "cable/redcable", Sag = 14, SprayCost = 8, SprayDmg = 10,
     }
 end
 
@@ -322,8 +322,14 @@ local function walkPressure(ent, seen)
     if cls == "grm_fire_hydrant" and ent.GetOpen and ent:GetOpen() then
         return true, nil
     end
-    if cls == "grm_fire_pump" and ent.GetPumpOn and ent:GetPumpOn() and (ent:GetTank() or 0) > 0 then
-        return true, ent
+    if cls == "grm_fire_pump" and ent.GetPumpOn and ent:GetPumpOn() then
+        if ent.GetHydrantFeed and ent:GetHydrantFeed() then return true, ent end
+        local ag = ent.GetAgent and ent:GetAgent() or "water"
+        local have = 0
+        if ag == "foam" then have = ent.GetFoam and ent:GetFoam() or 0
+        elseif ag == "powder" then have = ent.GetPowder and ent:GetPowder() or 0
+        else have = ent:GetTank() or 0 end
+        if have > 0 then return true, ent end
     end
     -- рукава, стартующие здесь или пристыкованные сюда
     for _, h in ipairs(ents.FindByClass("grm_fire_hose")) do
@@ -374,6 +380,19 @@ function ENT:RefreshPressure()
 end
 
 function ENT:SupplyPump()
+    local src = self:GetStartEnt()
+    if IsValid(src) and src:GetClass() == "grm_fire_pump" then
+        self:RefreshPressure()
+        return src
+    end
+    local endN = self:GetEndNode()
+    if IsValid(endN) then
+        local p = endN.GetParent and endN:GetParent() or NULL
+        if IsValid(p) and p:GetClass() == "grm_fire_pump" then
+            self:RefreshPressure()
+            return p
+        end
+    end
     self:RefreshPressure()
     return self._SupplyPump
 end

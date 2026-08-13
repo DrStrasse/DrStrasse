@@ -105,9 +105,24 @@ function SWEP:PrimaryAttack()
     end
 
     local pump = hose:SupplyPump()
+    local cfg = GRM.FireAddon and GRM.FireAddon.HoseCfg or {}
+    local agent = "water"
+    if IsValid(pump) and pump.GetAgent then
+        agent = pump:GetAgent()
+        if agent == "" then agent = "water" end
+    end
+    local cost = cfg.SprayCostWater or cfg.SprayCost or 8
+    local dmg = cfg.SprayDmgWater or cfg.SprayDmg or 10
+    if agent == "foam" then
+        cost = cfg.SprayCostFoam or 4
+        dmg = cfg.SprayDmgFoam or 18
+    elseif agent == "powder" then
+        cost = cfg.SprayCostPowder or 2
+        dmg = cfg.SprayDmgPowder or 24
+    end
     if IsValid(pump) and pump.Consume then
-        if not pump:Consume((GRM.FireAddon.HoseCfg and GRM.FireAddon.HoseCfg.SprayCost) or 1) then
-            if GRM and GRM.Notify then GRM.Notify(ply, "Бак машины пуст.", 255, 140, 80) end
+        if not pump:Consume(cost, agent) then
+            if GRM and GRM.Notify then GRM.Notify(ply, "Бак («" .. agent .. "») пуст. G — панель насоса.", 255, 140, 80) end
             return
         end
     end
@@ -191,9 +206,24 @@ if CLIENT then
         local maxl = hose:GetMaxLen() or 2200
         local press = hose:GetPressurized()
         local col = press and Color(90, 210, 255) or Color(255, 170, 80)
+        local tankTxt = ""
+        local pump = hose.GetStartEnt and hose:GetStartEnt() or NULL
+        if not (IsValid(pump) and pump:GetClass() == "grm_fire_pump") then
+            local endN = hose.GetEndNode and hose:GetEndNode() or NULL
+            pump = IsValid(endN) and endN.GetParent and endN:GetParent() or NULL
+        end
+        if IsValid(pump) and pump.GetTank then
+            local ag = (pump.GetAgent and pump:GetAgent()) or "water"
+            if ag == "" then ag = "water" end
+            local have, mx
+            if ag == "foam" then have, mx = pump:GetFoam(), pump:GetFoamMax()
+            elseif ag == "powder" then have, mx = pump:GetPowder(), pump:GetPowderMax()
+            else have, mx = pump:GetTank(), pump:GetTankMax() end
+            tankTxt = string.format("   %s %d/%d л", ag == "foam" and "пена" or (ag == "powder" and "порошок" or "вода"), have or 0, mx or 0)
+        end
         draw.SimpleText(
-            string.format("%s   %d / %d юн   назад — смотка   E на гидрант — свернуть",
-                press and "НАПОР" or "нет напора", laid, maxl),
+            string.format("%s%s   %d / %d юн   назад — смотка   G — насос",
+                press and "НАПОР" or "нет напора", tankTxt, laid, maxl),
             "GRMHose_HUD", x, y, col, TEXT_ALIGN_CENTER)
     end
 end

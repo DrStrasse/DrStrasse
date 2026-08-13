@@ -13,10 +13,13 @@ local F = GRM.Fire
 
 F.TruckCfg = F.TruckCfg or {
     HoseSlots = 4,
-    TankMax = 2000,
+    TankMax = 4000,
+    FoamMax = 500,
+    PowderMax = 250,
     PumpOffset = Vector(0, -46, 16),
     PumpAng = Angle(0, 90, 0),
 }
+if (F.TruckCfg.TankMax or 0) < 4000 then F.TruckCfg.TankMax = 4000 end
 
 local TRUCK_FILE = "grm_fire/trucks.json"
 local NET_TREQ = "GRM_FireTruck_Open"
@@ -272,9 +275,15 @@ function F.AttachPump(veh, ply)
         pump:SetLocalAngles(cfg.PumpAng)
     end
     if pump.SetHosesMax then pump:SetHosesMax(cfg.HoseSlots) end
-    if pump.SetTankMax then pump:SetTankMax(cfg.TankMax) end
-    if pump.SetTank then pump:SetTank(cfg.TankMax) end
+    if pump.SetTankMax then pump:SetTankMax(cfg.TankMax or 4000) end
+    if pump.SetTank then pump:SetTank(cfg.TankMax or 4000) end
+    if pump.SetFoamMax then pump:SetFoamMax(cfg.FoamMax or 500) end
+    if pump.SetFoam then pump:SetFoam(cfg.FoamMax or 500) end
+    if pump.SetPowderMax then pump:SetPowderMax(cfg.PowderMax or 250) end
+    if pump.SetPowder then pump:SetPowder(cfg.PowderMax or 250) end
+    if pump.SetAgent then pump:SetAgent("water") end
     if pump.SetPumpOn then pump:SetPumpOn(true) end
+    if pump.SyncHost then pump:SyncHost() end
     hook.Run("GRM_FireAddon_Placed", pump, ply)
     return pump
 end
@@ -307,7 +316,7 @@ function F.CommissionTruck(ply)
     veh:SetNWInt("GRM_FireHoses", pump.GetHosesMax and pump:GetHosesMax() or 4)
     veh:SetNWInt("GRM_FireTank", pump.GetTank and pump:GetTank() or 0)
     ply:SetNWEntity("GRM_FireMyTruck", veh)
-    tell(ply, "Машина принята как пожарная. Насос: 4 рукава, бак полный. E по насосу — взять рукав. У гидранта бак доливается сам.", 100, 220, 130)
+    tell(ply, "Машина принята. G — панель насоса (вода/пена/порошок). E по насосу — рукав. Закачка только через G у открытого гидранта.", 100, 220, 130)
     print("[GRM Fire] truck commissioned by " .. ply:Nick() .. " class=" .. veh:GetClass())
     return true, veh, pump
 end
@@ -487,7 +496,7 @@ if SERVER then
             local ok, fname = F.CanUseFireTruck(ply)
             if not ok then return end
             if F.IsListedFireTruck(root, fname) or F.IsFireTruck(root) then
-                tell(ply, "Это пожарное ТС. За рулём напишите /firetruck — включить насос и 4 рукава.", 120, 200, 255)
+                tell(ply, "Это пожарное ТС. /firetruck — насос. Потом G — баки и закачка.", 120, 200, 255)
             end
         end)
     end)
@@ -696,12 +705,14 @@ if CLIENT then
                     local ang = Angle(0, EyeAngles().y - 90, 90)
                     local fac = ent:GetNWString("GRM_FireFaction", "")
                     local tank = ent:GetNWInt("GRM_FireTank", 0)
+                    local foam = ent:GetNWInt("GRM_FireFoam", 0)
+                    local powder = ent:GetNWInt("GRM_FirePowder", 0)
                     local out = ent:GetNWInt("GRM_FireHosesOut", 0)
                     local maxh = ent:GetNWInt("GRM_FireHoses", 4)
                     cam.Start3D2D(pos, ang, 0.08)
-                        draw.RoundedBox(6, -160, -28, 320, 56, Color(28, 18, 14, 230))
+                        draw.RoundedBox(6, -180, -28, 360, 56, Color(28, 18, 14, 230))
                         draw.SimpleText("ПОЖАРНАЯ" .. (fac ~= "" and (" · " .. fac) or ""), "GRMFireTrk_3D", 0, -10, Color(255, 150, 70), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                        draw.SimpleText("бак " .. tank .. "  рукава " .. out .. "/" .. maxh, "GRMFireTrk_N", 0, 14, Color(230, 230, 235), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                        draw.SimpleText("вода " .. tank .. "  пена " .. foam .. "  порошок " .. powder .. "  рукава " .. out .. "/" .. maxh, "GRMFireTrk_N", 0, 14, Color(230, 230, 235), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                     cam.End3D2D()
                 end
             end
@@ -722,9 +733,11 @@ if CLIENT then
         end
         if not IsValid(veh) or not veh:GetNWBool("GRM_FireTruck", false) then return end
         local tank = veh:GetNWInt("GRM_FireTank", 0)
+        local foam = veh:GetNWInt("GRM_FireFoam", 0)
+        local powder = veh:GetNWInt("GRM_FirePowder", 0)
         local out = veh:GetNWInt("GRM_FireHosesOut", 0)
         local maxh = veh:GetNWInt("GRM_FireHoses", 4)
-        draw.SimpleText("ПОЖАРКА  бак " .. tank .. "  рукава " .. out .. "/" .. maxh .. "  E на насос",
+        draw.SimpleText("ПОЖАРКА  вода " .. tank .. "  пена " .. foam .. "  порошок " .. powder .. "  рукава " .. out .. "/" .. maxh .. "  G — насос",
             "GRMFireTrk_N", ScrW() / 2, ScrH() - 118, Color(255, 170, 90, 230), TEXT_ALIGN_CENTER)
     end)
 

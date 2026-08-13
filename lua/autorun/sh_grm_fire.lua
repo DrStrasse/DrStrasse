@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Fire v1.2.0 (Код 58)
+    GRM Fire v1.3.0 (Код 58)
     Серверная обвязка аддона grm_fire + vFire.
     Не содержит моделей/рукава — они в аддоне.
     Права, персист очагов, рандом по точкам, плита, оповещение.
@@ -10,7 +10,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Fire = GRM.Fire or {}
 local F = GRM.Fire
-F.Version = "1.2.0"
+F.Version = "1.3.0"
 
 F.Config = F.Config or {
     StoveEnabled = true,
@@ -312,14 +312,22 @@ if SERVER then
             GRM.PermData.Extract["grm_fire_pump"] = function(ent)
                 return {
                     tank = ent.GetTank and ent:GetTank() or 0,
-                    tankmax = ent.GetTankMax and ent:GetTankMax() or 2000,
+                    tankmax = ent.GetTankMax and ent:GetTankMax() or 4000,
+                    foam = ent.GetFoam and ent:GetFoam() or 0,
+                    foammax = ent.GetFoamMax and ent:GetFoamMax() or 500,
+                    powder = ent.GetPowder and ent:GetPowder() or 0,
+                    powdermax = ent.GetPowderMax and ent:GetPowderMax() or 250,
                     slots = ent.GetHosesMax and ent:GetHosesMax() or 4,
                 }
             end
             GRM.PermData.Apply["grm_fire_pump"] = function(ent, data)
                 if not istable(data) then return end
-                if data.tankmax and ent.SetTankMax then ent:SetTankMax(tonumber(data.tankmax) or 2000) end
-                if data.tank and ent.SetTank then ent:SetTank(tonumber(data.tank) or 0) end
+                if data.tankmax and ent.SetTankMax then ent:SetTankMax(math.min(20000, tonumber(data.tankmax) or 4000)) end
+                if data.tank and ent.SetTank then ent:SetTank(math.max(0, tonumber(data.tank) or 0)) end
+                if data.foammax and ent.SetFoamMax then ent:SetFoamMax(tonumber(data.foammax) or 500) end
+                if data.foam and ent.SetFoam then ent:SetFoam(tonumber(data.foam) or 0) end
+                if data.powdermax and ent.SetPowderMax then ent:SetPowderMax(tonumber(data.powdermax) or 250) end
+                if data.powder and ent.SetPowder then ent:SetPowder(tonumber(data.powder) or 0) end
                 if data.slots and ent.SetHosesMax then ent:SetHosesMax(tonumber(data.slots) or 4) end
             end
             GRM.PermData.Extract["grm_fire_spot"] = function(ent)

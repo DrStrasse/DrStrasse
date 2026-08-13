@@ -34,7 +34,7 @@ check("пак-шланг c_firehose_grm", has(packHose, "c_firehose_grm.mdl"))
 check("пак-шланг w_firehose_grm", has(packHose, "w_firehose_grm.mdl"))
 
 print("\n=== СЕРВЕР Код 58 ===")
-check("версия 1.2.0", has(core, 'F.Version = "1.2.0"'))
+check("версия 1.3.0", has(core, 'F.Version = "1.3.0"'))
 check("jsonT false,true", has(core, "util.JSONToTable, txt, false, true"))
 check("карантин", has(core, ".corrupt."))
 check("read-back", has(core, "SAVE read-back fail") or has(core, "chk ~= txt"))
@@ -94,6 +94,18 @@ check("файл лестницы", (function()
     if f then f:close() return true end
     return false
 end)())
+
+local pui = read("lua/autorun/sh_grm_fire_pump_ui.lua")
+local ladW = read("addons/grm_fire/lua/weapons/weapon_grm_ladder.lua")
+print("\n=== НАСОС G / ЛЕСТНИЦА ===")
+check("панель OpenPumpPanel", has(pui, "function F.OpenPumpPanel"))
+check("G KEY_G", has(pui, "KEY_G"))
+check("баки foam powder", has(pui, "foam") and has(pui, "powder"))
+check("закачка fill", has(pui, '"fill"'))
+check("лестница aluminium", has(ladW, "ladderaluminium.mdl"))
+check("лестница ПКМ на машину", has(ladW, "AttachToVehicle"))
+check("насос Consume agent", has(pump, "function ENT:Consume"))
+check("нет автозаливки +25", not has(pump, "self:Fill(25)"))
 
 print("")
 if fails == 0 then print("ВСЕ ТЕСТЫ ПРОЙДЕНЫ (fire)")

@@ -8,7 +8,7 @@ GRM_FireAddon = true
 GRM = GRM or {}
 GRM.FireAddon = GRM.FireAddon or {}
 local A = GRM.FireAddon
-A.Version = "0.3.0"
+A.Version = "0.4.0"
 
 A.Models = {
     hydrant  = { "models/props/cs_assault/FireHydrant.mdl", "models/props_pipes/valvewheel001.mdl" },
@@ -18,7 +18,7 @@ A.Models = {
     junction = { "models/props_lab/tpplugholder_single.mdl" },
     nozzle   = { "models/props/cs_assault/wirespout.mdl", "models/props_canal/mattpipe.mdl" },
     detector = { "models/props/cs_office/smoke_detector.mdl", "models/props_lab/reciever01c.mdl" },
-    ladder   = { "models/props_c17/metalladder002.mdl", "models/props_c17/metalladder001.mdl" },
+    ladder   = { "models/props/de_train/ladderaluminium.mdl", "models/props_c17/metalladder002.mdl", "models/props_c17/metalladder001.mdl" },
     spot     = { "models/props_junk/PopCan01a.mdl" },
 }
 
@@ -39,6 +39,10 @@ function A.IsWaterSource(ent)
     end
     if cls == "grm_fire_pump" then
         if not (ent.GetPumpOn and ent:GetPumpOn()) then return false end
+        if ent.GetHydrantFeed and ent:GetHydrantFeed() then return true end
+        local ag = ent.GetAgent and ent:GetAgent() or "water"
+        if ag == "foam" then return (ent.GetFoam and ent:GetFoam() or 0) > 0 end
+        if ag == "powder" then return (ent.GetPowder and ent:GetPowder() or 0) > 0 end
         return (ent.GetTank and ent:GetTank() or 0) > 0
     end
     return false

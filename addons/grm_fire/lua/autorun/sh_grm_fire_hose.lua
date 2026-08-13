@@ -19,8 +19,14 @@ A.HoseCfg = A.HoseCfg or {
     TruckSlots  = 4,
     HydrantPorts = 2,
     JunctionOut = 2,
-    SprayCost   = 1,
-    SprayDmg    = 10,
+    SprayCost        = 8,
+    SprayCostWater   = 8,
+    SprayCostFoam    = 4,
+    SprayCostPowder  = 2,
+    SprayDmg         = 10,
+    SprayDmgWater    = 10,
+    SprayDmgFoam     = 18,
+    SprayDmgPowder   = 24,
 }
 if A.HoseCfg.MaxLength < 2000 then A.HoseCfg.MaxLength = 2200 end
 
