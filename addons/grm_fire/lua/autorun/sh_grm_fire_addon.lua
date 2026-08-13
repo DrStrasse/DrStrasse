@@ -8,15 +8,18 @@ GRM_FireAddon = true
 GRM = GRM or {}
 GRM.FireAddon = GRM.FireAddon or {}
 local A = GRM.FireAddon
-A.Version = "0.2.0"
+A.Version = "0.3.0"
 
 A.Models = {
     hydrant  = { "models/props/cs_assault/FireHydrant.mdl", "models/props_pipes/valvewheel001.mdl" },
     cabinet  = { "models/props/cs_office/fire_extinguisher.mdl", "models/props_c17/canister01a.mdl" },
     coil     = { "models/props/cs_assault/wirepipe.mdl", "models/props_c17/GasPipes006a.mdl" },
+    pump     = { "models/props_lab/tpplugholder_single.mdl" },
+    junction = { "models/props_lab/tpplugholder_single.mdl" },
     nozzle   = { "models/props/cs_assault/wirespout.mdl", "models/props_canal/mattpipe.mdl" },
     detector = { "models/props/cs_office/smoke_detector.mdl", "models/props_lab/reciever01c.mdl" },
-    spot     = { "models/hunter/blocks/cube025x025x025.mdl" },
+    ladder   = { "models/props_c17/metalladder002.mdl", "models/props_c17/metalladder001.mdl" },
+    spot     = { "models/props_junk/PopCan01a.mdl" },
 }
 
 function A.SafeModel(list)
@@ -75,6 +78,45 @@ function A.Ready()
     return vFireInstalled == true
 end
 
+-- Лазание по выдвинутой лестнице (без физики пропа).
+hook.Add("SetupMove", "GRM_FireLadder_Climb", function(ply, mv)
+    if not IsValid(ply) or not ply:Alive() then return end
+    if ply.InVehicle and ply:InVehicle() then return end
+    local pos = ply:GetPos()
+    local best, bestD, a, b
+    for _, ent in ipairs(ents.FindByClass("grm_fire_ladder")) do
+        if IsValid(ent) and ent.GetDeployed and ent:GetDeployed() and ent.LadderSegment then
+            local p0, p1 = ent:LadderSegment()
+            local ab = p1 - p0
+            local denom = ab:LengthSqr()
+            if denom > 1 then
+                local t = math.Clamp((pos - p0):Dot(ab) / denom, 0, 1)
+                local near = p0 + ab * t
+                local d = pos:DistToSqr(near)
+                if d < 46 * 46 and (not best or d < bestD) then
+                    best, bestD, a, b = ent, d, p0, p1
+                end
+            end
+        end
+    end
+    if not IsValid(best) then return end
+    local dir = (b - a)
+    if dir:LengthSqr() < 1 then return end
+    dir:Normalize()
+    local wish = 0
+    if mv:KeyDown(IN_FORWARD) or mv:KeyDown(IN_JUMP) then wish = 190
+    elseif mv:KeyDown(IN_BACK) then wish = -170 end
+    local look = ply:GetAimVector():Dot((b - pos):GetNormalized())
+    if wish == 0 then
+        if not ply:OnGround() and bestD < 36 * 36 then
+            mv:SetVelocity(Vector(0, 0, 8))
+        end
+        return
+    end
+    if wish > 0 and ply:OnGround() and look < 0.08 then return end
+    mv:SetVelocity(dir * wish)
+end)
+
 if SERVER then
-    print("[GRM Fire Addon] v" .. A.Version .. " loaded (рукава + гидрант/насос; огонь = vFire)")
+    print("[GRM Fire Addon] v" .. A.Version .. " loaded (рукава 2200, насос-призрак, лестница; огонь = vFire)")
 end

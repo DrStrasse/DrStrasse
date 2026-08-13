@@ -9,7 +9,7 @@ function ENT:Initialize()
     self:SetMoveType(MOVETYPE_VPHYSICS)
     self:SetSolid(SOLID_VPHYSICS)
     self:SetUseType(SIMPLE_USE)
-    if self:GetMaxHose() <= 0 then self:SetMaxHose((A and A.HoseCfg and A.HoseCfg.MaxLength) or 850) end
+    if self:GetMaxHose() <= 0 then self:SetMaxHose((A and A.HoseCfg and A.HoseCfg.MaxLength) or 2200) end
     if self:GetPortsMax() <= 0 then self:SetPortsMax((A and A.HoseCfg and A.HoseCfg.HydrantPorts) or 2) end
     self:SetOpen(false)
     local phys = self:GetPhysicsObject()

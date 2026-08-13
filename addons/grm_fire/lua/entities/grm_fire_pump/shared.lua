@@ -5,6 +5,8 @@ ENT.Author = "GRM"
 ENT.Category = "GRM Fire"
 ENT.Spawnable = true
 ENT.AdminOnly = true
+ENT.RenderGroup = RENDERGROUP_TRANSLUCENT
+ENT.AutomaticFrameAdvance = false
 
 function ENT:SetupDataTables()
     self:NetworkVar("Bool", 0, "PumpOn")

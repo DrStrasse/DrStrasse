@@ -14,7 +14,7 @@ local F = GRM.Fire
 F.TruckCfg = F.TruckCfg or {
     HoseSlots = 4,
     TankMax = 2000,
-    PumpOffset = Vector(0, -42, 22),
+    PumpOffset = Vector(0, -46, 16),
     PumpAng = Angle(0, 90, 0),
 }
 

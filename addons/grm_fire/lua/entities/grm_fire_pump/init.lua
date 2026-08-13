@@ -4,27 +4,34 @@ include("shared.lua")
 
 function ENT:Initialize()
     local A = GRM and GRM.FireAddon
-    self:SetModel(A and A.SafeModel(A.Models.coil) or "models/props_c17/GasPipes006a.mdl")
-    self:PhysicsInit(SOLID_VPHYSICS)
-    self:SetMoveType(MOVETYPE_VPHYSICS)
-    self:SetSolid(SOLID_VPHYSICS)
+    self:SetModel(A and A.SafeModel(A.Models.pump) or "models/props_lab/tpplugholder_single.mdl")
+    self:SetSolid(SOLID_BBOX)
+    self:SetMoveType(MOVETYPE_NONE)
+    self:SetCollisionGroup(COLLISION_GROUP_WORLD)
     self:SetUseType(SIMPLE_USE)
+    self:DrawShadow(false)
+    self:SetNotSolid(true)
+    self:SetRenderMode(RENDERMODE_TRANSALPHA)
+    self:SetColor(Color(70, 190, 255, 140))
     if self:GetTankMax() <= 0 then self:SetTankMax(2000) end
     if self:GetTank() <= 0 then self:SetTank(self:GetTankMax()) end
-    if self:GetMaxHose() <= 0 then self:SetMaxHose((A and A.HoseCfg and A.HoseCfg.MaxLength) or 850) end
+    if self:GetMaxHose() <= 0 then self:SetMaxHose((A and A.HoseCfg and A.HoseCfg.MaxLength) or 2200) end
     if self:GetHosesMax() <= 0 then self:SetHosesMax((A and A.HoseCfg and A.HoseCfg.TruckSlots) or 4) end
     self:SetHosesOut(0)
     self:SetPumpOn(false)
-    local phys = self:GetPhysicsObject()
-    if IsValid(phys) then phys:Wake() phys:EnableMotion(false) end
 end
 
 function ENT:AttachToVehicle(veh, localPos, localAng)
     if not IsValid(veh) then return false end
     self:SetHostVehicle(veh)
     self:SetParent(veh)
-    if localPos then self:SetLocalPos(localPos) end
-    if localAng then self:SetLocalAngles(localAng) end
+    self:SetLocalPos(localPos or Vector(0, -46, 16))
+    self:SetLocalAngles(localAng or Angle(0, 90, 0))
+    self:SetSolid(SOLID_BBOX)
+    self:SetMoveType(MOVETYPE_NONE)
+    self:SetCollisionGroup(COLLISION_GROUP_WORLD)
+    self:SetNotSolid(true)
+    self:DrawShadow(false)
     return true
 end
 
@@ -37,11 +44,20 @@ function ENT:Use(ply)
     if IsValid(hose) then
         if hose:GetStartEnt() == self then
             if A and A.ReturnHose then A.ReturnHose(ply, hose) end
+            if ply.ChatPrint then ply:ChatPrint("[Рукав] Смотан на катушку.") end
             return
         end
         local ok, err = hose:DockTo(self, ply)
         if not ok and ply.ChatPrint then ply:ChatPrint("[Рукав] " .. tostring(err or "стык не вышел")) end
         return
+    end
+
+    if A and A.RewindAtSource then
+        local n = A.RewindAtSource(self, ply)
+        if n > 0 then
+            if ply.ChatPrint then ply:ChatPrint("[Рукав] Смотано рукавов: " .. tostring(n)) end
+            return
+        end
     end
 
     if A and A.TakeHose then
@@ -78,7 +94,6 @@ function ENT:Fill(amount)
 end
 
 function ENT:Think()
-    -- долив бака у открытого гидранта
     if self:GetTank() < self:GetTankMax() then
         local near
         for _, h in ipairs(ents.FindInSphere(self:GetPos(), 220)) do

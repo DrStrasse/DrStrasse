@@ -4,7 +4,7 @@ include("shared.lua")
 
 local function cfg()
     return (GRM and GRM.FireAddon and GRM.FireAddon.HoseCfg) or {
-        MaxLength = 850, LayStep = 70, Width = 5,
+        MaxLength = 2200, LayStep = 70, Width = 5,
         Material = "cable/redcable", Sag = 14, SprayCost = 1, SprayDmg = 10,
     }
 end
@@ -124,7 +124,44 @@ function ENT:LaidDistance()
 end
 
 function ENT:Remain()
-    return math.max(0, (self:GetMaxLen() or 850) - self:LaidDistance())
+    return math.max(0, (self:GetMaxLen() or 2200) - self:LaidDistance())
+end
+
+function ENT:TryRewind(ply)
+    if self:GetDocked() or not IsValid(ply) then return false end
+    local nodes = self.Nodes or {}
+    if #nodes < 2 then return false end
+    local last = nodes[#nodes]
+    if not IsValid(last) then return false end
+    local FA = A()
+    local typ = last:GetNodeType() or 0
+    if FA and (typ == FA.NODE_SOURCE or typ == FA.NODE_JUNCTION or typ == FA.NODE_NOZZLE) then
+        return false
+    end
+    local prev = nodes[#nodes - 1]
+    if not IsValid(prev) then return false end
+    local ppos = self:GroundPos(ply)
+    local toLast = ppos:Distance(last:GetPos())
+    local toPrev = ppos:Distance(prev:GetPos())
+    if toPrev + 10 >= toLast then return false end
+    if toLast > ((cfg().LayStep or 70) * 1.25) then return false end
+    if constraint.RemoveConstraints then
+        constraint.RemoveConstraints(last, "Rope")
+        constraint.RemoveConstraints(prev, "Rope")
+    end
+    last:Remove()
+    local keep = {}
+    for _, n in ipairs(self.Nodes) do
+        if IsValid(n) then keep[#keep + 1] = n end
+    end
+    self.Nodes = keep
+    local now = self:LastNode()
+    if IsValid(now) then
+        now:SetNextNode(ply)
+        self:SetEndNode(now)
+    end
+    self:SetLaidLen(math.floor(self:LaidDistance()))
+    return true
 end
 
 function ENT:TryLay(ply)
@@ -135,7 +172,7 @@ function ENT:TryLay(ply)
     local dest = self:GroundPos(ply)
     local dist = last:GetPos():Distance(dest)
     if dist < step then return end
-    if self:LaidDistance() + dist > (self:GetMaxLen() or 850) then return end
+    if self:LaidDistance() + dist > (self:GetMaxLen() or 2200) then return end
     -- не класть сквозь стену
     local wall = util.TraceLine({
         start = last:GetPos() + Vector(0, 0, 8),
@@ -357,7 +394,9 @@ function ENT:Think()
         if not ply:Alive() then
             self:DropNozzle()
         else
-            self:TryLay(ply)
+            if not self:TryRewind(ply) then
+                self:TryLay(ply)
+            end
             self:Leash(ply)
             local last = self:LastNode()
             if IsValid(last) then last:SetNextNode(ply) end

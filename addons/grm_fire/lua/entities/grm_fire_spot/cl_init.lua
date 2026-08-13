@@ -2,12 +2,10 @@ include("shared.lua")
 
 function ENT:Draw()
     local ply = LocalPlayer()
-    if not IsValid(ply) then return end
+    if not IsValid(ply) or not ply:IsSuperAdmin() then return end
     local wep = ply:GetActiveWeapon()
-    local show = ply:IsSuperAdmin() or (IsValid(wep) and wep:GetClass() == "gmod_tool")
-    if not show then return end
-    self:DrawModel()
-    local pos = self:WorldSpaceCenter() + Vector(0, 0, 18)
+    if not (IsValid(wep) and wep:GetClass() == "gmod_tool") then return end
+    local pos = self:GetPos() + Vector(0, 0, 18)
     local ang = EyeAngles()
     ang:RotateAroundAxis(ang:Right(), 90)
     ang:RotateAroundAxis(ang:Up(), -90)

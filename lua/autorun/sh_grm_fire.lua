@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Fire v1.1.0 (Код 58)
+    GRM Fire v1.2.0 (Код 58)
     Серверная обвязка аддона grm_fire + vFire.
     Не содержит моделей/рукава — они в аддоне.
     Права, персист очагов, рандом по точкам, плита, оповещение.
@@ -10,7 +10,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Fire = GRM.Fire or {}
 local F = GRM.Fire
-F.Version = "1.1.0"
+F.Version = "1.2.0"
 
 F.Config = F.Config or {
     StoveEnabled = true,
@@ -298,7 +298,7 @@ if SERVER then
     -- ── перм классов + данные ───────────────────────────────
     local function installPerm()
         if not (GRM.Perm and GRM.Perm.RegisterClass) then return end
-        for _, cls in ipairs({ "grm_fire_hydrant", "grm_fire_pump", "grm_fire_cabinet", "grm_fire_spot" }) do
+        for _, cls in ipairs({ "grm_fire_hydrant", "grm_fire_pump", "grm_fire_cabinet", "grm_fire_spot", "grm_fire_ladder" }) do
             GRM.Perm.RegisterClass(cls, true)
         end
         if GRM.PermData then

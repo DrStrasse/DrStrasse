@@ -1,10 +1,15 @@
 include("shared.lua")
 
 function ENT:Draw()
+    render.SetBlend(0.42)
+    render.SetColorModulation(0.30, 0.78, 1)
     self:DrawModel()
+    render.SetColorModulation(1, 1, 1)
+    render.SetBlend(1)
+
     local ply = LocalPlayer()
     if not IsValid(ply) or ply:GetPos():DistToSqr(self:GetPos()) > 200 * 200 then return end
-    local pos = self:WorldSpaceCenter() + Vector(0, 0, 16)
+    local pos = self:WorldSpaceCenter() + Vector(0, 0, 14)
     local ang = EyeAngles()
     ang:RotateAroundAxis(ang:Right(), 90)
     ang:RotateAroundAxis(ang:Up(), -90)

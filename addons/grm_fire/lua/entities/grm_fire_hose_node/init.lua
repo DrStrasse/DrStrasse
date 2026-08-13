@@ -4,40 +4,52 @@ include("shared.lua")
 
 local function A() return GRM and GRM.FireAddon end
 
+local function noPhys(self)
+    self:SetSolid(SOLID_NONE)
+    self:SetMoveType(MOVETYPE_NONE)
+    self:SetCollisionGroup(COLLISION_GROUP_IN_VEHICLE)
+    self:DrawShadow(false)
+    self:SetNoDraw(true)
+end
+
+local function ghostBox(self)
+    self:SetSolid(SOLID_BBOX)
+    self:SetMoveType(MOVETYPE_NONE)
+    self:SetCollisionGroup(COLLISION_GROUP_WEAPON)
+    self:DrawShadow(false)
+    self:SetNotSolid(true)
+end
+
 function ENT:Initialize()
     local FA = A()
     local typ = self:GetNodeType() or 0
+    local lay = FA and FA.NODE_LAY or 1
+    local src = FA and FA.NODE_SOURCE or 0
+    local jun = FA and FA.NODE_JUNCTION or 2
+    local noz = FA and FA.NODE_NOZZLE or 3
+
+    if typ == lay or typ == src then
+        -- якоря укладки: идея точек нужна, модель — нет (ERROR/кубы)
+        self:SetModel("models/props_junk/PopCan01a.mdl")
+        noPhys(self)
+        return
+    end
+
     local mdl
-    if FA then
-        if typ == FA.NODE_JUNCTION then
-            mdl = FA.SafeModel(FA.Models.coil)
-        elseif typ == FA.NODE_NOZZLE then
-            mdl = util.IsValidModel("models/weapons/w_firehose_grm.mdl") and "models/weapons/w_firehose_grm.mdl" or FA.SafeModel(FA.Models.nozzle)
-        elseif typ == FA.NODE_SOURCE then
-            mdl = FA.SafeModel(FA.Models.nozzle)
-        else
-            mdl = "models/hunter/blocks/cube025x025x025.mdl"
-        end
+    if typ == jun then
+        mdl = (FA and FA.SafeModel(FA.Models.junction)) or "models/props_lab/tpplugholder_single.mdl"
+    elseif typ == noz then
+        mdl = util.IsValidModel("models/weapons/w_firehose_grm.mdl") and "models/weapons/w_firehose_grm.mdl"
+            or ((FA and FA.SafeModel(FA.Models.nozzle)) or "models/props_canal/mattpipe.mdl")
     else
-        mdl = "models/hunter/blocks/cube025x025x025.mdl"
+        mdl = "models/props_junk/PopCan01a.mdl"
     end
     self:SetModel(mdl)
-    self:PhysicsInit(SOLID_VPHYSICS)
-    self:SetMoveType(MOVETYPE_VPHYSICS)
-    self:SetSolid(SOLID_VPHYSICS)
+    ghostBox(self)
     self:SetUseType(SIMPLE_USE)
-    self:SetCollisionGroup(COLLISION_GROUP_WEAPON)
-    if typ == (FA and FA.NODE_LAY or 1) then
-        self:SetModelScale(0.35, 0)
-        self:SetColor(Color(140, 30, 25, 210))
+    if typ == jun then
         self:SetRenderMode(RENDERMODE_TRANSALPHA)
-        self:DrawShadow(false)
-        self:SetCollisionGroup(COLLISION_GROUP_IN_VEHICLE)
-    end
-    local phys = self:GetPhysicsObject()
-    if IsValid(phys) then
-        phys:Wake()
-        phys:EnableMotion(false)
+        self:SetColor(Color(220, 80, 50, 200))
     end
 end
 

@@ -3,21 +3,18 @@ AddCSLuaFile("shared.lua")
 include("shared.lua")
 
 function ENT:Initialize()
-    local A = GRM and GRM.FireAddon
-    self:SetModel(A and A.SafeModel(A.Models.spot) or "models/hunter/blocks/cube025x025x025.mdl")
-    self:PhysicsInit(SOLID_VPHYSICS)
-    self:SetMoveType(MOVETYPE_VPHYSICS)
-    self:SetSolid(SOLID_VPHYSICS)
+    self:SetModel("models/props_junk/PopCan01a.mdl")
+    self:SetSolid(SOLID_BBOX)
+    self:SetMoveType(MOVETYPE_NONE)
     self:SetCollisionGroup(COLLISION_GROUP_WORLD)
     self:SetUseType(SIMPLE_USE)
     self:DrawShadow(false)
+    self:SetNoDraw(true)
+    self:SetNotSolid(true)
     if self:GetWeight() <= 0 then self:SetWeight(1) end
     if self:GetSpotLabel() == "" then self:SetSpotLabel("очаг") end
-    local phys = self:GetPhysicsObject()
-    if IsValid(phys) then phys:Wake() phys:EnableMotion(false) end
 end
 
--- E на точке: только подсказка. Поджог — тул / серверный скрипт (CreateVFire).
 function ENT:Use(ply)
     if not IsValid(ply) or not ply:IsPlayer() then return end
     hook.Run("GRM_FireAddon_SpotUse", ply, self)

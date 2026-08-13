@@ -7,7 +7,7 @@ AddCSLuaFile()
 SWEP.PrintName = "Пожарный рукав"
 SWEP.Author = "GRM"
 SWEP.Category = "GRM Fire"
-SWEP.Instructions = "ЛКМ: лить (нужен напор)  ПКМ: бросить ствол  R: узел соединения  E на гидрант/насос: взять/вернуть/стык"
+SWEP.Instructions = "ЛКМ: лить  ПКМ: бросить  R: узел  назад по рукаву: смотка  E на свой гидрант/насос: свернуть"
 SWEP.Spawnable = true
 SWEP.AdminOnly = false
 SWEP.UseHands = true
@@ -188,11 +188,11 @@ if CLIENT then
             return
         end
         local laid = hose:GetLaidLen() or 0
-        local maxl = hose:GetMaxLen() or 850
+        local maxl = hose:GetMaxLen() or 2200
         local press = hose:GetPressurized()
         local col = press and Color(90, 210, 255) or Color(255, 170, 80)
         draw.SimpleText(
-            string.format("%s   %d / %d юн   ПКМ бросить   R узел",
+            string.format("%s   %d / %d юн   назад — смотка   E на гидрант — свернуть",
                 press and "НАПОР" or "нет напора", laid, maxl),
             "GRMHose_HUD", x, y, col, TEXT_ALIGN_CENTER)
     end

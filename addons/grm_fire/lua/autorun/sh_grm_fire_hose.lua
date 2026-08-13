@@ -11,7 +11,7 @@ GRM.FireAddon = GRM.FireAddon or {}
 local A = GRM.FireAddon
 
 A.HoseCfg = A.HoseCfg or {
-    MaxLength   = 850,   -- 700–1000
+    MaxLength   = 2200,
     LayStep     = 70,
     Width       = 5,
     Material    = "cable/redcable",
@@ -19,9 +19,10 @@ A.HoseCfg = A.HoseCfg or {
     TruckSlots  = 4,
     HydrantPorts = 2,
     JunctionOut = 2,
-    SprayCost   = 1,     -- литры бака / тик, если цепь от насоса
-    SprayDmg    = 10,    -- SoftExtinguish
+    SprayCost   = 1,
+    SprayDmg    = 10,
 }
+if A.HoseCfg.MaxLength < 2000 then A.HoseCfg.MaxLength = 2200 end
 
 A.NODE_SOURCE    = 0
 A.NODE_LAY       = 1
@@ -108,6 +109,21 @@ if SERVER then
         end
         hook.Run("GRM_FireAddon_HoseReturned", ply, src, hose)
         return true
+    end
+
+    -- E на своём гидранте/насосе: смотать брошенные или свои рукава.
+    function A.RewindAtSource(src, ply)
+        if not IsValid(src) then return 0 end
+        local n = 0
+        for _, h in ipairs(ents.FindByClass("grm_fire_hose")) do
+            if IsValid(h) and h:GetStartEnt() == src then
+                local holder = h.GetHolder and h:GetHolder() or NULL
+                if not IsValid(holder) or holder == ply then
+                    if A.ReturnHose(ply, h) then n = n + 1 end
+                end
+            end
+        end
+        return n
     end
 
     function A.GiveHose(ply, src)

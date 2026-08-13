@@ -61,6 +61,7 @@ QM.ToolCatalog = {
     { id = "grm_augmentation",   label = "GRM: аугментации",                 desc = "Станции и поды аугментаций.", cat = "ui" },
     { id = "grm_citadel_core",   label = "GRM: ядро Цитадели",               desc = "Размещение ядра Цитадели.", cat = "ui" },
     { id = "grm_lab_tool",       label = "GRM: лаборатории",                 desc = "Мед- и нарко-лаборатории.", cat = "ui" },
+    { id = "grm_fire_place",     label = "GRM: пожарное железо",             desc = "Гидрант, насос, шкаф, точка, лестница.", cat = "ui" },
     { id = "colour",     label = "Цвет",                 desc = "Перекраска и прозрачность.",             cat = "decor" },
     { id = "material",   label = "Материал",             desc = "Смена материала/текстуры.",              cat = "decor" },
     { id = "paint",      label = "Краска",               desc = "Спрей-декали.",                          cat = "decor" },
@@ -231,6 +232,14 @@ QM.Schema = {
     grm_lab_tool = {
         { cvar = "grm_lab_tool_type", type = "choice", label = "Тип лаборатории",
           choices = { { "Лаборатория наркотиков", "narc" }, { "Медицинская лаборатория", "med" } } },
+    },
+    grm_fire_place = {
+        { cvar = "grm_fire_place_type", type = "choice", label = "Тип",
+          choices = {
+              { "Гидрант", "hydrant" }, { "Насос машины", "pump" },
+              { "Шкаф огнетушителей", "cabinet" }, { "Точка очага", "spot" },
+              { "Пожарная лестница", "ladder" },
+          } },
     },
     grm_network_tool = {
         { cvar = "grm_network_tool_mode", type = "choice", label = "Режим",
