@@ -7,7 +7,7 @@ AddCSLuaFile()
 SWEP.PrintName = "Пожарный рукав"
 SWEP.Author = "GRM"
 SWEP.Category = "GRM Fire"
-SWEP.Instructions = "ЛКМ: лить  ПКМ: бросить  R: узел  назад по рукаву / ALT: смотка  E на насос: свернуть"
+SWEP.Instructions = "ЛКМ: лить  ПКМ: бросить  R: узел  S/назад/ALT: смотка  E на насос: свернуть"
 SWEP.Spawnable = true
 SWEP.AdminOnly = false
 SWEP.UseHands = true
@@ -222,7 +222,7 @@ if CLIENT then
             tankTxt = string.format("   %s %d/%d л", ag == "foam" and "пена" or (ag == "powder" and "порошок" or "вода"), have or 0, mx or 0)
         end
         draw.SimpleText(
-            string.format("%s%s   %d / %d юн   назад или ALT — смотка   G — насос",
+            string.format("%s%s   %d / %d юн   S / назад / ALT — смотка   G — насос",
                 press and "НАПОР" or "нет напора", tankTxt, laid, maxl),
             "GRMHose_HUD", x, y, col, TEXT_ALIGN_CENTER)
     end

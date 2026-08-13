@@ -30,6 +30,7 @@ function ENT:Initialize()
     self:SetLaidLen(0)
     self:SetPressurized(false)
     self:SetDocked(false)
+    self:NextThink(CurTime() + 0.10)
 end
 
 function ENT:BroadcastPath()
@@ -171,56 +172,81 @@ function ENT:CanPopLast()
     return true
 end
 
--- Идём назад к источнику: ближе к предыдущему узлу, чем к последнему.
-function ENT:IsWalkingBack(ply)
-    if not IsValid(ply) then return false end
-    local nodes = self.Nodes or {}
-    if #nodes < 2 then return false end
-    local last, prev = nodes[#nodes], nodes[#nodes - 1]
-    if not IsValid(last) or not IsValid(prev) then return false end
-    local ppos = self:GroundPos(ply)
-    return ppos:Distance(prev:GetPos()) + 8 < ppos:Distance(last:GetPos())
+function ENT:MoveOpt(ply, reel)
+    local vel = (ply.GetVelocity and ply:GetVelocity()) or nil
+    return {
+        step = cfg().LayStep or 70,
+        vel = vel,
+        back = ply.KeyDown and ply:KeyDown(IN_BACK) == true,
+        reel = reel == true or (ply.KeyDown and ply:KeyDown(IN_WALK) == true),
+    }
 end
 
--- Сервер: снять один или несколько узлов укладки, если игрок идёт назад по рукаву.
+-- Сервер: hint по последнему сегменту (проекция / S / скорость / ALT).
+function ENT:MoveHint(ply)
+    local FA = A()
+    if not (FA and FA.HoseMoveHint) or not IsValid(ply) then return "idle" end
+    local nodes = self.Nodes or {}
+    if #nodes < 2 then return "idle" end
+    local last, prev = nodes[#nodes], nodes[#nodes - 1]
+    if not IsValid(last) or not IsValid(prev) then return "idle" end
+    return FA.HoseMoveHint(self:GroundPos(ply), last:GetPos(), prev:GetPos(), self:MoveOpt(ply))
+end
+
+function ENT:IsWalkingBack(ply)
+    local h = self:MoveHint(ply)
+    return h == "rewind" or h == "reel"
+end
+
+function ENT:PopLastNode(ply)
+    if not self:CanPopLast() then return false end
+    local nodes = self.Nodes
+    local last, prev = nodes[#nodes], nodes[#nodes - 1]
+    if not IsValid(last) then return false end
+    if constraint.RemoveConstraints then
+        pcall(constraint.RemoveConstraints, last, "Rope")
+        if IsValid(prev) then pcall(constraint.RemoveConstraints, prev, "Rope") end
+    end
+    last:Remove()
+    local keep = {}
+    for _, n in ipairs(self.Nodes) do
+        if IsValid(n) then keep[#keep + 1] = n end
+    end
+    self.Nodes = keep
+    local now = self:LastNode()
+    if IsValid(now) then
+        now:SetNextNode(ply)
+        self:SetEndNode(now)
+    end
+    return true
+end
+
+-- Сервер: снять узлы, пока игрок идёт назад по рукаву.
 function ENT:TryRewind(ply)
     if self:GetDocked() or not IsValid(ply) then return false end
     if not self:CanPopLast() then return false end
-    local step = cfg().LayStep or 70
+    local FA = A()
+    if not (FA and FA.HoseMoveHint) then return false end
     local ppos = self:GroundPos(ply)
+    local opt = self:MoveOpt(ply)
     local popped = 0
     for _ = 1, 24 do
         if not self:CanPopLast() then break end
         local nodes = self.Nodes
         local last, prev = nodes[#nodes], nodes[#nodes - 1]
         if not IsValid(prev) then break end
-        local toLast = ppos:Distance(last:GetPos())
-        local toPrev = ppos:Distance(prev:GetPos())
-        if toPrev + 8 >= toLast then break end
-        local span = last:GetPos():Distance(prev:GetPos())
-        -- далеко в сторону от линии рукава — не сматывать
-        if toLast > span + step * 2.5 and toPrev > step * 2.5 then break end
-        if constraint.RemoveConstraints then
-            pcall(constraint.RemoveConstraints, last, "Rope")
-            pcall(constraint.RemoveConstraints, prev, "Rope")
-        end
-        last:Remove()
-        local keep = {}
-        for _, n in ipairs(self.Nodes) do
-            if IsValid(n) then keep[#keep + 1] = n end
-        end
-        self.Nodes = keep
+        local hint = FA.HoseMoveHint(ppos, last:GetPos(), prev:GetPos(), opt)
+        if hint ~= "rewind" and hint ~= "reel" then break end
+        if not self:PopLastNode(ply) then break end
         popped = popped + 1
-        local now = self:LastNode()
-        if IsValid(now) then
-            now:SetNextNode(ply)
-            self:SetEndNode(now)
-        end
-        ppos = self:GroundPos(ply)
     end
     if popped <= 0 then return false end
     self:SetLaidLen(math.floor(self:LaidDistance()))
     if self.BroadcastPath then self:BroadcastPath() end
+    if (self._RewindSnd or 0) < CurTime() then
+        self._RewindSnd = CurTime() + 0.18
+        self:EmitSound("physics/rubber/rubber_tire_impact_soft2.wav", 50, 125)
+    end
     return true
 end
 
@@ -472,31 +498,30 @@ function ENT:Rewind()
     self:Remove()
 end
 
--- ALT: смотать один узел, если стоишь у рукава.
-function ENT:ReelIn(ply)
+-- ALT: смотать несколько узлов, если стоишь у конца рукава.
+function ENT:ReelIn(ply, maxn)
     if self:GetDocked() or not IsValid(ply) or not self:CanPopLast() then return false end
-    local last = self:LastNode()
-    if not IsValid(last) then return false end
-    if self:GroundPos(ply):Distance(last:GetPos()) > 260 then return false end
-    local nodes = self.Nodes
-    local prev = nodes[#nodes - 1]
-    if constraint.RemoveConstraints then
-        pcall(constraint.RemoveConstraints, last, "Rope")
-        if IsValid(prev) then pcall(constraint.RemoveConstraints, prev, "Rope") end
+    maxn = math.max(1, math.floor(tonumber(maxn) or 3))
+    local ppos = self:GroundPos(ply)
+    local popped = 0
+    for _ = 1, maxn do
+        if not self:CanPopLast() then break end
+        local last = self:LastNode()
+        if not IsValid(last) then break end
+        local prev = self.Nodes[#self.Nodes - 1]
+        local dLast = ppos:Distance(last:GetPos())
+        local dPrev = IsValid(prev) and ppos:Distance(prev:GetPos()) or 9999
+        if dLast > 380 and dPrev > 220 then break end
+        if not self:PopLastNode(ply) then break end
+        popped = popped + 1
     end
-    last:Remove()
-    local keep = {}
-    for _, n in ipairs(self.Nodes) do
-        if IsValid(n) then keep[#keep + 1] = n end
-    end
-    self.Nodes = keep
-    local now = self:LastNode()
-    if IsValid(now) then
-        now:SetNextNode(ply)
-        self:SetEndNode(now)
-    end
+    if popped <= 0 then return false end
     self:SetLaidLen(math.floor(self:LaidDistance()))
     if self.BroadcastPath then self:BroadcastPath() end
+    if (self._RewindSnd or 0) < CurTime() then
+        self._RewindSnd = CurTime() + 0.18
+        self:EmitSound("physics/rubber/rubber_tire_impact_soft2.wav", 50, 140)
+    end
     return true
 end
 
@@ -506,12 +531,13 @@ function ENT:Think()
         if not ply:Alive() then
             self:DropNozzle()
         else
-            local reeled = false
-            if ply.KeyDown and ply:KeyDown(IN_WALK) then
-                reeled = self:ReelIn(ply)
-            end
-            if not reeled then reeled = self:TryRewind(ply) end
-            if not reeled and not self:IsWalkingBack(ply) then
+            -- Смотка целиком на сервере (Think SENT). Клиент только рисует путь.
+            local hint = self:MoveHint(ply)
+            if hint == "reel" then
+                if not self:ReelIn(ply, 3) then self:TryRewind(ply) end
+            elseif hint == "rewind" then
+                self:TryRewind(ply)
+            elseif hint == "lay" then
                 self:TryLay(ply)
             end
             self:Leash(ply)
@@ -520,6 +546,6 @@ function ENT:Think()
         end
     end
     self:RefreshPressure()
-    self:NextThink(CurTime() + 0.10)
+    self:NextThink(CurTime() + 0.08)
     return true
 end

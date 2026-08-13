@@ -139,7 +139,10 @@ check("смотка серверная TryRewind", has(hoseInit, "function ENT:T
 check("смотка IsWalkingBack", has(hoseInit, "function ENT:IsWalkingBack"))
 check("смотка ReelIn ALT", has(hoseInit, "function ENT:ReelIn"))
 check("нет узкого LayStep*1.25", not hoseInit:find("LayStep or 70) * 1.25", 1, true))
-check("не класть при ходе назад", has(hoseInit, "not self:IsWalkingBack"))
+check("hint геометрии HoseMoveHint", has(hoseLua, "function A.HoseMoveHint"))
+check("Think зовёт MoveHint", has(hoseInit, "self:MoveHint"))
+check("S IN_BACK сматывает", has(hoseInit, "IN_BACK"))
+check("не класть при ходе назад", has(hoseInit, 'hint == "lay"') or has(hoseInit, "not self:IsWalkingBack"))
 
 print("")
 if fails == 0 then print("ВСЕ ТЕСТЫ ПРОЙДЕНЫ (fire)")

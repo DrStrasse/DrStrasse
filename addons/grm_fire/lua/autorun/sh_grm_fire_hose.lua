@@ -35,6 +35,78 @@ A.NODE_LAY       = 1
 A.NODE_JUNCTION  = 2
 A.NODE_NOZZLE    = 3
 
+-- Геометрия смотки: чистые x/y, без GMod API. Стенд грузит этот же файл.
+local function xy(v)
+    if not v then return 0, 0 end
+    return tonumber(v.x) or 0, tonumber(v.y) or 0
+end
+
+-- t=0 у prev, t=1 у last. off — расстояние до отрезка (зажатый t).
+function A.HoseSegProject(p, a, b)
+    local px, py = xy(p)
+    local ax, ay = xy(a)
+    local bx, by = xy(b)
+    local abx, aby = bx - ax, by - ay
+    local apx, apy = px - ax, py - ay
+    local ab2 = abx * abx + aby * aby
+    if ab2 < 1 then
+        local dx, dy = px - ax, py - ay
+        return 0, math.sqrt(dx * dx + dy * dy)
+    end
+    local t = (apx * abx + apy * aby) / ab2
+    local ct = t
+    if ct < 0 then ct = 0 elseif ct > 1 then ct = 1 end
+    local cx, cy = ax + abx * ct, ay + aby * ct
+    local dx, dy = px - cx, py - cy
+    return t, math.sqrt(dx * dx + dy * dy)
+end
+
+-- "reel" | "rewind" | "lay" | "idle"
+-- reel  = ALT, принудительная смотка
+-- rewind = шаг назад по линии / S / скорость к предыдущему узлу
+-- lay   = ушли вперёд от последнего узла
+function A.HoseMoveHint(p, last, prev, opt)
+    opt = opt or {}
+    local step = tonumber(opt.step) or 70
+    local px, py = xy(p)
+    local lx, ly = xy(last)
+    local rx, ry = xy(prev)
+    local dLast = math.sqrt((px - lx) * (px - lx) + (py - ly) * (py - ly))
+    local dPrev = math.sqrt((px - rx) * (px - rx) + (py - ry) * (py - ry))
+    local t, off = A.HoseSegProject(p, prev, last)
+
+    if opt.reel then
+        if dLast <= 380 or dPrev <= 220 or off <= 160 then
+            return "reel"
+        end
+    end
+
+    local along = (t <= 0.90 and off <= 140)
+        or (t < 0 and dPrev <= 220)
+        or (dPrev + 8 < dLast)
+
+    if opt.back and (off <= 170 or dLast <= 200 or dPrev <= 200) then
+        along = true
+    end
+
+    if not along and opt.vel then
+        local vx, vy = xy(opt.vel)
+        local vlen = math.sqrt(vx * vx + vy * vy)
+        if vlen > 40 then
+            local tx, ty = rx - px, ry - py
+            local tlen = math.sqrt(tx * tx + ty * ty)
+            if tlen > 1 and off <= 150 then
+                local dot = (vx / vlen) * (tx / tlen) + (vy / vlen) * (ty / tlen)
+                if dot > 0.40 and t < 1.10 then along = true end
+            end
+        end
+    end
+
+    if along then return "rewind" end
+    if dLast >= step then return "lay" end
+    return "idle"
+end
+
 function A.CanHose(ply, src, why)
     if not IsValid(ply) then return false end
     local r = hook.Run("GRM_FireAddon_CanHose", ply, src, why or "use")
