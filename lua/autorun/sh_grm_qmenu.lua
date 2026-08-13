@@ -1270,19 +1270,54 @@ if CLIENT then
                         CP:SetPos(0, 0)
                         CP:Dock(TOP)
                     end
-                    pcall(function()
-                        CP:InvalidateLayout(true)
-                        CP:PerformLayout()
-                    end)
-                    -- автовысота по содержимому (контролы ControlPanel раскладываются вниз)
-                    local bottom = 0
-                    for _, ch in ipairs(CP:GetChildren()) do
-                        if isfunction(ch.GetBottom) then
-                            local b = ch:GetBottom()
-                            if isnumber(b) then bottom = math.max(bottom, b) end
+                    --[[ ЗАВИСАНИЕ КЛИЕНТА ПРИ ОТКРЫТИИ Q (v3.2.1).
+                         Здесь стояло CP:InvalidateLayout(true) и сразу
+                         CP:PerformLayout(). Вызывать PerformLayout руками
+                         НЕЛЬЗЯ (wiki: «You should not call this function
+                         directly. Use Panel:InvalidateLayout instead»):
+                         движок держит внутренний флаг «идёт раскладка», и
+                         прямой Lua-вызов его обходит, снимая защиту от
+                         повторного входа.
+                         Дальше срабатывала связка с DScrollPanel:
+                           SetTall(CP) → канва скролла пересчитывает высоту →
+                           появляется/исчезает VBar → ширина канвы меняется →
+                           DForm (ControlPanel) переносит подписи и меняет свою
+                           высоту → снова SetTall → …
+                         Раскладка колеблется между «полоса нужна / не нужна» и
+                         никогда не сходится: игра встаёт намертво БЕЗ ошибки
+                         Lua (поэтому в консоли было пусто).
+                         Почему не воспроизводилось у админа: при adminsToo=false
+                         суперадмин получает ВАНИЛЬНОЕ Q, и этот код не
+                         выполняется вовсе. Игрок без прав — единственный, кто
+                         открывает нашу панель, поэтому фриз «появился» ровно
+                         после снятия суперадмина.
+                         Лечение: раскладку заказываем движку (без прямого
+                         вызова), а автовысоту ставим один раз, с защитой от
+                         повторного входа и с порогом, чтобы колебание в
+                         пару пикселей не гоняло цикл. ]]
+                    pcall(function() CP:InvalidateLayout(true) end)
+                    local function fitCPHeight()
+                        if not IsValid(CP) then return end
+                        if CP._grmFitting then return end -- защита от повторного входа
+                        CP._grmFitting = true
+                        -- автовысота по содержимому (контролы ControlPanel идут вниз)
+                        local bottom = 0
+                        for _, ch in ipairs(CP:GetChildren()) do
+                            if IsValid(ch) and isfunction(ch.GetBottom) then
+                                local b = ch:GetBottom()
+                                if isnumber(b) then bottom = math.max(bottom, b) end
+                            end
                         end
+                        local want = math.max(240, bottom + 12)
+                        local have = isfunction(CP.GetTall) and CP:GetTall() or 0
+                        -- порог 2 px: без него округление ширины под VBar
+                        -- заставляет высоту дёргаться туда-сюда бесконечно
+                        if not isnumber(have) or math.abs(have - want) > 2 then
+                            CP:SetTall(want)
+                        end
+                        CP._grmFitting = false
                     end
-                    CP:SetTall(math.max(240, bottom + 12))
+                    fitCPHeight()
                     QM._toolCP = CP
                 end
             end
