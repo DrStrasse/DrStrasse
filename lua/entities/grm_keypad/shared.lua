@@ -99,28 +99,26 @@ function ENT.SanitizePin(s)
     return s
 end
 
--- левая верхняя точка экрана: X вправо (+GetRight), Y вниз (−GetUp).
--- Раньше origin был справа, а 3D2D-Y шёл вверх — подпись «1» и попадание
--- прицела жили в разных местах («верный PIN → отказ»).
+-- Origin — правый верх грани. 3D2D в Source: Right = Up×Forward,
+-- поэтому Forward=−GetRight, Up=+GetForward даёт X влево по морде
+-- и Y вниз. Менять базис нельзя — панель встаёт вверх ногами.
 function ENT:KeypadScreenOrigin()
     local fr = self:KeypadScreenFrame()
     return fr.center
-        - self:GetRight() * ((tonumber(self.ScreenW) or 144) * fr.scale / 2)
+        + self:GetRight() * ((tonumber(self.ScreenW) or 144) * fr.scale / 2)
         + self:GetUp() * ((tonumber(self.ScreenH) or 220) * fr.scale / 2)
 end
 
--- Forward = вправо по экрану (+GetRight), Up = нормаль наружу (+GetForward)
--- → 3D2D-Y = −Right = −GetUp (вниз). Совпадает с KeypadButtonAt.
 function ENT:KeypadScreenAngles()
-    return self:GetRight():AngleEx(self:GetForward())
+    return (-self:GetRight()):AngleEx(self:GetForward())
 end
 
--- какая кнопка под мировой точкой (прицел): индекс, кнопка или nil
+-- Попадание в той же системе, что и 3D2D: X = −GetRight, Y = −GetUp.
 function ENT:KeypadButtonAt(hitPos)
     if not hitPos then return nil end
     local s = self:KeypadScreenScale()
     local rel = hitPos - self:KeypadScreenOrigin()
-    local x = rel:Dot(self:GetRight()) / s
+    local x = rel:Dot(-self:GetRight()) / s
     local y = rel:Dot(-self:GetUp()) / s
     for i, b in ipairs(self.Buttons or {}) do
         if x >= b.x and x <= b.x + b.w and y >= b.y and y <= b.y + b.h then

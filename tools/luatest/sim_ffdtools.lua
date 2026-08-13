@@ -484,16 +484,16 @@ local ang105 = kp:KeypadScreenAngles()
 local function vEq(a, x, y, z)
   return a ~= nil and math.abs(a.x - x) < 1e-6 and math.abs(a.y - y) < 1e-6 and math.abs(a.z - z) < 1e-6
 end
-ok(vEq(ang105:Forward(), 0, -1, 0) and vEq(ang105:Right(), 0, 0, 1) and vEq(ang105:Up(), 1, 0, 0),
-   "экран: X=+GetRight, Y=−GetUp (подпись и попадание совпадают)")
+ok(vEq(ang105:Forward(), 0, 1, 0) and vEq(ang105:Right(), 0, 0, -1) and vEq(ang105:Up(), 1, 0, 0),
+   "Код 105: базис 3D2D F=-E:R / R=-E:U / U=+E:F (ролл 180° ушёл)")
 
 -- хит-тест пикселя кнопки «5» (x=54,y=114,w36,h28 → центр 72,128)
 -- X вдоль GetRight=(0,-1,0), Y вниз −GetUp=(0,0,-1)
 local O = kp:KeypadScreenOrigin()
-local s5 = O + mkVec(0, -1, 0) * (72 * S) + mkVec(0, 0, -1) * (128 * S)
+local s5 = O + mkVec(0, 1, 0) * (72 * S) + mkVec(0, 0, -1) * (128 * S)
 local idx5, b5 = kp:KeypadButtonAt(s5)
 ok(idx5 ~= nil and b5.text == "5", "KeypadButtonAt: точка центра кнопки «5» -> «5» (ось не зеркальна)")
-local mX = O + mkVec(0, -1, 0) * (72 * S) + mkVec(0, 0, -1) * (46 * S) -- поле ввода, не кнопка
+local mX = O + mkVec(0, 1, 0) * (72 * S) + mkVec(0, 0, -1) * (46 * S) -- поле ввода, не кнопка
 ok(kp:KeypadButtonAt(mX) == nil, "KeypadButtonAt: мимо кнопок -> nil")
 
 local function mkEplayer(sid, sa)
@@ -532,7 +532,7 @@ local function pressAt(hitpos)
   aimFn(plyA, IN_USE)
 end
 local function centerOf(btn)
-  return O + mkVec(0, -1, 0) * ((btn.x + btn.w / 2) * S) + mkVec(0, 0, -1) * ((btn.y + btn.h / 2) * S)
+  return O + mkVec(0, 1, 0) * ((btn.x + btn.w / 2) * S) + mkVec(0, 0, -1) * ((btn.y + btn.h / 2) * S)
 end
 kp.CurrentInput = "" kp:SetStatus(0)
 pressAt(centerOf(ENT.Buttons[1]))  -- 1
