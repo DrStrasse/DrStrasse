@@ -19,7 +19,7 @@ if CLIENT then return end
 GRM = GRM or {}
 GRM.CompTerminal = GRM.CompTerminal or {}
 local T = GRM.CompTerminal
-T.Version = "1.0.1"
+T.Version = "1.1.0 — OS 2.0 photorobot attach"
 
 util.AddNetworkString("GRM_CompTerminal_Act")
 util.AddNetworkString("GRM_CompTerminal_Result")
@@ -195,6 +195,9 @@ local function wantedSlice(jurisdiction, limit, includeCovert)
             updated      = r.updated,
             reasons      = reasons,
             covert       = r.covert == true or nil,
+            photoPath    = r.photoPath or r.photorobot or nil,
+            photoBy      = r.photoAttachedBy or nil,
+            photoAt      = r.photoAttachedAt or nil,
         }
     end
     return out
@@ -507,6 +510,26 @@ net.Receive("GRM_CompTerminal_Act", function(_, ply)
         if act == "case_accept" then ok, msg = X.Accept(ply, num, text)
         else ok, msg = X.Decline(ply, num, text) end
         return result(ply, ok and true or false, tostring(msg))
+    end
+
+    -- ── Фоторобот: прикрепить к делу ────────────────────────────
+    if act == "attach_photo" or act == "photo_attach" or act == "case_attach_photo" then
+        local key = charKey(target)
+        if key == "" then return result(ply, false, "Не выбрано дело") end
+        local rec = W and W.Records and W.Records[key]
+        if not rec then return result(ply, false, "Дело не найдено") end
+        local photoPath = string.sub(extra ~= "" and extra or text or "", 1, 128)
+        if photoPath == "" then return result(ply, false, "Не указана фотография") end
+        -- базовая валидация пути
+        if not (photoPath:find("grm_computer/images") or photoPath:find("grm_photos") or photoPath:find("grm_import") or photoPath:find("%.jpg") or photoPath:find("%.png")) then
+            return result(ply, false, "Некорректный путь фото (ожидается grm_computer/images/...)")
+        end
+        rec.photoPath = photoPath
+        rec.photoAttachedBy = ply:Nick()
+        rec.photoAttachedAt = os.time()
+        rec.updated = os.time()
+        if W.Save then W.Save() end
+        return result(ply, true, "Фоторобот прикреплён к делу: " .. (rec.name or key))
     end
 
     -- ── Обновить данные ───────────────────────────────────────────

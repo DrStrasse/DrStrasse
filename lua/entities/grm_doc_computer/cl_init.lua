@@ -181,6 +181,13 @@ net.Receive("GRM_DocComp_Open", function()
         end
     end
 
+    local lblPPhoto = vgui.Create("DLabel", passPnl)
+    lblPPhoto:SetPos(16, 295) lblPPhoto:SetText("9. Фото (путь из data/, например grm_computer/images/xxx.jpg или из фоторобота):") lblPPhoto:SetTextColor(CC.text) lblPPhoto:SizeToContents()
+    local entPassPhoto = vgui.Create("DTextEntry", passPnl)
+    entPassPhoto:SetPos(16, 315) entPassPhoto:SetSize(565, 26)
+    entPassPhoto:SetText("")
+    entPassPhoto:SetPlaceholderText("Оставьте пусто = Steam аватар, или укажите путь к фото из OS")
+
     local btnIssuePass = vgui.Create("DButton", passPnl)
     btnIssuePass:SetPos(16, 315)
     btnIssuePass:SetSize(360, 36)
@@ -213,6 +220,7 @@ net.Receive("GRM_DocComp_Open", function()
             validUntil  = "Бессрочно",
             status      = "Действителен",
             steamID64   = selectedPassSid64,
+            photoPath   = entPassPhoto:GetText(),
         }
 
         net.Start("GRM_Doc_ComputerIssue")
@@ -353,6 +361,13 @@ net.Receive("GRM_DocComp_Open", function()
         end
     end
 
+    local lblBPhoto = vgui.Create("DLabel", badgePnl)
+    lblBPhoto:SetPos(16, yPos + 125) lblBPhoto:SetText("Фото (путь из data/):") lblBPhoto:SetTextColor(CC.text) lblBPhoto:SizeToContents()
+    local entBadgePhoto = vgui.Create("DTextEntry", badgePnl)
+    entBadgePhoto:SetPos(16, yPos + 145) entBadgePhoto:SetSize(420, 26)
+    entBadgePhoto:SetText("")
+    entBadgePhoto:SetPlaceholderText("grm_computer/images/xxx.jpg или пусто")
+
     local btnIssueBadge = vgui.Create("DButton", badgePnl)
     btnIssueBadge:SetPos(16, yPos + 175)
     btnIssueBadge:SetSize(320, 36)
@@ -390,6 +405,7 @@ net.Receive("GRM_DocComp_Open", function()
             validUntil  = "Бессрочно",
             status      = "Действителен",
             steamID64   = selectedBadgeSid64,
+            photoPath   = entBadgePhoto:GetText(),
             isCover     = false,
         }
 

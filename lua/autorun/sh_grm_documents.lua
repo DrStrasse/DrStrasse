@@ -1515,11 +1515,18 @@ if CLIENT then
                     draw.SimpleText(mrz2:sub(1, 38), "GRMDoc_MRZ", 18, 412, Color(30, 30, 35), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                 end
 
-                local avatar = vgui.Create("AvatarImage", rightPnl)
-                avatar:SetPos(15, 65)
-                avatar:SetSize(115, 145)
                 local sid64 = data.steamID64 or (LocalPlayer():SteamID64())
-                avatar:SetSteamID(sid64, 184)
+                if data.photoPath and file.Exists(data.photoPath, "DATA") then
+                    local img = vgui.Create("DImage", rightPnl)
+                    img:SetPos(15, 65)
+                    img:SetSize(115, 145)
+                    img:SetImage("../data/"..data.photoPath)
+                else
+                    local avatar = vgui.Create("AvatarImage", rightPnl)
+                    avatar:SetPos(15, 65)
+                    avatar:SetSize(115, 145)
+                    avatar:SetSteamID(sid64, 184)
+                end
             end
         end
 
@@ -1667,11 +1674,18 @@ if CLIENT then
                     drawField("СТАТУС:", data.status or "Действителен", (data.status == "Действителен" and Color(20, 140, 50) or Color(180, 40, 40)))
                 end
 
-                local avatar = vgui.Create("AvatarImage", rightPnl)
-                avatar:SetPos(10, 35)
-                avatar:SetSize(95, 120)
                 local sid64 = data.steamID64 or (LocalPlayer():SteamID64())
-                avatar:SetSteamID(sid64, 184)
+                if data.photoPath and file.Exists(data.photoPath, "DATA") then
+                    local img = vgui.Create("DImage", rightPnl)
+                    img:SetPos(10, 35)
+                    img:SetSize(95, 120)
+                    img:SetImage("../data/"..data.photoPath)
+                else
+                    local avatar = vgui.Create("AvatarImage", rightPnl)
+                    avatar:SetPos(10, 35)
+                    avatar:SetSize(95, 120)
+                    avatar:SetSteamID(sid64, 184)
+                end
             end
         end
 
@@ -1804,11 +1818,18 @@ if CLIENT then
                     draw.SimpleText(tostring(data.fullName or ""), "GRMDoc_Small", 165, 322, Color(25, 45, 110), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                 end
 
-                local avatar = vgui.Create("AvatarImage", leftPnl)
-                avatar:SetPos(24, 70)
-                avatar:SetSize(112, 140)
                 local sid64 = data.steamID64 or (LocalPlayer():SteamID64())
-                avatar:SetSteamID(sid64, 184)
+                if data.photoPath and file.Exists(data.photoPath, "DATA") then
+                    local img = vgui.Create("DImage", leftPnl)
+                    img:SetPos(24, 70)
+                    img:SetSize(112, 140)
+                    img:SetImage("../data/"..data.photoPath)
+                else
+                    local avatar = vgui.Create("AvatarImage", leftPnl)
+                    avatar:SetPos(24, 70)
+                    avatar:SetSize(112, 140)
+                    avatar:SetSteamID(sid64, 184)
+                end
 
                 -- Правая страница
                 local rightPnl = vgui.Create("DPanel", frame)
@@ -1899,11 +1920,18 @@ if CLIENT then
                     draw.SimpleText("СТАТУС: " .. tostring(data.status or "Действительно"), "GRMDoc_Bold", w - 16, 190, statCol, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
                 end
 
-                local avatar = vgui.Create("AvatarImage", frame)
-                avatar:SetPos(20, 56)
-                avatar:SetSize(82, 107)
                 local sid64 = data.steamID64 or (LocalPlayer():SteamID64())
-                avatar:SetSteamID(sid64, 184)
+                if data.photoPath and file.Exists(data.photoPath, "DATA") then
+                    local img = vgui.Create("DImage", frame)
+                    img:SetPos(20, 56)
+                    img:SetSize(82, 107)
+                    img:SetImage("../data/"..data.photoPath)
+                else
+                    local avatar = vgui.Create("AvatarImage", frame)
+                    avatar:SetPos(20, 56)
+                    avatar:SetSize(82, 107)
+                    avatar:SetSteamID(sid64, 184)
+                end
 
                 local btnTurn = vgui.Create("DButton", frame)
                 btnTurn:SetSize(320, 32)
@@ -2043,11 +2071,18 @@ if CLIENT then
                     draw.SimpleText("СТАТУС: " .. tostring(data.status or "Действительно (на службе)"), "GRMDoc_Bold", w - 16, 200, statCol, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
                 end
 
-                local avatar = vgui.Create("AvatarImage", frame)
-                avatar:SetPos(20, 56)
-                avatar:SetSize(82, 107)
                 local sid64 = data.steamID64 or (LocalPlayer():SteamID64())
-                avatar:SetSteamID(sid64, 184)
+                if data.photoPath and file.Exists(data.photoPath, "DATA") then
+                    local img = vgui.Create("DImage", frame)
+                    img:SetPos(20, 56)
+                    img:SetSize(82, 107)
+                    img:SetImage("../data/"..data.photoPath)
+                else
+                    local avatar = vgui.Create("AvatarImage", frame)
+                    avatar:SetPos(20, 56)
+                    avatar:SetSize(82, 107)
+                    avatar:SetSteamID(sid64, 184)
+                end
 
                 -- Печать ВАИ
                 local pnlStamp = vgui.Create("DPanel", frame)

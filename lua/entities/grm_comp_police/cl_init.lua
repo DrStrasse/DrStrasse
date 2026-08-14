@@ -178,6 +178,30 @@ net.Receive("GRM_CompPolice_Open", function()
         end
     end
 
+    -- Фоторобот: поле пути и кнопка прикрепления (OS 2.0)
+    local lblPhoto = vgui.Create("DLabel", wantPnl)
+    lblPhoto:SetPos(330, 565) lblPhoto:SetText("Фоторобот (путь data/):") lblPhoto:SetTextColor(CC.dim) lblPhoto:SizeToContents()
+    local entPhotoPath = vgui.Create("DTextEntry", wantPnl)
+    entPhotoPath:SetPos(480, 565) entPhotoPath:SetSize(280, 26)
+    entPhotoPath:SetPlaceholderText("grm_computer/images/xxx.jpg")
+    local btnAttachPhoto = vgui.Create("DButton", wantPnl)
+    btnAttachPhoto:SetPos(770, 565) btnAttachPhoto:SetSize(150, 26)
+    btnAttachPhoto:SetText("📸 Прикрепить фото")
+    btnAttachPhoto:SetFont("DermaDefaultBold")
+    btnAttachPhoto:SetTextColor(color_white)
+    btnAttachPhoto.Paint = function(s,w,h) draw.RoundedBox(4,0,0,w,h,s:IsHovered() and Color(80,130,200) or Color(50,100,160)) end
+    btnAttachPhoto.DoClick = function()
+        if not canEdit then notification.AddLegacy("Нет прав!", NOTIFY_ERROR, 3) return end
+        local line = listWanted:GetSelectedLine()
+        if not line then notification.AddLegacy("Выберите запись!", NOTIFY_ERROR, 3) return end
+        local row = listWanted:GetLine(line)
+        local path = string.Trim(entPhotoPath:GetText() or "")
+        if path=="" then notification.AddLegacy("Укажите путь к фото", NOTIFY_ERROR, 3) return end
+        if row and row._targetKey then
+            GRM_CompTerminal_Send("attach_photo", row._targetKey, "", 0, path)
+        end
+    end
+
     tabs:AddSheet("База розыска", wantPnl, "icon16/exclamation.png")
 
     -- ══════════════════════════════════════════════════════════════
