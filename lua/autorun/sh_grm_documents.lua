@@ -55,7 +55,7 @@ GRM = GRM or {}
 GRM.Documents = GRM.Documents or {}
 local DOC = GRM.Documents
 
-DOC.Version       = "1.4.1"
+DOC.Version       = "2.0.0 — licenses v2 expiry/points + photoPath"
 DOC.RegistryFile  = "grm_documents.json"
 DOC.TemplatesFile = "grm_doc_templates.json"
 
@@ -466,6 +466,43 @@ if SERVER then
         return DOC.Registry.milLicenses[key]
     end
     DOC.EnsureMilLicense = ensureMilLicense
+
+    -- Лицензии v2: баллы и приостановка
+    local function addPoints(charKey, add, reason)
+        if not charKey or charKey=="" then return false, "Нет ключа" end
+        local lic = DOC.Registry.licenses and DOC.Registry.licenses[charKey]
+        local mil = DOC.Registry.milLicenses and DOC.Registry.milLicenses[charKey]
+        local target = lic or mil
+        if not target then return false, "Нет В/У" end
+        target.points = math.max(0, (tonumber(target.points) or 0) + (tonumber(add) or 0))
+        target.maxPoints = tonumber(target.maxPoints) or 12
+        if target.points >= target.maxPoints then
+            target.status = (lic and "Приостановлено (баллы)") or "Приостановлено ВАИ (баллы)"
+            target.suspendedUntil = os.time() + 30*24*3600
+            target.updated = os.time()
+            DOC.SaveRegistry("suspend points "..charKey)
+            return true, "Приостановлено до "..os.date("%d.%m.%Y", target.suspendedUntil)
+        end
+        target.updated = os.time()
+        DOC.SaveRegistry("add points "..charKey.." +"..tostring(add).." "..tostring(reason or ""))
+        return true, "Баллы: "..tostring(target.points).."/"..tostring(target.maxPoints)
+    end
+    DOC.AddLicensePoints = addPoints
+
+    function DOC.GetLicensePoints(charKey)
+        local lic = DOC.Registry.licenses and DOC.Registry.licenses[charKey]
+        local mil = DOC.Registry.milLicenses and DOC.Registry.milLicenses[charKey]
+        local t = lic or mil
+        if not t then return 0,12 end
+        return tonumber(t.points) or 0, tonumber(t.maxPoints) or 12, t.status
+    end
+
+    -- Проверка просрочки при выдаче / загрузке (миграция уже есть в PlayerEnteredVehicle, но и тут)
+    function DOC.IsLicenseExpired(lic)
+        if not lic or not lic.expiry then return false end
+        return os.time() > tonumber(lic.expiry)
+    end
+
 
     -- Проверка прав игрока на выдачу документов
     function DOC.CanIssuePassports(ply)
@@ -1072,28 +1109,90 @@ if SERVER then
             catName = "C (Грузовой автотранспорт)"
         end
 
-        local hasCiv = civLic and civLic.status == "Действительно" and istable(civLic.categories) and (civLic.categories[reqCatCiv] == true or civLic.categories["SPEC"] == true)
-        local hasMil = milLic and (milLic.status == "Действительно" or milLic.status == "Действительно (на службе)") and istable(milLic.categories) and (milLic.categories[reqCatMil] == true or milLic.categories["СПЕЦ-В"] == true)
+        -- v2.0 expiry/points/suspended check + migration
+        local function isExpired(lic)
+            if not lic then return false end
+            if lic.expiry and tonumber(lic.expiry) and tonumber(lic.expiry) > 0 then
+                return os.time() > tonumber(lic.expiry)
+            end
+            return false
+        end
+        local function isSuspended(lic)
+            if not lic then return false, 0 end
+            if lic.suspendedUntil and tonumber(lic.suspendedUntil) and tonumber(lic.suspendedUntil) > os.time() then
+                return true, tonumber(lic.suspendedUntil)
+            end
+            if isstring(lic.status) and lic.status:find("Приостановлен") then
+                -- fallback parse date if suspendedUntil missing, treat as suspended
+                return true, 0
+            end
+            return false, 0
+        end
+        local function hasPointsIssue(lic)
+            if not lic then return false end
+            local pts = tonumber(lic.points) or 0
+            local maxPts = tonumber(lic.maxPoints) or 12
+            return pts >= maxPts
+        end
+
+        -- migration for old records: add expiry = created + 10y civ / 5y mil, points=0
+        if civLic and not civLic.expiry then
+            local base = tonumber(civLic.created) or os.time()
+            civLic.expiry = base + 10*365*24*3600
+            civLic.points = civLic.points or 0
+            civLic.maxPoints = civLic.maxPoints or 12
+        end
+        if milLic and not milLic.expiry then
+            local base = tonumber(milLic.created) or os.time()
+            milLic.expiry = base + 5*365*24*3600
+            milLic.points = milLic.points or 0
+            milLic.maxPoints = milLic.maxPoints or 12
+        end
+
+        local hasCivCat = civLic and istable(civLic.categories) and (civLic.categories[reqCatCiv] == true or civLic.categories["SPEC"] == true)
+        local hasMilCat = milLic and istable(milLic.categories) and (milLic.categories[reqCatMil] == true or milLic.categories["СПЕЦ-В"] == true)
+
+        local civExpired = isExpired(civLic)
+        local milExpired = isExpired(milLic)
+        local civSusp, civSuspUntil = isSuspended(civLic)
+        local milSusp, milSuspUntil = isSuspended(milLic)
+        local civPointsBad = hasPointsIssue(civLic)
+        local milPointsBad = hasPointsIssue(milLic)
+
+        local hasCiv = hasCivCat and civLic and (civLic.status == "Действительно" or civLic.status == "Действителен") and not civExpired and not civSusp and not civPointsBad
+        local hasMil = hasMilCat and milLic and (milLic.status == "Действительно" or milLic.status == "Действительно (на службе)" or milLic.status == "Действителен") and not milExpired and not milSusp and not milPointsBad
 
         if hasMil then
             if GRM.Notify then
-                GRM.Notify(ply, "Удостоверение военного водителя ВАИ проверено (Категория " .. reqCatMil .. " действительна).", 100, 200, 120)
+                local extra = ""
+                if milLic.points and tonumber(milLic.points) and tonumber(milLic.points) > 0 then extra = " | Баллы: "..tostring(milLic.points).."/"..tostring(milLic.maxPoints or 12) end
+                GRM.Notify(ply, "ВАИ проверено (Категория " .. reqCatMil .. " действительна)"..extra..".", 100, 200, 120)
             end
         elseif hasCiv then
             if GRM.Notify then
-                GRM.Notify(ply, "Водительское удостоверение проверено (Категория " .. reqCatCiv .. " действительна).", 100, 200, 120)
+                local extra = ""
+                if civLic.points and tonumber(civLic.points) and tonumber(civLic.points) > 0 then extra = " | Баллы: "..tostring(civLic.points).."/"..tostring(civLic.maxPoints or 12) end
+                GRM.Notify(ply, "В/У проверено (Категория " .. reqCatCiv .. " действительна)"..extra..".", 100, 200, 120)
             end
         else
-            if (civLic and civLic.status == "Лишён права управления") or (milLic and milLic.status == "Лишён ВАИ") then
-                if GRM.Notify then
-                    GRM.Notify(ply, "ВНИМАНИЕ: Вы лишены права управления транспортными средствами!", 255, 80, 80)
-                end
-                ply:ChatPrint("[Автоинспекция] Внимание: Вы лишены водительских прав и управляете Т/С незаконно!")
+            if civExpired or milExpired then
+                if GRM.Notify then GRM.Notify(ply, "ВНИМАНИЕ: Срок действия В/У истёк! Обратитесь в Автоинспекцию/ВАИ для перевыпуска.", 255, 80, 80) end
+                ply:ChatPrint("[Автоинспекция] ВУ просрочено — требуется перевыпуск.")
+            elseif civSusp or milSusp then
+                local untilStr = ""
+                local untilTs = civSusp and civSuspUntil or milSuspUntil
+                if untilTs and untilTs > 0 then untilStr = " до "..os.date("%d.%m.%Y", untilTs) end
+                if GRM.Notify then GRM.Notify(ply, "ВНИМАНИЕ: В/У приостановлено"..untilStr.."!", 255, 80, 80) end
+                ply:ChatPrint("[Автоинспекция] В/У приостановлено"..untilStr..".")
+            elseif civPointsBad or milPointsBad then
+                if GRM.Notify then GRM.Notify(ply, "ВНИМАНИЕ: Превышены баллы нарушений (12/12) — В/У подлежит приостановке!", 255, 80, 80) end
+                ply:ChatPrint("[Автоинспекция] Баллы 12/12 — обратитесь в ГАИ.")
+            elseif (civLic and civLic.status == "Лишён права управления") or (milLic and milLic.status == "Лишён ВАИ") then
+                if GRM.Notify then GRM.Notify(ply, "ВНИМАНИЕ: Вы лишены права управления ТС!", 255, 80, 80) end
+                ply:ChatPrint("[Автоинспекция] Вы лишены прав — управление незаконно!")
             else
-                if GRM.Notify then
-                    GRM.Notify(ply, "Внимание: У вас отсутствует водительское удостоверение категории " .. catName .. "!", 255, 160, 60)
-                end
-                ply:ChatPrint("[Автоинспекция] Предупреждение: У вас нет прав категории " .. catName .. " (оформляются в Автошколе / ВАИ).")
+                if GRM.Notify then GRM.Notify(ply, "Внимание: Нет В/У категории " .. catName .. "!", 255, 160, 60) end
+                ply:ChatPrint("[Автоинспекция] Нет прав категории " .. catName .. " (Автошкола/ВАИ).")
             end
         end
     end)
@@ -1199,6 +1298,43 @@ if SERVER then
             showDocToTarget(ply, "medcard")
             datapack.SkipPlayerSay = true
             datapack[1] = ""
+            return
+        end
+
+        -- Лицензии v2: баллы
+        if low == "/license_points" or low == "/points" or low == "/баллы" or low == "/моибаллы" then
+            local key = getCharKey(ply)
+            local pts, maxPts, status = DOC.GetLicensePoints(key)
+            if GRM.Notify then GRM.Notify(ply, "Баллы В/У: "..tostring(pts).."/"..tostring(maxPts).." | Статус: "..tostring(status or "Нет В/У"), 100, 200, 160) end
+            ply:ChatPrint("[Автоинспекция] Баллы: "..tostring(pts).."/"..tostring(maxPts).." | Статус: "..tostring(status or "Нет В/У"))
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
+            return
+        end
+        if low:find("^/license_check") or low:find("^/check_license") or low:find("^/проверить_права") then
+            -- формат: /license_check <часть ника/charKey>
+            local targetName = string.Trim(txt:sub(("/license_check"):len()+1))
+            if targetName=="" then targetName = string.Trim(txt:sub(("/check_license"):len()+1)) end
+            if targetName=="" then targetName = string.Trim(txt:sub(("/проверить_права"):len()+1)) end
+            if targetName=="" then
+                if GRM.Notify then GRM.Notify(ply, "Укажите ник/ключ для проверки: /license_check <ник>", 255,160,80) end
+                datapack.SkipPlayerSay=true
+                datapack[1]=""
+                return
+            end
+            -- поиск по онлайн
+            local foundKey=nil
+            for _,p in ipairs(player.GetAll()) do
+                if IsValid(p) and (p:Nick():lower():find(targetName:lower(),1,true) or (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)==targetName)) then
+                    foundKey = getCharKey(p)
+                    break
+                end
+            end
+            if not foundKey then foundKey=targetName end
+            local pts,maxPts,status = DOC.GetLicensePoints(foundKey)
+            if GRM.Notify then GRM.Notify(ply, "Проверка В/У "..foundKey..": "..tostring(pts).."/"..tostring(maxPts).." | "..tostring(status or "Нет"), 100,200,160) end
+            datapack.SkipPlayerSay=true
+            datapack[1]=""
             return
         end
 
