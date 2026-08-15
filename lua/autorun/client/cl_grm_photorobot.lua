@@ -300,8 +300,9 @@ local function bxor32(a, b)
   return r
 end
 
--- FNV-1a 32 бита (детерминированная, без util.CRC — работает и вне игры).
+-- FNV-1a 32 бита (общая для всей OS — GRM.OSFormat; фолбэк на случай загрузки без неё).
 function PR.Checksum(s)
+  if GRM.OSFormat and GRM.OSFormat.Checksum then return GRM.OSFormat.Checksum(s) end
   local h = 2166136261
   for i = 1, #s do
     h = bxor32(h, s:byte(i))
