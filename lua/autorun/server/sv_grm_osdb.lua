@@ -139,10 +139,13 @@ if SERVER then
       st.records[id] = r
       st.order[#st.order + 1] = r
     end
+    local changed = false
     for k, v in pairs(fields or {}) do
-      if k ~= "id" and k ~= "updated" then r[k] = v end
+      if k ~= "id" and k ~= "updated" then
+        if r[k] ~= v then r[k] = v; changed = true end
+      end
     end
-    r.updated = now()
+    if not r.updated or changed then r.updated = now() end -- не трогаем updated при повторном upsert
     st.dirty = true
     return r
   end

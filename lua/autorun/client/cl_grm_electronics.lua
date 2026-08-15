@@ -19,6 +19,18 @@ local cableMaterial=Material("cable/blue_elec")
 hook.Add("PostDrawTranslucentRenderables","GRM_Net_Cables",function(depth,sky,sky3d)if depth or sky or sky3d then return end;render.SetMaterial(cableMaterial);local by={};for _,d in ipairs(E.Topology.devices or{})do if IsValid(d.ent)then by[d.id]=d.ent end end;for _,l in ipairs(E.Topology.links or{})do local a,b=by[l.a],by[l.b];if IsValid(a)and IsValid(b)then render.DrawBeam(a:WorldSpaceCenter(),b:WorldSpaceCenter(),3,0,1,Color(55,165,255,230))end end end)
 
 local current={ent=nil,data=nil,files={},deviceID=""}
+-- Резолвер GRMML: [img: путь] → Material, [grface: fileID] → состояние фоторобота.
+local function osdocResolver(kind,ref)
+ if kind=="grface" then
+  for _,r in ipairs(current.files or{})do
+   if r.id==ref and type(r.grm)=="string" and r.grm~="" and GRM.Photorobot then
+    local st=GRM.Photorobot.Deserialize(r.grm);return st
+   end
+  end
+ elseif kind=="img" and file.Exists(ref,"DATA") then
+  return Material("../data/"..ref,"smooth")
+ end
+end
 local function openComputer(ent,data)
  if IsValid(E.ActiveFrame)then E.ActiveFrame:Remove()end
  local f=frame("GRM NET OS · "..tostring(data.name),1060,720);current.ent,current.data,current.deviceID=ent,data,data.deviceID or""
@@ -101,7 +113,8 @@ local function openComputer(ent,data)
  local function filesPage(files)
   clear();current.files=files or current.files or{};local headBar=vgui.Create("DPanel",body);headBar:SetPos(0,0);headBar:SetSize(830,44);headBar.Paint=function(_,w,h)draw.RoundedBoxEx(9,0,0,w,h,Color(14,22,38),true,true,false,false);surface.SetMaterial(ICONS.Files);surface.SetDrawColor(C.blue);surface.DrawTexturedRect(16,10,24,24);draw.SimpleText("ФАЙЛОВЫЙ МЕНЕДЖЕР","GRMNet_Head",48,22,C.text,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER);draw.SimpleText(tostring(current.deviceID):sub(1,24),"GRMNet_Small",w-16,22,C.dim,TEXT_ALIGN_RIGHT,TEXT_ALIGN_CENTER)end
   local list=darkList(body,14,52,310,500,{{"Файл",160},{"Владелец",85},{"КБ",42}});for _,r in ipairs(current.files)do local line=addLine(list,r.name,r.owner,math.ceil((r.size or 0)/1024));line._file=r end
-  local name=entry(body,"Название документа",340,52,470,34);local content=entry(body,"Текст файла",340,96,470,260,true);local selectedID=""
+  local name=entry(body,"Название документа",340,52,340,34);local content=entry(body,"Текст файла",340,96,470,260,true);local selectedID=""
+  btn(body,"ПРЕДПРОСМОТР",690,52,120,34,C.purple,function()if GRM.OSDoc and GRM.OSDoc.OpenViewer then GRM.OSDoc.OpenViewer((name:GetText()~=""and name:GetText())or"Документ",content:GetText(),{resolver=osdocResolver,owner=current.data.logged or""})else notification.AddLegacy("Модуль GRMML не загружен",NOTIFY_ERROR,3)end end)
   list.OnRowSelected=function(_,_,line)selectedID=line._file.id;send(ent,"file_open",function()net.WriteString(selectedID)end)end
   local share=entry(body,"Логин получателя",340,418,240,34);btn(body,"Передать",590,418,160,34,C.blue,function()send(ent,"file_share",function()net.WriteString(selectedID);net.WriteString(share:GetText())end)end)
   -- Printer section with visual settings
@@ -215,8 +228,9 @@ local function openComputer(ent,data)
   local selectedDocID=""
   btn(body,"Сохранить",430,594,120,30,C.green,function()send(ent,"file_save",function()net.WriteString(selectedDocID);net.WriteString(docName:GetText());net.WriteString(area:GetText());net.WriteString("doc")end)end)
   btn(body,"Файлы",560,594,120,30,C.blue,function()send(ent,"files")end)
+  btn(body,"ПРЕДПРОСМОТР",688,594,124,30,C.purple,function()if GRM.OSDoc and GRM.OSDoc.OpenViewer then GRM.OSDoc.OpenViewer((docName:GetText()~=""and docName:GetText())or"Документ",area:GetText(),{resolver=osdocResolver})else notification.AddLegacy("Модуль GRMML не загружен",NOTIFY_ERROR,3)end end)
   -- Status bar
-  local statusBar=vgui.Create("DPanel",body);statusBar:SetPos(18,630);statusBar:SetSize(794,14);statusBar.Paint=function(_,w,h)draw.RoundedBox(3,0,0,w,h,Color(14,22,38));local text=area:GetText()or"";local chars=#text;local lines=select(2,string.gsub(text,"\n",""))+1;draw.SimpleText("Символов: "..chars.."  |  Строк: "..lines,"GRMNet_Tiny",8,h/2,C.dim,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)end
+  local statusBar=vgui.Create("DPanel",body);statusBar:SetPos(18,630);statusBar:SetSize(794,14);statusBar.Paint=function(_,w,h)draw.RoundedBox(3,0,0,w,h,Color(14,22,38));local text=area:GetText()or"";local chars=#text;local lines=select(2,string.gsub(text,"\n",""))+1;draw.SimpleText("Символов: "..chars.."  |  Строк: "..lines.."  |  GRMML: # заголовок · **жирный** · *курсив*","GRMNet_Tiny",8,h/2,C.dim,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)end
   body._editorArea=area;body._editorName=docName
  end
  -- Фоторобот вынесен в отдельный модуль GRM.Photorobot (cl_grm_photorobot.lua).

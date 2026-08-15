@@ -1,10 +1,11 @@
 -- Contracts for GRM Electronics/Internet ecosystem and destructible money printer.
 local function read(p)local f=assert(io.open(p,"rb"));local s=f:read("*a");f:close();return s end
 local core,client,photo,tool=read("lua/autorun/sh_grm_electronics.lua"),read("lua/autorun/client/cl_grm_electronics.lua"),read("lua/autorun/client/cl_grm_photorobot.lua"),read("lua/weapons/gmod_tool/stools/grm_network_tool.lua")
+local osdoc,osformat=read("lua/autorun/client/cl_grm_osdoc.lua"),read("lua/autorun/sh_grm_osformat.lua")
 local printer,printerShared,deviceBase=read("lua/entities/grm_money_printer/init.lua"),read("lua/entities/grm_money_printer/shared.lua"),read("lua/entities/grm_net_device/init.lua")
 local hub,qmenu=read("lua/autorun/server/sv_grm_persistence_hub.lua"),read("lua/autorun/sh_grm_qmenu.lua")
 local pass,fail=0,0;local function has(s,n)return s:find(n,1,true)~=nil end;local function ok(v,n)if v then pass=pass+1;print("  ok  "..n)else fail=fail+1;print("  FAIL "..n)end end
-ok(has(core,'E.Version="2.1.0"'),"electronics ecosystem version 2.1.0 (автосейв + фотомодуль)")
+ok(has(core,'E.Version="2.2.0"'),"electronics ecosystem version 2.2.0 (автосейв + фотомодуль + свои языки/база)")
 ok(has(core,"function E.RegisterDevice")and has(core,"function E.NetworkRouter")and has(core,"function E.IsOnline"),"authoritative device registry and online resolver")
 ok(has(core,"connectedRouter")and has(core,"wifiAuthorized")and has(core,"passwordHash"),"Wi-Fi SSID/password authorization")
 ok(has(core,'(op=="register"or op=="login")and not E.IsOnline(ent)'),"login and registration are rejected on offline computers")
@@ -59,4 +60,8 @@ ok(has(photo,"sepia")and has(photo,"vintage")and has(photo,"grain"),"photorobot 
 ok(has(photo,"render.Capture")and has(photo,"GetRenderTarget")and has(photo,"GRMFACE"),"photorobot module: RT capture + own GRMFACE format")
 ok(has(photo,"Подозр. 1")and has(photo,"presets"),"photorobot module: preset suspect templates")
 ok(has(photo,"PR.Parts")and has(photo,"face = {")and has(photo,"eyes = {")and has(photo,"nose = {"),"photorobot module: layered face eyes nose parts")
+ok(has(core,"GRM.OSDB")and has(core,'GRM.OSDB.Open("netfiles")')and has(core,"filesSyncGRMDB"),"OS files stored in own GRMDB (legacy JSON stays mirror)")
+ok(has(core,'AddCSLuaFile("autorun/sh_grm_osformat.lua")')and has(core,'AddCSLuaFile("autorun/client/cl_grm_osdoc.lua")'),"OS format + GRMML renderer shipped to clients")
+ok(has(osdoc,"GRM.OSDoc")and has(osdoc,"OD.Layout")and has(osdoc,"OD.OpenViewer"),"GRMML document renderer module")
+ok(has(osformat,"GRM.OSFormat")and has(osformat,"GRMFILE")and has(osformat,"GRMML"),"own languages GRMFILE + GRMML")
 print(("ELECTRONICS: %d/%d failures=%d"):format(pass,pass+fail,fail));if fail>0 then os.exit(1)end

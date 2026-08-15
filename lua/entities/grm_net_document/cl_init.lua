@@ -66,21 +66,25 @@ function ENT:Use(act,called,type,value)
   ownerLabel:SetTextColor(Color(120,130,150))
   ownerLabel:SetText("Автор: "..owner)
  else
-  -- Regular text document
-  local textEntry=vgui.Create("DTextEntry",f)
-  textEntry:SetPos(20,60)
-  textEntry:SetSize(460,480)
-  textEntry:SetMultiline(true)
-  textEntry:SetEditable(false)
-  textEntry:SetText(content)
-  textEntry:SetFont("DermaDefault")
-  
-  -- Owner label
-  local ownerLabel=vgui.Create("DLabel",f)
-  ownerLabel:SetPos(20,550)
-  ownerLabel:SetSize(460,20)
-  ownerLabel:SetFont("DermaDefault")
-  ownerLabel:SetTextColor(Color(120,130,150))
-  ownerLabel:SetText("Автор: "..owner)
+  -- Text document: render via GRMML (свой язык). Fallback — сырой текст.
+  if GRM.OSDoc and GRM.OSDoc.OpenViewer then
+   f:Close()
+   GRM.OSDoc.OpenViewer("ДОКУМЕНТ · "..title, content, { owner = owner })
+  else
+   local textEntry=vgui.Create("DTextEntry",f)
+   textEntry:SetPos(20,60)
+   textEntry:SetSize(460,480)
+   textEntry:SetMultiline(true)
+   textEntry:SetEditable(false)
+   textEntry:SetText(content)
+   textEntry:SetFont("DermaDefault")
+   
+   local ownerLabel=vgui.Create("DLabel",f)
+   ownerLabel:SetPos(20,550)
+   ownerLabel:SetSize(460,20)
+   ownerLabel:SetFont("DermaDefault")
+   ownerLabel:SetTextColor(Color(120,130,150))
+   ownerLabel:SetText("Автор: "..owner)
+  end
  end
 end

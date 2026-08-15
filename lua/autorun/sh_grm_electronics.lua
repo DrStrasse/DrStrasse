@@ -1,7 +1,7 @@
---[[ GRM Electronics & Network Ecosystem v2.1.0 — OS 2.0 + модуль фоторобота GRMFACE ]]
-if SERVER then AddCSLuaFile();AddCSLuaFile("autorun/client/cl_grm_electronics.lua");AddCSLuaFile("autorun/client/cl_grm_photorobot.lua")end
+--[[ GRM Electronics & Network Ecosystem v2.2.0 — OS 2.0 + модуль фоторобота GRMFACE + свои языки/база ]]
+if SERVER then AddCSLuaFile();AddCSLuaFile("autorun/client/cl_grm_electronics.lua");AddCSLuaFile("autorun/client/cl_grm_photorobot.lua");AddCSLuaFile("autorun/client/cl_grm_osdoc.lua");AddCSLuaFile("autorun/sh_grm_osformat.lua")end
 GRM=GRM or{};GRM.Electronics=GRM.Electronics or{};local E=GRM.Electronics
-E.Version="2.1.0";E.Devices=E.Devices or{};E.Configs=E.Configs or{};E.Links=E.Links or{};E.Accounts=E.Accounts or{};E.Files=E.Files or{};E.Sessions=E.Sessions or{};E.Mailbox=E.Mailbox or{}
+E.Version="2.2.0";E.Devices=E.Devices or{};E.Configs=E.Configs or{};E.Links=E.Links or{};E.Accounts=E.Accounts or{};E.Files=E.Files or{};E.Sessions=E.Sessions or{};E.Mailbox=E.Mailbox or{}
 -- v1.5.1 (находка 155): автосейв по dirty-флагу — раньше карта и база писались
 -- только при ShutDown/явных операциях, и любое падение/килл процесса в окне
 -- между изменениями теряло устройства, файлы и почту (класс саги валюты,
@@ -46,11 +46,25 @@ if SERVER then
   table.sort(out,function(a,b)return a.name<b.name end);return out
  end
 
+ -- Своя база GRMDB (авторитетная для файлов ОС; JSON остаётся легаси-зеркалом для счетов/почты)
+ local function sharedToCSV(t)local out={};for u in pairs(t or{})do out[#out+1]=u end;table.sort(out);return table.concat(out,",")end
+ local function csvToShared(s)local t={};for u in tostring(s or""):gmatch("[^,]+")do if u~=""then t[u]=true end end;return t end
+ local function fileToFields(f,devID)return{dev=devID,name=f.name or"",owner=f.owner or"",category=f.category or"doc",content=f.content or"",imagePath=f.imagePath or"",desc=f.desc or"",grm=f.grm or"",source=f.source or"",imageBytes=f.imageBytes and tostring(f.imageBytes)or"",created=tostring(f.created or os.time()),updated=tostring(f.updated or os.time()),shared=sharedToCSV(f.sharedWith)}end
+ local function fieldsToFile(id,r)return{id=id,name=r.name or"",owner=r.owner or"",category=r.category or"doc",content=r.content or"",imagePath=r.imagePath or"",desc=r.desc or"",grm=r.grm or"",source=r.source or"",imageBytes=tonumber(r.imageBytes)or nil,created=tonumber(r.created)or os.time(),updated=tonumber(r.updated)or os.time(),sharedWith=csvToShared(r.shared)}end
+ local function filesSyncGRMDB()
+  if not GRM.OSDB then return end
+  local st=GRM.OSDB.Open("netfiles");if not st then return end
+  for _,r in ipairs(GRM.OSDB.All(st))do local live=E.Files[r.dev]and E.Files[r.dev][r.id];if not live then GRM.OSDB.Delete(st,r.id)end end
+  for devID,store in pairs(E.Files)do for id,f in pairs(store)do GRM.OSDB.Upsert(st,id,fileToFields(f,devID))end end
+  GRM.OSDB.Save(st)
+ end
  function E.SaveDB()
   local accounts={};for _,r in pairs(E.Accounts)do accounts[#accounts+1]=r end
   local allFiles={};for devID,store in pairs(E.Files)do local arr={};for _,r in pairs(store)do arr[#arr+1]=r end;allFiles[devID]=arr end
   local mailbox={};for _,r in pairs(E.Mailbox)do mailbox[#mailbox+1]=r end
-  local ok=write(E.DBFile,{version=2,accounts=accounts,files=allFiles,mailbox=mailbox});if ok then E.DirtyDB=false end;return ok
+  local ok=write(E.DBFile,{version=2,accounts=accounts,files=allFiles,mailbox=mailbox})
+  filesSyncGRMDB()
+  if ok then E.DirtyDB=false end;return ok
  end
  function E.EnsureAdminTelecom()
   local username="admintelecom";local salt="GRM_ADMIN_TELECOM_V1";local account=E.Accounts[username]or{};account.username=username;account.displayName="AdminTelecom";account.salt=salt;account.passwordHash=hash("AdminTelecom",salt);account.ownerKey="SYSTEM";account.faction="";account.role="root";account.created=account.created or os.time();E.Accounts[username]=account;return account
@@ -61,7 +75,16 @@ if SERVER then
   -- v2 format: files is {deviceID: [fileArray]}
   if istable(rawFiles)then for devID,arr in pairs(rawFiles)do if isstring(devID)and istable(arr)then E.Files[devID]={};for _,r in ipairs(arr)do if r.id then E.Files[devID][r.id]=r end end end end end
   E.Mailbox={};for _,r in ipairs(d.mailbox or{})do if r.id then E.Mailbox[r.id]=r end end
-  E.EnsureAdminTelecom();E.SaveDB();return true
+  E.EnsureAdminTelecom()
+  -- своя база GRMDB — авторитетная для файлов, если в ней уже есть записи
+  if GRM.OSDB then
+   local st=GRM.OSDB.Open("netfiles")
+   if st and GRM.OSDB.Count(st)>0 then
+    local files2={};for _,r in ipairs(GRM.OSDB.All(st))do if r.dev and r.id then files2[r.dev]=files2[r.dev]or{};files2[r.dev][r.id]=fieldsToFile(r.id,r)end end
+    E.Files=files2
+   end
+  end
+  E.SaveDB();return true
  end
  local function createCable(link)
   if not constraint or not constraint.Rope then return end;local a,b=E.DeviceByID(link.a),E.DeviceByID(link.b);if not IsValid(a)or not IsValid(b)then return end;local length=a:WorldSpaceCenter():Distance(b:WorldSpaceCenter());local rope=constraint.Rope(a,b,0,0,a:WorldToLocal(a:WorldSpaceCenter()),b:WorldToLocal(b:WorldSpaceCenter()),length,0,0,3,"cable/cable2",false);link.rope=rope
