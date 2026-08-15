@@ -129,7 +129,6 @@ if SERVER then
         v("Доска набора", GRM.Board and GRM.Board.Version)
         v("Аугментации", GRM.Augmentations and "2.0.0")
         v("Чипы аугментаций", GRM.AugChips and "1.0.0")
-        v("Электроника/сеть", GRM.Electronics and GRM.Electronics.Version)
         v("Торгаши", GRM.Vendor and GRM.Vendor.Version)
         v("Валюта", "2.0.3")
         v("Экономика", "3.0.4")
@@ -148,7 +147,6 @@ if SERVER then
                 { name = "Записей ачивок", val = (GRM.Ach and GRM.Ach.Records) and table.Count(GRM.Ach.Records) or 0 },
                 { name = "Игроков с аугментациями", val = (GRM.Augmentations and GRM.Augmentations.PlayerData) and table.Count(GRM.Augmentations.PlayerData) or 0 },
                 { name = "Созданных чипов", val = (GRM.AugChips and GRM.AugChips.PlayerChips) and (function() local count = 0 for _, chips in pairs(GRM.AugChips.PlayerChips) do count = count + #chips end return count end)() or 0 },
-                { name = "Устройств сети", val = (GRM.Electronics and GRM.Electronics.Devices) and table.Count(GRM.Electronics.Devices) or 0 },
             },
             factions = factionsList(),
         }

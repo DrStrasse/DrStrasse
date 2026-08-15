@@ -19,7 +19,7 @@ if CLIENT then return end
 GRM = GRM or {}
 GRM.CompTerminal = GRM.CompTerminal or {}
 local T = GRM.CompTerminal
-T.Version = "1.1.0 — OS 2.0 photorobot attach"
+T.Version = "1.1.0 — фото к делу розыска"
 
 util.AddNetworkString("GRM_CompTerminal_Act")
 util.AddNetworkString("GRM_CompTerminal_Result")

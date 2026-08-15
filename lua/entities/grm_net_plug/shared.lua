@@ -1,1 +1,0 @@
-ENT.Type="anim";ENT.Base="grm_net_device";ENT.PrintName="Кабельный штекер";ENT.Category="GRM — Electronics";ENT.Spawnable=true;ENT.AdminOnly=true;ENT.DeviceKind="plug";ENT.DefaultModel="models/props_lab/incubatorplug.mdl"

@@ -69,18 +69,6 @@ V.Catalogs.food = V.Catalogs.food or {
     ["grm_food_soda"]   = { name = "Газировка", price = 15, model = "models/props_junk/PopCan01a.mdl",                   hunger = 5,  health = 0 },
 }
 
--- 4.5) ЭЛЕКТРОНИКА — устройства GRM Electronics (Код: сеть/компьютеры/роутеры).
--- isEntity=true → покупка спавнит энтити рядом с покупателем; устройство
--- регистрируется в GRM.Electronics и попадает в автосейв карты (v1.5.1),
--- так что купленный компьютер/роутер переживает рестарт без /permadd.
-V.Catalogs.electronics = V.Catalogs.electronics or {
-    ["grm_net_computer"] = { name = "Сетевой компьютер", price = 15000, model = "models/natalya/sims/computer.mdl",   desc = "Рабочая станция: файлы, почта, модули сети", maxStack = 1, isEntity = true, class = "grm_net_computer", noSell = true },
-    ["grm_net_router"]   = { name = "Wi-Fi роутер",      price = 8000,  model = "models/cheeze/wires/router.mdl",     desc = "Раздаёт сеть: SSID, пароль, радиус 900",    maxStack = 1, isEntity = true, class = "grm_net_router",   noSell = true },
-    ["grm_net_printer"]  = { name = "Сетевой принтер",   price = 10000, model = "models/props_interiors/printer.mdl", desc = "Печать документов с компьютеров сети",      maxStack = 1, isEntity = true, class = "grm_net_printer",  noSell = true },
-    ["grm_net_socket"]   = { name = "Сетевая розетка",   price = 2500,  model = "models/props_lab/tpplugholder_single.mdl", desc = "Точка проводной сети у стены",           maxStack = 1, isEntity = true, class = "grm_net_socket",   noSell = true },
-    ["grm_net_plug"]     = { name = "Кабельный штекер",  price = 2000,  model = "models/props_lab/incubatorplug.mdl",  desc = "Удлинитель проводной сети",                maxStack = 1, isEntity = true, class = "grm_net_plug",     noSell = true },
-}
-
 -- 5) РЕДКОСТИ: itemID -> { name, price, model, desc, maxStack, isWeapon }
 -- isWeapon=true → выдаётся через ply:Give() (SWEP), иначе через GRM.Inventory.AddItem()
 V.Catalogs.rare = V.Catalogs.rare or {

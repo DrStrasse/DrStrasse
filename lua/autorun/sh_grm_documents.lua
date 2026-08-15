@@ -171,6 +171,26 @@ DOC.MilitaryDriverVUS = {
     "ВУС-166 (Механик-водитель инженерных машин разграждения)",
 }
 
+-- Категории лицензии на оружие (Отдел лицензионно-разрешительной работы)
+DOC.WeaponCategories = {
+    { id = "smooth",    name = "Гладкоствольное",            desc = "Охотничьи ружья и гладкоствольные карабины", icon = "[Г]" },
+    { id = "rifled",    name = "Нарезное",                   desc = "Винтовки и нарезные карабины",              icon = "[Н]" },
+    { id = "short",     name = "Короткоствольное",           desc = "Пистолеты и револьверы",                    icon = "[К]" },
+    { id = "traumatic", name = "Ограниченного поражения",    desc = "Травматическое и газовое оружие",           icon = "[Т]" },
+    { id = "hunting",   name = "Охотничье",                  desc = "Охотничье оружие и снаряжение",             icon = "[О]" },
+}
+
+-- Виды деятельности для лицензии на ведение бизнеса
+DOC.BusinessTypes = {
+    { id = "retail",    name = "Розничная торговля",          desc = "Магазины, лавки, киоски" },
+    { id = "logistics", name = "Грузоперевозки и логистика",  desc = "Транспортные компании, склады" },
+    { id = "factory",   name = "Производство",                desc = "Заводы, цеха, мануфактуры" },
+    { id = "food",      name = "Общественное питание",        desc = "Кафе, рестораны, столовые" },
+    { id = "pharmacy",  name = "Аптека и медицина",           desc = "Аптеки, частная медпрактика" },
+    { id = "service",   name = "Услуги",                      desc = "Мастерские, салоны, сервис" },
+    { id = "other",     name = "Иная деятельность",           desc = "Прочие виды бизнеса" },
+}
+
 -- Хелпер ключа персонажа
 local function getCharKey(ply)
     if IsValid(ply) and ply:IsPlayer() then
@@ -249,6 +269,22 @@ if SERVER then
                 defaultPrefix = "ВАИ-",
                 defaultIssuer = "101-я Военная автомобильная инспекция (ВАИ)",
             },
+            weaponLicense = {
+                stateTitle    = "ОТДЕЛ ЛИЦЕНЗИОННО-РАЗРЕШИТЕЛЬНОЙ РАБОТЫ",
+                docTitle      = "ЛИЦЕНЗИЯ НА ОРУЖИЕ",
+                coverColor    = { r = 45, g = 58, b = 50 },
+                foilStyle     = "gold",
+                defaultPrefix = "ЛО-",
+                defaultIssuer = "Отдел лицензионно-разрешительной работы (ОЛРР)",
+            },
+            businessLicense = {
+                stateTitle    = "ЭКОНОМИЧЕСКОЕ УПРАВЛЕНИЕ",
+                docTitle      = "ЛИЦЕНЗИЯ НА ВЕДЕНИЕ БИЗНЕСА",
+                coverColor    = { r = 24, g = 62, b = 62 },
+                foilStyle     = "silver",
+                defaultPrefix = "БЛ-",
+                defaultIssuer = "Экономическое управление Республики Гранд",
+            },
             factions = {
                 ["OrdnungPolizei"] = {
                     coverTitle   = "ORDNUNGSPOLIZEI",
@@ -289,6 +325,8 @@ if SERVER then
                 military    = { ["Feldgendarmerie"] = true },
                 licenses    = { ["OrdnungPolizei"] = true },
                 milLicenses = { ["Feldgendarmerie"] = true },
+                weaponLicenses = { ["OrdnungPolizei"] = true },
+                businessLicenses = { ["Department of Labour and Social Protection"] = true },
                 coverDocs   = { ["Gestapo"] = true },
             }
         }
@@ -303,6 +341,8 @@ if SERVER then
                 if istable(t.military)        then DOC.Templates.military        = t.military end
                 if istable(t.license)         then DOC.Templates.license         = t.license end
                 if istable(t.militaryLicense) then DOC.Templates.militaryLicense = t.militaryLicense end
+                if istable(t.weaponLicense)   then DOC.Templates.weaponLicense   = t.weaponLicense end
+                if istable(t.businessLicense) then DOC.Templates.businessLicense = t.businessLicense end
                 if istable(t.factions)        then DOC.Templates.factions        = t.factions end
                 if istable(t.access)          then DOC.Templates.access          = t.access end
             end
@@ -329,7 +369,7 @@ if SERVER then
 
     -- Загрузка базы выданных документов
     function DOC.LoadRegistry()
-        DOC.Registry = { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {}, milLicenses = {} }
+        DOC.Registry = { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {}, milLicenses = {}, weaponLicenses = {}, businessLicenses = {} }
         if file.Exists(DOC.RegistryFile, "DATA") then
             local t = jsonT(file.Read(DOC.RegistryFile, "DATA") or "")
             if istable(t) then
@@ -339,6 +379,8 @@ if SERVER then
                 DOC.Registry.military    = istable(t.military) and t.military or {}
                 DOC.Registry.licenses    = istable(t.licenses) and t.licenses or {}
                 DOC.Registry.milLicenses = istable(t.milLicenses) and t.milLicenses or {}
+                DOC.Registry.weaponLicenses = istable(t.weaponLicenses) and t.weaponLicenses or {}
+                DOC.Registry.businessLicenses = istable(t.businessLicenses) and t.businessLicenses or {}
             end
         end
         return DOC.Registry
@@ -467,6 +509,51 @@ if SERVER then
     end
     DOC.EnsureMilLicense = ensureMilLicense
 
+    -- Получение лицензии на оружие
+    local function ensureWeaponLicense(ply)
+        local key = getCharKey(ply)
+        if key == "" then return nil end
+        DOC.Registry.weaponLicenses = DOC.Registry.weaponLicenses or {}
+        return DOC.Registry.weaponLicenses[key]
+    end
+    DOC.EnsureWeaponLicense = ensureWeaponLicense
+
+    -- Получение лицензии на ведение бизнеса
+    local function ensureBusinessLicense(ply)
+        local key = getCharKey(ply)
+        if key == "" then return nil end
+        DOC.Registry.businessLicenses = DOC.Registry.businessLicenses or {}
+        return DOC.Registry.businessLicenses[key]
+    end
+    DOC.EnsureBusinessLicense = ensureBusinessLicense
+
+    -- Проверка действительности лицензии на оружие (категория опциональна)
+    function DOC.HasValidWeaponLicense(charKey, cat)
+        local rec = DOC.Registry.weaponLicenses and DOC.Registry.weaponLicenses[charKey]
+        if not rec then return false, "Нет лицензии", nil end
+        local st = rec.status or ""
+        if st == "Аннулирована" or st == "Лишена" then return false, st, rec end
+        if st == "Приостановлена" and (tonumber(rec.suspendedUntil) or 0) > os.time() then return false, "Приостановлена до " .. os.date("%d.%m.%Y", tonumber(rec.suspendedUntil) or 0), rec end
+        if rec.expiry and os.time() > tonumber(rec.expiry) then return false, "Срок истёк", rec end
+        if cat and cat ~= "" then
+            if not (istable(rec.categories) and rec.categories[cat] == true) then return false, "Нет категории " .. tostring(cat), rec end
+        end
+        return true, st, rec
+    end
+
+    -- Проверка действительности лицензии на бизнес (вид деятельности опционален)
+    function DOC.HasValidBusinessLicense(charKey, bizType)
+        local rec = DOC.Registry.businessLicenses and DOC.Registry.businessLicenses[charKey]
+        if not rec then return false, "Нет лицензии", nil end
+        local st = rec.status or ""
+        if st == "Аннулирована" or st == "Отозвана" then return false, st, rec end
+        if rec.expiry and os.time() > tonumber(rec.expiry) then return false, "Срок истёк", rec end
+        if bizType and bizType ~= "" then
+            if tostring(rec.businessType or "") ~= bizType then return false, "Не тот вид деятельности", rec end
+        end
+        return true, st, rec
+    end
+
     -- Лицензии v2: баллы и приостановка
     local function addPoints(charKey, add, reason)
         if not charKey or charKey=="" then return false, "Нет ключа" end
@@ -573,6 +660,26 @@ if SERVER then
         return false
     end
 
+    function DOC.CanIssueWeaponLicenses(ply)
+        if not IsValid(ply) then return false end
+        if ply:IsSuperAdmin() then return true end
+        local fac = ply:GetNWString("GRM_Faction", "")
+        if fac ~= "" and DOC.Templates.access and DOC.Templates.access.weaponLicenses and DOC.Templates.access.weaponLicenses[fac] == true then
+            return true
+        end
+        return false
+    end
+
+    function DOC.CanIssueBusinessLicenses(ply)
+        if not IsValid(ply) then return false end
+        if ply:IsSuperAdmin() then return true end
+        local fac = ply:GetNWString("GRM_Faction", "")
+        if fac ~= "" and DOC.Templates.access and DOC.Templates.access.businessLicenses and DOC.Templates.access.businessLicenses[fac] == true then
+            return true
+        end
+        return false
+    end
+
     -- Отправка документа игроку на экран
     local function sendOwnDoc(ply, docType, subType)
         if not IsValid(ply) then return end
@@ -642,6 +749,20 @@ if SERVER then
                 return
             end
             tpl = DOC.Templates.militaryLicense or {}
+        elseif docType == "weaponLicense" or docType == "weapon_license" then
+            payload = ensureWeaponLicense(ply)
+            if not payload then
+                if GRM.Notify then GRM.Notify(ply, "У вас нет лицензии на оружие (оформляется в отделе лицензионно-разрешительной работы).", 255, 140, 110) end
+                return
+            end
+            tpl = DOC.Templates.weaponLicense or {}
+        elseif docType == "businessLicense" or docType == "business_license" then
+            payload = ensureBusinessLicense(ply)
+            if not payload then
+                if GRM.Notify then GRM.Notify(ply, "У вас нет лицензии на ведение бизнеса (оформляется в экономическом управлении).", 255, 140, 110) end
+                return
+            end
+            tpl = DOC.Templates.businessLicense or {}
         elseif docType == "medcard" then
             if GRM.Medical and GRM.Medical.CardOf then
                 local cardKey = getCharKey(ply)
@@ -956,6 +1077,8 @@ if SERVER then
             if istable(tpl.military)        then DOC.Templates.military        = tpl.military end
             if istable(tpl.license)         then DOC.Templates.license         = tpl.license end
             if istable(tpl.militaryLicense) then DOC.Templates.militaryLicense = tpl.militaryLicense end
+            if istable(tpl.weaponLicense)   then DOC.Templates.weaponLicense   = tpl.weaponLicense end
+            if istable(tpl.businessLicense) then DOC.Templates.businessLicense = tpl.businessLicense end
             if istable(tpl.factions)        then DOC.Templates.factions        = tpl.factions end
             if istable(tpl.access)          then DOC.Templates.access          = tpl.access end
             DOC.SaveTemplates("admin edit by " .. ply:Nick())
@@ -1016,6 +1139,26 @@ if SERVER then
             end
             DOC.Registry.milLicenses[targetKey] = data
             DOC.SaveRegistry("issue military license " .. targetKey .. " by " .. ply:Nick())
+
+        elseif docType == "weaponLicense" or docType == "weapon_license" then
+            if not DOC.CanIssueWeaponLicenses(ply) then
+                if GRM.Notify then GRM.Notify(ply, "У вашей фракции нет допуска к выдаче лицензий на оружие!", 255, 100, 100) end
+                return
+            end
+            data.issuedBy = data.issuedBy or (DOC.Templates.weaponLicense and DOC.Templates.weaponLicense.defaultIssuer) or "ОЛРР"
+            data.updated = os.time()
+            DOC.Registry.weaponLicenses[targetKey] = data
+            DOC.SaveRegistry("issue weapon license " .. targetKey .. " by " .. ply:Nick())
+
+        elseif docType == "businessLicense" or docType == "business_license" then
+            if not DOC.CanIssueBusinessLicenses(ply) then
+                if GRM.Notify then GRM.Notify(ply, "У вашей фракции нет допуска к выдаче лицензий на ведение бизнеса!", 255, 100, 100) end
+                return
+            end
+            data.issuedBy = data.issuedBy or (DOC.Templates.businessLicense and DOC.Templates.businessLicense.defaultIssuer) or "Экономическое управление"
+            data.updated = os.time()
+            DOC.Registry.businessLicenses[targetKey] = data
+            DOC.SaveRegistry("issue business license " .. targetKey .. " by " .. ply:Nick())
         end
 
         if GRM.Notify then GRM.Notify(ply, "Документ успешно оформлен и внесён в базу данных.", 100, 220, 120) end
@@ -1061,6 +1204,18 @@ if SERVER then
             DOC.Registry.milLicenses[targetKey].status = "Лишён ВАИ"
             DOC.Registry.milLicenses[targetKey].updated = os.time()
             DOC.SaveRegistry("revoke military license " .. targetKey)
+
+        elseif (docType == "weaponLicense" or docType == "weapon_license") and DOC.Registry.weaponLicenses[targetKey] then
+            if not DOC.CanIssueWeaponLicenses(ply) then return end
+            DOC.Registry.weaponLicenses[targetKey].status = "Аннулирована"
+            DOC.Registry.weaponLicenses[targetKey].updated = os.time()
+            DOC.SaveRegistry("revoke weapon license " .. targetKey)
+
+        elseif (docType == "businessLicense" or docType == "business_license") and DOC.Registry.businessLicenses[targetKey] then
+            if not DOC.CanIssueBusinessLicenses(ply) then return end
+            DOC.Registry.businessLicenses[targetKey].status = "Отозвана"
+            DOC.Registry.businessLicenses[targetKey].updated = os.time()
+            DOC.SaveRegistry("revoke business license " .. targetKey)
         end
 
         if GRM.Notify then GRM.Notify(ply, "Статус документа изменён (аннулирован / лишён прав).", 255, 140, 100) end
@@ -1335,6 +1490,66 @@ if SERVER then
             if GRM.Notify then GRM.Notify(ply, "Проверка В/У "..foundKey..": "..tostring(pts).."/"..tostring(maxPts).." | "..tostring(status or "Нет"), 100,200,160) end
             datapack.SkipPlayerSay=true
             datapack[1]=""
+            return
+        end
+
+        -- Лицензия на оружие
+        if low == "/weaponlicense" or low == "/gunlicense" or low == "/wlicense" or low == "/оружие" or low == "/лицензиянаоружие" or low == "/ороружие" then
+            sendOwnDoc(ply, "weaponLicense")
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
+            return
+        end
+        if low == "/showweaponlicense" or low == "/showgunlicense" or low == "/показатьоружие" or low == "/показатьлицензиюоружие" or low == "/покоружие" then
+            showDocToTarget(ply, "weaponLicense")
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
+            return
+        end
+        if low:find("^/check_weapon") or low:find("^/проверить_оружие") then
+            local targetName = string.Trim(txt:sub(14))
+            if targetName == "" then targetName = string.Trim(txt:sub((("/проверить_оружие"):len()) + 1)) end
+            local foundKey = targetName
+            for _, p in ipairs(player.GetAll()) do
+                if IsValid(p) and (p:Nick():lower():find(targetName:lower(), 1, true) or (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p) == targetName)) then
+                    foundKey = getCharKey(p)
+                    break
+                end
+            end
+            local wOk, wSt = DOC.HasValidWeaponLicense(foundKey)
+            if GRM.Notify then GRM.Notify(ply, "Лицензия на оружие " .. foundKey .. ": " .. tostring(wOk and ("действительна (" .. tostring(wSt) .. ")") or wSt), wOk and Color(100, 200, 160) or Color(255, 140, 110)) end
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
+            return
+        end
+
+        -- Лицензия на ведение бизнеса
+        if low == "/businesslicense" or low == "/bizlicense" or low == "/blicense" or low == "/бизнес" or low == "/лицензиябизнес" or low == "/орбизнес" then
+            sendOwnDoc(ply, "businessLicense")
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
+            return
+        end
+        if low == "/showbusinesslicense" or low == "/showbizlicense" or low == "/показатьбизнес" or low == "/показатьлицензиюбизнес" or low == "/покбизнес" then
+            showDocToTarget(ply, "businessLicense")
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
+            return
+        end
+        if low:find("^/check_business") or low:find("^/проверить_бизнес") then
+            local targetName = string.Trim(txt:sub(15))
+            if targetName == "" then targetName = string.Trim(txt:sub((("/проверить_бизнес"):len()) + 1)) end
+            local foundKey = targetName
+            for _, p in ipairs(player.GetAll()) do
+                if IsValid(p) and (p:Nick():lower():find(targetName:lower(), 1, true) or (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p) == targetName)) then
+                    foundKey = getCharKey(p)
+                    break
+                end
+            end
+            local bOk, bSt = DOC.HasValidBusinessLicense(foundKey)
+            if GRM.Notify then GRM.Notify(ply, "Лицензия на бизнес " .. foundKey .. ": " .. tostring(bOk and ("действительна (" .. tostring(bSt) .. ")") or bSt), bOk and Color(100, 200, 160) or Color(255, 140, 110)) end
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
             return
         end
 
@@ -2331,6 +2546,200 @@ if CLIENT then
         setPhase(false)
     end
 
+    -- ── ДВУХФАЗНЫЙ РЕНДЕР ЛИЦЕНЗИИ НА ОРУЖИЕ ───────────────────
+    local function openWeaponLicenseUI(data, tpl, isShown, senderName)
+        tpl = tpl or {}
+        local coverCol = tpl.coverColor and Color(tpl.coverColor.r or 45, tpl.coverColor.g or 58, tpl.coverColor.b or 50) or Color(45, 58, 50)
+        local foil = DOC.FoilStyles[tpl.foilStyle or "gold"] or DOC.FoilStyles.gold
+
+        local frame = vgui.Create("DFrame")
+        frame:SetTitle("")
+        frame:MakePopup()
+        frame:ShowCloseButton(false)
+
+        local function setPhase(expanded)
+            if not expanded then
+                safeClearFrame(frame)
+                frame:SetSize(500, 310)
+                frame:Center()
+
+                frame.Paint = function(_, w, h)
+                    draw.RoundedBox(10, 0, 0, w, h, coverCol)
+                    draw.RoundedBox(8, 4, 4, w - 8, h - 8, Color(242, 246, 250))
+                    draw.RoundedBox(4, 8, 8, w - 16, 32, coverCol)
+                    draw.SimpleText(tpl.stateTitle or "ОТДЕЛ ЛИЦЕНЗИОННО-РАЗРЕШИТЕЛЬНОЙ РАБОТЫ", "GRMDoc_Bold", 20, 24, foil.col, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("WEAPON LICENSE", "GRMDoc_Small", w - 20, 24, Color(220, 230, 240), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+
+                    draw.RoundedBox(4, 16, 52, 90, 115, Color(210, 215, 225))
+                    draw.SimpleText("ЛИЦЕНЗИЯ НА ОРУЖИЕ", "GRMDoc_Small", 120, 50, Color(100, 110, 130), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("№ " .. tostring(data.number or "ЛО-000000"), "GRMDoc_Bold", 120, 66, Color(180, 40, 40), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("1. Владелец: " .. tostring(data.fullName or "—"), "GRMDoc_Bold", 120, 90, Color(25, 30, 40), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("2. Дата рожд.: " .. tostring(data.birthDate or "—"), "GRMDoc_Normal", 120, 112, Color(40, 45, 55), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("3. Выдано: " .. tostring(data.issueDate or os.date("%d.%m.%Y")) .. "  •  Действует до: " .. tostring(data.validUntil or "5 лет"), "GRMDoc_Normal", 120, 132, Color(40, 45, 55), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    drawWrapped("4. Орган: " .. tostring(data.issuedBy or "ОЛРР"), "GRMDoc_Small", 120, 152, w - 130, 14, Color(90, 100, 115), TEXT_ALIGN_LEFT)
+
+                    draw.RoundedBox(4, 8, 185, w - 16, 55, Color(230, 236, 245))
+                    draw.SimpleText("РАЗРЕШЁННЫЕ КАТЕГОРИИ:", "GRMDoc_Small", 16, 190, Color(100, 110, 130), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    local cats = data.categories or {}
+                    local cx = 16
+                    for _, cat in ipairs(DOC.WeaponCategories or {}) do
+                        local has = (cats[cat.id] == true)
+                        draw.RoundedBox(4, cx, 208, 84, 24, has and Color(45, 120, 70) or Color(205, 212, 222))
+                        draw.SimpleText(cat.id, "GRMDoc_Bold", cx + 42, 220, has and color_white or Color(125, 135, 145), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                        cx = cx + 90
+                    end
+                    local statCol = (data.status == "Действительна") and Color(30, 140, 60) or Color(180, 40, 40)
+                    draw.SimpleText("СТАТУС: " .. tostring(data.status or "Действительна"), "GRMDoc_Bold", w - 16, 190, statCol, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+                end
+
+                local sid64 = data.steamID64 or (LocalPlayer():SteamID64())
+                if data.photoPath and file.Exists(data.photoPath, "DATA") then
+                    local img = vgui.Create("DImage", frame)
+                    img:SetPos(20, 56); img:SetSize(82, 107); img:SetImage("../data/" .. data.photoPath)
+                else
+                    local avatar = vgui.Create("AvatarImage", frame)
+                    avatar:SetPos(20, 56); avatar:SetSize(82, 107); avatar:SetSteamID(sid64, 184)
+                end
+
+                local btnTurn = vgui.Create("DButton", frame)
+                btnTurn:SetSize(320, 32); btnTurn:SetPos(frame:GetWide() / 2 - 160, 260)
+                btnTurn:SetText("◄► Перевернуть (таблица категорий)")
+                btnTurn:SetFont("GRMDoc_Bold"); btnTurn:SetTextColor(Color(25, 45, 75))
+                btnTurn.Paint = function(s, bw, bh) draw.RoundedBox(4, 0, 0, bw, bh, s:IsHovered() and Color(210, 225, 245) or Color(225, 235, 250)); surface.SetDrawColor(180, 200, 230); surface.DrawOutlinedRect(0, 0, bw, bh) end
+                btnTurn.DoClick = function() surface.PlaySound("garrysmod/ui_click.wav") setPhase(true) end
+
+                local btnClose = vgui.Create("DButton", frame)
+                btnClose:SetSize(28, 24); btnClose:SetPos(frame:GetWide() - 34, 8); btnClose:SetText("✕")
+                btnClose:SetTextColor(Color(220, 220, 230)); btnClose:SetFont("GRMDoc_Bold")
+                btnClose.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(210, 80, 80) or Color(0, 0, 0, 80)) end
+                btnClose.DoClick = function() frame:Close() end
+            else
+                safeClearFrame(frame)
+                frame:SetSize(500, 400)
+                frame:Center()
+
+                frame.Paint = function(_, w, h)
+                    draw.RoundedBox(10, 0, 0, w, h, coverCol)
+                    draw.RoundedBox(8, 4, 4, w - 8, h - 8, Color(242, 246, 250))
+                    draw.SimpleText("ТАБЛИЦА РАЗРЕШЁННЫХ КАТЕГОРИЙ ОРУЖИЯ", "GRMDoc_Bold", w / 2, 14, Color(30, 45, 65), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    local y = 42
+                    local cats = data.categories or {}
+                    for _, cat in ipairs(DOC.WeaponCategories or {}) do
+                        local has = cats[cat.id] == true
+                        draw.RoundedBox(4, 12, y, w - 24, 26, has and Color(225, 242, 230) or Color(236, 238, 242))
+                        draw.SimpleText(cat.icon .. "  " .. cat.name, "GRMDoc_Small", 20, y + 13, Color(30, 35, 45), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                        draw.SimpleText(cat.desc, "GRMDoc_Small", w / 2, y + 13, Color(90, 95, 110), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                        draw.SimpleText(has and "✔ РАЗРЕШЕНО" or "—", "GRMDoc_Bold", w - 24, y + 13, has and Color(30, 140, 60) or Color(150, 155, 165), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                        y = y + 30
+                    end
+                    drawWrapped("Особые отметки: " .. tostring(data.restrictions or "Хранение в сейфе по месту жительства"), "GRMDoc_Small", 16, y + 8, w - 32, 14, Color(90, 95, 110), TEXT_ALIGN_LEFT)
+                    drawWrapped("Кем выдано: " .. tostring(data.issuedBy or "ОЛРР"), "GRMDoc_Small", 16, y + 26, w - 32, 14, Color(90, 95, 110), TEXT_ALIGN_LEFT)
+                end
+
+                local btnTurn = vgui.Create("DButton", frame)
+                btnTurn:SetSize(200, 28); btnTurn:SetPos(16, 356); btnTurn:SetText("◄► Лицевая сторона")
+                btnTurn:SetFont("GRMDoc_Bold"); btnTurn:SetTextColor(Color(25, 45, 75))
+                btnTurn.Paint = function(s, bw, bh) draw.RoundedBox(4, 0, 0, bw, bh, s:IsHovered() and Color(210, 225, 245) or Color(225, 235, 250)); surface.SetDrawColor(180, 200, 230); surface.DrawOutlinedRect(0, 0, bw, bh) end
+                btnTurn.DoClick = function() surface.PlaySound("garrysmod/ui_click.wav") setPhase(false) end
+
+                local btnClose = vgui.Create("DButton", frame)
+                btnClose:SetSize(120, 28); btnClose:SetPos(frame:GetWide() - 136, 356); btnClose:SetText("✕ Закрыть")
+                btnClose:SetTextColor(color_white); btnClose:SetFont("GRMDoc_Bold")
+                btnClose.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(210, 80, 80) or Color(150, 50, 50)) end
+                btnClose.DoClick = function() frame:Close() end
+            end
+        end
+
+        setPhase(false)
+    end
+
+    -- ── ДВУХФАЗНЫЙ РЕНДЕР ЛИЦЕНЗИИ НА ВЕДЕНИЕ БИЗНЕСА ──────────
+    local function openBusinessLicenseUI(data, tpl, isShown, senderName)
+        tpl = tpl or {}
+        local coverCol = tpl.coverColor and Color(tpl.coverColor.r or 24, tpl.coverColor.g or 62, tpl.coverColor.b or 62) or Color(24, 62, 62)
+        local foil = DOC.FoilStyles[tpl.foilStyle or "silver"] or DOC.FoilStyles.silver
+
+        local frame = vgui.Create("DFrame")
+        frame:SetTitle("")
+        frame:MakePopup()
+        frame:ShowCloseButton(false)
+
+        local function setPhase(expanded)
+            if not expanded then
+                safeClearFrame(frame)
+                frame:SetSize(520, 340)
+                frame:Center()
+
+                frame.Paint = function(_, w, h)
+                    draw.RoundedBox(10, 0, 0, w, h, coverCol)
+                    draw.RoundedBox(8, 4, 4, w - 8, h - 8, Color(240, 246, 246))
+                    draw.RoundedBox(4, 8, 8, w - 16, 34, coverCol)
+                    draw.SimpleText(tpl.stateTitle or "ЭКОНОМИЧЕСКОЕ УПРАВЛЕНИЕ", "GRMDoc_Bold", 20, 25, foil.col, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("BUSINESS LICENSE", "GRMDoc_Small", w - 20, 25, Color(215, 228, 228), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+
+                    draw.SimpleText("ЛИЦЕНЗИЯ НА ВЕДЕНИЕ БИЗНЕСА", "GRMDoc_Small", 20, 56, Color(100, 115, 120), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("№ " .. tostring(data.number or "БЛ-000000"), "GRMDoc_Bold", 20, 72, Color(20, 110, 110), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+
+                    draw.SimpleText("1. Наименование: " .. tostring(data.businessName or "—"), "GRMDoc_Bold", 20, 100, Color(20, 30, 40), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("2. Владелец: " .. tostring(data.fullName or "—"), "GRMDoc_Bold", 20, 122, Color(20, 30, 40), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("3. Вид деятельности: " .. tostring(data.businessTypeName or "—"), "GRMDoc_Normal", 20, 146, Color(40, 45, 55), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("4. Выдано: " .. tostring(data.issueDate or os.date("%d.%m.%Y")) .. "  •  Действует до: " .. tostring(data.validUntil or "1 год"), "GRMDoc_Normal", 20, 168, Color(40, 45, 55), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    drawWrapped("5. Орган: " .. tostring(data.issuedBy or "Экономическое управление"), "GRMDoc_Small", 20, 190, w - 40, 14, Color(90, 100, 115), TEXT_ALIGN_LEFT)
+
+                    local statCol = (data.status == "Действительна") and Color(30, 140, 60) or Color(180, 40, 40)
+                    draw.SimpleText("СТАТУС: " .. tostring(data.status or "Действительна"), "GRMDoc_Bold", w - 20, 190, statCol, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+
+                    draw.RoundedBox(4, 8, 230, w - 16, 70, Color(228, 236, 238))
+                    drawWrapped("Разрешение на осуществление предпринимательской деятельности на территории Республики Гранд. Лицензия подлежит предъявлению по требованию уполномоченных лиц.", "GRMDoc_Small", 16, 240, w - 32, 14, Color(80, 95, 105), TEXT_ALIGN_LEFT)
+                end
+
+                local btnTurn = vgui.Create("DButton", frame)
+                btnTurn:SetSize(300, 32); btnTurn:SetPos(frame:GetWide() / 2 - 150, 304)
+                btnTurn:SetText("◄► Перевернуть (условия)")
+                btnTurn:SetFont("GRMDoc_Bold"); btnTurn:SetTextColor(Color(20, 45, 50))
+                btnTurn.Paint = function(s, bw, bh) draw.RoundedBox(4, 0, 0, bw, bh, s:IsHovered() and Color(205, 228, 228) or Color(222, 236, 236)); surface.SetDrawColor(170, 200, 200); surface.DrawOutlinedRect(0, 0, bw, bh) end
+                btnTurn.DoClick = function() surface.PlaySound("garrysmod/ui_click.wav") setPhase(true) end
+
+                local btnClose = vgui.Create("DButton", frame)
+                btnClose:SetSize(28, 24); btnClose:SetPos(frame:GetWide() - 34, 8); btnClose:SetText("✕")
+                btnClose:SetTextColor(Color(220, 220, 230)); btnClose:SetFont("GRMDoc_Bold")
+                btnClose.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(210, 80, 80) or Color(0, 0, 0, 80)) end
+                btnClose.DoClick = function() frame:Close() end
+            else
+                safeClearFrame(frame)
+                frame:SetSize(520, 360)
+                frame:Center()
+
+                frame.Paint = function(_, w, h)
+                    draw.RoundedBox(10, 0, 0, w, h, coverCol)
+                    draw.RoundedBox(8, 4, 4, w - 8, h - 8, Color(240, 246, 246))
+                    draw.SimpleText("УСЛОВИЯ ОСУЩЕСТВЛЕНИЯ ДЕЯТЕЛЬНОСТИ", "GRMDoc_Bold", w / 2, 14, Color(20, 45, 50), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                    drawWrapped("Вид деятельности: " .. tostring(data.businessTypeName or "—"), "GRMDoc_Normal", 20, 40, w - 40, 16, Color(20, 30, 40), TEXT_ALIGN_LEFT)
+                    drawWrapped("Адрес / объект: " .. tostring(data.address or "—"), "GRMDoc_Normal", 20, 66, w - 40, 16, Color(20, 30, 40), TEXT_ALIGN_LEFT)
+                    drawWrapped("Особые условия: " .. tostring(data.restrictions or "Соблюдение санитарных и противопожарных норм"), "GRMDoc_Small", 20, 96, w - 40, 14, Color(90, 95, 110), TEXT_ALIGN_LEFT)
+                    draw.RoundedBox(4, 20, 130, w - 40, 1, Color(170, 200, 200))
+                    drawWrapped("Обязанности лицензиата: вести деятельность только в заявленном виде; предоставлять отчётность по требованию; уведомлять о смене объекта или вида деятельности; не передавать лицензию третьим лицам.", "GRMDoc_Small", 20, 150, w - 40, 14, Color(70, 85, 95), TEXT_ALIGN_LEFT)
+                    drawWrapped("Кем выдано: " .. tostring(data.issuedBy or "Экономическое управление"), "GRMDoc_Small", 20, 230, w - 40, 14, Color(90, 95, 110), TEXT_ALIGN_LEFT)
+                    draw.SimpleText("Срок действия: " .. tostring(data.validUntil or "1 год"), "GRMDoc_Small", 20, 260, Color(90, 95, 110), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                end
+
+                local btnTurn = vgui.Create("DButton", frame)
+                btnTurn:SetSize(200, 28); btnTurn:SetPos(16, 316); btnTurn:SetText("◄► Лицевая сторона")
+                btnTurn:SetFont("GRMDoc_Bold"); btnTurn:SetTextColor(Color(20, 45, 50))
+                btnTurn.Paint = function(s, bw, bh) draw.RoundedBox(4, 0, 0, bw, bh, s:IsHovered() and Color(205, 228, 228) or Color(222, 236, 236)); surface.SetDrawColor(170, 200, 200); surface.DrawOutlinedRect(0, 0, bw, bh) end
+                btnTurn.DoClick = function() surface.PlaySound("garrysmod/ui_click.wav") setPhase(false) end
+
+                local btnClose = vgui.Create("DButton", frame)
+                btnClose:SetSize(120, 28); btnClose:SetPos(frame:GetWide() - 136, 316); btnClose:SetText("✕ Закрыть")
+                btnClose:SetTextColor(color_white); btnClose:SetFont("GRMDoc_Bold")
+                btnClose.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(210, 80, 80) or Color(150, 50, 50)) end
+                btnClose.DoClick = function() frame:Close() end
+            end
+        end
+
+        setPhase(false)
+    end
+
     -- ── ДВУХФАЗНЫЙ РЕНДЕР МЕДИЦИНСКОЙ КАРТЫ ───────────────────
     local function openMedCardUI(card, extra, isShown, senderName)
         card = card or {}
@@ -2516,6 +2925,10 @@ if CLIENT then
             openLicenseUI(data, tpl, isShown, senderName)
         elseif docType == "milLicense" or docType == "license_mil" or docType == "military_license" then
             openMilLicenseUI(data, tpl, isShown, senderName)
+        elseif docType == "weaponLicense" or docType == "weapon_license" then
+            openWeaponLicenseUI(data, tpl, isShown, senderName)
+        elseif docType == "businessLicense" or docType == "business_license" then
+            openBusinessLicenseUI(data, tpl, isShown, senderName)
         elseif docType == "medcard" then
             openMedCardUI(data, tpl, isShown, senderName)
         end
@@ -2528,8 +2941,10 @@ if CLIENT then
         tpl.military        = tpl.military        or {}
         tpl.license         = tpl.license         or {}
         tpl.militaryLicense = tpl.militaryLicense or {}
+        tpl.weaponLicense   = tpl.weaponLicense   or {}
+        tpl.businessLicense = tpl.businessLicense or {}
         tpl.factions        = tpl.factions        or {}
-        tpl.access          = tpl.access          or { passports = {}, badges = {}, military = {}, licenses = {}, milLicenses = {}, coverDocs = {} }
+        tpl.access          = tpl.access          or { passports = {}, badges = {}, military = {}, licenses = {}, milLicenses = {}, weaponLicenses = {}, businessLicenses = {}, coverDocs = {} }
 
         local frame = vgui.Create("DFrame")
         frame:SetSize(720, 600)

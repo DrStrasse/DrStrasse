@@ -172,9 +172,9 @@ net.Receive("GRM_CompMilPolice_Open", function()
         end
     end
 
-    -- Фоторобот OS 2.0
+    -- Фото к делу розыска: путь в data/ и кнопка прикрепления.
     local lblPhoto = vgui.Create("DLabel", wantPnl)
-    lblPhoto:SetPos(330, 565) lblPhoto:SetText("Фоторобот (путь data/):") lblPhoto:SetTextColor(CC.dim) lblPhoto:SizeToContents()
+    lblPhoto:SetPos(330, 565) lblPhoto:SetText("Фото к делу (путь data/):") lblPhoto:SetTextColor(CC.dim) lblPhoto:SizeToContents()
     local entPhotoPath = vgui.Create("DTextEntry", wantPnl)
     entPhotoPath:SetPos(480, 565) entPhotoPath:SetSize(280, 26)
     entPhotoPath:SetPlaceholderText("grm_computer/images/xxx.jpg")

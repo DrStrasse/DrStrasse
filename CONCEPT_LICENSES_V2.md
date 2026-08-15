@@ -1,6 +1,6 @@
 # GRM Лицензии v2.0 — водительские удостоверения, категории, сроки, баллы, экзамены
 
-**Дата:** 2026-08-14 · **Код 60** · **Статус:** концепт  
+**Дата:** 2026-08-14 (обновлено 2026-08-15) · **Код 60** · **Статус:** водительские v2 сделаны (находка 128); **лицензии на оружие и бизнес сделаны (находка 134)**; остаток — госпошлина + экзамены  
 **База:** `sh_grm_documents.lua` v1.4.1 + v2 фото, `grm_doc_computer`, `grm_comp_traffic`, `PlayerEnteredVehicle` хук, `sh_grm_electronics` OS 2.0
 
 ## 1. Что есть сейчас (v1.4.1)
@@ -91,3 +91,32 @@
 6. Тесты + dist + README + ANALYSIS
 
 Объём: ~300 строк сервер + ~200 клиент.
+
+---
+
+## 9. Лицензия на оружие (находка 134, сделано)
+
+- **Категории** `DOC.WeaponCategories`: `smooth` (гладкоствольное), `rifled` (нарезное), `short` (короткоствольное), `traumatic` (ограниченного поражения), `hunting` (охотничье).
+- **Шаблон** `weaponLicense`: «Отдел лицензионно-разрешительной работы», префикс `ЛО-`, цвет тёмно-зелёный, тиснение gold.
+- **Данные** `DOC.Registry.weaponLicenses[charKey] = { number, fullName, birthDate, categories, categoriesStr, restrictions, issuedBy, issueDate, validUntil, expiry, status, suspendedUntil, steamID64 }`.
+- **Доступ к выдаче** `access.weaponLicenses` (по умолчанию OrdnungPolizei + SuperAdmin) → `DOC.CanIssueWeaponLicenses`.
+- **Проверка** `DOC.HasValidWeaponLicense(charKey, cat)` → bool, причина, запись (статус/срок/категория). Точка интеграции для продажи/ношения оружия.
+- **Команды**: `/weaponlicense` `/оружие` / `/showweaponlicense` / `/check_weapon <ник>`.
+- **Выдача**: `grm_doc_computer` вкладка «Оружие»; реестр и архив — аннулирование.
+
+## 10. Лицензия на ведение бизнеса (находка 134, сделано)
+
+- **Виды деятельности** `DOC.BusinessTypes`: `retail`, `logistics`, `factory`, `food`, `pharmacy`, `service`, `other`.
+- **Шаблон** `businessLicense`: «Экономическое управление», префикс `БЛ-`, цвет тёмно-бирюзовый, тиснение silver.
+- **Данные** `DOC.Registry.businessLicenses[charKey] = { number, businessName, fullName, businessType, businessTypeName, address, restrictions, issuedBy, issueDate, validUntil, expiry, status, steamID64 }`.
+- **Доступ к выдаче** `access.businessLicenses` (по умолчанию Department of Labour and Social Protection + SuperAdmin) → `DOC.CanIssueBusinessLicenses`.
+- **Проверка** `DOC.HasValidBusinessLicense(charKey, bizType)` → bool, причина, запись.
+- **Команды**: `/businesslicense` `/бизнес` / `/showbusinesslicense` / `/check_business <ник>`.
+- **Выдача**: `grm_doc_computer` вкладка «Бизнес»; реестр и архив — отзыв.
+
+## 11. Осталось по лицензиям (не сделано)
+
+- **Госпошлина** через `GRM.Services.Charge` (банк/счёт/наличные) за выдачу/перевыпуск.
+- **Экзамены** на водительские права: теория (10 вопросов в `grm_comp_traffic`/`grm_doc_computer`) + практика (`/drive_exam`).
+- **Интеграция оружия**: хук на покупку/выдачу оружия → `DOC.HasValidWeaponLicense`.
+- **Интеграция бизнеса**: проверка при открытии лавок/заводов → `DOC.HasValidBusinessLicense`.

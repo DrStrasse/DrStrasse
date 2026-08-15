@@ -49,6 +49,8 @@ function ENT:CanManage(ply)
         if acc.military and acc.military[fName] == true then return true end
         if acc.licenses and acc.licenses[fName] == true then return true end
         if acc.milLicenses and acc.milLicenses[fName] == true then return true end
+        if acc.weaponLicenses and acc.weaponLicenses[fName] == true then return true end
+        if acc.businessLicenses and acc.businessLicenses[fName] == true then return true end
         if acc.coverDocs and acc.coverDocs[fName] == true then return true end
     end
 
@@ -87,7 +89,7 @@ function ENT:Use(ply)
     end
 
     local tpls = GRM.Documents and GRM.Documents.Templates or {}
-    local reg  = GRM.Documents and GRM.Documents.Registry or { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {}, milLicenses = {} }
+    local reg  = GRM.Documents and GRM.Documents.Registry or { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {}, milLicenses = {}, weaponLicenses = {}, businessLicenses = {} }
     local myFac = ply:GetNWString("GRM_Faction", "")
     local isLeader = (_G.FactionsAPI and _G.FactionsAPI.IsLeader and myFac ~= "" and _G.FactionsAPI.IsLeader(ply, myFac)) == true
     local hasCover = (ply:IsSuperAdmin() or (tpls.access and tpls.access.coverDocs and tpls.access.coverDocs[myFac] == true)) == true
@@ -95,6 +97,8 @@ function ENT:Use(ply)
     local hasMilitary = (ply:IsSuperAdmin() or (tpls.access and tpls.access.military and tpls.access.military[myFac] == true)) == true
     local hasLicense  = (ply:IsSuperAdmin() or (tpls.access and tpls.access.licenses and tpls.access.licenses[myFac] == true)) == true
     local hasMilLicense = (ply:IsSuperAdmin() or (tpls.access and tpls.access.milLicenses and tpls.access.milLicenses[myFac] == true) or (tpls.access and tpls.access.military and tpls.access.military[myFac] == true)) == true
+    local hasWeaponLicense = (ply:IsSuperAdmin() or (tpls.access and tpls.access.weaponLicenses and tpls.access.weaponLicenses[myFac] == true)) == true
+    local hasBusinessLicense = (ply:IsSuperAdmin() or (tpls.access and tpls.access.businessLicenses and tpls.access.businessLicenses[myFac] == true)) == true
 
     net.Start("GRM_DocComp_Open")
         net.WriteEntity(self)
@@ -109,5 +113,7 @@ function ENT:Use(ply)
         net.WriteBool(hasMilitary)
         net.WriteBool(hasLicense)
         net.WriteBool(hasMilLicense)
+        net.WriteBool(hasWeaponLicense)
+        net.WriteBool(hasBusinessLicense)
     net.Send(ply)
 end

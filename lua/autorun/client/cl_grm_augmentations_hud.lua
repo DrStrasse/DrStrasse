@@ -207,7 +207,6 @@ hook.Add("HUDPaint", "GRM_AugHUD_TacticalChrome", function()
     local cx,cy=sw-355,sh-500; draw.RoundedBox(5,cx,cy,325,135,Color(5,12,18,145)); draw.SimpleText("GRM BIOCONSOLE // SECURE LINK","GRMAugHUD_Small",cx+10,cy+15,accent)
     local links={"BIOCORE","PACKET","TLS","AUTH"}
     if GRM.Phone then links[#links+1]="PHONE" end
-    if GRM.Electronics then links[#links+1]="ELECTRONICS" end
     if Factions or GRM.Factions then links[#links+1]="FACTION" end
     if GRM.Inventory then links[#links+1]="INVENTORY" end
     if GRM.Mobile then links[#links+1]="MOBILE" end

@@ -1,2 +1,0 @@
-ENT.Type="anim";ENT.Base="base_gmodentity";ENT.PrintName="GRM Network Device";ENT.Category="GRM — Electronics";ENT.Spawnable=false;ENT.AdminOnly=true
-function ENT:SetupDataTables()self:NetworkVar("String",0,"DeviceID");self:NetworkVar("String",1,"DeviceKind");self:NetworkVar("String",2,"DisplayName");self:NetworkVar("String",3,"NetworkID");self:NetworkVar("String",4,"OwnerKey");self:NetworkVar("String",5,"OwnerName");self:NetworkVar("Bool",0,"DeviceActive")end

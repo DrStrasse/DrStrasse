@@ -1,5 +1,0 @@
-AddCSLuaFile("shared.lua");AddCSLuaFile("cl_init.lua");include("shared.lua")
-function ENT:Initialize()if self:GetModel()==""or self:GetModel()=="models/error.mdl"then self:SetModel(self.DefaultModel or"models/props_lab/reciever01b.mdl")end;self:PhysicsInit(SOLID_VPHYSICS);self:SetMoveType(MOVETYPE_VPHYSICS);self:SetSolid(SOLID_VPHYSICS);self:SetUseType(SIMPLE_USE);if self:GetDeviceKind()==""then self:SetDeviceKind(self.DeviceKind or"device")end;if self:GetDisplayName()==""then self:SetDisplayName((GRM.Electronics.Kinds or{})[self:GetDeviceKind()]or"Сетевое устройство")end;self:SetDeviceActive(true);local ph=self:GetPhysicsObject();if IsValid(ph)then ph:Wake()end;if GRM.Electronics then GRM.Electronics.RegisterDevice(self)end end
-function ENT:Use(ply)if GRM.Electronics then GRM.Electronics.OpenDevice(ply,self)end end
-function ENT:OnRemove()if GRM.Electronics then if GRM.Electronics.HandleDeviceRemoved then GRM.Electronics.HandleDeviceRemoved(self)end;GRM.Electronics.UnregisterDevice(self)end end
-function ENT:OnTakeDamage(dmg)self:TakePhysicsDamage(dmg)end

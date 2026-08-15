@@ -51,7 +51,6 @@ QM.ToolCatalog = {
     { id = "grm_vendor_tool",    label = "GRM: торговцы",                    desc = "Торговцы предметами и аксессуарами.", cat = "ui" },
     { id = "vehicle_dealer_tool",label = "GRM: дилер и площадка выдачи",     desc = "Дилер, гараж и площадка транспорта.", cat = "ui" },
     { id = "grm_quest_tool",     label = "GRM: конструктор квестов",         desc = "Квестовые NPC, зоны и кат-сцены.", cat = "ui" },
-    { id = "grm_network_tool",   label = "GRM: электроника и интернет",      desc = "Компьютеры, роутеры, розетки.", cat = "ui" },
     { id = "grm_door_admin",     label = "GRM: двери",                       desc = "Канонические двери и доступы.", cat = "ui" },
     { id = "grm_sliding_door",   label = "GRM: раздвижная дверь",            desc = "Проп → раздвижная дверь + FFD Link.", cat = "ui" },
     { id = "grm_bank_tool",      label = "GRM: банковское оборудование",     desc = "Хранилище, станок, терминал, отмыв.", cat = "ui" },
@@ -243,15 +242,6 @@ QM.Schema = {
         { cvar = "grm_fire_place_weight", type = "number", label = "Вес точки (шанс)" },
         { cvar = "grm_fire_place_label", type = "text", label = "Метка очага" },
         { cvar = "grm_fire_place_feed", type = "number", label = "Сила воспламенения" },
-    },
-    grm_network_tool = {
-        { cvar = "grm_network_tool_mode", type = "choice", label = "Режим",
-          choices = { { "Установка устройства", "spawn" }, { "Соединение кабелем", "link" } } },
-        { cvar = "grm_network_tool_kind", type = "choice", label = "Устройство",
-          choices = { { "Компьютер", "computer" }, { "Wi-Fi роутер", "router" },
-                      { "Сетевой принтер", "printer" }, { "Розетка", "socket" }, { "Штекер", "plug" } } },
-        { cvar = "grm_network_tool_name", type = "text", label = "Название" },
-        { cvar = "grm_network_tool_network", type = "text", label = "Сеть / SSID" },
     },
     grm_quest_tool = {
         { cvar = "grm_quest_tool_mode", type = "choice", label = "Режим",

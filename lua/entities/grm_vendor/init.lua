@@ -100,10 +100,7 @@ local function grantItem(ply, itemID, item)
         local entity = ents.Create(tostring(item.class or itemID))
         if not IsValid(entity) then return false, "Не удалось создать объект" end
         entity:SetPos(ply:GetPos()+ply:GetForward()*70+Vector(0,0,24)); entity:SetAngles(Angle(0,ply:EyeAngles().y,0)); entity:Spawn(); entity:Activate()
-        if GRM.Electronics and GRM.Electronics.Claim and entity.GetDeviceKind then
-            -- Сетевое устройство (компьютер/роутер/принтер): привязка владельца
-            GRM.Electronics.Claim(entity, ply)
-        elseif entity.SetPrinterOwner then entity:SetPrinterOwner(ply) else entity:SetOwner(ply) end
+        if entity.SetPrinterOwner then entity:SetPrinterOwner(ply) else entity:SetOwner(ply) end
         local phys=entity:GetPhysicsObject(); if IsValid(phys) then phys:Wake() end
         return true
     end

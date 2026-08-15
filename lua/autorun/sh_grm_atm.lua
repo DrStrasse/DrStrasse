@@ -77,23 +77,7 @@ function A.TerminalReady(ent)
     if ent.GetNWBool and ent:GetNWBool("GRM_IncassLocked", false) then
         return false, "Терминал на обслуживании (инкассация). Попробуйте позже."
     end
-    -- Электроника: если банкомат заведён как устройство сети — он должен быть
-    -- включён и в сети. Нет модуля электроники — банкомат работает автономно.
-    local E = GRM.Electronics
-    if E and isfunction(ent.GetDeviceID) then
-        local id = ent:GetDeviceID()
-        if id and id ~= "" then
-            if isfunction(ent.GetDeviceActive) and not ent:GetDeviceActive() then
-                return false, "Банкомат обесточен. Обратитесь к обслуживающей организации."
-            end
-            if isfunction(E.IsOnline) then
-                local online = E.IsOnline(ent)
-                if not online then
-                    return false, "Нет связи с банковской сетью: устройство вне зоны покрытия."
-                end
-            end
-        end
-    end
+
     return true
 end
 

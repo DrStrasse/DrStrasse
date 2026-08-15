@@ -35,7 +35,7 @@ net.Receive("GRM_DocComp_Open", function()
     local ent          = net.ReadEntity()
     local onlineList   = net.ReadTable() or {}
     local tpls         = net.ReadTable() or {}
-    local registry     = net.ReadTable() or { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {}, milLicenses = {} }
+    local registry     = net.ReadTable() or { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {}, milLicenses = {}, weaponLicenses = {}, businessLicenses = {} }
     local myFaction    = net.ReadString()
     local isSuperAdmin = net.ReadBool()
     local isLeader     = net.ReadBool()
@@ -44,6 +44,8 @@ net.Receive("GRM_DocComp_Open", function()
     local hasMilitary  = net.ReadBool()
     local hasLicense   = net.ReadBool()
     local hasMilLicense= net.ReadBool()
+    local hasWeaponLicense = net.ReadBool()
+    local hasBusinessLicense = net.ReadBool()
 
     local frame = vgui.Create("DFrame")
     frame:SetSize(960, 700)
@@ -182,7 +184,7 @@ net.Receive("GRM_DocComp_Open", function()
     end
 
     local lblPPhoto = vgui.Create("DLabel", passPnl)
-    lblPPhoto:SetPos(16, 295) lblPPhoto:SetText("9. Фото (путь из data/, например grm_computer/images/xxx.jpg или из фоторобота):") lblPPhoto:SetTextColor(CC.text) lblPPhoto:SizeToContents()
+    lblPPhoto:SetPos(16, 295) lblPPhoto:SetText("9. Фото (путь из data/, например grm_computer/images/xxx.jpg):") lblPPhoto:SetTextColor(CC.text) lblPPhoto:SizeToContents()
     local entPassPhoto = vgui.Create("DTextEntry", passPnl)
     entPassPhoto:SetPos(16, 315) entPassPhoto:SetSize(565, 26)
     entPassPhoto:SetText("")
@@ -851,6 +853,241 @@ net.Receive("GRM_DocComp_Open", function()
     tabs:AddSheet("Автошкола и ВАИ / Права", licPnl, "icon16/car.png")
 
     -- ══════════════════════════════════════════════════════════════
+    -- ВКЛАДКА 3Б: ЛИЦЕНЗИЯ НА ОРУЖИЕ (ОЛРР)
+    -- ══════════════════════════════════════════════════════════════
+    local wlicPnl = vgui.Create("DPanel", tabs)
+    wlicPnl:DockPadding(12, 12, 12, 12)
+    wlicPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
+
+    local lblWl = vgui.Create("DLabel", wlicPnl)
+    lblWl:SetPos(16, 8) lblWl:SetText("Лицензия на оружие (Отдел лицензионно-разрешительной работы)") lblWl:SetFont("DermaDefaultBold") lblWl:SetTextColor(CC.gold) lblWl:SizeToContents()
+
+    local comboWTarget = vgui.Create("DComboBox", wlicPnl)
+    comboWTarget:SetPos(16, 34) comboWTarget:SetSize(460, 28)
+    comboWTarget:AddChoice("— Выберите гражданина онлайн —", "")
+    for _, pData in ipairs(onlineList) do
+        comboWTarget:AddChoice(string.format("%s  [%s]  (%s)", pData.rpName or "?", pData.nick or "?", pData.key or ""), pData)
+    end
+
+    local selWKey, selWSid = "", "0"
+    local entWName = vgui.Create("DTextEntry", wlicPnl)
+    entWName:SetPos(16, 76) entWName:SetSize(320, 26)
+    local lblWName = vgui.Create("DLabel", wlicPnl)
+    lblWName:SetPos(16, 56) lblWName:SetText("ФИО владельца:") lblWName:SetTextColor(CC.text) lblWName:SizeToContents()
+    local entWBirth = vgui.Create("DTextEntry", wlicPnl)
+    entWBirth:SetPos(351, 76) entWBirth:SetSize(140, 26) entWBirth:SetText("12.04.1988")
+    local lblWBirth = vgui.Create("DLabel", wlicPnl)
+    lblWBirth:SetPos(351, 56) lblWBirth:SetText("Дата рождения:") lblWBirth:SetTextColor(CC.text) lblWBirth:SizeToContents()
+    local pfxW = (tpls.weaponLicense and tpls.weaponLicense.defaultPrefix) or "ЛО-"
+    local entWNum = vgui.Create("DTextEntry", wlicPnl)
+    entWNum:SetPos(506, 76) entWNum:SetSize(180, 26) entWNum:SetText(pfxW .. "000000")
+    local lblWNum = vgui.Create("DLabel", wlicPnl)
+    lblWNum:SetPos(506, 56) lblWNum:SetText("Номер лицензии:") lblWNum:SetTextColor(CC.text) lblWNum:SizeToContents()
+
+    local lblWIssuer = vgui.Create("DLabel", wlicPnl)
+    lblWIssuer:SetPos(16, 110) lblWIssuer:SetText("Орган выдачи:") lblWIssuer:SetTextColor(CC.text) lblWIssuer:SizeToContents()
+    local entWIssuer = vgui.Create("DTextEntry", wlicPnl)
+    entWIssuer:SetPos(16, 130) entWIssuer:SetSize(420, 26)
+    entWIssuer:SetText((tpls.weaponLicense and tpls.weaponLicense.defaultIssuer) or "Отдел лицензионно-разрешительной работы (ОЛРР)")
+
+    local lblWCats = vgui.Create("DLabel", wlicPnl)
+    lblWCats:SetPos(16, 168) lblWCats:SetText("Разрешённые категории оружия:") lblWCats:SetFont("DermaDefaultBold") lblWCats:SetTextColor(CC.gold) lblWCats:SizeToContents()
+    local chkWCats = {}
+    local yW = 192
+    for i, cat in ipairs(GRM.Documents.WeaponCategories or {}) do
+        local chk = vgui.Create("DCheckBoxLabel", wlicPnl)
+        chk:SetPos(16 + ((i - 1) % 2) * 340, yW + math.floor((i - 1) / 2) * 24)
+        chk:SetText(cat.icon .. " " .. cat.name .. " (" .. cat.desc .. ")")
+        chk:SetTextColor(CC.text)
+        chk:SetValue(cat.id == "smooth")
+        chk:SizeToContents()
+        chkWCats[cat.id] = chk
+    end
+
+    local entWRestr = vgui.Create("DTextEntry", wlicPnl)
+    entWRestr:SetPos(16, 270) entWRestr:SetSize(620, 26) entWRestr:SetText("Хранение в сейфе по месту жительства")
+    local lblWRestr = vgui.Create("DLabel", wlicPnl)
+    lblWRestr:SetPos(16, 250) lblWRestr:SetText("Особые отметки / ограничения:") lblWRestr:SetTextColor(CC.text) lblWRestr:SizeToContents()
+
+    local lblWExp = vgui.Create("DLabel", wlicPnl)
+    lblWExp:SetPos(16, 306) lblWExp:SetText("Срок действия (лет):") lblWExp:SetTextColor(CC.text) lblWExp:SizeToContents()
+    local entWYears = vgui.Create("DNumberWang", wlicPnl)
+    entWYears:SetPos(160, 304) entWYears:SetSize(80, 26) entWYears:SetMin(1) entWYears:SetMax(10) entWYears:SetValue(5)
+
+    comboWTarget.OnSelect = function(_, _, _, pData)
+        if istable(pData) then
+            selWKey = pData.key or ""
+            selWSid = pData.steamID64 or "0"
+            entWName:SetText(pData.rpName or "")
+            entWNum:SetText(pfxW .. selWSid:sub(-5))
+            if registry.weaponLicenses and registry.weaponLicenses[selWKey] then
+                local ex = registry.weaponLicenses[selWKey]
+                entWName:SetText(ex.fullName or pData.rpName or "")
+                entWBirth:SetText(ex.birthDate or "12.04.1988")
+                entWNum:SetText(ex.number or (pfxW .. selWSid:sub(-5)))
+                entWIssuer:SetText(ex.issuedBy or ((tpls.weaponLicense and tpls.weaponLicense.defaultIssuer) or "ОЛРР"))
+                entWRestr:SetText(ex.restrictions or "Хранение в сейфе по месту жительства")
+                if istable(ex.categories) then
+                    for cId, cb in pairs(chkWCats) do cb:SetValue(ex.categories[cId] == true) end
+                end
+            end
+        end
+    end
+
+    local btnWIssue = vgui.Create("DButton", wlicPnl)
+    btnWIssue:SetPos(16, 348) btnWIssue:SetSize(400, 36)
+    btnWIssue:SetText("✔ Оформить и выдать лицензию на оружие")
+    btnWIssue:SetFont("DermaDefaultBold") btnWIssue:SetTextColor(color_white)
+    btnWIssue.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(35, 150, 120) or Color(25, 120, 95)) end
+    btnWIssue.DoClick = function()
+        if not hasWeaponLicense then notification.AddLegacy("У вашей фракции нет допуска к выдаче лицензий на оружие!", NOTIFY_ERROR, 3) return end
+        if selWKey == "" then notification.AddLegacy("Выберите гражданина из списка!", NOTIFY_ERROR, 3) return end
+        local curCats, catList = {}, {}
+        for cId, cb in pairs(chkWCats) do
+            curCats[cId] = cb:GetChecked()
+            if cb:GetChecked() then catList[#catList + 1] = cId end
+        end
+        local years = entWYears:GetValue() or 5
+        local pack = {
+            fullName = entWName:GetText(),
+            birthDate = entWBirth:GetText(),
+            number = entWNum:GetText(),
+            categories = curCats,
+            categoriesStr = table.concat(catList, " "),
+            restrictions = entWRestr:GetText(),
+            issuedBy = entWIssuer:GetText(),
+            issueDate = os.date("%d.%m.%Y"),
+            validUntil = tostring(years) .. " лет",
+            expiry = os.time() + years * 365 * 24 * 3600,
+            status = "Действительна",
+            steamID64 = selWSid,
+        }
+        net.Start("GRM_Doc_ComputerIssue")
+            net.WriteString("weaponLicense")
+            net.WriteString(selWKey)
+            net.WriteTable(pack)
+        net.SendToServer()
+        frame:Close()
+    end
+
+    tabs:AddSheet("Оружие", wlicPnl, "icon16/gun.png")
+
+    -- ══════════════════════════════════════════════════════════════
+    -- ВКЛАДКА 3В: ЛИЦЕНЗИЯ НА ВЕДЕНИЕ БИЗНЕСА
+    -- ══════════════════════════════════════════════════════════════
+    local blicPnl = vgui.Create("DPanel", tabs)
+    blicPnl:DockPadding(12, 12, 12, 12)
+    blicPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
+
+    local lblBl = vgui.Create("DLabel", blicPnl)
+    lblBl:SetPos(16, 8) lblBl:SetText("Лицензия на ведение бизнеса (Экономическое управление)") lblBl:SetFont("DermaDefaultBold") lblBl:SetTextColor(CC.gold) lblBl:SizeToContents()
+
+    local comboBTarget = vgui.Create("DComboBox", blicPnl)
+    comboBTarget:SetPos(16, 34) comboBTarget:SetSize(460, 28)
+    comboBTarget:AddChoice("— Выберите владельца бизнеса онлайн —", "")
+    for _, pData in ipairs(onlineList) do
+        comboBTarget:AddChoice(string.format("%s  [%s]  (%s)", pData.rpName or "?", pData.nick or "?", pData.key or ""), pData)
+    end
+
+    local selBKey, selBSid = "", "0"
+    local entBName = vgui.Create("DTextEntry", blicPnl)
+    entBName:SetPos(16, 76) entBName:SetSize(320, 26)
+    local lblBName = vgui.Create("DLabel", blicPnl)
+    lblBName:SetPos(16, 56) lblBName:SetText("Наименование бизнеса:") lblBName:SetTextColor(CC.text) lblBName:SizeToContents()
+    local entBOwner = vgui.Create("DTextEntry", blicPnl)
+    entBOwner:SetPos(351, 76) entBOwner:SetSize(300, 26)
+    local lblBOwner = vgui.Create("DLabel", blicPnl)
+    lblBOwner:SetPos(351, 56) lblBOwner:SetText("ФИО владельца:") lblBOwner:SetTextColor(CC.text) lblBOwner:SizeToContents()
+    local pfxB = (tpls.businessLicense and tpls.businessLicense.defaultPrefix) or "БЛ-"
+    local entBNum = vgui.Create("DTextEntry", blicPnl)
+    entBNum:SetPos(666, 76) entBNum:SetSize(150, 26) entBNum:SetText(pfxB .. "000000")
+    local lblBNum = vgui.Create("DLabel", blicPnl)
+    lblBNum:SetPos(666, 56) lblBNum:SetText("Номер:") lblBNum:SetTextColor(CC.text) lblBNum:SizeToContents()
+
+    local lblBType = vgui.Create("DLabel", blicPnl)
+    lblBType:SetPos(16, 110) lblBType:SetText("Вид деятельности:") lblBType:SetTextColor(CC.text) lblBType:SizeToContents()
+    local comboBType = vgui.Create("DComboBox", blicPnl)
+    comboBType:SetPos(16, 130) comboBType:SetSize(460, 26)
+    for _, bt in ipairs(GRM.Documents.BusinessTypes or {}) do
+        comboBType:AddChoice(bt.name .. " — " .. bt.desc, bt.id)
+    end
+    comboBType:ChooseOptionID(1)
+
+    local entBAddr = vgui.Create("DTextEntry", blicPnl)
+    entBAddr:SetPos(16, 170) entBAddr:SetSize(460, 26)
+    local lblBAddr = vgui.Create("DLabel", blicPnl)
+    lblBAddr:SetPos(16, 150) lblBAddr:SetText("Адрес / объект:") lblBAddr:SetTextColor(CC.text) lblBAddr:SizeToContents()
+
+    local lblBIssuer = vgui.Create("DLabel", blicPnl)
+    lblBIssuer:SetPos(16, 206) lblBIssuer:SetText("Орган выдачи:") lblBIssuer:SetTextColor(CC.text) lblBIssuer:SizeToContents()
+    local entBIssuer = vgui.Create("DTextEntry", blicPnl)
+    entBIssuer:SetPos(16, 226) entBIssuer:SetSize(420, 26)
+    entBIssuer:SetText((tpls.businessLicense and tpls.businessLicense.defaultIssuer) or "Экономическое управление Республики Гранд")
+
+    local lblBYears = vgui.Create("DLabel", blicPnl)
+    lblBYears:SetPos(16, 262) lblBYears:SetText("Срок действия (лет):") lblBYears:SetTextColor(CC.text) lblBYears:SizeToContents()
+    local entBYears = vgui.Create("DNumberWang", blicPnl)
+    entBYears:SetPos(160, 260) entBYears:SetSize(80, 26) entBYears:SetMin(1) entBYears:SetMax(10) entBYears:SetValue(1)
+
+    comboBTarget.OnSelect = function(_, _, _, pData)
+        if istable(pData) then
+            selBKey = pData.key or ""
+            selBSid = pData.steamID64 or "0"
+            entBOwner:SetText(pData.rpName or "")
+            entBNum:SetText(pfxB .. selBSid:sub(-5))
+            if registry.businessLicenses and registry.businessLicenses[selBKey] then
+                local ex = registry.businessLicenses[selBKey]
+                entBName:SetText(ex.businessName or "")
+                entBOwner:SetText(ex.fullName or pData.rpName or "")
+                entBNum:SetText(ex.number or (pfxB .. selBSid:sub(-5)))
+                entBAddr:SetText(ex.address or "")
+                entBIssuer:SetText(ex.issuedBy or ((tpls.businessLicense and tpls.businessLicense.defaultIssuer) or "Экономическое управление"))
+                for i, bt in ipairs(GRM.Documents.BusinessTypes or {}) do
+                    if bt.id == ex.businessType then comboBType:ChooseOptionID(i) end
+                end
+            end
+        end
+    end
+
+    local btnBIssue = vgui.Create("DButton", blicPnl)
+    btnBIssue:SetPos(16, 300) btnBIssue:SetSize(400, 36)
+    btnBIssue:SetText("✔ Оформить и выдать лицензию на бизнес")
+    btnBIssue:SetFont("DermaDefaultBold") btnBIssue:SetTextColor(color_white)
+    btnBIssue.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(35, 150, 150) or Color(25, 120, 120)) end
+    btnBIssue.DoClick = function()
+        if not hasBusinessLicense then notification.AddLegacy("У вашей фракции нет допуска к выдаче лицензий на бизнес!", NOTIFY_ERROR, 3) return end
+        if selBKey == "" then notification.AddLegacy("Выберите владельца из списка!", NOTIFY_ERROR, 3) return end
+        if entBName:GetText() == "" then notification.AddLegacy("Укажите наименование бизнеса!", NOTIFY_ERROR, 3) return end
+        local _, bType = comboBType:GetSelected()
+        local years = entBYears:GetValue() or 1
+        local typeName = bType or "other"
+        for _, bt in ipairs(GRM.Documents.BusinessTypes or {}) do if bt.id == bType then typeName = bt.name end end
+        local pack = {
+            businessName = entBName:GetText(),
+            fullName = entBOwner:GetText(),
+            number = entBNum:GetText(),
+            businessType = bType or "other",
+            businessTypeName = typeName,
+            address = entBAddr:GetText(),
+            restrictions = "",
+            issuedBy = entBIssuer:GetText(),
+            issueDate = os.date("%d.%m.%Y"),
+            validUntil = tostring(years) .. " год(а)",
+            expiry = os.time() + years * 365 * 24 * 3600,
+            status = "Действительна",
+            steamID64 = selBSid,
+        }
+        net.Start("GRM_Doc_ComputerIssue")
+            net.WriteString("businessLicense")
+            net.WriteString(selBKey)
+            net.WriteTable(pack)
+        net.SendToServer()
+        frame:Close()
+    end
+
+    tabs:AddSheet("Бизнес", blicPnl, "icon16/money.png")
+
+    -- ══════════════════════════════════════════════════════════════
     -- ВКЛАДКА 4: ВОЕНКОМАТ / ВОЕННЫЙ БИЛЕТ
     -- ══════════════════════════════════════════════════════════════
     local milPnl = vgui.Create("DPanel", tabs)
@@ -1209,6 +1446,20 @@ net.Receive("GRM_DocComp_Open", function()
             if istable(ml) then
                 local line = listDocs:AddLine("Права (ВАИ)", ml.fullName or "?", ml.number or "?", "ВУС: " .. (ml.vus or "837") .. " (Кат: " .. (ml.categoriesStr or "B-В") .. ")", ml.status or "Действительно", k)
                 line._docType = "milLicense"
+                line._docKey = k
+            end
+        end
+        for k, wl in pairs(registry.weaponLicenses or {}) do
+            if istable(wl) then
+                local line = listDocs:AddLine("Лицензия на оружие", wl.fullName or "?", wl.number or "?", "Кат: " .. (wl.categoriesStr or "smooth"), wl.status or "Действительна", k)
+                line._docType = "weaponLicense"
+                line._docKey = k
+            end
+        end
+        for k, bl in pairs(registry.businessLicenses or {}) do
+            if istable(bl) then
+                local line = listDocs:AddLine("Лицензия на бизнес", bl.businessName or bl.fullName or "?", bl.number or "?", bl.businessTypeName or bl.businessType or "—", bl.status or "Действительна", k)
+                line._docType = "businessLicense"
                 line._docKey = k
             end
         end

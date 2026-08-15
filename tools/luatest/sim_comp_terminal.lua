@@ -224,7 +224,7 @@ local clP   = read("lua/entities/grm_comp_police/cl_init.lua")
 local clM   = read("lua/entities/grm_comp_military_police/cl_init.lua")
 local clT   = read("lua/autorun/client/cl_grm_comp_terminal.lua")
 
-check("терминал v1.0.1", has(svT, 'T.Version = "1.0.1"'), T.Version)
+check("терминал v1.1.0 (фото к делу)", has(svT, 'T.Version = "1.1.0'), T.Version)
 check("ядро: trusted в AddCustomCharge", has(svW, "data.trusted==true") or has(svW, "data.trusted == true"))
 check("ядро: trusted в SetLevel", has(svW, "function W.SetLevel(issuer,targetSid,level,note,trusted)"))
 check("ядро: Clear пробрасывает trusted", has(svW, "function W.Clear(i,s,n,trusted)"))
