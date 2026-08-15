@@ -9,7 +9,8 @@ function ENT:Draw()
     ang:RotateAroundAxis(ang:Right(), 90)
     ang:RotateAroundAxis(ang:Up(), -90)
     local open = self:GetOpen()
-    local txt = (open and "ГИДРАНТ ОТКРЫТ" or "гидрант закрыт") .. "  E взять/стык"
+    local txt = open and "ГИДРАНТ ОТКРЫТ  •  E закрыть  •  Shift+E взять рукав"
+        or "ГИДРАНТ ЗАКРЫТ  •  E открыть"
     cam.Start3D2D(pos, ang, 0.07)
         draw.SimpleText(txt, "DermaDefaultBold", 0, 0, open and Color(80, 200, 255) or Color(180, 190, 200), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     cam.End3D2D()

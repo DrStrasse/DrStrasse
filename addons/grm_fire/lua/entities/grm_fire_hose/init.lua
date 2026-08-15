@@ -4,7 +4,7 @@ include("shared.lua")
 
 local function cfg()
     return (GRM and GRM.FireAddon and GRM.FireAddon.HoseCfg) or {
-        MaxLength = 2200, LayStep = 40, Width = 3,
+        MaxLength = 2200, LayStep = 26, Width = 3.5,
         Material = "grm/firehose", Sag = 14, SprayCost = 8, SprayDmg = 10,
     }
 end
@@ -266,31 +266,48 @@ function ENT:TryRewind(ply)
 end
 
 function ENT:TryLay(ply)
-    if self:GetDocked() then return end
+    if self:GetDocked() then return false end
     local last = self:LastNode()
-    if not IsValid(last) or not IsValid(ply) then return end
-    local step = cfg().LayStep
+    if not IsValid(last) or not IsValid(ply) then return false end
+    local step = math.max(18, tonumber(cfg().LayStep) or 26)
     local dest = self:GroundPos(ply)
-    local dist = last:GetPos():Distance(dest)
-    if dist < step then return end
-    if self:LaidDistance() + dist > (self:GetMaxLen() or 2200) then return end
-    -- не класть сквозь стену
-    local wall = util.TraceLine({
-        start = last:GetPos() + Vector(0, 0, 8),
-        endpos = dest + Vector(0, 0, 8),
-        filter = { last, ply, self },
-        mask = MASK_SOLID_BRUSHONLY,
-    })
-    if wall.Hit then return end
+    local start = last:GetPos()
+    local dist = start:Distance(dest)
+    if dist < step then return false end
+
+    -- Если игрок быстро повернул/спрыгнул/телепортировался, старая версия
+    -- ставила только ОДИН узел в конечной точке. Получались две точки и
+    -- длинная прямая. Теперь досеиваем путь с шагом 26 по рельефу.
+    local count = math.min(12, math.floor(dist / step))
+    local laid = self:LaidDistance()
+    local maxLen = self:GetMaxLen() or 2200
+    local added = 0
     local FA = A()
-    local node = self:MakeNode(FA and FA.NODE_LAY or 1, dest)
-    if not IsValid(node) then return end
-    last:SetNextNode(node)
-    self:Link(last, node, dist + cfg().Sag)
-    node:SetNextNode(ply)
-    self:SetEndNode(node)
-    self:SetLaidLen(math.floor(self:LaidDistance()))
+    for i = 1, count do
+        local t = math.min(1, (i * step) / dist)
+        local target = self:GroundSnap(LerpVector(t, start, dest))
+        local wall = util.TraceLine({
+            start = last:GetPos() + Vector(0, 0, 8),
+            endpos = target + Vector(0, 0, 8),
+            filter = { last, ply, self },
+            mask = MASK_SOLID_BRUSHONLY,
+        })
+        if wall.Hit then break end
+        local segLen = last:GetPos():Distance(target)
+        if laid + added + segLen > maxLen then break end
+        local node = self:MakeNode(FA and FA.NODE_LAY or 1, target)
+        if not IsValid(node) then break end
+        last:SetNextNode(node)
+        self:Link(last, node, segLen + cfg().Sag)
+        last = node
+        added = added + segLen
+    end
+    if added <= 0 then return false end
+    last:SetNextNode(ply)
+    self:SetEndNode(last)
+    self:SetLaidLen(math.floor(laid + added))
     self:BroadcastPath()
+    return true
 end
 
 function ENT:Leash(ply)
@@ -653,6 +670,33 @@ function ENT:PayoutFromSource()
     return changed
 end
 
+-- Подтянуть только перенапряжённые участки от концов, сохраняя ранее
+-- уложенные повороты. Старая линейная Lerp-перекладка каждый тик превращала
+-- любой извилистый путь в идеально прямую линию между двумя точками.
+function ENT:TensionDockedPath(srcPos, endPos)
+    local nodes = self.Nodes or {}
+    if #nodes < 3 or not srcPos or not endPos then return false end
+    local maxSeg = math.max(28, (tonumber(cfg().LayStep) or 26) * 1.55)
+    local moved = false
+    local anchor = srcPos
+    for i = 2, #nodes - 1 do
+        local node = nodes[i]
+        if IsValid(node) then
+            if self:DragNode(node, anchor, maxSeg) then moved = true end
+            anchor = node:GetPos()
+        end
+    end
+    anchor = endPos
+    for i = #nodes - 1, 2, -1 do
+        local node = nodes[i]
+        if IsValid(node) then
+            if self:DragNode(node, anchor, maxSeg) then moved = true end
+            anchor = node:GetPos()
+        end
+    end
+    return moved
+end
+
 function ENT:FollowHost()
     local srcPos, endPos = self:SyncAnchors()
     if not srcPos then return false end
@@ -667,18 +711,7 @@ function ENT:FollowHost()
 
     local moved = false
     if self:GetDocked() and endPos then
-        local nodes = self.Nodes or {}
-        local lays = {}
-        for i = 2, #nodes - 1 do
-            if IsValid(nodes[i]) and not self:IsFixedNode(nodes[i]) then
-                lays[#lays + 1] = nodes[i]
-            end
-        end
-        for k = 1, #lays do
-            local t = k / (#lays + 1)
-            lays[k]:SetPos(self:GroundSnap(LerpVector(t, srcPos, endPos)))
-            moved = true
-        end
+        if self:TensionDockedPath(srcPos, endPos) then moved = true end
     else
         if self:PayoutFromSource() then moved = true end
     end

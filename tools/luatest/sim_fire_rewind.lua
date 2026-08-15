@@ -106,11 +106,8 @@ check("PayoutFromSource", init:find("function ENT:PayoutFromSource", 1, true) ~=
 check("InsertLayAt", init:find("function ENT:InsertLayAt", 1, true) ~= nil)
 check("CheckOverstretch стационарной линии", init:find("function ENT:CheckOverstretch", 1, true) ~= nil)
 check("перерастяжение вызывает автосмотку", init:find("GRM_FireAddon_HoseOverstretched", 1, true) ~= nil)
-check("нет натяжки DragNode в FollowHost", (function()
-    local a = init:find("function ENT:FollowHost", 1, true) or 0
-    local b = init:find("function ENT:Rewind", 1, true) or #init
-    return init:sub(a, b):find("DragNode", 1, true) == nil
-end)())
+check("FollowHost не выпрямляет весь путь Lerp-линией", not init:find("lays[k]:SetPos(self:GroundSnap(LerpVector", 1, true))
+check("стыкованный рукав подтягивается от концов", init:find("function ENT:TensionDockedPath", 1, true) ~= nil and init:find("self:DragNode(node, anchor", 1, true) ~= nil)
 
 print("\n=== тяга за машиной ===")
 local nx, ny, moved, d = A.HoseDragPoint(100, 0, 0, 0, 50)

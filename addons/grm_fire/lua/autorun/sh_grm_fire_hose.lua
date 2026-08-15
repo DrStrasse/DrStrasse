@@ -12,7 +12,7 @@ local A = GRM.FireAddon
 
 A.HoseCfg = A.HoseCfg or {
     MaxLength   = 2200,
-    LayStep     = 52,
+    LayStep     = 26,
     Width       = 3,
     Material    = "grm/firehose",
     Sag         = 10,
@@ -34,10 +34,13 @@ A.HoseCfg = A.HoseCfg or {
     OverstretchSec   = 0.75,
 }
 if A.HoseCfg.MaxLength < 2000 then A.HoseCfg.MaxLength = 2200 end
-A.HoseCfg.LayStep = 40
-A.HoseCfg.Width = 3
-A.HoseBeamHalfW = 1.35
-A.HoseBeamHalfH = 0.28
+A.HoseCfg.LayStep = 26
+A.HoseCfg.Width = 3.5
+-- +0.5 к визуальному объёму относительно предыдущей ленты.
+A.HoseBeamHalfW = 1.85
+A.HoseBeamHalfH = 0.38
+A.HoseVisualSubdiv = 1
+A.HoseSupplySlack = 18
 A.HoseCfg.BreakGrace = math.max(0, tonumber(A.HoseCfg.BreakGrace) or 96)
 A.HoseCfg.OverstretchSec = math.max(0.2, tonumber(A.HoseCfg.OverstretchSec) or 0.75)
 
@@ -336,10 +339,22 @@ if SERVER then
         local startN = hose:MakeNode(A.NODE_SOURCE, a, src)
         if not IsValid(startN) then hose:Remove() return nil, "узел" end
         local last = startN
-        local step = math.max(36, A.HoseCfg.LayStep or 40)
+        local step = math.max(24, A.HoseCfg.LayStep or 26)
         local nsteps = math.max(0, math.floor(dist / step) - 1)
+        local flat = b - a
+        flat.z = 0
+        local side = Vector(0, 0, 0)
+        if flat:LengthSqr() > 1 then
+            flat:Normalize()
+            side = Vector(-flat.y, flat.x, 0)
+        end
+        local slack = math.min(A.HoseSupplySlack or 18, dist * 0.025)
         for i = 1, nsteps do
-            local p = LerpVector(i / (nsteps + 1), a, b)
+            local t = i / (nsteps + 1)
+            -- Небольшая S-образная слабина: стационарный рукав не выглядит
+            -- натянутой линейкой, но оба стыка остаются точно на местах.
+            local wave = math.sin(t * math.pi * 2) * math.sin(t * math.pi)
+            local p = LerpVector(t, a, b) + side * wave * slack
             local tr = util.TraceLine({
                 start = p + Vector(0, 0, 48),
                 endpos = p - Vector(0, 0, 96),
@@ -456,7 +471,34 @@ if CLIENT then
         return pts
     end
 
-    -- Плоская лента по земле, не балка в воздухе.
+    -- Сглаживание визуального пути без изменения серверной физики. Chaikin
+    -- сохраняет все повороты внутри исходной ломаной и убирает вид «две точки
+    -- + две прямые палки». Концы остаются точно на катушке/стволе.
+    function A.SmoothHosePath(points)
+        if not istable(points) or #points < 2 then return points or {} end
+        local cur = points
+        for _ = 1, math.max(1, tonumber(A.HoseVisualSubdiv) or 2) do
+            local out = { cur[1] }
+            for i = 1, #cur - 1 do
+                local a, b = cur[i], cur[i + 1]
+                out[#out + 1] = LerpVector(0.25, a, b)
+                out[#out + 1] = LerpVector(0.75, a, b)
+            end
+            out[#out + 1] = cur[#cur]
+            cur = out
+        end
+        -- Длинные переходы дополнительно дробим: DrawBox не выглядит одним
+        -- жёстким брусом даже при редком сетевом обновлении.
+        local dense = { cur[1] }
+        for i = 2, #cur do
+            local a, b = cur[i - 1], cur[i]
+            local parts = math.max(1, math.ceil(a:Distance(b) / 22))
+            for k = 1, parts do dense[#dense + 1] = LerpVector(k / parts, a, b) end
+        end
+        return dense
+    end
+
+    -- Объёмная плоско-овальная лента по земле, не балка в воздухе.
     function A.DrawHoseBeam(a, b, live)
         if not a or not b then return end
         local dir = b - a
@@ -468,8 +510,8 @@ if CLIENT then
         render.SetColorMaterial()
         local ang = dir:Angle()
         local mid = (a + b) * 0.5
-        local hw = A.HoseBeamHalfW or 1.35
-        local hh = A.HoseBeamHalfH or 0.28
+        local hw = A.HoseBeamHalfW or 1.85
+        local hh = A.HoseBeamHalfH or 0.38
         render.DrawBox(mid, ang, Vector(-len * 0.5, -hw, -hh), Vector(len * 0.5, hw, hh), col, true)
         render.DrawLine(a + Vector(0, 0, 0.4), b + Vector(0, 0, 0.4), COL_DARK, false)
     end
@@ -495,6 +537,7 @@ if CLIENT then
     local function drawPath(id, rec)
         local pts = livePts(rec)
         if not pts then return end
+        pts = A.SmoothHosePath(pts)
         local holder = rec.holder
         for i = 2, #pts do
             A.DrawHoseBeam(pts[i - 1], pts[i], i == #pts and IsValid(holder) and not rec.docked)
