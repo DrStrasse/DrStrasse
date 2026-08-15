@@ -55,5 +55,9 @@ ok(electronics:find("DBLoadBlocked",1,true)and electronics:find("MapLoadBlocked"
 local guardSrc=readSource("lua/autorun/sh_01_grm_persistence_guard.lua")
 ok(guardSrc:find('"grm_food/vending_" .. map',1,true) and guardSrc:find('"grm_factory_fullcycle/weapon_lockers.json"',1,true),
    "guard snapshots food vending and all factory support databases")
+ok(guardSrc:find('"grm_logistics/access.json"',1,true) and guardSrc:find('"grm_saves/" .. map',1,true)
+   and guardSrc:find('"grm_saves/grm_orespawns_" .. map',1,true)
+   and guardSrc:find('"grm_roomtap/temporary_equipment.json"',1,true),
+   "guard snapshots logistics, mining, ore points and RoomTap support databases")
 print(("PERSIST GUARD: %d/%d failures=%d"):format(pass,pass+fail,fail))
 os.exit(fail>0 and 1 or 0)

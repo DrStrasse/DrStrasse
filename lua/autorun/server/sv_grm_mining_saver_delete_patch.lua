@@ -61,22 +61,22 @@ local function findAimedEntity(ply)
     return closest
 end
 
-local function rewritePersistence(class)
-    -- Generic saver: ore buyer/nodes and legacy factory entities.
-    if GRM_SaveEntities then
+local function rewritePersistence(class, pos, wasAutoOre)
+    if wasAutoOre and GRM and GRM.OreSpawner and GRM.OreSpawner.RemovePointAt then
+        GRM.OreSpawner.RemovePointAt(pos, 80)
+    end
+    if GRM and GRM.MiningPersistence and GRM.MiningPersistence.SaveEntities then
+        GRM.MiningPersistence.SaveEntities(nil)
+    elseif GRM_SaveEntities then
         GRM_SaveEntities()
     end
-
-    -- New Factory Full Cycle has a separate save with stock/data.
-    if string.StartWith(class, "grm_fc_")
-        and GRM and GRM.FactoryCycle and GRM.FactoryCycle.SaveMap then
-        GRM.FactoryCycle.SaveMap(nil)
+    if string.StartWith(class, "grm_fc_") and GRM and GRM.FactoryCycle then
+        if GRM.FactoryCycle.SaveAll then GRM.FactoryCycle.SaveAll(nil, "permanent remove")
+        elseif GRM.FactoryCycle.SaveMap then GRM.FactoryCycle.SaveMap(nil) end
     end
-
-    -- Faction Logistics also has separate persistent entity/config data.
-    if string.StartWith(class, "grm_logistics_")
-        and GRM and GRM.Logistics and GRM.Logistics.SaveMap then
-        GRM.Logistics.SaveMap(nil)
+    if string.StartWith(class, "grm_logistics_") and GRM and GRM.Logistics then
+        if GRM.Logistics.SaveAll then GRM.Logistics.SaveAll(nil)
+        elseif GRM.Logistics.SaveMap then GRM.Logistics.SaveMap(nil) end
     end
 end
 
@@ -91,12 +91,15 @@ local function permanentlyRemoveLookedEntity(ply)
 
     local class = ent:GetClass()
     local model = ent:GetModel() or ""
+    local pos = ent:GetPos()
+    local wasAutoOre = class == "grm_ore_node" and GRM and GRM.OreSpawner
+        and GRM.OreSpawner.IsManagedNode and GRM.OreSpawner.IsManagedNode(ent) == true
 
     -- Remove first. The subsequent save serializes only remaining entities.
     ent:Remove()
 
     timer.Simple(0.15, function()
-        rewritePersistence(class)
+        rewritePersistence(class, pos, wasAutoOre)
 
         if IsValid(ply) then
             ply:ChatPrint("[GRM Saver] Entity удалена навсегда: " .. class)

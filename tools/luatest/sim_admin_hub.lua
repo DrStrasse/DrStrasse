@@ -165,12 +165,12 @@ local function mkMod(name, saveNames, loadNames)
   return m
 end
 GRM.Phone = mkMod("phone", { "SaveAll", "SaveMapEntities" }, { "LoadAll", "LoadMapEntities" })
-GRM.CCTV = mkMod("cctv", { "SavePermanent" }, { "LoadPermanent" })
-GRM.Alarm = mkMod("alarm", { "SavePermanent" }, { "LoadPermanent" })
+GRM.CCTV = mkMod("cctv", { "SaveAll", "SavePermanent" }, { "LoadAll", "LoadPermanent" })
+GRM.Alarm = mkMod("alarm", { "SaveAll", "SavePermanent" }, { "LoadAll", "LoadPermanent" })
 GRM.FactoryCycle = mkMod("factory", { "SaveAll", "SaveMap" }, { "LoadAll", "LoadMap" })
-GRM.Logistics = mkMod("logistics", { "SaveMap" }, { "LoadMap" })
+GRM.Logistics = mkMod("logistics", { "SaveAll", "SaveMap" }, { "LoadAll", "LoadMap" })
 GRM.Food = mkMod("food", { "SaveAll", "SaveVendingMachines" }, { "LoadAll", "LoadVendingMachines" })
-GRM.RoomTap = mkMod("roomtap", { "SaveMapEquipment" }, { "LoadMapEquipment" })
+GRM.RoomTap = mkMod("roomtap", { "SaveAll", "SaveMapEquipment" }, { "LoadAll", "LoadMapEquipment" })
 GRM.Wanted = mkMod("wanted", { "Save" }, { "Load" })
 GRM.Doors = mkMod("doors")
 GRM.Doors.SaveDoors = function() calls["doors_save"] = (calls["doors_save"] or 0) + 1 return true end
@@ -186,8 +186,9 @@ GRM.Customization = mkMod("customization", { "SaveData" }, { "LoadData" })
 GRM.Vendor = mkMod("vendors", { "SaveMapVendors" }, { "LoadMapVendors" })
 GRM.Quests = mkMod("quests", { "SaveAll" }, { "LoadAll" })
 GRM.Perm = mkMod("perm", { "SaveAll" }, { "LoadAll" })
-function _G.GRM_SaveEntities() calls["mining_save"] = (calls["mining_save"] or 0) + 1 return true end
-function _G.GRM_LoadEntities() calls["mining_load"] = (calls["mining_load"] or 0) + 1 return true end
+GRM.MiningPersistence = mkMod("mining", { "SaveAll" }, { "LoadAll" })
+function _G.GRM_SaveEntities() calls["mining_legacy_save"] = (calls["mining_legacy_save"] or 0) + 1 return 1 end
+function _G.GRM_LoadEntities() calls["mining_legacy_load"] = (calls["mining_legacy_load"] or 0) + 1 return 1 end
 
 H.netlog = {}
 dofile("lua/autorun/server/sv_grm_persistence_hub.lua")
@@ -206,7 +207,9 @@ ok(calls["vehicle_dealers_save"] == 1, "all_save: дилеры и гаражи �
 ok(calls["phone_save"] == 1 and calls["factory_save"] == 1 and calls["food_save"] == 1,
    "all_save: телефония, полный завод и еда вызваны через SaveAll")
 ok(calls["doors_save"] == 1 and calls["arrest_save"] == 1, "all_save: остальные модули сохранены")
-ok(calls["mining_save"] ~= nil, "all_save: рудные узлы сохранены (GRM_SaveEntities; вызывается и для perm)")
+ok(calls["logistics_save"] == 1 and calls["mining_save"] == 1 and calls["roomtap_save"] == 1,
+   "all_save: логистика, шахта и RoomTap используют полные SaveAll")
+ok(calls["mining_legacy_save"] == nil, "all_save: шахта не использует слабый legacy saver")
 local allOk = false
 for i = #H.netlog, 1, -1 do
   if H.netlog[i].msg == "GRM_Persistence_Result" then allOk = (H.netlog[i].f[1] == "T") break end
@@ -221,7 +224,8 @@ ok(calls["electronics_load"] == 1, "all_load: электроника загру�
 ok(calls["vehicle_dealers_load"] == 1, "all_load: дилеры загружены (LoadAll вызван)")
 ok(calls["phone_load"] == 1 and calls["factory_load"] == 1 and calls["food_load"] == 1,
    "all_load: телефония, полный завод и еда вызваны через LoadAll")
-ok(calls["mining_load"] ~= nil, "all_load: остальные модули загружены")
+ok(calls["logistics_load"] == 1 and calls["mining_load"] == 1 and calls["roomtap_load"] == 1,
+   "all_load: логистика, шахта и RoomTap используют полные LoadAll")
 
 -- точечная операция electronics_save
 calls = {}
@@ -253,6 +257,13 @@ local hubSrc = source("lua/autorun/server/sv_grm_persistence_hub.lua")
 local phoneSrc = source("lua/autorun/server/sv_grm_phone.lua")
 local foodSrc = source("lua/autorun/server/sv_grm_food.lua")
 local factorySrc = source("lua/autorun/server/sv_grm_factory_fullcycle.lua")
+local logisticsSrc = source("lua/autorun/server/sv_grm_logistics.lua")
+local miningSrc = source("lua/autorun/server/sv_grm_mining_saver.lua")
+local oreSpawnerSrc = source("lua/autorun/server/sv_grm_ore_spawner.lua")
+local roomtapSrc = source("lua/autorun/server/sv_grm_roomtap.lua")
+local alarmSrc = source("lua/autorun/server/sv_grm_alarm.lua")
+local cctvSrc = source("lua/autorun/server/sv_grm_cctv.lua")
+local electronicsSrc = source("lua/autorun/sh_grm_electronics.lua")
 local clientSrc = source("lua/autorun/client/cl_grm_persistence_hub.lua")
 ok(hubSrc:find('invoke("Phone", "SaveAll"',1,true) and hubSrc:find('invoke("Food", "SaveAll"',1,true)
    and hubSrc:find('invoke("FactoryCycle", "SaveAll"',1,true),
@@ -268,6 +279,23 @@ ok(factorySrc:find("function FC.SaveAll",1,true) and factorySrc:find("saveLocker
    and factorySrc:find("saveBuyers()",1,true) and factorySrc:find("saveMarket()",1,true)
    and factorySrc:find("validateMapRecords",1,true) and factorySrc:find("FC.DataLoadBlocked",1,true),
    "завод: единая операция включает карту, шкафы, скупщиков и рынок")
+ok(logisticsSrc:find("function L.SaveAll",1,true) and logisticsSrc:find("function L.LoadAll",1,true)
+   and logisticsSrc:find("validateMapRecords",1,true) and logisticsSrc:find("CRATEFILE",1,true),
+   "логистика: карта, доступ и переносимые ящики входят в полный контракт")
+ok(miningSrc:find("GRM.MiningPersistence",1,true) and miningSrc:find("function MP.SaveAll",1,true)
+   and miningSrc:find("function MP.LoadAll",1,true) and miningSrc:find("_grmMiningUID",1,true)
+   and oreSpawnerSrc:find("GRMOreSpawned",1,true) and oreSpawnerSrc:find("OS.SavePoints",1,true),
+   "шахта: ручное оборудование отделено от точек автореспавна и имеет UID")
+ok(roomtapSrc:find("function RT.SaveAll",1,true) and roomtapSrc:find("function RT.LoadAll",1,true)
+   and roomtapSrc:find("temporary equipment",1,true) and roomtapSrc:find("GRMRoomTapShopID",1,true)
+   and roomtapSrc:find("claimed[ent]",1,true),
+   "RoomTap: постоянные/временные устройства и доступ входят в SaveAll без дублей")
+ok(alarmSrc:find("function A.SaveAll",1,true) and alarmSrc:find("validatePermanentRecords",1,true)
+   and cctvSrc:find("function CCTV.SaveAll",1,true) and cctvSrc:find("validatePermanentRecords",1,true),
+   "Alarm/CCTV: единый bool-контракт и semantic validation до восстановления")
+ok(electronicsSrc:find("local mapOK=E.SaveMap();local dbOK=E.SaveDB()",1,true)
+   and electronicsSrc:find("if not dbOK then return false",1,true),
+   "электроника: SaveAll пишет оба контура, LoadAll fail-closed по DB")
 
 -- не-админ не может сохранять
 calls = {}

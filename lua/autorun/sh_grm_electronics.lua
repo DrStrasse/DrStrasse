@@ -87,6 +87,7 @@ if SERVER then
   -- v1.5.1: вычистить мёртвые записи реестра (после cleanup/удаления), чтобы
   -- DeviceByID не находил невалидные объекты и антидубль работал честно.
   for k,dev in pairs(E.Devices)do if not IsValid(dev)then E.Devices[k]=nil end end
+  for _,oldLink in pairs(E.Links)do if IsValid(oldLink.rope)then oldLink.rope:Remove()end end
   E.Links={};for _,l in pairs(d.links or{})do if l.a and l.b then E.Links[l.id or util.CRC(l.a..l.b)]={id=l.id or util.CRC(l.a..l.b),a=l.a,b=l.b}end end
   for _,r in pairs(d.devices or{})do if scripted_ents.GetStored(r.class or"")then local existing=E.DeviceByID(r.id);if not IsValid(existing)then existing=ents.Create(r.class);if IsValid(existing)then existing:SetPos(vec(r.pos));existing:SetAngles(ang(r.ang));existing:SetDeviceID(r.id or"");if util.IsValidModel(r.model or"")then existing:SetModel(r.model)end;existing:Spawn();existing:Activate()end end;if IsValid(existing)then existing:SetDisplayName(r.name or E.Kinds[existing:GetDeviceKind()]or"Устройство");existing:SetNetworkID(r.network or"");existing:SetOwnerKey(r.ownerKey or"");existing:SetOwnerName(r.ownerName or"");existing:SetDeviceActive(r.active~=false);E.Configs[existing:GetDeviceID()]=istable(r.config)and r.config or{};E.RegisterDevice(existing)end end end
   for _,link in pairs(E.Links)do createCable(link)end;E.DirtyMap=false;E.PushTopology();print("[GRM Electronics] MAP LOAD source="..tostring(source).." devices="..count(E.Devices));return true
@@ -96,8 +97,14 @@ if SERVER then
   if E.UnlinkDevice then E.UnlinkDevice(id)else for key,l in pairs(E.Links)do if l.a==id or l.b==id then E.Links[key]=nil end end end;E.Configs[id]=nil;E.Files[id]=nil;E.DirtyMap=true;E.DirtyDB=true
   timer.Simple(0,function()if not E.SuppressRemovalPersistence then E.SaveMap();E.SaveDB();E.PushTopology()end end)
  end
- function E.SaveAll()return E.SaveMap()and E.SaveDB(),"электроника и база сохранены"end
- function E.LoadAll()E.LoadDB();return E.LoadMap(),"электроника и база загружена"end
+ function E.SaveAll()
+  local mapOK=E.SaveMap();local dbOK=E.SaveDB();local ok=mapOK==true and dbOK==true
+  return ok,("электроника: карта=%s, база=%s"):format(tostring(mapOK),tostring(dbOK))
+ end
+ function E.LoadAll()
+  local dbOK=E.LoadDB();if not dbOK then return false,"база электроники повреждена; живые устройства не перезагружены"end
+  local mapOK=E.LoadMap();return mapOK==true,("электроника: карта=%s, база=%s"):format(tostring(mapOK),tostring(dbOK))
+ end
  function E.PushTopology(target)local rows={};for _,d in pairs(E.Devices)do if IsValid(d)then rows[#rows+1]={ent=d,id=d:GetDeviceID(),kind=d:GetDeviceKind(),name=d:GetDisplayName(),network=d:GetNetworkID(),online=E.IsOnline(d)}end end;local links={};for _,l in pairs(E.Links)do links[#links+1]=l end;net.Start("GRM_Net_Topology")net.WriteTable({devices=rows,links=links})if IsValid(target)then net.Send(target)else net.Broadcast()end end
  local function canConfigure(ply,ent)return IsValid(ply)and IsValid(ent)and E.IsNetworkAdmin(ply)end
  function E.Claim(ent,ply)if ent:GetOwnerKey()==""and IsValid(ply)then ent:SetOwnerKey(charKey(ply));ent:SetOwnerName(ply:Nick())end end

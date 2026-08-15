@@ -62,6 +62,8 @@ local SHOP_FILE = DATA_DIR .. "/temporary_equipment.json"
 local MAP_DIR = DATA_DIR .. "/maps"
 local RECORDS_DIR = DATA_DIR .. "/records"
 
+RT.PersistenceVersion = "1.1.0"
+RT.LoadBlocked = RT.LoadBlocked or {}
 RT.AccessData = RT.AccessData or {}
 RT.ShopOwned = RT.ShopOwned or {}       -- устройства текущей карты
 RT.ShopStored = RT.ShopStored or {}     -- записи всех карт для сохранения между сменами карт
@@ -117,23 +119,43 @@ local function ensureDir(path)
     if not file.Exists(path, "DATA") then file.CreateDir(path) end
 end
 
-local function readJSON(path, fallback)
-    if not file.Exists(path, "DATA") then return table.Copy(fallback or {}) end
-
-    local raw = file.Read(path, "DATA") or ""
-    if raw == "" then return table.Copy(fallback or {}) end
-
-    local ok, data = pcall(util.JSONToTable, raw, false, true)
-    if ok and istable(data) then return data end
-
-    print("[GRM RoomTap] Ошибка чтения JSON: " .. path)
-    return table.Copy(fallback or {})
+local function readJSON(path, fallback, label)
+    local guard, data, source, raw, meta = GRM.PersistenceGuard
+    if guard and guard.ReadBest then
+        data, source, raw, meta = guard.ReadBest(path, { path .. ".backup" }, label or path)
+    else
+        raw = file.Exists(path, "DATA") and (file.Read(path, "DATA") or "") or ""
+        local ok, parsed = pcall(util.JSONToTable, raw, false, true)
+        data = ok and istable(parsed) and parsed or nil
+        source = data and path or nil
+        meta = { hadAny = raw ~= "" }
+    end
+    if istable(data) then
+        RT.LoadBlocked[path] = nil
+        if guard and guard.Materialize and raw and not guard.Materialize(path, path .. ".backup", raw, label or path) then
+            RT.LoadBlocked[path] = true
+            return table.Copy(fallback or {}), nil, false
+        end
+        return data, source, true
+    end
+    if meta and meta.hadAny then
+        RT.LoadBlocked[path] = true
+        print("[GRM RoomTap][!] LOAD BLOCKED: " .. path)
+        return table.Copy(fallback or {}), nil, false
+    end
+    RT.LoadBlocked[path] = nil
+    return table.Copy(fallback or {}), "new", true
 end
 
-local function writeJSON(path, data)
+local function writeJSON(path, data, label)
+    if RT.LoadBlocked[path] then print("[GRM RoomTap][!] SAVE BLOCKED: " .. path) return false end
     ensureDir(DATA_DIR)
-    local json = util.TableToJSON(data or {}, true)
-    if json then file.Write(path, json) end
+    local guard = GRM.PersistenceGuard
+    if guard and guard.WriteMirrored then return guard.WriteMirrored(path, path .. ".backup", data or {}, label or path) end
+    local okJ, json = pcall(util.TableToJSON, data or {}, true)
+    if not okJ or not isstring(json) or json == "" then return false end
+    file.Write(path, json); file.Write(path .. ".backup", json)
+    return file.Read(path, "DATA") == json and file.Read(path .. ".backup", "DATA") == json
 end
 
 local function notify(ply, success, message)
@@ -214,13 +236,16 @@ end
 
 function RT.LoadAccess()
     ensureDir(DATA_DIR)
-    RT.AccessData = normalizeAccess(readJSON(ACCESS_FILE, {}))
-    return RT.AccessData
+    local data, source, healthy = readJSON(ACCESS_FILE, RT.AccessData or {}, "RoomTap access")
+    if not healthy then return false, "база доступа повреждена; память сохранена" end
+    RT.AccessData = normalizeAccess(data)
+    return true, "доступ загружен: " .. tostring(source)
 end
 
 function RT.SaveAccess(data)
     RT.AccessData = normalizeAccess(data or RT.AccessData)
-    writeJSON(ACCESS_FILE, RT.AccessData)
+    local ok = writeJSON(ACCESS_FILE, RT.AccessData, "RoomTap access")
+    return ok == true, ok and "доступ сохранён" or "ошибка сохранения доступа"
 end
 
 function RT.HasAccess(ply)
@@ -679,10 +704,33 @@ function RT.SaveMapEquipment(ply)
 
     local path=mapFile();local guard=GRM.PersistenceGuard;local ok
     if guard and guard.WriteMirrored then ok=guard.WriteMirrored(path,path..".backup",list,"RoomTap map")
-    else local okJ,raw=pcall(util.TableToJSON,list,true);ok=okJ and isstring(raw);if ok then file.Write(path,raw)file.Write(path..".backup",raw)end end
+    else
+        local okJ,raw=pcall(util.TableToJSON,list,true);ok=okJ and isstring(raw) and raw~=""
+        if ok then file.Write(path,raw);file.Write(path..".backup",raw);ok=file.Read(path,"DATA")==raw and file.Read(path..".backup","DATA")==raw end
+    end
     if IsValid(ply) then notify(ply, ok, (ok and "Сохранено" or "Ошибка сохранения") .. " постоянного оборудования: " .. #list) end
     print("[GRM RoomTap] SAVE "..tostring(ok).." records=" .. #list)
     return ok==true,"сохранено RoomTap: "..#list
+end
+
+local function validateMapEquipment(list)
+    if not istable(list) then return false, "база RoomTap не является таблицей" end
+    for key in pairs(list) do
+        if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then return false, "база RoomTap не является массивом" end
+    end
+    local seen = {}
+    for index, record in ipairs(list) do
+        if not istable(record) or not RT.DeviceClasses[tostring(record.class or "")]
+            or not istable(record.pos) or not istable(record.ang) then
+            return false, "некорректная запись RoomTap #" .. index
+        end
+        local id = tostring(record.deviceID or "")
+        if id ~= "" then
+            if seen[id] then return false, "повторяющийся DeviceID RoomTap: " .. id end
+            seen[id] = true
+        end
+    end
+    return true
 end
 
 function RT.LoadMapEquipment(ply)
@@ -695,8 +743,11 @@ function RT.LoadMapEquipment(ply)
     if guard and guard.ReadBest then list,source,raw,meta=guard.ReadBest(path,{path..".backup"},"RoomTap map")
     else local txt=file.Exists(path,"DATA")and(file.Read(path,"DATA")or"")or"";local ok,t=pcall(util.JSONToTable,txt,false,true);if ok and istable(t)then list,source,raw=t,path,txt end;meta={hadAny=txt~=""}end
     if not istable(list)then RT.MapLoadBlocked=meta and meta.hadAny==true;local why=RT.MapLoadBlocked and"primary/backup повреждены"or"файл карты отсутствует";print("[GRM RoomTap] LOAD skipped: "..why.."; live entities preserved")return false,why end
-    RT.MapLoadBlocked=false;if guard and guard.Materialize and raw then guard.Materialize(path,path..".backup",raw,"RoomTap map")end
-    local count = 0
+    local valid,why=validateMapEquipment(list)
+    if not valid then RT.MapLoadBlocked=true;print("[GRM RoomTap] LOAD rejected: "..why.."; live entities preserved")return false,why end
+    RT.MapLoadBlocked=false
+    if guard and guard.Materialize and raw and not guard.Materialize(path,path..".backup",raw,"RoomTap map")then return false,"не удалось восстановить primary/backup RoomTap"end
+    local count,failed = 0,0
 
     -- Удаляем только предыдущее постоянное оборудование, не временное из магазина.
     for class in pairs(RT.DeviceClasses) do
@@ -714,17 +765,19 @@ function RT.LoadMapEquipment(ply)
                 ent:Spawn()
                 ent:Activate()
                 applyRecord(ent, record)
-
+                if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
                 local phys = ent:GetPhysicsObject()
                 if IsValid(phys) then phys:EnableMotion(false) end
                 count = count + 1
-            end
+            else failed=failed+1 end
         end
     end
 
-    if IsValid(ply) then notify(ply, true, "Загружено постоянного оборудования: " .. count) end
-    print("[GRM RoomTap] LOAD source="..tostring(source).." records=" .. count)
-    return true,"загружено RoomTap: "..count
+    RT.MapLoadBlocked=failed>0
+    local msg=("загружено RoomTap: %d, ошибок: %d"):format(count,failed)
+    if IsValid(ply) then notify(ply, failed==0, msg) end
+    print("[GRM RoomTap] LOAD source="..tostring(source).." records=" .. count .. " failed="..failed)
+    return failed==0,msg
 end
 
 -- ============================================================
@@ -798,7 +851,8 @@ function RT.SaveShopOwned()
         end
     end
 
-    writeJSON(SHOP_FILE, RT.ShopStored)
+    local ok = writeJSON(SHOP_FILE, RT.ShopStored, "RoomTap temporary equipment")
+    return ok == true, ok and ("временных записей сохранено: " .. table.Count(RT.ShopStored)) or "ошибка сохранения временного оборудования"
 end
 
 local function applyShopRecord(ent, record)
@@ -819,42 +873,71 @@ end
 
 local function spawnShopRecord(record)
     if not record or not RT.DeviceClasses[record.class] then return nil end
-
-    local ent = ents.Create(record.class)
+    local ent = nil
+    for _, candidate in ipairs(ents.FindByClass(record.class)) do
+        if IsValid(candidate) and tostring(candidate.GRMRoomTapShopID or "") == tostring(record.id or "") then ent = candidate break end
+    end
+    local created = false
+    if not IsValid(ent) then ent = ents.Create(record.class); created = IsValid(ent) end
     if not IsValid(ent) then return nil end
 
-    ent:SetPos(tableToVec(record.pos))
-    ent:SetAngles(tableToAng(record.ang))
-    ent:Spawn()
-    ent:Activate()
+    ent:SetPos(tableToVec(record.pos)); ent:SetAngles(tableToAng(record.ang))
+    if created then ent:Spawn(); ent:Activate() end
     applyShopRecord(ent, record)
-
-    local phys = ent:GetPhysicsObject()
-    if IsValid(phys) then phys:EnableMotion(false) end
-
-    record.ent = ent
-    RT.ShopOwned[record.id] = record
-    return ent
+    local phys = ent:GetPhysicsObject(); if IsValid(phys) then phys:EnableMotion(false) end
+    record.ent = ent; RT.ShopOwned[record.id] = record
+    return ent, created
 end
 
 function RT.LoadShopOwned()
-    RT.ShopOwned = {}
-    RT.ShopStored = readJSON(SHOP_FILE, {})
-
-    local now = os.time()
-    local count = 0
-
+    local stored, source, healthy = readJSON(SHOP_FILE, RT.ShopStored or {}, "RoomTap temporary equipment")
+    if not healthy then return false, "база временного оборудования повреждена; живые устройства сохранены" end
+    for id, record in pairs(stored) do
+        if not istable(record) or not isstring(record.class) or not isstring(record.map) then
+            RT.LoadBlocked[SHOP_FILE] = true
+            return false, "некорректная временная запись RoomTap: " .. tostring(id)
+        end
+    end
+    RT.ShopOwned = {}; RT.ShopStored = stored
+    local now, count, claimed = os.time(), 0, {}
     for id, record in pairs(RT.ShopStored) do
-        if not istable(record) or (tonumber(record.expiresAt) or 0) <= now then
+        if (tonumber(record.expiresAt) or 0) <= now then
             RT.ShopStored[id] = nil
         elseif record.map == game.GetMap() and RT.DeviceClasses[record.class] then
             record.id = record.id or id
-            if spawnShopRecord(record) then count = count + 1 end
+            local ent = spawnShopRecord(record)
+            if IsValid(ent) then count = count + 1; claimed[ent] = true end
         end
     end
-
+    for class in pairs(RT.DeviceClasses) do
+        for _, ent in ipairs(ents.FindByClass(class)) do
+            if IsValid(ent) and ent.GRMRoomTapShopID and not claimed[ent] then ent:Remove() end
+        end
+    end
     RT.SaveShopOwned()
     print("[GRM RoomTap] Загружено временного оборудования: " .. count)
+    return true, ("временного оборудования загружено/обновлено: %d (%s)"):format(count, tostring(source))
+end
+
+function RT.SaveAll(ply)
+    for _, path in ipairs({ ACCESS_FILE, SHOP_FILE }) do
+        if RT.LoadBlocked[path] then return false, "сохранение RoomTap заблокировано: повреждён data/" .. path end
+    end
+    local mapOK, mapDetail = RT.SaveMapEquipment(ply)
+    local accessOK, accessDetail = RT.SaveAccess()
+    local shopOK, shopDetail = RT.SaveShopOwned()
+    return mapOK == true and accessOK == true and shopOK == true,
+        tostring(mapDetail) .. "; " .. tostring(accessDetail) .. "; " .. tostring(shopDetail)
+end
+
+function RT.LoadAll(ply)
+    local accessOK, accessDetail = RT.LoadAccess()
+    local shopOK, shopDetail = RT.LoadShopOwned()
+    if not accessOK or not shopOK then
+        return false, tostring(accessDetail) .. "; " .. tostring(shopDetail) .. "; постоянное оборудование не перезагружено"
+    end
+    local mapOK, mapDetail = RT.LoadMapEquipment(ply)
+    return mapOK == true, tostring(mapDetail) .. "; " .. tostring(accessDetail) .. "; " .. tostring(shopDetail)
 end
 
 local function canBuyTemporary(ply, itemID)
@@ -1243,13 +1326,8 @@ concommand.Add("roomtap_remove", function(ply)
     end
 end)
 
-concommand.Add("grm_roomtap_save", function(ply)
-    RT.SaveMapEquipment(ply)
-end)
-
-concommand.Add("grm_roomtap_load", function(ply)
-    RT.LoadMapEquipment(ply)
-end)
+concommand.Add("grm_roomtap_save", function(ply) RT.SaveAll(ply) end)
+concommand.Add("grm_roomtap_load", function(ply) RT.LoadAll(ply) end)
 
 concommand.Add("grm_roomtap_reload", function(ply)
     if IsValid(ply) and not ply:IsSuperAdmin() then return end
@@ -1292,8 +1370,7 @@ hook.Add("ShutDown", "GRM_RoomTap_Save", function()
     -- EntityRemoved срабатывает при выключении сервера; временные записи
     -- в этот момент нельзя удалять, иначе они не переживут рестарт.
     RT.IsShuttingDown = true
-    RT.SaveShopOwned()
-    RT.SaveMapEquipment(nil)
+    RT.SaveAll(nil)
 end)
 
 timer.Create("GRM_RoomTap_AutoSave", 60, 0, function()

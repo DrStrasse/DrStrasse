@@ -1217,16 +1217,11 @@ concommand.Add("grm_fc_save", function(ply) FC.SaveAll(ply, "manual") end)
 concommand.Add("grm_fc_load", function(ply) FC.LoadAll(ply) end)
 
 hook.Add("InitPostEntity", "GRM_FC_LoadMap", function() timer.Simple(5, function() FC.LoadMap(nil) end) end)
-hook.Add("ShutDown", "GRM_FC_SaveShutdown", function() FC.SaveMap(nil, "shutdown") end)
+hook.Add("ShutDown", "GRM_FC_SaveShutdown", function() FC.SaveAll(nil, "shutdown") end)
 
 -- Локеры сохраняются независимо от ручного сохранения карты, поэтому
 -- положенное оружие не теряется при выходе игрока или рестарте сервера.
 timer.Create("GRM_FC_LockerAutoSave", 30, 0, saveLockers)
-hook.Add("ShutDown", "GRM_FC_SaveWeaponData", function()
-    saveLockers()
-    saveMarket()
-    saveBuyers()
-end)
 
 local function aimedWeaponBuyer(ply)
     if not IsValid(ply) then return nil end

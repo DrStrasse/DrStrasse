@@ -4,13 +4,19 @@
 ]]
 
 if SERVER then
+    GRM = GRM or {}
+    GRM.OreSpawner = GRM.OreSpawner or {}
+    local OS = GRM.OreSpawner
+    OS.Version = "1.1.0"
+    OS.LoadBlocked = OS.LoadBlocked == true
 
     -- ============================================================
     -- КОНФИГУРАЦИЯ
     -- ============================================================
     local SAVE_DIR        = "grm_saves"
-    local SPAWN_FILE      = SAVE_DIR .. "/grm_orespawns_" .. game.GetMap() .. ".json"
-    local SPAWN_BACKUP    = SAVE_DIR .. "/grm_orespawns_" .. game.GetMap() .. "_backup.json"
+    local MAP_NAME        = string.lower(game.GetMap() or "unknown")
+    local SPAWN_FILE      = SAVE_DIR .. "/grm_orespawns_" .. MAP_NAME .. ".json"
+    local SPAWN_BACKUP    = SAVE_DIR .. "/grm_orespawns_" .. MAP_NAME .. "_backup.json"
 
     local SPAWN_INTERVAL  = 100  -- 1 минут
     local MIN_ORE_COUNT   = 8    -- минимальное количество узлов на карте
@@ -35,95 +41,100 @@ if SERVER then
         }
     end
 
-    local function BackupFile()
-        if not file.Exists(SPAWN_FILE, "DATA") then return end
-        local raw = file.Read(SPAWN_FILE, "DATA")
-        if raw and raw ~= "" then
-            file.Write(SPAWN_BACKUP, raw)
+    local function PointToTable(point)
+        return { pos = { x = point.pos.x, y = point.pos.y, z = point.pos.z },
+            ang = { p = point.ang.p, y = point.ang.y, r = point.ang.r } }
+    end
+
+    local function validatePointArray(data)
+        if not istable(data) then return false, "база точек не является таблицей" end
+        for key in pairs(data) do
+            if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then return false, "база точек не является массивом" end
         end
+        local parsed = {}
+        for index, row in ipairs(data) do
+            local point = PointFromTable(row)
+            if not point then return false, "повреждённая точка руды #" .. index end
+            parsed[#parsed + 1] = point
+        end
+        return true, parsed
     end
 
     local function LoadSpawnPoints()
-        if not file.Exists(SPAWN_FILE, "DATA") then
-            print("[GRM Ore Spawner] Файл не найден, создаём новый.")
-            SpawnPoints = {}
-            return
-        end
-        local raw = file.Read(SPAWN_FILE, "DATA")
-        if not raw or raw == "" then
-            print("[GRM Ore Spawner] Файл пустой.")
-            SpawnPoints = {}
-            return
-        end
-
-        local ok, data = pcall(util.JSONToTable, raw, false, true)
-        if ok and istable(data) then
-            local newPoints = {}
-            for i, pt in ipairs(data) do
-                local point = PointFromTable(pt)
-                if point then
-                    table.insert(newPoints, point)
-                else
-                    print("[GRM Ore Spawner] Пропущена повреждённая точка #" .. i)
-                end
-            end
-            if #newPoints > 0 then
-                SpawnPoints = newPoints
-                print("[GRM Ore Spawner] Загружено точек: " .. #SpawnPoints)
-                return
-            else
-                print("[GRM Ore Spawner] Файл повреждён (нет валидных точек).")
-            end
+        local guard, data, source, raw, meta = GRM.PersistenceGuard
+        if guard and guard.ReadBest then
+            data, source, raw, meta = guard.ReadBest(SPAWN_FILE, { SPAWN_BACKUP }, "ore spawn points")
         else
-            print("[GRM Ore Spawner] Ошибка парсинга JSON: " .. tostring(data))
+            raw = file.Exists(SPAWN_FILE, "DATA") and (file.Read(SPAWN_FILE, "DATA") or "") or ""
+            local ok, parsed = pcall(util.JSONToTable, raw, false, true)
+            data = ok and istable(parsed) and parsed or nil
+            source = data and SPAWN_FILE or nil
+            meta = { hadAny = raw ~= "" }
         end
-
-        -- Если загрузка не удалась, пробуем восстановить из бэкапа
-        if file.Exists(SPAWN_BACKUP, "DATA") then
-            print("[GRM Ore Spawner] Пробуем восстановить из резервной копии.")
-            local rawBackup = file.Read(SPAWN_BACKUP, "DATA")
-            if rawBackup and rawBackup ~= "" then
-                local okBack, dataBack = pcall(util.JSONToTable, rawBackup, false, true)
-                if okBack and istable(dataBack) then
-                    local restored = {}
-                    for i, pt in ipairs(dataBack) do
-                        local point = PointFromTable(pt)
-                        if point then
-                            table.insert(restored, point)
-                        end
-                    end
-                    if #restored > 0 then
-                        SpawnPoints = restored
-                        print("[GRM Ore Spawner] Восстановлено из бэкапа: " .. #SpawnPoints)
-                        return
-                    else
-                        print("[GRM Ore Spawner] Бэкап тоже повреждён.")
-                    end
-                else
-                    print("[GRM Ore Spawner] Ошибка парсинга бэкапа.")
-                end
+        if not istable(data) then
+            OS.LoadBlocked = meta and meta.hadAny == true
+            if OS.LoadBlocked then
+                print("[GRM Ore Spawner][!] LOAD BLOCKED: primary/backup повреждены; живые точки сохранены")
+                return false, "primary/backup точек повреждены"
             end
+            SpawnPoints = {}
+            print("[GRM Ore Spawner] Файл точек отсутствует, новый контур.")
+            return true, "точек спавна: 0 (новый контур)"
         end
-
-        print("[GRM Ore Spawner] Не удалось загрузить точки. Создаём пустой массив.")
-        SpawnPoints = {}
+        local valid, parsed = validatePointArray(data)
+        if not valid then
+            OS.LoadBlocked = true
+            print("[GRM Ore Spawner][!] LOAD rejected: " .. tostring(parsed) .. "; живые точки сохранены")
+            return false, tostring(parsed)
+        end
+        if guard and guard.Materialize and raw and not guard.Materialize(SPAWN_FILE, SPAWN_BACKUP, raw, "ore spawn points") then
+            OS.LoadBlocked = true
+            return false, "не удалось восстановить primary/backup точек"
+        end
+        OS.LoadBlocked = false
+        SpawnPoints = parsed
+        print("[GRM Ore Spawner] LOAD source=" .. tostring(source) .. " points=" .. #SpawnPoints)
+        return true, "загружено точек спавна: " .. #SpawnPoints
     end
 
     local function SaveSpawnPoints()
-        if not file.Exists(SAVE_DIR, "DATA") then
-            file.CreateDir(SAVE_DIR)
+        if OS.LoadBlocked then
+            print("[GRM Ore Spawner][!] SAVE BLOCKED после ошибки primary/backup")
+            return false, "сохранение точек заблокировано"
         end
-        BackupFile()
-
+        if not file.Exists(SAVE_DIR, "DATA") then file.CreateDir(SAVE_DIR) end
         local out = {}
-        for _, p in ipairs(SpawnPoints) do
-            table.insert(out, {
-                pos = { x = p.pos.x, y = p.pos.y, z = p.pos.z },
-                ang = { p = p.ang.p, y = p.ang.y, r = p.ang.r },
-            })
+        for _, point in ipairs(SpawnPoints) do out[#out + 1] = PointToTable(point) end
+        local guard, ok = GRM.PersistenceGuard, false
+        if guard and guard.WriteMirrored then
+            ok = guard.WriteMirrored(SPAWN_FILE, SPAWN_BACKUP, out, "ore spawn points")
+        else
+            local okJ, raw = pcall(util.TableToJSON, out, true)
+            ok = okJ and isstring(raw) and raw ~= ""
+            if ok then
+                file.Write(SPAWN_FILE, raw); file.Write(SPAWN_BACKUP, raw)
+                ok = file.Read(SPAWN_FILE, "DATA") == raw and file.Read(SPAWN_BACKUP, "DATA") == raw
+            end
         end
-        file.Write(SPAWN_FILE, util.TableToJSON(out, true))
-        print("[GRM Ore Spawner] Сохранено точек: " .. #SpawnPoints)
+        print("[GRM Ore Spawner] SAVE " .. tostring(ok) .. " points=" .. #SpawnPoints)
+        return ok == true, ok and ("сохранено точек спавна: " .. #SpawnPoints) or "ошибка записи/read-back точек"
+    end
+
+    OS.LoadPoints = LoadSpawnPoints
+    OS.SavePoints = SaveSpawnPoints
+    OS.GetPoints = function() return SpawnPoints end
+    function OS.RemovePointAt(pos, tolerance)
+        if not pos then return false end
+        local r2, best, bestD = (tonumber(tolerance) or 80) ^ 2, nil, nil
+        for index, point in ipairs(SpawnPoints) do
+            local dx, dy, dz = point.pos.x - pos.x, point.pos.y - pos.y, point.pos.z - pos.z
+            local d2 = dx * dx + dy * dy + dz * dz
+            if d2 <= r2 and (not bestD or d2 < bestD) then best, bestD = index, d2 end
+        end
+        if not best then return false end
+        table.remove(SpawnPoints, best)
+        local ok = SaveSpawnPoints()
+        return ok == true
     end
 
     -- ============================================================
@@ -159,6 +170,7 @@ if SERVER then
     local function SpawnOreNode(pos, ang)
         local node = ents.Create("grm_ore_node")
         if not IsValid(node) then return false end
+        node.GRMOreSpawned = true
         node:SetPos(pos)
         node:SetAngles(ang or Angle(0, 0, 0))
         node:Spawn()
@@ -168,16 +180,38 @@ if SERVER then
         return true
     end
 
+    function OS.IsSpawnPointPosition(pos, tolerance)
+        if not pos then return false end
+        local r2 = (tonumber(tolerance) or 4) ^ 2
+        for _, point in ipairs(SpawnPoints) do
+            local dx, dy, dz = point.pos.x - pos.x, point.pos.y - pos.y, point.pos.z - pos.z
+            if dx * dx + dy * dy + dz * dz <= r2 then return true end
+        end
+        return false
+    end
+
+    function OS.IsManagedNode(ent)
+        return IsValid(ent) and ent:GetClass() == "grm_ore_node"
+            and (ent.GRMOreSpawned == true or OS.IsSpawnPointPosition(ent:GetPos(), 4))
+    end
+
+    function OS.MarkManagedNodes()
+        local n = 0
+        for _, ent in ipairs(ents.FindByClass("grm_ore_node")) do
+            if IsValid(ent) and OS.IsSpawnPointPosition(ent:GetPos(), 4) then ent.GRMOreSpawned = true; n = n + 1 end
+        end
+        return n
+    end
+
     local function RefillOreNodes()
         if #SpawnPoints == 0 and file.Exists(SPAWN_FILE, "DATA") then
             LoadSpawnPoints()
         end
 
+        OS.MarkManagedNodes()
         local currentNodes = 0
         for _, ent in ipairs(ents.FindByClass("grm_ore_node")) do
-            if IsValid(ent) then
-                currentNodes = currentNodes + 1
-            end
+            if OS.IsManagedNode(ent) then currentNodes = currentNodes + 1 end
         end
 
         if currentNodes >= MIN_ORE_COUNT then
@@ -211,6 +245,8 @@ if SERVER then
             print("[GRM Ore Spawner] Восстановлено " .. spawned .. " узлов руды.")
         end
     end
+
+    OS.Refill = RefillOreNodes
 
     -- ============================================================
     -- ЗАГРУЗКА ПРИ СТАРТЕ
@@ -289,5 +325,5 @@ if SERVER then
         end
     end)
 
-    print("[GRM Ore Spawner] Загружен (без проверки валидности). Интервал: " .. SPAWN_INTERVAL .. "с, минимум " .. MIN_ORE_COUNT .. " узлов.")
+    print("[GRM Ore Spawner] v1.1.0 загружен. Интервал: " .. SPAWN_INTERVAL .. "с, минимум " .. MIN_ORE_COUNT .. " узлов.")
 end

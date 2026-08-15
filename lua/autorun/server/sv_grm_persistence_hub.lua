@@ -2,8 +2,8 @@
 if not SERVER then return end
 
 GRM = GRM or {}
-GRM.PersistenceHub = GRM.PersistenceHub or { Version = "1.1.0" }
-GRM.PersistenceHub.Version = "1.1.0"
+GRM.PersistenceHub = GRM.PersistenceHub or { Version = "1.2.0" }
+GRM.PersistenceHub.Version = "1.2.0"
 
 util.AddNetworkString("GRM_Persistence_Open")
 util.AddNetworkString("GRM_Persistence_Action")
@@ -47,22 +47,30 @@ local function operation(id, ply)
             save = function(p) return invoke("Phone", "SaveAll", "SaveMapEntities", p) end,
             load = function(p) return invoke("Phone", "LoadAll", "LoadMapEntities", p) end,
         },
-        cctv = { save = function() return invoke("CCTV", "SavePermanent") end, load = function() return invoke("CCTV", "LoadPermanent") end },
-        alarm = { save = function() return invoke("Alarm", "SavePermanent") end, load = function() return invoke("Alarm", "LoadPermanent") end },
+        cctv = { save = function() return invoke("CCTV", "SaveAll", "SavePermanent") end, load = function() return invoke("CCTV", "LoadAll", "LoadPermanent") end },
+        alarm = { save = function() return invoke("Alarm", "SaveAll", "SavePermanent") end, load = function() return invoke("Alarm", "LoadAll", "LoadPermanent") end },
         factory = {
             save = function(p) return invoke("FactoryCycle", "SaveAll", "SaveMap", p, "admin hub") end,
             load = function(p) return invoke("FactoryCycle", "LoadAll", "LoadMap", p) end,
         },
-        logistics = { save = function(p) return invoke("Logistics", "SaveMap", nil, p) end, load = function(p) return invoke("Logistics", "LoadMap", nil, p) end },
+        logistics = { save = function(p) return invoke("Logistics", "SaveAll", "SaveMap", p) end, load = function(p) return invoke("Logistics", "LoadAll", "LoadMap", p) end },
         food = {
             save = function(p) return invoke("Food", "SaveAll", "SaveVendingMachines", p) end,
             load = function(p) return invoke("Food", "LoadAll", "LoadVendingMachines", p, true) end,
         },
-        roomtap = { save = function(p) return invoke("RoomTap", "SaveMapEquipment", nil, p) end, load = function(p) return invoke("RoomTap", "LoadMapEquipment", nil, p) end },
+        roomtap = { save = function(p) return invoke("RoomTap", "SaveAll", "SaveMapEquipment", p) end, load = function(p) return invoke("RoomTap", "LoadAll", "LoadMapEquipment", p) end },
         wanted = { save = function() return invoke("Wanted", "Save") end, load = function() return invoke("Wanted", "Load") end },
         mining = {
-            save = function() if not isfunction(GRM_SaveEntities) then return false, "модуль рудных узлов не загружен" end return GRM_SaveEntities() end,
-            load = function() if not isfunction(GRM_LoadEntities) then return false, "модуль рудных узлов не загружен" end return GRM_LoadEntities() end,
+            save = function(p)
+                if GRM.MiningPersistence and GRM.MiningPersistence.SaveAll then return GRM.MiningPersistence.SaveAll(p) end
+                if not isfunction(GRM_SaveEntities) then return false, "модуль шахты не загружен" end
+                local count = GRM_SaveEntities(); return true, "legacy saver: " .. tostring(count)
+            end,
+            load = function(p)
+                if GRM.MiningPersistence and GRM.MiningPersistence.LoadAll then return GRM.MiningPersistence.LoadAll(p) end
+                if not isfunction(GRM_LoadEntities) then return false, "модуль шахты не загружен" end
+                local count = GRM_LoadEntities(); return true, "legacy loader: " .. tostring(count)
+            end,
         },
         doors = {
             save = function()

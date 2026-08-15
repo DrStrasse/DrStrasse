@@ -9,6 +9,8 @@ include("autorun/sh_grm_logistics_entities.lua")
 GRM = GRM or {}
 GRM.Logistics = GRM.Logistics or {}
 local L, C = GRM.Logistics, GRM.Logistics.Config
+L.PersistenceVersion = "1.3.0"
+L.LoadingMap = false
 
 local NET = {
     result="GRML_Result", routeMenu="GRML_RouteMenu", routeSync="GRML_RouteSync",
@@ -32,15 +34,40 @@ end
 
 local function ensure() if not file.Exists(DIR,"DATA") then file.CreateDir(DIR) end if not file.Exists(MAPDIR,"DATA") then file.CreateDir(MAPDIR) end end
 L.LoadBlocked=L.LoadBlocked or{}
-local function read(path,fallback,label)
- local guard=GRM.PersistenceGuard;local t,source,raw,meta
- if guard and guard.ReadBest then t,source,raw,meta=guard.ReadBest(path,{path..".backup"},label or path)
- else local txt=file.Exists(path,"DATA")and(file.Read(path,"DATA")or"")or"";t=jsonT(txt);source=t and path or nil;raw=txt;meta={hadAny=txt~=""}end
- if istable(t)then L.LoadBlocked[path]=nil;if guard and guard.Materialize and raw then guard.Materialize(path,path..".backup",raw,label or path)end;return t,source,true end
- if meta and meta.hadAny then L.LoadBlocked[path]=true;print("[GRM Logistics][!] LOAD BLOCKED "..path..": invalid primary/backup")return table.Copy(fallback or{}),nil,false end
- L.LoadBlocked[path]=nil;return table.Copy(fallback or{}),"new",true
+local function read(path, fallback, label)
+    local guard, t, source, raw, meta = GRM.PersistenceGuard
+    if guard and guard.ReadBest then
+        t, source, raw, meta = guard.ReadBest(path, { path .. ".backup" }, label or path)
+    else
+        local txt = file.Exists(path, "DATA") and (file.Read(path, "DATA") or "") or ""
+        t = jsonT(txt); source = t and path or nil; raw = txt; meta = { hadAny = txt ~= "" }
+    end
+    if istable(t) then
+        L.LoadBlocked[path] = nil
+        if guard and guard.Materialize and raw and not guard.Materialize(path, path .. ".backup", raw, label or path) then
+            L.LoadBlocked[path] = true
+            return table.Copy(fallback or {}), nil, false
+        end
+        return t, source, true
+    end
+    if meta and meta.hadAny then
+        L.LoadBlocked[path] = true
+        print("[GRM Logistics][!] LOAD BLOCKED " .. path .. ": invalid primary/backup")
+        return table.Copy(fallback or {}), nil, false
+    end
+    L.LoadBlocked[path] = nil
+    return table.Copy(fallback or {}), "new", true
 end
-local function write(path,t)ensure();if L.LoadBlocked[path]then print("[GRM Logistics][!] SAVE ОТКЛОНЁН "..path)return false end;local guard=GRM.PersistenceGuard;if guard and guard.WriteMirrored then return guard.WriteMirrored(path,path..".backup",t or{},"logistics")end;local raw=util.TableToJSON(t or{},true);file.Write(path,raw);file.Write(path..".backup",raw);return true end
+local function write(path, t, label)
+    ensure()
+    if L.LoadBlocked[path] then print("[GRM Logistics][!] SAVE ОТКЛОНЁН " .. path) return false end
+    local guard = GRM.PersistenceGuard
+    if guard and guard.WriteMirrored then return guard.WriteMirrored(path, path .. ".backup", t or {}, label or "logistics") end
+    local okJ, raw = pcall(util.TableToJSON, t or {}, true)
+    if not okJ or not isstring(raw) or raw == "" then return false end
+    file.Write(path, raw); file.Write(path .. ".backup", raw)
+    return file.Read(path, "DATA") == raw and file.Read(path .. ".backup", "DATA") == raw
+end
 local function vec(v) return {x=v.x,y=v.y,z=v.z} end
 local function ang(a) return {p=a.p,y=a.y,r=a.r} end
 local function V(t) return Vector(tonumber(t and(t.x or t[1]))or 0,tonumber(t and(t.y or t[2]))or 0,tonumber(t and(t.z or t[3]))or 0) end
@@ -56,18 +83,33 @@ local function refreshWeight(p)
     if GRM and GRM.Encumbrance and GRM.Encumbrance.Refresh then GRM.Encumbrance.Refresh(p) end
 end
 
-L.Access = read(ACCESSFILE,{ factions={}, vehicles=C.Vehicles })
-L.Access.factions = L.Access.factions or {}; L.Access.vehicles = L.Access.vehicles or C.Vehicles
-L.InventoryCrates = read(CRATEFILE,{})
+local function validateMapLikeTable(t)
+    if not istable(t) then return false end
+    return true
+end
 
-local function saveAccess() write(ACCESSFILE,L.Access) end
-local function saveCrates() write(CRATEFILE,L.InventoryCrates) end
+local function loadSupportData()
+    local access, _, accessOK = read(ACCESSFILE, L.Access or { factions = {}, vehicles = C.Vehicles }, "logistics access")
+    local crates, _, cratesOK = read(CRATEFILE, L.InventoryCrates or {}, "logistics crates")
+    if accessOK and validateMapLikeTable(access) then
+        access.factions = istable(access.factions) and access.factions or {}
+        access.vehicles = istable(access.vehicles) and access.vehicles or table.Copy(C.Vehicles or {})
+        L.Access = access
+    end
+    if cratesOK and validateMapLikeTable(crates) then L.InventoryCrates = crates end
+    return accessOK and cratesOK, ("доступ=%s, ящики=%s"):format(tostring(accessOK), tostring(cratesOK))
+end
+loadSupportData()
+
+local function saveAccess() return write(ACCESSFILE, L.Access, "logistics access") end
+local function saveCrates() return write(CRATEFILE, L.InventoryCrates, "logistics crates") end
 
 -- Код 90: автосейв карты-точек дебаунсом 1с. Склад/оружейная меняют сток
 -- через addStock/takeStock без немедленной записи — до ShutDown сток жил
 -- только в памяти; краш/смена карты между кликом и шатдауном = сток терялся.
 -- Серия депозитов перезапускает таймер, диск не дёргается.
 local function saveSoon()
+    if L.LoadingMap then return end
     timer.Create("GRM_Logistics_SaveSoon",1,1,function()
         if L.SaveMap then L.SaveMap(nil) end
     end)
@@ -887,8 +929,8 @@ concommand.Add("grm_logistics_start",function(p)
     openRouteMenu(p,truck)
 end)
 concommand.Add("grm_logistics_crates",function(p) if IsValid(p) then openCrateInv(p) end end)
-concommand.Add("grm_logistics_save",function(p) L.SaveMap(p) end)
-concommand.Add("grm_logistics_load",function(p) L.LoadMap(p) end)
+concommand.Add("grm_logistics_save",function(p) L.SaveAll(p) end)
+concommand.Add("grm_logistics_load",function(p) L.LoadAll(p) end)
 
 local function place(p,class,setup)
     if not IsValid(p) or not p:IsSuperAdmin() then return end
@@ -978,30 +1020,105 @@ concommand.Add("grm_logistics_debug",function(p)
 end)
 
 -- map persistence
-local function record(e) local r={class=e:GetClass(),id=e:GetLogisticsID(),pos=vec(e:GetPos()),ang=ang(e:GetAngles()),faction=e:GetFactionName(),network=e:GetNetworkID(),name=e:GetPointName(),mode=e:GetFactionMode()}; if e.LogisticsKind=="warehouse" then r.data=warehouseData(e) elseif e.LogisticsKind=="armory" then r.data=armoryData(e) end return r end
+local function record(e)
+    local r = { class=e:GetClass(), id=e:GetLogisticsID(), pos=vec(e:GetPos()), ang=ang(e:GetAngles()),
+        faction=e:GetFactionName(), network=e:GetNetworkID(), name=e:GetPointName(), mode=e:GetFactionMode() }
+    if e.LogisticsKind=="warehouse" then r.data=table.Copy(warehouseData(e))
+    elseif e.LogisticsKind=="armory" then r.data=table.Copy(armoryData(e)) end
+    return r
+end
+
+local function validateMapRecords(list)
+    if not istable(list) then return false, "база логистики не является таблицей" end
+    for key in pairs(list) do
+        if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then return false, "база логистики не является массивом" end
+    end
+    local seen = {}
+    for index, r in ipairs(list) do
+        if not istable(r) or not EQUIP[tostring(r.class or "")] or not istable(r.pos) or not istable(r.ang) then
+            return false, "некорректная запись логистики #" .. index
+        end
+        local rid = tostring(r.id or "")
+        if rid ~= "" then
+            if seen[rid] then return false, "повторяющийся LogisticsID: " .. rid end
+            seen[rid] = true
+        end
+        if (r.class == "grm_logistics_warehouse" or r.class == "grm_logistics_armory") and r.data ~= nil and not istable(r.data) then
+            return false, "некорректный склад/шкаф #" .. index
+        end
+    end
+    return true
+end
 
 function L.SaveMap(p)
     if IsValid(p) and not p:IsSuperAdmin() then notify(p,false,"Только superadmin") return false,"нет прав" end
-    ensure(); local list={}; for cls in pairs(EQUIP) do for _,e in ipairs(ents.FindByClass(cls)) do list[#list+1]=record(e) end end; local ok=write(MAPFILE,list);if not ok then if IsValid(p)then notify(p,false,"SAVE BLOCKED: ошибка загрузки primary/backup")end return false,"save blocked"end;if IsValid(p) then notify(p,true,"Сохранено логистики: "..#list) end; return true,"сохранено логистики: "..#list
+    if L.LoadingMap then return false, "загрузка логистики ещё выполняется" end
+    ensure()
+    local list={}
+    for cls in pairs(EQUIP) do
+        for _,e in ipairs(ents.FindByClass(cls)) do if IsValid(e) then list[#list+1]=record(e) end end
+    end
+    table.sort(list, function(a,b) return tostring(a.id or "") < tostring(b.id or "") end)
+    local ok=write(MAPFILE,list,"logistics map")
+    if not ok then if IsValid(p)then notify(p,false,"SAVE BLOCKED: ошибка загрузки primary/backup")end return false,"save blocked"end
+    if IsValid(p) then notify(p,true,"Сохранено логистики: "..#list) end
+    return true,"сохранено логистики: "..#list
 end
 
 function L.LoadMap(p)
     if IsValid(p) and not p:IsSuperAdmin() then return false,"нет прав" end
     local list,source,healthy=read(MAPFILE,{},"logistics map")
-    if not healthy or source=="new" then local why=healthy and"файл карты отсутствует"or"primary/backup повреждены";print("[GRM Logistics] LOAD skipped: "..why.."; live entities preserved")return false,why end
-    for cls in pairs(EQUIP) do for _,e in ipairs(ents.FindByClass(cls)) do e:Remove() end end
-    L.Warehouses={}; L.Armories={}; local n=0
-    for _,r in ipairs(list) do if EQUIP[r.class] then local e=ents.Create(r.class); if IsValid(e) then e:SetPos(V(r.pos)); e:SetAngles(A(r.ang)); e:Spawn(); e:Activate(); e:SetLogisticsID(r.id or id("log")); e:SetFactionName(r.faction or ""); e:SetNetworkID(r.network or""); e:SetPointName(r.name or""); e:SetFactionMode(r.mode~=false); if e.LogisticsKind=="warehouse" then L.Warehouses[e:GetLogisticsID()]=r.data or {stock={weapons={},items={}},capacity=table.Copy(C.Capacity)} elseif e.LogisticsKind=="armory" then L.Armories[e:GetLogisticsID()]=r.data or {stock={weapons={},items={}},capacity=table.Copy(C.Capacity)} end; local ph=e:GetPhysicsObject(); if IsValid(ph) then ph:EnableMotion(false) end; n=n+1 end end end;print("[GRM Logistics] LOAD source="..tostring(source).." records="..n);return true,"загружено логистики: "..n
+    if not healthy or source=="new" then
+        local why=healthy and"файл карты отсутствует"or"primary/backup повреждены"
+        print("[GRM Logistics] LOAD skipped: "..why.."; live entities preserved")
+        return false,why
+    end
+    local valid, why = validateMapRecords(list)
+    if not valid then L.LoadBlocked[MAPFILE]=true; print("[GRM Logistics] LOAD rejected: "..why.."; live entities preserved") return false,why end
+
+    L.LoadingMap=true
+    for cls in pairs(EQUIP) do for _,e in ipairs(ents.FindByClass(cls)) do if IsValid(e) then e:Remove() end end end
+    L.Warehouses={}; L.Armories={}
+    local n, failed=0,0
+    for _,r in ipairs(list) do
+        local e=ents.Create(r.class)
+        if IsValid(e) then
+            e:SetPos(V(r.pos)); e:SetAngles(A(r.ang)); e:Spawn(); e:Activate()
+            e:SetLogisticsID(tostring(r.id or id("log"))); e:SetFactionName(tostring(r.faction or "")); e:SetNetworkID(tostring(r.network or"")); e:SetPointName(tostring(r.name or"")); e:SetFactionMode(r.mode~=false)
+            if e.LogisticsKind=="warehouse" then L.Warehouses[e:GetLogisticsID()]=normalizeStoreData(istable(r.data) and r.data or {stock={weapons={},items={}},capacity=table.Copy(C.Capacity)})
+            elseif e.LogisticsKind=="armory" then L.Armories[e:GetLogisticsID()]=normalizeStoreData(istable(r.data) and r.data or {stock={weapons={},items={}},capacity=table.Copy(C.Capacity)}) end
+            if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(e) end
+            local ph=e:GetPhysicsObject(); if IsValid(ph) then ph:EnableMotion(false) end
+            n=n+1
+        else failed=failed+1 end
+    end
+    timer.Simple(1,function() L.LoadingMap=false end)
+    L.LoadBlocked[MAPFILE]=failed>0 and true or nil
+    local msg=("загружено логистики: %d, ошибок: %d"):format(n,failed)
+    print("[GRM Logistics] LOAD source="..tostring(source).." "..msg)
+    if IsValid(p) then notify(p,failed==0,msg) end
+    return failed==0,msg
 end
 
-hook.Add("InitPostEntity","GRML_Load",function() timer.Simple(5,function() L.LoadMap(nil) end) end)
--- Код 90: кнопка cleanup в spawnmenu раньше стирала точки до рестарта карты —
--- как в Alarm/CCTV, воскрешаем из того же сейва.
-hook.Add("PostCleanupMap","GRML_Reload",function() timer.Simple(1,function() L.LoadMap(nil) end) end)
-hook.Add("ShutDown","GRML_Save",function()
-    saveCrates()
-    saveAccess()
-    L.SaveMap(nil) -- Защита при рестарте: гарантированное сохранение всех оружейных шкафов
-end)
+function L.SaveAll(p)
+    for _,path in ipairs({MAPFILE,ACCESSFILE,CRATEFILE}) do
+        if L.LoadBlocked[path] then return false,"сохранение логистики заблокировано: повреждён data/"..path end
+    end
+    local mapOK,mapDetail=L.SaveMap(p)
+    local accessOK,cratesOK=saveAccess(),saveCrates()
+    return mapOK==true and accessOK==true and cratesOK==true,
+        tostring(mapDetail or "карта: ошибка")..("; доступ=%s, переносимые ящики=%s"):format(tostring(accessOK),tostring(cratesOK))
+end
 
-print("[GRM Logistics] server v1.2.1 — автосейв стока + воскрешение после cleanup (Код 90)")
+function L.LoadAll(p)
+    local supportOK,supportDetail=loadSupportData()
+    if not supportOK then return false,"supporting data повреждены; живое оборудование не перезагружено; "..tostring(supportDetail) end
+    local mapOK,mapDetail=L.LoadMap(p)
+    return mapOK==true,tostring(mapDetail or "карта: ошибка").."; "..tostring(supportDetail)
+end
+
+hook.Add("InitPostEntity","GRML_Load",function() timer.Simple(5,function() L.LoadAll(nil) end) end)
+hook.Add("PostCleanupMap","GRML_Reload",function() timer.Simple(1,function() L.LoadMap(nil) end) end)
+hook.Add("ShutDown","GRML_Save",function() L.SaveAll(nil) end)
+
+print("[GRM Logistics] server v1.3.0 — полный SaveAll + fail-closed restore (Код 90)")

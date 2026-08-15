@@ -2,7 +2,7 @@
 
 **Дата:** 2026-08-15
 **Рабочая ветка:** `arena/01a0041b-drstrasse`
-**База этой ветки:** `b44d5d1` + Код 61 / Fire 1.5.1 / Documents 2.1 / Perm 1.7.1 / Persistence Hub 1.1.
+**База этой ветки:** `b44d5d1` + Код 61 / Fire 1.5.1 / Documents 2.1 / Perm 1.7.1 / Persistence Hub 1.2 / Equipment Persistence 1.1.
 
 Master — старый неполный снапшот. В новых Arena-сессиях всегда работать только
 на закреплённой системой ветке, не копировать старые команды переключения веток
@@ -10,13 +10,13 @@ Master — старый неполный снапшот. В новых Arena-с�
 
 ## Что изменено последним пакетом
 
-0. **Код 62 — Persistence Guard 1.1**
+0. **Код 62 — Persistence Guard 1.2**
    - `sh_01_grm_persistence_guard.lua` делает ранний снимок DATA до загрузчиков;
    - primary остаётся главным, boot/backup используется при пустом/битом primary;
    - при ошибке загрузки autosave блокируется, живые entity/память не удаляются;
    - `grm_persistence_audit` печатает boot-файлы, байты, valid и score;
    - Hub `perm` теперь вызывает `GRM.Perm`, а не saver рудных узлов;
-   - boot snapshot расширен на Food Vending и три вспомогательные базы завода.
+   - boot snapshot расширен на Food, Factory, Logistics, Mining/OreSpawner и RoomTap supporting-файлы.
 1. **Код 61 — собственные инструменты GRM**
    - `sh_grm_build_tools.lua`;
    - `grm_camera`, `grm_light`, `grm_lamp`, `grm_material`, `grm_colour`;
@@ -44,12 +44,13 @@ Master — старый неполный снапшот. В новых Arena-с�
    - FFD Link разрешает открытую Sliding-дверь по BasePos, не вычищая связь;
    - Prop Protect не меняет физику механизированных дверей и запрещает физган/tool/remove во время исчезновения или движения даже SuperAdmin;
    - visual/material/RGBA/render/skin/bodygroups и остальные модульные данные сохранены.
-5. **Единое меню сохранений v1.1 — телефония / еда / завод**
-   - хаб вызывает полные `SaveAll/LoadAll` и fail-closed сообщает о незагруженном модуле;
-   - телефонная загрузка валидирует JSON до удаления и не трогает купленные Phone Shop entity;
-   - «Еда и кухня» сохраняет vending primary+backup и Upsert-состояние плиты/холодильника/горшка;
-   - завод одной кнопкой пишет карту, склады, оружейные шкафы, скупщиков и рынок;
-   - supporting JSON завода защищены backup/read-back и не затираются `{}` после ошибки.
+5. **Единое меню сохранений v1.2 — всё GRM-оборудование**
+   - Phone/Food/Factory из v1.1 сохранены; хаб теперь также вызывает полные контракты Logistics, Mining, RoomTap, Alarm и CCTV;
+   - Logistics 1.3 пишет map + access/vehicles + inventory crates, валидирует ID/классы/координаты до замены мира;
+   - Mining 1.1 отделяет UID-оборудование от OreSpawner: автоматические узлы не дублируются, отдельно сохраняются spawn points и тип ручной руды;
+   - RoomTap пишет permanent map + temporary shop equipment + access; Electronics SaveAll больше не short-circuit-ит DB;
+   - Alarm/CCTV валидируют весь массив и DeviceID, существующие устройства обновляются без дублей;
+   - все новые контуры: primary+backup, read-back, fail-closed, boot/cleanup/watchdog restore.
 6. `tools/build_dist.py` собирает пять архивов, включая fire overlay поверх `vFire PACK.zip`.
 
 ## Обязательные проверки после Lua-правок
@@ -62,7 +63,7 @@ python3 tools/build_dist.py
 unzip -t dist/*.zip
 ```
 
-Контрольная цифра на этой точке: **491/491 syntax, 78/78 sim, 16/16 roundtrip**.
+Контрольная цифра на этой точке: **491/491 syntax, 79/79 sim, 16/16 roundtrip**.
 
 ## Архитектурные законы
 

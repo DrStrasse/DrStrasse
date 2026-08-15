@@ -25,7 +25,7 @@ ok(has(server, "local bad = not ply:Alive()") and has(server, "if bad then CCTV.
 ok(has(server, "ply:SetViewEntity(nil)") and has(server, "ply:Freeze(false)") and has(server, "net.Start(NET_VIEW_STOP)"), "server stop restores view, movement, and client state")
 ok(has(client, "GetSelectedLine()") and has(client, "line._camID") and has(client, "net.WriteString(tostring(camID"), "monitor selection uses stable DeviceID, not only a PVS entity")
 ok(has(server, "function CCTV.FindDeviceByID") and has(server, 'CCTV.FindDeviceByID(camID, "grm_cctv_camera")'), "server resolves remote camera authoritatively by DeviceID")
-ok(has(server, "function CCTV.RebuildRegistry()") and has(server, "created=%d healed=%d"), "restart load rebuilds registry and heals existing devices")
+ok(has(server, "function CCTV.RebuildRegistry()") and has(server, "CCTV.LastLoadDetail") and has(server, "обновлено %d"), "restart load rebuilds registry and heals existing devices")
 ok(has(server, "claimed[ent]") and has(server, "ent:SetNetworkID(CCTV.NormalizeNetwork(rec.network))"), "load reconciliation restores saved network without duplicate entities")
 ok(has(server, "net.WriteVector(cam:GetPos())") and has(server, "net.WriteAngle(cam:GetAngles())") and has(client, "local basePos = net.ReadVector()"), "live view carries a transform fallback for cameras outside client PVS")
 ok(has(client, "IsValid(cam) and cam:GetPos() or ViewState.basePos") and has(client, 'tostring(ViewState.camID or "") == ""'), "client keeps remote DeviceID view alive without a networked camera entity")

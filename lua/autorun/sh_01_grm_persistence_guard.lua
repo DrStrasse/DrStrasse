@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Persistence Guard v1.1.0 (Код 62)
+    GRM Persistence Guard v1.2.0 (Код 62)
 
     Загружается раньше остальных GRM-модулей и снимает boot-копию важных
     DATA-файлов до того, как какой-либо поздний загрузчик успеет записать
@@ -12,7 +12,7 @@ if not SERVER then return end
 GRM = GRM or {}
 GRM.PersistenceGuard = GRM.PersistenceGuard or {}
 local P = GRM.PersistenceGuard
-P.Version = "1.1.0"
+P.Version = "1.2.0"
 P.Boot = P.Boot or {}
 
 local function jsonT(raw)
@@ -78,8 +78,14 @@ for _, path in ipairs({
     "grm_electronics/database.json", "grm_electronics/database.json.backup",
     "grm_electronics/" .. map .. ".json", "grm_electronics/" .. map .. ".json.backup",
     "grm_logistics/maps/" .. map .. ".json", "grm_logistics/maps/" .. map .. ".json.backup",
+    "grm_logistics/access.json", "grm_logistics/access.json.backup",
+    "grm_logistics/inventory_crates.json", "grm_logistics/inventory_crates.json.backup",
+    "grm_saves/" .. map .. ".json", "grm_saves/" .. map .. ".json.backup",
+    "grm_saves/grm_orespawns_" .. map .. ".json", "grm_saves/grm_orespawns_" .. map .. "_backup.json",
     "grm_phone/" .. map .. ".json", "grm_phone/" .. map .. ".json.backup",
     "grm_roomtap/maps/" .. map .. ".json", "grm_roomtap/maps/" .. map .. ".json.backup",
+    "grm_roomtap/access.json", "grm_roomtap/access.json.backup",
+    "grm_roomtap/temporary_equipment.json", "grm_roomtap/temporary_equipment.json.backup",
     "grm_cctv/" .. map .. ".json", "grm_cctv/" .. map .. ".json.backup",
     "grm_alarm/" .. map .. ".json", "grm_alarm/" .. map .. ".json.backup",
 }) do snapshot(path) end

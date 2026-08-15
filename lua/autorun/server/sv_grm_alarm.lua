@@ -435,52 +435,61 @@ function A.SavePermanent()
     return true
 end
 
+local function validatePermanentRecords(records)
+    if not istable(records) then return false, "база сигнализации не является таблицей" end
+    for key in pairs(records) do
+        if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then return false, "база сигнализации не является массивом" end
+    end
+    local seen = {}
+    for index, rec in ipairs(records) do
+        if not istable(rec) or not isAlarmClass(tostring(rec.class or ""))
+            or not istable(rec.pos) or not istable(rec.ang) then return false, "некорректная запись сигнализации #" .. index end
+        local id = tostring(rec.device_id or "")
+        if id ~= "" then if seen[id] then return false, "повторяющийся DeviceID сигнализации: " .. id end; seen[id] = true end
+    end
+    return true
+end
+
 function A.LoadPermanent()
     local path=savePath();local guard=GRM.PersistenceGuard;local t,source,raw,meta
     if guard and guard.ReadBest then t,source,raw,meta=guard.ReadBest(path,{path..".backup"},"alarm")
     else raw=file.Exists(path,"DATA")and(file.Read(path,"DATA")or"")or"";t=jsonT(raw);source=t and path or nil;meta={hadAny=raw~=""}end
-    if not istable(t)then A.PersistenceLoadBlocked=meta and meta.hadAny==true;if A.PersistenceLoadBlocked then print("[GRM Alarm][!] LOAD BLOCKED: invalid primary/backup")end;return 0 end
-    A.PersistenceLoadBlocked=false;if guard and guard.Materialize and raw then guard.Materialize(path,path..".backup",raw,"alarm")end
+    if not istable(t)then A.PersistenceLoadBlocked=meta and meta.hadAny==true;if A.PersistenceLoadBlocked then print("[GRM Alarm][!] LOAD BLOCKED: invalid primary/backup")end;A.LastLoadDetail="файл отсутствует/повреждён";return 0 end
+    local valid,why=validatePermanentRecords(t)
+    if not valid then A.PersistenceLoadBlocked=true;A.LastLoadDetail=why;print("[GRM Alarm][!] LOAD rejected: "..why);return 0 end
+    A.PersistenceLoadBlocked=false
+    if guard and guard.Materialize and raw and not guard.Materialize(path,path..".backup",raw,"alarm")then A.PersistenceLoadBlocked=true;A.LastLoadDetail="materialize failed";return 0 end
     print("[GRM Alarm] LOAD source="..tostring(source).." records="..#t)
-    local n = 0
-    for _, rec in ipairs(t) do
-        if istable(rec) and isstring(rec.class) and isAlarmClass(rec.class) then
-            local pos = Vector(tonumber(rec.pos and rec.pos.x) or 0, tonumber(rec.pos and rec.pos.y) or 0, tonumber(rec.pos and rec.pos.z) or 0)
-            local busy = false
-            for _, e in ipairs(ents.FindInSphere(pos, 6)) do
-                if IsValid(e) and classOf(e) == rec.class then busy = true break end
-            end
-            if not busy then
-                local ent = ents.Create(rec.class)
-                if IsValid(ent) then
-                    ent:SetPos(pos)
-                    ent:SetAngles(Angle(tonumber(rec.ang and rec.ang.p) or 0, tonumber(rec.ang and rec.ang.y) or 0, tonumber(rec.ang and rec.ang.r) or 0))
-                    if isstring(rec.model) and rec.model ~= "" then ent:SetModel(rec.model) end
-                    ent:Spawn()
-                    ent:Activate()
-                    if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
-                    if isstring(rec.device_id) then ent:SetDeviceID(rec.device_id) end
-                    if isstring(rec.label) then ent:SetLabel(rec.label) end
-                    if isstring(rec.network) then ent:SetNetworkID(A.NormalizeNetwork(rec.network)) end
-                    if isstring(rec.owner_steam) then ent:SetOwnerSteam(rec.owner_steam) end
-                    if classOf(ent) == "grm_alarm_sensor" then
-                        if rec.radius then ent:SetRadius(tonumber(rec.radius) or 220) end
-                        ent:SetActive(rec.active ~= false)
-                    elseif classOf(ent) == "grm_alarm_speaker" then
-                        if rec.active ~= nil then ent:SetActive(rec.active == true) end -- Код 89
-                    elseif classOf(ent) == "grm_alarm_hub" then
-                        ent:SetMode(A.ClampMode(rec.mode or 1))
-                    end
-                    ent:SetPermanent(true)
-                    local phys = ent:GetPhysicsObject()
-                    if IsValid(phys) then phys:EnableMotion(false) end
-                    n = n + 1
-                end
-            end
-        end
+    local created,healed,failed,claimed=0,0,0,{}
+    for _,rec in ipairs(t)do
+        local pos=Vector(tonumber(rec.pos.x)or 0,tonumber(rec.pos.y)or 0,tonumber(rec.pos.z)or 0)
+        local savedID=tostring(rec.device_id or"")
+        local ent=nil
+        if savedID~=""then for _,candidate in pairs(A.Devices)do if IsValid(candidate)and not claimed[candidate]and classOf(candidate)==rec.class and candidate:GetDeviceID()==savedID then ent=candidate break end end end
+        if not IsValid(ent)then for _,candidate in ipairs(ents.FindInSphere(pos,6))do if IsValid(candidate)and not claimed[candidate]and classOf(candidate)==rec.class then ent=candidate break end end end
+        local wasCreated=false
+        if not IsValid(ent)then ent=ents.Create(rec.class);if IsValid(ent)then ent:SetPos(pos);ent:SetAngles(Angle(tonumber(rec.ang.p)or 0,tonumber(rec.ang.y)or 0,tonumber(rec.ang.r)or 0));if isstring(rec.model)and rec.model~=""then ent:SetModel(rec.model)end;ent:Spawn();ent:Activate();wasCreated=true end end
+        if IsValid(ent)then
+            claimed[ent]=true;ent:SetPos(pos);ent:SetAngles(Angle(tonumber(rec.ang.p)or 0,tonumber(rec.ang.y)or 0,tonumber(rec.ang.r)or 0))
+            if savedID~=""then ent:SetDeviceID(savedID)end;if isstring(rec.label)then ent:SetLabel(rec.label)end;if isstring(rec.network)then ent:SetNetworkID(A.NormalizeNetwork(rec.network))end;if isstring(rec.owner_steam)then ent:SetOwnerSteam(rec.owner_steam)end
+            if classOf(ent)=="grm_alarm_sensor"then if rec.radius then ent:SetRadius(tonumber(rec.radius)or 220)end;ent:SetActive(rec.active~=false)
+            elseif classOf(ent)=="grm_alarm_speaker"then if rec.active~=nil then ent:SetActive(rec.active==true)end
+            elseif classOf(ent)=="grm_alarm_hub"then ent:SetMode(A.ClampMode(rec.mode or 1))end
+            ent:SetPermanent(true);A.RegisterDevice(ent);if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent)end
+            local phys=ent:GetPhysicsObject();if IsValid(phys)then phys:EnableMotion(false)end
+            if wasCreated then created=created+1 else healed=healed+1 end
+        else failed=failed+1 end
     end
-    print(("[GRM Alarm] LOAD permanent: %d"):format(n))
-    return n
+    A.PersistenceLoadBlocked=failed>0
+    A.LastLoadDetail=("создано %d, обновлено %d, ошибок %d"):format(created,healed,failed)
+    print("[GRM Alarm] LOAD permanent: "..A.LastLoadDetail)
+    return created
+end
+function A.SaveAll()
+    local ok=A.SavePermanent();return ok==true,ok and"сигнализация сохранена"or"ошибка сохранения сигнализации"
+end
+function A.LoadAll()
+    A.LoadPermanent();return A.PersistenceLoadBlocked~=true,"сигнализация: "..tostring(A.LastLoadDetail or"загрузка завершена")
 end
 
 -- ── menus ──────────────────────────────────────────────────

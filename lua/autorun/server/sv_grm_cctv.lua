@@ -248,6 +248,21 @@ function CCTV.SavePermanent()
     return true
 end
 
+local function validatePermanentRecords(records)
+    if not istable(records) then return false, "база CCTV не является таблицей" end
+    for key in pairs(records) do
+        if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then return false, "база CCTV не является массивом" end
+    end
+    local seen = {}
+    for index, rec in ipairs(records) do
+        if not istable(rec) or not isCCTVClass(tostring(rec.class or ""))
+            or not istable(rec.pos) or not istable(rec.ang) then return false, "некорректная запись CCTV #" .. index end
+        local id = tostring(rec.device_id or "")
+        if id ~= "" then if seen[id] then return false, "повторяющийся DeviceID CCTV: " .. id end; seen[id] = true end
+    end
+    return true
+end
+
 function CCTV.LoadPermanent()
     local path = savePath()
     local guard=GRM.PersistenceGuard;local t,source,raw,meta
@@ -258,8 +273,10 @@ function CCTV.LoadPermanent()
         if CCTV.PersistenceLoadBlocked then local q=(CFG().SaveDir or"grm_cctv").."/corrupt_"..os.time()..".txt";file.Write(q,raw or"");print("[GRM CCTV] LOAD BLOCKED: quarantine data/"..q)end
         return 0
     end
+    local valid,why=validatePermanentRecords(t)
+    if not valid then CCTV.PersistenceLoadBlocked=true;CCTV.LastLoadDetail=why;print("[GRM CCTV] LOAD rejected: "..why);return 0 end
     CCTV.PersistenceLoadBlocked=false
-    if guard and guard.Materialize and raw then guard.Materialize(path,path..".backup",raw,"CCTV")end
+    if guard and guard.Materialize and raw and not guard.Materialize(path,path..".backup",raw,"CCTV")then CCTV.PersistenceLoadBlocked=true;CCTV.LastLoadDetail="materialize failed";return 0 end
     print("[GRM CCTV] LOAD source="..tostring(source).." records="..#t)
     CCTV.RebuildRegistry()
     local spawned, healed, claimed = 0, 0, {}
@@ -301,8 +318,17 @@ function CCTV.LoadPermanent()
         end
     end
     CCTV.RebuildRegistry()
-    print(("[GRM CCTV] LOAD: created=%d healed=%d from data/%s"):format(spawned, healed, path))
+    local failed=math.max(0,#t-spawned-healed)
+    CCTV.PersistenceLoadBlocked=failed>0
+    CCTV.LastLoadDetail=("создано %d, обновлено %d, ошибок %d"):format(spawned,healed,failed)
+    print("[GRM CCTV] LOAD: "..CCTV.LastLoadDetail.." from data/"..path)
     return spawned + healed
+end
+function CCTV.SaveAll()
+    local ok=CCTV.SavePermanent();return ok==true,ok and"CCTV сохранено"or"ошибка сохранения CCTV"
+end
+function CCTV.LoadAll()
+    CCTV.LoadPermanent();return CCTV.PersistenceLoadBlocked~=true,"CCTV: "..tostring(CCTV.LastLoadDetail or"загрузка завершена")
 end
 
 function CCTV.StopView(ply, silent)
