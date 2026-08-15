@@ -11,6 +11,7 @@ AddCSLuaFile("autorun/client/cl_grm_vending_gui.lua")
 
 GRM = GRM or {}
 GRM.Food = GRM.Food or {}
+GRM.Food.PersistenceVersion = "1.1.0"
 
 if not GRM.Food.Config then
     include("autorun/sh_grm_food_config.lua")
@@ -215,6 +216,7 @@ local function vendingSaveFile()
     local map = string.lower(game.GetMap() or "unknown")
     return VENDING_SAVE_DIR .. "/" .. VENDING_SAVE_PREFIX .. map .. ".json"
 end
+local function vendingBackupFile() return vendingSaveFile() .. ".backup" end
 
 local function ensureVendingSaveDir()
     if not file.Exists(VENDING_SAVE_DIR, "DATA") then
@@ -285,63 +287,187 @@ end
 function GRM.Food.SaveVendingMachines(ply)
     if not canManageVending(ply) then
         reply(ply, "[GRM Food] Только superadmin может сохранять автоматы.")
-        return false
+        return false, "нет прав"
+    end
+    if GRM.Food.VendingLoadBlocked then
+        local msg = "сохранение автоматов заблокировано: primary/backup повреждены"
+        reply(ply, "[GRM Food] " .. msg)
+        return false, msg
     end
 
     ensureVendingSaveDir()
-
-    local saved = {}
+    local saved, live = {}, {}
     for _, ent in ipairs(ents.FindByClass("grm_vending_machine")) do
         if IsValid(ent) then
-            saved[#saved + 1] = {
-                pos = vecToTable(ent:GetPos()),
-                ang = angToTable(ent:GetAngles()),
-            }
+            saved[#saved + 1] = { pos = vecToTable(ent:GetPos()), ang = angToTable(ent:GetAngles()) }
+            live[#live + 1] = ent
         end
     end
 
-    file.Write(vendingSaveFile(), util.TableToJSON(saved, true))
-    reply(ply, "[GRM Food] Сохранено автоматов: " .. #saved .. ". Файл: data/" .. vendingSaveFile())
+    local guard, ok = GRM.PersistenceGuard, false
+    if guard and guard.WriteMirrored then
+        ok = guard.WriteMirrored(vendingSaveFile(), vendingBackupFile(), saved, "food vending")
+    else
+        local okJ, raw = pcall(util.TableToJSON, saved, true)
+        ok = okJ and isstring(raw) and raw ~= ""
+        if ok then
+            file.Write(vendingSaveFile(), raw); file.Write(vendingBackupFile(), raw)
+            ok = file.Read(vendingSaveFile(), "DATA") == raw and file.Read(vendingBackupFile(), "DATA") == raw
+        end
+    end
 
-    return true, #saved
+    if ok then
+        for _, ent in ipairs(live) do
+            if IsValid(ent) then
+                ent.GRMFoodPermanent = true
+                if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
+                local ph = ent.GetPhysicsObject and ent:GetPhysicsObject() or nil
+                if IsValid(ph) then ph:EnableMotion(false) end
+            end
+        end
+    end
+    local msg = (ok and "Сохранено автоматов: " or "Ошибка сохранения автоматов: ") .. #saved
+    reply(ply, "[GRM Food] " .. msg .. ". Файл: data/" .. vendingSaveFile())
+    return ok == true, ok and ("сохранено автоматов: " .. #saved) or "ошибка записи/read-back автоматов"
+end
+
+local function validateVendingRecords(data)
+    for key in pairs(data) do
+        if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then return false, "база автоматов не является массивом" end
+    end
+    for index, row in ipairs(data) do
+        if not istable(row) or not istable(row.pos) or not istable(row.ang) then
+            return false, "некорректная запись автомата #" .. index
+        end
+    end
+    return true
+end
+
+local function findVendingAt(pos, claimed)
+    local best, bestD
+    for _, ent in ipairs(ents.FindByClass("grm_vending_machine")) do
+        if IsValid(ent) and not claimed[ent] then
+            local p = ent:GetPos()
+            local dx, dy, dz = (p.x or 0) - pos.x, (p.y or 0) - pos.y, (p.z or 0) - pos.z
+            local d2 = dx * dx + dy * dy + dz * dz
+            if d2 <= 0.25 * 0.25 and (not bestD or d2 < bestD) then best, bestD = ent, d2 end
+        end
+    end
+    return best
 end
 
 function GRM.Food.LoadVendingMachines(ply, replaceAll)
     if IsValid(ply) and not canManageVending(ply) then
         reply(ply, "[GRM Food] Только superadmin может загружать автоматы.")
-        return false
+        return false, "нет прав"
     end
 
-    local path = vendingSaveFile()
-    if not file.Exists(path, "DATA") then
-        if IsValid(ply) then
-            reply(ply, "[GRM Food] Сохранённые автоматы для этой карты не найдены.")
+    local path, guard = vendingSaveFile(), GRM.PersistenceGuard
+    local data, source, raw, meta
+    if guard and guard.ReadBest then
+        data, source, raw, meta = guard.ReadBest(path, { vendingBackupFile() }, "food vending")
+    else
+        raw = file.Exists(path, "DATA") and (file.Read(path, "DATA") or "") or ""
+        local ok, parsed = pcall(util.JSONToTable, raw, false, true)
+        data = ok and istable(parsed) and parsed or nil
+        source = data and path or nil
+        meta = { hadAny = raw ~= "" }
+    end
+    if not istable(data) then
+        GRM.Food.VendingLoadBlocked = meta and meta.hadAny == true
+        local msg = GRM.Food.VendingLoadBlocked and "primary/backup автоматов повреждены; живые автоматы сохранены"
+            or "сохранённые автоматы для этой карты не найдены"
+        if IsValid(ply) then reply(ply, "[GRM Food] " .. msg) end
+        print("[GRM Food] LOAD skipped: " .. msg)
+        return false, msg
+    end
+    local valid, why = validateVendingRecords(data)
+    if not valid then
+        GRM.Food.VendingLoadBlocked = true
+        reply(ply, "[GRM Food] " .. why .. "; живые автоматы сохранены")
+        return false, why
+    end
+
+    GRM.Food.VendingLoadBlocked = false
+    if guard and guard.Materialize and raw then
+        if not guard.Materialize(path, vendingBackupFile(), raw, "food vending") then
+            return false, "не удалось восстановить primary/backup автоматов"
         end
-        return false
     end
 
-    local raw = file.Read(path, "DATA")
-    if not raw or raw == "" then return false end
-
-    local ok, data = pcall(util.JSONToTable, raw, false, true)
-    if not ok or not istable(data) then
-        reply(ply, "[GRM Food] Ошибка чтения файла автоматов: data/" .. path)
-        return false
-    end
-
-    removeVendingMachines(replaceAll == true)
-
-    local count = 0
+    local claimed = {}
+    if replaceAll == true then removeVendingMachines(true) end
+    local count, healed, failed = 0, 0, 0
     for _, row in ipairs(data) do
-        if istable(row) and row.pos and row.ang then
-            if IsValid(createPermanentVending(tableToVec(row.pos), tableToAng(row.ang))) then
-                count = count + 1
+        local pos, ang = tableToVec(row.pos), tableToAng(row.ang)
+        local ent = replaceAll ~= true and findVendingAt(pos, claimed) or nil
+        if IsValid(ent) then
+            ent:SetPos(pos); ent:SetAngles(ang); ent.GRMFoodPermanent = true
+            healed = healed + 1
+        else
+            ent = createPermanentVending(pos, ang)
+            if IsValid(ent) then count = count + 1 else failed = failed + 1 end
+        end
+        if IsValid(ent) then
+            claimed[ent] = true
+            ent.GRMFoodPermanent = true
+            if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
+            local ph = ent.GetPhysicsObject and ent:GetPhysicsObject() or nil
+            if IsValid(ph) then ph:EnableMotion(false) end
+        end
+    end
+    -- При startup-load не трогаем обычные несохранённые автоматы, но старые
+    -- permanent, которых больше нет в JSON (включая явный []), убираем.
+    if replaceAll ~= true then
+        for _, ent in ipairs(ents.FindByClass("grm_vending_machine")) do
+            if IsValid(ent) and ent.GRMFoodPermanent and not claimed[ent] then ent:Remove() end
+        end
+    end
+
+    local msg = ("загружено автоматов: %d, уже стояло: %d, ошибок: %d"):format(count, healed, failed)
+    reply(ply, "[GRM Food] " .. msg .. ".")
+    print("[GRM Food] LOAD source=" .. tostring(source) .. " " .. msg)
+    return failed == 0, msg
+end
+
+-- Единое меню «Еда и кухня»: автоматы сохраняются своим map-файлом, а
+-- плита/холодильник/горшок — через Perm с полным состоянием экземпляра.
+local KITCHEN_PERM_CLASSES = {
+    grm_food_stove = true, grm_food_fridge = true, grm_food_planter = true,
+}
+
+local function saveKitchenEquipment()
+    local total, saved, errors = 0, 0, {}
+    for class in pairs(KITCHEN_PERM_CLASSES) do
+        for _, ent in ipairs(ents.FindByClass(class)) do
+            if IsValid(ent) then
+                total = total + 1
+                local result = GRM.PermData and GRM.PermData.Upsert and GRM.PermData.Upsert(ent) or "perm_unavailable"
+                if result == "added" or result == "updated" then saved = saved + 1
+                else errors[#errors + 1] = class .. ":" .. tostring(result) end
             end
         end
     end
+    return #errors == 0, total, saved, errors
+end
 
-    reply(ply, "[GRM Food] Загружено автоматов: " .. count .. ".")
-    return true, count
+function GRM.Food.SaveAll(ply)
+    local vendingOK, vendingDetail = GRM.Food.SaveVendingMachines(ply)
+    local kitchenOK, total, saved, errors = saveKitchenEquipment()
+    local detail = tostring(vendingDetail or "автоматы: ошибка")
+        .. ("; кухня сохранена: %d/%d"):format(saved, total)
+    if #errors > 0 then detail = detail .. "; " .. table.concat(errors, ", ") end
+    return vendingOK == true and kitchenOK == true, detail
+end
+
+function GRM.Food.LoadAll(ply)
+    local vendingOK, vendingDetail = GRM.Food.LoadVendingMachines(ply, true)
+    local permOK, permDetail = false, "Perm API не загружен"
+    if GRM.Perm and GRM.Perm.LoadClasses then
+        permOK, permDetail = GRM.Perm.LoadClasses(KITCHEN_PERM_CLASSES, "Food Hub")
+    end
+    return vendingOK == true and permOK == true,
+        tostring(vendingDetail or "автоматы: ошибка") .. "; " .. tostring(permDetail)
 end
 
 function GRM.Food.ClearVendingMachines(ply, saveEmpty)
@@ -354,8 +480,15 @@ function GRM.Food.ClearVendingMachines(ply, saveEmpty)
 
     if saveEmpty then
         ensureVendingSaveDir()
-        file.Write(vendingSaveFile(), "[]")
-        reply(ply, "[GRM Food] Все автоматы удалены, сохранение для карты очищено.")
+        GRM.Food.VendingLoadBlocked = false
+        local guard = GRM.PersistenceGuard
+        local ok = guard and guard.WriteMirrored and guard.WriteMirrored(vendingSaveFile(), vendingBackupFile(), {}, "food vending clear")
+        if not guard or not guard.WriteMirrored then
+            file.Write(vendingSaveFile(), "[]"); file.Write(vendingBackupFile(), "[]")
+            ok = file.Read(vendingSaveFile(), "DATA") == "[]" and file.Read(vendingBackupFile(), "DATA") == "[]"
+        end
+        reply(ply, ok and "[GRM Food] Все автоматы удалены, сохранение для карты очищено."
+            or "[GRM Food] Автоматы удалены, но файл очистить не удалось.")
     else
         reply(ply, "[GRM Food] Все автоматы удалены. Файл сохранения не изменён.")
     end

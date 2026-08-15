@@ -1,6 +1,10 @@
 -- GRM unified map persistence hub
 if not SERVER then return end
 
+GRM = GRM or {}
+GRM.PersistenceHub = GRM.PersistenceHub or { Version = "1.1.0" }
+GRM.PersistenceHub.Version = "1.1.0"
+
 util.AddNetworkString("GRM_Persistence_Open")
 util.AddNetworkString("GRM_Persistence_Action")
 util.AddNetworkString("GRM_Persistence_Result")
@@ -22,29 +26,64 @@ local function call(label, fn, ply)
     return true, label .. ": " .. tostring(detail or "операция выполнена")
 end
 
+
+local function invoke(moduleName, method, fallback, ...)
+    local mod = GRM and GRM[moduleName] or nil
+    if not istable(mod) then return false, "модуль " .. moduleName .. " не загружен" end
+    local fn = mod[method]
+    if not isfunction(fn) and isstring(fallback) and fallback ~= "" then fn = mod[fallback] end
+    if not isfunction(fn) then
+        return false, ("метод %s.%s не загружен"):format(moduleName, method)
+    end
+    return fn(...)
+end
+
 local function operation(id, ply)
     local save = id:sub(-5) == "_save"
     local load = id:sub(-5) == "_load"
     local base = save and id:sub(1, -6) or (load and id:sub(1, -6) or id)
     local ops = {
-        phone = { save = function(p) return GRM.Phone and GRM.Phone.SaveMapEntities(p) end, load = function(p) return GRM.Phone and GRM.Phone.LoadMapEntities(p) end },
-        cctv = { save = function() return GRM.CCTV and GRM.CCTV.SavePermanent() end, load = function() return GRM.CCTV and GRM.CCTV.LoadPermanent() end },
-        alarm = { save = function() return GRM.Alarm and GRM.Alarm.SavePermanent() end, load = function() return GRM.Alarm and GRM.Alarm.LoadPermanent() end },
-        factory = { save = function(p) return GRM.FactoryCycle and GRM.FactoryCycle.SaveMap(p, "admin hub") end, load = function(p) return GRM.FactoryCycle and GRM.FactoryCycle.LoadMap(p) end },
-        logistics = { save = function(p) return GRM.Logistics and GRM.Logistics.SaveMap(p) end, load = function(p) return GRM.Logistics and GRM.Logistics.LoadMap(p) end },
-        vending = { save = function(p) return GRM.Food and GRM.Food.SaveVendingMachines(p) end, load = function(p) return GRM.Food and GRM.Food.LoadVendingMachines(p, true) end },
-        roomtap = { save = function(p) return GRM.RoomTap and GRM.RoomTap.SaveMapEquipment(p) end, load = function(p) return GRM.RoomTap and GRM.RoomTap.LoadMapEquipment(p) end },
-        wanted = { save = function() return GRM.Wanted and GRM.Wanted.Save() end, load = function() return GRM.Wanted and GRM.Wanted.Load() end },
-        mining = { save = function() return isfunction(GRM_SaveEntities) and GRM_SaveEntities() end, load = function() return isfunction(GRM_LoadEntities) and GRM_LoadEntities() end },
-        doors = { save = function() if not GRM.Doors then return false end; GRM.Doors.SaveDoors(); GRM.Doors.SaveCategories(); GRM.Doors.SaveWarrants(); return true end, load = function() if not GRM.Doors then return false end; GRM.Doors.LoadDoors(); GRM.Doors.LoadCategories(); GRM.Doors.LoadWarrants(); return true end },
-        arrest = { save = function() return GRM.Arrest and GRM.Arrest.SaveConfig() end, load = function() return GRM.Arrest and GRM.Arrest.LoadConfig() end },
-        customization = { save = function() return GRM.Customization and GRM.Customization.SaveData() end, load = function() return GRM.Customization and GRM.Customization.LoadData() end },
-        vendors = { save = function() return GRM.Vendor and GRM.Vendor.SaveMapVendors() end, load = function() return GRM.Vendor and GRM.Vendor.LoadMapVendors() end },
-        vehicle_dealers = { save = function() return GRM.VehicleDealer and GRM.VehicleDealer.SaveAll() end, load = function() return GRM.VehicleDealer and GRM.VehicleDealer.LoadAll() end },
-        quests = { save = function() return GRM.Quests and GRM.Quests.SaveAll() end, load = function() return GRM.Quests and GRM.Quests.LoadAll() end },
-        electronics = { save = function() return GRM.Electronics and GRM.Electronics.SaveAll() end, load = function() return GRM.Electronics and GRM.Electronics.LoadAll() end },
-        perm = { save = function() return GRM.Perm and GRM.Perm.SaveAll and GRM.Perm.SaveAll() end, load = function() return GRM.Perm and GRM.Perm.LoadAll and GRM.Perm.LoadAll() end },
+        phone = {
+            save = function(p) return invoke("Phone", "SaveAll", "SaveMapEntities", p) end,
+            load = function(p) return invoke("Phone", "LoadAll", "LoadMapEntities", p) end,
+        },
+        cctv = { save = function() return invoke("CCTV", "SavePermanent") end, load = function() return invoke("CCTV", "LoadPermanent") end },
+        alarm = { save = function() return invoke("Alarm", "SavePermanent") end, load = function() return invoke("Alarm", "LoadPermanent") end },
+        factory = {
+            save = function(p) return invoke("FactoryCycle", "SaveAll", "SaveMap", p, "admin hub") end,
+            load = function(p) return invoke("FactoryCycle", "LoadAll", "LoadMap", p) end,
+        },
+        logistics = { save = function(p) return invoke("Logistics", "SaveMap", nil, p) end, load = function(p) return invoke("Logistics", "LoadMap", nil, p) end },
+        food = {
+            save = function(p) return invoke("Food", "SaveAll", "SaveVendingMachines", p) end,
+            load = function(p) return invoke("Food", "LoadAll", "LoadVendingMachines", p, true) end,
+        },
+        roomtap = { save = function(p) return invoke("RoomTap", "SaveMapEquipment", nil, p) end, load = function(p) return invoke("RoomTap", "LoadMapEquipment", nil, p) end },
+        wanted = { save = function() return invoke("Wanted", "Save") end, load = function() return invoke("Wanted", "Load") end },
+        mining = {
+            save = function() if not isfunction(GRM_SaveEntities) then return false, "модуль рудных узлов не загружен" end return GRM_SaveEntities() end,
+            load = function() if not isfunction(GRM_LoadEntities) then return false, "модуль рудных узлов не загружен" end return GRM_LoadEntities() end,
+        },
+        doors = {
+            save = function()
+                if not GRM.Doors then return false, "модуль дверей не загружен" end
+                GRM.Doors.SaveDoors(); GRM.Doors.SaveCategories(); GRM.Doors.SaveWarrants(); return true
+            end,
+            load = function()
+                if not GRM.Doors then return false, "модуль дверей не загружен" end
+                GRM.Doors.LoadDoors(); GRM.Doors.LoadCategories(); GRM.Doors.LoadWarrants(); return true
+            end,
+        },
+        arrest = { save = function() return invoke("Arrest", "SaveConfig") end, load = function() return invoke("Arrest", "LoadConfig") end },
+        customization = { save = function() return invoke("Customization", "SaveData") end, load = function() return invoke("Customization", "LoadData") end },
+        vendors = { save = function() return invoke("Vendor", "SaveMapVendors") end, load = function() return invoke("Vendor", "LoadMapVendors") end },
+        vehicle_dealers = { save = function() return invoke("VehicleDealer", "SaveAll") end, load = function() return invoke("VehicleDealer", "LoadAll") end },
+        quests = { save = function() return invoke("Quests", "SaveAll") end, load = function() return invoke("Quests", "LoadAll") end },
+        electronics = { save = function() return invoke("Electronics", "SaveAll") end, load = function() return invoke("Electronics", "LoadAll") end },
+        perm = { save = function() return invoke("Perm", "SaveAll") end, load = function() return invoke("Perm", "LoadAll") end },
     }
+    -- Совместимость с уже открытым старым клиентским меню.
+    ops.vending = ops.food
     if not save and not load then return false, "Неизвестная операция" end
     local mod = ops[base]
     if not mod then return false, "Неизвестный модуль: " .. base end
@@ -52,7 +91,7 @@ local function operation(id, ply)
 end
 
 local function all(ply, mode)
-    local ids = { "phone", "cctv", "alarm", "factory", "logistics", "vending", "roomtap", "wanted", "mining", "doors", "arrest", "customization", "vendors", "vehicle_dealers", "quests", "electronics", "perm" }
+    local ids = { "phone", "cctv", "alarm", "factory", "logistics", "food", "roomtap", "wanted", "mining", "doors", "arrest", "customization", "vendors", "vehicle_dealers", "quests", "electronics", "perm" }
     local done, errors = 0, {}
     for _, id in ipairs(ids) do
         local ok, msg = operation(id .. "_" .. mode, ply)

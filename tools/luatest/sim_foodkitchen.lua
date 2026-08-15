@@ -714,15 +714,15 @@ do
        "живое окно: повторный пэйлоад перенаполняет, а не множит фреймы")
 end
 do
-    -- перм-модуль v1.7.0 допускает классы кухни
+    -- перм-модуль v1.7.1 допускает классы кухни
     local fh = io.open("lua/autorun/sh_grm_perm_entities.lua", "r")
     local src = fh and fh:read("*a") or ""
     if fh then fh:close() end
-    ok(src:find('PERM_VER = "1.7.0"', 1, true) ~= nil
+    ok(src:find('PERM_VER = "1.7.1"', 1, true) ~= nil
        and src:find("grm_food_stove", 1, true) ~= nil
        and src:find("grm_food_fridge", 1, true) ~= nil
        and src:find("grm_food_planter", 1, true) ~= nil,
-       "sh_grm_perm_entities v1.7.0: классы кухни допущены к /permadd")
+       "sh_grm_perm_entities v1.7.1: классы кухни допущены к /permadd")
 end
 
 print("")

@@ -22,6 +22,7 @@ include("autorun/sh_grm_phone_config.lua")
 GRM = GRM or {}
 GRM.Phone = GRM.Phone or {}
 local P = GRM.Phone
+P.PersistenceVersion = "1.1.0"
 
 P.Calls = P.Calls or {}
 P.NextCallID = P.NextCallID or 1
@@ -766,6 +767,13 @@ timer.Simple(2, installVoiceHook)
 -- ============================================================
 
 local SAVE_DIR = "grm_phone"
+local MAP_ENTITY_CLASSES = {
+    "grm_phone", "grm_payphone", "grm_pbx_station", "grm_phone_wiretap", "grm_phone_terminal",
+}
+local MAP_ENTITY_ALLOWED = {}
+for _, class in ipairs(MAP_ENTITY_CLASSES) do MAP_ENTITY_ALLOWED[class] = true end
+local cleanupCallsForRemovedEntity
+
 local function savePath() return SAVE_DIR .. "/" .. string.lower(game.GetMap() or "unknown") .. ".json" end
 local function backupPath() return savePath() .. ".backup" end
 local function jsonT(raw) local ok,t=pcall(util.JSONToTable,raw or"",false,true);return ok and istable(t) and t or nil end
@@ -788,8 +796,8 @@ end
 
 local function vecToTable(v) return { x = v.x, y = v.y, z = v.z } end
 local function angToTable(a) return { p = a.p, y = a.y, r = a.r } end
-local function tableToVec(t) return Vector(t.x or 0, t.y or 0, t.z or 0) end
-local function tableToAng(t) return Angle(t.p or 0, t.y or 0, t.r or 0) end
+local function tableToVec(t) return Vector(tonumber(t and t.x) or 0, tonumber(t and t.y) or 0, tonumber(t and t.z) or 0) end
+local function tableToAng(t) return Angle(tonumber(t and t.p) or 0, tonumber(t and t.y) or 0, tonumber(t and t.r) or 0) end
 
 local function serializeRecord(rec)
     local out = table.Copy(rec)
@@ -799,66 +807,154 @@ local function serializeRecord(rec)
 end
 
 function P.SaveMapEntities(ply)
-    if IsValid(ply) and not ply:IsSuperAdmin() then notify(ply, "Только superadmin.", true) return end
+    if IsValid(ply) and not ply:IsSuperAdmin() then
+        notify(ply, "Только superadmin.", true)
+        return false, "нет прав"
+    end
+    if P.MapLoadBlocked then
+        local msg = "сохранение заблокировано: primary/backup телефонии повреждены"
+        notify(ply, msg, true)
+        print("[GRM Phone][!] SAVE BLOCKED: " .. msg)
+        return false, msg
+    end
+
     ensureDir()
-    local list = {}
-    for _, class in ipairs({ "grm_phone", "grm_payphone", "grm_pbx_station", "grm_phone_wiretap", "grm_phone_terminal" }) do
+    local list, live = {}, {}
+    for _, class in ipairs(MAP_ENTITY_CLASSES) do
         for _, ent in ipairs(ents.FindByClass(class)) do
-            -- Купленное игроками оборудование сохраняется отдельной системой магазина,
-            -- чтобы не было дублей после grm_phone_save.
-            if not ent.GRMPhoneShopOwned then
+            -- Купленное игроками оборудование живёт в Phone Shop. Оно не
+            -- попадает в карту и не должно удаляться ручной загрузкой хаба.
+            if IsValid(ent) and not ent.GRMPhoneShopOwned then
                 list[#list + 1] = serializeRecord(entRecord(ent))
+                live[#live + 1] = ent
             end
         end
     end
+
     local guard = GRM.PersistenceGuard
     local ok
-    if guard and guard.WriteMirrored then ok = guard.WriteMirrored(savePath(), backupPath(), list, "phone map")
-    else local okJ,raw=pcall(util.TableToJSON,list,true);ok=okJ and isstring(raw);if ok then file.Write(savePath(),raw)file.Write(backupPath(),raw)end end
-    notify(ply, (ok and "Сохранено" or "ОШИБКА сохранения") .. " телефонного оборудования: " .. #list)
-    return ok == true, #list
+    if guard and guard.WriteMirrored then
+        ok = guard.WriteMirrored(savePath(), backupPath(), list, "phone map")
+    else
+        local okJ, raw = pcall(util.TableToJSON, list, true)
+        ok = okJ and isstring(raw) and raw ~= ""
+        if ok then
+            file.Write(savePath(), raw)
+            file.Write(backupPath(), raw)
+            ok = file.Read(savePath(), "DATA") == raw and file.Read(backupPath(), "DATA") == raw
+        end
+    end
+
+    if ok then
+        for _, ent in ipairs(live) do
+            if IsValid(ent) then
+                ent.GRMPhoneMapPermanent = true
+                if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
+                local ph = ent.GetPhysicsObject and ent:GetPhysicsObject() or nil
+                if IsValid(ph) then ph:EnableMotion(false) end
+            end
+        end
+    end
+    notify(ply, (ok and "Сохранено" or "ОШИБКА сохранения") .. " телефонного оборудования: " .. #list, not ok)
+    return ok == true, ok and ("сохранено телефонного оборудования: " .. #list) or "ошибка записи/read-back"
+end
+
+local function validateMapRecords(data)
+    for key in pairs(data) do
+        if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then return false, "база телефонии не является массивом" end
+    end
+    for index, rec in ipairs(data) do
+        if not istable(rec) or not MAP_ENTITY_ALLOWED[tostring(rec.class or "")]
+            or not istable(rec.pos) or not istable(rec.ang) then
+            return false, "некорректная запись телефонии #" .. index
+        end
+    end
+    return true
 end
 
 function P.LoadMapEntities(ply)
-    if IsValid(ply) and not ply:IsSuperAdmin() then notify(ply, "Только superadmin.", true) return false end
+    if IsValid(ply) and not ply:IsSuperAdmin() then
+        notify(ply, "Только superadmin.", true)
+        return false, "нет прав"
+    end
     local guard = GRM.PersistenceGuard
     local data, source, raw, meta
-    if guard and guard.ReadBest then data,source,raw,meta=guard.ReadBest(savePath(),{backupPath()},"phone map")
-    else local txt=file.Exists(savePath(),"DATA")and(file.Read(savePath(),"DATA")or"")or"";data=jsonT(txt);source=data and savePath()or nil;raw=txt;meta={hadAny=txt~=""}end
-    if not istable(data) then
-        local msg=(meta and meta.hadAny)and"Файл телефонии повреждён; живые объекты сохранены"or"Сохранение телефонии для карты не найдено"
-        notify(ply,msg,true) print("[GRM Phone] LOAD skipped: "..msg)
-        return false,msg
+    if guard and guard.ReadBest then
+        data, source, raw, meta = guard.ReadBest(savePath(), { backupPath() }, "phone map")
+    else
+        local txt = file.Exists(savePath(), "DATA") and (file.Read(savePath(), "DATA") or "") or ""
+        data = jsonT(txt); source = data and savePath() or nil; raw = txt; meta = { hadAny = txt ~= "" }
     end
-    if guard and guard.Materialize and raw then guard.Materialize(savePath(),backupPath(),raw,"phone map")end
-    -- Удаляем живые объекты только ПОСЛЕ успешного разбора файла.
-    for _, class in ipairs({ "grm_phone", "grm_payphone", "grm_pbx_station", "grm_phone_wiretap", "grm_phone_terminal" }) do
-        for _, ent in ipairs(ents.FindByClass(class)) do ent:Remove() end
+    if not istable(data) then
+        P.MapLoadBlocked = meta and meta.hadAny == true
+        local msg = P.MapLoadBlocked and "Файл телефонии повреждён; живые объекты сохранены"
+            or "Сохранение телефонии для карты не найдено"
+        notify(ply, msg, true)
+        print("[GRM Phone] LOAD skipped: " .. msg)
+        return false, msg
+    end
+    local valid, why = validateMapRecords(data)
+    if not valid then
+        P.MapLoadBlocked = true
+        notify(ply, why .. "; живые объекты сохранены", true)
+        print("[GRM Phone][!] LOAD rejected: " .. why)
+        return false, why
     end
 
-    local count = 0
+    P.MapLoadBlocked = false
+    if guard and guard.Materialize and raw then
+        if not guard.Materialize(savePath(), backupPath(), raw, "phone map") then
+            return false, "не удалось восстановить primary/backup телефонии"
+        end
+    end
+
+    -- Только карта заменяется картой. Телефоны, купленные персонажами,
+    -- переживают /grm_persistence load и остаются в Phone Shop.
+    for _, class in ipairs(MAP_ENTITY_CLASSES) do
+        for _, ent in ipairs(ents.FindByClass(class)) do
+            if IsValid(ent) and not ent.GRMPhoneShopOwned then
+                if cleanupCallsForRemovedEntity then cleanupCallsForRemovedEntity(ent) end
+                ent:Remove()
+            end
+        end
+    end
+
+    local count, failed = 0, 0
     for _, rec in ipairs(data) do
         local ent = ents.Create(rec.class)
         if IsValid(ent) then
-            ent:SetPos(tableToVec(rec.pos or {})); ent:SetAngles(tableToAng(rec.ang or {})); ent:Spawn(); ent:Activate()
+            ent.GRMPhoneMapPermanent = true
+            ent:SetPos(tableToVec(rec.pos)); ent:SetAngles(tableToAng(rec.ang)); ent:Spawn(); ent:Activate()
             if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
             if rec.class == "grm_phone" or rec.class == "grm_payphone" then
-                ent:SetPhoneNumber(rec.number or P.GenerateNumber()); ent:SetDisplayName(rec.name or (rec.class == "grm_payphone" and "Таксофон" or "Телефон")); ent:SetExchangeID(rec.exchange or "main")
+                ent:SetPhoneNumber(tostring(rec.number or P.GenerateNumber()))
+                ent:SetDisplayName(tostring(rec.name or (rec.class == "grm_payphone" and "Таксофон" or "Телефон")))
+                ent:SetExchangeID(tostring(rec.exchange or "main"))
                 updatePhoneVisual(ent, "idle")
             elseif rec.class == "grm_pbx_station" then
-                ent:SetExchangeID(rec.exchange or "main"); ent:SetActive(rec.active ~= false); ent:SetMaxLines(tonumber(rec.maxLines) or cfg().PBXDefaultMaxLines or 60)
+                ent:SetExchangeID(tostring(rec.exchange or "main")); ent:SetActive(rec.active ~= false)
+                ent:SetMaxLines(math.max(1, tonumber(rec.maxLines) or cfg().PBXDefaultMaxLines or 60))
             elseif rec.class == "grm_phone_terminal" then
-                ent:SetTerminalName(rec.name or "Мониторинг связи")
+                ent:SetTerminalName(tostring(rec.name or "Мониторинг связи"))
             elseif rec.class == "grm_phone_wiretap" then
-                ent:SetTargetNumber(rec.target or ""); ent:SetExchangeID(rec.exchange or "main"); ent:SetActive(rec.active == true)
+                ent:SetTargetNumber(tostring(rec.target or "")); ent:SetExchangeID(tostring(rec.exchange or "main")); ent:SetActive(rec.active == true)
             end
+            local ph = ent.GetPhysicsObject and ent:GetPhysicsObject() or nil
+            if IsValid(ph) then ph:EnableMotion(false) end
             count = count + 1
+        else
+            failed = failed + 1
         end
     end
-    notify(ply, "Загружено телефонного оборудования: " .. count)
-    print("[GRM Phone] LOAD source="..tostring(source).." records="..count)
-    return true, count
+    local msg = ("загружено телефонного оборудования: %d, ошибок: %d"):format(count, failed)
+    notify(ply, msg, failed > 0)
+    print("[GRM Phone] LOAD source=" .. tostring(source) .. " records=" .. count .. " failed=" .. failed)
+    return failed == 0, msg
 end
+
+-- Формальный контракт единого меню: не зависит от внутренних имён map-API.
+function P.SaveAll(ply) return P.SaveMapEntities(ply) end
+function P.LoadAll(ply) return P.LoadMapEntities(ply) end
 
 concommand.Add("grm_phone_save", function(ply) P.SaveMapEntities(ply) end)
 concommand.Add("grm_phone_load", function(ply) P.LoadMapEntities(ply) end)
@@ -927,7 +1023,7 @@ local function removeFromShopStorage(ent)
     return true
 end
 
-local function cleanupCallsForRemovedEntity(ent)
+cleanupCallsForRemovedEntity = function(ent)
     if not IsValid(ent) then return end
     if isPhoneEntity(ent) then
         local call = getCall(ent:GetCallID())

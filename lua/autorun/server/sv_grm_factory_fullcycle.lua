@@ -13,6 +13,7 @@ include("autorun/sh_grm_factory_fullcycle_entities.lua")
 GRM = GRM or {}
 GRM.FactoryCycle = GRM.FactoryCycle or {}
 local FC = GRM.FactoryCycle
+FC.PersistenceVersion = "1.1.0"
 local CFG = FC.Config
 
 local NET_OPEN_CRAFT = "GRM_FC_OpenCraft"
@@ -75,18 +76,47 @@ local function mapFile()
     return MAP_DIR .. "/" .. string.lower(game.GetMap() or "unknown") .. ".json"
 end
 
+FC.DataLoadBlocked = FC.DataLoadBlocked or {}
+
 local function readJSON(path, fallback)
-    if not file.Exists(path, "DATA") then return table.Copy(fallback or {}) end
-    local raw = file.Read(path, "DATA") or ""
-    if raw == "" then return table.Copy(fallback or {}) end
-    local ok, data = pcall(util.JSONToTable, raw, false, true)
-    return ok and istable(data) and data or table.Copy(fallback or {})
+    local guard = GRM.PersistenceGuard
+    local data, source, raw, meta
+    if guard and guard.ReadBest then
+        data, source, raw, meta = guard.ReadBest(path, { path .. ".backup" }, "factory " .. path)
+    else
+        raw = file.Exists(path, "DATA") and (file.Read(path, "DATA") or "") or ""
+        local ok, parsed = pcall(util.JSONToTable, raw, false, true)
+        data = ok and istable(parsed) and parsed or nil
+        source = data and path or nil
+        meta = { hadAny = raw ~= "" }
+    end
+    if not istable(data) then
+        FC.DataLoadBlocked[path] = meta and meta.hadAny == true
+        if FC.DataLoadBlocked[path] then
+            print("[GRM Factory][!] LOAD BLOCKED: invalid primary/backup data/" .. path)
+        end
+        return table.Copy(fallback or {}), not FC.DataLoadBlocked[path]
+    end
+    FC.DataLoadBlocked[path] = false
+    if guard and guard.Materialize and raw then guard.Materialize(path, path .. ".backup", raw, "factory " .. path) end
+    print("[GRM Factory] LOAD source=" .. tostring(source) .. " path=" .. path)
+    return data, true
 end
 
 local function writeJSON(path, data)
+    if FC.DataLoadBlocked[path] then
+        print("[GRM Factory][!] SAVE BLOCKED after invalid primary/backup: data/" .. path)
+        return false
+    end
     ensureDirectories()
-    local json = util.TableToJSON(data or {}, true)
-    if json then file.Write(path, json) end
+    local guard = GRM.PersistenceGuard
+    if guard and guard.WriteMirrored then
+        return guard.WriteMirrored(path, path .. ".backup", data or {}, "factory " .. path)
+    end
+    local okJ, json = pcall(util.TableToJSON, data or {}, true)
+    if not okJ or not isstring(json) or json == "" then return false end
+    file.Write(path, json); file.Write(path .. ".backup", json)
+    return file.Read(path, "DATA") == json and file.Read(path .. ".backup", "DATA") == json
 end
 
 local function defaultMarket()
@@ -98,9 +128,10 @@ local function defaultMarket()
 end
 
 local function loadWeaponData()
-    FC.WeaponLockerData = readJSON(LOCKERS_FILE, {})
-    FC.WeaponBuyerData = readJSON(BUYERS_FILE, {})
-    FC.WeaponMarketData = readJSON(MARKET_FILE, defaultMarket())
+    local lockersOK, buyersOK, marketOK
+    FC.WeaponLockerData, lockersOK = readJSON(LOCKERS_FILE, FC.WeaponLockerData or {})
+    FC.WeaponBuyerData, buyersOK = readJSON(BUYERS_FILE, FC.WeaponBuyerData or {})
+    FC.WeaponMarketData, marketOK = readJSON(MARKET_FILE, FC.WeaponMarketData or defaultMarket())
 
     -- Новые оружия из конфига добавляются, но старые админские цены не затираются.
     for class, info in pairs(defaultMarket()) do
@@ -108,19 +139,13 @@ local function loadWeaponData()
         FC.WeaponMarketData[class].name = FC.WeaponMarketData[class].name or info.name
         FC.WeaponMarketData[class].price = tonumber(FC.WeaponMarketData[class].price) or info.price
     end
+    return lockersOK and buyersOK and marketOK,
+        ("локеры=%s, скупщики=%s, рынок=%s"):format(tostring(lockersOK), tostring(buyersOK), tostring(marketOK))
 end
 
-local function saveLockers()
-    writeJSON(LOCKERS_FILE, FC.WeaponLockerData)
-end
-
-local function saveMarket()
-    writeJSON(MARKET_FILE, FC.WeaponMarketData)
-end
-
-local function saveBuyers()
-    writeJSON(BUYERS_FILE, FC.WeaponBuyerData)
-end
+local function saveLockers() return writeJSON(LOCKERS_FILE, FC.WeaponLockerData) end
+local function saveMarket() return writeJSON(MARKET_FILE, FC.WeaponMarketData) end
+local function saveBuyers() return writeJSON(BUYERS_FILE, FC.WeaponBuyerData) end
 
 local function vecTable(v) return { x = v.x, y = v.y, z = v.z } end
 local function angTable(a) return { p = a.p, y = a.y, r = a.r } end
@@ -1067,10 +1092,26 @@ function FC.SaveMap(ply, reason)
     end
     local path=mapFile();local guard=GRM.PersistenceGuard;local ok
     if guard and guard.WriteMirrored then ok=guard.WriteMirrored(path,path..".backup",records,"factory map")
-    else local okJ,raw=pcall(util.TableToJSON,records,true);ok=okJ and isstring(raw);if ok then file.Write(path,raw)file.Write(path..".backup",raw)end end
+    else
+        local okJ,raw=pcall(util.TableToJSON,records,true);ok=okJ and isstring(raw) and raw~=""
+        if ok then file.Write(path,raw);file.Write(path..".backup",raw);ok=file.Read(path,"DATA")==raw and file.Read(path..".backup","DATA")==raw end
+    end
     if IsValid(ply) then notify(ply, ok, (ok and "Сохранено" or "Ошибка сохранения") .. " заводского оборудования: " .. #records) end
     print("[GRM Factory Full Cycle] SAVE "..tostring(ok)..": " .. #records)
     return ok==true,"сохранено заводского оборудования: "..#records
+end
+
+local function validateMapRecords(records)
+    for key in pairs(records) do
+        if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then return false, "база оборудования не является массивом" end
+    end
+    for index, record in ipairs(records) do
+        if not istable(record) or not EQUIPMENT_CLASSES[tostring(record.class or "")]
+            or not istable(record.pos) or not istable(record.ang) then
+            return false, "некорректная запись оборудования #" .. index
+        end
+    end
+    return true
 end
 
 function FC.LoadMap(ply)
@@ -1079,7 +1120,10 @@ function FC.LoadMap(ply)
     if guard and guard.ReadBest then records,source,raw,meta=guard.ReadBest(path,{path..".backup"},"factory map")
     else local txt=file.Exists(path,"DATA")and(file.Read(path,"DATA")or"")or"";local ok,t=pcall(util.JSONToTable,txt,false,true);if ok and istable(t)then records,source,raw=t,path,txt end;meta={hadAny=txt~=""}end
     if not istable(records)then FC.MapLoadBlocked=meta and meta.hadAny==true;local why=FC.MapLoadBlocked and"primary/backup повреждены"or"файл карты отсутствует";print("[GRM Factory] LOAD skipped: "..why.."; live entities preserved")return false,why end
-    FC.MapLoadBlocked=false;if guard and guard.Materialize and raw then guard.Materialize(path,path..".backup",raw,"factory map")end
+    local valid, why = validateMapRecords(records)
+    if not valid then FC.MapLoadBlocked=true;print("[GRM Factory] LOAD rejected: "..why.."; live entities preserved")return false,why end
+    FC.MapLoadBlocked=false
+    if guard and guard.Materialize and raw and not guard.Materialize(path,path..".backup",raw,"factory map") then return false,"не удалось восстановить primary/backup завода" end
 
     FC.LoadingMap = true
     FC.StorageData = {}
@@ -1087,7 +1131,7 @@ function FC.LoadMap(ply)
         for _, ent in ipairs(ents.FindByClass(class)) do ent:Remove() end
     end
 
-    local count = 0
+    local count, failed = 0, 0
     for _, record in ipairs(records) do
         if EQUIPMENT_CLASSES[record.class] then
             local ent = ents.Create(record.class)
@@ -1118,14 +1162,43 @@ function FC.LoadMap(ply)
 
                 local phys = ent:GetPhysicsObject(); if IsValid(phys) then phys:EnableMotion(false); phys:Sleep() end
                 count = count + 1
+            else
+                failed = failed + 1
             end
         end
     end
     timer.Simple(1, function() FC.LoadingMap = false end)
 
-    if IsValid(ply) then notify(ply, true, "Загружено оборудования: " .. count) end
-    print("[GRM Factory Full Cycle] LOAD source="..tostring(source).." records=" .. count)
-    return true,"загружено оборудования: "..count
+    FC.MapLoadBlocked = failed > 0
+    local msg = ("загружено оборудования: %d, ошибок: %d"):format(count, failed)
+    if IsValid(ply) then notify(ply, failed == 0, msg) end
+    print("[GRM Factory Full Cycle] LOAD source="..tostring(source).." records=" .. count .. " failed=" .. failed)
+    return failed == 0, msg
+end
+
+-- Полный контракт для единого меню: карта + содержимое оружейных шкафов +
+-- запасы скупщиков + админские цены рынка сохраняются одним результатом.
+function FC.SaveAll(ply, reason)
+    for _, path in ipairs({ LOCKERS_FILE, BUYERS_FILE, MARKET_FILE }) do
+        if FC.DataLoadBlocked[path] then
+            return false, "сохранение завода заблокировано: повреждён data/" .. path
+        end
+    end
+    local mapOK, mapDetail = FC.SaveMap(ply, reason or "persistence hub")
+    local lockersOK, buyersOK, marketOK = saveLockers(), saveBuyers(), saveMarket()
+    local ok = mapOK == true and lockersOK == true and buyersOK == true and marketOK == true
+    return ok, tostring(mapDetail or "карта: ошибка")
+        .. ("; шкафы=%s, скупщики=%s, рынок=%s"):format(tostring(lockersOK), tostring(buyersOK), tostring(marketOK))
+end
+
+function FC.LoadAll(ply)
+    local dataOK, dataDetail = loadWeaponData()
+    if not dataOK then
+        return false, "данные шкафов/скупщиков/рынка повреждены; живое оборудование не перезагружено; "
+            .. tostring(dataDetail or "")
+    end
+    local mapOK, mapDetail = FC.LoadMap(ply)
+    return mapOK == true, tostring(mapDetail or "карта: ошибка") .. "; " .. tostring(dataDetail or "")
 end
 
 hook.Add("OnEntityCreated", "GRM_FC_AutoSaveCreated", function(ent)
@@ -1140,8 +1213,8 @@ hook.Add("PostCleanupMap", "GRM_FC_RestoreAfterCleanup", function()
     timer.Simple(1, function() if FC.LoadMap then FC.LoadMap(nil) end end)
 end)
 
-concommand.Add("grm_fc_save", function(ply) FC.SaveMap(ply, "manual") end)
-concommand.Add("grm_fc_load", function(ply) FC.LoadMap(ply) end)
+concommand.Add("grm_fc_save", function(ply) FC.SaveAll(ply, "manual") end)
+concommand.Add("grm_fc_load", function(ply) FC.LoadAll(ply) end)
 
 hook.Add("InitPostEntity", "GRM_FC_LoadMap", function() timer.Simple(5, function() FC.LoadMap(nil) end) end)
 hook.Add("ShutDown", "GRM_FC_SaveShutdown", function() FC.SaveMap(nil, "shutdown") end)

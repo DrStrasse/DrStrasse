@@ -46,11 +46,14 @@ local phone=readSource("lua/autorun/server/sv_grm_phone.lua")
 local logistics=readSource("lua/autorun/server/sv_grm_logistics.lua")
 local inventory=readSource("lua/autorun/sh_grm_inventory.lua")
 local electronics=readSource("lua/autorun/sh_grm_electronics.lua")
-ok(hub:find("GRM.Perm.SaveAll",1,true)and not hub:find('perm = { save = function() return isfunction(GRM_SaveEntities)',1,true),"Persistence Hub perm no longer calls mining saver")
-local parseAt=phone:find("guard.ReadBest",1,true)or 999999;local removeAt=phone:find("Удаляем живые объекты только ПОСЛЕ",1,true)or 0
+ok(hub:find('invoke("Perm", "SaveAll"',1,true)and not hub:find('perm = { save = function() return isfunction(GRM_SaveEntities)',1,true),"Persistence Hub perm no longer calls mining saver")
+local parseAt=phone:find("guard.ReadBest",1,true)or 999999;local removeAt=phone:find("Только карта заменяется картой",1,true)or 0
 ok(parseAt<removeAt,"phone parses primary/backup before removing live entities")
 ok(logistics:find("live entities preserved",1,true)and logistics:find("L.LoadBlocked",1,true),"logistics preserves live entities and blocks empty shutdown save")
 ok(inventory:find("inventoryLoadBlocked",1,true)and inventory:find("INV_BACKUP_FILE",1,true),"inventory autosave blocked after failed load")
 ok(electronics:find("DBLoadBlocked",1,true)and electronics:find("MapLoadBlocked",1,true),"electronics DB/map fail closed")
+local guardSrc=readSource("lua/autorun/sh_01_grm_persistence_guard.lua")
+ok(guardSrc:find('"grm_food/vending_" .. map',1,true) and guardSrc:find('"grm_factory_fullcycle/weapon_lockers.json"',1,true),
+   "guard snapshots food vending and all factory support databases")
 print(("PERSIST GUARD: %d/%d failures=%d"):format(pass,pass+fail,fail))
 os.exit(fail>0 and 1 or 0)

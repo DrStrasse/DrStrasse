@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Perm Entities v1.7.0 (Код 50/Код 89)
+    GRM Perm Entities v1.7.1 (Код 50/Код 89)
     «Пермы» для разворачиваемых энтити GRM: банкомат, таксофон, АТС,
     телефоны, CCTV-камера/монитор/сервер, сигнализация (сенсор/хаб/терминал/
     динамик), кейпад, RoomTap (чип/сервер/терминал), рудный узел/скупщик,
@@ -43,7 +43,7 @@
 -- Код 110: перм агрегатов кухни (плита/холодильник/горшок) — состояние
 -- (лоток плиты, содержимое холодильника, посадка) едет в rec.data
 -- через GRM.PermData-делегаты sh_grm_food_kitchen.lua.
-local PERM_VER = "1.7.0"
+local PERM_VER = "1.7.1"
 GRM = GRM or {}
 GRM._permEntitiesVer = PERM_VER
 
@@ -444,8 +444,9 @@ if SERVER then
     -- Общий снимок визуального состояния. Раньше обычный prop_physics
     -- восстанавливал только модель/позицию и терял цвет, прозрачность,
     -- материал, skin и bodygroups после рестарта.
-    local function captureEntity(rec, ent, transform)
+    local function captureEntity(rec, ent, transform, preserveMissingDoor)
         if not (istable(rec) and IsValid(ent)) then return end
+        local previousDoor = preserveMissingDoor and rec.door or nil
         pcall(function() rec.model = tostring(ent:GetModel() or rec.model or "") end)
         local slidingBase = ent.isSlidingDoor and ent.Sliding_BasePos or nil
         if slidingBase then
@@ -460,6 +461,7 @@ if SERVER then
             rec.ang = { p = ang.p, y = ang.y, r = ang.r }
         end
         captureDoorState(rec, ent)
+        if previousDoor and not rec.door then rec.door = previousDoor end
         local visual = {}
         pcall(function() visual.material = string.sub(tostring(ent:GetMaterial() or ""), 1, 128) end)
         pcall(function()
@@ -786,12 +788,12 @@ if SERVER then
     -- Возвращает: сколько заспавнено, сколько уже стояло и было привязано,
     -- сколько пока не удалось поднять. Обрабатывается ВЕСЬ JSON без квоты:
     -- лимиты добавления не являются лимитами восстановления.
-    local function spawnAll(reason)
+    local function spawnAll(reason, classFilter)
         local map = game.GetMap()
         local done, skipped, pending = 0, 0, 0
         local claimed = {}
         for _, rec in ipairs(loadDB()) do
-            if rec.map == map and PERM_CLASSES[rec.class] then
+            if rec.map == map and PERM_CLASSES[rec.class] and (not classFilter or classFilter[rec.class]) then
                 local occupied, byUID = findLiveForRecord(rec, claimed)
                 if IsValid(occupied) then
                     claimed[occupied] = true -- одна entity никогда не обслуживает две близкие записи
@@ -1377,15 +1379,66 @@ if SERVER then
     -- Совместимость: старые вызовы Upsert/UpdateEntry остаются рабочими
     P.Upsert      = function(ent) return GRM.PermData.Upsert(ent) end
     P.UpdateEntry = function(ent) return GRM.PermData.UpdateEntry(ent) end
+    local function normalizeClassFilter(classes)
+        if not istable(classes) then return nil end
+        local out = {}
+        for k, v in pairs(classes) do
+            if isstring(k) and v == true then out[k] = true
+            elseif type(k) == "number" and isstring(v) then out[v] = true end
+        end
+        return out
+    end
+
+    local function refreshLiveRecords(list, classFilter)
+        local map, refreshed = game.GetMap(), 0
+        for _, rec in ipairs(list) do
+            if rec.map == map and (not classFilter or classFilter[rec.class]) and isstring(rec.uid) then
+                local live = nil
+                for _, ent in ipairs(ents.FindByClass(tostring(rec.class or ""))) do
+                    if IsValid(ent) and ent._grmPermUID == rec.uid then live = ent break end
+                end
+                if IsValid(live) then
+                    captureEntity(rec, live, true, true)
+                    local extractFn = GRM.PermData and GRM.PermData.Extract and GRM.PermData.Extract[rec.class]
+                    if extractFn then
+                        local okX, data = pcall(extractFn, live)
+                        if okX and istable(data) then rec.data = data end
+                    end
+                    refreshed = refreshed + 1
+                end
+            end
+        end
+        return refreshed
+    end
+
     function P.SaveAll()
         local list = loadDB()
+        local refreshed = refreshLiveRecords(list)
         local ok = saveList(list)
-        return ok, ok and ("сохранено perm-записей: " .. #list) or "ошибка записи perm primary/backup"
+        return ok, ok and ("сохранено perm-записей: " .. #list .. ", обновлено живых: " .. refreshed)
+            or "ошибка записи perm primary/backup"
+    end
+    function P.SaveClasses(classes, reason)
+        local filter = normalizeClassFilter(classes)
+        if not filter then return false, "не передан список классов" end
+        local list = loadDB()
+        local refreshed = refreshLiveRecords(list, filter)
+        local ok = saveList(list)
+        return ok, ok and (("обновлено живых объектов: %d (%s)"):format(refreshed, tostring(reason or "classes")))
+            or "ошибка записи perm primary/backup"
     end
     function P.LoadAll()
         local spawned, bound, pending = spawnAll("Persistence Hub")
-        return not permLoadBlocked, ("восстановлено %d, привязано %d, ожидают повтора %d")
+        return not permLoadBlocked and pending == 0, ("восстановлено %d, привязано %d, ожидают повтора %d")
             :format(spawned, bound, pending)
+    end
+    function P.LoadClasses(classes, reason)
+        local filter = normalizeClassFilter(classes)
+        if not filter then return false, "не передан список классов" end
+        local spawned, bound, pending = spawnAll(tostring(reason or "class load"), filter)
+        return not permLoadBlocked and pending == 0,
+            ("кухонных агрегатов восстановлено %d, уже на месте %d, ожидают повтора %d")
+                :format(spawned, bound, pending)
     end
 
     -- Старые /permadd и /permremove теперь используют тот же API, что

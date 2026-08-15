@@ -761,7 +761,7 @@ dofile("lua/autorun/sh_grm_perm_entities.lua")
 -- Код 108: ядро ручных связей FFD Link — грузим ДО /permadd, чтобы Extract
 -- кейпада/сканера уже писал rec.data.links (ручную привязку к дверям)
 dofile("lua/autorun/sh_grm_ffdlink.lua")
-ok(GRM._permEntitiesVer == "1.7.0", "perm-модуль v1.7.0 загружен (visual/uid + rec.data-хуки)")
+ok(GRM._permEntitiesVer == "1.7.1", "perm-модуль v1.7.1 загружен (visual/uid + rec.data-хуки)")
 ok(GRM._ffdLinkVer == "1.2.0" and type(GRM.FFDLink.Add) == "function"
    and type(GRM.FFDLink.Toggle) == "function" and type(GRM.FFDLink.Fade) == "function",
    "ячейка связей Кода 109 (v1.2.0): GRM.FFDLink загружен (Add/Toggle/Fade), авто-радиус-фолбэк удалён")

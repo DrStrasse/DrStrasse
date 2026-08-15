@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Persistence Guard v1.0.0 (Код 62)
+    GRM Persistence Guard v1.1.0 (Код 62)
 
     Загружается раньше остальных GRM-модулей и снимает boot-копию важных
     DATA-файлов до того, как какой-либо поздний загрузчик успеет записать
@@ -12,7 +12,7 @@ if not SERVER then return end
 GRM = GRM or {}
 GRM.PersistenceGuard = GRM.PersistenceGuard or {}
 local P = GRM.PersistenceGuard
-P.Version = "1.0.0"
+P.Version = "1.1.0"
 P.Boot = P.Boot or {}
 
 local function jsonT(raw)
@@ -71,6 +71,10 @@ for _, path in ipairs({
     "grm_vehicle_garages.json", "grm_vehicle_garages.json.backup",
     "grm_vehicle_dealers/" .. map .. ".json", "grm_vehicle_dealers/" .. map .. ".json.backup",
     "grm_factory_fullcycle/maps/" .. map .. ".json", "grm_factory_fullcycle/maps/" .. map .. ".json.backup",
+    "grm_factory_fullcycle/weapon_lockers.json", "grm_factory_fullcycle/weapon_lockers.json.backup",
+    "grm_factory_fullcycle/weapon_buyers.json", "grm_factory_fullcycle/weapon_buyers.json.backup",
+    "grm_factory_fullcycle/weapon_market.json", "grm_factory_fullcycle/weapon_market.json.backup",
+    "grm_food/vending_" .. map .. ".json", "grm_food/vending_" .. map .. ".json.backup",
     "grm_electronics/database.json", "grm_electronics/database.json.backup",
     "grm_electronics/" .. map .. ".json", "grm_electronics/" .. map .. ".json.backup",
     "grm_logistics/maps/" .. map .. ".json", "grm_logistics/maps/" .. map .. ".json.backup",

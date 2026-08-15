@@ -164,12 +164,12 @@ local function mkMod(name, saveNames, loadNames)
   end
   return m
 end
-GRM.Phone = mkMod("phone", { "SaveMapEntities" }, { "LoadMapEntities" })
+GRM.Phone = mkMod("phone", { "SaveAll", "SaveMapEntities" }, { "LoadAll", "LoadMapEntities" })
 GRM.CCTV = mkMod("cctv", { "SavePermanent" }, { "LoadPermanent" })
 GRM.Alarm = mkMod("alarm", { "SavePermanent" }, { "LoadPermanent" })
-GRM.FactoryCycle = mkMod("factory", { "SaveMap" }, { "LoadMap" })
+GRM.FactoryCycle = mkMod("factory", { "SaveAll", "SaveMap" }, { "LoadAll", "LoadMap" })
 GRM.Logistics = mkMod("logistics", { "SaveMap" }, { "LoadMap" })
-GRM.Food = mkMod("vending", { "SaveVendingMachines" }, { "LoadVendingMachines" })
+GRM.Food = mkMod("food", { "SaveAll", "SaveVendingMachines" }, { "LoadAll", "LoadVendingMachines" })
 GRM.RoomTap = mkMod("roomtap", { "SaveMapEquipment" }, { "LoadMapEquipment" })
 GRM.Wanted = mkMod("wanted", { "Save" }, { "Load" })
 GRM.Doors = mkMod("doors")
@@ -182,6 +182,10 @@ GRM.Doors.LoadWarrants = function() return true end
 GRM.Arrest = mkMod("arrest", { "SaveConfig" }, { "LoadConfig" })
 GRM.Electronics = mkMod("electronics", { "SaveAll" }, { "LoadAll" })
 GRM.VehicleDealer = mkMod("vehicle_dealers", { "SaveAll" }, { "LoadAll" })
+GRM.Customization = mkMod("customization", { "SaveData" }, { "LoadData" })
+GRM.Vendor = mkMod("vendors", { "SaveMapVendors" }, { "LoadMapVendors" })
+GRM.Quests = mkMod("quests", { "SaveAll" }, { "LoadAll" })
+GRM.Perm = mkMod("perm", { "SaveAll" }, { "LoadAll" })
 function _G.GRM_SaveEntities() calls["mining_save"] = (calls["mining_save"] or 0) + 1 return true end
 function _G.GRM_LoadEntities() calls["mining_load"] = (calls["mining_load"] or 0) + 1 return true end
 
@@ -199,7 +203,9 @@ H.seq = { "all_save" }
 H.netrecv["GRM_Persistence_Action"](0, Admin)
 ok(calls["electronics_save"] == 1, "all_save: электроника сохранена (SaveAll вызван)")
 ok(calls["vehicle_dealers_save"] == 1, "all_save: дилеры и гаражи сохранены (SaveAll вызван)")
-ok(calls["phone_save"] == 1 and calls["doors_save"] == 1 and calls["arrest_save"] == 1, "all_save: остальные модули сохранены")
+ok(calls["phone_save"] == 1 and calls["factory_save"] == 1 and calls["food_save"] == 1,
+   "all_save: телефония, полный завод и еда вызваны через SaveAll")
+ok(calls["doors_save"] == 1 and calls["arrest_save"] == 1, "all_save: остальные модули сохранены")
 ok(calls["mining_save"] ~= nil, "all_save: рудные узлы сохранены (GRM_SaveEntities; вызывается и для perm)")
 local allOk = false
 for i = #H.netlog, 1, -1 do
@@ -213,13 +219,55 @@ H.seq = { "all_load" }
 H.netrecv["GRM_Persistence_Action"](0, Admin)
 ok(calls["electronics_load"] == 1, "all_load: электроника загружена (LoadAll вызван)")
 ok(calls["vehicle_dealers_load"] == 1, "all_load: дилеры загружены (LoadAll вызван)")
-ok(calls["phone_load"] == 1 and calls["mining_load"] ~= nil, "all_load: остальные модули загружены")
+ok(calls["phone_load"] == 1 and calls["factory_load"] == 1 and calls["food_load"] == 1,
+   "all_load: телефония, полный завод и еда вызваны через LoadAll")
+ok(calls["mining_load"] ~= nil, "all_load: остальные модули загружены")
 
 -- точечная операция electronics_save
 calls = {}
 H.seq = { "electronics_save" }
 H.netrecv["GRM_Persistence_Action"](0, Admin)
 ok(calls["electronics_save"] == 1 and calls["phone_save"] == nil, "electronics_save: точечно, без побочных вызовов")
+
+
+-- Старый id vending остаётся совместимым, но ведёт в полный Food.SaveAll.
+calls = {}
+H.seq = { "vending_save" }
+H.netrecv["GRM_Persistence_Action"](0, Admin)
+ok(calls["food_save"] == 1, "legacy vending_save перенаправлен на полный food SaveAll")
+
+-- Отсутствующий модуль больше не выдаёт ложный зелёный SUCCESS.
+local keepPhone = GRM.Phone
+GRM.Phone = nil
+H.netlog = {}
+H.seq = { "phone_save" }
+H.netrecv["GRM_Persistence_Action"](0, Admin)
+local missingResult = lastNet("GRM_Persistence_Result")
+ok(missingResult and missingResult.f[1] == "F" and tostring(missingResult.f[2]):find("не загружен", 1, true),
+   "хаб fail-closed: отсутствующий модуль возвращает ошибку")
+GRM.Phone = keepPhone
+
+-- Регресс-стражи конкретных систем из запроса владельца.
+local function source(path) local f=assert(io.open(path,"rb"));local t=f:read("*a");f:close();return t end
+local hubSrc = source("lua/autorun/server/sv_grm_persistence_hub.lua")
+local phoneSrc = source("lua/autorun/server/sv_grm_phone.lua")
+local foodSrc = source("lua/autorun/server/sv_grm_food.lua")
+local factorySrc = source("lua/autorun/server/sv_grm_factory_fullcycle.lua")
+local clientSrc = source("lua/autorun/client/cl_grm_persistence_hub.lua")
+ok(hubSrc:find('invoke("Phone", "SaveAll"',1,true) and hubSrc:find('invoke("Food", "SaveAll"',1,true)
+   and hubSrc:find('invoke("FactoryCycle", "SaveAll"',1,true),
+   "хаб использует полные контракты Phone/Food/Factory SaveAll")
+ok(phoneSrc:find("not ent.GRMPhoneShopOwned",1,true) and phoneSrc:find("function P.SaveAll",1,true)
+   and phoneSrc:find("MAP_ENTITY_ALLOWED",1,true) and phoneSrc:find("P.MapLoadBlocked",1,true),
+   "телефония: купленные телефоны не удаляются, JSON-классы валидируются")
+ok(foodSrc:find("function GRM.Food.SaveAll",1,true) and foodSrc:find("GRM.PermData.Upsert",1,true)
+   and foodSrc:find("GRM.Perm.LoadClasses",1,true) and foodSrc:find("VendingLoadBlocked",1,true)
+   and clientSrc:find('{ id = "food"',1,true),
+   "еда: единая строка сохраняет автоматы и полное состояние кухни")
+ok(factorySrc:find("function FC.SaveAll",1,true) and factorySrc:find("saveLockers()",1,true)
+   and factorySrc:find("saveBuyers()",1,true) and factorySrc:find("saveMarket()",1,true)
+   and factorySrc:find("validateMapRecords",1,true) and factorySrc:find("FC.DataLoadBlocked",1,true),
+   "завод: единая операция включает карту, шкафы, скупщиков и рынок")
 
 -- не-админ не может сохранять
 calls = {}
