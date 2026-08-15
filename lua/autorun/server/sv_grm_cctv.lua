@@ -210,7 +210,7 @@ local function angT(a)
 end
 
 function CCTV.SavePermanent()
-    if CCTV.PersistenceLoadBlocked then print("[GRM CCTV][!] SAVE ОТКЛОНЁН после ошибки primary/backup")return false end
+    if CCTV.PersistenceLoadBlocked then local path=savePath();local g=GRM.PersistenceGuard;if g and g.AllowBlockedWrite and g.AllowBlockedWrite(path,path..".backup","CCTV")then CCTV.PersistenceLoadBlocked=false else print("[GRM CCTV][!] SAVE ОТКЛОНЁН после ошибки primary/backup")return false end end
     local list = {}
     for _, ent in pairs(CCTV.Devices) do
         if IsValid(ent) and isCCTVClass(classOf(ent)) and ent:GetPermanent() then

@@ -399,7 +399,7 @@ local function angT(a)
 end
 
 function A.SavePermanent()
-    if A.PersistenceLoadBlocked then print("[GRM Alarm][!] SAVE ОТКЛОНЁН после ошибки primary/backup")return false end
+    if A.PersistenceLoadBlocked then local path=savePath();local g=GRM.PersistenceGuard;if g and g.AllowBlockedWrite and g.AllowBlockedWrite(path,path..".backup","alarm")then A.PersistenceLoadBlocked=false else print("[GRM Alarm][!] SAVE ОТКЛОНЁН после ошибки primary/backup")return false end end
     local list = {}
     for _, ent in pairs(A.Devices) do
         if IsValid(ent) and isAlarmClass(classOf(ent)) and ent:GetPermanent() then

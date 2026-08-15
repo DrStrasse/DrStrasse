@@ -812,10 +812,14 @@ function P.SaveMapEntities(ply)
         return false, "нет прав"
     end
     if P.MapLoadBlocked then
-        local msg = "сохранение заблокировано: primary/backup телефонии повреждены"
-        notify(ply, msg, true)
-        print("[GRM Phone][!] SAVE BLOCKED: " .. msg)
-        return false, msg
+        local guard = GRM.PersistenceGuard
+        if guard and guard.AllowBlockedWrite and guard.AllowBlockedWrite(savePath(), backupPath(), "phone map") then
+            P.MapLoadBlocked = false
+        else
+            local msg = "сохранение заблокировано: primary/backup телефонии повреждены"
+            notify(ply, msg, true); print("[GRM Phone][!] SAVE BLOCKED: " .. msg)
+            return false, msg
+        end
     end
 
     ensureDir()

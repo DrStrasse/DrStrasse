@@ -2,11 +2,11 @@
 
 **Обновлено:** 2026-08-15
 **Текущая ветка:** `arena/01a0041b-drstrasse`
-**Текущая точка:** Код 62 Persistence Guard; Build Tools 61, QMenu 4.2.0, Fire 1.5.1, Documents 2.1.0, Perm 1.7.1, Persistence Hub 1.2, Equipment Persistence 1.1, Sliding 1.1.0, FFD Link 1.2.0, Prop Protect 2.1.0.
+**Текущая точка:** Код 62 Persistence Guard; Build Tools 61, QMenu 4.2.0, Fire 1.5.1, Documents 2.1.0, Perm 1.7.1, Persistence Hub 1.3, Guard 1.3, Equipment Persistence 1.1, Sliding 1.1.0, FFD Link 1.2.0, Prop Protect 2.1.0.
 **Репо:** `https://github.com/DrStrasse/DrStrasse`
 **Следующий свободный номер модуля:** **Код 63**.
 
-Сначала читать актуальный `HANDOVER.md` и находки **129**, **134**, **135**, **136** в `ANALYSIS.md`.
+Сначала читать актуальный `HANDOVER.md` и находки **129**, **134**, **135**, **136**, **137** в `ANALYSIS.md`.
 Разделы ниже сохранены как историческая диагностика пожарной системы; команды
 со старыми Arena-ветками больше не выполнять. Master — неполный снапшот.
 
@@ -14,7 +14,15 @@
 
 ---
 
-## Актуальный последний фикс: всё GRM-оборудование (находка 136)
+## Актуальный последний фикс: ручное Save All больше не клинит на false (находка 137)
+
+- Автосейвы остаются fail-closed, но явный клик SuperAdmin — recovery-транзакция.
+- Blocked raw primary/backup/boot сначала архивируются в `data/grm_recovery/`, затем пишется живое состояние.
+- Исправлены blockers Phone/Food/Factory/Logistics/Mining/OreSpawner/RoomTap/Alarm/CCTV/Electronics/Perm/VehicleDealer.
+- Хаб печатает результат каждого модуля в чат/консоль; `grm_persistence_status` показывает последний отчёт.
+- Контроль: **491/491 syntax, 79/79 sim, 16/16 roundtrip**.
+
+## Предыдущий фикс: всё GRM-оборудование (находка 136)
 
 - Logistics 1.3: карта/склады/шкафы + доступ/транспорт + переносимые ящики одним SaveAll.
 - Mining 1.1: UID для ручных узлов/скупщиков; OreSpawner points отдельно, auto-node не дублируются.

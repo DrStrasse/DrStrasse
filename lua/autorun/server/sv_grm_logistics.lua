@@ -60,7 +60,11 @@ local function read(path, fallback, label)
 end
 local function write(path, t, label)
     ensure()
-    if L.LoadBlocked[path] then print("[GRM Logistics][!] SAVE ОТКЛОНЁН " .. path) return false end
+    if L.LoadBlocked[path] then
+        local guard=GRM.PersistenceGuard
+        if guard and guard.AllowBlockedWrite and guard.AllowBlockedWrite(path,path..".backup",label or"logistics")then L.LoadBlocked[path]=nil
+        else print("[GRM Logistics][!] SAVE ОТКЛОНЁН "..path)return false end
+    end
     local guard = GRM.PersistenceGuard
     if guard and guard.WriteMirrored then return guard.WriteMirrored(path, path .. ".backup", t or {}, label or "logistics") end
     local okJ, raw = pcall(util.TableToJSON, t or {}, true)
@@ -1101,8 +1105,12 @@ function L.LoadMap(p)
 end
 
 function L.SaveAll(p)
-    for _,path in ipairs({MAPFILE,ACCESSFILE,CRATEFILE}) do
-        if L.LoadBlocked[path] then return false,"сохранение логистики заблокировано: повреждён data/"..path end
+    for _,path in ipairs({MAPFILE,ACCESSFILE,CRATEFILE})do
+        if L.LoadBlocked[path]then
+            local guard=GRM.PersistenceGuard
+            if guard and guard.AllowBlockedWrite and guard.AllowBlockedWrite(path,path..".backup","logistics "..path)then L.LoadBlocked[path]=nil
+            else return false,"сохранение логистики заблокировано: повреждён data/"..path end
+        end
     end
     local mapOK,mapDetail=L.SaveMap(p)
     local accessOK,cratesOK=saveAccess(),saveCrates()

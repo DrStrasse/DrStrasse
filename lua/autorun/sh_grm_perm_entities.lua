@@ -398,8 +398,9 @@ if SERVER then
 
     local function saveList(list)
         if permLoadBlocked then
-            print("[GRM Perm][!] SAVE ОТКЛОНЁН после ошибки загрузки primary/backup")
-            return false
+            local guard=GRM.PersistenceGuard
+            if guard and guard.AllowBlockedWrite and guard.AllowBlockedWrite(PERM_FILE,PERM_BACKUP_FILE,"perm entities")then permLoadBlocked=false
+            else print("[GRM Perm][!] SAVE ОТКЛОНЁН после ошибки загрузки primary/backup")return false end
         end
         local okJ, txt = pcall(util.TableToJSON, list, true)
         if not okJ or not isstring(txt) or txt == "" then
@@ -1412,6 +1413,11 @@ if SERVER then
     end
 
     function P.SaveAll()
+        if permLoadBlocked then
+            local guard=GRM.PersistenceGuard
+            if guard and guard.AllowBlockedWrite and guard.AllowBlockedWrite(PERM_FILE,PERM_BACKUP_FILE,"perm entities")then permLoadBlocked=false
+            else return false,"ошибка загрузки perm primary/backup; save blocked"end
+        end
         local list = loadDB()
         local refreshed = refreshLiveRecords(list)
         local ok = saveList(list)

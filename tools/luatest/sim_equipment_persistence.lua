@@ -6,6 +6,7 @@ function AddCSLuaFile()end
 function isstring(v)return type(v)=="string"end
 function istable(v)return type(v)=="table"end
 function isnumber(v)return type(v)=="number"end
+function isfunction(v)return type(v)=="function"end
 function IsValid(v)return type(v)=="table"and v.__valid~=false end
 function ErrorNoHalt(...)print(...)end
 function CurTime()return 100 end
@@ -56,6 +57,7 @@ function ents.FindByClass(class)local o={};for _,e in ipairs(world)do if IsValid
 function ents.FindInSphere(pos,r)local o={};for _,e in ipairs(world)do if IsValid(e)and e.pos:DistToSqr(pos)<=r*r then o[#o+1]=e end end;return o end
 function ents.GetAll()local o={};for _,e in ipairs(world)do if IsValid(e)then o[#o+1]=e end end;return o end
 GRM={PropProtect={MarkServerEntity=function(e)e.serverOwned=true end}}
+dofile("lua/autorun/sh_01_grm_persistence_guard.lua")
 
 -- OreSpawner first: MiningPersistence can distinguish automatic nodes by API.
 dofile("lua/autorun/server/sv_grm_ore_spawner.lua")
@@ -94,6 +96,10 @@ local before=#ents.GetAll();local badOK=MP.LoadAll(nil)
 ok(badOK==false and #ents.GetAll()==before,"corrupt mining JSON preserves all live entities")
 local blocked=MP.SaveEntities(nil)
 ok(blocked==false,"save blocked after corrupt primary+backup")
+local guard=GRM.PersistenceGuard;guard.BeginManualSave("equipment repair")
+local repaired,repairDetail=MP.SaveAll(nil)
+guard.EndManualSave()
+ok(repaired==true,"explicit manual SaveAll archives corruption and repairs from live state: "..tostring(repairDetail))
 
 print(("EQUIPMENT PERSISTENCE: %d/%d failures=%d"):format(pass,pass+fail,fail))
 if fail>0 then os.exit(1)end

@@ -99,8 +99,9 @@ if SERVER then
 
     local function SaveSpawnPoints()
         if OS.LoadBlocked then
-            print("[GRM Ore Spawner][!] SAVE BLOCKED после ошибки primary/backup")
-            return false, "сохранение точек заблокировано"
+            local guard=GRM.PersistenceGuard
+            if guard and guard.AllowBlockedWrite and guard.AllowBlockedWrite(SPAWN_FILE,SPAWN_BACKUP,"ore spawn points")then OS.LoadBlocked=false
+            else print("[GRM Ore Spawner][!] SAVE BLOCKED после ошибки primary/backup")return false,"сохранение точек заблокировано"end
         end
         if not file.Exists(SAVE_DIR, "DATA") then file.CreateDir(SAVE_DIR) end
         local out = {}

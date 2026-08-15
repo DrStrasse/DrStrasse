@@ -186,6 +186,10 @@ GRM.Customization = mkMod("customization", { "SaveData" }, { "LoadData" })
 GRM.Vendor = mkMod("vendors", { "SaveMapVendors" }, { "LoadMapVendors" })
 GRM.Quests = mkMod("quests", { "SaveAll" }, { "LoadAll" })
 GRM.Perm = mkMod("perm", { "SaveAll" }, { "LoadAll" })
+GRM.PersistenceGuard = {
+  BeginManualSave = function() calls["manual_begin"] = (calls["manual_begin"] or 0) + 1 end,
+  EndManualSave = function() calls["manual_end"] = (calls["manual_end"] or 0) + 1 end,
+}
 GRM.MiningPersistence = mkMod("mining", { "SaveAll" }, { "LoadAll" })
 function _G.GRM_SaveEntities() calls["mining_legacy_save"] = (calls["mining_legacy_save"] or 0) + 1 return 1 end
 function _G.GRM_LoadEntities() calls["mining_legacy_load"] = (calls["mining_legacy_load"] or 0) + 1 return 1 end
@@ -215,6 +219,8 @@ for i = #H.netlog, 1, -1 do
   if H.netlog[i].msg == "GRM_Persistence_Result" then allOk = (H.netlog[i].f[1] == "T") break end
 end
 ok(allOk, "all_save: результат OK")
+ok(calls["manual_begin"] == 1 and calls["manual_end"] == 1,
+   "all_save выполняется как явная recovery-транзакция с гарантированным End")
 
 -- all_load
 calls = {}

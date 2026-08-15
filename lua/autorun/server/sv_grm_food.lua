@@ -290,9 +290,13 @@ function GRM.Food.SaveVendingMachines(ply)
         return false, "нет прав"
     end
     if GRM.Food.VendingLoadBlocked then
-        local msg = "сохранение автоматов заблокировано: primary/backup повреждены"
-        reply(ply, "[GRM Food] " .. msg)
-        return false, msg
+        local guard = GRM.PersistenceGuard
+        if guard and guard.AllowBlockedWrite and guard.AllowBlockedWrite(vendingSaveFile(), vendingBackupFile(), "food vending") then
+            GRM.Food.VendingLoadBlocked = false
+        else
+            local msg = "сохранение автоматов заблокировано: primary/backup повреждены"
+            reply(ply, "[GRM Food] " .. msg); return false, msg
+        end
     end
 
     ensureVendingSaveDir()

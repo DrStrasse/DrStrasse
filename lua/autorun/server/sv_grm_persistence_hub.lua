@@ -2,8 +2,8 @@
 if not SERVER then return end
 
 GRM = GRM or {}
-GRM.PersistenceHub = GRM.PersistenceHub or { Version = "1.2.0" }
-GRM.PersistenceHub.Version = "1.2.0"
+GRM.PersistenceHub = GRM.PersistenceHub or { Version = "1.3.0" }
+GRM.PersistenceHub.Version = "1.3.0"
 
 util.AddNetworkString("GRM_Persistence_Open")
 util.AddNetworkString("GRM_Persistence_Action")
@@ -100,13 +100,43 @@ end
 
 local function all(ply, mode)
     local ids = { "phone", "cctv", "alarm", "factory", "logistics", "food", "roomtap", "wanted", "mining", "doors", "arrest", "customization", "vendors", "vehicle_dealers", "quests", "electronics", "perm" }
-    local done, errors = 0, {}
+    local done, errors, report = 0, {}, {}
     for _, id in ipairs(ids) do
         local ok, msg = operation(id .. "_" .. mode, ply)
-        if ok then done = done + 1 else errors[#errors + 1] = msg end
+        report[#report + 1] = { id = id, ok = ok == true, text = tostring(msg or "") }
+        if ok then done = done + 1 else errors[#errors + 1] = id end
+        print(("[GRM Persistence] %s %s: %s"):format(mode, id, tostring(msg)))
     end
-    if #errors > 0 then return false, (mode == "save" and "Сохранение" or "Загрузка") .. ": " .. done .. "/" .. #ids .. "; " .. table.concat(errors, " | ") end
-    return true, (mode == "save" and "Сохранено" or "Загружено") .. ": " .. done .. " модулей на карте " .. game.GetMap()
+    GRM.PersistenceHub.LastReport = report
+    if #errors > 0 then
+        return false, ("%s: %d/%d. Ошибки: %s. Подробности — чат и консоль сервера.")
+            :format(mode == "save" and "Сохранение" or "Загрузка", done, #ids, table.concat(errors, ", ")), report
+    end
+    return true, (mode == "save" and "Сохранено" or "Загружено") .. ": " .. done .. " модулей на карте " .. game.GetMap(), report
+end
+
+local function runAction(id, ply)
+    local isSave = id == "all_save" or id:sub(-5) == "_save"
+    local guard = GRM.PersistenceGuard
+    if isSave and guard and guard.BeginManualSave then guard.BeginManualSave(id) end
+    local okCall, ok, msg, report = pcall(function()
+        if id == "all_save" or id == "all_load" then
+            return all(ply, id:sub(5) == "save" and "save" or "load")
+        end
+        local result, text = operation(id, ply)
+        return result, text, { { id = id, ok = result == true, text = tostring(text or "") } }
+    end)
+    if isSave and guard and guard.EndManualSave then guard.EndManualSave() end
+    if not okCall then return false, "Внутренняя ошибка Persistence Hub: " .. tostring(ok), {} end
+    return ok, msg, report
+end
+
+local function sendReport(ply, report)
+    if not IsValid(ply) then return end
+    for _, row in ipairs(report or {}) do
+        local line = (row.ok and "[OK] " or "[ОШИБКА] ") .. tostring(row.id) .. ": " .. tostring(row.text)
+        if ply.ChatPrint then ply:ChatPrint("[GRM Save] " .. line) end
+    end
 end
 
 net.Receive("GRM_Persistence_Open", function(_, ply)
@@ -118,13 +148,17 @@ end)
 net.Receive("GRM_Persistence_Action", function(_, ply)
     if not IsValid(ply) or not ply:IsSuperAdmin() then return end
     local id = tostring(net.ReadString() or "")
-    local ok, msg
-    if id == "all_save" or id == "all_load" then
-        ok, msg = all(ply, id:sub(5) == "save" and "save" or "load")
-    else
-        ok, msg = operation(id, ply)
-    end
+    local ok, msg, report = runAction(id, ply)
+    sendReport(ply, report)
     notify(ply, ok, msg)
+end)
+
+concommand.Add("grm_persistence_status", function(ply)
+    if IsValid(ply) and not ply:IsSuperAdmin() then return end
+    print("[GRM Persistence] ===== LAST REPORT =====")
+    for _, row in ipairs(GRM.PersistenceHub.LastReport or {}) do
+        print((row.ok and "[OK] " or "[FAIL] ") .. tostring(row.id) .. ": " .. tostring(row.text))
+    end
 end)
 
 concommand.Add("grm_persistence_admin", function(ply)

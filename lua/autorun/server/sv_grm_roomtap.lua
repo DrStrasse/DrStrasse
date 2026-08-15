@@ -148,7 +148,11 @@ local function readJSON(path, fallback, label)
 end
 
 local function writeJSON(path, data, label)
-    if RT.LoadBlocked[path] then print("[GRM RoomTap][!] SAVE BLOCKED: " .. path) return false end
+    if RT.LoadBlocked[path]then
+        local guard=GRM.PersistenceGuard
+        if guard and guard.AllowBlockedWrite and guard.AllowBlockedWrite(path,path..".backup",label or"RoomTap")then RT.LoadBlocked[path]=nil
+        else print("[GRM RoomTap][!] SAVE BLOCKED: "..path)return false end
+    end
     ensureDir(DATA_DIR)
     local guard = GRM.PersistenceGuard
     if guard and guard.WriteMirrored then return guard.WriteMirrored(path, path .. ".backup", data or {}, label or path) end
@@ -684,7 +688,11 @@ local function applyRecord(ent, record)
 end
 
 function RT.SaveMapEquipment(ply)
-    if RT.MapLoadBlocked then print("[GRM RoomTap][!] SAVE ОТКЛОНЁН после ошибки primary/backup")return false,"save blocked"end
+    if RT.MapLoadBlocked then
+        local path,guard=mapFile(),GRM.PersistenceGuard
+        if guard and guard.AllowBlockedWrite and guard.AllowBlockedWrite(path,path..".backup","RoomTap map")then RT.MapLoadBlocked=false
+        else print("[GRM RoomTap][!] SAVE ОТКЛОНЁН после ошибки primary/backup")return false,"save blocked"end
+    end
     if IsValid(ply) and not ply:IsSuperAdmin() then
         notify(ply, false, "Сохранять расстановку оборудования может только superadmin.")
         return false
@@ -920,8 +928,12 @@ function RT.LoadShopOwned()
 end
 
 function RT.SaveAll(ply)
-    for _, path in ipairs({ ACCESS_FILE, SHOP_FILE }) do
-        if RT.LoadBlocked[path] then return false, "сохранение RoomTap заблокировано: повреждён data/" .. path end
+    for _,path in ipairs({ACCESS_FILE,SHOP_FILE})do
+        if RT.LoadBlocked[path]then
+            local guard=GRM.PersistenceGuard
+            if guard and guard.AllowBlockedWrite and guard.AllowBlockedWrite(path,path..".backup","RoomTap "..path)then RT.LoadBlocked[path]=nil
+            else return false,"сохранение RoomTap заблокировано: повреждён data/"..path end
+        end
     end
     local mapOK, mapDetail = RT.SaveMapEquipment(ply)
     local accessOK, accessDetail = RT.SaveAccess()

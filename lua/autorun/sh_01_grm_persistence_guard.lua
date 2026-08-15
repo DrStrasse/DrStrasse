@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Persistence Guard v1.2.0 (Код 62)
+    GRM Persistence Guard v1.3.0 (Код 62)
 
     Загружается раньше остальных GRM-модулей и снимает boot-копию важных
     DATA-файлов до того, как какой-либо поздний загрузчик успеет записать
@@ -12,7 +12,7 @@ if not SERVER then return end
 GRM = GRM or {}
 GRM.PersistenceGuard = GRM.PersistenceGuard or {}
 local P = GRM.PersistenceGuard
-P.Version = "1.2.0"
+P.Version = "1.3.0"
 P.Boot = P.Boot or {}
 
 local function jsonT(raw)
@@ -21,6 +21,55 @@ local function jsonT(raw)
     return ok and istable(data) and data or nil
 end
 P.JSONToTable = jsonT
+P.ManualSaveDepth = tonumber(P.ManualSaveDepth) or 0
+P.RecoveryCounter = tonumber(P.RecoveryCounter) or 0
+
+function P.BeginManualSave(label)
+    P.ManualSaveDepth = P.ManualSaveDepth + 1
+    if P.ManualSaveDepth == 1 then P.ManualSaveLabel = tostring(label or "manual save"); P.ManualArchived = {} end
+    print("[GRM Persist] MANUAL SAVE begin: " .. tostring(P.ManualSaveLabel))
+end
+function P.EndManualSave()
+    P.ManualSaveDepth = math.max(0, P.ManualSaveDepth - 1)
+    if P.ManualSaveDepth == 0 then print("[GRM Persist] MANUAL SAVE end"); P.ManualSaveLabel = nil end
+end
+function P.IsManualSave() return P.ManualSaveDepth > 0 end
+
+local function recoveryName(path, suffix)
+    P.RecoveryCounter = P.RecoveryCounter + 1
+    local safe = tostring(path or "unknown"):gsub("[^%w_%-%.]", "_")
+    return ("grm_recovery/%d_%03d_%s%s.txt"):format(os.time(), P.RecoveryCounter, safe, tostring(suffix or ""))
+end
+local function archiveRaw(path, raw, suffix)
+    if not isstring(raw) or raw == "" then return true end
+    if not file.IsDir("grm_recovery", "DATA") then file.CreateDir("grm_recovery") end
+    local target = recoveryName(path, suffix)
+    file.Write(target, raw)
+    local ok = file.Read(target, "DATA") == raw
+    print("[GRM Persist] recovery " .. tostring(ok) .. ": data/" .. target)
+    return ok
+end
+
+-- Разрешается только внутри явного клика Save/Save All суперадмина.
+-- Перед снятием fail-closed блокировки сохраняем raw primary/backup/boot.
+function P.AllowBlockedWrite(primary, backup, label)
+    if not P.IsManualSave() then return false end
+    primary, backup = tostring(primary or ""), tostring(backup or "")
+    local key = primary .. "|" .. backup
+    if P.ManualArchived and P.ManualArchived[key] then return true end
+    local ok = true
+    for _, item in ipairs({ { primary, "_primary" }, { backup, "_backup" } }) do
+        local path, suffix = item[1], item[2]
+        if path ~= "" and file.Exists(path, "DATA") then ok = archiveRaw(path, file.Read(path, "DATA") or "", suffix) and ok end
+        local boot = P.Boot[path]
+        if boot and boot.exists and boot.raw ~= "" then ok = archiveRaw(path, boot.raw, suffix .. "_boot") and ok end
+    end
+    if ok then
+        P.ManualArchived = P.ManualArchived or {}; P.ManualArchived[key] = true
+        print("[GRM Persist] ручное восстановление разрешено: " .. tostring(label or primary))
+    end
+    return ok
+end
 
 local function score(value, depth, seen)
     if not istable(value) then return value == nil and 0 or 1 end

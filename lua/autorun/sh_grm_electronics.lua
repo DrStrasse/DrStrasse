@@ -55,7 +55,7 @@ if SERVER then
  end
 
  function E.SaveDB()
-  if E.DBLoadBlocked then print("[GRM Electronics][!] DB SAVE ОТКЛОНЁН после ошибки primary/backup")return false end
+  if E.DBLoadBlocked then local g=GRM.PersistenceGuard;if g and g.AllowBlockedWrite and g.AllowBlockedWrite(E.DBFile,E.DBFile..".backup","electronics DB")then E.DBLoadBlocked=false else print("[GRM Electronics][!] DB SAVE ОТКЛОНЁН после ошибки primary/backup")return false end end
   local accounts={};for _,r in pairs(E.Accounts)do accounts[#accounts+1]=r end
   local allFiles={};for devID,store in pairs(E.Files)do local arr={};for _,r in pairs(store)do arr[#arr+1]=r end;allFiles[devID]=arr end
   local mailbox={};for _,r in pairs(E.Mailbox)do mailbox[#mailbox+1]=r end
@@ -77,7 +77,7 @@ if SERVER then
   if not constraint or not constraint.Rope then return end;local a,b=E.DeviceByID(link.a),E.DeviceByID(link.b);if not IsValid(a)or not IsValid(b)then return end;local length=a:WorldSpaceCenter():Distance(b:WorldSpaceCenter());local rope=constraint.Rope(a,b,0,0,a:WorldToLocal(a:WorldSpaceCenter()),b:WorldToLocal(b:WorldSpaceCenter()),length,0,0,3,"cable/cable2",false);link.rope=rope
  end
  function E.SaveMap()
-  if E.MapLoadBlocked then print("[GRM Electronics][!] MAP SAVE ОТКЛОНЁН после ошибки primary/backup")return false end
+  if E.MapLoadBlocked then local g=GRM.PersistenceGuard;if g and g.AllowBlockedWrite and g.AllowBlockedWrite(E.MapFile,E.MapFile..".backup","electronics map")then E.MapLoadBlocked=false else print("[GRM Electronics][!] MAP SAVE ОТКЛОНЁН после ошибки primary/backup")return false end end
   local devices={};for _,d in pairs(E.Devices)do if IsValid(d)then devices[#devices+1]={class=d:GetClass(),id=d:GetDeviceID(),name=d:GetDisplayName(),network=d:GetNetworkID(),ownerKey=d:GetOwnerKey(),ownerName=d:GetOwnerName(),active=d:GetDeviceActive(),model=d:GetModel(),pos=vecT(d:GetPos()),ang=angT(d:GetAngles()),config=E.Configs[d:GetDeviceID()]or{}}end end
   local links={};for _,l in pairs(E.Links)do links[#links+1]={id=l.id,a=l.a,b=l.b}end;local ok=write(E.MapFile,{version=1,devices=devices,links=links},"electronics map");if ok then E.DirtyMap=false end;return ok
  end

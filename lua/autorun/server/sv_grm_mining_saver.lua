@@ -95,8 +95,9 @@ end
 
 local function writeRecords(records)
     if MP.LoadBlocked then
-        print("[GRM Mining][!] SAVE BLOCKED после ошибки primary/backup")
-        return false
+        local guard=GRM.PersistenceGuard
+        if guard and guard.AllowBlockedWrite and guard.AllowBlockedWrite(SAVE_FILE,BACKUP_FILE,"mining equipment")then MP.LoadBlocked=false
+        else print("[GRM Mining][!] SAVE BLOCKED после ошибки primary/backup")return false end
     end
     ensureDirectory()
     local guard = GRM.PersistenceGuard
@@ -123,7 +124,11 @@ end
 function MP.SaveEntities(ply)
     if IsValid(ply) and not ply:IsAdmin() then return false, "нет прав", 0 end
     if State.loading then return false, "загрузка шахты ещё выполняется", 0 end
-    if MP.LoadBlocked then return false, "сохранение шахты заблокировано после ошибки загрузки", 0 end
+    if MP.LoadBlocked then
+        local guard=GRM.PersistenceGuard
+        if guard and guard.AllowBlockedWrite and guard.AllowBlockedWrite(SAVE_FILE,BACKUP_FILE,"mining equipment")then MP.LoadBlocked=false
+        else return false,"сохранение шахты заблокировано после ошибки загрузки",0 end
+    end
     if GRM.OreSpawner and GRM.OreSpawner.MarkManagedNodes then GRM.OreSpawner.MarkManagedNodes() end
 
     local records, live = {}, {}

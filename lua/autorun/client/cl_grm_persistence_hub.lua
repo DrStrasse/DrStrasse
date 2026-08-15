@@ -56,7 +56,7 @@ local function open()
 
     local hint = vgui.Create("DLabel", frame)
     hint:SetPos(22, 77) hint:SetSize(770, 35) hint:SetFont("GRMPersistSmall") hint:SetTextColor(C.dim)
-    hint:SetText("Кнопки работают для текущей карты: сохраняют координаты, углы, модели и настройки модулей. Загрузка восстанавливает объекты без ручного поиска команд.") hint:SetWrap(true)
+    hint:SetText("Ручное сохранение делает текущий живой мир авторитетным. Заблокированные старые JSON сначала архивируются в data/grm_recovery/. Подробности результата идут в чат и консоль.") hint:SetWrap(true)
 
     local allSave = btn(frame, "СОХРАНИТЬ ВСЁ", C.green) allSave:SetPos(22, 120) allSave:SetSize(370, 40)
     local allLoad = btn(frame, "ЗАГРУЗИТЬ ВСЁ", C.blue) allLoad:SetPos(408, 120) allLoad:SetSize(370, 40)

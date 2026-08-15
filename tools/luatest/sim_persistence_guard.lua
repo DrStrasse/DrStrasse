@@ -11,7 +11,7 @@ game={GetMap=function()return"gm_test"end}
 local mem,objects,nextObject={}, {}, 0
 local function enc(t)nextObject=nextObject+1;local id="J"..tostring(nextObject);objects[id]=t;return id end
 util={JSONToTable=function(raw)return objects[raw]end,TableToJSON=function(t)return enc(t)end}
-file={Exists=function(p)return mem[p]~=nil end,Read=function(p)return mem[p]end,Write=function(p,v)mem[p]=v end}
+file={Exists=function(p)return mem[p]~=nil end,Read=function(p)return mem[p]end,Write=function(p,v)mem[p]=v end,IsDir=function()return true end,CreateDir=function()end}
 concommand={Add=function()end}
 GRM={}
 -- Boot has rich primary; current data will be replaced after guard loads.
@@ -37,6 +37,15 @@ ok(auth.keep==true and auth.old==nil and asrc=="authoritative.json","nonempty pr
 mem["broken.json"]="BROKEN";mem["broken.json.backup"]="ALSO_BROKEN"
 local bad,_,_,meta=P.ReadBest("broken.json",{"broken.json.backup"},"broken")
 ok(bad==nil and meta.hadAny==true and #meta.invalid==2,"invalid primary/backup is load-blocking")
+
+-- Explicit superadmin Save is a recovery transaction: raw files are archived first.
+ok(P.AllowBlockedWrite("broken.json","broken.json.backup","outside") == false,"blocked write remains denied outside manual save")
+P.BeginManualSave("test repair")
+local repairOK=P.AllowBlockedWrite("broken.json","broken.json.backup","broken test")
+P.EndManualSave()
+local recoveryCount=0
+for path,rawValue in pairs(mem)do if tostring(path):find("grm_recovery/",1,true)and(rawValue=="BROKEN"or rawValue=="ALSO_BROKEN")then recoveryCount=recoveryCount+1 end end
+ok(repairOK==true and recoveryCount>=2,"manual save archives corrupt primary+backup and permits repair")
 -- Materialization writes identical validated raw to both mirrors.
 local raw=enc({x=1});ok(P.Materialize("p.json","b.json",raw,"mirror"),"materialize succeeds")
 ok(mem["p.json"]==raw and mem["b.json"]==raw,"primary and backup identical")

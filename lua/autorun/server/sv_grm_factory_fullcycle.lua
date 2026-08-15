@@ -105,8 +105,13 @@ end
 
 local function writeJSON(path, data)
     if FC.DataLoadBlocked[path] then
-        print("[GRM Factory][!] SAVE BLOCKED after invalid primary/backup: data/" .. path)
-        return false
+        local guard = GRM.PersistenceGuard
+        if guard and guard.AllowBlockedWrite and guard.AllowBlockedWrite(path, path .. ".backup", "factory " .. path) then
+            FC.DataLoadBlocked[path] = false
+        else
+            print("[GRM Factory][!] SAVE BLOCKED after invalid primary/backup: data/" .. path)
+            return false
+        end
     end
     ensureDirectories()
     local guard = GRM.PersistenceGuard
@@ -1084,7 +1089,11 @@ end
 
 function FC.SaveMap(ply, reason)
     if IsValid(ply) and not ply:IsSuperAdmin() then notify(ply, false, "Только superadmin может сохранять завод.") return false,"нет прав" end
-    if FC.MapLoadBlocked then print("[GRM Factory][!] SAVE ОТКЛОНЁН после ошибки primary/backup")return false,"save blocked"end
+    if FC.MapLoadBlocked then
+        local path,guard=mapFile(),GRM.PersistenceGuard
+        if guard and guard.AllowBlockedWrite and guard.AllowBlockedWrite(path,path..".backup","factory map")then FC.MapLoadBlocked=false
+        else print("[GRM Factory][!] SAVE ОТКЛОНЁН после ошибки primary/backup")return false,"save blocked"end
+    end
     ensureDirectories()
     local records = {}
     for class in pairs(EQUIPMENT_CLASSES) do
@@ -1181,7 +1190,9 @@ end
 function FC.SaveAll(ply, reason)
     for _, path in ipairs({ LOCKERS_FILE, BUYERS_FILE, MARKET_FILE }) do
         if FC.DataLoadBlocked[path] then
-            return false, "сохранение завода заблокировано: повреждён data/" .. path
+            local guard=GRM.PersistenceGuard
+            if guard and guard.AllowBlockedWrite and guard.AllowBlockedWrite(path,path..".backup","factory "..path)then FC.DataLoadBlocked[path]=false
+            else return false,"сохранение завода заблокировано: повреждён data/"..path end
         end
     end
     local mapOK, mapDetail = FC.SaveMap(ply, reason or "persistence hub")
