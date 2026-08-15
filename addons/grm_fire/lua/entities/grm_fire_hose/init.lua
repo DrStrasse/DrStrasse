@@ -445,14 +445,21 @@ local function walkPressure(ent, seen)
     if cls == "grm_fire_hydrant" and ent.GetOpen and ent:GetOpen() then
         return true, nil
     end
-    if cls == "grm_fire_pump" and ent.GetPumpOn and ent:GetPumpOn() then
-        if ent.GetHydrantFeed and ent:GetHydrantFeed() then return true, ent end
+    if cls == "grm_fire_pump" then
+        -- Насос — граница графа: нельзя обходить его через supply-рукав и
+        -- получать напор от гидранта при PumpOn=false или HydrantFeed=false.
+        if not (ent.GetPumpOn and ent:GetPumpOn()) then return false, ent end
+        if ent.GetHydrantFeed and ent:GetHydrantFeed() then
+            local hyd = ent.FindLinkedHydrant and ent:FindLinkedHydrant() or nil
+            if IsValid(hyd) then return true, ent end
+            if ent.SetHydrantFeed then ent:SetHydrantFeed(false) end
+        end
         local ag = ent.GetAgent and ent:GetAgent() or "water"
         local have = 0
         if ag == "foam" then have = ent.GetFoam and ent:GetFoam() or 0
         elseif ag == "powder" then have = ent.GetPowder and ent:GetPowder() or 0
         else have = ent:GetTank() or 0 end
-        if have > 0 then return true, ent end
+        return have > 0, ent
     end
     -- рукава, стартующие здесь или пристыкованные сюда
     for _, h in ipairs(ents.FindByClass("grm_fire_hose")) do

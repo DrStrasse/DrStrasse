@@ -124,11 +124,18 @@ if SERVER then
             tell(ply, "Ствол: " .. (extra == "foam" and "пена" or extra == "powder" and "порошок" or "вода"), 120, 200, 255)
         elseif act == "pump" then
             pump:SetPumpOn(not pump:GetPumpOn())
+            if not pump:GetPumpOn() then pump:SetFilling(false) end
             pump:EmitSound(pump:GetPumpOn() and "ambient/machines/floodgate_stop1.wav" or "buttons/lever4.wav", 65, 100)
         elseif act == "feed" then
-            pump:SetHydrantFeed(not pump:GetHydrantFeed())
-            tell(ply, pump:GetHydrantFeed() and "Прямая подача с гидранта — бак воды не тратится."
-                or "Подача из бака — вода списывается при тушении.", 120, 200, 255)
+            local enabling = not pump:GetHydrantFeed()
+            if enabling and not IsValid(pump:FindLinkedHydrant()) then
+                pump:SetHydrantFeed(false)
+                tell(ply, "Прямая подача невозможна: нет открытого связанного гидранта.", 255, 160, 80)
+            else
+                pump:SetHydrantFeed(enabling)
+                tell(ply, pump:GetHydrantFeed() and "Прямая подача с гидранта — бак воды не тратится."
+                    or "Подача из бака — вода списывается при тушении.", 120, 200, 255)
+            end
         elseif act == "fill" then
             local ag = pump:GetAgent()
             if ag == "" then ag = "water" end

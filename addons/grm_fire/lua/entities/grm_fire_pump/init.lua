@@ -16,15 +16,31 @@ function ENT:Initialize()
     self:SetNotSolid(false)
     self:SetRenderMode(RENDERMODE_TRANSALPHA)
     self:SetColor(Color(70, 190, 255, 140))
+    -- Новый насос получает полные баки. Раньше NetworkVar max был 0, мы
+    -- задавали максимум, но сам current=0 считали валидным — отдельный насос
+    -- появлялся пустым. PermData после Spawn всё равно наложит сохранённые
+    -- значения, включая честный ноль.
     local tmax = self:GetTankMax()
-    if tmax <= 0 or tmax > 20000 then self:SetTankMax(WATER_MAX) end
-    if self:GetTank() < 0 or self:GetTank() > self:GetTankMax() then
-        self:SetTank(self:GetTankMax())
+    if tmax <= 0 or tmax > 20000 then
+        self:SetTankMax(WATER_MAX)
+        self:SetTank(WATER_MAX)
+    else
+        self:SetTank(math.Clamp(self:GetTank(), 0, tmax))
     end
-    if self:GetFoamMax() <= 0 or self:GetFoamMax() > 5000 then self:SetFoamMax(FOAM_MAX) end
-    if self:GetFoam() < 0 or self:GetFoam() > self:GetFoamMax() then self:SetFoam(self:GetFoamMax()) end
-    if self:GetPowderMax() <= 0 or self:GetPowderMax() > 5000 then self:SetPowderMax(POWDER_MAX) end
-    if self:GetPowder() < 0 or self:GetPowder() > self:GetPowderMax() then self:SetPowder(self:GetPowderMax()) end
+    local fmax = self:GetFoamMax()
+    if fmax <= 0 or fmax > 5000 then
+        self:SetFoamMax(FOAM_MAX)
+        self:SetFoam(FOAM_MAX)
+    else
+        self:SetFoam(math.Clamp(self:GetFoam(), 0, fmax))
+    end
+    local pmax = self:GetPowderMax()
+    if pmax <= 0 or pmax > 5000 then
+        self:SetPowderMax(POWDER_MAX)
+        self:SetPowder(POWDER_MAX)
+    else
+        self:SetPowder(math.Clamp(self:GetPowder(), 0, pmax))
+    end
     if self:GetMaxHose() <= 0 then self:SetMaxHose((A and A.HoseCfg and A.HoseCfg.MaxLength) or 2200) end
     if self:GetHosesMax() <= 0 then self:SetHosesMax((A and A.HoseCfg and A.HoseCfg.TruckSlots) or 4) end
     self:SetHosesOut(0)
@@ -121,15 +137,27 @@ function ENT:SyncHost()
     veh:SetNWInt("GRM_FireFoamMax", self:GetFoamMax())
     veh:SetNWInt("GRM_FirePowder", self:GetPowder())
     veh:SetNWInt("GRM_FirePowderMax", self:GetPowderMax())
-    veh:SetNWString("GRM_FireAgent", self:GetAgent() or "water")
+    veh:SetNWInt("GRM_FireHosesOut", self:GetHosesOut())
+    veh:SetNWInt("GRM_FireHoses", self:GetHosesMax())
+    veh:SetNWString("GRM_FireAgent", self:GetAgent() ~= "" and self:GetAgent() or "water")
+    if veh.SetNWBool then
+        veh:SetNWBool("GRM_FirePumpOn", self:GetPumpOn() == true)
+        veh:SetNWBool("GRM_FireFilling", self:GetFilling() == true)
+        veh:SetNWBool("GRM_FireHydrantFeed", self:GetHydrantFeed() == true)
+    end
 end
 
 function ENT:Consume(amount, agent)
     amount = math.max(0, math.floor(tonumber(amount) or 0))
     if amount <= 0 then return true end
     agent = tostring(agent or self:GetAgent() or "water")
-    if agent == "water" and self:GetHydrantFeed() and IsValid(self:FindLinkedHydrant()) then
-        return true
+    if agent == "water" and self:GetHydrantFeed() then
+        if IsValid(self:FindLinkedHydrant()) then
+            -- Прямая водопроводная подача бесконечна: бак машины не расходуется.
+            return true
+        end
+        -- Флаг без физической связи не должен рисовать ложную «прямую подачу».
+        self:SetHydrantFeed(false)
     end
     local have, setfn
     if agent == "foam" then
@@ -143,43 +171,46 @@ function ENT:Consume(amount, agent)
     have = math.max(0, tonumber(have) or 0)
     if have < amount then
         setfn(0)
-        if have <= 0 then self:SetPumpOn(false) end
+        self:SetPumpOn(false)
+        self:SetFilling(false)
         self:SyncHost()
         return false
     end
-    setfn(have - amount)
+    local remaining = math.max(0, have - amount)
+    setfn(remaining)
+    if remaining <= 0 then self:SetPumpOn(false) end
     self:SyncHost()
     return true
 end
 
+function ENT:AgentAmount(agent)
+    agent = tostring(agent or self:GetAgent() or "water")
+    if agent == "foam" then return self:GetFoam(), self:GetFoamMax(), "foam" end
+    if agent == "powder" then return self:GetPowder(), self:GetPowderMax(), "powder" end
+    return self:GetTank(), self:GetTankMax(), "water"
+end
+
 function ENT:FillAgent(agent, amount)
     amount = math.max(0, math.floor(tonumber(amount) or 0))
-    agent = tostring(agent or "water")
-    if agent == "foam" then
-        self:SetFoam(math.min(self:GetFoamMax(), self:GetFoam() + amount))
-        return self:GetFoam()
-    end
-    if agent == "powder" then
-        self:SetPowder(math.min(self:GetPowderMax(), self:GetPowder() + amount))
-        return self:GetPowder()
-    end
-    self:SetTank(math.min(self:GetTankMax(), self:GetTank() + amount))
-    return self:GetTank()
+    local have, maxv, normalized = self:AgentAmount(agent)
+    local value = math.Clamp((tonumber(have) or 0) + amount, 0, math.max(0, tonumber(maxv) or 0))
+    if normalized == "foam" then self:SetFoam(value)
+    elseif normalized == "powder" then self:SetPowder(value)
+    else self:SetTank(value) end
+    self:SyncHost()
+    return value
 end
 
 function ENT:DrainAgent(agent, amount)
     amount = math.max(0, math.floor(tonumber(amount) or 0))
-    agent = tostring(agent or "water")
-    if agent == "foam" then
-        self:SetFoam(math.max(0, self:GetFoam() - amount))
-        return self:GetFoam()
-    end
-    if agent == "powder" then
-        self:SetPowder(math.max(0, self:GetPowder() - amount))
-        return self:GetPowder()
-    end
-    self:SetTank(math.max(0, self:GetTank() - amount))
-    return self:GetTank()
+    local have, _, normalized = self:AgentAmount(agent)
+    local value = math.max(0, (tonumber(have) or 0) - amount)
+    if normalized == "foam" then self:SetFoam(value)
+    elseif normalized == "powder" then self:SetPowder(value)
+    else self:SetTank(value) end
+    self:SetFilling(false)
+    self:SyncHost()
+    return value
 end
 
 function ENT:Fill(amount)
@@ -200,27 +231,28 @@ function ENT:Think()
             return
         end
     end
+    if self:GetHydrantFeed() and not IsValid(self:FindLinkedHydrant()) then
+        self:SetHydrantFeed(false)
+    end
     if self:GetFilling() then
         local agent = self:GetAgent()
         if agent == "" then agent = "water" end
-        if agent == "powder" then
-            if IsValid(self:FindLinkedCabinet()) then
-                self:FillAgent("powder", 8)
-            else
-                self:SetFilling(false)
-            end
+        local sourceOK = agent == "powder" and IsValid(self:FindLinkedCabinet())
+            or agent ~= "powder" and IsValid(self:FindLinkedHydrant())
+        if sourceOK then
+            local value = self:FillAgent(agent, agent == "powder" and 8 or (agent == "foam" and 12 or 40))
+            local _, maxv = self:AgentAmount(agent)
+            if value >= (tonumber(maxv) or 0) then self:SetFilling(false) end
         else
-            if IsValid(self:FindLinkedHydrant()) then
-                self:FillAgent(agent, agent == "foam" and 12 or 40)
-            else
-                self:SetFilling(false)
-            end
+            self:SetFilling(false)
         end
-        self:SyncHost()
     end
     if GRM and GRM.FireAddon and GRM.FireAddon.HoseCountOn then
         self:SetHosesOut(GRM.FireAddon.HoseCountOn(self))
     end
+    -- Единая частота синхронизации всех HUD-счётчиков, даже когда насос не
+    -- качает: слив, смена реагента, обрыв/смотка рукава видны за <=0.25с.
+    self:SyncHost()
     self:NextThink(CurTime() + 0.25)
     return true
 end

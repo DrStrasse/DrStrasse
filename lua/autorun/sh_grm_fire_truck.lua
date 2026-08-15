@@ -584,10 +584,15 @@ if SERVER then
             if IsValid(veh) and veh.GetNWBool and veh:GetNWBool("GRM_FireTruck", false) then
                 local pump = F.FindPumpOn(veh)
                 if IsValid(pump) then
-                    if pump.GetTank then veh:SetNWInt("GRM_FireTank", pump:GetTank()) end
-                    if GRM.FireAddon and GRM.FireAddon.HoseCountOn and pump.GetHosesMax then
-                        veh:SetNWInt("GRM_FireHosesOut", GRM.FireAddon.HoseCountOn(pump))
-                        veh:SetNWInt("GRM_FireHoses", pump:GetHosesMax())
+                    if GRM.FireAddon and GRM.FireAddon.HoseCountOn then
+                        pump:SetHosesOut(GRM.FireAddon.HoseCountOn(pump))
+                    end
+                    if pump.SyncHost then
+                        pump:SyncHost()
+                    else
+                        veh:SetNWInt("GRM_FireTank", pump.GetTank and pump:GetTank() or 0)
+                        veh:SetNWInt("GRM_FireFoam", pump.GetFoam and pump:GetFoam() or 0)
+                        veh:SetNWInt("GRM_FirePowder", pump.GetPowder and pump:GetPowder() or 0)
                     end
                 end
             end
@@ -864,14 +869,17 @@ if CLIENT then
                     local ang = Angle(0, EyeAngles().y - 90, 90)
                     local fac = ent:GetNWString("GRM_FireFaction", "")
                     local tank = ent:GetNWInt("GRM_FireTank", 0)
+                    local tankMax = ent:GetNWInt("GRM_FireTankMax", 4000)
                     local foam = ent:GetNWInt("GRM_FireFoam", 0)
+                    local foamMax = ent:GetNWInt("GRM_FireFoamMax", 500)
                     local powder = ent:GetNWInt("GRM_FirePowder", 0)
+                    local powderMax = ent:GetNWInt("GRM_FirePowderMax", 250)
                     local out = ent:GetNWInt("GRM_FireHosesOut", 0)
                     local maxh = ent:GetNWInt("GRM_FireHoses", 4)
                     cam.Start3D2D(pos, ang, 0.08)
                         draw.RoundedBox(6, -180, -28, 360, 56, Color(28, 18, 14, 230))
                         draw.SimpleText("ПОЖАРНАЯ" .. (fac ~= "" and (" · " .. fac) or ""), "GRMFireTrk_3D", 0, -10, Color(255, 150, 70), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                        draw.SimpleText("вода " .. tank .. "  пена " .. foam .. "  порошок " .. powder .. "  рукава " .. out .. "/" .. maxh, "GRMFireTrk_N", 0, 14, Color(230, 230, 235), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                        draw.SimpleText("вода " .. tank .. "/" .. tankMax .. "  пена " .. foam .. "/" .. foamMax .. "  порошок " .. powder .. "/" .. powderMax .. "  рукава " .. out .. "/" .. maxh, "GRMFireTrk_N", 0, 14, Color(230, 230, 235), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
                     cam.End3D2D()
                 end
             end
@@ -892,11 +900,14 @@ if CLIENT then
         end
         if not IsValid(veh) or not veh:GetNWBool("GRM_FireTruck", false) then return end
         local tank = veh:GetNWInt("GRM_FireTank", 0)
+        local tankMax = veh:GetNWInt("GRM_FireTankMax", 4000)
         local foam = veh:GetNWInt("GRM_FireFoam", 0)
+        local foamMax = veh:GetNWInt("GRM_FireFoamMax", 500)
         local powder = veh:GetNWInt("GRM_FirePowder", 0)
+        local powderMax = veh:GetNWInt("GRM_FirePowderMax", 250)
         local out = veh:GetNWInt("GRM_FireHosesOut", 0)
         local maxh = veh:GetNWInt("GRM_FireHoses", 4)
-        draw.SimpleText("ПОЖАРКА  вода " .. tank .. "  пена " .. foam .. "  порошок " .. powder .. "  рукава " .. out .. "/" .. maxh .. "  G — насос",
+        draw.SimpleText("ПОЖАРКА  вода " .. tank .. "/" .. tankMax .. "  пена " .. foam .. "/" .. foamMax .. "  порошок " .. powder .. "/" .. powderMax .. "  рукава " .. out .. "/" .. maxh .. "  G — насос",
             "GRMFireTrk_N", ScrW() / 2, ScrH() - 118, Color(255, 170, 90, 230), TEXT_ALIGN_CENTER)
     end)
 

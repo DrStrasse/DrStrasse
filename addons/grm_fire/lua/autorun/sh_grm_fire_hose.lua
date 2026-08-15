@@ -227,10 +227,17 @@ if SERVER then
         hose = hose or (IsValid(ply) and ply.GRM_FireHose)
         if not IsValid(hose) then return false end
         local src = hose:GetStartEnt()
+        local tail = hose.GetEndNode and hose:GetEndNode() or NULL
+        local dst = IsValid(tail) and tail.GetParent and tail:GetParent() or NULL
         hose:Rewind()
-        if IsValid(src) and src.SetHosesOut then
-            src:SetHosesOut(A.HoseCountOn(src))
-        end
+        timer.Simple(0, function()
+            for _, endpoint in pairs({ src, dst }) do
+                if IsValid(endpoint) and endpoint.SetHosesOut then
+                    endpoint:SetHosesOut(A.HoseCountOn(endpoint))
+                    if endpoint.SyncHost then endpoint:SyncHost() end
+                end
+            end
+        end)
         hook.Run("GRM_FireAddon_HoseReturned", ply, src, hose)
         return true
     end
@@ -240,7 +247,7 @@ if SERVER then
         if not IsValid(src) then return 0 end
         local n = 0
         for _, h in ipairs(ents.FindByClass("grm_fire_hose")) do
-            if IsValid(h) and h:GetStartEnt() == src then
+            if IsValid(h) and A.HoseTouches(h, src) then
                 local holder = h.GetHolder and h:GetHolder() or NULL
                 if not IsValid(holder) or holder == ply then
                     if A.ReturnHose(ply, h) then n = n + 1 end

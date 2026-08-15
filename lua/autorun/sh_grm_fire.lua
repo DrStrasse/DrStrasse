@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Fire v1.5.0 (Код 58)
+    GRM Fire v1.5.1 (Код 58)
     Серверная обвязка аддона grm_fire + vFire.
     Не содержит моделей/рукава — они в аддоне.
     Права, персист очагов, рандом по точкам, плита, оповещение, учёт тушения v1.5.0.
@@ -10,7 +10,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Fire = GRM.Fire or {}
 local F = GRM.Fire
-F.Version = "1.5.0"
+F.Version = "1.5.1"
 
 F.Config = F.Config or {
     StoveEnabled = true,
@@ -605,6 +605,7 @@ if SERVER then
                     foammax = ent.GetFoamMax and ent:GetFoamMax() or 500,
                     powder = ent.GetPowder and ent:GetPowder() or 0,
                     powdermax = ent.GetPowderMax and ent:GetPowderMax() or 250,
+                    agent = ent.GetAgent and ent:GetAgent() or "water",
                     slots = ent.GetHosesMax and ent:GetHosesMax() or 4,
                     mounted = (ent._grmTruckGear == true)
                         or (ent.GetNWBool and ent:GetNWBool("GRM_TruckGear", false))
@@ -613,13 +614,20 @@ if SERVER then
             end
             GRM.PermData.Apply["grm_fire_pump"] = function(ent, data)
                 if not istable(data) then return end
-                if data.tankmax and ent.SetTankMax then ent:SetTankMax(math.min(20000, tonumber(data.tankmax) or 4000)) end
-                if data.tank and ent.SetTank then ent:SetTank(math.max(0, tonumber(data.tank) or 0)) end
-                if data.foammax and ent.SetFoamMax then ent:SetFoamMax(tonumber(data.foammax) or 500) end
-                if data.foam and ent.SetFoam then ent:SetFoam(tonumber(data.foam) or 0) end
-                if data.powdermax and ent.SetPowderMax then ent:SetPowderMax(tonumber(data.powdermax) or 250) end
-                if data.powder and ent.SetPowder then ent:SetPowder(tonumber(data.powder) or 0) end
-                if data.slots and ent.SetHosesMax then ent:SetHosesMax(tonumber(data.slots) or 4) end
+                local waterMax = math.Clamp(math.floor(tonumber(data.tankmax) or 4000), 1, 20000)
+                local foamMax = math.Clamp(math.floor(tonumber(data.foammax) or 500), 1, 5000)
+                local powderMax = math.Clamp(math.floor(tonumber(data.powdermax) or 250), 1, 5000)
+                if ent.SetTankMax then ent:SetTankMax(waterMax) end
+                if ent.SetTank then ent:SetTank(math.Clamp(math.floor(tonumber(data.tank) or 0), 0, waterMax)) end
+                if ent.SetFoamMax then ent:SetFoamMax(foamMax) end
+                if ent.SetFoam then ent:SetFoam(math.Clamp(math.floor(tonumber(data.foam) or 0), 0, foamMax)) end
+                if ent.SetPowderMax then ent:SetPowderMax(powderMax) end
+                if ent.SetPowder then ent:SetPowder(math.Clamp(math.floor(tonumber(data.powder) or 0), 0, powderMax)) end
+                local agent = tostring(data.agent or "water")
+                if agent ~= "foam" and agent ~= "powder" then agent = "water" end
+                if ent.SetAgent then ent:SetAgent(agent) end
+                if data.slots and ent.SetHosesMax then ent:SetHosesMax(math.Clamp(math.floor(tonumber(data.slots) or 4), 1, 16)) end
+                if ent.SyncHost then ent:SyncHost() end
             end
             GRM.PermData.Extract["grm_fire_spot"] = function(ent)
                 return {

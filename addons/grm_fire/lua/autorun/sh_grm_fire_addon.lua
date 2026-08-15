@@ -8,7 +8,7 @@ GRM_FireAddon = true
 GRM = GRM or {}
 GRM.FireAddon = GRM.FireAddon or {}
 local A = GRM.FireAddon
-A.Version = "0.6.1"
+A.Version = "0.6.2"
 
 if SERVER then
     resource.AddFile("materials/grm/firehose.vmt")
@@ -43,7 +43,10 @@ function A.IsWaterSource(ent)
     end
     if cls == "grm_fire_pump" then
         if not (ent.GetPumpOn and ent:GetPumpOn()) then return false end
-        if ent.GetHydrantFeed and ent:GetHydrantFeed() then return true end
+        if ent.GetHydrantFeed and ent:GetHydrantFeed() then
+            local hyd = ent.FindLinkedHydrant and ent:FindLinkedHydrant() or nil
+            if IsValid(hyd) then return true end
+        end
         local ag = ent.GetAgent and ent:GetAgent() or "water"
         if ag == "foam" then return (ent.GetFoam and ent:GetFoam() or 0) > 0 end
         if ag == "powder" then return (ent.GetPowder and ent:GetPowder() or 0) > 0 end

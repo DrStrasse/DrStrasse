@@ -135,7 +135,7 @@ function SWEP:PrimaryAttack()
 
     local tr = ply:GetEyeTrace()
     local pos = tr.HitPos
-    local dmg = (GRM.FireAddon.HoseCfg and GRM.FireAddon.HoseCfg.SprayDmg) or 10
+    -- dmg уже выбран выше по реагенту; не затирать пену/порошок общим water damage.
     for _, ent in ipairs(ents.FindInSphere(pos, 110)) do
         if IsValid(ent) and ply:GetPos():Distance(ent:GetPos()) <= 420 then
             if vFireIsVFireEnt and vFireIsVFireEnt(ent) and ent.SoftExtinguish then

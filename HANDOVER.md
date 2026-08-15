@@ -21,7 +21,7 @@ Master — старый неполный снапшот. В новых Arena-с�
    - `grm_camera`, `grm_light`, `grm_lamp`, `grm_material`, `grm_colour`;
    - stock `camera/light/lamp/material/colour/color` закрыты жёстко, включая SuperAdmin;
    - QMenu v4.2.0 показывает только GRM-варианты и их ручные схемы.
-2. **Пожары v1.5.0 / addon 0.6.1**
+2. **Пожары v1.5.1 / addon 0.6.2**
    - струя без живого vFire не создаёт инцидент;
    - быстрый очаг даёт только «потушен»; локализованный — строго до потушенного;
    - одно уведомление на получателя, без двойного Notify+ChatPrint;
@@ -53,7 +53,7 @@ python3 tools/build_dist.py
 unzip -t dist/*.zip
 ```
 
-Контрольная цифра на этой точке: **491/491 syntax, 77/77 sim, 16/16 roundtrip**.
+Контрольная цифра на этой точке: **491/491 syntax, 78/78 sim, 16/16 roundtrip**.
 
 ## Архитектурные законы
 
