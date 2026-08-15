@@ -66,7 +66,7 @@ function PERMS.Load()
     end
     
     local data = file.Read(PERMS.ConfigFile, "DATA")
-    local ok, tbl = pcall(util.JSONToTable, data)
+    local ok, tbl = pcall(util.JSONToTable, data, false, true)
     if ok and istable(tbl) then
         PERMS.Data = tbl
     else

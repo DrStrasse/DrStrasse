@@ -155,7 +155,7 @@ function GRM_LoadEntities()
         return 0
     end
 
-    local ok, records = pcall(util.JSONToTable, raw)
+    local ok, records = pcall(util.JSONToTable, raw, false, true)
     if not ok or not istable(records) then
         ErrorNoHalt("[GRM Saver] Файл сохранения повреждён: " .. SAVE_FILE .. "\n")
         State.loading = false

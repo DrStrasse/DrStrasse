@@ -31,8 +31,16 @@ local function jsonT(txt)
 end
 
 local function ensure() if not file.Exists(DIR,"DATA") then file.CreateDir(DIR) end if not file.Exists(MAPDIR,"DATA") then file.CreateDir(MAPDIR) end end
-local function read(path, fallback) local raw=file.Exists(path,"DATA") and file.Read(path,"DATA") or ""; local t=jsonT(raw); return t and t or table.Copy(fallback or {}) end
-local function write(path,t) ensure(); file.Write(path,util.TableToJSON(t or {},true)) end
+L.LoadBlocked=L.LoadBlocked or{}
+local function read(path,fallback,label)
+ local guard=GRM.PersistenceGuard;local t,source,raw,meta
+ if guard and guard.ReadBest then t,source,raw,meta=guard.ReadBest(path,{path..".backup"},label or path)
+ else local txt=file.Exists(path,"DATA")and(file.Read(path,"DATA")or"")or"";t=jsonT(txt);source=t and path or nil;raw=txt;meta={hadAny=txt~=""}end
+ if istable(t)then L.LoadBlocked[path]=nil;if guard and guard.Materialize and raw then guard.Materialize(path,path..".backup",raw,label or path)end;return t,source,true end
+ if meta and meta.hadAny then L.LoadBlocked[path]=true;print("[GRM Logistics][!] LOAD BLOCKED "..path..": invalid primary/backup")return table.Copy(fallback or{}),nil,false end
+ L.LoadBlocked[path]=nil;return table.Copy(fallback or{}),"new",true
+end
+local function write(path,t)ensure();if L.LoadBlocked[path]then print("[GRM Logistics][!] SAVE ОТКЛОНЁН "..path)return false end;local guard=GRM.PersistenceGuard;if guard and guard.WriteMirrored then return guard.WriteMirrored(path,path..".backup",t or{},"logistics")end;local raw=util.TableToJSON(t or{},true);file.Write(path,raw);file.Write(path..".backup",raw);return true end
 local function vec(v) return {x=v.x,y=v.y,z=v.z} end
 local function ang(a) return {p=a.p,y=a.y,r=a.r} end
 local function V(t) return Vector(tonumber(t and(t.x or t[1]))or 0,tonumber(t and(t.y or t[2]))or 0,tonumber(t and(t.z or t[3]))or 0) end
@@ -973,14 +981,17 @@ end)
 local function record(e) local r={class=e:GetClass(),id=e:GetLogisticsID(),pos=vec(e:GetPos()),ang=ang(e:GetAngles()),faction=e:GetFactionName(),network=e:GetNetworkID(),name=e:GetPointName(),mode=e:GetFactionMode()}; if e.LogisticsKind=="warehouse" then r.data=warehouseData(e) elseif e.LogisticsKind=="armory" then r.data=armoryData(e) end return r end
 
 function L.SaveMap(p)
-    if IsValid(p) and not p:IsSuperAdmin() then notify(p,false,"Только superadmin") return 0 end
-    ensure(); local list={}; for cls in pairs(EQUIP) do for _,e in ipairs(ents.FindByClass(cls)) do list[#list+1]=record(e) end end; write(MAPFILE,list); if IsValid(p) then notify(p,true,"Сохранено логистики: "..#list) end; return #list
+    if IsValid(p) and not p:IsSuperAdmin() then notify(p,false,"Только superadmin") return false,"нет прав" end
+    ensure(); local list={}; for cls in pairs(EQUIP) do for _,e in ipairs(ents.FindByClass(cls)) do list[#list+1]=record(e) end end; local ok=write(MAPFILE,list);if not ok then if IsValid(p)then notify(p,false,"SAVE BLOCKED: ошибка загрузки primary/backup")end return false,"save blocked"end;if IsValid(p) then notify(p,true,"Сохранено логистики: "..#list) end; return true,"сохранено логистики: "..#list
 end
 
 function L.LoadMap(p)
-    if IsValid(p) and not p:IsSuperAdmin() then return 0 end; local list=read(MAPFILE,{}); for cls in pairs(EQUIP) do for _,e in ipairs(ents.FindByClass(cls)) do e:Remove() end end
+    if IsValid(p) and not p:IsSuperAdmin() then return false,"нет прав" end
+    local list,source,healthy=read(MAPFILE,{},"logistics map")
+    if not healthy or source=="new" then local why=healthy and"файл карты отсутствует"or"primary/backup повреждены";print("[GRM Logistics] LOAD skipped: "..why.."; live entities preserved")return false,why end
+    for cls in pairs(EQUIP) do for _,e in ipairs(ents.FindByClass(cls)) do e:Remove() end end
     L.Warehouses={}; L.Armories={}; local n=0
-    for _,r in ipairs(list) do if EQUIP[r.class] then local e=ents.Create(r.class); if IsValid(e) then e:SetPos(V(r.pos)); e:SetAngles(A(r.ang)); e:Spawn(); e:Activate(); e:SetLogisticsID(r.id or id("log")); e:SetFactionName(r.faction or ""); e:SetNetworkID(r.network or ""); e:SetPointName(r.name or ""); e:SetFactionMode(r.mode~=false); if e.LogisticsKind=="warehouse" then L.Warehouses[e:GetLogisticsID()]=r.data or {stock={weapons={},items={}},capacity=table.Copy(C.Capacity)} elseif e.LogisticsKind=="armory" then L.Armories[e:GetLogisticsID()]=r.data or {stock={weapons={},items={}},capacity=table.Copy(C.Capacity)} end; local ph=e:GetPhysicsObject(); if IsValid(ph) then ph:EnableMotion(false) end; n=n+1 end end end; return n
+    for _,r in ipairs(list) do if EQUIP[r.class] then local e=ents.Create(r.class); if IsValid(e) then e:SetPos(V(r.pos)); e:SetAngles(A(r.ang)); e:Spawn(); e:Activate(); e:SetLogisticsID(r.id or id("log")); e:SetFactionName(r.faction or ""); e:SetNetworkID(r.network or""); e:SetPointName(r.name or""); e:SetFactionMode(r.mode~=false); if e.LogisticsKind=="warehouse" then L.Warehouses[e:GetLogisticsID()]=r.data or {stock={weapons={},items={}},capacity=table.Copy(C.Capacity)} elseif e.LogisticsKind=="armory" then L.Armories[e:GetLogisticsID()]=r.data or {stock={weapons={},items={}},capacity=table.Copy(C.Capacity)} end; local ph=e:GetPhysicsObject(); if IsValid(ph) then ph:EnableMotion(false) end; n=n+1 end end end;print("[GRM Logistics] LOAD source="..tostring(source).." records="..n);return true,"загружено логистики: "..n
 end
 
 hook.Add("InitPostEntity","GRML_Load",function() timer.Simple(5,function() L.LoadMap(nil) end) end)

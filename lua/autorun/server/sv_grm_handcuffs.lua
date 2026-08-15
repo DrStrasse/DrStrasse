@@ -89,7 +89,7 @@ local function readJSONFile(path)
     local raw = file.Read(path, "DATA")
     if not raw or raw == "" then return nil end
 
-    local ok, data = pcall(util.JSONToTable, raw)
+    local ok, data = pcall(util.JSONToTable, raw, false, true)
     if ok and istable(data) then return data end
 
     return nil

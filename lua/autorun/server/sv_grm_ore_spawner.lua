@@ -56,7 +56,7 @@ if SERVER then
             return
         end
 
-        local ok, data = pcall(util.JSONToTable, raw)
+        local ok, data = pcall(util.JSONToTable, raw, false, true)
         if ok and istable(data) then
             local newPoints = {}
             for i, pt in ipairs(data) do
@@ -83,7 +83,7 @@ if SERVER then
             print("[GRM Ore Spawner] Пробуем восстановить из резервной копии.")
             local rawBackup = file.Read(SPAWN_BACKUP, "DATA")
             if rawBackup and rawBackup ~= "" then
-                local okBack, dataBack = pcall(util.JSONToTable, rawBackup)
+                local okBack, dataBack = pcall(util.JSONToTable, rawBackup, false, true)
                 if okBack and istable(dataBack) then
                     local restored = {}
                     for i, pt in ipairs(dataBack) do

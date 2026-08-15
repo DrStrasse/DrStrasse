@@ -367,7 +367,7 @@ function AUG.LoadData()
 		return
 	end
 	
-	local data = util.JSONToTable(file.Read("grm_augmentations/data.txt", "DATA"))
+	local data = util.JSONToTable(file.Read("grm_augmentations/data.txt", "DATA"), false, true)
 	if not data then return end
 	
 	if data.config then

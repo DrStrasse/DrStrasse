@@ -62,7 +62,7 @@ local function readJSON(path, fallback)
     if not file.Exists(path, "DATA") then return table.Copy(fallback) end
     local raw = file.Read(path, "DATA") or ""
     if raw == "" then return table.Copy(fallback) end
-    local ok, data = pcall(util.JSONToTable, raw)
+    local ok, data = pcall(util.JSONToTable, raw, false, true)
     if ok and istable(data) then return data end
     return table.Copy(fallback)
 end

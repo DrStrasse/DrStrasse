@@ -94,7 +94,9 @@ if SERVER then
     util.AddNetworkString(NET_DEPB_MSG)
 
     local FACTIONS_FILE = "factions.json"
+    local FACTIONS_BACKUP_FILE = "factions_backup.json"
     local INVITES_FILE  = "invites.json"
+    local factionsLoadBlocked = false
     Factions      = nil
     Invites       = nil
 
@@ -105,14 +107,36 @@ if SERVER then
     end
 
     local function loadFactions()
-        if not file.Exists(FACTIONS_FILE, "DATA") then return {} end
-        local data = file.Read(FACTIONS_FILE, "DATA")
-        if not data or data == "" then return {} end
-        return safeJSONToTable(data)
+        local guard = GRM.PersistenceGuard
+        local data, source, raw, meta
+        if guard and guard.ReadBest then
+            data, source, raw, meta = guard.ReadBest(FACTIONS_FILE, { FACTIONS_BACKUP_FILE }, "factions")
+        else
+            local txt = file.Exists(FACTIONS_FILE, "DATA") and (file.Read(FACTIONS_FILE, "DATA") or "") or ""
+            local parsed = safeJSONToTable(txt)
+            data = txt ~= "" and parsed or nil source = data and FACTIONS_FILE or nil raw = txt meta = { hadAny = txt ~= "" }
+        end
+        if istable(data) then
+            factionsLoadBlocked = false
+            if guard and guard.Materialize and raw then guard.Materialize(FACTIONS_FILE, FACTIONS_BACKUP_FILE, raw, "factions") end
+            print(("[Factions] LOAD source=%s factions=%d"):format(tostring(source), table.Count(data)))
+            return data
+        end
+        factionsLoadBlocked = meta and meta.hadAny == true
+        if factionsLoadBlocked then print("[Factions][!] LOAD BLOCKED: invalid factions primary/backup, save disabled") end
+        return {}
     end
 
     local function saveFactions(tbl)
-        file.Write(FACTIONS_FILE, util.TableToJSON(tbl, true))
+        if factionsLoadBlocked then
+            print("[Factions][!] SAVE ОТКЛОНЁН после ошибки загрузки")
+            return false
+        end
+        local guard = GRM.PersistenceGuard
+        if guard and guard.WriteMirrored then return guard.WriteMirrored(FACTIONS_FILE, FACTIONS_BACKUP_FILE, tbl, "factions save") end
+        local raw = util.TableToJSON(tbl, true)
+        file.Write(FACTIONS_FILE, raw) file.Write(FACTIONS_BACKUP_FILE, raw)
+        return true
     end
 
     local function loadInvites()

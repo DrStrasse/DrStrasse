@@ -34,6 +34,7 @@ local MD = GRM.Medical
 MD.Version   = "2.0.0"
 MD.ConfigFile = "grm_medcfg.json"
 MD.CardsFile  = "grm_medcards.json"
+MD.CardsBackupFile = "grm_medcards_backup.json"
 MD.MaxEntries = 60
 
 MD.BloodTypes = {
@@ -152,8 +153,23 @@ if SERVER then
 
     local function loadCards()
         MD.Cards = MD.Cards or {}
-        local t = jsonT(file.Read(MD.CardsFile, "DATA") or "")
-        if istable(t) then MD.Cards = t end
+        local guard = GRM.PersistenceGuard
+        local t, source, raw, meta
+        if guard and guard.ReadBest then
+            t, source, raw, meta = guard.ReadBest(MD.CardsFile, { MD.CardsBackupFile }, "medical cards")
+        else
+            local txt = file.Exists(MD.CardsFile, "DATA") and (file.Read(MD.CardsFile, "DATA") or "") or ""
+            t = jsonT(txt) source = t and MD.CardsFile or nil raw = txt meta = { hadAny = txt ~= "" }
+        end
+        if istable(t) then
+            MD.Cards = t
+            MD._CardsLoadBlocked = false
+            if guard and guard.Materialize and raw then guard.Materialize(MD.CardsFile, MD.CardsBackupFile, raw, "medical cards") end
+            print(("[GRM Medical] LOAD source=%s cards=%d"):format(tostring(source), table.Count(MD.Cards)))
+        else
+            MD._CardsLoadBlocked = meta and meta.hadAny == true
+            if MD._CardsLoadBlocked then print("[GRM Medical][!] LOAD BLOCKED: invalid primary/backup, save disabled") end
+        end
         local moved = {}
         for key, card in pairs(MD.Cards) do
             local ck = identityKey(key)
@@ -163,12 +179,22 @@ if SERVER then
         if next(moved) ~= nil then MD._CardsMigrated = true end
     end
     function MD.SaveCards(why)
-        local ok, txt = pcall(util.TableToJSON, MD.Cards or {}, true)
-        if ok and txt then
-            file.Write(MD.CardsFile, txt)
-            local rb = file.Read(MD.CardsFile, "DATA")
-            print("[GRM Medical] SAVE ok cards (" .. tostring(why or "?") .. "), записей: " .. tostring(table.Count(MD.Cards or {})) .. ", read-back: " .. tostring(rb ~= nil))
+        if MD._CardsLoadBlocked then
+            print("[GRM Medical][!] SAVE ОТКЛОНЁН после ошибки загрузки [" .. tostring(why or "?") .. "]")
+            return false
         end
+        local guard = GRM.PersistenceGuard
+        local ok
+        if guard and guard.WriteMirrored then
+            ok = guard.WriteMirrored(MD.CardsFile, MD.CardsBackupFile, MD.Cards or {}, "medical cards save")
+        else
+            local okJ, txt = pcall(util.TableToJSON, MD.Cards or {}, true)
+            ok = okJ and isstring(txt)
+            if ok then file.Write(MD.CardsFile, txt) file.Write(MD.CardsBackupFile, txt) end
+        end
+        local rb = file.Read(MD.CardsFile, "DATA")
+        print("[GRM Medical] SAVE " .. (ok and "ok" or "FAIL") .. " cards (" .. tostring(why or "?") .. "), записей: " .. tostring(table.Count(MD.Cards or {})) .. ", read-back: " .. tostring(rb ~= nil))
+        return ok == true
     end
     MD.Save = MD.SaveCards
     GRM.Medical.SaveCards = MD.SaveCards

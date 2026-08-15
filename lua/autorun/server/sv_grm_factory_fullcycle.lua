@@ -79,7 +79,7 @@ local function readJSON(path, fallback)
     if not file.Exists(path, "DATA") then return table.Copy(fallback or {}) end
     local raw = file.Read(path, "DATA") or ""
     if raw == "" then return table.Copy(fallback or {}) end
-    local ok, data = pcall(util.JSONToTable, raw)
+    local ok, data = pcall(util.JSONToTable, raw, false, true)
     return ok and istable(data) and data or table.Copy(fallback or {})
 end
 
@@ -1058,23 +1058,28 @@ local function entityRecord(ent)
 end
 
 function FC.SaveMap(ply, reason)
-    if IsValid(ply) and not ply:IsSuperAdmin() then notify(ply, false, "Только superadmin может сохранять завод.") return 0 end
+    if IsValid(ply) and not ply:IsSuperAdmin() then notify(ply, false, "Только superadmin может сохранять завод.") return false,"нет прав" end
+    if FC.MapLoadBlocked then print("[GRM Factory][!] SAVE ОТКЛОНЁН после ошибки primary/backup")return false,"save blocked"end
     ensureDirectories()
     local records = {}
     for class in pairs(EQUIPMENT_CLASSES) do
         for _, ent in ipairs(ents.FindByClass(class)) do records[#records + 1] = entityRecord(ent) end
     end
-    file.Write(mapFile(), util.TableToJSON(records, true))
-    if IsValid(ply) then notify(ply, true, "Сохранено заводского оборудования: " .. #records) end
-    print("[GRM Factory Full Cycle] Saved: " .. #records)
-    return #records
+    local path=mapFile();local guard=GRM.PersistenceGuard;local ok
+    if guard and guard.WriteMirrored then ok=guard.WriteMirrored(path,path..".backup",records,"factory map")
+    else local okJ,raw=pcall(util.TableToJSON,records,true);ok=okJ and isstring(raw);if ok then file.Write(path,raw)file.Write(path..".backup",raw)end end
+    if IsValid(ply) then notify(ply, ok, (ok and "Сохранено" or "Ошибка сохранения") .. " заводского оборудования: " .. #records) end
+    print("[GRM Factory Full Cycle] SAVE "..tostring(ok)..": " .. #records)
+    return ok==true,"сохранено заводского оборудования: "..#records
 end
 
 function FC.LoadMap(ply)
-    if IsValid(ply) and not ply:IsSuperAdmin() then notify(ply, false, "Только superadmin может загружать завод.") return 0 end
-    if not file.Exists(mapFile(), "DATA") then return 0 end
-    local ok, records = pcall(util.JSONToTable, file.Read(mapFile(), "DATA") or "")
-    if not ok or not istable(records) then return 0 end
+    if IsValid(ply) and not ply:IsSuperAdmin() then notify(ply, false, "Только superadmin может загружать завод.") return false,"нет прав" end
+    local path=mapFile();local guard=GRM.PersistenceGuard;local records,source,raw,meta
+    if guard and guard.ReadBest then records,source,raw,meta=guard.ReadBest(path,{path..".backup"},"factory map")
+    else local txt=file.Exists(path,"DATA")and(file.Read(path,"DATA")or"")or"";local ok,t=pcall(util.JSONToTable,txt,false,true);if ok and istable(t)then records,source,raw=t,path,txt end;meta={hadAny=txt~=""}end
+    if not istable(records)then FC.MapLoadBlocked=meta and meta.hadAny==true;local why=FC.MapLoadBlocked and"primary/backup повреждены"or"файл карты отсутствует";print("[GRM Factory] LOAD skipped: "..why.."; live entities preserved")return false,why end
+    FC.MapLoadBlocked=false;if guard and guard.Materialize and raw then guard.Materialize(path,path..".backup",raw,"factory map")end
 
     FC.LoadingMap = true
     FC.StorageData = {}
@@ -1119,8 +1124,8 @@ function FC.LoadMap(ply)
     timer.Simple(1, function() FC.LoadingMap = false end)
 
     if IsValid(ply) then notify(ply, true, "Загружено оборудования: " .. count) end
-    print("[GRM Factory Full Cycle] Loaded: " .. count)
-    return count
+    print("[GRM Factory Full Cycle] LOAD source="..tostring(source).." records=" .. count)
+    return true,"загружено оборудования: "..count
 end
 
 hook.Add("OnEntityCreated", "GRM_FC_AutoSaveCreated", function(ent)

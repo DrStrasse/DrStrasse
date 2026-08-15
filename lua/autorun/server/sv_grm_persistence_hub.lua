@@ -43,7 +43,7 @@ local function operation(id, ply)
         vehicle_dealers = { save = function() return GRM.VehicleDealer and GRM.VehicleDealer.SaveAll() end, load = function() return GRM.VehicleDealer and GRM.VehicleDealer.LoadAll() end },
         quests = { save = function() return GRM.Quests and GRM.Quests.SaveAll() end, load = function() return GRM.Quests and GRM.Quests.LoadAll() end },
         electronics = { save = function() return GRM.Electronics and GRM.Electronics.SaveAll() end, load = function() return GRM.Electronics and GRM.Electronics.LoadAll() end },
-        perm = { save = function() return isfunction(GRM_SaveEntities) and GRM_SaveEntities() end, load = function() return isfunction(GRM_LoadEntities) and GRM_LoadEntities() end },
+        perm = { save = function() return GRM.Perm and GRM.Perm.SaveAll and GRM.Perm.SaveAll() end, load = function() return GRM.Perm and GRM.Perm.LoadAll and GRM.Perm.LoadAll() end },
     }
     if not save and not load then return false, "Неизвестная операция" end
     local mod = ops[base]

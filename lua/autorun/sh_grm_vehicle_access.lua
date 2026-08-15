@@ -72,7 +72,7 @@ if SERVER then
 
     -- ── Загрузка/Сохранение ──────────────────────────────────────
     local function safeJSON(data)
-        local ok, t = pcall(util.JSONToTable, data or "")
+        local ok, t = pcall(util.JSONToTable, data or "", false, true)
         if ok and istable(t) then return t end
         return {}
     end

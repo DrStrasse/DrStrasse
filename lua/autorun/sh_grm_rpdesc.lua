@@ -70,7 +70,7 @@ if SERVER then
         if not file.Exists(DESC_FILE, "DATA") then return {} end
         local data = file.Read(DESC_FILE, "DATA")
         if not data or data == "" then return {} end
-        local ok, tbl = pcall(util.JSONToTable, data)
+        local ok, tbl = pcall(util.JSONToTable, data, false, true)
         if ok and istable(tbl) then return tbl end
         return {}
     end

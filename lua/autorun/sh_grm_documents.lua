@@ -57,6 +57,7 @@ local DOC = GRM.Documents
 
 DOC.Version       = "2.1.0 — server-authoritative licenses + secure terminals"
 DOC.RegistryFile  = "grm_documents.json"
+DOC.RegistryBackupFile = "grm_documents_backup.json"
 DOC.TemplatesFile = "grm_doc_templates.json"
 
 local NET_OPEN_DOC       = "GRM_Doc_OpenDoc"
@@ -387,17 +388,32 @@ if SERVER then
 
     -- Загрузка базы выданных документов
     function DOC.LoadRegistry()
-        DOC.Registry = { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {}, milLicenses = {} }
-        if file.Exists(DOC.RegistryFile, "DATA") then
-            local t = jsonT(file.Read(DOC.RegistryFile, "DATA") or "")
-            if istable(t) then
-                DOC.Registry.passports   = istable(t.passports) and t.passports or {}
-                DOC.Registry.badges      = istable(t.badges) and t.badges or {}
-                DOC.Registry.coverBadges = istable(t.coverBadges) and t.coverBadges or {}
-                DOC.Registry.military    = istable(t.military) and t.military or {}
-                DOC.Registry.licenses    = istable(t.licenses) and t.licenses or {}
-                DOC.Registry.milLicenses = istable(t.milLicenses) and t.milLicenses or {}
-            end
+        local empty = { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {}, milLicenses = {} }
+        local guard = GRM.PersistenceGuard
+        local t, source, raw, meta
+        if guard and guard.ReadBest then
+            t, source, raw, meta = guard.ReadBest(DOC.RegistryFile, { DOC.RegistryBackupFile }, "documents")
+        else
+            local txt = file.Exists(DOC.RegistryFile, "DATA") and (file.Read(DOC.RegistryFile, "DATA") or "") or ""
+            t = jsonT(txt) source = t and DOC.RegistryFile or nil raw = txt meta = { hadAny = txt ~= "" }
+        end
+        if not istable(t) then
+            DOC._RegistryLoadBlocked = meta and meta.hadAny == true
+            DOC.Registry = DOC.Registry or empty
+            if DOC._RegistryLoadBlocked then print("[GRM Documents][!] LOAD BLOCKED: invalid primary/backup, save disabled") end
+        else
+            DOC._RegistryLoadBlocked = false
+            DOC.Registry = empty
+            DOC.Registry.passports   = istable(t.passports) and t.passports or {}
+            DOC.Registry.badges      = istable(t.badges) and t.badges or {}
+            DOC.Registry.coverBadges = istable(t.coverBadges) and t.coverBadges or {}
+            DOC.Registry.military    = istable(t.military) and t.military or {}
+            DOC.Registry.licenses    = istable(t.licenses) and t.licenses or {}
+            DOC.Registry.milLicenses = istable(t.milLicenses) and t.milLicenses or {}
+            if guard and guard.Materialize and raw then guard.Materialize(DOC.RegistryFile, DOC.RegistryBackupFile, raw, "documents") end
+            print(("[GRM Documents] LOAD source=%s records=%d"):format(tostring(source),
+                table.Count(DOC.Registry.passports) + table.Count(DOC.Registry.badges) + table.Count(DOC.Registry.military)
+                + table.Count(DOC.Registry.licenses) + table.Count(DOC.Registry.milLicenses)))
         end
         local migrated = false
         for _, rec in pairs(DOC.Registry.licenses) do
@@ -408,26 +424,38 @@ if SERVER then
             local _, changed = DOC.NormalizeLicenseRecord(rec, true, os.time(), false)
             migrated = migrated or changed
         end
-        if migrated then
-            local ok, txt = pcall(util.TableToJSON, DOC.Registry, true)
-            if ok and isstring(txt) then
-                file.Write(DOC.RegistryFile, txt)
-                if file.Read(DOC.RegistryFile, "DATA") ~= txt then
-                    print("[GRM Documents][!] migration write-back failed")
-                else
-                    print("[GRM Documents] licenses v2 migration saved")
-                end
+        if migrated and not DOC._RegistryLoadBlocked then
+            local guard = GRM.PersistenceGuard
+            local ok = guard and guard.WriteMirrored
+                and guard.WriteMirrored(DOC.RegistryFile, DOC.RegistryBackupFile, DOC.Registry, "documents migration")
+            if not (guard and guard.WriteMirrored) then
+                local okJ, txt = pcall(util.TableToJSON, DOC.Registry, true)
+                ok = okJ and isstring(txt)
+                if ok then file.Write(DOC.RegistryFile, txt) file.Write(DOC.RegistryBackupFile, txt) end
             end
+            print(ok and "[GRM Documents] licenses v2 migration saved" or "[GRM Documents][!] migration write-back failed")
         end
         return DOC.Registry
     end
 
     function DOC.SaveRegistry(why)
-        local ok, txt = pcall(util.TableToJSON, DOC.Registry or {}, true)
-        if ok and txt then
-            file.Write(DOC.RegistryFile, txt)
+        if DOC._RegistryLoadBlocked then
+            print("[GRM Documents][!] SAVE ОТКЛОНЁН после ошибки загрузки [" .. tostring(why or "?") .. "]")
+            return false
+        end
+        local guard = GRM.PersistenceGuard
+        local ok
+        if guard and guard.WriteMirrored then
+            ok = guard.WriteMirrored(DOC.RegistryFile, DOC.RegistryBackupFile, DOC.Registry or {}, "documents save")
+        else
+            local okJ, txt = pcall(util.TableToJSON, DOC.Registry or {}, true)
+            ok = okJ and isstring(txt)
+            if ok then file.Write(DOC.RegistryFile, txt) file.Write(DOC.RegistryBackupFile, txt) end
+        end
+        if ok then
             print("[GRM Documents] SAVE ok registry (" .. tostring(why or "?") .. "), паспортов: " .. table.Count(DOC.Registry.passports or {}) .. ", удостоверений: " .. table.Count(DOC.Registry.badges or {}) .. ", прав Дорожной Инспекции: " .. table.Count(DOC.Registry.licenses or {}) .. ", прав ВАИ: " .. table.Count(DOC.Registry.milLicenses or {}))
         end
+        return ok == true
     end
 
     DOC.LoadTemplates()

@@ -33,7 +33,7 @@ function NEWS.LoadData()
 	if file.Exists("grm_news/articles.txt", "DATA") then
 		local data = file.Read("grm_news/articles.txt", "DATA")
 		if data then
-			local articles = util.JSONToTable(data)
+			local articles = util.JSONToTable(data, false, true)
 			if articles then
 				NEWS.Articles = articles
 			end
@@ -44,7 +44,7 @@ function NEWS.LoadData()
 	if file.Exists("grm_news/config.txt", "DATA") then
 		local data = file.Read("grm_news/config.txt", "DATA")
 		if data then
-			local config = util.JSONToTable(data)
+			local config = util.JSONToTable(data, false, true)
 			if config then
 				NEWS.Config_ = config
 			end

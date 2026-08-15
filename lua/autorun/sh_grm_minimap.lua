@@ -22,7 +22,7 @@ if SERVER then
     end
     local function load()
         if file.Exists(MM.File, "DATA") then
-            local ok, d = pcall(util.JSONToTable, file.Read(MM.File, "DATA") or "")
+            local ok, d = pcall(util.JSONToTable, file.Read(MM.File, "DATA") or "", false, true)
             if ok and istable(d) then MM.Data = d end
         end
         MM.Data.districts = istable(MM.Data.districts) and MM.Data.districts or {}

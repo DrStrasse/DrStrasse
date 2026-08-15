@@ -10,6 +10,12 @@ Master — старый неполный снапшот. В новых Arena-с�
 
 ## Что изменено последним пакетом
 
+0. **Код 62 — Persistence Guard**
+   - `sh_01_grm_persistence_guard.lua` делает ранний снимок DATA до загрузчиков;
+   - primary остаётся главным, boot/backup используется при пустом/битом primary;
+   - при ошибке загрузки autosave блокируется, живые entity/память не удаляются;
+   - `grm_persistence_audit` печатает boot-файлы, байты, valid и score;
+   - Hub `perm` теперь вызывает `GRM.Perm`, а не saver рудных узлов.
 1. **Код 61 — собственные инструменты GRM**
    - `sh_grm_build_tools.lua`;
    - `grm_camera`, `grm_light`, `grm_lamp`, `grm_material`, `grm_colour`;
@@ -45,7 +51,7 @@ python3 tools/build_dist.py
 unzip -t dist/*.zip
 ```
 
-Контрольная цифра на этой точке: **490/490 syntax, 76/76 sim, 16/16 roundtrip**.
+Контрольная цифра на этой точке: **491/491 syntax, 77/77 sim, 16/16 roundtrip**.
 
 ## Архитектурные законы
 

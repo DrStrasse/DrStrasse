@@ -123,7 +123,7 @@ local function readJSON(path, fallback)
     local raw = file.Read(path, "DATA") or ""
     if raw == "" then return table.Copy(fallback or {}) end
 
-    local ok, data = pcall(util.JSONToTable, raw)
+    local ok, data = pcall(util.JSONToTable, raw, false, true)
     if ok and istable(data) then return data end
 
     print("[GRM RoomTap] Ошибка чтения JSON: " .. path)
@@ -436,7 +436,7 @@ local function loadRecentRecords()
         for _, fileName in ipairs(files or {}) do
             local raw = file.Read(channelPath .. "/" .. fileName, "DATA") or ""
             for line in string.gmatch(raw, "[^\r\n]+") do
-                local ok, record = pcall(util.JSONToTable, line)
+                local ok, record = pcall(util.JSONToTable, line, false, true)
                 if ok and istable(record) then
                     RT.RecentRecords[#RT.RecentRecords + 1] = record
                 end
@@ -659,6 +659,7 @@ local function applyRecord(ent, record)
 end
 
 function RT.SaveMapEquipment(ply)
+    if RT.MapLoadBlocked then print("[GRM RoomTap][!] SAVE ОТКЛОНЁН после ошибки primary/backup")return false,"save blocked"end
     if IsValid(ply) and not ply:IsSuperAdmin() then
         notify(ply, false, "Сохранять расстановку оборудования может только superadmin.")
         return false
@@ -676,10 +677,12 @@ function RT.SaveMapEquipment(ply)
         end
     end
 
-    writeJSON(mapFile(), list)
-    if IsValid(ply) then notify(ply, true, "Сохранено постоянного оборудования: " .. #list) end
-    print("[GRM RoomTap] Сохранено постоянного оборудования: " .. #list)
-    return true
+    local path=mapFile();local guard=GRM.PersistenceGuard;local ok
+    if guard and guard.WriteMirrored then ok=guard.WriteMirrored(path,path..".backup",list,"RoomTap map")
+    else local okJ,raw=pcall(util.TableToJSON,list,true);ok=okJ and isstring(raw);if ok then file.Write(path,raw)file.Write(path..".backup",raw)end end
+    if IsValid(ply) then notify(ply, ok, (ok and "Сохранено" or "Ошибка сохранения") .. " постоянного оборудования: " .. #list) end
+    print("[GRM RoomTap] SAVE "..tostring(ok).." records=" .. #list)
+    return ok==true,"сохранено RoomTap: "..#list
 end
 
 function RT.LoadMapEquipment(ply)
@@ -688,7 +691,11 @@ function RT.LoadMapEquipment(ply)
         return false
     end
 
-    local list = readJSON(mapFile(), {})
+    local path=mapFile();local guard=GRM.PersistenceGuard;local list,source,raw,meta
+    if guard and guard.ReadBest then list,source,raw,meta=guard.ReadBest(path,{path..".backup"},"RoomTap map")
+    else local txt=file.Exists(path,"DATA")and(file.Read(path,"DATA")or"")or"";local ok,t=pcall(util.JSONToTable,txt,false,true);if ok and istable(t)then list,source,raw=t,path,txt end;meta={hadAny=txt~=""}end
+    if not istable(list)then RT.MapLoadBlocked=meta and meta.hadAny==true;local why=RT.MapLoadBlocked and"primary/backup повреждены"or"файл карты отсутствует";print("[GRM RoomTap] LOAD skipped: "..why.."; live entities preserved")return false,why end
+    RT.MapLoadBlocked=false;if guard and guard.Materialize and raw then guard.Materialize(path,path..".backup",raw,"RoomTap map")end
     local count = 0
 
     -- Удаляем только предыдущее постоянное оборудование, не временное из магазина.
@@ -716,8 +723,8 @@ function RT.LoadMapEquipment(ply)
     end
 
     if IsValid(ply) then notify(ply, true, "Загружено постоянного оборудования: " .. count) end
-    print("[GRM RoomTap] Загружено постоянного оборудования: " .. count)
-    return true
+    print("[GRM RoomTap] LOAD source="..tostring(source).." records=" .. count)
+    return true,"загружено RoomTap: "..count
 end
 
 -- ============================================================

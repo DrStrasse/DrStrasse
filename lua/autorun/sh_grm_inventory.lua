@@ -299,6 +299,8 @@ if SERVER then
     util.AddNetworkString("grm_inv_split")
 
     local INV_FILE = "grm_inventories.json"
+    local INV_BACKUP_FILE = "grm_inventories_backup.json"
+    local inventoryLoadBlocked = false
     -- v1.6: ключ инвентаря = CharacterKey, если поднят GRM.Char.
     -- fallback = SteamID64 для совместимости/тестов/серверов без character core.
     local Inventories = {}  -- [InventoryKey] = { slots = { [1] = {id="ammo_pistol", count=30}, ... } }
@@ -307,11 +309,25 @@ if SERVER then
     -- находка 114: лоадер БЕЗ 3-го аргумента конвертировал sid64-ключ
     -- «7656…» в битый double — после рестарта ВСЕ записи сиротели.
     local function loadInventories()
-        if not file.Exists(INV_FILE, "DATA") then return {} end
-        local raw = file.Read(INV_FILE, "DATA") or ""
-        if raw == "" then return {} end
-        local ok, t = pcall(util.JSONToTable, raw, false, true) -- н65: s64-ключи не конвертируем
-        if not (ok and istable(t)) then return {} end
+        local t, source, raw, meta
+        local guard = GRM.PersistenceGuard
+        if guard and guard.ReadBest then
+            t, source, raw, meta = guard.ReadBest(INV_FILE, { INV_BACKUP_FILE }, "inventories")
+        else
+            local txt = file.Exists(INV_FILE, "DATA") and (file.Read(INV_FILE, "DATA") or "") or ""
+            local ok, parsed = pcall(util.JSONToTable, txt, false, true)
+            if ok and istable(parsed) then t, source, raw = parsed, INV_FILE, txt end
+            meta = { hadAny = txt ~= "" }
+        end
+        if not istable(t) then
+            inventoryLoadBlocked = meta and meta.hadAny == true
+            if inventoryLoadBlocked then
+                print("[GRM Inv][!] LOAD BLOCKED: база существует, но primary/backup не разобраны; пустой autosave запрещён")
+            end
+            return {}
+        end
+        inventoryLoadBlocked = false
+        if guard and guard.Materialize and raw then guard.Materialize(INV_FILE, INV_BACKUP_FILE, raw, "inventories") end
         local out = {}
         for k, rec in pairs(t) do
             if istable(rec) then
@@ -339,19 +355,30 @@ if SERVER then
                 end
             end
         end
+        print(("[GRM Inv] LOAD: source=%s inventories=%d"):format(tostring(source or INV_FILE), table.Count(out)))
         return out
     end
 
     local function saveInventories(why)
+        if inventoryLoadBlocked then
+            print("[GRM Inv][!] SAVE ОТКЛОНЁН: загрузка primary/backup была ошибочной; живые файлы не затираем [" .. tostring(why or "?") .. "]")
+            return false
+        end
         local ok, enc = pcall(util.TableToJSON, Inventories, true)
         if not ok or not isstring(enc) then
             print("[GRM Inv][!] TableToJSON упал, сейв пропущен (" .. tostring(why or "?") .. ")")
             return false
         end
-        file.Write(INV_FILE, enc)
+        local guard = GRM.PersistenceGuard
+        if guard and guard.Materialize then
+            if not guard.Materialize(INV_FILE, INV_BACKUP_FILE, enc, "inventories save") then return false end
+        else
+            file.Write(INV_FILE, enc)
+            file.Write(INV_BACKUP_FILE, enc)
+        end
         local rb = file.Read(INV_FILE, "DATA") or ""
-        if rb == "" then
-            print("[GRM Inv][!] КОНТРОЛЬ ЗАПИСИ: файл пуст после save (" .. tostring(why or "?") .. ")")
+        if rb ~= enc then
+            print("[GRM Inv][!] КОНТРОЛЬ ЗАПИСИ: read-back mismatch (" .. tostring(why or "?") .. ")")
             return false
         end
         return true

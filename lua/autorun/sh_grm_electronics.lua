@@ -11,6 +11,7 @@ E.Version="2.0.0";E.Devices=E.Devices or{};E.Configs=E.Configs or{};E.Links=E.Li
 E.DirtyMap=false;E.DirtyDB=false
 E.Kinds={router="Wi-Fi роутер",computer="Компьютер",printer="Сетевой принтер",socket="Сетевая розетка",plug="Кабельный штекер"}
 local function trim(v,n)return string.sub(string.Trim(tostring(v or"")),1,n or 128)end
+local function count(t)local n=0;for _ in pairs(t or{})do n=n+1 end;return n end
 local function charKey(p)if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(p)end;return tostring(p:SteamID64())..":char1"end
 local function vecT(v)return{x=v.x,y=v.y,z=v.z}end;local function angT(a)return{p=a.p,y=a.y,r=a.r}end
 local function vec(t)t=istable(t)and t or{};return Vector(tonumber(t.x)or 0,tonumber(t.y)or 0,tonumber(t.z)or 0)end
@@ -31,8 +32,15 @@ if SERVER then
  for _,n in ipairs({"GRM_Net_Open","GRM_Net_Action","GRM_Net_Result","GRM_Net_Topology","GRM_Net_AdminOpen","GRM_Net_AdminSave","GRM_Net_AdminData","GRM_Net_AdminAction","GRM_Net_Document","GRM_Net_MailInbox","GRM_Net_MailSend","GRM_Net_PrintJob"})do util.AddNetworkString(n)end
  E.Dir="grm_electronics";E.MapFile=E.Dir.."/"..string.lower(game.GetMap()or"unknown")..".json";E.DBFile=E.Dir.."/database.json"
  local function ensure()if not file.IsDir(E.Dir,"DATA")then file.CreateDir(E.Dir)end end
- local function read(path)if not file.Exists(path,"DATA")then return nil end;local ok,t=pcall(util.JSONToTable,file.Read(path,"DATA")or"",false,true);return ok and istable(t)and t or nil end
- local function write(path,data)ensure();local ok,raw=pcall(util.TableToJSON,data,true);if not ok or not isstring(raw)then return false end;local old=file.Exists(path,"DATA")and file.Read(path,"DATA");if old and old~=""then file.Write(path..".backup",old)end;file.Write(path,raw);if file.Read(path,"DATA")~=raw then return false end;return istable(read(path))end
+ local function read(path,label)
+  local guard=GRM.PersistenceGuard;local data,source,raw,meta
+  if guard and guard.ReadBest then data,source,raw,meta=guard.ReadBest(path,{path..".backup"},label or path)
+  else local txt=file.Exists(path,"DATA")and(file.Read(path,"DATA")or"")or"";local ok,t=pcall(util.JSONToTable,txt,false,true);if ok and istable(t)then data,source,raw=t,path,txt end;meta={hadAny=txt~=""}end
+  if istable(data)then if guard and guard.Materialize and raw then guard.Materialize(path,path..".backup",raw,label or path)end;return data,source end
+  if not(meta and meta.hadAny)then return{},"new"end
+  return nil,nil
+ end
+ local function write(path,data,label)ensure();local guard=GRM.PersistenceGuard;if guard and guard.WriteMirrored then return guard.WriteMirrored(path,path..".backup",data,label or path)end;local ok,raw=pcall(util.TableToJSON,data,true);if not ok or not isstring(raw)then return false end;file.Write(path,raw);file.Write(path..".backup",raw);return file.Read(path,"DATA")==raw end
  local function hash(password,salt)local raw=tostring(password)..":"..tostring(salt);return util.SHA256 and util.SHA256(raw)or util.CRC(raw)end
  local function cleanUser(v)return string.lower(trim(v,32)):gsub("[^%w_%-%.]","")end
  local function session(ply)local s=E.Sessions[ply];if s and s.expires>CurTime()then return s end end
@@ -47,36 +55,41 @@ if SERVER then
  end
 
  function E.SaveDB()
+  if E.DBLoadBlocked then print("[GRM Electronics][!] DB SAVE ОТКЛОНЁН после ошибки primary/backup")return false end
   local accounts={};for _,r in pairs(E.Accounts)do accounts[#accounts+1]=r end
   local allFiles={};for devID,store in pairs(E.Files)do local arr={};for _,r in pairs(store)do arr[#arr+1]=r end;allFiles[devID]=arr end
   local mailbox={};for _,r in pairs(E.Mailbox)do mailbox[#mailbox+1]=r end
-  local ok=write(E.DBFile,{version=2,accounts=accounts,files=allFiles,mailbox=mailbox});if ok then E.DirtyDB=false end;return ok
+  local ok=write(E.DBFile,{version=2,accounts=accounts,files=allFiles,mailbox=mailbox},"electronics DB");if ok then E.DirtyDB=false end;return ok
  end
  function E.EnsureAdminTelecom()
   local username="admintelecom";local salt="GRM_ADMIN_TELECOM_V1";local account=E.Accounts[username]or{};account.username=username;account.displayName="AdminTelecom";account.salt=salt;account.passwordHash=hash("AdminTelecom",salt);account.ownerKey="SYSTEM";account.faction="";account.role="root";account.created=account.created or os.time();E.Accounts[username]=account;return account
  end
  function E.LoadDB()
-  local d=read(E.DBFile)or{};E.Accounts={};for _,r in pairs(d.accounts or{})do if r.username then E.Accounts[r.username]=r end end
+  local d,source=read(E.DBFile,"electronics DB");if not istable(d)then E.DBLoadBlocked=true;print("[GRM Electronics][!] DB LOAD BLOCKED: primary/backup invalid; memory preserved")return false end
+  E.DBLoadBlocked=false;E.Accounts={};for _,r in pairs(d.accounts or{})do if r.username then E.Accounts[r.username]=r end end
   E.Files={};local rawFiles=d.files or{}
   -- v2 format: files is {deviceID: [fileArray]}
   if istable(rawFiles)then for devID,arr in pairs(rawFiles)do if isstring(devID)and istable(arr)then E.Files[devID]={};for _,r in ipairs(arr)do if r.id then E.Files[devID][r.id]=r end end end end end
   E.Mailbox={};for _,r in ipairs(d.mailbox or{})do if r.id then E.Mailbox[r.id]=r end end
-  E.EnsureAdminTelecom();E.SaveDB();return true
+  E.EnsureAdminTelecom();if source=="new"then E.SaveDB()end;print("[GRM Electronics] DB LOAD source="..tostring(source).." accounts="..count(E.Accounts));return true
  end
  local function createCable(link)
   if not constraint or not constraint.Rope then return end;local a,b=E.DeviceByID(link.a),E.DeviceByID(link.b);if not IsValid(a)or not IsValid(b)then return end;local length=a:WorldSpaceCenter():Distance(b:WorldSpaceCenter());local rope=constraint.Rope(a,b,0,0,a:WorldToLocal(a:WorldSpaceCenter()),b:WorldToLocal(b:WorldSpaceCenter()),length,0,0,3,"cable/cable2",false);link.rope=rope
  end
  function E.SaveMap()
+  if E.MapLoadBlocked then print("[GRM Electronics][!] MAP SAVE ОТКЛОНЁН после ошибки primary/backup")return false end
   local devices={};for _,d in pairs(E.Devices)do if IsValid(d)then devices[#devices+1]={class=d:GetClass(),id=d:GetDeviceID(),name=d:GetDisplayName(),network=d:GetNetworkID(),ownerKey=d:GetOwnerKey(),ownerName=d:GetOwnerName(),active=d:GetDeviceActive(),model=d:GetModel(),pos=vecT(d:GetPos()),ang=angT(d:GetAngles()),config=E.Configs[d:GetDeviceID()]or{}}end end
-  local links={};for _,l in pairs(E.Links)do links[#links+1]={id=l.id,a=l.a,b=l.b}end;local ok=write(E.MapFile,{version=1,devices=devices,links=links});if ok then E.DirtyMap=false end;return ok
+  local links={};for _,l in pairs(E.Links)do links[#links+1]={id=l.id,a=l.a,b=l.b}end;local ok=write(E.MapFile,{version=1,devices=devices,links=links},"electronics map");if ok then E.DirtyMap=false end;return ok
  end
  function E.LoadMap()
+  local d,source=read(E.MapFile,"electronics map");if not istable(d)then E.MapLoadBlocked=true;print("[GRM Electronics][!] MAP LOAD BLOCKED: primary/backup invalid; live devices preserved")return false end
+  E.MapLoadBlocked=false
   -- v1.5.1: вычистить мёртвые записи реестра (после cleanup/удаления), чтобы
   -- DeviceByID не находил невалидные объекты и антидубль работал честно.
-  for k,d in pairs(E.Devices)do if not IsValid(d)then E.Devices[k]=nil end end
-  local d=read(E.MapFile)or{};E.Links={};for _,l in pairs(d.links or{})do if l.a and l.b then E.Links[l.id or util.CRC(l.a..l.b)]={id=l.id or util.CRC(l.a..l.b),a=l.a,b=l.b}end end
+  for k,dev in pairs(E.Devices)do if not IsValid(dev)then E.Devices[k]=nil end end
+  E.Links={};for _,l in pairs(d.links or{})do if l.a and l.b then E.Links[l.id or util.CRC(l.a..l.b)]={id=l.id or util.CRC(l.a..l.b),a=l.a,b=l.b}end end
   for _,r in pairs(d.devices or{})do if scripted_ents.GetStored(r.class or"")then local existing=E.DeviceByID(r.id);if not IsValid(existing)then existing=ents.Create(r.class);if IsValid(existing)then existing:SetPos(vec(r.pos));existing:SetAngles(ang(r.ang));existing:SetDeviceID(r.id or"");if util.IsValidModel(r.model or"")then existing:SetModel(r.model)end;existing:Spawn();existing:Activate()end end;if IsValid(existing)then existing:SetDisplayName(r.name or E.Kinds[existing:GetDeviceKind()]or"Устройство");existing:SetNetworkID(r.network or"");existing:SetOwnerKey(r.ownerKey or"");existing:SetOwnerName(r.ownerName or"");existing:SetDeviceActive(r.active~=false);E.Configs[existing:GetDeviceID()]=istable(r.config)and r.config or{};E.RegisterDevice(existing)end end end
-  for _,link in pairs(E.Links)do createCable(link)end;E.DirtyMap=false;E.PushTopology();return true
+  for _,link in pairs(E.Links)do createCable(link)end;E.DirtyMap=false;E.PushTopology();print("[GRM Electronics] MAP LOAD source="..tostring(source).." devices="..count(E.Devices));return true
  end
  function E.HandleDeviceRemoved(ent)
   if E.SuppressRemovalPersistence then return end;local id=ent.GetDeviceID and ent:GetDeviceID()or"";if id==""then return end
@@ -177,7 +190,7 @@ end
  function E.OpenAdmin(ply,ent)if not IsValid(ply)or not E.IsNetworkAdmin(ply)or not IsValid(ent)then return end;net.Start("GRM_Net_AdminOpen")net.WriteEntity(ent)net.WriteTable(E.Configs[ent:GetDeviceID()]or{})net.Send(ply)end
  function E.AdminPayload()
   local devices={};for _,d in pairs(E.Devices)do if IsValid(d)then local online,router=E.IsOnline(d);devices[#devices+1]={id=d:GetDeviceID(),name=d:GetDisplayName(),kind=d:GetDeviceKind(),network=d:GetNetworkID(),owner=d:GetOwnerName(),active=d:GetDeviceActive(),online=online,router=IsValid(router)and router:GetDisplayName()or"",ent=d}end end;table.sort(devices,function(a,b)return a.name<b.name end)
-  local links={};for _,l in pairs(E.Links)do links[#links+1]={id=l.id,a=l.a,b=l.b}end;local fileCount=0;for _,store in pairs(E.Files)do fileCount=fileCount+table.Count(store)end;return{devices=devices,links=links,accounts=table.Count(E.Accounts),files=fileCount}
+  local links={};for _,l in pairs(E.Links)do links[#links+1]={id=l.id,a=l.a,b=l.b}end;local fileCount=0;for _,store in pairs(E.Files)do fileCount=fileCount+count(store)end;return{devices=devices,links=links,accounts=count(E.Accounts),files=fileCount}
  end
  function E.OpenControlCenter(ply)if not IsValid(ply)or not E.IsNetworkAdmin(ply)then return end;net.Start("GRM_Net_AdminData")net.WriteTable(E.AdminPayload())net.Send(ply)end
  concommand.Add("grm_network_admin",E.OpenControlCenter)

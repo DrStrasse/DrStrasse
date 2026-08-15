@@ -27,7 +27,7 @@ if SERVER then
     end
     local function load()
         if not file.Exists(T.File, "DATA") then return end
-        local ok, d = pcall(util.JSONToTable, file.Read(T.File, "DATA") or "")
+        local ok, d = pcall(util.JSONToTable, file.Read(T.File, "DATA") or "", false, true)
         if ok and istable(d) then T.NextID = tonumber(d.nextID) or 0; T.Active = istable(d.active) and d.active or {}; T.History = istable(d.history) and d.history or {}; T.Zones = istable(d.zones) and d.zones or {} end
     end
     load()

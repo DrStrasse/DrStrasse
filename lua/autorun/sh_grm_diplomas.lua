@@ -91,11 +91,15 @@ local function jsonT(s)
     return ok and istable(t) and t or nil
 end
 
+D.LoadBlocked = D.LoadBlocked or false
 local function write(path, data)
     ensure()
+    if D.LoadBlocked then print("[GRM Diplomas][!] SAVE ОТКЛОНЁН после ошибки primary/backup")return false end
+    local guard=GRM.PersistenceGuard
+    if guard and guard.WriteMirrored then return guard.WriteMirrored(path,path..".backup",data,"diplomas")end
     local ok, s = pcall(util.TableToJSON, data, true)
     if not ok or not isstring(s) then return false end
-    file.Write(path, s)
+    file.Write(path, s) file.Write(path..".backup",s)
     return file.Read(path, "DATA") == s
 end
 
@@ -211,14 +215,18 @@ local function normalize(raw)
 end
 
 function D.Load()
-    D.List, D._nextNumber = {}, 1
-    if not file.Exists(FILE, "DATA") then return end
-    local t = jsonT(file.Read(FILE, "DATA") or "")
+    local guard=GRM.PersistenceGuard;local t,source,raw,meta
+    if guard and guard.ReadBest then t,source,raw,meta=guard.ReadBest(FILE,{FILE..".backup"},"diplomas")
+    else raw=file.Exists(FILE,"DATA")and(file.Read(FILE,"DATA")or"")or"";t=jsonT(raw);source=t and FILE or nil;meta={hadAny=raw~=""}end
     if not t then
-        backupCorrupt(FILE)
-        print("[GRM Diplomas] diplomas.json повреждён — сохранена копия, реестр пуст")
-        return
+        D.LoadBlocked=meta and meta.hadAny==true
+        if D.LoadBlocked then backupCorrupt(FILE);print("[GRM Diplomas] LOAD BLOCKED: invalid primary/backup")end
+        D.List,D._nextNumber=D.List or{},D._nextNumber or 1
+        return false
     end
+    D.LoadBlocked=false;if guard and guard.Materialize and raw then guard.Materialize(FILE,FILE..".backup",raw,"diplomas")end
+    D.List, D._nextNumber = {}, 1
+    print("[GRM Diplomas] LOAD source="..tostring(source))
     local list = istable(t.diplomas) and t.diplomas or (istable(t) and t or {})
     local maxSeq = 0
     for _, raw in pairs(list) do

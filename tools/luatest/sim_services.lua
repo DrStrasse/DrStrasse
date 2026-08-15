@@ -426,7 +426,7 @@ check("дубликатов номеров нет", not dup)
 print("\n=== ТЕСТ 10: битый файл не теряет данные ===")
 files["grm_services/invoices.json"] = "{ это не json"
 S.LoadInvoices()
-check("битый json не роняет загрузку", #S.Invoices == 0)
+check("битый json не роняет загрузку и не обнуляет память", #S.Invoices > 0)
 local backed = false
 for path in pairs(files) do
     if path:match("^grm_services/invoices%.json%.corrupt%.") then backed = true end

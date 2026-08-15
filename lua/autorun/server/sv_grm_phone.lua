@@ -767,6 +767,8 @@ timer.Simple(2, installVoiceHook)
 
 local SAVE_DIR = "grm_phone"
 local function savePath() return SAVE_DIR .. "/" .. string.lower(game.GetMap() or "unknown") .. ".json" end
+local function backupPath() return savePath() .. ".backup" end
+local function jsonT(raw) local ok,t=pcall(util.JSONToTable,raw or"",false,true);return ok and istable(t) and t or nil end
 local function ensureDir() if not file.Exists(SAVE_DIR, "DATA") then file.CreateDir(SAVE_DIR) end end
 
 local function entRecord(ent)
@@ -809,19 +811,31 @@ function P.SaveMapEntities(ply)
             end
         end
     end
-    file.Write(savePath(), util.TableToJSON(list, true))
-    notify(ply, "Сохранено телефонного оборудования: " .. #list)
+    local guard = GRM.PersistenceGuard
+    local ok
+    if guard and guard.WriteMirrored then ok = guard.WriteMirrored(savePath(), backupPath(), list, "phone map")
+    else local okJ,raw=pcall(util.TableToJSON,list,true);ok=okJ and isstring(raw);if ok then file.Write(savePath(),raw)file.Write(backupPath(),raw)end end
+    notify(ply, (ok and "Сохранено" or "ОШИБКА сохранения") .. " телефонного оборудования: " .. #list)
+    return ok == true, #list
 end
 
 function P.LoadMapEntities(ply)
-    if IsValid(ply) and not ply:IsSuperAdmin() then notify(ply, "Только superadmin.", true) return end
-    if not file.Exists(savePath(), "DATA") then return end
-
+    if IsValid(ply) and not ply:IsSuperAdmin() then notify(ply, "Только superadmin.", true) return false end
+    local guard = GRM.PersistenceGuard
+    local data, source, raw, meta
+    if guard and guard.ReadBest then data,source,raw,meta=guard.ReadBest(savePath(),{backupPath()},"phone map")
+    else local txt=file.Exists(savePath(),"DATA")and(file.Read(savePath(),"DATA")or"")or"";data=jsonT(txt);source=data and savePath()or nil;raw=txt;meta={hadAny=txt~=""}end
+    if not istable(data) then
+        local msg=(meta and meta.hadAny)and"Файл телефонии повреждён; живые объекты сохранены"or"Сохранение телефонии для карты не найдено"
+        notify(ply,msg,true) print("[GRM Phone] LOAD skipped: "..msg)
+        return false,msg
+    end
+    if guard and guard.Materialize and raw then guard.Materialize(savePath(),backupPath(),raw,"phone map")end
+    -- Удаляем живые объекты только ПОСЛЕ успешного разбора файла.
     for _, class in ipairs({ "grm_phone", "grm_payphone", "grm_pbx_station", "grm_phone_wiretap", "grm_phone_terminal" }) do
         for _, ent in ipairs(ents.FindByClass(class)) do ent:Remove() end
     end
 
-    local data = util.JSONToTable(file.Read(savePath(), "DATA") or "") or {}
     local count = 0
     for _, rec in ipairs(data) do
         local ent = ents.Create(rec.class)
@@ -842,6 +856,8 @@ function P.LoadMapEntities(ply)
         end
     end
     notify(ply, "Загружено телефонного оборудования: " .. count)
+    print("[GRM Phone] LOAD source="..tostring(source).." records="..count)
+    return true, count
 end
 
 concommand.Add("grm_phone_save", function(ply) P.SaveMapEntities(ply) end)

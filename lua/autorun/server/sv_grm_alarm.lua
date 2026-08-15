@@ -399,6 +399,7 @@ local function angT(a)
 end
 
 function A.SavePermanent()
+    if A.PersistenceLoadBlocked then print("[GRM Alarm][!] SAVE ОТКЛОНЁН после ошибки primary/backup")return false end
     local list = {}
     for _, ent in pairs(A.Devices) do
         if IsValid(ent) and isAlarmClass(classOf(ent)) and ent:GetPermanent() then
@@ -426,17 +427,21 @@ function A.SavePermanent()
     local path = savePath()
     local ok, txt = pcall(util.TableToJSON, list, true)
     if not ok or not isstring(txt) then return false end
-    file.Write(path, txt)
+    local guard=GRM.PersistenceGuard
+    if guard and guard.Materialize then if not guard.Materialize(path,path..".backup",txt,"alarm")then return false end
+    else file.Write(path,txt)file.Write(path..".backup",txt)end
     if file.Read(path, "DATA") ~= txt then return false end
     print(("[GRM Alarm] SAVE permanent: %d → data/%s"):format(#list, path))
     return true
 end
 
 function A.LoadPermanent()
-    local path = savePath()
-    if not file.Exists(path, "DATA") then return 0 end
-    local t = jsonT(file.Read(path, "DATA") or "")
-    if not istable(t) then return 0 end
+    local path=savePath();local guard=GRM.PersistenceGuard;local t,source,raw,meta
+    if guard and guard.ReadBest then t,source,raw,meta=guard.ReadBest(path,{path..".backup"},"alarm")
+    else raw=file.Exists(path,"DATA")and(file.Read(path,"DATA")or"")or"";t=jsonT(raw);source=t and path or nil;meta={hadAny=raw~=""}end
+    if not istable(t)then A.PersistenceLoadBlocked=meta and meta.hadAny==true;if A.PersistenceLoadBlocked then print("[GRM Alarm][!] LOAD BLOCKED: invalid primary/backup")end;return 0 end
+    A.PersistenceLoadBlocked=false;if guard and guard.Materialize and raw then guard.Materialize(path,path..".backup",raw,"alarm")end
+    print("[GRM Alarm] LOAD source="..tostring(source).." records="..#t)
     local n = 0
     for _, rec in ipairs(t) do
         if istable(rec) and isstring(rec.class) and isAlarmClass(rec.class) then

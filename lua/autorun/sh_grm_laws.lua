@@ -25,7 +25,7 @@ local function jsonT(raw)
     if not raw or raw == "" then return nil end
     local ok, tbl = pcall(util.JSONToTable, raw, false, true)
     if ok and istable(tbl) then return tbl end
-    ok, tbl = pcall(util.JSONToTable, raw)
+    ok, tbl = pcall(util.JSONToTable, raw, false, true)
     if ok and istable(tbl) then return tbl end
     return nil
 end

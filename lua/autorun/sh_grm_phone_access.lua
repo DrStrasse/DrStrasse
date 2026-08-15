@@ -103,7 +103,7 @@ if SERVER then
             AM.Data = normalizeAccess({})
             return AM.Data
         end
-        local ok, data = pcall(util.JSONToTable, raw)
+        local ok, data = pcall(util.JSONToTable, raw, false, true)
         AM.Data = normalizeAccess(ok and data or {})
         return AM.Data
     end

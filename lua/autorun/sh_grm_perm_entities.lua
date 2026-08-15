@@ -150,6 +150,8 @@ end
 
 if SERVER then
     local PERM_FILE  = "grm_perm_entities.json"
+    local PERM_BACKUP_FILE = "grm_perm_entities_backup.json"
+    local permLoadBlocked = false
     local PERM_QUOTA_FACTION = 32 -- записей на фракцию
     local PERM_QUOTA_PLAYER  = 8  -- записей на персонажа (если разрешено конваром)
 
@@ -282,16 +284,26 @@ if SERVER then
 
     -- ── Хранилище ───────────────────────────────────────────
     local function loadList()
-        if not file.Exists(PERM_FILE, "DATA") then return {} end
-        local txt = file.Read(PERM_FILE, "DATA") or ""
-        if string.Trim(txt) == "" or string.Trim(txt) == "[]" then return {} end
-        local t = jsonT(txt)
+        local guard = GRM.PersistenceGuard
+        local t, source, raw, meta
+        if guard and guard.ReadBest then
+            t, source, raw, meta = guard.ReadBest(PERM_FILE, { PERM_BACKUP_FILE }, "perm entities")
+        else
+            local txt = file.Exists(PERM_FILE, "DATA") and (file.Read(PERM_FILE, "DATA") or "") or ""
+            t = jsonT(txt) source = t and PERM_FILE or nil raw = txt meta = { hadAny = txt ~= "" }
+        end
         if not istable(t) then
-            local q = "grm_perm_entities_corrupt_" .. os.time() .. ".txt"
-            file.Write(q, txt)
-            print("[GRM Perm][!] База пермов битая — копия в data/" .. q .. ", работаем с пустой")
+            permLoadBlocked = meta and meta.hadAny == true
+            if permLoadBlocked then
+                local q = "grm_perm_entities_corrupt_" .. os.time() .. ".txt"
+                file.Write(q, raw or "")
+                print("[GRM Perm][!] primary/backup не разобраны — карантин data/" .. q .. ", SAVE BLOCKED")
+            end
             return {}
         end
+        permLoadBlocked = false
+        if guard and guard.Materialize and raw then guard.Materialize(PERM_FILE, PERM_BACKUP_FILE, raw, "perm entities") end
+        print(("[GRM Perm] LOAD source=%s records=%d"):format(tostring(source), #t))
         -- в базе только массив записей-таблиц
         local out = {}
         for _, rec in ipairs(t) do
@@ -370,13 +382,13 @@ if SERVER then
             local migrated, changed = migrateList(list)
             list = migrated
             migrationDone = true
-            if changed then
+            if changed and not permLoadBlocked then
                 local okJ, txt = pcall(util.TableToJSON, list, true)
                 if okJ and isstring(txt) and txt ~= "" then
-                    file.Write(PERM_FILE, txt)
-                    if file.Read(PERM_FILE, "DATA") ~= txt then
-                        print("[GRM Perm][!] Миграция: запись основной базы не подтвердилась")
-                    end
+                    local guard = GRM.PersistenceGuard
+                    if guard and guard.Materialize then guard.Materialize(PERM_FILE, PERM_BACKUP_FILE, txt, "perm migration")
+                    else file.Write(PERM_FILE, txt) file.Write(PERM_BACKUP_FILE, txt) end
+                    if file.Read(PERM_FILE, "DATA") ~= txt then print("[GRM Perm][!] Миграция: запись основной базы не подтвердилась") end
                 end
             end
         end
@@ -384,12 +396,22 @@ if SERVER then
     end
 
     local function saveList(list)
+        if permLoadBlocked then
+            print("[GRM Perm][!] SAVE ОТКЛОНЁН после ошибки загрузки primary/backup")
+            return false
+        end
         local okJ, txt = pcall(util.TableToJSON, list, true)
         if not okJ or not isstring(txt) or txt == "" then
             print("[GRM Perm][!] SAVE: сериализация не удалась — запись пропущена")
             return false
         end
-        file.Write(PERM_FILE, txt)
+        local guard = GRM.PersistenceGuard
+        if guard and guard.Materialize then
+            if not guard.Materialize(PERM_FILE, PERM_BACKUP_FILE, txt, "perm save") then return false end
+        else
+            file.Write(PERM_FILE, txt)
+            file.Write(PERM_BACKUP_FILE, txt)
+        end
         local chk = file.Read(PERM_FILE, "DATA")
         if chk ~= txt then
             print(("[GRM Perm][!] ЗАПИСЬ НЕ ПОДТВЕРДИЛАСЬ: сохранено %d байт, на диске %s")
@@ -1138,6 +1160,15 @@ if SERVER then
     -- Совместимость: старые вызовы Upsert/UpdateEntry остаются рабочими
     P.Upsert      = function(ent) return GRM.PermData.Upsert(ent) end
     P.UpdateEntry = function(ent) return GRM.PermData.UpdateEntry(ent) end
+    function P.SaveAll()
+        local list = loadDB()
+        local ok = saveList(list)
+        return ok, ok and ("сохранено perm-записей: " .. #list) or "ошибка записи perm primary/backup"
+    end
+    function P.LoadAll()
+        local spawned, bound = spawnAll("Persistence Hub")
+        return not permLoadBlocked, ("восстановлено %d, привязано %d"):format(spawned, bound)
+    end
 
     -- Старые /permadd и /permremove теперь используют тот же API, что
     -- grm_perm_tool. Раньше это был отдельный слабый путь: /permadd не

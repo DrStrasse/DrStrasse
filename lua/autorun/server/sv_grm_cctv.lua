@@ -210,6 +210,7 @@ local function angT(a)
 end
 
 function CCTV.SavePermanent()
+    if CCTV.PersistenceLoadBlocked then print("[GRM CCTV][!] SAVE ОТКЛОНЁН после ошибки primary/backup")return false end
     local list = {}
     for _, ent in pairs(CCTV.Devices) do
         if IsValid(ent) and isCCTVClass(classOf(ent)) and ent:GetPermanent() then
@@ -234,7 +235,10 @@ function CCTV.SavePermanent()
         print("[GRM CCTV] SAVE fail: serialize")
         return false
     end
-    file.Write(path, txt)
+    local guard=GRM.PersistenceGuard
+    if guard and guard.Materialize then
+        if not guard.Materialize(path,path..".backup",txt,"CCTV")then return false end
+    else file.Write(path,txt)file.Write(path..".backup",txt)end
     local chk = file.Read(path, "DATA")
     if chk ~= txt then
         print("[GRM CCTV] SAVE fail: read-back " .. path)
@@ -246,15 +250,17 @@ end
 
 function CCTV.LoadPermanent()
     local path = savePath()
-    if not file.Exists(path, "DATA") then return 0 end
-    local raw = file.Read(path, "DATA") or ""
-    local t = jsonT(raw)
+    local guard=GRM.PersistenceGuard;local t,source,raw,meta
+    if guard and guard.ReadBest then t,source,raw,meta=guard.ReadBest(path,{path..".backup"},"CCTV")
+    else raw=file.Exists(path,"DATA")and(file.Read(path,"DATA")or"")or"";t=jsonT(raw);source=t and path or nil;meta={hadAny=raw~=""}end
     if not istable(t) then
-        local q = (CFG().SaveDir or "grm_cctv") .. "/corrupt_" .. os.time() .. ".txt"
-        file.Write(q, raw)
-        print("[GRM CCTV] LOAD: quarantine data/" .. q)
+        CCTV.PersistenceLoadBlocked=meta and meta.hadAny==true
+        if CCTV.PersistenceLoadBlocked then local q=(CFG().SaveDir or"grm_cctv").."/corrupt_"..os.time()..".txt";file.Write(q,raw or"");print("[GRM CCTV] LOAD BLOCKED: quarantine data/"..q)end
         return 0
     end
+    CCTV.PersistenceLoadBlocked=false
+    if guard and guard.Materialize and raw then guard.Materialize(path,path..".backup",raw,"CCTV")end
+    print("[GRM CCTV] LOAD source="..tostring(source).." records="..#t)
     CCTV.RebuildRegistry()
     local spawned, healed, claimed = 0, 0, {}
     for _, rec in ipairs(t) do

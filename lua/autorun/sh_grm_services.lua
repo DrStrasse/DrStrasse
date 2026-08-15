@@ -93,12 +93,24 @@ local function jsonT(s)
     return ok and istable(t) and t or nil
 end
 
+S.LoadBlocked = S.LoadBlocked or {}
 local function write(path, data)
     ensure()
+    if S.LoadBlocked[path] then print("[GRM Services][!] SAVE ОТКЛОНЁН "..path)return false end
+    local guard=GRM.PersistenceGuard
+    if guard and guard.WriteMirrored then return guard.WriteMirrored(path,path..".backup",data,"services") end
     local ok, s = pcall(util.TableToJSON, data, true)
     if not ok or not isstring(s) then return false end
-    file.Write(path, s)
+    file.Write(path, s) file.Write(path..".backup",s)
     return file.Read(path, "DATA") == s
+end
+local function readBest(path,label)
+    local guard=GRM.PersistenceGuard;local t,source,raw,meta
+    if guard and guard.ReadBest then t,source,raw,meta=guard.ReadBest(path,{path..".backup"},label)
+    else local txt=file.Exists(path,"DATA")and(file.Read(path,"DATA")or"")or"";t=jsonT(txt);source=t and path or nil;raw=txt;meta={hadAny=txt~=""}end
+    if istable(t)then S.LoadBlocked[path]=nil;if guard and guard.Materialize and raw then guard.Materialize(path,path..".backup",raw,label)end;return t,source end
+    if meta and meta.hadAny then S.LoadBlocked[path]=true;print("[GRM Services][!] LOAD BLOCKED "..path)end
+    return nil,nil
 end
 
 --- Битый json не затираем: уводим в копию, чтобы данные можно было спасти.
@@ -463,14 +475,15 @@ local function normalizeService(raw)
 end
 
 function S.LoadServices()
-    S.Catalog, S.Access = {}, {}
-    if not file.Exists(FILE_SRV, "DATA") then return end
-    local t = jsonT(file.Read(FILE_SRV, "DATA") or "")
+    local t,source=readBest(FILE_SRV,"services catalog")
     if not t then
-        backupCorrupt(FILE_SRV)
-        print("[GRM Services] services.json повреждён — сохранена копия, начинаем с чистого каталога")
-        return
+        if file.Exists(FILE_SRV,"DATA")then backupCorrupt(FILE_SRV)end
+        print("[GRM Services] LOAD skipped: primary/backup отсутствуют или повреждены; память сохранена")
+        S.Catalog,S.Access=S.Catalog or{},S.Access or{}
+        return false
     end
+    S.Catalog, S.Access = {}, {}
+    print("[GRM Services] LOAD source="..tostring(source))
     local list = istable(t.services) and t.services or {}
     for _, raw in pairs(list) do
         local n = normalizeService(raw)
@@ -530,14 +543,15 @@ local function normalizeInvoice(raw)
 end
 
 function S.LoadInvoices()
-    S.Invoices, S._nextInvoice = {}, 1
-    if not file.Exists(FILE_INV, "DATA") then return end
-    local t = jsonT(file.Read(FILE_INV, "DATA") or "")
+    local t,source=readBest(FILE_INV,"service invoices")
     if not t then
-        backupCorrupt(FILE_INV)
-        print("[GRM Services] invoices.json повреждён — сохранена копия, реестр счетов пуст")
-        return
+        if file.Exists(FILE_INV,"DATA")then backupCorrupt(FILE_INV)end
+        print("[GRM Services] invoices LOAD skipped; память сохранена")
+        S.Invoices,S._nextInvoice=S.Invoices or{},S._nextInvoice or 1
+        return false
     end
+    S.Invoices, S._nextInvoice = {}, 1
+    print("[GRM Services] invoices LOAD source="..tostring(source))
     -- толерантно: и { invoices = {...} }, и голый массив
     local list = istable(t.invoices) and t.invoices or (istable(t) and t or {})
     local maxID = 0

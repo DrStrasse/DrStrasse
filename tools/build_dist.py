@@ -23,6 +23,7 @@ CONTENT_DIRS = ["lua", "materials", "models", "sound", "resource", "gamemodes", 
 
 # Экономический срез: ядро экономики + всё, что его использует.
 ECONOMY_FILES = [
+    "lua/autorun/sh_01_grm_persistence_guard.lua",
     "lua/autorun/sh_grm_currency.lua",
     "lua/autorun/sh_grm_economy.lua",
     "lua/autorun/sh_grm_incassation.lua",
@@ -136,7 +137,12 @@ def build_fire():
     tmp = path + ".tmp"
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
         for rel in sorted(entries):
-            z.writestr("grm_fire_addon/" + rel, entries[rel])
+            # Детерминированный timestamp: повторная сборка без изменений не
+            # должна менять бинарный hash архива.
+            info = zipfile.ZipInfo("grm_fire_addon/" + rel, (2026, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o100644 << 16
+            z.writestr(info, entries[rel])
     shutil.move(tmp, path)
     print("%-34s %4d файлов, %8.1f КБ" % ("grm_fire_addon.zip", len(entries), os.path.getsize(path) / 1024.0))
 

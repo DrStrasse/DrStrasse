@@ -71,7 +71,7 @@ if SERVER then
 
     local function loadLog()
         if not file.Exists(LOG_FILE, "DATA") then return end
-        local ok, t = pcall(util.JSONToTable, file.Read(LOG_FILE, "DATA") or "")
+        local ok, t = pcall(util.JSONToTable, file.Read(LOG_FILE, "DATA") or "", false, true)
         if ok and istable(t) then adminLog = t end
     end
 
@@ -90,7 +90,7 @@ if SERVER then
 
     local function loadPTax()
         if not file.Exists(PTAX_FILE, "DATA") then return end
-        local ok, t = pcall(util.JSONToTable, file.Read(PTAX_FILE, "DATA") or "")
+        local ok, t = pcall(util.JSONToTable, file.Read(PTAX_FILE, "DATA") or "", false, true)
         if ok and istable(t) then playerTaxes = t end
     end
 

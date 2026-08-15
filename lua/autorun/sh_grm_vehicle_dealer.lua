@@ -4,9 +4,18 @@ GRM=GRM or{};GRM.VehicleDealer=GRM.VehicleDealer or{};local VD=GRM.VehicleDealer
 VD.Version="3.1.3";VD.DealerFile="grm_vehicle_dealers/";VD.GarageFile="grm_vehicle_garages.json";VD.MaxActive=3;VD.UseDistance=180;VD.DefaultLift=30
 VD.Dealers=VD.Dealers or{};VD.Garages=VD.Garages or{};VD.Active=VD.Active or{}
 local function jsonT(s)local ok,t=pcall(util.JSONToTable,s or"",false,true);return ok and istable(t)and t or nil end
+VD.LoadBlocked=VD.LoadBlocked or{}
+local function readSaved(path,label)
+ local guard=GRM.PersistenceGuard;local data,source,raw,meta
+ if guard and guard.ReadBest then data,source,raw,meta=guard.ReadBest(path,{path..".backup"},label)
+ else local txt=file.Exists(path,"DATA")and(file.Read(path,"DATA")or"")or"";data=jsonT(txt);source=data and path or nil;raw=txt;meta={hadAny=txt~=""}end
+ if istable(data)then VD.LoadBlocked[path]=nil;if guard and guard.Materialize and raw then guard.Materialize(path,path..".backup",raw,label)end;return data,source end
+ if meta and meta.hadAny then VD.LoadBlocked[path]=true;print("[GRM VehicleDealer][!] LOAD BLOCKED "..path..": invalid primary/backup")return nil,nil end
+ VD.LoadBlocked[path]=nil;return{},"new"
+end
 local function ensureDir()if SERVER and not file.IsDir("grm_vehicle_dealers","DATA")then file.CreateDir("grm_vehicle_dealers")end end
 local function mapFile()ensureDir();return VD.DealerFile..string.lower(game.GetMap()or"unknown")..".json"end
-local function write(path,data)local ok,s=pcall(util.TableToJSON,data,true);if not ok or not isstring(s)then return false end;file.Write(path,s);return file.Read(path,"DATA")==s end
+local function write(path,data)if VD.LoadBlocked[path]then print("[GRM VehicleDealer][!] SAVE ОТКЛОНЁН "..path)return false end;local guard=GRM.PersistenceGuard;if guard and guard.WriteMirrored then return guard.WriteMirrored(path,path..".backup",data,"vehicle dealer")end;local ok,s=pcall(util.TableToJSON,data,true);if not ok or not isstring(s)then return false end;file.Write(path,s);file.Write(path..".backup",s);return file.Read(path,"DATA")==s end
 local function key(ply)if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply)end;return tostring(ply:SteamID64())..":char1"end
 local function vd(v)return{x=v.x,y=v.y,z=v.z}end;local function ad(a)return{p=a.p,y=a.y,r=a.r}end
 local function vec(t)return Vector(tonumber(t.x)or 0,tonumber(t.y)or 0,tonumber(t.z)or 0)end;local function ang(t)return Angle(tonumber(t.p)or 0,tonumber(t.y)or 0,tonumber(t.r)or 0)end
@@ -22,9 +31,9 @@ function VD.CanUseEntry(ply,entry)if not entry.faction or entry.faction==""then 
 function VD.DealerRecord(ent)return{id=ent:GetDealerID(),name=ent:GetDealerName(),model=ent:GetDealerModel(),pos=vd(ent:GetPos()),ang=ad(ent:GetAngles()),spawnPos=vd(ent:GetSpawnPos()),spawnAng=ad(ent:GetSpawnAngle()),hasSpawn=ent:GetHasCustomSpawn(),hasSpawnZone=ent:GetHasSpawnZone(),spawnZoneMin=vd(ent:GetSpawnZoneMin()),spawnZoneMax=vd(ent:GetSpawnZoneMax()),lift=tonumber(ent.VD_Lift)or VD.DefaultLift,vehicles=table.Copy(ent.VD_Vehicles or{})}end
 if SERVER then
  for _,n in ipairs({"GRM_VD_Open","GRM_VD_Action","GRM_VD_Result","GRM_VD_AdminOpen","GRM_VD_AdminSave","GRM_VD_ZoneRequest","GRM_VD_ZoneData","VD_RequestVehicleList","VD_VehicleList","VD_AdminSpawnVehicle"})do util.AddNetworkString(n)end
- local function loadDealers()local d=file.Exists(mapFile(),"DATA")and jsonT(file.Read(mapFile(),"DATA"))or{};local src=d and(d.dealers or d)or{};local o={}for _,r in pairs(src)do if istable(r)and r.id and r.pos then o[#o+1]=r end end;return o end
+ local function loadDealers()local path=mapFile();local d,source=readSaved(path,"vehicle dealers");if not istable(d)then return{}end;local src=d.dealers or d;local o={}for _,r in pairs(src)do if istable(r)and r.id and r.pos then o[#o+1]=r end end;print("[GRM VehicleDealer] LOAD dealers source="..tostring(source).." records="..#o);return o end
  local function saveDealers(records)return write(mapFile(),{version=3,map=game.GetMap(),dealers=records})end
- local function loadGarage(markStored)VD.Garages=file.Exists(VD.GarageFile,"DATA")and(jsonT(file.Read(VD.GarageFile,"DATA"))or{})or{};if markStored then for _,garageRows in pairs(VD.Garages)do for _,record in pairs(garageRows)do record.stored=true end end end end;local function saveGarage()return write(VD.GarageFile,VD.Garages)end;loadGarage(true);saveGarage()
+ local function loadGarage(markStored)local d,source=readSaved(VD.GarageFile,"vehicle garages");if not istable(d)then return false end;VD.Garages=d;if markStored then for _,garageRows in pairs(VD.Garages)do for _,record in pairs(garageRows)do record.stored=true end end end;print("[GRM VehicleDealer] LOAD garage source="..tostring(source).." owners="..table.Count(VD.Garages));return true end;local function saveGarage()return write(VD.GarageFile,VD.Garages)end;local garageLoaded=loadGarage(true);if garageLoaded and not file.Exists(VD.GarageFile,"DATA")then saveGarage()end
  local function makeID(prefix)return prefix.."_"..util.CRC(table.concat({game.GetMap(),SysTime(),math.random()},":"))end
  function VD.SaveDealer(ent)if not IsValid(ent)or ent:GetClass()~="sent_vehicle_dealer"then return false,"Дилер не найден"end;if ent:GetDealerID()==""then ent:SetDealerID(makeID("dealer"))end;local records=loadDealers();local rec=VD.DealerRecord(ent);local found=false;for i,r in ipairs(records)do if r.id==rec.id then records[i]=rec;found=true break end end;if not found then records[#records+1]=rec end;VD.Dealers[rec.id]=ent;return saveDealers(records),rec.id end
  function VD.DeleteDealer(ent)local records=loadDealers();for i=#records,1,-1 do if records[i].id==ent:GetDealerID()then table.remove(records,i)end end;VD.Dealers[ent:GetDealerID()]=nil;return saveDealers(records)end

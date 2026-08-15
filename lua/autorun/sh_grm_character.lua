@@ -32,7 +32,8 @@ local CH = GRM.Char
 CH.Version    = "1.3.0"
 CH.NameMin    = 3     -- минимальная длина RP-имени
 CH.NameMax    = 48
-    CH.DataFile   = "grm_characters.json"
+CH.DataFile    = "grm_characters.json"
+CH.BackupFile  = "grm_characters_backup.json"
 CH.MaxSlots    = 3
 CH.PendingSelection = CH.PendingSelection or {}
 CH.PendingMandatory = CH.PendingMandatory or {}
@@ -111,23 +112,47 @@ if SERVER then
         return (ok and istable(t)) and t or nil
     end
 
+    local charLoadBlocked = false
     local function loadChars()
         CH.Data = CH.Data or {}
-        if not file.Exists(CH.DataFile, "DATA") then return CH.Data end
-        local t = jsonT(file.Read(CH.DataFile, "DATA") or "")
-        if istable(t) then CH.Data = t end
+        local guard = GRM.PersistenceGuard
+        local t, source, raw, meta
+        if guard and guard.ReadBest then
+            t, source, raw, meta = guard.ReadBest(CH.DataFile, { CH.BackupFile }, "characters")
+        else
+            local txt = file.Exists(CH.DataFile, "DATA") and (file.Read(CH.DataFile, "DATA") or "") or ""
+            t = jsonT(txt) source = t and CH.DataFile or nil raw = txt meta = { hadAny = txt ~= "" }
+        end
+        if istable(t) then
+            CH.Data = t
+            charLoadBlocked = false
+            if guard and guard.Materialize and raw then guard.Materialize(CH.DataFile, CH.BackupFile, raw, "characters") end
+            print(("[GRM Char] LOAD source=%s accounts=%d"):format(tostring(source), table.Count(CH.Data)))
+        else
+            charLoadBlocked = meta and meta.hadAny == true
+            if charLoadBlocked then print("[GRM Char][!] LOAD BLOCKED: invalid primary/backup, save disabled") end
+        end
         return CH.Data
     end
 
     local function saveChars(reason)
-        local ok, txt = pcall(util.TableToJSON, CH.Data or {}, true)
-        if ok and txt then
-            file.Write(CH.DataFile, txt)
-            local back = readbackCheck()
-            if not back then
-                ErrorNoHalt("[GRM Char] SAVE FAIL (" .. tostring(reason) .. ")\n")
-            end
+        if charLoadBlocked then
+            print("[GRM Char][!] SAVE ОТКЛОНЁН после ошибки загрузки [" .. tostring(reason) .. "]")
+            return false
         end
+        local guard = GRM.PersistenceGuard
+        local ok = guard and guard.WriteMirrored
+            and guard.WriteMirrored(CH.DataFile, CH.BackupFile, CH.Data or {}, "characters save")
+        if not (guard and guard.WriteMirrored) then
+            local okJ, txt = pcall(util.TableToJSON, CH.Data or {}, true)
+            ok = okJ and isstring(txt)
+            if ok then file.Write(CH.DataFile, txt) file.Write(CH.BackupFile, txt) end
+        end
+        if not ok or not readbackCheck() then
+            ErrorNoHalt("[GRM Char] SAVE FAIL (" .. tostring(reason) .. ")\n")
+            return false
+        end
+        return true
     end
     function readbackCheck()
         local t = file.Read(CH.DataFile, "DATA")
