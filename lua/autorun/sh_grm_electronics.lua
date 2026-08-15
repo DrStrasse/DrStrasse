@@ -1,7 +1,7 @@
---[[ GRM Electronics & Network Ecosystem v2.2.0 — OS 2.0 + модуль фоторобота GRMFACE + свои языки/база ]]
-if SERVER then AddCSLuaFile();AddCSLuaFile("autorun/client/cl_grm_electronics.lua");AddCSLuaFile("autorun/client/cl_grm_photorobot.lua");AddCSLuaFile("autorun/client/cl_grm_osdoc.lua");AddCSLuaFile("autorun/sh_grm_osformat.lua")end
+--[[ GRM Electronics & Network Ecosystem v2.3.0 — OS 2.0 + свои модули + свои языки/база ]]
+if SERVER then AddCSLuaFile();AddCSLuaFile("autorun/client/cl_grm_electronics.lua");AddCSLuaFile("autorun/client/cl_grm_photorobot.lua");AddCSLuaFile("autorun/client/cl_grm_osdoc.lua");AddCSLuaFile("autorun/client/cl_grm_osfiles.lua");AddCSLuaFile("autorun/client/cl_grm_oseditor.lua");AddCSLuaFile("autorun/sh_grm_osformat.lua")end
 GRM=GRM or{};GRM.Electronics=GRM.Electronics or{};local E=GRM.Electronics
-E.Version="2.2.0";E.Devices=E.Devices or{};E.Configs=E.Configs or{};E.Links=E.Links or{};E.Accounts=E.Accounts or{};E.Files=E.Files or{};E.Sessions=E.Sessions or{};E.Mailbox=E.Mailbox or{}
+E.Version="2.3.0";E.Devices=E.Devices or{};E.Configs=E.Configs or{};E.Links=E.Links or{};E.Accounts=E.Accounts or{};E.Files=E.Files or{};E.Sessions=E.Sessions or{};E.Mailbox=E.Mailbox or{}
 -- v1.5.1 (находка 155): автосейв по dirty-флагу — раньше карта и база писались
 -- только при ShutDown/явных операциях, и любое падение/килл процесса в окне
 -- между изменениями теряло устройства, файлы и почту (класс саги валюты,

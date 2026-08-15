@@ -1,11 +1,11 @@
 -- Contracts for GRM Electronics/Internet ecosystem and destructible money printer.
 local function read(p)local f=assert(io.open(p,"rb"));local s=f:read("*a");f:close();return s end
 local core,client,photo,tool=read("lua/autorun/sh_grm_electronics.lua"),read("lua/autorun/client/cl_grm_electronics.lua"),read("lua/autorun/client/cl_grm_photorobot.lua"),read("lua/weapons/gmod_tool/stools/grm_network_tool.lua")
-local osdoc,osformat=read("lua/autorun/client/cl_grm_osdoc.lua"),read("lua/autorun/sh_grm_osformat.lua")
+local osdoc,osformat,osfiles,oseditor=read("lua/autorun/client/cl_grm_osdoc.lua"),read("lua/autorun/sh_grm_osformat.lua"),read("lua/autorun/client/cl_grm_osfiles.lua"),read("lua/autorun/client/cl_grm_oseditor.lua")
 local printer,printerShared,deviceBase=read("lua/entities/grm_money_printer/init.lua"),read("lua/entities/grm_money_printer/shared.lua"),read("lua/entities/grm_net_device/init.lua")
 local hub,qmenu=read("lua/autorun/server/sv_grm_persistence_hub.lua"),read("lua/autorun/sh_grm_qmenu.lua")
 local pass,fail=0,0;local function has(s,n)return s:find(n,1,true)~=nil end;local function ok(v,n)if v then pass=pass+1;print("  ok  "..n)else fail=fail+1;print("  FAIL "..n)end end
-ok(has(core,'E.Version="2.2.0"'),"electronics ecosystem version 2.2.0 (автосейв + фотомодуль + свои языки/база)")
+ok(has(core,'E.Version="2.3.0"'),"electronics ecosystem version 2.3.0 (автосейв + фотомодуль + свои языки/база/модули)")
 ok(has(core,"function E.RegisterDevice")and has(core,"function E.NetworkRouter")and has(core,"function E.IsOnline"),"authoritative device registry and online resolver")
 ok(has(core,"connectedRouter")and has(core,"wifiAuthorized")and has(core,"passwordHash"),"Wi-Fi SSID/password authorization")
 ok(has(core,'(op=="register"or op=="login")and not E.IsOnline(ent)'),"login and registration are rejected on offline computers")
@@ -48,7 +48,7 @@ ok(has(core,'op=="inbox"')and has(core,'op=="mail_send"')and has(core,"E.Mailbox
 ok(has(core,"GRM_Net_MailSend")and has(core,"[РАССЫЛКА]"),"admin broadcast mail to all users")
 ok(has(client,"КАЛЬКУЛЯТОР")and has(client,"calcPage"),"calculator application")
 ok(has(client,"ЗАМЕТКИ")and has(client,"notesPage"),"notes application")
-ok(has(client,"ТЕКСТОВЫЙ РЕДАКТОР")and has(client,"editorPage"),"text editor application")
+ok(has(client,"editorPage")and has(oseditor,"ТЕКСТОВЫЙ РЕДАКТОР"),"text editor application (module)")
 ok(has(client,"ФОТОРОБОТ")and has(client,"photoPage")and has(client,"GRM.Photorobot")and has(client,"photoCtx"),"photo robot app delegated to GRM.Photorobot module via context")
 ok(has(client,"ПОЧТА / РАССЫЛКА")and has(client,"mailPage"),"mail and distribution application")
 ok(has(client,"РАССЫЛКА ВСЕМ")and has(photo,"РАССЫЛКА ФОТОРОБОТА"),"broadcast and photo distribution")
@@ -64,4 +64,8 @@ ok(has(core,"GRM.OSDB")and has(core,'GRM.OSDB.Open("netfiles")')and has(core,"fi
 ok(has(core,'AddCSLuaFile("autorun/sh_grm_osformat.lua")')and has(core,'AddCSLuaFile("autorun/client/cl_grm_osdoc.lua")'),"OS format + GRMML renderer shipped to clients")
 ok(has(osdoc,"GRM.OSDoc")and has(osdoc,"OD.Layout")and has(osdoc,"OD.OpenViewer"),"GRMML document renderer module")
 ok(has(osformat,"GRM.OSFormat")and has(osformat,"GRMFILE")and has(osformat,"GRMML"),"own languages GRMFILE + GRMML")
+ok(has(core,'AddCSLuaFile("autorun/client/cl_grm_osfiles.lua")')and has(core,'AddCSLuaFile("autorun/client/cl_grm_oseditor.lua")'),"OS file manager + editor modules shipped to clients")
+ok(has(client,"GRM.OSFiles")and has(client,"appCtx")and has(client,"GRM.OSEditor"),"OS delegates file manager and editor to own modules")
+ok(has(osfiles,"GRM.OSFiles")and has(osfiles,"ФАЙЛОВЫЙ МЕНЕДЖЕР")and has(osfiles,"ПЕЧАТЬ ДОКУМЕНТА"),"file manager module")
+ok(has(oseditor,"GRM.OSEditor")and has(oseditor,"ТЕКСТОВЫЙ РЕДАКТОР")and has(oseditor,"GRMML"),"text editor module (GRMML aware)")
 print(("ELECTRONICS: %d/%d failures=%d"):format(pass,pass+fail,fail));if fail>0 then os.exit(1)end

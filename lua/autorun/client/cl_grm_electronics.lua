@@ -1,4 +1,4 @@
--- GRM Electronics client v2.1.0 — OS 2.0 + модуль фоторобота GRMFACE
+-- GRM Electronics client v2.3.0 — OS 2.0 + свои модули (фоторобот/файлы/редактор/документы)
 if not CLIENT then return end
 GRM=GRM or{};GRM.Electronics=GRM.Electronics or{};local E=GRM.Electronics;E.Topology=E.Topology or{devices={},links={}}
 surface.CreateFont("GRMNet_Title",{font="Roboto",size=24,weight=800,extended=true});surface.CreateFont("GRMNet_Head",{font="Roboto",size=17,weight=700,extended=true});surface.CreateFont("GRMNet_Body",{font="Roboto",size=14,weight=500,extended=true});surface.CreateFont("GRMNet_Small",{font="Roboto",size=12,weight=500,extended=true});surface.CreateFont("GRMNet_Calc",{font="Roboto",size=36,weight=700,extended=true});surface.CreateFont("GRMNet_CalcHist",{font="Roboto",size=14,weight=400,extended=true});surface.CreateFont("GRMNet_Tiny",{font="Roboto",size=10,weight=500,extended=true});surface.CreateFont("GRMNet_BigIcon",{font="Roboto",size=48,weight=300,extended=true});surface.CreateFont("GRMNet_Status",{font="Roboto",size=11,weight=600,extended=true});surface.CreateFont("GRMNet_Bold",{font="Roboto",size=14,weight=700,extended=true});surface.CreateFont("GRMNet_Normal",{font="Roboto",size=13,weight=500,extended=true});surface.CreateFont("GRMNet_Bold",{font="Roboto",size=14,weight=700,extended=true})
@@ -109,30 +109,27 @@ local function openComputer(ent,data)
  end
  -- Wi-Fi
  local function wifiPage()clear();textLabel(body,"ПОДКЛЮЧЕНИЕ К WI-FI",200,20,410,36,"GRMNet_Title",C.text);textLabel(body,"Введите SSID и пароль настроенного роутера",200,56,460,24,"GRMNet_Body",C.dim);local ssid=entry(body,"SSID сети",200,100,410,38);local password=secureEntry(body,"Пароль Wi-Fi",200,150,410,38);btn(body,"ПОДКЛЮЧИТЬСЯ",200,210,410,44,C.blue,function()send(ent,"connect",function()net.WriteString(ssid:GetText());net.WriteString(password:GetText())end)end)end
- -- Files
+ -- Общий контекст для модулей ОС (файл-менеджер, редактор).
+ local appCtx = {
+  body = body,
+  send = function(op, writer) send(ent, op, writer) end,
+  ent = ent,
+  user = function() return current.data.logged or "" end,
+  files = function() return current.files end,
+  setFiles = function(files) current.files = files or {} end,
+  topology = function() return E.Topology end,
+  deviceID = function() return current.deviceID end,
+  resolver = osdocResolver,
+  C = C,
+  ui = { frame = frame, btn = btn, entry = entry, textLabel = textLabel, darkList = darkList, addLine = addLine },
+ }
+ -- Files (модуль GRM.OSFiles — cl_grm_osfiles.lua)
  local function filesPage(files)
-  clear();current.files=files or current.files or{};local headBar=vgui.Create("DPanel",body);headBar:SetPos(0,0);headBar:SetSize(830,44);headBar.Paint=function(_,w,h)draw.RoundedBoxEx(9,0,0,w,h,Color(14,22,38),true,true,false,false);surface.SetMaterial(ICONS.Files);surface.SetDrawColor(C.blue);surface.DrawTexturedRect(16,10,24,24);draw.SimpleText("ФАЙЛОВЫЙ МЕНЕДЖЕР","GRMNet_Head",48,22,C.text,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER);draw.SimpleText(tostring(current.deviceID):sub(1,24),"GRMNet_Small",w-16,22,C.dim,TEXT_ALIGN_RIGHT,TEXT_ALIGN_CENTER)end
-  local list=darkList(body,14,52,310,500,{{"Файл",160},{"Владелец",85},{"КБ",42}});for _,r in ipairs(current.files)do local line=addLine(list,r.name,r.owner,math.ceil((r.size or 0)/1024));line._file=r end
-  local name=entry(body,"Название документа",340,52,340,34);local content=entry(body,"Текст файла",340,96,470,260,true);local selectedID=""
-  btn(body,"ПРЕДПРОСМОТР",690,52,120,34,C.purple,function()if GRM.OSDoc and GRM.OSDoc.OpenViewer then GRM.OSDoc.OpenViewer((name:GetText()~=""and name:GetText())or"Документ",content:GetText(),{resolver=osdocResolver,owner=current.data.logged or""})else notification.AddLegacy("Модуль GRMML не загружен",NOTIFY_ERROR,3)end end)
-  list.OnRowSelected=function(_,_,line)selectedID=line._file.id;send(ent,"file_open",function()net.WriteString(selectedID)end)end
-  local share=entry(body,"Логин получателя",340,418,240,34);btn(body,"Передать",590,418,160,34,C.blue,function()send(ent,"file_share",function()net.WriteString(selectedID);net.WriteString(share:GetText())end)end)
-  -- Printer section with visual settings
-  local printPanel=vgui.Create("DPanel",body);printPanel:SetPos(340,464);printPanel:SetSize(470,166);printPanel.Paint=function(_,w,h)draw.RoundedBox(8,0,0,w,h,Color(14,22,38));surface.SetMaterial(ICONS.Print);surface.SetDrawColor(C.yellow);surface.DrawTexturedRect(14,12,22,22);draw.SimpleText("ПЕЧАТЬ ДОКУМЕНТА","GRMNet_Head",44,22,C.yellow,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)end
-  local printer=vgui.Create("DComboBox",printPanel);printer:SetPos(14,44);printer:SetSize(220,30);printer.PrinterID="";for _,d in ipairs(E.Topology.devices or{})do if d.kind=="printer"and d.online then printer:AddChoice("🖨 "..d.name,d.id)end end;printer.OnSelect=function(_,_,_,id)printer.PrinterID=id end
-  local paper=vgui.Create("DComboBox",printPanel);paper:SetPos(244,44);paper:SetSize(100,30);paper:AddChoice("A4","A4");paper:AddChoice("A5","A5");paper:AddChoice("Letter","Letter");paper:ChooseOptionID(1)
-  local orient=vgui.Create("DComboBox",printPanel);orient:SetPos(354,44);orient:SetSize(100,30);orient:AddChoice("Книжная","portrait");orient:AddChoice("Альбом.","landscape");orient:ChooseOptionID(1)
-  local copiesLabel=vgui.Create("DLabel",printPanel);copiesLabel:SetPos(14,84);copiesLabel:SetSize(60,26);copiesLabel:SetText("Копий:");copiesLabel:SetFont("GRMNet_Small");copiesLabel:SetTextColor(C.dim)
-  local copies=vgui.Create("DNumberWang",printPanel);copies:SetPos(76,82);copies:SetSize(50,28);copies:SetMin(1);copies:SetMax(10);copies:SetValue(1)
-  local quality=vgui.Create("DComboBox",printPanel);quality:SetPos(140,82);quality:SetSize(120,28);quality:AddChoice("Черновик","draft");quality:AddChoice("Обычное","normal");quality:AddChoice("Высокое","high");quality:ChooseOptionID(2)
-  btn(printPanel,"ПЕЧАТАТЬ",300,82,156,28,C.yellow,function()send(ent,"print",function()net.WriteString(selectedID);net.WriteString(printer.PrinterID);local _,pd=paper:GetSelected();net.WriteString(pd or"A4");local _,od=orient:GetSelected();net.WriteString(od or"portrait");net.WriteUInt(copies:GetValue(),4);local _,qd=quality:GetSelected();net.WriteString(qd or"normal")end)end)
-  -- Print preview
-  local preview=vgui.Create("DPanel",printPanel);preview:SetPos(300,116);preview:SetSize(156,42);preview.Paint=function(_,w,h)
-   draw.RoundedBox(4,0,0,w,h,Color(240,240,230));local _,pd=paper:GetSelected();local landscape=orient:GetText()=="Альбом."
-   if landscape then draw.RoundedBox(2,8,4,w-16,h-8,Color(255,255,255));for i=1,4 do surface.SetDrawColor(200,200,200);surface.DrawLine(14,8+i*7,w-14,8+i*7)end else draw.RoundedBox(2,w/2-20,4,40,h-8,Color(255,255,255));for i=1,4 do surface.SetDrawColor(200,200,200);surface.DrawLine(w/2-16,8+i*7,w/2+16,8+i*7)end end
-   draw.SimpleText(pd or"A4","GRMNet_Tiny",w/2,h-4,Color(120,120,120),TEXT_ALIGN_CENTER,TEXT_ALIGN_BOTTOM)
+  if GRM.OSFiles and GRM.OSFiles.Open then
+   GRM.OSFiles.Open(appCtx, files)
+  else
+   notification.AddLegacy("Модуль файл-менеджера не загружен (cl_grm_osfiles.lua)", NOTIFY_ERROR, 4)
   end
-  body._fileName=name;body._fileContent=content
  end
  -- Modules
  local function modulesPage()clear();textLabel(body,"Сетевые модули",18,10,300,28,"GRMNet_Title",C.text);textLabel(body,"Интеграция с системами сервера",18,38,400,20,"GRMNet_Small",C.dim);local modules={{"Фракция","Состав и принадлежность","faction","icon16/group.png",C.blue},{"Аресты","Текущие задержанные","arrest","icon16/lock.png",C.red},{"Розыск / штрафы","Объявление в розыск","fines","icon16/money.png",C.yellow},{"CCTV","Камеры и сети","cctv","icon16/camera.png",C.green},{"Прослушка","RoomTap интеграция","roomtap","icon16/sound.png",C.purple},{"Госуслуги","Счета, услуги, дипломы","services","icon16/report.png",C.blue}};for i,m in ipairs(modules)do local col=(i-1)%3;local row=math.floor((i-1)/3);appTile(body,m[1],m[2],m[4],18+col*204,64+row*122,m[5],function()
@@ -217,21 +214,13 @@ local function openComputer(ent,data)
   local statsPanel=vgui.Create("DPanel",body);statsPanel:SetPos(284,596);statsPanel:SetSize(528,22);statsPanel.Paint=function(_,w,h)draw.RoundedBox(4,0,0,w,h,Color(14,22,38));local count=0;for _,r in ipairs(current.files)do if r.category=="note"then count=count+1 end end;draw.SimpleText("Заметок: "..count,"GRMNet_Small",12,11,C.dim,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)end
   body._noteName=noteName;body._noteContent=noteContent;body._reloadNotes=loadNotes
  end
- -- Text Editor (improved)
+ -- Text Editor (модуль GRM.OSEditor — cl_grm_oseditor.lua)
  local function editorPage()
-  clear();textLabel(body,"ТЕКСТОВЫЙ РЕДАКТОР",18,10,300,28,"GRMNet_Title",C.text)
-  local toolbar=vgui.Create("DPanel",body);toolbar:SetPos(18,42);toolbar:SetSize(794,36);toolbar.Paint=function(_,w,h)draw.RoundedBox(6,0,0,w,h,Color(15,24,38));surface.SetDrawColor(Color(40,55,75));surface.DrawLine(0,h-1,w,h-1)end
-  local area=entry(body,"Начните вводить текст...",18,84,794,500,true)
-  local docName=entry(body,"Название документа",18,594,400,30)
-  local tbBtns={{"B","Жирный",function()local t=area:GetText();area:SetText(t.."**жирный**")end},{"I","Курсив",function()local t=area:GetText();area:SetText(t.."_курсив_")end},{"H","# Заголовок",function()local t=area:GetText();area:SetText(t.."\n# Заголовок\n")end},{"•","Список",function()local t=area:GetText();area:SetText(t.."\n  • пункт")end},{"☰","Шаблон",function()area:SetText("ДОКУМЕНТ\n═══════════\n\nДата: "..os.date("%d.%m.%Y").."\nАвтор: "..tostring(current.data.logged or"").."\n\n---\n\n")end},{"✕","Очистить",function()area:SetText("")end}}
-  for i,tb in ipairs(tbBtns)do local bx=4+(i-1)*132;local b=vgui.Create("DButton",toolbar);b:SetPos(bx,4);b:SetSize(126,28);b:SetText("");b.DoClick=function()surface.PlaySound("buttons/button15.wav");tb[3]()end;b.Paint=function(self,w,h)local c=self:IsDown()and Color(20,32,50)or(self:IsHovered()and C.hover or C.card);draw.RoundedBox(5,0,0,w,h,c);draw.SimpleText(tb[1],"GRMNet_Body",8,h/2,C.blue,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER);draw.SimpleText(tb[2],"GRMNet_Small",28,h/2,C.text,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)end end
-  local selectedDocID=""
-  btn(body,"Сохранить",430,594,120,30,C.green,function()send(ent,"file_save",function()net.WriteString(selectedDocID);net.WriteString(docName:GetText());net.WriteString(area:GetText());net.WriteString("doc")end)end)
-  btn(body,"Файлы",560,594,120,30,C.blue,function()send(ent,"files")end)
-  btn(body,"ПРЕДПРОСМОТР",688,594,124,30,C.purple,function()if GRM.OSDoc and GRM.OSDoc.OpenViewer then GRM.OSDoc.OpenViewer((docName:GetText()~=""and docName:GetText())or"Документ",area:GetText(),{resolver=osdocResolver})else notification.AddLegacy("Модуль GRMML не загружен",NOTIFY_ERROR,3)end end)
-  -- Status bar
-  local statusBar=vgui.Create("DPanel",body);statusBar:SetPos(18,630);statusBar:SetSize(794,14);statusBar.Paint=function(_,w,h)draw.RoundedBox(3,0,0,w,h,Color(14,22,38));local text=area:GetText()or"";local chars=#text;local lines=select(2,string.gsub(text,"\n",""))+1;draw.SimpleText("Символов: "..chars.."  |  Строк: "..lines.."  |  GRMML: # заголовок · **жирный** · *курсив*","GRMNet_Tiny",8,h/2,C.dim,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)end
-  body._editorArea=area;body._editorName=docName
+  if GRM.OSEditor and GRM.OSEditor.Open then
+   GRM.OSEditor.Open(appCtx)
+  else
+   notification.AddLegacy("Модуль редактора не загружен (cl_grm_oseditor.lua)", NOTIFY_ERROR, 4)
+  end
  end
  -- Фоторобот вынесен в отдельный модуль GRM.Photorobot (cl_grm_photorobot.lua).
  -- Здесь остаётся только точка входа + контекст для модуля (правила отрисовки,
@@ -1006,7 +995,7 @@ local function openComputer(ent,data)
  if canShow("files") then appTile(body,"Печать","Файл на принтер","icon16/printer.png",18,488,C.yellow,function()send(ent,"files")end) end
  if data.canConfigure then appTile(body,"Администрирование","Управление сетью и доступы","icon16/cog.png",218,488,C.red,function()send(ent,"control_center")end)end
   -- Footer
-  local footer=vgui.Create("DPanel",body);footer:SetPos(0,618);footer:SetSize(830,22);footer.Paint=function(_,w,h)draw.RoundedBox(4,0,0,w,h,Color(12,18,30));draw.SimpleText("GRM NET OS v2.1.0 · Фоторобот GRMFACE","GRMNet_Tiny",12,11,C.dim,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER);draw.SimpleText("Файлов на устройстве: "..#current.files,"GRMNet_Tiny",w-12,11,C.dim,TEXT_ALIGN_RIGHT,TEXT_ALIGN_CENTER)end
+  local footer=vgui.Create("DPanel",body);footer:SetPos(0,618);footer:SetSize(830,22);footer.Paint=function(_,w,h)draw.RoundedBox(4,0,0,w,h,Color(12,18,30));draw.SimpleText("GRM NET OS v2.3.0 · Свои модули · GRMFACE · GRMML","GRMNet_Tiny",12,11,C.dim,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER);draw.SimpleText("Файлов на устройстве: "..#current.files,"GRMNet_Tiny",w-12,11,C.dim,TEXT_ALIGN_RIGHT,TEXT_ALIGN_CENTER)end
  end
  -- Side navigation
  btn(side,"Главная",12,80,166,40,C.card,homePage)
@@ -1193,7 +1182,7 @@ net.Receive("GRM_Net_Document",function()
  end
 end)
 net.Receive("GRM_Net_MailSend",function()end)
-print("[GRM Electronics] client v2.1.0 — OS 2.0 + photorobot module loaded")
+print("[GRM Electronics] client v2.3.0 — OS 2.0 + own modules loaded")
 
 -- Persistent social/chat snapshot bridge.
 GRM=GRM or {}; GRM.Computer=GRM.Computer or {}; GRM.Computer.Social=GRM.Computer.Social or {}
