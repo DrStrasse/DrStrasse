@@ -1,7 +1,7 @@
---[[ GRM Electronics & Network Ecosystem v2.0.0 — OS 2.0 RT photorobot + universal print ]]
-if SERVER then AddCSLuaFile();AddCSLuaFile("autorun/client/cl_grm_electronics.lua")end
+--[[ GRM Electronics & Network Ecosystem v2.1.0 — OS 2.0 + модуль фоторобота GRMFACE ]]
+if SERVER then AddCSLuaFile();AddCSLuaFile("autorun/client/cl_grm_electronics.lua");AddCSLuaFile("autorun/client/cl_grm_photorobot.lua")end
 GRM=GRM or{};GRM.Electronics=GRM.Electronics or{};local E=GRM.Electronics
-E.Version="2.0.0";E.Devices=E.Devices or{};E.Configs=E.Configs or{};E.Links=E.Links or{};E.Accounts=E.Accounts or{};E.Files=E.Files or{};E.Sessions=E.Sessions or{};E.Mailbox=E.Mailbox or{}
+E.Version="2.1.0";E.Devices=E.Devices or{};E.Configs=E.Configs or{};E.Links=E.Links or{};E.Accounts=E.Accounts or{};E.Files=E.Files or{};E.Sessions=E.Sessions or{};E.Mailbox=E.Mailbox or{}
 -- v1.5.1 (находка 155): автосейв по dirty-флагу — раньше карта и база писались
 -- только при ShutDown/явных операциях, и любое падение/килл процесса в окне
 -- между изменениями теряло устройства, файлы и почту (класс саги валюты,
@@ -42,7 +42,7 @@ if SERVER then
  -- File storage is per-device: E.Files[deviceID] = {[fileID] = fileRecord}
  local function filesFor(ply,deviceID)
   local s=session(ply);if not s or not deviceID then return{}end;local store=E.Files[deviceID]or{};local out={}
-  for _,f in pairs(store)do if f.owner==s.username or f.shared==true or(f.sharedWith and f.sharedWith[s.username])then out[#out+1]={id=f.id,name=f.name,owner=f.owner,size=#tostring(f.content or""),updated=f.updated,category=f.category or"doc"}end end
+  for _,f in pairs(store)do if f.owner==s.username or f.shared==true or(f.sharedWith and f.sharedWith[s.username])then out[#out+1]={id=f.id,name=f.name,owner=f.owner,size=#tostring(f.content or""),updated=f.updated,category=f.category or"doc",imagePath=f.imagePath,desc=f.desc,grm=f.grm}end end
   table.sort(out,function(a,b)return a.name<b.name end);return out
  end
 
@@ -115,7 +115,7 @@ end
    if s.device~=ent:GetDeviceID()then result(ply,false,"Сессия для другого устройства. Войдите заново.")return end
    local online,router=E.IsOnline(ent);if not online then result(ply,false,"Нет подключения к сети")return end;local cfg=E.Configs[router:GetDeviceID()]or{};local devID=ent:GetDeviceID()
    if op=="files"then result(ply,true,"Файлы",{files=filesFor(ply,devID),deviceID=devID})
-   elseif op=="file_open"then local id=trim(net.ReadString(),64);local store=E.Files[devID]or{};local f=store[id];if not f or(f.owner~=s.username and not f.shared and not(f.sharedWith and f.sharedWith[s.username]))then result(ply,false,"Нет доступа")else result(ply,true,"Файл",{file={id=f.id,name=f.name,content=f.content,owner=f.owner,category=f.category or"doc"}})end
+   elseif op=="file_open"then local id=trim(net.ReadString(),64);local store=E.Files[devID]or{};local f=store[id];if not f or(f.owner~=s.username and not f.shared and not(f.sharedWith and f.sharedWith[s.username]))then result(ply,false,"Нет доступа")else result(ply,true,"Файл",{file={id=f.id,name=f.name,content=f.content,owner=f.owner,category=f.category or"doc",imagePath=f.imagePath,desc=f.desc,grm=f.grm}})end
    elseif op=="image_save"then
     local name=trim(net.ReadString(),96); local category=trim(net.ReadString(),24); local bytes=math.min(net.ReadUInt(24),4*1024*1024); local image=net.ReadData(bytes) or ""
     if #image==0 then result(ply,false,"Пустое изображение") return end
@@ -140,6 +140,23 @@ end
     local src = (category=="import" and "import" or category=="photo" and "photorobot" or category=="photo_print" and "photorobot_print" or category)
     E.Files[devID][id]={id=id,owner=s.username,created=os.time(),updated=os.time(),sharedWith={},name=name,category=category,content="[ИЗОБРАЖЕНИЕ: "..imageName.."]",imagePath=imageName,imageBytes=#image,source=src}; 
     E.SaveDB(); result(ply,true,"Изображение сохранено ("..math.ceil(#image/1024).."Кб)",{files=filesFor(ply,devID),deviceID=devID,imagePath=imageName})
+   elseif op=="photorobot_save"then
+    local name=trim(net.ReadString(),96); local desc=string.sub(net.ReadString()or"",1,2048); local grm=string.sub(net.ReadString()or"",1,4096); local bytes=math.min(net.ReadUInt(24),4*1024*1024); local image=net.ReadData(bytes) or ""
+    if #image==0 then result(ply,false,"Пустое изображение") return end
+    if #image>200*1024 then result(ply,false,"Изображение >200Кб, сожмите качество") return end
+    local header=image:sub(1,2)
+    local isJpeg=header==string.char(0xFF,0xD8)
+    local isPng=image:sub(1,4)==string.char(0x89,0x50,0x4E,0x47)
+    if not isJpeg and not isPng then result(ply,false,"Неизвестный формат изображения (только JPG/PNG)") return end
+    if grm~="" and grm:match("^GRMFACE/%d+")==nil then result(ply,false,"Неверный формат GRMFACE") return end
+    file.CreateDir("grm_computer/images")
+    local ext = isPng and ".png" or ".jpg"
+    local imageName="grm_computer/images/"..util.CRC(s.username..devID..SysTime()..math.random())..ext
+    file.Write(imageName,image)
+    E.Files[devID]=E.Files[devID] or {}
+    local id="file_"..util.CRC(s.username..devID..SysTime()..math.random())
+    E.Files[devID][id]={id=id,owner=s.username,created=os.time(),updated=os.time(),sharedWith={},name=name~=""and name or"Фоторобот",category="photorobot",content="[ИЗОБРАЖЕНИЕ: "..imageName.."]",imagePath=imageName,imageBytes=#image,source="photorobot",desc=desc,grm=grm}
+    E.SaveDB(); result(ply,true,"Фоторобот сохранён ("..math.ceil(#image/1024).."Кб, GRMFACE)",{files=filesFor(ply,devID),deviceID=devID,imagePath=imageName})
    elseif op=="file_save"then local id=trim(net.ReadString(),64);local name=trim(net.ReadString(),96);local content=string.sub(net.ReadString()or"",1,65536);local category=trim(net.ReadString(),24);if category==""then category="doc"end;E.Files[devID]=E.Files[devID]or{};local store=E.Files[devID];local f=id~=""and store[id]or nil;if f and f.owner~=s.username then result(ply,false,"Нет прав")return end;if not f then id="file_"..util.CRC(s.username..devID..SysTime()..math.random());f={id=id,owner=s.username,created=os.time(),sharedWith={}};store[id]=f end;f.name=name~=""and name or"Документ";f.content=content;f.category=category;f.updated=os.time();E.SaveDB();result(ply,true,"Файл сохранён",{files=filesFor(ply,devID),deviceID=devID})
    elseif op=="file_share"then local id=trim(net.ReadString(),64);local user=cleanUser(net.ReadString());local store=E.Files[devID]or{};local f=store[id];if not f or f.owner~=s.username or not E.Accounts[user]then result(ply,false,"Не удалось передать файл")else f.sharedWith=f.sharedWith or{};f.sharedWith[user]=true;E.SaveDB();result(ply,true,"Файл передан: "..user)end
    elseif op=="file_delete"then local id=trim(net.ReadString(),64);local store=E.Files[devID]or{};local f=store[id];if f and f.owner==s.username then store[id]=nil;E.SaveDB();result(ply,true,"Файл удалён",{files=filesFor(ply,devID),deviceID=devID})else result(ply,false,"Нет прав")end
@@ -150,12 +167,15 @@ end
     if ply:GetPos():DistToSqr(printer:GetPos())>350*350 then result(ply,false,"Принтер слишком далеко")return end
     local imgFile=f.content and f.content:match("%[ИЗОБРАЖЕНИЕ: ([^%]]+)%]")or f.imagePath or nil
     local category=f.category or"doc"
+    -- для фоторобота на распечатку идёт описание (GRMF desc), а не служебный маркер изображения
+    local shownContent=f.content
+    if category=="photorobot" and f.desc and f.desc~="" then shownContent=f.desc end
     -- allow all image categories: photo, photo_print, drawing, import, doc with image
     for i=1,copies do
      timer.Simple((i-1)*0.6,function()
       if not IsValid(printer)then return end
       local doc=ents.Create("grm_net_document");if not IsValid(doc)then return end
-      doc:SetPos(printer:GetPos()+printer:GetUp()*24+printer:GetForward()*20);doc:SetAngles(printer:GetAngles());doc:SetDocumentTitle(f.name);doc.DocumentContentServer=f.content;doc:SetDocumentContent(string.sub(f.content or"",1,500));doc:SetDocumentOwner(s.username);doc:SetDocumentCategory(category)
+      doc:SetPos(printer:GetPos()+printer:GetUp()*24+printer:GetForward()*20);doc:SetAngles(printer:GetAngles());doc:SetDocumentTitle(f.name);doc.DocumentContentServer=f.content;doc:SetDocumentContent(string.sub(shownContent or"",1,500));doc:SetDocumentOwner(s.username);doc:SetDocumentCategory(category)
       if imgFile and imgFile~="" then doc:SetDocumentImage(imgFile) end
       doc:Spawn();doc:Activate()
       if i==1 then printer:EmitSound("ambient/machines/combine_terminal_idle4.wav",60,120)end

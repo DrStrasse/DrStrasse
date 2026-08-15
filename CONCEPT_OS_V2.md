@@ -1,7 +1,7 @@
 # GRM OS 2.0 — компьютеры, электроника, фоторобот и печать
 
-**Дата:** 2026-08-14 · **Код 59** · **Статус:** концепт, код пока v1.5.1  
-**Связь:** `sh_grm_electronics.lua` + `cl_grm_electronics.lua` + `grm_net_*` entities + `sh_grm_documents.lua` + `sv_grm_comp_terminal.lua`
+**Дата:** 2026-08-14 · **Код 59** · **Статус:** концепт; ядро реализовано (OS 2.0 → v2.1.0, фоторобот вынесен в модуль `cl_grm_photorobot.lua` с форматом GRMFACE — находка 129)  
+**Связь:** `sh_grm_electronics.lua` + `cl_grm_electronics.lua` + `cl_grm_photorobot.lua` + `grm_net_*` entities + `sh_grm_documents.lua` + `sv_grm_comp_terminal.lua`
 
 ## 1. Что есть (v1.5.1)
 

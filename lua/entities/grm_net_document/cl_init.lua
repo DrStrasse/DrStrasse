@@ -31,7 +31,7 @@ function ENT:Use(act,called,type,value)
  end
  
  -- Check if this is a photo document with image
- if imgFile!=""and(category=="photo"or category=="photo_print")then
+ if imgFile~=""and(category=="photo"or category=="photo_print"or category=="photorobot")then
   -- Photo document - show image
   local imgPanel=vgui.Create("DPanel",f)
   imgPanel:SetPos(20,60)
