@@ -118,7 +118,7 @@ if SERVER then
 
     -- ядро: применить настройки fading door (используется и тулганом, и
     -- перм-восстановлением Кода 105). skipDupe — без записи в duplicator.
-    local function coreMakeFadingDoor(ply, ent, key, reversed, toggle, autoclose, closeTime, skipDupe)
+    local function coreMakeFadingDoor(ply, ent, key, reversed, toggle, autoclose, closeTime, skipDupe, safeVisible)
         if not IsValid(ent) then return false end
 
         -- Очистка старых нумпад-импульсов
@@ -151,9 +151,12 @@ if SERVER then
         ent.FadeDeactivate = function() fadeOff(ply, ent) end
         ent.FadeToggle = function() fadeToggle(ply, ent) end
 
-        -- Устанавливаем начальное состояние
-        ent.FFD_IsActive = false
-        applyFadeState(ent, false)
+        -- Обычный инструмент сохраняет семантику reversed. Perm restore
+        -- всегда начинает с безопасного видимого/коллизионного состояния:
+        -- после рестарта дверь не должна оказаться «призрачной» из-за того,
+        -- что снимок был сделан во время сигнала или исчезновения.
+        ent.FFD_IsActive = safeVisible == true and ent.FFD_Reversed == true or false
+        applyFadeState(ent, ent.FFD_IsActive)
 
         if not skipDupe then
             duplicator.StoreEntityModifier(ent, "FFD_FadingDoor", {
@@ -183,32 +186,50 @@ if SERVER then
     -- встаёт на место и СРАЗУ работает как fading door.
     -- ============================================================
     GRM = GRM or {}
-    GRM.FFD_MakeFadingDoor = function(ply, ent, key, reversed, toggle, autoclose, closeTime)
-        return coreMakeFadingDoor(ply, ent, key, reversed, toggle, autoclose, closeTime, true)
+    GRM.FFD_MakeFadingDoor = function(ply, ent, key, reversed, toggle, autoclose, closeTime, safeVisible)
+        return coreMakeFadingDoor(ply, ent, key, reversed, toggle, autoclose, closeTime, true, safeVisible)
     end
+    GRM.FFD_EnsureRestoredState = function(ent)
+        if not (IsValid(ent) and ent.isFadingDoor) then return false end
+        ent.FFD_IsActive = ent.FFD_Reversed == true
+        applyFadeState(ent, ent.FFD_IsActive)
+        return true
+    end
+
+    -- Perm-дверь часто поднимается раньше владельца. При nil-player механизм
+    -- рабочий через FFD Link, но numpad.OnDown создать нельзя. Возвращаем
+    -- персональную клавишу сразу после входа нужного персонажа.
+    function GRM.FFD_RebindOwner(ply)
+        if not (IsValid(ply) and ply:IsPlayer()) then return 0 end
+        local ck = tostring((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64() or "")
+        local sid = tostring(ply:SteamID64() or "")
+        local n = 0
+        for _, ent in ipairs(ents.FindByClass("prop_physics")) do
+            if IsValid(ent) and ent.isFadingDoor then
+                local owner = tostring(ent.FFD_OwnerSID64 or "")
+                if owner ~= "" and (owner == ck or owner == sid) then
+                    if ent.FFD_NumDown then numpad.Remove(ent.FFD_NumDown) end
+                    if ent.FFD_NumUp then numpad.Remove(ent.FFD_NumUp) end
+                    ent.FFD_NumDown = numpad.OnDown(ply, tonumber(ent.FFD_Key) or 1, "FFD_Fade_On", ent)
+                    ent.FFD_NumUp = numpad.OnUp(ply, tonumber(ent.FFD_Key) or 1, "FFD_Fade_Off", ent)
+                    n = n + 1
+                end
+            end
+        end
+        return n
+    end
+    hook.Add("PlayerInitialSpawn", "GRM_FFD_RebindPermOwner", function(ply)
+        timer.Simple(2, function()
+            if IsValid(ply) then GRM.FFD_RebindOwner(ply) end
+        end)
+    end)
+
     GRM.PermData = GRM.PermData or { Extract = {}, Apply = {} }
     GRM.PermData.Extract = GRM.PermData.Extract or {}
     GRM.PermData.Apply = GRM.PermData.Apply or {}
     GRM.PermData.Extract["prop_physics"] = function(ent)
-        -- Находка 173: раздвижная дверь (сдвиг) — сохраняем свой конфиг
-        if ent.isSlidingDoor and ent.Sliding then
-            local s = ent.Sliding
-            return {
-                sliding = {
-                    direction = tostring(s.direction or "left"),
-                    distance = tonumber(s.distance) or 100,
-                    speed = tonumber(s.speed) or 120,
-                    smooth = tonumber(s.smooth) or 1,
-                    toggle = s.toggle == true,
-                    autoclose = s.autoclose == true,
-                    closeTime = tonumber(s.closeTime) or 5,
-                    owner = tostring(s.owner or ""),
-                    soundOpen = tostring(s.soundOpen or ""),
-                    soundClose = tostring(s.soundClose or ""),
-                    soundMove = tostring(s.soundMove or ""),
-                },
-            }
-        end
+        -- Sliding хранит собственный autorun-модуль sh_grm_sliding_door;
+        -- этот делегат отвечает только за исчезающие FFD-двери.
         if not ent.isFadingDoor then return nil end
         return {
             ffd = {
@@ -222,27 +243,6 @@ if SERVER then
         }
     end
     GRM.PermData.Apply["prop_physics"] = function(ent, t)
-        if not istable(t) then return end
-        -- Находка 173: раздвижная дверь восстанавливается со сдвигом
-        if istable(t.sliding) then
-            local d = t.sliding
-            local ownerPly = nil
-            local want = tostring(d.owner or "")
-            if want ~= "" then
-                for _, p in ipairs(player.GetAll()) do
-                    if IsValid(p) and tostring((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64() or "") == want then ownerPly = p break end
-                end
-            end
-            if GRM.SlidingDoor and GRM.SlidingDoor.Apply then
-                GRM.SlidingDoor.Apply(ownerPly, ent, {
-                    direction = d.direction, distance = d.distance,
-                    speed = d.speed, smooth = d.smooth,
-                    toggle = d.toggle, autoclose = d.autoclose, closeTime = d.closeTime,
-                    soundOpen = d.soundOpen, soundClose = d.soundClose, soundMove = d.soundMove,
-                })
-            end
-            return
-        end
         if not (istable(t) and istable(t.ffd)) then return end
         local d = t.ffd
         local ownerPly = nil
@@ -252,7 +252,7 @@ if SERVER then
                 if IsValid(p) and tostring((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64() or "") == want then ownerPly = p break end
             end
         end
-        coreMakeFadingDoor(ownerPly, ent, tonumber(d.key) or 1, d.reversed, d.toggle, d.autoclose, tonumber(d.time) or 5, true)
+        coreMakeFadingDoor(ownerPly, ent, tonumber(d.key) or 1, d.reversed, d.toggle, d.autoclose, tonumber(d.time) or 5, true, true)
         ent.FFD_OwnerSID64 = want
     end
 end

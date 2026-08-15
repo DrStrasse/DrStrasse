@@ -154,11 +154,24 @@ local scCode = sc:read("*a") sc:close()
 ok(scCode:find("prop.isFadingDoor or prop.isSlidingDoor", 1, true) ~= nil, "scanner: isSlidingDoor")
 
 -- ══════════════ 5. ПЕРМ ══════════════
+local slidingFile = assert(io.open("lua/autorun/sh_grm_sliding_door.lua", "rb"))
+local slidingCode = slidingFile:read("*a") slidingFile:close()
 local ffd = assert(io.open("lua/weapons/gmod_tool/stools/ffd_fading_door.lua", "rb"))
 local ffdCode = ffd:read("*a") ffd:close()
-ok(ffdCode:find('ent.isSlidingDoor and ent.Sliding', 1, true) ~= nil, "перм Extract: sliding-ветка")
-ok(ffdCode:find('istable(t.sliding)', 1, true) ~= nil, "перм Apply: sliding-ветка")
-ok(ffdCode:find('GRM.SlidingDoor.Apply', 1, true) ~= nil, "перм Apply: вызывает SD.Apply")
+ok(slidingCode:find('local function extractSliding', 1, true) ~= nil, "перм Extract зарегистрирован в autorun Sliding")
+ok(slidingCode:find('local function applySliding', 1, true) ~= nil and slidingCode:find('owner = d.owner', 1, true) ~= nil, "перм Apply восстанавливает sliding и офлайн-владельца")
+ok(not ffdCode:find('GRM.SlidingDoor.Apply', 1, true), "FFD STOOL больше не дублирует sliding-делегат")
+local extractSliding = GRM.PermData and GRM.PermData.Extract and GRM.PermData.Extract["prop_physics"]
+local applySliding = GRM.PermData and GRM.PermData.Apply and GRM.PermData.Apply["prop_physics"]
+local payload = extractSliding and extractSliding(prop)
+ok(istable(payload) and istable(payload.sliding) and payload.sliding.direction == "left", "runtime Perm Extract сохраняет sliding-конфиг")
+local restoredSliding = mkProp()
+if applySliding then applySliding(restoredSliding, payload) end
+ok(restoredSliding.isSlidingDoor == true and restoredSliding.Sliding.distance == 80, "runtime Perm Apply восстанавливает механизм")
+ok(restoredSliding.Sliding.owner == "76561198000000001:char1", "runtime Perm Apply не теряет офлайн-владельца")
+local permCore = assert(io.open("lua/autorun/sh_grm_perm_entities.lua", "rb")):read("*a")
+ok(permCore:find("ent.Sliding_BasePos", 1, true) ~= nil and permCore:find('kind = "sliding"', 1, true) ~= nil,
+    "Perm core хранит canonical BasePos и независимый door snapshot")
 
 -- ══════════════ 6. Тул + Q-меню ══════════════
 local tool = assert(io.open("lua/weapons/gmod_tool/stools/grm_sliding_door.lua", "rb"))
@@ -203,7 +216,7 @@ ok(hadClose, "звук ЗАКРЫТИЯ проигран при достижен
 _G.CurTime = oldT
 
 -- перм/тул: звуки
-ok(ffdCode:find('soundOpen', 1, true) ~= nil and ffdCode:find('soundMove', 1, true) ~= nil, "перм Extract/Apply хранит звуки")
+ok(slidingCode:find('soundOpen', 1, true) ~= nil and slidingCode:find('soundMove', 1, true) ~= nil, "перм Extract/Apply хранит звуки")
 ok(toolCode:find('grm_sliding_door_soundopen', 1, true) ~= nil, "тул: поле звука открытия")
 ok(toolCode:find('grm_sliding_door_soundmove', 1, true) ~= nil, "тул: поле звука движения")
 

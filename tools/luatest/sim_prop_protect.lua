@@ -30,6 +30,8 @@ EMT.__index = function(t, k)
   if k == "GetClass" then return function(s) return s.__cls end
   elseif k == "GetNWString" then return function(s, key, d) local v = s.nw and s.nw[key]; if v == nil then return d or "" end return v end
   elseif k == "SetNWString" then return function(s, key, v) s.nw = s.nw or {} s.nw[key] = v end
+  elseif k == "GetNWBool" then return function(s, key, d) local v = s.nw and s.nw[key]; if v == nil then return d == true end return v == true end
+  elseif k == "SetNWBool" then return function(s, key, v) s.nw = s.nw or {} s.nw[key] = v == true end
   elseif k == "GetPhysicsObject" then return function() return { __valid = true, SetMaterial = function() end, SetFriction = function() end, SetDamping = function() end } end
   elseif k == "IsPlayer" then return function() return false end
   elseif k == "IsWorld" then return function() return false end
@@ -90,7 +92,37 @@ ok(PP.CanInteract(admin, vault, "physgun") == true, "суперадмин: мо�
 ok(PP.CanInteract(admin, vault, "tool") == true, "суперадмин: может тулить серверное")
 ok(PP.CanInteract(admin, vault, "remove") == true, "суперадмин: может удалять серверное")
 
--- ══════════════ 3. Хуки ══════════════
+
+-- ══════════════ 3. Механизированные двери ══════════════
+local ffd = mkEnt("prop_physics")
+ffd.isFadingDoor, ffd.FFD_IsFaded, ffd.FFD_IsActive = true, true, true
+ok(PP.IsMechanizedDoor(ffd) == true and PP.IsDoorBusy(ffd) == true,
+   "FFD: исчезнувшая дверь распознана как busy")
+ok(PP.CanInteract(admin, ffd, "physgun") == false, "FFD busy: даже суперадмину запрещён физган")
+ok(PP.CanInteract(admin, ffd, "tool") == false, "FFD busy: даже суперадмину запрещён tool")
+ok(PP.CanInteract(admin, ffd, "remove") == false, "FFD busy: даже суперадмину запрещено удаление")
+ok(PP.CanInteract(admin, ffd, "use") == true, "FFD busy: управляющее использование не блокируется")
+ok(PP.CanInteract(admin, ffd, "door_control") == true, "FFD busy: сигнал контроллера не блокируется")
+ffd.FFD_IsFaded, ffd.FFD_IsActive = false, false
+ok(PP.IsDoorBusy(ffd) == false and PP.CanInteract(admin, ffd, "tool") == true,
+   "FFD closed: стабильная дверь снова доступна суперадмину")
+ffd.FFD_Reversed, ffd.FFD_IsActive = true, true
+ok(PP.IsDoorBusy(ffd) == false, "FFD reversed: видимое active-состояние не принято за исчезновение")
+
+local sliding = mkEnt("prop_physics")
+sliding.isSlidingDoor, sliding.Sliding_Open, sliding.Sliding_Progress = true, true, 1
+ok(PP.IsDoorBusy(sliding) == true and PP.CanInteract(admin, sliding, "physgun") == false
+   and PP.CanInteract(admin, sliding, "tool") == false,
+   "Sliding open/moving: физган и tool запрещены даже суперадмину")
+sliding.Sliding_Open, sliding.Sliding_Progress = false, 0
+ok(PP.IsDoorBusy(sliding) == false and PP.CanInteract(admin, sliding, "physgun") == true,
+   "Sliding closed: стабильная дверь снова доступна")
+
+local ppSource = assert(io.open("lua/autorun/sh_grm_prop_protect.lua", "rb")):read("*a")
+ok(ppSource:find("if PP.IsMechanizedDoor(ent) then return end", 1, true) ~= nil,
+   "stablePhysics не меняет физику механизированных дверей")
+
+-- ══════════════ 4. Хуки ══════════════
 local physHook = H.hooks["PhysgunPickup"]["GRM_PropProtect_Physgun"]
 local gravHook = H.hooks["GravgunPickup"]["GRM_PropProtect_Gravgun"]
 local gravPunt = H.hooks["GravgunPunt"]["GRM_PropProtect_GravgunPunt"]

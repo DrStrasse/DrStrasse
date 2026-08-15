@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Perm Entities v1.6.1 (Код 50/Код 89)
+    GRM Perm Entities v1.7.0 (Код 50/Код 89)
     «Пермы» для разворачиваемых энтити GRM: банкомат, таксофон, АТС,
     телефоны, CCTV-камера/монитор/сервер, сигнализация (сенсор/хаб/терминал/
     динамик), кейпад, RoomTap (чип/сервер/терминал), рудный узел/скупщик,
@@ -30,10 +30,11 @@
     Команды (только суперадмин; add/remove — глядя на энтити ≤256 юнитов):
       чат:     /permadd   /permremove   /permlist   /permload
       консоль: grm_perm_add  grm_perm_remove  grm_perm_list  grm_perm_load
-      /permload — немедленная загрузка из файла (без рестарта); антидубль:
-      на занятое место (тот же класс в радиусе 6 юнитов) второй не ставится.
-    Рамки: не больше 256 пермов на карту; дедуп по классу+точке (6 юнитов);
-    воскрешённые энтити заморожены (EnableMotion(false)).
+      /permload — немедленная загрузка из файла (без рестарта); антидубль
+      идёт по UID, legacy-привязка — модель+тип двери+точка ≤0.25 юн.
+      Соседние/пересекающиеся записи не считаются помехой друг другу.
+    Рамки добавления: не больше 256 пермов на карту; загрузчик обходит весь
+    JSON без квоты восстановления; воскрешённые entity заморожены.
 ----------------------------------------------------------------------]]
 
 -- Код 108: кейпад/сканер несут в rec.data ещё и links — ручные связи
@@ -42,7 +43,7 @@
 -- Код 110: перм агрегатов кухни (плита/холодильник/горшок) — состояние
 -- (лоток плиты, содержимое холодильника, посадка) едет в rec.data
 -- через GRM.PermData-делегаты sh_grm_food_kitchen.lua.
-local PERM_VER = "1.6.1"
+local PERM_VER = "1.7.0"
 GRM = GRM or {}
 GRM._permEntitiesVer = PERM_VER
 
@@ -421,17 +422,44 @@ if SERVER then
         return true
     end
 
+    local function captureDoorState(rec, ent)
+        rec.door = nil
+        if not (IsValid(ent) and tostring(ent:GetClass() or "") == "prop_physics") then return end
+        if ent.isSlidingDoor and istable(ent.Sliding) then
+            local s = ent.Sliding
+            rec.door = { kind = "sliding", direction = tostring(s.direction or "left"),
+                distance = tonumber(s.distance) or 100, speed = tonumber(s.speed) or 120,
+                smooth = tonumber(s.smooth) or 1, toggle = s.toggle == true,
+                autoclose = s.autoclose == true, closeTime = tonumber(s.closeTime) or 5,
+                owner = tostring(s.owner or ""), soundOpen = tostring(s.soundOpen or ""),
+                soundClose = tostring(s.soundClose or ""), soundMove = tostring(s.soundMove or "") }
+        elseif ent.isFadingDoor then
+            rec.door = { kind = "fading", key = tonumber(ent.FFD_Key) or 1,
+                reversed = ent.FFD_Reversed == true, toggle = ent.FFD_Toggle == true,
+                autoclose = ent.FFD_AutoClose == true, time = tonumber(ent.FFD_CloseTime) or 5,
+                owner = tostring(ent.FFD_OwnerSID64 or "") }
+        end
+    end
+
     -- Общий снимок визуального состояния. Раньше обычный prop_physics
     -- восстанавливал только модель/позицию и терял цвет, прозрачность,
     -- материал, skin и bodygroups после рестарта.
     local function captureEntity(rec, ent, transform)
         if not (istable(rec) and IsValid(ent)) then return end
         pcall(function() rec.model = tostring(ent:GetModel() or rec.model or "") end)
-        if transform ~= false then
+        local slidingBase = ent.isSlidingDoor and ent.Sliding_BasePos or nil
+        if slidingBase then
+            -- Открытая sliding-дверь физически смещена. В базе всегда хранится
+            -- её закрытая базовая позиция, иначе после рестарта база «ползла».
+            rec.pos = { x = slidingBase.x, y = slidingBase.y, z = slidingBase.z }
+            local ang = ent:GetAngles()
+            rec.ang = { p = ang.p, y = ang.y, r = ang.r }
+        elseif transform ~= false then
             local pos, ang = ent:GetPos(), ent:GetAngles()
             rec.pos = { x = pos.x, y = pos.y, z = pos.z }
             rec.ang = { p = ang.p, y = ang.y, r = ang.r }
         end
+        captureDoorState(rec, ent)
         local visual = {}
         pcall(function() visual.material = string.sub(tostring(ent:GetMaterial() or ""), 1, 128) end)
         pcall(function()
@@ -469,12 +497,127 @@ if SERVER then
         end
     end
 
-    local function sameSpot(a, b, classA, classB)
+    local function savedDoor(rec)
+        if istable(rec and rec.door) then return rec.door end
+        local function copyWithKind(src, kind)
+            local d = { kind = kind }
+            for k, v in pairs(src) do d[k] = v end
+            return d
+        end
+        if istable(rec and rec.data and rec.data.sliding) then return copyWithKind(rec.data.sliding, "sliding") end
+        if istable(rec and rec.data and rec.data.ffd) then return copyWithKind(rec.data.ffd, "fading") end
+    end
+
+    local function applyDoorNow(ent, rec)
+        local d = savedDoor(rec)
+        if not d then return true end
+        if d.kind == "sliding" then
+            if ent.isSlidingDoor and istable(ent.Sliding) then
+                ent.Sliding.owner = tostring(d.owner or ent.Sliding.owner or "")
+                return true
+            end
+            if not (GRM.SlidingDoor and type(GRM.SlidingDoor.Apply) == "function") then return false end
+            local ok = GRM.SlidingDoor.Apply(nil, ent, {
+                direction = d.direction, distance = d.distance, speed = d.speed,
+                smooth = d.smooth, toggle = d.toggle, autoclose = d.autoclose,
+                closeTime = d.closeTime, owner = d.owner, soundOpen = d.soundOpen,
+                soundClose = d.soundClose, soundMove = d.soundMove, skipDupe = true,
+            })
+            return ok == true
+        end
+        if d.kind == "fading" then
+            if ent.isFadingDoor then
+                ent.FFD_OwnerSID64 = tostring(d.owner or ent.FFD_OwnerSID64 or "")
+                if type(GRM.FFD_EnsureRestoredState) == "function" then GRM.FFD_EnsureRestoredState(ent) end
+                return true
+            end
+            if type(GRM.FFD_MakeFadingDoor) ~= "function" then return false end
+            local ok = GRM.FFD_MakeFadingDoor(nil, ent, tonumber(d.key) or 1,
+                d.reversed, d.toggle, d.autoclose, tonumber(d.time) or 5, true)
+            if ok then ent.FFD_OwnerSID64 = tostring(d.owner or "") end
+            return ok == true
+        end
+        return true
+    end
+
+    local function ensureDoorState(ent, rec)
+        if not savedDoor(rec) then return end
+        if applyDoorNow(ent, rec) then ent._grmPermDoorApplied = true return end
+        local uid = tostring(rec.uid or ent:EntIndex()):gsub("[^%w_]", "_")
+        local timerName = "GRM_PermDoorApply_" .. uid
+        timer.Create(timerName, 0.5, 40, function()
+            if not IsValid(ent) then timer.Remove(timerName) return end
+            if applyDoorNow(ent, rec) then
+                ent._grmPermDoorApplied = true
+                timer.Remove(timerName)
+                print("[GRM Perm] door mechanism applied late uid=" .. tostring(rec.uid))
+            end
+        end)
+    end
+
+    local function ensurePhysicalPresence(ent, rec)
+        if not (IsValid(ent) and tostring(rec.class or "") == "prop_physics") then return end
+        -- Соседние solids не являются причиной делать восстановленный prop
+        -- призрачным. Это не trace-spawn: коллизия включается без проверки
+        -- свободного hull, поэтому рамка и дверь могут занимать общий объём.
+        if ent.SetNotSolid then pcall(function() ent:SetNotSolid(false) end) end
+        local ph = ent.GetPhysicsObject and ent:GetPhysicsObject() or nil
+        if IsValid(ph) and ph.EnableCollisions then pcall(function() ph:EnableCollisions(true) end) end
+
+        -- Снимок исчезнувшей FFD мог содержать alpha=40. Пока API двери ещё
+        -- загружается, показываем безопасный solid, а поздний delegate затем
+        -- повторно подтвердит согласованное состояние.
+        if savedDoor(rec) then
+            pcall(function()
+                local c = ent:GetColor()
+                ent:SetColor(Color(tonumber(c.r) or 255, tonumber(c.g) or 255, tonumber(c.b) or 255, 255))
+            end)
+        end
+    end
+
+    local function sameSpot(a, b, classA, classB, range)
         if classA ~= classB then return false end
-        local dx = (tonumber(a.x) or 0) - (tonumber(b.x) or 0)
-        local dy = (tonumber(a.y) or 0) - (tonumber(b.y) or 0)
-        local dz = (tonumber(a.z) or 0) - (tonumber(b.z) or 0)
-        return (dx * dx + dy * dy + dz * dz) <= (PERM_RANGE * PERM_RANGE)
+        local dx = (tonumber(a and a.x) or 0) - (tonumber(b and b.x) or 0)
+        local dy = (tonumber(a and a.y) or 0) - (tonumber(b and b.y) or 0)
+        local dz = (tonumber(a and a.z) or 0) - (tonumber(b and b.z) or 0)
+        range = tonumber(range) or PERM_RANGE
+        return (dx * dx + dy * dy + dz * dz) <= (range * range)
+    end
+
+    -- Радиус 6 юнитов остаётся только удобным допуском для админского
+    -- поиска. Для идентичности при загрузке он слишком велик: рамка и дверь
+    -- почти всегда оба prop_physics и стоят ближе 6 юнитов. Старый антидубль
+    -- принимал один проп за другой и не создавал вторую запись/сущность.
+    local RESTORE_ADOPT_RANGE = 0.25
+
+    local function stableEntityPos(ent)
+        if IsValid(ent) and ent.isSlidingDoor and ent.Sliding_BasePos then return ent.Sliding_BasePos end
+        return IsValid(ent) and ent:GetPos() or nil
+    end
+
+    local function entityDoorKind(ent)
+        if not IsValid(ent) then return nil end
+        if ent.isSlidingDoor == true then return "sliding" end
+        if ent.isFadingDoor == true then return "fading" end
+        return nil
+    end
+
+    local function sameModel(ent, rec)
+        local want = tostring(rec and rec.model or "")
+        if want == "" then return true end
+        local got = ""
+        pcall(function() got = tostring(ent:GetModel() or "") end)
+        return string.lower(got) == string.lower(want)
+    end
+
+    local function recordMatchesEntity(rec, ent, range)
+        if not (istable(rec) and IsValid(ent)) then return false end
+        if tostring(ent:GetClass() or "") ~= tostring(rec.class or "") then return false end
+        if not sameModel(ent, rec) then return false end
+        local door = savedDoor(rec)
+        if (door and tostring(door.kind or "") or nil) ~= entityDoorKind(ent) then return false end
+        local pos = stableEntityPos(ent)
+        return pos ~= nil and sameSpot(rec.pos, pos, rec.class, ent:GetClass(), range or RESTORE_ADOPT_RANGE)
     end
 
     -- ── Владение, права, квоты ──────────────────────────────
@@ -564,14 +707,36 @@ if SERVER then
     end
 
     -- ── Восстановление на карте ─────────────────────────────
-    -- Антидубль: не ставим энтити, если того же класса уже стоит на месте
-    -- (важно для ручной /permload поверх живой карты)
-    local function isOccupied(class, pos)
-        local center = Vector(tonumber(pos.x) or 0, tonumber(pos.y) or 0, tonumber(pos.z) or 0)
-        for _, ent in ipairs(ents.FindInSphere(center, PERM_RANGE)) do
-            if IsValid(ent) and tostring(ent:GetClass() or "") == class then return ent end
+    -- UID — единственная сильная идентичность. Позиционный fallback нужен
+    -- лишь для legacy/горячей перезагрузки и намеренно строгий: модель,
+    -- механизм двери и 0.25 юнита должны совпасть. Соседний/пересекающийся
+    -- проп НЕ считается помехой и никогда не блокирует ents.Create.
+    local function findLiveForRecord(rec, claimed)
+        local fallback, fallbackD = nil, math.huge
+        for _, ent in ipairs(ents.FindByClass(tostring(rec.class or ""))) do
+            if IsValid(ent) and not claimed[ent] then
+                if isstring(rec.uid) and rec.uid ~= "" and ent._grmPermUID == rec.uid then
+                    return ent, true
+                end
+                if ent._grmPermUID == nil and recordMatchesEntity(rec, ent, RESTORE_ADOPT_RANGE) then
+                    local p = stableEntityPos(ent)
+                    local dx = (tonumber(rec.pos and rec.pos.x) or 0) - (tonumber(p and p.x) or 0)
+                    local dy = (tonumber(rec.pos and rec.pos.y) or 0) - (tonumber(p and p.y) or 0)
+                    local dz = (tonumber(rec.pos and rec.pos.z) or 0) - (tonumber(p and p.z) or 0)
+                    local d2 = dx * dx + dy * dy + dz * dz
+                    if d2 < fallbackD then fallback, fallbackD = ent, d2 end
+                end
+            end
         end
-        return nil
+        return fallback, false
+    end
+
+    local function doorStateMissing(ent, rec)
+        local d = savedDoor(rec)
+        if not d then return false end
+        if d.kind == "sliding" and ent.isSlidingDoor ~= true then return true end
+        if d.kind == "fading" and ent.isFadingDoor ~= true then return true end
+        return ent._grmPermDoorApplied ~= true
     end
 
     local function restoreState(ent, rec)
@@ -604,54 +769,71 @@ if SERVER then
             ent:SetNWBool("GRM_IsPerm", true)
             ent:SetNWString("GRM_PermKind", ent._grmPermKind or "server")
         end)
+        -- Сначала внешний вид обычного пропа, затем механизмы. FFD должна
+        -- последней выставить согласованные color/render/collision; раньше
+        -- visual снимок открытой двери делал её прозрачной, но твёрдой.
+        applyVisual(ent, rec)
         local applyFn = GRM.PermData and GRM.PermData.Apply and GRM.PermData.Apply[rec.class]
         if istable(rec.data) and applyFn then pcall(applyFn, ent, rec.data) end
-        applyVisual(ent, rec)
+        ensureDoorState(ent, rec)
+        ensurePhysicalPresence(ent, rec)
         local ph = ent.GetPhysicsObject and ent:GetPhysicsObject() or nil
         if IsValid(ph) then ph:EnableMotion(rec.freeze == false) end
         hook.Run("GRM_PermRestored", ent, rec)
         return true
     end
 
-    -- Возвращает: сколько заспавнено, сколько уже стояло и было привязано.
+    -- Возвращает: сколько заспавнено, сколько уже стояло и было привязано,
+    -- сколько пока не удалось поднять. Обрабатывается ВЕСЬ JSON без квоты:
+    -- лимиты добавления не являются лимитами восстановления.
     local function spawnAll(reason)
         local map = game.GetMap()
-        local done, skipped = 0, 0
+        local done, skipped, pending = 0, 0, 0
+        local claimed = {}
         for _, rec in ipairs(loadDB()) do
             if rec.map == map and PERM_CLASSES[rec.class] then
-                local occupied = isOccupied(rec.class, rec.pos)
+                local occupied, byUID = findLiveForRecord(rec, claimed)
                 if IsValid(occupied) then
-                    -- Не просто «пропустить»: привязываем существующий объект
-                    -- к uid, восстанавливаем владение, визуал и данные модуля.
-                    -- Повторные boot-проверки уже привязанный объект не трогают.
-                    if occupied._grmPermUID ~= rec.uid then restoreState(occupied, rec) end
+                    claimed[occupied] = true -- одна entity никогда не обслуживает две близкие записи
+                    if not byUID or occupied._grmPermUID ~= rec.uid then
+                        restoreState(occupied, rec)
+                    elseif doorStateMissing(occupied, rec) then
+                        -- Ранний boot мог создать обычный prop до загрузки
+                        -- Sliding/FFD API. Повтор обязан наложить механизм.
+                        ensureDoorState(occupied, rec)
+                    end
                     skipped = skipped + 1
                 else
+                    -- Никаких trace/hull/"занято" проверок: сохранённые рамка,
+                    -- дверь и декор имеют право пересекаться. Source создаёт их
+                    -- независимо, затем мы сразу замораживаем физику.
                     local ent = ents.Create(rec.class)
                     if IsValid(ent) then
                         if isstring(rec.model) and rec.model ~= "" then pcall(function() ent:SetModel(rec.model) end) end
-                        ent:SetPos(Vector(tonumber(rec.pos.x) or 0, tonumber(rec.pos.y) or 0, tonumber(rec.pos.z) or 0))
-                        ent:SetAngles(Angle(tonumber(rec.ang.p) or 0, tonumber(rec.ang.y) or 0, tonumber(rec.ang.r) or 0))
+                        ent:SetPos(Vector(tonumber(rec.pos and rec.pos.x) or 0, tonumber(rec.pos and rec.pos.y) or 0, tonumber(rec.pos and rec.pos.z) or 0))
+                        ent:SetAngles(Angle(tonumber(rec.ang and rec.ang.p) or 0, tonumber(rec.ang and rec.ang.y) or 0, tonumber(rec.ang and rec.ang.r) or 0))
                         ent:Spawn()
                         ent:Activate()
                         restoreState(ent, rec)
+                        claimed[ent] = true
                         done = done + 1
                     else
-                        print("[GRM Perm][!] Не удалось создать класс " .. tostring(rec.class) .. " — запись пропущена")
+                        pending = pending + 1
+                        print("[GRM Perm][!] Не удалось создать класс " .. tostring(rec.class) .. " — watchdog повторит запись")
                     end
                 end
             end
         end
-        print(("[GRM Perm] восстановлено перм-энтити на карте %s: %d, уже на месте: %d (%s)")
-            :format(tostring(map), done, skipped, tostring(reason or "?")))
-        return done, skipped
+        print(("[GRM Perm] карта %s: восстановлено %d, уже на месте %d, ожидают повтора %d (%s)")
+            :format(tostring(map), done, skipped, pending, tostring(reason or "?")))
+        return done, skipped, pending
     end
     -- Некоторые gamemode выполняют собственную позднюю очистку уже ПОСЛЕ
     -- InitPostEntity. Единственный вызов через 1с успевал создать пермы, затем
     -- их снимала эта очистка без PostCleanupMap. Ручная cleanup работала,
     -- потому что её PostCleanupMap снова вызывал spawnAll.
     --
-    -- Восстановление идемпотентно: isOccupied + uid не дают дублей. Поэтому
+    -- Восстановление идемпотентно: UID + one-to-one claimed не дают дублей. Поэтому
     -- первые 20 секунд проверяем карту серией проходов, а при входе первого
     -- игрока делаем финальную страховочную сверку.
     local function startBootRestore(reason)
@@ -659,6 +841,13 @@ if SERVER then
         timer.Simple(0, function() spawnAll(tostring(reason) .. " immediate") end)
         timer.Create("GRM_PermEntities_BootRetry", 2, 10, function()
             spawnAll(tostring(reason) .. " retry")
+        end)
+        -- Не ограничиваемся первыми 20 секундами: если модуль класса загрузился
+        -- поздно или сторонняя очистка прошла без PostCleanupMap, карта сама
+        -- дойдёт до полного состояния. UID делает сверку идемпотентной.
+        if timer.Remove then timer.Remove("GRM_PermEntities_Watchdog") end
+        timer.Create("GRM_PermEntities_Watchdog", 30, 0, function()
+            spawnAll("continuous watchdog")
         end)
     end
 
@@ -806,7 +995,7 @@ if SERVER then
             local uid = ent._grmPermUID
             for _, rec in ipairs(list) do
                 local matched = isstring(uid) and uid ~= "" and rec.uid == uid
-                if not matched then matched = rec.map == map and rec.class == class and sameSpot(rec.pos, np, rec.class, class) end
+                if not matched then matched = rec.map == map and recordMatchesEntity(rec, ent, RESTORE_ADOPT_RANGE) end
                 if matched then
                     local okX, data = pcall(extractFn, ent)
                     if okX and istable(data) then rec.data = data end
@@ -833,11 +1022,12 @@ if SERVER then
         local pos = ent:GetPos()
         local np = { x = pos.x, y = pos.y, z = pos.z }
         local list = loadDB()
-        -- запись уже есть: uid главнее позиции (объект мог быть сдвинут).
+        -- Современная запись принадлежит конкретной entity только по UID.
+        -- Позиционный дедуп здесь запрещён: две детали одной модели могут
+        -- законно пересекаться и обе должны получить отдельные записи.
         local uid = ent._grmPermUID
         for _, rec in ipairs(list) do
             local matched = isstring(uid) and uid ~= "" and rec.uid == uid
-            if not matched then matched = rec.map == map and rec.class == class and sameSpot(rec.pos, np, rec.class, class) end
             if matched then
                 if extractFn then
                     local okX, data = pcall(extractFn, ent)
@@ -918,7 +1108,7 @@ if SERVER then
 
     -- Поиск записи по объекту: сначала по uid (надёжно), потом по
     -- классу+позиции (для записей до миграции и после ручного сдвига)
-    local function findRec(list, ent)
+    local function findRec(list, ent, allowFallback)
         if not IsValid(ent) then return nil end
         local map = game.GetMap()
         local class = tostring(ent:GetClass() or "")
@@ -928,18 +1118,17 @@ if SERVER then
                 if rec.uid == uid then return i, rec end
             end
         end
-        local pos = ent:GetPos()
-        local np = { x = pos.x, y = pos.y, z = pos.z }
+        if allowFallback == false then return nil end
+        local pos = stableEntityPos(ent)
         local bestI, bestRec, bestD = nil, nil, math.huge
         for i, rec in ipairs(list) do
-            if rec.map == map and rec.class == class then
-                local dx = (tonumber(rec.pos and rec.pos.x) or 0) - np.x
-                local dy = (tonumber(rec.pos and rec.pos.y) or 0) - np.y
-                local dz = (tonumber(rec.pos and rec.pos.z) or 0) - np.z
+            if rec.map == map and rec.class == class
+                and recordMatchesEntity(rec, ent, RESTORE_ADOPT_RANGE) then
+                local dx = (tonumber(rec.pos and rec.pos.x) or 0) - (tonumber(pos and pos.x) or 0)
+                local dy = (tonumber(rec.pos and rec.pos.y) or 0) - (tonumber(pos and pos.y) or 0)
+                local dz = (tonumber(rec.pos and rec.pos.z) or 0) - (tonumber(pos and pos.z) or 0)
                 local d2 = dx * dx + dy * dy + dz * dz
-                if d2 <= (PERM_RANGE * PERM_RANGE) and d2 < bestD then
-                    bestI, bestRec, bestD = i, rec, d2
-                end
+                if d2 < bestD then bestI, bestRec, bestD = i, rec, d2 end
             end
         end
         return bestI, bestRec
@@ -1014,7 +1203,7 @@ if SERVER then
         local map = game.GetMap()
 
         -- уже в базе? тогда это обновление, а не дубль
-        local idx, exist = findRec(list, ent)
+        local idx, exist = findRec(list, ent, false)
         if exist then
             local okOwn, whyOwn = canManageRec(ply, exist)
             if not okOwn then return false, whyOwn end
@@ -1194,8 +1383,9 @@ if SERVER then
         return ok, ok and ("сохранено perm-записей: " .. #list) or "ошибка записи perm primary/backup"
     end
     function P.LoadAll()
-        local spawned, bound = spawnAll("Persistence Hub")
-        return not permLoadBlocked, ("восстановлено %d, привязано %d"):format(spawned, bound)
+        local spawned, bound, pending = spawnAll("Persistence Hub")
+        return not permLoadBlocked, ("восстановлено %d, привязано %d, ожидают повтора %d")
+            :format(spawned, bound, pending)
     end
 
     -- Старые /permadd и /permremove теперь используют тот же API, что
@@ -1220,11 +1410,12 @@ if SERVER then
     end
 
     local function loadPerm(ply)
-        local spawned, skipped = spawnAll("ручная загрузка")
-        if spawned == 0 and skipped == 0 then
-            tell(ply, "[ПЕРМ] Для этой карты в базе записей нет.", 255, 200, 80)
+        local spawned, skipped, pending = spawnAll("ручная загрузка")
+        if spawned == 0 and skipped == 0 and pending == 0 then
+            tell(ply, "[ПЕРМ] Для этой карты в базе допустимых записей нет.", 255, 200, 80)
         else
-            tell(ply, ("[ПЕРМ] Загрузка из базы: восстановлено %d, уже на месте %d."):format(spawned, skipped), 100, 220, 255)
+            tell(ply, ("[ПЕРМ] Загрузка из базы: восстановлено %d, уже на месте %d, ожидают повтора %d.")
+                :format(spawned, skipped, pending), 100, 220, 255)
         end
     end
 

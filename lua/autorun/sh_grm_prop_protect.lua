@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Prop Protect v2.0.0
+    GRM Prop Protect v2.1.0
     Комплексная защита пропов, объектов карты, дверей и серверного оборудования.
 
     • Защита объектов карты: func_door, func_door_rotating, prop_door_rotating,
@@ -18,7 +18,7 @@ GRM = GRM or {}
 GRM.PropProtect = GRM.PropProtect or {}
 local PP = GRM.PropProtect
 
-PP.Version = "2.0.0"
+PP.Version = "2.1.0"
 PP.File    = "grm_prop_protect.json"
 
 PP.Cfg = PP.Cfg or {
@@ -166,6 +166,24 @@ function PP.IsOwner(ply, ent)
     return own ~= "" and own == charKey(ply)
 end
 
+function PP.IsMechanizedDoor(ent)
+    return IsValid(ent) and (ent.isFadingDoor == true or ent.isSlidingDoor == true
+        or (ent.GetNWBool and ent:GetNWBool("FFD_IsDoor", false) == true))
+end
+
+function PP.IsDoorBusy(ent)
+    if not PP.IsMechanizedDoor(ent) then return false end
+    if ent.FFD_IsFaded == true or (ent.GetNWBool and ent:GetNWBool("FFD_Faded", false)) then return true end
+    -- FFD_IsActive у reversed-двери означает как раз ВИДИМЫЙ solid; такую
+    -- дверь не блокируем. У обычной двери active эквивалентен исчезновению.
+    if ent.FFD_IsActive == true and ent.FFD_Reversed ~= true then return true end
+    if ent.isSlidingDoor then
+        local progress = tonumber(ent.Sliding_Progress) or 0
+        if ent.Sliding_Open == true or progress > 0.001 then return true end
+    end
+    return false
+end
+
 local function isAdmin(ply)
     return IsValid(ply) and ply:IsPlayer() and ply:IsSuperAdmin() and (PP.Cfg.adminAll ~= false)
 end
@@ -175,7 +193,12 @@ function PP.CanInteract(ply, ent, action)
     if not IsValid(ent) then return false end
     if not PP.Cfg.enabled then return true end
 
-    -- Суперадмин имеет полный доступ ко всему
+    -- Движущуюся/исчезнувшую дверь нельзя хватать физганом, перекрашивать,
+    -- удалять или перенастраивать даже администратору: Source оставляет
+    -- рассинхрон color/solid/base position. Сначала механизм должен закрыться.
+    if PP.IsDoorBusy(ent) and action ~= "use" and action ~= "door_control" then return false end
+
+    -- Суперадмин имеет полный доступ ко всему в стабильном состоянии
     if isAdmin(ply) then return true end
 
     -- 1. Объекты карты (двери, браши, здания, статичные пропы)
@@ -228,6 +251,7 @@ end
 
 local function stablePhysics(ent)
     if not PP.Cfg.stableFriction or not IsValid(ent) then return end
+    if PP.IsMechanizedDoor(ent) then return end
     local phys = ent:GetPhysicsObject()
     if not IsValid(phys) then return end
     pcall(function() phys:SetMaterial("default") end)

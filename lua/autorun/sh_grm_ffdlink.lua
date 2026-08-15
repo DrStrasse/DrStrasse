@@ -34,7 +34,7 @@ end
 
 GRM = GRM or {}
 GRM.FFDLink = GRM.FFDLink or {}
-GRM._ffdLinkVer = "1.1.0"  -- Код 109: авто-радиус-фолбэк удалён (заказ)
+GRM._ffdLinkVer = "1.2.0"  -- sliding resolve по стабильной BasePos, включая открытую дверь
 
 -- какие энтити могут быть контроллерами связи
 local CONTROLLERS = {
@@ -64,6 +64,15 @@ if SERVER then
     -- округление до 0.1: позиции переживают JSON-переупаковку перм-базы
     local function r1(v) return math.floor((tonumber(v) or 0) * 10 + 0.5) / 10 end
 
+    -- Sliding-дверь физически уезжает от точки связи. Её идентичность —
+    -- закрытая базовая позиция, а не текущая анимированная координата.
+    local function stableDoorPos(ent)
+        if not IsValid(ent) then return nil end
+        if ent.isSlidingDoor and ent.Sliding_BasePos then return ent.Sliding_BasePos end
+        return ent:GetPos()
+    end
+    GRM.FFDLink.StableDoorPos = stableDoorPos
+
     -- записанная дверь -> живая энтити (класс + позиция в допуске ACCEPT)
     local function resolveEntry(e)
         if not istable(e) or not isstring(e.class) then return nil end
@@ -71,8 +80,20 @@ if SERVER then
         local best, bestD = nil, ACCEPT * ACCEPT
         for _, ent in ipairs(ents.FindInSphere(center, FIND_RANGE)) do
             if IsValid(ent) and tostring(ent:GetClass() or "") == e.class then
-                local d = ent:GetPos():DistToSqr(center)
+                local pos = stableDoorPos(ent)
+                local d = pos and pos:DistToSqr(center) or math.huge
                 if d <= bestD then best, bestD = ent, d end
+            end
+        end
+        if best then return best end
+        -- Открытая sliding-дверь уже вне FIND_RANGE. Ищем её по BasePos;
+        -- обычные FFD-пропы глобально не перебираются без необходимости.
+        if e.class == "prop_physics" then
+            for _, ent in ipairs(ents.FindByClass("prop_physics")) do
+                if IsValid(ent) and ent.isSlidingDoor and ent.Sliding_BasePos then
+                    local d = ent.Sliding_BasePos:DistToSqr(center)
+                    if d <= bestD then best, bestD = ent, d end
+                end
             end
         end
         return best
@@ -157,7 +178,8 @@ if SERVER then
     function GRM.FFDLink.FindIndex(ctrl, door)
         if not (IsValid(ctrl) and IsValid(door)) then return nil end
         local class = tostring(door:GetClass() or "")
-        local p = door:GetPos()
+        local p = stableDoorPos(door)
+        if not p then return nil end
         local x, y, z = r1(p.x), r1(p.y), r1(p.z)
         for i, e in ipairs(ctrl.FFDLink_Doors or {}) do
             if e.class == class and e.x == x and e.y == y and e.z == z then
@@ -174,7 +196,8 @@ if SERVER then
         if GRM.FFDLink.FindIndex(ctrl, door) then return false end
         local class = tostring(door:GetClass() or "")
         if class == "" then return false end
-        local p = door:GetPos()
+        local p = stableDoorPos(door)
+        if not p then return false end
         ctrl.FFDLink_Doors[#ctrl.FFDLink_Doors + 1] = { class = class, x = r1(p.x), y = r1(p.y), z = r1(p.z) }
         GRM.FFDLink.RefreshNW(ctrl)
         dupeStore(ctrl)

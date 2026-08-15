@@ -116,7 +116,13 @@ ents = {
     if not e.GetModel then function e:GetModel() return self.model or "" end end
     if not e.SetNotSolid then function e:SetNotSolid(v) self.notsolid = v end end
     if not e.SetRenderMode then function e:SetRenderMode(v) self.rendermode = v end end
+    if not e.GetRenderMode then function e:GetRenderMode() return self.rendermode or 0 end end
     if not e.SetColor then function e:SetColor(v) self.color = v end end
+    if not e.GetColor then function e:GetColor() return self.color or Color(255,255,255,255) end end
+    if not e.GetRenderFX then function e:GetRenderFX() return 0 end end
+    if not e.GetMaterial then function e:GetMaterial() return "" end end
+    if not e.GetSkin then function e:GetSkin() return 0 end end
+    if not e.GetNumBodyGroups then function e:GetNumBodyGroups() return 0 end end
     if not e.DrawShadow then function e:DrawShadow(v) self.shadow = v end end
     if not e.SetNWBool then function e:SetNWBool(k, v) self.__nwb = self.__nwb or {} self.__nwb[k] = v end end
     if not e.GetNWBool then function e:GetNWBool(k, d) local t = self.__nwb local v = t and t[k] if v == nil then return d end return v end end
@@ -755,10 +761,10 @@ dofile("lua/autorun/sh_grm_perm_entities.lua")
 -- Код 108: ядро ручных связей FFD Link — грузим ДО /permadd, чтобы Extract
 -- кейпада/сканера уже писал rec.data.links (ручную привязку к дверям)
 dofile("lua/autorun/sh_grm_ffdlink.lua")
-ok(GRM._permEntitiesVer == "1.6.1", "perm-модуль v1.6.1 загружен (visual/uid + rec.data-хуки)")
-ok(GRM._ffdLinkVer == "1.1.0" and type(GRM.FFDLink.Add) == "function"
+ok(GRM._permEntitiesVer == "1.7.0", "perm-модуль v1.7.0 загружен (visual/uid + rec.data-хуки)")
+ok(GRM._ffdLinkVer == "1.2.0" and type(GRM.FFDLink.Add) == "function"
    and type(GRM.FFDLink.Toggle) == "function" and type(GRM.FFDLink.Fade) == "function",
-   "ячейка связей Кода 109 (v1.1.0): GRM.FFDLink загружен (Add/Toggle/Fade), авто-радиус-фолбэк удалён")
+   "ячейка связей Кода 109 (v1.2.0): GRM.FFDLink загружен (Add/Toggle/Fade), авто-радиус-фолбэк удалён")
 ok(type(GRM.PermData.Extract["grm_keypad"]) == "function"
    and type(GRM.PermData.Apply["grm_keypad"]) == "function",
    "кейпад: Extract/Apply данных зарегистрированы (init.lua)")
@@ -796,8 +802,8 @@ ok(#base1 == 1 and base1[1].class == "grm_keypad" and istable(base1[1].data)
 local prop = ents.Create("prop_physics")
 prop:SetPos(mkVec(10, 0, 0))
 H.npadDown, H.npadUp = 0, 0
-ok(GRM.FFD_MakeFadingDoor(plyA, prop, 3, true, false, true, 7) == true
-   and prop.isFadingDoor == true and prop.FFD_Key == 3 and prop.FFD_Reversed == true
+ok(GRM.FFD_MakeFadingDoor(plyA, prop, 3, false, false, true, 7) == true
+   and prop.isFadingDoor == true and prop.FFD_Key == 3 and prop.FFD_Reversed == false
    and prop.FFD_Toggle == false and prop.FFD_AutoClose == true and prop.FFD_CloseTime == 7,
    "FFD_MakeFadingDoor: проп стал fading door (key3 / reversed / autoclose 7с)")
 ok(H.npadDown == 1 and H.npadUp == 1, "нумпад-связка двери создана (владелец онлайн)")
@@ -807,26 +813,43 @@ ok(GRM.FFD_MakeFadingDoor(nil, propAlone, 2, false, true, false, 5) == true
    and propAlone.isFadingDoor == true,
    "FFD без живого владельца — без краша numpad, дверь рабочая")
 propAlone:Remove()
+-- Сохраняем дверь в открытом/исчезнувшем состоянии: после рестарта она
+-- обязана вернуться согласованно закрытой, а не прозрачной и твёрдой.
+prop:FadeActivate()
+ok(prop.FFD_IsFaded == true and prop.color and prop.color.a == 40, "FFD перед permadd действительно исчезла")
 H.hit = { Entity = prop }
 chatFn(admin5, "/permadd")
 local base2 = util.JSONToTable(FILES["grm_perm_entities.json"])
 ok(#base2 == 2 and base2[2].class == "prop_physics" and istable(base2[2].data)
    and istable(base2[2].data.ffd) and base2[2].data.ffd.key == 3
-   and base2[2].data.ffd.reversed == true and base2[2].data.ffd.autoclose == true
-   and base2[2].data.ffd.time == 7 and base2[2].data.ffd.owner == plyA:SteamID64(),
-   "запись FFD-двери несёт rec.data.ffd (ключ/инверсия/автозакрытие/время/владельца)")
+   and base2[2].data.ffd.reversed == false and base2[2].data.ffd.autoclose == true
+   and base2[2].data.ffd.time == 7 and base2[2].data.ffd.owner == plyA:SteamID64()
+   and istable(base2[2].door) and base2[2].door.kind == "fading" and base2[2].door.key == 3,
+   "запись FFD-двери несёт rec.data.ffd + независимый door snapshot")
+
+-- Рамка стоит в двух юнитах от двери: прежний class+radius(6) антидубль
+-- принимал оба prop_physics за один и терял один объект после рестарта.
+local closeFrame = ents.Create("prop_physics")
+closeFrame:SetPos(mkVec(12, 0, 0))
+H.hit = { Entity = closeFrame }
+chatFn(admin5, "/permadd")
+local baseClose = util.JSONToTable(FILES["grm_perm_entities.json"])
+ok(#baseClose == 3 and baseClose[3].class == "prop_physics" and baseClose[3].door == nil
+   and baseClose[2].uid ~= baseClose[3].uid,
+   "близкие дверь+рамка получают две независимые UID-записи")
 
 -- «рестарт карты»: мир пуст, база на диске
 world = {}
 _G.__mkEnt_grm_keypad = mkKeypadEnt
 H.notifies = {}
 chatFn(admin5, "/permload")
-ok(lastNotify("восстановлено 2") ~= nil, "/permload: оба перма воскрешены за раз")
-local newKp, newProp
+ok(lastNotify("восстановлено 3") ~= nil, "/permload: кейпад, дверь и близкая рамка воскрешены за раз")
+local newKp, newProp, newFrame
 for e in pairs(world) do
   if not e.__removed then
     if e:GetClass() == "grm_keypad" then newKp = e end
-    if e:GetClass() == "prop_physics" then newProp = e end
+    if e:GetClass() == "prop_physics" and e.isFadingDoor then newProp = e end
+    if e:GetClass() == "prop_physics" and not e.isFadingDoor then newFrame = e end
   end
 end
 ok(newKp ~= nil and newKp.spawned and newKp.activated and newKp.frozen == true and newKp._grmPerm == true,
@@ -839,12 +862,22 @@ ok(newKp ~= nil and newKp.KeypadOwner == plyA and newKp:IsKeypadOwner(plyA) == t
    and newKp:IsKeypadOwner(rando) == false,
    "перм-кейпад: владелец найден по sid64, IsKeypadOwner работает после рестарта")
 ok(newProp ~= nil and newProp.isFadingDoor == true and newProp.FFD_Key == 3
-   and newProp.FFD_Reversed == true and newProp.FFD_Toggle == false
+   and newProp.FFD_Reversed == false and newProp.FFD_Toggle == false
    and newProp.FFD_AutoClose == true and newProp.FFD_CloseTime == 7
    and newProp.frozen == true,
    "перм-дверь: после рестарта сразу рабочая fading door (фриз)")
 ok(newProp ~= nil and newProp.FFD_OwnerSID64 == plyA:SteamID64(),
    "перм-дверь: владелец sid64 восстановлен")
+ok(newProp ~= nil and newProp.FFD_IsFaded == false and newProp.notsolid == false
+   and newProp.color and newProp.color.a == 255 and newProp.collisions == true,
+   "перм-дверь: visual применён ДО механизма — закрыта, видима и коллизионна")
+ok(newFrame ~= nil and newFrame:GetPos().x == 12 and newFrame.notsolid == false
+   and newFrame.collisions == true and newFrame._grmPermUID ~= newProp._grmPermUID,
+   "близкая рамка не принята за дверь: отдельная, видимая и коллизионная")
+local ffdSource = assert(io.open("lua/weapons/gmod_tool/stools/ffd_fading_door.lua", "rb")):read("*a")
+ok(ffdSource:find("function GRM.FFD_RebindOwner", 1, true) ~= nil
+   and ffdSource:find("GRM_FFD_RebindPermOwner", 1, true) ~= nil,
+   "перм-дверь: numpad владельца перепривязывается после входа")
 -- воскрешённый кейпад реально работает как PIN-замок
 H.npad = {}
 newKp.CurrentInput = "4321"
@@ -859,29 +892,29 @@ newKp:SetStatus(0) newKp.IsGrantActive = false newKp.CurrentInput = ""
 -- антидубль: повторный /permload на живой карте — ничего не клонирует
 H.notifies = {}
 chatFn(admin5, "/permload")
-ok(lastNotify("уже на месте 2") ~= nil, "антидубль: повторная загрузка только отмечает «уже на месте»")
+ok(lastNotify("уже на месте 3") ~= nil, "антидубль: повторная загрузка отмечает все три независимые UID")
 -- /permremove снимает и с карты, и из базы
 H.hit = { Entity = newKp }
 chatFn(admin5, "/permremove")
 local base3 = util.JSONToTable(FILES["grm_perm_entities.json"])
-ok(#base3 == 1 and base3[1].class == "prop_physics" and not IsValid(newKp),
-   "/permremove: кейпад снят из базы и с карты, дверь осталась")
+ok(#base3 == 2 and base3[1].class == "prop_physics" and base3[2].class == "prop_physics" and not IsValid(newKp),
+   "/permremove: кейпад снят из базы, дверь и близкая рамка остались")
 
 -- Код 107: ПЕРМ сканера — фракции/сигналы/задержка/владелец едут в rec.data
 H.hit = { Entity = sc }
 chatFn(admin5, "/permadd")
 local base4 = util.JSONToTable(FILES["grm_perm_entities.json"])
-ok(#base4 == 2 and base4[2].class == "grm_scanner" and istable(base4[2].data)
-   and base4[2].data.faction == "Медики,Полиция"
-   and base4[2].data.granted == 7 and base4[2].data.denied == 8
-   and base4[2].data.hold == 6 and base4[2].data.owner == plyA:SteamID64(),
+ok(#base4 == 3 and base4[3].class == "grm_scanner" and istable(base4[3].data)
+   and base4[3].data.faction == "Медики,Полиция"
+   and base4[3].data.granted == 7 and base4[3].data.denied == 8
+   and base4[3].data.hold == 6 and base4[3].data.owner == plyA:SteamID64(),
    "запись сканера несёт rec.data (фракции/кнопки/задержку/владельца)")
 
 -- «второй рестарт»: восстают дверь и сканер
 world = {}
 H.notifies = {}
 chatFn(admin5, "/permload")
-ok(lastNotify("восстановлено 2") ~= nil, "/permload №2: дверь и сканер воскрешены")
+ok(lastNotify("восстановлено 3") ~= nil, "/permload №2: дверь, рамка и сканер воскрешены")
 local newSc
 for e in pairs(world) do
   if not e.__removed and e:GetClass() == "grm_scanner" then newSc = e end
@@ -985,6 +1018,22 @@ doorB:SetPos(mkVec(jitPos.x + 0.4, jitPos.y, jitPos.z)) -- физика/JSON п�
 local resJit = GRM.FFDLink.Resolve(kLink, false)
 ok(#resJit == 1 and resJit[1] == doorB, "живая дверь с микросдвигом 0.4 юнита разрешается")
 doorB:SetPos(jitPos) -- вернули для дальнейших проверок
+GRM.FFDLink.Clear(kLink)
+
+-- Открытая sliding-дверь ушла далеко от записанной точки, но связь обязана
+-- разрешаться по стабильной Sliding_BasePos и не удаляться prune'ом.
+local slidingLinkDoor = ents.Create("prop_physics")
+slidingLinkDoor:SetPos(mkVec(20, 0, 0))
+slidingLinkDoor.isSlidingDoor = true
+slidingLinkDoor.Sliding_BasePos = mkVec(20, 0, 0)
+slidingLinkDoor.Sliding_Open = true
+slidingLinkDoor.Sliding_Progress = 1
+ok(GRM.FFDLink.Add(kLink, slidingLinkDoor) == true, "sliding: связь записана по BasePos")
+slidingLinkDoor:SetPos(mkVec(220, 0, 0))
+local slidingResolved = GRM.FFDLink.Resolve(kLink, true)
+ok(#slidingResolved == 1 and slidingResolved[1] == slidingLinkDoor and GRM.FFDLink.Count(kLink) == 1,
+   "sliding: открытая дверь разрешилась по BasePos и связь не pruned")
+ok(GRM.FFDLink.FindIndex(kLink, slidingLinkDoor) == 1, "sliding: FindIndex использует BasePos даже в открытом состоянии")
 GRM.FFDLink.Clear(kLink)
 
 local doorA2 = ents.Create("prop_physics") doorA2:SetPos(mkVec(1, 0, 0))

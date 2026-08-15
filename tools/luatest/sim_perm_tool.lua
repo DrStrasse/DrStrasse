@@ -345,7 +345,14 @@ local permSource = assert(io.open("lua/autorun/sh_grm_perm_entities.lua", "rb"))
 ok(permSource:find("GRM_PermEntities_BootRetry", 1, true) ~= nil, "Boot: серия повторных восстановлений зарегистрирована")
 ok(permSource:find('timer.Create("GRM_PermEntities_BootRetry", 2, 10', 1, true) ~= nil, "Boot: проверки идут 20 секунд")
 ok(permSource:find("GRM_PermEntities_FirstPlayer", 1, true) ~= nil, "Boot: есть fallback на первого игрока")
-ok(permSource:find("occupied._grmPermUID ~= rec.uid", 1, true) ~= nil, "Boot: повторы идемпотентны по uid")
+ok(permSource:find("findLiveForRecord", 1, true) ~= nil
+   and permSource:find("ent._grmPermUID == rec.uid", 1, true) ~= nil,
+   "Boot: повторы находят живой объект прежде всего по uid")
+ok(permSource:find('timer.Create("GRM_PermEntities_Watchdog", 30, 0', 1, true) ~= nil,
+   "Boot: после стартовых попыток остаётся постоянная самопроверка")
+ok(permSource:find("claimed[ent] = true", 1, true) ~= nil
+   and permSource:find("Никаких trace/hull", 1, true) ~= nil,
+   "Restore: близкие/пересекающиеся записи не блокируют друг друга")
 
 print(string.format("sim_perm_tool: %d ok, %d fail", pass, fail))
 if fail > 0 then os.exit(1) end

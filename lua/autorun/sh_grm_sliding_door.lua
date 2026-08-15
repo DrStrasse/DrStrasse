@@ -23,7 +23,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.SlidingDoor = GRM.SlidingDoor or {}
 local SD = GRM.SlidingDoor
-SD.Version = "1.0.0"
+SD.Version = "1.1.0"
 
 SD.Doors = SD.Doors or {}   -- [ent] = data
 
@@ -69,7 +69,9 @@ function SD.Apply(ply, ent, opts)
         toggle     = opts.toggle == true or opts.toggle == 1,
         autoclose  = opts.autoclose == true or opts.autoclose == 1,
         closeTime  = math.max(0.5, tonumber(opts.closeTime) or 5),
-        owner      = IsValid(ply) and charKey(ply) or "",
+        -- При perm-восстановлении владелец может быть офлайн: не теряем
+        -- сохранённый CharacterKey только потому, что Player сейчас nil.
+        owner      = IsValid(ply) and charKey(ply) or tostring(opts.owner or (ent.Sliding and ent.Sliding.owner) or ""),
         -- Звуки (находка 173d): пусто = нет звука; "открытие/закрытие" —
         -- когда дверь достигла конца/начала, "движение" — во время движения.
         soundOpen   = tostring(opts.soundOpen or ""),
@@ -151,6 +153,49 @@ function SD.SetOpen(ent, open)
     elseif ent.Sliding and ent.Sliding.autoclose then
         ent.Sliding_CloseAt = 0 -- автозакрытие управляется таймером Think
     end
+end
+
+-- ============================================================
+-- PERM: собственный autorun-делегат (не зависит от загрузки STOOL FFD)
+-- ============================================================
+if SERVER then
+    GRM.PermData = GRM.PermData or { Extract = {}, Apply = {} }
+    GRM.PermData.Extract = GRM.PermData.Extract or {}
+    GRM.PermData.Apply = GRM.PermData.Apply or {}
+
+    local function extractSliding(ent)
+        if not (IsValid(ent) and ent.isSlidingDoor and istable(ent.Sliding)) then return nil end
+        local s = ent.Sliding
+        return { sliding = {
+            direction = tostring(s.direction or "left"),
+            distance = tonumber(s.distance) or 100,
+            speed = tonumber(s.speed) or 120,
+            smooth = tonumber(s.smooth) or 1,
+            toggle = s.toggle == true,
+            autoclose = s.autoclose == true,
+            closeTime = tonumber(s.closeTime) or 5,
+            owner = tostring(s.owner or ""),
+            soundOpen = tostring(s.soundOpen or ""),
+            soundClose = tostring(s.soundClose or ""),
+            soundMove = tostring(s.soundMove or ""),
+        } }
+    end
+    local function applySliding(ent, payload)
+        local d = istable(payload) and payload.sliding or nil
+        if not istable(d) then return end
+        SD.Apply(nil, ent, {
+            direction = d.direction, distance = d.distance,
+            speed = d.speed, smooth = d.smooth,
+            toggle = d.toggle, autoclose = d.autoclose, closeTime = d.closeTime,
+            owner = d.owner,
+            soundOpen = d.soundOpen, soundClose = d.soundClose, soundMove = d.soundMove,
+            skipDupe = true,
+        })
+    end
+    if isfunction(GRM.PermData.AddExtract) then GRM.PermData.AddExtract("prop_physics", extractSliding)
+    else GRM.PermData.Extract["prop_physics"] = extractSliding end
+    if isfunction(GRM.PermData.AddApply) then GRM.PermData.AddApply("prop_physics", applySliding)
+    else GRM.PermData.Apply["prop_physics"] = applySliding end
 end
 
 -- ============================================================
