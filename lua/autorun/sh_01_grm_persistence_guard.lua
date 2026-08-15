@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Persistence Guard v1.3.0 (Код 62)
+    GRM Persistence Guard v1.4.0 (Код 62)
 
     Загружается раньше остальных GRM-модулей и снимает boot-копию важных
     DATA-файлов до того, как какой-либо поздний загрузчик успеет записать
@@ -12,7 +12,7 @@ if not SERVER then return end
 GRM = GRM or {}
 GRM.PersistenceGuard = GRM.PersistenceGuard or {}
 local P = GRM.PersistenceGuard
-P.Version = "1.3.0"
+P.Version = "1.4.0"
 P.Boot = P.Boot or {}
 
 local function jsonT(raw)
@@ -21,6 +21,29 @@ local function jsonT(raw)
     return ok and istable(data) and data or nil
 end
 P.JSONToTable = jsonT
+
+-- GMod DATA write whitelist rejects a number of arbitrary final extensions on
+-- new files. Legacy code used `name.json.backup`; on affected servers primary
+-- was written, backup silently was not, and read-back returned false. Keep the
+-- old name as a read candidate, but write a canonical `_backup.json` mirror.
+function P.CanonicalBackup(primary, requested)
+    local backup = tostring(requested or "")
+    if backup == "" then return "" end
+    if backup:sub(-7) == ".backup" then
+        local base = backup:sub(1, -8)
+        if base:sub(-5) == ".json" then return base:sub(1, -6) .. "_backup.json" end
+        return base .. "_backup.json"
+    end
+    return backup
+end
+local function backupCandidates(primary, requested)
+    local out, seen = {}, {}
+    for _, path in ipairs({ tostring(requested or ""), P.CanonicalBackup(primary, requested) }) do
+        if path ~= "" and not seen[path] then out[#out + 1] = path; seen[path] = true end
+    end
+    return out
+end
+
 P.ManualSaveDepth = tonumber(P.ManualSaveDepth) or 0
 P.RecoveryCounter = tonumber(P.RecoveryCounter) or 0
 
@@ -57,8 +80,9 @@ function P.AllowBlockedWrite(primary, backup, label)
     primary, backup = tostring(primary or ""), tostring(backup or "")
     local key = primary .. "|" .. backup
     if P.ManualArchived and P.ManualArchived[key] then return true end
-    local ok = true
-    for _, item in ipairs({ { primary, "_primary" }, { backup, "_backup" } }) do
+    local ok, items = true, { { primary, "_primary" } }
+    for index, path in ipairs(backupCandidates(primary, backup)) do items[#items + 1] = { path, "_backup" .. index } end
+    for _, item in ipairs(items) do
         local path, suffix = item[1], item[2]
         if path ~= "" and file.Exists(path, "DATA") then ok = archiveRaw(path, file.Read(path, "DATA") or "", suffix) and ok end
         local boot = P.Boot[path]
@@ -137,7 +161,11 @@ for _, path in ipairs({
     "grm_roomtap/temporary_equipment.json", "grm_roomtap/temporary_equipment.json.backup",
     "grm_cctv/" .. map .. ".json", "grm_cctv/" .. map .. ".json.backup",
     "grm_alarm/" .. map .. ".json", "grm_alarm/" .. map .. ".json.backup",
-}) do snapshot(path) end
+}) do
+    snapshot(path)
+    local canonical = P.CanonicalBackup("", path)
+    if canonical ~= path then snapshot(canonical) end
+end
 
 -- opts.score(table)->number может переопределить универсальную оценку.
 -- Возврат: data, source, raw, meta{hadAny,invalid,score}.
@@ -146,9 +174,10 @@ function P.ReadBest(primary, backups, label, opts)
     backups = istable(backups) and backups or (isstring(backups) and { backups } or {})
     opts = istable(opts) and opts or {}
     local paths, seen = { primary }, { [primary] = true }
-    for _, path in ipairs(backups) do
-        path = tostring(path or "")
-        if path ~= "" and not seen[path] then paths[#paths + 1], seen[path] = path, true end
+    for _, requested in ipairs(backups) do
+        for _, path in ipairs(backupCandidates(primary, requested)) do
+            if path ~= "" and not seen[path] then paths[#paths + 1], seen[path] = path, true end
+        end
     end
     local candidates, hadAny, invalid = {}, false, {}
     local eval = isfunction(opts.score) and opts.score or score
@@ -204,13 +233,18 @@ function P.Materialize(primary, backup, raw, label)
         return false
     end
     if isstring(backup) and backup ~= "" then
-        file.Write(backup, raw)
-        if file.Read(backup, "DATA") ~= raw then
-            print("[GRM Persist][!] materialize backup failed: data/" .. tostring(backup))
+        local target = P.CanonicalBackup(primary, backup)
+        file.Write(target, raw)
+        if file.Read(target, "DATA") ~= raw then
+            print("[GRM Persist][!] materialize backup failed: data/" .. tostring(target)
+                .. " (legacy requested: " .. tostring(backup) .. ")")
             return false
         end
+        -- Если legacy-файл уже существует и движок разрешает его обновить,
+        -- поддерживаем его best-effort, но успех зависит только от canonical.
+        if target ~= backup and file.Exists(backup, "DATA") then file.Write(backup, raw) end
     end
-    print(("[GRM Persist] %s: primary/backup синхронизированы"):format(tostring(label or primary)))
+    print(("[GRM Persist] %s: primary/canonical backup синхронизированы"):format(tostring(label or primary)))
     return true
 end
 

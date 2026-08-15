@@ -2,11 +2,11 @@
 
 **Обновлено:** 2026-08-15
 **Текущая ветка:** `arena/01a0041b-drstrasse`
-**Текущая точка:** Код 62 Persistence Guard; Build Tools 61, QMenu 4.2.0, Fire 1.5.1, Documents 2.1.0, Perm 1.7.1, Persistence Hub 1.3, Guard 1.3, Equipment Persistence 1.1, Sliding 1.1.0, FFD Link 1.2.0, Prop Protect 2.1.0.
+**Текущая точка:** Код 62 Persistence Guard; Build Tools 61, QMenu 4.2.0, Fire 1.5.1, Documents 2.1.0, Perm 1.7.1, Persistence Hub 1.3.1, Guard 1.4, Equipment Persistence 1.1, Sliding 1.1.0, FFD Link 1.2.0, Prop Protect 2.1.0.
 **Репо:** `https://github.com/DrStrasse/DrStrasse`
 **Следующий свободный номер модуля:** **Код 63**.
 
-Сначала читать актуальный `HANDOVER.md` и находки **129**, **134**, **135**, **136**, **137** в `ANALYSIS.md`.
+Сначала читать актуальный `HANDOVER.md` и находки **129**, **134**, **135**, **136**, **137**, **138** в `ANALYSIS.md`.
 Разделы ниже сохранены как историческая диагностика пожарной системы; команды
 со старыми Arena-ветками больше не выполнять. Master — неполный снапшот.
 
@@ -14,7 +14,14 @@
 
 ---
 
-## Актуальный последний фикс: ручное Save All больше не клинит на false (находка 137)
+## Актуальный последний фикс: canonical backup extension (находка 138)
+
+- Ошибки materialize были общими для новых `*.json.backup`: GMod не создавал файл с финальным расширением `.backup`.
+- Guard 1.4 пишет canonical `*_backup.json`, но читает и старое, и новое имя.
+- Boot snapshot, recovery и ReadBest автоматически учитывают обе схемы без потери старых данных.
+- Контроль: **491/491 syntax, 79/79 sim, 16/16 roundtrip**.
+
+## Предыдущий фикс: ручное Save All больше не клинит на false (находка 137)
 
 - Автосейвы остаются fail-closed, но явный клик SuperAdmin — recovery-транзакция.
 - Blocked raw primary/backup/boot сначала архивируются в `data/grm_recovery/`, затем пишется живое состояние.

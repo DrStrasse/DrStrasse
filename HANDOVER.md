@@ -2,7 +2,7 @@
 
 **Дата:** 2026-08-15
 **Рабочая ветка:** `arena/01a0041b-drstrasse`
-**База этой ветки:** `b44d5d1` + Код 61 / Fire 1.5.1 / Documents 2.1 / Perm 1.7.1 / Persistence Hub 1.3 / Guard 1.3 / Equipment Persistence 1.1.
+**База этой ветки:** `b44d5d1` + Код 61 / Fire 1.5.1 / Documents 2.1 / Perm 1.7.1 / Persistence Hub 1.3.1 / Guard 1.4 / Equipment Persistence 1.1.
 
 Master — старый неполный снапшот. В новых Arena-сессиях всегда работать только
 на закреплённой системой ветке, не копировать старые команды переключения веток
@@ -10,7 +10,7 @@ Master — старый неполный снапшот. В новых Arena-с�
 
 ## Что изменено последним пакетом
 
-0. **Код 62 — Persistence Guard 1.3**
+0. **Код 62 — Persistence Guard 1.4**
    - `sh_01_grm_persistence_guard.lua` делает ранний снимок DATA до загрузчиков;
    - primary остаётся главным, boot/backup используется при пустом/битом primary;
    - при ошибке загрузки autosave блокируется, живые entity/память не удаляются;
@@ -44,7 +44,7 @@ Master — старый неполный снапшот. В новых Arena-с�
    - FFD Link разрешает открытую Sliding-дверь по BasePos, не вычищая связь;
    - Prop Protect не меняет физику механизированных дверей и запрещает физган/tool/remove во время исчезновения или движения даже SuperAdmin;
    - visual/material/RGBA/render/skin/bodygroups и остальные модульные данные сохранены.
-5. **Единое меню сохранений v1.3 — всё GRM-оборудование**
+5. **Единое меню сохранений v1.3.1 — всё GRM-оборудование**
    - явный Save/Save All снимает stale `LoadBlocked` только как recovery-транзакция;
    - перед перезаписью каждый blocked primary/backup/boot архивируется в `data/grm_recovery/` с read-back;
    - автоматические save по-прежнему fail-closed и ничего повреждённого не затирают;

@@ -2,8 +2,8 @@
 if not SERVER then return end
 
 GRM = GRM or {}
-GRM.PersistenceHub = GRM.PersistenceHub or { Version = "1.3.0" }
-GRM.PersistenceHub.Version = "1.3.0"
+GRM.PersistenceHub = GRM.PersistenceHub or { Version = "1.3.1" }
+GRM.PersistenceHub.Version = "1.3.1"
 
 util.AddNetworkString("GRM_Persistence_Open")
 util.AddNetworkString("GRM_Persistence_Action")

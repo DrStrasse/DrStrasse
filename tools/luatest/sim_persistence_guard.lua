@@ -11,7 +11,7 @@ game={GetMap=function()return"gm_test"end}
 local mem,objects,nextObject={}, {}, 0
 local function enc(t)nextObject=nextObject+1;local id="J"..tostring(nextObject);objects[id]=t;return id end
 util={JSONToTable=function(raw)return objects[raw]end,TableToJSON=function(t)return enc(t)end}
-file={Exists=function(p)return mem[p]~=nil end,Read=function(p)return mem[p]end,Write=function(p,v)mem[p]=v end,IsDir=function()return true end,CreateDir=function()end}
+file={Exists=function(p)return mem[p]~=nil end,Read=function(p)return mem[p]end,Write=function(p,v)if tostring(p):sub(-7)==".backup"and mem[p]==nil then return end;mem[p]=v end,IsDir=function()return true end,CreateDir=function()end}
 concommand={Add=function()end}
 GRM={}
 -- Boot has rich primary; current data will be replaced after guard loads.
@@ -49,6 +49,12 @@ ok(repairOK==true and recoveryCount>=2,"manual save archives corrupt primary+bac
 -- Materialization writes identical validated raw to both mirrors.
 local raw=enc({x=1});ok(P.Materialize("p.json","b.json",raw,"mirror"),"materialize succeeds")
 ok(mem["p.json"]==raw and mem["b.json"]==raw,"primary and backup identical")
+local legacyRaw=enc({legacy=true})
+ok(P.Materialize("legacy.json","legacy.json.backup",legacyRaw,"legacy extension"),"legacy .json.backup request materializes through canonical name")
+ok(mem["legacy_backup.json"]==legacyRaw and mem["legacy.json.backup"]==nil,"canonical _backup.json bypasses GMod extension restriction")
+mem["legacy.json"]="BROKEN_PRIMARY"
+local legacyRecovered,legacySource=P.ReadBest("legacy.json",{"legacy.json.backup"},"canonical fallback")
+ok(legacyRecovered and legacyRecovered.legacy==true and legacySource=="legacy_backup.json","ReadBest automatically discovers canonical backup")
 local function readSource(path)local f=assert(io.open(path,"rb"));local s=f:read("*a");f:close();return s end
 local hub=readSource("lua/autorun/server/sv_grm_persistence_hub.lua")
 local phone=readSource("lua/autorun/server/sv_grm_phone.lua")

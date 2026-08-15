@@ -91,7 +91,7 @@ local againOK=MP.LoadAll(nil)
 ok(againOK==true and #ents.FindByClass("grm_ore_node")==2 and #ents.FindByClass("grm_ore_buyer")==1,"repeat load idempotent by UID/position")
 
 -- Corrupt both entity mirrors: live world must survive and SAVE must block.
-mem["grm_saves/gm_equipment.json"]="BROKEN";mem["grm_saves/gm_equipment.json.backup"]="BROKEN_TOO"
+mem["grm_saves/gm_equipment.json"]="BROKEN";mem["grm_saves/gm_equipment.json.backup"]="BROKEN_TOO";mem["grm_saves/gm_equipment_backup.json"]="BROKEN_CANONICAL"
 local before=#ents.GetAll();local badOK=MP.LoadAll(nil)
 ok(badOK==false and #ents.GetAll()==before,"corrupt mining JSON preserves all live entities")
 local blocked=MP.SaveEntities(nil)
