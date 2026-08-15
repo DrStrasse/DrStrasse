@@ -319,6 +319,7 @@ function T.Open(ent, ply, channel)
 
     ply.GRM_CompTerminalEnt = ent
     ply.GRM_CompTerminalJur = jur
+    ply.GRM_DocComputerEnt = ent
 
     local online = onlinePlayers(jur)
 
@@ -562,6 +563,8 @@ local function legacyAct(_, ply)
     local level  = net.ReadUInt(4)
 
     local jur = ply.GRM_CompTerminalJur or "civil"
+    local okTerminal, whyTerminal = validTerminal(ply, jur)
+    if not okTerminal then return notify(ply, tostring(whyTerminal or "Терминал недоступен")) end
     if not T.CanEdit(ply, jur) then
         return notify(ply, "У вас нет прав на изменение базы розыска.")
     end

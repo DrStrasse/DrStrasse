@@ -104,6 +104,8 @@ check("Think зовёт FollowHost", init:find("self:FollowHost()", 1, true) ~= 
 check("SyncAnchors SrcPos", init:find("function ENT:SyncAnchors", 1, true) ~= nil)
 check("PayoutFromSource", init:find("function ENT:PayoutFromSource", 1, true) ~= nil)
 check("InsertLayAt", init:find("function ENT:InsertLayAt", 1, true) ~= nil)
+check("CheckOverstretch стационарной линии", init:find("function ENT:CheckOverstretch", 1, true) ~= nil)
+check("перерастяжение вызывает автосмотку", init:find("GRM_FireAddon_HoseOverstretched", 1, true) ~= nil)
 check("нет натяжки DragNode в FollowHost", (function()
     local a = init:find("function ENT:FollowHost", 1, true) or 0
     local b = init:find("function ENT:Rewind", 1, true) or #init
@@ -118,6 +120,11 @@ local sx, sy, sm = A.HoseDragPoint(30, 0, 0, 0, 50)
 check("внутри maxSeg — не трогать", sm == false and math.abs(sx - 30) < 0.01)
 check("compact близко", A.HoseShouldCompact(20, 52) == true)
 check("compact далеко нет", A.HoseShouldCompact(40, 52) == false)
+local overEarly, hoseLimit = A.HoseOverstretch(2400, 2200, 96, 0.5, 0.75)
+check("перерастяжение ждёт grace-time", overEarly == false and hoseLimit == 2296)
+local overLate = A.HoseOverstretch(2400, 2200, 96, 0.8, 0.75)
+check("перерастяжение после 0.75с срабатывает", overLate == true)
+check("линия внутри лимита не рвётся", A.HoseOverstretch(2296, 2200, 96, 2, 0.75) == false)
 
 print("")
 if fails == 0 then print("ВСЕ ТЕСТЫ ПРОЙДЕНЫ (fire rewind)")

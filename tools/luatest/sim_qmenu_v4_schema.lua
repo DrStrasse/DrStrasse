@@ -51,9 +51,9 @@ ok(none == nil and nk == "none", "нет схемы и нет ClientConVar → n
 
 local ts, tk = QM.ResolveSchema("textscreen")
 ok(ts == nil and tk == "none", "textscreen без ручной схемы — не дампить")
-local light, lk = QM.ResolveSchema("light")
-ok(lk == "hand" and light and #light >= 3, "light — ручная схема с подписями")
-ok(light[1].label ~= light[1].cvar, "у light человеческая подпись, не сырой cvar")
+local light, lk = QM.ResolveSchema("grm_light")
+ok(lk == "hand" and light and #light >= 3, "grm_light — ручная схема с подписями")
+ok(light[1].label ~= light[1].cvar, "у grm_light человеческая подпись, не сырой cvar")
 
 -- UI не должен звать автосхему: ResolveSchema не смотрит weapons
 local src

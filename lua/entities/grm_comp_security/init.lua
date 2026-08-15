@@ -91,8 +91,13 @@ function ENT:Use(ply)
     end
 
     local tpls = GRM.Documents and GRM.Documents.Templates or {}
-    local reg  = GRM.Documents and GRM.Documents.Registry or {}
-    local medCards = GRM.Medical and GRM.Medical.Cards or {}
+    local reg  = (GRM.Documents and GRM.Documents.RegistryForOnline)
+        and GRM.Documents.RegistryForOnline(onlineList) or {}
+    local medCards = {}
+    for _, row in ipairs(onlineList) do
+        local card = GRM.Medical and GRM.Medical.Cards and GRM.Medical.Cards[row.key]
+        if istable(card) then medCards[row.key] = card end
+    end
 
     -- Образование субъектов учёта: диплом — такой же установочный
     -- признак, как военный билет. Шлём только по онлайн-списку, чтобы
@@ -120,6 +125,7 @@ function ENT:Use(ply)
         end
     end
 
+    ply.GRM_DocComputerEnt = self
     net.Start("GRM_CompSecurity_Open")
         net.WriteEntity(self)
         net.WriteTable(onlineList)

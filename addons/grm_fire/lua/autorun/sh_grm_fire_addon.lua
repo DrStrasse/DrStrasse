@@ -8,7 +8,7 @@ GRM_FireAddon = true
 GRM = GRM or {}
 GRM.FireAddon = GRM.FireAddon or {}
 local A = GRM.FireAddon
-A.Version = "0.5.0"
+A.Version = "0.6.0"
 
 if SERVER then
     resource.AddFile("materials/grm/firehose.vmt")

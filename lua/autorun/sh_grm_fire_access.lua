@@ -135,6 +135,12 @@ if SERVER then
         return select(1, getFactionInfo(ply))
     end
 
+    function F.WantsFireNotify(ply)
+        if not IsValid(ply) then return false end
+        local fac = factionOf(ply)
+        return fac ~= nil and F.NotifyData.factions[fac] == true
+    end
+
     function F.NotifyFactions(text, pos, r, g, b)
         r = tonumber(r) or 255
         g = tonumber(g) or 120

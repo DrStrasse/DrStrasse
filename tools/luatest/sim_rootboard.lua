@@ -19,7 +19,7 @@ function istable(x) return type(x) == "table" end
 function isstring(x) return type(x) == "string" end
 function isfunction(x) return type(x) == "function" end
 function isnumber(x) return type(x) == "number" end
-function IsValid(o) return o ~= nil and o ~= false and o.removed ~= true end
+function IsValid(o) return type(o) == "table" and o.removed ~= true end
 HUD_PRINTTALK, HUD_PRINTCENTER = 3, 4
 table.Count = function(t) local n = 0 for k in pairs(t or {}) do n = n + 1 end return n end
 table.HasValue = function(t, val) for _, v in ipairs(istable(t) and t or {}) do if v == val then return true end end return false end

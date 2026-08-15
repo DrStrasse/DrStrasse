@@ -381,8 +381,8 @@ H.hooks.PlayerSay["GRM_PermEntities_Chat"](admin, "/permadd")
 permList = fileTable("grm_perm_entities.json")
 ok(countOfClass(permList, "grm_keypad") == 1, "повторный /permadd: дедуп, записей всё ещё 1")
 local dupMsg = false
-for _, c in ipairs(H.chatlog) do if string.find(c, "уже в пермах") then dupMsg = true end end
-ok(dupMsg, "админу показано «уже в пермах»")
+for _, c in ipairs(H.chatlog) do if string.find(c, "единый API") then dupMsg = true end end
+ok(dupMsg, "повторный /permadd прошёл через единый API без дубля")
 H.trace = { Hit = false, Entity = speaker3 }
 H.hooks.PlayerSay["GRM_PermEntities_Chat"](admin, "/permadd")
 permList = fileTable("grm_perm_entities.json")
@@ -393,8 +393,8 @@ H.hooks.PlayerSay["GRM_PermEntities_Chat"](admin, "/permadd")
 local after = countOfClass(fileTable("grm_perm_entities.json"), "grm_mobile_line")
 ok(before == 0 and after == 0, "временная grm_mobile_line отвергнута")
 local rejMsg = false
-for _, c in ipairs(H.chatlog) do if string.find(c, "нельзя пермить") then rejMsg = true end end
-ok(rejMsg, "админу показано «нельзя пермить»")
+for _, c in ipairs(H.chatlog) do if string.find(c, "виртуальная станция") then rejMsg = true end end
+ok(rejMsg, "админу показана конкретная причина запрета перма")
 -- «рестарт»: воскрешение из базы
 resetREG()
 H.hooks.InitPostEntity["GRM_PermEntities_Spawn"]()

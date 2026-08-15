@@ -1,8 +1,8 @@
 --[[--------------------------------------------------------------------
-    GRM Fire v1.4.1 (Код 58)
+    GRM Fire v1.5.0 (Код 58)
     Серверная обвязка аддона grm_fire + vFire.
     Не содержит моделей/рукава — они в аддоне.
-    Права, персист очагов, рандом по точкам, плита, оповещение, учёт тушения v1.4.1.
+    Права, персист очагов, рандом по точкам, плита, оповещение, учёт тушения v1.5.0.
     Не трогает: FFD, Q-меню, двери, принтер, пресс.
 ----------------------------------------------------------------------]]
 if SERVER then AddCSLuaFile() end
@@ -10,7 +10,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Fire = GRM.Fire or {}
 local F = GRM.Fire
-F.Version = "1.4.1"
+F.Version = "1.5.0"
 
 F.Config = F.Config or {
     StoveEnabled = true,
@@ -81,6 +81,21 @@ function F.IsFireEnt(ent)
     local p = ent.GetParent and ent:GetParent() or nil
     if IsValid(p) and p.GetNWBool and p:GetNWBool("GRM_FireTruck", false) then return true end
     return false
+end
+
+-- Пожарное оборудование не является топливом и не может быть родителем
+-- очага vFire. В первую очередь это закрывает ложные пожары на гидранте.
+F.FireproofClasses = F.FireproofClasses or {
+    grm_fire_hydrant = true,
+    grm_fire_pump = true,
+    grm_fire_cabinet = true,
+    grm_fire_spot = true,
+    grm_fire_ladder = true,
+    grm_fire_hose = true,
+    grm_fire_hose_node = true,
+}
+function F.IsFireproofEntity(ent)
+    return IsValid(ent) and F.FireproofClasses[tostring(ent:GetClass() or "")] == true
 end
 
 -- G у насоса/машины/гидранта — только пожарка. Смотришь на банкомат — инкассация.
@@ -205,7 +220,7 @@ if SERVER then
     function F.Snapshot()
         local out = {}
         for _, ent in ipairs(ents.FindByClass("vfire")) do
-            if not IsValid(ent) then
+            if not IsValid(ent) or ent._grmIgnoreStatus then
             else
                 local p, n = ent:GetPos(), ent:GetForward()
                 out[#out + 1] = {
@@ -315,6 +330,7 @@ if SERVER then
         local nrm = Vector(0, 0, 1)
         local parent = game.GetWorld()
         if isentity(pos) and IsValid(pos) then
+            if F.IsFireproofEntity(pos) then return nil, "пожарное оборудование не может быть источником огня" end
             parent = pos
             local p = pos:WorldSpaceCenter()
             local tr = util.TraceLine({ start = p + Vector(0, 0, 8), endpos = p - Vector(0, 0, 64), filter = pos })
@@ -325,7 +341,10 @@ if SERVER then
             if tr.Hit then
                 pos = tr.HitPos
                 nrm = tr.HitNormal
-                if IsValid(tr.Entity) and not tr.Entity:IsWorld() then parent = tr.Entity end
+                if IsValid(tr.Entity) and not tr.Entity:IsWorld() then
+                    if F.IsFireproofEntity(tr.Entity) then return nil, "пожарное оборудование не может быть источником огня" end
+                    parent = tr.Entity
+                end
             end
         else
             return nil, "нет позиции"
@@ -510,8 +529,42 @@ if SERVER then
         end
     end)
 
-    hook.Add("vFireCreated", "GRM_Fire_Track", function(fire)
+    -- vFire уже успевает создать клетку до события. Помечаем её игнорируемой
+    -- и удаляем в тот же/следующий тик, если родитель — пожарное оборудование.
+    hook.Add("vFireCreated", "GRM_Fire_Fireproof", function(fire, parent)
         if not IsValid(fire) then return end
+        parent = IsValid(parent) and parent or (fire.GetParent and fire:GetParent() or NULL)
+        if F.IsFireproofEntity(parent) then
+            fire._grmIgnoreStatus = true
+            fire._grmFireproofParent = parent
+            fire:Remove()
+        end
+    end)
+    hook.Add("vFireEntityStartedBurning", "GRM_Fire_Fireproof", function(ent)
+        if not F.IsFireproofEntity(ent) then return end
+        if ent.Extinguish then pcall(ent.Extinguish, ent) end
+        timer.Simple(0, function()
+            if not IsValid(ent) then return end
+            if ent.Extinguish then pcall(ent.Extinguish, ent) end
+            for _, fire in ipairs(ents.FindByClass("vfire")) do
+                if IsValid(fire) then
+                    local parent = fire._grmFireproofParent or (fire.GetParent and fire:GetParent() or NULL)
+                    if parent == ent or fire:GetPos():DistToSqr(ent:WorldSpaceCenter()) <= 72 * 72 then
+                        fire._grmIgnoreStatus = true
+                        fire:Remove()
+                    end
+                end
+            end
+        end)
+    end)
+    hook.Add("EntityTakeDamage", "GRM_Fire_Fireproof", function(ent, dmg)
+        if F.IsFireproofEntity(ent) and dmg and (dmg:IsDamageType(DMG_BURN) or dmg:IsDamageType(DMG_SLOWBURN)) then
+            return true
+        end
+    end)
+
+    hook.Add("vFireCreated", "GRM_Fire_Track", function(fire, parent)
+        if not IsValid(fire) or fire._grmIgnoreStatus or F.IsFireproofEntity(parent) then return end
         fire._grmStarted = fire._grmStarted or os.time()
         F.MarkDirty()
         local pos = fire:GetPos()

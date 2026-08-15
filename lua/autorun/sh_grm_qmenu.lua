@@ -1,6 +1,8 @@
 --[[--------------------------------------------------------------------
-    GRM Q-меню «Стройка» v4.1.0 (Код 96) — переписано с нуля
+    GRM Q-меню «Стройка» v4.2.0 (Код 96) — переписано с нуля
 
+    v4.2.0: штатные camera/light/lamp/material/colour закрыты даже для
+      суперадмина; каталог и схемы переведены на безопасные GRM-инструменты.
     v4.1.1: три колонки — меню | инструменты | панель настроек;
       окно шире и выше; параметры в отдельной правой колонке, не под тулами.
     v4.1.0: инструменты справа (как ваниль / v3), не вкладкой;
@@ -21,7 +23,11 @@ GRM = GRM or {}
 GRM.QMenu = GRM.QMenu or {}
 local QM = GRM.QMenu
 
-QM.Version = "4.1.1"
+QM.Version = "4.2.0"
+QM.DisabledStockTools = (GRM.BuildTools and GRM.BuildTools.DisabledStockTools) or {
+    camera = true, light = true, lamp = true,
+    material = true, colour = true, color = true,
+}
 
 local CONFIG_FILE = "grm_qmenu.json"
 
@@ -41,11 +47,11 @@ QM.ToolCatalog = {
     { id = "thruster",   label = "Ускоритель",                 desc = "Реактивная тяга по клавише.",            cat = "mech" },
     { id = "hoverball",  label = "Ховербол",                   desc = "Поднимает предмет на высоте.",           cat = "mech" },
     { id = "balloon",    label = "Воздушный шар",              desc = "Воздушный шар с тяговым усилием.",       cat = "mech" },
-    { id = "light",      label = "Источник света",              desc = "Точечный источник света.",               cat = "light" },
-    { id = "lamp",       label = "Лампа",                      desc = "Прожектор/лампа.",                       cat = "light" },
+    { id = "grm_light",  label = "GRM: источник света",        desc = "Безопасный точечный источник света.",     cat = "light" },
+    { id = "grm_lamp",   label = "GRM: лампа-прожектор",        desc = "Управляемый прожектор GRM.",               cat = "light" },
     { id = "emitter",    label = "Эмиттер",                    desc = "Частицы/эффекты — дым, огонь.",          cat = "light" },
     { id = "button",     label = "Кнопка",                     desc = "Сигнальная кнопка.",                     cat = "ui" },
-    { id = "camera",     label = "Камера",                     desc = "Камера наблюдателя.",                    cat = "ui" },
+    { id = "grm_camera", label = "GRM: камера",                 desc = "Камера наблюдения с владением.",           cat = "ui" },
     { id = "textscreen", label = "Текстовый экран",            desc = "Табличка с текстом на карте.",           cat = "ui" },
     { id = "grm_minimap",        label = "GRM: районы и точки",              desc = "Районы, точки захвата и мини-карта.", cat = "ui" },
     { id = "grm_vendor_tool",    label = "GRM: торговцы",                    desc = "Торговцы предметами и аксессуарами.", cat = "ui" },
@@ -62,8 +68,8 @@ QM.ToolCatalog = {
     { id = "grm_citadel_core",   label = "GRM: ядро Цитадели",               desc = "Размещение ядра Цитадели.", cat = "ui" },
     { id = "grm_lab_tool",       label = "GRM: лаборатории",                 desc = "Мед- и нарко-лаборатории.", cat = "ui" },
     { id = "grm_fire_place",     label = "GRM: пожарное железо",             desc = "Гидрант, насос, шкаф, точка, лестница.", cat = "ui" },
-    { id = "colour",     label = "Цвет",                 desc = "Перекраска и прозрачность.",             cat = "decor" },
-    { id = "material",   label = "Материал",             desc = "Смена материала/текстуры.",              cat = "decor" },
+    { id = "grm_colour",  label = "GRM: цвет",            desc = "Безопасная окраска своих объектов.",     cat = "decor" },
+    { id = "grm_material", label = "GRM: материал",        desc = "Материал из проверенного набора.",        cat = "decor" },
     { id = "paint",      label = "Краска",               desc = "Спрей-декали.",                          cat = "decor" },
     { id = "trails",     label = "Трейлы",               desc = "Шлейф за объектом.",                     cat = "decor" },
     { id = "remover",    label = "Ремувер",              desc = "Убирает проп; свои — всегда можно.",     cat = "precise" },
@@ -202,28 +208,51 @@ QM.Schema = {
         { cvar = "ffd_scanner_faction", type = "text", label = "Фракция" },
         { cvar = "ffd_scanner_hold_time", type = "number", label = "Удержание, сек" },
     },
-    light = {
-        { cvar = "light_r", type = "number", label = "Красный" },
-        { cvar = "light_g", type = "number", label = "Зелёный" },
-        { cvar = "light_b", type = "number", label = "Синий" },
-        { cvar = "light_brightness", type = "number", label = "Яркость" },
-        { cvar = "light_size", type = "number", label = "Радиус" },
-        { cvar = "light_toggle", type = "bool", label = "Переключатель" },
+    grm_camera = {
+        { cvar = "grm_camera_key", type = "number", label = "Клавиша камеры" },
+        { cvar = "grm_camera_locked", type = "bool", label = "Зафиксировать направление" },
+        { cvar = "grm_camera_toggle", type = "bool", label = "Режим переключателя" },
     },
-    lamp = {
-        { cvar = "lamp_r", type = "number", label = "Красный" },
-        { cvar = "lamp_g", type = "number", label = "Зелёный" },
-        { cvar = "lamp_b", type = "number", label = "Синий" },
-        { cvar = "lamp_brightness", type = "number", label = "Яркость" },
-        { cvar = "lamp_fov", type = "number", label = "Угол луча" },
-        { cvar = "lamp_distance", type = "number", label = "Дальность" },
-        { cvar = "lamp_toggle", type = "bool", label = "Переключатель" },
+    grm_light = {
+        { cvar = "grm_light_r", type = "number", label = "Красный" },
+        { cvar = "grm_light_g", type = "number", label = "Зелёный" },
+        { cvar = "grm_light_b", type = "number", label = "Синий" },
+        { cvar = "grm_light_brightness", type = "number", label = "Яркость (-6..8)" },
+        { cvar = "grm_light_size", type = "number", label = "Радиус (32..1024)" },
+        { cvar = "grm_light_key", type = "number", label = "Клавиша" },
+        { cvar = "grm_light_toggle", type = "bool", label = "Переключатель" },
+        { cvar = "grm_light_freeze", type = "bool", label = "Заморозить" },
     },
-    colour = {
-        { cvar = "colour_r", type = "number", label = "Красный" },
-        { cvar = "colour_g", type = "number", label = "Зелёный" },
-        { cvar = "colour_b", type = "number", label = "Синий" },
-        { cvar = "colour_a", type = "number", label = "Прозрачность" },
+    grm_lamp = {
+        { cvar = "grm_lamp_r", type = "number", label = "Красный" },
+        { cvar = "grm_lamp_g", type = "number", label = "Зелёный" },
+        { cvar = "grm_lamp_b", type = "number", label = "Синий" },
+        { cvar = "grm_lamp_brightness", type = "number", label = "Яркость (0..8)" },
+        { cvar = "grm_lamp_fov", type = "number", label = "Угол луча (10..170)" },
+        { cvar = "grm_lamp_distance", type = "number", label = "Дальность (64..2048)" },
+        { cvar = "grm_lamp_texture", type = "choice", label = "Текстура луча",
+          choices = { { "Обычная", "effects/flashlight001" }, { "Щель", "effects/flashlight/slit" },
+                      { "Круги", "effects/flashlight/circles" }, { "Окно", "effects/flashlight/window" },
+                      { "Логотип", "effects/flashlight/logo" } } },
+        { cvar = "grm_lamp_key", type = "number", label = "Клавиша" },
+        { cvar = "grm_lamp_toggle", type = "bool", label = "Переключатель" },
+        { cvar = "grm_lamp_freeze", type = "bool", label = "Заморозить" },
+    },
+    grm_colour = {
+        { cvar = "grm_colour_r", type = "number", label = "Красный" },
+        { cvar = "grm_colour_g", type = "number", label = "Зелёный" },
+        { cvar = "grm_colour_b", type = "number", label = "Синий" },
+        { cvar = "grm_colour_a", type = "number", label = "Прозрачность (20..255)" },
+    },
+    grm_material = {
+        { cvar = "grm_material_override", type = "choice", label = "Материал",
+          choices = { { "Обычный", "" }, { "Белый", "models/debug/debugwhite" },
+                      { "Каркас", "models/wireframe" }, { "Блестящий", "models/shiny" },
+                      { "Металл", "models/props_c17/furnituremetal001a" },
+                      { "Ткань", "models/props_c17/furniturefabric003a" },
+                      { "Матовое стекло", "models/props_c17/frostedglass_01a" },
+                      { "Пластик", "phoenix_storms/plastic" }, { "Дерево", "phoenix_storms/wood" },
+                      { "Синий металл", "phoenix_storms/bluemetal" } } },
     },
     weld = {
         { cvar = "weld_forcelimit", type = "number", label = "Предел силы (0 = без лимита)" },
@@ -475,11 +504,16 @@ if SERVER then
     end
 
     function QM.CanUseTool(ply, tool)
+        tool = string.lower(tostring(tool or ""))
+        -- Жёсткий запрет штатных вариантов: их нельзя вернуть конфигом и
+        -- суперадмин-байпасом. Вместо них существуют grm_* инструменты.
+        if QM.DisabledStockTools[tool] == true then
+            return false, "Штатный инструмент «" .. tool .. "» отключён; используйте GRM-версию"
+        end
         if IsValid(ply) and (ply:GetNWBool("GRM_Cuffed", false) or ply:GetNWBool("GRM_Stunned", false)) then
             return false, "Игрок ограничен наручниками/оглушением"
         end
         if IsValid(ply) and ply:IsSuperAdmin() then return true end
-        tool = string.lower(tostring(tool or ""))
         if tool == "" then return true end
         if QM.Cfg.toolDeny[tool] == true then
             return false, "Инструмент «" .. tool .. "» запрещён администрацией"
@@ -1123,9 +1157,10 @@ if CLIENT then
     QM.FitText = fitText
 
     local function toolWhy(id)
+        id = string.lower(tostring(id or ""))
+        if QM.DisabledStockTools[id] == true then return "штатная версия отключена; используйте GRM-инструмент" end
         if isAdmin() then return nil end
         local c = cfg()
-        id = string.lower(id)
         if istable(c.toolDeny) and c.toolDeny[id] == true then return "закрыт чёрным списком" end
         if c.whitelistMode == true and (not istable(c.toolAllow) or c.toolAllow[id] ~= true) then
             return "включён белый режим"

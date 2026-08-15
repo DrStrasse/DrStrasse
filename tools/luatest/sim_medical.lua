@@ -144,7 +144,7 @@ local function recvAs(ply, proto, ...)
 end
 
 -- 1. загрузка ------------------------------------------------------------
-ok(MD ~= nil and MD.Version == "1.1.0", "модуль загружен, версия 1.1.0")
+ok(MD ~= nil and MD.Version == "2.0.0", "модуль загружен, версия 2.0.0")
 local ri = H.regItems["medcard"]
 ok(istable(ri) and ri.useFunc == "medcard_view" and ri.model == "models/props_lab/clipboard.mdl"
    and ri.maxStack == 1, "предмет medcard зарегистрирован (clipboard-модель, useFunc medcard_view)")

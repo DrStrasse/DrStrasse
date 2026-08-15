@@ -1,12 +1,14 @@
 # CHECKPOINT — контрольная точка для следующего ИИ-агента
 
-**Дата:** 2026-08-14  
-**Ветка сессии:** `arena/019ffaa2-drstrasse` → наследуется `arena/019ffd5c-drstrasse` (эта сессия)  
-**HEAD:** `380f7d0` + fire v1.4.1 (статус переписан, мягче локализован, скан на boot, журнал `/fire_log`)  
-**Репо:** `https://github.com/DrStrasse/DrStrasse`  
-**Следующий свободный номер модуля:** **Код 59** (после пожаров)
+**Обновлено:** 2026-08-15
+**Текущая ветка:** `arena/01a0041b-drstrasse`
+**Текущая точка:** Код 61 Build Tools, QMenu 4.2.0, Fire 1.5.0, Documents 2.1.0, Perm 1.6.0.
+**Репо:** `https://github.com/DrStrasse/DrStrasse`
+**Следующий свободный номер модуля:** **Код 62**.
 
-Читать этот файл ПЕРВЫМ. Затем `HANDOVER.md`, строку модуля 58 в `README.md`, находки **103–126** в `ANALYSIS.md`. Не начинать с master — он почти пустой.
+Сначала читать актуальный `HANDOVER.md` и находку **129** в `ANALYSIS.md`.
+Разделы ниже сохранены как историческая диагностика пожарной системы; команды
+со старыми Arena-ветками больше не выполнять. Master — неполный снапшот.
 
 > Владелец **дважды** просил оставить инструкции в ветке. Этот файл и есть контрольная точка. Не создавать третий дубль — править этот.
 
@@ -23,10 +25,10 @@
 
 ## 1. Жёсткие правила сессии (сломаешь — работа пропадёт)
 
-- Работать **только** на `arena/019ffaa2-drstrasse`. Не переключаться, не создавать другие ветки, не пушить никуда больше.
+- Работать **только** на `arena/01a0041b-drstrasse`. Не переключаться, не создавать другие ветки, не пушить никуда больше.
 - При расхождении HEAD и remote:
   ```
-  git fetch origin arena/019ffaa2-drstrasse && git reset --mixed FETCH_HEAD
+  git fetch origin arena/01a0041b-drstrasse && git reset --mixed FETCH_HEAD
   ```
   Один раз локальный HEAD откатился на `2122758` при живом remote `2ed0e61`. Лечится только так.
 - Cwd **всегда** `/home/user/DrStrasse`. Shell из `/home/user` файлы репо не видит.
@@ -57,11 +59,11 @@
 
 ### Dist raw (владелец качает отсюда)
 
-- https://github.com/DrStrasse/DrStrasse/raw/arena/019ffaa2-drstrasse/dist/grm_single_addon.zip
-- https://github.com/DrStrasse/DrStrasse/raw/arena/019ffaa2-drstrasse/dist/grm_full_code.zip
-- https://github.com/DrStrasse/DrStrasse/raw/arena/019ffaa2-drstrasse/dist/grm_economy.zip
-- https://github.com/DrStrasse/DrStrasse/raw/arena/019ffaa2-drstrasse/dist/grm_fix_hud_tab_currency.zip
-- https://github.com/DrStrasse/DrStrasse/raw/arena/019ffaa2-drstrasse/dist/grm_fire_addon.zip
+- https://github.com/DrStrasse/DrStrasse/raw/arena/01a0041b-drstrasse/dist/grm_single_addon.zip
+- https://github.com/DrStrasse/DrStrasse/raw/arena/01a0041b-drstrasse/dist/grm_full_code.zip
+- https://github.com/DrStrasse/DrStrasse/raw/arena/01a0041b-drstrasse/dist/grm_economy.zip
+- https://github.com/DrStrasse/DrStrasse/raw/arena/01a0041b-drstrasse/dist/grm_fix_hud_tab_currency.zip
+- https://github.com/DrStrasse/DrStrasse/raw/arena/01a0041b-drstrasse/dist/grm_fire_addon.zip
 
 Для пожаров на сервере нужны **оба**: `grm_single_addon.zip` (ядро) + `grm_fire_addon.zip` (vFire + сущности) + рестарт.
 
@@ -72,7 +74,7 @@
 Владелец **трижды** прислал `+учёт тушения пожара, уведомление - Пожар локализован/потушен.`
 
 - v1.4.0 (`3430a00`) — первый вариант, условия строгие.
-- **v1.4.1 (эта сессия, `arena/019ffd5c-drstrasse`) — усиленный:** мягче локализован (2.5с, peak≥1), peak=min 1 если видели vfire, скан на boot, оба события при тушении после ствола, toast+ChatPrint, получатели SuperAdmin+Dispatch+FightPro+notify-фракции+бойцы+рядом 1500, журнал `/fire_log` + UI.
+- **v1.4.1 (эта сессия, `arena/01a0041b-drstrasse`) — усиленный:** мягче локализован (2.5с, peak≥1), peak=min 1 если видели vfire, скан на boot, оба события при тушении после ствола, toast+ChatPrint, получатели SuperAdmin+Dispatch+FightPro+notify-фракции+бойцы+рядом 1500, журнал `/fire_log` + UI.
 
 ### Что уже есть (`sh_grm_fire_status.lua` v1.4.1)
 
@@ -125,8 +127,8 @@
 
 ### vFire API (не ломать)
 
-`CreateVFire` / `CreateVFireBall`; `ent:Ignite()` / `Extinguish()` / `IsOnFire()` перехвачены; `SoftExtinguish` / `ChangeLife` / `GetFireState`; хуки `vFireCreated` / `vFireRemoved` / `vFireEntityStartedBurning` / `vFireEntityStoppedBurning`; флаги `vFireInstalled`, `vFireVersion=1`, `GRM_FireAddon`, `GRM.FireAddon.Version`.  
-Workshop `1525218777` и `104607228` сняты.  
+`CreateVFire` / `CreateVFireBall`; `ent:Ignite()` / `Extinguish()` / `IsOnFire()` перехвачены; `SoftExtinguish` / `ChangeLife` / `GetFireState`; хуки `vFireCreated` / `vFireRemoved` / `vFireEntityStartedBurning` / `vFireEntityStoppedBurning`; флаги `vFireInstalled`, `vFireVersion=1`, `GRM_FireAddon`, `GRM.FireAddon.Version`.
+Workshop `1525218777` и `104607228` сняты.
 `hook.Run("vFireRemoved", self, parent)` — сущность ещё часто валидна; recount через `timer.Simple(0)`.
 
 ### Модели оружия `_grm`
@@ -157,8 +159,8 @@ Workshop `1525218777` и `104607228` сняты.
 
 ### G-меню насоса
 
-После `/firetruck` или посадки KEY_G у машины/насоса. XUI-стиль. Полосы с NetworkVar насоса, **не** net-спам Think. G тогглит. ShowCloseButton(false). Антидребезг 0.2 с сервер / 0.35 с G.  
-Кнопки: **ВЗЯТЬ РУКАВ / СТВОЛ С МАШИНЫ**, Смотать, Связать с гидрантом, вода/пена/порошок, насос вкл/выкл, закачка, прямая подача, слить.  
+После `/firetruck` или посадки KEY_G у машины/насоса. XUI-стиль. Полосы с NetworkVar насоса, **не** net-спам Think. G тогглит. ShowCloseButton(false). Антидребезг 0.2 с сервер / 0.35 с G.
+Кнопки: **ВЗЯТЬ РУКАВ / СТВОЛ С МАШИНЫ**, Смотать, Связать с гидрантом, вода/пена/порошок, насос вкл/выкл, закачка, прямая подача, слить.
 G насоса **только** в `F.IsFireGContext`, не «везде на дежурстве».
 
 ### Рукав (визуал + физика укладки)
@@ -191,7 +193,7 @@ Entity `grm_fire_ladder` + SWEP `weapon_grm_ladder`. E взять, ЛКМ пос
 
 ### Точки очага
 
-SOLID_BBOX / COLLISION_GROUP_WEAPON / TRANSMIT_ALWAYS, без NoDraw. Клиент `GRM_FireSpot_Vis` рисует столб+метку **только SuperAdmin с `gmod_tool` mode=`grm_fire_place`**. ЛКМ поставить/обновить; ПКМ `IgniteSpot`; R удалить (сфера 80 юн.). NetworkVar: Weight, LastIgnite, CoolSec, Feed, SpotOn, SpotLabel.  
+SOLID_BBOX / COLLISION_GROUP_WEAPON / TRANSMIT_ALWAYS, без NoDraw. Клиент `GRM_FireSpot_Vis` рисует столб+метку **только SuperAdmin с `gmod_tool` mode=`grm_fire_place`**. ЛКМ поставить/обновить; ПКМ `IgniteSpot`; R удалить (сфера 80 юн.). NetworkVar: Weight, LastIgnite, CoolSec, Feed, SpotOn, SpotLabel.
 `/fire_spots` `/очаги` `/пожары_очаги`. Конфиг `data/grm_fire/config.json` (version=1, random/stove/min_sec/max_sec/cooldown/max_incidents/ttl; jsonT false/true, карантин, read-back). Дефолт: RandomEnabled, RandomMinSec=480, RandomMaxSec=900, SpotCooldownSec=2700, MaxIncidents=8, PersistTTL=1800. Выключенная точка в рандом не берётся.
 
 ### Данные
@@ -318,14 +320,14 @@ Q-меню: **только** каталог/схема `grm_fire_place`, не л
 4. `python3 tools/build_dist.py` (все zip).
 5. README строка модуля + ANALYSIS новая находка + HANDOVER/CHECKPOINT.
 6. `git add` нужное (не `.luabuild/`, не случайный economy.zip если только timestamp).
-7. `git commit` + `git push origin arena/019ffaa2-drstrasse`.
+7. `git commit` + `git push origin arena/01a0041b-drstrasse`.
 8. Владельцу — проза + raw-ссылки на zip. Код в чат не слать.
 
 ---
 
 ## 9. Что делать сразу после прочтения (обновлено 2026-08-14)
 
-1. `git fetch origin arena/019ffd5c-drstrasse && git reset --mixed FETCH_HEAD` (ветка этой сессии) + `git log -1`. HEAD теперь **v1.4.1**.
+1. `git fetch origin arena/01a0041b-drstrasse && git reset --mixed FETCH_HEAD` (ветка этой сессии) + `git log -1`. HEAD теперь **v1.4.1**.
 2. Пожары **закрыты v1.4.1** — стенды 0 fails, zip пересобраны. Если владелец подтвердит — переходить к Коду 59.
 3. Если новый репорт по пожарам — таблица §6, потом код.
 4. Код 59 — лицензии/документы + компьютеры/электроника v2.0 + фоторобот (см. §11). Не начинать без концепта.
@@ -354,7 +356,7 @@ Q-меню: **только** каталог/схема `grm_fire_place`, не л
 
 ### Что делать — концепт Кода 59 v2.0
 
-**59.1. Лицензии v2.0:** 
+**59.1. Лицензии v2.0:**
 - Переработать категории под реальные: добавить подкатегории BE/CE/DE, стаж, очки, мед.ограничения, срок действия прав, приостановка/лишение через терминал ГИБДД/ВАИ.
 - Связка с банком: госпошлина через `GRM.Services.Charge` (уже есть).
 - Экзамен: теория (тест в компе) + практика (чекпоинт на маршруте).

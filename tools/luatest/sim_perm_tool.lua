@@ -101,6 +101,19 @@ local function mkEnt(cls, idx, x, y, z)
     SetAngles = function() end,
     GetModel = function(s) return s.__model end,
     SetModel = function(s, m) s.__model = m end,
+    GetMaterial = function(s) return s.__material or "" end,
+    SetMaterial = function(s, v) s.__material = v end,
+    GetColor = function(s) return s.__color or { r=255,g=255,b=255,a=255 } end,
+    SetColor = function(s, v) s.__color = v end,
+    GetRenderMode = function(s) return s.__renderMode or 0 end,
+    SetRenderMode = function(s, v) s.__renderMode = v end,
+    GetRenderFX = function(s) return s.__renderFX or 0 end,
+    SetKeyValue = function(s, k, v) if k=="renderfx" then s.__renderFX=v end end,
+    GetSkin = function(s) return s.__skin or 0 end,
+    SetSkin = function(s, v) s.__skin = v end,
+    GetNumBodyGroups = function() return 2 end,
+    GetBodygroup = function(s, i) return (s.__bodygroups or {})[i] or 0 end,
+    SetBodygroup = function(s, i, v) s.__bodygroups=s.__bodygroups or{} s.__bodygroups[i]=v end,
     IsPlayer = function() return false end,
     IsNPC = function() return false end,
     Remove = function(s) s.__valid = false s.__removed = true end,
@@ -176,6 +189,7 @@ ok(isstring(recAdd.uid) and recAdd.uid ~= "", "Add: записи присвое�
 ok(recAdd.ownerKind == "server", "Add: по умолчанию серверное оборудование")
 ok(comp._grmPerm == true and comp._grmPermKind == "server", "Add: объект помечен как перм")
 ok(comp.__motion == false, "Add: объект заморожен")
+ok(istable(recAdd.visual) and recAdd.visual.material == "" and recAdd.visual.color.r == 255, "Add: визуальное состояние сохранено")
 ok(dbCount() == 1, "Add: в базе одна запись")
 ok((hooksRun["GRM_PermAdded"] or 0) >= 1, "Add: хук GRM_PermAdded вызван")
 
@@ -277,11 +291,14 @@ ok(isfunction(lg) and lg({}).legacy == true, "Цепочки: старый ст�
 local upEnt = mkEnt("grm_comp_medical", 9, 700, 700, 0)
 GRM.Perm.Add(admin, upEnt)
 upEnt:SetPos(Vector(760, 700, 0))
+upEnt.__material = "models/shiny"
+upEnt.__color = { r=40,g=80,b=120,a=200 }
 local okU = GRM.Perm.Update(admin, upEnt, { label = "приёмный покой", freeze = false })
 local recU = GRM.Perm.Info(upEnt)
 ok(okU and recU and recU.label == "приёмный покой", "Update: метка сохранена")
 ok(recU and math.abs((recU.pos.x or 0) - 760) < 0.01, "Update: позиция записи поехала за объектом")
-ok(recU and recU.freeze == false, "Update: заморозку можно отключить")
+ok(recU and recU.freeze == false and upEnt.__motion == true, "Update: заморозку можно отключить сразу")
+ok(recU and recU.visual and recU.visual.material == "models/shiny" and recU.visual.color.a == 200, "Update: материал/цвет сохранены")
 
 -- ══ 15. Миграция v1 -> v2 ══
 -- Готовим «старую» базу без uid, как на боевом сервере

@@ -183,11 +183,10 @@ ok(hubCode:find("GRM_EcoAccess_Request", 1, true) ~= nil, "хаб: кнопка 
 local ffSrc = assert(io.open("lua/autorun/sh_faction_fixes.lua", "rb"))
 local ffCode = ffSrc:read("*a") ffSrc:close()
 ok(ffCode:find('OpenEconomyPanel', 1, true) ~= nil, "/factions: вкладка «Экономика» (OpenEconomyPanel)")
-ok(ffCode:find('BuildAdminContent', 1, true) ~= nil, "/factions: вкладка встраивает BuildAdminContent (полная панель)")
-ok(ffCode:find('GRM_Eco_AdminOpen', 1, true) ~= nil, "/factions: вкладка запрашивает данные экономики")
-ok(ffCode:find('EmbedAdminPanel', 1, true) ~= nil, "/factions: вкладка регистрируется для обновления")
--- Находка 177: build принимает данные и из 1-го, и из 2-го аргумента
-ok(ffCode:find('local function build(a, b)', 1, true) ~= nil and ffCode:find('local d = b or a', 1, true) ~= nil, "/factions: build защищён от лишнего аргумента (находка 177)")
+ok(ffCode:find('чистый информационный режим', 1, true) ~= nil, "/factions: экономика информационная, без читерских действий")
+ok(ffCode:find('GRM.StateBudgetGet', 1, true) ~= nil, "/factions: госбюджет читается через публичный API")
+ok(ffCode:find('GRM.FactionBudgetGet', 1, true) ~= nil, "/factions: бюджеты фракций читаются через API")
+ok(ffCode:find('Управление налогами, финансовыми перечислениями', 1, true) ~= nil, "/factions: управление направлено в банкомат/компьютер")
 
 local econSrc = assert(io.open("lua/autorun/sh_grm_economy.lua", "rb"))
 local econCode = econSrc:read("*a") econSrc:close()

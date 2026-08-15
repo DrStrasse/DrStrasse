@@ -14,6 +14,8 @@ string.Trim = string.Trim or function(s) return (tostring(s):gsub("^%s+", ""):gs
 function istable(x) return type(x) == "table" end
 function isstring(x) return type(x) == "string" end
 function isnumber(x) return type(x) == "number" end
+function isfunction(x) return type(x) == "function" end
+function isentity(x) return type(x) == "table" and type(x.IsPlayer) == "function" end
 function IsValid(o) return o ~= nil and o ~= false and not (istable(o) and o.__removed) end
 function AddCSLuaFile() end
 -- GLua-расширения table.*, которых нет в ваниле
@@ -120,12 +122,12 @@ end
 -- создаём фракцию: стартовый список отделов — «Основной» (осознанный дефолт
 -- создания; владелец против именно ВОСКРЕШЕНИЯ после удаления)
 fireAction(admin, "createFaction", { "Медики", "STEAM_0:1:7" })
-ok(#deptsOf("Медики") == 1 and deptsOf("Медики")[1] == "Основной",
-   "свежая фракция: один стартовый отдел «Основной» (дефолт создания, не баг)")
+ok(#deptsOf("Медики") == 0,
+   "свежая фракция: отделы не создаются искусственно")
 
 fireAction(admin, "addDepartment", { "Медики", "Патруль" })
 fireAction(admin, "addDepartment", { "Медики", "ОМОН" })
-ok(#deptsOf("Медики") == 3, "добавлены отделы Патруль и ОМОН")
+ok(#deptsOf("Медики") == 2, "добавлены отделы Патруль и ОМОН")
 
 -- ГЛАВНОЕ: удаляем «Основной» — он НЕ должен появиться заново
 fireAction(admin, "removeDepartment", { "Медики", "Основной" })
@@ -153,19 +155,19 @@ mem = (_G.FactionsAPI.List())["Медики"].Members["STEAM_0:1:9"]
 ok(mem.Department == "СОБР" and not hasDept("Медики", "Основной"),
    "при удалении Патруля люди переехали в первый реальный (СОБР), «Основной» не появился")
 
--- последний отдел удалять нельзя — фракция не остаётся без отделов совсем
+-- Последний отдел можно удалить: пустой список корректен и не вызывает
+-- автоматического воскресения «Основного».
 fireAction(admin, "removeDepartment", { "Медики", "СОБР" })
-ok(#deptsOf("Медики") == 1 and deptsOf("Медики")[1] == "СОБР",
-   "последний отдел защищён от удаления (гард по-прежнему на месте)")
+ok(#deptsOf("Медики") == 0,
+   "последний отдел удалён, искусственный «Основной» не появился")
 
 -- «рестарт сервера»: перезагружаем модуль на той же файловой базе
 dofile("lua/autorun/sh_factions.lua")
 ok(type(H.netrecv["Factions_Action"]) == "function", "модуль перезагружен (имитация рестарта)")
-ok(not hasDept("Медики", "Основной") and #deptsOf("Медики") == 1
-   and deptsOf("Медики")[1] == "СОБР",
+ok(not hasDept("Медики", "Основной") and #deptsOf("Медики") == 0,
    "после загрузки из factions.json «Основной» НЕ воскрес (ensureAllDefaults чист)")
 _G.FactionsAPI.Broadcast()
-ok(H.lastSync and H.lastSync["Медики"] and H.lastSync["Медики"].Departments[1] == "СОБР",
+ok(H.lastSync and H.lastSync["Медики"] and #(H.lastSync["Медики"].Departments or {}) == 0,
    "и послерестартный SYNC — сразу чистый")
 
 -- ════ ЧАСТЬ B (client): «живые» вкладки /factions по SYNC_ALL ════════
@@ -188,6 +190,7 @@ local function mkVgui(cls, parent)
   setmetatable(c, mt)
   function c:AddChoice(text, data) self.__choices = self.__choices or {} self.__choices[#self.__choices + 1] = text end
   function c:Clear() self.__choices = {} self.__children = {} end
+  function c:GetCanvas() return self end
   function c:SetValue(v) self.__val = v end
   function c:GetValue() return self.__val end
   function c:SetText(t) self.__txt = t end

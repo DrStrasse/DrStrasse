@@ -71,8 +71,10 @@ function ENT:Use(ply)
     end
 
     local tpls = GRM.Documents and GRM.Documents.Templates or {}
-    local reg  = GRM.Documents and GRM.Documents.Registry or {}
+    local reg  = (GRM.Documents and GRM.Documents.RegistryForOnline)
+        and GRM.Documents.RegistryForOnline(onlineList) or {}
 
+    ply.GRM_DocComputerEnt = self
     net.Start("GRM_CompTraffic_Open")
         net.WriteEntity(self)
         net.WriteTable(onlineList)

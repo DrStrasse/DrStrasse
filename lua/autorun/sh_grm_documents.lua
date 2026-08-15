@@ -55,7 +55,7 @@ GRM = GRM or {}
 GRM.Documents = GRM.Documents or {}
 local DOC = GRM.Documents
 
-DOC.Version       = "2.0.0 — licenses v2 expiry/points + photoPath"
+DOC.Version       = "2.1.0 — server-authoritative licenses + secure terminals"
 DOC.RegistryFile  = "grm_documents.json"
 DOC.TemplatesFile = "grm_doc_templates.json"
 
@@ -212,6 +212,64 @@ if SERVER then
         return (ok and istable(t)) and t or nil
     end
 
+    local LICENSE_MAX_POINTS = 12
+    local LICENSE_CIV_SEC = 10 * 365 * 24 * 3600
+    local LICENSE_MIL_SEC = 5 * 365 * 24 * 3600
+
+    local function validLicenseStatus(military)
+        return military and "Действительно (на службе)" or "Действительно"
+    end
+
+    -- Единая миграция/проверка лицензии. Возвращает запись и changed.
+    -- forceIssue используется только после серверной проверки полномочий:
+    -- срок и баллы задаёт сервер, а не присланная клиентом таблица.
+    function DOC.NormalizeLicenseRecord(rec, military, now, forceIssue)
+        if not istable(rec) then return nil, false end
+        now = math.floor(tonumber(now) or os.time())
+        local changed = false
+        local function set(k, v)
+            if rec[k] ~= v then rec[k] = v changed = true end
+        end
+        local created = math.floor(tonumber(rec.created) or tonumber(rec.updated) or now)
+        if forceIssue then created = now end
+        set("created", created)
+        set("updated", forceIssue and now or math.floor(tonumber(rec.updated) or created))
+        local maxPoints = math.Clamp(math.floor(tonumber(rec.maxPoints) or LICENSE_MAX_POINTS), 1, LICENSE_MAX_POINTS)
+        set("maxPoints", maxPoints)
+        local points = forceIssue and 0 or math.Clamp(math.floor(tonumber(rec.points) or 0), 0, maxPoints)
+        set("points", points)
+        local expiry = math.floor(tonumber(rec.expiry) or 0)
+        if forceIssue or expiry <= 0 then expiry = created + (military and LICENSE_MIL_SEC or LICENSE_CIV_SEC) end
+        set("expiry", expiry)
+        set("validUntil", os.date("%d.%m.%Y", expiry))
+        local suspended = forceIssue and 0 or math.max(0, math.floor(tonumber(rec.suspendedUntil) or 0))
+        local status = tostring(rec.status or validLicenseStatus(military))
+        local revoked = status:find("Лишён", 1, true) or status:find("Аннулирован", 1, true)
+        if forceIssue then
+            status, suspended = validLicenseStatus(military), 0
+        elseif suspended > 0 and suspended <= now and status:find("Приостанов", 1, true) then
+            -- После отбытия приостановки баллы сбрасываются, иначе проверка
+            -- points>=max немедленно заблокировала бы права снова.
+            status, suspended, points = validLicenseStatus(military), 0, 0
+            set("points", 0)
+        elseif not revoked and expiry <= now then
+            status = "Истёк"
+        elseif not revoked and suspended > now then
+            status = military and "Приостановлено ВАИ" or "Приостановлено"
+        elseif not revoked and status == "Истёк" and expiry > now then
+            status = validLicenseStatus(military)
+        end
+        set("suspendedUntil", suspended)
+        set("status", status)
+        return rec, changed
+    end
+
+    function DOC.RefreshLicenseRecord(rec, military, saveReason)
+        local _, changed = DOC.NormalizeLicenseRecord(rec, military, os.time(), false)
+        if changed and saveReason and DOC.SaveRegistry then DOC.SaveRegistry(saveReason) end
+        return rec, changed
+    end
+
     -- Загрузка шаблонов оформления
     local function defaultTemplates()
         return {
@@ -341,6 +399,26 @@ if SERVER then
                 DOC.Registry.milLicenses = istable(t.milLicenses) and t.milLicenses or {}
             end
         end
+        local migrated = false
+        for _, rec in pairs(DOC.Registry.licenses) do
+            local _, changed = DOC.NormalizeLicenseRecord(rec, false, os.time(), false)
+            migrated = migrated or changed
+        end
+        for _, rec in pairs(DOC.Registry.milLicenses) do
+            local _, changed = DOC.NormalizeLicenseRecord(rec, true, os.time(), false)
+            migrated = migrated or changed
+        end
+        if migrated then
+            local ok, txt = pcall(util.TableToJSON, DOC.Registry, true)
+            if ok and isstring(txt) then
+                file.Write(DOC.RegistryFile, txt)
+                if file.Read(DOC.RegistryFile, "DATA") ~= txt then
+                    print("[GRM Documents][!] migration write-back failed")
+                else
+                    print("[GRM Documents] licenses v2 migration saved")
+                end
+            end
+        end
         return DOC.Registry
     end
 
@@ -354,6 +432,22 @@ if SERVER then
 
     DOC.LoadTemplates()
     DOC.LoadRegistry()
+
+    -- Безопасный сетевой срез: служебные компьютеры получают документы
+    -- только выбранных онлайн-персонажей, а не многолетний реестр целиком.
+    function DOC.RegistryForOnline(onlineList)
+        local out = { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {}, milLicenses = {} }
+        local keys, n = {}, 0
+        for _, row in ipairs(istable(onlineList) and onlineList or {}) do
+            local key = tostring(row.key or "")
+            if key ~= "" and not keys[key] and n < 128 then keys[key], n = true, n + 1 end
+        end
+        for section in pairs(out) do
+            local src = DOC.Registry[section] or {}
+            for key in pairs(keys) do if istable(src[key]) then out[section][key] = src[key] end end
+        end
+        return out
+    end
 
     -- Авто-создание паспорта гражданина при необходимости
     local function ensurePassport(ply)
@@ -369,6 +463,7 @@ if SERVER then
             local tpl = DOC.Templates.passport or {}
 
             p = {
+                charKey     = key,
                 fullName    = getPlayerRPName(ply),
                 gender      = "Мужской",
                 birthDate   = "12.04.1988",
@@ -454,7 +549,9 @@ if SERVER then
         local key = getCharKey(ply)
         if key == "" then return nil end
         DOC.Registry.licenses = DOC.Registry.licenses or {}
-        return DOC.Registry.licenses[key]
+        local rec = DOC.Registry.licenses[key]
+        if istable(rec) then DOC.RefreshLicenseRecord(rec, false, "refresh civilian license " .. key) end
+        return rec
     end
     DOC.EnsureLicense = ensureLicense
 
@@ -463,21 +560,27 @@ if SERVER then
         local key = getCharKey(ply)
         if key == "" then return nil end
         DOC.Registry.milLicenses = DOC.Registry.milLicenses or {}
-        return DOC.Registry.milLicenses[key]
+        local rec = DOC.Registry.milLicenses[key]
+        if istable(rec) then DOC.RefreshLicenseRecord(rec, true, "refresh military license " .. key) end
+        return rec
     end
     DOC.EnsureMilLicense = ensureMilLicense
 
     -- Лицензии v2: баллы и приостановка
-    local function addPoints(charKey, add, reason)
+    local function addPoints(charKey, add, reason, licenseType)
         if not charKey or charKey=="" then return false, "Нет ключа" end
         local lic = DOC.Registry.licenses and DOC.Registry.licenses[charKey]
         local mil = DOC.Registry.milLicenses and DOC.Registry.milLicenses[charKey]
-        local target = lic or mil
+        local useMil = licenseType == "military" or licenseType == "milLicense"
+        local target = useMil and mil or (lic or mil)
         if not target then return false, "Нет В/У" end
-        target.points = math.max(0, (tonumber(target.points) or 0) + (tonumber(add) or 0))
-        target.maxPoints = tonumber(target.maxPoints) or 12
-        if target.points >= target.maxPoints then
-            target.status = (lic and "Приостановлено (баллы)") or "Приостановлено ВАИ (баллы)"
+        useMil = target == mil
+        DOC.NormalizeLicenseRecord(target, useMil, os.time(), false)
+        local maxPoints = math.Clamp(math.floor(tonumber(target.maxPoints) or LICENSE_MAX_POINTS), 1, LICENSE_MAX_POINTS)
+        target.maxPoints = maxPoints
+        target.points = math.Clamp((tonumber(target.points) or 0) + (tonumber(add) or 0), 0, maxPoints)
+        if target.points >= maxPoints and (tonumber(target.suspendedUntil) or 0) <= os.time() then
+            target.status = useMil and "Приостановлено ВАИ" or "Приостановлено"
             target.suspendedUntil = os.time() + 30*24*3600
             target.updated = os.time()
             DOC.SaveRegistry("suspend points "..charKey)
@@ -494,14 +597,21 @@ if SERVER then
         local mil = DOC.Registry.milLicenses and DOC.Registry.milLicenses[charKey]
         local t = lic or mil
         if not t then return 0,12 end
+        DOC.RefreshLicenseRecord(t, t == mil, "refresh points " .. tostring(charKey))
         return tonumber(t.points) or 0, tonumber(t.maxPoints) or 12, t.status
     end
 
-    -- Проверка просрочки при выдаче / загрузке (миграция уже есть в PlayerEnteredVehicle, но и тут)
     function DOC.IsLicenseExpired(lic)
-        if not lic or not lic.expiry then return false end
-        return os.time() > tonumber(lic.expiry)
+        local expiry = istable(lic) and tonumber(lic.expiry) or nil
+        return expiry ~= nil and expiry > 0 and os.time() >= expiry
     end
+
+    -- Интеграционный хук для штрафов/ДТП. Сторонний модуль передаёт игрока
+    -- либо CharacterKey; четвёртый аргумент выбирает военную лицензию.
+    hook.Add("GRM_LicenseAddPoints", "GRM_Doc_LicensePoints", function(target, points, reason, licenseType)
+        local key = IsValid(target) and target:IsPlayer() and getCharKey(target) or tostring(target or "")
+        return DOC.AddLicensePoints(key, points, reason, licenseType)
+    end)
 
 
     -- Проверка прав игрока на выдачу документов
@@ -552,6 +662,15 @@ if SERVER then
         if fac ~= "" and DOC.Templates.access and DOC.Templates.access.licenses and DOC.Templates.access.licenses[fac] == true then
             return true
         end
+        return false
+    end
+
+    function DOC.CanCheckLicenses(ply)
+        if not IsValid(ply) then return false end
+        if ply:IsSuperAdmin() then return true end
+        if DOC.CanIssueLicenses and DOC.CanIssueLicenses(ply) then return true end
+        if DOC.CanIssueMilLicenses and DOC.CanIssueMilLicenses(ply) then return true end
+        if GRM.Wanted and isfunction(GRM.Wanted.CanView) and GRM.Wanted.CanView(ply) then return true end
         return false
     end
 
@@ -962,13 +1081,64 @@ if SERVER then
         end
     end)
 
-    net.Receive(NET_COMPUTER_ISSUE, function(_, ply)
-        if not IsValid(ply) then return end
-        local docType = net.ReadString()
-        local targetKey = net.ReadString()
-        local data = net.ReadTable()
+    local DOC_TERMINAL_CLASSES = {
+        grm_doc_computer = true, grm_comp_traffic = true,
+        grm_comp_police = true, grm_comp_military_police = true,
+        grm_comp_security = true, grm_comp_military = true,
+        grm_comp_medical = true,
+    }
+    local function validDocTerminal(ply)
+        if not (IsValid(ply) and ply:IsPlayer()) then return false end
+        local ent = ply.GRM_DocComputerEnt
+        if not IsValid(ent) or not DOC_TERMINAL_CLASSES[tostring(ent:GetClass() or "")] then return false end
+        if ply:GetPos():DistToSqr(ent:GetPos()) > 260 * 260 then return false end
+        if ent.CanManage and ent:CanManage(ply) ~= true then return false end
+        return true
+    end
 
-        if not isstring(targetKey) or targetKey == "" or not istable(data) then return end
+    local function sanitizeDocData(data, targetKey)
+        if not istable(data) then return nil end
+        local out, fields = {}, 0
+        for k, v in pairs(data) do
+            if fields >= 56 then break end
+            if isstring(k) and #k <= 32 then
+                if isstring(v) then
+                    out[k] = string.sub(v:gsub("[%z\1-\8\11\12\14-\31]", ""), 1, 512)
+                    fields = fields + 1
+                elseif isnumber(v) then
+                    out[k] = math.Clamp(v, -2147483648, 2147483647)
+                    fields = fields + 1
+                elseif isbool(v) then
+                    out[k] = v fields = fields + 1
+                elseif istable(v) then
+                    local nested, n = {}, 0
+                    for nk, nv in pairs(v) do
+                        if n >= 64 then break end
+                        if isstring(nk) and #nk <= 40 and (isbool(nv) or isnumber(nv) or isstring(nv)) then
+                            nested[nk] = isstring(nv) and string.sub(nv, 1, 128) or nv
+                            n = n + 1
+                        end
+                    end
+                    out[k] = nested fields = fields + 1
+                end
+            end
+        end
+        out.charKey = targetKey
+        out.updated = os.time()
+        if isstring(out.photoPath) and (out.photoPath:find("..", 1, true) or #out.photoPath > 128) then out.photoPath = nil end
+        return out
+    end
+
+    net.Receive(NET_COMPUTER_ISSUE, function(_, ply)
+        if not validDocTerminal(ply) then return end
+        ply.GRM_DocActionAt = ply.GRM_DocActionAt or 0
+        if CurTime() < ply.GRM_DocActionAt then return end
+        ply.GRM_DocActionAt = CurTime() + 0.5
+        local docType = string.sub(net.ReadString(), 1, 32)
+        local targetKey = string.sub(net.ReadString(), 1, 64)
+        local data = sanitizeDocData(net.ReadTable(), targetKey)
+
+        if targetKey == "" or targetKey:find("[%z\1-\32]") or not istable(data) then return end
 
         if docType == "passport" then
             if not DOC.CanIssuePassports(ply) then return end
@@ -1006,6 +1176,7 @@ if SERVER then
                 if GRM.Notify then GRM.Notify(ply, "У вашей фракции нет допуска к выдаче водительских прав!", 255, 100, 100) end
                 return
             end
+            DOC.NormalizeLicenseRecord(data, false, os.time(), true)
             DOC.Registry.licenses[targetKey] = data
             DOC.SaveRegistry("issue civilian license " .. targetKey .. " by " .. ply:Nick())
 
@@ -1014,6 +1185,7 @@ if SERVER then
                 if GRM.Notify then GRM.Notify(ply, "У вашей фракции нет допуска к выдаче военных водительских удостоверений (ВАИ)!", 255, 100, 100) end
                 return
             end
+            DOC.NormalizeLicenseRecord(data, true, os.time(), true)
             DOC.Registry.milLicenses[targetKey] = data
             DOC.SaveRegistry("issue military license " .. targetKey .. " by " .. ply:Nick())
         end
@@ -1022,10 +1194,13 @@ if SERVER then
     end)
 
     net.Receive(NET_COMPUTER_REVOKE, function(_, ply)
-        if not IsValid(ply) then return end
-        local docType = net.ReadString()
-        local targetKey = net.ReadString()
-        if not isstring(targetKey) or targetKey == "" then return end
+        if not validDocTerminal(ply) then return end
+        ply.GRM_DocActionAt = ply.GRM_DocActionAt or 0
+        if CurTime() < ply.GRM_DocActionAt then return end
+        ply.GRM_DocActionAt = CurTime() + 0.5
+        local docType = string.sub(net.ReadString(), 1, 32)
+        local targetKey = string.sub(net.ReadString(), 1, 64)
+        if targetKey == "" or targetKey:find("[%z\1-\32]") then return end
 
         if docType == "passport" and DOC.Registry.passports[targetKey] then
             if not DOC.CanIssuePassports(ply) then return end
@@ -1083,6 +1258,10 @@ if SERVER then
         local charKey = getCharKey(ply)
         local civLic = DOC.Registry.licenses and DOC.Registry.licenses[charKey]
         local milLic = DOC.Registry.milLicenses and DOC.Registry.milLicenses[charKey]
+        local changed = false
+        if civLic then local _, c = DOC.NormalizeLicenseRecord(civLic, false, os.time(), false) changed = changed or c end
+        if milLic then local _, c = DOC.NormalizeLicenseRecord(milLic, true, os.time(), false) changed = changed or c end
+        if changed then DOC.SaveRegistry("vehicle license refresh " .. charKey) end
 
         local mdl = string.lower(veh:GetModel() or "")
         local cl = string.lower(veh:GetClass() or "")
@@ -1312,10 +1491,12 @@ if SERVER then
             return
         end
         if low:find("^/license_check") or low:find("^/check_license") or low:find("^/проверить_права") then
+            if not DOC.CanCheckLicenses(ply) then
+                if GRM.Notify then GRM.Notify(ply, "Проверка чужих В/У доступна только уполномоченным ведомствам.", 255, 120, 100) end
+                datapack.SkipPlayerSay=true datapack[1]="" return
+            end
             -- формат: /license_check <часть ника/charKey>
-            local targetName = string.Trim(txt:sub(("/license_check"):len()+1))
-            if targetName=="" then targetName = string.Trim(txt:sub(("/check_license"):len()+1)) end
-            if targetName=="" then targetName = string.Trim(txt:sub(("/проверить_права"):len()+1)) end
+            local targetName = string.Trim(txt:match("^%S+%s+(.+)$") or "")
             if targetName=="" then
                 if GRM.Notify then GRM.Notify(ply, "Укажите ник/ключ для проверки: /license_check <ник>", 255,160,80) end
                 datapack.SkipPlayerSay=true
@@ -2034,7 +2215,7 @@ if CLIENT then
 
                     draw.SimpleText("1. ФИО: " .. tostring(data.fullName or "Водитель"), "GRMDoc_Bold", 120, 90, Color(25, 30, 40), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                     draw.SimpleText("2. Дата рожд.: " .. tostring(data.birthDate or "12.04.1988"), "GRMDoc_Normal", 120, 112, Color(40, 45, 55), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    draw.SimpleText("3. Выдано: " .. tostring(data.issueDate or os.date("%d.%m.%Y")) .. "  •  Срок: " .. tostring(data.validUntil or "10 лет"), "GRMDoc_Normal", 120, 132, Color(40, 45, 55), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("3. Выдано: " .. tostring(data.issueDate or os.date("%d.%m.%Y")) .. "  •  4b. До: " .. tostring(data.validUntil or "—"), "GRMDoc_Normal", 120, 132, Color(40, 45, 55), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                     drawWrapped("4. Орган: " .. tostring(data.issuedBy or "Дорожная Инспекция"), "GRMDoc_Small", 120, 152, w - 130, 14, Color(90, 100, 115), TEXT_ALIGN_LEFT)
 
                     -- Значки категорий внизу
@@ -2117,7 +2298,8 @@ if CLIENT then
 
                     -- Особые отметки
                     drawWrapped("12. Особые отметки: " .. tostring(data.restrictions or "Стаж вождения подтверждён"), "GRMDoc_Small", 16, y + 8, w - 32, 14, Color(90, 95, 110), TEXT_ALIGN_LEFT)
-                    drawWrapped("Кем выдано: " .. tostring(data.issuedBy or "Дорожная Инспекция"), "GRMDoc_Small", 16, y + 26, w - 32, 14, Color(90, 95, 110), TEXT_ALIGN_LEFT)
+                    draw.SimpleText("Баллы нарушений: " .. tostring(data.points or 0) .. "/" .. tostring(data.maxPoints or 12), "GRMDoc_Bold", 16, y + 26, (tonumber(data.points) or 0) >= (tonumber(data.maxPoints) or 12) and Color(190, 45, 45) or Color(45, 110, 70), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    drawWrapped("Кем выдано: " .. tostring(data.issuedBy or "Дорожная Инспекция"), "GRMDoc_Small", 16, y + 44, w - 32, 14, Color(90, 95, 110), TEXT_ALIGN_LEFT)
                 end
 
                 local btnTurn = vgui.Create("DButton", frame)
@@ -2186,7 +2368,7 @@ if CLIENT then
                     draw.SimpleText("2. Звание: " .. tostring(data.rank or "Рядовой"), "GRMDoc_Bold", 120, 110, Color(40, 75, 45), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                     draw.SimpleText("3. В/Ч (Часть): " .. tostring(data.formation or "Автобат"), "GRMDoc_Normal", 120, 130, Color(45, 55, 45), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                     draw.SimpleText("4. ВУС: " .. tostring(data.vus or "ВУС-837 (Водитель спецтранспорта)"), "GRMDoc_Normal", 120, 150, Color(45, 55, 45), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    draw.SimpleText("5. Выдано: " .. tostring(data.issueDate or os.date("%d.%m.%Y")) .. "  •  Срок: " .. tostring(data.validUntil or "На срок службы"), "GRMDoc_Small", 120, 170, Color(80, 95, 80), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("5. Выдано: " .. tostring(data.issueDate or os.date("%d.%m.%Y")) .. "  •  Действует до: " .. tostring(data.validUntil or "—"), "GRMDoc_Small", 120, 170, Color(80, 95, 80), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
 
                     -- Значки военных категорий внизу
                     draw.RoundedBox(4, 8, 195, w - 16, 55, Color(226, 235, 222))
@@ -2301,7 +2483,8 @@ if CLIENT then
 
                     -- Особые отметки
                     drawWrapped("12. Особые отметки: " .. tostring(data.restrictions or data.specialNotes or "Норматив вождения сдан. Стажировка пройдена."), "GRMDoc_Small", 16, y, w - 32, 14, Color(80, 95, 80), TEXT_ALIGN_LEFT)
-                    drawWrapped("Кем выдано: " .. tostring(data.issuedBy or "101-я Военная автомобильная инспекция (ВАИ)"), "GRMDoc_Small", 16, y + 18, w - 32, 14, Color(80, 95, 80), TEXT_ALIGN_LEFT)
+                    draw.SimpleText("Баллы нарушений: " .. tostring(data.points or 0) .. "/" .. tostring(data.maxPoints or 12), "GRMDoc_Bold", 16, y + 18, (tonumber(data.points) or 0) >= (tonumber(data.maxPoints) or 12) and Color(190, 45, 45) or Color(35, 105, 45), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    drawWrapped("Кем выдано: " .. tostring(data.issuedBy or "101-я Военная автомобильная инспекция (ВАИ)"), "GRMDoc_Small", 16, y + 36, w - 32, 14, Color(80, 95, 80), TEXT_ALIGN_LEFT)
                 end
 
                 local btnTurn = vgui.Create("DButton", frame)

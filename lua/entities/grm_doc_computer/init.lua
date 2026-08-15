@@ -52,7 +52,7 @@ function ENT:CanManage(ply)
         if acc.coverDocs and acc.coverDocs[fName] == true then return true end
     end
 
-    return true
+    return false
 end
 
 function ENT:Use(ply)
@@ -87,7 +87,9 @@ function ENT:Use(ply)
     end
 
     local tpls = GRM.Documents and GRM.Documents.Templates or {}
-    local reg  = GRM.Documents and GRM.Documents.Registry or { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {}, milLicenses = {} }
+    local reg  = (GRM.Documents and GRM.Documents.RegistryForOnline)
+        and GRM.Documents.RegistryForOnline(onlineList)
+        or { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {}, milLicenses = {} }
     local myFac = ply:GetNWString("GRM_Faction", "")
     local isLeader = (_G.FactionsAPI and _G.FactionsAPI.IsLeader and myFac ~= "" and _G.FactionsAPI.IsLeader(ply, myFac)) == true
     local hasCover = (ply:IsSuperAdmin() or (tpls.access and tpls.access.coverDocs and tpls.access.coverDocs[myFac] == true)) == true
@@ -96,6 +98,9 @@ function ENT:Use(ply)
     local hasLicense  = (ply:IsSuperAdmin() or (tpls.access and tpls.access.licenses and tpls.access.licenses[myFac] == true)) == true
     local hasMilLicense = (ply:IsSuperAdmin() or (tpls.access and tpls.access.milLicenses and tpls.access.milLicenses[myFac] == true) or (tpls.access and tpls.access.military and tpls.access.military[myFac] == true)) == true
 
+    -- Серверные действия выдачи/отзыва принимаются только пока игрок
+    -- действительно стоит у этого компьютера.
+    ply.GRM_DocComputerEnt = self
     net.Start("GRM_DocComp_Open")
         net.WriteEntity(self)
         net.WriteTable(onlineList)

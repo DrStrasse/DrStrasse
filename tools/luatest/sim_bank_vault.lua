@@ -11,6 +11,7 @@
 --   • «Установить» в гос.бюджете — только суперадмин (статически);
 --   • тул/Q-меню/PERM/модели.
 local pass, fail = 0, 0
+local realExit = os.exit
 local function ok(v, n) if v then pass = pass + 1 print("  ok  " .. n) else fail = fail + 1 print("  FAIL " .. n) end end
 
 SERVER, CLIENT = true, false
@@ -239,7 +240,7 @@ local beforeLoad = E.StateBudgetGet()
 loaded = vault:LoadNearCash(bankier)
 ok(loaded == 70000, "деньги-проп 70.000 загружены")
 ok(vault:GetHeldCash() == 70000, "HeldCash +70.000")
-ok(E.StateBudgetGet() == beforeLoad + 70000, "взнос в казну: гос.бюджет +70.000")
+ok(E.StateBudgetGet() == beforeLoad, "физические HeldCash не дублируются в гос.бюджете")
 
 -- ══════════════ 3. ВЫГРУЗКА (права + дробление) ══════════════
 -- банкир без доступа (Factions нет → CanManageEconomy=false)
@@ -252,7 +253,7 @@ local beforeUn = E.StateBudgetGet()
 okUn = vault:UnloadCash(admin, 250000)
 ok(okUn == true, "выгрузка 250.000 суперадмином прошла")
 ok(vault:GetHeldCash() == 0, "HeldCash списан полностью (было 70к — выгружено 70к)")
-ok(E.StateBudgetGet() == beforeUn - 70000, "гос.бюджет -70.000 (изъятие из казны)")
+ok(E.StateBudgetGet() == beforeUn, "выгрузка HeldCash не списывает независимый гос.бюджет")
 -- 70.000 ≥ 50.000 → одна паллета grm_vault_cash, money_drop не нужен
 ok(spawnedClasses["grm_vault_cash"] == 1 and spawnedClasses["grm_money_drop"] == nil, "70.000 → одна паллета (≥50к), без money.mdl")
 
@@ -472,4 +473,4 @@ local rec = saved[1]
 ok(rec and rec.data and rec.data.held == 250000, "перм-запись обновлена: held = 250.000 (находка 179d)")
 
 print(string.format("sim_bank_vault: %d ok, %d fail", pass, fail))
-if fail > 0 then os.exit(1) end
+if fail > 0 then realExit(1) end

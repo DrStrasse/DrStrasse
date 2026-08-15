@@ -4,7 +4,7 @@ local core,client,tool=read("lua/autorun/sh_grm_electronics.lua"),read("lua/auto
 local printer,printerShared,deviceBase=read("lua/entities/grm_money_printer/init.lua"),read("lua/entities/grm_money_printer/shared.lua"),read("lua/entities/grm_net_device/init.lua")
 local hub,qmenu=read("lua/autorun/server/sv_grm_persistence_hub.lua"),read("lua/autorun/sh_grm_qmenu.lua")
 local pass,fail=0,0;local function has(s,n)return s:find(n,1,true)~=nil end;local function ok(v,n)if v then pass=pass+1;print("  ok  "..n)else fail=fail+1;print("  FAIL "..n)end end
-ok(has(core,'E.Version="1.5.1"'),"electronics ecosystem version 1.5.1 (автосейв)")
+ok(has(core,'E.Version="2.0.0"'),"electronics ecosystem version 2.0.0 (RT photorobot)")
 ok(has(core,"function E.RegisterDevice")and has(core,"function E.NetworkRouter")and has(core,"function E.IsOnline"),"authoritative device registry and online resolver")
 ok(has(core,"connectedRouter")and has(core,"wifiAuthorized")and has(core,"passwordHash"),"Wi-Fi SSID/password authorization")
 ok(has(core,'(op=="register"or op=="login")and not E.IsOnline(ent)'),"login and registration are rejected on offline computers")
@@ -56,7 +56,7 @@ ok(has(tool,"models/props_interiors/printer.mdl"),"updated printer model")
 ok(has(core,"E.Files[id]=nil")and has(core,"E.Files[devID][r.id]"),"file cleanup on device removal and per-device store")
 ok(has(client,"skinColors")and has(client,"hairColors")and has(client,"eyeColors"),"photo robot supports skin hair and eye color customization")
 ok(has(client,"effects")and has(client,"sepia")and has(client,"vintage"),"photo robot supports photo effects sepia vintage grain")
-ok(has(client,"render.Capture")and has(client,"grm_photorobot"),"photo robot captures screenshot for printing")
-ok(has(client,"Подозреваемый")and has(client,"presetBtns"),"photo robot has preset suspect templates")
+ok(has(client,"render.Capture")and has(client,"GetRenderTarget")and has(client,"drawRobotContent"),"photo robot captures isolated RT for printing")
+ok(has(client,"presetBtns")and has(client,"preset.data"),"photo robot has preset portrait templates")
 ok(has(client,"faceParts.face")and has(client,"faceParts.eyes")and has(client,"faceParts.nose"),"photo robot has drawn face eyes nose parts")
 print(("ELECTRONICS: %d/%d failures=%d"):format(pass,pass+fail,fail));if fail>0 then os.exit(1)end

@@ -690,6 +690,70 @@ function ENT:FollowHost()
     return moved or srcMoved or endMoved
 end
 
+-- Проверка стационарной линии гидрант <-> насос. Свободный рукав в руках
+-- ограничивается Leash; здесь нужен отдельный гард для машины, которая
+-- физически уезжает вместе с насосом и раньше растягивала линию бесконечно.
+function ENT:SupplyEndpoints()
+    if not self:GetDocked() then return nil, nil end
+    local src = self:GetStartEnt()
+    local tail = self:GetEndNode()
+    local dst = IsValid(tail) and tail.GetParent and tail:GetParent() or NULL
+    if not (IsValid(src) and IsValid(dst)) then return nil, nil end
+    local a, b = src:GetClass(), dst:GetClass()
+    if (a == "grm_fire_hydrant" and b == "grm_fire_pump")
+        or (a == "grm_fire_pump" and b == "grm_fire_hydrant") then
+        return src, dst
+    end
+    return nil, nil
+end
+
+function ENT:CheckOverstretch()
+    local src, dst = self:SupplyEndpoints()
+    if not IsValid(src) or not IsValid(dst) then
+        self._OverstretchAt = nil
+        return false
+    end
+    local a = src:WorldSpaceCenter()
+    local b = dst:WorldSpaceCenter()
+    local dist = a:Distance(b)
+    local c = cfg()
+    local FA = A()
+    if not (FA and FA.HoseOverstretch) then return false end
+    local maxLen = tonumber(self:GetMaxLen()) or tonumber(c.MaxLength) or 2200
+    local _, limit = FA.HoseOverstretch(dist, maxLen, c.BreakGrace, 0, c.OverstretchSec)
+    if dist <= limit then
+        self._OverstretchAt = nil
+        return false
+    end
+    self._OverstretchAt = self._OverstretchAt or CurTime()
+    local shouldBreak = FA.HoseOverstretch(dist, maxLen, c.BreakGrace,
+        CurTime() - self._OverstretchAt, c.OverstretchSec)
+    if not shouldBreak then return false end
+
+    local pump = src:GetClass() == "grm_fire_pump" and src or dst
+    if IsValid(pump) then
+        if pump.SetHydrantFeed then pump:SetHydrantFeed(false) end
+        if pump.SetFilling then pump:SetFilling(false) end
+        if pump.SyncHost then pump:SyncHost() end
+        pump:EmitSound("physics/rubber/rubber_tire_impact_hard3.wav", 75, 90)
+        local host = pump.GetHostVehicle and pump:GetHostVehicle() or pump:GetParent()
+        local driver = IsValid(host) and host.GetDriver and host:GetDriver() or NULL
+        if IsValid(driver) then
+            local msg = ("Линия гидранта перерастянута (%.0f/%d): рукав автоматически смотан."):format(dist, limit)
+            if GRM and GRM.Notify then GRM.Notify(driver, msg, 255, 110, 90) else driver:ChatPrint("[Рукав] " .. msg) end
+        end
+    end
+    hook.Run("GRM_FireAddon_HoseOverstretched", self, src, dst, dist, limit)
+    self:Rewind()
+    timer.Simple(0, function()
+        if FA and FA.HoseCountOn then
+            if IsValid(src) and src.SetHosesOut then src:SetHosesOut(FA.HoseCountOn(src)) end
+            if IsValid(dst) and dst.SetHosesOut then dst:SetHosesOut(FA.HoseCountOn(dst)) end
+        end
+    end)
+    return true
+end
+
 function ENT:Rewind()
     local ply = self:GetHolder()
     if IsValid(ply) then
@@ -734,6 +798,7 @@ function ENT:Think()
         return true
     end
     self:FollowHost()
+    if self:CheckOverstretch() then return true end
     local ply = self:GetHolder()
     if IsValid(ply) and not self:GetDocked() then
         if not ply:Alive() then

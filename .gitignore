@@ -1,0 +1,12 @@
+# Local validation/build artifacts
+.luabuild/
+.arena-audit/
+__pycache__/
+*.py[cod]
+
+# Lua test runtime data (tracked fixtures remain tracked by Git)
+tools/luatest/data/*
+
+# Local extraction/staging directories
+/grm/
+/dop.addons/

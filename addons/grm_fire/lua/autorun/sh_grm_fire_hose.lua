@@ -27,12 +27,19 @@ A.HoseCfg = A.HoseCfg or {
     SprayDmgWater    = 10,
     SprayDmgFoam     = 18,
     SprayDmgPowder   = 24,
+    -- Машина не может увезти подключённый к гидранту рукав бесконечно.
+    -- После короткой выдержки при превышении MaxLength + BreakGrace
+    -- линия автоматически сматывается и отключает прямую подачу.
+    BreakGrace       = 96,
+    OverstretchSec   = 0.75,
 }
 if A.HoseCfg.MaxLength < 2000 then A.HoseCfg.MaxLength = 2200 end
 A.HoseCfg.LayStep = 40
 A.HoseCfg.Width = 3
 A.HoseBeamHalfW = 1.35
 A.HoseBeamHalfH = 0.28
+A.HoseCfg.BreakGrace = math.max(0, tonumber(A.HoseCfg.BreakGrace) or 96)
+A.HoseCfg.OverstretchSec = math.max(0.2, tonumber(A.HoseCfg.OverstretchSec) or 0.75)
 
 A.NODE_SOURCE    = 0
 A.NODE_LAY       = 1
@@ -79,6 +86,14 @@ end
 function A.HoseShouldCompact(dist, step)
     step = tonumber(step) or 40
     return (tonumber(dist) or 999) < step * 0.42
+end
+
+-- Чистая функция порога стационарной линии (покрывается LuaJIT-стендом).
+function A.HoseOverstretch(dist, maxLength, grace, heldSec, delay)
+    local limit = math.max(128, tonumber(maxLength) or 2200) + math.max(0, tonumber(grace) or 96)
+    local over = (tonumber(dist) or 0) > limit
+        and (tonumber(heldSec) or 0) >= math.max(0.2, tonumber(delay) or 0.75)
+    return over, limit
 end
 
 -- "reel" | "rewind" | "lay" | "idle"
@@ -137,7 +152,15 @@ end
 function A.HoseCountOn(src)
     local n = 0
     for _, h in ipairs(ents.FindByClass("grm_fire_hose")) do
-        if IsValid(h) and h:GetStartEnt() == src then n = n + 1 end
+        if IsValid(h) then
+            local touches = h:GetStartEnt() == src
+            if not touches then
+                local tail = h.GetEndNode and h:GetEndNode() or NULL
+                local parent = IsValid(tail) and tail.GetParent and tail:GetParent() or NULL
+                touches = tail == src or parent == src
+            end
+            if touches then n = n + 1 end
+        end
     end
     return n
 end

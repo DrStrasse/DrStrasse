@@ -32,6 +32,8 @@ EMT.__index = function(t, k)
   elseif k == "SetNWString" then return function(s, key, v) s.nw = s.nw or {} s.nw[key] = v end
   elseif k == "GetPhysicsObject" then return function() return { __valid = true, SetMaterial = function() end, SetFriction = function() end, SetDamping = function() end } end
   elseif k == "IsPlayer" then return function() return false end
+  elseif k == "IsWorld" then return function() return false end
+  elseif k == "CreatedByMap" then return function() return false end
   end
   return nil
 end
@@ -61,22 +63,22 @@ GRM = {
 -- ══════════════ ЗАГРУЗКА ══════════════
 dofile("lua/autorun/sh_grm_prop_protect.lua")
 local PP = GRM.PropProtect
-ok(PP ~= nil and PP.IsManaged ~= nil and PP.CanInteract ~= nil, "проп-протектор загружен")
+ok(PP ~= nil and PP.IsServerEntity ~= nil and PP.IsOwnedEntity ~= nil and PP.CanInteract ~= nil, "проп-протектор v2 загружен")
 
--- ══════════════ 1. IsManaged ══════════════
+-- ══════════════ 1. Классификация v2 ══════════════
 local prop = mkEnt("prop_physics")
-ok(PP.IsManaged(prop) == true, "prop_physics: под защитой (как раньше)")
+ok(PP.IsOwnedEntity(prop) == false, "непомеченный prop_physics не имеет владельца")
 local vault = mkEnt("grm_bank_vault")
-ok(PP.IsManaged(vault) == false, "grm_bank_vault БЕЗ метки: не управляется (прежнее поведение)")
+ok(PP.IsServerEntity(vault) == true, "известное банковское оборудование серверное без ручной метки")
 PP.MarkServerEntity(vault)
 ok(vault:GetNWString("GRM_EntityOwnerType", "") == "server", "MarkServerEntity пометил сущность")
-ok(PP.IsManaged(vault) == true, "grm_bank_vault с меткой server: ПОД ЗАЩИТОЙ (находка 179)")
+ok(PP.IsOwnedEntity(vault) == true, "серверное оборудование считается управляемым контуром")
 local press = mkEnt("grm_money_press")
 PP.MarkServerEntity(press)
-ok(PP.IsManaged(press) == true, "grm_money_press с меткой server: под защитой")
+ok(PP.IsServerEntity(press) == true, "grm_money_press с меткой server: под защитой")
 local alarm = mkEnt("grm_alarm_hub")
 PP.MarkServerEntity(alarm)
-ok(PP.IsManaged(alarm) == true, "grm_alarm_hub с меткой server: под защитой")
+ok(PP.IsServerEntity(alarm) == true, "grm_alarm_hub с меткой server: под защитой")
 
 -- ══════════════ 2. CanInteract ══════════════
 local player = mkPly(false)

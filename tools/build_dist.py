@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Пересборка архивов dist/ из рабочего дерева.
 
-Четыре архива:
+Пять архивов:
   grm_single_addon.zip  — весь аддон, файлы под префиксом grm/
   grm_full_code.zip     — то же самое, но без префикса
   grm_economy.zip       — экономика, банк, документы, служебные компьютеры
                           и модули розыска/штрафов, от которых они зависят
   grm_fix_hud_tab_currency.zip — точечный фикс HUD/TAB/валюты
+  grm_fire_addon.zip    — базовый vFire PACK с наложением addons/grm_fire
 
 Запуск: python3 tools/build_dist.py
 """
@@ -105,6 +106,41 @@ def build(name, files, prefix=""):
     print("%-34s %4d файлов, %8.1f КБ" % (name, written, size / 1024.0))
 
 
+def build_fire():
+    """Собрать vFire и GRM-патч в один устанавливаемый аддон.
+
+    addons/grm_fire — только наш overlay; без vFire PACK в архиве не будет
+    базовых entity/effects. Поэтому обычный collect_all здесь неприменим.
+    """
+    base_zip = os.path.join(ROOT, "vFire PACK.zip")
+    overlay = os.path.join(ROOT, "addons", "grm_fire")
+    if not os.path.isfile(base_zip):
+        print("  пропуск grm_fire_addon.zip: нет vFire PACK.zip")
+        return
+    entries = {}
+    with zipfile.ZipFile(base_zip, "r") as src:
+        for info in src.infolist():
+            if info.is_dir():
+                continue
+            name = info.filename.replace("\\", "/")
+            rel = name.split("/", 1)[1] if "/" in name else name
+            if rel:
+                entries[rel] = src.read(info.filename)
+    for dirpath, _dirnames, filenames in os.walk(overlay):
+        for fn in filenames:
+            full = os.path.join(dirpath, fn)
+            rel = os.path.relpath(full, overlay).replace(os.sep, "/")
+            with open(full, "rb") as fh:
+                entries[rel] = fh.read()
+    path = os.path.join(DIST, "grm_fire_addon.zip")
+    tmp = path + ".tmp"
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+        for rel in sorted(entries):
+            z.writestr("grm_fire_addon/" + rel, entries[rel])
+    shutil.move(tmp, path)
+    print("%-34s %4d файлов, %8.1f КБ" % ("grm_fire_addon.zip", len(entries), os.path.getsize(path) / 1024.0))
+
+
 def main():
     os.makedirs(DIST, exist_ok=True)
     everything = collect_all()
@@ -112,6 +148,7 @@ def main():
     build("grm_full_code.zip", everything)
     build("grm_economy.zip", ECONOMY_FILES, prefix="grm/")
     build("grm_fix_hud_tab_currency.zip", HUD_FIX_FILES)
+    build_fire()
 
 
 if __name__ == "__main__":

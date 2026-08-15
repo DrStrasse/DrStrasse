@@ -933,6 +933,23 @@ if PHASE == "documents" then
     local milAfter = DOC.Registry.military["76561199000000001:char1"]
     assert(istable(milAfter) and milAfter.rank == "Сержант" and milAfter.number == "ВБ-428901", "documents: военный билет не пережил рестарт")
 
-    print("PHASE documents: OK — паспорта/служебные удостоверения/военные билеты/префиксы/спецдопуски/персистентность")
+    -- 5. Лицензии v2.1: серверный срок, баллы и завершение приостановки
+    local now = os.time()
+    local oldLicense = { created = now - 100, status = "Действительно", categories = { B = true } }
+    local _, migrated = DOC.NormalizeLicenseRecord(oldLicense, false, now, false)
+    assert(migrated and oldLicense.expiry == oldLicense.created + 10*365*24*3600, "documents: срок старого ВУ не мигрирован")
+    assert(oldLicense.points == 0 and oldLicense.maxPoints == 12, "documents: баллы старого ВУ не мигрированы")
+    oldLicense.status, oldLicense.suspendedUntil, oldLicense.points = "Приостановлено", now - 1, 12
+    DOC.NormalizeLicenseRecord(oldLicense, false, now, false)
+    assert(oldLicense.status == "Действительно" and oldLicense.suspendedUntil == 0 and oldLicense.points == 0, "documents: истёкшая приостановка не снялась")
+    local fresh = { expiry = 1, points = 99, status = "Лишён права управления", categories = { B = true } }
+    DOC.NormalizeLicenseRecord(fresh, false, now, true)
+    assert(fresh.expiry > now and fresh.points == 0 and fresh.status == "Действительно", "documents: выдача не нормализована сервером")
+    local citizenKey = DOC.GetCharKey(citizen)
+    DOC.Registry.licenses[citizenKey] = fresh
+    local okPts = DOC.AddLicensePoints(citizenKey, 20, "тест")
+    assert(okPts == true and fresh.points == 12 and fresh.suspendedUntil > now, "documents: баллы не ограничены/приостановка не сработала")
+
+    print("PHASE documents: OK — документы + licenses v2.1 expiry/points/suspension")
     return
 end

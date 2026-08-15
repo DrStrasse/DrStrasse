@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Perm Entities v1.2.0 (Код 50/Код 89)
+    GRM Perm Entities v1.6.0 (Код 50/Код 89)
     «Пермы» для разворачиваемых энтити GRM: банкомат, таксофон, АТС,
     телефоны, CCTV-камера/монитор/сервер, сигнализация (сенсор/хаб/терминал/
     динамик), кейпад, RoomTap (чип/сервер/терминал), рудный узел/скупщик,
@@ -42,7 +42,7 @@
 -- Код 110: перм агрегатов кухни (плита/холодильник/горшок) — состояние
 -- (лоток плиты, содержимое холодильника, посадка) едет в rec.data
 -- через GRM.PermData-делегаты sh_grm_food_kitchen.lua.
-local PERM_VER = "1.5.0"
+local PERM_VER = "1.6.0"
 GRM = GRM or {}
 GRM._permEntitiesVer = PERM_VER
 
@@ -191,10 +191,11 @@ if SERVER then
         grm_food_stove     = true,
         grm_food_fridge    = true,
         grm_food_planter   = true,
-        -- Код 105: prop_physics допускаем именно ради FFD-дверей
-        -- (владелец пермит двери; рабочее состояние восстанавливает
-        -- GRM.PermData.Apply["prop_physics"] из стула FFD Fading Door)
+        -- Оформление и безопасные GRM-инструменты (Код 61)
         prop_physics       = true,
+        gmod_light         = true,
+        gmod_lamp          = true,
+        gmod_cameraprop    = true,
         -- RoomTap: комнатная прослушка (Код 72/Код 89)
         grm_roomtap_chip     = true,
         grm_roomtap_server   = true,
@@ -226,7 +227,7 @@ if SERVER then
         grm_logistics_loading   = true,
         grm_logistics_warehouse = true,
         grm_logistics_armory    = true,
-        grm_logistics_crate     = true,
+        -- grm_logistics_crate временный груз рейса: пермить нельзя.
         -- ВАЖНО: CCTV (grm_cctv_camera/monitor/server) НЕ в PERM_CLASSES!
         -- У CCTV своя система сохранения через CCTV.SavePermanent/LoadPermanent
         -- (grm_cctv/<map>.json). Добавление сюда создаёт дубликаты.
@@ -260,6 +261,7 @@ if SERVER then
         grm_item_drop     = "временный объект (выброшенный предмет)",
         grm_money_drop    = "временный объект (выброшенные деньги)",
         grm_ore_chunk     = "временный объект (добытая руда)",
+        grm_logistics_crate = "временный груз логистического рейса",
         grm_mobile_line   = "виртуальная станция, не физический объект",
     }
 
@@ -397,6 +399,54 @@ if SERVER then
         return true
     end
 
+    -- Общий снимок визуального состояния. Раньше обычный prop_physics
+    -- восстанавливал только модель/позицию и терял цвет, прозрачность,
+    -- материал, skin и bodygroups после рестарта.
+    local function captureEntity(rec, ent, transform)
+        if not (istable(rec) and IsValid(ent)) then return end
+        pcall(function() rec.model = tostring(ent:GetModel() or rec.model or "") end)
+        if transform ~= false then
+            local pos, ang = ent:GetPos(), ent:GetAngles()
+            rec.pos = { x = pos.x, y = pos.y, z = pos.z }
+            rec.ang = { p = ang.p, y = ang.y, r = ang.r }
+        end
+        local visual = {}
+        pcall(function() visual.material = string.sub(tostring(ent:GetMaterial() or ""), 1, 128) end)
+        pcall(function()
+            local c = ent:GetColor()
+            visual.color = { r = c.r, g = c.g, b = c.b, a = c.a }
+        end)
+        pcall(function() visual.renderMode = math.Clamp(math.floor(tonumber(ent:GetRenderMode()) or 0), 0, 10) end)
+        pcall(function() visual.renderFX = math.Clamp(math.floor(tonumber(ent:GetRenderFX()) or 0), 0, 24) end)
+        pcall(function() visual.skin = math.max(0, math.floor(tonumber(ent:GetSkin()) or 0)) end)
+        visual.bodygroups = {}
+        pcall(function()
+            local count = math.min(32, math.max(0, tonumber(ent:GetNumBodyGroups()) or 0))
+            for i = 0, count - 1 do visual.bodygroups[tostring(i)] = math.max(0, math.floor(tonumber(ent:GetBodygroup(i)) or 0)) end
+        end)
+        rec.visual = visual
+    end
+
+    local function applyVisual(ent, rec)
+        if not (IsValid(ent) and istable(rec) and istable(rec.visual)) then return end
+        local v = rec.visual
+        if isstring(v.material) and #v.material <= 128 and not v.material:find("..", 1, true) then
+            pcall(function() ent:SetMaterial(v.material) end)
+        end
+        if istable(v.color) then
+            pcall(function() ent:SetColor(Color(math.Clamp(tonumber(v.color.r) or 255, 0, 255), math.Clamp(tonumber(v.color.g) or 255, 0, 255), math.Clamp(tonumber(v.color.b) or 255, 0, 255), math.Clamp(tonumber(v.color.a) or 255, 0, 255))) end)
+        end
+        if v.renderMode ~= nil then pcall(function() ent:SetRenderMode(math.Clamp(math.floor(tonumber(v.renderMode) or 0), 0, 10)) end) end
+        if v.renderFX ~= nil then pcall(function() ent:SetKeyValue("renderfx", math.Clamp(math.floor(tonumber(v.renderFX) or 0), 0, 24)) end) end
+        if v.skin ~= nil then pcall(function() ent:SetSkin(math.max(0, math.floor(tonumber(v.skin) or 0))) end) end
+        if istable(v.bodygroups) then
+            for k, value in pairs(v.bodygroups) do
+                local idx = tonumber(k)
+                if idx and idx >= 0 and idx < 32 then pcall(function() ent:SetBodygroup(idx, math.max(0, math.floor(tonumber(value) or 0))) end) end
+            end
+        end
+    end
+
     local function sameSpot(a, b, classA, classB)
         if classA ~= classB then return false end
         local dx = (tonumber(a.x) or 0) - (tonumber(b.x) or 0)
@@ -497,77 +547,71 @@ if SERVER then
     local function isOccupied(class, pos)
         local center = Vector(tonumber(pos.x) or 0, tonumber(pos.y) or 0, tonumber(pos.z) or 0)
         for _, ent in ipairs(ents.FindInSphere(center, PERM_RANGE)) do
-            if IsValid(ent) and tostring(ent:GetClass() or "") == class then return true end
+            if IsValid(ent) and tostring(ent:GetClass() or "") == class then return ent end
         end
-        return false
+        return nil
     end
 
-    -- Возвращает: сколько заспавнено, сколько пропущено (уже стоят)
+    local function restoreState(ent, rec)
+        if not (IsValid(ent) and istable(rec)) then return false end
+        local kind = tostring(rec.ownerKind or "server")
+        ent._grmPerm = true
+        ent._grmPermKind = kind
+        ent._grmPermUID = rec.uid
+        if kind == "character" and isstring(rec.owner) and rec.owner ~= "" then
+            ent.GRM_PropOwnerCharacterKey = rec.owner
+            ent.GRM_EntityOwnerCharacterKey = rec.owner
+            ent.GRM_EntityOwnerName = tostring(rec.ownerName or "")
+            pcall(function()
+                ent:SetNWString("GRM_PropOwnerCharacterKey", rec.owner)
+                ent:SetNWString("GRM_EntityOwnerCharacterKey", rec.owner)
+                ent:SetNWString("GRM_PropOwnerName", tostring(rec.ownerName or ""))
+                ent:SetNWString("GRM_EntityOwnerName", tostring(rec.ownerName or ""))
+            end)
+        elseif kind == "faction" then
+            ent.GRM_PermFaction = tostring(rec.faction or "")
+            pcall(function()
+                ent:SetNWString("GRM_PermFaction", tostring(rec.faction or ""))
+                ent:SetNWString("GRM_EntityOwnerName", tostring(rec.faction or ""))
+            end)
+        elseif GRM.PropProtect and GRM.PropProtect.MarkServerEntity then
+            GRM.PropProtect.MarkServerEntity(ent)
+            ent._grmPermKind = "server"
+        end
+        pcall(function()
+            ent:SetNWBool("GRM_IsPerm", true)
+            ent:SetNWString("GRM_PermKind", ent._grmPermKind or "server")
+        end)
+        local applyFn = GRM.PermData and GRM.PermData.Apply and GRM.PermData.Apply[rec.class]
+        if istable(rec.data) and applyFn then pcall(applyFn, ent, rec.data) end
+        applyVisual(ent, rec)
+        local ph = ent.GetPhysicsObject and ent:GetPhysicsObject() or nil
+        if IsValid(ph) then ph:EnableMotion(rec.freeze == false) end
+        hook.Run("GRM_PermRestored", ent, rec)
+        return true
+    end
+
+    -- Возвращает: сколько заспавнено, сколько уже стояло и было привязано.
     local function spawnAll(reason)
         local map = game.GetMap()
         local done, skipped = 0, 0
         for _, rec in ipairs(loadDB()) do
             if rec.map == map and PERM_CLASSES[rec.class] then
-                if isOccupied(rec.class, rec.pos) then
+                local occupied = isOccupied(rec.class, rec.pos)
+                if IsValid(occupied) then
+                    -- Не просто «пропустить»: привязываем существующий объект
+                    -- к uid, восстанавливаем владение, визуал и данные модуля.
+                    restoreState(occupied, rec)
                     skipped = skipped + 1
                 else
                     local ent = ents.Create(rec.class)
                     if IsValid(ent) then
-                        if isstring(rec.model) and rec.model ~= "" then
-                            pcall(function() ent:SetModel(rec.model) end)
-                        end
+                        if isstring(rec.model) and rec.model ~= "" then pcall(function() ent:SetModel(rec.model) end) end
                         ent:SetPos(Vector(tonumber(rec.pos.x) or 0, tonumber(rec.pos.y) or 0, tonumber(rec.pos.z) or 0))
                         ent:SetAngles(Angle(tonumber(rec.ang.p) or 0, tonumber(rec.ang.y) or 0, tonumber(rec.ang.r) or 0))
                         ent:Spawn()
                         ent:Activate()
-                        -- Владение восстанавливается по записи (П1). Раньше
-                        -- ЛЮБОЙ перм безусловно становился «серверным», и
-                        -- запермленная дверь после рестарта уходила у
-                        -- владельца: PP.CanInteract проверяет IsServerEntity
-                        -- раньше IsOwner.
-                        local kind = tostring(rec.ownerKind or "server")
-                        ent._grmPerm = true
-                        ent._grmPermKind = kind
-                        ent._grmPermUID = rec.uid
-                        if kind == "character" and isstring(rec.owner) and rec.owner ~= "" then
-                            ent.GRM_PropOwnerCharacterKey = rec.owner
-                            ent.GRM_EntityOwnerCharacterKey = rec.owner
-                            ent.GRM_EntityOwnerName = tostring(rec.ownerName or "")
-                            pcall(function()
-                                ent:SetNWString("GRM_PropOwnerCharacterKey", rec.owner)
-                                ent:SetNWString("GRM_EntityOwnerCharacterKey", rec.owner)
-                                ent:SetNWString("GRM_PropOwnerName", tostring(rec.ownerName or ""))
-                                ent:SetNWString("GRM_EntityOwnerName", tostring(rec.ownerName or ""))
-                            end)
-                        elseif kind == "faction" then
-                            ent.GRM_PermFaction = tostring(rec.faction or "")
-                            pcall(function()
-                                ent:SetNWString("GRM_PermFaction", tostring(rec.faction or ""))
-                                ent:SetNWString("GRM_EntityOwnerName", tostring(rec.faction or ""))
-                            end)
-                        elseif GRM.PropProtect and GRM.PropProtect.MarkServerEntity then
-                            GRM.PropProtect.MarkServerEntity(ent)
-                            ent._grmPermKind = "server"
-                        end
-                        pcall(function()
-                            ent:SetNWBool("GRM_IsPerm", true)
-                            ent:SetNWString("GRM_PermKind", ent._grmPermKind or "server")
-                        end)
-                        -- freeze=false — объект остаётся подвижным (тележки, качели)
-                        if rec.freeze ~= false then
-                            local ph = ent:GetPhysicsObject()
-                            if IsValid(ph) then ph:EnableMotion(false) end -- перм не катается по карте
-                        end
-                        -- Код 105: данные экземпляра обратно (PIN кейпада,
-                        -- конфиг FFD-двери и т.п.) — после Spawn, чтобы
-                        -- NetworkVar'ы уже существовали
-                        local applyFn = GRM.PermData and GRM.PermData.Apply and GRM.PermData.Apply[rec.class]
-                        if istable(rec.data) and applyFn then
-                            pcall(applyFn, ent, rec.data)
-                        end
-                        -- Модули (сигнализация, банк, электроника) доподключают
-                        -- воскрешённый объект к своим реестрам
-                        hook.Run("GRM_PermRestored", ent, rec)
+                        restoreState(ent, rec)
                         done = done + 1
                     else
                         print("[GRM Perm][!] Не удалось создать класс " .. tostring(rec.class) .. " — запись пропущена")
@@ -626,6 +670,7 @@ if SERVER then
             faction = "", freeze = true, label = "",
             by = tostring(ply:SteamID64() or ""), byName = rpNameOf(ply), at = os.time(),
         }
+        captureEntity(rec, ent, false)
         -- Код 105: данные экземпляра (PIN кейпада, конфиг двери и т.п.)
         local extractFn = GRM.PermData and GRM.PermData.Extract and GRM.PermData.Extract[class]
         if extractFn then
@@ -708,13 +753,15 @@ if SERVER then
             local map = game.GetMap()
             local pos = ent:GetPos()
             local np = { x = pos.x, y = pos.y, z = pos.z }
+            local uid = ent._grmPermUID
             for _, rec in ipairs(list) do
-                if rec.map == map and rec.class == class and sameSpot(rec.pos, np, rec.class, class) then
+                local matched = isstring(uid) and uid ~= "" and rec.uid == uid
+                if not matched then matched = rec.map == map and rec.class == class and sameSpot(rec.pos, np, rec.class, class) end
+                if matched then
                     local okX, data = pcall(extractFn, ent)
-                    if okX and istable(data) then
-                        rec.data = data
-                        saveList(list)
-                    end
+                    if okX and istable(data) then rec.data = data end
+                    captureEntity(rec, ent, false)
+                    saveList(list)
                     break
                 end
             end
@@ -736,13 +783,17 @@ if SERVER then
         local pos = ent:GetPos()
         local np = { x = pos.x, y = pos.y, z = pos.z }
         local list = loadDB()
-        -- запись уже есть на месте — обновляем данные экземпляра
+        -- запись уже есть: uid главнее позиции (объект мог быть сдвинут).
+        local uid = ent._grmPermUID
         for _, rec in ipairs(list) do
-            if rec.map == map and rec.class == class and sameSpot(rec.pos, np, rec.class, class) then
+            local matched = isstring(uid) and uid ~= "" and rec.uid == uid
+            if not matched then matched = rec.map == map and rec.class == class and sameSpot(rec.pos, np, rec.class, class) end
+            if matched then
                 if extractFn then
                     local okX, data = pcall(extractFn, ent)
                     if okX and istable(data) then rec.data = data end
                 end
+                captureEntity(rec, ent, true)
                 saveList(list)
                 return "updated"
             end
@@ -760,15 +811,14 @@ if SERVER then
             faction = "", freeze = true, label = "",
             by = "", byName = "upsert", at = os.time(),
         }
+        captureEntity(rec, ent, false)
         if extractFn then
             local okX, data = pcall(extractFn, ent)
             if okX and istable(data) then rec.data = data end
         end
         list[#list + 1] = rec
         if saveList(list) then
-            ent._grmPerm = true
-            ent._grmPermKind = "server"
-            ent._grmPermUID = rec.uid
+            restoreState(ent, rec)
             print(("[GRM Perm] Upsert: создана запись %s @ %d %d %d"):format(class, np.x, np.y, np.z))
             return "added"
         end
@@ -890,10 +940,8 @@ if SERVER then
             ent.GRM_PermFaction = tostring(rec.faction or "")
             pcall(function() ent:SetNWString("GRM_PermFaction", tostring(rec.faction or "")) end)
         end
-        if rec.freeze ~= false then
-            local ph = ent:GetPhysicsObject()
-            if IsValid(ph) then ph:EnableMotion(false) end
-        end
+        local ph = ent.GetPhysicsObject and ent:GetPhysicsObject() or nil
+        if IsValid(ph) then ph:EnableMotion(rec.freeze == false) end
     end
 
     -- Закрепить объект. opts = {ownerKind, owner, ownerName, faction,
@@ -907,6 +955,10 @@ if SERVER then
 
         local okRight, whyRight = canManageRec(ply, nil)
         if not okRight then return false, whyRight end
+        if IsValid(ply) and not ply:IsSuperAdmin() and GRM.PropProtect and isfunction(GRM.PropProtect.CanInteract)
+            and GRM.PropProtect.CanInteract(ply, ent, "tool") ~= true then
+            return false, "закреплять можно только собственный или разрешённый фракционный объект"
+        end
 
         local list = loadDB()
         local map = game.GetMap()
@@ -980,6 +1032,7 @@ if SERVER then
             byName = IsValid(ply) and rpNameOf(ply) or "console",
             at = os.time(),
         }
+        captureEntity(rec, ent, false)
 
         local extractFn = GRM.PermData and GRM.PermData.Extract and GRM.PermData.Extract[rec.class]
         if extractFn then
@@ -1018,7 +1071,7 @@ if SERVER then
             ent:SetNWBool("GRM_IsPerm", false)
             ent:SetNWString("GRM_PermKind", "")
         end)
-        local ph = ent:GetPhysicsObject()
+        local ph = ent.GetPhysicsObject and ent:GetPhysicsObject() or nil
         if IsValid(ph) then ph:EnableMotion(true) end
 
         hook.Run("GRM_PermRemoved", ent, rec, ply)
@@ -1041,10 +1094,7 @@ if SERVER then
         local okOwn, whyOwn = canManageRec(ply, rec)
         if not okOwn then return false, whyOwn end
 
-        local pos, ang = ent:GetPos(), ent:GetAngles()
-        rec.pos = { x = pos.x, y = pos.y, z = pos.z }
-        rec.ang = { p = ang.p, y = ang.y, r = ang.r }
-        pcall(function() rec.model = tostring(ent:GetModel() or rec.model or "") end)
+        captureEntity(rec, ent, true)
 
         if opts.freeze ~= nil then rec.freeze = (opts.freeze ~= false) end
         if opts.label ~= nil then rec.label = tostring(opts.label) end
@@ -1088,6 +1138,27 @@ if SERVER then
     -- Совместимость: старые вызовы Upsert/UpdateEntry остаются рабочими
     P.Upsert      = function(ent) return GRM.PermData.Upsert(ent) end
     P.UpdateEntry = function(ent) return GRM.PermData.UpdateEntry(ent) end
+
+    -- Старые /permadd и /permremove теперь используют тот же API, что
+    -- grm_perm_tool. Раньше это был отдельный слабый путь: /permadd не
+    -- замораживал объект сразу и иначе сохранял/искал запись.
+    addPerm = function(ply)
+        local ent = aimEntity(ply)
+        if not IsValid(ent) then tell(ply, "Наведи прицел на энтити (до 256 юнитов).", 255, 200, 80) return end
+        local ok, msg, rec = P.Add(ply, ent, { ownerKind = "server", freeze = true })
+        if ok then
+            tell(ply, "[ПЕРМ] " .. tostring(rec and rec.class or ent:GetClass()) .. " закреплён через единый API.", 100, 220, 100)
+        else
+            tell(ply, "[ПЕРМ] " .. tostring(msg), 255, 120, 120)
+        end
+    end
+    removePerm = function(ply)
+        local ent = aimEntity(ply)
+        if not IsValid(ent) then tell(ply, "Наведи прицел на перм-энтити.", 255, 200, 80) return end
+        local ok, msg = P.Remove(ply, ent, true)
+        if ok then tell(ply, "[ПЕРМ] Объект снят с карты и удалён из базы.", 235, 180, 60)
+        else tell(ply, "[ПЕРМ] " .. tostring(msg), 255, 120, 120) end
+    end
 
     local function loadPerm(ply)
         local spawned, skipped = spawnAll("ручная загрузка")

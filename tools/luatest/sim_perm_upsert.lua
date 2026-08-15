@@ -9,6 +9,7 @@
 -- (round-trip через память: TableToJSON сохраняет таблицу, JSONToTable её
 -- возвращает — честный контур loadList/saveList).
 local pass, fail = 0, 0
+local realExit = os.exit
 local function ok(v, n) if v then pass = pass + 1 print("  ok  " .. n) else fail = fail + 1 print("  FAIL " .. n) end end
 
 -- ── глобальные моки ──
@@ -49,7 +50,7 @@ net = {
   Receive = function() end, ReadEntity = function() end, ReadString = function() end,
   ReadBool = function() end, ReadUInt = function() end, ReadTable = function() end,
 }
-hook = { Add = function() end }
+hook = { Add = function() end, Run = function() end }
 timer = { Simple = function() end, Create = function() end }
 concommand = { Add = function() end }
 ents = { FindInSphere = function() return {} end, Create = function() return nil end }
@@ -127,4 +128,4 @@ ok(resL == "limit", "Upsert: лимит 256 = limit")
 ok(#lastTbl == 256, "Upsert: база не превысила лимит")
 
 print(string.format("sim_perm_upsert: %d ok, %d fail", pass, fail))
-os.exit(fail > 0 and 1 or 0)
+realExit(fail > 0 and 1 or 0)
