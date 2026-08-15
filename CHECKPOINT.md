@@ -2,7 +2,7 @@
 
 **Обновлено:** 2026-08-15
 **Текущая ветка:** `arena/01a0041b-drstrasse`
-**Текущая точка:** Код 62 Persistence Guard; Build Tools 61, QMenu 4.2.0, Fire 1.5.0, Documents 2.1.0, Perm 1.6.0.
+**Текущая точка:** Код 62 Persistence Guard; Build Tools 61, QMenu 4.2.0, Fire 1.5.0, Documents 2.1.0, Perm 1.6.1.
 **Репо:** `https://github.com/DrStrasse/DrStrasse`
 **Следующий свободный номер модуля:** **Код 63**.
 

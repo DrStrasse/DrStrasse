@@ -340,5 +340,12 @@ for name in pairs(mem) do if name:find("bak") then bakCountAfter = bakCountAfter
 ok(again[1].uid == uidBefore, "Миграция идемпотентна: uid не переписан")
 ok(bakCountAfter == bakCountBefore, "Миграция идемпотентна: второй бэкап не создан")
 
+-- ══ 16. Многофазная загрузка старта карты ══
+local permSource = assert(io.open("lua/autorun/sh_grm_perm_entities.lua", "rb")):read("*a")
+ok(permSource:find("GRM_PermEntities_BootRetry", 1, true) ~= nil, "Boot: серия повторных восстановлений зарегистрирована")
+ok(permSource:find('timer.Create("GRM_PermEntities_BootRetry", 2, 10', 1, true) ~= nil, "Boot: проверки идут 20 секунд")
+ok(permSource:find("GRM_PermEntities_FirstPlayer", 1, true) ~= nil, "Boot: есть fallback на первого игрока")
+ok(permSource:find("occupied._grmPermUID ~= rec.uid", 1, true) ~= nil, "Boot: повторы идемпотентны по uid")
+
 print(string.format("sim_perm_tool: %d ok, %d fail", pass, fail))
 if fail > 0 then os.exit(1) end

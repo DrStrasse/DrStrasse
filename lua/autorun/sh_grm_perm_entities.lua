@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Perm Entities v1.6.0 (Код 50/Код 89)
+    GRM Perm Entities v1.6.1 (Код 50/Код 89)
     «Пермы» для разворачиваемых энтити GRM: банкомат, таксофон, АТС,
     телефоны, CCTV-камера/монитор/сервер, сигнализация (сенсор/хаб/терминал/
     динамик), кейпад, RoomTap (чип/сервер/терминал), рудный узел/скупщик,
@@ -42,7 +42,7 @@
 -- Код 110: перм агрегатов кухни (плита/холодильник/горшок) — состояние
 -- (лоток плиты, содержимое холодильника, посадка) едет в rec.data
 -- через GRM.PermData-делегаты sh_grm_food_kitchen.lua.
-local PERM_VER = "1.6.0"
+local PERM_VER = "1.6.1"
 GRM = GRM or {}
 GRM._permEntitiesVer = PERM_VER
 
@@ -623,7 +623,8 @@ if SERVER then
                 if IsValid(occupied) then
                     -- Не просто «пропустить»: привязываем существующий объект
                     -- к uid, восстанавливаем владение, визуал и данные модуля.
-                    restoreState(occupied, rec)
+                    -- Повторные boot-проверки уже привязанный объект не трогают.
+                    if occupied._grmPermUID ~= rec.uid then restoreState(occupied, rec) end
                     skipped = skipped + 1
                 else
                     local ent = ents.Create(rec.class)
@@ -645,11 +646,38 @@ if SERVER then
             :format(tostring(map), done, skipped, tostring(reason or "?")))
         return done, skipped
     end
+    -- Некоторые gamemode выполняют собственную позднюю очистку уже ПОСЛЕ
+    -- InitPostEntity. Единственный вызов через 1с успевал создать пермы, затем
+    -- их снимала эта очистка без PostCleanupMap. Ручная cleanup работала,
+    -- потому что её PostCleanupMap снова вызывал spawnAll.
+    --
+    -- Восстановление идемпотентно: isOccupied + uid не дают дублей. Поэтому
+    -- первые 20 секунд проверяем карту серией проходов, а при входе первого
+    -- игрока делаем финальную страховочную сверку.
+    local function startBootRestore(reason)
+        if timer.Remove then timer.Remove("GRM_PermEntities_BootRetry") end
+        timer.Simple(0, function() spawnAll(tostring(reason) .. " immediate") end)
+        timer.Create("GRM_PermEntities_BootRetry", 2, 10, function()
+            spawnAll(tostring(reason) .. " retry")
+        end)
+    end
+
     hook.Add("InitPostEntity", "GRM_PermEntities_Spawn", function()
-        timer.Simple(1, function() spawnAll("InitPostEntity") end)
+        startBootRestore("InitPostEntity")
+    end)
+    hook.Add("PostGamemodeLoaded", "GRM_PermEntities_PostGamemode", function()
+        timer.Simple(0, function() startBootRestore("PostGamemodeLoaded") end)
     end)
     hook.Add("PostCleanupMap", "GRM_PermEntities_Cleanup", function()
-        timer.Simple(0.5, function() spawnAll("PostCleanupMap") end)
+        timer.Simple(0.2, function() spawnAll("PostCleanupMap") end)
+        timer.Simple(1.2, function() spawnAll("PostCleanupMap verify") end)
+    end)
+
+    local firstPlayerRestore = false
+    hook.Add("PlayerInitialSpawn", "GRM_PermEntities_FirstPlayer", function()
+        if firstPlayerRestore then return end
+        firstPlayerRestore = true
+        timer.Simple(1, function() spawnAll("first player fallback") end)
     end)
 
     -- ── Действия ────────────────────────────────────────────
