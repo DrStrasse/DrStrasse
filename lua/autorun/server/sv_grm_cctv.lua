@@ -325,7 +325,12 @@ function CCTV.LoadPermanent()
     return spawned + healed
 end
 function CCTV.SaveAll()
-    local ok=CCTV.SavePermanent();return ok==true,ok and"CCTV сохранено"or"ошибка сохранения CCTV"
+    local promoted,total=0,0
+    for _,ent in pairs(CCTV.Devices or{})do
+        if IsValid(ent)and isCCTVClass(classOf(ent))then total=total+1;if not ent:GetPermanent()then promoted=promoted+1 end;ent:SetPermanent(true)end
+    end
+    local ok=CCTV.SavePermanent()
+    return ok==true,ok and("CCTV сохранено; устройств: "..total..", закреплено: "..promoted)or"ошибка сохранения CCTV"
 end
 function CCTV.LoadAll()
     CCTV.LoadPermanent();return CCTV.PersistenceLoadBlocked~=true,"CCTV: "..tostring(CCTV.LastLoadDetail or"загрузка завершена")

@@ -928,6 +928,12 @@ function RT.LoadShopOwned()
 end
 
 function RT.SaveAll(ply)
+    local promoted=0
+    for class in pairs(RT.DeviceClasses)do
+        for _,ent in ipairs(ents.FindByClass(class))do
+            if IsValid(ent)and not ent.GRMRoomTapShopID then if not ent:GetPermanent()then promoted=promoted+1 end;ent:SetPermanent(true)end
+        end
+    end
     for _,path in ipairs({ACCESS_FILE,SHOP_FILE})do
         if RT.LoadBlocked[path]then
             local guard=GRM.PersistenceGuard
@@ -939,7 +945,7 @@ function RT.SaveAll(ply)
     local accessOK, accessDetail = RT.SaveAccess()
     local shopOK, shopDetail = RT.SaveShopOwned()
     return mapOK == true and accessOK == true and shopOK == true,
-        tostring(mapDetail) .. "; " .. tostring(accessDetail) .. "; " .. tostring(shopDetail)
+        tostring(mapDetail) .. "; закреплено устройств="..promoted.."; " .. tostring(accessDetail) .. "; " .. tostring(shopDetail)
 end
 
 function RT.LoadAll(ply)

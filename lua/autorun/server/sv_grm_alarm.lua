@@ -486,7 +486,12 @@ function A.LoadPermanent()
     return created
 end
 function A.SaveAll()
-    local ok=A.SavePermanent();return ok==true,ok and"сигнализация сохранена"or"ошибка сохранения сигнализации"
+    local promoted=0
+    for _,ent in pairs(A.Devices or{})do
+        if IsValid(ent)and isAlarmClass(classOf(ent))then if not ent:GetPermanent()then promoted=promoted+1 end;ent:SetPermanent(true)end
+    end
+    local ok=A.SavePermanent()
+    return ok==true,ok and("сигнализация сохранена; устройств: "..tostring(table.Count(A.Devices or{}))..", закреплено: "..promoted)or"ошибка сохранения сигнализации"
 end
 function A.LoadAll()
     A.LoadPermanent();return A.PersistenceLoadBlocked~=true,"сигнализация: "..tostring(A.LastLoadDetail or"загрузка завершена")

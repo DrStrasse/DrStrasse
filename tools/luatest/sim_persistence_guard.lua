@@ -72,7 +72,8 @@ ok(guardSrc:find('"grm_food/vending_" .. map',1,true) and guardSrc:find('"grm_fa
    "guard snapshots food vending and all factory support databases")
 ok(guardSrc:find('"grm_logistics/access.json"',1,true) and guardSrc:find('"grm_saves/" .. map',1,true)
    and guardSrc:find('"grm_saves/grm_orespawns_" .. map',1,true)
-   and guardSrc:find('"grm_roomtap/temporary_equipment.json"',1,true),
-   "guard snapshots logistics, mining, ore points and RoomTap support databases")
+   and guardSrc:find('"grm_roomtap/temporary_equipment.json"',1,true)
+   and guardSrc:find('"grm_equipment/" .. map',1,true),
+   "guard snapshots logistics, mining, ore points, RoomTap and equipment manifest")
 print(("PERSIST GUARD: %d/%d failures=%d"):format(pass,pass+fail,fail))
 os.exit(fail>0 and 1 or 0)

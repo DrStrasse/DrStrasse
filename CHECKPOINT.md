@@ -2,11 +2,11 @@
 
 **Обновлено:** 2026-08-15
 **Текущая ветка:** `arena/01a0041b-drstrasse`
-**Текущая точка:** Код 62 Persistence Guard; Build Tools 61, QMenu 4.2.0, Fire 1.5.1, Documents 2.1.0, Perm 1.7.1, Persistence Hub 1.3.1, Guard 1.4, Equipment Persistence 1.1, Sliding 1.1.0, FFD Link 1.2.0, Prop Protect 2.1.0.
+**Текущая точка:** Код 62 Persistence Guard; Build Tools 61, QMenu 4.2.0, Fire 1.5.1, Documents 2.1.0, Perm 1.7.1, Persistence Hub 1.4, Guard 1.5, Equipment Persistence 1.1, Sliding 1.1.0, FFD Link 1.2.0, Prop Protect 2.1.0.
 **Репо:** `https://github.com/DrStrasse/DrStrasse`
 **Следующий свободный номер модуля:** **Код 63**.
 
-Сначала читать актуальный `HANDOVER.md` и находки **129**, **134**, **135**, **136**, **137**, **138** в `ANALYSIS.md`.
+Сначала читать актуальный `HANDOVER.md` и находки **129**, **134**, **135**, **136**, **137**, **138**, **139** в `ANALYSIS.md`.
 Разделы ниже сохранены как историческая диагностика пожарной системы; команды
 со старыми Arena-ветками больше не выполнять. Master — неполный снапшот.
 
@@ -14,7 +14,15 @@
 
 ---
 
-## Актуальный последний фикс: canonical backup extension (находка 138)
+## Актуальный последний фикс: OK без entity закрыт manifest-ом (находка 139)
+
+- Save All автоматически делает все живые Alarm/CCTV/RoomTap map-устройства Permanent.
+- Параллельно пишется `data/grm_equipment/<map>.json` со всеми ожидаемыми GRM entity.
+- После boot/cleanup и каждые 30с manifest восстанавливает отсутствующие классы по ID/позиции без дублей.
+- Модульные JSON по-прежнему восстанавливают настройки; manifest гарантирует физическое наличие entity.
+- Контроль: **491/491 syntax, 79/79 sim, 16/16 roundtrip**.
+
+## Предыдущий фикс: canonical backup extension (находка 138)
 
 - Ошибки materialize были общими для новых `*.json.backup`: GMod не создавал файл с финальным расширением `.backup`.
 - Guard 1.4 пишет canonical `*_backup.json`, но читает и старое, и новое имя.

@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Persistence Guard v1.4.0 (Код 62)
+    GRM Persistence Guard v1.5.0 (Код 62)
 
     Загружается раньше остальных GRM-модулей и снимает boot-копию важных
     DATA-файлов до того, как какой-либо поздний загрузчик успеет записать
@@ -12,7 +12,7 @@ if not SERVER then return end
 GRM = GRM or {}
 GRM.PersistenceGuard = GRM.PersistenceGuard or {}
 local P = GRM.PersistenceGuard
-P.Version = "1.4.0"
+P.Version = "1.5.0"
 P.Boot = P.Boot or {}
 
 local function jsonT(raw)
@@ -161,6 +161,7 @@ for _, path in ipairs({
     "grm_roomtap/temporary_equipment.json", "grm_roomtap/temporary_equipment.json.backup",
     "grm_cctv/" .. map .. ".json", "grm_cctv/" .. map .. ".json.backup",
     "grm_alarm/" .. map .. ".json", "grm_alarm/" .. map .. ".json.backup",
+    "grm_equipment/" .. map .. ".json", "grm_equipment/" .. map .. ".json.backup",
 }) do
     snapshot(path)
     local canonical = P.CanonicalBackup("", path)

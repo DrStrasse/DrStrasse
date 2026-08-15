@@ -26,7 +26,7 @@ game={GetMap=function()return"gm_equipment"end}
 local mem, blobs, blobN={}, {}, 0
 local function copy(v)local o;if type(v)~="table"then return v end;o={};for k,x in pairs(v)do o[k]=copy(x)end;return o end
 file={Exists=function(p)return mem[p]~=nil end,Read=function(p)return mem[p]end,Write=function(p,v)mem[p]=v end,CreateDir=function()end,IsDir=function()return true end}
-util={}
+util={AddNetworkString=function()end}
 function util.TableToJSON(t)blobN=blobN+1;local k="JSON"..blobN;blobs[k]=copy(t);return k end
 function util.JSONToTable(raw)return blobs[raw]and copy(blobs[raw])or nil end
 
@@ -34,6 +34,7 @@ local H={hooks={},timers={}}
 hook={Add=function(n,id,fn)H.hooks[n]=H.hooks[n]or{};H.hooks[n][id]=fn end,Run=function()end}
 timer={Create=function(n,d,r,fn)H.timers[n]=fn end,Remove=function(n)H.timers[n]=nil end,Simple=function(_,fn)fn()end}
 concommand={Add=function()end}
+net={Receive=function()end,Start=function()end,WriteBool=function()end,WriteString=function()end,Send=function()end,ReadString=function()return""end}
 
 local world={};local nextID=0
 local function phys(owner)
@@ -100,6 +101,20 @@ local guard=GRM.PersistenceGuard;guard.BeginManualSave("equipment repair")
 local repaired,repairDetail=MP.SaveAll(nil)
 guard.EndManualSave()
 ok(repaired==true,"explicit manual SaveAll archives corruption and repairs from live state: "..tostring(repairDetail))
+
+-- Central equipment manifest is a final fallback when a module reports OK but wrote 0 records.
+dofile("lua/autorun/server/sv_grm_persistence_hub.lua")
+local PH=GRM.PersistenceHub
+local manifestOK,manifestDetail=PH.SaveManifest()
+ok(manifestOK==true,"equipment manifest saves expected live entities: "..tostring(manifestDetail))
+local manifest=util.JSONToTable(mem["grm_equipment/gm_equipment.json"])
+ok(manifest and manifest.records and #manifest.records==2,"manifest contains manual node + buyer, excludes automatic node")
+for _,e in ipairs(world)do if IsValid(e)and(e:GetClass()=="grm_ore_buyer"or(e:GetClass()=="grm_ore_node"and not e.GRMOreSpawned))then e:Remove()end end
+local reconcileOK,reconcileDetail=PH.ReconcileManifest("sim")
+ok(reconcileOK==true and #ents.FindByClass("grm_ore_node")==2 and #ents.FindByClass("grm_ore_buyer")==1,
+   "manifest recreates missing equipment entities: "..tostring(reconcileDetail))
+PH.ReconcileManifest("sim repeat")
+ok(#ents.FindByClass("grm_ore_node")==2 and #ents.FindByClass("grm_ore_buyer")==1,"manifest repeat is idempotent")
 
 print(("EQUIPMENT PERSISTENCE: %d/%d failures=%d"):format(pass,pass+fail,fail))
 if fail>0 then os.exit(1)end

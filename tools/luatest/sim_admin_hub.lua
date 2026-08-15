@@ -302,6 +302,10 @@ ok(alarmSrc:find("function A.SaveAll",1,true) and alarmSrc:find("validatePermane
 ok(electronicsSrc:find("local mapOK=E.SaveMap();local dbOK=E.SaveDB()",1,true)
    and electronicsSrc:find("if not dbOK then return false",1,true),
    "электроника: SaveAll пишет оба контура, LoadAll fail-closed по DB")
+ok(hubSrc:find("function GRM.PersistenceHub.SaveManifest",1,true)
+   and hubSrc:find("function GRM.PersistenceHub.ReconcileManifest",1,true)
+   and hubSrc:find("GRM_EquipmentManifest_Watchdog",1,true),
+   "хаб: central equipment manifest сохраняет ожидаемые entity и самовосстанавливается")
 
 -- не-админ не может сохранять
 calls = {}
