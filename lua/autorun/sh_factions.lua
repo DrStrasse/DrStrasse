@@ -1490,9 +1490,12 @@ if CLIENT then
     end)
 
     net.Receive(NET_DEP_MSG, function()
-        local r, g, b = net.ReadUInt(8), net.ReadUInt(8), net.ReadUInt(8)
+        -- Цвет фракции читаем для совместимости сетевого протокола, но
+        -- государственная волна целиком отображается белым. Один текстовый
+        -- сегмент не даёт EasyChat протянуть красно-розовый цвет тега дальше.
+        net.ReadUInt(8) net.ReadUInt(8) net.ReadUInt(8)
         local msg = net.ReadString()
-        chat.AddText(Color(r, g, b), "[Волна] ", Color(255, 255, 255), msg)
+        chat.AddText(Color(255, 255, 255), "[Волна] " .. tostring(msg or ""))
     end)
 
     net.Receive(NET_DEPB_MSG, function()
