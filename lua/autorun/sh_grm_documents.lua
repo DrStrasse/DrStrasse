@@ -1097,6 +1097,34 @@ if SERVER then
 
             if GRM.Notify then GRM.Notify(ply, "Вы предъявили удостоверение военного водителя ВАИ игроку " .. targetName .. ".", 100, 220, 130) end
 
+        elseif docType == "weaponLicense" or docType == "weapon_license" then
+            local wl = ensureWeaponLicense(ply)
+            if not wl then
+                if GRM.Notify then GRM.Notify(ply, "У вас нет лицензии на оружие.", 255, 140, 110) end
+                return
+            end
+            local tpl = DOC.Templates.weaponLicense or {}
+            broadcastDocAction(ply, string.format("предъявил(а) лицензию на оружие игроку %s (№%s)", targetName, wl.number or "—"))
+            net.Start(NET_RECEIVE_VIEW)
+                net.WriteString("weaponLicense") net.WriteTable(wl) net.WriteTable(tpl)
+                net.WriteBool(true) net.WriteString(senderName)
+            net.Send(target)
+            if GRM.Notify then GRM.Notify(ply, "Вы предъявили лицензию на оружие игроку " .. targetName .. ".", 100, 220, 130) end
+
+        elseif docType == "businessLicense" or docType == "business_license" then
+            local bl = ensureBusinessLicense(ply)
+            if not bl then
+                if GRM.Notify then GRM.Notify(ply, "У вас нет лицензии на ведение бизнеса.", 255, 140, 110) end
+                return
+            end
+            local tpl = DOC.Templates.businessLicense or {}
+            broadcastDocAction(ply, string.format("предъявил(а) лицензию на ведение бизнеса игроку %s (№%s, «%s»)", targetName, bl.number or "—", bl.businessName or "—"))
+            net.Start(NET_RECEIVE_VIEW)
+                net.WriteString("businessLicense") net.WriteTable(bl) net.WriteTable(tpl)
+                net.WriteBool(true) net.WriteString(senderName)
+            net.Send(target)
+            if GRM.Notify then GRM.Notify(ply, "Вы предъявили лицензию на бизнес игроку " .. targetName .. ".", 100, 220, 130) end
+
         elseif docType == "medcard" then
             if GRM.Medical then
                 local cardKey = getCharKey(ply)

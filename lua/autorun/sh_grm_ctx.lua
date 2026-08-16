@@ -153,6 +153,11 @@ if SERVER then
         local milLic = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.milLicenses and GRM.Documents.Registry.milLicenses[key]
         result.hasMilLicense = (milLic ~= nil and milLic.status ~= "Аннулировано" and milLic.status ~= "Лишён ВАИ")
 
+        local weaponLic = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.weaponLicenses and GRM.Documents.Registry.weaponLicenses[key]
+        result.hasWeaponLicense = weaponLic ~= nil
+        local businessLic = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.businessLicenses and GRM.Documents.Registry.businessLicenses[key]
+        result.hasBusinessLicense = businessLic ~= nil
+
         if factionName and FactionsExt and FactionsExt[factionName] then
             local cfg = FactionsExt[factionName]
             local member = faction and GRM.Identity.FactionMember(faction, ply)
@@ -420,6 +425,15 @@ local function actShowMilLicense()
     net.SendToServer()
 end
 
+local function actShowWeaponLicense()
+    local ap=istable(data.aimPly) and data.aimPly or nil
+    net.Start("GRM_Doc_ShowDoc") net.WriteString("weaponLicense") net.WriteEntity(Entity(ap and ap.idx or 0)) net.SendToServer()
+end
+local function actShowBusinessLicense()
+    local ap=istable(data.aimPly) and data.aimPly or nil
+    net.Start("GRM_Doc_ShowDoc") net.WriteString("businessLicense") net.WriteEntity(Entity(ap and ap.idx or 0)) net.SendToServer()
+end
+
 local function actOwnPassport()
     net.Start("GRM_Doc_OpenDoc")
         net.WriteString("passport")
@@ -471,6 +485,13 @@ local function actOwnMilLicense()
         net.WriteString("milLicense")
         net.WriteString("military")
     net.SendToServer()
+end
+
+local function actOwnWeaponLicense()
+    net.Start("GRM_Doc_OpenDoc") net.WriteString("weaponLicense") net.SendToServer()
+end
+local function actOwnBusinessLicense()
+    net.Start("GRM_Doc_OpenDoc") net.WriteString("businessLicense") net.SendToServer()
 end
 
 local function actOwnMedCard()
@@ -583,6 +604,18 @@ local BTNS = {
       fn = actShowMilLicense,
       c = Color(42, 105, 52), ch = Color(60, 135, 70),
       ok = function() return istable(data.aimPly) and data.hasMilLicense == true end },
+    { id = "doc_weapon_lic", l = function()
+          local n=istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
+          return "Показать лицензию на оружие: " .. GRM.Utf8Ellipsis(n,12)
+      end,
+      fn=actShowWeaponLicense, c=Color(55,105,75), ch=Color(70,135,95),
+      ok=function() return istable(data.aimPly) and data.hasWeaponLicense==true end },
+    { id = "doc_business_lic", l = function()
+          local n=istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
+          return "Показать бизнес-лицензию: " .. GRM.Utf8Ellipsis(n,12)
+      end,
+      fn=actShowBusinessLicense, c=Color(35,115,115), ch=Color(50,145,145),
+      ok=function() return istable(data.aimPly) and data.hasBusinessLicense==true end },
     { id = "doc_diploma", l = function()
           local n = istable(data.aimPly) and tostring(data.aimPly.name or "игроку") or "игроку"
           n = GRM.Utf8Ellipsis(n, 14)
@@ -624,6 +657,12 @@ local BTNS = {
       fn = actOwnMilLicense,
       c = Color(42, 105, 52), ch = Color(60, 135, 70),
       ok = function() return not istable(data.aimPly) and data.hasMilLicense == true end },
+    { id = "doc_self_weapon_lic", l = "Моя лицензия на оружие",
+      fn=actOwnWeaponLicense, c=Color(55,105,75), ch=Color(70,135,95),
+      ok=function() return not istable(data.aimPly) and data.hasWeaponLicense==true end },
+    { id = "doc_self_business_lic", l = "Моя бизнес-лицензия",
+      fn=actOwnBusinessLicense, c=Color(35,115,115), ch=Color(50,145,145),
+      ok=function() return not istable(data.aimPly) and data.hasBusinessLicense==true end },
     { id = "doc_self_med", l = "Моя медкарта",
       fn = actOwnMedCard,
       c = Color(35, 120, 95), ch = Color(45, 150, 120),
@@ -688,12 +727,20 @@ local function drawMenu()
     if #list == 0 then return end
 
     local vehBar = istable(data.veh) and 22 or 0
-    local th = #list * (bh + gap) - gap + pad * 2 + vehBar
-    local x, y = sw - bw - 20, MENU_Y
+    -- Документов стало больше: при нехватке высоты меню автоматически
+    -- раскладывается в несколько колонок и не уезжает за нижний край.
+    local maxH=math.max(180,sh-MENU_Y-20)
+    local rowsPerCol=math.max(1,math.floor((maxH-pad*2-vehBar+gap)/(bh+gap)))
+    local cols=math.max(1,math.ceil(#list/rowsPerCol))
+    local visibleRows=math.min(#list,rowsPerCol)
+    local colW=bw+pad*2
+    local totalW=cols*colW+(cols-1)*gap
+    local th=visibleRows*(bh+gap)-gap+pad*2+vehBar
+    local x,y=sw-totalW-20,MENU_Y
 
-    draw.RoundedBox(6, x, y, bw + pad * 2, th, BG)
+    draw.RoundedBox(6,x,y,totalW,th,BG)
     surface.SetDrawColor(BORD)
-    surface.DrawOutlinedRect(x, y, bw + pad * 2, th, 1)
+    surface.DrawOutlinedRect(x,y,totalW,th,1)
 
     -- шапка с текущим Т/С (Код 82): имя + статус замка
     if vehBar > 0 then
@@ -701,18 +748,19 @@ local function drawMenu()
         vt = GRM.Utf8Ellipsis(vt, 26)
         local lockCol = data.veh.locked and Color(230, 120, 110) or Color(120, 220, 140)
         draw.SimpleText(vt .. "  •  " .. (data.veh.locked and "ЗАКРЫТА" or "ОТКРЫТА"),
-            "GRMCtx_Normal", x + pad + bw / 2, y + pad + 9, lockCol, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            "GRMCtx_Normal", x + totalW / 2, y + pad + 9, lockCol, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
 
     local mx, my = gui.MouseX(), gui.MouseY()
     local down = input.IsMouseDown(MOUSE_LEFT)
     local click = down and not wasDown
-    local cy = y + pad + vehBar
-
     if armed.id and CurTime() > (armed.untilT or 0) then armed.id = nil end -- протухло подтверждение
 
-    for _, b in ipairs(list) do
-        local bx, by = x + pad, cy
+    for bi,b in ipairs(list) do
+        local col=math.floor((bi-1)/rowsPerCol)
+        local row=(bi-1)%rowsPerCol
+        local bx=x+col*(colW+gap)+pad
+        local by=y+pad+vehBar+row*(bh+gap)
         local col, colH = b.c, b.ch
         if b.id == "tp" then
             col = tp and Color(60, 160, 80) or b.c
@@ -741,7 +789,6 @@ local function drawMenu()
                 end
             end
         end
-        cy = cy + bh + gap
     end
     wasDown = down
 end
