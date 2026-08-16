@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Jobs Exchange v2.0.0 (Код 77) — Биржа труда
+    GRM Jobs Exchange v3.0.0 (Код 77) — Биржа труда
 
     v1.1.0 (заказ владельца «фракции выставляют свои работы для найма»):
       - ВАКАНСИИ фракций поверх разовых заказов: лидер ставит зарплату
@@ -55,7 +55,7 @@ GRM = GRM or {}
 GRM.Jobs = GRM.Jobs or {}
 local JB = GRM.Jobs
 
-JB.Version     = "2.1.0"  -- работы: курьер / мусоровоз / таксист + новый UI
+JB.Version     = "3.0.0"  -- работы: курьер / мусоровоз / таксист + новый UI
 JB.DataFile    = "grm_jobs.json"
 JB.ActiveFile  = "grm_jobs_active.json"
 JB.Rotate      = 300      -- смена вакансий, сек
@@ -295,7 +295,11 @@ if SERVER then
         return fname ~= nil and (JB.Cfg.allow[fname] == true) and isLeader(ply, fname), fname
     end
 
-    local function depots()
+    local function depots(kind)
+        if JB.GetRoutePoints then
+            local custom = JB.GetRoutePoints(kind)
+            if istable(custom) and #custom > 0 then return custom end
+        end
         local out = {}
         for _, e in ipairs(ents.FindByClass("grm_depot")) do
             if IsValid(e) then out[#out + 1] = e end
@@ -327,8 +331,8 @@ if SERVER then
     local function vecTbl(v) return { x = v.x, y = v.y, z = v.z } end
 
     local function buildOffers(center)
-        local dps = depots()
-        if #dps == 0 then return nil, "В городе не расставлены точки доставки. Обратитесь к администрации (/jobdepot_add)." end
+        local dps = depots("all")
+        if #dps == 0 then return nil, "В городе не настроены точки работ. Обратитесь к администрации (/jobs_admin)." end
         local cpos = center:GetPos()
         local seed = math.floor(CurTime() / JB.Rotate) * 7919 + center:EntIndex() * 31
         local out = {}
@@ -338,10 +342,17 @@ if SERVER then
                 local s = seed + idx * 104729
                 local offer
                 if tid == "garbage" then
-                    -- контейнеры + финальная свалка
-                    local need = (tonumber(tpl.points) or 2) + 1
-                    local pk = seededPick(s, dps, need)
-                    if pk then
+                    -- Контейнеры и свалка теперь имеют разные типы точек.
+                    local bins = depots("garbage")
+                    local dumps = depots("dump")
+                    local count = (JB.WorkConfig and tonumber(JB.WorkConfig.garbageStops)) or tonumber(tpl.points) or 2
+                    local picked = seededPick(s, bins, count)
+                    local dump = dumps[(s % math.max(1, #dumps)) + 1]
+                    local pk = picked or seededPick(s, dps, count)
+                    if pk and ((dump and dump.GetPos) or #dumps == 0) then
+                        dump = (dump and dump.GetPos) and dump or seededPick(s + 17, dps, 1)[1]
+                        pk[#pk + 1] = dump
+                        local need = #pk
                         local routeDist, prev = 0, cpos
                         for _, e in ipairs(pk) do routeDist = routeDist + prev:Distance(e:GetPos()); prev = e:GetPos() end
                         local pts, names = {}, {}
@@ -359,7 +370,11 @@ if SERVER then
                         }
                     end
                 elseif tid == "taxi" then
-                    local pk = seededPick(s, dps, 2)
+                    local pickups = depots("taxi_pickup")
+                    local drops = depots("taxi_dropoff")
+                    local a = seededPick(s, pickups, 1)
+                    local b = seededPick(s + 29, drops, 1)
+                    local pk = (a and b) and { a[1], b[1] } or seededPick(s, dps, 2)
                     if pk then
                         local d = math.floor(pk[1]:GetPos():Distance(pk[2]:GetPos()))
                         offer = {
@@ -372,7 +387,9 @@ if SERVER then
                         }
                     end
                 else
-                    local dep = dps[(s % #dps) + 1]
+                    local courier = depots("courier")
+                    if #courier == 0 then courier = dps end
+                    local dep = courier[(s % #courier) + 1]
                     local d = math.floor(cpos:Distance(dep:GetPos()))
                     offer = {
                         tplId = tid, title = tpl.title, desc = tpl.desc, jtype = tpl.jtype,
@@ -417,6 +434,7 @@ if SERVER then
                     needVehicle = j.needVehicle == true,
                     pointIndex = j.pointIndex or 1,
                     points = j.points, pointNames = j.pointNames,
+                    tplId = j.tplId, budgetEscrow = tonumber(j.budgetEscrow) or 0,
                     fromPost = j.fromPost and true or false,
                     postFac = j.postFac, postId = j.postId, postKind = j.postKind,
                 }
@@ -445,6 +463,7 @@ if SERVER then
                     needVehicle = r.needVehicle == true,
                     pointIndex = tonumber(r.pointIndex) or 1,
                     points = r.points, pointNames = r.pointNames,
+                    tplId = r.tplId, budgetEscrow = tonumber(r.budgetEscrow) or 0,
                     fromPost = r.fromPost == true, postFac = r.postFac, postId = r.postId,
                     postKind = r.postKind,
                 }
@@ -511,6 +530,7 @@ if SERVER then
                     stageName = stageName,
                     pointsTotal = #(j.points or {}),
                     pointIndex = tonumber(j.pointIndex) or 1,
+                    tplId = j.tplId, budgetEscrow = tonumber(j.budgetEscrow) or 0,
                     fromPost = j.fromPost and true or false,
                     postFac = tostring(j.postFac or ""),
                 })
@@ -527,7 +547,17 @@ if SERVER then
             if GRM.Notify then GRM.Notify(ply, "У вас уже есть активная задача. /jobcancel — отказаться.", 255, 190, 90) end
             return false
         end
+        local reserved = 0
+        if not fields.fromPost and JB.ReserveSystemReward then
+            local ok, amountOrWhy = JB.ReserveSystemReward(ply, fields.tplId or fields.jtype, fields.reward)
+            if not ok then
+                if GRM.Notify then GRM.Notify(ply, tostring(amountOrWhy or "В городской казне недостаточно средств."), 255, 130, 110) end
+                return false
+            end
+            reserved = tonumber(amountOrWhy) or 0
+        end
         JB.Active[sd] = {
+            tplId = fields.tplId, budgetEscrow = reserved,
             title = fields.title, desc = fields.desc or "",
             jtype = fields.jtype or "goto", stage = 1,
             stayLeft = fields.staySec or 0,
@@ -630,6 +660,9 @@ if SERVER then
         local j = JB.Active[sd]
         if not istable(j) then return end
         JB.Active[sd] = nil
+        if not j.fromPost and (tonumber(j.budgetEscrow) or 0) > 0 and JB.RefundSystemReward then
+            JB.RefundSystemReward(j.budgetEscrow, tostring(why or "провал"))
+        end
         releasePost(j, why)
         saveActive("провал: " .. tostring(why))
         local p = isstring(ply) and nil or ply
@@ -654,11 +687,12 @@ if SERVER then
                         local pp = ply:GetPos()
                         local inVeh = ply:InVehicle() == true
                         local needVeh = j.needVehicle == true
-                        -- работа на транспорте: прогресс идёт только за рулём
-                        if needVeh and not inVeh then
+                        local vehicleOK = inVeh and (not JB.IsWorkVehicleAllowed or JB.IsWorkVehicleAllowed(ply, j.tplId or j.jtype))
+                        -- Работа на транспорте: прогресс идёт только за рулём разрешённой машины.
+                        if needVeh and not vehicleOK then
                             if (j._hintT or 0) < CurTime() then
                                 j._hintT = CurTime() + 10
-                                if GRM.Notify then GRM.Notify(ply, "Для этой работы нужен транспорт — сядьте за руль.", 255, 190, 90) end
+                                if GRM.Notify then GRM.Notify(ply, "Для этой работы нужен разрешённый транспорт — сядьте за руль подходящей машины.", 255, 190, 90) end
                             end
                         elseif j.jtype == "garbage" then
                             local pts = j.points or {}
@@ -762,7 +796,9 @@ if SERVER then
         JB._lastOffers[sid64(ply)] = { list = offers or {}, at = os.time(), center = ent:GetPos() }
         local wire = {}
         for _, o in ipairs(offers or {}) do
-            wire[#wire + 1] = { idx = o.idx, tplId = o.tplId, title = o.title, desc = o.desc, jtype = o.jtype, reward = o.reward, timeSec = o.timeSec, staySec = o.staySec, dist = o.dist, zoneRadius = o.zoneRadius, zoneName = o.zoneName, needVehicle = o.needVehicle == true, icon = o.icon, color = o.color }
+            local shownReward = o.reward
+            if o.tplId == "taxi" and JB.GetTaxiFare then shownReward = JB.GetTaxiFare(ply, shownReward) end
+            wire[#wire + 1] = { idx = o.idx, tplId = o.tplId, title = o.title, desc = o.desc, jtype = o.jtype, reward = shownReward, timeSec = o.timeSec, staySec = o.staySec, dist = o.dist, zoneRadius = o.zoneRadius, zoneName = o.zoneName, needVehicle = o.needVehicle == true, icon = o.icon, color = o.color }
         end
         local sd = sid64(ply)
         local j = JB.Active[sd]
@@ -836,9 +872,11 @@ if SERVER then
             if GRM.Notify then GRM.Notify(ply, "Вакансия не найдена (список обновился).", 255, 190, 90) end
             return
         end
+        local reward = offer.reward
+        if offer.tplId == "taxi" and JB.GetTaxiFare then reward = JB.GetTaxiFare(ply, reward) end
         JB.StartJob(ply, {
-            title = offer.title, desc = offer.desc, jtype = offer.jtype,
-            reward = offer.reward, timeSec = offer.timeSec, staySec = offer.staySec,
+            tplId = offer.tplId, title = offer.title, desc = offer.desc, jtype = offer.jtype,
+            reward = reward, timeSec = offer.timeSec, staySec = offer.staySec,
             target = offer.target, center = offer.center or rec.center,
             zoneRadius = offer.zoneRadius, zoneName = offer.zoneName,
             needVehicle = offer.needVehicle == true,
