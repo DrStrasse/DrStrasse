@@ -1,6 +1,7 @@
 # GRM — Garry's Mod RP-сборка (DrStrasse)
 
 > Передача дел новой сессии: **сначала `CHECKPOINT.md`**, потом `HANDOVER.md`.
+> Актуальный архитектурный аудит и roadmap: **`ROADMAP_GRM_2026.md`**.
 > Рабочая ветка этой сессии — **`arena/019ffaa2-drstrasse`** (не `019f69c8`).
 > Master — старый пустой снапшот, с него не работать.
 
