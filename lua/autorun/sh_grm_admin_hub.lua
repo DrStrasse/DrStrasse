@@ -28,7 +28,7 @@ GRM = GRM or {}
 GRM.AdminHub = GRM.AdminHub or {}
 local HB = GRM.AdminHub
 
-HB.Version = "1.1.1"
+HB.Version = "1.2.0"
 
 local NET_GET  = "GRM_HUB_Get"
 local NET_DATA = "GRM_HUB_Data"
@@ -601,6 +601,13 @@ if CLIENT then
     local function buildAccess(sc, d)
         sc:Clear()
         local fs = istable(d.factions) and d.factions or {}
+        local core = block(sc, 74, "GRM Core • единые capability:", C.acc)
+        local coreText = vgui.Create("DLabel", core)
+        coreText:SetPos(12, 27); coreText:SetSize(650, 36); coreText:SetFont("GRMHub_Small"); coreText:SetTextColor(C.text)
+        coreText:SetWrap(true); coreText:SetText("Общие allow/deny для фракций, ролей, отделов, аккаунтов и персонажей. Явное решение сильнее старой матрицы ниже.")
+        local coreButton = mkBtn(core, "Открыть единые права", C.acc, 220, 30)
+        coreButton:SetPos(700, 27); coreButton.DoClick = function() RunConsoleCommand("grm_access") end
+
         local note = vgui.Create("DLabel", sc)
         note:Dock(TOP) note:SetTall(34) note:SetFont("GRMHub_Small") note:SetTextColor(C.dim)
         note:SetText("Те же хранилища, что /factions → «Доступы» и /board_allow /bcast_allow /alert_allow /job_allow. Суперадмин может всё без галочек.")

@@ -167,10 +167,18 @@ if SERVER then
         net.Send(ply)
     end
 
-    net.Receive(NET_REQ, function(_, ply) sendData(ply) end)
+    local function adminGuard(ply, key, bits, maxBits)
+        if not (IsValid(ply) and ply:IsSuperAdmin()) then return false end
+        if GRM.Net and GRM.Net.Guard then
+            return GRM.Net.Guard(ply, key, { rate = .75, burst = 2, maxBits = maxBits,
+                permission = function(actor) return actor:IsSuperAdmin() end }, { bits = bits }) == true
+        end
+        return true
+    end
+    net.Receive(NET_REQ, function(bits, ply) if adminGuard(ply, "cctv.access.open", bits, 1024) then sendData(ply) end end)
 
-    net.Receive(NET_SAVE, function(_, ply)
-        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+    net.Receive(NET_SAVE, function(bits, ply)
+        if not adminGuard(ply, "cctv.access.save", bits, 524288) then return end
         local data = net.ReadTable() or {}
         data = normalizeAccess(data)
         -- Steam: только string-ключи
@@ -181,13 +189,14 @@ if SERVER then
             end
         end
         data.Steam = steam
-        AM.Save(data)
+        local ok = AM.Save(data)
+        if ok and GRM.Audit and GRM.Audit.Write then GRM.Audit.Write("access", "cctv.legacy.save", ply, {}, { publicView = data.PublicView == true }) end
         -- Синхронизируем PublicView в live-конфиг CCTV
         if GRM.CCTV and GRM.CCTV.Config and GRM.CCTV.Config.Access then
             GRM.CCTV.Config.Access.PublicView = data.PublicView and true or false
         end
-        sendResult(ply, true, "Доступ к CCTV сохранён.")
-        sendData(ply)
+        sendResult(ply, ok == true, ok and "Доступ к CCTV сохранён." or "Ошибка записи доступа CCTV.")
+        if ok then sendData(ply) end
     end)
 
     local function hasAccessByData(ply)
@@ -257,6 +266,12 @@ if SERVER then
 
         GRM.CCTV.CanView = function(ply)
             if not IsValid(ply) then return false end
+            if GRM.Access and GRM.Access.Explicit then
+                local decision = GRM.Access.Explicit(ply, "cctv.view")
+                if decision ~= nil then return decision == true end
+                local configure = GRM.Access.Explicit(ply, "cctv.configure")
+                if configure == true then return true end -- configure implies view
+            end
             if AM.IsPublicView() then return true end
             return AM.HasAccess(ply)
         end
@@ -264,6 +279,10 @@ if SERVER then
         GRM.CCTV.CanConfigure = function(ply, ent)
             if not IsValid(ply) then return false end
             if ply:IsSuperAdmin() then return true end
+            if GRM.Access and GRM.Access.Explicit then
+                local decision = GRM.Access.Explicit(ply, "cctv.configure")
+                if decision ~= nil then return decision == true end
+            end
             if not AM.HasAccess(ply) then return false end
             -- владелец entity тоже может крутить «своё»
             if IsValid(ent) and ent.GetOwnerSteam then

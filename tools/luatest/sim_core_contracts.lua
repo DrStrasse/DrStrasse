@@ -39,6 +39,8 @@ ok(allowed==true and source:find("grant:",1,true)==1,"faction grant allows capab
 GRM.Access.Grants[#GRM.Access.Grants+1]={capability="medical.patient.edit",subjectType="character",subject="76561198000000001:char1",allow=false,enabled=true}
 allowed=GRM.Access.Check(ply,"medical.patient.edit")
 ok(allowed==false,"specific character deny overrides faction allow")
+local explicit, explicitSource=GRM.Access.Explicit(ply,"medical.patient.edit")
+ok(explicit==false and explicitSource:find("grant:",1,true)==1,"legacy adapters can read explicit decision without recursion")
 allowed=GRM.Access.Check(ply,"unknown.capability")
 ok(allowed==false,"unknown capability fails closed")
 
@@ -50,4 +52,14 @@ ok(med:find("GRM.Audit.Write",1,true)~=nil,"medical mutations use common audit")
 local perm=read("lua/autorun/sh_grm_perm_entities.lua")
 ok(perm:find('backend: %s',1,true)~=nil,"/perminfo displays backend")
 ok(perm:find('GRM.Persistence.Register("perm"',1,true)~=nil,"central perm adapter registered")
+local access=read("lua/autorun/sh_03_grm_access.lua")
+ok(access:find('concommand.Add("grm_access"',1,true)~=nil and access:find("PlayerSayTransform",1,true)~=nil,"unified editor has console, chat and EasyChat entry points")
+ok(access:find("GRM_AccessCore_Save",1,true)~=nil and access:find("GRM.Net.Guard",1,true)~=nil,"unified editor save is guarded")
+local hub=read("lua/autorun/sh_grm_admin_hub.lua")
+ok(hub:find('RunConsoleCommand("grm_access")',1,true)~=nil,"admin hub Access tab opens unified editor")
+for _,domain in ipairs({"fire","wanted","cctv","phone"})do
+ local src=read("lua/autorun/sh_grm_"..domain.."_access.lua")
+ ok(src:find("GRM.Access.Explicit",1,true)~=nil,domain.." honours explicit Core grants")
+ ok(src:find("GRM.Net.Guard",1,true)~=nil and src:find("GRM.Audit.Write",1,true)~=nil,domain.." legacy admin writes are guarded and audited")
+end
 print(("CORE CONTRACTS: %d checks, failures=%d"):format(checks,fail));os.exit(fail==0 and 0 or 1)

@@ -16,6 +16,14 @@ Vendor/CCTV/RadioNet/Perm зарегистрированы как владель
 оба C→S receiver получили rate/size guard, мутации пишутся в общий аудит.
 Старые UI, `Can*`, форматы и CharacterKey-семантика сохранены.
 
+Следующая итерация добавила единый крупный редактор `/grm_access` (`/доступы`):
+capability-фильтр, allow/deny и субъекты faction/role/department/account/character.
+Явные решения Core теперь применяются в Fire, Wanted, CCTV и Phone до их
+legacy-матриц; при отсутствии назначения поведение остаётся старым. Receiver
+открытия/сохранения этих четырёх access-панелей получили общий Net Guard,
+а сохранения — Audit. Phone access переведён на безопасный Persistence JSON
+с quarantine/read-back вместо голого `JSONToTable` и непроверенного `file.Write`.
+
 ## 1. Архитектура
 
 Единая точка интеграции — глобальный `GRM = GRM or {}` и глобальная

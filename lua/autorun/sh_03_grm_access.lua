@@ -4,7 +4,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Access = GRM.Access or {}
 local A = GRM.Access
-A.Version = "1.0.0"
+A.Version = "1.1.0"
 A.Capabilities = A.Capabilities or {}
 A.Providers = A.Providers or {}
 A.Grants = A.Grants or {}
@@ -76,6 +76,15 @@ local function explicitDecision(actor, capability)
         end
     end
     return decision, source
+end
+
+-- Explicit returns nil when Core has no assignment. Legacy Can* adapters use
+-- this to honour central grants without recursively calling A.Check.
+function A.Explicit(ply, capability)
+    capability = string.lower(string.Trim(tostring(capability or "")))
+    if not A.Capabilities[capability] or not (IsValid(ply) and ply.IsPlayer and ply:IsPlayer()) then return nil end
+    if A.Capabilities[capability].superadminBypass ~= false and ply:IsSuperAdmin() then return true, "superadmin" end
+    return explicitDecision(A.Actor(ply), capability)
 end
 
 function A.Check(ply, capability, context)
@@ -151,11 +160,19 @@ if SERVER then
         if not istable(grants) then return false, "grants_required" end
         local clean = {}
         for _, grant in ipairs(grants) do
-            if istable(grant) and (grant.capability == "*" or A.Capabilities[grant.capability]) and SUBJECT_PRIORITY[grant.subjectType] then
+            if #clean >= 512 then break end
+            local capability = istable(grant) and string.lower(tostring(grant.capability or "")) or ""
+            local kind = istable(grant) and tostring(grant.subjectType or "") or ""
+            local subject = istable(grant) and string.Trim(tostring(grant.subject or "")) or ""
+            local faction = istable(grant) and string.Trim(tostring(grant.faction or "")) or ""
+            local validSubject = kind == "everyone"
+                or (kind == "character" and GRM.Identity and GRM.Identity.IsCharacterKey and GRM.Identity.IsCharacterKey(subject))
+                or (kind == "account" and subject:match("^%d+$") ~= nil)
+                or ((kind == "faction" or kind == "role" or kind == "department") and subject ~= "")
+            if istable(grant) and (capability == "*" or A.Capabilities[capability]) and SUBJECT_PRIORITY[kind] and validSubject then
                 clean[#clean + 1] = {
-                    capability = tostring(grant.capability), subjectType = tostring(grant.subjectType),
-                    subject = tostring(grant.subject or ""), faction = tostring(grant.faction or ""),
-                    allow = grant.allow ~= false, enabled = grant.enabled ~= false,
+                    capability = capability, subjectType = kind, subject = kind == "everyone" and "" or subject,
+                    faction = faction, allow = grant.allow ~= false, enabled = grant.enabled ~= false,
                 }
             end
         end
@@ -190,6 +207,226 @@ if SERVER then
     A.Capabilities["phone.equipment.use"].legacy = function(ply)
         if GRM.Phone and GRM.Phone.HasEquipmentAccess then return GRM.Phone.HasEquipmentAccess(ply), "legacy_phone" end
     end
+end
+
+-- Unified capability editor. Old domain access windows remain available
+-- during migration; this editor adds explicit overrides above them.
+local NET_OPEN = "GRM_AccessCore_Open"
+local NET_SAVE = "GRM_AccessCore_Save"
+local NET_RESULT = "GRM_AccessCore_Result"
+
+if SERVER then
+    util.AddNetworkString(NET_OPEN)
+    util.AddNetworkString(NET_SAVE)
+    util.AddNetworkString(NET_RESULT)
+
+    local function factionPayload()
+        local out = {}
+        for name, faction in pairs(Factions or {}) do
+            if istable(faction) then
+                local roles, departments = {}, {}
+                for role in pairs(faction.Roles or {}) do roles[#roles + 1] = tostring(role) end
+                for department in pairs(faction.Departments or {}) do departments[#departments + 1] = tostring(department) end
+                table.sort(roles); table.sort(departments)
+                out[#out + 1] = { name = tostring(name), roles = roles, departments = departments }
+            end
+        end
+        table.sort(out, function(a, b) return a.name < b.name end)
+        return out
+    end
+
+    local function sendEditor(ply)
+        if not (IsValid(ply) and ply:IsSuperAdmin()) then return end
+        net.Start(NET_OPEN)
+            net.WriteTable(A.List())
+            net.WriteTable(factionPayload())
+            net.WriteTable(A.Grants or {})
+        net.Send(ply)
+    end
+
+    local function guard(ply, key, bits, maxBits)
+        if not (IsValid(ply) and ply:IsSuperAdmin()) then return false end
+        if GRM.Net and GRM.Net.Guard then
+            return GRM.Net.Guard(ply, key, { rate = 0.75, burst = 2, maxBits = maxBits,
+                permission = function(actor) return actor:IsSuperAdmin() end }, { bits = bits }) == true
+        end
+        return true
+    end
+
+    net.Receive(NET_OPEN, function(bits, ply)
+        if not guard(ply, "access.editor.open", bits, 1024) then return end
+        sendEditor(ply)
+    end)
+    net.Receive(NET_SAVE, function(bits, ply)
+        if not guard(ply, "access.editor.save", bits, 1048576) then return end
+        local incoming = net.ReadTable()
+        local before = #(A.Grants or {})
+        local ok, reason = A.SetGrants(incoming)
+        if ok and GRM.Audit and GRM.Audit.Write then
+            GRM.Audit.Write("access", "grants.save", ply, { file = "grm_core/access_grants.json" }, { before = before, after = #A.Grants })
+        end
+        net.Start(NET_RESULT); net.WriteBool(ok == true); net.WriteString(tostring(reason or (ok and "saved" or "error"))); net.Send(ply)
+        if ok then sendEditor(ply) end
+    end)
+
+    local function openEditor(ply)
+        if not (IsValid(ply) and ply:IsSuperAdmin()) then
+            if IsValid(ply) then ply:ChatPrint("[GRM Access] Только superadmin.") end
+            return
+        end
+        sendEditor(ply)
+    end
+    concommand.Add("grm_access", openEditor)
+    hook.Add("PlayerSay", "GRM_AccessCore_Chat", function(ply, text)
+        local msg = string.lower(string.Trim(tostring(text or "")))
+        if msg == "/grm_access" or msg == "!grm_access" or msg == "/доступы" then openEditor(ply) return "" end
+    end)
+    hook.Add("PlayerSayTransform", "GRM_AccessCore_EasyChat", function(ply, text, datapack)
+        local msg = string.lower(string.Trim(tostring(text or "")))
+        if msg ~= "/grm_access" and msg ~= "!grm_access" and msg ~= "/доступы" then return end
+        openEditor(ply); datapack.SkipPlayerSay = true; datapack[1] = ""
+    end)
+end
+
+if CLIENT then
+    surface.CreateFont("GRMCoreAccessTitle", { font = "Roboto", size = 24, weight = 800, extended = true })
+    surface.CreateFont("GRMCoreAccessText", { font = "Roboto", size = 16, weight = 500, extended = true })
+    surface.CreateFont("GRMCoreAccessSmall", { font = "Roboto", size = 13, weight = 400, extended = true })
+    local COL = { bg = Color(17, 20, 26, 252), panel = Color(27, 32, 41), row = Color(35, 41, 52),
+        accent = Color(170, 45, 60), green = Color(65, 170, 105), red = Color(195, 70, 75),
+        text = Color(235, 238, 242), dim = Color(150, 160, 175) }
+
+    local function button(parent, text, color)
+        local btn = vgui.Create("DButton", parent); btn:SetText(""); btn.Label = text; btn.Col = color or COL.accent
+        btn.Paint = function(self, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, self:IsHovered() and Color(self.Col.r + 18, self.Col.g + 18, self.Col.b + 18) or self.Col)
+            draw.SimpleText(self.Label, "GRMCoreAccessText", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+        return btn
+    end
+
+    local function sortedFactionNames(factions)
+        local out = {}; for _, row in ipairs(factions or {}) do out[#out + 1] = row.name end; return out
+    end
+
+    local function openEditor(capabilities, factions, grants)
+        if IsValid(A._editor) then A._editor:Remove() end
+        local frame = vgui.Create("DFrame"); frame:SetSize(ScrW() * .94, ScrH() * .92); frame:Center(); frame:SetTitle("")
+        frame:MakePopup(); frame:ShowCloseButton(true); frame:SetSizable(true); frame:SetMinWidth(1050); frame:SetMinHeight(650)
+        frame.Paint = function(_, w, h)
+            draw.RoundedBox(10, 0, 0, w, h, COL.bg)
+            draw.SimpleText("GRM CORE • ЕДИНЫЕ ПРАВА", "GRMCoreAccessTitle", 24, 22, COL.text)
+            draw.SimpleText("Явные назначения имеют приоритет над старыми матрицами доступа", "GRMCoreAccessSmall", 24, 51, COL.dim)
+        end
+        A._editor = frame
+        if GRM.UI and GRM.UI.Track then GRM.UI.Track("core.access", frame) end
+
+        local work = table.Copy(grants or {})
+        local selectedCapability = capabilities[1] and capabilities[1].id or ""
+        local selectedGrant = nil
+        local left = vgui.Create("DPanel", frame); left.Paint = function(_,w,h) draw.RoundedBox(8,0,0,w,h,COL.panel) end
+        local middle = vgui.Create("DPanel", frame); middle.Paint = left.Paint
+        local right = vgui.Create("DPanel", frame); right.Paint = left.Paint
+
+        local search = vgui.Create("DTextEntry", left); search:SetFont("GRMCoreAccessText"); search:SetPlaceholderText("Поиск capability...")
+        local capList = vgui.Create("DListView", left); capList:SetMultiSelect(false); capList:AddColumn("Capability"); capList:AddColumn("Название")
+        local grantList = vgui.Create("DListView", middle); grantList:SetMultiSelect(false)
+        grantList:AddColumn("Решение"):SetFixedWidth(90); grantList:AddColumn("Тип"):SetFixedWidth(100); grantList:AddColumn("Субъект"); grantList:AddColumn("Фракция")
+
+        local title = vgui.Create("DLabel", right); title:SetFont("GRMCoreAccessTitle"); title:SetTextColor(COL.text); title:SetText("НОВОЕ НАЗНАЧЕНИЕ")
+        local typeBox = vgui.Create("DComboBox", right); typeBox:SetFont("GRMCoreAccessText")
+        for _, kind in ipairs({"everyone", "faction", "role", "department", "account", "character"}) do typeBox:AddChoice(kind, kind) end
+        typeBox:ChooseOptionID(2)
+        local factionBox = vgui.Create("DComboBox", right); factionBox:SetFont("GRMCoreAccessText"); factionBox:SetValue("Фракция")
+        for _, name in ipairs(sortedFactionNames(factions)) do factionBox:AddChoice(name, name) end
+        local subjectBox = vgui.Create("DComboBox", right); subjectBox:SetFont("GRMCoreAccessText"); subjectBox:SetValue("Роль / отдел")
+        local subjectEntry = vgui.Create("DTextEntry", right); subjectEntry:SetFont("GRMCoreAccessText"); subjectEntry:SetPlaceholderText("SteamID64 или CharacterKey")
+        local hint = vgui.Create("DLabel", right); hint:SetFont("GRMCoreAccessSmall"); hint:SetTextColor(COL.dim); hint:SetWrap(true)
+        hint:SetText("Фракция — выберите название. Роль/отдел — сначала фракцию. Account — SteamID64. Character — SteamID64:charN.")
+        local allowBtn = button(right, "ДОБАВИТЬ РАЗРЕШЕНИЕ", COL.green)
+        local denyBtn = button(right, "ДОБАВИТЬ ЗАПРЕТ", COL.red)
+        local deleteBtn = button(middle, "УДАЛИТЬ ВЫБРАННОЕ", COL.red)
+        local saveBtn = button(frame, "СОХРАНИТЬ ВСЕ НАЗНАЧЕНИЯ", COL.accent)
+        local status = vgui.Create("DLabel", frame); status:SetFont("GRMCoreAccessSmall"); status:SetTextColor(COL.dim); status:SetText("Несохранённые изменения отсутствуют")
+
+        local function factionData(name)
+            for _, row in ipairs(factions or {}) do if row.name == name then return row end end
+        end
+        local function currentKind() local _, data = typeBox:GetSelected(); return data or "faction" end
+        local function refreshSubjectControls()
+            local kind = currentKind(); local fac = select(2, factionBox:GetSelected()) or ""
+            factionBox:SetVisible(kind == "faction" or kind == "role" or kind == "department")
+            subjectBox:SetVisible(kind == "role" or kind == "department")
+            subjectEntry:SetVisible(kind == "account" or kind == "character")
+            subjectBox:Clear()
+            local row = factionData(fac); local values = row and (kind == "role" and row.roles or row.departments) or {}
+            for _, value in ipairs(values) do subjectBox:AddChoice(value, value) end
+            subjectBox:SetValue(kind == "role" and "Выберите роль" or "Выберите отдел")
+        end
+        typeBox.OnSelect = refreshSubjectControls; factionBox.OnSelect = function() refreshSubjectControls() end
+
+        local function refillCaps(filter)
+            capList:Clear(); filter = string.lower(string.Trim(filter or ""))
+            for _, cap in ipairs(capabilities or {}) do
+                if filter == "" or string.find(string.lower(cap.id .. " " .. cap.label), filter, 1, true) then
+                    local line = capList:AddLine(cap.id, cap.label); line.Capability = cap.id
+                    if cap.id == selectedCapability then capList:SelectItem(line) end
+                end
+            end
+        end
+        local function refillGrants()
+            grantList:Clear(); selectedGrant = nil
+            for index, grant in ipairs(work) do
+                if grant.capability == selectedCapability or selectedCapability == "*" then
+                    local line = grantList:AddLine(grant.allow == false and "ЗАПРЕТ" or "РАЗРЕШЕНО", grant.subjectType,
+                        grant.subject == "" and "Все" or grant.subject, grant.faction or "")
+                    line.GrantIndex = index
+                end
+            end
+        end
+        search.OnChange = function(self) refillCaps(self:GetValue()) end
+        capList.OnRowSelected = function(_, _, line) selectedCapability = line.Capability or line:GetColumnText(1); refillGrants() end
+        grantList.OnRowSelected = function(_, _, line) selectedGrant = line.GrantIndex end
+
+        local function addGrant(allow)
+            if selectedCapability == "" then return end
+            local kind = currentKind(); local fac = select(2, factionBox:GetSelected()) or ""; local subject = ""
+            if kind == "faction" then subject = fac
+            elseif kind == "role" or kind == "department" then subject = select(2, subjectBox:GetSelected()) or ""
+            elseif kind == "account" or kind == "character" then subject = string.Trim(subjectEntry:GetValue()) end
+            if kind ~= "everyone" and subject == "" then status:SetText("Сначала выберите или введите субъект права"); status:SetTextColor(COL.red); return end
+            work[#work + 1] = { capability = selectedCapability, subjectType = kind, subject = subject,
+                faction = (kind == "role" or kind == "department") and fac or "", allow = allow, enabled = true }
+            status:SetText("Есть несохранённые изменения"); status:SetTextColor(Color(230,190,90)); refillGrants()
+        end
+        allowBtn.DoClick = function() addGrant(true) end; denyBtn.DoClick = function() addGrant(false) end
+        deleteBtn.DoClick = function()
+            if selectedGrant and work[selectedGrant] then table.remove(work, selectedGrant); status:SetText("Есть несохранённые изменения"); refillGrants() end
+        end
+        saveBtn.DoClick = function() net.Start(NET_SAVE); net.WriteTable(work); net.SendToServer(); status:SetText("Сохранение...") end
+
+        frame.PerformLayout = function(self, w, h)
+            local top, bottom, gap, leftW, rightW = 82, 66, 12, math.max(300, w * .29), math.max(310, w * .25)
+            left:SetPos(18, top); left:SetSize(leftW, h - top - bottom)
+            right:SetPos(w - rightW - 18, top); right:SetSize(rightW, h - top - bottom)
+            middle:SetPos(18 + leftW + gap, top); middle:SetSize(w - leftW - rightW - 36 - gap * 2, h - top - bottom)
+            search:SetPos(12,12); search:SetSize(left:GetWide()-24,36); capList:SetPos(12,58); capList:SetSize(left:GetWide()-24,left:GetTall()-70)
+            grantList:SetPos(12,12); grantList:SetSize(middle:GetWide()-24,middle:GetTall()-64); deleteBtn:SetPos(12,middle:GetTall()-44); deleteBtn:SetSize(middle:GetWide()-24,32)
+            title:SetPos(16,16); title:SetSize(right:GetWide()-32,34); typeBox:SetPos(16,64); typeBox:SetSize(right:GetWide()-32,36)
+            factionBox:SetPos(16,110); factionBox:SetSize(right:GetWide()-32,36); subjectBox:SetPos(16,156); subjectBox:SetSize(right:GetWide()-32,36)
+            subjectEntry:SetPos(16,156); subjectEntry:SetSize(right:GetWide()-32,36); hint:SetPos(16,205); hint:SetSize(right:GetWide()-32,80)
+            allowBtn:SetPos(16,right:GetTall()-100); allowBtn:SetSize(right:GetWide()-32,36); denyBtn:SetPos(16,right:GetTall()-54); denyBtn:SetSize(right:GetWide()-32,36)
+            saveBtn:SetPos(w-330,h-52); saveBtn:SetSize(312,36); status:SetPos(18,h-49); status:SetSize(w-370,30)
+        end
+        refillCaps(""); refillGrants(); refreshSubjectControls()
+    end
+
+    net.Receive(NET_OPEN, function() openEditor(net.ReadTable() or {}, net.ReadTable() or {}, net.ReadTable() or {}) end)
+    net.Receive(NET_RESULT, function()
+        local ok, reason = net.ReadBool(), net.ReadString()
+        notification.AddLegacy(ok and "Единые права сохранены" or ("Ошибка: " .. reason), ok and NOTIFY_GENERIC or NOTIFY_ERROR, 5)
+    end)
+    concommand.Add("grm_access", function() net.Start(NET_OPEN); net.SendToServer() end)
 end
 
 print("[GRM Access] capability core v" .. A.Version .. " loaded")

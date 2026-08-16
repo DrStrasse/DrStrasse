@@ -94,16 +94,14 @@ if SERVER then
 
     function AM.Load()
         ensureDir()
-        if not file.Exists(ACCESS_FILE, "DATA") then
-            AM.Data = normalizeAccess({})
+        if GRM.Persistence and GRM.Persistence.LoadJSON then
+            local data = GRM.Persistence.LoadJSON(ACCESS_FILE, { version = 1 })
+            AM.Data = normalizeAccess(data)
             return AM.Data
         end
+        if not file.Exists(ACCESS_FILE, "DATA") then AM.Data = normalizeAccess({}) return AM.Data end
         local raw = file.Read(ACCESS_FILE, "DATA") or ""
-        if raw == "" then
-            AM.Data = normalizeAccess({})
-            return AM.Data
-        end
-        local ok, data = pcall(util.JSONToTable, raw)
+        local ok, data = pcall(util.JSONToTable, raw, false, true)
         AM.Data = normalizeAccess(ok and data or {})
         return AM.Data
     end
@@ -111,7 +109,13 @@ if SERVER then
     function AM.Save(data)
         ensureDir()
         AM.Data = normalizeAccess(data or AM.Data or {})
-        file.Write(ACCESS_FILE, util.TableToJSON(AM.Data, true))
+        AM.Data.version = 1
+        if GRM.Persistence and GRM.Persistence.SaveJSON then
+            return GRM.Persistence.SaveJSON(ACCESS_FILE, AM.Data, { version = 1 })
+        end
+        local encoded = util.TableToJSON(AM.Data, true)
+        file.Write(ACCESS_FILE, encoded)
+        return file.Read(ACCESS_FILE, "DATA") == encoded
     end
 
     AM.Load()
@@ -152,23 +156,35 @@ if SERVER then
         net.Send(ply)
     end
 
-    net.Receive(NET_REQ, function(_, ply)
-        sendData(ply)
+    local function adminGuard(ply, key, bits, maxBits)
+        if not (IsValid(ply) and ply:IsSuperAdmin()) then return false end
+        if GRM.Net and GRM.Net.Guard then
+            return GRM.Net.Guard(ply, key, { rate = .75, burst = 2, maxBits = maxBits,
+                permission = function(actor) return actor:IsSuperAdmin() end }, { bits = bits }) == true
+        end
+        return true
+    end
+    net.Receive(NET_REQ, function(bits, ply)
+        if adminGuard(ply, "phone.access.open", bits, 1024) then sendData(ply) end
     end)
 
-    net.Receive(NET_SAVE, function(_, ply)
-        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
-        local data = net.ReadTable() or {}
-        data = normalizeAccess(data)
-        AM.Save(data)
-        sendResult(ply, true, "Доступ к оборудованию телефонии сохранён.")
-        sendData(ply)
+    net.Receive(NET_SAVE, function(bits, ply)
+        if not adminGuard(ply, "phone.access.save", bits, 524288) then return end
+        local data = normalizeAccess(net.ReadTable() or {})
+        local ok = AM.Save(data)
+        if ok and GRM.Audit and GRM.Audit.Write then GRM.Audit.Write("access", "phone.legacy.save", ply, {}, {}) end
+        sendResult(ply, ok == true, ok and "Доступ к оборудованию телефонии сохранён." or "Ошибка записи доступа.")
+        if ok then sendData(ply) end
     end)
 
     local function hasAccessByData(ply)
         if not IsValid(ply) then return false, "invalid" end
         local cfg = AM.Config or {}
         if cfg.SuperAdminBypass ~= false and ply:IsSuperAdmin() then return true, "superadmin" end
+        if GRM.Access and GRM.Access.Explicit then
+            local decision, source = GRM.Access.Explicit(ply, "phone.equipment.use")
+            if decision ~= nil then return decision == true, source or "core_access" end
+        end
         if cfg.AdminBypass and ply:IsAdmin() then return true, "admin" end
 
         AM.Data = normalizeAccess(AM.Data or AM.Load())

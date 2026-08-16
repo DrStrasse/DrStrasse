@@ -152,6 +152,14 @@ if SERVER then
     local function check(ply, mode)
         if not IsValid(ply) then return false end
         if ply:IsSuperAdmin() then return true end
+        if GRM.Access and GRM.Access.Explicit then
+            local decision = GRM.Access.Explicit(ply, mode == "control" and "fire.dispatch" or "fire.fight")
+            if decision ~= nil then return decision == true end
+            if mode == "view" then
+                local dispatch = GRM.Access.Explicit(ply, "fire.dispatch")
+                if dispatch == true then return true end -- control implies view
+            end
+        end
         local data = normalize(AM.Data or AM.Load())
         if steamHas(mode == "control" and data.ControlSteam or data.ViewSteam, ply) then return true end
         if mode == "view" and steamHas(data.ControlSteam, ply) then return true end
@@ -185,10 +193,20 @@ if SERVER then
         net.Send(ply)
     end
 
-    net.Receive(NET_REQ, function(_, ply) sendAccess(ply) end)
-    net.Receive(NET_SAVE, function(_, ply)
-        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
-        AM.Save(net.ReadTable() or {})
+    local function adminGuard(ply, key, bits, maxBits)
+        if not (IsValid(ply) and ply:IsSuperAdmin()) then return false end
+        if GRM.Net and GRM.Net.Guard then
+            return GRM.Net.Guard(ply, key, { rate = .75, burst = 2, maxBits = maxBits,
+                permission = function(actor) return actor:IsSuperAdmin() end }, { bits = bits }) == true
+        end
+        return true
+    end
+
+    net.Receive(NET_REQ, function(bits, ply) if adminGuard(ply, "fire.access.open", bits, 1024) then sendAccess(ply) end end)
+    net.Receive(NET_SAVE, function(bits, ply)
+        if not adminGuard(ply, "fire.access.save", bits, 524288) then return end
+        local ok = AM.Save(net.ReadTable() or {})
+        if ok and GRM.Audit and GRM.Audit.Write then GRM.Audit.Write("access", "fire.legacy.save", ply, {}, {}) end
         sendAccess(ply)
         if GRM.Notify then GRM.Notify(ply, "Доступ пожарных сохранён.", 100, 220, 130) end
     end)
@@ -214,15 +232,16 @@ if SERVER then
         net.Send(ply)
     end
 
-    net.Receive(NET_NREQ, function(_, ply) sendNotify(ply) end)
-    net.Receive(NET_NSAVE, function(_, ply)
-        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+    net.Receive(NET_NREQ, function(bits, ply) if adminGuard(ply, "fire.notify.open", bits, 1024) then sendNotify(ply) end end)
+    net.Receive(NET_NSAVE, function(bits, ply)
+        if not adminGuard(ply, "fire.notify.save", bits, 262144) then return end
         local selected = net.ReadTable() or {}
         F.NotifyData.factions = {}
         for _, n in ipairs(selected) do
             if isstring(n) and string.Trim(n) ~= "" then F.NotifyData.factions[string.Trim(n)] = true end
         end
         F.SaveNotify()
+        if GRM.Audit and GRM.Audit.Write then GRM.Audit.Write("access", "fire.notifications.save", ply, {}, { factions = table.Count(F.NotifyData.factions) }) end
         if GRM.Notify then GRM.Notify(ply, "Фракции оповещения о пожаре сохранены.", 100, 220, 130) end
     end)
 

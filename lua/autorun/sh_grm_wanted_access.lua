@@ -141,12 +141,21 @@ if SERVER then
         net.Send(ply)
     end
 
-    net.Receive(NET_REQ, function(_, ply) sendData(ply) end)
-    net.Receive(NET_SAVE, function(_, ply)
-        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+    local function adminGuard(ply, key, bits, maxBits)
+        if not (IsValid(ply) and ply:IsSuperAdmin()) then return false end
+        if GRM.Net and GRM.Net.Guard then
+            return GRM.Net.Guard(ply, key, { rate = .75, burst = 2, maxBits = maxBits,
+                permission = function(actor) return actor:IsSuperAdmin() end }, { bits = bits }) == true
+        end
+        return true
+    end
+    net.Receive(NET_REQ, function(bits, ply) if adminGuard(ply, "wanted.access.open", bits, 1024) then sendData(ply) end end)
+    net.Receive(NET_SAVE, function(bits, ply)
+        if not adminGuard(ply, "wanted.access.save", bits, 524288) then return end
         local data = normalizeAccess(net.ReadTable() or {})
-        AM.Save(data)
-        sendResult(ply, true, "Доступ к розыску сохранён.")
+        local ok = AM.Save(data)
+        if ok and GRM.Audit and GRM.Audit.Write then GRM.Audit.Write("access", "wanted.legacy.save", ply, {}, {}) end
+        sendResult(ply, ok == true, ok and "Доступ к розыску сохранён." or "Ошибка записи доступа.")
         sendData(ply)
     end)
 
@@ -155,6 +164,14 @@ if SERVER then
         if not IsValid(ply) then return false end
         local cfg = AM.Config or {}
         if cfg.SuperAdminBypass ~= false and ply:IsSuperAdmin() then return true end
+        if GRM.Access and GRM.Access.Explicit then
+            local decision = GRM.Access.Explicit(ply, mode == "edit" and "wanted.civil.edit" or "wanted.civil.view")
+            if decision ~= nil then return decision == true end
+            if mode == "view" then
+                local edit = GRM.Access.Explicit(ply, "wanted.civil.edit")
+                if edit == true then return true end -- edit implies view
+            end
+        end
         if cfg.AdminBypass and ply:IsAdmin() then return true end
         local data = normalizeAccess(AM.Data or AM.Load())
         local sid, sid64 = ply:SteamID(), ply:SteamID64()

@@ -468,7 +468,9 @@ receiver без удаления их старых UI и файлов данны
 4. [x] Создать persistence adapters для Vendor/CCTV/RadioNet/Perm.
 5. [x] `/perminfo` показывает backend.
 6. [x] Добавить базовый стенд grants/adapters/интеграции.
-7. [ ] Добавить общее GUI назначения прав и миграционные conflict-тесты на серверном стенде.
+7. [x] Добавить общее GUI назначения прав (`/grm_access`, `/доступы`) с allow/deny.
+8. [x] Подключить явные grants к Fire/Wanted/CCTV/Phone и защитить их admin-save через Net Guard/Audit.
+9. [ ] Перевести игровые receiver этих доменов (не только настройку доступа) на manifest/guard.
 
 ### Sprint B — Incident Core
 
