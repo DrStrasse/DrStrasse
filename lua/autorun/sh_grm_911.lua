@@ -23,6 +23,7 @@ local NET_ADMIN_SAVE = "GRM_911_AdminSave"
 local NET_MARKER = "GRM_911_Marker"
 local NET_BODY_ACT = "GRM_911_BodyAct"
 local NET_CASES = "GRM_911_Cases"
+local NET_LOOT = "GRM_911_Loot"
 
 local function clamp(v, lo, hi)
     v = tonumber(v) or lo
@@ -32,7 +33,7 @@ local function clamp(v, lo, hi)
 end
 
 if SERVER then
-    for _, n in ipairs({NET_CALL_FORM,NET_CALL_SEND,NET_CALLS,NET_CALL_ACT,NET_PATIENT,NET_TREAT,NET_BODY,NET_ADMIN,NET_ADMIN_SAVE,NET_MARKER,NET_BODY_ACT,NET_CASES}) do util.AddNetworkString(n) end
+    for _, n in ipairs({NET_CALL_FORM,NET_CALL_SEND,NET_CALLS,NET_CALL_ACT,NET_PATIENT,NET_TREAT,NET_BODY,NET_ADMIN,NET_ADMIN_SAVE,NET_MARKER,NET_BODY_ACT,NET_CASES,NET_LOOT}) do util.AddNetworkString(n) end
 
     local DIR = "grm_911"
     local CFG_FILE = DIR .. "/config.json"
@@ -42,11 +43,11 @@ if SERVER then
     local function jsonT(raw) local ok,t=pcall(util.JSONToTable,raw or "",false,true) return ok and istable(t) and t or nil end
     local function quarantine(path, raw) if raw and raw~="" then file.Write(path..".corrupt."..os.time()..".txt",raw) end end
     local function defaults()
-        return {version=1,enabled=true,bleedoutSec=180,stabilizedSec=300,bodyTTL=1800,maxBodies=32,autoCall=true,reviveHealth=35,reviveSubsidy=300}
+        return {version=1,enabled=true,bleedoutSec=180,stabilizedSec=300,bodyTTL=1800,maxBodies=32,autoCall=true,lootInventory=true,reviveHealth=35,reviveSubsidy=300}
     end
     local function normCfg(t)
         local d=defaults(); t=istable(t) and t or {}
-        d.enabled=t.enabled~=false; d.autoCall=t.autoCall~=false
+        d.enabled=t.enabled~=false; d.autoCall=t.autoCall~=false; d.lootInventory=t.lootInventory~=false
         d.bleedoutSec=math.floor(clamp(t.bleedoutSec,30,900)); d.stabilizedSec=math.floor(clamp(t.stabilizedSec,60,1800))
         d.bodyTTL=math.floor(clamp(t.bodyTTL,60,86400)); d.maxBodies=math.floor(clamp(t.maxBodies,1,128))
         d.reviveHealth=math.floor(clamp(t.reviveHealth,1,100)); d.reviveSubsidy=math.floor(clamp(t.reviveSubsidy,0,100000))
@@ -160,6 +161,44 @@ if SERVER then
     hook.Add("CanPlayerEnterVehicle","GRM_911_NoVehicle",function(ply) if ply:GetNWBool("GRM_911_Downed") then return false end end)
     hook.Add("PlayerSpawn","GRM_911_Reset",function(ply) clearDowned(ply); ply._grm911ForceDeath=nil; ply._grm911Wounds={} end)
 
+    local function lootDisplay(slot)
+        local id=tostring(slot.id or "")
+        local def=GRM.Inventory and GRM.Inventory.GetItemDef and GRM.Inventory.GetItemDef(id) or nil
+        local name=(def and def.name) or id
+        local data=istable(slot.data) and slot.data or {}
+        local docType=data.docType
+        if not docType and GRM.Documents and GRM.Documents.PhysicalDefs then
+            for typ,pd in pairs(GRM.Documents.PhysicalDefs) do if pd.item==id then docType=typ break end end
+        end
+        local number=tostring(data.number or "")
+        local ownerName=""
+        if docType and GRM.Documents and GRM.Documents.PhysicalRecord then
+            local rec=GRM.Documents.PhysicalRecord(tostring(data.ownerKey or ""),docType)
+            if istable(rec) then ownerName=tostring(rec.fullName or rec.businessName or ""); if number=="" then number=tostring(rec.number or "") end end
+        end
+        return {name=name,id=id,count=tonumber(slot.count) or 1,isDocument=docType~=nil,docType=docType or "",number=number,ownerName=ownerName}
+    end
+    local function extractInventory(victim)
+        local loot,documents={},{}
+        if not EM.Config.lootInventory or not (GRM.Inventory and GRM.Inventory.GetPlayerInv) then return loot,documents end
+        local inv=GRM.Inventory.GetPlayerInv(victim)
+        if not inv then return loot,documents end
+        local indices={}; for idx,slot in pairs(inv.slots or {}) do if istable(slot) and slot.id then indices[#indices+1]=tonumber(idx) or idx end end
+        table.sort(indices,function(a,b)return tonumber(a)<tonumber(b)end)
+        for _,idx in ipairs(indices) do
+            local slot=inv.slots[idx]
+            if istable(slot) and slot.id then
+                local copy={id=slot.id,count=tonumber(slot.count) or 1,data=istable(slot.data) and table.Copy(slot.data) or nil}
+                loot[#loot+1]=copy
+                local info=lootDisplay(copy); if info.isDocument then documents[#documents+1]=info end
+                if GRM.Inventory.RemoveFromSlot then GRM.Inventory.RemoveFromSlot(victim,idx,copy.count) else inv.slots[idx]=nil end
+            end
+        end
+        if GRM.Inventory.SyncToClient then GRM.Inventory.SyncToClient(victim) end
+        return loot,documents
+    end
+    EM.ExtractInventory=extractInventory
+
     EM.Bodies=EM.Bodies or {}
     local function bodyData(victim,attacker)
         local d=victim._grm911Downed or {}; return {victim=key(victim),name=rpName(victim),time=os.time(),cause=tonumber(d.damageType) or 0,damage=tonumber(d.damage) or 0,weapon=tostring(d.weapon or "неизвестно"),attacker=tostring(d.attacker or (IsValid(attacker) and (attacker:IsPlayer() and rpName(attacker) or attacker:GetClass())) or "неизвестно"),attackerKey=tostring(d.attackerKey or ""),wounds=d.wounds or victim._grm911Wounds or {},pos={x=victim:GetPos().x,y=victim:GetPos().y,z=victim:GetPos().z}}
@@ -170,8 +209,9 @@ if SERVER then
     end
     hook.Add("PlayerDeath","GRM_911_Corpse",function(victim,inflictor,attacker)
         timer.Remove("GRM_911_Bleedout_"..victim:EntIndex()); victim:Freeze(false); victim:SetNWBool("GRM_911_Downed",false)
-        local data=bodyData(victim,attacker); pruneBodies()
-        local body=ents.Create("prop_ragdoll"); if IsValid(body) then body:SetModel(victim:GetModel()); body:SetPos(victim:GetPos()); body:SetAngles(victim:GetAngles()); body:Spawn(); body:SetNWBool("GRM_911_Body",true); body:SetNWString("GRM_911_Name",data.name); body:SetNWInt("GRM_911_Time",data.time); body._grm911Body=data; EM.Bodies[#EM.Bodies+1]=body; timer.Simple(EM.Config.bodyTTL,function() if IsValid(body) then body:Remove() end end) end
+        local loot,documents=extractInventory(victim)
+        local data=bodyData(victim,attacker); data.documents=documents; pruneBodies()
+        local body=ents.Create("prop_ragdoll"); if IsValid(body) then body:SetModel(victim:GetModel()); body:SetPos(victim:GetPos()); body:SetAngles(victim:GetAngles()); body:Spawn(); body:SetNWBool("GRM_911_Body",true); body:SetNWString("GRM_911_Name",data.name); body:SetNWInt("GRM_911_Time",data.time); body._grm911Body=data; body._grm911Loot=loot; EM.Bodies[#EM.Bodies+1]=body; timer.Simple(EM.Config.bodyTTL,function() if IsValid(body) then body:Remove() end end) end
         EM.Cases[#EM.Cases+1]={id="case_"..data.time.."_"..math.random(100,999),body=data,actions={},status="body",created=data.time}; while #EM.Cases>300 do table.remove(EM.Cases,1) end; save(CASE_FILE,{version=1,cases=EM.Cases},"смерть "..data.name)
         medCardEntry(victim,"operation","Констатирована смерть. Причина повреждения: "..data.weapon,nil); hook.Run("GRM_911_Death",victim,data,body); victim._grm911ForceDeath=nil
     end)
@@ -207,9 +247,33 @@ if SERVER then
             if istable(case.body) and case.body.time == d.time and case.body.victim == d.victim then return case end
         end
     end
+    local function sendLoot(ply,body)
+        local rows={}
+        for i,slot in ipairs(body._grm911Loot or {}) do local info=lootDisplay(slot); info.index=i; rows[#rows+1]=info end
+        net.Start(NET_LOOT) net.WriteEntity(body) net.WriteTable(rows) net.Send(ply)
+    end
+    local function takeLoot(ply,body,index)
+        local loot=body._grm911Loot or {}; local slot=loot[index]
+        if not istable(slot) or not slot.id then return false,"Предмет уже изъят" end
+        local ok=false; local left=slot.count or 1
+        if string.StartWith(tostring(slot.id),"weapon:") and GRM.Inventory and GRM.Inventory.AddWeapon then
+            local cls=(slot.data and slot.data.class) or string.sub(slot.id,8); ok=GRM.Inventory.AddWeapon(ply,cls,slot.data and slot.data.clip1,slot.data and slot.data.clip2); if ok then left=0 end
+        elseif GRM.Inventory and GRM.Inventory.AddItem then
+            left=GRM.Inventory.AddItem(ply,slot.id,slot.count or 1,slot.data); ok=left<(slot.count or 1)
+        end
+        if not ok then return false,"В инвентаре нет места" end
+        if left>0 then slot.count=left else table.remove(loot,index) end
+        local info=lootDisplay(slot)
+        local case=caseForBody(body); if case then case.actions=case.actions or {}; case.actions[#case.actions+1]={time=os.time(),action="loot_take",item=info.id,itemName=info.name,by=key(ply),byName=rpName(ply)}; save(CASE_FILE,{version=1,cases=EM.Cases},"изъятие из тела") end
+        hook.Run("GRM_911_BodyLootTaken",ply,body,slot,info)
+        return true,"Изъято: "..info.name
+    end
+    EM.TakeBodyLoot=takeLoot
     net.Receive(NET_BODY_ACT,function(_,ply)
         local body=net.ReadEntity(); local act=net.ReadString()
         if not IsValid(body) or not body:GetNWBool("GRM_911_Body") or ply:GetPos():DistToSqr(body:GetPos())>180*180 then return end
+        if act=="search" then sendLoot(ply,body) return end
+        if act=="take" then local idx=net.ReadUInt(8); local ok,msg=takeLoot(ply,body,idx); if GRM.Notify then GRM.Notify(ply,msg,ok and 100 or 255,ok and 220 or 130,ok and 140 or 110) end; sendLoot(ply,body); return end
         local case=caseForBody(body); if not case then return end
         if act=="seal" and isInvestigator(ply) then
             case.status="sealed"; case.actions[#case.actions+1]={time=os.time(),action="seal",by=key(ply),byName=rpName(ply)}
@@ -269,9 +333,22 @@ else
     net.Receive(NET_CALL_FORM,function() local f=frame("911 • ЭКСТРЕННЫЙ ВЫЗОВ",560,330); local cat=vgui.Create("DComboBox",f) cat:SetPos(16,72) cat:SetSize(528,30) cat:AddChoice("Медицинская помощь","medical",true); cat:AddChoice("Полиция / происшествие","police"); cat:AddChoice("Пожар","fire"); local txt=vgui.Create("DTextEntry",f) txt:SetPos(16,116) txt:SetSize(528,100) txt:SetMultiline(true) txt:SetPlaceholderText("Кратко опишите происшествие и ориентиры..."); button(f,"ОТПРАВИТЬ ВЫЗОВ",238,C.red,function() local _,id=cat:GetSelected(); net.Start(NET_CALL_SEND) net.WriteString(id or "emergency") net.WriteString(txt:GetValue()) net.SendToServer(); f:Close() end) end)
     net.Receive(NET_PATIENT,function() local target=net.ReadEntity(); local medic=net.ReadBool(); local stable=net.ReadBool(); local left=net.ReadUInt(12); if not IsValid(target) then return end; local f=frame("911 • ПОСТРАДАВШИЙ",520,300); local l=vgui.Create("DLabel",f) l:SetPos(16,70) l:SetSize(488,70) l:SetFont("GRM911_Text") l:SetTextColor(C.text) l:SetText(target:Nick().."\nСостояние: "..(stable and "стабилизирован" or "критическое").."\nДо остановки жизненных функций: "..left.." с") button(f,stable and "УЖЕ СТАБИЛИЗИРОВАН" or "СТАБИЛИЗИРОВАТЬ (6 С)",150,C.cyan,function() net.Start(NET_TREAT) net.WriteEntity(target) net.WriteString("stabilize") net.SendToServer(); f:Close() end); if medic then button(f,"РЕАНИМИРОВАТЬ (10 С)",202,C.green,function() net.Start(NET_TREAT) net.WriteEntity(target) net.WriteString("revive") net.SendToServer(); f:Close() end) end end)
     net.Receive(NET_CALLS,function() local rows=net.ReadTable() or {}; local f=frame("911 • АКТИВНЫЕ ВЫЗОВЫ",820,600); local sc=vgui.Create("DScrollPanel",f) sc:SetPos(12,62) sc:SetSize(796,526); for _,r in ipairs(rows) do local p=vgui.Create("DPanel",sc) p:Dock(TOP) p:DockMargin(0,0,0,7) p:SetTall(92) p.Paint=function(_,w,h) draw.RoundedBox(6,0,0,w,h,C.panel); draw.SimpleText("#"..r.id.." • "..r.category.." • "..r.status,"GRM911_Text",12,12,C.red); draw.SimpleText(r.text,"GRM911_Text",12,36,C.text); draw.SimpleText(r.callerName..(r.assignedName~="" and " • принял: "..r.assignedName or ""),"GRM911_Text",12,62,C.muted) end local take=vgui.Create("DButton",p) take:SetPos(620,10) take:SetSize(160,30) take:SetText("Принять") take.DoClick=function() net.Start(NET_CALL_ACT) net.WriteUInt(r.id,32) net.WriteString("take") net.SendToServer() end local close=vgui.Create("DButton",p) close:SetPos(620,50) close:SetSize(160,30) close:SetText("Закрыть") close.DoClick=function() net.Start(NET_CALL_ACT) net.WriteUInt(r.id,32) net.WriteString("close") net.SendToServer() end sc:AddItem(p) end end)
-    net.Receive(NET_BODY,function() local ent=net.ReadEntity(); local pro=net.ReadBool(); local d=net.ReadTable() or {}; local f=frame("911 • ОСМОТР ТЕЛА",620,440); local text="Личность: "..tostring(d.name or "неизвестно").."\nВремя смерти: "..os.date("%d.%m.%Y %H:%M",tonumber(d.time) or os.time()); if pro then text=text.."\nОрудие/источник: "..tostring(d.weapon).."\nПредполагаемый нападавший: "..tostring(d.attacker).."\nПоследний урон: "..tostring(d.damage).."\nСледов повреждений: "..tostring(#(d.wounds or {})) else text=text.."\nДля подробного заключения нужен медик или следователь." end local l=vgui.Create("DLabel",f) l:SetPos(18,74) l:SetSize(584,260) l:SetFont("GRM911_Text") l:SetTextColor(C.text) l:SetWrap(true) l:SetText(text); if pro and IsValid(ent) then local seal=vgui.Create("DButton",f) seal:SetPos(18,360) seal:SetSize(280,36) seal:SetText("ОПЕЧАТАТЬ МЕСТО") seal.DoClick=function() net.Start(NET_BODY_ACT) net.WriteEntity(ent) net.WriteString("seal") net.SendToServer(); f:Close() end local morgue=vgui.Create("DButton",f) morgue:SetPos(316,360) morgue:SetSize(286,36) morgue:SetText("ДОСТАВИТЬ В МОРГ") morgue.DoClick=function() net.Start(NET_BODY_ACT) net.WriteEntity(ent) net.WriteString("morgue") net.SendToServer(); f:Close() end end end)
+    net.Receive(NET_BODY,function() local ent=net.ReadEntity(); local pro=net.ReadBool(); local d=net.ReadTable() or {}; local f=frame("911 • ОСМОТР ТЕЛА",620,440); local text="Личность: "..tostring(d.name or "неизвестно").."\nВремя смерти: "..os.date("%d.%m.%Y %H:%M",tonumber(d.time) or os.time()); if pro then text=text.."\nОрудие/источник: "..tostring(d.weapon).."\nПредполагаемый нападавший: "..tostring(d.attacker).."\nПоследний урон: "..tostring(d.damage).."\nСледов повреждений: "..tostring(#(d.wounds or {})).."\nДокументов при теле: "..tostring(#(d.documents or {})) else text=text.."\nДля подробного заключения нужен медик или следователь." end local l=vgui.Create("DLabel",f) l:SetPos(18,74) l:SetSize(584,240) l:SetFont("GRM911_Text") l:SetTextColor(C.text) l:SetWrap(true) l:SetText(text); if IsValid(ent) then local search=vgui.Create("DButton",f) search:SetPos(18,320) search:SetSize(584,32) search:SetText("ОБЫСКАТЬ ТЕЛО") search.DoClick=function() net.Start(NET_BODY_ACT) net.WriteEntity(ent) net.WriteString("search") net.SendToServer() end end; if pro and IsValid(ent) then local seal=vgui.Create("DButton",f) seal:SetPos(18,360) seal:SetSize(280,36) seal:SetText("ОПЕЧАТАТЬ МЕСТО") seal.DoClick=function() net.Start(NET_BODY_ACT) net.WriteEntity(ent) net.WriteString("seal") net.SendToServer(); f:Close() end local morgue=vgui.Create("DButton",f) morgue:SetPos(316,360) morgue:SetSize(286,36) morgue:SetText("ДОСТАВИТЬ В МОРГ") morgue.DoClick=function() net.Start(NET_BODY_ACT) net.WriteEntity(ent) net.WriteString("morgue") net.SendToServer(); f:Close() end end end)
+    net.Receive(NET_LOOT,function()
+        local body,rows=net.ReadEntity(),net.ReadTable() or {}
+        if IsValid(EM._lootFrame) then EM._lootFrame:Remove() end
+        local f=frame("911 • ОБЫСК ТЕЛА",760,560); EM._lootFrame=f; local sc=vgui.Create("DScrollPanel",f); sc:SetPos(12,62); sc:SetSize(736,486)
+        if #rows==0 then local l=vgui.Create("DLabel",sc); l:Dock(TOP); l:SetTall(50); l:SetText("При теле ничего не найдено."); l:SetTextColor(C.muted); l:SetFont("GRM911_Text"); sc:AddItem(l) end
+        for _,r in ipairs(rows) do
+            local row=vgui.Create("DPanel",sc); row:Dock(TOP); row:DockMargin(0,0,0,7); row:SetTall(r.isDocument and 78 or 58)
+            row.Paint=function(_,w,h) draw.RoundedBox(6,0,0,w,h,C.panel); draw.SimpleText(tostring(r.name).." ×"..tostring(r.count),"GRM911_Text",12,12,r.isDocument and Color(250,185,63) or C.text); if r.isDocument then draw.SimpleText("Документ: "..tostring(r.docType).." • №"..tostring(r.number).." • "..tostring(r.ownerName),"GRM911_Text",12,38,C.muted) end end
+            local take=vgui.Create("DButton",row); take:Dock(RIGHT); take:SetWide(140); take:SetText("ИЗЪЯТЬ"); take.DoClick=function() if not IsValid(body) then return end net.Start(NET_BODY_ACT); net.WriteEntity(body); net.WriteString("take"); net.WriteUInt(tonumber(r.index) or 0,8); net.SendToServer() end
+            sc:AddItem(row)
+        end
+    end)
+
     net.Receive(NET_CASES,function() local rows=net.ReadTable() or {}; local f=frame("911 • ЖУРНАЛ РАССЛЕДОВАНИЙ",900,620); local sc=vgui.Create("DScrollPanel",f) sc:SetPos(12,62) sc:SetSize(876,546); for _,c in ipairs(rows) do local p=vgui.Create("DPanel",sc) p:Dock(TOP) p:DockMargin(0,0,0,7) p:SetTall(86) p.Paint=function(_,w,h) draw.RoundedBox(6,0,0,w,h,C.panel); draw.SimpleText(tostring(c.id).." • "..tostring(c.status),"GRM911_Text",12,12,C.red); draw.SimpleText(tostring(c.body and c.body.name or "неизвестно").." • "..os.date("%d.%m.%Y %H:%M",tonumber(c.created) or 0),"GRM911_Text",12,36,C.text); draw.SimpleText("Орудие: "..tostring(c.body and c.body.weapon or "—").." • действий: "..tostring(#(c.actions or {})),"GRM911_Text",12,60,C.muted) end sc:AddItem(p) end end)
-    net.Receive(NET_ADMIN,function() local cfg=net.ReadTable() or {}; local f=frame("911 • НАСТРОЙКА",620,520); local vals={}; local fields={{"bleedoutSec","До смерти, сек"},{"stabilizedSec","После стабилизации, сек"},{"bodyTTL","Время тела, сек"},{"maxBodies","Максимум тел"},{"reviveHealth","HP после реанимации"},{"reviveSubsidy","Субсидия медслужбе"}}; for i,v in ipairs(fields) do local l=vgui.Create("DLabel",f) l:SetPos(16,66+(i-1)*48) l:SetSize(260,22) l:SetText(v[2]) l:SetTextColor(C.muted); local e=vgui.Create("DTextEntry",f) e:SetPos(290,64+(i-1)*48) e:SetSize(300,26) e:SetValue(tostring(cfg[v[1]] or 0)); vals[v[1]]=e end local enabled=vgui.Create("DCheckBoxLabel",f) enabled:SetPos(16,360) enabled:SetSize(260,24) enabled:SetText("Система включена") enabled:SetTextColor(C.text) enabled:SetValue(cfg.enabled and 1 or 0); local auto=vgui.Create("DCheckBoxLabel",f) auto:SetPos(290,360) auto:SetSize(300,24) auto:SetText("Автовызов при ранении") auto:SetTextColor(C.text) auto:SetValue(cfg.autoCall and 1 or 0); button(f,"СОХРАНИТЬ",410,C.green,function() local t={enabled=enabled:GetChecked(),autoCall=auto:GetChecked()}; for k,e in pairs(vals) do t[k]=tonumber(e:GetValue()) end net.Start(NET_ADMIN_SAVE) net.WriteTable(t) net.SendToServer(); f:Close() end) end)
+    net.Receive(NET_ADMIN,function() local cfg=net.ReadTable() or {}; local f=frame("911 • НАСТРОЙКА",620,520); local vals={}; local fields={{"bleedoutSec","До смерти, сек"},{"stabilizedSec","После стабилизации, сек"},{"bodyTTL","Время тела, сек"},{"maxBodies","Максимум тел"},{"reviveHealth","HP после реанимации"},{"reviveSubsidy","Субсидия медслужбе"}}; for i,v in ipairs(fields) do local l=vgui.Create("DLabel",f) l:SetPos(16,66+(i-1)*48) l:SetSize(260,22) l:SetText(v[2]) l:SetTextColor(C.muted); local e=vgui.Create("DTextEntry",f) e:SetPos(290,64+(i-1)*48) e:SetSize(300,26) e:SetValue(tostring(cfg[v[1]] or 0)); vals[v[1]]=e end local enabled=vgui.Create("DCheckBoxLabel",f) enabled:SetPos(16,360) enabled:SetSize(260,24) enabled:SetText("Система включена") enabled:SetTextColor(C.text) enabled:SetValue(cfg.enabled and 1 or 0); local auto=vgui.Create("DCheckBoxLabel",f) auto:SetPos(290,360) auto:SetSize(300,24) auto:SetText("Автовызов при ранении") auto:SetTextColor(C.text) auto:SetValue(cfg.autoCall and 1 or 0); local loot=vgui.Create("DCheckBoxLabel",f) loot:SetPos(16,390) loot:SetSize(400,24) loot:SetText("Переносить инвентарь в тело") loot:SetTextColor(C.text) loot:SetValue(cfg.lootInventory and 1 or 0); button(f,"СОХРАНИТЬ",438,C.green,function() local t={enabled=enabled:GetChecked(),autoCall=auto:GetChecked(),lootInventory=loot:GetChecked()}; for k,e in pairs(vals) do t[k]=tonumber(e:GetValue()) end net.Start(NET_ADMIN_SAVE) net.WriteTable(t) net.SendToServer(); f:Close() end) end)
     net.Receive(NET_MARKER,function() if net.ReadBool() then marker={pos=net.ReadVector(),id=net.ReadUInt(32),at=CurTime()} else marker=nil end end)
     hook.Add("HUDPaint","GRM_911_HUD",function() local lp=LocalPlayer(); if IsValid(lp) and lp:GetNWBool("GRM_911_Downed") then local left=math.max(0,lp:GetNWInt("GRM_911_DeathAt",os.time())-os.time()); draw.RoundedBox(8,ScrW()/2-240,ScrH()-155,480,90,Color(20,8,12,230)); draw.SimpleText("ТЯЖЁЛОЕ РАНЕНИЕ","GRM911_HUD",ScrW()/2,ScrH()-137,C.red,TEXT_ALIGN_CENTER); draw.SimpleText((lp:GetNWBool("GRM_911_Stable") and "Стабилизирован • " or "Кровопотеря • ").."до смерти "..left.." с","GRM911_Text",ScrW()/2,ScrH()-105,C.text,TEXT_ALIGN_CENTER); draw.SimpleText("Ожидайте помощь. Вызов: /911","GRM911_Text",ScrW()/2,ScrH()-82,C.muted,TEXT_ALIGN_CENTER) end; if marker then local d=math.floor(LocalPlayer():GetPos():Distance(marker.pos)); draw.SimpleText("911 #"..marker.id.." • "..d.." юн","GRM911_HUD",ScrW()/2,90,C.red,TEXT_ALIGN_CENTER) end end)
     hook.Add("PostDrawTranslucentRenderables","GRM_911_Marker",function() if marker then render.SetColorMaterial(); render.DrawWireframeSphere(marker.pos,80,20,10,Color(244,78,96,180),true) end end)

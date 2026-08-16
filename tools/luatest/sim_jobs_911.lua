@@ -2,6 +2,8 @@
 string.Trim=function(s)return tostring(s or ""):match("^%s*(.-)%s*$")end
 function istable(v)return type(v)=="table"end function isstring(v)return type(v)=="string"end function isfunction(v)return type(v)=="function"end
 function IsValid(v)return type(v)=="table" and v._invalid~=true end
+table.Copy=function(t)local o={}for k,v in pairs(t or{})do o[k]=type(v)=="table"and table.Copy(v)or v end return o end
+string.StartWith=function(s,p)return tostring(s):sub(1,#p)==p end
 local VM={}; VM.__index=VM
 function VM:Distance(o)local x,y,z=self.x-o.x,self.y-o.y,self.z-o.z return math.sqrt(x*x+y*y+z*z)end
 function VM:DistToSqr(o)local x,y,z=self.x-o.x,self.y-o.y,self.z-o.z return x*x+y*y+z*z end
@@ -65,5 +67,17 @@ local sOk=EM.Stabilize(medic,victim)
 check("стабилизация продлевает жизнь",sOk and victim:GetNWBool("GRM_911_Stable"))
 local rOk=EM.Revive(medic,victim)
 check("медик реанимирует",rOk and not victim:GetNWBool("GRM_911_Downed") and victim:Health()==EM.Config.reviveHealth and not victim._frozen)
+
+-- Тело забирает инвентарь, документы отмечаются и сохраняют владельца.
+local deadInv={slots={[1]={id="passport",count=1,data={docType="passport",ownerKey=victim._key,number="P-100",copyID="copy-1"}},[2]={id="item_healthkit",count=2}}}
+local taken=nil
+GRM.Documents={PhysicalDefs={passport={item="passport"}},PhysicalRecord=function(owner,typ)if owner==victim._key and typ=="passport"then return{number="P-100",fullName="Пациент"}end end}
+GRM.Inventory={GetPlayerInv=function(p)return p==victim and deadInv or{slots={}}end,GetItemDef=function(id)return{name=id=="passport"and"Паспорт гражданина"or"Аптечка"}end,RemoveFromSlot=function(_,idx)deadInv.slots[idx]=nil return true end,SyncToClient=function()end,AddItem=function(_,id,count,data)taken={id=id,count=count,data=data}return 0 end}
+local loot,documents=EM.ExtractInventory(victim)
+check("инвентарь перенесён в тело",#loot==2 and next(deadInv.slots)==nil)
+check("документ отражён у тела",#documents==1 and documents[1].number=="P-100" and documents[1].ownerName=="Пациент")
+local body={_grm911Loot=loot}
+local takeOK=EM.TakeBodyLoot(medic,body,1)
+check("документ можно изъять",takeOK and taken and taken.id=="passport" and taken.data.ownerKey==victim._key and #body._grm911Loot==1)
 print("[SIM] === "..(fails==0 and "ВСЕ ПРОВЕРКИ ПРОШЛИ" or ("ПРОВАЛОВ: "..fails)).." ===")
 os.exit(fails==0 and 0 or 1)
