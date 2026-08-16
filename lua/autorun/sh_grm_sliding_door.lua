@@ -23,7 +23,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.SlidingDoor = GRM.SlidingDoor or {}
 local SD = GRM.SlidingDoor
-SD.Version = "1.0.0"
+SD.Version = "1.1.0"
 
 SD.Doors = SD.Doors or {}   -- [ent] = data
 
@@ -52,7 +52,7 @@ function SD.Apply(ply, ent, opts)
     -- если уже раздвижная — просто перенастраиваем
     if not SD.IsSliding(ent) then
         ent:PhysicsInit(SOLID_VPHYSICS)
-        ent:SetMoveType(MOVETYPE_NONE)
+        ent:SetMoveType(MOVETYPE_VPHYSICS)
         ent:SetSolid(SOLID_VPHYSICS)
         local phys = ent:GetPhysicsObject()
         if IsValid(phys) then
@@ -124,10 +124,27 @@ function SD.IsSliding(ent)
     return IsValid(ent) and ent.isSlidingDoor == true
 end
 
+-- Entity:SetPos у замороженного VPhysics-пропа может сдвинуть только
+-- визуальную оболочку. Двигаем одновременно entity и PhysicsObject — тогда
+-- collision box реально освобождает проезд для игроков и транспорта.
+function SD.MovePhysical(ent,pos)
+    if not IsValid(ent) or not pos then return false end
+    local phys=ent:GetPhysicsObject()
+    if IsValid(phys) then
+        phys:EnableMotion(false)
+        phys:SetPos(pos,true)
+        phys:SetAngles(ent:GetAngles())
+        if phys.SetVelocityInstantaneous then phys:SetVelocityInstantaneous(vector_origin) end
+    end
+    ent:SetPos(pos)
+    ent:CollisionRulesChanged()
+    return true
+end
+
 -- Снять механизм (проп возвращается в исходную позицию)
 function SD.Remove(ent)
     if not SD.IsSliding(ent) then return false end
-    ent:SetPos(ent.Sliding_BasePos or ent:GetPos())
+    SD.MovePhysical(ent,ent.Sliding_BasePos or ent:GetPos())
     ent.isSlidingDoor = nil
     ent.Sliding = nil
     ent.Sliding_Open = nil
@@ -193,7 +210,7 @@ if SERVER then
                     ent.Sliding_Progress = next
                     -- плавная позиция
                     local e = ease(next, data.smooth)
-                    ent:SetPos(base + (openPos - base) * e)
+                    SD.MovePhysical(ent,base + (openPos - base) * e)
 
                     -- Звуки (находка 173d): в движении, при открытии, при закрытии
                     local moving = math.abs(next - cur) > 0.0001

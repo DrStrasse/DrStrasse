@@ -19,9 +19,9 @@ local function has(src, n) return src:find(n, 1, true) ~= nil end
 local hud = read("lua/autorun/client/cl_grm_hud.lua")
 
 print("\n=== КОНТРАКТ ИСТОЧНИКА ===")
-check("версия 10.3 в шапке", has(hud, "GRM HUD v10.3"))
-check("приветствие v10.3", has(hud, "HUD v10.3 загружен"))
-check("принт v10.3", has(hud, '[GRM] HUD v10.3 загружен'))
+check("версия 10.4 в шапке", has(hud, "GRM HUD v10.4"))
+check("приветствие v10.4", has(hud, "HUD v10.4 загружен"))
+check("принт v10.4", has(hud, '[GRM] HUD v10.4 загружен'))
 check("хелпер IsPropToolBusy", has(hud, "function GRM.HUD.IsPropToolBusy"))
 check("хелпер IsBuildWeapon", has(hud, "function GRM.HUD.IsBuildWeapon"))
 check("физган в белом списке", has(hud, "weapon_physgun"))
@@ -159,7 +159,7 @@ check("монтировка не build", GRM.HUD.IsBuildWeapon(ply) == false)
 check("монтировка+ЛКМ не busy", GRM.HUD.IsPropToolBusy(ply) == false)
 ply._active = physgun
 
--- Без захвата колесо открывает селектор и по таймауту меняет оружие
+-- Без захвата колесо только подсвечивает. Выбор — исключительно ЛКМ.
 ply._keys[IN_ATTACK] = false
 input.selected = nil
 NOW = 20
@@ -167,7 +167,11 @@ local rFree = bind(ply, "invnext", true)
 check("без захвата invnext глотается", rFree == true)
 NOW = 24
 paint()
-check("без захвата таймаут выбирает другое", input.selected == crowbar, tostring(input.selected and input.selected.GetClass and input.selected:GetClass()))
+check("таймаут НЕ выбирает подсвеченное", input.selected == nil)
+NOW = 25
+bind(ply,"invnext",true)
+local rConfirm=bind(ply,"+attack",true)
+check("ЛКМ подтверждает выбор",rConfirm==true and input.selected==crowbar)
 
 -- С захватом колесо НЕ должно выбрать другое оружие даже после таймаута
 ply._keys[IN_ATTACK] = true

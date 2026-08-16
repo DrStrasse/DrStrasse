@@ -1,5 +1,7 @@
 --[[--------------------------------------------------------------------
-    GRM HUD v10.3 — Полноценный HUD для Sandbox
+    GRM HUD v10.4 — Полноценный HUD для Sandbox
+    v10.4: колесо и клавиши слотов только двигают подсветку; таймаут
+           закрывает панель без смены оружия. Выбор выполняется лишь ЛКМ.
     v10.3: колесо/слоты/таймаут селектора НЕ сменяют оружие, пока
            физган или гравиган держит проп (IN_ATTACK). Иначе при
            вращении/подтягивании пропа бар открывался, через 3 с
@@ -409,7 +411,9 @@ local function DrawWeaponSelector()
         return
     end
     local cfg = GRM.HUD.Config
-    if selector.active and CurTime() - selector.lastInput > cfg.selectorTimeout then SelectWeapon() end
+    -- Таймаут только закрывает интерфейс. Подсвеченное оружие никогда не
+    -- выбирается без явного подтверждения ЛКМ.
+    if selector.active and CurTime() - selector.lastInput > cfg.selectorTimeout then CloseSelector() end
     local targetAlpha = selector.active and 255 or 0
     selector.alpha = math.Approach(selector.alpha, targetAlpha, FrameTime() * 900)
     if selector.alpha < 1 then return end
@@ -510,8 +514,8 @@ end)
 
 hook.Add("InitPostEntity", "GRM_HUD_Welcome", function()
     timer.Simple(4, function()
-        if IsValid(LocalPlayer()) then GRM.AddNotification("HUD v10.3 загружен — колёсико для выбора оружия", 5, Color(100, 180, 255)) end
+        if IsValid(LocalPlayer()) then GRM.AddNotification("HUD v10.4 загружен — колёсико для выбора оружия", 5, Color(100, 180, 255)) end
     end)
 end)
 
-print("[GRM] HUD v10.3 загружен")
+print("[GRM] HUD v10.4 загружен")

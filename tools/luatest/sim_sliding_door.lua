@@ -79,7 +79,8 @@ PMT.__index = function(t, k)
   elseif k == "PhysicsInit" then return function() end
   elseif k == "SetMoveType" then return function() end
   elseif k == "SetSolid" then return function() end
-  elseif k == "GetPhysicsObject" then return function() return { EnableMotion = function() end, Sleep = function() end, Wake = function() end } end
+  elseif k == "GetPhysicsObject" then return function(s) s.phys=s.phys or { EnableMotion=function()end,Sleep=function()end,Wake=function()end,SetPos=function(_,v)s.physicsPos=v end,SetAngles=function()end,SetVelocityInstantaneous=function()end };return s.phys end
+  elseif k == "CollisionRulesChanged" then return function(s)s.collisionUpdated=true end
   elseif k == "SetNWBool" then return function() end
   elseif k == "IsPlayer" then return function() return false end
   elseif k == "IsNPC" then return function() return false end
@@ -129,6 +130,7 @@ fakeTime = fakeTime + 0.5
 thinkFn()
 ok(prop.Sliding_Progress > 0, "Think двигает прогресс (прогресс=" .. tostring(prop.Sliding_Progress) .. ")")
 ok(prop.pos.x > 0, "проп реально смещается (x=" .. tostring(prop.pos.x) .. ")")
+ok(prop.physicsPos and prop.physicsPos.x == prop.pos.x and prop.collisionUpdated==true,"PhysicsObject и collision box смещаются вместе с моделью")
 _G.CurTime = oldCurTime
 
 -- ══════════════ 3. Remove ══════════════
