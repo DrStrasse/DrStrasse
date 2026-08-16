@@ -25,6 +25,8 @@ ok(has(fireInit, "F.CommissionTruck") and has(fireInit, "F.DecommissionTruck") a
 ok(has(fireInit, "F.Snapshot"), "fire snapshot of active vfire")
 ok(has(fireCl, "grm_fire_access") and has(fireCl, "grm_fire_log") and has(fireCl, "grm_fire_trucks") and has(fireCl, "grm_fire_spots"), "fire UI opens existing fire menus")
 ok(has(fireCl, "grm_fire_notify"), "fire UI opens notify menu")
+ok(has(fireInit, "local function snapshot(ent, ply)") and has(fireInit, "snapshot(self, ply)"), "fire E snapshot uses valid entity, not nil self")
+ok(has(fireCl, "GRM.FireComputerFrame") and has(fireCl, "body.PerformLayout"), "fire UI singleton and delayed-width layout")
 
 -- Мэрия.
 ok(has(chSh, "grm_comp_cityhall") and has(chSh, "мэрии"), "cityhall shared defines class/name")

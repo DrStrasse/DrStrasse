@@ -34,13 +34,13 @@ local function openStore(ent,kind,name,catalog)
  local side=vgui.Create("DScrollPanel",f);side:SetPos(18,124);side:SetSize(210,f:GetTall()-142)
  local content=vgui.Create("DScrollPanel",f);content:SetPos(240,124);content:SetSize(f:GetWide()-258,f:GetTall()-142)
  local selectedCategory="Все"
- local categories={Все=true};for _,item in pairs(catalog)do categories[item.category or"Прочее"]=true end
+ local categories={["Все"]=true};for _,item in pairs(catalog)do categories[item.category or"Прочее"]=true end
  local function rebuild()
   content:Clear();local query=string.lower(string.Trim(search:GetValue()or""));local count=0
   local ids={};for id in pairs(catalog)do ids[#ids+1]=id end;table.sort(ids,function(a,b)return tostring(catalog[a].name)<tostring(catalog[b].name)end)
   for _,id in ipairs(ids)do local item=catalog[id];local category=item.category or"Прочее";local hay=string.lower(table.concat({item.name or"",item.desc or"",category,functionText(item)}," "))
    if(selectedCategory=="Все"or selectedCategory==category)and(query==""or string.find(hay,query,1,true))then
-    count=count+1;local row=vgui.Create("DPanel",content);row:Dock(TOP);row:SetTall(112);row:DockMargin(0,0,6,7);row.Paint=function(self,w,h)draw.RoundedBox(8,0,0,w,h,self:IsHovered()and UI.card2 or UI.card);surface.SetDrawColor(UI.line);surface.DrawOutlinedRect(0,0,w,h,1);draw.SimpleText(item.name or id,"GRMVendor2_Head",112,12,UI.text);draw.SimpleText(category.."  •  "..money(item.price),"GRMVendor2_Body",112,37,UI.yellow);draw.SimpleText(item.desc or"","GRMVendor2_Small",112,62,UI.dim);local ft=functionText(item);if ft~=""then draw.SimpleText("Функции: "..ft,"GRMVendor2_Small",112,84,UI.green)end end
+    count=count+1;local licNames={rifled="Нарезное",short="Короткоствольное",smooth="Гладкоствольное",traumatic="Травматическое",hunting="Охотничье"};local licText=item.requiresLicense and ("Лицензия: "..(licNames[item.weaponCategory]or tostring(item.weaponCategory or"оружейная")))or"";local row=vgui.Create("DPanel",content);row:Dock(TOP);row:SetTall(112);row:DockMargin(0,0,6,7);row.Paint=function(self,w,h)draw.RoundedBox(8,0,0,w,h,self:IsHovered()and UI.card2 or UI.card);surface.SetDrawColor(UI.line);surface.DrawOutlinedRect(0,0,w,h,1);draw.SimpleText(item.name or id,"GRMVendor2_Head",112,12,UI.text);draw.SimpleText(category.."  •  "..money(item.price),"GRMVendor2_Body",112,37,UI.yellow);draw.SimpleText(item.desc or"","GRMVendor2_Small",112,62,UI.dim);local ft=functionText(item);if licText~=""then draw.SimpleText(licText,"GRMVendor2_Small",112,84,UI.orange)elseif ft~=""then draw.SimpleText("Функции: "..ft,"GRMVendor2_Small",112,84,UI.green)end end
     local model=vgui.Create("DModelPanel",row);model:SetPos(7,7);model:SetSize(96,96);setupPreview(model,item.model)
     local actions=vgui.Create("DPanel",row);actions:Dock(RIGHT);actions:SetWide(126);actions:DockMargin(6,8,8,8);actions:SetPaintBackground(false)
     local buy=button(actions,"КУПИТЬ",UI.green);buy:Dock(TOP);buy:SetTall(42);buy.DoClick=function()surface.PlaySound("buttons/button15.wav");net.Start("GRM_Vendor_Buy")net.WriteEntity(ent)net.WriteString(id)net.SendToServer()end

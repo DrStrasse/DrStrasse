@@ -601,6 +601,12 @@ if SERVER then
         local ent = aimEntity(ply)
         if not IsValid(ent) then tell(ply, "Наведи прицел на энтити (до 256 юнитов).", 255, 200, 80) return end
         local class = tostring(ent:GetClass() or "")
+        if class == "grm_vendor" and GRM.Vendor and GRM.Vendor.SaveVendor then
+            local ok,id=GRM.Vendor.SaveVendor(ent)
+            if ok then ent:SetNWBool("GRM_IsPerm",true); ent:SetNWString("GRM_PermKind","external"); tell(ply,"[ПЕРМ] Торгаш сохранён собственным модулем: "..tostring(id)..". Двойной перм не создан.",100,220,100)
+            else tell(ply,"[ПЕРМ] Не удалось сохранить торгаша: "..tostring(id),255,120,120) end
+            return
+        end
         if not PERM_CLASSES[class] then
             tell(ply, "Класс [" .. class .. "] нельзя пермить (не GRM-разворачиваемое).", 255, 120, 120)
             return
@@ -660,6 +666,12 @@ if SERVER then
         local ent = aimEntity(ply)
         if not IsValid(ent) then tell(ply, "Наведи прицел на перм-энтити.", 255, 200, 80) return end
         local class = tostring(ent:GetClass() or "")
+        if class=="grm_vendor" and GRM.Vendor and GRM.Vendor.RemoveVendorSave then
+            local ok=GRM.Vendor.RemoveVendorSave(ent)
+            if ok then ent:Remove(); tell(ply,"[ПЕРМ] Торгаш удалён из собственного сохранения и с карты.",235,180,60)
+            else tell(ply,"[ПЕРМ] У торгаша нет подтверждённой записи сохранения.",255,200,80) end
+            return
+        end
         local list = loadDB()
         local map = game.GetMap()
         local pos = ent:GetPos()
@@ -807,6 +819,7 @@ if SERVER then
     function P.IsPermable(ent)
         if not IsValid(ent) then return false, "объект не найден" end
         local class = tostring(ent:GetClass() or "")
+        if class=="grm_vendor" and GRM.Vendor and GRM.Vendor.SaveVendor then return true,"собственная система сохранения торговцев" end
         if PERM_BLACKLIST[class] then return false, PERM_BLACKLIST[class] end
         if not PERM_CLASSES[class] then
             return false, "класс «" .. class .. "» не разрешён для закрепления"
@@ -851,6 +864,7 @@ if SERVER then
 
     function P.IsPerm(ent)
         if not IsValid(ent) then return false end
+        if ent:GetClass()=="grm_vendor" then return ent.GRMVendorPersistent==true or tostring(ent.GRMVendorID or "")~="" end
         if ent._grmPerm then return true end
         local _, rec = findRec(loadDB(), ent)
         return rec ~= nil
@@ -858,6 +872,7 @@ if SERVER then
 
     function P.Info(ent)
         if not IsValid(ent) then return nil end
+        if ent:GetClass()=="grm_vendor" and (ent.GRMVendorPersistent==true or tostring(ent.GRMVendorID or "")~="") then return {uid=tostring(ent.GRMVendorID or ""),class="grm_vendor",ownerKind="server",label="Торгаш (собственный сейв)",external=true,freeze=true,byName="GRM Vendor"} end
         local _, rec = findRec(loadDB(), ent)
         return rec
     end
@@ -905,6 +920,12 @@ if SERVER then
     function P.Add(ply, ent, opts)
         opts = istable(opts) and opts or {}
         if not IsValid(ent) then return false, "объект не найден" end
+        if ent:GetClass()=="grm_vendor" and GRM.Vendor and GRM.Vendor.SaveVendor then
+            if not (IsValid(ply) and ply:IsSuperAdmin()) then return false,"торгашей сохраняет только суперадмин" end
+            local ok,id=GRM.Vendor.SaveVendor(ent)
+            if ok then ent:SetNWBool("GRM_IsPerm",true); ent:SetNWString("GRM_PermKind","external"); return true,"external",P.Info(ent) end
+            return false,tostring(id or "ошибка сохранения торговца")
+        end
 
         local okClass, whyClass = P.IsPermable(ent)
         if not okClass then return false, whyClass end
@@ -1005,6 +1026,12 @@ if SERVER then
     -- чтобы подвинуть постройку, а не чтобы её потерять.
     function P.Remove(ply, ent, alsoDelete)
         if not IsValid(ent) then return false, "объект не найден" end
+        if ent:GetClass()=="grm_vendor" and GRM.Vendor and GRM.Vendor.RemoveVendorSave then
+            if not (IsValid(ply) and ply:IsSuperAdmin()) then return false,"торгашей снимает только суперадмин" end
+            local ok=GRM.Vendor.RemoveVendorSave(ent); if not ok then return false,"запись торговца не найдена" end
+            ent:SetNWBool("GRM_IsPerm",false); ent:SetNWString("GRM_PermKind",""); if alsoDelete then ent:Remove() end
+            return true,"external_removed",{class="grm_vendor",external=true}
+        end
         local list = loadDB()
         local idx, rec = findRec(list, ent)
         if not rec then return false, "объект не закреплён" end
@@ -1038,6 +1065,10 @@ if SERVER then
     function P.Update(ply, ent, opts)
         opts = istable(opts) and opts or {}
         if not IsValid(ent) then return false, "объект не найден" end
+        if ent:GetClass()=="grm_vendor" and GRM.Vendor and GRM.Vendor.SaveVendor then
+            if not (IsValid(ply) and ply:IsSuperAdmin()) then return false,"торгашей обновляет только суперадмин" end
+            local ok,id=GRM.Vendor.SaveVendor(ent); return ok,ok and "external_updated" or tostring(id),P.Info(ent)
+        end
         local list = loadDB()
         local _, rec = findRec(list, ent)
         if not rec then return false, "объект не закреплён" end

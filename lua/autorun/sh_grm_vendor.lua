@@ -14,7 +14,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Vendor = GRM.Vendor or {}
 local V = GRM.Vendor
-V.Version = "2.0.0"
+V.Version = "2.1.0"
 
 -- ============================================================
 -- КОНФИГ
@@ -44,12 +44,12 @@ V.Catalogs.accessory = V.Catalogs.accessory or {}
 
 -- 1) ОРУЖИЕ — ArcCW (базовый набор; расширяется через V.RegisterItem)
 V.Catalogs.weapon = V.Catalogs.weapon or {
-    ["arccw_ak47"]        = { name = "AK-47 (ArcCW)",     price = 12000, model = "models/weapons/w_rif_ak47.mdl",    category = "Автоматы",  license = "gun" },
-    ["arccw_m4a1"]        = { name = "M4A1 (ArcCW)",      price = 13000, model = "models/weapons/w_rif_m4a1.mdl",    category = "Автоматы",  license = "gun" },
-    ["arccw_p228"]        = { name = "P228 (ArcCW)",      price = 3500,  model = "models/weapons/w_pist_p228.mdl",   category = "Пистолеты", license = "gun" },
-    ["arccw_deagle"]      = { name = "Desert Eagle (ArcCW)", price = 6500, model = "models/weapons/w_pist_deagle.mdl", category = "Пистолеты", license = "gun" },
-    ["arccw_shotgun"]     = { name = "Remington 870 (ArcCW)", price = 9000, model = "models/weapons/w_shotgun.mdl",   category = "Дробовики", license = "gun" },
-    ["arccw_mp5"]         = { name = "MP5 (ArcCW)",       price = 8500,  model = "models/weapons/w_smg_mp5.mdl",     category = "ПП",        license = "gun" },
+    ["arccw_ak47"]        = { name = "AK-47 (ArcCW)",     price = 12000, model = "models/weapons/w_rif_ak47.mdl",    category = "Автоматы",  license = "gun", weaponCategory = "rifled" },
+    ["arccw_m4a1"]        = { name = "M4A1 (ArcCW)",      price = 13000, model = "models/weapons/w_rif_m4a1.mdl",    category = "Автоматы",  license = "gun", weaponCategory = "rifled" },
+    ["arccw_p228"]        = { name = "P228 (ArcCW)",      price = 3500,  model = "models/weapons/w_pist_p228.mdl",   category = "Пистолеты", license = "gun", weaponCategory = "short" },
+    ["arccw_deagle"]      = { name = "Desert Eagle (ArcCW)", price = 6500, model = "models/weapons/w_pist_deagle.mdl", category = "Пистолеты", license = "gun", weaponCategory = "short" },
+    ["arccw_shotgun"]     = { name = "Remington 870 (ArcCW)", price = 9000, model = "models/weapons/w_shotgun.mdl",   category = "Дробовики", license = "gun", weaponCategory = "smooth" },
+    ["arccw_mp5"]         = { name = "MP5 (ArcCW)",       price = 8500,  model = "models/weapons/w_smg_mp5.mdl",     category = "ПП",        license = "gun", weaponCategory = "rifled" },
     ["arrest_stick"]      = { name = "Полицейская дубинка", price = 500, model = "models/weapons/w_stunbaton.mdl",   category = "Спецназ",   license = "police" },
 }
 
@@ -170,26 +170,29 @@ end
 
 -- Проверка лицензии на оружие (использует Factions из sh_factions.lua)
 function V.CanBuyWeapon(ply, item)
-    if not item.license then return true end
+    if not IsValid(ply) or not istable(item) then return false, "Некорректный покупатель или товар" end
+    if ply:IsSuperAdmin() then return true end
 
-    if item.license == "admin" then
-        return ply:IsSuperAdmin()
-    end
-
+    if item.license == "admin" then return false, "Товар доступен только суперадминистратору" end
     if item.license == "police" then
-        -- Проверяем через глобальную таблицу Factions
-        if Factions and Factions.Polizei and Factions.Polizei.Members then
-            if GRM.Identity.FactionMember(Factions.Polizei, ply) then
-                return true
-            end
+        for name, faction in pairs(Factions or {}) do
+            local low=string.lower(tostring(name))
+            if (low:find("polizei",1,true) or low:find("полици",1,true) or low:find("жандар",1,true))
+                and GRM.Identity and GRM.Identity.FactionMember and GRM.Identity.FactionMember(faction,ply) then return true end
         end
-        return ply:IsSuperAdmin() -- суперадмин всегда может
+        return false, "Требуется служебный допуск полиции или жандармерии"
     end
 
-    if item.license == "gun" then
-        return true -- свободная продажа
+    -- Любое огнестрельное оружие оружейного торговца требует действующую
+    -- лицензию именно нужной категории, а не декоративный флаг «gun».
+    if item.isWeapon and (item.license == "gun" or item.weaponCategory) then
+        local DOC=GRM.Documents
+        if not (DOC and DOC.HasValidWeaponLicense) then return false, "Система лицензий на оружие не загружена" end
+        local charKey=(GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or (ply:SteamID64()..":char1")
+        local category=tostring(item.weaponCategory or "short")
+        local ok,why=DOC.HasValidWeaponLicense(charKey,category)
+        if not ok then return false,"Нужна действующая лицензия на оружие: "..category.." ("..tostring(why or "нет допуска")..")" end
     end
-
     return true
 end
 
@@ -446,4 +449,4 @@ if SERVER then
     hook.Add("PostCleanupMap","GRM_Vendor_PersistenceCleanup",function() timer.Simple(0.8,function() V.LoadMapVendors() end) end)
 end
 
-print("[GRM Vendor] Framework v2.0 loaded (Code 111)")
+print("[GRM Vendor] Framework v"..V.Version.." loaded (Code 111)")

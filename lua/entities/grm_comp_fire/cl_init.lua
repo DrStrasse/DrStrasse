@@ -58,11 +58,17 @@ end
 
 local function openMenu(ent, data)
     g_FireEnt = ent
+    if IsValid(GRM.FireComputerFrame) then GRM.FireComputerFrame:Remove() end
     local frame = vgui.Create("DFrame")
+    GRM.FireComputerFrame = frame
+    if GRM.UI and GRM.UI.Track then GRM.UI.Track("fire_computer",frame) end
     frame:SetTitle("")
     frame:SetSize(560, 560)
     frame:Center()
     frame:MakePopup()
+    frame:ShowCloseButton(false)
+    frame:SetDeleteOnClose(true)
+    frame.OnRemove=function() if GRM.FireComputerFrame==frame then GRM.FireComputerFrame=nil end end
     frame.Paint = function(_, w, h)
         draw.RoundedBox(8, 0, 0, w, h, THEME.bg)
         draw.RoundedBoxEx(8, 0, 0, w, 42, THEME.header, true, true, false, false)
@@ -99,11 +105,14 @@ local function openMenu(ent, data)
     body.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, THEME.panel) end
 
     local y = 12
+    local rows = {}
     local function row(text, col, fn)
         local b = mkBtn(body, text, col or THEME.accent, fn)
-        b:SetPos(14, y) b:SetSize(body:GetWide() - 28, 40)
-        y = y + 50
+        b._rowY=y; rows[#rows+1]=b; y=y+50
         return b
+    end
+    body.PerformLayout=function(_,w)
+        for _,b in ipairs(rows) do b:SetPos(14,b._rowY or 12); b:SetSize(math.max(120,w-28),40) end
     end
 
     row("🚒 Закрепить машину / насос  (/firetruck)", Color(150, 70, 45), function() sendAction("commission") end)

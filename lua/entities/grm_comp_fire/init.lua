@@ -36,7 +36,7 @@ function ENT:CanManage(ply)
     return false
 end
 
-local function snapshot(ply)
+local function snapshot(ent, ply)
     local F = GRM.Fire
     local fires = (F and isfunction(F.Snapshot) and F.Snapshot()) or {}
     local cfg = (F and F.Config) or {}
@@ -52,12 +52,15 @@ local function snapshot(ply)
         maxIncidents  = tonumber(cfg.MaxIncidents) or 8,
         minSec        = tonumber(cfg.RandomMinSec) or 480,
         maxSec        = tonumber(cfg.RandomMaxSec) or 900,
-        name          = self:GetComputerName(),
+        name          = IsValid(ent) and ent:GetComputerName() or "ПОЖАРНАЯ СЛУЖБА • ДИСПЕТЧЕРСКАЯ",
     }
 end
 
 function ENT:Use(ply)
     if not (IsValid(ply) and ply:IsPlayer()) then return end
+    if ply:GetPos():DistToSqr(self:GetPos()) > 250 * 250 then return end
+    if (self._grmFireUseAt or 0) > CurTime() then return end
+    self._grmFireUseAt = CurTime() + 0.7
     if not self:CanManage(ply) then
         if GRM.Notify then
             GRM.Notify(ply, "Доступ к пожарной станции — только бойцам, диспетчерам пожарной службы и суперадминам.", 255, 120, 100)
@@ -67,7 +70,7 @@ function ENT:Use(ply)
 
     net.Start("GRM_CompFire_Open")
         net.WriteEntity(self)
-        net.WriteTable(snapshot(ply))
+        net.WriteTable(snapshot(self, ply))
     net.Send(ply)
 end
 

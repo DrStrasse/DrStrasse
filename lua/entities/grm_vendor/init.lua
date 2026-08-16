@@ -67,6 +67,7 @@ function ENT:BuildCatalogPayload()
                 model=tostring(item.model or ""), price=V.GetPrice(self,id,item), sellPrice=V.GetSellPrice(nil,self.VendorType,id),
                 limit=V.GetLimit(self,id), license=item.license, hunger=item.hunger, health=item.health,
                 maxStack=item.maxStack, isWeapon=self.VendorType == "weapon" or item.isWeapon == true, isEntity=item.isEntity == true,
+                weaponCategory=item.weaponCategory, requiresLicense=(self.VendorType=="weapon" and item.license~="police"),
                 functions=table.Copy(item.functions or {}), functionConfig=table.Copy(item.functionConfig or {}),
             }
         end
@@ -119,7 +120,8 @@ net.Receive("GRM_Vendor_Buy",function(_,ply)
     if item then item=table.Copy(item);if ent.VendorType=="weapon"then item.isWeapon=true end end
     if not item or not V.IsItemEnabled(ent,itemID) then notify(ply,false,"Товар отсутствует у этого торговца") return end
     if ply:GetNWBool("GRM_Arrested",false) then notify(ply,false,"Покупки недоступны во время ареста") return end
-    if not V.CanBuyWeapon(ply,item) then notify(ply,false,"Нет необходимого допуска или лицензии") return end
+    local canBuy,licenseWhy=V.CanBuyWeapon(ply,item)
+    if not canBuy then notify(ply,false,licenseWhy or "Нет необходимого допуска или лицензии") return end
     local limit=V.GetLimit(ent,itemID)
     if limit>0 and ownedCount(ply,itemID,item)>=limit then notify(ply,false,"Достигнут лимит: "..limit) return end
     local price=V.GetPrice(ent,itemID,item)
