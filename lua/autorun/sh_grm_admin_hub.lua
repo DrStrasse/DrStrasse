@@ -122,6 +122,7 @@ if SERVER then
         local vers = {}
         local function v(name, val) vers[#vers + 1] = { name = name, ver = tostring(val or "—") } end
         v("Биржа труда", GRM.Jobs and GRM.Jobs.Version)
+        v("Служба 911", GRM.E911 and GRM.E911.Version)
         v("Ачивки", GRM.Ach and GRM.Ach.Version)
         v("Багажник", GRM.Trunk and GRM.Trunk.Version)
         v("Q-меню/инструменты", GRM.QMenu and GRM.QMenu.Version)
@@ -142,6 +143,7 @@ if SERVER then
             counters = {
                 { name = "Фракций", val = istable(Factions) and table.Count(Factions) or 0 },
                 { name = "Активных задач биржи", val = (GRM.Jobs and GRM.Jobs.Active) and table.Count(GRM.Jobs.Active) or 0 },
+                { name = "Без сознания (911)", val = (GRM.E911 and GRM.E911.Downed) and table.Count(GRM.E911.Downed) or 0 },
                 { name = "Публикаций на бирже", val = posts },
                 { name = "Багажников в базе", val = (GRM.Trunk and GRM.Trunk.Store) and table.Count(GRM.Trunk.Store) or 0 },
                 { name = "Записей ачивок", val = (GRM.Ach and GRM.Ach.Records) and table.Count(GRM.Ach.Records) or 0 },
