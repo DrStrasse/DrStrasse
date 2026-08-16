@@ -1,8 +1,8 @@
 --[[ GRM Weather & Time v1.0.0: authoritative clock, day/night, fog and sky. ]]
 if SERVER then AddCSLuaFile()end
 GRM=GRM or{};GRM.Weather=GRM.Weather or{};local W=GRM.Weather
-W.Version="1.1.0";W.Types={clear={name="Ясно",fog=.08},cloudy={name="Облачно",fog=.22},fog={name="Туман",fog=.72},rain={name="Дождь",fog=.38},storm={name="Гроза",fog=.55}}
-W.Config=W.Config or{dayLengthMinutes=90,randomWeather=true,weatherMinMinutes=12,weatherMaxMinutes=28,startHour=8,hudClock=true,soundVolume=.65,musicVolume=.18,musicEnabled=true,musicTheme="noir"}
+W.Version="1.1.1";W.Types={clear={name="Ясно",fog=.08},cloudy={name="Облачно",fog=.22},fog={name="Туман",fog=.72},rain={name="Дождь",fog=.38},storm={name="Гроза",fog=.55}}
+W.Config=W.Config or{dayLengthMinutes=90,randomWeather=true,weatherMinMinutes=12,weatherMaxMinutes=28,startHour=8,hudClock=true,soundVolume=.65,musicVolume=.18,musicEnabled=true,musicTheme="noir",nightDarkness=.4}
 local OPEN="GRM_Weather_Admin";local SAVE="GRM_Weather_Save"
 if GRM.Access and GRM.Access.Register then GRM.Access.Register("weather.manage",{label="Погода и время: управление",scope="account"})end
 function W.CanAdmin(p)return IsValid(p)and(p:IsSuperAdmin()or(GRM.Access and GRM.Access.Can and GRM.Access.Can(p,"weather.manage")==true))end
@@ -22,9 +22,9 @@ if SERVER then
   dawn={TopColor=Vector(.2,.5,1),BottomColor=Vector(.46,.65,.49),FadeBias=1,HDRScale=.26,StarScale=1.84,StarFade=0,StarSpeed=.02,DuskScale=1,DuskIntensity=1,DuskColor=Vector(1,.2,0),SunColor=Vector(.2,.1,0),SunSize=2},
   day={TopColor=Vector(.2,.49,1),BottomColor=Vector(.8,1,1),FadeBias=1,HDRScale=.26,StarScale=1.84,StarFade=1.5,StarSpeed=.02,DuskScale=1,DuskIntensity=1,DuskColor=Vector(1,.2,0),SunColor=Vector(.83,.45,.11),SunSize=.34},
   dusk={TopColor=Vector(.24,.15,.08),BottomColor=Vector(.4,.07,0),FadeBias=1,HDRScale=.36,StarScale=1.5,StarFade=5,StarSpeed=.01,DuskScale=1,DuskIntensity=1.94,DuskColor=Vector(.69,.22,.02),SunColor=Vector(.9,.3,0),SunSize=.44},
-  night={TopColor=Vector(0,0,0),BottomColor=Vector(.05,.05,.11),FadeBias=.1,HDRScale=.19,StarScale=1.5,StarFade=5,StarSpeed=.01,DuskScale=0,DuskIntensity=0,DuskColor=Vector(1,.36,0),SunColor=Vector(.83,.45,.11),SunSize=0},
-  storm={TopColor=Vector(.22,.22,.22),BottomColor=Vector(.05,.05,.07),FadeBias=1,HDRScale=.26,StarScale=2,StarFade=5,StarSpeed=.04,DuskScale=0,DuskIntensity=0,DuskColor=Vector(.23,.23,.23),SunColor=Vector(.83,.45,.11),SunSize=.1},
-  storm_night={TopColor=Vector(.01,.01,.01),BottomColor=Vector(0,0,0),FadeBias=1,HDRScale=.26,StarScale=2,StarFade=5,StarSpeed=.04,DuskScale=0,DuskIntensity=0,DuskColor=Vector(.23,.23,.23),SunColor=Vector(.83,.45,.11),SunSize=.1},
+  night={TopColor=Vector(.012,.02,.055),BottomColor=Vector(.09,.12,.21),FadeBias=.22,HDRScale=.28,StarScale=1.65,StarFade=5,StarSpeed=.01,DuskScale=0,DuskIntensity=0,DuskColor=Vector(.15,.18,.3),SunColor=Vector(.08,.11,.2),SunSize=0},
+  storm={TopColor=Vector(.22,.22,.22),BottomColor=Vector(.08,.09,.12),FadeBias=1,HDRScale=.30,StarScale=2,StarFade=5,StarSpeed=.04,DuskScale=0,DuskIntensity=0,DuskColor=Vector(.23,.23,.23),SunColor=Vector(.3,.3,.34),SunSize=.1},
+  storm_night={TopColor=Vector(.008,.012,.025),BottomColor=Vector(.035,.045,.08),FadeBias=.65,HDRScale=.25,StarScale=1.8,StarFade=5,StarSpeed=.04,DuskScale=0,DuskIntensity=0,DuskColor=Vector(.08,.09,.13),SunColor=Vector(.05,.06,.1),SunSize=0},
  }
  local SKY_KEYS={{0,"night"},{4.5,"night"},{6,"dawn"},{9,"day"},{16.5,"day"},{19,"dusk"},{22,"night"},{24,"night"}}
  local VECTOR_FIELDS={TopColor=true,BottomColor=true,DuskColor=true,SunColor=true}
@@ -39,7 +39,7 @@ if SERVER then
  local lastLightStyle
  local function applyWorldLight(sun)
   if not (engine and engine.LightStyle) then return end
-  local style = sun < .03 and "d" or sun < .12 and "f" or sun < .30 and "h" or sun < .60 and "k" or "m"
+  local darkness=math.Clamp(tonumber(W.Config.nightDarkness)or.4,.2,.85);local nightStyle=darkness>=.68 and"f"or darkness>=.48 and"g"or darkness>=.3 and"h"or"i";local style=sun<.03 and nightStyle or sun<.12 and"h"or sun<.30 and"j"or sun<.60 and"l"or"m"
   if style ~= lastLightStyle then engine.LightStyle(0, style); lastLightStyle = style end
  end
  local function applySky()
@@ -57,13 +57,13 @@ if SERVER then
   e:SetSunColor(preset.SunColor);e:SetSunSize(preset.SunSize)
   applyWorldLight(sun)
  end
- local function sync()SetGlobalFloat("GRM_TimeMinutes",W._time);SetGlobalString("GRM_Weather",W._weather);SetGlobalFloat("GRM_SunFactor",W.SunFactor(W._time));SetGlobalBool("GRM_WeatherHUD",W.Config.hudClock~=false);SetGlobalFloat("GRM_WeatherSoundVolume",math.Clamp(tonumber(W.Config.soundVolume)or.65,0,1));SetGlobalFloat("GRM_WeatherMusicVolume",math.Clamp(tonumber(W.Config.musicVolume)or.18,0,1));SetGlobalBool("GRM_WeatherMusic",W.Config.musicEnabled~=false);SetGlobalString("GRM_WeatherMusicTheme",W.Config.musicTheme=="periods"and"periods"or"noir")end
+ local function sync()SetGlobalFloat("GRM_TimeMinutes",W._time);SetGlobalString("GRM_Weather",W._weather);SetGlobalFloat("GRM_SunFactor",W.SunFactor(W._time));SetGlobalBool("GRM_WeatherHUD",W.Config.hudClock~=false);SetGlobalFloat("GRM_WeatherSoundVolume",math.Clamp(tonumber(W.Config.soundVolume)or.65,0,1));SetGlobalFloat("GRM_WeatherMusicVolume",math.Clamp(tonumber(W.Config.musicVolume)or.18,0,1));SetGlobalBool("GRM_WeatherMusic",W.Config.musicEnabled~=false);SetGlobalString("GRM_WeatherMusicTheme",W.Config.musicTheme=="periods"and"periods"or"noir");SetGlobalFloat("GRM_NightDarkness",math.Clamp(tonumber(W.Config.nightDarkness)or.4,.2,.85))end
  local function nextWeather()if not W.Config.randomWeather then return end;local ids={"clear","clear","cloudy","fog","rain","storm"};W._weather=ids[math.random(#ids)];W._weatherUntil=CurTime()+math.random(W.Config.weatherMinMinutes*60,W.Config.weatherMaxMinutes*60);sync();save();if GRM.Audit then GRM.Audit.Write("weather","weather.change",nil,{}, {weather=W._weather})end end
  W._weatherUntil=CurTime()+math.random(W.Config.weatherMinMinutes*60,W.Config.weatherMaxMinutes*60)
  timer.Create("GRM_Weather_Clock",1,0,function()W._time=(W._time+1440/math.max(600,(tonumber(W.Config.dayLengthMinutes)or 90)*60))%1440;if CurTime()>=W._weatherUntil then nextWeather()end;sync()end);timer.Create("GRM_Weather_SunMotion",5,0,applySky);timer.Simple(1,applySky);timer.Create("GRM_Weather_Autosave",120,0,save)
  hook.Add("InitPostEntity","GRM_Weather_Sky",function()timer.Simple(2,applySky)end);hook.Add("ShutDown","GRM_Weather_Save",save)
  local function adminData(p)if not W.CanAdmin(p)then return end;net.Start(OPEN);net.WriteTable(W.Config);net.WriteFloat(W._time);net.WriteString(W._weather);net.Send(p)end
- net.Receive(SAVE,function(bits,p)if not W.CanAdmin(p)then return end;if GRM.Net and not GRM.Net.Guard(p,"weather.admin.save",{rate=.5,burst=2,maxBits=65536},{bits=bits})then return end;local d=net.ReadTable()or{};W.Config.dayLengthMinutes=math.Clamp(tonumber(d.dayLengthMinutes)or 90,10,1440);W.Config.randomWeather=d.randomWeather~=false;W.Config.weatherMinMinutes=math.Clamp(math.floor(tonumber(d.weatherMinMinutes)or 12),2,240);W.Config.weatherMaxMinutes=math.Clamp(math.floor(tonumber(d.weatherMaxMinutes)or 28),W.Config.weatherMinMinutes,480);W.Config.hudClock=d.hudClock~=false;W.Config.soundVolume=math.Clamp(tonumber(d.soundVolume)or.65,0,1);W.Config.musicVolume=math.Clamp(tonumber(d.musicVolume)or.18,0,1);W.Config.musicEnabled=d.musicEnabled~=false;W.Config.musicTheme=d.musicTheme=="periods"and"periods"or"noir";local hour=tonumber(d.hour);if hour then W._time=(hour%24)*60 end;if W.Types[d.weather]then W._weather=d.weather;W._weatherUntil=CurTime()+W.Config.weatherMaxMinutes*60 end;save();sync();applySky();if GRM.Audit then GRM.Audit.Write("weather","admin.save",p,{},d)end;adminData(p)end)
+ net.Receive(SAVE,function(bits,p)if not W.CanAdmin(p)then return end;if GRM.Net and not GRM.Net.Guard(p,"weather.admin.save",{rate=.5,burst=2,maxBits=65536},{bits=bits})then return end;local d=net.ReadTable()or{};W.Config.dayLengthMinutes=math.Clamp(tonumber(d.dayLengthMinutes)or 90,10,1440);W.Config.randomWeather=d.randomWeather~=false;W.Config.weatherMinMinutes=math.Clamp(math.floor(tonumber(d.weatherMinMinutes)or 12),2,240);W.Config.weatherMaxMinutes=math.Clamp(math.floor(tonumber(d.weatherMaxMinutes)or 28),W.Config.weatherMinMinutes,480);W.Config.hudClock=d.hudClock~=false;W.Config.soundVolume=math.Clamp(tonumber(d.soundVolume)or.65,0,1);W.Config.musicVolume=math.Clamp(tonumber(d.musicVolume)or.18,0,1);W.Config.musicEnabled=d.musicEnabled~=false;W.Config.musicTheme=d.musicTheme=="periods"and"periods"or"noir";W.Config.nightDarkness=math.Clamp(tonumber(d.nightDarkness)or.4,.2,.85);local hour=tonumber(d.hour);if hour then W._time=(hour%24)*60 end;if W.Types[d.weather]then W._weather=d.weather;W._weatherUntil=CurTime()+W.Config.weatherMaxMinutes*60 end;save();sync();applySky();if GRM.Audit then GRM.Audit.Write("weather","admin.save",p,{},d)end;adminData(p)end)
  concommand.Add("grm_weather_admin",adminData);concommand.Add("grm_time",function(p)if IsValid(p)then p:ChatPrint("[Время] "..W.FormatTime(W._time).." • "..W.Period(W._time).." • "..W.Types[W._weather].name)end end)
  hook.Add("PlayerSay","GRM_Weather_Chat",function(p,t)local s=string.lower(string.Trim(t or""));if s=="/time"or s=="/время"or s=="/weather"or s=="/погода"then p:ChatPrint("[Время] "..W.FormatTime(W._time).." • "..W.Period(W._time).." • "..W.Types[W._weather].name);return""elseif s=="/weather_admin"and W.CanAdmin(p)then adminData(p);return""end end)
  hook.Add("PlayerSayTransform","GRM_Weather_EasyChat",function(p,t,d)d=istable(t)and t or d;local raw=istable(t)and t[1]or t;local s=string.lower(string.Trim(raw or""));if s~="/time"and s~="/время"and s~="/weather"and s~="/погода"and s~="/weather_admin"then return end;if s=="/weather_admin"then if W.CanAdmin(p)then adminData(p)end else p:ChatPrint("[Время] "..W.FormatTime(W._time).." • "..W.Period(W._time).." • "..W.Types[W._weather].name)end;d.SkipPlayerSay=true;d[1]=""end)
@@ -114,11 +114,14 @@ if CLIENT then
         local sun = GetGlobalFloat("GRM_SunFactor", 1)
         local weather = GetGlobalString("GRM_Weather", "clear")
         local dark = 1 - sun
+        local nightDarkness=math.Clamp(GetGlobalFloat("GRM_NightDarkness",.4),.2,.85)
+        local brightnessLoss=Lerp(nightDarkness,.035,.11)
+        local colorLoss=Lerp(nightDarkness,.16,.36)
         DrawColorModify({
-            ["$pp_colour_addr"]=0, ["$pp_colour_addg"]=0, ["$pp_colour_addb"]=dark*.012,
-            ["$pp_colour_brightness"]=-dark*.18,
-            ["$pp_colour_contrast"]=1+dark*.04,
-            ["$pp_colour_colour"]=1-dark*.48-(weather=="storm" and .15 or 0),
+            ["$pp_colour_addr"]=0, ["$pp_colour_addg"]=0, ["$pp_colour_addb"]=dark*.008,
+            ["$pp_colour_brightness"]=-dark*brightnessLoss,
+            ["$pp_colour_contrast"]=1+dark*.025,
+            ["$pp_colour_colour"]=1-dark*colorLoss-(weather=="storm" and .08 or 0),
             ["$pp_colour_mulr"]=0, ["$pp_colour_mulg"]=0, ["$pp_colour_mulb"]=0,
         })
     end)
@@ -286,6 +289,7 @@ if CLIENT then
         end
         local day=slider("Длительность суток, реальные минуты",10,1440,cfg.dayLengthMinutes)
         local hour=slider("Текущее время, час",0,23,tm/60)
+        local nightDarkness=slider("Темнота ночи (0.2 светлее — 0.85 темнее)",.2,.85,cfg.nightDarkness or .4,2)
         local weatherBox=vgui.Create("DComboBox",f);weatherBox:SetPos(18,y);weatherBox:SetSize(724,36)
         for id,row in pairs(W.Types) do weatherBox:AddChoice(row.name,id,id==weather) end;y=y+46
         local random=vgui.Create("DCheckBoxLabel",f);random:SetPos(18,y);random:SetText("Случайная смена погоды");random:SetValue(cfg.randomWeather and 1 or 0);random:SizeToContents();y=y+34
@@ -299,7 +303,7 @@ if CLIENT then
         local b=vgui.Create("DButton",f);b:SetPos(18,655);b:SetSize(724,44);b:SetText("СОХРАНИТЬ И ПРИМЕНИТЬ")
         b.DoClick=function()
             local _,wid=weatherBox:GetSelected()
-            local _,themeID=theme:GetSelected();net.Start(SAVE);net.WriteTable({dayLengthMinutes=day:GetValue(),hour=hour:GetValue(),weather=wid or weather,randomWeather=random:GetChecked(),weatherMinMinutes=mn:GetValue(),weatherMaxMinutes=mx:GetValue(),hudClock=hud:GetChecked(),soundVolume=soundVolume:GetValue(),musicVolume=musicVolume:GetValue(),musicEnabled=music:GetChecked(),musicTheme=themeID or"noir"});net.SendToServer()
+            local _,themeID=theme:GetSelected();net.Start(SAVE);net.WriteTable({dayLengthMinutes=day:GetValue(),hour=hour:GetValue(),weather=wid or weather,randomWeather=random:GetChecked(),weatherMinMinutes=mn:GetValue(),weatherMaxMinutes=mx:GetValue(),hudClock=hud:GetChecked(),soundVolume=soundVolume:GetValue(),musicVolume=musicVolume:GetValue(),musicEnabled=music:GetChecked(),musicTheme=themeID or"noir",nightDarkness=nightDarkness:GetValue()});net.SendToServer()
         end
     end)
 end
