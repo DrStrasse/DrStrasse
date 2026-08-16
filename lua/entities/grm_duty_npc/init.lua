@@ -16,6 +16,18 @@ function ENT:Initialize()
     self:SetHealth(100000)
     self:CapabilitiesAdd(CAP_ANIMATEDFACE + CAP_TURN_HEAD)
     self:DropToFloor()
+    local seq=self:SelectWeightedSequence(ACT_IDLE)
+    if not seq or seq<0 then seq=self:LookupSequence("idle_all_01") end
+    if not seq or seq<0 then seq=self:LookupSequence("idle_all") end
+    self:ResetSequence((seq and seq>=0) and seq or 0)
+    self:SetPlaybackRate(1)
+    self:SetCycle(0)
+end
+
+function ENT:Think()
+    self:FrameAdvance(FrameTime())
+    self:NextThink(CurTime())
+    return true
 end
 
 function ENT:Use(activator)

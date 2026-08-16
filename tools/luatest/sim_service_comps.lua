@@ -3,6 +3,7 @@ local function read(p) local f = assert(io.open(p, "rb")); local s = f:read("*a"
 local fireInit = read("lua/entities/grm_comp_fire/init.lua")
 local fireCl   = read("lua/entities/grm_comp_fire/cl_init.lua")
 local fireSh   = read("lua/entities/grm_comp_fire/shared.lua")
+local policeCl = read("lua/entities/grm_comp_police/cl_init.lua")
 local chInit   = read("lua/entities/grm_comp_cityhall/init.lua")
 local chCl     = read("lua/entities/grm_comp_cityhall/cl_init.lua")
 local chSh     = read("lua/entities/grm_comp_cityhall/shared.lua")
@@ -27,6 +28,7 @@ ok(has(fireCl, "grm_fire_access") and has(fireCl, "grm_fire_log") and has(fireCl
 ok(has(fireCl, "grm_fire_notify"), "fire UI opens notify menu")
 ok(has(fireInit, "local function snapshot(ent, ply)") and has(fireInit, "snapshot(self, ply)"), "fire E snapshot uses valid entity, not nil self")
 ok(has(fireCl, "GRM.FireComputerFrame") and has(fireCl, "body.PerformLayout"), "fire UI singleton and delayed-width layout")
+ok(has(policeCl,"Лицензии на оружие") and has(policeCl,'net.WriteString("weaponLicense")') and has(policeCl,'StartExam("weaponLicense"'),"police computer issues weapon licenses and runs exam")
 
 -- Мэрия.
 ok(has(chSh, "grm_comp_cityhall") and has(chSh, "мэрии"), "cityhall shared defines class/name")

@@ -341,13 +341,15 @@ if SERVER then
         for key, rec in pairs(f.Members or {}) do
             if istable(rec) then
                 local rp, online, steamNick = characterDisplay(key)
+                local onlineP=GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(key) or nil
+                local onDuty=IsValid(onlineP) and GRM.FactionDuty and GRM.FactionDuty.IsOnDuty and GRM.FactionDuty.IsOnDuty(onlineP) or false
+                local savedDuty=GRM.FactionDuty and GRM.FactionDuty.State and GRM.FactionDuty.State[key]
+                local dutyStatus=online and (onDuty and "НА СЛУЖБЕ" or "ВНЕ СЛУЖБЫ") or (savedDuty==false and "ВЫХОДНОЙ" or "НЕ В СЕТИ")
+                local location=IsValid(onlineP) and string.format("%.0f %.0f %.0f",onlineP:GetPos().x,onlineP:GetPos().y,onlineP:GetPos().z) or "—"
                 out[key] = {
-                    Role = rec.Role,
-                    Department = rec.Department,
-                    _characterKey = key,
-                    _rpName = rp,
-                    _online = online,
-                    _steamNick = steamNick,
+                    Role = rec.Role, Department = rec.Department,
+                    _characterKey = key, _rpName = rp, _online = online, _steamNick = steamNick,
+                    _dutyStatus=dutyStatus, _location=location,
                 }
             end
         end
@@ -1982,6 +1984,7 @@ if CLIENT then
             local lblDept = vgui.Create("DLabel", row)
             lblDept:SetPos(360, 6) lblDept:SetSize(130, 20) lblDept:SetText((info.Department and info.Department ~= "") and info.Department or "—")
             lblDept:SetFont("Factions_Normal") lblDept:SetTextColor(THEME.textDim)
+            local lblDuty=vgui.Create("DLabel",row);lblDuty:SetPos(500,6);lblDuty:SetSize(210,20);lblDuty:SetText(tostring(info._dutyStatus or"НЕ В СЕТИ").."  "..tostring(info._location or"—"));lblDuty:SetFont("Factions_Small");lblDuty:SetTextColor(info._dutyStatus=="НА СЛУЖБЕ" and Color(80,220,130) or THEME.textDim)
 
             if not info._rpName then
                 getPlayerName(steam, function(name)
@@ -2213,6 +2216,7 @@ if CLIENT then
             local lblDept = vgui.Create("DLabel", row)
             lblDept:SetPos(380, 6) lblDept:SetSize(130, 20) lblDept:SetText((info.Department and info.Department ~= "") and info.Department or "—")
             lblDept:SetFont("Factions_Normal") lblDept:SetTextColor(THEME.textDim)
+            local lblDuty=vgui.Create("DLabel",row);lblDuty:SetPos(520,6);lblDuty:SetSize(210,20);lblDuty:SetText(tostring(info._dutyStatus or"НЕ В СЕТИ").."  "..tostring(info._location or"—"));lblDuty:SetFont("Factions_Small");lblDuty:SetTextColor(info._dutyStatus=="НА СЛУЖБЕ" and Color(80,220,130) or THEME.textDim)
 
             if not info._rpName then
                 getPlayerName(steam, function(name)

@@ -7,6 +7,7 @@ local C = GRM.Customization
 C.Catalog = C.Catalog or {}
 C.ClientLoadouts = C.ClientLoadouts or {}
 C.RenderCache = C.RenderCache or {}
+C.ClientVersion = "1.1.0"
 
 local UI = {
     bg = Color(12, 17, 25, 248), head = Color(22, 30, 43, 252), panel = Color(27, 37, 52, 245),
@@ -179,14 +180,8 @@ hook.Add("PlayerBindPress", "GRM_Customization_NoFlashlightBind", function(ply, 
     if bind == "+flashlight" then return true end
 end)
 hook.Add("Think", "GRM_Customization_FlashlightForceOff", function()
-    -- Находка 180b: правильный метод проверки фонарика — FlashlightIsOn().
-    -- Оба метода под isfunction-гардом (проверка существования до вызова).
-    local lp = LocalPlayer()
-    if IsValid(lp) then
-        if isfunction(lp.FlashlightIsOn) and lp:FlashlightIsOn() then
-            if isfunction(lp.SetFlashlight) then lp:SetFlashlight(false) end
-        end
-    end
+    local lp=LocalPlayer()
+    if IsValid(lp) and isfunction(lp.FlashlightIsOn) and lp:FlashlightIsOn() and isfunction(lp.SetFlashlight) then lp:SetFlashlight(false) end
 end)
 
 hook.Add("EntityRemoved", "GRM_Customization_CacheCleanup", function(ent)
@@ -274,10 +269,6 @@ local function drawAccessories(ply, forceEditorDraw)
 end
 
 hook.Add("PostPlayerDraw", "GRM_Customization_DrawAccessories", function(ply)
-    -- В редакторе LocalPlayer рисуется отдельным third-person проходом.
-    -- Не рисуем аксессуар внутри этого нестабильного прохода: иначе он
-    -- помечался lastFrame, но фактически не попадал в финальный framebuffer,
-    -- а поздний fallback уже считал кадр готовым.
     if C.EditorActive and ply == LocalPlayer() then return end
     drawAccessories(ply)
 end)
@@ -386,13 +377,23 @@ local GIZMO_AXES = {
     z = { color = Color(75, 145, 255), vector = function(ang) return ang:Up() end },
 }
 
+local function gizmoGeometry(origin)
+    local dist=EyePos():Distance(origin)
+    local base=math.Clamp(dist*0.055,12,34)
+    local half=4
+    local lp=LocalPlayer();local cache=IsValid(lp)and C.RenderCache[lp];local entry=cache and cache[editor.selected]
+    if entry and IsValid(entry.ent) then local mn,mx=entry.ent:GetRenderBounds();half=math.max(half,(mx-mn):Length()*(entry.smoothScale or 1)*0.28)end
+    return math.Clamp(math.max(base,half+4),12,48),math.Clamp(math.max(base*0.78,half+2),10,42)
+end
+
 local function pickGizmoAxis(mx, my)
     local origin, boneAng = selectedAccessoryWorld()
     if not origin then return end
     local os = origin:ToScreen()
     local bestAxis, bestDistance, bestDX, bestDY
     for axis, data in pairs(GIZMO_AXES) do
-        local es = (origin + data.vector(boneAng) * 15):ToScreen()
+        local axisLength=gizmoGeometry(origin)
+        local es = (origin + data.vector(boneAng) * axisLength):ToScreen()
         local dx, dy = es.x - os.x, es.y - os.y
         local len2 = dx * dx + dy * dy
         if len2 > 4 then
@@ -423,7 +424,7 @@ local function pickRotationAxis(mx, my)
     local origin, boneAng = selectedAccessoryWorld()
     if not origin then return end
     local bestAxis, bestDistance, bestDX, bestDY
-    local segments, radius = 40, 12
+    local segments=64;local _,radius=gizmoGeometry(origin)
     for axis in pairs(GIZMO_AXES) do
         local previous = rotationRingPoint(origin, boneAng, axis, 0, radius):ToScreen()
         for i = 1, segments do
@@ -455,8 +456,9 @@ hook.Add("PostDrawTranslucentRenderables", "GRM_Customization_TransformGizmo", f
     local origin, boneAng = selectedAccessoryWorld()
     if not origin then return end
     render.SetColorMaterial()
+    render.DrawWireframeSphere(origin,1.6,8,8,Color(245,245,255),false)
     if editor.gizmoMode == "rotate" then
-        local segments, radius = 40, 12
+        local segments=64;local _,radius=gizmoGeometry(origin)
         for axis, data in pairs(GIZMO_AXES) do
             local previous = rotationRingPoint(origin, boneAng, axis, 0, radius)
             for i = 1, segments do
@@ -466,8 +468,9 @@ hook.Add("PostDrawTranslucentRenderables", "GRM_Customization_TransformGizmo", f
             end
         end
     else
+        local axisLength=gizmoGeometry(origin)
         for _, data in pairs(GIZMO_AXES) do
-            local endpoint = origin + data.vector(boneAng) * 15
+            local endpoint = origin + data.vector(boneAng) * axisLength
             render.DrawLine(origin, endpoint, data.color, false)
             render.DrawWireframeSphere(endpoint, 1.15, 7, 7, data.color, false)
         end

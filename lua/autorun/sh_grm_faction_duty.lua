@@ -105,6 +105,7 @@ if SERVER then
         end
         timer.Simple(0, function() if IsValid(ply) then applyAppearance(ply) end end)
         hook.Run("GRM_FactionDutyChanged", ply, onDuty, factionOf(ply))
+        if isfunction(broadcastFactionData) then broadcastFactionData() end
     end
 
     function FD.Set(ply, onDuty, actor)
@@ -236,13 +237,15 @@ else
         if not IsValid(ent) then return end
         if IsValid(FD._adminFrame) then FD._adminFrame:Remove() end
         local f=vgui.Create("DFrame") FD._adminFrame=f; f:SetSize(620,390); f:Center(); f:MakePopup(); f:SetTitle("Настройка служебного диспетчера")
+        local selectedFaction=current
         local fac=vgui.Create("DComboBox",f); fac:SetPos(20,60); fac:SetSize(580,32); fac:SetValue(current ~= "" and current or "Выберите фракцию")
         for _,name in ipairs(factions) do fac:AddChoice(name,name,name==current) end
+        fac.OnSelect=function(_,_,_,data) selectedFaction=tostring(data or "") end
         local title=vgui.Create("DTextEntry",f); title:SetPos(20,120); title:SetSize(580,30); title:SetValue(currentTitle); title:SetPlaceholderText("Надпись пункта")
         local mdl=vgui.Create("DTextEntry",f); mdl:SetPos(20,180); mdl:SetSize(580,30); mdl:SetValue(currentModel); mdl:SetPlaceholderText("Модель NPC")
         local hint=vgui.Create("DLabel",f); hint:SetPos(20,225); hint:SetSize(580,55); hint:SetWrap(true); hint:SetText("Каждый NPC обслуживает только одну выбранную фракцию. Название фракции автоматически показывается на 3D2D-табличке над ним.")
         local saveBtn=vgui.Create("DButton",f); saveBtn:SetPos(20,305); saveBtn:SetSize(580,42); saveBtn:SetText("СОХРАНИТЬ И ОБНОВИТЬ ПЕРМ")
-        saveBtn.DoClick=function() local _,selected=fac:GetSelected(); net.Start(NET_ADMIN_SAVE); net.WriteEntity(ent); net.WriteString(tostring(selected or current or "")); net.WriteString(title:GetValue()); net.WriteString(mdl:GetValue()); net.SendToServer(); f:Close() end
+        saveBtn.DoClick=function() net.Start(NET_ADMIN_SAVE); net.WriteEntity(ent); net.WriteString(tostring(selectedFaction or "")); net.WriteString(title:GetValue()); net.WriteString(mdl:GetValue()); net.SendToServer(); f:Close() end
     end)
 
     net.Receive(NET_OPEN, function()

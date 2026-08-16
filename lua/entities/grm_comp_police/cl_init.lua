@@ -583,6 +583,38 @@ net.Receive("GRM_CompPolice_Open", function()
     tabs:AddSheet("Отдел кадров OrdnungPolizei", badgePnl, "icon16/shield.png")
 
     -- ══════════════════════════════════════════════════════════════
+    -- ВКЛАДКА 5: ЛИЦЕНЗИРОВАНИЕ ОРУЖИЯ (ОЛРР)
+    -- ══════════════════════════════════════════════════════════════
+    local licPnl=vgui.Create("DPanel",tabs); licPnl.Paint=function(_,w,h)draw.RoundedBox(6,0,0,w,h,CC.panel)end
+    local title=vgui.Create("DLabel",licPnl); title:SetPos(16,16); title:SetSize(880,24); title:SetFont("DermaDefaultBold"); title:SetTextColor(CC.gold); title:SetText("ОЛРР • ВЫДАЧА ЛИЦЕНЗИИ НА ОРУЖИЕ")
+    local target=vgui.Create("DComboBox",licPnl); target:SetPos(16,50); target:SetSize(420,28); target:AddChoice("— Выберите гражданина —","")
+    for _,pd in ipairs(onlineList)do target:AddChoice((pd.rpName or"?").."  ["..(pd.nick or"?").."]",pd)end
+    local selectedKey,selectedSid="","0"
+    local name=vgui.Create("DTextEntry",licPnl); name:SetPos(16,94); name:SetSize(300,28); name:SetPlaceholderText("ФИО владельца")
+    local birth=vgui.Create("DTextEntry",licPnl); birth:SetPos(330,94); birth:SetSize(150,28); birth:SetPlaceholderText("Дата рождения")
+    local number=vgui.Create("DTextEntry",licPnl); number:SetPos(494,94); number:SetSize(180,28); number:SetPlaceholderText("ЛО-000000")
+    local valid=vgui.Create("DTextEntry",licPnl); valid:SetPos(688,94); valid:SetSize(220,28); valid:SetText("5 лет")
+    local cats={}; local x,y=16,150
+    for _,cd in ipairs(GRM.Documents and GRM.Documents.WeaponCategories or{})do local cb=vgui.Create("DCheckBoxLabel",licPnl); cb:SetPos(x,y); cb:SetSize(280,24); cb:SetText(cd.name); cb:SetTextColor(CC.text); cats[cd.id]=cb; x=x+300;if x>650 then x=16;y=y+30 end end
+    local restrictions=vgui.Create("DTextEntry",licPnl); restrictions:SetPos(16,250); restrictions:SetSize(892,70); restrictions:SetMultiline(true); restrictions:SetPlaceholderText("Особые условия хранения и ношения")
+    target.OnSelect=function(_,_,_,pd)
+        if not istable(pd)then return end; selectedKey=pd.key or"";selectedSid=pd.steamID64 or"0";name:SetText(pd.rpName or"");number:SetText("ЛО-"..selectedSid:sub(-6))
+        local ex=registry.weaponLicenses and registry.weaponLicenses[selectedKey]
+        if ex then name:SetText(ex.fullName or pd.rpName or"");birth:SetText(ex.birthDate or"");number:SetText(ex.number or"");valid:SetText(ex.validUntil or"5 лет");restrictions:SetText(ex.restrictions or"");for id,cb in pairs(cats)do cb:SetValue(ex.categories and ex.categories[id]==true)end end
+    end
+    local exam=vgui.Create("DButton",licPnl); exam:SetPos(16,340); exam:SetSize(280,38); exam:SetText("ПРОВЕСТИ ЭКЗАМЕН"); exam:SetTextColor(color_white); exam.Paint=function(s,w,h)draw.RoundedBox(5,0,0,w,h,s:IsHovered()and Color(80,130,210)or CC.accent)end
+    exam.DoClick=function()if selectedKey==""then return end;if GRM.Documents and GRM.Documents.StartExam then GRM.Documents.StartExam("weaponLicense",selectedKey)end end
+    local issue=vgui.Create("DButton",licPnl); issue:SetPos(310,340); issue:SetSize(360,38); issue:SetText("ВЫДАТЬ ЛИЦЕНЗИЮ И БЛАНК"); issue:SetTextColor(color_white); issue.Paint=function(s,w,h)draw.RoundedBox(5,0,0,w,h,s:IsHovered()and Color(70,210,120)or CC.success)end
+    issue.DoClick=function()
+        if selectedKey==""then notification.AddLegacy("Выберите гражданина",NOTIFY_ERROR,3)return end
+        local selected={};for id,cb in pairs(cats)do selected[id]=cb:GetChecked()end
+        net.Start("GRM_Doc_ComputerIssue");net.WriteString("weaponLicense");net.WriteString(selectedKey);net.WriteTable({fullName=name:GetValue(),birthDate=birth:GetValue(),number=number:GetValue(),categories=selected,restrictions=restrictions:GetValue(),issuedBy="ОЛРР OrdnungPolizei",issueDate=os.date("%d.%m.%Y"),validUntil=valid:GetValue(),status="Действительна",steamID64=selectedSid});net.SendToServer();frame:Close()
+    end
+    local revoke=vgui.Create("DButton",licPnl);revoke:SetPos(684,340);revoke:SetSize(224,38);revoke:SetText("АННУЛИРОВАТЬ");revoke:SetTextColor(color_white);revoke.Paint=function(s,w,h)draw.RoundedBox(5,0,0,w,h,s:IsHovered()and Color(235,80,80)or CC.danger)end
+    revoke.DoClick=function()if selectedKey==""then return end;net.Start("GRM_Doc_ComputerRevoke");net.WriteString("weaponLicense");net.WriteString(selectedKey);net.SendToServer();frame:Close()end
+    tabs:AddSheet("Лицензии на оружие",licPnl,"icon16/key.png")
+
+    -- ══════════════════════════════════════════════════════════════
     -- ВКЛАДКА: МЕЖВЕДОМСТВЕННЫЙ ОБМЕН СВЕДЕНИЯМИ
     -- Общий конструктор живёт в autorun/client/cl_grm_comp_terminal.lua,
     -- чтобы оба терминала были одинаковыми и правились в одном месте.

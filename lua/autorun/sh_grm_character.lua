@@ -29,7 +29,7 @@ GRM = GRM or {}
 GRM.Char = GRM.Char or {}
 local CH = GRM.Char
 
-CH.Version    = "1.3.0"
+CH.Version    = "1.5.0"
 CH.NameMin    = 3     -- минимальная длина RP-имени
 CH.NameMax    = 48
     CH.DataFile   = "grm_characters.json"
@@ -328,6 +328,16 @@ if SERVER then
         return true
     end
 
+    local function factionMembership(ply)
+        for name,f in pairs(Factions or {}) do
+            if istable(f) and istable(f.Members) then
+                local member=GRM.Identity and GRM.Identity.FactionMember and GRM.Identity.FactionMember(f,ply)
+                if member then return name,member,f end
+            end
+        end
+        return nil
+    end
+
     -- провайдеры по умолчанию -----------------------------------
     CH.RegisterProvider("civilian", {
         Order = 10,
@@ -346,37 +356,14 @@ if SERVER then
     CH.RegisterProvider("faction", {
         Order = 20,
         Title = function(ply)
-            if not istable(Factions) then return "Фракция" end
-            local sid, s64 = ply:SteamID(), ply:SteamID64()
-            local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or nil
-            for n, f in pairs(Factions) do
-                local m = nil
-                if istable(f) and istable(f.Members) then
-                    if ck then m = f.Members[ck]
-                    else m = f.Members[sid] or f.Members[s64] end
-                end
-                if istable(m) then
-                    return "Фракция: " .. n .. (m.Role and (" — " .. tostring(m.Role)) or "")
-                end
-            end
-            return nil -- скрыть секцию для гражданских
+            local n,m=factionMembership(ply)
+            if not n then return nil end
+            local duty=(GRM.FactionDuty and GRM.FactionDuty.IsOnDuty and GRM.FactionDuty.IsOnDuty(ply)) and "НА СЛУЖБЕ" or "ВНЕ СЛУЖБЫ"
+            return "Фракция: "..n..(m.Role and (" — "..tostring(m.Role)) or "").." • "..duty
         end,
         Outfits = function(ply)
             if _G.GetModelsForPlayer then
-                local hasFaction = false
-                if istable(Factions) then
-                    local sid, s64 = ply:SteamID(), ply:SteamID64()
-                    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or nil
-                    for _, f in pairs(Factions) do
-                        if istable(f) and istable(f.Members) then
-                            local member
-                            if ck then member = f.Members[ck]
-                            else member = f.Members[sid] or f.Members[s64] end
-                            if member then hasFaction = true break end
-                        end
-                    end
-                end
-                if not hasFaction then return {} end
+                if not factionMembership(ply) then return {} end
                 local out = {}
                 for _, e in ipairs(_G.GetModelsForPlayer(ply) or {}) do
                     if istable(e) and isstring(e.path) then out[#out + 1] = { path = e.path, skin = tonumber(e.skin) or 0, bodygroups = table.Copy(istable(e.bodygroups) and e.bodygroups or {}) } end
@@ -401,12 +388,8 @@ if SERVER then
             if oa == ob then return a < b end
             return oa < ob
         end)
-        local hasFaction = false
-        if istable(Factions) and GRM.Identity and GRM.Identity.FactionMember then
-            for _, faction in pairs(Factions) do
-                if GRM.Identity.FactionMember(faction, ply) then hasFaction = true break end
-            end
-        end
+        local factionName,member=factionMembership(ply)
+        local hasFaction=factionName~=nil
         for _, id in ipairs(ids) do
             local skip = false
             -- Гражданская и фракционная внешность взаимоисключающие:
@@ -426,13 +409,13 @@ if SERVER then
                 end
             end
         end
-        local allOutfits = {}
-        for _, section in ipairs(sections) do
-            for _, outfit in ipairs(section.outfits or {}) do
-                local copy = table.Copy(outfit)
-                copy.provider = section.id
-                copy.providerTitle = section.title
-                allOutfits[#allOutfits + 1] = copy
+        local allOutfits,seenOutfits = {},{}
+        for _,section in ipairs(sections) do
+            for _,outfit in ipairs(section.outfits or {}) do
+                local sig=string.lower(tostring(outfit.path or "")).."|"..tostring(tonumber(outfit.skin) or 0).."|"..tostring(util.TableToJSON(outfit.bodygroups or {}) or "")
+                if not seenOutfits[sig] then
+                    seenOutfits[sig]=true; local copy=table.Copy(outfit); copy.provider=section.id; copy.providerTitle=section.title; allOutfits[#allOutfits+1]=copy
+                end
             end
         end
 
@@ -460,6 +443,10 @@ if SERVER then
             isAdmin = ply:IsSuperAdmin() or nil,
             pending = CH.PendingSelection[sid64(ply)] == true,
             mandatory = CH.PendingMandatory[sid64(ply)] == true,
+            factionName = factionName or "",
+            factionRole = member and tostring(member.Role or "") or "",
+            factionDepartment = member and tostring(member.Department or "") or "",
+            onDuty = hasFaction and (not GRM.FactionDuty or not GRM.FactionDuty.IsOnDuty or GRM.FactionDuty.IsOnDuty(ply)) or false,
         }
     end
 
@@ -755,14 +742,12 @@ if CLIENT then
             bodygroups = char and table.Copy(char.bodygroups or {}) or {},
             wardrobeRule = {},
         }
-        if draft.model == "" and defaultOutfit then
-            draft.model = defaultOutfit.path
-            draft.skin = tonumber(defaultOutfit.skin) or 0
-            draft.bodygroups = table.Copy(defaultOutfit.bodygroups or {})
+        local matchedOutfit=nil
+        for _,outfit in ipairs(outfits) do if string.lower(tostring(outfit.path or ""))==string.lower(draft.model) then matchedOutfit=outfit break end end
+        if (draft.model=="" or not matchedOutfit) and defaultOutfit then
+            draft.model=defaultOutfit.path; draft.skin=tonumber(defaultOutfit.skin) or 0; draft.bodygroups=table.Copy(defaultOutfit.bodygroups or {}); matchedOutfit=defaultOutfit
         end
-        for _, outfit in ipairs(outfits) do
-            if outfit.path == draft.model then draft.wardrobeRule = table.Copy(outfit.wardrobeRule or {}) break end
-        end
+        if matchedOutfit then draft.wardrobeRule=table.Copy(matchedOutfit.wardrobeRule or {}) end
 
         if IsValid(CH._frame) then CH._frame:Remove() CH._frame = nil end
         local f = vgui.Create("DFrame")
@@ -785,7 +770,7 @@ if CLIENT then
             local ttl = isWardrobe and tostring(payload.wardrobeTitle or "Гардероб") or (char and "МЕНЮ ПЕРСОНАЖА" or "СОЗДАНИЕ ПЕРСОНАЖА")
             draw.SimpleText(ttl, "GRMChar_Big", 26, 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             draw.SimpleText("GRM Identity v" .. CH.Version .. "   ·   активный слот: " .. tostring(activeSlot), "GRMChar_Small", pw - 26, 26, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-            draw.SimpleText("Слот и внешность применяются после подтверждения", "GRMChar_Small", 26, 44, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("Слот и внешность применяются после подтверждения  •  "..(payload.factionName~="" and (payload.factionName.." / "..tostring(payload.factionRole).." / "..(payload.onDuty and "НА СЛУЖБЕ" or "ВНЕ СЛУЖБЫ")) or "ГРАЖДАНСКИЙ"), "GRMChar_Small", 26, 44, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
 
         local x = vgui.Create("DButton", f)
@@ -933,33 +918,22 @@ if CLIENT then
             local name = tostring(path or ""):match("([^/]+)$") or tostring(path or "")
             return name:gsub("%.mdl$", "")
         end
-        for _, entry in ipairs(outfits) do
-            local row = vgui.Create("DPanel", osc)
-            row:Dock(TOP) row:SetTall(56) row:DockMargin(0, 0, 0, 6)
-            local bn = vgui.Create("DButton", row)
-            bn:Dock(FILL) bn:SetText("")
-            bn.Paint = function(self, pw, ph)
-                local sel = (entry.path == draft.model)
-                draw.RoundedBox(7, 0, 0, pw, ph, sel and Color(33, 52, 76) or C.panel2)
-                surface.SetDrawColor(sel and C.acc or C.border)
-                surface.DrawOutlinedRect(0, 0, pw, ph, sel and 2 or 1)
-                draw.SimpleText(tostring(entry.providerTitle or "Внешность"), "GRMChar_Normal", 10, 9, sel and C.text or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                draw.SimpleText(modelLabel(entry.path), "GRMChar_Small", 10, 31, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                if sel then draw.SimpleText("ВЫБРАНО", "GRMChar_Small", pw - 10, 18, C.acc, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER) end
-            end
-            bn.DoClick = function()
-                draft.model = entry.path
-                draft.skin = tonumber(entry.skin) or 0
-                draft.bodygroups = table.Copy(entry.bodygroups or {})
-                draft.wardrobeRule = table.Copy(entry.wardrobeRule or {})
-                refreshPreview()
-                refreshSkinMax()
-                skinSlider:SetValue(draft.skin)
-                rebuildBodygroups()
-                timer.Simple(0.12, function() if IsValid(preview) then rebuildBodygroups() end end)
-                surface.PlaySound("buttons/button15.wav")
-            end
+        local modelChoice=vgui.Create("DComboBox",mid)
+        modelChoice:Dock(TOP); modelChoice:SetTall(34); modelChoice:DockMargin(0,4,0,8); modelChoice:SetFont("GRMChar_Normal")
+        local modelInfo=vgui.Create("DLabel",mid); modelInfo:Dock(TOP); modelInfo:SetTall(70); modelInfo:SetWrap(true); modelInfo:SetFont("GRMChar_Normal"); modelInfo:SetTextColor(C.dim)
+        local function chooseOutfit(entry)
+            if not entry then return end
+            draft.model=entry.path; draft.skin=tonumber(entry.skin) or 0; draft.bodygroups=table.Copy(entry.bodygroups or {}); draft.wardrobeRule=table.Copy(entry.wardrobeRule or {})
+            modelInfo:SetText("Провайдер: "..tostring(entry.providerTitle or "Внешность").."\nМодель: "..tostring(entry.path or ""))
+            refreshPreview(); refreshSkinMax(); skinSlider:SetValue(draft.skin); rebuildBodygroups(); timer.Simple(0.12,function()if rebuildBodygroups then rebuildBodygroups()end end)
         end
+        for _,entry in ipairs(outfits) do
+            local title=modelLabel(entry.path).."  •  "..tostring(entry.providerTitle or "Внешность")
+            modelChoice:AddChoice(title,entry,string.lower(tostring(entry.path or ""))==string.lower(draft.model))
+            if string.lower(tostring(entry.path or ""))==string.lower(draft.model) then modelInfo:SetText("Провайдер: "..tostring(entry.providerTitle or "Внешность").."\nМодель: "..tostring(entry.path or "")) end
+        end
+        modelChoice.OnSelect=function(_,_,_,entry) chooseOutfit(entry) end
+        if #outfits==0 then modelChoice:SetValue("Нет доступных моделей"); modelInfo:SetText("Сервер не выдал моделей для текущей фракции/роли.") end
 
         -- ── ПРАВАЯ: превью + настройка ────────────────────────────────────
         local previewTitle = vgui.Create("DPanel", right)
@@ -1133,8 +1107,19 @@ if CLIENT then
         if not char then bSave:SetText("Создать и выбрать (обязательно)") end
     end
 
-    net.Receive(NET_OPEN, function()
-        openCharMenu(net.ReadTable() or {})
+    local function payloadSignature(p)
+        local parts={tostring(p.activeSlot),tostring(p.characterKey),tostring(p.factionName),tostring(p.factionRole),tostring(p.factionDepartment),tostring(p.onDuty),tostring(p.char and p.char.name),tostring(p.char and p.char.model)}
+        for _,sl in ipairs(p.slots or{})do parts[#parts+1]=tostring(sl.id)..":"..tostring(sl.name)..":"..tostring(sl.model)end
+        for _,o in ipairs(p.outfits or {}) do parts[#parts+1]=tostring(o.path)..":"..tostring(o.skin) end
+        return table.concat(parts,"|")
+    end
+    net.Receive(NET_OPEN,function()
+        local payload=net.ReadTable() or {}; local sig=payloadSignature(payload)
+        if IsValid(CH._frame) and CH._liveSignature==sig then return end
+        CH._liveSignature=sig; openCharMenu(payload)
+    end)
+    timer.Create("GRM_Char_LiveRefresh",2,0,function()
+        if IsValid(CH._frame) then net.Start(NET_REQUEST) net.SendToServer() end
     end)
 
     net.Receive(NET_CLOSE, function()
