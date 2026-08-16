@@ -68,6 +68,7 @@ util.AddNetworkString("GRM_Edu_ShowAsk")  -- клиент -> сервер: по�
 util.AddNetworkString("GRM_Edu_ShowView") -- сервер -> клиент: вам показали
 
 local nextAct = {}
+local nextMine = {} -- список своих дипломов не должен блокировать немедленное предъявление
 
 local function result(ply, ok, msg)
     if not IsValid(ply) then return end
@@ -337,57 +338,57 @@ local function announce(ply, meText)
     end
 end
 
-net.Receive("GRM_Edu_ShowAsk", function(_, ply)
-    if not IsValid(ply) then return end
-    local now = CurTime()
-    if (nextAct[ply] or 0) > now then return end
-    nextAct[ply] = now + EDU.Config.RateLimit
-
-    local number = string.sub(net.ReadString() or "", 1, 32)
-
-    local target = ply:GetEyeTrace().Entity
+local function showDiplomaToAim(ply,number)
+    if not IsValid(ply) then return false end
+    number=string.sub(tostring(number or ""),1,32)
+    local target=ply:GetEyeTrace().Entity
     if not (IsValid(target) and target:IsPlayer() and target:Alive()) then
-        if GRM.Notify then GRM.Notify(ply, "Наведитесь на игрока перед собой.", 255, 180, 90) end
-        return
+        if GRM.Notify then GRM.Notify(ply,"Наведитесь на игрока перед собой.",255,180,90) end
+        return false
     end
-    if ply:GetPos():DistToSqr(target:GetPos()) > 200 * 200 then
-        if GRM.Notify then GRM.Notify(ply, "Игрок слишком далеко — подойдите ближе.", 255, 180, 90) end
-        return
+    if ply:GetPos():DistToSqr(target:GetPos())>200*200 then
+        if GRM.Notify then GRM.Notify(ply,"Игрок слишком далеко — подойдите ближе.",255,180,90) end
+        return false
     end
+    local mine=EDU.MyDiplomas(ply); local rec
+    if number~="" then for _,d in ipairs(mine) do if d.number==number then rec=d break end end
+    else for _,d in ipairs(mine) do if not d.revoked then rec=d break end end; rec=rec or mine[1] end
+    if not rec then if GRM.Notify then GRM.Notify(ply,"У вас нет такого диплома.",255,140,110) end return false end
+    local tName=target:GetNWString("GRM_RPName",""); if tName=="" then tName=target:Nick() end
+    announce(ply,("предъявил(а) диплом игроку %s (%s, %s)"):format(tName,rec.number,rec.specialty~="" and rec.specialty or "специальность не указана"))
+    net.Start("GRM_Edu_ShowView"); net.WriteTable(rec); net.WriteString((ply:GetNWString("GRM_RPName","")~="" and ply:GetNWString("GRM_RPName","")) or ply:Nick()); net.Send(target)
+    if GRM.Notify then GRM.Notify(ply,"Вы предъявили диплом игроку "..tName..".",100,220,130) end
+    return true
+end
+EDU.ShowDiplomaToAim=showDiplomaToAim
 
-    -- Показать можно ТОЛЬКО свой бланк: ищем среди дипломов предъявителя.
-    local mine = EDU.MyDiplomas(ply)
-    local rec
-    if number ~= "" then
-        for _, d in ipairs(mine) do if d.number == number then rec = d break end end
-    else
-        for _, d in ipairs(mine) do if not d.revoked then rec = d break end end
-        rec = rec or mine[1]
-    end
-    if not rec then
-        if GRM.Notify then GRM.Notify(ply, "У вас нет такого диплома.", 255, 140, 110) end
-        return
-    end
+local function requestShow(ply,number)
+    local now=CurTime(); if (nextAct[ply] or 0)>now then return false end
+    nextAct[ply]=now+EDU.Config.RateLimit
+    return showDiplomaToAim(ply,number)
+end
 
-    local tName = target:GetNWString("GRM_RPName", "")
-    if tName == "" then tName = target:Nick() end
-
-    announce(ply, ("предъявил(а) диплом игроку %s (%s, %s)")
-        :format(tName, rec.number, rec.specialty ~= "" and rec.specialty or "специальность не указана"))
-
-    net.Start("GRM_Edu_ShowView")
-        net.WriteTable(rec)
-        net.WriteString((ply:GetNWString("GRM_RPName", "") ~= "" and ply:GetNWString("GRM_RPName", "")) or ply:Nick())
-    net.Send(target)
-
-    if GRM.Notify then GRM.Notify(ply, "Вы предъявили диплом игроку " .. tName .. ".", 100, 220, 130) end
+net.Receive("GRM_Edu_ShowAsk",function(_,ply)
+    if not IsValid(ply) then return end
+    requestShow(ply,net.ReadString() or "")
 end)
+
+local function showChat(ply,text)
+    local raw=string.Trim(tostring(text or "")); local low=string.lower(raw); local prefix
+    for _,cmd in ipairs({"/showdiploma","/покдиплом","/предъявитьдиплом"}) do if low==cmd or string.sub(low,1,#cmd+1)==cmd.." " then prefix=cmd break end end
+    if not prefix then return false end
+    if ply._grmEduShowCmdAt==CurTime() then return true end; ply._grmEduShowCmdAt=CurTime()
+    requestShow(ply,string.Trim(string.sub(raw,#prefix+1)))
+    return true
+end
+hook.Add("PlayerSayTransform","GRM_Edu_ShowCmdTransform",function(ply,data) if istable(data) and isstring(data[1]) and showChat(ply,data[1]) then data[1]="" data.SkipPlayerSay=true end end)
+hook.Add("PlayerSay","GRM_Edu_ShowCmd",function(ply,text) if showChat(ply,text) then return "" end end)
 
 net.Receive("GRM_Edu_MyAsk", function(_, ply)
     if not IsValid(ply) then return end
     local now = CurTime()
-    if (nextAct[ply] or 0) > now then return end
-    nextAct[ply] = now + EDU.Config.RateLimit
+    if (nextMine[ply] or 0) > now then return end
+    nextMine[ply] = now + 0.2
 
     net.Start("GRM_Edu_MyData")
         net.WriteTable(EDU.MyDiplomas(ply))
@@ -396,6 +397,7 @@ end)
 
 hook.Add("PlayerDisconnected", "GRM_Edu_Cleanup", function(ply)
     nextAct[ply] = nil
+    nextMine[ply] = nil
 end)
 
 end -- SERVER
@@ -984,22 +986,28 @@ end)
 --- Рисует один бланк дипломa в стиле документа (не строчку списка).
 local function diplomaBlank(parent, rec)
     local revoked = rec.revoked == true
-    local p = card(parent, 250)
-    p.Paint = function(_, w, h)
-        -- «Бумага»: тёплый фон, рамка, цветной корешок слева
-        draw.RoundedBox(6, 0, 0, w, h, Color(30, 34, 44, 250))
-        surface.SetDrawColor(revoked and Color(120, 60, 60, 220) or Color(150, 125, 60, 220))
-        surface.DrawOutlinedRect(0, 0, w, h, 2)
-        draw.RoundedBoxEx(6, 0, 0, 6, h, revoked and UI.red or UI.gold, true, false, true, false)
-
-        draw.SimpleText("ГОСУДАРСТВЕННЫЙ ДИПЛОМ", "GRM_Edu_Head", w / 2, 20,
-            revoked and UI.red or UI.gold, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        surface.SetDrawColor(UI.line)
-        surface.DrawLine(20, 38, w - 20, 38)
-
+    local p = card(parent, 390)
+    p.Paint = function(_,w,h)
+        local paper=revoked and Color(242,224,218) or Color(247,241,220)
+        local ink=Color(48,43,35)
+        local gold=revoked and Color(145,65,60) or Color(156,119,42)
+        draw.RoundedBox(8,0,0,w,h,Color(20,23,30,245))
+        draw.RoundedBox(6,5,5,w-10,h-10,paper)
+        surface.SetDrawColor(gold); surface.DrawOutlinedRect(9,9,w-18,h-18,3); surface.DrawOutlinedRect(15,15,w-30,h-30,1)
+        -- Угловой орнамент и разделители.
+        surface.DrawLine(20,28,72,28); surface.DrawLine(28,20,28,50)
+        surface.DrawLine(w-72,28,w-20,28); surface.DrawLine(w-28,20,w-28,50)
+        draw.SimpleText("ГОСУДАРСТВЕННЫЙ ОБРАЗОВАТЕЛЬНЫЙ ДОКУМЕНТ","GRM_Edu_Small",w/2,24,gold,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+        draw.SimpleText("Д И П Л О М","GRM_Edu_Title",w/2,52,ink,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+        draw.SimpleText(tostring(rec.institution or "Учреждение образования"),"GRM_Edu_Small",w/2,76,Color(83,72,52),TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+        surface.SetDrawColor(gold); surface.DrawLine(40,92,w-40,92)
+        -- Печать и декоративный водяной знак.
+        draw.SimpleText("D","GRM_Edu_Title",w-72,h-55,Color(gold.r,gold.g,gold.b,35),TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+        surface.SetDrawColor(Color(gold.r,gold.g,gold.b,150)); surface.DrawCircle(w-72,h-55,31,gold.r,gold.g,gold.b,150); surface.DrawCircle(w-72,h-55,25,gold.r,gold.g,gold.b,120)
+        draw.SimpleText("ПЕЧАТЬ","GRM_Edu_Small",w-72,h-55,gold,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
         if revoked then
-            draw.SimpleText("АННУЛИРОВАН", "GRM_Edu_Title", w / 2, h / 2,
-                Color(225, 90, 90, 45), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            draw.SimpleText("АННУЛИРОВАН","GRM_Edu_Title",w/2,h/2,Color(175,40,40,80),TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+            surface.SetDrawColor(Color(180,45,45,100)); surface.DrawLine(35,h-36,w-35,36); surface.DrawLine(35,36,w-35,h-36)
         end
     end
 
@@ -1031,11 +1039,11 @@ local function diplomaBlank(parent, rec)
          значения. ]]
     local keys, vals = {}, {}
     for i, r in ipairs(rows) do
-        keys[i] = label(p, r[1], "GRM_Edu_Small", UI.muted, 0, 0, 10, 18)
+        keys[i] = label(p, r[1], "GRM_Edu_Small", revoked and Color(130,65,60) or Color(122,93,38), 0, 0, 10, 18)
         keys[i]:SetContentAlignment(7) -- левый верх
 
         local v = label(p, tostring(r[2]), "GRM_Edu_Body",
-            (i == 1) and (revoked and UI.red or UI.gold) or UI.text, 0, 0, 10, 18)
+            (i == 1) and (revoked and Color(165,45,45) or Color(120,82,20)) or Color(48,43,35), 0, 0, 10, 18)
         v:SetWrap(true)
         v:SetAutoStretchVertical(true)
         v:SetContentAlignment(7)
@@ -1046,7 +1054,7 @@ local function diplomaBlank(parent, rec)
     p.PerformLayout = function(self, w)
         local pad, keyW, gap = 20, 150, 6
         local valW = math.max(80, w - pad * 2 - keyW)
-        local y = 50
+        local y = 106
         for i = 1, #rows do
             local v = vals[i]
             v:SetPos(pad + keyW, y)
@@ -1059,7 +1067,7 @@ local function diplomaBlank(parent, rec)
             keys[i]:SetPos(pad, y) keys[i]:SetSize(keyW - gap, rowH)
             y = y + rowH + 4
         end
-        local need = y + 12
+        local need = y + 52
         if math.abs((self:GetTall() or 0) - need) > 1 then
             self:SetTall(need)
             --[[ Карточка приклеена через Dock(TOP): смена высоты изнутри
