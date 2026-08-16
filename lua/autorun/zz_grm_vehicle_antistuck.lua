@@ -42,7 +42,12 @@ AS.Config = AS.Config or {
     -- Радиус поиска связанных сидений/транспорта.
     VehicleChildSearchRadius = 420,
     -- Мягкий толчок после переноса. 0 = вообще без толчка.
-    PushVelocity = 35,
+    PushVelocity = 0,
+    -- Максимальное горизонтальное удаление от позиции выхода/сиденья.
+    MaxExitDistance = 180,
+    -- Запрещаем поиск этажом выше. Допустим только небольшой подъём на порог.
+    MaxUpwardDelta = 24,
+    MaxDownwardDelta = 88,
     -- Безопасная высота над найденной землёй.
     GroundOffset = 3,
     -- Насколько расширять OBB машины при проверке "внутри".
@@ -60,7 +65,7 @@ AS.Config = AS.Config or {
 -- Если файл обновлён поверх старой версии через lua_refresh, мягко переводим старые настройки
 -- на новый адекватный профиль один раз.
 AS.Config.ProfileVersion = AS.Config.ProfileVersion or 0
-if AS.Config.ProfileVersion < 2 then
+if AS.Config.ProfileVersion < 3 then
     AS.Config.OnlyAfterVehicleExit = true
     AS.Config.ForceMoveOnExit = false
     AS.Config.NoCollideTime = 1.25
@@ -68,13 +73,16 @@ if AS.Config.ProfileVersion < 2 then
     AS.Config.ThinkInterval = 0.25
     AS.Config.ExitExtraDistance = 26
     AS.Config.VehicleChildSearchRadius = 420
-    AS.Config.PushVelocity = 35
+    AS.Config.PushVelocity = 0
+    AS.Config.MaxExitDistance = 180
+    AS.Config.MaxUpwardDelta = 24
+    AS.Config.MaxDownwardDelta = 88
     AS.Config.GroundOffset = 3
     AS.Config.InsideOBBExpand = 2
     AS.Config.UseHullStartSolidCheck = false
     AS.Config.IgnoreNoclip = true
     AS.Config.TemporaryPlayerCollisionGroup = true
-    AS.Config.ProfileVersion = 2
+    AS.Config.ProfileVersion = 3
 end
 
 -- Безопасные дефолты.
@@ -86,7 +94,10 @@ AS.Config.PostExitCheckTime = AS.Config.PostExitCheckTime or 1.8
 AS.Config.ThinkInterval = AS.Config.ThinkInterval or 0.25
 AS.Config.ExitExtraDistance = AS.Config.ExitExtraDistance or 26
 AS.Config.VehicleChildSearchRadius = AS.Config.VehicleChildSearchRadius or 420
-AS.Config.PushVelocity = AS.Config.PushVelocity or 35
+AS.Config.PushVelocity = tonumber(AS.Config.PushVelocity) or 0
+AS.Config.MaxExitDistance = tonumber(AS.Config.MaxExitDistance) or 180
+AS.Config.MaxUpwardDelta = tonumber(AS.Config.MaxUpwardDelta) or 24
+AS.Config.MaxDownwardDelta = tonumber(AS.Config.MaxDownwardDelta) or 88
 AS.Config.GroundOffset = AS.Config.GroundOffset or 3
 AS.Config.InsideOBBExpand = AS.Config.InsideOBBExpand or 2
 AS.Config.UseHullStartSolidCheck = AS.Config.UseHullStartSolidCheck == true
@@ -188,97 +199,80 @@ local function isPointInsideVehicleOBB(pos, ent, expand)
        and localPos.z >= mins.z and localPos.z <= maxs.z
 end
 
-local function groundAndHullClear(pos, filter)
-    local start = pos + Vector(0, 0, 96)
-    local endpos = pos - Vector(0, 0, 160)
+local function horizontalDistSqr(a,b)
+    local dx,dy=a.x-b.x,a.y-b.y
+    return dx*dx+dy*dy
+end
 
-    local ground = util.TraceLine({
-        start = start,
-        endpos = endpos,
-        filter = filter,
-        mask = MASK_PLAYERSOLID,
-    })
+local function groundAndHullClear(pos, filter, anchor, referenceZ)
+    -- Короткая трасса вокруг текущего этажа. Старые +96/-160 могли начать
+    -- луч над потолком и выбрать пол следующего этажа.
+    local ground=util.TraceLine({start=pos+Vector(0,0,24),endpos=pos-Vector(0,0,72),filter=filter,mask=MASK_PLAYERSOLID})
+    if not ground.Hit or ground.StartSolid then return nil end
+    if ground.HitNormal and ground.HitNormal.z<0.55 then return nil end
+    local finalPos=ground.HitPos+Vector(0,0,cfg().GroundOffset or 3)
+    local dz=finalPos.z-referenceZ
+    if dz>(cfg().MaxUpwardDelta or 24) or dz<-(cfg().MaxDownwardDelta or 88) then return nil end
+    local maxDist=cfg().MaxExitDistance or 180
+    if horizontalDistSqr(finalPos,anchor)>maxDist*maxDist then return nil end
 
-    local finalPos = ground.Hit and (ground.HitPos + Vector(0, 0, cfg().GroundOffset or 4)) or pos
+    local hull=util.TraceHull({start=finalPos,endpos=finalPos,mins=PLAYER_MINS,maxs=PLAYER_MAXS,filter=filter,mask=MASK_PLAYERSOLID})
+    if hull.StartSolid or hull.Hit then return nil end
 
-    local hull = util.TraceHull({
-        start = finalPos,
-        endpos = finalPos,
-        mins = PLAYER_MINS,
-        maxs = PLAYER_MAXS,
-        filter = filter,
-        mask = MASK_PLAYERSOLID,
-    })
-
-    if hull.StartSolid or hull.Hit then
-        return nil
-    end
-
+    -- Проверяем путь на уровне корпуса: нельзя телепортироваться сквозь стену.
+    local path=util.TraceHull({start=anchor+Vector(0,0,36),endpos=finalPos+Vector(0,0,36),mins=Vector(-14,-14,-32),maxs=Vector(14,14,32),filter=filter,mask=MASK_PLAYERSOLID})
+    if path.StartSolid or path.Hit then return nil end
     return finalPos
 end
 
-local function candidateDirections(ply, base)
-    local dirs = {}
-    if IsValid(ply) and IsValid(base) then
-        local away = ply:GetPos() - base:GetPos()
-        away.z = 0
-        if away:LengthSqr() > 1 then
-            away:Normalize()
-            dirs[#dirs + 1] = away
-        end
-    end
-
-    if IsValid(base) then
-        dirs[#dirs + 1] = base:GetRight()
-        dirs[#dirs + 1] = -base:GetRight()
-        dirs[#dirs + 1] = -base:GetForward()
-        dirs[#dirs + 1] = base:GetForward()
-    end
-
-    if IsValid(ply) then
-        dirs[#dirs + 1] = ply:GetRight()
-        dirs[#dirs + 1] = -ply:GetRight()
-        dirs[#dirs + 1] = -ply:GetForward()
-        dirs[#dirs + 1] = ply:GetForward()
-    end
-
-    return dirs
+local function pushCandidate(out,pos,dir)
+    if not pos then return end
+    for _,old in ipairs(out)do if old.pos:DistToSqr(pos)<16 then return end end
+    out[#out+1]={pos=pos,dir=dir}
 end
 
-function AS.FindSafeExitPos(ply, vehicleOrSeat)
+local function buildCandidates(ply,base,seat)
+    local out={}
+    local anchor=IsValid(seat) and seat:GetPos() or ply:GetPos()
+    -- Сначала точки буквально рядом с сиденьем — это ожидаемое место выхода.
+    local seatDirs=IsValid(seat) and {seat:GetRight(),-seat:GetRight(),-seat:GetForward(),seat:GetForward()} or {}
+    for _,dir in ipairs(seatDirs)do dir.z=0;if dir:LengthSqr()>1 then dir:Normalize();pushCandidate(out,anchor+dir*46+Vector(0,0,18),dir)end end
+
+    if IsValid(base)then
+        local mins,maxs=base:OBBMins(),base:OBBMaxs();local center=(mins+maxs)*0.5;local extra=cfg().ExitExtraDistance or 26
+        local locals={
+            {Vector(maxs.x+extra,center.y,center.z),base:GetForward()},
+            {Vector(mins.x-extra,center.y,center.z),-base:GetForward()},
+            {Vector(center.x,maxs.y+extra,center.z),base:GetRight()},
+            {Vector(center.x,mins.y-extra,center.z),-base:GetRight()},
+        }
+        for _,v in ipairs(locals)do local dir=v[2];dir.z=0;if dir:LengthSqr()>1 then dir:Normalize()end;pushCandidate(out,base:LocalToWorld(v[1]),dir)end
+    end
+
+    -- Последними — небольшие кольца вокруг исходной позиции, но никогда
+    -- дальше MaxExitDistance и без необработанного fallback.
+    local dirs=IsValid(base) and {base:GetRight(),-base:GetRight(),base:GetForward(),-base:GetForward()} or {ply:GetRight(),-ply:GetRight(),ply:GetForward(),-ply:GetForward()}
+    for _,radius in ipairs({64,96,128})do for _,dir in ipairs(dirs)do dir.z=0;if dir:LengthSqr()>1 then dir:Normalize();pushCandidate(out,anchor+dir*radius+Vector(0,0,18),dir)end end end
+    return out,anchor
+end
+
+function AS.FindSafeExitPos(ply,vehicleOrSeat)
     if not IsValid(ply) or not IsValid(vehicleOrSeat) then return nil end
-
-    local base = getVehicleBase(vehicleOrSeat)
-    if not IsValid(base) then base = vehicleOrSeat end
-
-    local filter = collectRelatedEntities(base, vehicleOrSeat)
-    filter[#filter + 1] = ply
-
-    local radius = vehicleRadius(base) + (cfg().ExitExtraDistance or 54)
-    local origin = base:GetPos()
-
-    for _, dir in ipairs(candidateDirections(ply, base)) do
-        dir.z = 0
-        if dir:LengthSqr() > 1 then
-            dir:Normalize()
-            for _, mult in ipairs({ 1, 1.25, 1.55, 2.0 }) do
-                local pos = origin + dir * radius * mult + Vector(0, 0, 32)
-                local clear = groundAndHullClear(pos, filter)
-                if clear then
-                    return clear, dir, base
-                end
-            end
-        end
+    local base=getVehicleBase(vehicleOrSeat);if not IsValid(base)then base=vehicleOrSeat end
+    local filter=collectRelatedEntities(base,vehicleOrSeat);filter[#filter+1]=ply
+    local candidates,anchor=buildCandidates(ply,base,vehicleOrSeat)
+    local referenceZ=ply:GetPos().z
+    for _,candidate in ipairs(candidates)do
+        local clear=groundAndHullClear(candidate.pos,filter,anchor,referenceZ)
+        if clear then return clear,candidate.dir,base end
     end
-
-    -- Последний шанс: вверх и назад от машины.
-    local fallbackDir = IsValid(ply) and ply:GetForward() or Vector(1, 0, 0)
-    fallbackDir.z = 0
-    if fallbackDir:LengthSqr() < 1 then fallbackDir = Vector(1, 0, 0) end
-    fallbackDir:Normalize()
-
-    return origin + fallbackDir * (radius + 48) + Vector(0, 0, 24), fallbackDir, base
+    -- Нет безопасной точки рядом — не переносим вообще. Временный NoCollide
+    -- всё равно даст игроку выйти из модели без броска на улицу/этаж.
+    return nil,nil,base
 end
+
+AS._BuildCandidates=buildCandidates -- тестовый экспорт
+AS._GroundAndHullClear=groundAndHullClear
 
 AS.NoCollidePairs = AS.NoCollidePairs or {}
 
