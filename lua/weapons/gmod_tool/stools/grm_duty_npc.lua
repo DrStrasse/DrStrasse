@@ -3,7 +3,7 @@ TOOL.Name = "#tool.grm_duty_npc.name"
 TOOL.Command = nil
 TOOL.ConfigName = ""
 TOOL.ClientConVar = {
-    faction = "*",
+    faction = "",
     title = "ПУНКТ ВЫХОДА НА СЛУЖБУ",
     model = "models/Humans/Group01/Male_07.mdl",
     make_perm = "1",
@@ -23,8 +23,12 @@ function TOOL:LeftClick(tr)
     if not IsValid(ent) then return false end
     local mdl=self:GetClientInfo("model")
     if not util.IsValidModel(mdl or "") then mdl="models/Humans/Group01/Male_07.mdl" end
-    local fac=string.sub(string.Trim(self:GetClientInfo("faction") or "*"),1,80)
-    if fac=="" then fac="*" end
+    local fac=string.sub(string.Trim(self:GetClientInfo("faction") or ""),1,80)
+    if not (Factions and Factions[fac]) then
+        if GRM.Notify then GRM.Notify(ply,"Сначала укажите точное имя существующей фракции.",255,140,100) end
+        ent:Remove()
+        return false
+    end
     local title=string.sub(string.Trim(self:GetClientInfo("title") or ""),1,80)
     if title=="" then title="ПУНКТ ВЫХОДА НА СЛУЖБУ" end
     ent:SetNWString("GRM_DutyModel",mdl)
@@ -42,7 +46,8 @@ function TOOL:RightClick(tr)
     if CLIENT then return true end
     local ply=self:GetOwner(); local ent=tr and tr.Entity
     if not IsValid(ply) or not IsValid(ent) or ent:GetClass()~="grm_duty_npc" then return false end
-    if GRM and GRM.FactionDuty and GRM.FactionDuty.Open then GRM.FactionDuty.Open(ply,ent) end
+    if ply:IsSuperAdmin() and GRM and GRM.FactionDuty and GRM.FactionDuty.OpenAdmin then GRM.FactionDuty.OpenAdmin(ply,ent)
+    elseif GRM and GRM.FactionDuty and GRM.FactionDuty.Open then GRM.FactionDuty.Open(ply,ent) end
     return true
 end
 
@@ -57,7 +62,13 @@ end
 
 function TOOL.BuildCPanel(panel)
     panel:AddControl("Header",{Description="Сотрудник фракции по умолчанию находится на службе. У этого NPC он меняет статус, форму и снаряжение."})
-    panel:TextEntry("Фракция (* = все)","grm_duty_npc_faction")
+    local combo = panel:ComboBox("Фракция (обязательно)", "grm_duty_npc_faction")
+    if combo and istable(Factions) then
+        local names = {}
+        for name in pairs(Factions) do names[#names + 1] = name end
+        table.sort(names, function(a,b) return string.lower(a) < string.lower(b) end)
+        for _, name in ipairs(names) do combo:AddChoice(name, name) end
+    end
     panel:TextEntry("Заголовок","grm_duty_npc_title")
     panel:TextEntry("Модель NPC","grm_duty_npc_model")
     panel:CheckBox("Сохранить на карте","grm_duty_npc_make_perm")

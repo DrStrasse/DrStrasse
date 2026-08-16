@@ -167,7 +167,7 @@ QM.Schema = {
         { cvar = "grm_service_tool_make_perm", type = "bool", label = "Сохранять на карте" },
     },
     grm_duty_npc = {
-        { cvar = "grm_duty_npc_faction", type = "text", label = "Фракция (* = все)" },
+        { cvar = "grm_duty_npc_faction", type = "text", label = "Точное имя фракции (обязательно)" },
         { cvar = "grm_duty_npc_title", type = "text", label = "Заголовок" },
         { cvar = "grm_duty_npc_model", type = "text", label = "Модель NPC" },
         { cvar = "grm_duty_npc_make_perm", type = "bool", label = "Сохранять на карте" },

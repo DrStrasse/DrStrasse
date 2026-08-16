@@ -12,6 +12,8 @@ FD.Version = "1.0.0"
 
 local NET_OPEN = "GRM_FactionDuty_Open"
 local NET_SET = "GRM_FactionDuty_Set"
+local NET_ADMIN = "GRM_FactionDuty_Admin"
+local NET_ADMIN_SAVE = "GRM_FactionDuty_AdminSave"
 
 local function characterKey(ply)
     if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
@@ -39,6 +41,8 @@ FD.FactionOf = factionOf
 if SERVER then
     util.AddNetworkString(NET_OPEN)
     util.AddNetworkString(NET_SET)
+    util.AddNetworkString(NET_ADMIN)
+    util.AddNetworkString(NET_ADMIN_SAVE)
 
     local DATA_FILE = "grm_faction_duty.json"
     local function jsonT(raw)
@@ -125,7 +129,11 @@ if SERVER then
             return
         end
         local stationFac = ent:GetNWString("GRM_DutyFaction", "")
-        if stationFac ~= "" and stationFac ~= "*" and stationFac ~= fac then
+        if stationFac == "" or stationFac == "*" or not (Factions and Factions[stationFac]) then
+            if GRM.Notify then GRM.Notify(ply, "Этот служебный диспетчер не настроен. Суперадмин должен привязать его к фракции.", 255, 170, 90) end
+            return
+        end
+        if stationFac ~= fac then
             if GRM.Notify then GRM.Notify(ply, "Этот пункт обслуживает только фракцию «" .. stationFac .. "».", 255, 130, 110) end
             return
         end
@@ -137,6 +145,41 @@ if SERVER then
         net.Send(ply)
     end
 
+    function FD.OpenAdmin(ply, ent)
+        if not IsValid(ply) or not ply:IsSuperAdmin() or not IsValid(ent) or ent:GetClass() ~= "grm_duty_npc" then return end
+        if ply:GetPos():DistToSqr(ent:GetPos()) > 300 * 300 then return end
+        local factions = {}
+        for name in pairs(Factions or {}) do factions[#factions + 1] = name end
+        table.sort(factions, function(a,b) return string.lower(a) < string.lower(b) end)
+        net.Start(NET_ADMIN)
+            net.WriteEntity(ent)
+            net.WriteString(ent:GetNWString("GRM_DutyFaction", ""))
+            net.WriteString(ent:GetNWString("GRM_DutyTitle", "ПУНКТ ВЫХОДА НА СЛУЖБУ"))
+            net.WriteString(ent:GetNWString("GRM_DutyModel", ent:GetModel()))
+            net.WriteTable(factions)
+        net.Send(ply)
+    end
+
+    net.Receive(NET_ADMIN_SAVE, function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() or (ply._grmDutyAdminAt or 0) > CurTime() then return end
+        ply._grmDutyAdminAt = CurTime() + 0.5
+        local ent = net.ReadEntity()
+        local fac = string.sub(string.Trim(net.ReadString() or ""), 1, 80)
+        local title = string.sub(string.Trim(net.ReadString() or ""), 1, 80)
+        local mdl = string.sub(string.Trim(net.ReadString() or ""), 1, 180)
+        if not IsValid(ent) or ent:GetClass() ~= "grm_duty_npc" or ply:GetPos():DistToSqr(ent:GetPos()) > 300 * 300 then return end
+        if not (Factions and Factions[fac]) then
+            if GRM.Notify then GRM.Notify(ply, "Выберите существующую фракцию.", 255, 130, 110) end
+            return
+        end
+        if title == "" then title = "ПУНКТ ВЫХОДА НА СЛУЖБУ" end
+        ent:SetNWString("GRM_DutyFaction", fac)
+        ent:SetNWString("GRM_DutyTitle", title)
+        if util.IsValidModel(mdl) then ent:SetNWString("GRM_DutyModel", mdl); ent:SetModel(mdl) end
+        if GRM.Perm and GRM.Perm.Update then GRM.Perm.Update(ply, ent) end
+        if GRM.Notify then GRM.Notify(ply, "Диспетчер привязан к фракции «" .. fac .. "».", 80, 230, 150) end
+    end)
+
     net.Receive(NET_SET, function(_, ply)
         if not IsValid(ply) or (ply._grmDutyActAt or 0) > CurTime() then return end
         ply._grmDutyActAt = CurTime() + 1
@@ -144,7 +187,7 @@ if SERVER then
         local want = net.ReadBool()
         if not IsValid(ent) or ent:GetClass() ~= "grm_duty_npc" or ply:GetPos():DistToSqr(ent:GetPos()) > 220 * 220 then return end
         local stationFac, fac = ent:GetNWString("GRM_DutyFaction", ""), factionOf(ply)
-        if not fac or (stationFac ~= "" and stationFac ~= "*" and stationFac ~= fac) then return end
+        if not fac or stationFac == "" or stationFac == "*" or stationFac ~= fac then return end
         local ok, msg = FD.Set(ply, want, ply)
         if GRM.Notify then GRM.Notify(ply, msg, ok and 80 or 255, ok and 230 or 130, ok and 150 or 110) else ply:ChatPrint("[Служба] " .. msg) end
     end)
@@ -162,12 +205,12 @@ if SERVER then
         if GRM.Perm and GRM.Perm.RegisterClass then GRM.Perm.RegisterClass("grm_duty_npc", true) end
         if not (GRM.PermData and GRM.PermData.Extract and GRM.PermData.Apply) then return end
         GRM.PermData.Extract["grm_duty_npc"] = function(ent)
-            return { duty = { faction = ent:GetNWString("GRM_DutyFaction", "*"), title = ent:GetNWString("GRM_DutyTitle", "ПУНКТ ВЫХОДА НА СЛУЖБУ"), model = ent:GetNWString("GRM_DutyModel", ent:GetModel()) } }
+            return { duty = { faction = ent:GetNWString("GRM_DutyFaction", ""), title = ent:GetNWString("GRM_DutyTitle", "ПУНКТ ВЫХОДА НА СЛУЖБУ"), model = ent:GetNWString("GRM_DutyModel", ent:GetModel()) } }
         end
         GRM.PermData.Apply["grm_duty_npc"] = function(ent, data)
             local d = istable(data) and data.duty or nil
             if not istable(d) then return end
-            ent:SetNWString("GRM_DutyFaction", tostring(d.faction or "*"))
+            ent:SetNWString("GRM_DutyFaction", tostring(d.faction or ""))
             ent:SetNWString("GRM_DutyTitle", tostring(d.title or "ПУНКТ ВЫХОДА НА СЛУЖБУ"))
             if util.IsValidModel(tostring(d.model or "")) then ent:SetNWString("GRM_DutyModel", d.model); ent:SetModel(d.model) end
         end
@@ -188,6 +231,20 @@ if SERVER then
 else
     surface.CreateFont("GRMDuty_Title", { font = "Roboto", size = 22, weight = 800, extended = true })
     surface.CreateFont("GRMDuty_Text", { font = "Roboto", size = 14, weight = 500, extended = true })
+    net.Receive(NET_ADMIN, function()
+        local ent, current, currentTitle, currentModel, factions = net.ReadEntity(), net.ReadString(), net.ReadString(), net.ReadString(), net.ReadTable() or {}
+        if not IsValid(ent) then return end
+        if IsValid(FD._adminFrame) then FD._adminFrame:Remove() end
+        local f=vgui.Create("DFrame") FD._adminFrame=f; f:SetSize(620,390); f:Center(); f:MakePopup(); f:SetTitle("Настройка служебного диспетчера")
+        local fac=vgui.Create("DComboBox",f); fac:SetPos(20,60); fac:SetSize(580,32); fac:SetValue(current ~= "" and current or "Выберите фракцию")
+        for _,name in ipairs(factions) do fac:AddChoice(name,name,name==current) end
+        local title=vgui.Create("DTextEntry",f); title:SetPos(20,120); title:SetSize(580,30); title:SetValue(currentTitle); title:SetPlaceholderText("Надпись пункта")
+        local mdl=vgui.Create("DTextEntry",f); mdl:SetPos(20,180); mdl:SetSize(580,30); mdl:SetValue(currentModel); mdl:SetPlaceholderText("Модель NPC")
+        local hint=vgui.Create("DLabel",f); hint:SetPos(20,225); hint:SetSize(580,55); hint:SetWrap(true); hint:SetText("Каждый NPC обслуживает только одну выбранную фракцию. Название фракции автоматически показывается на 3D2D-табличке над ним.")
+        local saveBtn=vgui.Create("DButton",f); saveBtn:SetPos(20,305); saveBtn:SetSize(580,42); saveBtn:SetText("СОХРАНИТЬ И ОБНОВИТЬ ПЕРМ")
+        saveBtn.DoClick=function() local _,selected=fac:GetSelected(); net.Start(NET_ADMIN_SAVE); net.WriteEntity(ent); net.WriteString(tostring(selected or current or "")); net.WriteString(title:GetValue()); net.WriteString(mdl:GetValue()); net.SendToServer(); f:Close() end
+    end)
+
     net.Receive(NET_OPEN, function()
         local ent, fac, onDuty, title = net.ReadEntity(), net.ReadString(), net.ReadBool(), net.ReadString()
         if IsValid(FD._frame) then FD._frame:Remove() end
