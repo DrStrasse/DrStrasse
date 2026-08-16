@@ -812,6 +812,16 @@ if SERVER then
         return false
     end
 
+    local function badgeTemplate(rec)
+        local base=(DOC.Templates.factions and DOC.Templates.factions[tostring(rec and rec.faction or"")]) or{}
+        local tpl=tblCopy(base)
+        if rec and istable(rec.coverColor) then tpl.coverColor={r=tonumber(rec.coverColor.r)or 30,g=tonumber(rec.coverColor.g)or 35,b=tonumber(rec.coverColor.b)or 45} end
+        if rec and isstring(rec.foilStyle) and DOC.FoilStyles[rec.foilStyle] then tpl.foilStyle=rec.foilStyle end
+        if rec and rec.isCover then tpl.coverTitle=tostring(rec.faction or tpl.coverTitle or"ДОКУМЕНТ ПРИКРЫТИЯ") end
+        return tpl
+    end
+    DOC.BadgeTemplate=badgeTemplate
+
     -- Отправка документа игроку на экран
     local function sendOwnDoc(ply, docType, subType)
         if not IsValid(ply) then return end
@@ -828,33 +838,33 @@ if SERVER then
                 local entry=GRM.SpecialService and GRM.SpecialService.CoversOf and GRM.SpecialService.CoversOf(key)
                 payload=entry and entry.list and entry.list[tonumber(coverIndex)]
                 if not (istable(payload) and payload.status=="Действителен") then if GRM.Notify then GRM.Notify(ply,"Документ прикрытия не найден или аннулирован.",255,140,110)end return end
-                tpl=(DOC.Templates.factions and DOC.Templates.factions[payload.faction]) or{}
+                tpl=badgeTemplate(payload)
             elseif subType == "cover" then
                 payload = DOC.Registry.coverBadges and DOC.Registry.coverBadges[key]
                 if not (istable(payload) and payload.status == "Действителен") then
                     if GRM.Notify then GRM.Notify(ply, "У вас нет активного документа прикрытия.", 255, 140, 110) end
                     return
                 end
-                tpl = (DOC.Templates.factions and DOC.Templates.factions[payload.faction]) or {}
+                tpl = badgeTemplate(payload)
             elseif subType == "official" then
                 payload = ensureBadge(ply)
                 if not payload then
                     if GRM.Notify then GRM.Notify(ply, "У вас нет служебного удостоверения (вы не состоите во фракции).", 255, 140, 110) end
                     return
                 end
-                tpl = (DOC.Templates.factions and DOC.Templates.factions[payload.faction]) or {}
+                tpl = badgeTemplate(payload)
             else
                 local cover = DOC.Registry.coverBadges and DOC.Registry.coverBadges[key]
                 if istable(cover) and cover.status == "Действителен" then
                     payload = cover
-                    tpl = (DOC.Templates.factions and DOC.Templates.factions[payload.faction]) or {}
+                    tpl = badgeTemplate(payload)
                 else
                     payload = ensureBadge(ply)
                     if not payload then
                         if GRM.Notify then GRM.Notify(ply, "У вас нет служебного удостоверения (вы не состоите во фракции).", 255, 140, 110) end
                         return
                     end
-                    tpl = (DOC.Templates.factions and DOC.Templates.factions[payload.faction]) or {}
+                    tpl = badgeTemplate(payload)
                 end
             end
         elseif docType == "military" then
@@ -1022,7 +1032,7 @@ if SERVER then
                 if GRM.Notify then GRM.Notify(ply, "У вас нет служебного удостоверения (вы не состоите во фракции).", 255, 140, 110) end
                 return
             end
-            local tpl = (DOC.Templates.factions and DOC.Templates.factions[badge.faction]) or {}
+            local tpl = badgeTemplate(badge)
 
             local meText = string.format("предъявил(а) служебное удостоверение %s игроку %s (Жетон: %s, Должность: %s)", badge.faction or "организации", targetName, badge.number or "—", badge.role or "—")
             broadcastDocAction(ply, meText)
@@ -1285,8 +1295,13 @@ if SERVER then
                     if GRM.Notify then GRM.Notify(ply, "У вашей фракции нет допуска к оформлению документов прикрытия!", 255, 100, 100) end
                     return
                 end
-                DOC.Registry.coverBadges[targetKey] = data
-                DOC.SaveRegistry("issue cover doc " .. targetKey .. " by " .. ply:Nick())
+                if GRM.SpecialService and GRM.SpecialService.IssueCover then
+                    local okCover,errCover=GRM.SpecialService.IssueCover(ply,targetKey,data)
+                    if not okCover then if GRM.Notify then GRM.Notify(ply,tostring(errCover),255,120,100)end return end
+                else
+                    DOC.Registry.coverBadges[targetKey] = data
+                    DOC.SaveRegistry("issue cover doc " .. targetKey .. " by " .. ply:Nick())
+                end
             else
                 if not DOC.CanIssueBadges(ply, data.faction) then
                     if GRM.Notify then GRM.Notify(ply, "У вас нет права выдавать удостоверения этой организации!", 255, 100, 100) end
@@ -1391,7 +1406,7 @@ if SERVER then
 
         -- Физический бланк сразу выдаётся онлайн-получателю. Реестр остаётся
         -- источником истины, поэтому аннулирование отражается на всех копиях.
-        if DOC.GivePhysicalCopy then
+        if DOC.GivePhysicalCopy and data.isCover ~= true then
             local targetPly = findOnlineByKey(targetKey)
             if IsValid(targetPly) then
                 local copyOK, copyErr = DOC.GivePhysicalCopy(targetPly, docType, targetKey, ply)

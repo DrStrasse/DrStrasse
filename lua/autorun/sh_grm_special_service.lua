@@ -586,6 +586,8 @@ if SERVER then
                 role     = tostring(c.role or ""),
                 number   = tostring(c.number or ""),
                 status   = tostring(c.status or "Действителен"),
+                coverColor = istable(c.coverColor) and table.Copy(c.coverColor) or nil,
+                foilStyle = tostring(c.foilStyle or "gold"),
                 active   = (entry.active == i),
             }
         end
@@ -624,6 +626,8 @@ if SERVER then
             issueDate   = os.date("%d.%m.%Y"),
             validUntil  = tostring(legend.validUntil or "Бессрочно"):sub(1, 32),
             status      = "Действителен",
+            coverColor  = istable(legend.coverColor) and {r=math.Clamp(tonumber(legend.coverColor.r) or 30,0,255),g=math.Clamp(tonumber(legend.coverColor.g) or 35,0,255),b=math.Clamp(tonumber(legend.coverColor.b) or 45,0,255)} or nil,
+            foilStyle   = ({gold=true,silver=true,bronze=true,white=true})[tostring(legend.foilStyle or "gold")] and tostring(legend.foilStyle or "gold") or "gold",
             isCover     = true,
             created     = os.time(),
             updated     = os.time(),
@@ -853,7 +857,9 @@ if SERVER then
             ok, msg = SS.CovertRelease(ply, target)
         elseif act == "cover_issue" then
             ok, msg = SS.IssueCover(ply, target ~= "" and target or charKey(ply), {
-                label = text, fullName = text,
+                label = extra.label or text, fullName = extra.fullName or text,
+                faction = extra.faction, role = extra.role, department = extra.department,
+                number = extra.number, coverColor = extra.coverColor, foilStyle = extra.foilStyle,
             })
         elseif act == "cover_switch" then
             ok, msg = SS.SetActiveCover(ply, target ~= "" and target or charKey(ply), num)
@@ -1206,25 +1212,26 @@ if CLIENT then
         wrap:Dock(FILL) wrap:DockMargin(8, 8, 8, 8)
         wrap.Paint = function() end
 
-        local nameEntry = vgui.Create("DTextEntry", wrap)
-        nameEntry:SetPos(0, 0) nameEntry:SetSize(300, 26)
-        nameEntry:SetPlaceholderText("Имя новой легенды…")
-
-        btn(wrap, "Оформить легенду", 308, 0, 150, 26, C().green, function()
-            local v = string.Trim(nameEntry:GetValue() or "")
-            if v == "" then return end
-            act("cover_issue", "", v, 0)
-            nameEntry:SetValue("")
+        local labelEntry=vgui.Create("DTextEntry",wrap);labelEntry:SetPos(0,0);labelEntry:SetSize(210,26);labelEntry:SetPlaceholderText("Название легенды")
+        local nameEntry=vgui.Create("DTextEntry",wrap);nameEntry:SetPos(218,0);nameEntry:SetSize(210,26);nameEntry:SetPlaceholderText("ФИО по легенде")
+        local factionCombo=vgui.Create("DComboBox",wrap);factionCombo:SetPos(436,0);factionCombo:SetSize(220,26);factionCombo:SetValue("Фракция прикрытия")
+        local selectedFaction="";local factionNames={};for n in pairs(Factions or{})do factionNames[#factionNames+1]=n end;table.sort(factionNames);for _,n in ipairs(factionNames)do factionCombo:AddChoice(n,n)end
+        local factionManual=vgui.Create("DTextEntry",wrap);factionManual:SetPos(664,0);factionManual:SetSize(220,26);factionManual:SetPlaceholderText("или вручную")
+        local mixer=vgui.Create("DColorMixer",wrap);mixer:SetPos(0,36);mixer:SetSize(260,145);mixer:SetPalette(true);mixer:SetAlphaBar(false);mixer:SetWangs(true);mixer:SetColor(Color(30,35,45))
+        factionCombo.OnSelect=function(_,_,_,data)selectedFaction=tostring(data or"");local cfg=GRM.Documents and GRM.Documents.Templates and GRM.Documents.Templates.factions and GRM.Documents.Templates.factions[selectedFaction];if cfg and cfg.coverColor then mixer:SetColor(Color(cfg.coverColor.r,cfg.coverColor.g,cfg.coverColor.b))end end
+        local roleEntry=vgui.Create("DTextEntry",wrap);roleEntry:SetPos(275,42);roleEntry:SetSize(190,26);roleEntry:SetPlaceholderText("Должность")
+        local deptEntry=vgui.Create("DTextEntry",wrap);deptEntry:SetPos(475,42);deptEntry:SetSize(190,26);deptEntry:SetPlaceholderText("Подразделение")
+        local numEntry=vgui.Create("DTextEntry",wrap);numEntry:SetPos(675,42);numEntry:SetSize(190,26);numEntry:SetPlaceholderText("Номер")
+        local foil=vgui.Create("DComboBox",wrap);foil:SetPos(275,76);foil:SetSize(190,26);foil:SetValue("Золотое тиснение");foil:AddChoice("Золотое","gold",true);foil:AddChoice("Серебряное","silver");foil:AddChoice("Бронзовое","bronze");foil:AddChoice("Белое","white")
+        btn(wrap,"ОФОРМИТЬ ЛЕГЕНДУ",475,76,390,34,C().green,function()
+            local full=string.Trim(nameEntry:GetValue()or"");if full==""then return end
+            local fac=string.Trim(factionManual:GetValue()or"");if fac==""then fac=selectedFaction end;if fac==""then return end
+            local _,foilID=foil:GetSelected();local col=mixer:GetColor()
+            act("cover_issue","",full,0,{label=string.Trim(labelEntry:GetValue()or"")~=""and labelEntry:GetValue()or full,fullName=full,faction=fac,role=roleEntry:GetValue(),department=deptEntry:GetValue(),number=numEntry:GetValue(),coverColor={r=col.r,g=col.g,b=col.b},foilStyle=foilID or"gold"})
         end)
+        btn(wrap,"Настоящий документ",475,118,190,28,C().panel2,function()act("cover_switch","","",0)end)
 
-        btn(wrap, "Работать под настоящим документом", 466, 0, 250, 26, C().panel2, function()
-            act("cover_switch", "", "", 0)
-        end)
-
-        local sc = vgui.Create("DScrollPanel", wrap)
-        sc:SetPos(0, 34)
-        sc:SetSize(wrap:GetWide(), wrap:GetTall() - 34)
-        sc.PerformLayout = function(self) self:SetSize(wrap:GetWide(), math.max(50, wrap:GetTall() - 34)) end
+        local sc=vgui.Create("DScrollPanel",wrap);sc:SetPos(0,190);sc:SetSize(wrap:GetWide(),math.max(50,wrap:GetTall()-190));sc.PerformLayout=function(self)self:SetSize(wrap:GetWide(),math.max(50,wrap:GetTall()-190))end
 
         for _, c in ipairs(SS.Covers) do
             local card = vgui.Create("DPanel", sc)
@@ -1233,7 +1240,8 @@ if CLIENT then
                 draw.RoundedBox(6, 0, 0, w, h, C().panel)
                 surface.SetDrawColor(c.active and C().green or C().line)
                 surface.DrawOutlinedRect(0, 0, w, h, c.active and 2 or 1)
-                draw.SimpleText(("#%d  %s"):format(c.index, c.label), "GRM_SS_Head", 12, 13, c.active and C().green or C().text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                local cc=c.coverColor or {r=80,g=90,b=110};draw.RoundedBox(3,8,8,5,36,Color(cc.r or 80,cc.g or 90,cc.b or 110))
+                draw.SimpleText(("#%d  %s"):format(c.index, c.label), "GRM_SS_Head", 18, 13, c.active and C().green or C().text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                 draw.SimpleText(("%s • %s %s • №%s • %s")
                     :format(c.fullName, c.faction ~= "" and c.faction or "—", c.role, c.number, c.status),
                     "GRM_SS_Row", 12, 34, C().muted, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)

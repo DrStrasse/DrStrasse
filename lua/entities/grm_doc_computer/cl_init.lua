@@ -1306,6 +1306,7 @@ net.Receive("GRM_DocComp_Open", function()
 
         local comboCoverFac = vgui.Create("DComboBox", coverPnl)
         comboCoverFac:SetPos(16, 95) comboCoverFac:SetSize(280, 26)
+        local selectedCoverFaction=""
 
         local entCoverFacManual = vgui.Create("DTextEntry", coverPnl)
         entCoverFacManual:SetPos(310, 95) entCoverFacManual:SetSize(240, 26)
@@ -1314,7 +1315,12 @@ net.Receive("GRM_DocComp_Open", function()
         local fNames = {}
         for fn in pairs(Factions or FactionsData or {}) do if isstring(fn) then fNames[#fNames+1] = fn end end
         table.sort(fNames)
-        for _, fn in ipairs(fNames) do comboCoverFac:AddChoice(fn) end
+        for _, fn in ipairs(fNames) do comboCoverFac:AddChoice(fn,fn) end
+
+        local lblCColor=vgui.Create("DLabel",coverPnl);lblCColor:SetPos(570,75);lblCColor:SetSize(320,18);lblCColor:SetText("Цвет обложки документа прикрытия:");lblCColor:SetTextColor(CC.text)
+        local coverMixer=vgui.Create("DColorMixer",coverPnl);coverMixer:SetPos(570,95);coverMixer:SetSize(330,130);coverMixer:SetPalette(true);coverMixer:SetAlphaBar(false);coverMixer:SetWangs(true);coverMixer:SetColor(Color(30,35,45))
+        local coverFoil=vgui.Create("DComboBox",coverPnl);coverFoil:SetPos(570,225);coverFoil:SetSize(220,26);coverFoil:SetValue("Золотое тиснение");coverFoil:AddChoice("Золотое","gold",true);coverFoil:AddChoice("Серебряное","silver");coverFoil:AddChoice("Бронзовое","bronze");coverFoil:AddChoice("Белое","white")
+        comboCoverFac.OnSelect=function(_,_,_,data)selectedCoverFaction=tostring(data or"");local cfg=tpls.factions and tpls.factions[selectedCoverFaction];if cfg and cfg.coverColor then coverMixer:SetColor(Color(cfg.coverColor.r,cfg.coverColor.g,cfg.coverColor.b))end end
 
         local lblCName = vgui.Create("DLabel", coverPnl)
         lblCName:SetPos(16, 135) lblCName:SetText("ФИО по легенде:") lblCName:SetTextColor(CC.text) lblCName:SizeToContents()
@@ -1370,6 +1376,9 @@ net.Receive("GRM_DocComp_Open", function()
                     entCoverNum:SetText(ex.number or "SEC-0042")
                     entCoverFacManual:SetText(ex.faction or "")
                     comboCoverFac:SetValue(ex.faction or "")
+                    selectedCoverFaction=tostring(ex.faction or"")
+                    if istable(ex.coverColor) then coverMixer:SetColor(Color(ex.coverColor.r or 30,ex.coverColor.g or 35,ex.coverColor.b or 45)) end
+                    if ex.foilStyle then coverFoil:SetValue(tostring(ex.foilStyle)) end
                     if istable(ex.permissions) then
                         for pId, cb in pairs(chkCoverBoxes) do
                             cb:SetValue(ex.permissions[pId] == true)
@@ -1395,7 +1404,7 @@ net.Receive("GRM_DocComp_Open", function()
             end
 
             local chosenFac = string.Trim(entCoverFacManual:GetText())
-            if chosenFac == "" then chosenFac = comboCoverFac:GetValue() end
+            if chosenFac == "" then chosenFac = selectedCoverFaction end
             if chosenFac == "" then chosenFac = "Служба Государственной Безопасности" end
 
             local curPerms = {}
@@ -1410,6 +1419,9 @@ net.Receive("GRM_DocComp_Open", function()
                 department  = entCoverDept:GetText(),
                 number      = entCoverNum:GetText(),
                 permissions = curPerms,
+                coverColor  = (function() local c=coverMixer:GetColor();return {r=c.r,g=c.g,b=c.b} end)(),
+                foilStyle   = select(2,coverFoil:GetSelected()) or "gold",
+                label       = entCoverName:GetText(),
                 issuedBy    = "Руководство ведомства " .. chosenFac,
                 issueDate   = os.date("%d.%m.%Y"),
                 validUntil  = "Бессрочно",
