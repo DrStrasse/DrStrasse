@@ -55,6 +55,23 @@ local light, lk = QM.ResolveSchema("light")
 ok(lk == "hand" and light and #light >= 3, "light — ручная схема с подписями")
 ok(light[1].label ~= light[1].cvar, "у light человеческая подпись, не сырой cvar")
 
+local function hasRow(tool, cvar, kind)
+    local rows = QM.ResolveSchema(tool)
+    for _, row in ipairs(rows or {}) do
+        if row.cvar == cvar and (not kind or row.type == kind) then return true end
+    end
+    return false
+end
+ok(hasRow("pulley", "pulley_forcelimit", "slider") and hasRow("pulley", "pulley_material", "choice"), "шкив: прочность и материал")
+ok(hasRow("winch", "winch_fwd_group", "key") and hasRow("winch", "winch_fwd_speed", "slider"), "лебёдка: клавиши и скорости")
+ok(hasRow("hydraulic", "hydraulic_addlength", "slider") and hasRow("hydraulic", "hydraulic_toggle", "bool"), "гидравлика: ход и переключатель")
+ok(hasRow("muscle", "muscle_period", "slider") and hasRow("muscle", "muscle_group", "key"), "мышца: период и клавиша")
+ok(hasRow("rope", "rope_width", "slider") and hasRow("slider", "slider_width", "slider"), "верёвка и направляющая: толщина")
+ok(hasRow("axis", "axis_torquelimit", "slider") and hasRow("ballsocket", "ballsocket_nocollide", "bool"), "ось и шарнир: ограничения")
+ok(hasRow("motor", "motor_torque", "slider") and hasRow("wheel", "wheel_fwd", "key"), "мотор и колесо: сила и клавиши")
+ok(hasRow("thruster", "thruster_force", "slider") and hasRow("hoverball", "hoverball_strength", "slider"), "ускоритель и ховербол: сила")
+ok(hasRow("balloon", "balloon_force", "slider") and QM.ResolveSchema("balloon")[3].type == "color", "воздушный шар: сила и палитра")
+
 -- UI не должен звать автосхему: ResolveSchema не смотрит weapons
 local src
 do

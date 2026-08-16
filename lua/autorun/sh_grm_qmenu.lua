@@ -33,7 +33,7 @@ QM.ToolCatalog = {
     { id = "rope",       label = "Верёвка",                    desc = "Связывает пропы тросом.",                cat = "connect" },
     { id = "pulley",     label = "Блок",                       desc = "Трос через блок.",                       cat = "connect" },
     { id = "winch",      label = "Лебёдка",                    desc = "Трос с управляемой длиной.",             cat = "connect" },
-    { id = "hydraulics", label = "Гидравлика",                 desc = "Управляемое давление/ход.",              cat = "connect" },
+    { id = "hydraulic",  label = "Гидравлика",                 desc = "Управляемое давление/ход.",              cat = "connect" },
     { id = "muscle",     label = "Мышца",                      desc = "Упругая связка-амортизатор.",            cat = "connect" },
     { id = "slider",     label = "Слайдер",                    desc = "Движение вдоль оси.",                    cat = "connect" },
     { id = "wheel",      label = "Колесо",                     desc = "Ставит колесо на проп.",                 cat = "mech" },
@@ -98,7 +98,7 @@ QM.ToolCategories = {
 -- дубликаторы, оружие и спавнеры остаются только у суперадмина.
 QM.PlayerTools = {
     weld=true, axis=true, ballsocket=true, nocollide=true, rope=true, pulley=true,
-    winch=true, hydraulics=true, muscle=true, slider=true, wheel=true, motor=true,
+    winch=true, hydraulic=true, muscle=true, slider=true, wheel=true, motor=true,
     thruster=true, hoverball=true, balloon=true, light=true, lamp=true, button=true,
     camera=true, textscreen=true, colour=true, material=true, paint=true, trails=true,
     remover=true, precision=true, stacker=true,
@@ -161,6 +161,22 @@ function QM.InCatalog(id)
 end
 
 -- Схема настроек: данные, не чужой код. BuildCPanel не вызывается.
+local ROPE_MATERIALS = {
+    { "Обычная верёвка", "cable/rope" }, { "Стальной трос", "cable/cable" },
+    { "Красный кабель", "cable/redlaser" }, { "Синий энергетический", "cable/blue_elec" },
+    { "Физический луч", "cable/physbeam" }, { "Гидравлический", "cable/hydra" },
+    { "X-луч", "cable/xbeam" },
+}
+local THRUSTER_EFFECTS = {
+    { "Огонь", "fire" }, { "Тепловая волна", "heatwave" }, { "Цветные кольца", "color" },
+    { "Дым", "smoke" }, { "Без эффекта", "none" },
+}
+local THRUSTER_SOUNDS = {
+    { "Без звука", "" }, { "Паровой двигатель", "PhysicsCannister.ThrusterLoop" },
+    { "Электрический заряд", "WeaponDissolve.Charge" }, { "Энергетический луч", "WeaponDissolve.Beam" },
+    { "Механизм лифта", "eli_lab.elevator_move" }, { "Кольца лаборатории", "k_lab.ringsrotating" },
+}
+
 QM.Schema = {
     grm_perm_tool = {
         { cvar = "grm_perm_tool_owner",  type = "choice", label = "Кому принадлежит",
@@ -219,24 +235,146 @@ QM.Schema = {
         { cvar = "ffd_scanner_hold_time", type = "number", label = "Удержание, сек" },
     },
     light = {
-        { type = "color", label = "Цвет света", cvars = { r="light_r", g="light_g", b="light_b" } },
-        { cvar = "light_brightness", type = "number", label = "Яркость" },
-        { cvar = "light_size", type = "number", label = "Радиус" },
-        { cvar = "light_toggle", type = "bool", label = "Переключатель" },
+        { cvar="light_key", type="key", label="Клавиша" },
+        { cvar="light_ropelength", type="slider", label="Длина подвеса", min=0, max=256, decimals=0 },
+        { cvar="light_ropematerial", type="choice", label="Материал подвеса", choices=ROPE_MATERIALS },
+        { cvar="light_brightness", type="slider", label="Яркость", min=-6, max=6, decimals=0 },
+        { cvar="light_size", type="slider", label="Радиус", min=0, max=1024, decimals=0 },
+        { cvar="light_toggle", type="bool", label="Режим переключателя" },
+        { type="color", label="Цвет света", cvars={r="light_r",g="light_g",b="light_b"} },
     },
     lamp = {
-        { type = "color", label = "Цвет лампы", cvars = { r="lamp_r", g="lamp_g", b="lamp_b" } },
-        { cvar = "lamp_brightness", type = "number", label = "Яркость" },
-        { cvar = "lamp_fov", type = "number", label = "Угол луча" },
-        { cvar = "lamp_distance", type = "number", label = "Дальность" },
-        { cvar = "lamp_toggle", type = "bool", label = "Переключатель" },
+        { cvar="lamp_key", type="key", label="Клавиша" },
+        { cvar="lamp_fov", type="slider", label="Угол луча", min=10, max=170, decimals=0 },
+        { cvar="lamp_distance", type="slider", label="Дальность", min=64, max=2048, decimals=0 },
+        { cvar="lamp_brightness", type="slider", label="Яркость", min=0, max=8, decimals=1 },
+        { cvar="lamp_texture", type="text", label="Материал проекции" },
+        { cvar="lamp_model", type="text", label="Модель лампы" },
+        { cvar="lamp_toggle", type="bool", label="Режим переключателя" },
+        { type="color", label="Цвет лампы", cvars={r="lamp_r",g="lamp_g",b="lamp_b"} },
     },
     colour = {
-        { type = "color", label = "Цвет и прозрачность", cvars = { r="colour_r", g="colour_g", b="colour_b", a="colour_a" } },
+        { type="color", label="Цвет и прозрачность", cvars={r="colour_r",g="colour_g",b="colour_b",a="colour_a"} },
+    },
+    button = {
+        { cvar="button_keygroup", type="key", label="Клавиша" },
+        { cvar="button_description", type="text", label="Надпись кнопки" },
+        { cvar="button_toggle", type="bool", label="Режим переключателя" },
+        { cvar="button_model", type="text", label="Модель кнопки" },
+    },
+    material = {
+        { cvar="material_override", type="text", label="Путь материала" },
+    },
+    paint = {
+        { cvar="paint_decal", type="text", label="Название декали" },
+    },
+    trails = {
+        { cvar="trails_length", type="slider", label="Время шлейфа", min=0, max=10, decimals=1 },
+        { cvar="trails_startsize", type="slider", label="Начальная ширина", min=0, max=128, decimals=0 },
+        { cvar="trails_endsize", type="slider", label="Конечная ширина", min=0, max=128, decimals=0 },
+        { cvar="trails_material", type="text", label="Материал шлейфа" },
+        { type="color", label="Цвет и прозрачность", cvars={r="trails_r",g="trails_g",b="trails_b",a="trails_a"} },
     },
     weld = {
-        { cvar = "weld_forcelimit", type = "number", label = "Предел силы (0 = без лимита)" },
+        { cvar = "weld_forcelimit", type = "slider", label = "Предел силы (0 = без лимита)", min=0, max=50000, decimals=0 },
         { cvar = "weld_nocollide", type = "bool", label = "Не сталкиваться" },
+    },
+    rope = {
+        { cvar="rope_forcelimit", type="slider", label="Предел прочности", min=0, max=1000, decimals=0 },
+        { cvar="rope_addlength", type="slider", label="Добавочная длина", min=-500, max=500, decimals=0 },
+        { cvar="rope_width", type="slider", label="Толщина", min=0, max=10, decimals=1 },
+        { cvar="rope_rigid", type="bool", label="Жёсткая верёвка" },
+        { cvar="rope_material", type="choice", label="Материал", choices=ROPE_MATERIALS },
+        { type="color", label="Цвет верёвки", cvars={r="rope_color_r",g="rope_color_g",b="rope_color_b"} },
+    },
+    pulley = {
+        { cvar="pulley_forcelimit", type="slider", label="Предел прочности", min=0, max=1000, decimals=0 },
+        { cvar="pulley_width", type="slider", label="Толщина троса", min=0, max=10, decimals=1 },
+        { cvar="pulley_rigid", type="bool", label="Жёсткий трос" },
+        { cvar="pulley_material", type="choice", label="Материал троса", choices=ROPE_MATERIALS },
+        { type="color", label="Цвет троса", cvars={r="pulley_color_r",g="pulley_color_g",b="pulley_color_b"} },
+    },
+    winch = {
+        { cvar="winch_fwd_group", type="key", label="Клавиша сматывания" },
+        { cvar="winch_bwd_group", type="key", label="Клавиша разматывания" },
+        { cvar="winch_fwd_speed", type="slider", label="Скорость сматывания", min=0, max=1000, decimals=0 },
+        { cvar="winch_bwd_speed", type="slider", label="Скорость разматывания", min=0, max=1000, decimals=0 },
+        { cvar="winch_rope_width", type="slider", label="Толщина троса", min=0, max=10, decimals=1 },
+        { cvar="winch_rope_material", type="choice", label="Материал троса", choices=ROPE_MATERIALS },
+        { type="color", label="Цвет троса", cvars={r="winch_color_r",g="winch_color_g",b="winch_color_b"} },
+    },
+    hydraulic = {
+        { cvar="hydraulic_group", type="key", label="Клавиша управления" },
+        { cvar="hydraulic_addlength", type="slider", label="Ход гидравлики", min=-1000, max=1000, decimals=0 },
+        { cvar="hydraulic_speed", type="slider", label="Скорость", min=0, max=50, decimals=1 },
+        { cvar="hydraulic_width", type="slider", label="Толщина", min=0, max=5, decimals=1 },
+        { cvar="hydraulic_fixed", type="bool", label="Фиксированная длина" },
+        { cvar="hydraulic_toggle", type="bool", label="Режим переключателя" },
+        { cvar="hydraulic_material", type="choice", label="Материал", choices=ROPE_MATERIALS },
+        { type="color", label="Цвет", cvars={r="hydraulic_color_r",g="hydraulic_color_g",b="hydraulic_color_b"} },
+    },
+    muscle = {
+        { cvar="muscle_group", type="key", label="Клавиша управления" },
+        { cvar="muscle_addlength", type="slider", label="Амплитуда изменения длины", min=-1000, max=1000, decimals=0 },
+        { cvar="muscle_period", type="slider", label="Период", min=0, max=10, decimals=2 },
+        { cvar="muscle_width", type="slider", label="Толщина", min=0, max=5, decimals=1 },
+        { cvar="muscle_fixed", type="bool", label="Фиксированное соединение" },
+        { cvar="muscle_starton", type="bool", label="Активна сразу" },
+        { cvar="muscle_material", type="choice", label="Материал", choices=ROPE_MATERIALS },
+        { type="color", label="Цвет", cvars={r="muscle_color_r",g="muscle_color_g",b="muscle_color_b"} },
+    },
+    slider = {
+        { cvar="slider_width", type="slider", label="Толщина направляющей", min=0, max=10, decimals=1 },
+        { cvar="slider_material", type="choice", label="Материал", choices=ROPE_MATERIALS },
+        { type="color", label="Цвет", cvars={r="slider_color_r",g="slider_color_g",b="slider_color_b"} },
+    },
+    axis = {
+        { cvar="axis_forcelimit", type="slider", label="Предел силы", min=0, max=50000, decimals=0 },
+        { cvar="axis_torquelimit", type="slider", label="Предел крутящего момента", min=0, max=50000, decimals=0 },
+        { cvar="axis_hingefriction", type="slider", label="Трение оси", min=0, max=200, decimals=1 },
+        { cvar="axis_nocollide", type="bool", label="Отключить столкновения" },
+    },
+    ballsocket = {
+        { cvar="ballsocket_forcelimit", type="slider", label="Предел силы", min=0, max=50000, decimals=0 },
+        { cvar="ballsocket_nocollide", type="bool", label="Отключить столкновения" },
+    },
+    motor = {
+        { cvar="motor_fwd", type="key", label="Клавиша вперёд" }, { cvar="motor_bwd", type="key", label="Клавиша назад" },
+        { cvar="motor_torque", type="slider", label="Крутящий момент", min=0, max=10000, decimals=0 },
+        { cvar="motor_forcelimit", type="slider", label="Предел силы", min=0, max=50000, decimals=0 },
+        { cvar="motor_friction", type="slider", label="Трение", min=0, max=100, decimals=1 },
+        { cvar="motor_forcetime", type="slider", label="Время действия", min=0, max=120, decimals=1 },
+        { cvar="motor_nocollide", type="bool", label="Отключить столкновения" }, { cvar="motor_toggle", type="bool", label="Режим переключателя" },
+    },
+    wheel = {
+        { cvar="wheel_fwd", type="key", label="Клавиша вперёд" }, { cvar="wheel_bck", type="key", label="Клавиша назад" },
+        { cvar="wheel_torque", type="slider", label="Крутящий момент", min=10, max=10000, decimals=0 },
+        { cvar="wheel_forcelimit", type="slider", label="Предел силы", min=0, max=50000, decimals=0 },
+        { cvar="wheel_friction", type="slider", label="Трение", min=0, max=100, decimals=1 },
+        { cvar="wheel_nocollide", type="bool", label="Отключить столкновения" }, { cvar="wheel_toggle", type="bool", label="Режим переключателя" },
+        { cvar="wheel_model", type="text", label="Модель колеса" },
+        { cvar="wheel_rx", type="slider", label="Поворот X", min=-180, max=180, decimals=0 }, { cvar="wheel_ry", type="slider", label="Поворот Y", min=-180, max=180, decimals=0 }, { cvar="wheel_rz", type="slider", label="Поворот Z", min=-180, max=180, decimals=0 },
+    },
+    thruster = {
+        { cvar="thruster_keygroup", type="key", label="Клавиша тяги" }, { cvar="thruster_keygroup_back", type="key", label="Клавиша обратной тяги" },
+        { cvar="thruster_force", type="slider", label="Сила тяги", min=1, max=10000, decimals=0 },
+        { cvar="thruster_effect", type="choice", label="Эффект", choices=THRUSTER_EFFECTS },
+        { cvar="thruster_soundname", type="choice", label="Звук", choices=THRUSTER_SOUNDS },
+        { cvar="thruster_toggle", type="bool", label="Режим переключателя" }, { cvar="thruster_collision", type="bool", label="Столкновения" }, { cvar="thruster_damageable", type="bool", label="Реагировать на урон" },
+        { cvar="thruster_model", type="text", label="Модель ускорителя" },
+    },
+    hoverball = {
+        { cvar="hoverball_keyup", type="key", label="Клавиша вверх" }, { cvar="hoverball_keydn", type="key", label="Клавиша вниз" }, { cvar="hoverball_keyon", type="key", label="Вкл./выкл." },
+        { cvar="hoverball_speed", type="slider", label="Скорость", min=0, max=20, decimals=1 },
+        { cvar="hoverball_resistance", type="slider", label="Сопротивление", min=0, max=10, decimals=1 },
+        { cvar="hoverball_strength", type="slider", label="Сила", min=0.1, max=10, decimals=1 },
+        { cvar="hoverball_model", type="text", label="Модель ховербола" },
+    },
+    balloon = {
+        { cvar="balloon_ropelength", type="slider", label="Длина верёвки", min=5, max=1000, decimals=0 },
+        { cvar="balloon_force", type="slider", label="Подъёмная сила", min=-1000, max=2000, decimals=0 },
+        { type="color", label="Цвет шара", cvars={r="balloon_r",g="balloon_g",b="balloon_b"} },
+        { cvar="balloon_model", type="choice", label="Вид шара", choices={{"Обычный жёлтый","normal_skin1"},{"Обычный красный","normal_skin2"},{"Обычный синий","normal_skin3"},{"G-Man","gman"},{"Mossman","mossman"},{"Собака","dog"},{"Сердце","heart"},{"Звезда","star"}} },
     },
     grm_lab_tool = {
         { cvar = "grm_lab_tool_type", type = "choice", label = "Тип лаборатории",
@@ -1227,7 +1365,7 @@ if CLIENT then
             local caption=tostring(row.label or "")
             local kind=tostring(row.type or "text")
             if caption~="" and (kind=="color" or (isstring(row.cvar) and row.cvar~="")) then
-                local tall=(kind=="color" and 245) or ((kind=="choice" or kind=="text") and 54) or (kind=="bool" and 28 or 34)
+                local tall=(kind=="color" and 245) or (kind=="slider" and 58) or ((kind=="choice" or kind=="text" or kind=="key") and 54) or (kind=="bool" and 28 or 34)
                 local box=vgui.Create("DPanel",body); box:Dock(TOP); box:SetTall(tall); box:DockMargin(4,4,4,2); box:SetPaintBackground(false)
                 if isfunction(body.AddItem) then body:AddItem(box) end
                 if kind=="bool" then
@@ -1245,7 +1383,13 @@ if CLIENT then
                     end
                 else
                     local lab=vgui.Create("DLabel",box); lab:SetPos(6,2); lab:SetSize(270,17); lab:SetFont("GRMQ_Small"); lab:SetTextColor(QC.dim); lab:SetText(caption)
-                    if kind=="choice" then
+                    if kind=="slider" then
+                        local sl=vgui.Create("DNumSlider",box); sl:SetPos(0,18); sl:SetSize(280,38); sl:SetText(""); sl:SetMin(tonumber(row.min) or 0); sl:SetMax(tonumber(row.max) or 100); sl:SetDecimals(tonumber(row.decimals) or 0); sl:SetValue(tonumber(cvarGet(row.cvar)) or tonumber(row.min) or 0)
+                        sl.OnValueChanged=function(_,v)cvarSet(row.cvar,tostring(v))end
+                    elseif kind=="key" then
+                        local binder=vgui.Create("DBinder",box); binder:SetPos(176,22); binder:SetSize(100,26); binder:SetValue(tonumber(cvarGet(row.cvar)) or 0)
+                        binder.OnChange=function(_,num)cvarSet(row.cvar,tostring(num or 0))end
+                    elseif kind=="choice" then
                         local combo=vgui.Create("DComboBox",box); combo:SetPos(6,23); combo:SetSize(270,25)
                         local cur=cvarGet(row.cvar); local choices=row.choices or {}
                         if row.dynamic=="factions" then
