@@ -1,7 +1,7 @@
 --[[ GRM Weather & Time v1.0.0: authoritative clock, day/night, fog and sky. ]]
 if SERVER then AddCSLuaFile()end
 GRM=GRM or{};GRM.Weather=GRM.Weather or{};local W=GRM.Weather
-W.Version="1.1.1";W.Types={clear={name="Ясно",fog=.08},cloudy={name="Облачно",fog=.22},fog={name="Туман",fog=.72},rain={name="Дождь",fog=.38},storm={name="Гроза",fog=.55}}
+W.Version="1.1.2";W.Types={clear={name="Ясно",fog=.08},cloudy={name="Облачно",fog=.22},fog={name="Туман",fog=.72},rain={name="Дождь",fog=.38},storm={name="Гроза",fog=.55}}
 W.Config=W.Config or{dayLengthMinutes=90,randomWeather=true,weatherMinMinutes=12,weatherMaxMinutes=28,startHour=8,hudClock=true,soundVolume=.65,musicVolume=.18,musicEnabled=true,musicTheme="noir",nightDarkness=.4}
 local OPEN="GRM_Weather_Admin";local SAVE="GRM_Weather_Save"
 if GRM.Access and GRM.Access.Register then GRM.Access.Register("weather.manage",{label="Погода и время: управление",scope="account"})end
