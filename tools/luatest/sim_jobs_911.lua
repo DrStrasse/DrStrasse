@@ -65,7 +65,7 @@ check("летальный урон переводит в тяжёлое сост
 check("раненый заменён физическим ragdoll",IsValid(victim._grm911Ragdoll) and victim._grm911Ragdoll:GetNWBool("GRM_911_WoundedRagdoll") and victim._nodraw==true)
 check("автовызов 911 создан",#EM.Calls>=1 and EM.Calls[#EM.Calls].patientName=="Пациент")
 local sOk=EM.Stabilize(medic,victim)
-check("стабилизация продлевает жизнь",sOk and victim:GetNWBool("GRM_911_Stable"))
+check("стабилизация продлевает жизнь и даёт минимум 30 HP",sOk and victim:GetNWBool("GRM_911_Stable") and victim:Health()>=30)
 local rOk=EM.Revive(medic,victim)
 check("медик реанимирует",rOk and not victim:GetNWBool("GRM_911_Downed") and victim:Health()==EM.Config.reviveHealth and not victim._frozen and victim._nodraw==false and victim._grm911Ragdoll==nil)
 

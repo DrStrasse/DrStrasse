@@ -9,7 +9,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Documents = GRM.Documents or {}
 local DOC = GRM.Documents
-DOC.PhysicalVersion = "1.0.0"
+DOC.PhysicalVersion = "1.1.0"
 DOC.MaxPhysicalCopies = 6
 
 local NET_VIEW = "GRM_Doc_ReceiveView"
@@ -117,7 +117,7 @@ if SERVER then
         if count>=DOC.MaxPhysicalCopies then return false,"Лимит физических копий этого документа: "..DOC.MaxPhysicalCopies end
         if not (GRM.Inventory and GRM.Inventory.AddItem) then return false,"Инвентарь не загружен" end
         local copyID="doc_"..os.time().."_"..math.random(100000,999999)
-        local left=GRM.Inventory.AddItem(target,def.item,1,{docType=docType,ownerKey=ownerKey,number=tostring(rec.number or rec.series or ""),copyID=copyID,issuedAt=os.time(),issuedBy=IsValid(issuer) and issuer:Nick() or "Система"})
+        local left=GRM.Inventory.AddItem(target,def.item,1,{docType=docType,ownerKey=ownerKey,ownerName=tostring(rec.fullName or rec.businessName or target:Nick()),number=tostring(rec.number or rec.series or ""),copyID=copyID,issuedAt=os.time(),issuedBy=IsValid(issuer) and issuer:Nick() or "Система"})
         if left~=0 then return false,"В инвентаре нет свободного места" end
         if GRM.Notify then GRM.Notify(target,"Получен физический бланк: "..def.name.." (копия "..tostring(count+1).."/"..DOC.MaxPhysicalCopies..")",100,220,140) end
         hook.Run("GRM_DocumentPhysicalIssued",target,docType,ownerKey,copyID,issuer)

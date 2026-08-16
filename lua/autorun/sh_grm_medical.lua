@@ -395,11 +395,15 @@ if SERVER then
     -- Править по-прежнему может только персонал с доступом.
     function MD.ViewIssued(ply, data)
         if not IsValid(ply) then return end
-        if not istable(data) or tostring(data.sid64 or "") == "" then
+        data = istable(data) and data or {}
+        local sid64 = tostring(data.ownerKey or data.sid64 or "")
+        -- Легаси-карта без instance-data могла принадлежать только текущему
+        -- держателю. Чужие современные карты всегда имеют ownerKey.
+        if sid64 == "" and MD.HasCard(identityKey(ply)) then sid64 = identityKey(ply) end
+        if sid64 == "" then
             if GRM.Notify then GRM.Notify(ply, "Пустой бланк карты — на нём нет печати выдачи. Заполненную выдаёт врач (окно /medcards).", 255, 200, 90) end
             return
         end
-        local sid64 = tostring(data.sid64)
         -- актуализируем имя по онлайну (карта могла выехать с давним сейвом)
         local c0 = MD.Cards[sid64]
         if istable(c0) then
@@ -516,7 +520,7 @@ if SERVER then
                 if GRM.Notify then GRM.Notify(ply, "У этого пациента уже есть медкарта на руках.", 255, 200, 90) end
                 return
             end
-            local left = GRM.Inventory.AddItem(patient, MD.CardItem, 1, { sid64 = sid64 })
+            local left = GRM.Inventory.AddItem(patient, MD.CardItem, 1, { sid64 = sid64, ownerKey = sid64, ownerName = rpName(patient), docType = "medcard" })
             if (left or 1) > 0 then
                 if GRM.Notify then GRM.Notify(ply, "В инвентаре пациента нет места.", 255, 140, 110) end
                 return

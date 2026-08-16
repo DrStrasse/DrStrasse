@@ -122,22 +122,38 @@ if SERVER then
         result.isSuperAdmin = ply:IsSuperAdmin() == true
         result.hasMaskAccess = false
 
-        -- Проверка наличия документов у персонажа (Код 87)
+        -- Кнопка документа появляется только при наличии ФИЗИЧЕСКОГО
+        -- собственного бланка в инвентаре. Чужой ownerKey права не даёт.
         local key = (GRM.Identity and isfunction(GRM.Identity.CharacterKey) and GRM.Identity.CharacterKey(ply)) or (ply:SteamID64() .. ":char1")
+        local function hasOwnItem(itemID,docType)
+            local inv=GRM.Inventory and GRM.Inventory.GetPlayerInv and GRM.Inventory.GetPlayerInv(ply)
+            if not inv then return false end
+            for _,slot in pairs(inv.slots or {}) do
+                if istable(slot) and slot.id==itemID then
+                    local d=istable(slot.data) and slot.data or {}
+                    local owner=tostring(d.ownerKey or d.sid64 or "")
+                    if owner=="" then owner=key end -- старые личные бланки до instance-data
+                    local typ=GRM.Documents and GRM.Documents.CanonicalPhysicalType and GRM.Documents.CanonicalPhysicalType(d.docType or docType) or (d.docType or docType)
+                    if owner==key and (not docType or tostring(typ)==tostring(docType)) then return true end
+                end
+            end
+            return false
+        end
         local pass = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.passports and GRM.Documents.Registry.passports[key]
-        result.hasPassport = (pass == nil or pass.status == "Действителен")
+        result.hasPassport = hasOwnItem("passport","passport") and pass ~= nil
 
         local hasCover = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.coverBadges and GRM.Documents.Registry.coverBadges[key] and GRM.Documents.Registry.coverBadges[key].status == "Действителен"
         local coverRec = hasCover and GRM.Documents.Registry.coverBadges[key] or nil
         local badge = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.badges and GRM.Documents.Registry.badges[key]
         local hasOfficial = (factionName ~= nil and (badge == nil or badge.status == "Действителен"))
-        result.hasBadge = (hasCover == true or hasOfficial == true)
-        result.hasOfficialBadge = (hasOfficial == true)
-        result.hasCoverBadge = (hasCover == true)
+        local hasBadgeItem=hasOwnItem("badge","badge")
+        result.hasBadge = hasBadgeItem and (hasCover == true or hasOfficial == true)
+        result.hasOfficialBadge = hasBadgeItem and (hasOfficial == true)
+        result.hasCoverBadge = hasBadgeItem and (hasCover == true)
         result.officialBadgeFac = hasOfficial and (badge and badge.faction or factionName) or ""
         result.coverBadgeFac = hasCover and (coverRec and coverRec.faction or "") or ""
 
-        result.hasMedCard = (GRM.Medical and isfunction(GRM.Medical.HasCard) and GRM.Medical.HasCard(key)) == true
+        result.hasMedCard = hasOwnItem("medcard",nil) and (GRM.Medical and isfunction(GRM.Medical.HasCard) and GRM.Medical.HasCard(key)) == true
 
         -- Дипломы: свои бланки игрок смотрит как любой другой документ.
         -- Аннулированные учитываем тоже — владелец должен видеть их статус.
@@ -145,18 +161,18 @@ if SERVER then
         result.diplomaCount = istable(dipl) and #dipl or 0
 
         local mil = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.military and GRM.Documents.Registry.military[key]
-        result.hasMilitary = (mil ~= nil and mil.status ~= "Аннулирован")
+        result.hasMilitary = hasOwnItem("military_ticket","military") and (mil ~= nil and mil.status ~= "Аннулирован")
 
         local lic = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.licenses and GRM.Documents.Registry.licenses[key]
-        result.hasLicense = (lic ~= nil and lic.status ~= "Аннулировано" and lic.status ~= "Лишён права управления")
+        result.hasLicense = hasOwnItem("driver_license","license") and (lic ~= nil and lic.status ~= "Аннулировано" and lic.status ~= "Лишён права управления")
 
         local milLic = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.milLicenses and GRM.Documents.Registry.milLicenses[key]
-        result.hasMilLicense = (milLic ~= nil and milLic.status ~= "Аннулировано" and milLic.status ~= "Лишён ВАИ")
+        result.hasMilLicense = hasOwnItem("military_license","milLicense") and (milLic ~= nil and milLic.status ~= "Аннулировано" and milLic.status ~= "Лишён ВАИ")
 
         local weaponLic = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.weaponLicenses and GRM.Documents.Registry.weaponLicenses[key]
-        result.hasWeaponLicense = weaponLic ~= nil
+        result.hasWeaponLicense = hasOwnItem("weapon_license","weaponLicense") and weaponLic ~= nil
         local businessLic = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.businessLicenses and GRM.Documents.Registry.businessLicenses[key]
-        result.hasBusinessLicense = businessLic ~= nil
+        result.hasBusinessLicense = hasOwnItem("business_license","businessLicense") and businessLic ~= nil
 
         if factionName and FactionsExt and FactionsExt[factionName] then
             local cfg = FactionsExt[factionName]

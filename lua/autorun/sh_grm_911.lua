@@ -50,7 +50,7 @@ if SERVER then
         d.enabled=t.enabled~=false; d.autoCall=t.autoCall~=false; d.lootInventory=t.lootInventory~=false
         d.bleedoutSec=math.floor(clamp(t.bleedoutSec,30,900)); d.stabilizedSec=math.floor(clamp(t.stabilizedSec,60,1800))
         d.bodyTTL=math.floor(clamp(t.bodyTTL,60,86400)); d.maxBodies=math.floor(clamp(t.maxBodies,1,128))
-        d.reviveHealth=math.floor(clamp(t.reviveHealth,1,100)); d.reviveSubsidy=math.floor(clamp(t.reviveSubsidy,0,100000))
+        d.reviveHealth=math.floor(clamp(t.reviveHealth,30,100)); d.reviveSubsidy=math.floor(clamp(t.reviveSubsidy,0,100000))
         return d
     end
     local function save(path,data,why)
@@ -165,6 +165,7 @@ if SERVER then
         target:SetNWBool("GRM_911_Stable",true); local deathAt=os.time()+EM.Config.stabilizedSec; target:SetNWInt("GRM_911_DeathAt",deathAt)
         local rag=woundedRagdoll(target); if IsValid(rag) then rag:SetNWBool("GRM_911_Stable",true); rag:SetNWInt("GRM_911_DeathAt",deathAt) end
         timer.Adjust("GRM_911_Bleedout_"..target:EntIndex(),EM.Config.stabilizedSec,1,function() if IsValid(target) and target:GetNWBool("GRM_911_Downed") then target._grm911ForceDeath=true; local pos=removeWoundedRagdoll(target,true); target:SetPos(pos+Vector(0,0,8)); target:Freeze(false); target:Kill() end end)
+        target:SetHealth(math.max(30,target:Health()))
         target:SetNWInt("GRM_Bleed",0); medCardEntry(target,"vitals","Стабилизация на месте. Исполнитель: "..rpName(actor),actor); hook.Run("GRM_911_Stabilized",actor,target); return true,"Пациент стабилизирован"
     end
     local function subsidy(actor)

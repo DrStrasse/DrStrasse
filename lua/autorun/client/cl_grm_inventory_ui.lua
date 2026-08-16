@@ -44,9 +44,26 @@ local function itemDef(slot)
     return (INV.GetItemDef and INV.GetItemDef(slot.id)) or FACTORY_DEFS[slot.id]
 end
 
+local DOCUMENT_ITEMS = {passport=true,badge=true,military_ticket=true,driver_license=true,military_license=true,weapon_license=true,business_license=true,medcard=true}
+local function documentMeta(slot)
+    if not (slot and DOCUMENT_ITEMS[slot.id]) then return nil end
+    local d=istable(slot.data) and slot.data or {}
+    local lp=LocalPlayer(); local myKey=""
+    if IsValid(lp) then myKey=(GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(lp)) or lp:GetNWString("GRM_CharacterKey","") end
+    local owner=tostring(d.ownerKey or d.sid64 or "")
+    if owner=="" then owner=myKey end -- легаси-бланк считается своим
+    return {ownerKey=owner,ownerName=tostring(d.ownerName or ""),number=tostring(d.number or ""),mine=(owner~="" and owner==myKey)}
+end
 local function itemName(slot)
-    local def = itemDef(slot)
-    return def and def.name or (slot and slot.id) or "Пустой слот"
+    local def=itemDef(slot)
+    local base=def and def.name or (slot and slot.id) or "Пустой слот"
+    local meta=documentMeta(slot)
+    if meta then
+        local mark=meta.mine and "СВОЙ" or "ЧУЖОЙ"
+        local who=(not meta.mine and meta.ownerName~="") and (" — "..meta.ownerName) or ""
+        return mark.." • "..base..who
+    end
+    return base
 end
 
 local function accessoryModel(slot)
@@ -168,7 +185,11 @@ local function rebuildDetail()
     local count = vgui.Create("DLabel", detailPanel)
     count:SetPos(74, 38); count:SetSize(260, 20); count:SetText(string.format("Количество: %d   |   Вес: %.2f кг", tonumber(slot.count) or 1, itemWeight(slot))); count:SetFont("GRMInv2_Small"); count:SetTextColor(C.yellow)
     local desc = vgui.Create("DLabel", detailPanel)
-    desc:SetPos(14, 76); desc:SetSize(330, 45); desc:SetWrap(true); desc:SetText(def.desc or "Описание отсутствует"); desc:SetFont("GRMInv2_Small"); desc:SetTextColor(C.dim)
+    desc:SetPos(14, 76); desc:SetSize(330, 45); desc:SetWrap(true)
+    local description=def.desc or "Описание отсутствует"
+    local docMeta=documentMeta(slot)
+    if docMeta then description=description.."\nВладелец: "..(docMeta.ownerName~="" and docMeta.ownerName or docMeta.ownerKey)..(docMeta.number~="" and (" • №"..docMeta.number) or "") end
+    desc:SetText(description); desc:SetFont("GRMInv2_Small"); desc:SetTextColor(docMeta and (docMeta.mine and C.green or C.red) or C.dim)
 
     local use = btn(detailPanel, def.type == "weapon" and "Экипировать" or "Использовать", C.green, 155, 32)
     use:SetPos(14, 132)
