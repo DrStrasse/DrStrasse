@@ -1,8 +1,8 @@
 --[[ GRM Weather & Time v1.0.0: authoritative clock, day/night, fog and sky. ]]
 if SERVER then AddCSLuaFile()end
 GRM=GRM or{};GRM.Weather=GRM.Weather or{};local W=GRM.Weather
-W.Version="1.1.2";W.Types={clear={name="Ясно",fog=.08},cloudy={name="Облачно",fog=.22},fog={name="Туман",fog=.72},rain={name="Дождь",fog=.38},storm={name="Гроза",fog=.55}}
-W.Config=W.Config or{dayLengthMinutes=90,randomWeather=true,weatherMinMinutes=12,weatherMaxMinutes=28,startHour=8,hudClock=true,soundVolume=.65,musicVolume=.18,musicEnabled=true,musicTheme="noir",nightDarkness=.4}
+W.Version="1.2.0";W.Types={clear={name="Ясно",fog=.08},cloudy={name="Облачно",fog=.22},fog={name="Туман",fog=.72},rain={name="Дождь",fog=.38},storm={name="Гроза",fog=.55}}
+W.Config=W.Config or{dayLengthMinutes=90,randomWeather=true,weatherMinMinutes=12,weatherMaxMinutes=28,startHour=8,hudClock=true,soundVolume=.65,musicVolume=.18,musicEnabled=true,musicTheme="noir",nightDarkness=.3}
 local OPEN="GRM_Weather_Admin";local SAVE="GRM_Weather_Save"
 if GRM.Access and GRM.Access.Register then GRM.Access.Register("weather.manage",{label="Погода и время: управление",scope="account"})end
 function W.CanAdmin(p)return IsValid(p)and(p:IsSuperAdmin()or(GRM.Access and GRM.Access.Can and GRM.Access.Can(p,"weather.manage")==true))end
@@ -13,7 +13,7 @@ function W.SunFactor(minutes)local h=(tonumber(minutes)or W.TimeMinutes())/60;lo
 if SERVER then
  util.AddNetworkString(OPEN);util.AddNetworkString(SAVE);local FILE="grm_weather/config.json"
  local AUDIO_RESOURCES={"ambient_day.wav","ambient_evening.wav","ambient_night.wav","ambient_noir.wav","rain_loop.wav","storm_loop.wav"}
- for _,name in ipairs(AUDIO_RESOURCES)do resource.AddFile("sound/grm/weather/"..name)end
+ for _,name in ipairs(AUDIO_RESOURCES)do resource.AddFile("sound/grm/weather/"..name);util.PrecacheSound("grm/weather/"..name)end
  local function load()local d=GRM.Persistence.LoadJSON(FILE,{version=1,config=W.Config,state={time=W.Config.startHour*60,weather="clear"}});if istable(d.config)then for k,v in pairs(d.config)do W.Config[k]=v end end;W._time=tonumber(d.state and d.state.time)or W.Config.startHour*60;W._weather=W.Types[d.state and d.state.weather]and d.state.weather or"clear"end
  local function save()return GRM.Persistence.SaveJSON(FILE,{version=1,config=W.Config,state={time=W._time,weather=W._weather}},{version=1})end
  load();SetGlobalFloat("GRM_TimeMinutes",W._time);SetGlobalString("GRM_Weather",W._weather);if GRM.Perm and GRM.Perm.RegisterClass then GRM.Perm.RegisterClass("grm_clock",true)end;if GRM.PermData and GRM.PermData.AddExtract then GRM.PermData.AddExtract("grm_clock",function(e)return{clockName=e:GetClockName()}end);GRM.PermData.AddApply("grm_clock",function(e,d)if d.clockName then e:SetClockName(string.Trim(tostring(d.clockName)):sub(1,64))end end)end
@@ -36,11 +36,11 @@ if SERVER then
   for i=1,#SKY_KEYS-1 do local a,b=SKY_KEYS[i],SKY_KEYS[i+1];if hour>=a[1]and hour<=b[1]then local span=math.max(.001,b[1]-a[1]);return blendPreset(SKYPAINT[a[2]],SKYPAINT[b[2]],math.Clamp((hour-a[1])/span,0,1))end end
   return SKYPAINT.night
  end
- local lastLightStyle
- local function applyWorldLight(sun)
-  if not (engine and engine.LightStyle) then return end
-  local darkness=math.Clamp(tonumber(W.Config.nightDarkness)or.4,.2,.85);local nightStyle=darkness>=.68 and"f"or darkness>=.48 and"g"or darkness>=.3 and"h"or"i";local style=sun<.03 and nightStyle or sun<.12 and"h"or sun<.30 and"j"or sun<.60 and"l"or"m"
-  if style ~= lastLightStyle then engine.LightStyle(0, style); lastLightStyle = style end
+ local restoredLightStyle=false
+ local function restoreWorldLight()
+  -- Never dim compiled lightmaps: changing style 0 broke maps and required
+  -- artificial lamps. Night is now sky + client grading only.
+  if not restoredLightStyle and engine and engine.LightStyle then engine.LightStyle(0,"m");restoredLightStyle=true end
  end
  local function applySky()
   local e=skyPaint();if not IsValid(e)or not isfunction(e.SetTopColor)then return end
@@ -55,15 +55,15 @@ if SERVER then
   e:SetStarScale(preset.StarScale);e:SetStarFade(preset.StarFade);e:SetStarSpeed(preset.StarSpeed)
   e:SetDuskScale(preset.DuskScale);e:SetDuskIntensity(preset.DuskIntensity);e:SetDuskColor(preset.DuskColor)
   e:SetSunColor(preset.SunColor);e:SetSunSize(preset.SunSize)
-  applyWorldLight(sun)
+  restoreWorldLight()
  end
- local function sync()SetGlobalFloat("GRM_TimeMinutes",W._time);SetGlobalString("GRM_Weather",W._weather);SetGlobalFloat("GRM_SunFactor",W.SunFactor(W._time));SetGlobalBool("GRM_WeatherHUD",W.Config.hudClock~=false);SetGlobalFloat("GRM_WeatherSoundVolume",math.Clamp(tonumber(W.Config.soundVolume)or.65,0,1));SetGlobalFloat("GRM_WeatherMusicVolume",math.Clamp(tonumber(W.Config.musicVolume)or.18,0,1));SetGlobalBool("GRM_WeatherMusic",W.Config.musicEnabled~=false);SetGlobalString("GRM_WeatherMusicTheme",W.Config.musicTheme=="periods"and"periods"or"noir");SetGlobalFloat("GRM_NightDarkness",math.Clamp(tonumber(W.Config.nightDarkness)or.4,.2,.85))end
+ local function sync()SetGlobalFloat("GRM_TimeMinutes",W._time);SetGlobalString("GRM_Weather",W._weather);SetGlobalFloat("GRM_SunFactor",W.SunFactor(W._time));SetGlobalBool("GRM_WeatherHUD",W.Config.hudClock~=false);SetGlobalFloat("GRM_WeatherSoundVolume",math.Clamp(tonumber(W.Config.soundVolume)or.65,0,1));SetGlobalFloat("GRM_WeatherMusicVolume",math.Clamp(tonumber(W.Config.musicVolume)or.18,0,1));SetGlobalBool("GRM_WeatherMusic",W.Config.musicEnabled~=false);SetGlobalString("GRM_WeatherMusicTheme",W.Config.musicTheme=="periods"and"periods"or"noir");SetGlobalFloat("GRM_NightDarkness",math.Clamp(tonumber(W.Config.nightDarkness)or.3,.2,.85))end
  local function nextWeather()if not W.Config.randomWeather then return end;local ids={"clear","clear","cloudy","fog","rain","storm"};W._weather=ids[math.random(#ids)];W._weatherUntil=CurTime()+math.random(W.Config.weatherMinMinutes*60,W.Config.weatherMaxMinutes*60);sync();save();if GRM.Audit then GRM.Audit.Write("weather","weather.change",nil,{}, {weather=W._weather})end end
  W._weatherUntil=CurTime()+math.random(W.Config.weatherMinMinutes*60,W.Config.weatherMaxMinutes*60)
  timer.Create("GRM_Weather_Clock",1,0,function()W._time=(W._time+1440/math.max(600,(tonumber(W.Config.dayLengthMinutes)or 90)*60))%1440;if CurTime()>=W._weatherUntil then nextWeather()end;sync()end);timer.Create("GRM_Weather_SunMotion",5,0,applySky);timer.Simple(1,applySky);timer.Create("GRM_Weather_Autosave",120,0,save)
  hook.Add("InitPostEntity","GRM_Weather_Sky",function()timer.Simple(2,applySky)end);hook.Add("ShutDown","GRM_Weather_Save",save)
  local function adminData(p)if not W.CanAdmin(p)then return end;net.Start(OPEN);net.WriteTable(W.Config);net.WriteFloat(W._time);net.WriteString(W._weather);net.Send(p)end
- net.Receive(SAVE,function(bits,p)if not W.CanAdmin(p)then return end;if GRM.Net and not GRM.Net.Guard(p,"weather.admin.save",{rate=.5,burst=2,maxBits=65536},{bits=bits})then return end;local d=net.ReadTable()or{};W.Config.dayLengthMinutes=math.Clamp(tonumber(d.dayLengthMinutes)or 90,10,1440);W.Config.randomWeather=d.randomWeather~=false;W.Config.weatherMinMinutes=math.Clamp(math.floor(tonumber(d.weatherMinMinutes)or 12),2,240);W.Config.weatherMaxMinutes=math.Clamp(math.floor(tonumber(d.weatherMaxMinutes)or 28),W.Config.weatherMinMinutes,480);W.Config.hudClock=d.hudClock~=false;W.Config.soundVolume=math.Clamp(tonumber(d.soundVolume)or.65,0,1);W.Config.musicVolume=math.Clamp(tonumber(d.musicVolume)or.18,0,1);W.Config.musicEnabled=d.musicEnabled~=false;W.Config.musicTheme=d.musicTheme=="periods"and"periods"or"noir";W.Config.nightDarkness=math.Clamp(tonumber(d.nightDarkness)or.4,.2,.85);local hour=tonumber(d.hour);if hour then W._time=(hour%24)*60 end;if W.Types[d.weather]then W._weather=d.weather;W._weatherUntil=CurTime()+W.Config.weatherMaxMinutes*60 end;save();sync();applySky();if GRM.Audit then GRM.Audit.Write("weather","admin.save",p,{},d)end;adminData(p)end)
+ net.Receive(SAVE,function(bits,p)if not W.CanAdmin(p)then return end;if GRM.Net and not GRM.Net.Guard(p,"weather.admin.save",{rate=.5,burst=2,maxBits=65536},{bits=bits})then return end;local d=net.ReadTable()or{};W.Config.dayLengthMinutes=math.Clamp(tonumber(d.dayLengthMinutes)or 90,10,1440);W.Config.randomWeather=d.randomWeather~=false;W.Config.weatherMinMinutes=math.Clamp(math.floor(tonumber(d.weatherMinMinutes)or 12),2,240);W.Config.weatherMaxMinutes=math.Clamp(math.floor(tonumber(d.weatherMaxMinutes)or 28),W.Config.weatherMinMinutes,480);W.Config.hudClock=d.hudClock~=false;W.Config.soundVolume=math.Clamp(tonumber(d.soundVolume)or.65,0,1);W.Config.musicVolume=math.Clamp(tonumber(d.musicVolume)or.18,0,1);W.Config.musicEnabled=d.musicEnabled~=false;W.Config.musicTheme=d.musicTheme=="periods"and"periods"or"noir";W.Config.nightDarkness=math.Clamp(tonumber(d.nightDarkness)or.3,.2,.85);local hour=tonumber(d.hour);if hour then W._time=(hour%24)*60 end;if W.Types[d.weather]then W._weather=d.weather;W._weatherUntil=CurTime()+W.Config.weatherMaxMinutes*60 end;save();sync();applySky();if GRM.Audit then GRM.Audit.Write("weather","admin.save",p,{},d)end;adminData(p)end)
  concommand.Add("grm_weather_admin",adminData);concommand.Add("grm_time",function(p)if IsValid(p)then p:ChatPrint("[Время] "..W.FormatTime(W._time).." • "..W.Period(W._time).." • "..W.Types[W._weather].name)end end)
  hook.Add("PlayerSay","GRM_Weather_Chat",function(p,t)local s=string.lower(string.Trim(t or""));if s=="/time"or s=="/время"or s=="/weather"or s=="/погода"then p:ChatPrint("[Время] "..W.FormatTime(W._time).." • "..W.Period(W._time).." • "..W.Types[W._weather].name);return""elseif s=="/weather_admin"and W.CanAdmin(p)then adminData(p);return""end end)
  hook.Add("PlayerSayTransform","GRM_Weather_EasyChat",function(p,t,d)d=istable(t)and t or d;local raw=istable(t)and t[1]or t;local s=string.lower(string.Trim(raw or""));if s~="/time"and s~="/время"and s~="/weather"and s~="/погода"and s~="/weather_admin"then return end;if s=="/weather_admin"then if W.CanAdmin(p)then adminData(p)end else p:ChatPrint("[Время] "..W.FormatTime(W._time).." • "..W.Period(W._time).." • "..W.Types[W._weather].name)end;d.SkipPlayerSay=true;d[1]=""end)
@@ -114,11 +114,11 @@ if CLIENT then
         local sun = GetGlobalFloat("GRM_SunFactor", 1)
         local weather = GetGlobalString("GRM_Weather", "clear")
         local dark = 1 - sun
-        local nightDarkness=math.Clamp(GetGlobalFloat("GRM_NightDarkness",.4),.2,.85)
-        local brightnessLoss=Lerp(nightDarkness,.035,.11)
-        local colorLoss=Lerp(nightDarkness,.16,.36)
+        local nightDarkness=math.Clamp(GetGlobalFloat("GRM_NightDarkness",.3),.2,.85)
+        local brightnessLoss=Lerp(nightDarkness,.012,.060)
+        local colorLoss=Lerp(nightDarkness,.08,.25)
         DrawColorModify({
-            ["$pp_colour_addr"]=0, ["$pp_colour_addg"]=0, ["$pp_colour_addb"]=dark*.008,
+            ["$pp_colour_addr"]=0, ["$pp_colour_addg"]=0, ["$pp_colour_addb"]=dark*.014,
             ["$pp_colour_brightness"]=-dark*brightnessLoss,
             ["$pp_colour_contrast"]=1+dark*.025,
             ["$pp_colour_colour"]=1-dark*colorLoss-(weather=="storm" and .08 or 0),
@@ -159,51 +159,39 @@ if CLIENT then
         end
     end
 
-    -- Original GRM audio: separate weather beds and musical day periods.
-    local audioFiles = {
-        rain="sound/grm/weather/rain_loop.wav",
-        storm="sound/grm/weather/storm_loop.wav",
-        day="sound/grm/weather/ambient_day.wav",
-        evening="sound/grm/weather/ambient_evening.wav",
-        night="sound/grm/weather/ambient_night.wav",
-        noir="sound/grm/weather/ambient_noir.wav",
+    -- Source-engine sound patches are used instead of BASS file streams.
+    -- They resolve mounted addon/download content and can fall back to built-in
+    -- rain even when a client has not downloaded GRM WAV files yet.
+    local audioDefs = {
+        rain={path="grm/weather/rain_loop.wav",fallback="ambient/weather/rain.wav",duration=24},
+        storm={path="grm/weather/storm_loop.wav",fallback="ambient/weather/rain.wav",duration=24},
+        day={path="grm/weather/ambient_day.wav",duration=24},
+        evening={path="grm/weather/ambient_evening.wav",duration=24},
+        night={path="grm/weather/ambient_night.wav",duration=24},
+        noir={path="grm/weather/ambient_noir.wav",duration=48},
     }
-    local channels, loading, currentVolumes, retryAt, warned = {}, {}, {}, {}, {}
-    local function loadChannel(id)
-        if IsValid(channels[id]) or loading[id] or (retryAt[id] or 0) > RealTime() then return end
-        channels[id] = nil
-        local path = audioFiles[id]
-        if not file.Exists(path, "GAME") then
-            retryAt[id] = RealTime() + 30
-            if not warned[id] then
-                warned[id] = true
-                ErrorNoHalt("[GRM Weather] audio file missing: "..path..". Reconnect after server content download.\n")
-            end
-            return
+    local patches, currentVolumes, startedAt, selectedWave, warned = {}, {}, {}, {}, {}
+    local function ensurePatch(id)
+        if patches[id] then return patches[id] end
+        local def=audioDefs[id];if not def then return nil end
+        local customExists=file.Exists("sound/"..def.path,"GAME")
+        local wave=customExists and def.path or def.fallback
+        if not wave then
+            if not warned[id]then warned[id]=true;ErrorNoHalt("[GRM Weather] optional music missing: sound/"..def.path.."\n")end
+            return nil
         end
-        loading[id] = true
-        sound.PlayFile(path, "noplay noblock", function(channel, errCode, errName)
-            loading[id] = nil
-            if not IsValid(channel) then
-                retryAt[id] = RealTime() + 30
-                if not warned[id] then
-                    warned[id] = true
-                    ErrorNoHalt("[GRM Weather] audio "..id.." failed: "..tostring(errCode).." "..tostring(errName).."\n")
-                end
-                return
-            end
-            warned[id], retryAt[id] = nil, nil
-            channels[id] = channel
-            currentVolumes[id] = 0
-            channel:EnableLooping(true)
-            channel:SetVolume(0)
-            channel:Play()
-        end)
+        local name="GRM.Weather.Source."..id
+        sound.Add({name=name,channel=CHAN_AUTO,volume=1,soundlevel=0,pitch=100,sound=wave})
+        local ply=LocalPlayer();if not IsValid(ply)then return nil end
+        local patch=CreateSound(ply,name)
+        if not patch then return nil end
+        patches[id]=patch;selectedWave[id]=wave;currentVolumes[id]=0;startedAt[id]=RealTime()
+        patch:PlayEx(0,100)
+        return patch
     end
-    for id in pairs(audioFiles) do loadChannel(id) end
     concommand.Add("grm_weather_audio_debug",function()
-        print("[GRM Weather] audio diagnostics")
-        for id,path in pairs(audioFiles)do print(id,path,"exists="..tostring(file.Exists(path,"GAME")),"channel="..tostring(IsValid(channels[id])))end
+        print("[GRM Weather] Source audio diagnostics")
+        for id,def in pairs(audioDefs)do print(id,"custom="..tostring(file.Exists("sound/"..def.path,"GAME")),"wave="..tostring(selectedWave[id]or def.fallback or"none"),"patch="..tostring(patches[id]~=nil),"playing="..tostring(patches[id]and patches[id]:IsPlaying()or false))end
     end)
 
     local function musicPeriod()
@@ -231,12 +219,15 @@ if CLIENT then
             local track = theme == "periods" and period or "noir"
             targets[track] = musicVolume * (weather == "storm" and .45 or weather == "rain" and .7 or 1)
         end
-        for id, target in pairs(targets) do
-            loadChannel(id)
-            local ch = channels[id]
-            if IsValid(ch) then
-                currentVolumes[id] = Lerp(FrameTime() * .35, currentVolumes[id] or 0, target)
-                ch:SetVolume(math.Clamp(currentVolumes[id], 0, 1))
+        W._nextAudioMix=W._nextAudioMix or 0;if RealTime()<W._nextAudioMix then return end;W._nextAudioMix=RealTime()+.2
+        for id,target in pairs(targets)do
+            local patch=ensurePatch(id)
+            if patch then
+                currentVolumes[id]=Lerp(.18,currentVolumes[id]or 0,target)
+                local def=audioDefs[id]
+                if not patch:IsPlaying()or(selectedWave[id]==def.path and RealTime()-(startedAt[id]or 0)>=def.duration-.08)then
+                    patch:Stop();patch:PlayEx(currentVolumes[id],100);startedAt[id]=RealTime()
+                else patch:ChangeVolume(math.Clamp(currentVolumes[id],0,1),.22)end
             end
         end
     end
@@ -274,7 +265,7 @@ if CLIENT then
     end)
 
     hook.Add("ShutDown", "GRM_Weather_AudioStop", function()
-        for _, channel in pairs(channels) do if IsValid(channel) then channel:Stop() end end
+        for _,patch in pairs(patches)do if patch then patch:Stop()end end
         if emitter then emitter:Finish(); emitter=nil end
     end)
 
@@ -289,7 +280,7 @@ if CLIENT then
         end
         local day=slider("Длительность суток, реальные минуты",10,1440,cfg.dayLengthMinutes)
         local hour=slider("Текущее время, час",0,23,tm/60)
-        local nightDarkness=slider("Темнота ночи (0.2 светлее — 0.85 темнее)",.2,.85,cfg.nightDarkness or .4,2)
+        local nightDarkness=slider("Глубина ночного тона (не меняет освещение карты)",.2,.85,cfg.nightDarkness or .3,2)
         local weatherBox=vgui.Create("DComboBox",f);weatherBox:SetPos(18,y);weatherBox:SetSize(724,36)
         for id,row in pairs(W.Types) do weatherBox:AddChoice(row.name,id,id==weather) end;y=y+46
         local random=vgui.Create("DCheckBoxLabel",f);random:SetPos(18,y);random:SetText("Случайная смена погоды");random:SetValue(cfg.randomWeather and 1 or 0);random:SizeToContents();y=y+34
