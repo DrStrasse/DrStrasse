@@ -1,6 +1,6 @@
 --[[--------------------------------------------------------------------
-    GRM Identity Core v1.1.0 (Код 72) — Персонажи, RP-имена, регистрация
-    v1.1.0: ширина меню удвоена (до 1880 px, адаптивно под экран).
+    GRM Identity Core v1.6.0 (Код 72) — Персонажи, RP-имена, регистрация
+    v1.6.0: singleton меню/гардероба и серверный предпросмотр слота.
     Ядро + точки расширения (патчи-провайдеры):
 
       - При КАЖДОМ входе игрок встречает меню персонажа:
@@ -29,7 +29,7 @@ GRM = GRM or {}
 GRM.Char = GRM.Char or {}
 local CH = GRM.Char
 
-CH.Version    = "1.5.0"
+CH.Version    = "1.6.0"
 CH.NameMin    = 3     -- минимальная длина RP-имени
 CH.NameMax    = 48
     CH.DataFile   = "grm_characters.json"
@@ -328,14 +328,32 @@ if SERVER then
         return true
     end
 
-    local function factionMembership(ply)
+    local function factionMembership(ply, characterKey)
+        characterKey = tostring(characterKey or "")
         for name,f in pairs(Factions or {}) do
             if istable(f) and istable(f.Members) then
-                local member=GRM.Identity and GRM.Identity.FactionMember and GRM.Identity.FactionMember(f,ply)
-                if member then return name,member,f end
+                local member
+                if characterKey ~= "" then member = f.Members[characterKey]
+                else member = GRM.Identity and GRM.Identity.FactionMember and GRM.Identity.FactionMember(f,ply) end
+                if istable(member) then return name,member,f end
             end
         end
         return nil
+    end
+
+    local function modelsForContext(ply, context)
+        if not istable(context) or not context.preview then
+            return _G.GetModelsForPlayer and (_G.GetModelsForPlayer(ply) or {}) or {}
+        end
+        if context.factionName and context.faction then
+            if context.onDuty == false then return istable(DefaultModels) and DefaultModels or {} end
+            local f, member = context.faction, context.member or {}
+            local role, department = member.Role, member.Department
+            if role and istable(f.RoleModels) and istable(f.RoleModels[role]) and #f.RoleModels[role] > 0 then return f.RoleModels[role] end
+            if department and istable(f.DepartmentModels) and istable(f.DepartmentModels[department]) and #f.DepartmentModels[department] > 0 then return f.DepartmentModels[department] end
+            if istable(f.Models) and #f.Models > 0 then return f.Models end
+        end
+        return istable(DefaultModels) and DefaultModels or {}
     end
 
     -- провайдеры по умолчанию -----------------------------------
@@ -355,22 +373,22 @@ if SERVER then
 
     CH.RegisterProvider("faction", {
         Order = 20,
-        Title = function(ply)
-            local n,m=factionMembership(ply)
+        Title = function(ply, context)
+            local n,m = context and context.factionName, context and context.member
+            if not n then n,m=factionMembership(ply) end
             if not n then return nil end
-            local duty=(GRM.FactionDuty and GRM.FactionDuty.IsOnDuty and GRM.FactionDuty.IsOnDuty(ply)) and "НА СЛУЖБЕ" or "ВНЕ СЛУЖБЫ"
-            return "Фракция: "..n..(m.Role and (" — "..tostring(m.Role)) or "").." • "..duty
+            local onDuty = context and context.onDuty
+            if onDuty == nil then onDuty = GRM.FactionDuty and GRM.FactionDuty.IsOnDuty and GRM.FactionDuty.IsOnDuty(ply) end
+            return "Фракция: "..n..(m.Role and (" — "..tostring(m.Role)) or "").." • "..(onDuty and "НА СЛУЖБЕ" or "ВНЕ СЛУЖБЫ")
         end,
-        Outfits = function(ply)
-            if _G.GetModelsForPlayer then
-                if not factionMembership(ply) then return {} end
-                local out = {}
-                for _, e in ipairs(_G.GetModelsForPlayer(ply) or {}) do
-                    if istable(e) and isstring(e.path) then out[#out + 1] = { path = e.path, skin = tonumber(e.skin) or 0, bodygroups = table.Copy(istable(e.bodygroups) and e.bodygroups or {}) } end
-                end
-                return out
+        Outfits = function(ply, context)
+            local factionName = context and context.factionName or factionMembership(ply)
+            if not factionName then return {} end
+            local out = {}
+            for _, e in ipairs(modelsForContext(ply, context) or {}) do
+                if istable(e) and isstring(e.path) then out[#out + 1] = { path = e.path, skin = tonumber(e.skin) or 0, bodygroups = table.Copy(istable(e.bodygroups) and e.bodygroups or {}) } end
             end
-            return {}
+            return out
         end,
     })
 
@@ -379,6 +397,21 @@ if SERVER then
     --         allowSkin/allowBodygroups = bool|nil, ent=Entity }
     function CH.BuildPayload(ply, opts)
         opts = istable(opts) and opts or {}
+        local rec = normalizePlayerData(ply) or { active = "char1", slots = {} }
+        local previewSlot = tostring(opts.previewSlot or rec.active or "char1")
+        if not previewSlot:match("^char[123]$") then previewSlot = rec.active or "char1" end
+        local previewKey = sid64(ply) .. ":" .. previewSlot
+        local previewChar = istable(rec.slots[previewSlot]) and rec.slots[previewSlot] or nil
+        if previewChar then previewChar.id = previewSlot; previewChar.key = previewKey end
+        local factionName,member,faction=factionMembership(ply, previewKey)
+        local hasFaction=factionName~=nil
+        local onDuty = false
+        if hasFaction then
+            local state = GRM.FactionDuty and GRM.FactionDuty.State and GRM.FactionDuty.State[previewKey]
+            onDuty = state == nil or state == true
+        end
+        local context = { preview = previewSlot ~= rec.active, slot = previewSlot, characterKey = previewKey,
+            character = previewChar, factionName = factionName, member = member, faction = faction, onDuty = onDuty }
         local sections = {}
         local ids = {}
         for id in pairs(CH.Providers) do ids[#ids + 1] = id end
@@ -388,8 +421,6 @@ if SERVER then
             if oa == ob then return a < b end
             return oa < ob
         end)
-        local factionName,member=factionMembership(ply)
-        local hasFaction=factionName~=nil
         for _, id in ipairs(ids) do
             local skip = false
             -- Гражданская и фракционная внешность взаимоисключающие:
@@ -400,9 +431,9 @@ if SERVER then
             if opts.wardrobe and id == "faction" and opts.allowFaction == false then skip = true end
             if not skip then
                 local def = CH.Providers[id]
-                local okT, title = pcall(def.Title or function() return id end, ply)
+                local okT, title = pcall(def.Title or function() return id end, ply, context)
                 if okT and title then
-                    local okO, outfits = pcall(def.Outfits, ply)
+                    local okO, outfits = pcall(def.Outfits, ply, context)
                     if okO and istable(outfits) and #outfits > 0 then
                         sections[#sections + 1] = { id = id, title = tostring(title), outfits = outfits }
                     end
@@ -419,20 +450,25 @@ if SERVER then
             end
         end
 
-        local rec = normalizePlayerData(ply) or { active = "char1", slots = {} }
         local slots = {}
         for i = 1, CH.MaxSlots do
             local id = slotID(i)
             local c = rec.slots[id]
-            slots[#slots + 1] = { id = id, index = i, exists = istable(c), name = istable(c) and tostring(c.name or "") or "", model = istable(c) and tostring(c.model or "") or "" }
+            local slotFaction, slotMember = factionMembership(ply, sid64(ply) .. ":" .. id)
+            slots[#slots + 1] = { id = id, index = i, exists = istable(c), name = istable(c) and tostring(c.name or "") or "",
+                model = istable(c) and tostring(c.model or "") or "", skin = istable(c) and tonumber(c.skin) or 0,
+                bodygroups = istable(c) and table.Copy(c.bodygroups or {}) or {}, factionName = slotFaction or "",
+                factionRole = slotMember and tostring(slotMember.Role or "") or "",
+                factionDepartment = slotMember and tostring(slotMember.Department or "") or "" }
         end
         return {
-            char = CH.Get(ply),
+            char = previewChar,
             slots = slots,
             activeSlot = rec.active or "char1",
-            characterID = CH.GetActiveID(ply),
-            characterKey = CH.GetActiveKey(ply),
-            identityNote = "Активный CharacterKey: " .. CH.GetActiveKey(ply) .. ". Новые модули должны использовать GRM.Char.GetActiveKey(ply).",
+            previewSlot = previewSlot,
+            characterID = previewSlot,
+            characterKey = previewKey,
+            identityNote = "Предпросмотр CharacterKey: " .. previewKey .. ". Активный: " .. CH.GetActiveKey(ply) .. ".",
             sections = sections, -- legacy payload compatibility
             outfits = allOutfits,
             nameMin = CH.NameMin, nameMax = CH.NameMax,
@@ -446,14 +482,14 @@ if SERVER then
             factionName = factionName or "",
             factionRole = member and tostring(member.Role or "") or "",
             factionDepartment = member and tostring(member.Department or "") or "",
-            onDuty = hasFaction and (not GRM.FactionDuty or not GRM.FactionDuty.IsOnDuty or GRM.FactionDuty.IsOnDuty(ply)) or false,
+            onDuty = onDuty,
         }
     end
 
-    local function sendMenu(ply)
+    local function sendMenu(ply, previewSlot)
         if not IsValid(ply) then return end
         net.Start(NET_OPEN)
-            net.WriteTable(CH.BuildPayload(ply))
+            net.WriteTable(CH.BuildPayload(ply, { previewSlot = previewSlot }))
         net.Send(ply)
     end
     CH.OpenMenu = sendMenu
@@ -531,16 +567,23 @@ if SERVER then
         end
     end)
 
-    net.Receive(NET_REQUEST, function(_, ply)
+    net.Receive(NET_REQUEST, function(bits, ply)
         if not IsValid(ply) then return end
+        if GRM.Net and GRM.Net.Guard then
+            local allowed = GRM.Net.Guard(ply, "character.menu.request", { rate = .2, burst = 4, maxBits = 1024 }, { bits = bits })
+            if not allowed then return end
+        end
         if ply:GetNWBool("GRM_Arrested", false) then
             if GRM.Notify then GRM.Notify(ply, "Во время ареста меню персонажа недоступно.", 255, 100, 100) end
             return
         end
+        local previewSlot = ""
+        if bits and bits >= 8 then previewSlot = tostring(net.ReadString() or "") end
+        if not previewSlot:match("^char[123]$") then previewSlot = activeSlot(ply) end
         -- Открытие персонажей через F4 /char переводит игрока в тот же
         -- безопасный режим выбора: мир затемняется и блокируется до подтверждения.
         setCharacterLock(ply, true, false)
-        sendMenu(ply)
+        sendMenu(ply, previewSlot)
     end)
 
     net.Receive(NET_CANCEL, function(_, ply)
@@ -730,7 +773,9 @@ if CLIENT then
             if outfit.provider == "civilian" then defaultOutfit = outfit break end
         end
         local slots = istable(payload.slots) and payload.slots or {}
-        local activeSlot = tostring(payload.activeSlot or "char1")
+        local serverActiveSlot = tostring(payload.activeSlot or "char1")
+        local activeSlot = tostring(payload.previewSlot or serverActiveSlot)
+        CH._previewSlot = activeSlot
         local refreshPreview, refreshSkinMax, rebuildBodygroups
         local skinSlider
         local bContinue, bSave
@@ -749,10 +794,15 @@ if CLIENT then
         end
         if matchedOutfit then draft.wardrobeRule=table.Copy(matchedOutfit.wardrobeRule or {}) end
 
+        local isWardrobe = payload.wardrobe == true
         if IsValid(CH._frame) then CH._frame:Remove() CH._frame = nil end
         local f = vgui.Create("DFrame")
         CH._frame = f
-        f.OnRemove = function() if CH._frame == f then CH._frame = nil end end
+        CH._frameMode = isWardrobe and "wardrobe" or "character"
+        f.OnRemove = function()
+            if CH._frame == f then CH._frame = nil; CH._frameMode = nil; CH._liveSignature = nil end
+        end
+        if GRM.UI and GRM.UI.Track then GRM.UI.Track("character.appearance", f) end
         f:SetTitle("")
         local fw = math.min(1500, ScrW() - 60)
         local fh = math.min(880, ScrH() - 60)
@@ -762,14 +812,13 @@ if CLIENT then
         f:ShowCloseButton(false)
         f:SetDraggable(false)
 
-        local isWardrobe = payload.wardrobe == true
-
         f.Paint = function(_, pw, ph)
             draw.RoundedBox(14, 0, 0, pw, ph, Color(8, 10, 16, 255))
             draw.RoundedBoxEx(14, 0, 0, pw, 64, C.head, true, true, false, false)
             local ttl = isWardrobe and tostring(payload.wardrobeTitle or "Гардероб") or (char and "МЕНЮ ПЕРСОНАЖА" or "СОЗДАНИЕ ПЕРСОНАЖА")
             draw.SimpleText(ttl, "GRMChar_Big", 26, 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText("GRM Identity v" .. CH.Version .. "   ·   активный слот: " .. tostring(activeSlot), "GRMChar_Small", pw - 26, 26, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            local slotText = activeSlot == serverActiveSlot and ("активный слот: " .. activeSlot) or ("предпросмотр: " .. activeSlot .. "  •  активный: " .. serverActiveSlot)
+            draw.SimpleText("GRM Identity v" .. CH.Version .. "   ·   " .. slotText, "GRMChar_Small", pw - 26, 26, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
             draw.SimpleText("Слот и внешность применяются после подтверждения  •  "..(payload.factionName~="" and (payload.factionName.." / "..tostring(payload.factionRole).." / "..(payload.onDuty and "НА СЛУЖБЕ" or "ВНЕ СЛУЖБЫ")) or "ГРАЖДАНСКИЙ"), "GRMChar_Small", 26, 44, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
 
@@ -861,6 +910,7 @@ if CLIENT then
                 b:SetText("")
                 b._slotID = info.id
                 b._selected = (info.id == activeSlot)
+                b._active = (info.id == serverActiveSlot)
                 slotButtons[#slotButtons + 1] = b
                 b:Dock(TOP) b:SetTall(98) b:DockMargin(0, 0, 0, 8)
                 b.Paint = function(self, pw, ph)
@@ -874,35 +924,22 @@ if CLIENT then
                     local nm = (has and (info.name ~= "" and info.name or ("Персонаж " .. i))) or ("Пустой слот " .. i)
                     draw.SimpleText(nm, "GRMChar_Sub", 38, 11, has and C.text or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                     draw.SimpleText(has and ("ID: " .. tostring(info.id)) or "Создать нового персонажа", "GRMChar_Small", 38, 33, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    local detail = info.factionName ~= "" and (tostring(info.factionName) .. (info.factionRole ~= "" and (" • " .. tostring(info.factionRole)) or "")) or "Гражданский"
+                    draw.SimpleText(detail, "GRMChar_Small", 38, 50, info.factionName ~= "" and C.yellow or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                     if has and info.model ~= "" then
                         local mdl = tostring(info.model):match("([^/]+)$") or tostring(info.model)
-                        draw.SimpleText(mdl, "GRMChar_Small", 38, 50, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                        draw.SimpleText(mdl, "GRMChar_Small", 38, 67, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                     end
-                    draw.SimpleText(sel and "● АКТИВЕН" or "ВЫБРАТЬ", "GRMChar_Small", pw - 14, ph / 2, sel and C.acc or C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                    local state = self._active and (sel and "● АКТИВЕН" or "АКТИВЕН") or (sel and "● ПРОСМОТР" or "ВЫБРАТЬ")
+                    draw.SimpleText(state, "GRMChar_Small", pw - 14, ph / 2, sel and C.acc or C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
                 end
                 b:SetEnabled(not (info.id == payload.activeSlot and payload.pending and payload.mandatory ~= true))
                 b:SetTooltip(info.model ~= "" and ("Модель: " .. info.model) or "Персонаж ещё не создан")
                 b.DoClick = function()
-                    activeSlot = info.id
-                    refreshSlotButtons()
-                    draft.name = tostring(info.name or "")
-                    draft.model = tostring(info.model or "")
-                    draft.skin = 0
-                    draft.bodygroups = {}
-                    if draft.model == "" and defaultOutfit then
-                        draft.model = defaultOutfit.path
-                        draft.skin = tonumber(defaultOutfit.skin) or 0
-                        draft.bodygroups = table.Copy(defaultOutfit.bodygroups or {})
-                    end
-                    nameEntry:SetText(draft.name)
-                    updHint()
-                    refreshPreview()
-                    refreshSkinMax()
-                    skinSlider:SetValue(draft.skin)
-                    rebuildBodygroups()
-                    bContinue:SetVisible(info.exists == true)
-                    bSave:SetVisible(info.exists ~= true or isWardrobe)
-                    bSave:SetText(info.exists and (isWardrobe and "Сохранить" or "") or "Создать и выбрать")
+                    if info.id == activeSlot then return end
+                    CH._previewSlot = info.id
+                    for _, sb in ipairs(slotButtons) do sb:SetEnabled(false) end
+                    net.Start(NET_REQUEST); net.WriteString(info.id); net.SendToServer()
                 end
             end
         end
@@ -1108,18 +1145,25 @@ if CLIENT then
     end
 
     local function payloadSignature(p)
-        local parts={tostring(p.activeSlot),tostring(p.characterKey),tostring(p.factionName),tostring(p.factionRole),tostring(p.factionDepartment),tostring(p.onDuty),tostring(p.char and p.char.name),tostring(p.char and p.char.model)}
-        for _,sl in ipairs(p.slots or{})do parts[#parts+1]=tostring(sl.id)..":"..tostring(sl.name)..":"..tostring(sl.model)end
+        local parts={tostring(p.wardrobe),tostring(p.wardrobeEnt),tostring(p.activeSlot),tostring(p.previewSlot),tostring(p.characterKey),tostring(p.factionName),tostring(p.factionRole),tostring(p.factionDepartment),tostring(p.onDuty),tostring(p.char and p.char.name),tostring(p.char and p.char.model)}
+        for _,sl in ipairs(p.slots or{})do parts[#parts+1]=tostring(sl.id)..":"..tostring(sl.name)..":"..tostring(sl.model)..":"..tostring(sl.factionName)..":"..tostring(sl.factionRole)..":"..tostring(sl.factionDepartment)end
         for _,o in ipairs(p.outfits or {}) do parts[#parts+1]=tostring(o.path)..":"..tostring(o.skin) end
         return table.concat(parts,"|")
     end
-    net.Receive(NET_OPEN,function()
-        local payload=net.ReadTable() or {}; local sig=payloadSignature(payload)
-        if IsValid(CH._frame) and CH._liveSignature==sig then return end
-        CH._liveSignature=sig; openCharMenu(payload)
-    end)
+    function CH.ReceiveMenuPayload(payload)
+        payload = istable(payload) and payload or {}
+        local sig = payloadSignature(payload)
+        local mode = payload.wardrobe == true and "wardrobe" or "character"
+        if IsValid(CH._frame) and CH._liveSignature == sig and CH._frameMode == mode then return false end
+        CH._liveSignature = sig
+        openCharMenu(payload)
+        return true
+    end
+    net.Receive(NET_OPEN,function() CH.ReceiveMenuPayload(net.ReadTable() or {}) end)
     timer.Create("GRM_Char_LiveRefresh",2,0,function()
-        if IsValid(CH._frame) then net.Start(NET_REQUEST) net.SendToServer() end
+        if IsValid(CH._frame) and CH._frameMode == "character" then
+            net.Start(NET_REQUEST); net.WriteString(CH._previewSlot or "char1"); net.SendToServer()
+        end
     end)
 
     net.Receive(NET_CLOSE, function()
@@ -1129,8 +1173,8 @@ if CLIENT then
         end
     end)
 
-    -- точка входа гардероба (grm_wardrobe, Код 73)
-    CH._openFromWardrobe = openCharMenu
+    -- Точка входа гардероба проходит через тот же singleton/dedup guard.
+    CH._openFromWardrobe = CH.ReceiveMenuPayload
 
     function CH.OpenMenu()
         local lp = LocalPlayer()
@@ -1138,7 +1182,13 @@ if CLIENT then
             notification.AddLegacy("Во время ареста меню персонажа недоступно.", NOTIFY_ERROR, 5)
             return
         end
-        net.Start(NET_REQUEST) net.SendToServer()
+        if IsValid(CH._frame) and CH._frameMode == "character" then
+            CH._frame:MakePopup(); CH._frame:MoveToFront(); return
+        end
+        if (CH._nextOpenRequest or 0) > RealTime() then return end
+        CH._nextOpenRequest = RealTime() + .5
+        local slot = CH._previewSlot or (IsValid(lp) and lp:GetNWString("GRM_CharacterID", "char1")) or "char1"
+        net.Start(NET_REQUEST); net.WriteString(slot); net.SendToServer()
     end
     concommand.Add("grm_character", CH.OpenMenu)
 
