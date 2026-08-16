@@ -4,6 +4,18 @@
 (HTML-сущности, markdown-ссылки, `_`→`*`) и проходят синтаксический
 контроль через luaparser.
 
+## Актуализация 16.08.2026 — GRM Core v1
+
+После полного аудита введён общий слой контрактов без одномоментной переписи
+старых систем: `GRM.Core`, `GRM.Lang` (ru/en), capability-реестр `GRM.Access`,
+безопасный JSON и adapters в `GRM.Persistence`, `GRM.Net.Guard` и append-only
+`GRM.Audit`. Единые правила и порядок миграции зафиксированы в `GRM_CORE.md`.
+Vendor/CCTV/RadioNet/Perm зарегистрированы как владельцы persistence, а
+`/perminfo` показывает backend. Медицинский компьютер — первая вертикальная
+интеграция: вход и изменение карт используют capability с legacy fallback,
+оба C→S receiver получили rate/size guard, мутации пишутся в общий аудит.
+Старые UI, `Can*`, форматы и CharacterKey-семантика сохранены.
+
 ## 1. Архитектура
 
 Единая точка интеграции — глобальный `GRM = GRM or {}` и глобальная

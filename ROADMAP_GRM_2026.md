@@ -454,12 +454,21 @@ quality, encrypted, interceptedBy, timestamp
 
 ### Sprint A — Access + Persistence
 
-1. Создать `GRM.Access` без миграции UI.
-2. Зарегистрировать capability для Medical computer, Fire, Wanted, CCTV, Phone.
-3. Старые `Can*` читают новый Access, затем legacy fallback.
-4. Создать persistence adapters для Vendor/CCTV/RadioNet/Perm.
-5. `/perminfo` показывает backend.
-6. Стенд миграции и конфликтов.
+**Статус 16.08.2026:** фундамент v1 реализован. Созданы Core/Lang, Access,
+Persistence, Net Guard и Audit; зарегистрированы capability и legacy-provider,
+adapters Vendor/CCTV/RadioNet/Perm; `/perminfo` показывает backend; медицинский
+компьютер первым переведён на capability/guard/audit. Контракт описан в
+`GRM_CORE.md`, стенд — `sim_core_contracts.lua`. Следующая итерация спринта —
+общее меню назначения grants и последовательный перевод Fire/Wanted/CCTV/Phone
+receiver без удаления их старых UI и файлов данных.
+
+1. [x] Создать `GRM.Access` без миграции UI.
+2. [x] Зарегистрировать capability для Medical computer, Fire, Wanted, CCTV, Phone.
+3. [x] Сохранить legacy fallback старых `Can*`.
+4. [x] Создать persistence adapters для Vendor/CCTV/RadioNet/Perm.
+5. [x] `/perminfo` показывает backend.
+6. [x] Добавить базовый стенд grants/adapters/интеграции.
+7. [ ] Добавить общее GUI назначения прав и миграционные conflict-тесты на серверном стенде.
 
 ### Sprint B — Incident Core
 

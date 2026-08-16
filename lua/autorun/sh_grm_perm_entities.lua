@@ -42,7 +42,7 @@
 -- Код 110: перм агрегатов кухни (плита/холодильник/горшок) — состояние
 -- (лоток плиты, содержимое холодильника, посадка) едет в rec.data
 -- через GRM.PermData-делегаты sh_grm_food_kitchen.lua.
-local PERM_VER = "1.5.0"
+local PERM_VER = "1.6.0"
 GRM = GRM or {}
 GRM._permEntitiesVer = PERM_VER
 
@@ -601,10 +601,16 @@ if SERVER then
         local ent = aimEntity(ply)
         if not IsValid(ent) then tell(ply, "Наведи прицел на энтити (до 256 юнитов).", 255, 200, 80) return end
         local class = tostring(ent:GetClass() or "")
-        if class == "grm_vendor" and GRM.Vendor and GRM.Vendor.SaveVendor then
-            local ok,id=GRM.Vendor.SaveVendor(ent)
-            if ok then ent:SetNWBool("GRM_IsPerm",true); ent:SetNWString("GRM_PermKind","external"); tell(ply,"[ПЕРМ] Торгаш сохранён собственным модулем: "..tostring(id)..". Двойной перм не создан.",100,220,100)
-            else tell(ply,"[ПЕРМ] Не удалось сохранить торгаша: "..tostring(id),255,120,120) end
+        local external, backend
+        if GRM.Persistence and GRM.Persistence.Resolve then external, backend = GRM.Persistence.Resolve(ent) end
+        if external and backend ~= "perm" then
+            local ok, result = GRM.Persistence.Call("Save", ent, ply)
+            if ok then
+                ent:SetNWBool("GRM_IsPerm", true); ent:SetNWString("GRM_PermKind", "external")
+                tell(ply, "[ПЕРМ] Объект сохранён backend «" .. tostring(backend) .. "»: " .. tostring(result or "ok") .. ". Двойной перм не создан.", 100, 220, 100)
+            else
+                tell(ply, "[ПЕРМ] Backend «" .. tostring(backend) .. "» не сохранил объект: " .. tostring(result), 255, 120, 120)
+            end
             return
         end
         if not PERM_CLASSES[class] then
@@ -666,10 +672,12 @@ if SERVER then
         local ent = aimEntity(ply)
         if not IsValid(ent) then tell(ply, "Наведи прицел на перм-энтити.", 255, 200, 80) return end
         local class = tostring(ent:GetClass() or "")
-        if class=="grm_vendor" and GRM.Vendor and GRM.Vendor.RemoveVendorSave then
-            local ok=GRM.Vendor.RemoveVendorSave(ent)
-            if ok then ent:Remove(); tell(ply,"[ПЕРМ] Торгаш удалён из собственного сохранения и с карты.",235,180,60)
-            else tell(ply,"[ПЕРМ] У торгаша нет подтверждённой записи сохранения.",255,200,80) end
+        local external, backend
+        if GRM.Persistence and GRM.Persistence.Resolve then external, backend = GRM.Persistence.Resolve(ent) end
+        if external and backend ~= "perm" then
+            local ok, result = GRM.Persistence.Call("Remove", ent, ply)
+            if ok then ent:Remove(); tell(ply, "[ПЕРМ] Объект удалён через backend «" .. tostring(backend) .. "» и снят с карты.", 235, 180, 60)
+            else tell(ply, "[ПЕРМ] Backend «" .. tostring(backend) .. "» не подтвердил удаление: " .. tostring(result), 255, 200, 80) end
             return
         end
         local list = loadDB()
@@ -819,7 +827,9 @@ if SERVER then
     function P.IsPermable(ent)
         if not IsValid(ent) then return false, "объект не найден" end
         local class = tostring(ent:GetClass() or "")
-        if class=="grm_vendor" and GRM.Vendor and GRM.Vendor.SaveVendor then return true,"собственная система сохранения торговцев" end
+        local external, backend
+        if GRM.Persistence and GRM.Persistence.Resolve then external, backend = GRM.Persistence.Resolve(ent) end
+        if external and backend ~= "perm" then return true, "собственный backend: " .. tostring(backend) end
         if PERM_BLACKLIST[class] then return false, PERM_BLACKLIST[class] end
         if not PERM_CLASSES[class] then
             return false, "класс «" .. class .. "» не разрешён для закрепления"
@@ -864,7 +874,12 @@ if SERVER then
 
     function P.IsPerm(ent)
         if not IsValid(ent) then return false end
-        if ent:GetClass()=="grm_vendor" then return ent.GRMVendorPersistent==true or tostring(ent.GRMVendorID or "")~="" end
+        local external, backend
+        if GRM.Persistence and GRM.Persistence.Resolve then external, backend = GRM.Persistence.Resolve(ent) end
+        if external and backend ~= "perm" then
+            local info = GRM.Persistence.Inspect(ent)
+            return istable(info) and info.persistent == true
+        end
         if ent._grmPerm then return true end
         local _, rec = findRec(loadDB(), ent)
         return rec ~= nil
@@ -872,9 +887,35 @@ if SERVER then
 
     function P.Info(ent)
         if not IsValid(ent) then return nil end
-        if ent:GetClass()=="grm_vendor" and (ent.GRMVendorPersistent==true or tostring(ent.GRMVendorID or "")~="") then return {uid=tostring(ent.GRMVendorID or ""),class="grm_vendor",ownerKind="server",label="Торгаш (собственный сейв)",external=true,freeze=true,byName="GRM Vendor"} end
+        local external, backend
+        if GRM.Persistence and GRM.Persistence.Resolve then external, backend = GRM.Persistence.Resolve(ent) end
+        if external and backend ~= "perm" then
+            local info = GRM.Persistence.Inspect(ent)
+            if not (istable(info) and info.persistent == true) then return nil end
+            info.class = info.class or ent:GetClass()
+            info.ownerKind = info.ownerKind or "server"
+            info.external = true
+            info.freeze = info.freeze ~= false
+            info.byName = info.byName or ("GRM " .. tostring(backend))
+            return info
+        end
         local _, rec = findRec(loadDB(), ent)
+        if rec then rec.backend = rec.backend or "perm" end
         return rec
+    end
+
+    if GRM.Persistence and GRM.Persistence.Register then
+        GRM.Persistence.Register("perm", {
+            Priority = 10,
+            OwnsClass = function(class)
+                class = tostring(class or "")
+                return class ~= "grm_vendor" and PERM_CLASSES[class] == true
+            end,
+            Save = function(ent, ply, opts) return P.Add(ply, ent, opts) end,
+            Remove = function(ent, ply, alsoDelete) return P.Remove(ply, ent, alsoDelete) end,
+            Reload = function() return spawnAll("persistence_adapter") end,
+            Inspect = function(ent) return P.Info(ent) or { class = IsValid(ent) and ent:GetClass() or "" } end,
+        })
     end
 
     function P.ListForMap(map)
@@ -920,11 +961,17 @@ if SERVER then
     function P.Add(ply, ent, opts)
         opts = istable(opts) and opts or {}
         if not IsValid(ent) then return false, "объект не найден" end
-        if ent:GetClass()=="grm_vendor" and GRM.Vendor and GRM.Vendor.SaveVendor then
-            if not (IsValid(ply) and ply:IsSuperAdmin()) then return false,"торгашей сохраняет только суперадмин" end
-            local ok,id=GRM.Vendor.SaveVendor(ent)
-            if ok then ent:SetNWBool("GRM_IsPerm",true); ent:SetNWString("GRM_PermKind","external"); return true,"external",P.Info(ent) end
-            return false,tostring(id or "ошибка сохранения торговца")
+        local external, backend
+        if GRM.Persistence and GRM.Persistence.Resolve then external, backend = GRM.Persistence.Resolve(ent) end
+        if external and backend ~= "perm" then
+            if not (IsValid(ply) and ply:IsSuperAdmin()) then return false, "внешний backend доступен только суперадмину" end
+            local ok, result = GRM.Persistence.Call("Save", ent, ply, opts)
+            if ok then
+                ent:SetNWBool("GRM_IsPerm", true); ent:SetNWString("GRM_PermKind", "external")
+                local info = GRM.Persistence.Inspect(ent) or { class = ent:GetClass(), backend = backend, external = true }
+                return true, "external", info
+            end
+            return false, tostring(result or ("ошибка backend " .. tostring(backend)))
         end
 
         local okClass, whyClass = P.IsPermable(ent)
@@ -1026,11 +1073,15 @@ if SERVER then
     -- чтобы подвинуть постройку, а не чтобы её потерять.
     function P.Remove(ply, ent, alsoDelete)
         if not IsValid(ent) then return false, "объект не найден" end
-        if ent:GetClass()=="grm_vendor" and GRM.Vendor and GRM.Vendor.RemoveVendorSave then
-            if not (IsValid(ply) and ply:IsSuperAdmin()) then return false,"торгашей снимает только суперадмин" end
-            local ok=GRM.Vendor.RemoveVendorSave(ent); if not ok then return false,"запись торговца не найдена" end
-            ent:SetNWBool("GRM_IsPerm",false); ent:SetNWString("GRM_PermKind",""); if alsoDelete then ent:Remove() end
-            return true,"external_removed",{class="grm_vendor",external=true}
+        local external, backend
+        if GRM.Persistence and GRM.Persistence.Resolve then external, backend = GRM.Persistence.Resolve(ent) end
+        if external and backend ~= "perm" then
+            if not (IsValid(ply) and ply:IsSuperAdmin()) then return false, "внешний backend доступен только суперадмину" end
+            local ok, result = GRM.Persistence.Call("Remove", ent, ply)
+            if not ok then return false, tostring(result or ("запись backend " .. tostring(backend) .. " не найдена")) end
+            ent:SetNWBool("GRM_IsPerm", false); ent:SetNWString("GRM_PermKind", "")
+            if alsoDelete then ent:Remove() end
+            return true, "external_removed", { class = ent:GetClass(), external = true, backend = backend }
         end
         local list = loadDB()
         local idx, rec = findRec(list, ent)
@@ -1065,9 +1116,12 @@ if SERVER then
     function P.Update(ply, ent, opts)
         opts = istable(opts) and opts or {}
         if not IsValid(ent) then return false, "объект не найден" end
-        if ent:GetClass()=="grm_vendor" and GRM.Vendor and GRM.Vendor.SaveVendor then
-            if not (IsValid(ply) and ply:IsSuperAdmin()) then return false,"торгашей обновляет только суперадмин" end
-            local ok,id=GRM.Vendor.SaveVendor(ent); return ok,ok and "external_updated" or tostring(id),P.Info(ent)
+        local external, backend
+        if GRM.Persistence and GRM.Persistence.Resolve then external, backend = GRM.Persistence.Resolve(ent) end
+        if external and backend ~= "perm" then
+            if not (IsValid(ply) and ply:IsSuperAdmin()) then return false, "внешний backend доступен только суперадмину" end
+            local ok, result = GRM.Persistence.Call("Save", ent, ply, opts)
+            return ok, ok and "external_updated" or tostring(result), GRM.Persistence.Inspect(ent)
         end
         local list = loadDB()
         local _, rec = findRec(list, ent)
@@ -1203,17 +1257,24 @@ if SERVER then
         local ent = aimEntity(ply)
         if not IsValid(ent) then tell(ply, "Наведи прицел на объект.", 255, 200, 80) return end
         local rec = P.Info(ent)
+        local backendInfo = GRM.Persistence and GRM.Persistence.Inspect and GRM.Persistence.Inspect(ent) or nil
+        if not rec and istable(backendInfo) and backendInfo.persistent == true then
+            rec = { class = ent:GetClass(), ownerKind = "server", freeze = true,
+                uid = backendInfo.uid or "-", backend = backendInfo.backend, byName = "GRM " .. tostring(backendInfo.backend) }
+        end
         if not rec then
             local ok, why = P.IsPermable(ent)
-            tell(ply, "Объект НЕ закреплён. " .. (ok and "Можно закрепить." or ("Причина: " .. tostring(why))), 255, 200, 80)
+            local backend = istable(backendInfo) and (" Backend: " .. tostring(backendInfo.backend) .. ".") or ""
+            tell(ply, "Объект НЕ закреплён." .. backend .. " " .. (ok and "Можно закрепить." or ("Причина: " .. tostring(why))), 255, 200, 80)
             return
         end
         local kind = tostring(rec.ownerKind or "server")
         local whose = (kind == "faction" and ("фракция " .. tostring(rec.faction or "?")))
             or (kind == "character" and ("персонаж " .. tostring(rec.ownerName ~= "" and rec.ownerName or rec.owner)))
             or "серверное оборудование"
-        tell(ply, ("[ПЕРМ] %s | %s | заморозка: %s | uid: %s")
-            :format(tostring(rec.class), whose, rec.freeze == false and "нет" or "да", tostring(rec.uid or "-")), 100, 220, 255)
+        local backend = tostring(rec.backend or (istable(backendInfo) and backendInfo.backend) or "perm")
+        tell(ply, ("[ПЕРМ] %s | backend: %s | %s | заморозка: %s | uid: %s")
+            :format(tostring(rec.class), backend, whose, rec.freeze == false and "нет" or "да", tostring(rec.uid or "-")), 100, 220, 255)
         tell(ply, ("Закрепил: %s (%s)"):format(tostring(rec.byName or "?"),
             rec.at and os.date("%d.%m.%Y %H:%M", tonumber(rec.at)) or "?"), 160, 190, 210)
     end

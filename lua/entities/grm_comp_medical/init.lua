@@ -26,28 +26,35 @@ function ENT:Initialize()
     if IsValid(phys) then phys:Wake() phys:EnableMotion(false) end
 end
 
-function ENT:CanManage(ply)
+local function legacyCanManage(ply)
     if not (IsValid(ply) and ply:IsPlayer()) then return false end
     if ply:IsSuperAdmin() then return true end
-
     local fName = ply:GetNWString("GRM_Faction", "")
     if fName == "" then return false end
 
-    -- Общая матрица /doc_admin: отдельная галочка доступа именно к
-    -- медицинскому компьютеру. Детальная MD.CanTreat (роли/отделы)
-    -- остаётся вторым, более точным источником допуска.
     local docAccess=GRM.Documents and GRM.Documents.Templates and GRM.Documents.Templates.access
     if docAccess and istable(docAccess.medicalComputer) and docAccess.medicalComputer[fName]==true then return true end
+    local lower = fName:lower()
+    if lower:find("мед") or lower:find("госпитал") or lower:find("врач") or lower:find("hospital") or lower:find("medic") then return true end
+    return GRM.Medical and GRM.Medical.CanTreat and GRM.Medical.CanTreat(ply) == true or false
+end
 
-    if fName:lower():find("мед") or fName:lower():find("госпитал") or fName:lower():find("врач") or fName:lower():find("hospital") or fName:lower():find("medic") then
-        return true
+if GRM.Access and GRM.Access.Register then
+    GRM.Access.Register("medical.computer.use", {
+        label = "Медицинский компьютер: вход",
+        legacy = function(ply) return legacyCanManage(ply), "legacy_medical" end,
+    })
+    GRM.Access.Register("medical.patient.edit", {
+        label = "Медицина: изменение карты пациента",
+        legacy = function(ply) return legacyCanManage(ply), "legacy_medical" end,
+    })
+end
+
+function ENT:CanManage(ply)
+    if GRM.Access and GRM.Access.Can then
+        return GRM.Access.Can(ply, "medical.computer.use", { entity = self }) == true
     end
-
-    if GRM.Medical and GRM.Medical.CanTreat and GRM.Medical.CanTreat(ply) then
-        return true
-    end
-
-    return false
+    return legacyCanManage(ply)
 end
 
 function ENT:Use(ply)
@@ -88,11 +95,18 @@ function ENT:Use(ply)
     net.Send(ply)
 end
 
-net.Receive("GRM_CompMedical_SaveCard", function(_, ply)
+net.Receive("GRM_CompMedical_SaveCard", function(bits, ply)
     if not IsValid(ply) then return end
+    if GRM.Net and GRM.Net.Guard then
+        local allowed = GRM.Net.Guard(ply, "medical.card.save", {
+            rate = 0.75, burst = 3, maxBits = 262144, capability = "medical.patient.edit",
+        }, { bits = bits })
+        if not allowed then return end
+    elseif not legacyCanManage(ply) then return end
     local targetKey = net.ReadString()
     local cardData = net.ReadTable()
     if not isstring(targetKey) or targetKey == "" or not istable(cardData) then return end
+    if GRM.Identity and GRM.Identity.IsCharacterKey and not GRM.Identity.IsCharacterKey(targetKey) then return end
 
     if GRM.Medical then
         GRM.Medical.Cards = GRM.Medical.Cards or {}
@@ -112,16 +126,27 @@ net.Receive("GRM_CompMedical_SaveCard", function(_, ply)
             GRM.Medical.Save("medical computer save by " .. ply:Nick())
         end
 
+        if GRM.Audit and GRM.Audit.Write then
+            GRM.Audit.Write("medical", "patient.card.save", ply,
+                { characterKey = targetKey }, { patientName = cardData.name or "" })
+        end
         if GRM.Notify then
             GRM.Notify(ply, "Медицинская карта [" .. tostring(cardData.name or targetKey) .. "] сохранена в базу данных.", 100, 220, 120)
         end
     end
 end)
 
-net.Receive("GRM_CompMedical_IssuePhysical", function(_, ply)
+net.Receive("GRM_CompMedical_IssuePhysical", function(bits, ply)
     if not IsValid(ply) then return end
+    if GRM.Net and GRM.Net.Guard then
+        local allowed = GRM.Net.Guard(ply, "medical.card.issue", {
+            rate = 1, burst = 2, maxBits = 8192, capability = "medical.patient.edit",
+        }, { bits = bits })
+        if not allowed then return end
+    elseif not legacyCanManage(ply) then return end
     local targetKey = net.ReadString()
     if not isstring(targetKey) or targetKey == "" then return end
+    if GRM.Identity and GRM.Identity.IsCharacterKey and not GRM.Identity.IsCharacterKey(targetKey) then return end
 
     local targetPly = nil
     for _, p in ipairs(player.GetAll()) do
@@ -140,6 +165,10 @@ net.Receive("GRM_CompMedical_IssuePhysical", function(_, ply)
     if GRM.Inventory and GRM.Inventory.AddItem then
         local ok, err = GRM.Inventory.AddItem(targetPly, "medcard", 1, { sid64 = targetPly:SteamID64(), charKey = targetKey, patientName = targetPly:Nick() })
         if ok then
+            if GRM.Audit and GRM.Audit.Write then
+                GRM.Audit.Write("medical", "patient.card.issue_physical", ply,
+                    { characterKey = targetKey, accountKey = targetPly:SteamID64() }, {})
+            end
             if GRM.Notify then
                 GRM.Notify(ply, "Физическая медицинская карта выдана пациенту " .. targetPly:Nick() .. ".", 100, 220, 120)
                 GRM.Notify(targetPly, "Вам выдана на руки медицинская карта (в инвентаре).", 100, 220, 120)

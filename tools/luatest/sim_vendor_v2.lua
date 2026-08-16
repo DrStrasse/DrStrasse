@@ -27,5 +27,5 @@ ok(has(core,"enabledItems") and has(core,"displayName"),"dedicated persistence i
 ok(has(core,"weaponCategory = \"rifled\"") and has(core,"weaponCategory = \"short\"") and has(core,"weaponCategory = \"smooth\""),"weapon catalog maps license categories")
 ok(has(core,"DOC.HasValidWeaponLicense") and has(entity,"licenseWhy"),"weapon vendor enforces documents core with visible reason")
 ok(has(ui,"Лицензия:") and has(entity,"requiresLicense"),"storefront shows required weapon license")
-ok(has(perm,'ent:GetClass()==\"grm_vendor\"') and has(perm,"GRM.Vendor.SaveVendor") and has(perm,"external_removed"),"permadd/remove route vendor to dedicated persistence")
+ok(has(perm,'backend ~= "perm"') and has(perm,'GRM.Persistence.Call("Save"') and has(perm,"external_removed"),"permadd/remove route vendor through dedicated persistence adapter")
 print(("VENDOR V2: %d/%d failures=%d"):format(checks-failed,checks,failed));if failed>0 then os.exit(1)end
