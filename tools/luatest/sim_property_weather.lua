@@ -4,6 +4,7 @@ function istable(v)return type(v)=="table"end;function isstring(v)return type(v)
 function IsValid(v)return type(v)=="table"and v.valid==true end
 string.Trim=function(s)return(tostring(s):gsub("^%s+",""):gsub("%s+$",""))end
 math.Clamp=function(v,a,b)return math.max(a,math.min(b,v))end
+function Lerp(t,a,b)return a+(b-a)*t end
 function GetGlobalFloat(_,d)return d end
 GRM={Identity={CharacterKey=function(p)return p.key end}}
 local fail,n=0,0;local function ok(c,s)n=n+1;if c then print("  ok  "..s)else fail=fail+1;print("  FAIL "..s)end end
@@ -22,6 +23,9 @@ ok(GRM.Property.IsInside(r,{x=50,y=50,z=50})and not GRM.Property.IsInside(r,{x=1
 ok(GRM.Weather.FormatTime(7*60+5)=="07:05","clock formatting")
 ok(GRM.Weather.Period(19*60)=="Вечер"and GRM.Weather.Period(2*60)=="Ночь","day periods")
 ok(GRM.Weather.SunFactor(12*60)>.99 and GRM.Weather.SunFactor(1*60)==0,"sun curve")
+ok(GRM.Weather.AmbientFactor(12*60)==1 and GRM.Weather.AmbientFactor(0)==0 and GRM.Weather.AmbientFactor(19.5*60)>.45,"perceptual light keeps dusk gradual")
+local outdoorExp=GRM.Weather.ExposureTarget(0,.5,true,"clear",1);local indoorExp=GRM.Weather.ExposureTarget(0,.5,false,"clear",1);local dayExp=GRM.Weather.ExposureTarget(1,.5,true,"clear",1)
+ok(outdoorExp>.085 and outdoorExp<.10 and indoorExp<outdoorExp and indoorExp>.05 and dayExp==0,"balanced exposure is dark outdoors, readable indoors and neutral by day")
 local function read(p)local f=assert(io.open(p,"rb"));local s=f:read("*a");f:close();return s end
 local prop=read("lua/autorun/sh_grm_property.lua");local weather=read("lua/autorun/sh_grm_weather.lua");local doors=read("lua/autorun/sh_grm_doors.lua")
 ok(prop:find("GRM.Persistence.SaveJSON",1,true)and prop:find("GRM_DoorAccessOverride",1,true),"safe persistence and door integration")
@@ -34,7 +38,8 @@ ok(weather:find("SetSunNormal",1,true)and weather:find("GRM_Weather_SunMotion",1
 ok(weather:find('engine.LightStyle(0,"m")',1,true)and not weather:find("nightStyle",1,true),"weather restores compiled map lighting instead of dimming lightmaps")
 ok(weather:find("local SKYPAINT",1,true)and weather:find("timePreset",1,true)and weather:find("blendPreset",1,true),"SkyPaint presets interpolate by time")
 ok(weather:find("FadeBias=.22",1,true)and weather:find("HDRScale=.28",1,true)and weather:find("SunSize=0",1,true),"night preset removes sun but keeps streets readable")
-ok(weather:find("GRM_NightDarkness",1,true)and weather:find("brightnessLoss",1,true)and weather:find("Глубина ночного тона",1,true),"night tone is soft, client-side and configurable")
+ok(weather:find("GRM_AmbientFactor",1,true)and weather:find("targetExposure",1,true)and weather:find("exposureNow",1,true),"night uses smooth adaptive exposure instead of map lighting")
+ok(weather:find("grm_weather_night_strength",1,true)and weather:find("shelter=isOutside and 1 or .68",1,true)and weather:find("lightingModelVersion=2",1,true),"night stays darker outdoors and readable indoors")
 ok(weather:find("storm_night",1,true)and weather:find('weather=="rain"and .62',1,true),"weather blends storm palettes over day/night")
 ok(weather:find("ParticleEmitter",1,true)and weather:find('atmos/water_drop',1,true)and weather:find('atmos/warp_ripple3',1,true),"Atmos-derived world rain has drops and collision splashes")
 ok(weather:find('atmos/rainsmoke',1,true)and weather:find("pointOutside",1,true)and weather:find("skyCache",1,true),"rain mist uses cached per-cell sky checks")
@@ -44,7 +49,7 @@ ok(dropSize>5000 and mistSize>300000,"Atmos drop and rain-mist textures are pack
 local rainFile=assert(io.open("sound/atmos/rain.wav","rb"));local rainRaw=rainFile:read("*a");rainFile:close()
 local thunderFile=assert(io.open("sound/atmos/thunder/thunder_1.mp3","rb"));local thunderSize=thunderFile:seek("end");thunderFile:close()
 ok(weather:find("atmos/rain.wav",1,true)and weather:find("CreateSound",1,true)and weather:find("ChangeVolume",1,true),"rain and storm use Atmos loop through Source sound patches")
-ok(#rainRaw>120000 and rainRaw:find("cue ",1,true)and thunderSize>100000 and weather:find('W.Version="2.0.0"',1,true),"loop-cued rain and real thunder assets are packaged")
+ok(#rainRaw>120000 and rainRaw:find("cue ",1,true)and thunderSize>100000 and weather:find('W.Version="2.1.0"',1,true),"loop-cued rain and real thunder assets are packaged")
 local warmSizes={};for _,name in ipairs({"ambient_day_warm.wav","ambient_evening_warm.wav","ambient_night_warm.wav","ambient_noir_city.wav"})do local f=assert(io.open("sound/grm/weather/"..name,"rb"));warmSizes[#warmSizes+1]=f:seek("end");f:close()end
 ok(weather:find("ambient_day_warm.wav",1,true)and weather:find("ambient_evening_warm.wav",1,true)and weather:find("ambient_night_warm.wav",1,true),"warm city ambience changes by day period")
 ok(warmSizes[1]>1100000 and warmSizes[2]>1100000 and warmSizes[3]>1100000 and warmSizes[4]>1100000,"all four warm ambience WAVs are full 36-second tracks")
