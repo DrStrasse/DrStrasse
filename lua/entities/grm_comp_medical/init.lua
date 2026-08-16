@@ -33,6 +33,12 @@ function ENT:CanManage(ply)
     local fName = ply:GetNWString("GRM_Faction", "")
     if fName == "" then return false end
 
+    -- Общая матрица /doc_admin: отдельная галочка доступа именно к
+    -- медицинскому компьютеру. Детальная MD.CanTreat (роли/отделы)
+    -- остаётся вторым, более точным источником допуска.
+    local docAccess=GRM.Documents and GRM.Documents.Templates and GRM.Documents.Templates.access
+    if docAccess and istable(docAccess.medicalComputer) and docAccess.medicalComputer[fName]==true then return true end
+
     if fName:lower():find("мед") or fName:lower():find("госпитал") or fName:lower():find("врач") or fName:lower():find("hospital") or fName:lower():find("medic") then
         return true
     end

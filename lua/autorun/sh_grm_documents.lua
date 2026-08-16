@@ -380,6 +380,7 @@ if SERVER then
                 milLicenses = { ["Feldgendarmerie"] = true },
                 weaponLicenses = { ["OrdnungPolizei"] = true },
                 businessLicenses = { ["Department of Labour and Social Protection"] = true },
+                medicalComputer = {},
                 coverDocs   = { ["Gestapo"] = true },
             }
         }
@@ -3340,7 +3341,7 @@ if CLIENT then
         tpl.businessLicense = tpl.businessLicense or {}
         tpl.fees            = tpl.fees            or { license = 500, milLicense = 0, weaponLicense = 1500, businessLicense = 3000 }
         tpl.factions        = tpl.factions        or {}
-        tpl.access          = tpl.access          or { passports = {}, badges = {}, military = {}, licenses = {}, milLicenses = {}, weaponLicenses = {}, businessLicenses = {}, coverDocs = {} }
+        tpl.access          = tpl.access          or { passports = {}, badges = {}, military = {}, licenses = {}, milLicenses = {}, weaponLicenses = {}, businessLicenses = {}, medicalComputer = {}, coverDocs = {} }
 
         local frame = vgui.Create("DFrame")
         frame:SetSize(720, 600)
@@ -3682,6 +3683,17 @@ if CLIENT then
             businessBoxes[fname] = chk
         end
 
+        -- 9. Медицинский компьютер госпиталя
+        mkSection("9. Фракции с доступом к медицинскому компьютеру госпиталя:", Color(90, 210, 170))
+        local medicalComputerBoxes = {}
+        for _, fname in ipairs(names) do
+            local chk = vgui.Create("DCheckBoxLabel", accScroll)
+            chk:Dock(TOP) chk:DockMargin(12, 2, 0, 2)
+            chk:SetText(fname)
+            chk:SetValue(tpl.access.medicalComputer and tpl.access.medicalComputer[fname] == true)
+            medicalComputerBoxes[fname] = chk
+        end
+
         tabs:AddSheet("Права доступа к Компьютеру", accPnl, "icon16/key.png")
 
         -- Кнопка сохранения
@@ -3770,6 +3782,9 @@ if CLIENT then
 
             tpl.access.businessLicenses = {}
             for fn, cb in pairs(businessBoxes) do if cb:GetChecked() then tpl.access.businessLicenses[fn] = true end end
+
+            tpl.access.medicalComputer = {}
+            for fn, cb in pairs(medicalComputerBoxes) do if cb:GetChecked() then tpl.access.medicalComputer[fn] = true end end
 
             tpl.access.coverDocs = {}
             for fn, cb in pairs(coverBoxes) do if cb:GetChecked() then tpl.access.coverDocs[fn] = true end end
