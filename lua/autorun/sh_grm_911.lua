@@ -9,7 +9,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Emergency = GRM.Emergency or {}
 local EM = GRM.Emergency
-EM.Version = "1.0.0"
+EM.Version = "1.1.0"
 
 local NET_CALL_FORM = "GRM_911_CallForm"
 local NET_CALL_SEND = "GRM_911_CallSend"
@@ -117,16 +117,44 @@ if SERVER then
         local card=MD.CardOf(key(ply)); card.entries=istable(card.entries) and card.entries or {}; card.entries[#card.entries+1]={time=os.time(),kind=kind,text=text,doctor=IsValid(doctor) and rpName(doctor) or "Система 911"}; while #card.entries>100 do table.remove(card.entries,1) end
         if MD.SaveCards then MD.SaveCards("911: "..kind) end
     end
+    local function woundedRagdoll(ply)
+        local rag=ply._grm911Ragdoll
+        return IsValid(rag) and rag or nil
+    end
+    local function removeWoundedRagdoll(ply,restore)
+        local rag=woundedRagdoll(ply)
+        local pos=IsValid(rag) and rag:GetPos() or ply:GetPos()
+        if IsValid(rag) then rag:Remove() end
+        ply._grm911Ragdoll=nil
+        ply:SetNWEntity("GRM_911_Ragdoll",NULL)
+        if restore then
+            ply:SetNoDraw(false); ply:DrawShadow(true)
+            ply:SetCollisionGroup(ply._grm911OldCollision or COLLISION_GROUP_PLAYER)
+        end
+        return pos
+    end
+    local function spawnWoundedRagdoll(ply)
+        local old=woundedRagdoll(ply); if IsValid(old) then old:Remove() end
+        local rag=ents.Create("prop_ragdoll")
+        if not IsValid(rag) then return nil end
+        rag:SetModel(ply:GetModel()); rag:SetPos(ply:GetPos()); rag:SetAngles(ply:GetAngles()); rag:Spawn(); rag:Activate()
+        rag:SetNWBool("GRM_911_WoundedRagdoll",true); rag:SetNWString("GRM_911_PatientName",rpName(ply)); rag:SetNWBool("GRM_911_Stable",false)
+        rag._grm911Patient=ply; ply._grm911Ragdoll=rag; ply:SetNWEntity("GRM_911_Ragdoll",rag)
+        local vel=ply:GetVelocity(); for i=0,rag:GetPhysicsObjectCount()-1 do local ph=rag:GetPhysicsObjectNum(i); if IsValid(ph) then ph:SetVelocity(vel) end end
+        ply._grm911OldCollision=ply:GetCollisionGroup(); ply:SetCollisionGroup(COLLISION_GROUP_IN_VEHICLE); ply:SetNoDraw(true); ply:DrawShadow(false)
+        return rag
+    end
     local function clearDowned(ply)
-        timer.Remove("GRM_911_Bleedout_"..ply:EntIndex()); ply:SetNWBool("GRM_911_Downed",false); ply:SetNWBool("GRM_911_Stable",false); ply:SetNWInt("GRM_911_DeathAt",0); ply:Freeze(false); ply._grm911Downed=nil
+        timer.Remove("GRM_911_Bleedout_"..ply:EntIndex()); ply:SetNWBool("GRM_911_Downed",false); ply:SetNWBool("GRM_911_Stable",false); ply:SetNWInt("GRM_911_DeathAt",0); ply:Freeze(false); removeWoundedRagdoll(ply,true); ply._grm911Downed=nil
     end
     function EM.Down(ply,dmg)
         if not EM.Config.enabled or not IsValid(ply) or not ply:Alive() or ply:GetNWBool("GRM_911_Downed") then return false end
         ply:SetHealth(1); ply:ExitVehicle(); ply:Freeze(true); ply:SetNWBool("GRM_911_Downed",true); ply:SetNWBool("GRM_911_Stable",false)
         local deathAt=os.time()+EM.Config.bleedoutSec; ply:SetNWInt("GRM_911_DeathAt",deathAt)
+        local woundRag=spawnWoundedRagdoll(ply); if IsValid(woundRag) then woundRag:SetNWInt("GRM_911_DeathAt",deathAt) end
         local att=dmg and dmg:GetAttacker() or nil; local inf=dmg and dmg:GetInflictor() or nil
         ply._grm911Downed={at=os.time(),attacker=IsValid(att) and (att:IsPlayer() and rpName(att) or att:GetClass()) or "неизвестно",attackerKey=IsValid(att) and att:IsPlayer() and key(att) or "",weapon=IsValid(inf) and inf:GetClass() or "неизвестно",damage=dmg and math.floor(dmg:GetDamage()) or 0,damageType=dmg and dmg:GetDamageType() or 0,pos=ply:GetPos(),wounds=ply._grm911Wounds or {}}
-        timer.Create("GRM_911_Bleedout_"..ply:EntIndex(),EM.Config.bleedoutSec,1,function() if IsValid(ply) and ply:GetNWBool("GRM_911_Downed") then ply._grm911ForceDeath=true; ply:Freeze(false); ply:Kill() end end)
+        timer.Create("GRM_911_Bleedout_"..ply:EntIndex(),EM.Config.bleedoutSec,1,function() if IsValid(ply) and ply:GetNWBool("GRM_911_Downed") then ply._grm911ForceDeath=true; local pos=removeWoundedRagdoll(ply,true); ply:SetPos(pos+Vector(0,0,8)); ply:Freeze(false); ply:Kill() end end)
         if EM.Config.autoCall then EM.CreateCall(nil,"medical","Автоматический сигнал: тяжело ранен "..rpName(ply),ply:GetPos(),ply) end
         medCardEntry(ply,"vitals","Доставлен сигнал о критическом ранении",nil); hook.Run("GRM_911_Downed",ply,ply._grm911Downed)
         return true
@@ -135,7 +163,8 @@ if SERVER then
         if not IsValid(target) or not target:GetNWBool("GRM_911_Downed") then return false,"Пациент не находится в тяжёлом состоянии" end
         if target:GetNWBool("GRM_911_Stable") then return false,"Пациент уже стабилизирован" end
         target:SetNWBool("GRM_911_Stable",true); local deathAt=os.time()+EM.Config.stabilizedSec; target:SetNWInt("GRM_911_DeathAt",deathAt)
-        timer.Adjust("GRM_911_Bleedout_"..target:EntIndex(),EM.Config.stabilizedSec,1,function() if IsValid(target) and target:GetNWBool("GRM_911_Downed") then target._grm911ForceDeath=true; target:Freeze(false); target:Kill() end end)
+        local rag=woundedRagdoll(target); if IsValid(rag) then rag:SetNWBool("GRM_911_Stable",true); rag:SetNWInt("GRM_911_DeathAt",deathAt) end
+        timer.Adjust("GRM_911_Bleedout_"..target:EntIndex(),EM.Config.stabilizedSec,1,function() if IsValid(target) and target:GetNWBool("GRM_911_Downed") then target._grm911ForceDeath=true; local pos=removeWoundedRagdoll(target,true); target:SetPos(pos+Vector(0,0,8)); target:Freeze(false); target:Kill() end end)
         target:SetNWInt("GRM_Bleed",0); medCardEntry(target,"vitals","Стабилизация на месте. Исполнитель: "..rpName(actor),actor); hook.Run("GRM_911_Stabilized",actor,target); return true,"Пациент стабилизирован"
     end
     local function subsidy(actor)
@@ -146,7 +175,8 @@ if SERVER then
     function EM.Revive(actor,target)
         if not isMedic(actor) then return false,"Реанимацию может проводить только медик" end
         if not IsValid(target) or not target:GetNWBool("GRM_911_Downed") then return false,"Пациент не нуждается в реанимации" end
-        clearDowned(target); target:SetHealth(math.min(target:GetMaxHealth(),EM.Config.reviveHealth)); target:SetNWInt("GRM_Pain",math.max(25,target:GetNWInt("GRM_Pain",0))); subsidy(actor)
+        local rag=woundedRagdoll(target); local returnPos=IsValid(rag) and rag:GetPos() or target:GetPos()
+        clearDowned(target); target:SetPos(returnPos+Vector(0,0,8)); target:SetHealth(math.min(target:GetMaxHealth(),EM.Config.reviveHealth)); target:SetNWInt("GRM_Pain",math.max(25,target:GetNWInt("GRM_Pain",0))); subsidy(actor)
         medCardEntry(target,"operation","Экстренная реанимация. Исполнитель: "..rpName(actor),actor); hook.Run("GRM_911_Revived",actor,target); return true,"Пациент реанимирован"
     end
 
@@ -160,6 +190,7 @@ if SERVER then
     hook.Add("StartCommand","GRM_911_Restrict",function(ply,cmd) if ply:GetNWBool("GRM_911_Downed") then cmd:ClearMovement(); cmd:ClearButtons() end end)
     hook.Add("CanPlayerEnterVehicle","GRM_911_NoVehicle",function(ply) if ply:GetNWBool("GRM_911_Downed") then return false end end)
     hook.Add("PlayerSpawn","GRM_911_Reset",function(ply) clearDowned(ply); ply._grm911ForceDeath=nil; ply._grm911Wounds={} end)
+    hook.Add("PlayerDisconnected","GRM_911_RagCleanup",function(ply) local rag=woundedRagdoll(ply); if IsValid(rag) then rag:Remove() end end)
 
     local function lootDisplay(slot)
         local id=tostring(slot.id or "")
@@ -209,6 +240,7 @@ if SERVER then
     end
     hook.Add("PlayerDeath","GRM_911_Corpse",function(victim,inflictor,attacker)
         timer.Remove("GRM_911_Bleedout_"..victim:EntIndex()); victim:Freeze(false); victim:SetNWBool("GRM_911_Downed",false)
+        local wr=woundedRagdoll(victim); if IsValid(wr) then local wp=wr:GetPos(); removeWoundedRagdoll(victim,true); victim:SetPos(wp+Vector(0,0,8)) else removeWoundedRagdoll(victim,true) end
         local loot,documents=extractInventory(victim)
         local data=bodyData(victim,attacker); data.documents=documents; pruneBodies()
         local body=ents.Create("prop_ragdoll"); if IsValid(body) then body:SetModel(victim:GetModel()); body:SetPos(victim:GetPos()); body:SetAngles(victim:GetAngles()); body:Spawn(); body:SetNWBool("GRM_911_Body",true); body:SetNWString("GRM_911_Name",data.name); body:SetNWInt("GRM_911_Time",data.time); body._grm911Body=data; body._grm911Loot=loot; EM.Bodies[#EM.Bodies+1]=body; timer.Simple(EM.Config.bodyTTL,function() if IsValid(body) then body:Remove() end end) end
@@ -234,7 +266,13 @@ if SERVER then
         net.Start(NET_BODY) net.WriteEntity(body) net.WriteBool(professional) net.WriteTable(professional and d or {name=d.name,time=d.time}) net.Send(ply)
     end
     hook.Add("PlayerUse","GRM_911_Use",function(ply,ent)
-        if IsValid(ent) and ent:IsPlayer() and ent:GetNWBool("GRM_911_Downed") then net.Start(NET_PATIENT) net.WriteEntity(ent) net.WriteBool(isMedic(ply)) net.WriteBool(ent:GetNWBool("GRM_911_Stable")) net.WriteUInt(math.max(0,ent:GetNWInt("GRM_911_DeathAt",os.time())-os.time()),12) net.Send(ply); return false end
+        local patient=nil
+        if IsValid(ent) and ent:IsPlayer() and ent:GetNWBool("GRM_911_Downed") then patient=ent
+        elseif IsValid(ent) and ent:GetNWBool("GRM_911_WoundedRagdoll") and IsValid(ent._grm911Patient) then patient=ent._grm911Patient end
+        if IsValid(patient) then
+            if (ply._grm911PatientUseAt or 0)<=CurTime() then ply._grm911PatientUseAt=CurTime()+1; net.Start(NET_PATIENT) net.WriteEntity(patient) net.WriteBool(isMedic(ply)) net.WriteBool(patient:GetNWBool("GRM_911_Stable")) net.WriteUInt(math.max(0,patient:GetNWInt("GRM_911_DeathAt",os.time())-os.time()),12) net.Send(ply) end
+            return false
+        end
         if IsValid(ent) and ent:GetNWBool("GRM_911_Body") then
             if (ply._grm911BodyUseAt or 0) <= CurTime() then ply._grm911BodyUseAt = CurTime() + 2; sendBody(ply,ent) end
             return false
@@ -293,11 +331,12 @@ if SERVER then
         if (actor._grm911TreatAt or 0)>CurTime() then return end; actor._grm911TreatAt=CurTime()+seconds
         local start=actor:GetPos(); if GRM.Notify then GRM.Notify(actor,"Процедура начата. Не отходите от пациента "..seconds.." с.",120,220,255) end
         timer.Simple(seconds,function()
-            if not IsValid(actor) or not IsValid(target) or actor:GetPos():DistToSqr(target:GetPos())>150*150 or actor:GetPos():DistToSqr(start)>180*180 then return end
+            local rag=IsValid(target) and woundedRagdoll(target) or nil; local patientPos=IsValid(rag) and rag:GetPos() or (IsValid(target) and target:GetPos() or vector_origin)
+            if not IsValid(actor) or not IsValid(target) or actor:GetPos():DistToSqr(patientPos)>150*150 or actor:GetPos():DistToSqr(start)>180*180 then return end
             local ok,msg=kind=="revive" and EM.Revive(actor,target) or EM.Stabilize(actor,target); if IsValid(actor) then if GRM.Notify then GRM.Notify(actor,msg,ok and 80 or 255,ok and 230 or 120,ok and 150 or 110) else actor:ChatPrint("[911] "..msg) end end
         end)
     end
-    net.Receive(NET_TREAT,function(_,ply) local target=net.ReadEntity(); local act=net.ReadString(); if not IsValid(target) or not target:IsPlayer() or ply:GetPos():DistToSqr(target:GetPos())>160*160 then return end; if act=="stabilize" then delayedTreatment(ply,target,act,6) elseif act=="revive" and isMedic(ply) then delayedTreatment(ply,target,act,10) end end)
+    net.Receive(NET_TREAT,function(_,ply) local target=net.ReadEntity(); local act=net.ReadString(); local rag=IsValid(target) and woundedRagdoll(target) or nil; local tpos=IsValid(rag) and rag:GetPos() or (IsValid(target) and target:GetPos() or vector_origin); if not IsValid(target) or not target:IsPlayer() or ply:GetPos():DistToSqr(tpos)>160*160 then return end; if act=="stabilize" then delayedTreatment(ply,target,act,6) elseif act=="revive" and isMedic(ply) then delayedTreatment(ply,target,act,10) end end)
     net.Receive(NET_CALL_SEND,function(_,ply) if not IsValid(ply) or (ply._grm911CallAt or 0)>CurTime() then return end; ply._grm911CallAt=CurTime()+10; EM.CreateCall(ply,net.ReadString(),net.ReadString(),ply:GetPos(),nil) end)
     net.Receive(NET_CALL_ACT,function(_,ply) if not (isMedic(ply) or isInvestigator(ply)) then return end; local id=net.ReadUInt(32); local act=net.ReadString(); for _,r in ipairs(EM.Calls) do if r.id==id and r.status~="closed" then if act=="take" then r.status="assigned"; r.assigned=key(ply); r.assignedName=rpName(ply); net.Start(NET_MARKER) net.WriteBool(true) net.WriteVector(Vector(r.pos.x,r.pos.y,r.pos.z)) net.WriteUInt(r.id,32) net.Send(ply) elseif act=="close" then r.status="closed"; r.closed=os.time(); r.closedBy=rpName(ply); net.Start(NET_MARKER) net.WriteBool(false) net.Send(ply) end; save(CALL_FILE,{version=1,calls=EM.Calls},"вызов действие"); pushCalls(ply); break end end end)
     net.Receive(NET_ADMIN_SAVE,function(_,ply) if not IsValid(ply) or not ply:IsSuperAdmin() then return end; EM.Config=normCfg(net.ReadTable()); save(CFG_FILE,EM.Config,"админ"); end)
@@ -317,7 +356,7 @@ if SERVER then
         if low=="/911_calls" or low=="/вызовы" then pushCalls(ply) return true end
         if low=="/911_admin" then openAdmin(ply) return true end
         if low=="/911_cases" or low=="/дела911" then sendCases(ply) return true end
-        if low=="/aid" or low=="/помощь" then local target=ply:GetEyeTrace().Entity; if IsValid(target) and target:IsPlayer() then net.Start(NET_PATIENT) net.WriteEntity(target) net.WriteBool(isMedic(ply)) net.WriteBool(target:GetNWBool("GRM_911_Stable")) net.WriteUInt(math.max(0,target:GetNWInt("GRM_911_DeathAt",os.time())-os.time()),12) net.Send(ply) end return true end
+        if low=="/aid" or low=="/помощь" then local aimed=ply:GetEyeTrace().Entity; local target=(IsValid(aimed) and aimed:IsPlayer()) and aimed or (IsValid(aimed) and aimed:GetNWBool("GRM_911_WoundedRagdoll") and aimed._grm911Patient or nil); if IsValid(target) then net.Start(NET_PATIENT) net.WriteEntity(target) net.WriteBool(isMedic(ply)) net.WriteBool(target:GetNWBool("GRM_911_Stable")) net.WriteUInt(math.max(0,target:GetNWInt("GRM_911_DeathAt",os.time())-os.time()),12) net.Send(ply) end return true end
         if low=="/forensics" or low=="/осмотр" then examine(ply) return true end
         return false
     end
@@ -331,7 +370,7 @@ else
     local function frame(title,w,h) local f=vgui.Create("DFrame") f:SetSize(w,h) f:Center() f:MakePopup() f:SetTitle("") f:ShowCloseButton(false) f.Paint=function(_,pw,ph) draw.RoundedBox(9,0,0,pw,ph,C.bg); draw.RoundedBoxEx(9,0,0,pw,52,Color(10,22,37),true,true,false,false); draw.SimpleText(title,"GRM911_Title",16,26,C.text,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER) end local x=vgui.Create("DButton",f) x:SetPos(w-42,10) x:SetSize(30,30) x:SetText("✕") x:SetTextColor(color_white) x.DoClick=function() f:Close() end return f end
     local function button(parent,text,y,col,fn) local b=vgui.Create("DButton",parent) b:SetPos(16,y) b:SetSize(parent:GetWide()-32,36) b:SetText(text) b:SetTextColor(color_white) b.Paint=function(s,w,h) draw.RoundedBox(5,0,0,w,h,s:IsHovered() and Color(math.min(255,col.r+20),math.min(255,col.g+20),math.min(255,col.b+20)) or col) end b.DoClick=fn return b end
     net.Receive(NET_CALL_FORM,function() local f=frame("911 • ЭКСТРЕННЫЙ ВЫЗОВ",560,330); local cat=vgui.Create("DComboBox",f) cat:SetPos(16,72) cat:SetSize(528,30) cat:AddChoice("Медицинская помощь","medical",true); cat:AddChoice("Полиция / происшествие","police"); cat:AddChoice("Пожар","fire"); local txt=vgui.Create("DTextEntry",f) txt:SetPos(16,116) txt:SetSize(528,100) txt:SetMultiline(true) txt:SetPlaceholderText("Кратко опишите происшествие и ориентиры..."); button(f,"ОТПРАВИТЬ ВЫЗОВ",238,C.red,function() local _,id=cat:GetSelected(); net.Start(NET_CALL_SEND) net.WriteString(id or "emergency") net.WriteString(txt:GetValue()) net.SendToServer(); f:Close() end) end)
-    net.Receive(NET_PATIENT,function() local target=net.ReadEntity(); local medic=net.ReadBool(); local stable=net.ReadBool(); local left=net.ReadUInt(12); if not IsValid(target) then return end; local f=frame("911 • ПОСТРАДАВШИЙ",520,300); local l=vgui.Create("DLabel",f) l:SetPos(16,70) l:SetSize(488,70) l:SetFont("GRM911_Text") l:SetTextColor(C.text) l:SetText(target:Nick().."\nСостояние: "..(stable and "стабилизирован" or "критическое").."\nДо остановки жизненных функций: "..left.." с") button(f,stable and "УЖЕ СТАБИЛИЗИРОВАН" or "СТАБИЛИЗИРОВАТЬ (6 С)",150,C.cyan,function() net.Start(NET_TREAT) net.WriteEntity(target) net.WriteString("stabilize") net.SendToServer(); f:Close() end); if medic then button(f,"РЕАНИМИРОВАТЬ (10 С)",202,C.green,function() net.Start(NET_TREAT) net.WriteEntity(target) net.WriteString("revive") net.SendToServer(); f:Close() end) end end)
+    net.Receive(NET_PATIENT,function() local target=net.ReadEntity(); local medic=net.ReadBool(); local stable=net.ReadBool(); local left=net.ReadUInt(12); if not IsValid(target) then return end; if IsValid(EM._patientFrame) and EM._patientTarget==target then return end; if IsValid(EM._patientFrame) then EM._patientFrame:Remove() end; local f=frame("911 • ПОСТРАДАВШИЙ",520,300); EM._patientFrame=f; EM._patientTarget=target; f.OnRemove=function() if EM._patientFrame==f then EM._patientFrame=nil; EM._patientTarget=nil end end; local l=vgui.Create("DLabel",f) l:SetPos(16,70) l:SetSize(488,70) l:SetFont("GRM911_Text") l:SetTextColor(C.text) l:SetText(target:Nick().."\nСостояние: "..(stable and "стабилизирован" or "критическое").."\nДо остановки жизненных функций: "..left.." с") button(f,stable and "УЖЕ СТАБИЛИЗИРОВАН" or "СТАБИЛИЗИРОВАТЬ (6 С)",150,C.cyan,function() net.Start(NET_TREAT) net.WriteEntity(target) net.WriteString("stabilize") net.SendToServer(); f:Close() end); if medic then button(f,"РЕАНИМИРОВАТЬ (10 С)",202,C.green,function() net.Start(NET_TREAT) net.WriteEntity(target) net.WriteString("revive") net.SendToServer(); f:Close() end) end end)
     net.Receive(NET_CALLS,function() local rows=net.ReadTable() or {}; local f=frame("911 • АКТИВНЫЕ ВЫЗОВЫ",820,600); local sc=vgui.Create("DScrollPanel",f) sc:SetPos(12,62) sc:SetSize(796,526); for _,r in ipairs(rows) do local p=vgui.Create("DPanel",sc) p:Dock(TOP) p:DockMargin(0,0,0,7) p:SetTall(92) p.Paint=function(_,w,h) draw.RoundedBox(6,0,0,w,h,C.panel); draw.SimpleText("#"..r.id.." • "..r.category.." • "..r.status,"GRM911_Text",12,12,C.red); draw.SimpleText(r.text,"GRM911_Text",12,36,C.text); draw.SimpleText(r.callerName..(r.assignedName~="" and " • принял: "..r.assignedName or ""),"GRM911_Text",12,62,C.muted) end local take=vgui.Create("DButton",p) take:SetPos(620,10) take:SetSize(160,30) take:SetText("Принять") take.DoClick=function() net.Start(NET_CALL_ACT) net.WriteUInt(r.id,32) net.WriteString("take") net.SendToServer() end local close=vgui.Create("DButton",p) close:SetPos(620,50) close:SetSize(160,30) close:SetText("Закрыть") close.DoClick=function() net.Start(NET_CALL_ACT) net.WriteUInt(r.id,32) net.WriteString("close") net.SendToServer() end sc:AddItem(p) end end)
     net.Receive(NET_BODY,function() local ent=net.ReadEntity(); local pro=net.ReadBool(); local d=net.ReadTable() or {}; local f=frame("911 • ОСМОТР ТЕЛА",620,440); local text="Личность: "..tostring(d.name or "неизвестно").."\nВремя смерти: "..os.date("%d.%m.%Y %H:%M",tonumber(d.time) or os.time()); if pro then text=text.."\nОрудие/источник: "..tostring(d.weapon).."\nПредполагаемый нападавший: "..tostring(d.attacker).."\nПоследний урон: "..tostring(d.damage).."\nСледов повреждений: "..tostring(#(d.wounds or {})).."\nДокументов при теле: "..tostring(#(d.documents or {})) else text=text.."\nДля подробного заключения нужен медик или следователь." end local l=vgui.Create("DLabel",f) l:SetPos(18,74) l:SetSize(584,240) l:SetFont("GRM911_Text") l:SetTextColor(C.text) l:SetWrap(true) l:SetText(text); if IsValid(ent) then local search=vgui.Create("DButton",f) search:SetPos(18,320) search:SetSize(584,32) search:SetText("ОБЫСКАТЬ ТЕЛО") search.DoClick=function() net.Start(NET_BODY_ACT) net.WriteEntity(ent) net.WriteString("search") net.SendToServer() end end; if pro and IsValid(ent) then local seal=vgui.Create("DButton",f) seal:SetPos(18,360) seal:SetSize(280,36) seal:SetText("ОПЕЧАТАТЬ МЕСТО") seal.DoClick=function() net.Start(NET_BODY_ACT) net.WriteEntity(ent) net.WriteString("seal") net.SendToServer(); f:Close() end local morgue=vgui.Create("DButton",f) morgue:SetPos(316,360) morgue:SetSize(286,36) morgue:SetText("ДОСТАВИТЬ В МОРГ") morgue.DoClick=function() net.Start(NET_BODY_ACT) net.WriteEntity(ent) net.WriteString("morgue") net.SendToServer(); f:Close() end end end)
     net.Receive(NET_LOOT,function()
@@ -350,6 +389,26 @@ else
     net.Receive(NET_CASES,function() local rows=net.ReadTable() or {}; local f=frame("911 • ЖУРНАЛ РАССЛЕДОВАНИЙ",900,620); local sc=vgui.Create("DScrollPanel",f) sc:SetPos(12,62) sc:SetSize(876,546); for _,c in ipairs(rows) do local p=vgui.Create("DPanel",sc) p:Dock(TOP) p:DockMargin(0,0,0,7) p:SetTall(86) p.Paint=function(_,w,h) draw.RoundedBox(6,0,0,w,h,C.panel); draw.SimpleText(tostring(c.id).." • "..tostring(c.status),"GRM911_Text",12,12,C.red); draw.SimpleText(tostring(c.body and c.body.name or "неизвестно").." • "..os.date("%d.%m.%Y %H:%M",tonumber(c.created) or 0),"GRM911_Text",12,36,C.text); draw.SimpleText("Орудие: "..tostring(c.body and c.body.weapon or "—").." • действий: "..tostring(#(c.actions or {})),"GRM911_Text",12,60,C.muted) end sc:AddItem(p) end end)
     net.Receive(NET_ADMIN,function() local cfg=net.ReadTable() or {}; local f=frame("911 • НАСТРОЙКА",620,520); local vals={}; local fields={{"bleedoutSec","До смерти, сек"},{"stabilizedSec","После стабилизации, сек"},{"bodyTTL","Время тела, сек"},{"maxBodies","Максимум тел"},{"reviveHealth","HP после реанимации"},{"reviveSubsidy","Субсидия медслужбе"}}; for i,v in ipairs(fields) do local l=vgui.Create("DLabel",f) l:SetPos(16,66+(i-1)*48) l:SetSize(260,22) l:SetText(v[2]) l:SetTextColor(C.muted); local e=vgui.Create("DTextEntry",f) e:SetPos(290,64+(i-1)*48) e:SetSize(300,26) e:SetValue(tostring(cfg[v[1]] or 0)); vals[v[1]]=e end local enabled=vgui.Create("DCheckBoxLabel",f) enabled:SetPos(16,360) enabled:SetSize(260,24) enabled:SetText("Система включена") enabled:SetTextColor(C.text) enabled:SetValue(cfg.enabled and 1 or 0); local auto=vgui.Create("DCheckBoxLabel",f) auto:SetPos(290,360) auto:SetSize(300,24) auto:SetText("Автовызов при ранении") auto:SetTextColor(C.text) auto:SetValue(cfg.autoCall and 1 or 0); local loot=vgui.Create("DCheckBoxLabel",f) loot:SetPos(16,390) loot:SetSize(400,24) loot:SetText("Переносить инвентарь в тело") loot:SetTextColor(C.text) loot:SetValue(cfg.lootInventory and 1 or 0); button(f,"СОХРАНИТЬ",438,C.green,function() local t={enabled=enabled:GetChecked(),autoCall=auto:GetChecked(),lootInventory=loot:GetChecked()}; for k,e in pairs(vals) do t[k]=tonumber(e:GetValue()) end net.Start(NET_ADMIN_SAVE) net.WriteTable(t) net.SendToServer(); f:Close() end) end)
     net.Receive(NET_MARKER,function() if net.ReadBool() then marker={pos=net.ReadVector(),id=net.ReadUInt(32),at=CurTime()} else marker=nil end end)
+    hook.Add("PostDrawTranslucentRenderables","GRM_911_WoundedLabels",function()
+        for _,rag in ipairs(ents.FindByClass("prop_ragdoll")) do
+            if IsValid(rag) and rag:GetNWBool("GRM_911_WoundedRagdoll") then
+                local pos=rag:GetPos()+Vector(0,0,34); local ang=Angle(0,EyeAngles().y-90,90)
+                cam.Start3D2D(pos,ang,0.09)
+                    draw.RoundedBox(7,-105,-28,210,56,Color(18,5,8,225))
+                    surface.SetDrawColor(244,78,96,220); surface.DrawOutlinedRect(-105,-28,210,56,2)
+                    draw.SimpleText("РАНЕН","GRM911_HUD",0,-20,Color(255,70,85),TEXT_ALIGN_CENTER,TEXT_ALIGN_TOP)
+                    draw.SimpleText(rag:GetNWBool("GRM_911_Stable") and "СТАБИЛИЗИРОВАН" or "НУЖНА ПОМОЩЬ","GRM911_Text",0,5,rag:GetNWBool("GRM_911_Stable") and C.green or C.text,TEXT_ALIGN_CENTER,TEXT_ALIGN_TOP)
+                cam.End3D2D()
+            end
+        end
+    end)
+    hook.Add("CalcView","GRM_911_RagdollView",function(ply,pos,ang,fov)
+        if not IsValid(ply) or not ply:GetNWBool("GRM_911_Downed") then return end
+        local rag=ply:GetNWEntity("GRM_911_Ragdoll")
+        if not IsValid(rag) then return end
+        return {origin=rag:GetPos()+Vector(0,0,48)-ang:Forward()*90,angles=ang,fov=fov,drawviewer=false}
+    end)
+
     hook.Add("HUDPaint","GRM_911_HUD",function() local lp=LocalPlayer(); if IsValid(lp) and lp:GetNWBool("GRM_911_Downed") then local left=math.max(0,lp:GetNWInt("GRM_911_DeathAt",os.time())-os.time()); draw.RoundedBox(8,ScrW()/2-240,ScrH()-155,480,90,Color(20,8,12,230)); draw.SimpleText("ТЯЖЁЛОЕ РАНЕНИЕ","GRM911_HUD",ScrW()/2,ScrH()-137,C.red,TEXT_ALIGN_CENTER); draw.SimpleText((lp:GetNWBool("GRM_911_Stable") and "Стабилизирован • " or "Кровопотеря • ").."до смерти "..left.." с","GRM911_Text",ScrW()/2,ScrH()-105,C.text,TEXT_ALIGN_CENTER); draw.SimpleText("Ожидайте помощь. Вызов: /911","GRM911_Text",ScrW()/2,ScrH()-82,C.muted,TEXT_ALIGN_CENTER) end; if marker then local d=math.floor(LocalPlayer():GetPos():Distance(marker.pos)); draw.SimpleText("911 #"..marker.id.." • "..d.." юн","GRM911_HUD",ScrW()/2,90,C.red,TEXT_ALIGN_CENTER) end end)
     hook.Add("PostDrawTranslucentRenderables","GRM_911_Marker",function() if marker then render.SetColorMaterial(); render.DrawWireframeSphere(marker.pos,80,20,10,Color(244,78,96,180),true) end end)
     hook.Add("CalcMainActivity","GRM_911_Lie",function(ply) if ply:GetNWBool("GRM_911_Downed") then return ACT_DIESIMPLE,-1 end end)

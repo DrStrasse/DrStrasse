@@ -4,7 +4,7 @@ function istable(v)return type(v)=="table"end function isstring(v)return type(v)
 function IsValid(v)return type(v)=="table" and v._invalid~=true end
 table.Copy=function(t)local o={}for k,v in pairs(t or{})do o[k]=type(v)=="table"and table.Copy(v)or v end return o end
 string.StartWith=function(s,p)return tostring(s):sub(1,#p)==p end
-local VM={}; VM.__index=VM
+local VM={}; VM.__index=VM; VM.__add=function(a,b)return Vector(a.x+b.x,a.y+b.y,a.z+b.z)end
 function VM:Distance(o)local x,y,z=self.x-o.x,self.y-o.y,self.z-o.z return math.sqrt(x*x+y*y+z*z)end
 function VM:DistToSqr(o)local x,y,z=self.x-o.x,self.y-o.y,self.z-o.z return x*x+y*y+z*z end
 function Vector(x,y,z)return setmetatable({x=x or 0,y=y or 0,z=z or 0},VM)end
@@ -19,7 +19,7 @@ net={Receive=function(n,fn)H.net[n]=fn end,Start=function()end,WriteTable=functi
 concommand={Add=function()end}
 AddCSLuaFile=function()end
 player={GetAll=function()return H.players or{}end}
-ents={Create=function()return nil end}
+ents={Create=function(cls)if cls~="prop_ragdoll"then return nil end local r={_class=cls,_nw={},_pos=Vector(0,0,0)} function r:SetModel(v)self._model=v end function r:SetPos(v)self._pos=v end function r:GetPos()return self._pos end function r:SetAngles()end function r:Spawn()self._spawned=true end function r:Activate()end function r:SetNWBool(k,v)self._nw[k]=v end function r:GetNWBool(k,d)local v=self._nw[k]if v==nil then return d end return v end function r:SetNWString(k,v)self._nw[k]=v end function r:SetNWInt(k,v)self._nw[k]=v end function r:GetPhysicsObjectCount()return 0 end function r:Remove()self._invalid=true end return r end,FindByClass=function()return{}end}
 function CurTime()return 100 end
 SERVER=true CLIENT=false
 GRM={Identity={CharacterKey=function(p)return p._key end},Notify=function()end,Economy={StateBudgetGet=function()return H.state end,StateBudgetAdd=function(v)H.state=H.state+v return H.state end},MedicalFull={IsMedic=function(p)return p._medic==true end}}
@@ -50,9 +50,9 @@ local function person(name,key,medic)
  function p:IsPlayer()return true end function p:IsSuperAdmin()return false end function p:Alive()return true end function p:GetClass()return "player" end
  function p:SteamID64()return self._key:match("^([^:]+)")end function p:Nick()return self._name end function p:GetNWString(_,d)return d end
  function p:GetNWBool(k,d)local v=self._nw[k]if v==nil then return d end return v end function p:SetNWBool(k,v)self._nw[k]=v end
- function p:GetNWInt(k,d)local v=self._nw[k]if v==nil then return d end return v end function p:SetNWInt(k,v)self._nw[k]=v end
- function p:GetPos()return self._pos end function p:SetHealth(v)self._hp=v end function p:Health()return self._hp end function p:GetMaxHealth()return 100 end
- function p:ExitVehicle()end function p:Freeze(v)self._frozen=v end function p:EntIndex()return self._medic and 2 or 1 end function p:ChatPrint()end
+ function p:GetNWInt(k,d)local v=self._nw[k]if v==nil then return d end return v end function p:SetNWInt(k,v)self._nw[k]=v end function p:SetNWEntity(k,v)self._nw[k]=v end function p:GetNWEntity(k)return self._nw[k]end
+ function p:GetPos()return self._pos end function p:SetPos(v)self._pos=v end function p:GetVelocity()return Vector(0,0,0)end function p:GetModel()return"models/player/test.mdl"end function p:GetAngles()return{}end function p:SetHealth(v)self._hp=v end function p:Health()return self._hp end function p:GetMaxHealth()return 100 end
+ function p:ExitVehicle()end function p:Freeze(v)self._frozen=v end function p:SetNoDraw(v)self._nodraw=v end function p:DrawShadow()end function p:GetCollisionGroup()return 5 end function p:SetCollisionGroup(v)self._collision=v end function p:EntIndex()return self._medic and 2 or 1 end function p:ChatPrint()end
  return p
 end
 local victim=person("Пациент","100:char1",false); local medic=person("Врач","200:char1",true); H.players={victim,medic}
@@ -62,11 +62,12 @@ local dmg={GetDamage=function()return 75 end,GetDamageType=function()return 2 en
 local damageHook=H.hooks.EntityTakeDamage.GRM_911_Damage
 damageHook(victim,dmg)
 check("летальный урон переводит в тяжёлое состояние",victim:GetNWBool("GRM_911_Downed") and victim:Health()==1 and H.damage==0)
+check("раненый заменён физическим ragdoll",IsValid(victim._grm911Ragdoll) and victim._grm911Ragdoll:GetNWBool("GRM_911_WoundedRagdoll") and victim._nodraw==true)
 check("автовызов 911 создан",#EM.Calls>=1 and EM.Calls[#EM.Calls].patientName=="Пациент")
 local sOk=EM.Stabilize(medic,victim)
 check("стабилизация продлевает жизнь",sOk and victim:GetNWBool("GRM_911_Stable"))
 local rOk=EM.Revive(medic,victim)
-check("медик реанимирует",rOk and not victim:GetNWBool("GRM_911_Downed") and victim:Health()==EM.Config.reviveHealth and not victim._frozen)
+check("медик реанимирует",rOk and not victim:GetNWBool("GRM_911_Downed") and victim:Health()==EM.Config.reviveHealth and not victim._frozen and victim._nodraw==false and victim._grm911Ragdoll==nil)
 
 -- Тело забирает инвентарь, документы отмечаются и сохраняют владельца.
 local deadInv={slots={[1]={id="passport",count=1,data={docType="passport",ownerKey=victim._key,number="P-100",copyID="copy-1"}},[2]={id="item_healthkit",count=2}}}
@@ -79,5 +80,8 @@ check("документ отражён у тела",#documents==1 and documents[
 local body={_grm911Loot=loot}
 local takeOK=EM.TakeBodyLoot(medic,body,1)
 check("документ можно изъять",takeOK and taken and taken.id=="passport" and taken.data.ownerKey==victim._key and #body._grm911Loot==1)
+local src=assert(io.open("lua/autorun/sh_grm_911.lua","rb")):read("*a")
+check("меню помощи — singleton",src:find("EM._patientFrame",1,true)~=nil and src:find("_grm911PatientUseAt",1,true)~=nil)
+check("над раненым есть 3D2D РАНЕН",src:find("GRM_911_WoundedLabels",1,true)~=nil and src:find('draw.SimpleText("РАНЕН"',1,true)~=nil)
 print("[SIM] === "..(fails==0 and "ВСЕ ПРОВЕРКИ ПРОШЛИ" or ("ПРОВАЛОВ: "..fails)).." ===")
 os.exit(fails==0 and 0 or 1)
