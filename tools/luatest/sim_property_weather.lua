@@ -30,6 +30,8 @@ local function read(p)local f=assert(io.open(p,"rb"));local s=f:read("*a");f:clo
 local prop=read("lua/autorun/sh_grm_property.lua");local weather=read("lua/autorun/sh_grm_weather.lua");local doors=read("lua/autorun/sh_grm_doors.lua")
 ok(prop:find("GRM.Persistence.SaveJSON",1,true)and prop:find("GRM_DoorAccessOverride",1,true),"safe persistence and door integration")
 ok(prop:find("PlayerSayTransform",1,true)and prop:find("istable(t)and t[1]",1,true)and weather:find("istable(t)and t[1]",1,true),"EasyChat datapack commands")
+ok(weather:find('(tonumber(savedConfig.lightingModelVersion)or 0)<2',1,true)and weather:find('W.Version="2.1.1"',1,true),"legacy config without lightingModelVersion loads safely")
+ok(weather:find('concommand.Add("grm_weather_admin"',1,true)and weather:find('s=="/weather_admin"',1,true)and weather:find("GRM_Weather_EasyChat",1,true),"weather admin opens from console, chat and EasyChat")
 ok(prop:find("wanted.civil.edit",1,true)and prop:find("property_warrant",1,true),"warrant entry")
 ok(prop:find("GRM_PropertyBreach",1,true)and prop:find("cameraIDs",1,true),"alarm and CCTV metadata integration")
 ok(weather:find("SetupWorldFog",1,true)and weather:find('ents.Create("env_skypaint")',1,true),"fog and dynamic sky")
@@ -49,7 +51,7 @@ ok(dropSize>5000 and mistSize>300000,"Atmos drop and rain-mist textures are pack
 local rainFile=assert(io.open("sound/atmos/rain.wav","rb"));local rainRaw=rainFile:read("*a");rainFile:close()
 local thunderFile=assert(io.open("sound/atmos/thunder/thunder_1.mp3","rb"));local thunderSize=thunderFile:seek("end");thunderFile:close()
 ok(weather:find("atmos/rain.wav",1,true)and weather:find("CreateSound",1,true)and weather:find("ChangeVolume",1,true),"rain and storm use Atmos loop through Source sound patches")
-ok(#rainRaw>120000 and rainRaw:find("cue ",1,true)and thunderSize>100000 and weather:find('W.Version="2.1.0"',1,true),"loop-cued rain and real thunder assets are packaged")
+ok(#rainRaw>120000 and rainRaw:find("cue ",1,true)and thunderSize>100000 and weather:find('W.Version="2.1.1"',1,true),"loop-cued rain and real thunder assets are packaged")
 local warmSizes={};for _,name in ipairs({"ambient_day_warm.wav","ambient_evening_warm.wav","ambient_night_warm.wav","ambient_noir_city.wav"})do local f=assert(io.open("sound/grm/weather/"..name,"rb"));warmSizes[#warmSizes+1]=f:seek("end");f:close()end
 ok(weather:find("ambient_day_warm.wav",1,true)and weather:find("ambient_evening_warm.wav",1,true)and weather:find("ambient_night_warm.wav",1,true),"warm city ambience changes by day period")
 ok(warmSizes[1]>1100000 and warmSizes[2]>1100000 and warmSizes[3]>1100000 and warmSizes[4]>1100000,"all four warm ambience WAVs are full 36-second tracks")

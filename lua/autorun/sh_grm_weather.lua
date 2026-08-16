@@ -1,7 +1,7 @@
 --[[ GRM Weather & Time v1.0.0: authoritative clock, day/night, fog and sky. ]]
 if SERVER then AddCSLuaFile()end
 GRM=GRM or{};GRM.Weather=GRM.Weather or{};local W=GRM.Weather
-W.Version="2.1.0";W.Types={clear={name="Ясно",fog=.08},cloudy={name="Облачно",fog=.22},fog={name="Туман",fog=.72},rain={name="Дождь",fog=.38},storm={name="Гроза",fog=.55},snow={name="Снег",fog=.32}}
+W.Version="2.1.1";W.Types={clear={name="Ясно",fog=.08},cloudy={name="Облачно",fog=.22},fog={name="Туман",fog=.72},rain={name="Дождь",fog=.38},storm={name="Гроза",fog=.55},snow={name="Снег",fog=.32}}
 W.Config=W.Config or{dayLengthMinutes=90,randomWeather=true,weatherMinMinutes=12,weatherMaxMinutes=28,startHour=8,hudClock=true,soundVolume=.48,musicVolume=.18,musicEnabled=true,musicTheme="periods",nightDarkness=.5,snowEnabled=true,forcePaintedSky=true,atmosAssetVersion=1,lightingModelVersion=2}
 local OPEN="GRM_Weather_Admin";local SAVE="GRM_Weather_Save"
 if GRM.Access and GRM.Access.Register then GRM.Access.Register("weather.manage",{label="Погода и время: управление",scope="account"})end
@@ -34,8 +34,9 @@ if SERVER then
  local MATERIAL_RESOURCES={"materials/atmos/water_drop.vmt","materials/atmos/water_drop.vtf","materials/atmos/rainsmoke.vmt","materials/atmos/rainsmoke.vtf","materials/atmos/warp_ripple3.vmt","materials/atmos/warp_ripple3_normal.vtf","materials/atmos/snow.vmt","materials/atmos/snow.vtf"}
  for _,path in ipairs(MATERIAL_RESOURCES)do resource.AddFile(path)end
  local function load()
-  local d=GRM.Persistence.LoadJSON(FILE,{version=1,config=W.Config,state={time=W.Config.startHour*60,weather="clear"}});local oldAssets=not(istable(d.config)and tonumber(d.config.atmosAssetVersion));local oldLighting=not(istable(d.config)and tonumber(d.config.lightingModelVersion)>=2)
-  if istable(d.config)then for k,v in pairs(d.config)do W.Config[k]=v end end
+  local d=GRM.Persistence.LoadJSON(FILE,{version=1,config=W.Config,state={time=W.Config.startHour*60,weather="clear"}})
+  local savedConfig=istable(d.config)and d.config or{};local oldAssets=tonumber(savedConfig.atmosAssetVersion)==nil;local oldLighting=(tonumber(savedConfig.lightingModelVersion)or 0)<2
+  for k,v in pairs(savedConfig)do W.Config[k]=v end
   if oldAssets then W.Config.soundVolume=.48;W.Config.atmosAssetVersion=1 end
   if oldLighting then W.Config.nightDarkness=.5;W.Config.lightingModelVersion=2 end
   W._time=tonumber(d.state and d.state.time)or W.Config.startHour*60;W._weather=W.Types[d.state and d.state.weather]and d.state.weather or"clear"

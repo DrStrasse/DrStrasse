@@ -52,7 +52,9 @@ fallback. Физические
 `grm_clock` ставятся инструментом **GRM Городские часы** и
 закрепляются `/permadd`. Панель: `/weather_admin`, просмотр: `/time`.
 Описание: [`CONCEPT_PROPERTY_WEATHER.md`](CONCEPT_PROPERTY_WEATHER.md). Адаптация
-GMod Atmos: [`THIRD_PARTY_GMOD_ATMOS.md`](THIRD_PARTY_GMOD_ATMOS.md).
+GMod Atmos: [`THIRD_PARTY_GMOD_ATMOS.md`](THIRD_PARTY_GMOD_ATMOS.md). **v2.1.1:**
+старый конфиг без `lightingModelVersion` больше не обрывает загрузку модуля;
+`/weather_admin` снова регистрируется в обычном чате, EasyChat и консоли.
 
 ## Установка
 
