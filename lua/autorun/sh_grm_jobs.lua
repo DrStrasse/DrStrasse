@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Jobs Exchange v1.1.0 (Код 77) — Биржа труда
+    GRM Jobs Exchange v2.0.0 (Код 77) — Биржа труда
 
     v1.1.0 (заказ владельца «фракции выставляют свои работы для найма»):
       - ВАКАНСИИ фракций поверх разовых заказов: лидер ставит зарплату
@@ -55,7 +55,7 @@ GRM = GRM or {}
 GRM.Jobs = GRM.Jobs or {}
 local JB = GRM.Jobs
 
-JB.Version     = "1.1.0"  -- +вакансии фракций: зарплата×смены, зона работы, /jobpost
+JB.Version     = "2.0.0"  -- готовый набор работ + мусоровоз/таксист + новый UI
 JB.DataFile    = "grm_jobs.json"
 JB.ActiveFile  = "grm_jobs_active.json"
 JB.Rotate      = 300      -- смена вакансий, сек
@@ -92,29 +92,42 @@ end
 -- награды/сроки считаем по дистанции до точки
 local function clampN(v, a, b) if v < a then return a end if v > b then return b end return v end
 
+-- Готовый набор работ биржи (v2.0.0). Каждая — карточка в UI:
+-- id, title, jtype, needVehicle (требует транспорт), icon, color, desc.
 JB.Register({
-    id = "courier", title = "Курьер: доставка", jtype = "goto",
-    desc = "Доставьте пакет в указанную точку города. Быстрее — раньше следующая заявка.",
-    rewardFn = function(dist) return clampN(300 + dist * 0.15, 200, 900) end,
+    id = "courier", title = "Курьер", jtype = "goto",
+    icon = "icon16/package.png", color = { 90, 170, 250 },
+    desc = "Доставьте посылку в точку города. На чём угодно — хоть пешком.",
+    rewardFn = function(dist) return clampN(350 + dist * 0.18, 250, 950) end,
     timeFn   = function(dist) return clampN(300 + dist * 0.12, 240, 600) end,
 })
 JB.Register({
-    id = "patrol", title = "Патруль точки", jtype = "stay", stay = 90,
-    desc = "Продержитесь в отмеченной зоне 90 секунд (на своих двоих, не в транспорте).",
+    id = "loader", title = "Грузчик", jtype = "stay", stay = 120,
+    icon = "icon16/bricks.png", color = { 240, 170, 60 },
+    desc = "Смена на складе: пробудьте в зоне 120 секунд (не в транспорте).",
+    rewardFn = function() return 500 end,
+    timeFn   = function() return 500 end,
+})
+JB.Register({
+    id = "patrol", title = "Патрульный", jtype = "stay", stay = 90,
+    icon = "icon16/shield.png", color = { 120, 200, 140 },
+    desc = "Продержитесь в зоне 90 секунд (на своих двоих, не в транспорте).",
     rewardFn = function() return 420 end,
     timeFn   = function() return 420 end,
 })
 JB.Register({
-    id = "loader", title = "Грузчик на складе", jtype = "stay", stay = 120,
-    desc = "Смена грузчиком: пробудьте в зоне склада 120 секунд (не в транспорте).",
-    rewardFn = function() return 480 end,
-    timeFn   = function() return 480 end,
+    id = "garbage", title = "Мусоровоз", jtype = "garbage", needVehicle = true, points = 2,
+    icon = "icon16/lorry.png", color = { 130, 190, 95 },
+    desc = "На грузовике объезжайте точки вывоза отходов и сдайте их на свалку.",
+    rewardFn = function(dist) return clampN(900 + dist * 0.30, 800, 2000) end,
+    timeFn   = function(dist) return clampN(600 + dist * 0.30, 480, 1200) end,
 })
 JB.Register({
-    id = "inspector", title = "Выездной инспектор", jtype = "roundtrip",
-    desc = "Доберитесь до точки проверки, а затем вернитесь к терминалу биржи.",
-    rewardFn = function(dist) return clampN(500 + dist * 0.2, 400, 1300) end,
-    timeFn   = function(dist) return clampN(480 + dist * 0.25, 400, 900) end,
+    id = "taxi", title = "Таксист", jtype = "taxi", needVehicle = true,
+    icon = "icon16/car.png", color = { 250, 200, 70 },
+    desc = "Заберите пассажира на точке посадки и довезите до пункта назначения (на машине).",
+    rewardFn = function(dist) return clampN(450 + dist * 0.25, 400, 1300) end,
+    timeFn   = function(dist) return clampN(400 + dist * 0.25, 360, 900) end,
 })
 
 -- ============================================================
@@ -304,41 +317,97 @@ if SERVER then
         return out
     end
 
-    -- вакансии: детерминированная генерация на цикл (5 мин) ------------
-    local TPL_ORDER = { "courier", "patrol", "loader", "inspector" }
-    local function cycleId() return math.floor(CurTime() / JB.Rotate) end
+    -- Готовый набор вакансий: фиксированный список, награды по реальным
+    -- дистанциям до точек. garbage/taxi — маршрутные, требуют транспорт.
+    local TPL_ORDER = { "courier", "loader", "patrol", "garbage", "taxi" }
+
+    -- детерминированная выборка count разных точек из списка (без повторов)
+    local function seededPick(seed, dps, count)
+        local n = #dps
+        if n < count then return nil end
+        local order = {}
+        for i = 1, n do order[i] = i end
+        local st = (seed % 100000) + 1
+        for i = n, 2, -1 do
+            st = (st * 48271) % 2147483647
+            local j = (st % i) + 1
+            order[i], order[j] = order[j], order[i]
+        end
+        local out = {}
+        for i = 1, count do out[#out + 1] = dps[order[i]] end
+        return out
+    end
+
+    local function vecTbl(v) return { x = v.x, y = v.y, z = v.z } end
 
     local function buildOffers(center)
         local dps = depots()
         if #dps == 0 then return nil, "В городе не расставлены точки доставки. Обратитесь к администрации (/jobdepot_add)." end
-        local cyc = cycleId()
         local cpos = center:GetPos()
+        local seed = math.floor(CurTime() / JB.Rotate) * 7919 + center:EntIndex() * 31
         local out = {}
         for idx, tid in ipairs(TPL_ORDER) do
             local tpl = JB.Templates[tid]
             if tpl then
-                local seed = cyc * 7919 + idx * 104729 + center:EntIndex() * 31
-                local dep = dps[(seed % #dps) + 1]
-                local dist = math.floor(cpos:Distance(dep:GetPos()))
-                local pct = ((cyc * 7 + idx * 13) % 21) - 10 -- ±10%
-                local reward = math.floor((tpl.rewardFn(dist) * (1 + pct / 100)) / 5) * 5
-                reward = clampN(reward, JB.MinReward, JB.MaxReward)
-                out[#out + 1] = {
-                    idx = #out + 1,
-                    tplId = tid,
-                    title = tpl.title,
-                    desc = tpl.desc,
-                    jtype = tpl.jtype,
-                    reward = reward,
-                    timeSec = math.floor(tpl.timeFn(dist)),
-                    staySec = tpl.stay or 0,
-                    dist = dist,
-                    zoneRadius = tonumber(tpl.radius or 180),
-                    zoneName = dep.GetNWString and dep:GetNWString("GRM_JobZoneName", "Точка работы") or "Точка работы",
-                    target = dep:GetPos(),
-                }
+                local s = seed + idx * 104729
+                local offer
+                if tid == "garbage" then
+                    -- контейнеры + финальная свалка
+                    local need = (tonumber(tpl.points) or 2) + 1
+                    local pk = seededPick(s, dps, need)
+                    if pk then
+                        local routeDist, prev = 0, cpos
+                        for _, e in ipairs(pk) do routeDist = routeDist + prev:Distance(e:GetPos()); prev = e:GetPos() end
+                        local pts, names = {}, {}
+                        for i = 1, need do
+                            pts[#pts + 1] = vecTbl(pk[i]:GetPos())
+                            names[#names + 1] = (i == need) and "Свалка" or ("Контейнер " .. tostring(i))
+                        end
+                        offer = {
+                            tplId = tid, title = tpl.title, desc = tpl.desc, jtype = tpl.jtype,
+                            needVehicle = true, dist = math.floor(routeDist),
+                            reward = clampN(math.floor(tpl.rewardFn(routeDist) / 5) * 5, JB.MinReward, JB.MaxReward),
+                            timeSec = math.floor(tpl.timeFn(routeDist)),
+                            target = pk[1]:GetPos(), points = pts, pointNames = names,
+                            zoneRadius = 170, zoneName = "Маршрут вывоза отходов",
+                        }
+                    end
+                elseif tid == "taxi" then
+                    local pk = seededPick(s, dps, 2)
+                    if pk then
+                        local d = math.floor(pk[1]:GetPos():Distance(pk[2]:GetPos()))
+                        offer = {
+                            tplId = tid, title = tpl.title, desc = tpl.desc, jtype = tpl.jtype,
+                            needVehicle = true, dist = d,
+                            reward = clampN(math.floor(tpl.rewardFn(d) / 5) * 5, JB.MinReward, JB.MaxReward),
+                            timeSec = math.floor(tpl.timeFn(d)),
+                            target = pk[1]:GetPos(), center = pk[2]:GetPos(),
+                            zoneRadius = 170, zoneName = "Посадка → назначение",
+                        }
+                    end
+                else
+                    local dep = dps[(s % #dps) + 1]
+                    local d = math.floor(cpos:Distance(dep:GetPos()))
+                    offer = {
+                        tplId = tid, title = tpl.title, desc = tpl.desc, jtype = tpl.jtype,
+                        needVehicle = false, dist = d,
+                        reward = clampN(math.floor(tpl.rewardFn(d) / 5) * 5, JB.MinReward, JB.MaxReward),
+                        timeSec = math.floor(tpl.timeFn(d)),
+                        staySec = tpl.stay or 0,
+                        target = dep:GetPos(),
+                        zoneRadius = tonumber(tpl.radius or 180),
+                        zoneName = dep.GetNWString and dep:GetNWString("GRM_JobZoneName", "Точка работы") or "Точка работы",
+                    }
+                end
+                if offer then
+                    offer.idx = #out + 1
+                    offer.icon = tpl.icon
+                    offer.color = tpl.color
+                    out[#out + 1] = offer
+                end
             end
         end
+        if #out == 0 then return nil, "Недостаточно точек доставки для вакансий. Обратитесь к администрации." end
         return out
     end
 
@@ -359,6 +428,9 @@ if SERVER then
                     tx = j.target.x, ty = j.target.y, tz = j.target.z,
                     cx = j.center and j.center.x or 0, cy = j.center and j.center.y or 0, cz = j.center and j.center.z or 0,
                     zoneRadius = j.zoneRadius or 180, zoneName = j.zoneName or "Точка работы",
+                    needVehicle = j.needVehicle == true,
+                    pointIndex = j.pointIndex or 1,
+                    points = j.points, pointNames = j.pointNames,
                     fromPost = j.fromPost and true or false,
                     postFac = j.postFac, postId = j.postId, postKind = j.postKind,
                 }
@@ -384,6 +456,9 @@ if SERVER then
                     target = Vector(tonumber(r.tx) or 0, tonumber(r.ty) or 0, tonumber(r.tz) or 0),
                     center = Vector(tonumber(r.cx) or 0, tonumber(r.cy) or 0, tonumber(r.cz) or 0),
                     zoneRadius = tonumber(r.zoneRadius) or 180, zoneName = tostring(r.zoneName or "Точка работы"),
+                    needVehicle = r.needVehicle == true,
+                    pointIndex = tonumber(r.pointIndex) or 1,
+                    points = r.points, pointNames = r.pointNames,
                     fromPost = r.fromPost == true, postFac = r.postFac, postId = r.postId,
                     postKind = r.postKind,
                 }
@@ -399,8 +474,19 @@ if SERVER then
         local j = JB.Active[sid64(ply)]
         net.Start(NET_TRACKER)
         if istable(j) then
+            local goal = (j.stage == 2) and j.center or j.target
+            local stageName = ""
+            if j.jtype == "garbage" then
+                local pts = j.points or {}
+                local idx = tonumber(j.pointIndex) or 1
+                local g = pts[idx]
+                if istable(g) then goal = Vector(tonumber(g.x) or 0, tonumber(g.y) or 0, tonumber(g.z) or 0) end
+                stageName = "точка " .. tostring(idx) .. "/" .. tostring(#pts)
+            elseif j.jtype == "taxi" then
+                stageName = (j.stage == 2) and "к назначению" or "на посадку"
+            end
             net.WriteBool(true)
-            net.WriteVector((j.stage == 2) and j.center or j.target)
+            net.WriteVector(goal or j.target)
             net.WriteString(tostring(j.title or ""))
             net.WriteUInt(math.max(0, (j.deadline or os.time()) - os.time()), 20)
             net.WriteUInt(math.max(0, j.stayLeft or 0), 12)
@@ -409,6 +495,8 @@ if SERVER then
             if zoneRadius < 1 then zoneRadius = 1 elseif zoneRadius > 4095 then zoneRadius = 4095 end
             net.WriteUInt(zoneRadius, 12)
             net.WriteString(tostring(j.zoneName or "Точка работы"))
+            net.WriteString(stageName)
+            net.WriteBool(j.needVehicle == true)
         else
             net.WriteBool(false)
         end
@@ -423,6 +511,9 @@ if SERVER then
         net.Start(NET_MYSTATE)
             net.WriteBool(istable(j))
             if istable(j) then
+                local stageName = ""
+                if j.jtype == "garbage" then stageName = "точка " .. tostring(j.pointIndex or 1) .. "/" .. tostring(#(j.points or {}))
+                elseif j.jtype == "taxi" then stageName = (j.stage == 2) and "к назначению" or "на посадку" end
                 net.WriteTable({
                     title = j.title, desc = j.desc, jtype = j.jtype,
                     stage = j.stage or 1, stayLeft = j.stayLeft or 0,
@@ -430,6 +521,10 @@ if SERVER then
                     reward = j.reward or 0,
                     zoneName = j.zoneName or "Точка работы",
                     zoneRadius = j.zoneRadius or 180,
+                    needVehicle = j.needVehicle == true,
+                    stageName = stageName,
+                    pointsTotal = #(j.points or {}),
+                    pointIndex = tonumber(j.pointIndex) or 1,
                     fromPost = j.fromPost and true or false,
                     postFac = tostring(j.postFac or ""),
                 })
@@ -454,6 +549,8 @@ if SERVER then
             started = os.time(),
             target = fields.target, center = fields.center or (IsValid(ply) and ply:GetPos() or Vector(0, 0, 0)),
             zoneRadius = tonumber(fields.zoneRadius) or 180, zoneName = tostring(fields.zoneName or "Точка работы"),
+            needVehicle = fields.needVehicle == true,
+            points = fields.points, pointNames = fields.pointNames, pointIndex = 1,
             fromPost = fields.fromPost and true or false,
             postFac = fields.postFac, postId = fields.postId,
             postKind = fields.postKind,
@@ -569,7 +666,48 @@ if SERVER then
                         JB.Fail(ply, "время вышло")
                     elseif ply:Alive() then
                         local pp = ply:GetPos()
-                        if j.jtype == "stay" or j.jtype == "shift" then
+                        local inVeh = ply:InVehicle() == true
+                        local needVeh = j.needVehicle == true
+                        -- работа на транспорте: прогресс идёт только за рулём
+                        if needVeh and not inVeh then
+                            if (j._hintT or 0) < CurTime() then
+                                j._hintT = CurTime() + 10
+                                if GRM.Notify then GRM.Notify(ply, "Для этой работы нужен транспорт — сядьте за руль.", 255, 190, 90) end
+                            end
+                        elseif j.jtype == "garbage" then
+                            local pts = j.points or {}
+                            local idx = tonumber(j.pointIndex) or 1
+                            local goal = pts[idx]
+                            if not istable(goal) then
+                                JB.Complete(ply)
+                            else
+                                local gv = Vector(tonumber(goal.x) or 0, tonumber(goal.y) or 0, tonumber(goal.z) or 0)
+                                local rad = tonumber(j.zoneRadius) or 170
+                                if pp:DistToSqr(gv) < rad * rad then
+                                    j.pointIndex = idx + 1
+                                    saveActive("мусоровоз: точка " .. tostring(idx))
+                                    if idx >= #pts then
+                                        JB.Complete(ply)
+                                    else
+                                        JB.PushTracker(ply) JB.PushMyState(ply)
+                                        local nm = (j.pointNames and j.pointNames[idx + 1]) or ("точка " .. tostring(idx + 1))
+                                        if GRM.Notify then GRM.Notify(ply, "Контейнер собран. Дальше: " .. tostring(nm), 120, 220, 255) end
+                                    end
+                                end
+                            end
+                        elseif j.jtype == "taxi" then
+                            local rad = tonumber(j.zoneRadius) or 170
+                            if (j.stage or 1) == 1 then
+                                if pp:DistToSqr(j.target) < rad * rad then
+                                    j.stage = 2
+                                    saveActive("такси: посадка")
+                                    JB.PushTracker(ply) JB.PushMyState(ply)
+                                    if GRM.Notify then GRM.Notify(ply, "Пассажир на борту — везите к пункту назначения.", 120, 220, 255) end
+                                end
+                            else
+                                if pp:DistToSqr(j.center) < rad * rad then JB.Complete(ply) end
+                            end
+                        elseif j.jtype == "stay" or j.jtype == "shift" then
                             local rad = tonumber(j.zoneRadius) or ((j.jtype == "shift") and 400 or 300)
                             if pp:DistToSqr(j.target) < rad * rad then
                                 if ply:InVehicle() then
@@ -638,7 +776,7 @@ if SERVER then
         JB._lastOffers[sid64(ply)] = { list = offers or {}, at = os.time(), center = ent:GetPos() }
         local wire = {}
         for _, o in ipairs(offers or {}) do
-            wire[#wire + 1] = { idx = o.idx, tplId = o.tplId, title = o.title, desc = o.desc, jtype = o.jtype, reward = o.reward, timeSec = o.timeSec, staySec = o.staySec, dist = o.dist, zoneRadius = o.zoneRadius, zoneName = o.zoneName }
+            wire[#wire + 1] = { idx = o.idx, tplId = o.tplId, title = o.title, desc = o.desc, jtype = o.jtype, reward = o.reward, timeSec = o.timeSec, staySec = o.staySec, dist = o.dist, zoneRadius = o.zoneRadius, zoneName = o.zoneName, needVehicle = o.needVehicle == true, icon = o.icon, color = o.color }
         end
         local sd = sid64(ply)
         local j = JB.Active[sd]
@@ -715,8 +853,10 @@ if SERVER then
         JB.StartJob(ply, {
             title = offer.title, desc = offer.desc, jtype = offer.jtype,
             reward = offer.reward, timeSec = offer.timeSec, staySec = offer.staySec,
-            target = offer.target, center = rec.center,
+            target = offer.target, center = offer.center or rec.center,
             zoneRadius = offer.zoneRadius, zoneName = offer.zoneName,
+            needVehicle = offer.needVehicle == true,
+            points = offer.points, pointNames = offer.pointNames,
         })
     end)
 
@@ -1096,6 +1236,8 @@ if CLIENT then
                 stage = net.ReadUInt(3),
                 radius = net.ReadUInt(12),
                 zoneName = net.ReadString() or "Точка работы",
+                stageName = net.ReadString() or "",
+                needVehicle = net.ReadBool(),
                 at = CurTime(),
             }
         else
@@ -1127,11 +1269,11 @@ if CLIENT then
         local left = math.max(0, (tracker.remain or 0) - (CurTime() - (tracker.at or CurTime())))
         local txt = "Работа: " .. tostring(tracker.title) ..
             "  •  " .. fmtTime(left) ..
-            (tracker.jtypeText or "") ..
-            (tracker.stage == 2 and "  •  этап: возврат" or "") ..
+            ((tracker.stageName ~= nil and tracker.stageName ~= "") and ("  •  " .. tostring(tracker.stageName)) or "") ..
+            (tracker.needVehicle and "  •  нужен транспорт" or "") ..
             ((tracker.stayLeft or 0) > 0 and ("  •  в зоне: " .. tostring(tracker.stayLeft) .. " с") or "")
         local w, h = ScrW(), ScrH()
-        draw.RoundedBox(6, w / 2 - 270, h - 52, 540, 26, Color(14, 18, 26, 190))
+        draw.RoundedBox(6, w / 2 - 300, h - 52, 600, 26, Color(14, 18, 26, 190))
         draw.SimpleText(txt, "GRMJobs_Normal", w / 2, h - 39, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end)
 
@@ -1148,7 +1290,7 @@ if CLIENT then
         return b
     end
 
-    local JTYPE_NAMES = { goto = "Доставка", stay = "Дежурство", roundtrip = "Туда-обратно", shift = "Смена" }
+    local JTYPE_NAMES = { goto = "Доставка", stay = "Дежурство", roundtrip = "Туда-обратно", shift = "Смена", garbage = "Мусоровоз", taxi = "Такси" }
 
     -- общая форма публикации заказа/вакансии (терминал + /jobpost)
     function JB.OpenPostForm(zoneMode, myFac)
@@ -1252,176 +1394,298 @@ if CLIENT then
         local f = vgui.Create("DFrame")
         JB._frame = f
         f:SetTitle("")
-        f:SetSize(920, 700)
+        f:SetSize(940, 680)
         f:Center()
         f:MakePopup()
         f:ShowCloseButton(false)
         f:SetDeleteOnClose(true)
         f.Paint = function(_, pw, ph)
-            draw.RoundedBox(8, 0, 0, pw, ph, C.bg)
-            draw.RoundedBoxEx(8, 0, 0, pw, 44, C.head, true, true, false, false)
-            draw.SimpleText("Биржа труда — работа для каждого", "GRMJobs_Title", 14, 22, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText("Выполнено: " .. tostring(st.done or 0) .. "  •  Заработано: " .. fmtMoney(st.earned or 0), "GRMJobs_Normal", pw - 48, 22, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-        end
-        local x = vgui.Create("DButton", f)
-        x:SetText("X") x:SetFont("GRMJobs_Title") x:SetTextColor(color_white)
-        x:SetPos(876, 8) x:SetSize(32, 28)
-        x.DoClick = function() f:Close() end
-        x.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.red or Color(45, 52, 68)) end
-
-        local sc = vgui.Create("DScrollPanel", f)
-        sc:Dock(FILL) sc:DockMargin(10, 52, 10, 10)
-
-        local function block(h, title, accent)
-            local b = vgui.Create("DPanel", sc)
-            b:Dock(TOP) b:SetTall(h) b:DockMargin(0, 0, 0, 6)
-            b.Paint = function(_, pw, ph)
-                draw.RoundedBox(6, 0, 0, pw, ph, C.panel)
-                draw.SimpleText(title, "GRMJobs_Sub", 10, 14, accent or C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.RoundedBox(10, 0, 0, pw, ph, C.bg)
+            draw.RoundedBoxEx(10, 0, 0, pw, 66, C.head, true, true, false, false)
+            draw.SimpleText("БИРЖА ТРУДА", "GRMJobs_Title", 18, 13, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            draw.SimpleText("Городская подработка — выбирайте дело по душе", "GRMJobs_Small", 18, 42, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            draw.SimpleText("Выполнено: " .. tostring(st.done or 0) .. "   •   Заработано: " .. fmtMoney(st.earned or 0), "GRMJobs_Normal", pw - 18, 24, C.teal, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            if hasActive then
+                draw.SimpleText("Активная работа: " .. tostring(active.title), "GRMJobs_Small", pw - 18, 46, C.yellow, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
             end
+        end
+
+        local btnClose = vgui.Create("DButton", f)
+        btnClose:SetText("✕") btnClose:SetFont("GRMJobs_Sub") btnClose:SetTextColor(color_white)
+        btnClose:SetPos(898, 10) btnClose:SetSize(30, 28)
+        btnClose.Paint = function(self, pw, ph) draw.RoundedBox(5, 0, 0, pw, ph, self:IsHovered() and C.red or Color(45, 52, 68)) end
+        btnClose.DoClick = function() f:Close() end
+
+        -- Контент + вкладки
+        local content = vgui.Create("DPanel", f)
+        content:SetPos(12, 108) content:SetSize(916, 560)
+        content.Paint = function() end
+
+        local currentTab = "work"
+        local tabBtns = {}
+        local renderTabs
+        local function tabButton(id, label, icon)
+            local b = vgui.Create("DButton", f)
+            b:SetText("") b:SetFont("GRMJobs_Small") b:SetTextColor(color_white)
+            tabBtns[id] = b
+            b.Paint = function(self, pw, ph)
+                local act = (currentTab == id)
+                draw.RoundedBox(6, 0, 0, pw, ph, act and C.acc or C.panel2)
+                if icon then surface.SetMaterial(Material(icon, "smooth")) surface.SetDrawColor(255, 255, 255, 255) surface.DrawTexturedRect(10, ph / 2 - 8, 16, 16) end
+                draw.SimpleText(label, "GRMJobs_Small", icon and 32 or 12, ph / 2, act and color_white or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+            b.DoClick = function() surface.PlaySound("buttons/button15.wav") currentTab = id renderTabs() end
             return b
         end
 
-        -- моя работа
-        local bm = block(hasActive and 96 or 44, "Моя текущая работа:", C.green)
-        if hasActive then
-            local row = vgui.Create("DPanel", bm)
-            row:SetPos(10, 28) row:SetSize(880, 60)
-            row.Paint = function(_, pw, ph)
-                draw.RoundedBox(5, 0, 0, pw, ph, C.panel2)
-                draw.SimpleText(tostring(active.title) .. "  (" .. tostring(fmtMoney(active.reward or 0)) .. ")", "GRMJobs_Sub", 10, 16, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                local note = ""
-                if active.jtype == "stay" then note = " | в зоне: " .. tostring(active.stayLeft or 0) .. " с" end
-                if active.jtype == "shift" then note = " | смена: " .. tostring(active.stayLeft or 0) .. " с" end
-                if active.jtype == "roundtrip" then note = (active.stage == 2) and " | этап: возврат к терминалу" or " | этап: к точке" end
-                if active.fromPost then note = note .. " | заказ " .. tostring(active.postFac) end
-                draw.SimpleText(tostring(active.desc or ""), "GRMJobs_Small", 10, 34, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                draw.SimpleText("Зона: " .. tostring(active.zoneName or "Точка работы") .. " • радиус " .. tostring(active.zoneRadius or 180) .. " • осталось: " .. fmtTime(active.remain or 0) .. note, "GRMJobs_Normal", 10, 51, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        local function cardButton(parent, text, col, enabled, onClick)
+            local b = vgui.Create("DButton", parent)
+            b:SetText(text) b:SetFont("GRMJobs_Normal") b:SetTextColor(color_white)
+            b:SetEnabled(enabled ~= false)
+            b.Paint = function(self, pw, ph)
+                local cc = col or C.acc
+                if not self:IsEnabled() then cc = Color(60, 65, 75)
+                elseif self:IsHovered() then cc = Color(math.min(255, cc.r + 22), math.min(255, cc.g + 22), math.min(255, cc.b + 22)) end
+                draw.RoundedBox(6, 0, 0, pw, ph, cc)
+                surface.SetDrawColor(255, 255, 255, 46) surface.DrawOutlinedRect(0, 0, pw, ph)
+                draw.SimpleText(text, "GRMJobs_Normal", pw / 2, ph / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
             end
-            local bCancel = mkBtn(bm, "Отказаться", C.red)
-            bCancel:SetPos(738, 32) bCancel:SetSize(140, 34) bCancel:SetFont("GRMJobs_Normal")
-            bCancel.DoClick = function()
+            b.DoClick = function() surface.PlaySound("buttons/button15.wav") if onClick then onClick() end end
+            return b
+        end
+
+        -- Вкладка «Работы»: карточки готового набора
+        local function buildWorkTab()
+            local scroll = vgui.Create("DScrollPanel", content)
+            scroll:Dock(FILL)
+            local canvas = vgui.Create("DPanel", scroll)
+            canvas:SetWide(900)
+            canvas.Paint = function() end
+
+            if err ~= "" or #offers == 0 then
+                local none = vgui.Create("DLabel", canvas)
+                none:SetPos(14, 10) none:SetSize(870, 60) none:SetFont("GRMJobs_Normal") none:SetTextColor(C.red)
+                none:SetText((err ~= "" and err) or "Сейчас вакансий нет — загляните позже.")
+                none:SetWrap(true) none:SetAutoStretchVertical(true)
+                canvas:SetTall(90)
+                scroll:AddItem(canvas)
+                return
+            end
+
+            local cols, cw, ch, gap = 2, 440, 150, 20
+            for i, o in ipairs(offers) do
+                local col = (i - 1) % cols
+                local row = math.floor((i - 1) / cols)
+                local cx = col * (cw + gap)
+                local cy = row * (ch + 10)
+                local colR, colG, colB = 90, 170, 250
+                if istable(o.color) then colR, colG, colB = tonumber(o.color[1]) or 90, tonumber(o.color[2]) or 170, tonumber(o.color[3]) or 250 end
+                local icon = tostring(o.icon or "icon16/package.png")
+
+                local card = vgui.Create("DPanel", canvas)
+                card:SetPos(cx, cy) card:SetSize(cw, ch)
+                card.Paint = function(_, pw, ph)
+                    draw.RoundedBox(8, 0, 0, pw, ph, C.panel)
+                    surface.SetDrawColor(colR, colG, colB, 150) surface.DrawOutlinedRect(0, 0, pw, ph, 1)
+                    draw.RoundedBox(8, 12, 12, 62, 62, Color(colR, colG, colB, 40))
+                    surface.SetMaterial(Material(icon, "smooth")) surface.SetDrawColor(255, 255, 255, 255)
+                    surface.DrawTexturedRect(24, 24, 38, 38)
+                    draw.SimpleText(tostring(o.title), "GRMJobs_Sub", 88, 10, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText(JTYPE_NAMES[o.jtype] or o.jtype, "GRMJobs_Small", 88, 30, Color(colR, colG, colB), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    if o.needVehicle then
+                        local w2 = 92
+                        draw.RoundedBox(4, pw - w2 - 12, 12, w2, 18, Color(colR, colG, colB, 36))
+                        draw.SimpleText("нужен транспорт", "GRMJobs_Small", pw - 12 - w2 / 2, 21, Color(colR, colG, colB), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    end
+                end
+
+                local desc = vgui.Create("DLabel", card)
+                desc:SetPos(88, 50) desc:SetSize(cw - 100, 34) desc:SetFont("GRMJobs_Small") desc:SetTextColor(C.dim)
+                desc:SetText(tostring(o.desc or "")) desc:SetWrap(true)
+
+                local info = vgui.Create("DLabel", card)
+                info:SetPos(12, 96) info:SetSize(cw - 24, 18) info:SetFont("GRMJobs_Normal") info:SetTextColor(C.yellow)
+                info:SetText(fmtMoney(o.reward or 0) .. "   •   до " .. fmtTime(o.timeSec or 0))
+
+                local zone = vgui.Create("DLabel", card)
+                zone:SetPos(12, 120) zone:SetSize(cw - 160, 18) zone:SetFont("GRMJobs_Small") zone:SetTextColor(C.dim)
+                zone:SetText(tostring(o.zoneName or ""))
+
+                local take = cardButton(card, hasActive and "Занято" or "ВЗЯТЬ", hasActive and Color(70, 78, 92) or C.green, not hasActive, function()
+                    net.Start(NET_ACCEPT) net.WriteUInt(o.idx, 8) net.SendToServer()
+                    timer.Simple(0.5, function() if IsValid(f) then f:Close() end end)
+                end)
+                take:SetPos(cw - 138, 116) take:SetSize(126, 28)
+            end
+            local rows = math.ceil(#offers / cols)
+            canvas:SetTall(rows * (ch + 10) + 10)
+            scroll:AddItem(canvas)
+        end
+
+        -- Вкладка «Моя работа»
+        local function buildMineTab()
+            local panel = vgui.Create("DPanel", content)
+            panel:Dock(FILL) panel:DockMargin(0, 0, 0, 0)
+            panel.Paint = function() end
+            if not hasActive then
+                local none = vgui.Create("DLabel", panel)
+                none:Dock(TOP) none:SetTall(60) none:SetFont("GRMJobs_Normal") none:SetTextColor(C.dim)
+                none:SetText("Активной работы нет.\nВыберите дело во вкладке «Работы» — маркер цели появится на экране.")
+                none:SetWrap(true) none:SetAutoStretchVertical(true)
+                return
+            end
+            local card = vgui.Create("DPanel", panel)
+            card:Dock(TOP) card:SetTall(150)
+            card.Paint = function(_, pw, ph)
+                draw.RoundedBox(8, 0, 0, pw, ph, C.panel)
+                draw.RoundedBoxEx(8, 0, 0, pw, 40, Color(30, 40, 56), true, true, false, false)
+                draw.SimpleText("МОЯ РАБОТА", "GRMJobs_Sub", 14, 20, C.green, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+            local title = vgui.Create("DLabel", card)
+            title:SetPos(14, 48) title:SetSize(880, 22) title:SetFont("GRMJobs_Sub") title:SetTextColor(C.text)
+            title:SetText(tostring(active.title) .. "   —   " .. fmtMoney(active.reward or 0))
+            local info = vgui.Create("DLabel", card)
+            info:SetPos(14, 74) info:SetSize(880, 20) info:SetFont("GRMJobs_Normal") info:SetTextColor(C.yellow)
+            local note = JTYPE_NAMES[active.jtype] or active.jtype
+            if active.needVehicle then note = note .. " • нужен транспорт" end
+            if (active.stageName or "") ~= "" then note = note .. " • " .. tostring(active.stageName) end
+            if (active.stayLeft or 0) > 0 then note = note .. " • в зоне: " .. tostring(active.stayLeft) .. " с" end
+            note = note .. " • осталось: " .. fmtTime(active.remain or 0)
+            info:SetText(note)
+            local zone = vgui.Create("DLabel", card)
+            zone:SetPos(14, 98) zone:SetSize(700, 18) zone:SetFont("GRMJobs_Small") zone:SetTextColor(C.dim)
+            zone:SetText("Зона: " .. tostring(active.zoneName or "—") .. " • радиус " .. tostring(active.zoneRadius or 180) .. (active.fromPost and (" • заказ " .. tostring(active.postFac)) or ""))
+            local cancel = cardButton(card, "Отказаться", C.red, true, function()
                 net.Start(NET_CANCEL) net.SendToServer()
                 timer.Simple(0.5, function() if IsValid(f) then f:Close() end end)
-            end
-        else
-            local none = vgui.Create("DLabel", bm)
-            none:SetPos(14, 24) none:SetSize(860, 18) none:SetFont("GRMJobs_Normal") none:SetTextColor(C.dim)
-            none:SetText("Нет активной задачи — выберите вакансию ниже. Быстрые команды: /jobs (статус), /jobcancel (отказ).")
+            end)
+            cancel:SetPos(760, 106) cancel:SetSize(140, 30)
         end
 
-        -- вакансии биржи
-        local n = #offers
-        local bv = block(30 + math.max(1, n) * 58 + 8, "Вакансии биржи (обновляются каждые 5 минут):", C.yellow)
-        if err ~= "" or n == 0 then
-            local none = vgui.Create("DLabel", bv)
-            none:SetPos(14, 30) none:SetSize(860, 40) none:SetFont("GRMJobs_Normal") none:SetTextColor(C.red)
-            none:SetText((err ~= "" and err) or "Сейчас вакансий нет — загляните позже.")
-            none:SetWrap(true) none:SetAutoStretchVertical(true)
-        end
-        for i, o in ipairs(offers) do
-            local row = vgui.Create("DPanel", bv)
-            row:SetPos(10, 28 + (i - 1) * 58) row:SetSize(880, 54)
-            row.Paint = function(_, pw, ph)
-                draw.RoundedBox(5, 0, 0, pw, ph, C.panel2)
-                draw.SimpleText(tostring(o.title) .. "  (" .. tostring(JTYPE_NAMES[o.jtype] or o.jtype) .. ")", "GRMJobs_Sub", 10, 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                draw.SimpleText(tostring(o.desc or ""), "GRMJobs_Small", 10, 31, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                draw.SimpleText("Зона: " .. tostring(o.zoneName or "Точка работы") .. " • радиус " .. tostring(o.zoneRadius or 180) .. " • " .. fmtTime(o.timeSec or 0) .. " • " .. fmtMoney(o.reward or 0), "GRMJobs_Normal", 10, 46, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        -- Вкладка «Заказы фракций»
+        local function buildPostsTab()
+            local scroll = vgui.Create("DScrollPanel", content)
+            scroll:Dock(FILL)
+            local canvas = vgui.Create("DPanel", scroll)
+            canvas:SetWide(900)
+            canvas.Paint = function() end
+            if #posts == 0 then
+                local none = vgui.Create("DLabel", canvas)
+                none:SetPos(14, 10) none:SetSize(870, 40) none:SetFont("GRMJobs_Normal") none:SetTextColor(C.dim)
+                none:SetText("Пока ни одна фракция не опубликовала заказ.")
+                canvas:SetTall(60) scroll:AddItem(canvas)
+                return
             end
-            local bTake = mkBtn(row, hasActive and "Занято" or "Взять", hasActive and Color(70, 78, 92) or C.green)
-            bTake:SetPos(720, 11) bTake:SetSize(150, 32) bTake:SetFont("GRMJobs_Normal")
-            bTake:SetEnabled(not hasActive)
-            bTake.DoClick = function()
-                net.Start(NET_ACCEPT)
-                    net.WriteUInt(o.idx, 8)
-                net.SendToServer()
-                timer.Simple(0.5, function() if IsValid(f) then f:Close() end end)
-            end
-        end
-
-        -- заказы фракций
-        local bp = block(30 + math.max(1, #posts) * 58 + 8, "Заказы от фракций (оплата с бюджета заказчика):", C.teal)
-        if #posts == 0 then
-            local none = vgui.Create("DLabel", bp)
-            none:SetPos(14, 30) none:SetSize(860, 20) none:SetFont("GRMJobs_Normal") none:SetTextColor(C.dim)
-            none:SetText("Пока ни одна фракция не опубликовала заказ.")
-        end
-        for i, p in ipairs(posts) do
-            local isVac = p.kind == "vacancy"
-            local row = vgui.Create("DPanel", bp)
-            row:SetPos(10, 28 + (i - 1) * 58) row:SetSize(880, 54)
-            row.Paint = function(_, pw, ph)
-                draw.RoundedBox(5, 0, 0, pw, ph, C.panel2)
-                draw.SimpleText((isVac and "ВАКАНСИЯ «" or "Заказ «") .. tostring(p.title) .. "»  —  " .. tostring(p.faction), "GRMJobs_Sub", 10, 14, isVac and C.green or C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                draw.SimpleText(tostring(p.desc or "") .. "  •  " .. (isVac and ("зона смены • автор: ") or ("тип: " .. tostring(JTYPE_NAMES[p.jtype] or p.jtype) .. " • автор: ")) .. tostring(p.author), "GRMJobs_Small", 10, 31, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                local status
+            for i, p in ipairs(posts) do
+                local isVac = p.kind == "vacancy"
+                local cy = (i - 1) * 96
+                local row = vgui.Create("DPanel", canvas)
+                row:SetPos(0, cy) row:SetSize(900, 88)
+                row.Paint = function(_, pw, ph)
+                    draw.RoundedBox(8, 0, 0, pw, ph, C.panel)
+                    if isVac then surface.SetDrawColor(80, 200, 170, 120) else surface.SetDrawColor(80, 170, 250, 120) end
+                    surface.DrawOutlinedRect(0, 0, pw, ph, 1)
+                end
+                local t = vgui.Create("DLabel", row)
+                t:SetPos(12, 10) t:SetSize(700, 20) t:SetFont("GRMJobs_Sub") t:SetTextColor(isVac and C.green or C.text)
+                t:SetText((isVac and "ВАКАНСИЯ «" or "Заказ «") .. tostring(p.title) .. "» — " .. tostring(p.faction))
+                local d = vgui.Create("DLabel", row)
+                d:SetPos(12, 32) d:SetSize(700, 18) d:SetFont("GRMJobs_Small") d:SetTextColor(C.dim)
+                d:SetText(tostring(p.desc or "") .. " • автор: " .. tostring(p.author))
+                local s2 = vgui.Create("DLabel", row)
+                s2:SetPos(12, 54) s2:SetSize(700, 20) s2:SetFont("GRMJobs_Normal") s2:SetTextColor(p.taken and C.red or (isVac and C.green or C.teal))
                 if isVac then
-                    status = (p.taken and "СМЕНА ИДЁТ • " or "") .. "зарплата " .. fmtMoney(p.salary or 0) .. " × осталось смен: " .. tostring(p.shiftsLeft or 0) ..
-                        ((tonumber(p.payedTotal) or 0) > 0 and (" • выплачено: " .. fmtMoney(p.payedTotal) .. " (" .. tostring(p.lastWorker) .. ")") or "")
+                    s2:SetText((p.taken and "СМЕНА ИДЁТ • " or "") .. "зарплата " .. fmtMoney(p.salary or 0) .. " × смен: " .. tostring(p.shiftsLeft or 0) .. ((tonumber(p.payedTotal) or 0) > 0 and (" • выплачено " .. fmtMoney(p.payedTotal) .. " (" .. tostring(p.lastWorker) .. ")") or ""))
                 else
-                    status = p.taken and "ВЗЯТ исполнителем" or (fmtMoney(p.reward or 0) .. " • свободен")
+                    s2:SetText(p.taken and "ВЗЯТ исполнителем" or (fmtMoney(p.reward or 0) .. " • свободен"))
                 end
-                draw.SimpleText(status, "GRMJobs_Normal", 10, 46, p.taken and C.red or (isVac and C.green or C.teal), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            end
-            if canP and p.mine then
-                local bUn = mkBtn(row, "Отозвать", C.red)
-                bUn:SetPos(720, 11) bUn:SetSize(150, 32) bUn:SetFont("GRMJobs_Normal")
-                bUn.DoClick = function()
-                    net.Start(NET_UNPOST)
-                        net.WriteString(p.faction)
-                        net.WriteUInt(tonumber(p.id) or 0, 32)
-                    net.SendToServer()
-                    timer.Simple(0.4, function() if IsValid(f) then f:Close() end end)
-                end
-            else
-                local canTake = (not hasActive) and (not p.taken) and (not p.mine)
-                local bTake = mkBtn(row, p.taken and "Занят" or (p.mine and "Ваш заказ" or "Взять"), canTake and C.teal or Color(70, 78, 92))
-                bTake:SetPos(720, 11) bTake:SetSize(150, 32) bTake:SetFont("GRMJobs_Normal")
-                bTake:SetEnabled(canTake)
-                bTake.DoClick = function()
-                    net.Start(NET_TAKEPOST)
-                        net.WriteString(p.faction)
-                        net.WriteUInt(tonumber(p.id) or 0, 32)
-                    net.SendToServer()
-                    timer.Simple(0.5, function() if IsValid(f) then f:Close() end end)
+                if canP and p.mine then
+                    local un = cardButton(row, "Отозвать", C.red, true, function()
+                        net.Start(NET_UNPOST) net.WriteString(p.faction) net.WriteUInt(tonumber(p.id) or 0, 32) net.SendToServer()
+                        timer.Simple(0.4, function() if IsValid(f) then f:Close() end end)
+                    end)
+                    un:SetPos(720, 26) un:SetSize(160, 32)
+                else
+                    local canTake = (not hasActive) and (not p.taken) and (not p.mine)
+                    local tk = cardButton(row, p.taken and "Занят" or (p.mine and "Ваш заказ" or "Взять"), canTake and C.teal or Color(70, 78, 92), canTake, function()
+                        net.Start(NET_TAKEPOST) net.WriteString(p.faction) net.WriteUInt(tonumber(p.id) or 0, 32) net.SendToServer()
+                        timer.Simple(0.5, function() if IsValid(f) then f:Close() end end)
+                    end)
+                    tk:SetPos(720, 26) tk:SetSize(160, 32)
                 end
             end
+            canvas:SetTall(#posts * 96 + 10)
+            scroll:AddItem(canvas)
         end
 
-        -- публикация заказа/вакансии лидером (форма-всплывашка)
-        if canP then
-            local bf = block(64, "Вы — лидер с доступом «БИРЖА»: публикация работ от «" .. myFac .. "» (эскроу с бюджета):", C.green)
-            local bPub = mkBtn(bf, "Опубликовать заказ / вакансию", C.green)
-            bPub:SetPos(10, 26) bPub:SetSize(300, 30) bPub:SetFont("GRMJobs_Normal")
-            bPub.DoClick = function() JB.OpenPostForm("term", myFac) end
-            local hint = vgui.Create("DLabel", bf)
-            hint:SetPos(330, 28) hint:SetSize(550, 30) hint:SetFont("GRMJobs_Small") hint:SetTextColor(C.dim)
-            hint:SetText("Вакансия у станка/завода: встаньте на место и используйте /jobpost — зона смены будет там, где вы стоите.")
+        -- Вкладка «Публикация» (лидер с доступом БИРЖА)
+        local function buildPublishTab()
+            local panel = vgui.Create("DPanel", content)
+            panel:Dock(FILL) panel.Paint = function() end
+            local head = vgui.Create("DLabel", panel)
+            head:Dock(TOP) head:SetTall(24) head:SetFont("GRMJobs_Sub") head:SetTextColor(C.green)
+            head:SetText("Публикация работ от «" .. myFac .. "» (эскроу с бюджета фракции)")
+            local btn = cardButton(panel, "Опубликовать заказ / вакансию", C.green, true, function() JB.OpenPostForm("term", myFac) end)
+            btn:Dock(TOP) btn:DockMargin(0, 8, 0, 8) btn:SetTall(36)
+            local hint = vgui.Create("DLabel", panel)
+            hint:Dock(TOP) hint:SetTall(60) hint:SetFont("GRMJobs_Small") hint:SetTextColor(C.dim)
+            hint:SetText("Вакансия у станка/завода: встаньте на место и используйте /jobpost — зона смены будет там, где вы стоите. Деньги резервируются с бюджета при публикации; отзыв/срок — возврат.")
             hint:SetWrap(true) hint:SetAutoStretchVertical(true)
         end
 
-        -- доступ работодателей (суперадмин)
-        if isSuper then
-            local ba = block(30 + math.max(1, #allow) * 28 + 8, "Доступ работодателей (кто публикует заказы) — суперадмин:", C.acc)
+        -- Вкладка «Доступы» (суперадмин)
+        local function buildAccessTab()
+            local scroll = vgui.Create("DScrollPanel", content)
+            scroll:Dock(FILL)
+            local canvas = vgui.Create("DPanel", scroll)
+            canvas:SetWide(900)
+            canvas.Paint = function() end
             for i, a in ipairs(allow) do
-                local chk = vgui.Create("DCheckBoxLabel", ba)
-                chk:SetPos(14, 26 + (i - 1) * 28) chk:SetSize(500, 24)
+                local chk = vgui.Create("DCheckBoxLabel", canvas)
+                chk:SetPos(14, 10 + (i - 1) * 30) chk:SetSize(600, 26)
                 chk:SetText(a.name) chk:SetFont("GRMJobs_Normal")
                 chk:SetTextColor(a.allowed and C.green or C.dim)
                 chk:SetValue(a.allowed and 1 or 0)
                 chk.OnChange = function(_, v)
-                    net.Start(NET_ALLOW)
-                        net.WriteString(a.name)
-                        net.WriteBool(v)
-                    net.SendToServer()
+                    net.Start(NET_ALLOW) net.WriteString(a.name) net.WriteBool(v) net.SendToServer()
                     chk:SetTextColor(v and C.green or C.dim)
                 end
             end
-            local hint = vgui.Create("DLabel", ba)
-            hint:SetPos(520, 26) hint:SetSize(360, 60) hint:SetFont("GRMJobs_Small") hint:SetTextColor(C.dim)
-            hint:SetText("Те же галочки: /factions → «Доступы» (колонка БИРЖА) и команды /job_allow Фракция, /job_deny Фракция.")
+            local hint = vgui.Create("DLabel", canvas)
+            hint:SetPos(14, 10 + #allow * 30 + 6) hint:SetSize(860, 40) hint:SetFont("GRMJobs_Small") hint:SetTextColor(C.dim)
+            hint:SetText("Кто публикует заказы от фракций. Те же галочки: /factions → «Доступы» (колонка БИРЖА) и команды /job_allow Фракция, /job_deny Фракция.")
             hint:SetWrap(true) hint:SetAutoStretchVertical(true)
+            canvas:SetTall(40 + #allow * 30 + 60)
+            scroll:AddItem(canvas)
         end
+
+        renderTabs = function()
+            content:Clear()
+            -- раскладка кнопок вкладок
+            local defs = {
+                { id = "work",    label = "Работы",          icon = "icon16/briefcase.png" },
+                { id = "mine",    label = "Моя работа",      icon = "icon16/user_go.png" },
+                { id = "posts",   label = "Заказы фракций",  icon = "icon16/group.png" },
+            }
+            if canP then defs[#defs + 1] = { id = "publish", label = "Публикация", icon = "icon16/report_edit.png" } end
+            if isSuper then defs[#defs + 1] = { id = "access", label = "Доступы", icon = "icon16/key.png" } end
+            local x = 12
+            for _, d in ipairs(defs) do
+                local b = tabBtns[d.id]
+                if not IsValid(b) then b = tabButton(d.id, d.label, d.icon) end
+                b:SetPos(x, 72) b:SetSize(150, 32)
+                b._tabId = d.id
+                x = x + 158
+            end
+            if currentTab == "work" then buildWorkTab()
+            elseif currentTab == "mine" then buildMineTab()
+            elseif currentTab == "posts" then buildPostsTab()
+            elseif currentTab == "publish" then buildPublishTab()
+            elseif currentTab == "access" then buildAccessTab()
+            end
+        end
+
+        renderTabs()
     end)
 
     -- вкладка «Работа» в F4 (хук из sh_grm_f4menu v1.4.0) -------------------
@@ -1458,7 +1722,7 @@ if CLIENT then
                     draw.SimpleText("Отказаться: /jobcancel • маркер цели показан над точкой в мире", "GRMJobs_Small", 12, y, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                 else
                     draw.SimpleText("Активной задачи нет.", "GRMJobs_Sub", 12, y, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP) y = y + 22
-                    draw.SimpleText("Вакансии: подойдите к терминалу «Биржа труда» и нажмите E. Курьер, патруль, грузчик, инспектор — список обновляется каждые 5 минут. Фракции-работодатели публикуют свои заказы с оплатой из бюджета.", "GRMJobs_Small", 12, y, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("Вакансии: подойдите к терминалу «Биржа труда» и нажмите E. Курьер, грузчик, патрульный, мусоровоз, таксист. Фракции-работодатели публикуют свои заказы с оплатой из бюджета.", "GRMJobs_Small", 12, y, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                 end
                 draw.SimpleText("Ваш счётчик: выполнено " .. tostring((st and st.done) or 0) .. " задач • заработано " .. fmtMoney((st and st.earned) or 0), "GRMJobs_Normal", 12, ph - 26, C.teal, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
             end
