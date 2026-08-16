@@ -547,6 +547,18 @@ if SERVER then
             if GRM.Notify then GRM.Notify(ply, "У вас уже есть активная задача. /jobcancel — отказаться.", 255, 190, 90) end
             return false
         end
+        -- Член фракции может брать гражданскую подработку только вне службы.
+        -- Без модуля Duty сохраняем строгое безопасное правило: фракционные
+        -- сотрудники не смешивают службу с такси/курьером/мусоровозом.
+        if not fields.fromPost then
+            local fac = factionOfPly(ply)
+            local canCivil = not fac
+            if fac and GRM.FactionDuty and GRM.FactionDuty.CanTakeCivilJob then canCivil = GRM.FactionDuty.CanTakeCivilJob(ply) end
+            if not canCivil then
+                if GRM.Notify then GRM.Notify(ply, "Сотрудник фракции не может брать городскую работу, пока находится на службе. Завершите службу у служебного NPC.", 255, 150, 90) end
+                return false
+            end
+        end
         local reserved = 0
         if not fields.fromPost and JB.ReserveSystemReward then
             local ok, amountOrWhy = JB.ReserveSystemReward(ply, fields.tplId or fields.jtype, fields.reward)

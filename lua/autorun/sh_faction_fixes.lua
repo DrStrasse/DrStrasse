@@ -461,6 +461,9 @@ if SERVER then
     end
 
     function GetModelsForPlayer(ply)
+        -- Сотрудник вне службы выглядит как гражданский. Этот флаг выставляет
+        -- GRM.FactionDuty; без модуля поведение фракций остаётся прежним.
+        if IsValid(ply) and ply:GetNWBool("GRM_FactionOffDuty", false) then return DefaultModels end
         local factionName, member, f = getFactionMemberByPlayer(ply)
         if not factionName or not f then return DefaultModels end
         local role = member.Role
@@ -565,6 +568,7 @@ if SERVER then
 
     function GetWeaponsForPlayer(ply)
         if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then return {} end
+        if IsValid(ply) and ply:GetNWBool("GRM_FactionOffDuty", false) then return DEFAULT_WEAPONS end
         local factionName, member, f = getFactionMemberByPlayer(ply)
         if not factionName or not f then return DEFAULT_WEAPONS end
         local role = member.Role

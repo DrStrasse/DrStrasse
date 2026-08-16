@@ -179,6 +179,7 @@ if SERVER then
         -- Биржа труда (Код 77) — модуль и сам автоперсистентен, классы тут для /permadd-совместимости
         grm_jobcenter      = true,
         grm_depot          = true,
+        grm_duty_npc       = true,
         -- Охранная сигнализация (Код 62/Код 89)
         grm_alarm_sensor   = true,
         grm_alarm_hub      = true,

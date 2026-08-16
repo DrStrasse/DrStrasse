@@ -79,6 +79,7 @@ local SERVER_CLASSES = {
     -- Биржа труда, гардероб и руды
     grm_jobcenter            = true,
     grm_depot                = true,
+    grm_duty_npc             = true,
     grm_board                = true,
     grm_wardrobe             = true,
     grm_ore_node             = true,
