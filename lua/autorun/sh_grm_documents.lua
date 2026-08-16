@@ -822,7 +822,13 @@ if SERVER then
             tpl = DOC.Templates.passport
         elseif docType == "badge" then
             local key = getCharKey(ply)
-            if subType == "cover" then
+            local coverIndex=tostring(subType or ""):match("^cover:(%d+)$")
+            if coverIndex then
+                local entry=GRM.SpecialService and GRM.SpecialService.CoversOf and GRM.SpecialService.CoversOf(key)
+                payload=entry and entry.list and entry.list[tonumber(coverIndex)]
+                if not (istable(payload) and payload.status=="Действителен") then if GRM.Notify then GRM.Notify(ply,"Документ прикрытия не найден или аннулирован.",255,140,110)end return end
+                tpl=(DOC.Templates.factions and DOC.Templates.factions[payload.faction]) or{}
+            elseif subType == "cover" then
                 payload = DOC.Registry.coverBadges and DOC.Registry.coverBadges[key]
                 if not (istable(payload) and payload.status == "Действителен") then
                     if GRM.Notify then GRM.Notify(ply, "У вас нет активного документа прикрытия.", 255, 140, 110) end
@@ -997,7 +1003,12 @@ if SERVER then
             local key = getCharKey(ply)
             local badge = nil
 
-            if subType == "cover" then
+            local coverIndex=tostring(subType or ""):match("^cover:(%d+)$")
+            if coverIndex then
+                local entry=GRM.SpecialService and GRM.SpecialService.CoversOf and GRM.SpecialService.CoversOf(key)
+                badge=entry and entry.list and entry.list[tonumber(coverIndex)]
+                if not (istable(badge) and badge.status=="Действителен") then badge=nil end
+            elseif subType == "cover" then
                 badge = DOC.Registry.coverBadges and DOC.Registry.coverBadges[key]
             elseif subType == "official" then
                 badge = ensureBadge(ply)
