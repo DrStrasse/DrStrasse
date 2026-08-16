@@ -21,7 +21,7 @@ GRM = GRM or {}
 GRM.QMenu = GRM.QMenu or {}
 local QM = GRM.QMenu
 
-QM.Version = "5.0.0"
+QM.Version = "5.1.0"
 
 local CONFIG_FILE = "grm_qmenu.json"
 
@@ -1103,6 +1103,7 @@ if CLIENT then
         CreateClientConVar("grm_qmenu_safe", "0", true, false, "1 — без иконок моделей")
         CreateClientConVar("grm_qmenu_profile", "0", true, false, "1 — печать этапов сборки")
         CreateClientConVar("grm_qmenu_compact", "0", true, false, "1 — компактные подписи")
+        CreateClientConVar("grm_qmenu_admin_vanilla", "0", true, false, "Суперадмин: 1 — стандартное Q, 0 — GRM Стройка")
     end
 
     local function safeMode()
@@ -1203,11 +1204,31 @@ if CLIENT then
 
     local function cfg() return GRM.QMenu.Cfg or {} end
     local function isAdmin() return IsValid(LocalPlayer()) and LocalPlayer():IsSuperAdmin() end
+    local function adminVanilla()
+        if not isAdmin() or not GetConVar then return false end
+        local cv=GetConVar("grm_qmenu_admin_vanilla")
+        return cv and cv:GetBool() or false
+    end
+    function QM.SetAdminQMode(useVanilla)
+        if not isAdmin() then return false end
+        if RunConsoleCommand then RunConsoleCommand("grm_qmenu_admin_vanilla",useVanilla and "1" or "0") end
+        return true
+    end
+    if istable(concommand) and isfunction(concommand.Add) then
+        concommand.Add("grm_qmenu_admin_toggle",function()
+            if not isAdmin() then return end
+            local nextVanilla=not adminVanilla()
+            QM.SetAdminQMode(nextVanilla)
+            if IsValid(QM._frame) then QM.CloseMenu() end
+            if chat and chat.AddText then chat.AddText(QC.acc,"[Q-меню] ",color_white,nextVanilla and "Включено стандартное Q-меню." or "Включено кастомное GRM Q-меню.") end
+        end)
+    end
 
     local function qBlockedForMe()
         local lp = LocalPlayer()
         if IsValid(lp) and (lp:GetNWBool("GRM_Cuffed", false) or lp:GetNWBool("GRM_Stunned", false)) then return true end
         local c = cfg()
+        if adminVanilla() then return false end
         return c.grmBuildMenu == true
     end
 
@@ -1493,6 +1514,13 @@ if CLIENT then
         end
         local x = mkBtn(f, "✕", QC.red) x:SetPos(FW - 44, 12) x:SetSize(32, 28)
         x.DoClick = function() QM.CloseMenu() end
+        if admin then
+            local vanillaNow=adminVanilla()
+            local mode=mkBtn(f,vanillaNow and "Q: СТАНДАРТНОЕ" or "Q: КАСТОМНОЕ",vanillaNow and QC.yellow or QC.acc)
+            mode:SetPos(FW-210,12) mode:SetSize(156,28)
+            mode:SetTooltip("Переключить персональный режим Q-меню суперадмина")
+            mode.DoClick=function() QM.SetAdminQMode(not vanillaNow); QM.CloseMenu() end
+        end
 
         local tabDefs = {
             { "catalog", "Каталог", 110 },
@@ -1825,7 +1853,12 @@ if CLIENT then
                 note:SetText("Игрокам доступны только пропы и безопасный строительный набор инструментов. Оружие, NPC, энтити, транспорт и служебные инструменты блокируются сервером.")
                 return
             end
-            local adminHead=vgui.Create("DLabel",content); adminHead:SetPos(12,y); adminHead:SetSize(CW-24,22); adminHead:SetFont("GRMQ_Sub"); adminHead:SetTextColor(QC.yellow); adminHead:SetText("НАСТРОЙКИ СЕРВЕРА")
+            local adminHead=vgui.Create("DLabel",content); adminHead:SetPos(12,y); adminHead:SetSize(CW-24,22); adminHead:SetFont("GRMQ_Sub"); adminHead:SetTextColor(QC.yellow); adminHead:SetText("НАСТРОЙКИ СУПЕРАДМИНА")
+            y=y+28
+            local vanilla=vgui.Create("DCheckBoxLabel",content); vanilla:SetPos(12,y); vanilla:SetSize(CW-24,22); vanilla:SetFont("GRMQ_Text"); vanilla:SetTextColor(QC.text); vanilla:SetText("Использовать стандартное Q-меню для меня"); vanilla:SetValue(adminVanilla() and 1 or 0)
+            vanilla.OnChange=function(_,v) QM.SetAdminQMode(v==true) end
+            y=y+32
+            local serverHead=vgui.Create("DLabel",content); serverHead:SetPos(12,y); serverHead:SetSize(CW-24,22); serverHead:SetFont("GRMQ_Sub"); serverHead:SetTextColor(QC.yellow); serverHead:SetText("НАСТРОЙКИ СЕРВЕРА")
             y=y+28
             local function optRow(id, labelTxt)
                 local cb = vgui.Create("DCheckBoxLabel", content)
