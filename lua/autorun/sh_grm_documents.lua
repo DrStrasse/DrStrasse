@@ -67,6 +67,7 @@ local NET_ADMIN_SAVE     = "GRM_Doc_AdminSave"
 local NET_COMPUTER_OPEN  = "GRM_Doc_ComputerOpen"
 local NET_COMPUTER_ISSUE = "GRM_Doc_ComputerIssue"
 local NET_COMPUTER_REVOKE= "GRM_Doc_ComputerRevoke"
+local NET_EXAM            = "GRM_Doc_Exam"
 
 -- Пресеты цветов обложек
 DOC.CoverColors = {
@@ -191,6 +192,52 @@ DOC.BusinessTypes = {
     { id = "other",     name = "Иная деятельность",           desc = "Прочие виды бизнеса" },
 }
 
+-- Теория-экзамены (сдаются на компьютере, практики нет).
+-- licType → { title, passPercent, questions = { {q, options{...}, correct(1-based)} } }
+DOC.ExamBank = {
+    license = {
+        title = "Правила дорожного движения (теория)",
+        passPercent = 80,
+        questions = {
+            { q = "Кто имеет право управлять транспортным средством категории B?", options = { "Любой гражданин с паспортом", "Только владелец транспорта", "Гражданин с действующим В/У категории B" }, correct = 3 },
+            { q = "Что означает знак «Стоп»?", options = { "Снизить скорость", "Полная остановка", "Уступить только автобусам" }, correct = 2 },
+            { q = "Разрешено ли управлять Т/С в состоянии опьянения?", options = { "Разрешено до 0.3 промилле", "Категорически запрещено", "Разрешено только ночью" }, correct = 2 },
+            { q = "Нужно ли уступать дорогу пешеходу на переходе?", options = { "Да, всегда", "Нет", "Только если он машет рукой" }, correct = 1 },
+            { q = "Что обязан предъявить водитель при остановке инспектором?", options = { "Только паспорт", "В/У, документы на Т/С и документы личности", "Только страховку" }, correct = 2 },
+        },
+    },
+    weaponLicense = {
+        title = "Обращение с оружием и его хранение (теория)",
+        passPercent = 80,
+        questions = {
+            { q = "Где должно храниться зарегистрированное оружие?", options = { "Под кроватью", "В сейфе по месту жительства", "В автомобиле" }, correct = 2 },
+            { q = "Можно ли передавать своё оружие другому лицу?", options = { "Да, без ограничений", "Только с переоформлением/разрешением", "Только родственникам" }, correct = 2 },
+            { q = "Что делать при утере или краже оружия?", options = { "Ничего не делать", "Купить новое", "Немедленно сообщить в полицию / ОЛРР" }, correct = 3 },
+            { q = "Разрешено ли ношение оружия в состоянии опьянения?", options = { "Запрещено", "Разрешено", "Разрешено на охоте" }, correct = 1 },
+            { q = "Кто вправе проверять лицензию и условия хранения оружия?", options = { "Только соседи", "Сотрудники полиции и ОЛРР", "Любой прохожий" }, correct = 2 },
+        },
+    },
+    businessLicense = {
+        title = "Основы предпринимательской деятельности (теория)",
+        passPercent = 80,
+        questions = {
+            { q = "Что даёт лицензия на ведение бизнеса?", options = { "Право на любую деятельность", "Право заниматься заявленным видом деятельности", "Освобождение от налогов" }, correct = 2 },
+            { q = "Можно ли заниматься деятельностью вне указанного в лицензии вида?", options = { "Да", "Нет, только заявленный вид", "Только по выходным" }, correct = 2 },
+            { q = "Можно ли передавать лицензию третьим лицам?", options = { "Нет", "Да, за плату", "Да, только друзьям" }, correct = 1 },
+            { q = "Что делать при смене объекта или вида деятельности?", options = { "Ничего", "Уведомить экономическое управление", "Скрыть изменения" }, correct = 2 },
+            { q = "Кому предъявляется лицензия?", options = { "Уполномоченным лицам по требованию", "Никому", "Только покупателям" }, correct = 1 },
+        },
+    },
+}
+
+-- Госпошлины по умолчанию (перекрываются в шаблонах DOC.Templates.fees).
+DOC.DefaultFees = {
+    license = 500,
+    milLicense = 0,
+    weaponLicense = 1500,
+    businessLicense = 3000,
+}
+
 -- Хелпер ключа персонажа
 local function getCharKey(ply)
     if IsValid(ply) and ply:IsPlayer() then
@@ -222,7 +269,7 @@ if SERVER then
     for _, str in ipairs({
         NET_OPEN_DOC, NET_SHOW_DOC, NET_RECEIVE_VIEW,
         NET_ADMIN_GET, NET_ADMIN_SAVE, NET_COMPUTER_OPEN,
-        NET_COMPUTER_ISSUE, NET_COMPUTER_REVOKE
+        NET_COMPUTER_ISSUE, NET_COMPUTER_REVOKE, NET_EXAM
     }) do
         util.AddNetworkString(str)
     end
@@ -319,6 +366,12 @@ if SERVER then
                     defaultPerms = { access = true, transport = true },
                 },
             },
+            fees = {
+                license = 500,
+                milLicense = 0,
+                weaponLicense = 1500,
+                businessLicense = 3000,
+            },
             access = {
                 passports   = { ["OrdnungPolizei"] = true, ["Department of Labour and Social Protection"] = true },
                 badges      = { ["OrdnungPolizei"] = true, ["Feldgendarmerie"] = true, ["Gestapo"] = true, ["Department of Labour and Social Protection"] = true },
@@ -343,6 +396,7 @@ if SERVER then
                 if istable(t.militaryLicense) then DOC.Templates.militaryLicense = t.militaryLicense end
                 if istable(t.weaponLicense)   then DOC.Templates.weaponLicense   = t.weaponLicense end
                 if istable(t.businessLicense) then DOC.Templates.businessLicense = t.businessLicense end
+                if istable(t.fees)            then DOC.Templates.fees            = t.fees end
                 if istable(t.factions)        then DOC.Templates.factions        = t.factions end
                 if istable(t.access)          then DOC.Templates.access          = t.access end
             end
@@ -369,7 +423,7 @@ if SERVER then
 
     -- Загрузка базы выданных документов
     function DOC.LoadRegistry()
-        DOC.Registry = { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {}, milLicenses = {}, weaponLicenses = {}, businessLicenses = {} }
+        DOC.Registry = { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {}, milLicenses = {}, weaponLicenses = {}, businessLicenses = {}, exams = {} }
         if file.Exists(DOC.RegistryFile, "DATA") then
             local t = jsonT(file.Read(DOC.RegistryFile, "DATA") or "")
             if istable(t) then
@@ -381,6 +435,7 @@ if SERVER then
                 DOC.Registry.milLicenses = istable(t.milLicenses) and t.milLicenses or {}
                 DOC.Registry.weaponLicenses = istable(t.weaponLicenses) and t.weaponLicenses or {}
                 DOC.Registry.businessLicenses = istable(t.businessLicenses) and t.businessLicenses or {}
+                DOC.Registry.exams = istable(t.exams) and t.exams or {}
             end
         end
         return DOC.Registry
@@ -552,6 +607,82 @@ if SERVER then
             if tostring(rec.businessType or "") ~= bizType then return false, "Не тот вид деятельности", rec end
         end
         return true, st, rec
+    end
+
+    -- ── Теория-экзамены и госпошлины ─────────────────────────────────────
+    local function findOnlineByKey(key)
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and getCharKey(p) == key then return p end
+        end
+    end
+
+    function DOC.ExamRequired(licType)
+        return DOC.ExamBank[licType] ~= nil
+    end
+
+    function DOC.ExamInfo(charKey, licType)
+        local ex = DOC.Registry.exams and DOC.Registry.exams[charKey] or nil
+        local r = ex and ex[licType] or nil
+        if not r then return { passed = false, score = 0, total = 0, correct = 0, date = 0 } end
+        return r
+    end
+
+    -- Вопросы БЕЗ правильных ответов (для клиента).
+    function DOC.ExamQuestions(licType)
+        local bank = DOC.ExamBank[licType]
+        if not bank then return nil end
+        local out = {}
+        for _, q in ipairs(bank.questions) do
+            out[#out + 1] = { q = q.q, options = q.options }
+        end
+        return out, bank.title, tonumber(bank.passPercent) or 80
+    end
+
+    -- Проверка ответов. Записывает сдачу за targetKey (гражданин сдаёт).
+    function DOC.GradeExam(targetKey, licType, answers)
+        local bank = DOC.ExamBank[licType]
+        if not bank then return false, "Нет такого экзамена" end
+        answers = istable(answers) and answers or {}
+        local correct, total = 0, #bank.questions
+        for i, q in ipairs(bank.questions) do
+            if (tonumber(answers[i]) or 0) == q.correct then correct = correct + 1 end
+        end
+        local score = total > 0 and math.floor(correct / total * 100) or 0
+        local passed = score >= (tonumber(bank.passPercent) or 80)
+        if passed then
+            DOC.Registry.exams = DOC.Registry.exams or {}
+            DOC.Registry.exams[targetKey] = DOC.Registry.exams[targetKey] or {}
+            DOC.Registry.exams[targetKey][licType] = { passed = true, score = score, total = total, correct = correct, date = os.time() }
+            DOC.SaveRegistry("exam passed " .. licType .. " " .. targetKey)
+        end
+        return true, { passed = passed, score = score, total = total, correct = correct }
+    end
+
+    function DOC.FeeOf(licType)
+        local fees = DOC.Templates.fees or DOC.DefaultFees or {}
+        return math.floor(tonumber(fees[licType]) or tonumber((DOC.DefaultFees or {})[licType]) or 0)
+    end
+
+    -- Списание госпошлины + распределение (доля фракции → её бюджет, остаток → казна).
+    function DOC.CollectFee(ply, licType, factionName)
+        local fee = DOC.FeeOf(licType)
+        if fee <= 0 then return true, 0 end
+        if not GRM.Services or not isfunction(GRM.Services.Charge) then return false, "Сервис оплаты недоступен" end
+        local title = (DOC.ExamBank[licType] and DOC.ExamBank[licType].title) or licType
+        local ok, err = GRM.Services.Charge(ply, fee, "auto", "Госпошлина: " .. title)
+        if not ok then return false, err end
+        local E = GRM.Economy
+        local share = 0.8
+        local toFaction = 0
+        if factionName and factionName ~= "" and Factions and Factions[factionName] and isfunction(GRM.FactionBudgetAdd) then
+            toFaction = math.floor(fee * share)
+            GRM.FactionBudgetAdd(factionName, toFaction, "Госпошлина: " .. title)
+        end
+        local toState = fee - toFaction
+        if toState > 0 and E and isfunction(E.StateAdd) then
+            E.StateAdd(toState, "Госпошлина: " .. title)
+        end
+        return true, fee
     end
 
     -- Лицензии v2: баллы и приостановка
@@ -1079,6 +1210,7 @@ if SERVER then
             if istable(tpl.militaryLicense) then DOC.Templates.militaryLicense = tpl.militaryLicense end
             if istable(tpl.weaponLicense)   then DOC.Templates.weaponLicense   = tpl.weaponLicense end
             if istable(tpl.businessLicense) then DOC.Templates.businessLicense = tpl.businessLicense end
+            if istable(tpl.fees)            then DOC.Templates.fees            = tpl.fees end
             if istable(tpl.factions)        then DOC.Templates.factions        = tpl.factions end
             if istable(tpl.access)          then DOC.Templates.access          = tpl.access end
             DOC.SaveTemplates("admin edit by " .. ply:Nick())
@@ -1129,6 +1261,22 @@ if SERVER then
                 if GRM.Notify then GRM.Notify(ply, "У вашей фракции нет допуска к выдаче водительских прав!", 255, 100, 100) end
                 return
             end
+            if not ply:IsSuperAdmin() then
+                if not DOC.ExamInfo(targetKey, "license").passed then
+                    if GRM.Notify then GRM.Notify(ply, "Гражданин не сдал экзамен (теорию). Сначала — экзамен.", 255, 140, 110) end
+                    return
+                end
+                local tp = findOnlineByKey(targetKey)
+                if not IsValid(tp) then
+                    if GRM.Notify then GRM.Notify(ply, "Игрок должен быть в игре для оплаты госпошлины.", 255, 140, 110) end
+                    return
+                end
+                local ok, err = DOC.CollectFee(tp, "license", ply:GetNWString("GRM_Faction", ""))
+                if not ok then
+                    if GRM.Notify then GRM.Notify(ply, err or "Не удалось списать госпошлину", 255, 140, 110) end
+                    return
+                end
+            end
             DOC.Registry.licenses[targetKey] = data
             DOC.SaveRegistry("issue civilian license " .. targetKey .. " by " .. ply:Nick())
 
@@ -1145,6 +1293,22 @@ if SERVER then
                 if GRM.Notify then GRM.Notify(ply, "У вашей фракции нет допуска к выдаче лицензий на оружие!", 255, 100, 100) end
                 return
             end
+            if not ply:IsSuperAdmin() then
+                if not DOC.ExamInfo(targetKey, "weaponLicense").passed then
+                    if GRM.Notify then GRM.Notify(ply, "Гражданин не сдал экзамен (теорию). Сначала — экзамен.", 255, 140, 110) end
+                    return
+                end
+                local tp = findOnlineByKey(targetKey)
+                if not IsValid(tp) then
+                    if GRM.Notify then GRM.Notify(ply, "Игрок должен быть в игре для оплаты госпошлины.", 255, 140, 110) end
+                    return
+                end
+                local ok, err = DOC.CollectFee(tp, "weaponLicense", ply:GetNWString("GRM_Faction", ""))
+                if not ok then
+                    if GRM.Notify then GRM.Notify(ply, err or "Не удалось списать госпошлину", 255, 140, 110) end
+                    return
+                end
+            end
             data.issuedBy = data.issuedBy or (DOC.Templates.weaponLicense and DOC.Templates.weaponLicense.defaultIssuer) or "ОЛРР"
             data.updated = os.time()
             DOC.Registry.weaponLicenses[targetKey] = data
@@ -1154,6 +1318,22 @@ if SERVER then
             if not DOC.CanIssueBusinessLicenses(ply) then
                 if GRM.Notify then GRM.Notify(ply, "У вашей фракции нет допуска к выдаче лицензий на ведение бизнеса!", 255, 100, 100) end
                 return
+            end
+            if not ply:IsSuperAdmin() then
+                if not DOC.ExamInfo(targetKey, "businessLicense").passed then
+                    if GRM.Notify then GRM.Notify(ply, "Гражданин не сдал экзамен (теорию). Сначала — экзамен.", 255, 140, 110) end
+                    return
+                end
+                local tp = findOnlineByKey(targetKey)
+                if not IsValid(tp) then
+                    if GRM.Notify then GRM.Notify(ply, "Игрок должен быть в игре для оплаты госпошлины.", 255, 140, 110) end
+                    return
+                end
+                local ok, err = DOC.CollectFee(tp, "businessLicense", ply:GetNWString("GRM_Faction", ""))
+                if not ok then
+                    if GRM.Notify then GRM.Notify(ply, err or "Не удалось списать госпошлину", 255, 140, 110) end
+                    return
+                end
             end
             data.issuedBy = data.issuedBy or (DOC.Templates.businessLicense and DOC.Templates.businessLicense.defaultIssuer) or "Экономическое управление"
             data.updated = os.time()
@@ -1219,6 +1399,53 @@ if SERVER then
         end
 
         if GRM.Notify then GRM.Notify(ply, "Статус документа изменён (аннулирован / лишён прав).", 255, 140, 100) end
+    end)
+
+    -- ── Теория-экзамен (сдача на компьютере, практики нет) ─────────────
+    net.Receive(NET_EXAM, function(_, ply)
+        if not IsValid(ply) then return end
+        local op = net.ReadString()
+        local licType = net.ReadString()
+        local targetKey = net.ReadString()
+
+        local canRun = false
+        if licType == "license" then canRun = DOC.CanIssueLicenses(ply)
+        elseif licType == "weaponLicense" then canRun = DOC.CanIssueWeaponLicenses(ply)
+        elseif licType == "businessLicense" then canRun = DOC.CanIssueBusinessLicenses(ply) end
+        if not canRun then
+            if GRM.Notify then GRM.Notify(ply, "У вас нет допуска к проведению экзамена по этому типу лицензии.", 255, 140, 110) end
+            return
+        end
+
+        if op == "request" then
+            local questions, title, passPercent = DOC.ExamQuestions(licType)
+            if not questions then
+                if GRM.Notify then GRM.Notify(ply, "По этому типу лицензии экзамен не предусмотрен.", 255, 160, 80) end
+                return
+            end
+            net.Start(NET_EXAM)
+                net.WriteString("questions")
+                net.WriteString(licType)
+                net.WriteString(title)
+                net.WriteUInt(math.floor(passPercent), 8)
+                net.WriteTable(questions)
+                net.WriteTable(DOC.ExamInfo(targetKey, licType))
+            net.Send(ply)
+
+        elseif op == "submit" then
+            local answers = net.ReadTable() or {}
+            local ok, res = DOC.GradeExam(targetKey, licType, answers)
+            if not ok then
+                if GRM.Notify then GRM.Notify(ply, res or "Ошибка проверки", 255, 140, 110) end
+                return
+            end
+            net.Start(NET_EXAM)
+                net.WriteString("result")
+                net.WriteString(licType)
+                net.WriteTable(res)
+                net.WriteTable(DOC.ExamInfo(targetKey, licType))
+            net.Send(ply)
+        end
     end)
 
     -- Инспекция водительских прав при посадке за руль
@@ -1582,6 +1809,118 @@ if CLIENT then
     surface.CreateFont("GRMDoc_Tiny",       { font = "Roboto", size = 10, weight = 400, extended = true, antialias = true })
     surface.CreateFont("GRMDoc_MRZ",        { font = "Courier New", size = 12, weight = 700, extended = true, antialias = true })
     surface.CreateFont("GRMDoc_Badge",      { font = "Roboto", size = 12, weight = 800, extended = true, antialias = true })
+
+    -- ── Теория-экзамен (общий диалог для служебных компьютеров) ────────
+    local examFrame = nil
+    local examLicType = ""
+    local examTargetKey = ""
+    local examPassPercent = 80
+
+    local function closeExam()
+        if IsValid(examFrame) then examFrame:Remove() end
+        examFrame = nil
+    end
+
+    local function openExamDialog(title, passPercent, questions, info)
+        closeExam()
+        examPassPercent = tonumber(passPercent) or 80
+        examFrame = vgui.Create("DFrame")
+        examFrame:SetTitle("")
+        examFrame:SetSize(660, 580)
+        examFrame:Center()
+        examFrame:MakePopup()
+        examFrame.Paint = function(_, w, h) draw.RoundedBox(8, 0, 0, w, h, Color(22, 26, 34)) end
+
+        local head = vgui.Create("DLabel", examFrame)
+        head:Dock(TOP) head:DockMargin(12, 10, 12, 0) head:SetTall(24)
+        head:SetFont("GRMDoc_Bold") head:SetTextColor(Color(80, 160, 255))
+        head:SetText(title .. "  ·  проходной балл " .. tostring(passPercent) .. "%")
+
+        if istable(info) and info.passed then
+            local done = vgui.Create("DLabel", examFrame)
+            done:Dock(TOP) done:DockMargin(12, 2, 12, 0) done:SetTall(20)
+            done:SetFont("GRMDoc_Small") done:SetTextColor(Color(60, 190, 100))
+            done:SetText("Уже сдан: " .. tostring(info.correct or 0) .. "/" .. tostring(info.total or 0) .. " (" .. tostring(info.score or 0) .. "%), " .. os.date("%d.%m.%Y", info.date or os.time()))
+        end
+
+        local scroll = vgui.Create("DScrollPanel", examFrame)
+        scroll:Dock(FILL) scroll:DockMargin(8, 4, 8, 4)
+
+        local combos = {}
+        for i, q in ipairs(questions or {}) do
+            local lbl = vgui.Create("DLabel", scroll)
+            lbl:Dock(TOP) lbl:DockMargin(0, 8, 0, 2)
+            lbl:SetWrap(true) lbl:SetAutoStretchVertical(true)
+            lbl:SetFont("GRMDoc_Bold") lbl:SetTextColor(Color(230, 235, 245))
+            lbl:SetText(i .. ". " .. tostring(q.q))
+            local combo = vgui.Create("DComboBox", scroll)
+            combo:Dock(TOP) combo:DockMargin(0, 0, 0, 6)
+            combo:AddChoice("— выберите ответ —", "")
+            for oi, opt in ipairs(q.options or {}) do combo:AddChoice(opt, oi) end
+            combos[i] = combo
+        end
+
+        local btnSubmit = vgui.Create("DButton", examFrame)
+        btnSubmit:Dock(BOTTOM) btnSubmit:DockMargin(12, 4, 12, 10) btnSubmit:SetTall(34)
+        btnSubmit:SetText("✔ Отправить ответы")
+        btnSubmit:SetFont("GRMDoc_Bold") btnSubmit:SetTextColor(Color(255, 255, 255))
+        btnSubmit.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(40, 180, 90) or Color(30, 150, 75)) end
+        btnSubmit.DoClick = function()
+            local answers = {}
+            for i, combo in ipairs(combos) do
+                local _, data = combo:GetSelected()
+                answers[i] = tonumber(data) or 0
+            end
+            net.Start(NET_EXAM)
+                net.WriteString("submit")
+                net.WriteString(examLicType)
+                net.WriteString(examTargetKey)
+                net.WriteTable(answers)
+            net.SendToServer()
+        end
+
+        local btnClose = vgui.Create("DButton", examFrame)
+        btnClose:Dock(BOTTOM) btnClose:DockMargin(12, 0, 12, 6) btnClose:SetTall(24)
+        btnClose:SetText("✕ Закрыть")
+        btnClose:SetFont("GRMDoc_Bold") btnClose:SetTextColor(Color(255, 255, 255))
+        btnClose.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(210, 80, 80) or Color(150, 50, 50)) end
+        btnClose.DoClick = function() closeExam() end
+    end
+
+    -- Точка входа: запрашивает вопросы экзамена для выбранного гражданина.
+    function GRM.Documents.StartExam(licType, targetKey)
+        if not isstring(targetKey) or targetKey == "" then
+            notification.AddLegacy("Сначала выберите гражданина из списка!", NOTIFY_ERROR, 3)
+            return
+        end
+        examLicType = licType
+        examTargetKey = targetKey
+        net.Start(NET_EXAM)
+            net.WriteString("request")
+            net.WriteString(licType)
+            net.WriteString(targetKey)
+        net.SendToServer()
+    end
+
+    net.Receive(NET_EXAM, function()
+        local op = net.ReadString()
+        local licType = net.ReadString()
+        if op == "questions" then
+            local title = net.ReadString()
+            local passPercent = net.ReadUInt(8)
+            local questions = net.ReadTable() or {}
+            local info = net.ReadTable() or {}
+            openExamDialog(title, passPercent, questions, info)
+        elseif op == "result" then
+            local res = net.ReadTable() or {}
+            if res.passed then
+                notification.AddLegacy("Экзамен сдан: " .. tostring(res.correct or 0) .. "/" .. tostring(res.total or 0) .. " (" .. tostring(res.score or 0) .. "%). Можно выдавать лицензию.", NOTIFY_GENERIC, 6)
+                closeExam()
+            else
+                notification.AddLegacy("Экзамен НЕ сдан: " .. tostring(res.correct or 0) .. "/" .. tostring(res.total or 0) .. " (" .. tostring(res.score or 0) .. "%). Нужно " .. tostring(examPassPercent) .. "% — попробуйте ещё раз.", NOTIFY_ERROR, 6)
+            end
+        end
+    end)
 
     -- Хелпер авто-переноса текста
     local function wrapText(text, font, maxW)
@@ -2943,6 +3282,7 @@ if CLIENT then
         tpl.militaryLicense = tpl.militaryLicense or {}
         tpl.weaponLicense   = tpl.weaponLicense   or {}
         tpl.businessLicense = tpl.businessLicense or {}
+        tpl.fees            = tpl.fees            or { license = 500, milLicense = 0, weaponLicense = 1500, businessLicense = 3000 }
         tpl.factions        = tpl.factions        or {}
         tpl.access          = tpl.access          or { passports = {}, badges = {}, military = {}, licenses = {}, milLicenses = {}, weaponLicenses = {}, businessLicenses = {}, coverDocs = {} }
 
@@ -3031,7 +3371,66 @@ if CLIENT then
         local entLicIssuer = vgui.Create("DTextEntry", licPnl)
         entLicIssuer:SetPos(16, 158) entLicIssuer:SetSize(350, 28) entLicIssuer:SetText(tpl.license.defaultIssuer or "Дорожная Инспекция Полиции Порядка")
 
+        local lblL4 = vgui.Create("DLabel", licPnl)
+        lblL4:SetPos(16, 196) lblL4:SetText("Госпошлина за выдачу В/У (0 = бесплатно):") lblL4:SetFont("GRMDoc_Bold") lblL4:SizeToContents()
+        local entLicFee = vgui.Create("DNumberWang", licPnl)
+        entLicFee:SetPos(16, 220) entLicFee:SetSize(160, 28) entLicFee:SetMin(0) entLicFee:SetMax(1000000) entLicFee:SetValue(tonumber(tpl.fees and tpl.fees.license) or 500)
+
         tabs:AddSheet("Права (Дорожная Инспекция)", licPnl, "icon16/car.png")
+
+        -- Вкладка: Лицензия на оружие (ОЛРР)
+        local wlicPnl = vgui.Create("DPanel", tabs)
+        wlicPnl:DockPadding(16, 16, 16, 16)
+        wlicPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(30, 35, 45)) end
+
+        local lblW1 = vgui.Create("DLabel", wlicPnl)
+        lblW1:SetPos(16, 16) lblW1:SetText("Заголовок бланка лицензии на оружие:") lblW1:SetFont("GRMDoc_Bold") lblW1:SizeToContents()
+        local entWLicTitle = vgui.Create("DTextEntry", wlicPnl)
+        entWLicTitle:SetPos(16, 38) entWLicTitle:SetSize(350, 28) entWLicTitle:SetText(tpl.weaponLicense.stateTitle or "ОТДЕЛ ЛИЦЕНЗИОННО-РАЗРЕШИТЕЛЬНОЙ РАБОТЫ")
+
+        local lblW2 = vgui.Create("DLabel", wlicPnl)
+        lblW2:SetPos(16, 76) lblW2:SetText("Префикс номера лицензии:") lblW2:SetFont("GRMDoc_Bold") lblW2:SizeToContents()
+        local entWLicPfx = vgui.Create("DTextEntry", wlicPnl)
+        entWLicPfx:SetPos(16, 98) entWLicPfx:SetSize(150, 28) entWLicPfx:SetText(tpl.weaponLicense.defaultPrefix or "ЛО-")
+
+        local lblW3 = vgui.Create("DLabel", wlicPnl)
+        lblW3:SetPos(16, 136) lblW3:SetText("Орган выдачи по умолчанию:") lblW3:SetFont("GRMDoc_Bold") lblW3:SizeToContents()
+        local entWLicIssuer = vgui.Create("DTextEntry", wlicPnl)
+        entWLicIssuer:SetPos(16, 158) entWLicIssuer:SetSize(350, 28) entWLicIssuer:SetText(tpl.weaponLicense.defaultIssuer or "ОЛРР")
+
+        local lblW4 = vgui.Create("DLabel", wlicPnl)
+        lblW4:SetPos(16, 196) lblW4:SetText("Госпошлина за выдачу лицензии на оружие (0 = бесплатно):") lblW4:SetFont("GRMDoc_Bold") lblW4:SizeToContents()
+        local entWLicFee = vgui.Create("DNumberWang", wlicPnl)
+        entWLicFee:SetPos(16, 220) entWLicFee:SetSize(160, 28) entWLicFee:SetMin(0) entWLicFee:SetMax(1000000) entWLicFee:SetValue(tonumber(tpl.fees and tpl.fees.weaponLicense) or 1500)
+
+        tabs:AddSheet("Лицензия на оружие", wlicPnl, "icon16/gun.png")
+
+        -- Вкладка: Лицензия на ведение бизнеса
+        local blicPnl = vgui.Create("DPanel", tabs)
+        blicPnl:DockPadding(16, 16, 16, 16)
+        blicPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(30, 35, 45)) end
+
+        local lblB1 = vgui.Create("DLabel", blicPnl)
+        lblB1:SetPos(16, 16) lblB1:SetText("Заголовок бланка лицензии на бизнес:") lblB1:SetFont("GRMDoc_Bold") lblB1:SizeToContents()
+        local entBLicTitle = vgui.Create("DTextEntry", blicPnl)
+        entBLicTitle:SetPos(16, 38) entBLicTitle:SetSize(350, 28) entBLicTitle:SetText(tpl.businessLicense.stateTitle or "ЭКОНОМИЧЕСКОЕ УПРАВЛЕНИЕ")
+
+        local lblB2 = vgui.Create("DLabel", blicPnl)
+        lblB2:SetPos(16, 76) lblB2:SetText("Префикс номера лицензии:") lblB2:SetFont("GRMDoc_Bold") lblB2:SizeToContents()
+        local entBLicPfx = vgui.Create("DTextEntry", blicPnl)
+        entBLicPfx:SetPos(16, 98) entBLicPfx:SetSize(150, 28) entBLicPfx:SetText(tpl.businessLicense.defaultPrefix or "БЛ-")
+
+        local lblB3 = vgui.Create("DLabel", blicPnl)
+        lblB3:SetPos(16, 136) lblB3:SetText("Орган выдачи по умолчанию:") lblB3:SetFont("GRMDoc_Bold") lblB3:SizeToContents()
+        local entBLicIssuer = vgui.Create("DTextEntry", blicPnl)
+        entBLicIssuer:SetPos(16, 158) entBLicIssuer:SetSize(350, 28) entBLicIssuer:SetText(tpl.businessLicense.defaultIssuer or "Экономическое управление")
+
+        local lblB4 = vgui.Create("DLabel", blicPnl)
+        lblB4:SetPos(16, 196) lblB4:SetText("Госпошлина за выдачу лицензии на бизнес (0 = бесплатно):") lblB4:SetFont("GRMDoc_Bold") lblB4:SizeToContents()
+        local entBLicFee = vgui.Create("DNumberWang", blicPnl)
+        entBLicFee:SetPos(16, 220) entBLicFee:SetSize(160, 28) entBLicFee:SetMin(0) entBLicFee:SetMax(1000000) entBLicFee:SetValue(tonumber(tpl.fees and tpl.fees.businessLicense) or 3000)
+
+        tabs:AddSheet("Лицензия на бизнес", blicPnl, "icon16/money.png")
 
         -- Вкладка 4: Военные водительские права (ВАИ)
         local milLicPnl = vgui.Create("DPanel", tabs)
@@ -3205,6 +3604,28 @@ if CLIENT then
             coverBoxes[fname] = chk
         end
 
+        -- 7. Лицензии на оружие
+        mkSection("7. Фракции с правом выдачи лицензий на оружие (ОЛРР):", Color(160, 120, 60))
+        local weaponBoxes = {}
+        for _, fname in ipairs(names) do
+            local chk = vgui.Create("DCheckBoxLabel", accScroll)
+            chk:Dock(TOP) chk:DockMargin(12, 2, 0, 2)
+            chk:SetText(fname)
+            chk:SetValue(tpl.access.weaponLicenses and tpl.access.weaponLicenses[fname] == true)
+            weaponBoxes[fname] = chk
+        end
+
+        -- 8. Лицензии на бизнес
+        mkSection("8. Фракции с правом выдачи лицензий на бизнес (Экономическое управление):", Color(80, 200, 200))
+        local businessBoxes = {}
+        for _, fname in ipairs(names) do
+            local chk = vgui.Create("DCheckBoxLabel", accScroll)
+            chk:Dock(TOP) chk:DockMargin(12, 2, 0, 2)
+            chk:SetText(fname)
+            chk:SetValue(tpl.access.businessLicenses and tpl.access.businessLicenses[fname] == true)
+            businessBoxes[fname] = chk
+        end
+
         tabs:AddSheet("Права доступа к Компьютеру", accPnl, "icon16/key.png")
 
         -- Кнопка сохранения
@@ -3234,6 +3655,19 @@ if CLIENT then
             tpl.license.stateTitle = entLicTitle:GetText()
             tpl.license.defaultPrefix = entLicPfx:GetText()
             tpl.license.defaultIssuer = entLicIssuer:GetText()
+
+            tpl.weaponLicense.stateTitle = entWLicTitle:GetText()
+            tpl.weaponLicense.defaultPrefix = entWLicPfx:GetText()
+            tpl.weaponLicense.defaultIssuer = entWLicIssuer:GetText()
+
+            tpl.businessLicense.stateTitle = entBLicTitle:GetText()
+            tpl.businessLicense.defaultPrefix = entBLicPfx:GetText()
+            tpl.businessLicense.defaultIssuer = entBLicIssuer:GetText()
+
+            tpl.fees = tpl.fees or {}
+            tpl.fees.license = math.floor(tonumber(entLicFee:GetValue()) or 0)
+            tpl.fees.weaponLicense = math.floor(tonumber(entWLicFee:GetValue()) or 0)
+            tpl.fees.businessLicense = math.floor(tonumber(entBLicFee:GetValue()) or 0)
 
             tpl.militaryLicense.stateTitle = entMilLicTitle:GetText()
             tpl.militaryLicense.defaultPrefix = entMilLicPfx:GetText()
@@ -3274,6 +3708,12 @@ if CLIENT then
 
             tpl.access.milLicenses = {}
             for fn, cb in pairs(milLicBoxes) do if cb:GetChecked() then tpl.access.milLicenses[fn] = true end end
+
+            tpl.access.weaponLicenses = {}
+            for fn, cb in pairs(weaponBoxes) do if cb:GetChecked() then tpl.access.weaponLicenses[fn] = true end end
+
+            tpl.access.businessLicenses = {}
+            for fn, cb in pairs(businessBoxes) do if cb:GetChecked() then tpl.access.businessLicenses[fn] = true end end
 
             tpl.access.coverDocs = {}
             for fn, cb in pairs(coverBoxes) do if cb:GetChecked() then tpl.access.coverDocs[fn] = true end end

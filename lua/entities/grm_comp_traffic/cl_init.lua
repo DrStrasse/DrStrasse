@@ -140,6 +140,13 @@ net.Receive("GRM_CompTraffic_Open", function()
         end
     end
 
+    local btnExamCiv = vgui.Create("DButton", civPnl)
+    btnExamCiv:SetPos(16, yCat + 35) btnExamCiv:SetSize(210, 30)
+    btnExamCiv:SetText("📝 Экзамен (теория ПДД)")
+    btnExamCiv:SetFont("DermaDefaultBold") btnExamCiv:SetTextColor(color_white)
+    btnExamCiv.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(150, 110, 60) or Color(120, 88, 48)) end
+    btnExamCiv.DoClick = function() if GRM.Documents and GRM.Documents.StartExam then GRM.Documents.StartExam("license", selCKey) end end
+
     local btnIssueCiv = vgui.Create("DButton", civPnl)
     btnIssueCiv:SetPos(16, yCat + 75) btnIssueCiv:SetSize(360, 36)
     btnIssueCiv:SetText("✔ Выдать водительское удостоверение (Дорожная Инспекция)")

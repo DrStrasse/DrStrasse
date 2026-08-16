@@ -128,5 +128,57 @@ DOC.Registry.businessLicenses[key].status = "Отозвана"
 local b5, b6 = DOC.HasValidBusinessLicense(key)
 ok(b5 == false and b6 == "Отозвана", "revoked business license rejected")
 
+-- ── Теория-экзамены и госпошлины ────────────────────────────────────────
+ok(istable(DOC.ExamBank) and DOC.ExamBank.license and DOC.ExamBank.weaponLicense and DOC.ExamBank.businessLicense, "exam bank: license/weapon/business")
+ok(#(DOC.ExamBank.weaponLicense.questions) >= 4, "weapon exam has questions (" .. tostring(#(DOC.ExamBank.weaponLicense.questions)) .. ")")
+
+local qs, title, passPct = DOC.ExamQuestions("license")
+ok(qs ~= nil and title ~= "" and passPct == 80, "ExamQuestions returns sanitized questions")
+ok(qs[1].q ~= nil and istable(qs[1].options) and qs[1].correct == nil, "client questions hide correct answers")
+
+-- Правильные ответы дают сдачу.
+local key2 = "123:char1"
+local correctAnswers = {}
+for i, q in ipairs(DOC.ExamBank.weaponLicense.questions) do correctAnswers[i] = q.correct end
+local gOk, gRes = DOC.GradeExam(key2, "weaponLicense", correctAnswers)
+ok(gOk == true and gRes.passed == true and gRes.score == 100, "correct answers pass (100%)")
+ok(DOC.ExamInfo(key2, "weaponLicense").passed == true, "ExamInfo reflects passed")
+
+-- Неправильные ответы — не сдан.
+local wrongAnswers = {}
+for i = 1, #DOC.ExamBank.weaponLicense.questions do wrongAnswers[i] = 1 end
+local wOk, wRes = DOC.GradeExam(key2, "weaponLicense", wrongAnswers)
+ok(wOk == true and wRes.passed == false, "wrong answers fail")
+
+-- Пошлины.
+ok(DOC.FeeOf("license") == 500 and DOC.FeeOf("weaponLicense") == 1500 and DOC.FeeOf("businessLicense") == 3000, "default fees (500/1500/3000)")
+ok(DOC.FeeOf("milLicense") == 0, "military license is free")
+
+-- Списывание пошлины + распределение (80% фракции / 20% казна).
+Factions = { ["OrdnungPolizei"] = { budget = 0 } }
+local stateBudget = 0
+local wallet = { ["123:char1"] = 100000 }
+GRM.GetBalance = function(p) return wallet["123:char1"] end
+GRM.TakeMoney = function(p, sum, reason) if wallet["123:char1"] < sum then return false end; wallet["123:char1"] = wallet["123:char1"] - sum; return true end
+GRM.FactionBudgetAdd = function(fname, sum, reason) Factions[fname].budget = (Factions[fname].budget or 0) + sum end
+GRM.Economy = { BankBalance = function(p) return 0 end, BankTake = function() return false end, StateAdd = function(sum, reason) stateBudget = stateBudget + sum end }
+GRM.Services = {
+    Charge = function(p, amount, source, reason)
+        if GRM.GetBalance(p) < amount then return false, "Недостаточно наличных" end
+        return GRM.TakeMoney(p, amount, reason), nil
+    end,
+}
+local payPly = { sid64 = "123", __valid = true }
+local cOk, cAmount = DOC.CollectFee(payPly, "weaponLicense", "OrdnungPolizei")
+ok(cOk == true and cAmount == 1500, "fee charged: 1500")
+ok(wallet["123:char1"] == 98500, "wallet decreased by fee (100000→98500)")
+ok(Factions["OrdnungPolizei"].budget == 1200, "80% to faction budget (1200)")
+ok(stateBudget == 300, "20% to treasury (300)")
+
+-- Нехватка средств → отказ.
+wallet["123:char1"] = 100
+local nOk, nErr = DOC.CollectFee(payPly, "weaponLicense", "OrdnungPolizei")
+ok(nOk == false and nErr ~= nil, "insufficient funds rejected: " .. tostring(nErr))
+
 print(("LICENSES: %d/%d failures=%d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

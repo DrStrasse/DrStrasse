@@ -15,6 +15,15 @@ local CC = {
     gold    = Color(245, 200, 70),
 }
 
+-- Теория-экзамен живёт в общем клиентском модуле документов (GRM.Documents).
+local function startTheoryExam(licType, targetKey)
+    if GRM.Documents and GRM.Documents.StartExam then
+        GRM.Documents.StartExam(licType, targetKey)
+    else
+        notification.AddLegacy("Модуль экзамена не загружен (sh_grm_documents.lua).", NOTIFY_ERROR, 3)
+    end
+end
+
 function ENT:Draw()
     self:DrawModel()
 
@@ -578,10 +587,19 @@ net.Receive("GRM_DocComp_Open", function()
             end
         end
 
+        local feeLic = (tpls.fees and tpls.fees.license) or 500
+        local btnExam = vgui.Create("DButton", formContainer)
+        btnExam:SetPos(0, yCat + 35)
+        btnExam:SetSize(210, 30)
+        btnExam:SetText("📝 Экзамен (теория ПДД)")
+        btnExam:SetFont("DermaDefaultBold") btnExam:SetTextColor(color_white)
+        btnExam.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(150, 110, 60) or Color(120, 88, 48)) end
+        btnExam.DoClick = function() startTheoryExam("license", selKey) end
+
         local btnIssue = vgui.Create("DButton", formContainer)
         btnIssue:SetPos(0, yCat + 75)
         btnIssue:SetSize(360, 36)
-        btnIssue:SetText("✔ Оформить и выдать гражданское ВУ (ГАИ)")
+        btnIssue:SetText("✔ Оформить и выдать гражданское ВУ (пошлина " .. tostring(feeLic) .. ")")
         btnIssue:SetFont("DermaDefaultBold")
         btnIssue:SetTextColor(color_white)
         btnIssue.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(35, 150, 180) or Color(25, 120, 150)) end
@@ -934,9 +952,17 @@ net.Receive("GRM_DocComp_Open", function()
         end
     end
 
+    local feeW = (tpls.fees and tpls.fees.weaponLicense) or 1500
+    local btnWExam = vgui.Create("DButton", wlicPnl)
+    btnWExam:SetPos(420, 348) btnWExam:SetSize(210, 36)
+    btnWExam:SetText("📝 Экзамен (теория)")
+    btnWExam:SetFont("DermaDefaultBold") btnWExam:SetTextColor(color_white)
+    btnWExam.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(150, 110, 60) or Color(120, 88, 48)) end
+    btnWExam.DoClick = function() startTheoryExam("weaponLicense", selWKey) end
+
     local btnWIssue = vgui.Create("DButton", wlicPnl)
     btnWIssue:SetPos(16, 348) btnWIssue:SetSize(400, 36)
-    btnWIssue:SetText("✔ Оформить и выдать лицензию на оружие")
+    btnWIssue:SetText("✔ Оформить и выдать лицензию на оружие (пошлина " .. tostring(feeW) .. ")")
     btnWIssue:SetFont("DermaDefaultBold") btnWIssue:SetTextColor(color_white)
     btnWIssue.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(35, 150, 120) or Color(25, 120, 95)) end
     btnWIssue.DoClick = function()
@@ -1049,9 +1075,17 @@ net.Receive("GRM_DocComp_Open", function()
         end
     end
 
+    local feeB = (tpls.fees and tpls.fees.businessLicense) or 3000
+    local btnBExam = vgui.Create("DButton", blicPnl)
+    btnBExam:SetPos(420, 300) btnBExam:SetSize(210, 36)
+    btnBExam:SetText("📝 Экзамен (теория)")
+    btnBExam:SetFont("DermaDefaultBold") btnBExam:SetTextColor(color_white)
+    btnBExam.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(150, 110, 60) or Color(120, 88, 48)) end
+    btnBExam.DoClick = function() startTheoryExam("businessLicense", selBKey) end
+
     local btnBIssue = vgui.Create("DButton", blicPnl)
     btnBIssue:SetPos(16, 300) btnBIssue:SetSize(400, 36)
-    btnBIssue:SetText("✔ Оформить и выдать лицензию на бизнес")
+    btnBIssue:SetText("✔ Оформить и выдать лицензию на бизнес (пошлина " .. tostring(feeB) .. ")")
     btnBIssue:SetFont("DermaDefaultBold") btnBIssue:SetTextColor(color_white)
     btnBIssue.Paint = function(s, w, h) draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(35, 150, 150) or Color(25, 120, 120)) end
     btnBIssue.DoClick = function()
