@@ -4,6 +4,13 @@ GRM = GRM or {}
 GRM.Minimap = GRM.Minimap or {}
 local MM = GRM.Minimap
 MM.File = "grm_minimap_" .. string.lower(game.GetMap() or "unknown") .. ".json"
+MM.GPSArrivalRadius=120
+function MM.HasArrived(current,target,radius,maxVertical)
+ if not current or not target then return false end
+ radius=math.Clamp(tonumber(radius)or MM.GPSArrivalRadius,64,256);maxVertical=math.Clamp(tonumber(maxVertical)or 180,64,512)
+ local dx=(tonumber(current.x)or 0)-(tonumber(target.x)or 0);local dy=(tonumber(current.y)or 0)-(tonumber(target.y)or 0);local dz=math.abs((tonumber(current.z)or 0)-(tonumber(target.z)or 0))
+ return dx*dx+dy*dy<=radius*radius and dz<=maxVertical
+end
 
 if SERVER then
     util.AddNetworkString("GRM_Minimap_Data")
@@ -325,6 +332,18 @@ else
         net.Receive("GRM_Minimap_Data", function() data = net.ReadTable() or data; mapSnapshotReady = false; nextMapRender = 0; rebuild() end)
     end)
     local gpsTarget
+    local reachedTemp={}
+    local arrivalSince,nextArrivalCheck=nil,0
+    local function gpsPoint(id)for _,point in ipairs(data.points or{})do if tostring(point.id)==tostring(id)then return point end end end
+    function MM.ClearGPS()gpsTarget=nil;arrivalSince=nil end
+    hook.Add("Think","GRM_GPS_AutoArrival",function()
+        if not gpsTarget then arrivalSince=nil return end;local now=CurTime();if now<nextArrivalCheck then return end;nextArrivalCheck=now+.15
+        local lp=LocalPlayer();if not IsValid(lp)then return end;local point=gpsPoint(gpsTarget);if not point then MM.ClearGPS()return end
+        if MM.HasArrived(lp:GetPos(),point.pos,point.arrivalRadius or MM.GPSArrivalRadius,180)then
+            arrivalSince=arrivalSince or now
+            if now-arrivalSince>=.45 then local name=tostring(point.name or"место назначения");if point.temp then reachedTemp[tostring(point.id)]=true end;MM.ClearGPS();notification.AddLegacy("Вы достигли места назначения.",NOTIFY_GENERIC,5);surface.PlaySound("buttons/button15.wav");chat.AddText(Color(255,210,75),"[GPS] ",color_white,"Вы достигли места назначения: "..name)end
+        else arrivalSince=nil end
+    end)
     local function openGPS()
         if IsValid(frame) then frame:Close() end
         frame = vgui.Create("DFrame") frame:SetSize(520, 500) frame:Center() frame:MakePopup() frame:SetTitle("GRM — GPS и точки")
@@ -332,9 +351,9 @@ else
         for _, p in ipairs(data.points or {}) do
             local b = vgui.Create("DButton", list) b:Dock(TOP) b:SetTall(36) b:DockMargin(0, 0, 0, 5)
             b:SetText(tostring(p.name) .. "  •  GPS-метка")
-            b.DoClick = function() gpsTarget = p.id; frame:Close() end
+            b.DoClick = function() gpsTarget=p.id;arrivalSince=nil;reachedTemp[tostring(p.id)]=nil;frame:Close() end
         end
-        local clear = vgui.Create("DButton", frame) clear:SetPos(12, 470) clear:SetSize(496, 24) clear:SetText("Сбросить GPS") clear.DoClick = function() gpsTarget = nil frame:Close() end
+        local clear = vgui.Create("DButton", frame) clear:SetPos(12, 470) clear:SetSize(496, 24) clear:SetText("Сбросить GPS") clear.DoClick = function() MM.ClearGPS();frame:Close() end
     end
     concommand.Add("grm_minimap_admin", function() if IsValid(LocalPlayer()) and LocalPlayer():IsSuperAdmin() then net.Start("GRM_Minimap_Open") net.SendToServer() end end)
     concommand.Add("grm_gps", openGPS)
@@ -384,7 +403,7 @@ else
         if not IsValid(lp) then return end
         local now = CurTime()
         for _, point in ipairs(data.points or {}) do
-            if point and point.temp and (tonumber(point.expires) or 0) > now then
+            if point and point.temp and not reachedTemp[tostring(point.id)] and (tonumber(point.expires) or 0) > now then
                 local target = Vector(point.pos.x, point.pos.y, point.pos.z or lp:GetPos().z)
                 local screen = target:ToScreen()
                 local distance = math.floor(lp:GetPos():Distance(target))

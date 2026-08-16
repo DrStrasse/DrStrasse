@@ -126,7 +126,8 @@ GRM уже является не набором отдельных аддоно�
 | Perm | API, ownership, delegates | Адаптеры всех собственных persistence-систем |
 | PropProtect | Character/faction/server ownership | Единый WorldObject policy |
 | Doors v3 + Property v1 | владение, ACL, ордера, здания, аренда, организации, коммунальные, ключи, печати | Следом: интерьерные зоны, договоры и муниципальный реестр |
-| Weather/Time | **Отложено, удалено из production**; наработки в `ARCHIVE_WEATHER_2026.md` | Возвращать только отдельным optional addon после per-map dedicated-тестов |
+| Weather | **Отложено, удалено из production**; наработки в `ARCHIVE_WEATHER_2026.md` | Возвращать только отдельным optional addon после per-map dedicated-тестов |
+| Real Time + GPS | реальные UTC+3 часы в TAB; GPS автоматически завершается при прибытии | ETA, маршруты и дорожная сеть без Weather-зависимости |
 | FFD/sliding | механика и физика | Единая DoorActuator abstraction |
 | Vehicle keys/trunk | замки, багажник | Единый VehicleOwnership API |
 | Anti-Stuck | безопасный локальный выход | Карта диагностических неудач |

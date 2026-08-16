@@ -1,4 +1,6 @@
 --[[--------------------------------------------------------------------
+    GRM Tab Menu v2.0 — RP-имена + серверные часы HH:MM:SS
+    v2.0: в шапке TAB отображается реальное серверное время GRM.Time.
     GRM Tab Menu v1.9 — Игровые (RP) имена вместо Steam-ников
     v1.9: в списке и карточке игрока показывается RP-имя (NWString
           GRM_RPName, Код 72); если RP-имени нет — фолбэк на Steam-ник;
@@ -870,6 +872,15 @@ if CLIENT then
             if s:IsHovered() then draw.RoundedBox(4, 0, 0, w, h, Color(180,40,40)) end
         end
         closeBtn.DoClick = function() f:Remove(); _frame = nil end
+
+        local clockPanel=vgui.Create("DPanel",f)
+        clockPanel:SetPos(W-306,6);clockPanel:SetSize(166,28)
+        clockPanel.Paint=function(_,w,h)
+            draw.RoundedBox(5,0,0,w,h,Color(18,25,40,245));surface.SetDrawColor(C.BORDER);surface.DrawOutlinedRect(0,0,w,h,1)
+            local now=GRM.Time and GRM.Time.GetString and GRM.Time.GetString()or GetGlobalString("GRM_RealTime","--:--:--")
+            draw.SimpleText(now,"GRMT_Head",w/2,h/2,C.CYAN,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+        end
+        clockPanel:SetTooltip("Реальное серверное время • UTC+3 по умолчанию")
 
         local refBtn = vgui.Create("DButton", f)
         refBtn:SetPos(W - 130, 8); refBtn:SetSize(90, 24)
