@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Q-меню «Стройка» v4.1.0 (Код 96) — переписано с нуля
+    GRM Q-меню «Стройка» v5.0.0 (Код 96) — большой безопасный SpawnMenu
 
     v4.1.1: три колонки — меню | инструменты | панель настроек;
       окно шире и выше; параметры в отдельной правой колонке, не под тулами.
@@ -21,7 +21,7 @@ GRM = GRM or {}
 GRM.QMenu = GRM.QMenu or {}
 local QM = GRM.QMenu
 
-QM.Version = "4.1.1"
+QM.Version = "5.0.0"
 
 local CONFIG_FILE = "grm_qmenu.json"
 
@@ -94,6 +94,16 @@ QM.ToolCategories = {
     { id = "misc",    name = "Прочее" },
 }
 
+-- Игроку доступен только строительный набор. GRM-служебные тулы,
+-- дубликаторы, оружие и спавнеры остаются только у суперадмина.
+QM.PlayerTools = {
+    weld=true, axis=true, ballsocket=true, nocollide=true, rope=true, pulley=true,
+    winch=true, hydraulics=true, muscle=true, slider=true, wheel=true, motor=true,
+    thruster=true, hoverball=true, balloon=true, light=true, lamp=true, button=true,
+    camera=true, textscreen=true, colour=true, material=true, paint=true, trails=true,
+    remover=true, precision=true, stacker=true,
+}
+
 QM.SeedProps = {
     "models/props_c17/furnituretable001a.mdl",
     "models/props_c17/furnituretable002a.mdl",
@@ -119,7 +129,7 @@ local function defaultCfg()
     return {
         playersQ     = true,
         allowProps   = true,
-        allowRagdolls= true,
+        allowRagdolls= false,
         allowEffects = false,
         allowNPCs    = false,
         allowSENTs   = false,
@@ -167,7 +177,7 @@ QM.Schema = {
         { cvar = "grm_service_tool_make_perm", type = "bool", label = "Сохранять на карте" },
     },
     grm_duty_npc = {
-        { cvar = "grm_duty_npc_faction", type = "text", label = "Точное имя фракции (обязательно)" },
+        { cvar = "grm_duty_npc_faction", type = "choice", label = "Фракция (обязательно)", dynamic = "factions" },
         { cvar = "grm_duty_npc_title", type = "text", label = "Заголовок" },
         { cvar = "grm_duty_npc_model", type = "text", label = "Модель NPC" },
         { cvar = "grm_duty_npc_make_perm", type = "bool", label = "Сохранять на карте" },
@@ -209,27 +219,20 @@ QM.Schema = {
         { cvar = "ffd_scanner_hold_time", type = "number", label = "Удержание, сек" },
     },
     light = {
-        { cvar = "light_r", type = "number", label = "Красный" },
-        { cvar = "light_g", type = "number", label = "Зелёный" },
-        { cvar = "light_b", type = "number", label = "Синий" },
+        { type = "color", label = "Цвет света", cvars = { r="light_r", g="light_g", b="light_b" } },
         { cvar = "light_brightness", type = "number", label = "Яркость" },
         { cvar = "light_size", type = "number", label = "Радиус" },
         { cvar = "light_toggle", type = "bool", label = "Переключатель" },
     },
     lamp = {
-        { cvar = "lamp_r", type = "number", label = "Красный" },
-        { cvar = "lamp_g", type = "number", label = "Зелёный" },
-        { cvar = "lamp_b", type = "number", label = "Синий" },
+        { type = "color", label = "Цвет лампы", cvars = { r="lamp_r", g="lamp_g", b="lamp_b" } },
         { cvar = "lamp_brightness", type = "number", label = "Яркость" },
         { cvar = "lamp_fov", type = "number", label = "Угол луча" },
         { cvar = "lamp_distance", type = "number", label = "Дальность" },
         { cvar = "lamp_toggle", type = "bool", label = "Переключатель" },
     },
     colour = {
-        { cvar = "colour_r", type = "number", label = "Красный" },
-        { cvar = "colour_g", type = "number", label = "Зелёный" },
-        { cvar = "colour_b", type = "number", label = "Синий" },
-        { cvar = "colour_a", type = "number", label = "Прозрачность" },
+        { type = "color", label = "Цвет и прозрачность", cvars = { r="colour_r", g="colour_g", b="colour_b", a="colour_a" } },
     },
     weld = {
         { cvar = "weld_forcelimit", type = "number", label = "Предел силы (0 = без лимита)" },
@@ -364,8 +367,13 @@ if SERVER then
     end
 
     function QM.PushSync(ply)
+        local payload = {}
+        for k,v in pairs(QM.Cfg or defaultCfg()) do payload[k]=v end
+        payload._factions = {}
+        for name in pairs(Factions or {}) do payload._factions[#payload._factions + 1] = name end
+        table.sort(payload._factions, function(a,b) return string.lower(a) < string.lower(b) end)
         net.Start(NET_SYNC)
-            net.WriteTable(QM.Cfg or defaultCfg())
+            net.WriteTable(payload)
         if IsValid(ply) then net.Send(ply) else net.Broadcast() end
     end
     hook.Add("PlayerInitialSpawn", "GRM_QMenu_SyncJoin", function(ply)
@@ -465,8 +473,13 @@ if SERVER then
         if IsValid(ply) and (ply:GetNWBool("GRM_Cuffed", false) or ply:GetNWBool("GRM_Stunned", false)) then
             return false, "Игрок ограничен наручниками/оглушением"
         end
+        what = tostring(what or "")
+        -- Жёсткий контур: обычный игрок через Q может создавать только prop_physics.
+        if IsValid(ply) and not ply:IsSuperAdmin() and what ~= "prop" then
+            return false, "В Q-меню игрокам разрешены только пропы"
+        end
         if IsValid(ply) and ply:IsSuperAdmin() then return true end
-        local flag = SpawnFlags[tostring(what or "")]
+        local flag = SpawnFlags[what]
         if not flag then return true end
         return QM.Cfg[flag] == true
     end
@@ -478,6 +491,7 @@ if SERVER then
         if IsValid(ply) and ply:IsSuperAdmin() then return true end
         tool = string.lower(tostring(tool or ""))
         if tool == "" then return true end
+        if not QM.PlayerTools[tool] then return false, "Этот инструмент доступен только суперадмину" end
         if QM.Cfg.toolDeny[tool] == true then
             return false, "Инструмент «" .. tool .. "» запрещён администрацией"
         end
@@ -506,6 +520,9 @@ if SERVER then
         if not GRM.QMenu.CanSpawn(ply, "sent") then return false end
     end)
     hook.Add("PlayerSpawnSWEP", "GRM_QMenu_SWEP", function(ply)
+        if not GRM.QMenu.CanSpawn(ply, "swep") then return false end
+    end)
+    hook.Add("PlayerGiveSWEP", "GRM_QMenu_GiveSWEP", function(ply)
         if not GRM.QMenu.CanSpawn(ply, "swep") then return false end
     end)
     hook.Add("PlayerSpawnVehicle", "GRM_QMenu_Vehicle", function(ply)
@@ -947,6 +964,7 @@ if CLIENT then
     if isfunction(CreateClientConVar) then
         CreateClientConVar("grm_qmenu_safe", "0", true, false, "1 — без иконок моделей")
         CreateClientConVar("grm_qmenu_profile", "0", true, false, "1 — печать этапов сборки")
+        CreateClientConVar("grm_qmenu_compact", "0", true, false, "1 — компактные подписи")
     end
 
     local function safeMode()
@@ -967,6 +985,8 @@ if CLIENT then
     net.Receive("GRM_QMenu_Sync", function()
         local t = net.ReadTable()
         if not istable(t) then return end
+        QM.FactionNames = istable(t._factions) and t._factions or QM.FactionNames or {}
+        t._factions = nil
         local d = GRM.QMenu.Cfg or {}
         for k, v in pairs(t) do d[k] = v end
         GRM.QMenu.Cfg = d
@@ -1050,9 +1070,7 @@ if CLIENT then
         local lp = LocalPlayer()
         if IsValid(lp) and (lp:GetNWBool("GRM_Cuffed", false) or lp:GetNWBool("GRM_Stunned", false)) then return true end
         local c = cfg()
-        if c.playersQ ~= false then return false end
-        if isAdmin() and c.adminsToo ~= true then return false end
-        return true
+        return c.grmBuildMenu == true
     end
 
     hook.Add("SpawnMenuOpen", "GRM_QMenu_BlockOpen", function()
@@ -1123,6 +1141,7 @@ if CLIENT then
         if isAdmin() then return nil end
         local c = cfg()
         id = string.lower(id)
+        if not QM.PlayerTools[id] then return "только для суперадмина" end
         if istable(c.toolDeny) and c.toolDeny[id] == true then return "закрыт чёрным списком" end
         if c.whitelistMode == true and (not istable(c.toolAllow) or c.toolAllow[id] ~= true) then
             return "включён белый режим"
@@ -1198,68 +1217,49 @@ if CLIENT then
         if not IsValid(body) then return end
         if isfunction(body.Clear) then body:Clear() end
         local function addHint(txt)
-            local l = vgui.Create("DLabel", body)
-            l:Dock(TOP) l:SetTall(78) l:SetFont("GRMQ_Text") l:SetTextColor(QC.dim) l:SetWrap(true)
-            l:DockMargin(6, 6, 6, 4)
-            l:SetText(txt)
+            local l=vgui.Create("DLabel",body); l:Dock(TOP); l:SetTall(86); l:SetFont("GRMQ_Text"); l:SetTextColor(QC.dim); l:SetWrap(true); l:DockMargin(8,8,8,4); l:SetText(txt)
             if isfunction(body.AddItem) then body:AddItem(l) end
         end
-        if not isstring(toolId) or toolId == "" then
-            addHint("Выберите инструмент слева. Параметры появятся здесь, если для него есть схема Стройки.")
-            return
-        end
-        -- Только ручная схема. Авто из ClientConVar сюда не попадает.
-        local schema = QM.ResolveSchema(toolId)
-        if not schema then
-            local name = toolId
-            for _, t in ipairs(QM.ToolCatalog) do
-                if t.id == toolId then name = toolLabel(t) break end
-            end
-            addHint("«" .. tostring(name) .. "» — панели в Стройке нет. Инструмент уже выбран: работайте в мире.")
-            return
-        end
-        for _, row in ipairs(schema) do
-            local caption = row.label
-            if isstring(caption) and caption ~= "" and isstring(row.cvar) and row.cvar ~= "" then
-                local kind = row.type
-                local tall = 28
-                if kind == "choice" or kind == "text" then tall = 48
-                elseif kind == "bool" then tall = 24 end
-                local box = vgui.Create("DPanel", body)
-                box:Dock(TOP) box:SetTall(tall) box:DockMargin(2, 2, 2, 2)
-                box:SetPaintBackground(false)
+        if not isstring(toolId) or toolId=="" then addHint("Выберите строительный инструмент. Его безопасные параметры появятся в этой колонке.") return end
+        local schema=QM.ResolveSchema(toolId)
+        if not schema then addHint("Для этого инструмента нет параметров в быстром меню. Инструмент уже выбран — работайте им в мире.") return end
+        for _,row in ipairs(schema) do
+            local caption=tostring(row.label or "")
+            local kind=tostring(row.type or "text")
+            if caption~="" and (kind=="color" or (isstring(row.cvar) and row.cvar~="")) then
+                local tall=(kind=="color" and 245) or ((kind=="choice" or kind=="text") and 54) or (kind=="bool" and 28 or 34)
+                local box=vgui.Create("DPanel",body); box:Dock(TOP); box:SetTall(tall); box:DockMargin(4,4,4,2); box:SetPaintBackground(false)
                 if isfunction(body.AddItem) then body:AddItem(box) end
-                if kind == "bool" then
-                    local cb = vgui.Create("DCheckBoxLabel", box)
-                    cb:SetPos(4, 3) cb:SetSize(276, 18)
-                    cb:SetFont("GRMQ_Text") cb:SetTextColor(QC.text)
-                    cb:SetText(caption)
-                    cb:SetValue(cvarGet(row.cvar) ~= "0" and 1 or 0)
-                    cb.OnChange = function(_, v) cvarSet(row.cvar, v and "1" or "0") end
+                if kind=="bool" then
+                    local cb=vgui.Create("DCheckBoxLabel",box); cb:SetPos(6,5); cb:SetSize(270,20); cb:SetFont("GRMQ_Text"); cb:SetTextColor(QC.text); cb:SetText(caption); cb:SetValue(cvarGet(row.cvar)~="0" and 1 or 0)
+                    cb.OnChange=function(_,v)cvarSet(row.cvar,v and "1" or "0")end
+                elseif kind=="color" then
+                    local lab=vgui.Create("DLabel",box); lab:SetPos(6,2); lab:SetSize(270,18); lab:SetFont("GRMQ_Text"); lab:SetTextColor(QC.text); lab:SetText(caption)
+                    local cv=row.cvars or {}; local mixer=vgui.Create("DColorMixer",box); mixer:SetPos(6,24); mixer:SetSize(270,210); mixer:SetPalette(true); mixer:SetWangs(true); mixer:SetAlphaBar(cv.a~=nil)
+                    mixer:SetColor(Color(tonumber(cvarGet(cv.r)) or 255,tonumber(cvarGet(cv.g)) or 255,tonumber(cvarGet(cv.b)) or 255,cv.a and (tonumber(cvarGet(cv.a)) or 255) or 255))
+                    mixer.ValueChanged=function(_,col)
+                        if cv.r then cvarSet(cv.r,math.floor(col.r or 255)) end
+                        if cv.g then cvarSet(cv.g,math.floor(col.g or 255)) end
+                        if cv.b then cvarSet(cv.b,math.floor(col.b or 255)) end
+                        if cv.a then cvarSet(cv.a,math.floor(col.a or 255)) end
+                    end
                 else
-                    local lab = vgui.Create("DLabel", box)
-                    lab:SetPos(4, 2) lab:SetSize(276, 16) lab:SetFont("GRMQ_Small") lab:SetTextColor(QC.dim)
-                    lab:SetText(caption)
-                    if kind == "choice" then
-                        local combo = vgui.Create("DComboBox", box)
-                        combo:SetPos(4, 20) combo:SetSize(276, 22)
-                        local cur = cvarGet(row.cvar)
-                        for _, ch in ipairs(row.choices or {}) do
-                            combo:AddChoice(ch[1], ch[2], ch[2] == cur)
+                    local lab=vgui.Create("DLabel",box); lab:SetPos(6,2); lab:SetSize(270,17); lab:SetFont("GRMQ_Small"); lab:SetTextColor(QC.dim); lab:SetText(caption)
+                    if kind=="choice" then
+                        local combo=vgui.Create("DComboBox",box); combo:SetPos(6,23); combo:SetSize(270,25)
+                        local cur=cvarGet(row.cvar); local choices=row.choices or {}
+                        if row.dynamic=="factions" then
+                            choices={}; local names=QM.FactionNames or {}
+                            if #names==0 and istable(Factions) then names={}; for name in pairs(Factions) do names[#names+1]=name end; table.sort(names,function(a,b)return string.lower(a)<string.lower(b)end) end
+                            for _,name in ipairs(names) do choices[#choices+1]={name,name} end
                         end
-                        combo.OnSelect = function(_, _, _, data) if data then cvarSet(row.cvar, data) end end
-                    elseif kind == "number" then
-                        local nw = vgui.Create("DNumberWang", box)
-                        nw:SetPos(176, 4) nw:SetSize(100, 20)
-                        nw:SetMin(-99999) nw:SetMax(99999)
-                        nw:SetValue(tonumber(cvarGet(row.cvar)) or 0)
-                        nw.OnValueChanged = function(_, v) cvarSet(row.cvar, tostring(v)) end
+                        if #choices==0 then combo:SetValue("Нет доступных вариантов") end
+                        for _,ch in ipairs(choices) do combo:AddChoice(ch[1],ch[2],ch[2]==cur) end
+                        combo.OnSelect=function(_,_,_,data)if data then cvarSet(row.cvar,data)end end
+                    elseif kind=="number" then
+                        local nw=vgui.Create("DNumberWang",box); nw:SetPos(174,6); nw:SetSize(102,23); nw:SetMin(tonumber(row.min) or -99999); nw:SetMax(tonumber(row.max) or 99999); nw:SetValue(tonumber(cvarGet(row.cvar)) or 0); nw.OnValueChanged=function(_,v)cvarSet(row.cvar,tostring(v))end
                     else
-                        local te = vgui.Create("DTextEntry", box)
-                        te:SetPos(4, 20) te:SetSize(276, 22) te:SetFont("GRMQ_Text")
-                        te:SetValue(cvarGet(row.cvar))
-                        te.OnEnter = function() cvarSet(row.cvar, te:GetValue() or "") end
-                        te.OnLoseFocus = function() cvarSet(row.cvar, te:GetValue() or "") end
+                        local te=vgui.Create("DTextEntry",box); te:SetPos(6,23); te:SetSize(270,25); te:SetFont("GRMQ_Text"); te:SetValue(cvarGet(row.cvar)); te.OnEnter=function()cvarSet(row.cvar,te:GetValue() or "")end; te.OnLoseFocus=te.OnEnter
                     end
                 end
             end
@@ -1274,14 +1274,14 @@ if CLIENT then
         if QM._tab ~= "catalog" and QM._tab ~= "mine" and QM._tab ~= "settings" then
             QM._tab = "catalog"
         end
-        if not admin and QM._tab == "settings" then QM._tab = "catalog" end
+        -- Вкладка настроек доступна всем; серверные параметры внутри — только админу.
 
         local FW, FH = 1400, 780
         if isfunction(ScrW) and isfunction(ScrH) then
             local sw, sh = ScrW(), ScrH()
             if isnumber(sw) and isnumber(sh) and sw > 0 and sh > 0 then
-                FW = math.Clamp(math.floor(sw * 0.88), 1100, 1680)
-                FH = math.Clamp(math.floor(sh * 0.84), 640, 960)
+                FW = math.Clamp(math.floor(sw * 0.94), 1280, 1900)
+                FH = math.Clamp(math.floor(sh * 0.92), 700, 1040)
             end
         end
         -- Три колонки: меню | инструменты | панель. Иконки в safe-режиме
@@ -1354,7 +1354,7 @@ if CLIENT then
             { "catalog", "Каталог", 110 },
             { "mine", "Мои объекты", 128 },
         }
-        if admin then tabDefs[#tabDefs + 1] = { "settings", "Настройки ⚙", 128 } end
+        tabDefs[#tabDefs + 1] = { "settings", "Настройки ⚙", 128 }
         local tabX = PAD
         for _, td in ipairs(tabDefs) do
             local id, txt, w = td[1], td[2], td[3]
@@ -1545,7 +1545,7 @@ if CLIENT then
             for _, catDef in ipairs(QM.ToolCategories or {}) do
                 local here = {}
                 for _, t in ipairs(QM.ToolCatalog) do
-                    if (t.cat or "misc") == catDef.id then here[#here + 1] = t end
+                    if (t.cat or "misc") == catDef.id and (admin or QM.PlayerTools[t.id]) then here[#here + 1] = t end
                 end
                 if #here > 0 then
                     catsShown = catsShown + 1
@@ -1568,8 +1568,10 @@ if CLIENT then
                             local why = toolWhy(t.id)
                             local allowed = why == nil
                             local row = vgui.Create("DButton")
-                            row:SetText("") row:SetTall(22)
-                            local tlabel = fitText(toolLabel(t), "GRMQ_Text", innerW)
+                            local compact = GetConVar("grm_qmenu_compact") and GetConVar("grm_qmenu_compact"):GetBool()
+                            row:SetText("") row:SetTall(compact and 18 or 24)
+                            local rowFont = compact and "GRMQ_Small" or "GRMQ_Text"
+                            local tlabel = fitText(toolLabel(t), rowFont, innerW)
                             local tid = t.id
                             row:SetTooltip(toolLabel(t) .. " [" .. tid .. "]\n" .. tostring(t.desc or "")
                                 .. (why and ("\nНЕДОСТУПНО: " .. why) or ""))
@@ -1581,7 +1583,7 @@ if CLIENT then
                                     draw.RoundedBox(4, 0, 0, pw, ph, QC.panel2)
                                 end
                                 local tcol = active and QC.text or (allowed and QC.dim or QC.dim2)
-                                draw.SimpleText(tlabel, "GRMQ_Text", 8, ph / 2, tcol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                                draw.SimpleText(tlabel, rowFont, 8, ph / 2, tcol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                             end
                             row.DoClick = function()
                                 if not allowed then
@@ -1658,9 +1660,29 @@ if CLIENT then
 
         builders.settings = function()
             content:Clear()
-            if not admin then return end
             local c = cfg()
             local y = 8
+            local personal = vgui.Create("DLabel", content)
+            personal:SetPos(12,y) personal:SetSize(CW-24,22) personal:SetFont("GRMQ_Sub") personal:SetTextColor(QC.acc)
+            personal:SetText("ЛИЧНЫЕ НАСТРОЙКИ МЕНЮ")
+            y = y + 30
+            local compact = vgui.Create("DCheckBoxLabel",content)
+            compact:SetPos(12,y) compact:SetSize(CW-24,22) compact:SetFont("GRMQ_Text") compact:SetTextColor(QC.text)
+            compact:SetText("Компактные подписи инструментов") compact:SetValue(GetConVar("grm_qmenu_compact") and GetConVar("grm_qmenu_compact"):GetBool() and 1 or 0)
+            compact.OnChange=function(_,v)cvarSet("grm_qmenu_compact",v and "1" or "0")end
+            y=y+28
+            local safe=vgui.Create("DCheckBoxLabel",content)
+            safe:SetPos(12,y) safe:SetSize(CW-24,22) safe:SetFont("GRMQ_Text") safe:SetTextColor(QC.text)
+            safe:SetText("Без превью моделей (для слабого ПК)") safe:SetValue(safeMode() and 1 or 0)
+            safe.OnChange=function(_,v)cvarSet("grm_qmenu_safe",v and "1" or "0")end
+            y=y+36
+            if not admin then
+                local note=vgui.Create("DLabel",content); note:SetPos(12,y); note:SetSize(CW-24,70); note:SetWrap(true); note:SetFont("GRMQ_Text"); note:SetTextColor(QC.dim)
+                note:SetText("Игрокам доступны только пропы и безопасный строительный набор инструментов. Оружие, NPC, энтити, транспорт и служебные инструменты блокируются сервером.")
+                return
+            end
+            local adminHead=vgui.Create("DLabel",content); adminHead:SetPos(12,y); adminHead:SetSize(CW-24,22); adminHead:SetFont("GRMQ_Sub"); adminHead:SetTextColor(QC.yellow); adminHead:SetText("НАСТРОЙКИ СЕРВЕРА")
+            y=y+28
             local function optRow(id, labelTxt)
                 local cb = vgui.Create("DCheckBoxLabel", content)
                 cb:SetPos(12, y) cb:SetSize(CW - 24, 22)
@@ -1680,12 +1702,10 @@ if CLIENT then
             hint:SetPos(12, y) hint:SetSize(CW - 24, 18) hint:SetFont("GRMQ_Small") hint:SetTextColor(QC.dim)
             hint:SetText("Пишется сразу в data/grm_qmenu.json. Дублирует вкладку «Инструменты» хаба.")
             y = y + 22
-            optRow("playersQ", "Ванильное Q игрокам (ВЫКЛ = наше меню)")
-            optRow("grmBuildMenu", "Меню GRM Стройка вместо ванильного Q")
+            optRow("grmBuildMenu", "Большое безопасное меню GRM на удержание Q")
             optRow("propsFree", "Свободный спавн любых моделей")
             optRow("whitelistMode", "Белый режим инструментов")
             optRow("protectFurniture", "Защита чужих/серверных пропов от remover")
-            optRow("adminsToo", "Суперадмину тоже Стройка вместо ванильного Q")
             optRow("allowProps", "Пропы игрокам")
             local capL = vgui.Create("DLabel", content)
             capL:SetPos(12, y + 6) capL:SetSize(240, 20) capL:SetFont("GRMQ_Text") capL:SetTextColor(QC.text)
