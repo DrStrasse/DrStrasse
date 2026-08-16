@@ -39,6 +39,7 @@ local NET_LAUNCH_RESULT = "GRM_HUB_LaunchResult"
 
 local LAUNCH_WHITELIST = {
     ["/factions"] = true, ["/salary_admin"] = true, ["/feco_admin"] = true, ["/door_access"] = true,
+    ["/property_admin"] = true, ["/weather_admin"] = true,
     ["/models_admin"] = true, ["/weapons_admin"] = true, ["/mask_admin"] = true,
     ["/logistics_admin"] = true, ["/vshop_admin"] = true,
     ["/scanvehicles"] = true, ["/phoneshop_admin"] = true, ["/phone_access"] = true,
@@ -746,6 +747,8 @@ if CLIENT then
         { "Документы и Удостоверения", "/doc_admin", "Настройка бланков паспортов, дизайна корочек, префиксов и прав доступа к Компьютеру" },
         { "Единая экономика", "/salary_admin", "Зарплаты, налоги, штрафы, банк, бюджеты и настройки экономики" },
         { "Доступ к дверям", "/door_access", "Матрица доступов дверей, категории и фракции" },
+        { "Недвижимость и здания", "/property_admin", "Помещения, двери, цены, аренда, владельцы, коммунальные платежи, печати и безопасность" },
+        { "Погода и время", "/weather_admin", "Скорость суток, часы, туман, дождь, гроза и динамическое небо" },
         { "Модели фракций", "/models_admin", "Фракционные модели и превью" },
         { "Оружие фракций", "/weapons_admin", "Выдача оружия по фракциям" },
         { "Маски", "/mask_admin", "Настройки масок" },

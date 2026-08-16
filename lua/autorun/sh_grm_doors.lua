@@ -211,7 +211,7 @@ function D.EvaluateAccess(rec, actor)
         or (actor.aclCategory == true)
     local warrant = rec.owner_type == "player" and (rec.owner_key or "") ~= ""
         and actor.hasWarrantOnOwner == true and actor.canWarrant == true
-    local hasKey = super or isOwner or isCo or isFac or isCat or acl or warrant
+    local hasKey = super or isOwner or isCo or isFac or isCat or acl or warrant or actor.propertyHas == true
 
     return {
         walk_unlocked = true,
@@ -689,6 +689,7 @@ if SERVER then
             end
         end
         local AM = D.AccessManager
+        local propertyHas = hook.Run("GRM_DoorPropertyAccess", ply, rec and rec.id or "")
         return {
             superadmin = D.CanAdminDoors(ply),
             key = charKey(ply),
@@ -699,11 +700,14 @@ if SERVER then
             canForce = AM and AM.CanForceDoor and AM.CanForceDoor(ply) or false,
             categoryHas = catHas == true,
             aclCategory = aclCat,
+            propertyHas = propertyHas == true,
         }
     end
 
     function D.CanAccessDoor(ply, ent)
         if not IsValid(ply) or not IsValid(ent) then return false, "invalid" end
+        local override, overrideReason = hook.Run("GRM_DoorAccessOverride", ply, ent)
+        if override ~= nil then return override == true, overrideReason or "property" end
         if D.Config.SuperAdminBypass ~= false and ply:IsSuperAdmin() then return true, "superadmin" end
         local rec = select(1, getRecord(ent))
         local acc = D.EvaluateAccess(rec, actorOf(ply, rec))
@@ -882,6 +886,13 @@ if SERVER then
             end
         end
         if not D.IsDoorLocked(ent) then return end
+        local override, overrideReason = hook.Run("GRM_DoorAccessOverride", ply, ent)
+        if override == false then
+            notify(ply, tostring(overrideReason or "Доступ к объекту закрыт."), 255, 90, 90)
+            return false
+        elseif override == true then
+            return
+        end
         local rec = select(1, getRecord(ent))
         local acc = D.EvaluateAccess(rec, actorOf(ply, rec))
         if not acc.walk_locked then

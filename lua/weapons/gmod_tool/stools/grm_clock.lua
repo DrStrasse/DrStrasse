@@ -1,0 +1,6 @@
+TOOL.Category="GRM";TOOL.Name="#tool.grm_clock.name";TOOL.ClientConVar={name="ГОРОДСКОЕ ВРЕМЯ"}
+if CLIENT then language.Add("tool.grm_clock.name","GRM Городские часы");language.Add("tool.grm_clock.desc","Установка часов мира");language.Add("tool.grm_clock.0","ЛКМ: поставить • ПКМ: обновить название • R: удалить")end
+function TOOL:LeftClick(tr)if CLIENT then return true end;local p=self:GetOwner();if not(IsValid(p)and p:IsSuperAdmin())then return false end;local e=ents.Create("grm_clock");if not IsValid(e)then return false end;e:SetPos(tr.HitPos+tr.HitNormal*4);e:SetAngles(tr.HitNormal:Angle()+Angle(90,0,0));e:Spawn();e:SetClockName(string.sub(self:GetClientInfo("name"),1,64));return true end
+function TOOL:RightClick(tr)if CLIENT then return true end;if IsValid(tr.Entity)and tr.Entity:GetClass()=="grm_clock"and self:GetOwner():IsSuperAdmin()then tr.Entity:SetClockName(string.sub(self:GetClientInfo("name"),1,64));return true end return false end
+function TOOL:Reload(tr)if SERVER and IsValid(tr.Entity)and tr.Entity:GetClass()=="grm_clock"and self:GetOwner():IsSuperAdmin()then tr.Entity:Remove();return true end return CLIENT end
+function TOOL.BuildCPanel(p)p:TextEntry("Название","grm_clock_name");p:Button("Погода и время","grm_weather_admin");p:Help("После установки закрепите часы /permadd.")end
