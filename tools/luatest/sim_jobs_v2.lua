@@ -105,15 +105,17 @@ local function CHECK(name, cond)
     if cond then P("OK: " .. name) else fails = fails + 1 P("FAIL: " .. name) end
 end
 
--- 1) набор работ: 5 карточек, мусоровоз и такси — маршрутные с needVehicle
+-- 1) набор работ: 3 карточки (курьер/мусоровоз/такси), маршрутные — с needVehicle
 JB.OpenMenu(worker, center)
 local wsid = worker:SteamID64()
 local offers = JB._lastOffers[wsid] and JB._lastOffers[wsid].list or {}
-CHECK("вакансий 5 (готовый набор)", #offers == 5)
+CHECK("вакансий 3 (курьер/мусоровоз/такси)", #offers == 3)
 local byTpl = {}
 for _, o in ipairs(offers) do byTpl[o.tplId] = o end
+CHECK("есть курьер", istable(byTpl.courier))
 CHECK("есть мусоровоз", istable(byTpl.garbage))
 CHECK("есть таксист", istable(byTpl.taxi))
+CHECK("нет грузчика/патрульного", byTpl.loader == nil and byTpl.patrol == nil)
 CHECK("мусоровоз: needVehicle", byTpl.garbage and byTpl.garbage.needVehicle == true)
 CHECK("мусоровоз: 3 точки маршрута (2 контейнера + свалка)", byTpl.garbage and #byTpl.garbage.points == 3)
 CHECK("таксист: needVehicle + центр назначения", byTpl.taxi and byTpl.taxi.needVehicle == true and istable(byTpl.taxi.center))

@@ -692,34 +692,27 @@ end
 -- КЛИЕНТ
 -- ============================================================
 if CLIENT then
+    surface.CreateFont("GRMChar_Big",    { font = "Roboto", size = 26, weight = 800, extended = true })
     surface.CreateFont("GRMChar_Title",  { font = "Roboto", size = 20, weight = 800, extended = true })
     surface.CreateFont("GRMChar_Sub",    { font = "Roboto", size = 15, weight = 600, extended = true })
     surface.CreateFont("GRMChar_Normal", { font = "Roboto", size = 13, weight = 500, extended = true })
+    surface.CreateFont("GRMChar_Small",  { font = "Roboto", size = 12, weight = 400, extended = true })
 
+    -- Плоская палитра (MapStudio-стиль): ограниченный набор слотов + свои кнопки.
     local C = {
-        bg    = Color(20, 24, 32, 252),
-        head  = Color(28, 34, 46, 255),
-        panel = Color(32, 38, 50, 245),
-        panel2= Color(26, 32, 42, 245),
-        acc   = Color(70, 150, 240),
-        green = Color(60, 190, 110),
-        red   = Color(220, 75, 70),
-        yellow= Color(230, 180, 60),
-        text  = Color(240, 245, 250),
-        dim   = Color(160, 170, 185),
+        bg     = Color(13, 16, 24, 255),
+        head   = Color(22, 28, 40, 255),
+        panel  = Color(24, 30, 42, 245),
+        panel2 = Color(30, 38, 52, 245),
+        border = Color(70, 82, 105, 180),
+        acc    = Color(75, 149, 255),
+        accHov = Color(100, 170, 255, 255),
+        green  = Color(46, 204, 113),
+        red    = Color(225, 83, 83),
+        yellow = Color(245, 200, 70),
+        text   = Color(235, 239, 247),
+        dim    = Color(150, 160, 175),
     }
-
-    local function mkBtn(p, txt, col)
-        local b = vgui.Create("DButton", p)
-        b:SetText(txt) b:SetFont("GRMChar_Sub") b:SetTextColor(color_white)
-        b.Paint = function(self, pw, ph)
-            local cc = col or C.acc
-            if not self:IsEnabled() then cc = Color(60, 65, 75)
-            elseif self:IsHovered() then cc = Color(math.min(255, cc.r + 25), math.min(255, cc.g + 25), math.min(255, cc.b + 25)) end
-            draw.RoundedBox(6, 0, 0, pw, ph, cc)
-        end
-        return b
-    end
 
     -----------------------------------------------------------
     -- Главное меню персонажа
@@ -731,8 +724,6 @@ if CLIENT then
             return
         end
         payload = istable(payload) and payload or {}
-        -- Bodygroups персонажа задаются моделью фракции через /models_admin.
-        -- В обычном меню персонажа их нельзя вручную переопределять.
         if payload.wardrobe ~= true then payload.allowBodygroups = false end
         local char = istable(payload.char) and payload.char or nil
         local sections = istable(payload.sections) and payload.sections or {}
@@ -757,7 +748,6 @@ if CLIENT then
         local skinSlider
         local bContinue, bSave
 
-        -- состояние редактора (черновик)
         local draft = {
             name = char and tostring(char.name or "") or "",
             model = char and tostring(char.model or "") or "",
@@ -774,172 +764,225 @@ if CLIENT then
             if outfit.path == draft.model then draft.wardrobeRule = table.Copy(outfit.wardrobeRule or {}) break end
         end
 
-        if IsValid(CH._frame) then
-            CH._frame:Remove()
-            CH._frame = nil
-        end
+        if IsValid(CH._frame) then CH._frame:Remove() CH._frame = nil end
         local f = vgui.Create("DFrame")
         CH._frame = f
-        f.OnRemove = function()
-            if CH._frame == f then CH._frame = nil end
-        end
+        f.OnRemove = function() if CH._frame == f then CH._frame = nil end end
         f:SetTitle("")
-        -- v1.2: меню больше по высоте и компактнее по ширине: не «полоса», а полноценный экран персонажа
-        local fw = math.min(1320, ScrW() - 80)
-        local fh = math.min(860, ScrH() - 80)
-        local leftW = math.min(560, math.floor(fw * 0.44))
+        local fw = math.min(1500, ScrW() - 60)
+        local fh = math.min(880, ScrH() - 60)
         f:SetSize(fw, fh)
         f:Center()
         f:MakePopup()
         f:ShowCloseButton(false)
         f:SetDraggable(false)
-        f.Paint = function(_, pw, ph)
-            draw.RoundedBox(12, 0, 0, pw, ph, Color(9, 12, 18, 252))
-            draw.RoundedBox(10, 8, 8, pw - 16, ph - 16, C.bg)
-            draw.RoundedBoxEx(10, 8, 8, pw - 16, 58, C.head, true, true, false, false)
-            local ttl = payload.wardrobe and tostring(payload.wardrobeTitle or "Гардероб")
-                or (char and "Меню персонажа" or "Создание персонажа")
-            draw.SimpleText(ttl, "GRMChar_Title", 24, 29, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText("ID: " .. tostring(payload.characterID or "—"), "GRMChar_Normal", pw - 24, 22, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-            draw.SimpleText("GRM Identity v" .. CH.Version, "GRMChar_Normal", pw - 24, 42, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-        end
 
-        local function canClose() return payload.wardrobe == true or (char ~= nil and payload.pending ~= true) end
+        local isWardrobe = payload.wardrobe == true
+
+        f.Paint = function(_, pw, ph)
+            draw.RoundedBox(14, 0, 0, pw, ph, Color(8, 10, 16, 255))
+            draw.RoundedBoxEx(14, 0, 0, pw, 64, C.head, true, true, false, false)
+            local ttl = isWardrobe and tostring(payload.wardrobeTitle or "Гардероб") or (char and "МЕНЮ ПЕРСОНАЖА" or "СОЗДАНИЕ ПЕРСОНАЖА")
+            draw.SimpleText(ttl, "GRMChar_Big", 26, 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("GRM Identity v" .. CH.Version .. "   ·   активный слот: " .. tostring(activeSlot), "GRMChar_Small", pw - 26, 26, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("Слот и внешность применяются после подтверждения", "GRMChar_Small", 26, 44, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
 
         local x = vgui.Create("DButton", f)
-        x:SetText("X") x:SetFont("GRMChar_Title") x:SetTextColor(color_white)
-        x:SetPos(fw - 48, 18) x:SetSize(32, 28)
+        x:SetText("✕") x:SetFont("GRMChar_Sub") x:SetTextColor(color_white)
+        x:SetPos(fw - 46, 16) x:SetSize(30, 28)
+        x.Paint = function(self, pw, ph) draw.RoundedBox(5, 0, 0, pw, ph, self:IsHovered() and C.red or Color(45, 52, 68)) end
         x.DoClick = function()
-            if payload.wardrobe == true then
-                f:Close()
-                return
-            end
-            -- Отмена через крестик: сервер сам решает, можно ли выйти.
-            net.Start(NET_CANCEL)
-            net.SendToServer()
+            if isWardrobe then f:Close() return end
+            net.Start(NET_CANCEL) net.SendToServer()
             f:Close()
         end
-        x.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.red or Color(45, 52, 68)) end
 
-        -- админская кнопка настройки гардероба
-        if payload.wardrobe and payload.isAdmin and payload.wardrobeEnt then
-            local bCfg = mkBtn(f, "⚙ Настройка гардероба", C.yellow)
-            bCfg:SetTextColor(Color(30, 28, 20))
-            bCfg:SetPos(fw - 300, 20) bCfg:SetSize(230, 28)
+        if isWardrobe and payload.isAdmin and payload.wardrobeEnt then
+            local bCfg = vgui.Create("DButton", f)
+            bCfg:SetText("⚙ Настройка гардероба") bCfg:SetFont("GRMChar_Normal") bCfg:SetTextColor(color_white)
+            bCfg:SetPos(fw - 300, 18) bCfg:SetSize(230, 28)
+            bCfg.Paint = function(self, pw, ph) draw.RoundedBox(6, 0, 0, pw, ph, self:IsHovered() and Color(255, 215, 100) or Color(190, 150, 40)) end
             bCfg.DoClick = function()
-                net.Start("GRM_Wardrobe_CfgReq")
-                    net.WriteUInt(tonumber(payload.wardrobeEnt) or 0, 16)
-                net.SendToServer()
+                net.Start("GRM_Wardrobe_CfgReq") net.WriteUInt(tonumber(payload.wardrobeEnt) or 0, 16) net.SendToServer()
                 f:Close()
             end
         end
 
-        -- ЛЕВАЯ КОЛОНКА: имя + провайдеры (список внешностей)
+        -- ── Нижняя панель действий ──────────────────────────────────────
+        local bot = vgui.Create("DPanel", f)
+        bot:Dock(BOTTOM) bot:SetTall(64) bot:DockMargin(20, 0, 20, 14)
+        bot:SetPaintBackground(false)
+        local botHint = vgui.Create("DLabel", bot)
+        botHint:Dock(LEFT) botHint:SetWide(520) botHint:DockMargin(4, 8, 0, 0)
+        botHint:SetFont("GRMChar_Small") botHint:SetTextColor(C.dim)
+        botHint:SetText("Слот определяет активного персонажа (счета, фракция, спавн). Внешность — модель, скин и бодигруппы.")
+
+        -- ── Колонки ──────────────────────────────────────────────────────
         local left = vgui.Create("DPanel", f)
-        left:Dock(LEFT) left:DockMargin(18, 78, 8, 18) left:SetWide(leftW)
+        left:Dock(LEFT) left:DockMargin(20, 78, 12, 10) left:SetWide(370)
         left:SetPaintBackground(false)
 
+        local mid = vgui.Create("DPanel", f)
+        mid:Dock(LEFT) mid:DockMargin(0, 78, 12, 10) mid:SetWide(330)
+        mid:SetPaintBackground(false)
+
+        local right = vgui.Create("DPanel", f)
+        right:Dock(FILL) right:DockMargin(0, 78, 20, 10)
+        right:SetPaintBackground(false)
+
+        -- ── ЛЕВАЯ: имя ────────────────────────────────────────────────────
         local nameBox = vgui.Create("DPanel", left)
-        nameBox:Dock(TOP) nameBox:SetTall(118) nameBox:DockMargin(0, 0, 0, 10)
+        nameBox:Dock(TOP) nameBox:SetTall(122) nameBox:DockMargin(0, 0, 0, 10)
         nameBox.Paint = function(_, pw, ph)
-            draw.RoundedBox(6, 0, 0, pw, ph, C.panel)
-            draw.SimpleText("Игровое имя (RP Name)", "GRMChar_Sub", 10, 14, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.RoundedBox(8, 0, 0, pw, ph, C.panel)
+            surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, pw, ph, 1)
+            draw.SimpleText("Игровое имя (RP Name)", "GRMChar_Sub", 14, 12, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
         local nameEntry = vgui.Create("DTextEntry", nameBox)
-        nameEntry:SetPos(10, 30) nameEntry:SetSize(math.min(560, leftW - 30), 30)
-        nameEntry:SetFont("GRMChar_Sub")
-        nameEntry:SetPlaceholderText("Имя Фамилия")
-        nameEntry:SetText(draft.name)
-        nameEntry:SetUpdateOnType(true)
-        nameEntry.OnChange = function() draft.name = nameEntry:GetValue() end
+        nameEntry:SetPos(14, 38) nameEntry:SetSize(left:GetWide() - 28, 32)
+        nameEntry:SetFont("GRMChar_Sub") nameEntry:SetPlaceholderText("Имя Фамилия")
+        nameEntry:SetText(draft.name) nameEntry:SetUpdateOnType(true)
         local nameHint = vgui.Create("DLabel", nameBox)
-        nameHint:SetPos(10, 62) nameHint:SetSize(leftW - 20, 20) nameHint:SetFont("GRMChar_Normal") nameHint:SetTextColor(C.dim)
+        nameHint:SetPos(14, 76) nameHint:SetSize(left:GetWide() - 28, 20) nameHint:SetFont("GRMChar_Normal") nameHint:SetTextColor(C.dim)
         local idHint = vgui.Create("DLabel", nameBox)
-        idHint:SetPos(10, 88) idHint:SetSize(leftW - 20, 22) idHint:SetFont("GRMChar_Normal") idHint:SetTextColor(C.dim)
+        idHint:SetPos(14, 96) idHint:SetSize(left:GetWide() - 28, 20) idHint:SetFont("GRMChar_Small") idHint:SetTextColor(C.dim)
         idHint:SetText("CharacterID: " .. tostring(payload.characterID or "будет создан"))
         local function updHint()
             local n = CH.ValidateName(draft.name)
-            nameHint:SetText(n and ("OK: «" .. n .. "»") or ("Имя: мин. " .. (payload.nameMin or 3) .. " символа"))
+            nameHint:SetText(n and ("✓ «" .. n .. "»") or ("Имя: минимум " .. (payload.nameMin or 3) .. " символа"))
             nameHint:SetTextColor(n and C.green or C.red)
         end
-        updHint() nameEntry.OnChange = function() draft.name = nameEntry:GetValue() updHint() end
+        nameEntry.OnChange = function() draft.name = nameEntry:GetValue() updHint() end
+        updHint()
 
-        local slotPanel = vgui.Create("DPanel", left)
-        slotPanel:Dock(TOP) slotPanel:SetTall(72) slotPanel:DockMargin(0, 0, 0, 10)
-        slotPanel.Paint = function(_, pw, ph)
-            draw.RoundedBox(6, 0, 0, pw, ph, C.panel)
-            draw.SimpleText("Слоты персонажей", "GRMChar_Sub", 10, 14, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        end
+        -- ── ЛЕВАЯ: слоты (только не гардероб) ────────────────────────────
         local slotButtons = {}
         local function refreshSlotButtons()
-            for _, slotButton in ipairs(slotButtons) do
-                slotButton._selected = slotButton._slotID == activeSlot
+            for _, sb in ipairs(slotButtons) do sb._selected = (sb._slotID == activeSlot) end
+        end
+        if not isWardrobe then
+            local slotPanel = vgui.Create("DPanel", left)
+            slotPanel:Dock(FILL) slotPanel:SetPaintBackground(false)
+            local st = vgui.Create("DLabel", slotPanel)
+            st:Dock(TOP) st:SetTall(26) st:SetFont("GRMChar_Sub") st:SetTextColor(C.yellow)
+            st:SetText("Персонажи")
+            local swrap = vgui.Create("DPanel", slotPanel)
+            swrap:Dock(FILL) swrap:DockMargin(0, 4, 0, 0)
+            swrap:SetPaintBackground(false)
+            for i = 1, 3 do
+                local info = slots[i] or { id = "char" .. i, index = i, exists = false }
+                local b = vgui.Create("DButton", swrap)
+                b:SetText("")
+                b._slotID = info.id
+                b._selected = (info.id == activeSlot)
+                slotButtons[#slotButtons + 1] = b
+                b:Dock(TOP) b:SetTall(98) b:DockMargin(0, 0, 0, 8)
+                b.Paint = function(self, pw, ph)
+                    local sel = self._selected == true
+                    local has = info.exists == true
+                    draw.RoundedBox(8, 0, 0, pw, ph, sel and Color(33, 52, 76) or C.panel)
+                    surface.SetDrawColor(sel and C.acc or C.border)
+                    surface.DrawOutlinedRect(0, 0, pw, ph, sel and 2 or 1)
+                    local dot = sel and C.acc or (has and C.green or Color(80, 88, 102))
+                    draw.RoundedBox(6, 14, 15, 12, 12, dot)
+                    local nm = (has and (info.name ~= "" and info.name or ("Персонаж " .. i))) or ("Пустой слот " .. i)
+                    draw.SimpleText(nm, "GRMChar_Sub", 38, 11, has and C.text or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText(has and ("ID: " .. tostring(info.id)) or "Создать нового персонажа", "GRMChar_Small", 38, 33, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    if has and info.model ~= "" then
+                        local mdl = tostring(info.model):match("([^/]+)$") or tostring(info.model)
+                        draw.SimpleText(mdl, "GRMChar_Small", 38, 50, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    end
+                    draw.SimpleText(sel and "● АКТИВЕН" or "ВЫБРАТЬ", "GRMChar_Small", pw - 14, ph / 2, sel and C.acc or C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                end
+                b:SetEnabled(not (info.id == payload.activeSlot and payload.pending and payload.mandatory ~= true))
+                b:SetTooltip(info.model ~= "" and ("Модель: " .. info.model) or "Персонаж ещё не создан")
+                b.DoClick = function()
+                    activeSlot = info.id
+                    refreshSlotButtons()
+                    draft.name = tostring(info.name or "")
+                    draft.model = tostring(info.model or "")
+                    draft.skin = 0
+                    draft.bodygroups = {}
+                    if draft.model == "" and defaultOutfit then
+                        draft.model = defaultOutfit.path
+                        draft.skin = tonumber(defaultOutfit.skin) or 0
+                        draft.bodygroups = table.Copy(defaultOutfit.bodygroups or {})
+                    end
+                    nameEntry:SetText(draft.name)
+                    updHint()
+                    refreshPreview()
+                    refreshSkinMax()
+                    skinSlider:SetValue(draft.skin)
+                    rebuildBodygroups()
+                    bContinue:SetVisible(info.exists == true)
+                    bSave:SetVisible(info.exists ~= true or isWardrobe)
+                    bSave:SetText(info.exists and (isWardrobe and "Сохранить" or "") or "Создать и выбрать")
+                end
             end
         end
-        for i = 1, 3 do
-            local info = slots[i] or { id = "char" .. i, index = i, exists = false }
-            local b = mkBtn(slotPanel, (info.exists and (info.name ~= "" and info.name or ("Персонаж " .. i)) or ("+ Слот " .. i)), info.id == activeSlot and C.green or C.panel2)
-            b._slotID = info.id
-            b._selected = info.id == activeSlot
-            slotButtons[#slotButtons + 1] = b
-            b.Paint = function(self, pw, ph)
-                local cc = self._selected and C.green or C.panel2
-                if not self:IsEnabled() then cc = Color(45, 50, 60)
-                elseif self:IsHovered() then cc = Color(math.min(255, cc.r + 18), math.min(255, cc.g + 18), math.min(255, cc.b + 18)) end
-                draw.RoundedBox(6, 0, 0, pw, ph, cc)
+
+        -- ── СРЕДНЯЯ: внешность ────────────────────────────────────────────
+        local midHead = vgui.Create("DLabel", mid)
+        midHead:Dock(TOP) midHead:SetTall(26) midHead:SetFont("GRMChar_Sub") midHead:SetTextColor(C.yellow)
+        midHead:SetText("Внешность")
+
+        local osc = vgui.Create("DScrollPanel", mid)
+        osc:Dock(FILL) osc:DockMargin(0, 2, 0, 0)
+        local function modelLabel(path)
+            local name = tostring(path or ""):match("([^/]+)$") or tostring(path or "")
+            return name:gsub("%.mdl$", "")
+        end
+        for _, entry in ipairs(outfits) do
+            local row = vgui.Create("DPanel", osc)
+            row:Dock(TOP) row:SetTall(56) row:DockMargin(0, 0, 0, 6)
+            local bn = vgui.Create("DButton", row)
+            bn:Dock(FILL) bn:SetText("")
+            bn.Paint = function(self, pw, ph)
+                local sel = (entry.path == draft.model)
+                draw.RoundedBox(7, 0, 0, pw, ph, sel and Color(33, 52, 76) or C.panel2)
+                surface.SetDrawColor(sel and C.acc or C.border)
+                surface.DrawOutlinedRect(0, 0, pw, ph, sel and 2 or 1)
+                draw.SimpleText(tostring(entry.providerTitle or "Внешность"), "GRMChar_Normal", 10, 9, sel and C.text or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                draw.SimpleText(modelLabel(entry.path), "GRMChar_Small", 10, 31, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                if sel then draw.SimpleText("ВЫБРАНО", "GRMChar_Small", pw - 10, 18, C.acc, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER) end
             end
-            b:SetPos(10 + (i - 1) * math.floor((leftW - 34) / 3), 30)
-            b:SetSize(math.floor((leftW - 40) / 3), 34)
-            b:SetFont("GRMChar_Normal")
-            b:SetEnabled(not (info.id == payload.activeSlot and payload.pending and payload.mandatory ~= true))
-            b:SetTooltip(info.model ~= "" and ("Текущая модель: " .. info.model) or "Персонаж ещё не создан")
-            b.DoClick = function()
-                -- Выбор карточки — только локальный черновик. Серверный активный
-                -- CharacterKey, счета, фракция и spawn НЕ меняются до подтверждения.
-                activeSlot = info.id
-                refreshSlotButtons()
-                draft.name = tostring(info.name or "")
-                draft.model = tostring(info.model or "")
-                draft.skin = 0
-                draft.bodygroups = {}
-                if draft.model == "" and defaultOutfit then
-                    draft.model = defaultOutfit.path
-                    draft.skin = tonumber(defaultOutfit.skin) or 0
-                    draft.bodygroups = table.Copy(defaultOutfit.bodygroups or {})
-                end
-                nameEntry:SetText(draft.name)
-                updHint()
+            bn.DoClick = function()
+                draft.model = entry.path
+                draft.skin = tonumber(entry.skin) or 0
+                draft.bodygroups = table.Copy(entry.bodygroups or {})
+                draft.wardrobeRule = table.Copy(entry.wardrobeRule or {})
                 refreshPreview()
                 refreshSkinMax()
                 skinSlider:SetValue(draft.skin)
                 rebuildBodygroups()
-                bContinue:SetVisible(info.exists == true)
-                bSave:SetVisible(info.exists ~= true or payload.wardrobe == true)
-                bSave:SetText(info.exists and (payload.wardrobe and "Сохранить" or "") or "Создать и выбрать")
+                timer.Simple(0.12, function() if IsValid(preview) then rebuildBodygroups() end end)
+                surface.PlaySound("buttons/button15.wav")
             end
         end
 
-        -- ПРАВАЯ КОЛОНКА: превью + настройка модели
-        local right = vgui.Create("DPanel", f)
-        right:Dock(FILL) right:DockMargin(8, 78, 18, 18)
-        right:SetPaintBackground(false)
-
+        -- ── ПРАВАЯ: превью + настройка ────────────────────────────────────
         local previewTitle = vgui.Create("DPanel", right)
-        previewTitle:Dock(TOP) previewTitle:SetTall(54) previewTitle:DockMargin(0,0,0,8)
+        previewTitle:Dock(TOP) previewTitle:SetTall(44) previewTitle:DockMargin(0, 0, 0, 8)
         previewTitle.Paint = function(_, pw, ph)
             draw.RoundedBox(8, 0, 0, pw, ph, C.panel)
-            draw.SimpleText("3D-превью персонажа", "GRMChar_Sub", 14, 18, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText("Модель, скин и bodygroups применяются после сохранения", "GRMChar_Normal", 14, 38, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("3D-превью", "GRMChar_Sub", 14, 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("модель · скин · бодигруппы", "GRMChar_Small", 14, 30, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
-        local preview = vgui.Create("DModelPanel", right)
-        preview:Dock(FILL) preview:DockMargin(0, 0, 0, 10)
+
+        local previewBox = vgui.Create("DPanel", right)
+        previewBox:Dock(FILL) previewBox:DockMargin(0, 0, 0, 10)
+        previewBox.Paint = function(_, pw, ph)
+            draw.RoundedBox(10, 0, 0, pw, ph, Color(11, 14, 21, 255))
+            surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, pw, ph, 1)
+        end
+        local preview = vgui.Create("DModelPanel", previewBox)
+        preview:Dock(FILL) preview:DockMargin(6, 6, 6, 6)
         preview:SetFOV(36)
         preview:SetDirectionalLight(BOX_TOP, Color(255, 255, 255))
         preview:SetDirectionalLight(BOX_FRONT, Color(180, 200, 255))
         preview:SetAmbientLight(Color(90, 100, 125))
         function preview:LayoutEntity(ent) end
-        -- Используем штатный Paint DModelPanel: он корректно запускает
-        -- cam.Start3D/DrawModel на всех ветках GMod.
 
         refreshPreview = function()
             if not IsValid(preview) then return end
@@ -952,19 +995,13 @@ if CLIENT then
                 local height = math.max(32, maxs.z - mins.z)
                 local width = math.max(32, maxs.y - mins.y)
                 local fov = 36
-                -- DModelPanel использует FOV для вертикального кадра не так,
-                -- как обычная камера. Считаем дистанцию по высоте модели,
-                -- иначе голова/ноги обрезаются на разных моделях.
-                local distance = math.max(height * 1.65, width * 2.8,
-                    (height * 0.5) / math.tan(math.rad(fov * 0.5)) * 1.55)
+                local distance = math.max(height * 1.65, width * 2.8, (height * 0.5) / math.tan(math.rad(fov * 0.5)) * 1.55)
                 preview:SetFOV(fov)
                 preview:SetLookAt(center + Vector(0, 0, height * 0.02))
                 preview:SetCamPos(center + Vector(distance, 0, height * 0.03))
                 ent:SetSkin(math.Clamp(tonumber(draft.skin) or 0, 0, 64))
                 for i = 0, (ent:GetNumBodyGroups() or 1) - 1 do ent:SetBodygroup(i, 0) end
-                for g, v in pairs(draft.bodygroups or {}) do
-                    ent:SetBodygroup(tonumber(g) or 0, tonumber(v) or 0)
-                end
+                for g, v in pairs(draft.bodygroups or {}) do ent:SetBodygroup(tonumber(g) or 0, tonumber(v) or 0) end
             end
             preview._grmPreviewSig = tostring(draft.model) .. "|" .. tostring(draft.skin)
         end
@@ -982,25 +1019,16 @@ if CLIENT then
         local skinLbl = vgui.Create("DLabel", sets)
         skinLbl:Dock(TOP) skinLbl:SetTall(18) skinLbl:SetFont("GRMChar_Sub") skinLbl:SetTextColor(C.text)
         skinLbl:SetText("Скин")
-
         skinSlider = vgui.Create("DNumSlider", sets)
         skinSlider:Dock(TOP) skinSlider:SetTall(26)
-        skinSlider:SetMin(0) skinSlider:SetDecimals(0)
-        skinSlider:SetValue(draft.skin)
+        skinSlider:SetMin(0) skinSlider:SetDecimals(0) skinSlider:SetValue(draft.skin)
         skinSlider.OnValueChanged = function(_, val)
             draft.skin = math.floor(tonumber(val) or 0)
             local ent = IsValid(preview) and preview:GetEntity()
             if IsValid(ent) then ent:SetSkin(draft.skin) end
         end
-        -- гардероб может отключать настройку скинов
-        if payload.allowSkin == false then
-            skinLbl:SetVisible(false) skinSlider:SetVisible(false)
-            sets:SetTall(88)
-        end
-        -- и настройку бодигрупп
-        if payload.allowBodygroups == false then
-            sets:SetTall(payload.allowSkin == false and 4 or 60)
-        end
+        if payload.allowSkin == false then skinLbl:SetVisible(false) skinSlider:SetVisible(false) sets:SetTall(88) end
+        if payload.allowBodygroups == false then sets:SetTall(payload.allowSkin == false and 4 or 60) end
         refreshSkinMax = function()
             local ent = IsValid(preview) and preview:GetEntity()
             local mx = IsValid(ent) and (ent:SkinCount() - 1) or 0
@@ -1010,11 +1038,9 @@ if CLIENT then
         end
         refreshSkinMax()
 
-        -- bodygroups
         local bgScroll = vgui.Create("DScrollPanel", sets)
         bgScroll:Dock(FILL) bgScroll:DockMargin(0, 4, 0, 0)
         if payload.allowBodygroups == false then bgScroll:SetVisible(false) end
-
         rebuildBodygroups = function()
             bgScroll:Clear()
             local ent = IsValid(preview) and preview:GetEntity()
@@ -1025,8 +1051,7 @@ if CLIENT then
                 local count = ent:GetBodygroupCount(i) or 1
                 local options = {}
                 for value = 0, count - 1 do
-                    local allowed = groupRule == nil or groupRule == true
-                        or (istable(groupRule) and groupRule[value] ~= false)
+                    local allowed = groupRule == nil or groupRule == true or (istable(groupRule) and groupRule[value] ~= false)
                     if allowed then options[#options + 1] = value end
                 end
                 if #options > 0 and count > 1 then
@@ -1040,16 +1065,20 @@ if CLIENT then
                         return 1
                     end
                     if optionIndex(cur) == 1 and options[1] ~= cur then cur = options[1] draft.bodygroups[i] = cur end
-
-                    local bL = mkBtn(row, "◀", C.acc) bL:Dock(LEFT) bL:SetWide(30) bL:DockMargin(2, 2, 0, 2)
-                    local bR = mkBtn(row, "▶", C.acc) bR:Dock(RIGHT) bR:SetWide(30) bR:DockMargin(0, 2, 2, 2)
+                    local bL = vgui.Create("DButton", row)
+                    bL:SetText("◀") bL:SetFont("GRMChar_Normal") bL:SetTextColor(C.text)
+                    bL:Dock(LEFT) bL:SetWide(30) bL:DockMargin(2, 2, 0, 2)
+                    bL.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.acc or Color(45, 52, 68)) end
+                    local bR = vgui.Create("DButton", row)
+                    bR:SetText("▶") bR:SetFont("GRMChar_Normal") bR:SetTextColor(C.text)
+                    bR:Dock(RIGHT) bR:SetWide(30) bR:DockMargin(0, 2, 2, 2)
+                    bR.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.acc or Color(45, 52, 68)) end
                     local valLbl = vgui.Create("DLabel", row)
                     valLbl:Dock(FILL) valLbl:DockMargin(6, 0, 6, 0)
                     valLbl:SetFont("GRMChar_Normal") valLbl:SetTextColor(C.text)
                     local function upd()
                         local v = tonumber(draft.bodygroups[i]) or 0
                         valLbl:SetText(gname .. ":  " .. v .. " / " .. (count - 1) .. "  [доступно: " .. #options .. "]")
-                        valLbl:SizeToContentsX() valLbl:SetWide(190)
                         if IsValid(ent) then ent:SetBodygroup(i, v) end
                     end
                     bL.DoClick = function()
@@ -1069,66 +1098,14 @@ if CLIENT then
             end
             if bgScroll:GetCanvas():GetTall() <= 2 then
                 local none = vgui.Create("DLabel", bgScroll)
-                none:Dock(TOP) none:SetText("У этой модели нет бодигрупп для настройки.")
+                none:Dock(TOP) none:SetText("У этой модели нет бодигрупп.")
                 none:SetFont("GRMChar_Normal") none:SetTextColor(C.dim)
             end
         end
         rebuildBodygroups()
-        timer.Simple(0.12, function()
-            if IsValid(preview) then rebuildBodygroups() end
-        end)
+        timer.Simple(0.12, function() if IsValid(preview) then rebuildBodygroups() end end)
 
-        local function selectModel(entry)
-            draft.model = entry.path
-            draft.skin = tonumber(entry.skin) or 0
-            draft.bodygroups = table.Copy(entry.bodygroups or {})
-            draft.wardrobeRule = table.Copy(entry.wardrobeRule or {})
-            refreshPreview()
-            refreshSkinMax()
-            skinSlider:SetValue(draft.skin)
-            rebuildBodygroups()
-            timer.Simple(0.12, function()
-                if IsValid(preview) then rebuildBodygroups() end
-            end)
-        end
-
-        -- Единый список внешности: гражданские и фракционные модели
-        -- не разделяются вкладками. Доступный набор уже отфильтрован сервером
-        -- для активного CharacterKey.
-        local sheet = vgui.Create("DPropertySheet", left)
-        sheet:Dock(FILL)
-        local sc = vgui.Create("DScrollPanel")
-        sc:DockMargin(2, 2, 2, 2)
-        for _, entry in ipairs(outfits) do
-            local row = vgui.Create("DPanel", sc)
-            row:Dock(TOP) row:SetTall(66) row:DockMargin(0, 0, 0, 6)
-            row.Paint = function(_, pw, ph)
-                draw.RoundedBox(6, 0, 0, pw, ph, (entry.path == draft.model) and Color(44, 66, 96) or C.panel)
-            end
-
-            local bn = mkBtn(row, "", C.panel)
-            bn:Dock(FILL) bn:DockMargin(0, 3, 3, 3)
-            bn:SetFont("GRMChar_Normal") bn:SetTextColor(C.text)
-            bn.Paint = function(self, pw, ph)
-                local cc = (entry.path == draft.model) and Color(44, 66, 96) or C.panel2
-                if self:IsHovered() then cc = Color(cc.r + 14, cc.g + 14, cc.b + 14) end
-                draw.RoundedBox(5, 0, 0, pw, ph, cc)
-            end
-            local provider = entry.providerTitle and tostring(entry.providerTitle) or "Внешность"
-            bn:SetText(provider .. (entry.path == draft.model and "  •  ВЫБРАНО" or ""))
-            bn:SetTooltip("Выбрать этот образ")
-            bn.DoClick = function()
-                selectModel(entry)
-                surface.PlaySound("buttons/button15.wav")
-            end
-        end
-        sheet:AddSheet("Внешность", sc, "icon16/user.png")
-
-        -- НИЗ: действия
-        local bot = vgui.Create("DPanel", f)
-        bot:Dock(BOTTOM) bot:SetTall(50) bot:DockMargin(10, 0, 10, 10)
-        bot:SetPaintBackground(false)
-
+        -- ── Действия ─────────────────────────────────────────────────────
         local function submitCharacter()
             local nm = CH.ValidateName(draft.name)
             if not nm then
@@ -1136,23 +1113,24 @@ if CLIENT then
                 return
             end
             net.Start(NET_SAVE)
-                net.WriteTable({ slot = activeSlot or "char1", name = draft.name, model = draft.model, skin = draft.skin, bodygroups = draft.bodygroups, wardrobe = payload.wardrobe == true, wardrobeEnt = payload.wardrobeEnt, wardrobeRule = draft.wardrobeRule })
+                net.WriteTable({ slot = activeSlot or "char1", name = draft.name, model = draft.model, skin = draft.skin, bodygroups = draft.bodygroups, wardrobe = isWardrobe, wardrobeEnt = payload.wardrobeEnt, wardrobeRule = draft.wardrobeRule })
             net.SendToServer()
         end
 
-        bContinue = mkBtn(bot, char and "Продолжить" or "", C.acc)
-        bContinue:Dock(RIGHT) bContinue:SetWide(150) bContinue:DockMargin(8, 6, 0, 6)
+        bContinue = vgui.Create("DButton", bot)
+        bContinue:SetText("▶ ПРОДОЛЖИТЬ") bContinue:SetFont("GRMChar_Sub") bContinue:SetTextColor(color_white)
+        bContinue:Dock(RIGHT) bContinue:SetWide(210) bContinue:DockMargin(8, 8, 0, 8)
         bContinue:SetVisible(char ~= nil)
+        bContinue.Paint = function(self, pw, ph) draw.RoundedBox(7, 0, 0, pw, ph, self:IsHovered() and C.accHov or C.acc) end
         bContinue.DoClick = submitCharacter
 
-        bSave = mkBtn(bot, char and (payload.wardrobe and "Сохранить" or "") or "Создать персонажа", C.green)
-        bSave:Dock(RIGHT) bSave:SetWide(230) bSave:DockMargin(8, 6, 0, 6)
-        bSave:SetVisible(char == nil or payload.wardrobe == true)
+        bSave = vgui.Create("DButton", bot)
+        bSave:SetText(char and (isWardrobe and "Сохранить" or "") or "Создать и выбрать") bSave:SetFont("GRMChar_Sub") bSave:SetTextColor(color_white)
+        bSave:Dock(RIGHT) bSave:SetWide(250) bSave:DockMargin(8, 8, 0, 8)
+        bSave:SetVisible(char == nil or isWardrobe)
+        bSave.Paint = function(self, pw, ph) draw.RoundedBox(7, 0, 0, pw, ph, self:IsHovered() and Color(70, 220, 130) or C.green) end
         bSave.DoClick = submitCharacter
-
-        if not char then
-            bSave:SetText("Создать персонажа (обязательно)")
-        end
+        if not char then bSave:SetText("Создать и выбрать (обязательно)") end
     end
 
     net.Receive(NET_OPEN, function()

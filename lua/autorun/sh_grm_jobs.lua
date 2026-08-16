@@ -55,7 +55,7 @@ GRM = GRM or {}
 GRM.Jobs = GRM.Jobs or {}
 local JB = GRM.Jobs
 
-JB.Version     = "2.0.0"  -- готовый набор работ + мусоровоз/таксист + новый UI
+JB.Version     = "2.1.0"  -- работы: курьер / мусоровоз / таксист + новый UI
 JB.DataFile    = "grm_jobs.json"
 JB.ActiveFile  = "grm_jobs_active.json"
 JB.Rotate      = 300      -- смена вакансий, сек
@@ -92,7 +92,7 @@ end
 -- награды/сроки считаем по дистанции до точки
 local function clampN(v, a, b) if v < a then return a end if v > b then return b end return v end
 
--- Готовый набор работ биржи (v2.0.0). Каждая — карточка в UI:
+-- Готовый набор работ биржи (v2.1.0): курьер / мусоровоз / таксист.
 -- id, title, jtype, needVehicle (требует транспорт), icon, color, desc.
 JB.Register({
     id = "courier", title = "Курьер", jtype = "goto",
@@ -100,20 +100,6 @@ JB.Register({
     desc = "Доставьте посылку в точку города. На чём угодно — хоть пешком.",
     rewardFn = function(dist) return clampN(350 + dist * 0.18, 250, 950) end,
     timeFn   = function(dist) return clampN(300 + dist * 0.12, 240, 600) end,
-})
-JB.Register({
-    id = "loader", title = "Грузчик", jtype = "stay", stay = 120,
-    icon = "icon16/bricks.png", color = { 240, 170, 60 },
-    desc = "Смена на складе: пробудьте в зоне 120 секунд (не в транспорте).",
-    rewardFn = function() return 500 end,
-    timeFn   = function() return 500 end,
-})
-JB.Register({
-    id = "patrol", title = "Патрульный", jtype = "stay", stay = 90,
-    icon = "icon16/shield.png", color = { 120, 200, 140 },
-    desc = "Продержитесь в зоне 90 секунд (на своих двоих, не в транспорте).",
-    rewardFn = function() return 420 end,
-    timeFn   = function() return 420 end,
 })
 JB.Register({
     id = "garbage", title = "Мусоровоз", jtype = "garbage", needVehicle = true, points = 2,
@@ -319,7 +305,7 @@ if SERVER then
 
     -- Готовый набор вакансий: фиксированный список, награды по реальным
     -- дистанциям до точек. garbage/taxi — маршрутные, требуют транспорт.
-    local TPL_ORDER = { "courier", "loader", "patrol", "garbage", "taxi" }
+    local TPL_ORDER = { "courier", "garbage", "taxi" }
 
     -- детерминированная выборка count разных точек из списка (без повторов)
     local function seededPick(seed, dps, count)
@@ -1722,7 +1708,7 @@ if CLIENT then
                     draw.SimpleText("Отказаться: /jobcancel • маркер цели показан над точкой в мире", "GRMJobs_Small", 12, y, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                 else
                     draw.SimpleText("Активной задачи нет.", "GRMJobs_Sub", 12, y, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP) y = y + 22
-                    draw.SimpleText("Вакансии: подойдите к терминалу «Биржа труда» и нажмите E. Курьер, грузчик, патрульный, мусоровоз, таксист. Фракции-работодатели публикуют свои заказы с оплатой из бюджета.", "GRMJobs_Small", 12, y, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("Вакансии: подойдите к терминалу «Биржа труда» и нажмите E. Курьер, мусоровоз, таксист. Фракции-работодатели публикуют свои заказы с оплатой из бюджета.", "GRMJobs_Small", 12, y, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                 end
                 draw.SimpleText("Ваш счётчик: выполнено " .. tostring((st and st.done) or 0) .. " задач • заработано " .. fmtMoney((st and st.earned) or 0), "GRMJobs_Normal", 12, ph - 26, C.teal, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
             end
