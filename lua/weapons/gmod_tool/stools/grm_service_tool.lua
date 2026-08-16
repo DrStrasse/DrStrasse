@@ -85,6 +85,22 @@ local TYPES = {
         defTitle  = "УЧРЕЖДЕНИЕ ОБРАЗОВАНИЯ • ДЕКАНАТ",
         defModel  = "models/props/cs_office/computer.mdl",
     },
+    fire = {
+        id        = "fire",
+        class     = "grm_comp_fire",
+        label     = "Пожарная станция (диспетчерская)",
+        desc      = "Дежурство, доступ/оповещение, машины, очаги, журнал тушения",
+        defTitle  = "ПОЖАРНАЯ СЛУЖБА • ДИСПЕТЧЕРСКАЯ",
+        defModel  = "models/props_lab/monitor01a.mdl",
+    },
+    cityhall = {
+        id        = "cityhall",
+        class     = "grm_comp_cityhall",
+        label     = "Компьютер мэрии (городская администрация)",
+        desc      = "Бизнес-лицензии, городская казна, каталог госуслуг",
+        defTitle  = "МЭРИЯ • ГОРОДСКАЯ АДМИНИСТРАЦИЯ",
+        defModel  = "models/props_lab/monitor02.mdl",
+    },
     general = {
         id        = "general",
         class     = "grm_doc_computer",

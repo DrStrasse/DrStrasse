@@ -60,6 +60,7 @@ ECONOMY_ENTS = [
     "grm_bank_terminal", "grm_bank_vault", "grm_bank_computer", "grm_doc_computer",
     "grm_comp_police", "grm_comp_military_police", "grm_comp_security",
     "grm_comp_military", "grm_comp_traffic", "grm_comp_medical",
+    "grm_comp_cityhall",
     "grm_vault_cash", "grm_money_press", "grm_money_printer",
 ]
 for ent in ECONOMY_ENTS:

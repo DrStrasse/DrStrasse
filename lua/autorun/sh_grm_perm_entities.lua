@@ -217,6 +217,8 @@ if SERVER then
         grm_comp_traffic         = true,
         grm_comp_medical         = true,
         grm_comp_education       = true,
+        grm_comp_fire            = true,
+        grm_comp_cityhall        = true,
         -- Отмывщик денег / ивент «Ограбление» (находка 179e)
         grm_money_launderer     = true,
         -- Лаборатории (Код 120)
@@ -1267,6 +1269,7 @@ if SERVER then
         "grm_doc_computer", "grm_comp_police", "grm_comp_military_police",
         "grm_comp_security", "grm_comp_military", "grm_comp_traffic",
         "grm_comp_medical", "grm_comp_education",
+        "grm_comp_fire", "grm_comp_cityhall",
     }) do
         GRM.PermData.Extract[class] = function(ent)
             if not IsValid(ent) or not isfunction(ent.GetComputerName) then return nil end

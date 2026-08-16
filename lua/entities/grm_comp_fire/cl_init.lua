@@ -1,0 +1,131 @@
+--[[--------------------------------------------------------------------
+    grm_comp_fire — cl_init.lua (Клиентская часть пожарной станции)
+----------------------------------------------------------------------]]
+include("shared.lua")
+
+local THEME = {
+    bg      = Color(24, 30, 34, 250),
+    panel   = Color(30, 38, 44, 245),
+    header  = Color(38, 48, 56, 255),
+    accent  = Color(235, 120, 60),
+    danger  = Color(220, 70, 70),
+    success = Color(60, 190, 100),
+    text    = Color(235, 240, 245),
+    dim     = Color(150, 160, 170),
+    gold    = Color(245, 200, 70),
+}
+
+function ENT:Draw()
+    self:DrawModel()
+
+    local pos = self:GetPos() + self:GetUp() * 24 + self:GetForward() * 2
+    local ang = self:GetAngles()
+    ang:RotateAroundAxis(ang:Up(), 90)
+    ang:RotateAroundAxis(ang:Forward(), 90)
+
+    cam.Start3D2D(pos, ang, 0.08)
+        draw.RoundedBox(6, -150, -50, 300, 100, Color(24, 18, 16, 240))
+        draw.SimpleText("ПОЖАРНАЯ СЛУЖБА", "DermaDefaultBold", 0, -24, Color(235, 120, 60), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Диспетчерская станция", "DermaDefault", 0, -4, Color(225, 230, 235), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Нажмите [E] для входа", "DermaDefault", 0, 20, Color(165, 175, 185), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    cam.End3D2D()
+end
+
+local function mkBtn(parent, text, col, doClick)
+    local b = vgui.Create("DButton", parent)
+    b:SetText("")
+    b:SetFont("DermaDefaultBold")
+    b:SetTextColor(color_white)
+    b.Paint = function(s, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(col.r + 20, col.g + 20, col.b + 20) or col)
+        surface.SetDrawColor(255, 255, 255, 40)
+        surface.DrawOutlinedRect(0, 0, w, h)
+        draw.SimpleText(text, "DermaDefaultBold", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+    b.DoClick = function() surface.PlaySound("buttons/button15.wav") if doClick then doClick() end end
+    return b
+end
+
+local g_FireEnt = nil
+
+local function sendAction(op)
+    if not IsValid(g_FireEnt) then return end
+    net.Start("GRM_CompFire_Action")
+        net.WriteEntity(g_FireEnt)
+        net.WriteString(op)
+    net.SendToServer()
+end
+
+local function openMenu(ent, data)
+    g_FireEnt = ent
+    local frame = vgui.Create("DFrame")
+    frame:SetTitle("")
+    frame:SetSize(560, 560)
+    frame:Center()
+    frame:MakePopup()
+    frame.Paint = function(_, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, THEME.bg)
+        draw.RoundedBoxEx(8, 0, 0, w, 42, THEME.header, true, true, false, false)
+        draw.SimpleText(data.name or "ПОЖАРНАЯ СЛУЖБА", "DermaDefaultBold", 16, 21, THEME.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Диспетчерская станция", "DermaDefault", w - 16, 21, THEME.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+    end
+
+    local btnClose = vgui.Create("DButton", frame)
+    btnClose:SetSize(28, 24) btnClose:SetPos(frame:GetWide() - 36, 8)
+    btnClose:SetText("✕") btnClose:SetTextColor(THEME.dim) btnClose:SetFont("DermaDefaultBold")
+    btnClose.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and THEME.danger or Color(45, 50, 60)) end
+    btnClose.DoClick = function() frame:Close() end
+
+    -- Сводка.
+    local status = vgui.Create("DPanel", frame)
+    status:Dock(TOP) status:DockMargin(12, 52, 12, 6) status:SetTall(96)
+    status.Paint = function(_, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, THEME.panel)
+        local line1 = string.format("Очагов сейчас: %d   ·   vFire: %s   ·   аддон: %s",
+            tonumber(data.activeFires) or 0,
+            data.vfireReady and "готов" or "НЕТ",
+            data.addonReady and "готов" or "НЕТ")
+        local line2 = string.format("Рандомное возгорание: %s (интервал %d-%d с, лимит %d)",
+            data.randomEnabled and "ВКЛ" or "выкл",
+            tonumber(data.minSec) or 0, tonumber(data.maxSec) or 0,
+            tonumber(data.maxIncidents) or 8)
+        draw.SimpleText(line1, "DermaDefault", 12, 12, THEME.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        draw.SimpleText(line2, "DermaDefault", 12, 36, THEME.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        draw.SimpleText("Плита (случайный очаг): " .. (data.stoveEnabled and "ВКЛ" or "выкл"), "DermaDefault", 12, 60, THEME.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    end
+
+    local body = vgui.Create("DPanel", frame)
+    body:Dock(FILL) body:DockMargin(12, 0, 12, 12)
+    body.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, THEME.panel) end
+
+    local y = 12
+    local function row(text, col, fn)
+        local b = mkBtn(body, text, col or THEME.accent, fn)
+        b:SetPos(14, y) b:SetSize(body:GetWide() - 28, 40)
+        y = y + 50
+        return b
+    end
+
+    row("🚒 Закрепить машину / насос  (/firetruck)", Color(150, 70, 45), function() sendAction("commission") end)
+    row("🅿️ Снять машину  (/firetruck_off)", Color(120, 90, 50), function() sendAction("decommission") end)
+    row("🧯 Взять ствол / рукав", Color(90, 120, 150), function() sendAction("hose") end)
+    row("📋 Журнал тушения  (/fire_log)", Color(60, 120, 150), function() RunConsoleCommand("grm_fire_log") end)
+
+    if data.isAdmin then
+        row("🔑 Доступ и оповещение  (/fire_access)", Color(150, 110, 60), function() RunConsoleCommand("grm_fire_access") end)
+        row("📢 Фракции оповещения  (/grm_fire_notify)", Color(120, 100, 60), function() RunConsoleCommand("grm_fire_notify") end)
+        row("🚒 Пожарные машины  (/fire_trucks)", Color(140, 70, 45), function() RunConsoleCommand("grm_fire_trucks") end)
+        row("🔥 Очаги / точки  (/fire_spots)", Color(170, 60, 45), function() RunConsoleCommand("grm_fire_spots") end)
+    end
+
+    -- Плавно расширяем высоту под контент (кнопок немного — фиксировано).
+    frame:SetSize(560, math.min(760, 210 + y))
+    frame:Center()
+end
+
+net.Receive("GRM_CompFire_Open", function()
+    local ent = net.ReadEntity()
+    local data = net.ReadTable() or {}
+    if not IsValid(ent) then return end
+    openMenu(ent, data)
+end)
