@@ -1834,7 +1834,7 @@ if CLIENT then
             local newRole = newEntry:GetText()
             if newRole == "" then return end
             sendAction("addRole", { newRole }, function(ok, msg)
-                if ok then notification.AddLegacy("Роль добавлена", NOTIFY_GENERIC, 3) refreshAllUI() newEntry:SetText("")
+                if ok then notification.AddLegacy("Роль добавлена", NOTIFY_GENERIC, 3) if IsValid(newEntry) then newEntry:SetText("") end refreshAllUI()
                 else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) end
             end)
         end
@@ -1923,7 +1923,7 @@ if CLIENT then
             local newDept = newEntry:GetText()
             if newDept == "" then return end
             sendAction("addDepartment", { newDept }, function(ok, msg)
-                if ok then notification.AddLegacy("Отдел добавлен", NOTIFY_GENERIC, 3) refreshAllUI() newEntry:SetText("")
+                if ok then notification.AddLegacy("Отдел добавлен", NOTIFY_GENERIC, 3) if IsValid(newEntry) then newEntry:SetText("") end refreshAllUI()
                 else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) end
             end)
         end
@@ -2084,7 +2084,7 @@ if CLIENT then
             local newRole = newEntry:GetText()
             if newRole == "" then return end
             sendAction("addRole", { factionName, newRole }, function(ok, msg)
-                if ok then notification.AddLegacy("Роль добавлена", NOTIFY_GENERIC, 3) refreshAllUI() newEntry:SetText("")
+                if ok then notification.AddLegacy("Роль добавлена", NOTIFY_GENERIC, 3) if IsValid(newEntry) then newEntry:SetText("") end refreshAllUI()
                 else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) end
             end)
         end
@@ -2167,7 +2167,7 @@ if CLIENT then
             local newDept = newEntry:GetText()
             if newDept == "" then return end
             sendAction("addDepartment", { factionName, newDept }, function(ok, msg)
-                if ok then notification.AddLegacy("Отдел добавлен", NOTIFY_GENERIC, 3) refreshAllUI() newEntry:SetText("")
+                if ok then notification.AddLegacy("Отдел добавлен", NOTIFY_GENERIC, 3) if IsValid(newEntry) then newEntry:SetText("") end refreshAllUI()
                 else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) end
             end)
         end
@@ -2380,7 +2380,7 @@ if CLIENT then
             local leader = leaderEntry:GetText()
             if leader == "" then leader = nil end
             sendAction("createFaction", { name, leader }, function(ok, msg)
-                if ok then notification.AddLegacy("Фракция создана", NOTIFY_GENERIC, 3) refreshAllUI() nameEntry:SetText("") leaderEntry:SetText("")
+                if ok then notification.AddLegacy("Фракция создана", NOTIFY_GENERIC, 3) if IsValid(nameEntry) then nameEntry:SetText("") end if IsValid(leaderEntry) then leaderEntry:SetText("") end refreshAllUI()
                 else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) end
             end)
         end
@@ -2496,7 +2496,7 @@ if CLIENT then
             local newName = renameEntry:GetText()
             if not faction or faction == "" or newName == "" then return end
             sendAction("renameFaction", { faction, newName }, function(ok, msg)
-                if ok then notification.AddLegacy("Фракция переименована", NOTIFY_GENERIC, 3) refreshAllUI() renameEntry:SetText("")
+                if ok then notification.AddLegacy("Фракция переименована", NOTIFY_GENERIC, 3) if IsValid(renameEntry) then renameEntry:SetText("") end refreshAllUI()
                 else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) end
             end)
         end
