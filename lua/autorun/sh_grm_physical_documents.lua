@@ -9,7 +9,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Documents = GRM.Documents or {}
 local DOC = GRM.Documents
-DOC.PhysicalVersion = "1.1.0"
+DOC.PhysicalVersion = "1.2.0"
 DOC.MaxPhysicalCopies = 6
 
 local NET_VIEW = "GRM_Doc_ReceiveView"
@@ -71,6 +71,8 @@ local function registerItems()
         local owner=tostring(data.ownerKey or keyOf(ply))
         local rec,def=DOC.PhysicalRecord(owner,typ)
         if not rec then if GRM.Notify then GRM.Notify(ply,"Запись документа отсутствует в государственном реестре.",255,130,110) end return false end
+        local copyGeneration=tonumber(data.generation)or 1;local currentGeneration=tonumber(rec.physicalGeneration)or 1
+        if copyGeneration~=currentGeneration then if GRM.Notify then GRM.Notify(ply,"Эта физическая копия аннулирована после восстановления документа.",255,120,100)end return false end
         net.Start(NET_VIEW)
             net.WriteString(typ)
             net.WriteTable(rec)
@@ -105,6 +107,11 @@ if SERVER then
         return n
     end
     DOC.CountPhysicalCopies=copyCount
+    local function removeCopyByID(ply,copyID)
+        local inv=GRM.Inventory and GRM.Inventory.GetPlayerInv and GRM.Inventory.GetPlayerInv(ply);if not inv then return false end
+        for idx,slot in pairs(inv.slots or{})do if istable(slot)and istable(slot.data)and tostring(slot.data.copyID or"")==tostring(copyID)then inv.slots[idx]=nil;if GRM.Inventory.SyncSlot then GRM.Inventory.SyncSlot(ply,idx)end return true end end
+        return false
+    end
 
     function DOC.GivePhysicalCopy(target,docType,ownerKey,issuer)
         if not IsValid(target) or not target:IsPlayer() then return false,"Получатель должен находиться в игре" end
@@ -117,12 +124,42 @@ if SERVER then
         if count>=DOC.MaxPhysicalCopies then return false,"Лимит физических копий этого документа: "..DOC.MaxPhysicalCopies end
         if not (GRM.Inventory and GRM.Inventory.AddItem) then return false,"Инвентарь не загружен" end
         local copyID="doc_"..os.time().."_"..math.random(100000,999999)
-        local left=GRM.Inventory.AddItem(target,def.item,1,{docType=docType,ownerKey=ownerKey,ownerName=tostring(rec.fullName or rec.businessName or target:Nick()),number=tostring(rec.number or rec.series or ""),copyID=copyID,issuedAt=os.time(),issuedBy=IsValid(issuer) and issuer:Nick() or "Система"})
+        local left=GRM.Inventory.AddItem(target,def.item,1,{docType=docType,ownerKey=ownerKey,ownerName=tostring(rec.fullName or rec.businessName or target:Nick()),number=tostring(rec.number or rec.series or ""),copyID=copyID,generation=tonumber(rec.physicalGeneration)or 1,issuedAt=os.time(),issuedBy=IsValid(issuer) and issuer:Nick() or "Система"})
         if left~=0 then return false,"В инвентаре нет свободного места" end
+        if GRM.Inventory.SaveNow and not GRM.Inventory.SaveNow("physical document "..copyID)then removeCopyByID(target,copyID);return false,"Не удалось надёжно сохранить физический документ; выдача отменена"end
         if GRM.Notify then GRM.Notify(target,"Получен физический бланк: "..def.name.." (копия "..tostring(count+1).."/"..DOC.MaxPhysicalCopies..")",100,220,140) end
         hook.Run("GRM_DocumentPhysicalIssued",target,docType,ownerKey,copyID,issuer)
         return true,copyID
     end
+
+    function DOC.RestorePhysicalDocument(ply,docType)
+        if not IsValid(ply)or not ply:IsPlayer()then return false,"Игрок не найден"end
+        docType=DOC.CanonicalPhysicalType(docType);local ownerKey=keyOf(ply);local rec,def=DOC.PhysicalRecord(ownerKey,docType)
+        if not rec or not def then return false,"Документ этого типа не выдавался персонажу"end
+        local status=string.lower(tostring(rec.status or"действителен"));if status:find("аннулир",1,true)or status:find("отозван",1,true)then return false,"Документ аннулирован в реестре"end
+        if copyCount(ply,docType,ownerKey)>0 then return false,"Физический документ уже находится в инвентаре"end
+        local now=os.time();local cooldown=6*3600;if now-(tonumber(rec.lastPhysicalRestore)or 0)<cooldown then return false,"Повторное восстановление будет доступно позже"end
+        local oldGeneration=tonumber(rec.physicalGeneration)or 1;rec.physicalGeneration=oldGeneration+1
+        if DOC.SaveRegistry and DOC.SaveRegistry("invalidate lost physical copies "..ownerKey.." "..docType)==false then rec.physicalGeneration=oldGeneration;return false,"Реестр документов временно недоступен"end
+        local ok,result=DOC.GivePhysicalCopy(ply,docType,ownerKey,ply)
+        if not ok then rec.physicalGeneration=oldGeneration;if DOC.SaveRegistry then DOC.SaveRegistry("rollback physical restore")end return false,result end
+        rec.lastPhysicalRestore=now;if DOC.SaveRegistry then DOC.SaveRegistry("physical restore "..ownerKey.." "..docType)end
+        if GRM.Audit and GRM.Audit.Write then GRM.Audit.Write("documents","physical.restore",ply,{characterKey=ownerKey,docType=docType},{copyID=result,generation=rec.physicalGeneration})end
+        return true,result
+    end
+
+    function DOC.MissingPhysicalTypes(ply)
+        local ownerKey=keyOf(ply);local out={}
+        for typ in pairs(DOC.PhysicalDefs)do local rec=DOC.PhysicalRecord(ownerKey,typ);if rec and copyCount(ply,typ,ownerKey)==0 then local status=string.lower(tostring(rec.status or"действителен"));if not status:find("аннулир",1,true)and not status:find("отозван",1,true)then out[#out+1]=typ end end end
+        table.sort(out);return out
+    end
+    local function notifyMissing(ply)
+        if not IsValid(ply)then return end;local key=keyOf(ply);local missing=DOC.MissingPhysicalTypes(ply);if #missing<1 then return end
+        DOC._missingTold=DOC._missingTold or{};if DOC._missingTold[key]then return end;DOC._missingTold[key]=true
+        if GRM.Notify then GRM.Notify(ply,"В реестре есть документы без физического бланка. Восстановление: /docrestore all",255,190,90)else ply:ChatPrint("[Документы] Восстановление физических бланков: /docrestore all")end
+    end
+    hook.Add("GRM_CharacterChanged","GRM_PhysicalDocs_Missing",function(ply)timer.Simple(3,function()notifyMissing(ply)end)end)
+    hook.Add("PlayerInitialSpawn","GRM_PhysicalDocs_MissingJoin",function(ply)timer.Simple(8,function()notifyMissing(ply)end)end)
 
     local function findOnlineByKey(ownerKey)
         for _,p in ipairs(player.GetAll()) do if keyOf(p)==ownerKey then return p end end
@@ -136,8 +173,14 @@ if SERVER then
         if not ok and GRM.Notify then GRM.Notify(ply,msg,255,140,110) end
         return true
     end
-    hook.Add("PlayerSayTransform","GRM_PhysicalDocs_Transform",function(ply,data) if istable(data) and isstring(data[1]) and handleCopyCommand(ply,data[1]) then data[1]="" data.SkipPlayerSay=true end end)
-    hook.Add("PlayerSay","GRM_PhysicalDocs_Chat",function(ply,text) if handleCopyCommand(ply,text) then return "" end end)
+    local function handleRestoreCommand(ply,text)
+        local raw=string.Trim(tostring(text or""));local low=string.lower(raw);local arg
+        if low=="/docrestore"then arg=""elseif low:sub(1,12)=="/docrestore "then arg=string.Trim(raw:sub(13))else return false end;if arg==""then ply:ChatPrint("[Документы] /docrestore passport|badge|military|license|milLicense|weaponLicense|businessLicense|all")return true end
+        if string.lower(arg)=="all"then local restored,errors=0,{};for typ in pairs(DOC.PhysicalDefs)do local rec=DOC.PhysicalRecord(keyOf(ply),typ);if rec and copyCount(ply,typ,keyOf(ply))==0 then local ok,msg=DOC.RestorePhysicalDocument(ply,typ);if ok then restored=restored+1 else errors[#errors+1]=tostring(msg)end end end;if GRM.Notify then GRM.Notify(ply,"Восстановлено документов: "..restored,restored>0 and 100 or 255,restored>0 and 220 or 150,120)end return true end
+        local ok,msg=DOC.RestorePhysicalDocument(ply,arg);if GRM.Notify then GRM.Notify(ply,ok and"Физический документ восстановлен."or tostring(msg),ok and 100 or 255,ok and 220 or 140,ok and 130 or 110)end return true
+    end
+    hook.Add("PlayerSayTransform","GRM_PhysicalDocs_Transform",function(ply,data)if istable(data)and isstring(data[1])and(handleCopyCommand(ply,data[1])or handleRestoreCommand(ply,data[1]))then data[1]="";data.SkipPlayerSay=true end end)
+    hook.Add("PlayerSay","GRM_PhysicalDocs_Chat",function(ply,text)if handleCopyCommand(ply,text)or handleRestoreCommand(ply,text)then return""end end)
 
     registerItems(); timer.Simple(2,registerItems); timer.Simple(6,registerItems)
 end

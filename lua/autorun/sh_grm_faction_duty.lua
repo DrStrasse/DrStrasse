@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Faction Duty v1.0.0 (Код 102)
+    GRM Faction Duty v1.1.0 (Код 102)
     Смена статуса «на службе / вне службы» через служебного NPC.
 ----------------------------------------------------------------------]]
 
@@ -8,7 +8,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.FactionDuty = GRM.FactionDuty or {}
 local FD = GRM.FactionDuty
-FD.Version = "1.0.0"
+FD.Version = "1.1.0"
 
 local NET_OPEN = "GRM_FactionDuty_Open"
 local NET_SET = "GRM_FactionDuty_Set"
@@ -176,7 +176,7 @@ if SERVER then
         if title == "" then title = "ПУНКТ ВЫХОДА НА СЛУЖБУ" end
         ent:SetNWString("GRM_DutyFaction", fac)
         ent:SetNWString("GRM_DutyTitle", title)
-        if util.IsValidModel(mdl) then ent:SetNWString("GRM_DutyModel", mdl); ent:SetModel(mdl) end
+        if util.IsValidModel(mdl) then ent:SetNWString("GRM_DutyModel",mdl);ent:SetModel(mdl);if ent.RefreshIdle then ent:RefreshIdle(true)end end
         if GRM.Perm and GRM.Perm.Update then GRM.Perm.Update(ply, ent) end
         if GRM.Notify then GRM.Notify(ply, "Диспетчер привязан к фракции «" .. fac .. "».", 80, 230, 150) end
     end)
@@ -213,7 +213,7 @@ if SERVER then
             if not istable(d) then return end
             ent:SetNWString("GRM_DutyFaction", tostring(d.faction or ""))
             ent:SetNWString("GRM_DutyTitle", tostring(d.title or "ПУНКТ ВЫХОДА НА СЛУЖБУ"))
-            if util.IsValidModel(tostring(d.model or "")) then ent:SetNWString("GRM_DutyModel", d.model); ent:SetModel(d.model) end
+            if util.IsValidModel(tostring(d.model or""))then ent:SetNWString("GRM_DutyModel",d.model);ent:SetModel(d.model);if ent.RefreshIdle then ent:RefreshIdle(true)end end
         end
     end
     timer.Simple(1, registerPerm)

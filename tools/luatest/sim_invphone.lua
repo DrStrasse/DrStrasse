@@ -223,6 +223,8 @@ CurTime = CurTime or os.clock
 GRM = nil -- гарантированно чистый неймспейс
 SERVER, CLIENT = true, false
 os.remove(DATA .. "/grm_inventories.json")
+os.remove(DATA .. "/grm_inventories_backup.json")
+os.remove(DATA .. "/grm_inventories_write_tmp.json")
 
 local traces = {}
 
@@ -262,6 +264,7 @@ print("== 2. Автосейв ==")
 ok(H.timers["GRM_Inv_AutoSave"] ~= nil, "автотаймер сейва зарегистрирован")
 H.timers["GRM_Inv_AutoSave"]()
 ok(file.Exists("grm_inventories.json"), "файл grm_inventories.json создан автотаймером")
+ok(file.Exists("grm_inventories_backup.json"), "проверенная резервная копия инвентаря создана вместе с main")
 local raw = file.Read("grm_inventories.json") or ""
 ok(string.find(raw, "mobile_badger", 1, true) ~= nil, "телефон есть в JSON на диске")
 
@@ -269,6 +272,12 @@ print("== 3. Жёсткий рестарт (процесс убит, тольк�
 dofile("lua/autorun/sh_grm_inventory.lua") -- модуль перегружается с нуля
 ok(GRM.Inventory.CountItem(ply, "mobile_badger") == 1, "ПОСЛЕ РЕСТАРТА: телефон на месте (CountItem=1)")
 ok(GRM.Inventory.CountItem(ply, "ammo_pistol") == 30, "патроны на месте")
+
+print("== 3.5. Битый main восстанавливается из backup без потери документов/предметов ==")
+file.Write("grm_inventories.json","{broken json")
+dofile("lua/autorun/sh_grm_inventory.lua")
+ok(GRM.Inventory.CountItem(ply,"mobile_badger")==1 and GRM.Inventory.CountItem(ply,"ammo_pistol")==30,"backup восстановил полный инвентарь")
+ok((file.Read("grm_inventories.json")or""):find("mobile_badger",1,true)~=nil,"main автоматически вылечен из backup")
 
 print("== 4. Дебаунс-автосейв на мутациях (v н114): покупка → файл за 2с ==")
 os.remove(DATA .. "/grm_inventories.json")

@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Inventory System v1.5.0 (Код 109)
+    GRM Inventory System v1.7.0 (Код 109)
     Полноценный инвентарь с ячейками для патронов, оружия и предметов
 
     v1.5.0 (Код 109, находка 126 — заказ владельца «нормальный модуль на
@@ -299,64 +299,71 @@ if SERVER then
     util.AddNetworkString("grm_inv_split")
 
     local INV_FILE = "grm_inventories.json"
-    -- v1.6: ключ инвентаря = CharacterKey, если поднят GRM.Char.
-    -- fallback = SteamID64 для совместимости/тестов/серверов без character core.
-    local Inventories = {}  -- [InventoryKey] = { slots = { [1] = {id="ammo_pistol", count=30}, ... } }
+    local INV_BACKUP_FILE = "grm_inventories_backup.json"
+    local INV_TEMP_FILE = "grm_inventories_write_tmp.json"
+    -- v1.7: CharacterKey inventory + verified main/temporary/backup chain.
+    local Inventories = {}
+    local persistenceHealthy = true
+    local persistenceRevision = 0
 
-    -- ── Загрузка / Сохранение ────────────────────────────────────
-    -- находка 114: лоадер БЕЗ 3-го аргумента конвертировал sid64-ключ
-    -- «7656…» в битый double — после рестарта ВСЕ записи сиротели.
-    local function loadInventories()
-        if not file.Exists(INV_FILE, "DATA") then return {} end
-        local raw = file.Read(INV_FILE, "DATA") or ""
-        if raw == "" then return {} end
-        local ok, t = pcall(util.JSONToTable, raw, false, true) -- н65: s64-ключи не конвертируем
-        if not (ok and istable(t)) then return {} end
-        local out = {}
-        for k, rec in pairs(t) do
-            if istable(rec) then
-                local sk = k
-                if isnumber(k) then sk = string.format("%.0f", k) end -- легаси битых сейвов
-                if isstring(sk) and sk ~= "" then
-                    local rawSlots = rec.slots
-                    -- Rescue for very old/bad saves: sometimes the inventory table itself
-                    -- was saved as a slot map without the `.slots` wrapper.
-                    if not istable(rawSlots) then
-                        local looksLikeSlots = false
-                        for kk, vv in pairs(rec) do
-                            if (tonumber(kk) ~= nil) and istable(vv) and vv.id then looksLikeSlots = true break end
-                        end
-                        if looksLikeSlots then rawSlots = rec end
+    local function decodeInventories(raw)
+        if not isstring(raw) or string.Trim(raw) == "" then return nil,"empty" end
+        local ok,t=pcall(util.JSONToTable,raw,false,true)
+        if not(ok and istable(t))then return nil,"decode" end
+        local out={};local revision=istable(t._grm_meta)and tonumber(t._grm_meta.revision)or 0
+        for k,rec in pairs(t)do
+            if k~="_grm_meta"and istable(rec)then
+                local sk=isnumber(k)and string.format("%.0f",k)or k
+                if isstring(sk)and sk~=""then
+                    local rawSlots=rec.slots
+                    if not istable(rawSlots)then
+                        local looks=false;for kk,vv in pairs(rec)do if tonumber(kk)~=nil and istable(vv)and vv.id then looks=true break end end
+                        if looks then rawSlots=rec end
                     end
-                    local slots = {}
-                    for kk, vv in pairs(rawSlots or {}) do
-                        if istable(vv) and vv.id then
-                            slots[tonumber(kk) or kk] = vv -- ключи слотов — строго числа
-                        end
-                    end
-                    rec.slots = slots
-                    out[sk] = rec
+                    local slots={};for kk,vv in pairs(rawSlots or{})do if istable(vv)and vv.id then slots[tonumber(kk)or kk]=vv end end
+                    rec.slots=slots;out[sk]=rec
                 end
             end
         end
-        return out
+        return out,nil,revision
     end
-
-    local function saveInventories(why)
-        local ok, enc = pcall(util.TableToJSON, Inventories, true)
-        if not ok or not isstring(enc) then
-            print("[GRM Inv][!] TableToJSON упал, сейв пропущен (" .. tostring(why or "?") .. ")")
-            return false
+    local function inventoryScore(data)local score=0;for _,rec in pairs(data or{})do score=score+10;for _ in pairs(rec.slots or{})do score=score+1 end end;return score end
+    local function persistenceError(msg)if ErrorNoHalt then ErrorNoHalt(msg.."\n")else print(msg)end end
+    local function quarantineInventory(path,raw,why)
+        if not isstring(raw)or raw==""then return end
+        local q="grm_inventory_corrupt_"..tostring(os.time()).."_"..path:gsub("[^%w]","_")..".json"
+        file.Write(q,raw);persistenceError("[GRM Inv] повреждён "..path.." ("..tostring(why).."), карантин: "..q)
+    end
+    local function loadInventories()
+        local existed=false;local best,bestPath,bestRevision,bestScore=nil,nil,-1,-1
+        for _,path in ipairs({INV_FILE,INV_TEMP_FILE,INV_BACKUP_FILE})do
+            if file.Exists(path,"DATA")then
+                existed=true;local raw=file.Read(path,"DATA")or"";local decoded,why,revision=decodeInventories(raw)
+                if decoded then local score=inventoryScore(decoded);if revision>bestRevision or(revision==bestRevision and score>bestScore)then best,bestPath,bestRevision,bestScore=decoded,path,revision,score end
+                else quarantineInventory(path,raw,why)end
+            end
         end
-        file.Write(INV_FILE, enc)
-        local rb = file.Read(INV_FILE, "DATA") or ""
-        if rb == "" then
-            print("[GRM Inv][!] КОНТРОЛЬ ЗАПИСИ: файл пуст после save (" .. tostring(why or "?") .. ")")
-            return false
-        end
+        if best then persistenceRevision=bestRevision;if bestPath~=INV_FILE then print("[GRM Inv] восстановление из "..bestPath.." rev="..bestRevision.." score="..bestScore)end;return best,true,bestPath end
+        if existed then persistenceError("[GRM Inv] все источники повреждены; пустой реестр НЕ будет записан поверх данных");return{},false,"corrupt"end
+        return{},true,"new"
+    end
+    local function verifiedWrite(path,encoded)
+        file.Write(path,encoded)
+        local rb=file.Read(path,"DATA")or"";if rb~=encoded then return false,"readback" end
+        local decoded=decodeInventories(rb);if not decoded then return false,"verify_decode" end
         return true
     end
-
+    local function saveInventories(why)
+        if not persistenceHealthy then print("[GRM Inv][!] SAVE BLOCKED: boot persistence unhealthy ("..tostring(why or"?")..")")return false end
+        local nextRevision=persistenceRevision+1;local payload={};for key,value in pairs(Inventories)do payload[key]=value end;payload._grm_meta={version=2,revision=nextRevision,savedAt=os.time()}
+        local ok,enc=pcall(util.TableToJSON,payload,true)
+        if not ok or not isstring(enc)or not decodeInventories(enc)then print("[GRM Inv][!] сериализация/проверка не удалась ("..tostring(why or"?")..")")return false end
+        local tempOK,tempWhy=verifiedWrite(INV_TEMP_FILE,enc);if not tempOK then print("[GRM Inv][!] temp SAVE FAIL: "..tostring(tempWhy))return false end
+        local mainOK,mainWhy=verifiedWrite(INV_FILE,enc);if not mainOK then print("[GRM Inv][!] main SAVE FAIL: "..tostring(mainWhy))return false end
+        local backupOK,backupWhy=verifiedWrite(INV_BACKUP_FILE,enc);if not backupOK then print("[GRM Inv][!] backup SAVE FAIL: "..tostring(backupWhy))return false end
+        persistenceRevision=nextRevision;if file.Delete then file.Delete(INV_TEMP_FILE)end
+        return true
+    end
     -- дебаунс-автосейв 2с на любых мутациях: закрывает окно 10с автотаймера
     local function saveSoon(why)
         timer.Create("GRM_Inv_SaveSoon", 2, 1, function()
@@ -365,7 +372,11 @@ if SERVER then
     end
     GRM.Inventory._devSaveSoon = saveSoon -- тест-экспорт
 
-    Inventories = loadInventories()
+    local loadedInventories,loadedHealthy,loadedSource=loadInventories()
+    Inventories=loadedInventories or{};persistenceHealthy=loadedHealthy~=false
+    GRM.Inventory.PersistenceHealthy=function()return persistenceHealthy,loadedSource end
+    GRM.Inventory.SaveNow=function(why)return saveInventories("immediate: "..tostring(why or"api"))end
+    if persistenceHealthy and loadedSource~=INV_FILE and loadedSource~="new"then timer.Simple(0,function()saveInventories("heal from "..tostring(loadedSource))end)end
 
     -- Автосохранение
     local function steamKey(ply)
@@ -1121,8 +1132,11 @@ if SERVER then
         end)
     end)
 
+    hook.Add("GRM_CharacterChanged","GRM_Inv_CharacterSave",function(ply)
+        saveInventories("character switch");timer.Simple(.1,function()if IsValid(ply)then GRM.Inventory.SyncToClient(ply)end end)
+    end)
     hook.Add("PlayerDisconnected", "GRM_Inv_Leave", function(ply)
-        saveInventories()
+        saveInventories("disconnect")
     end)
 
     hook.Add("ShutDown", "GRM_Inv_Shutdown", function()
@@ -1212,7 +1226,7 @@ if SERVER then
         end
     end)
 
-    print("[GRM] Inventory v1.1.0 (Код 97) — сервер загружен")
+    print("[GRM] Inventory v1.7.0 (Код 109) — сервер загружен")
 end
 
 -- ================================================================
@@ -1346,5 +1360,5 @@ if CLIENT then
         GRM.Inventory.RequestOpen()
     end)
 
-    print("[GRM] Inventory v1.1.0 — клиент загружен")
+    print("[GRM] Inventory v1.7.0 — клиент загружен")
 end

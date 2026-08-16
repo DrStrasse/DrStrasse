@@ -55,8 +55,10 @@ GRM = GRM or {}
 GRM.Documents = GRM.Documents or {}
 local DOC = GRM.Documents
 
-DOC.Version       = "2.0.0 — licenses v2 expiry/points + photoPath"
+DOC.Version       = "2.1.0 — verified registry persistence + physical recovery"
 DOC.RegistryFile  = "grm_documents.json"
+DOC.RegistryBackupFile = "grm_documents_backup.json"
+DOC.RegistryTempFile = "grm_documents_write_tmp.json"
 DOC.TemplatesFile = "grm_doc_templates.json"
 
 local NET_OPEN_DOC       = "GRM_Doc_OpenDoc"
@@ -422,36 +424,50 @@ if SERVER then
         end
     end
 
-    -- Загрузка базы выданных документов
+    -- Загрузка базы выданных документов: main -> interrupted temp -> backup.
+    -- Повреждённые источники помещаются в карантин и никогда не затираются `{}`.
+    local function emptyRegistry()return{passports={},badges={},coverBadges={},military={},licenses={},milLicenses={},weaponLicenses={},businessLicenses={},exams={}}end
+    local function normalizeRegistry(t)
+        local out=emptyRegistry();if not istable(t)then return out end
+        for key in pairs(out)do if istable(t[key])then out[key]=t[key]end end;return out
+    end
+    local function registryScore(t)local n=0;for key in pairs(emptyRegistry())do for _ in pairs(t[key]or{})do n=n+1 end end;return n end
+    local function registryError(msg)if ErrorNoHalt then ErrorNoHalt(msg.."\n")else print(msg)end end
+    local function quarantineRegistry(path,raw)
+        if not isstring(raw)or raw==""then return end;local q="grm_documents_corrupt_"..os.time().."_"..path:gsub("[^%w]","_")..".json";file.Write(q,raw);registryError("[GRM Documents] повреждён "..path..", карантин: "..q)
+    end
     function DOC.LoadRegistry()
-        DOC.Registry = { passports = {}, badges = {}, coverBadges = {}, military = {}, licenses = {}, milLicenses = {}, weaponLicenses = {}, businessLicenses = {}, exams = {} }
-        if file.Exists(DOC.RegistryFile, "DATA") then
-            local t = jsonT(file.Read(DOC.RegistryFile, "DATA") or "")
-            if istable(t) then
-                DOC.Registry.passports   = istable(t.passports) and t.passports or {}
-                DOC.Registry.badges      = istable(t.badges) and t.badges or {}
-                DOC.Registry.coverBadges = istable(t.coverBadges) and t.coverBadges or {}
-                DOC.Registry.military    = istable(t.military) and t.military or {}
-                DOC.Registry.licenses    = istable(t.licenses) and t.licenses or {}
-                DOC.Registry.milLicenses = istable(t.milLicenses) and t.milLicenses or {}
-                DOC.Registry.weaponLicenses = istable(t.weaponLicenses) and t.weaponLicenses or {}
-                DOC.Registry.businessLicenses = istable(t.businessLicenses) and t.businessLicenses or {}
-                DOC.Registry.exams = istable(t.exams) and t.exams or {}
+        local existed=false;local best,bestPath,bestRevision,bestScore=nil,nil,-1,-1
+        for _,path in ipairs({DOC.RegistryFile,DOC.RegistryTempFile,DOC.RegistryBackupFile})do
+            if file.Exists(path,"DATA")then existed=true;local raw=file.Read(path,"DATA")or"";local t=jsonT(raw)
+                if istable(t)then local normalized=normalizeRegistry(t);local revision=istable(t._grm_meta)and tonumber(t._grm_meta.revision)or 0;local score=registryScore(normalized);if revision>bestRevision or(revision==bestRevision and score>bestScore)then best,bestPath,bestRevision,bestScore=normalized,path,revision,score end
+                else quarantineRegistry(path,raw)end
             end
         end
+        if best then DOC.Registry=best;DOC.RegistryHealthy=true;DOC.RegistrySource=bestPath;DOC.RegistryRevision=bestRevision;if bestPath~=DOC.RegistryFile then print("[GRM Documents] восстановление из "..bestPath.." rev="..bestRevision.." score="..bestScore)end;return DOC.Registry end
+        DOC.Registry=emptyRegistry();DOC.RegistryHealthy=not existed;DOC.RegistrySource=existed and"corrupt"or"new";DOC.RegistryRevision=0
+        if existed then registryError("[GRM Documents] main/temp/backup повреждены; пустой реестр НЕ будет сохранён поверх данных")end
         return DOC.Registry
     end
-
+    local function writeRegistry(path,txt)
+        file.Write(path,txt);local rb=file.Read(path,"DATA")or"";return rb==txt and istable(jsonT(rb))
+    end
     function DOC.SaveRegistry(why)
-        local ok, txt = pcall(util.TableToJSON, DOC.Registry or {}, true)
-        if ok and txt then
-            file.Write(DOC.RegistryFile, txt)
-            print("[GRM Documents] SAVE ok registry (" .. tostring(why or "?") .. "), паспортов: " .. table.Count(DOC.Registry.passports or {}) .. ", удостоверений: " .. table.Count(DOC.Registry.badges or {}) .. ", прав Дорожной Инспекции: " .. table.Count(DOC.Registry.licenses or {}) .. ", прав ВАИ: " .. table.Count(DOC.Registry.milLicenses or {}))
-        end
+        if DOC.RegistryHealthy==false then registryError("[GRM Documents] SAVE BLOCKED: boot registry unhealthy ("..tostring(why or"?")..")")return false end
+        local nextRevision=(tonumber(DOC.RegistryRevision)or 0)+1;local payload={};for key,value in pairs(DOC.Registry or emptyRegistry())do payload[key]=value end;payload._grm_meta={version=2,revision=nextRevision,savedAt=os.time()}
+        local ok,txt=pcall(util.TableToJSON,payload,true);if not ok or not isstring(txt)or not istable(jsonT(txt))then return false end
+        if not writeRegistry(DOC.RegistryTempFile,txt)then return false end
+        if not writeRegistry(DOC.RegistryFile,txt)then return false end
+        if not writeRegistry(DOC.RegistryBackupFile,txt)then return false end
+        DOC.RegistryRevision=nextRevision;if file.Delete then file.Delete(DOC.RegistryTempFile)end
+        DOC.RegistryHealthy=true
+        print("[GRM Documents] SAVE ok registry ("..tostring(why or"?").."), паспортов: "..table.Count(DOC.Registry.passports or{})..", удостоверений: "..table.Count(DOC.Registry.badges or{})..", прав Дорожной Инспекции: "..table.Count(DOC.Registry.licenses or{})..", прав ВАИ: "..table.Count(DOC.Registry.milLicenses or{}))
+        return true
     end
 
     DOC.LoadTemplates()
     DOC.LoadRegistry()
+    if DOC.RegistryHealthy and DOC.RegistrySource~=DOC.RegistryFile and DOC.RegistrySource~="new"then timer.Simple(0,function()DOC.SaveRegistry("heal from "..tostring(DOC.RegistrySource))end)end
 
     -- Авто-создание паспорта гражданина при необходимости
     local function ensurePassport(ply)

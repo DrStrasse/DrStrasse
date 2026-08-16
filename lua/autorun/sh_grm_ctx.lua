@@ -177,6 +177,8 @@ if SERVER then
         result.hasWeaponLicense = hasOwnItem("weapon_license","weaponLicense") and weaponLic ~= nil
         local businessLic = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.businessLicenses and GRM.Documents.Registry.businessLicenses[key]
         result.hasBusinessLicense = hasOwnItem("business_license","businessLicense") and businessLic ~= nil
+        local missing=GRM.Documents and GRM.Documents.MissingPhysicalTypes and GRM.Documents.MissingPhysicalTypes(ply)or{}
+        result.missingPhysicalCount=istable(missing)and #missing or 0
 
         if factionName and FactionsExt and FactionsExt[factionName] then
             local cfg = FactionsExt[factionName]
@@ -625,6 +627,9 @@ local BTNS = {
       c = Color(35, 120, 95), ch = Color(45, 150, 120),
       ok = function() return istable(data.aimPly) and data.hasMedCard == true end },
     -- ── документы: личный просмотр (Код 87) ───────────────────
+    { id="doc_restore",l=function()return"Восстановить бланки ("..tostring(tonumber(data.missingPhysicalCount)or 0)..")"end,
+      fn=function()RunConsoleCommand("say","/docrestore all")end,c=Color(185,115,45),ch=Color(215,145,65),
+      ok=function()return not istable(data.aimPly)and(tonumber(data.missingPhysicalCount)or 0)>0 end },
     { id = "doc_self_pass", l = "Мой паспорт",
       fn = actOwnPassport,
       c = Color(140, 45, 55), ch = Color(170, 60, 70),
