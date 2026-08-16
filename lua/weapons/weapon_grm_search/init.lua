@@ -138,8 +138,8 @@ function SWEP:CheckDocuments(searcher, target)
     local milLic = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.milLicenses and GRM.Documents.Registry.milLicenses[charKey]
     local milLicStr = milLic and string.format("№ %s (ВУС: %s, Кат: %s, %s)", milLic.number or "—", milLic.vus or "ВУС-837", milLic.categoriesStr or "B-В", milLic.status or "Действительно") or "Не выданы"
 
-    -- 6. Медкарта
-    local card = GRM.Medical and GRM.Medical.Cards and (GRM.Medical.Cards[charKey] or GRM.Medical.Cards[target:SteamID64()])
+    -- 6. Медкарта (единая: одна запись на персонажа, без авто-создания)
+    local card = (GRM.Medical and isfunction(GRM.Medical.HasCard) and GRM.Medical.HasCard(charKey)) and GRM.Medical.Cards[charKey] or nil
     local medStr = card and string.format("Группа: %s | Категория: %s", (card.blood ~= "" and card.blood or "—"), (card.fitnessCategory or "А")) or "Не заведена"
 
     -- 7. Оружие

@@ -137,8 +137,7 @@ if SERVER then
         result.officialBadgeFac = hasOfficial and (badge and badge.faction or factionName) or ""
         result.coverBadgeFac = hasCover and (coverRec and coverRec.faction or "") or ""
 
-        local card = GRM.Medical and GRM.Medical.Cards and (GRM.Medical.Cards[key] or GRM.Medical.Cards[ply:SteamID64()])
-        result.hasMedCard = (card ~= nil)
+        result.hasMedCard = (GRM.Medical and isfunction(GRM.Medical.HasCard) and GRM.Medical.HasCard(key)) == true
 
         -- Дипломы: свои бланки игрок смотрит как любой другой документ.
         -- Аннулированные учитываем тоже — владелец должен видеть их статус.

@@ -91,13 +91,14 @@ net.Receive("GRM_CompMedical_SaveCard", function(_, ply)
     if GRM.Medical then
         GRM.Medical.Cards = GRM.Medical.Cards or {}
         cardData.updated = os.time()
-        GRM.Medical.Cards[targetKey] = cardData
-
-        -- Ключевое дублирование для быстрого резолва по SteamID64
-        local sid64 = targetKey:match("^(%d+)")
-        if sid64 and sid64 ~= targetKey then
-            GRM.Medical.Cards[sid64] = cardData
+        -- ЕДИНАЯ МЕДКАРТА: одна запись на персонажа, канонические справочники.
+        if isfunction(GRM.Medical.NormalizeBlood) and cardData.blood ~= nil then
+            cardData.blood = GRM.Medical.NormalizeBlood(cardData.blood)
         end
+        if isfunction(GRM.Medical.NormalizeFitness) and cardData.fitnessCategory ~= nil then
+            cardData.fitnessCategory = GRM.Medical.NormalizeFitness(cardData.fitnessCategory)
+        end
+        GRM.Medical.Cards[targetKey] = cardData
 
         if GRM.Medical.SaveCards then
             GRM.Medical.SaveCards("medical computer save by " .. ply:Nick())

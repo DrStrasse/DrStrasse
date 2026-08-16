@@ -58,6 +58,56 @@ MD.EntryKinds = {
     issue        = "Выдача карты", -- служебный вид: пишется только op «issue» (Код 101)
 }
 
+-- ── ЕДИНАЯ МЕДКАРТА: канонизация справочников ──────────────────────────
+-- Разные UI когда-то писали разные форматы группы крови и ВВК
+-- («I (0) Rh+» против «O(I) Rh+», «Д — Не годен… (освобождён)» против
+-- ядра). Эти функции приводят ЛЮБОЙ старый формат к единому (MD.BloodTypes /
+-- MD.FitnessCategories). Используются сервером при загрузке/сохранении и
+-- доступны клиенту.
+
+-- Группа крови → канонический «O(I) Rh+»… (буква группы + резус).
+function MD.NormalizeBlood(v)
+    v = tostring(v or "")
+    if v == "" then return "" end
+    local up = v:upper()
+    local group
+    if up:find("AB", 1, true) or up:find("IV", 1, true) then group = "AB(IV)"
+    elseif up:find("III", 1, true) then group = "B(III)"
+    elseif up:find("II", 1, true) then group = "A(II)"
+    elseif up:find("A", 1, true) then group = "A(II)"
+    elseif up:find("B", 1, true) then group = "B(III)"
+    elseif up:find("O", 1, true) or up:find("0", 1, true) or up:find("I", 1, true) then group = "O(I)"
+    else return v end
+    local rh = (v:find("−", 1, true) or v:find("-", 1, true)) and "−" or "+"
+    return group .. " Rh" .. rh
+end
+
+-- Категория годности ВВК → каноническая запись по букве (А–Д).
+function MD.NormalizeFitness(v)
+    v = tostring(v or "")
+    if v == "" then return "" end
+    local t = string.Trim(v)
+    -- уже канонично — не трогаем
+    for _, canon in ipairs(MD.FitnessCategories) do
+        if t == canon then return canon end
+    end
+    -- первая буква категории: кириллица А–Д (2 байта в UTF-8) или латиница A–D
+    local letter
+    local first = t:sub(1, 2)
+    if first == "А" or first == "Б" or first == "В" or first == "Г" or first == "Д" then
+        letter = first
+    else
+        local lat = { A = "А", B = "Б", C = "В", D = "Г", E = "Д" }
+        letter = lat[t:sub(1, 1):upper()]
+    end
+    if letter then
+        for _, canon in ipairs(MD.FitnessCategories) do
+            if canon:sub(1, 2) == letter then return canon end
+        end
+    end
+    return v
+end
+
 -- Код 101: медицинская карта как предмет инвентаря («на руки»).
 -- sid64 владельца лежит в данных предмета (slot.data.sid64) — дроп,
 -- подбор и рестарт привязку не теряют (сейв инвентаря хранит data).
@@ -154,13 +204,50 @@ if SERVER then
         MD.Cards = MD.Cards or {}
         local t = jsonT(file.Read(MD.CardsFile, "DATA") or "")
         if istable(t) then MD.Cards = t end
-        local moved = {}
+
+        -- ЕДИНАЯ МЕДКАРТА: миграция ключей. Канонический ключ — CharacterKey
+        -- (`SteamID64:charN`). Голый SteamID64 и SteamID (STEAM_0:…) сводятся
+        -- к `:char1`; дубликат (компьютер когда-то писал и `sid64`, и `sid64:charN`)
+        -- схлопывается в ОДНУ запись.
+        local remap = {}
         for key, card in pairs(MD.Cards) do
-            local ck = identityKey(key)
-            if ck ~= key and moved[ck] == nil then moved[ck] = card MD.Cards[key] = nil end
+            if istable(card) then
+                local ck = identityKey(key)
+                if key:match("^%d+$") and not key:find(":", 1, true) then ck = key .. ":char1" end
+                if ck ~= key then remap[#remap + 1] = { from = key, to = ck, card = card } end
+            end
         end
-        for key, card in pairs(moved) do MD.Cards[key] = card end
-        if next(moved) ~= nil then MD._CardsMigrated = true end
+        local migrated = false
+        for _, r in ipairs(remap) do
+            if not istable(MD.Cards[r.to]) then MD.Cards[r.to] = r.card end
+            MD.Cards[r.from] = nil
+            migrated = true
+        end
+
+        -- Нормализация справочников (группа крови, ВВК) к единому виду.
+        local normalized = false
+        for _, card in pairs(MD.Cards) do
+            if istable(card) then
+                if card.blood ~= nil and card.blood ~= "" then
+                    local nb = MD.NormalizeBlood(card.blood)
+                    if nb ~= card.blood then card.blood = nb normalized = true end
+                end
+                if card.fitnessCategory ~= nil and card.fitnessCategory ~= "" then
+                    local nf = MD.NormalizeFitness(card.fitnessCategory)
+                    if nf ~= card.fitnessCategory then card.fitnessCategory = nf normalized = true end
+                end
+            end
+        end
+
+        if migrated then MD._CardsMigrated = true end
+        if migrated or normalized then MD.SaveCards("миграция ключей/справочников") end
+    end
+
+    -- Карта заведена? Без авто-создания (в отличие от CardOf — для обыска/документа).
+    function MD.HasCard(key)
+        key = tostring(key or "")
+        if key == "" then return false end
+        return istable(MD.Cards and MD.Cards[key])
     end
     function MD.SaveCards(why)
         local ok, txt = pcall(util.TableToJSON, MD.Cards or {}, true)

@@ -895,9 +895,13 @@ if SERVER then
             end
             tpl = DOC.Templates.businessLicense or {}
         elseif docType == "medcard" then
-            if GRM.Medical and GRM.Medical.CardOf then
+            if GRM.Medical then
                 local cardKey = getCharKey(ply)
-                payload = GRM.Medical.CardOf(cardKey)
+                if isfunction(GRM.Medical.HasCard) and not GRM.Medical.HasCard(cardKey) then
+                    if GRM.Notify then GRM.Notify(ply, "Медицинская карта не заведена (обратитесь в госпиталь).", 255, 140, 110) end
+                    return
+                end
+                payload = GRM.Medical.CardOf and GRM.Medical.CardOf(cardKey)
                 tpl = { patientName = getPlayerRPName(ply) }
             end
         end
@@ -1094,9 +1098,13 @@ if SERVER then
             if GRM.Notify then GRM.Notify(ply, "Вы предъявили удостоверение военного водителя ВАИ игроку " .. targetName .. ".", 100, 220, 130) end
 
         elseif docType == "medcard" then
-            if GRM.Medical and GRM.Medical.CardOf then
+            if GRM.Medical then
                 local cardKey = getCharKey(ply)
-                local card = GRM.Medical.CardOf(cardKey)
+                if isfunction(GRM.Medical.HasCard) and not GRM.Medical.HasCard(cardKey) then
+                    if GRM.Notify then GRM.Notify(ply, "Медицинская карта не заведена (обратитесь в госпиталь).", 255, 140, 110) end
+                    return
+                end
+                local card = GRM.Medical.CardOf and GRM.Medical.CardOf(cardKey)
                 local meText = string.format("передал(а) медицинскую карту на имя %s игроку %s", getPlayerRPName(ply), targetName)
                 broadcastDocAction(ply, meText)
 

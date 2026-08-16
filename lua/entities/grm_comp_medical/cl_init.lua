@@ -103,33 +103,24 @@ net.Receive("GRM_CompMedical_Open", function()
     lblBlood:SetText("2. Группа крови и резус-фактор:")
     lblBlood:SetTextColor(CC.text)
     lblBlood:SizeToContents()
+    local bloodTypes = GRM.Medical and GRM.Medical.BloodTypes or { "O(I) Rh+", "O(I) Rh−", "A(II) Rh+", "A(II) Rh−", "B(III) Rh+", "B(III) Rh−", "AB(IV) Rh+", "AB(IV) Rh−" }
     local comboBlood = vgui.Create("DComboBox", medPnl)
     comboBlood:SetPos(300, 88)
     comboBlood:SetSize(170, 26)
-    comboBlood:AddChoice("I (0) Rh+")
-    comboBlood:AddChoice("I (0) Rh-")
-    comboBlood:AddChoice("II (A) Rh+")
-    comboBlood:AddChoice("II (A) Rh-")
-    comboBlood:AddChoice("III (B) Rh+")
-    comboBlood:AddChoice("III (B) Rh-")
-    comboBlood:AddChoice("IV (AB) Rh+")
-    comboBlood:AddChoice("IV (AB) Rh-")
-    comboBlood:SetValue("I (0) Rh+")
+    for _, b in ipairs(bloodTypes) do comboBlood:AddChoice(b) end
+    comboBlood:SetValue(bloodTypes[1])
 
     local lblFit = vgui.Create("DLabel", medPnl)
     lblFit:SetPos(485, 68)
     lblFit:SetText("3. Категория годности к службе / работе (ВВК):")
     lblFit:SetTextColor(CC.text)
     lblFit:SizeToContents()
+    local fitCats = GRM.Medical and GRM.Medical.FitnessCategories or { "А — Годен к военной службе и работе", "Б — Годен с незначительными ограничениями", "В — Ограниченно годен к службе", "Г — Временно не годен (на период лечения)", "Д — Не годен к военной службе" }
     local comboFit = vgui.Create("DComboBox", medPnl)
     comboFit:SetPos(485, 88)
     comboFit:SetSize(430, 26)
-    comboFit:AddChoice("А — Годен к военной службе и работе")
-    comboFit:AddChoice("Б — Годен с незначительными ограничениями")
-    comboFit:AddChoice("В — Ограниченно годен к службе (запас)")
-    comboFit:AddChoice("Г — Временно не годен (отсрочка на лечение)")
-    comboFit:AddChoice("Д — Не годен к военной службе (освобождён)")
-    comboFit:SetValue("А — Годен к военной службе и работе")
+    for _, f in ipairs(fitCats) do comboFit:AddChoice(f) end
+    comboFit:SetValue(fitCats[1])
 
     -- Ряд 2: Аллергии и Хронические заболевания
     local lblAllergies = vgui.Create("DLabel", medPnl)
@@ -212,11 +203,11 @@ net.Receive("GRM_CompMedical_Open", function()
             listEntries:Clear()
             currentEntries = {}
 
-            local card = medCards[selKey] or medCards[selSid64]
+            local card = medCards[selKey]
             if istable(card) then
                 entName:SetText(card.name or pData.rpName or "")
-                comboBlood:SetValue(card.blood or "I (0) Rh+")
-                comboFit:SetValue(card.fitnessCategory or "А — Годен к военной службе и работе")
+                comboBlood:SetValue(card.blood or bloodTypes[1])
+                comboFit:SetValue(card.fitnessCategory or fitCats[1])
                 entAllergies:SetText(card.allergies or "Не выявлено")
                 entChronic:SetText(card.chronic or "Отсутствуют")
 
@@ -226,8 +217,8 @@ net.Receive("GRM_CompMedical_Open", function()
                     listEntries:AddLine(dStr, e.kind or "Осмотр", e.text or "—", e.doctor or "Врач")
                 end
             else
-                comboBlood:SetValue("I (0) Rh+")
-                comboFit:SetValue("А — Годен к военной службе и работе")
+                comboBlood:SetValue(bloodTypes[1])
+                comboFit:SetValue(fitCats[1])
                 entAllergies:SetText("Не выявлено")
                 entChronic:SetText("Отсутствуют")
             end
@@ -280,7 +271,6 @@ net.Receive("GRM_CompMedical_Open", function()
         }
 
         medCards[selKey] = pack
-        if selSid64 ~= "" then medCards[selSid64] = pack end
 
         net.Start("GRM_CompMedical_SaveCard")
             net.WriteString(selKey)
