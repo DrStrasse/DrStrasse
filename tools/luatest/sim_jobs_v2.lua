@@ -64,6 +64,11 @@ GRM.Notify = function(ply, msg, r, g, b) P("NOTIFY[" .. ply:Nick() .. "]: " .. t
 
 Factions = {}
 
+local taxiVeh = {
+    GetModel = function() return "models/taxi.mdl" end,
+    GetClass = function() return "prop_vehicle_jeep" end,
+    GetDriver = function() return nil end,
+}
 local function mkPly(nick, sid, s64, super)
     local p = {
         _pos = Vector(0, 0, 0), _bal = 1000, _inVeh = false,
@@ -75,6 +80,8 @@ local function mkPly(nick, sid, s64, super)
         IsPlayer = function() return true end,
         Alive = function() return true end,
         InVehicle = function(self) return self._inVeh == true end,
+        GetVehicle = function(self) if self._inVeh then return taxiVeh end return nil end,
+        ExitVehicle = function(self) self._inVeh = false end,
         GetPos = function(self) return self._pos end,
         GetNWString = function() return "" end,
         PrintMessage = function(_, ch, txt) P("CHAT[" .. nick .. "]: " .. tostring(txt)) end,

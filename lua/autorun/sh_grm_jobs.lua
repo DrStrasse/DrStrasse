@@ -55,7 +55,7 @@ GRM = GRM or {}
 GRM.Jobs = GRM.Jobs or {}
 local JB = GRM.Jobs
 
-JB.Version     = "2.1.0"  -- работы: курьер / мусоровоз / таксист + новый UI
+JB.Version     = "2.2.0"  -- v2.2.0: типы точек/маршруты + такси (такса, ТС, бюджет)
 JB.DataFile    = "grm_jobs.json"
 JB.ActiveFile  = "grm_jobs_active.json"
 JB.Rotate      = 300      -- смена вакансий, сек
@@ -66,6 +66,30 @@ JB.MaxReward   = 10000
 JB.MinSalary   = 100      -- вакансия: зарплата за смену (мин/макс)
 JB.MaxSalary   = 5000
 JB.MaxShifts   = 10       -- вакансия: смен на одну публикацию
+
+-- ── v2.2.0: типы точек биржи (расстановка маршрутов суперадмином) ──────
+-- /jobdepot_add [type], /jobdepot_type <type>, /jobdepot_name <имя>.
+-- Тип точки определяет, куда ведут маршруты работ (курьер/мусоровоз/такси).
+JB.DepotTypes = {
+    generic      = { label = "Универсальная точка", color = { 120, 170, 200 } },
+    courier      = { label = "Курьерская доставка", color = { 90, 170, 250 } },
+    garbage      = { label = "Контейнер мусора",    color = { 130, 190, 95 } },
+    dump         = { label = "Свалка",               color = { 150, 140, 90 } },
+    taxi_pickup  = { label = "Посадка такси",        color = { 250, 200, 70 } },
+    taxi_dest    = { label = "Назначение такси",     color = { 240, 150, 60 } },
+}
+
+-- ── v2.2.0: конфиг такси (правит суперадмин, персист в grm_jobs.json) ──
+-- vehicles — список моделей ТС (или подстрок класса), которые считаются
+-- такси; allowAny=true — любое ТС годится (по умолчанию). fareMin/fareMax —
+-- границы таксы; commission — % таксы в гос.казну (связь с бюджетом).
+JB.TaxiDefaults = {
+    allowAny   = true,
+    vehicles   = {},      -- массив строк (модель или подстрока класса)
+    fareMin    = 100,
+    fareMax    = 3000,
+    commission = 10,      -- % от таксы идёт в гос.бюджет
+}
 
 local NET_OPEN      = "GRM_Jobs_Open"
 local NET_ACCEPT    = "GRM_Jobs_Accept"
@@ -78,6 +102,11 @@ local NET_TRACKER   = "GRM_Jobs_Tracker"
 local NET_GETMY     = "GRM_Jobs_GetMy"
 local NET_MYSTATE   = "GRM_Jobs_MyState"
 local NET_FORM      = "GRM_Jobs_PostForm" -- S→C: открыть форму публикации (зона = где стоишь)
+local NET_TAXI_STATE= "GRM_Taxi_State"    -- S→C: состояние такси (водитель/пассажир)
+local NET_TAXI_OPEN = "GRM_Taxi_Open"     -- S→C: открыть меню такси
+local NET_TAXI_SET  = "GRM_Taxi_Set"      -- C→S: водитель задаёт таксу
+local NET_TAXI_ACT  = "GRM_Taxi_Act"      -- C→S: start/stop/refuse
+local NET_TAXI_CFG  = "GRM_Taxi_Cfg"      -- C→S: суперадмин сохраняет конфиг
 
 -- ============================================================
 -- ШАБЛОНЫ ЗАДАНИЙ (можно расширять из других модулей — JB.Register)
@@ -131,6 +160,11 @@ if SERVER then
     util.AddNetworkString(NET_GETMY)
     util.AddNetworkString(NET_MYSTATE)
     util.AddNetworkString(NET_FORM)
+    util.AddNetworkString(NET_TAXI_STATE)
+    util.AddNetworkString(NET_TAXI_OPEN)
+    util.AddNetworkString(NET_TAXI_SET)
+    util.AddNetworkString(NET_TAXI_ACT)
+    util.AddNetworkString(NET_TAXI_CFG)
 
     local function jsonT(txt)
         local ok, t = pcall(util.JSONToTable, txt, false, true)
@@ -139,7 +173,7 @@ if SERVER then
 
     -- конфиг: доступ работодателей + заказы фракций + статистика игроков
     local function defaultCfg()
-        return { allow = {}, posts = {}, stats = {}, nextId = 1 }
+        return { allow = {}, posts = {}, stats = {}, nextId = 1, taxi = {} }
     end
     local function loadCfg()
         JB.Cfg = defaultCfg()
@@ -150,6 +184,19 @@ if SERVER then
             JB.Cfg.stats = istable(t.stats) and t.stats or {}
             JB.Cfg.nextId = math.max(1, tonumber(t.nextId) or 1)
         end
+        -- v2.2.0: конфиг такси (мержим с дефолтами — новые ключи подхватываются)
+        local tx = (istable(t) and istable(t.taxi)) and t.taxi or {}
+        JB.Cfg.taxi = {
+            allowAny   = (tx.allowAny ~= nil) and (tx.allowAny == true) or (JB.TaxiDefaults.allowAny == true),
+            vehicles   = istable(tx.vehicles) and tx.vehicles or {},
+            fareMin    = math.max(1,  math.floor(tonumber(tx.fareMin) or JB.TaxiDefaults.fareMin)),
+            fareMax    = math.max(1,  math.floor(tonumber(tx.fareMax) or JB.TaxiDefaults.fareMax)),
+            commission = math.floor(tonumber(tx.commission) or JB.TaxiDefaults.commission),
+        }
+        if JB.Cfg.taxi.fareMin > JB.Cfg.taxi.fareMax then
+            JB.Cfg.taxi.fareMin, JB.Cfg.taxi.fareMax = JB.Cfg.taxi.fareMax, JB.Cfg.taxi.fareMin
+        end
+        JB.Cfg.taxi.commission = clampN(JB.Cfg.taxi.commission, 0, 100)
     end
     function JB.SaveCfg(why)
         local ok, txt = pcall(util.TableToJSON, JB.Cfg or defaultCfg(), true)
@@ -202,6 +249,8 @@ if SERVER then
             class = class,
             pos = { x = pos.x, y = pos.y, z = pos.z },
             ang = { p = ang.p or 0, y = ang.y or 0, r = ang.r or 0 },
+            jtype = tostring(ent:GetNWString("GRM_JobType", "generic") or "generic"),
+            jname = tostring(ent:GetNWString("GRM_JobName", "") or ""),
         }
         savePersist()
     end
@@ -229,6 +278,9 @@ if SERVER then
                             local a = istable(rec.ang) and rec.ang or {}
                             ent:SetAngles(Angle(tonumber(a.p) or 0, tonumber(a.y) or 0, tonumber(a.r) or 0))
                             ent:Spawn() ent:Activate()
+                            -- v2.2.0: тип и имя точки переживают рестарт
+                            if tostring(rec.jtype or "") ~= "" then ent:SetNWString("GRM_JobType", tostring(rec.jtype)) end
+                            if tostring(rec.jname or "") ~= "" then ent:SetNWString("GRM_JobName", tostring(rec.jname)) end
                             local phys = ent:GetPhysicsObject()
                             if IsValid(phys) then phys:EnableMotion(false) end
                             restored = restored + 1
@@ -303,6 +355,36 @@ if SERVER then
         return out
     end
 
+    -- v2.2.0: типизированные точки — суперадмин расставляет маршруты
+    function JB.DepotType(ent)
+        if not IsValid(ent) then return "generic" end
+        return tostring((ent.GetNWString and ent:GetNWString("GRM_JobType", "generic")) or "generic")
+    end
+    function JB.DepotName(ent)
+        if not IsValid(ent) then return "" end
+        return tostring((ent.GetNWString and ent:GetNWString("GRM_JobName", "")) or "")
+    end
+    function JB.DepotLabel(ent)
+        local nm = JB.DepotName(ent)
+        if nm ~= "" then return nm end
+        local t = JB.DepotTypes[JB.DepotType(ent)] or JB.DepotTypes.generic
+        return t.label
+    end
+    -- точки заданного типа; при нехватке — дополняем универсальными
+    -- (точки другого типа в чужой маршрут не попадают).
+    local function depotsOfType(t)
+        local exact, generic = {}, {}
+        for _, e in ipairs(depots()) do
+            local tt = JB.DepotType(e)
+            if tt == t then exact[#exact + 1] = e
+            elseif tt == "generic" then generic[#generic + 1] = e end
+        end
+        local out = {}
+        for _, e in ipairs(exact) do out[#out + 1] = e end
+        for _, e in ipairs(generic) do out[#out + 1] = e end
+        return out
+    end
+
     -- Готовый набор вакансий: фиксированный список, награды по реальным
     -- дистанциям до точек. garbage/taxi — маршрутные, требуют транспорт.
     local TPL_ORDER = { "courier", "garbage", "taxi" }
@@ -338,16 +420,27 @@ if SERVER then
                 local s = seed + idx * 104729
                 local offer
                 if tid == "garbage" then
-                    -- контейнеры + финальная свалка
-                    local need = (tonumber(tpl.points) or 2) + 1
-                    local pk = seededPick(s, dps, need)
+                    -- контейнеры (тип garbage/универсал) + финальная свалка (тип dump)
+                    local cCount = math.max(1, tonumber(tpl.points) or 2)
+                    local pk = seededPick(s, depotsOfType("garbage"), cCount)
                     if pk then
-                        local routeDist, prev = 0, cpos
-                        for _, e in ipairs(pk) do routeDist = routeDist + prev:Distance(e:GetPos()); prev = e:GetPos() end
                         local pts, names = {}, {}
-                        for i = 1, need do
-                            pts[#pts + 1] = vecTbl(pk[i]:GetPos())
-                            names[#names + 1] = (i == need) and "Свалка" or ("Контейнер " .. tostring(i))
+                        local routeDist, prev = 0, cpos
+                        for i = 1, cCount do
+                            local e = pk[i]
+                            routeDist = routeDist + prev:Distance(e:GetPos())
+                            prev = e:GetPos()
+                            pts[#pts + 1] = vecTbl(e:GetPos())
+                            names[#names + 1] = (JB.DepotName(e) ~= "") and JB.DepotName(e) or ("Контейнер " .. tostring(i))
+                        end
+                        local dumps = depotsOfType("dump")
+                        local dumpEnt = (#dumps > 0) and dumps[1] or nil
+                        if dumpEnt then
+                            routeDist = routeDist + prev:Distance(dumpEnt:GetPos())
+                            pts[#pts + 1] = vecTbl(dumpEnt:GetPos())
+                            names[#names + 1] = (JB.DepotName(dumpEnt) ~= "") and JB.DepotName(dumpEnt) or "Свалка"
+                        else
+                            names[cCount] = "Свалка (" .. names[cCount] .. ")"
                         end
                         offer = {
                             tplId = tid, title = tpl.title, desc = tpl.desc, jtype = tpl.jtype,
@@ -359,20 +452,32 @@ if SERVER then
                         }
                     end
                 elseif tid == "taxi" then
-                    local pk = seededPick(s, dps, 2)
-                    if pk then
-                        local d = math.floor(pk[1]:GetPos():Distance(pk[2]:GetPos()))
+                    -- посадка (taxi_pickup) → назначение (taxi_dest); иначе две разные точки
+                    local picks = depotsOfType("taxi_pickup")
+                    local a, b
+                    local dests = depotsOfType("taxi_dest")
+                    for _, e in ipairs(dests) do
+                        if e ~= a then b = e break end
+                    end
+                    if not a then a = picks[1] end
+                    if not b then
+                        local pk = seededPick(s, picks, 2)
+                        if pk then a, b = pk[1], pk[2] end
+                    end
+                    if a and b then
+                        local d = math.floor(a:GetPos():Distance(b:GetPos()))
                         offer = {
                             tplId = tid, title = tpl.title, desc = tpl.desc, jtype = tpl.jtype,
                             needVehicle = true, dist = d,
                             reward = clampN(math.floor(tpl.rewardFn(d) / 5) * 5, JB.MinReward, JB.MaxReward),
                             timeSec = math.floor(tpl.timeFn(d)),
-                            target = pk[1]:GetPos(), center = pk[2]:GetPos(),
+                            target = a:GetPos(), center = b:GetPos(),
                             zoneRadius = 170, zoneName = "Посадка → назначение",
                         }
                     end
                 else
-                    local dep = dps[(s % #dps) + 1]
+                    local couriers = depotsOfType("courier")
+                    local dep = couriers[(s % #couriers) + 1]
                     local d = math.floor(cpos:Distance(dep:GetPos()))
                     offer = {
                         tplId = tid, title = tpl.title, desc = tpl.desc, jtype = tpl.jtype,
@@ -382,7 +487,7 @@ if SERVER then
                         staySec = tpl.stay or 0,
                         target = dep:GetPos(),
                         zoneRadius = tonumber(tpl.radius or 180),
-                        zoneName = dep.GetNWString and dep:GetNWString("GRM_JobZoneName", "Точка работы") or "Точка работы",
+                        zoneName = JB.DepotLabel(dep),
                     }
                 end
                 if offer then
@@ -660,6 +765,11 @@ if SERVER then
                                 j._hintT = CurTime() + 10
                                 if GRM.Notify then GRM.Notify(ply, "Для этой работы нужен транспорт — сядьте за руль.", 255, 190, 90) end
                             end
+                        elseif j.jtype == "taxi" and not JB.IsTaxiVehicle(ply:GetVehicle()) then
+                            if (j._hintT or 0) < CurTime() then
+                                j._hintT = CurTime() + 10
+                                if GRM.Notify then GRM.Notify(ply, "Для работы таксистом нужна машина такси (список — у суперадмина, /taxiveh_list).", 255, 190, 90) end
+                            end
                         elseif j.jtype == "garbage" then
                             local pts = j.points or {}
                             local idx = tonumber(j.pointIndex) or 1
@@ -755,6 +865,263 @@ if SERVER then
         if dropped > 0 then JB.SaveCfg("зачистка просроченных заказов") print("[GRM Jobs] Просрочено заказов: " .. tostring(dropped)) end
     end)
 
+    -- ============================================================
+    -- ТАКСИ (v2.2.0): такса, пассажир, комиссия в гос.бюджет
+    -- ============================================================
+    function JB.TaxiCfg() return (JB.Cfg and JB.Cfg.taxi) or JB.TaxiDefaults end
+
+    function JB.IsTaxiVehicle(veh)
+        if not IsValid(veh) then return false end
+        local cfg = JB.TaxiCfg()
+        if cfg.allowAny == true then return true end
+        local mdl = string.lower(tostring((veh.GetModel and veh:GetModel()) or ""))
+        local cls = string.lower(tostring((veh.GetClass and veh:GetClass()) or ""))
+        for _, v in ipairs(cfg.vehicles or {}) do
+            local s = string.lower(string.Trim(tostring(v or "")))
+            if s ~= "" and (mdl == s or mdl:find(s, 1, true) or cls:find(s, 1, true)) then return true end
+        end
+        return false
+    end
+
+    JB.TaxiDrivers = JB.TaxiDrivers or {} -- [driverKey] = { fare, trip, earned, rides }
+    function JB.TaxiDriverState(key)
+        local s = JB.TaxiDrivers[key]
+        if not s then
+            s = { fare = math.floor(JB.TaxiCfg().fareMin or 0), trip = nil, earned = 0, rides = 0 }
+            JB.TaxiDrivers[key] = s
+        end
+        return s
+    end
+
+    function JB.PushTaxiState(ply)
+        if not IsValid(ply) then return end
+        local veh = ply:GetVehicle()
+        local vehDrv = IsValid(veh) and (veh.GetDriver and veh:GetDriver()) or nil
+        local isDriver = IsValid(veh) and JB.IsTaxiVehicle(veh) and IsValid(vehDrv) and vehDrv == ply
+        local isPassenger = IsValid(veh) and JB.IsTaxiVehicle(veh) and IsValid(vehDrv) and vehDrv ~= ply
+        local key = sid64(ply)
+        local s = JB.TaxiDriverState(key)
+        local cfg = JB.TaxiCfg()
+        local trip = s.trip
+        local tripActive = istable(trip)
+        local pName = ""
+        if tripActive then
+            for _, p in ipairs(player.GetAll()) do
+                if IsValid(p) and sid64(p) == trip.passengerKey then pName = rpName(p) break end
+            end
+        end
+        local driverFare = math.floor(cfg.fareMin or 0)
+        if IsValid(vehDrv) then driverFare = math.floor(JB.TaxiDriverState(sid64(vehDrv)).fare or driverFare) end
+        net.Start(NET_TAXI_STATE)
+            net.WriteBool(isDriver == true)
+            net.WriteBool(isPassenger == true)
+            net.WriteUInt(math.max(0, math.floor(s.fare or 0)), 20)
+            net.WriteUInt(math.max(0, math.floor(cfg.fareMin or 0)), 20)
+            net.WriteUInt(math.max(0, math.floor(cfg.fareMax or 0)), 20)
+            net.WriteUInt(math.floor(cfg.commission or 0), 8)
+            net.WriteBool(tripActive == true)
+            net.WriteString(pName)
+            net.WriteUInt(math.max(0, math.floor(s.earned or 0)), 24)
+            net.WriteUInt(math.max(0, math.floor(s.rides or 0)), 16)
+            net.WriteString(IsValid(vehDrv) and rpName(vehDrv) or "")
+            net.WriteUInt(math.max(0, driverFare), 20)
+        net.Send(ply)
+    end
+
+    function JB.TaxiSetFare(driver, fare)
+        if not IsValid(driver) then return false end
+        local cfg = JB.TaxiCfg()
+        fare = math.floor(tonumber(fare) or 0)
+        if fare <= 0 then
+            if GRM.Notify then GRM.Notify(driver, "Такса: /taxifare <сумма> (лимит " .. (GRM.Format and GRM.Format(cfg.fareMin) or tostring(cfg.fareMin)) .. "–" .. (GRM.Format and GRM.Format(cfg.fareMax) or tostring(cfg.fareMax)) .. ").", 255, 190, 90) end
+            return false
+        end
+        fare = clampN(fare, cfg.fareMin, cfg.fareMax)
+        local s = JB.TaxiDriverState(sid64(driver))
+        s.fare = fare
+        if GRM.Notify then GRM.Notify(driver, "Такса установлена: " .. (GRM.Format and GRM.Format(fare) or tostring(fare)), 120, 220, 255) end
+        JB.PushTaxiState(driver)
+        return true
+    end
+
+    function JB.TaxiVehicleEnter(ply, veh, role)
+        if not (IsValid(ply) and IsValid(veh) and JB.IsTaxiVehicle(veh)) then return end
+        local key = sid64(ply)
+        if tonumber(role or 0) == 0 then
+            local s = JB.TaxiDriverState(key)
+            if not s.fare or s.fare <= 0 then s.fare = math.floor(JB.TaxiCfg().fareMin or 0) end
+            if GRM.Notify then GRM.Notify(ply, "Вы за рулём такси. Такса: " .. (GRM.Format and GRM.Format(s.fare) or tostring(s.fare)) .. " (/taxifare <сумма>, меню — /taxi).", 120, 220, 255) end
+        else
+            local d = veh.GetDriver and veh:GetDriver() or nil
+            if IsValid(d) and d ~= ply then
+                local s = JB.TaxiDriverState(sid64(d))
+                if GRM.Notify then
+                    GRM.Notify(ply, "Вы сели в такси к " .. rpName(d) .. ". Такса: " .. (GRM.Format and GRM.Format(s.fare) or tostring(s.fare)) .. ". Отказаться — /taxirefuse.", 255, 220, 120)
+                    GRM.Notify(d, "Пассажир " .. rpName(ply) .. " на борту. /taxi → «Начать поездку».", 255, 220, 120)
+                end
+            end
+        end
+        JB.PushTaxiState(ply)
+    end
+
+    function JB.TaxiStartTrip(driver)
+        if not IsValid(driver) then return end
+        local veh = driver:GetVehicle()
+        if not (IsValid(veh) and JB.IsTaxiVehicle(veh)) then
+            if GRM.Notify then GRM.Notify(driver, "Вы не за рулём такси.", 255, 190, 90) end
+            return
+        end
+        local s = JB.TaxiDriverState(sid64(driver))
+        if istable(s.trip) then
+            if GRM.Notify then GRM.Notify(driver, "Поездка уже идёт.", 255, 190, 90) end
+            return
+        end
+        local passenger
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and p ~= driver and IsValid(p:GetVehicle()) and p:GetVehicle() == veh then passenger = p break end
+        end
+        if not IsValid(passenger) then
+            if GRM.Notify then GRM.Notify(driver, "В машине нет пассажира.", 255, 190, 90) end
+            return
+        end
+        s.trip = { passengerKey = sid64(passenger), startedAt = os.time() }
+        if GRM.Notify then
+            GRM.Notify(driver, "Поездка начата. Такса: " .. (GRM.Format and GRM.Format(s.fare) or tostring(s.fare)) .. ". Завершить — /taxistop.", 120, 255, 150)
+            GRM.Notify(passenger, "Поездка началась. К оплате: " .. (GRM.Format and GRM.Format(s.fare) or tostring(s.fare)) .. ".", 120, 255, 150)
+        end
+        JB.PushTaxiState(driver)
+        JB.PushTaxiState(passenger)
+    end
+
+    function JB.TaxiCharge(driver, passenger)
+        local s = JB.TaxiDriverState(sid64(driver))
+        local fare = math.floor(s.fare or 0)
+        local cfg = JB.TaxiCfg()
+        if not IsValid(passenger) then
+            s.trip = nil
+            if IsValid(driver) then JB.PushTaxiState(driver) end
+            return
+        end
+        if fare > 0 then
+            local paid = false
+            if GRM.Services and GRM.Services.Charge then
+                paid = GRM.Services.Charge(passenger, fare, "auto", "Такси: поездка с " .. rpName(driver)) == true
+            elseif GRM.TakeMoney then
+                paid = GRM.TakeMoney(passenger, fare, "Такси: оплата проезда") == true
+            end
+            if paid then
+                local comm = math.floor(fare * (cfg.commission or 0) / 100)
+                local netSum = fare - comm
+                if netSum > 0 and GRM.GiveMoney then GRM.GiveMoney(driver, netSum, "Такси: заработок (пассажир " .. rpName(passenger) .. ")") end
+                if comm > 0 and GRM.Economy and GRM.Economy.StateAdd then GRM.Economy.StateAdd(comm, "Такси: комиссия " .. rpName(driver)) end
+                s.earned = (s.earned or 0) + netSum
+                s.rides = (s.rides or 0) + 1
+                if GRM.Notify then
+                    GRM.Notify(driver, "Поездка оплачена: +" .. (GRM.Format and GRM.Format(netSum) or tostring(netSum)) .. (comm > 0 and (" (комиссия в казну " .. (GRM.Format and GRM.Format(comm) or tostring(comm)) .. ")") or ""), 120, 255, 150)
+                    GRM.Notify(passenger, "Оплачено такси: " .. (GRM.Format and GRM.Format(fare) or tostring(fare)), 120, 255, 150)
+                end
+            else
+                if GRM.Notify then
+                    GRM.Notify(driver, "Пассажир не смог оплатить " .. (GRM.Format and GRM.Format(fare) or tostring(fare)) .. ".", 255, 130, 110)
+                    GRM.Notify(passenger, "Недостаточно средств на оплату такси (" .. (GRM.Format and GRM.Format(fare) or tostring(fare)) .. ").", 255, 130, 110)
+                end
+            end
+        end
+        s.trip = nil
+        if IsValid(driver) then JB.PushTaxiState(driver) end
+        if IsValid(passenger) then JB.PushTaxiState(passenger) end
+    end
+
+    function JB.TaxiStopTrip(driver)
+        if not IsValid(driver) then return end
+        local s = JB.TaxiDriverState(sid64(driver))
+        if not istable(s.trip) then
+            if GRM.Notify then GRM.Notify(driver, "Поездка не начата.", 255, 190, 90) end
+            return
+        end
+        local pKey = s.trip.passengerKey
+        local passenger
+        for _, p in ipairs(player.GetAll()) do
+            if IsValid(p) and sid64(p) == pKey then passenger = p break end
+        end
+        JB.TaxiCharge(driver, passenger)
+    end
+
+    function JB.TaxiRefuse(passenger)
+        if not IsValid(passenger) then return end
+        local veh = passenger:GetVehicle()
+        if not (IsValid(veh) and JB.IsTaxiVehicle(veh)) then
+            if GRM.Notify then GRM.Notify(passenger, "Вы не в такси.", 255, 190, 90) end
+            return
+        end
+        local d = veh.GetDriver and veh:GetDriver() or nil
+        if IsValid(d) and d ~= passenger then
+            local s = JB.TaxiDriverState(sid64(d))
+            if istable(s.trip) and s.trip.passengerKey == sid64(passenger) then
+                s.trip = nil
+                if GRM.Notify then
+                    GRM.Notify(d, "Пассажир " .. rpName(passenger) .. " отказался от поездки.", 255, 190, 90)
+                    GRM.Notify(passenger, "Вы отказались от поездки — оплата не взимается.", 255, 190, 90)
+                end
+                JB.PushTaxiState(d)
+            end
+        end
+        if passenger.ExitVehicle then passenger:ExitVehicle() end
+        JB.PushTaxiState(passenger)
+    end
+
+    hook.Add("PlayerEnteredVehicle", "GRM_Taxi_Enter", function(ply, veh, role)
+        JB.TaxiVehicleEnter(ply, veh, role)
+    end)
+    hook.Add("PlayerLeaveVehicle", "GRM_Taxi_Leave", function(ply, veh)
+        if not (IsValid(ply) and IsValid(veh) and JB.IsTaxiVehicle(veh)) then return end
+        local d = veh.GetDriver and veh:GetDriver() or nil
+        if IsValid(d) and d ~= ply then
+            local s = JB.TaxiDriverState(sid64(d))
+            if istable(s.trip) and s.trip.passengerKey == sid64(ply) then
+                JB.TaxiCharge(d, ply)
+            end
+        end
+        JB.PushTaxiState(ply)
+    end)
+
+    net.Receive(NET_TAXI_SET, function(_, ply)
+        if not IsValid(ply) then return end
+        JB.TaxiSetFare(ply, tonumber(net.ReadUInt(20)) or 0)
+    end)
+
+    net.Receive(NET_TAXI_ACT, function(_, ply)
+        if not IsValid(ply) then return end
+        local act = tostring(net.ReadString() or "")
+        if act == "start" then JB.TaxiStartTrip(ply)
+        elseif act == "stop" then JB.TaxiStopTrip(ply)
+        elseif act == "refuse" then JB.TaxiRefuse(ply)
+        else JB.PushTaxiState(ply) end
+    end)
+
+    net.Receive(NET_TAXI_CFG, function(_, ply)
+        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        local upd = net.ReadTable()
+        if not istable(upd) then return end
+        local cfg = JB.TaxiCfg()
+        if upd.allowAny ~= nil then cfg.allowAny = upd.allowAny == true end
+        if upd.fareMin then cfg.fareMin = math.max(1, math.floor(tonumber(upd.fareMin) or cfg.fareMin)) end
+        if upd.fareMax then cfg.fareMax = math.max(1, math.floor(tonumber(upd.fareMax) or cfg.fareMax)) end
+        if upd.commission then cfg.commission = clampN(math.floor(tonumber(upd.commission) or 0), 0, 100) end
+        if upd.vehicles then
+            local list = {}
+            for _, v in ipairs(upd.vehicles) do
+                local s = string.Trim(tostring(v or ""))
+                if s ~= "" then list[#list + 1] = s end
+            end
+            cfg.vehicles = list
+        end
+        if cfg.fareMin > cfg.fareMax then cfg.fareMin, cfg.fareMax = cfg.fareMax, cfg.fareMin end
+        JB.SaveCfg("конфиг такси")
+        if GRM.Notify then GRM.Notify(ply, "Конфиг такси сохранён.", 120, 255, 150) end
+        JB.PushTaxiState(ply)
+    end)
+
     -- открытие меню -------------------------------------------------------
     function JB.OpenMenu(ply, ent)
         if not IsValid(ply) or not IsValid(ent) then return end
@@ -812,6 +1179,7 @@ if SERVER then
             net.WriteTable(postsWire)
             net.WriteTable(allowWire)
             net.WriteTable({ done = tonumber(st.done) or 0, earned = tonumber(st.earned) or 0 })
+            net.WriteTable(JB.TaxiCfg())
         net.Send(ply)
     end
 
@@ -1064,7 +1432,7 @@ if SERVER then
     end)
 
     -- спавн энтити --------------------------------------------------------
-    local function spawnAtAim(ply, class, label)
+    local function spawnAtAim(ply, class, label, jtype)
         if not ply:IsSuperAdmin() then ply:PrintMessage(HUD_PRINTTALK, "[Биржа] Только суперадмин.") return true end
         local tr = ply:GetEyeTrace()
         local pos = (tr and tr.HitPos) and (tr.HitPos + Vector(0, 0, 2)) or (ply:GetPos() + ply:GetForward() * 60)
@@ -1075,8 +1443,38 @@ if SERVER then
         ent:Spawn() ent:Activate()
         local phys = ent:GetPhysicsObject()
         if IsValid(phys) then phys:EnableMotion(false) end
+        if tostring(jtype or "") ~= "" and ent.SetNWString then ent:SetNWString("GRM_JobType", tostring(jtype)) end
         JB.PersistAdd(ent)
         ply:PrintMessage(HUD_PRINTTALK, "[Биржа] " .. label .. " установлен и СОХРАНЁН автоматически (grm_jobs_ents). Снятие — наведитесь и повторите remove-команду.")
+        return true
+    end
+    -- v2.2.0: тип/имя точки под прицелом (маршруты биржи)
+    local function editDepotAtAim(ply, what, val)
+        if not ply:IsSuperAdmin() then ply:PrintMessage(HUD_PRINTTALK, "[Биржа] Только суперадмин.") return true end
+        local tr = ply:GetEyeTrace()
+        local ent = tr and tr.Entity or nil
+        if not (IsValid(ent) and ent:GetClass() == "grm_depot") then
+            ply:PrintMessage(HUD_PRINTTALK, "[Биржа] Наведите прицел на точку доставки (grm_depot).")
+            return true
+        end
+        if what == "type" then
+            local t = string.Trim(tostring(val or ""))
+            if not JB.DepotTypes[t] then
+                local all = {}
+                for k in pairs(JB.DepotTypes) do all[#all + 1] = k end
+                table.sort(all)
+                ply:PrintMessage(HUD_PRINTTALK, "[Биржа] Типы точек: " .. table.concat(all, ", "))
+                return true
+            end
+            ent:SetNWString("GRM_JobType", t)
+            JB.PersistAdd(ent)
+            ply:PrintMessage(HUD_PRINTTALK, "[Биржа] Точка → «" .. (JB.DepotTypes[t].label) .. "».")
+        elseif what == "name" then
+            local nm = string.sub(string.Trim(tostring(val or "")), 1, 40)
+            ent:SetNWString("GRM_JobName", nm)
+            JB.PersistAdd(ent)
+            ply:PrintMessage(HUD_PRINTTALK, "[Биржа] Имя точки: " .. (nm ~= "" and ("«" .. nm .. "»") or "(сброшено)"))
+        end
         return true
     end
     local function removeAtAim(ply, class, label)
@@ -1103,6 +1501,38 @@ if SERVER then
         JB.Cfg.allow[fname] = allow and true or nil
         JB.SaveCfg("job_allow " .. fname)
         ply:PrintMessage(HUD_PRINTTALK, "[Биржа] Доступ работодателя — «" .. fname .. "»: " .. (allow and "ВЫДАН" or "ОТОЗВАН"))
+        return true
+    end
+
+    -- v2.2.0: правка списка ТС-такси суперадмином
+    local function taxiVehEdit(ply, op, arg)
+        local cfg = JB.TaxiCfg()
+        cfg.vehicles = cfg.vehicles or {}
+        if op == "add" then
+            local mdl = string.Trim(tostring(arg or ""))
+            if mdl == "" then
+                local tr = ply:GetEyeTrace()
+                local e = tr and tr.Entity or nil
+                if IsValid(e) and e.GetModel and (e.IsVehicle and e:IsVehicle() or (e.GetClass and string.sub(e:GetClass(), 1, 13) == "prop_vehicle_")) then
+                    mdl = tostring(e:GetModel() or "")
+                end
+            end
+            if mdl == "" then ply:PrintMessage(HUD_PRINTTALK, "[Такси] Наведитесь на машину или укажите модель: /taxiveh_add models/...") return true end
+            for _, v in ipairs(cfg.vehicles) do
+                if v == mdl then ply:PrintMessage(HUD_PRINTTALK, "[Такси] Модель уже в списке.") return true end
+            end
+            cfg.vehicles[#cfg.vehicles + 1] = mdl
+            JB.SaveCfg("taxi vehicle add")
+            ply:PrintMessage(HUD_PRINTTALK, "[Такси] ТС-такси добавлено: " .. mdl)
+        elseif op == "del" then
+            local mdl = string.Trim(tostring(arg or ""))
+            if mdl == "" then ply:PrintMessage(HUD_PRINTTALK, "[Такси] /taxiveh_del <модель>") return true end
+            for i = #cfg.vehicles, 1, -1 do
+                if cfg.vehicles[i] == mdl then table.remove(cfg.vehicles, i) end
+            end
+            JB.SaveCfg("taxi vehicle del")
+            ply:PrintMessage(HUD_PRINTTALK, "[Такси] ТС убрано из списка: " .. mdl)
+        end
         return true
     end
 
@@ -1144,10 +1574,66 @@ if SERVER then
         end
         if low == "/jobcenter_add" then return spawnAtAim(ply, "grm_jobcenter", "Терминал биржи труда") end
         if low == "/jobcenter_remove" then return removeAtAim(ply, "grm_jobcenter", "Терминал биржи труда") end
-        if low == "/jobdepot_add" then return spawnAtAim(ply, "grm_depot", "Точка доставки") end
+        if low == "/jobdepot_add" then return spawnAtAim(ply, "grm_depot", "Точка доставки", "generic") end
+        if string.sub(low, 1, 14) == "/jobdepot_add " then
+            return spawnAtAim(ply, "grm_depot", "Точка доставки", string.Trim(string.sub(t, 15)))
+        end
         if low == "/jobdepot_remove" then return removeAtAim(ply, "grm_depot", "Точка доставки") end
+        if string.sub(low, 1, 15) == "/jobdepot_type " then return editDepotAtAim(ply, "type", string.sub(t, 16)) end
+        if string.sub(low, 1, 15) == "/jobdepot_name " then return editDepotAtAim(ply, "name", string.sub(t, 16)) end
         if string.sub(low, 1, 11) == "/job_allow " then return editAccess(string.sub(t, 12), true, ply) end
         if string.sub(low, 1, 10) == "/job_deny " then return editAccess(string.sub(t, 11), false, ply) end
+        -- ── такси (v2.2.0) ────────────────────────────────────────────
+        if low == "/taxi" then
+            JB.PushTaxiState(ply)
+            net.Start(NET_TAXI_OPEN) net.Send(ply)
+            return true
+        end
+        if low == "/taxistart" then JB.TaxiStartTrip(ply) return true end
+        if low == "/taxistop" then JB.TaxiStopTrip(ply) return true end
+        if low == "/taxirefuse" then JB.TaxiRefuse(ply) return true end
+        if string.sub(low, 1, 10) == "/taxifare " then
+            local n = tonumber(string.match(t, "%S+%s+(%d+)")) or 0
+            if n <= 0 then
+                ply:PrintMessage(HUD_PRINTTALK, "[Такси] /taxifare <сумма> — задать таксу.")
+                return true
+            end
+            JB.TaxiSetFare(ply, n)
+            return true
+        end
+        if low == "/taxiveh_list" then
+            if not ply:IsSuperAdmin() then ply:PrintMessage(HUD_PRINTTALK, "[Такси] Только суперадмин.") return true end
+            local cfg = JB.TaxiCfg()
+            ply:PrintMessage(HUD_PRINTTALK, "[Такси] Любое ТС = " .. tostring(cfg.allowAny) .. " | такса " .. tostring(cfg.fareMin) .. "–" .. tostring(cfg.fareMax) .. " | комиссия " .. tostring(cfg.commission) .. "%")
+            if #(cfg.vehicles or {}) == 0 then
+                ply:PrintMessage(HUD_PRINTTALK, "[Такси] Список ТС-такси пуст.")
+            else
+                for i, v in ipairs(cfg.vehicles) do ply:PrintMessage(HUD_PRINTTALK, "[Такси] " .. tostring(i) .. ". " .. tostring(v)) end
+            end
+            return true
+        end
+        if string.sub(low, 1, 13) == "/taxiveh_add " then
+            if not ply:IsSuperAdmin() then ply:PrintMessage(HUD_PRINTTALK, "[Такси] Только суперадмин.") return true end
+            return taxiVehEdit(ply, "add", string.Trim(string.sub(t, 14)))
+        end
+        if low == "/taxiveh_add" then
+            if not ply:IsSuperAdmin() then ply:PrintMessage(HUD_PRINTTALK, "[Такси] Только суперадмин.") return true end
+            return taxiVehEdit(ply, "add", "")
+        end
+        if string.sub(low, 1, 13) == "/taxiveh_del " then
+            if not ply:IsSuperAdmin() then ply:PrintMessage(HUD_PRINTTALK, "[Такси] Только суперадмин.") return true end
+            return taxiVehEdit(ply, "del", string.Trim(string.sub(t, 14)))
+        end
+        if string.sub(low, 1, 9) == "/taxiany " then
+            if not ply:IsSuperAdmin() then ply:PrintMessage(HUD_PRINTTALK, "[Такси] Только суперадмин.") return true end
+            local v = string.Trim(string.sub(t, 10))
+            if v == "" then ply:PrintMessage(HUD_PRINTTALK, "[Такси] /taxiany 1 — любое ТС, /taxiany 0 — только список.") return true end
+            local cfg = JB.TaxiCfg()
+            cfg.allowAny = (v ~= "0")
+            JB.SaveCfg("taxi allowAny")
+            ply:PrintMessage(HUD_PRINTTALK, "[Такси] Любое ТС считается такси: " .. tostring(cfg.allowAny))
+            return true
+        end
         if low == "/job_list" then
             if ply:IsSuperAdmin() then
                 local n = 0
@@ -1374,6 +1860,7 @@ if CLIENT then
         local posts = net.ReadTable() or {}
         local allow = net.ReadTable() or {}
         local st = net.ReadTable() or { done = 0, earned = 0 }
+        local taxiCfg = net.ReadTable() or {}
         local hasActive = istable(active) and active.title ~= nil
 
         if IsValid(JB._frame) then JB._frame:Remove() end
@@ -1645,6 +2132,86 @@ if CLIENT then
             scroll:AddItem(canvas)
         end
 
+        -- Вкладка «Такси (админ)» — суперадмин настраивает таксу и ТС
+        local function buildTaxiCfgTab()
+            local panel = vgui.Create("DPanel", content)
+            panel:Dock(FILL) panel.Paint = function() end
+
+            local cfg = taxiCfg or {}
+            local curVehicles = {}
+            for _, v in ipairs(cfg.vehicles or {}) do curVehicles[#curVehicles + 1] = tostring(v) end
+
+            local function label(x, y, w, txt)
+                local l = vgui.Create("DLabel", panel)
+                l:SetPos(x, y) l:SetSize(w, 20) l:SetFont("GRMJobs_Small") l:SetTextColor(C.dim) l:SetText(txt)
+                return l
+            end
+
+            local chkAny = vgui.Create("DCheckBoxLabel", panel)
+            chkAny:SetPos(14, 6) chkAny:SetSize(500, 22) chkAny:SetFont("GRMJobs_Normal") chkAny:SetTextColor(C.text)
+            chkAny:SetText("Любое ТС считается такси (иначе — только список ниже)")
+            chkAny:SetValue((cfg.allowAny ~= false) and 1 or 0)
+
+            label(14, 34, 220, "Такса: минимум")
+            local eMin = vgui.Create("DTextEntry", panel)
+            eMin:SetPos(14, 54) eMin:SetSize(120, 26) eMin:SetFont("GRMJobs_Normal") eMin:SetNumeric(true)
+            eMin:SetText(tostring(cfg.fareMin or 0))
+            label(150, 34, 220, "максимум")
+            local eMax = vgui.Create("DTextEntry", panel)
+            eMax:SetPos(150, 54) eMax:SetSize(120, 26) eMax:SetFont("GRMJobs_Normal") eMax:SetNumeric(true)
+            eMax:SetText(tostring(cfg.fareMax or 0))
+            label(290, 34, 200, "комиссия в казну, %")
+            local eComm = vgui.Create("DTextEntry", panel)
+            eComm:SetPos(290, 54) eComm:SetSize(80, 26) eComm:SetFont("GRMJobs_Normal") eComm:SetNumeric(true)
+            eComm:SetText(tostring(cfg.commission or 0))
+
+            label(14, 92, 600, "Список ТС-такси (модель или подстрока класса; пусто при «любое ТС»):")
+            local lv = vgui.Create("DListView", panel)
+            lv:SetPos(14, 114) lv:SetSize(880, 260) lv:SetMultiSelect(false)
+            lv:AddColumn("Модель / класс")
+            local function refill()
+                lv:Clear()
+                for _, v in ipairs(curVehicles) do lv:AddLine(v) end
+            end
+            refill()
+
+            local eAdd = vgui.Create("DTextEntry", panel)
+            eAdd:SetPos(14, 382) eAdd:SetSize(700, 28) eAdd:SetFont("GRMJobs_Normal")
+            eAdd:SetPlaceholderText("Вставьте модель (models/…/car.mdl) или подстроку класса (prop_vehicle_jeep)…")
+            local bAdd = cardButton(panel, "Добавить", C.acc, true, function()
+                local v = string.Trim(eAdd:GetValue() or "")
+                if v == "" then return end
+                for _, ex in ipairs(curVehicles) do if ex == v then return end end
+                curVehicles[#curVehicles + 1] = v
+                eAdd:SetText("")
+                refill()
+            end)
+            bAdd:SetPos(724, 382) bAdd:SetSize(170, 28)
+
+            local bDel = cardButton(panel, "Удалить выбранное", C.red, true, function()
+                local line = lv:GetSelectedLine()
+                if not line then return end
+                local v = tostring(line:GetValue(1) or "")
+                for i = #curVehicles, 1, -1 do if curVehicles[i] == v then table.remove(curVehicles, i) end end
+                refill()
+            end)
+            bDel:SetPos(724, 418) bDel:SetSize(170, 28)
+
+            local bSave = cardButton(panel, "Сохранить конфиг такси", C.green, true, function()
+                local upd = {
+                    allowAny = chkAny:GetChecked() == true,
+                    fareMin = math.floor(tonumber(eMin:GetValue()) or 0),
+                    fareMax = math.floor(tonumber(eMax:GetValue()) or 0),
+                    commission = math.floor(tonumber(eComm:GetValue()) or 0),
+                    vehicles = curVehicles,
+                }
+                net.Start(NET_TAXI_CFG) net.WriteTable(upd) net.SendToServer()
+            end)
+            bSave:SetPos(14, 452) bSave:SetSize(880, 34)
+
+            label(14, 494, 880, "То же из чата: /taxiany, /taxiveh_add [модель], /taxiveh_del, /taxiveh_list. Маршруты точек: /jobdepot_add [тип], /jobdepot_type, /jobdepot_name. Комиссия уходит в гос.бюджет (связь с бюджетом).")
+        end
+
         renderTabs = function()
             content:Clear()
             -- раскладка кнопок вкладок
@@ -1654,20 +2221,24 @@ if CLIENT then
                 { id = "posts",   label = "Заказы фракций",  icon = "icon16/group.png" },
             }
             if canP then defs[#defs + 1] = { id = "publish", label = "Публикация", icon = "icon16/report_edit.png" } end
-            if isSuper then defs[#defs + 1] = { id = "access", label = "Доступы", icon = "icon16/key.png" } end
+            if isSuper then
+                defs[#defs + 1] = { id = "access", label = "Доступы", icon = "icon16/key.png" }
+                defs[#defs + 1] = { id = "taxicfg", label = "Такси", icon = "icon16/car.png" }
+            end
             local x = 12
             for _, d in ipairs(defs) do
                 local b = tabBtns[d.id]
                 if not IsValid(b) then b = tabButton(d.id, d.label, d.icon) end
-                b:SetPos(x, 72) b:SetSize(150, 32)
+                b:SetPos(x, 72) b:SetSize(142, 32)
                 b._tabId = d.id
-                x = x + 158
+                x = x + 150
             end
             if currentTab == "work" then buildWorkTab()
             elseif currentTab == "mine" then buildMineTab()
             elseif currentTab == "posts" then buildPostsTab()
             elseif currentTab == "publish" then buildPublishTab()
             elseif currentTab == "access" then buildAccessTab()
+            elseif currentTab == "taxicfg" then buildTaxiCfgTab()
             end
         end
 
@@ -1738,6 +2309,129 @@ if CLIENT then
         end)
 
         sheet:AddSheet("Работа", panel, "icon16/bricks.png")
+    end)
+
+    -- ── Меню такси (/taxi) ────────────────────────────────────────────────
+    JB._taxiState = JB._taxiState or nil
+    local function taxiMkBtn(p, txt, col, onClick)
+        local b = vgui.Create("DButton", p)
+        b:SetText(txt) b:SetFont("GRMJobs_Sub") b:SetTextColor(color_white)
+        b.Paint = function(self, pw, ph)
+            local cc = col or C.acc
+            if self:IsHovered() then cc = Color(math.min(255, cc.r + 22), math.min(255, cc.g + 22), math.min(255, cc.b + 22)) end
+            draw.RoundedBox(6, 0, 0, pw, ph, cc)
+        end
+        b.DoClick = function() surface.PlaySound("buttons/button15.wav") if onClick then onClick() end end
+        return b
+    end
+
+    function JB.OpenTaxiMenu(st)
+        if IsValid(JB._taxiFrame) then JB._taxiFrame:Remove() end
+        JB._taxiState = st
+        local f = vgui.Create("DFrame")
+        JB._taxiFrame = f
+        f:SetTitle("") f:SetSize(460, 380) f:Center() f:MakePopup() f:ShowCloseButton(false)
+        f:SetDeleteOnClose(true)
+
+        local function rebuild()
+            for _, ch in ipairs(f:GetChildren()) do if ch._taxiDyn then ch:Remove() end end
+            local st = JB._taxiState
+            if not istable(st) then return end
+            local y = 58
+            local function lbl(txt, col, font)
+                local l = vgui.Create("DLabel", f)
+                l._taxiDyn = true l:SetPos(16, y) l:SetSize(428, 20)
+                l:SetFont(font or "GRMJobs_Normal") l:SetTextColor(col or C.text) l:SetText(txt)
+                y = y + 24
+                return l
+            end
+
+            if st.isDriver then
+                lbl("Вы за рулём такси.", C.green)
+                lbl("Такса (лимит " .. fmtMoney(st.fareMin) .. " – " .. fmtMoney(st.fareMax) .. ", комиссия в казну " .. tostring(st.commission) .. "%):", C.dim, "GRMJobs_Small")
+                local sl = vgui.Create("DNumSlider", f)
+                sl._taxiDyn = true sl:SetPos(16, y) sl:SetSize(428, 34)
+                sl:SetText("Такса") sl:SetMin(st.fareMin) sl:SetMax(st.fareMax) sl:SetDecimals(0) sl:SetValue(st.fare)
+                y = y + 46
+                local bFare = taxiMkBtn(f, "Установить таксу", C.acc, function()
+                    net.Start(NET_TAXI_SET) net.WriteUInt(math.floor(tonumber(sl:GetValue()) or 0), 20) net.SendToServer()
+                end)
+                bFare._taxiDyn = true bFare:SetPos(16, y) bFare:SetSize(200, 30)
+                y = y + 40
+                if st.tripActive then
+                    lbl("Пассажир: " .. tostring(st.passengerName or "—"), C.yellow)
+                    local bStop = taxiMkBtn(f, "Завершить поездку (оплата)", C.red, function()
+                        net.Start(NET_TAXI_ACT) net.WriteString("stop") net.SendToServer()
+                    end)
+                    bStop._taxiDyn = true bStop:SetPos(16, y) bStop:SetSize(428, 34)
+                    y = y + 44
+                else
+                    lbl("Пассажира нет — позовите (/taxi) или дождитесь посадки.", C.dim, "GRMJobs_Small")
+                    local bStart = taxiMkBtn(f, "Начать поездку", C.green, function()
+                        net.Start(NET_TAXI_ACT) net.WriteString("start") net.SendToServer()
+                    end)
+                    bStart._taxiDyn = true bStart:SetPos(16, y) bStart:SetSize(428, 34)
+                    y = y + 44
+                end
+                lbl("Сегодня: поездок " .. tostring(st.rides or 0) .. " • заработок " .. fmtMoney(st.earned or 0), C.teal, "GRMJobs_Small")
+            elseif st.isPassenger then
+                lbl("Вы пассажир такси.", C.yellow)
+                lbl("Водитель: " .. tostring(st.driverName or "—") .. " • такса: " .. fmtMoney(st.driverFare or 0), C.text)
+                local bRefuse = taxiMkBtn(f, "Отказаться (выйти без оплаты)", C.red, function()
+                    net.Start(NET_TAXI_ACT) net.WriteString("refuse") net.SendToServer()
+                end)
+                bRefuse._taxiDyn = true bRefuse:SetPos(16, y) bRefuse:SetSize(428, 34)
+            else
+                lbl("Сядьте за руль машины такси, чтобы работать таксистом.", C.text)
+                lbl("Такса: /taxifare <сумма>. Список машин такси настраивает суперадмин (/taxiveh_list).", C.dim, "GRMJobs_Small")
+            end
+        end
+
+        f.Paint = function(_, pw, ph)
+            draw.RoundedBox(8, 0, 0, pw, ph, C.bg)
+            draw.RoundedBoxEx(8, 0, 0, pw, 42, C.head, true, true, false, false)
+            draw.SimpleText("ТАКСИ", "GRMJobs_Title", 16, 21, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("/taxifare <сумма> • /taxistart • /taxistop • /taxirefuse", "GRMJobs_Small", pw - 16, 21, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        end
+        local x = vgui.Create("DButton", f)
+        x:SetText("✕") x:SetFont("GRMJobs_Sub") x:SetTextColor(color_white)
+        x:SetPos(418, 8) x:SetSize(30, 26)
+        x.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.red or Color(45, 52, 68)) end
+        x.DoClick = function() f:Close() end
+
+        f._taxiRebuild = rebuild
+        rebuild()
+        -- периодически спрашиваем свежее состояние (посадка/высадка/оплата)
+        timer.Create("GRM_Taxi_Poll", 2, 0, function()
+            if IsValid(f) then net.Start(NET_TAXI_ACT) net.WriteString("get") net.SendToServer()
+            else timer.Remove("GRM_Taxi_Poll") end
+        end)
+    end
+
+    net.Receive(NET_TAXI_OPEN, function()
+        JB.OpenTaxiMenu(JB._taxiState)
+        net.Start(NET_TAXI_ACT) net.WriteString("get") net.SendToServer()
+    end)
+
+    net.Receive(NET_TAXI_STATE, function()
+        local st = {
+            isDriver = net.ReadBool(),
+            isPassenger = net.ReadBool(),
+            fare = net.ReadUInt(20),
+            fareMin = net.ReadUInt(20),
+            fareMax = net.ReadUInt(20),
+            commission = net.ReadUInt(8),
+            tripActive = net.ReadBool(),
+            passengerName = net.ReadString() or "",
+            earned = net.ReadUInt(24),
+            rides = net.ReadUInt(16),
+            driverName = net.ReadString() or "",
+            driverFare = net.ReadUInt(20),
+        }
+        JB._taxiState = st
+        if IsValid(JB._taxiFrame) and JB._taxiFrame._taxiRebuild then
+            JB._taxiFrame._taxiRebuild()
+        end
     end)
 
     print("[GRM Jobs] Клиент биржи труда v" .. JB.Version .. " загружен")
