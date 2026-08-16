@@ -126,7 +126,7 @@ GRM уже является не набором отдельных аддоно�
 | Perm | API, ownership, delegates | Адаптеры всех собственных persistence-систем |
 | PropProtect | Character/faction/server ownership | Единый WorldObject policy |
 | Doors v3 + Property v1 | владение, ACL, ордера, здания, аренда, организации, коммунальные, ключи, печати | Следом: интерьерные зоны, договоры и муниципальный реестр |
-| Weather/Time v1.2 | серверные часы, движение солнца, ночь без изменения lightmaps, fog, мировые осадки, Source audio и нуарный эмбиент | Сезоны, прогноз и влияние на Incident/транспорт |
+| Weather/Time v1.3 | серверные часы, движение солнца, ночь без изменения lightmaps, fog, мировые осадки, Source audio и тёплые городские эмбиенты | Сезоны, прогноз и влияние на Incident/транспорт |
 | FFD/sliding | механика и физика | Единая DoorActuator abstraction |
 | Vehicle keys/trunk | замки, багажник | Единый VehicleOwnership API |
 | Anti-Stuck | безопасный локальный выход | Карта диагностических неудач |
