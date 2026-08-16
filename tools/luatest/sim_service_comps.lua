@@ -6,6 +6,9 @@ local fireSh   = read("lua/entities/grm_comp_fire/shared.lua")
 local chInit   = read("lua/entities/grm_comp_cityhall/init.lua")
 local chCl     = read("lua/entities/grm_comp_cityhall/cl_init.lua")
 local chSh     = read("lua/entities/grm_comp_cityhall/shared.lua")
+local courtInit = read("lua/entities/grm_comp_court/init.lua")
+local courtCl   = read("lua/entities/grm_comp_court/cl_init.lua")
+local courtSh   = read("lua/entities/grm_comp_court/shared.lua")
 local tool     = read("lua/weapons/gmod_tool/stools/grm_service_tool.lua")
 local perm     = read("lua/autorun/sh_grm_perm_entities.lua")
 
@@ -33,10 +36,19 @@ ok(has(chCl, "GRM_Doc_ComputerIssue") and has(chCl, "businessLicense"), "cityhal
 ok(has(chCl, "GRM_Doc_ComputerRevoke"), "cityhall revokes business licenses via documents core")
 ok(has(chCl, "GRM.Documents.StartExam") and has(chCl, "businessLicense"), "cityhall runs theory exam (no practice)")
 
+-- Юстиция.
+ok(has(courtSh, "grm_comp_court") and has(courtSh, "юстиции"), "court shared defines class/name")
+ok(has(courtInit, "GRM_CompCourt_Open") and has(courtInit, "GRM_CompCourt_Action"), "court net strings")
+ok(has(courtInit, "function ENT:CanManage") and has(courtInit, "GRM.Wanted"), "court access via wanted core")
+ok(has(courtInit, "F.Issue") and has(courtInit, "F.Cancel"), "court issues/cancels fines via fines core")
+ok(has(courtInit, "jurisdiction = \"civil\""), "court operates civil jurisdiction")
+ok(has(courtInit, "F.Page"), "court lists fines via F.Page")
+ok(has(courtCl, "Законы и статьи") and has(courtCl, "Штрафы"), "court UI: laws + fines tabs")
+
 -- Регистрация.
-ok(has(tool, 'class     = "grm_comp_fire"') and has(tool, 'class     = "grm_comp_cityhall"'), "both computers registered in service tool")
-ok(has(perm, "grm_comp_fire            = true") and has(perm, "grm_comp_cityhall        = true"), "both computers in PERM_CLASSES")
-ok(has(perm, '"grm_comp_fire", "grm_comp_cityhall"'), "computer titles persist via PermData")
+ok(has(tool, 'class     = "grm_comp_fire"') and has(tool, 'class     = "grm_comp_cityhall"') and has(tool, 'class     = "grm_comp_court"'), "all new computers registered in service tool")
+ok(has(perm, "grm_comp_fire            = true") and has(perm, "grm_comp_cityhall        = true") and has(perm, "grm_comp_court           = true"), "all new computers in PERM_CLASSES")
+ok(has(perm, '"grm_comp_fire", "grm_comp_cityhall"') and has(perm, '"grm_comp_court"'), "computer titles persist via PermData")
 
 print(("SERVICE_COMPUTERS: %d/%d failures=%d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

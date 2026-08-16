@@ -101,6 +101,14 @@ local TYPES = {
         defTitle  = "МЭРИЯ • ГОРОДСКАЯ АДМИНИСТРАЦИЯ",
         defModel  = "models/props_lab/monitor02.mdl",
     },
+    court = {
+        id        = "court",
+        class     = "grm_comp_court",
+        label     = "Компьютер юстиции (суд / прокуратура)",
+        desc      = "Законы и статьи, розыск, реестр штрафов (гражданская юрисдикция)",
+        defTitle  = "ЮСТИЦИЯ • СУД И ПРОКУРАТУРА",
+        defModel  = "models/props_lab/monitor02.mdl",
+    },
     general = {
         id        = "general",
         class     = "grm_doc_computer",
