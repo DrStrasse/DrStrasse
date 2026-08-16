@@ -16,6 +16,24 @@ if SERVER then
  local function save()return GRM.Persistence.SaveJSON(FILE,{version=1,config=W.Config,state={time=W._time,weather=W._weather}},{version=1})end
  load();SetGlobalFloat("GRM_TimeMinutes",W._time);SetGlobalString("GRM_Weather",W._weather);if GRM.Perm and GRM.Perm.RegisterClass then GRM.Perm.RegisterClass("grm_clock",true)end;if GRM.PermData and GRM.PermData.AddExtract then GRM.PermData.AddExtract("grm_clock",function(e)return{clockName=e:GetClockName()}end);GRM.PermData.AddApply("grm_clock",function(e,d)if d.clockName then e:SetClockName(string.Trim(tostring(d.clockName)):sub(1,64))end end)end
  local function skyPaint()local e=ents.FindByClass("env_skypaint")[1];if not IsValid(e)then e=ents.Create("env_skypaint");if IsValid(e)then e:SetPos(Vector(0,0,0));e:Spawn()end end;return e end
+ local SKYPAINT={
+  dawn={TopColor=Vector(.2,.5,1),BottomColor=Vector(.46,.65,.49),FadeBias=1,HDRScale=.26,StarScale=1.84,StarFade=0,StarSpeed=.02,DuskScale=1,DuskIntensity=1,DuskColor=Vector(1,.2,0),SunColor=Vector(.2,.1,0),SunSize=2},
+  day={TopColor=Vector(.2,.49,1),BottomColor=Vector(.8,1,1),FadeBias=1,HDRScale=.26,StarScale=1.84,StarFade=1.5,StarSpeed=.02,DuskScale=1,DuskIntensity=1,DuskColor=Vector(1,.2,0),SunColor=Vector(.83,.45,.11),SunSize=.34},
+  dusk={TopColor=Vector(.24,.15,.08),BottomColor=Vector(.4,.07,0),FadeBias=1,HDRScale=.36,StarScale=1.5,StarFade=5,StarSpeed=.01,DuskScale=1,DuskIntensity=1.94,DuskColor=Vector(.69,.22,.02),SunColor=Vector(.9,.3,0),SunSize=.44},
+  night={TopColor=Vector(0,0,0),BottomColor=Vector(.05,.05,.11),FadeBias=.1,HDRScale=.19,StarScale=1.5,StarFade=5,StarSpeed=.01,DuskScale=0,DuskIntensity=0,DuskColor=Vector(1,.36,0),SunColor=Vector(.83,.45,.11),SunSize=0},
+  storm={TopColor=Vector(.22,.22,.22),BottomColor=Vector(.05,.05,.07),FadeBias=1,HDRScale=.26,StarScale=2,StarFade=5,StarSpeed=.04,DuskScale=0,DuskIntensity=0,DuskColor=Vector(.23,.23,.23),SunColor=Vector(.83,.45,.11),SunSize=.1},
+  storm_night={TopColor=Vector(.01,.01,.01),BottomColor=Vector(0,0,0),FadeBias=1,HDRScale=.26,StarScale=2,StarFade=5,StarSpeed=.04,DuskScale=0,DuskIntensity=0,DuskColor=Vector(.23,.23,.23),SunColor=Vector(.83,.45,.11),SunSize=.1},
+ }
+ local SKY_KEYS={{0,"night"},{4.5,"night"},{6,"dawn"},{9,"day"},{16.5,"day"},{19,"dusk"},{22,"night"},{24,"night"}}
+ local VECTOR_FIELDS={TopColor=true,BottomColor=true,DuskColor=true,SunColor=true}
+ local function blendPreset(a,b,t)
+  local out={};for key,value in pairs(a)do if VECTOR_FIELDS[key]then out[key]=LerpVector(t,value,b[key])else out[key]=Lerp(t,value,b[key])end end;return out
+ end
+ local function timePreset(hour)
+  hour=hour%24
+  for i=1,#SKY_KEYS-1 do local a,b=SKY_KEYS[i],SKY_KEYS[i+1];if hour>=a[1]and hour<=b[1]then local span=math.max(.001,b[1]-a[1]);return blendPreset(SKYPAINT[a[2]],SKYPAINT[b[2]],math.Clamp((hour-a[1])/span,0,1))end end
+  return SKYPAINT.night
+ end
  local lastLightStyle
  local function applyWorldLight(sun)
   if not (engine and engine.LightStyle) then return end
@@ -24,10 +42,17 @@ if SERVER then
  end
  local function applySky()
   local e=skyPaint();if not IsValid(e)or not isfunction(e.SetTopColor)then return end
-  local t=W._time;local sun=W.SunFactor(t);local h=t/60;local dusk=math.max(math.Clamp(1-math.abs(h-19)/2,0,1),math.Clamp(1-math.abs(h-5.5)/1.5,0,1)*.55);local night=1-sun
-  local elevation=math.sin(math.rad((h-6)*15));local azimuth=(h/24)*360+90
+  local hour=W._time/60;local sun=W.SunFactor(W._time);local preset=timePreset(hour);local weather=W._weather
+  local weatherBlend=weather=="storm"and 1 or weather=="rain"and .62 or weather=="cloudy"and .38 or weather=="fog"and .18 or 0
+  if weatherBlend>0 then local storm=sun<.15 and SKYPAINT.storm_night or SKYPAINT.storm;preset=blendPreset(preset,storm,weatherBlend)end
+  local elevation=math.sin(math.rad((hour-6)*15));local azimuth=(hour/24)*360+90
   if isfunction(e.SetSunNormal)then e:SetSunNormal(Angle(-elevation*78,azimuth,0):Forward())end
-  e:SetTopColor(Vector(.006+.18*sun+.16*dusk,.009+.32*sun+.06*dusk,.025+.58*sun+.02*dusk));e:SetBottomColor(Vector(.008+.42*sun+.35*dusk,.012+.52*sun+.12*dusk,.035+.72*sun+.04*dusk));e:SetSunColor(Vector(.02+.98*sun,.025+.92*sun,.05+.78*sun));e:SetDuskColor(Vector(1,.18,.05));e:SetDuskScale(.15+1.2*dusk);e:SetDuskIntensity(.12+1.2*dusk);e:SetSunSize(sun<.03 and .01 or 2.2+2.2*sun);e:SetStarScale(.25+1.65*night);e:SetStarFade(1.35);e:SetStarSpeed(.01)
+  e:SetTopColor(preset.TopColor);e:SetBottomColor(preset.BottomColor)
+  if isfunction(e.SetFadeBias)then e:SetFadeBias(preset.FadeBias)end
+  if isfunction(e.SetHDRScale)then e:SetHDRScale(preset.HDRScale)end
+  e:SetStarScale(preset.StarScale);e:SetStarFade(preset.StarFade);e:SetStarSpeed(preset.StarSpeed)
+  e:SetDuskScale(preset.DuskScale);e:SetDuskIntensity(preset.DuskIntensity);e:SetDuskColor(preset.DuskColor)
+  e:SetSunColor(preset.SunColor);e:SetSunSize(preset.SunSize)
   applyWorldLight(sun)
  end
  local function sync()SetGlobalFloat("GRM_TimeMinutes",W._time);SetGlobalString("GRM_Weather",W._weather);SetGlobalFloat("GRM_SunFactor",W.SunFactor(W._time));SetGlobalBool("GRM_WeatherHUD",W.Config.hudClock~=false);SetGlobalFloat("GRM_WeatherSoundVolume",math.Clamp(tonumber(W.Config.soundVolume)or.65,0,1));SetGlobalFloat("GRM_WeatherMusicVolume",math.Clamp(tonumber(W.Config.musicVolume)or.18,0,1));SetGlobalBool("GRM_WeatherMusic",W.Config.musicEnabled~=false)end
