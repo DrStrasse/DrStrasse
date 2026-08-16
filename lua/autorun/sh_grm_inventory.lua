@@ -829,12 +829,14 @@ if SERVER then
         local pos = ply:GetPos() + ply:GetForward() * GRM.Inventory.Config.DropDistance + Vector(0, 0, 20)
         ent:SetPos(pos)
         ent:SetAngles(Angle(0, math.random(0, 360), 0))
-        ent:Spawn()
+        -- ItemID и данные экземпляра должны быть установлены ДО Spawn:
+        -- Initialize выбирает по ним модель (документ → бланк/clipboard).
         ent:SetItemID(slot.id)
         ent:SetItemCount(count)
-        if slot.data then
-            ent.ItemData = table.Copy(slot.data)
-        end
+        local dropDef = GRM.Inventory.GetItemDef(slot.id)
+        if dropDef and dropDef.name then ent:SetDisplayName(tostring(dropDef.name)) end
+        if slot.data then ent.ItemData = table.Copy(slot.data) end
+        ent:Spawn()
 
         local phys = ent:GetPhysicsObject()
         if IsValid(phys) then

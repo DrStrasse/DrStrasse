@@ -1349,6 +1349,15 @@ if SERVER then
             DOC.SaveRegistry("issue business license " .. targetKey .. " by " .. ply:Nick())
         end
 
+        -- Физический бланк сразу выдаётся онлайн-получателю. Реестр остаётся
+        -- источником истины, поэтому аннулирование отражается на всех копиях.
+        if DOC.GivePhysicalCopy then
+            local targetPly = findOnlineByKey(targetKey)
+            if IsValid(targetPly) then
+                local copyOK, copyErr = DOC.GivePhysicalCopy(targetPly, docType, targetKey, ply)
+                if not copyOK and GRM.Notify then GRM.Notify(ply, "Документ внесён в реестр, но бланк не выдан: " .. tostring(copyErr), 255, 180, 90) end
+            end
+        end
         if GRM.Notify then GRM.Notify(ply, "Документ успешно оформлен и внесён в базу данных.", 100, 220, 120) end
     end)
 
