@@ -2,7 +2,7 @@
 
 **Дата:** 2026-08-17  
 **Ветка сессии:** `arena/01a00f34-drstrasse`  
-**Состояние:** Faction Core v5.0 (Иерархия «Отделы ➔ Подотделы» + Stable Roles & Departments + Unified UI v1.1.0), FFD Link v1.2.0 (память дверей и сканнеров восстановлена, autorun perm registration), сквозные хуки `PostCleanupMap` во всех модулях окружения.  
+**Состояние:** Door Integrity v4.0 (Дедупликатор фантомов + Master-Slave Double Doors + /door_audit), Warrant Core v2.0 (Судебные ордера в grm_comp_court, таран ds_battering_ram v2.0 с прогресс-баром), Суверенитет спецслужб (иммунитет судей wiretap_judge), Faction Core v5.0 (Иерархия «Отделы ➔ Подотделы» + Unified UI v1.1.0).  
 **Репо:** `https://github.com/DrStrasse/DrStrasse`  
 
 Читать этот файл ПЕРВЫМ. Затем `HANDOVER.md`, `ROADMAP_GRM_2026.md`, `GRM_CORE.md` и актуализации в `ANALYSIS.md`. Не начинать с master — он пустой.

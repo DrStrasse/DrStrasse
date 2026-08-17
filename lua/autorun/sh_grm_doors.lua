@@ -24,7 +24,58 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Doors = GRM.Doors or {}
 local D = GRM.Doors
-D.Version = "3.1.0"
+D.Version = "4.0.0"
+
+function D.PurgeGhostDoors()
+    if not SERVER then return 0 end
+    local doors = {}
+    for _, ent in ipairs(ents.GetAll()) do
+        if IsValid(ent) and D.IsDoor(ent) then
+            doors[#doors + 1] = ent
+        end
+    end
+    local purged = 0
+    local toRemove = {}
+    for i = 1, #doors do
+        local a = doors[i]
+        if IsValid(a) and not toRemove[a] then
+            local posA = a.WorldSpaceCenter and a:WorldSpaceCenter() or a:GetPos()
+            for j = i + 1, #doors do
+                local b = doors[j]
+                if IsValid(b) and not toRemove[b] then
+                    local posB = b.WorldSpaceCenter and b:WorldSpaceCenter() or b:GetPos()
+                    if posA:DistToSqr(posB) <= (14 * 14) and math.abs(posA.z - posB.z) <= 8 then
+                        local isMapA = a.CreatedByMap and a:CreatedByMap() or false
+                        local isMapB = b.CreatedByMap and b:CreatedByMap() or false
+                        local killTarget = nil
+                        if isMapA and not isMapB then
+                            killTarget = b
+                        elseif isMapB and not isMapA then
+                            killTarget = a
+                        else
+                            killTarget = (a:EntIndex() > b:EntIndex()) and a or b
+                        end
+                        if killTarget and not toRemove[killTarget] then
+                            toRemove[killTarget] = true
+                            purged = purged + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+    for ent in pairs(toRemove) do
+        if IsValid(ent) then
+            print(("[GRM Doors] Ликвидирована фантомная дверь-дубликат #%d (%s) на %.0f,%.0f,%.0f")
+                :format(ent:EntIndex(), tostring(ent:GetClass()), ent:GetPos().x, ent:GetPos().y, ent:GetPos().z))
+            ent:Remove()
+        end
+    end
+    if purged > 0 and D.RebuildDoorIdentityCache then
+        D.RebuildDoorIdentityCache()
+    end
+    return purged
+end
 
 D.Config = D.Config or {
     UseDistance = 180,
@@ -159,6 +210,60 @@ function D.GetPartnerDoor(ent)
     if not IsValid(ent) or not D.IsDoor(ent) then return nil end
     local parent = ent:GetParent()
     if IsValid(parent) and D.IsDoor(parent) then return parent end
+    if ent._grmPartnerDoor ~= nil then
+        if IsValid(ent._grmPartnerDoor) then return ent._grmPartnerDoor end
+        ent._grmPartnerDoor = false
+    end
+    local posA = ent.WorldSpaceCenter and ent:WorldSpaceCenter() or ent:GetPos()
+    local cls = ent:GetClass()
+    local best, bestD = nil, 70 * 70
+    for _, other in ipairs(ents.FindInSphere(posA, 70)) do
+        if IsValid(other) and other ~= ent and D.IsDoor(other) and other:GetClass() == cls then
+            local posB = other.WorldSpaceCenter and other:WorldSpaceCenter() or other:GetPos()
+            local d = posA:DistToSqr(posB)
+            if d >= (18 * 18) and d <= bestD and math.abs(posA.z - posB.z) <= 14 then
+                best, bestD = other, d
+            end
+        end
+    end
+    if best then
+        ent._grmPartnerDoor = best
+        best._grmPartnerDoor = ent
+        return best
+    end
+    ent._grmPartnerDoor = false
+    return nil
+end
+
+function D.BreachDoor(ent, breakerPly, method)
+    if not IsValid(ent) or not D.IsDoor(ent) then return false end
+    method = method or "battering_ram"
+
+    D.LockDoor(ent, false)
+    ent:Fire("Open", "", 0.05)
+    ent._grmBreachedUntil = CurTime() + 300
+    ent:SetNWFloat("GRM_BreachedUntil", ent._grmBreachedUntil)
+
+    local partner = D.GetPartnerDoor(ent)
+    if IsValid(partner) then
+        D.LockDoor(partner, false)
+        partner:Fire("Open", "", 0.05)
+        partner._grmBreachedUntil = CurTime() + 300
+        partner:SetNWFloat("GRM_BreachedUntil", partner._grmBreachedUntil)
+    end
+
+    hook.Run("GRM_OnDoorBreached", breakerPly, ent, method)
+
+    if GRM.Audit and GRM.Audit.Log then
+        local actorName = IsValid(breakerPly) and breakerPly:Nick() or "Система"
+        local actorKey = IsValid(breakerPly) and (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(breakerPly) or breakerPly:SteamID64()) or ""
+        GRM.Audit.Log("door_breached", actorKey, actorName, {
+            doorID = D.GetDoorID(ent),
+            method = method,
+            pos = tostring(ent:GetPos()),
+        })
+    end
+    return true
 end
 
 function D.IsDoorLocked(ent)
@@ -248,11 +353,38 @@ function D.ClearLockDenyHold(state)
 end
 
 hook.Add("InitPostEntity", "GRM_Doors_BuildIdentityCache", function()
-    timer.Simple(0, D.RebuildDoorIdentityCache)
+    timer.Simple(0, function()
+        if D.PurgeGhostDoors then D.PurgeGhostDoors() end
+        D.RebuildDoorIdentityCache()
+    end)
 end)
-hook.Add("PostCleanupMap","GRM_Doors_RebuildIdentityCache",function()timer.Simple(.2,D.RebuildDoorIdentityCache)end)
+hook.Add("PostCleanupMap","GRM_Doors_RebuildIdentityCache",function()
+    timer.Simple(.2, function()
+        if D.PurgeGhostDoors then D.PurgeGhostDoors() end
+        D.RebuildDoorIdentityCache()
+    end)
+end)
 hook.Add("OnEntityCreated","GRM_Doors_IdentityCreated",function(ent)timer.Simple(.1,function()if IsValid(ent)and D.IsDoor(ent)then D._canonicalDoorIDs=nil;D._equivalentDoors=nil;D._primaryDoors=nil;D.RebuildDoorIdentityCache()end end)end)
 hook.Add("EntityRemoved","GRM_Doors_IdentityRemoved",function(ent)if D._canonicalDoorIDs and D._canonicalDoorIDs[ent]then D._canonicalDoorIDs=nil;D._equivalentDoors=nil;D._primaryDoors=nil;timer.Simple(.1,D.RebuildDoorIdentityCache)end end)
+
+if SERVER then
+    concommand.Add("grm_door_audit", function(ply)
+        local isSA = not IsValid(ply) or ply:IsSuperAdmin()
+        if not isSA then return end
+        local doors = 0
+        local pairsCount = 0
+        local ghostCount = D.PurgeGhostDoors and D.PurgeGhostDoors() or 0
+        for _, ent in ipairs(ents.GetAll()) do
+            if IsValid(ent) and D.IsDoor(ent) then
+                doors = doors + 1
+                if D.GetPartnerDoor and D.GetPartnerDoor(ent) then pairsCount = pairsCount + 1 end
+            end
+        end
+        local msg = string.format("[GRM Door Audit] Дверей на карте: %d | Двустворчатых пар: %d | Ликвидировано фантомов: %d | Записей в БД: %d",
+            doors, math.floor(pairsCount / 2), ghostCount, table.Count(D.Data and D.Data.doors or {}))
+        if IsValid(ply) then ply:ChatPrint(msg) else print(msg) end
+    end)
+end
 
 -----------------------------------------------------------------------
 -- SERVER
@@ -597,18 +729,39 @@ if SERVER then
         return nil, nil, nil
     end
 
-    function D.HasWarrant(plyOrSid)
+    function D.HasWarrant(plyOrSid, warrantType)
         local sid = charKey(plyOrSid)
         if sid == "" then return false end
         local w = D.Data.warrants and D.Data.warrants[sid]
         if not istable(w) then return false end
-        local exp = tonumber(w.expires) or 0
+        local exp = tonumber(w.expires or w.expiresAt) or 0
         if exp > 0 and os.time() > exp then
             D.Data.warrants[sid] = nil
             D.SaveWarrants()
             return false
         end
+        if w.status and w.status ~= "active" then return false end
+        if warrantType and warrantType ~= "" then
+            local t = tostring(w.type or "search")
+            if t ~= warrantType and t ~= "all" then return false end
+        end
         return true, w
+    end
+
+    function D.HasPropertyWarrant(propertyId, warrantType)
+        propertyId = tostring(propertyId or "")
+        if propertyId == "" or not istable(D.Data.warrants) then return false end
+        for sid, w in pairs(D.Data.warrants) do
+            if istable(w) and tostring(w.propertyId or "") == propertyId then
+                local exp = tonumber(w.expires or w.expiresAt) or 0
+                if exp > 0 and os.time() <= exp and (not w.status or w.status == "active") then
+                    if not warrantType or warrantType == "" or w.type == warrantType or w.type == "all" then
+                        return true, w
+                    end
+                end
+            end
+        end
+        return false
     end
 
     function D.SyncLockNW(ent, locked)
@@ -809,35 +962,126 @@ if SERVER then
         return true
     end
 
-    function D.IssueWarrant(issuer, targetSid, minutes, reason)
-        if not IsValid(issuer) then return false, "Ошибка инициатора" end
-        if not D.CanAdminDoors(issuer)
-            and not (D.AccessManager and D.AccessManager.CanWarrant and D.AccessManager.CanWarrant(issuer)) then
-            return false, "У вас нет прав выдавать ордера"
-        end
+    function D.IssueWarrant(issuer, targetSid, warrantType, minutes, reason, propertyId, approvedBy)
+        if not IsValid(issuer) and not (isstring(issuer) and issuer == "console") then return false, "Ошибка инициатора" end
         targetSid = charKey(targetSid)
         if targetSid == "" then return false, "Не указана цель" end
+        warrantType = tostring(warrantType or "search")
         minutes = math.Clamp(math.floor(tonumber(minutes) or 30), 5, 24 * 60)
         D.Data.warrants = D.Data.warrants or {}
+        local id = "war_" .. os.time() .. "_" .. math.random(100, 999)
+        local issuerName = IsValid(issuer) and issuer:Nick() or tostring(issuer)
+        local issuerKey = IsValid(issuer) and charKey(issuer) or tostring(issuer)
+        local judgeName = IsValid(approvedBy) and approvedBy:Nick() or (isstring(approvedBy) and approvedBy or "Суд")
+        local judgeKey = IsValid(approvedBy) and charKey(approvedBy) or (isstring(approvedBy) and approvedBy or "")
         D.Data.warrants[targetSid] = {
-            sid = targetSid, name = nickOf(targetSid),
-            reason = utf8cut(tostring(reason or "Ордер на обыск имущества"), 160),
-            by = charKey(issuer), byNick = issuer:Nick(),
+            id = id,
+            sid = targetSid,
+            type = warrantType,
+            name = nickOf(targetSid),
+            propertyId = tostring(propertyId or ""),
+            reason = utf8cut(tostring(reason or "Судебный ордер"), 200),
+            by = issuerKey, byNick = issuerName,
+            approvedBy = judgeKey, approvedByName = judgeName,
+            status = "active",
             issued = os.time(), expires = os.time() + minutes * 60,
         }
         D.SaveWarrants()
+        hook.Run("GRM_OnWarrantIssued", targetSid, D.Data.warrants[targetSid], issuer)
+        return true, D.Data.warrants[targetSid]
+    end
+
+    function D.RequestWarrant(issuer, targetSid, warrantType, minutes, reason, propertyId)
+        if not IsValid(issuer) then return false, "Ошибка инициатора" end
+        targetSid = charKey(targetSid)
+        if targetSid == "" then return false, "Не указан фигурант" end
+        warrantType = tostring(warrantType or "search")
+        minutes = math.Clamp(math.floor(tonumber(minutes) or 30), 5, 24 * 60)
+        D.Data.warrants = D.Data.warrants or {}
+        local id = "req_" .. os.time() .. "_" .. math.random(100, 999)
+        D.Data.warrants[id] = {
+            id = id,
+            sid = targetSid,
+            type = warrantType,
+            name = nickOf(targetSid),
+            propertyId = tostring(propertyId or ""),
+            reason = utf8cut(tostring(reason or "Ходатайство на ордер"), 200),
+            by = charKey(issuer), byNick = issuer:Nick(),
+            status = "pending",
+            issued = os.time(), expires = os.time() + minutes * 60,
+        }
+        D.SaveWarrants()
+        hook.Run("GRM_OnWarrantRequested", id, D.Data.warrants[id], issuer)
+        return true, D.Data.warrants[id]
+    end
+
+    function D.ApproveWarrant(judge, warrantId, minutes)
+        if not IsValid(judge) then return false, "Ошибка судьи" end
+        if not istable(D.Data.warrants) or not D.Data.warrants[warrantId] then
+            return false, "Ходатайство не найдено"
+        end
+        local req = D.Data.warrants[warrantId]
+        minutes = math.Clamp(math.floor(tonumber(minutes) or 60), 5, 24 * 60)
+        local targetSid = req.sid
+        D.Data.warrants[warrantId] = nil
+        D.Data.warrants[targetSid] = {
+            id = "war_" .. os.time() .. "_" .. math.random(100, 999),
+            sid = targetSid,
+            type = req.type or "search",
+            name = req.name or nickOf(targetSid),
+            propertyId = req.propertyId or "",
+            reason = req.reason or "Утверждён судом",
+            by = req.by or "", byNick = req.byNick or "",
+            approvedBy = charKey(judge), approvedByName = judge:Nick(),
+            status = "active",
+            issued = os.time(), expires = os.time() + minutes * 60,
+        }
+        D.SaveWarrants()
+        hook.Run("GRM_OnWarrantApproved", targetSid, D.Data.warrants[targetSid], judge)
+        return true, D.Data.warrants[targetSid]
+    end
+
+    function D.RejectWarrant(judge, warrantId, reason)
+        if not istable(D.Data.warrants) or not D.Data.warrants[warrantId] then
+            return false, "Ходатайство не найдено"
+        end
+        local req = D.Data.warrants[warrantId]
+        req.status = "rejected"
+        req.rejectReason = utf8cut(tostring(reason or "Отклонено судом"), 160)
+        req.rejectedBy = IsValid(judge) and charKey(judge) or "court"
+        D.SaveWarrants()
+        hook.Run("GRM_OnWarrantRejected", warrantId, req, judge)
         return true
     end
 
     function D.RevokeWarrant(issuer, targetSid)
-        if not IsValid(issuer) then return false end
-        if not D.CanAdminDoors(issuer)
-            and not (D.AccessManager and D.AccessManager.CanWarrant and D.AccessManager.CanWarrant(issuer)) then
-            return false, "У вас нет прав отзывать ордера"
+        if not IsValid(issuer) and not (isstring(issuer) and issuer == "console") then return false end
+        targetSid = charKey(targetSid)
+        if D.Data.warrants and D.Data.warrants[targetSid] then
+            D.Data.warrants[targetSid] = nil
         end
-        if D.Data.warrants then D.Data.warrants[charKey(targetSid)] = nil end
         D.SaveWarrants()
         return true
+    end
+
+    function D.ListWarrants(filterType, includePending)
+        local out = {}
+        local now = os.time()
+        for k, w in pairs(D.Data.warrants or {}) do
+            if istable(w) then
+                local exp = tonumber(w.expires or w.expiresAt) or 0
+                if exp == 0 or exp > now then
+                    local isPend = (w.status == "pending" or string.sub(k, 1, 4) == "req_")
+                    if (not isPend or includePending == true) then
+                        if not filterType or filterType == "" or filterType == "all" or w.type == filterType then
+                            out[#out + 1] = w
+                        end
+                    end
+                end
+            end
+        end
+        table.sort(out, function(a, b) return (a.issued or 0) > (b.issued or 0) end)
+        return out
     end
 
     local function aimDoor(ply)

@@ -67,6 +67,7 @@ net.Receive("GRM_CompCourt_Open", function()
     local levels = net.ReadTable() or {}
     local fines = net.ReadTable() or {}
     local online = net.ReadTable() or {}
+    local warrants = net.ReadTable() or {}
 
     if not IsValid(ent) then return end
 
@@ -204,4 +205,135 @@ net.Receive("GRM_CompCourt_Open", function()
     btnCancel:SetPos(264, 118) btnCancel:SetSize(240, 28)
 
     tabs:AddSheet("Штрафы", finPnl, "icon16/money.png")
+
+    -- ════════════ ВКЛАДКА 4: СУДЕБНЫЕ ОРДЕРА И ХОДАТАЙСТВА ════════════
+    local warPnl = vgui.Create("DPanel", tabs)
+    warPnl:DockPadding(8, 8, 8, 8)
+    warPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
+
+    local warList = vgui.Create("DListView", warPnl)
+    warList:Dock(TOP) warList:SetTall(250)
+    warList:AddColumn("ID / №"):SetFixedWidth(90)
+    warList:AddColumn("Тип ордера"):SetFixedWidth(140)
+    warList:AddColumn("Фигурант / Адрес"):SetFixedWidth(200)
+    warList:AddColumn("Статус"):SetFixedWidth(100)
+    warList:AddColumn("Инициатор / Судья"):SetFixedWidth(160)
+    warList:AddColumn("Срок действия"):SetFixedWidth(120)
+
+    local warrantTypeLabels = {
+        search = "Обыск жилища",
+        arrest = "Арест и захват",
+        wiretap_judge = "Надзор за судьёй",
+        eviction = "Опечатывание",
+    }
+
+    for _, w in ipairs(warrants) do
+        local tLabel = warrantTypeLabels[w.type or "search"] or tostring(w.type or "Ордер")
+        local statusLabel = (w.status == "pending") and "ХОДАТАЙСТВО" or ((w.status == "active") and "АКТИВЕН" or tostring(w.status or "—"))
+        local exp = tonumber(w.expires or w.expiresAt) or 0
+        local timeLeft = exp > os.time() and (tostring(math.ceil((exp - os.time()) / 60)) .. " мин.") or "Истёк"
+        local targetText = tostring(w.name or w.sid or "?")
+        if w.propertyId and w.propertyId ~= "" then targetText = targetText .. " (" .. w.propertyId .. ")" end
+        local byText = tostring(w.byNick or w.by or "?")
+        if w.approvedByName and w.approvedByName ~= "" then byText = byText .. " / " .. w.approvedByName end
+
+        local line = warList:AddLine(tostring(w.id or w.sid), tLabel, targetText, statusLabel, byText, timeLeft)
+        line._warrant = w
+    end
+
+    local warFormPnl = vgui.Create("DPanel", warPnl)
+    warFormPnl:Dock(FILL) warFormPnl:DockMargin(0, 8, 0, 0)
+    warFormPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(24, 30, 44)) end
+
+    local lblWTarget = vgui.Create("DLabel", warFormPnl)
+    lblWTarget:SetPos(12, 10) lblWTarget:SetText("Фигурант (гражданин):") lblWTarget:SetFont("DermaDefaultBold") lblWTarget:SetTextColor(CC.gold) lblWTarget:SizeToContents()
+    local comboWTarget = vgui.Create("DComboBox", warFormPnl)
+    comboWTarget:SetPos(12, 28) comboWTarget:SetSize(240, 24)
+    comboWTarget:AddChoice("— выберите гражданина —", "")
+    for _, p in ipairs(online) do comboWTarget:AddChoice(string.format("%s [%s]", p.rpName or "?", p.nick or "?"), p) end
+    local selWKey = ""
+    comboWTarget.OnSelect = function(_, _, _, pData) if istable(pData) then selWKey = pData.key or "" end end
+
+    local lblWType = vgui.Create("DLabel", warFormPnl)
+    lblWType:SetPos(265, 10) lblWType:SetText("Тип судебного ордера:") lblWType:SetFont("DermaDefaultBold") lblWType:SetTextColor(CC.gold) lblWType:SizeToContents()
+    local comboWType = vgui.Create("DComboBox", warFormPnl)
+    comboWType:SetPos(265, 28) comboWType:SetSize(180, 24)
+    comboWType:AddChoice("Обыск жилища (Search)", "search", true)
+    comboWType:AddChoice("Принудительный арест", "arrest")
+    comboWType:AddChoice("Надзор за судьёй", "wiretap_judge")
+    comboWType:AddChoice("Опечатывание помещения", "eviction")
+
+    local lblWMins = vgui.Create("DLabel", warFormPnl)
+    lblWMins:SetPos(460, 10) lblWMins:SetText("Срок (мин):") lblWMins:SetFont("DermaDefaultBold") lblWMins:SetTextColor(CC.gold) lblWMins:SizeToContents()
+    local entWMins = vgui.Create("DNumberWang", warFormPnl)
+    entWMins:SetPos(460, 28) entWMins:SetSize(70, 24) entWMins:SetMin(10) entWMins:SetMax(1440) entWMins:SetValue(60)
+
+    local lblWReason = vgui.Create("DLabel", warFormPnl)
+    lblWReason:SetPos(12, 60) lblWReason:SetText("Основание / Статья / Помещение:") lblWReason:SetFont("DermaDefaultBold") lblWReason:SetTextColor(CC.gold) lblWReason:SizeToContents()
+    local entWReason = vgui.Create("DTextEntry", warFormPnl)
+    entWReason:SetPos(12, 78) entWReason:SetSize(520, 24) entWReason:SetText("Подозрение в совершении тяжкого преступления")
+
+    local btnReq = mkBtn(warFormPnl, "⚖ Подать ходатайство", Color(80, 140, 220), function()
+        if selWKey == "" then notification.AddLegacy("Выберите фигуранта!", NOTIFY_ERROR, 3) return end
+        local _, wType = comboWType:GetSelected()
+        net.Start("GRM_CompCourt_Action")
+            net.WriteEntity(ent)
+            net.WriteString("warrant_request")
+            net.WriteString(selWKey)
+            net.WriteString(tostring(wType or "search"))
+            net.WriteUInt(math.floor(entWMins:GetValue() or 60), 16)
+            net.WriteString(entWReason:GetText())
+            net.WriteString("")
+        net.SendToServer()
+    end)
+    btnReq:SetPos(12, 112) btnReq:SetSize(170, 28)
+
+    local btnApprove = mkBtn(warFormPnl, "✔ Утвердить ордер", CC.success, function()
+        local l = warList:GetSelectedLine()
+        if not l then notification.AddLegacy("Выберите ходатайство в списке!", NOTIFY_ERROR, 3) return end
+        local row = warList:GetLine(l)
+        local w = row and row._warrant
+        if w and w.id then
+            net.Start("GRM_CompCourt_Action")
+                net.WriteEntity(ent)
+                net.WriteString("warrant_approve")
+                net.WriteString(tostring(w.id))
+                net.WriteUInt(math.floor(entWMins:GetValue() or 60), 16)
+            net.SendToServer()
+        end
+    end)
+    btnApprove:SetPos(190, 112) btnApprove:SetSize(160, 28)
+
+    local btnReject = mkBtn(warFormPnl, "✕ Отклонить", CC.danger, function()
+        local l = warList:GetSelectedLine()
+        if not l then notification.AddLegacy("Выберите ходатайство в списке!", NOTIFY_ERROR, 3) return end
+        local row = warList:GetLine(l)
+        local w = row and row._warrant
+        if w and w.id then
+            net.Start("GRM_CompCourt_Action")
+                net.WriteEntity(ent)
+                net.WriteString("warrant_reject")
+                net.WriteString(tostring(w.id))
+                net.WriteString("Отклонено судом")
+            net.SendToServer()
+        end
+    end)
+    btnReject:SetPos(360, 112) btnReject:SetSize(140, 28)
+
+    local btnRevoke = mkBtn(warFormPnl, "Отозвать ордер", Color(120, 120, 130), function()
+        local l = warList:GetSelectedLine()
+        if not l then notification.AddLegacy("Выберите ордер в списке!", NOTIFY_ERROR, 3) return end
+        local row = warList:GetLine(l)
+        local w = row and row._warrant
+        if w and w.sid then
+            net.Start("GRM_CompCourt_Action")
+                net.WriteEntity(ent)
+                net.WriteString("warrant_revoke")
+                net.WriteString(tostring(w.sid))
+            net.SendToServer()
+        end
+    end)
+    btnRevoke:SetPos(510, 112) btnRevoke:SetSize(140, 28)
+
+    tabs:AddSheet("Судебные ордера", warPnl, "icon16/page_white_star.png")
 end)

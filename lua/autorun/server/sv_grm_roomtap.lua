@@ -561,10 +561,24 @@ hook.Add("PlayerSay", "GRM_RoomTap_TextRecording", function(ply, text)
     local first = string.sub(text, 1, 1)
     if first == "/" or first == "!" then return end
 
+    local fac = ply:GetNWString("GRM_Faction", "")
+    local isJudge = false
+    for _, w in ipairs({ "юстиц", "суд", "прокур", "правосуд", "justice", "court", "prokur" }) do
+        if fac:lower():find(w, 1, true) then isJudge = true break end
+    end
+
+    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or (ply.SteamID64 and ply:SteamID64()) or ""
+    local hasJudgeWarrant = (not isJudge) or (GRM.Doors and GRM.Doors.HasWarrant and GRM.Doors.HasWarrant(ck, "wiretap_judge"))
+
+    local recordText = text
+    if isJudge and not hasJudgeWarrant then
+        recordText = "[Защищено судебным иммунитетом: требуется ордер надзора Верховного суда]"
+    end
+
     for _, chip in ipairs(ents.FindByClass("grm_roomtap_chip")) do
         if IsValid(chip) and chip:GetActive()
             and ply:GetPos():DistToSqr(chip:GetPos()) <= math.max(1, chip:GetRadius()) ^ 2 then
-            RT.WriteChipRecord(chip, "text", ply, text)
+            RT.WriteChipRecord(chip, "text", ply, recordText)
         end
     end
 end)

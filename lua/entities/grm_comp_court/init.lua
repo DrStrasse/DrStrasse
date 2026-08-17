@@ -108,6 +108,11 @@ function ENT:Use(ply)
         fines = (F.Page("civil", { status = "unpaid" }, 0, 200))
     end
 
+    local warrants = {}
+    if GRM.Doors and GRM.Doors.ListWarrants then
+        warrants = GRM.Doors.ListWarrants(nil, true)
+    end
+
     net.Start("GRM_CompCourt_Open")
         net.WriteEntity(self)
         net.WriteTable({ name = self:GetComputerName(), isSuper = ply:IsSuperAdmin() })
@@ -116,10 +121,11 @@ function ENT:Use(ply)
         net.WriteTable(GRM.Wanted and GRM.Wanted.Levels or {})
         net.WriteTable(fines)
         net.WriteTable(onlineList())
+        net.WriteTable(warrants)
     net.Send(ply)
 end
 
--- Выписка судебного штрафа / аннулирование. Права — как у CanManage.
+-- Обработка действий юстиции (штрафы и судебные ордера)
 net.Receive("GRM_CompCourt_Action", function(_, ply)
     if not IsValid(ply) then return end
     local ent = net.ReadEntity()
@@ -129,12 +135,9 @@ net.Receive("GRM_CompCourt_Action", function(_, ply)
 
     local op = net.ReadString()
     local F = GRM.Wanted and GRM.Wanted.Fines
-    if not F then
-        if GRM.Notify then GRM.Notify(ply, "Реестр штрафов не загружен.", 255, 120, 100) end
-        return
-    end
 
     if op == "fine_issue" then
+        if not F then return end
         local targetKey = net.ReadString()
         local amount = math.floor(tonumber(net.ReadString()) or 0)
         local reason = net.ReadString()
@@ -146,6 +149,7 @@ net.Receive("GRM_CompCourt_Action", function(_, ply)
             else GRM.Notify(ply, tostring(err or "Не выписать штраф"), 255, 140, 100) end
         end
     elseif op == "fine_cancel" then
+        if not F then return end
         local id = math.floor(tonumber(net.ReadString()) or 0)
         local reason = net.ReadString()
         if id <= 0 then return end
@@ -153,6 +157,46 @@ net.Receive("GRM_CompCourt_Action", function(_, ply)
         if GRM.Notify then
             if ok then GRM.Notify(ply, ("Штраф №%d аннулирован."):format(id), 120, 220, 140)
             else GRM.Notify(ply, tostring(err or "Не аннулировать"), 255, 140, 100) end
+        end
+    elseif op == "warrant_request" then
+        local targetKey = net.ReadString()
+        local wType = net.ReadString()
+        local mins = net.ReadUInt(16)
+        local reason = net.ReadString()
+        local propId = net.ReadString()
+        if GRM.Doors and GRM.Doors.RequestWarrant then
+            local ok, w = GRM.Doors.RequestWarrant(ply, targetKey, wType, mins, reason, propId)
+            if GRM.Notify then
+                if ok then GRM.Notify(ply, "Ходатайство на судебный ордер подано.", 100, 220, 130)
+                else GRM.Notify(ply, "Ошибка подачи ходатайства: " .. tostring(w), 255, 120, 100) end
+            end
+        end
+    elseif op == "warrant_approve" then
+        local warId = net.ReadString()
+        local mins = net.ReadUInt(16)
+        if GRM.Doors and GRM.Doors.ApproveWarrant then
+            local ok, w = GRM.Doors.ApproveWarrant(ply, warId, mins)
+            if GRM.Notify then
+                if ok then GRM.Notify(ply, "Судебный ордер утверждён и вступил в силу!", 100, 220, 130)
+                else GRM.Notify(ply, "Не удалось утвердить ордер: " .. tostring(w), 255, 120, 100) end
+            end
+        end
+    elseif op == "warrant_reject" then
+        local warId = net.ReadString()
+        local reason = net.ReadString()
+        if GRM.Doors and GRM.Doors.RejectWarrant then
+            local ok = GRM.Doors.RejectWarrant(ply, warId, reason)
+            if GRM.Notify then
+                if ok then GRM.Notify(ply, "Ходатайство на ордер отклонено.", 235, 180, 80) end
+            end
+        end
+    elseif op == "warrant_revoke" then
+        local targetSid = net.ReadString()
+        if GRM.Doors and GRM.Doors.RevokeWarrant then
+            local ok = GRM.Doors.RevokeWarrant(ply, targetSid)
+            if GRM.Notify then
+                if ok then GRM.Notify(ply, "Судебный ордер отозван.", 235, 180, 80) end
+            end
         end
     end
 end)
