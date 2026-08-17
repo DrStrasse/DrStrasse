@@ -433,5 +433,48 @@ ok(BD.Dirty == true, "MarkDirty поднимает флаг")
 BD.Save()
 ok(BD.Dirty == false, "Save снимает флаг")
 
+
+print("\n=== 8. ЗВУК И ПОДСВЕТКА ===")
+local hud = read("lua/autorun/client/cl_grm_hud.lua")
+local snd = read("lua/autorun/sh_07_grm_sound.lua")
+
+ok(snd:find('"common/wpn_hudon.wav", "common/wpn_hudoff.wav", "common/wpn_moveselect.wav"', 1, true) ~= nil
+    and snd:find('"common/wpn_select.wav", "common/wpn_denyselect.wav"', 1, true) ~= nil,
+    "стоковые звуки выбора оружия зарегистрированы и прекэшируются")
+
+ok(hud:find("local SELECTOR_SND = {", 1, true) ~= nil, "селектор оружия: схема звуков")
+ok(hud:find('open   = "common/wpn_hudon.wav"', 1, true) ~= nil
+    and hud:find('move   = "common/wpn_moveselect.wav"', 1, true) ~= nil
+    and hud:find('pick   = "common/wpn_select.wav"', 1, true) ~= nil
+    and hud:find('deny   = "common/wpn_denyselect.wav"', 1, true) ~= nil,
+    "используются именно ванильные HL2-звуки, а не самодельные")
+ok(hud:find('if was ~= (selector.slot .. ":" .. selector.pos) then selectorSound("move") end', 1, true) ~= nil,
+    "щелчок звучит только когда выбор реально сдвинулся")
+ok(hud:find('selectorSound(picked and "pick" or "deny", 0.05)', 1, true) ~= nil,
+    "подтверждение и отказ звучат по-разному")
+ok(hud:find('selectorSound("open", 0.05)', 1, true) ~= nil, "открытие селектора озвучено")
+ok(hud:find('if selector.active and not silent then selectorSound("close") end', 1, true) ~= nil,
+    "закрытие селектора озвучено")
+ok(hud:find("GRM.Sound.UI(path, throttle or 0.02)", 1, true) ~= nil,
+    "звук идёт через общий слой с троттлингом (быстрая прокрутка не трещит)")
+
+ok(binder:find("local RADIAL_SND = {", 1, true) ~= nil, "круг биндера: та же звуковая схема")
+ok(binder:find('radialSound("move")', 1, true) ~= nil, "щелчок при переходе на другой сектор")
+ok(binder:find('radialSound("open", 0.05)', 1, true) ~= nil and binder:find('radialSound("pick", 0.05)', 1, true) ~= nil
+    and binder:find('radialSound("close", 0.05)', 1, true) ~= nil,
+    "открытие, выполнение и отмена озвучены")
+ok(binder:find("if BD.RadialPick ~= prevPick and BD.RadialPick > 0 then", 1, true) ~= nil,
+    "звук привязан к смене сектора, а не к каждому кадру")
+
+ok(binder:find("BD.RadialAnim", 1, true) ~= nil, "у секторов есть анимация подсветки")
+ok(binder:find("local ft = math.min(FrameTime() * 9, 1)", 1, true) ~= nil,
+    "плавность считается по FrameTime, без таймеров")
+ok(binder:find("local br = Lerp(anim, C.card.r, C.acc.r)", 1, true) ~= nil,
+    "цвет сектора плавно уходит в акцентный при наведении")
+ok(binder:find("-- Светящаяся кромка выбранного сектора.", 1, true) ~= nil,
+    "у выбранного сектора светящаяся золотая кромка")
+ok(binder:find('anim > 0.5 and "GRMBind_Head" or "GRMBind_Body"', 1, true) ~= nil,
+    "подпись выбранного сектора крупнее")
+
 print(("\nBINDER + CHAT + FORMS: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)

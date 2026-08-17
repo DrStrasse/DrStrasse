@@ -115,7 +115,25 @@ local MEMO = "БИНДЕР служит упрощением отыгровки 
 
 local function click(path)
     if GRM.Sound and GRM.Sound.UI then GRM.Sound.UI(path or "buttons/button15.wav")
-    else surface.PlaySound(path or "buttons/button15.wav") end
+    elseif surface and surface.PlaySound then surface.PlaySound(path or "buttons/button15.wav") end
+end
+
+--[[ Звуковая схема круга — стоковые HL2, те же, что у выбора оружия:
+     открытие, «щелчок» при переходе на другой сектор, подтверждение и
+     отмена. Молчаливое меню ощущается сломанным. ]]
+local RADIAL_SND = {
+    open  = "common/wpn_hudon.wav",
+    close = "common/wpn_hudoff.wav",
+    move  = "common/wpn_moveselect.wav",
+    pick  = "common/wpn_select.wav",
+    deny  = "common/wpn_denyselect.wav",
+}
+
+local function radialSound(kind, throttle)
+    local path = RADIAL_SND[kind]
+    if not path then return end
+    if GRM.Sound and GRM.Sound.UI then GRM.Sound.UI(path, throttle or 0.02)
+    elseif surface and surface.PlaySound then surface.PlaySound(path) end
 end
 
 -----------------------------------------------------------------------
@@ -529,9 +547,10 @@ function BD.OpenRadial()
     end
     BD.RadialOpen = true
     BD.RadialPick = 0
+    BD.RadialAnim = {}
     BD.RadialOpenedAt = RealTime()
     gui.EnableScreenClicker(true)
-    click("buttons/button14.wav")
+    radialSound("open", 0.05)
 end
 
 -- Закрыть круг. execute=true — запустить выбранный сектор.
@@ -543,8 +562,11 @@ function BD.CloseRadial(execute)
     local entries = radialEntries()
     local pick = BD.RadialPick
     BD.RadialPick = 0
-    if not execute or pick <= 0 or not entries[pick] then return end
-    click()
+    if not execute or pick <= 0 or not entries[pick] then
+        radialSound("close", 0.05)
+        return
+    end
+    radialSound("pick", 0.05)
     BD.Run(entries[pick].id)
 end
 
@@ -613,7 +635,19 @@ hook.Add("HUDPaint", "GRM_Binder_RadialDraw", function()
     local mx, my = gui.MousePos()
     if mx == 0 and my == 0 then mx, my = cx, cy end
 
+    local prevPick = BD.RadialPick
     BD.RadialPick = BD.RadialPickFrom(cx, cy, mx, my, count, inner)
+    -- «Щелчок» при переходе на другой сектор — как в селекторе оружия.
+    if BD.RadialPick ~= prevPick and BD.RadialPick > 0 then radialSound("move") end
+
+    -- Плавная подсветка: каждый сектор тянется к 1 при наведении и обратно
+    -- к 0 при уходе мыши. Считается по FrameTime, без таймеров.
+    BD.RadialAnim = BD.RadialAnim or {}
+    local ft = math.min(FrameTime() * 9, 1)
+    for i = 1, count do
+        local target = (BD.RadialPick == i) and 1 or 0
+        BD.RadialAnim[i] = (BD.RadialAnim[i] or 0) + (target - (BD.RadialAnim[i] or 0)) * ft
+    end
 
     -- Затемнение и центральная «шайба»
     surface.SetDrawColor(0, 0, 0, 170)
@@ -622,42 +656,70 @@ hook.Add("HUDPaint", "GRM_Binder_RadialDraw", function()
     surface.SetDrawColor(C.head.r, C.head.g, C.head.b, 240)
 
     local step = 360 / count
+    local pulse = 0.5 + math.sin(RealTime() * 6) * 0.5
     for i, entry in ipairs(entries) do
+        local anim = BD.RadialAnim[i] or 0
         local selected = (BD.RadialPick == i)
         local startAng = (i - 1) * step - step / 2 - 90
+        local segments = math.max(8, math.floor(step / 3))
+
+        -- Сектор «выезжает» и раздаётся по мере наведения.
+        local grow = 16 * anim
+        local r1 = outer + grow
+        local r0 = inner - 4 * anim
+        local gap = math.rad(1.2)
+
         local poly = {}
-        local segments = math.max(6, math.floor(step / 4))
-        local r1 = selected and (outer + 14) or outer
         for s2 = 0, segments do
-            local a = math.rad(startAng + step * (s2 / segments))
+            local a = math.rad(startAng) + gap + (math.rad(step) - gap * 2) * (s2 / segments)
             poly[#poly + 1] = { x = cx + math.cos(a) * r1, y = cy + math.sin(a) * r1 }
         end
         for s2 = segments, 0, -1 do
-            local a = math.rad(startAng + step * (s2 / segments))
-            poly[#poly + 1] = { x = cx + math.cos(a) * inner, y = cy + math.sin(a) * inner }
+            local a = math.rad(startAng) + gap + (math.rad(step) - gap * 2) * (s2 / segments)
+            poly[#poly + 1] = { x = cx + math.cos(a) * r0, y = cy + math.sin(a) * r0 }
         end
 
         draw.NoTexture()
-        if selected then
-            surface.SetDrawColor(C.acc.r, C.acc.g, C.acc.b, 235)
-        else
-            surface.SetDrawColor(C.card.r, C.card.g, C.card.b, 225)
-        end
+        -- База темнее, наведённый сектор плавно уходит в акцентный синий.
+        local br = Lerp(anim, C.card.r, C.acc.r)
+        local bg = Lerp(anim, C.card.g, C.acc.g)
+        local bb = Lerp(anim, C.card.b, C.acc.b)
+        surface.SetDrawColor(br, bg, bb, 230 + 25 * anim)
         surface.DrawPoly(poly)
+
+        -- Светящаяся кромка выбранного сектора.
+        if anim > 0.02 then
+            local edge = {}
+            local glowR = r1 + 3
+            for s2 = 0, segments do
+                local a = math.rad(startAng) + gap + (math.rad(step) - gap * 2) * (s2 / segments)
+                edge[#edge + 1] = { x = cx + math.cos(a) * glowR, y = cy + math.sin(a) * glowR }
+            end
+            for s2 = segments, 0, -1 do
+                local a = math.rad(startAng) + gap + (math.rad(step) - gap * 2) * (s2 / segments)
+                edge[#edge + 1] = { x = cx + math.cos(a) * r1, y = cy + math.sin(a) * r1 }
+            end
+            draw.NoTexture()
+            surface.SetDrawColor(C.gold.r, C.gold.g, C.gold.b, (120 + 100 * pulse) * anim)
+            surface.DrawPoly(edge)
+        end
 
         -- Подпись сектора
         local midA = math.rad(startAng + step / 2)
-        local tr = (inner + r1) / 2
+        local tr = (r0 + r1) / 2
         local tx, ty = cx + math.cos(midA) * tr, cy + math.sin(midA) * tr
         local slot = entry.slot
         local steps = 0
         for _, st in ipairs(slot.steps or {}) do
             if st.enabled ~= false and string.Trim(tostring(st.text or "")) ~= "" then steps = steps + 1 end
         end
-        draw.SimpleTextOutlined(tostring(slot.name or ("Слот " .. entry.id)), "GRMBind_Body", tx, ty - 8,
-            selected and color_white or C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 2, Color(8, 12, 18, 230))
-        draw.SimpleTextOutlined(steps .. " шаг(ов)", "GRMBind_Small", tx, ty + 10,
-            selected and Color(235, 245, 255) or C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 2, Color(8, 12, 18, 230))
+        local textCol = Color(
+            Lerp(anim, C.text.r, 255), Lerp(anim, C.text.g, 255), Lerp(anim, C.text.b, 255))
+        draw.SimpleTextOutlined(tostring(slot.name or ("Слот " .. entry.id)),
+            anim > 0.5 and "GRMBind_Head" or "GRMBind_Body", tx, ty - 9,
+            textCol, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 2, Color(8, 12, 18, 235))
+        draw.SimpleTextOutlined(steps .. " шаг(ов)", "GRMBind_Small", tx, ty + 11,
+            selected and Color(235, 245, 255) or C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 2, Color(8, 12, 18, 235))
     end
 
     -- Центр: подсказка и текущий выбор

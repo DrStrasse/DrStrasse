@@ -145,6 +145,29 @@ end
 -- СЕЛЕКТОР ОРУЖИЯ
 local selector = { active = false, slot = 1, pos = 1, lastInput = 0, alpha = 0, weapons = {}, lastRefresh = 0 }
 
+--[[ Звуки селектора оружия — стоковые HL2, ровно те же, что играет ванильный
+     выбор оружия. Раньше наш селектор листался молча: визуально работает, а
+     на слух — «мёртвый». Проигрываем через GRM.Sound (там прекэш и защита
+     от отсутствующего файла), с фолбэком на surface.PlaySound. ]]
+local SELECTOR_SND = {
+    open   = "common/wpn_hudon.wav",
+    close  = "common/wpn_hudoff.wav",
+    move   = "common/wpn_moveselect.wav",
+    pick   = "common/wpn_select.wav",
+    deny   = "common/wpn_denyselect.wav",
+}
+
+local function selectorSound(kind, throttle)
+    local path = SELECTOR_SND[kind]
+    if not path then return end
+    if GRM.Sound and GRM.Sound.UI then
+        GRM.Sound.UI(path, throttle or 0.02)
+    elseif surface and surface.PlaySound then
+        surface.PlaySound(path)
+    end
+end
+GRM.HUD.SelectorSound = selectorSound
+
 local function RefreshWeapons()
     local now = CurTime()
     if now - selector.lastRefresh < 0.2 then return end
@@ -163,15 +186,20 @@ local function RefreshWeapons()
     for s, weps in pairs(selector.weapons) do table.sort(weps, function(a, b) return a.slotPos < b.slotPos end) end
 end
 
-local function CloseSelector() selector.active = false end
+local function CloseSelector(silent)
+    if selector.active and not silent then selectorSound("close") end
+    selector.active = false
+end
 
 local function SelectWeapon()
     local slotWeps = selector.weapons[selector.slot]
+    local picked = false
     if slotWeps and slotWeps[selector.pos] then
         local wep = slotWeps[selector.pos].weapon
-        if IsValid(wep) then input.SelectWeapon(wep) end
+        if IsValid(wep) then input.SelectWeapon(wep) picked = true end
     end
-    CloseSelector()
+    selectorSound(picked and "pick" or "deny", 0.05)
+    CloseSelector(true)
 end
 
 local function FindCurrentWeapon()
@@ -299,25 +327,35 @@ hook.Add("PlayerBindPress", "GRM_HUD_Selector", function(ply, bind, pressed)
     end
     if bind == "invnext" then
         RefreshWeapons()
-        if not selector.active then selector.active = true; FindCurrentWeapon() end
+        if not selector.active then selector.active = true selectorSound("open", 0.05) FindCurrentWeapon() end
+        local was = selector.slot .. ":" .. selector.pos
         NextWeapon()
+        -- Щелчок только когда выбор реально сдвинулся (одно оружие в руках —
+        -- звука нет, как в ванильном селекторе).
+        if was ~= (selector.slot .. ":" .. selector.pos) then selectorSound("move") end
         selector.lastInput = CurTime()
         return true
     elseif bind == "invprev" then
         RefreshWeapons()
-        if not selector.active then selector.active = true; FindCurrentWeapon() end
+        if not selector.active then selector.active = true selectorSound("open", 0.05) FindCurrentWeapon() end
+        local was = selector.slot .. ":" .. selector.pos
         PrevWeapon()
+        if was ~= (selector.slot .. ":" .. selector.pos) then selectorSound("move") end
         selector.lastInput = CurTime()
         return true
     end
     for i = 1, 6 do
         if bind == "slot" .. i then
             RefreshWeapons()
+            local slotWeps = selector.weapons[i]
+            local has = slotWeps and #slotWeps > 0
             if selector.active and selector.slot == i then
-                local slotWeps = selector.weapons[i]
-                if slotWeps and #slotWeps > 0 then selector.pos = (selector.pos % #slotWeps) + 1 end
+                if has then selector.pos = (selector.pos % #slotWeps) + 1 end
+                selectorSound(has and "move" or "deny")
             else
-                selector.active = true; selector.slot = i; selector.pos = 1
+                if not selector.active then selectorSound("open", 0.05) end
+                selector.active = true selector.slot = i selector.pos = 1
+                selectorSound(has and "move" or "deny")
             end
             selector.lastInput = CurTime()
             return true

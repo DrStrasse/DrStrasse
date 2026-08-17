@@ -144,6 +144,9 @@ local STOCK = {
     "buttons/lever7.wav", "buttons/lightswitch2.wav", "buttons/combine_button1.wav",
     "buttons/combine_button2.wav", "buttons/combine_button3.wav", "buttons/combine_button7.wav",
     "garrysmod/ui_click.wav", "garrysmod/save_load1.wav",
+    -- Стоковые звуки выбора оружия HL2 — их же использует ванильный селектор.
+    "common/wpn_hudon.wav", "common/wpn_hudoff.wav", "common/wpn_moveselect.wav",
+    "common/wpn_select.wav", "common/wpn_denyselect.wav",
     "ui/buttonclick.wav", "ui/buttonclickrelease.wav",
     "ambient/alarms/combine_bank_alarm_loop4.wav", "ambient/alarms/klaxon1.wav",
     "ambient/alarms/scanner_alert_pass1.wav", "ambient/alarms/warningbell1.wav",
