@@ -58,6 +58,64 @@ local C = {
 
 local currentFrame = nil
 
+-- Состояние, доступное извне UI.Open (чтобы хук обновления данных мог
+-- перерисовать ТЕКУЩУЮ вкладку, не сбрасывая её на «Обзор»).
+local currentTab = nil
+local currentTargetFac = nil
+local currentContent = nil
+local currentTabButtons = nil
+
+-- Тёмная тема для полей ввода (DTextEntry) в духе XUI.
+local function skinTextEntry(te)
+    if not IsValid(te) then return end
+    te:SetFont("GRMFac_Normal")
+    te:SetTextColor(C.text)
+    te.Paint = function(s, w, h)
+        draw.RoundedBox(4, 0, 0, w, h, Color(24, 30, 40, 245))
+        surface.SetDrawColor(C.border.r, C.border.g, C.border.b, C.border.a)
+        surface.DrawOutlinedRect(0, 0, w, h)
+        s:DrawTextEntryText(C.text, C.accent, C.text)
+    end
+end
+
+-- Тёмная тема для выпадающих списков (DComboBox).
+local function skinCombo(cb)
+    if not IsValid(cb) then return end
+    cb:SetFont("GRMFac_Normal")
+    cb:SetTextColor(C.text)
+    cb.Paint = function(s, w, h)
+        local isHov = s:IsHovered()
+        draw.RoundedBox(4, 0, 0, w, h, isHov and Color(30, 38, 52, 245) or Color(24, 30, 40, 245))
+        surface.SetDrawColor(C.border.r, C.border.g, C.border.b, C.border.a)
+        surface.DrawOutlinedRect(0, 0, w, h)
+    end
+    -- Тёмное оформление выпадающего меню
+    cb.OnMenuOpened = function(s, menu)
+        if not IsValid(menu) then return end
+        menu.Paint = function(_, mw, mh)
+            draw.RoundedBox(6, 0, 0, mw, mh, Color(22, 28, 38, 252))
+            surface.SetDrawColor(C.borderLight.r, C.borderLight.g, C.borderLight.b, C.borderLight.a)
+            surface.DrawOutlinedRect(0, 0, mw, mh)
+        end
+        for _, opt in ipairs(menu:GetChildren() or {}) do
+            if IsValid(opt) then
+                opt:SetTextColor(C.text)
+                opt:SetFont("GRMFac_Normal")
+                if opt.Paint and not opt.__grmfaced then
+                    opt.__grmfaced = true
+                    local old = opt.Paint
+                    opt.Paint = function(sel, ow, oh)
+                        if sel:IsHovered() then
+                            draw.RoundedBox(4, 0, 0, ow, oh, Color(40, 62, 96, 240))
+                        end
+                        if old then old(sel, ow, oh) end
+                    end
+                end
+            end
+        end
+    end
+end
+
 local function sendAction(action, args, cb)
     net.Start("Factions_AdminAction")
         net.WriteString(action)
@@ -103,9 +161,33 @@ local function mkBtn(parent, text, col, hoverCol, doClick)
     return b
 end
 
+-- Стилизация строки DListView: светлый читаемый текст вместо чёрного
+-- стандартного скина, и шрифт размера интерфейса (а не DermaDefault 13px).
+local function skinListViewLine(line)
+    if not IsValid(line) then return end
+    for _, col in pairs(line.Columns or {}) do
+        if IsValid(col) then
+            col:SetFont("GRMFac_Normal")
+            col:SetTextColor(C.text)
+        end
+    end
+    -- Тёмный фон строки вместо яркой подсветки стандартного скина.
+    line.Paint = function(s, w, h)
+        if s:IsLineSelected() then
+            draw.RoundedBox(4, 0, 0, w, h, Color(40, 62, 96, 240))
+            surface.SetDrawColor(C.accent.r, C.accent.g, C.accent.b, 110)
+            surface.DrawOutlinedRect(0, 0, w, h)
+        elseif s.Hovered then
+            draw.RoundedBox(4, 0, 0, w, h, Color(30, 40, 56, 220))
+        end
+    end
+end
+
 local function skinListView(lv)
     if not IsValid(lv) then return end
     lv:SetPaintBackground(false)
+    lv:SetDataHeight(26)
+    lv:SetHeaderHeight(30)
     lv.Paint = function(s, w, h)
         draw.RoundedBox(6, 0, 0, w, h, C.card)
         surface.SetDrawColor(C.border.r, C.border.g, C.border.b, C.border.a)
@@ -114,7 +196,7 @@ local function skinListView(lv)
     if lv.Columns then
         for _, col in ipairs(lv.Columns) do
             if col.Header then
-                col.Header:SetTall(28)
+                col.Header:SetTall(30)
                 col.Header:SetFont("GRMFac_Btn")
                 col.Header:SetTextColor(C.gold)
                 col.Header.Paint = function(s, w, h)
@@ -125,6 +207,10 @@ local function skinListView(lv)
                 end
             end
         end
+    end
+    -- Перекрашиваем уже добавленные строки (если skin вызывается позже AddLine)
+    for _, line in ipairs(lv:GetLines() or {}) do
+        skinListViewLine(line)
     end
 end
 
@@ -146,7 +232,7 @@ local function promptInput(title, defaultVal, cb)
     local te = vgui.Create("DTextEntry", modal)
     te:SetPos(16, 56)
     te:SetSize(348, 32)
-    te:SetFont("GRMFac_Normal")
+    skinTextEntry(te)
     te:SetText(tostring(defaultVal or ""))
     te:RequestFocus()
 
@@ -250,7 +336,7 @@ function UI.Open(requestedFaction)
         local comboFac = vgui.Create("DComboBox", f)
         comboFac:SetPos(f:GetWide() - 430, 9)
         comboFac:SetSize(260, 28)
-        comboFac:SetFont("GRMFac_Normal")
+        skinCombo(comboFac)
         for fname, _ in pairs(data) do
             local disp = GRM.Factions.DisplayName(fname)
             comboFac:AddChoice(disp .. " [" .. fname .. "]", fname, fname == targetFac)
@@ -293,18 +379,21 @@ function UI.Open(requestedFaction)
     content:DockMargin(12, 10, 12, 10)
     content:SetPaintBackground(false)
 
-    local activeTab = nil
+    currentContent = content
+    currentTargetFac = targetFac
+
     local tabButtons = {}
+    currentTabButtons = tabButtons
 
     local function refreshView()
-        if activeTab and tabButtons[activeTab] and tabButtons[activeTab].builder then
+        if currentTab and tabButtons[currentTab] and tabButtons[currentTab].builder then
             content:Clear()
-            tabButtons[activeTab].builder(content, targetFac, FactionsData or {})
+            tabButtons[currentTab].builder(content, targetFac, FactionsData or {})
         end
     end
 
     local function selectTab(tabKey, builderFn)
-        activeTab = tabKey
+        currentTab = tabKey
         for k, btn in pairs(tabButtons) do
             btn.isActive = (k == tabKey)
         end
@@ -456,7 +545,7 @@ function UI.Open(requestedFaction)
         searchBox:Dock(LEFT)
         searchBox:SetWide(300)
         searchBox:SetPlaceholderText("Поиск по имени или SteamID...")
-        searchBox:SetFont("GRMFac_Normal")
+        skinTextEntry(searchBox)
 
         local list = vgui.Create("DListView", pnl)
         list:Dock(FILL)
@@ -485,6 +574,7 @@ function UI.Open(requestedFaction)
                     local dutyText = onDuty and "НА СЛУЖБЕ" or "ВНЕ СЛУЖБЫ"
                     local loc = rec._location or "—"
                     local ln = list:AddLine(rp, roleDisplay, branchText, dutyText, loc)
+                    skinListViewLine(ln)
                     ln.memberKey = key
                 end
             end
@@ -509,7 +599,7 @@ function UI.Open(requestedFaction)
             end
 
             local comboPly = vgui.Create("DComboBox", invModal)
-            comboPly:SetPos(16, 52); comboPly:SetSize(388, 28); comboPly:SetFont("GRMFac_Normal")
+            comboPly:SetPos(16, 52); comboPly:SetSize(388, 28); skinCombo(comboPly)
             comboPly:AddChoice("— Выберите игрока онлайн —", "")
             for _, p in ipairs(player.GetAll()) do
                 if IsValid(p) and p ~= LocalPlayer() then
@@ -519,13 +609,13 @@ function UI.Open(requestedFaction)
             end
 
             local comboRole = vgui.Create("DComboBox", invModal)
-            comboRole:SetPos(16, 90); comboRole:SetSize(388, 28); comboRole:SetFont("GRMFac_Normal")
+            comboRole:SetPos(16, 90); comboRole:SetSize(388, 28); skinCombo(comboRole)
             for _, rKey in ipairs(fac.Roles or {}) do
                 comboRole:AddChoice(GRM.Factions.RoleDisplayName(fac, rKey) .. " [" .. rKey .. "]", rKey)
             end
 
             local comboDept = vgui.Create("DComboBox", invModal)
-            comboDept:SetPos(16, 128); comboDept:SetSize(388, 28); comboDept:SetFont("GRMFac_Normal")
+            comboDept:SetPos(16, 128); comboDept:SetSize(388, 28); skinCombo(comboDept)
             for _, dKey in ipairs(fac.Departments or {}) do
                 comboDept:AddChoice(GRM.Factions.DepartmentDisplayName(fac, dKey) .. " [" .. dKey .. "]", dKey)
             end
@@ -626,6 +716,7 @@ function UI.Open(requestedFaction)
         for _, rKey in ipairs(fac.Roles or {}) do
             local rDisp = GRM.Factions.RoleDisplayName(fac, rKey)
             local line = rList:AddLine(rKey, rDisp)
+            skinListViewLine(line)
             line.roleKey = rKey
         end
 
@@ -960,17 +1051,17 @@ function UI.Open(requestedFaction)
         local lbl1 = vgui.Create("DLabel", form)
         lbl1:SetPos(20, 50); lbl1:SetText("Регистрационный системный ключ (eng):"); lbl1:SetFont("GRMFac_Normal"); lbl1:SetTextColor(C.dim); lbl1:SizeToContents()
         local entKey = vgui.Create("DTextEntry", form)
-        entKey:SetPos(20, 72); entKey:SetSize(400, 28); entKey:SetFont("GRMFac_Normal"); entKey:SetPlaceholderText("police_department")
+        entKey:SetPos(20, 72); entKey:SetSize(400, 28); skinTextEntry(entKey); entKey:SetPlaceholderText("police_department")
 
         local lbl2 = vgui.Create("DLabel", form)
         lbl2:SetPos(20, 110); lbl2:SetText("Публичное название организации (RU):"); lbl2:SetFont("GRMFac_Normal"); lbl2:SetTextColor(C.dim); lbl2:SizeToContents()
         local entDisp = vgui.Create("DTextEntry", form)
-        entDisp:SetPos(20, 132); entDisp:SetSize(400, 28); entDisp:SetFont("GRMFac_Normal"); entDisp:SetPlaceholderText("Полицейский Департамент")
+        entDisp:SetPos(20, 132); entDisp:SetSize(400, 28); skinTextEntry(entDisp); entDisp:SetPlaceholderText("Полицейский Департамент")
 
         local lbl3 = vgui.Create("DLabel", form)
         lbl3:SetPos(20, 170); lbl3:SetText("Тэг радиоволны:"); lbl3:SetFont("GRMFac_Normal"); lbl3:SetTextColor(C.dim); lbl3:SizeToContents()
         local entTag = vgui.Create("DTextEntry", form)
-        entTag:SetPos(20, 192); entTag:SetSize(400, 28); entTag:SetFont("GRMFac_Normal"); entTag:SetPlaceholderText("PD")
+        entTag:SetPos(20, 192); entTag:SetSize(400, 28); skinTextEntry(entTag); entTag:SetPlaceholderText("PD")
 
         local btnCreate = mkBtn(form, "+ Создать организацию", C.green, C.greenHover, function()
             local kVal = string.Trim(entKey:GetText())
@@ -1014,13 +1105,23 @@ concommand.Add("grm_faction", function() UI.Open() end)
 concommand.Add("factions_unified", function() UI.Open() end)
 
 hook.Add("GRM_FactionUIRefreshed", "GRM_FactionUnified_AutoRefresh", function(data)
-    if IsValid(currentFrame) then
-        local activeFac = getLeaderFactionName(data) or getPlayerFactionName(data)
-        if LocalPlayer():IsSuperAdmin() and not activeFac then activeFac = next(data or {}) end
-        if activeFac then
-            currentFrame:Remove()
-            UI.Open(activeFac)
-        end
+    if not IsValid(currentFrame) or not IsValid(currentContent) then return end
+
+    local lp = LocalPlayer()
+    local activeFac = getLeaderFactionName(data) or getPlayerFactionName(data)
+    if IsValid(lp) and lp:IsSuperAdmin() and not activeFac then activeFac = next(data or {}) end
+
+    -- Фракция реально сменилась (редкий случай) — переоткрываем меню.
+    if activeFac and activeFac ~= currentTargetFac then
+        UI.Open(activeFac)
+        return
+    end
+
+    -- Иначе просто перерисовываем ТЕКУЩУЮ вкладку, сохраняя позицию.
+    local btn = currentTabButtons and currentTabButtons[currentTab]
+    if btn and btn.builder then
+        currentContent:Clear()
+        btn.builder(currentContent, currentTargetFac, data or FactionsData or {})
     end
 end)
 
