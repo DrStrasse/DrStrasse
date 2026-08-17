@@ -338,7 +338,14 @@ function UI.Open(requestedFaction)
     end
 
     if not targetFac and isSA then
-        targetFac = next(data)
+        -- Первая по алфавиту, а не случайная из pairs().
+        local best = nil
+        for name in pairs(data) do
+            if not best or string.lower(GRM.Factions.DisplayName(name)) < string.lower(GRM.Factions.DisplayName(best)) then
+                best = name
+            end
+        end
+        targetFac = best
     end
 
     local f = vgui.Create("DFrame")
@@ -367,13 +374,20 @@ function UI.Open(requestedFaction)
         end
     end
 
-    -- Селектор организаций для SuperAdmin в шапке
+    -- Селектор организаций для SuperAdmin в шапке.
+    -- Список сортируем по публичному имени — иначе pairs(data) даёт
+    -- недетерминированный (и меняющийся между пересборками) порядок.
     if isSA and table.Count(data) > 0 then
         local comboFac = vgui.Create("DComboBox", f)
         comboFac:SetPos(f:GetWide() - 430, 9)
         comboFac:SetSize(260, 28)
         skinCombo(comboFac)
-        for fname, _ in pairs(data) do
+        local fnames = {}
+        for fname, _ in pairs(data) do fnames[#fnames + 1] = fname end
+        table.sort(fnames, function(a, b)
+            return string.lower(GRM.Factions.DisplayName(a)) < string.lower(GRM.Factions.DisplayName(b))
+        end)
+        for _, fname in ipairs(fnames) do
             local disp = GRM.Factions.DisplayName(fname)
             comboFac:AddChoice(disp .. " [" .. fname .. "]", fname, fname == targetFac)
         end

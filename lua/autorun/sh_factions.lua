@@ -3603,6 +3603,33 @@ if CLIENT then
     -- ============================================================
     -- HUD — НАДПИСИ НАД ИГРОКАМИ
     -- ============================================================
+    -- Обратный индекс «CharacterKey → {фракция, роль, цвет, тег}».
+    -- Раньше HUD для каждого ближнего игрока делал ВЛОЖЕННЫЙ обход всех
+    -- фракций (O(игроки × фракции) каждый кадр). Теперь индекс строится
+    -- один раз при изменении FactionsData и даёт O(1) на кадр.
+    local factionHUDCache = { ref = nil, index = nil }
+    local function factionHUDInfo(steam)
+        local data = FactionsData
+        if factionHUDCache.ref ~= data then
+            local idx = {}
+            for fname, fdata in pairs(data or {}) do
+                if istable(fdata) and istable(fdata.Members) then
+                    local col = fdata.Color or {}
+                    local cr, cg, cb = tonumber(col.r) or 255, tonumber(col.g) or 200, tonumber(col.b) or 50
+                    local tag = (fdata.Tag and fdata.Tag ~= "") and fdata.Tag or ""
+                    for memberKey, rec in pairs(fdata.Members) do
+                        if istable(rec) then
+                            idx[memberKey] = { fname, rec.Role, Color(cr, cg, cb), tag }
+                        end
+                    end
+                end
+            end
+            factionHUDCache.ref = data
+            factionHUDCache.index = idx
+        end
+        return factionHUDCache.index and factionHUDCache.index[steam]
+    end
+
     hook.Add("HUDPaint", "Factions_HUD", function()
         local lp = LocalPlayer()
         if not IsValid(lp) then return end
@@ -3612,22 +3639,9 @@ if CLIENT then
             -- Код 108: continue→инвертированное условие (ванильный Lua)
             if IsValid(ply) and ply:Alive() and ply ~= lp
                 and lp:GetPos():Distance(ply:GetPos()) <= radius then
-                local steam = clientMemberKey(ply)
-                local faction, role = nil, nil
-                local fColor = Color(255, 200, 50)
-                local fTag = ""
-
-                for fname, fdata in pairs(FactionsData or {}) do
-                    if fdata.Members and fdata.Members[steam] then
-                        faction = fname
-                        role = fdata.Members[steam].Role
-                        if fdata.Color then fColor = Color(fdata.Color.r or 255, fdata.Color.g or 200, fdata.Color.b or 50) end
-                        fTag = (fdata.Tag and fdata.Tag ~= "") and fdata.Tag or ""
-                        break
-                    end
-                end
-
-                if faction then
+                local info = factionHUDInfo(clientMemberKey(ply))
+                if info then
+                    local faction, role, fColor, fTag = info[1], info[2], info[3], info[4]
                     local pos = ply:GetPos() + Vector(0, 0, 100)
                     local screenPos = pos:ToScreen()
                     if screenPos.visible then

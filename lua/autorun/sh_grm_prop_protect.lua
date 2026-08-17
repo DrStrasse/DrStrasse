@@ -506,11 +506,20 @@ if CLIENT then
 
     surface.CreateFont("GRMPP_Owner", { font = "Roboto", size = 14, weight = 700, extended = true, antialias = true })
 
+    -- GetEyeTrace каждый кадр — заметная трассировка; троттлим до ~10 Гц.
+    -- Между тиками перерисовываем кэшированный результат (метка обновляется
+    -- с лёгкой задержкой, что незаметно для владельца).
+    local ppHUDTrace = { at = 0, ent = nil }
     hook.Add("HUDPaint", "GRM_PropProtect_OwnerHUD", function()
         local lp = LocalPlayer()
         if not IsValid(lp) then return end
-        local tr = lp:GetEyeTrace()
-        local ent = tr and tr.Entity
+        local now = CurTime()
+        if now - (ppHUDTrace.at or 0) >= 0.1 then
+            ppHUDTrace.at = now
+            local tr = lp:GetEyeTrace()
+            ppHUDTrace.ent = tr and tr.Entity
+        end
+        local ent = ppHUDTrace.ent
         if not IsValid(ent) then return end
 
         local text = ""

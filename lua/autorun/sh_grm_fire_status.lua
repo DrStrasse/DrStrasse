@@ -134,10 +134,19 @@ if SERVER then
         return true
     end
 
+    -- Кэшированный список живых vfire (event-реестр GRM.Perf вместо покадрового
+    -- ents.FindByClass, который каждый раз сканирует ВСЕ энтити карты).
+    local function liveVfire()
+        if GRM.Perf and GRM.Perf.Entities then
+            return GRM.Perf.Entities("vfire")
+        end
+        return ents.FindByClass("vfire")
+    end
+
     local function countAround(origin)
         if not origin then return 0 end
         local n, r2 = 0, CLUSTER * CLUSTER
-        for _, e in ipairs(ents.FindByClass("vfire")) do
+        for _, e in ipairs(liveVfire()) do
             if IsValid(e) and e.GetPos and e:GetPos():DistToSqr(origin) <= r2 then
                 n = n + 1
             end
@@ -300,7 +309,7 @@ if SERVER then
     -- Скан уже живущих vfire на буте / первом тике
     function F.BuildFromExisting()
         local found = 0
-        for _, fire in ipairs(ents.FindByClass("vfire")) do
+        for _, fire in ipairs(liveVfire()) do
             if IsValid(fire) then
                 local pos = fire.GetPos and fire:GetPos() or nil
                 if pos then
@@ -359,7 +368,7 @@ if SERVER then
         end
         if #F.Incidents == 0 then
             -- если инцидентов нет, но vfire появились (ранний спавн карты) — подберём
-            if #ents.FindByClass("vfire") > 0 then F.BuildFromExisting() end
+            if #liveVfire() > 0 then F.BuildFromExisting() end
             return
         end
         for _, ply in ipairs(player.GetAll()) do

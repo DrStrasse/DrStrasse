@@ -304,7 +304,16 @@ if CLIENT then
     -----------------------------------------------------------
     -- Отрисовка над головами (плавное затухание по дистанции)
     -----------------------------------------------------------
+    -- Кэш переноса строк: wrapText вызывался КАЖДЫЙ кадр для каждого ближнего
+    -- игрока с описанием и делал surface.GetTextSize на каждое слово (дёшево
+    -- по одному, дорого на 60 FPS × N игроков). Результат по (текст, ширина)
+    -- стабилен — кэшируем с ограниченным размером.
+    local wrapCache = {}
+    local wrapCacheSeq = 0
     local function wrapText(text, maxWidth)
+        local key = maxWidth .. ":" .. text
+        local hit = wrapCache[key]
+        if hit then return hit end
         local lines, current = {}, ""
         surface.SetFont("GRM_RPDesc_Font")
         for word in string.gmatch(text, "%S+") do
@@ -320,6 +329,14 @@ if CLIENT then
         if current ~= "" and #lines < RD.MaxLines then lines[#lines + 1] = current
         elseif #lines == RD.MaxLines then
             lines[#lines] = string.sub(lines[#lines], 1, -2) .. "…"
+        end
+        -- Ограничиваем кэш, чтобы не расти бесконечно (игроки меняют описания).
+        wrapCacheSeq = wrapCacheSeq + 1
+        if wrapCacheSeq > 256 then
+            wrapCache = { [key] = lines }
+            wrapCacheSeq = 0
+        else
+            wrapCache[key] = lines
         end
         return lines
     end
