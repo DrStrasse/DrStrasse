@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Faction Duty v1.1.0 (Код 102)
+    GRM Faction Duty v1.2.0 (Код 102)
     Смена статуса «на службе / вне службы» через служебного NPC.
 ----------------------------------------------------------------------]]
 
@@ -14,6 +14,8 @@ local NET_OPEN = "GRM_FactionDuty_Open"
 local NET_SET = "GRM_FactionDuty_Set"
 local NET_ADMIN = "GRM_FactionDuty_Admin"
 local NET_ADMIN_SAVE = "GRM_FactionDuty_AdminSave"
+local NET_TOOL_REQ = "GRM_FactionDuty_ToolFactionsReq"
+local NET_TOOL_DATA = "GRM_FactionDuty_ToolFactionsData"
 
 local function characterKey(ply)
     if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
@@ -43,8 +45,16 @@ if SERVER then
     util.AddNetworkString(NET_SET)
     util.AddNetworkString(NET_ADMIN)
     util.AddNetworkString(NET_ADMIN_SAVE)
+    util.AddNetworkString(NET_TOOL_REQ)
+    util.AddNetworkString(NET_TOOL_DATA)
 
     local DATA_FILE = "grm_faction_duty.json"
+    local function sendToolFactions(ply)
+        if not(IsValid(ply)and ply:IsSuperAdmin())then return end;local names={};for name in pairs(Factions or{})do names[#names+1]=tostring(name)end;table.sort(names,function(a,b)return string.lower(a)<string.lower(b)end)
+        net.Start(NET_TOOL_DATA);net.WriteTable(names);net.Send(ply)
+    end
+    net.Receive(NET_TOOL_REQ,function(bits,ply)if GRM.Net and not GRM.Net.Guard(ply,"duty.tool.factions",{rate=.5,burst=2,maxBits=64},{bits=bits})then return end;sendToolFactions(ply)end)
+
     local function jsonT(raw)
         local ok, t = pcall(util.JSONToTable, raw or "", false, true)
         return ok and istable(t) and t or nil
@@ -230,6 +240,8 @@ if SERVER then
     hook.Add("PlayerSayTransform", "GRM_Duty_Transform", function(ply, data) if istable(data) and isstring(data[1]) and statusChat(ply, data[1]) then data[1] = "" data.SkipPlayerSay = true end end)
     hook.Add("PlayerSay", "GRM_Duty_Chat", function(ply, text) if statusChat(ply, text) then return "" end end)
 else
+    net.Receive(NET_TOOL_DATA,function()local names=net.ReadTable()or{};FD.ToolFactions=names;if GRM.QMenu then GRM.QMenu.FactionNames=names;if IsValid(GRM.QMenu._frame)and isfunction(GRM.QMenu._rebuild)then timer.Simple(0,GRM.QMenu._rebuild)end end;hook.Run("GRM_DutyToolFactionsUpdated",names)end)
+    function FD.RequestToolFactions()if(FD._toolFactionReqAt or 0)>CurTime()then return end;FD._toolFactionReqAt=CurTime()+2;net.Start(NET_TOOL_REQ);net.SendToServer()end
     surface.CreateFont("GRMDuty_Title", { font = "Roboto", size = 22, weight = 800, extended = true })
     surface.CreateFont("GRMDuty_Text", { font = "Roboto", size = 14, weight = 500, extended = true })
     net.Receive(NET_ADMIN, function()

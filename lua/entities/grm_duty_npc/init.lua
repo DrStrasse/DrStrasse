@@ -27,7 +27,7 @@ end
 function ENT:Think()
     local model=string.lower(tostring(self:GetModel()or""));local sequence=string.lower(tostring(self:GetSequenceName(self:GetSequence())or""))
     if model~=self._grmIdleModel or sequence==""or sequence=="reference"or sequence=="ragdoll"then self:RefreshIdle(true)end
-    self:NextThink(CurTime()+.5);return true
+    self:NextThink(CurTime()+2);return true
 end
 function ENT:Use(activator)
     if not IsValid(activator)or not activator:IsPlayer()then return end;if(self._grmUseAt or 0)>CurTime()then return end;self._grmUseAt=CurTime()+.7

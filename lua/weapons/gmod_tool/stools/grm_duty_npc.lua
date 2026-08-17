@@ -62,13 +62,18 @@ end
 
 function TOOL.BuildCPanel(panel)
     panel:AddControl("Header",{Description="Сотрудник фракции по умолчанию находится на службе. У этого NPC он меняет статус, форму и снаряжение."})
-    local combo = panel:ComboBox("Фракция (обязательно)", "grm_duty_npc_faction")
-    if combo and istable(Factions) then
-        local names = {}
-        for name in pairs(Factions) do names[#names + 1] = name end
-        table.sort(names, function(a,b) return string.lower(a) < string.lower(b) end)
-        for _, name in ipairs(names) do combo:AddChoice(name, name) end
+    local combo=panel:ComboBox("Фракция (обязательно)","grm_duty_npc_faction");local hookID="GRM_DutyToolPanel_"..tostring(panel)
+    local function factionNames()
+        local out,seen={},{};local sources={GRM and GRM.FactionDuty and GRM.FactionDuty.ToolFactions,GRM and GRM.QMenu and GRM.QMenu.FactionNames}
+        for _,src in ipairs(sources)do for _,name in ipairs(istable(src)and src or{})do name=tostring(name);if name~=""and not seen[name]then seen[name]=true;out[#out+1]=name end end end
+        for name in pairs(Factions or{})do name=tostring(name);if name~=""and not seen[name]then seen[name]=true;out[#out+1]=name end end;table.sort(out,function(a,b)return string.lower(a)<string.lower(b)end);return out
     end
+    local function refill()
+        if not IsValid(combo)then hook.Remove("GRM_DutyToolFactionsUpdated",hookID)return end;local cur=GetConVar("grm_duty_npc_faction");cur=cur and cur:GetString()or"";combo:Clear();local names=factionNames();if#names==0 then combo:SetValue("Загрузка списка фракций...")else combo:SetValue(cur~=""and cur or"Выберите фракцию");for _,name in ipairs(names)do combo:AddChoice(name,name,name==cur)end end
+    end
+    combo.OnSelect=function(_,_,_,data)if data then RunConsoleCommand("grm_duty_npc_faction",tostring(data))end end
+    hook.Add("GRM_DutyToolFactionsUpdated",hookID,refill);local oldRemove=panel.OnRemove;panel.OnRemove=function(self)hook.Remove("GRM_DutyToolFactionsUpdated",hookID);if isfunction(oldRemove)then oldRemove(self)end end
+    refill();if GRM and GRM.FactionDuty and GRM.FactionDuty.RequestToolFactions then GRM.FactionDuty.RequestToolFactions()end
     panel:TextEntry("Заголовок","grm_duty_npc_title")
     panel:TextEntry("Модель NPC","grm_duty_npc_model")
     panel:CheckBox("Сохранить на карте","grm_duty_npc_make_perm")

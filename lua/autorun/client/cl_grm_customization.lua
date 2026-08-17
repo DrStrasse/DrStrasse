@@ -6,8 +6,10 @@ GRM.Customization = GRM.Customization or {}
 local C = GRM.Customization
 C.Catalog = C.Catalog or {}
 C.ClientLoadouts = C.ClientLoadouts or {}
+C.ActiveRenderPlayers=C.ActiveRenderPlayers or setmetatable({},{__mode="k"})
+C.ValidModelCache=C.ValidModelCache or{}
 C.RenderCache = C.RenderCache or {}
-C.ClientVersion = "1.1.0"
+C.ClientVersion = "1.2.0"
 
 local UI = {
     bg = Color(12, 17, 25, 248), head = Color(22, 30, 43, 252), panel = Color(27, 37, 52, 245),
@@ -130,12 +132,13 @@ local function removeCached(cache)
     for _, entry in pairs(cache or {}) do if IsValid(entry.ent) then entry.ent:Remove() end end
 end
 local function clearPlayerCache(ply)
-    removeCached(C.RenderCache[ply])
-    C.RenderCache[ply] = nil
+    removeCached(C.RenderCache[ply]);C.RenderCache[ply]=nil
 end
+local function trackLoadout(ply,loadout)if IsValid(ply)and istable(loadout)and next(loadout)~=nil then C.ActiveRenderPlayers[ply]=true else C.ActiveRenderPlayers[ply]=nil end end
+local function validAccessoryModel(model)model=tostring(model or"");local cached=C.ValidModelCache[model];if cached~=nil then return cached end;cached=model~=""and util.IsValidModel(model)==true;C.ValidModelCache[model]=cached;return cached end
 
 net.Receive("GRM_Custom_Catalog", function()
-    C.Catalog = net.ReadTable() or {}
+    C.Catalog=net.ReadTable()or{};C.ValidModelCache={}
     if GRM.Inventory and GRM.Inventory.RegisterItem then
         for _, item in pairs(C.Catalog) do
             GRM.Inventory.RegisterItem(item.itemID, {
@@ -153,7 +156,7 @@ net.Receive("GRM_Custom_Sync", function()
     net.ReadString() -- CharacterKey для диагностики/будущего кэша офлайн
     local loadout = net.ReadTable() or {}
     if not IsValid(ply) then return end
-    C.ClientLoadouts[ply] = loadout
+    C.ClientLoadouts[ply]=loadout;trackLoadout(ply,loadout)
     -- Не уничтожаем весь render cache при каждом Save/повторном входе.
     -- Оставляем ту же ClientsideModel и её плавное состояние; удаляем
     -- только реально снятые либо заменённые модели.
@@ -186,7 +189,7 @@ hook.Add("Think", "GRM_Customization_FlashlightForceOff", function()
 end)
 
 hook.Add("EntityRemoved", "GRM_Customization_CacheCleanup", function(ent)
-    if ent:IsPlayer() then clearPlayerCache(ent); C.ClientLoadouts[ent] = nil end
+    if ent:IsPlayer()then clearPlayerCache(ent);C.ClientLoadouts[ent]=nil;C.ActiveRenderPlayers[ent]=nil end
 end)
 
 local function getRenderEntity(ply, slot, item, equipped)
@@ -234,14 +237,14 @@ local function drawAccessories(ply, forceEditorDraw)
     local loadout = C.ClientLoadouts[ply]
     if not istable(loadout) then return end
 
-    for slot, equipped in pairs(loadout) do
-        local item = C.Catalog[equipped.accessoryID]
-        if item and util.IsValidModel(item.model) then
-            local boneIndex = ply:LookupBone(tostring(equipped.bone or item.bone or ""))
-            local matrix = boneIndex and ply:GetBoneMatrix(boneIndex) or nil
+    for slot,equipped in pairs(loadout)do
+        local item=C.Catalog[equipped.accessoryID]
+        if item and validAccessoryModel(item.model)then
+            local entry=getRenderEntity(ply,slot,item,equipped);local boneName=tostring(equipped.bone or item.bone or"")
+            if entry and entry.boneName~=boneName then entry.boneName=boneName;entry.boneIndex=ply:LookupBone(boneName)end
+            local matrix=entry and entry.boneIndex and ply:GetBoneMatrix(entry.boneIndex)or nil
             if matrix then
-                local entry = getRenderEntity(ply, slot, item, equipped)
-                if entry and (forceEditorDraw or entry.lastFrame ~= FrameNumber()) then
+                if forceEditorDraw or entry.lastFrame~=FrameNumber()then
                     if not forceEditorDraw then entry.lastFrame = FrameNumber() end
                     -- Сглаживаем только ЛОКАЛЬНУЮ настройку аксессуара.
                     -- Матрица кости остаётся точной в текущем кадре, поэтому
@@ -259,7 +262,6 @@ local function drawAccessories(ply, forceEditorDraw)
                     local ang = boneLocalAngles(boneAng, entry.smoothAng)
                     entry.ent:SetRenderOrigin(pos)
                     entry.ent:SetRenderAngles(ang)
-                    entry.ent:SetupBones()
                     entry.ent:DrawModel()
                     entry.ent:SetRenderOrigin()
                     entry.ent:SetRenderAngles()
@@ -292,9 +294,7 @@ hook.Add("PostDrawOpaqueRenderables", "GRM_Customization_DrawAccessoriesOpaque",
     if drawingDepth or drawingSkybox or drawing3DSkybox then return end
     local lp = LocalPlayer()
     if not IsValid(lp) then return end
-    for _, ply in ipairs(player.GetAll()) do
-        if IsValid(ply) then drawAccessories(ply) end
-    end
+    for ply in pairs(C.ActiveRenderPlayers)do if IsValid(ply)then drawAccessories(ply)else C.ActiveRenderPlayers[ply]=nil end end
 end)
 
 hook.Add("PostDrawTranslucentRenderables", "GRM_Customization_EditorPreviewFallback", function(drawingDepth, drawingSkybox, drawing3DSkybox)
@@ -480,7 +480,7 @@ end)
 
 local function closeEditor(restore)
     if not editor.active then return end
-    if restore and IsValid(LocalPlayer()) then C.ClientLoadouts[LocalPlayer()] = deepCopy(editor.backup) end
+    if restore and IsValid(LocalPlayer())then C.ClientLoadouts[LocalPlayer()]=deepCopy(editor.backup);trackLoadout(LocalPlayer(),C.ClientLoadouts[LocalPlayer()])end
     editor.active = false
     C.EditorActive = false
     net.Start("GRM_Custom_Op") net.WriteString("close") net.SendToServer()
@@ -520,7 +520,7 @@ local function openEditor(catalog, loadout)
     -- Авторитетный GRM_Custom_Sync приходит отдельным пакетом перед Open.
     -- Если loadout не передан, сохраняем уже синхронизированные slots.
     loadout = istable(loadout) and loadout or C.ClientLoadouts[lp] or {}
-    C.ClientLoadouts[lp] = deepCopy(loadout)
+    C.ClientLoadouts[lp]=deepCopy(loadout);trackLoadout(lp,C.ClientLoadouts[lp]);C.ValidModelCache={}
     -- Не уничтожаем уже видимую ClientsideModel при входе: getRenderEntity
     -- сам заменит её, только если реально изменилась модель каталога.
     editor.active = true; C.EditorActive = true; editor.backup = deepCopy(loadout); editor.selected = C.SlotOrder[1]

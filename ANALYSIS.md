@@ -18,8 +18,10 @@ guards ограничены по частоте; отключённый bone-pos
 change-only NW и throttle. Кадровые глобальные сканы убраны из Trunk,
 Incassation, FireTruck, Vendor/OreBuyer, Factory/Logistics, 911/Arrest;
 Quest/Factory disk mutations объединены в batch, бесконечные dependency installers
-останавливаются после установки. Полный отчёт и границы безопасной оптимизации:
-`PERFORMANCE_AUDIT_2026.md`.
+останавливаются после установки. Отдельно оптимизированы placement/render paths:
+аксессуары используют active-loadout/model/bone caches; Quest Tool кеширует
+preview-геометрию; Duty NPC получает список фракций серверным событием и явно
+пишет tool convar, без polling. Полный отчёт: `PERFORMANCE_AUDIT_2026.md`.
 
 ## Актуализация 16.08.2026 — GRM Core v1
 

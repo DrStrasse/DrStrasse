@@ -149,8 +149,8 @@ local lp = mkPly(false)
 local p2 = mkPly(false)
 _G.__lp = lp
 _G.__players = { lp, p2 }
-C.ClientLoadouts[lp] = loadout
-C.ClientLoadouts[p2] = loadout
+C.ClientLoadouts[lp]=loadout;C.ActiveRenderPlayers[lp]=true
+C.ClientLoadouts[p2]=loadout;C.ActiveRenderPlayers[p2]=true
 
 -- ═══ КАДР 1000: lp в 1-м лице, fallback (фонарик-проход) ═══
 _G.__frame = 1000

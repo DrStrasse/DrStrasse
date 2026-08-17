@@ -1420,6 +1420,7 @@ if CLIENT then
                         local cur=cvarGet(row.cvar); local choices=row.choices or {}
                         if row.dynamic=="factions" then
                             choices={}; local names=QM.FactionNames or {}
+                            if #names==0 and GRM.FactionDuty and GRM.FactionDuty.RequestToolFactions then GRM.FactionDuty.RequestToolFactions()end
                             if #names==0 and istable(Factions) then names={}; for name in pairs(Factions) do names[#names+1]=name end; table.sort(names,function(a,b)return string.lower(a)<string.lower(b)end) end
                             for _,name in ipairs(names) do choices[#choices+1]={name,name} end
                         end
