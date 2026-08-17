@@ -1,0 +1,11 @@
+# Нормализация переводов строк для текстовых файлов
+* text=auto
+
+# Бинарные файлы — не трогать переводы строк
+*.zip binary
+*.7z binary
+*.vmt binary
+*.vtf binary
+*.mdl binary
+*.wav binary
+*.mp3 binary
