@@ -17,6 +17,6 @@ ok(physical:find("function DOC.RestorePhysicalDocument",1,true)and physical:find
 ok(physical:find('low=="/docrestore"',1,true)and physical:find('string.lower(arg)=="all"',1,true),"restore command supports one type or all")
 ok(physical:find("MissingPhysicalTypes",1,true)and ctx:find("missingPhysicalCount",1,true)and ctx:find("doc_restore",1,true),"missing documents are announced and recoverable from C-menu")
 ok(npc:find("function ENT:RefreshIdle",1,true)and npc:find("idle_all_01",1,true),"duty NPC explicitly selects a valid idle sequence")
-ok(npc:find("reference",1,true)and npc:find("NPC_STATE_IDLE",1,true)and not npc:find("FrameAdvance(FrameTime",1,true),"duty NPC heals reference pose without double frame advance")
+ok(npc:find("reference",1,true)and npc:find("function ENT:OnRestore",1,true)and not npc:find("FrameAdvance(FrameTime",1,true),"duty NPC restores idle pose without AI/frame double-processing")
 ok(duty:find("ent:RefreshIdle(true)",1,true),"admin and persistence model changes refresh NPC animation")
 print(("DOCUMENT PERSISTENCE/NPC: %d checks, failures=%d"):format(n,fail));os.exit(fail==0 and 0 or 1)

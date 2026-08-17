@@ -110,6 +110,6 @@ python3 tools/performance_audit.py --json > performance-audit.json
 - Mobile key repeat больше не создаёт временную таблицу каждый кадр;
 - Accessory opaque fallback обходит только event-tracked active loadouts, кеширует model validation/bone index и не вызывает `SetupBones` у каждой ClientsideModel;
 - Quest NPC/cutscene placement tool компилирует preview-геометрию раз в 0.5 с вместо создания Vector/Angle/link maps каждый render frame;
-- Duty NPC получает фракции серверным событием без polling timer, а idle-watchdog снижен с 2 до 0.5 проверки/с.
+- Duty terminal получает фракции серверным событием без polling timer; стационарная entity переведена с `base_ai` на `base_anim`, удалены AI scheduler/capabilities и watchdog Think, idle обновляется только по spawn/model/Perm/restore-событиям.
 
 Не заменялись частоты, являющиеся частью механики: движение/стамина, освобождение из наручников, Alarm sensors, активные Logistics routes и Fire hose simulation. Крупные сетевые snapshot-протоколы должны мигрировать отдельно с сохранением публичного wire-формата.

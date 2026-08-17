@@ -22,15 +22,11 @@ function ENT:RefreshIdle(force)
 end
 function ENT:Initialize()
     local mdl=self:GetNWString("GRM_DutyModel","");if mdl==""or not util.IsValidModel(mdl)then mdl="models/Humans/Group01/Male_07.mdl"end
-    self:SetModel(mdl);self:SetHullType(HULL_HUMAN);self:SetHullSizeNormal();self:SetNPCState(NPC_STATE_IDLE);self:SetSolid(SOLID_BBOX);self:SetMoveType(MOVETYPE_NONE);self:SetUseType(SIMPLE_USE);self:SetMaxHealth(100000);self:SetHealth(100000);self:CapabilitiesAdd(CAP_ANIMATEDFACE+CAP_TURN_HEAD);self:DropToFloor();self:RefreshIdle(true)
+    self:SetModel(mdl);self:SetMoveType(MOVETYPE_NONE);self:SetSolid(SOLID_BBOX);self:SetCollisionBounds(Vector(-16,-16,0),Vector(16,16,72));self:SetUseType(SIMPLE_USE);self:DrawShadow(false);self:DropToFloor();self:RefreshIdle(true)
 end
-function ENT:Think()
-    local model=string.lower(tostring(self:GetModel()or""));local sequence=string.lower(tostring(self:GetSequenceName(self:GetSequence())or""))
-    if model~=self._grmIdleModel or sequence==""or sequence=="reference"or sequence=="ragdoll"then self:RefreshIdle(true)end
-    self:NextThink(CurTime()+2);return true
-end
+function ENT:OnRestore()timer.Simple(0,function()if IsValid(self)then self:RefreshIdle(true)end end)end
 function ENT:Use(activator)
     if not IsValid(activator)or not activator:IsPlayer()then return end;if(self._grmUseAt or 0)>CurTime()then return end;self._grmUseAt=CurTime()+.7
     if GRM and GRM.FactionDuty and GRM.FactionDuty.Open then GRM.FactionDuty.Open(activator,self)end
 end
-function ENT:OnTakeDamage(dmg)if dmg and dmg.SetDamage then dmg:SetDamage(0)end;self:SetHealth(100000);return 0 end
+function ENT:OnTakeDamage(dmg)if dmg and dmg.SetDamage then dmg:SetDamage(0)end;return 0 end
