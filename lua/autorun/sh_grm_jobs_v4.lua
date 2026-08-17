@@ -72,7 +72,16 @@ if SERVER then
  hook.Add("PlayerDeath","GRM_Garbage_RemoveCarry",function(p)local b=p:GetNWEntity("GRM_GarbageBox");if IsValid(b)then b:Remove()end end);hook.Add("PlayerDisconnected","GRM_Garbage_RemoveCarryLeave",function(p)local b=p:GetNWEntity("GRM_GarbageBox");if IsValid(b)then b:Remove()end end)
  local function chat(p,text)local s=string.lower(string.Trim(text or""));if s=="/calltaxi"or s=="/вызватьтакси"then local ok,msg=JB.CallTaxi(p,"chat");if not ok then notify(p,msg,false)end return true elseif s=="/canceltaxi"then local ok,msg=JB.CancelTaxi(p,"chat");if not ok then notify(p,msg,false)end return true end end
  hook.Add("PlayerSay","GRM_JobsV4_Chat",function(p,t)if chat(p,t)then return""end end);hook.Add("PlayerSayTransform","GRM_JobsV4_EasyChat",function(p,pack)if istable(pack)and chat(p,pack[1])then pack[1]="";pack.SkipPlayerSay=true end end)
- local function registerPerm()if GRM.Perm and GRM.Perm.RegisterClass then GRM.Perm.RegisterClass("grm_garbage_bin",true)end;if GRM.PermData and GRM.PermData.AddExtract then GRM.PermData.AddExtract("grm_garbage_bin",function(e)return{binName=e:GetBinName(),jobPointID=e.GRMJobPointID}end);GRM.PermData.AddApply("grm_garbage_bin",function(e,d)e:SetBinName(tostring(d.binName or"Мусорный контейнер"));e.GRMJobPointID=d.jobPointID end)end end;timer.Simple(1,registerPerm);timer.Simple(4,registerPerm)
+ local function registerPerm()if GRM.Perm and GRM.Perm.RegisterClass then GRM.Perm.RegisterClass("grm_garbage_bin",true)end;if GRM.PermData and GRM.PermData.AddExtract then GRM.PermData.AddExtract("grm_garbage_bin",function(e)return{binName=e:GetBinName()}end);GRM.PermData.AddApply("grm_garbage_bin",function(e,d)e:SetBinName(tostring(d.binName or"Мусорный контейнер"))end)end end;timer.Simple(1,registerPerm);timer.Simple(4,registerPerm)
+ function JB.SaveGarbageBins(ply)
+  if not(IsValid(ply)and ply:IsSuperAdmin())then return false,"только суперадмин"end;registerPerm();if not(GRM.Perm and GRM.Perm.Add)then return false,"perm-модуль не загружен"end
+  local saved,errors=0,{};for _,bin in ipairs(ents.FindByClass("grm_garbage_bin"))do if IsValid(bin)then local ok,why=GRM.Perm.Add(ply,bin,{ownerKind="server",freeze=true,label="Мусорный контейнер"});if ok then saved=saved+1 else errors[#errors+1]=tostring(why)end end end
+  if#errors>0 then return false,"сохранено "..saved..", ошибок "..#errors..": "..table.concat(errors,"; ")end;return true,"мусорок сохранено: "..saved
+ end
+ function JB.LoadGarbageBins(ply)
+  if not(IsValid(ply)and ply:IsSuperAdmin())then return false,"только суперадмин"end;registerPerm();if not(GRM.Perm and GRM.Perm.LoadClass)then return false,"точечная загрузка perm недоступна"end
+  local ok,result=GRM.Perm.LoadClass("grm_garbage_bin","/grm_persistence");if not ok then return false,tostring(result)end;return true,("восстановлено %d, уже на месте %d"):format(tonumber(result.spawned)or 0,tonumber(result.skipped)or 0)
+ end
 end
 if CLIENT then
  hook.Add("PlayerButtonDown","GRM_Garbage_GKey",function(p,keyCode)if p~=LocalPlayer()or keyCode~=KEY_G or not IsValid(p:GetNWEntity("GRM_GarbageBox"))then return end;net.Start(NGARBAGE);net.SendToServer()end)

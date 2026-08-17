@@ -507,11 +507,12 @@ if SERVER then
     end
 
     -- Возвращает: сколько заспавнено, сколько пропущено (уже стоят)
-    local function spawnAll(reason)
+    local function spawnAll(reason, onlyClass)
         local map = game.GetMap()
+        onlyClass = isstring(onlyClass) and onlyClass ~= "" and onlyClass or nil
         local done, skipped = 0, 0
         for _, rec in ipairs(loadDB()) do
-            if rec.map == map and PERM_CLASSES[rec.class] then
+            if rec.map == map and PERM_CLASSES[rec.class] and (not onlyClass or rec.class == onlyClass) then
                 if isOccupied(rec.class, rec.pos) then
                     skipped = skipped + 1
                 else
@@ -925,6 +926,15 @@ if SERVER then
             if rec.map == map then out[#out + 1] = rec end
         end
         return out
+    end
+
+    -- Точечная загрузка одного класса использует ту же perm-базу и ту же
+    -- защиту от дублей. Модулям не требуется заводить второй persistence backend.
+    function P.LoadClass(class, reason)
+        class = tostring(class or "")
+        if class == "" or not PERM_CLASSES[class] then return false, "класс не зарегистрирован" end
+        local spawned, skipped = spawnAll(reason or ("ручная загрузка " .. class), class)
+        return true, { spawned = spawned, skipped = skipped }
     end
 
     -- Пометить живой объект как перм (общая часть Add/spawnAll)

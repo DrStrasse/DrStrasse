@@ -200,10 +200,8 @@ QM.Schema = {
         { cvar = "grm_duty_npc_make_perm", type = "bool", label = "Сохранять на карте" },
     },
     grm_jobs = {
-        { cvar = "grm_jobs_point_type", type = "choice", label = "Тип точки", choices = { { "Курьер", "courier" }, { "Мусорный контейнер", "garbage" }, { "Свалка", "dump" }, { "Стоянка такси", "taxi_pickup" }, { "Ориентир такси", "taxi_dropoff" } } },
+        { cvar = "grm_jobs_point_type", type = "choice", label = "Что установить", choices = { { "Курьер", "courier" }, { "Точка маршрута мусоровоза", "garbage" }, { "Свалка", "dump" }, { "Физическая мусорка (отдельно)", "garbage_bin" }, { "Стоянка такси", "taxi_pickup" }, { "Ориентир такси", "taxi_dropoff" } } },
         { cvar = "grm_jobs_point_name", type = "text", label = "Название" },
-        { cvar = "grm_jobs_spawn_bin", type = "bool", label = "Создать физическую мусорку" },
-        { cvar = "grm_jobs_make_perm", type = "bool", label = "Сохранять мусорку" },
     },
     grm_bank_tool = {
         { cvar = "grm_bank_tool_type", type = "choice", label = "Тип",

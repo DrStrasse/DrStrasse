@@ -42,6 +42,7 @@ local function operation(id, ply)
         vendors = { save = function() return GRM.Vendor and GRM.Vendor.SaveMapVendors() end, load = function() return GRM.Vendor and GRM.Vendor.LoadMapVendors() end },
         vehicle_dealers = { save = function() return GRM.VehicleDealer and GRM.VehicleDealer.SaveAll() end, load = function() return GRM.VehicleDealer and GRM.VehicleDealer.LoadAll() end },
         quests = { save = function() return GRM.Quests and GRM.Quests.SaveAll() end, load = function() return GRM.Quests and GRM.Quests.LoadAll() end },
+        garbage_bins = { save = function(p) return GRM.Jobs and GRM.Jobs.SaveGarbageBins and GRM.Jobs.SaveGarbageBins(p) end, load = function(p) return GRM.Jobs and GRM.Jobs.LoadGarbageBins and GRM.Jobs.LoadGarbageBins(p) end },
         perm = { save = function() return isfunction(GRM_SaveEntities) and GRM_SaveEntities() end, load = function() return isfunction(GRM_LoadEntities) and GRM_LoadEntities() end },
     }
     if not save and not load then return false, "Неизвестная операция" end
@@ -51,7 +52,7 @@ local function operation(id, ply)
 end
 
 local function all(ply, mode)
-    local ids = { "phone", "cctv", "alarm", "factory", "logistics", "vending", "roomtap", "wanted", "mining", "doors", "arrest", "customization", "vendors", "vehicle_dealers", "quests", "perm" }
+    local ids = { "phone", "cctv", "alarm", "factory", "logistics", "vending", "roomtap", "wanted", "mining", "doors", "arrest", "customization", "vendors", "vehicle_dealers", "quests", "garbage_bins", "perm" }
     local done, errors = 0, {}
     for _, id in ipairs(ids) do
         local ok, msg = operation(id .. "_" .. mode, ply)
