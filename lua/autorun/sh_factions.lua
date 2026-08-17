@@ -3625,8 +3625,12 @@ if CLIENT then
         end
     end)
 
-    net.Receive(NET_OPEN_ADMIN, function() OpenAdminMenu() end)
-    net.Receive(NET_OPEN_LEADER, function() OpenLeaderMenu() end)
+    net.Receive(NET_OPEN_ADMIN, function()
+        if OpenUnifiedFactionsMenu then OpenUnifiedFactionsMenu() else OpenAdminMenu() end
+    end)
+    net.Receive(NET_OPEN_LEADER, function()
+        if OpenUnifiedFactionsMenu then OpenUnifiedFactionsMenu() else OpenLeaderMenu() end
+    end)
 
     print("[Factions] Клиентская часть загружена (v3.2 dual names + /factions)")
 end
