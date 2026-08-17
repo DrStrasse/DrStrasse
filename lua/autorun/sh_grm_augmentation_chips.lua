@@ -829,6 +829,7 @@ end
 	end
 	timer.Create("GRM_AugChip_RegisterInventory", 1, 0, function() if registerChipUse() then timer.Remove("GRM_AugChip_RegisterInventory") end end)
 
+    CHIPS._hackedDoors=CHIPS._hackedDoors or setmetatable({},{__mode="k"})
     local function hackDoor(ply, door)
         if not IsValid(ply) or not IsValid(door) then return false end
         local cls=door:GetClass()
@@ -839,15 +840,16 @@ end
         if not chip then return false end
         if GRM.AugmentationAccess and not GRM.AugmentationAccess.Can(ply,"hack_door",door) then GRM.AugmentationAccess.Deny(ply); return true end
         if door.GRMHackUntil and door.GRMHackUntil>CurTime() then return true end
-        door.GRMHackUntil=CurTime()+30;
+        door.GRMHackUntil=CurTime()+30;CHIPS._hackedDoors[door]=true
         door.GRMHackHoldUntil=CurTime()+40; door.GRMHackWasLocked=door:GetInternalVariable("m_bLocked")==1
         door:Fire("Unlock","",0); door:Fire("Open","",0); door:Fire("Toggle","",0)
         ply:EmitSound("buttons/combine_button7.wav",70,125,1,CHAN_AUTO); if GRM.Notify then GRM.Notify(ply,"Дверь взломана на 60 секунд",80,210,150) else ply:ChatPrint("[Аугментации] Дверь взломана на 30 секунд, удержание открытия ещё 10 секунд") end
-        timer.Create("GRM_DoorHack_"..door:EntIndex(),40,1,function() if IsValid(door) then door:Fire("Close","",0); if door.GRMHackWasLocked then door:Fire("Lock","",0) end; door.GRMHackUntil=nil; door.GRMHackHoldUntil=nil end end)
+        timer.Create("GRM_DoorHack_"..door:EntIndex(),40,1,function() if IsValid(door) then door:Fire("Close","",0); if door.GRMHackWasLocked then door:Fire("Lock","",0) end; door.GRMHackUntil=nil; door.GRMHackHoldUntil=nil end;CHIPS._hackedDoors[door]=nil end)
         return true
     end
     hook.Add("Think", "GRM_AugChip_DoorHackCleanup", function()
-        for _,e in ipairs(ents.GetAll()) do if e.GRMHackUntil and e.GRMHackUntil <= CurTime() then e.GRMHackUntil=nil end end
+        local now=CurTime();if(CHIPS._doorHackCleanupAt or 0)>now then return end;CHIPS._doorHackCleanupAt=now+.5
+        for e in pairs(CHIPS._hackedDoors)do if not IsValid(e)then CHIPS._hackedDoors[e]=nil elseif e.GRMHackUntil and e.GRMHackUntil<=now then e.GRMHackUntil=nil;CHIPS._hackedDoors[e]=nil end end
     end)
     hook.Add("PlayerUse","GRM_AugChip_DoorHack",function(ply,ent) if hackDoor(ply,ent) then return false end end)
     hook.Add("KeyPress","GRM_AugChip_DoorHack_Key",function(ply,key) if key==IN_USE then hackDoor(ply,ply:GetEyeTrace().Entity) end end)

@@ -1240,7 +1240,8 @@ if CLIENT then
     end)
 
     hook.Add("Think", "GRM_Char_CloseForeignMenus", function()
-        if not clientCharacterPending() then return end
+        if not clientCharacterPending() then CH._foreignMenuCheckAt=nil return end
+        local now=CurTime();if(CH._foreignMenuCheckAt or 0)>now then return end;CH._foreignMenuCheckAt=now+.1
         if GRM.Mobile and GRM.Mobile.ClientIsOpen and GRM.Mobile.ClientIsOpen()
             and GRM.Mobile.ClientClose then
             GRM.Mobile.ClientClose()

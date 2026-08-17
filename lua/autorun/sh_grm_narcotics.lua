@@ -228,7 +228,7 @@ if SERVER then
     timer.Simple(6, NARC.RegisterUseHandlers)
 
     hook.Add("Think", "GRM_Narc_Tick", function()
-        local now = CurTime()
+        local now = CurTime();if(NARC._tickAt or 0)>now then return end;NARC._tickAt=now+.25
         for _, ply in ipairs(player.GetAll()) do
             if IsValid(ply) and ply:Alive() then
                 local active = NARC.Active[ply]

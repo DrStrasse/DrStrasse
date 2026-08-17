@@ -1940,7 +1940,9 @@ if CLIENT then
         if not IsValid(QM._frame) then QM._iconQueue = {} return end
         local n = 0
         while #q > 0 and n < ICON_BUDGET do
-            local job = table.remove(q, 1)
+            -- Снятие с хвоста O(1): table.remove(q, 1) сдвигал всю очередь
+            -- моделей каждый кадр и давал микрофризы на больших каталогах.
+            local job = table.remove(q)
             n = n + 1
             if job and IsValid(job.tile) then
                 local icon = vgui.Create("SpawnIcon", job.tile)

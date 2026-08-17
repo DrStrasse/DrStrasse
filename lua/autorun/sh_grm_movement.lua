@@ -45,9 +45,12 @@ if SERVER then
         return playerData[sid]
     end
 
-    local function syncStamina(ply)
+    local function syncStamina(ply, force)
         if not IsValid(ply) then return end
-        local data = getPlayerData(ply)
+        local data = getPlayerData(ply);local now=CurTime()
+        if not force and (data.nextSync or 0)>now then return end
+        if not force and data.lastSynced~=nil and math.abs(data.lastSynced-data.stamina)<.001 then return end
+        data.nextSync=now+.25;data.lastSynced=data.stamina
         net.Start("GRM_Stamina_Sync")
         net.WriteFloat(data.stamina)
         net.Send(ply)
@@ -120,7 +123,7 @@ if SERVER then
         timer.Simple(0.5, function()
             if IsValid(ply) then
                 getPlayerData(ply)
-                syncStamina(ply)
+                syncStamina(ply, true)
             end
         end)
     end)

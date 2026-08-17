@@ -173,7 +173,7 @@ if SERVER then
     timer.Simple(6, MED.RegisterUseHandlers)
 
     hook.Add("Think", "GRM_MedFull_Tick", function()
-        local now = CurTime()
+        local now = CurTime();if(MED._tickAt or 0)>now then return end;MED._tickAt=now+.25
         for _, ply in ipairs(player.GetAll()) do
             if IsValid(ply) and ply:Alive() then
                 local bleed = ply:GetNWInt("GRM_Bleed", 0)

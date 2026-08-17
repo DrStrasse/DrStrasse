@@ -384,27 +384,11 @@ local function resetCuffPose(ply)
     posedPlayers[ply] = nil
 end
 
-local function applyCuffPose(ply)
-    if not IsValid(ply) then return end
-    -- Behind-back bone manipulation is disabled completely. Different player
-    -- models use different bone axes and produce twisted/dangling arms.
-    resetCuffPose(ply)
-end
-
-hook.Add("Think", "GRM_Handcuffs_BehindBackPose", function()
-    for _, ply in ipairs(player.GetAll()) do
-        if IsValid(ply) and isCuffed(ply) and ply:Alive() then
-            applyCuffPose(ply)
-        elseif posedPlayers[ply] then
-            resetCuffPose(ply)
-        end
-    end
-
-    for ply in pairs(posedPlayers) do
-        if not IsValid(ply) then
-            posedPlayers[ply] = nil
-        end
-    end
+-- Behind-back bone manipulation is intentionally disabled: player models use
+-- incompatible bone axes. Сбрасываем возможный след старой версии один раз,
+-- вместо LookupBone/ManipulateBone для каждого игрока в каждом кадре.
+timer.Simple(0, function()
+    for _, ply in ipairs(player.GetAll()) do if IsValid(ply) then resetCuffPose(ply) end end
 end)
 
 hook.Add("EntityNetworkedVarChanged", "GRM_Handcuffs_ResetPoseOnUncuff", function(ent, name, _, value)

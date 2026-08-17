@@ -589,6 +589,7 @@ hook.Add("SetupPlayerVisibility", "GRM_CCTV_RemoteCameraPVS", function(ply)
 end)
 
 hook.Add("Think", "GRM_CCTV_ViewGuard", function()
+    local now=CurTime();if(CCTV._viewGuardAt or 0)>now then return end;CCTV._viewGuardAt=now+.2
     for _, ply in ipairs(player.GetAll()) do
         if ply._grmCCTVView then
             local mon, cam = ply._grmCCTVMonitor, ply._grmCCTVCam

@@ -300,7 +300,7 @@ A._speakerSync = syncSpeakers      -- тест-экспорт
 A._speakerSyncAll = syncAllSpeakers
 
 -- ── sensor scan ────────────────────────────────────────────
-local lastScan = 0
+local lastScan, lastSpeakerWatch = 0, 0
 hook.Add("Think", "GRM_Alarm_Scan", function()
     local now = CurTime()
     local interval = tonumber(CFG().ScanInterval) or 0.35
@@ -319,8 +319,9 @@ hook.Add("Think", "GRM_Alarm_Scan", function()
         end
     end
 
-    -- Код 89: сторожевой прогон динамиков сирены (restore/спавн/смена сети)
-    if syncAllSpeakers then syncAllSpeakers() end
+    -- Самовосстановление динамиков не относится к срочному sensor scan:
+    -- полный обход устройств достаточно делать раз в секунду.
+    if syncAllSpeakers and now-lastSpeakerWatch>=1 then lastSpeakerWatch=now;syncAllSpeakers() end
 
     local cd = tonumber(CFG().TriggerCooldown) or 4
     for _, sensor in pairs(A.Devices) do
