@@ -70,11 +70,11 @@
 
 ### Dist raw (владелец качает отсюда)
 
-- https://github.com/DrStrasse/DrStrasse/raw/arena/019ffaa2-drstrasse/dist/grm_single_addon.zip
-- https://github.com/DrStrasse/DrStrasse/raw/arena/019ffaa2-drstrasse/dist/grm_full_code.zip
-- https://github.com/DrStrasse/DrStrasse/raw/arena/019ffaa2-drstrasse/dist/grm_economy.zip
-- https://github.com/DrStrasse/DrStrasse/raw/arena/019ffaa2-drstrasse/dist/grm_fix_hud_tab_currency.zip
-- https://github.com/DrStrasse/DrStrasse/raw/arena/019ffaa2-drstrasse/dist/grm_fire_addon.zip
+- https://github.com/DrStrasse/DrStrasse/raw/arena/01a00f34-drstrasse/dist/grm_single_addon.zip
+- https://github.com/DrStrasse/DrStrasse/raw/arena/01a00f34-drstrasse/dist/grm_full_code.zip
+- https://github.com/DrStrasse/DrStrasse/raw/arena/01a00f34-drstrasse/dist/grm_economy.zip
+- https://github.com/DrStrasse/DrStrasse/raw/arena/01a00f34-drstrasse/dist/grm_fix_hud_tab_currency.zip
+- https://github.com/DrStrasse/DrStrasse/raw/arena/01a00f34-drstrasse/dist/grm_fire_addon.zip
 
 Для пожаров на сервере нужны **оба**: `grm_single_addon.zip` (ядро) + `grm_fire_addon.zip` (vFire + сущности) + рестарт.
 
