@@ -1288,6 +1288,54 @@ if SERVER then
             if istable(tpl.factions)        then DOC.Templates.factions        = tpl.factions end
             if istable(tpl.access)          then DOC.Templates.access          = tpl.access end
             DOC.SaveTemplates("admin edit by " .. ply:Nick())
+
+            -- Перекраска УЖЕ ВЫДАННЫХ документов (заказ владельца 18.08).
+            -- Запись удостоверения хранит свой coverColor/foilStyle — снимок на
+            -- момент выдачи, и он перекрывает шаблон при отрисовке. Поэтому
+            -- смена цвета в /doc_admin раньше не касалась выданных корочек.
+            if tpl._applyIssuedColors == true and istable(tpl.factions) then
+                local repainted, coversRepainted = 0, 0
+
+                for _, rec in pairs(DOC.Registry.badges or {}) do
+                    if istable(rec) then
+                        local cfg = tpl.factions[tostring(rec.faction or "")]
+                        if istable(cfg) and istable(cfg.coverColor) then
+                            rec.coverColor = { r = cfg.coverColor.r, g = cfg.coverColor.g, b = cfg.coverColor.b }
+                            if isstring(cfg.foilStyle) then rec.foilStyle = cfg.foilStyle end
+                            repainted = repainted + 1
+                        end
+                    end
+                end
+
+                if tpl._applyIssuedCovers == true then
+                    for _, rec in pairs(DOC.Registry.coverBadges or {}) do
+                        if istable(rec) then
+                            local cfg = tpl.factions[tostring(rec.faction or "")]
+                            if istable(cfg) and istable(cfg.coverColor) then
+                                rec.coverColor = { r = cfg.coverColor.r, g = cfg.coverColor.g, b = cfg.coverColor.b }
+                                if isstring(cfg.foilStyle) then rec.foilStyle = cfg.foilStyle end
+                                coversRepainted = coversRepainted + 1
+                            end
+                        end
+                    end
+                end
+
+                if repainted > 0 or coversRepainted > 0 then
+                    DOC.SaveRegistry(("repaint documents by %s (%d / %d)"):format(ply:Nick(), repainted, coversRepainted))
+                end
+
+                if GRM.Notify then
+                    GRM.Notify(ply, ("Шаблоны сохранены. Перекрашено удостоверений: %d, документов прикрытия: %d.")
+                        :format(repainted, coversRepainted), 100, 220, 130)
+                end
+            elseif GRM.Notify then
+                GRM.Notify(ply, "Шаблоны документов и права доступа сохранены.", 100, 220, 130)
+            end
+
+            if GRM.Audit and GRM.Audit.Write then
+                GRM.Audit.Write("documents", "templates.save", ply,
+                    { applyIssued = tpl._applyIssuedColors == true, applyCovers = tpl._applyIssuedCovers == true }, {})
+            end
         end
     end)
 
@@ -3363,6 +3411,8 @@ if CLIENT then
 
     -- ── Админ-меню настройки шаблонов документов ──────────────
     local function openAdminUI(tpl)
+        -- Форвард-декларации: задаются ниже, но нужны кнопке сохранения.
+        local adminCommitFaction, adminApplyFlags
         tpl = tpl or {}
         tpl.passport        = tpl.passport        or {}
         tpl.military        = tpl.military        or {}
@@ -3668,11 +3718,64 @@ if CLIENT then
             comboIcon:SetValue(DOC.BadgeIcons[cfg.badgeIcon or "star"] or "★ Звезда")
         end
 
-        comboFac.OnSelect = function(_, _, fname) loadFactionSettings(fname) end
+        -- Правки по КАЖДОЙ организации переносим в буфер шаблона сразу при
+        -- переключении: раньше «Сохранить» отправляло только ту организацию,
+        -- что была выбрана в момент нажатия, остальные правки терялись.
+        local currentFactionName = nil
+        local function commitFactionSettings()
+            if not currentFactionName or currentFactionName == "" then return end
+            tpl.factions = tpl.factions or {}
+            local cfg = tpl.factions[currentFactionName] or {}
+            cfg.coverTitle = entCoverTitle:GetText()
+            cfg.prefix = entPrefix:GetText()
+            cfg.coverColor = { r = curCover.r, g = curCover.g, b = curCover.b }
+            cfg.foilStyle = curFoil
+            local _, iconId = comboIcon:GetSelected()
+            if isstring(iconId) then cfg.badgeIcon = iconId end
+            tpl.factions[currentFactionName] = cfg
+        end
+        adminCommitFaction = commitFactionSettings
+
+        comboFac.OnSelect = function(_, _, fname)
+            commitFactionSettings()
+            currentFactionName = fname
+            loadFactionSettings(fname)
+        end
 
         if #names > 0 then
+            currentFactionName = names[1]
             comboFac:SetValue(names[1])
             loadFactionSettings(names[1])
+        end
+
+        -- Применение цвета к уже выданным документам (заказ владельца):
+        -- раньше запись удостоверения хранила цвет НА МОМЕНТ ВЫДАЧИ и
+        -- перекрывала шаблон, поэтому смена цвета в /doc_admin не касалась
+        -- уже выданных корочек.
+        local applyPanel = vgui.Create("DPanel", facPnl)
+        applyPanel:SetPos(16, 470)
+        applyPanel:SetSize(680, 74)
+        applyPanel.Paint = function(_, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, Color(26, 32, 44))
+            draw.SimpleText("ПРИМЕНЕНИЕ ЦВЕТА К УЖЕ ВЫДАННЫМ ДОКУМЕНТАМ", "GRMDoc_Small", 12, 10, Color(235, 195, 90))
+        end
+
+        local chkApply = vgui.Create("DCheckBoxLabel", applyPanel)
+        chkApply:SetPos(12, 32)
+        chkApply:SetText("Перекрасить служебные удостоверения этой организации")
+        chkApply:SetTextColor(Color(225, 232, 240))
+        chkApply:SizeToContents()
+        chkApply:SetValue(true)
+
+        local chkApplyCover = vgui.Create("DCheckBoxLabel", applyPanel)
+        chkApplyCover:SetPos(12, 52)
+        chkApplyCover:SetText("Включая документы прикрытия с этой легендой")
+        chkApplyCover:SetTextColor(Color(190, 200, 215))
+        chkApplyCover:SizeToContents()
+        chkApplyCover:SetValue(false)
+
+        adminApplyFlags = function()
+            return chkApply:GetChecked() == true, chkApplyCover:GetChecked() == true
         end
 
         tabs:AddSheet("Служебные удостоверения", facPnl, "icon16/shield.png")
@@ -3809,6 +3912,16 @@ if CLIENT then
             draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(40, 180, 90) or Color(30, 150, 75))
         end
         btnSave.DoClick = function()
+            -- Шаблон мог прийти из старого файла без части разделов: тогда
+            -- первое же обращение к nil-таблице роняло весь обработчик, и
+            -- «Сохранить» визуально не делало НИЧЕГО. Нормализуем структуру.
+            for _, key in ipairs({ "passport", "military", "license", "weaponLicense",
+                "businessLicense", "militaryLicense", "fees", "factions", "access" }) do
+                if not istable(tpl[key]) then tpl[key] = {} end
+            end
+
+            if adminCommitFaction then adminCommitFaction() end
+
             tpl.passport.stateTitle = entState:GetText()
             tpl.passport.defaultSeries = entSeries:GetText()
 
@@ -3891,9 +4004,15 @@ if CLIENT then
             tpl.access.coverDocs = {}
             for fn, cb in pairs(coverBoxes) do if cb:GetChecked() then tpl.access.coverDocs[fn] = true end end
 
+            local applyIssued, applyCovers = false, false
+            if adminApplyFlags then applyIssued, applyCovers = adminApplyFlags() end
+            tpl._applyIssuedColors = applyIssued
+            tpl._applyIssuedCovers = applyCovers
+
             net.Start(NET_ADMIN_SAVE)
                 net.WriteTable(tpl)
             net.SendToServer()
+            surface.PlaySound("buttons/button15.wav")
             frame:Close()
         end
     end

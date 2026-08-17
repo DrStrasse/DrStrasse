@@ -19,6 +19,6 @@ ok(personnel:find('tabs:AddSheet("Кадровые дела"',1,true),"unified f
 ok(personnel:find("ДОБАВИТЬ ЗАПИСЬ",1,true)and personnel:find("БЛАГОДАРНОСТЬ",1,true)and personnel:find("ВЗЫСКАНИЕ",1,true),"personnel UI has practical actions")
 ok(personnel:find('faction.personnel.request',1,true)and personnel:find('faction.personnel.action',1,true),"personnel network is guarded")
 ok(personnel:find("SetProbation",1,true)and personnel:find("ИСПЫТАТЕЛЬНЫЙ СРОК",1,true),"probation workflow exists")
-ok(personnel:find("sendList",1,true)and personnel:find('r.archived and"АРХИВ"',1,true),"personnel UI includes dismissed archive")
+ok(personnel:find("sendList",1,true)and personnel:find('r.archived and "АРХИВ"',1,true),"personnel UI includes dismissed archive")
 ok(fixes:find("DepartmentModels",1,true)and fixes:find("DepartmentWeapons",1,true),"legacy department equipment maps remain intact")
 print(("FACTION CORE V4: %d/%d failures=%d"):format(n-fail,n,fail));os.exit(fail==0 and 0 or 1)

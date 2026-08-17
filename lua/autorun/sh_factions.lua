@@ -1194,6 +1194,13 @@ if SERVER then
         elseif action == "setDepAccess" then
             if not args[1] then done(false, "Не указана фракция") return end
             if not isSuperAdmin and getFactionOfLeader(ply) ~= args[1] then done(false, "Недостаточно прав") return end
+            -- Раздел «Доступы и связь» может быть закрыт суперадмином:
+            -- тогда лидер не переключит доступ и в обход интерфейса.
+            if GRM.MenuAccess and GRM.MenuAccess.PlayerCan
+                and not GRM.MenuAccess.PlayerCan(ply, "access", args[1]) then
+                done(false, "Раздел доступов закрыт администрацией")
+                return
+            end
             local ok, err = setFactionDepAccess(args[1], args[2])
             done(ok, err)
         elseif action == "setServiceAccess" then

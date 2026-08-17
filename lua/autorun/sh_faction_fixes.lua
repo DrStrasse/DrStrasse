@@ -1154,6 +1154,11 @@ if SERVER then
                 sendExtResult(ply, false, "Недостаточно прав")
                 return
             end
+            if GRM.MenuAccess and GRM.MenuAccess.PlayerCan
+                and not GRM.MenuAccess.PlayerCan(ply, "access", fname) then
+                sendExtResult(ply, false, "Раздел доступов закрыт администрацией")
+                return
+            end
             local enabled = args[2] and true or false
             local cfg = getExtConfig(fname)
             cfg.GNewsAccess = enabled

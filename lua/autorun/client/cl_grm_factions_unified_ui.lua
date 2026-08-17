@@ -563,7 +563,22 @@ function UI.Open(requestedFaction)
         if builderFn then builderFn(content, targetFac, FactionsData or {}) end
     end
 
+    -- Видимость раздела решает GRM.MenuAccess: по умолчанию всё
+    -- чувствительное — только суперадмину, остальное настраивает он сам
+    -- в разделе «Права меню». Суперадмин видит всё всегда.
+    local function tabVisible(tabKey)
+        if isSA then return true end
+        local MA = GRM.MenuAccess
+        if not (MA and MA.CanSeeLocal) then
+            -- Модуль прав не загружен — безопасный режим: чувствительное скрыто.
+            local safe = { overview = true, members = true, structure = true, personnel = true, finance = true }
+            return safe[tabKey] == true
+        end
+        return MA.CanSeeLocal(tabKey, targetFac) == true
+    end
+
     local function addTabBtn(tabKey, label, iconPath, builderFn)
+        if not tabVisible(tabKey) then return end
         local btn = vgui.Create("DButton", sidebar)
         btn:Dock(TOP)
         btn:SetTall(38)
@@ -1305,6 +1320,168 @@ function UI.Open(requestedFaction)
             "icon16/phone.png", "grm_phone_shop_admin", C.green)
     end
 
+    -- ════════════ ПРАВА МЕНЮ (только суперадмин) ════════════
+    local function buildMenuAccessTab(pnl)
+        local MA = GRM.MenuAccess
+        local scroll = vgui.Create("DScrollPanel", pnl)
+        scroll:Dock(FILL)
+
+        if not MA then
+            local warn = vgui.Create("DLabel", scroll)
+            warn:Dock(TOP) warn:SetTall(40) warn:SetFont("GRMFac_Sub") warn:SetTextColor(C.red)
+            warn:SetText("Модуль прав меню не загружен (sh_grm_faction_menu_access.lua).")
+            return
+        end
+
+        local head = vgui.Create("DPanel", scroll)
+        head:Dock(TOP) head:SetTall(62) head:DockMargin(0, 0, 0, 8)
+        head.Paint = function(_, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, C.card)
+            draw.SimpleText("КТО ВИДИТ РАЗДЕЛЫ ЭТОГО МЕНЮ", "GRMFac_Sub", 14, 12, C.gold)
+            draw.SimpleText("Суперадмин видит всё всегда. Здесь решается, что показывать лидерам и сотрудникам.",
+                "GRMFac_Small", 14, 36, C.dim)
+        end
+
+        -- Рабочая копия: правки применяются только по кнопке «Сохранить».
+        local levels = table.Copy(MA.Config.levels or {})
+        local overrides = table.Copy(MA.Config.overrides or {})
+
+        local knownKeys, seen = {}, {}
+        for _, row in ipairs(MA.Tabs) do
+            knownKeys[#knownKeys + 1] = { key = row.key, name = row.name }
+            seen[row.key] = true
+        end
+        for _, row in ipairs(hookedPanels) do
+            local key = "ext:" .. row.label
+            if not seen[key] then
+                seen[key] = true
+                knownKeys[#knownKeys + 1] = { key = key, name = row.label .. "  (модуль)" }
+            end
+        end
+        for key in pairs(levels) do
+            if not seen[key] then
+                seen[key] = true
+                knownKeys[#knownKeys + 1] = { key = key, name = MA.TabName(key) }
+            end
+        end
+
+        for _, row in ipairs(knownKeys) do
+            local line = vgui.Create("DPanel", scroll)
+            line:Dock(TOP) line:SetTall(54) line:DockMargin(0, 0, 0, 6)
+            line.Paint = function(_, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, C.card)
+                draw.SimpleText(row.name, "GRMFac_Sub", 14, 12, C.text)
+                local lvl = levels[row.key] or MA.DefaultLevel(row.key)
+                draw.SimpleText("по умолчанию: " .. (MA.LevelNames[MA.DefaultLevel(row.key)] or "?"),
+                    "GRMFac_Small", 14, 32, C.dim)
+                if lvl == "admin" or lvl == "off" then
+                    draw.SimpleText("ЗАКРЫТО", "GRMFac_Small", 300, 20, C.gold)
+                end
+            end
+
+            local combo = vgui.Create("DComboBox", line)
+            combo:Dock(RIGHT) combo:SetWide(230) combo:DockMargin(8, 13, 12, 13)
+            skinCombo(combo)
+            local cur = levels[row.key] or MA.DefaultLevel(row.key)
+            for _, lvl in ipairs(MA.LevelOrder) do
+                combo:AddChoice(MA.LevelNames[lvl] or lvl, lvl, lvl == cur)
+            end
+            combo.OnSelect = function(_, _, _, value)
+                levels[row.key] = value
+            end
+        end
+
+        local note = vgui.Create("DPanel", scroll)
+        note:Dock(TOP) note:SetTall(52) note:DockMargin(0, 6, 0, 6)
+        note.Paint = function(_, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, C.card)
+            draw.SimpleText("Исключение для текущей организации: " .. tostring(targetFac or "—"),
+                "GRMFac_Small", 14, 10, C.dim)
+            draw.SimpleText("Позволяет открыть раздел одной организации, не открывая его всем.",
+                "GRMFac_Small", 14, 30, C.dim)
+        end
+
+        local exRow = vgui.Create("DPanel", scroll)
+        exRow:Dock(TOP) exRow:SetTall(44) exRow:DockMargin(0, 0, 0, 8)
+        exRow:SetPaintBackground(false)
+
+        local exTab = vgui.Create("DComboBox", exRow)
+        exTab:Dock(LEFT) exTab:SetWide(300) exTab:DockMargin(0, 6, 8, 6)
+        skinCombo(exTab)
+        for _, row in ipairs(knownKeys) do exTab:AddChoice(row.name, row.key, false) end
+        exTab:SetValue("Раздел…")
+
+        local exLevel = vgui.Create("DComboBox", exRow)
+        exLevel:Dock(LEFT) exLevel:SetWide(230) exLevel:DockMargin(0, 6, 8, 6)
+        skinCombo(exLevel)
+        for _, lvl in ipairs(MA.LevelOrder) do exLevel:AddChoice(MA.LevelNames[lvl] or lvl, lvl, false) end
+        exLevel:SetValue("Уровень…")
+
+        local exAdd = vgui.Create("DButton", exRow)
+        exAdd:Dock(LEFT) exAdd:SetWide(170) exAdd:DockMargin(0, 6, 0, 6)
+        exAdd:SetText("") 
+        exAdd.Paint = function(self, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, self:IsHovered() and C.accentHover or C.accent)
+            draw.SimpleText("ДОБАВИТЬ ИСКЛЮЧЕНИЕ", "GRMFac_Btn", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+
+        local exList = vgui.Create("DPanel", scroll)
+        exList:Dock(TOP) exList:SetTall(150) exList:DockMargin(0, 0, 0, 8)
+        exList:SetPaintBackground(false)
+
+        local rebuildEx
+        rebuildEx = function()
+            exList:Clear()
+            local y = 0
+            for fac, rows in pairs(overrides) do
+                for key, lvl in pairs(rows) do
+                    local item = vgui.Create("DPanel", exList)
+                    item:Dock(TOP) item:SetTall(30) item:DockMargin(0, 0, 0, 4)
+                    item.Paint = function(_, w, h)
+                        draw.RoundedBox(5, 0, 0, w, h, C.cardLight)
+                        draw.SimpleText(fac .. "  ·  " .. MA.TabName(key) .. "  →  " .. (MA.LevelNames[lvl] or lvl),
+                            "GRMFac_Small", 12, h / 2, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    end
+                    local del = vgui.Create("DButton", item)
+                    del:Dock(RIGHT) del:SetWide(90) del:SetText("")
+                    del.Paint = function(self, w, h)
+                        draw.RoundedBox(5, 0, 0, w, h, self:IsHovered() and C.redHover or C.red)
+                        draw.SimpleText("УБРАТЬ", "GRMFac_Small", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    end
+                    del.DoClick = function()
+                        overrides[fac][key] = nil
+                        if not next(overrides[fac]) then overrides[fac] = nil end
+                        rebuildEx()
+                    end
+                    y = y + 34
+                end
+            end
+            exList:SetTall(math.max(40, y))
+        end
+        rebuildEx()
+
+        exAdd.DoClick = function()
+            local _, tabKey = exTab:GetSelected()
+            local _, lvl = exLevel:GetSelected()
+            if not isstring(tabKey) or not isstring(lvl) or not targetFac then return end
+            overrides[targetFac] = overrides[targetFac] or {}
+            overrides[targetFac][tabKey] = lvl
+            rebuildEx()
+        end
+
+        local save = vgui.Create("DButton", scroll)
+        save:Dock(TOP) save:SetTall(42) save:DockMargin(0, 4, 0, 12)
+        save:SetText("")
+        save.Paint = function(self, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, self:IsHovered() and C.greenHover or C.green)
+            draw.SimpleText("СОХРАНИТЬ ПРАВА РАЗДЕЛОВ", "GRMFac_Btn", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+        save.DoClick = function()
+            if MA.RequestSave then MA.RequestSave(levels, overrides) end
+            surface.PlaySound("buttons/button15.wav")
+        end
+    end
+
     -- Добавление вкладок в боковое меню
     addTabBtn("overview", "Обзор", "icon16/application_home.png", buildOverviewTab)
     addTabBtn("members", "Личный состав", "icon16/group.png", buildMembersTab)
@@ -1319,6 +1496,7 @@ function UI.Open(requestedFaction)
     addTabBtn("service", "Служебные системы", "icon16/wrench.png", buildServiceSystemsTab)
     if isSA then
         addTabBtn("create", "Создать организацию", "icon16/add.png", buildCreateTab)
+        addTabBtn("menuaccess", "Права меню", "icon16/lock_edit.png", buildMenuAccessTab)
     end
 
     -- ── Разделы от других модулей ────────────────────────────────────────
@@ -1330,8 +1508,15 @@ function UI.Open(requestedFaction)
         proxy.AddSheet = function(_, label, panel, icon)
             if not IsValid(panel) then return end
             order = order + 1
-            local key = "ext_" .. order
             label = tostring(label or ("Раздел " .. order))
+            -- Ключ прав для навесного раздела — по его названию, чтобы
+            -- суперадмин мог выдать, например, «Логистику» лидерам, оставив
+            -- «Доступ к аресту» только себе.
+            local key = "ext:" .. label
+            if not tabVisible(key) then
+                if IsValid(panel) then panel:Remove() end
+                return
+            end
 
             panel:SetParent(hookHost)
             panel:SetVisible(false)
@@ -1362,7 +1547,31 @@ function UI.Open(requestedFaction)
         hookedPanels = {}
     end
 
-    selectTab("overview", buildOverviewTab)
+    -- Открываем первый ДОСТУПНЫЙ раздел: у сотрудника без прав «Обзора» может
+    -- не быть вовсе, и окно не должно оставаться пустым без объяснения.
+    if tabButtons["overview"] then
+        selectTab("overview", buildOverviewTab)
+    else
+        local firstKey, firstBtn
+        for key, btn in pairs(tabButtons) do
+            if IsValid(btn) and (not firstBtn or btn:GetY() < firstBtn:GetY()) then
+                firstKey, firstBtn = key, btn
+            end
+        end
+        if firstKey and tabButtons[firstKey].builder then
+            selectTab(firstKey, tabButtons[firstKey].builder)
+        else
+            local empty = vgui.Create("DPanel", content)
+            empty:Dock(FILL)
+            empty.Paint = function(_, w, h)
+                draw.RoundedBox(8, 0, 0, w, h, C.card)
+                draw.SimpleText("Разделы этого меню закрыты вашей должности.", "GRMFac_Sub",
+                    w / 2, h / 2 - 12, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                draw.SimpleText("Доступ выдаёт суперадминистратор: /factions → «Права меню».", "GRMFac_Small",
+                    w / 2, h / 2 + 12, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            end
+        end
+    end
     net.Start("Factions_GetData")
     net.SendToServer()
     -- Подтянуть свежие флаги доступов (доска/эфир/оповещения/биржа).
