@@ -2,7 +2,7 @@
     GRM Factions Unified UI v3.0.0 (Код 112 / Structure v5.0)
     Единый полнофункциональный центр управления организациями:
       • Широкий адаптивный Singleton XUI (без сломанных emoji);
-      • Левая навигация со всеми 10 разделами:
+      • Левая навигация со всеми 12 разделами:
           1. «Обзор» — сводка, параметры, лидер, цвет, тэг, удаление;
           2. «Сотрудники» — интерактивный состав, поиск, приглашение v2,
              смена должности, перевод в отдел/подотдел, увольнение;
@@ -17,6 +17,8 @@
           8. «Комендантский час» — запуск, отмена, роли с допуском, таймер;
           9. «Казна и финансы» — бюджет, налоги, инкассация;
           10. «Создать организацию» — создание новой фракции v2;
+          11. «Спецслужбы» — CCTV, прослушка (RoomTap), розыск и штрафы;
+          12. «Служебные системы» — логистика, экономика, аугментации, телефония;
       • Полная поддержка двойных имён (DisplayName + SystemKey).
 ----------------------------------------------------------------------]]
 
@@ -26,7 +28,7 @@ GRM = GRM or {}
 GRM.Factions = GRM.Factions or {}
 GRM.Factions.UnifiedUI = GRM.Factions.UnifiedUI or {}
 local UI = GRM.Factions.UnifiedUI
-UI.Version = "3.0.0"
+UI.Version = "3.1.0"
 
 surface.CreateFont("GRMFac_Title",   { font = "Roboto", size = 20, weight = 800, extended = true })
 surface.CreateFont("GRMFac_Sub",     { font = "Roboto", size = 15, weight = 700, extended = true })
@@ -159,6 +161,40 @@ local function mkBtn(parent, text, col, hoverCol, doClick)
         if doClick then doClick() end
     end
     return b
+end
+
+-- Карточка-запуск внешней админ-панели модуля (подход «launch»).
+local function launchCard(parent, title, desc, iconPath, cmd, color)
+    local card = vgui.Create("DPanel", parent)
+    card:Dock(TOP)
+    card:SetTall(64)
+    card:DockMargin(0, 0, 0, 8)
+    local iconMat = nil
+    if iconPath then
+        local m = Material(iconPath, "smooth")
+        if m and not m:IsError() then iconMat = m end
+    end
+    card.Paint = function(self, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, C.card)
+        surface.SetDrawColor(C.border.r, C.border.g, C.border.b, C.border.a)
+        surface.DrawOutlinedRect(0, 0, w, h)
+        local iconX = 16
+        if iconMat then
+            surface.SetMaterial(iconMat)
+            surface.SetDrawColor(color or C.accent)
+            surface.DrawTexturedRect(14, h / 2 - 8, 16, 16)
+            iconX = 40
+        end
+        draw.SimpleText(title, "GRMFac_Sub", iconX, 15, C.text, TEXT_ALIGN_LEFT)
+        draw.SimpleText(desc, "GRMFac_Small", iconX, 37, C.dim, TEXT_ALIGN_LEFT)
+    end
+    local btn = mkBtn(card, "Открыть", color or C.accent, C.accentHover, function()
+        RunConsoleCommand(cmd)
+    end)
+    btn:Dock(RIGHT)
+    btn:DockMargin(0, 17, 12, 0)
+    btn:SetSize(150, 30)
+    return card
 end
 
 -- Стилизация строки DListView: светлый читаемый текст вместо чёрного
@@ -1077,6 +1113,48 @@ function UI.Open(requestedFaction)
         btnCreate:SetPos(20, 250); btnCreate:SetSize(400, 38)
     end
 
+    -- ════════════ 11. СПЕЦСЛУЖБЫ И НАБЛЮДЕНИЕ ════════════
+    local function buildSecurityTab(pnl, facName, facData)
+        local scroll = vgui.Create("DScrollPanel", pnl)
+        scroll:Dock(FILL)
+        launchCard(scroll, "CCTV — камеры и наблюдение",
+            "Назначение фракций с доступом к городской системе видеонаблюдения.",
+            "icon16/camera.png", "grm_cctv_access", C.accent)
+        launchCard(scroll, "Прослушка помещений (RoomTap)",
+            "Управление доступом к прослушке и запросами на установку «жучков».",
+            "icon16/sound.png", "roomtap_access", C.teal)
+        launchCard(scroll, "Магазин оборудования прослушки",
+            "Выдача аппаратуры прослушки оперативным сотрудникам.",
+            "icon16/cart.png", "roomtap_shop", C.teal)
+        launchCard(scroll, "Розыск и штрафы",
+            "Каталог статей, вменение нарушений и выписка штрафов.",
+            "icon16/page_white_edit.png", "grm_wanted", C.gold)
+        launchCard(scroll, "Доступы к розыску",
+            "Какие фракции и роли могут вести розыск, ориентировки и обмен сведениями.",
+            "icon16/key.png", "grm_wanted_access", C.gold)
+    end
+
+    -- ════════════ 12. СЛУЖЕБНЫЕ СИСТЕМЫ ════════════
+    local function buildServiceSystemsTab(pnl, facName, facData)
+        local scroll = vgui.Create("DScrollPanel", pnl)
+        scroll:Dock(FILL)
+        launchCard(scroll, "Логистика и снабжение",
+            "Доступ фракций к матовозкам, точкам погрузки и складам.",
+            "icon16/lorry.png", "grm_logistics_admin_menu", C.green)
+        launchCard(scroll, "Экономика и казна",
+            "Бюджеты, налоги, переводы средств (полная панель).",
+            "icon16/money.png", "grm_feco", C.gold)
+        launchCard(scroll, "Аугментации и импланты",
+            "Управление киберимплантами и их выдачей.",
+            "icon16/wrench.png", "grm_augmentations_admin", C.accent)
+        launchCard(scroll, "Доступы к аугментациям",
+            "Кто может выдавать и снимать импланты по фракциям и ролям.",
+            "icon16/key.png", "grm_augmentation_access_admin", C.accent)
+        launchCard(scroll, "Магазин телефонии",
+            "Управление ассортиментом телефонов и смартфонов.",
+            "icon16/phone.png", "grm_phone_shop_admin", C.green)
+    end
+
     -- Добавление вкладок в боковое меню
     addTabBtn("overview", "Обзор", "icon16/application_home.png", buildOverviewTab)
     addTabBtn("members", "Личный состав", "icon16/group.png", buildMembersTab)
@@ -1087,6 +1165,8 @@ function UI.Open(requestedFaction)
     addTabBtn("mask", "Маскировка", "icon16/user_suit.png", buildMaskTab)
     addTabBtn("curfew", "Комендантский час", "icon16/clock.png", buildCurfewTab)
     addTabBtn("finance", "Казна и финансы", "icon16/money.png", buildFinanceTab)
+    addTabBtn("security", "Спецслужбы", "icon16/camera.png", buildSecurityTab)
+    addTabBtn("service", "Служебные системы", "icon16/wrench.png", buildServiceSystemsTab)
     if isSA then
         addTabBtn("create", "Создать организацию", "icon16/add.png", buildCreateTab)
     end
@@ -1135,4 +1215,4 @@ hook.Add("PlayerSayTransform", "GRM_FactionUnified_ChatCommand", function(ply, d
     end
 end)
 
-print("[GRM Factions Unified UI] v" .. UI.Version .. " fully initialized with all 10 management domains")
+print("[GRM Factions Unified UI] v" .. UI.Version .. " fully initialized with all 12 management domains")
