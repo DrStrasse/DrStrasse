@@ -154,8 +154,8 @@ function MB.AvailableApps(tierKey)
         apps[#apps + 1] = "Биржа"
         apps[#apps + 1] = "Моя фракция"
         apps[#apps + 1] = "Форум"
-        apps[#apps + 1] = "Такси"
     end
+    apps[#apps + 1] = "Такси"
     return apps
 end
 
@@ -657,7 +657,7 @@ function MB.HandleAction(ply, act)
         MB.PushData(ply, "forum")
         return
     elseif op=="taxi_call"then
-        if not(tier and tier.apps)then return end;local ok,msg=false,"Модуль такси не загружен";if GRM.Jobs and GRM.Jobs.CallTaxi then ok,msg=GRM.Jobs.CallTaxi(ply,"mobile")end;if not ok and MB.ServerNotify then MB.ServerNotify(ply,tostring(msg or"Не удалось вызвать такси"))end;MB.PushData(ply,"taxi");return
+        if not tier then return end;local ok,msg=false,"Модуль такси не загружен";if GRM.Jobs and GRM.Jobs.CallTaxi then ok,msg=GRM.Jobs.CallTaxi(ply,"mobile")end;if not ok and MB.ServerNotify then MB.ServerNotify(ply,tostring(msg or"Не удалось вызвать такси"))end;MB.PushData(ply,"taxi");return
     elseif op=="taxi_cancel"then
         local ok,msg=false,"Модуль такси не загружен";if GRM.Jobs and GRM.Jobs.CancelTaxi then ok,msg=GRM.Jobs.CancelTaxi(ply,"mobile")end;if not ok and MB.ServerNotify then MB.ServerNotify(ply,tostring(msg or"Нет заказа"))end;MB.PushData(ply,"taxi");return
     elseif op=="taxi_query"then MB.PushData(ply,"taxi");return
@@ -1021,8 +1021,9 @@ if CLIENT then
         if t.contacts then out[#out+1] = { id="contacts", name="Контакты" } end
         if t.notes then out[#out+1] = { id="notes", name="Заметки" } end
         if t.apps then
-            out[#out+1]={id="jobs",name="Биржа"};out[#out+1]={id="fac",name="Моя фракция"};out[#out+1]={id="forum",name="Форум"};out[#out+1]={id="taxi",name="Такси"}
+            out[#out+1]={id="jobs",name="Биржа"};out[#out+1]={id="fac",name="Моя фракция"};out[#out+1]={id="forum",name="Форум"}
         end
+        out[#out+1] = { id="taxi", name="Такси" }
         out[#out+1] = { id="calc", name="Калькулятор" }
         out[#out+1] = { id="power", name="Управление" }
         return out

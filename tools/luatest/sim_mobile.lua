@@ -299,8 +299,8 @@ end
 ok(allReg, "все 7 трубок зарегистрированы (mobile_open + модель)")
 ok(MB.Tiers.crappy.sms == false and MB.Tiers.tinkle.apps == true, "флаги: crappy без SMS, tinkle с приложениями")
 ok(MB.Tiers.crappy.minQ > MB.Tiers.whiz_gold.minQ, "порог сигнала: дешёвый требовательнее (0.35 vs 0.10)")
-ok(#MB.AvailableApps("crappy") == 2, "crappy: только Телефон+Калькулятор")
-ok(#MB.AvailableApps("badger") == 4, "badger: +SMS+Контакты")
+ok(#MB.AvailableApps("crappy")==3,"crappy: Телефон+Калькулятор+Такси")
+ok(#MB.AvailableApps("badger")==5,"badger: +SMS+Контакты+Такси")
 ok(#MB.AvailableApps("tinkle")==9,"tinkle: все приложения + Такси")
 
 -- ══ 2. Номера и сигнал ════════════════════════════════════════════════
