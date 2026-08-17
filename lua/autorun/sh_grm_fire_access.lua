@@ -423,57 +423,42 @@ if CLIENT then
         net.Start(NET_NREQ) net.SendToServer()
     end)
 
-    local function installTab()
-        if not OpenAdminMenu or AM._wrapped then return end
-        AM._old = OpenAdminMenu
-        AM._wrapped = true
-        OpenAdminMenu = function(...)
-            if AM._old then AM._old(...) end
-            timer.Simple(0.35, function()
-                if not ui or not IsValid(ui.currentFrame) then return end
-                local sheet
-                for _, ch in ipairs(ui.currentFrame:GetChildren()) do
-                    if ch.ClassName == "DPropertySheet" then sheet = ch break end
-                end
-                if not IsValid(sheet) then return end
-                for _, item in ipairs(sheet.Items or {}) do
-                    if item.Tab and item.Tab:GetText() == "Пожарные" then return end
-                end
-                local panel = vgui.Create("DPanel")
-                panel:SetPaintBackground(false)
-                local lab = vgui.Create("DLabel", panel)
-                lab:Dock(TOP) lab:SetTall(70) lab:DockMargin(12, 12, 12, 4) lab:SetWrap(true)
-                lab:SetText("Доступ к рукавам/гидрантам и пульт оповещения. Имя фракции в коде не ищем — отметьте галочками.")
-                lab:SetTextColor(Color(220, 220, 230))
-                local b = mkBtn(panel, "Открыть доступ пожарных", THEME.accent)
-                b:Dock(TOP) b:SetTall(36) b:DockMargin(12, 8, 12, 0)
-                b.DoClick = AM.OpenMenu
-                local b2 = mkBtn(panel, "Фракции оповещения о пожаре", THEME.green)
-                b2:Dock(TOP) b2:SetTall(36) b2:DockMargin(12, 8, 12, 0)
-                b2.DoClick = function() net.Start(NET_NREQ) net.SendToServer() end
-                local b3 = mkBtn(panel, "Пожарные машины (список ТС)", Color(70, 140, 220))
-                b3:Dock(TOP) b3:SetTall(36) b3:DockMargin(12, 8, 12, 0)
-                b3.DoClick = function() RunConsoleCommand("grm_fire_trucks") end
-                local b4 = mkBtn(panel, "Очаги и таймеры", Color(220, 110, 50))
-                b4:Dock(TOP) b4:SetTall(36) b4:DockMargin(12, 8, 12, 0)
-                b4.DoClick = function() RunConsoleCommand("grm_fire_spots") end
-                local b5 = mkBtn(panel, "Журнал тушения /fire_log", Color(60, 180, 130))
-                b5:Dock(TOP) b5:SetTall(36) b5:DockMargin(12, 8, 12, 0)
-                b5.DoClick = function() RunConsoleCommand("grm_fire_log") end
-                sheet:AddSheet("Пожарные", panel, "icon16/fire.png")
-            end)
+    -- v18.08: вкладка встраивается штатным хуком меню организаций
+    -- (работает и в старом /factions, и в Unified UI). Раньше модуль
+    -- ПОДМЕНЯЛ глобальную OpenAdminMenu и искал DPropertySheet внутри окна —
+    -- в новом меню такого листа нет, поэтому вкладка просто не появлялась.
+    local function installTab(sheet)
+        if not IsValid(sheet) then return end
+        for _, item in ipairs(sheet.Items or {}) do
+            if item.Tab and item.Tab:GetText() == "Пожарные" then return end
         end
+        local panel = vgui.Create("DPanel")
+        panel:SetPaintBackground(false)
+        local lab = vgui.Create("DLabel", panel)
+        lab:Dock(TOP) lab:SetTall(70) lab:DockMargin(12, 12, 12, 4) lab:SetWrap(true)
+        lab:SetText("Доступ к рукавам/гидрантам и пульт оповещения. Имя фракции в коде не ищем — отметьте галочками.")
+        lab:SetTextColor(Color(220, 220, 230))
+        local b = mkBtn(panel, "Открыть доступ пожарных", THEME.accent)
+        b:Dock(TOP) b:SetTall(36) b:DockMargin(12, 8, 12, 0)
+        b.DoClick = AM.OpenMenu
+        local b2 = mkBtn(panel, "Фракции оповещения о пожаре", THEME.green)
+        b2:Dock(TOP) b2:SetTall(36) b2:DockMargin(12, 8, 12, 0)
+        b2.DoClick = function() net.Start(NET_NREQ) net.SendToServer() end
+        local b3 = mkBtn(panel, "Пожарные машины (список ТС)", Color(70, 140, 220))
+        b3:Dock(TOP) b3:SetTall(36) b3:DockMargin(12, 8, 12, 0)
+        b3.DoClick = function() RunConsoleCommand("grm_fire_trucks") end
+        local b4 = mkBtn(panel, "Очаги и таймеры", Color(220, 110, 50))
+        b4:Dock(TOP) b4:SetTall(36) b4:DockMargin(12, 8, 12, 0)
+        b4.DoClick = function() RunConsoleCommand("grm_fire_spots") end
+        local b5 = mkBtn(panel, "Журнал тушения /fire_log", Color(60, 180, 130))
+        b5:Dock(TOP) b5:SetTall(36) b5:DockMargin(12, 8, 12, 0)
+        b5.DoClick = function() RunConsoleCommand("grm_fire_log") end
+        sheet:AddSheet("Пожарные", panel, "icon16/fire.png")
     end
     -- Вкладка встраивается в меню фракций, как только оно появится.
     -- Раньше здесь крутился собственный опрашивающий таймер (0.5 с × 24) —
     -- и так в шести модулях доступов. Теперь единое ожидание условия
     -- GRM.Boot.When: одна проверка на всех, с таймаутом и без «вечных» реп.
-    if GRM.Boot and GRM.Boot.When then
-        GRM.Boot.When("fire.access.tab", function() return OpenAdminMenu ~= nil end, installTab,
-            { interval = 0.5, timeout = 60 })
-    else
-        timer.Create("GRM_FireAccess_WaitFactions", 0.5, 24, installTab)
-        timer.Simple(1, installTab)
-    end
+    hook.Add("GRM_FactionsAdmin_BuildTabs", "GRM_FireAccess_Tab", installTab)
     print("[GRM Fire] Access client loaded")
 end

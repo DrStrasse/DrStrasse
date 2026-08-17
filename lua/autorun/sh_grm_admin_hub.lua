@@ -28,7 +28,7 @@ GRM = GRM or {}
 GRM.AdminHub = GRM.AdminHub or {}
 local HB = GRM.AdminHub
 
-HB.Version = "1.2.0"
+HB.Version = "1.3.0"
 
 local NET_GET  = "GRM_HUB_Get"
 local NET_DATA = "GRM_HUB_Data"
@@ -51,6 +51,13 @@ local LAUNCH_WHITELIST = {
     ["grm_chips"] = true,
     ["/doc_admin"] = true,
     ["/doccfg"] = true,
+    -- Пожарная служба (заказ владельца 18.08: в хабе не было ни одной кнопки)
+    ["/fire_access"] = true, ["/fire_spots"] = true, ["/fire_log"] = true,
+    ["/fire_trucks"] = true,
+    ["grm_fire_access"] = true, ["grm_fire_notify"] = true, ["grm_fire_spots"] = true,
+    ["grm_fire_log"] = true, ["grm_fire_trucks"] = true,
+    -- Торговцы и транспорт
+    ["grm_phone_vendor_reload"] = true, ["grm_vendor_load"] = true,
 }
 
 -- ============================================================
@@ -751,6 +758,11 @@ if CLIENT then
         { "Модели фракций", "/models_admin", "Фракционные модели и превью" },
         { "Оружие фракций", "/weapons_admin", "Выдача оружия по фракциям" },
         { "Маски", "/mask_admin", "Настройки масок" },
+        { "Пожарные: доступы", "/fire_access", "Кто пользуется рукавами, гидрантами и пультом оповещения о пожаре" },
+        { "Пожарные: очаги и таймеры", "grm_fire_spots", "Точки возгорания на карте, интервалы и настройки очагов" },
+        { "Пожарные: журнал тушения", "grm_fire_log", "История вызовов и тушений" },
+        { "Пожарные: машины", "grm_fire_trucks", "Список пожарных ТС, насосы и рукава" },
+        { "Пожарные: оповещение фракций", "grm_fire_notify", "Кому приходит сигнал о пожаре" },
         { "Логистика", "/logistics_admin", "Склады и логистика фракций" },
         { "Магазин транспорта", "/vshop_admin", "Цены доступа к транспорту" },
         { "Скан транспорта", "/scanvehicles", "Все машины на карте" },
@@ -926,6 +938,16 @@ if CLIENT then
         if not LAUNCH_WHITELIST[command] then
             notification.AddLegacy("Команда недоступна в едином меню", NOTIFY_ERROR, 3)
             surface.PlaySound("buttons/button10.wav")
+            return
+        end
+
+        -- Пункт может быть КОНСОЛЬНОЙ командой (grm_fire_spots и т.п.), а не
+        -- чат-командой: такие запускаем локально, иначе сервер получал бы
+        -- бессмысленный PlayerSay и кнопка «ничего не делала».
+        if command:sub(1, 1) ~= "/" and command:sub(1, 1) ~= "!" then
+            RunConsoleCommand(command)
+            chat.AddText(C.acc, "[Хаб] ", C.green, "Открыто: ", C.text, command)
+            surface.PlaySound("buttons/button14.wav")
             return
         end
 

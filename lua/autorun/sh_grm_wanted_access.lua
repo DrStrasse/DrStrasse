@@ -511,56 +511,41 @@ if CLIENT then
         end
     end)
 
-    local function installFactionsTab()
-        if not OpenAdminMenu or AM._wrapped then return end
-        AM._old = OpenAdminMenu
-        AM._wrapped = true
-        OpenAdminMenu = function(...)
-            if AM._old then AM._old(...) end
-            timer.Simple(0.3, function()
-                if not ui or not IsValid(ui.currentFrame) then return end
-                local sheet
-                for _, child in ipairs(ui.currentFrame:GetChildren()) do
-                    if child.ClassName == "DPropertySheet" then sheet = child break end
-                end
-                if not IsValid(sheet) then return end
-                for _, item in ipairs(sheet.Items or {}) do
-                    if item.Tab and item.Tab:GetText() == "Розыск" then return end
-                end
-                local panel = vgui.Create("DPanel")
-                panel:SetPaintBackground(false)
-                local label = vgui.Create("DLabel", panel)
-                label:Dock(TOP)
-                label:SetTall(70)
-                label:DockMargin(12, 12, 12, 4)
-                label:SetWrap(true)
-                label:SetText("Доступ фракций / рангов / отделов / SteamID к базе розыска: просмотр (/wanted) и редактирование (статьи, уровни).")
-                label:SetTextColor(Color(220, 220, 230))
-                local button = mkBtn(panel, "Открыть настройку доступа розыска", THEME.accent)
-                button:Dock(TOP)
-                button:SetTall(36)
-                button:DockMargin(12, 8, 12, 0)
-                button.DoClick = AM.OpenMenu
-                local tip = vgui.Create("DLabel", panel)
-                tip:Dock(TOP)
-                tip:SetTall(36)
-                tip:DockMargin(12, 12, 12, 0)
-                tip:SetText("/wanted_access  ·  grm_wanted_access  ·  /wanted — база")
-                tip:SetTextColor(Color(160, 170, 180))
-                sheet:AddSheet("Розыск", panel, "icon16/exclamation.png")
-            end)
+    -- v18.08: вкладка встраивается штатным хуком меню организаций
+    -- (работает и в старом /factions, и в Unified UI). Раньше модуль
+    -- ПОДМЕНЯЛ глобальную OpenAdminMenu и искал DPropertySheet внутри окна —
+    -- в новом меню такого листа нет, поэтому вкладка просто не появлялась.
+    local function installFactionsTab(sheet)
+        if not IsValid(sheet) then return end
+        for _, item in ipairs(sheet.Items or {}) do
+            if item.Tab and item.Tab:GetText() == "Розыск" then return end
         end
+        local panel = vgui.Create("DPanel")
+        panel:SetPaintBackground(false)
+        local label = vgui.Create("DLabel", panel)
+        label:Dock(TOP)
+        label:SetTall(70)
+        label:DockMargin(12, 12, 12, 4)
+        label:SetWrap(true)
+        label:SetText("Доступ фракций / рангов / отделов / SteamID к базе розыска: просмотр (/wanted) и редактирование (статьи, уровни).")
+        label:SetTextColor(Color(220, 220, 230))
+        local button = mkBtn(panel, "Открыть настройку доступа розыска", THEME.accent)
+        button:Dock(TOP)
+        button:SetTall(36)
+        button:DockMargin(12, 8, 12, 0)
+        button.DoClick = AM.OpenMenu
+        local tip = vgui.Create("DLabel", panel)
+        tip:Dock(TOP)
+        tip:SetTall(36)
+        tip:DockMargin(12, 12, 12, 0)
+        tip:SetText("/wanted_access  ·  grm_wanted_access  ·  /wanted — база")
+        tip:SetTextColor(Color(160, 170, 180))
+        sheet:AddSheet("Розыск", panel, "icon16/exclamation.png")
     end
     -- Вкладка встраивается в меню фракций, как только оно появится.
     -- Раньше здесь крутился собственный опрашивающий таймер (0.5 с × 24) —
     -- и так в шести модулях доступов. Теперь единое ожидание условия
     -- GRM.Boot.When: одна проверка на всех, с таймаутом и без «вечных» реп.
-    if GRM.Boot and GRM.Boot.When then
-        GRM.Boot.When("wanted.access.tab", function() return OpenAdminMenu ~= nil end, installFactionsTab,
-            { interval = 0.5, timeout = 60 })
-    else
-        timer.Create("GRM_WantedAccess_WaitFactions", 0.5, 24, installFactionsTab)
-        timer.Simple(1, installFactionsTab)
-    end
+    hook.Add("GRM_FactionsAdmin_BuildTabs", "GRM_WantedAccess_Tab", installFactionsTab)
     print("[GRM Wanted] Access client loaded")
 end

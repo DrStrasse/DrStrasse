@@ -722,70 +722,51 @@ if CLIENT then
     end)
 
     -- Вкладка в /factions
-    local function installFactionsMenuIntegration()
-        if not OpenAdminMenu or AM._wrappedOpenAdminMenu then return end
-        AM._oldOpenAdminMenu = OpenAdminMenu
-        AM._wrappedOpenAdminMenu = true
+    -- v18.08: вкладка встраивается штатным хуком меню организаций
+    -- (работает и в старом /factions, и в Unified UI). Раньше модуль
+    -- ПОДМЕНЯЛ глобальную OpenAdminMenu и искал DPropertySheet внутри окна —
+    -- в новом меню такого листа нет, поэтому вкладка просто не появлялась.
+    local function installFactionsMenuIntegration(sheet)
+        if not IsValid(sheet) then return end
 
-        OpenAdminMenu = function(...)
-            if AM._oldOpenAdminMenu then AM._oldOpenAdminMenu(...) end
-
-            timer.Simple(0.3, function()
-                if not ui or not IsValid(ui.currentFrame) then return end
-
-                local sheet
-                for _, child in ipairs(ui.currentFrame:GetChildren()) do
-                    if child.ClassName == "DPropertySheet" then sheet = child break end
-                end
-                if not IsValid(sheet) then return end
-
-                for _, item in ipairs(sheet.Items or {}) do
-                    if item.Tab and (item.Tab:GetText() == "CCTV" or item.Tab:GetText() == "Видеонаблюдение") then
-                        return
-                    end
-                end
-
-                local panel = vgui.Create("DPanel")
-                panel:SetPaintBackground(false)
-
-                local label = vgui.Create("DLabel", panel)
-                label:Dock(TOP)
-                label:SetTall(70)
-                label:DockMargin(12, 12, 12, 4)
-                label:SetWrap(true)
-                label:SetText("Доступ фракций, рангов, отделов и SteamID к системе видеонаблюдения: мониторы, live-view, настройка камер и серверов сети.")
-                label:SetTextColor(Color(220, 220, 230))
-
-                local button = makeButton(panel, "Открыть настройку доступа CCTV", THEME.accent)
-                button:Dock(TOP)
-                button:SetTall(36)
-                button:DockMargin(12, 8, 12, 0)
-                button.DoClick = AM.OpenMenu
-
-                local tip = vgui.Create("DLabel", panel)
-                tip:Dock(TOP)
-                tip:SetTall(40)
-                tip:DockMargin(12, 12, 12, 0)
-                tip:SetWrap(true)
-                tip:SetText("Также: /cctv_access  ·  grm_cctv_access  ·  grm_cctv_access_debug <ник>")
-                tip:SetTextColor(Color(160, 170, 180))
-
-                sheet:AddSheet("CCTV", panel, "icon16/camera.png")
-            end)
+        for _, item in ipairs(sheet.Items or {}) do
+            if item.Tab and (item.Tab:GetText() == "CCTV" or item.Tab:GetText() == "Видеонаблюдение") then
+                return
+            end
         end
-    end
 
+        local panel = vgui.Create("DPanel")
+        panel:SetPaintBackground(false)
+
+        local label = vgui.Create("DLabel", panel)
+        label:Dock(TOP)
+        label:SetTall(70)
+        label:DockMargin(12, 12, 12, 4)
+        label:SetWrap(true)
+        label:SetText("Доступ фракций, рангов, отделов и SteamID к системе видеонаблюдения: мониторы, live-view, настройка камер и серверов сети.")
+        label:SetTextColor(Color(220, 220, 230))
+
+        local button = makeButton(panel, "Открыть настройку доступа CCTV", THEME.accent)
+        button:Dock(TOP)
+        button:SetTall(36)
+        button:DockMargin(12, 8, 12, 0)
+        button.DoClick = AM.OpenMenu
+
+        local tip = vgui.Create("DLabel", panel)
+        tip:Dock(TOP)
+        tip:SetTall(40)
+        tip:DockMargin(12, 12, 12, 0)
+        tip:SetWrap(true)
+        tip:SetText("Также: /cctv_access  ·  grm_cctv_access  ·  grm_cctv_access_debug <ник>")
+        tip:SetTextColor(Color(160, 170, 180))
+
+        sheet:AddSheet("CCTV", panel, "icon16/camera.png")
+    end
     -- Вкладка встраивается в меню фракций, как только оно появится.
     -- Раньше здесь крутился собственный опрашивающий таймер (0.5 с × 24) —
     -- и так в шести модулях доступов. Теперь единое ожидание условия
     -- GRM.Boot.When: одна проверка на всех, с таймаутом и без «вечных» реп.
-    if GRM.Boot and GRM.Boot.When then
-        GRM.Boot.When("cctv.access.tab", function() return OpenAdminMenu ~= nil end, installFactionsMenuIntegration,
-            { interval = 0.5, timeout = 60 })
-    else
-        timer.Create("GRM_CCTVAccess_WaitFactionsMenu", 0.5, 24, installFactionsMenuIntegration)
-        timer.Simple(1, installFactionsMenuIntegration)
-    end
+    hook.Add("GRM_FactionsAdmin_BuildTabs", "GRM_CCTVAccess_Tab", installFactionsMenuIntegration)
 
     print("[GRM CCTV] Access Manager client loaded")
 end

@@ -916,61 +916,45 @@ if CLIENT then
         end
     end)
 
-    local function installFactionsTab()
-        if not OpenAdminMenu or AM._wrappedOpenAdminMenu then return end
-        AM._oldOpenAdminMenu = OpenAdminMenu
-        AM._wrappedOpenAdminMenu = true
-        OpenAdminMenu = function(...)
-            if AM._oldOpenAdminMenu then AM._oldOpenAdminMenu(...) end
-            timer.Simple(0.3, function()
-                if not ui or not IsValid(ui.currentFrame) then return end
-                local sheet
-                for _, child in ipairs(ui.currentFrame:GetChildren()) do
-                    if child.ClassName == "DPropertySheet" then sheet = child break end
-                end
-                if not IsValid(sheet) then return end
-                for _, item in ipairs(sheet.Items or {}) do
-                    if item.Tab and (item.Tab:GetText() == "Двери и Ордера" or item.Tab:GetText() == "Двери") then return end
-                end
-                local panel = vgui.Create("DPanel")
-                panel:SetPaintBackground(false)
-
-                local label = vgui.Create("DLabel", panel)
-                label:Dock(TOP)
-                label:SetTall(86)
-                label:DockMargin(12, 12, 12, 4)
-                label:SetWrap(true)
-                label:SetText("Три контура дверей: ордер (/warrant + ключ на запертую дверь хозяина), таран (выбить, не ключ на E), управление (/door_access и категории). Назначение дверей карты в R — только суперадмин. Розыск и штрафы настраиваются отдельно.")
-                label:SetTextColor(Color(220, 220, 230))
-
-                local button = mkBtn(panel, "Настроить доступ: ордера, таран, управление", CUI.accent)
-                button:Dock(TOP)
-                button:SetTall(38)
-                button:DockMargin(12, 8, 12, 0)
-                button.DoClick = function() AM.OpenMenu() end
-
-                local btnCats = mkBtn(panel, "Категории фракций (владельцы дверей)", CUI.green)
-                btnCats:Dock(TOP)
-                btnCats:SetTall(38)
-                btnCats:DockMargin(12, 8, 12, 0)
-                btnCats.DoClick = function() AM.OpenMenu("Категории") end
-
-                sheet:AddSheet("Двери и Ордера", panel, "icon16/door.png")
-            end)
+    -- v18.08: вкладка встраивается штатным хуком меню организаций
+    -- (работает и в старом /factions, и в Unified UI). Раньше модуль
+    -- ПОДМЕНЯЛ глобальную OpenAdminMenu и искал DPropertySheet внутри окна —
+    -- в новом меню такого листа нет, поэтому вкладка просто не появлялась.
+    local function installFactionsTab(sheet)
+        if not IsValid(sheet) then return end
+        for _, item in ipairs(sheet.Items or {}) do
+            if item.Tab and (item.Tab:GetText() == "Двери и Ордера" or item.Tab:GetText() == "Двери") then return end
         end
-    end
+        local panel = vgui.Create("DPanel")
+        panel:SetPaintBackground(false)
 
+        local label = vgui.Create("DLabel", panel)
+        label:Dock(TOP)
+        label:SetTall(86)
+        label:DockMargin(12, 12, 12, 4)
+        label:SetWrap(true)
+        label:SetText("Три контура дверей: ордер (/warrant + ключ на запертую дверь хозяина), таран (выбить, не ключ на E), управление (/door_access и категории). Назначение дверей карты в R — только суперадмин. Розыск и штрафы настраиваются отдельно.")
+        label:SetTextColor(Color(220, 220, 230))
+
+        local button = mkBtn(panel, "Настроить доступ: ордера, таран, управление", CUI.accent)
+        button:Dock(TOP)
+        button:SetTall(38)
+        button:DockMargin(12, 8, 12, 0)
+        button.DoClick = function() AM.OpenMenu() end
+
+        local btnCats = mkBtn(panel, "Категории фракций (владельцы дверей)", CUI.green)
+        btnCats:Dock(TOP)
+        btnCats:SetTall(38)
+        btnCats:DockMargin(12, 8, 12, 0)
+        btnCats.DoClick = function() AM.OpenMenu("Категории") end
+
+        sheet:AddSheet("Двери и Ордера", panel, "icon16/door.png")
+    end
     -- Вкладка встраивается в меню фракций, как только оно появится.
     -- Раньше здесь крутился собственный опрашивающий таймер (0.5 с × 24) —
     -- и так в шести модулях доступов. Теперь единое ожидание условия
     -- GRM.Boot.When: одна проверка на всех, с таймаутом и без «вечных» реп.
-    if GRM.Boot and GRM.Boot.When then
-        GRM.Boot.When("doors.access.tab", function() return OpenAdminMenu ~= nil end, installFactionsTab,
-            { interval = 0.5, timeout = 60 })
-    else
-        timer.Create("GRM_DoorAccess_WaitFactions", 0.5, 24, installFactionsTab)
-        timer.Simple(1, installFactionsTab)
-    end
+    hook.Add("GRM_FactionsAdmin_BuildTabs", "GRM_DoorsAccess_Tab", installFactionsTab)
 
     print("[GRM Doors] Менеджер доступа к дверям v" .. AM.Version .. " загружен (клиент)")
 end

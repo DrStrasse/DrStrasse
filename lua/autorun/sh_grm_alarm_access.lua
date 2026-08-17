@@ -329,45 +329,30 @@ if CLIENT then
         if msg == "/alarm_access" or msg == "!alarm_access" then AM.OpenMenu() return true end
     end)
 
-    local function installTab()
-        if not OpenAdminMenu or AM._wrapped then return end
-        AM._old = OpenAdminMenu
-        AM._wrapped = true
-        OpenAdminMenu = function(...)
-            if AM._old then AM._old(...) end
-            timer.Simple(0.35, function()
-                if not ui or not IsValid(ui.currentFrame) then return end
-                local sheet
-                for _, ch in ipairs(ui.currentFrame:GetChildren()) do
-                    if ch.ClassName == "DPropertySheet" then sheet = ch break end
-                end
-                if not IsValid(sheet) then return end
-                for _, item in ipairs(sheet.Items or {}) do
-                    if item.Tab and item.Tab:GetText() == "Сигнализация" then return end
-                end
-                local panel = vgui.Create("DPanel")
-                panel:SetPaintBackground(false)
-                local lab = vgui.Create("DLabel", panel)
-                lab:Dock(TOP) lab:SetTall(60) lab:DockMargin(12, 12, 12, 4) lab:SetWrap(true)
-                lab:SetText("Доступ к системе сигнализации: терминалы (просмотр логов/статуса) и управление режимами (выкл / охрана / пассив).")
-                lab:SetTextColor(Color(220, 220, 230))
-                local b = mkBtn(panel, "Открыть доступ сигнализации", THEME.accent)
-                b:Dock(TOP) b:SetTall(36) b:DockMargin(12, 8, 12, 0)
-                b.DoClick = AM.OpenMenu
-                sheet:AddSheet("Сигнализация", panel, "icon16/bell.png")
-            end)
+    -- v18.08: вкладка встраивается штатным хуком меню организаций
+    -- (работает и в старом /factions, и в Unified UI). Раньше модуль
+    -- ПОДМЕНЯЛ глобальную OpenAdminMenu и искал DPropertySheet внутри окна —
+    -- в новом меню такого листа нет, поэтому вкладка просто не появлялась.
+    local function installTab(sheet)
+        if not IsValid(sheet) then return end
+        for _, item in ipairs(sheet.Items or {}) do
+            if item.Tab and item.Tab:GetText() == "Сигнализация" then return end
         end
+        local panel = vgui.Create("DPanel")
+        panel:SetPaintBackground(false)
+        local lab = vgui.Create("DLabel", panel)
+        lab:Dock(TOP) lab:SetTall(60) lab:DockMargin(12, 12, 12, 4) lab:SetWrap(true)
+        lab:SetText("Доступ к системе сигнализации: терминалы (просмотр логов/статуса) и управление режимами (выкл / охрана / пассив).")
+        lab:SetTextColor(Color(220, 220, 230))
+        local b = mkBtn(panel, "Открыть доступ сигнализации", THEME.accent)
+        b:Dock(TOP) b:SetTall(36) b:DockMargin(12, 8, 12, 0)
+        b.DoClick = AM.OpenMenu
+        sheet:AddSheet("Сигнализация", panel, "icon16/bell.png")
     end
     -- Вкладка встраивается в меню фракций, как только оно появится.
     -- Раньше здесь крутился собственный опрашивающий таймер (0.5 с × 24) —
     -- и так в шести модулях доступов. Теперь единое ожидание условия
     -- GRM.Boot.When: одна проверка на всех, с таймаутом и без «вечных» реп.
-    if GRM.Boot and GRM.Boot.When then
-        GRM.Boot.When("alarm.access.tab", function() return OpenAdminMenu ~= nil end, installTab,
-            { interval = 0.5, timeout = 60 })
-    else
-        timer.Create("GRM_AlarmAccess_WaitFactions", 0.5, 24, installTab)
-        timer.Simple(1, installTab)
-    end
+    hook.Add("GRM_FactionsAdmin_BuildTabs", "GRM_AlarmAccess_Tab", installTab)
     print("[GRM Alarm] Access client loaded")
 end

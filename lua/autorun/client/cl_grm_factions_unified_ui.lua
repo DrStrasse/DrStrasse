@@ -471,14 +471,72 @@ function UI.Open(requestedFaction)
     body:DockMargin(0, 46, 0, 0)
     body:SetPaintBackground(false)
 
-    local sidebar = vgui.Create("DPanel", body)
-    sidebar:Dock(LEFT)
-    sidebar:SetWide(220)
-    sidebar.Paint = function(self, w, h)
+    -- Боковое меню: список разделов растёт (навесные вкладки модулей), поэтому
+    -- он ПРОКРУЧИВАЕТСЯ и при переполнении автоматически становится в два
+    -- столбца — раньше нижние разделы уходили за нижнюю кромку окна.
+    local sidebarHost = vgui.Create("DPanel", body)
+    sidebarHost:Dock(LEFT)
+    sidebarHost:SetWide(228)
+    sidebarHost.Paint = function(self, w, h)
         draw.RoundedBoxEx(0, 0, 0, w, h, C.sidebar, false, false, true, false)
         surface.SetDrawColor(C.border.r, C.border.g, C.border.b, 80)
         surface.DrawLine(w - 1, 0, w - 1, h)
     end
+
+    local sidebarScroll = vgui.Create("DScrollPanel", sidebarHost)
+    sidebarScroll:Dock(FILL)
+    local sbar = sidebarScroll:GetVBar()
+    if IsValid(sbar) then
+        sbar:SetWide(6)
+        sbar.Paint = function(_, w, h) draw.RoundedBox(3, 0, 0, w, h, Color(18, 22, 32)) end
+        sbar.btnUp.Paint, sbar.btnDown.Paint = function() end, function() end
+        sbar.btnGrip.Paint = function(_, w, h) draw.RoundedBox(3, 0, 0, w, h, C.borderLight) end
+    end
+
+    local sidebar = vgui.Create("DPanel", sidebarScroll)
+    sidebar:Dock(TOP)
+    sidebar:SetTall(10)
+    sidebar:SetPaintBackground(false)
+
+    -- Раскладка кнопок: один столбец, а если не помещается по высоте — два.
+    local navRows = {}
+    local function relayoutNav()
+        if not IsValid(sidebar) then return end
+        local visible = {}
+        for _, btn in ipairs(navRows) do
+            if IsValid(btn) then visible[#visible + 1] = btn end
+        end
+        local count = #visible
+        if count == 0 then sidebar:SetTall(10) return end
+
+        local hostH = math.max(120, sidebarHost:GetTall())
+        local rowH, gap = 38, 4
+        local perColumn = math.floor((hostH - 8) / (rowH + gap))
+        local columns = (perColumn > 0 and count > perColumn) and 2 or 1
+
+        if columns == 1 then
+            sidebarHost:SetWide(228)
+            local w = sidebar:GetWide() - 12
+            for i, btn in ipairs(visible) do
+                btn:SetPos(6, (i - 1) * (rowH + gap) + 4)
+                btn:SetSize(w, rowH)
+            end
+            sidebar:SetTall(count * (rowH + gap) + 8)
+        else
+            sidebarHost:SetWide(360)
+            local colW = math.floor((sidebar:GetWide() - 18) / 2)
+            local rows = math.ceil(count / 2)
+            for i, btn in ipairs(visible) do
+                local col = (i <= rows) and 0 or 1
+                local row = (i <= rows) and (i - 1) or (i - rows - 1)
+                btn:SetPos(6 + col * (colW + 6), row * (rowH + gap) + 4)
+                btn:SetSize(colW, rowH)
+            end
+            sidebar:SetTall(rows * (rowH + gap) + 8)
+        end
+    end
+    sidebar.PerformLayout = function() relayoutNav() end
+    sidebarHost.PerformLayout = function() relayoutNav() end
 
     local content = vgui.Create("DPanel", body)
     content:Dock(FILL)
@@ -580,10 +638,9 @@ function UI.Open(requestedFaction)
     local function addTabBtn(tabKey, label, iconPath, builderFn)
         if not tabVisible(tabKey) then return end
         local btn = vgui.Create("DButton", sidebar)
-        btn:Dock(TOP)
         btn:SetTall(38)
-        btn:DockMargin(6, 4, 6, 0)
         btn:SetText("")
+        navRows[#navRows + 1] = btn
         btn.isActive = false
         btn.builder = builderFn
 
@@ -608,6 +665,7 @@ function UI.Open(requestedFaction)
 
         btn.DoClick = function() selectTab(tabKey, builderFn) end
         tabButtons[tabKey] = btn
+        relayoutNav()
     end
 
     -- ════════════ 1. ОБЗОР ════════════
