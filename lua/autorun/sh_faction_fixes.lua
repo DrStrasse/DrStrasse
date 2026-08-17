@@ -1237,12 +1237,12 @@ if SERVER then
 
             factionName = factionName or "Гос. новости"
             f = f or {}
-            local tag=GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(factionName)or factionName
-            local sid = ply:SteamID()
-            local sid64 = ply:SteamID64()
-            local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
-            local member = f.Members and GRM.Identity.FactionMember(f, ply)
-            local role = (member and member.Role) or f.LeaderRoleName or "Лидер"
+            local tag = GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(factionName) or factionName
+            local rpName = ply:GetNWString("GRM_RPName", "")
+            if rpName == "" then rpName = ply:Nick() end
+            local member = f.Members and GRM.Identity and GRM.Identity.FactionMember and GRM.Identity.FactionMember(f, ply)
+            local roleKey = (member and member.Role) or f.LeaderRoleName or "Лидер"
+            local role = GRM.Factions and GRM.Factions.RoleDisplayName and GRM.Factions.RoleDisplayName(f, roleKey) or roleKey
             local color = f.Color or { r = 255, g = 200, b = 50 }
 
             net.Start("GNews_Message")
@@ -1250,17 +1250,58 @@ if SERVER then
                 net.WriteUInt(tonumber(color.g) or 200, 8)
                 net.WriteUInt(tonumber(color.b) or 50, 8)
                 net.WriteString(tag)
-                net.WriteString(ply:Nick())
+                net.WriteString(rpName)
                 net.WriteString(role)
                 net.WriteString(text)
             net.Broadcast()
 
-            file.Append("gnews_log.txt", os.date("%Y-%m-%d %H:%M:%S") .. " " .. ply:Nick() .. " (" .. ply:SteamID() .. "): " .. text .. "\n")
-            print("[GNews] [" .. tag .. "] " .. ply:Nick() .. " (" .. role .. "): " .. text)
+            file.Append("gnews_log.txt", os.date("%Y-%m-%d %H:%M:%S") .. " " .. rpName .. " (" .. ply:SteamID() .. "): " .. text .. "\n")
+            print("[GNews] [" .. tag .. "]\n" .. rpName .. " (" .. role .. "): " .. text)
         end)
     end
     installGNewsReceiver()
     timer.Create("FactionsExt_GNews_LeaderOnly_Reinstall", 1, 10, installGNewsReceiver)
+
+    hook.Add("PlayerSay", "FactionsExt_GNews_ServerChat", function(ply, text)
+        if not IsValid(ply) then return end
+        local trimmed = string.Trim(tostring(text or ""))
+        if string.sub(trimmed:lower(), 1, 7) == "/gnews " then
+            local msg = string.Trim(string.sub(trimmed, 8))
+            if msg ~= "" then
+                local ok, factionName, f = hasGNewsAccess(ply)
+                if not ok then
+                    if f and f.GNewsAccess == true then
+                        ply:PrintMessage(HUD_PRINTTALK, "[GNews] /gnews доступен только лидеру вашей фракции.")
+                    else
+                        ply:PrintMessage(HUD_PRINTTALK, "[GNews] У вашей фракции нет доступа к государственным новостям.")
+                    end
+                    return ""
+                end
+                factionName = factionName or "Гос. новости"
+                f = f or {}
+                local tag = GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(factionName) or factionName
+                local rpName = ply:GetNWString("GRM_RPName", "")
+                if rpName == "" then rpName = ply:Nick() end
+                local member = f.Members and GRM.Identity and GRM.Identity.FactionMember and GRM.Identity.FactionMember(f, ply)
+                local roleKey = (member and member.Role) or f.LeaderRoleName or "Лидер"
+                local role = GRM.Factions and GRM.Factions.RoleDisplayName and GRM.Factions.RoleDisplayName(f, roleKey) or roleKey
+                local color = f.Color or { r = 255, g = 200, b = 50 }
+
+                net.Start("GNews_Message")
+                    net.WriteUInt(tonumber(color.r) or 255, 8)
+                    net.WriteUInt(tonumber(color.g) or 200, 8)
+                    net.WriteUInt(tonumber(color.b) or 50, 8)
+                    net.WriteString(tag)
+                    net.WriteString(rpName)
+                    net.WriteString(role)
+                    net.WriteString(msg)
+                net.Broadcast()
+                file.Append("gnews_log.txt", os.date("%Y-%m-%d %H:%M:%S") .. " " .. rpName .. " (" .. ply:SteamID() .. "): " .. msg .. "\n")
+                print("[GNews] [" .. tag .. "]\n" .. rpName .. " (" .. role .. "): " .. msg)
+            end
+            return ""
+        end
+    end)
 
     timer.Simple(5, function()
         ensureFactionRuntimeDefaults()
@@ -3122,10 +3163,10 @@ if CLIENT then
         local role = net.ReadString()
         local message = net.ReadString()
         chat.AddText(
-            Color(255, 0, 0), "[Гос.новости] ",
-            Color(r, g, b), "[" .. tag .. "] ",
+            Color(255, 60, 60), "[Гос.Новости] ",
+            Color(r, g, b), "[" .. tag .. "]\n",
             Color(100, 200, 255), playerName,
-            Color(255, 255, 255), " (", role, "): ",
+            Color(230, 230, 230), " (" .. role .. "): ",
             Color(255, 255, 255), message
         )
     end)
