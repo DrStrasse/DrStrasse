@@ -92,8 +92,9 @@ ok(binder:find("local function inputBusy", 1, true) ~= nil and binder:find("lp:I
     "бинды молчат, пока открыт чат/консоль/меню")
 ok(binder:find("function BD.RebuildKeyMap", 1, true) ~= nil and binder:find("BD.KeyMap[key]", 1, true) ~= nil,
     "нажатие смотрит в таблицу клавиш, а не перебирает слоты")
-ok(binder:find('file.Write(BD.File, util.TableToJSON(arr, true))', 1, true) ~= nil,
-    "сохранение в data/grm_binder.json")
+ok(binder:find("file.Write(BD.File, util.TableToJSON({", 1, true) ~= nil
+    and binder:find("slots = arr,", 1, true) ~= nil,
+    "сохранение слотов и круга в data/grm_binder.json")
 ok(binder:find("▲", 1, true) ~= nil and binder:find("▼", 1, true) ~= nil,
     "порядок шагов меняется стрелками")
 
@@ -314,6 +315,77 @@ ok(factions:find("for memberSteam, _ in pairs(f.Members) do", 1, true) ~= nil,
     "получатели /frb — только свои сотрудники")
 ok(read("lua/autorun/sh_grm_f4menu.lua"):find("/frb текст", 1, true) ~= nil,
     "/frb добавлена в справку F4")
+
+
+print("\n=== 6. РАДИАЛЬНОЕ МЕНЮ (подобие селектора оружия) ===")
+ok(binder:find("BD.Radial = BD.Radial or { key = KEY_NONE, items = {} }", 1, true) ~= nil,
+    "состояние радиального меню: одна клавиша + список секторов")
+ok(binder:find("BD.MaxRadial = 12", 1, true) ~= nil, "до 12 секторов в круге")
+ok(binder:find("function BD.RadialPickFrom", 1, true) ~= nil, "выбор сектора по положению мыши")
+ok(binder:find("gui.EnableScreenClicker(true)", 1, true) ~= nil
+    and binder:find("gui.EnableScreenClicker(false)", 1, true) ~= nil,
+    "курсор освобождается на время удержания и возвращается обратно")
+ok(binder:find('hook.Add("PlayerButtonDown", "GRM_Binder_Radial"', 1, true) ~= nil
+    and binder:find('hook.Add("PlayerButtonUp", "GRM_Binder_RadialUp"', 1, true) ~= nil,
+    "держим клавишу — открыто, отпустили — выполняется")
+ok(binder:find('hook.Add("HUDPaint", "GRM_Binder_RadialDraw"', 1, true) ~= nil,
+    "круг рисуется только пока меню открыто")
+ok(binder:find("if not BD.RadialOpen then return end", 1, true) ~= nil,
+    "закрытое меню не тратит ни кадра")
+ok(binder:find("центр = отмена", 1, true) ~= nil, "центр круга — отмена")
+ok(binder:find("РАДИАЛЬНОЕ МЕНЮ — ОДНА КЛАВИША НА ВСЁ", 1, true) ~= nil,
+    "секция настройки в /binder")
+ok(binder:find("radial = { key = BD.Radial.key or KEY_NONE, items = BD.Radial.items or {} }", 1, true) ~= nil,
+    "настройки круга сохраняются в тот же файл")
+ok(binder:find("if istable(root.slots) then", 1, true) ~= nil,
+    "старый формат файла (просто массив слотов) продолжает читаться")
+
+-- Живая геометрия: угол курсора → номер сектора
+local pick = BD.RadialPickFrom
+ok(isfunction(pick), "функция выбора сектора доступна")
+if isfunction(pick) then
+    local cx, cy = 100, 100
+    ok(pick(cx, cy, 100, 0, 8, 40) == 1, "курсор вверх = первый сектор")
+    ok(pick(cx, cy, 200, 100, 8, 40) == 3, "курсор вправо = третий из восьми")
+    ok(pick(cx, cy, 100, 200, 8, 40) == 5, "курсор вниз = пятый из восьми")
+    ok(pick(cx, cy, 0, 100, 8, 40) == 7, "курсор влево = седьмой из восьми")
+    ok(pick(cx, cy, 105, 103, 8, 40) == 0, "курсор в центре = отмена")
+    ok(pick(cx, cy, 200, 100, 4, 40) == 2, "при четырёх секторах вправо = второй")
+end
+
+-- Открытие/закрытие и выполнение выбранной сцены
+local clicker = { state = false }
+_G.gui = _G.gui or {}
+_G.gui.EnableScreenClicker = function(v) clicker.state = v end
+_G.gui.MousePos = function() return 100, 0 end
+_G.gui.IsGameUIVisible = function() return false end
+_G.gui.IsConsoleVisible = function() return false end
+
+BD.Slots[5] = BD.BlankSlot(5)
+BD.Slots[5].name = "Радиальная сцена"
+BD.Slots[5].cooldown = 0
+BD.Slots[5].steps = { { mode = "chat", text = "/me проверка радиального меню", delay = 0, enabled = true } }
+BD.Radial.key = KEY_F
+BD.Radial.items = { 5 }
+BD.Save()
+
+sentSay = {}
+stub.time = 900
+_G.hook.Run("PlayerButtonDown", lp, KEY_F)
+ok(BD.RadialOpen == true and clicker.state == true, "удержание клавиши открыло круг и включило курсор")
+BD.RadialPick = 1
+_G.hook.Run("PlayerButtonUp", lp, KEY_F)
+ok(BD.RadialOpen == false and clicker.state == false, "отпускание закрыло круг и вернуло курсор")
+ok(sentSay[1] == "/me проверка радиального меню", "выбранная сцена выполнилась", sentSay[1])
+ok(#sentSay == 1, "обычный бинд на той же клавише не сработал заодно с кругом", #sentSay)
+
+-- отмена в центре ничего не запускает
+sentSay = {}
+stub.time = 1000
+_G.hook.Run("PlayerButtonDown", lp, KEY_F)
+BD.RadialPick = 0
+_G.hook.Run("PlayerButtonUp", lp, KEY_F)
+ok(#sentSay == 0, "отмена в центре не выполняет ничего")
 
 print(("\nBINDER + CHAT + FORMS: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)

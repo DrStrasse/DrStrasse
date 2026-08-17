@@ -254,6 +254,13 @@ BD.BlankStep = blankStep
 BD.Slots = BD.Slots or {}
 BD.KeyMap = BD.KeyMap or {}
 
+--[[ РАДИАЛЬНОЕ МЕНЮ (по образцу селектора оружия).
+     Одна клавиша на всё: держишь — появляется круг с секторами, мышью
+     наводишь нужный, отпускаешь — сцена играет. Сектора настраиваются
+     в /binder: в каждый кладётся любой существующий слот. ]]
+BD.MaxRadial = 12
+BD.Radial = BD.Radial or { key = KEY_NONE, items = {} }
+
 local function slotHasWork(slot)
     for _, st in ipairs(slot.steps or {}) do
         if st.enabled ~= false and string.Trim(tostring(st.text or "")) ~= "" then return true end
@@ -311,7 +318,30 @@ end
 function BD.Load()
     BD.Slots = {}
     local raw = file.Read(BD.File, "DATA")
-    local data = (raw and raw ~= "") and util.JSONToTable(raw) or nil
+    local root = (raw and raw ~= "") and util.JSONToTable(raw) or nil
+
+    -- v2.1: файл стал объектом { slots = {...}, radial = {...} }.
+    -- Старый формат (просто массив слотов) читается как прежде.
+    local data, radial = nil, nil
+    if istable(root) then
+        if istable(root.slots) then
+            data, radial = root.slots, root.radial
+        else
+            data = root
+        end
+    end
+
+    BD.Radial = { key = KEY_NONE, items = {} }
+    if istable(radial) then
+        BD.Radial.key = math.Clamp(math.floor(tonumber(radial.key) or KEY_NONE), 0, 159)
+        for _, id in ipairs(istable(radial.items) and radial.items or {}) do
+            if #BD.Radial.items < BD.MaxRadial then
+                local n = math.Clamp(math.floor(tonumber(id) or 0), 0, BD.MaxSlots)
+                if n > 0 then BD.Radial.items[#BD.Radial.items + 1] = n end
+            end
+        end
+    end
+
     if istable(data) then
         for _, row in ipairs(data) do
             if istable(row) then
@@ -345,7 +375,11 @@ function BD.Save()
             }
         end
     end
-    file.Write(BD.File, util.TableToJSON(arr, true))
+    file.Write(BD.File, util.TableToJSON({
+        version = 2,
+        slots = arr,
+        radial = { key = BD.Radial.key or KEY_NONE, items = BD.Radial.items or {} },
+    }, true))
     BD.RebuildKeyMap()
     return true
 end
@@ -448,8 +482,171 @@ local function inputBusy()
     return false
 end
 
+-----------------------------------------------------------------------
+-- РАДИАЛЬНОЕ МЕНЮ (подобие селектора оружия)
+--
+-- Держим одну клавишу → на экране круг с секторами. Мышь наводит сектор
+-- (как в селекторе оружия), отпускание клавиши запускает выбранную сцену.
+-- Курсор в центре = отмена. Рисуется только пока меню открыто, ничего не
+-- считается в кадре сверх этого.
+-----------------------------------------------------------------------
+BD.RadialOpen = false
+BD.RadialPick = 0
+
+local function radialEntries()
+    local out = {}
+    for _, id in ipairs(BD.Radial.items or {}) do
+        local slot = BD.Slots[id]
+        if istable(slot) then out[#out + 1] = { id = id, slot = slot } end
+    end
+    return out
+end
+BD.RadialEntries = radialEntries
+
+-- Сектор под курсором: 0 = центр (отмена).
+function BD.RadialPickFrom(cx, cy, mx, my, count, deadZone)
+    if count <= 0 then return 0 end
+    local dx, dy = mx - cx, my - cy
+    if (dx * dx + dy * dy) < (deadZone * deadZone) then return 0 end
+    -- Отсчёт от «12 часов» по часовой стрелке — как читается круг глазами.
+    local ang = math.deg(math.atan2(dx, -dy))
+    if ang < 0 then ang = ang + 360 end
+    local sector = math.floor((ang + (180 / count)) / (360 / count)) + 1
+    if sector > count then sector = 1 end
+    return sector
+end
+
+function BD.OpenRadial()
+    if BD.RadialOpen then return end
+    if #radialEntries() == 0 then
+        chat.AddText(C.gold, "[Биндер] ", C.text, "Радиальные слоты не настроены — откройте /binder.")
+        return
+    end
+    BD.RadialOpen = true
+    BD.RadialPick = 0
+    BD.RadialOpenedAt = RealTime()
+    gui.EnableScreenClicker(true)
+    click("buttons/button14.wav")
+end
+
+function BD.CloseRadial(execute)
+    if not BD.RadialOpen then return end
+    BD.RadialOpen = false
+    gui.EnableScreenClicker(false)
+
+    local entries = radialEntries()
+    local pick = BD.RadialPick
+    BD.RadialPick = 0
+    if not execute or pick <= 0 or not entries[pick] then return end
+    click()
+    BD.Run(entries[pick].id)
+end
+
+hook.Add("PlayerButtonDown", "GRM_Binder_Radial", function(ply, key)
+    if ply ~= LocalPlayer() then return end
+    if key ~= (BD.Radial.key or KEY_NONE) or key <= KEY_NONE then return end
+    if inputBusy() then return end
+    BD.OpenRadial()
+end)
+
+hook.Add("PlayerButtonUp", "GRM_Binder_RadialUp", function(ply, key)
+    if ply ~= LocalPlayer() then return end
+    if key ~= (BD.Radial.key or KEY_NONE) then return end
+    BD.CloseRadial(true)
+end)
+
+-- ESC и смерть гасят меню, чтобы курсор не завис включённым.
+hook.Add("OnPlayerChat", "GRM_Binder_RadialChat", function() if BD.RadialOpen then BD.CloseRadial(false) end end)
+hook.Add("PlayerDeath", "GRM_Binder_RadialDeath", function() if BD.RadialOpen then BD.CloseRadial(false) end end)
+
+hook.Add("HUDPaint", "GRM_Binder_RadialDraw", function()
+    if not BD.RadialOpen then return end
+    local entries = radialEntries()
+    local count = #entries
+    if count == 0 then BD.CloseRadial(false) return end
+
+    local sw, sh = ScrW(), ScrH()
+    local cx, cy = sw / 2, sh / 2
+    local outer = math.min(sw, sh) * 0.30
+    local inner = outer * 0.42
+    local mx, my = gui.MousePos()
+    if mx == 0 and my == 0 then mx, my = cx, cy end
+
+    BD.RadialPick = BD.RadialPickFrom(cx, cy, mx, my, count, inner)
+
+    -- Затемнение и центральная «шайба»
+    surface.SetDrawColor(0, 0, 0, 170)
+    surface.DrawRect(0, 0, sw, sh)
+    draw.NoTexture()
+    surface.SetDrawColor(C.head.r, C.head.g, C.head.b, 240)
+
+    local step = 360 / count
+    for i, entry in ipairs(entries) do
+        local selected = (BD.RadialPick == i)
+        local startAng = (i - 1) * step - step / 2 - 90
+        local poly = {}
+        local segments = math.max(6, math.floor(step / 4))
+        local r1 = selected and (outer + 14) or outer
+        for s2 = 0, segments do
+            local a = math.rad(startAng + step * (s2 / segments))
+            poly[#poly + 1] = { x = cx + math.cos(a) * r1, y = cy + math.sin(a) * r1 }
+        end
+        for s2 = segments, 0, -1 do
+            local a = math.rad(startAng + step * (s2 / segments))
+            poly[#poly + 1] = { x = cx + math.cos(a) * inner, y = cy + math.sin(a) * inner }
+        end
+
+        draw.NoTexture()
+        if selected then
+            surface.SetDrawColor(C.acc.r, C.acc.g, C.acc.b, 235)
+        else
+            surface.SetDrawColor(C.card.r, C.card.g, C.card.b, 225)
+        end
+        surface.DrawPoly(poly)
+
+        -- Подпись сектора
+        local midA = math.rad(startAng + step / 2)
+        local tr = (inner + r1) / 2
+        local tx, ty = cx + math.cos(midA) * tr, cy + math.sin(midA) * tr
+        local slot = entry.slot
+        local steps = 0
+        for _, st in ipairs(slot.steps or {}) do
+            if st.enabled ~= false and string.Trim(tostring(st.text or "")) ~= "" then steps = steps + 1 end
+        end
+        draw.SimpleTextOutlined(tostring(slot.name or ("Слот " .. entry.id)), "GRMBind_Body", tx, ty - 8,
+            selected and color_white or C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 2, Color(8, 12, 18, 230))
+        draw.SimpleTextOutlined(steps .. " шаг(ов)", "GRMBind_Small", tx, ty + 10,
+            selected and Color(235, 245, 255) or C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 2, Color(8, 12, 18, 230))
+    end
+
+    -- Центр: подсказка и текущий выбор
+    draw.NoTexture()
+    surface.SetDrawColor(C.head.r, C.head.g, C.head.b, 245)
+    local hub = {}
+    for a = 0, 360, 6 do
+        local r = math.rad(a)
+        hub[#hub + 1] = { x = cx + math.cos(r) * (inner - 6), y = cy + math.sin(r) * (inner - 6) }
+    end
+    surface.DrawPoly(hub)
+
+    local picked = entries[BD.RadialPick]
+    draw.SimpleText("БИНДЕР", "GRMBind_Head", cx, cy - 22, C.gold, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    if picked then
+        draw.SimpleText(tostring(picked.slot.name or ""), "GRMBind_Body", cx, cy, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("отпустите клавишу", "GRMBind_Small", cx, cy + 20, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    else
+        draw.SimpleText("наведите мышь", "GRMBind_Body", cx, cy, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("центр = отмена", "GRMBind_Small", cx, cy + 20, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+end)
+
 hook.Add("PlayerButtonDown", "GRM_Binder_Keys", function(ply, key)
     if ply ~= LocalPlayer() then return end
+    -- Клавиша радиального меню принадлежит только ему: если на ней случайно
+    -- висит и обычный слот, сцена не должна играть одновременно с открытием
+    -- круга.
+    if key == (BD.Radial.key or KEY_NONE) and key > KEY_NONE then return end
+    if BD.RadialOpen then return end
     local slots = BD.KeyMap[key]
     if not slots then return end
     if inputBusy() then return end
@@ -583,6 +780,73 @@ function BD.Open()
         draw.SimpleText("ПАМЯТКА", "GRMBind_Memo", 16, 16, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         draw.SimpleText(MEMO, "GRMBind_Body", 16, 36, Color(250, 238, 205), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
+
+    -- ── РАДИАЛЬНОЕ МЕНЮ: одна клавиша на все сцены ──────────────────
+    local radialCard = vgui.Create("DPanel", body)
+    radialCard:Dock(TOP) radialCard:SetTall(96) radialCard:DockMargin(0, 0, 0, 8)
+    radialCard.Paint = function(_, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, C.card)
+        draw.RoundedBox(2, 0, 0, 4, h, C.violet)
+        draw.SimpleText("РАДИАЛЬНОЕ МЕНЮ — ОДНА КЛАВИША НА ВСЁ", "GRMBind_Head", 16, 18, C.violet, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Держите клавишу — появится круг, наводите мышью нужный сектор (как в селекторе оружия) и отпускайте. Центр круга — отмена.",
+            "GRMBind_Small", 16, 38, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    end
+
+    local radKeyLbl = vgui.Create("DLabel", radialCard)
+    radKeyLbl:SetPos(16, 60) radKeyLbl:SetSize(70, 22)
+    radKeyLbl:SetFont("GRMBind_Small") radKeyLbl:SetTextColor(C.dim) radKeyLbl:SetText("Клавиша:")
+
+    local radBinder = vgui.Create("DBinder", radialCard)
+    radBinder:SetPos(78, 58) radBinder:SetSize(110, 26)
+    radBinder:SetValue(BD.Radial.key or KEY_NONE)
+    radBinder.OnChange = function(_, num)
+        BD.Radial.key = math.floor(tonumber(num) or KEY_NONE)
+        BD.Save()
+    end
+
+    local sectorsHost = vgui.Create("DPanel", radialCard)
+    sectorsHost:SetPos(198, 56) sectorsHost:SetSize(860, 30) sectorsHost:SetPaintBackground(false)
+
+    local rebuildRadial
+    rebuildRadial = function()
+        sectorsHost:Clear()
+        local x = 0
+        for i, id in ipairs(BD.Radial.items or {}) do
+            local slot = BD.Slots[id]
+            local btn = mkBtn(sectorsHost, i .. ". " .. (slot and tostring(slot.name) or ("Слот " .. id)), C.violet, function()
+                table.remove(BD.Radial.items, i)
+                BD.Save()
+                rebuildRadial()
+            end, "GRMBind_Small")
+            btn:SetPos(x, 0) btn:SetSize(150, 26)
+            btn:SetTooltip("Клик — убрать сектор из круга")
+            x = x + 156
+        end
+
+        if #(BD.Radial.items or {}) < BD.MaxRadial then
+            local add = vgui.Create("DComboBox", sectorsHost)
+            add:SetPos(x, 2) add:SetSize(170, 22)
+            add:SetFont("GRMBind_Small")
+            add:SetValue("+ добавить сектор")
+            for i = 1, BD.MaxSlots do
+                local slot = BD.Slots[i]
+                if slot then add:AddChoice("#" .. i .. " " .. tostring(slot.name or ""), i) end
+            end
+            add.OnSelect = function(_, _, _, id)
+                id = math.floor(tonumber(id) or 0)
+                if id <= 0 then return end
+                BD.Radial.items[#BD.Radial.items + 1] = id
+                BD.Save()
+                rebuildRadial()
+            end
+        else
+            local full = vgui.Create("DLabel", sectorsHost)
+            full:SetPos(x, 4) full:SetSize(200, 22)
+            full:SetFont("GRMBind_Small") full:SetTextColor(C.dim)
+            full:SetText("круг заполнен (" .. BD.MaxRadial .. ")")
+        end
+    end
+    rebuildRadial()
 
     local hint = vgui.Create("DPanel", body)
     hint:Dock(TOP) hint:SetTall(44) hint:DockMargin(0, 0, 0, 8)
