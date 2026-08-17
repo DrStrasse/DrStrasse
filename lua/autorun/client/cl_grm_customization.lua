@@ -319,7 +319,10 @@ end)
 hook.Add("HUDPaint", "GRM_Customization_FunctionHUD", function()
     if C.EditorActive then return end
     if C.LocalHasFunction("watch") then
-        local text = os.date("%H:%M:%S  •  %d.%m.%Y")
+        -- os.date в HUDPaint = новая строка каждый кадр. Берём общий кэш
+        -- GRM.Time (пересчёт раз в секунду на весь клиент).
+        local text = (GRM.Time and GRM.Time.Clock) and GRM.Time.Clock("%H:%M:%S  •  %d.%m.%Y")
+            or os.date("%H:%M:%S  •  %d.%m.%Y")
         surface.SetFont("GRMCustom_Body")
         local tw, th = surface.GetTextSize(text)
         local x, y = ScrW() - tw - 24, 72

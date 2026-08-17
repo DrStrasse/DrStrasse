@@ -11,7 +11,9 @@ local A = GRM.FireAddon
 A.Version = "0.5.0"
 
 if SERVER then
-    resource.AddFile("materials/grm/firehose.vmt")
+    if file.Exists("materials/grm/firehose.vmt", "GAME") then
+        resource.AddFile("materials/grm/firehose.vmt")
+    end
 end
 
 A.Models = {

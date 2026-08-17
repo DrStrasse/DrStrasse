@@ -185,11 +185,32 @@ if SERVER then
     end
 
     local lastThink = 0
+    -- Счётчик анимирующихся дверей: пока ничего не едет, покадровый обход
+    -- реестра не нужен вообще. Раньше Think каждый кадр перебирал ВСЕ
+    -- раздвижные двери карты и на каждую делал tostring() трёх звуковых
+    -- полей — работа на пустом месте при полностью статичных дверях.
+    function SD.HasMoving()
+        for ent, _ in pairs(SD.Doors) do
+            if IsValid(ent) then
+                local target = ent.Sliding_Open and 1 or 0
+                if math.abs((ent.Sliding_Progress or 0) - target) > 0.0001 then return true end
+            end
+        end
+        return false
+    end
+
     hook.Add("Think", "GRM_SlidingDoor_Think", function()
         local now = CurTime()
         local dt = math.min(0.1, now - lastThink)
         lastThink = now
         if dt <= 0 then return end
+
+        -- Ленивая проверка «есть ли вообще движение» не чаще 4 раз в секунду.
+        if (SD._idleCheckAt or 0) < now then
+            SD._idleCheckAt = now + 0.25
+            SD._anyMoving = SD.HasMoving()
+        end
+        if not SD._anyMoving then return end
 
         for ent, data in pairs(SD.Doors) do
             if not IsValid(ent) then
@@ -210,24 +231,29 @@ if SERVER then
                     local moving = math.abs(next - cur) > 0.0001
                     if moving then ent.Sliding_Progress = next;local e=ease(next,data.smooth);SD.MovePhysical(ent,base+(openPos-base)*e)end
 
-                    -- Звуки (находка 173d): в движении, при открытии, при закрытии
-                    local soundOpen = tostring(data.soundOpen or "")
-                    local soundClose = tostring(data.soundClose or "")
-                    local soundMove = tostring(data.soundMove or "")
+                    -- Звуки (находка 173d): в движении, при открытии, при закрытии.
+                    -- tostring() трёх полей вынесен под условие: у стоящей двери
+                    -- звуковые строки в кадре больше не собираются.
+                    local soundOpen, soundClose, soundMove = "", "", ""
+                    if moving or next >= 1 or next <= 0 then
+                        soundOpen = tostring(data.soundOpen or "")
+                        soundClose = tostring(data.soundClose or "")
+                        soundMove = tostring(data.soundMove or "")
+                    end
                     if moving and soundMove ~= "" then
                         if (ent.Sliding_SndMove or 0) <= now then
                             ent.Sliding_SndMove = now + 0.6  -- не чаще 1.6/сек
-                            ent:EmitSound(soundMove, 70, 100)
+                            if GRM.Sound and GRM.Sound.Emit then GRM.Sound.Emit(ent, soundMove, 70, 100) else ent:EmitSound(soundMove, 70, 100) end
                         end
                     end
                     -- Открытие: один раз при достижении конца (переход 0→1)
                     if next >= 1 and not ent.Sliding_WasOpen and soundOpen ~= "" then
-                        ent:EmitSound(soundOpen, 75, 100)
+                        if GRM.Sound and GRM.Sound.Emit then GRM.Sound.Emit(ent, soundOpen, 75, 100) else ent:EmitSound(soundOpen, 75, 100) end
                     end
                     -- Закрытие: один раз при достижении начала (переход 1→0),
                     -- флаг «был открыт» держим до самого конца, чтобы не потерять момент
                     if next <= 0 and ent.Sliding_WasEverOpen and soundClose ~= "" then
-                        ent:EmitSound(soundClose, 75, 100)
+                        if GRM.Sound and GRM.Sound.Emit then GRM.Sound.Emit(ent, soundClose, 75, 100) else ent:EmitSound(soundClose, 75, 100) end
                     end
                     if next >= 1 then ent.Sliding_WasOpen = true ent.Sliding_WasEverOpen = true
                     elseif next <= 0 then ent.Sliding_WasOpen = false ent.Sliding_WasEverOpen = false end

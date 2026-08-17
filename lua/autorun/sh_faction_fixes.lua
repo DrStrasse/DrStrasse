@@ -36,8 +36,15 @@
 
 if SERVER then
     AddCSLuaFile()
-    resource.AddFile("sound/kom_hour.wav")
-    Sound("kom_hour.wav")
+    -- Раздаём и прекэшируем kom_hour.wav ТОЛЬКО если файл реально лежит на
+    -- сервере: иначе движок ругается на старте и клиенты получают битую
+    -- запись в списке загрузок. Общий реестр звуков — GRM.Sound.
+    if file.Exists("sound/kom_hour.wav", "GAME") then
+        resource.AddFile("sound/kom_hour.wav")
+        Sound("kom_hour.wav")
+    else
+        print("[GRM] sound/kom_hour.wav не найден — комендантский час прозвучит фолбэком (grm_sound_check покажет список)")
+    end
 end
 
 GRM = GRM or {}
@@ -446,7 +453,14 @@ if SERVER then
         for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             p:PrintMessage(HUD_PRINTCENTER, "=== ОБЪЯВЛЕН КОМЕНДАНТСКИЙ ЧАС ===\nВсе граждане должны покинуть улицы!")
             p:EmitSound("ambient/alarms/scanner_alert_pass1.wav", 100, 100)
-            p:EmitSound("kom_hour.wav", 127, 110)
+            -- Комендантский час: kom_hour.wav — кастомный файл, которого на
+            -- сервере может не быть. GRM.Sound проверяет наличие ОДИН раз и
+            -- играет фолбэк вместо потока ошибок движка на каждого игрока.
+            if GRM.Sound and GRM.Sound.Emit then
+                GRM.Sound.Emit(p, "kom_hour.wav", 127, 110)
+            else
+                p:EmitSound("kom_hour.wav", 127, 110)
+            end
         end
     end
 

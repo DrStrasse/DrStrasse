@@ -262,7 +262,7 @@ if SERVER then
         logEvent(inc, "out")
         hook.Run("GRM_FireExtinguished", inc.origin, inc)
         notifyCrew(inc, "Пожар потушен", 100, 220, 130)
-        local live = #ents.FindByClass("vfire")
+        local live = #liveVfire()
         if live == 0 and GRM.Minimap and GRM.Minimap.RemoveTempPoint then
             GRM.Minimap.RemoveTempPoint("ПОЖАР")
         end

@@ -115,5 +115,44 @@ ok(select(2, radio:gsub('GRM%.Perf%.Entities%("grm_', "")) >= 5,
 local spots = read("addons/grm_fire/lua/entities/grm_fire_spot/cl_init.lua")
 ok(spots:find("GRM.Perf.Entities", 1, true), "Маркеры очагов: покадровый скан класса убран")
 
+
+print("\n=== 3. ВТОРАЯ ВОЛНА: ВРЕМЯ, ДВЕРИ, ОГОНЬ ===")
+local doors = read("lua/autorun/sh_grm_doors.lua")
+local liveGetAll = 0
+for line in doors:gsub("%-%-%[%[.-%]%]", ""):gmatch("[^\n]+") do
+    local body = line:gsub("^%s+", "")
+    if not body:match("^%-%-") and body:find("ents.GetAll()", 1, true) then liveGetAll = liveGetAll + 1 end
+end
+ok(liveGetAll == 0, ("двери: живых ents.GetAll() не осталось (%d)"):format(liveGetAll))
+ok(doors:find("for _, ent in ipairs(D.AllDoors()) do", 1, true) ~= nil,
+    "сверка замков каждые 2с идёт по реестру дверей, а не по всем энтити")
+
+local slide = read("lua/autorun/sh_grm_sliding_door.lua")
+ok(slide:find("function SD.HasMoving", 1, true) and slide:find("if not SD._anyMoving then return end", 1, true),
+    "раздвижные двери: покадровый обход отключается, когда ничего не едет")
+ok(slide:find("if moving or next >= 1 or next <= 0 then", 1, true),
+    "звуковые строки не собираются у стоящей двери")
+
+local hose = read("addons/grm_fire/lua/entities/grm_fire_hose/init.lua")
+ok(hose:find("local function hoseList()", 1, true) ~= nil
+    and hose:find("local function walkPressure(ent, seen, hoses)", 1, true) ~= nil
+    and hose:find("for _, h in ipairs(hoses) do", 1, true) ~= nil,
+    "рукава: список рукавов берётся один раз на обход графа давления")
+ok(hose:find("self._PressureAt = now + 0.25", 1, true),
+    "рукава: пересчёт давления троттлится (было 12 обходов графа в секунду на рукав)")
+ok(read("addons/grm_fire/lua/autorun/sh_grm_fire_hose.lua"):find("GRM.Perf.Entities(\"grm_fire_hose\")", 1, true) ~= nil,
+    "счётчик рукавов на насосе использует реестр")
+
+local fire = read("lua/autorun/sh_grm_fire.lua")
+ok(fire:find("local function liveVfire()", 1, true) ~= nil, "очаги vFire берутся из общего реестра")
+local rawVfire = select(2, fire:gsub('ents%.FindByClass%("vfire"%)', ""))
+ok(rawVfire <= 1, ("прямых сканов vfire осталось %d (только фолбэк внутри хелпера)"):format(rawVfire))
+
+local pod = read("lua/entities/grm_augmentation_pod/init.lua")
+ok(pod:find("self:NextThink(CurTime() + 2)", 1, true) ~= nil, "капсула аугментаций не думает каждый тик")
+
+local bc = read("lua/autorun/sh_grm_broadcast.lua")
+ok(bc:find('GRM.Perf.Entities("grm_radio")', 1, true) ~= nil, "проверка слышимости радио использует реестр")
+
 print(("\nPERF CORE: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)

@@ -135,8 +135,12 @@ function A.CanHose(ply, src, why)
 end
 
 function A.HoseCountOn(src)
+    -- Зовётся из Think насоса (4/сек) и из бортового NW-тика: полный скан
+    -- класса заменён event-реестром GRM.Perf.
     local n = 0
-    for _, h in ipairs(ents.FindByClass("grm_fire_hose")) do
+    local hoses = (GRM and GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_fire_hose")
+        or ents.FindByClass("grm_fire_hose")
+    for _, h in ipairs(hoses) do
         if IsValid(h) and h:GetStartEnt() == src then n = n + 1 end
     end
     return n

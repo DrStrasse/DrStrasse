@@ -117,11 +117,20 @@ function F.IsFireGContext(ply)
     return false
 end
 
+-- Живые очаги vFire одним списком из event-реестра GRM.Perf: на горящем
+-- здании их бывают сотни, а ents.FindByClass строит новую таблицу на каждый
+-- вызов (а зовут его и таймеры, и проверки очагов, и статистика).
+local function liveVfire()
+    if GRM and GRM.Perf and GRM.Perf.Entities then return GRM.Perf.Entities("vfire") end
+    return ents.FindByClass("vfire")
+end
+F.LiveVFire = liveVfire
+
 function F.IsBurning(pos)
     if not isvector(pos) then
         if IsValid(pos) and pos.GetPos then pos = pos:GetPos() else return false end
     end
-    for _, ent in ipairs(ents.FindByClass("vfire")) do
+    for _, ent in ipairs(liveVfire()) do
         if IsValid(ent) and ent:GetPos():DistToSqr(pos) < 96 * 96 then return true end
     end
     return false
@@ -204,7 +213,7 @@ if SERVER then
 
     function F.Snapshot()
         local out = {}
-        for _, ent in ipairs(ents.FindByClass("vfire")) do
+        for _, ent in ipairs(liveVfire()) do
             if not IsValid(ent) then
             else
                 local p, n = ent:GetPos(), ent:GetForward()
@@ -308,7 +317,7 @@ if SERVER then
 
     function F.Ignite(pos, source, starter)
         if not F.VFireReady() then return nil, "vFire не загружен" end
-        if #ents.FindByClass("vfire") >= (tonumber(F.Config.MaxIncidents) or 8) * 12 then
+        if #liveVfire() >= (tonumber(F.Config.MaxIncidents) or 8) * 12 then
             return nil, "лимит очагов"
         end
         source = tostring(source or "system")
@@ -516,7 +525,7 @@ if SERVER then
         F.MarkDirty()
         local pos = fire:GetPos()
         local near = 0
-        for _, o in ipairs(ents.FindByClass("vfire")) do
+        for _, o in ipairs(liveVfire()) do
             if o ~= fire and IsValid(o) and o:GetPos():DistToSqr(pos) < 400 * 400 then
                 near = near + 1
             end
@@ -525,7 +534,7 @@ if SERVER then
     end)
     hook.Add("vFireRemoved", "GRM_Fire_Track", function()
         F.MarkDirty()
-        if #ents.FindByClass("vfire") == 0 and GRM.Minimap and GRM.Minimap.RemoveTempPoint then
+        if #liveVfire() == 0 and GRM.Minimap and GRM.Minimap.RemoveTempPoint then
             GRM.Minimap.RemoveTempPoint("ПОЖАР")
         end
     end)
@@ -625,7 +634,7 @@ if SERVER then
         if b < a then b = a end
         timer.Create("GRM_Fire_Random", math.Rand(a, b), 1, function()
             if F.Config.RandomEnabled and F.VFireReady() then
-                local live = #ents.FindByClass("vfire")
+                local live = #liveVfire()
                 if live < (tonumber(F.Config.MaxIncidents) or 8) * 6 then
                     local spot = pickSpot()
                     if IsValid(spot) then

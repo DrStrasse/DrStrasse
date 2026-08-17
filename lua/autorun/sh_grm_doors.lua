@@ -952,8 +952,8 @@ if SERVER then
             end
         end
         timer.Simple(1, function()
-            for _, ent in ipairs(ents.GetAll()) do
-                if IsValid(ent) and D.IsDoor(ent) then
+            for _, ent in ipairs(D.AllDoors()) do
+                if IsValid(ent) then
                     local rec = select(1, D.GetRecord(ent))
                     if rec and not rec._ephemeral then
                         D.ApplyRecordVisual(ent, rec)
@@ -1492,8 +1492,10 @@ if SERVER then
 
     timer.Create("GRM_Doors_LockReconciler", (D.Config and D.Config.LockSyncInterval) or 2.0, 0, function()
         if not istable(D.Data) or not istable(D.Data.doors) then return end
-        for _, ent in ipairs(ents.GetAll()) do
-            if IsValid(ent) and D.IsDoor(ent) then
+        -- Раньше сверка замков каждые 2 секунды делала ПОЛНЫЙ ents.GetAll()
+        -- по всем энтити карты. Теперь берём только двери из event-реестров.
+        for _, ent in ipairs(D.AllDoors()) do
+            if IsValid(ent) then
                 local rec = D.Data.doors[D.GetDoorID(ent)]
                 local okE, engRaw = pcall(function() return ent:GetInternalVariable("m_bLocked") end)
                 if not okE then engRaw = nil end

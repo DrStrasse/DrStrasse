@@ -317,8 +317,11 @@ if SERVER then
         if not IsValid(listener) or not IsValid(speaker) then return end
         local mic = speaker._grmBCMic
         if not IsValid(mic) or not mic.BCLive or mic.BCSpeaker ~= speaker then return end
-        for _, r in ipairs(ents.FindByClass("grm_radio")) do
-            if r:GetNWBool("GRM_BC_On", false) and r:GetNWInt("GRM_BC_Mic", 0) == mic:EntIndex() then
+        -- Проверка слышимости зовётся на каждого слушателя каждой реплики:
+        -- полный скан приёмников заменён event-реестром.
+        local radios = (GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_radio") or ents.FindByClass("grm_radio")
+        for _, r in ipairs(radios) do
+            if IsValid(r) and r:GetNWBool("GRM_BC_On", false) and r:GetNWInt("GRM_BC_Mic", 0) == mic:EntIndex() then
                 if listener:GetPos():DistToSqr(r:GetPos()) <= BC.ReceiveRadius * BC.ReceiveRadius then
                     return true, false -- слышно глобально (эффект радио)
                 end

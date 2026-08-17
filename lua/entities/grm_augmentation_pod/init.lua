@@ -70,14 +70,20 @@ if SERVER then
 	end
 	
 	function ENT:Think()
-		-- Проверка occupants
+		-- Проверка occupants. Раньше Think капсулы выполнялся КАЖДЫЙ тик
+		-- (без NextThink) ради одной проверки валидности — теперь дважды в
+		-- секунду, а при пустой капсуле ещё реже.
 		if self:GetOccupied() then
 			local occupant = self:GetOccupant()
 			if not IsValid(occupant) then
 				self:SetOccupied(false)
 				self:SetOccupant(nil)
 			end
+			self:NextThink(CurTime() + 0.5)
+		else
+			self:NextThink(CurTime() + 2)
 		end
+		return true
 	end
 	
 	-- Обработка запросов на аугментацию из капсулы

@@ -420,8 +420,19 @@ function ENT:DockTo(target, ply)
     return true
 end
 
-local function walkPressure(ent, seen)
+-- Список рукавов на карте берём ОДИН раз на весь обход графа, а не заново
+-- в каждом рекурсивном шаге. Раньше walkPressure звал ents.FindByClass на
+-- каждом узле, а сам walkPressure дёргался из ENT:Think КАЖДОГО рукава 12
+-- раз в секунду — при развёрнутой линии из 5-6 рукавов это сотни полных
+-- сканов класса в секунду на сервере.
+local function hoseList()
+    return (GRM and GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_fire_hose")
+        or ents.FindByClass("grm_fire_hose")
+end
+
+local function walkPressure(ent, seen, hoses)
     if not IsValid(ent) then return false, nil end
+    hoses = hoses or hoseList()
     if seen[ent] then return false, nil end
     seen[ent] = true
     local cls = ent:GetClass()
@@ -438,7 +449,7 @@ local function walkPressure(ent, seen)
         if have > 0 then return true, ent end
     end
     -- рукава, стартующие здесь или пристыкованные сюда
-    for _, h in ipairs(ents.FindByClass("grm_fire_hose")) do
+    for _, h in ipairs(hoses) do
         if IsValid(h) and (h:GetStartEnt() == ent or h:GetEndNode() == ent) then
             local other = h:GetStartEnt()
             if other == ent then
@@ -446,38 +457,48 @@ local function walkPressure(ent, seen)
                 if IsValid(endN) then
                     local p = endN:GetParent()
                     if IsValid(p) then
-                        local ok, pump = walkPressure(p, seen)
+                        local ok, pump = walkPressure(p, seen, hoses)
                         if ok then return true, pump end
                     end
-                    local ok, pump = walkPressure(endN, seen)
+                    local ok, pump = walkPressure(endN, seen, hoses)
                     if ok then return true, pump end
                 end
             else
-                local ok, pump = walkPressure(other, seen)
+                local ok, pump = walkPressure(other, seen, hoses)
                 if ok then return true, pump end
             end
         end
         if IsValid(h:GetEndNode()) and h:GetEndNode():GetParent() == ent then
-            local ok, pump = walkPressure(h:GetStartEnt(), seen)
+            local ok, pump = walkPressure(h:GetStartEnt(), seen, hoses)
             if ok then return true, pump end
         end
     end
     if cls == "grm_fire_hose_node" then
         local hose = ent:GetHose()
         if IsValid(hose) then
-            local ok, pump = walkPressure(hose:GetStartEnt(), seen)
+            local ok, pump = walkPressure(hose:GetStartEnt(), seen, hoses)
             if ok then return true, pump end
         end
     end
     return false, nil
 end
 
-function ENT:RefreshPressure()
-    local ok, pump = walkPressure(self:GetStartEnt(), {})
+-- Пересчёт давления троттлится: гидравлика линии не меняется 12 раз в секунду,
+-- а обход графа — самая дорогая операция рукава. force=true для мгновенной
+-- пересборки (стыковка/отстыковка/включение насоса).
+function ENT:RefreshPressure(force)
+    local now = CurTime()
+    if not force and (self._PressureAt or 0) > now then
+        return self:GetPressurized() == true
+    end
+    self._PressureAt = now + 0.25
+
+    local hoses = hoseList()
+    local ok, pump = walkPressure(self:GetStartEnt(), {}, hoses)
     if not ok then
         local endN = self:GetEndNode()
         if IsValid(endN) then
-            ok, pump = walkPressure(endN:GetParent(), {})
+            ok, pump = walkPressure(endN:GetParent(), {}, hoses)
         end
     end
     self:SetPressurized(ok == true)
@@ -488,14 +509,14 @@ end
 function ENT:SupplyPump()
     local src = self:GetStartEnt()
     if IsValid(src) and src:GetClass() == "grm_fire_pump" then
-        self:RefreshPressure()
+        self:RefreshPressure(true)
         return src
     end
     local endN = self:GetEndNode()
     if IsValid(endN) then
         local p = endN.GetParent and endN:GetParent() or NULL
         if IsValid(p) and p:GetClass() == "grm_fire_pump" then
-            self:RefreshPressure()
+            self:RefreshPressure(true)
             return p
         end
     end

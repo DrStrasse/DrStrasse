@@ -877,7 +877,7 @@ if CLIENT then
         clockPanel:SetPos(W-306,6);clockPanel:SetSize(166,28)
         clockPanel.Paint=function(_,w,h)
             draw.RoundedBox(5,0,0,w,h,Color(18,25,40,245));surface.SetDrawColor(C.BORDER);surface.DrawOutlinedRect(0,0,w,h,1)
-            local now=GRM.Time and GRM.Time.GetString and GRM.Time.GetString()or GetGlobalString("GRM_RealTime","--:--:--")
+            local now=GRM.Time and GRM.Time.GetString and GRM.Time.GetString()or"--:--:--"
             draw.SimpleText(now,"GRMT_Head",w/2,h/2,C.CYAN,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
         end
         clockPanel:SetTooltip("Реальное серверное время • UTC+3 по умолчанию")

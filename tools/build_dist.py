@@ -28,6 +28,8 @@ ECONOMY_FILES = [
     "lua/autorun/sh_03_grm_access.lua",
     "lua/autorun/sh_04_grm_net.lua",
     "lua/autorun/sh_05_grm_audit.lua",
+    "lua/autorun/sh_06_grm_performance.lua",
+    "lua/autorun/sh_07_grm_sound.lua",
     "lua/autorun/sh_grm_identity.lua",
     "lua/autorun/sh_grm_currency.lua",
     "lua/autorun/sh_grm_economy.lua",
