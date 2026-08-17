@@ -68,6 +68,62 @@ local currentContent = nil
 local currentTabButtons = nil
 
 -- Тёмная тема для полей ввода (DTextEntry) в духе XUI.
+--[[ ЗАЩИТА ВВОДА ОТ АВТООБНОВЛЕНИЯ.
+
+     Синк фракций (GRM_FactionUIRefreshed) прилетает каждые несколько секунд и
+     раньше БЕЗУСЛОВНО пересобирал текущую вкладку через content:Clear().
+     Если в этот момент админ печатал название новой организации — панель
+     уничтожалась вместе с DTextEntry, и текст «сам собой исчезал».
+
+     Теперь: пока в открытой вкладке есть поле в фокусе (или ввод был меньше
+     трёх секунд назад), обновление откладывается; когда пользователь
+     закончил — вкладка перерисовывается уже свежими данными. Плюс значения
+     помеченных полей (GRMFormKey) переносятся через пересборку, а позиция
+     прокрутки восстанавливается. ]]
+local formValues = {}
+local lastTypedAt = 0
+
+local function eachChild(panel, fn)
+    if not IsValid(panel) then return end
+    for _, child in ipairs(panel:GetChildren() or {}) do
+        if IsValid(child) then
+            fn(child)
+            eachChild(child, fn)
+        end
+    end
+end
+
+local function hasActiveInput(panel)
+    if RealTime() - lastTypedAt < 3 then return true end
+    local found = false
+    eachChild(panel, function(child)
+        if found then return end
+        if child.HasFocus and child:HasFocus() and child.GetText then found = true end
+    end)
+    return found
+end
+
+local function collectFormValues(panel)
+    eachChild(panel, function(child)
+        if child.GRMFormKey and child.GetText then
+            formValues[child.GRMFormKey] = child:GetText()
+        end
+    end)
+end
+
+-- Поле формы, значение которого переживает автообновление вкладки.
+local function bindFormField(te, key)
+    if not IsValid(te) then return te end
+    te.GRMFormKey = key
+    if formValues[key] and formValues[key] ~= "" then te:SetText(formValues[key]) end
+    te.OnChange = function(s)
+        lastTypedAt = RealTime()
+        formValues[key] = s:GetText()
+    end
+    te.OnGetFocus = function() lastTypedAt = RealTime() end
+    return te
+end
+
 local function skinTextEntry(te)
     if not IsValid(te) then return end
     te:SetFont("GRMFac_Normal")
@@ -455,6 +511,8 @@ function UI.Open(requestedFaction)
             local oldScroll = findScroll(content)
             if IsValid(oldScroll) and IsValid(oldScroll.VBar) then keep = oldScroll.VBar:GetScroll() end
 
+            -- Введённый в форму текст переносим через пересборку.
+            collectFormValues(content)
             content:Clear()
             tabButtons[currentTab].builder(content, targetFac, FactionsData or {})
 
@@ -1147,16 +1205,19 @@ function UI.Open(requestedFaction)
         lbl1:SetPos(20, 50); lbl1:SetText("Регистрационный системный ключ (eng):"); lbl1:SetFont("GRMFac_Normal"); lbl1:SetTextColor(C.dim); lbl1:SizeToContents()
         local entKey = vgui.Create("DTextEntry", form)
         entKey:SetPos(20, 72); entKey:SetSize(400, 28); skinTextEntry(entKey); entKey:SetPlaceholderText("police_department")
+        bindFormField(entKey, "create.key")
 
         local lbl2 = vgui.Create("DLabel", form)
         lbl2:SetPos(20, 110); lbl2:SetText("Публичное название организации (RU):"); lbl2:SetFont("GRMFac_Normal"); lbl2:SetTextColor(C.dim); lbl2:SizeToContents()
         local entDisp = vgui.Create("DTextEntry", form)
         entDisp:SetPos(20, 132); entDisp:SetSize(400, 28); skinTextEntry(entDisp); entDisp:SetPlaceholderText("Полицейский Департамент")
+        bindFormField(entDisp, "create.display")
 
         local lbl3 = vgui.Create("DLabel", form)
         lbl3:SetPos(20, 170); lbl3:SetText("Тэг радиоволны:"); lbl3:SetFont("GRMFac_Normal"); lbl3:SetTextColor(C.dim); lbl3:SizeToContents()
         local entTag = vgui.Create("DTextEntry", form)
         entTag:SetPos(20, 192); entTag:SetSize(400, 28); skinTextEntry(entTag); entTag:SetPlaceholderText("PD")
+        bindFormField(entTag, "create.tag")
 
         local btnCreate = mkBtn(form, "+ Создать организацию", C.green, C.greenHover, function()
             local kVal = string.Trim(entKey:GetText())
@@ -1164,6 +1225,8 @@ function UI.Open(requestedFaction)
             local tVal = string.Trim(entTag:GetText())
             if kVal == "" or dVal == "" then notification.AddLegacy("Заполните ключ и название!", NOTIFY_ERROR, 3) return end
             sendAction("createFactionV2", { kVal, dVal, "", tVal, 255, 200, 50 }, function()
+                -- черновик формы больше не нужен
+                formValues["create.key"], formValues["create.display"], formValues["create.tag"] = nil, nil, nil
                 f:Remove()
                 UI.Open(kVal)
                 notification.AddLegacy("Организация создана!", NOTIFY_GENERIC, 3)
@@ -1250,29 +1313,72 @@ concommand.Add("grm_factions_menu", function() UI.Open() end)
 concommand.Add("grm_faction", function() UI.Open() end)
 concommand.Add("factions_unified", function() UI.Open() end)
 
+-- Общая точка пересборки вкладки: с сохранением введённого текста и прокрутки.
+local pendingRefreshData = nil
+
+local function findScrollPanel(panel)
+    local found = nil
+    eachChild(panel, function(child)
+        if not found and child.GetClassName and child:GetClassName() == "DScrollPanel" then found = child end
+    end)
+    return found
+end
+
+local function rebuildCurrentTab(data)
+    if not (IsValid(currentFrame) and IsValid(currentContent)) then return end
+    local btn = currentTabButtons and currentTabButtons[currentTab]
+    if not (btn and btn.builder) then return end
+
+    collectFormValues(currentContent)
+
+    local keep = 0
+    local oldScroll = findScrollPanel(currentContent)
+    if IsValid(oldScroll) and IsValid(oldScroll.VBar) then keep = oldScroll.VBar:GetScroll() end
+
+    currentContent:Clear()
+    btn.builder(currentContent, currentTargetFac, data or FactionsData or {})
+
+    if keep > 0 then
+        timer.Simple(0, function()
+            if not IsValid(currentContent) then return end
+            local newScroll = findScrollPanel(currentContent)
+            if IsValid(newScroll) and IsValid(newScroll.VBar) then newScroll.VBar:SetScroll(keep) end
+        end)
+    end
+end
+
 hook.Add("GRM_FactionUIRefreshed", "GRM_FactionUnified_AutoRefresh", function(data)
     if not IsValid(currentFrame) or not IsValid(currentContent) then return end
 
     -- НЕ переключаем организацию при обновлении данных: пользователь мог сам
-    -- выбрать фракцию для просмотра (особенно суперадмин). Раньше здесь
-    -- вычислялся activeFac (лидер → участник → next(data) для суперадмина) и
-    -- меню «отпрыгивало» на первую фракцию через пару секунд после выбора.
-    -- Теперь просто перерисовываем ТЕКУЩУЮ вкладку свежими данными.
-    local btn = currentTabButtons and currentTabButtons[currentTab]
-    if btn and btn.builder then
-        currentContent:Clear()
-        btn.builder(currentContent, currentTargetFac, data or FactionsData or {})
+    -- выбрать фракцию для просмотра (особенно суперадмин).
+    -- И НЕ пересобираем панель, пока в ней печатают: иначе введённый текст
+    -- (например, ключ и название новой организации) исчезает на глазах.
+    if hasActiveInput(currentContent) then
+        pendingRefreshData = data or FactionsData or {}
+        return
     end
+    rebuildCurrentTab(data)
+end)
+
+-- Отложенное обновление применяется, когда ввод закончен.
+hook.Add("Think", "GRM_FactionUnified_PendingRefresh", function()
+    if not pendingRefreshData then return end
+    if not (IsValid(currentFrame) and IsValid(currentContent)) then pendingRefreshData = nil return end
+    if hasActiveInput(currentContent) then return end
+    local data = pendingRefreshData
+    pendingRefreshData = nil
+    rebuildCurrentTab(data)
 end)
 
 hook.Add("GRM_FAccDataUpdated", "GRM_FactionUnified_AccessRefresh", function()
     -- Обновить вкладку «Доступы и связь», если она открыта и флаги пришли.
     if IsValid(currentFrame) and IsValid(currentContent) and currentTab == "access" then
-        local btn = currentTabButtons and currentTabButtons["access"]
-        if btn and btn.builder then
-            currentContent:Clear()
-            btn.builder(currentContent, currentTargetFac, FactionsData or {})
+        if hasActiveInput(currentContent) then
+            pendingRefreshData = FactionsData or {}
+            return
         end
+        rebuildCurrentTab(FactionsData or {})
     end
 end)
 

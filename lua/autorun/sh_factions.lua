@@ -1360,7 +1360,13 @@ if SERVER then
         if not factionName then ply:PrintMessage(HUD_PRINTTALK, "Вы не состоите ни в одной фракции.") return end
         local f = Factions[factionName]
         local tag=(f and f.Tag and f.Tag~="")and f.Tag or GRM.Factions.DisplayName(factionName)
-        local msg = string.format("[%s] %s (%s): %s", tag, ply:Nick(), role or "Участник", text)
+        -- Формат как у /gnews: шапка отдельной строкой, дальше имя, должность
+        -- и текст — раздельными полями, чтобы клиент раскрасил и перенёс строку.
+        local rpName = ply:GetNWString("GRM_RPName", "")
+        if rpName == "" then rpName = ply:Nick() end
+        local roleName = (GRM.Factions and GRM.Factions.RoleDisplayName)
+            and GRM.Factions.RoleDisplayName(f, role) or (role or "Участник")
+        local col = (f and f.Color) or { r = 255, g = 200, b = 0 }
 
         local recipients = {}
         for memberSteam, _ in pairs(Factions[factionName].Members) do
@@ -1368,7 +1374,15 @@ if SERVER then
             if IsValid(target) then recipients[#recipients + 1] = target end
         end
         if #recipients > 0 then
-            net.Start(NET_RADIO_MSG) net.WriteString(msg) net.Send(recipients)
+            net.Start(NET_RADIO_MSG)
+                net.WriteUInt(math.Clamp(math.floor(tonumber(col.r) or 255), 0, 255), 8)
+                net.WriteUInt(math.Clamp(math.floor(tonumber(col.g) or 200), 0, 255), 8)
+                net.WriteUInt(math.Clamp(math.floor(tonumber(col.b) or 0), 0, 255), 8)
+                net.WriteString(tag)
+                net.WriteString(rpName)
+                net.WriteString(roleName)
+                net.WriteString(text)
+            net.Send(recipients)
         end
     end)
 
@@ -1380,7 +1394,12 @@ if SERVER then
         if not factionName then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Вы не состоите ни в одной фракции.") return end
         if not depAccess then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Ваша фракция не имеет доступа к волне департамента.") return end
         local displayTag=GRM.Factions.DisplayName(factionName)
-        local msgText = string.format("[%s] %s (%s): - %s", displayTag, ply:Nick(), role or "Участник", text)
+        -- Как /gnews: поля отдельно, перенос строки и раскраску делает клиент.
+        local rpName = ply:GetNWString("GRM_RPName", "")
+        if rpName == "" then rpName = ply:Nick() end
+        local fData = Factions and Factions[factionName]
+        local roleName = (GRM.Factions and GRM.Factions.RoleDisplayName)
+            and GRM.Factions.RoleDisplayName(fData or factionName, role) or (role or "Участник")
 
         local recipients = {}
         for _, target in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
@@ -1392,7 +1411,10 @@ if SERVER then
         if #recipients > 0 then
             net.Start(NET_DEP_MSG)
             net.WriteUInt(color.r, 8) net.WriteUInt(color.g, 8) net.WriteUInt(color.b, 8)
-            net.WriteString(msgText)
+            net.WriteString(displayTag)
+            net.WriteString(rpName)
+            net.WriteString(roleName)
+            net.WriteString(text)
             net.Send(recipients)
         end
     end)
@@ -1405,11 +1427,18 @@ if SERVER then
         if not factionName then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Вы не состоите ни в одной фракции.") return end
         if not depAccess then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Ваша фракция не имеет доступа к волне департамента.") return end
         local displayTag=GRM.Factions.DisplayName(factionName)
-        local msgText = string.format("[%s] %s (%s): (( - %s ))", displayTag, ply:Nick(), role or "Участник", text)
+        local rpNameB = ply:GetNWString("GRM_RPName", "")
+        if rpNameB == "" then rpNameB = ply:Nick() end
+        local fDataB = Factions and Factions[factionName]
+        local roleNameB = (GRM.Factions and GRM.Factions.RoleDisplayName)
+            and GRM.Factions.RoleDisplayName(fDataB or factionName, role) or (role or "Участник")
 
         net.Start(NET_DEPB_MSG)
         net.WriteUInt(color.r, 8) net.WriteUInt(color.g, 8) net.WriteUInt(color.b, 8)
-        net.WriteString(msgText)
+        net.WriteString(displayTag)
+        net.WriteString(rpNameB)
+        net.WriteString(roleNameB)
+        net.WriteString(text)
         net.Broadcast()
     end)
 
@@ -1686,23 +1715,41 @@ if CLIENT then
         FactionCharacterChoices = net.ReadTable() or {}
     end)
 
+    --[[ Единый вывод служебных каналов — ровно как у /gnews:
+             [Канал] [ТЭГ]
+             Имя (Должность): текст
+         Шапка с тэгом идёт отдельной строкой (\n после тэга), имя, должность
+         и сам текст раскрашиваются раздельно. Раньше /dep и /fr клеили всё в
+         одну длинную строку одним цветом, и на длинных сообщениях волна
+         превращалась в нечитаемое полотно. ]]
+    local function printChannel(prefix, prefixColor, tagColor, tag, name, role, text)
+        chat.AddText(
+            prefixColor, prefix,
+            tagColor, "[" .. tostring(tag or "") .. "]\n",
+            Color(100, 200, 255), tostring(name or ""),
+            Color(230, 230, 230), " (" .. tostring(role or "Участник") .. "): ",
+            Color(255, 255, 255), tostring(text or "")
+        )
+    end
+
     net.Receive(NET_RADIO_MSG, function()
-        local msg = net.ReadString()
-        chat.AddText(Color(255, 200, 0), "[Рация] ", Color(255, 255, 255), msg)
+        local r, g, b = net.ReadUInt(8), net.ReadUInt(8), net.ReadUInt(8)
+        local tag, name, role, text = net.ReadString(), net.ReadString(), net.ReadString(), net.ReadString()
+        printChannel("[Рация] ", Color(255, 200, 0), Color(r, g, b), tag, name, role, text)
     end)
 
     net.Receive(NET_DEP_MSG, function()
-        -- Цвет фракции читаем для совместимости протокола, но вся
-        -- государственная волна имеет единый бордово-тёмно-красный цвет.
-        net.ReadUInt(8) net.ReadUInt(8) net.ReadUInt(8)
-        local msg = net.ReadString()
-        chat.AddText(Color(170, 45, 60), "[Волна] " .. tostring(msg or ""))
+        -- Цвет фракции читаем для тэга, но сам канал остаётся единым
+        -- бордово-тёмно-красным — как и было задумано для госволны.
+        local r, g, b = net.ReadUInt(8), net.ReadUInt(8), net.ReadUInt(8)
+        local tag, name, role, text = net.ReadString(), net.ReadString(), net.ReadString(), net.ReadString()
+        printChannel("[Волна] ", Color(170, 45, 60), Color(r, g, b), tag, name, role, text)
     end)
 
     net.Receive(NET_DEPB_MSG, function()
         local r, g, b = net.ReadUInt(8), net.ReadUInt(8), net.ReadUInt(8)
-        local msg = net.ReadString()
-        chat.AddText(Color(r, g, b), "[Волна OOC] ", Color(180, 180, 180), msg)
+        local tag, name, role, text = net.ReadString(), net.ReadString(), net.ReadString(), net.ReadString()
+        printChannel("[Волна OOC] ", Color(150, 150, 160), Color(r, g, b), tag, name, "(( " .. tostring(role) .. " ))", "(( " .. tostring(text) .. " ))")
     end)
 
     net.Receive(NET_ACTION_RESULT, function()
