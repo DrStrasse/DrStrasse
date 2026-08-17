@@ -590,7 +590,14 @@ if SERVER then
         if not factionName or not f then return DefaultModels end
         local role = member.Role
         local dept = member.Department
-        -- Приоритет владельца: роль выше отдела.
+        local sub = member.Subdepartment
+        -- Приоритет: ПОДОТДЕЛ (самый частный уровень) → роль → отдел → фракция.
+        -- Раньше подотдел не учитывался вовсе, хотя его списки редактируются
+        -- в структуре фракции и хранятся в f.Subdepartments[key].models.
+        if sub and sub ~= "" and istable(f.Subdepartments) and istable(f.Subdepartments[sub])
+            and istable(f.Subdepartments[sub].models) and #f.Subdepartments[sub].models > 0 then
+            return f.Subdepartments[sub].models
+        end
         if role and istable(f.RoleModels) and istable(f.RoleModels[role]) and #f.RoleModels[role] > 0 then
             return f.RoleModels[role]
         end
@@ -695,6 +702,14 @@ if SERVER then
         if not factionName or not f then return DEFAULT_WEAPONS end
         local role = member.Role
         local dept = member.Department
+        local sub = member.Subdepartment
+        -- Приоритет: ПОДОТДЕЛ → отдел → роль → фракция. Исторический порядок
+        -- «отдел выше роли» для оружия сохранён, чтобы не менять поведение
+        -- живых серверов; подотдел добавлен сверху как самый частный уровень.
+        if sub and sub ~= "" and istable(f.Subdepartments) and istable(f.Subdepartments[sub])
+            and istable(f.Subdepartments[sub].weapons) and #f.Subdepartments[sub].weapons > 0 then
+            return f.Subdepartments[sub].weapons
+        end
         if dept and istable(f.DepartmentWeapons) and istable(f.DepartmentWeapons[dept]) and #f.DepartmentWeapons[dept] > 0 then
             return f.DepartmentWeapons[dept]
         end
@@ -719,14 +734,15 @@ if SERVER then
         end
     end
 
-    local function applyWeaponsToTargetGroup(targetFaction, targetRole, targetDept)
+    local function applyWeaponsToTargetGroup(targetFaction, targetRole, targetDept, targetSub)
         for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) then
                 local factionName, member = getFactionMemberByPlayer(ply)
                 if targetFaction and targetFaction ~= "" and factionName == targetFaction then
                     local roleMatch = (not targetRole or targetRole == "") or (member and member.Role == targetRole)
                     local deptMatch = (not targetDept or targetDept == "") or (member and member.Department == targetDept)
-                    if roleMatch and deptMatch then
+                    local subMatch = (not targetSub or targetSub == "") or (member and member.Subdepartment == targetSub)
+                    if roleMatch and deptMatch and subMatch then
                         ApplyWeaponsToPlayer(ply)
                     end
                 elseif not targetFaction or targetFaction == "" then
@@ -838,17 +854,67 @@ if SERVER then
         ply:PrintMessage(HUD_PRINTTALK, "[Маскировка] Снята.")
     end)
 
+    --[[ Структура фракции для админ-меню экипировки: роли, отделы И ПОДОТДЕЛЫ
+         вместе с публичными названиями. Раньше меню /models_admin и
+         /weapons_admin знали только про роли и отделы, хотя Faction Core v5
+         давно ввёл иерархию «Отдел ➔ Подотдел», и у подотдела есть
+         собственные списки моделей и оружия. ]]
+    local function factionStructureFor(f, factionName, kind)
+        local roleNames, deptNames = {}, {}
+        for _, key in ipairs(f.Roles or {}) do
+            roleNames[key] = GRM.Factions and GRM.Factions.RoleDisplayName
+                and GRM.Factions.RoleDisplayName(f, key) or key
+        end
+        for _, key in ipairs(f.Departments or {}) do
+            deptNames[key] = GRM.Factions and GRM.Factions.DepartmentDisplayName
+                and GRM.Factions.DepartmentDisplayName(f, key) or key
+        end
+
+        local subs, subList = {}, {}
+        for subKey, sub in pairs(istable(f.Subdepartments) and f.Subdepartments or {}) do
+            if istable(sub) then
+                local list = (kind == "weapons") and sub.weapons or sub.models
+                subs[subKey] = istable(list) and list or {}
+                subList[#subList + 1] = {
+                    id = subKey,
+                    name = tostring(sub.name or subKey),
+                    parent = tostring(sub.parentDept or ""),
+                }
+            end
+        end
+        table.sort(subList, function(a, b)
+            if a.parent ~= b.parent then return a.parent < b.parent end
+            return a.name < b.name
+        end)
+
+        return {
+            displayName = GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(factionName) or factionName,
+            rolesList = f.Roles or {},
+            deptsList = f.Departments or {},
+            roleNames = roleNames,
+            deptNames = deptNames,
+            subList = subList,
+            subdepartments = subs,
+        }
+    end
+
     net.Receive(NET_ADMIN_MODELS_OPEN, function(_, ply)
         if not IsValid(ply) or not ply:IsSuperAdmin() then return end
         loadFactionExtras()
         local data = { factions = {}, default = DefaultModels }
         for factionName, f in pairs(Factions or {}) do
+            local st = factionStructureFor(f, factionName, "models")
             data.factions[factionName] = {
                 general = f.Models or {},
                 roles = f.RoleModels or {},
                 departments = f.DepartmentModels or {},
-                rolesList = f.Roles or {},
-                deptsList = f.Departments or {},
+                subdepartments = st.subdepartments,
+                rolesList = st.rolesList,
+                deptsList = st.deptsList,
+                subList = st.subList,
+                roleNames = st.roleNames,
+                deptNames = st.deptNames,
+                displayName = st.displayName,
             }
         end
         net.Start(NET_ADMIN_MODELS_DATA)
@@ -887,6 +953,13 @@ if SERVER then
         elseif saveType == "department" then
             f.DepartmentModels = f.DepartmentModels or {}
             f.DepartmentModels[key] = models
+        elseif saveType == "subdepartment" then
+            -- Списки подотдела живут внутри самой записи подотдела
+            -- (f.Subdepartments[key].models), как их читает GetSubdepartments.
+            f.Subdepartments = istable(f.Subdepartments) and f.Subdepartments or {}
+            if istable(f.Subdepartments[key]) then
+                f.Subdepartments[key].models = models
+            end
         end
 
         saveFactionExtras()
@@ -899,12 +972,18 @@ if SERVER then
         loadFactionExtras()
         local data = { factions = {}, default = DEFAULT_WEAPONS }
         for factionName, f in pairs(Factions or {}) do
+            local st = factionStructureFor(f, factionName, "weapons")
             data.factions[factionName] = {
                 general = f.Weapons or {},
                 roles = f.RoleWeapons or {},
                 departments = f.DepartmentWeapons or {},
-                rolesList = f.Roles or {},
-                deptsList = f.Departments or {},
+                subdepartments = st.subdepartments,
+                rolesList = st.rolesList,
+                deptsList = st.deptsList,
+                subList = st.subList,
+                roleNames = st.roleNames,
+                deptNames = st.deptNames,
+                displayName = st.displayName,
             }
         end
         net.Start(NET_ADMIN_WEAPONS_DATA)
@@ -943,6 +1022,12 @@ if SERVER then
             f.DepartmentWeapons = f.DepartmentWeapons or {}
             f.DepartmentWeapons[key] = weapons
             applyWeaponsToTargetGroup(factionName, nil, key)
+        elseif saveType == "subdepartment" then
+            f.Subdepartments = istable(f.Subdepartments) and f.Subdepartments or {}
+            if istable(f.Subdepartments[key]) then
+                f.Subdepartments[key].weapons = weapons
+                applyWeaponsToTargetGroup(factionName, nil, nil, key)
+            end
         end
         -- фикс v3.1.1: оружейные списки раньше НЕ сохранялись на диск
         -- (только модели) — после рестарта слетали; пишем в fw_faction_extras.json
@@ -2157,6 +2242,8 @@ if CLIENT then
     local pendingModelsCb = nil
     net.Receive(NET_ADMIN_MODELS_DATA, function()
         local data = net.ReadTable() or {}
+        -- Новый интерфейс регистрирует свой приёмник поверх этого; сюда
+        -- попадаем только при фолбэке на старое окно.
         if pendingModelsCb then local cb = pendingModelsCb pendingModelsCb = nil cb(data) end
     end)
 
@@ -2240,7 +2327,15 @@ if CLIENT then
     end
 
     -- v2.1: интерактивное админ-меню моделей с живым превью (GRM v2 refresh)
+    --[[ Меню одежды переехало в GRM Loadout Admin (cl_grm_faction_loadout_admin):
+         новый дизайн GRM + структура фракции целиком (должности, отделы И
+         ПОДОТДЕЛЫ). Старая реализация оставлена как фолбэк на случай, если
+         клиентский файл почему-то не загрузился. ]]
     local function openAdminModelsMenu()
+        if GRM.LoadoutAdmin and GRM.LoadoutAdmin.OpenModels then
+            GRM.LoadoutAdmin.OpenModels()
+            return
+        end
         pendingModelsCb = function(data)
             local frame = vgui.Create("DFrame")
             frame:SetTitle("Управление моделями")
@@ -2431,7 +2526,12 @@ if CLIENT then
     end)
 
     -- v2.1: интерактивное админ-меню оружия с каталогом и поиском (GRM v2 refresh)
+    -- Аналогично одежде: основной интерфейс — GRM Loadout Admin.
     local function openWeaponsAdminMenu()
+        if GRM.LoadoutAdmin and GRM.LoadoutAdmin.OpenWeapons then
+            GRM.LoadoutAdmin.OpenWeapons()
+            return
+        end
         pendingWeaponsCb = function(data)
             local frame = vgui.Create("DFrame")
             frame:SetTitle("Управление оружием")
