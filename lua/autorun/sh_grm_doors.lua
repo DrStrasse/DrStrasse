@@ -366,7 +366,24 @@ hook.Add("PostCleanupMap","GRM_Doors_RebuildIdentityCache",function()
         D.RebuildDoorIdentityCache()
     end)
 end)
-hook.Add("OnEntityCreated","GRM_Doors_IdentityCreated",function(ent)timer.Simple(.1,function()if IsValid(ent)and D.IsDoor(ent)then D._canonicalDoorIDs=nil;D._equivalentDoors=nil;D._primaryDoors=nil;D.RebuildDoorIdentityCache()end end)end)
+-- При создании новой двери в рантайме (тулза/дупликатор) пересобираем
+-- идентичность и отложенно ликвидируем фантомные дубли. Раньше чистка дублей
+-- происходила ТОЛЬКО при загрузке карты и PostCleanupMap, поэтому «вторые
+-- двери», созданные позже, оставались с пустым владельцем поверх первой.
+local _grmDoorPurgeAt = 0
+hook.Add("OnEntityCreated","GRM_Doors_IdentityCreated",function(ent)
+    timer.Simple(.1,function()
+        if not IsValid(ent) or not D.IsDoor(ent) then return end
+        D._canonicalDoorIDs=nil;D._equivalentDoors=nil;D._primaryDoors=nil
+        D.RebuildDoorIdentityCache()
+        -- Чистку дублей троттлим (PurgeGhostDoors — O(n^2) по дверям).
+        local now = CurTime()
+        if now - _grmDoorPurgeAt >= 2 then
+            _grmDoorPurgeAt = now
+            if D.PurgeGhostDoors then D.PurgeGhostDoors() end
+        end
+    end)
+end)
 hook.Add("EntityRemoved","GRM_Doors_IdentityRemoved",function(ent)if D._canonicalDoorIDs and D._canonicalDoorIDs[ent]then D._canonicalDoorIDs=nil;D._equivalentDoors=nil;D._primaryDoors=nil;timer.Simple(.1,D.RebuildDoorIdentityCache)end end)
 
 if SERVER then
@@ -376,15 +393,60 @@ if SERVER then
         local doors = 0
         local pairsCount = 0
         local ghostCount = D.PurgeGhostDoors and D.PurgeGhostDoors() or 0
+
+        -- Диагностика дублей: группируем двери по физической идентичности и
+        -- показываем группы, где «одна дверь отвечает за другую» (двойной владелец).
+        D.RebuildDoorIdentityCache()
+        local groups = D._equivalentDoors or {}
+        local groupCount, ambiguousCount = 0, 0
+        local ownedCount, ownerlessCount = 0, 0
+        local classCounts = {}
+        for id, group in pairs(groups) do
+            if istable(group) and #group > 1 then groupCount = groupCount + 1 end
+        end
+
         for _, ent in ipairs(ents.GetAll()) do
             if IsValid(ent) and D.IsDoor(ent) then
                 doors = doors + 1
                 if D.GetPartnerDoor and D.GetPartnerDoor(ent) then pairsCount = pairsCount + 1 end
+                local cls = ent:GetClass()
+                classCounts[cls] = (classCounts[cls] or 0) + 1
+                local rec = D.GetRecord and select(1, D.GetRecord(ent))
+                if istable(rec) and rec.owner_type and rec.owner_type ~= "none" then
+                    ownedCount = ownedCount + 1
+                else
+                    ownerlessCount = ownerlessCount + 1
+                end
             end
         end
-        local msg = string.format("[GRM Door Audit] Дверей на карте: %d | Двустворчатых пар: %d | Ликвидировано фантомов: %d | Записей в БД: %d",
-            doors, math.floor(pairsCount / 2), ghostCount, table.Count(D.Data and D.Data.doors or {}))
-        if IsValid(ply) then ply:ChatPrint(msg) else print(msg) end
+
+        -- Двойные владельцы: физ-группа, где у разных дверей разные записи-владельцы.
+        for id, group in pairs(groups) do
+            if istable(group) and #group > 1 then
+                local seenOwners = {}
+                for _, e in ipairs(group) do
+                    local rec = D.GetRecord and select(1, D.GetRecord(e))
+                    local owner = istable(rec) and tostring(rec.owner_type or "none") .. ":" .. tostring(rec.owner_key or rec.owner_faction or rec.owner_category or "") or "none:"
+                    seenOwners[owner] = true
+                end
+                if table.Count(seenOwners) > 1 then ambiguousCount = ambiguousCount + 1 end
+            end
+        end
+
+        local classStr = {}
+        for cls, n in pairs(classCounts) do classStr[#classStr + 1] = cls .. "=" .. n end
+        table.sort(classStr)
+
+        local lines = {}
+        lines[#lines + 1] = "[GRM Door Audit] Дверей: " .. doors .. " | Классы: " .. table.concat(classStr, ", ")
+        lines[#lines + 1] = "  Физических групп (дублей-полотен): " .. groupCount .. " | Двустворчатых пар: " .. math.floor(pairsCount / 2)
+        lines[#lines + 1] = "  С владельцем: " .. ownedCount .. " | Без владельца: " .. ownerlessCount
+        lines[#lines + 1] = "  Групп с РАЗНЫМИ владельцами (конфликт «две двери за одну»): " .. ambiguousCount
+        lines[#lines + 1] = "  Ликвидировано фантомов сейчас: " .. ghostCount .. " | Записей в БД: " .. table.Count(D.Data and D.Data.doors or {})
+
+        for _, l in ipairs(lines) do
+            if IsValid(ply) then ply:ChatPrint(l) else print(l) end
+        end
     end)
 end
 

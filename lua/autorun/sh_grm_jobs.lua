@@ -1325,80 +1325,14 @@ if CLIENT then
         cam.End3D2D()
     end)
 
-    -- GPS-метки маршрута мусоровоза: КАЖДАЯ точка сбора + свалка, видимые
-    -- СКВОЗЬ браши (cam.IgnoreZ). Раньше игрок не видел, куда ехать за мусором.
-    hook.Add("PostDrawTranslucentRenderables", "GRM_Jobs_GarbageRouteMarkers", function(depth, sky)
-        if sky then return end
-        if not istable(tracker) or not istable(tracker.points) or #tracker.points == 0 then return end
-        local lp = LocalPlayer()
-        if not IsValid(lp) then return end
-
-        local total = #tracker.points
-        local current = math.Clamp(tonumber(tracker.pointIndex) or 1, 1, total)
-
-        for i, p in ipairs(tracker.points) do
-            local isDump = (i == total)
-            local isCurrent = (i == current)
-            local col = isDump and Color(90, 220, 120)
-                     or (isCurrent and Color(255, 210, 70) or Color(80, 200, 240))
-
-            local dist = math.floor(lp:GetPos():Distance(p))
-
-            -- Пульсирующая сфера в точке (видна в мире).
-            render.SetColorMaterial()
-            render.DrawWireframeSphere(p, isCurrent and 64 or 52, 12, 6, Color(col.r, col.g, col.b, isCurrent and 150 or 85), true)
-
-            -- Табличка, видимая сквозь стены/здания.
-            local name = tracker.pointNames[i]
-            if name == nil or name == "" then name = isDump and "Свалка" or ("Точка " .. tostring(i)) end
-            local ang = Angle(0, EyeAngles().y - 90, 90)
-            local bob = Vector(0, 0, 44 + math.sin(CurTime() * 2.5 + i * 1.7) * 6)
-            cam.Start3D2D(p + bob, ang, 0.12)
-                cam.IgnoreZ(true)
-                local w = 240
-                draw.RoundedBox(6, -w / 2, -28, w, 54, Color(12, 16, 24, 220))
-                surface.SetDrawColor(col.r, col.g, col.b, 235)
-                surface.DrawOutlinedRect(-w / 2, -28, w, 54, 2)
-                local head = (isDump and "СВАЛКА" or (isCurrent and "СОБРАТЬ МУСОР" or "МУСОРКА")) .. " • " .. dist .. " юн."
-                draw.SimpleText(head, "GRMJobs_Sub", 0, -22, Color(col.r, col.g, col.b), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-                draw.SimpleText(name, "GRMJobs_Normal", 0, 0, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-                cam.IgnoreZ(false)
-            cam.End3D2D()
-        end
-    end)
-
-    hook.Add("HUDPaint", "GRM_Jobs_HudLine", function()
-        if not istable(tracker) then return end
-        local left = math.max(0, (tracker.remain or 0) - (CurTime() - (tracker.at or CurTime())))
-        local txt = "Работа: " .. tostring(tracker.title) ..
-            "  •  " .. fmtTime(left) ..
-            ((tracker.stageName ~= nil and tracker.stageName ~= "") and ("  •  " .. tostring(tracker.stageName)) or "") ..
-            (tracker.needVehicle and "  •  нужен транспорт" or "") ..
-            ((tracker.stayLeft or 0) > 0 and ("  •  в зоне: " .. tostring(tracker.stayLeft) .. " с") or "")
-        local w, h = ScrW(), ScrH()
-        draw.RoundedBox(6, w / 2 - 300, h - 52, 600, 26, Color(14, 18, 26, 190))
-        draw.SimpleText(txt, "GRMJobs_Normal", w / 2, h - 39, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-    end)
-
-    -- Экранная GPS-метка текущей точки работы (мусоровоз/курьер/такси).
-    -- Раньше точка обозначалась только полупрозрачной сферой в мире, которую
-    -- игрок не видел издалека — «мусорку нигде не найти». Теперь — полноценная
-    -- GPS-метка: пульсирующий кружок с названием и дистанцией на экране, а если
-    -- точка вне поля зрения — стрелка-указатель по краю экрана.
-    hook.Add("HUDPaint", "GRM_Jobs_GPSMarker", function()
-        if not istable(tracker) or not tracker.target then return end
-        local lp = LocalPlayer()
-        if not IsValid(lp) then return end
-        local target = tracker.target
+    -- Экранная GPS-метка точки (как в модуле GPS-меток): рисуется на 2D-экране,
+    -- поэтому ВИДНА СКВОЗЬ любые браши — «три здания» между игроком и точкой не
+    -- мешают. Если точка вне поля зрения — стрелка-указатель по краю экрана.
+    local function drawScreenMarker(target, name, dist, col, sw, sh)
         local screen = target:ToScreen()
-        local distance = math.floor(lp:GetPos():Distance(target))
-        local sw, sh = ScrW(), ScrH()
         local visible = screen.visible == true and screen.x > 0 and screen.x < sw and screen.y > 0 and screen.y < sh
         local x, y = screen.x or sw / 2, screen.y or sh / 2
-        local radius = math.Clamp(9 + distance / 450, 10, 22)
-
-        -- Метка-индикатор: голубой/бирюзовый, чтобы не путать с GPS города.
-        local col = Color(80, 200, 240)
+        local radius = math.Clamp(9 + dist / 450, 10, 22)
 
         if not visible then
             -- Стрелка-указатель направления по краю экрана.
@@ -1421,13 +1355,61 @@ if CLIENT then
         surface.SetDrawColor(8, 14, 23, 240)
         surface.DrawCircle(x, y, math.max(3, radius - 4), 8, 14, 23, 240)
 
-        -- Подпись: название точки работы (для мусоровоза — «точка 1/3»).
-        local name = tracker.stageName
-        if name == nil or name == "" then name = tracker.zoneName or tracker.title or "Точка работы" end
         local textX = math.Clamp(x + radius + 14, 14, sw - 14)
         local align = textX > sw - 220 and TEXT_ALIGN_RIGHT or TEXT_ALIGN_LEFT
         draw.SimpleTextOutlined(tostring(name), "GRMJobs_Sub", textX, y - 11, color_white, align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
-        draw.SimpleTextOutlined(distance .. " юн.", "GRMJobs_Small", textX, y + 9, Color(80, 200, 240), align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
+        draw.SimpleTextOutlined(dist .. " юн.", "GRMJobs_Small", textX, y + 9, Color(col.r, col.g, col.b), align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
+    end
+
+    -- GPS-метки маршрута мусоровоза: КАЖДАЯ точка сбора + свалка, экранные
+    -- маркеры (видимы сквозь браши), с номером точки и направлением.
+    hook.Add("HUDPaint", "GRM_Jobs_GarbageRouteMarkers", function()
+        if not istable(tracker) or not istable(tracker.points) or #tracker.points == 0 then return end
+        local lp = LocalPlayer()
+        if not IsValid(lp) then return end
+        local sw, sh = ScrW(), ScrH()
+        local total = #tracker.points
+        local current = math.Clamp(tonumber(tracker.pointIndex) or 1, 1, total)
+
+        for i, p in ipairs(tracker.points) do
+            local isDump = (i == total)
+            local isCurrent = (i == current)
+            local col = isDump and Color(90, 220, 120)
+                     or (isCurrent and Color(255, 210, 70) or Color(80, 200, 240))
+            local dist = math.floor(lp:GetPos():Distance(p))
+            local name = tracker.pointNames[i]
+            if name == nil or name == "" then name = isDump and "Свалка" or ("Точка " .. tostring(i)) end
+            local head = (isDump and "СВАЛКА" or (isCurrent and "СОБРАТЬ МУСОР" or "МУСОРКА")) .. " " .. tostring(i) .. "/" .. tostring(total)
+            drawScreenMarker(p, head .. " — " .. name, dist, col, sw, sh)
+        end
+    end)
+
+    hook.Add("HUDPaint", "GRM_Jobs_HudLine", function()
+        if not istable(tracker) then return end
+        local left = math.max(0, (tracker.remain or 0) - (CurTime() - (tracker.at or CurTime())))
+        local txt = "Работа: " .. tostring(tracker.title) ..
+            "  •  " .. fmtTime(left) ..
+            ((tracker.stageName ~= nil and tracker.stageName ~= "") and ("  •  " .. tostring(tracker.stageName)) or "") ..
+            (tracker.needVehicle and "  •  нужен транспорт" or "") ..
+            ((tracker.stayLeft or 0) > 0 and ("  •  в зоне: " .. tostring(tracker.stayLeft) .. " с") or "")
+        local w, h = ScrW(), ScrH()
+        draw.RoundedBox(6, w / 2 - 300, h - 52, 600, 26, Color(14, 18, 26, 190))
+        draw.SimpleText(txt, "GRMJobs_Normal", w / 2, h - 39, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end)
+
+    -- Экранная GPS-метка одиночной точки работы (курьер/такси). Маршрут
+    -- мусоровоза рисует отдельный хук GRM_Jobs_GarbageRouteMarkers.
+    hook.Add("HUDPaint", "GRM_Jobs_GPSMarker", function()
+        if not istable(tracker) or not tracker.target then return end
+        if istable(tracker.points) and #tracker.points > 0 then return end
+        local lp = LocalPlayer()
+        if not IsValid(lp) then return end
+        local target = tracker.target
+        local distance = math.floor(lp:GetPos():Distance(target))
+        local sw, sh = ScrW(), ScrH()
+        local name = tracker.stageName
+        if name == nil or name == "" then name = tracker.zoneName or tracker.title or "Точка работы" end
+        drawScreenMarker(target, name, distance, Color(80, 200, 240), sw, sh)
     end)
 
     -- Меню терминала --------------------------------------------------------

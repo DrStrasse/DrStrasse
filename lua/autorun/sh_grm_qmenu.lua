@@ -1515,6 +1515,7 @@ if CLIENT then
             QM._iconQueue = {}
             QM._settingsBody = nil
             QM._toolsBody = nil
+            QM._preview = nil
             if QM._frame == f then QM._frame = nil end
             QM._holdOpen = false
         end
@@ -1559,6 +1560,29 @@ if CLIENT then
         local content = vgui.Create("DPanel", f)
         content:SetPos(PAD, contY) content:SetSize(CW, CH)
         content.Paint = function() end
+
+        -- Крупный предпросмотр модели: показывает наведённую на плитку каталога
+        -- модель в 3D (как стандартный spawnmenu), пока курсор на плитке.
+        local preview = vgui.Create("DModelPanel", f)
+        preview:SetPos(FW - panelW - PAD, contY + 2)
+        preview:SetSize(panelW - 8, CH - 8)
+        preview:SetVisible(false)
+        preview:SetFOV(50)
+        preview.LayoutEntity = function(self, ent)
+            if not IsValid(ent) then return end
+            local mn, mx = ent:GetRenderBounds()
+            local size = mx - mn
+            local center = mn + size * 0.5
+            local radius = math.max(size:Length() * 0.6, 20)
+            self:SetCamPos(center + Vector(radius, radius, radius * 0.6))
+            self:SetLookAt(center)
+        end
+        preview.PaintOver = function(self, w, h)
+            surface.SetDrawColor(QC.acc.r, QC.acc.g, QC.acc.b, 180)
+            surface.DrawOutlinedRect(0, 0, w, h)
+            draw.SimpleText("ПРЕДПРОСМОТР", "GRMQ_Small", 8, 8, QC.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        end
+        QM._preview = preview
 
         local settingsBody, toolsBody
         local COL_HEAD = 26
@@ -1669,6 +1693,15 @@ if CLIENT then
                 tile.DoClick = function()
                     surface.PlaySound("ui/buttonclickrelease.wav")
                     net.Start("GRM_QMenu_SpawnProp") net.WriteString(mdl) net.SendToServer()
+                end
+                tile.OnCursorEntered = function()
+                    if not safeMode() and IsValid(QM._preview) then
+                        QM._preview:SetModel(mdl)
+                        QM._preview:SetVisible(true)
+                    end
+                end
+                tile.OnCursorExited = function()
+                    if IsValid(QM._preview) then QM._preview:SetVisible(false) end
                 end
                 if rmbDel then
                     tile.DoRightClick = function()
