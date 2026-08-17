@@ -2718,6 +2718,12 @@ if CLIENT then
     -- Таймер-синк 1.5 c: панель сама пересобирается при изменении зеркал.
     -- ============================================================================
     function OpenExtendedSettings(parentFrame)
+        -- Синхронизировать доступы по ролям (FactionPerms), чтобы чекбоксы
+        -- законодательства отображали актуальное состояние.
+        if GRM and GRM.FactionPerms and GRM.FactionPerms.Request then
+            GRM.FactionPerms.Request()
+        end
+
         local panel = vgui.Create("DPanel")
         panel:SetPaintBackground(false)
         panel:DockPadding(10, 10, 10, 10)
@@ -2777,6 +2783,8 @@ if CLIENT then
                 tostring(CurfewState and CurfewState.active == true), tostring(CurfewState and CurfewState.faction or ""),
                 tostring(istable(cfg.MaskDepartments) and table.Count(cfg.MaskDepartments) or 0),
                 tostring(countArr(cfg.CurfewRoles)),
+                -- Доступы по ролям (FactionPerms) — чтобы чекбоксы законов обновлялись
+                tostring(GRM.FactionPerms and GRM.FactionPerms.GetFactionRoles and util.TableToJSON(GRM.FactionPerms.GetFactionRoles(factionName)) or "{}"),
             }, "|")
         end
 

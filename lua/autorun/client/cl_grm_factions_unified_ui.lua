@@ -932,6 +932,11 @@ function UI.Open(requestedFaction)
         local scroll = vgui.Create("DScrollPanel", pnl)
         scroll:Dock(FILL)
 
+        -- Полные доступы к экономическим функциям ПО РОЛЯМ (отдельная панель).
+        launchCard(scroll, "Доступы по ролям (экономика)",
+            "Бюджеты, налоги, штрафы, законы, инкассация — по должностям.",
+            "icon16/table_key.png", "grm_faction_perms", C.gold)
+
         local function addAccessToggle(title, desc, getVal, onToggle)
             local row = vgui.Create("DPanel", scroll)
             row:Dock(TOP)
@@ -1187,6 +1192,10 @@ function UI.Open(requestedFaction)
     -- Подтянуть свежие флаги доступов (доска/эфир/оповещения/биржа).
     net.Start("GRM_FAcc_Get")
     net.SendToServer()
+    -- Подтянуть доступы по ролям (FactionPerms).
+    if GRM.FactionPerms and GRM.FactionPerms.Request then
+        GRM.FactionPerms.Request()
+    end
 end
 
 function OpenUnifiedFactionsMenu(fname)
