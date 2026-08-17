@@ -61,13 +61,14 @@ local function rowsOf(faction)
     return rows
 end
 
+local function displayFaction(name,faction)return GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(faction,name)or name end
 local function printFaction(ply,factionName,faction,index,total)
-    local rows=rowsOf(faction)
+    local rows=rowsOf(faction);local publicName=displayFaction(factionName,faction)
     local online,onDuty=0,0
     for _,row in ipairs(rows) do if IsValid(row.ply) then online=online+1 end;if row.status=="НА СЛУЖБЕ" then onDuty=onDuty+1 end end
     local prefix=(total and total>1) and string.format("[%d/%d] ",index,total) or ""
     ply:ChatPrint("════════════════════════════════")
-    ply:ChatPrint(prefix..factionName..string.format(" • всего %d • онлайн %d • на службе %d",#rows,online,onDuty))
+    ply:ChatPrint(prefix..publicName..string.format(" • всего %d • онлайн %d • на службе %d",#rows,online,onDuty))
     if #rows==0 then ply:ChatPrint("  — состав пуст —") return end
     for i,row in ipairs(rows) do
         local leader=row.key==faction.Leader and "★ " or "  "
@@ -82,9 +83,9 @@ function R.PrintMembers(ply,requested)
 
     if ply:IsSuperAdmin() then
         if requested~="" and string.lower(requested)~="all" and requested~="все" then
-            local faction=Factions and Factions[requested]
+            local registration=Factions and Factions[requested]and requested or(FactionsAPI and FactionsAPI.GetRegistrationName and FactionsAPI.GetRegistrationName(requested));local faction=registration and Factions[registration]
             if not faction then ply:ChatPrint("[Состав] Фракция «"..requested.."» не найдена.") return end
-            printFaction(ply,requested,faction,1,1)
+            printFaction(ply,registration,faction,1,1)
             return
         end
         local names={}
@@ -113,7 +114,7 @@ function R.PrintLeaders(ply)
         local leaderKey=tostring(faction.Leader or"")
         local leader=leaderKey~="" and resolve(leaderKey) or nil
         local leaderName=leaderKey~="" and nameOf(leaderKey,faction.Members and faction.Members[leaderKey]) or "НЕ НАЗНАЧЕН"
-        ply:ChatPrint(string.format("%02d. %s — %s [%s]",i,name,leaderName,IsValid(leader) and "В СЕТИ" or "НЕ В СЕТИ"))
+        ply:ChatPrint(string.format("%02d. %s — %s [%s]",i,displayFaction(name,faction),leaderName,IsValid(leader) and "В СЕТИ" or "НЕ В СЕТИ"))
     end
     ply:ChatPrint("Всего фракций: "..#names)
 end

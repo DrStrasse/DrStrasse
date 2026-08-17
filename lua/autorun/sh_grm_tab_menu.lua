@@ -134,7 +134,7 @@ if SERVER then
                     nick     = (rpName ~= "" and rpName) or ply:Nick(),
                     steam    = ply:Nick(),
                     rank     = getPlayerRank(ply),
-                    faction  = GRM.TabMenu.ShowFaction and getPlayerFaction(ply) or "",
+                    faction=GRM.TabMenu.ShowFaction and(GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(getPlayerFaction(ply))or getPlayerFaction(ply))or"",
                     balance  = bal,
                     showBal  = isAdmin or (ply == requester),
                     pingMs   = ply:Ping(),

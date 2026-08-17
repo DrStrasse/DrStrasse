@@ -1422,7 +1422,7 @@ if CLIENT then
                             choices={}; local names=QM.FactionNames or {}
                             if #names==0 and GRM.FactionDuty and GRM.FactionDuty.RequestToolFactions then GRM.FactionDuty.RequestToolFactions()end
                             if #names==0 and istable(Factions) then names={}; for name in pairs(Factions) do names[#names+1]=name end; table.sort(names,function(a,b)return string.lower(a)<string.lower(b)end) end
-                            for _,name in ipairs(names) do choices[#choices+1]={name,name} end
+                            for _,name in ipairs(names)do local public=GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(name)or name;choices[#choices+1]={public..(public~=name and("  ["..name.."]")or""),name}end
                         end
                         if #choices==0 then combo:SetValue("Нет доступных вариантов") end
                         for _,ch in ipairs(choices) do combo:AddChoice(ch[1],ch[2],ch[2]==cur) end

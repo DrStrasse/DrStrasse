@@ -69,7 +69,7 @@ function TOOL.BuildCPanel(panel)
         for name in pairs(Factions or{})do name=tostring(name);if name~=""and not seen[name]then seen[name]=true;out[#out+1]=name end end;table.sort(out,function(a,b)return string.lower(a)<string.lower(b)end);return out
     end
     local function refill()
-        if not IsValid(combo)then hook.Remove("GRM_DutyToolFactionsUpdated",hookID)return end;local cur=GetConVar("grm_duty_npc_faction");cur=cur and cur:GetString()or"";combo:Clear();local names=factionNames();if#names==0 then combo:SetValue("Загрузка списка фракций...")else combo:SetValue(cur~=""and cur or"Выберите фракцию");for _,name in ipairs(names)do combo:AddChoice(name,name,name==cur)end end
+        if not IsValid(combo)then hook.Remove("GRM_DutyToolFactionsUpdated",hookID)return end;local cur=GetConVar("grm_duty_npc_faction");cur=cur and cur:GetString()or"";combo:Clear();local names=factionNames();if#names==0 then combo:SetValue("Загрузка списка фракций...")else combo:SetValue(cur~=""and cur or"Выберите фракцию");for _,name in ipairs(names)do local public=GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(name)or name;combo:AddChoice(public..(public~=name and("  ["..name.."]")or""),name,name==cur)end end
     end
     combo.OnSelect=function(_,_,_,data)if data then RunConsoleCommand("grm_duty_npc_faction",tostring(data))end end
     hook.Add("GRM_DutyToolFactionsUpdated",hookID,refill);local oldRemove=panel.OnRemove;panel.OnRemove=function(self)hook.Remove("GRM_DutyToolFactionsUpdated",hookID);if isfunction(oldRemove)then oldRemove(self)end end

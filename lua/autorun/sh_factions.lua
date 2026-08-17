@@ -1,6 +1,6 @@
 --[[--------------------------------------------------------------------
     Единая система фракций + волна департамента + админ-меню
-    ВЕРСИЯ v3 — Обновлённый UI, маскировка удалена (FIXED)
+    ВЕРСИЯ v3.2 — Обновлённый UI, маскировка удалена (FIXED)
     + Чат-команда /factions для суперадмина/лидера
 --------------------------------------------------------------------]]
 
@@ -25,6 +25,15 @@ local NET_DEPB                 = "Factions_Depb"
 local NET_CHARACTER_CHOICES    = "Factions_CharacterChoices"
 local NET_DEP_MSG             = "Factions_DepMsg"
 local NET_DEPB_MSG            = "Factions_DepbMsg"
+
+GRM=GRM or{};GRM.Factions=GRM.Factions or{}
+local function factionTrim(value,maxLen)local s=string.Trim(tostring(value or""));return string.sub(s,1,tonumber(maxLen)or 96)end
+function GRM.Factions.DisplayName(value,fallback)
+    if istable(value)then local d=factionTrim(value.DisplayName,96);return d~=""and d or tostring(fallback or"")end
+    local registration=tostring(value or"");local source=(istable(Factions)and Factions[registration])or(istable(FactionsData)and FactionsData[registration]);local d=istable(source)and factionTrim(source.DisplayName,96)or"";return d~=""and d or registration
+end
+function GRM.Factions.RegistrationName(value)if isstring(value)then return value end;for name,f in pairs(Factions or FactionsData or{})do if f==value then return name end end;return""end
+function GRM.Factions.PlayerDisplayName(ply)if not IsValid(ply)then return""end;local d=ply:GetNWString("GRM_FactionDisplay","");if d~=""then return d end;return GRM.Factions.DisplayName(ply:GetNWString("GRM_Faction",""))end
 
 -- ============================================================
 -- SHARED ЛИДЕРСКИЙ ХЕЛПЕР (изоляция слотов персонажей)
@@ -212,8 +221,9 @@ if SERVER then
         return canonicalMemberKey(raw)
     end
 
-    local function ensureDefaults(f)
-        if not f or type(f) ~= "table" then return end
+    local function ensureDefaults(f,registrationName)
+        if not f or type(f)~="table"then return false end;local changed=false
+        local display=factionTrim(f.DisplayName,96);if display==""then display=factionTrim(registrationName,96)end;if f.DisplayName~=display then f.DisplayName=display;changed=true end
 
         f.Members     = istable(f.Members)     and f.Members     or {}
         f.Roles       = istable(f.Roles)       and f.Roles       or {}
@@ -285,6 +295,7 @@ if SERVER then
         inc.Enabled = inc.Enabled == true
         inc.Roles    = istable(inc.Roles)    and inc.Roles    or {}
         inc.Vehicles = istable(inc.Vehicles) and inc.Vehicles or {}
+        return changed
     end
 
     -- Отдел по умолчанию для новых участников: первый реальный отдел или пустая строка
@@ -312,16 +323,11 @@ if SERVER then
     end
 
     local function ensureAllDefaults()
-        for _, f in pairs(Factions) do
-            if type(f) == "table" then ensureDefaults(f) end
-        end
+        local changed=false;for name,f in pairs(Factions)do if type(f)=="table"and ensureDefaults(f,name)then changed=true end end;return changed
     end
 
-    Factions = loadFactions()
-    Invites  = loadInvites()
-    local factionMigrationChanged = migrateFactionMembers()
-    ensureAllDefaults()
-    if factionMigrationChanged then saveFactions(Factions) end
+    Factions=loadFactions();Invites=loadInvites();local factionMigrationChanged=migrateFactionMembers();local factionNameMigrationChanged=ensureAllDefaults()
+    if factionMigrationChanged or factionNameMigrationChanged then saveFactions(Factions)end
 
     local function characterDisplay(key)
         key = tostring(key or "")
@@ -400,11 +406,12 @@ if SERVER then
         local data = {}
         for name, f in pairs(Factions) do
             if type(f) == "table" then
-                ensureDefaults(f)
+                ensureDefaults(f,name)
                 local b = (GRM.FactionBudgetGet and GRM.FactionBudgetGet(name)) or f.Budget or 0
                 local tax = (GRM.Economy and GRM.Economy.TaxRateGet and GRM.Economy.TaxRateGet(name)) or 0.05
                 data[name] = {
                     Leader           = f.Leader,
+                    DisplayName      = f.DisplayName,
                     Roles            = f.Roles,
                     Departments      = f.Departments,
                     Members          = buildMemberSync(f),
@@ -521,7 +528,7 @@ if SERVER then
         dept = dept or ""
 
         ply:SetNWString("GRM_Faction", fname)
-        ply:SetNWString("Faction", fname)
+        ply:SetNWString("Faction",fname);ply:SetNWString("GRM_FactionDisplay",GRM.Factions.DisplayName(fname))
         ply:SetNWString("GRM_Role", role)
         ply:SetNWString("FactionRole", role)
         ply:SetNWString("GRM_FactionTag", tag)
@@ -571,8 +578,8 @@ if SERVER then
         end)
     end)
 
-    local function createFaction(name, leaderSteamID)
-        if not name or name == "" then return false, "Не указано название" end
+    local function createFaction(name,leaderSteamID,displayName)
+        name=factionTrim(name,64);displayName=factionTrim(displayName,96);if name==""then return false,"Не указано регистрационное название"end;if displayName==""then displayName=name end
         if Factions[name] then return false, "Фракция с таким именем уже существует" end
 
         local defaultLeaderRole = "Лидер"
@@ -584,6 +591,7 @@ if SERVER then
         end
 
         Factions[name] = {
+            DisplayName    = displayName,
             Leader         = leader,
             Roles          = { defaultLeaderRole, "Участник" },
             LeaderRoleName = defaultLeaderRole,
@@ -618,6 +626,10 @@ if SERVER then
         Factions[oldName] = nil
         saveFactions(Factions)
         return true
+    end
+
+    local function setFactionDisplayName(factionName,displayName)
+        local f=Factions[factionName];if not f then return false,"Фракция не найдена"end;displayName=factionTrim(displayName,96);if displayName==""then return false,"Публичное название не указано"end;f.DisplayName=displayName;saveFactions(Factions);return true,"Публичное название сохранено"
     end
 
     local function setFactionTag(factionName, tag)
@@ -914,7 +926,7 @@ if SERVER then
 
         local target = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(targetKey)) or player.GetBySteamID(toSteam) or player.GetBySteamID64(toSteam)
         if IsValid(target) then
-            target:PrintMessage(HUD_PRINTTALK, "Вы приглашены во фракцию " .. factionName .. "! Для принятия напишите /fjoin " .. factionName)
+            target:PrintMessage(HUD_PRINTTALK,"Вы приглашены во фракцию «"..GRM.Factions.DisplayName(factionName).."»! Для принятия: /fjoin "..factionName)
         end
         return true
     end
@@ -936,7 +948,7 @@ if SERVER then
         Invites[key] = nil
         saveInvites(Invites)
         local ply = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(key)) or player.GetBySteamID(steamID) or player.GetBySteamID64(steamID)
-        if IsValid(ply) then ply:PrintMessage(HUD_PRINTTALK, "Вы вступили во фракцию " .. factionName) end
+        if IsValid(ply) then ply:PrintMessage(HUD_PRINTTALK, "Вы вступили во фракцию «"..GRM.Factions.DisplayName(factionName).."»") end
         return true
     end
 
@@ -1006,10 +1018,12 @@ if SERVER then
             return leaderFaction, 0
         end
 
-        if action == "createFaction" then
-            if not isSuperAdmin then done(false, "Только суперадмин") return end
-            local ok, err = createFaction(args[1], args[2])
-            done(ok, err)
+        if action=="createFaction"then
+            if not isSuperAdmin then done(false,"Только суперадмин")return end;local ok,err=createFaction(args[1],args[2],args[1]);done(ok,err)
+        elseif action=="createFactionV2"then
+            if not isSuperAdmin then done(false,"Только суперадмин")return end;local ok,err=createFaction(args[1],args[3],args[2]);done(ok,err)
+        elseif action=="setDisplayName"then
+            if not isSuperAdmin then done(false,"Только суперадмин")return end;local ok,err=setFactionDisplayName(args[1],args[2]);done(ok,err)
         elseif action == "renameFaction" then
             if not isSuperAdmin then done(false, "Только суперадмин") return end
             if not args[1] or not args[2] then done(false, "Не указаны параметры") return end
@@ -1158,7 +1172,7 @@ if SERVER then
         local factionName = net.ReadString()
         local ok, err = acceptInvite(ply, factionName)
         if ok then
-            ply:PrintMessage(HUD_PRINTTALK, "Вы вступили во фракцию " .. factionName)
+            ply:PrintMessage(HUD_PRINTTALK, "Вы вступили во фракцию «"..GRM.Factions.DisplayName(factionName).."»")
             broadcastFactionData()
         else
             ply:PrintMessage(HUD_PRINTTALK, "Ошибка: " .. err)
@@ -1168,7 +1182,7 @@ if SERVER then
     net.Receive(NET_DECLINE, function(_, ply)
         local factionName = net.ReadString()
         local ok, err = declineInvite(ply, factionName)
-        if ok then ply:PrintMessage(HUD_PRINTTALK, "Вы отклонили приглашение во фракцию " .. factionName)
+        if ok then ply:PrintMessage(HUD_PRINTTALK, "Вы отклонили приглашение во фракцию «"..GRM.Factions.DisplayName(factionName).."»")
         else ply:PrintMessage(HUD_PRINTTALK, "Ошибка: " .. err) end
     end)
 
@@ -1193,7 +1207,7 @@ if SERVER then
 
         if not factionName then ply:PrintMessage(HUD_PRINTTALK, "Вы не состоите ни в одной фракции.") return end
         local f = Factions[factionName]
-        local tag = (f and f.Tag and f.Tag ~= "") and f.Tag or factionName
+        local tag=(f and f.Tag and f.Tag~="")and f.Tag or GRM.Factions.DisplayName(factionName)
         local msg = string.format("[%s] %s (%s): %s", tag, ply:Nick(), role or "Участник", text)
 
         local recipients = {}
@@ -1213,7 +1227,7 @@ if SERVER then
         local factionName, role, tag, color, depAccess = getFactionInfoForPlayer(steam)
         if not factionName then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Вы не состоите ни в одной фракции.") return end
         if not depAccess then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Ваша фракция не имеет доступа к волне департамента.") return end
-        local displayTag = (tag and tag ~= "") and tag or factionName
+        local displayTag=GRM.Factions.DisplayName(factionName)
         local msgText = string.format("[%s] %s (%s): - %s", displayTag, ply:Nick(), role or "Участник", text)
 
         local recipients = {}
@@ -1238,7 +1252,7 @@ if SERVER then
         local factionName, role, tag, color, depAccess = getFactionInfoForPlayer(steam)
         if not factionName then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Вы не состоите ни в одной фракции.") return end
         if not depAccess then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Ваша фракция не имеет доступа к волне департамента.") return end
-        local displayTag = (tag and tag ~= "") and tag or factionName
+        local displayTag=GRM.Factions.DisplayName(factionName)
         local msgText = string.format("[%s] %s (%s): (( - %s ))", displayTag, ply:Nick(), role or "Участник", text)
 
         net.Start(NET_DEPB_MSG)
@@ -1346,6 +1360,9 @@ if SERVER then
         local f = Factions[factionName]
         return istable(f) and getDefaultMemberRole(f) or nil
     end
+    _G.FactionsAPI.GetDisplayName=function(factionName)return GRM.Factions.DisplayName(factionName)end
+    _G.FactionsAPI.GetRegistrationName=function(value)local raw=tostring(value or"");if Factions[raw]then return raw end;local found;for name,f in pairs(Factions or{})do if GRM.Factions.DisplayName(f,name)==raw then if found then return nil end;found=name end end;return found end
+    _G.FactionsAPI.SetDisplayName=function(factionName,displayName)return setFactionDisplayName(factionName,displayName)end
     _G.FactionsAPI.Save           = function() saveFactions(Factions) end
     _G.FactionsAPI.List           = function()
         -- Compatibility view for older GRM modules. The persisted table keeps
@@ -1377,7 +1394,7 @@ if SERVER then
     _G.FactionsAPI.SetMemberRole       = function(factionName, steamID, role) return setMemberRole(factionName, steamID, role) end
     _G.FactionsAPI.SetMemberDepartment = function(factionName, steamID, dept) return setMemberDepartment(factionName, steamID, dept) end
 
-    print("[Factions] Серверная часть загружена (v3 fixed + чат-команда /factions)")
+    print("[Factions] Серверная часть загружена (v3.2 dual names + /factions)")
 end
 
 -- ============================================================
@@ -1651,7 +1668,7 @@ if CLIENT then
                     local leaderStr = f.Leader or "Нет"
                     local count = table.Count(f.Members or {})
                     local tagStr = (f.Tag and f.Tag ~= "") and ("[" .. f.Tag .. "] ") or ""
-                    ui.listView:AddLine(tagStr .. name, leaderStr, count)
+                    ui.listView:AddLine(tagStr..GRM.Factions.DisplayName(f,name),name,leaderStr,count)
                 end
             end
         end
@@ -1942,7 +1959,7 @@ if CLIENT then
             return
         end
         if IsValid(ui.leaderTitleLabel) then
-            ui.leaderTitleLabel:SetText("Фракция: " .. tostring(factionName))
+            ui.leaderTitleLabel:SetText("Фракция: "..GRM.Factions.DisplayName(factionName))
         end
 
         local members     = f.Members     or {}
@@ -2272,7 +2289,7 @@ if CLIENT then
                 local tagStr = (f.Tag and f.Tag ~= "") and ("[" .. f.Tag .. "] ") or ""
                 local nameLbl = vgui.Create("DLabel", row)
                 nameLbl:SetPos(14, 12) nameLbl:SetSize(300, 20)
-                nameLbl:SetText(tagStr .. factionName)
+                nameLbl:SetText(tagStr..GRM.Factions.DisplayName(f,factionName))
                 nameLbl:SetTextColor(Color(fCol.r, fCol.g, fCol.b))
                 nameLbl:SetFont("Factions_Normal")
 
@@ -2338,7 +2355,7 @@ if CLIENT then
         factionList:SetPaintBackground(false)
         local listView = vgui.Create("DListView", factionList)
         listView:Dock(FILL)
-        listView:AddColumn("Название") listView:AddColumn("Лидер") listView:AddColumn("Участников")
+        listView:AddColumn("Публичное имя") listView:AddColumn("Регистрационное имя") listView:AddColumn("Лидер") listView:AddColumn("Участников")
         ui.listView = listView
 
         local btnRefresh = styledButton(factionList, "↻ Обновить", THEME.accent, THEME.accentDark)
@@ -2358,28 +2375,27 @@ if CLIENT then
         sectionPanel(createPanel, "Создание новой фракции")
 
         local lblName = vgui.Create("DLabel", createPanel)
-        lblName:SetText("Название фракции:") lblName:SetPos(15, 55) lblName:SetSize(160, 20)
+        lblName:SetText("Регистрационное имя:") lblName:SetPos(15,55) lblName:SetSize(165,20)
         lblName:SetFont("Factions_Normal") lblName:SetTextColor(THEME.text)
 
-        local nameEntry = vgui.Create("DTextEntry", createPanel)
-        nameEntry:SetPos(185, 52) nameEntry:SetSize(240, 26) nameEntry:SetFont("Factions_Normal")
+        local nameEntry=vgui.Create("DTextEntry",createPanel);nameEntry:SetPos(185,52);nameEntry:SetSize(240,26);nameEntry:SetFont("Factions_Normal");nameEntry:SetPlaceholderText("system_registration_id")
+        local lblDisplay=vgui.Create("DLabel",createPanel);lblDisplay:SetText("Публичное имя (RU):");lblDisplay:SetPos(15,90);lblDisplay:SetSize(165,20);lblDisplay:SetFont("Factions_Normal");lblDisplay:SetTextColor(THEME.text)
+        local displayEntry=vgui.Create("DTextEntry",createPanel);displayEntry:SetPos(185,87);displayEntry:SetSize(320,26);displayEntry:SetFont("Factions_Normal");displayEntry:SetPlaceholderText("Название для новостей, департамента и UI")
 
         local lblLeader = vgui.Create("DLabel", createPanel)
-        lblLeader:SetText("SteamID лидера (опционально):") lblLeader:SetPos(15, 90) lblLeader:SetSize(220, 20)
+        lblLeader:SetText("SteamID лидера (опционально):") lblLeader:SetPos(15, 125) lblLeader:SetSize(220, 20)
         lblLeader:SetFont("Factions_Normal") lblLeader:SetTextColor(THEME.text)
 
         local leaderEntry = vgui.Create("DTextEntry", createPanel)
-        leaderEntry:SetPos(245, 87) leaderEntry:SetSize(260, 26) leaderEntry:SetFont("Factions_Normal")
+        leaderEntry:SetPos(245,122) leaderEntry:SetSize(260,26) leaderEntry:SetFont("Factions_Normal")
 
         local btnCreate = styledButton(createPanel, "+ Создать фракцию", THEME.success, Color(40, 160, 80))
-        btnCreate:SetPos(15, 130) btnCreate:SetSize(180, 32)
+        btnCreate:SetPos(15,165) btnCreate:SetSize(180,32)
         btnCreate.DoClick = function()
-            local name = nameEntry:GetText()
-            if name == "" then notification.AddLegacy("Введите название", NOTIFY_ERROR, 3) return end
-            local leader = leaderEntry:GetText()
-            if leader == "" then leader = nil end
-            sendAction("createFaction", { name, leader }, function(ok, msg)
-                if ok then notification.AddLegacy("Фракция создана", NOTIFY_GENERIC, 3) if IsValid(nameEntry) then nameEntry:SetText("") end if IsValid(leaderEntry) then leaderEntry:SetText("") end refreshAllUI()
+            local name=string.Trim(nameEntry:GetText()or"");local displayName=string.Trim(displayEntry:GetText()or"");if name==""then notification.AddLegacy("Введите регистрационное имя",NOTIFY_ERROR,3)return end;if displayName==""then notification.AddLegacy("Введите публичное русское имя",NOTIFY_ERROR,3)return end
+            local leader=leaderEntry:GetText();if leader==""then leader=nil end
+            sendAction("createFactionV2",{name,displayName,leader},function(ok,msg)
+                if ok then notification.AddLegacy("Фракция создана",NOTIFY_GENERIC,3);if IsValid(nameEntry)then nameEntry:SetText("")end;if IsValid(displayEntry)then displayEntry:SetText("")end;if IsValid(leaderEntry)then leaderEntry:SetText("")end;refreshAllUI()
                 else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) end
             end)
         end
@@ -2479,17 +2495,22 @@ if CLIENT then
         end
         Y = Y + 50
 
-        -- Переименование фракции
+        -- Публичное русское имя не меняет системные ключи и связи.
+        local lblDisplayEdit=vgui.Create("DLabel",editPanel);lblDisplayEdit:SetText("Публичное имя (RU):");lblDisplayEdit:SetPos(15,Y+3);lblDisplayEdit:SetSize(145,20);lblDisplayEdit:SetFont("Factions_Normal");lblDisplayEdit:SetTextColor(THEME.text)
+        local displayEdit=vgui.Create("DTextEntry",editPanel);displayEdit:SetPos(165,Y);displayEdit:SetSize(260,26);displayEdit:SetFont("Factions_Normal");displayEdit:SetPlaceholderText("Название для публичного интерфейса")
+        local btnDisplay=styledButton(editPanel,"Сохранить имя",THEME.success,Color(40,160,80));btnDisplay:SetPos(435,Y);btnDisplay:SetSize(130,26);btnDisplay.DoClick=function()local faction=factionCombo:GetValue();local value=string.Trim(displayEdit:GetText()or"");if not faction or faction==""or value==""then return end;sendAction("setDisplayName",{faction,value},function(ok,msg)if ok then notification.AddLegacy("Публичное имя сохранено",NOTIFY_GENERIC,3);refreshAllUI()else notification.AddLegacy("Ошибка: "..msg,NOTIFY_ERROR,3)end end)end
+        Y=Y+42
+
+        -- Переименование регистрационного имени (системного ключа)
         local lblRename = vgui.Create("DLabel", editPanel)
-        lblRename:SetText("Новое название:") lblRename:SetPos(15, Y + 3) lblRename:SetSize(110, 20)
+        lblRename:SetText("Регистрационное имя:") lblRename:SetPos(15, Y + 3) lblRename:SetSize(145, 20)
         lblRename:SetFont("Factions_Normal") lblRename:SetTextColor(THEME.text)
 
         local renameEntry = vgui.Create("DTextEntry", editPanel)
-        renameEntry:SetPos(130, Y) renameEntry:SetSize(200, 26) renameEntry:SetFont("Factions_Normal")
-        renameEntry:SetPlaceholderText("Новое название")
+        renameEntry:SetPos(165,Y) renameEntry:SetSize(200,26) renameEntry:SetFont("Factions_Normal");renameEntry:SetPlaceholderText("Новый системный ID")
 
         local btnRename = styledButton(editPanel, "✎ Переименовать", THEME.accent, THEME.accentDark)
-        btnRename:SetPos(340, Y) btnRename:SetSize(140, 26)
+        btnRename:SetPos(375,Y) btnRename:SetSize(140,26)
         btnRename.DoClick = function()
             local faction = factionCombo:GetValue()
             local newName = renameEntry:GetText()
@@ -2578,7 +2599,7 @@ if CLIENT then
             getData(function(data)
                 if not data or not data[faction] then return end
                 local f = data[faction]
-                if IsValid(tagEntry) then tagEntry:SetText(f.Tag or "") end
+                if IsValid(tagEntry)then tagEntry:SetText(f.Tag or"")end;if IsValid(displayEdit)then displayEdit:SetText(GRM.Factions.DisplayName(f,faction))end
                 if IsValid(renameEntry) then renameEntry:SetText("") end
                 local col = f.Color or { r = 255, g = 200, b = 50 }
                 ui._editColorR = col.r ui._editColorG = col.g ui._editColorB = col.b
@@ -2948,7 +2969,7 @@ if CLIENT then
             local chkEnabled = vgui.Create("DCheckBoxLabel", incLeft)
             chkEnabled._grmChrome = true
             chkEnabled:Dock(TOP) chkEnabled:DockMargin(4, 4, 4, 10)
-            chkEnabled:SetText("Включить инкассацию для фракции «" .. factionName .. "»")
+            chkEnabled:SetText("Включить инкассацию для фракции «"..GRM.Factions.DisplayName(f,factionName).."»")
             chkEnabled:SetFont("Factions_Normal") chkEnabled:SetTextColor(THEME.text)
             chkEnabled:SetValue(inc.Enabled == true)
             chkEnabled.OnChange = markIncassoDirty
@@ -3451,5 +3472,5 @@ if CLIENT then
     net.Receive(NET_OPEN_ADMIN, function() OpenAdminMenu() end)
     net.Receive(NET_OPEN_LEADER, function() OpenLeaderMenu() end)
 
-    print("[Factions] Клиентская часть загружена (v3 fixed + чат-команда /factions)")
+    print("[Factions] Клиентская часть загружена (v3.2 dual names + /factions)")
 end

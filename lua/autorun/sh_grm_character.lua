@@ -821,7 +821,7 @@ if CLIENT then
             draw.SimpleText(ttl, "GRMChar_Big", 26, 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             local slotText = activeSlot == serverActiveSlot and ("активный слот: " .. activeSlot) or ("предпросмотр: " .. activeSlot .. "  •  активный: " .. serverActiveSlot)
             draw.SimpleText("GRM Identity v" .. CH.Version .. "   ·   " .. slotText, "GRMChar_Small", pw - 26, 26, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-            draw.SimpleText("Слот и внешность применяются после подтверждения  •  "..(payload.factionName~="" and (payload.factionName.." / "..tostring(payload.factionRole).." / "..(payload.onDuty and "НА СЛУЖБЕ" or "ВНЕ СЛУЖБЫ")) or "ГРАЖДАНСКИЙ"), "GRMChar_Small", 26, 44, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("Слот и внешность применяются после подтверждения  •  "..(payload.factionName~="" and ((GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(payload.factionName)or payload.factionName).." / "..tostring(payload.factionRole).." / "..(payload.onDuty and "НА СЛУЖБЕ" or "ВНЕ СЛУЖБЫ")) or "ГРАЖДАНСКИЙ"), "GRMChar_Small", 26, 44, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
 
         local x = vgui.Create("DButton", f)
@@ -927,7 +927,7 @@ if CLIENT then
                     local nm = (has and (info.name ~= "" and info.name or ("Персонаж " .. i))) or ("Пустой слот " .. i)
                     draw.SimpleText(nm, "GRMChar_Sub", 38, 11, has and C.text or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                     draw.SimpleText(has and ("ID: " .. tostring(info.id)) or "Создать нового персонажа", "GRMChar_Small", 38, 33, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    local detail = info.factionName ~= "" and (tostring(info.factionName) .. (info.factionRole ~= "" and (" • " .. tostring(info.factionRole)) or "")) or "Гражданский"
+                    local detail = info.factionName ~= "" and (tostring(GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(info.factionName)or info.factionName) .. (info.factionRole ~= "" and (" • " .. tostring(info.factionRole)) or "")) or "Гражданский"
                     draw.SimpleText(detail, "GRMChar_Small", 38, 50, info.factionName ~= "" and C.yellow or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                     if has and info.model ~= "" then
                         local mdl = tostring(info.model):match("([^/]+)$") or tostring(info.model)

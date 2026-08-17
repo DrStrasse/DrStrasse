@@ -6,7 +6,7 @@ ok(s:find('refreshAllUI() nameEntry:SetText("")',1,true)==nil,"нет SetText п
 ok(s:find('refreshAllUI() renameEntry:SetText("")',1,true)==nil,"нет SetText после refresh при переименовании")
 local count=0;for _ in s:gmatch('if IsValid%(newEntry%) then newEntry:SetText%(""%) end refreshAllUI%(%)')do count=count+1 end
 ok(count==4,"четыре формы role/dept очищаются безопасно до refresh")
-ok(s:find('if IsValid(nameEntry) then nameEntry:SetText("") end if IsValid(leaderEntry)',1,true)~=nil,"оба поля создания защищены IsValid")
+ok(s:find('if IsValid(nameEntry)then nameEntry:SetText("")end;if IsValid(displayEntry)then displayEntry:SetText("")end;if IsValid(leaderEntry)',1,true)~=nil,"три поля создания защищены IsValid")
 ok(s:find('if IsValid(renameEntry) then renameEntry:SetText("") end refreshAllUI()',1,true)~=nil,"поле переименования защищено")
 -- Мини-воспроизведение исходного порядка.
 local entry={valid=true};function entry:SetText()assert(self.valid,"NULL Panel")end

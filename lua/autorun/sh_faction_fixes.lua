@@ -1237,7 +1237,7 @@ if SERVER then
 
             factionName = factionName or "Гос. новости"
             f = f or {}
-            local tag = (f.Tag and f.Tag ~= "") and f.Tag or factionName
+            local tag=GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(factionName)or factionName
             local sid = ply:SteamID()
             local sid64 = ply:SteamID64()
             local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or sid64
