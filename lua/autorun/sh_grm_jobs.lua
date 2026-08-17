@@ -701,6 +701,9 @@ if SERVER then
                         local inVeh = ply:InVehicle() == true
                         local needVeh = j.needVehicle == true
                         local vehicleOK = inVeh and (not JB.IsWorkVehicleAllowed or JB.IsWorkVehicleAllowed(ply, j.tplId or j.jtype))
+                        -- Загруженный сервером мусор является авторитетным доказательством
+                        -- правильного мусоровоза, даже если LVS/simfphys отдал нестандартный pod.
+                        if not vehicleOK and inVeh and j.tplId=="garbage"and JB.GetGarbageLoad then local cargoVeh=JB.GetPlayerGarbageTruck and JB.GetPlayerGarbageTruck(ply)or ply:GetVehicle();if IsValid(cargoVeh)and JB.GetGarbageLoad(cargoVeh)>0 then vehicleOK=true end end
                         -- Работа на транспорте: прогресс идёт только за рулём разрешённой машины.
                         if needVeh and not vehicleOK then
                             if (j._hintT or 0) < CurTime() then
@@ -1278,7 +1281,8 @@ if CLIENT then
         if not IsValid(lp) then return end
         local radius = math.max(40, tonumber(tracker.radius) or 180)
         render.SetColorMaterial()
-        render.DrawWireframeSphere(tracker.target, radius, 32, 12, Color(70, 180, 255, 90), true)
+        -- 32x12 строило сотни линий каждый кадр и давало клиентские spikes.
+        render.DrawWireframeSphere(tracker.target, radius, 16, 8, Color(70, 180, 255, 90), true)
         local pos = tracker.target + Vector(0, 0, 46 + math.sin(CurTime() * 2.5) * 6)
         local dist = math.floor(lp:GetPos():Distance(tracker.target))
         local ang = Angle(0, EyeAngles().y - 90, 90)

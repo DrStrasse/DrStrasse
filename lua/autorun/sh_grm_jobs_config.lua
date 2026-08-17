@@ -131,12 +131,12 @@ if SERVER then
     function JB.AddWorkPoint(pointType,name,pointPos)
         pointType=POINT_TYPES[tostring(pointType or"")]and tostring(pointType)or nil;if not pointType or not pointPos then return false,"Неизвестный тип точки"end
         local rec={id="jp_"..os.time().."_"..math.random(1000,9999),type=pointType,name=string.sub(string.Trim(tostring(name or"")),1,64),pos={x=pointPos.x,y=pointPos.y,z=pointPos.z+4},created=os.time()};if rec.name==""then rec.name=POINT_TYPES[pointType]end
-        JB.WorkPoints[#JB.WorkPoints+1]=rec;JB.SaveWorkConfig("добавлена точка "..pointType);return true,rec
+        JB.WorkPoints[#JB.WorkPoints+1]=rec;JB.SaveWorkConfig("добавлена точка "..pointType);if JB.RefreshGarbageTopology then timer.Simple(0,function()JB.RefreshGarbageTopology("point added")end)end;return true,rec
     end
     function JB.RemoveNearestWorkPoint(point,maxDistance)
         local best,bestIndex,bestDist=nil,nil,(tonumber(maxDistance)or 160)^2
         for i,rec in ipairs(JB.WorkPoints or{})do local p=Vector(rec.pos.x,rec.pos.y,rec.pos.z);local d=p:DistToSqr(point);if d<bestDist then best,bestIndex,bestDist=rec,i,d end end
-        if not bestIndex then return false,"Рядом нет точки работы"end;table.remove(JB.WorkPoints,bestIndex);JB.SaveWorkConfig("удалена ближайшая точка");return true,best
+        if not bestIndex then return false,"Рядом нет точки работы"end;table.remove(JB.WorkPoints,bestIndex);JB.SaveWorkConfig("удалена ближайшая точка");if JB.RefreshGarbageTopology then timer.Simple(0,function()JB.RefreshGarbageTopology("point removed")end)end;return true,best
     end
     JB.LoadWorkConfig()
 
@@ -174,8 +174,18 @@ if SERVER then
         if not IsValid(ent)then return false end;local tagged=tostring(ent:GetNWString("GRM_WorkVehicle",ent.GRMWorkVehicle or""));if tagged~=""then return tagged==tostring(workID)end;local list=JB.AllowedVehicleList(workID);if not istable(list)or#list==0 then return true end;local tokens=JB.VehicleTokens(ent)
         for _,allow in ipairs(list)do allow=string.lower(string.Trim(tostring(allow or"")));for _,token in ipairs(tokens)do if allow~=""and token==allow then return true end end end;return false
     end
+    function JB.ResolveWorkVehicle(ply,workID)
+        if not IsValid(ply)or not ply:InVehicle()then return nil,nil end;local seat=ply:GetVehicle();if not IsValid(seat)then return nil,nil end;local root=seat
+        if workID=="garbage"and JB.ResolveGarbageVehicle then root=JB.ResolveGarbageVehicle(seat)or seat else for _=1,3 do local parent=root.GetParent and root:GetParent()or nil;if not IsValid(parent)or parent==root then break end;root=parent end end
+        return IsValid(root)and root or seat,seat
+    end
     function JB.IsWorkVehicleAllowed(ply,workID)
-        if not IsValid(ply)or not ply:InVehicle()then return false end;local veh=ply:GetVehicle();if not IsValid(veh)then return false end;if veh.GetDriver and veh:GetDriver()~=ply then return false end;return JB.IsVehicleClassAllowed(veh,workID)
+        local root,seat=JB.ResolveWorkVehicle(ply,workID);if not IsValid(seat)then return false end;local now=CurTime();local cache=ply._grmWorkVehicleCache
+        if cache and cache.seat==seat and cache.root==root and cache.workID==workID and cache.untilAt>now then return cache.allowed end
+        local seatDriver=seat.GetDriver and seat:GetDriver()or nil;local rootDriver=IsValid(root)and root.GetDriver and root:GetDriver()or nil;local driving=(seatDriver==ply)or(rootDriver==ply)
+        if not driving then ply._grmWorkVehicleCache={seat=seat,root=root,workID=workID,untilAt=now+.5,allowed=false};return false end
+        local allowed=JB.IsVehicleClassAllowed(root,workID)or(root~=seat and JB.IsVehicleClassAllowed(seat,workID))
+        ply._grmWorkVehicleCache={seat=seat,root=root,workID=workID,untilAt=now+.5,allowed=allowed};return allowed
     end
     function JB.GetVehicleCatalog()
         local source=GRM.VehicleDealer and GRM.VehicleDealer.AllVehicleClasses and GRM.VehicleDealer.AllVehicleClasses()or{};if#source==0 then for class,row in pairs(list.Get("Vehicles")or{})do source[#source+1]={class=class,name=row.Name or class,system="source"}end end
@@ -247,7 +257,7 @@ if SERVER then
         elseif act == "remove_point" then
             local id = net.ReadString()
             for i = #JB.WorkPoints, 1, -1 do if JB.WorkPoints[i].id == id then table.remove(JB.WorkPoints, i) break end end
-            JB.SaveWorkConfig("удалена точка")
+            JB.SaveWorkConfig("удалена точка");if JB.RefreshGarbageTopology then timer.Simple(0,function()JB.RefreshGarbageTopology("admin point removed")end)end
         end
         snapshot(ply)
     end)

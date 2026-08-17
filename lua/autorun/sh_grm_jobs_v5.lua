@@ -14,6 +14,9 @@ if SERVER then
  util.AddNetworkString(NREQ);util.AddNetworkString(NDATA)
  local function notify(p,msg,ok)if not IsValid(p)then return end;if GRM.Notify then GRM.Notify(p,msg,ok==false and 255 or 100,ok==false and 125 or 220,ok==false and 95 or 145)else p:ChatPrint("[Мусоровоз] "..msg)end end
  local function audit(action,actor,target,details)if GRM.Audit and GRM.Audit.Write then GRM.Audit.Write("jobs",action,actor,target or{},details or{})end end
+ local function nwString(ent,key,value)value=tostring(value or"");if ent:GetNWString(key,"")~=value then ent:SetNWString(key,value)end end
+ local function nwInt(ent,key,value)value=math.floor(tonumber(value)or 0);if ent:GetNWInt(key,-2147483648)~=value then ent:SetNWInt(key,value)end end
+ local function nwFloat(ent,key,value)value=tonumber(value)or 0;if math.abs(ent:GetNWFloat(key,-1e30)-value)>.001 then ent:SetNWFloat(key,value)end end
  local function pointMap()
   local all,garbage,dumps={},{},{};for _,rec in ipairs(JB.WorkPoints or{})do all[rec.id]=rec;if rec.type=="garbage"then garbage[#garbage+1]=rec elseif rec.type=="dump"then dumps[#dumps+1]=rec end end;return all,garbage,dumps
  end
@@ -22,17 +25,16 @@ if SERVER then
   if not IsValid(veh)then return 0 end;local root=rootVehicle(veh);return math.max(tonumber(veh.GRM_GarbageLoad)or veh:GetNWInt("GRM_GarbageLoad",0),IsValid(root)and(tonumber(root.GRM_GarbageLoad)or root:GetNWInt("GRM_GarbageLoad",0))or 0)
  end
  function JB.SetGarbageLoad(veh,value)
-  if not IsValid(veh)then return nil end;local root=rootVehicle(veh);value=math.max(0,math.floor(tonumber(value)or 0));for _,e in ipairs({veh,root})do if IsValid(e)then e.GRM_GarbageLoad=value;e:SetNWInt("GRM_GarbageLoad",value)end end;return IsValid(root)and root or veh
+  if not IsValid(veh)then return nil end;local root=rootVehicle(veh);value=math.max(0,math.floor(tonumber(value)or 0));for _,e in ipairs({veh,root})do if IsValid(e)then e.GRM_GarbageLoad=value;nwInt(e,"GRM_GarbageLoad",value)end end;return IsValid(root)and root or veh
  end
- function JB.MarkGarbageTruck(veh,ply,j)
-  if not IsValid(veh)then return end;local source=veh;local load=JB.GetGarbageLoad(source);veh=JB.SetGarbageLoad(source,load);if not IsValid(veh)then return end;JB.GarbageTrucks[veh]=true;veh:SetNWInt("GRM_GarbageCapacity",tonumber(JB.WorkConfig and JB.WorkConfig.garbageCapacity)or 8);veh:SetNWString("GRM_GarbageState","collecting");if IsValid(ply)then veh._grmGarbageDriver=ply;veh:SetNWEntity("GRM_GarbageDriverEntity",ply);veh:SetNWString("GRM_GarbageDriver",ply:GetNWString("GRM_RPName",ply:Nick()))end
+ function JB.MarkGarbageTruck(veh,ply,j,preserveState)
+  if not IsValid(veh)then return end;local source=veh;local load=JB.GetGarbageLoad(source);veh=JB.SetGarbageLoad(source,load);if not IsValid(veh)then return end;JB.GarbageTrucks[veh]=true;nwInt(veh,"GRM_GarbageCapacity",tonumber(JB.WorkConfig and JB.WorkConfig.garbageCapacity)or 8);if not preserveState then nwString(veh,"GRM_GarbageState","collecting")end;if IsValid(ply)then veh._grmGarbageDriver=ply;if veh:GetNWEntity("GRM_GarbageDriverEntity")~=ply then veh:SetNWEntity("GRM_GarbageDriverEntity",ply)end;nwString(veh,"GRM_GarbageDriver",ply:GetNWString("GRM_RPName",ply:Nick()))end
  end
  local function binState(bin)local now=CurTime();if(tonumber(bin._grmGarbageSearchingUntil)or 0)>now then return"searching"end;return bin:GetReadyAt()>now and"cooldown"or"ready"end
  local function bindTopology()
-  local all,points,dumps=pointMap();local bins=ents.FindByClass("grm_garbage_bin");local claimed,bindings={},{};local radius=tonumber(JB.WorkConfig and JB.WorkConfig.garbageBindRadius)or 500
-  for _,bin in ipairs(bins)do if IsValid(bin)then bin:SetNWString("GRM_GarbagePointID","");bin:SetNWString("GRM_GarbagePointName","");bin:SetNWString("GRM_GarbageState","unbound")end end
-  for _,rec in ipairs(points)do local rp=posOf(rec);local best,bestD=nil,radius*radius;for _,bin in ipairs(bins)do if IsValid(bin)and not claimed[bin]then local d=rp:DistToSqr(bin:GetPos());if d<bestD then best,bestD=bin,d end end end;if IsValid(best)then claimed[best]=true;bindings[rec.id]=best;rec._grmGarbageBin=best;best:SetNWString("GRM_GarbagePointID",rec.id);best:SetNWString("GRM_GarbagePointName",rec.name);best:SetNWString("GRM_GarbageState",binState(best))else rec._grmGarbageBin=nil end end
-  for _,bin in ipairs(bins)do if IsValid(bin)and claimed[bin]then bin:SetNWString("GRM_GarbageState",binState(bin))end end
+  local all,points,dumps=pointMap();local bins=ents.FindByClass("grm_garbage_bin");local claimed,bindings,boundRec={},{},{};local radius=tonumber(JB.WorkConfig and JB.WorkConfig.garbageBindRadius)or 500
+  for _,rec in ipairs(points)do local rp=posOf(rec);local best,bestD=nil,radius*radius;for _,bin in ipairs(bins)do if IsValid(bin)and not claimed[bin]then local d=rp:DistToSqr(bin:GetPos());if d<bestD then best,bestD=bin,d end end end;if IsValid(best)then claimed[best]=true;boundRec[best]=rec;bindings[rec.id]=best;rec._grmGarbageBin=best else rec._grmGarbageBin=nil end end
+  for _,bin in ipairs(bins)do if IsValid(bin)then local rec=boundRec[bin];if rec then nwString(bin,"GRM_GarbagePointID",rec.id);nwString(bin,"GRM_GarbagePointName",rec.name);nwString(bin,"GRM_GarbageState",binState(bin))else nwString(bin,"GRM_GarbagePointID","");nwString(bin,"GRM_GarbagePointName","");nwString(bin,"GRM_GarbageState","unbound")end end end
   JB.GarbageBindings=bindings;JB.GarbageTopology={all=all,points=points,dumps=dumps,bins=bins,updated=CurTime()};return all,points,dumps
  end
  local function nearestUnused(points,want,used)
@@ -72,19 +74,20 @@ if SERVER then
   local direct=rootVehicle(seat);if IsValid(direct)and JB.GetGarbageLoad(direct)>0 then return direct end
   local best,bestD=nil,650*650;for veh in pairs(JB.GarbageTrucks)do if IsValid(veh)and JB.GetGarbageLoad(veh)>0 then local owner=veh._grmGarbageDriver or(veh.GetNWEntity and veh:GetNWEntity("GRM_GarbageDriverEntity"));if owner==ply then local d=IsValid(direct)and direct:GetPos():DistToSqr(veh:GetPos())or 0;if d<bestD then best,bestD=veh,d end end else JB.GarbageTrucks[veh]=nil end end;return best or direct
  end
+ function JB.GetPlayerGarbageTruck(ply)return IsValid(ply)and unloadTruckFor(ply,ply:GetVehicle())or nil end
  local function clearUnload(ply,j,veh)
-  j.garbageUnloadAt=nil;j.garbageUnloadStart=nil;if IsValid(ply)then ply:SetNWBool("GRM_GarbageUnloading",false);ply:SetNWFloat("GRM_GarbageUnloadStart",0);ply:SetNWFloat("GRM_GarbageUnloadEnd",0);ply:SetNWEntity("GRM_GarbageUnloadTruck",NULL)end;if IsValid(veh)then veh:SetNWFloat("GRM_GarbageUnloadAt",0)end
+  j.garbageUnloadAt=nil;j.garbageUnloadStart=nil;if IsValid(ply)then ply:SetNWBool("GRM_GarbageUnloading",false);ply:SetNWFloat("GRM_GarbageUnloadStart",0);ply:SetNWFloat("GRM_GarbageUnloadEnd",0);ply:SetNWEntity("GRM_GarbageUnloadTruck",NULL)end;if IsValid(veh)then nwFloat(veh,"GRM_GarbageUnloadAt",0)end
  end
  function JB.TickGarbageDump(ply,j,seat,goal,rad)
   if j.routeState=="missing_dump"then if(j._garbageConfigHintAt or 0)<CurTime()then j._garbageConfigHintAt=CurTime()+10;notify(ply,"Свалка не настроена. Сообщите администрации.",false)end;clearUnload(ply,j,nil)return end
-  local veh=unloadTruckFor(ply,seat);if not IsValid(veh)then clearUnload(ply,j,nil)return end;JB.MarkGarbageTruck(veh,ply,j);local load=JB.GetGarbageLoad(veh)
-  if load<=0 then clearUnload(ply,j,veh);veh:SetNWString("GRM_GarbageState","empty");if(j._garbageEmptyHintAt or 0)<CurTime()then j._garbageEmptyHintAt=CurTime()+8;notify(ply,"В машине не найден загруженный мусор. Сначала загрузите коробки клавишей G.",false)end return end
+  local veh=unloadTruckFor(ply,seat);if not IsValid(veh)then clearUnload(ply,j,nil)return end;JB.MarkGarbageTruck(veh,ply,j,true);local load=JB.GetGarbageLoad(veh)
+  if load<=0 then clearUnload(ply,j,veh);nwString(veh,"GRM_GarbageState","empty");if(j._garbageEmptyHintAt or 0)<CurTime()then j._garbageEmptyHintAt=CurTime()+8;notify(ply,"В машине не найден загруженный мусор. Сначала загрузите коробки клавишей G.",false)end return end
   local radius=math.max(tonumber(rad)or 170,tonumber(JB.WorkConfig and JB.WorkConfig.garbageDumpRadius)or 320);local inside=veh:GetPos():DistToSqr(goal)<radius*radius;local actualDriver=veh.GetDriver and veh:GetDriver()or nil;local driver=not IsValid(actualDriver)or actualDriver==ply or veh._grmGarbageDriver==ply;local stopped=not veh.GetVelocity or veh:GetVelocity():Length2D()<80
-  if not inside or not driver or not stopped then if j.garbageUnloadAt then notify(ply,"Выгрузка прервана: остановите мусоровоз в зоне свалки.",false)end;clearUnload(ply,j,veh);veh:SetNWString("GRM_GarbageState","to_dump");return end
-  local duration=tonumber(JB.WorkConfig and JB.WorkConfig.garbageUnloadTime)or 4;if not j.garbageUnloadAt then j.garbageUnloadStart=CurTime();j.garbageUnloadAt=CurTime()+duration;veh:SetNWString("GRM_GarbageState","unloading");veh:SetNWFloat("GRM_GarbageUnloadAt",j.garbageUnloadAt);ply:SetNWBool("GRM_GarbageUnloading",true);ply:SetNWFloat("GRM_GarbageUnloadStart",j.garbageUnloadStart);ply:SetNWFloat("GRM_GarbageUnloadEnd",j.garbageUnloadAt);ply:SetNWEntity("GRM_GarbageUnloadTruck",veh);notify(ply,"Выгрузка началась. Стойте на месте "..duration.." сек.",true);JB.PushMyState(ply);return end
-  if CurTime()<j.garbageUnloadAt then return end;j.garbageDelivered=load;clearUnload(ply,j,veh);JB.SetGarbageLoad(veh,0);veh:SetNWString("GRM_GarbageState","empty");audit("garbage.unload",ply,{vehicle=veh:EntIndex(),dumpID=j.garbageDumpID},{load=load});notify(ply,"Выгрузка завершена: "..load.." коробок. Маршрут закрыт.",true);JB.Complete(ply)
+  if not inside or not driver or not stopped then if j.garbageUnloadAt then notify(ply,"Выгрузка прервана: остановите мусоровоз в зоне свалки.",false)end;clearUnload(ply,j,veh);nwString(veh,"GRM_GarbageState","to_dump");return end
+  local duration=tonumber(JB.WorkConfig and JB.WorkConfig.garbageUnloadTime)or 4;if not j.garbageUnloadAt then j.garbageUnloadStart=CurTime();j.garbageUnloadAt=CurTime()+duration;nwString(veh,"GRM_GarbageState","unloading");nwFloat(veh,"GRM_GarbageUnloadAt",j.garbageUnloadAt);ply:SetNWBool("GRM_GarbageUnloading",true);ply:SetNWFloat("GRM_GarbageUnloadStart",j.garbageUnloadStart);ply:SetNWFloat("GRM_GarbageUnloadEnd",j.garbageUnloadAt);ply:SetNWEntity("GRM_GarbageUnloadTruck",veh);notify(ply,"Выгрузка началась. Стойте на месте "..duration.." сек.",true);JB.PushMyState(ply);return end
+  if CurTime()<j.garbageUnloadAt then return end;j.garbageDelivered=load;clearUnload(ply,j,veh);JB.SetGarbageLoad(veh,0);nwString(veh,"GRM_GarbageState","empty");audit("garbage.unload",ply,{vehicle=veh:EntIndex(),dumpID=j.garbageDumpID},{load=load});notify(ply,"Выгрузка завершена: "..load.." коробок. Маршрут закрыт.",true);JB.Complete(ply)
  end
- hook.Add("PlayerLeaveVehicle","GRM_Garbage_UnloadLeave",function(ply,seat)local j=JB.GetActiveJob and JB.GetActiveJob(ply);if j and j.garbageUnloadAt then local veh=unloadTruckFor(ply,seat);clearUnload(ply,j,veh);if IsValid(veh)then veh:SetNWString("GRM_GarbageState","to_dump")end;notify(ply,"Выгрузка прервана: вы покинули водительское место.",false)end end)
+ hook.Add("PlayerLeaveVehicle","GRM_Garbage_UnloadLeave",function(ply,seat)local j=JB.GetActiveJob and JB.GetActiveJob(ply);if j and j.garbageUnloadAt then local veh=unloadTruckFor(ply,seat);clearUnload(ply,j,veh);if IsValid(veh)then nwString(veh,"GRM_GarbageState","to_dump")end;notify(ply,"Выгрузка прервана: вы покинули водительское место.",false)end end)
  hook.Add("PlayerDeath","GRM_Garbage_UnloadDeath",function(ply)local j=JB.GetActiveJob and JB.GetActiveJob(ply);if j and j.garbageUnloadAt then clearUnload(ply,j,nil)end end)
  hook.Add("GRM_Jobs_Failed","GRM_Garbage_UnloadFail",function(ply,j)if j and j.tplId=="garbage"then clearUnload(ply,j,nil)end end)
  function JB.GarbageStateSnapshot()
@@ -93,7 +96,7 @@ if SERVER then
   return{updated=os.time(),rows=rows,trucks=trucks,summary={points=#(t.points or{}),bound=table.Count(JB.GarbageBindings),bins=#(t.bins or{}),dumps=#(t.dumps or{})}}
  end
  net.Receive(NREQ,function(bits,ply)if not(IsValid(ply)and ply:IsSuperAdmin())then return end;if GRM.Net and not GRM.Net.Guard(ply,"jobs.garbage.state",{rate=.5,burst=3,maxBits=64},{bits=bits})then return end;net.Start(NDATA);net.WriteTable(JB.GarbageStateSnapshot());net.Send(ply)end)
- timer.Create("GRM_Garbage_Topology",2,0,function()JB.RefreshGarbageTopology("auto")end)
+ timer.Create("GRM_Garbage_Topology",10,0,function()JB.RefreshGarbageTopology("fallback auto")end)
  hook.Add("InitPostEntity","GRM_Garbage_TopologyInit",function()timer.Simple(2,function()JB.RefreshGarbageTopology("map init")end)end)
  hook.Add("PostCleanupMap","GRM_Garbage_TopologyCleanup",function()timer.Simple(1,function()JB.RefreshGarbageTopology("cleanup")end)end)
  hook.Add("OnEntityCreated","GRM_Garbage_TopologyCreate",function(e)timer.Simple(.2,function()if IsValid(e)and e:GetClass()=="grm_garbage_bin"then JB.RefreshGarbageTopology("bin created")end end)end)

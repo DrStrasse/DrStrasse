@@ -16,7 +16,7 @@ ok(box:find("models/props/cs_office/cardboard_box03.mdl",1,true),"requested garb
 ok(box:find("AttachTo",1,true)and box:find("GRM_GarbageBox",1,true),"box is visibly carried by player")
 ok(v4:find("GRM_SearchingGarbage",1,true)and v4:find("garbageSearchTime",1,true),"garbage rummaging has server progress lock")
 ok(v4:find("KEY_G",1,true)and v4:find("GRM_JobsV4_GarbageLoad",1,true),"G loads carried box")
-ok(v4:find("Dot(e:GetForward())<0",1,true)and v4:find("garbageCapacity",1,true),"server requires rear of allowed truck and capacity")
+ok(v4:find("Dot(basis:GetForward())<0",1,true)and v4:find("garbageCapacity",1,true)and v4:find("ents.FindInSphere",1,true),"server requires rear of nearby allowed truck and capacity")
 ok(core:find("контейнер не",1,true)==nil and core:find("j.garbageDelivered",1,true),"dump unloads physical truck cargo")
 ok(core:find("taxiStandby=true",1,true)and core:find("ожидайте живые заказы",1,true),"taxi job is a live standby shift")
 ok(v4:find("function JB.CallTaxi",1,true)and v4:find('s=="/calltaxi"',1,true),"players call taxi through chat")
