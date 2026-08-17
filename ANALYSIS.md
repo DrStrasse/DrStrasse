@@ -11,7 +11,9 @@
 Legacy-записи мигрируют DisplayName из ключа без переименования таблиц и без
 поломки access/budget/document/vehicle ссылок. Добавлены shared/API resolvers и
 отдельный `GRM_FactionDisplay` NW. Первая UI-волна охватывает `/dep`, `/depb`,
-`/gnews`, TAB, Character, roster и Duty NPC. Подробно `CONCEPT_FACTION_NAMES.md`.
+`/gnews`, TAB, Character, roster и Duty NPC. Приглашения v2 получили nonce,
+CharacterKey, срок 5 минут, стартовые роль/отдел, singleton-modal, resync при
+смене персонажа, Net Guard и Audit. Подробно `CONCEPT_FACTION_NAMES.md`.
 
 ## Актуализация 17.08.2026 — аудит производительности
 

@@ -25,6 +25,8 @@ local NET_DEPB                 = "Factions_Depb"
 local NET_CHARACTER_CHOICES    = "Factions_CharacterChoices"
 local NET_DEP_MSG             = "Factions_DepMsg"
 local NET_DEPB_MSG            = "Factions_DepbMsg"
+local NET_INVITE_OPEN         = "Factions_InviteOpenV2"
+local NET_INVITE_ACTION       = "Factions_InviteActionV2"
 
 GRM=GRM or{};GRM.Factions=GRM.Factions or{}
 local function factionTrim(value,maxLen)local s=string.Trim(tostring(value or""));return string.sub(s,1,tonumber(maxLen)or 96)end
@@ -101,6 +103,8 @@ if SERVER then
     util.AddNetworkString(NET_CHARACTER_CHOICES)
     util.AddNetworkString(NET_DEP_MSG)
     util.AddNetworkString(NET_DEPB_MSG)
+    util.AddNetworkString(NET_INVITE_OPEN)
+    util.AddNetworkString(NET_INVITE_ACTION)
 
     local FACTIONS_FILE = "factions.json"
     local INVITES_FILE  = "invites.json"
@@ -905,61 +909,41 @@ if SERVER then
     -- --------------------
     -- ПРИГЛАШЕНИЯ
     -- --------------------
-    local function sendInvite(fromPlayerOrKey, toSteam, factionName)
-        local f = Factions[factionName]
-        if not f then return false, "Фракция не найдена" end
-        ensureDefaults(f)
-
-        local fromPlayer   = (isentity(fromPlayerOrKey) and IsValid(fromPlayerOrKey) and fromPlayerOrKey)
-            or (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(fromPlayerOrKey))
-            or player.GetBySteamID(tostring(fromPlayerOrKey or ""))
-            or player.GetBySteamID64(tostring(fromPlayerOrKey or ""))
-        local fromKey      = memberKey(fromPlayer or fromPlayerOrKey)
-        local targetKey    = memberKey(toSteam)
-        local isSuperAdmin = IsValid(fromPlayer) and fromPlayer:IsSuperAdmin()
-        local isLeader     = (f.Leader == fromKey) or (IsValid(fromPlayer) and isCharacterLeaderOfFaction(fromPlayer, f))
-        if not isSuperAdmin and not isLeader then return false, "Недостаточно прав" end
-        if getFactionOfPlayer(targetKey) then return false, "Игрок уже состоит во фракции" end
-
-        Invites[targetKey] = { faction = factionName, from = fromKey, time = os.time() }
-        saveInvites(Invites)
-
-        local target = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(targetKey)) or player.GetBySteamID(toSteam) or player.GetBySteamID64(toSteam)
-        if IsValid(target) then
-            target:PrintMessage(HUD_PRINTTALK,"Вы приглашены во фракцию «"..GRM.Factions.DisplayName(factionName).."»! Для принятия: /fjoin "..factionName)
-        end
-        return true
+    local INVITE_LIFETIME=300
+    local function inviteTarget(key)return(GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(key))or nil end
+    local function inviteAuthorName(fromPlayer,fromKey)local rp=IsValid(fromPlayer)and fromPlayer:GetNWString("GRM_RPName","")or"";if rp~=""then return rp end;if IsValid(fromPlayer)then return fromPlayer:Nick()end;return select(1,characterDisplay(fromKey))end
+    local function normalizeInvite(inv)
+        if not istable(inv)then return nil end;inv.faction=tostring(inv.faction or"");inv.from=tostring(inv.from or"");inv.created=tonumber(inv.created or inv.time)or os.time();inv.expires=tonumber(inv.expires)or(inv.created+INVITE_LIFETIME);local rawID=inv.faction.."|"..inv.from.."|"..inv.created;inv.id=tostring(inv.id or("legacy_"..(util.CRC and util.CRC(rawID)or rawID:gsub("[^%w]","_"))));inv.fromName=tostring(inv.fromName or inviteAuthorName(nil,inv.from));local f=Factions[inv.faction]or{};inv.role=tostring(inv.role or getDefaultMemberRole(f));inv.department=tostring(inv.department or getDefaultDepartment(f));return inv
+    end
+    local function pushInvite(target,inv,closedReason)
+        if not IsValid(target)then return end;net.Start(NET_INVITE_OPEN);net.WriteBool(closedReason==nil);if closedReason~=nil then net.WriteString(tostring(closedReason))else local f=Factions[inv.faction]or{};net.WriteString(inv.id);net.WriteString(inv.faction);net.WriteString(GRM.Factions.DisplayName(f,inv.faction));net.WriteString(inv.fromName);net.WriteString(inv.role or getDefaultMemberRole(f));net.WriteString(inv.department or getDefaultDepartment(f));net.WriteUInt(math.max(0,math.floor(inv.expires)),32)end;net.Send(target)
+    end
+    local function notifyInviteAuthor(inv,text)
+        local author=inviteTarget(inv.from);if IsValid(author)then author:PrintMessage(HUD_PRINTTALK,"[Фракция] "..text)end
+    end
+    local function sendInvite(fromPlayerOrKey,toSteam,factionName,desiredRole,desiredDepartment)
+        local f=Factions[factionName];if not f then return false,"Фракция не найдена"end;ensureDefaults(f,factionName);desiredRole=tostring(desiredRole or"");desiredDepartment=tostring(desiredDepartment or"");if desiredRole==""then desiredRole=getDefaultMemberRole(f)end;if desiredRole==f.LeaderRoleName or not table.HasValue(f.Roles,desiredRole)then return false,"Недопустимая стартовая должность"end;if desiredDepartment==""then desiredDepartment=getDefaultDepartment(f)end;if desiredDepartment~=""and not table.HasValue(f.Departments,desiredDepartment)then return false,"Недопустимый стартовый отдел"end
+        local fromPlayer=(isentity(fromPlayerOrKey)and IsValid(fromPlayerOrKey)and fromPlayerOrKey)or inviteTarget(fromPlayerOrKey)or player.GetBySteamID(tostring(fromPlayerOrKey or""))or player.GetBySteamID64(tostring(fromPlayerOrKey or""));local fromKey=memberKey(fromPlayer or fromPlayerOrKey);local targetKey=memberKey(toSteam)
+        local isSuperAdmin=IsValid(fromPlayer)and fromPlayer:IsSuperAdmin();local isLeader=(f.Leader==fromKey)or(IsValid(fromPlayer)and isCharacterLeaderOfFaction(fromPlayer,f));if not isSuperAdmin and not isLeader then return false,"Недостаточно прав"end
+        if targetKey==""then return false,"Не выбран персонаж"end;if targetKey==fromKey then return false,"Нельзя пригласить самого себя"end;if getFactionOfPlayer(targetKey)then return false,"Персонаж уже состоит во фракции"end
+        local old=normalizeInvite(Invites[targetKey]);if old and old.expires>os.time()then return false,"У персонажа уже есть активное приглашение от «"..GRM.Factions.DisplayName(old.faction).."»"end
+        local now=os.time();local inv={id="fi_"..now.."_"..math.random(100000,999999),faction=factionName,from=fromKey,fromName=inviteAuthorName(fromPlayer,fromKey),created=now,time=now,expires=now+INVITE_LIFETIME,role=desiredRole,department=desiredDepartment};Invites[targetKey]=inv;saveInvites(Invites)
+        local target=inviteTarget(targetKey)or player.GetBySteamID(tostring(toSteam or""))or player.GetBySteamID64(tostring(toSteam or""));if IsValid(target)then pushInvite(target,inv)end
+        if GRM.Audit and GRM.Audit.Write then GRM.Audit.Write("factions","invite.sent",fromPlayer,{characterKey=targetKey,faction=factionName},{inviteID=inv.id,expires=inv.expires})end
+        return true,"Приглашение в «"..GRM.Factions.DisplayName(f,factionName).."» отправлено на 5 минут"
     end
 
-    local function acceptInvite(steamID, factionName)
-        local key = memberKey(steamID)
-        local inv = Invites[key]
-        if not inv then return false, "У вас нет активных приглашений" end
-        if factionName ~= "" and inv.faction:lower() ~= factionName:lower() then
-            return false, "У вас нет приглашения в эту фракцию. Ваше приглашение: /fjoin " .. inv.faction
-        end
-        factionName = inv.faction
-        if getFactionOfPlayer(key) then return false, "Вы уже состоите во фракции" end
-        local f = Factions[factionName]
-        if not f then return false, "Фракция не найдена" end
-        ensureDefaults(f)
-        f.Members[key] = { Role = getDefaultMemberRole(f), Department = getDefaultDepartment(f) }
-        saveFactions(Factions)
-        Invites[key] = nil
-        saveInvites(Invites)
-        local ply = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(key)) or player.GetBySteamID(steamID) or player.GetBySteamID64(steamID)
-        if IsValid(ply) then ply:PrintMessage(HUD_PRINTTALK, "Вы вступили во фракцию «"..GRM.Factions.DisplayName(factionName).."»") end
-        return true
+    local function acceptInvite(steamID,factionName,inviteID)
+        local key=memberKey(steamID);local inv=normalizeInvite(Invites[key]);if not inv then return false,"У вас нет активных приглашений"end
+        if inv.expires<=os.time()then Invites[key]=nil;saveInvites(Invites);return false,"Срок приглашения истёк"end
+        if inviteID and inviteID~=""and inv.id~=inviteID then return false,"Приглашение уже обновилось"end
+        if factionName~=""and inv.faction:lower()~=factionName:lower()then return false,"Активное приглашение выдано фракцией «"..GRM.Factions.DisplayName(inv.faction).."»"end
+        factionName=inv.faction;if getFactionOfPlayer(key)then return false,"Вы уже состоите во фракции"end;local f=Factions[factionName];if not f then Invites[key]=nil;saveInvites(Invites);return false,"Фракция больше не существует"end;ensureDefaults(f,factionName)
+        f.Members[key]={Role=inv.role or getDefaultMemberRole(f),Department=inv.department or getDefaultDepartment(f)};saveFactions(Factions);Invites[key]=nil;saveInvites(Invites);local ply=inviteTarget(key);local display=GRM.Factions.DisplayName(f,factionName);if IsValid(ply)then pushInvite(ply,inv,"Вы приняты во фракцию «"..display.."»");ply:PrintMessage(HUD_PRINTTALK,"Вы вступили во фракцию «"..display.."»")end;notifyInviteAuthor(inv,(IsValid(ply)and ply:Nick()or key).." принял приглашение в «"..display.."»")
+        if GRM.Audit and GRM.Audit.Write then GRM.Audit.Write("factions","invite.accepted",ply,{faction=factionName,characterKey=key},{inviteID=inv.id})end;return true,display
     end
-
-    local function declineInvite(steamID, factionName)
-        local key = memberKey(steamID)
-        local inv = Invites[key]
-        if not inv then return false, "У вас нет активных приглашений" end
-        if inv.faction ~= factionName then return false, "У вас нет приглашения в эту фракцию" end
-        Invites[key] = nil
-        saveInvites(Invites)
-        return true
+    local function declineInvite(steamID,factionName,inviteID)
+        local key=memberKey(steamID);local inv=normalizeInvite(Invites[key]);if not inv then return false,"У вас нет активных приглашений"end;if inviteID and inviteID~=""and inv.id~=inviteID then return false,"Приглашение уже обновилось"end;if factionName~=""and inv.faction~=factionName then return false,"Это приглашение уже не активно"end;Invites[key]=nil;saveInvites(Invites);local display=GRM.Factions.DisplayName(inv.faction);local target=inviteTarget(key);if IsValid(target)then pushInvite(target,inv,"Приглашение в «"..display.."» отклонено")end;notifyInviteAuthor(inv,(IsValid(inviteTarget(key))and inviteTarget(key):Nick()or key).." отклонил приглашение в «"..display.."»");if GRM.Audit and GRM.Audit.Write then GRM.Audit.Write("factions","invite.declined",inviteTarget(key),{faction=inv.faction,characterKey=key},{inviteID=inv.id})end;return true,display
     end
 
     local function leaveFaction(steamID)
@@ -1112,7 +1096,7 @@ if SERVER then
         elseif action == "inviteMember" then
             local faction, shift = getFactionAndShift()
             if not faction then return end
-            local ok, err = sendInvite(ply, args[1 + shift], faction)
+            local ok,err=sendInvite(ply,args[1+shift],faction,args[2+shift],args[3+shift])
             done(ok, err)
         elseif action == "removeMember" then
             local faction, shift = getFactionAndShift()
@@ -1168,16 +1152,7 @@ if SERVER then
         end
     end)
 
-    net.Receive(NET_JOIN, function(_, ply)
-        local factionName = net.ReadString()
-        local ok, err = acceptInvite(ply, factionName)
-        if ok then
-            ply:PrintMessage(HUD_PRINTTALK, "Вы вступили во фракцию «"..GRM.Factions.DisplayName(factionName).."»")
-            broadcastFactionData()
-        else
-            ply:PrintMessage(HUD_PRINTTALK, "Ошибка: " .. err)
-        end
-    end)
+    net.Receive(NET_JOIN,function(_,ply)local factionName=net.ReadString();local ok,err=acceptInvite(ply,factionName);if ok then broadcastFactionData()else ply:PrintMessage(HUD_PRINTTALK,"Ошибка: "..err)end end)
 
     net.Receive(NET_DECLINE, function(_, ply)
         local factionName = net.ReadString()
@@ -1185,6 +1160,19 @@ if SERVER then
         if ok then ply:PrintMessage(HUD_PRINTTALK, "Вы отклонили приглашение во фракцию «"..GRM.Factions.DisplayName(factionName).."»")
         else ply:PrintMessage(HUD_PRINTTALK, "Ошибка: " .. err) end
     end)
+
+    net.Receive(NET_INVITE_ACTION,function(bits,ply)
+        if not IsValid(ply)then return end;if GRM.Net and not GRM.Net.Guard(ply,"factions.invite.action",{rate=.5,burst=2,maxBits=512},{bits=bits})then return end;local op,id=net.ReadString(),net.ReadString();local ok,msg
+        if op=="accept"then ok,msg=acceptInvite(ply,"",id);if ok then broadcastFactionData()end elseif op=="decline"then ok,msg=declineInvite(ply,"",id)else return end
+        if not ok then pushInvite(ply,{faction="",id=id},"Ошибка: "..tostring(msg))end
+    end)
+
+    local function resendInvite(ply,closeMissing)
+        if not IsValid(ply)then return end;local key=memberKey(ply);local inv=normalizeInvite(Invites[key]);if not inv then if closeMissing then pushInvite(ply,{},"")end return end;if inv.expires<=os.time()then Invites[key]=nil;saveInvites(Invites);pushInvite(ply,inv,"Срок приглашения истёк");return end;Invites[key]=inv;pushInvite(ply,inv)
+    end
+    hook.Add("PlayerInitialSpawn","Factions_InviteV2Join",function(ply)timer.Simple(3,function()resendInvite(ply,false)end)end)
+    hook.Add("GRM_CharacterChanged","Factions_InviteV2Character",function(ply)timer.Simple(.5,function()resendInvite(ply,true)end)end)
+    timer.Create("Factions_InviteV2Expire",5,0,function()local changed=false;for key,row in pairs(Invites or{})do local inv=normalizeInvite(row);if not inv or inv.expires<=os.time()then local target=inviteTarget(key);if IsValid(target)and inv then pushInvite(target,inv,"Срок приглашения истёк")end;Invites[key]=nil;changed=true else Invites[key]=inv end end;if changed then saveInvites(Invites)end end)
 
     net.Receive(NET_LEAVE, function(_, ply)
         local ok, err = leaveFaction(ply)
@@ -1428,6 +1416,28 @@ if CLIENT then
     surface.CreateFont("Factions_Normal", { font = "Roboto", size = 14, weight = 500, antialias = true })
     surface.CreateFont("Factions_Small",  { font = "Roboto", size = 12, weight = 400, antialias = true })
     surface.CreateFont("Factions_HUD",    { font = "Roboto", size = 16, weight = 700, antialias = true })
+    surface.CreateFont("Factions_InviteTitle",{font="Roboto",size=28,weight=900,extended=true})
+    surface.CreateFont("Factions_InviteBody",{font="Roboto",size=16,weight=600,extended=true})
+
+    local inviteFrame,inviteData
+    local function sendInviteDecision(op)
+        if not inviteData or inviteData.pending then return end;inviteData.pending=true;net.Start(NET_INVITE_ACTION);net.WriteString(op);net.WriteString(inviteData.id);net.SendToServer();if IsValid(inviteFrame)then for _,child in ipairs(inviteFrame:GetChildren())do if child.SetEnabled then child:SetEnabled(false)end end end
+    end
+    local function closeInvite(reason)
+        if IsValid(inviteFrame)then inviteFrame:Remove()end;inviteFrame=nil;inviteData=nil;if reason and reason~=""then notification.AddLegacy(reason,NOTIFY_GENERIC,6);surface.PlaySound("buttons/button15.wav")end
+    end
+    local function openInvite(data)
+        if IsValid(inviteFrame)then inviteFrame:Remove()end;inviteData=data;local f=vgui.Create("DFrame");inviteFrame=f;f:SetSize(760,440);f:Center();f:MakePopup();f:SetTitle("");f:ShowCloseButton(false);f:SetDeleteOnClose(true);if GRM.UI then GRM.UI.Track("factions.invite",f)end
+        f.Paint=function(_,w,h)draw.RoundedBox(12,0,0,w,h,Color(10,15,24,252));draw.RoundedBoxEx(12,0,0,w,76,Color(24,36,54),true,true,false,false);draw.SimpleText("ОФИЦИАЛЬНОЕ ПРИГЛАШЕНИЕ","Factions_Small",24,19,Color(90,180,255));draw.SimpleText(data.display,"Factions_InviteTitle",24,47,color_white,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER);draw.SimpleText("Регистрационное имя: "..data.faction,"Factions_Small",w-24,48,Color(135,155,180),TEXT_ALIGN_RIGHT,TEXT_ALIGN_CENTER)end
+        local from=vgui.Create("DLabel",f);from:SetPos(24,98);from:SetSize(712,30);from:SetFont("Factions_InviteBody");from:SetTextColor(Color(220,230,240));from:SetText("Приглашение выдал:  "..data.fromName)
+        local assignment=vgui.Create("DPanel",f);assignment:SetPos(24,145);assignment:SetSize(712,108);assignment.Paint=function(_,w,h)draw.RoundedBox(8,0,0,w,h,Color(22,31,44));draw.SimpleText("НАЗНАЧЕНИЕ ПОСЛЕ ВСТУПЛЕНИЯ","Factions_Small",18,18,Color(90,180,255));draw.SimpleText("Должность:  "..(data.role~=""and data.role or"Участник"),"Factions_InviteBody",18,49,color_white);draw.SimpleText("Отдел:  "..(data.department~=""and data.department or"не назначен"),"Factions_InviteBody",18,78,Color(195,205,220))end
+        local terms=vgui.Create("DLabel",f);terms:SetPos(24,270);terms:SetSize(712,45);terms:SetWrap(true);terms:SetFont("Factions_Normal");terms:SetTextColor(Color(150,165,185));terms:SetText("Принимая приглашение, вы вступаете выбранным персонажем. Одновременно состоять в нескольких фракциях нельзя.")
+        local timerLabel=vgui.Create("DLabel",f);timerLabel:SetPos(24,322);timerLabel:SetSize(250,30);timerLabel:SetFont("Factions_InviteBody");timerLabel:SetTextColor(Color(255,205,90));timerLabel._next=0;timerLabel.Think=function(self)if CurTime()<self._next then return end;self._next=CurTime()+.2;local left=math.max(0,data.expires-os.time());self:SetText("Осталось: "..math.floor(left/60)..":"..string.format("%02d",left%60));if left<=0 then closeInvite("Срок приглашения истёк")end end
+        local decline=vgui.Create("DButton",f);decline:SetPos(392,350);decline:SetSize(160,54);decline:SetText("ОТКЛОНИТЬ");decline:SetFont("Factions_InviteBody");decline:SetTextColor(color_white);decline.Paint=function(s,w,h)draw.RoundedBox(7,0,0,w,h,s:IsHovered()and Color(185,65,75)or Color(135,48,58))end;decline.DoClick=function()sendInviteDecision("decline")end
+        local accept=vgui.Create("DButton",f);accept:SetPos(564,350);accept:SetSize(172,54);accept:SetText("ПРИНЯТЬ");accept:SetFont("Factions_InviteBody");accept:SetTextColor(color_white);accept.Paint=function(s,w,h)draw.RoundedBox(7,0,0,w,h,s:IsHovered()and Color(65,210,130)or Color(45,160,98))end;accept.DoClick=function()sendInviteDecision("accept")end
+        f.OnRemove=function()if inviteFrame==f then inviteFrame=nil end end;surface.PlaySound("buttons/button24.wav")
+    end
+    net.Receive(NET_INVITE_OPEN,function()local active=net.ReadBool();if not active then closeInvite(net.ReadString())return end;openInvite({id=net.ReadString(),faction=net.ReadString(),display=net.ReadString(),fromName=net.ReadString(),role=net.ReadString(),department=net.ReadString(),expires=net.ReadUInt(32)})end)
 
     local function installClientFactionAliases(data)
         for _, f in pairs(data or {}) do
@@ -1593,6 +1603,14 @@ if CLIENT then
             draw.RoundedBox(4, 0, 0, w, h, c)
         end
         return btn
+    end
+
+    local function confirmInvite(factionName,targetKey,role,department,onConfirm)
+        local fData=FactionsData and FactionsData[factionName]or{};local display=GRM.Factions.DisplayName(fData,factionName);local w=vgui.Create("DFrame");w:SetSize(610,315);w:Center();w:MakePopup();w:SetTitle("");w:ShowCloseButton(false);w.Paint=function(_,pw,ph)draw.RoundedBox(10,0,0,pw,ph,Color(12,18,27,252));draw.RoundedBoxEx(10,0,0,pw,64,Color(25,38,56),true,true,false,false);draw.SimpleText("ПОДТВЕРЖДЕНИЕ ПРИГЛАШЕНИЯ","Factions_Title",20,32,color_white,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)end
+        local text=vgui.Create("DLabel",w);text:SetPos(20,82);text:SetSize(570,145);text:SetWrap(true);text:SetFont("Factions_InviteBody");text:SetTextColor(Color(215,225,238));text:SetText("Фракция:  "..display.."\nРегистрационное имя:  "..factionName.."\nПерсонаж:  "..targetKey.."\nДолжность:  "..(role~=""and role or"по умолчанию").."\nОтдел:  "..(department~=""and department or"не назначен").."\n\nПриглашение будет действительно 5 минут.")
+        local cancel=styledButton(w,"ОТМЕНА",Color(110,55,65),Color(165,65,75));cancel:SetPos(280,242);cancel:SetSize(140,46);cancel.DoClick=function()w:Close()end
+        local send=styledButton(w,"ОТПРАВИТЬ",Color(45,155,98),Color(65,210,130));send:SetPos(432,242);send:SetSize(158,46);send.DoClick=function()send:SetEnabled(false);w:Close();onConfirm()end
+        if GRM.UI then GRM.UI.Track("factions.invite.confirm",w)end
     end
 
     -- Стилизованная панель-секция
@@ -2725,10 +2743,7 @@ if CLIENT then
             local faction = factionCombo3:GetValue()
             local steam   = targetEntry:GetText()
             if not faction or faction == "" or steam == "" then return end
-            sendAction("inviteMember", { faction, steam }, function(ok, msg)
-                if ok then notification.AddLegacy("Приглашение отправлено", NOTIFY_GENERIC, 3)
-                else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) end
-            end)
+            local role,dept=roleCombo:GetValue()or"",deptCombo:GetValue()or"";confirmInvite(faction,steam,role,dept,function()sendAction("inviteMember",{faction,steam,role,dept},function(ok,msg)if ok then notification.AddLegacy(msg~=""and msg or"Приглашение отправлено",NOTIFY_GENERIC,5)else notification.AddLegacy("Ошибка: "..msg,NOTIFY_ERROR,4)end end)end)
         end
 
         local btnRemoveMember = styledButton(memberPanel, "✕ Удалить", THEME.danger, THEME.dangerHover)
@@ -3258,10 +3273,8 @@ if CLIENT then
         btnInvite.DoClick = function()
             local steam = targetEntry:GetText()
             if steam == "" then return end
-            sendAction("inviteMember", { steam }, function(ok, msg)
-                if ok then notification.AddLegacy("Приглашение отправлено", NOTIFY_GENERIC, 3)
-                else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) end
-            end)
+            local factionName=clientGetLeaderFaction(FactionsData);if not factionName then notification.AddLegacy("Фракция лидера не найдена",NOTIFY_ERROR,3)return end
+            local role,dept=roleCombo:GetValue()or"",deptCombo:GetValue()or"";confirmInvite(factionName,steam,role,dept,function()sendAction("inviteMember",{steam,role,dept},function(ok,msg)if ok then notification.AddLegacy(msg~=""and msg or"Приглашение отправлено",NOTIFY_GENERIC,5)else notification.AddLegacy("Ошибка: "..msg,NOTIFY_ERROR,4)end end)end)
         end
 
         local btnRemoveMember = styledButton(memberPanel, "✕ Уволить", THEME.danger, THEME.dangerHover)

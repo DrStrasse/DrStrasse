@@ -32,7 +32,10 @@ CCTV и Phone учитывают эти назначения поверх ста
 переименования ключей. `/dep`, `/depb`, `/gnews`, TAB, меню персонажа,
 составы/лидеры и служебные диспетчеры показывают DisplayName, тогда как
 доступы, бюджеты и persistence продолжают использовать регистрационный ключ.
-Контракт и API: [`CONCEPT_FACTION_NAMES.md`](CONCEPT_FACTION_NAMES.md).
+Приглашения v2 показываются большим singleton-окном: публичное/регистрационное
+имя, пригласивший, стартовые роль/отдел и таймер 5 минут; accept/decline
+защищены nonce, CharacterKey и Net Guard. Контракт и API:
+[`CONCEPT_FACTION_NAMES.md`](CONCEPT_FACTION_NAMES.md).
 
 ## Производительность
 
