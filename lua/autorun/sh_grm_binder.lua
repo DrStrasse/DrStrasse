@@ -413,13 +413,87 @@ end
 local lastRun = {}
 BD.Running = BD.Running or {}   -- id таймеров активных сцен
 
+-- Движок обрезает консольную команду say примерно на 127 байтах, поэтому
+-- длинные /me /do /it через RunConsoleCommand("say", ...) приходили урезанными,
+-- хотя тот же текст, набранный руками в окне EasyChat, уходит целиком
+-- (EasyChat шлёт сообщение своей net-строкой, лимит easychat_max_chars = 3000).
+-- Отправляем через EasyChat, когда он есть; иначе режем по словам на куски,
+-- влезающие в say, и сохраняем ведущую команду (/me, /do, /dep …) в каждом куске.
+BD.SayLimit = 120   -- запас от движкового 127 (байты, не символы)
+
+function BD.ChatLimit()
+    local cv = GetConVar and GetConVar("easychat_max_chars")
+    if EasyChat and isfunction(EasyChat.SendGlobalMessage) then
+        return cv and math.max(50, cv:GetInt()) or 3000
+    end
+    return BD.SayLimit
+end
+
+-- Режем строку на куски не длиннее limit БАЙТ, по границам слов.
+function BD.SplitChat(text, limit)
+    limit = math.max(16, math.floor(tonumber(limit) or BD.SayLimit))
+    text = string.Trim(tostring(text or ""))
+    if text == "" then return {} end
+    if #text <= limit then return { text } end
+
+    local prefix = string.match(text, "^(/%S+)%s") or ""
+    local body   = prefix ~= "" and string.Trim(string.sub(text, #prefix + 1)) or text
+    local head   = prefix ~= "" and (prefix .. " ") or ""
+    local room   = limit - #head
+    if room < 16 then head, room = "", limit end
+
+    local out, cur = {}, ""
+    local function flush()
+        if cur ~= "" then out[#out + 1] = head .. cur; cur = "" end
+    end
+    for word in string.gmatch(body, "%S+") do
+        -- одно слово длиннее куска — рвём его насильно
+        while #word > room do
+            flush()
+            out[#out + 1] = head .. string.sub(word, 1, room)
+            word = string.sub(word, room + 1)
+        end
+        if cur == "" then
+            cur = word
+        elseif #cur + 1 + #word <= room then
+            cur = cur .. " " .. word
+        else
+            flush()
+            cur = word
+        end
+    end
+    flush()
+    return out
+end
+
+local function sendChat(text)
+    if EasyChat and isfunction(EasyChat.SendGlobalMessage) then
+        EasyChat.SendGlobalMessage(text, false, false)
+        return 1
+    end
+    local parts = BD.SplitChat(text, BD.SayLimit)
+    for i, part in ipairs(parts) do
+        if i == 1 then
+            RunConsoleCommand("say", part)
+        else
+            local tname = ("GRM_BinderSay_%d_%f"):format(i, RealTime())
+            BD.Running[tname] = true
+            timer.Create(tname, BD.MinChatGap * (i - 1), 1, function()
+                BD.Running[tname] = nil
+                RunConsoleCommand("say", part)
+            end)
+        end
+    end
+    return #parts
+end
+
 local function runStep(step)
     local text = string.Trim(tostring(step.text or ""))
     if text == "" then return false end
     if step.mode == "console" then
         LocalPlayer():ConCommand(text .. "\n")
     else
-        RunConsoleCommand("say", text)
+        sendChat(text)
     end
     return true
 end
@@ -467,7 +541,10 @@ function BD.Run(index, depth, visited, force)
             at = at + math.Clamp(tonumber(step.delay) or 0, 0, 60)
             if step.mode ~= "console" then
                 if at - lastChatAt < BD.MinChatGap then at = lastChatAt + BD.MinChatGap end
-                lastChatAt = at
+                -- если строка не влезает в одно сообщение, она уйдёт кусками —
+                -- держим паузу и на них, чтобы следующий шаг не наложился
+                local parts = #BD.SplitChat(step.text, BD.ChatLimit())
+                lastChatAt = at + BD.MinChatGap * math.max(0, parts - 1)
             end
             seq = seq + 1
             local tname = ("GRM_Binder_%d_%d_%f"):format(index, seq, now)
@@ -485,7 +562,7 @@ function BD.Run(index, depth, visited, force)
 
     local nextID = math.floor(tonumber(slot.chain) or 0)
     if nextID > 0 and nextID ~= index then
-        local wait = math.max(at, 0) + math.Clamp(tonumber(slot.chainDelay) or 0, 0, 60)
+        local wait = math.max(at, lastChatAt, 0) + math.Clamp(tonumber(slot.chainDelay) or 0, 0, 60)
         local tname = ("GRM_BinderChain_%d_%f"):format(index, now)
         BD.Running[tname] = true
         timer.Create(tname, wait, 1, function()
@@ -1028,12 +1105,15 @@ function BD.Open()
 
     local hint = vgui.Create("DPanel", body)
     hint:Dock(TOP) hint:SetTall(44) hint:DockMargin(0, 0, 0, 8)
+    hint:SetTall(60)
     hint.Paint = function(_, w, h)
         draw.RoundedBox(6, 0, 0, w, h, C.card)
         draw.SimpleText("Шаг «в чат» уходит как обычное сообщение — работают /me, /do, /dep, /gnews, /fr, /frb. Шаг «в консоль» — команды вроде act salute.",
             "GRMBind_Small", 14, 14, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         draw.SimpleText("Пауза указывается ПЕРЕД шагом; между сообщениями в чат автоматически держится минимум " .. BD.MinChatGap .. " с, чтобы антифлуд не съел строки.",
             "GRMBind_Small", 14, 30, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Длина строки: до " .. BD.ChatLimit() .. " символов за сообщение. Если EasyChat выключен, длинный текст сам разобьётся по словам на несколько сообщений.",
+            "GRMBind_Small", 14, 46, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
 
     local scroll = vgui.Create("DScrollPanel", body)

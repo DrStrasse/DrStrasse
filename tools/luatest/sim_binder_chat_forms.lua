@@ -74,7 +74,11 @@ ok(binder:find('concommand.Add("grm_binder"', 1, true) ~= nil, "консольн
 ok(binder:find('hook.Add("PlayerSay", "GRM_Binder_Chat"', 1, true) ~= nil
     and binder:find('hook.Add("PlayerSayTransform", "GRM_Binder_ChatEC"', 1, true) ~= nil,
     "команда ловится на сервере (и в EasyChat) — в общий чат не улетает")
-ok(binder:find('RunConsoleCommand("say", text)', 1, true) ~= nil, "шаг «в чат» отправляет say")
+ok(binder:find("EasyChat.SendGlobalMessage(text, false, false)", 1, true) ~= nil,
+    "длинный шаг «в чат» уходит через EasyChat (лимит 3000), а не через обрезающий say")
+ok(binder:find('RunConsoleCommand("say", part)', 1, true) ~= nil
+    and binder:find("function BD.SplitChat", 1, true) ~= nil,
+    "без EasyChat текст режется по словам на куски, влезающие в say")
 ok(binder:find('LocalPlayer():ConCommand(text .. "\\n")', 1, true) ~= nil, "шаг «в консоль» выполняет команду")
 ok(binder:find("DBinder", 1, true) ~= nil, "клавиша выбирается стандартным биндером")
 ok(binder:find("local function normalizeSlot", 1, true) ~= nil
@@ -475,6 +479,33 @@ ok(binder:find("-- Светящаяся кромка выбранного сек
     "у выбранного сектора светящаяся золотая кромка")
 ok(binder:find('anim > 0.5 and "GRMBind_Head" or "GRMBind_Body"', 1, true) ~= nil,
     "подпись выбранного сектора крупнее")
+
+print("\n=== 5. ДЛИННЫЕ /me /do /it (заказ владельца) ===")
+local long = "/me " .. string.rep("подробно описывает происходящее действие ", 12)
+local parts = BD.SplitChat(long, BD.SayLimit)
+ok(#parts > 1, ("длинная строка разбита на куски: %d"):format(#parts))
+local fits = true
+for _, p in ipairs(parts) do if #p > BD.SayLimit then fits = false end end
+ok(fits, "каждый кусок влезает в лимит консольной команды say")
+local allPrefixed = true
+for _, p in ipairs(parts) do if p:sub(1, 4) ~= "/me " then allPrefixed = false end end
+ok(allPrefixed, "команда /me повторяется в каждом куске — текст не превращается в обычный чат")
+local restored = {}
+for _, p in ipairs(parts) do restored[#restored + 1] = p:sub(5) end
+ok(table.concat(restored, " ") == (long:sub(5):gsub("%s+$", "")), "слова не теряются и не режутся посередине")
+ok(#BD.SplitChat("/do короткая строка", BD.SayLimit) == 1, "короткая строка уходит одним сообщением")
+
+-- когда EasyChat есть, сообщение уходит целиком одной строкой
+sentSay = {}
+_G.EasyChat = { SendGlobalMessage = function(msg) sentSay[#sentSay + 1] = msg end }
+_G.GetConVar = _G.GetConVar or function() return { GetInt = function() return 3000 end } end
+BD.Slots[5] = BD.BlankSlot(5)
+BD.Slots[5].cooldown = 0
+BD.Slots[5].steps = { { mode = "chat", text = long, delay = 0, enabled = true } }
+stub.time = 400
+BD.Run(5, 1, {}, true)
+ok(sentSay[1] == (long:gsub("%s+$", "")), "с EasyChat длинный /me уходит целиком, одним сообщением", sentSay[1] and #sentSay[1])
+_G.EasyChat = nil
 
 print(("\nBINDER + CHAT + FORMS: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)
