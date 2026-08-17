@@ -1,11 +1,11 @@
 --[[--------------------------------------------------------------------
-    GRM Factions Unified UI v1.0.0 (Код 112, заказ владельца)
+    GRM Factions Unified UI v1.1.0 (Structure v5.0: Отделы и Подотделы)
     Единый интерфейс управления фракцией:
       • Singleton VGUI окно (левая боковая навигация + контент);
-      • Вкладки: Обзор, Сотрудники, Кадровые дела, Структура, Служба, Доступы, Финансы, Журнал;
-      • Полная поддержка двойных имён: DisplayName в заголовках, системные ключи в подсказках;
-      • Стабильные ключи отделов и должностей (RoleDisplayNames + DepartmentDisplayNames);
-      • Подключение к FactionsAPI, FactionCore, FactionDuty, FactionPersonnel.
+      • Вкладки: Обзор, Сотрудники, Кадровые дела, Структура, Служба, Доступы, Финансы;
+      • Полная поддержка иерархии «Отделы ➔ Подотделы» (Subdepartments);
+      • Стабильные ключи ролей, отделов и подотделов (RoleDisplayNames, DepartmentDisplayNames, SubdepartmentDisplayNames);
+      • Подключение к FactionsAPI, FactionCore v5.0, FactionDuty, FactionPersonnel.
 ----------------------------------------------------------------------]]
 
 if not CLIENT then return end
@@ -14,7 +14,7 @@ GRM = GRM or {}
 GRM.Factions = GRM.Factions or {}
 GRM.Factions.UnifiedUI = GRM.Factions.UnifiedUI or {}
 local UI = GRM.Factions.UnifiedUI
-UI.Version = "1.0.0"
+UI.Version = "1.1.0"
 
 surface.CreateFont("GRMFac_Title",   { font = "Roboto", size = 20, weight = 800, extended = true })
 surface.CreateFont("GRMFac_Sub",     { font = "Roboto", size = 15, weight = 700, extended = true })
@@ -32,6 +32,7 @@ local C = {
     accentHover= Color(95, 170, 255),
     gold       = Color(245, 200, 70),
     green      = Color(60, 190, 115),
+    teal       = Color(80, 200, 175),
     red        = Color(230, 75, 75),
     text       = Color(240, 245, 250),
     dim        = Color(160, 175, 195),
@@ -72,6 +73,13 @@ local function getPlayerFactionName(data)
     return nil
 end
 
+local function sendAction(action, args, cb)
+    net.Start("Factions_AdminAction")
+        net.WriteString(action)
+        net.WriteTable(args or {})
+    net.SendToServer()
+end
+
 function UI.Open(requestedFaction)
     if IsValid(currentFrame) then
         currentFrame:Remove()
@@ -100,7 +108,7 @@ function UI.Open(requestedFaction)
     currentFrame = f
     if GRM.UI and GRM.UI.Track then GRM.UI.Track("grm_factions_unified", f) end
 
-    f:SetSize(math.Clamp(ScrW() * 0.85, 960, 1400), math.Clamp(ScrH() * 0.82, 620, 900))
+    f:SetSize(math.Clamp(ScrW() * 0.85, 980, 1400), math.Clamp(ScrH() * 0.84, 640, 920))
     f:Center()
     f:SetTitle("")
     f:SetDraggable(true)
@@ -140,7 +148,7 @@ function UI.Open(requestedFaction)
 
     local sidebar = vgui.Create("DPanel", body)
     sidebar:Dock(LEFT)
-    sidebar:SetWide(200)
+    sidebar:SetWide(210)
     sidebar.Paint = function(self, w, h)
         draw.RoundedBoxEx(0, 0, 0, w, h, C.sidebar, false, false, true, false)
         surface.SetDrawColor(C.border.r, C.border.g, C.border.b, 80)
@@ -161,7 +169,7 @@ function UI.Open(requestedFaction)
             btn.isActive = (k == tabKey)
         end
         content:Clear()
-        if builderFn then builderFn(content, targetFac, data) end
+        if builderFn then builderFn(content, targetFac, FactionsData or {}) end
     end
 
     local function addTabBtn(tabKey, label, icon, builderFn)
@@ -195,12 +203,13 @@ function UI.Open(requestedFaction)
         local ldrKey = tostring(fac.Leader or "Не назначен")
         local memCount = fac.Members and table.Count(fac.Members) or 0
         local deptCount = fac.Departments and #fac.Departments or 0
+        local subCount = fac.Subdepartments and table.Count(fac.Subdepartments) or 0
         local roleCount = fac.Roles and #fac.Roles or 0
         local budget = fac.Budget or 0
 
         local grid = vgui.Create("DGrid", pnl)
         grid:Dock(TOP)
-        grid:SetTall(130)
+        grid:SetTall(120)
         grid:SetCols(4)
         grid:SetColWide((pnl:GetWide() - 40) / 4)
         grid:SetRowHeight(110)
@@ -219,7 +228,7 @@ function UI.Open(requestedFaction)
         end
 
         addStatCard("СОТРУДНИКОВ", memCount, C.accent)
-        addStatCard("ОТДЕЛОВ", deptCount, C.green)
+        addStatCard("ОТДЕЛОВ / ПОДОТДЕЛОВ", tostring(deptCount) .. " / " .. tostring(subCount), C.green)
         addStatCard("ДОЛЖНОСТЕЙ", roleCount, C.gold)
         addStatCard("КАЗНА / БЮДЖЕТ", tostring(budget) .. " руб.", C.gold)
 
@@ -246,20 +255,25 @@ function UI.Open(requestedFaction)
         list:SetMultiSelect(false)
         list:AddColumn("Имя / Идентификатор"):SetFixedWidth(240)
         list:AddColumn("Должность"):SetFixedWidth(180)
-        list:AddColumn("Отдел"):SetFixedWidth(180)
+        list:AddColumn("Отдел / Подотдел"):SetFixedWidth(260)
         list:AddColumn("Статус службы"):SetFixedWidth(120)
 
         for key, rec in pairs(fac.Members or {}) do
             local roleDisplay = GRM.Factions.RoleDisplayName(fac, rec.Role)
             local deptDisplay = GRM.Factions.DepartmentDisplayName(fac, rec.Department)
+            local subDisplay = GRM.Factions.SubdepartmentDisplayName(fac, rec.Subdepartment)
+            local branchText = deptDisplay
+            if subDisplay ~= "" and subDisplay ~= deptDisplay then
+                branchText = deptDisplay .. " [" .. subDisplay .. "]"
+            end
             local onDuty = GRM.FactionDuty and GRM.FactionDuty.State and GRM.FactionDuty.State[key]
             local dutyText = onDuty and "НА СЛУЖБЕ" or "ВНЕ СЛУЖБЫ"
-            local ln = list:AddLine(tostring(key), roleDisplay, deptDisplay, dutyText)
+            local ln = list:AddLine(tostring(key), roleDisplay, branchText, dutyText)
             ln.memberKey = key
         end
     end
 
-    -- Вкладка 3: СТРУКТУРА (Отделы и Должности со стабильными ключами)
+    -- Вкладка 3: СТРУКТУРА (Иерархия «Отделы ➔ Подотделы» + Должности)
     local function buildStructureTab(pnl, facName, facData)
         local fac = facData and facData[facName] or {}
 
@@ -269,7 +283,7 @@ function UI.Open(requestedFaction)
 
         local left = vgui.Create("DPanel", split)
         left:Dock(LEFT)
-        left:SetWide((pnl:GetWide() - 40) / 2)
+        left:SetWide((pnl:GetWide() - 40) * 0.42)
         left.Paint = function(self, w, h)
             draw.RoundedBox(6, 0, 0, w, h, C.card)
             draw.SimpleText("Должности (Roles)", "GRMFac_Sub", 14, 14, C.gold)
@@ -277,16 +291,17 @@ function UI.Open(requestedFaction)
 
         local right = vgui.Create("DPanel", split)
         right:Dock(RIGHT)
-        right:SetWide((pnl:GetWide() - 40) / 2)
+        right:SetWide((pnl:GetWide() - 40) * 0.56)
         right.Paint = function(self, w, h)
             draw.RoundedBox(6, 0, 0, w, h, C.card)
-            draw.SimpleText("Отделы (Departments)", "GRMFac_Sub", 14, 14, C.green)
+            draw.SimpleText("Иерархия отделов и подотделов", "GRMFac_Sub", 14, 14, C.green)
         end
 
+        -- Список должностей
         local rList = vgui.Create("DListView", left)
         rList:Dock(FILL)
         rList:DockMargin(10, 40, 10, 10)
-        rList:AddColumn("Системный ключ"):SetFixedWidth(140)
+        rList:AddColumn("Системный ключ"):SetFixedWidth(120)
         rList:AddColumn("Публичное название (RU)")
 
         for _, rKey in ipairs(fac.Roles or {}) do
@@ -294,15 +309,46 @@ function UI.Open(requestedFaction)
             rList:AddLine(rKey, rDisp)
         end
 
-        local dList = vgui.Create("DListView", right)
-        dList:Dock(FILL)
-        dList:DockMargin(10, 40, 10, 10)
-        dList:AddColumn("Системный ключ"):SetFixedWidth(140)
-        dList:AddColumn("Публичное название (RU)")
+        -- Дерево отделов и подотделов
+        local deptScroll = vgui.Create("DScrollPanel", right)
+        deptScroll:Dock(FILL)
+        deptScroll:DockMargin(10, 40, 10, 10)
 
         for _, dKey in ipairs(fac.Departments or {}) do
             local dDisp = GRM.Factions.DepartmentDisplayName(fac, dKey)
-            dList:AddLine(dKey, dDisp)
+            local subList = GRM.Factions.GetSubdepartments(fac, dKey)
+
+            local dCard = vgui.Create("DPanel", deptScroll)
+            dCard:Dock(TOP)
+            dCard:DockMargin(0, 0, 0, 8)
+            dCard:SetTall(38 + #subList * 32)
+            dCard.Paint = function(self, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, Color(30, 38, 52, 220))
+                surface.SetDrawColor(C.border.r, C.border.g, C.border.b, 80)
+                surface.DrawOutlinedRect(0, 0, w, h)
+                draw.SimpleText("🏛 " .. dDisp, "GRMFac_Sub", 12, 12, C.text)
+                draw.SimpleText("[" .. dKey .. "]", "GRMFac_Small", 14 + surface.GetTextSize("🏛 " .. dDisp) + 12, 14, C.dim)
+                draw.SimpleText("Подотделов: " .. tostring(#subList), "GRMFac_Small", w - 16, 14, C.dim, TEXT_ALIGN_RIGHT)
+            end
+
+            local subContainer = vgui.Create("DPanel", dCard)
+            subContainer:Dock(FILL)
+            subContainer:DockMargin(16, 32, 8, 4)
+            subContainer:SetPaintBackground(false)
+
+            for _, sub in ipairs(subList) do
+                local subRow = vgui.Create("DPanel", subContainer)
+                subRow:Dock(TOP)
+                subRow:SetTall(28)
+                subRow:DockMargin(0, 2, 0, 0)
+                subRow.Paint = function(self, w, h)
+                    draw.RoundedBox(4, 0, 0, w, h, Color(22, 28, 38, 200))
+                    local tag = sub.tag ~= "" and (" " .. sub.tag) or ""
+                    draw.SimpleText("🔹 " .. sub.name .. tag, "GRMFac_Normal", 10, h / 2, C.teal, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    local quotaText = sub.quota > 0 and ("лимит: " .. tostring(sub.quota)) or "без лимита"
+                    draw.SimpleText("[" .. sub.id .. " • " .. quotaText .. "]", "GRMFac_Small", w - 10, h / 2, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                end
+            end
         end
     end
 
@@ -322,7 +368,7 @@ function UI.Open(requestedFaction)
     -- Регистрация кнопок в боковой панели
     addTabBtn("overview", "Обзор", "icon16/application_home.png", buildOverviewTab)
     addTabBtn("members", "Сотрудники", "icon16/group.png", buildMembersTab)
-    addTabBtn("structure", "Структура", "icon16/chart_organisation.png", buildStructureTab)
+    addTabBtn("structure", "Структура и штат", "icon16/chart_organisation.png", buildStructureTab)
     addTabBtn("personnel", "Кадровые дела", "icon16/book.png", buildPersonnelTab)
 
     selectTab("overview", buildOverviewTab)
@@ -341,4 +387,4 @@ hook.Add("PlayerSayTransform", "GRM_FactionUnified_ChatCommand", function(ply, d
     end
 end)
 
-print("[GRM Factions Unified UI] v" .. UI.Version .. " loaded")
+print("[GRM Factions Unified UI] v" .. UI.Version .. " (Structure v5.0) loaded")

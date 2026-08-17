@@ -49,6 +49,17 @@ function GRM.Factions.ResolveRoleKey(factionValue,roleInput)
     for _,r in ipairs(f.Roles or{}) do if r==input then return r end end
     return input
 end
+function GRM.Factions.SubdepartmentDisplayName(factionValue,subdeptKey)
+    local f=isstring(factionValue)and((Factions and Factions[factionValue])or(FactionsData and FactionsData[factionValue]))or factionValue;local key=tostring(subdeptKey or"");if key==""then return""end;local names=istable(f)and f.SubdepartmentDisplayNames or nil;local display=names and factionTrim(names[key],96)or"";if display~=""then return display end;if istable(f)and istable(f.Subdepartments)and f.Subdepartments[key]then local d=factionTrim(f.Subdepartments[key].name or f.Subdepartments[key].displayName,96);if d~=""then return d end end;return key
+end
+function GRM.Factions.ResolveSubdepartmentKey(factionValue,subInput)
+    local f=isstring(factionValue)and((Factions and Factions[factionValue])or(FactionsData and FactionsData[factionValue]))or factionValue;local input=tostring(subInput or"");if input==""or not istable(f)then return input end;if f.Subdepartments and f.Subdepartments[input]then return input end;if f.SubdepartmentDisplayNames and f.SubdepartmentDisplayNames[input]then return input end;if istable(f.SubdepartmentDisplayNames)then for k,v in pairs(f.SubdepartmentDisplayNames)do if tostring(v)==input then return k end end end;if istable(f.Subdepartments)then for k,sub in pairs(f.Subdepartments)do if istable(sub)and(sub.name==input or sub.displayName==input)then return k end end end;return input
+end
+function GRM.Factions.GetSubdepartments(factionValue,parentDeptId)
+    local f=isstring(factionValue)and((Factions and Factions[factionValue])or(FactionsData and FactionsData[factionValue]))or factionValue;local out={};if not(istable(f)and istable(f.Subdepartments))then return out end;parentDeptId=parentDeptId and tostring(parentDeptId)or nil
+    for k,sub in pairs(f.Subdepartments)do if istable(sub)then if not parentDeptId or tostring(sub.parentDept or"")==parentDeptId then out[#out+1]={id=k,name=tostring(sub.name or(f.SubdepartmentDisplayNames and f.SubdepartmentDisplayNames[k])or k),parentDept=tostring(sub.parentDept or""),tag=tostring(sub.tag or""),quota=tonumber(sub.quota)or 0,head=tostring(sub.head or""),models=istable(sub.models)and sub.models or{},weapons=istable(sub.weapons)and sub.weapons or{},vehicles=istable(sub.vehicles)and sub.vehicles or{}}end end end
+    table.sort(out,function(a,b)return a.name:lower()<b.name:lower()end);return out
+end
 
 -- ============================================================
 -- SHARED ЛИДЕРСКИЙ ХЕЛПЕР (изоляция слотов персонажей)
@@ -249,6 +260,18 @@ if SERVER then
         f.Departments = istable(f.Departments) and f.Departments or {}
         f.DepartmentDisplayNames=istable(f.DepartmentDisplayNames)and f.DepartmentDisplayNames or{}
         for _,departmentKey in ipairs(f.Departments)do local public=factionTrim(f.DepartmentDisplayNames[departmentKey],96);if public==""then f.DepartmentDisplayNames[departmentKey]=departmentKey;changed=true end end
+        f.Subdepartments = istable(f.Subdepartments) and f.Subdepartments or {}
+        f.SubdepartmentDisplayNames = istable(f.SubdepartmentDisplayNames) and f.SubdepartmentDisplayNames or {}
+        for subKey, sub in pairs(f.Subdepartments) do
+            if istable(sub) then
+                local public = factionTrim(sub.name or f.SubdepartmentDisplayNames[subKey] or subKey, 96)
+                if public == "" then public = subKey end
+                sub.id = subKey
+                sub.name = public
+                sub.parentDept = tostring(sub.parentDept or "")
+                f.SubdepartmentDisplayNames[subKey] = public
+            end
+        end
         f.PersonnelArchive=istable(f.PersonnelArchive)and f.PersonnelArchive or{}
 
         if type(f.LeaderRoleName) ~= "string" or f.LeaderRoleName == "" then
@@ -375,7 +398,7 @@ if SERVER then
                 local dutyStatus=online and (onDuty and "НА СЛУЖБЕ" or "ВНЕ СЛУЖБЫ") or (savedDuty==false and "ВЫХОДНОЙ" or "НЕ В СЕТИ")
                 local location=IsValid(onlineP) and string.format("%.0f %.0f %.0f",onlineP:GetPos().x,onlineP:GetPos().y,onlineP:GetPos().z) or "—"
                 out[key] = {
-                    Role=rec.Role,Department=rec.Department,Personnel=rec.Personnel and{joinedAt=rec.Personnel.joinedAt,status=rec.Personnel.status,probationUntil=rec.Personnel.probationUntil}or nil,
+                    Role=rec.Role,Department=rec.Department,Subdepartment=tostring(rec.Subdepartment or rec.Subdept or""),Personnel=rec.Personnel and{joinedAt=rec.Personnel.joinedAt,status=rec.Personnel.status,probationUntil=rec.Personnel.probationUntil}or nil,
                     _characterKey = key, _rpName = rp, _online = online, _steamNick = steamNick,
                     _dutyStatus=dutyStatus, _location=location,
                 }
@@ -438,6 +461,8 @@ if SERVER then
                     RoleDisplayNames = f.RoleDisplayNames,
                     Departments      = f.Departments,
                     DepartmentDisplayNames=f.DepartmentDisplayNames,
+                    Subdepartments   = f.Subdepartments,
+                    SubdepartmentDisplayNames=f.SubdepartmentDisplayNames,
                     Members          = buildMemberSync(f),
                     Tag              = f.Tag,
                     Color            = f.Color,
@@ -893,6 +918,105 @@ if SERVER then
         return true
     end
 
+    local function addSubdepartment(factionName, parentDeptId, subdeptKey, displayName, tag, quota)
+        local f = Factions[factionName]
+        if not f then return false, "Фракция не найдена" end
+        ensureDefaults(f, factionName)
+        if not parentDeptId or not table.HasValue(f.Departments, parentDeptId) then
+            return false, "Родительский отдел не найден"
+        end
+        subdeptKey = factionTrim(subdeptKey, 64):lower():gsub("[^%w_%-]", "_")
+        if subdeptKey == "" then return false, "Не указан системный ключ подотдела" end
+        if f.Subdepartments and f.Subdepartments[subdeptKey] then
+            return false, "Подотдел с таким системным ключом уже существует"
+        end
+        displayName = factionTrim(displayName or subdeptKey, 96)
+        if displayName == "" then displayName = subdeptKey end
+        tag = factionTrim(tag or "", 24)
+        quota = math.max(0, math.floor(tonumber(quota) or 0))
+
+        f.Subdepartments = f.Subdepartments or {}
+        f.SubdepartmentDisplayNames = f.SubdepartmentDisplayNames or {}
+        f.Subdepartments[subdeptKey] = {
+            id = subdeptKey,
+            name = displayName,
+            parentDept = parentDeptId,
+            tag = tag,
+            quota = quota,
+            head = "",
+            models = {},
+            weapons = {},
+            vehicles = {},
+        }
+        f.SubdepartmentDisplayNames[subdeptKey] = displayName
+        saveFactions(Factions)
+        hook.Run("GRM_FactionSubdepartmentAdded", factionName, parentDeptId, subdeptKey, displayName)
+        return true, "Подотдел успешно добавлен"
+    end
+
+    local function removeSubdepartment(factionName, subdeptKey)
+        local f = Factions[factionName]
+        if not f then return false, "Фракция не найдена" end
+        ensureDefaults(f, factionName)
+        if not (f.Subdepartments and f.Subdepartments[subdeptKey]) then
+            return false, "Подотдел не найден"
+        end
+        f.Subdepartments[subdeptKey] = nil
+        if f.SubdepartmentDisplayNames then f.SubdepartmentDisplayNames[subdeptKey] = nil end
+        for key, info in pairs(f.Members or {}) do
+            if info.Subdepartment == subdeptKey then
+                local oldSub = info.Subdepartment
+                info.Subdepartment = ""
+                hook.Run("GRM_FactionMemberSubdepartmentChanged", factionName, key, info, oldSub, "", nil)
+            end
+        end
+        saveFactions(Factions)
+        hook.Run("GRM_FactionSubdepartmentRemoved", factionName, subdeptKey)
+        return true, "Подотдел удалён"
+    end
+
+    local function renameSubdepartment(factionName, subdeptKey, newDisplayName)
+        local f = Factions[factionName]
+        if not f then return false, "Фракция не найдена" end
+        ensureDefaults(f, factionName)
+        if not (f.Subdepartments and f.Subdepartments[subdeptKey]) then
+            return false, "Подотдел не найден"
+        end
+        newDisplayName = factionTrim(newDisplayName, 96)
+        if newDisplayName == "" then return false, "Публичное название подотдела не указано" end
+        f.Subdepartments[subdeptKey].name = newDisplayName
+        f.SubdepartmentDisplayNames = f.SubdepartmentDisplayNames or {}
+        f.SubdepartmentDisplayNames[subdeptKey] = newDisplayName
+        saveFactions(Factions)
+        hook.Run("GRM_FactionSubdepartmentDisplayChanged", factionName, subdeptKey, newDisplayName)
+        return true, "Публичное название подотдела сохранено"
+    end
+
+    local function setMemberSubdepartment(factionName, steamID, newSubdept, actor)
+        local f = Factions[factionName]
+        if not f then return false, "Фракция не найдена" end
+        ensureDefaults(f, factionName)
+        local key = memberKey(steamID)
+        if not f.Members[key] then return false, "Игрок не состоит во фракции" end
+        newSubdept = tostring(newSubdept or "")
+        if newSubdept ~= "" and not (f.Subdepartments and f.Subdepartments[newSubdept]) then
+            return false, "Такого подотдела нет"
+        end
+        if newSubdept ~= "" then
+            local parent = f.Subdepartments[newSubdept].parentDept
+            if parent and parent ~= "" and f.Members[key].Department ~= parent then
+                local oldDept = f.Members[key].Department
+                f.Members[key].Department = parent
+                hook.Run("GRM_FactionMemberDepartmentChanged", factionName, key, f.Members[key], oldDept, parent, actor)
+            end
+        end
+        local oldSub = f.Members[key].Subdepartment or ""
+        f.Members[key].Subdepartment = newSubdept
+        hook.Run("GRM_FactionMemberSubdepartmentChanged", factionName, key, f.Members[key], oldSub, newSubdept, actor)
+        saveFactions(Factions)
+        return true
+    end
+
     local function changeLeader(factionName, newLeaderSteamID)
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
@@ -1111,6 +1235,26 @@ if SERVER then
             local faction, shift = getFactionAndShift()
             if not faction then return end
             local ok,err=setMemberDepartment(faction,args[1+shift],args[2+shift],ply)
+            done(ok, err)
+        elseif action == "addSubdepartment" then
+            local faction, shift = getFactionAndShift()
+            if not faction then return end
+            local ok,err=addSubdepartment(faction,args[1+shift],args[2+shift],args[3+shift],args[4+shift],args[5+shift])
+            done(ok, err)
+        elseif action == "removeSubdepartment" then
+            local faction, shift = getFactionAndShift()
+            if not faction then return end
+            local ok,err=removeSubdepartment(faction,args[1+shift])
+            done(ok, err)
+        elseif action == "renameSubdepartment" then
+            local faction, shift = getFactionAndShift()
+            if not faction then return end
+            local ok,err=renameSubdepartment(faction,args[1+shift],args[2+shift])
+            done(ok, err)
+        elseif action == "setSubdepartment" then
+            local faction, shift = getFactionAndShift()
+            if not faction then return end
+            local ok,err=setMemberSubdepartment(faction,args[1+shift],args[2+shift],ply)
             done(ok, err)
         elseif action == "saveIncasso" then
             -- Код 126: сохранение настроек инкассации фракции (только суперадмин)
@@ -1354,6 +1498,12 @@ if SERVER then
     _G.FactionsAPI.SetRoleDisplayName=function(factionName,roleKey,displayName)return renameRole(factionName,roleKey,displayName)end
     _G.FactionsAPI.RenameRole=function(factionName,roleKey,displayName)return renameRole(factionName,roleKey,displayName)end
     _G.FactionsAPI.ResolveRoleKey=function(factionName,roleInput)return GRM.Factions.ResolveRoleKey(factionName,roleInput)end
+    _G.FactionsAPI.AddSubdepartment=function(factionName,parentDeptId,subdeptKey,displayName,tag,quota)return addSubdepartment(factionName,parentDeptId,subdeptKey,displayName,tag,quota)end
+    _G.FactionsAPI.RemoveSubdepartment=function(factionName,subdeptKey)return removeSubdepartment(factionName,subdeptKey)end
+    _G.FactionsAPI.RenameSubdepartment=function(factionName,subdeptKey,displayName)return renameSubdepartment(factionName,subdeptKey,displayName)end
+    _G.FactionsAPI.SetMemberSubdepartment=function(factionName,steamID,subdept)return setMemberSubdepartment(factionName,steamID,subdept)end
+    _G.FactionsAPI.GetSubdepartmentDisplayName=function(factionName,subdeptKey)return GRM.Factions.SubdepartmentDisplayName(factionName,subdeptKey)end
+    _G.FactionsAPI.GetSubdepartments=function(factionName,parentDeptId)return GRM.Factions.GetSubdepartments(factionName,parentDeptId)end
     _G.FactionsAPI.Save           = function() saveFactions(Factions) end
     _G.FactionsAPI.List           = function()
         -- Compatibility view for older GRM modules. The persisted table keeps

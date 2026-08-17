@@ -37,12 +37,13 @@ CCTV и Phone учитывают эти назначения поверх ста
 защищены nonce, CharacterKey и Net Guard. Контракт и API:
 [`CONCEPT_FACTION_NAMES.md`](CONCEPT_FACTION_NAMES.md).
 
-**Faction Core v4 / Structure v4.1** добавляет стабильные ключи отделов и
-должностей (`RoleDisplayNames` + `DepartmentDisplayNames`), каркас **Unified Factions UI**
-(`cl_grm_factions_unified_ui.lua`, `/fmenu`, `/фракция`) и вкладку **«Кадровые дела»**.
-Переименование отдела или должности больше не меняет привязки участников, модели, оружие,
-spawn points или access maps. Кадровая история, испытательный срок, благодарности, взыскания
-и архив увольнений хранятся внутри `factions.json`: [`CONCEPT_FACTION_CORE_V4.md`](CONCEPT_FACTION_CORE_V4.md).
+**Faction Core v5.0 / Structure v5.0** добавляет иерархическую структуру «Отделы ➔ Подотделы»
+(`Subdepartments` + `SubdepartmentDisplayNames`), стабильные ключи должностей (`RoleDisplayNames`),
+каркас **Unified Factions UI** (`cl_grm_factions_unified_ui.lua`, `/fmenu`, `/фракция`) и вкладку
+**«Кадровые дела»**. Переименование отдела, подотдела или должности больше не меняет привязки
+участников, модели, оружие, spawn points или access maps. Кадровая история, испытательный срок,
+благодарности, взыскания и архив увольнений хранятся внутри `factions.json`:
+[`CONCEPT_FACTION_CORE_V4.md`](CONCEPT_FACTION_CORE_V4.md).
 
 ## Персистентность и память FFD
 

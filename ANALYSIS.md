@@ -4,6 +4,15 @@
 (HTML-сущности, markdown-ссылки, `_`→`*`) и проходят синтаксический
 контроль через luaparser.
 
+## Актуализация 17.08.2026 — Factions Structure v5.0 (Иерархия «Отделы ➔ Подотделы»)
+
+1. **Иерархическая структура «Отделы ➔ Подотделы» (Structure v5.0):**
+   Внедрена древовидная модель подразделений: родительские отделы (`Departments`) содержат дочерние подотделы (`Subdepartments`), привязанные через `parentDept`. Каждый подотдел обладает системным ключом, публичным именем (`SubdepartmentDisplayNames`), тактическим префиксом (`tag`), штатной квотой (`quota`), командиром (`head`) и списками моделей/оружия/техники. Добавлены резолверы `GRM.Factions.SubdepartmentDisplayName`, `GRM.Factions.ResolveSubdepartmentKey`, `GRM.Factions.GetSubdepartments`. В `FactionsAPI` экспортированы методы `AddSubdepartment`, `RemoveSubdepartment`, `RenameSubdepartment`, `SetMemberSubdepartment`.
+2. **Кадровая история Core v5.0:**
+   `sh_grm_factions_core_v4.lua` обновлен до v5.0.0. Переводы между подотделами (`GRM_FactionMemberSubdepartmentChanged`) автоматически логируются в личные кадровые дела сотрудников (`rec.Personnel.history`).
+3. **Unified Factions UI v1.1.0:**
+   Вкладка «Структура» визуализирует иерархическое дерево отделов и подотделов с лимитами и тактическими тегами. Вкладка «Сотрудники» отображает принадлежность к подотделу.
+
 ## Актуализация 17.08.2026 — Factions Structure v4.1, память FFD и персистентность карты
 
 1. **Structure v4.1 (Стабильные ключи должностей):**
