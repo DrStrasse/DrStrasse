@@ -181,6 +181,19 @@ function D.RebuildDoorIdentityCache()
             if D.IsSamePhysicalDoor(doors[i], doors[j]) then unite(i, j) end
         end
     end
+    -- Двустворчатые двери: IsSamePhysicalDoor не ловит створки «бок-о-бок»
+    -- (AABB-перекрытие почти нулевое), из-за чего парные полотна получали
+    -- РАЗНЫЕ canonical-ID и РАЗНЫЕ записи владельца — на одной створке владелец,
+    -- на другой пусто, и дверь можно было открыть без прав. Объединяем партнёров
+    -- через GetPartnerDoor (дистанционная эвристика 18–70 юнитов).
+    for i = 1, #doors do
+        local partner = D.GetPartnerDoor(doors[i])
+        if IsValid(partner) then
+            for j = 1, #doors do
+                if doors[j] == partner then unite(i, j) break end
+            end
+        end
+    end
     local ids = {}
     for i, ent in ipairs(doors) do
         local r = root(i)

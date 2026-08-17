@@ -1328,11 +1328,14 @@ if CLIENT then
     -- Экранная GPS-метка точки (как в модуле GPS-меток): рисуется на 2D-экране,
     -- поэтому ВИДНА СКВОЗЬ любые браши — «три здания» между игроком и точкой не
     -- мешают. Если точка вне поля зрения — стрелка-указатель по краю экрана.
-    local function drawScreenMarker(target, name, dist, col, sw, sh)
+    -- isPrimary=true — текущая цель (куда ехать): крупный яркий маяк.
+    local function drawScreenMarker(target, name, dist, col, sw, sh, isPrimary)
         local screen = target:ToScreen()
         local visible = screen.visible == true and screen.x > 0 and screen.x < sw and screen.y > 0 and screen.y < sh
         local x, y = screen.x or sw / 2, screen.y or sh / 2
-        local radius = math.Clamp(9 + dist / 450, 10, 22)
+        local radius = isPrimary and math.Clamp(12 + dist / 380, 13, 30)
+                    or math.Clamp(8 + dist / 500, 9, 18)
+        local alpha = isPrimary and 255 or 150
 
         if not visible then
             -- Стрелка-указатель направления по краю экрана.
@@ -1341,28 +1344,29 @@ if CLIENT then
             dx, dy = dx / len, dy / len
             x = math.Clamp(sw / 2 + dx * (sw / 2 - 40), 30, sw - 30)
             y = math.Clamp(sh / 2 + dy * (sh / 2 - 40), 30, sh - 30)
-            surface.SetDrawColor(col.r, col.g, col.b, 255)
+            surface.SetDrawColor(col.r, col.g, col.b, alpha)
             surface.DrawPoly({
-                { x = x + dx * 20, y = y + dy * 20 },
-                { x = x - dx * 11 - dy * 11, y = y - dy * 11 + dx * 11 },
-                { x = x - dx * 11 + dy * 11, y = y - dy * 11 - dx * 11 },
+                { x = x + dx * 22, y = y + dy * 22 },
+                { x = x - dx * 12 - dy * 12, y = y - dy * 12 + dx * 12 },
+                { x = x - dx * 12 + dy * 12, y = y - dy * 12 - dx * 12 },
             })
         end
 
-        local pulse = math.sin(CurTime() * 4) * 3
-        surface.SetDrawColor(col.r, col.g, col.b, 255)
-        surface.DrawCircle(x, y, radius + pulse, col.r, col.g, col.b, 255)
-        surface.SetDrawColor(8, 14, 23, 240)
-        surface.DrawCircle(x, y, math.max(3, radius - 4), 8, 14, 23, 240)
+        local pulse = math.sin(CurTime() * (isPrimary and 5 or 3)) * (isPrimary and 4 or 2)
+        surface.SetDrawColor(col.r, col.g, col.b, alpha)
+        surface.DrawCircle(x, y, radius + pulse, col.r, col.g, col.b, alpha)
+        surface.SetDrawColor(8, 14, 23, isPrimary and 245 or 180)
+        surface.DrawCircle(x, y, math.max(3, radius - 4), 8, 14, 23, isPrimary and 245 or 180)
 
         local textX = math.Clamp(x + radius + 14, 14, sw - 14)
-        local align = textX > sw - 220 and TEXT_ALIGN_RIGHT or TEXT_ALIGN_LEFT
-        draw.SimpleTextOutlined(tostring(name), "GRMJobs_Sub", textX, y - 11, color_white, align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
-        draw.SimpleTextOutlined(dist .. " юн.", "GRMJobs_Small", textX, y + 9, Color(col.r, col.g, col.b), align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
+        local align = textX > sw - 240 and TEXT_ALIGN_RIGHT or TEXT_ALIGN_LEFT
+        draw.SimpleTextOutlined(tostring(name), isPrimary and "GRMJobs_Sub" or "GRMJobs_Small", textX, y - 11, isPrimary and color_white or Color(220, 230, 240, 200), align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
+        draw.SimpleTextOutlined(dist .. " юн.", isPrimary and "GRMJobs_Sub" or "GRMJobs_Small", textX, y + 9, Color(col.r, col.g, col.b, alpha), align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
     end
 
     -- GPS-метки маршрута мусоровоза: КАЖДАЯ точка сбора + свалка, экранные
-    -- маркеры (видимы сквозь браши), с номером точки и направлением.
+    -- маркеры (видимы сквозь браши). Текущая цель — крупный яркий маяк,
+    -- остальные — приглушённые подсказки маршрута.
     hook.Add("HUDPaint", "GRM_Jobs_GarbageRouteMarkers", function()
         if not istable(tracker) or not istable(tracker.points) or #tracker.points == 0 then return end
         local lp = LocalPlayer()
@@ -1371,16 +1375,27 @@ if CLIENT then
         local total = #tracker.points
         local current = math.Clamp(tonumber(tracker.pointIndex) or 1, 1, total)
 
-        for i, p in ipairs(tracker.points) do
+        -- Сначала рисуем второстепенные точки, потом текущую — поверх остальных.
+        local order = {}
+        for i = 1, total do if i ~= current then order[#order + 1] = i end end
+        order[#order + 1] = current
+
+        for _, i in ipairs(order) do
+            local p = tracker.points[i]
             local isDump = (i == total)
             local isCurrent = (i == current)
             local col = isDump and Color(90, 220, 120)
-                     or (isCurrent and Color(255, 210, 70) or Color(80, 200, 240))
+                     or (isCurrent and Color(255, 205, 60) or Color(80, 200, 240))
             local dist = math.floor(lp:GetPos():Distance(p))
             local name = tracker.pointNames[i]
-            if name == nil or name == "" then name = isDump and "Свалка" or ("Точка " .. tostring(i)) end
-            local head = (isDump and "СВАЛКА" or (isCurrent and "СОБРАТЬ МУСОР" or "МУСОРКА")) .. " " .. tostring(i) .. "/" .. tostring(total)
-            drawScreenMarker(p, head .. " — " .. name, dist, col, sw, sh)
+            if name == nil or name == "" then name = isDump and "Свалка" or ("Мусорка " .. tostring(i)) end
+            local head
+            if isCurrent then
+                head = (isDump and "ВЕЗИ НА СВАЛКУ" or "СОБЕРИ МУСОР ЗДЕСЬ")
+            else
+                head = isDump and "Свалка" or ("Мусорка " .. tostring(i))
+            end
+            drawScreenMarker(p, head .. " — " .. name .. "  (" .. tostring(i) .. "/" .. tostring(total) .. ")", dist, col, sw, sh, isCurrent)
         end
     end)
 
