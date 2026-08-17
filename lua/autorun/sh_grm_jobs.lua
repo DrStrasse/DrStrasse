@@ -508,6 +508,19 @@ if SERVER then
             net.WriteString(tostring(j.zoneName or "Точка работы"))
             net.WriteString(stageName)
             net.WriteBool(j.needVehicle == true)
+
+            -- Полный маршрут (мусоровоз: точки сбора + свалка) — чтобы клиент
+            -- рисовал GPS-метку на КАЖДУЮ точку, а не только текущую.
+            local routePts = j.points or {}
+            local routeNames = j.pointNames or {}
+            net.WriteUInt(#routePts, 8)
+            for _, p in ipairs(routePts) do
+                local v = istable(p) and Vector(tonumber(p.x) or 0, tonumber(p.y) or 0, tonumber(p.z) or 0) or Vector(0, 0, 0)
+                net.WriteVector(v)
+            end
+            net.WriteUInt(#routeNames, 8)
+            for _, n in ipairs(routeNames) do net.WriteString(tostring(n)) end
+            net.WriteUInt(math.max(1, tonumber(j.pointIndex) or 1), 8)
         else
             net.WriteBool(false)
         end
@@ -1276,6 +1289,14 @@ if CLIENT then
                 needVehicle = net.ReadBool(),
                 at = CurTime(),
             }
+            -- Полный маршрут (мусоровоз): точки сбора + свалка.
+            local nPts = net.ReadUInt(8)
+            tracker.points = {}
+            for i = 1, nPts do tracker.points[i] = net.ReadVector() end
+            local nNames = net.ReadUInt(8)
+            tracker.pointNames = {}
+            for i = 1, nNames do tracker.pointNames[i] = net.ReadString() end
+            tracker.pointIndex = net.ReadUInt(8)
         else
             tracker = nil
         end
@@ -1283,6 +1304,9 @@ if CLIENT then
 
     hook.Add("PostDrawTranslucentRenderables", "GRM_Jobs_Marker", function()
         if not istable(tracker) then return end
+        -- Если это маршрут мусоровоза (есть точки сбора + свалка), их рисует
+        -- GRM_Jobs_GarbageRouteMarkers сквозь браши — не дублируем текущую сферу.
+        if istable(tracker.points) and #tracker.points > 0 then return end
         local lp = LocalPlayer()
         if not IsValid(lp) then return end
         local radius = math.max(40, tonumber(tracker.radius) or 180)
@@ -1299,6 +1323,48 @@ if CLIENT then
             draw.SimpleText("◎ " .. tostring(tracker.title), "GRMJobs_Sub", 0, -40, C.yellow, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
             draw.SimpleText(tostring(tracker.zoneName or "Рабочая зона") .. " • " .. tostring(dist) .. " юн.", "GRMJobs_Normal", 0, -16, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
         cam.End3D2D()
+    end)
+
+    -- GPS-метки маршрута мусоровоза: КАЖДАЯ точка сбора + свалка, видимые
+    -- СКВОЗЬ браши (cam.IgnoreZ). Раньше игрок не видел, куда ехать за мусором.
+    hook.Add("PostDrawTranslucentRenderables", "GRM_Jobs_GarbageRouteMarkers", function(depth, sky)
+        if sky then return end
+        if not istable(tracker) or not istable(tracker.points) or #tracker.points == 0 then return end
+        local lp = LocalPlayer()
+        if not IsValid(lp) then return end
+
+        local total = #tracker.points
+        local current = math.Clamp(tonumber(tracker.pointIndex) or 1, 1, total)
+
+        for i, p in ipairs(tracker.points) do
+            local isDump = (i == total)
+            local isCurrent = (i == current)
+            local col = isDump and Color(90, 220, 120)
+                     or (isCurrent and Color(255, 210, 70) or Color(80, 200, 240))
+
+            local dist = math.floor(lp:GetPos():Distance(p))
+
+            -- Пульсирующая сфера в точке (видна в мире).
+            render.SetColorMaterial()
+            render.DrawWireframeSphere(p, isCurrent and 64 or 52, 12, 6, Color(col.r, col.g, col.b, isCurrent and 150 or 85), true)
+
+            -- Табличка, видимая сквозь стены/здания.
+            local name = tracker.pointNames[i]
+            if name == nil or name == "" then name = isDump and "Свалка" or ("Точка " .. tostring(i)) end
+            local ang = Angle(0, EyeAngles().y - 90, 90)
+            local bob = Vector(0, 0, 44 + math.sin(CurTime() * 2.5 + i * 1.7) * 6)
+            cam.Start3D2D(p + bob, ang, 0.12)
+                cam.IgnoreZ(true)
+                local w = 240
+                draw.RoundedBox(6, -w / 2, -28, w, 54, Color(12, 16, 24, 220))
+                surface.SetDrawColor(col.r, col.g, col.b, 235)
+                surface.DrawOutlinedRect(-w / 2, -28, w, 54, 2)
+                local head = (isDump and "СВАЛКА" or (isCurrent and "СОБРАТЬ МУСОР" or "МУСОРКА")) .. " • " .. dist .. " юн."
+                draw.SimpleText(head, "GRMJobs_Sub", 0, -22, Color(col.r, col.g, col.b), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                draw.SimpleText(name, "GRMJobs_Normal", 0, 0, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+                cam.IgnoreZ(false)
+            cam.End3D2D()
+        end
     end)
 
     hook.Add("HUDPaint", "GRM_Jobs_HudLine", function()
@@ -1377,7 +1443,8 @@ if CLIENT then
         return b
     end
 
-    local JTYPE_NAMES = { goto = "Доставка", stay = "Дежурство", roundtrip = "Туда-обратно", shift = "Смена", garbage = "Мусоровоз", taxi = "Такси" }
+    -- NB: «goto» — ключевое слово Lua 5.2+/LuaJIT, поэтому ключ закавычен.
+    local JTYPE_NAMES = { ["goto"] = "Доставка", stay = "Дежурство", roundtrip = "Туда-обратно", shift = "Смена", garbage = "Мусоровоз", taxi = "Такси" }
 
     -- общая форма публикации заказа/вакансии (терминал + /jobpost)
     function JB.OpenPostForm(zoneMode, myFac)

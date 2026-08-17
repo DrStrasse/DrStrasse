@@ -312,6 +312,13 @@ end
 
 hook.Add("ShouldCollide", "GRM_VehicleAntiStuck_TempNoCollide", function(a, b)
     if not AS.Config or AS.Config.Enabled == false then return end
+    -- ГОРЯЧИЙ ПУТЬ: ShouldCollide вызывается движком для КАЖДОЙ пары
+    -- сталкивающихся объектов каждый тик. Раньше здесь всегда делался
+    -- pairKey() (2x EntIndex + конкатенация строк) даже когда активных
+    -- no-collide пар не было вообще — это давало постоянную нагрузку и
+    -- микрофризы на серверах с транспортом/пропами. Быстрый выход при пустой
+    -- таблице делает хук практически бесплатным в 99.99% случаев.
+    if next(AS.NoCollidePairs) == nil then return end
     local key = pairKey(a, b)
     if not key then return end
     local untilTime = AS.NoCollidePairs[key]
@@ -427,6 +434,17 @@ if SERVER then
     end
     hook.Add("PlayerDeath", "GRM_VehicleAntiStuck_CleanupDeath", cleanupPlayer)
     hook.Add("PlayerDisconnected", "GRM_VehicleAntiStuck_CleanupDisconnect", cleanupPlayer)
+
+    -- Периодическая чистка истёкших no-collide пар: иначе записи, которые
+    -- больше никогда не столкнутся (игрок ушёл/отключился), копились бы
+    -- в NoCollidePairs вечно. Редкий (раз в 2с) проход — дешёвый.
+    timer.Create("GRM_VehicleAntiStuck_Cleanup", 2, 0, function()
+        if next(AS.NoCollidePairs) == nil then return end
+        local now = CurTime()
+        for k, untilTime in pairs(AS.NoCollidePairs) do
+            if untilTime <= now then AS.NoCollidePairs[k] = nil end
+        end
+    end)
 
     timer.Create("GRM_VehicleAntiStuck_Think", AS.Config.ThinkInterval, 0, function()
         if not cfg().Enabled then return end
