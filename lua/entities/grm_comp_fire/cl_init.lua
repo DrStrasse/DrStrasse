@@ -118,7 +118,14 @@ local function openMenu(ent, data)
     end
 
     row("📋 Журнал пожаров  (/fire_log)", Color(60, 120, 150), function() RunConsoleCommand("grm_fire_log") end)
-    row("☎ Журнал вызовов (911 · пожар)", Color(150, 90, 60), function() requestCalls() end)
+    row("☎ Журнал вызовов (пожар · 911)", Color(150, 90, 60), function() requestCalls() end)
+    row("🚨 Активные вызовы — принять", Color(180, 70, 50), function()
+        if GRM.Fire and GRM.Fire.Dispatch and GRM.Fire.Dispatch.RequestList then
+            GRM.Fire.Dispatch.RequestList()
+        else
+            RunConsoleCommand("grm_fire_calls")
+        end
+    end)
 
     if data.isAdmin then
         row("🔑 Доступ и оповещение  (/fire_access)", Color(150, 110, 60), function() RunConsoleCommand("grm_fire_access") end)
@@ -178,16 +185,21 @@ local function openCallsWindow(rows)
     list:AddColumn("Время"):SetFixedWidth(140)
     list:AddColumn("Заявитель"):SetFixedWidth(180)
     list:AddColumn("Описание")
+    list:AddColumn("Район"):SetFixedWidth(140)
     list:AddColumn("Статус"):SetFixedWidth(120)
     list:AddColumn("Принял"):SetFixedWidth(150)
 
-    local STATUS = { open = "Открыт", assigned = "Принят", closed = "Закрыт" }
+    local STATUS = {
+        open = "Открыт", assigned = "Принят", closed = "Закрыт",
+        pending = "ОЖИДАЕТ ПРИНЯТИЯ", accepted = "Принят",
+    }
     for _, r in ipairs(rows) do
         list:AddLine(
             tostring(r.id or 0),
             os.date("%d.%m.%Y %H:%M", tonumber(r.created) or 0),
             tostring(r.caller or ""),
             tostring(r.text or ""),
+            tostring(r.area or ""),
             STATUS[tostring(r.status or "")] or tostring(r.status or ""),
             tostring(r.assigned or "")
         )

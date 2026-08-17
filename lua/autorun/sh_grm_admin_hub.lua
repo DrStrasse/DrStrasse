@@ -55,7 +55,7 @@ local LAUNCH_WHITELIST = {
     ["/fire_access"] = true, ["/fire_spots"] = true, ["/fire_log"] = true,
     ["/fire_trucks"] = true,
     ["grm_fire_access"] = true, ["grm_fire_notify"] = true, ["grm_fire_spots"] = true,
-    ["grm_fire_log"] = true, ["grm_fire_trucks"] = true,
+    ["grm_fire_log"] = true, ["grm_fire_trucks"] = true, ["grm_fire_calls"] = true,
     -- Торговцы и транспорт
     ["grm_phone_vendor_reload"] = true, ["grm_vendor_load"] = true,
 }
@@ -760,7 +760,8 @@ if CLIENT then
         { "Маски", "/mask_admin", "Настройки масок" },
         { "Пожарные: доступы", "/fire_access", "Кто пользуется рукавами, гидрантами и пультом оповещения о пожаре" },
         { "Пожарные: очаги и таймеры", "grm_fire_spots", "Точки возгорания на карте, интервалы и настройки очагов" },
-        { "Пожарные: журнал тушения", "grm_fire_log", "История вызовов и тушений" },
+        { "Пожарные: журнал пожаров", "grm_fire_log", "История возгораний и тушений" },
+        { "Пожарные: вызовы (принятие)", "grm_fire_calls", "Активные вызовы расчётов: кто принял, кто ждёт" },
         { "Пожарные: машины", "grm_fire_trucks", "Список пожарных ТС, насосы и рукава" },
         { "Пожарные: оповещение фракций", "grm_fire_notify", "Кому приходит сигнал о пожаре" },
         { "Логистика", "/logistics_admin", "Склады и логистика фракций" },

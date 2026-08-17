@@ -1,7 +1,7 @@
 {
     "_grm_meta": {
+        "savedAt": 1787004733,
         "revision": 3,
-        "savedAt": 1787004275,
         "version": 2
     },
     "76561198000000012": {
@@ -15,11 +15,11 @@
                 "id": "ammo_pistol"
             },
             {
+                "count": 1,
+                "id": "radio_modulator",
                 "data": {
                     "on": true
-                },
-                "count": 1,
-                "id": "radio_modulator"
+                }
             }
         ]
     }

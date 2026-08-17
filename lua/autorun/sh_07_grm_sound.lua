@@ -184,6 +184,7 @@ for _, path in ipairs(STOCK) do S.Register(path) end
 
 -- Кастомный контент сборки (может отсутствовать у владельца сервера).
 S.Register("kom_hour.wav", "ambient/alarms/warningbell1.wav")            -- комендантский час
+S.Register("npc/scanner/scanner_siren2.wav", "ambient/alarms/klaxon1.wav") -- вызов пожарного расчёта
 S.Register("weapons/extinguisher/fire1.wav", "ambient/machines/steam_release_2.wav")
 S.Register("weapons/extinguisher/release1.wav", "ambient/machines/steam_release_2.wav")
 

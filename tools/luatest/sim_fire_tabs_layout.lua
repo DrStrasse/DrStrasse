@@ -24,7 +24,7 @@ local unified = read("lua/autorun/client/cl_grm_factions_unified_ui.lua")
 print("\n=== 1. ПОЖАРНЫЕ НАСТРОЙКИ В АДМИН-МЕНЮ ===")
 ok(hub:find('{ "Пожарные: доступы", "/fire_access"', 1, true) ~= nil, "хаб: доступы пожарных")
 ok(hub:find('{ "Пожарные: очаги и таймеры", "grm_fire_spots"', 1, true) ~= nil, "хаб: очаги и таймеры")
-ok(hub:find('{ "Пожарные: журнал тушения", "grm_fire_log"', 1, true) ~= nil, "хаб: журнал тушения")
+ok(hub:find('{ "Пожарные: журнал пожаров", "grm_fire_log"', 1, true) ~= nil, "хаб: журнал пожаров")
 ok(hub:find('{ "Пожарные: машины", "grm_fire_trucks"', 1, true) ~= nil, "хаб: пожарные машины")
 ok(hub:find('{ "Пожарные: оповещение фракций", "grm_fire_notify"', 1, true) ~= nil, "хаб: оповещение фракций")
 ok(hub:find('["/fire_access"] = true', 1, true) ~= nil and hub:find('["grm_fire_spots"] = true', 1, true) ~= nil,

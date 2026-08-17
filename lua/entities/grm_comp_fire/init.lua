@@ -88,8 +88,15 @@ net.Receive("GRM_CompFire_Calls", function(_, ply)
     if ply:GetPos():DistToSqr(ent:GetPos()) > 250 * 250 then return end
     if not ent:CanManage(ply) then return end
 
-    local EM = GRM.Emergency
+    -- Основной источник — диспетчерские вызовы пожарной службы
+    -- (sh_grm_fire_dispatch), плюс экстренные вызовы 911 категории «Пожар».
     local rows = {}
+    local D = GRM.Fire and GRM.Fire.Dispatch
+    if D and isfunction(D.LogRows) then
+        for _, r in ipairs(D.LogRows(100)) do rows[#rows + 1] = r end
+    end
+
+    local EM = GRM.Emergency
     if EM and istable(EM.Calls) then
         for i = #EM.Calls, 1, -1 do
             local r = EM.Calls[i]
@@ -105,10 +112,13 @@ net.Receive("GRM_CompFire_Calls", function(_, ply)
                     y = math.floor((r.pos and r.pos.y) or 0),
                     z = math.floor((r.pos and r.pos.z) or 0),
                 }
-                if #rows >= 100 then break end
+                if #rows >= 150 then break end
             end
         end
     end
+
+    table.sort(rows, function(a, b) return (tonumber(a.created) or 0) > (tonumber(b.created) or 0) end)
+    while #rows > 100 do table.remove(rows) end
 
     net.Start("GRM_CompFire_CallsData")
         net.WriteTable(rows)

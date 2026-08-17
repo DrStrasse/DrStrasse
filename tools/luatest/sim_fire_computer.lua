@@ -30,14 +30,14 @@ ok(sv:find("CommissionTruck", 1, true) == nil and sv:find("TakeHoseFromTruck", 1
 
 print("\n=== ЧТО ОСТАЛОСЬ ===")
 ok(cl:find("📋 Журнал пожаров", 1, true) ~= nil, "журнал пожаров на месте")
-ok(cl:find("Журнал вызовов (911 · пожар)", 1, true) ~= nil, "добавлен журнал вызовов")
+ok(cl:find("Журнал вызовов (пожар · 911)", 1, true) ~= nil, "добавлен журнал вызовов")
 ok(cl:find("local function requestCalls()", 1, true) ~= nil, "клиент запрашивает журнал вызовов")
 ok(sv:find('net.Receive("GRM_CompFire_Calls"', 1, true) ~= nil, "сервер отдаёт журнал вызовов")
 ok(sv:find('tostring(r.category or "") == "fire"', 1, true) ~= nil,
     "в журнал попадают только вызовы категории «Пожар»")
 ok(sv:find("if not ent:CanManage(ply) then return end", 1, true) ~= nil,
     "журнал вызовов под тем же доступом: бойцы, диспетчеры, суперадмин")
-ok(sv:find("if #rows >= 100 then break end", 1, true) ~= nil, "журнал ограничен последними 100 вызовами")
+ok(sv:find("while #rows > 100 do table.remove(rows) end", 1, true) ~= nil, "журнал ограничен последними 100 вызовами")
 ok(cl:find('list:AddColumn("Статус")', 1, true) ~= nil and cl:find('list:AddColumn("Принял")', 1, true) ~= nil,
     "в окне журнала видно статус и кто принял вызов")
 ok(cl:find("Вызовов по линии пожарной службы пока не поступало.", 1, true) ~= nil,

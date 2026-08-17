@@ -20,7 +20,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Fire = GRM.Fire or {}
 local F = GRM.Fire
-F.StatusVersion = "1.4.1"
+F.StatusVersion = "1.5.0"
 
 F.Incidents = F.Incidents or {}
 F._nextInc = F._nextInc or 1
@@ -199,6 +199,9 @@ if SERVER then
             fighters = {},
         }
         F.Incidents[#F.Incidents + 1] = inc
+        -- Диспетчеризация (v1.5.0): по открытию очага создаётся вызов, который
+        -- пожарные должны ПРИНЯТЬ. Слушатель — sh_grm_fire_dispatch.lua.
+        hook.Run("GRM_FireIncidentOpened", inc)
         return inc
     end
 

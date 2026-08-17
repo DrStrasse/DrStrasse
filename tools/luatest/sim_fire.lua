@@ -205,7 +205,7 @@ check("уведомление потушен", has(status, "Пожар поту�
 check("журнал log.json", has(status, "grm_fire/log.json"))
 check("MarkExtinguished", has(status, "function F.MarkExtinguished"))
 check("NotifyFactions цвет", has(acc, "function F.NotifyFactions(text, pos, r, g, b)"))
-check("статус v1.4.1", has(status, "StatusVersion = \"1.4.1\""))
+check("статус v1.5.0 (диспетчеризация вызовов)", has(status, "StatusVersion = \"1.5.0\"") and has(status, "GRM_FireIncidentOpened"))
 check("BuildFromExisting скан", has(status, "function F.BuildFromExisting"))
 check("пик min 1", has(status, "math.max(inc.peak or 0, 1)") or has(status, "peak = 1"))
 check("мягкий локализован 2.5с", has(status, "2.5"))
