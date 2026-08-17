@@ -19,6 +19,8 @@ local NET_DECLINE             = "Factions_Decline"
 local NET_LEAVE               = "Factions_Leave"
 local NET_RADIO               = "Factions_Radio"
 local NET_RADIO_MSG           = "Factions_RadioMessage"
+local NET_RADIOB              = "Factions_RadioOOC"        -- /frb: рация фракции, нон-РП
+local NET_RADIOB_MSG          = "Factions_RadioOOCMessage"
 local NET_OPEN_ADMIN          = "Factions_OpenAdminMenu"
 local NET_OPEN_LEADER         = "Factions_OpenLeaderMenu"
 local NET_DEP                  = "Factions_Dep"
@@ -121,6 +123,8 @@ if SERVER then
     util.AddNetworkString(NET_LEAVE)
     util.AddNetworkString(NET_RADIO)
     util.AddNetworkString(NET_RADIO_MSG)
+    util.AddNetworkString(NET_RADIOB)
+    util.AddNetworkString(NET_RADIOB_MSG)
     util.AddNetworkString(NET_OPEN_ADMIN)
     util.AddNetworkString(NET_OPEN_LEADER)
     util.AddNetworkString(NET_DEP)
@@ -1386,6 +1390,51 @@ if SERVER then
         end
     end)
 
+    --[[ /frb — фракционная рация НОН-РП (OOC). Такого канала в сборке не было:
+         у госволны OOC-версия есть (/depb, /db), а у своей рации — нет, и
+         сотрудники решали организационные вопросы прямо в РП-эфире.
+         Получатели те же, что у /fr — только свои. ]]
+    net.Receive(NET_RADIOB, function(_, ply)
+        local text = net.ReadString()
+        if not text or text == "" then return end
+        local steam = memberKey(ply)
+
+        local factionName, role = nil, nil
+        for name, f in pairs(Factions) do
+            if type(f) == "table" then
+                ensureDefaults(f)
+                if f.Members[steam] then factionName = name role = f.Members[steam].Role break end
+            end
+        end
+        if not factionName then ply:PrintMessage(HUD_PRINTTALK, "Вы не состоите ни в одной фракции.") return end
+
+        local f = Factions[factionName]
+        local tag = (f and f.Tag and f.Tag ~= "") and f.Tag or GRM.Factions.DisplayName(factionName)
+        local rpName = ply:GetNWString("GRM_RPName", "")
+        if rpName == "" then rpName = ply:Nick() end
+        local roleName = (GRM.Factions and GRM.Factions.RoleDisplayName)
+            and GRM.Factions.RoleDisplayName(f, role) or (role or "Участник")
+        local col = (f and f.Color) or { r = 255, g = 200, b = 0 }
+
+        local recipients = {}
+        for memberSteam, _ in pairs(f.Members) do
+            local target = (GRM.Identity and GRM.Identity.ResolveCharacter and GRM.Identity.ResolveCharacter(memberSteam))
+                or player.GetBySteamID(memberSteam) or player.GetBySteamID64(memberSteam)
+            if IsValid(target) then recipients[#recipients + 1] = target end
+        end
+        if #recipients > 0 then
+            net.Start(NET_RADIOB_MSG)
+                net.WriteUInt(math.Clamp(math.floor(tonumber(col.r) or 255), 0, 255), 8)
+                net.WriteUInt(math.Clamp(math.floor(tonumber(col.g) or 200), 0, 255), 8)
+                net.WriteUInt(math.Clamp(math.floor(tonumber(col.b) or 0), 0, 255), 8)
+                net.WriteString(tag)
+                net.WriteString(rpName)
+                net.WriteString(roleName)
+                net.WriteString(text)
+            net.Send(recipients)
+        end
+    end)
+
     net.Receive(NET_DEP, function(_, ply)
         local text = net.ReadString()
         if not text or text == "" then return end
@@ -1736,6 +1785,13 @@ if CLIENT then
         local r, g, b = net.ReadUInt(8), net.ReadUInt(8), net.ReadUInt(8)
         local tag, name, role, text = net.ReadString(), net.ReadString(), net.ReadString(), net.ReadString()
         printChannel("[Рация] ", Color(255, 200, 0), Color(r, g, b), tag, name, role, text)
+    end)
+
+    net.Receive(NET_RADIOB_MSG, function()
+        local r, g, b = net.ReadUInt(8), net.ReadUInt(8), net.ReadUInt(8)
+        local tag, name, role, text = net.ReadString(), net.ReadString(), net.ReadString(), net.ReadString()
+        printChannel("[Рация OOC] ", Color(150, 160, 175), Color(r, g, b), tag, name,
+            "(( " .. tostring(role) .. " ))", "(( " .. tostring(text) .. " ))")
     end)
 
     net.Receive(NET_DEP_MSG, function()
@@ -3611,6 +3667,14 @@ if CLIENT then
             local text = msg:sub(4)
             if text == "" then datapack[1] = "" return end
             net.Start(NET_RADIO) net.WriteString(text) net.SendToServer()
+            datapack[1] = "" return
+        end
+        -- /frb, /frooc — рация фракции нон-РП (OOC).
+        if lower:find("^/frb%s+") == 1 or lower:find("^/frooc%s+") == 1 then
+            local cut = lower:find("^/frb%s+") == 1 and 5 or 7
+            local text = msg:sub(cut):Trim()
+            if text == "" then datapack[1] = "" return end
+            net.Start(NET_RADIOB) net.WriteString(text) net.SendToServer()
             datapack[1] = "" return
         end
         if lower:find("^/dep%s+") == 1 or lower:find("^/d%s+") == 1 then
