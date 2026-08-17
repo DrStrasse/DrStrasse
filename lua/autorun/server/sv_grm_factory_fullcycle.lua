@@ -66,6 +66,10 @@ FC.WeaponMarketData = FC.WeaponMarketData or {}
 
 local function trim(value) return string.Trim(tostring(value or "")) end
 
+-- Форвард-декларация: имя таймера QTE нужно и коду очистки станка выше,
+-- и самому блоку QTE ниже по файлу.
+local qteTimerName
+
 local function ensureDirectories()
     if not file.Exists(DATA_DIR, "DATA") then file.CreateDir(DATA_DIR) end
     if not file.Exists(MAP_DIR, "DATA") then file.CreateDir(MAP_DIR) end
@@ -563,7 +567,7 @@ function FC.OnEntityRemoved(ent)
     if not ent then return end
     if ent.FC_QTE then
         local session = ent.FC_QTE
-        timer.Remove(qteTimerName and qteTimerName(ent) or ("GRM_FC_QTE_" .. ent:EntIndex()))
+        timer.Remove(qteTimerName(ent))
         if IsValid(session.owner) then
             refundInputs(session.owner, session.input)
             notify(session.owner, false, "Станок удалён: материалы мини-игры возвращены.")
@@ -677,7 +681,7 @@ end
 -- ============================================================
 local QTE_ARROWS = { "UP", "RIGHT", "DOWN", "LEFT" }
 
-local function qteTimerName(ent)
+qteTimerName = function(ent)
     return "GRM_FC_QTE_" .. ent:EntIndex()
 end
 

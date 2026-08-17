@@ -176,6 +176,9 @@ function MB.IsMobileItem(itemID)
     return (MB.ItemTier or {})[tostring(itemID or "")] ~= nil
 end
 
+-- Форвард-декларация: tierRank объявлена ниже, но используется в этой
+-- функции. Без неё замыкание читало глобал (nil) и подсчёт чипов падал.
+local tierRank
 function MB.InventoryMobileStats(ply)
     local total, active, bestActive = 0, 0, nil
     if not (IsValid(ply) and GRM.Inventory and GRM.Inventory.GetPlayerInv) then return total, active, bestActive end
@@ -199,7 +202,7 @@ function MB.InventoryMobileStats(ply)
     return total, active, bestActive
 end
 
-local function tierRank(key)
+tierRank = function(key)
     for i, k in ipairs(TierOrder) do if k == key then return i end end
     return 0
 end

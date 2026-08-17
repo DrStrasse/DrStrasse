@@ -1379,6 +1379,12 @@ if SERVER then
         return false
     end
 
+    -- ВАЖНО: обработчик объявлен ниже по файлу, поэтому здесь нужна
+    -- форвард-декларация. Без неё замыкание хука читало ГЛОБАЛЬНУЮ
+    -- переменную (nil) и падало при первом же сообщении в EasyChat:
+    -- "attempt to call global 'handleCurfewChat' (a nil value)".
+    local handleCurfewChat
+
     hook.Add("PlayerSayTransform", "FactionsExt_CurfewCommands", function(ply, datapack)
         if not istable(datapack) or not isstring(datapack[1]) then return end
         if not handleCurfewChat(ply, datapack[1]) then return end
@@ -1396,7 +1402,7 @@ if SERVER then
     -- Комендантский час доступен и через PlayerSay, и через PlayerSayTransform
     -- (правило сборки: EasyChat перехватывает ввод и обычный PlayerSay может
     -- не сработать). Обе точки входа зовут ОДИН обработчик.
-    local function handleCurfewChat(ply, text)
+    handleCurfewChat = function(ply, text)
         local lower = safeLower(trim(text))
         -- Русский алиас: длина «/комчас» в БАЙТАХ — 13, safeLower кириллицу
         -- не трогает, поэтому сравниваем исходную строку.

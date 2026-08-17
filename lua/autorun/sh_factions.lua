@@ -626,6 +626,11 @@ if SERVER then
         end)
     end)
 
+    -- Форвард-декларация: хук ниже создаётся РАНЬШЕ объявления локальной
+    -- sendFactionDataTo, поэтому без неё замыкание читало глобал (nil) и
+    -- синк фракций падал при каждом заходе игрока.
+    local sendFactionDataTo
+
     hook.Add("PlayerInitialSpawn", "Factions_SyncOnJoin", function(ply)
         timer.Simple(1.0, function()
             if IsValid(ply) then
@@ -1105,7 +1110,7 @@ if SERVER then
         net.Send(ply)
     end
 
-    local function sendFactionDataTo(ply)
+    sendFactionDataTo = function(ply)
         net.Start(NET_SEND_DATA)
         net.WriteTable(buildSyncData())
         net.Send(ply)

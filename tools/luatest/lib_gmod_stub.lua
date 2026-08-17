@@ -170,6 +170,15 @@ function entMeta:GetNWFloat(k, d) return self.nw[k] or d or 0 end
 function entMeta:GetInternalVariable() return false end
 function entMeta:Fire() end
 function entMeta:IsPlayer() return self.isPlayer == true end
+function entMeta:SteamID() return self.steamid or "STEAM_0:0:1" end
+function entMeta:SteamID64() return self.steamid64 or "76561190000000001" end
+function entMeta:Nick() return self.nick or "Тестер" end
+function entMeta:IsSuperAdmin() return self.superadmin == true end
+function entMeta:IsAdmin() return self.superadmin == true end
+function entMeta:PrintMessage(_, msg) self.lastMessage = msg end
+function entMeta:ChatPrint(msg) self.lastMessage = msg end
+function entMeta:GetModel() return self.model or "models/player/kleiner.mdl" end
+function entMeta:EmitSound() end
 function entMeta:Alive() return true end
 function entMeta:Remove() self.__valid = false S.removed = (S.removed or 0) + 1 end
 

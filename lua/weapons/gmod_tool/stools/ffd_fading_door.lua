@@ -63,6 +63,7 @@ if SERVER then
         end
     end
 
+local fadeOff
     local function fadeOn(ply, ent)
         if not IsValid(ent) or not ent.isFadingDoor then return end
         if ent.FFD_IsActive then return end
@@ -81,7 +82,7 @@ if SERVER then
         end
     end
 
-    local function fadeOff(ply, ent)
+    fadeOff = function(ply, ent)
         if not IsValid(ent) or not ent.isFadingDoor then return end
         if not ent.FFD_IsActive then return end
 

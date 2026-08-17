@@ -69,7 +69,8 @@ ok(fixes:find('GRM.Net.Guard(ply, "curfew.act"', 1, true) ~= nil, "действ�
 ok(fixes:find('GRM.Audit.Write("curfew", "start"', 1, true) ~= nil, "объявление пишется в аудит")
 ok(fixes:find("if IsValid(p) and p._grmCurfewMenuOpen then sendCurfewState(p) end", 1, true) ~= nil,
     "открытые меню обновляются push-ом, без опроса по таймеру")
-ok(fixes:find("local function handleCurfewChat", 1, true) ~= nil, "единый обработчик чат-команды")
+ok(fixes:find("local handleCurfewChat", 1, true) ~= nil and fixes:find("handleCurfewChat = function", 1, true) ~= nil,
+    "единый обработчик чат-команды с форвард-декларацией (иначе падал как глобал)")
 ok(fixes:find('hook.Add("PlayerSayTransform", "FactionsExt_CurfewCommands"', 1, true) ~= nil,
     "команда работает и через EasyChat (PlayerSayTransform)")
 ok(fixes:find('string.sub(rawTrim, 1, 13) == "/комчас"', 1, true) ~= nil, "русский алиас /комчас")
@@ -99,6 +100,54 @@ ok(menu:find("net.Start(NET_MENU)", 1, true) ~= nil and menu:find("timer.Create"
 ok(menu:find('concommand.Add("grm_curfew"', 1, true) ~= nil, "есть консольная команда")
 ok(menu:find("GRM.Sound.UI", 1, true) ~= nil, "звуки через общий слой GRM.Sound")
 ok(menu:find('net.WriteString("close")', 1, true) ~= nil, "закрытие меню снимает флаг на сервере")
+
+
+print("\n=== 6. ЖИВОЙ ПРОГОН ЧАТ-КОМАНДЫ (регресс краша в EasyChat) ===")
+--[[ Владелец поймал в бою:
+       attempt to call global 'handleCurfewChat' (a nil value)
+     Причина: хук PlayerSayTransform создавался ВЫШЕ объявления локальной
+     функции, поэтому замыкание читало глобал. Здесь мы реально поднимаем
+     модуль в моке GMod и дёргаем оба хука — включая постороннее сообщение
+     «!noclip», на котором всё и упало. ]]
+local stub = dofile("tools/luatest/lib_gmod_stub.lua")
+stub.install()
+stub.reset()
+_G.CreateConVar = function() return { GetInt = function() return 0 end, GetFloat = function() return 0 end,
+    GetBool = function() return false end, GetString = function() return "" end } end
+_G.GetConVar = _G.CreateConVar
+_G.bit = { bor = function(a) return a end }
+_G.FCVAR_ARCHIVE, _G.FCVAR_REPLICATED = 1, 2
+_G.HUD_PRINTTALK, _G.HUD_PRINTCENTER, _G.HUD_PRINTCONSOLE = 3, 4, 2
+_G.Factions, _G.FactionsData = {}, {}
+
+local loaded, loadErr = stub.loadModule("lua/autorun/sh_faction_fixes.lua")
+ok(loaded, "модуль фракций поднялся в моке", loadErr)
+
+local transform = (stub.hooks["PlayerSayTransform"] or {})["FactionsExt_CurfewCommands"]
+local playerSay = (stub.hooks["PlayerSay"] or {})["FactionsExt_Commands"]
+ok(isfunction(transform), "хук PlayerSayTransform для ком.часа зарегистрирован")
+ok(isfunction(playerSay), "хук PlayerSay зарегистрирован")
+
+if isfunction(transform) and isfunction(playerSay) then
+    local ply = stub.makeEntity({ class = "player", isPlayer = true })
+    local cases = { "/kom_hour", "/комчас", "/kom_hour off", "/kom_hour 15", "!noclip", "привет" }
+    local allOK, firstErr = true, nil
+    for _, text in ipairs(cases) do
+        local pack = { text }
+        local okT, errT = pcall(transform, ply, pack)
+        local okS, errS = pcall(playerSay, ply, text)
+        if not okT or not okS then allOK = false firstErr = firstErr or tostring(errT or errS) end
+    end
+    ok(allOK, "ни одна форма команды и ни одно постороннее сообщение не падают", firstErr)
+
+    local pack = { "/kom_hour" }
+    pcall(transform, ply, pack)
+    ok(pack.SkipPlayerSay == true and pack[1] == "", "команда ком.часа проглатывается чатом")
+
+    local other = { "!noclip" }
+    pcall(transform, ply, other)
+    ok(other.SkipPlayerSay ~= true and other[1] == "!noclip", "чужие сообщения проходят в чат нетронутыми")
+end
 
 print(("\nPERMS SCROLL + CURFEW: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)

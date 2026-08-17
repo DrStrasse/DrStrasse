@@ -323,12 +323,15 @@ if SERVER then
         end
     end
 
+local fadeOff
     local function fadeOn(ply, ent)
         if not IsValid(ent) or not ent.isFadingDoor then return end
         if ent.FFD_IsActive then return end
         ent.FFD_IsActive = true
         applyFadeState(ent, true)
         ent:EmitSound("doors/door1_move.wav", 65, 110, 0.6)
+        -- fadeOff объявлена ниже — вызов идёт из таймера, поэтому нужна
+        -- форвард-декларация (иначе автозакрытие двери падало с nil).
         if ent.FFD_AutoClose and tonumber(ent.FFD_CloseTime) and ent.FFD_CloseTime > 0 then
             timer.Create("FFD_AutoClose_" .. ent:EntIndex(), ent.FFD_CloseTime, 1, function()
                 if IsValid(ent) and ent.isFadingDoor and ent.FFD_IsActive then
@@ -338,7 +341,7 @@ if SERVER then
         end
     end
 
-    local function fadeOff(ply, ent)
+    fadeOff = function(ply, ent)
         if not IsValid(ent) or not ent.isFadingDoor then return end
         if not ent.FFD_IsActive then return end
         timer.Remove("FFD_AutoClose_" .. ent:EntIndex())

@@ -49,6 +49,11 @@
 - `lua.zip` **не** распаковывать поверх `lua/`. `.luabuild/` **не** коммитить.
 - Ветки `019fe80c` / `019fe86a` — другой проект (E2). Не мержить.
 - HOLD-Q / Q-меню не трогать кроме уже добавленной строки каталога `grm_fire_place` и схемы (type/weight/label/feed). Чужой `BuildCPanel` не звать.
+- **Замыкание не видит local, объявленный НИЖЕ по файлу** — оно читает глобал
+  и падает в бою («attempt to call global 'X' (a nil value)»), хотя файл
+  грузится без ошибок. Если хук/таймер вызывает локальную функцию, объявленную
+  дальше, — обязательна форвард-декларация `local X` выше. Проверка:
+  `luajit tools/luatest/sim_forward_locals.lua`.
 - Не локализовать глобалы `OpenAdminMenu`, `OpenLeaderMenu`, `refreshAllUI`, `Factions`.
 - `sh_factions.lua` **не трогать** для пожарных машин — настройки в `data/grm_fire/trucks.json`, не IncassoSettings.
 - FFD не трогать без просьбы. Принтер/пресс — не источники огня.
