@@ -1,7 +1,29 @@
 --[[--------------------------------------------------------------------
-    GRM Faction Permissions UI — Client (Код 122, v2.1)
-    Панель настройки доступов фракций к экономическим функциям ПО РОЛЯМ.
-    Команда: grm_faction_perms
+    GRM Faction Permissions UI — Client v3.0.0
+
+    Панель настройки доступов фракций к экономическим/законодательным
+    функциям ПО РОЛЯМ. Команда: grm_faction_perms
+    Открывается также из «Доступы и связь» в /fmenu.
+
+    v3.0.0 — ПОЧЕМУ БОЛЬШЕ НЕ ДЁРГАЕТ ВВЕРХ:
+      Раньше любое изменение чекбокса уходило на сервер, сервер рассылал
+      обновлённую таблицу доступов, клиент ловил GRM_FPermDataUpdated и
+      ПОЛНОСТЬЮ пересобирал панель (parent:Clear() + новый DScrollPanel).
+      Новый скролл всегда начинается сверху — отсюда и «прыжок» к началу
+      списка после каждой галочки, причём на длинном списке ролей это
+      делало настройку почти невозможной.
+
+      Теперь:
+        * панель строится ОДИН раз на выбранную фракцию;
+        * чекбоксы живут в реестре rows[роль][доступ] и при обновлении
+          данных с сервера им просто переставляется значение (SetValue) —
+          никакого Clear и никакого нового скролла;
+        * полная пересборка происходит ТОЛЬКО если реально изменился состав
+          ролей/доступов, и даже тогда позиция скролла восстанавливается;
+        * клик применяется оптимистично локально, поэтому галочка не мигает
+          в ожидании ответа сервера;
+        * защита от рекурсии: программная установка значения не вызывает
+          OnChange и не шлёт лишний пакет на сервер.
 ----------------------------------------------------------------------]]
 
 if SERVER then return end
@@ -29,6 +51,12 @@ local C = {
 }
 
 local frame = nil
+local ui = { rows = {}, faction = nil, signature = nil, scroll = nil, applying = false }
+
+local function click(path)
+    if GRM.Sound and GRM.Sound.UI then GRM.Sound.UI(path or "buttons/button15.wav")
+    else surface.PlaySound(path or "buttons/button15.wav") end
+end
 
 local function mkBtn(parent, text, col, hoverCol, doClick)
     local b = vgui.Create("DButton", parent)
@@ -42,30 +70,76 @@ local function mkBtn(parent, text, col, hoverCol, doClick)
         draw.SimpleText(text, "GRMFPerm_Normal", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
     b.DoClick = function()
-        surface.PlaySound("buttons/button15.wav")
+        click()
         if doClick then doClick() end
     end
     return b
 end
 
--- Сгруппировать разрешения по категориям (по префиксу до первого '_').
+-- Категории доступов считаем один раз и кэшируем: раньше categories()
+-- пересчитывался для КАЖДОЙ роли при каждой пересборке панели.
+local catCache = nil
 local function categories()
+    if catCache then return catCache end
     local cats, order = {}, {}
     for id in pairs(PERMS.Permissions or {}) do
         local cat = id:match("^([^_]+)_") or "прочее"
         if not cats[cat] then cats[cat] = {} order[#order + 1] = cat end
         cats[cat][#cats[cat] + 1] = id
     end
-    table.sort(order, function(a, b) return a < b end)
+    table.sort(order)
     local out = {}
     for _, cat in ipairs(order) do
+        table.sort(cats[cat])
         out[#out + 1] = { name = cat, perms = cats[cat] }
     end
+    catCache = out
     return out
+end
+hook.Add("GRM_FPermPermissionsChanged", "GRM_FPermUI_DropCatCache", function() catCache = nil end)
+
+-- Подпись состава: меняется только при изменении набора ролей/доступов,
+-- но НЕ при простой смене галочки.
+local function structureSignature(factionName)
+    local f = FactionsData and FactionsData[factionName]
+    if not istable(f) then return "none" end
+    local parts = { factionName }
+    for _, role in ipairs(f.Roles or {}) do parts[#parts + 1] = tostring(role) end
+    parts[#parts + 1] = "|"
+    for _, cat in ipairs(categories()) do
+        for _, permID in ipairs(cat.perms) do parts[#parts + 1] = permID end
+    end
+    return table.concat(parts, "\1")
+end
+
+-- Точечное обновление значений без пересборки панели.
+local function syncValues(factionName)
+    local rolePerms = PERMS.GetFactionRoles(factionName) or {}
+    ui.applying = true
+    for role, perms in pairs(ui.rows) do
+        local rp = rolePerms[role] or {}
+        for permID, chk in pairs(perms) do
+            if IsValid(chk) then
+                local want = rp[permID] and true or false
+                if chk:GetChecked() ~= want then chk:SetValue(want) end
+                chk:SetTextColor(want and C.green or C.text)
+            end
+        end
+    end
+    ui.applying = false
 end
 
 local function buildPanel(parent, factionName)
+    -- Сохраняем позицию скролла: даже при вынужденной полной пересборке
+    -- список должен остаться там, где на него смотрел админ.
+    local prevScroll = 0
+    if IsValid(ui.scroll) and IsValid(ui.scroll.VBar) then prevScroll = ui.scroll.VBar:GetScroll() end
+
     parent:Clear()
+    ui.rows = {}
+    ui.scroll = nil
+    ui.faction = factionName
+    ui.signature = structureSignature(factionName)
 
     if not factionName or not FactionsData or not FactionsData[factionName] then
         local lbl = vgui.Create("DLabel", parent)
@@ -76,10 +150,11 @@ local function buildPanel(parent, factionName)
 
     local f = FactionsData[factionName]
     local roles = f.Roles or {}
-    local rolePerms = PERMS.GetFactionRoles(factionName)
+    local rolePerms = PERMS.GetFactionRoles(factionName) or {}
 
     local scroll = vgui.Create("DScrollPanel", parent)
     scroll:Dock(FILL)
+    ui.scroll = scroll
 
     local header = vgui.Create("DLabel", scroll)
     header:Dock(TOP) header:SetTall(28) header:SetFont("GRMFPerm_Title") header:SetTextColor(C.gold)
@@ -94,6 +169,8 @@ local function buildPanel(parent, factionName)
 
     for _, role in ipairs(roles) do
         local rp = rolePerms[role] or {}
+        ui.rows[role] = {}
+
         local roleCard = vgui.Create("DPanel", scroll)
         roleCard:Dock(TOP) roleCard:SetTall(30) roleCard:DockMargin(0, 4, 0, 0)
         roleCard.Paint = function(_, w, h)
@@ -110,9 +187,8 @@ local function buildPanel(parent, factionName)
             for _, permID in ipairs(cat.perms) do
                 local row = vgui.Create("DPanel", scroll)
                 row:Dock(TOP) row:SetTall(30) row:DockMargin(8, 0, 0, 2)
-                row.Paint = function(_, w, h)
-                    draw.RoundedBox(4, 0, 0, w, h, C.card)
-                end
+                row.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, C.card) end
+
                 local chk = vgui.Create("DCheckBoxLabel", row)
                 chk:Dock(FILL) chk:DockMargin(10, 0, 0, 0)
                 chk:SetText(PERMS.Permissions[permID] or permID)
@@ -120,21 +196,51 @@ local function buildPanel(parent, factionName)
                 chk:SetTextColor(rp[permID] and C.green or C.text)
                 chk:SetValue(rp[permID] and 1 or 0)
                 chk.OnChange = function(_, val)
+                    -- Программная синхронизация значений не должна улетать
+                    -- обратно на сервер и вызывать новый цикл обновления.
+                    if ui.applying then return end
                     local v = val == true
+                    chk:SetTextColor(v and C.green or C.text)
+
+                    -- Оптимистичное локальное применение: галочка не мигает,
+                    -- пока идёт обмен с сервером.
+                    PERMS.Data = PERMS.Data or {}
+                    PERMS.Data[factionName] = PERMS.Data[factionName] or {}
+                    PERMS.Data[factionName][role] = PERMS.Data[factionName][role] or {}
+                    PERMS.Data[factionName][role][permID] = v or nil
+
                     if v then PERMS.GrantToRole(factionName, role, permID)
                     else PERMS.RevokeFromRole(factionName, role, permID) end
                 end
+
+                ui.rows[role][permID] = chk
             end
         end
+    end
+
+    if prevScroll > 0 and IsValid(scroll.VBar) then
+        -- Восстанавливаем прокрутку после того, как Derma разложит элементы.
+        timer.Simple(0, function()
+            if IsValid(scroll) and IsValid(scroll.VBar) then scroll.VBar:SetScroll(prevScroll) end
+        end)
+    end
+end
+
+-- Обновление данных с сервера: по возможности БЕЗ пересборки.
+local function onDataUpdated(right)
+    if not (IsValid(frame) and IsValid(right)) then return end
+    if not ui.faction then return end
+    if structureSignature(ui.faction) ~= ui.signature then
+        buildPanel(right, ui.faction)
+    else
+        syncValues(ui.faction)
     end
 end
 
 local function open()
     PERMS.Request()
 
-    if IsValid(frame) then
-        frame:Remove()
-    end
+    if IsValid(frame) then frame:Remove() end
 
     frame = vgui.Create("DFrame")
     frame:SetTitle("")
@@ -142,6 +248,7 @@ local function open()
     frame:Center()
     frame:MakePopup()
     frame:ShowCloseButton(false)
+    if GRM.UI and GRM.UI.Track then GRM.UI.Track("faction.perms", frame) end
 
     frame.Paint = function(_, w, h)
         draw.RoundedBox(8, 0, 0, w, h, C.bg)
@@ -192,28 +299,25 @@ local function open()
 
     local selected = names[1]
 
-    local function refresh()
-        buildPanel(right, selected)
-    end
-
     left.OnRowSelected = function(_, _, line)
-        if IsValid(line) then
+        if IsValid(line) and line.FactionName ~= ui.faction then
             selected = line.FactionName
-            refresh()
+            buildPanel(right, selected)
         end
     end
 
-    local btnRefresh = mkBtn(right, "Обновить", C.acc, C.gold, function() PERMS.Request() end)
+    mkBtn(right, "Обновить", C.acc, C.gold, function() PERMS.Request() end)
 
-    refresh()
+    buildPanel(right, selected)
 
-    -- Автообновление при получении данных с сервера
-    hook.Add("GRM_FPermDataUpdated", "GRM_FPermUI_Refresh", function()
-        if IsValid(frame) and IsValid(right) then
-            refresh()
-        end
-    end)
+    hook.Add("GRM_FPermDataUpdated", "GRM_FPermUI_Refresh", function() onDataUpdated(right) end)
+    frame.OnRemove = function()
+        hook.Remove("GRM_FPermDataUpdated", "GRM_FPermUI_Refresh")
+        ui.rows, ui.scroll, ui.faction, ui.signature = {}, nil, nil, nil
+    end
 end
+
+PERMS.OpenUI = open
 
 concommand.Add("grm_faction_perms", function()
     if LocalPlayer():IsSuperAdmin() or (GRM.Factions and GRM.Factions.IsLeader and GRM.Factions.IsLeader(LocalPlayer())) then
@@ -223,4 +327,4 @@ concommand.Add("grm_faction_perms", function()
     end
 end)
 
-print("[GRM Faction Permissions UI] v2.1 loaded")
+print("[GRM Faction Permissions UI] v3.0.0 loaded (без прыжка скролла)")

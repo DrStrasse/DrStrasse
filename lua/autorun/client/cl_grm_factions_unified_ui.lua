@@ -435,10 +435,36 @@ function UI.Open(requestedFaction)
     local tabButtons = {}
     currentTabButtons = tabButtons
 
+    -- Поиск скролла внутри вкладки: вкладки строят свой DScrollPanel сами.
+    local function findScroll(panel)
+        if not IsValid(panel) then return nil end
+        for _, child in ipairs(panel:GetChildren() or {}) do
+            if IsValid(child) and child.GetClassName and child:GetClassName() == "DScrollPanel" then return child end
+            local nested = findScroll(child)
+            if nested then return nested end
+        end
+    end
+
+    -- Пересборка вкладки С СОХРАНЕНИЕМ ПРОКРУТКИ. Раньше любое переключение
+    -- галочки доступа звало refreshView, вкладка собиралась заново вместе с
+    -- новым DScrollPanel, и список отщёлкивал в самое начало — на длинных
+    -- списках доступов настраивать было невозможно.
     local function refreshView()
         if currentTab and tabButtons[currentTab] and tabButtons[currentTab].builder then
+            local keep = 0
+            local oldScroll = findScroll(content)
+            if IsValid(oldScroll) and IsValid(oldScroll.VBar) then keep = oldScroll.VBar:GetScroll() end
+
             content:Clear()
             tabButtons[currentTab].builder(content, targetFac, FactionsData or {})
+
+            if keep > 0 then
+                timer.Simple(0, function()
+                    if not IsValid(content) then return end
+                    local newScroll = findScroll(content)
+                    if IsValid(newScroll) and IsValid(newScroll.VBar) then newScroll.VBar:SetScroll(keep) end
+                end)
+            end
         end
     end
 
@@ -951,6 +977,10 @@ function UI.Open(requestedFaction)
             "Бюджеты, налоги, штрафы, законы, инкассация — по должностям.",
             "icon16/table_key.png", "grm_faction_perms", C.gold)
 
+        -- Тумблеры доступов НЕ пересобирают вкладку: чекбокс сам меняет свой
+        -- текст и цвет, а серверный ответ приходит отдельным синком. Раньше
+        -- каждый клик звал refreshView -> content:Clear() -> новый скролл,
+        -- из-за чего список прыгал в начало.
         local function addAccessToggle(title, desc, getVal, onToggle)
             local row = vgui.Create("DPanel", scroll)
             row:Dock(TOP)
@@ -979,39 +1009,39 @@ function UI.Open(requestedFaction)
 
         addAccessToggle("Волна департамента (/dep, /depb)", "Право служебной радиосвязи между всеми ведомствами",
             function() return fac.DepAccess == true end,
-            function(v) sendAction("setDepAccess", { facName, v }, refreshView) end)
+            function(v) sendAction("setDepAccess", { facName, v }) end)
 
         addAccessToggle("Государственные новости (/gnews)", "Право трансляции официальных новостей лидером",
             function() return fac.GNewsAccess == true end,
-            function(v) sendExtAction("setGNewsAccess", { facName, v }, refreshView) end)
+            function(v) sendExtAction("setGNewsAccess", { facName, v }) end)
 
         addAccessToggle("Доска объявлений (/board)", "Право публикации объявлений о наборе сотрудников",
             function() return (GRM.FAcc and GRM.FAcc.board and GRM.FAcc.board[facName]) == true end,
-            function(v) sendBridgeAction("board", facName, v, refreshView) end)
+            function(v) sendBridgeAction("board", facName, v) end)
 
         addAccessToggle("Радиовещание у микрофонов (/bcast)", "Право проведения городских радиоэфиров",
             function() return (GRM.FAcc and GRM.FAcc.journ and GRM.FAcc.journ[facName]) == true end,
-            function(v) sendBridgeAction("journ", facName, v, refreshView) end)
+            function(v) sendBridgeAction("journ", facName, v) end)
 
         addAccessToggle("Оповещения тревоги (/alert, /alertall)", "Право запуска тревожных сирен и оповещений",
             function() return (GRM.FAcc and GRM.FAcc.alert and GRM.FAcc.alert[facName]) == true end,
-            function(v) sendBridgeAction("alert", facName, v, refreshView) end)
+            function(v) sendBridgeAction("alert", facName, v) end)
 
         addAccessToggle("Биржа труда (/jobs)", "Публикация оплачиваемых государственных заказов",
             function() return (GRM.FAcc and GRM.FAcc.jobs and GRM.FAcc.jobs[facName]) == true end,
-            function(v) sendBridgeAction("jobs", facName, v, refreshView) end)
+            function(v) sendBridgeAction("jobs", facName, v) end)
 
         addAccessToggle("Государственные услуги (каталог)", "Оказание платных услуг населению",
             function() return fac.ServiceAccess == true end,
-            function(v) sendAction("setServiceAccess", { facName, "service", v }, refreshView) end)
+            function(v) sendAction("setServiceAccess", { facName, "service", v }) end)
 
         addAccessToggle("Выписка счетов и квитанций", "Формирование счетов на оплату в банкоматах",
             function() return fac.InvoiceAccess == true end,
-            function(v) sendAction("setServiceAccess", { facName, "invoice", v }, refreshView) end)
+            function(v) sendAction("setServiceAccess", { facName, "invoice", v }) end)
 
         addAccessToggle("Государственный реестр дипломов", "Выдача официальных дипломов об образовании",
             function() return fac.DiplomaAccess == true end,
-            function(v) sendAction("setServiceAccess", { facName, "diploma", v }, refreshView) end)
+            function(v) sendAction("setServiceAccess", { facName, "diploma", v }) end)
     end
 
     -- ════════════ 6. ВООРУЖЕНИЕ И ФОРМА ════════════

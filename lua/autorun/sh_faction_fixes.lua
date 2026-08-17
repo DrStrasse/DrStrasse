@@ -60,6 +60,8 @@ local NET_EXT_OPEN_MASK      = "FactionsExt_OpenMask"
 local NET_EXT_APPLY_MASK     = "FactionsExt_ApplyMask"
 local NET_EXT_REMOVE_MASK    = "FactionsExt_RemoveMask"
 local NET_EXT_CURFEW         = "FactionsExt_Curfew"
+local NET_CURFEW_MENU        = "GRM_Curfew_Menu"      -- запрос/выдача состояния меню
+local NET_CURFEW_ACT         = "GRM_Curfew_Act"       -- объявить/остановить из меню
 local NET_MODELS_SYNC        = "FactionsExt_ModelsSync"
 local NET_MODELS_REQUEST     = "FactionsExt_ModelsRequest"
 local NET_MODEL_SELECT       = "FactionsExt_ModelSelect"
@@ -255,6 +257,8 @@ if SERVER then
     util.AddNetworkString(NET_EXT_APPLY_MASK)
     util.AddNetworkString(NET_EXT_REMOVE_MASK)
     util.AddNetworkString(NET_EXT_CURFEW)
+    util.AddNetworkString(NET_CURFEW_MENU)
+    util.AddNetworkString(NET_CURFEW_ACT)
     util.AddNetworkString(NET_MODELS_SYNC)
     util.AddNetworkString(NET_MODELS_REQUEST)
     util.AddNetworkString(NET_MODEL_SELECT)
@@ -278,6 +282,8 @@ if SERVER then
     CurfewEndTime = CurfewEndTime or 0
     CurfewStartedBy = CurfewStartedBy or ""
     CurfewFaction = CurfewFaction or ""
+    CurfewReason = CurfewReason or ""
+    CurfewStartedAt = CurfewStartedAt or 0
     OriginalModels = OriginalModels or {}
     DefaultModels = DefaultModels or readJSON(DEFAULT_MODELS_FILE, {
         { path = "models/player/Group01/male_07.mdl", skin = 0, bodygroups = {} },
@@ -406,8 +412,13 @@ if SERVER then
             net.WriteBool(CurfewActive == true)
             net.WriteFloat(tonumber(CurfewEndTime) or 0)
             net.WriteString(CurfewFaction or "")
+            net.WriteString(CurfewStartedBy or "")
+            net.WriteString(CurfewReason or "")
+            net.WriteFloat(tonumber(CurfewStartedAt) or 0)
         net.Broadcast()
     end
+    GRM.FactionsExt = GRM.FactionsExt or {}
+    GRM.FactionsExt.BroadcastCurfew = broadcastCurfew
 
     local function getFactionDepartments(factionName)
         if not Factions or not Factions[factionName] then return {} end
@@ -444,12 +455,21 @@ if SERVER then
         return tableHasValue(cfg.CurfewRoles, member.Role)
     end
 
-    local function startCurfew(ply, duration)
+    local function startCurfew(ply, duration, reason)
+        reason = string.sub(string.Trim(tostring(reason or "")), 1, 140)
+        reason = string.gsub(reason, "[%c]", "")
         CurfewActive = true
         CurfewEndTime = CurTime() + duration
-        CurfewStartedBy = IsValid(ply) and ply:Nick() or "Система"
+        CurfewStartedAt = CurTime()
+        CurfewStartedBy = IsValid(ply) and (ply:GetNWString("GRM_RPName", "") ~= "" and ply:GetNWString("GRM_RPName", "") or ply:Nick()) or "Система"
         CurfewFaction = select(1, getFactionMemberByPlayer(ply)) or ""
+        CurfewReason = reason
         broadcastCurfew()
+        if reason ~= "" then
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+                if IsValid(p) then p:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Причина: " .. reason) end
+            end
+        end
         for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             p:PrintMessage(HUD_PRINTCENTER, "=== ОБЪЯВЛЕН КОМЕНДАНТСКИЙ ЧАС ===\nВсе граждане должны покинуть улицы!")
             p:EmitSound("ambient/alarms/scanner_alert_pass1.wav", 100, 100)
@@ -468,11 +488,99 @@ if SERVER then
         CurfewActive = false
         CurfewEndTime = 0
         CurfewFaction = ""
+        CurfewReason = ""
+        CurfewStartedAt = 0
         broadcastCurfew()
         for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             p:PrintMessage(HUD_PRINTCENTER, "=== КОМЕНДАНТСКИЙ ЧАС ОТМЕНЁН ===")
         end
     end
+
+    ----------------------------------------------------------------
+    -- МЕНЮ КОМЕНДАНТСКОГО ЧАСА (/kom_hour без аргументов)
+    -- Клиент не решает ничего сам: сервер отдаёт состояние + флаг доступа,
+    -- и сам же валидирует каждое действие (доступ, состояние, лимиты).
+    ----------------------------------------------------------------
+    local CURFEW_MIN_MINUTES, CURFEW_MAX_MINUTES = 1, 120
+
+    local function sendCurfewState(ply)
+        if not IsValid(ply) then return end
+        local can = ply:IsSuperAdmin() or hasCurfewAccess(ply)
+        net.Start(NET_CURFEW_MENU)
+            net.WriteBool(can == true)
+            net.WriteBool(CurfewActive == true)
+            net.WriteFloat(tonumber(CurfewEndTime) or 0)
+            net.WriteFloat(tonumber(CurfewStartedAt) or 0)
+            net.WriteString(CurfewStartedBy or "")
+            net.WriteString(CurfewFaction or "")
+            net.WriteString(CurfewReason or "")
+            net.WriteUInt(CURFEW_MIN_MINUTES, 8)
+            net.WriteUInt(CURFEW_MAX_MINUTES, 8)
+        net.Send(ply)
+    end
+    GRM.FactionsExt.SendCurfewState = sendCurfewState
+
+    -- Состояние ушло всем — обновим и открытые меню.
+    local oldBroadcast = broadcastCurfew
+    broadcastCurfew = function()
+        oldBroadcast()
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+            if IsValid(p) and p._grmCurfewMenuOpen then sendCurfewState(p) end
+        end
+    end
+    GRM.FactionsExt.BroadcastCurfew = broadcastCurfew
+
+    net.Receive(NET_CURFEW_MENU, function(bits, ply)
+        if not IsValid(ply) then return end
+        if GRM.Net and GRM.Net.Guard and not GRM.Net.Guard(ply, "curfew.menu", { rate = .5, burst = 3, maxBits = 64 }, { bits = bits }) then return end
+        ply._grmCurfewMenuOpen = true
+        sendCurfewState(ply)
+    end)
+
+    net.Receive(NET_CURFEW_ACT, function(bits, ply)
+        if not IsValid(ply) then return end
+        if GRM.Net and GRM.Net.Guard and not GRM.Net.Guard(ply, "curfew.act", { rate = 1, burst = 2, maxBits = 2048 }, { bits = bits }) then return end
+        local act = net.ReadString()
+        local minutes = net.ReadUInt(8)
+        local reason = net.ReadString()
+
+        if act == "close" then ply._grmCurfewMenuOpen = nil return end
+
+        if not (ply:IsSuperAdmin() or hasCurfewAccess(ply)) then
+            sendExtResult(ply, false, "Нет доступа к комендантскому часу")
+            sendCurfewState(ply)
+            return
+        end
+
+        if act == "start" then
+            if CurfewActive then
+                sendExtResult(ply, false, "Комендантский час уже идёт")
+                sendCurfewState(ply)
+                return
+            end
+            minutes = math.Clamp(math.floor(tonumber(minutes) or 10), CURFEW_MIN_MINUTES, CURFEW_MAX_MINUTES)
+            startCurfew(ply, minutes * 60, reason)
+            if GRM.Audit and GRM.Audit.Write then
+                GRM.Audit.Write("curfew", "start", ply, {}, { minutes = minutes, reason = reason })
+            end
+            sendExtResult(ply, true, "Комендантский час объявлен на " .. minutes .. " мин.")
+        elseif act == "stop" then
+            if not CurfewActive then
+                sendExtResult(ply, false, "Комендантский час не активен")
+                sendCurfewState(ply)
+                return
+            end
+            stopCurfew()
+            if GRM.Audit and GRM.Audit.Write then
+                GRM.Audit.Write("curfew", "stop", ply, {}, {})
+            end
+            sendExtResult(ply, true, "Комендантский час отменён")
+        else
+            sendCurfewState(ply)
+        end
+    end)
+
+    hook.Add("PlayerDisconnected", "GRM_Curfew_MenuCleanup", function(ply) if ply then ply._grmCurfewMenuOpen = nil end end)
 
     function GetModelsForPlayer(ply)
         -- Сотрудник вне службы выглядит как гражданский. Этот флаг выставляет
@@ -929,7 +1037,7 @@ if SERVER then
                 return
             end
             local duration = math.Clamp(tonumber(args[1]) or 600, 60, 7200)
-            startCurfew(ply, duration)
+            startCurfew(ply, duration, args[2])
             sendExtResult(ply, true, "Комендантский час объявлен на " .. math.floor(duration / 60) .. " мин.")
             return
         end
@@ -1186,6 +1294,13 @@ if SERVER then
         return false
     end
 
+    hook.Add("PlayerSayTransform", "FactionsExt_CurfewCommands", function(ply, datapack)
+        if not istable(datapack) or not isstring(datapack[1]) then return end
+        if not handleCurfewChat(ply, datapack[1]) then return end
+        datapack[1] = ""
+        datapack.SkipPlayerSay = true
+    end)
+
     hook.Add("PlayerSayTransform", "FactionsExt_MaskCommands", function(ply, datapack)
         if not istable(datapack) or not isstring(datapack[1]) then return end
         if not handleMaskChatCommand(ply, datapack[1]) then return end
@@ -1193,33 +1308,64 @@ if SERVER then
         datapack.SkipPlayerSay = true
     end)
 
+    -- Комендантский час доступен и через PlayerSay, и через PlayerSayTransform
+    -- (правило сборки: EasyChat перехватывает ввод и обычный PlayerSay может
+    -- не сработать). Обе точки входа зовут ОДИН обработчик.
+    local function handleCurfewChat(ply, text)
+        local lower = safeLower(trim(text))
+        -- Русский алиас: длина «/комчас» в БАЙТАХ — 13, safeLower кириллицу
+        -- не трогает, поэтому сравниваем исходную строку.
+        local rawTrim = trim(text)
+        local komPrefix = nil
+        if string.sub(lower, 1, 9) == "/kom_hour" then komPrefix = 9
+        elseif string.sub(rawTrim, 1, 13) == "/комчас" then komPrefix = 13 end
+        if not komPrefix then return false end
+        local arg = trim(string.sub(rawTrim, komPrefix + 1))
+        -- Без аргументов — открываем меню (кнопки, ползунок, причина).
+        if arg == "" then
+            if not ply:IsSuperAdmin() and not hasCurfewAccess(ply) then
+                ply:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Нет доступа.")
+                return true
+            end
+            ply._grmCurfewMenuOpen = true
+            -- Тот же пакет состояния, что и у кнопки «Обновить» в меню:
+            -- один источник правды, никакого дублирования полей.
+            sendCurfewState(ply)
+            return true
+        end
+        if safeLower(arg) == "off" then
+            if not ply:IsSuperAdmin() and not hasCurfewAccess(ply) then
+                ply:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Нет доступа к отмене.")
+                return true
+            end
+            if not CurfewActive then
+                ply:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Не активен.")
+                return true
+            end
+            stopCurfew()
+            return true
+        end
+        if not ply:IsSuperAdmin() and not hasCurfewAccess(ply) then
+            ply:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Нет доступа.")
+            return true
+        end
+        -- «/kom_hour 15» — минуты (совместимость со старым «/kom_hour 900»
+        -- в секундах сохранена: значения больше 120 считаем секундами).
+        local num = tonumber(arg)
+        local duration
+        if num and num > 0 and num <= 120 then duration = num * 60 else duration = num or 600 end
+        duration = math.Clamp(duration, 60, 7200)
+        startCurfew(ply, duration)
+        ply:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Объявлен на " .. math.floor(duration / 60) .. " мин. Меню: /kom_hour без аргументов.")
+        return true
+    end
+
     hook.Add("PlayerSay", "FactionsExt_Commands", function(ply, text)
         local lower = safeLower(trim(text))
 
         if handleMaskChatCommand(ply, text) then return "" end
 
-        if string.sub(lower, 1, 9) == "/kom_hour" then
-            local arg = trim(string.sub(text, 10))
-            if safeLower(arg) == "off" then
-                if not ply:IsSuperAdmin() and not hasCurfewAccess(ply) then
-                    ply:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Нет доступа к отмене.")
-                    return ""
-                end
-                if not CurfewActive then
-                    ply:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Не активен.")
-                    return ""
-                end
-                stopCurfew()
-                return ""
-            end
-            if not ply:IsSuperAdmin() and not hasCurfewAccess(ply) then
-                ply:PrintMessage(HUD_PRINTTALK, "[Комендантский час] Нет доступа.")
-                return ""
-            end
-            local duration = math.Clamp(tonumber(arg) or 600, 60, 7200)
-            startCurfew(ply, duration)
-            return ""
-        end
+        if handleCurfewChat(ply, text) then return "" end
 
         if lower:sub(1, 10) == "/maskdesc " or lower:sub(1, 10) == "!maskdesc " then
             if not ply:GetNWBool("IsMasked", false) then
@@ -1844,6 +1990,22 @@ if CLIENT then
         CurfewState.active = net.ReadBool()
         CurfewState.endTime = net.ReadFloat()
         CurfewState.faction = net.ReadString()
+        CurfewState.startedBy = net.ReadString()
+        CurfewState.reason = net.ReadString()
+        CurfewState.startedAt = net.ReadFloat()
+
+        -- Открытое меню комендантского часа обновляется тем же пакетом:
+        -- отдельный опрос сервера по таймеру не нужен.
+        if GRM.Curfew and GRM.Curfew.State then
+            local st = GRM.Curfew.State
+            st.active    = CurfewState.active
+            st.endTime   = CurfewState.endTime
+            st.faction   = CurfewState.faction
+            st.startedBy = CurfewState.startedBy
+            st.reason    = CurfewState.reason
+            st.startedAt = CurfewState.startedAt
+            if GRM.Curfew._apply then GRM.Curfew._apply() end
+        end
     end)
 
     net.Receive(NET_EXT_RESULT, function()
@@ -2804,8 +2966,20 @@ if CLIENT then
 
         local lastSig = nil
 
+        -- Вкладка пересобирается при изменении подписи состояния (это нужно,
+        -- чтобы галочки подхватывали серверные данные). Но раньше при этом
+        -- терялась позиция прокрутки: поставил галочку в конце длинного
+        -- списка ролей — список отщёлкивал в самое начало. Запоминаем и
+        -- возвращаем скролл вокруг пересборки.
         local function rebuild(factionName)
+            local keepScroll = 0
+            if IsValid(scroll) and IsValid(scroll.VBar) then keepScroll = scroll.VBar:GetScroll() end
             scroll:Clear()
+            if keepScroll > 0 then
+                timer.Simple(0, function()
+                    if IsValid(scroll) and IsValid(scroll.VBar) then scroll.VBar:SetScroll(keepScroll) end
+                end)
+            end
             if not factionName or not FactionsData or not FactionsData[factionName] then return end
             local f = FactionsData[factionName]
             local cfg = (FactionsExtData and FactionsExtData[factionName]) or { CurfewRoles = {}, MaskDepartments = {}, GNewsAccess = false }
