@@ -429,7 +429,7 @@ if SERVER then
     RN._fxLastKind = {}
     timer.Create("GRM_RN_FxWatch", 0.35, 0, function()
         local now = CurTime()
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) then
                 local active = ply._rnTxSeen and (now - ply._rnTxSeen) < 0.6
                 local kind = active and ply._rnFx or nil
@@ -892,8 +892,11 @@ if SERVER then
     -- Периодический пересчёт сети
     ----------------------------------------------------------------
     recompute = function()
+        -- Пересчёт топологии радиосети шёл каждые 0.7 с и делал ПЯТЬ полных
+        -- сканов классов подряд. Теперь классы берутся из event-реестров
+        -- GRM.Perf — скан заменён готовыми массивами.
         registerDevices()  -- Код 87: позывные/реестр прежде топологии
-        local racks = ents.FindByClass("grm_server_rack")
+        local racks = ((GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_server_rack") or ents.FindByClass("grm_server_rack"))
         RN._racks = racks
         local active = {}
         for _, r in ipairs(racks) do
@@ -904,7 +907,7 @@ if SERVER then
         local cov = {}
         for _, r in ipairs(active) do cov[#cov + 1] = { pos = r:GetPos(), r = RN.RackRange } end
 
-        local ants, linked = ents.FindByClass("grm_antenna"), 0
+        local ants, linked = ((GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_antenna") or ents.FindByClass("grm_antenna")), 0
         for _, a in ipairs(ants) do
             if IsValid(a) then
                 local isL = nearActiveRack(a:GetPos(), RN.LinkDist) and deviceOnForEnt(a)
@@ -919,19 +922,19 @@ if SERVER then
         RN._antsLinked = linked
         RN._coverage = cov
 
-        for _, m in ipairs(ents.FindByClass("grm_broadcast_mic")) do
+        for _, m in ipairs(((GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_broadcast_mic") or ents.FindByClass("grm_broadcast_mic"))) do
             if IsValid(m) then
                 local l = RN.MicLink(m)
                 if m:GetNWInt("GRM_RN_Link", -1) ~= l then m:SetNWInt("GRM_RN_Link", l) end
             end
         end
-        for _, st in ipairs(ents.FindByClass("grm_radio_station")) do
+        for _, st in ipairs(((GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_radio_station") or ents.FindByClass("grm_radio_station"))) do
             if IsValid(st) then
                 local on = nearActiveRack(st:GetPos(), RN.LinkDist)
                 if st:GetNWBool("GRM_RN_Online", false) ~= on then st:SetNWBool("GRM_RN_Online", on) end
             end
         end
-        for _, c in ipairs(ents.FindByClass("grm_net_console")) do
+        for _, c in ipairs(((GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_net_console") or ents.FindByClass("grm_net_console"))) do
             if IsValid(c) then
                 local on = nearActiveRack(c:GetPos(), RN.LinkDist)
                 if c:GetNWBool("GRM_RN_Online", false) ~= on then c:SetNWBool("GRM_RN_Online", on) end
@@ -1146,7 +1149,7 @@ if SERVER then
         local name = rpName(ply)
         local myPos = IsValid(ply) and ply:GetPos() or nil
         local delivered = 0
-        for _, lp in ipairs(player.GetAll()) do
+        for _, lp in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if RN.FreqOf(lp) == f then
                 local ok = (lp == ply)
                 local body = text

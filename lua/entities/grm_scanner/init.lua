@@ -45,7 +45,7 @@ local function scannerPermApply(ent, t)
     ent.HoldTime   = math.max(0.5, tonumber(t.hold) or 4)
     ent.OwnerSID64 = tostring(t.owner or "")
     if ent.OwnerSID64 ~= "" then
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and tostring((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64() or "") == ent.OwnerSID64 then
                 ent.ScannerOwner = p
                 break

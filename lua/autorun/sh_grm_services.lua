@@ -125,7 +125,7 @@ S.CharKey = charKey
 local function findPlayerByKey(k)
     k = tostring(k or "")
     if k == "" then return nil end
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) and (charKey(p) == k or p:SteamID64() == k) then return p end
     end
 end
@@ -168,7 +168,7 @@ function S.CharacterRegistry()
     end
 
     -- 1) онлайн
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) and p:IsPlayer() then
             local rp = p.GetNWString and p:GetNWString("GRM_RPName", "") or ""
             put(charKey(p), {

@@ -590,7 +590,8 @@ end)
 
 hook.Add("Think", "GRM_CCTV_ViewGuard", function()
     local now=CurTime();if(CCTV._viewGuardAt or 0)>now then return end;CCTV._viewGuardAt=now+.2
-    for _, ply in ipairs(player.GetAll()) do
+    -- Кэш списка игроков вместо новой таблицы player.GetAll() 5 раз в секунду.
+    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if ply._grmCCTVView then
             local mon, cam = ply._grmCCTVMonitor, ply._grmCCTVCam
             local bad = not ply:Alive()

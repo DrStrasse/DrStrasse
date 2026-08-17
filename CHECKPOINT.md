@@ -1,8 +1,8 @@
 # CHECKPOINT — контрольная точка для следующего ИИ-агента
 
-**Дата:** 2026-08-17  
-**Ветка сессии:** `arena/01a00f34-drstrasse`  
-**Состояние:** Door Integrity v4.0 (Дедупликатор фантомов + Master-Slave Double Doors + /door_audit), Warrant Core v2.0 (Судебные ордера в grm_comp_court, таран ds_battering_ram v2.0 с прогресс-баром), Суверенитет спецслужб (иммунитет судей wiretap_judge), Faction Core v5.0 (Иерархия «Отделы ➔ Подотделы» + Unified UI v1.1.0).  
+**Дата:** 2026-08-17 (вечер)  
+**Ветка сессии:** `arena/01a010c8-drstrasse`  
+**Состояние:** GRM Perf v1.2.0 (общий слой против микрофризов), Двери v5.0.0 (пространственный хэш + пересборка `/door_rebuild` + групповая ликвидация фантомов), мусоровоз 3 пакета / метки по очереди / полигон только с полным кузовом, цвет удостоверений запоминается в `/doc_admin`. Ранее: Door Integrity v4.0 (Дедупликатор фантомов + Master-Slave Double Doors + /door_audit), Warrant Core v2.0 (Судебные ордера в grm_comp_court, таран ds_battering_ram v2.0 с прогресс-баром), Суверенитет спецслужб (иммунитет судей wiretap_judge), Faction Core v5.0 (Иерархия «Отделы ➔ Подотделы» + Unified UI v1.1.0).  
 **Репо:** `https://github.com/DrStrasse/DrStrasse`  
 
 Читать этот файл ПЕРВЫМ. Затем `HANDOVER.md`, `ROADMAP_GRM_2026.md`, `GRM_CORE.md` и актуализации в `ANALYSIS.md`. Не начинать с master — он пустой.
@@ -36,10 +36,10 @@
 
 ## 1. Жёсткие правила сессии (сломаешь — работа пропадёт)
 
-- Работать **только** на `arena/019ffaa2-drstrasse`. Не переключаться, не создавать другие ветки, не пушить никуда больше.
+- Работать **только** на ветке ТЕКУЩЕЙ сессии (сейчас `arena/01a010c8-drstrasse`). Не переключаться, не создавать другие ветки, не пушить никуда больше.
 - При расхождении HEAD и remote:
   ```
-  git fetch origin arena/019ffaa2-drstrasse && git reset --mixed FETCH_HEAD
+  git fetch origin arena/01a010c8-drstrasse && git reset --mixed FETCH_HEAD
   ```
   Один раз локальный HEAD откатился на `2122758` при живом remote `2ed0e61`. Лечится только так.
 - Cwd **всегда** `/home/user/DrStrasse`. Shell из `/home/user` файлы репо не видит.
@@ -70,11 +70,11 @@
 
 ### Dist raw (владелец качает отсюда)
 
-- https://github.com/DrStrasse/DrStrasse/raw/arena/01a00f34-drstrasse/dist/grm_single_addon.zip
-- https://github.com/DrStrasse/DrStrasse/raw/arena/01a00f34-drstrasse/dist/grm_full_code.zip
-- https://github.com/DrStrasse/DrStrasse/raw/arena/01a00f34-drstrasse/dist/grm_economy.zip
-- https://github.com/DrStrasse/DrStrasse/raw/arena/01a00f34-drstrasse/dist/grm_fix_hud_tab_currency.zip
-- https://github.com/DrStrasse/DrStrasse/raw/arena/01a00f34-drstrasse/dist/grm_fire_addon.zip
+- https://github.com/DrStrasse/DrStrasse/raw/arena/01a010c8-drstrasse/dist/grm_single_addon.zip
+- https://github.com/DrStrasse/DrStrasse/raw/arena/01a010c8-drstrasse/dist/grm_full_code.zip
+- https://github.com/DrStrasse/DrStrasse/raw/arena/01a010c8-drstrasse/dist/grm_economy.zip
+- https://github.com/DrStrasse/DrStrasse/raw/arena/01a010c8-drstrasse/dist/grm_fix_hud_tab_currency.zip
+- https://github.com/DrStrasse/DrStrasse/raw/arena/01a010c8-drstrasse/dist/grm_fire_addon.zip
 
 Для пожаров на сервере нужны **оба**: `grm_single_addon.zip` (ядро) + `grm_fire_addon.zip` (vFire + сущности) + рестарт.
 

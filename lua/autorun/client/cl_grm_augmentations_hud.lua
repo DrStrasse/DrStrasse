@@ -234,7 +234,7 @@ hook.Add("HUDPaint", "GRM_AugHUD_DoorPrompt", function()
         end
     end
     if not hasChip then return end
-    local tr=lp:GetEyeTrace(); local e=tr.Entity
+    local tr=(GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(lp,0.05) or lp:GetEyeTrace(); if not tr then return end; local e=tr.Entity
     if not IsValid(e) or not ({func_door=true,func_door_rotating=true,prop_door_rotating=true,prop_physics=true})[e:GetClass()] then return end
     if tr.HitPos:DistToSqr(lp:EyePos()) > 10000 then return end
     local w,h=470,64; local x,y=ScrW()/2-w/2,ScrH()*.43
@@ -266,7 +266,7 @@ local function resolveFaction(target)
 end
 hook.Add("PreDrawHalos", "GRM_AugHUD_PlayerScanOutline", function()
     if not HUD.IsActive() then return end
-    local tr=LocalPlayer():GetEyeTrace(); local e=tr.Entity
+    local tr=(GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(LocalPlayer(),0.05) or LocalPlayer():GetEyeTrace(); if not tr then return end; local e=tr.Entity
     if IsValid(e) and e:IsPlayer() and e~=LocalPlayer() and tr.HitPos:DistToSqr(LocalPlayer():EyePos())<350000 then
         local col=Color(70,210,255); for _,c in ipairs(HUD.GetActiveChips()) do if c.category=="experimental" then col=Color(255,70,100) elseif c.category=="military" then col=Color(255,190,50) end end
         halo.Add({e},col,2,2,1,true,true)
@@ -275,7 +275,7 @@ end)
 
 hook.Add("HUDPaint", "GRM_AugHUD_AutoScan", function()
     if not HUD.IsActive() then return end
-    local ply=LocalPlayer(); local tr=ply:GetEyeTrace(); local target=tr.Entity
+    local ply=LocalPlayer(); local tr=(GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(ply,0.05) or ply:GetEyeTrace(); if not tr then return end; local target=tr.Entity
     if not IsValid(target) or not target:IsPlayer() or target==ply or tr.HitPos:DistToSqr(ply:EyePos())>350000 then HUD.ScanStarted=0; return end
     if CurTime()-HUD.LastScanSound > 2 then HUD.LastScanSound=CurTime(); surface.PlaySound("buttons/blip1.wav") end
     local chips=HUD.GetActiveChips(); if HUD.ScanStarted==0 then HUD.ScanStarted=CurTime() end; local scanProgress=math.Clamp((CurTime()-HUD.ScanStarted)*3,0,1); local military=false; for _,c in ipairs(chips) do if c.category=="military" or c.category=="experimental" then military=true end end

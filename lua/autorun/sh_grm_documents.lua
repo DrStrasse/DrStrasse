@@ -628,7 +628,7 @@ if SERVER then
 
     -- ── Теория-экзамены и госпошлины ─────────────────────────────────────
     local function findOnlineByKey(key)
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and getCharKey(p) == key then return p end
         end
     end
@@ -963,7 +963,7 @@ if SERVER then
         local fullText = "* " .. senderName .. " " .. meText
         local origin = ply:GetPos()
 
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and p:GetPos():DistToSqr(origin) <= 400 * 400 then
                 if EasyChat and EasyChat.PlayerAddText then
                     -- EasyChat сам рисует сообщение — других каналов не трогаем.
@@ -1794,7 +1794,7 @@ if SERVER then
             end
             -- поиск по онлайн
             local foundKey=nil
-            for _,p in ipairs(player.GetAll()) do
+            for _,p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and (p:Nick():lower():find(targetName:lower(),1,true) or (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)==targetName)) then
                     foundKey = getCharKey(p)
                     break
@@ -1825,7 +1825,7 @@ if SERVER then
             local targetName = string.Trim(txt:sub(14))
             if targetName == "" then targetName = string.Trim(txt:sub((("/проверить_оружие"):len()) + 1)) end
             local foundKey = targetName
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and (p:Nick():lower():find(targetName:lower(), 1, true) or (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p) == targetName)) then
                     foundKey = getCharKey(p)
                     break
@@ -1855,7 +1855,7 @@ if SERVER then
             local targetName = string.Trim(txt:sub(15))
             if targetName == "" then targetName = string.Trim(txt:sub((("/проверить_бизнес"):len()) + 1)) end
             local foundKey = targetName
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and (p:Nick():lower():find(targetName:lower(), 1, true) or (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p) == targetName)) then
                     foundKey = getCharKey(p)
                     break
@@ -2155,7 +2155,7 @@ if CLIENT then
 
                 frame.Paint = function(_, w, h)
                     draw.RoundedBox(10, 0, 0, w, h, coverCol)
-                    draw.RoundedBox(6, 12, 12, w - 24, h - 24, Color(coverCol.r + 10, coverCol.g + 10, coverCol.b + 10))
+                    draw.RoundedBox(6, 12, 12, w - 24, h - 24, Color(math.min(255, coverCol.r + 10), math.min(255, coverCol.g + 10), math.min(255, coverCol.b + 10)))
 
                     draw.SimpleText(tpl.stateTitle or "РЕСПУБЛИКА ГРАНД", "GRMDoc_CoverTitle", w / 2, 60, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
                     draw.SimpleText("★ ★ ★", "GRMDoc_CoverTitle", w / 2, 140, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
@@ -2330,7 +2330,7 @@ if CLIENT then
 
                 frame.Paint = function(_, w, h)
                     draw.RoundedBox(10, 0, 0, w, h, coverCol)
-                    draw.RoundedBox(8, 8, 8, w - 16, h - 16, Color(coverCol.r + 8, coverCol.g + 8, coverCol.b + 8))
+                    draw.RoundedBox(8, 8, 8, w - 16, h - 16, Color(math.min(255, coverCol.r + 8), math.min(255, coverCol.g + 8), math.min(255, coverCol.b + 8)))
 
                     local title = tpl.coverTitle or data.faction or "СЛУЖЕБНОЕ УДОСТОВЕРЕНИЕ"
                     draw.SimpleText(title, "GRMDoc_Foil", w / 2, 70, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
@@ -2489,7 +2489,7 @@ if CLIENT then
 
                 frame.Paint = function(_, w, h)
                     draw.RoundedBox(10, 0, 0, w, h, coverCol)
-                    draw.RoundedBox(6, 12, 12, w - 24, h - 24, Color(coverCol.r + 10, coverCol.g + 10, coverCol.b + 10))
+                    draw.RoundedBox(6, 12, 12, w - 24, h - 24, Color(math.min(255, coverCol.r + 10), math.min(255, coverCol.g + 10), math.min(255, coverCol.b + 10)))
 
                     draw.SimpleText(tpl.stateTitle or "ВООРУЖЁННЫЕ СИЛЫ", "GRMDoc_CoverTitle", w / 2, 60, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
                     draw.SimpleText("★ МИНИСТЕРСТВО ОБОРОНЫ ★", "GRMDoc_Header", w / 2, 140, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
@@ -3575,6 +3575,24 @@ if CLIENT then
         local comboCol = vgui.Create("DComboBox", facPnl)
         comboCol:SetPos(16, 222) comboCol:SetSize(250, 28)
         for _, cDef in ipairs(DOC.CoverColors) do comboCol:AddChoice(cDef.name, cDef) end
+        comboCol:AddChoice("Свой цвет (палитра ниже)", "custom")
+
+        -- Текущий цвет обложки живёт отдельной переменной: комбобокс —
+        -- лишь один из способов его задать (второй — палитра). Раньше цвет
+        -- сохранялся ТОЛЬКО если в этот заход выбрали пункт списка, а при
+        -- открытии всегда показывалось «Выбрать цвет» — настройка выглядела
+        -- забытой, хотя лежала в шаблоне.
+        local curCover = { r = 18, g = 32, b = 60 }
+        local curFoil = "gold"
+
+        local function coverPresetName(col)
+            for _, cDef in ipairs(DOC.CoverColors) do
+                if cDef.col and cDef.col.r == col.r and cDef.col.g == col.g and cDef.col.b == col.b then
+                    return cDef.name
+                end
+            end
+            return string.format("Свой цвет (%d, %d, %d)", col.r, col.g, col.b)
+        end
 
         local lblFoil = vgui.Create("DLabel", facPnl)
         lblFoil:SetPos(16, 260) lblFoil:SetText("Стиль тиснения надписи:") lblFoil:SetFont("GRMDoc_Bold") lblFoil:SizeToContents()
@@ -3588,13 +3606,65 @@ if CLIENT then
         comboIcon:SetPos(16, 342) comboIcon:SetSize(250, 28)
         for icId, icName in pairs(DOC.BadgeIcons) do comboIcon:AddChoice(icName, icId) end
 
+        -- ЖИВОЙ ПРЕДПРОСМОТР КОРОЧКИ: ровно то, что увидит игрок при показе
+        -- удостоверения (тот же цвет обложки, то же тиснение и надпись).
+        local preview = vgui.Create("DPanel", facPnl)
+        preview:SetPos(400, 96) preview:SetSize(300, 210)
+        preview.Paint = function(_, w, h)
+            local c = Color(curCover.r, curCover.g, curCover.b)
+            local foil = DOC.FoilStyles[curFoil] or DOC.FoilStyles.gold
+            draw.RoundedBox(10, 0, 0, w, h, c)
+            draw.RoundedBox(8, 8, 8, w - 16, h - 16,
+                Color(math.min(255, c.r + 8), math.min(255, c.g + 8), math.min(255, c.b + 8)))
+            local title = entCoverTitle and entCoverTitle:GetValue() or ""
+            if title == "" then title = comboFac:GetValue() or "ОРГАНИЗАЦИЯ" end
+            draw.SimpleText(title, "GRMDoc_Bold", w / 2, 58, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            draw.SimpleText("★", "GRMDoc_CoverTitle", w / 2, 100, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            draw.SimpleText("УДОСТОВЕРЕНИЕ", "GRMDoc_Bold", w / 2, 140, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            draw.SimpleText(string.format("RGB %d, %d, %d", curCover.r, curCover.g, curCover.b),
+                "GRMDoc_Small", w / 2, h - 18, Color(220, 225, 235, 190), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+
+        local lblPrev = vgui.Create("DLabel", facPnl)
+        lblPrev:SetPos(400, 76) lblPrev:SetText("Так корочка выглядит у игрока:") lblPrev:SetFont("GRMDoc_Bold") lblPrev:SizeToContents()
+
+        local mixer = vgui.Create("DColorMixer", facPnl)
+        mixer:SetPos(400, 322) mixer:SetSize(300, 150)
+        mixer:SetPalette(true) mixer:SetAlphaBar(false) mixer:SetWangs(true)
+        mixer.ValueChanged = function(_, col)
+            curCover = { r = math.floor(col.r), g = math.floor(col.g), b = math.floor(col.b) }
+            comboCol:SetValue(coverPresetName(curCover))
+        end
+
+        comboCol.OnSelect = function(_, _, _, data)
+            if istable(data) and data.col then
+                curCover = { r = data.col.r, g = data.col.g, b = data.col.b }
+                mixer:SetColor(Color(curCover.r, curCover.g, curCover.b))
+            end
+        end
+
+        comboFoil.OnSelect = function(_, _, _, foilId)
+            if isstring(foilId) then curFoil = foilId end
+        end
+
         local function loadFactionSettings(fname)
             tpl.factions = tpl.factions or {}
             local cfg = tpl.factions[fname] or {}
             entCoverTitle:SetText(cfg.coverTitle or fname)
             entPrefix:SetText(cfg.prefix or (fname:sub(1, 3):upper() .. "-"))
-            comboCol:SetValue("Выбрать цвет")
-            comboFoil:SetValue(DOC.FoilStyles[cfg.foilStyle or "gold"] and DOC.FoilStyles[cfg.foilStyle or "gold"].name or "Золотое тиснение")
+
+            -- ЗАПОМИНАНИЕ ЦВЕТА: показываем реально сохранённый цвет обложки
+            -- этой организации (пресет по имени либо «свой цвет RGB»).
+            local saved = istable(cfg.coverColor) and cfg.coverColor or nil
+            curCover = {
+                r = math.Clamp(math.floor(tonumber(saved and saved.r) or 18), 0, 255),
+                g = math.Clamp(math.floor(tonumber(saved and saved.g) or 32), 0, 255),
+                b = math.Clamp(math.floor(tonumber(saved and saved.b) or 60), 0, 255),
+            }
+            curFoil = DOC.FoilStyles[cfg.foilStyle or "gold"] and (cfg.foilStyle or "gold") or "gold"
+            comboCol:SetValue(coverPresetName(curCover))
+            if IsValid(mixer) then mixer:SetColor(Color(curCover.r, curCover.g, curCover.b)) end
+            comboFoil:SetValue(DOC.FoilStyles[curFoil].name)
             comboIcon:SetValue(DOC.BadgeIcons[cfg.badgeIcon or "star"] or "★ Звезда")
         end
 
@@ -3779,10 +3849,11 @@ if CLIENT then
                 fCfg.coverTitle = entCoverTitle:GetText()
                 fCfg.prefix = entPrefix:GetText()
 
-                local _, colData = comboCol:GetSelected()
-                if istable(colData) and colData.col then
-                    fCfg.coverColor = { r = colData.col.r, g = colData.col.g, b = colData.col.b }
-                end
+                -- Цвет берём из живого состояния панели (пресет ИЛИ палитра),
+                -- поэтому он сохраняется всегда, а не только когда в этот заход
+                -- кликнули пункт выпадающего списка.
+                fCfg.coverColor = { r = curCover.r, g = curCover.g, b = curCover.b }
+                fCfg.foilStyle = curFoil
 
                 local _, foilId = comboFoil:GetSelected()
                 if isstring(foilId) then fCfg.foilStyle = foilId end

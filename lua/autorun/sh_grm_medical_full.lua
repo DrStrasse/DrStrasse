@@ -174,7 +174,7 @@ if SERVER then
 
     hook.Add("Think", "GRM_MedFull_Tick", function()
         local now = CurTime();if(MED._tickAt or 0)>now then return end;MED._tickAt=now+.25
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) and ply:Alive() then
                 local bleed = ply:GetNWInt("GRM_Bleed", 0)
                 if bleed > 0 and (ply._grmMedBleedAt or 0) <= now then

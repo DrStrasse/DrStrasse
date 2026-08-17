@@ -338,7 +338,7 @@ if SERVER then
             local covered = true
             if RNm and RNm.ReceiverOK then covered = RNm.ReceiverOK(r) end
             if covered and r:GetNWBool("GRM_BC_On", false) and r:GetNWInt("GRM_BC_Mic", 0) == micIdx then
-                for _, p in ipairs(player.GetAll()) do
+                for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                     if not set[p] and p:GetPos():DistToSqr(r:GetPos()) <= BC.ReceiveRadius * BC.ReceiveRadius then
                         set[p] = true
                         out[#out + 1] = p
@@ -357,7 +357,7 @@ if SERVER then
             local active = true
             if RNm and RNm.SpeakerActive then active = RNm.SpeakerActive(s) end
             if active then
-                for _, p in ipairs(player.GetAll()) do
+                for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                     if not set[p] and p:GetPos():DistToSqr(s:GetPos()) <= BC.SpeakerRadius * BC.SpeakerRadius then
                         set[p] = true
                         out[#out + 1] = p
@@ -405,7 +405,7 @@ if SERVER then
         targetGroup = (isstring(targetGroup) and targetGroup ~= "") and targetGroup or nil
         local targets = {}
         if global then
-            for _, p in ipairs(player.GetAll()) do targets[#targets + 1] = p end
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do targets[#targets + 1] = p end
         else
             local RNm = GRM.RadioNet
             local speakers = ents.FindByClass("grm_loudspeaker")
@@ -424,7 +424,7 @@ if SERVER then
                     timer.Create("GRM_BC_SpkOff" .. sp:EntIndex(), BC.AlertDuration, 1, function()
                         if IsValid(sp) then sp:SetNWBool("GRM_BC_Alert", false) end
                     end)
-                    for _, p in ipairs(player.GetAll()) do
+                    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                         if not marked[p] and p:GetPos():DistToSqr(sp:GetPos()) <= BC.SpeakerRadius * BC.SpeakerRadius then
                             marked[p] = true
                             targets[#targets + 1] = p

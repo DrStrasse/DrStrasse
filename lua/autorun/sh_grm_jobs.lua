@@ -102,9 +102,9 @@ JB.Register({
     timeFn   = function(dist) return clampN(300 + dist * 0.12, 240, 600) end,
 })
 JB.Register({
-    id = "garbage", title = "Мусоровоз", jtype = "garbage", needVehicle = true, points = 2,
+    id = "garbage", title = "Мусоровоз", jtype = "garbage", needVehicle = true, points = 3,
     icon = "icon16/lorry.png", color = { 130, 190, 95 },
-    desc = "На грузовике объезжайте точки вывоза отходов и сдайте их на свалку.",
+    desc = "Соберите 3 мусорных пакета по контейнерам и сдайте полный кузов на полигон.",
     rewardFn = function(dist) return clampN(900 + dist * 0.30, 800, 2000) end,
     timeFn   = function(dist) return clampN(600 + dist * 0.30, 480, 1200) end,
 })
@@ -353,7 +353,7 @@ if SERVER then
                     -- Контейнеры и свалка теперь имеют разные типы точек.
                     local bins = depots("garbage")
                     local dumps = depots("dump")
-                    local requested = (JB.WorkConfig and tonumber(JB.WorkConfig.garbageStops)) or tonumber(tpl.points) or 2
+                    local requested = (JB.WorkConfig and tonumber(JB.WorkConfig.garbageStops)) or tonumber(tpl.points) or 3
                     local count = math.min(math.max(1,math.floor(requested)),#bins)
                     local picked = count>0 and seededPick(s, bins, count)or nil
                     local dump = dumps[(s % math.max(1, #dumps)) + 1]
@@ -536,7 +536,18 @@ if SERVER then
             net.WriteBool(istable(j))
             if istable(j) then
                 local stageName = ""
-                if j.jtype == "garbage" then stageName = "точка " .. tostring(j.pointIndex or 1) .. "/" .. tostring(#(j.points or {}))
+                if j.jtype == "garbage" then
+                    -- Стадия мусоровоза: «собрано X/Y» пока едем по контейнерам,
+                    -- «на полигон» — когда кузов набран полностью.
+                    local total = #(j.points or {})
+                    local stops = math.max(1, total - 1)
+                    local idx = tonumber(j.pointIndex) or 1
+                    if idx < 1 then idx = 1 elseif idx > math.max(1, total) then idx = math.max(1, total) end
+                    if idx >= total then
+                        stageName = ("на полигон • %d/%d"):format(stops, stops)
+                    else
+                        stageName = ("собрано %d/%d"):format(idx - 1, stops)
+                    end
                 elseif j.jtype=="taxi"then stageName=j.taxiStandby and((not j.taxiRequestID and"ожидание заказов")or(j.stage==2 and"такси прибыло"or"к клиенту"))or(j.stage==2 and"к назначению"or"на посадку")end
                 net.WriteTable({
                     title = j.title, desc = j.desc, jtype = j.jtype,
@@ -709,7 +720,7 @@ if SERVER then
     -- движок прогресса ---------------------------------------------------
     function JB.TickJobs()
         local now = os.time()
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) then
                 local j = JB.Active[sid64(ply)]
                 if istable(j) then
@@ -1027,7 +1038,7 @@ if SERVER then
                 if p.takenBy ~= nil then
                     -- исполнитель уже в пути: проваливаем его задачу
                     -- (разовый заказ удалится сам в releasePost, вакансия останется со снятой бронью)
-                    for _, pl in ipairs(player.GetAll()) do
+                    for _, pl in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                         if IsValid(pl) then
                             local j = JB.Active[sid64(pl)]
                             if istable(j) and j.fromPost and tostring(j.postId) == tostring(p.id) then
@@ -1361,8 +1372,13 @@ if CLIENT then
         draw.SimpleTextOutlined(dist .. " юн.", "GRMJobs_Small", textX, y + 9, Color(col.r, col.g, col.b), align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
     end
 
-    -- GPS-метки маршрута мусоровоза: КАЖДАЯ точка сбора + свалка, экранные
-    -- маркеры (видимы сквозь браши), с номером точки и направлением.
+    -- GPS-метки маршрута мусоровоза: СТРОГО ПО ОЧЕРЕДИ (заказ владельца).
+    -- Одновременно на экране ровно ОДНА метка — текущая цель:
+    --   * пока собираем мусор — метка контейнера №N; она гаснет ТОЛЬКО когда
+    --     игрок реально загрузил пакет в кузов (сервер двигает pointIndex
+    --     в loadGarbage, см. sh_grm_jobs_v4.lua) — не по приближению;
+    --   * когда собрано 3/3 — вместо контейнера появляется метка полигона.
+    -- Раньше рисовались все точки сразу, и «мусорка + свалка» висели вместе.
     hook.Add("HUDPaint", "GRM_Jobs_GarbageRouteMarkers", function()
         if not istable(tracker) or not istable(tracker.points) or #tracker.points == 0 then return end
         local lp = LocalPlayer()
@@ -1370,19 +1386,26 @@ if CLIENT then
         local sw, sh = ScrW(), ScrH()
         local total = #tracker.points
         local current = math.Clamp(tonumber(tracker.pointIndex) or 1, 1, total)
+        local p = tracker.points[current]
+        if not p then return end
 
-        for i, p in ipairs(tracker.points) do
-            local isDump = (i == total)
-            local isCurrent = (i == current)
-            local col = isDump and Color(90, 220, 120)
-                     or (isCurrent and Color(255, 210, 70) or Color(80, 200, 240))
-            local dist = math.floor(lp:GetPos():Distance(p))
-            local name = tracker.pointNames[i]
-            if name == nil or name == "" then name = isDump and "Свалка" or ("Точка " .. tostring(i)) end
-            local head = (isDump and "СВАЛКА" or (isCurrent and "СОБРАТЬ МУСОР" or "МУСОРКА")) .. " " .. tostring(i) .. "/" .. tostring(total)
-            drawScreenMarker(p, head .. " — " .. name, dist, col, sw, sh)
+        local isDump = (current == total)
+        local collected = math.max(0, current - 1)
+        local stops = math.max(1, total - 1)
+        local col = isDump and Color(90, 220, 120) or Color(255, 210, 70)
+        local dist = math.floor(lp:GetPos():Distance(p))
+        local name = tracker.pointNames[current]
+        if name == nil or name == "" then name = isDump and "Полигон (свалка)" or ("Контейнер " .. current) end
+
+        local head
+        if isDump then
+            head = ("ПОЛИГОН • мусор собран %d/%d"):format(collected, stops)
+        else
+            head = ("СОБРАТЬ МУСОР %d/%d"):format(collected, stops)
         end
+        drawScreenMarker(p, head .. " — " .. name, dist, col, sw, sh)
     end)
+
 
     hook.Add("HUDPaint", "GRM_Jobs_HudLine", function()
         if not istable(tracker) then return end

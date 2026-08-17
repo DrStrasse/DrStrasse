@@ -353,7 +353,7 @@ if CLIENT then
         surface.SetFont("GRM_RPName_Font")
         local _, nameH = surface.GetTextSize("A")
 
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) and ply:Alive() then
                 local masked = ply:GetNWBool("IsMasked", false)
                 local rname = masked and "" or string.Trim(tostring(ply:GetNWString("GRM_RPName", "") or ""))

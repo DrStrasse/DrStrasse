@@ -265,7 +265,7 @@ function ENT:SendHeistTargetMarkers()
     local coord = ("X %.0f  Y %.0f"):format(target.x, target.y)
     for sid in pairs(self.Participants) do
         local p = nil
-        for _, pl in ipairs(player.GetAll()) do
+        for _, pl in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(pl) then
                 local key = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(pl)) or pl:SteamID64() or ""
                 if tostring(key) == tostring(sid) then p = pl break end
@@ -314,7 +314,7 @@ function ENT:StartEvent()
     if GRM.HeistMusicOwner and IsValid(GRM.HeistMusicOwner) and GRM.HeistMusicOwner ~= self then
         pcall(function() GRM.HeistMusicOwner:StopHeistMusic() end)
     end
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) and p:IsPlayer() then
             p:EmitSound(HEIST_MUSIC, 127, 110)
         end
@@ -335,7 +335,7 @@ end
 function ENT:StopHeistMusic()
     -- Находка 179v: этот отмывщик больше не владеет музыкой ивента
     if GRM.HeistMusicOwner == self then GRM.HeistMusicOwner = nil end
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) and p:IsPlayer() then
             p:StopSound(HEIST_MUSIC)
         end
@@ -420,7 +420,7 @@ function ENT:EndEvent(criminalsWin, reason)
                     print(("[GRM Heist] Гос.структура [%s] получила %d GRM в бюджет (киллов: %d)"):format(
                         f, amount, kills[f] or 0))
                     -- уведомление членам фракции
-                    for _, p in ipairs(player.GetAll()) do
+                    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                         if IsValid(p) and p:IsPlayer() and self:FactionOf(p) == f then
                             notify(p, "Гос.структура [" .. f .. "] получила " .. money(amount) .. " в бюджет за защиту города (киллов: " .. (kills[f] or 0) .. ")", 100, 220, 130)
                         end
@@ -455,7 +455,7 @@ function ENT:EndEvent(criminalsWin, reason)
                     if share > 0 and GRM.FactionBudgetAdd then
                         GRM.FactionBudgetAdd(f, share, "Ограбление: победа криминала (сдано: " .. amt .. ")")
                         print(("[GRM Heist] Криминал [%s] получил %d GRM в бюджет (сдано: %d)"):format(f, share, amt))
-                        for _, p in ipairs(player.GetAll()) do
+                        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                             if IsValid(p) and p:IsPlayer() and self:FactionOf(p) == f then
                                 notify(p, "Криминальная фракция [" .. f .. "] получила " .. money(share) .. " в бюджет за успешное ограбление!", 255, 200, 100)
                             end
@@ -532,7 +532,7 @@ function ENT:TakeJob(ply)
         local pre = self:GetPreStartAt() or 0
         if pre <= 0 then
             self:SetPreStartAt(CurTime() + (self.PreStartDelay or 40))
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) then
                     notify(p, "Минимум участников набран! Ивент начнётся через " .. (self.PreStartDelay or 40) .. " сек — успевайте вступить.", 200, 220, 255)
                 end

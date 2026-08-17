@@ -297,7 +297,7 @@ function VK.UpdateKeySwep(ply)
 end
 
 local function refreshAllKeySWEPS()
-    for _, ply in ipairs(player.GetAll()) do
+    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         VK.UpdateKeySwep(ply)
     end
 end
@@ -562,7 +562,7 @@ net.Receive(NET_REQUEST_LIST, function(_, ply)
     end
 
     local players = {}
-    for _, target in ipairs(player.GetAll()) do
+    for _, target in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if target ~= ply then
             players[#players + 1] = {
                 steam = playerSteamID(target),
@@ -648,7 +648,7 @@ local function findOnlinePlayer(queryText)
     local query = string.lower(string.Trim(tostring(queryText or "")))
     if query == "" then return nil end
 
-    for _, ply in ipairs(player.GetAll()) do
+    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if ply:SteamID() == queryText or ply:SteamID64() == queryText or string.lower(ply:Nick()) == query then
             return ply
         end

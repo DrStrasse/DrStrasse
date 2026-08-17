@@ -255,7 +255,7 @@ end
         -- Команда должна работать по сопровождаемому задержанному, даже
         -- если прицел упирается в дверь/решётку/стену рядом с ним.
         local best, bestDist
-        for _, candidate in ipairs(player.GetAll()) do
+        for _, candidate in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(candidate) and candidate ~= ply and candidate:IsPlayer()
                 and GRM.Handcuffs and GRM.Handcuffs.IsCuffed and GRM.Handcuffs.IsCuffed(candidate) then
                 local dist = ply:GetPos():DistToSqr(candidate:GetPos())
@@ -295,7 +295,7 @@ end
 
         -- Выбираем наименее занятую камеру категории. Так уголовники и
         -- гауптвахта не сваливаются всегда в первую точку.
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false)
                 and ply:GetNWString("GRM_ArrestGroup", "") == tostring(groupID) then
                 local occupiedID = ply:GetNWString("GRM_ArrestCameraID", "")
@@ -460,7 +460,7 @@ end
         end)
     end)
     timer.Create("GRM_Arrest_EnforceUnarmed", 0.25, 0, function()
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then A.EnforceUnarmed(ply) end
         end
     end)
@@ -1231,7 +1231,7 @@ if CLIENT then
     hook.Add("HUDPaint", "GRM_Arrest_Label", function()
         local lp = LocalPlayer()
         if not IsValid(lp) then return end
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and p:GetNWBool("GRM_Arrested", false) and (p == lp or lp:GetPos():DistToSqr(p:GetPos()) < 600 * 600) then
                 local sp = (p:GetPos() + Vector(0, 0, 82)):ToScreen()
                 if sp.visible then

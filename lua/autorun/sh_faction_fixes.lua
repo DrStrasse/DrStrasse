@@ -443,7 +443,7 @@ if SERVER then
         CurfewStartedBy = IsValid(ply) and ply:Nick() or "Система"
         CurfewFaction = select(1, getFactionMemberByPlayer(ply)) or ""
         broadcastCurfew()
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             p:PrintMessage(HUD_PRINTCENTER, "=== ОБЪЯВЛЕН КОМЕНДАНТСКИЙ ЧАС ===\nВсе граждане должны покинуть улицы!")
             p:EmitSound("ambient/alarms/scanner_alert_pass1.wav", 100, 100)
             p:EmitSound("kom_hour.wav", 127, 110)
@@ -455,7 +455,7 @@ if SERVER then
         CurfewEndTime = 0
         CurfewFaction = ""
         broadcastCurfew()
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             p:PrintMessage(HUD_PRINTCENTER, "=== КОМЕНДАНТСКИЙ ЧАС ОТМЕНЁН ===")
         end
     end
@@ -598,7 +598,7 @@ if SERVER then
     end
 
     local function applyWeaponsToTargetGroup(targetFaction, targetRole, targetDept)
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) then
                 local factionName, member = getFactionMemberByPlayer(ply)
                 if targetFaction and targetFaction ~= "" and factionName == targetFaction then
@@ -1116,7 +1116,7 @@ if SERVER then
     end
 
     timer.Create("FactionsExt_ModelCheck", 2, 0, function()
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) and ply:Alive() then
                 if ply:GetNWBool("IsMasked", false) then
                     -- Маскировка должна строго держать свои skin/bodygroups.
@@ -1352,7 +1352,7 @@ if SERVER then
 
     timer.Simple(5, function()
         ensureFactionRuntimeDefaults()
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) then
                 ApplyWeaponsToPlayer(ply)
                 sendModelsToPlayer(ply)

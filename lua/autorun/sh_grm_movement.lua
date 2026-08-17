@@ -57,7 +57,7 @@ if SERVER then
     end
 
     timer.Create("GRM_StaminaTick", 0.1, 0, function()
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) and not ply:InVehicle() then
                 local data = getPlayerData(ply)
                 local isRunning = ply:KeyDown(IN_SPEED) and ply:GetVelocity():Length2D() > 50

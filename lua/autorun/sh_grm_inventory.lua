@@ -1006,7 +1006,7 @@ if SERVER then
         if not IsValid(admin) or not admin:IsSuperAdmin() then return end
         local idx = net.ReadUInt(16)
         local target = nil
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and p:EntIndex() == idx then target = p break end
         end
         if not IsValid(target) then
@@ -1028,7 +1028,7 @@ if SERVER then
         local count = math.max(1, math.floor(tonumber(net.ReadUInt(16)) or 1))
         local op = net.ReadString()
         local target = nil
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and p:EntIndex() == idx then target = p break end
         end
         if not IsValid(target) then return end

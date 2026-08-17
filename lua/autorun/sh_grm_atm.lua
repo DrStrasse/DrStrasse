@@ -209,7 +209,7 @@ function A.Snapshot(ply, ent)
 
     -- Список игроков онлайн: для переводов (деньги можно слать только живой сессии)
     snap.players = {}
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) and p ~= ply then
             snap.players[#snap.players + 1] = { nick = p:Nick(), key = charKey(p) }
         end

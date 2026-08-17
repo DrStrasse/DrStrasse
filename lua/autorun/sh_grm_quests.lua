@@ -166,7 +166,7 @@ if SERVER then
         if targetKey and targetKey~=""and targetKey~="*"then local quests=Q.Progress[targetKey];if quests and quests[questID]then quests[questID]=nil;removed=1;removedKeys[1]=targetKey end
         else for key,quests in pairs(Q.Progress)do if quests[questID]then quests[questID]=nil;removed=removed+1;removedKeys[#removedKeys+1]=key end end end
         local achievement=Q.Definitions[questID]and Q.Definitions[questID].achievement;if achievement and achievement.enabled and GRM.Ach and GRM.Ach.ResetUnlock then for _,key in ipairs(removedKeys)do GRM.Ach.ResetUnlock(key,achievement.id,true)end;if GRM.Ach.SaveNow then GRM.Ach.SaveNow("quest progress reset")end end
-        Q.SaveProgress();for _,online in ipairs(player.GetAll())do if IsValid(online)and(not targetKey or targetKey=="*"or characterKey(online)==targetKey)then sync(online)end end
+        Q.SaveProgress();for _,online in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll())do if IsValid(online)and(not targetKey or targetKey=="*"or characterKey(online)==targetKey)then sync(online)end end
         hook.Run("GRM_QuestProgressReset",questID,targetKey,removed);return removed
     end
     local function canStart(ply,def)
@@ -243,7 +243,7 @@ if SERVER then
     end
     timer.Create("GRM_Quest_Objectives",1,0,function()
         local changed,changedPlayers=false,{}
-        for _,ply in ipairs(player.GetAll())do if IsValid(ply)and ply:Alive()then local all=progressFor(ply);for id,p in pairs(all)do local def=Q.Definitions[id];local step=def and def.steps[p.step or 1]
+        for _,ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll())do if IsValid(ply)and ply:Alive()then local all=progressFor(ply);for id,p in pairs(all)do local def=Q.Definitions[id];local step=def and def.steps[p.step or 1]
             if def and def.enabled and not def.draft and p.status=="active"and step then
                 if step.type=="visit"and inZone(ply:GetPos(),step)then p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);checkCurrent(ply,def,p);changed=true;changedPlayers[ply]=true
                 elseif step.type=="item"then local before=p.count;checkCurrent(ply,def,p);if before~=p.count then changed=true;changedPlayers[ply]=true end end
@@ -268,7 +268,7 @@ if SERVER then
         elseif op=="abandon"then local all=progressFor(ply);if all[id]and all[id].status=="active"then all[id]=nil;Q.SaveProgress();sync(ply);notice(ply,true,"Квест отменён")end end
     end)
 
-    function Q.AdminData()local defs={};for _,d in pairs(Q.Definitions)do defs[#defs+1]=d end;table.sort(defs,function(a,b)return tostring(a.title or a.id)<tostring(b.title or b.id)end);local online={};for _,p in ipairs(player.GetAll())do if IsValid(p)then online[#online+1]={name=p:Nick(),key=characterKey(p)}end end;return{definitions=defs,eventTypes=Q.EventTypes,npcs=Q._NPCRecords or {},onlinePlayers=online}end
+    function Q.AdminData()local defs={};for _,d in pairs(Q.Definitions)do defs[#defs+1]=d end;table.sort(defs,function(a,b)return tostring(a.title or a.id)<tostring(b.title or b.id)end);local online={};for _,p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll())do if IsValid(p)then online[#online+1]={name=p:Nick(),key=characterKey(p)}end end;return{definitions=defs,eventTypes=Q.EventTypes,npcs=Q._NPCRecords or {},onlinePlayers=online}end
     local function adminOpen(ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;net.Start("GRM_Quest_AdminOpen")net.WriteTable(Q.AdminData())net.Send(ply)end
     Q.OpenAdmin=adminOpen
     concommand.Add("grm_quests_admin",adminOpen)

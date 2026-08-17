@@ -22,7 +22,7 @@ local courtInitCode = assert(io.open("lua/entities/grm_comp_court/init.lua", "rb
 local courtClCode = assert(io.open("lua/entities/grm_comp_court/cl_init.lua", "rb")):read("*a")
 local roomtapCode = assert(io.open("lua/autorun/server/sv_grm_roomtap.lua", "rb")):read("*a")
 
-ok(doorsCode:find('D.Version = "4.0.0"', 1, true) ~= nil, "Doors Core v4.0.0")
+ok((doorsCode:match('D%.Version = "(%d+)') or "0")+0>=4, "Doors Core не ниже v4.0.0")
 ok(doorsCode:find("function D.PurgeGhostDoors", 1, true) ~= nil, "D.PurgeGhostDoors дедупликатор фантомов существует")
 ok(doorsCode:find("D.GetPartnerDoor", 1, true) ~= nil, "D.GetPartnerDoor связка двустворчатых дверей существует")
 ok(doorsCode:find("function D.BreachDoor", 1, true) ~= nil, "D.BreachDoor синхронный силовой взлом существует")

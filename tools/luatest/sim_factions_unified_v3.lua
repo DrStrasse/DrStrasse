@@ -19,7 +19,7 @@ print("=== ТЕСТ: Unified Factions UI v3.0 (10 разделов и кнопк
 local uiCode = assert(io.open("lua/autorun/client/cl_grm_factions_unified_ui.lua", "rb")):read("*a")
 local facCode = assert(io.open("lua/autorun/sh_factions.lua", "rb")):read("*a")
 
-ok(uiCode:find('UI.Version = "3.0.0"', 1, true) ~= nil, "Unified UI v3.0.0")
+ok((uiCode:match('UI%.Version = "(%d+)') or "0") + 0 >= 3, "Unified UI не ниже v3.0.0")
 ok(uiCode:find('addTabBtn("overview"', 1, true) ~= nil, "Раздел 1: Обзор")
 ok(uiCode:find('addTabBtn("members"', 1, true) ~= nil, "Раздел 2: Личный состав")
 ok(uiCode:find('addTabBtn("structure"', 1, true) ~= nil, "Раздел 3: Структура и штат")

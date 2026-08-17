@@ -64,7 +64,7 @@ local function resolveTarget(arg)
 
     local low = string.lower(arg)
     local exact, partial
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) then
             local nick = string.lower(p:Nick())
             local rp   = string.lower(p:GetNWString("GRM_RPName", ""))

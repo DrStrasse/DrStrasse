@@ -425,7 +425,7 @@ if SERVER then
         if IsValid(ply) and not ply:IsSuperAdmin() then return end
         local count = 0
         local activeKeys = {}
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             activeKeys[charKey(p)] = true
         end
 
@@ -516,7 +516,7 @@ if CLIENT then
         local now = CurTime()
         if now - (ppHUDTrace.at or 0) >= 0.1 then
             ppHUDTrace.at = now
-            local tr = lp:GetEyeTrace()
+            local tr = (GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(lp, 0.1) or lp:GetEyeTrace()
             ppHUDTrace.ent = tr and tr.Entity
         end
         local ent = ppHUDTrace.ent
@@ -539,7 +539,7 @@ if CLIENT then
             local ownerName = ent:GetNWString("GRM_PropOwnerName", "")
             if ownerName == "" then ownerName = ent:GetNWString("GRM_EntityOwnerName", "") end
             local online = false
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p) == ownerKey then
                     online = true
                     break

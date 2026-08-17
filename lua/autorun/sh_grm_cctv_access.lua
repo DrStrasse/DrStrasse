@@ -318,7 +318,7 @@ if SERVER then
         local target = ply
         local query = args and args[1]
         if query and query ~= "" then
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if string.find(string.lower(p:Nick()), string.lower(query), 1, true)
                     or p:SteamID() == query or p:SteamID64() == query then
                     target = p
@@ -649,7 +649,7 @@ if CLIENT then
             online:Dock(FILL)
             online:DockMargin(8, 0, 0, 0)
             online:SetValue("Игрок онлайн…")
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) then
                     local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64()
                     online:AddChoice(p:Nick() .. " (" .. ck .. ")", ck)

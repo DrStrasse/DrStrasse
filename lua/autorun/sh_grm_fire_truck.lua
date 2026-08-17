@@ -618,7 +618,7 @@ if SERVER then
                 end
             end
         end
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) and ply.GetNWEntity and ply:GetNWEntity("GRM_FireMyTruck") == veh then
                 ply:SetNWEntity("GRM_FireMyTruck", NULL)
             end

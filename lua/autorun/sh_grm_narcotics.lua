@@ -229,7 +229,7 @@ if SERVER then
 
     hook.Add("Think", "GRM_Narc_Tick", function()
         local now = CurTime();if(NARC._tickAt or 0)>now then return end;NARC._tickAt=now+.25
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) and ply:Alive() then
                 local active = NARC.Active[ply]
                 if active and active.untilTime > now then

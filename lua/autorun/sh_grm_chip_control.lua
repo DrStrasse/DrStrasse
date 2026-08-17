@@ -33,7 +33,7 @@ function CC.ListCarriers()
     local out = {}
     local seen = {}
     -- онлайн-игроки
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) then
             local key = CC.CarrierKey(p)
             seen[key] = true
@@ -159,7 +159,7 @@ if SERVER then
     -- ── АДМИН (суперадмин): изъятие чипов и предметов ──────────────
     local function targetBySID(sid64)
         if not sid64 or sid64 == "" then return nil end
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and p:SteamID64() == sid64 then return p end
         end
         return nil
@@ -295,7 +295,7 @@ if SERVER then
         for _, af in ipairs(alertFactions) do
             local f = af.f
             if istable(f) and istable(f.Members) then
-                for _, member in ipairs(player.GetAll()) do
+                for _, member in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                     if IsValid(member) and member ~= victim and not sentTo[member] then
                         local sid, s64 = member:SteamID(), member:SteamID64()
                         if f.Members[sid] or f.Members[s64] then
@@ -449,7 +449,7 @@ if CLIENT then
             local playerCombo = vgui.Create("DComboBox", topBar)
             playerCombo:SetPos(0, 4); playerCombo:SetSize(320, 30); playerCombo:SetFont("GRMCC_Text")
             local playersList = {}
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) then
                     playersList[#playersList + 1] = { nick = p:Nick(), sid64 = p:SteamID64() }
                 end

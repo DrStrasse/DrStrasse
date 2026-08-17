@@ -321,7 +321,7 @@ local function announce(ply, meText)
     local full = "* " .. name .. " " .. meText
     local origin = ply:GetPos()
 
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) and p:GetPos():DistToSqr(origin) <= 400 * 400 then
             if EasyChat and EasyChat.PlayerAddText then
                 EasyChat.PlayerAddText(p, Color(200, 160, 255), full)

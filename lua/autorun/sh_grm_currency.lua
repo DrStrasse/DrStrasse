@@ -125,7 +125,7 @@ if SERVER then
         local raw = tostring(value or "")
         if raw:match(":char[1-3]$") then return raw end
         if player and player.GetAll then
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and (p:SteamID() == raw or p:SteamID64() == raw) then
                     return characterKeyOf(p)
                 end
@@ -153,7 +153,7 @@ if SERVER then
 
     local function onlinePlayerOf(key)
         key = tostring(key or "")
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and characterKeyOf(p) == key then return p end
         end
         return nil
@@ -847,7 +847,7 @@ if SERVER then
         query = tostring(query or "")
         if records[query] then return query, records[query].name end
         local low = query:lower()
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if p:Nick():lower():find(low, 1, true) then
                 return p:SteamID64(), p:Nick(), p
             end

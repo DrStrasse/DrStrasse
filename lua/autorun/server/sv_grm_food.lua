@@ -542,7 +542,7 @@ if timer.Exists("GRM_Food_HungerTick") then
 end
 
 timer.Create("GRM_Food_HungerTick", 1, 0, function()
-    for _, ply in ipairs(player.GetAll()) do
+    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(ply) then
             if not ply:Alive() then
                 GRM.Food.SyncHunger(ply)
@@ -731,7 +731,7 @@ concommand.Add("grm_food_set", function(ply, _, args)
         return
     end
 
-    for _, target in ipairs(player.GetAll()) do
+    for _, target in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if string.find(string.lower(target:Nick()), string.lower(targetName), 1, true) or target:SteamID64() == targetName then
             GRM.Food.SetHunger(target, value)
 

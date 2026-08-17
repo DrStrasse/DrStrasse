@@ -75,7 +75,7 @@ local function hasDraggedCaptive()
     local lp = LocalPlayer()
     if not IsValid(lp) then return false end
 
-    for _, ply in ipairs(player.GetAll()) do
+    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(ply) and isCuffed(ply) and ply:GetNWEntity("GRM_CuffDragger") == lp then
             return true
         end
@@ -87,7 +87,7 @@ end
 local function hasCuffedPassengerNear(ent)
     if not IsValid(ent) then return false end
 
-    for _, ply in ipairs(player.GetAll()) do
+    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(ply) and isCuffed(ply) and ply:InVehicle() then
             local veh = ply:GetVehicle()
             if IsValid(veh) then
@@ -137,7 +137,9 @@ hook.Add("HUDPaint", "GRM_Handcuffs_HUD", function()
         return
     end
 
-    local tr = lp:GetEyeTrace()
+    -- Общий кэш трейса (GRM.Perf): один GetEyeTrace на кадр на все HUD-модули.
+    local tr = (GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(lp, 0.05) or lp:GetEyeTrace()
+    if not tr then return end
     local target = tr.Entity
     if not IsValid(target) or target == lp then return end
 
@@ -227,7 +229,7 @@ hook.Add("RenderScreenspaceEffects", "GRM_Handcuffs_Blindfold", function()
 end)
 
 hook.Add("PostDrawOpaqueRenderables", "GRM_Handcuffs_DrawDragRope", function()
-    for _, ply in ipairs(player.GetAll()) do
+    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if isCuffed(ply) then
             local dragger = ply:GetNWEntity("GRM_CuffDragger")
             if IsValid(dragger) then
@@ -388,7 +390,7 @@ end
 -- incompatible bone axes. Сбрасываем возможный след старой версии один раз,
 -- вместо LookupBone/ManipulateBone для каждого игрока в каждом кадре.
 timer.Simple(0, function()
-    for _, ply in ipairs(player.GetAll()) do if IsValid(ply) then resetCuffPose(ply) end end
+    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do if IsValid(ply) then resetCuffPose(ply) end end
 end)
 
 hook.Add("EntityNetworkedVarChanged", "GRM_Handcuffs_ResetPoseOnUncuff", function(ent, name, _, value)
@@ -404,7 +406,7 @@ hook.Add("EntityRemoved", "GRM_Handcuffs_ResetPoseOnRemove", function(ent)
 end)
 
 concommand.Add("grm_cuffs_pose_reset", function()
-    for _, ply in ipairs(player.GetAll()) do
+    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         resetCuffPose(ply)
     end
 end)

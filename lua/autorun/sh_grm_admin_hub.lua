@@ -193,7 +193,7 @@ if SERVER then
 
     local function payloadPlayers()
         local out = {}
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) then
                 local sid = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64() or p:SteamID()
                 local achDone, achTotal = 0, 0
@@ -244,7 +244,7 @@ if SERVER then
             table.sort(factions, function(a, b) return a.name:lower() < b.name:lower() end)
         end
         local players = {}
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) then
                 players[#players + 1] = {
                     nick = p:Nick(), sid = tostring((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64() or p:SteamID()),
@@ -329,7 +329,7 @@ if SERVER then
             if GRM.Jobs and GRM.Jobs.Fail then
                 local sid = tostring(args.sid or "")
                 local target = nil
-                for _, p in ipairs(player.GetAll()) do
+                for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                     if IsValid(p) and (p:SteamID64() == sid or p:SteamID() == sid) then target = p break end
                 end
                 if IsValid(target) then GRM.Jobs.Fail(target, "снято администратором") else GRM.Jobs.Fail(sid, "снято администратором") end
@@ -346,7 +346,7 @@ if SERVER then
                         if p.takenBy ~= nil then
                             -- исполнитель в пути: проваливаем (многоразовая вакансия при этом ОСТАНЕТСЯ
                             -- на витрине со снятой бронью — урок фикса Кода 77 v1.1.0)
-                            for _, pl in ipairs(player.GetAll()) do
+                            for _, pl in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                                 if IsValid(pl) then
                                     local j = GRM.Jobs.Active and GRM.Jobs.Active[((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(pl)) or pl:SteamID64() or pl:SteamID())]
                                     if istable(j) and j.fromPost and tostring(j.postId) == tostring(p.id) then
@@ -374,7 +374,7 @@ if SERVER then
         elseif act == "achReset" then
             if GRM.Ach and GRM.Ach.AdminReset then
                 GRM.Ach.AdminReset(tostring(args.sid or ""))
-                for _, p in ipairs(player.GetAll()) do
+                for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                     if IsValid(p) and (p:SteamID64() == tostring(args.sid or "") or p:SteamID() == tostring(args.sid or "")) then
                         if GRM.Notify then GRM.Notify(p, "Ваш прогресс ачивок сброшен администрацией.", 255, 130, 110) end
                     end
@@ -406,7 +406,7 @@ if SERVER then
             local sid, op = tostring(args.sid or ""), tostring(args.op or "")
             local v = math.max(0, math.floor(tonumber(args.amount) or 0))
             local target = sid
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and (tostring(p:SteamID64()) == sid or tostring(p:SteamID()) == sid) then target = p break end
             end
             if op == "give" and GRM.GiveMoney then GRM.GiveMoney(target, v, "Хаб: выдача " .. ply:Nick())

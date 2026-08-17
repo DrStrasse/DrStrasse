@@ -257,7 +257,7 @@ local function syncRoute(route)
     net.Start(NET.routeSync); net.WriteBool(target~=nil); net.WriteString(route.phase); net.WriteEntity(IsValid(target) and target or NULL); net.WriteString(route.name or ""); net.WriteUInt(weaponCrates,8); net.WriteUInt(route.minimumWeaponCrates or 0,8); net.Send(route.driver)
 end
 
-local function global(msg) for _,p in ipairs(player.GetAll()) do p:ChatPrint("[Логистика] "..msg) end end
+local function global(msg) for _,p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do p:ChatPrint("[Логистика] "..msg) end end
 
 local function openRouteMenu(p,truck)
     local loads,wh={},{}
@@ -639,7 +639,7 @@ timer.Create("GRML_RouteThink",0.4,0,function()
         elseif r.phase=="loading" then
             local truckCfg=truckConfig(r.truck) or {}
             local rear=r.truck:LocalToWorld(truckCfg.rearOffset or C.TruckRearOffset)
-            for _,p in ipairs(player.GetAll()) do local crate=p.GRMCarriedCrate; if IsValid(crate) and crate.GRMCarrier==p and p:GetPos():DistToSqr(rear)<=C.LoadRadius^2 and #r.cargo<r.capacity then loadCarried(r,crate) break end end
+            for _,p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do local crate=p.GRMCarriedCrate; if IsValid(crate) and crate.GRMCarrier==p and p:GetPos():DistToSqr(rear)<=C.LoadRadius^2 and #r.cargo<r.capacity then loadCarried(r,crate) break end end
         elseif r.phase=="to_destination" and r.truck:GetPos():DistToSqr(r.destination:GetPos())<=C.CheckpointRadius^2 then deliver(r) end
     end
 end)
@@ -655,7 +655,7 @@ local function openWarehouse(p,e)
     if payload.admin then
         for name in pairs(Factions or {}) do payload.factions[#payload.factions+1]=name end
         table.sort(payload.factions)
-        for _,armory in ipairs(ents.FindByClass("grm_logistics_armory")) do
+        for _,armory in ipairs(((GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_logistics_armory") or ents.FindByClass("grm_logistics_armory"))) do
             if IsValid(armory) then
                 local ad=armoryData(armory)
                 payload.armories[#payload.armories+1]={
@@ -675,7 +675,7 @@ local function openArmory(p,e)
     if not canUse(p,e) or (e:GetFactionMode() and not memberOf(p,e:GetFactionName())) then notify(p,false,"Нет доступа к оружейному шкафу") return end
     local armory = armoryData(e)
     local supply = nil
-    for _,x in ipairs(ents.FindByClass("grm_logistics_warehouse")) do
+    for _,x in ipairs(((GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_logistics_warehouse") or ents.FindByClass("grm_logistics_warehouse"))) do
         if armory.warehouseID and x:GetLogisticsID()==armory.warehouseID then
             supply=warehouseData(x)
             break
@@ -717,7 +717,7 @@ local function openArmory(p,e)
     if payload.admin then
         for name in pairs(Factions or {}) do payload.factions[#payload.factions+1]=name end
         table.sort(payload.factions)
-        for _,warehouse in ipairs(ents.FindByClass("grm_logistics_warehouse")) do
+        for _,warehouse in ipairs(((GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_logistics_warehouse") or ents.FindByClass("grm_logistics_warehouse"))) do
             payload.warehouses[#payload.warehouses+1]={
                 id=warehouse:GetLogisticsID(),
                 faction=warehouse:GetFactionName(),
@@ -742,12 +742,12 @@ local function armoryRequest(p,e,kind,item,amount)
     if not canUse(p,e) or (e:GetFactionMode() and not memberOf(p,e:GetFactionName())) then return end
     local a=armoryData(e); local wh
     if a.warehouseID then
-        for _,x in ipairs(ents.FindByClass("grm_logistics_warehouse")) do
+        for _,x in ipairs(((GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_logistics_warehouse") or ents.FindByClass("grm_logistics_warehouse"))) do
             if x:GetLogisticsID()==a.warehouseID then wh=x break end
         end
     end
     if not IsValid(wh) then
-        for _,x in ipairs(ents.FindByClass("grm_logistics_warehouse")) do
+        for _,x in ipairs(((GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_logistics_warehouse") or ents.FindByClass("grm_logistics_warehouse"))) do
             if x:GetFactionName()==e:GetFactionName() and x:GetNetworkID()==e:GetNetworkID() then wh=x break end
         end
     end

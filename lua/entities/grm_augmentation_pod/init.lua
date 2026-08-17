@@ -170,7 +170,9 @@ else
 	-- HUD при наведении
 	hook.Add("HUDPaint", "GRM_AugmentationPod_HUD", function()
 		local ply = LocalPlayer()
-		local ent = ply:GetEyeTrace().Entity
+		local tr = (GRM and GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(ply, 0.05) or (IsValid(ply) and ply:GetEyeTrace())
+		if not tr then return end
+		local ent = tr.Entity
 		
 		if not IsValid(ent) or ent:GetClass() ~= "grm_augmentation_pod" then return end
 		

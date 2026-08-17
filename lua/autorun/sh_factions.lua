@@ -241,7 +241,7 @@ if SERVER then
         end
         local raw = tostring(value or "")
         if player and player.GetAll then
-            for _, ply in ipairs(player.GetAll()) do
+            for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(ply) and (ply:SteamID() == raw or ply:SteamID64() == raw) then
                     return canonicalMemberKey(ply)
                 end
@@ -410,7 +410,7 @@ if SERVER then
 
     local function buildCharacterChoices()
         local out = {}
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and p:IsPlayer() then
                 local account = p:SteamID64()
                 local chars = GRM.Char and GRM.Char.Data and GRM.Char and GRM.Char.Data[account] and GRM.Char and GRM.Char.Data[account].slots or {}
@@ -588,7 +588,7 @@ if SERVER then
     end
 
     local function syncAllPlayersFactionNW()
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) then syncPlayerFactionNW(p) end
         end
     end
@@ -1378,7 +1378,7 @@ if SERVER then
         local msgText = string.format("[%s] %s (%s): - %s", displayTag, ply:Nick(), role or "Участник", text)
 
         local recipients = {}
-        for _, target in ipairs(player.GetAll()) do
+        for _, target in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(target) then
                 local targetFaction, _, _, _, targetAccess = getFactionInfoForPlayer(memberKey(target))
                 if targetFaction and targetAccess then recipients[#recipients + 1] = target end
@@ -1661,7 +1661,7 @@ if CLIENT then
         if not IsValid(combo) then return end
         combo:Clear()
         combo:AddChoice("-- Выберите активного персонажа онлайн --", "")
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and not p:IsBot() then
                 local rpName = (p.GetNWString and p:GetNWString("GRM_RPName", ""))
                 if not isstring(rpName) or rpName == "" then rpName = p:Nick() end
@@ -3635,7 +3635,9 @@ if CLIENT then
         if not IsValid(lp) then return end
         local radius = GetConVarNumber("rpdesc_radius") or 5000
 
-        for _, ply in ipairs(player.GetAll()) do
+        -- Кэш списка игроков: player.GetAll() в HUDPaint создавал новую
+        -- таблицу 60 раз в секунду (мусор для GC на каждом кадре).
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             -- Код 108: continue→инвертированное условие (ванильный Lua)
             if IsValid(ply) and ply:Alive() and ply ~= lp
                 and lp:GetPos():Distance(ply:GetPos()) <= radius then

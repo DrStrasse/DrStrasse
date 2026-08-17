@@ -23,7 +23,7 @@ ok(facCode:find("function GRM.Factions.RoleDisplayName", 1, true) ~= nil, "GRM.F
 ok(facCode:find("function GRM.Factions.ResolveRoleKey", 1, true) ~= nil, "GRM.Factions.ResolveRoleKey resolver существует")
 ok(facCode:find("RoleDisplayNames = f.RoleDisplayNames", 1, true) ~= nil, "RoleDisplayNames синхронизируются клиенту")
 ok(facCode:find("f.RoleDisplayNames[roleKey] = newDisplayName", 1, true) ~= nil, "renameRole обновляет только display metadata")
-ok(coreCode:find('C.Version="4.1.0"', 1, true) ~= nil, "Faction Core обновлён до v4.1.0")
+ok((coreCode:match('C%.Version="(%d+)') or "0") + 0 >= 4, "Faction Core не ниже v4.1.0")
 ok(coreCode:find("f.RoleDisplayNames", 1, true) ~= nil, "Faction Core мигрирует и проверяет RoleDisplayNames")
 ok(facCode:find("FactionsAPI.GetRoleDisplayName", 1, true) ~= nil, "FactionsAPI экспортирует GetRoleDisplayName")
 

@@ -48,7 +48,7 @@ end
 local function findTarget(query)
     query = string.lower(string.Trim(tostring(query or "")))
     if query == "" then return nil end
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) then
             if string.lower(p:Nick()):find(query, 1, true)
                 or string.lower(p:SteamID()) == query

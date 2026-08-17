@@ -60,7 +60,7 @@ if SERVER then
         data.players = {}
         if GRM.GetAllBalances then
             local balances = GRM.GetAllBalances()
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) then
                     local sid64 = p:SteamID64()
                     data.players[#data.players + 1] = {

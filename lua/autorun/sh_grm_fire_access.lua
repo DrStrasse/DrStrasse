@@ -140,7 +140,7 @@ if SERVER then
         g = tonumber(g) or 120
         b = tonumber(b) or 80
         for facName in pairs(F.NotifyData.factions or {}) do
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and factionOf(p) == facName then
                     if GRM.Notify then GRM.Notify(p, text, r, g, b)
                     else p:ChatPrint("[Пожар] " .. tostring(text)) end

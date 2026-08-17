@@ -83,7 +83,7 @@ end
 
 local function onlineList()
     local out = {}
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) then
             local rp = p:GetNWString("GRM_RPName", "")
             if rp == "" then rp = p:Nick() end

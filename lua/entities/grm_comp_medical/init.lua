@@ -67,7 +67,7 @@ function ENT:Use(ply)
     end
 
     local onlineList = {}
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) then
             local rp = p:GetNWString("GRM_RPName", "")
             if rp == "" then rp = p:Nick() end
@@ -149,7 +149,7 @@ net.Receive("GRM_CompMedical_IssuePhysical", function(bits, ply)
     if GRM.Identity and GRM.Identity.IsCharacterKey and not GRM.Identity.IsCharacterKey(targetKey) then return end
 
     local targetPly = nil
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         local k = (GRM.Identity and isfunction(GRM.Identity.CharacterKey) and GRM.Identity.CharacterKey(p)) or (p:SteamID64() .. ":char1")
         if k == targetKey or p:SteamID64() == targetKey then
             targetPly = p

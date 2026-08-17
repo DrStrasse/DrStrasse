@@ -324,6 +324,19 @@ hook.Add("Think", "GRM_Alarm_Scan", function()
     if syncAllSpeakers and now-lastSpeakerWatch>=1 then lastSpeakerWatch=now;syncAllSpeakers() end
 
     local cd = tonumber(CFG().TriggerCooldown) or 4
+
+    -- Самый тяжёлый серверный цикл сборки: раньше на КАЖДЫЙ активный сенсор
+    -- заново строился player.GetAll() (новая таблица), а живые/мёртвые игроки
+    -- проверялись внутри. Теперь список живых игроков собирается ОДИН раз на
+    -- проход, и если живых нет — скан сенсоров вообще не запускается.
+    local alive = {}
+    local players = (GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()
+    for i = 1, #players do
+        local ply = players[i]
+        if IsValid(ply) and ply:Alive() then alive[#alive + 1] = ply end
+    end
+    if #alive == 0 then return end
+
     for _, sensor in pairs(A.Devices) do
         if IsValid(sensor) and classOf(sensor) == "grm_alarm_sensor" and sensor:GetActive() then
             local netID = A.NormalizeNetwork(sensor:GetNetworkID())
@@ -335,8 +348,9 @@ hook.Add("Think", "GRM_Alarm_Scan", function()
                         tonumber(CFG().MinSensorRadius) or 64,
                         tonumber(CFG().MaxSensorRadius) or 800)
                     local origin = sensor:GetPos()
-                    for _, ply in ipairs(player.GetAll()) do
-                        if IsValid(ply) and ply:Alive() and origin:DistToSqr(ply:GetPos()) <= radius * radius then
+                    local radiusSqr = radius * radius
+                    for _, ply in ipairs(alive) do
+                        if origin:DistToSqr(ply:GetPos()) <= radiusSqr then
                             -- Игнор «своих»: доступ управления сигналкой / door friendly / warrant force
                             local friendly = false
                             if GRM.Doors and GRM.Doors.IsFriendlyForAlarm then

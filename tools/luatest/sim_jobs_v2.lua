@@ -117,7 +117,7 @@ CHECK("есть мусоровоз", istable(byTpl.garbage))
 CHECK("есть таксист", istable(byTpl.taxi))
 CHECK("нет грузчика/патрульного", byTpl.loader == nil and byTpl.patrol == nil)
 CHECK("мусоровоз: needVehicle", byTpl.garbage and byTpl.garbage.needVehicle == true)
-CHECK("мусоровоз: 3 точки маршрута (2 контейнера + свалка)", byTpl.garbage and #byTpl.garbage.points == 3)
+CHECK("мусоровоз: 4 точки маршрута (3 контейнера + полигон)", byTpl.garbage and #byTpl.garbage.points == 4)
 CHECK("таксист: смена ожидания живых заказов",byTpl.taxi and byTpl.taxi.needVehicle==true and byTpl.taxi.taxiStandby==true and byTpl.taxi.reward==0)
 
 -- 2) мусоровоз: без транспорта прогресса нет

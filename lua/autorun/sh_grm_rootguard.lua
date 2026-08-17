@@ -109,7 +109,7 @@ if SERVER then
 
     local function onlineRoots()
         local out = {}
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if RG.IsRoot(p) then out[#out + 1] = p end
         end
         return out

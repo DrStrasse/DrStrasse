@@ -162,7 +162,7 @@ if SERVER then
     hook.Add("PlayerInitialSpawn","GRM_PhysicalDocs_MissingJoin",function(ply)timer.Simple(8,function()notifyMissing(ply)end)end)
 
     local function findOnlineByKey(ownerKey)
-        for _,p in ipairs(player.GetAll()) do if keyOf(p)==ownerKey then return p end end
+        for _,p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do if keyOf(p)==ownerKey then return p end end
     end
 
     local function handleCopyCommand(ply,text)

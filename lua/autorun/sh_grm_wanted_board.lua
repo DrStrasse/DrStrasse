@@ -113,7 +113,7 @@ if SERVER then
     -----------------------------------------------------------------------
     local function onlineKeys()
         local set = {}
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) then set[charKey(p)] = true end
         end
         return set

@@ -108,8 +108,10 @@ ok(serverOk, "GRM_HUB_Get(server) выполнился без ошибок")
 ok(payload ~= nil and payload.online == 2 and payload.map == "gm_test", "payload сервера: онлайн и карта")
 ok(payload ~= nil and istable(payload.counters) and #payload.counters >= 6, "счётчики сервера (включая устройства сети)")
 local hasVer = false
+-- Модуль «Электроника/сеть» удалён из сборки (находка 133): в списке версий
+-- его быть НЕ должно, но сам список обязан приходить непустым.
 for _, v in ipairs(payload and payload.versions or {}) do if tostring(v.name):find("Электроника") then hasVer = true end end
-ok(hasVer, "в списке версий есть Электроника/сеть")
+ok(not hasVer and #(payload and payload.versions or {}) > 0, "список версий непустой и без удалённой Электроники")
 
 -- остальные вкладки не падают
 for _, tab in ipairs({ "access", "jobs", "players", "econ", "tools" }) do
@@ -180,7 +182,6 @@ GRM.Doors.LoadDoors = function() calls["doors_load"] = (calls["doors_load"] or 0
 GRM.Doors.LoadCategories = function() return true end
 GRM.Doors.LoadWarrants = function() return true end
 GRM.Arrest = mkMod("arrest", { "SaveConfig" }, { "LoadConfig" })
-GRM.Electronics = mkMod("electronics", { "SaveAll" }, { "LoadAll" })
 GRM.VehicleDealer = mkMod("vehicle_dealers", { "SaveAll" }, { "LoadAll" })
 function _G.GRM_SaveEntities() calls["mining_save"] = (calls["mining_save"] or 0) + 1 return true end
 function _G.GRM_LoadEntities() calls["mining_load"] = (calls["mining_load"] or 0) + 1 return true end
@@ -197,7 +198,7 @@ ok(lastNet("GRM_Persistence_Open") ~= nil, "суперадмину отправ�
 calls = {}
 H.seq = { "all_save" }
 H.netrecv["GRM_Persistence_Action"](0, Admin)
-ok(calls["electronics_save"] == 1, "all_save: электроника сохранена (SaveAll вызван)")
+ok(calls["electronics_save"] == nil, "all_save: удалённая электроника не сохраняется")
 ok(calls["vehicle_dealers_save"] == 1, "all_save: дилеры и гаражи сохранены (SaveAll вызван)")
 ok(calls["phone_save"] == 1 and calls["doors_save"] == 1 and calls["arrest_save"] == 1, "all_save: остальные модули сохранены")
 ok(calls["mining_save"] ~= nil, "all_save: рудные узлы сохранены (GRM_SaveEntities; вызывается и для perm)")
@@ -211,7 +212,7 @@ ok(allOk, "all_save: результат OK")
 calls = {}
 H.seq = { "all_load" }
 H.netrecv["GRM_Persistence_Action"](0, Admin)
-ok(calls["electronics_load"] == 1, "all_load: электроника загружена (LoadAll вызван)")
+ok(calls["electronics_load"] == nil, "all_load: удалённая электроника не загружается")
 ok(calls["vehicle_dealers_load"] == 1, "all_load: дилеры загружены (LoadAll вызван)")
 ok(calls["phone_load"] == 1 and calls["mining_load"] ~= nil, "all_load: остальные модули загружены")
 
@@ -219,7 +220,7 @@ ok(calls["phone_load"] == 1 and calls["mining_load"] ~= nil, "all_load: оста
 calls = {}
 H.seq = { "electronics_save" }
 H.netrecv["GRM_Persistence_Action"](0, Admin)
-ok(calls["electronics_save"] == 1 and calls["phone_save"] == nil, "electronics_save: точечно, без побочных вызовов")
+ok(calls["electronics_save"] == nil and calls["phone_save"] == nil, "electronics_save: неизвестная операция ничего не трогает")
 
 -- не-админ не может сохранять
 calls = {}

@@ -792,7 +792,7 @@ if CLIENT then
                 online:SetPos(8, 58) online:SetSize(284, 24)
                 online:SetValue("Онлайн…")
                 online:SetEnabled(canEdit)
-                for _, p in ipairs(player.GetAll()) do
+                for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                     if IsValid(p) then
                         local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64()
                         online:AddChoice(p:Nick() .. " [" .. ck .. "]", ck)

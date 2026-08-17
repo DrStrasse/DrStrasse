@@ -9,7 +9,7 @@ ok(rename:find("DepartmentDisplayNames",1,true)and not rename:find("f.Department
 ok(not rename:find("info.Department",1,true),"rename never rewrites member department")
 ok(not rename:find("f.DepartmentModels",1,true)and not rename:find("f.DepartmentWeapons",1,true),"rename never touches model/weapon settings")
 ok(fac:find("Системный ключ:",1,true)and fac:find("Настройки и участники останутся привязаны",1,true),"department UI explains stable key")
-ok(core:find('C.Version="4.0.0"',1,true)and core:find("function C.Touch",1,true),"Faction Core v4 revision/event facade exists")
+ok((core:match('C%.Version="(%d+)') or "0")+0>=4 and core:find("function C.Touch",1,true),"Faction Core revision/event facade exists (>=v4)")
 ok(core:find("normalizePersonnel",1,true)and core:find("C.MaxHistory=200",1,true),"personnel records are normalized and bounded")
 ok(core:find("PersonnelArchive",1,true)and core:find("member.removed",1,true),"dismissed personnel files are archived")
 ok(core:find("GRM_FactionMemberJoined",1,true)and core:find("GRM_FactionMemberRoleChanged",1,true)and core:find("GRM_FactionMemberDepartmentChanged",1,true),"membership mutations feed personnel history")

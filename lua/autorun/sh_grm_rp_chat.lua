@@ -71,7 +71,7 @@ if SERVER then
         if not IsValid(originPly) then return 0 end
         local origin = originPly:GetPos()
         local others = 0
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) then
                 if ply == originPly then
                     if includeSelf ~= false then sendTo(ply, parts) end
@@ -85,7 +85,7 @@ if SERVER then
     end
 
     local function broadcastAll(parts, filterFn)
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) and (not filterFn or filterFn(ply)) then
                 sendTo(ply, parts)
             end

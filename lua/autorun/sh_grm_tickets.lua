@@ -33,7 +33,7 @@ if SERVER then
     load()
 
     local function notifyAdmins(text)
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and p:IsAdmin() then p:ChatPrint("[GRM Тикеты] " .. text) end
         end
     end
@@ -59,7 +59,7 @@ if SERVER then
         save(); return true, ticket.id
     end
     local function findPlayer(ticket)
-        for _, p in ipairs(player.GetAll()) do if IsValid(p) and p:SteamID64() == ticket.account then return p end end
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do if IsValid(p) and p:SteamID64() == ticket.account then return p end end
     end
     sendPlayerTicket = function(ticket)
         local owner = findPlayer(ticket)

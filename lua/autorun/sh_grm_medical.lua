@@ -332,7 +332,7 @@ if SERVER then
         local doctor = MD.CanTreat(ply)
         local online = {}
         if doctor then
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and p ~= ply then
                     online[#online + 1] = { sid64 = identityKey(p), name = rpName(p), fac = factionOf(p) or "—" }
                 end
@@ -382,7 +382,7 @@ if SERVER then
             return
         end
         -- актуализируем кэш имени по онлайну
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if identityKey(p) == sid64 then cardOf(sid64).name = rpName(p) break end
         end
         pushCard(ply, sid64, doctor == true)
@@ -407,7 +407,7 @@ if SERVER then
         -- актуализируем имя по онлайну (карта могла выехать с давним сейвом)
         local c0 = MD.Cards[sid64]
         if istable(c0) then
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and identityKey(p) == sid64 then c0.name = rpName(p) break end
             end
         end
@@ -468,7 +468,7 @@ if SERVER then
             MD.SaveCards("entry " .. kind .. " " .. sid64)
             pushCard(ply, sid64, true)
             -- уведомить пациента, если он онлайн
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if identityKey(p) == sid64 and GRM.Notify then
                     GRM.Notify(p, "В вашу мед.карту добавлено: " .. (MD.EntryKinds[kind] or kind) .. " — «" .. text .. "» (" .. myName .. ")", 120, 200, 255)
                 end
@@ -509,7 +509,7 @@ if SERVER then
                 return
             end
             local patient
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and identityKey(p) == sid64 then patient = p break end
             end
             if not IsValid(patient) then

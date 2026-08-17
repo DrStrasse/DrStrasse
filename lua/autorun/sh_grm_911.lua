@@ -93,7 +93,7 @@ if SERVER then
         return {id=r.id,category=r.category,text=r.text,callerName=r.callerName,pos=r.pos,status=r.status,created=r.created,assignedName=r.assignedName or "",patientName=r.patientName or ""}
     end
     local function responders()
-        local out={}; for _,p in ipairs(player.GetAll()) do if isMedic(p) or isInvestigator(p) then out[#out+1]=p end end; return out
+        local out={}; for _,p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do if isMedic(p) or isInvestigator(p) then out[#out+1]=p end end; return out
     end
     local function pushCalls(ply)
         if not (isMedic(ply) or isInvestigator(ply)) then return end

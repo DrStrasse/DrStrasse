@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Doors System v3.1.0 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
+    GRM Doors System v5.0.0 (Код 64 — ЯДРО ПЕРЕСОБРАНО)
 
     Слои допуска — CONCEPT_DOORS_V3.md:
       0 SuperAdmin  — всё, включая назначение владельца карты;
@@ -14,7 +14,23 @@
     ownable=false = «не продаётся», НЕ «всем можно».
     AM.CanManage = /door_access, не вкладка R-меню.
 
-    Идентичность: MapCreationID + AABB-склейка дублей одного полотна.
+    Идентичность: MapCreationID + AABB-склейка дублей одного полотна через
+    ПРОСТРАНСТВЕННЫЙ ХЭШ (v5.0.0): дверь сравнивается только с соседями по
+    сетке 128 юнитов, а не со всеми дверьми карты (было O(n^2) на каждый
+    спавн двери — источник фризов на дупликаторе и загрузке карты).
+
+    v5.0.0 «полная пересборка»:
+      * D.AllDoors()        — список дверей из event-реестров GRM.Perf,
+                              без ents.GetAll();
+      * D.PurgeGhostDoors() — фантомы по группам, с весами «кого оставить»
+                              (карта > владелец > запись > меньший ID) и
+                              защитой полотен самой карты (force снимает);
+      * D.RebuildAll()      — идентичность + фантомы + схлопывание записей
+                              + сироты + переприменение визуала + save;
+      * D.InvalidateIdentity() и коалесцированное обслуживание вместо
+                              timer.Simple на каждую созданную entity;
+      * /door_audit, /door_rebuild [dry|force|orphans].
+
     Персист: только изменённые записи, массив, version=3,
              jsonT(..., false, true). CharacterKey = SteamID64:charN.
 ----------------------------------------------------------------------]]
@@ -24,60 +40,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Doors = GRM.Doors or {}
 local D = GRM.Doors
-D.Version = "4.0.0"
-
-function D.PurgeGhostDoors()
-    if not SERVER then return 0 end
-    local doors = {}
-    for _, ent in ipairs(ents.GetAll()) do
-        if IsValid(ent) and D.IsDoor(ent) then
-            doors[#doors + 1] = ent
-        end
-    end
-    local purged = 0
-    local toRemove = {}
-    for i = 1, #doors do
-        local a = doors[i]
-        if IsValid(a) and not toRemove[a] then
-            for j = i + 1, #doors do
-                local b = doors[j]
-                if IsValid(b) and not toRemove[b] then
-                    -- Единый предикат с системой идентичности: раньше здесь был
-                    -- жёсткий порог 14 юнитов, из-за чего фантомные дубли на
-                    -- расстоянии 15–60 юнитов не отлавливались и оставались
-                    -- «второй дверью» с пустым владельцем.
-                    if D.IsSamePhysicalDoor(a, b) then
-                        local isMapA = a.CreatedByMap and a:CreatedByMap() or false
-                        local isMapB = b.CreatedByMap and b:CreatedByMap() or false
-                        local killTarget = nil
-                        if isMapA and not isMapB then
-                            killTarget = b
-                        elseif isMapB and not isMapA then
-                            killTarget = a
-                        else
-                            killTarget = (a:EntIndex() > b:EntIndex()) and a or b
-                        end
-                        if killTarget and not toRemove[killTarget] then
-                            toRemove[killTarget] = true
-                            purged = purged + 1
-                        end
-                    end
-                end
-            end
-        end
-    end
-    for ent in pairs(toRemove) do
-        if IsValid(ent) then
-            print(("[GRM Doors] Ликвидирована фантомная дверь-дубликат #%d (%s) на %.0f,%.0f,%.0f")
-                :format(ent:EntIndex(), tostring(ent:GetClass()), ent:GetPos().x, ent:GetPos().y, ent:GetPos().z))
-            ent:Remove()
-        end
-    end
-    if purged > 0 and D.RebuildDoorIdentityCache then
-        D.RebuildDoorIdentityCache()
-    end
-    return purged
-end
+D.Version = "5.0.0"
 
 D.Config = D.Config or {
     UseDistance = 180,
@@ -92,6 +55,13 @@ D.Config = D.Config or {
     DuplicateZOverlap = 0.72,
     LockSyncInterval = 2.0,
     ActCooldown = 0.4,
+    -- Ячейка пространственного хэша для поиска дублей. Сравниваем дверь только
+    -- с соседями по сетке, а не со всеми дверьми карты (было O(n^2)).
+    IdentityCellSize = 128,
+    -- Удалять ли дубли, созданные САМОЙ картой. По умолчанию нет: фантомы
+    -- родом из тулзы/дупликатора/сейва, а снос настоящего полотна карты
+    -- ломает геометрию и не откатывается. Включается `grm_door_rebuild force`.
+    PurgeMapDoors = false,
     DoorClasses = {
         prop_door_rotating = true,
         func_door = true,
@@ -159,39 +129,238 @@ function D.IsSamePhysicalDoor(a, b)
         and z >= ((D.Config and D.Config.DuplicateZOverlap) or 0.72)
 end
 
+-- Все двери карты одним списком. Раньше здесь был ents.GetAll() (полный скан
+-- ВСЕХ энтити) при каждой пересборке; теперь берём event-реестры GRM.Perf.
+function D.AllDoors()
+    local out, seen = {}, {}
+    local classes = {}
+    for cls in pairs((D.Config and D.Config.DoorClasses) or {}) do classes[#classes + 1] = cls end
+    if #classes == 0 then classes = { "prop_door_rotating", "func_door", "func_door_rotating" } end
+    for _, cls in ipairs(classes) do
+        local list = (GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities(cls) or ents.FindByClass(cls)
+        for _, ent in ipairs(list) do
+            if IsValid(ent) and not seen[ent] and D.IsDoor(ent) then
+                seen[ent] = true
+                out[#out + 1] = ent
+            end
+        end
+    end
+    return out
+end
+
+local function doorCenter(ent)
+    return (ent.WorldSpaceCenter and ent:WorldSpaceCenter()) or ent:GetPos()
+end
+
+-- Пространственный хэш: ключ ячейки по центру двери.
+local function cellKey(v, size)
+    return math.floor(v.x / size) .. ":" .. math.floor(v.y / size) .. ":" .. math.floor(v.z / size)
+end
+
+-- Кандидаты в дубли: только двери из своей и 26 соседних ячеек.
+local function buildNeighbourIndex(doors)
+    local size = math.max(32, tonumber(D.Config and D.Config.IdentityCellSize) or 128)
+    local grid, centers = {}, {}
+    for i, ent in ipairs(doors) do
+        local c = doorCenter(ent)
+        centers[i] = c
+        local key = cellKey(c, size)
+        local cell = grid[key]
+        if not cell then cell = {} grid[key] = cell end
+        cell[#cell + 1] = i
+    end
+    return grid, centers, size
+end
+
+local function forEachCandidatePair(doors, fn)
+    local grid, centers, size = buildNeighbourIndex(doors)
+    local checked = {}
+    for i = 1, #doors do
+        local c = centers[i]
+        local cx, cy, cz = math.floor(c.x / size), math.floor(c.y / size), math.floor(c.z / size)
+        for dx = -1, 1 do
+            for dy = -1, 1 do
+                for dz = -1, 1 do
+                    local cell = grid[(cx + dx) .. ":" .. (cy + dy) .. ":" .. (cz + dz)]
+                    if cell then
+                        for _, j in ipairs(cell) do
+                            if j > i then
+                                local key = i * 100000 + j
+                                if not checked[key] then
+                                    checked[key] = true
+                                    fn(i, j, doors[i], doors[j])
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+D.ForEachCandidatePair = forEachCandidatePair
+
+--[[ Ликвидация фантомов.
+
+     Фантом — это ВТОРОЕ полотно ровно на месте первого (дубликатор, тулза,
+     кривой сейв аддона перма). Именно из-за них «дверь помнит не того
+     владельца»: запись висит на одном полотне, а игрок жмёт E на другом.
+
+     Правила сноса (по убыванию приоритета «кого оставить»):
+       1. дверь, созданная картой, важнее созданной в рантайме;
+       2. дверь с непустой записью владельца важнее «ничьей»;
+       3. меньший MapCreationID / EntIndex важнее.
+     Дубли самой карты по умолчанию НЕ сносятся (D.Config.PurgeMapDoors). ]]
+function D.PurgeGhostDoors(opts)
+    if not SERVER then return 0 end
+    opts = istable(opts) and opts or {}
+    local doors = D.AllDoors()
+    if #doors < 2 then return 0 end
+
+    local allowMap = opts.force == true or (D.Config and D.Config.PurgeMapDoors) == true
+    local dry = opts.dry == true
+    local toRemove, kept, report = {}, {}, {}
+
+    local function isMap(ent) return (ent.CreatedByMap and ent:CreatedByMap()) == true end
+    local function weight(ent)
+        local w = 0
+        if isMap(ent) then w = w + 1000 end
+        local rec = D.GetRecord and select(1, D.GetRecord(ent))
+        if istable(rec) and rec.owner_type and rec.owner_type ~= "none" then w = w + 100 end
+        if istable(rec) and not rec._ephemeral then w = w + 10 end
+        local mcid = ent.MapCreationID and ent:MapCreationID() or 0
+        if mcid > 0 then w = w + math.max(0, 5 - mcid / 100000) end
+        return w
+    end
+
+    -- Работаем по ГРУППАМ идентичности, а не по отдельным парам: три полотна
+    -- «лесенкой» (A≈B, B≈C, но A и C напрямую перекрываются слабо) — это всё
+    -- равно одна физическая дверь, и лишними должны стать оба дубля, а не один.
+    D._canonicalDoorIDs, D._equivalentDoors, D._primaryDoors = nil, nil, nil
+    D.RebuildDoorIdentityCache()
+
+    for _, group in pairs(D._equivalentDoors or {}) do
+        if istable(group) and #group > 1 then
+            local best
+            for _, ent in ipairs(group) do
+                if IsValid(ent) then
+                    if not best then
+                        best = ent
+                    else
+                        local wb, we = weight(best), weight(ent)
+                        if we > wb or (we == wb and ent:EntIndex() < best:EntIndex()) then best = ent end
+                    end
+                end
+            end
+            for _, ent in ipairs(group) do
+                if IsValid(ent) and ent ~= best then
+                    if isMap(ent) and not allowMap then
+                        local c = doorCenter(ent)
+                        report[#report + 1] = ("конфликт полотен КАРТЫ #%d и #%d на %.0f,%.0f,%.0f (не сношу без force)")
+                            :format(ent:EntIndex(), best:EntIndex(), c.x, c.y, c.z)
+                    else
+                        toRemove[ent] = true
+                        kept[ent] = best
+                    end
+                end
+            end
+        end
+    end
+
+    local purged = 0
+    for ent in pairs(toRemove) do
+        local keep = kept[ent]
+        if IsValid(ent) then
+            purged = purged + 1
+            local c = doorCenter(ent)
+            local line = ("[GRM Doors] %s фантомная дверь #%d (%s) на %.0f,%.0f,%.0f — оставлена #%d")
+                :format(dry and "НАЙДЕНА" or "Ликвидирована", ent:EntIndex(), tostring(ent:GetClass()),
+                    c.x, c.y, c.z, IsValid(keep) and keep:EntIndex() or 0)
+            report[#report + 1] = line
+            print(line)
+            if not dry then ent:Remove() end
+        end
+    end
+
+    if purged > 0 and not dry then D.InvalidateIdentity(true) end
+    return purged, report
+end
+
+-- Полная пересборка идентичности. Union-Find, но пары берём только из
+-- соседних ячеек сетки — на карте с 400 дверьми это ~4k сравнений вместо 80k.
 function D.RebuildDoorIdentityCache()
     if D._buildingDoorIdentity then return end
     D._buildingDoorIdentity = true
-    local doors = {}
-    for _, ent in ipairs(ents.GetAll()) do
-        if IsValid(ent) and D.IsDoor(ent) then doors[#doors + 1] = ent end
-    end
+
+    local doors = D.AllDoors()
     local parent = {}
     local function root(i)
-        if parent[i] ~= i then parent[i] = root(parent[i]) end
-        return parent[i]
+        while parent[i] ~= i do parent[i] = parent[parent[i]] i = parent[i] end
+        return i
     end
     local function unite(a, b)
         local ra, rb = root(a), root(b)
         if ra ~= rb then parent[rb] = ra end
     end
     for i = 1, #doors do parent[i] = i end
-    for i = 1, #doors do
-        for j = i + 1, #doors do
-            if D.IsSamePhysicalDoor(doors[i], doors[j]) then unite(i, j) end
-        end
-    end
+    forEachCandidatePair(doors, function(i, j, a, b)
+        if D.IsSamePhysicalDoor(a, b) then unite(i, j) end
+    end)
+
     local ids = {}
+    local baseIDs = {}
     for i, ent in ipairs(doors) do
         local r = root(i)
         local id = baseDoorID(ent)
+        baseIDs[i] = id
         if id and (not ids[r] or id < ids[r]) then ids[r] = id end
     end
-    D._canonicalDoorIDs,D._equivalentDoors,D._primaryDoors={},{},{}
-    for i,ent in ipairs(doors)do local id=ids[root(i)]or baseDoorID(ent);D._canonicalDoorIDs[ent]=id;D._equivalentDoors[id]=D._equivalentDoors[id]or{};D._equivalentDoors[id][#D._equivalentDoors[id]+1]=ent end
-    for id,group in pairs(D._equivalentDoors)do table.sort(group,function(a,b)return tostring(baseDoorID(a))<tostring(baseDoorID(b))end);D._primaryDoors[id]=group[1];if SERVER then for i,ent in ipairs(group)do ent:SetNWBool("GRM_DoorAlias",i>1);ent:SetNWString("GRM_DoorCanonicalID",id)end end end
-    D._buildingDoorIdentity=nil
+
+    D._canonicalDoorIDs, D._equivalentDoors, D._primaryDoors = {}, {}, {}
+    for i, ent in ipairs(doors) do
+        local id = ids[root(i)] or baseIDs[i]
+        D._canonicalDoorIDs[ent] = id
+        local group = D._equivalentDoors[id]
+        if not group then group = {} D._equivalentDoors[id] = group end
+        group[#group + 1] = ent
+    end
+    for id, group in pairs(D._equivalentDoors) do
+        table.sort(group, function(a, b) return tostring(baseDoorID(a)) < tostring(baseDoorID(b)) end)
+        D._primaryDoors[id] = group[1]
+        if SERVER then
+            for i, ent in ipairs(group) do
+                if GRM.Perf and GRM.Perf.NWBool then
+                    GRM.Perf.NWBool(ent, "GRM_DoorAlias", i > 1)
+                    GRM.Perf.NWString(ent, "GRM_DoorCanonicalID", id)
+                else
+                    ent:SetNWBool("GRM_DoorAlias", i > 1)
+                    ent:SetNWString("GRM_DoorCanonicalID", id)
+                end
+            end
+        end
+    end
+
+    D._identityBuiltAt = CurTime()
+    D._buildingDoorIdentity = nil
+    return D._equivalentDoors
 end
+
+-- Сброс кэша + отложенная (коалесцированная) пересборка. Раньше на КАЖДУЮ
+-- созданную дверь заводился свой timer.Simple и свой полный ребилд.
+function D.InvalidateIdentity(immediate)
+    D._canonicalDoorIDs, D._equivalentDoors, D._primaryDoors = nil, nil, nil
+    if immediate then return D.RebuildDoorIdentityCache() end
+    if GRM.Perf and GRM.Perf.Coalesce then
+        GRM.Perf.Coalesce("doors.identity.rebuild", 0.2, function()
+            if not D._canonicalDoorIDs then D.RebuildDoorIdentityCache() end
+        end)
+    else
+        timer.Create("GRM_Doors_IdentityRebuild", 0.2, 1, function()
+            if not D._canonicalDoorIDs then D.RebuildDoorIdentityCache() end
+        end)
+    end
+end
+
 
 function D.GetDoorID(ent)
     if not IsValid(ent) or not D.IsDoor(ent) then return nil end
@@ -355,98 +524,244 @@ function D.ClearLockDenyHold(state)
 end
 
 hook.Add("InitPostEntity", "GRM_Doors_BuildIdentityCache", function()
-    timer.Simple(0, function()
+    timer.Simple(0.5, function()
         if D.PurgeGhostDoors then D.PurgeGhostDoors() end
         D.RebuildDoorIdentityCache()
     end)
 end)
-hook.Add("PostCleanupMap","GRM_Doors_RebuildIdentityCache",function()
+hook.Add("PostCleanupMap", "GRM_Doors_RebuildIdentityCache", function()
     timer.Simple(.2, function()
         if D.PurgeGhostDoors then D.PurgeGhostDoors() end
         D.RebuildDoorIdentityCache()
     end)
 end)
--- При создании новой двери в рантайме (тулза/дупликатор) пересобираем
--- идентичность и отложенно ликвидируем фантомные дубли. Раньше чистка дублей
--- происходила ТОЛЬКО при загрузке карты и PostCleanupMap, поэтому «вторые
--- двери», созданные позже, оставались с пустым владельцем поверх первой.
-local _grmDoorPurgeAt = 0
-hook.Add("OnEntityCreated","GRM_Doors_IdentityCreated",function(ent)
-    timer.Simple(.1,function()
-        if not IsValid(ent) or not D.IsDoor(ent) then return end
-        D._canonicalDoorIDs=nil;D._equivalentDoors=nil;D._primaryDoors=nil
+
+-- Дверь, созданная в рантайме (тулза/дупликатор/перм), пересобирает
+-- идентичность и отложенно чистит фантомов. Раньше на КАЖДУЮ созданную
+-- entity (не только дверь!) заводился отдельный timer.Simple(0.1) с полным
+-- O(n^2) ребилдом — на загрузке карты это давало заметный фриз. Теперь всё
+-- склеивается в один коалесцированный проход.
+local function scheduleDoorMaintenance()
+    if not (GRM.Perf and GRM.Perf.Coalesce) then
+        timer.Create("GRM_Doors_Maintenance", 0.3, 1, function()
+            D.RebuildDoorIdentityCache()
+            if SERVER and D.PurgeGhostDoors then D.PurgeGhostDoors() end
+        end)
+        return
+    end
+    GRM.Perf.Coalesce("doors.maintenance", 0.3, function()
         D.RebuildDoorIdentityCache()
-        -- Чистку дублей троттлим (PurgeGhostDoors — O(n^2) по дверям).
-        local now = CurTime()
-        if now - _grmDoorPurgeAt >= 2 then
-            _grmDoorPurgeAt = now
-            if D.PurgeGhostDoors then D.PurgeGhostDoors() end
+        if SERVER and D.PurgeGhostDoors and GRM.Perf.Throttle("doors.purge", 2) then
+            D.PurgeGhostDoors()
         end
     end)
+end
+D.ScheduleMaintenance = scheduleDoorMaintenance
+
+hook.Add("OnEntityCreated", "GRM_Doors_IdentityCreated", function(ent)
+    -- Класс у только что созданной entity уже доступен для prop_door_rotating
+    -- и func_door*, поэтому фильтруем СРАЗУ и не платим таймером за каждый проп.
+    if not ent or not ent.GetClass then return end
+    local cls = ent:GetClass()
+    local cfg = D.Config and D.Config.DoorClasses or {}
+    if not (cfg[cls] or cls == "prop_door_rotating" or cls == "func_door" or cls == "func_door_rotating") then return end
+    D._canonicalDoorIDs, D._equivalentDoors, D._primaryDoors = nil, nil, nil
+    scheduleDoorMaintenance()
 end)
-hook.Add("EntityRemoved","GRM_Doors_IdentityRemoved",function(ent)if D._canonicalDoorIDs and D._canonicalDoorIDs[ent]then D._canonicalDoorIDs=nil;D._equivalentDoors=nil;D._primaryDoors=nil;timer.Simple(.1,D.RebuildDoorIdentityCache)end end)
+
+hook.Add("EntityRemoved", "GRM_Doors_IdentityRemoved", function(ent)
+    if D._canonicalDoorIDs and D._canonicalDoorIDs[ent] then
+        D.InvalidateIdentity(false)
+    end
+end)
+
 
 if SERVER then
-    concommand.Add("grm_door_audit", function(ply)
-        local isSA = not IsValid(ply) or ply:IsSuperAdmin()
-        if not isSA then return end
-        local doors = 0
-        local pairsCount = 0
-        local ghostCount = D.PurgeGhostDoors and D.PurgeGhostDoors() or 0
+    --[[ ── ДИАГНОСТИКА И ПОЛНАЯ ПЕРЕСБОРКА ДВЕРЕЙ ──────────────────────────
 
-        -- Диагностика дублей: группируем двери по физической идентичности и
-        -- показываем группы, где «одна дверь отвечает за другую» (двойной владелец).
+         D.BuildAuditReport()  — что сейчас на карте (без изменений);
+         D.RebuildAll(opts)    — полная пересборка:
+             1. заново строит идентичность (пространственный хэш + union-find);
+             2. ликвидирует фантомные полотна (dry — только показать);
+             3. схлопывает записи-дубли на канонический ID;
+             4. чинит «сироты» — записи без двери на карте;
+             5. переприменяет визуал/замки и сохраняет БД.
+         opts = { dry=true, force=true, dropOrphans=true } ]]
+
+    function D.BuildAuditReport()
         D.RebuildDoorIdentityCache()
         local groups = D._equivalentDoors or {}
-        local groupCount, ambiguousCount = 0, 0
+        local doors, pairsCount = 0, 0
+        local groupCount, ambiguousCount, aliasCount = 0, 0, 0
         local ownedCount, ownerlessCount = 0, 0
-        local classCounts = {}
-        for id, group in pairs(groups) do
-            if istable(group) and #group > 1 then groupCount = groupCount + 1 end
-        end
+        local classCounts, conflicts = {}, {}
 
-        for _, ent in ipairs(ents.GetAll()) do
-            if IsValid(ent) and D.IsDoor(ent) then
-                doors = doors + 1
-                if D.GetPartnerDoor and D.GetPartnerDoor(ent) then pairsCount = pairsCount + 1 end
-                local cls = ent:GetClass()
-                classCounts[cls] = (classCounts[cls] or 0) + 1
-                local rec = D.GetRecord and select(1, D.GetRecord(ent))
-                if istable(rec) and rec.owner_type and rec.owner_type ~= "none" then
-                    ownedCount = ownedCount + 1
-                else
-                    ownerlessCount = ownerlessCount + 1
-                end
+        for _, ent in ipairs(D.AllDoors()) do
+            doors = doors + 1
+            if D.GetPartnerDoor and D.GetPartnerDoor(ent) then pairsCount = pairsCount + 1 end
+            local cls = ent:GetClass()
+            classCounts[cls] = (classCounts[cls] or 0) + 1
+            local rec = D.GetRecord and select(1, D.GetRecord(ent))
+            if istable(rec) and rec.owner_type and rec.owner_type ~= "none" then
+                ownedCount = ownedCount + 1
+            else
+                ownerlessCount = ownerlessCount + 1
             end
         end
 
-        -- Двойные владельцы: физ-группа, где у разных дверей разные записи-владельцы.
         for id, group in pairs(groups) do
             if istable(group) and #group > 1 then
+                groupCount = groupCount + 1
+                aliasCount = aliasCount + (#group - 1)
                 local seenOwners = {}
                 for _, e in ipairs(group) do
                     local rec = D.GetRecord and select(1, D.GetRecord(e))
-                    local owner = istable(rec) and tostring(rec.owner_type or "none") .. ":" .. tostring(rec.owner_key or rec.owner_faction or rec.owner_category or "") or "none:"
+                    local owner = istable(rec)
+                        and (tostring(rec.owner_type or "none") .. ":" ..
+                             tostring(rec.owner_key or rec.owner_faction or rec.owner_category or ""))
+                        or "none:"
                     seenOwners[owner] = true
                 end
-                if table.Count(seenOwners) > 1 then ambiguousCount = ambiguousCount + 1 end
+                if table.Count(seenOwners) > 1 then
+                    ambiguousCount = ambiguousCount + 1
+                    conflicts[#conflicts + 1] = id
+                end
             end
         end
+
+        -- Записи-сироты: в БД есть, а двери с таким каноническим ID на карте нет.
+        local orphans = {}
+        for id, rec in pairs((D.Data and D.Data.doors) or {}) do
+            if istable(rec) and not groups[id] then orphans[#orphans + 1] = id end
+        end
+        table.sort(orphans)
 
         local classStr = {}
         for cls, n in pairs(classCounts) do classStr[#classStr + 1] = cls .. "=" .. n end
         table.sort(classStr)
 
-        local lines = {}
-        lines[#lines + 1] = "[GRM Door Audit] Дверей: " .. doors .. " | Классы: " .. table.concat(classStr, ", ")
-        lines[#lines + 1] = "  Физических групп (дублей-полотен): " .. groupCount .. " | Двустворчатых пар: " .. math.floor(pairsCount / 2)
-        lines[#lines + 1] = "  С владельцем: " .. ownedCount .. " | Без владельца: " .. ownerlessCount
-        lines[#lines + 1] = "  Групп с РАЗНЫМИ владельцами (конфликт «две двери за одну»): " .. ambiguousCount
-        lines[#lines + 1] = "  Ликвидировано фантомов сейчас: " .. ghostCount .. " | Записей в БД: " .. table.Count(D.Data and D.Data.doors or {})
+        return {
+            doors = doors,
+            classes = classStr,
+            groups = groupCount,
+            aliases = aliasCount,
+            doublePairs = math.floor(pairsCount / 2),
+            owned = ownedCount,
+            ownerless = ownerlessCount,
+            ambiguous = ambiguousCount,
+            conflicts = conflicts,
+            orphans = orphans,
+            records = table.Count((D.Data and D.Data.doors) or {}),
+        }
+    end
 
+    function D.RebuildAll(opts)
+        opts = istable(opts) and opts or {}
+        local dry = opts.dry == true
+        local log = {}
+        local function add(fmt, ...)
+            local line = select("#", ...) > 0 and string.format(fmt, ...) or fmt
+            log[#log + 1] = line
+            print("[GRM Doors Rebuild] " .. line)
+        end
+
+        local before = D.BuildAuditReport()
+        add("до: дверей %d, физ-групп %d (лишних полотен %d), записей %d, сирот %d, конфликтов %d",
+            before.doors, before.groups, before.aliases, before.records, #before.orphans, before.ambiguous)
+
+        -- 1. Идентичность с нуля.
+        D._canonicalDoorIDs, D._equivalentDoors, D._primaryDoors = nil, nil, nil
+        D.RebuildDoorIdentityCache()
+
+        -- 2. Фантомы.
+        local purged, purgeLog = D.PurgeGhostDoors({ dry = dry, force = opts.force == true })
+        add("фантомных полотен %s: %d", dry and "найдено" or "ликвидировано", purged or 0)
+        for _, l in ipairs(purgeLog or {}) do log[#log + 1] = l end
+
+        -- 3. Записи-дубли -> канонический ID.
+        local collapsed = 0
+        if not dry then
+            D._canonicalDoorIDs, D._equivalentDoors, D._primaryDoors = nil, nil, nil
+            D.RebuildDoorIdentityCache()
+            collapsed = D.CollapseDuplicateRecords() or 0
+        end
+        add("записей-дублей схлопнуто: %d", collapsed)
+
+        -- 4. Сироты (по умолчанию только показываем — дверь может быть просто
+        --    не заспавнена аддоном перма на момент запуска).
+        local after = D.BuildAuditReport()
+        if #after.orphans > 0 then
+            add("записей без двери на карте: %d%s", #after.orphans,
+                opts.dropOrphans and (dry and " (будут удалены)" or " — удалены") or " (оставлены; удалить: grm_door_rebuild orphans)")
+            if opts.dropOrphans and not dry then
+                for _, id in ipairs(after.orphans) do D.Data.doors[id] = nil end
+            end
+            for i = 1, math.min(12, #after.orphans) do add("   сирота: %s", after.orphans[i]) end
+        end
+
+        -- 5. Переприменяем визуал и сохраняем.
+        if not dry then
+            for _, ent in ipairs(D.AllDoors()) do
+                local rec = D.GetRecord and select(1, D.GetRecord(ent))
+                if istable(rec) and not rec._ephemeral then
+                    D.ApplyRecordVisual(ent, rec)
+                elseif ent.GetInternalVariable then
+                    local eng = ent:GetInternalVariable("m_bLocked")
+                    D.SyncLockNW(ent, eng == true or eng == 1)
+                end
+            end
+            D.SaveDoors()
+        end
+
+        local final = D.BuildAuditReport()
+        add("после: дверей %d, физ-групп %d (лишних полотен %d), записей %d, конфликтов %d",
+            final.doors, final.groups, final.aliases, final.records, final.ambiguous)
+        if dry then add("РЕЖИМ ПРОВЕРКИ (dry): ничего не изменено. Запуск без 'dry' применит.") end
+        return log, final
+    end
+
+    local function printLines(ply, lines)
         for _, l in ipairs(lines) do
             if IsValid(ply) then ply:ChatPrint(l) else print(l) end
         end
+    end
+
+    function D.RunAudit(ply, purge)
+        local ghost = 0
+        if purge ~= false and D.PurgeGhostDoors then ghost = D.PurgeGhostDoors() or 0 end
+        local r = D.BuildAuditReport()
+        local lines = {
+            "[GRM Door Audit] Дверей: " .. r.doors .. " | Классы: " .. table.concat(r.classes, ", "),
+            "  Физических групп (дублей-полотен): " .. r.groups .. " | лишних полотен в группах: " .. r.aliases ..
+                " | Двустворчатых пар: " .. r.doublePairs,
+            "  С владельцем: " .. r.owned .. " | Без владельца: " .. r.ownerless,
+            "  Групп с РАЗНЫМИ владельцами (конфликт «две двери за одну»): " .. r.ambiguous,
+            "  Записей в БД: " .. r.records .. " | из них без двери на карте: " .. #r.orphans,
+            "  Ликвидировано фантомов сейчас: " .. ghost .. " | Полная пересборка: grm_door_rebuild (или /door_rebuild)",
+        }
+        for i = 1, math.min(6, #r.conflicts) do
+            lines[#lines + 1] = "   конфликт: " .. tostring(r.conflicts[i])
+        end
+        printLines(ply, lines)
+        return r
+    end
+
+    concommand.Add("grm_door_audit", function(ply)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        D.RunAudit(ply, true)
+    end)
+
+    concommand.Add("grm_door_rebuild", function(ply, _, args)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        local opts = {}
+        for _, a in ipairs(args or {}) do
+            a = string.lower(tostring(a))
+            if a == "dry" or a == "check" or a == "проверка" then opts.dry = true end
+            if a == "force" then opts.force = true end
+            if a == "orphans" or a == "сироты" then opts.dropOrphans = true end
+        end
+        local log = D.RebuildAll(opts)
+        printLines(ply, log)
     end)
 end
 
@@ -521,7 +836,7 @@ if SERVER then
     end
 
     local function nickOf(key)
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and (charKey(p) == key or p:SteamID64() == key or p:SteamID() == key) then
                 return p:Nick()
             end
@@ -1486,6 +1801,25 @@ if SERVER then
         local args = string.Explode(" ", string.Trim(text or ""))
         local cmd = string.lower(args[1] or "")
         if cmd == "/door" or cmd == "!door" then D.OpenDoorMenu(ply) return true end
+        if cmd == "/door_audit" or cmd == "/аудит_дверей" then
+            if not D.CanAdminDoors(ply) then notify(ply, "Только суперадмин.", 255, 120, 100) return true end
+            D.RunAudit(ply, true)
+            return true
+        end
+        if cmd == "/door_rebuild" or cmd == "/пересборка_дверей" then
+            if not D.CanAdminDoors(ply) then notify(ply, "Только суперадмин.", 255, 120, 100) return true end
+            local opts = {}
+            for i = 2, #args do
+                local a = string.lower(tostring(args[i] or ""))
+                if a == "dry" or a == "check" or a == "проверка" then opts.dry = true end
+                if a == "force" then opts.force = true end
+                if a == "orphans" or a == "сироты" then opts.dropOrphans = true end
+            end
+            local log = D.RebuildAll(opts)
+            for _, l in ipairs(log) do notify(ply, l, 180, 210, 255) end
+            return true
+        end
+
         if cmd == "/lock" or cmd == "!lock" or cmd == "/unlock" or cmd == "!unlock" then
             local ent = aimDoor(ply)
             if IsValid(ent) then
@@ -1505,7 +1839,7 @@ if SERVER then
             local who = args[2]
             if not who then notify(ply, "Использование: /warrant <ник|sid64> [мин] [причина]", 255, 180, 80) return true end
             local sid, mins, reason = who, tonumber(args[3]) or 30, table.concat(args, " ", 4)
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and (string.find(string.lower(p:Nick()), string.lower(who), 1, true)
                     or p:SteamID64() == who or p:SteamID() == who) then
                     sid = charKey(p) break
@@ -1519,7 +1853,7 @@ if SERVER then
             local who = args[2]
             if not who then return true end
             local sid = who
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and (string.find(string.lower(p:Nick()), string.lower(who), 1, true) or p:SteamID64() == who) then
                     sid = charKey(p) break
                 end
@@ -1655,7 +1989,11 @@ if CLIENT then
         if not IsValid(ply) or not ply:Alive() then return end
         local active = ply:GetActiveWeapon()
         if IsValid(active) and active:GetClass() == "ds_key_swep" then return end
-        local tr = ply:GetEyeTrace()
+        -- Общий трейс из глаз (GRM.Perf): один на кадр на все HUD-модули,
+        -- вместо собственного GetEyeTrace 60 раз в секунду в каждом.
+        local tr = (GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(ply, 0.05) or ply:GetEyeTrace()
+        if not tr then return end
+
         local ent = tr.Entity
         if not IsValid(ent) then return end
         if not D.IsDoor(ent) and not (IsValid(ent:GetParent()) and D.IsDoor(ent:GetParent())) then return end
@@ -1800,7 +2138,7 @@ if CLIENT then
             local plyCombo = vgui.Create("DComboBox", addPanel)
             plyCombo:SetPos(10, 7) plyCombo:SetSize(360, 26)
             plyCombo:SetValue("Выберите игрока онлайн...")
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and p ~= LocalPlayer() then
                     local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64()
                     plyCombo:AddChoice(p:Nick() .. " (" .. ck .. ")", ck)

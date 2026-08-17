@@ -215,7 +215,7 @@ if SERVER then
         local now = os.time()
         -- инвентари игроков: приготовленное с просроченным сроком → мусор
         if GRM.Inventory and GRM.Inventory.GetPlayerInv then
-            for _, ply in ipairs(player.GetAll()) do
+            for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(ply) then
                     local inv = GRM.Inventory.GetPlayerInv(ply)
                     local rotted = 0

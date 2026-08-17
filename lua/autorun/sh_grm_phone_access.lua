@@ -242,7 +242,7 @@ if SERVER then
         local target = ply
         local query = args[1]
         if query and query ~= "" then
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if string.find(string.lower(p:Nick()), string.lower(query), 1, true) or p:SteamID() == query or p:SteamID64() == query then
                     target = p
                     break

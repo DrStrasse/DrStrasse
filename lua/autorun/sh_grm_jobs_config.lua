@@ -49,9 +49,15 @@ if SERVER then
     local function quarantine(path, raw)
         if raw and raw ~= "" then file.Write(path .. ".corrupt." .. os.time() .. ".txt", raw) end
     end
+    -- Профиль маршрута мусоровоза. Поднятие числа заставляет один раз
+    -- переставить контейнеры/вместимость на новые значения даже в уже
+    -- сохранённом на сервере конфиге (иначе владелец получил бы старые 2/8).
+    local GARBAGE_PROFILE = 3
+
     local function defaults()
         return {
             version = 2,
+            garbageProfile = GARBAGE_PROFILE,
             fundFromState = true,
             taxiMin = 300,
             taxiMax = 2500,
@@ -59,8 +65,10 @@ if SERVER then
             taxiVehicles = {},
             garbageVehicles = {},
             courierVehicles = {},
-            garbageStops = 2,
-            garbageCapacity = 8,
+            -- Заказ владельца: маршрут из 3 контейнеров, кузов на 3 пакета.
+            -- Мусоровоз едет на полигон ТОЛЬКО собрав 3/3.
+            garbageStops = 3,
+            garbageCapacity = 3,
             garbageSearchTime = 2.5,
             garbageBinCooldown = 90,
             garbageBindRadius = 500,
@@ -75,8 +83,20 @@ if SERVER then
         d.taxiMin = math.floor(clamp(t.taxiMin, 0, 100000))
         d.taxiMax = math.floor(clamp(t.taxiMax, d.taxiMin, 100000))
         d.taxiDefault = math.floor(clamp(t.taxiDefault, d.taxiMin, d.taxiMax))
-        d.garbageStops = math.floor(clamp(t.garbageStops, 1, 8))
-        d.garbageCapacity = math.floor(clamp(t.garbageCapacity, 1, 32))
+        d.garbageProfile = math.floor(tonumber(t.garbageProfile) or 0)
+        if d.garbageProfile < GARBAGE_PROFILE then
+            -- Одноразовая миграция старого конфига (2 контейнера / кузов 8).
+            d.garbageStops = 3
+            d.garbageCapacity = 3
+            d.garbageProfile = GARBAGE_PROFILE
+            print("[GRM Jobs] миграция маршрута мусоровоза: 3 контейнера, вместимость 3")
+        else
+            d.garbageStops = math.floor(clamp(t.garbageStops, 1, 8))
+            d.garbageCapacity = math.floor(clamp(t.garbageCapacity, 1, 32))
+        end
+        -- Кузов не может быть меньше маршрута: иначе 3/3 недостижимо и
+        -- игрок навсегда застревает между контейнером и полигоном.
+        if d.garbageCapacity < d.garbageStops then d.garbageCapacity = d.garbageStops end
         d.garbageSearchTime = clamp(t.garbageSearchTime, .5, 15)
         d.garbageBinCooldown = math.floor(clamp(t.garbageBinCooldown, 10, 1800))
         d.garbageBindRadius = math.floor(clamp(t.garbageBindRadius, 100, 2000))
@@ -247,6 +267,10 @@ if SERVER then
             JB.WorkConfig.taxiMax = math.floor(clamp(t.taxiMax, JB.WorkConfig.taxiMin, 100000))
             JB.WorkConfig.taxiDefault = math.floor(clamp(t.taxiDefault, JB.WorkConfig.taxiMin, JB.WorkConfig.taxiMax))
             JB.WorkConfig.garbageStops=math.floor(clamp(t.garbageStops,1,8));JB.WorkConfig.garbageCapacity=math.floor(clamp(t.garbageCapacity,1,32));JB.WorkConfig.garbageSearchTime=clamp(t.garbageSearchTime,.5,15);JB.WorkConfig.garbageBinCooldown=math.floor(clamp(t.garbageBinCooldown,10,1800));JB.WorkConfig.garbageBindRadius=math.floor(clamp(t.garbageBindRadius,100,2000));JB.WorkConfig.garbageDumpRadius=math.floor(clamp(t.garbageDumpRadius,150,1000));JB.WorkConfig.garbageUnloadTime=clamp(t.garbageUnloadTime,1,30)
+            -- Кузов не меньше маршрута — иначе «собрать 3/3» недостижимо.
+            if JB.WorkConfig.garbageCapacity < JB.WorkConfig.garbageStops then
+                JB.WorkConfig.garbageCapacity = JB.WorkConfig.garbageStops
+            end
             JB.WorkConfig.taxiVehicles=parseList(t.taxiVehicles);JB.WorkConfig.garbageVehicles=parseList(t.garbageVehicles);JB.WorkConfig.courierVehicles=parseList(t.courierVehicles)
             JB.SaveWorkConfig("админ-настройки")
         elseif act == "add_point" then

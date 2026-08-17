@@ -67,7 +67,7 @@ function ENT:Use(ply)
     end
 
     local onlineList = {}
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) then
             local rp = (p.GetNWString and p:GetNWString("GRM_RPName", ""))
             if not isstring(rp) or rp == "" then rp = p:Nick() end

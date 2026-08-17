@@ -306,7 +306,7 @@ concommand.Add("grm_cuffs_debug_access", function(ply, _, args)
     local query = args[1]
 
     if query and query ~= "" then
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if string.find(string.lower(p:Nick()), string.lower(query), 1, true) or p:SteamID() == query or p:SteamID64() == query then
                 target = p
                 break
@@ -1304,7 +1304,7 @@ hook.Add("PlayerUse", "GRM_Handcuffs_ReleaseOrTransfer", function(ply, ent)
 end)
 
 timer.Create("GRM_Handcuffs_ReleaseDecay", 0.25, 0, function()
-    for _, ply in ipairs(player.GetAll()) do
+    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if HC.IsCuffed(ply) then
             local progress = ply:GetNWFloat("GRM_CuffReleaseProgress", 0)
             if progress > 0 then
@@ -1315,7 +1315,7 @@ timer.Create("GRM_Handcuffs_ReleaseDecay", 0.25, 0, function()
 end)
 
 timer.Create("GRM_Handcuffs_EnforceNoWeaponsWhileCuffed", 0.35, 0, function()
-    for _, ply in ipairs(player.GetAll()) do
+    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if HC.IsCuffed(ply) then
             HC.EnforceCuffedWeaponState(ply)
         end
@@ -1355,7 +1355,7 @@ concommand.Add("grm_cuffs_give", function(ply, _, args)
     if not query or query == "" then
         target = IsValid(ply) and ply or nil
     else
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if string.find(string.lower(p:Nick()), string.lower(query), 1, true) or p:SteamID() == query or p:SteamID64() == query then
                 target = p
                 break

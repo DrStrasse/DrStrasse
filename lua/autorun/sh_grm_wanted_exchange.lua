@@ -475,7 +475,7 @@ function X.Accept(actor, id, note)
     X.Save()
 
     -- уведомляем заявителя, если он в сети
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) and charKey(p) == req.from then
             notify(p, ("Заявка №%d удовлетворена: %s"):format(req.id, msg), 110, 220, 150)
         end
@@ -511,7 +511,7 @@ function X.Decline(actor, id, note)
     X.Log("decline", actor, req.targetKey, "заявка №" .. req.id, note)
     X.Save()
 
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) and charKey(p) == req.from then
             notify(p, ("Заявка №%d отклонена%s"):format(req.id, note and note ~= "" and (": " .. note) or ""), 250, 170, 110)
         end

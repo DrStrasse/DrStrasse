@@ -161,7 +161,7 @@ function SWEP:LogSearch(searcher, target, found)
     print(log)
     
     -- Отправляем в чат всем игрокам с доступом
-    for _, ply in ipairs(player.GetAll()) do
+    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(ply) and self:CanSearch(ply) then
             ply:ChatPrint(log)
         end

@@ -570,7 +570,7 @@ hook.Add("PlayerSay", "GRM_Phone_LineTextChat", function(ply, text)
 
     local recipients = {}
     local tapped = {}
-    for _, target in ipairs(player.GetAll()) do
+    for _, target in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if target ~= ply then
             local tCall, tDev = getCallForPlayer(target)
             if tCall and tCall.id == call.id and callIncludesPhone(call, tDev) then

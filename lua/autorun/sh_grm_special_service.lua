@@ -273,7 +273,7 @@ if SERVER then
         saveWanted()
 
         -- Обновляем сетевые переменные цели без чат-уведомления.
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and charKey(p) == key then
                 p:SetNW2Int("GRM_WantedLevel", level)
                 p:SetNWInt("GRM_WantedLevel", level)
@@ -324,7 +324,7 @@ if SERVER then
         R[key] = nil
         saveWanted()
 
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and charKey(p) == key then
                 p:SetNW2Int("GRM_WantedLevel", 0)
                 p:SetNWInt("GRM_WantedLevel", 0)
@@ -384,7 +384,7 @@ if SERVER then
         if not isfunction(release) then return false, "Модуль арестов недоступен" end
 
         local low = string.lower(tostring(targetName or ""))
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and p:GetNWBool("GRM_Arrested", false)
                 and (charKey(p) == targetName or string.find(string.lower(p:Nick()), low, 1, true)) then
                 local ok = release(actor, p)
@@ -431,7 +431,7 @@ if SERVER then
     -- а не только автору, и переживает перезаход.
     -------------------------------------------------------------------
     local function subjectName(key)
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and charKey(p) == key then
                 local rp = p:GetNWString("GRM_RPName", "")
                 if rp ~= "" then return rp end
@@ -754,7 +754,7 @@ if SERVER then
 
     local function arrestRows()
         local out = {}
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and p:GetNWBool("GRM_Arrested", false) then
                 out[#out + 1] = {
                     key    = charKey(p),
@@ -778,7 +778,7 @@ if SERVER then
 
     local function onlineRows()
         local out = {}
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) then
                 local rp = p:GetNWString("GRM_RPName", "")
                 out[#out + 1] = {

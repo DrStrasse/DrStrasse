@@ -575,7 +575,7 @@ ok(tool2:find('Цель ивента — Рейхсбанк', 1, true) ~= nil, "
 local lin = assert(io.open("lua/entities/grm_money_launderer/init.lua", "rb")):read("*a")
 ok(lin:find('НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ', 1, true) ~= nil, "баннер: «НАЧАТ ИВЕНТ: ОГРАБЛЕНИЕ»")
 ok(lin:find('HEIST_MUSIC = "music/hl2_song20_submix0.mp3"', 1, true) ~= nil, "сервер: константа HEIST_MUSIC")
-ok(lin:find('for _, p in ipairs(player.GetAll()) do', 1, true) ~= nil and lin:find('p:EmitSound(HEIST_MUSIC, 127, 110)', 1, true) ~= nil, "сервер: музыка КАЖДОМУ игроку p:EmitSound 127/110 (находка 180d)")
+ok((lin:find('ipairs(player.GetAll())', 1, true) ~= nil or lin:find('GRM.Perf.Players()', 1, true) ~= nil) and lin:find('p:EmitSound(HEIST_MUSIC, 127, 110)', 1, true) ~= nil, "сервер: музыка КАЖДОМУ игроку p:EmitSound 127/110 (находка 180d)")
 ok(lin:find('Sound(HEIST_MUSIC)', 1, true) ~= nil, "сервер: прекэш Sound() как у kom_hour (находка 180d)")
 ok(lin:find('util.PrecacheSound(HEIST_MUSIC)', 1, true) ~= nil, "сервер: прекэш util.PrecacheSound (страховка)")
 ok(lin:find('CreateSound', 1, true) == nil and lin:find('FadeOutHeistMusic', 1, true) == nil, "сервер: CreateSound/FadeOut ПОЛНОСТЬЮ удалены (находка 180d)")

@@ -523,7 +523,7 @@ local function scanPresence()
             local seen = {}
             local radiusSqr = math.max(1, chip:GetRadius()) ^ 2
 
-            for _, ply in ipairs(player.GetAll()) do
+            for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 local sid = steamID64(ply)
                 local inside = ply:GetPos():DistToSqr(chip:GetPos()) <= radiusSqr
                 seen[sid] = true
@@ -1108,7 +1108,7 @@ net.Receive(NET_DEVICE_ACTION, function(_, ply)
         RT.SaveShopOwned()
         notify(ply, true, "Запрос на постоянное сохранение оборудования отправлен администраторам.")
 
-        for _, admin in ipairs(player.GetAll()) do
+        for _, admin in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if admin:IsSuperAdmin() then
                 notify(admin, false, "[Прослушка] Запрос сохранения от " .. rpName(ply) .. ". Команда: roomtap_requests")
             end

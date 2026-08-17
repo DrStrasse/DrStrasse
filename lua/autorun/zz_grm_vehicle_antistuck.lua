@@ -449,7 +449,7 @@ if SERVER then
     timer.Create("GRM_VehicleAntiStuck_Think", AS.Config.ThinkInterval, 0, function()
         if not cfg().Enabled then return end
 
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) and ply:Alive() and not ply:InVehicle() then
                 if not (cfg().IgnoreNoclip and ply:GetMoveType() == MOVETYPE_NOCLIP) then
                     -- Новый режим: проверяем только игроков, которые недавно вышли из машины.

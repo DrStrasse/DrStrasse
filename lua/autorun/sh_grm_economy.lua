@@ -234,7 +234,7 @@ if SERVER then
         local raw = tostring(value or "")
         if raw:match(":char[1-3]$") then return raw end
         if player and player.GetAll then
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and (p:SteamID() == raw or p:SteamID64() == raw) then return characterKeyOf(p) end
             end
         end
@@ -285,7 +285,7 @@ if SERVER then
         local out = {}
         f = f or (Factions and Factions[name])
         if not istable(f) or not istable(f.Members) then return out end
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and memberRec(f, p) then out[#out + 1] = p end
         end
         return out
@@ -882,7 +882,7 @@ if SERVER then
     net.Receive("GRM_Bank_Request", function(_, ply) pushBank(ply) end)
 
     local function pushBankBySid(sid)
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and characterKeyOf(p) == tostring(sid) then pushBank(p) return end
         end
     end
@@ -901,7 +901,7 @@ if SERVER then
          и досылаем разницу. Трафик копеечный: пуш идёт только при
          фактическом расхождении. ]]
     timer.Create("GRM_Economy_BankSyncWatch", 1, 0, function()
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and p:IsPlayer() then
                 local key = characterKeyOf(p)
                 if key and key ~= "" and key ~= "0" then
@@ -1309,7 +1309,7 @@ if SERVER then
         -- поднимался сверкой (анти-потеря ловит только уменьшение) →
         -- нал уже выдан, счёт снова вырос = «умножение».
         local onlineBank = {}
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and p:IsPlayer() then
                 local sid = characterKeyOf(p)
                 if sid ~= "" and istable(oldAccounts) and istable(oldAccounts[sid]) then
@@ -1357,7 +1357,7 @@ if SERVER then
             save(true, "сверка: анти-раздутие online-счетов")
         end
         local pushed = 0
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and p:IsPlayer() then
                 local sid = characterKeyOf(p)
                 local oldBal = oldAccounts and oldAccounts[sid] and oldAccounts[sid].balance or 0
@@ -1725,7 +1725,7 @@ if SERVER then
             if E.Data.state.budget < v then notify(ply, "В гос.бюджете только: " .. money(E.Data.state.budget), 255, 100, 100) return end
             stateAdd(-v, ("Выплата игроку %s (админ %s)"):format(sid, ply:Nick()))
             GRM.GiveMoney(sid, v, "Выплата из гос.бюджета")
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and characterKeyOf(p) == sid then
                     notify(p, "Вам выплачено из гос.бюджета: " .. money(v), 100, 220, 100)
                     break
@@ -1798,7 +1798,7 @@ if SERVER then
         end
 
         sendAdminData(ply)
-        timer.Simple(0.5, function() for _, p in ipairs(player.GetAll()) do if IsValid(p) then syncPlayer(p) end end end)
+        timer.Simple(0.5, function() for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do if IsValid(p) then syncPlayer(p) end end end)
     end)
 
     -- ========================================================
@@ -1809,7 +1809,7 @@ if SERVER then
         if ply:GetPos():DistToSqr(ent:GetPos()) > (E.Config.UseDistance ^ 2) * 4 then return end
         local name = factionOf(ply)
         local players = {}
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and p ~= ply then
                 players[#players + 1] = { nick = p:Nick(), sid64 = characterKeyOf(p), characterKey = characterKeyOf(p) }
             end
@@ -1866,7 +1866,7 @@ if SERVER then
             local ok = E.BankTransfer(ply, toSid, amt)
             if not ok then notify(ply, "Перевод не выполнен: недостаточно средств на счёте.", 255, 100, 100) return end
             local target
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and characterKeyOf(p) == toSid then target = p break end
             end
             notify(ply, ("Переведено %s → %s"):format(money(amt), IsValid(target) and target:Nick() or toSid), 255, 180, 80)
@@ -1895,7 +1895,7 @@ if SERVER then
         elseif a.type == "transfer" then
             if amt <= 0 then return end
             local target
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and characterKeyOf(p) == tostring(a.to or "") then target = p break end
             end
             if not IsValid(target) then notify(ply, "Получатель не в сети.", 255, 100, 100) return end
@@ -2012,7 +2012,7 @@ if SERVER then
             if tail ~= "" then
                 local low = string.lower(tail)
                 local matches = {}
-                for _, p in ipairs(player.GetAll()) do
+                for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                     if IsValid(p) and p ~= ply and string.find(string.lower(p:Nick()), low, 1, true) then
                         matches[#matches + 1] = p
                     end

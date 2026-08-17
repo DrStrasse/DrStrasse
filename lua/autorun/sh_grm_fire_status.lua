@@ -67,7 +67,7 @@ function F.NotifyFire(text, r, g, b, pos, inc)
     end
 
     -- 1. SuperAdmin + диспетчер + FightPro (галочка Control)
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) then
             if p:IsSuperAdmin() or (F.CanDispatch and F.CanDispatch(p)) or (F.CanFightPro and F.CanFightPro(p)) then
                 tellPlayer(p)
@@ -79,7 +79,7 @@ function F.NotifyFire(text, r, g, b, pos, inc)
     if inc and istable(inc.fighters) then
         for _, rec in ipairs(inc.fighters) do
             if rec and rec.key then
-                for _, p in ipairs(player.GetAll()) do
+                for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                     if IsValid(p) and plyKey(p) == rec.key then
                         tellPlayer(p)
                     end
@@ -90,7 +90,7 @@ function F.NotifyFire(text, r, g, b, pos, inc)
 
     -- 3. Рядом с очагом ~1500 юнитов (видели дым, должны знать)
     if isvector(pos) then
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and not notified[p] then
                 if p:GetPos():DistToSqr(pos) <= 1500 * 1500 then
                     tellPlayer(p)
@@ -344,7 +344,7 @@ if SERVER then
         if IsValid(fire) and fire.GetPos then pos = fire:GetPos() end
         if pos then
             -- записать бойца рядом если держит ствол
-            for _, ply in ipairs(player.GetAll()) do
+            for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(ply) and ply:GetPos():DistToSqr(pos) <= 320 * 320 then
                     local w = ply:GetActiveWeapon()
                     local cls = IsValid(w) and w:GetClass() or ""
@@ -371,7 +371,7 @@ if SERVER then
             if #liveVfire() > 0 then F.BuildFromExisting() end
             return
         end
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) and ply:KeyDown(IN_ATTACK) then
                 local w = ply:GetActiveWeapon()
                 local cls = IsValid(w) and w:GetClass() or ""

@@ -298,7 +298,7 @@ if SERVER then
         if GRM.Minimap and GRM.Minimap.AddTempPoint then
             GRM.Minimap.AddTempPoint("ПОЖАР", pos, 120)
             if GRM.Minimap.SendTo then
-                for _, p in ipairs(player.GetAll()) do
+                for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                     if F.CanDispatch(p) or p:IsSuperAdmin() then GRM.Minimap.SendTo(p) end
                 end
             end
@@ -650,13 +650,13 @@ if SERVER then
     -- ── плита ───────────────────────────────────────────────
     timer.Create("GRM_Fire_Stove", 2, 0, function()
         if not F.Config.StoveEnabled or not F.VFireReady() then return end
-        for _, stove in ipairs(ents.FindByClass("grm_food_stove")) do
+        for _, stove in ipairs((GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_food_stove") or ents.FindByClass("grm_food_stove")) do
             if IsValid(stove) and stove.GetStoveState and stove:GetStoveState() == 1 then
                 if F.IsBurning(stove:GetPos()) then
                 else
                     local near = false
                     local r = tonumber(F.Config.StoveNear) or 200
-                    for _, p in ipairs(player.GetAll()) do
+                    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                         if IsValid(p) and p:Alive() and p:GetPos():DistToSqr(stove:GetPos()) <= r * r then
                             near = true
                             break

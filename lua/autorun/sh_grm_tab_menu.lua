@@ -119,7 +119,7 @@ if SERVER then
     local function buildTabData(requester)
         local isAdmin = requester:IsAdmin()
         local players = {}
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) then
                 local sid = ply:SteamID64()
                 local bal = 0
@@ -169,7 +169,7 @@ if SERVER then
         if not a or not a.type then return end
 
         local function findBySID64(sid64)
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and p:SteamID64() == sid64 then return p end
             end
             return nil
@@ -371,7 +371,7 @@ if CLIENT then
     local function buildLocalPlayers()
         local list = {}
         local lp   = LocalPlayer()
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) then
                 local rank = "user"
                 if ply:IsSuperAdmin() then rank = "superadmin"

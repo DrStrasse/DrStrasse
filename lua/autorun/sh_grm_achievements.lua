@@ -238,7 +238,7 @@ if SERVER then
 
     -- поллинг: время игры + состоит ли во фракции (30 с) --------------------
     timer.Create("GRM_Ach_Poll30", 30, 0, function()
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and p:IsPlayer() then
                 AC.AddMetric(p, "playSec", 30)
                 local fac = nil
@@ -258,7 +258,7 @@ if SERVER then
     -- поллинг: пешая дистанция (2 с, анти-телепорт капа) ---------------------
     local lastPos = {}
     timer.Create("GRM_Ach_Walk", 2, 0, function()
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and p:IsPlayer() then
                     local k = achievementKey(p)
                 if p:Alive() and (not p.InVehicle or not p:InVehicle()) and p:IsOnGround() then
@@ -404,7 +404,7 @@ if SERVER then
             if not ply:IsSuperAdmin() then ply:PrintMessage(HUD_PRINTTALK, "[Ачивки] Только суперадмин.") return true end
             local who = string.lower(string.Trim(string.sub(t, 12)))
             local target = nil
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and string.find(string.lower(p:Nick()), who, 1, true) then target = p break end
             end
             if not IsValid(target) then ply:PrintMessage(HUD_PRINTTALK, "[Ачивки] Игрок «" .. who .. "» не найден в онлайне.") return true end

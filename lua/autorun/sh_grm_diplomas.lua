@@ -123,7 +123,7 @@ D.CharKey = charKey
 local function findPlayerByKey(k)
     if GRM.Services and isfunction(GRM.Services.FindPlayer) then return GRM.Services.FindPlayer(k) end
     k = tostring(k or "")
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) and (charKey(p) == k or p:SteamID64() == k) then return p end
     end
 end

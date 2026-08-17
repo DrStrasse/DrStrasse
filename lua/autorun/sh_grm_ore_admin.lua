@@ -17,7 +17,7 @@ if SERVER then
     local function findPlayer(name)
         if not name or name == "" then return nil end
         local lower = name:lower()
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if ply:Nick():lower():find(lower, 1, true) then
                 return ply
             end

@@ -178,7 +178,7 @@ if SERVER then
 
     -- Рассылка всем суперадминам (и лидерам — они видят доступы своей фракции).
     function PERMS.Broadcast()
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and p:IsSuperAdmin() then
                 PERMS.SendTo(p)
             end

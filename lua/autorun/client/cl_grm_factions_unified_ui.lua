@@ -661,7 +661,7 @@ function UI.Open(requestedFaction)
             local comboPly = vgui.Create("DComboBox", invModal)
             comboPly:SetPos(16, 52); comboPly:SetSize(388, 28); skinCombo(comboPly)
             comboPly:AddChoice("— Выберите игрока онлайн —", "")
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and p ~= LocalPlayer() then
                     local n = p:GetNWString("GRM_RPName", "")
                     comboPly:AddChoice(string.format("%s [%s]", n ~= "" and n or p:Nick(), p:Nick()), p:SteamID())

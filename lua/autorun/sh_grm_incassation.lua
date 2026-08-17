@@ -753,7 +753,7 @@ function I.StartRun(ply)
 
     notify(ply, "Рейс #" .. runID .. " начат (" .. tostring(spawnName) .. "). Доступен забор и развозка средств по банкоматам. G — меню.", 100, 220, 130)
 
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) and p ~= ply and (isfunction(p.IsAdmin) and p:IsAdmin() or isfunction(p.IsSuperAdmin) and p:IsSuperAdmin())
            and p:GetPos():DistToSqr(ply:GetPos()) <= (I.Config.NotifyPoliceRadius ^ 2) then
             notify(p, "[АДМИН] " .. ply:Nick() .. " начал рейс инкассации #" .. runID, 200, 180, 80)
@@ -1996,7 +1996,8 @@ hook.Add("HUDPaint", "GRM_Incass_HUD", function()
         draw.SimpleText(txt, "GRMInc_Normal", ScrW() / 2, ScrH() - 120, Color(255, 220, 120, 230), TEXT_ALIGN_CENTER)
     end
 
-    local tr = ply:GetEyeTrace()
+    local tr = (GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(ply, 0.05) or ply:GetEyeTrace()
+    if not tr then return end
     local pPos = ply:GetPos()
     local targetEnt = IsValid(tr.Entity) and tr.Entity or nil
     if not IsValid(targetEnt) then

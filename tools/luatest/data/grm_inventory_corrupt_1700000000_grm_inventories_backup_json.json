@@ -1,0 +1,26 @@
+{
+    "76561198000000012": {
+        "slots": [
+            {
+                "count": 1,
+                "id": "mobile_badger"
+            },
+            {
+                "count": 30,
+                "id": "ammo_pistol"
+            },
+            {
+                "id": "radio_modulator",
+                "data": {
+                    "on": true
+                },
+                "count": 1
+            }
+        ]
+    },
+    "_grm_meta": {
+        "savedAt": 1786989753,
+        "revision": 3,
+        "version": 2
+    }
+}

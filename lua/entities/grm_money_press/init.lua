@@ -192,7 +192,7 @@ end
 function ENT:OwnerPlayer()
     local sid = tostring(self:GetOwnerSID64() or "")
     if sid == "" then return nil end
-    for _, p in ipairs(player.GetAll()) do
+    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(p) then
             local key = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64() or ""
             if tostring(key) == sid then return p end

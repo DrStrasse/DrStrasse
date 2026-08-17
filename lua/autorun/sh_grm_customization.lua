@@ -424,7 +424,7 @@ if SERVER then
     timer.Simple(0, registerIntegrations)
     function C.LoadData()
         loadData(); registerIntegrations()
-        for _, target in ipairs(player.GetAll()) do
+        for _, target in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(target) then C.SendCatalog(target); C.SyncPlayer(target) end
         end
         return true
@@ -444,7 +444,7 @@ if SERVER then
     end
     function C.SyncAllTo(ply)
         C.SendCatalog(ply)
-        for _, target in ipairs(player.GetAll()) do if IsValid(target) then C.SyncPlayer(target, ply) end end
+        for _, target in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do if IsValid(target) then C.SyncPlayer(target, ply) end end
     end
 
     function C.Confiscate(ply)
@@ -712,7 +712,7 @@ if SERVER then
             end
         else return end
         saveCatalog(); saveLoadouts(); registerIntegrations()
-        for _, target in ipairs(player.GetAll()) do C.SendCatalog(target); C.SyncPlayer(target) end
+        for _, target in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do C.SendCatalog(target); C.SyncPlayer(target) end
         sendAck(ply, true, op == "delete" and "admin_delete" or "admin_save", op == "delete" and "Аксессуар удалён из каталога" or "Аксессуар сохранён в каталоге")
         adminOpen(ply)
     end)

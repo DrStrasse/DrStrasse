@@ -137,7 +137,7 @@ if SERVER then
     end
 
     local function findBySID64(sid64)
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if p:SteamID64() == sid64 then return p end
         end
         return nil
@@ -160,7 +160,7 @@ if SERVER then
         local players = {}
         local total   = 0
 
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) then
                 local bal     = GRM.GetBalance(p)
                 local fName   = getPlayerFaction(p)
@@ -184,7 +184,7 @@ if SERVER then
             for name, f in pairs(Factions) do
                 if istable(f) then
                     local online = 0
-                    for _, p in ipairs(player.GetAll()) do
+                    for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                         if IsValid(p) and getPlayerFaction(p) == name then
                             online = online + 1
                         end
@@ -353,7 +353,7 @@ if SERVER then
             if amount <= 0 then fail(ply, "Сумма должна быть > 0"); return end
 
             local members, total = {}, 0
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and getPlayerFaction(p) == fname then
                     table.insert(members, p); total = total + amount
                 end

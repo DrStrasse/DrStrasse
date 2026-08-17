@@ -449,7 +449,7 @@ if CLIENT then
             online:Dock(FILL)
             online:DockMargin(6, 0, 0, 0)
             online:SetValue("Онлайн…")
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) then
                     local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64()
                     online:AddChoice(p:Nick() .. " [" .. ck .. "]", ck)

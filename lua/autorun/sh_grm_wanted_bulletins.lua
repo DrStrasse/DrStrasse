@@ -117,7 +117,7 @@ if SERVER then
         local out = {}
         if ch == "dep" then
             local allowed = depFactions()
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) and allowed[factionOf(p)] then out[#out + 1] = p end
             end
             return out
@@ -125,7 +125,7 @@ if SERVER then
 
         local mine = IsValid(sender) and factionOf(sender) or ""
         if mine == "" then return out end
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and factionOf(p) == mine then out[#out + 1] = p end
         end
         return out
@@ -222,7 +222,7 @@ if SERVER then
         end
 
         -- онлайн-подсказка помогает патрулю сориентироваться
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and charKey(p) == key then
                 parts[#parts + 1] = "фигурант в сети"
                 break
@@ -371,7 +371,7 @@ if SERVER then
     local function resolveTarget(arg)
         if not arg or arg == "" then return "" end
         local low = string.lower(arg)
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) then
                 if charKey(p) == arg or p:SteamID64() == arg then return charKey(p) end
                 if string.find(string.lower(p:Nick()), low, 1, true) then return charKey(p) end

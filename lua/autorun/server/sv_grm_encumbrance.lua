@@ -198,7 +198,7 @@ function E.Refresh(ply)
 end
 
 timer.Create("GRM_Weight_Update", math.max(0.1, C.UpdateInterval or 0.25), 0, function()
-    for _, ply in ipairs(player.GetAll()) do updatePlayer(ply) end
+    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do updatePlayer(ply) end
 end)
 
 hook.Add("Move", "GRM_Weight_FinalSpeedCap", function(ply, mv)

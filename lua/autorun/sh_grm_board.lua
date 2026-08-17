@@ -219,7 +219,7 @@ if SERVER then
         local lsid = (_G.FactionsAPI.GetLeader and _G.FactionsAPI.GetLeader(fname)) or (istable(f) and f.Leader)
         local leader = lsid and player.GetBySteamID(lsid) or nil
         if not IsValid(leader) then
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if p ~= ply and isLeader(p, fname) then leader = p break end
             end
         end

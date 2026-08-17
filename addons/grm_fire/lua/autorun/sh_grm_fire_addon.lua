@@ -90,9 +90,15 @@ end
 hook.Add("SetupMove", "GRM_FireLadder_Climb", function(ply, mv)
     if not IsValid(ply) or not ply:Alive() then return end
     if ply.InVehicle and ply:InVehicle() then return end
+    -- SetupMove вызывается КАЖДЫЙ тик на КАЖДОГО игрока. Полный скан класса
+    -- здесь стоил дороже самой механики лазания — берём event-реестр
+    -- GRM.Perf и выходим сразу, если выдвинутых лестниц на карте нет.
+    local ladders = (GRM and GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_fire_ladder")
+        or ents.FindByClass("grm_fire_ladder")
+    if #ladders == 0 then return end
     local pos = ply:GetPos()
     local best, bestD, a, b
-    for _, ent in ipairs(ents.FindByClass("grm_fire_ladder")) do
+    for _, ent in ipairs(ladders) do
         if IsValid(ent) and ent.GetDeployed and ent:GetDeployed() and ent.LadderSegment then
             local p0, p1 = ent:LadderSegment()
             local ab = p1 - p0

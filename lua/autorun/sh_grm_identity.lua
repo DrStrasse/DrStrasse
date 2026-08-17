@@ -106,7 +106,7 @@ if SERVER then
     function I.ResolveCharacter(key)
         key = tostring(key or "")
         if not I.IsCharacterKey(key) then return nil end
-        for _, ply in ipairs(player.GetAll()) do
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if I.CharacterKey(ply) == key then return ply end
         end
         return nil

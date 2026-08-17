@@ -58,7 +58,10 @@ hook.Add("PostDrawTranslucentRenderables", "GRM_FireSpot_Vis", function(_, sky)
     if sky then return end
     local ply = LocalPlayer()
     if not holdingPlaceTool(ply) then return end
-    for _, ent in ipairs(ents.FindByClass("grm_fire_spot")) do
+    -- Покадровый скан класса заменён event-реестром GRM.Perf.
+    local spots = (GRM and GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_fire_spot")
+        or ents.FindByClass("grm_fire_spot")
+    for _, ent in ipairs(spots) do
         if IsValid(ent) and ent.DrawSpotMarker then ent:DrawSpotMarker() end
     end
 end)

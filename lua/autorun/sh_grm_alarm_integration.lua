@@ -58,7 +58,7 @@ end
 function AN.NotifyFactions(text, pos)
     for facName in pairs(DATA.factions) do
         -- шлём всем членам оповещаемых фракций (онлайн)
-        for _, p in ipairs(player.GetAll()) do
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and AN.FactionOf(p) == facName then
                 if GRM.Notify then
                     GRM.Notify(p, text, 255, 120, 80)
@@ -70,7 +70,7 @@ function AN.NotifyFactions(text, pos)
     if pos and GRM.Minimap and GRM.Minimap.AddTempPoint then
         GRM.Minimap.AddTempPoint("ВЗЛОМ/ВМЕШАТЕЛЬСТВО", pos, 90)
         if GRM.Minimap.SendTo then
-            for _, p in ipairs(player.GetAll()) do
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) then GRM.Minimap.SendTo(p) end
             end
         end

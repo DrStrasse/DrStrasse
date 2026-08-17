@@ -174,7 +174,8 @@ hook.Add("HUDPaint", "VK_PassiveVehicleOwnerHUD", function()
     local ply = LocalPlayer()
     if not IsValid(ply) then return end
 
-    local trace = ply:GetEyeTrace()
+    local trace = (GRM and GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(ply, 0.05) or ply:GetEyeTrace()
+    if not trace then return end
     local veh = trace.Entity
     if not VK.IsVehicle(veh) then return end
     if ply:GetPos():DistToSqr(veh:GetPos()) > (VK.HUD_RANGE or 220) ^ 2 then return end
