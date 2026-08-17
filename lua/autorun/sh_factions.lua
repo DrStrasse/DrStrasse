@@ -6,6 +6,7 @@
 
 if SERVER then
     AddCSLuaFile()
+    AddCSLuaFile("autorun/client/cl_grm_factions_unified_ui.lua")
 end
 
 local NET_GET_DATA            = "Factions_GetData"
@@ -1542,6 +1543,7 @@ end
 -- CLIENT
 -- ============================================================
 if CLIENT then
+    pcall(include, "autorun/client/cl_grm_factions_unified_ui.lua")
     ui           = ui           or {}
     FactionsData = FactionsData or {}
     FactionCharacterChoices = FactionCharacterChoices or {}
@@ -2490,9 +2492,14 @@ if CLIENT then
     end
 
     -- ============================================================
-    -- ОСНОВНОЕ МЕНЮ АДМИНА (FIX: запрос данных при открытии)
+    -- ОСНОВНОЕ МЕНЮ АДМИНА (FIX: Unified Factions UI v2.0)
     -- ============================================================
-    function OpenAdminMenu()
+    function OpenAdminMenu(facName)
+        if GRM and GRM.Factions and GRM.Factions.UnifiedUI and GRM.Factions.UnifiedUI.Open then
+            GRM.Factions.UnifiedUI.Open(facName)
+            return
+        end
+
         local frame = vgui.Create("DFrame")
         frame:SetTitle("")
         frame:SetSize(1280, 860) frame:Center() frame:MakePopup()
@@ -3316,9 +3323,14 @@ if CLIENT then
     end
 
     -- ============================================================
-    -- МЕНЮ ЛИДЕРА (FIX: запрос данных при открытии)
+    -- МЕНЮ ЛИДЕРА (FIX: Unified Factions UI v2.0)
     -- ============================================================
-    function OpenLeaderMenu()
+    function OpenLeaderMenu(facName)
+        if GRM and GRM.Factions and GRM.Factions.UnifiedUI and GRM.Factions.UnifiedUI.Open then
+            GRM.Factions.UnifiedUI.Open(facName)
+            return
+        end
+
         local frame = vgui.Create("DFrame")
         frame:SetTitle("")
         frame:SetSize(1280, 860) frame:Center() frame:MakePopup()

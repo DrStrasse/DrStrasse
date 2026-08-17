@@ -682,6 +682,9 @@ function UI.Open(requestedFaction)
     addTabBtn("personnel", "Кадровые дела", "icon16/book.png", buildPersonnelTab)
 
     selectTab("overview", buildOverviewTab)
+
+    net.Start("Factions_GetData")
+    net.SendToServer()
 end
 
 function OpenUnifiedFactionsMenu(fname)
@@ -690,6 +693,18 @@ end
 
 concommand.Add("grm_factions_menu", function() UI.Open() end)
 concommand.Add("grm_faction", function() UI.Open() end)
+concommand.Add("factions_unified", function() UI.Open() end)
+
+hook.Add("GRM_FactionUIRefreshed", "GRM_FactionUnified_AutoRefresh", function(data)
+    if IsValid(currentFrame) then
+        local activeFac = getLeaderFactionName(data) or getPlayerFactionName(data)
+        if LocalPlayer():IsSuperAdmin() and not activeFac then activeFac = next(data or {}) end
+        if activeFac then
+            currentFrame:Remove()
+            UI.Open(activeFac)
+        end
+    end
+end)
 
 hook.Add("PlayerSayTransform", "GRM_FactionUnified_ChatCommand", function(ply, datapack)
     if not istable(datapack) then return end
