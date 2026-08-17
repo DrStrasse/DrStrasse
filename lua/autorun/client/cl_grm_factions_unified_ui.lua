@@ -1200,17 +1200,11 @@ concommand.Add("factions_unified", function() UI.Open() end)
 hook.Add("GRM_FactionUIRefreshed", "GRM_FactionUnified_AutoRefresh", function(data)
     if not IsValid(currentFrame) or not IsValid(currentContent) then return end
 
-    local lp = LocalPlayer()
-    local activeFac = getLeaderFactionName(data) or getPlayerFactionName(data)
-    if IsValid(lp) and lp:IsSuperAdmin() and not activeFac then activeFac = next(data or {}) end
-
-    -- Фракция реально сменилась (редкий случай) — переоткрываем меню.
-    if activeFac and activeFac ~= currentTargetFac then
-        UI.Open(activeFac)
-        return
-    end
-
-    -- Иначе просто перерисовываем ТЕКУЩУЮ вкладку, сохраняя позицию.
+    -- НЕ переключаем организацию при обновлении данных: пользователь мог сам
+    -- выбрать фракцию для просмотра (особенно суперадмин). Раньше здесь
+    -- вычислялся activeFac (лидер → участник → next(data) для суперадмина) и
+    -- меню «отпрыгивало» на первую фракцию через пару секунд после выбора.
+    -- Теперь просто перерисовываем ТЕКУЩУЮ вкладку свежими данными.
     local btn = currentTabButtons and currentTabButtons[currentTab]
     if btn and btn.builder then
         currentContent:Clear()
