@@ -593,12 +593,27 @@ if SERVER then
         end
     end
 
-    function broadcastFactionData()
+    -- Полная рассылка: синк NW всех игроков + сериализация всех фракций/членов
+    -- + broadcast всем. Дорогая — не дёргать чаще, чем реально нужно.
+    local broadcastPending = false
+    local function doBroadcastFactionData()
         syncAllPlayersFactionNW()
         net.Start(NET_SYNC_ALL)
         net.WriteTable(buildSyncData())
         net.Broadcast()
         sendCharacterChoices()
+    end
+
+    -- Коалесцируем частые вызовы (одно действие фракции тянет цепочку вызовов,
+    -- а каждый приводил к полной сериализации + рассылке всем + клиентской
+    -- пересборке UI) в ОДНУ рассылку за тик — убирает микрофризы.
+    function broadcastFactionData()
+        if broadcastPending then return end
+        broadcastPending = true
+        timer.Simple(0, function()
+            broadcastPending = false
+            doBroadcastFactionData()
+        end)
     end
 
     hook.Add("GRM_CharacterChanged", "Factions_CharacterSync", function(ply)

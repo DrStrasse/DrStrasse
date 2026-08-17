@@ -1314,6 +1314,56 @@ if CLIENT then
         draw.SimpleText(txt, "GRMJobs_Normal", w / 2, h - 39, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end)
 
+    -- Экранная GPS-метка текущей точки работы (мусоровоз/курьер/такси).
+    -- Раньше точка обозначалась только полупрозрачной сферой в мире, которую
+    -- игрок не видел издалека — «мусорку нигде не найти». Теперь — полноценная
+    -- GPS-метка: пульсирующий кружок с названием и дистанцией на экране, а если
+    -- точка вне поля зрения — стрелка-указатель по краю экрана.
+    hook.Add("HUDPaint", "GRM_Jobs_GPSMarker", function()
+        if not istable(tracker) or not tracker.target then return end
+        local lp = LocalPlayer()
+        if not IsValid(lp) then return end
+        local target = tracker.target
+        local screen = target:ToScreen()
+        local distance = math.floor(lp:GetPos():Distance(target))
+        local sw, sh = ScrW(), ScrH()
+        local visible = screen.visible == true and screen.x > 0 and screen.x < sw and screen.y > 0 and screen.y < sh
+        local x, y = screen.x or sw / 2, screen.y or sh / 2
+        local radius = math.Clamp(9 + distance / 450, 10, 22)
+
+        -- Метка-индикатор: голубой/бирюзовый, чтобы не путать с GPS города.
+        local col = Color(80, 200, 240)
+
+        if not visible then
+            -- Стрелка-указатель направления по краю экрана.
+            local dx, dy = x - sw / 2, y - sh / 2
+            local len = math.max(1, math.sqrt(dx * dx + dy * dy))
+            dx, dy = dx / len, dy / len
+            x = math.Clamp(sw / 2 + dx * (sw / 2 - 40), 30, sw - 30)
+            y = math.Clamp(sh / 2 + dy * (sh / 2 - 40), 30, sh - 30)
+            surface.SetDrawColor(col.r, col.g, col.b, 255)
+            surface.DrawPoly({
+                { x = x + dx * 20, y = y + dy * 20 },
+                { x = x - dx * 11 - dy * 11, y = y - dy * 11 + dx * 11 },
+                { x = x - dx * 11 + dy * 11, y = y - dy * 11 - dx * 11 },
+            })
+        end
+
+        local pulse = math.sin(CurTime() * 4) * 3
+        surface.SetDrawColor(col.r, col.g, col.b, 255)
+        surface.DrawCircle(x, y, radius + pulse, col.r, col.g, col.b, 255)
+        surface.SetDrawColor(8, 14, 23, 240)
+        surface.DrawCircle(x, y, math.max(3, radius - 4), 8, 14, 23, 240)
+
+        -- Подпись: название точки работы (для мусоровоза — «точка 1/3»).
+        local name = tracker.stageName
+        if name == nil or name == "" then name = tracker.zoneName or tracker.title or "Точка работы" end
+        local textX = math.Clamp(x + radius + 14, 14, sw - 14)
+        local align = textX > sw - 220 and TEXT_ALIGN_RIGHT or TEXT_ALIGN_LEFT
+        draw.SimpleTextOutlined(tostring(name), "GRMJobs_Sub", textX, y - 11, color_white, align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
+        draw.SimpleTextOutlined(distance .. " юн.", "GRMJobs_Small", textX, y + 9, Color(80, 200, 240), align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
+    end)
+
     -- Меню терминала --------------------------------------------------------
     local function mkBtn(p, txt, col)
         local b = vgui.Create("DButton", p)
