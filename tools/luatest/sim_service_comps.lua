@@ -21,10 +21,10 @@ local function ok(v, n) if v then pass = pass + 1; print("  ok  " .. n) else fai
 
 -- Пожарная станция.
 ok(has(fireSh, "grm_comp_fire") and has(fireSh, "Пожарная станция"), "fire computer shared defines class/name")
-ok(has(fireInit, "GRM_CompFire_Open") and has(fireInit, "GRM_CompFire_Action"), "fire computer net strings")
+ok(has(fireInit, "GRM_CompFire_Open") and has(fireInit, "GRM_CompFire_Calls"), "fire computer net strings (журнал вызовов вместо действий дежурства)")
 ok(has(fireInit, "function ENT:CanManage") and has(fireInit, "GRM.Fire"), "fire computer access via GRM.Fire")
 ok(has(fireInit, "F.CanFightPro") and has(fireInit, "F.CanDispatch"), "fire access: fighters + dispatchers")
-ok(has(fireInit, "F.CommissionTruck") and has(fireInit, "F.DecommissionTruck") and has(fireInit, "F.TakeHoseFromTruck"), "fire actions: commission/decommission/hose")
+ok(not has(fireInit, "F.CommissionTruck") and not has(fireInit, "F.TakeHoseFromTruck") and has(fireInit, 'r.category or ""'), "станция — только журналы: ствол/рукав и закрепление машины убраны")
 ok(has(fireInit, "F.Snapshot"), "fire snapshot of active vfire")
 ok(has(fireCl, "grm_fire_access") and has(fireCl, "grm_fire_log") and has(fireCl, "grm_fire_trucks") and has(fireCl, "grm_fire_spots"), "fire UI opens existing fire menus")
 ok(has(fireCl, "grm_fire_notify"), "fire UI opens notify menu")

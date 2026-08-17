@@ -48,11 +48,13 @@ end
 
 local g_FireEnt = nil
 
-local function sendAction(op)
+-- Заказ владельца 18.08: со станции убраны кнопки ствола/рукава и
+-- закрепления машины. Осталась диспетчерская работа: журнал пожаров и
+-- журнал вызовов.
+local function requestCalls()
     if not IsValid(g_FireEnt) then return end
-    net.Start("GRM_CompFire_Action")
+    net.Start("GRM_CompFire_Calls")
         net.WriteEntity(g_FireEnt)
-        net.WriteString(op)
     net.SendToServer()
 end
 
@@ -115,10 +117,8 @@ local function openMenu(ent, data)
         for _,b in ipairs(rows) do b:SetPos(14,b._rowY or 12); b:SetSize(math.max(120,w-28),40) end
     end
 
-    row("🚒 Закрепить машину / насос  (/firetruck)", Color(150, 70, 45), function() sendAction("commission") end)
-    row("🅿️ Снять машину  (/firetruck_off)", Color(120, 90, 50), function() sendAction("decommission") end)
-    row("🧯 Взять ствол / рукав", Color(90, 120, 150), function() sendAction("hose") end)
-    row("📋 Журнал тушения  (/fire_log)", Color(60, 120, 150), function() RunConsoleCommand("grm_fire_log") end)
+    row("📋 Журнал пожаров  (/fire_log)", Color(60, 120, 150), function() RunConsoleCommand("grm_fire_log") end)
+    row("☎ Журнал вызовов (911 · пожар)", Color(150, 90, 60), function() requestCalls() end)
 
     if data.isAdmin then
         row("🔑 Доступ и оповещение  (/fire_access)", Color(150, 110, 60), function() RunConsoleCommand("grm_fire_access") end)
@@ -137,4 +137,71 @@ net.Receive("GRM_CompFire_Open", function()
     local data = net.ReadTable() or {}
     if not IsValid(ent) then return end
     openMenu(ent, data)
+end)
+
+
+-----------------------------------------------------------------------
+-- ЖУРНАЛ ВЫЗОВОВ (экстренные вызовы 911 категории «Пожар»)
+-----------------------------------------------------------------------
+local function openCallsWindow(rows)
+    if IsValid(GRM.FireCallsFrame) then GRM.FireCallsFrame:Remove() end
+
+    local frame = vgui.Create("DFrame")
+    GRM.FireCallsFrame = frame
+    if GRM.UI and GRM.UI.Track then GRM.UI.Track("fire_calls", frame) end
+    frame:SetTitle("")
+    frame:SetSize(math.min(900, ScrW() - 80), math.min(600, ScrH() - 120))
+    frame:Center()
+    frame:MakePopup()
+    frame:ShowCloseButton(false)
+    frame:SetDeleteOnClose(true)
+    frame.OnRemove = function() if GRM.FireCallsFrame == frame then GRM.FireCallsFrame = nil end end
+    frame.Paint = function(_, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, THEME.bg)
+        draw.RoundedBoxEx(8, 0, 0, w, 42, THEME.header, true, true, false, false)
+        draw.SimpleText("ЖУРНАЛ ВЫЗОВОВ • ПОЖАРНАЯ СЛУЖБА", "DermaDefaultBold", 16, 21, THEME.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Всего записей: " .. #rows, "DermaDefault", w - 16, 21, THEME.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+    end
+
+    local close = vgui.Create("DButton", frame)
+    close:SetSize(28, 24)
+    close:SetText("✕") close:SetTextColor(THEME.dim) close:SetFont("DermaDefaultBold")
+    close.Paint = function(s2, w, h) draw.RoundedBox(4, 0, 0, w, h, s2:IsHovered() and THEME.danger or Color(45, 50, 60)) end
+    close.DoClick = function() frame:Close() end
+    frame.PerformLayout = function(self, w) if IsValid(close) then close:SetPos(w - 36, 8) end end
+
+    local list = vgui.Create("DListView", frame)
+    list:Dock(FILL)
+    list:DockMargin(12, 52, 12, 12)
+    list:SetMultiSelect(false)
+    list:AddColumn("№"):SetFixedWidth(60)
+    list:AddColumn("Время"):SetFixedWidth(140)
+    list:AddColumn("Заявитель"):SetFixedWidth(180)
+    list:AddColumn("Описание")
+    list:AddColumn("Статус"):SetFixedWidth(120)
+    list:AddColumn("Принял"):SetFixedWidth(150)
+
+    local STATUS = { open = "Открыт", assigned = "Принят", closed = "Закрыт" }
+    for _, r in ipairs(rows) do
+        list:AddLine(
+            tostring(r.id or 0),
+            os.date("%d.%m.%Y %H:%M", tonumber(r.created) or 0),
+            tostring(r.caller or ""),
+            tostring(r.text or ""),
+            STATUS[tostring(r.status or "")] or tostring(r.status or ""),
+            tostring(r.assigned or "")
+        )
+    end
+
+    if #rows == 0 then
+        local empty = vgui.Create("DLabel", frame)
+        empty:Dock(BOTTOM) empty:SetTall(30) empty:DockMargin(12, 0, 12, 10)
+        empty:SetContentAlignment(5)
+        empty:SetTextColor(THEME.dim)
+        empty:SetText("Вызовов по линии пожарной службы пока не поступало.")
+    end
+end
+
+net.Receive("GRM_CompFire_CallsData", function()
+    openCallsWindow(net.ReadTable() or {})
 end)

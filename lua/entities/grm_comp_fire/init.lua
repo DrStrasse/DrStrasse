@@ -6,7 +6,8 @@ AddCSLuaFile("cl_init.lua")
 include("shared.lua")
 
 util.AddNetworkString("GRM_CompFire_Open")
-util.AddNetworkString("GRM_CompFire_Action")
+util.AddNetworkString("GRM_CompFire_Calls")
+util.AddNetworkString("GRM_CompFire_CallsData")
 
 function ENT:Initialize()
     local mdl = self.Model
@@ -74,37 +75,42 @@ function ENT:Use(ply)
     net.Send(ply)
 end
 
--- Дежурство: закрепить машину / снять / взять ствол.
-net.Receive("GRM_CompFire_Action", function(_, ply)
+-- Заказ владельца 18.08: со станции убраны кнопки «закрепить/снять машину»
+-- и «взять ствол / рукав» — это делается у самой машины (/firetruck,
+-- /firetruck_off) и через рукавный ящик, а компьютер остаётся чисто
+-- диспетчерским: журнал пожаров и журнал вызовов.
+
+-- Журнал вызовов: экстренные вызовы 911 категории «Пожар».
+net.Receive("GRM_CompFire_Calls", function(_, ply)
     if not IsValid(ply) then return end
     local ent = net.ReadEntity()
     if not IsValid(ent) or ent:GetClass() ~= "grm_comp_fire" then return end
     if ply:GetPos():DistToSqr(ent:GetPos()) > 250 * 250 then return end
     if not ent:CanManage(ply) then return end
 
-    local op = net.ReadString()
-    local F = GRM.Fire
-    if not F then
-        if GRM.Notify then GRM.Notify(ply, "Модуль пожаров не загружен.", 255, 120, 100) end
-        return
-    end
-
-    local ok, err
-    if op == "commission" then
-        ok, err = F.CommissionTruck(ply)
-    elseif op == "decommission" then
-        ok, err = F.DecommissionTruck(ply)
-    elseif op == "hose" then
-        ok, err = F.TakeHoseFromTruck(ply)
-    else
-        return
-    end
-
-    if GRM.Notify then
-        if ok then
-            GRM.Notify(ply, tostring(err or "Готово."), 100, 220, 130)
-        else
-            GRM.Notify(ply, tostring(err or "Не выполнено."), 255, 140, 100)
+    local EM = GRM.Emergency
+    local rows = {}
+    if EM and istable(EM.Calls) then
+        for i = #EM.Calls, 1, -1 do
+            local r = EM.Calls[i]
+            if istable(r) and tostring(r.category or "") == "fire" then
+                rows[#rows + 1] = {
+                    id = tonumber(r.id) or 0,
+                    text = tostring(r.text or ""),
+                    caller = tostring(r.callerName or ""),
+                    status = tostring(r.status or "open"),
+                    assigned = tostring(r.assignedName or ""),
+                    created = tonumber(r.created) or 0,
+                    x = math.floor((r.pos and r.pos.x) or 0),
+                    y = math.floor((r.pos and r.pos.y) or 0),
+                    z = math.floor((r.pos and r.pos.z) or 0),
+                }
+                if #rows >= 100 then break end
+            end
         end
     end
+
+    net.Start("GRM_CompFire_CallsData")
+        net.WriteTable(rows)
+    net.Send(ply)
 end)
