@@ -1133,9 +1133,13 @@ local function restoreAllATMsOnMap()
     end
 end
 
-hook.Add("InitPostEntity", "GRM_Incass_RestoreATMs", function()
-    timer.Simple(1.5, restoreAllATMsOnMap)
-end)
+if GRM.Boot and GRM.Boot.Task then
+    GRM.Boot.Task("incass.atms", "normal", restoreAllATMsOnMap, { label = "Инкассация: восстановление банкоматов" })
+else
+    hook.Add("InitPostEntity", "GRM_Incass_RestoreATMs", function()
+        timer.Simple(1.5, restoreAllATMsOnMap)
+    end)
+end
 
 hook.Add("PostCleanupMap", "GRM_Incass_RestoreATMsCleanup", function()
     timer.Simple(1.0, restoreAllATMsOnMap)

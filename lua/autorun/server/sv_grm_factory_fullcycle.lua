@@ -1133,7 +1133,11 @@ end)
 concommand.Add("grm_fc_save", function(ply) FC.SaveMap(ply, "manual") end)
 concommand.Add("grm_fc_load", function(ply) FC.LoadMap(ply) end)
 
+if GRM.Boot and GRM.Boot.Task then
+    GRM.Boot.Task("factory.map", "late", function() FC.LoadMap(nil) end, { label = "Завод: оборудование карты" })
+else
 hook.Add("InitPostEntity", "GRM_FC_LoadMap", function() timer.Simple(5, function() FC.LoadMap(nil) end) end)
+end
 hook.Add("ShutDown", "GRM_FC_SaveShutdown", function() FC.SaveMap(nil, "shutdown") end)
 
 -- Локеры сохраняются независимо от ручного сохранения карты, поэтому

@@ -847,9 +847,35 @@ if SERVER then
     SHOP.LoadCatalog()
     SHOP.LoadPurchases()
 
+--[[ Реестр купленных номеров нужен ТОЛЬКО когда его действительно
+     спрашивают: игрок открыл магазин, взял в руки телефон или зашёл на
+     сервер. На пустом сервере файл не читается вообще — это чистая
+     экономия старта («если игрок сделал А, тогда выполняем Б»). ]]
+if GRM.Boot and GRM.Boot.Lazy then
+    GRM.Boot.Lazy("phoneshop.owned", function() SHOP.LoadOwned() end,
+        { label = "Магазин телефонов: купленные номера (по требованию)" })
+    GRM.Boot.OnChat({ "/phoneshop", "!phoneshop", "/teleshop", "!teleshop", "/phoneshop_admin" }, "phoneshop.owned")
+    GRM.Boot.OnUseClass("grm_phone_terminal", "phoneshop.owned")
+    GRM.Boot.OnUseClass("grm_phone", "phoneshop.owned")
+    GRM.Boot.OnFirstPlayer("phoneshop.owned")
+    -- Любой внутренний доступ к реестру тоже поднимает его сам.
+    local rawOwned = SHOP.LoadOwned
+    function SHOP.EnsureOwned()
+        if GRM.Boot.Done("phoneshop.owned") then return end
+        GRM.Boot.Ensure("phoneshop.owned", "прямой запрос реестра")
+    end
+    SHOP.LoadOwned = function(...)
+        local ok = rawOwned(...)
+        if GRM.Boot.Tasks and GRM.Boot.Tasks["phoneshop.owned"] then
+            GRM.Boot.Tasks["phoneshop.owned"].state = "done"
+        end
+        return ok
+    end
+else
     hook.Add("InitPostEntity", "GRM_PhoneShop_Load", function()
         timer.Simple(1.5, SHOP.LoadOwned)
     end)
+end
 
     hook.Add("ShutDown", "GRM_PhoneShop_Save", function() SHOP.SaveOwned(); SHOP.SavePurchases(); SHOP.SaveCatalog() end)
 

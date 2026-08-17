@@ -549,8 +549,17 @@ if CLIENT then
         end
     end
 
-    timer.Create("GRM_PhoneAccess_WaitFactionsMenu", 0.5, 20, installFactionsMenuIntegration)
-    timer.Simple(1, installFactionsMenuIntegration)
+    -- Вкладка встраивается в меню фракций, как только оно появится.
+    -- Раньше здесь крутился собственный опрашивающий таймер (0.5 с × 20) —
+    -- и так в шести модулях доступов. Теперь единое ожидание условия
+    -- GRM.Boot.When: одна проверка на всех, с таймаутом и без «вечных» реп.
+    if GRM.Boot and GRM.Boot.When then
+        GRM.Boot.When("phone.access.tab", function() return OpenAdminMenu ~= nil end, installFactionsMenuIntegration,
+            { interval = 0.5, timeout = 60 })
+    else
+        timer.Create("GRM_PhoneAccess_WaitFactionsMenu", 0.5, 20, installFactionsMenuIntegration)
+        timer.Simple(1, installFactionsMenuIntegration)
+    end
 
     print("[GRM Phone] Access Manager client loaded")
 end

@@ -217,9 +217,13 @@ if SERVER then
     -- ============================================================
     LoadSpawnPoints()
 
+if GRM.Boot and GRM.Boot.Task then
+    GRM.Boot.Task("ore.nodes", "late", function() RefillOreNodes() end, { label = "Шахта: пополнение жил" })
+else
     hook.Add("InitPostEntity", "GRM_OreSpawner_Load", function()
         timer.Simple(3, RefillOreNodes)
     end)
+end
 
     hook.Add("PostCleanupMap", "GRM_OreSpawner_Cleanup", function()
         timer.Simple(0.5, RefillOreNodes)

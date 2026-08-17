@@ -304,7 +304,11 @@ if SERVER then
     hook.Add("PlayerInitialSpawn","GRM_Quest_Join",function(ply)timer.Simple(3,function()if not IsValid(ply)then return end;for _,def in pairs(Q.Definitions)do if def.autoStart and not def.draft then Q.Start(ply,def.id)end end;sync(ply)end)end)
     hook.Add("ShutDown","GRM_Quest_Save",function()Q.SaveDefinitions();Q.SaveProgress()end)
     hook.Add("PostCleanupMap","GRM_Quest_NPCRestore",function()timer.Simple(1,function()for _,r in ipairs(Q._NPCRecords or {})do Q.SpawnNPC(r.id,r.name,r.model,vec(r.pos),ang(r.ang))end end)end)
+if GRM.Boot and GRM.Boot.Task then
+    GRM.Boot.Task("quests.npc", "late", function() for _,r in ipairs(Q._NPCRecords or {})do Q.SpawnNPC(r.id,r.name,r.model,vec(r.pos),ang(r.ang))end end, { label = "Квесты: спавн NPC" })
+else
     hook.Add("InitPostEntity","GRM_Quest_NPCLoad",function()timer.Simple(2,function()for _,r in ipairs(Q._NPCRecords or {})do Q.SpawnNPC(r.id,r.name,r.model,vec(r.pos),ang(r.ang))end end)end)
+end
 
     -- Integrations: modules may also call GRM.Quests.Event directly.
     hook.Add("GRM_QuestEvent","GRM_Quest_GenericEvent",function(ply,eventName,target,amount,meta)Q.Event(ply,eventName,target,amount,meta)end)

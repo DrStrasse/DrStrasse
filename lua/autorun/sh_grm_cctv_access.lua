@@ -775,8 +775,17 @@ if CLIENT then
         end
     end
 
-    timer.Create("GRM_CCTVAccess_WaitFactionsMenu", 0.5, 24, installFactionsMenuIntegration)
-    timer.Simple(1, installFactionsMenuIntegration)
+    -- Вкладка встраивается в меню фракций, как только оно появится.
+    -- Раньше здесь крутился собственный опрашивающий таймер (0.5 с × 24) —
+    -- и так в шести модулях доступов. Теперь единое ожидание условия
+    -- GRM.Boot.When: одна проверка на всех, с таймаутом и без «вечных» реп.
+    if GRM.Boot and GRM.Boot.When then
+        GRM.Boot.When("cctv.access.tab", function() return OpenAdminMenu ~= nil end, installFactionsMenuIntegration,
+            { interval = 0.5, timeout = 60 })
+    else
+        timer.Create("GRM_CCTVAccess_WaitFactionsMenu", 0.5, 24, installFactionsMenuIntegration)
+        timer.Simple(1, installFactionsMenuIntegration)
+    end
 
     print("[GRM CCTV] Access Manager client loaded")
 end

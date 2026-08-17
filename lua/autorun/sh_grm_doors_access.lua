@@ -960,8 +960,17 @@ if CLIENT then
         end
     end
 
-    timer.Create("GRM_DoorAccess_WaitFactions", 0.5, 24, installFactionsTab)
-    timer.Simple(1, installFactionsTab)
+    -- Вкладка встраивается в меню фракций, как только оно появится.
+    -- Раньше здесь крутился собственный опрашивающий таймер (0.5 с × 24) —
+    -- и так в шести модулях доступов. Теперь единое ожидание условия
+    -- GRM.Boot.When: одна проверка на всех, с таймаутом и без «вечных» реп.
+    if GRM.Boot and GRM.Boot.When then
+        GRM.Boot.When("doors.access.tab", function() return OpenAdminMenu ~= nil end, installFactionsTab,
+            { interval = 0.5, timeout = 60 })
+    else
+        timer.Create("GRM_DoorAccess_WaitFactions", 0.5, 24, installFactionsTab)
+        timer.Simple(1, installFactionsTab)
+    end
 
     print("[GRM Doors] Менеджер доступа к дверям v" .. AM.Version .. " загружен (клиент)")
 end

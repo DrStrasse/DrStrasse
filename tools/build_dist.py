@@ -23,6 +23,7 @@ CONTENT_DIRS = ["lua", "materials", "models", "sound", "resource", "gamemodes", 
 # Экономический срез: ядро экономики + всё, что его использует.
 ECONOMY_FILES = [
     # Общие контракты нужны service-компьютерам: Access/Net/Audit/Persistence.
+    "lua/autorun/sh_00_grm_boot.lua",
     "lua/autorun/sh_01_grm_core.lua",
     "lua/autorun/sh_02_grm_persistence.lua",
     "lua/autorun/sh_03_grm_access.lua",

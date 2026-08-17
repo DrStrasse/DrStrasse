@@ -649,9 +649,13 @@ hook.Add("PlayerSpawnedSENT", "GRM_Alarm_Spawned", function(ply, ent)
     A.RegisterDevice(ent)
 end)
 
+if GRM.Boot and GRM.Boot.Task then
+    GRM.Boot.Task("alarm.map", "normal", function() A.LoadPermanent() end, { label = "Сигнализация: оборудование карты" })
+else
 hook.Add("InitPostEntity", "GRM_Alarm_Load", function()
     timer.Simple(2.5, function() A.LoadPermanent() end)
 end)
+end
 hook.Add("PostCleanupMap", "GRM_Alarm_Reload", function()
     timer.Simple(1, function() A.LoadPermanent() end)
 end)

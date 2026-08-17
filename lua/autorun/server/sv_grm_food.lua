@@ -429,13 +429,16 @@ local function registerULXCommands()
     clearCmd:help("Удалить все автоматы GRM Food и очистить сохранение текущей карты.")
 end
 
-hook.Add("InitPostEntity", "GRM_Food_LoadPermanentVending", function()
-    timer.Simple(1, function()
-        GRM.Food.LoadVendingMachines(nil, false)
+if GRM.Boot and GRM.Boot.Task then
+    GRM.Boot.Task("food.vending", "late", function() GRM.Food.LoadVendingMachines(nil, false) end,
+        { label = "Еда: торговые автоматы" })
+    GRM.Boot.Task("food.ulx", "late", registerULXCommands, { label = "Еда: команды ULX" })
+else
+    hook.Add("InitPostEntity", "GRM_Food_LoadPermanentVending", function()
+        timer.Simple(1, function() GRM.Food.LoadVendingMachines(nil, false) end)
+        timer.Simple(2, registerULXCommands)
     end)
-
-    timer.Simple(2, registerULXCommands)
-end)
+end
 
 hook.Add("PostCleanupMap", "GRM_Food_Cleanup", function()
     timer.Simple(0.5, function()

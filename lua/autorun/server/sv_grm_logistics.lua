@@ -983,7 +983,11 @@ function L.LoadMap(p)
     for _,r in ipairs(list) do if EQUIP[r.class] then local e=ents.Create(r.class); if IsValid(e) then e:SetPos(V(r.pos)); e:SetAngles(A(r.ang)); e:Spawn(); e:Activate(); e:SetLogisticsID(r.id or id("log")); e:SetFactionName(r.faction or ""); e:SetNetworkID(r.network or ""); e:SetPointName(r.name or ""); e:SetFactionMode(r.mode~=false); if e.LogisticsKind=="warehouse" then L.Warehouses[e:GetLogisticsID()]=r.data or {stock={weapons={},items={}},capacity=table.Copy(C.Capacity)} elseif e.LogisticsKind=="armory" then L.Armories[e:GetLogisticsID()]=r.data or {stock={weapons={},items={}},capacity=table.Copy(C.Capacity)} end; local ph=e:GetPhysicsObject(); if IsValid(ph) then ph:EnableMotion(false) end; n=n+1 end end end; return n
 end
 
+if GRM.Boot and GRM.Boot.Task then
+    GRM.Boot.Task("logistics.map", "late", function() L.LoadMap(nil) end, { label = "Логистика: точки и склады" })
+else
 hook.Add("InitPostEntity","GRML_Load",function() timer.Simple(5,function() L.LoadMap(nil) end) end)
+end
 -- Код 90: кнопка cleanup в spawnmenu раньше стирала точки до рестарта карты —
 -- как в Alarm/CCTV, воскрешаем из того же сейва.
 hook.Add("PostCleanupMap","GRML_Reload",function() timer.Simple(1,function() L.LoadMap(nil) end) end)

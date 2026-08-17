@@ -523,12 +523,18 @@ function D.ClearLockDenyHold(state)
     return state
 end
 
-hook.Add("InitPostEntity", "GRM_Doors_BuildIdentityCache", function()
-    timer.Simple(0.5, function()
-        if D.PurgeGhostDoors then D.PurgeGhostDoors() end
-        D.RebuildDoorIdentityCache()
-    end)
-end)
+-- Идентичность дверей нужна ДО входа игроков — приоритет early. Планировщик
+-- GRM.Boot размажет её по тикам вместе с остальной стартовой работой, вместо
+-- собственного timer.Simple в общей куче.
+local function doorsIdentityBoot()
+    if D.PurgeGhostDoors then D.PurgeGhostDoors() end
+    D.RebuildDoorIdentityCache()
+end
+if GRM.Boot and GRM.Boot.Task then
+    GRM.Boot.Task("doors.identity", "early", doorsIdentityBoot, { label = "Двери: идентичность и фантомы" })
+else
+    hook.Add("InitPostEntity", "GRM_Doors_BuildIdentityCache", function() timer.Simple(0.5, doorsIdentityBoot) end)
+end
 hook.Add("PostCleanupMap", "GRM_Doors_RebuildIdentityCache", function()
     timer.Simple(.2, function()
         if D.PurgeGhostDoors then D.PurgeGhostDoors() end
@@ -1908,11 +1914,21 @@ if SERVER then
         end
     end)
 
-    hook.Add("InitPostEntity", "GRM_Doors_Load", function()
+    -- Три чтения JSON подряд: раньше выполнялись прямо в InitPostEntity
+    -- вместе с загрузками ещё двух десятков модулей.
+    local function doorsDBBoot()
         D.LoadCategories()
         D.LoadDoors()
         D.LoadWarrants()
-    end)
+    end
+    if GRM.Boot and GRM.Boot.Task then
+        GRM.Boot.Task("doors.db", "early", doorsDBBoot, { label = "Двери: база владельцев" })
+        hook.Add("PostCleanupMap", "GRM_Doors_ReloadDB", function()
+            if GRM.Boot.Reset then GRM.Boot.Reset("doors.db") end
+        end)
+    else
+        hook.Add("InitPostEntity", "GRM_Doors_Load", doorsDBBoot)
+    end
 
     print("[GRM Doors] Серверная система дверей v" .. D.Version .. " загружена")
 end

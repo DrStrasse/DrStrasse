@@ -252,11 +252,15 @@ hook.Add("EntityRemoved", "GRM_Saver_PersistentRemoved", function(ent)
     end
 end)
 
+if GRM.Boot and GRM.Boot.Task then
+    GRM.Boot.Task("mining.saver", "late", function() GRM_LoadEntities() end, { label = "Сейвер шахты: восстановление entity" })
+else
 hook.Add("InitPostEntity", "GRM_Saver_AutoLoad", function()
     timer.Simple(5, function()
         GRM_LoadEntities()
     end)
 end)
+end
 
 hook.Add("PostCleanupMap", "GRM_Saver_Cleanup", function()
     timer.Simple(0.5, function()

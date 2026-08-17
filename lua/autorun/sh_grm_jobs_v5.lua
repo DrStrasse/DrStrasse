@@ -109,7 +109,11 @@ if SERVER then
  end
  net.Receive(NREQ,function(bits,ply)if not(IsValid(ply)and ply:IsSuperAdmin())then return end;if GRM.Net and not GRM.Net.Guard(ply,"jobs.garbage.state",{rate=.5,burst=3,maxBits=64},{bits=bits})then return end;net.Start(NDATA);net.WriteTable(JB.GarbageStateSnapshot());net.Send(ply)end)
  timer.Create("GRM_Garbage_Topology",10,0,function()JB.RefreshGarbageTopology("fallback auto")end)
+if GRM.Boot and GRM.Boot.Task then
+    GRM.Boot.Task("jobs.garbage", "late", function() JB.RefreshGarbageTopology("map init") end, { label = "Мусоровоз: топология контейнеров" })
+else
  hook.Add("InitPostEntity","GRM_Garbage_TopologyInit",function()timer.Simple(2,function()JB.RefreshGarbageTopology("map init")end)end)
+end
  hook.Add("PostCleanupMap","GRM_Garbage_TopologyCleanup",function()timer.Simple(1,function()JB.RefreshGarbageTopology("cleanup")end)end)
  hook.Add("OnEntityCreated","GRM_Garbage_TopologyCreate",function(e)timer.Simple(.2,function()if IsValid(e)and e:GetClass()=="grm_garbage_bin"then JB.RefreshGarbageTopology("bin created")end end)end)
  hook.Add("EntityRemoved","GRM_Garbage_TopologyRemove",function(e)if e:GetClass()=="grm_garbage_bin"then timer.Simple(0,function()JB.RefreshGarbageTopology("bin removed")end)end end)

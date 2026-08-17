@@ -689,14 +689,25 @@ if SERVER then
     hook.Add("ShutDown", "GRM_Fire_Save", function() F.SaveActive("shutdown") end)
     F.LoadConfig()
 
-    hook.Add("InitPostEntity", "GRM_Fire_Boot", function()
-        timer.Simple(3, function()
+    if GRM.Boot and GRM.Boot.Task then
+        GRM.Boot.Task("fire.state", "normal", function()
             F.LoadConfig()
             F.LoadActive()
             scheduleRandom()
+        end, { label = "Пожары: конфиг и активные очаги" })
+        -- Чистка бесхозного снаряжения никому не мешает подождать.
+        GRM.Boot.Task("fire.sweep", "late", function() F.SweepOrphanGear("boot") end,
+            { needs = { "fire.state" }, label = "Пожары: чистка бесхозных рукавов" })
+    else
+        hook.Add("InitPostEntity", "GRM_Fire_Boot", function()
+            timer.Simple(3, function()
+                F.LoadConfig()
+                F.LoadActive()
+                scheduleRandom()
+            end)
+            timer.Simple(5, function() F.SweepOrphanGear("boot") end)
         end)
-        timer.Simple(5, function() F.SweepOrphanGear("boot") end)
-    end)
+    end
     hook.Add("PostCleanupMap", "GRM_Fire_Cleanup", function()
         timer.Simple(2, function() F.LoadActive() end)
         timer.Simple(4, function() F.SweepOrphanGear("cleanup") end)

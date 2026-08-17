@@ -643,9 +643,13 @@ hook.Add("PlayerSpawnedSENT", "GRM_CCTV_Spawned", function(ply, ent)
     CCTV.RegisterDevice(ent)
 end)
 
+if GRM.Boot and GRM.Boot.Task then
+    GRM.Boot.Task("cctv.map", "normal", function() CCTV.LoadPermanent() end, { label = "CCTV: камеры карты" })
+else
 hook.Add("InitPostEntity", "GRM_CCTV_Load", function()
     timer.Simple(2, function() CCTV.LoadPermanent() end)
 end)
+end
 
 hook.Add("PostCleanupMap", "GRM_CCTV_Reload", function()
     timer.Simple(1, function() CCTV.LoadPermanent() end)

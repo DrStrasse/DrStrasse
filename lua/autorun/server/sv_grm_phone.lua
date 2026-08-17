@@ -847,9 +847,13 @@ end
 concommand.Add("grm_phone_save", function(ply) P.SaveMapEntities(ply) end)
 concommand.Add("grm_phone_load", function(ply) P.LoadMapEntities(ply) end)
 
+if GRM.Boot and GRM.Boot.Task then
+    GRM.Boot.Task("phone.map", "normal", function() P.LoadMapEntities(nil) end, { label = "Телефония: оборудование карты" })
+else
 hook.Add("InitPostEntity", "GRM_Phone_LoadMap", function()
     timer.Simple(1, function() P.LoadMapEntities(nil) end)
 end)
+end
 
 hook.Add("PostCleanupMap", "GRM_Phone_Cleanup", function()
     timer.Simple(0.5, function() P.LoadMapEntities(nil) end)

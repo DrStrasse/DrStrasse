@@ -587,9 +587,18 @@ if SERVER then
             :format(tostring(map), done, skipped, tostring(reason or "?")))
         return done, skipped
     end
-    hook.Add("InitPostEntity", "GRM_PermEntities_Spawn", function()
-        timer.Simple(1, function() spawnAll("InitPostEntity") end)
-    end)
+    -- Спавн закреплённого оборудования — самая тяжёлая стартовая операция
+    -- (создание десятков entity). Отдаём планировщику с приоритетом early:
+    -- оборудование обязано стоять до входа игроков, но не обязано появиться
+    -- в один тик со всеми остальными загрузками.
+    if GRM.Boot and GRM.Boot.Task then
+        GRM.Boot.Task("perm.entities", "early", function() spawnAll("GRM.Boot") end,
+            { label = "Перм-энтити: спавн оборудования карты" })
+    else
+        hook.Add("InitPostEntity", "GRM_PermEntities_Spawn", function()
+            timer.Simple(1, function() spawnAll("InitPostEntity") end)
+        end)
+    end
     hook.Add("PostCleanupMap", "GRM_PermEntities_Cleanup", function()
         timer.Simple(0.5, function() spawnAll("PostCleanupMap") end)
     end)
