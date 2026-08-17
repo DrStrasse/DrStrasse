@@ -217,7 +217,7 @@ end)
 
 -- INVENTORY INTEGRATION
 local function installInventoryWrapper()
-    if not GRM or not GRM.Inventory then return end
+    if not GRM or not GRM.Inventory then return false end
     if isfunction(GRM.Inventory.AddItem) and GRM.Inventory.AddItem ~= E.AddItemWrapper then
         E.OriginalAddItem = GRM.Inventory.AddItem
         E.AddItemWrapper = function(ply, itemID, count)
@@ -263,9 +263,10 @@ local function installInventoryWrapper()
         end
         GRM.Inventory.AddWeapon = E.AddWeaponWrapper
     end
+    return isfunction(GRM.Inventory.AddItem)and GRM.Inventory.AddItem==E.AddItemWrapper and isfunction(GRM.Inventory.RemoveItem)and GRM.Inventory.RemoveItem==E.RemoveItemWrapper
 end
 
-timer.Create("GRM_Weight_InstallInventory", 1, 0, installInventoryWrapper)
+timer.Create("GRM_Weight_InstallInventory",1,0,function()if installInventoryWrapper()then timer.Remove("GRM_Weight_InstallInventory")end end)
 timer.Simple(0, installInventoryWrapper)
 
 hook.Add("PlayerCanPickupWeapon", "GRM_Weight_WeaponPickup", function(ply, weapon)

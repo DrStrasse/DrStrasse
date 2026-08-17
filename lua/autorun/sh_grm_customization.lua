@@ -418,8 +418,9 @@ if SERVER then
                 })
             end
         end
+        return GRM.Inventory and GRM.Inventory.RegisterItem and GRM.Inventory.RegisterUseHandler and GRM.Vendor and GRM.Vendor.RegisterItem
     end
-    timer.Create("GRM_Custom_RegisterIntegrations", 1, 0, registerIntegrations)
+    timer.Create("GRM_Custom_RegisterIntegrations",1,0,function()if registerIntegrations()then timer.Remove("GRM_Custom_RegisterIntegrations")end end)
     timer.Simple(0, registerIntegrations)
     function C.LoadData()
         loadData(); registerIntegrations()

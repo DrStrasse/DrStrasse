@@ -725,7 +725,7 @@ end)
 
 -- Подхватываем даже HUD hooks, которые другой аддон зарегистрировал уже после входа.
 hook.Add("Think", "GRM_CCTV_SuppressOtherHUD", function()
-    if ViewState.active then suppressOtherHUDPaint() end
+    if ViewState.active and(not GRM.Perf or GRM.Perf.Throttle("cctv.hudhooks",.5))then suppressOtherHUDPaint()end
 end)
 
 surface.CreateFont("GRM_CCTV_Title", { font = "Roboto", size = 22, weight = 700, extended = true })

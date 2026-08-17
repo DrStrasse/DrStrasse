@@ -4,9 +4,9 @@
 
 ## Охват и принцип
 
-Статическим проходом `tools/performance_audit.py` проверены **все 467 Lua-файлов**:
+Статическим проходом `tools/performance_audit.py` проверены **все 469 Lua-файлов**:
 
-- 417 файлов GRM и интеграций;
+- 419 файлов GRM и интеграций;
 - 50 файлов vendored EasyChat (учтены отдельно, без рискованной переписи стороннего API);
 - frame hooks (`Think`, render/HUD hooks), быстрые бесконечные timers;
 - глобальные обходы entity/player;
@@ -88,4 +88,25 @@ python3 tools/performance_audit.py --json > performance-audit.json
 - отдельно нагрузить RadioNet, CCTV, Alarm, Fire, Incassation и массовое открытие Q/TAB;
 - проверить cleanup/restart persistence без дублей.
 
-Следующие оптимизации следует делать только по профилю и отдельными небольшими коммитами: entity registries FireTruck, batching quest persistence, замена самых крупных сетевых snapshot-протоколов на ограниченные массивы/дельты.
+## Вторая event-driven волна
+
+Повторный проход охватывает **469 Lua-файлов** и вводит `GRM.Perf`:
+
+- class registry строится один раз и обновляется `OnEntityCreated/EntityRemoved`;
+- готовый массив entity переиспользуется до события изменения, без аллокации каждый кадр;
+- общие `Throttle` и change-only `NWString/NWInt/NWBool/NWFloat`;
+- Vendor/OreBuyer/Factory/Logistics/911/Arrest world labels переведены с кадрового `FindByClass` на registry;
+- Trunk полностью убрал `FindByClass("*")` из render hook: открытые крышки отслеживаются NW-событием;
+- Incassation и FireTruck больше не делают `ents.GetAll()` в render frame; произвольные vehicle-классы ведутся через NW-change registry с единственным bootstrap-сканом;
+- FireTruck server sync идёт по насосам, а не по всем entity карты;
+- Broadcast watcher использует registry микрофонов;
+- idle SlidingDoor не вызывает физическое перемещение каждый frame;
+- клиентская Regeneration больше не пересоздаёт один timer каждый Think;
+- F2/F4/flashlight/breath/CCTV hook-table fallback checks ограничены по частоте;
+- Quest objective mutations сохраняются одним batch на tick;
+- Factory scrap refill создаёт один save batch для всех изменившихся мусорок;
+- бесконечные dependency installers Encumbrance/Customization останавливаются после успешной установки;
+- Economy vault mirror не отправляет неизменившийся budget;
+- Mobile key repeat больше не создаёт временную таблицу каждый кадр.
+
+Не заменялись частоты, являющиеся частью механики: движение/стамина, освобождение из наручников, Alarm sensors, активные Logistics routes и Fire hose simulation. Крупные сетевые snapshot-протоколы должны мигрировать отдельно с сохранением публичного wire-формата.

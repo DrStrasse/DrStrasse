@@ -1209,7 +1209,8 @@ if CLIENT then
     hook.Add("PostDrawTranslucentRenderables", "GRM_Arrest_Zones", function()
         local lp = LocalPlayer()
         if not IsValid(lp) or not lp:IsSuperAdmin() then return end
-        for _, camEnt in ipairs(ents.FindByClass("grm_arrest_camera")) do
+        local cameras=GRM.Perf and GRM.Perf.Entities and GRM.Perf.Entities("grm_arrest_camera")or ents.FindByClass("grm_arrest_camera")
+        for _, camEnt in ipairs(cameras) do
             if IsValid(camEnt) then
                 local distSqr = lp:GetPos():DistToSqr(camEnt:GetPos())
                 if distSqr <= 500 * 500 then

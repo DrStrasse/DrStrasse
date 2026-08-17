@@ -180,6 +180,7 @@ hook.Add("PlayerBindPress", "GRM_Customization_NoFlashlightBind", function(ply, 
     if bind == "+flashlight" then return true end
 end)
 hook.Add("Think", "GRM_Customization_FlashlightForceOff", function()
+    if GRM.Perf and not GRM.Perf.Throttle("custom.flashlight",.25)then return end
     local lp=LocalPlayer()
     if IsValid(lp) and isfunction(lp.FlashlightIsOn) and lp:FlashlightIsOn() and isfunction(lp.SetFlashlight) then lp:SetFlashlight(false) end
 end)

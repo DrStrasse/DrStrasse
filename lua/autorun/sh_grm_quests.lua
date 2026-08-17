@@ -242,7 +242,14 @@ if SERVER then
         return step.pos and pos:DistToSqr(vec(step.pos))<=step.radius*step.radius
     end
     timer.Create("GRM_Quest_Objectives",1,0,function()
-        for _,ply in ipairs(player.GetAll())do if IsValid(ply)and ply:Alive()then local all=progressFor(ply);for id,p in pairs(all)do local def=Q.Definitions[id];local step=def and def.steps[p.step or 1];if def and def.enabled and not def.draft and p.status=="active"and step then if step.type=="visit"and inZone(ply:GetPos(),step)then p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);checkCurrent(ply,def,p);Q.SaveProgress();sync(ply)elseif step.type=="item"then local before=p.count;checkCurrent(ply,def,p);if before~=p.count then Q.SaveProgress();sync(ply)end end end end end end
+        local changed,changedPlayers=false,{}
+        for _,ply in ipairs(player.GetAll())do if IsValid(ply)and ply:Alive()then local all=progressFor(ply);for id,p in pairs(all)do local def=Q.Definitions[id];local step=def and def.steps[p.step or 1]
+            if def and def.enabled and not def.draft and p.status=="active"and step then
+                if step.type=="visit"and inZone(ply:GetPos(),step)then p.step=p.step+1;p.count=0;questNotice(ply,"step",def,step);checkCurrent(ply,def,p);changed=true;changedPlayers[ply]=true
+                elseif step.type=="item"then local before=p.count;checkCurrent(ply,def,p);if before~=p.count then changed=true;changedPlayers[ply]=true end end
+            end
+        end end end
+        if changed then Q.SaveProgress();for ply in pairs(changedPlayers)do if IsValid(ply)then sync(ply)end end end
     end)
 
     function Q.OpenNPC(ply,npc)

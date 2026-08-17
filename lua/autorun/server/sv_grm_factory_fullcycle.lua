@@ -1033,14 +1033,9 @@ end
 
 -- Scrap bins replenish their finite stock over time.
 timer.Create("GRM_FC_ScrapRefill", 2, 0, function()
-    local now = CurTime()
-    for _, bin in ipairs(ents.FindByClass("grm_fc_scrap_bin")) do
-        if bin:GetNextRefill() <= now then
-            bin:SetStock(math.min(CFG.ScrapBinMax or 50, bin:GetStock() + (CFG.ScrapRefillAmount or 5)))
-            bin:SetNextRefill(now + (CFG.ScrapRefillEvery or 60))
-            scheduleFactorySave("scrap refill")
-        end
-    end
+    local now,changed=CurTime(),false;local bins=GRM.Perf and GRM.Perf.Entities and GRM.Perf.Entities("grm_fc_scrap_bin")or ents.FindByClass("grm_fc_scrap_bin")
+    for _,bin in ipairs(bins)do if bin:GetNextRefill()<=now then bin:SetStock(math.min(CFG.ScrapBinMax or 50,bin:GetStock()+(CFG.ScrapRefillAmount or 5)));bin:SetNextRefill(now+(CFG.ScrapRefillEvery or 60));changed=true end end
+    if changed then scheduleFactorySave("scrap refill batch")end
 end)
 
 -- Manual persistence for full factory state.

@@ -96,23 +96,10 @@ end)
 
 -- Регенерация (клиентская визуализация)
 hook.Add("Think", "GRM_Augmentations_Regeneration", function()
-	local ply = LocalPlayer()
-	if not IsValid(ply) then return end
-	
-	local data = AUG.GetPlayerData(ply)
-	if not data or not data.augmentations or not data.augmentations.Regeneration then return end
-	
-	-- Медленное восстановление здоровья
-	if ply:Health() < ply:GetMaxHealth() then
-		timer.Create("GRM_Regen_" .. ply:SteamID64(), 5, 0, function()
-			if not IsValid(ply) then return end
-			if ply:Health() < ply:GetMaxHealth() then
-				ply:SetHealth(math.min(ply:Health() + 5, ply:GetMaxHealth()))
-			end
-		end)
-	else
-		timer.Remove("GRM_Regen_" .. ply:SteamID64())
-	end
+	if GRM.Perf and not GRM.Perf.Throttle("augment.regen.client",.5)then return end;local ply=LocalPlayer();if not IsValid(ply)then return end
+	local timerName="GRM_Regen_"..ply:SteamID64();local data=AUG.GetPlayerData(ply);local enabled=data and data.augmentations and data.augmentations.Regeneration
+	if enabled and ply:Health()<ply:GetMaxHealth()then if not timer.Exists(timerName)then timer.Create(timerName,5,0,function()if not IsValid(ply)then timer.Remove(timerName)return end;if ply:Health()<ply:GetMaxHealth()then ply:SetHealth(math.min(ply:Health()+5,ply:GetMaxHealth()))else timer.Remove(timerName)end end)end
+	elseif timer.Exists(timerName)then timer.Remove(timerName)end
 end)
 
 -- HUD Overlay (терминал перед лицом)
@@ -187,6 +174,7 @@ end)
 -- Звук работы аугментаций
 local ambientSound = nil
 hook.Add("Think", "GRM_Augmentations_Ambient", function()
+	if GRM.Perf and not GRM.Perf.Throttle("augment.ambient.client",.25)then return end
 	if not hudEnabled and not infraredEnabled and not nightVisionEnabled then
 		if ambientSound then
 			ambientSound:Stop()

@@ -234,6 +234,7 @@ else
     end)
     local f2Down = false
     hook.Add("Think", "GRM_Tickets_F2Poll", function()
+        if GRM.Perf and not GRM.Perf.Throttle("tickets.f2poll",.05)then return end
         local down = input.IsKeyDown(KEY_F2)
         if down and not f2Down and IsValid(LocalPlayer()) and LocalPlayer():IsAdmin() then RunConsoleCommand("grm_tickets") end
         f2Down = down

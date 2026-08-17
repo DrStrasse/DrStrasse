@@ -359,7 +359,7 @@ hook.Add("HUDPaint","GRML_EntityLabels",function()
     end
 
     for _,class in ipairs({"grm_logistics_warehouse","grm_logistics_armory","grm_logistics_loading"})do
-        for _,e in ipairs(ents.FindByClass(class))do
+        for _,e in ipairs((GRM.Perf and GRM.Perf.Entities and GRM.Perf.Entities(class)or ents.FindByClass(class)))do
             local hiddenLoading=class=="grm_logistics_loading" and not e:GetNWBool("GRML_LoadingActive",false) and not ply:IsSuperAdmin()
             if IsValid(e) and not hiddenLoading and ply:GetPos():DistToSqr(e:GetPos())<=700*700 then
                 if class=="grm_logistics_warehouse" then label(e,"Склад фракции: "..(e:GetFactionName()~="" and e:GetFactionName() or "не настроен"),"[E] Открыть склад")
@@ -369,7 +369,7 @@ hook.Add("HUDPaint","GRML_EntityLabels",function()
         end
     end
 
-    for _,crate in ipairs(ents.FindByClass("grm_logistics_crate"))do
+    for _,crate in ipairs((GRM.Perf and GRM.Perf.Entities and GRM.Perf.Entities("grm_logistics_crate")or ents.FindByClass("grm_logistics_crate")))do
         if IsValid(crate) and not IsValid(crate:GetParent()) and ply:GetPos():DistToSqr(crate:GetPos())<=500*500 then
             local kind=crate:GetCargoKind()
             local title=kind=="" and "Пустой грузовой ящик" or ("Грузовой ящик: "..kind)

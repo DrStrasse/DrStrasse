@@ -675,27 +675,17 @@ if CLIENT then
         if veh == TK._veh then closeFrame() end
     end)
 
-    -- 3D2D-метка открытого багажника ----------------------------------------
+    -- 3D2D-метка: реестр меняется по NW-событию, без FindByClass("*") в кадре.
+    local openTrunks=setmetatable({},{__mode="k"})
+    hook.Add("EntityNetworkedVarChanged","GRM_Trunk_LidRegistry",function(ent,name,_,value)if name=="VK_TrunkOpen"then if value==true then openTrunks[ent]=true else openTrunks[ent]=nil end end end)
+    hook.Add("EntityRemoved","GRM_Trunk_LidRegistryRemove",function(ent)openTrunks[ent]=nil end)
+    timer.Simple(1,function()for _,veh in ipairs(ents.GetAll())do if IsValid(veh)and veh.GetNW2Bool and veh:GetNW2Bool("VK_TrunkOpen",false)then openTrunks[veh]=true end end end)
     hook.Add("PostDrawTranslucentRenderables", "GRM_Trunk_Lid", function()
-        local lp = LocalPlayer()
-        if not IsValid(lp) then return end
-        for _, veh in ipairs(ents.FindByClass("*")) do
-            if IsValid(veh) and veh.GetNW2Bool and veh:GetNW2Bool("VK_TrunkOpen", false) then
-                local d2 = lp:GetPos():DistToSqr(veh:GetPos())
-                if d2 > 300 * 300 then return end
-                local mins, maxs = veh:OBBMins(), veh:OBBMaxs()
-                local back = (mins and mins.y) and mins.y or -60
-                local pos = veh:LocalToWorld(Vector(0, back - 8, (maxs and maxs.z or 60) * 0.5 + 30 + math.sin(CurTime() * 3) * 3))
-                local ang = Angle(0, EyeAngles().y - 90, 90)
-                cam.Start3D2D(pos, ang, 0.1)
-                    draw.RoundedBox(6, -110, -20, 220, 40, Color(14, 18, 26, 215))
-                    surface.SetDrawColor(C.yellow.r, C.yellow.g, C.yellow.b, 220)
-                    surface.DrawOutlinedRect(-110, -20, 220, 40, 2)
-                    draw.SimpleText("БАГАЖНИК ОТКРЫТ", "GRMTrunk_3D", 0, 0, C.yellow, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                cam.End3D2D()
-                return
-            end
-        end
+        local lp=LocalPlayer();if not IsValid(lp)then return end
+        for veh in pairs(openTrunks)do if not IsValid(veh)or not veh:GetNW2Bool("VK_TrunkOpen",false)then openTrunks[veh]=nil elseif lp:GetPos():DistToSqr(veh:GetPos())<=300*300 then
+            local mins,maxs=veh:OBBMins(),veh:OBBMaxs();local back=(mins and mins.y)and mins.y or-60;local pos=veh:LocalToWorld(Vector(0,back-8,(maxs and maxs.z or 60)*.5+30+math.sin(CurTime()*3)*3));local ang=Angle(0,EyeAngles().y-90,90)
+            cam.Start3D2D(pos,ang,.1);draw.RoundedBox(6,-110,-20,220,40,Color(14,18,26,215));surface.SetDrawColor(C.yellow.r,C.yellow.g,C.yellow.b,220);surface.DrawOutlinedRect(-110,-20,220,40,2);draw.SimpleText("БАГАЖНИК ОТКРЫТ","GRMTrunk_3D",0,0,C.yellow,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER);cam.End3D2D();return
+        end end
     end)
 
     print("[GRM Trunk] Клиент багажника v" .. TK.Version .. " загружен")

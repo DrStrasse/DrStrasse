@@ -1794,6 +1794,7 @@ if CLIENT then
     hook.Add("FinishChat", "GRM_Mobile_UnblockOpenAfterTyping", function() M.chatOpen = false end)
     hook.Add("PlayerButtonDown", "GRM_Mobile_KeyDown", function(ply, key) if ply ~= lp() then return end keyDown(key) end)
     hook.Add("PlayerButtonUp", "GRM_Mobile_KeyUp", function(ply, key) if ply ~= lp() then return end keyUp(key) end)
+    local keyRepeatDelta={[KEY_UP]=-1,[KEY_DOWN]=1}
     hook.Add("Think", "GRM_Mobile_KeyRepeat", function()
         -- Keyboard repeat intentionally disabled: menu navigation is mouse wheel only.
         -- Live GMod note: DFrame/MakePopup may eat PlayerButtonDown for arrows.
@@ -1801,7 +1802,7 @@ if CLIENT then
         if not input or not input.IsKeyDown then return end
 
         if M.open then
-            for key,delta in pairs({[KEY_UP]=-1,[KEY_DOWN]=1})do
+            for key,delta in pairs(keyRepeatDelta)do
                 if M.down[key] and input.IsKeyDown(key) and now()>=(M.nextRepeat[key] or math.huge)then
                     M.nextRepeat[key]=now()+0.11;move(delta)
                 end

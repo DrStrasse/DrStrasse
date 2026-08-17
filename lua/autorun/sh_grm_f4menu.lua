@@ -690,6 +690,7 @@ end)
 -- Канал 2: резервный прямой опрос клавиши (если бинд съеден/переопределён)
 local f4WasDown = false
 hook.Add("Think", "GRM_F4_KeyPoll", function()
+    if GRM.Perf and not GRM.Perf.Throttle("f4.keypoll",.05)then return end
     local down = input.IsKeyDown(KEY_F4)
     if down == f4WasDown then return end
     f4WasDown = down

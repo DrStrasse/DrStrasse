@@ -207,13 +207,10 @@ if SERVER then
                     local next = cur
                     if cur < target then next = math.min(target, cur + step)
                     elseif cur > target then next = math.max(target, cur - step) end
-                    ent.Sliding_Progress = next
-                    -- плавная позиция
-                    local e = ease(next, data.smooth)
-                    SD.MovePhysical(ent,base + (openPos - base) * e)
+                    local moving = math.abs(next - cur) > 0.0001
+                    if moving then ent.Sliding_Progress = next;local e=ease(next,data.smooth);SD.MovePhysical(ent,base+(openPos-base)*e)end
 
                     -- Звуки (находка 173d): в движении, при открытии, при закрытии
-                    local moving = math.abs(next - cur) > 0.0001
                     local soundOpen = tostring(data.soundOpen or "")
                     local soundClose = tostring(data.soundClose or "")
                     local soundMove = tostring(data.soundMove or "")

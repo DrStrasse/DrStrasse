@@ -18,7 +18,8 @@ hook.Add("HUDPaint", "GRM_OreBuyerLabel", function()
     local pos = ply:GetPos()
     local maxDist = 300
 
-    for _, ent in ipairs(ents.FindByClass("grm_ore_buyer")) do
+    local buyers=GRM.Perf and GRM.Perf.Entities and GRM.Perf.Entities("grm_ore_buyer")or ents.FindByClass("grm_ore_buyer")
+    for _, ent in ipairs(buyers) do
         if IsValid(ent) then
             local dist = pos:Distance(ent:GetPos())
             if dist <= maxDist then

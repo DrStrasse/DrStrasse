@@ -292,7 +292,8 @@ if SERVER then
 
     -- сторож: спикер отошёл/умер → эфир гаснет
     timer.Create("GRM_BC_LiveWatch", 0.5, 0, function()
-        for _, ent in ipairs(ents.FindByClass("grm_broadcast_mic")) do
+        local mics=GRM.Perf and GRM.Perf.Entities and GRM.Perf.Entities("grm_broadcast_mic")or ents.FindByClass("grm_broadcast_mic")
+        for _, ent in ipairs(mics) do
             if ent.BCLive then
                 local sp = ent.BCSpeaker
                 if not IsValid(sp) or not sp:Alive()

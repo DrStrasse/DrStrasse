@@ -580,18 +580,11 @@ if SERVER then
     hook.Add("Think", "GRM_FireTruck_NW", function()
         if (F._truckNwAt or 0) > CurTime() then return end
         F._truckNwAt = CurTime() + 1
-        for _, veh in ipairs(ents.GetAll()) do
-            if IsValid(veh) and veh.GetNWBool and veh:GetNWBool("GRM_FireTruck", false) then
-                local pump = F.FindPumpOn(veh)
-                if IsValid(pump) then
-                    if pump.GetTank then veh:SetNWInt("GRM_FireTank", pump:GetTank()) end
-                    if GRM.FireAddon and GRM.FireAddon.HoseCountOn and pump.GetHosesMax then
-                        veh:SetNWInt("GRM_FireHosesOut", GRM.FireAddon.HoseCountOn(pump))
-                        veh:SetNWInt("GRM_FireHoses", pump:GetHosesMax())
-                    end
-                end
-            end
-        end
+        local pumps=GRM.Perf and GRM.Perf.Entities and GRM.Perf.Entities("grm_fire_pump")or ents.FindByClass("grm_fire_pump")
+        for _,pump in ipairs(pumps)do if IsValid(pump)then local veh=pump.GetHostVehicle and pump:GetHostVehicle()or pump:GetParent();if IsValid(veh)and veh:GetNWBool("GRM_FireTruck",false)then
+            local tank=pump.GetTank and pump:GetTank()or 0;if not GRM.Perf or not GRM.Perf.NWInt then veh:SetNWInt("GRM_FireTank",tank)else GRM.Perf.NWInt(veh,"GRM_FireTank",tank)end
+            if GRM.FireAddon and GRM.FireAddon.HoseCountOn and pump.GetHosesMax then local out,total=GRM.FireAddon.HoseCountOn(pump),pump:GetHosesMax();if GRM.Perf and GRM.Perf.NWInt then GRM.Perf.NWInt(veh,"GRM_FireHosesOut",out);GRM.Perf.NWInt(veh,"GRM_FireHoses",total)else veh:SetNWInt("GRM_FireHosesOut",out);veh:SetNWInt("GRM_FireHoses",total)end end
+        end end end
     end)
 
     -- Машину снесли — смотать рукава и снять бортовое.
@@ -851,11 +844,15 @@ if CLIENT then
         net.Start(NET_TREQ) net.SendToServer()
     end)
 
+    local renderTrucks=setmetatable({},{__mode="k"})
+    hook.Add("EntityNetworkedVarChanged","GRM_FireTruck_RenderRegistry",function(ent,name,_,value)if name=="GRM_FireTruck"then if value==true then renderTrucks[ent]=true else renderTrucks[ent]=nil end end end)
+    hook.Add("EntityRemoved","GRM_FireTruck_RenderRegistryRemove",function(ent)renderTrucks[ent]=nil end)
+    timer.Simple(1,function()for _,ent in ipairs(ents.GetAll())do if IsValid(ent)and ent.GetNWBool and ent:GetNWBool("GRM_FireTruck",false)then renderTrucks[ent]=true end end end)
     hook.Add("PostDrawTranslucentRenderables", "GRM_FireTruck_3D", function(_, sky)
         if sky then return end
         local lp = LocalPlayer()
         if not IsValid(lp) then return end
-        for _, ent in ipairs(ents.GetAll()) do
+        for ent in pairs(renderTrucks) do
             if IsValid(ent) and ent.GetNWBool and ent:GetNWBool("GRM_FireTruck", false) then
                 if lp:GetPos():DistToSqr(ent:GetPos()) > 520 * 520 then
                 else

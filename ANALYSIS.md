@@ -6,15 +6,20 @@
 
 ## Актуализация 17.08.2026 — аудит производительности
 
-Статическим сканером `tools/performance_audit.py` проинвентаризированы все 467
-Lua-файлов (417 GRM, 50 vendored EasyChat), после чего вручную проверены
+Статическим сканером `tools/performance_audit.py` проинвентаризированы все 469
+Lua-файлов (419 GRM, 50 vendored EasyChat), после чего вручную проверены
 горячие кандидаты. Без изменения публичных API: DoorHack переведён с
 `ents.GetAll()` каждого кадра на weak registry; CCTV/Narcotics/Medical/Character
 guards ограничены по частоте; отключённый bone-pose наручников больше не
 сбрасывает кости всех игроков каждый кадр; Alarm speaker reconciliation отделён
 от срочного sensor scan; stamina остаётся 10 Гц на сервере, но сеть стала 4 Гц
-и change-driven; очередь иконок Q стала O(1). Полный отчёт, отложенные кандидаты
-и требования live-профилирования: `PERFORMANCE_AUDIT_2026.md`.
+и change-driven; очередь иконок Q стала O(1). Вторая волна добавила общий
+`GRM.Perf`: event-driven class registries, переиспользуемые entity arrays,
+change-only NW и throttle. Кадровые глобальные сканы убраны из Trunk,
+Incassation, FireTruck, Vendor/OreBuyer, Factory/Logistics, 911/Arrest;
+Quest/Factory disk mutations объединены в batch, бесконечные dependency installers
+останавливаются после установки. Полный отчёт и границы безопасной оптимизации:
+`PERFORMANCE_AUDIT_2026.md`.
 
 ## Актуализация 16.08.2026 — GRM Core v1
 

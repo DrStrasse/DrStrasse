@@ -1787,14 +1787,18 @@ net.Receive(NET_NOTIFY, function()
 end)
 
 -- ── 3D2D индикаторы над машиной и банкоматом ─────────────────────
+local runVehicles=setmetatable({},{__mode="k"})
+hook.Add("EntityNetworkedVarChanged","GRM_Incass_RunRegistry",function(ent,name,_,value)if name=="GRM_IncassRun"then if(tonumber(value)or 0)>0 then runVehicles[ent]=true else runVehicles[ent]=nil end end end)
+hook.Add("EntityRemoved","GRM_Incass_RunRegistryRemove",function(ent)runVehicles[ent]=nil end)
+timer.Simple(1,function()for _,ent in ipairs(ents.GetAll())do if IsValid(ent)and ent:GetNWInt("GRM_IncassRun",0)>0 then runVehicles[ent]=true end end end)
 hook.Add("PostDrawTranslucentRenderables", "GRM_Incass_3D2D", function(depth, skybox)
     if skybox then return end
     local ply = LocalPlayer()
     if not IsValid(ply) then return end
     local myPos = ply:GetPos()
 
-    -- 1. Индикатор над инкассаторской машиной в рейсе
-    for _, ent in ipairs(ents.GetAll()) do
+    -- 1. Индикатор над инкассаторской машиной: event-driven NW registry.
+    for ent in pairs(runVehicles) do
         if IsValid(ent) and ent:GetNWInt("GRM_IncassRun", 0) > 0 then
             local epos = ent:GetPos()
             local d2 = myPos:DistToSqr(epos)
@@ -1822,7 +1826,8 @@ hook.Add("PostDrawTranslucentRenderables", "GRM_Incass_3D2D", function(depth, sk
     end
 
     -- 2. Индикатор над банкоматом в режиме обслуживания
-    for _, ent in ipairs(ents.FindByClass("grm_bank_terminal")) do
+    local terminals=GRM.Perf and GRM.Perf.Entities and GRM.Perf.Entities("grm_bank_terminal")or ents.FindByClass("grm_bank_terminal")
+    for _, ent in ipairs(terminals) do
         if IsValid(ent) and ent:GetNWBool("GRM_IncassLocked", false) then
             local epos = ent:GetPos()
             local d2 = myPos:DistToSqr(epos)
@@ -1995,7 +2000,8 @@ hook.Add("HUDPaint", "GRM_Incass_HUD", function()
     local pPos = ply:GetPos()
     local targetEnt = IsValid(tr.Entity) and tr.Entity or nil
     if not IsValid(targetEnt) then
-        for _, ent in ipairs(ents.FindByClass("grm_bank_vault")) do
+        local vaults=GRM.Perf and GRM.Perf.Entities and GRM.Perf.Entities("grm_bank_vault")or ents.FindByClass("grm_bank_vault")
+        for _, ent in ipairs(vaults) do
             if IsValid(ent) and pPos:DistToSqr(ent:GetPos()) <= (350 * 350) then
                 targetEnt = ent
                 break

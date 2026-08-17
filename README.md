@@ -25,6 +25,15 @@ net guard и общий аудит. Общее большое меню прав 
 CCTV и Phone учитывают эти назначения поверх старых матриц; их admin-receiver
 защищены Net Guard и пишут Audit. Полные правила и API: [`GRM_CORE.md`](GRM_CORE.md).
 
+## Производительность
+
+`sh_06_grm_performance.lua` предоставляет event-driven реестры entity,
+переиспользуемые class arrays, throttle и change-only NW. Убраны кадровые
+глобальные сканы из Trunk, Incassation, FireTruck, Vendor/OreBuyer,
+Factory/Logistics, 911 и Arrest; Quest/Factory persistence объединяет изменения
+в batch. Механические частоты движения, наручников, Alarm и Fire hoses не
+урезались. Полный аудит всех 469 Lua-файлов: [`PERFORMANCE_AUDIT_2026.md`](PERFORMANCE_AUDIT_2026.md).
+
 ## Недвижимость
 
 `GRM.Property` объединяет канонические Doors v3.1 в квартиры, магазины, офисы. Door Core выбирает один primary entity, помечает вторичные полотна alias и перед каждым save схлопывает фантомные записи. Объекты недвижимости включают

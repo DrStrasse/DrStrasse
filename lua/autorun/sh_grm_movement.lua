@@ -172,6 +172,7 @@ if CLIENT then
 
     -- Управление звуком усталости
     hook.Add("Think", "GRM_StaminaSound", function()
+        if GRM.Perf and not GRM.Perf.Throttle("movement.breath.client",.1)then return end
         local stamina = GRM.LocalStamina or 0
         local maxStamina = GRM.Movement.Config.StaminaMax
         local threshold = maxStamina * (GRM.Movement.Config.StaminaWarningThreshold / 100)

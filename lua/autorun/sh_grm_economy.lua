@@ -380,9 +380,7 @@ if SERVER then
     function E.SyncVaultsState()
         local budget = math.floor(tonumber(E.Data and E.Data.state and E.Data.state.budget) or 0)
         for _, v in pairs(E.Vaults) do
-            if IsValid(v) and v.SetStateBudget then
-                v:SetStateBudget(budget)
-            end
+            if IsValid(v)and v.SetStateBudget and(not v.GetStateBudget or v:GetStateBudget()~=budget)then v:SetStateBudget(budget)end
         end
     end
 
