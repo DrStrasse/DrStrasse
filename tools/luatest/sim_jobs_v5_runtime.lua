@@ -1,5 +1,5 @@
 -- Focused runtime simulation for Jobs v5 topology and unloading.
-SERVER=true;CLIENT=false;function AddCSLuaFile()end
+SERVER=true;CLIENT=false;function AddCSLuaFile()end;NULL={_valid=false}
 local now=100
 function CurTime()return now end
 function IsValid(v)return type(v)=="table"and v._valid~=false end
@@ -32,13 +32,16 @@ JB.WorkPoints[1].pos.x=50;JB.RefreshGarbageTopology("move")
 ok(active.points[1].x==50 and (JB.saved or 0)>0,"active route auto-updates and saves moved point")
 local snap=JB.GarbageStateSnapshot()
 ok(snap.summary.points==2 and snap.summary.bound==2 and snap.summary.bins==3 and snap.summary.dumps==1,"state snapshot reports topology")
-local ply={_valid=true};function ply:GetNWString(_,d)return d end;function ply:Nick()return"Driver"end;function ply:ChatPrint()end
-local veh={_valid=true,_pos=Vector(2000,0,0),nw={},GRM_GarbageLoad=2};function veh:GetParent()return nil end;function veh:GetNWEntity()return nil end;function veh:GetPos()return self._pos end;function veh:GetVelocity()return Vector(0,0,0)end;function veh:GetDriver()return ply end;function veh:SetNWInt(k,v)self.nw[k]=v end;function veh:GetNWInt(k,d)local v=self.nw[k];if v==nil then return d end;return v end;function veh:SetNWString(k,v)self.nw[k]=v end;function veh:GetNWString(k,d)return self.nw[k]or d end;function veh:SetNWFloat(k,v)self.nw[k]=v end;function veh:EntIndex()return 77 end
+local ply={_valid=true,nw={}};function ply:GetNWString(k,d)return self.nw[k]or d end;function ply:SetNWBool(k,v)self.nw[k]=v end;function ply:SetNWFloat(k,v)self.nw[k]=v end;function ply:SetNWEntity(k,v)self.nw[k]=v end;function ply:Nick()return"Driver"end;function ply:ChatPrint()end
+local veh={_valid=true,_pos=Vector(2000,0,0),nw={},GRM_GarbageLoad=0};function veh:GetParent()return nil end;function veh:GetNWEntity()return nil end;function veh:GetPos()return self._pos end;function veh:GetVelocity()return Vector(0,0,0)end;function veh:GetDriver()return ply end;function veh:SetNWInt(k,v)self.nw[k]=v end;function veh:GetNWInt(k,d)local v=self.nw[k];if v==nil then return d end;return v end;function veh:SetNWString(k,v)self.nw[k]=v end;function veh:GetNWString(k,d)return self.nw[k]or d end;function veh:SetNWFloat(k,v)self.nw[k]=v end;function veh:SetNWEntity(k,v)self.nw[k]=v end;function veh:EntIndex()return 77 end
+local seat={_valid=true,nw={},GRM_GarbageLoad=2};function seat:GetParent()return veh end;function seat:GetNWEntity()return nil end;function seat:GetNWInt(k,d)return self.nw[k]or d end;function seat:SetNWInt(k,v)self.nw[k]=v end
+JB.MarkGarbageTruck(seat,ply,active)
+ok(veh.GRM_GarbageLoad==2 and veh.nw.GRM_GarbageLoad==2,"seat cargo migrates to canonical vehicle root")
 JB.Complete=function()JB.completed=true end
-JB.TickGarbageDump(ply,active,veh,Vector(2000,0,0),170)
-ok(active.garbageUnloadAt==103 and veh.nw.GRM_GarbageState=="unloading","stationary truck starts timed unload")
-now=102;JB.TickGarbageDump(ply,active,veh,Vector(2000,0,0),170)
+JB.TickGarbageDump(ply,active,seat,Vector(2000,0,0),170)
+ok(active.garbageUnloadAt==103 and veh.nw.GRM_GarbageState=="unloading"and ply.nw.GRM_GarbageUnloading==true,"stationary truck starts replicated timed unload")
+now=102;JB.TickGarbageDump(ply,active,seat,Vector(2000,0,0),170)
 ok(not JB.completed and veh.GRM_GarbageLoad==2,"cargo remains before timer finishes")
-now=104;JB.TickGarbageDump(ply,active,veh,Vector(2000,0,0),170)
+now=104;JB.TickGarbageDump(ply,active,seat,Vector(2000,0,0),170)
 ok(JB.completed and veh.GRM_GarbageLoad==0 and veh.nw.GRM_GarbageLoad==0,"finished unload clears cargo and completes route")
 print(("JOBS V5 RUNTIME: %d/%d failures=%d"):format(n-fail,n,fail));os.exit(fail==0 and 0 or 1)
