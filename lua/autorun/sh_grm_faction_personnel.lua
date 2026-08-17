@@ -50,6 +50,24 @@ else
   local refresh=btn(parent,"ОБНОВИТЬ",Color(75,90,110));refresh:SetPos(1070,586);refresh:SetSize(160,34);refresh.DoClick=function()request()end
   if own~=""then facCombo:SetValue(displayFac(own).."  ["..own.."]");selectFaction(own)end
  end
+ -- Точка входа для Unified Factions UI: строит кадровые дела ПРЯМО в переданную
+ -- панель вкладки и выбирает нужную фракцию. Раньше этой функции не было —
+ -- вкладка показывала заглушку «модуль активен», хотя серверная часть работала.
+ function P.OpenTab(pnl, facName)
+  if not IsValid(pnl) then return end
+  selectedFaction = nil
+  selectedKey = nil
+  panel = nil
+  build(pnl)
+  local fname = facName
+  if (not fname or not FactionsData or not FactionsData[fname]) then
+   fname = LocalPlayer():GetNWString("GRM_Faction", "")
+  end
+  if fname and fname ~= "" and FactionsData and FactionsData[fname] then
+   facCombo:SetValue(displayFac(fname) .. "  [" .. fname .. "]")
+   selectFaction(fname)
+  end
+ end
  hook.Add("GRM_FactionsAdmin_BuildTabs","GRM_FactionPersonnel_Tab",function(tabs)if not IsValid(tabs)then return end;local p=vgui.Create("DPanel");p:SetPaintBackground(false);tabs:AddSheet("Кадровые дела",p,"icon16/vcard.png");timer.Simple(0,function()if IsValid(p)then build(p)end end)end)
  net.Receive(NDATA,function()local d=net.ReadTable()or{};if not d.ok then notification.AddLegacy(d.message or"Ошибка",NOTIFY_ERROR,5)return end;if d.kind=="list"then if d.faction~=selectedFaction or not IsValid(members)then return end;members:Clear();local f=FactionsData and FactionsData[d.faction];for _,r in ipairs(d.rows or{})do local live=f and f.Members and f.Members[r.key];local name=live and live._rpName or r.key;local state=r.archived and"АРХИВ"or(r.status=="probation"and"ИСПЫТАНИЕ"or"ДЕЙСТВУЕТ");local line=members:AddLine(name,r.role or"",displayDept(d.faction,r.department or""),state);line.CharacterKey=r.key end;summary:SetText("Выберите кадровое дело слева")return end;if d.faction~=selectedFaction or d.key~=selectedKey then return end;local p=d.personnel or{};local status=p.status=="probation"and("ИСПЫТАТЕЛЬНЫЙ СРОК до "..os.date("%d.%m.%Y",p.probationUntil or 0))or(p.status=="dismissed"and"УВОЛЕН"or"ДЕЙСТВУЮЩИЙ СОТРУДНИК");summary:SetText((d.archived and"АРХИВ • "or"")..d.key.."\n"..d.role.." • "..displayDept(d.faction,d.department).."\n"..status.." • принят "..os.date("%d.%m.%Y",p.joinedAt or 0));history:Clear();for i=#(p.history or{}),1,-1 do local r=p.history[i];history:AddLine(os.date("%d.%m.%Y %H:%M",r.time or 0),r.type or"",r.text or"",r.actorName or"")end;if IsValid(noteEntry)then noteEntry:SetText("")end end)
  hook.Add("GRM_FactionUIRefreshed","GRM_FactionPersonnel_RosterRefresh",function(data)if IsValid(panel)then refreshFactionChoices(data);if selectedFaction then requestList()end end end)

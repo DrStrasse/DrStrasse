@@ -39,12 +39,14 @@ function D.PurgeGhostDoors()
     for i = 1, #doors do
         local a = doors[i]
         if IsValid(a) and not toRemove[a] then
-            local posA = a.WorldSpaceCenter and a:WorldSpaceCenter() or a:GetPos()
             for j = i + 1, #doors do
                 local b = doors[j]
                 if IsValid(b) and not toRemove[b] then
-                    local posB = b.WorldSpaceCenter and b:WorldSpaceCenter() or b:GetPos()
-                    if posA:DistToSqr(posB) <= (14 * 14) and math.abs(posA.z - posB.z) <= 8 then
+                    -- Единый предикат с системой идентичности: раньше здесь был
+                    -- жёсткий порог 14 юнитов, из-за чего фантомные дубли на
+                    -- расстоянии 15–60 юнитов не отлавливались и оставались
+                    -- «второй дверью» с пустым владельцем.
+                    if D.IsSamePhysicalDoor(a, b) then
                         local isMapA = a.CreatedByMap and a:CreatedByMap() or false
                         local isMapB = b.CreatedByMap and b:CreatedByMap() or false
                         local killTarget = nil
