@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[
 	GRM Augmentations HUD
 	Отображение активных аугментаций и чипов на экране
@@ -326,7 +333,7 @@ concommand.Add("grm_aughud_refresh", function()
 end)
 
 -- Инициализация
-hook.Add("InitPostEntity", "GRM_AugHUD_Init", function()
+grmBootStart("GRM_AugHUD_Init", "late", function()
 	HUD.UpdateData()
 end)
 

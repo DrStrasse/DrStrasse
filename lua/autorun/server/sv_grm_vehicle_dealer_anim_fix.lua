@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[--------------------------------------------------------------------
     GRM Vehicle Dealer — anim entity safety patch
 
@@ -47,7 +54,7 @@ hook.Add("OnEntityCreated", "GRM_VehicleDealer_NoRagdoll", function(ent)
     end)
 end)
 
-hook.Add("InitPostEntity", "GRM_VehicleDealer_FixExisting", function()
+grmBootStart("GRM_VehicleDealer_FixExisting", "late", function()
     timer.Simple(1, function()
         for _, ent in ipairs(ents.FindByClass(CLASS)) do
             applyDealerAnimState(ent)

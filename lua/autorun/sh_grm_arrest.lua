@@ -381,6 +381,7 @@ end
         target.GRM_ArrestOriginalBodygroups = {}
         for i = 0, (target:GetNumBodyGroups() or 0) - 1 do target.GRM_ArrestOriginalBodygroups[i] = target:GetBodygroup(i) end
         target:SetNWBool("GRM_Arrested", true)
+        A.ArrestedCount = (A.ArrestedCount or 0) + 1
         target:SetNWString("GRM_ArrestGroup", groupID or "criminals")
         target:SetNWString("GRM_ArrestGroupName", g.name or groupID or "Арестованный")
         target:SetNWString("GRM_ArrestCameraID", tostring(cam.id or ""))
@@ -407,6 +408,7 @@ end
     function A.UnarrestPlayer(actor, target)
         if not IsValid(target) or not target:GetNWBool("GRM_Arrested", false) then return false end
         target:SetNWBool("GRM_Arrested", false)
+        A.ArrestedCount = math.max(0, (A.ArrestedCount or 1) - 1)
         target:SetNWString("GRM_ArrestGroup", "")
         target:SetNWString("GRM_ArrestGroupName", "")
         target:SetNWString("GRM_ArrestCameraID", "")
@@ -459,11 +461,34 @@ end
             if IsValid(ply) then A.EnforceUnarmed(ply) end
         end)
     end)
-    timer.Create("GRM_Arrest_EnforceUnarmed", 0.25, 0, function()
+    -- Аудит нагрузки 18.08: таймер обходил ВСЕХ игроков 4 раза в секунду,
+    -- хотя арестованных обычно ноль. Теперь проход идёт раз в 0.5 с и только
+    -- когда на сервере реально есть хоть один арестованный (флаг ставит
+    -- сам модуль ареста при посадке/освобождении).
+    timer.Create("GRM_Arrest_EnforceUnarmed", 0.5, 0, function()
+        if (A.ArrestedCount or 0) <= 0 then return end
+        local seen = 0
         for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
-            if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then A.EnforceUnarmed(ply) end
+            if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then
+                A.EnforceUnarmed(ply)
+                seen = seen + 1
+            end
         end
+        A.ArrestedCount = seen
     end)
+
+    -- Счётчик арестованных: дешёвая замена постоянному сканированию.
+    function A.RefreshArrestedCount()
+        local n = 0
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+            if IsValid(ply) and ply:GetNWBool("GRM_Arrested", false) then n = n + 1 end
+        end
+        A.ArrestedCount = n
+        return n
+    end
+    hook.Add("GRM_ArrestStateChanged", "GRM_Arrest_CountWatch", function() A.RefreshArrestedCount() end)
+    hook.Add("PlayerDisconnected", "GRM_Arrest_CountWatch", function() timer.Simple(0, function() A.RefreshArrestedCount() end) end)
+    timer.Simple(5, function() if A.RefreshArrestedCount then A.RefreshArrestedCount() end end)
 
     local function handleArrestChatCommand(ply, text)
         if not IsValid(ply) or not ply:IsPlayer() then return false end

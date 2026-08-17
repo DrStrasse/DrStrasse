@@ -596,6 +596,8 @@ function HC.CuffPlayer(actor, target)
     end
 
     target:SetNWBool("GRM_Cuffed", true)
+    HC.Cuffed = istable(HC.Cuffed) and HC.Cuffed or {}
+    HC.Cuffed[target] = true
     if target.GRM_CuffOriginalCollisionGroup == nil then target.GRM_CuffOriginalCollisionGroup = target:GetCollisionGroup() end
     target:SetCollisionGroup(COLLISION_GROUP_DEBRIS)
     target:SetNWEntity("GRM_CuffOwner", actor)
@@ -628,6 +630,7 @@ function HC.UncuffPlayer(actor, target, silent)
     end
 
     target:SetNWBool("GRM_Cuffed", false)
+    if istable(HC.Cuffed) then HC.Cuffed[target] = nil end
     target:SetNWEntity("GRM_CuffOwner", NULL)
     target:SetNWBool("GRM_CuffDragged", false)
     target:SetNWEntity("GRM_CuffDragger", NULL)
@@ -1303,7 +1306,14 @@ hook.Add("PlayerUse", "GRM_Handcuffs_ReleaseOrTransfer", function(ply, ent)
     return false
 end)
 
+hook.Add("PlayerDisconnected", "GRM_Handcuffs_CuffedRegistry", function(ply)
+    if istable(HC.Cuffed) then HC.Cuffed[ply] = nil end
+end)
+
 timer.Create("GRM_Handcuffs_ReleaseDecay", 0.25, 0, function()
+    -- Аудит нагрузки 18.08: проход по всем игрокам 4 раза в секунду шёл
+    -- всегда. Реестр закованных ведёт сам модуль — обычно он пуст.
+    if istable(HC.Cuffed) and next(HC.Cuffed) == nil then return end
     for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if HC.IsCuffed(ply) then
             local progress = ply:GetNWFloat("GRM_CuffReleaseProgress", 0)

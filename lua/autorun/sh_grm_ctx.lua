@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[--------------------------------------------------------------------
     GRM Context Menu — единое контекстное меню (server + client)
 --------------------------------------------------------------------]]
@@ -708,7 +715,7 @@ req = function()
 end
 net.Receive("GRM_Ctx_Result", function() data = net.ReadTable() or {} end)
 timer.Create("GRM_Ctx_Refresh", 15, 0, req)
-hook.Add("InitPostEntity", "GRM_Ctx_Init", function() timer.Simple(3, req) end)
+grmBootStart("GRM_Ctx_Init", "early", function() timer.Simple(3, req) end)
 
 local function drawMenu()
     if not visible then return end

@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[--------------------------------------------------------------------
     GRM Special Service v1.0.0 — спецслужбы (Гестапо, Комитет).
 
@@ -915,7 +922,7 @@ if SERVER then
 
     -- Менеджер доступов переустанавливает CanView/CanEdit на таймерах
     -- 0/1/3/6 секунд — накатываем патч после него.
-    hook.Add("Initialize", "GRM_SS_Install", function()
+    grmBootStart("GRM_SS_Install", "normal", function()
         timer.Simple(8, installJurisdictionHook)
     end)
     timer.Simple(8, installJurisdictionHook)

@@ -9,7 +9,7 @@ local perm=read("lua/autorun/sh_grm_perm_entities.lua")
 local checks,failed=0,0
 local function has(s,n)return s:find(n,1,true)~=nil end
 local function ok(v,n)checks=checks+1;if v then print("  ok "..checks..". "..n)else failed=failed+1;print("  FAIL "..checks..". "..n)end end
-ok(has(core,'V.Version = "2.1.0"'),"framework version 2.1")
+ok(has(core,'V.Version = "2.2.0"'),"framework version 2.2 (реестр типов торговцев)")
 ok(has(core,"function V.IsItemEnabled") and has(core,"function V.GetPrice") and has(core,"function V.GetLimit"),"authoritative stock price and limit APIs")
 ok(has(entity,"function ENT:BuildCatalogPayload") and has(entity,"V.IsItemEnabled(self, id)"),"store payload exposes only enabled products")
 ok(has(entity,"rateOK(ply") and has(entity,"inRange(ply,ent)"),"transactions are range and rate limited")

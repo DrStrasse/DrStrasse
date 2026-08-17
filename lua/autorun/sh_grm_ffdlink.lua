@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[--------------------------------------------------------------------
     GRM FFD Link v1.2.0 (Код 108 → Код 109 → Код 110, память и персист)
     РУЧНАЯ связь «контроллер → исчезающие / раздвижные двери»:
@@ -100,7 +107,7 @@ if SERVER then
         end
     end
 
-    hook.Add("InitPostEntity", "GRM_FFDLink_RefreshPostEntity", function()
+    grmBootStart("GRM_FFDLink_RefreshPostEntity", "normal", function()
         timer.Simple(1.5, function()
             if GRM.FFDLink and GRM.FFDLink.RefreshAllControllers then
                 GRM.FFDLink.RefreshAllControllers()

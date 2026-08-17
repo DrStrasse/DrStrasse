@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[--------------------------------------------------------------------
     GRM RoomTap — server
 
@@ -1283,7 +1290,7 @@ end)
 
 RT.LoadAccess()
 
-hook.Add("InitPostEntity", "GRM_RoomTap_LoadEquipment", function()
+grmBootStart("GRM_RoomTap_LoadEquipment", "normal", function()
     timer.Simple(1, function()
         RT.LoadMapEquipment(nil)
         loadRecentRecords()

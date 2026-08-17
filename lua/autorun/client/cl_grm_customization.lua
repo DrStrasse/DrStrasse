@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 -- GRM Closed Customization v1.0.0 — client renderer and editors
 if not CLIENT then return end
 
@@ -836,5 +843,5 @@ local function openAdmin(catalog)
 end
 net.Receive("GRM_Custom_AdminOpen", function() openAdmin(net.ReadTable() or {}) end)
 
-hook.Add("InitPostEntity", "GRM_Customization_Request", function() timer.Simple(2, C.RequestSync) end)
+grmBootStart("GRM_Customization_Request", "late", function() timer.Simple(2, C.RequestSync) end)
 print("[GRM Customization] client v" .. tostring(C.Version or "1.0.0") .. " loaded")

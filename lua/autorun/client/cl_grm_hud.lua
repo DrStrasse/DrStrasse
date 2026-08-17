@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[--------------------------------------------------------------------
     GRM HUD v10.4 — Полноценный HUD для Sandbox
     v10.4: колесо и клавиши слотов только двигают подсветку; таймаут
@@ -96,7 +103,7 @@ function GRM.AddNotification(text, duration, color)
     while #GRM.Notifications > 6 do table.remove(GRM.Notifications) end
 end
 
-hook.Add("InitPostEntity", "GRM_HUD_ReqBal", function()
+grmBootStart("GRM_HUD_ReqBal", "late", function()
     timer.Simple(1, function()
         net.Start("grm_request_bal")
         net.SendToServer()
@@ -550,7 +557,7 @@ hook.Add("HUDPaint", "GRM_HUD_Main", function()
     pcall(DrawNotifications)
 end)
 
-hook.Add("InitPostEntity", "GRM_HUD_Welcome", function()
+grmBootStart("GRM_HUD_Welcome", "late", function()
     timer.Simple(4, function()
         if IsValid(LocalPlayer()) then GRM.AddNotification("HUD v10.4 загружен — колёсико для выбора оружия", 5, Color(100, 180, 255)) end
     end)

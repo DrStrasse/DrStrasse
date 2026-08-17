@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[--------------------------------------------------------------------
     GRM Food x GRM Inventory Patch (v2 — Код 109, находка 126)
 
@@ -159,7 +166,7 @@ local function startRegistrationTimer()
 end
 
 startRegistrationTimer()
-hook.Add("InitPostEntity", "GRM_FoodInventoryPatch_RegisterItems", startRegistrationTimer)
+grmBootStart("GRM_FoodInventoryPatch_RegisterItems", "normal", startRegistrationTimer)
 
 -- ===================================================================
 -- КЛИЕНТУ НУЖНА ТОЛЬКО РЕГИСТРАЦИЯ ItemDefs
@@ -606,7 +613,7 @@ local function tryInstallAll()
     installVendingBuyPatch()
 end
 
-hook.Add("InitPostEntity", "GRM_FoodInventoryPatch_Install", function()
+grmBootStart("GRM_FoodInventoryPatch_Install", "normal", function()
     timer.Simple(1, tryInstallAll)
     timer.Simple(3, tryInstallAll)
     timer.Simple(6, tryInstallAll)

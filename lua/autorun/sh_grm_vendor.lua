@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[--------------------------------------------------------------------
     GRM Vendor Framework v2.0 (Код 111)
     Единый фреймворк торгашей: оружие / руда / еда / редкости.
@@ -14,7 +21,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Vendor = GRM.Vendor or {}
 local V = GRM.Vendor
-V.Version = "2.1.0"
+V.Version = "2.2.0"
 
 -- ============================================================
 -- КОНФИГ
@@ -35,6 +42,36 @@ V.Models = {
     rare   = "models/gman_high.mdl",
     accessory = "models/alyx.mdl",
 }
+
+-- v2.2.0: типы торговцев — общий реестр. Раньше список был захардкожен
+-- и в этом файле, и в тулгане: новый торговец приходилось вписывать в двух
+-- местах. Теперь модуль регистрирует свой тип сам (V.RegisterType).
+V.TypeNames = V.TypeNames or {
+    weapon    = "Арсенал",
+    ore       = "Скупщик руды",
+    food      = "Продукты",
+    rare      = "Редкости",
+    accessory = "Аксессуары",
+}
+
+function V.RegisterType(key, label, model, catalog)
+    key = tostring(key or "")
+    if key == "" then return false end
+    V.TypeNames[key] = tostring(label or key)
+    if model and model ~= "" then V.Models[key] = model end
+    V.Catalogs[key] = V.Catalogs[key] or {}
+    if istable(catalog) then
+        for id, data in pairs(catalog) do V.Catalogs[key][id] = data end
+    end
+    return true
+end
+
+function V.TypeList()
+    local out = {}
+    for key, label in pairs(V.TypeNames) do out[#out + 1] = { key = key, name = label } end
+    table.sort(out, function(a, b) return string.lower(a.name) < string.lower(b.name) end)
+    return out
+end
 
 -- ============================================================
 -- КАТАЛОГИ (shared, регистрируются до загрузки энтити)
@@ -158,8 +195,7 @@ end
 
 function V.GetDisplayName(ent)
     if IsValid(ent) and tostring(ent.DisplayName or "") ~= "" then return tostring(ent.DisplayName):sub(1, 64) end
-    local names = {weapon="Арсенал",ore="Скупщик руды",food="Продукты",rare="Редкости",accessory="Аксессуары"}
-    return names[IsValid(ent) and ent.VendorType or ""] or "GRM Торгаш"
+    return V.TypeNames[IsValid(ent) and ent.VendorType or ""] or "GRM Торгаш"
 end
 
 function V.GetSellPrice(ply, vendorType, id)
@@ -445,7 +481,7 @@ if SERVER then
         local cmd=map[string.lower(name or "")]; if not cmd then return end
         command(ply,cmd,argument); pack[1]=""; pack.SkipPlayerSay=true
     end)
-    hook.Add("InitPostEntity","GRM_Vendor_PersistenceLoad",function() timer.Simple(1.4,function() migrateLegacyPerm(); V.LoadMapVendors() end) end)
+    grmBootStart("GRM_Vendor_PersistenceLoad","normal",function() timer.Simple(1.4,function() migrateLegacyPerm(); V.LoadMapVendors() end) end)
     hook.Add("PostCleanupMap","GRM_Vendor_PersistenceCleanup",function() timer.Simple(0.8,function() V.LoadMapVendors() end) end)
 end
 

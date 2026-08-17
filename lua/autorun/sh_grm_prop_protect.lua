@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[--------------------------------------------------------------------
     GRM Prop Protect v2.0.0
     Комплексная защита пропов, объектов карты, дверей и серверного оборудования.
@@ -489,7 +496,7 @@ if SERVER then
         net.Start("GRM_PropProtect_Data") net.WriteTable(PP.Cfg) net.Send(ply)
     end)
 
-    hook.Add("InitPostEntity", "GRM_PropProtect_StabilizeExisting", function()
+    grmBootStart("GRM_PropProtect_StabilizeExisting", "early", function()
         timer.Simple(1, function()
             for _, ent in ipairs(ents.FindByClass("prop_physics")) do
                 if not PP.IsMapEntity(ent) and ownerOf(ent) ~= "" then stablePhysics(ent) end

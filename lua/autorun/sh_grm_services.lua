@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[--------------------------------------------------------------------
     GRM Services v1.0.0 — государственные услуги и счета на оплату
 
@@ -1062,5 +1069,5 @@ local function boot()
         :format(S.Version, table.Count(S.Catalog), #S.Invoices))
 end
 
-hook.Add("Initialize", "GRM_Services_Load", boot)
+grmBootStart("GRM_Services_Load", "normal", boot)
 if GRM and GRM.Services then boot() end

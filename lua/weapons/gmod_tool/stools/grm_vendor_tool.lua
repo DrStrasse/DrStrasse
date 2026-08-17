@@ -1,7 +1,14 @@
 -- GRM Vendor Tool v2.0 — spawn, configure stock and autosave
 TOOL.Category = "GRM";TOOL.Name = "#tool.grm_vendor_tool.name";TOOL.Command=nil;TOOL.ConfigName=""
 TOOL.ClientConVar={type="weapon"}
-local TYPES={weapon="Оружие",ore="Руда",food="Еда",rare="Редкости",accessory="Аксессуары"}
+-- Список типов берём из реестра GRM.Vendor (v2.2.0): новый торговец
+-- (например, салон связи) появляется в тулгане сам, без правки этого файла.
+local function TYPESLIST()
+    return (GRM and GRM.Vendor and GRM.Vendor.TypeNames)
+        or {weapon="Оружие",ore="Руда",food="Еда",rare="Редкости",accessory="Аксессуары"}
+end
+local TYPES=setmetatable({},{__index=function(_,k)return TYPESLIST()[k]end,
+    __pairs=function()return pairs(TYPESLIST())end})
 if CLIENT then language.Add("tool.grm_vendor_tool.name", "GRM Торговец");language.Add("tool.grm_vendor_tool.desc","Создание, ассортимент, цены и сохранение торговцев");language.Add("tool.grm_vendor_tool.0","ЛКМ: поставить • ПКМ: настроить • R: убрать с карты")end
 
 function TOOL:LeftClick(tr)
@@ -72,5 +79,5 @@ if CLIENT then
   local save=button(f,"СОХРАНИТЬ И ПРИМЕНИТЬ",UI.green);save:SetPos(18,708);save:SetSize(882,36);save.DoClick=function()local prices,limits,enabled={},{},{};for _,row in ipairs(scroll:GetCanvas():GetChildren())do if row._id then enabled[row._id]=row._enabled:GetChecked();local p=math.floor(row._price:GetValue());local l=math.floor(row._limit:GetValue());if p~=row._base then prices[row._id]=p end;if l>0 then limits[row._id]=l end end end;net.Start("GRM_VendorTool_Config")net.WriteEntity(ent)net.WriteTable({vendorType=data.vendorType,displayName=name:GetValue(),model=model:GetValue(),customPrices=prices,customLimits=limits,enabledItems=enabled})net.SendToServer();surface.PlaySound("buttons/button15.wav")end
  end)
  net.Receive("GRM_VendorTool_Result",function()local ok,text=net.ReadBool(),net.ReadString();notification.AddLegacy(text,ok and NOTIFY_GENERIC or NOTIFY_ERROR,5);surface.PlaySound(ok and"buttons/button9.wav"or"buttons/button10.wav")end)
- function TOOL.BuildCPanel(panel)panel:AddControl("Header",{Description="GRM Торгаш v2: автоматически сохраняет тип, модель, ассортимент, цены и лимиты"});local options={};for id,name in pairs(TYPES)do options[name]={["grm_vendor_tool_type"]=id}end;panel:AddControl("ComboBox",{Label="Тип торговца",Options=options});panel:Help("ЛКМ — поставить и сохранить\nПКМ — GRM-настройки\nR — убрать NPC, сохранив запись\n/vendor_unsave — удалить запись навсегда")end
+ function TOOL.BuildCPanel(panel)panel:AddControl("Header",{Description="GRM Торгаш v2: автоматически сохраняет тип, модель, ассортимент, цены и лимиты"});local options={};for id,name in pairs(TYPESLIST())do options[name]={["grm_vendor_tool_type"]=id}end;panel:AddControl("ComboBox",{Label="Тип торговца",Options=options});panel:Help("ЛКМ — поставить и сохранить\nПКМ — GRM-настройки\nR — убрать NPC, сохранив запись\n/vendor_unsave — удалить запись навсегда")end
 end

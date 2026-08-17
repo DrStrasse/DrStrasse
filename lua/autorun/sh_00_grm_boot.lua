@@ -44,7 +44,7 @@ GRM = GRM or {}
 GRM.Boot = GRM.Boot or {}
 local B = GRM.Boot
 
-B.Version = "1.0.0"
+B.Version = "1.1.0"
 
 B.TIERS = { critical = 0, early = 1, normal = 2, late = 3, idle = 4 }
 B.TIER_NAMES = { [0] = "critical", [1] = "early", [2] = "normal", [3] = "late", [4] = "idle" }
@@ -255,6 +255,16 @@ hook.Add("PostCleanupMap", "GRM_Boot_Restart", function()
 end)
 -- Страховка: если InitPostEntity уже прошёл к моменту загрузки файла.
 timer.Simple(3, B.Start)
+
+-- v1.1.0: единая точка «сделать на старте карты». Заменяет прямые
+-- hook.Add("InitPostEntity"/"Initialize", ...) в модулях: задача попадает в
+-- очередь с приоритетом и не бьёт по тикрейту в первые секунды карты.
+-- Порядок: critical → early → normal → late; idle — только по требованию.
+function B.OnMapStart(id, tier, fn, opts)
+    id = "start." .. tostring(id or "")
+    if not isfunction(fn) then return false end
+    return B.Task(id, tier or "normal", fn, opts)
+end
 
 -- Пометить задачу как «нужно выполнить снова» (например, после очистки карты).
 function B.Reset(id)

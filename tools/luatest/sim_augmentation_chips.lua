@@ -70,7 +70,7 @@ ok(has(shared, "GRM_AugChip_SendList"), "send list network string exists")
 
 -- Hooks
 ok(has(shared, "PlayerSpawn"), "player spawn hook exists")
-ok(has(shared, "Initialize"), "initialize hook exists")
+ok(has(shared, "grmBootStart(\"GRM_AugChips_Init\", \"normal\""), "старт подсистемы идёт через GRM.Boot (было Initialize)")
 ok(has(shared, "ShutDown"), "shutdown hook exists")
 
 -- Effects application

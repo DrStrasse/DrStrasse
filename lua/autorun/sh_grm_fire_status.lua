@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[--------------------------------------------------------------------
     GRM Fire — учёт тушения v1.4.1
     Кластер vFire = один пожар. Уведомления:
@@ -384,7 +391,7 @@ if SERVER then
         F.RefreshIncidents()
     end)
 
-    hook.Add("InitPostEntity", "GRM_Fire_StatusBoot", function()
+    grmBootStart("GRM_Fire_StatusBoot", "normal", function()
         timer.Simple(1, function() F.BuildFromExisting() end)
         timer.Simple(2, function() F.BuildFromExisting() end)
     end)

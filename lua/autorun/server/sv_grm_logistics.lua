@@ -627,6 +627,8 @@ hook.Add("CanProperty","GRML_ProtectLoadingMarkerProperty",function(ply,property
 end)
 
 timer.Create("GRML_RouteThink",0.4,0,function()
+    -- Аудит нагрузки 18.08: тик маршрутов работал вхолостую, пока рейсов нет.
+    if not istable(L.Routes) or next(L.Routes) == nil then return end
     for key,r in pairs(L.Routes) do
         if not IsValid(r.truck) then
             setLoadingVisual(r.loading, false)

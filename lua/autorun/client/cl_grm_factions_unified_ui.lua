@@ -491,6 +491,10 @@ function UI.Open(requestedFaction)
     local tabButtons = {}
     currentTabButtons = tabButtons
 
+    -- Форвард-декларация: parkHookedPanels объявлена ниже, но нужна уже в
+    -- refreshView. Без неё замыкание читало бы глобал и падало.
+    local parkHookedPanels
+
     -- Поиск скролла внутри вкладки: вкладки строят свой DScrollPanel сами.
     local function findScroll(panel)
         if not IsValid(panel) then return nil end
@@ -513,6 +517,7 @@ function UI.Open(requestedFaction)
 
             -- Введённый в форму текст переносим через пересборку.
             collectFormValues(content)
+            if parkHookedPanels then parkHookedPanels() end
             content:Clear()
             tabButtons[currentTab].builder(content, targetFac, FactionsData or {})
 
@@ -526,11 +531,34 @@ function UI.Open(requestedFaction)
         end
     end
 
+    -- ── МОСТ НАВЕСНЫХ ВКЛАДОК ────────────────────────────────────────────
+    -- Сторонние модули (арест, экономика, кадры, образование, мост доступов)
+    -- добавляют свои разделы хуком GRM_FactionsAdmin_BuildTabs. Раньше хук
+    -- звало только СТАРОЕ меню, поэтому в /factions эти разделы пропадали.
+    -- Панели модулей живут дольше одной вкладки, поэтому перед content:Clear()
+    -- их «паркуем» в невидимый контейнер — иначе Clear() их удалит и данные,
+    -- запрошенные по сети при открытии, некуда будет положить.
+    local hookedPanels = {}
+    local hookHost = vgui.Create("DPanel", f)
+    hookHost:SetVisible(false)
+    hookHost:SetSize(0, 0)
+    hookHost:SetPaintBackground(false)
+
+    parkHookedPanels = function()
+        for _, row in ipairs(hookedPanels) do
+            if IsValid(row.panel) and row.panel:GetParent() == content then
+                row.panel:SetVisible(false)
+                row.panel:SetParent(hookHost)
+            end
+        end
+    end
+
     local function selectTab(tabKey, builderFn)
         currentTab = tabKey
         for k, btn in pairs(tabButtons) do
             btn.isActive = (k == tabKey)
         end
+        parkHookedPanels()
         content:Clear()
         if builderFn then builderFn(content, targetFac, FactionsData or {}) end
     end
@@ -1291,6 +1319,47 @@ function UI.Open(requestedFaction)
     addTabBtn("service", "Служебные системы", "icon16/wrench.png", buildServiceSystemsTab)
     if isSA then
         addTabBtn("create", "Создать организацию", "icon16/add.png", buildCreateTab)
+    end
+
+    -- ── Разделы от других модулей ────────────────────────────────────────
+    -- Прокси с методом AddSheet: модулям он выглядит как DPropertySheet,
+    -- а на деле каждая «страница» превращается в кнопку бокового меню GRM.
+    do
+        local proxy = hookHost
+        local order = 0
+        proxy.AddSheet = function(_, label, panel, icon)
+            if not IsValid(panel) then return end
+            order = order + 1
+            local key = "ext_" .. order
+            label = tostring(label or ("Раздел " .. order))
+
+            panel:SetParent(hookHost)
+            panel:SetVisible(false)
+            hookedPanels[#hookedPanels + 1] = { key = key, panel = panel, label = label }
+
+            addTabBtn(key, label, isstring(icon) and icon or "icon16/plugin.png", function(parent)
+                if not IsValid(panel) then return end
+                panel:SetParent(parent)
+                panel:SetVisible(true)
+                panel:Dock(FILL)
+                panel:DockMargin(0, 0, 0, 0)
+                panel:InvalidateLayout(true)
+            end)
+
+            return { Name = label, Panel = panel, Tab = tabButtons[key] }
+        end
+
+        if hook and hook.Call then
+            pcall(hook.Call, "GRM_FactionsAdmin_BuildTabs", nil, proxy)
+        end
+    end
+
+    -- Панели модулей не должны исчезнуть вместе с окном раньше времени.
+    f.OnRemove = function()
+        for _, row in ipairs(hookedPanels) do
+            if IsValid(row.panel) then row.panel:Remove() end
+        end
+        hookedPanels = {}
     end
 
     selectTab("overview", buildOverviewTab)

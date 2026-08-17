@@ -276,6 +276,9 @@ if SERVER then
 
     -- сторож автозакрытия: бежим только по открытым крышкам (TK.Viewers) ---
     timer.Create("GRM_Trunk_Watch", 0.5, 0, function()
+        -- Аудит нагрузки 18.08: сторож крутился всегда. Если багажник никто
+        -- не смотрит, выходим до цикла (99% времени сервера).
+        if not istable(TK.Viewers) or next(TK.Viewers) == nil then return end
         for veh, set in pairs(TK.Viewers or {}) do
             if not IsValid(veh) then
                 TK.Viewers[veh] = nil

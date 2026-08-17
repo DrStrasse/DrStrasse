@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[--------------------------------------------------------------------
     GRM RadioNet v1.0.0 (Код 85) — Радиосеть: стойки, антенны,
     передатчики, мегафон, маршрутизация голоса с «радио-искажением».
@@ -572,7 +579,7 @@ if SERVER then
         print("[GRM RadioNet] Персистент: записей " .. tostring(table.Count(RN.Persist or {})) .. ", восстановлено " .. tostring(restored))
     end
 
-    hook.Add("InitPostEntity", "GRM_RN_Restore", function()
+    grmBootStart("GRM_RN_Restore", "normal", function()
         timer.Simple(4, function() RN.RestoreMap() end)
     end)
 

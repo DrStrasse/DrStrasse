@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[
     СИСТЕМА ТОЧЕК СПАВНА ДЛЯ ФРАКЦИЙ И ГЛОБАЛЬНЫХ
 
@@ -229,7 +236,7 @@ if SERVER then
     reloadSpawnPoints()
 
     -- При смене карты перезагружаем точки (после полной инициализации карты и фракций)
-    hook.Add("InitPostEntity", "SpawnPoints_ReloadOnMap", function()
+    grmBootStart("SpawnPoints_ReloadOnMap", "early", function()
         -- Если Factions ещё не определена, ждём короткое время
         if not Factions then
             timer.Simple(0.1, function()

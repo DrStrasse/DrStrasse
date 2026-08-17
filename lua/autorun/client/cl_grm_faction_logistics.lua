@@ -337,15 +337,22 @@ local function findSheet(panel)
     for _,child in ipairs(panel:GetChildren())do local s=findSheet(child);if s then return s end end
 end
 
-timer.Create("GRML_FactionsMenuTab",0.7,0,function()
-    if not IsValid(LocalPlayer()) or not LocalPlayer():IsSuperAdmin() then return end
-    local sheet=findSheet(ui and ui.currentFrame)
+-- Аудит нагрузки 18.08: раньше вкладка «Логистика» пыталась встроиться
+-- ВЕЧНЫМ таймером раз в 0.7 с — он крутился всю сессию, даже когда меню
+-- фракций закрыто. Теперь вкладка строится по штатному хуку меню
+-- (он работает и в старом /factions, и в новом Unified UI).
+local function buildLogisticsTab(sheet)
     if not IsValid(sheet) then return end
+    if not IsValid(LocalPlayer()) or not LocalPlayer():IsSuperAdmin() then return end
     for _,it in ipairs(sheet.Items or{})do if IsValid(it.Tab) and it.Tab:GetText()=="Логистика" then return end end
     local panel=vgui.Create("DPanel");panel:SetPaintBackground(false)
     local text=vgui.Create("DLabel",panel);text:Dock(TOP);text:SetTall(60);text:DockMargin(12,12,12,4);text:SetWrap(true);text:SetText("Настройка фракций, имеющих доступ к матовозкам и точкам погрузки.");text:SetFont("GRML_Normal");text:SetTextColor(CUI.text)
     local open=b(panel,"Открыть настройки логистики",CUI.accent,300,36);open:Dock(TOP);open:DockMargin(12,4,12,0);open.DoClick=function()act("admin_open",NULL)end
     sheet:AddSheet("Логистика",panel,"icon16/lorry.png")
+end
+
+hook.Add("GRM_FactionsAdmin_BuildTabs","GRML_FactionsMenuTab",function(sheet)
+    buildLogisticsTab(sheet)
 end)
 
 hook.Add("HUDPaint","GRML_EntityLabels",function()

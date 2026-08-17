@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[
     GRM Property Core v1.0.0
     Buildings/premises above GRM Doors: ownership, rent, utilities, staff,
@@ -90,7 +97,7 @@ if SERVER then
  hook.Add("PlayerSayTransform","GRM_Property_EasyChat",function(p,t,d)d=istable(t)and t or d;local raw=istable(t)and t[1]or t;local s=string.lower(string.Trim(raw or""));if s~="/property"and s~="/недвижимость"and s~="/property_admin"then return end;if s=="/property_admin"then if P.CanAdmin(p)then send(p,nil,true)end else local tr=p:GetEyeTrace();if tr and IsValid(tr.Entity)then P.OpenForDoor(p,tr.Entity)end end;d.SkipPlayerSay=true;d[1]=""end)
  concommand.Add("grm_property",function(p)if IsValid(p)then local tr=p:GetEyeTrace();if tr and IsValid(tr.Entity)then P.OpenForDoor(p,tr.Entity)end end end);concommand.Add("grm_property_admin",function(p)if P.CanAdmin(p)then send(p,nil,true)end end)
  timer.Create("GRM_Property_Billing",P.Config.UtilityInterval,0,function()local now=os.time();for _,r in pairs(P.Records)do if r.sealed and r.sealUntil>0 and r.sealUntil<=now then r.sealed=false;r.sealUntil=0 end;if r.tenure=="rent"and r.rentUntil>0 and r.rentUntil<=now then clearOwnership(r);audit("rent.expired",nil,r,{})elseif r.ownerType~="none"and r.utilityRate>0 then local periods=math.floor((now-r.lastUtilityAt)/P.Config.UtilityInterval);if periods>0 then r.utilityDebt=math.min(100000000,r.utilityDebt+periods*r.utilityRate);r.lastUtilityAt=r.lastUtilityAt+periods*P.Config.UtilityInterval end end;for i=#r.tempKeys,1,-1 do if(tonumber(r.tempKeys[i].expires)or 0)<=now then table.remove(r.tempKeys,i)end end end;save("billing")end)
- hook.Add("InitPostEntity","GRM_Property_DoorPolicy",function()timer.Simple(2,function()P.Reindex();for _,r in pairs(P.Records)do setDoorPolicy(r);if r.sealed or r.ownerType~="none"then lockAll(r,true)end end end)end)
+ grmBootStart("GRM_Property_DoorPolicy","early",function()timer.Simple(2,function()P.Reindex();for _,r in pairs(P.Records)do setDoorPolicy(r);if r.sealed or r.ownerType~="none"then lockAll(r,true)end end end)end)
  print("[GRM Property] v"..P.Version.." server loaded")
 end
 

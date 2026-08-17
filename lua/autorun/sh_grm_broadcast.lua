@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[--------------------------------------------------------------------
     GRM Broadcast v1.2.0 (Код 75) — Радиовещание и массовое оповещение
     v1.2.0: интеграция с RadioNet (Код 85): эфир до приёмников доходит
@@ -183,7 +190,7 @@ if SERVER then
     end
 
     -- воскрешение после рестарта (антидубль: если рядом уже есть — пропускаем)
-    hook.Add("InitPostEntity", "GRM_BC_Restore", function()
+    grmBootStart("GRM_BC_Restore", "normal", function()
         timer.Simple(3, function() BC.RestoreMap() end)
     end)
 
@@ -249,6 +256,7 @@ if SERVER then
             return false
         end
         ent.BCLive = true
+        BC.LiveCount = (BC.LiveCount or 0) + 1
         ent.BCSpeaker = ply
         ply._grmBCMic = ent
         ent:SetNWBool("GRM_BC_Live", true)
@@ -285,6 +293,7 @@ if SERVER then
     function BC.StopLive(ent, reason)
         if not IsValid(ent) then return end
         ent.BCLive = false
+        BC.LiveCount = math.max(0, (BC.LiveCount or 1) - 1)
         local sp = ent.BCSpeaker
         ent.BCSpeaker = nil
         if IsValid(sp) then
@@ -298,6 +307,9 @@ if SERVER then
 
     -- сторож: спикер отошёл/умер → эфир гаснет
     timer.Create("GRM_BC_LiveWatch", 0.5, 0, function()
+        -- Аудит нагрузки 18.08: сканирование микрофонов шло каждые полсекунды
+        -- даже когда в эфире никого. Счётчик живых эфиров ведёт сам модуль.
+        if (BC.LiveCount or 0) <= 0 then return end
         local mics=GRM.Perf and GRM.Perf.Entities and GRM.Perf.Entities("grm_broadcast_mic")or ents.FindByClass("grm_broadcast_mic")
         for _, ent in ipairs(mics) do
             if ent.BCLive then

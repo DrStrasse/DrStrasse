@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[--------------------------------------------------------------------
     GRM Jobs Exchange v4.0.0 (Код 77) — Биржа труда
 
@@ -239,7 +246,7 @@ if SERVER then
         print("[GRM Jobs] Персистент: записей " .. tostring(table.Count(JB.Persist or {})) .. ", восстановлено " .. tostring(restored))
     end
 
-    hook.Add("InitPostEntity", "GRM_Jobs_Restore", function()
+    grmBootStart("GRM_Jobs_Restore", "normal", function()
         timer.Simple(3, function() JB.RestoreMap() end)
     end)
 

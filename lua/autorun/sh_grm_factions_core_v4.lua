@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[ GRM Faction Core v5.0: stable structure metadata, departments & subdepartments, role display names, personnel records and domain events. ]]
 if SERVER then AddCSLuaFile()end
 GRM=GRM or{};GRM.FactionCore=GRM.FactionCore or{};local C=GRM.FactionCore
@@ -59,7 +66,7 @@ if SERVER then
  hook.Add("GRM_FactionMemberDepartmentChanged","GRM_FactionCore_PersonnelDepartment",function(factionName,key,rec,oldDept,newDept,actor)pushHistory(rec,"department_changed",actor,"Переведён в другой отдел",{from=oldDept,to=newDept});C.Touch(factionName,"member.department",{characterKey=key,from=oldDept,to=newDept})end)
  hook.Add("GRM_FactionMemberSubdepartmentChanged","GRM_FactionCore_PersonnelSubdepartment",function(factionName,key,rec,oldSub,newSub,actor)local subDisp=C.SubdepartmentDisplayName(factionName,newSub);local txt=newSub~=""and("Назначен в подотдел «"..subDisp.."»")or"Выведен из подотдела";pushHistory(rec,"subdepartment_changed",actor,txt,{from=oldSub,to=newSub});C.Touch(factionName,"member.subdepartment",{characterKey=key,from=oldSub,to=newSub})end)
  hook.Add("GRM_FactionDutyChanged","GRM_FactionCore_PersonnelDuty",function(ply,onDuty,factionName)local key=charKey(ply);local f=faction(factionName);local rec=f and f.Members and f.Members[key];if not rec then return end;pushHistory(rec,onDuty and"duty_started"or"duty_ended",ply,onDuty and"Вышел на службу"or"Завершил службу",{});C.Touch(factionName,"member.duty",{characterKey=key,onDuty=onDuty});if FactionsAPI and FactionsAPI.Save then FactionsAPI.Save()end end)
- local function migrate()local changed=false;for name,f in pairs(Factions or{})do changed=C.EnsureFaction(name,f)or changed end;if changed and FactionsAPI and FactionsAPI.Save then FactionsAPI.Save()end end;timer.Simple(1,migrate);hook.Add("InitPostEntity","GRM_FactionCore_Migrate",function()timer.Simple(1,migrate)end)
+ local function migrate()local changed=false;for name,f in pairs(Factions or{})do changed=C.EnsureFaction(name,f)or changed end;if changed and FactionsAPI and FactionsAPI.Save then FactionsAPI.Save()end end;timer.Simple(1,migrate);grmBootStart("GRM_FactionCore_Migrate","early",function()timer.Simple(1,migrate)end)
  timer.Simple(1,function()if not FactionsAPI then return end;FactionsAPI.GetPersonnel=C.GetPersonnel;FactionsAPI.ListPersonnel=C.ListPersonnel;FactionsAPI.AddPersonnelRecord=C.AddRecord;FactionsAPI.SetProbation=C.SetProbation;FactionsAPI.GetRoleDisplayName=C.RoleDisplayName;FactionsAPI.ResolveRoleKey=C.ResolveRoleKey;FactionsAPI.GetSubdepartmentDisplayName=C.SubdepartmentDisplayName end)
 end
 print("[GRM Faction Core] v"..C.Version.." loaded")

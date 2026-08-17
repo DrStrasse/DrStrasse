@@ -152,6 +152,10 @@ function TOOL:RightClick(trace)
             hasSpawn = ent:GetHasCustomSpawn(), hasSpawnZone = ent:GetHasSpawnZone(),
             spawnPos = ent:GetSpawnPos(), spawnAng = ent:GetSpawnAngle(),
             available = GRM.VehicleDealer.AllVehicleClasses(),
+            -- v3.3.0: фракции и категории приходят списком — админ выбирает,
+            -- а не набирает вручную (опечатка = машина никому не доступна).
+            factions = GRM.VehicleDealer.FactionList(),
+            categories = GRM.VehicleDealer.CategoryList(ent.VD_Vehicles or {}),
         })
     net.Send(ply)
     return true

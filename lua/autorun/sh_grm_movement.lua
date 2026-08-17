@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[--------------------------------------------------------------------
     GRM Movement System v1.3 — Полное управление звуком дыхания
     - Используется CreateSound для точного контроля (Play/Stop)
@@ -128,7 +135,7 @@ if SERVER then
         end)
     end)
 
-    hook.Add("InitPostEntity", "GRM_Movement_ClearData", function()
+    grmBootStart("GRM_Movement_ClearData", "normal", function()
         playerData = {}
     end)
 
@@ -146,7 +153,7 @@ if CLIENT then
     local isBreathing = false
 
     -- Создаём звуковой объект при загрузке
-    hook.Add("InitPostEntity", "GRM_Movement_InitSound", function()
+    grmBootStart("GRM_Movement_InitSound", "late", function()
         breathSound = CreateSound(LocalPlayer(), "player/breathe1.wav")
         if breathSound then
             breathSound:SetSoundLevel(70) -- громкость

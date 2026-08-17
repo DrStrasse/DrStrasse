@@ -1,3 +1,10 @@
+-- Boot-шим: старт подсистемы идёт через планировщик GRM.Boot (приоритеты и
+-- бюджет на тик). Если планировщик почему-то не загружен, работаем по-старому.
+local function grmBootStart(id, tier, fn)
+    if GRM and GRM.Boot and GRM.Boot.OnMapStart then return GRM.Boot.OnMapStart(id, tier, fn) end
+    return hook.Add("InitPostEntity", id, fn)
+end
+
 --[[--------------------------------------------------------------------
     GRM ATM v1.0.0 — интерактивное меню банкомата в стиле GRM
 
@@ -625,7 +632,7 @@ hook.Add("PlayerDisconnected", "GRM_ATM_Cleanup", function(ply) nextAct[ply] = n
      Но старые энтити и сторонние модули зовут E.OpenBankTerminal — перенаправляем
      и их, сохранив прежнюю функцию на случай отката. Делаем это после полной
      загрузки, иначе экономика перезапишет подмену своим определением. ]]
-hook.Add("InitPostEntity", "GRM_ATM_HijackBankTerminal", function()
+grmBootStart("GRM_ATM_HijackBankTerminal", "normal", function()
     local E = GRM.Economy
     if not (E and isfunction(E.OpenBankTerminal)) then return end
     if E._grmLegacyOpenBank then return end

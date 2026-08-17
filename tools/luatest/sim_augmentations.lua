@@ -81,7 +81,7 @@ ok(has(shared, "GRM_Augmentation_Admin_SendList"), "admin send list network stri
 
 -- Hooks
 ok(has(shared, "PlayerSpawn"), "player spawn hook exists")
-ok(has(shared, "Initialize"), "initialize hook exists")
+ok(has(shared, "grmBootStart(\"GRM_Augmentations_Init\", \"normal\""), "старт подсистемы идёт через GRM.Boot (было Initialize)")
 ok(has(shared, "ShutDown"), "shutdown hook exists")
 
 -- Server-side operations

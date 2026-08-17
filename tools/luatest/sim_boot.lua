@@ -37,7 +37,7 @@ stub.reset()
 local loaded, err = stub.loadModule("lua/autorun/sh_00_grm_boot.lua")
 ok(loaded, "модуль планировщика поднялся", err)
 local B = _G.GRM and _G.GRM.Boot
-ok(B and B.Version == "1.0.0", "версия 1.0.0")
+ok(B and B.Version == "1.1.0", "версия 1.1.0")
 ok(B.TIERS.critical == 0 and B.TIERS.idle == 4, "пять приоритетов от critical до idle")
 
 print("\n=== 2. ПРИОРИТЕТЫ И ПОРЯДОК ===")
