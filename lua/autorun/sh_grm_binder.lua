@@ -261,6 +261,10 @@ BD.KeyMap = BD.KeyMap or {}
 BD.MaxRadial = 12
 BD.Radial = BD.Radial or { key = KEY_NONE, items = {} }
 
+-- Правки в меню копятся в памяти и уходят на диск по кнопке «СОХРАНИТЬ».
+BD.Dirty = false
+function BD.MarkDirty() BD.Dirty = true end
+
 local function slotHasWork(slot)
     for _, st in ipairs(slot.steps or {}) do
         if st.enabled ~= false and string.Trim(tostring(st.text or "")) ~= "" then return true end
@@ -381,6 +385,7 @@ function BD.Save()
         radial = { key = BD.Radial.key or KEY_NONE, items = BD.Radial.items or {} },
     }, true))
     BD.RebuildKeyMap()
+    BD.Dirty = false
     return true
 end
 
@@ -529,6 +534,7 @@ function BD.OpenRadial()
     click("buttons/button14.wav")
 end
 
+-- Закрыть круг. execute=true — запустить выбранный сектор.
 function BD.CloseRadial(execute)
     if not BD.RadialOpen then return end
     BD.RadialOpen = false
@@ -544,6 +550,19 @@ end
 
 hook.Add("PlayerButtonDown", "GRM_Binder_Radial", function(ply, key)
     if ply ~= LocalPlayer() then return end
+
+    -- ЛКМ внутри открытого круга = «выполнить выбранное» (как просил владелец:
+    -- навёл мышью, кликнул — цепочка пошла). ПКМ = отмена.
+    if BD.RadialOpen then
+        if key == MOUSE_LEFT then
+            BD.CloseRadial(true)
+            return
+        elseif key == MOUSE_RIGHT then
+            BD.CloseRadial(false)
+            return
+        end
+    end
+
     if key ~= (BD.Radial.key or KEY_NONE) or key <= KEY_NONE then return end
     if inputBusy() then return end
     BD.OpenRadial()
@@ -552,7 +571,29 @@ end)
 hook.Add("PlayerButtonUp", "GRM_Binder_RadialUp", function(ply, key)
     if ply ~= LocalPlayer() then return end
     if key ~= (BD.Radial.key or KEY_NONE) then return end
-    BD.CloseRadial(true)
+    -- Отпустили клавишу — круг просто закрывается. Запуск делает ЛКМ.
+    BD.CloseRadial(false)
+end)
+
+--[[ Пока круг открыт, персонаж стоит на месте — как при открытом C-меню.
+     Гасим и движение, и кнопки: иначе ЛКМ выбора сектора уходила бы ещё и
+     в оружие (выстрел/удар), а WASD таскал бы игрока вслепую. ]]
+hook.Add("StartCommand", "GRM_Binder_RadialFreeze", function(ply, cmd)
+    if not BD.RadialOpen then return end
+    if ply ~= LocalPlayer() then return end
+    cmd:ClearMovement()
+    cmd:ClearButtons()
+end)
+
+-- Страховка на случай, если событие отпускания клавиши потерялось
+-- (альт-таб, потеря фокуса): круг не должен «залипнуть» с курсором.
+hook.Add("Think", "GRM_Binder_RadialGuard", function()
+    if not BD.RadialOpen then return end
+    local key = BD.Radial.key or KEY_NONE
+    if key <= KEY_NONE then BD.CloseRadial(false) return end
+    if not input.IsKeyDown(key) and not input.IsMouseDown(key) then
+        BD.CloseRadial(false)
+    end
 end)
 
 -- ESC и смерть гасят меню, чтобы курсор не завис включённым.
@@ -633,10 +674,10 @@ hook.Add("HUDPaint", "GRM_Binder_RadialDraw", function()
     draw.SimpleText("БИНДЕР", "GRMBind_Head", cx, cy - 22, C.gold, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     if picked then
         draw.SimpleText(tostring(picked.slot.name or ""), "GRMBind_Body", cx, cy, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        draw.SimpleText("отпустите клавишу", "GRMBind_Small", cx, cy + 20, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("ЛКМ — выполнить", "GRMBind_Small", cx, cy + 20, C.green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     else
         draw.SimpleText("наведите мышь", "GRMBind_Body", cx, cy, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        draw.SimpleText("центр = отмена", "GRMBind_Small", cx, cy + 20, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("ЛКМ — выполнить, ПКМ — отмена", "GRMBind_Small", cx, cy + 20, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
 end)
 
@@ -743,6 +784,7 @@ end
 function BD.Open()
     if IsValid(frame) then frame:Remove() end
     BD.Load()
+    BD.Dirty = false
 
     frame = vgui.Create("DFrame")
     frame:SetSize(math.min(1120, ScrW() - 60), math.min(800, ScrH() - 60))
@@ -760,11 +802,21 @@ function BD.Open()
             "GRMBind_Small", 240, 26, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
 
+    -- Закрытие на крестик: если правки не сохранены — спрашиваем, чтобы
+    -- настройка часа не улетела в никуда.
+    local function tryClose()
+        if not BD.Dirty then frame:Close() return end
+        Derma_Query("Есть несохранённые изменения биндов.", "БИНДЕР",
+            "Сохранить и закрыть", function() BD.Save() frame:Close() end,
+            "Закрыть без сохранения", function() BD.Load() frame:Close() end,
+            "Отмена", function() end)
+    end
+
     local close = vgui.Create("DButton", frame)
     close:SetPos(frame:GetWide() - 42, 10) close:SetSize(30, 30) close:SetText("✕")
     close:SetFont("GRMBind_Head") close:SetTextColor(C.dim)
     close.Paint = function(s, w, h) if s:IsHovered() then draw.RoundedBox(4, 0, 0, w, h, C.red) end end
-    close.DoClick = function() frame:Close() end
+    close.DoClick = tryClose
 
     local body = vgui.Create("DPanel", frame)
     body:Dock(FILL) body:DockMargin(12, 58, 12, 12) body:SetPaintBackground(false)
@@ -779,6 +831,70 @@ function BD.Open()
         draw.RoundedBox(2, 0, 0, 5, h, C.gold)
         draw.SimpleText("ПАМЯТКА", "GRMBind_Memo", 16, 16, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         draw.SimpleText(MEMO, "GRMBind_Body", 16, 36, Color(250, 238, 205), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    end
+
+    -- ── ПАНЕЛЬ УПРАВЛЕНИЯ: сколько слотов и явное сохранение ────────
+    local topBar = vgui.Create("DPanel", body)
+    topBar:Dock(TOP) topBar:SetTall(56) topBar:DockMargin(0, 0, 0, 8)
+    topBar.Paint = function(_, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, C.card)
+        draw.SimpleText("НАСТРОЙКА БИНДОВ", "GRMBind_Head", 16, 18, C.acc, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Выберите число слотов, настройте сцены и нажмите «СОХРАНИТЬ» — изменения запишутся на диск.",
+            "GRMBind_Small", 16, 38, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    end
+
+    local countLbl = vgui.Create("DLabel", topBar)
+    countLbl:SetPos(300, 16) countLbl:SetSize(120, 22)
+    countLbl:SetFont("GRMBind_Small") countLbl:SetTextColor(C.dim) countLbl:SetText("Слотов в списке:")
+
+    local function slotCount()
+        local n = 0
+        for i = 1, BD.MaxSlots do if BD.Slots[i] then n = i end end
+        return n
+    end
+
+    local countW = vgui.Create("DNumberWang", topBar)
+    countW:SetPos(410, 14) countW:SetSize(64, 26)
+    countW:SetMin(1) countW:SetMax(BD.MaxSlots) countW:SetDecimals(0) countW:SetValue(slotCount())
+
+    local saveBtn, dirtyLbl
+
+    countW.OnValueChanged = function(_, v)
+        local want = math.Clamp(math.floor(tonumber(v) or 1), 1, BD.MaxSlots)
+        local have = slotCount()
+        if want == have then return end
+        if want > have then
+            for i = have + 1, want do BD.Slots[i] = BD.Slots[i] or blankSlot(i) end
+        else
+            for i = want + 1, have do BD.Slots[i] = nil end
+            -- Убираем из круга сектора, ссылающиеся на удалённые слоты.
+            local kept = {}
+            for _, id in ipairs(BD.Radial.items or {}) do
+                if BD.Slots[id] then kept[#kept + 1] = id end
+            end
+            BD.Radial.items = kept
+        end
+        BD.MarkDirty()
+        BD.RebuildMenu()
+    end
+
+    dirtyLbl = vgui.Create("DLabel", topBar)
+    dirtyLbl:SetPos(492, 16) dirtyLbl:SetSize(300, 22)
+    dirtyLbl:SetFont("GRMBind_Small") dirtyLbl:SetTextColor(C.gold)
+    dirtyLbl:SetText("")
+    dirtyLbl.Think = function(s)
+        s:SetText(BD.Dirty and "● есть несохранённые изменения" or "все изменения сохранены")
+        s:SetTextColor(BD.Dirty and C.gold or C.dim)
+    end
+
+    saveBtn = mkBtn(topBar, "СОХРАНИТЬ", C.green, function()
+        BD.Save()
+        chat.AddText(C.green, "[Биндер] ", C.text, "Настройки сохранены.")
+    end)
+    saveBtn:SetPos(topBar:GetWide() - 190, 13) saveBtn:SetSize(170, 30)
+    saveBtn.Think = function(s)
+        s:SetPos((s:GetParent():GetWide() or 0) - 190, 13)
+        s.Label = BD.Dirty and "СОХРАНИТЬ ●" or "СОХРАНИТЬ"
     end
 
     -- ── РАДИАЛЬНОЕ МЕНЮ: одна клавиша на все сцены ──────────────────
@@ -801,7 +917,7 @@ function BD.Open()
     radBinder:SetValue(BD.Radial.key or KEY_NONE)
     radBinder.OnChange = function(_, num)
         BD.Radial.key = math.floor(tonumber(num) or KEY_NONE)
-        BD.Save()
+        BD.MarkDirty()
     end
 
     local sectorsHost = vgui.Create("DPanel", radialCard)
@@ -815,7 +931,7 @@ function BD.Open()
             local slot = BD.Slots[id]
             local btn = mkBtn(sectorsHost, i .. ". " .. (slot and tostring(slot.name) or ("Слот " .. id)), C.violet, function()
                 table.remove(BD.Radial.items, i)
-                BD.Save()
+                BD.MarkDirty()
                 rebuildRadial()
             end, "GRMBind_Small")
             btn:SetPos(x, 0) btn:SetSize(150, 26)
@@ -836,7 +952,7 @@ function BD.Open()
                 id = math.floor(tonumber(id) or 0)
                 if id <= 0 then return end
                 BD.Radial.items[#BD.Radial.items + 1] = id
-                BD.Save()
+                BD.MarkDirty()
                 rebuildRadial()
             end
         else
@@ -880,13 +996,13 @@ function BD.Open()
         local modeBtn = mkBtn(row, step.mode == "console" and "КОНСОЛЬ" or "ЧАТ",
             step.mode == "console" and C.violet or C.green, function()
                 step.mode = (step.mode == "console") and "chat" or "console"
-                BD.Save() rebuild()
+                BD.MarkDirty() rebuild()
             end)
         modeBtn:SetPos(32, 4) modeBtn:SetSize(90, 24)
 
         local text = mkEntry(row,
             step.mode == "console" and "act salute" or "/me поправляет фуражку",
-            step.text, function(v) step.text = v BD.Save() end)
+            step.text, function(v) step.text = v BD.MarkDirty() end)
         text:SetPos(128, 4) text:SetSize(520, 24)
 
         local delayLbl = vgui.Create("DLabel", row)
@@ -896,12 +1012,12 @@ function BD.Open()
         local delay = vgui.Create("DNumberWang", row)
         delay:SetPos(700, 5) delay:SetSize(58, 22)
         delay:SetMin(0) delay:SetMax(60) delay:SetDecimals(1) delay:SetValue(step.delay or 0)
-        delay.OnValueChanged = function(_, v) step.delay = tonumber(v) or 0 BD.Save() end
+        delay.OnValueChanged = function(_, v) step.delay = tonumber(v) or 0 BD.MarkDirty() end
 
         local up = mkBtn(row, "▲", C.off, function()
             if idx > 1 then
                 slot.steps[idx], slot.steps[idx - 1] = slot.steps[idx - 1], slot.steps[idx]
-                BD.Save() rebuild()
+                BD.MarkDirty() rebuild()
             end
         end)
         up:SetPos(768, 4) up:SetSize(26, 24)
@@ -909,7 +1025,7 @@ function BD.Open()
         local down = mkBtn(row, "▼", C.off, function()
             if idx < #slot.steps then
                 slot.steps[idx], slot.steps[idx + 1] = slot.steps[idx + 1], slot.steps[idx]
-                BD.Save() rebuild()
+                BD.MarkDirty() rebuild()
             end
         end)
         down:SetPos(798, 4) down:SetSize(26, 24)
@@ -917,14 +1033,14 @@ function BD.Open()
         local onBtn = mkBtn(row, step.enabled ~= false and "вкл" or "выкл",
             step.enabled ~= false and C.green or C.off, function()
                 step.enabled = not (step.enabled ~= false)
-                BD.Save() rebuild()
+                BD.MarkDirty() rebuild()
             end)
         onBtn:SetPos(828, 4) onBtn:SetSize(52, 24)
 
         local del = mkBtn(row, "✕", C.red, function()
             table.remove(slot.steps, idx)
             if #slot.steps == 0 then slot.steps[1] = blankStep() end
-            BD.Save() rebuild()
+            BD.MarkDirty() rebuild()
         end)
         del:SetPos(884, 4) del:SetSize(26, 24)
     end
@@ -939,7 +1055,7 @@ function BD.Open()
             draw.SimpleText("#" .. slot.id, "GRMBind_Small", 14, 20, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
 
-        local name = mkEntry(card, "название сцены", slot.name, function(v) slot.name = v BD.Save() end)
+        local name = mkEntry(card, "название сцены", slot.name, function(v) slot.name = v BD.MarkDirty() end)
         name:SetPos(46, 10) name:SetSize(220, 26)
 
         local keyLbl = vgui.Create("DLabel", card)
@@ -949,7 +1065,7 @@ function BD.Open()
         local binder = vgui.Create("DBinder", card)
         binder:SetPos(338, 10) binder:SetSize(110, 26)
         binder:SetValue(slot.key or KEY_NONE)
-        binder.OnChange = function(_, num) slot.key = math.floor(tonumber(num) or KEY_NONE) BD.Save() end
+        binder.OnChange = function(_, num) slot.key = math.floor(tonumber(num) or KEY_NONE) BD.MarkDirty() end
 
         local startLbl = vgui.Create("DLabel", card)
         startLbl:SetPos(458, 12) startLbl:SetSize(70, 22)
@@ -958,7 +1074,7 @@ function BD.Open()
         local startW = vgui.Create("DNumberWang", card)
         startW:SetPos(516, 11) startW:SetSize(56, 24)
         startW:SetMin(0) startW:SetMax(60) startW:SetDecimals(1) startW:SetValue(slot.delay or 0)
-        startW.OnValueChanged = function(_, v) slot.delay = tonumber(v) or 0 BD.Save() end
+        startW.OnValueChanged = function(_, v) slot.delay = tonumber(v) or 0 BD.MarkDirty() end
 
         local cdLbl = vgui.Create("DLabel", card)
         cdLbl:SetPos(582, 12) cdLbl:SetSize(70, 22)
@@ -967,10 +1083,10 @@ function BD.Open()
         local cdW = vgui.Create("DNumberWang", card)
         cdW:SetPos(640, 11) cdW:SetSize(56, 24)
         cdW:SetMin(0) cdW:SetMax(60) cdW:SetDecimals(1) cdW:SetValue(slot.cooldown or 0.5)
-        cdW.OnValueChanged = function(_, v) slot.cooldown = tonumber(v) or 0 BD.Save() end
+        cdW.OnValueChanged = function(_, v) slot.cooldown = tonumber(v) or 0 BD.MarkDirty() end
 
         local onBtn = mkBtn(card, slot.enabled and "ВКЛ" or "ВЫКЛ", slot.enabled and C.green or C.off, function()
-            slot.enabled = not slot.enabled BD.Save() rebuild()
+            slot.enabled = not slot.enabled BD.MarkDirty() rebuild()
         end)
         onBtn:SetPos(706, 10) onBtn:SetSize(64, 26)
 
@@ -986,14 +1102,14 @@ function BD.Open()
                         mode = st.mode, text = st.text, delay = st.delay or 0, enabled = true,
                     }
                 end
-                BD.Save() rebuild()
+                BD.MarkDirty() rebuild()
             end)
         end)
         presetBtn:SetPos(874, 10) presetBtn:SetSize(84, 26)
 
         local clearBtn = mkBtn(card, "Очистить", C.red, function()
             BD.Slots[slot.id] = blankSlot(slot.id)
-            BD.Save() rebuild()
+            BD.MarkDirty() rebuild()
         end)
         clearBtn:SetPos(964, 10) clearBtn:SetSize(88, 26)
 
@@ -1010,7 +1126,7 @@ function BD.Open()
                 return
             end
             slot.steps[#slot.steps + 1] = blankStep()
-            BD.Save() rebuild()
+            BD.MarkDirty() rebuild()
         end)
         addStep:Dock(TOP) addStep:SetTall(26) addStep:DockMargin(28, 4, 620, 0)
 
@@ -1028,7 +1144,7 @@ function BD.Open()
                 chainCombo:AddChoice("#" .. i .. " " .. tostring(other.name or ""), i, slot.chain == i)
             end
         end
-        chainCombo.OnSelect = function(_, _, _, id) slot.chain = math.floor(tonumber(id) or 0) BD.Save() end
+        chainCombo.OnSelect = function(_, _, _, id) slot.chain = math.floor(tonumber(id) or 0) BD.MarkDirty() end
 
         local chainDelayLbl = vgui.Create("DLabel", card)
         chainDelayLbl:SetPos(342, card:GetTall() - 30) chainDelayLbl:SetSize(110, 20)
@@ -1038,7 +1154,7 @@ function BD.Open()
         chainDelay:SetPos(404, card:GetTall() - 32) chainDelay:SetSize(56, 22)
         chainDelay:SetMin(0) chainDelay:SetMax(60) chainDelay:SetDecimals(1)
         chainDelay:SetValue(slot.chainDelay or 1)
-        chainDelay.OnValueChanged = function(_, v) slot.chainDelay = tonumber(v) or 0 BD.Save() end
+        chainDelay.OnValueChanged = function(_, v) slot.chainDelay = tonumber(v) or 0 BD.MarkDirty() end
     end
 
     rebuild = function()
@@ -1054,6 +1170,9 @@ function BD.Open()
             end)
         end
     end
+    BD.RebuildMenu = function()
+        if IsValid(frame) then rebuild() if rebuildRadial then rebuildRadial() end end
+    end
     rebuild()
 
     local addBtn = mkBtn(footer, "+ ДОБАВИТЬ СЛОТ", C.acc, function()
@@ -1064,7 +1183,7 @@ function BD.Open()
             return
         end
         BD.Slots[n + 1] = blankSlot(n + 1)
-        BD.Save() rebuild()
+        BD.MarkDirty() rebuild()
     end)
     addBtn:Dock(LEFT) addBtn:SetWide(190)
 
@@ -1079,7 +1198,7 @@ function BD.Open()
     infoLbl:SetFont("GRMBind_Small") infoLbl:SetTextColor(C.dim)
     infoLbl:SetText("Сохраняется автоматически в data/grm_binder.json. Бинды молчат, когда открыт чат, консоль или меню.")
 
-    local closeBtn = mkBtn(footer, "ЗАКРЫТЬ", C.off, function() frame:Close() end)
+    local closeBtn = mkBtn(footer, "ЗАКРЫТЬ", C.off, function() tryClose() end)
     closeBtn:Dock(RIGHT) closeBtn:SetWide(130)
 end
 

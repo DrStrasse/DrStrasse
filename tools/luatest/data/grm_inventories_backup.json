@@ -1,18 +1,13 @@
 {
-    "_grm_meta": {
-        "revision": 3,
-        "version": 2,
-        "savedAt": 1786996079
-    },
     "76561198000000012": {
         "slots": [
             {
-                "count": 1,
-                "id": "mobile_badger"
+                "id": "mobile_badger",
+                "count": 1
             },
             {
-                "count": 30,
-                "id": "ammo_pistol"
+                "id": "ammo_pistol",
+                "count": 30
             },
             {
                 "data": {
@@ -22,5 +17,10 @@
                 "count": 1
             }
         ]
+    },
+    "_grm_meta": {
+        "savedAt": 1786996462,
+        "version": 2,
+        "revision": 3
     }
 }

@@ -324,15 +324,23 @@ ok(binder:find("BD.MaxRadial = 12", 1, true) ~= nil, "до 12 секторов �
 ok(binder:find("function BD.RadialPickFrom", 1, true) ~= nil, "выбор сектора по положению мыши")
 ok(binder:find("gui.EnableScreenClicker(true)", 1, true) ~= nil
     and binder:find("gui.EnableScreenClicker(false)", 1, true) ~= nil,
-    "курсор освобождается на время удержания и возвращается обратно")
-ok(binder:find('hook.Add("PlayerButtonDown", "GRM_Binder_Radial"', 1, true) ~= nil
-    and binder:find('hook.Add("PlayerButtonUp", "GRM_Binder_RadialUp"', 1, true) ~= nil,
-    "держим клавишу — открыто, отпустили — выполняется")
+    "курсор появляется на время удержания и убирается обратно")
+ok(binder:find("if key == MOUSE_LEFT then", 1, true) ~= nil,
+    "ЛКМ запускает выбранную цепочку")
+ok(binder:find("elseif key == MOUSE_RIGHT then", 1, true) ~= nil, "ПКМ — отмена")
+ok(binder:find("-- Отпустили клавишу — круг просто закрывается. Запуск делает ЛКМ.", 1, true) ~= nil,
+    "отпускание клавиши только закрывает круг")
+ok(binder:find('hook.Add("StartCommand", "GRM_Binder_RadialFreeze"', 1, true) ~= nil
+    and binder:find("cmd:ClearMovement()", 1, true) ~= nil
+    and binder:find("cmd:ClearButtons()", 1, true) ~= nil,
+    "пока круг открыт, игрок стоит на месте и не стреляет (как при C-меню)")
+ok(binder:find('hook.Add("Think", "GRM_Binder_RadialGuard"', 1, true) ~= nil,
+    "страховка от «залипания» круга при потере фокуса")
 ok(binder:find('hook.Add("HUDPaint", "GRM_Binder_RadialDraw"', 1, true) ~= nil,
     "круг рисуется только пока меню открыто")
 ok(binder:find("if not BD.RadialOpen then return end", 1, true) ~= nil,
     "закрытое меню не тратит ни кадра")
-ok(binder:find("центр = отмена", 1, true) ~= nil, "центр круга — отмена")
+ok(binder:find("ЛКМ — выполнить, ПКМ — отмена", 1, true) ~= nil, "подсказка в центре круга")
 ok(binder:find("РАДИАЛЬНОЕ МЕНЮ — ОДНА КЛАВИША НА ВСЁ", 1, true) ~= nil,
     "секция настройки в /binder")
 ok(binder:find("radial = { key = BD.Radial.key or KEY_NONE, items = BD.Radial.items or {} }", 1, true) ~= nil,
@@ -353,13 +361,15 @@ if isfunction(pick) then
     ok(pick(cx, cy, 200, 100, 4, 40) == 2, "при четырёх секторах вправо = второй")
 end
 
--- Открытие/закрытие и выполнение выбранной сцены
+-- Полный цикл: зажал -> навёл -> ЛКМ -> отпустил
 local clicker = { state = false }
 _G.gui = _G.gui or {}
 _G.gui.EnableScreenClicker = function(v) clicker.state = v end
 _G.gui.MousePos = function() return 100, 0 end
 _G.gui.IsGameUIVisible = function() return false end
 _G.gui.IsConsoleVisible = function() return false end
+_G.MOUSE_LEFT, _G.MOUSE_RIGHT = 107, 108
+_G.input = { IsKeyDown = function() return true end, IsMouseDown = function() return false end }
 
 BD.Slots[5] = BD.BlankSlot(5)
 BD.Slots[5].name = "Радиальная сцена"
@@ -373,19 +383,55 @@ sentSay = {}
 stub.time = 900
 _G.hook.Run("PlayerButtonDown", lp, KEY_F)
 ok(BD.RadialOpen == true and clicker.state == true, "удержание клавиши открыло круг и включило курсор")
-BD.RadialPick = 1
-_G.hook.Run("PlayerButtonUp", lp, KEY_F)
-ok(BD.RadialOpen == false and clicker.state == false, "отпускание закрыло круг и вернуло курсор")
-ok(sentSay[1] == "/me проверка радиального меню", "выбранная сцена выполнилась", sentSay[1])
-ok(#sentSay == 1, "обычный бинд на той же клавише не сработал заодно с кругом", #sentSay)
+ok(#sentSay == 0, "само открытие круга ничего не выполняет")
 
--- отмена в центре ничего не запускает
+-- движение и кнопки блокируются
+local frozen = { move = false, buttons = false }
+local cmd = {
+    ClearMovement = function() frozen.move = true end,
+    ClearButtons = function() frozen.buttons = true end,
+}
+_G.hook.Run("StartCommand", lp, cmd)
+ok(frozen.move and frozen.buttons, "пока круг открыт, движение и кнопки погашены")
+
+BD.RadialPick = 1
+_G.hook.Run("PlayerButtonDown", lp, MOUSE_LEFT)
+ok(sentSay[1] == "/me проверка радиального меню", "ЛКМ запустила выбранную сцену", sentSay[1])
+ok(BD.RadialOpen == false and clicker.state == false, "после ЛКМ круг закрылся и курсор убран")
+
+-- отпускание клавиши без клика ничего не выполняет
 sentSay = {}
 stub.time = 1000
 _G.hook.Run("PlayerButtonDown", lp, KEY_F)
-BD.RadialPick = 0
+BD.RadialPick = 1
 _G.hook.Run("PlayerButtonUp", lp, KEY_F)
-ok(#sentSay == 0, "отмена в центре не выполняет ничего")
+ok(BD.RadialOpen == false, "отпускание клавиши закрыло круг")
+ok(#sentSay == 0, "без ЛКМ ничего не выполняется")
+
+-- ПКМ отменяет
+sentSay = {}
+stub.time = 1100
+_G.hook.Run("PlayerButtonDown", lp, KEY_F)
+BD.RadialPick = 1
+_G.hook.Run("PlayerButtonDown", lp, MOUSE_RIGHT)
+ok(BD.RadialOpen == false and #sentSay == 0, "ПКМ закрыла круг без выполнения")
+
+print("\n=== 7. ЯВНОЕ СОХРАНЕНИЕ И ЧИСЛО СЛОТОВ ===")
+ok(binder:find("function BD.MarkDirty()", 1, true) ~= nil, "правки помечаются как несохранённые")
+ok(binder:find('mkBtn(topBar, "СОХРАНИТЬ"', 1, true) ~= nil, "кнопка СОХРАНИТЬ в меню")
+ok(binder:find("есть несохранённые изменения", 1, true) ~= nil, "видно, что изменения не записаны")
+ok(binder:find("Слотов в списке:", 1, true) ~= nil, "поле выбора числа слотов")
+ok(binder:find("local function tryClose", 1, true) ~= nil
+    and binder:find("Derma_Query", 1, true) ~= nil,
+    "закрытие с несохранёнными правками спрашивает подтверждение")
+ok(binder:find("BD.Dirty = false", 1, true) ~= nil, "после записи флаг снимается")
+
+BD.Dirty = false
+BD.Slots[6] = BD.BlankSlot(6)
+BD.MarkDirty()
+ok(BD.Dirty == true, "MarkDirty поднимает флаг")
+BD.Save()
+ok(BD.Dirty == false, "Save снимает флаг")
 
 print(("\nBINDER + CHAT + FORMS: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)
