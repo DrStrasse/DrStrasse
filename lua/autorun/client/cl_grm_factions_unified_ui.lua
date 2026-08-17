@@ -101,9 +101,9 @@ local function skinCombo(cb)
         end
         for _, opt in ipairs(menu:GetChildren() or {}) do
             if IsValid(opt) then
-                opt:SetTextColor(C.text)
-                opt:SetFont("GRMFac_Normal")
-                if opt.Paint and not opt.__grmfaced then
+                if isfunction(opt.SetTextColor) then opt:SetTextColor(C.text) end
+                if isfunction(opt.SetFont) then opt:SetFont("GRMFac_Normal") end
+                if isfunction(opt.Paint) and not opt.__grmfaced then
                     opt.__grmfaced = true
                     local old = opt.Paint
                     opt.Paint = function(sel, ow, oh)
@@ -119,7 +119,7 @@ local function skinCombo(cb)
 end
 
 local function sendAction(action, args, cb)
-    net.Start("Factions_AdminAction")
+    net.Start("Factions_Action")
         net.WriteString(action)
         net.WriteTable(args or {})
     net.SendToServer()
@@ -607,10 +607,20 @@ function UI.Open(requestedFaction)
                         branchText = deptDisplay .. " [" .. subDisplay .. "]"
                     end
                     local onDuty = GRM.FactionDuty and GRM.FactionDuty.State and GRM.FactionDuty.State[key]
-                    local dutyText = onDuty and "НА СЛУЖБЕ" or "ВНЕ СЛУЖБЫ"
+                    -- Корректный статус службы синхронизируется сервером в _dutyStatus
+                    -- (НА СЛУЖБЕ / ВНЕ СЛУЖБЫ / ВЫХОДНОЙ / НЕ В СЕТИ) — см. buildMemberSync
+                    -- в sh_factions.lua. На клиенте GRM.FactionDuty.State не существует.
+                    local dutyText = rec._dutyStatus or (onDuty and "НА СЛУЖБЕ" or "ВНЕ СЛУЖБЫ")
+                    local dutyCol = C.dim
+                    if dutyText == "НА СЛУЖБЕ" then dutyCol = C.green
+                    elseif dutyText == "ВЫХОДНОЙ" then dutyCol = C.gold
+                    elseif dutyText == "ВНЕ СЛУЖБЫ" then dutyCol = C.teal end
                     local loc = rec._location or "—"
                     local ln = list:AddLine(rp, roleDisplay, branchText, dutyText, loc)
                     skinListViewLine(ln)
+                    if ln.Columns and IsValid(ln.Columns[4]) then
+                        ln.Columns[4]:SetTextColor(dutyCol)
+                    end
                     ln.memberKey = key
                 end
             end
@@ -1050,11 +1060,11 @@ function UI.Open(requestedFaction)
         bBar:Dock(BOTTOM); bBar:SetTall(42); bBar:DockMargin(16, 0, 16, 16); bBar:SetPaintBackground(false)
 
         mkBtn(bBar, "Объявить на 10 мин", C.red, C.redHover, function()
-            sendExtAction("startCurfew", { 10 }, refreshView)
+            sendExtAction("startCurfew", { 600 }, refreshView)
         end):Dock(LEFT); bBar:GetChildren()[1]:SetWide(180)
 
         mkBtn(bBar, "Объявить на 20 мин", C.red, C.redHover, function()
-            sendExtAction("startCurfew", { 20 }, refreshView)
+            sendExtAction("startCurfew", { 1200 }, refreshView)
         end):Dock(LEFT); bBar:GetChildren()[2]:DockMargin(8, 0, 0, 0); bBar:GetChildren()[2]:SetWide(180)
 
         mkBtn(bBar, "Отменить комендантский час", C.green, C.greenHover, function()

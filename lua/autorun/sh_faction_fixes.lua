@@ -887,12 +887,29 @@ if SERVER then
     end)
 
     net.Receive(NET_EXT_ACTION, function(_, ply)
-        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        if not IsValid(ply) then return end
         local action = net.ReadString()
         local args = net.ReadTable() or {}
-        local factionName = trim(args[1])
+
+        -- Комендантский час: доступ суперадмину и ролям с допуском (/kom_hour).
+        -- Обрабатывается ДО гейта «только суперадмин», чтобы лидеры могли
+        -- объявлять/снимать ком.час прямо из меню фракций.
+        if action == "startCurfew" then
+            if not ply:IsSuperAdmin() and not hasCurfewAccess(ply) then
+                sendExtResult(ply, false, "Нет доступа к комендантскому часу")
+                return
+            end
+            local duration = math.Clamp(tonumber(args[1]) or 600, 60, 7200)
+            startCurfew(ply, duration)
+            sendExtResult(ply, true, "Комендантский час объявлен на " .. math.floor(duration / 60) .. " мин.")
+            return
+        end
 
         if action == "stopCurfew" then
+            if not ply:IsSuperAdmin() and not hasCurfewAccess(ply) then
+                sendExtResult(ply, false, "Нет доступа к комендантскому часу")
+                return
+            end
             if CurfewActive then
                 stopCurfew()
                 sendExtResult(ply, true, "Комендантский час отменён")
@@ -901,6 +918,10 @@ if SERVER then
             end
             return
         end
+
+        if not ply:IsSuperAdmin() then return end
+
+        local factionName = trim(args[1])
 
         if factionName == "" or not Factions or not Factions[factionName] then
             sendExtResult(ply, false, "Фракция не найдена")
