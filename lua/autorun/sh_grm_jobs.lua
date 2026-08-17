@@ -347,8 +347,9 @@ if SERVER then
                     -- Контейнеры и свалка теперь имеют разные типы точек.
                     local bins = depots("garbage")
                     local dumps = depots("dump")
-                    local count = (JB.WorkConfig and tonumber(JB.WorkConfig.garbageStops)) or tonumber(tpl.points) or 2
-                    local picked = seededPick(s, bins, count)
+                    local requested = (JB.WorkConfig and tonumber(JB.WorkConfig.garbageStops)) or tonumber(tpl.points) or 2
+                    local count = math.min(math.max(1,math.floor(requested)),#bins)
+                    local picked = count>0 and seededPick(s, bins, count)or nil
                     local dump = dumps[(s % math.max(1, #dumps)) + 1]
                     local pk = picked -- только связанные garbage-точки; чужие depot не подмешиваются
                     if pk and dump and dump.GetPos then
@@ -373,6 +374,9 @@ if SERVER then
                             garbagePointIDs=pointIDs,garbageDumpID=tostring(dumpRec and dumpRec.id or ""),
                             zoneRadius = 170, zoneName = "Маршрут вывоза отходов",
                         }
+                    else
+                        local reason=#bins==0 and"Нет связанных точек сбора и физических мусорок."or(#dumps==0 and"Не установлена отдельная точка свалки."or"Маршрут мусоровоза ещё не готов.")
+                        offer={tplId=tid,title=tpl.title,desc=reason,jtype=tpl.jtype,needVehicle=true,dist=0,reward=0,timeSec=0,target=cpos,zoneRadius=170,zoneName="Требуется настройка маршрута",blockedReason=reason}
                     end
                 elseif tid=="taxi"then
                     offer={tplId=tid,title=tpl.title,desc="Выйдите на линию, ожидайте живые заказы игроков и принимайте их через /taxi.",jtype=tpl.jtype,needVehicle=true,dist=0,reward=0,timeSec=8*3600,target=cpos,center=cpos,zoneRadius=180,zoneName="Ожидание заказов",taxiStandby=true}
@@ -797,7 +801,7 @@ if SERVER then
         local wire = {}
         for _, o in ipairs(offers or {}) do
             local shownReward=o.reward
-            wire[#wire + 1] = { idx = o.idx, tplId = o.tplId, title = o.title, desc = o.desc, jtype = o.jtype, reward = shownReward, timeSec = o.timeSec, staySec = o.staySec, dist = o.dist, zoneRadius = o.zoneRadius, zoneName = o.zoneName, needVehicle = o.needVehicle == true, icon = o.icon, color = o.color }
+            wire[#wire + 1] = { idx = o.idx, tplId = o.tplId, title = o.title, desc = o.desc, jtype = o.jtype, reward = shownReward, timeSec = o.timeSec, staySec = o.staySec, dist = o.dist, zoneRadius = o.zoneRadius, zoneName = o.zoneName, needVehicle = o.needVehicle == true, blockedReason=tostring(o.blockedReason or""), icon = o.icon, color = o.color }
         end
         local sd = sid64(ply)
         local j = JB.Active[sd]
@@ -871,6 +875,7 @@ if SERVER then
             if GRM.Notify then GRM.Notify(ply, "Вакансия не найдена (список обновился).", 255, 190, 90) end
             return
         end
+        if tostring(offer.blockedReason or"")~=""then if GRM.Notify then GRM.Notify(ply,tostring(offer.blockedReason),255,150,95)end return end
         local reward=offer.reward
         JB.StartJob(ply, {
             tplId = offer.tplId, title = offer.title, desc = offer.desc, jtype = offer.jtype,
@@ -878,7 +883,7 @@ if SERVER then
             target = offer.target, center = offer.center or rec.center,
             zoneRadius = offer.zoneRadius, zoneName = offer.zoneName,
             needVehicle = offer.needVehicle == true,
-            points=offer.points,pointNames=offer.pointNames,taxiStandby=offer.taxiStandby==true,
+            points=offer.points,pointNames=offer.pointNames,garbagePointIDs=offer.garbagePointIDs,garbageDumpID=offer.garbageDumpID,taxiStandby=offer.taxiStandby==true,
         })
     end)
 
@@ -1527,13 +1532,14 @@ if CLIENT then
 
                 local info = vgui.Create("DLabel", card)
                 info:SetPos(12, 96) info:SetSize(cw - 24, 18) info:SetFont("GRMJobs_Normal") info:SetTextColor(C.yellow)
-                info:SetText(o.tplId=="taxi"and("Живые заказы игроков   •   смена "..fmtTime(o.timeSec or 0))or(fmtMoney(o.reward or 0).."   •   до "..fmtTime(o.timeSec or 0)))
+                info:SetText(tostring(o.blockedReason or"")~=""and"ТРЕБУЕТСЯ НАСТРОЙКА АДМИНИСТРАТОРОМ"or(o.tplId=="taxi"and("Живые заказы игроков   •   смена "..fmtTime(o.timeSec or 0))or(fmtMoney(o.reward or 0).."   •   до "..fmtTime(o.timeSec or 0))))
 
                 local zone = vgui.Create("DLabel", card)
                 zone:SetPos(12, 120) zone:SetSize(cw - 160, 18) zone:SetFont("GRMJobs_Small") zone:SetTextColor(C.dim)
                 zone:SetText(tostring(o.zoneName or ""))
 
-                local take = cardButton(card, hasActive and "Занято" or "ВЗЯТЬ", hasActive and Color(70, 78, 92) or C.green, not hasActive, function()
+                local blocked=tostring(o.blockedReason or"")~=""
+                local take = cardButton(card, hasActive and "Занято" or(blocked and"НЕТ МАРШРУТА"or"ВЗЯТЬ"), (hasActive or blocked)and Color(70,78,92)or C.green, not hasActive and not blocked, function()
                     net.Start(NET_ACCEPT) net.WriteUInt(o.idx, 8) net.SendToServer()
                     timer.Simple(0.5, function() if IsValid(f) then f:Close() end end)
                 end)
