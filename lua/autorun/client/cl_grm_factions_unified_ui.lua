@@ -967,19 +967,19 @@ function UI.Open(requestedFaction)
             function(v) sendExtAction("setGNewsAccess", { facName, v }, refreshView) end)
 
         addAccessToggle("Доска объявлений (/board)", "Право публикации объявлений о наборе сотрудников",
-            function() return (GRM.Board and GRM.Board.Cfg and GRM.Board.Cfg.allow and GRM.Board.Cfg.allow[facName]) == true end,
+            function() return (GRM.FAcc and GRM.FAcc.board and GRM.FAcc.board[facName]) == true end,
             function(v) sendBridgeAction("board", facName, v, refreshView) end)
 
         addAccessToggle("Радиовещание у микрофонов (/bcast)", "Право проведения городских радиоэфиров",
-            function() return (GRM.Broadcast and GRM.Broadcast.Cfg and GRM.Broadcast.Cfg.journalists and GRM.Broadcast.Cfg.journalists[facName]) == true end,
+            function() return (GRM.FAcc and GRM.FAcc.journ and GRM.FAcc.journ[facName]) == true end,
             function(v) sendBridgeAction("journ", facName, v, refreshView) end)
 
         addAccessToggle("Оповещения тревоги (/alert, /alertall)", "Право запуска тревожных сирен и оповещений",
-            function() return (GRM.Broadcast and GRM.Broadcast.Cfg and GRM.Broadcast.Cfg.alerters and GRM.Broadcast.Cfg.alerters[facName]) == true end,
+            function() return (GRM.FAcc and GRM.FAcc.alert and GRM.FAcc.alert[facName]) == true end,
             function(v) sendBridgeAction("alert", facName, v, refreshView) end)
 
         addAccessToggle("Биржа труда (/jobs)", "Публикация оплачиваемых государственных заказов",
-            function() return (GRM.Jobs and GRM.Jobs.Cfg and GRM.Jobs.Cfg.allow and GRM.Jobs.Cfg.allow[facName]) == true end,
+            function() return (GRM.FAcc and GRM.FAcc.jobs and GRM.FAcc.jobs[facName]) == true end,
             function(v) sendBridgeAction("jobs", facName, v, refreshView) end)
 
         addAccessToggle("Государственные услуги (каталог)", "Оказание платных услуг населению",
@@ -1184,6 +1184,9 @@ function UI.Open(requestedFaction)
     selectTab("overview", buildOverviewTab)
     net.Start("Factions_GetData")
     net.SendToServer()
+    -- Подтянуть свежие флаги доступов (доска/эфир/оповещения/биржа).
+    net.Start("GRM_FAcc_Get")
+    net.SendToServer()
 end
 
 function OpenUnifiedFactionsMenu(fname)
@@ -1212,6 +1215,17 @@ hook.Add("GRM_FactionUIRefreshed", "GRM_FactionUnified_AutoRefresh", function(da
     if btn and btn.builder then
         currentContent:Clear()
         btn.builder(currentContent, currentTargetFac, data or FactionsData or {})
+    end
+end)
+
+hook.Add("GRM_FAccDataUpdated", "GRM_FactionUnified_AccessRefresh", function()
+    -- Обновить вкладку «Доступы и связь», если она открыта и флаги пришли.
+    if IsValid(currentFrame) and IsValid(currentContent) and currentTab == "access" then
+        local btn = currentTabButtons and currentTabButtons["access"]
+        if btn and btn.builder then
+            currentContent:Clear()
+            btn.builder(currentContent, currentTargetFac, FactionsData or {})
+        end
     end
 end)
 

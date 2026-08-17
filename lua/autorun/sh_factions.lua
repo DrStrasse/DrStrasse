@@ -1168,13 +1168,13 @@ if SERVER then
             local ok, err = setFactionColor(args[1], args[2], args[3], args[4])
             done(ok, err)
         elseif action == "setDepAccess" then
-            if not isSuperAdmin then done(false, "Только суперадмин") return end
             if not args[1] then done(false, "Не указана фракция") return end
+            if not isSuperAdmin and getFactionOfLeader(ply) ~= args[1] then done(false, "Недостаточно прав") return end
             local ok, err = setFactionDepAccess(args[1], args[2])
             done(ok, err)
         elseif action == "setServiceAccess" then
-            if not isSuperAdmin then done(false, "Только суперадмин") return end
             if not args[1] or not args[2] then done(false, "Не указаны параметры") return end
+            if not isSuperAdmin and getFactionOfLeader(ply) ~= args[1] then done(false, "Недостаточно прав") return end
             local ok, err = setFactionServiceAccess(args[1], args[2], args[3])
             done(ok, err)
         elseif action == "addRole" then

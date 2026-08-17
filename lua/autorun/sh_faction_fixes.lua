@@ -886,6 +886,21 @@ if SERVER then
         broadcastExt()
     end)
 
+    -- Проверка лидерства в конкретной фракции (для доступов, открытых лидерам).
+    local function isLeaderOfFaction(ply, factionName)
+        if not IsValid(ply) or not istable(Factions) or not Factions[factionName] then return false end
+        local f = Factions[factionName]
+        local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64()
+        local ldr = tostring(f.Leader or "")
+        if ldr ~= "" and (ldr == ck or ldr == ply:SteamID() or ldr == ply:SteamID64()) then return true end
+        local member = istable(f.Members) and (GRM.Identity.FactionMember(f, ply) or f.Members[ck] or f.Members[ply:SteamID()] or f.Members[ply:SteamID64()]) or nil
+        if istable(member) then
+            local leaderRole = f.LeaderRoleName or "Лидер"
+            if member.Role == leaderRole or member.Role == "Лидер" then return true end
+        end
+        return false
+    end
+
     net.Receive(NET_EXT_ACTION, function(_, ply)
         if not IsValid(ply) then return end
         local action = net.ReadString()
@@ -916,6 +931,35 @@ if SERVER then
             else
                 sendExtResult(ply, false, "Не активен")
             end
+            return
+        end
+
+        -- Госновости (/gnews): суперадмин или лидер СВОЕЙ фракции.
+        -- Вынесено до гейта «только суперадмин», чтобы лидеры могли
+        -- переключать доступ к госновостям своей организации.
+        if action == "setGNewsAccess" then
+            local fname = trim(args[1])
+            if fname == "" or not Factions or not Factions[fname] then
+                sendExtResult(ply, false, "Фракция не найдена")
+                return
+            end
+            if not ply:IsSuperAdmin() and not isLeaderOfFaction(ply, fname) then
+                sendExtResult(ply, false, "Недостаточно прав")
+                return
+            end
+            local enabled = args[2] and true or false
+            local cfg = getExtConfig(fname)
+            cfg.GNewsAccess = enabled
+            Factions[fname].GNewsAccess = enabled
+            saveExt()
+            local factionsFromFile = readJSON("factions.json", Factions or {})
+            if factionsFromFile[fname] then
+                factionsFromFile[fname].GNewsAccess = enabled
+                writeJSON("factions.json", factionsFromFile)
+            end
+            broadcastExt()
+            if broadcastFactionData then pcall(broadcastFactionData) end
+            sendExtResult(ply, true, enabled and "Доступ к /gnews выдан лидеру фракции" or "Доступ к /gnews снят")
             return
         end
 
@@ -1004,24 +1048,6 @@ if SERVER then
                 end
             end
             sendExtResult(ply, false, deptName .. ": модель не найдена")
-            return
-        end
-
-        if action == "setGNewsAccess" then
-            local enabled = args[2] and true or false
-            cfg.GNewsAccess = enabled
-            if Factions[factionName] then
-                Factions[factionName].GNewsAccess = enabled
-            end
-            saveExt()
-            local factionsFromFile = readJSON("factions.json", Factions or {})
-            if factionsFromFile[factionName] then
-                factionsFromFile[factionName].GNewsAccess = enabled
-                writeJSON("factions.json", factionsFromFile)
-            end
-            broadcastExt()
-            if broadcastFactionData then pcall(broadcastFactionData) end
-            sendExtResult(ply, true, enabled and "Доступ к /gnews выдан лидеру фракции" or "Доступ к /gnews снят")
             return
         end
 
