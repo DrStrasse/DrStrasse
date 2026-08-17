@@ -57,6 +57,7 @@ QM.ToolCatalog = {
     { id = "grm_perm_tool",      label = "GRM: перм-проп (закрепление)",     desc = "Закрепить объект на карте.", cat = "ui" },
     { id = "grm_service_tool",   label = "GRM: служебное оборудование",      desc = "Компьютеры ведомств.", cat = "ui" },
     { id = "grm_duty_npc",       label = "GRM: служебный диспетчер",          desc = "Выход на службу и уход со службы.", cat = "ui" },
+    { id = "grm_jobs",           label = "GRM: точки работ",                 desc = "Курьер, мусорки, свалка и ориентиры такси.", cat = "ui" },
     { id = "grm_arrest_zone",    label = "GRM: зона ареста",                 desc = "Камеры и зоны содержания.", cat = "ui" },
     { id = "grm_augmentation",   label = "GRM: аугментации",                 desc = "Станции и поды аугментаций.", cat = "ui" },
     { id = "grm_citadel_core",   label = "GRM: ядро Цитадели",               desc = "Размещение ядра Цитадели.", cat = "ui" },
@@ -197,6 +198,12 @@ QM.Schema = {
         { cvar = "grm_duty_npc_title", type = "text", label = "Заголовок" },
         { cvar = "grm_duty_npc_model", type = "text", label = "Модель NPC" },
         { cvar = "grm_duty_npc_make_perm", type = "bool", label = "Сохранять на карте" },
+    },
+    grm_jobs = {
+        { cvar = "grm_jobs_point_type", type = "choice", label = "Тип точки", choices = { { "Курьер", "courier" }, { "Мусорный контейнер", "garbage" }, { "Свалка", "dump" }, { "Стоянка такси", "taxi_pickup" }, { "Ориентир такси", "taxi_dropoff" } } },
+        { cvar = "grm_jobs_point_name", type = "text", label = "Название" },
+        { cvar = "grm_jobs_spawn_bin", type = "bool", label = "Создать физическую мусорку" },
+        { cvar = "grm_jobs_make_perm", type = "bool", label = "Сохранять мусорку" },
     },
     grm_bank_tool = {
         { cvar = "grm_bank_tool_type", type = "choice", label = "Тип",

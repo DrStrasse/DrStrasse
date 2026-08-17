@@ -29,7 +29,7 @@ dofile("lua/autorun/sh_grm_jobs_config.lua")
 local JB=GRM.Jobs
 local fails=0
 local function check(n,c)if c then print("[SIM] OK: "..n)else fails=fails+1 print("[SIM] FAIL: "..n)end end
-check("конфиг работ поднялся",JB and JB.ConfigVersion=="1.0.0")
+check("конфиг работ поднялся",JB and JB.ConfigVersion=="2.0.0")
 JB.WorkPoints={{id="1",type="taxi_pickup",name="Вокзал",pos={x=10,y=20,z=30}},{id="2",type="taxi_dropoff",name="Больница",pos={x=100,y=200,z=30}}}
 local a=JB.GetRoutePoints("taxi_pickup")
 check("типизированная точка такси",#a==1 and a[1]:GetPos().x==10 and a[1]:GetNWString("GRM_JobZoneName","")=="Вокзал")

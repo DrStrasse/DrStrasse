@@ -75,7 +75,7 @@ local function mkPly(nick, sid, s64, super)
         IsPlayer = function() return true end,
         Alive = function() return true end,
         InVehicle = function(self) return self._inVeh == true end,
-        GetPos = function(self) return self._pos end,
+        GetPos=function(self)return self._pos end,GetVehicle=function(self)return self._veh end,
         GetNWString = function() return "" end,
         PrintMessage = function(_, ch, txt) P("CHAT[" .. nick .. "]: " .. tostring(txt)) end,
         GetEyeTrace = function() return {} end,
@@ -118,7 +118,7 @@ CHECK("есть таксист", istable(byTpl.taxi))
 CHECK("нет грузчика/патрульного", byTpl.loader == nil and byTpl.patrol == nil)
 CHECK("мусоровоз: needVehicle", byTpl.garbage and byTpl.garbage.needVehicle == true)
 CHECK("мусоровоз: 3 точки маршрута (2 контейнера + свалка)", byTpl.garbage and #byTpl.garbage.points == 3)
-CHECK("таксист: needVehicle + центр назначения", byTpl.taxi and byTpl.taxi.needVehicle == true and istable(byTpl.taxi.center))
+CHECK("таксист: смена ожидания живых заказов",byTpl.taxi and byTpl.taxi.needVehicle==true and byTpl.taxi.taxiStandby==true and byTpl.taxi.reward==0)
 
 -- 2) мусоровоз: без транспорта прогресса нет
 H._curPly = worker
@@ -131,32 +131,23 @@ worker._pos = Vector(jg.points[1].x, jg.points[1].y, jg.points[1].z)
 JB.TickJobs()
 CHECK("без транспорта маршрут не идёт (pointIndex=1)", jg.pointIndex == 1)
 
--- 3) мусоровоз: на транспорте объезжает все точки → завершение
-worker._inVeh = true
-for step = 1, 3 do
-    local pt = jg.points[jg.pointIndex]
-    worker._pos = Vector(pt.x, pt.y, pt.z)
-    JB.TickJobs()
-end
-CHECK("мусоровоз завершён после сдачи на свалку", JB.Active[wsid] == nil)
-CHECK("начисление прошло", worker._bal > 1000)
+-- 3) физический цикл: подъезд к контейнеру сам по себе больше не засчитывает сбор.
+worker._inVeh=true
+worker._pos=Vector(jg.points[1].x,jg.points[1].y,jg.points[1].z)
+JB.TickJobs()
+CHECK("контейнер не собирается автоматически из кабины",jg.pointIndex==1)
+-- grm_jobs_v4 увеличивает pointIndex только после коробки + G сзади машины.
+jg.pointIndex=#jg.points
+worker._veh={GRM_GarbageLoad=2,SetNWInt=function(self,_,v)self.GRM_GarbageLoad=v end}
+local dump=jg.points[#jg.points];worker._pos=Vector(dump.x,dump.y,dump.z);JB.TickJobs()
+CHECK("загруженный мусоровоз разгружен на свалке",JB.Active[wsid]==nil and worker._veh.GRM_GarbageLoad==0)
+CHECK("начисление прошло",worker._bal>1000)
 
--- 4) таксист: посадка → назначение (на транспорте)
--- повторно открываем меню (вакансии заново) и берём такси
-JB.OpenMenu(worker, center)
-offers = JB._lastOffers[wsid].list
-byTpl = {}
-for _, o in ipairs(offers) do byTpl[o.tplId] = o end
-worker._inVeh = true
-netInject("GRM_Jobs_Accept", { byTpl.taxi.idx })
-local jt = JB.Active[wsid]
-CHECK("такси принят", istable(jt) and jt.jtype == "taxi" and jt.stage == 1)
-worker._pos = Vector(jt.target.x, jt.target.y, jt.target.z)
-JB.TickJobs()
-CHECK("после посадки — этап 2", jt.stage == 2)
-worker._pos = Vector(jt.center.x, jt.center.y, jt.center.z)
-JB.TickJobs()
-CHECK("такси завершён у назначения", JB.Active[wsid] == nil)
+-- 4) таксист выходит на линию без синтетического NPC-маршрута.
+JB.OpenMenu(worker,center);offers=JB._lastOffers[wsid].list;byTpl={};for _,o in ipairs(offers)do byTpl[o.tplId]=o end
+worker._inVeh=true;netInject("GRM_Jobs_Accept",{byTpl.taxi.idx});local jt=JB.Active[wsid]
+CHECK("такси принято как standby-смена",istable(jt)and jt.jtype=="taxi"and jt.taxiStandby==true)
+CHECK("у standby нет искусственной награды и заказа",jt.reward==0 and jt.taxiRequestID==nil)
 
 P("=== ИТОГ: " .. (fails == 0 and "ВСЕ ПРОВЕРКИ ПРОШЛИ" or ("ПРОВАЛОВ: " .. tostring(fails))) .. " ===")
 os.exit(fails == 0 and 0 or 1)

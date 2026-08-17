@@ -184,7 +184,7 @@ local okr, rerr = pcall(chunk)
 ok(okr, "выполняется без ошибок: " .. tostring(rerr))
 local MB = GRM.Mobile
 ok(MB ~= nil, "GRM.Mobile зарегистрирован")
-ok(MB.Version == "1.2.2" and MB.UIVersion == "3.2.1", "protocol 1.2.2 / UI 3.2.1 (блокировка открытия во время ввода)")
+ok(MB.Version=="1.2.2"and MB.UIVersion=="3.3.0","protocol 1.2.2 / UI 3.3.0 (+ Taxi app)")
 ok(MB.Tiers.crappy.ui == "feature" and MB.Tiers.lost.ui == "flip", "кнопочная трубка и раскладушка имеют отдельный дизайн")
 ok(MB.Tiers.tinkle.ui == "smartphone" and MB.Tiers.whiz_gold.ui == "smartphone", "смартфоны используют app-grid дизайн")
 
@@ -486,7 +486,7 @@ act = lastAct()
 ok(act ~= nil and act.op == "sms_read", "колесо сдвинуло выбор на №2 (SMS)")
 tap(KEY_BACKSPACE)
 NET_SENT = {}
-bindRet("invprev", true) bindRet("invprev", true) bindRet("invprev", true) -- 1→9 deactivate→8 calc→7 forum
+bindRet("invprev",true)bindRet("invprev",true)bindRet("invprev",true)bindRet("invprev",true) -- 1→10 power→9 calc→8 taxi→7 forum
 tap(KEY_ENTER)
 act = lastAct()
 ok(act ~= nil and act.op == "forum_query", "колесо вверх трижды → №7 Форум")

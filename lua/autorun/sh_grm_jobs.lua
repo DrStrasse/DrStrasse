@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Jobs Exchange v3.0.0 (Код 77) — Биржа труда
+    GRM Jobs Exchange v4.0.0 (Код 77) — Биржа труда
 
     v1.1.0 (заказ владельца «фракции выставляют свои работы для найма»):
       - ВАКАНСИИ фракций поверх разовых заказов: лидер ставит зарплату
@@ -55,7 +55,7 @@ GRM = GRM or {}
 GRM.Jobs = GRM.Jobs or {}
 local JB = GRM.Jobs
 
-JB.Version     = "3.0.0"  -- работы: курьер / мусоровоз / таксист + новый UI
+JB.Version     = "4.0.0"  -- работы: курьер / мусоровоз / таксист + новый UI
 JB.DataFile    = "grm_jobs.json"
 JB.ActiveFile  = "grm_jobs_active.json"
 JB.Rotate      = 300      -- смена вакансий, сек
@@ -260,6 +260,7 @@ if SERVER then
         end
         return raw
     end
+    JB.CharacterKey=sid64
 
     local function factionOfPly(ply)
         if not IsValid(ply) then return nil end
@@ -369,23 +370,8 @@ if SERVER then
                             zoneRadius = 170, zoneName = "Маршрут вывоза отходов",
                         }
                     end
-                elseif tid == "taxi" then
-                    local pickups = depots("taxi_pickup")
-                    local drops = depots("taxi_dropoff")
-                    local a = seededPick(s, pickups, 1)
-                    local b = seededPick(s + 29, drops, 1)
-                    local pk = (a and b) and { a[1], b[1] } or seededPick(s, dps, 2)
-                    if pk then
-                        local d = math.floor(pk[1]:GetPos():Distance(pk[2]:GetPos()))
-                        offer = {
-                            tplId = tid, title = tpl.title, desc = tpl.desc, jtype = tpl.jtype,
-                            needVehicle = true, dist = d,
-                            reward = clampN(math.floor(tpl.rewardFn(d) / 5) * 5, JB.MinReward, JB.MaxReward),
-                            timeSec = math.floor(tpl.timeFn(d)),
-                            target = pk[1]:GetPos(), center = pk[2]:GetPos(),
-                            zoneRadius = 170, zoneName = "Посадка → назначение",
-                        }
-                    end
+                elseif tid=="taxi"then
+                    offer={tplId=tid,title=tpl.title,desc="Выйдите на линию, ожидайте живые заказы игроков и принимайте их через /taxi.",jtype=tpl.jtype,needVehicle=true,dist=0,reward=0,timeSec=8*3600,target=cpos,center=cpos,zoneRadius=180,zoneName="Ожидание заказов",taxiStandby=true}
                 else
                     local courier = depots("courier")
                     if #courier == 0 then courier = dps end
@@ -393,7 +379,7 @@ if SERVER then
                     local d = math.floor(cpos:Distance(dep:GetPos()))
                     offer = {
                         tplId = tid, title = tpl.title, desc = tpl.desc, jtype = tpl.jtype,
-                        needVehicle = false, dist = d,
+                            needVehicle=JB.WorkConfig and#(JB.WorkConfig.courierVehicles or{})>0 or false,dist=d,
                         reward = clampN(math.floor(tpl.rewardFn(d) / 5) * 5, JB.MinReward, JB.MaxReward),
                         timeSec = math.floor(tpl.timeFn(d)),
                         staySec = tpl.stay or 0,
@@ -436,14 +422,18 @@ if SERVER then
                     points = j.points, pointNames = j.pointNames,
                     tplId = j.tplId, budgetEscrow = tonumber(j.budgetEscrow) or 0,
                     fromPost = j.fromPost and true or false,
-                    postFac = j.postFac, postId = j.postId, postKind = j.postKind,
+                    postFac=j.postFac,postId=j.postId,postKind=j.postKind,
+                    taxiStandby=j.taxiStandby==true,taxiRequestID=j.taxiRequestID,
+                    garbageCollected=tonumber(j.garbageCollected)or 0,
                 }
             end
         end
         local ok, txt = pcall(util.TableToJSON, arr, true)
         if ok and txt then file.Write(JB.ActiveFile, txt) end
-        print("[GRM Jobs] SAVE active (" .. tostring(why or "-") .. "): " .. tostring(#arr) .. " зап.")
+        print("[GRM Jobs] SAVE active ("..tostring(why or"-").."): "..tostring(#arr).." зап.")
     end
+    JB.SaveActive=saveActive
+    function JB.GetActiveJob(ply)return JB.Active[sid64(ply)]end
 
     local function loadActive()
         local t = jsonT(file.Read(JB.ActiveFile, "DATA") or "")
@@ -465,7 +455,7 @@ if SERVER then
                     points = r.points, pointNames = r.pointNames,
                     tplId = r.tplId, budgetEscrow = tonumber(r.budgetEscrow) or 0,
                     fromPost = r.fromPost == true, postFac = r.postFac, postId = r.postId,
-                    postKind = r.postKind,
+                    postKind=r.postKind,taxiStandby=r.taxiStandby==true,taxiRequestID=r.taxiRequestID,garbageCollected=tonumber(r.garbageCollected)or 0,
                 }
                 n = n + 1
             end
@@ -478,7 +468,7 @@ if SERVER then
         if not IsValid(ply) then return end
         local j = JB.Active[sid64(ply)]
         net.Start(NET_TRACKER)
-        if istable(j) then
+        if istable(j)and not(j.taxiStandby and(not j.taxiRequestID or j.stage==2))then
             local goal = (j.stage == 2) and j.center or j.target
             local stageName = ""
             if j.jtype == "garbage" then
@@ -487,8 +477,8 @@ if SERVER then
                 local g = pts[idx]
                 if istable(g) then goal = Vector(tonumber(g.x) or 0, tonumber(g.y) or 0, tonumber(g.z) or 0) end
                 stageName = "точка " .. tostring(idx) .. "/" .. tostring(#pts)
-            elseif j.jtype == "taxi" then
-                stageName = (j.stage == 2) and "к назначению" or "на посадку"
+            elseif j.jtype=="taxi"then
+                stageName=j.taxiStandby and((j.stage==2)and"ожидание посадки"or"к клиенту")or((j.stage==2)and"к назначению"or"на посадку")
             end
             net.WriteBool(true)
             net.WriteVector(goal or j.target)
@@ -518,7 +508,7 @@ if SERVER then
             if istable(j) then
                 local stageName = ""
                 if j.jtype == "garbage" then stageName = "точка " .. tostring(j.pointIndex or 1) .. "/" .. tostring(#(j.points or {}))
-                elseif j.jtype == "taxi" then stageName = (j.stage == 2) and "к назначению" or "на посадку" end
+                elseif j.jtype=="taxi"then stageName=j.taxiStandby and((not j.taxiRequestID and"ожидание заказов")or(j.stage==2 and"такси прибыло"or"к клиенту"))or(j.stage==2 and"к назначению"or"на посадку")end
                 net.WriteTable({
                     title = j.title, desc = j.desc, jtype = j.jtype,
                     stage = j.stage or 1, stayLeft = j.stayLeft or 0,
@@ -571,7 +561,7 @@ if SERVER then
         JB.Active[sd] = {
             tplId = fields.tplId, budgetEscrow = reserved,
             title = fields.title, desc = fields.desc or "",
-            jtype = fields.jtype or "goto", stage = 1,
+            jtype=fields.jtype or"goto",stage=fields.taxiStandby and 0 or 1,
             stayLeft = fields.staySec or 0,
             reward = fields.reward, deadline = os.time() + (fields.timeSec or 300),
             started = os.time(),
@@ -581,12 +571,12 @@ if SERVER then
             points = fields.points, pointNames = fields.pointNames, pointIndex = 1,
             fromPost = fields.fromPost and true or false,
             postFac = fields.postFac, postId = fields.postId,
-            postKind = fields.postKind,
+            postKind=fields.postKind,taxiStandby=fields.taxiStandby==true,garbageCollected=tonumber(fields.garbageCollected)or 0,
         }
         saveActive("старт")
         JB.PushTracker(ply)
         JB.PushMyState(ply)
-        if GRM.Notify then GRM.Notify(ply, "Задача принята: " .. tostring(fields.title) .. ". Маркер цели появился на экране. Время: " .. string.format("%d:%02d", math.floor((fields.timeSec or 300) / 60), (fields.timeSec or 300) % 60), 120, 220, 255) end
+        if GRM.Notify then local msg=fields.taxiStandby and("Смена такси начата. Ожидайте живые заказы и открывайте /taxi. Время: ")or("Задача принята: "..tostring(fields.title)..". Маркер цели появился на экране. Время: ");GRM.Notify(ply,msg..string.format("%d:%02d",math.floor((fields.timeSec or 300)/60),(fields.timeSec or 300)%60),120,220,255)end
         hook.Run("GRM_Jobs_Started", ply, JB.Active[sd])
         return true
     end
@@ -706,27 +696,17 @@ if SERVER then
                                 j._hintT = CurTime() + 10
                                 if GRM.Notify then GRM.Notify(ply, "Для этой работы нужен разрешённый транспорт — сядьте за руль подходящей машины.", 255, 190, 90) end
                             end
-                        elseif j.jtype == "garbage" then
-                            local pts = j.points or {}
-                            local idx = tonumber(j.pointIndex) or 1
-                            local goal = pts[idx]
-                            if not istable(goal) then
-                                JB.Complete(ply)
-                            else
-                                local gv = Vector(tonumber(goal.x) or 0, tonumber(goal.y) or 0, tonumber(goal.z) or 0)
-                                local rad = tonumber(j.zoneRadius) or 170
-                                if pp:DistToSqr(gv) < rad * rad then
-                                    j.pointIndex = idx + 1
-                                    saveActive("мусоровоз: точка " .. tostring(idx))
-                                    if idx >= #pts then
-                                        JB.Complete(ply)
-                                    else
-                                        JB.PushTracker(ply) JB.PushMyState(ply)
-                                        local nm = (j.pointNames and j.pointNames[idx + 1]) or ("точка " .. tostring(idx + 1))
-                                        if GRM.Notify then GRM.Notify(ply, "Контейнер собран. Дальше: " .. tostring(nm), 120, 220, 255) end
-                                    end
+                        elseif j.jtype=="garbage"then
+                            local pts=j.points or{};local idx=tonumber(j.pointIndex)or 1;local goal=pts[idx]
+                            if not istable(goal)then JB.Complete(ply)
+                            elseif idx>=#pts then
+                                local gv=Vector(tonumber(goal.x)or 0,tonumber(goal.y)or 0,tonumber(goal.z)or 0);local rad=tonumber(j.zoneRadius)or 170;local veh=ply:GetVehicle()
+                                if pp:DistToSqr(gv)<rad*rad and IsValid(veh)and(tonumber(veh.GRM_GarbageLoad)or 0)>0 then
+                                    j.garbageDelivered=tonumber(veh.GRM_GarbageLoad)or 0;veh.GRM_GarbageLoad=0;veh:SetNWInt("GRM_GarbageLoad",0);JB.Complete(ply)
                                 end
-                            end
+                            elseif(j._hintT or 0)<CurTime()then j._hintT=CurTime()+12;if GRM.Notify then GRM.Notify(ply,"Остановитесь у отмеченной мусорки, выйдите, найдите отходы и загрузите коробку клавишей G сзади мусоровоза.",255,210,100)end end
+                        elseif j.jtype=="taxi"and j.taxiStandby and JB.TickTaxiJob then
+                            JB.TickTaxiJob(ply,j)
                         elseif j.jtype == "taxi" then
                             local rad = tonumber(j.zoneRadius) or 170
                             if (j.stage or 1) == 1 then
@@ -808,8 +788,7 @@ if SERVER then
         JB._lastOffers[sid64(ply)] = { list = offers or {}, at = os.time(), center = ent:GetPos() }
         local wire = {}
         for _, o in ipairs(offers or {}) do
-            local shownReward = o.reward
-            if o.tplId == "taxi" and JB.GetTaxiFare then shownReward = JB.GetTaxiFare(ply, shownReward) end
+            local shownReward=o.reward
             wire[#wire + 1] = { idx = o.idx, tplId = o.tplId, title = o.title, desc = o.desc, jtype = o.jtype, reward = shownReward, timeSec = o.timeSec, staySec = o.staySec, dist = o.dist, zoneRadius = o.zoneRadius, zoneName = o.zoneName, needVehicle = o.needVehicle == true, icon = o.icon, color = o.color }
         end
         local sd = sid64(ply)
@@ -884,15 +863,14 @@ if SERVER then
             if GRM.Notify then GRM.Notify(ply, "Вакансия не найдена (список обновился).", 255, 190, 90) end
             return
         end
-        local reward = offer.reward
-        if offer.tplId == "taxi" and JB.GetTaxiFare then reward = JB.GetTaxiFare(ply, reward) end
+        local reward=offer.reward
         JB.StartJob(ply, {
             tplId = offer.tplId, title = offer.title, desc = offer.desc, jtype = offer.jtype,
             reward = reward, timeSec = offer.timeSec, staySec = offer.staySec,
             target = offer.target, center = offer.center or rec.center,
             zoneRadius = offer.zoneRadius, zoneName = offer.zoneName,
             needVehicle = offer.needVehicle == true,
-            points = offer.points, pointNames = offer.pointNames,
+            points=offer.points,pointNames=offer.pointNames,taxiStandby=offer.taxiStandby==true,
         })
     end)
 
@@ -1541,7 +1519,7 @@ if CLIENT then
 
                 local info = vgui.Create("DLabel", card)
                 info:SetPos(12, 96) info:SetSize(cw - 24, 18) info:SetFont("GRMJobs_Normal") info:SetTextColor(C.yellow)
-                info:SetText(fmtMoney(o.reward or 0) .. "   •   до " .. fmtTime(o.timeSec or 0))
+                info:SetText(o.tplId=="taxi"and("Живые заказы игроков   •   смена "..fmtTime(o.timeSec or 0))or(fmtMoney(o.reward or 0).."   •   до "..fmtTime(o.timeSec or 0)))
 
                 local zone = vgui.Create("DLabel", card)
                 zone:SetPos(12, 120) zone:SetSize(cw - 160, 18) zone:SetFont("GRMJobs_Small") zone:SetTextColor(C.dim)
@@ -1579,7 +1557,7 @@ if CLIENT then
             end
             local title = vgui.Create("DLabel", card)
             title:SetPos(14, 48) title:SetSize(880, 22) title:SetFont("GRMJobs_Sub") title:SetTextColor(C.text)
-            title:SetText(tostring(active.title) .. "   —   " .. fmtMoney(active.reward or 0))
+            title:SetText(active.jtype=="taxi"and(tostring(active.title).."   —   оплата за живые заказы")or(tostring(active.title).."   —   "..fmtMoney(active.reward or 0)))
             local info = vgui.Create("DLabel", card)
             info:SetPos(14, 74) info:SetSize(880, 20) info:SetFont("GRMJobs_Normal") info:SetTextColor(C.yellow)
             local note = JTYPE_NAMES[active.jtype] or active.jtype

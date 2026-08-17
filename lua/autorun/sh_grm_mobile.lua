@@ -19,7 +19,7 @@ MB.SmsCap = 40
 MB.ContactsCap = 50
 MB.NotesCap = 30
 MB.Version = "1.2.2" -- network/data compatibility
-MB.UIVersion = "3.2.1"
+MB.UIVersion = "3.3.0"
 
 MB.Tiers = {
     crappy = {
@@ -154,6 +154,7 @@ function MB.AvailableApps(tierKey)
         apps[#apps + 1] = "Биржа"
         apps[#apps + 1] = "Моя фракция"
         apps[#apps + 1] = "Форум"
+        apps[#apps + 1] = "Такси"
     end
     return apps
 end
@@ -476,6 +477,8 @@ function MB.PushData(ply, kind)
         for i, r in ipairs(d.notes or {}) do
             payload.rows[#payload.rows + 1] = { i = i, text = r.text, ts = r.ts or r.time }
         end
+    elseif kind=="taxi"then
+        payload.data=GRM.Jobs and GRM.Jobs.TaxiStatus and GRM.Jobs.TaxiStatus(ply)or nil
     elseif kind == "forum" then
         normalizeForumPosts()
         local key = MB.Key(ply)
@@ -514,8 +517,7 @@ end
 function MB.PushAllData(ply)
     MB.PushData(ply, "contacts")
     MB.PushData(ply, "sms")
-    MB.PushData(ply, "notes")
-    MB.PushData(ply, "forum")
+    MB.PushData(ply,"notes");MB.PushData(ply,"taxi");MB.PushData(ply,"forum")
 end
 
 function MB.SendSms(ply, num, text)
@@ -654,6 +656,11 @@ function MB.HandleAction(ply, act)
     elseif op == "forum_query" then
         MB.PushData(ply, "forum")
         return
+    elseif op=="taxi_call"then
+        if not(tier and tier.apps)then return end;local ok,msg=false,"Модуль такси не загружен";if GRM.Jobs and GRM.Jobs.CallTaxi then ok,msg=GRM.Jobs.CallTaxi(ply,"mobile")end;if not ok and MB.ServerNotify then MB.ServerNotify(ply,tostring(msg or"Не удалось вызвать такси"))end;MB.PushData(ply,"taxi");return
+    elseif op=="taxi_cancel"then
+        local ok,msg=false,"Модуль такси не загружен";if GRM.Jobs and GRM.Jobs.CancelTaxi then ok,msg=GRM.Jobs.CancelTaxi(ply,"mobile")end;if not ok and MB.ServerNotify then MB.ServerNotify(ply,tostring(msg or"Нет заказа"))end;MB.PushData(ply,"taxi");return
+    elseif op=="taxi_query"then MB.PushData(ply,"taxi");return
     elseif op == "jobs_query" then
         local rows = {}
         local posts = GRM.Jobs and GRM.Jobs.Cfg and GRM.Jobs.Cfg.posts or {}
@@ -927,7 +934,7 @@ if CLIENT then
     local APP_META = {
         dial={icon="icon16/telephone.png",color=Color(60,190,110)}, sms={icon="icon16/email.png",color=Color(65,145,240)},
         contacts={icon="icon16/group.png",color=Color(236,158,67)}, notes={icon="icon16/note.png",color=Color(235,198,76)},
-        jobs={icon="icon16/briefcase.png",color=Color(70,174,205)}, fac={icon="icon16/shield.png",color=Color(202,83,91)},
+        jobs={icon="icon16/briefcase.png",color=Color(70,174,205)},taxi={icon="icon16/car.png",color=Color(235,175,60)},fac={icon="icon16/shield.png",color=Color(202,83,91)},
         forum={icon="icon16/comments.png",color=Color(135,105,235)}, calc={icon="icon16/calculator.png",color=Color(90,110,140)},
         power={icon="icon16/disconnect.png",color=Color(190,72,82)},
     }
@@ -1014,9 +1021,7 @@ if CLIENT then
         if t.contacts then out[#out+1] = { id="contacts", name="Контакты" } end
         if t.notes then out[#out+1] = { id="notes", name="Заметки" } end
         if t.apps then
-            out[#out+1] = { id="jobs", name="Биржа" }
-            out[#out+1] = { id="fac", name="Моя фракция" }
-            out[#out+1] = { id="forum", name="Форум" }
+            out[#out+1]={id="jobs",name="Биржа"};out[#out+1]={id="fac",name="Моя фракция"};out[#out+1]={id="forum",name="Форум"};out[#out+1]={id="taxi",name="Такси"}
         end
         out[#out+1] = { id="calc", name="Калькулятор" }
         out[#out+1] = { id="power", name="Управление" }
@@ -1099,7 +1104,8 @@ if CLIENT then
                     elseif a.id == "sms" then setScreen("sms"); sendAct({op="sms_read"})
                     elseif a.id == "contacts" then setScreen("contacts")
                     elseif a.id == "notes" then setScreen("notes"); sendAct({op="note_query"})
-                    elseif a.id == "jobs" then setScreen("jobs"); sendAct({op="jobs_query"})
+                    elseif a.id=="jobs"then setScreen("jobs");sendAct({op="jobs_query"})
+                    elseif a.id=="taxi"then setScreen("taxi");sendAct({op="taxi_query"})
                     elseif a.id == "fac" then setScreen("fac"); sendAct({op="fac_query"})
                     elseif a.id == "forum" then setScreen("forum"); sendAct({op="forum_query"})
                     elseif a.id == "calc" then setScreen("calc")
@@ -1156,10 +1162,13 @@ if CLIENT then
             add("Удалить выбранную", function() sendAct({op="note_del", i=math.max(1, M.listSel)}) end, nil, "call_bad")
             add("Обновить", function() sendAct({op="note_query"}); snd("select") end, nil, "small")
             add("Назад", function() goHome(); snd("back") end, nil, "back")
-        elseif M.screen == "jobs" then
-            for _, r in ipairs(rows("jobs")) do add(tostring(r.fac or "") .. ": " .. tostring(r.title or ""), function() end, tostring(r.kind or "") .. " " .. tostring(r.pay or r.reward or "")) end
-            add("Обновить", function() sendAct({op="jobs_query"}); snd("select") end, nil, "small")
-            add("Назад", function() goHome(); snd("back") end, nil, "back")
+        elseif M.screen=="jobs"then
+            for _,r in ipairs(rows("jobs"))do add(tostring(r.fac or"")..": "..tostring(r.title or""),function()end,tostring(r.kind or"").." "..tostring(r.pay or r.reward or""))end;add("Обновить",function()sendAct({op="jobs_query"});snd("select")end,nil,"small");add("Назад",function()goHome();snd("back")end,nil,"back")
+        elseif M.screen=="taxi"then
+            local td=(M.data.taxi or{}).data
+            if istable(td)then add("Статус: "..tostring(td.status or"ожидание"),function()end,(td.driverName~=""and("Водитель: "..td.driverName)or"Идёт поиск водителя")..((tonumber(td.fare)or 0)>0 and(" • "..tostring(td.fare))or""));add("Отменить заказ",function()sendAct({op="taxi_cancel"})end,nil,"call_bad")
+            else add("ВЫЗВАТЬ ТАКСИ",function()sendAct({op="taxi_call"})end,"Место подачи определяется по вашей текущей позиции","call_good")end
+            add("Обновить",function()sendAct({op="taxi_query"});snd("select")end,nil,"small");add("Назад",function()goHome();snd("back")end,nil,"back")
         elseif M.screen == "fac" then
             local d = (M.data.fac or {}).data or {}
             for _, r in ipairs(d.rows or {}) do add((r.online and "● " or "○ ") .. tostring(r.name or "?"), function() end, tostring(r.role or "") .. " / " .. tostring(r.dept or "")) end
@@ -1563,7 +1572,7 @@ if CLIENT then
                 end
 
                 local callControls = st == "ringing" or st == "dialing" or st == "call"
-                local title = ({ home="Главное меню", dial="Набор номера", sms="SMS", sms_dialog="Диалог " .. tostring(M.smsThread or ""), contacts="Контакты", contact_actions="Контакт", notes="Заметки", jobs="Биржа труда", fac="Моя фракция", forum="Городской форум", forum_detail="Публикация", calc="Калькулятор", power="Телефон", deactivate_confirm="Подтверждение" })[M.screen] or M.screen
+                local title = ({ home="Главное меню", dial="Набор номера", sms="SMS", sms_dialog="Диалог " .. tostring(M.smsThread or ""), contacts="Контакты", contact_actions="Контакт", notes="Заметки",jobs="Биржа труда",taxi="Вызов такси",fac="Моя фракция", forum="Городской форум", forum_detail="Публикация", calc="Калькулятор", power="Телефон", deactivate_confirm="Подтверждение" })[M.screen] or M.screen
                 if st == "ringing" then title = "Управление вызовом"
                 elseif st == "dialing" then title = "Исходящий вызов"
                 elseif st == "call" then title = "Разговор" end

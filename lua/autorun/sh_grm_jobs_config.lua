@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Jobs Configuration v1.0.0 (Код 77, расширение v3)
+    GRM Jobs Configuration v2.0.0 (Код 77, расширение v3)
     Типизированные точки/маршруты, транспорт, такса и городская казна.
 ----------------------------------------------------------------------]]
 
@@ -8,7 +8,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Jobs = GRM.Jobs or {}
 local JB = GRM.Jobs
-JB.ConfigVersion = "1.0.0"
+JB.ConfigVersion = "2.0.0"
 
 local NET_OPEN = "GRM_JobsAdmin_Open"
 local NET_ACT = "GRM_JobsAdmin_Act"
@@ -51,14 +51,18 @@ if SERVER then
     end
     local function defaults()
         return {
-            version = 1,
+            version = 2,
             fundFromState = true,
             taxiMin = 300,
             taxiMax = 2500,
             taxiDefault = 700,
             taxiVehicles = {},
             garbageVehicles = {},
+            courierVehicles = {},
             garbageStops = 2,
+            garbageCapacity = 8,
+            garbageSearchTime = 2.5,
+            garbageBinCooldown = 90,
         }
     end
     local function normalizeCfg(t)
@@ -69,8 +73,12 @@ if SERVER then
         d.taxiMax = math.floor(clamp(t.taxiMax, d.taxiMin, 100000))
         d.taxiDefault = math.floor(clamp(t.taxiDefault, d.taxiMin, d.taxiMax))
         d.garbageStops = math.floor(clamp(t.garbageStops, 1, 8))
+        d.garbageCapacity = math.floor(clamp(t.garbageCapacity, 1, 32))
+        d.garbageSearchTime = clamp(t.garbageSearchTime, .5, 15)
+        d.garbageBinCooldown = math.floor(clamp(t.garbageBinCooldown, 10, 1800))
         d.taxiVehicles = istable(t.taxiVehicles) and t.taxiVehicles or {}
         d.garbageVehicles = istable(t.garbageVehicles) and t.garbageVehicles or {}
+        d.courierVehicles = istable(t.courierVehicles) and t.courierVehicles or {}
         return d
     end
     local function normalizePoints(t)
@@ -112,7 +120,17 @@ if SERVER then
         JB.WorkPoints = normalizePoints(pts)
     end
     function JB.SaveWorkConfig(why)
-        return save(CFG_FILE, JB.WorkConfig, why) and save(mapFile(), { version = 1, points = JB.WorkPoints }, why)
+        return save(CFG_FILE, JB.WorkConfig, why) and save(mapFile(), { version = 2, points = JB.WorkPoints }, why)
+    end
+    function JB.AddWorkPoint(pointType,name,pointPos)
+        pointType=POINT_TYPES[tostring(pointType or"")]and tostring(pointType)or nil;if not pointType or not pointPos then return false,"Неизвестный тип точки"end
+        local rec={id="jp_"..os.time().."_"..math.random(1000,9999),type=pointType,name=string.sub(string.Trim(tostring(name or"")),1,64),pos={x=pointPos.x,y=pointPos.y,z=pointPos.z+4},created=os.time()};if rec.name==""then rec.name=POINT_TYPES[pointType]end
+        JB.WorkPoints[#JB.WorkPoints+1]=rec;JB.SaveWorkConfig("добавлена точка "..pointType);return true,rec
+    end
+    function JB.RemoveNearestWorkPoint(point,maxDistance)
+        local best,bestIndex,bestDist=nil,nil,(tonumber(maxDistance)or 160)^2
+        for i,rec in ipairs(JB.WorkPoints or{})do local p=Vector(rec.pos.x,rec.pos.y,rec.pos.z);local d=p:DistToSqr(point);if d<bestDist then best,bestIndex,bestDist=rec,i,d end end
+        if not bestIndex then return false,"Рядом нет точки работы"end;table.remove(JB.WorkPoints,bestIndex);JB.SaveWorkConfig("удалена ближайшая точка");return true,best
     end
     JB.LoadWorkConfig()
 
@@ -139,31 +157,23 @@ if SERVER then
         return nil -- старые grm_depot остаются фолбэком ядра
     end
 
-    local function vehicleToken(ent)
-        if not IsValid(ent) then return "" end
-        local raw = {
-            ent:GetClass(), ent:GetNWString("GRMSpawnName", ""), ent:GetNWString("SpawnName", ""),
-            ent:GetNWString("VehicleName", ""), ent.VehicleName, ent.SpawnName,
-        }
-        local candidates = {}
-        for _, v in ipairs(raw) do if tostring(v or "") ~= "" then candidates[#candidates + 1] = string.lower(tostring(v)) end end
-        return candidates
+    function JB.VehicleTokens(ent)
+        if not IsValid(ent) then return{}end;local raw={ent:GetClass(),ent:GetNWString("GRMSpawnName",""),ent:GetNWString("SpawnName",""),ent:GetNWString("VehicleName",""),ent.VehicleName,ent.SpawnName,ent.VD_Class};local out={}
+        for _,v in ipairs(raw)do if tostring(v or"")~=""then out[#out+1]=string.lower(tostring(v))end end;return out
     end
-    function JB.IsWorkVehicleAllowed(ply, workID)
-        if not IsValid(ply) or not ply:InVehicle() then return false end
-        local veh = ply:GetVehicle()
-        if not IsValid(veh) then return false end
-        if veh.GetDriver and veh:GetDriver() ~= ply then return false end
-        local list = workID == "taxi" and JB.WorkConfig.taxiVehicles or (workID == "garbage" and JB.WorkConfig.garbageVehicles or {})
-        if not istable(list) or #list == 0 then return true end
-        local tokens = vehicleToken(veh)
-        for _, allow in ipairs(list) do
-            allow = string.lower(string.Trim(tostring(allow or "")))
-            if allow ~= "" then
-                for _, token in ipairs(tokens) do if string.lower(tostring(token or "")) == allow then return true end end
-            end
-        end
-        return false
+    function JB.AllowedVehicleList(workID)
+        if workID=="taxi"then return JB.WorkConfig.taxiVehicles elseif workID=="garbage"then return JB.WorkConfig.garbageVehicles elseif workID=="courier"then return JB.WorkConfig.courierVehicles end;return{}
+    end
+    function JB.IsVehicleClassAllowed(ent,workID)
+        if not IsValid(ent)then return false end;local tagged=tostring(ent:GetNWString("GRM_WorkVehicle",ent.GRMWorkVehicle or""));if tagged~=""then return tagged==tostring(workID)end;local list=JB.AllowedVehicleList(workID);if not istable(list)or#list==0 then return true end;local tokens=JB.VehicleTokens(ent)
+        for _,allow in ipairs(list)do allow=string.lower(string.Trim(tostring(allow or"")));for _,token in ipairs(tokens)do if allow~=""and token==allow then return true end end end;return false
+    end
+    function JB.IsWorkVehicleAllowed(ply,workID)
+        if not IsValid(ply)or not ply:InVehicle()then return false end;local veh=ply:GetVehicle();if not IsValid(veh)then return false end;if veh.GetDriver and veh:GetDriver()~=ply then return false end;return JB.IsVehicleClassAllowed(veh,workID)
+    end
+    function JB.GetVehicleCatalog()
+        local source=GRM.VehicleDealer and GRM.VehicleDealer.AllVehicleClasses and GRM.VehicleDealer.AllVehicleClasses()or{};if#source==0 then for class,row in pairs(list.Get("Vehicles")or{})do source[#source+1]={class=class,name=row.Name or class,system="source"}end end
+        table.sort(source,function(a,b)return tostring(a.name)<tostring(b.name)end);local out={};for i=1,math.min(600,#source)do local v=source[i];out[i]={class=tostring(v.class or""),name=tostring(v.name or v.class or""),system=tostring(v.system or"?")}end;return out
     end
 
     JB.TaxiFares = JB.TaxiFares or {}
@@ -196,12 +206,11 @@ if SERVER then
             net.WriteTable(JB.WorkConfig or defaults())
             net.WriteTable(JB.WorkPoints or {})
             net.WriteTable(POINT_TYPES)
+            net.WriteTable(JB.GetVehicleCatalog())
         net.Send(ply)
     end
-    local function openAdmin(ply)
-        if not IsValid(ply) or not ply:IsSuperAdmin() then return end
-        snapshot(ply)
-    end
+    local function openAdmin(ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;snapshot(ply)end
+    JB.OpenAdmin=openAdmin
     local function parseList(text)
         local out, seen = {}, {}
         for part in string.gmatch(tostring(text or "") .. ",", "(.-),") do
@@ -221,18 +230,14 @@ if SERVER then
             JB.WorkConfig.taxiMin = math.floor(clamp(t.taxiMin, 0, 100000))
             JB.WorkConfig.taxiMax = math.floor(clamp(t.taxiMax, JB.WorkConfig.taxiMin, 100000))
             JB.WorkConfig.taxiDefault = math.floor(clamp(t.taxiDefault, JB.WorkConfig.taxiMin, JB.WorkConfig.taxiMax))
-            JB.WorkConfig.garbageStops = math.floor(clamp(t.garbageStops, 1, 8))
-            JB.WorkConfig.taxiVehicles = parseList(t.taxiVehicles)
-            JB.WorkConfig.garbageVehicles = parseList(t.garbageVehicles)
+            JB.WorkConfig.garbageStops=math.floor(clamp(t.garbageStops,1,8));JB.WorkConfig.garbageCapacity=math.floor(clamp(t.garbageCapacity,1,32));JB.WorkConfig.garbageSearchTime=clamp(t.garbageSearchTime,.5,15);JB.WorkConfig.garbageBinCooldown=math.floor(clamp(t.garbageBinCooldown,10,1800))
+            JB.WorkConfig.taxiVehicles=parseList(t.taxiVehicles);JB.WorkConfig.garbageVehicles=parseList(t.garbageVehicles);JB.WorkConfig.courierVehicles=parseList(t.courierVehicles)
             JB.SaveWorkConfig("админ-настройки")
         elseif act == "add_point" then
             local typ = net.ReadString()
             local name = string.sub(string.Trim(net.ReadString()), 1, 64)
             if not POINT_TYPES[typ] then return end
-            local tr = ply:GetEyeTrace()
-            local pos = tr and tr.HitPos or ply:GetPos()
-            JB.WorkPoints[#JB.WorkPoints + 1] = { id = "jp_" .. os.time() .. "_" .. math.random(1000, 9999), type = typ, name = name ~= "" and name or POINT_TYPES[typ], pos = { x = pos.x, y = pos.y, z = pos.z + 4 }, created = os.time() }
-            JB.SaveWorkConfig("добавлена точка")
+            local tr=ply:GetEyeTrace();local pos=tr and tr.HitPos or ply:GetPos();JB.AddWorkPoint(typ,name,pos)
         elseif act == "remove_point" then
             local id = net.ReadString()
             for i = #JB.WorkPoints, 1, -1 do if JB.WorkPoints[i].id == id then table.remove(JB.WorkPoints, i) break end end
@@ -247,6 +252,7 @@ if SERVER then
         ply:ChatPrint("[Такси] Такса установлена: " .. tostring(fare) .. ". Она применится к следующему заказу.")
     end)
     local function openTaxi(ply)
+        if JB.OpenTaxiDriverMenu then JB.OpenTaxiDriverMenu(ply)return end
         net.Start(NET_TAXI)
             net.WriteUInt(JB.GetTaxiFare(ply, JB.WorkConfig.taxiDefault), 20)
             net.WriteUInt(JB.WorkConfig.taxiMin, 20)
@@ -280,21 +286,36 @@ else
         local e=vgui.Create("DTextEntry",parent) e:SetPos(270,y-2) e:SetSize(380,24) e:SetValue(tostring(value or "")) return e
     end
     net.Receive(NET_OPEN, function()
-        local cfg, points, types = net.ReadTable() or {}, net.ReadTable() or {}, net.ReadTable() or {}
-        if IsValid(JB._adminFrame) then JB._adminFrame:Remove() end
-        local f=frame("РАБОТЫ • НАСТРОЙКА МАРШРУТОВ",920,680) JB._adminFrame=f
-        local sheet=vgui.Create("DPropertySheet",f) sheet:SetPos(12,60) sheet:SetSize(896,608)
+        local cfg,points,types,vehicles=net.ReadTable()or{},net.ReadTable()or{},net.ReadTable()or{},net.ReadTable()or{}
+        if IsValid(JB._adminFrame)then JB._adminFrame:Remove()end
+        local f=frame("РАБОТЫ • ТОЧКИ, ТРАНСПОРТ И ПРАВИЛА",1100,760)JB._adminFrame=f;if GRM.UI and GRM.UI.Track then GRM.UI.Track("jobs.admin",f)end
+        local sheet=vgui.Create("DPropertySheet",f)sheet:SetPos(12,60)sheet:SetSize(1076,688)
         local settings=vgui.Create("DPanel",sheet) settings.Paint=function(_,w,h) draw.RoundedBox(6,0,0,w,h,C.panel) end
-        local min=field(settings,"Минимальная такса",cfg.taxiMin,20)
-        local max=field(settings,"Максимальная такса",cfg.taxiMax,56)
-        local def=field(settings,"Такса по умолчанию",cfg.taxiDefault,92)
-        local tv=field(settings,"Транспорт такси (через запятую)",table.concat(cfg.taxiVehicles or {},", "),128)
-        local gv=field(settings,"Транспорт мусоровоза",table.concat(cfg.garbageVehicles or {},", "),164)
-        local gs=field(settings,"Контейнеров в маршруте",cfg.garbageStops,200)
-        local fund=vgui.Create("DCheckBoxLabel",settings) fund:SetPos(16,242) fund:SetSize(500,28) fund:SetText("Финансировать системные работы из городской казны") fund:SetTextColor(C.text) fund:SetValue(cfg.fundFromState and 1 or 0)
-        local save=vgui.Create("DButton",settings) save:SetPos(16,290) save:SetSize(634,38) save:SetText("СОХРАНИТЬ НАСТРОЙКИ") save:SetTextColor(color_white) save.Paint=function(s,w,h) draw.RoundedBox(5,0,0,w,h,s:IsHovered() and Color(80,235,165) or C.green) end
-        save.DoClick=function() net.Start(NET_ACT) net.WriteString("save") net.WriteTable({taxiMin=tonumber(min:GetValue()),taxiMax=tonumber(max:GetValue()),taxiDefault=tonumber(def:GetValue()),taxiVehicles=tv:GetValue(),garbageVehicles=gv:GetValue(),garbageStops=tonumber(gs:GetValue()),fundFromState=fund:GetChecked()}) net.SendToServer() end
+        local min=field(settings,"Минимальная такса",cfg.taxiMin,20);local max=field(settings,"Максимальная такса",cfg.taxiMax,56);local def=field(settings,"Такса по умолчанию",cfg.taxiDefault,92)
+        local tv=field(settings,"Разрешённый транспорт такси",table.concat(cfg.taxiVehicles or{},", "),128);local gv=field(settings,"Разрешённый транспорт мусоровоза",table.concat(cfg.garbageVehicles or{},", "),164);local cv=field(settings,"Разрешённый транспорт доставки",table.concat(cfg.courierVehicles or{},", "),200)
+        local gs=field(settings,"Контейнеров в маршруте",cfg.garbageStops,236);local cap=field(settings,"Вместимость мусоровоза (коробок)",cfg.garbageCapacity,272);local searchTime=field(settings,"Время поиска в мусорке, сек",cfg.garbageSearchTime,308);local cooldown=field(settings,"Восстановление мусорки, сек",cfg.garbageBinCooldown,344)
+        local fund=vgui.Create("DCheckBoxLabel",settings)fund:SetPos(16,382)fund:SetSize(600,28)fund:SetText("Финансировать системные работы из городской казны")fund:SetTextColor(C.text)fund:SetValue(cfg.fundFromState and 1 or 0)
+        local save=vgui.Create("DButton",settings)save:SetPos(16,430)save:SetSize(760,40)save:SetText("СОХРАНИТЬ ВСЕ НАСТРОЙКИ")save:SetTextColor(color_white)save.Paint=function(s,w,h)draw.RoundedBox(5,0,0,w,h,s:IsHovered()and Color(80,235,165)or C.green)end
+        save.DoClick=function()net.Start(NET_ACT)net.WriteString("save")net.WriteTable({taxiMin=tonumber(min:GetValue()),taxiMax=tonumber(max:GetValue()),taxiDefault=tonumber(def:GetValue()),taxiVehicles=tv:GetValue(),garbageVehicles=gv:GetValue(),courierVehicles=cv:GetValue(),garbageStops=tonumber(gs:GetValue()),garbageCapacity=tonumber(cap:GetValue()),garbageSearchTime=tonumber(searchTime:GetValue()),garbageBinCooldown=tonumber(cooldown:GetValue()),fundFromState=fund:GetChecked()})net.SendToServer()end
         sheet:AddSheet("Настройки",settings,"icon16/cog.png")
+        local transport=vgui.Create("DPanel",sheet);transport.Paint=function(_,w,h)draw.RoundedBox(6,0,0,w,h,C.panel)end
+        local vsearch=vgui.Create("DTextEntry",transport);vsearch:SetPos(16,16);vsearch:SetSize(620,30);vsearch:SetPlaceholderText("Поиск класса / SpawnName / названия транспорта")
+        local vlist=vgui.Create("DListView",transport);vlist:SetPos(16,56);vlist:SetSize(760,560);vlist:AddColumn("Название");vlist:AddColumn("Class / SpawnName");vlist:AddColumn("Система");vlist:AddColumn("Разрешён для")
+        local selectedClass
+        local function values(entry)local set={};for part in(tostring(entry:GetValue()or"")..","):gmatch("(.-),")do part=string.lower(string.Trim(part));if part~=""then set[part]=true end end;return set end
+        local function writeValues(entry,set)local arr={};for token in pairs(set)do arr[#arr+1]=token end;table.sort(arr);entry:SetValue(table.concat(arr,", "))end
+        local function status(class)local t,g,c=values(tv),values(gv),values(cv);local out={};if t[class]then out[#out+1]="ТАКСИ"end;if g[class]then out[#out+1]="МУСОР"end;if c[class]then out[#out+1]="ДОСТАВКА"end;return#out>0 and table.concat(out," • ")or"—"end
+        local function rebuildVehicles()vlist:Clear();local q=string.lower(string.Trim(vsearch:GetValue()or""));for _,v in ipairs(vehicles)do local class=string.lower(tostring(v.class or""));local hay=string.lower(tostring(v.name or"").." "..class.." "..tostring(v.system or""));if q==""or hay:find(q,1,true)then local line=vlist:AddLine(v.name or class,class,v.system or"?",status(class));line.VehicleClass=class end end end
+        vlist.OnRowSelected=function(_,_,line)selectedClass=line.VehicleClass end;vsearch.OnChange=rebuildVehicles
+        local function assign(entry,on)local class=selectedClass;if not class or class==""then return end;local set=values(entry);set[class]=on and true or nil;writeValues(entry,set);rebuildVehicles()end
+        local taxiAdd=vgui.Create("DButton",transport);taxiAdd:SetPos(800,70);taxiAdd:SetSize(240,36);taxiAdd:SetText("Разрешить для ТАКСИ");taxiAdd.DoClick=function()assign(tv,true)end
+        local garbageAdd=vgui.Create("DButton",transport);garbageAdd:SetPos(800,116);garbageAdd:SetSize(240,36);garbageAdd:SetText("Разрешить для МУСОРОВОЗА");garbageAdd.DoClick=function()assign(gv,true)end
+        local courierAdd=vgui.Create("DButton",transport);courierAdd:SetPos(800,162);courierAdd:SetSize(240,36);courierAdd:SetText("Разрешить для ДОСТАВКИ");courierAdd.DoClick=function()assign(cv,true)end
+        local removeAll=vgui.Create("DButton",transport);removeAll:SetPos(800,220);removeAll:SetSize(240,36);removeAll:SetText("Убрать из всех работ");removeAll.DoClick=function()assign(tv,false);assign(gv,false);assign(cv,false)end
+        local manual=vgui.Create("DTextEntry",transport);manual:SetPos(800,290);manual:SetSize(240,30);manual:SetPlaceholderText("Ручной Class / SpawnName")
+        local manualPick=vgui.Create("DButton",transport);manualPick:SetPos(800,330);manualPick:SetSize(240,32);manualPick:SetText("Выбрать ручное значение");manualPick.DoClick=function()selectedClass=string.lower(string.Trim(manual:GetValue()or""))end
+        local hint=vgui.Create("DLabel",transport);hint:SetPos(800,390);hint:SetSize(240,160);hint:SetWrap(true);hint:SetTextColor(C.muted);hint:SetText("Выберите транспорт слева и назначьте работе. Пустой список у работы означает: разрешён любой транспорт. После изменений нажмите «Сохранить все настройки» во вкладке Настройки.")
+        rebuildVehicles();sheet:AddSheet("Транспорт работ",transport,"icon16/lorry.png")
         local pp=vgui.Create("DPanel",sheet) pp.Paint=function(_,w,h) draw.RoundedBox(6,0,0,w,h,C.panel) end
         local typ=vgui.Create("DComboBox",pp) typ:SetPos(16,16) typ:SetSize(220,28) typ:SetValue("Тип точки") for id,n in pairs(types) do typ:AddChoice(n,id) end
         local name=vgui.Create("DTextEntry",pp) name:SetPos(246,16) name:SetSize(300,28) name:SetPlaceholderText("Название точки")

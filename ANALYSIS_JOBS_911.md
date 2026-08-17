@@ -2,9 +2,13 @@
 
 **Дата:** 2026-08-16 · **Находка 142**
 
-## Работы v3
+## Актуализация: Jobs v4
 
-`sh_grm_jobs.lua` поднят до v3.0.0 и дополнен `sh_grm_jobs_config.lua`.
+Поверх стабильного v3 добавлены `sh_grm_jobs_v4.lua`, stool `grm_jobs`, физические `grm_garbage_bin`/`grm_garbage_box`, живой taxi dispatch и классификация дилера v3.2. Старые синтетические taxi pickup→dropoff заменены standby-сменой и заказами игроков. Подробно: `CONCEPT_JOBS_V4.md`.
+
+## Работы v3 (историческая база)
+
+`sh_grm_jobs.lua` был поднят до v3.0.0 и дополнен `sh_grm_jobs_config.lua`.
 
 - Точки разделены по назначению: `courier`, `garbage`, `dump`, `taxi_pickup`, `taxi_dropoff`, `all`.
 - `/jobs_admin` позволяет ставить точки по прицелу, удалять их, задавать классы/SpawnName транспорта, число контейнеров, минимальную/максимальную/стандартную таксу и источник финансирования.
