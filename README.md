@@ -37,6 +37,12 @@ CCTV и Phone учитывают эти назначения поверх ста
 защищены nonce, CharacterKey и Net Guard. Контракт и API:
 [`CONCEPT_FACTION_NAMES.md`](CONCEPT_FACTION_NAMES.md).
 
+**Faction Core v4** добавляет стабильные ключи отделов с отдельным публичным
+названием и вкладку **«Кадровые дела»**. Переименование отдела больше не меняет
+участников, модели, оружие, spawn points или access maps. Кадровая история,
+испытательный срок, благодарности, взыскания и архив увольнений хранятся внутри
+`factions.json`: [`CONCEPT_FACTION_CORE_V4.md`](CONCEPT_FACTION_CORE_V4.md).
+
 ## Производительность
 
 `sh_06_grm_performance.lua` предоставляет event-driven реестры entity,

@@ -72,7 +72,7 @@ local function printFaction(ply,factionName,faction,index,total)
     if #rows==0 then ply:ChatPrint("  — состав пуст —") return end
     for i,row in ipairs(rows) do
         local leader=row.key==faction.Leader and "★ " or "  "
-        ply:ChatPrint(string.format("%s%02d. %s | %s | %s | %s | %s",leader,i,row.name,tostring(row.rec.Role or"Участник"),tostring(row.rec.Department or"—"),row.status,locationOf(row.ply)))
+        ply:ChatPrint(string.format("%s%02d. %s | %s | %s | %s | %s",leader,i,row.name,tostring(row.rec.Role or"Участник"),tostring(GRM.Factions and GRM.Factions.DepartmentDisplayName and GRM.Factions.DepartmentDisplayName(faction,row.rec.Department)or row.rec.Department or"—"),row.status,locationOf(row.ply)))
     end
 end
 

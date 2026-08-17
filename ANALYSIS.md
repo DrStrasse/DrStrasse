@@ -13,7 +13,10 @@ Legacy-записи мигрируют DisplayName из ключа без пер
 отдельный `GRM_FactionDisplay` NW. Первая UI-волна охватывает `/dep`, `/depb`,
 `/gnews`, TAB, Character, roster и Duty NPC. Приглашения v2 получили nonce,
 CharacterKey, срок 5 минут, стартовые роль/отдел, singleton-modal, resync при
-смене персонажа, Net Guard и Audit. Подробно `CONCEPT_FACTION_NAMES.md`.
+смене персонажа, Net Guard и Audit. Faction Core v4 отделяет системный ключ
+отдела от `DepartmentDisplayNames`: rename не трогает member/models/weapons.
+Кадровые дела сохраняют приём, переводы, службу, испытание, взыскания и архив
+увольнений внутри `factions.json`. Подробно `CONCEPT_FACTION_CORE_V4.md`.
 
 ## Актуализация 17.08.2026 — аудит производительности
 

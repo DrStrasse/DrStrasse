@@ -36,6 +36,9 @@ function GRM.Factions.DisplayName(value,fallback)
 end
 function GRM.Factions.RegistrationName(value)if isstring(value)then return value end;for name,f in pairs(Factions or FactionsData or{})do if f==value then return name end end;return""end
 function GRM.Factions.PlayerDisplayName(ply)if not IsValid(ply)then return""end;local d=ply:GetNWString("GRM_FactionDisplay","");if d~=""then return d end;return GRM.Factions.DisplayName(ply:GetNWString("GRM_Faction",""))end
+function GRM.Factions.DepartmentDisplayName(factionValue,departmentKey)
+    local f=isstring(factionValue)and((Factions and Factions[factionValue])or(FactionsData and FactionsData[factionValue]))or factionValue;local key=tostring(departmentKey or"");local names=istable(f)and f.DepartmentDisplayNames or nil;local display=names and factionTrim(names[key],96)or"";return display~=""and display or key
+end
 
 -- ============================================================
 -- SHARED ЛИДЕРСКИЙ ХЕЛПЕР (изоляция слотов персонажей)
@@ -232,6 +235,9 @@ if SERVER then
         f.Members     = istable(f.Members)     and f.Members     or {}
         f.Roles       = istable(f.Roles)       and f.Roles       or {}
         f.Departments = istable(f.Departments) and f.Departments or {}
+        f.DepartmentDisplayNames=istable(f.DepartmentDisplayNames)and f.DepartmentDisplayNames or{}
+        for _,departmentKey in ipairs(f.Departments)do local public=factionTrim(f.DepartmentDisplayNames[departmentKey],96);if public==""then f.DepartmentDisplayNames[departmentKey]=departmentKey;changed=true end end
+        f.PersonnelArchive=istable(f.PersonnelArchive)and f.PersonnelArchive or{}
 
         if type(f.LeaderRoleName) ~= "string" or f.LeaderRoleName == "" then
             f.LeaderRoleName = "Лидер"
@@ -357,7 +363,7 @@ if SERVER then
                 local dutyStatus=online and (onDuty and "НА СЛУЖБЕ" or "ВНЕ СЛУЖБЫ") or (savedDuty==false and "ВЫХОДНОЙ" or "НЕ В СЕТИ")
                 local location=IsValid(onlineP) and string.format("%.0f %.0f %.0f",onlineP:GetPos().x,onlineP:GetPos().y,onlineP:GetPos().z) or "—"
                 out[key] = {
-                    Role = rec.Role, Department = rec.Department,
+                    Role=rec.Role,Department=rec.Department,Personnel=rec.Personnel and{joinedAt=rec.Personnel.joinedAt,status=rec.Personnel.status,probationUntil=rec.Personnel.probationUntil}or nil,
                     _characterKey = key, _rpName = rp, _online = online, _steamNick = steamNick,
                     _dutyStatus=dutyStatus, _location=location,
                 }
@@ -418,6 +424,7 @@ if SERVER then
                     DisplayName      = f.DisplayName,
                     Roles            = f.Roles,
                     Departments      = f.Departments,
+                    DepartmentDisplayNames=f.DepartmentDisplayNames,
                     Members          = buildMemberSync(f),
                     Tag              = f.Tag,
                     Color            = f.Color,
@@ -714,9 +721,7 @@ if SERVER then
             if r == roleName then
                 table.remove(f.Roles, i)
                 local fallback = getDefaultMemberRole(f)
-                for _, info in pairs(f.Members) do
-                    if info.Role == roleName then info.Role = fallback end
-                end
+                for key,info in pairs(f.Members)do if info.Role==roleName then local oldRole=info.Role;info.Role=fallback;hook.Run("GRM_FactionMemberRoleChanged",factionName,key,info,oldRole,fallback,nil)end end
                 saveFactions(Factions)
                 return true
             end
@@ -736,9 +741,7 @@ if SERVER then
         for i, r in ipairs(f.Roles) do
             if r == oldRoleName then f.Roles[i] = newRoleName break end
         end
-        for _, info in pairs(f.Members) do
-            if info.Role == oldRoleName then info.Role = newRoleName end
-        end
+        for key,info in pairs(f.Members)do if info.Role==oldRoleName then info.Role=newRoleName;hook.Run("GRM_FactionMemberRoleChanged",factionName,key,info,oldRoleName,newRoleName,nil)end end
         saveFactions(Factions)
         return true
     end
@@ -766,7 +769,7 @@ if SERVER then
         ensureDefaults(f)
         if not deptName or deptName == "" then return false, "Не указан отдел" end
         if table.HasValue(f.Departments, deptName) then return false, "Такой отдел уже существует" end
-        table.insert(f.Departments, deptName)
+        table.insert(f.Departments,deptName);f.DepartmentDisplayNames[deptName]=deptName
         saveFactions(Factions)
         return true
     end
@@ -777,11 +780,9 @@ if SERVER then
         ensureDefaults(f)
         for i, d in ipairs(f.Departments) do
             if d == deptName then
-                table.remove(f.Departments, i)
+                table.remove(f.Departments,i);f.DepartmentDisplayNames[deptName]=nil
                 local firstDept = (istable(f.Departments) and f.Departments[1]) or ""
-                for _, info in pairs(f.Members) do
-                    if info.Department == deptName then info.Department = firstDept end
-                end
+                for key,info in pairs(f.Members)do if info.Department==deptName then local oldDept=info.Department;info.Department=firstDept;hook.Run("GRM_FactionMemberDepartmentChanged",factionName,key,info,oldDept,firstDept,nil)end end
                 saveFactions(Factions)
                 return true
             end
@@ -789,20 +790,11 @@ if SERVER then
         return false, "Отдел не найден"
     end
 
-    local function renameDepartment(factionName, oldDeptName, newDeptName)
-        local f = Factions[factionName]
-        if not f then return false, "Фракция не найдена" end
-        ensureDefaults(f)
-        if not table.HasValue(f.Departments, oldDeptName) then return false, "Отдел не найден" end
-        if table.HasValue(f.Departments, newDeptName) then return false, "Отдел с таким именем уже существует" end
-        for i, d in ipairs(f.Departments) do
-            if d == oldDeptName then f.Departments[i] = newDeptName break end
-        end
-        for _, info in pairs(f.Members) do
-            if info.Department == oldDeptName then info.Department = newDeptName end
-        end
-        saveFactions(Factions)
-        return true
+    local function renameDepartment(factionName,departmentKey,newDisplayName)
+        local f=Factions[factionName];if not f then return false,"Фракция не найдена"end;ensureDefaults(f,factionName);if not table.HasValue(f.Departments,departmentKey)then return false,"Отдел не найден"end;newDisplayName=factionTrim(newDisplayName,96);if newDisplayName==""then return false,"Публичное название отдела не указано"end
+        -- ВАЖНО: меняется только label. Department у участников и ключи
+        -- DepartmentModels/DepartmentWeapons/SpawnPoints/Access не трогаются.
+        f.DepartmentDisplayNames[departmentKey]=newDisplayName;saveFactions(Factions);hook.Run("GRM_FactionDepartmentDisplayChanged",factionName,departmentKey,newDisplayName);return true,"Публичное название отдела сохранено"
     end
 
     local function moveDepartment(factionName, deptName, direction)
@@ -835,29 +827,29 @@ if SERVER then
         -- Код 108: дефолтный отдел — первый реальный (а не «Основной» из воздуха)
         local rec = { Role = role or getDefaultMemberRole(f), Department = dept or getDefaultDepartment(f) }
         if isstring(steamID) and not steamID:match(":char[1-3]$") then rec.LegacyKey = steamID end
-        f.Members[key] = rec
+        f.Members[key]=rec;hook.Run("GRM_FactionMemberJoined",factionName,key,rec,nil,"direct")
         saveFactions(Factions)
         return true
     end
 
-    local function removeMember(factionName, steamID)
+    local function removeMember(factionName,steamID,actor,reason)
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
         local key = memberKey(steamID)
         if not f.Members[key] then return false, "Игрок не состоит во фракции" end
-        if key == f.Leader then
-            f.Members[key] = nil
+        if key==f.Leader then
+            hook.Run("GRM_FactionMemberRemoved",factionName,key,f.Members[key],actor,reason or"leader_removed");f.Members[key]=nil
             f.Leader = nil
             saveFactions(Factions)
             return true, "Лидер удалён, фракция сохранена без лидера"
         end
-        f.Members[key] = nil
+        hook.Run("GRM_FactionMemberRemoved",factionName,key,f.Members[key],actor,reason or"dismissed");f.Members[key]=nil
         saveFactions(Factions)
         return true, "Участник удалён"
     end
 
-    local function setMemberRole(factionName, steamID, newRole)
+    local function setMemberRole(factionName,steamID,newRole,actor)
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
@@ -870,19 +862,19 @@ if SERVER then
         if key == f.Leader and newRole ~= f.LeaderRoleName then
             return false, "Нельзя изменить роль текущего лидера отдельно"
         end
-        f.Members[key].Role = newRole
+        local oldRole=f.Members[key].Role;f.Members[key].Role=newRole;hook.Run("GRM_FactionMemberRoleChanged",factionName,key,f.Members[key],oldRole,newRole,actor)
         saveFactions(Factions)
         return true
     end
 
-    local function setMemberDepartment(factionName, steamID, newDept)
+    local function setMemberDepartment(factionName,steamID,newDept,actor)
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
         local key = memberKey(steamID)
         if not f.Members[key] then return false, "Игрок не состоит во фракции" end
         if not table.HasValue(f.Departments, newDept) then return false, "Такого отдела нет" end
-        f.Members[key].Department = newDept
+        local oldDept=f.Members[key].Department;f.Members[key].Department=newDept;hook.Run("GRM_FactionMemberDepartmentChanged",factionName,key,f.Members[key],oldDept,newDept,actor)
         saveFactions(Factions)
         return true
     end
@@ -892,16 +884,9 @@ if SERVER then
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
         local key = memberKey(newLeaderSteamID)
-        if not f.Members[key] then
-            local existing = getFactionOfPlayer(key)
-            if existing then return false, "Игрок уже состоит во фракции " .. existing end
-            f.Members[key] = { Role = getDefaultMemberRole(f), Department = getDefaultDepartment(f) }
-        end
-        if f.Leader and f.Members[f.Leader] then
-            f.Members[f.Leader].Role = getDefaultMemberRole(f)
-        end
-        f.Leader = key
-        f.Members[key].Role = f.LeaderRoleName
+        if not f.Members[key]then local existing=getFactionOfPlayer(key);if existing then return false,"Игрок уже состоит во фракции "..existing end;f.Members[key]={Role=getDefaultMemberRole(f),Department=getDefaultDepartment(f)};added=true;hook.Run("GRM_FactionMemberJoined",factionName,key,f.Members[key],nil,"leader_assignment")end
+        local oldLeader=f.Leader;if oldLeader and f.Members[oldLeader]then local oldRole=f.Members[oldLeader].Role;f.Members[oldLeader].Role=getDefaultMemberRole(f);hook.Run("GRM_FactionMemberRoleChanged",factionName,oldLeader,f.Members[oldLeader],oldRole,f.Members[oldLeader].Role,nil)end
+        f.Leader=key;local previous=f.Members[key].Role;f.Members[key].Role=f.LeaderRoleName;hook.Run("GRM_FactionMemberRoleChanged",factionName,key,f.Members[key],previous,f.LeaderRoleName,nil);hook.Run("GRM_FactionLeaderChanged",factionName,oldLeader,key)
         saveFactions(Factions)
         return true
     end
@@ -939,7 +924,7 @@ if SERVER then
         if inviteID and inviteID~=""and inv.id~=inviteID then return false,"Приглашение уже обновилось"end
         if factionName~=""and inv.faction:lower()~=factionName:lower()then return false,"Активное приглашение выдано фракцией «"..GRM.Factions.DisplayName(inv.faction).."»"end
         factionName=inv.faction;if getFactionOfPlayer(key)then return false,"Вы уже состоите во фракции"end;local f=Factions[factionName];if not f then Invites[key]=nil;saveInvites(Invites);return false,"Фракция больше не существует"end;ensureDefaults(f,factionName)
-        f.Members[key]={Role=inv.role or getDefaultMemberRole(f),Department=inv.department or getDefaultDepartment(f)};saveFactions(Factions);Invites[key]=nil;saveInvites(Invites);local ply=inviteTarget(key);local display=GRM.Factions.DisplayName(f,factionName);if IsValid(ply)then pushInvite(ply,inv,"Вы приняты во фракцию «"..display.."»");ply:PrintMessage(HUD_PRINTTALK,"Вы вступили во фракцию «"..display.."»")end;notifyInviteAuthor(inv,(IsValid(ply)and ply:Nick()or key).." принял приглашение в «"..display.."»")
+        f.Members[key]={Role=inv.role or getDefaultMemberRole(f),Department=inv.department or getDefaultDepartment(f)};hook.Run("GRM_FactionMemberJoined",factionName,key,f.Members[key],inv.from,"invite");saveFactions(Factions);Invites[key]=nil;saveInvites(Invites);local ply=inviteTarget(key);local display=GRM.Factions.DisplayName(f,factionName);if IsValid(ply)then pushInvite(ply,inv,"Вы приняты во фракцию «"..display.."»");ply:PrintMessage(HUD_PRINTTALK,"Вы вступили во фракцию «"..display.."»")end;notifyInviteAuthor(inv,(IsValid(ply)and ply:Nick()or key).." принял приглашение в «"..display.."»")
         if GRM.Audit and GRM.Audit.Write then GRM.Audit.Write("factions","invite.accepted",ply,{faction=factionName,characterKey=key},{inviteID=inv.id})end;return true,display
     end
     local function declineInvite(steamID,factionName,inviteID)
@@ -954,7 +939,7 @@ if SERVER then
         if not f then return false, "Фракция не найдена" end
         ensureDefaults(f)
         if f.Leader == key then return false, "Лидер не может покинуть фракцию, используйте увольнение" end
-        f.Members[key] = nil
+        hook.Run("GRM_FactionMemberRemoved",factionName,key,f.Members[key],steamID,"left_voluntarily");f.Members[key]=nil
         saveFactions(Factions)
         return true
     end
@@ -1101,17 +1086,17 @@ if SERVER then
         elseif action == "removeMember" then
             local faction, shift = getFactionAndShift()
             if not faction then return end
-            local ok, err = removeMember(faction, args[1 + shift])
+            local ok,err=removeMember(faction,args[1+shift],ply,"dismissed_by_management")
             done(ok, err)
         elseif action == "setRole" then
             local faction, shift = getFactionAndShift()
             if not faction then return end
-            local ok, err = setMemberRole(faction, args[1 + shift], args[2 + shift])
+            local ok,err=setMemberRole(faction,args[1+shift],args[2+shift],ply)
             done(ok, err)
         elseif action == "setDepartment" then
             local faction, shift = getFactionAndShift()
             if not faction then return end
-            local ok, err = setMemberDepartment(faction, args[1 + shift], args[2 + shift])
+            local ok,err=setMemberDepartment(faction,args[1+shift],args[2+shift],ply)
             done(ok, err)
         elseif action == "saveIncasso" then
             -- Код 126: сохранение настроек инкассации фракции (только суперадмин)
@@ -1777,6 +1762,7 @@ if CLIENT then
             local myLead = clientGetLeaderFaction(data)
             rebuildRoleDeptCombos(myLead, ui.roleComboLeader, ui.deptComboLeader)
         end
+        hook.Run("GRM_FactionUIRefreshed",data)
     end
 
     -- ============================================================
@@ -1836,7 +1822,7 @@ if CLIENT then
 
             if not isLeader then
                 local btnRemove = styledButton(row, "✕", THEME.danger, THEME.dangerHover)
-                btnRemove:SetPos(282, 5) btnRemove:SetSize(36, 26)
+                btnRemove:SetPos(342,5) btnRemove:SetSize(36, 26)
                 btnRemove.DoClick = function()
                     sendAction("removeRole", { roleName }, function(ok, msg)
                         if ok then notification.AddLegacy("Роль удалена", NOTIFY_GENERIC, 3) refreshAllUI()
@@ -1909,24 +1895,21 @@ if CLIENT then
                 end)
             end
 
-            local edit = vgui.Create("DTextEntry", row)
-            edit:SetPos(70, 5) edit:SetSize(160, 26) edit:SetText(deptName)
-            edit:SetFont("Factions_Normal")
+            local edit=vgui.Create("DTextEntry",row);edit:SetPos(70,5);edit:SetSize(220,26);local departmentDisplay=GRM.Factions.DepartmentDisplayName(f,deptName);edit:SetText(departmentDisplay);edit:SetPlaceholderText("Публичное название");edit:SetTooltip("Системный ключ: "..deptName..". Настройки и участники останутся привязаны к нему.");edit:SetFont("Factions_Normal")
 
-            local btnRename = styledButton(row, "✎", THEME.accent, THEME.accentDark)
-            btnRename:SetPos(240, 5) btnRename:SetSize(36, 26)
+            local btnRename=styledButton(row,"✎",THEME.accent,THEME.accentDark);btnRename:SetPos(300,5);btnRename:SetSize(36,26)
             btnRename.DoClick = function()
                 local newName = edit:GetText()
-                if newName == "" or newName == deptName then return end
+                if newName==""or newName==departmentDisplay then return end
                 sendAction("renameDepartment", { deptName, newName }, function(ok, msg)
-                    if ok then notification.AddLegacy("Отдел переименован", NOTIFY_GENERIC, 3) refreshAllUI()
-                    else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) edit:SetText(deptName) end
+                    if ok then notification.AddLegacy("Название отдела обновлено", NOTIFY_GENERIC, 3) refreshAllUI()
+                    else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) edit:SetText(departmentDisplay) end
                 end)
             end
 
             if #departments > 1 then
                 local btnRemove = styledButton(row, "✕", THEME.danger, THEME.dangerHover)
-                btnRemove:SetPos(282, 5) btnRemove:SetSize(36, 26)
+                btnRemove:SetPos(342,5) btnRemove:SetSize(36, 26)
                 btnRemove.DoClick = function()
                     sendAction("removeDepartment", { deptName }, function(ok, msg)
                         if ok then notification.AddLegacy("Отдел удалён", NOTIFY_GENERIC, 3) refreshAllUI()
@@ -2158,24 +2141,12 @@ if CLIENT then
                 end)
             end
 
-            local edit = vgui.Create("DTextEntry", row)
-            edit:SetPos(70, 5) edit:SetSize(160, 26) edit:SetText(deptName)
-            edit:SetFont("Factions_Normal")
-
-            local btnRename = styledButton(row, "✎", THEME.accent, THEME.accentDark)
-            btnRename:SetPos(240, 5) btnRename:SetSize(36, 26)
-            btnRename.DoClick = function()
-                local newName = edit:GetText()
-                if newName == "" or newName == deptName then return end
-                sendAction("renameDepartment", { factionName, deptName, newName }, function(ok, msg)
-                    if ok then notification.AddLegacy("Отдел переименован", NOTIFY_GENERIC, 3) refreshAllUI()
-                    else notification.AddLegacy("Ошибка: " .. msg, NOTIFY_ERROR, 3) edit:SetText(deptName) end
-                end)
-            end
+            local edit=vgui.Create("DTextEntry",row);edit:SetPos(70,5);edit:SetSize(220,26);local departmentDisplay=GRM.Factions.DepartmentDisplayName(f,deptName);edit:SetText(departmentDisplay);edit:SetPlaceholderText("Публичное название");edit:SetTooltip("Системный ключ: "..deptName..". Настройки и участники останутся привязаны к нему.");edit:SetFont("Factions_Normal")
+            local btnRename=styledButton(row,"✎",THEME.accent,THEME.accentDark);btnRename:SetPos(300,5);btnRename:SetSize(36,26);btnRename.DoClick=function()local newName=edit:GetText();if newName==""or newName==departmentDisplay then return end;sendAction("renameDepartment",{factionName,deptName,newName},function(ok,msg)if ok then notification.AddLegacy("Название отдела обновлено",NOTIFY_GENERIC,3);refreshAllUI()else notification.AddLegacy("Ошибка: "..msg,NOTIFY_ERROR,3);edit:SetText(departmentDisplay)end end)end
 
             if #departments > 1 then
                 local btnRemove = styledButton(row, "✕", THEME.danger, THEME.dangerHover)
-                btnRemove:SetPos(282, 5) btnRemove:SetSize(36, 26)
+                btnRemove:SetPos(342,5) btnRemove:SetSize(36, 26)
                 btnRemove.DoClick = function()
                     sendAction("removeDepartment", { factionName, deptName }, function(ok, msg)
                         if ok then notification.AddLegacy("Отдел удалён", NOTIFY_GENERIC, 3) refreshAllUI()
