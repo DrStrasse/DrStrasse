@@ -23,7 +23,7 @@
 GRM = GRM or {}
 GRM.ATM = GRM.ATM or {}
 local A = GRM.ATM
-A.Version = "1.0.0"
+A.Version = "1.1.0"
 
 A.Config = A.Config or {
     UseRange     = 200,     -- дистанция взаимодействия с банкоматом
@@ -302,7 +302,12 @@ A.Push = push
 -----------------------------------------------------------------------
 -- Обработка действий
 -----------------------------------------------------------------------
-local handlers = {}
+local handlers={}
+local function stampInvoiceATM(ply,rec)
+    local ent=IsValid(ply._grmATMEnt)and ply._grmATMEnt or nil;if not rec or not IsValid(ent)then return end
+    rec.atmNumber=GRM.Incass and GRM.Incass.GetTerminalNumber and GRM.Incass.GetTerminalNumber(ent)or ent:EntIndex();rec.atmName=ent.GetTerminalName and ent:GetTerminalName()or"Банкомат";rec.orderSource=rec.orderSource~=""and rec.orderSource or"atm_payment"
+    if GRM.Services and GRM.Services.SaveInvoices then GRM.Services.SaveInvoices()end
+end
 
 -- ── личный счёт ───────────────────────────────────────────
 handlers.deposit = function(ply, args)
@@ -356,9 +361,9 @@ end
 handlers.pay_invoice = function(ply, args)
     local S = GRM.Services
     if not (S and isfunction(S.PayInvoice)) then return false, "Модуль оплаты недоступен" end
-    local ok, res = S.PayInvoice(ply, args.id, args.amount, args.source or "auto")
-    if not ok then return false, res end
-    return true, ("Оплачено: %s"):format(money(res))
+    local rec=S.InvoiceByID(args.id);local ok,res=S.PayInvoice(ply,args.id,args.amount,args.source or"auto")
+    if not ok then return false,res end;stampInvoiceATM(ply,rec)
+    return true,("Оплачено: %s"):format(money(res))
 end
 
 --- Оплатить всю задолженность разом.
@@ -376,8 +381,8 @@ handlers.pay_all = function(ply, args)
         end
     end
     for _, rec in ipairs(S.InvoicesFor(ply, true)) do
-        local ok, res = S.PayInvoice(ply, rec.id, rec.amount - rec.paid, src)
-        if ok then paid = paid + (tonumber(res) or 0) else failed = failed or res end
+        local ok,res=S.PayInvoice(ply,rec.id,rec.amount-rec.paid,src)
+        if ok then paid=paid+(tonumber(res)or 0);stampInvoiceATM(ply,rec)else failed=failed or res end
     end
 
     if paid <= 0 then return false, failed or "Задолженности нет" end
@@ -398,10 +403,11 @@ handlers.order_service = function(ply, args)
     if not svc then return false, "Услуга не найдена" end
     if svc.enabled == false then return false, "Услуга временно не оказывается" end
 
+    local atm=IsValid(ply._grmATMEnt)and ply._grmATMEnt or nil;local atmNumber=GRM.Incass and GRM.Incass.GetTerminalNumber and GRM.Incass.GetTerminalNumber(atm)or(IsValid(atm)and atm:EntIndex()or 0);local atmName=IsValid(atm)and atm.GetTerminalName and atm:GetTerminalName()or"Банкомат"
     local rec = {
         id         = S._nextInvoice,
         target     = charKey(ply),
-        targetName = ply:Nick(),
+        targetName=ply:GetNWString("GRM_RPName",ply:Nick()),
         issuer     = "система",
         issuerName = "Банкомат",
         faction    = svc.provider,
@@ -410,8 +416,8 @@ handlers.order_service = function(ply, args)
         amount     = svc.price,
         paid       = 0,
         status     = "unpaid",
-        issued     = os.time(),
-        note       = "Заказано жителем через банкомат",
+        issued=os.time(),orderSource="atm",atmNumber=atmNumber,atmName=tostring(atmName),
+        note="Заказано жителем через банкомат",
     }
     if rec.amount <= 0 then return false, "Услуга бесплатна: обратитесь напрямую в организацию" end
 

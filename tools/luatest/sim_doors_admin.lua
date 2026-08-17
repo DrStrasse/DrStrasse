@@ -30,7 +30,7 @@ end
 local function has(s, n) return s:find(n, 1, true) ~= nil end
 
 print("\n=== ИСТОЧНИКИ v2.0.7 ===")
-check("версия 3.0.x в шапке", has(src, "GRM Doors System v3.0.") or has(src, 'D.Version = "3.0.'))
+check("версия 3.1.x в шапке",has(src,"GRM Doors System v3.1.")or has(src,'D.Version = "3.1.'))
 check("сервер печатает версию", has(src, "Серверная система дверей v") or has(src, "D.Version"))
 check("клиент печатает версию", has(src, "Клиентская система дверей v"))
 check("есть D.CanAdminDoors", has(src, "function D.CanAdminDoors"))

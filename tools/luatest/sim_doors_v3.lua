@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    sim_doors_v3 — контракт переписи дверей v3.0.1
+    sim_doors_v3 — контракт переписи дверей v3.1.0
     Запуск: ./.luabuild/lj/src/luajit tools/luatest/sim_doors_v3.lua
 ----------------------------------------------------------------------]]
 local function read(p)
@@ -17,8 +17,8 @@ local function check(name, cond, extra)
 end
 local function has(n) return src:find(n, 1, true) ~= nil end
 
-print("\n=== ИСТОЧНИКИ v3.0.1 ===")
-check("версия 3.0.1", has('D.Version = "3.0.1"'))
+print("\n=== ИСТОЧНИКИ v3.1.0 ===")
+check("версия 3.1.0",has('D.Version = "3.1.0"'))
 check("EvaluateAccess — единая матрица", has("function D.EvaluateAccess"))
 check("антиспам тоста замка", has("function D.ShouldNotifyLockDeny"))
 check("сброс удержания E", has("function D.ClearLockDenyHold"))

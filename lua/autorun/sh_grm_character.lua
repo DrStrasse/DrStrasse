@@ -1,6 +1,6 @@
 --[[--------------------------------------------------------------------
-    GRM Identity Core v1.6.0 (Код 72) — Персонажи, RP-имена, регистрация
-    v1.6.0: singleton меню/гардероба и серверный предпросмотр слота.
+    GRM Identity Core v1.7.0 (Код 72) — Персонажи, RP-имена, регистрация
+    v1.7.0: reentrancy/action guards; singleton signature survives rebuild.
     Ядро + точки расширения (патчи-провайдеры):
 
       - При КАЖДОМ входе игрок встречает меню персонажа:
@@ -29,7 +29,7 @@ GRM = GRM or {}
 GRM.Char = GRM.Char or {}
 local CH = GRM.Char
 
-CH.Version    = "1.6.0"
+CH.Version    = "1.7.0"
 CH.NameMin    = 3     -- минимальная длина RP-имени
 CH.NameMax    = 48
     CH.DataFile   = "grm_characters.json"
@@ -586,8 +586,8 @@ if SERVER then
         sendMenu(ply, previewSlot)
     end)
 
-    net.Receive(NET_CANCEL, function(_, ply)
-        if not IsValid(ply) then return end
+    net.Receive(NET_CANCEL,function(bits,ply)
+        if not IsValid(ply)then return end;if GRM.Net and not GRM.Net.Guard(ply,"character.menu.cancel",{rate=.5,burst=1,maxBits=128},{bits=bits})then return end
         if ply:GetNWBool("GRM_Arrested", false) then
             closeMenu(ply)
             return
@@ -604,8 +604,10 @@ if SERVER then
         closeMenu(ply)
     end)
 
-    net.Receive(NET_SAVE, function(_, ply)
-        if not IsValid(ply) then return end
+    net.Receive(NET_SAVE,function(bits,ply)
+        if not IsValid(ply)then return end
+        if GRM.Net and not GRM.Net.Guard(ply,"character.menu.save",{rate=1,burst=1,maxBits=262144},{bits=bits})then return end
+        if(ply._grmCharacterSaveAt or 0)>CurTime()then return end;ply._grmCharacterSaveAt=CurTime()+.75
         if ply:GetNWBool("GRM_Arrested", false) then
             if GRM.Notify then GRM.Notify(ply, "Нельзя менять персонажа во время ареста.", 255, 100, 100) end
             return
@@ -775,7 +777,7 @@ if CLIENT then
         local slots = istable(payload.slots) and payload.slots or {}
         local serverActiveSlot = tostring(payload.activeSlot or "char1")
         local activeSlot = tostring(payload.previewSlot or serverActiveSlot)
-        CH._previewSlot = activeSlot
+        CH._previewSlot=activeSlot;CH._actionPending=false;CH._actionKind=nil
         local refreshPreview, refreshSkinMax, rebuildBodygroups
         local skinSlider
         local bContinue, bSave
@@ -800,7 +802,7 @@ if CLIENT then
         CH._frame = f
         CH._frameMode = isWardrobe and "wardrobe" or "character"
         f.OnRemove = function()
-            if CH._frame == f then CH._frame = nil; CH._frameMode = nil; CH._liveSignature = nil end
+            if CH._frame==f then CH._frame=nil;CH._frameMode=nil;CH._liveSignature=nil;CH._actionPending=false;CH._actionKind=nil end
         end
         if GRM.UI and GRM.UI.Track then GRM.UI.Track("character.appearance", f) end
         f:SetTitle("")
@@ -826,7 +828,8 @@ if CLIENT then
         x:SetText("✕") x:SetFont("GRMChar_Sub") x:SetTextColor(color_white)
         x:SetPos(fw - 46, 16) x:SetSize(30, 28)
         x.Paint = function(self, pw, ph) draw.RoundedBox(5, 0, 0, pw, ph, self:IsHovered() and C.red or Color(45, 52, 68)) end
-        x.DoClick = function()
+        x.DoClick=function()
+            if CH._actionPending then return end
             if isWardrobe then f:Close() return end
             net.Start(NET_CANCEL) net.SendToServer()
             f:Close()
@@ -935,11 +938,11 @@ if CLIENT then
                 end
                 b:SetEnabled(not (info.id == payload.activeSlot and payload.pending and payload.mandatory ~= true))
                 b:SetTooltip(info.model ~= "" and ("Модель: " .. info.model) or "Персонаж ещё не создан")
-                b.DoClick = function()
-                    if info.id == activeSlot then return end
-                    CH._previewSlot = info.id
-                    for _, sb in ipairs(slotButtons) do sb:SetEnabled(false) end
-                    net.Start(NET_REQUEST); net.WriteString(info.id); net.SendToServer()
+                b.DoClick=function()
+                    if info.id==activeSlot or CH._actionPending then return end;CH._actionPending=true;CH._actionKind="preview";CH._previewSlot=info.id
+                    for _,sb in ipairs(slotButtons)do sb:SetEnabled(false)end
+                    net.Start(NET_REQUEST);net.WriteString(info.id);net.SendToServer()
+                    timer.Simple(4,function()if IsValid(f)and CH._frame==f and CH._actionPending then CH._actionPending=false;CH._actionKind=nil;for _,sb in ipairs(slotButtons)do if IsValid(sb)then sb:SetEnabled(true)end end end end)
                 end
             end
         end
@@ -1123,9 +1126,10 @@ if CLIENT then
                 Derma_Message("Укажите игровое имя (мин. " .. (payload.nameMin or 3) .. " символа).", "Персонаж", "Ок")
                 return
             end
-            net.Start(NET_SAVE)
-                net.WriteTable({ slot = activeSlot or "char1", name = draft.name, model = draft.model, skin = draft.skin, bodygroups = draft.bodygroups, wardrobe = isWardrobe, wardrobeEnt = payload.wardrobeEnt, wardrobeRule = draft.wardrobeRule })
-            net.SendToServer()
+            if CH._actionPending then return end;CH._actionPending=true;CH._actionKind="save"
+            if IsValid(bContinue)then bContinue:SetEnabled(false)end;if IsValid(bSave)then bSave:SetEnabled(false)end
+            net.Start(NET_SAVE);net.WriteTable({slot=activeSlot or"char1",name=draft.name,model=draft.model,skin=draft.skin,bodygroups=draft.bodygroups,wardrobe=isWardrobe,wardrobeEnt=payload.wardrobeEnt,wardrobeRule=draft.wardrobeRule});net.SendToServer()
+            timer.Simple(5,function()if IsValid(f)and CH._frame==f then CH._actionPending=false;CH._actionKind=nil;if IsValid(bContinue)then bContinue:SetEnabled(true)end;if IsValid(bSave)then bSave:SetEnabled(true)end end end)
         end
 
         bContinue = vgui.Create("DButton", bot)
@@ -1151,17 +1155,19 @@ if CLIENT then
         return table.concat(parts,"|")
     end
     function CH.ReceiveMenuPayload(payload)
-        payload = istable(payload) and payload or {}
-        local sig = payloadSignature(payload)
-        local mode = payload.wardrobe == true and "wardrobe" or "character"
-        if IsValid(CH._frame) and CH._liveSignature == sig and CH._frameMode == mode then return false end
-        CH._liveSignature = sig
-        openCharMenu(payload)
+        payload=istable(payload)and payload or{};local sig=payloadSignature(payload);local mode=payload.wardrobe==true and"wardrobe"or"character"
+        if IsValid(CH._frame)and CH._liveSignature==sig and CH._frameMode==mode then if CH._actionKind=="preview"then CH._actionPending=false;CH._actionKind=nil end return false end
+        if CH._opening then CH._queuedPayload=payload return false end
+        CH._opening=true;local ok,err=pcall(openCharMenu,payload);CH._opening=false
+        if not ok then ErrorNoHalt("[GRM Character] menu build failed: "..tostring(err).."\n")return false end
+        -- Set AFTER old frame removal: its OnRemove clears the previous signature.
+        CH._liveSignature=sig;CH._actionPending=false;CH._actionKind=nil
+        local queued=CH._queuedPayload;CH._queuedPayload=nil;if queued then timer.Simple(0,function()CH.ReceiveMenuPayload(queued)end)end
         return true
     end
     net.Receive(NET_OPEN,function() CH.ReceiveMenuPayload(net.ReadTable() or {}) end)
     timer.Create("GRM_Char_LiveRefresh",2,0,function()
-        if IsValid(CH._frame) and CH._frameMode == "character" then
+        if IsValid(CH._frame)and CH._frameMode=="character"and not CH._actionPending and not CH._opening then
             net.Start(NET_REQUEST); net.WriteString(CH._previewSlot or "char1"); net.SendToServer()
         end
     end)

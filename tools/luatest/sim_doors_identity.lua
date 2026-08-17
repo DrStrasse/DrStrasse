@@ -11,6 +11,8 @@ end
 local function has(s) return src:find(s, 1, true) ~= nil end
 
 ok(has("function D.IsSamePhysicalDoor"), "physical-door equivalence API exists")
+ok(has("function D.GetPrimaryDoor")and has("GRM_DoorAlias"),"one canonical door marks secondary map entities as aliases")
+ok(has("function D.CollapseDuplicateRecords")and has("удалено фантомных записей-дублей"),"legacy phantom door records collapse before save")
 ok(has("function D.RebuildDoorIdentityCache"), "canonical identity cache exists")
 ok(has("function D.GetEquivalentDoors"), "all duplicate entities can be synchronized")
 ok(has("DuplicateXYOverlap") and has("DuplicateZOverlap"), "AABB overlap guards against adjacent door merge")

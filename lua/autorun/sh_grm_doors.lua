@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Doors System v3.0.1 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
+    GRM Doors System v3.1.0 (Код 64 — ПЕРЕПИСАНО С НУЛЯ)
 
     Слои допуска — CONCEPT_DOORS_V3.md:
       0 SuperAdmin  — всё, включая назначение владельца карты;
@@ -24,7 +24,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Doors = GRM.Doors or {}
 local D = GRM.Doors
-D.Version = "3.0.1"
+D.Version = "3.1.0"
 
 D.Config = D.Config or {
     UseDistance = 180,
@@ -134,14 +134,10 @@ function D.RebuildDoorIdentityCache()
         local id = baseDoorID(ent)
         if id and (not ids[r] or id < ids[r]) then ids[r] = id end
     end
-    D._canonicalDoorIDs, D._equivalentDoors = {}, {}
-    for i, ent in ipairs(doors) do
-        local id = ids[root(i)] or baseDoorID(ent)
-        D._canonicalDoorIDs[ent] = id
-        D._equivalentDoors[id] = D._equivalentDoors[id] or {}
-        D._equivalentDoors[id][#D._equivalentDoors[id] + 1] = ent
-    end
-    D._buildingDoorIdentity = nil
+    D._canonicalDoorIDs,D._equivalentDoors,D._primaryDoors={},{},{}
+    for i,ent in ipairs(doors)do local id=ids[root(i)]or baseDoorID(ent);D._canonicalDoorIDs[ent]=id;D._equivalentDoors[id]=D._equivalentDoors[id]or{};D._equivalentDoors[id][#D._equivalentDoors[id]+1]=ent end
+    for id,group in pairs(D._equivalentDoors)do table.sort(group,function(a,b)return tostring(baseDoorID(a))<tostring(baseDoorID(b))end);D._primaryDoors[id]=group[1];if SERVER then for i,ent in ipairs(group)do ent:SetNWBool("GRM_DoorAlias",i>1);ent:SetNWString("GRM_DoorCanonicalID",id)end end end
+    D._buildingDoorIdentity=nil
 end
 
 function D.GetDoorID(ent)
@@ -150,6 +146,8 @@ function D.GetDoorID(ent)
     return D._canonicalDoorIDs and D._canonicalDoorIDs[ent] or baseDoorID(ent)
 end
 
+function D.GetPrimaryDoor(ent)local id=D.GetDoorID(ent);return id and D._primaryDoors and D._primaryDoors[id]or ent end
+function D.IsPrimaryDoor(ent)return IsValid(ent)and D.GetPrimaryDoor(ent)==ent end
 function D.GetEquivalentDoors(ent)
     local id = D.GetDoorID(ent)
     local list = id and D._equivalentDoors and D._equivalentDoors[id] or nil
@@ -252,9 +250,9 @@ end
 hook.Add("InitPostEntity", "GRM_Doors_BuildIdentityCache", function()
     timer.Simple(0, D.RebuildDoorIdentityCache)
 end)
-hook.Add("PostCleanupMap", "GRM_Doors_RebuildIdentityCache", function()
-    timer.Simple(0.2, D.RebuildDoorIdentityCache)
-end)
+hook.Add("PostCleanupMap","GRM_Doors_RebuildIdentityCache",function()timer.Simple(.2,D.RebuildDoorIdentityCache)end)
+hook.Add("OnEntityCreated","GRM_Doors_IdentityCreated",function(ent)timer.Simple(.1,function()if IsValid(ent)and D.IsDoor(ent)then D._canonicalDoorIDs=nil;D._equivalentDoors=nil;D._primaryDoors=nil;D.RebuildDoorIdentityCache()end end)end)
+hook.Add("EntityRemoved","GRM_Doors_IdentityRemoved",function(ent)if D._canonicalDoorIDs and D._canonicalDoorIDs[ent]then D._canonicalDoorIDs=nil;D._equivalentDoors=nil;D._primaryDoors=nil;timer.Simple(.1,D.RebuildDoorIdentityCache)end end)
 
 -----------------------------------------------------------------------
 -- SERVER
@@ -399,7 +397,18 @@ if SERVER then
         return false
     end
 
+    function D.CollapseDuplicateRecords()
+        if not D._equivalentDoors then D.RebuildDoorIdentityCache()end;local changed=0
+        for canonical,group in pairs(D._equivalentDoors or{})do
+            local best,bestScore=D.Data.doors[canonical],recordPriority(D.Data.doors[canonical]);local aliases={}
+            for _,ent in ipairs(group)do local alias=baseDoorID(ent);if alias then aliases[alias]=true;local candidate=D.Data.doors[alias];local score=recordPriority(candidate);if score>bestScore then best,bestScore=candidate,score end end end
+            if best then best.id=canonical;D.Data.doors[canonical]=best end
+            for alias in pairs(aliases)do if alias~=canonical and D.Data.doors[alias]then D.Data.doors[alias]=nil;changed=changed+1 end end
+        end
+        return changed
+    end
     function D.SaveDoors()
+        D.CollapseDuplicateRecords()
         local arr = {}
         for id, rec in pairs(D.Data.doors or {}) do
             if istable(rec) and recDirty(rec) then
@@ -443,6 +452,7 @@ if SERVER then
                     end
                 end
             end
+            local collapsed=D.CollapseDuplicateRecords();if collapsed>0 then D.SaveDoors();print("[GRM Doors] удалено фантомных записей-дублей: "..collapsed)end
         end)
         print("[GRM Doors] Загружено дверей на карте " .. mapName() .. ": " .. table.Count(D.Data.doors))
         return true

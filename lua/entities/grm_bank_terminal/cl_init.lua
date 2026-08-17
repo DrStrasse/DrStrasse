@@ -16,7 +16,7 @@ function ENT:Draw()
             draw.SimpleTextOutlined("Терминал на обслуживании", "DermaDefaultBold", 0, 30,
                 Color(255, 120, 120), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, color_black)
         else
-            draw.SimpleTextOutlined("БАНК GRM", "DermaLarge", 0, 0, Color(100, 220, 120),
+            local number=self:GetNWInt("GRM_ATMNumber",0);draw.SimpleTextOutlined(number>0 and("БАНКОМАТ №"..number)or"БАНК GRM","DermaLarge",0,0,Color(100,220,120),
                 TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, color_black)
             draw.SimpleTextOutlined("[E] Операции со счетами", "DermaDefaultBold", 0, 30,
                 Color(220, 220, 230), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, color_black)

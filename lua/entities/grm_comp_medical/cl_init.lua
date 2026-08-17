@@ -65,6 +65,7 @@ net.Receive("GRM_CompMedical_Open", function()
     local tabs = vgui.Create("DPropertySheet", frame)
     tabs:Dock(FILL)
     tabs:DockMargin(4, 38, 4, 4)
+    if GRM.ServiceOrders and GRM.ServiceOrders.AttachTab then GRM.ServiceOrders.AttachTab(tabs) end
 
     -- ══════════════════════════════════════════════════════════════
     -- ВКЛАДКА 1: КАРТОТЕКА ПАЦИЕНТОВ И ЭЛЕКТРОННЫЕ МЕДКАРТЫ

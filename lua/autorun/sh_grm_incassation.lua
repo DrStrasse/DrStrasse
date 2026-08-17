@@ -38,7 +38,7 @@ GRM = GRM or {}
 GRM.Incass = GRM.Incass or {}
 local I = GRM.Incass
 
-I.Version    = "2.2.2"
+I.Version    = "2.3.0"
 I.Code       = 126
 I.ModuleName = "incassation"
 
@@ -521,7 +521,8 @@ end
 
 function I.SaveTerminalCashDatabase(force, why)
     local curMap = curMapName()
-    local records = I.LoadTerminalCashDatabase()
+    local records=I.LoadTerminalCashDatabase();local nextNumber=1
+    for _,rec in ipairs(records)do if rec.map==curMap then nextNumber=math.max(nextNumber,(tonumber(rec.number)or 0)+1)end end
 
     -- 1. Собрать живые банкоматы на текущей карте
     for _, ent in ipairs(ents.FindByClass("grm_bank_terminal")) do
@@ -540,20 +541,18 @@ function I.SaveTerminalCashDatabase(force, why)
                     rec.cash = cash
                     rec.name = name
                     rec.last_collect = lastC
-                    rec.updated = os.time()
-                    found = true
+                    if not tonumber(rec.number)or tonumber(rec.number)<=0 then rec.number=nextNumber;nextNumber=nextNumber+1 end
+                    rec.updated=os.time();if ent.SetNWInt then ent:SetNWInt("GRM_ATMNumber",rec.number)end
+                    found=true
                     break
                 end
             end
             if not found then
-                records[#records + 1] = {
-                    map = curMap,
-                    pos = np,
-                    name = name,
-                    cash = cash,
+                local number=nextNumber;nextNumber=nextNumber+1;records[#records+1]={
+                    map=curMap,number=number,pos=np,name=name,cash=cash,
                     last_collect = lastC,
-                    updated = os.time(),
-                }
+                    updated=os.time(),
+                };if ent.SetNWInt then ent:SetNWInt("GRM_ATMNumber",number)end
             end
         end
     end
@@ -586,9 +585,7 @@ function I.RestoreTerminalCash(terminal)
             local cash = math.max(0, math.floor(tonumber(rec.cash) or 0))
             I.TerminalCash[eid] = cash
             I.TerminalLastCollect[eid] = tonumber(rec.last_collect) or 0
-            if isfunction(terminal.SetNWInt) then
-                terminal:SetNWInt("GRM_TerminalCash", cash)
-            end
+            if isfunction(terminal.SetNWInt)then terminal:SetNWInt("GRM_TerminalCash",cash);terminal:SetNWInt("GRM_ATMNumber",math.max(0,math.floor(tonumber(rec.number)or 0)))end
             if isfunction(terminal.SetTerminalName) and rec.name then
                 terminal:SetTerminalName(rec.name)
             end
@@ -598,6 +595,10 @@ function I.RestoreTerminalCash(terminal)
         end
     end
     return 0
+end
+function I.GetTerminalNumber(terminal)
+    if not IsValid(terminal)then return 0 end;local number=terminal:GetNWInt("GRM_ATMNumber",0);if number>0 then return number end
+    I.SaveTerminalCashDatabase(true,"assign ATM number");I.RestoreTerminalCash(terminal);return terminal:GetNWInt("GRM_ATMNumber",terminal:EntIndex())
 end
 
 function I.SetTerminalCash(terminal, amount, why)

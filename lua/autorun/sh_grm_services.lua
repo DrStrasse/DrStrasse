@@ -29,7 +29,7 @@ GRM = GRM or {}
 GRM.Services = GRM.Services or {}
 
 local S = GRM.Services
-S.Version = "1.0.0"
+S.Version = "1.1.0"
 
 local DIR       = "grm_services"
 local FILE_SRV  = "grm_services/services.json"
@@ -524,8 +524,9 @@ local function normalizeInvoice(raw)
         paid       = paid,
         status     = status,
         issued     = math.floor(tonumber(raw.issued) or os.time()),
-        closed     = raw.closed and math.floor(tonumber(raw.closed)) or nil,
-        note       = trim(raw.note, 200),
+        closed=raw.closed and math.floor(tonumber(raw.closed))or nil,paidAt=raw.paidAt and math.floor(tonumber(raw.paidAt))or nil,lastPaidAt=raw.lastPaidAt and math.floor(tonumber(raw.lastPaidAt))or nil,
+        atmNumber=math.max(0,math.floor(tonumber(raw.atmNumber)or 0)),atmName=trim(raw.atmName,64),orderSource=trim(raw.orderSource,24),
+        note=trim(raw.note,200),
     }
 end
 
@@ -720,17 +721,12 @@ function S.DebtOf(target)
 end
 
 --- Счета, выставленные фракцией (для кабинета организации).
-function S.InvoicesByFaction(factionName, limit)
-    limit = math.floor(tonumber(limit) or 120)
-    local out = {}
-    for i = #S.Invoices, 1, -1 do
-        local rec = S.Invoices[i]
-        if rec.faction == factionName then
-            out[#out + 1] = rec
-            if #out >= limit then break end
-        end
-    end
-    return out
+function S.InvoicesByFaction(factionName,limit)
+    limit=math.floor(tonumber(limit)or 120);local out={};for i=#S.Invoices,1,-1 do local rec=S.Invoices[i];if rec.faction==factionName then out[#out+1]=rec;if#out>=limit then break end end end;return out
+end
+function S.OrderedServicesForFaction(factionName,limit)
+    local out={};for _,rec in ipairs(S.InvoicesByFaction(factionName,limit or 150))do if tostring(rec.serviceID or"")~=""then out[#out+1]=rec end end
+    table.sort(out,function(a,b)return(tonumber(a.issued)or 0)>(tonumber(b.issued)or 0)end);return out
 end
 
 --- Выставление счёта.
@@ -859,11 +855,8 @@ function S.PayInvoice(ply, id, amount, source)
     local ok, err = GRM.Services.Charge(ply, amount, source, ("Оплата счёта №%d"):format(rec.id))
     if not ok then return false, err end
 
-    rec.paid = rec.paid + amount
-    if rec.paid >= rec.amount then
-        rec.status = "paid"
-        rec.closed = os.time()
-    end
+    rec.paid=rec.paid+amount;rec.lastPaidAt=os.time()
+    if rec.paid>=rec.amount then rec.status="paid";rec.closed=os.time();rec.paidAt=rec.closed end
     S.SaveInvoices()
     distribute(rec, amount, ply:Nick())
 

@@ -47,6 +47,7 @@ ECONOMY_FILES = [
     "lua/autorun/sh_grm_special_service.lua",
     # фаза 4: госуслуги, счета, дипломы и меню банкомата
     "lua/autorun/sh_grm_services.lua",
+    "lua/autorun/sh_grm_service_orders.lua",
     "lua/autorun/sh_grm_diplomas.lua",
     "lua/autorun/sh_grm_atm.lua",
     "lua/autorun/server/sv_grm_services_commands.lua",
