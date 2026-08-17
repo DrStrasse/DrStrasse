@@ -300,6 +300,7 @@ if SERVER then
         if JB.GetRoutePoints then
             local custom = JB.GetRoutePoints(kind)
             if istable(custom) and #custom > 0 then return custom end
+            if kind=="garbage"or kind=="dump"then return{}end
         end
         local out = {}
         for _, e in ipairs(ents.FindByClass("grm_depot")) do
@@ -349,24 +350,27 @@ if SERVER then
                     local count = (JB.WorkConfig and tonumber(JB.WorkConfig.garbageStops)) or tonumber(tpl.points) or 2
                     local picked = seededPick(s, bins, count)
                     local dump = dumps[(s % math.max(1, #dumps)) + 1]
-                    local pk = picked or seededPick(s, dps, count)
-                    if pk and ((dump and dump.GetPos) or #dumps == 0) then
-                        dump = (dump and dump.GetPos) and dump or seededPick(s + 17, dps, 1)[1]
+                    local pk = picked -- только связанные garbage-точки; чужие depot не подмешиваются
+                    if pk and dump and dump.GetPos then
                         pk[#pk + 1] = dump
                         local need = #pk
                         local routeDist, prev = 0, cpos
                         for _, e in ipairs(pk) do routeDist = routeDist + prev:Distance(e:GetPos()); prev = e:GetPos() end
-                        local pts, names = {}, {}
+                        local pts, names, pointIDs = {}, {}, {}
                         for i = 1, need do
                             pts[#pts + 1] = vecTbl(pk[i]:GetPos())
-                            names[#names + 1] = (i == need) and "Свалка" or ("Контейнер " .. tostring(i))
+                            local rec=pk[i]._grmJobPoint
+                            names[#names + 1] = (i == need) and tostring(rec and rec.name or "Свалка") or tostring(rec and rec.name or ("Контейнер " .. tostring(i)))
+                            if i<need then pointIDs[#pointIDs+1]=tostring(rec and rec.id or "") end
                         end
+                        local dumpRec=pk[need]and pk[need]._grmJobPoint
                         offer = {
                             tplId = tid, title = tpl.title, desc = tpl.desc, jtype = tpl.jtype,
                             needVehicle = true, dist = math.floor(routeDist),
                             reward = clampN(math.floor(tpl.rewardFn(routeDist) / 5) * 5, JB.MinReward, JB.MaxReward),
                             timeSec = math.floor(tpl.timeFn(routeDist)),
                             target = pk[1]:GetPos(), points = pts, pointNames = names,
+                            garbagePointIDs=pointIDs,garbageDumpID=tostring(dumpRec and dumpRec.id or ""),
                             zoneRadius = 170, zoneName = "Маршрут вывоза отходов",
                         }
                     end
@@ -420,6 +424,7 @@ if SERVER then
                     needVehicle = j.needVehicle == true,
                     pointIndex = j.pointIndex or 1,
                     points = j.points, pointNames = j.pointNames,
+                    garbagePointIDs=j.garbagePointIDs,garbageDumpID=j.garbageDumpID,
                     tplId = j.tplId, budgetEscrow = tonumber(j.budgetEscrow) or 0,
                     fromPost = j.fromPost and true or false,
                     postFac=j.postFac,postId=j.postId,postKind=j.postKind,
@@ -453,6 +458,7 @@ if SERVER then
                     needVehicle = r.needVehicle == true,
                     pointIndex = tonumber(r.pointIndex) or 1,
                     points = r.points, pointNames = r.pointNames,
+                    garbagePointIDs=r.garbagePointIDs,garbageDumpID=r.garbageDumpID,
                     tplId = r.tplId, budgetEscrow = tonumber(r.budgetEscrow) or 0,
                     fromPost = r.fromPost == true, postFac = r.postFac, postId = r.postId,
                     postKind=r.postKind,taxiStandby=r.taxiStandby==true,taxiRequestID=r.taxiRequestID,garbageCollected=tonumber(r.garbageCollected)or 0,
@@ -569,6 +575,7 @@ if SERVER then
             zoneRadius = tonumber(fields.zoneRadius) or 180, zoneName = tostring(fields.zoneName or "Точка работы"),
             needVehicle = fields.needVehicle == true,
             points = fields.points, pointNames = fields.pointNames, pointIndex = 1,
+            garbagePointIDs=fields.garbagePointIDs,garbageDumpID=fields.garbageDumpID,
             fromPost = fields.fromPost and true or false,
             postFac = fields.postFac, postId = fields.postId,
             postKind=fields.postKind,taxiStandby=fields.taxiStandby==true,garbageCollected=tonumber(fields.garbageCollected)or 0,
@@ -701,7 +708,8 @@ if SERVER then
                             if not istable(goal)then JB.Complete(ply)
                             elseif idx>=#pts then
                                 local gv=Vector(tonumber(goal.x)or 0,tonumber(goal.y)or 0,tonumber(goal.z)or 0);local rad=tonumber(j.zoneRadius)or 170;local veh=ply:GetVehicle()
-                                if pp:DistToSqr(gv)<rad*rad and IsValid(veh)and(tonumber(veh.GRM_GarbageLoad)or 0)>0 then
+                                if JB.TickGarbageDump then JB.TickGarbageDump(ply,j,veh,gv,rad)
+                                elseif pp:DistToSqr(gv)<rad*rad and IsValid(veh)and(tonumber(veh.GRM_GarbageLoad)or 0)>0 then
                                     j.garbageDelivered=tonumber(veh.GRM_GarbageLoad)or 0;veh.GRM_GarbageLoad=0;veh:SetNWInt("GRM_GarbageLoad",0);JB.Complete(ply)
                                 end
                             elseif(j._hintT or 0)<CurTime()then j._hintT=CurTime()+12;if GRM.Notify then GRM.Notify(ply,"Остановитесь у отмеченной мусорки, выйдите, найдите отходы и загрузите коробку клавишей G сзади мусоровоза.",255,210,100)end end

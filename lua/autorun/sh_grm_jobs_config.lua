@@ -63,6 +63,8 @@ if SERVER then
             garbageCapacity = 8,
             garbageSearchTime = 2.5,
             garbageBinCooldown = 90,
+            garbageBindRadius = 500,
+            garbageUnloadTime = 4,
         }
     end
     local function normalizeCfg(t)
@@ -76,6 +78,8 @@ if SERVER then
         d.garbageCapacity = math.floor(clamp(t.garbageCapacity, 1, 32))
         d.garbageSearchTime = clamp(t.garbageSearchTime, .5, 15)
         d.garbageBinCooldown = math.floor(clamp(t.garbageBinCooldown, 10, 1800))
+        d.garbageBindRadius = math.floor(clamp(t.garbageBindRadius, 100, 2000))
+        d.garbageUnloadTime = clamp(t.garbageUnloadTime, 1, 30)
         d.taxiVehicles = istable(t.taxiVehicles) and t.taxiVehicles or {}
         d.garbageVehicles = istable(t.garbageVehicles) and t.garbageVehicles or {}
         d.courierVehicles = istable(t.courierVehicles) and t.courierVehicles or {}
@@ -230,7 +234,7 @@ if SERVER then
             JB.WorkConfig.taxiMin = math.floor(clamp(t.taxiMin, 0, 100000))
             JB.WorkConfig.taxiMax = math.floor(clamp(t.taxiMax, JB.WorkConfig.taxiMin, 100000))
             JB.WorkConfig.taxiDefault = math.floor(clamp(t.taxiDefault, JB.WorkConfig.taxiMin, JB.WorkConfig.taxiMax))
-            JB.WorkConfig.garbageStops=math.floor(clamp(t.garbageStops,1,8));JB.WorkConfig.garbageCapacity=math.floor(clamp(t.garbageCapacity,1,32));JB.WorkConfig.garbageSearchTime=clamp(t.garbageSearchTime,.5,15);JB.WorkConfig.garbageBinCooldown=math.floor(clamp(t.garbageBinCooldown,10,1800))
+            JB.WorkConfig.garbageStops=math.floor(clamp(t.garbageStops,1,8));JB.WorkConfig.garbageCapacity=math.floor(clamp(t.garbageCapacity,1,32));JB.WorkConfig.garbageSearchTime=clamp(t.garbageSearchTime,.5,15);JB.WorkConfig.garbageBinCooldown=math.floor(clamp(t.garbageBinCooldown,10,1800));JB.WorkConfig.garbageBindRadius=math.floor(clamp(t.garbageBindRadius,100,2000));JB.WorkConfig.garbageUnloadTime=clamp(t.garbageUnloadTime,1,30)
             JB.WorkConfig.taxiVehicles=parseList(t.taxiVehicles);JB.WorkConfig.garbageVehicles=parseList(t.garbageVehicles);JB.WorkConfig.courierVehicles=parseList(t.courierVehicles)
             JB.SaveWorkConfig("админ-настройки")
         elseif act == "add_point" then
@@ -293,10 +297,10 @@ else
         local settings=vgui.Create("DPanel",sheet) settings.Paint=function(_,w,h) draw.RoundedBox(6,0,0,w,h,C.panel) end
         local min=field(settings,"Минимальная такса",cfg.taxiMin,20);local max=field(settings,"Максимальная такса",cfg.taxiMax,56);local def=field(settings,"Такса по умолчанию",cfg.taxiDefault,92)
         local tv=field(settings,"Разрешённый транспорт такси",table.concat(cfg.taxiVehicles or{},", "),128);local gv=field(settings,"Разрешённый транспорт мусоровоза",table.concat(cfg.garbageVehicles or{},", "),164);local cv=field(settings,"Разрешённый транспорт доставки",table.concat(cfg.courierVehicles or{},", "),200)
-        local gs=field(settings,"Контейнеров в маршруте",cfg.garbageStops,236);local cap=field(settings,"Вместимость мусоровоза (коробок)",cfg.garbageCapacity,272);local searchTime=field(settings,"Время поиска в мусорке, сек",cfg.garbageSearchTime,308);local cooldown=field(settings,"Восстановление мусорки, сек",cfg.garbageBinCooldown,344)
-        local fund=vgui.Create("DCheckBoxLabel",settings)fund:SetPos(16,382)fund:SetSize(600,28)fund:SetText("Финансировать системные работы из городской казны")fund:SetTextColor(C.text)fund:SetValue(cfg.fundFromState and 1 or 0)
-        local save=vgui.Create("DButton",settings)save:SetPos(16,430)save:SetSize(760,40)save:SetText("СОХРАНИТЬ ВСЕ НАСТРОЙКИ")save:SetTextColor(color_white)save.Paint=function(s,w,h)draw.RoundedBox(5,0,0,w,h,s:IsHovered()and Color(80,235,165)or C.green)end
-        save.DoClick=function()net.Start(NET_ACT)net.WriteString("save")net.WriteTable({taxiMin=tonumber(min:GetValue()),taxiMax=tonumber(max:GetValue()),taxiDefault=tonumber(def:GetValue()),taxiVehicles=tv:GetValue(),garbageVehicles=gv:GetValue(),courierVehicles=cv:GetValue(),garbageStops=tonumber(gs:GetValue()),garbageCapacity=tonumber(cap:GetValue()),garbageSearchTime=tonumber(searchTime:GetValue()),garbageBinCooldown=tonumber(cooldown:GetValue()),fundFromState=fund:GetChecked()})net.SendToServer()end
+        local gs=field(settings,"Контейнеров в маршруте",cfg.garbageStops,236);local cap=field(settings,"Вместимость мусоровоза (коробок)",cfg.garbageCapacity,272);local searchTime=field(settings,"Время поиска в мусорке, сек",cfg.garbageSearchTime,308);local cooldown=field(settings,"Восстановление мусорки, сек",cfg.garbageBinCooldown,344);local bindRadius=field(settings,"Радиус связи точки с мусоркой",cfg.garbageBindRadius,380);local unloadTime=field(settings,"Время выгрузки на свалке, сек",cfg.garbageUnloadTime,416)
+        local fund=vgui.Create("DCheckBoxLabel",settings)fund:SetPos(16,454)fund:SetSize(600,28)fund:SetText("Финансировать системные работы из городской казны")fund:SetTextColor(C.text)fund:SetValue(cfg.fundFromState and 1 or 0)
+        local save=vgui.Create("DButton",settings)save:SetPos(16,500)save:SetSize(760,40)save:SetText("СОХРАНИТЬ ВСЕ НАСТРОЙКИ")save:SetTextColor(color_white)save.Paint=function(s,w,h)draw.RoundedBox(5,0,0,w,h,s:IsHovered()and Color(80,235,165)or C.green)end
+        save.DoClick=function()net.Start(NET_ACT)net.WriteString("save")net.WriteTable({taxiMin=tonumber(min:GetValue()),taxiMax=tonumber(max:GetValue()),taxiDefault=tonumber(def:GetValue()),taxiVehicles=tv:GetValue(),garbageVehicles=gv:GetValue(),courierVehicles=cv:GetValue(),garbageStops=tonumber(gs:GetValue()),garbageCapacity=tonumber(cap:GetValue()),garbageSearchTime=tonumber(searchTime:GetValue()),garbageBinCooldown=tonumber(cooldown:GetValue()),garbageBindRadius=tonumber(bindRadius:GetValue()),garbageUnloadTime=tonumber(unloadTime:GetValue()),fundFromState=fund:GetChecked()})net.SendToServer()end
         sheet:AddSheet("Настройки",settings,"icon16/cog.png")
         local transport=vgui.Create("DPanel",sheet);transport.Paint=function(_,w,h)draw.RoundedBox(6,0,0,w,h,C.panel)end
         local vsearch=vgui.Create("DTextEntry",transport);vsearch:SetPos(16,16);vsearch:SetSize(620,30);vsearch:SetPlaceholderText("Поиск класса / SpawnName / названия транспорта")
@@ -320,7 +324,8 @@ else
         local typ=vgui.Create("DComboBox",pp) typ:SetPos(16,16) typ:SetSize(220,28) typ:SetValue("Тип точки") for id,n in pairs(types) do typ:AddChoice(n,id) end
         local name=vgui.Create("DTextEntry",pp) name:SetPos(246,16) name:SetSize(300,28) name:SetPlaceholderText("Название точки")
         local add=vgui.Create("DButton",pp) add:SetPos(556,16) add:SetSize(190,28) add:SetText("Добавить по прицелу") add.DoClick=function() local _,id=typ:GetSelected() if not id then return end net.Start(NET_ACT) net.WriteString("add_point") net.WriteString(id) net.WriteString(name:GetValue()) net.SendToServer() end
-        local sc=vgui.Create("DScrollPanel",pp) sc:SetPos(16,56) sc:SetSize(850,490)
+        local state=vgui.Create("DButton",pp)state:SetPos(756,16)state:SetSize(280,28)state:SetText("Состояние мусорок и свалки")state.DoClick=function()RunConsoleCommand("grm_garbage_status")end
+        local sc=vgui.Create("DScrollPanel",pp) sc:SetPos(16,56) sc:SetSize(1020,540)
         for _,r in ipairs(points) do local row=vgui.Create("DPanel",sc) row:Dock(TOP) row:DockMargin(0,0,0,6) row:SetTall(44) row.Paint=function(_,w,h) draw.RoundedBox(4,0,0,w,h,Color(22,37,56)) draw.SimpleText((types[r.type] or r.type).." • "..r.name,"GRMJobsCfg_Text",12,12,C.text) end local del=vgui.Create("DButton",row) del:Dock(RIGHT) del:SetWide(100) del:SetText("Удалить") del.DoClick=function() net.Start(NET_ACT) net.WriteString("remove_point") net.WriteString(r.id) net.SendToServer() end sc:AddItem(row) end
         sheet:AddSheet("Точки и маршруты",pp,"icon16/map.png")
     end)

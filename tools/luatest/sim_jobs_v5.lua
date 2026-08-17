@@ -1,0 +1,22 @@
+-- Jobs v5 garbage topology and unloading contracts.
+local function read(p)local f=assert(io.open(p,"rb"));local s=f:read("*a");f:close();return s end
+local core=read("lua/autorun/sh_grm_jobs.lua");local cfg=read("lua/autorun/sh_grm_jobs_config.lua");local v4=read("lua/autorun/sh_grm_jobs_v4.lua");local v5=read("lua/autorun/sh_grm_jobs_v5.lua");local tool=read("lua/weapons/gmod_tool/stools/grm_jobs.lua")
+local fail,n=0,0;local function ok(v,msg)n=n+1;if v then print("  ok  "..msg)else fail=fail+1;print("  FAIL "..msg)end end
+ok(core:find("garbagePointIDs=pointIDs",1,true)and core:find("garbageDumpID",1,true),"offers carry stable collection and dump IDs")
+ok(core:find("garbagePointIDs=j.garbagePointIDs",1,true)and core:find("garbagePointIDs=r.garbagePointIDs",1,true),"garbage topology IDs survive active-job save/load")
+ok(core:find("if JB.TickGarbageDump then",1,true),"core delegates dump phase to physical unloading")
+ok(core:find('if kind=="garbage"or kind=="dump"then return{}end',1,true)and core:find("local pk = picked -- только связанные garbage-точки",1,true),"garbage route never falls back to unrelated depots")
+ok(cfg:find("garbageBindRadius",1,true)and cfg:find("garbageUnloadTime",1,true),"binding radius and unloading time are configurable")
+ok(v5:find("function JB.RefreshGarbageTopology",1,true)and v5:find('timer.Create("GRM_Garbage_Topology",2,0',1,true),"topology automatically refreshes")
+ok(v5:find("claimed[best]=true",1,true)and v5:find('GRM_GarbagePointID',1,true),"each route point binds one physical bin")
+ok(v5:find("reconcileActive",1,true)and v5:find("_garbageTopologySignature",1,true),"active route positions reconcile and republish on topology changes")
+ok(v5:find("JB.GarbageBindings[id]~=bin",1,true),"only the bin bound to the current route point can be searched")
+ok(v4:find("JB.GarbageBindings[currentID]~=bin",1,true),"binding is revalidated after search delay")
+ok(v5:find("function JB.TickGarbageDump",1,true)and v5:find("garbageUnloadAt",1,true),"dump requires a timed stationary unloading phase")
+ok(v5:find('SetNWString("GRM_GarbageState","unloading")',1,true)and v5:find('SetNWInt("GRM_GarbageLoad",0)',1,true),"truck state and cargo update during unload")
+ok(v5:find("function JB.GarbageStateSnapshot",1,true)and v5:find("GRM_JobsV5_StateReq",1,true),"server exposes guarded live state snapshot")
+ok(v5:find("function JB.OpenGarbageState",1,true)and cfg:find("Состояние мусорок и свалки",1,true),"large admin state UI is linked from jobs menu")
+ok(v5:find('timer.Create("GRM_Garbage_StateRefresh",3,0',1,true),"open state UI automatically refreshes")
+ok(v5:find('hook.Add("HUDPaint","GRM_Garbage_TruckState"',1,true),"driver reads live truck load/state in HUD")
+ok(tool:find('"garbage_bin"',1,true)and tool:find('"garbage"',1,true),"physical bins and route points remain separately placeable")
+print(("JOBS V5: %d/%d failures=%d"):format(n-fail,n,fail));os.exit(fail==0 and 0 or 1)
