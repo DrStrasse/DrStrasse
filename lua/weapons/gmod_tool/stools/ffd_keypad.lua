@@ -62,6 +62,16 @@ if SERVER then
             phys:EnableMotion(false) -- Автозаморозка на стене
         end
 
+        if duplicator and duplicator.StoreEntityModifier then
+            duplicator.StoreEntityModifier(ent, "GRM_KeypadData", {
+                password = pw ~= "" and pw or "1234",
+                granted  = tonumber(ent.KeyGranted) or 1,
+                denied   = tonumber(ent.KeyDenied) or 2,
+                hold     = tonumber(ent.HoldTime) or 5,
+                owner    = IsValid(ply) and tostring((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64() or "") or "",
+            })
+        end
+
         undo.Create("FFD Keypad")
             undo.AddEntity(ent)
             undo.SetPlayer(ply)
@@ -104,6 +114,15 @@ function TOOL:LeftClick(trace)
         end
         local pw = toolPin(self, ply)
         ent:SetPassword(pw)
+        if duplicator and duplicator.StoreEntityModifier then
+            duplicator.StoreEntityModifier(ent, "GRM_KeypadData", {
+                password = pw,
+                granted  = tonumber(ent.KeyGranted) or 1,
+                denied   = tonumber(ent.KeyDenied) or 2,
+                hold     = tonumber(ent.HoldTime) or 5,
+                owner    = tostring(ent.OwnerSID64 or ""),
+            })
+        end
         if GRM and GRM.Notify then
             GRM.Notify(ply, "PIN кейпада обновлён (" .. #pw .. " цифр).", 100, 220, 100)
         end
@@ -130,8 +149,10 @@ function TOOL:RightClick(trace)
 
     if SERVER then
         local ply = self:GetOwner()
-        ply:ConCommand("ffd_keypad_password " .. string.Trim(tostring(ent:GetPassword())))
-        ply:ConCommand("ffd_keypad_hold_time " .. tostring(ent.HoldTime or 5))
+        ply:ConCommand(string.format('ffd_keypad_password %q', string.Trim(tostring(ent:GetPassword() or "1234"))))
+        ply:ConCommand(string.format('ffd_keypad_hold_time %s', tostring(ent.HoldTime or 5)))
+        ply:ConCommand(string.format('ffd_keypad_key_granted %s', tostring(ent.KeyGranted or 1)))
+        ply:ConCommand(string.format('ffd_keypad_key_denied %s', tostring(ent.KeyDenied or 2)))
 
         if GRM and GRM.Notify then
             GRM.Notify(ply, "Настройки Кейпада скопированы!", 100, 220, 255)

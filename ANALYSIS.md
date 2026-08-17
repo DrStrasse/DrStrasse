@@ -4,6 +4,17 @@
 (HTML-сущности, markdown-ссылки, `_`→`*`) и проходят синтаксический
 контроль через luaparser.
 
+## Актуализация 17.08.2026 — Factions Structure v4.1, память FFD и персистентность карты
+
+1. **Structure v4.1 (Стабильные ключи должностей):**
+   Ключи `f.Roles` формализованы как системные неизменные идентификаторы, а `f.RoleDisplayNames` хранит публичные русские названия должностей. Переименование должности через `FactionsAPI.RenameRole` или UI обновляет только `f.RoleDisplayNames[roleKey] = newDisplayName`, не трогая привязки участников (`member.Role`), таблицы моделей (`RoleModels`), оружия (`RoleWeapons`), доступы, транспорт, документы и кадровые дела. Добавлены резолверы `GRM.Factions.RoleDisplayName` и `GRM.Factions.ResolveRoleKey`.
+2. **Единый UI фракций (Unified UI):**
+   Создан каркас `cl_grm_factions_unified_ui.lua` (singleton, левая панель навигации, вкладки «Обзор», «Сотрудники», «Структура», «Кадровые дела», «Служба», «Доступы», «Финансы», «Журнал»), поддерживающий live delta refresh и двойные имена.
+3. **Память FFD и сканнеров (`sh_grm_ffdlink.lua` v1.2.0):**
+   Устранена главная причина потери памяти контроллеров: `GRM.FFDLink.Fade` переведён на `Resolve(ctrl, false)` (без деструктивного runtime-prune). `resolveEntry` теперь проверяет `Sliding_BasePos or GetPos()` (открытая раздвижная дверь не теряется) и использует реальный допуск 32 юнита с поддержкой `prop_physics`/`prop_dynamic`. В autorun вынесены `GRM.PermData.Extract/Apply` для fading и sliding дверей, зарегистрированы Duplicator-модификаторы для `grm_scanner` (`GRM_ScannerData`) и `grm_keypad` (`GRM_KeypadData`), экранированы конвары при копировании настроек через ПКМ тулгана.
+4. **Сквозное восстановление при очистке карты (`PostCleanupMap`):**
+   Добавлены недостающие хуки `PostCleanupMap` в 9 модулей: телефония (`sv_grm_phone.lua`), прослушка (`sv_grm_roomtap.lua`), спавн руд (`sv_grm_ore_spawner.lua`), сейвер шахты (`sv_grm_mining_saver.lua`), радиовещание (`sh_grm_broadcast.lua`), радиосеть (`sh_grm_radionet.lua`), арест-камеры (`sh_grm_arrest.lua`), точки спавна фракций (`sh_spawn_points.lua`), вендинг-автоматы еды (`sv_grm_food.lua`), точки работ (`sh_grm_jobs.lua`). После спавна пермов вызывается `RefreshAllControllers` для синхронизации клиентского состояния.
+
 ## Актуализация 17.08.2026 — двойные имена фракций
 
 Текущий ключ `Factions[registrationName]` формализован как стабильное

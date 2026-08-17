@@ -258,6 +258,12 @@ hook.Add("InitPostEntity", "GRM_Saver_AutoLoad", function()
     end)
 end)
 
+hook.Add("PostCleanupMap", "GRM_Saver_Cleanup", function()
+    timer.Simple(0.5, function()
+        GRM_LoadEntities()
+    end)
+end)
+
 if AUTO_SAVE_INTERVAL > 0 then
     timer.Create("GRM_Saver_AutoSave", AUTO_SAVE_INTERVAL, 0, function()
         GRM_SaveEntities()

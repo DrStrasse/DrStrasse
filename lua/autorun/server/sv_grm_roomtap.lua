@@ -1281,6 +1281,12 @@ hook.Add("InitPostEntity", "GRM_RoomTap_LoadEquipment", function()
     end)
 end)
 
+hook.Add("PostCleanupMap", "GRM_RoomTap_Cleanup", function()
+    timer.Simple(0.5, function()
+        RT.LoadMapEquipment(nil)
+    end)
+end)
+
 hook.Add("ShutDown", "GRM_RoomTap_Save", function()
     -- EntityRemoved срабатывает при выключении сервера; временные записи
     -- в этот момент нельзя удалять, иначе они не переживут рестарт.

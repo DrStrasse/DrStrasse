@@ -81,6 +81,14 @@ GRM.PermData.Apply = GRM.PermData.Apply or {}
 GRM.PermData.Extract["grm_keypad"] = keypadPermExtract
 GRM.PermData.Apply["grm_keypad"] = keypadPermApply
 
+if duplicator and duplicator.RegisterEntityModifier then
+    duplicator.RegisterEntityModifier("GRM_KeypadData", function(ply, ent, data)
+        if IsValid(ent) and istable(data) then
+            keypadPermApply(ent, data)
+        end
+    end)
+end
+
 function ENT:Initialize()
     self:SetModel("models/props_lab/keypad.mdl")
     self:PhysicsInit(SOLID_VPHYSICS)

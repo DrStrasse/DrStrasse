@@ -221,6 +221,10 @@ if SERVER then
         timer.Simple(3, RefillOreNodes)
     end)
 
+    hook.Add("PostCleanupMap", "GRM_OreSpawner_Cleanup", function()
+        timer.Simple(0.5, RefillOreNodes)
+    end)
+
     timer.Create("GRM_OreSpawner_Timer", SPAWN_INTERVAL, 0, RefillOreNodes)
 
     -- ============================================================

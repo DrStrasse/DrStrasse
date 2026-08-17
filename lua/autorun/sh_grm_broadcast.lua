@@ -155,34 +155,40 @@ if SERVER then
     timer.Create("GRM_BC_PersistSweep", 17, 0, persistSweep)
     BC._devSweep = persistSweep -- тест-экспорт (сим)
 
-    -- воскрешение после рестарта (антидубль: если рядом уже есть — пропускаем)
-    hook.Add("InitPostEntity", "GRM_BC_Restore", function()
-        timer.Simple(3, function()
-            BC._restoring = true
-            for k, rec in pairs(BC.Persist or {}) do
-                if PERSIST_CLASSES[rec.class] and istable(rec.pos) then
-                    local pos = Vector(tonumber(rec.pos.x) or 0, tonumber(rec.pos.y) or 0, tonumber(rec.pos.z) or 0)
-                    local dup = false
-                    for _, e in ipairs(ents.FindByClass(rec.class)) do
-                        if IsValid(e) and e:GetPos():DistToSqr(pos) < 64 then dup = true break end
-                    end
-                    if not dup then
-                        local ent = ents.Create(rec.class)
-                        if IsValid(ent) then
-                            ent:SetPos(pos)
-                            local a = istable(rec.ang) and rec.ang or {}
-                            ent:SetAngles(Angle(tonumber(a.p) or 0, tonumber(a.y) or 0, tonumber(a.r) or 0))
-                            ent:Spawn() ent:Activate()
-                            if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
-                            local phys = ent:GetPhysicsObject()
-                            if IsValid(phys) then phys:EnableMotion(false) end
-                        end
+    function BC.RestoreMap()
+        BC._restoring = true
+        for k, rec in pairs(BC.Persist or {}) do
+            if PERSIST_CLASSES[rec.class] and istable(rec.pos) then
+                local pos = Vector(tonumber(rec.pos.x) or 0, tonumber(rec.pos.y) or 0, tonumber(rec.pos.z) or 0)
+                local dup = false
+                for _, e in ipairs(ents.FindByClass(rec.class)) do
+                    if IsValid(e) and e:GetPos():DistToSqr(pos) < 64 then dup = true break end
+                end
+                if not dup then
+                    local ent = ents.Create(rec.class)
+                    if IsValid(ent) then
+                        ent:SetPos(pos)
+                        local a = istable(rec.ang) and rec.ang or {}
+                        ent:SetAngles(Angle(tonumber(a.p) or 0, tonumber(a.y) or 0, tonumber(a.r) or 0))
+                        ent:Spawn() ent:Activate()
+                        if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
+                        local phys = ent:GetPhysicsObject()
+                        if IsValid(phys) then phys:EnableMotion(false) end
                     end
                 end
             end
-            BC._restoring = false
-            print("[GRM Broadcast] Персистент: проверено записей — " .. tostring(table.Count(BC.Persist or {})))
-        end)
+        end
+        BC._restoring = false
+        print("[GRM Broadcast] Персистент: проверено записей — " .. tostring(table.Count(BC.Persist or {})))
+    end
+
+    -- воскрешение после рестарта (антидубль: если рядом уже есть — пропускаем)
+    hook.Add("InitPostEntity", "GRM_BC_Restore", function()
+        timer.Simple(3, function() BC.RestoreMap() end)
+    end)
+
+    hook.Add("PostCleanupMap", "GRM_BC_Cleanup", function()
+        timer.Simple(0.5, function() BC.RestoreMap() end)
     end)
 
     -- помощники доступа ----------------------------------------------

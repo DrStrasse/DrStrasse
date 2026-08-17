@@ -580,6 +580,9 @@ if SERVER then
                 end
             end
         end
+        if GRM.FFDLink and GRM.FFDLink.RefreshAllControllers then
+            GRM.FFDLink.RefreshAllControllers()
+        end
         print(("[GRM Perm] восстановлено перм-энтити на карте %s: %d, уже на месте: %d (%s)")
             :format(tostring(map), done, skipped, tostring(reason or "?")))
         return done, skipped

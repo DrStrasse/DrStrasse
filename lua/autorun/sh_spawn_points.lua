@@ -242,6 +242,12 @@ if SERVER then
         end
     end)
 
+    hook.Add("PostCleanupMap", "SpawnPoints_ReloadCleanup", function()
+        timer.Simple(0.5, function()
+            reloadSpawnPoints()
+        end)
+    end)
+
     -- При создании новой фракции инициализируем пустые точки
     hook.Add("FactionCreated", "SpawnPoints_InitNew", function(factionName)
         if Factions and Factions[factionName] then

@@ -37,11 +37,20 @@ CCTV и Phone учитывают эти назначения поверх ста
 защищены nonce, CharacterKey и Net Guard. Контракт и API:
 [`CONCEPT_FACTION_NAMES.md`](CONCEPT_FACTION_NAMES.md).
 
-**Faction Core v4** добавляет стабильные ключи отделов с отдельным публичным
-названием и вкладку **«Кадровые дела»**. Переименование отдела больше не меняет
-участников, модели, оружие, spawn points или access maps. Кадровая история,
-испытательный срок, благодарности, взыскания и архив увольнений хранятся внутри
-`factions.json`: [`CONCEPT_FACTION_CORE_V4.md`](CONCEPT_FACTION_CORE_V4.md).
+**Faction Core v4 / Structure v4.1** добавляет стабильные ключи отделов и
+должностей (`RoleDisplayNames` + `DepartmentDisplayNames`), каркас **Unified Factions UI**
+(`cl_grm_factions_unified_ui.lua`, `/fmenu`, `/фракция`) и вкладку **«Кадровые дела»**.
+Переименование отдела или должности больше не меняет привязки участников, модели, оружие,
+spawn points или access maps. Кадровая история, испытательный срок, благодарности, взыскания
+и архив увольнений хранятся внутри `factions.json`: [`CONCEPT_FACTION_CORE_V4.md`](CONCEPT_FACTION_CORE_V4.md).
+
+## Персистентность и память FFD
+
+Устранена потеря памяти у сканнеров и кейпадов (`sh_grm_ffdlink.lua` v1.2.0):
+* `Resolve` вызывается без деструктивного runtime-pruning при штатном открытии дверей;
+* `resolveEntry` корректно определяет открытые раздвижные двери по `Sliding_BasePos` с расширенным допуском 32 юнита;
+* Восстановление fading и sliding дверей (`GRM.PermData`) и Duplicator-модификаторы вынесены в autorun;
+* Добавлены хуки `PostCleanupMap` во все 9 модулей окружения (телефония, прослушка, шахта, радиосеть, вещание, камеры ареста, спавнпоинты, вендинг, работы).
 
 ## Производительность
 

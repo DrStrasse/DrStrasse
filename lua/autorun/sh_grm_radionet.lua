@@ -541,37 +541,43 @@ if SERVER then
     timer.Create("GRM_RN_PersistSweep", 15, 0, persistSweep)
     RN._devSweep = persistSweep -- тест-экспорт (сим)
 
-    hook.Add("InitPostEntity", "GRM_RN_Restore", function()
-        timer.Simple(4, function()
-            RN._restoring = true
-            local restored = 0
-            for k, rec in pairs(RN.Persist or {}) do
-                if PERSIST_CLASSES[rec.class] and istable(rec.pos) then
-                    local pos = Vector(tonumber(rec.pos.x) or 0, tonumber(rec.pos.y) or 0, tonumber(rec.pos.z) or 0)
-                    local dup = false
-                    for _, e in ipairs(ents.FindByClass(rec.class)) do
-                        if IsValid(e) and e:GetPos():DistToSqr(pos) < 64 then dup = true break end
-                    end
-                    if not dup then
-                        local ent = ents.Create(rec.class)
-                        if IsValid(ent) then
-                            ent:SetPos(pos)
-                            local a = istable(rec.ang) and rec.ang or {}
-                            ent:SetAngles(Angle(tonumber(a.p) or 0, tonumber(a.y) or 0, tonumber(a.r) or 0))
-                            ent:Spawn() ent:Activate()
-                            if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
-                            local phys = ent:GetPhysicsObject()
-                            if IsValid(phys) then phys:EnableMotion(false) end
-                            if rec.class == "grm_server_rack" then ent:SetNWBool("GRM_RN_On", true) end
-                            ent._grmRNKey = k -- Код 88.4: свипер узнаёт своих
-                            restored = restored + 1
-                        end
+    function RN.RestoreMap()
+        RN._restoring = true
+        local restored = 0
+        for k, rec in pairs(RN.Persist or {}) do
+            if PERSIST_CLASSES[rec.class] and istable(rec.pos) then
+                local pos = Vector(tonumber(rec.pos.x) or 0, tonumber(rec.pos.y) or 0, tonumber(rec.pos.z) or 0)
+                local dup = false
+                for _, e in ipairs(ents.FindByClass(rec.class)) do
+                    if IsValid(e) and e:GetPos():DistToSqr(pos) < 64 then dup = true break end
+                end
+                if not dup then
+                    local ent = ents.Create(rec.class)
+                    if IsValid(ent) then
+                        ent:SetPos(pos)
+                        local a = istable(rec.ang) and rec.ang or {}
+                        ent:SetAngles(Angle(tonumber(a.p) or 0, tonumber(a.y) or 0, tonumber(a.r) or 0))
+                        ent:Spawn() ent:Activate()
+                        if GRM.PropProtect and GRM.PropProtect.MarkServerEntity then GRM.PropProtect.MarkServerEntity(ent) end
+                        local phys = ent:GetPhysicsObject()
+                        if IsValid(phys) then phys:EnableMotion(false) end
+                        if rec.class == "grm_server_rack" then ent:SetNWBool("GRM_RN_On", true) end
+                        ent._grmRNKey = k -- Код 88.4: свипер узнаёт своих
+                        restored = restored + 1
                     end
                 end
             end
-            RN._restoring = false
-            print("[GRM RadioNet] Персистент: записей " .. tostring(table.Count(RN.Persist or {})) .. ", восстановлено " .. tostring(restored))
-        end)
+        end
+        RN._restoring = false
+        print("[GRM RadioNet] Персистент: записей " .. tostring(table.Count(RN.Persist or {})) .. ", восстановлено " .. tostring(restored))
+    end
+
+    hook.Add("InitPostEntity", "GRM_RN_Restore", function()
+        timer.Simple(4, function() RN.RestoreMap() end)
+    end)
+
+    hook.Add("PostCleanupMap", "GRM_RN_Cleanup", function()
+        timer.Simple(0.5, function() RN.RestoreMap() end)
     end)
 
     ----------------------------------------------------------------

@@ -687,6 +687,7 @@ end
     concommand.Add("grm_arrest_admin", function(ply) A.OpenAdmin(ply) end)
     concommand.Add("grm_arrest_reload", function(ply) if not IsValid(ply) or ply:IsSuperAdmin() then loadCameras() end end)
     hook.Add("InitPostEntity", "GRM_Arrest_LoadCameras", function() timer.Simple(2, loadCameras) end)
+    hook.Add("PostCleanupMap", "GRM_Arrest_Cleanup", function() timer.Simple(0.5, loadCameras) end)
     hook.Add("ShutDown", "GRM_Arrest_Save", save)
 
     applyArrestAppearance = function(ply, g)

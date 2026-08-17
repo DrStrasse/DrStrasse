@@ -39,6 +39,16 @@ function GRM.Factions.PlayerDisplayName(ply)if not IsValid(ply)then return""end;
 function GRM.Factions.DepartmentDisplayName(factionValue,departmentKey)
     local f=isstring(factionValue)and((Factions and Factions[factionValue])or(FactionsData and FactionsData[factionValue]))or factionValue;local key=tostring(departmentKey or"");local names=istable(f)and f.DepartmentDisplayNames or nil;local display=names and factionTrim(names[key],96)or"";return display~=""and display or key
 end
+function GRM.Factions.RoleDisplayName(factionValue,roleKey)
+    local f=isstring(factionValue)and((Factions and Factions[factionValue])or(FactionsData and FactionsData[factionValue]))or factionValue;local key=tostring(roleKey or"");local names=istable(f)and f.RoleDisplayNames or nil;local display=names and factionTrim(names[key],96)or"";return display~=""and display or (key~="" and key or "Участник")
+end
+function GRM.Factions.ResolveRoleKey(factionValue,roleInput)
+    local f=isstring(factionValue)and((Factions and Factions[factionValue])or(FactionsData and FactionsData[factionValue]))or factionValue;local input=tostring(roleInput or"");if not istable(f)then return input end
+    if f.RoleDisplayNames and f.RoleDisplayNames[input] then return input end
+    if istable(f.RoleDisplayNames) then for k,v in pairs(f.RoleDisplayNames) do if tostring(v)==input then return k end end end
+    for _,r in ipairs(f.Roles or{}) do if r==input then return r end end
+    return input
+end
 
 -- ============================================================
 -- SHARED ЛИДЕРСКИЙ ХЕЛПЕР (изоляция слотов персонажей)
@@ -234,6 +244,8 @@ if SERVER then
 
         f.Members     = istable(f.Members)     and f.Members     or {}
         f.Roles       = istable(f.Roles)       and f.Roles       or {}
+        f.RoleDisplayNames = istable(f.RoleDisplayNames) and f.RoleDisplayNames or {}
+        for _,roleKey in ipairs(f.Roles)do local public=factionTrim(f.RoleDisplayNames[roleKey],96);if public==""then f.RoleDisplayNames[roleKey]=roleKey;changed=true end end
         f.Departments = istable(f.Departments) and f.Departments or {}
         f.DepartmentDisplayNames=istable(f.DepartmentDisplayNames)and f.DepartmentDisplayNames or{}
         for _,departmentKey in ipairs(f.Departments)do local public=factionTrim(f.DepartmentDisplayNames[departmentKey],96);if public==""then f.DepartmentDisplayNames[departmentKey]=departmentKey;changed=true end end
@@ -423,6 +435,7 @@ if SERVER then
                     Leader           = f.Leader,
                     DisplayName      = f.DisplayName,
                     Roles            = f.Roles,
+                    RoleDisplayNames = f.RoleDisplayNames,
                     Departments      = f.Departments,
                     DepartmentDisplayNames=f.DepartmentDisplayNames,
                     Members          = buildMemberSync(f),
@@ -700,14 +713,16 @@ if SERVER then
         return true
     end
 
-    local function addRole(factionName, roleName)
+    local function addRole(factionName, roleName, displayName)
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
-        ensureDefaults(f)
+        ensureDefaults(f, factionName)
         if not roleName or roleName == "" then return false, "Не указана роль" end
-        if roleName == f.LeaderRoleName then return false, "Нельзя добавить роль с именем лидера" end
+        if roleName == f.LeaderRoleName and (not f.RoleDisplayNames or not f.RoleDisplayNames[roleName]) then return false, "Нельзя добавить роль с системным именем лидера" end
         if table.HasValue(f.Roles, roleName) then return false, "Такой ранг уже существует" end
+        local public = (displayName and displayName ~= "") and factionTrim(displayName, 96) or roleName
         table.insert(f.Roles, roleName)
+        f.RoleDisplayNames[roleName] = public
         saveFactions(Factions)
         return true
     end
@@ -715,11 +730,12 @@ if SERVER then
     local function removeRole(factionName, roleName)
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
-        ensureDefaults(f)
+        ensureDefaults(f, factionName)
         if roleName == f.LeaderRoleName then return false, "Нельзя удалить роль лидера" end
         for i, r in ipairs(f.Roles) do
             if r == roleName then
                 table.remove(f.Roles, i)
+                f.RoleDisplayNames[roleName] = nil
                 local fallback = getDefaultMemberRole(f)
                 for key,info in pairs(f.Members)do if info.Role==roleName then local oldRole=info.Role;info.Role=fallback;hook.Run("GRM_FactionMemberRoleChanged",factionName,key,info,oldRole,fallback,nil)end end
                 saveFactions(Factions)
@@ -729,21 +745,19 @@ if SERVER then
         return false, "Ранг не найден"
     end
 
-    local function renameRole(factionName, oldRoleName, newRoleName)
+    local function renameRole(factionName, roleKey, newDisplayName)
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
-        ensureDefaults(f)
-        if not table.HasValue(f.Roles, oldRoleName) then return false, "Роль не найдена" end
-        if table.HasValue(f.Roles, newRoleName) then return false, "Роль с таким именем уже существует" end
-        if oldRoleName == f.LeaderRoleName then
-            f.LeaderRoleName = newRoleName
-        end
-        for i, r in ipairs(f.Roles) do
-            if r == oldRoleName then f.Roles[i] = newRoleName break end
-        end
-        for key,info in pairs(f.Members)do if info.Role==oldRoleName then info.Role=newRoleName;hook.Run("GRM_FactionMemberRoleChanged",factionName,key,info,oldRoleName,newRoleName,nil)end end
+        ensureDefaults(f, factionName)
+        if not table.HasValue(f.Roles, roleKey) then return false, "Роль не найдена" end
+        newDisplayName = factionTrim(newDisplayName, 96)
+        if newDisplayName == "" then return false, "Публичное название должности не указано" end
+        -- ВАЖНО: меняется только label в f.RoleDisplayNames.
+        -- Ключ roleKey у участников, RoleModels, RoleWeapons, доступы, транспорт, документы и кадровые дела не ломаются!
+        f.RoleDisplayNames[roleKey] = newDisplayName
         saveFactions(Factions)
-        return true
+        hook.Run("GRM_FactionRoleDisplayChanged", factionName, roleKey, newDisplayName)
+        return true, "Публичное название должности сохранено"
     end
 
     local function moveRole(factionName, roleName, direction)
@@ -1336,6 +1350,10 @@ if SERVER then
     _G.FactionsAPI.GetDisplayName=function(factionName)return GRM.Factions.DisplayName(factionName)end
     _G.FactionsAPI.GetRegistrationName=function(value)local raw=tostring(value or"");if Factions[raw]then return raw end;local found;for name,f in pairs(Factions or{})do if GRM.Factions.DisplayName(f,name)==raw then if found then return nil end;found=name end end;return found end
     _G.FactionsAPI.SetDisplayName=function(factionName,displayName)return setFactionDisplayName(factionName,displayName)end
+    _G.FactionsAPI.GetRoleDisplayName=function(factionName,roleKey)return GRM.Factions.RoleDisplayName(factionName,roleKey)end
+    _G.FactionsAPI.SetRoleDisplayName=function(factionName,roleKey,displayName)return renameRole(factionName,roleKey,displayName)end
+    _G.FactionsAPI.RenameRole=function(factionName,roleKey,displayName)return renameRole(factionName,roleKey,displayName)end
+    _G.FactionsAPI.ResolveRoleKey=function(factionName,roleInput)return GRM.Factions.ResolveRoleKey(factionName,roleInput)end
     _G.FactionsAPI.Save           = function() saveFactions(Factions) end
     _G.FactionsAPI.List           = function()
         -- Compatibility view for older GRM modules. The persisted table keeps
@@ -1782,7 +1800,9 @@ if CLIENT then
             row:SetTall(36) row:Dock(TOP) row:DockMargin(0, 2, 0, 2) row:SetPaintBackground(false)
 
             local edit = vgui.Create("DTextEntry", row)
-            edit:SetPos(70, 5) edit:SetSize(160, 26) edit:SetText(roleName)
+            edit:SetPos(70, 5) edit:SetSize(160, 26)
+            edit:SetText(GRM.Factions.RoleDisplayName(f, roleName))
+            edit:SetTooltip("Системный ключ: " .. roleName .. " (настройки и участники останутся привязаны)")
             edit:SetFont("Factions_Normal")
 
             local leaderRoleName = (f and f.LeaderRoleName) or "Лидер"
@@ -2054,7 +2074,9 @@ if CLIENT then
             end
 
             local edit = vgui.Create("DTextEntry", row)
-            edit:SetPos(70, 5) edit:SetSize(160, 26) edit:SetText(roleName)
+            edit:SetPos(70, 5) edit:SetSize(160, 26)
+            edit:SetText(GRM.Factions.RoleDisplayName(f, roleName))
+            edit:SetTooltip("Системный ключ: " .. roleName .. " (настройки и участники останутся привязаны)")
             edit:SetFont("Factions_Normal")
 
             local btnRename = styledButton(row, "✎", THEME.accent, THEME.accentDark)

@@ -437,6 +437,12 @@ hook.Add("InitPostEntity", "GRM_Food_LoadPermanentVending", function()
     timer.Simple(2, registerULXCommands)
 end)
 
+hook.Add("PostCleanupMap", "GRM_Food_Cleanup", function()
+    timer.Simple(0.5, function()
+        GRM.Food.LoadVendingMachines(nil, false)
+    end)
+end)
+
 timer.Simple(0, registerULXCommands)
 
 -- ============================================================

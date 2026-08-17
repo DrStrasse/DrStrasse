@@ -851,6 +851,10 @@ hook.Add("InitPostEntity", "GRM_Phone_LoadMap", function()
     timer.Simple(1, function() P.LoadMapEntities(nil) end)
 end)
 
+hook.Add("PostCleanupMap", "GRM_Phone_Cleanup", function()
+    timer.Simple(0.5, function() P.LoadMapEntities(nil) end)
+end)
+
 -- ============================================================
 -- ADMIN REMOVE TOOL / COMMANDS
 -- ============================================================

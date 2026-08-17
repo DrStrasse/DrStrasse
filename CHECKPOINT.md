@@ -1,12 +1,11 @@
 # CHECKPOINT — контрольная точка для следующего ИИ-агента
 
-**Дата:** 2026-08-14  
-**Ветка сессии:** `arena/019ffaa2-drstrasse` → наследуется `arena/019ffd5c-drstrasse` (эта сессия)  
-**HEAD:** `380f7d0` + fire v1.4.1 (статус переписан, мягче локализован, скан на boot, журнал `/fire_log`)  
+**Дата:** 2026-08-17  
+**Ветка сессии:** `arena/01a00f34-drstrasse`  
+**Состояние:** Core v4.1 (Stable Roles + Department DisplayNames + Unified UI), FFD Link v1.2.0 (память дверей и сканнеров восстановлена, autorun perm registration), сквозные хуки `PostCleanupMap` во всех модулях окружения.  
 **Репо:** `https://github.com/DrStrasse/DrStrasse`  
-**Следующий свободный номер модуля:** **Код 59** (после пожаров)
 
-Читать этот файл ПЕРВЫМ. Затем `HANDOVER.md`, строку модуля 58 в `README.md`, находки **103–126** в `ANALYSIS.md`. Не начинать с master — он почти пустой.
+Читать этот файл ПЕРВЫМ. Затем `HANDOVER.md`, `ROADMAP_GRM_2026.md`, `GRM_CORE.md` и актуализации в `ANALYSIS.md`. Не начинать с master — он пустой.
 
 > **Новые материалы-референсы (16.08.2026, режим анализа):** владелец подгрузил
 > `AI part 2 details.zip` (Wiremod + E2 + ZVM/CPU-чипы + GTerminal + TerminalR),

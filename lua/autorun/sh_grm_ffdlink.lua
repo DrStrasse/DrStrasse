@@ -1,31 +1,20 @@
 --[[--------------------------------------------------------------------
-    GRM FFD Link v1.1.0 (Код 108 → Код 109, заказы владельца)
-    РУЧНАЯ связь «контроллер → исчезающие двери»:
+    GRM FFD Link v1.2.0 (Код 108 → Код 109 → Код 110, память и персист)
+    РУЧНАЯ связь «контроллер → исчезающие / раздвижные двери»:
       контроллер = grm_keypad или grm_scanner, дверь = любой проп с
-      isFadingDoor (инструмент FFD Fading Door).
+      isFadingDoor (инструмент FFD Fading Door) или isSlidingDoor
+      (инструмент GRM Раздвижная дверь).
 
-    До Кода 108 кейпад/сканер открывали ВСЕ FFD-двери в радиусе 250 —
-    нельзя было сказать «этот кейпад открывает ровно эту дверь».
-    Код 108 ввёл ручные связи (инструмент FFD Link, stools/ffd_link.lua),
-    но оставил радиус-фолбэк «нет связей → опять весь радиус». Код 109
-    (заказ владельца): ФОЛБЭК УДАЛЁН НАСОВСЕМ — авто-определения дверей
-    больше нет. Правило поведения:
-      * связей нет        → контроллер НЕ ОТКРЫВАЕТ НИ ОДНУ ДВЕРЬ
-                            (грант/нумпад-сигнал работают, двери — нет);
-                            владельцу выводится видимая подсказка;
-      * связи есть        → открываются ТОЛЬКО привязанные двери;
-      * привязанная дверь удалена → запись само-вычищается (prune);
-        умерла последняя связь — контроллер опять «ни к чему не
-        привязан», а не «открывает всё подряд».
-
-    Хранение: ent.FFDLink_Doors = { {class,x,y,z}, ... } на контроллере.
-    Координаты округлены до 0.1 — перебор при resolve сферой 15 юнитов
-    (переживает JSON-переупаковку позиций в перм-базе).
-    Персистентность: кейпад/сканер складывают links в rec.data перм-базы
-    (Extract/Apply в init.lua энтити), плюс duplicator-модификатор
-    FFD_LinkList — связи копируются вместе с дубликатом.
-    Клиенту на контроллере лежат NW «FFDLinkN» (число связей) и
-    «FFDLinkIdx» (EntIndex'ы разрешённых дверей — подсветка стула).
+    Код 110 (защита памяти и персистентность):
+      * resolveEntry учитывает и текущую позицию, и базовую позицию
+        раздвижной двери (Sliding_BasePos), допуск до 32 юнитов с приоритетом
+        живых дверей — открытая/движущаяся раздвижная дверь НЕ теряется;
+      * Fade НЕ стирает привязанные двери (prune=false при обычной работе);
+      * FFD_MakeFadingDoor, PermData (Extract/Apply для prop_physics и
+        prop_dynamic) и duplicator-модификаторы зарегистрированы прямо в
+        autorun — перм-двери и раздвижные двери восстанавливаются на старте
+        сервера ещё до взятия тулгана в руки;
+      * RefreshAllControllers гарантирует синк NW-состояния после спавна пермов.
 ----------------------------------------------------------------------]]
 
 if SERVER then
@@ -34,7 +23,7 @@ end
 
 GRM = GRM or {}
 GRM.FFDLink = GRM.FFDLink or {}
-GRM._ffdLinkVer = "1.1.0"  -- Код 109: авто-радиус-фолбэк удалён (заказ)
+GRM._ffdLinkVer = "1.2.0"
 
 -- какие энтити могут быть контроллерами связи
 local CONTROLLERS = {
@@ -49,17 +38,12 @@ function GRM.FFDLink.IsController(ent)
 end
 
 -- ============================================================
--- SERVER: хранилище, mutate, resolve
+-- SERVER: хранилище, mutate, resolve, персист
 -- ============================================================
 if SERVER then
     local MAX_LINKS  = 32   -- защита от раздувания одного контроллера
-    local FIND_RANGE = 15   -- грубая сфера выборки при разрешении записи
-    local ACCEPT     = 1.2  -- юнитов: допуск совпадения позиции (только
-                            -- JSON/физический микроджиттер!). Шире нельзя:
-                            -- у стены часто стоит ВТОРАЯ дверь в паре юнитов —
-                            -- принимать её за удалённую ломануло бы prune
-                            -- и «перемкнуло» бы связь на чужую дверь
-                            -- (находка 125, стенд-кейс sim_ffdtools №108).
+    local FIND_RANGE = 48   -- сфера выборки при разрешении записи
+    local ACCEPT     = 32.0 -- юнитов: допуск совпадения позиции
 
     -- округление до 0.1: позиции переживают JSON-переупаковку перм-базы
     local function r1(v) return math.floor((tonumber(v) or 0) * 10 + 0.5) / 10 end
@@ -69,10 +53,22 @@ if SERVER then
         if not istable(e) or not isstring(e.class) then return nil end
         local center = Vector(tonumber(e.x) or 0, tonumber(e.y) or 0, tonumber(e.z) or 0)
         local best, bestD = nil, ACCEPT * ACCEPT
-        for _, ent in ipairs(ents.FindInSphere(center, FIND_RANGE)) do
-            if IsValid(ent) and tostring(ent:GetClass() or "") == e.class then
-                local d = ent:GetPos():DistToSqr(center)
-                if d <= bestD then best, bestD = ent, d end
+        local candidates = ents.FindInSphere(center, FIND_RANGE)
+        for _, ent in ipairs(candidates) do
+            if IsValid(ent) then
+                local cls = tostring(ent:GetClass() or "")
+                local matchClass = (cls == e.class)
+                    or (e.class == "prop_physics" and cls == "prop_dynamic")
+                    or (e.class == "prop_dynamic" and cls == "prop_physics")
+                if matchClass then
+                    local p = ent.Sliding_BasePos or ent:GetPos()
+                    local d = p:DistToSqr(center)
+                    if ent.isFadingDoor or ent.isSlidingDoor then
+                        if d <= bestD then best, bestD = ent, d end
+                    elseif d <= bestD then
+                        best, bestD = ent, d
+                    end
+                end
             end
         end
         return best
@@ -92,6 +88,33 @@ if SERVER then
         ctrl:SetNWInt("FFDLinkN", n)
         ctrl:SetNWString("FFDLinkIdx", table.concat(idxs, ","))
     end
+
+    -- Обновить все контроллеры на карте (после InitPostEntity / PostCleanupMap)
+    function GRM.FFDLink.RefreshAllControllers()
+        for class, _ in pairs(CONTROLLERS) do
+            for _, ctrl in ipairs(ents.FindByClass(class)) do
+                if IsValid(ctrl) then
+                    GRM.FFDLink.RefreshNW(ctrl)
+                end
+            end
+        end
+    end
+
+    hook.Add("InitPostEntity", "GRM_FFDLink_RefreshPostEntity", function()
+        timer.Simple(1.5, function()
+            if GRM.FFDLink and GRM.FFDLink.RefreshAllControllers then
+                GRM.FFDLink.RefreshAllControllers()
+            end
+        end)
+    end)
+
+    hook.Add("PostCleanupMap", "GRM_FFDLink_RefreshCleanup", function()
+        timer.Simple(1.0, function()
+            if GRM.FFDLink and GRM.FFDLink.RefreshAllControllers then
+                GRM.FFDLink.RefreshAllControllers()
+            end
+        end)
+    end)
 
     -- сериализуемая копия (для перм-базы и дубликатора)
     function GRM.FFDLink.ExportData(ctrl)
@@ -157,10 +180,16 @@ if SERVER then
     function GRM.FFDLink.FindIndex(ctrl, door)
         if not (IsValid(ctrl) and IsValid(door)) then return nil end
         local class = tostring(door:GetClass() or "")
-        local p = door:GetPos()
+        local p = door.Sliding_BasePos or door:GetPos()
         local x, y, z = r1(p.x), r1(p.y), r1(p.z)
         for i, e in ipairs(ctrl.FFDLink_Doors or {}) do
-            if e.class == class and e.x == x and e.y == y and e.z == z then
+            if (e.class == class or (e.class == "prop_physics" and class == "prop_dynamic") or (e.class == "prop_dynamic" and class == "prop_physics"))
+                and math.abs((tonumber(e.x) or 0) - x) <= 1.0
+                and math.abs((tonumber(e.y) or 0) - y) <= 1.0
+                and math.abs((tonumber(e.z) or 0) - z) <= 1.0 then
+                return i
+            end
+            if resolveEntry(e) == door then
                 return i
             end
         end
@@ -174,7 +203,7 @@ if SERVER then
         if GRM.FFDLink.FindIndex(ctrl, door) then return false end
         local class = tostring(door:GetClass() or "")
         if class == "" then return false end
-        local p = door:GetPos()
+        local p = door.Sliding_BasePos or door:GetPos()
         ctrl.FFDLink_Doors[#ctrl.FFDLink_Doors + 1] = { class = class, x = r1(p.x), y = r1(p.y), z = r1(p.z) }
         GRM.FFDLink.RefreshNW(ctrl)
         dupeStore(ctrl)
@@ -224,8 +253,6 @@ if SERVER then
     end
 
     -- живые двери контроллера (без дублей энтити).
-    -- prune=true вычищает записи, уже не разрешающиеся в энтити
-    -- (дверь удалили/перенесли): список сам себя лечит.
     function GRM.FFDLink.Resolve(ctrl, prune)
         local doors, keep, changed = {}, {}, false
         for _, e in ipairs(ctrl.FFDLink_Doors or {}) do
@@ -248,13 +275,11 @@ if SERVER then
     end
 
     -- открыть/закрыть привязанные двери; возврат: сколько сработало, список.
-    -- Вызывающий код БЕРЁТ список и сам гасит те же двери по таймеру —
-    -- как кейпад до этого гасил захваченный nearProps.
+    -- prune = false: обычная активация никогда не затирает память о дверях!
     function GRM.FFDLink.Fade(ctrl, activate)
-        local doors = GRM.FFDLink.Resolve(ctrl, true)
+        local doors = GRM.FFDLink.Resolve(ctrl, false)
         local n = 0
         for _, d in ipairs(doors) do
-            -- Находка 173: раздвижные двери (isSlidingDoor) тоже открываются
             if IsValid(d) and (d.isFadingDoor or d.isSlidingDoor) then
                 if activate and d.FadeActivate then
                     d:FadeActivate()
@@ -268,7 +293,205 @@ if SERVER then
         return n, doors
     end
 
-    print("[GRM FFD Link] v" .. GRM._ffdLinkVer .. ": ручные связи контроллер↔дверь готовы")
+    -- ============================================================
+    -- AUTORUN: ПЕРМ FFD И РАЗДВИЖНЫХ ДВЕРЕЙ + DUPLICATOR
+    -- ============================================================
+    local function applyFadeState(ent, active)
+        if not IsValid(ent) or not ent.isFadingDoor then return end
+        local reverse = ent.FFD_Reversed == true
+        local shouldFade = active
+        if reverse then shouldFade = not active end
+
+        if shouldFade then
+            ent:SetNotSolid(true)
+            ent:SetRenderMode(RENDERMODE_TRANSCOLOR)
+            ent:SetColor(Color(255, 255, 255, 40))
+            ent:DrawShadow(false)
+            local phys = ent:GetPhysicsObject()
+            if IsValid(phys) then phys:EnableCollisions(false) end
+            ent.FFD_IsFaded = true
+            ent:SetNWBool("FFD_Faded", true)
+        else
+            ent:SetNotSolid(false)
+            ent:SetRenderMode(RENDERMODE_NORMAL)
+            ent:SetColor(Color(255, 255, 255, 255))
+            ent:DrawShadow(true)
+            local phys = ent:GetPhysicsObject()
+            if IsValid(phys) then phys:EnableCollisions(true) end
+            ent.FFD_IsFaded = false
+            ent:SetNWBool("FFD_Faded", false)
+        end
+    end
+
+    local function fadeOn(ply, ent)
+        if not IsValid(ent) or not ent.isFadingDoor then return end
+        if ent.FFD_IsActive then return end
+        ent.FFD_IsActive = true
+        applyFadeState(ent, true)
+        ent:EmitSound("doors/door1_move.wav", 65, 110, 0.6)
+        if ent.FFD_AutoClose and tonumber(ent.FFD_CloseTime) and ent.FFD_CloseTime > 0 then
+            timer.Create("FFD_AutoClose_" .. ent:EntIndex(), ent.FFD_CloseTime, 1, function()
+                if IsValid(ent) and ent.isFadingDoor and ent.FFD_IsActive then
+                    fadeOff(ply, ent)
+                end
+            end)
+        end
+    end
+
+    local function fadeOff(ply, ent)
+        if not IsValid(ent) or not ent.isFadingDoor then return end
+        if not ent.FFD_IsActive then return end
+        timer.Remove("FFD_AutoClose_" .. ent:EntIndex())
+        ent.FFD_IsActive = false
+        applyFadeState(ent, false)
+        ent:EmitSound("doors/door_latch1.wav", 65, 100, 0.6)
+    end
+
+    local function fadeToggle(ply, ent)
+        if not IsValid(ent) or not ent.isFadingDoor then return end
+        if ent.FFD_IsActive then fadeOff(ply, ent) else fadeOn(ply, ent) end
+    end
+
+    if numpad and numpad.Register then
+        numpad.Register("FFD_Fade_On", function(ply, ent)
+            if not IsValid(ent) or not ent.isFadingDoor then return end
+            if ent.FFD_Toggle then fadeToggle(ply, ent) else fadeOn(ply, ent) end
+        end)
+        numpad.Register("FFD_Fade_Off", function(ply, ent)
+            if not IsValid(ent) or not ent.isFadingDoor then return end
+            if not ent.FFD_Toggle then fadeOff(ply, ent) end
+        end)
+    end
+
+    function GRM.FFD_MakeFadingDoor(ply, ent, key, reversed, toggle, autoclose, closeTime, skipDupe)
+        if not IsValid(ent) then return false end
+        if ent.isFadingDoor and ent.FFD_NumDown and numpad and numpad.Remove then
+            numpad.Remove(ent.FFD_NumDown)
+            numpad.Remove(ent.FFD_NumUp)
+        end
+
+        ent.isFadingDoor = true
+        ent.FFD_Reversed = reversed == true or reversed == 1
+        ent.FFD_Toggle = toggle == true or toggle == 1
+        ent.FFD_AutoClose = autoclose == true or autoclose == 1
+        ent.FFD_CloseTime = math.max(0.5, tonumber(closeTime) or 5)
+        ent.FFD_Key = key
+        ent.FFD_OwnerSID64 = IsValid(ply) and tostring((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64() or "") or tostring(ent.FFD_OwnerSID64 or "")
+        ent:SetNWBool("FFD_IsDoor", true)
+
+        if IsValid(ply) and numpad and numpad.OnDown then
+            ent.FFD_NumDown = numpad.OnDown(ply, key, "FFD_Fade_On", ent)
+            ent.FFD_NumUp = numpad.OnUp(ply, key, "FFD_Fade_Off", ent)
+        end
+
+        ent.FadeActivate = function() fadeOn(ply, ent) end
+        ent.FadeDeactivate = function() fadeOff(ply, ent) end
+        ent.FadeToggle = function() fadeToggle(ply, ent) end
+
+        ent.FFD_IsActive = false
+        applyFadeState(ent, false)
+
+        if not skipDupe and duplicator and duplicator.StoreEntityModifier then
+            duplicator.StoreEntityModifier(ent, "FFD_FadingDoor", {
+                key = key,
+                reversed = reversed,
+                toggle = toggle,
+                autoclose = autoclose,
+                time = closeTime,
+            })
+        end
+
+        return true
+    end
+
+    if duplicator and duplicator.RegisterEntityModifier then
+        duplicator.RegisterEntityModifier("FFD_FadingDoor", function(ply, ent, data)
+            if istable(data) then
+                GRM.FFD_MakeFadingDoor(ply, ent, data.key, data.reversed, data.toggle, data.autoclose, data.time, true)
+            end
+        end)
+    end
+
+    -- Регистрация PermData Extract/Apply для prop_physics и prop_dynamic в autorun
+    local function propPermExtract(ent)
+        if not IsValid(ent) then return nil end
+        if ent.isSlidingDoor and ent.Sliding then
+            local s = ent.Sliding
+            return {
+                sliding = {
+                    direction = tostring(s.direction or "left"),
+                    distance = tonumber(s.distance) or 100,
+                    speed = tonumber(s.speed) or 120,
+                    smooth = tonumber(s.smooth) or 1,
+                    toggle = s.toggle == true,
+                    autoclose = s.autoclose == true,
+                    closeTime = tonumber(s.closeTime) or 5,
+                    owner = tostring(s.owner or ""),
+                    soundOpen = tostring(s.soundOpen or ""),
+                    soundClose = tostring(s.soundClose or ""),
+                    soundMove = tostring(s.soundMove or ""),
+                },
+            }
+        end
+        if ent.isFadingDoor then
+            return {
+                ffd = {
+                    key = tonumber(ent.FFD_Key) or 1,
+                    reversed = ent.FFD_Reversed == true,
+                    toggle = ent.FFD_Toggle == true,
+                    autoclose = ent.FFD_AutoClose == true,
+                    time = tonumber(ent.FFD_CloseTime) or 5,
+                    owner = tostring(ent.FFD_OwnerSID64 or ""),
+                },
+            }
+        end
+        return nil
+    end
+
+    local function propPermApply(ent, t)
+        if not (IsValid(ent) and istable(t)) then return end
+        if istable(t.sliding) then
+            local d = t.sliding
+            local ownerPly = nil
+            local want = tostring(d.owner or "")
+            if want ~= "" then
+                for _, p in ipairs(player.GetAll()) do
+                    if IsValid(p) and tostring((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64() or "") == want then ownerPly = p break end
+                end
+            end
+            if GRM.SlidingDoor and GRM.SlidingDoor.Apply then
+                GRM.SlidingDoor.Apply(ownerPly, ent, {
+                    direction = d.direction, distance = d.distance,
+                    speed = d.speed, smooth = d.smooth,
+                    toggle = d.toggle, autoclose = d.autoclose, closeTime = d.closeTime,
+                    soundOpen = d.soundOpen, soundClose = d.soundClose, soundMove = d.soundMove,
+                })
+            end
+            return
+        end
+        if istable(t.ffd) then
+            local d = t.ffd
+            local ownerPly = nil
+            local want = tostring(d.owner or "")
+            if want ~= "" then
+                for _, p in ipairs(player.GetAll()) do
+                    if IsValid(p) and tostring((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64() or "") == want then ownerPly = p break end
+                end
+            end
+            GRM.FFD_MakeFadingDoor(ownerPly, ent, tonumber(d.key) or 1, d.reversed, d.toggle, d.autoclose, tonumber(d.time) or 5, true)
+            ent.FFD_OwnerSID64 = want
+        end
+    end
+
+    GRM.PermData = GRM.PermData or { Extract = {}, Apply = {} }
+    GRM.PermData.Extract = GRM.PermData.Extract or {}
+    GRM.PermData.Apply = GRM.PermData.Apply or {}
+    GRM.PermData.Extract["prop_physics"] = propPermExtract
+    GRM.PermData.Apply["prop_physics"]   = propPermApply
+    GRM.PermData.Extract["prop_dynamic"] = propPermExtract
+    GRM.PermData.Apply["prop_dynamic"]   = propPermApply
+
+    print("[GRM FFD Link] v" .. GRM._ffdLinkVer .. ": ручные связи и персистентность дверей готовы")
 end
 
 -- ============================================================
@@ -292,3 +515,4 @@ if CLIENT then
         return set
     end
 end
+

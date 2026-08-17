@@ -211,34 +211,40 @@ if SERVER then
         if JB.Persist[k] then JB.Persist[k] = nil savePersist() end
     end
 
-    hook.Add("InitPostEntity", "GRM_Jobs_Restore", function()
-        timer.Simple(3, function()
-            JB._restoring = true
-            local restored = 0
-            for k, rec in pairs(JB.Persist or {}) do
-                if PERSIST_CLASSES[rec.class] and istable(rec.pos) then
-                    local pos = Vector(tonumber(rec.pos.x) or 0, tonumber(rec.pos.y) or 0, tonumber(rec.pos.z) or 0)
-                    local dup = false
-                    for _, e in ipairs(ents.FindByClass(rec.class)) do
-                        if IsValid(e) and e:GetPos():DistToSqr(pos) < 64 then dup = true end
-                    end
-                    if not dup then
-                        local ent = ents.Create(rec.class)
-                        if IsValid(ent) then
-                            ent:SetPos(pos)
-                            local a = istable(rec.ang) and rec.ang or {}
-                            ent:SetAngles(Angle(tonumber(a.p) or 0, tonumber(a.y) or 0, tonumber(a.r) or 0))
-                            ent:Spawn() ent:Activate()
-                            local phys = ent:GetPhysicsObject()
-                            if IsValid(phys) then phys:EnableMotion(false) end
-                            restored = restored + 1
-                        end
+    function JB.RestoreMap()
+        JB._restoring = true
+        local restored = 0
+        for k, rec in pairs(JB.Persist or {}) do
+            if PERSIST_CLASSES[rec.class] and istable(rec.pos) then
+                local pos = Vector(tonumber(rec.pos.x) or 0, tonumber(rec.pos.y) or 0, tonumber(rec.pos.z) or 0)
+                local dup = false
+                for _, e in ipairs(ents.FindByClass(rec.class)) do
+                    if IsValid(e) and e:GetPos():DistToSqr(pos) < 64 then dup = true end
+                end
+                if not dup then
+                    local ent = ents.Create(rec.class)
+                    if IsValid(ent) then
+                        ent:SetPos(pos)
+                        local a = istable(rec.ang) and rec.ang or {}
+                        ent:SetAngles(Angle(tonumber(a.p) or 0, tonumber(a.y) or 0, tonumber(a.r) or 0))
+                        ent:Spawn() ent:Activate()
+                        local phys = ent:GetPhysicsObject()
+                        if IsValid(phys) then phys:EnableMotion(false) end
+                        restored = restored + 1
                     end
                 end
             end
-            JB._restoring = false
-            print("[GRM Jobs] Персистент: записей " .. tostring(table.Count(JB.Persist or {})) .. ", восстановлено " .. tostring(restored))
-        end)
+        end
+        JB._restoring = false
+        print("[GRM Jobs] Персистент: записей " .. tostring(table.Count(JB.Persist or {})) .. ", восстановлено " .. tostring(restored))
+    end
+
+    hook.Add("InitPostEntity", "GRM_Jobs_Restore", function()
+        timer.Simple(3, function() JB.RestoreMap() end)
+    end)
+
+    hook.Add("PostCleanupMap", "GRM_Jobs_Cleanup", function()
+        timer.Simple(0.5, function() JB.RestoreMap() end)
     end)
 
     -- помощники ---------------------------------------------------------

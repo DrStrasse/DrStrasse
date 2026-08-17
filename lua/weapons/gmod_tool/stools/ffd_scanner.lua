@@ -55,6 +55,16 @@ if SERVER then
             phys:EnableMotion(false) -- автозаморозка на стене
         end
 
+        if duplicator and duplicator.StoreEntityModifier then
+            duplicator.StoreEntityModifier(ent, "GRM_ScannerData", {
+                faction = tostring(faction or ""),
+                granted = tonumber(ent.KeyGranted) or 1,
+                denied  = tonumber(ent.KeyDenied) or 2,
+                hold    = tonumber(ent.HoldTime) or 4,
+                owner   = IsValid(ply) and tostring((GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64() or "") or "",
+            })
+        end
+
         undo.Create("FFD Scanner")
             undo.AddEntity(ent)
             undo.SetPlayer(ply)
@@ -89,8 +99,10 @@ function TOOL:RightClick(trace)
 
     if SERVER then
         local ply = self:GetOwner()
-        ply:ConCommand("ffd_scanner_faction " .. tostring(ent:GetFaction()))
-        ply:ConCommand("ffd_scanner_hold_time " .. tostring(ent.HoldTime or 4))
+        ply:ConCommand(string.format('ffd_scanner_faction %q', tostring(ent:GetFaction() or "")))
+        ply:ConCommand(string.format('ffd_scanner_hold_time %s', tostring(ent.HoldTime or 4)))
+        ply:ConCommand(string.format('ffd_scanner_key_granted %s', tostring(ent.KeyGranted or 1)))
+        ply:ConCommand(string.format('ffd_scanner_key_denied %s', tostring(ent.KeyDenied or 2)))
 
         if GRM and GRM.Notify then
             GRM.Notify(ply, "Настройки Сканера скопированы!", 100, 220, 255)

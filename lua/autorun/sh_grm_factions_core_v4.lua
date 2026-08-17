@@ -1,7 +1,7 @@
---[[ GRM Faction Core v4: stable structure metadata, personnel records and domain events. ]]
+--[[ GRM Faction Core v4.1: stable structure metadata, department & role display names, personnel records and domain events. ]]
 if SERVER then AddCSLuaFile()end
 GRM=GRM or{};GRM.FactionCore=GRM.FactionCore or{};local C=GRM.FactionCore
-C.Version="4.0.0";C.Revision=C.Revision or 0;C.MaxHistory=200;C.MaxNotes=50
+C.Version="4.1.0";C.Revision=C.Revision or 0;C.MaxHistory=200;C.MaxNotes=50
 local function charKey(value)if IsValid(value)and value.IsPlayer and value:IsPlayer()then return GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(value)or(value:SteamID64()..":char1")end;return tostring(value or"")end
 local function actorName(actor)if IsValid(actor)then local n=actor:GetNWString("GRM_RPName","");return n~=""and n or actor:Nick()end;return tostring(actor or"Система")end
 local function normalizePersonnel(rec,key,source)
@@ -18,8 +18,26 @@ function C.Touch(factionName,eventType,payload)
  local f=faction(factionName);if not f then return end;C.Revision=C.Revision+1;f.CoreRevision=(tonumber(f.CoreRevision)or 0)+1;hook.Run("GRM_FactionCoreChanged",factionName,eventType,payload or{},f.CoreRevision,C.Revision)
 end
 function C.EnsureFaction(factionName,f)
- f=istable(f)and f or faction(factionName);if not f then return false end;local changed=false;f.DepartmentDisplayNames=istable(f.DepartmentDisplayNames)and f.DepartmentDisplayNames or{};for _,key in ipairs(f.Departments or{})do if tostring(f.DepartmentDisplayNames[key]or"")==""then f.DepartmentDisplayNames[key]=key;changed=true end end;f.PersonnelArchive=istable(f.PersonnelArchive)and f.PersonnelArchive or{}
+ f=istable(f)and f or faction(factionName);if not f then return false end;local changed=false
+ f.DepartmentDisplayNames=istable(f.DepartmentDisplayNames)and f.DepartmentDisplayNames or{}
+ for _,key in ipairs(f.Departments or{})do if tostring(f.DepartmentDisplayNames[key]or"")==""then f.DepartmentDisplayNames[key]=key;changed=true end end
+ f.RoleDisplayNames=istable(f.RoleDisplayNames)and f.RoleDisplayNames or{}
+ for _,key in ipairs(f.Roles or{})do if tostring(f.RoleDisplayNames[key]or"")==""then f.RoleDisplayNames[key]=key;changed=true end end
+ f.PersonnelArchive=istable(f.PersonnelArchive)and f.PersonnelArchive or{}
  for key,rec in pairs(f.Members or{})do if istable(rec)then local _,c=normalizePersonnel(rec,key,"migration");changed=changed or c end end;return changed
+end
+function C.RoleDisplayName(factionName,roleKey)
+ local f=faction(factionName);if not f then return tostring(roleKey or"Участник")end
+ if GRM.Factions and GRM.Factions.RoleDisplayName then return GRM.Factions.RoleDisplayName(f,roleKey)end
+ local names=f.RoleDisplayNames;local key=tostring(roleKey or"")
+ return (names and names[key] and names[key]~="") and names[key] or (key~="" and key or "Участник")
+end
+function C.ResolveRoleKey(factionName,roleInput)
+ local f=faction(factionName);if not f then return tostring(roleInput or"")end
+ if GRM.Factions and GRM.Factions.ResolveRoleKey then return GRM.Factions.ResolveRoleKey(f,roleInput)end
+ local input=tostring(roleInput or"");if f.RoleDisplayNames and f.RoleDisplayNames[input] then return input end
+ if istable(f.RoleDisplayNames) then for k,v in pairs(f.RoleDisplayNames) do if tostring(v)==input then return k end end end
+ return input
 end
 function C.GetPersonnel(factionName,key,includeArchive)local f=faction(factionName);if not f then return nil end;local rec=f.Members and f.Members[key];if rec then normalizePersonnel(rec,key);return rec.Personnel,rec,false end;if includeArchive then local archived=f.PersonnelArchive and f.PersonnelArchive[key];if archived then return archived.Personnel,archived,true end end end
 function C.ListPersonnel(factionName,includeArchive)local f=faction(factionName);local out={};if not f then return out end;for key,rec in pairs(f.Members or{})do if istable(rec)then normalizePersonnel(rec,key);out[#out+1]={key=key,role=rec.Role,department=rec.Department,personnel=rec.Personnel,archived=false}end end;if includeArchive then for key,rec in pairs(f.PersonnelArchive or{})do out[#out+1]={key=key,role=rec.Role,department=rec.Department,personnel=rec.Personnel,archived=true}end end;return out end
@@ -32,6 +50,6 @@ if SERVER then
  hook.Add("GRM_FactionMemberDepartmentChanged","GRM_FactionCore_PersonnelDepartment",function(factionName,key,rec,oldDept,newDept,actor)pushHistory(rec,"department_changed",actor,"Переведён в другой отдел",{from=oldDept,to=newDept});C.Touch(factionName,"member.department",{characterKey=key,from=oldDept,to=newDept})end)
  hook.Add("GRM_FactionDutyChanged","GRM_FactionCore_PersonnelDuty",function(ply,onDuty,factionName)local key=charKey(ply);local f=faction(factionName);local rec=f and f.Members and f.Members[key];if not rec then return end;pushHistory(rec,onDuty and"duty_started"or"duty_ended",ply,onDuty and"Вышел на службу"or"Завершил службу",{});C.Touch(factionName,"member.duty",{characterKey=key,onDuty=onDuty});if FactionsAPI and FactionsAPI.Save then FactionsAPI.Save()end end)
  local function migrate()local changed=false;for name,f in pairs(Factions or{})do changed=C.EnsureFaction(name,f)or changed end;if changed and FactionsAPI and FactionsAPI.Save then FactionsAPI.Save()end end;timer.Simple(1,migrate);hook.Add("InitPostEntity","GRM_FactionCore_Migrate",function()timer.Simple(1,migrate)end)
- timer.Simple(1,function()if not FactionsAPI then return end;FactionsAPI.GetPersonnel=C.GetPersonnel;FactionsAPI.ListPersonnel=C.ListPersonnel;FactionsAPI.AddPersonnelRecord=C.AddRecord;FactionsAPI.SetProbation=C.SetProbation end)
+ timer.Simple(1,function()if not FactionsAPI then return end;FactionsAPI.GetPersonnel=C.GetPersonnel;FactionsAPI.ListPersonnel=C.ListPersonnel;FactionsAPI.AddPersonnelRecord=C.AddRecord;FactionsAPI.SetProbation=C.SetProbation;FactionsAPI.GetRoleDisplayName=C.RoleDisplayName;FactionsAPI.ResolveRoleKey=C.ResolveRoleKey end)
 end
 print("[GRM Faction Core] v"..C.Version.." loaded")

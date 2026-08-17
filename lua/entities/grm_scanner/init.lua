@@ -64,6 +64,14 @@ GRM.PermData.Apply = GRM.PermData.Apply or {}
 GRM.PermData.Extract["grm_scanner"] = scannerPermExtract
 GRM.PermData.Apply["grm_scanner"] = scannerPermApply
 
+if duplicator and duplicator.RegisterEntityModifier then
+    duplicator.RegisterEntityModifier("GRM_ScannerData", function(ply, ent, data)
+        if IsValid(ent) and istable(data) then
+            scannerPermApply(ent, data)
+        end
+    end)
+end
+
 function ENT:Initialize()
     -- модель — та же «стенная панель с мордой в +X», геометрия доказана
     local mdl = "models/props_lab/keypad.mdl"
