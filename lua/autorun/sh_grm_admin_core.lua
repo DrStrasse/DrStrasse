@@ -518,10 +518,26 @@ if SERVER then
         return rows
     end
 
+    --[[ Срез по игрокам нужен только тем, у кого открыто меню. Раньше он
+         рассылался всем (Broadcast) после каждого действия: лишний трафик и
+         лишние пересборки интерфейса у тех, кто меню даже не открывал. ]]
     function AD.PushPlayers(ply)
+        local rows = AD.PlayerRows()
+        if IsValid(ply) then
+            net.Start(NET_PLAYERS)
+                net.WriteTable(rows)
+            net.Send(ply)
+            return
+        end
+
+        local targets = {}
+        for watcher in pairs(AD.Watchers or {}) do
+            if IsValid(watcher) then targets[#targets + 1] = watcher end
+        end
+        if #targets == 0 then return end
         net.Start(NET_PLAYERS)
-            net.WriteTable(AD.PlayerRows())
-        if IsValid(ply) then net.Send(ply) else net.Broadcast() end
+            net.WriteTable(rows)
+        net.Send(targets)
     end
 
     function AD.Result(ply, ok, message)
@@ -530,9 +546,9 @@ if SERVER then
             net.WriteBool(ok == true)
             net.WriteString(tostring(message or ""))
         net.Send(ply)
-        if GRM.Notify then
-            GRM.Notify(ply, tostring(message or ""), ok and 100 or 255, ok and 220 or 150, ok and 130 or 90)
-        end
+        -- Один результат — одно уведомление: раньше рядом с net-сообщением
+        -- дублировался GRM.Notify, и админ видел каждую строку дважды
+        -- («Строительный режим включён» два раза подряд).
     end
 
     -- Правка групп (только с правом acl.groups).
@@ -618,7 +634,7 @@ if SERVER then
         end
         -- Пока меню открыто, игрок получает живой срез по онлайну.
         AD.Watchers = AD.Watchers or {}
-        AD.Watchers[ply] = CurTime() + 300
+        AD.Watchers[ply] = CurTime() + 180
         AD.SyncTo(ply)
         AD.PushPlayers(ply)
     end)
@@ -680,8 +696,14 @@ if SERVER then
     AD.Watchers = AD.Watchers or {}
     timer.Create("GRM_Admin_PlayerPush", 3, 0, function()
         local any = false
-        for ply in pairs(AD.Watchers) do
-            if IsValid(ply) then any = true else AD.Watchers[ply] = nil end
+        for ply, expires in pairs(AD.Watchers) do
+            -- Меню закрыли или игрок вышел: подписка истекает сама, чтобы не
+            -- слать обновления в пустоту.
+            if not IsValid(ply) or (isnumber(expires) and expires < CurTime()) then
+                AD.Watchers[ply] = nil
+            else
+                any = true
+            end
         end
         if not any then return end
         local rows = AD.PlayerRows()

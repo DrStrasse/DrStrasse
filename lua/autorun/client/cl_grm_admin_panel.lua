@@ -119,6 +119,7 @@ local function buildPlayers(pnl)
     local current = nil
 
     local function drawActions()
+        if not IsValid(side) then return end
         side:Clear()
         if not current then
             local hint = vgui.Create("DPanel", side)
@@ -277,6 +278,11 @@ local function buildPlayers(pnl)
     end
 
     local function rebuild()
+        -- Панель могли уже пересобрать (переключение вкладки, повторный синк):
+        -- сам pnl при этом остаётся валидным, а его дети — нет. Без этой
+        -- проверки хук обновления игроков дёргал Clear() на удалённом списке
+        -- и сыпал «Tried to use a NULL Panel!».
+        if not (IsValid(list) and IsValid(search)) then return end
         list:Clear()
         local q = string.lower(string.Trim(search:GetValue() or ""))
         for _, row in ipairs(AD.Data and AD.Data.players or {}) do
@@ -311,16 +317,23 @@ local function buildPlayers(pnl)
     rebuild()
     drawActions()
 
-    hook.Add("GRM_AdminPlayersUpdated", "GRM_AdminPanel_Players", function()
-        if not IsValid(pnl) then hook.Remove("GRM_AdminPlayersUpdated", "GRM_AdminPanel_Players") return end
-        -- Обновляем только данные выбранного, чтобы не сбивать работу.
+    -- Хук живёт ровно столько, сколько живёт СПИСОК этой вкладки.
+    local hookID = "GRM_AdminPanel_Players"
+    hook.Add("GRM_AdminPlayersUpdated", hookID, function()
+        if not (IsValid(list) and IsValid(search)) then
+            hook.Remove("GRM_AdminPlayersUpdated", hookID)
+            return
+        end
+        -- Обновляем данные выбранного игрока, не сбивая работу администратора.
         if current then
             for _, row in ipairs(AD.Data.players or {}) do
                 if row.sid == current.sid then current = row break end
             end
+            if IsValid(side) then drawActions() end
         end
         rebuild()
     end)
+    list.OnRemove = function() hook.Remove("GRM_AdminPlayersUpdated", hookID) end
 end
 
 -----------------------------------------------------------------------
@@ -713,6 +726,10 @@ function AD.OpenPanel()
     end
     close.DoClick = function() frame:Close() end
     frame.PerformLayout = function(self, w) if IsValid(close) then close:SetPos(w - 44, 8) end end
+    frame.OnRemove = function()
+        hook.Remove("GRM_AdminPlayersUpdated", "GRM_AdminPanel_Players")
+        selected = nil
+    end
 
     local body = vgui.Create("DPanel", frame)
     body:Dock(FILL) body:DockMargin(0, 46, 0, 0) body:SetPaintBackground(false)
@@ -742,6 +759,9 @@ function AD.OpenPanel()
         end
         b.DoClick = function()
             selected = key
+            -- Уходя с раздела, снимаем его подписки — иначе они продолжают
+            -- работать с уже удалёнными панелями.
+            hook.Remove("GRM_AdminPlayersUpdated", "GRM_AdminPanel_Players")
             content:Clear()
             builder(content)
         end
@@ -764,11 +784,13 @@ function AD.OpenPanel()
 end
 
 hook.Add("GRM_AdminDataUpdated", "GRM_AdminPanel_Refresh", function()
-    if IsValid(frame) and selected == "players" and IsValid(content) then
-        -- Справочники обновились: перерисуем текущий раздел.
-        content:Clear()
-        buildPlayers(content)
-    end
+    -- Пересобираем раздел «Игроки» только когда окно реально открыто и
+    -- показывает именно его: иначе получаем работу с удалёнными панелями.
+    if not (IsValid(frame) and IsValid(content)) then return end
+    if selected ~= "players" then return end
+    hook.Remove("GRM_AdminPlayersUpdated", "GRM_AdminPanel_Players")
+    content:Clear()
+    buildPlayers(content)
 end)
 
 concommand.Add("grm_admin_panel", function() AD.OpenPanel() end)

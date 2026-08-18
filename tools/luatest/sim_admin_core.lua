@@ -162,5 +162,22 @@ if AD then
     ok(AD.GroupOf(mod) == "moderator", "истёкшее назначение не действует")
 end
 
+print("\n=== 7. УСТОЙЧИВОСТЬ ИНТЕРФЕЙСА (фикс NULL Panel) ===")
+ok(panel:find("if not (IsValid(list) and IsValid(search)) then return end", 1, true) ~= nil,
+    "пересборка списка проверяет, живы ли его панели")
+ok(panel:find("list.OnRemove = function() hook.Remove(\"GRM_AdminPlayersUpdated\", hookID) end", 1, true) ~= nil,
+    "подписка на обновление игроков снимается вместе со списком")
+ok(panel:find("frame.OnRemove = function()", 1, true) ~= nil, "закрытие окна снимает подписки")
+ok(panel:find('hook.Remove("GRM_AdminPlayersUpdated", "GRM_AdminPanel_Players")', 1, true) ~= nil,
+    "переключение раздела тоже снимает подписку прошлого")
+ok(panel:find("if not IsValid(side) then return end", 1, true) ~= nil,
+    "панель действий не рисуется в удалённый контейнер")
+ok(core:find("net.Send(targets)", 1, true) ~= nil and core:find("net.Broadcast()", 1, true) == nil
+    or core:find("for watcher in pairs(AD.Watchers or {})", 1, true) ~= nil,
+    "срез по игрокам уходит только тем, у кого открыто меню")
+ok(core:find("Один результат — одно уведомление", 1, true) ~= nil,
+    "результат действия больше не дублируется двумя уведомлениями")
+ok(core:find("expires < CurTime()", 1, true) ~= nil, "подписка на живой список истекает сама")
+
 print(("\nADMIN CORE: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)
