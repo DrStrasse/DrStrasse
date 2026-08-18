@@ -8,7 +8,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.FactionDuty = GRM.FactionDuty or {}
 local FD = GRM.FactionDuty
-FD.Version = "1.1.0"
+FD.Version = "1.3.0"
 
 local NET_OPEN = "GRM_FactionDuty_Open"
 local NET_SET = "GRM_FactionDuty_Set"
@@ -49,6 +49,136 @@ if SERVER then
     util.AddNetworkString(NET_TOOL_DATA)
 
     local DATA_FILE = "grm_faction_duty.json"
+    local STATION_DIR = "grm_duty"
+
+    --[[ ХРАНИЛИЩЕ СТАНЦИЙ (заказ владельца 18.08).
+         Раньше настройки диспетчера жили только в NW-строках и надеялись на
+         перм-запись: если её не было, «Сохранить» тихо ничего не сохраняло
+         (GRM.Perm.Update отвечает «объект не закреплён»), а после рестарта
+         фракция терялась и модель сбрасывалась на стандартного гражданина.
+         Теперь у станций свой файл по карте — как у дилеров транспорта. ]]
+    local function stationFile()
+        if not file.IsDir(STATION_DIR, "DATA") then file.CreateDir(STATION_DIR) end
+        return STATION_DIR .. "/stations_" .. string.lower(game.GetMap() or "unknown") .. ".json"
+    end
+
+    local function readStations()
+        local raw = file.Read(stationFile(), "DATA")
+        if not raw or raw == "" then return {} end
+        local ok, t = pcall(util.JSONToTable, raw, false, true)
+        if not ok or not istable(t) then return {} end
+        return istable(t.stations) and t.stations or {}
+    end
+
+    local function writeStations(rows)
+        local ok, raw = pcall(util.TableToJSON, { version = 1, map = game.GetMap(), stations = rows }, true)
+        if not ok or not isstring(raw) then return false end
+        file.Write(stationFile(), raw)
+        return true
+    end
+
+    local function sameSpot(a, b)
+        if not (istable(a) and isvector(b)) then return false end
+        local dx, dy, dz = (tonumber(a.x) or 0) - b.x, (tonumber(a.y) or 0) - b.y, (tonumber(a.z) or 0) - b.z
+        return (dx * dx + dy * dy + dz * dz) <= (64 * 64)
+    end
+
+    -- Сохранить конфигурацию конкретного диспетчера.
+    function FD.SaveStation(ent)
+        if not IsValid(ent) or ent:GetClass() ~= "grm_duty_npc" then return false end
+        local cfg = ent.StationConfig and ent:StationConfig() or {}
+        local pos, ang = ent:GetPos(), ent:GetAngles()
+        local rows = readStations()
+
+        local updated = false
+        for _, row in ipairs(rows) do
+            if sameSpot(row.pos, pos) then
+                row.faction = cfg.faction
+                row.title = cfg.title
+                row.model = cfg.model
+                row.ang = { p = ang.p, y = ang.y, r = ang.r }
+                updated = true
+                break
+            end
+        end
+        if not updated then
+            rows[#rows + 1] = {
+                pos = { x = pos.x, y = pos.y, z = pos.z },
+                ang = { p = ang.p, y = ang.y, r = ang.r },
+                faction = cfg.faction, title = cfg.title, model = cfg.model,
+            }
+        end
+        while #rows > 128 do table.remove(rows, 1) end
+        return writeStations(rows), updated and "обновлено" or "создано"
+    end
+
+    -- Убрать станцию из файла (диспетчера снесли тулом).
+    function FD.RemoveStation(ent)
+        if not IsValid(ent) then return false end
+        local pos = ent:GetPos()
+        local rows, removed = readStations(), false
+        for i = #rows, 1, -1 do
+            if sameSpot(rows[i].pos, pos) then
+                table.remove(rows, i)
+                removed = true
+            end
+        end
+        if removed then writeStations(rows) end
+        return removed
+    end
+
+    -- Найти конфиг для уже стоящего диспетчера и применить.
+    function FD.RestoreStation(ent)
+        if not IsValid(ent) or ent:GetClass() ~= "grm_duty_npc" then return false end
+        local pos = ent:GetPos()
+        for _, row in ipairs(readStations()) do
+            if sameSpot(row.pos, pos) then
+                if ent.ApplyStationConfig then ent:ApplyStationConfig(row) end
+                return true
+            end
+        end
+        return false
+    end
+
+    -- Поднять все станции карты: применить конфиг к найденным NPC и
+    -- восстановить пропавшие (например, если перм-запись потерялась).
+    function FD.LoadStations()
+        local rows = readStations()
+        if #rows == 0 then return 0, 0 end
+
+        local existing = ents.FindByClass("grm_duty_npc")
+        local restored, created = 0, 0
+
+        for _, row in ipairs(rows) do
+            local target
+            for _, ent in ipairs(existing) do
+                if IsValid(ent) and sameSpot(row.pos, ent:GetPos()) then target = ent break end
+            end
+
+            if not IsValid(target) then
+                target = ents.Create("grm_duty_npc")
+                if IsValid(target) then
+                    -- Модель ставим ДО Spawn, иначе Initialize возьмёт дефолт
+                    -- и игрок увидит «стандартного ситизена».
+                    target.GRMDutyModel = tostring(row.model or "")
+                    target.GRMDutyFaction = tostring(row.faction or "")
+                    target.GRMDutyTitle = tostring(row.title or "")
+                    target:SetPos(Vector(row.pos.x, row.pos.y, row.pos.z))
+                    if istable(row.ang) then target:SetAngles(Angle(row.ang.p or 0, row.ang.y or 0, row.ang.r or 0)) end
+                    target:Spawn()
+                    target:Activate()
+                    created = created + 1
+                end
+            else
+                restored = restored + 1
+            end
+
+            if IsValid(target) and target.ApplyStationConfig then target:ApplyStationConfig(row) end
+        end
+
+        print(("[GRM Duty] станции: применено %d, восстановлено %d"):format(restored, created))
+        return restored, created
+    end
     local function sendToolFactions(ply)
         if not(IsValid(ply)and ply:IsSuperAdmin())then return end;local names={};for name in pairs(Factions or{})do names[#names+1]=tostring(name)end;table.sort(names,function(a,b)return string.lower(a)<string.lower(b)end)
         net.Start(NET_TOOL_DATA);net.WriteTable(names);net.Send(ply)
@@ -162,11 +292,19 @@ if SERVER then
         local factions = {}
         for name in pairs(Factions or {}) do factions[#factions + 1] = name end
         table.sort(factions, function(a,b) return string.lower(a) < string.lower(b) end)
+        -- Берём конфиг из полей энтити: NW-строки могут ещё не прийти или
+        -- быть пустыми после рестарта, из-за чего меню показывало «не выбрано»
+        -- и следующее сохранение затирало фракцию.
+        local cfg = ent.StationConfig and ent:StationConfig() or {
+            faction = ent:GetNWString("GRM_DutyFaction", ""),
+            title = ent:GetNWString("GRM_DutyTitle", "ПУНКТ ВЫХОДА НА СЛУЖБУ"),
+            model = ent:GetNWString("GRM_DutyModel", ent:GetModel()),
+        }
         net.Start(NET_ADMIN)
             net.WriteEntity(ent)
-            net.WriteString(ent:GetNWString("GRM_DutyFaction", ""))
-            net.WriteString(ent:GetNWString("GRM_DutyTitle", "ПУНКТ ВЫХОДА НА СЛУЖБУ"))
-            net.WriteString(ent:GetNWString("GRM_DutyModel", ent:GetModel()))
+            net.WriteString(tostring(cfg.faction or ""))
+            net.WriteString(tostring(cfg.title or "ПУНКТ ВЫХОДА НА СЛУЖБУ"))
+            net.WriteString(tostring(cfg.model or ent:GetModel() or ""))
             net.WriteTable(factions)
         net.Send(ply)
     end
@@ -184,11 +322,36 @@ if SERVER then
             return
         end
         if title == "" then title = "ПУНКТ ВЫХОДА НА СЛУЖБУ" end
-        ent:SetNWString("GRM_DutyFaction", fac)
-        ent:SetNWString("GRM_DutyTitle", title)
-        if util.IsValidModel(mdl) then ent:SetNWString("GRM_DutyModel",mdl);ent:SetModel(mdl);if ent.RefreshIdle then ent:RefreshIdle(true)end end
-        if GRM.Perm and GRM.Perm.Update then GRM.Perm.Update(ply, ent) end
-        if GRM.Notify then GRM.Notify(ply, "Диспетчер привязан к фракции «" .. fac .. "».", 80, 230, 150) end
+        -- Пишем конфиг в энтити (поля + NW), в файл станций и в перм-запись.
+        if ent.ApplyStationConfig then
+            ent:ApplyStationConfig({ faction = fac, title = title, model = mdl })
+        else
+            ent:SetNWString("GRM_DutyFaction", fac)
+            ent:SetNWString("GRM_DutyTitle", title)
+            if util.IsValidModel(mdl) then ent:SetNWString("GRM_DutyModel", mdl) ent:SetModel(mdl) end
+        end
+
+        local savedFile = FD.SaveStation(ent)
+
+        -- Upsert создаёт перм-запись, если её не было: раньше вызывался
+        -- GRM.Perm.Update, который на незакреплённом объекте молча отвечал
+        -- «объект не закреплён» — настройки не сохранялись вообще.
+        local permState = "нет"
+        if GRM.PermData and GRM.PermData.Upsert then
+            permState = tostring(GRM.PermData.Upsert(ent) or "нет")
+        elseif GRM.Perm and GRM.Perm.Update then
+            permState = tostring(select(2, GRM.Perm.Update(ply, ent)) or "нет")
+        end
+
+        if GRM.Audit and GRM.Audit.Write then
+            GRM.Audit.Write("duty", "station.save", ply,
+                { faction = fac, title = title, model = mdl }, { file = savedFile == true, perm = permState })
+        end
+
+        if GRM.Notify then
+            GRM.Notify(ply, ("Диспетчер привязан к «%s». Файл станций: %s, перм: %s.")
+                :format(fac, savedFile and "сохранён" or "ОШИБКА", permState), 80, 230, 150)
+        end
     end)
 
     net.Receive(NET_SET, function(_, ply)
@@ -221,13 +384,47 @@ if SERVER then
         GRM.PermData.Apply["grm_duty_npc"] = function(ent, data)
             local d = istable(data) and data.duty or nil
             if not istable(d) then return end
+            if ent.ApplyStationConfig then
+                ent:ApplyStationConfig({
+                    faction = tostring(d.faction or ""),
+                    title = tostring(d.title or "ПУНКТ ВЫХОДА НА СЛУЖБУ"),
+                    model = tostring(d.model or ""),
+                })
+                return
+            end
             ent:SetNWString("GRM_DutyFaction", tostring(d.faction or ""))
             ent:SetNWString("GRM_DutyTitle", tostring(d.title or "ПУНКТ ВЫХОДА НА СЛУЖБУ"))
-            if util.IsValidModel(tostring(d.model or""))then ent:SetNWString("GRM_DutyModel",d.model);ent:SetModel(d.model);if ent.RefreshIdle then ent:RefreshIdle(true)end end
+            if util.IsValidModel(tostring(d.model or "")) then
+                ent:SetNWString("GRM_DutyModel", d.model)
+                ent:SetModel(d.model)
+                if ent.RefreshIdle then ent:RefreshIdle(true) end
+            end
         end
     end
     timer.Simple(1, registerPerm)
     timer.Simple(4, registerPerm)
+
+    -- Станции поднимаем после перм-энтити: если перм отработал — просто
+    -- применяем конфиг, если нет — создаём диспетчера заново.
+    local function bootStations()
+        timer.Simple(3, function() FD.LoadStations() end)
+        timer.Simple(8, function() FD.LoadStations() end)
+    end
+    if GRM.Boot and GRM.Boot.OnMapStart then
+        GRM.Boot.OnMapStart("GRM_Duty_Stations", "normal", bootStations)
+    else
+        hook.Add("InitPostEntity", "GRM_Duty_Stations", bootStations)
+    end
+    hook.Add("PostCleanupMap", "GRM_Duty_StationsCleanup", function()
+        timer.Simple(1.5, function() FD.LoadStations() end)
+    end)
+
+    if concommand and concommand.Add then concommand.Add("grm_duty_stations", function(ply)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        local restored, created = FD.LoadStations()
+        local msg = ("[GRM Duty] станции перезагружены: применено %d, создано %d"):format(restored or 0, created or 0)
+        if IsValid(ply) then ply:PrintMessage(HUD_PRINTCONSOLE, msg) else print(msg) end
+    end) end
 
     local function statusChat(ply, text)
         local low = string.lower(string.Trim(text or ""))
@@ -250,8 +447,18 @@ else
         if IsValid(FD._adminFrame) then FD._adminFrame:Remove() end
         local f=vgui.Create("DFrame") FD._adminFrame=f; f:SetSize(620,390); f:Center(); f:MakePopup(); f:SetTitle("Настройка служебного диспетчера")
         local selectedFaction=current
-        local fac=vgui.Create("DComboBox",f); fac:SetPos(20,60); fac:SetSize(580,32); fac:SetValue(current ~= "" and current or "Выберите фракцию")
-        for _,name in ipairs(factions) do fac:AddChoice(name,name,name==current) end
+        local function displayName(name)
+            local public=GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(name) or name
+            return public~=name and (public.."  ["..name.."]") or name
+        end
+        local fac=vgui.Create("DComboBox",f); fac:SetPos(20,60); fac:SetSize(580,32)
+        fac:SetValue(current ~= "" and displayName(current) or "Выберите фракцию")
+        for _,name in ipairs(factions) do fac:AddChoice(displayName(name),name,name==current) end
+        -- Если сохранённой фракции больше нет в реестре — показываем это явно,
+        -- а не подменяем молча первой попавшейся.
+        if current ~= "" and not table.HasValue(factions, current) then
+            fac:AddChoice("⚠ "..current.." (организации больше нет)",current,true)
+        end
         fac.OnSelect=function(_,_,_,data) selectedFaction=tostring(data or "") end
         local title=vgui.Create("DTextEntry",f); title:SetPos(20,120); title:SetSize(580,30); title:SetValue(currentTitle); title:SetPlaceholderText("Надпись пункта")
         local mdl=vgui.Create("DTextEntry",f); mdl:SetPos(20,180); mdl:SetSize(580,30); mdl:SetValue(currentModel); mdl:SetPlaceholderText("Модель NPC")

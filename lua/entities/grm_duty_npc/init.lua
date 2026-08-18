@@ -20,9 +20,72 @@ function ENT:RefreshIdle(force)
     self:ResetSequence(seq);self:ResetSequenceInfo();self:SetCycle(0);self:SetPlaybackRate(1);self._grmIdleModel=model;self._grmIdleSequence=seq
     return true
 end
+ENT.DefaultModel = "models/Humans/Group01/Male_07.mdl"
+
+--[[ Применение конфигурации станции (фракция, надпись, модель).
+     Заказ владельца 18.08: раньше модель и фракция жили ТОЛЬКО в NW-строках,
+     которые при спавне ещё пусты — Initialize ставил дефолтного гражданина, а
+     если перм-записи не было, настройки терялись совсем. Теперь конфиг
+     хранится и в полях энтити, и в отдельном файле станций. ]]
+function ENT:ApplyStationConfig(cfg)
+    if not istable(cfg) then return false end
+
+    local faction = tostring(cfg.faction or "")
+    if faction ~= "" then
+        self.GRMDutyFaction = faction
+        self:SetNWString("GRM_DutyFaction", faction)
+    end
+
+    local title = tostring(cfg.title or "")
+    if title ~= "" then
+        self.GRMDutyTitle = title
+        self:SetNWString("GRM_DutyTitle", title)
+    end
+
+    local mdl = tostring(cfg.model or "")
+    if mdl ~= "" and util.IsValidModel(mdl) then
+        self.GRMDutyModel = mdl
+        self:SetNWString("GRM_DutyModel", mdl)
+        if string.lower(tostring(self:GetModel() or "")) ~= string.lower(mdl) then
+            self:SetModel(mdl)
+            self:SetCollisionBounds(Vector(-16, -16, 0), Vector(16, 16, 72))
+            self:RefreshIdle(true)
+        end
+    end
+    return true
+end
+
+function ENT:StationConfig()
+    return {
+        faction = tostring(self.GRMDutyFaction or self:GetNWString("GRM_DutyFaction", "")),
+        title = tostring(self.GRMDutyTitle or self:GetNWString("GRM_DutyTitle", "ПУНКТ ВЫХОДА НА СЛУЖБУ")),
+        model = tostring(self.GRMDutyModel or self:GetNWString("GRM_DutyModel", self:GetModel() or "")),
+    }
+end
+
 function ENT:Initialize()
-    local mdl=self:GetNWString("GRM_DutyModel","");if mdl==""or not util.IsValidModel(mdl)then mdl="models/Humans/Group01/Male_07.mdl"end
-    self:SetModel(mdl);self:SetMoveType(MOVETYPE_NONE);self:SetSolid(SOLID_BBOX);self:SetCollisionBounds(Vector(-16,-16,0),Vector(16,16,72));self:SetUseType(SIMPLE_USE);self:DrawShadow(false);self:DropToFloor();self:RefreshIdle(true)
+    -- Модель: сначала уже назначенная полем (перм/файл станций применили её
+    -- до спавна), затем NW, и только потом дефолт.
+    local mdl = tostring(self.GRMDutyModel or "")
+    if mdl == "" or not util.IsValidModel(mdl) then mdl = self:GetNWString("GRM_DutyModel", "") end
+    if mdl == "" or not util.IsValidModel(mdl) then mdl = self.DefaultModel end
+
+    self:SetModel(mdl)
+    self:SetMoveType(MOVETYPE_NONE)
+    self:SetSolid(SOLID_BBOX)
+    self:SetCollisionBounds(Vector(-16, -16, 0), Vector(16, 16, 72))
+    self:SetUseType(SIMPLE_USE)
+    self:DrawShadow(false)
+    self:DropToFloor()
+    self:RefreshIdle(true)
+
+    -- Конфиг мог быть загружен раньше энтити: применяем его следующим тиком.
+    timer.Simple(0, function()
+        if not IsValid(self) then return end
+        if GRM and GRM.FactionDuty and GRM.FactionDuty.RestoreStation then
+            GRM.FactionDuty.RestoreStation(self)
+        end
+    end)
 end
 function ENT:OnRestore()timer.Simple(0,function()if IsValid(self)then self:RefreshIdle(true)end end)end
 function ENT:Use(activator)

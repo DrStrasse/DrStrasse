@@ -31,14 +31,23 @@ function TOOL:LeftClick(tr)
     end
     local title=string.sub(string.Trim(self:GetClientInfo("title") or ""),1,80)
     if title=="" then title="ПУНКТ ВЫХОДА НА СЛУЖБУ" end
+    -- Поля выставляем ДО Spawn: Initialize берёт модель из них, иначе
+    -- диспетчер на мгновение (а после рестарта — навсегда) становился
+    -- стандартным гражданином.
+    ent.GRMDutyModel = mdl
+    ent.GRMDutyFaction = fac
+    ent.GRMDutyTitle = title
     ent:SetNWString("GRM_DutyModel",mdl)
     ent:SetNWString("GRM_DutyFaction",fac)
     ent:SetNWString("GRM_DutyTitle",title)
     ent:SetPos(tr.HitPos+tr.HitNormal*2)
     ent:SetAngles(Angle(0,ply:EyeAngles().y+180,0))
     ent:Spawn() ent:Activate()
+    if ent.ApplyStationConfig then ent:ApplyStationConfig({faction=fac,title=title,model=mdl}) end
     if self:GetClientInfo("make_perm")~="0" and GRM.Perm and GRM.Perm.Add then GRM.Perm.Add(ply,ent,{ownerKind="server",freeze=true,label="Служебный диспетчер"}) end
-    if GRM.Notify then GRM.Notify(ply,"Служебный диспетчер установлен.",80,230,150) end
+    -- Своя запись станции: работает даже без перм-записи.
+    if GRM.FactionDuty and GRM.FactionDuty.SaveStation then GRM.FactionDuty.SaveStation(ent) end
+    if GRM.Notify then GRM.Notify(ply,"Служебный диспетчер установлен и сохранён за фракцией «"..fac.."».",80,230,150) end
     return true
 end
 
@@ -56,6 +65,7 @@ function TOOL:Reload(tr)
     local ply=self:GetOwner(); local ent=tr and tr.Entity
     if not IsValid(ply) or not ply:IsSuperAdmin() or not IsValid(ent) or ent:GetClass()~="grm_duty_npc" then return false end
     if GRM.Perm and GRM.Perm.Remove then GRM.Perm.Remove(ply,ent,false) end
+    if GRM.FactionDuty and GRM.FactionDuty.RemoveStation then GRM.FactionDuty.RemoveStation(ent) end
     ent:Remove()
     return true
 end
