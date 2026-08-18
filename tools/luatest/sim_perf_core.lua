@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    sim_perf_core — GRM Perf v1.2.0: живой прогон + проверка применения
+    sim_perf_core — GRM Perf v1.3.0: живой прогон + проверка применения
     в горячих местах модулей.
 
     Запуск: ./.luabuild/lj/src/luajit tools/luatest/sim_perf_core.lua
@@ -20,7 +20,7 @@ stub.reset()
 local loaded, err = stub.loadModule("lua/autorun/sh_06_grm_performance.lua")
 ok(loaded, "модуль поднялся", err)
 local P = _G.GRM and _G.GRM.Perf
-ok(P and P.Version == "1.2.0", "версия 1.2.0", P and P.Version)
+ok(P and P.Version == "1.3.0", "версия 1.3.0", P and P.Version)
 
 -- Коалесцирование: 500 событий -> ОДИН отложенный вызов.
 local runs = 0

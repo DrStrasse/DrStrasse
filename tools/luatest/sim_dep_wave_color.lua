@@ -13,14 +13,14 @@ local printer = s:match("local function printChannel(.-)\nend") or ""
 ok(printer ~= "", "есть единый вывод служебных каналов printChannel")
 ok(printer:find('tagColor, "[" .. tostring(tag or "") .. "]\\n"', 1, true) ~= nil,
     "после тэга идёт перенос строки — как в /gnews")
-ok(printer:find('Color(100, 200, 255), tostring(name or "")', 1, true) ~= nil,
-    "имя отдельным сегментом (цвет как у /gnews)")
+ok(printer:find('bodyColor, tostring(name or "")', 1, true) ~= nil,
+    "имя отдельным сегментом, цветом канала")
 ok(printer:find('" (" .. tostring(role or "Участник") .. "): "', 1, true) ~= nil,
     "должность отдельным сегментом")
 
 local depBlock = s:match("net%.Receive%(NET_DEP_MSG, function%(%)(.-)end%)") or ""
-ok(depBlock:find('printChannel("[Волна] ", Color(170, 45, 60)', 1, true) ~= nil,
-    "госволна остаётся бордово-тёмно-красной в шапке")
+ok(depBlock:find('printChannel("[Волна] ", CH_DEP_WINE, CH_DEP_WINE', 1, true) ~= nil,
+    "госволна целиком бордовая: шапка, тэг и текст")
 ok(depBlock:find("net.ReadUInt(8), net.ReadUInt(8), net.ReadUInt(8)", 1, true) ~= nil,
     "цвет фракции читается и используется для тэга")
 

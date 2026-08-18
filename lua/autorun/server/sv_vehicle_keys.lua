@@ -297,9 +297,17 @@ function VK.UpdateKeySwep(ply)
 end
 
 local function refreshAllKeySWEPS()
-    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
-        VK.UpdateKeySwep(ply)
+    local list = (GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()
+    -- Распределение нагрузки: на полном сервере обновление ключей у всех
+    -- разом заметно в тике. Отдаём очереди GRM.Perf — она размажет проход
+    -- по кадрам в рамках бюджета.
+    if GRM.Perf and GRM.Perf.Spread and #list > 8 then
+        GRM.Perf.Spread("vehiclekeys.refresh", list, function(ply)
+            if IsValid(ply) then VK.UpdateKeySwep(ply) end
+        end, { chunk = 4 })
+        return
     end
+    for _, ply in ipairs(list) do VK.UpdateKeySwep(ply) end
 end
 
 -- ============================================================

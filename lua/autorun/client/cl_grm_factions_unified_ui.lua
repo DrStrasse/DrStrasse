@@ -66,6 +66,9 @@ local currentTab = nil
 local currentTargetFac = nil
 local currentContent = nil
 local currentTabButtons = nil
+-- Парковка панелей навесных разделов: задаётся при открытии окна, нужна и
+-- автосинку (rebuildCurrentTab), а он живёт вне UI.Open.
+local currentParkHooked = nil
 
 -- Тёмная тема для полей ввода (DTextEntry) в духе XUI.
 --[[ ЗАЩИТА ВВОДА ОТ АВТООБНОВЛЕНИЯ.
@@ -610,6 +613,11 @@ function UI.Open(requestedFaction)
             end
         end
     end
+
+    -- Автосинк живёт в другой функции (rebuildCurrentTab) — ему тоже нужна
+    -- парковка, иначе Clear() убивает панели навесных разделов и вкладка
+    -- «то появляется, то пустая».
+    currentParkHooked = parkHookedPanels
 
     local function selectTab(tabKey, builderFn)
         currentTab = tabKey
@@ -1665,12 +1673,19 @@ local function rebuildCurrentTab(data)
     local btn = currentTabButtons and currentTabButtons[currentTab]
     if not (btn and btn.builder) then return end
 
+    -- Разделы других модулей (арест, экономика, логистика, пожарные…)
+    -- обновляют себя сами по своим сетевым каналам. Пересобирать их при
+    -- каждом автосинке фракций нельзя: панель модуля живёт дольше вкладки,
+    -- и Clear() просто оставлял пустой экран.
+    if isstring(currentTab) and currentTab:sub(1, 4) == "ext:" then return end
+
     collectFormValues(currentContent)
 
     local keep = 0
     local oldScroll = findScrollPanel(currentContent)
     if IsValid(oldScroll) and IsValid(oldScroll.VBar) then keep = oldScroll.VBar:GetScroll() end
 
+    if currentParkHooked then currentParkHooked() end
     currentContent:Clear()
     btn.builder(currentContent, currentTargetFac, data or FactionsData or {})
 

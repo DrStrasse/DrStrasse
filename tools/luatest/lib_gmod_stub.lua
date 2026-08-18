@@ -134,6 +134,12 @@ function S.install()
     _G.GetConVar = function() return { GetInt = function() return 1 end, GetFloat = function() return 1 end, GetBool = function() return true end, GetString = function() return "" end } end
     _G.CreateConVar = _G.GetConVar
     _G.GetConVarNumber = function() return 1 end
+    -- Конвар-флаги и bit нужны модулям, создающим свои конвары.
+    _G.FCVAR_ARCHIVE = 128
+    _G.FCVAR_REPLICATED = 8192
+    _G.FCVAR_NOTIFY = 256
+    _G.bit = _G.bit or { bor = function(a, b) return (a or 0) + (b or 0) end,
+        band = function(a) return a or 0 end, bnot = function(a) return -(a or 0) end }
     _G.surface = setmetatable({}, { __index = function() return noop end })
     _G.draw = setmetatable({}, { __index = function() return noop end })
     _G.vgui = { Create = function() return setmetatable({}, { __index = function() return noop end }) end }

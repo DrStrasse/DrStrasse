@@ -1778,27 +1778,41 @@ if CLIENT then
          и сам текст раскрашиваются раздельно. Раньше /dep и /fr клеили всё в
          одну длинную строку одним цветом, и на длинных сообщениях волна
          превращалась в нечитаемое полотно. ]]
-    local function printChannel(prefix, prefixColor, tagColor, tag, name, role, text)
+    --[[ Единый вывод канала (заказ владельца 18.08 по цветам):
+           prefixColor — цвет заголовка канала («[Рация]», «[Волна]»);
+           tagColor    — цвет тэга организации в квадратных скобках;
+           bodyColor   — цвет ИМЕНИ, ДОЛЖНОСТИ И ТЕКСТА (одним цветом).
+         Раньше имя всегда рисовалось голубым, должность — светло-серой, а
+         текст — белым, из-за чего «золотая рация» выглядела разноцветной. ]]
+    local function printChannel(prefix, prefixColor, tagColor, tag, name, role, text, bodyColor)
+        bodyColor = bodyColor or Color(255, 255, 255)
         chat.AddText(
             prefixColor, prefix,
             tagColor, "[" .. tostring(tag or "") .. "]\n",
-            Color(100, 200, 255), tostring(name or ""),
-            Color(230, 230, 230), " (" .. tostring(role or "Участник") .. "): ",
-            Color(255, 255, 255), tostring(text or "")
+            bodyColor, tostring(name or ""),
+            bodyColor, " (" .. tostring(role or "Участник") .. "): ",
+            bodyColor, tostring(text or "")
         )
     end
+
+    -- Цвета каналов держим в одном месте, чтобы не разъезжались.
+    local CH_RADIO_GOLD = Color(255, 200, 0)     -- рация: весь текст золотой
+    local CH_RADIO_TAG  = Color(225, 60, 60)     -- первый тэг рации — красный
+    local CH_DEP_WINE   = Color(170, 45, 60)     -- госволна: всё бордовое
 
     net.Receive(NET_RADIO_MSG, function()
         local r, g, b = net.ReadUInt(8), net.ReadUInt(8), net.ReadUInt(8)
         local tag, name, role, text = net.ReadString(), net.ReadString(), net.ReadString(), net.ReadString()
-        printChannel("[Рация] ", Color(255, 200, 0), Color(r, g, b), tag, name, role, text)
+        -- Рация: заголовок и весь текст золотые, тэг организации — красный.
+        printChannel("[Рация] ", CH_RADIO_GOLD, CH_RADIO_TAG, tag, name, role, text, CH_RADIO_GOLD)
     end)
 
     net.Receive(NET_RADIOB_MSG, function()
         local r, g, b = net.ReadUInt(8), net.ReadUInt(8), net.ReadUInt(8)
         local tag, name, role, text = net.ReadString(), net.ReadString(), net.ReadString(), net.ReadString()
-        printChannel("[Рация OOC] ", Color(150, 160, 175), Color(r, g, b), tag, name,
-            "(( " .. tostring(role) .. " ))", "(( " .. tostring(text) .. " ))")
+        -- OOC-рация остаётся приглушённой: её нарочно видно как «не РП».
+        printChannel("[Рация OOC] ", Color(150, 160, 175), CH_RADIO_TAG, tag, name,
+            "(( " .. tostring(role) .. " ))", "(( " .. tostring(text) .. " ))", Color(170, 180, 195))
     end)
 
     net.Receive(NET_DEP_MSG, function()
@@ -1806,13 +1820,15 @@ if CLIENT then
         -- бордово-тёмно-красным — как и было задумано для госволны.
         local r, g, b = net.ReadUInt(8), net.ReadUInt(8), net.ReadUInt(8)
         local tag, name, role, text = net.ReadString(), net.ReadString(), net.ReadString(), net.ReadString()
-        printChannel("[Волна] ", Color(170, 45, 60), Color(r, g, b), tag, name, role, text)
+        -- Госволна: заголовок, тэг, имя, должность и текст — одним бордовым.
+        printChannel("[Волна] ", CH_DEP_WINE, CH_DEP_WINE, tag, name, role, text, CH_DEP_WINE)
     end)
 
     net.Receive(NET_DEPB_MSG, function()
         local r, g, b = net.ReadUInt(8), net.ReadUInt(8), net.ReadUInt(8)
         local tag, name, role, text = net.ReadString(), net.ReadString(), net.ReadString(), net.ReadString()
-        printChannel("[Волна OOC] ", Color(150, 150, 160), Color(r, g, b), tag, name, "(( " .. tostring(role) .. " ))", "(( " .. tostring(text) .. " ))")
+        printChannel("[Волна OOC] ", CH_DEP_WINE, CH_DEP_WINE, tag, name,
+            "(( " .. tostring(role) .. " ))", "(( " .. tostring(text) .. " ))", CH_DEP_WINE)
     end)
 
     net.Receive(NET_ACTION_RESULT, function()

@@ -22,7 +22,7 @@ GRM = GRM or {}
 GRM.Perf = GRM.Perf or {}
 local P = GRM.Perf
 
-P.Version   = "1.2.0"
+P.Version   = "1.3.0"
 P._classes  = P._classes or {}
 P._throttle = P._throttle or {}
 P._pending  = P._pending or {}
@@ -245,4 +245,221 @@ function P.NWFloat(ent, key, value, epsilon)
     return false
 end
 
-print("[GRM Perf] v" .. P.Version .. ": реестры entity, кэш игроков/трейсов/материалов, коалесцирование")
+-----------------------------------------------------------------------
+-- РАСПРЕДЕЛЕНИЕ НАГРУЗКИ ВО ВРЕМЯ ИГРЫ (v1.3.0)
+--
+-- GRM.Boot размазывает СТАРТ карты. Этот слой делает то же самое для
+-- рантайма: тяжёлую работу (обходы сотен дверей, пересборки кэшей, чистки)
+-- не выполняют одним куском в тике, а ставят в очередь и делают порциями,
+-- укладываясь в бюджет миллисекунд на кадр.
+--
+--   GRM.Perf.Queue(id, fn[, priority])  — разовая задача в очередь
+--   GRM.Perf.Spread(id, list, fn[, opts]) — обойти список порциями
+--   GRM.Perf.QueueStatus()              — что в очереди
+-----------------------------------------------------------------------
+P.Jobs = P.Jobs or {}
+P._jobSeq = P._jobSeq or 0
+
+local JOB_BUDGET = CreateConVar("grm_perf_budget_ms", SERVER and "1.5" or "2",
+    bit.bor(FCVAR_ARCHIVE), "Сколько миллисекунд за кадр GRM тратит на фоновые задачи")
+
+local function jobsPending()
+    return #P.Jobs > 0
+end
+
+local function jobTick()
+    if not jobsPending() then
+        hook.Remove("Think", "GRM_Perf_Jobs")
+        P._jobsRunning = false
+        return
+    end
+
+    local deadline = SysTime() + math.max(0.2, JOB_BUDGET:GetFloat()) / 1000
+    while #P.Jobs > 0 and SysTime() < deadline do
+        local job = P.Jobs[1]
+        local finished = true
+
+        if job.kind == "once" then
+            local ok, err = pcall(job.fn)
+            if not ok then ErrorNoHalt("[GRM Perf] задача '" .. tostring(job.id) .. "': " .. tostring(err) .. "\n") end
+        else
+            -- Порционный обход списка: за проход берём chunk элементов.
+            local list = job.list or {}
+            local last = math.min(job.index + job.chunk - 1, #list)
+            for i = job.index, last do
+                local ok, err = pcall(job.fn, list[i], i)
+                if not ok then
+                    ErrorNoHalt("[GRM Perf] обход '" .. tostring(job.id) .. "': " .. tostring(err) .. "\n")
+                end
+            end
+            job.index = last + 1
+            finished = job.index > #list
+            if finished and isfunction(job.onDone) then pcall(job.onDone) end
+        end
+
+        if finished then table.remove(P.Jobs, 1) end
+    end
+end
+
+local function ensureJobs()
+    if P._jobsRunning then return end
+    if not jobsPending() then return end
+    P._jobsRunning = true
+    hook.Add("Think", "GRM_Perf_Jobs", jobTick)
+end
+
+-- Разовая задача: выполнится в ближайшем кадре, где есть бюджет.
+function P.Queue(id, fn, priority)
+    if not isfunction(fn) then return false end
+    P._jobSeq = P._jobSeq + 1
+    local job = { id = tostring(id or ("job." .. P._jobSeq)), kind = "once", fn = fn, priority = tonumber(priority) or 0 }
+    -- Приоритет: чем больше, тем раньше. Стабильная вставка.
+    local placed = false
+    for i = 1, #P.Jobs do
+        if (P.Jobs[i].priority or 0) < job.priority then
+            table.insert(P.Jobs, i, job)
+            placed = true
+            break
+        end
+    end
+    if not placed then P.Jobs[#P.Jobs + 1] = job end
+    ensureJobs()
+    return true
+end
+
+--[[ Обойти большой список порциями.
+     opts: chunk (сколько за кадр, по умолчанию 32), priority, onDone.
+     Повторная постановка задачи с тем же id заменяет прежнюю — так обход не
+     копится, если событие сработало несколько раз подряд. ]]
+function P.Spread(id, list, fn, opts)
+    if not istable(list) or not isfunction(fn) then return false end
+    opts = istable(opts) and opts or {}
+    id = tostring(id or "spread")
+
+    for i = #P.Jobs, 1, -1 do
+        if P.Jobs[i].id == id then table.remove(P.Jobs, i) end
+    end
+
+    local job = {
+        id = id, kind = "spread", list = list, fn = fn, index = 1,
+        chunk = math.max(1, math.floor(tonumber(opts.chunk) or 32)),
+        priority = tonumber(opts.priority) or 0,
+        onDone = opts.onDone,
+    }
+    local placed = false
+    for i = 1, #P.Jobs do
+        if (P.Jobs[i].priority or 0) < job.priority then
+            table.insert(P.Jobs, i, job)
+            placed = true
+            break
+        end
+    end
+    if not placed then P.Jobs[#P.Jobs + 1] = job end
+    ensureJobs()
+    return true
+end
+
+function P.QueueStatus()
+    local rows = {}
+    for _, job in ipairs(P.Jobs) do
+        rows[#rows + 1] = {
+            id = job.id, kind = job.kind, priority = job.priority or 0,
+            left = job.kind == "spread" and math.max(0, #(job.list or {}) - job.index + 1) or 1,
+        }
+    end
+    return rows
+end
+
+concommand.Add("grm_perf_queue", function(ply)
+    local function out(line)
+        if IsValid(ply) then ply:PrintMessage(HUD_PRINTCONSOLE, line) else print(line) end
+    end
+    local rows = P.QueueStatus()
+    out(("[GRM Perf] очередь фоновых задач: %d (бюджет %.1f мс/кадр)"):format(#rows, JOB_BUDGET:GetFloat()))
+    for _, row in ipairs(rows) do
+        out(("  %-28s %-7s приоритет %d, осталось %d"):format(row.id, row.kind, row.priority, row.left))
+    end
+end)
+
+-----------------------------------------------------------------------
+-- ДЕТЕКТОР ФРИЗОВ (v1.3.0)
+--
+-- Считает время тика (сервер) и кадра (клиент), копит статистику и
+-- запоминает всплески. Нужен, чтобы на живом сервере отвечать на вопрос
+-- «кто фризит», а не гадать: в момент всплеска фиксируется, сколько было
+-- игроков, сущностей, машин (в т.ч. simfphys/LVS) и задач в очереди GRM.
+--
+--   grm_perf_report        — сводка и последние всплески
+--   grm_perf_spike_ms      — порог всплеска (по умолчанию 40 мс)
+-----------------------------------------------------------------------
+local SPIKE_MS = CreateConVar("grm_perf_spike_ms", "40", bit.bor(FCVAR_ARCHIVE),
+    "Порог фиксации всплеска времени кадра/тика, миллисекунды")
+
+P.Spikes = P.Spikes or {}
+P.Stats = P.Stats or { frames = 0, total = 0, max = 0, since = 0 }
+
+local lastSample = 0
+hook.Add("Think", "GRM_Perf_SpikeWatch", function()
+    local now = SysTime()
+    if lastSample == 0 then
+        lastSample = now
+        P.Stats.since = now
+        return
+    end
+
+    local dt = (now - lastSample) * 1000
+    lastSample = now
+
+    P.Stats.frames = P.Stats.frames + 1
+    P.Stats.total = P.Stats.total + dt
+    if dt > P.Stats.max then P.Stats.max = dt end
+
+    if dt < SPIKE_MS:GetFloat() then return end
+
+    -- Всплеск: снимаем дешёвый срез окружения.
+    local vehicles, players = 0, 0
+    if SERVER then
+        players = #player.GetAll()
+        for _, class in ipairs({ "prop_vehicle_jeep", "prop_vehicle_airboat", "gmod_sent_vehicle_fphysics_base", "lvs_base" }) do
+            vehicles = vehicles + #ents.FindByClass(class)
+        end
+    else
+        players = #player.GetAll()
+    end
+
+    P.Spikes[#P.Spikes + 1] = {
+        at = os.time(), ms = dt, players = players, vehicles = vehicles,
+        ents = SERVER and #ents.GetAll() or 0, jobs = #P.Jobs,
+    }
+    while #P.Spikes > 40 do table.remove(P.Spikes, 1) end
+end)
+
+concommand.Add("grm_perf_report", function(ply)
+    local function out(line)
+        if IsValid(ply) then ply:PrintMessage(HUD_PRINTCONSOLE, line) else print(line) end
+    end
+    local avg = P.Stats.frames > 0 and (P.Stats.total / P.Stats.frames) or 0
+    out(("[GRM Perf] %s: кадров %d, среднее %.2f мс, максимум %.1f мс, порог всплеска %.0f мс")
+        :format(SERVER and "сервер" or "клиент", P.Stats.frames, avg, P.Stats.max, SPIKE_MS:GetFloat()))
+    out(("[GRM Perf] фоновых задач в очереди: %d"):format(#P.Jobs))
+    if #P.Spikes == 0 then
+        out("[GRM Perf] всплесков не зафиксировано")
+        return
+    end
+    out("[GRM Perf] последние всплески:")
+    for i = math.max(1, #P.Spikes - 15), #P.Spikes do
+        local sp = P.Spikes[i]
+        out(("  %s  %6.1f мс  игроков %2d  ТС %3d  энтити %4d  задач %d")
+            :format(os.date("%H:%M:%S", sp.at), sp.ms, sp.players, sp.vehicles, sp.ents, sp.jobs))
+    end
+end)
+
+concommand.Add("grm_perf_reset", function(ply)
+    if IsValid(ply) and not ply:IsSuperAdmin() then return end
+    P.Spikes = {}
+    P.Stats = { frames = 0, total = 0, max = 0, since = SysTime() }
+    local msg = "[GRM Perf] статистика сброшена"
+    if IsValid(ply) then ply:PrintMessage(HUD_PRINTCONSOLE, msg) else print(msg) end
+end)
+
+print("[GRM Perf] v" .. P.Version .. ": реестры entity, кэш игроков/трейсов/материалов, коалесцирование, очередь фоновых задач")

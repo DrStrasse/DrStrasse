@@ -44,8 +44,8 @@ print("\n=== 2. /dep И /fr КАК /gnews ===")
 ok(factions:find("local function printChannel", 1, true) ~= nil, "единый вывод служебных каналов")
 ok(factions:find('tagColor, "[" .. tostring(tag or "") .. "]\\n"', 1, true) ~= nil,
     "после тэга идёт перенос строки — как в /gnews")
-ok(factions:find('Color(100, 200, 255), tostring(name or "")', 1, true) ~= nil,
-    "имя выделено тем же цветом, что в /gnews")
+ok(factions:find('bodyColor, tostring(name or "")', 1, true) ~= nil,
+    "имя, должность и текст рисуются единым цветом канала (заказ 18.08)")
 ok(factions:find('printChannel("[Рация] "', 1, true) ~= nil, "/fr использует общий вывод")
 ok(factions:find('printChannel("[Волна] "', 1, true) ~= nil, "/dep использует общий вывод")
 ok(factions:find('printChannel("[Волна OOC] "', 1, true) ~= nil, "/depb тоже приведён к общему виду")
