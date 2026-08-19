@@ -444,6 +444,19 @@ A.item = { perm = "cheat.items", target = true, label = "Выдать предм
         return false, "Не удалось выдать: неизвестный класс"
     end }
 
+A.docs_wipe = { perm = "docs.wipe", target = true, label = "Стереть документы",
+    fn = function(actor, target, args)
+        local DOC = GRM.Documents
+        if not (DOC and isfunction(DOC.WipeDocuments)) then return false, "Модуль документов не загружен" end
+        local charKey = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(target))
+            or (tostring(target:SteamID64() or "") .. ":char1")
+        local ok, removed, details = DOC.WipeDocuments(charKey, { account = args and args.account == true })
+        if not ok then return false, tostring(removed) end
+        tell(target, "Все ваши документы аннулированы администрацией", false)
+        return true, ("Документы %s удалены: %d записей%s"):format(rpNameOf(target), removed,
+            (details and details ~= "") and (" (" .. details .. ")") or "")
+    end }
+
 A.cleanup = { perm = "server.cleanup", target = false, label = "Очистка мусора",
     fn = function(actor)
         local removed = 0

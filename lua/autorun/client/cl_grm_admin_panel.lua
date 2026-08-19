@@ -206,6 +206,11 @@ local function buildPlayers(pnl)
         action("Наблюдать", "mod.spectate", "spectate")
 
         row = nil
+        group("Документы")
+        action("Стереть документы", "docs.wipe", "docs_wipe", C.red)
+        action("Стереть на всех персонажах", "docs.wipe", "docs_wipe", C.red, { account = true })
+
+        row = nil
         group("Санкции")
         action("Предупреждение", "mod.warn", "warn", C.orange, { reason = "Соблюдайте правила" })
         action("Кик", "mod.kick", "kick", C.red, { reason = "Нарушение правил" })

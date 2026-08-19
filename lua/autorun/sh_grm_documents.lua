@@ -1715,11 +1715,246 @@ if SERVER then
         end
     end)
 
+    -----------------------------------------------------------------
+    -- ПОЛНОЕ УДАЛЕНИЕ ДОКУМЕНТОВ (заказ владельца 18.08)
+    --
+    -- Убирает у персонажа ВСЕ документы разом и вычищает их из всех баз:
+    -- паспорта, удостоверения, документы прикрытия, военные билеты,
+    -- водительские и военные права, лицензии на оружие и бизнес, записи
+    -- экзаменов, легенды спецслужбы и дипломы. Не «прячет», а удаляет.
+    --
+    --   opts.account = true — вычистить ВСЕ слоты персонажей аккаунта
+    --   opts.keepExams = true — не трогать сданные экзамены
+    -----------------------------------------------------------------
+    local REGISTRY_LABELS = {
+        passports = "паспорта",
+        badges = "служебные удостоверения",
+        coverBadges = "документы прикрытия",
+        military = "военные билеты",
+        licenses = "водительские права",
+        milLicenses = "военные права",
+        weaponLicenses = "лицензии на оружие",
+        businessLicenses = "лицензии на деятельность",
+        exams = "результаты экзаменов",
+    }
+
+    function DOC.WipeDocuments(charKey, opts)
+        charKey = tostring(charKey or "")
+        if charKey == "" then return false, "не указан персонаж" end
+        opts = istable(opts) and opts or {}
+
+        local account = opts.account == true
+        local sid64 = string.match(charKey, "^(%d+)") or ""
+        local removed, details = 0, {}
+
+        local function matches(key)
+            if not isstring(key) then return false end
+            if key == charKey then return true end
+            if account and sid64 ~= "" then
+                return string.sub(key, 1, #sid64 + 1) == (sid64 .. ":")
+            end
+            return false
+        end
+
+        for registry, label in pairs(REGISTRY_LABELS) do
+            if not (opts.keepExams == true and registry == "exams") then
+                local store = DOC.Registry and DOC.Registry[registry]
+                if istable(store) then
+                    local n = 0
+                    for key in pairs(store) do
+                        if matches(key) then store[key] = nil n = n + 1 end
+                    end
+                    if n > 0 then
+                        removed = removed + n
+                        details[#details + 1] = ("%s: %d"):format(label, n)
+                    end
+                end
+            end
+        end
+
+        if removed > 0 then
+            DOC.SaveRegistry("wipe documents " .. charKey .. (account and " (весь аккаунт)" or ""))
+        end
+
+        -- Легенды спецслужбы живут в своей базе (special.json).
+        local SS = GRM.SpecialService
+        if SS and istable(SS.Data) and istable(SS.Data.covers) then
+            local n = 0
+            for key in pairs(SS.Data.covers) do
+                if matches(key) then SS.Data.covers[key] = nil n = n + 1 end
+            end
+            if n > 0 then
+                removed = removed + n
+                details[#details + 1] = ("легенды прикрытия: %d"):format(n)
+                if isfunction(SS.Save) then pcall(SS.Save) end
+            end
+        end
+
+        -- Дипломы — отдельный реестр учебных заведений.
+        local DP = GRM.Diplomas
+        if DP and istable(DP.List) then
+            local n = 0
+            for i = #DP.List, 1, -1 do
+                local rec = DP.List[i]
+                if istable(rec) and matches(rec.graduate) then
+                    table.remove(DP.List, i)
+                    n = n + 1
+                end
+            end
+            if n > 0 then
+                removed = removed + n
+                details[#details + 1] = ("дипломы: %d"):format(n)
+                if isfunction(DP.Save) then pcall(DP.Save) end
+            end
+        end
+
+        hook.Run("GRM_DocumentsWiped", charKey, account, removed)
+        return true, removed, table.concat(details, ", ")
+    end
+
+    -- Найти игрока по нику, части ника, SteamID или SteamID64.
+    local function findTarget(query)
+        query = string.lower(string.Trim(tostring(query or "")))
+        if query == "" then return nil end
+        for _, ply in ipairs(player.GetAll()) do
+            if IsValid(ply) then
+                if string.lower(tostring(ply:SteamID64() or "")) == query then return ply end
+                if string.lower(tostring(ply:SteamID() or "")) == query then return ply end
+                if string.find(string.lower(ply:Nick()), query, 1, true) then return ply end
+                local rp = string.lower(ply:GetNWString("GRM_RPName", ""))
+                if rp ~= "" and string.find(rp, query, 1, true) then return ply end
+            end
+        end
+        return nil
+    end
+
+    local function canWipeOthers(ply)
+        if not IsValid(ply) then return true end
+        if GRM.Admin and GRM.Admin.Can then return GRM.Admin.Can(ply, "docs.wipe") end
+        return ply:IsSuperAdmin()
+    end
+
+    -- Право регистрируем в админ-платформе: суперадмин сам решит, кому дать.
+    if GRM.Admin and GRM.Admin.RegisterPerm then
+        GRM.Admin.RegisterPerm("docs.wipe", {
+            label = "Удаление всех документов игрока",
+            category = "Документы", minAccess = "superadmin", danger = true,
+            desc = "Полностью стирает документы персонажа из всех баз",
+        })
+    end
+
+    --[[ Точка входа команды. Требует подтверждения: первая команда
+         предупреждает, повтор в течение 20 секунд выполняет. ]]
+    function DOC.WipeCommand(ply, query, account)
+        local target = ply
+        if isstring(query) and string.Trim(query) ~= "" then
+            target = findTarget(query)
+            if not IsValid(target) then
+                if IsValid(ply) then ply:ChatPrint("[Документы] Игрок не найден: " .. tostring(query)) end
+                return false
+            end
+        end
+        if not IsValid(target) then return false end
+
+        local self_ = (target == ply)
+        if not self_ and not canWipeOthers(ply) then
+            if IsValid(ply) then ply:ChatPrint("[Документы] Нет права стирать документы другим игрокам.") end
+            return false
+        end
+
+        local charKey = getCharKey(target)
+        local token = tostring(charKey) .. (account and ":all" or "")
+        local now = CurTime()
+
+        if IsValid(ply) then
+            if ply._grmDocWipeToken ~= token or (ply._grmDocWipeAt or 0) < now then
+                ply._grmDocWipeToken = token
+                ply._grmDocWipeAt = now + 20
+                ply:ChatPrint(("[Документы] ВНИМАНИЕ: будут БЕЗВОЗВРАТНО удалены все документы %s%s.")
+                    :format(self_ and "ваши" or ("игрока " .. target:Nick()), account and " (все персонажи аккаунта)" or ""))
+                ply:ChatPrint("[Документы] Повторите команду в течение 20 секунд, чтобы подтвердить.")
+                return false
+            end
+            ply._grmDocWipeToken = nil
+            ply._grmDocWipeAt = 0
+        end
+
+        local ok, removed, details = DOC.WipeDocuments(charKey, { account = account })
+        if not ok then
+            if IsValid(ply) then ply:ChatPrint("[Документы] Ошибка: " .. tostring(removed)) end
+            return false
+        end
+
+        local summary = ("[Документы] Удалено записей: %d%s"):format(removed,
+            (details and details ~= "") and (" (" .. details .. ")") or "")
+        if IsValid(ply) then ply:ChatPrint(summary) end
+        if IsValid(target) and target ~= ply then
+            target:ChatPrint("[Документы] Все ваши документы аннулированы администрацией.")
+        elseif IsValid(target) then
+            target:ChatPrint("[Документы] Все ваши документы уничтожены.")
+        end
+        if GRM.Notify then
+            GRM.Notify(target, "Документы аннулированы", 255, 140, 100)
+        end
+
+        if GRM.Audit and GRM.Audit.Write then
+            GRM.Audit.Write("documents", "wipe", ply,
+                { nick = IsValid(target) and target:Nick() or "", charKey = charKey },
+                { removed = removed, account = account == true, details = details })
+        end
+        return true, removed
+    end
+
+    concommand.Add("grm_doc_wipe", function(ply, _, args)
+        DOC.WipeCommand(ply, args and args[1], (args and args[2] or ""):lower() == "all")
+    end)
+
+    local function handleWipeChat(ply, text)
+        local low = string.lower(string.Trim(tostring(text or "")))
+        if low ~= "/doc_wipe" and string.sub(low, 1, 10) ~= "/doc_wipe "
+            and low ~= "/докстереть" and string.sub(low, 1, 12) ~= "/докстереть " then
+            return false
+        end
+        local parts = string.Explode(" ", string.Trim(text))
+        table.remove(parts, 1)
+        local account = false
+        for i = #parts, 1, -1 do
+            if string.lower(parts[i]) == "all" or string.lower(parts[i]) == "все" then
+                account = true
+                table.remove(parts, i)
+            end
+        end
+        DOC.WipeCommand(ply, table.concat(parts, " "), account)
+        return true
+    end
+
+    hook.Add("PlayerSay", "GRM_Doc_WipeChat", function(ply, text)
+        if handleWipeChat(ply, text) then return "" end
+    end)
+
     -- Обработка чат-команд на сервере
     hook.Add("PlayerSayTransform", "GRM_Doc_Commands", function(ply, datapack)
         if not IsValid(ply) or not istable(datapack) then return end
         local txt = datapack[1] or ""
         local low = string.lower(string.Trim(txt))
+
+        -- Полное удаление документов (EasyChat приходит сюда, а не в PlayerSay)
+        if low == "/doc_wipe" or string.sub(low, 1, 10) == "/doc_wipe "
+            or low == "/докстереть" or string.sub(low, 1, 12) == "/докстереть " then
+            local parts = string.Explode(" ", string.Trim(txt))
+            table.remove(parts, 1)
+            local account = false
+            for i = #parts, 1, -1 do
+                if string.lower(parts[i]) == "all" or string.lower(parts[i]) == "все" then
+                    account = true
+                    table.remove(parts, i)
+                end
+            end
+            DOC.WipeCommand(ply, table.concat(parts, " "), account)
+            datapack.SkipPlayerSay = true
+            datapack[1] = ""
+            return
+        end
 
         -- Паспорт
         if low == "/passport" or low == "/pass" or low == "/myid" or low == "/id" or low == "/mypasport" or low == "/паспорт" or low == "/пас" then
