@@ -1380,6 +1380,11 @@ if SERVER then
                 if GRM.Notify then GRM.Notify(ply, "У вашей фракции нет допуска к оформлению военных билетов!", 255, 100, 100) end
                 return
             end
+            -- Звание может быть вписано вручную: подрезаем длину, чтобы
+            -- бланк не «поехал» и в реестр не попала простыня текста.
+            if isstring(data.rank) then data.rank = string.sub(string.Trim(data.rank), 1, 48) end
+            if data.rank == "" then data.rank = "Рядовой" end
+            if isstring(data.position) then data.position = string.sub(string.Trim(data.position), 1, 64) end
             DOC.Registry.military[targetKey] = data
             DOC.SaveRegistry("issue military " .. targetKey .. " by " .. ply:Nick())
 
@@ -1412,6 +1417,8 @@ if SERVER then
                 if GRM.Notify then GRM.Notify(ply, "У вашей фракции нет допуска к выдаче военных водительских удостоверений (ВАИ)!", 255, 100, 100) end
                 return
             end
+            if isstring(data.rank) then data.rank = string.sub(string.Trim(data.rank), 1, 48) end
+            if data.rank == "" then data.rank = "Рядовой" end
             DOC.Registry.milLicenses[targetKey] = data
             DOC.SaveRegistry("issue military license " .. targetKey .. " by " .. ply:Nick())
 

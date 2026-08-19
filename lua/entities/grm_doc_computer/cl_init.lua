@@ -671,11 +671,20 @@ net.Receive("GRM_DocComp_Open", function()
         entName:SetPos(0, 80) entName:SetSize(250, 26)
 
         local lblRank = vgui.Create("DLabel", formContainer)
-        lblRank:SetPos(260, 60) lblRank:SetText("Воинское звание:") lblRank:SetTextColor(CC.text) lblRank:SizeToContents()
+        lblRank:SetPos(260, 60) lblRank:SetText("Воинское звание (выбор / ручной ввод):") lblRank:SetTextColor(CC.text) lblRank:SizeToContents()
         local comboRank = vgui.Create("DComboBox", formContainer)
         comboRank:SetPos(260, 80) comboRank:SetSize(160, 26)
         for _, r in ipairs(GRM.Documents.MilitaryRanks or {}) do comboRank:AddChoice(r) end
         comboRank:SetValue("Рядовой")
+
+        -- Звание можно вписать вручную: список не покрывает все звания
+        -- сборки (гвардейские, ведомственные, специальные).
+        local entRankCustom = vgui.Create("DTextEntry", formContainer)
+        entRankCustom:SetPos(260, 108) entRankCustom:SetSize(160, 24)
+        entRankCustom:SetPlaceholderText("или своё звание")
+        comboRank.OnSelect = function(_, _, value)
+            if value and value ~= "" then entRankCustom:SetText(value) end
+        end
 
         local lblUnit = vgui.Create("DLabel", formContainer)
         lblUnit:SetPos(430, 60) lblUnit:SetText("Воинская часть / Подразделение:") lblUnit:SetTextColor(CC.text) lblUnit:SizeToContents()
@@ -780,6 +789,7 @@ net.Receive("GRM_DocComp_Open", function()
                     local ex = registry.milLicenses[selKey]
                     entName:SetText(ex.fullName or pData.rpName or "")
                     comboRank:SetValue(ex.rank or "Рядовой")
+                    entRankCustom:SetText(ex.rank or "")
                     entUnit:SetText(ex.formation or pData.faction or "В/Ч 00000 (Автобат)")
                     entNum:SetText(ex.number or (pfx .. selSid64:sub(-5)))
                     entVusCustom:SetText(ex.vus or "ВУС-837 (Водитель спецтранспорта)")
@@ -829,7 +839,8 @@ net.Receive("GRM_DocComp_Open", function()
 
             local pack = {
                 fullName      = entName:GetText(),
-                rank          = comboRank:GetValue(),
+                rank          = (string.Trim(entRankCustom:GetText()) ~= "" and string.Trim(entRankCustom:GetText()))
+                                    or comboRank:GetValue(),
                 formation     = entUnit:GetText(),
                 vus           = chosenVus,
                 number        = entNum:GetText(),
@@ -1155,6 +1166,10 @@ net.Receive("GRM_DocComp_Open", function()
 
     local entMilRankCustom = vgui.Create("DTextEntry", milPnl)
     entMilRankCustom:SetPos(540, 95) entMilRankCustom:SetSize(180, 26) entMilRankCustom:SetPlaceholderText("или своё звание")
+    -- Как у ВУС: выбор из списка подставляется в поле, а поле можно править.
+    comboMilRank.OnSelect = function(_, _, value)
+        if value and value ~= "" then entMilRankCustom:SetText(value) end
+    end
 
     local lblMVUS = vgui.Create("DLabel", milPnl)
     lblMVUS:SetPos(16, 135) lblMVUS:SetText("Военно-учётная специальность (ВУС):") lblMVUS:SetTextColor(CC.text) lblMVUS:SizeToContents()
@@ -1220,6 +1235,7 @@ net.Receive("GRM_DocComp_Open", function()
                 local ex = registry.military[selectedMilKey]
                 entMilName:SetText(ex.fullName or pData.rpName or "")
                 comboMilRank:SetValue(ex.rank or "Рядовой")
+                entMilRankCustom:SetText(ex.rank or "")
                 entMilVUSCustom:SetText(ex.vus or "ВУС-100 (Стрелковая подготовка)")
                 entMilForm:SetText(ex.formation or "Вооружённые Силы")
                 entMilDept:SetText(ex.department or "Штабная рота")

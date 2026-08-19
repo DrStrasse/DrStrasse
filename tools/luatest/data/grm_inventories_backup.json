@@ -10,17 +10,17 @@
                 "id": "ammo_pistol"
             },
             {
+                "count": 1,
                 "data": {
                     "on": true
                 },
-                "count": 1,
                 "id": "radio_modulator"
             }
         ]
     },
     "_grm_meta": {
-        "savedAt": 1787127320,
         "version": 2,
+        "savedAt": 1787128150,
         "revision": 3
     }
 }

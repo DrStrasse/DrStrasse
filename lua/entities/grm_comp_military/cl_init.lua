@@ -86,11 +86,35 @@ net.Receive("GRM_CompMilitary_Open", function()
         comboMilTarget:AddChoice(string.format("%s  [%s]  (%s)", pData.rpName or "?", pData.nick or "?", pData.key or ""), pData)
     end
 
+    --[[ Подписи к полям (заказ владельца 19.08): раньше вкладка выдачи была
+         набором безымянных строк — не понять, куда вписывать звание. ]]
+    local function fieldLabel(x, y, text)
+        local lbl = vgui.Create("DLabel", milPnl)
+        lbl:SetPos(x, y)
+        lbl:SetText(text)
+        lbl:SetTextColor(Color(215, 225, 235))
+        lbl:SizeToContents()
+        return lbl
+    end
+
+    fieldLabel(16, 75, "ФИО военнослужащего:")
     local entMilName = vgui.Create("DTextEntry", milPnl) entMilName:SetPos(16, 95) entMilName:SetSize(280, 26)
+
+    fieldLabel(310, 75, "Воинское звание (выбор / ручной ввод):")
     local comboMilRank = vgui.Create("DComboBox", milPnl) comboMilRank:SetPos(310, 95) comboMilRank:SetSize(220, 26)
     for _, r in ipairs(GRM.Documents and GRM.Documents.MilitaryRanks or {}) do comboMilRank:AddChoice(r) end
     comboMilRank:SetValue("Рядовой")
 
+    -- Звание можно вписать своё — как ВУС ниже: список не покрывает все
+    -- звания сборки (гвардейские, ведомственные, специальные).
+    local entMilRankCustom = vgui.Create("DTextEntry", milPnl)
+    entMilRankCustom:SetPos(540, 95) entMilRankCustom:SetSize(250, 26)
+    entMilRankCustom:SetPlaceholderText("или своё звание вручную")
+    comboMilRank.OnSelect = function(_, _, value)
+        if value and value ~= "" then entMilRankCustom:SetText(value) end
+    end
+
+    fieldLabel(16, 135, "Военно-учётная специальность (ВУС):")
     local comboMilVUS = vgui.Create("DComboBox", milPnl) comboMilVUS:SetPos(16, 155) comboMilVUS:SetSize(340, 26)
     for _, v in ipairs(GRM.Documents and GRM.Documents.MilitaryVUS or {}) do comboMilVUS:AddChoice(v) end
     comboMilVUS:SetValue("ВУС-100 (Стрелковая подготовка)")
@@ -98,10 +122,16 @@ net.Receive("GRM_CompMilitary_Open", function()
     local entMilVUSCustom = vgui.Create("DTextEntry", milPnl) entMilVUSCustom:SetPos(365, 155) entMilVUSCustom:SetSize(220, 26) entMilVUSCustom:SetPlaceholderText("или свой ВУС")
     comboMilVUS.OnSelect = function(_, _, v) if v and v ~= "" then entMilVUSCustom:SetText(v) end end
 
+    fieldLabel(600, 135, "Воинское формирование:")
     local entMilForm = vgui.Create("DTextEntry", milPnl) entMilForm:SetPos(600, 155) entMilForm:SetSize(190, 26) entMilForm:SetText("Вооружённые Силы")
+
+    fieldLabel(16, 195, "Подразделение:")
     local entMilDept = vgui.Create("DTextEntry", milPnl) entMilDept:SetPos(16, 215) entMilDept:SetSize(240, 26) entMilDept:SetText("Мотострелковый батальон")
+
+    fieldLabel(270, 195, "Должность:")
     local entMilPos  = vgui.Create("DTextEntry", milPnl) entMilPos:SetPos(270, 215) entMilPos:SetSize(240, 26) entMilPos:SetText("Стрелок")
 
+    fieldLabel(525, 195, "Категория годности:")
     local comboMilFit = vgui.Create("DComboBox", milPnl) comboMilFit:SetPos(525, 215) comboMilFit:SetSize(265, 26)
     comboMilFit:AddChoice("А — Годен к военной службе без ограничений")
     comboMilFit:AddChoice("Б — Годен к военной службе с незначительными ограничениями")
@@ -110,7 +140,10 @@ net.Receive("GRM_CompMilitary_Open", function()
     comboMilFit:AddChoice("Д — Не годен к военной службе (освобождён)")
     comboMilFit:SetValue("А — Годен к военной службе без ограничений")
 
+    fieldLabel(16, 255, "Номер бланка:")
     local entMilNum = vgui.Create("DTextEntry", milPnl) entMilNum:SetPos(16, 275) entMilNum:SetSize(180, 26) entMilNum:SetText("ВБ-014289")
+
+    fieldLabel(210, 255, "Кем выдан:")
     local entMilIssuer = vgui.Create("DTextEntry", milPnl) entMilIssuer:SetPos(210, 275) entMilIssuer:SetSize(380, 26) entMilIssuer:SetText("Военный комиссариат Центрального округа")
 
     local selectedMilKey = ""
@@ -127,6 +160,7 @@ net.Receive("GRM_CompMilitary_Open", function()
                 local ex = registry.military[selectedMilKey]
                 entMilName:SetText(ex.fullName or pData.rpName or "")
                 comboMilRank:SetValue(ex.rank or "Рядовой")
+                entMilRankCustom:SetText(ex.rank or "")
                 entMilVUSCustom:SetText(ex.vus or "ВУС-100 (Стрелковая подготовка)")
                 entMilForm:SetText(ex.formation or "Вооружённые Силы")
                 entMilDept:SetText(ex.department or "Мотострелковый батальон")
@@ -148,9 +182,14 @@ net.Receive("GRM_CompMilitary_Open", function()
         if selectedMilKey == "" then notification.AddLegacy("Выберите военнообязанного!", NOTIFY_ERROR, 3) return end
         local chosenVus = string.Trim(entMilVUSCustom:GetText())
         if chosenVus == "" then chosenVus = comboMilVUS:GetValue() end
+
+        -- Ручное звание имеет приоритет над списком.
+        local chosenRank = string.Trim(entMilRankCustom:GetText())
+        if chosenRank == "" then chosenRank = comboMilRank:GetValue() end
+
         local pack = {
             fullName    = entMilName:GetText(),
-            rank        = comboMilRank:GetValue(),
+            rank        = chosenRank,
             vus         = chosenVus,
             formation   = entMilForm:GetText(),
             department  = entMilDept:GetText(),
