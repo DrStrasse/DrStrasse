@@ -21,7 +21,7 @@
         (Чат RP, Персонаж, Фракции, Деньги, Двери, Транспорт, Телефон, Прочее).
       - «Настройки»: клиентские выключатели HUD (RPDesc над головами,
         дистанция RPDesc, HUD дверей, полоса стамины, полоса сытости).
-      - Открытие: F4 (бинд ShowSpare2 + резервный опрос KEY_F4) — уступает дверям
+      - Открытие: F4 (бинд ShowSpare2 + резервный опрос KEY_F4); меню двери — F3
         (прицел на дверь → меню двери), команда /menu, !menu, /f4, concommand grm_f4.
 ----------------------------------------------------------------------]]
 
@@ -661,16 +661,9 @@ end
 
 concommand.Add("grm_f4", F4.Open)
 
--- уступаем прицелу на дверь (двери открывают своё меню) — общий предикат
-local function yieldsToDoor(ply)
-    if not IsValid(ply) then return false end
-    if not (GRM and GRM.Doors and GRM.Doors.IsDoor) then return false end
-    local tr = ply:GetEyeTrace()
-    if not (tr and IsValid(tr.Entity)) then return false end
-    if not GRM.Doors.IsDoor(tr.Entity) then return false end
-    local maxD = (GRM.Doors.Config and GRM.Doors.Config.UseDistance) or 180
-    return tr.StartPos:DistToSqr(tr.HitPos) <= maxD * maxD
-end
+--[[ Раньше F4 «уступал» прицелу на дверь: двери перехватывали все бинды
+     F1–F4, и меню не открывалось, если игрок смотрел на дверь. С 19.08
+     меню двери висит только на F3, поэтому F4 всегда открывает главное меню. ]]
 
 -- анти-дубль: два канала (бинд и опрос) могут увидеть одно нажатие
 local function keyPressHandled()
@@ -683,7 +676,6 @@ end
 -- Канал 1: стандартный бинд gm_showspare2 (F4)
 hook.Add("ShowSpare2", "GRM_F4_Open", function(ply)
     if not IsValid(ply) or ply ~= LocalPlayer() then return end
-    if yieldsToDoor(ply) then return end
     if keyPressHandled() then return true end
     F4.Toggle()
     return true
@@ -704,7 +696,6 @@ hook.Add("Think", "GRM_F4_KeyPoll", function()
     local lp = LocalPlayer()
     if not IsValid(lp) then return end
     if lp.IsTyping and lp:IsTyping() then return end
-    if yieldsToDoor(lp) then return end
     if keyPressHandled() then return end
     F4.Toggle()
 end)

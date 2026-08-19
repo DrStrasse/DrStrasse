@@ -1785,10 +1785,13 @@ if SERVER then
         if not IsValid(ply) then return end
         if IsValid(aimDoor(ply)) then D.OpenDoorMenu(ply) return true end
     end
-    hook.Add("ShowTeam", "GRM_Doors_ServerOverrideF2", handleServerDoorBind)
+    --[[ Меню двери открывается ТОЛЬКО по F3 (заказ владельца 19.08).
+         Раньше двери перехватывали все четыре бинда и забирали F2 у тикетов,
+         F4 у главного меню и F1 у справки. ]]
     hook.Add("ShowSpare1", "GRM_Doors_ServerOverrideF3", handleServerDoorBind)
-    hook.Add("ShowSpare2", "GRM_Doors_ServerOverrideF4", handleServerDoorBind)
-    hook.Add("ShowHelp", "GRM_Doors_ServerOverrideF1", handleServerDoorBind)
+    hook.Remove("ShowTeam", "GRM_Doors_ServerOverrideF2")
+    hook.Remove("ShowSpare2", "GRM_Doors_ServerOverrideF4")
+    hook.Remove("ShowHelp", "GRM_Doors_ServerOverrideF1")
 
     net.Receive(NET_ACT, function(_, ply)
         if not IsValid(ply) then return end
@@ -2194,10 +2197,12 @@ if CLIENT then
             return true
         end
     end
-    hook.Add("ShowTeam", "GRM_Doors_OverrideF2", handleDoorBindOverride)
+    -- Клиентский перехват — тоже только F3; остальные бинды остаются своим
+    -- владельцам (F2 — тикеты, F4 — главное меню, F1 — справка).
     hook.Add("ShowSpare1", "GRM_Doors_OverrideF3", handleDoorBindOverride)
-    hook.Add("ShowSpare2", "GRM_Doors_OverrideF4", handleDoorBindOverride)
-    hook.Add("ShowHelp", "GRM_Doors_OverrideF1", handleDoorBindOverride)
+    hook.Remove("ShowTeam", "GRM_Doors_OverrideF2")
+    hook.Remove("ShowSpare2", "GRM_Doors_OverrideF4")
+    hook.Remove("ShowHelp", "GRM_Doors_OverrideF1")
 
     hook.Add("HUDPaint", "GRM_Doors_HUD3D2D", function()
         local cv = GetConVar("grm_cl_doorhud")

@@ -89,5 +89,16 @@ ok(not ui:find("content%.OnVScroll = function%(_, offset%) lastScroll"),
 ok(has(ui, "if key ~= lastTab then lastScroll = 0 end"),
     "смена раздела не тянет за собой чужую позицию прокрутки")
 
+print("\n=== 7. БИНД ОТКРЫТИЯ ===")
+local f4 = read("lua/autorun/sh_grm_f4menu.lua")
+ok(has(core, 'hook.Add("ShowSpare1", "GRM_Doors_ServerOverrideF3"'), "сервер открывает меню двери по F3")
+ok(has(core, 'hook.Add("ShowSpare1", "GRM_Doors_OverrideF3"'), "клиент открывает меню двери по F3")
+ok(not has(core, 'hook.Add("ShowTeam"'), "F2 двери больше не забирают (там тикеты)")
+ok(not has(core, 'hook.Add("ShowSpare2"') and not has(core, 'hook.Add("ShowHelp"'),
+    "F4 и F1 двери больше не перехватывают")
+ok(has(core, 'hook.Remove("ShowTeam", "GRM_Doors_ServerOverrideF2")'),
+    "старые перехваты снимаются при перезагрузке файла")
+ok(not has(f4, "yieldsToDoor"), "F4-меню больше не уступает прицелу на дверь")
+
 print(("\nDOOR MENU UI: %d/%d, провалов: %d"):format(total - fails, total, fails))
 if fails > 0 then os.exit(1) end
