@@ -19,6 +19,9 @@ local function read(p)
 end
 
 local src = read("lua/autorun/sh_grm_doors.lua")
+-- Окно двери переехало в отдельный клиентский модуль (19.08): гейт «только
+-- админ» проверяем и там.
+local menu = read("lua/autorun/client/cl_grm_doors_menu.lua")
 local acc = read("lua/autorun/sh_grm_doors_access.lua")
 local key = read("lua/weapons/ds_key_swep/shared.lua")
 
@@ -40,7 +43,8 @@ check("net-флаг = CanAdminDoors, не AM.CanManage", has(src, "net.WriteBool
 check("старый WriteBool с AM.CanManage убран", not has(src, "D.AccessManager.CanManage and D.AccessManager.CanManage(ply) or ply:IsSuperAdmin()"))
 check("set_faction_owner режет не-админа", has(src, "Только суперадмин может менять принадлежность двери."))
 check("toggle_ownable режет не-админа", has(src, "Только суперадмин может менять статус приватизации."))
-check("вкладка Администрирование только админу", has(src, "if d.is_admin == true or canAdmin == true then") or has(src, "if d.is_admin == true or canManage == true then"))
+check("вкладка Администрирование только админу",
+    has(menu, "local isAdmin = (d.is_admin == true) or (canAdmin == true)") and has(menu, 'if isAdmin then'))
 check("R ключей открывает OpenDoorMenu", has(key, "GRM.Doors.OpenDoorMenu"))
 check("AM.CanManage остался для /door_access", has(acc, "function AM.CanManage"))
 

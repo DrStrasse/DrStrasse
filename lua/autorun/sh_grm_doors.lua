@@ -463,6 +463,49 @@ local function recordPriority(rec)
     return score
 end
 
+--[[ ПРОФИЛЬ КАТЕГОРИИ ПРОТИВ СОТРУДНИКА (общая логика сервера и стендов).
+     actor = { faction, department, subdepartment, role, superadmin }.
+     Пустая фракция — «человек с улицы»: его пускает только everyone/noFaction. ]]
+function D.CategoryMatch(cat, actor)
+    if not istable(cat) then return false end
+    actor = istable(actor) and actor or {}
+    if cat.everyone == true then return true end
+    local fac = tostring(actor.faction or "")
+    if fac == "" then return cat.noFaction == true end
+    if listHas(cat.factions, fac) then return true end
+    local dept = tostring(actor.department or "")
+    if dept ~= "" and listHas(cat.departments, fac .. "|" .. dept) then return true end
+    local sub = tostring(actor.subdepartment or "")
+    if sub ~= "" and listHas(cat.subdepartments, fac .. "|" .. sub) then return true end
+    local role = tostring(actor.role or "")
+    if role ~= "" and listHas(cat.roles, fac .. "|" .. role) then return true end
+    return false
+end
+
+--- Может ли сотрудник управлять замком двери этой категории.
+function D.CategoryCanLock(cat, actor)
+    if not istable(cat) then return true end
+    if cat.lockAdminOnly == true then return (istable(actor) and actor.superadmin) == true end
+    if cat.canLock == false then return false end
+    return D.CategoryMatch(cat, actor)
+end
+
+--[[ Флаги профиля категории — общий список для сервера и редактора. ]]
+D.CategoryFlags = {
+    { key = "everyone",      label = "Открывать может каждый (общественная)",
+      desc = "Дверь пропускает любого игрока, даже без организации" },
+    { key = "noFaction",     label = "Пускать людей без организации",
+      desc = "Гражданские без фракции считаются своими" },
+    { key = "canLock",       label = "«Свои» могут запирать и отпирать",
+      desc = "Снимите — проход останется, а замком управлять будет нельзя" },
+    { key = "lockAdminOnly", label = "Замком управляет только администрация",
+      desc = "Даже свои не смогут закрыть или открыть замок" },
+    { key = "keepLocked",    label = "Дверь всегда заперта",
+      desc = "Замок принудительно возвращается в закрытое состояние" },
+    { key = "allowBuy",      label = "Разрешить приватизацию",
+      desc = "Дверь можно купить или арендовать, несмотря на категорию" },
+}
+
 --- Чистая матрица допуска. actor = { superadmin, key, faction, role, canWarrant, hasWarrantOnOwner, canForce, categoryHas }
 function D.EvaluateAccess(rec, actor)
     rec = istable(rec) and rec or { owner_type = "none", ownable = true }
@@ -487,12 +530,23 @@ function D.EvaluateAccess(rec, actor)
         and actor.hasWarrantOnOwner == true and actor.canWarrant == true
     local hasKey = super or isOwner or isCo or isFac or isCat or acl or warrant or actor.propertyHas == true
 
+    --[[ Замок и приватизация у категорийной двери живут по профилю категории:
+         «Общественная» пускает всех, но запирать её нельзя никому, кроме
+         администрации; «Государственная» может разрешить замок только своим. ]]
+    local lock = hasKey
+    local buy = (not owned) and rec.ownable ~= false
+    if rec.owner_type == "category" then
+        lock = super or actor.categoryLock == true
+        if actor.categoryKeepLocked == true and not super then lock = false end
+        buy = rec.ownable ~= false and actor.categoryBuy == true
+    end
+
     return {
         walk_unlocked = true,
         walk_locked = hasKey,
-        lock = hasKey,
+        lock = lock,
         own = super or isOwner,
-        buy = (not owned) and rec.ownable ~= false,
+        buy = buy,
         admin = super,
         force = super or actor.canForce == true or warrant,
         is_owner = isOwner,
@@ -994,24 +1048,57 @@ if SERVER then
         return true
     end
 
+    --[[ КАТЕГОРИИ ДОСТУПА v4 (заказ владельца 19.08).
+         Раньше категория умела ровно одно: список фракций. Теперь это полный
+         профиль доступа к двери:
+           factions/departments/subdepartments/roles — кто «свой»;
+           everyone   — открывать может каждый (общественная дверь);
+           noFaction  — пускать людей без организации;
+           canLock    — «свои» могут запирать/отпирать;
+           lockAdminOnly — замком управляет только администрация;
+           keepLocked — дверь всегда заперта (проходной режим отключён);
+           allowBuy   — дверь можно приватизировать, несмотря на категорию.
+         Пример владельца: гаражные ворота «Общественная» — everyone = true,
+         canLock = false: открыть может любой, а запереть — никто. ]]
+    function D.NormalizeCategory(raw, fallbackID)
+        raw = istable(raw) and raw or {}
+        local id = tostring(raw.id or fallbackID or "")
+        local c = {
+            id = id,
+            name = utf8cut(tostring(raw.name or id), 48),
+            factions       = toArray(raw.factions),
+            departments    = toArray(raw.departments),
+            subdepartments = toArray(raw.subdepartments),
+            roles          = toArray(raw.roles),
+            everyone      = raw.everyone == true,
+            noFaction     = raw.noFaction == true,
+            canLock       = raw.canLock ~= false,
+            lockAdminOnly = raw.lockAdminOnly == true,
+            keepLocked    = raw.keepLocked == true,
+            allowBuy      = raw.allowBuy == true,
+        }
+        if c.name == "" then c.name = id end
+        return c
+    end
+
     function D.SaveCategories()
         local arr = {}
         for id, c in pairs(D.Data.categories or {}) do
-            if istable(c) then
-                arr[#arr + 1] = { id = id, name = c.name or id, factions = toArray(c.factions) }
-            end
+            if istable(c) then arr[#arr + 1] = D.NormalizeCategory(c, id) end
         end
         table.sort(arr, function(a, b) return tostring(a.id) < tostring(b.id) end)
-        return writeJSON(catFile(), { version = 3, categories = arr })
+        return writeJSON(catFile(), { version = 4, categories = arr })
     end
 
     function D.LoadCategories()
         D.Data.categories = {}
         if not file.Exists(catFile(), "DATA") then
             D.Data.categories = {
-                police = { id = "police", name = "Полиция и Силовики", factions = {} },
-                med    = { id = "med",    name = "Медицинская служба", factions = {} },
-                gov    = { id = "gov",    name = "Правительство / Мэрия", factions = {} },
+                police = D.NormalizeCategory({ id = "police", name = "Полиция и Силовики" }),
+                med    = D.NormalizeCategory({ id = "med",    name = "Медицинская служба" }),
+                gov    = D.NormalizeCategory({ id = "gov",    name = "Правительство / Мэрия" }),
+                public = D.NormalizeCategory({ id = "public", name = "Общественная",
+                    everyone = true, canLock = false }),
             }
             D.SaveCategories()
             return true
@@ -1019,18 +1106,19 @@ if SERVER then
         local t = jsonT(file.Read(catFile(), "DATA") or "")
         if not istable(t) then return false end
         local list = istable(t.categories) and t.categories or (istable(t[1]) and t or nil)
+        -- Старые файлы (version 3: только id/name/factions) читаются как есть —
+        -- недостающие поля профиля добираются значениями по умолчанию.
         if list then
             for _, c in ipairs(list) do
                 if istable(c) and isstring(c.id) then
-                    D.Data.categories[c.id] = { id = c.id, name = c.name or c.id, factions = toArray(c.factions) }
+                    D.Data.categories[c.id] = D.NormalizeCategory(c, c.id)
                 end
             end
         else
             for id, c in pairs(t) do
                 if istable(c) and id ~= "version" then
-                    D.Data.categories[tostring(c.id or id)] = {
-                        id = tostring(c.id or id), name = c.name or id, factions = toArray(c.factions),
-                    }
+                    local cid = tostring(c.id or id)
+                    D.Data.categories[cid] = D.NormalizeCategory(c, cid)
                 end
             end
         end
@@ -1064,7 +1152,7 @@ if SERVER then
         if D.Data.categories[id] then return nil, "Категория уже существует" end
         name = utf8cut(tostring(name or ""), 48)
         if name == "" then name = id end
-        local c = { id = id, name = name, factions = {} }
+        local c = D.NormalizeCategory({ id = id, name = name })
         D.Data.categories[id] = c
         D.SaveCategories()
         return c
@@ -1115,10 +1203,16 @@ if SERVER then
         return true
     end
 
-    local function factionInCategory(factionName, catId)
+    function D.CategoryOfDoor(rec)
+        if not (istable(rec) and rec.owner_type == "category") then return nil end
+        return D.Data.categories and D.Data.categories[tostring(rec.owner_category or "")]
+    end
+
+    local function factionInCategory(factionName, catId, actor)
         local cat = D.Data.categories and D.Data.categories[catId]
         if not istable(cat) then return false end
-        return listHas(toArray(cat.factions), factionName)
+        actor = istable(actor) and actor or { faction = factionName }
+        return D.CategoryMatch(cat, actor)
     end
 
     local function playerFactionInfo(ply)
@@ -1127,7 +1221,7 @@ if SERVER then
         for name, f in pairs(Factions) do
             if istable(f) and istable(f.Members) then
                 local m = GRM.Identity.FactionMember(f, ply)
-                if istable(m) then return name, m.Role, m.Department end
+                if istable(m) then return name, m.Role, m.Department, tostring(m.Subdepartment or m.Subdept or "") end
             end
         end
         return nil, nil, nil
@@ -1247,28 +1341,40 @@ if SERVER then
     end
 
     local function actorOf(ply, rec)
-        local fac, role = playerFactionInfo(ply)
-        local catHas = rec and rec.owner_type == "category" and fac and factionInCategory(fac, rec.owner_category)
-        local aclCat = false
-        if rec and fac and istable(rec.categories) then
-            for _, cid in ipairs(rec.categories) do
-                if factionInCategory(fac, cid) then aclCat = true break end
-            end
-        end
+        local fac, role, dept, sub = playerFactionInfo(ply)
         local AM = D.AccessManager
-        local propertyHas = hook.Run("GRM_DoorPropertyAccess", ply, rec and rec.id or "")
-        return {
+        local actor = {
             superadmin = D.CanAdminDoors(ply),
             key = charKey(ply),
             faction = fac,
             role = role,
+            department = dept,
+            subdepartment = sub,
             canWarrant = AM and AM.CanWarrant and AM.CanWarrant(ply) or false,
             hasWarrantOnOwner = rec and rec.owner_type == "player" and D.HasWarrant(rec.owner_key) or false,
             canForce = AM and AM.CanForceDoor and AM.CanForceDoor(ply) or false,
-            categoryHas = catHas == true,
-            aclCategory = aclCat,
-            propertyHas = propertyHas == true,
         }
+
+        -- Категория-владелец: проход, замок и приватизация считаются по её профилю
+        -- (отделы, подотделы, должности, «все», «без организации»).
+        local ownerCat = D.CategoryOfDoor(rec)
+        actor.categoryHas = ownerCat and D.CategoryMatch(ownerCat, actor) or false
+        actor.categoryLock = ownerCat and D.CategoryCanLock(ownerCat, actor) or false
+        actor.categoryBuy = ownerCat and ownerCat.allowBuy == true or false
+        actor.categoryKeepLocked = ownerCat and ownerCat.keepLocked == true or false
+
+        -- Категории, добавленные в список доступа двери (не владелец).
+        local aclCat = false
+        if rec and istable(rec.categories) then
+            for _, cid in ipairs(rec.categories) do
+                if factionInCategory(fac, cid, actor) then aclCat = true break end
+            end
+        end
+        actor.aclCategory = aclCat
+
+        local propertyHas = hook.Run("GRM_DoorPropertyAccess", ply, rec and rec.id or "")
+        actor.propertyHas = propertyHas == true
+        return actor
     end
 
     function D.CanAccessDoor(ply, ent)
@@ -1294,6 +1400,9 @@ if SERVER then
     function D.LockDoor(ent, locked)
         if not IsValid(ent) then return end
         local rec, id = getRecord(ent)
+        -- Профиль категории «дверь всегда заперта» сильнее любой попытки её открыть.
+        local keepCat = D.CategoryOfDoor(rec)
+        if istable(keepCat) and keepCat.keepLocked == true then locked = true end
         local cmd = locked and "Lock" or "Unlock"
         for _, equivalent in ipairs(D.GetEquivalentDoors(ent)) do
             if IsValid(equivalent) then equivalent:Fire(cmd, "", 0) end
@@ -1612,6 +1721,39 @@ if SERVER then
         return payload
     end
 
+    --[[ Дерево организаций для редактора категорий: фракция → отделы →
+         подотделы → должности, с публичными названиями (их видит админ) и
+         системными ключами (их хранит категория). ]]
+    function D.FactionTree()
+        local out = {}
+        if not istable(Factions) then return out end
+        local FA = GRM.Factions or {}
+        for name, f in pairs(Factions) do
+            if istable(f) then
+                local row = { name = name, display = (FA.DisplayName and FA.DisplayName(name)) or name,
+                    roles = {}, departments = {}, subdepartments = {} }
+                for _, roleKey in ipairs(f.Roles or {}) do
+                    row.roles[#row.roles + 1] = { key = roleKey,
+                        display = (FA.RoleDisplayName and FA.RoleDisplayName(f, roleKey)) or roleKey }
+                end
+                for _, deptKey in ipairs(f.Departments or {}) do
+                    row.departments[#row.departments + 1] = { key = deptKey,
+                        display = (FA.DepartmentDisplayName and FA.DepartmentDisplayName(f, deptKey)) or deptKey }
+                end
+                for subKey, sub in pairs(f.Subdepartments or {}) do
+                    if istable(sub) then
+                        row.subdepartments[#row.subdepartments + 1] = { key = subKey,
+                            display = tostring(sub.name or subKey), parent = tostring(sub.parentDept or "") }
+                    end
+                end
+                table.sort(row.subdepartments, function(a, b) return tostring(a.display) < tostring(b.display) end)
+                out[#out + 1] = row
+            end
+        end
+        table.sort(out, function(a, b) return string.lower(tostring(a.display)) < string.lower(tostring(b.display)) end)
+        return out
+    end
+
     function D.OpenDoorMenu(ply)
         local ent = aimDoor(ply)
         if not IsValid(ent) then
@@ -1622,16 +1764,13 @@ if SERVER then
         local acc = doorData and (doorData.can_own or doorData.is_admin)
         local catsList, facList = {}, {}
         if acc then
+            -- Категории уходят ЦЕЛИКОМ (профиль доступа), иначе редактировать
+            -- их на клиенте нечем.
             for id, c in pairs(D.Data.categories or {}) do
-                catsList[#catsList + 1] = { id = id, name = c.name or id }
+                catsList[#catsList + 1] = D.NormalizeCategory(c, id)
             end
-            if istable(Factions) then
-                for n, f in pairs(Factions) do
-                    if istable(f) then
-                        facList[#facList + 1] = { name = n, roles = f.Roles or {} }
-                    end
-                end
-            end
+            table.sort(catsList, function(a, b) return tostring(a.name) < tostring(b.name) end)
+            facList = D.FactionTree()
         end
         net.Start(NET_OPEN)
             net.WriteEntity(ent)
@@ -1811,6 +1950,68 @@ if SERVER then
             notify(ply, "Назначен владелец: категория [" .. catDisp .. "]", 100, 220, 100)
             D.OpenDoorMenu(ply)
 
+        elseif act == "cat_create" then
+            if not acc.admin then notify(ply, "Только суперадмин.", 255, 100, 100) return end
+            local c, err = D.CreateCategory(a.catId, a.name)
+            notify(ply, c and ("Категория создана: " .. tostring(c.name)) or tostring(err), c and 100 or 255, c and 220 or 100, 100)
+            D.OpenDoorMenu(ply)
+
+        elseif act == "cat_rename" then
+            if not acc.admin then return end
+            local okRen, err = D.RenameCategory(a.catId, a.name)
+            notify(ply, okRen and "Категория переименована." or tostring(err), okRen and 100 or 255, okRen and 220 or 100, 100)
+            D.OpenDoorMenu(ply)
+
+        elseif act == "cat_delete" then
+            if not acc.admin then return end
+            local okDel, err = D.DeleteCategory(a.catId)
+            notify(ply, okDel and "Категория удалена." or tostring(err), okDel and 100 or 255, okDel and 220 or 100, 100)
+            D.OpenDoorMenu(ply)
+
+        elseif act == "cat_flag" then
+            if not acc.admin then return end
+            local c = D.Data.categories and D.Data.categories[tostring(a.catId or "")]
+            if not istable(c) then return end
+            local flag = tostring(a.flag or "")
+            local known = false
+            for _, row in ipairs(D.CategoryFlags or {}) do if row.key == flag then known = true break end end
+            if not known then return end
+            c[flag] = a.value == true
+            D.Data.categories[c.id] = D.NormalizeCategory(c, c.id)
+            D.SaveCategories()
+            D.OpenDoorMenu(ply)
+
+        elseif act == "cat_member" then
+            -- Переключение элемента профиля: фракция, отдел, подотдел, должность.
+            if not acc.admin then return end
+            local c = D.Data.categories and D.Data.categories[tostring(a.catId or "")]
+            if not istable(c) then return end
+            local list = tostring(a.list or "")
+            if list ~= "factions" and list ~= "departments" and list ~= "subdepartments" and list ~= "roles" then return end
+            local value = tostring(a.value or "")
+            if value == "" then return end
+            local cur, nextList = toArray(c[list]), {}
+            local found = false
+            for _, v in ipairs(cur) do
+                if v == value then found = true else nextList[#nextList + 1] = v end
+            end
+            if not found then nextList[#nextList + 1] = value end
+            c[list] = nextList
+            D.Data.categories[c.id] = D.NormalizeCategory(c, c.id)
+            D.SaveCategories()
+            D.OpenDoorMenu(ply)
+
+        elseif act == "clear_owner" then
+            if not acc.admin then notify(ply, "Только суперадмин.", 255, 100, 100) return end
+            rec.owner_type = "none"
+            rec.owner_key, rec.owner_nick, rec.owner_faction, rec.owner_category = "", "", "", ""
+            rec.rent_until = 0
+            persist(rec, id)
+            D.ApplyRecordVisual(ent, rec)
+            D.SaveDoors()
+            notify(ply, "Владелец двери сброшен.", 100, 220, 100)
+            D.OpenDoorMenu(ply)
+
         elseif act == "toggle_ownable" then
             if not acc.admin then
                 notify(ply, "Только суперадмин может менять статус приватизации.", 255, 100, 100)
@@ -1963,27 +2164,6 @@ if CLIENT then
     surface.CreateFont("GRMDoor_HUD",    { font = "Roboto", size = 19, weight = 800, extended = true })
     surface.CreateFont("GRMDoor_HUDSm",  { font = "Roboto", size = 13, weight = 600, extended = true })
 
-    local CUI = {
-        bg = Color(20, 24, 32, 250), panel = Color(32, 38, 50, 245),
-        accent = Color(70, 150, 240), green = Color(60, 190, 110),
-        red = Color(220, 75, 70), yellow = Color(230, 180, 60),
-        text = Color(240, 245, 250), dim = Color(160, 170, 185),
-    }
-
-    local function btn(p, text, col, w, h)
-        local b = vgui.Create("DButton", p)
-        if w then b:SetWide(w) end
-        if h then b:SetTall(h) end
-        b:SetText(text) b:SetFont("GRMDoor_Normal") b:SetTextColor(color_white)
-        b.Paint = function(self, pw, ph)
-            local c = col or CUI.accent
-            if not self:IsEnabled() then c = Color(60, 65, 75)
-            elseif self:IsHovered() then c = Color(math.min(255, c.r + 25), math.min(255, c.g + 25), math.min(255, c.b + 25)) end
-            draw.RoundedBox(6, 0, 0, pw, ph, c)
-        end
-        return b
-    end
-
     local function act(t)
         net.Start(NET_ACT) net.WriteTable(t or {}) net.SendToServer()
     end
@@ -2053,276 +2233,9 @@ if CLIENT then
             locked and Color(255, 90, 90, alpha) or Color(90, 230, 130, alpha), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end)
 
-    net.Receive(NET_OPEN, function()
-        local ent = net.ReadEntity()
-        local d = net.ReadTable() or {}
-        local catsList = net.ReadTable() or {}
-        local facList = net.ReadTable() or {}
-        local canAdmin = net.ReadBool()
-        if not IsValid(ent) then return end
-
-        local prevTabName, prevScroll
-        if IsValid(D._sheet) then
-            local at = D._sheet:GetActiveTab()
-            if IsValid(at) then
-                prevTabName = at:GetText()
-                for _, it in ipairs(D._sheet.Items or {}) do
-                    if it.Tab == at and IsValid(it.Panel) then
-                        for _, ch in ipairs(it.Panel:GetChildren()) do
-                            if IsValid(ch) and ch.ClassName == "DScrollPanel" then
-                                prevScroll = ch:GetVBar():GetScroll()
-                                break
-                            end
-                        end
-                    end
-                end
-            end
-        end
-
-        if IsValid(D._frame) then D._frame:Remove() end
-        local f = vgui.Create("DFrame")
-        D._frame = f
-        if GRM.UI and GRM.UI.Track then GRM.UI.Track("grm_door_menu", f) end
-        f:SetTitle("") f:SetSize(620, 520) f:Center() f:MakePopup() f:ShowCloseButton(false)
-        f.Paint = function(_, pw, ph)
-            draw.RoundedBox(8, 0, 0, pw, ph, CUI.bg)
-            draw.RoundedBoxEx(8, 0, 0, pw, 38, Color(28, 34, 46), true, true, false, false)
-            draw.SimpleText("Управление дверью", "GRMDoor_Title", 14, 19, CUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        end
-        local closeBtn = vgui.Create("DButton", f)
-        closeBtn:SetText("X") closeBtn:SetFont("GRMDoor_Sub") closeBtn:SetTextColor(color_white)
-        closeBtn:SetPos(576, 6) closeBtn:SetSize(32, 26)
-        closeBtn.DoClick = function() f:Close() end
-        closeBtn.Paint = function(self, pw, ph)
-            draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and CUI.red or Color(45, 52, 68))
-        end
-
-        local sheet = vgui.Create("DPropertySheet", f)
-        sheet:Dock(FILL) sheet:DockMargin(8, 44, 8, 8)
-        D._sheet = sheet
-
-        local p1 = vgui.Create("DPanel", sheet) p1:SetPaintBackground(false)
-        sheet:AddSheet("Обзор", p1, "icon16/door.png")
-        local scroll1 = vgui.Create("DScrollPanel", p1) scroll1:Dock(FILL)
-
-        local function infoRow(parent, labelText, valueText, valColor)
-            local r = vgui.Create("DPanel", parent)
-            r:Dock(TOP) r:SetTall(32) r:DockMargin(4, 2, 4, 2)
-            r.Paint = function(_, pw, ph) draw.RoundedBox(6, 0, 0, pw, ph, CUI.panel) end
-            local l1 = vgui.Create("DLabel", r) l1:Dock(LEFT) l1:SetWide(160) l1:DockMargin(10, 0, 0, 0)
-            l1:SetText(labelText) l1:SetFont("GRMDoor_Normal") l1:SetTextColor(CUI.dim)
-            local l2 = vgui.Create("DLabel", r) l2:Dock(FILL)
-            l2:SetText(valueText) l2:SetFont("GRMDoor_Sub") l2:SetTextColor(valColor or CUI.text)
-        end
-
-        local ownerDesc = "Никто"
-        if d.owner_type == "player" then ownerDesc = tostring(d.owner_nick)
-        elseif d.owner_type == "faction" then ownerDesc = "Фракция: " .. tostring(d.owner_faction)
-        elseif d.owner_type == "category" then
-            ownerDesc = "Категория: " .. tostring((d.owner_category_name ~= "" and d.owner_category_name) or d.owner_category)
-        end
-        infoRow(scroll1, "Название:", d.title ~= "" and d.title or "Без названия", CUI.text)
-        infoRow(scroll1, "Владелец:", ownerDesc, CUI.yellow)
-        infoRow(scroll1, "Состояние замка:", d.locked and "ЗАКРЫТО" or "ОТКРЫТО", d.locked and CUI.red or CUI.green)
-        if (tonumber(d.rent_until) or 0) > os.time() then
-            infoRow(scroll1, "Аренда до:", os.date("%d.%m.%Y %H:%M", d.rent_until), CUI.yellow)
-        end
-
-        local actBox = vgui.Create("DPanel", scroll1)
-        actBox:Dock(TOP) actBox:SetTall(160) actBox:DockMargin(4, 8, 4, 4)
-        actBox.Paint = function(_, pw, ph) draw.RoundedBox(6, 0, 0, pw, ph, CUI.panel) end
-        local btnY = 12
-        if d.can_buy then
-            local bRent = btn(actBox, "Арендовать (" .. (d.rent_price or 5000) .. " GRM / 7дн)", CUI.accent, 270, 32)
-            bRent:SetPos(12, btnY)
-            bRent.DoClick = function() act({ action = "claim_rent", entIndex = ent:EntIndex() }) end
-            local bPerm = btn(actBox, "Купить навечно (" .. ((d.rent_price or 5000) * 3) .. " GRM)", CUI.green, 270, 32)
-            bPerm:SetPos(292, btnY)
-            bPerm.DoClick = function() act({ action = "claim_perm", entIndex = ent:EntIndex() }) end
-            btnY = btnY + 40
-        end
-        if d.can_access or d.is_owner or d.is_admin then
-            local bLock = btn(actBox, "Заблокировать замок", CUI.red, 270, 32)
-            bLock:SetPos(12, btnY)
-            bLock.DoClick = function() act({ action = "lock", entIndex = ent:EntIndex() }) end
-            local bUnlock = btn(actBox, "Разблокировать замок", CUI.green, 270, 32)
-            bUnlock:SetPos(292, btnY)
-            bUnlock.DoClick = function() act({ action = "unlock", entIndex = ent:EntIndex() }) end
-            btnY = btnY + 40
-        end
-        if d.can_own or d.is_admin then
-            local bRel = btn(actBox, "Освободить / Отказаться от владения", CUI.yellow, 550, 30)
-            bRel:SetPos(12, btnY)
-            bRel.DoClick = function() act({ action = "release", entIndex = ent:EntIndex() }) end
-            btnY = btnY + 36
-            local titleEntry = vgui.Create("DTextEntry", actBox)
-            titleEntry:SetPos(12, btnY) titleEntry:SetSize(400, 28)
-            titleEntry:SetText(tostring(d.title or ""))
-            titleEntry:SetPlaceholderText("Изменить название двери...")
-            local bTitle = btn(actBox, "Сохранить имя", CUI.accent, 140, 28)
-            bTitle:SetPos(422, btnY)
-            bTitle.DoClick = function()
-                act({ action = "set_title", entIndex = ent:EntIndex(), title = titleEntry:GetValue() })
-            end
-        end
-
-        if d.can_own or d.is_admin then
-            local p2 = vgui.Create("DPanel", sheet) p2:SetPaintBackground(false)
-            sheet:AddSheet("Совладельцы", p2, "icon16/user_add.png")
-            local addPanel = vgui.Create("DPanel", p2)
-            addPanel:Dock(TOP) addPanel:SetTall(40) addPanel:DockMargin(4, 4, 4, 4)
-            addPanel.Paint = function(_, pw, ph) draw.RoundedBox(6, 0, 0, pw, ph, CUI.panel) end
-            local plyCombo = vgui.Create("DComboBox", addPanel)
-            plyCombo:SetPos(10, 7) plyCombo:SetSize(360, 26)
-            plyCombo:SetValue("Выберите игрока онлайн...")
-            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
-                if IsValid(p) and p ~= LocalPlayer() then
-                    local ck = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)) or p:SteamID64()
-                    plyCombo:AddChoice(p:Nick() .. " (" .. ck .. ")", ck)
-                end
-            end
-            local bAddCo = btn(addPanel, "+ Добавить совладельца", CUI.green, 180, 26)
-            bAddCo:SetPos(380, 7)
-            bAddCo.DoClick = function()
-                local _, sid = plyCombo:GetSelected()
-                if sid then act({ action = "add_coowner", entIndex = ent:EntIndex(), sid = sid }) end
-            end
-            local coScroll = vgui.Create("DScrollPanel", p2)
-            coScroll:Dock(FILL) coScroll:DockMargin(4, 4, 4, 4)
-            for _, co in ipairs(d.co_owners or {}) do
-                local row = vgui.Create("DPanel", coScroll)
-                row:Dock(TOP) row:SetTall(32) row:DockMargin(0, 0, 0, 4)
-                row.Paint = function(_, pw, ph) draw.RoundedBox(6, 0, 0, pw, ph, CUI.panel) end
-                local lbl = vgui.Create("DLabel", row)
-                lbl:Dock(LEFT) lbl:SetWide(380) lbl:DockMargin(10, 0, 0, 0)
-                lbl:SetText(tostring(co.nick) .. " (" .. tostring(co.sid) .. ")")
-                lbl:SetFont("GRMDoor_Normal") lbl:SetTextColor(CUI.text)
-                local bRem = btn(row, "Удалить", CUI.red, 120, 24)
-                bRem:Dock(RIGHT) bRem:DockMargin(0, 4, 10, 4)
-                bRem.DoClick = function()
-                    act({ action = "remove_coowner", entIndex = ent:EntIndex(), sid = co.sid })
-                end
-            end
-
-            local p3 = vgui.Create("DPanel", sheet) p3:SetPaintBackground(false)
-            sheet:AddSheet("Фракции и Роли", p3, "icon16/group_key.png")
-            local scroll3 = vgui.Create("DScrollPanel", p3)
-            scroll3:Dock(FILL) scroll3:DockMargin(4, 4, 4, 4)
-            for _, fData in ipairs(facList or {}) do
-                local fn = fData.name
-                local fHas = false
-                for _, n in ipairs(d.factions or {}) do if n == fn then fHas = true break end end
-                local fRow = vgui.Create("DPanel", scroll3)
-                fRow:Dock(TOP) fRow:SetTall(32) fRow:DockMargin(0, 0, 0, 2)
-                fRow.Paint = function(_, pw, ph) draw.RoundedBox(6, 0, 0, pw, ph, CUI.panel) end
-                local chk = vgui.Create("DCheckBoxLabel", fRow)
-                chk:Dock(LEFT) chk:SetWide(300) chk:DockMargin(10, 0, 0, 0)
-                chk:SetText("Фракция: " .. fn) chk:SetTextColor(CUI.text)
-                chk:SetValue(fHas and 1 or 0)
-                chk.OnChange = function()
-                    act({ action = "toggle_acl_faction", entIndex = ent:EntIndex(), faction = fn })
-                end
-                for _, rName in ipairs(fData.roles or {}) do
-                    local roleKey = fn .. "|" .. rName
-                    local rHas = false
-                    for _, n in ipairs(d.roles or {}) do if n == roleKey then rHas = true break end end
-                    local rRow = vgui.Create("DPanel", scroll3)
-                    rRow:Dock(TOP) rRow:SetTall(26) rRow:DockMargin(24, 0, 0, 2)
-                    rRow.Paint = function(_, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, Color(26, 32, 42)) end
-                    local rChk = vgui.Create("DCheckBoxLabel", rRow)
-                    rChk:Dock(FILL) rChk:DockMargin(10, 0, 0, 0)
-                    rChk:SetText("Роль: " .. rName) rChk:SetTextColor(CUI.dim)
-                    rChk:SetValue(rHas and 1 or 0)
-                    rChk.OnChange = function()
-                        act({ action = "toggle_acl_role", entIndex = ent:EntIndex(), roleKey = roleKey })
-                    end
-                end
-            end
-            for _, cData in ipairs(catsList or {}) do
-                local cid = cData.id
-                if isstring(cid) and cid ~= "" then
-                    local cHas = false
-                    for _, n in ipairs(d.categories or {}) do if n == cid then cHas = true break end end
-                    local cRow = vgui.Create("DPanel", scroll3)
-                    cRow:Dock(TOP) cRow:SetTall(32) cRow:DockMargin(0, 0, 0, 2)
-                    cRow.Paint = function(_, pw, ph) draw.RoundedBox(6, 0, 0, pw, ph, Color(38, 46, 62)) end
-                    local cChk = vgui.Create("DCheckBoxLabel", cRow)
-                    cChk:Dock(LEFT) cChk:SetWide(340) cChk:DockMargin(10, 0, 0, 0)
-                    cChk:SetText("Категория: " .. tostring(cData.name or cid)) cChk:SetTextColor(CUI.yellow)
-                    cChk:SetValue(cHas and 1 or 0)
-                    cChk.OnChange = function()
-                        act({ action = "toggle_acl_category", entIndex = ent:EntIndex(), category = cid })
-                    end
-                end
-            end
-        end
-
-        if d.is_admin == true or canAdmin == true then
-            local p4 = vgui.Create("DPanel", sheet) p4:SetPaintBackground(false)
-            sheet:AddSheet("Администрирование", p4, "icon16/shield.png")
-            local scroll4 = vgui.Create("DScrollPanel", p4)
-            scroll4:Dock(FILL) scroll4:DockMargin(4, 4, 4, 4)
-            local function adminBlock(title, height)
-                local b = vgui.Create("DPanel", scroll4)
-                b:Dock(TOP) b:SetTall(height or 80) b:DockMargin(0, 0, 0, 6)
-                b.Paint = function(_, pw, ph)
-                    draw.RoundedBox(6, 0, 0, pw, ph, CUI.panel)
-                    draw.SimpleText(title, "GRMDoor_Sub", 10, 14, CUI.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                end
-                return b
-            end
-            local b1 = adminBlock("Назначить владельца — Фракцию:", 70)
-            local facCombo = vgui.Create("DComboBox", b1)
-            facCombo:SetPos(10, 32) facCombo:SetSize(280, 26) facCombo:SetValue("Выберите фракцию...")
-            for _, fData in ipairs(facList or {}) do facCombo:AddChoice(fData.name, fData.name) end
-            local bSetFac = btn(b1, "Назначить", CUI.accent, 140, 26)
-            bSetFac:SetPos(300, 32)
-            bSetFac.DoClick = function()
-                local fn = facCombo:GetValue()
-                if fn and fn ~= "" and fn ~= "Выберите фракцию..." then
-                    act({ action = "set_faction_owner", entIndex = ent:EntIndex(), faction = fn })
-                end
-            end
-            local b2 = adminBlock("Назначить владельца — Категорию:", 70)
-            local catCombo = vgui.Create("DComboBox", b2)
-            catCombo:SetPos(10, 32) catCombo:SetSize(280, 26) catCombo:SetValue("Выберите категорию...")
-            for _, c in ipairs(catsList or {}) do catCombo:AddChoice(c.name or c.id, c.id) end
-            local bSetCat = btn(b2, "Назначить", CUI.accent, 140, 26)
-            bSetCat:SetPos(300, 32)
-            bSetCat.DoClick = function()
-                local catId = catCombo:GetOptionData(catCombo:GetSelectedID()) or catCombo:GetValue()
-                if catId and catId ~= "" and catId ~= "Выберите категорию..." then
-                    act({ action = "set_category_owner", entIndex = ent:EntIndex(), category = catId })
-                end
-            end
-            local b3 = adminBlock("Статус доступности для приватизации:", 65)
-            local bOwnable = btn(b3, d.ownable and "Разрешена приватизация (Сделать непубличной)" or "Заблокировано (Разрешить покупку/аренду)",
-                d.ownable and CUI.green or CUI.red, 440, 28)
-            bOwnable:SetPos(10, 30)
-            bOwnable.DoClick = function() act({ action = "toggle_ownable", entIndex = ent:EntIndex() }) end
-        end
-
-        if prevTabName then
-            for _, it in ipairs(sheet.Items or {}) do
-                if IsValid(it.Tab) and it.Tab:GetText() == prevTabName then
-                    sheet:SetActiveTab(it.Tab)
-                    if prevScroll then
-                        local restorePnl = it.Panel
-                        timer.Simple(0, function()
-                            if not IsValid(restorePnl) then return end
-                            for _, ch in ipairs(restorePnl:GetChildren()) do
-                                if IsValid(ch) and ch.ClassName == "DScrollPanel" then
-                                    ch:GetVBar():SetScroll(prevScroll)
-                                    break
-                                end
-                            end
-                        end)
-                    end
-                    break
-                end
-            end
-        end
-    end)
+    --[[ Окно «Управление дверью» переехало в отдельный клиентский модуль
+         lua/autorun/client/cl_grm_doors_menu.lua (стиль GRM + редактор
+         категорий). Здесь остались HUD, бинды и сеть. ]]
 
     concommand.Add("grm_door", function()
         net.Start(NET_ACT) net.WriteTable({ action = "open_menu" }) net.SendToServer()

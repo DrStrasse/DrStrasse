@@ -452,3 +452,17 @@ Q-меню: **только** каталог/схема `grm_fire_place`, не л
   `sim_garage_module` (60), `sim_dept_tags` (45).
 * Не проверено вживую: привязка ворот на реальной карте, продажа дома с
   гаражом на живом сервере, смена ключа ранга при большом составе.
+
+## Ход 19.08 (4) — категории дверей
+
+* Категории дверей v4: `factions/departments/subdepartments/roles` + флаги
+  `everyone/noFaction/canLock/lockAdminOnly/keepLocked/allowBuy`.
+* `D.CategoryMatch`, `D.CategoryCanLock`, `D.CategoryOfDoor`, `D.FactionTree`,
+  `D.NormalizeCategory`; действия `cat_create/rename/delete/flag/member`,
+  `clear_owner`.
+* Окно двери → `lua/autorun/client/cl_grm_doors_menu.lua` v2.0.0 (стиль GRM,
+  боковое меню, редактор категорий, ширина до 1480).
+* Стенды: `sim_door_categories` (30), `sim_door_menu_ui` (39); обновлены
+  `sim_doors_admin`, `sim_doors_v3`.
+* Не проверено вживую: миграция старого categories.json на живом сервере,
+  поведение keepLocked с парными дверями.

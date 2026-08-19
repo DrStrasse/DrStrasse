@@ -10,6 +10,9 @@ local function read(p)
 end
 
 local src = read("lua/autorun/sh_grm_doors.lua")
+-- Окно двери с 19.08 живёт отдельным клиентским модулем — контракт ядра
+-- проверяем по обоим файлам.
+src = src .. "\n" .. read("lua/autorun/client/cl_grm_doors_menu.lua")
 local fails = 0
 local function check(name, cond, extra)
     if cond then print("  OK   " .. name)
