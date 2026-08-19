@@ -69,6 +69,13 @@ local currentTabButtons = nil
 -- Парковка панелей навесных разделов: задаётся при открытии окна, нужна и
 -- автосинку (rebuildCurrentTab), а он живёт вне UI.Open.
 local currentParkHooked = nil
+-- Селектор организаций в шапке: живёт дольше одного открытия, потому что
+-- данные фракций прилетают ПОЗЖЕ окна (полный снимок идёт частями через
+-- GRM.Net.Stream). Держим ссылку, чтобы пересобрать список, когда данные
+-- наконец пришли.
+local currentFacCombo = nil
+local currentIsSA = false
+local currentFacNames = nil
 
 -- Тёмная тема для полей ввода (DTextEntry) в духе XUI.
 --[[ ЗАЩИТА ВВОДА ОТ АВТООБНОВЛЕНИЯ.
@@ -376,11 +383,13 @@ local function getPlayerFactionName(data)
     return nil
 end
 
-function UI.Open(requestedFaction)
+function UI.Open(requestedFaction, requestedTab)
     if IsValid(currentFrame) then
         currentFrame:Remove()
         currentFrame = nil
     end
+    currentFacCombo = nil
+    currentFacNames = nil
 
     local data = FactionsData or {}
     local lp = LocalPlayer()
@@ -435,30 +444,64 @@ function UI.Open(requestedFaction)
         end
     end
 
-    -- Селектор организаций для SuperAdmin в шапке.
-    -- Список сортируем по публичному имени — иначе pairs(data) даёт
-    -- недетерминированный (и меняющийся между пересборками) порядок.
-    if isSA and table.Count(data) > 0 then
-        local comboFac = vgui.Create("DComboBox", f)
-        comboFac:SetPos(f:GetWide() - 430, 9)
-        comboFac:SetSize(260, 28)
-        skinCombo(comboFac)
+    --[[ СЕЛЕКТОР ОРГАНИЗАЦИЙ (шапка, суперадмин).
+
+         Две причины, по которым он «ломался»:
+           1) он создавался ОДИН раз и только если FactionsData уже был
+              заполнен. Но полный снимок организаций теперь приходит частями
+              (GRM.Net.Stream) и запрашивается в конце UI.Open — при первом
+              открытии список пуст, селектор не появлялся вовсе и больше
+              никогда не создавался;
+           2) выбор организации удалял окно ПРЯМО из OnSelect, то есть внутри
+              обработчика самого выпадающего списка — Derma после этого
+              трогала уже удалённую панель (классический «NULL Panel»).
+
+         Теперь селектор пересобирается при каждом синке данных, а
+         переключение уходит в следующий кадр и сохраняет открытый раздел. ]]
+    currentIsSA = isSA
+
+    local function switchFaction(val)
+        if not val or val == targetFac then return end
+        local keepTab = currentTab
+        timer.Simple(0, function()
+            if IsValid(currentFrame) and currentFrame ~= f then return end
+            if IsValid(f) then f:Remove() end
+            UI.Open(val, keepTab)
+        end)
+    end
+
+    local function buildSelector()
+        if not currentIsSA then return end
+        local src = FactionsData or {}
         local fnames = {}
-        for fname, _ in pairs(data) do fnames[#fnames + 1] = fname end
+        for fname in pairs(src) do fnames[#fnames + 1] = fname end
+        if #fnames == 0 then return end
+        -- Список сортируем по публичному имени — иначе pairs() даёт
+        -- недетерминированный (и меняющийся между пересборками) порядок.
         table.sort(fnames, function(a, b)
             return string.lower(GRM.Factions.DisplayName(a)) < string.lower(GRM.Factions.DisplayName(b))
         end)
+
+        local signature = table.concat(fnames, "\30") .. "\31" .. tostring(targetFac)
+        if IsValid(currentFacCombo) and currentFacNames == signature then return end
+        currentFacNames = signature
+
+        if IsValid(currentFacCombo) then currentFacCombo:Remove() end
+        local comboFac = vgui.Create("DComboBox", f)
+        currentFacCombo = comboFac
+        comboFac:SetSize(260, 28)
+        comboFac:SetPos(f:GetWide() - 430, 9)
+        skinCombo(comboFac)
         for _, fname in ipairs(fnames) do
             local disp = GRM.Factions.DisplayName(fname)
             comboFac:AddChoice(disp .. " [" .. fname .. "]", fname, fname == targetFac)
         end
-        comboFac.OnSelect = function(_, _, _, val)
-            if val and val ~= targetFac then
-                f:Remove()
-                UI.Open(val)
-            end
-        end
+        if not targetFac then comboFac:SetValue("— выберите организацию —") end
+        comboFac.OnSelect = function(_, _, _, val) switchFaction(val) end
     end
+
+    UI.RebuildSelector = function() if IsValid(f) then buildSelector() end end
+    buildSelector()
 
     local btnClose = vgui.Create("DButton", f)
     btnClose:SetSize(34, 30)
@@ -1675,7 +1718,11 @@ function UI.Open(requestedFaction)
 
     -- Открываем первый ДОСТУПНЫЙ раздел: у сотрудника без прав «Обзора» может
     -- не быть вовсе, и окно не должно оставаться пустым без объяснения.
-    if tabButtons["overview"] then
+    if requestedTab and tabButtons[requestedTab] and tabButtons[requestedTab].builder then
+        -- Переключение организации не должно выкидывать в «Обзор»:
+        -- возвращаемся в тот же раздел, где админ работал.
+        selectTab(requestedTab, tabButtons[requestedTab].builder)
+    elseif tabButtons["overview"] then
         selectTab("overview", buildOverviewTab)
     else
         local firstKey, firstBtn
@@ -1760,6 +1807,12 @@ end
 
 hook.Add("GRM_FactionUIRefreshed", "GRM_FactionUnified_AutoRefresh", function(data)
     if not IsValid(currentFrame) or not IsValid(currentContent) then return end
+
+    -- Полный снимок организаций приходит частями и уже ПОСЛЕ открытия окна,
+    -- поэтому список организаций в шапке дозаполняется здесь, а не только
+    -- при открытии (раньше при первом заходе он оставался пустым до
+    -- переоткрытия меню).
+    if UI.RebuildSelector then pcall(UI.RebuildSelector) end
 
     -- НЕ переключаем организацию при обновлении данных: пользователь мог сам
     -- выбрать фракцию для просмотра (особенно суперадмин).
