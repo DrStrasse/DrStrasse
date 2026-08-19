@@ -36,6 +36,12 @@ function ENT:ApplyStationConfig(cfg)
         self:SetNWString("GRM_DutyFaction", faction)
     end
 
+    local id = tostring(cfg.id or "")
+    if id ~= "" then
+        self.GRMDutyID = id
+        self:SetNWString("GRM_DutyID", id)
+    end
+
     local title = tostring(cfg.title or "")
     if title ~= "" then
         self.GRMDutyTitle = title
@@ -57,6 +63,7 @@ end
 
 function ENT:StationConfig()
     return {
+        id = tostring(self.GRMDutyID or self:GetNWString("GRM_DutyID", "")),
         faction = tostring(self.GRMDutyFaction or self:GetNWString("GRM_DutyFaction", "")),
         title = tostring(self.GRMDutyTitle or self:GetNWString("GRM_DutyTitle", "ПУНКТ ВЫХОДА НА СЛУЖБУ")),
         model = tostring(self.GRMDutyModel or self:GetNWString("GRM_DutyModel", self:GetModel() or "")),

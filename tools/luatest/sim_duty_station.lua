@@ -33,7 +33,7 @@ ok(duty:find('GRM.Boot.OnMapStart("GRM_Duty_Stations", "normal"', 1, true) ~= ni
 ok(duty:find('hook.Add("PostCleanupMap", "GRM_Duty_StationsCleanup"', 1, true) ~= nil,
     "после очистки карты станции восстанавливаются")
 ok(duty:find('concommand.Add("grm_duty_stations"', 1, true) ~= nil, "ручная перезагрузка станций командой")
-ok(duty:find('FD.Version = "1.3.0"', 1, true) ~= nil, "модуль дежурства v1.3.0")
+ok(duty:find('FD.Version = "1.4.0"', 1, true) ~= nil, "модуль дежурства v1.4.0 (было 1.3.0)")
 
 print("\n=== 2. ПРИЧИНА: МОДЕЛЬ СБРАСЫВАЛАСЬ НА ГРАЖДАНИНА ===")
 ok(ent:find("function ENT:ApplyStationConfig", 1, true) ~= nil, "единая точка применения конфига")
@@ -61,11 +61,33 @@ ok(duty:find('GRM.Audit.Write("duty", "station.save"', 1, true) ~= nil, "нас�
 
 print("\n=== 4. ЖИВОЙ ПРОГОН ЛОГИКИ ХРАНИЛИЩА ===")
 -- Проверяем ключевую формулу «та же точка» и порядок применения модели.
-ok(duty:find("(dx * dx + dy * dy + dz * dz) <= (64 * 64)", 1, true) ~= nil,
-    "станция ищется по позиции с допуском 64 юнита")
+ok(duty:find("radius = tonumber(radius) or STATION_MATCH", 1, true) ~= nil,
+    "радиус поиска станции параметризован (192 по умолчанию, 96 для дедупа)")
 local initSrc = ent:match("function ENT:Initialize%(%).-end")
 ok(initSrc ~= nil and initSrc:find("GRMDutyModel") < (initSrc:find("DefaultModel") or math.huge),
     "в Initialize поле модели проверяется РАНЬШЕ дефолта")
+
+print("\n=== 5. КЛОНЫ И «НАСТРОЙКА РАСПОЛЗЛАСЬ НА ВСЕХ» ===")
+ok(duty:find("local STATION_MATCH = 192", 1, true) ~= nil,
+    "радиус узнавания станции увеличен: после DropToFloor диспетчер уезжает по Z")
+ok(duty:find("function FD.DedupeStations", 1, true) ~= nil, "есть дедупликация диспетчеров")
+ok(duty:find("FD.DedupeStations()", 1, true) ~= nil, "дедуп вызывается при загрузке станций")
+ok(duty:find('concommand.Add("grm_duty_dedupe"', 1, true) ~= nil, "ручная команда очистки клонов")
+ok(duty:find("local anyNear = nearestNPC(row.pos, STATION_MATCH, existing)", 1, true) ~= nil,
+    "новый диспетчер создаётся, только если в точке никого нет (перм мог поднять своего)")
+ok(duty:find("taken[target] = true", 1, true) ~= nil,
+    "одна станция — один диспетчер: занятый NPC не достаётся другой записи")
+ok(duty:find("local function stationID", 1, true) ~= nil, "у станции есть стабильный идентификатор")
+ok(duty:find("row.id == id", 1, true) ~= nil, "запись ищется по id, а не только по координатам")
+ok(duty:find('tostring(ent.GRMDutyFaction or "") ~= "" then return false end', 1, true) ~= nil,
+    "настроенного диспетчера не перетирает соседняя станция")
+ok(duty:find("FD._stationsDirty = true", 1, true) ~= nil,
+    "фактическая позиция дописывается в файл, чтобы в следующий раз совпасть сразу")
+ok(read("lua/entities/grm_duty_npc/init.lua"):find("self.GRMDutyID = id", 1, true) ~= nil,
+    "энтити хранит идентификатор станции")
+ok(read("lua/weapons/gmod_tool/stools/grm_duty_npc.lua"):find("ent.GRMDutyID = util.CRC", 1, true) ~= nil,
+    "тул присваивает идентификатор при постановке")
+ok(duty:find('FD.Version = "1.4.0"', 1, true) ~= nil, "модуль дежурства v1.4.0")
 
 print(("\nDUTY STATION: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)

@@ -44,6 +44,12 @@ function TOOL:LeftClick(tr)
     ent:SetAngles(Angle(0,ply:EyeAngles().y+180,0))
     ent:Spawn() ent:Activate()
     if ent.ApplyStationConfig then ent:ApplyStationConfig({faction=fac,title=title,model=mdl}) end
+    -- Свой идентификатор станции сразу: иначе два диспетчера рядом делили бы
+    -- одну запись, и настройка одного «расползалась» на другого.
+    if not ent.GRMDutyID then
+        ent.GRMDutyID = util.CRC(table.concat({game.GetMap(), ent:EntIndex(), os.time(), math.random()}, ":"))
+        ent:SetNWString("GRM_DutyID", ent.GRMDutyID)
+    end
     if self:GetClientInfo("make_perm")~="0" and GRM.Perm and GRM.Perm.Add then GRM.Perm.Add(ply,ent,{ownerKind="server",freeze=true,label="Служебный диспетчер"}) end
     -- Своя запись станции: работает даже без перм-записи.
     if GRM.FactionDuty and GRM.FactionDuty.SaveStation then GRM.FactionDuty.SaveStation(ent) end

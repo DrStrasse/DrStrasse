@@ -8,7 +8,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.FactionDuty = GRM.FactionDuty or {}
 local FD = GRM.FactionDuty
-FD.Version = "1.3.0"
+FD.Version = "1.4.0"
 
 local NET_OPEN = "GRM_FactionDuty_Open"
 local NET_SET = "GRM_FactionDuty_Set"
@@ -77,25 +77,112 @@ if SERVER then
         return true
     end
 
-    local function sameSpot(a, b)
-        if not (istable(a) and isvector(b)) then return false end
+    -- Радиусы подобраны по реальной ситуации: после Spawn энтити падает на
+    -- пол (DropToFloor) и уезжает по Z на десятки юнитов, поэтому «та же
+    -- точка» — это не 64, а 192 юнита. Из-за узкого радиуса восстановление
+    -- не узнавало уже стоящего диспетчера и плодило рядом КЛОНА с той же
+    -- фракцией — отсюда «настройка расползлась на всех».
+    local STATION_MATCH = 192
+    local STATION_DEDUPE = 96
+
+    local function dist2(a, b)
+        if not (istable(a) and isvector(b)) then return math.huge end
         local dx, dy, dz = (tonumber(a.x) or 0) - b.x, (tonumber(a.y) or 0) - b.y, (tonumber(a.z) or 0) - b.z
-        return (dx * dx + dy * dy + dz * dz) <= (64 * 64)
+        return dx * dx + dy * dy + dz * dz
+    end
+
+    local function sameSpot(a, b, radius)
+        radius = tonumber(radius) or STATION_MATCH
+        return dist2(a, b) <= (radius * radius)
+    end
+
+    -- Ближайший диспетчер к точке (или nil).
+    local function nearestNPC(pos, radius, list)
+        local best, bestD
+        for _, ent in ipairs(list or ents.FindByClass("grm_duty_npc")) do
+            if IsValid(ent) then
+                local d = dist2(pos, ent:GetPos())
+                if d <= (radius * radius) and (not bestD or d < bestD) then best, bestD = ent, d end
+            end
+        end
+        return best, bestD
+    end
+
+    --[[ Убрать клонов: если в одной точке несколько диспетчеров, оставляем
+         одного. Приоритет — тот, у кого уже есть настроенная фракция, затем
+         закреплённый пермом, затем самый «старый» (меньший EntIndex). ]]
+    function FD.DedupeStations()
+        local list = ents.FindByClass("grm_duty_npc")
+        local removed = 0
+        for i = 1, #list do
+            local a = list[i]
+            if IsValid(a) then
+                for j = i + 1, #list do
+                    local b = list[j]
+                    if IsValid(b) and dist2({ x = a:GetPos().x, y = a:GetPos().y, z = a:GetPos().z }, b:GetPos())
+                        <= (STATION_DEDUPE * STATION_DEDUPE) then
+                        local function score(ent)
+                            local n = 0
+                            if tostring(ent.GRMDutyFaction or ent:GetNWString("GRM_DutyFaction", "")) ~= "" then n = n + 10 end
+                            if GRM.Perm and GRM.Perm.IsPerm and GRM.Perm.IsPerm(ent) then n = n + 5 end
+                            return n - (ent:EntIndex() / 100000)
+                        end
+                        local drop = (score(a) >= score(b)) and b or a
+                        local keep = (drop == b) and a or b
+                        -- Настройку не теряем: переносим на выжившего.
+                        if keep.ApplyStationConfig and drop.StationConfig then
+                            local cfg = drop:StationConfig()
+                            if tostring(cfg.faction or "") ~= ""
+                                and tostring(keep.GRMDutyFaction or "") == "" then
+                                keep:ApplyStationConfig(cfg)
+                            end
+                        end
+                        drop:Remove()
+                        removed = removed + 1
+                        if drop == a then break end
+                    end
+                end
+            end
+        end
+        if removed > 0 then print(("[GRM Duty] убрано дублирующих диспетчеров: %d"):format(removed)) end
+        return removed
+    end
+
+    -- Стабильный идентификатор станции. Раньше запись искалась ТОЛЬКО по
+    -- координатам, и два диспетчера, стоящие рядом, делили одну запись —
+    -- настройка второго затирала первого. Теперь у каждого свой id.
+    local function stationID(ent)
+        local id = tostring(ent.GRMDutyID or ent:GetNWString("GRM_DutyID", ""))
+        if id ~= "" then return id end
+        local pos = ent:GetPos()
+        id = util.CRC(table.concat({ game.GetMap(), math.floor(pos.x), math.floor(pos.y),
+            math.floor(pos.z), ent:EntIndex(), os.time() }, ":"))
+        ent.GRMDutyID = id
+        ent:SetNWString("GRM_DutyID", id)
+        return id
     end
 
     -- Сохранить конфигурацию конкретного диспетчера.
     function FD.SaveStation(ent)
         if not IsValid(ent) or ent:GetClass() ~= "grm_duty_npc" then return false end
+        local id = stationID(ent)
         local cfg = ent.StationConfig and ent:StationConfig() or {}
+        cfg.id = id
         local pos, ang = ent:GetPos(), ent:GetAngles()
         local rows = readStations()
 
         local updated = false
         for _, row in ipairs(rows) do
-            if sameSpot(row.pos, pos) then
+            -- Сопоставление строго по id; координаты — только для старых
+            -- записей, у которых id ещё нет.
+            local match = (tostring(row.id or "") ~= "" and row.id == id)
+                or (tostring(row.id or "") == "" and sameSpot(row.pos, pos, STATION_DEDUPE))
+            if match then
+                row.id = id
                 row.faction = cfg.faction
                 row.title = cfg.title
                 row.model = cfg.model
+                row.pos = { x = pos.x, y = pos.y, z = pos.z }
                 row.ang = { p = ang.p, y = ang.y, r = ang.r }
                 updated = true
                 break
@@ -103,6 +190,7 @@ if SERVER then
         end
         if not updated then
             rows[#rows + 1] = {
+                id = id,
                 pos = { x = pos.x, y = pos.y, z = pos.z },
                 ang = { p = ang.p, y = ang.y, r = ang.r },
                 faction = cfg.faction, title = cfg.title, model = cfg.model,
@@ -116,9 +204,11 @@ if SERVER then
     function FD.RemoveStation(ent)
         if not IsValid(ent) then return false end
         local pos = ent:GetPos()
+        local id = tostring(ent.GRMDutyID or ent:GetNWString("GRM_DutyID", ""))
         local rows, removed = readStations(), false
         for i = #rows, 1, -1 do
-            if sameSpot(rows[i].pos, pos) then
+            local match = (id ~= "" and rows[i].id == id) or (id == "" and sameSpot(rows[i].pos, pos, STATION_DEDUPE))
+            if match then
                 table.remove(rows, i)
                 removed = true
             end
@@ -130,14 +220,21 @@ if SERVER then
     -- Найти конфиг для уже стоящего диспетчера и применить.
     function FD.RestoreStation(ent)
         if not IsValid(ent) or ent:GetClass() ~= "grm_duty_npc" then return false end
+
+        -- Уже настроенного диспетчера чужой станцией не перетираем.
+        if tostring(ent.GRMDutyFaction or "") ~= "" then return false end
+
         local pos = ent:GetPos()
+        local best, bestD
         for _, row in ipairs(readStations()) do
-            if sameSpot(row.pos, pos) then
-                if ent.ApplyStationConfig then ent:ApplyStationConfig(row) end
-                return true
+            local d = dist2(row.pos, pos)
+            if d <= (STATION_MATCH * STATION_MATCH) and (not bestD or d < bestD) then
+                best, bestD = row, d
             end
         end
-        return false
+        if not best then return false end
+        if ent.ApplyStationConfig then ent:ApplyStationConfig(best) end
+        return true
     end
 
     -- Поднять все станции карты: применить конфиг к найденным NPC и
@@ -146,37 +243,84 @@ if SERVER then
         local rows = readStations()
         if #rows == 0 then return 0, 0 end
 
+        -- Сначала убираем клонов, оставшихся от прежних восстановлений.
+        FD.DedupeStations()
+
         local existing = ents.FindByClass("grm_duty_npc")
         local restored, created = 0, 0
+        local taken = {}
 
         for _, row in ipairs(rows) do
-            local target
-            for _, ent in ipairs(existing) do
-                if IsValid(ent) and sameSpot(row.pos, ent:GetPos()) then target = ent break end
-            end
+            -- Каждая станция получает СВОЕГО ближайшего диспетчера и только
+            -- его: раньше при промахе радиуса создавался клон рядом с чужим
+            -- NPC, и одна настройка «размножалась» по карте.
+            local target, bestD
 
-            if not IsValid(target) then
-                target = ents.Create("grm_duty_npc")
-                if IsValid(target) then
-                    -- Модель ставим ДО Spawn, иначе Initialize возьмёт дефолт
-                    -- и игрок увидит «стандартного ситизена».
-                    target.GRMDutyModel = tostring(row.model or "")
-                    target.GRMDutyFaction = tostring(row.faction or "")
-                    target.GRMDutyTitle = tostring(row.title or "")
-                    target:SetPos(Vector(row.pos.x, row.pos.y, row.pos.z))
-                    if istable(row.ang) then target:SetAngles(Angle(row.ang.p or 0, row.ang.y or 0, row.ang.r or 0)) end
-                    target:Spawn()
-                    target:Activate()
-                    created = created + 1
+            -- 1) точное совпадение по идентификатору станции
+            if tostring(row.id or "") ~= "" then
+                for _, ent in ipairs(existing) do
+                    if IsValid(ent) and not taken[ent]
+                        and tostring(ent.GRMDutyID or ent:GetNWString("GRM_DutyID", "")) == row.id then
+                        target = ent
+                        break
+                    end
                 end
-            else
-                restored = restored + 1
             end
 
-            if IsValid(target) and target.ApplyStationConfig then target:ApplyStationConfig(row) end
+            -- 2) иначе — ближайший свободный в радиусе
+            for _, ent in ipairs(existing) do
+                if not IsValid(target) and IsValid(ent) and not taken[ent] then
+                    local d = dist2(row.pos, ent:GetPos())
+                    if d <= (STATION_MATCH * STATION_MATCH) and (not bestD or d < bestD) then
+                        target, bestD = ent, d
+                    end
+                end
+            end
+
+            if IsValid(target) then
+                taken[target] = true
+                restored = restored + 1
+            else
+                -- Создаём только если в точке ВООБЩЕ никого нет: перм-система
+                -- могла поднять диспетчера сама, и второй здесь не нужен.
+                local anyNear = nearestNPC(row.pos, STATION_MATCH, existing)
+                if not IsValid(anyNear) then
+                    target = ents.Create("grm_duty_npc")
+                    if IsValid(target) then
+                        -- Модель ставим ДО Spawn, иначе Initialize возьмёт
+                        -- дефолт и игрок увидит стандартного гражданина.
+                        target.GRMDutyModel = tostring(row.model or "")
+                        target.GRMDutyFaction = tostring(row.faction or "")
+                        target.GRMDutyTitle = tostring(row.title or "")
+                        target:SetPos(Vector(row.pos.x, row.pos.y, row.pos.z))
+                        if istable(row.ang) then target:SetAngles(Angle(row.ang.p or 0, row.ang.y or 0, row.ang.r or 0)) end
+                        target:Spawn()
+                        target:Activate()
+                        existing[#existing + 1] = target
+                        taken[target] = true
+                        created = created + 1
+                    end
+                end
+            end
+
+            if IsValid(target) and target.ApplyStationConfig then
+                target:ApplyStationConfig(row)
+                -- Точку в файле обновляем на фактическую: после DropToFloor
+                -- диспетчер стоит ниже, и в следующий раз он найдётся сразу.
+                local pos = target:GetPos()
+                if dist2(row.pos, pos) > 4 then
+                    row.pos = { x = pos.x, y = pos.y, z = pos.z }
+                    FD._stationsDirty = true
+                end
+            end
         end
 
-        print(("[GRM Duty] станции: применено %d, восстановлено %d"):format(restored, created))
+        if FD._stationsDirty then
+            FD._stationsDirty = nil
+            writeStations(rows)
+        end
+
+        print(("[GRM Duty] станции: применено %d, создано %d"):format(restored, created))
         return restored, created
     end
     local function sendToolFactions(ply)
@@ -379,13 +523,19 @@ if SERVER then
         if GRM.Perm and GRM.Perm.RegisterClass then GRM.Perm.RegisterClass("grm_duty_npc", true) end
         if not (GRM.PermData and GRM.PermData.Extract and GRM.PermData.Apply) then return end
         GRM.PermData.Extract["grm_duty_npc"] = function(ent)
-            return { duty = { faction = ent:GetNWString("GRM_DutyFaction", ""), title = ent:GetNWString("GRM_DutyTitle", "ПУНКТ ВЫХОДА НА СЛУЖБУ"), model = ent:GetNWString("GRM_DutyModel", ent:GetModel()) } }
+            local cfg = ent.StationConfig and ent:StationConfig() or {
+                faction = ent:GetNWString("GRM_DutyFaction", ""),
+                title = ent:GetNWString("GRM_DutyTitle", "ПУНКТ ВЫХОДА НА СЛУЖБУ"),
+                model = ent:GetNWString("GRM_DutyModel", ent:GetModel()),
+            }
+            return { duty = { id = cfg.id, faction = cfg.faction, title = cfg.title, model = cfg.model } }
         end
         GRM.PermData.Apply["grm_duty_npc"] = function(ent, data)
             local d = istable(data) and data.duty or nil
             if not istable(d) then return end
             if ent.ApplyStationConfig then
                 ent:ApplyStationConfig({
+                    id = tostring(d.id or ""),
                     faction = tostring(d.faction or ""),
                     title = tostring(d.title or "ПУНКТ ВЫХОДА НА СЛУЖБУ"),
                     model = tostring(d.model or ""),
@@ -418,6 +568,13 @@ if SERVER then
     hook.Add("PostCleanupMap", "GRM_Duty_StationsCleanup", function()
         timer.Simple(1.5, function() FD.LoadStations() end)
     end)
+
+    if concommand and concommand.Add then concommand.Add("grm_duty_dedupe", function(ply)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        local removed = FD.DedupeStations()
+        local msg = ("[GRM Duty] убрано дублирующих диспетчеров: %d"):format(removed or 0)
+        if IsValid(ply) then ply:PrintMessage(HUD_PRINTCONSOLE, msg) else print(msg) end
+    end) end
 
     if concommand and concommand.Add then concommand.Add("grm_duty_stations", function(ply)
         if IsValid(ply) and not ply:IsSuperAdmin() then return end
