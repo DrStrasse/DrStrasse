@@ -131,6 +131,7 @@ util = {
 
 local entityList = {}
 ents = {
+    GetAll = function() return entityList end,
     FindByClass = function(cls) local out = {} for _, e in ipairs(entityList) do if e._class == cls then out[#out + 1] = e end end return out end,
     FindInSphere = function(pos, rad) local out = {} for _, e in ipairs(entityList) do if e._pos and e._pos:DistToSqr(pos) <= rad * rad then out[#out + 1] = e end end return out end,
     Create = function(cls)
@@ -167,6 +168,22 @@ concommand = { Add = function() end }
 player = { GetAll = function() return {} end }
 
 GRM = { Notify = function() end, Format = function(n) return tostring(n) .. " GRM" end }
+
+-- Заглушки дверей и недвижимости: только то, чем пользуется гараж.
+local doorsByID = {}
+GRM.Doors = {
+    IsDoor = function(e) return IsValid(e) and e._class == "sim_door" end,
+    GetDoorID = function(e) return IsValid(e) and e._doorID or nil end,
+    IsDoorLocked = function(e) return IsValid(e) and e._locked == true end,
+    LockDoor = function(e, on) if IsValid(e) then e._locked = on == true end end,
+}
+GRM.Property = { Records = {}, GetByDoorID = function(id) return GRM.Property.ByDoor and GRM.Property.ByDoor[id] end }
+local function mkDoor(id, pos)
+    local e = ents.Create("sim_door")
+    e._doorID = id e:SetPos(pos or Vector(0, 0, 0)) e._locked = false
+    doorsByID[id] = e
+    return e
+end
 
 -- Заглушка дилера: только тот слой, которым пользуется гараж.
 local VD = { Active = {}, Garages = {}, MaxActive = 3 }
@@ -335,6 +352,63 @@ local slotRemoved = G.RemoveNearestSlot(Vector(100, 100, 0), 200)
 ok(slotRemoved and #G.Get(rec.id).slots == 1, "место удаляется по близости")
 local termRemoved = G.RemoveNearestTerminal(Vector(300, 300, 0), 200)
 ok(termRemoved and #ents.FindByClass("grm_garage_terminal") == 0, "стойка удаляется вместе с записью")
+
+print("\n=== 9. ВОРОТА ГАРАЖА (ДВЕРИ) ===")
+local gateA, gateB = mkDoor("door_a", Vector(120, 120, 0)), mkDoor("door_b", Vector(140, 120, 0))
+local linkedA, linkMsgA = G.LinkDoor(rec.id, "door_a")
+ok(linkedA, "дверь привязывается к гаражу", linkMsgA)
+G.LinkDoor(rec.id, "door_b")
+ok(#G.Get(rec.id).doors == 2 and G.GarageByDoorID("door_b") == G.Get(rec.id), "индекс дверей построен")
+local _, other = G.Create(admin, Vector(-3000, -3000, 0), Vector(-2000, -2000, 300), { name = "Второй двор" })
+local dup, dupMsg = G.LinkDoor(other.id, "door_a")
+ok(dup == false and tostring(dupMsg):find("уже привязана") ~= nil, "одна дверь — один гараж", dupMsg)
+G.Remove(other.id, admin)
+
+local access = hooks["GRM_DoorAccessOverride"]["GRM_Garage_Doors"]
+G.Update(rec.id, { kind = "private", owner = drv._key }, admin)
+ok(select(1, access(drv, gateA)) == true, "владелец гаража открывает ворота")
+ok(select(1, access(cop, gateA)) == false, "чужому ворота закрыты")
+ok(gateA._locked == true and gateB._locked == true, "личный гараж запирает свои ворота")
+G.Update(rec.id, { kind = "public" }, admin)
+ok(gateA._locked == false, "общий гараж ворота отпирает")
+ok(select(1, access(cop, gateA)) == true, "у общего гаража ворота открыты всем")
+
+-- Дверь, принадлежащая недвижимости, остаётся её правилам.
+GRM.Property.ByDoor = { door_b = { id = "prop_1" } }
+ok(access(cop, gateB) == nil, "дверь объекта недвижимости гараж не перехватывает")
+GRM.Property.ByDoor = nil
+
+drv:SetPos(Vector(0, 0, 10))
+local togOK, togMsg = G.ToggleDoors(drv)
+ok(togOK and gateA._locked == true, "кнопка ворот закрывает их", togMsg)
+local togOK2 = G.ToggleDoors(drv)
+ok(togOK2 and gateA._locked == false, "повторное нажатие открывает")
+
+print("\n=== 10. ГАРАЖ ВМЕСТЕ С ДОМОМ ===")
+GRM.Property.Records["prop_home"] = { id = "prop_home", ownerType = "none", ownerKey = "" }
+local linkedProp, linkedPropMsg = G.LinkProperty(rec.id, "prop_home")
+ok(linkedProp, "гараж привязан к объекту недвижимости", linkedPropMsg)
+ok(G.Get(rec.id).baseKind == "public", "исходный тип гаража запомнен")
+
+GRM.Property.Records["prop_home"].ownerType = "character"
+GRM.Property.Records["prop_home"].ownerKey = drv._key
+hook.Run("GRM_PropertyOwnerChanged", GRM.Property.Records["prop_home"], "buy", drv)
+ok(G.Get(rec.id).kind == "private" and G.Get(rec.id).owner == drv._key, "покупка дома делает гараж личным")
+ok(G.CanUse(drv, G.Get(rec.id)) == true and G.CanUse(cop, G.Get(rec.id)) == false, "гараж отдан покупателю дома")
+ok(select(1, access(drv, gateA)) == true and select(1, access(cop, gateA)) == false, "ворота дома-гаража слушают владельца")
+
+GRM.Property.Records["prop_home"].ownerType = "faction"
+GRM.Property.Records["prop_home"].ownerKey = "police"
+hook.Run("GRM_PropertyOwnerChanged", GRM.Property.Records["prop_home"], "admin_update", admin)
+ok(G.Get(rec.id).kind == "faction" and G.Get(rec.id).faction == "police", "ведомственный дом делает гараж ведомственным")
+
+GRM.Property.Records["prop_home"].ownerType = "none"
+GRM.Property.Records["prop_home"].ownerKey = ""
+hook.Run("GRM_PropertyOwnerChanged", GRM.Property.Records["prop_home"], "release", drv)
+ok(G.Get(rec.id).kind == "public" and G.Get(rec.id).owner == "", "освобождение дома возвращает гараж администрации")
+
+local unlinked = G.LinkProperty(rec.id, "prop_home")
+ok(unlinked and G.Get(rec.id).propertyID == "", "повторная привязка снимает связь")
 
 print(("\nGARAGE RUNTIME: %d/%d, провалов: %d"):format(total - fails, total, fails))
 if fails > 0 then os.exit(1) end

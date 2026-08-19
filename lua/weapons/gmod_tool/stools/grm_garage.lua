@@ -7,6 +7,9 @@
       2. Режим «Место стоянки»: ЛКМ внутри зоны — место с направлением
          (по взгляду/по осям) и высотой.
       3. Режим «Стойка вызова»: ЛКМ — стойка, у которой открывается меню.
+      3.1 Режим «Ворота гаража»: ЛКМ по двери — привязать/отвязать её к
+         выбранному гаражу (двери открываются его владельцу).
+         ПКМ по двери объекта недвижимости — продавать гараж вместе с домом.
       4. ПКМ по земле — выбрать гараж под ногами (для правки).
          ПКМ по дилеру — привязать/отвязать дилера: купленный у него
          транспорт будет приписан к выбранному гаражу.
@@ -64,7 +67,7 @@ if CLIENT then
             cam.Start3D2D(center + Vector(0, 0, (mx.z - mn.z) * 0.5 + 12), Angle(0, EyeAngles().y - 90, 90), 0.1)
                 draw.RoundedBox(6, -220, -26, 440, 52, Color(10, 15, 22, 232))
                 draw.SimpleText("ГАРАЖ: " .. tostring(z.name), "DermaLarge", 0, -14, col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                draw.SimpleText(("мест %d • стоек %d • %s"):format(z.slots or 0, z.terminals or 0, tostring(z.kindName or "")),
+                draw.SimpleText(("мест %d • стоек %d • ворот %d • %s"):format(z.slots or 0, z.terminals or 0, z.doors or 0, tostring(z.kindName or "")),
                     "DermaDefaultBold", 0, 12, Color(190, 205, 225), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
             cam.End3D2D()
 
@@ -91,6 +94,7 @@ if CLIENT then
         mode:AddChoice("Зона гаража (2 клика)", "zone")
         mode:AddChoice("Место стоянки", "slot")
         mode:AddChoice("Стойка вызова меню", "terminal")
+        mode:AddChoice("Ворота гаража (двери)", "door")
         panel:TextEntry("Название гаража", "grm_garage_name")
         local kind = panel:ComboBox("Тип гаража", "grm_garage_kind")
         kind:AddChoice("Городской — для всех", "public")
@@ -106,7 +110,7 @@ if CLIENT then
         dir:AddChoice("Юг (180°)", "south")
         dir:AddChoice("Запад (270°)", "west")
         panel:TextEntry("Название места (необязательно)", "grm_garage_slotname")
-        panel:Help("ЛКМ — поставить выбранное. ПКМ по земле — выбрать гараж под ногами, ПКМ по дилеру — привязать/отвязать его к выбранному гаражу. R — удалить ближайшее (Shift+R в режиме зоны — удалить гараж).")
+        panel:Help("ЛКМ — поставить выбранное. В режиме «Ворота гаража» ЛКМ по двери привязывает её к выбранному гаражу. ПКМ по земле — выбрать гараж под ногами, ПКМ по дилеру — привязать/отвязать его, ПКМ по двери объекта недвижимости — продавать гараж вместе с домом. R — удалить ближайшее (Shift+R в режиме зоны — удалить гараж).")
         panel:Help("Меню гаража: /garage в зоне или E у стойки. Список гаражей — консоль grm_garages.")
     end
 end
@@ -132,7 +136,7 @@ if SERVER then
             out[#out + 1] = {
                 id = rec.id, name = rec.name, kindName = g.KindName(rec.kind),
                 min = rec.zone.min, max = rec.zone.max,
-                slots = #(rec.slots or {}), terminals = #(rec.terminals or {}),
+                slots = #(rec.slots or {}), terminals = #(rec.terminals or {}), doors = #(rec.doors or {}),
                 selected = selected == rec.id,
                 slotList = slotList, terminalList = terminalList,
             }
@@ -203,6 +207,17 @@ function TOOL:LeftClick(trace)
         return true
     end
 
+    if mode == "door" then
+        local door = trace.Entity
+        if not (IsValid(door) and GRM.Doors and GRM.Doors.IsDoor and GRM.Doors.IsDoor(door)) then
+            notify(ply, "Наведитесь на дверь или ворота.", false) return false
+        end
+        local doorID = GRM.Doors.GetDoorID and GRM.Doors.GetDoorID(door) or ""
+        local ok, msg = g.LinkDoor(rec.id, doorID)
+        notify(ply, tostring(msg), ok)
+        return ok == true
+    end
+
     if mode == "terminal" then
         local ok, term = g.AddTerminal(rec.id, trace.HitPos + trace.HitNormal * 2, Angle(0, ply:EyeAngles().y + 180, 0))
         if not ok then notify(ply, tostring(term), false) return false end
@@ -230,6 +245,17 @@ function TOOL:RightClick(trace)
         return ok == true
     end
 
+    -- ПКМ по двери объекта недвижимости — гараж продаётся вместе с домом.
+    if IsValid(ent) and GRM.Doors and GRM.Doors.IsDoor and GRM.Doors.IsDoor(ent) then
+        local selected = selectedGarage(ply)
+        if not selected then notify(ply, "Сначала выберите гараж (ПКМ по земле в его зоне).", false) return false end
+        local prop = GRM.Property and GRM.Property.GetByDoor and select(1, GRM.Property.GetByDoor(ent)) or nil
+        if not prop then notify(ply, "Эта дверь не входит в объект недвижимости (/property_admin).", false) return false end
+        local ok, msg = g.LinkProperty(selected.id, prop.id)
+        notify(ply, tostring(msg), ok)
+        return ok == true
+    end
+
     local rec = g.FindByPos(trace.HitPos) or g.Nearest(trace.HitPos, 900)
     if not rec then notify(ply, "Рядом нет гаража.", false) return false end
     ply.GRMGarageSelected = rec.id
@@ -250,6 +276,19 @@ function TOOL:Reload(trace)
         notify(ply, ok and ("Место «" .. tostring(res.name) .. "» удалено") or tostring(res), ok)
         return ok == true
     end
+    if mode == "door" then
+        local door = trace.Entity
+        if not (IsValid(door) and GRM.Doors and GRM.Doors.IsDoor and GRM.Doors.IsDoor(door)) then
+            notify(ply, "Наведитесь на привязанную дверь.", false) return false
+        end
+        local doorID = GRM.Doors.GetDoorID and GRM.Doors.GetDoorID(door) or ""
+        local owner = g.GarageByDoorID(doorID)
+        if not owner then notify(ply, "Эта дверь не привязана к гаражу.", false) return false end
+        local ok, msg = g.LinkDoor(owner.id, doorID)
+        notify(ply, tostring(msg), ok)
+        return ok == true
+    end
+
     if mode == "terminal" then
         local ok, res = g.RemoveNearestTerminal(trace.HitPos, 260)
         notify(ply, ok and "Стойка удалена" or tostring(res), ok)

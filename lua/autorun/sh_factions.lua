@@ -936,6 +936,65 @@ if SERVER then
         return true, "Публичное название должности сохранено"
     end
 
+    --[[ СМЕНА СИСТЕМНОГО КЛЮЧА ДОЛЖНОСТИ (заказ владельца 19.08).
+         Раньше правилось только публичное название: ключ, придуманный один
+         раз, оставался в базе навсегда (и в правах, и в дверях, и у людей).
+         Теперь ключ можно переименовать — сама фракция чинится целиком, а
+         внешние модули (права, двери, доступы) слушают хук
+         GRM_FactionRoleKeyRenamed и переносят свои списки. ]]
+    local function setRoleKey(factionName, oldKey, newKey)
+        local f = Factions[factionName]
+        if not f then return false, "Фракция не найдена" end
+        ensureDefaults(f, factionName)
+        oldKey = tostring(oldKey or "")
+        newKey = factionTrim(newKey, 64)
+        if not table.HasValue(f.Roles, oldKey) then return false, "Должность не найдена" end
+        if newKey == "" then return false, "Новый системный ключ не указан" end
+        if newKey == oldKey then return true, "Ключ не изменился" end
+        if table.HasValue(f.Roles, newKey) then return false, "Должность с таким ключом уже есть" end
+
+        for i, key in ipairs(f.Roles) do if key == oldKey then f.Roles[i] = newKey break end end
+        if f.RoleDisplayNames then
+            local display = f.RoleDisplayNames[oldKey]
+            f.RoleDisplayNames[oldKey] = nil
+            f.RoleDisplayNames[newKey] = (display and display ~= "") and display or newKey
+        end
+        if f.LeaderRoleName == oldKey then f.LeaderRoleName = newKey end
+
+        local moved = 0
+        for _, rec in pairs(f.Members or {}) do
+            if istable(rec) and rec.Role == oldKey then rec.Role = newKey moved = moved + 1 end
+        end
+        for _, rec in pairs(f.PersonnelArchive or {}) do
+            if istable(rec) and rec.Role == oldKey then rec.Role = newKey end
+        end
+
+        -- Списки, где ключ должности — ИНДЕКС таблицы.
+        for _, field in ipairs({ "RoleModels", "RoleWeapons", "RoleVehicles" }) do
+            local tbl = f[field]
+            if istable(tbl) and tbl[oldKey] ~= nil then
+                tbl[newKey] = tbl[oldKey]
+                tbl[oldKey] = nil
+            end
+        end
+        -- Списки, где ключ должности — ЗНАЧЕНИЕ массива.
+        local function renameInArray(arr)
+            if not istable(arr) then return end
+            for i, v in ipairs(arr) do if v == oldKey then arr[i] = newKey end end
+        end
+        if istable(f.IncassoSettings) then renameInArray(f.IncassoSettings.Roles) end
+        for _, dept in pairs(f.MaskDepartments or {}) do
+            if istable(dept) then renameInArray(dept.Roles) end
+        end
+        for _, sub in pairs(f.Subdepartments or {}) do
+            if istable(sub) then renameInArray(sub.roles) end
+        end
+
+        saveFactions(Factions)
+        hook.Run("GRM_FactionRoleKeyRenamed", factionName, oldKey, newKey, moved)
+        return true, ("Ключ должности изменён: %s → %s (сотрудников переведено: %d)"):format(oldKey, newKey, moved)
+    end
+
     local function moveRole(factionName, roleName, direction)
         local f = Factions[factionName]
         if not f then return false, "Фракция не найдена" end
@@ -1396,6 +1455,11 @@ if SERVER then
             local faction, shift = getFactionAndShift()
             if not faction then return end
             local ok, err = renameRole(faction, args[1 + shift], args[2 + shift])
+            done(ok, err)
+        elseif action == "setRoleKey" then
+            local faction, shift = getFactionAndShift()
+            if not faction then return end
+            local ok, err = setRoleKey(faction, args[1 + shift], args[2 + shift])
             done(ok, err)
         elseif action == "moveRole" then
             local faction, shift = getFactionAndShift()

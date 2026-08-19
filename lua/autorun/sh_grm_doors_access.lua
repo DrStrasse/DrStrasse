@@ -194,6 +194,23 @@ if SERVER then
 
     AM.Load()
 
+    --[[ Ключ должности переименован — переносим галочки «Ранг: …» в списках
+         управления, ордеров и вскрытия, иначе доступ повисает на мёртвом ключе. ]]
+    hook.Add("GRM_FactionRoleKeyRenamed", "GRM_DoorsAccess_RoleKey", function(factionName, oldKey, newKey)
+        local data = AM.Data or AM.Load()
+        if not istable(data) then return end
+        local changed = false
+        for _, spec in pairs(KINDS or {}) do
+            local bucket = istable(data[spec.roles]) and data[spec.roles][factionName] or nil
+            if istable(bucket) and bucket[oldKey] ~= nil then
+                bucket[newKey] = bucket[oldKey]
+                bucket[oldKey] = nil
+                changed = true
+            end
+        end
+        if changed then AM.Save(data, "role key renamed") end
+    end)
+
     local function factionInfo(ply)
         if not IsValid(ply) or not istable(Factions) then return nil, nil, nil end
         if not (GRM.Identity and GRM.Identity.FactionMember) then return nil, nil, nil end

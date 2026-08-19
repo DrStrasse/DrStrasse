@@ -98,5 +98,27 @@ ok(has(hubC, '{ id = "garages", name = "Гаражи карты"'), "разде�
 ok(has(qm, '{ id = "grm_garage",'), "тул зарегистрирован в Q-меню")
 ok(f4 == "" or has(f4, "Гараж (/garage"), "подсказка по гаражу есть в F4")
 
+print("\n=== 7. ВОРОТА ГАРАЖА (ДВЕРИ) ===")
+local prop = read("lua/autorun/sh_grm_property.lua")
+ok(has(core, "function G.LinkDoor"), "двери привязываются к гаражу")
+ok(has(core, "function G.ReindexDoors") and has(core, "function G.GarageByDoorID"), "индекс «дверь → гараж»")
+ok(has(core, 'return false, ("Эта дверь уже привязана к гаражу'), "одна дверь принадлежит одному гаражу")
+ok(has(core, 'hook.Add("GRM_DoorAccessOverride", "GRM_Garage_Doors"'), "ворота слушают владельца гаража")
+ok(has(core, "if GRM.Property and GRM.Property.GetByDoorID and GRM.Property.GetByDoorID(id) then return end"),
+    "двери объекта недвижимости остаются её правилам — приоритет не спорит")
+ok(has(core, "function G.ApplyDoorState"), "ворота запираются вместе со сменой типа гаража")
+ok(has(core, "function G.ToggleDoors") and has(ui, 'G.SendAction("doors", "")'), "в меню есть кнопка открыть/закрыть ворота")
+ok(has(tool, '"Ворота гаража (двери)", "door"') and has(tool, "g.LinkDoor(rec.id, doorID)"), "режим привязки дверей в туле")
+
+print("\n=== 8. ГАРАЖ ВМЕСТЕ С ДОМОМ ===")
+ok(has(core, "function G.LinkProperty"), "гараж привязывается к объекту недвижимости")
+ok(has(core, "function G.SyncWithProperty"), "владелец дома становится владельцем гаража")
+ok(has(core, "rec.baseKind"), "исходный тип гаража запоминается и возвращается")
+ok(has(core, 'hook.Add("GRM_PropertyOwnerChanged", "GRM_Garage_FollowProperty"'), "гараж следит за сменой владельца дома")
+ok(select(2, prop:gsub('hook%.Run%("GRM_PropertyOwnerChanged"', "")) >= 5,
+    "недвижимость сообщает о покупке, аренде, освобождении, выселении и истечении аренды")
+ok(has(tool, "GRM.Property.GetByDoor"), "ПКМ по двери дома привязывает гараж к объекту")
+ok(has(ui, "продаётся с объектом"), "в админ-списке видно, с каким домом продаётся гараж")
+
 print(("\nGARAGE MODULE: %d/%d, провалов: %d"):format(total - fails, total, fails))
 if fails > 0 then os.exit(1) end

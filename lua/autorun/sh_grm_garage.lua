@@ -8,8 +8,9 @@
     спавн из гаража, тулы и энтити».
 
     МОДЕЛЬ ДАННЫХ (data/grm_garage/<карта>.json)
-      гараж = { id, name, kind, faction, owner, zone{min,max},
+      гараж = { id, name, kind, baseKind, faction, owner, zone{min,max},
                 slots[{id,name,pos,ang,lift}], terminals[{id,pos,ang}],
+                doors[doorID], propertyID, linkedDealers[dealerID],
                 fee, created }
       kind: public   — общий городской гараж (любой игрок),
             faction  — ведомственный (члены организации),
@@ -200,6 +201,11 @@ if SERVER then
             id      = trim(raw.id, 48),
             name    = trim(raw.name ~= "" and raw.name or "Гараж", 64),
             kind    = G.Kinds[tostring(raw.kind or "")] and tostring(raw.kind) or "public",
+            -- baseKind — тип, заданный админом. Когда гараж уходит вместе с
+            -- домом, kind временно становится private/faction, а при
+            -- освобождении дома возвращается к baseKind.
+            baseKind = G.Kinds[tostring(raw.baseKind or "")] and tostring(raw.baseKind) or nil,
+            propertyID = trim(raw.propertyID, 48),
             faction = trim(raw.faction, 64),
             owner   = trim(raw.owner, 64),
             fee     = math.max(0, math.floor(tonumber(raw.fee) or 0)),
@@ -208,7 +214,13 @@ if SERVER then
             slots   = {},
             terminals = {},
             linkedDealers = {},
+            doors   = {},
         }
+        rec.baseKind = rec.baseKind or rec.kind
+        for _, doorID in ipairs(raw.doors or {}) do
+            local d = trim(doorID, 64)
+            if d ~= "" then rec.doors[#rec.doors + 1] = d end
+        end
         for _, dealerID in ipairs(raw.linkedDealers or {}) do
             local d = trim(dealerID, 48)
             if d ~= "" then rec.linkedDealers[#rec.linkedDealers + 1] = d end
@@ -250,6 +262,7 @@ if SERVER then
             if rec then G.Garages[rec.id] = rec end
         end
         print(("[GRM Garage] загружено гаражей: %d"):format(table.Count(G.Garages)))
+        G.ReindexDoors()
         G.SpawnTerminals()
         return true
     end
@@ -283,7 +296,9 @@ if SERVER then
         for _, ent in ipairs(ents.FindByClass("grm_garage_terminal")) do
             if IsValid(ent) and ent:GetGarageID() == rec.id then ent:Remove() end
         end
+        G.ApplyDoorState(rec, false)
         G.Garages[rec.id] = nil
+        G.ReindexDoors()
         G.Save("удалён гараж " .. rec.id)
         audit("garage.remove", actor, { id = rec.id }, { name = rec.name })
         return true, "Гараж «" .. rec.name .. "» удалён"
@@ -294,10 +309,11 @@ if SERVER then
         if not rec then return false, "Гараж не найден" end
         fields = istable(fields) and fields or {}
         if fields.name    ~= nil then rec.name = trim(fields.name ~= "" and fields.name or rec.name, 64) end
-        if fields.kind    ~= nil and G.Kinds[tostring(fields.kind)] then rec.kind = tostring(fields.kind) end
+        if fields.kind    ~= nil and G.Kinds[tostring(fields.kind)] then rec.kind = tostring(fields.kind) rec.baseKind = rec.kind end
         if fields.faction ~= nil then rec.faction = trim(fields.faction, 64) end
         if fields.owner   ~= nil then rec.owner = trim(fields.owner, 64) end
         if fields.fee     ~= nil then rec.fee = math.max(0, math.floor(tonumber(fields.fee) or 0)) end
+        G.ApplyDoorState(rec)
         G.Save("правка гаража " .. rec.id)
         audit("garage.update", actor, { id = rec.id }, fields)
         return true, "Настройки гаража сохранены"
@@ -456,6 +472,154 @@ if SERVER then
     end
 
     ------------------------------------------------------------------
+    -- ВОРОТА ГАРАЖА (двери) И СВЯЗЬ С НЕДВИЖИМОСТЬЮ
+    ------------------------------------------------------------------
+    G.ByDoor = G.ByDoor or {}
+
+    function G.ReindexDoors()
+        G.ByDoor = {}
+        for _, rec in pairs(G.Garages) do
+            for _, doorID in ipairs(rec.doors or {}) do G.ByDoor[tostring(doorID)] = rec end
+        end
+        return G.ByDoor
+    end
+
+    function G.GarageByDoorID(doorID) return G.ByDoor[tostring(doorID or "")] end
+
+    local function doorEntities(rec)
+        local out = {}
+        if not (GRM.Doors and GRM.Doors.IsDoor and GRM.Doors.GetDoorID) then return out end
+        local wanted = {}
+        for _, id in ipairs(rec.doors or {}) do wanted[tostring(id)] = true end
+        if not next(wanted) then return out end
+        for _, ent in ipairs(ents.GetAll()) do
+            if IsValid(ent) and GRM.Doors.IsDoor(ent) then
+                local id = GRM.Doors.GetDoorID(ent)
+                if id and wanted[tostring(id)] then out[#out + 1] = ent end
+            end
+        end
+        return out
+    end
+    G.DoorEntities = doorEntities
+
+    -- Ворота закрыты, пока гараж не общий: у общего запирать нечего.
+    function G.ApplyDoorState(rec, forceLocked)
+        if not (istable(rec) and GRM.Doors and GRM.Doors.LockDoor) then return 0 end
+        local locked = forceLocked
+        if locked == nil then locked = rec.kind ~= "public" end
+        local n = 0
+        for _, ent in ipairs(doorEntities(rec)) do
+            GRM.Doors.LockDoor(ent, locked == true)
+            n = n + 1
+        end
+        return n
+    end
+
+    function G.LinkDoor(id, doorID)
+        local rec = G.Get(id)
+        if not rec then return false, "Гараж не найден" end
+        doorID = trim(doorID, 64)
+        if doorID == "" then return false, "У двери нет идентификатора (сначала занесите её в /doors_admin)" end
+        local other = G.ByDoor[doorID]
+        if other and other.id ~= rec.id then
+            return false, ("Эта дверь уже привязана к гаражу «%s»"):format(other.name)
+        end
+        rec.doors = rec.doors or {}
+        for i, existing in ipairs(rec.doors) do
+            if existing == doorID then
+                table.remove(rec.doors, i)
+                G.ReindexDoors()
+                G.Save("отвязана дверь от " .. rec.id)
+                return true, ("Дверь отвязана от гаража «%s» (осталось %d)"):format(rec.name, #rec.doors)
+            end
+        end
+        rec.doors[#rec.doors + 1] = doorID
+        G.ReindexDoors()
+        G.ApplyDoorState(rec)
+        G.Save("привязана дверь к " .. rec.id)
+        return true, ("Дверь привязана к гаражу «%s» (всего %d)"):format(rec.name, #rec.doors)
+    end
+
+    -- Гараж как часть дома: покупает игрок недвижимость — получает и гараж.
+    function G.LinkProperty(id, propertyID)
+        local rec = G.Get(id)
+        if not rec then return false, "Гараж не найден" end
+        propertyID = trim(propertyID, 48)
+        if propertyID == "" then
+            rec.propertyID = ""
+            rec.kind = rec.baseKind or "public"
+            rec.owner = ""
+            G.Save("гараж отвязан от недвижимости")
+            G.ApplyDoorState(rec)
+            return true, ("Гараж «%s» отвязан от недвижимости"):format(rec.name)
+        end
+        if rec.propertyID == propertyID then
+            rec.propertyID = ""
+            rec.kind = rec.baseKind or "public"
+            rec.owner = ""
+            G.Save("гараж отвязан от недвижимости")
+            G.ApplyDoorState(rec)
+            return true, ("Гараж «%s» отвязан от объекта недвижимости"):format(rec.name)
+        end
+        rec.propertyID = propertyID
+        G.Save("гараж привязан к недвижимости")
+        G.SyncWithProperty(propertyID)
+        return true, ("Гараж «%s» продаётся вместе с объектом %s"):format(rec.name, propertyID)
+    end
+
+    --[[ Синхронизация с недвижимостью: владелец дома становится владельцем
+         гаража (личный или ведомственный), при освобождении дома гараж
+         возвращается к типу, который задал админ. ]]
+    function G.SyncWithProperty(propertyID)
+        local P = GRM.Property
+        if not (P and P.Records) then return 0 end
+        propertyID = tostring(propertyID or "")
+        local prop = P.Records[propertyID]
+        local touched = 0
+        for _, rec in pairs(G.Garages) do
+            if rec.propertyID == propertyID then
+                rec.baseKind = rec.baseKind or rec.kind
+                if not prop or prop.ownerType == "none" or prop.ownerType == nil then
+                    rec.kind = rec.baseKind
+                    rec.owner = ""
+                elseif prop.ownerType == "character" then
+                    rec.kind = "private"
+                    rec.owner = tostring(prop.ownerKey or "")
+                    rec.name = rec.name
+                elseif prop.ownerType == "faction" then
+                    rec.kind = "faction"
+                    rec.faction = tostring(prop.ownerKey or "")
+                    rec.owner = ""
+                end
+                G.ApplyDoorState(rec)
+                touched = touched + 1
+            end
+        end
+        if touched > 0 then G.Save("синхронизация с недвижимостью " .. propertyID) end
+        return touched
+    end
+
+    -- Владелец дома получает и ворота гаража. Двери, которые уже относятся к
+    -- объекту недвижимости, оставляем её правилам — там своя логика ордеров.
+    hook.Add("GRM_DoorAccessOverride", "GRM_Garage_Doors", function(ply, ent)
+        if not (IsValid(ply) and IsValid(ent)) then return end
+        if not (GRM.Doors and GRM.Doors.GetDoorID) then return end
+        local id = GRM.Doors.GetDoorID(ent)
+        if not id then return end
+        local rec = G.ByDoor[tostring(id)]
+        if not rec then return end
+        if GRM.Property and GRM.Property.GetByDoorID and GRM.Property.GetByDoorID(id) then return end
+        local can, why = G.CanUse(ply, rec)
+        if can then return true, "garage_key" end
+        return false, why or ("Ворота гаража «%s» закрыты."):format(rec.name)
+    end)
+
+    hook.Add("GRM_PropertyOwnerChanged", "GRM_Garage_FollowProperty", function(record)
+        if not istable(record) then return end
+        G.SyncWithProperty(record.id)
+    end)
+
+    ------------------------------------------------------------------
     -- СВЯЗЬ С ДИЛЕРОМ
     ------------------------------------------------------------------
     -- Куда приписать покупку: гараж, привязанный к дилеру → личный гараж
@@ -543,12 +707,21 @@ if SERVER then
         local slots = G.SlotState(garage)
         local free = 0
         for _, s in ipairs(slots) do if s.free then free = free + 1 end end
+        local doors = #(garage.doors or {})
+        local locked = false
+        if doors > 0 and GRM.Doors and GRM.Doors.IsDoorLocked then
+            for _, ent in ipairs(G.DoorEntities(garage)) do
+                if GRM.Doors.IsDoorLocked(ent) then locked = true break end
+            end
+        end
         net.Start(NET_OPEN)
             net.WriteString(garage.id)
             net.WriteString(garage.name)
             net.WriteString(garage.kind)
             net.WriteUInt(math.min(garage.fee or 0, 16777215), 24)
             net.WriteUInt(free, 8)
+            net.WriteUInt(math.min(doors, 255), 8)
+            net.WriteBool(locked)
             net.WriteTable(slots)
             net.WriteTable(vehicleRows(ply, garage))
         net.Send(ply)
@@ -622,6 +795,23 @@ if SERVER then
         return ok, msg
     end
 
+    -- Открыть/закрыть ворота гаража (только тот, у кого есть доступ).
+    function G.ToggleDoors(ply)
+        local garage = G.GarageAt(ply)
+        if not garage then return false, "Вы не в гараже" end
+        local can, why = G.CanUse(ply, garage)
+        if not can then return false, why end
+        if #(garage.doors or {}) == 0 then return false, "К этому гаражу не привязаны ворота" end
+        if not (GRM.Doors and GRM.Doors.IsDoorLocked and GRM.Doors.LockDoor) then return false, "Модуль дверей не загружен" end
+        local anyLocked = false
+        for _, ent in ipairs(G.DoorEntities(garage)) do
+            if GRM.Doors.IsDoorLocked(ent) then anyLocked = true break end
+        end
+        local n = G.ApplyDoorState(garage, not anyLocked)
+        audit("garage.doors", ply, { garage = garage.id }, { locked = not anyLocked, doors = n })
+        return true, anyLocked and ("Ворота открыты (%d)"):format(n) or ("Ворота закрыты (%d)"):format(n)
+    end
+
     function G.SetHome(ply, recordID)
         local garage = G.GarageAt(ply)
         if not garage then return false, "Вы не в гараже" end
@@ -646,6 +836,7 @@ if SERVER then
         if op == "retrieve" then ok, msg = G.Retrieve(ply, id)
         elseif op == "store" then ok, msg = G.Store(ply, id)
         elseif op == "sethome" then ok, msg = G.SetHome(ply, id)
+        elseif op == "doors" then ok, msg = G.ToggleDoors(ply)
         elseif op == "refresh" then G.Push(ply) return
         else return end
         result(ply, ok, msg)
@@ -662,6 +853,7 @@ if SERVER then
                 rows[#rows + 1] = {
                     id = rec.id, name = rec.name, kind = rec.kind, faction = rec.faction, owner = rec.owner,
                     fee = rec.fee, slots = #(rec.slots or {}), terminals = #(rec.terminals or {}),
+                    doors = #(rec.doors or {}), propertyID = rec.propertyID or "",
                     center = vd(G.ZoneCenter(rec)),
                 }
             end
@@ -747,6 +939,7 @@ if CLIENT then
         local data = {
             id = net.ReadString(), name = net.ReadString(), kind = net.ReadString(),
             fee = net.ReadUInt(24), free = net.ReadUInt(8),
+            doors = net.ReadUInt(8), doorsLocked = net.ReadBool(),
             slots = net.ReadTable() or {}, vehicles = net.ReadTable() or {},
         }
         G.LastData = data

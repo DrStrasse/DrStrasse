@@ -87,6 +87,9 @@ function G.OpenWindow(data)
         surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
         draw.SimpleText("ГАРАЖ · " .. tostring(data.name), "GRMGar_Title", 18, 23, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         local info = ("%s  •  свободных мест: %d из %d"):format(kindName, data.free or 0, #(data.slots or {}))
+        if (data.doors or 0) > 0 then
+            info = info .. ("  •  ворота: %d (%s)"):format(data.doors, data.doorsLocked and "закрыты" or "открыты")
+        end
         if (data.fee or 0) > 0 then info = info .. "  •  выезд: " .. money(data.fee) end
         draw.SimpleText(info, "GRMGar_Small", 18, 40, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
@@ -183,6 +186,14 @@ function G.OpenWindow(data)
         end
     end
 
+    -- Ворота: одна кнопка на весь набор дверей гаража.
+    if (data.doors or 0) > 0 then
+        local gates = button(frame, data.doorsLocked and "ОТКРЫТЬ ВОРОТА" or "ЗАКРЫТЬ ВОРОТА",
+            data.doorsLocked and C.green or C.accent)
+        gates:Dock(BOTTOM) gates:SetTall(36) gates:DockMargin(12, 0, 12, 8)
+        gates.DoClick = function() G.SendAction("doors", "") end
+    end
+
     local refresh = button(frame, "ОБНОВИТЬ", C.cardHov)
     refresh:Dock(BOTTOM) refresh:SetTall(32) refresh:DockMargin(12, 0, 12, 10)
     refresh.DoClick = function() G.SendAction("refresh", "") end
@@ -207,11 +218,13 @@ local function fillAdmin(rows)
             draw.RoundedBox(8, 0, 0, w, h, C.card)
             surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
             draw.SimpleText(tostring(r.name), "GRMGar_Head", 14, 12, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            draw.SimpleText(("%s • мест %d • стоек %d • выезд %s"):format(
-                (G.Kinds and G.Kinds[r.kind]) or r.kind, r.slots or 0, r.terminals or 0, money(r.fee or 0)),
+            draw.SimpleText(("%s • мест %d • стоек %d • ворот %d • выезд %s"):format(
+                (G.Kinds and G.Kinds[r.kind]) or r.kind, r.slots or 0, r.terminals or 0, r.doors or 0, money(r.fee or 0)),
                 "GRMGar_Small", 14, 36, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            draw.SimpleText(tostring(r.id) .. (r.faction ~= "" and ("  •  " .. r.faction) or ""),
-                "GRMGar_Small", 14, 54, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            local extra = tostring(r.id)
+            if r.faction ~= "" then extra = extra .. "  •  " .. r.faction end
+            if tostring(r.propertyID or "") ~= "" then extra = extra .. "  •  продаётся с объектом " .. r.propertyID end
+            draw.SimpleText(extra, "GRMGar_Small", 14, 54, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
         end
 
         local del = button(card, "Удалить", C.red)

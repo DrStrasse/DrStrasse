@@ -439,3 +439,16 @@ Q-меню: **только** каталог/схема `grm_fire_place`, не л
 * Документ: `CONCEPT_GARAGE.md`. Стенды: `sim_garage_runtime`, `sim_garage_module`.
 * Не проверено вживую: разметка тулом на карте, поведение стоек после
   PostCleanupMap, выдача крупных simfphys/LVS машин в тесных боксах.
+
+## Ход 19.08 (3)
+
+* Гараж ↔ двери: `G.LinkDoor`, `G.ByDoor`, `GRM_DoorAccessOverride`,
+  `G.ApplyDoorState`, `G.ToggleDoors`; режим тула «Ворота гаража».
+* Гараж ↔ дом: `G.LinkProperty`, `G.SyncWithProperty`, `baseKind`; в
+  недвижимости появился хук `GRM_PropertyOwnerChanged` (5 точек).
+* Фракции: `setRoleKey` + действие + кнопка «Ключ»; хук
+  `GRM_FactionRoleKeyRenamed`; подписчики в perms, doors_access, doors.
+* Стенды: `sim_role_key_runtime` (25), `sim_garage_runtime` (58),
+  `sim_garage_module` (60), `sim_dept_tags` (45).
+* Не проверено вживую: привязка ворот на реальной карте, продажа дома с
+  гаражом на живом сервере, смена ключа ранга при большом составе.

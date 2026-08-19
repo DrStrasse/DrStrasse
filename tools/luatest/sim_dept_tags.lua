@@ -78,5 +78,21 @@ ok(has(ui, 'dBtnRename:Dock(RIGHT)') and has(ui, 'sBtnTag:Dock(RIGHT)'),
     "кнопки отдела и подотдела докнуты вправо — не уезжают за край")
 ok(has(ui, 'тег не задан'), "в структуре видно, задан ли тег")
 
+print("\n=== 7. СИСТЕМНЫЙ КЛЮЧ ДОЛЖНОСТИ ===")
+local perms = read("lua/autorun/sh_grm_faction_perms.lua")
+local dacc  = read("lua/autorun/sh_grm_doors_access.lua")
+local doors = read("lua/autorun/sh_grm_doors.lua")
+ok(has(fac, "local function setRoleKey"), "ключ должности можно переименовать")
+ok(has(fac, 'action == "setRoleKey"'), "действие setRoleKey зарегистрировано")
+ok(has(ui, 'sendAction("setRoleKey"'), "кнопка «Ключ» в разделе «Структура»")
+ok(has(fac, 'rec.Role == oldKey then rec.Role = newKey'), "сотрудники переводятся на новый ключ")
+ok(has(fac, 'if f.LeaderRoleName == oldKey then f.LeaderRoleName = newKey end'), "лидерская должность не отваливается")
+ok(has(fac, '"RoleModels", "RoleWeapons", "RoleVehicles"'), "форма, оружие и транспорт роли переезжают")
+ok(has(fac, 'renameInArray(f.IncassoSettings.Roles)'), "список инкассации обновляется")
+ok(has(fac, 'hook.Run("GRM_FactionRoleKeyRenamed"'), "внешние модули узнают о смене ключа хуком")
+ok(has(perms, '"GRM_FactionPerms_RoleKey"'), "права фракции переносятся на новый ключ")
+ok(has(dacc, '"GRM_DoorsAccess_RoleKey"'), "галочки доступа к дверям переносятся")
+ok(has(doors, '"GRM_Doors_RoleKey"'), "строки «фракция|ранг» в дверях переписываются")
+
 print(("\nDEPT TAGS: %d/%d, провалов: %d"):format(total - fails, total, fails))
 if fails > 0 then os.exit(1) end

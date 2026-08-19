@@ -924,6 +924,25 @@ if SERVER then
         end
         return changed
     end
+    --[[ Доступ двери к рангу хранится строкой «фракция|ключ_ранга». При смене
+         ключа ранга строки надо переписать, иначе дверь перестаёт узнавать
+         своих сотрудников (заказ владельца 19.08). ]]
+    hook.Add("GRM_FactionRoleKeyRenamed", "GRM_Doors_RoleKey", function(factionName, oldKey, newKey)
+        local from, to = tostring(factionName) .. "|" .. tostring(oldKey), tostring(factionName) .. "|" .. tostring(newKey)
+        local changed = 0
+        for _, rec in pairs((D.Data and D.Data.doors) or {}) do
+            if istable(rec) and istable(rec.roles) then
+                for i, v in ipairs(rec.roles) do
+                    if v == from then rec.roles[i] = to changed = changed + 1 end
+                end
+            end
+        end
+        if changed > 0 then
+            D.SaveDoors()
+            print(("[GRM Doors] ключ ранга перенесён в дверях: %s → %s (записей %d)"):format(from, to, changed))
+        end
+    end)
+
     function D.SaveDoors()
         D.CollapseDuplicateRecords()
         local arr = {}

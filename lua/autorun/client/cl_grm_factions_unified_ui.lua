@@ -1003,26 +1003,43 @@ function UI.Open(requestedFaction)
             end)
         end):Dock(LEFT); rBar:GetChildren()[2]:DockMargin(6, 0, 0, 0); rBar:GetChildren()[2]:SetWide(125)
 
+        --[[ Смена СИСТЕМНОГО ключа должности (заказ владельца 19.08): ключ
+             тянется через права, двери и кадровые записи, поэтому меняем его
+             отдельной кнопкой и с предупреждением. ]]
+        mkBtn(rBar, "Ключ", C.gold, C.cardHover, function()
+            local l = rList:GetSelectedLine()
+            if not l then notification.AddLegacy("Выберите должность в списке!", NOTIFY_ERROR, 3) return end
+            local rKey = rList:GetLine(l).roleKey
+            promptInput("Новый системный ключ должности (eng)", rKey, function(val)
+                val = string.Trim(tostring(val or ""))
+                if val == "" or val == rKey then return end
+                Derma_Query("Сменить ключ «" .. rKey .. "» на «" .. val .. "»?\nСотрудники, права, двери и списки будут переведены автоматически.",
+                    "Системный ключ должности", "Сменить", function()
+                        sendAction("setRoleKey", { isSA and facName or rKey, isSA and rKey or val, isSA and val or nil }, refreshView)
+                    end, "Отмена")
+            end)
+        end):Dock(LEFT); rBar:GetChildren()[3]:DockMargin(6, 0, 0, 0); rBar:GetChildren()[3]:SetWide(70)
+
         mkBtn(rBar, "▲", C.cardLight, C.cardHover, function()
             local l = rList:GetSelectedLine()
             if not l then return end
             local rKey = rList:GetLine(l).roleKey
             sendAction("moveRole", { isSA and facName or rKey, isSA and rKey or "up", isSA and "up" or nil }, refreshView)
-        end):Dock(LEFT); rBar:GetChildren()[3]:DockMargin(6, 0, 0, 0); rBar:GetChildren()[3]:SetWide(30)
+        end):Dock(LEFT); rBar:GetChildren()[4]:DockMargin(6, 0, 0, 0); rBar:GetChildren()[4]:SetWide(30)
 
         mkBtn(rBar, "▼", C.cardLight, C.cardHover, function()
             local l = rList:GetSelectedLine()
             if not l then return end
             local rKey = rList:GetLine(l).roleKey
             sendAction("moveRole", { isSA and facName or rKey, isSA and rKey or "down", isSA and "down" or nil }, refreshView)
-        end):Dock(LEFT); rBar:GetChildren()[4]:DockMargin(4, 0, 0, 0); rBar:GetChildren()[4]:SetWide(30)
+        end):Dock(LEFT); rBar:GetChildren()[5]:DockMargin(4, 0, 0, 0); rBar:GetChildren()[5]:SetWide(30)
 
         mkBtn(rBar, "Удалить", C.red, C.redHover, function()
             local l = rList:GetSelectedLine()
             if not l then return end
             local rKey = rList:GetLine(l).roleKey
             sendAction("removeRole", { isSA and facName or rKey, isSA and rKey or nil }, refreshView)
-        end):Dock(RIGHT); rBar:GetChildren()[5]:SetWide(75)
+        end):Dock(RIGHT); rBar:GetChildren()[6]:SetWide(75)
 
         -- Правая колонка: ИЕРАРХИЯ ОТДЕЛОВ И ПОДОТДЕЛОВ
         local right = vgui.Create("DPanel", split)

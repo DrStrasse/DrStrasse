@@ -168,6 +168,19 @@ if SERVER then
         end
     end
 
+    --[[ Переименование системного ключа должности (GRM_FactionRoleKeyRenamed):
+         права выданы НА КЛЮЧ, поэтому переносим их вместе с ним, иначе после
+         смены ключа должность молча теряет все доступы. ]]
+    hook.Add("GRM_FactionRoleKeyRenamed", "GRM_FactionPerms_RoleKey", function(factionName, oldKey, newKey)
+        local fd = PERMS.Data and PERMS.Data[factionName]
+        if not (istable(fd) and istable(fd.roles) and fd.roles[oldKey] ~= nil) then return end
+        fd.roles[newKey] = fd.roles[oldKey]
+        fd.roles[oldKey] = nil
+        PERMS.Save()
+        PERMS.Broadcast()
+        print(("[GRM FactionPerms] ключ должности перенесён: %s → %s (%s)"):format(oldKey, newKey, factionName))
+    end)
+
     -- Отправить актуальные доступы одному игроку.
     function PERMS.SendTo(ply)
         if not IsValid(ply) then return end
