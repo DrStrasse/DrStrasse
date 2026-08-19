@@ -1,184 +1,201 @@
 include("shared.lua")
 
--- Создаём шрифт для надписи
-surface.CreateFont("OreBuyerLabel", {
-    font = "Arial",
-    size = 22,
-    weight = 700,
-    antialias = true,
-})
+--[[ Окно скупщика руды в стиле GRM (заказ владельца 19.08).
+     Было: DFrame 500×420 со стандартным скином, DListView, продажа по клику
+     на строку (легко продать не то) и подпись над NPC чёрным прямоугольником
+     через HUDPaint.
+     Стало: широкое окно GRM с карточками руды, отдельными кнопками продажи,
+     «продать всё», разделом инструмента (выдача/сдача, залог) и табличкой
+     3D2D над скупщиком. ]]
 
--- ============================================================
--- ОТРИСОВКА НАДПИСИ НАД СКУПЩИКОМ
--- ============================================================
-hook.Add("HUDPaint", "GRM_OreBuyerLabel", function()
-    local ply = LocalPlayer()
-    if not IsValid(ply) then return end
+surface.CreateFont("GRMOre_Title", { font = "Roboto", size = 21, weight = 800, extended = true })
+surface.CreateFont("GRMOre_Head",  { font = "Roboto", size = 16, weight = 700, extended = true })
+surface.CreateFont("GRMOre_Body",  { font = "Roboto", size = 13, weight = 550, extended = true })
+surface.CreateFont("GRMOre_Small", { font = "Roboto", size = 11, weight = 500, extended = true })
+surface.CreateFont("GRMOre_Sign",  { font = "Roboto", size = 26, weight = 800, extended = true })
 
-    local pos = ply:GetPos()
-    local maxDist = 300
+local C = {
+    bg      = Color(16, 20, 28, 252),
+    sidebar = Color(12, 15, 22, 255),
+    card    = Color(22, 28, 38, 240),
+    cardHov = Color(32, 42, 56, 240),
+    row     = Color(26, 33, 45, 240),
+    border  = Color(38, 48, 66, 200),
+    accent  = Color(65, 145, 235),
+    gold    = Color(245, 195, 65),
+    green   = Color(55, 185, 110),
+    teal    = Color(75, 195, 170),
+    red     = Color(225, 70, 70),
+    text    = Color(240, 244, 250),
+    dim     = Color(155, 170, 190),
+}
 
-    local buyers=GRM.Perf and GRM.Perf.Entities and GRM.Perf.Entities("grm_ore_buyer")or ents.FindByClass("grm_ore_buyer")
-    for _, ent in ipairs(buyers) do
-        if IsValid(ent) then
-            local dist = pos:Distance(ent:GetPos())
-            if dist <= maxDist then
-                local offset = Vector(0, 0, 50)
-                local screenPos = (ent:GetPos() + offset):ToScreen()
-                if screenPos.visible then
-                    local x, y = screenPos.x, screenPos.y
-                    local alpha = math.Clamp(255 - (dist / maxDist) * 200, 55, 255)
+local function money(n) return GRM.Format and GRM.Format(n) or (tostring(n) .. " GRM") end
 
-                    local text = "Скупщик руды"
-                    surface.SetFont("OreBuyerLabel")
-        local tw, th = surface.GetTextSize(text)
+local function button(parent, label, base)
+    local b = vgui.Create("DButton", parent)
+    b:SetText("")
+    b.Paint = function(self, w, h)
+        local col = base or C.accent
+        if not self:IsEnabled() then col = Color(38, 44, 56)
+        elseif self:IsHovered() then col = Color(math.min(255, col.r + 24), math.min(255, col.g + 24), math.min(255, col.b + 24)) end
+        draw.RoundedBox(6, 0, 0, w, h, col)
+        draw.SimpleText(label, "GRMOre_Body", w / 2, h / 2, self:IsEnabled() and color_white or C.dim,
+            TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+    return b
+end
 
-        local padding = 8
-        local bgW = tw + padding * 2
-        local bgH = th + padding * 2
-        local bgX = x - padding
-        local bgY = y - padding
+-----------------------------------------------------------------------
+-- ТАБЛИЧКА НАД СКУПЩИКОМ (3D2D вместо плоского HUD-прямоугольника)
+-----------------------------------------------------------------------
+function ENT:Draw()
+    self:DrawModel()
 
-        surface.SetDrawColor(0, 0, 0, alpha * 0.6)
-        surface.DrawRect(bgX, bgY, bgW, bgH)
+    local lp = LocalPlayer()
+    if not IsValid(lp) then return end
+    local dist = lp:GetPos():DistToSqr(self:GetPos())
+    if dist > 400 * 400 then return end
 
-        surface.SetTextColor(0, 0, 0, alpha * 0.8)
-        surface.SetFont("OreBuyerLabel")
-        surface.SetTextPos(x + 2, y + 2)
-        surface.DrawText(text)
+    local ang = Angle(0, (lp:EyeAngles().y + 90) % 360, 90)
+    cam.Start3D2D(self:GetPos() + Vector(0, 0, 82), ang, 0.16)
+        draw.RoundedBox(8, -180, -46, 360, 84, Color(12, 17, 25, 235))
+        draw.RoundedBox(8, -180, -46, 360, 6, C.gold)
+        draw.SimpleText("СКУПЩИК РУДЫ", "GRMOre_Sign", 0, -24, C.gold, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+        draw.SimpleText(self:GetNWString("GRMOreBuyerName", "Приём руды • выдача бура"), "GRMOre_Head", 0, 4,
+            C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+        if dist < 220 * 220 then
+            draw.SimpleText("E — открыть", "GRMOre_Body", 0, 24, Color(120, 205, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+        end
+    cam.End3D2D()
+end
 
-                    surface.SetTextColor(255, 220, 80, alpha)
-                    surface.SetFont("OreBuyerLabel")
-                    surface.SetTextPos(x, y)
-                    surface.DrawText(text)
-                end
+-----------------------------------------------------------------------
+-- ОКНО
+-----------------------------------------------------------------------
+local frame
+
+local function open(ent, rows, hasTool, deposit, toolAvailable)
+    if IsValid(frame) then frame:Remove() end
+
+    frame = vgui.Create("DFrame")
+    frame:SetSize(math.Clamp(ScrW() * 0.60, 860, 1180), math.Clamp(ScrH() * 0.70, 580, 840))
+    frame:Center() frame:SetTitle("") frame:ShowCloseButton(false) frame:MakePopup()
+    if GRM.UI and GRM.UI.Track then GRM.UI.Track("grm_ore_buyer", frame) end
+
+    local total, totalCount = 0, 0
+    for _, r in ipairs(rows) do
+        total = total + (r.count or 0) * (r.price or 0)
+        totalCount = totalCount + (r.count or 0)
+    end
+
+    frame.Paint = function(_, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, C.bg)
+        draw.RoundedBox(8, 0, 0, w, 46, C.sidebar)
+        surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
+        draw.SimpleText("GRM · СКУПЩИК РУДЫ", "GRMOre_Title", 18, 14, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        draw.SimpleText(("В сумке руды: %d ед.  •  на сумму %s"):format(totalCount, money(total)),
+            "GRMOre_Small", 18, 36, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    end
+
+    local close = button(frame, "✕", C.red)
+    close:SetSize(34, 30) close:SetPos(frame:GetWide() - 44, 8)
+    close.DoClick = function() frame:Remove() end
+
+    local body = vgui.Create("DPanel", frame)
+    body:Dock(FILL) body:DockMargin(12, 54, 12, 12) body:SetPaintBackground(false)
+
+    -- Правая колонка: инструмент.
+    local right = vgui.Create("DPanel", body)
+    right:Dock(RIGHT) right:SetWide(300) right:DockMargin(10, 0, 0, 0)
+    right.Paint = function(_, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, C.card)
+        surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
+        draw.SimpleText("ИНСТРУМЕНТ ДОБЫЧИ", "GRMOre_Head", 14, 14, C.teal, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        draw.SimpleText(hasTool and "Бур у вас на руках" or "Бур не выдан", "GRMOre_Body", 14, 44,
+            hasTool and C.green or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        local depText = (deposit or 0) > 0 and ("Залог: " .. money(deposit) .. " (возвращается при сдаче)")
+            or "Залог не требуется"
+        draw.SimpleText(depText, "GRMOre_Small", 14, 66, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        if not toolAvailable then
+            draw.SimpleText("Аддон бура не установлен на сервере!", "GRMOre_Small", 14, 86, C.red, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        end
+        draw.SimpleText("Бур теряется при смерти.", "GRMOre_Small", 14, 108, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        draw.SimpleText("Сдавайте его после смены.", "GRMOre_Small", 14, 124, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    end
+
+    local give = button(right, hasTool and "БУР УЖЕ ВЫДАН" or "ПОЛУЧИТЬ БУР", C.green)
+    give:SetPos(14, 150) give:SetSize(272, 38)
+    give:SetEnabled(not hasTool and toolAvailable ~= false)
+    give.DoClick = function()
+        surface.PlaySound("items/ammo_pickup.wav")
+        net.Start("grm_ore_buyer_give_jackhammer") net.SendToServer()
+    end
+
+    local ret = button(right, "СДАТЬ БУР", C.red)
+    ret:SetPos(14, 196) ret:SetSize(272, 34)
+    ret:SetEnabled(hasTool == true)
+    ret.DoClick = function()
+        surface.PlaySound("items/weapon_drop.wav")
+        net.Start("grm_ore_buyer_return_jackhammer") net.SendToServer()
+    end
+
+    -- Левая часть: руда.
+    local list = vgui.Create("DScrollPanel", body)
+    list:Dock(FILL)
+
+    for _, r in ipairs(rows) do
+        local col = (GRM.Mining and GRM.Mining.OreColor and GRM.Mining.OreColor(r.id)) or C.text
+        local haveIt = (r.count or 0) > 0 and (r.price or 0) > 0
+        local cardP = vgui.Create("DPanel", list)
+        cardP:Dock(TOP) cardP:SetTall(74) cardP:DockMargin(0, 0, 6, 8)
+        cardP.Paint = function(self, w, h)
+            draw.RoundedBox(8, 0, 0, w, h, self:IsHovered() and C.cardHov or C.card)
+            surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
+            draw.RoundedBox(4, 12, 14, 8, h - 28, col)
+            draw.SimpleText(tostring(r.name), "GRMOre_Head", 32, 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            local priceText = (r.price or 0) > 0 and ("Цена: " .. money(r.price) .. " за единицу") or "Скупка приостановлена"
+            draw.SimpleText(priceText, "GRMOre_Body", 32, 38, (r.price or 0) > 0 and C.gold or C.red, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            draw.SimpleText(("В сумке: %d"):format(r.count or 0), "GRMOre_Body", 32, 56,
+                haveIt and C.green or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            if haveIt then
+                draw.SimpleText(money((r.count or 0) * (r.price or 0)), "GRMOre_Head", w - 190, h / 2,
+                    C.teal, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
             end
         end
-    end
-end)
-
--- ============================================================
--- GUI ПРОДАЖИ + ВЫДАЧА/СДАЧА БУРА
--- ============================================================
-local function OpenBuyerGUI(prices)
-    if not prices or table.Count(prices) == 0 then
-        notification.AddLegacy("Цены на руду не установлены (админ: !setoreprice)", NOTIFY_ERROR, 4)
-        return
-    end
-
-    local frame = vgui.Create("DFrame")
-    frame:SetTitle("Скупщик руды")
-    frame:SetSize(500, 420)
-    frame:Center()
-    frame:MakePopup()
-
-    local list = vgui.Create("DListView", frame)
-    list:Dock(FILL)
-    list:DockMargin(4, 4, 4, 4)
-    list:AddColumn("Тип руды")
-    list:AddColumn("Цена за шт.")
-    list:AddColumn("У вас")
-    list:AddColumn("Продать всё")
-
-    local slots = GRM.Inventory.LocalSlots or {}
-    local oreCounts = {}
-    for _, slot in pairs(slots) do
-        if slot.id and slot.id:match("^ore_") then
-            local oreType = slot.id:match("ore_(.+)")
-            oreCounts[oreType] = (oreCounts[oreType] or 0) + (slot.count or 1)
+        local sell = button(cardP, "ПРОДАТЬ", C.accent)
+        sell:Dock(RIGHT) sell:SetWide(160) sell:DockMargin(6, 18, 12, 18)
+        sell:SetEnabled(haveIt)
+        sell.DoClick = function()
+            surface.PlaySound("buttons/button14.wav")
+            net.Start("grm_ore_sell") net.WriteString(r.id) net.SendToServer()
         end
     end
 
-    local hasItems = false
-    for oreType, price in pairs(prices) do
-        if price > 0 then
-            local count = oreCounts[oreType] or 0
-            local line = list:AddLine(
-                oreType:sub(1,1):upper() .. oreType:sub(2),
-                GRM.Format(price),
-                tostring(count),
-                count > 0 and "Продать" or "—"
-            )
-            line._oreType = oreType
-            line._price = price
-            line._count = count
-            if count > 0 then hasItems = true end
+    if totalCount == 0 then
+        local empty = vgui.Create("DPanel", list)
+        empty:Dock(TOP) empty:SetTall(80) empty:DockMargin(0, 0, 6, 0)
+        empty.Paint = function(_, w, h)
+            draw.RoundedBox(8, 0, 0, w, h, C.card)
+            draw.SimpleText("Руды нет. Возьмите бур и идите в шахту.", "GRMOre_Body", w / 2, h / 2,
+                C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
     end
 
-    if not hasItems then
-        local lbl = vgui.Create("DLabel", list)
-        lbl:SetText("У вас нет руды для продажи.")
-        lbl:SetFont("DermaDefaultBold")
-        lbl:SetPos(10, 10)
-        lbl:SizeToContents()
+    local sellAll = button(frame, totalCount > 0 and ("ПРОДАТЬ ВСЁ · " .. money(total)) or "ПРОДАТЬ ВСЁ", C.green)
+    sellAll:Dock(BOTTOM) sellAll:SetTall(38) sellAll:DockMargin(12, 0, 324, 12)
+    sellAll:SetEnabled(totalCount > 0 and total > 0)
+    sellAll.DoClick = function()
+        surface.PlaySound("buttons/button14.wav")
+        net.Start("grm_ore_sell") net.WriteString("all") net.SendToServer()
     end
-
-    function list:OnRowSelected(rowIndex, line)
-        if not line then return end
-        if line._count <= 0 then
-            notification.AddLegacy("У вас нет этой руды", NOTIFY_ERROR, 3)
-            return
-        end
-        net.Start("grm_ore_sell")
-            net.WriteString(line._oreType)
-        net.SendToServer()
-        frame:Close()
-    end
-
-    -- ============================================================
-    -- КНОПКА "ПОЛУЧИТЬ БУР"
-    -- ============================================================
-    local btnJackhammer = vgui.Create("DButton", frame)
-    btnJackhammer:SetText("Получить бур")
-    btnJackhammer:Dock(BOTTOM)
-    btnJackhammer:SetTall(32)
-    btnJackhammer:SetFont("DermaDefaultBold")
-    btnJackhammer:SetTextColor(Color(255, 255, 255))
-    btnJackhammer.Paint = function(s, w, h)
-        local col = s:IsHovered() and Color(60, 140, 60) or Color(40, 100, 40)
-        draw.RoundedBox(6, 0, 0, w, h, col)
-    end
-    btnJackhammer.DoClick = function()
-        surface.PlaySound("items/ammo_pickup.wav")   -- звук выдачи
-        net.Start("grm_ore_buyer_give_jackhammer")
-        net.SendToServer()
-        frame:Close()
-    end
-
-    -- ============================================================
-    -- КНОПКА "СДАТЬ БУР"
-    -- ============================================================
-    local btnReturn = vgui.Create("DButton", frame)
-    btnReturn:SetText("Сдать бур")
-    btnReturn:Dock(BOTTOM)
-    btnReturn:SetTall(32)
-    btnReturn:SetFont("DermaDefaultBold")
-    btnReturn:SetTextColor(Color(255, 255, 255))
-    btnReturn.Paint = function(s, w, h)
-        local col = s:IsHovered() and Color(140, 60, 60) or Color(100, 40, 40)
-        draw.RoundedBox(6, 0, 0, w, h, col)
-    end
-    btnReturn.DoClick = function()
-        surface.PlaySound("items/weapon_drop.wav")   -- звук сдачи
-        net.Start("grm_ore_buyer_return_jackhammer")
-        net.SendToServer()
-        frame:Close()
-    end
-
-    -- ============================================================
-    -- КНОПКА "ЗАКРЫТЬ"
-    -- ============================================================
-    local closeBtn = vgui.Create("DButton", frame)
-    closeBtn:SetText("Закрыть")
-    closeBtn:Dock(BOTTOM)
-    closeBtn:SetTall(30)
-    closeBtn.DoClick = function() frame:Close() end
 end
 
 net.Receive("grm_ore_buyer_open", function()
-    local prices = net.ReadTable() or {}
-    OpenBuyerGUI(prices)
+    local ent = net.ReadEntity()
+    local rows = net.ReadTable() or {}
+    local hasTool = net.ReadBool()
+    local deposit = net.ReadUInt(24)
+    local toolAvailable = net.ReadBool()
+    open(ent, rows, hasTool, deposit, toolAvailable)
 end)
-
-print("[GRM Ore Buyer] Клиент загружен (с звуками на кнопки)")

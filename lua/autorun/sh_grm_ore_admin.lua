@@ -1,156 +1,121 @@
---[[
-    Админ-команды для шахты + обработчик продажи
-]]
+--[[--------------------------------------------------------------------
+    GRM Ore Admin v2.0.0 — админ-команды шахты.
 
-if SERVER then
-    if not GRM then GRM = {} end
-    GRM.OrePrices = GRM.OrePrices or {
-        copper = 50,
-        gold = 100,
-        aluminum = 75,
-        platinum = 150,
-    }
+    ВАЖНАЯ НАХОДКА 19.08: этот файл держал ВТОРОЙ приёмник продажи руды
+    (сетевое сообщение grm_ore_sell) — такой же был в скупщике. В GMod
+    повторная регистрация ЗАТИРАЕТ предыдущую, поэтому реально работал тот,
+    что загрузился последним, а правки во втором просто не действовали
+    (в т.ч. проверка дистанции и цен). Теперь продажа живёт ровно в одном
+    месте — GRM.Mining.Sell, а здесь только команды администрации.
 
-    local ORE_TYPES = { "copper", "gold", "aluminum", "platinum" }
+    Команды (админ):
+      !spawnore <тип>              — поставить узел руды по прицелу
+      !setoreprice <тип> <цена>    — цена скупки (сохраняется в файл)
+      !oreprices                   — показать цены
+      !giveore <игрок> <тип> <кол> — выдать руду в инвентарь
+      !mineclean                   — убрать все валяющиеся куски руды
+----------------------------------------------------------------------]]
+if not SERVER then return end
 
-    -- Вспомогательная функция для поиска игрока по части имени
-    local function findPlayer(name)
-        if not name or name == "" then return nil end
-        local lower = name:lower()
-        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
-            if ply:Nick():lower():find(lower, 1, true) then
-                return ply
-            end
+GRM = GRM or {}
+GRM.Mining = GRM.Mining or {}
+local M = GRM.Mining
+
+local function oreTypes()
+    return M.OreOrder or { "copper", "gold", "aluminum", "platinum" }
+end
+
+local function isOre(t)
+    if M.IsOre then return M.IsOre(t) end
+    return table.HasValue(oreTypes(), t)
+end
+
+local function tell(ply, msg)
+    if IsValid(ply) then ply:PrintMessage(HUD_PRINTTALK, "[Шахта] " .. tostring(msg)) else print("[Шахта] " .. tostring(msg)) end
+end
+
+local function findPlayer(name)
+    if not name or name == "" then return nil end
+    local lower = string.lower(name)
+    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+        if IsValid(ply) and string.find(string.lower(ply:Nick()), lower, 1, true) then return ply end
+    end
+end
+
+local function handle(ply, text)
+    if not (IsValid(ply) and ply:IsAdmin()) then return false end
+    local args = string.Explode(" ", string.Trim(tostring(text or "")))
+    local cmd = string.lower(args[1] or "")
+
+    if cmd == "!spawnore" then
+        local oreType = string.lower(args[2] or "")
+        if not isOre(oreType) then
+            tell(ply, "Типы руды: " .. table.concat(oreTypes(), ", "))
+            return true
         end
-        return nil
+        local node = ents.Create("grm_ore_node")
+        if not IsValid(node) then tell(ply, "Не удалось создать узел") return true end
+        local tr = ply:GetEyeTrace()
+        node:SetPos(tr.HitPos + tr.HitNormal * 10)
+        node:Spawn()
+        node:SetOreType(oreType)
+        tell(ply, "Узел руды создан: " .. ((M.OreName and M.OreName(oreType)) or oreType))
+        return true
     end
 
-    hook.Add("PlayerSay", "GRM_OreAdminCmds", function(ply, text)
-        if not ply:IsAdmin() then return end  -- только админы
+    if cmd == "!setoreprice" then
+        if not M.SetPrice then tell(ply, "Модуль шахты не загружен") return true end
+        local ok, msg = M.SetPrice(args[2], args[3])
+        tell(ply, ok and msg or ("Ошибка: " .. tostring(msg) .. ". Использование: !setoreprice <тип> <цена>"))
+        return true
+    end
 
-        local args = string.Explode(" ", text)
-        local cmd = args[1] and args[1]:lower() or ""
-
-        -- !spawnore <тип>
-        if cmd == "!spawnore" then
-            local oreType = (args[2] or ""):lower()
-            if not table.HasValue(ORE_TYPES, oreType) then
-                ply:PrintMessage(HUD_PRINTTALK, "Доступные типы: copper, gold, aluminum, platinum")
-                return ""
-            end
-
-            local node = ents.Create("grm_ore_node")
-            if not IsValid(node) then
-                ply:PrintMessage(HUD_PRINTTALK, "Не удалось создать узел")
-                return ""
-            end
-            local tr = ply:GetEyeTrace()
-            local pos = tr.HitPos + tr.HitNormal * 10
-            node:SetPos(pos)
-            node:Spawn()
-            node:SetOreType(oreType)
-            ply:PrintMessage(HUD_PRINTTALK, "Узел " .. oreType .. " руды создан")
-            return ""
+    if cmd == "!oreprices" then
+        tell(ply, "Цены скупки:")
+        for _, ore in ipairs(oreTypes()) do
+            local price = (GRM.OrePrices or {})[ore] or 0
+            tell(ply, ("  %s — %s"):format((M.OreName and M.OreName(ore)) or ore, GRM.Format and GRM.Format(price) or price))
         end
+        return true
+    end
 
-        -- !setoreprice <тип> <цена>
-        if cmd == "!setoreprice" then
-            local oreType = (args[2] or ""):lower()
-            local price = tonumber(args[3])
-            if not table.HasValue(ORE_TYPES, oreType) or not price or price < 0 then
-                ply:PrintMessage(HUD_PRINTTALK, "Использование: !setoreprice <тип> <цена>")
-                return ""
-            end
-            GRM.OrePrices[oreType] = math.floor(price)
-            ply:PrintMessage(HUD_PRINTTALK, "Цена для " .. oreType .. " установлена: " .. GRM.Format(price))
-            return ""
+    if cmd == "!giveore" then
+        local target = findPlayer(args[2])
+        local oreType = string.lower(args[3] or "")
+        local amount = math.floor(tonumber(args[4]) or 0)
+        if not IsValid(target) then tell(ply, "Игрок не найден. Использование: !giveore <игрок> <тип> <количество>") return true end
+        if not isOre(oreType) then tell(ply, "Типы руды: " .. table.concat(oreTypes(), ", ")) return true end
+        if amount <= 0 then tell(ply, "Количество должно быть больше нуля") return true end
+        if not (GRM.Inventory and GRM.Inventory.AddItem) then tell(ply, "Инвентарь недоступен") return true end
+
+        local notAdded = GRM.Inventory.AddItem(target, "ore_" .. oreType, amount)
+        if notAdded == 0 then
+            tell(ply, ("Выдано %d ед. руды игроку %s"):format(amount, target:Nick()))
+            if GRM.Notify then GRM.Notify(target, ("Администрация выдала вам руду: %d ед."):format(amount), 120, 220, 140) end
+        else
+            tell(ply, ("Инвентарь игрока переполнен, добавлено только %d"):format(amount - notAdded))
         end
+        return true
+    end
 
-        -- !oreprices
-        if cmd == "!oreprices" then
-            ply:PrintMessage(HUD_PRINTTALK, "Текущие цены:")
-            for ore, price in pairs(GRM.OrePrices) do
-                ply:PrintMessage(HUD_PRINTTALK, "  " .. ore .. ": " .. GRM.Format(price))
-            end
-            return ""
+    if cmd == "!mineclean" then
+        local removed = 0
+        for _, e in ipairs(ents.FindByClass("grm_ore_chunk")) do
+            if IsValid(e) then e:Remove() removed = removed + 1 end
         end
+        tell(ply, "Убрано кусков руды: " .. removed)
+        return true
+    end
 
-        -- !giveore <игрок> <тип> <количество>
-        if cmd == "!giveore" then
-            if not args[2] or not args[3] or not args[4] then
-                ply:PrintMessage(HUD_PRINTTALK, "Использование: !giveore <игрок> <тип> <количество>")
-                return ""
-            end
-            local target = findPlayer(args[2])
-            if not IsValid(target) then
-                ply:PrintMessage(HUD_PRINTTALK, "Игрок не найден")
-                return ""
-            end
-            local oreType = args[3]:lower()
-            if not table.HasValue(ORE_TYPES, oreType) then
-                ply:PrintMessage(HUD_PRINTTALK, "Неверный тип руды")
-                return ""
-            end
-            local amount = math.floor(tonumber(args[4]) or 0)
-            if amount <= 0 then
-                ply:PrintMessage(HUD_PRINTTALK, "Количество должно быть > 0")
-                return ""
-            end
-
-            local itemID = "ore_" .. oreType
-            local notAdded = GRM.Inventory.AddItem(target, itemID, amount)
-            if notAdded == 0 then
-                ply:PrintMessage(HUD_PRINTTALK, "Выдано " .. amount .. " " .. oreType .. " руды игроку " .. target:Nick())
-                target:PrintMessage(HUD_PRINTTALK, "Админ выдал вам " .. amount .. " " .. oreType .. " руды")
-            else
-                ply:PrintMessage(HUD_PRINTTALK, "Инвентарь игрока переполнен, добавлено только " .. (amount - notAdded))
-            end
-            return ""
-        end
-    end)
-
-    -- ============================================================
-    -- ОБРАБОТЧИК ПРОДАЖИ РУДЫ (единый)
-    -- ============================================================
-    net.Receive("grm_ore_sell", function(_, ply)
-        if not IsValid(ply) then return end
-
-        local oreType = net.ReadString()
-        local itemID = "ore_" .. oreType
-
-        -- Диагностика
-        print("[GRM Sell] Игрок", ply:Nick(), "продаёт", oreType)
-
-        -- Проверяем наличие руды
-        local count = GRM.Inventory.CountItem(ply, itemID)
-        if count <= 0 then
-            GRM.Notify(ply, "У вас нет этой руды", 255, 100, 100)
-            print("[GRM Sell] Ошибка: руды нет")
-            return
-        end
-
-        -- Проверяем цену
-        local price = GRM.OrePrices[oreType]
-        if not price or price <= 0 then
-            GRM.Notify(ply, "Цена для этого типа не установлена", 255, 100, 100)
-            print("[GRM Sell] Ошибка: цена не установлена для", oreType)
-            return
-        end
-
-        -- Удаляем руду
-        local removed = GRM.Inventory.RemoveItem(ply, itemID, count)
-        if removed <= 0 then
-            GRM.Notify(ply, "Ошибка при удалении руды", 255, 100, 100)
-            print("[GRM Sell] Ошибка: не удалось удалить руду")
-            return
-        end
-
-        -- Выдаём деньги
-        local total = count * price
-        GRM.GiveMoney(ply, total)
-        GRM.Notify(ply, "Продано " .. count .. " " .. oreType .. " руды за " .. GRM.Format(total), 100, 220, 100)
-        print("[GRM Sell] Успешно продано", count, oreType, "за", total)
-    end)
-
-    print("[GRM Ore Admin] Команды и обработчик продажи загружены")
+    return false
 end
+
+hook.Add("PlayerSay", "GRM_OreAdminCmds", function(ply, text)
+    if handle(ply, text) then return "" end
+end)
+hook.Add("PlayerSayTransform", "GRM_OreAdminCmdsEC", function(ply, pack)
+    if not (istable(pack) and isstring(pack[1])) then return end
+    if handle(ply, pack[1]) then pack[1] = "" pack.SkipPlayerSay = true end
+end)
+
+print("[GRM Ore Admin] v2.0.0 — команды администрации шахты загружены")

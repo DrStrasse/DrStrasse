@@ -5,7 +5,11 @@ local fail,n=0,0;local function ok(v,msg)n=n+1;if v then print("  ok  "..msg)els
 ok(perf:find("function P.Entities",1,true)and perf:find("GRM_Perf_EntityCreated",1,true)and perf:find("GRM_Perf_EntityRemoved",1,true),"shared entity cache is event-driven")
 ok(perf:find("if not b.dirty then return b.array",1,true),"entity arrays are reused until an event invalidates cache")
 ok(perf:find("function P.NWString",1,true)and perf:find("function P.NWInt",1,true),"change-only NW helpers exist")
-ok(vendor:find('GRM.Perf.Entities("grm_vendor")',1,true)and ore:find('GRM.Perf.Entities("grm_ore_buyer")',1,true),"vendor world labels use registries")
+-- 19.08: вывески торгашей и скупщика переехали из HUDPaint (перебор ВСЕХ
+-- сущностей каждый кадр) в ENT:Draw с 3D2D — рисуются только когда NPC в кадре.
+ok(vendor:find("cam.Start3D2D",1,true)and ore:find("cam.Start3D2D",1,true)
+    and not vendor:find('hook.Add("HUDPaint"',1,true)and not ore:find('hook.Add("HUDPaint"',1,true),
+    "vendor world labels draw per-entity instead of scanning every frame")
 ok(factoryUI:find('GRM.Perf.Entities("grm_fc_scrap_bin")',1,true)and logisticsUI:find('GRM.Perf.Entities("grm_logistics_crate")',1,true),"factory/logistics render labels use registries")
 ok(broadcast:find('GRM.Perf.Entities("grm_broadcast_mic")',1,true),"broadcast watcher uses microphone registry")
 ok(fire:find('GRM.Perf.Entities("grm_fire_pump")',1,true)and fire:find("GRM_FireTruck_RenderRegistry",1,true)and not fire:find('for _, veh in ipairs(ents.GetAll())',1,true),"fire truck server/client use pump and NW registries")

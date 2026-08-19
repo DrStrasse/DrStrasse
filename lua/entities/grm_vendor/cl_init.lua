@@ -1,74 +1,58 @@
 --[[--------------------------------------------------------------------
-    GRM Vendor Entity — client HUD label (Код 111)
-----------------------------------------------------------------------]]
+    GRM Vendor Entity — вывеска торговца в стиле GRM.
 
+    Было: HUDPaint каждый кадр обходил ВСЕХ торговцев на карте и рисовал
+    плоский чёрный прямоугольник с текстом (плюс эмодзи, которые часть
+    шрифтов не тянет). Стало: 3D2D-вывеска в палитре GRM рисуется самим
+    энтити (ENT:Draw), то есть только когда торговец в кадре.
+----------------------------------------------------------------------]]
 include("shared.lua")
 
-surface.CreateFont("GRM_VendorLabel", {
-    font = "Roboto",
-    size = 20,
-    weight = 700,
-    extended = true,
-    antialias = true,
-})
+surface.CreateFont("GRM_VendorSign",  { font = "Roboto", size = 26, weight = 800, extended = true })
+surface.CreateFont("GRM_VendorLabel", { font = "Roboto", size = 17, weight = 700, extended = true })
+surface.CreateFont("GRM_VendorHint",  { font = "Roboto", size = 14, weight = 600, extended = true })
 
 local LABELS = {
-    weapon = "🔫 Торговец оружием",
-    ore    = "⛏️ Скупщик руды",
-    food   = "🍎 Ларёк еды",
-    rare   = " Торговец редкостями",
-    accessory = "Торговец аксессуарами",
+    weapon    = "ТОРГОВЕЦ ОРУЖИЕМ",
+    ore       = "СКУПЩИК РУДЫ",
+    food      = "ЛАРЁК ЕДЫ",
+    rare      = "ТОРГОВЕЦ РЕДКОСТЯМИ",
+    accessory = "ТОРГОВЕЦ АКСЕССУАРАМИ",
+    phone     = "САЛОН СВЯЗИ",
 }
 
-hook.Add("HUDPaint", "GRM_VendorLabel", function()
-    local ply = LocalPlayer()
-    if not IsValid(ply) then return end
+local COLORS = {
+    weapon    = Color(225, 110, 90),
+    ore       = Color(245, 195, 65),
+    food      = Color(120, 210, 130),
+    rare      = Color(190, 140, 245),
+    accessory = Color(75, 195, 170),
+    phone     = Color(90, 165, 245),
+}
 
-    local maxDist = 300
+function ENT:Draw()
+    self:DrawModel()
 
-    local vendors=GRM.Perf and GRM.Perf.Entities and GRM.Perf.Entities("grm_vendor")or ents.FindByClass("grm_vendor")
-    for _, ent in ipairs(vendors) do
-        if IsValid(ent) then
-            local dist = ply:GetPos():Distance(ent:GetPos())
-            if dist <= maxDist then
-                -- Подсказка над головой NPC
-                local offset = Vector(0, 0, 62)
-                local scr = (ent:GetPos() + offset):ToScreen()
-                if scr.visible then
-                    local x, y = scr.x, scr.y
-                    local alpha = math.Clamp(255 - (dist / maxDist) * 200, 55, 255)
+    local lp = LocalPlayer()
+    if not IsValid(lp) then return end
+    local dist = lp:GetPos():DistToSqr(self:GetPos())
+    if dist > 400 * 400 then return end
 
-                    local vtype = ent:GetNWString("VendorType", ent.VendorType or "weapon")
-                    local text = ent:GetNWString("GRMVendorName", "")
-                    if text == "" then text = LABELS[vtype] or "GRM Торгаш" end
+    local vtype = self:GetNWString("VendorType", self.VendorType or "weapon")
+    local title = LABELS[vtype] or "ТОРГОВЕЦ GRM"
+    local name = self:GetNWString("GRMVendorName", "")
+    local accent = COLORS[vtype] or Color(245, 195, 65)
 
-                    surface.SetFont("GRM_VendorLabel")
-                    local tw, th = surface.GetTextSize(text)
-                    local pad = 6
-
-                    -- Фон
-                    surface.SetDrawColor(0, 0, 0, alpha * 0.65)
-                    surface.DrawRect(x - pad, y - pad, tw + pad * 2, th + pad * 2)
-
-                    -- Текст
-                    surface.SetTextColor(255, 220, 80, alpha)
-                    surface.SetTextPos(x, y)
-                    surface.DrawText(text)
-
-                    -- Подсказка "E — купить" при близком расстоянии
-                    if dist < 120 then
-                        local hint = "[E] — Открыть магазин"
-                        local hw, hh = surface.GetTextSize(hint)
-                        surface.SetDrawColor(0, 0, 0, alpha * 0.5)
-                        surface.DrawRect(x - pad, y + th + 4, hw + pad * 2, hh + pad)
-                        surface.SetTextColor(200, 220, 255, alpha)
-                        surface.SetTextPos(x, y + th + 4)
-                        surface.DrawText(hint)
-                    end
-                end
-            end
+    local ang = Angle(0, (lp:EyeAngles().y + 90) % 360, 90)
+    cam.Start3D2D(self:GetPos() + Vector(0, 0, 82), ang, 0.16)
+        draw.RoundedBox(8, -180, -46, 360, 84, Color(12, 17, 25, 235))
+        draw.RoundedBox(8, -180, -46, 360, 6, accent)
+        draw.SimpleText(title, "GRM_VendorSign", 0, -24, accent, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+        draw.SimpleText(name ~= "" and name or "Товары и услуги", "GRM_VendorLabel", 0, 4,
+            Color(235, 240, 248), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
+        if dist < 220 * 220 then
+            draw.SimpleText("E — открыть магазин", "GRM_VendorHint", 0, 24,
+                Color(120, 205, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
         end
-    end
-end)
-
-print("[GRM Vendor] Client HUD loaded")
+    cam.End3D2D()
+end

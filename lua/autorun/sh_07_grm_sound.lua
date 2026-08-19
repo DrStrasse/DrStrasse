@@ -186,6 +186,8 @@ for _, path in ipairs(STOCK) do S.Register(path) end
 S.Register("kom_hour.wav", "ambient/alarms/warningbell1.wav")            -- комендантский час
 S.Register("npc/scanner/scanner_siren2.wav", "ambient/alarms/klaxon1.wav") -- вызов пожарного расчёта
 S.Register("weapons/extinguisher/fire1.wav", "ambient/machines/steam_release_2.wav")
+S.Register("physics/concrete/concrete_break2.wav") -- запасной звук разрушения породы
+S.Register("physics/concrete/concrete_break3.wav", "physics/concrete/concrete_break2.wav") -- разрушение узла руды
 S.Register("weapons/extinguisher/release1.wav", "ambient/machines/steam_release_2.wav")
 
 S.Custom = { "kom_hour.wav", "weapons/extinguisher/fire1.wav", "weapons/extinguisher/release1.wav" }

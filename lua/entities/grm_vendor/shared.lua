@@ -9,6 +9,7 @@ ENT.Category  = "GRM Vendors"
 ENT.Spawnable = true
 ENT.AdminOnly = true
 ENT.AutomaticFrameAdvance = true
+ENT.RenderGroup = RENDERGROUP_BOTH -- вывеска 3D2D рисуется поверх модели
 
 -- Тип задаётся при спавне: weapon / ore / food / rare
 ENT.VendorType    = "weapon"

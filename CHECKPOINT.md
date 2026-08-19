@@ -466,3 +466,14 @@ Q-меню: **только** каталог/схема `grm_fire_place`, не л
   `sim_doors_admin`, `sim_doors_v3`.
 * Не проверено вживую: миграция старого categories.json на живом сервере,
   поведение keepLocked с парными дверями.
+
+## Ход 19.08 (5) — шахта и торгаши
+
+* `GRM.Mining` v2.0.0: цены в `data/grm_mining/prices.json`, `M.Sell`,
+  `M.CountOres`, `M.GiveTool/ReturnTool` (залог `grm_mining_deposit`),
+  `M.ToolClass`, `M.PushProgress`.
+* Окно скупщика и вывески торгашей/скупщика — стиль GRM, 3D2D.
+* Убран дубль `net.Receive("grm_ore_sell")` (две регистрации затирали друг друга).
+* Стенды: `sim_mining_runtime` (23), `sim_mining_ui` (44).
+* Не проверено вживую: наличие аддона бура на сервере, залог на живой
+  экономике, подбор кучки руды при полном инвентаре.
