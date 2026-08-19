@@ -58,6 +58,7 @@ QM.ToolCatalog = {
     { id = "grm_service_tool",   label = "GRM: служебное оборудование",      desc = "Компьютеры ведомств.", cat = "ui" },
     { id = "grm_duty_npc",       label = "GRM: служебный диспетчер",          desc = "Выход на службу и уход со службы.", cat = "ui" },
     { id = "grm_jobs",           label = "GRM: точки работ",                 desc = "Курьер, мусорки, свалка и ориентиры такси.", cat = "ui" },
+    { id = "grm_garage",         label = "GRM: гаражи",                      desc = "Зоны гаражей, места стоянки и стойки вызова.", cat = "ui" },
     { id = "grm_arrest_zone",    label = "GRM: зона ареста",                 desc = "Камеры и зоны содержания.", cat = "ui" },
     { id = "grm_augmentation",   label = "GRM: аугментации",                 desc = "Станции и поды аугментаций.", cat = "ui" },
     { id = "grm_citadel_core",   label = "GRM: ядро Цитадели",               desc = "Размещение ядра Цитадели.", cat = "ui" },

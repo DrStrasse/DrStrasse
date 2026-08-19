@@ -357,6 +357,9 @@ net.Receive("GRM_VD_Open", function()
             draw.SimpleText(tostring(v.class or ""), "GRMVD_Small", 124, 42, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
             draw.SimpleText(v.stored == false and "Выдан на карту" or "В гараже", "GRMVD_Body", 124, 70,
                 v.stored == false and C.gold or C.green, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            local home = tostring(v.homeName or "")
+            draw.SimpleText(home ~= "" and ("Гараж: " .. home) or "Гараж не назначен", "GRMVD_Small", 124, 90,
+                home ~= "" and C.teal or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
         end
         local m = vgui.Create("DModelPanel", row)
         m:SetPos(9, 9)

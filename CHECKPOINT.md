@@ -428,3 +428,14 @@ Q-меню: **только** каталог/схема `grm_fire_place`, не л
 * Дилер v3.4.0: раздел «На карте (убрать)», операция `remove`.
 * Не проверено вживую: теги в эфире на полном сервере, сбор без контейнера,
   уборка служебного ТС из меню дилера.
+
+## Ход 19.08 (2) — модуль гаражей
+
+* `GRM.Garage` v1.0.0 (`sh_grm_garage.lua`): зоны, места, стойки, типы,
+  плата, привязка дилеров, `data/grm_garage/<карта>.json`.
+* Тул «GRM: гаражи», энтити `grm_garage_terminal`, окно `cl_grm_garage_ui`.
+* Дилер v3.5.0: общий слой `VD.IssueRecord / VD.StoreRecord`,
+  `VD.Spawn(class, dealer, ply, place)`; конвар `grm_garage_strict`.
+* Документ: `CONCEPT_GARAGE.md`. Стенды: `sim_garage_runtime`, `sim_garage_module`.
+* Не проверено вживую: разметка тулом на карте, поведение стоек после
+  PostCleanupMap, выдача крупных simfphys/LVS машин в тесных боксах.
