@@ -691,6 +691,63 @@ local function buildSuper(pnl)
 end
 
 -----------------------------------------------------------------------
+-- РАЗДЕЛ: АНАЛИЗ НАГРУЗКИ
+-----------------------------------------------------------------------
+local function buildAnalytics(pnl)
+    local scroll = vgui.Create("DScrollPanel", pnl)
+    scroll:Dock(FILL)
+
+    local AN = GRM.Analytics
+    local head = vgui.Create("DPanel", scroll)
+    head:Dock(TOP) head:SetTall(84) head:DockMargin(0, 0, 6, 8)
+    head.Paint = function(_, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, C.card)
+        draw.SimpleText("АНАЛИЗ НАГРУЗКИ", "GRMAdm_Sub", 14, 12, C.gold)
+        local snap = AN and AN.Last
+        if not snap then
+            draw.SimpleText("Сбор ещё не начался — данные появятся через несколько секунд.",
+                "GRMAdm_Small", 14, 38, C.dim)
+            return
+        end
+        draw.SimpleText(("Кадр/тик: среднее %.2f мс · максимум %.1f мс · всплесков %d · фоновых задач %d")
+            :format(snap.tickAvgMs or 0, snap.tickMaxMs or 0, snap.spikes or 0, snap.jobs or 0),
+            "GRMAdm_Small", 14, 38, C.text)
+        draw.SimpleText(("Сущности: %d (GRM %d, пропов %d, транспорт %d) · двери: %d, фантомов %d")
+            :format(snap.entities and snap.entities.total or 0, snap.entities and snap.entities.grm or 0,
+                snap.entities and snap.entities.props or 0, snap.entities and snap.entities.vehicles or 0,
+                snap.doors and snap.doors.total or 0, snap.doors and snap.doors.suspectPhantom or 0),
+            "GRMAdm_Small", 14, 58, C.dim)
+    end
+
+    local function tool(title, desc, command, col)
+        local card = vgui.Create("DPanel", scroll)
+        card:Dock(TOP) card:SetTall(58) card:DockMargin(0, 0, 6, 6)
+        card.Paint = function(_, w, h)
+            draw.RoundedBox(8, 0, 0, w, h, C.card)
+            draw.SimpleText(title, "GRMAdm_Body", 14, 12, C.text)
+            draw.SimpleText(desc, "GRMAdm_Small", 14, 32, C.dim)
+        end
+        local b = btn(card, "ВЫПОЛНИТЬ", col or C.accent, function()
+            RunConsoleCommand(unpack(string.Explode(" ", command)))
+            chat.AddText(C.gold, "[GRM] ", C.text, "Отчёт напечатан в консоли (~): ", C.dim, command)
+        end)
+        b:Dock(RIGHT) b:SetWide(150) b:DockMargin(8, 11, 12, 11)
+    end
+
+    tool("Общая сводка", "Тайминги, сущности, двери, игроки, топ событий", "grm_analyze", C.gold)
+    tool("Сущности по классам", "Что именно живёт на карте и в каком количестве", "grm_analyze_ents")
+    tool("Двери", "Записи, бесхозные, парные и подозрение на фантомы", "grm_analyze_doors")
+    tool("Игроки", "Движение, действия, состояние, пинг, AFK", "grm_analyze_players")
+    tool("События и сеть", "Счётчики событий и последний профиль net", "grm_analyze_events")
+    tool("Профиль хуков (10 с)", "Сколько миллисекунд съедает каждый хук GRM", "grm_analyze_hooks 10", C.orange)
+    tool("Профиль сети (10 с)", "Какие net-строки шлют больше всего данных", "grm_analyze_net 10", C.orange)
+    tool("Выгрузить срез", "Полный отчёт в data/grm_analytics/*.json", "grm_analyze_dump", C.green)
+    tool("Фризы: отчёт", "Всплески времени кадра со срезом окружения", "grm_perf_report")
+    tool("Очередь фоновых задач", "Что сейчас распределяется по кадрам", "grm_perf_queue")
+    tool("Очередь загрузки карты", "Порядок и время стартовых задач", "grm_boot_status")
+end
+
+-----------------------------------------------------------------------
 -- ОКНО
 -----------------------------------------------------------------------
 function AD.OpenPanel()
@@ -778,6 +835,7 @@ function AD.OpenPanel()
     addTab("persist", "Сохранения и карта", "server.persistence", buildPersistence)
     addTab("factions", "Фракционный контроль", "server.factions", buildFactions)
     addTab("modules", "Модули сборки", "menu.modules", buildModules)
+    addTab("analytics", "Анализ нагрузки", "menu.modules", buildAnalytics)
     addTab("super", "Суперадмин", "cheat.god", buildSuper)
 
     AD.Request()

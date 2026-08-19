@@ -396,13 +396,53 @@ local SPIKE_MS = CreateConVar("grm_perf_spike_ms", "40", bit.bor(FCVAR_ARCHIVE),
     "Порог фиксации всплеска времени кадра/тика, миллисекунды")
 
 P.Spikes = P.Spikes or {}
-P.Stats = P.Stats or { frames = 0, total = 0, max = 0, since = 0 }
+P.Stats = P.Stats or { frames = 0, total = 0, max = 0, since = 0, ignored = 0, spikes = 0 }
+
+--[[ ЧТО НЕ СЧИТАЕТСЯ ФРИЗОМ (важно, иначе отчёт врёт).
+     Первый живой прогон владельца дал пачки ровно по ~50 мс — это не фриз, а
+     клиент в фоне: GMod при потере фокуса рендерит на 20 Гц, дельта Think
+     становится 50 мс. Такие кадры теперь помечаются и в статистику всплесков
+     не идут. Так же игнорируем Esc-меню, загрузку карты и первые секунды. ]]
+local function frameIgnored()
+    if CLIENT then
+        if system and system.HasFocus and not system.HasFocus() then return "окно свёрнуто" end
+        if gui and gui.IsGameUIVisible and gui.IsGameUIVisible() then return "открыто игровое меню" end
+        if not (LocalPlayer and IsValid(LocalPlayer())) then return "мир ещё грузится" end
+    end
+    if engine and engine.TickInterval and engine.TickInterval() <= 0 then return "движок не готов" end
+    return nil
+end
+
+local function countVehicles()
+    local n = 0
+    for _, class in ipairs({ "prop_vehicle_jeep", "prop_vehicle_airboat", "prop_vehicle_prisoner_pod",
+        "gmod_sent_vehicle_fphysics_base", "lvs_base" }) do
+        n = n + #ents.FindByClass(class)
+    end
+    return n
+end
+
+-- Какие окна GRM сейчас открыты: частая причина клиентских рывков — тяжёлое
+-- меню (превью моделей, длинные списки), и это должно быть видно в отчёте.
+local function openWindows()
+    if not CLIENT then return "" end
+    local frames = GRM.UI and GRM.UI._frames or nil
+    if not istable(frames) then return "" end
+    local names = {}
+    for key, panel in pairs(frames) do
+        if IsValid(panel) and panel:IsVisible() then names[#names + 1] = tostring(key) end
+    end
+    table.sort(names)
+    return table.concat(names, ",")
+end
 
 local lastSample = 0
+local startedAt = 0
 hook.Add("Think", "GRM_Perf_SpikeWatch", function()
     local now = SysTime()
     if lastSample == 0 then
         lastSample = now
+        startedAt = now
         P.Stats.since = now
         return
     end
@@ -410,27 +450,42 @@ hook.Add("Think", "GRM_Perf_SpikeWatch", function()
     local dt = (now - lastSample) * 1000
     lastSample = now
 
+    local ignoreReason = frameIgnored()
+    if now - startedAt < 15 then ignoreReason = ignoreReason or "прогрев после загрузки" end
+
+    if ignoreReason then
+        P.Stats.ignored = (P.Stats.ignored or 0) + 1
+        return
+    end
+
     P.Stats.frames = P.Stats.frames + 1
     P.Stats.total = P.Stats.total + dt
     if dt > P.Stats.max then P.Stats.max = dt end
 
     if dt < SPIKE_MS:GetFloat() then return end
+    P.Stats.spikes = (P.Stats.spikes or 0) + 1
 
-    -- Всплеск: снимаем дешёвый срез окружения.
-    local vehicles, players = 0, 0
-    if SERVER then
-        players = #player.GetAll()
-        for _, class in ipairs({ "prop_vehicle_jeep", "prop_vehicle_airboat", "gmod_sent_vehicle_fphysics_base", "lvs_base" }) do
-            vehicles = vehicles + #ents.FindByClass(class)
-        end
-    else
-        players = #player.GetAll()
+    local row = {
+        at = os.time(), ms = dt,
+        players = #player.GetAll(),
+        vehicles = countVehicles(),
+        ents = #ents.GetAll(),
+        jobs = #P.Jobs,
+        windows = openWindows(),
+    }
+
+    -- Пачку одинаковых всплесков подряд сворачиваем в одну строку со
+    -- счётчиком: иначе история из 40 записей забивается одним событием.
+    local last = P.Spikes[#P.Spikes]
+    if last and math.abs(last.ms - row.ms) < 6 and (row.at - last.at) <= 1
+        and last.windows == row.windows then
+        last.count = (last.count or 1) + 1
+        last.ms = math.max(last.ms, row.ms)
+        return
     end
 
-    P.Spikes[#P.Spikes + 1] = {
-        at = os.time(), ms = dt, players = players, vehicles = vehicles,
-        ents = SERVER and #ents.GetAll() or 0, jobs = #P.Jobs,
-    }
+    row.count = 1
+    P.Spikes[#P.Spikes + 1] = row
     while #P.Spikes > 40 do table.remove(P.Spikes, 1) end
 end)
 
@@ -439,25 +494,41 @@ concommand.Add("grm_perf_report", function(ply)
         if IsValid(ply) then ply:PrintMessage(HUD_PRINTCONSOLE, line) else print(line) end
     end
     local avg = P.Stats.frames > 0 and (P.Stats.total / P.Stats.frames) or 0
-    out(("[GRM Perf] %s: кадров %d, среднее %.2f мс, максимум %.1f мс, порог всплеска %.0f мс")
-        :format(SERVER and "сервер" or "клиент", P.Stats.frames, avg, P.Stats.max, SPIKE_MS:GetFloat()))
-    out(("[GRM Perf] фоновых задач в очереди: %d"):format(#P.Jobs))
+    out(("[GRM Perf] %s: учтено кадров %d, среднее %.2f мс (%.0f fps), максимум %.1f мс, порог %.0f мс")
+        :format(SERVER and "сервер" or "клиент", P.Stats.frames, avg,
+            avg > 0 and (1000 / avg) or 0, P.Stats.max, SPIKE_MS:GetFloat()))
+    out(("[GRM Perf] пропущено кадров (фон, меню, прогрев): %d   ·   всплесков: %d   ·   задач в очереди: %d")
+        :format(P.Stats.ignored or 0, P.Stats.spikes or 0, #P.Jobs))
+
     if #P.Spikes == 0 then
-        out("[GRM Perf] всплесков не зафиксировано")
+        out("[GRM Perf] всплесков не зафиксировано — клиент/сервер идёт ровно")
         return
     end
-    out("[GRM Perf] последние всплески:")
+
+    out("[GRM Perf] последние всплески (окна GRM в момент рывка — последняя колонка):")
     for i = math.max(1, #P.Spikes - 15), #P.Spikes do
         local sp = P.Spikes[i]
-        out(("  %s  %6.1f мс  игроков %2d  ТС %3d  энтити %4d  задач %d")
-            :format(os.date("%H:%M:%S", sp.at), sp.ms, sp.players, sp.vehicles, sp.ents, sp.jobs))
+        out(("  %s  %6.1f мс x%-3d игроков %2d  ТС %3d  энтити %4d  задач %d  %s")
+            :format(os.date("%H:%M:%S", sp.at), sp.ms, sp.count or 1, sp.players, sp.vehicles,
+                sp.ents, sp.jobs, sp.windows ~= "" and sp.windows or "-"))
+    end
+
+    -- Подсказка по прочтению: владельцу нужен вывод, а не голые цифры.
+    local worst, worstWindows = 0, ""
+    for _, sp in ipairs(P.Spikes) do
+        if sp.ms > worst then worst, worstWindows = sp.ms, sp.windows or "" end
+    end
+    if worstWindows ~= "" then
+        out(("[GRM Perf] самый тяжёлый рывок был при открытых окнах: %s"):format(worstWindows))
+    elseif SERVER then
+        out("[GRM Perf] рывки не связаны с интерфейсом — смотрите ТС и число энтити в строках выше")
     end
 end)
 
 concommand.Add("grm_perf_reset", function(ply)
     if IsValid(ply) and not ply:IsSuperAdmin() then return end
     P.Spikes = {}
-    P.Stats = { frames = 0, total = 0, max = 0, since = SysTime() }
+    P.Stats = { frames = 0, total = 0, max = 0, since = SysTime(), ignored = 0, spikes = 0 }
     local msg = "[GRM Perf] статистика сброшена"
     if IsValid(ply) then ply:PrintMessage(HUD_PRINTCONSOLE, msg) else print(msg) end
 end)
