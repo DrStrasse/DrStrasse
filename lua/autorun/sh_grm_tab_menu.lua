@@ -271,20 +271,22 @@ if CLIENT then
     surface.CreateFont("GRMT_Badge",   { font = "Roboto", size = 11, weight = 700 })
     surface.CreateFont("GRMT_BigBal",  { font = "Roboto", size = 16, weight = 700 })
 
+    -- Палитра приведена к общему стилю GRM (как /factions и /admin):
+    -- тёмный корпус, золотой акцент, синее выделение.
     local C = {
-        BG       = Color(14,  16,  22,  245),
-        PANEL    = Color(22,  25,  36,  255),
-        DARK     = Color(12,  14,  20,  255),
-        BORDER   = Color(40,  45,  65,  255),
-        ROW_ALT  = Color(18,  21,  32,  255),
-        ROW_SEL  = Color(30,  50,  90,  255),
-        ROW_HOV  = Color(24,  28,  42,  255),
-        WHITE    = Color(215, 220, 235, 255),
-        GREY     = Color(120, 125, 145, 255),
+        BG       = Color(16,  20,  28,  252),
+        PANEL    = Color(22,  28,  38,  255),
+        DARK     = Color(12,  15,  22,  255),
+        BORDER   = Color(38,  48,  66,  255),
+        ROW_ALT  = Color(20,  25,  34,  255),
+        ROW_SEL  = Color(40,  80,  140, 255),
+        ROW_HOV  = Color(36,  46,  62,  255),
+        WHITE    = Color(240, 244, 250, 255),
+        GREY     = Color(155, 170, 190, 255),
         GREEN    = Color(60,  200, 90,  255),
         RED      = Color(210, 70,  60,  255),
-        BLUE     = Color(70,  140, 220, 255),
-        GOLD     = Color(220, 175, 45,  255),
+        BLUE     = Color(65,  145, 235, 255),
+        GOLD     = Color(245, 195, 65,  255),
         PURPLE   = Color(160, 90,  220, 255),
         CYAN     = Color(60,  200, 200, 255),
         ORANGE   = Color(220, 130, 40,  255),
@@ -585,7 +587,8 @@ if CLIENT then
         if IsValid(_selPanel) then _selPanel:Remove() end
         local pw = parent:GetWide()
         local ph = parent:GetTall()
-        local dw = 270
+        -- Карточка тянется по ширине контейнера (окно стало шире).
+        local dw = math.max(260, pw - 8)
         local sp = vgui.Create("DPanel", parent)
         sp:SetPos(pw - dw - 8, 0); sp:SetSize(dw, ph)
         sp.Paint = function(_, w, h)
@@ -597,9 +600,19 @@ if CLIENT then
 
         local ri  = getRankInfo(pd.rank)
         local y   = 14
+
+        -- Крупная аватарка Steam в карточке игрока.
+        local bigAvatar = vgui.Create("AvatarImage", sp)
+        bigAvatar:SetSize(64, 64)
+        bigAvatar:SetPos(12, y)
+        if pd.sid64 and pd.sid64 ~= "" and pd.sid64 ~= "0" then
+            bigAvatar:SetSteamID(tostring(pd.sid64), 128)
+        end
+        bigAvatar:SetMouseInputEnabled(false)
+
         local badgeW = 50
         local badge = vgui.Create("DPanel", sp)
-        badge:SetPos(12, y); badge:SetSize(badgeW, 22)
+        badge:SetPos(86, y); badge:SetSize(badgeW, 22)
         badge.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, ri.col) end
         local badgeLbl = vgui.Create("DLabel", badge)
         badgeLbl:SetPos(0,0); badgeLbl:SetSize(badgeW, 22)
@@ -608,9 +621,9 @@ if CLIENT then
         badgeLbl:SetContentAlignment(5)
 
         local nameLbl = vgui.Create("DLabel", sp)
-        nameLbl:SetPos(68, y+2); nameLbl:SetSize(dw - 80, 20)
+        nameLbl:SetPos(86, y + 26); nameLbl:SetSize(dw - 98, 22)
         nameLbl:SetText(pd.nick); nameLbl:SetFont("GRMT_Head"); nameLbl:SetTextColor(C.WHITE)
-        y = y + 28
+        y = y + 74
 
         -- исходный Steam-ник (если RP-имя заменило его в списке)
         if pd.steam and pd.steam ~= "" and pd.steam ~= pd.nick then
@@ -632,10 +645,12 @@ if CLIENT then
             y = y + 18
         end
 
+        local pingVal = tonumber(pd.pingMs) or 0
         local pingLbl = vgui.Create("DLabel", sp)
         pingLbl:SetPos(12, y); pingLbl:SetSize(dw - 24, 14)
-        pingLbl:SetText("Пинг: " .. (pd.pingMs or "?") .. " ms")
-        pingLbl:SetFont("GRMT_Small"); pingLbl:SetTextColor(C.GREY)
+        pingLbl:SetText("Пинг: " .. pingVal .. " ms")
+        pingLbl:SetFont("GRMT_Small")
+        pingLbl:SetTextColor(pingVal < 80 and C.GREEN or pingVal < 150 and C.GOLD or C.RED)
         y = y + 20
 
         local sep1 = vgui.Create("DPanel", sp)
@@ -783,8 +798,9 @@ if CLIENT then
         return sp
     end
 
-    -- Строка игрока
-    local ROW_H = 52
+    -- Строка игрока: аватар Steam + ранг + имя/организация + баланс + пинг
+    -- отдельной колонкой (раньше пинг рисовался под именем и терялся).
+    local ROW_H = 56
     local function buildPlayerRow(scroll, pd, idx, bodyW, detailParent)
         local isSelf   = IsValid(LocalPlayer()) and LocalPlayer():SteamID64() == pd.sid64
         local ri       = getRankInfo(pd.rank)
@@ -793,38 +809,65 @@ if CLIENT then
 
         local row = vgui.Create("DPanel", scroll)
         row:SetSize(bodyW, ROW_H)
-        row:Dock(TOP); row:DockMargin(0, 0, 0, 1)
+        row:Dock(TOP); row:DockMargin(0, 0, 0, 3)
+
+        -- Аватарка из Steam-профиля.
+        local avatar = vgui.Create("AvatarImage", row)
+        avatar:SetSize(40, 40)
+        avatar:SetPos(12, (ROW_H - 40) / 2)
+        if pd.sid64 and pd.sid64 ~= "" and pd.sid64 ~= "0" then
+            avatar:SetSteamID(tostring(pd.sid64), 64)
+        end
+        avatar:SetMouseInputEnabled(false)
+
         row.Paint = function(s, w, h)
             local bg = (_selSID == pd.sid64) and C.ROW_SEL
                     or (s:IsHovered() and C.ROW_HOV)
-                    or (idx % 2 == 0 and C.ROW_ALT or C.DARK)
-            draw.RoundedBox(4, 0, 0, w, h, bg)
-            draw.RoundedBox(2, 0, 0, 3, h, ri.col)
-            local badgeW = 34
-            draw.RoundedBox(3, 10, (h-18)/2, badgeW, 18, ri.col)
-            draw.SimpleText(ri.label, "GRMT_Badge", 10 + badgeW/2, h/2,
-                Color(0,0,0,200), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    or (idx % 2 == 0 and C.ROW_ALT or C.PANEL)
+            draw.RoundedBox(6, 0, 0, w, h, bg)
+            draw.RoundedBox(6, 0, 0, 3, h, ri.col)
 
-            local nameX    = 52
+            -- Рамка вокруг аватарки цветом ранга.
+            surface.SetDrawColor(ri.col)
+            surface.DrawOutlinedRect(11, (h - 40) / 2 - 1, 42, 42, 1)
+
+            local nameX = 64
             local nameColor = isSelf and C.CYAN or C.WHITE
-            draw.SimpleText(pd.nick, "GRMT_Body", nameX, h/2 - 7, nameColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            if pd.faction and pd.faction ~= "" then
-                draw.SimpleText("[" .. pd.faction .. "]", "GRMT_Small", nameX, h/2 + 8, C.GOLD, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            elseif pd.isBot then
-                draw.SimpleText("[BOT]", "GRMT_Small", nameX, h/2 + 8, C.GREY, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(pd.nick, "GRMT_Body", nameX, h / 2 - 8, nameColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+
+            -- Ранг подписью под именем, а не тесным бейджем.
+            draw.SimpleText(ri.label, "GRMT_Small", nameX, h / 2 + 10, ri.col, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            if pd.isBot then
+                draw.SimpleText("BOT", "GRMT_Small", nameX + 34, h / 2 + 10, C.GREY, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             end
+
+            local facX = math.floor(w * 0.46)
+            if pd.faction and pd.faction ~= "" then
+                draw.SimpleText(pd.faction, "GRMT_Body", facX, h / 2, C.GOLD, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            else
+                draw.SimpleText("—", "GRMT_Small", facX, h / 2, C.GREY, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+
             if pd.showBal then
                 local balStr = (GRM and GRM.Format) and GRM.Format(pd.balance) or tostring(pd.balance)
-                draw.SimpleText(balStr, "GRMT_Body", w - 56, h/2, C.GREEN, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                draw.SimpleText(balStr, "GRMT_Body", w - 150, h / 2, C.GREEN, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
             end
-            local iconX = w - 50
-            if isMuted  then draw.SimpleText("[M]", "GRMT_Small", iconX + 16, h/2, C.GREY,   TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER) end
-            if isGagged then draw.SimpleText("[G]", "GRMT_Small", iconX + 30, h/2, C.ORANGE, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER) end
-            if isSelf   then draw.SimpleText("<<",  "GRMT_Small", iconX + 44, h/2, C.CYAN,   TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER) end
 
-            local ping    = pd.pingMs or 0
+            -- Пинг: своя колонка справа с индикатором качества связи.
+            local ping = pd.pingMs or 0
             local pingCol = ping < 80 and C.GREEN or ping < 150 and C.GOLD or C.RED
-            draw.SimpleText(ping .. "ms", "GRMT_Small", 52, h - 12, pingCol, TEXT_ALIGN_LEFT, TEXT_ALIGN_BOTTOM)
+            draw.RoundedBox(4, w - 86, h / 2 - 11, 62, 22, Color(0, 0, 0, 90))
+            draw.SimpleText(ping .. " ms", "GRMT_Small", w - 30, h / 2, pingCol, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            for i = 1, 3 do
+                local lit = (i == 1) or (i == 2 and ping < 150) or (i == 3 and ping < 80)
+                draw.RoundedBox(1, w - 82 + (i - 1) * 5, h / 2 + 5 - i * 3, 3, 3 + i * 3,
+                    lit and pingCol or Color(60, 66, 80))
+            end
+
+            local iconY = h / 2 - 16
+            if isMuted  then draw.SimpleText("MUTE", "GRMT_Small", w - 100, iconY, C.GREY,   TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER) end
+            if isGagged then draw.SimpleText("GAG",  "GRMT_Small", w - 100, h / 2 + 16, C.ORANGE, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER) end
+            if isSelf   then draw.SimpleText("ВЫ",   "GRMT_Small", w - 150, h / 2 - 16, C.CYAN, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER) end
         end
         row:SetCursor("hand")
         row.OnMousePressed = function()
@@ -839,8 +882,12 @@ if CLIENT then
     function GRM.OpenTabMenu()
         if IsValid(_frame) then return end
         local SW, SH = ScrW(), ScrH()
-        local W = math.min(960, SW - 40)
-        local H = math.min(640, SH - 40)
+        -- Раньше окно было 960×640 при любом разрешении: колонки жались,
+        -- пинг уезжал под имя и терялся. Теперь ширина по экрану.
+        local W = math.Clamp(math.floor(SW * 0.92), 1100, 1720)
+        local H = math.Clamp(math.floor(SH * 0.86), 640, 1000)
+        W = math.min(W, SW - 40)
+        H = math.min(H, SH - 40)
 
         local f = vgui.Create("DFrame")
         f:SetTitle("")
@@ -851,22 +898,23 @@ if CLIENT then
         f:ShowCloseButton(false)
         _frame = f
         f.Paint = function(_, w, h)
-            draw.RoundedBox(10, 0, 0, w, h, C.BG)
-            draw.RoundedBox(10, 0, 0, w, 40, C.DARK)
+            draw.RoundedBox(8, 0, 0, w, h, C.BG)
+            draw.RoundedBoxEx(8, 0, 0, w, 44, C.DARK, true, true, false, false)
             surface.SetDrawColor(C.BORDER)
-            surface.DrawRect(0, 40, w, 1)
+            surface.DrawRect(0, 44, w, 1)
+            surface.DrawOutlinedRect(0, 0, w, h)
         end
 
         local titleLbl = vgui.Create("DLabel", f)
-        titleLbl:SetPos(14, 10); titleLbl:SetSize(400, 22)
-        titleLbl:SetText("ИГРОКИ НА СЕРВЕРЕ"); titleLbl:SetFont("GRMT_Title"); titleLbl:SetTextColor(C.WHITE)
+        titleLbl:SetPos(16, 12); titleLbl:SetSize(460, 22)
+        titleLbl:SetText("GRM · ИГРОКИ НА СЕРВЕРЕ"); titleLbl:SetFont("GRMT_Title"); titleLbl:SetTextColor(C.GOLD)
 
         local cntLbl = vgui.Create("DLabel", f)
-        cntLbl:SetPos(W/2 - 50, 12); cntLbl:SetSize(100, 18)
+        cntLbl:SetPos(W/2 - 70, 14); cntLbl:SetSize(140, 18)
         cntLbl:SetFont("GRMT_Head"); cntLbl:SetTextColor(C.GREY); cntLbl:SetContentAlignment(5)
 
         local closeBtn = vgui.Create("DButton", f)
-        closeBtn:SetPos(W - 34, 6); closeBtn:SetSize(28, 28)
+        closeBtn:SetPos(W - 36, 8); closeBtn:SetSize(28, 28)
         closeBtn:SetText("X"); closeBtn:SetFont("GRMT_Head"); closeBtn:SetTextColor(C.GREY)
         closeBtn.Paint = function(s, w, h)
             if s:IsHovered() then draw.RoundedBox(4, 0, 0, w, h, Color(180,40,40)) end
@@ -874,7 +922,7 @@ if CLIENT then
         closeBtn.DoClick = function() f:Remove(); _frame = nil end
 
         local clockPanel=vgui.Create("DPanel",f)
-        clockPanel:SetPos(W-306,6);clockPanel:SetSize(166,28)
+        clockPanel:SetPos(W-312,8);clockPanel:SetSize(166,28)
         clockPanel.Paint=function(_,w,h)
             draw.RoundedBox(5,0,0,w,h,Color(18,25,40,245));surface.SetDrawColor(C.BORDER);surface.DrawOutlinedRect(0,0,w,h,1)
             local now=GRM.Time and GRM.Time.GetString and GRM.Time.GetString()or"--:--:--"
@@ -883,7 +931,7 @@ if CLIENT then
         clockPanel:SetTooltip("Реальное серверное время • UTC+3 по умолчанию")
 
         local refBtn = vgui.Create("DButton", f)
-        refBtn:SetPos(W - 130, 8); refBtn:SetSize(90, 24)
+        refBtn:SetPos(W - 136, 10); refBtn:SetSize(90, 24)
         refBtn:SetText("Обновить"); refBtn:SetFont("GRMT_Small"); refBtn:SetTextColor(C.WHITE)
         refBtn.Paint = function(s, w, h)
             draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(45,60,90) or Color(30,40,65))
@@ -938,7 +986,7 @@ if CLIENT then
 
         local bodyY    = filterY + filterH + 2
         local bodyH    = H - bodyY - 8
-        local detailW  = 280
+        local detailW  = math.Clamp(math.floor(W * 0.28), 320, 460)
         local listW    = W - detailW - 24
 
         local body = vgui.Create("DPanel", f)
@@ -972,9 +1020,11 @@ if CLIENT then
         local hdr = vgui.Create("DPanel", body)
         hdr:SetPos(0, -22); hdr:SetSize(listW, 20)
         hdr.Paint = function(_, w, h)
-            draw.RoundedBox(0, 0, 0, w, h, C.PANEL)
-            draw.SimpleText("РАНГ  ИМЯ / ФРАКЦИЯ", "GRMT_Small", 52, h/2, C.GREY, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText("БАЛАНС", "GRMT_Small", w - 56, h/2, C.GREY, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            draw.RoundedBox(4, 0, 0, w, h, C.PANEL)
+            draw.SimpleText("ИГРОК", "GRMT_Small", 104, h/2, C.GREY, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("ОРГАНИЗАЦИЯ", "GRMT_Small", math.floor(w * 0.46), h/2, C.GREY, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("БАЛАНС", "GRMT_Small", w - 150, h/2, C.GREY, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("ПИНГ", "GRMT_Small", w - 24, h/2, C.GREY, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
 
         local function refresh()

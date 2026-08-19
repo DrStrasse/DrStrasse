@@ -1,9 +1,4 @@
 {
-    "_grm_meta": {
-        "version": 2,
-        "savedAt": 1787128912,
-        "revision": 3
-    },
     "76561198000000012": {
         "slots": [
             {
@@ -22,5 +17,10 @@
                 "count": 1
             }
         ]
+    },
+    "_grm_meta": {
+        "savedAt": 1787129350,
+        "version": 2,
+        "revision": 3
     }
 }
