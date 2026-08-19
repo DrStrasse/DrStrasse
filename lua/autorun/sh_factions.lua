@@ -12,6 +12,7 @@ end
 local NET_GET_DATA            = "Factions_GetData"
 local NET_SEND_DATA           = "Factions_SendData"
 local NET_SYNC_ALL            = "Factions_SyncAll"
+local NET_SYNC_DELTA          = "Factions_SyncDelta"   -- дельта: только изменившиеся организации
 local NET_ACTION              = "Factions_Action"
 local NET_ACTION_RESULT       = "Factions_ActionResult"
 local NET_JOIN                = "Factions_Join"
@@ -116,6 +117,7 @@ if SERVER then
     util.AddNetworkString(NET_GET_DATA)
     util.AddNetworkString(NET_SEND_DATA)
     util.AddNetworkString(NET_SYNC_ALL)
+    util.AddNetworkString(NET_SYNC_DELTA)
     util.AddNetworkString(NET_ACTION)
     util.AddNetworkString(NET_ACTION_RESULT)
     util.AddNetworkString(NET_JOIN)
@@ -599,12 +601,93 @@ if SERVER then
 
     -- Полная рассылка: синк NW всех игроков + сериализация всех фракций/членов
     -- + broadcast всем. Дорогая — не дёргать чаще, чем реально нужно.
+    -- Контрольные суммы последнего разосланного состояния: по ним считается
+    -- дельта. Полный снимок остаётся только для первого синка игроку.
+    local syncHashes, publicHashes = {}, {}
+    local PUBLIC_FULL = CreateConVar("grm_factions_public_full", "0",
+        bit.bor(FCVAR_ARCHIVE),
+        "1 — рассылать полные данные организаций всем игрокам (как раньше), 0 — только тем, кому они нужны")
+
     local broadcastPending = false
     local function doBroadcastFactionData()
         syncAllPlayersFactionNW()
-        net.Start(NET_SYNC_ALL)
-        net.WriteTable(buildSyncData())
-        net.Broadcast()
+        --[[ ДЕЛЬТА-СИНК (19.08).
+             Раньше каждое изменение рассылало ПОЛНЫЙ снимок всех организаций
+             всем игрокам: замер на живом сервере дал 45 620 байт одним
+             пакетом Factions_SyncAll — на полном сервере это главный источник
+             сетевых рывков. Теперь считаем контрольную сумму по каждой
+             организации и шлём только изменившиеся, и только тем, кому они
+             нужны: полностью — суперадминам и членам организации, публично
+             (название, тэг, цвет) — остальным. ]]
+        local data = buildSyncData()
+
+        local changedFull, changedPublic, removed = {}, {}, {}
+        local anyFull, anyPublic = false, false
+
+        for name, row in pairs(data) do
+            local ok, encoded = pcall(util.TableToJSON, row)
+            local crc = ok and isstring(encoded) and util.CRC(encoded) or tostring(math.random())
+            if syncHashes[name] ~= crc then
+                syncHashes[name] = crc
+                changedFull[name] = row
+                anyFull = true
+
+                local pub = {
+                    DisplayName = row.DisplayName, Tag = row.Tag, Color = row.Color,
+                    LeaderRoleName = row.LeaderRoleName, GNewsAccess = row.GNewsAccess,
+                }
+                local okP, encodedP = pcall(util.TableToJSON, pub)
+                local crcP = okP and isstring(encodedP) and util.CRC(encodedP) or crc
+                if publicHashes[name] ~= crcP then
+                    publicHashes[name] = crcP
+                    changedPublic[name] = pub
+                    anyPublic = true
+                end
+            end
+        end
+
+        for name in pairs(syncHashes) do
+            if not data[name] then
+                syncHashes[name] = nil
+                publicHashes[name] = nil
+                removed[#removed + 1] = name
+                anyFull, anyPublic = true, true
+            end
+        end
+
+        if not anyFull and #removed == 0 then
+            sendCharacterChoices()
+            return
+        end
+
+        -- Полный доступ: суперадмины и члены изменившихся организаций.
+        local fullTargets, publicTargets = {}, {}
+        local everyoneFull = PUBLIC_FULL and PUBLIC_FULL:GetBool()
+
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+            if IsValid(ply) then
+                local wantsFull = everyoneFull or ply:IsSuperAdmin()
+                if not wantsFull then
+                    local own = ply:GetNWString("GRM_Faction", "")
+                    if own ~= "" and changedFull[own] then wantsFull = true end
+                end
+                if wantsFull then fullTargets[#fullTargets + 1] = ply
+                else publicTargets[#publicTargets + 1] = ply end
+            end
+        end
+
+        if #fullTargets > 0 and (anyFull or #removed > 0) then
+            net.Start(NET_SYNC_DELTA)
+                net.WriteTable({ mode = "full", changed = changedFull, removed = removed })
+            net.Send(fullTargets)
+        end
+
+        if #publicTargets > 0 and (anyPublic or #removed > 0) then
+            net.Start(NET_SYNC_DELTA)
+                net.WriteTable({ mode = "public", changed = changedPublic, removed = removed })
+            net.Send(publicTargets)
+        end
+
         sendCharacterChoices()
     end
 
@@ -1761,6 +1844,36 @@ if CLIENT then
             end
         end
     end
+
+    --[[ Приём дельты: сервер шлёт только изменившиеся организации.
+         mode = "full"   — заменяем запись целиком;
+         mode = "public" — обновляем публичную часть (название, тэг, цвет),
+                           не затирая уже известный состав. ]]
+    net.Receive(NET_SYNC_DELTA, function()
+        local payload = net.ReadTable() or {}
+        FactionsData = istable(FactionsData) and FactionsData or {}
+
+        local mode = tostring(payload.mode or "full")
+        for name, row in pairs(istable(payload.changed) and payload.changed or {}) do
+            if mode == "public" then
+                local cur = istable(FactionsData[name]) and FactionsData[name] or {}
+                for key, value in pairs(row) do cur[key] = value end
+                FactionsData[name] = cur
+            else
+                FactionsData[name] = row
+            end
+        end
+
+        for _, name in ipairs(istable(payload.removed) and payload.removed or {}) do
+            FactionsData[name] = nil
+        end
+
+        -- Алиасы ключей участников (SteamID → SteamID64:charN) нужны и дельте:
+        -- без них поиск члена организации на клиенте перестал бы работать.
+        FactionsData = installClientFactionAliases(FactionsData)
+        if refreshAllUI then pcall(refreshAllUI, FactionsData) end
+        hook.Run("GRM_FactionUIRefreshed", FactionsData)
+    end)
 
     net.Receive(NET_SYNC_ALL, function()
         FactionsData = installClientFactionAliases(net.ReadTable() or {})
