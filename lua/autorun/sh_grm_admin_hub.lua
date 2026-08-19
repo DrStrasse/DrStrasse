@@ -406,7 +406,9 @@ if SERVER then
             if fac ~= "" and GRM.FactionBudgetAdd then
                 if op == "give" then GRM.FactionBudgetAdd(fac, v, ("Хаб: %s +%s"):format(ply:Nick(), v))
                 elseif op == "take" then GRM.FactionBudgetAdd(fac, -math.min(v, GRM.FactionBudgetGet(fac)), ("Хаб: %s -%s"):format(ply:Nick(), v)) end
-                ply:PrintMessage(HUD_PRINTTALK, ("[Хаб] Бюджет «%s»: %s"):format(fac, tostring(GRM.FactionBudgetGet(fac))))
+                -- Валюта сборки — GRM: печатаем через общий форматтер, а не голым числом.
+                ply:PrintMessage(HUD_PRINTTALK, ("[Хаб] Бюджет «%s»: %s"):format(fac,
+                    (GRM.Format and GRM.Format(GRM.FactionBudgetGet(fac))) or (tostring(GRM.FactionBudgetGet(fac)) .. " GRM")))
             end
             pushTab(ply, "econ")
         elseif act == "econCash" then

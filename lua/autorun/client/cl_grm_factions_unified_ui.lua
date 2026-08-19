@@ -708,7 +708,9 @@ function UI.Open(requestedFaction)
         addStat(1, "СОТРУДНИКОВ В ШТАТЕ", memCount, C.accent)
         addStat(2, "ОТДЕЛОВ / ПОДОТДЕЛОВ", tostring(deptCount) .. " / " .. tostring(subCount), C.green)
         addStat(3, "ДОЛЖНОСТЕЙ", roleCount, C.gold)
-        addStat(4, "КАЗНА И БЮДЖЕТ", tostring(budget) .. " руб.", C.gold)
+        -- Валюта сборки — GRM (Groennerland Reich Money), рублей на сервере нет.
+        addStat(4, "КАЗНА И БЮДЖЕТ",
+            (GRM.Format and GRM.Format(budget)) or (tostring(budget) .. " GRM"), C.gold)
 
         local infoPanel = vgui.Create("DPanel", pnl)
         infoPanel:Dock(FILL)
@@ -1296,7 +1298,9 @@ function UI.Open(requestedFaction)
         p.Paint = function(self, w, h)
             draw.RoundedBox(6, 0, 0, w, h, C.card)
             draw.SimpleText("Казна и финансы организации", "GRMFac_Sub", 16, 16, C.gold)
-            draw.SimpleText("Текущий баланс бюджета: " .. tostring(fac.Budget or 0) .. " руб.", "GRMFac_StatVal", 16, 50, C.gold)
+            draw.SimpleText("Текущий баланс бюджета: " ..
+                ((GRM.Format and GRM.Format(fac.Budget or 0)) or (tostring(fac.Budget or 0) .. " GRM")),
+                "GRMFac_StatVal", 16, 50, C.gold)
             draw.SimpleText("Налоговая ставка: " .. tostring(math.floor((fac.TaxRate or 0.05) * 100)) .. "%", "GRMFac_Normal", 16, 90, C.dim)
         end
     end

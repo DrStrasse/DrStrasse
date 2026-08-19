@@ -1,26 +1,26 @@
 {
-    "_grm_meta": {
-        "savedAt": 1787124964,
-        "version": 2,
-        "revision": 3
-    },
     "76561198000000012": {
         "slots": [
             {
-                "count": 1,
-                "id": "mobile_badger"
+                "id": "mobile_badger",
+                "count": 1
             },
             {
-                "count": 30,
-                "id": "ammo_pistol"
+                "id": "ammo_pistol",
+                "count": 30
             },
             {
-                "count": 1,
                 "data": {
                     "on": true
                 },
-                "id": "radio_modulator"
+                "id": "radio_modulator",
+                "count": 1
             }
         ]
+    },
+    "_grm_meta": {
+        "savedAt": 1787125620,
+        "version": 2,
+        "revision": 3
     }
 }

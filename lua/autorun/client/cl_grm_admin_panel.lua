@@ -103,6 +103,53 @@ end
 -----------------------------------------------------------------------
 -- РАЗДЕЛ: ИГРОКИ
 -----------------------------------------------------------------------
+--[[ Список игроков строится из ДВУХ источников:
+       1) серверный срез (группы, иммунитет, флаги мут/клетка/фриз);
+       2) локальный player.GetAll() — он есть сразу, ещё до ответа сервера.
+     Раньше вкладка показывала пустоту (в том числе самого администратора),
+     если ответ сервера не пришёл или пришёл раньше, чем построился раздел. ]]
+local function playerRows()
+    local byID, rows = {}, {}
+
+    for _, row in ipairs((AD.Data and AD.Data.players) or {}) do
+        if istable(row) and isstring(row.sid) then
+            byID[row.sid] = row
+            rows[#rows + 1] = row
+        end
+    end
+
+    for _, ply in ipairs(player.GetAll()) do
+        if IsValid(ply) then
+            local sid = tostring(ply:SteamID64() or "")
+            local row = byID[sid]
+            if not row then
+                row = {
+                    sid = sid,
+                    nick = ply:Nick(),
+                    rpName = ply:GetNWString("GRM_RPName", ""),
+                    group = string.lower(tostring(ply:GetUserGroup() or "user")),
+                    immunity = 0,
+                    faction = ply:GetNWString("GRM_Faction", ""),
+                    hp = ply:Health(), armor = ply:Armor(), ping = ply:Ping(),
+                    alive = ply:Alive(), local_ = true,
+                }
+                byID[sid] = row
+                rows[#rows + 1] = row
+            else
+                -- Живые значения берём с клиента: они свежее раза в 3 секунды.
+                row.nick = ply:Nick()
+                row.ping = ply:Ping()
+                row.hp = ply:Health()
+                row.alive = ply:Alive()
+            end
+            row.entity = ply
+        end
+    end
+
+    table.sort(rows, function(a, b) return string.lower(a.nick or "") < string.lower(b.nick or "") end)
+    return rows
+end
+
 local function buildPlayers(pnl)
     local search = entry(pnl, "Поиск по нику, RP-имени или SteamID…")
     search:Dock(TOP) search:SetTall(30) search:DockMargin(0, 0, 0, 8)
@@ -290,9 +337,23 @@ local function buildPlayers(pnl)
         if not (IsValid(list) and IsValid(search)) then return end
         list:Clear()
         local q = string.lower(string.Trim(search:GetValue() or ""))
-        for _, row in ipairs(AD.Data and AD.Data.players or {}) do
-            local hay = string.lower(row.nick .. " " .. (row.rpName or "") .. " " .. row.sid)
+        local rows = playerRows()
+        local shown = 0
+
+        if #rows == 0 then
+            local empty = vgui.Create("DPanel", list)
+            empty:Dock(TOP) empty:SetTall(70)
+            empty.Paint = function(_, w, h)
+                draw.RoundedBox(8, 0, 0, w, h, C.card)
+                draw.SimpleText("Список игроков пуст — данные ещё идут с сервера…",
+                    "GRMAdm_Body", w / 2, h / 2, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            end
+        end
+
+        for _, row in ipairs(rows) do
+            local hay = string.lower(tostring(row.nick or "") .. " " .. tostring(row.rpName or "") .. " " .. tostring(row.sid or ""))
             if q == "" or string.find(hay, q, 1, true) then
+                shown = shown + 1
                 local item = vgui.Create("DButton", list)
                 item:Dock(TOP) item:SetTall(52) item:DockMargin(0, 0, 6, 6) item:SetText("")
                 item.Paint = function(self, w, h)
@@ -300,7 +361,8 @@ local function buildPlayers(pnl)
                     draw.RoundedBox(6, 0, 0, w, h, active and C.accent or (self:IsHovered() and C.cardHover or C.card))
                     draw.SimpleText(row.nick, "GRMAdm_Body", 12, 10, C.text)
                     draw.SimpleText((row.rpName ~= "" and row.rpName or row.sid), "GRMAdm_Small", 12, 30, active and C.text or C.dim)
-                    draw.SimpleText(row.group, "GRMAdm_Small", w - 12, 10, C.gold, TEXT_ALIGN_RIGHT)
+                    draw.SimpleText(tostring(row.group or "user") .. (row.local_ and " ·" or ""),
+                        "GRMAdm_Small", w - 12, 10, row.local_ and C.dim or C.gold, TEXT_ALIGN_RIGHT)
                     local flags = {}
                     if row.muted then flags[#flags + 1] = "мут" end
                     if row.jailed then flags[#flags + 1] = "клетка" end
@@ -322,6 +384,21 @@ local function buildPlayers(pnl)
     rebuild()
     drawActions()
 
+    -- Пока раздел открыт, раз в 5 секунд просим свежий срез: подписка на
+    -- сервере живёт ограниченное время, а вкладка может висеть долго.
+    local pollName = "GRM_AdminPanel_Poll"
+    timer.Create(pollName, 5, 0, function()
+        if not (IsValid(list) and IsValid(search)) then
+            timer.Remove(pollName)
+            return
+        end
+        if AD.Request then AD.Request() end
+    end)
+    list.OnRemove = function()
+        timer.Remove(pollName)
+        hook.Remove("GRM_AdminPlayersUpdated", "GRM_AdminPanel_Players")
+    end
+
     -- Хук живёт ровно столько, сколько живёт СПИСОК этой вкладки.
     local hookID = "GRM_AdminPanel_Players"
     hook.Add("GRM_AdminPlayersUpdated", hookID, function()
@@ -338,7 +415,7 @@ local function buildPlayers(pnl)
         end
         rebuild()
     end)
-    list.OnRemove = function() hook.Remove("GRM_AdminPlayersUpdated", hookID) end
+    -- OnRemove уже назначен выше: снимает и таймер опроса, и подписку.
 end
 
 -----------------------------------------------------------------------
@@ -847,13 +924,13 @@ function AD.OpenPanel()
 end
 
 hook.Add("GRM_AdminDataUpdated", "GRM_AdminPanel_Refresh", function()
-    -- Пересобираем раздел «Игроки» только когда окно реально открыто и
-    -- показывает именно его: иначе получаем работу с удалёнными панелями.
+    -- Справочники (группы, права) приходят несколько раз за сессию. Полная
+    -- пересборка раздела на каждый такой пакет заставляла вкладку «моргать»
+    -- и сбрасывала выбранного игрока. Раздел «Игроки» обновляет себя сам
+    -- через GRM_AdminPlayersUpdated, поэтому здесь ничего не трогаем.
     if not (IsValid(frame) and IsValid(content)) then return end
     if selected ~= "players" then return end
-    hook.Remove("GRM_AdminPlayersUpdated", "GRM_AdminPanel_Players")
-    content:Clear()
-    buildPlayers(content)
+    hook.Run("GRM_AdminPlayersUpdated")
 end)
 
 concommand.Add("grm_admin_panel", function() AD.OpenPanel() end)

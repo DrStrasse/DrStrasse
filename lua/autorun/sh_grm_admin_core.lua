@@ -635,7 +635,14 @@ if SERVER then
         -- Пока меню открыто, игрок получает живой срез по онлайну.
         AD.Watchers = AD.Watchers or {}
         AD.Watchers[ply] = CurTime() + 180
-        AD.SyncTo(ply)
+
+        -- Справочники (группы и права) меняются редко и весят больше среза:
+        -- шлём их не чаще раза в 30 секунд, а список игроков — всегда.
+        ply._grmAdminSyncAt = ply._grmAdminSyncAt or 0
+        if CurTime() >= ply._grmAdminSyncAt then
+            ply._grmAdminSyncAt = CurTime() + 30
+            AD.SyncTo(ply)
+        end
         AD.PushPlayers(ply)
     end)
 

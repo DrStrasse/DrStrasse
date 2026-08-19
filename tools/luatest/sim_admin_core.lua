@@ -165,7 +165,8 @@ end
 print("\n=== 7. УСТОЙЧИВОСТЬ ИНТЕРФЕЙСА (фикс NULL Panel) ===")
 ok(panel:find("if not (IsValid(list) and IsValid(search)) then return end", 1, true) ~= nil,
     "пересборка списка проверяет, живы ли его панели")
-ok(panel:find("list.OnRemove = function() hook.Remove(\"GRM_AdminPlayersUpdated\", hookID) end", 1, true) ~= nil,
+ok(panel:find('hook.Remove("GRM_AdminPlayersUpdated", "GRM_AdminPanel_Players")', 1, true) ~= nil
+    and panel:find("list.OnRemove = function()", 1, true) ~= nil,
     "подписка на обновление игроков снимается вместе со списком")
 ok(panel:find("frame.OnRemove = function()", 1, true) ~= nil, "закрытие окна снимает подписки")
 ok(panel:find('hook.Remove("GRM_AdminPlayersUpdated", "GRM_AdminPanel_Players")', 1, true) ~= nil,
@@ -178,6 +179,28 @@ ok(core:find("net.Send(targets)", 1, true) ~= nil and core:find("net.Broadcast()
 ok(core:find("Один результат — одно уведомление", 1, true) ~= nil,
     "результат действия больше не дублируется двумя уведомлениями")
 ok(core:find("expires < CurTime()", 1, true) ~= nil, "подписка на живой список истекает сама")
+
+print("\n=== 8. СПИСОК ИГРОКОВ (фикс «не показывает меня») ===")
+ok(panel:find("local function playerRows", 1, true) ~= nil,
+    "список строится из серверного среза И локального player.GetAll()")
+ok(panel:find("row.entity = ply", 1, true) ~= nil, "строка связывается с живым игроком")
+ok(panel:find("Список игроков пуст — данные ещё идут с сервера", 1, true) ~= nil,
+    "пустой список объясняет себя, а не выглядит поломкой")
+ok(panel:find('timer.Create(pollName, 5, 0', 1, true) ~= nil,
+    "пока раздел открыт, срез перезапрашивается раз в 5 секунд")
+ok(panel:find("timer.Remove(pollName)", 1, true) ~= nil, "опрос останавливается вместе с разделом")
+ok(panel:find('hook.Run("GRM_AdminPlayersUpdated")', 1, true) ~= nil,
+    "приход справочников больше не пересобирает вкладку целиком (не моргает)")
+ok(core:find("ply._grmAdminSyncAt = CurTime() + 30", 1, true) ~= nil,
+    "тяжёлые справочники шлются не чаще раза в 30 секунд")
+
+print("\n=== 9. ВАЛЮТА GRM ВМЕСТО РУБЛЕЙ ===")
+local unified = read("lua/autorun/client/cl_grm_factions_unified_ui.lua")
+local hub = read("lua/autorun/sh_grm_admin_hub.lua")
+ok(unified:find(" руб.", 1, true) == nil, "в меню организаций не осталось рублей")
+ok(unified:find('GRM.Format(budget)', 1, true) ~= nil, "казна выводится общим форматтером GRM")
+ok(unified:find("GRM.Format(fac.Budget or 0)", 1, true) ~= nil, "баланс бюджета — тоже")
+ok(hub:find("GRM.Format(GRM.FactionBudgetGet(fac))", 1, true) ~= nil, "админ-хаб печатает бюджет в GRM")
 
 print(("\nADMIN CORE: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)
