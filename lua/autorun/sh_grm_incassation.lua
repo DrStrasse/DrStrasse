@@ -76,7 +76,8 @@ I.Config = I.Config or {
     TerminalCollectCooldown = 120,    -- секунд кулдауна после изъятия
     TerminalRadius          = 220,    -- радиус взаимодействия с банкоматом
     CarInteractRadius       = 250,    -- радиус взаимодействия с машиной
-    VaultRadius             = 320,    -- радиус взаимодействия с хранилищем
+    VaultRadius             = 140,    -- радиус взаимодействия с хранилищем (вплотную; раньше 320 × 1.5 = через стены)
+    VaultRequireLineOfSight = true,   -- сдавать можно только когда хранилище видно, а не через соседнюю комнату
     RequireDriverSeat       = true,   -- старт рейса только за рулём (место водителя)
     LockTerminalOnCollect   = true,   -- блокировка банкомата от обычных игроков во время сбора
     NotifyPoliceRadius      = 1200,   -- радиус оповещения админов/полиции при старте
@@ -304,6 +305,39 @@ function I.CanPlayerIncass(ply)
         return false, "Ваша роль («" .. tostring(roleName) .. "») не допущена к инкассации"
     end
     return true, fname, inc, roleName
+end
+
+--[[ Флаг «этому игроку положены подсказки инкассации».
+     Подсказку у хранилища раньше видели ВСЕ, включая случайных прохожих.
+     Право считается на сервере (фракция + роль в IncassoSettings) и
+     зеркалится в NW, чтобы клиент не гадал. ]]
+if SERVER then
+    function I.RefreshAccessFlag(ply)
+        if not isPly(ply) then return end
+        local ok = I.CanPlayerIncass(ply) == true
+        if ply:GetNWBool("GRMIncass_Allowed", false) ~= ok then
+            ply:SetNWBool("GRMIncass_Allowed", ok)
+        end
+        return ok
+    end
+
+    function I.RefreshAllAccessFlags()
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+            I.RefreshAccessFlag(ply)
+        end
+    end
+
+    hook.Add("PlayerSpawn", "GRM_Incass_AccessFlag", function(ply)
+        timer.Simple(1, function() if IsValid(ply) then I.RefreshAccessFlag(ply) end end)
+    end)
+    hook.Add("GRM_FactionDutyChanged", "GRM_Incass_AccessFlag", function(ply)
+        if IsValid(ply) then I.RefreshAccessFlag(ply) end
+    end)
+    hook.Add("GRM_CharacterChanged", "GRM_Incass_AccessFlag", function(ply)
+        timer.Simple(0.5, function() if IsValid(ply) then I.RefreshAccessFlag(ply) end end)
+    end)
+    -- Состав и роли фракций меняются администрацией: раз в 15 секунд сверяем.
+    timer.Create("GRM_Incass_AccessSweep", 15, 0, function() I.RefreshAllAccessFlags() end)
 end
 
 function I.IsIncassCarForFaction(veh, factionName)
@@ -939,6 +973,27 @@ function I.UnloadBagFromCar(ply, car)
     return true, take
 end
 
+--[[ Хранилище должно быть В ЗОНЕ ВИДИМОСТИ: раньше проверялась только
+     дистанция, и сдать инкассацию можно было через стену из соседнего
+     помещения. Луч от глаз к хранилищу отсекает такие «сдачи сквозь стены». ]]
+local function vaultReachable(ply, vault)
+    if not (isPly(ply) and IsValid(vault)) then return false end
+    local radius = (I.Config and I.Config.VaultRadius) or 140
+    if ply:GetPos():DistToSqr(vault:GetPos()) > (radius ^ 2) then
+        return false, "Подойдите вплотную к хранилищу"
+    end
+    if I.Config and I.Config.VaultRequireLineOfSight == false then return true end
+
+    local from = ply:EyePos()
+    local to = vault:LocalToWorld(vault:OBBCenter())
+    local tr = util.TraceLine({ start = from, endpos = to, filter = { ply, vault }, mask = MASK_SOLID_BRUSHONLY })
+    if tr.Hit then
+        return false, "Хранилище за стеной — подойдите к нему"
+    end
+    return true
+end
+I.VaultReachable = vaultReachable
+
 -- ── Загрузка чемодана в хранилище банка ──────────────────────────
 function I.LoadBagIntoVault(ply, vault)
     if not isPly(ply) then return false, "Нет игрока" end
@@ -948,8 +1003,9 @@ function I.LoadBagIntoVault(ply, vault)
     if not IsValid(vault) or vault:GetClass() ~= "grm_bank_vault" then
         return false, "Это не банковское хранилище"
     end
-    if ply:GetPos():DistToSqr(vault:GetPos()) > (((I.Config.VaultRadius or 350) * 1.5) ^ 2) then
-        return false, "Слишком далеко от хранилища"
+    local reach, why = vaultReachable(ply, vault)
+    if not reach then
+        return false, why or "Слишком далеко от хранилища"
     end
 
     local amt = I.PlayerBagAmount(ply)
@@ -1046,8 +1102,9 @@ function I.UnloadBagFromVault(ply, vault)
     if not IsValid(vault) or vault:GetClass() ~= "grm_bank_vault" then
         return false, "Это не банковское хранилище"
     end
-    if ply:GetPos():DistToSqr(vault:GetPos()) > (((I.Config.VaultRadius or 350) * 1.5) ^ 2) then
-        return false, "Слишком далеко от хранилища"
+    local reach, why = vaultReachable(ply, vault)
+    if not reach then
+        return false, why or "Слишком далеко от хранилища"
     end
     if not (vault.SetHeldCash and vault.GetHeldCash) then
         return false, "Хранилище не поддерживает выгрузку"
@@ -1333,7 +1390,7 @@ net.Receive(NET_VAULT_MENU, function(_, ply)
         vault = I.FindNearestVault(ply:GetPos(), (I.Config.VaultRadius or 350) * 1.5)
     end
     if not IsValid(vault) or vault:GetClass() ~= "grm_bank_vault" then return end
-    if ply:GetPos():DistToSqr(vault:GetPos()) > (((I.Config.VaultRadius or 350) * 1.5) ^ 2) then return end
+    if not vaultReachable(ply, vault) then return end
 
     local held = 0
     if isfunction(vault.GetHeldCash) then held = math.floor(vault:GetHeldCash() or 0) end
@@ -1403,7 +1460,7 @@ concommand.Add("grm_incass_vault_use", function(ply)
         v = I.FindNearestVault(ply:GetPos(), (I.Config.VaultRadius or 350) * 1.5)
     end
     if not IsValid(v) or v:GetClass() ~= "grm_bank_vault" then return end
-    if ply:GetPos():DistToSqr(v:GetPos()) > (((I.Config.VaultRadius or 350) * 1.5) ^ 2) then return end
+    if not vaultReachable(ply, v) then return end
 
     local held = isfunction(v.GetHeldCash) and math.floor(v:GetHeldCash() or 0) or 0
     local bagAmt = I.PlayerBagAmount(ply)
@@ -1935,7 +1992,7 @@ hook.Add("PlayerButtonDown", "GRM_Incass_GKey", function(ply, button)
     local nearVault = hit
     if not (IsValid(nearVault) and nearVault:GetClass() == "grm_bank_vault") then
         for _, ent in ipairs(ents.FindByClass("grm_bank_vault")) do
-            if IsValid(ent) and pPos:DistToSqr(ent:GetPos()) <= (350 * 350) then
+            if IsValid(ent) and pPos:DistToSqr(ent:GetPos()) <= (((I.Config and I.Config.VaultRadius) or 140) ^ 2) then
                 nearVault = ent
                 break
             end
@@ -1943,7 +2000,7 @@ hook.Add("PlayerButtonDown", "GRM_Incass_GKey", function(ply, button)
     end
 
     if IsValid(nearVault) and nearVault:GetClass() == "grm_bank_vault"
-       and pPos:DistToSqr(nearVault:GetPos()) <= (((I.Config and I.Config.VaultRadius or 350) * 1.5) ^ 2) then
+       and pPos:DistToSqr(nearVault:GetPos()) <= ((I.Config and I.Config.VaultRadius or 140) ^ 2) then
         RunConsoleCommand("grm_incass_vault_use")
         return true
     end
@@ -2006,21 +2063,27 @@ hook.Add("HUDPaint", "GRM_Incass_HUD", function()
     local targetEnt = IsValid(tr.Entity) and tr.Entity or nil
     if not IsValid(targetEnt) then
         local vaults=GRM.Perf and GRM.Perf.Entities and GRM.Perf.Entities("grm_bank_vault")or ents.FindByClass("grm_bank_vault")
+        local reach = ((I.Config and I.Config.VaultRadius) or 140) ^ 2
         for _, ent in ipairs(vaults) do
-            if IsValid(ent) and pPos:DistToSqr(ent:GetPos()) <= (350 * 350) then
+            if IsValid(ent) and pPos:DistToSqr(ent:GetPos()) <= reach then
                 targetEnt = ent
                 break
             end
         end
     end
 
-    if IsValid(targetEnt) then
+    -- Подсказки видят только сотрудники допущенной фракции (и суперадмин):
+    -- обычному прохожему они ни к чему и только путают.
+    local allowedHint = ply:GetNWBool("GRMIncass_Allowed", false) or ply:IsSuperAdmin()
+
+    if IsValid(targetEnt) and allowedHint then
         local pos = targetEnt:GetPos()
         local d = pPos:DistToSqr(pos)
         if targetEnt:GetClass() == "grm_bank_terminal" and d <= (250 * 250) and IsValid(car) then
             draw.SimpleText("[G] — открыть меню банкомата (изъять / загрузить)", "GRMInc_Normal",
                 ScrW() / 2, ScrH() / 2 + 40, Color(255, 220, 120, 230), TEXT_ALIGN_CENTER)
-        elseif targetEnt:GetClass() == "grm_bank_vault" and d <= (350 * 350) then
+        elseif targetEnt:GetClass() == "grm_bank_vault"
+            and d <= (((I.Config and I.Config.VaultRadius) or 140) ^ 2) then
             draw.SimpleText("[G] — сдать инкассацию в хранилище банка", "GRMInc_Normal",
                 ScrW() / 2, ScrH() / 2 + 40, Color(120, 255, 160, 230), TEXT_ALIGN_CENTER)
         end
