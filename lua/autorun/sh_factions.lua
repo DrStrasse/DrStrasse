@@ -43,6 +43,31 @@ function GRM.Factions.PlayerDisplayName(ply)if not IsValid(ply)then return""end;
 function GRM.Factions.DepartmentDisplayName(factionValue,departmentKey)
     local f=isstring(factionValue)and((Factions and Factions[factionValue])or(FactionsData and FactionsData[factionValue]))or factionValue;local key=tostring(departmentKey or"");local names=istable(f)and f.DepartmentDisplayNames or nil;local display=names and factionTrim(names[key],96)or"";return display~=""and display or key
 end
+--[[ ТЕГИ ОТДЕЛОВ И ПОДОТДЕЛОВ (заказ владельца 19.08).
+     У фракции всегда был тег (f.Tag), у подотдела — поле tag, у отдела тега не
+     было вовсе. Теперь тег есть у всех трёх уровней и служебные каналы
+     (/fr, /frb, /dep, /d, /depb, /db) печатают их одной шапкой:
+        [ПД | СВАТ | 1-й Взвод]
+     Если тег уровня не задан — уровень просто пропускается. ]]
+function GRM.Factions.DepartmentTag(factionValue,departmentKey)
+    local f=isstring(factionValue)and((Factions and Factions[factionValue])or(FactionsData and FactionsData[factionValue]))or factionValue;local key=tostring(departmentKey or"");if key==""then return""end
+    local tags=istable(f)and f.DepartmentTags or nil;return tags and factionTrim(tags[key],24)or""
+end
+function GRM.Factions.SubdepartmentTag(factionValue,subdeptKey)
+    local f=isstring(factionValue)and((Factions and Factions[factionValue])or(FactionsData and FactionsData[factionValue]))or factionValue;local key=tostring(subdeptKey or"");if key==""then return""end
+    local subs=istable(f)and f.Subdepartments or nil;local sub=subs and subs[key];return istable(sub)and factionTrim(sub.tag,24)or""
+end
+-- Шапка служебного канала: тег фракции + тег отдела + тег подотдела.
+function GRM.Factions.ChannelTag(factionValue,departmentKey,subdeptKey,baseTag)
+    local f=isstring(factionValue)and((Factions and Factions[factionValue])or(FactionsData and FactionsData[factionValue]))or factionValue
+    local base=factionTrim(baseTag,64)
+    if base==""then base=factionTrim(istable(f)and f.Tag or"",24)end
+    if base==""then base=GRM.Factions.DisplayName(isstring(factionValue)and factionValue or GRM.Factions.RegistrationName(factionValue))end
+    local parts={base}
+    local dTag=GRM.Factions.DepartmentTag(f,departmentKey);if dTag~=""then parts[#parts+1]=dTag end
+    local sTag=GRM.Factions.SubdepartmentTag(f,subdeptKey);if sTag~=""then parts[#parts+1]=sTag end
+    return table.concat(parts," | ")
+end
 function GRM.Factions.RoleDisplayName(factionValue,roleKey)
     local f=isstring(factionValue)and((Factions and Factions[factionValue])or(FactionsData and FactionsData[factionValue]))or factionValue;local key=tostring(roleKey or"");local names=istable(f)and f.RoleDisplayNames or nil;local display=names and factionTrim(names[key],96)or"";return display~=""and display or (key~="" and key or "Участник")
 end
@@ -266,7 +291,10 @@ if SERVER then
         for _,roleKey in ipairs(f.Roles)do local public=factionTrim(f.RoleDisplayNames[roleKey],96);if public==""then f.RoleDisplayNames[roleKey]=roleKey;changed=true end end
         f.Departments = istable(f.Departments) and f.Departments or {}
         f.DepartmentDisplayNames=istable(f.DepartmentDisplayNames)and f.DepartmentDisplayNames or{}
-        for _,departmentKey in ipairs(f.Departments)do local public=factionTrim(f.DepartmentDisplayNames[departmentKey],96);if public==""then f.DepartmentDisplayNames[departmentKey]=departmentKey;changed=true end end
+        f.DepartmentTags=istable(f.DepartmentTags)and f.DepartmentTags or{}
+        for _,departmentKey in ipairs(f.Departments)do local public=factionTrim(f.DepartmentDisplayNames[departmentKey],96);if public==""then f.DepartmentDisplayNames[departmentKey]=departmentKey;changed=true end
+            local dtag=factionTrim(f.DepartmentTags[departmentKey],24);if f.DepartmentTags[departmentKey]~=dtag then f.DepartmentTags[departmentKey]=dtag;changed=true end end
+        for tagKey in pairs(f.DepartmentTags)do if not table.HasValue(f.Departments,tagKey)then f.DepartmentTags[tagKey]=nil;changed=true end end
         f.Subdepartments = istable(f.Subdepartments) and f.Subdepartments or {}
         f.SubdepartmentDisplayNames = istable(f.SubdepartmentDisplayNames) and f.SubdepartmentDisplayNames or {}
         for subKey, sub in pairs(f.Subdepartments) do
@@ -275,6 +303,7 @@ if SERVER then
                 if public == "" then public = subKey end
                 sub.id = subKey
                 sub.name = public
+                sub.tag = factionTrim(sub.tag, 24)
                 sub.parentDept = tostring(sub.parentDept or "")
                 f.SubdepartmentDisplayNames[subKey] = public
             end
@@ -468,6 +497,7 @@ if SERVER then
                     RoleDisplayNames = f.RoleDisplayNames,
                     Departments      = f.Departments,
                     DepartmentDisplayNames=f.DepartmentDisplayNames,
+                    DepartmentTags   = f.DepartmentTags,
                     Subdepartments   = f.Subdepartments,
                     SubdepartmentDisplayNames=f.SubdepartmentDisplayNames,
                     Members          = buildMemberSync(f),
@@ -509,7 +539,7 @@ if SERVER then
     end
 
     local function getPlayerFactionData(plyOrKey)
-        if not istable(Factions) then return nil, nil, "", {r=255,g=200,b=50}, false, "" end
+        if not istable(Factions) then return nil, nil, "", {r=255,g=200,b=50}, false, "", "" end
         local ply = (isentity(plyOrKey) and IsValid(plyOrKey) and plyOrKey:IsPlayer() and plyOrKey) or nil
         local sid = ply and (ply:SteamID() or "") or (isstring(plyOrKey) and plyOrKey or "")
         local sid64 = (ply and ply.SteamID64 and ply:SteamID64()) or (util.SteamIDTo64 and util.SteamIDTo64(sid)) or ""
@@ -522,7 +552,7 @@ if SERVER then
                 if istable(f) and istable(f.Members) then
                     local rec = rawget(f.Members, charKey)
                     if istable(rec) then
-                        return name, rec.Role or "Участник", f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, rec.Department or ""
+                        return name, rec.Role or "Участник", f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, rec.Department or "", tostring(rec.Subdepartment or rec.Subdept or "")
                     end
                 end
             end
@@ -535,7 +565,8 @@ if SERVER then
                     local leaderRole = f.LeaderRoleName or "Лидер"
                     local mem = (charKey ~= "" and rawget(f.Members, charKey)) or (charKey == "" and (rawget(f.Members, sid) or (sid64 ~= "" and rawget(f.Members, sid64))))
                     local dept = istable(mem) and mem.Department or ""
-                    return name, leaderRole, f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, dept
+                    local subdept = istable(mem) and tostring(mem.Subdepartment or mem.Subdept or "") or ""
+                    return name, leaderRole, f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, dept, subdept
                 end
             end
         end
@@ -547,7 +578,7 @@ if SERVER then
                     if istable(f) and istable(f.Members) then
                         local rec = rawget(f.Members, sid)
                         if istable(rec) then
-                            return name, rec.Role or "Участник", f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, rec.Department or ""
+                            return name, rec.Role or "Участник", f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, rec.Department or "", tostring(rec.Subdepartment or rec.Subdept or "")
                         end
                     end
                 end
@@ -557,14 +588,14 @@ if SERVER then
                     if istable(f) and istable(f.Members) then
                         local rec = rawget(f.Members, sid64)
                         if istable(rec) then
-                            return name, rec.Role or "Участник", f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, rec.Department or ""
+                            return name, rec.Role or "Участник", f.Tag or "", f.Color or {r=255,g=200,b=50}, f.DepAccess == true, rec.Department or "", tostring(rec.Subdepartment or rec.Subdept or "")
                         end
                     end
                 end
             end
         end
 
-        return nil, nil, "", {r=255,g=200,b=50}, false, ""
+        return nil, nil, "", {r=255,g=200,b=50}, false, "", ""
     end
 
     local function getFactionOfPlayer(steamID)
@@ -577,11 +608,12 @@ if SERVER then
 
     local function syncPlayerFactionNW(ply)
         if not IsValid(ply) or not ply:IsPlayer() then return end
-        local fname, role, tag, col, dep, dept = getPlayerFactionData(ply)
+        local fname, role, tag, col, dep, dept, subdept = getPlayerFactionData(ply)
         fname = fname or ""
         role = role or ""
         tag = tag or ""
         dept = dept or ""
+        subdept = subdept or ""
 
         ply:SetNWString("GRM_Faction", fname)
         ply:SetNWString("Faction",fname);ply:SetNWString("GRM_FactionDisplay",GRM.Factions.DisplayName(fname))
@@ -591,6 +623,17 @@ if SERVER then
         ply:SetNWString("FactionTag", tag)
         ply:SetNWString("GRM_Department", dept)
         ply:SetNWString("Department", dept)
+        --[[ Отдел и подотдел теперь реально «применяются к игроку»: ключи,
+             публичные названия и теги висят на игроке networked-строками, их
+             читают HUD, служебные каналы, выдача формы и внешние модули. ]]
+        local fData = fname ~= "" and Factions[fname] or nil
+        ply:SetNWString("GRM_Subdepartment", subdept)
+        ply:SetNWString("Subdepartment", subdept)
+        ply:SetNWString("GRM_DepartmentDisplay", dept ~= "" and GRM.Factions.DepartmentDisplayName(fData or fname, dept) or "")
+        ply:SetNWString("GRM_SubdepartmentDisplay", subdept ~= "" and GRM.Factions.SubdepartmentDisplayName(fData or fname, subdept) or "")
+        ply:SetNWString("GRM_DepartmentTag", dept ~= "" and GRM.Factions.DepartmentTag(fData or fname, dept) or "")
+        ply:SetNWString("GRM_SubdepartmentTag", subdept ~= "" and GRM.Factions.SubdepartmentTag(fData or fname, subdept) or "")
+        ply:SetNWString("GRM_ChannelTag", fname ~= "" and GRM.Factions.ChannelTag(fData or fname, dept, subdept, tag) or "")
     end
 
     local function syncAllPlayersFactionNW()
@@ -1022,8 +1065,45 @@ if SERVER then
         if not f.Members[key] then return false, "Игрок не состоит во фракции" end
         if not table.HasValue(f.Departments, newDept) then return false, "Такого отдела нет" end
         local oldDept=f.Members[key].Department;f.Members[key].Department=newDept;hook.Run("GRM_FactionMemberDepartmentChanged",factionName,key,f.Members[key],oldDept,newDept,actor)
+        -- Перевод в другой отдел снимает подотдел ЧУЖОГО отдела: иначе в
+        -- составе висел подотдел, к которому сотрудник уже не относится, и
+        -- по нему же выдавалась форма и печатался тег в рацию.
+        local curSub = tostring(f.Members[key].Subdepartment or "")
+        if curSub ~= "" then
+            local sub = f.Subdepartments and f.Subdepartments[curSub]
+            local parent = istable(sub) and tostring(sub.parentDept or "") or ""
+            if not istable(sub) or (parent ~= "" and parent ~= newDept) then
+                f.Members[key].Subdepartment = ""
+                hook.Run("GRM_FactionMemberSubdepartmentChanged", factionName, key, f.Members[key], curSub, "", actor)
+            end
+        end
         saveFactions(Factions)
         return true
+    end
+
+    -- Теги отдела/подотдела: применяются в /fr, /frb, /dep, /d, /depb, /db
+    -- и в шапке над игроком.
+    local function setDepartmentTag(factionName, departmentKey, newTag)
+        local f = Factions[factionName]
+        if not f then return false, "Фракция не найдена" end
+        ensureDefaults(f, factionName)
+        if not table.HasValue(f.Departments, departmentKey) then return false, "Отдел не найден" end
+        f.DepartmentTags = f.DepartmentTags or {}
+        f.DepartmentTags[departmentKey] = factionTrim(newTag, 24)
+        saveFactions(Factions)
+        hook.Run("GRM_FactionDepartmentTagChanged", factionName, departmentKey, f.DepartmentTags[departmentKey])
+        return true, "Тег отдела сохранён"
+    end
+
+    local function setSubdepartmentTag(factionName, subdeptKey, newTag)
+        local f = Factions[factionName]
+        if not f then return false, "Фракция не найдена" end
+        ensureDefaults(f, factionName)
+        if not (f.Subdepartments and f.Subdepartments[subdeptKey]) then return false, "Подотдел не найден" end
+        f.Subdepartments[subdeptKey].tag = factionTrim(newTag, 24)
+        saveFactions(Factions)
+        hook.Run("GRM_FactionSubdepartmentTagChanged", factionName, subdeptKey, f.Subdepartments[subdeptKey].tag)
+        return true, "Тег подотдела сохранён"
     end
 
     local function addSubdepartment(factionName, parentDeptId, subdeptKey, displayName, tag, quota)
@@ -1372,6 +1452,16 @@ if SERVER then
             if not faction then return end
             local ok,err=removeSubdepartment(faction,args[1+shift])
             done(ok, err)
+        elseif action == "setDepartmentTag" then
+            local faction, shift = getFactionAndShift()
+            if not faction then return end
+            local ok, err = setDepartmentTag(faction, args[1 + shift], args[2 + shift])
+            done(ok, err)
+        elseif action == "setSubdepartmentTag" then
+            local faction, shift = getFactionAndShift()
+            if not faction then return end
+            local ok, err = setSubdepartmentTag(faction, args[1 + shift], args[2 + shift])
+            done(ok, err)
         elseif action == "renameSubdepartment" then
             local faction, shift = getFactionAndShift()
             if not faction then return end
@@ -1464,7 +1554,10 @@ if SERVER then
 
         if not factionName then ply:PrintMessage(HUD_PRINTTALK, "Вы не состоите ни в одной фракции.") return end
         local f = Factions[factionName]
-        local tag=(f and f.Tag and f.Tag~="")and f.Tag or GRM.Factions.DisplayName(factionName)
+        local rec = (f and f.Members and f.Members[steam]) or {}
+        -- Шапка канала: тег фракции + теги отдела и подотдела (если заданы).
+        local tag=GRM.Factions.ChannelTag(f,rec.Department,rec.Subdepartment,
+            (f and f.Tag and f.Tag~="") and f.Tag or GRM.Factions.DisplayName(factionName))
         -- Формат как у /gnews: шапка отдельной строкой, дальше имя, должность
         -- и текст — раздельными полями, чтобы клиент раскрасил и перенёс строку.
         local rpName = ply:GetNWString("GRM_RPName", "")
@@ -1510,7 +1603,9 @@ if SERVER then
         if not factionName then ply:PrintMessage(HUD_PRINTTALK, "Вы не состоите ни в одной фракции.") return end
 
         local f = Factions[factionName]
-        local tag = (f and f.Tag and f.Tag ~= "") and f.Tag or GRM.Factions.DisplayName(factionName)
+        local recB = (f and f.Members and f.Members[steam]) or {}
+        local tag = GRM.Factions.ChannelTag(f,recB.Department,recB.Subdepartment,
+            (f and f.Tag and f.Tag ~= "") and f.Tag or GRM.Factions.DisplayName(factionName))
         local rpName = ply:GetNWString("GRM_RPName", "")
         if rpName == "" then rpName = ply:Nick() end
         local roleName = (GRM.Factions and GRM.Factions.RoleDisplayName)
@@ -1540,10 +1635,11 @@ if SERVER then
         local text = net.ReadString()
         if not text or text == "" then return end
         local steam = memberKey(ply)
-        local factionName, role, tag, color, depAccess = getFactionInfoForPlayer(steam)
+        local factionName, role, tag, color, depAccess, depKey, subKey = getFactionInfoForPlayer(steam)
         if not factionName then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Вы не состоите ни в одной фракции.") return end
         if not depAccess then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Ваша фракция не имеет доступа к волне департамента.") return end
-        local displayTag=GRM.Factions.DisplayName(factionName)
+        local displayTag=GRM.Factions.ChannelTag(Factions and Factions[factionName] or factionName,
+            depKey, subKey, GRM.Factions.DisplayName(factionName))
         -- Как /gnews: поля отдельно, перенос строки и раскраску делает клиент.
         local rpName = ply:GetNWString("GRM_RPName", "")
         if rpName == "" then rpName = ply:Nick() end
@@ -1573,10 +1669,11 @@ if SERVER then
         local text = net.ReadString()
         if not text or text == "" then return end
         local steam = memberKey(ply)
-        local factionName, role, tag, color, depAccess = getFactionInfoForPlayer(steam)
+        local factionName, role, tag, color, depAccess, depKeyB, subKeyB = getFactionInfoForPlayer(steam)
         if not factionName then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Вы не состоите ни в одной фракции.") return end
         if not depAccess then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Ваша фракция не имеет доступа к волне департамента.") return end
-        local displayTag=GRM.Factions.DisplayName(factionName)
+        local displayTag=GRM.Factions.ChannelTag(Factions and Factions[factionName] or factionName,
+            depKeyB, subKeyB, GRM.Factions.DisplayName(factionName))
         local rpNameB = ply:GetNWString("GRM_RPName", "")
         if rpNameB == "" then rpNameB = ply:Nick() end
         local fDataB = Factions and Factions[factionName]
@@ -3891,7 +3988,11 @@ if CLIENT then
                     local tag = (fdata.Tag and fdata.Tag ~= "") and fdata.Tag or ""
                     for memberKey, rec in pairs(fdata.Members) do
                         if istable(rec) then
-                            idx[memberKey] = { fname, rec.Role, Color(cr, cg, cb), tag }
+                            -- Теги отдела и подотдела попадают и в шапку над игроком:
+                            -- «[ПД | СВАТ] Полиция [Сержант]».
+                            local full = GRM.Factions.ChannelTag(fdata, rec.Department, rec.Subdepartment, tag)
+                            if tag == "" and full == GRM.Factions.DisplayName(fname) then full = "" end
+                            idx[memberKey] = { fname, rec.Role, Color(cr, cg, cb), full }
                         end
                     end
                 end
@@ -3916,6 +4017,11 @@ if CLIENT then
                 local info = factionHUDInfo(clientMemberKey(ply))
                 if info then
                     local faction, role, fColor, fTag = info[1], info[2], info[3], info[4]
+                    -- Готовая шапка приходит с сервера NW-строкой: у игроков без
+                    -- полного снимка организаций (публичный синк) отделов в
+                    -- FactionsData нет, а тег отдела показать всё равно надо.
+                    local nwTag = ply:GetNWString("GRM_ChannelTag", "")
+                    if nwTag ~= "" then fTag = nwTag end
                     local pos = ply:GetPos() + Vector(0, 0, 100)
                     local screenPos = pos:ToScreen()
                     if screenPos.visible then

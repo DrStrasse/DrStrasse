@@ -1,8 +1,11 @@
---[[ GRM Jobs v5.1: живая топология мусора, сверка маршрута и выгрузка на полигоне.
-     v1.1.0: кузов 3 пакета (конфиг), полигон принимает ТОЛЬКО полный рейс 3/3. ]]
+--[[ GRM Jobs v5.2: живая топология мусора, сверка маршрута и выгрузка на полигоне.
+     v1.1.0: кузов 3 пакета (конфиг), полигон принимает ТОЛЬКО полный рейс 3/3.
+     v1.2.0: физическая мусорка стала НЕОБЯЗАТЕЛЬНОЙ — маршрут строится по точкам,
+             сверка больше не переставляет уже выстроенный рейс, сбор без
+             контейнера идёт клавишей G прямо на точке. ]]
 if SERVER then AddCSLuaFile()end
 GRM=GRM or{};GRM.Jobs=GRM.Jobs or{};local JB=GRM.Jobs
-JB.V5Version="1.1.0";JB.GarbageBindings=JB.GarbageBindings or{};JB.GarbageTrucks=JB.GarbageTrucks or setmetatable({},{__mode="k"})
+JB.V5Version="1.2.0";JB.GarbageBindings=JB.GarbageBindings or{};JB.GarbageTrucks=JB.GarbageTrucks or setmetatable({},{__mode="k"})
 local NREQ="GRM_JobsV5_StateReq";local NDATA="GRM_JobsV5_StateData"
 local function posOf(rec)return Vector(tonumber(rec.pos and rec.pos.x)or 0,tonumber(rec.pos and rec.pos.y)or 0,tonumber(rec.pos and rec.pos.z)or 0)end
 local function rootVehicle(ent)
@@ -34,22 +37,50 @@ if SERVER then
  local function binState(bin)local now=CurTime();if(tonumber(bin._grmGarbageSearchingUntil)or 0)>now then return"searching"end;return bin:GetReadyAt()>now and"cooldown"or"ready"end
  local function bindTopology()
   local all,points,dumps=pointMap();local bins=ents.FindByClass("grm_garbage_bin");local claimed,bindings,boundRec={},{},{};local radius=tonumber(JB.WorkConfig and JB.WorkConfig.garbageBindRadius)or 500
-  for _,rec in ipairs(points)do local rp=posOf(rec);local best,bestD=nil,radius*radius;for _,bin in ipairs(bins)do if IsValid(bin)and not claimed[bin]then local d=rp:DistToSqr(bin:GetPos());if d<bestD then best,bestD=bin,d end end end;if IsValid(best)then claimed[best]=true;boundRec[best]=rec;bindings[rec.id]=best;rec._grmGarbageBin=best else rec._grmGarbageBin=nil end end
+  -- Привязка «точка ↔ мусорка» глобально жадная по расстоянию: раньше первая
+  -- по списку точка забирала мусорку, которая физически ближе к следующей, и
+  -- та оставалась без контейнера (маршрут «то есть, то нет»).
+  local pairsList={}
+  for _,rec in ipairs(points)do local rp=posOf(rec);for _,bin in ipairs(bins)do if IsValid(bin)then local d=rp:DistToSqr(bin:GetPos());if d<=radius*radius then pairsList[#pairsList+1]={rec=rec,bin=bin,d=d}end end end end
+  table.sort(pairsList,function(a,b)if a.d==b.d then return tostring(a.rec.id)<tostring(b.rec.id)end;return a.d<b.d end)
+  for _,rec in ipairs(points)do rec._grmGarbageBin=nil end
+  for _,pair in ipairs(pairsList)do
+   if not claimed[pair.bin]and not bindings[pair.rec.id]then claimed[pair.bin]=true;boundRec[pair.bin]=pair.rec;bindings[pair.rec.id]=pair.bin;pair.rec._grmGarbageBin=pair.bin end
+  end
   for _,bin in ipairs(bins)do if IsValid(bin)then local rec=boundRec[bin];if rec then nwString(bin,"GRM_GarbagePointID",rec.id);nwString(bin,"GRM_GarbagePointName",rec.name);nwString(bin,"GRM_GarbageState",binState(bin))else nwString(bin,"GRM_GarbagePointID","");nwString(bin,"GRM_GarbagePointName","");nwString(bin,"GRM_GarbageState","unbound")end end end
   JB.GarbageBindings=bindings;JB.GarbageTopology={all=all,points=points,dumps=dumps,bins=bins,updated=CurTime()};return all,points,dumps
  end
  local function nearestUnused(points,want,used)
   local wp=want and Vector(tonumber(want.x)or 0,tonumber(want.y)or 0,tonumber(want.z)or 0)or nil;local best,bestD=nil,math.huge
-  for _,rec in ipairs(points)do if JB.GarbageBindings[rec.id]and not used[rec.id]then local d=wp and wp:DistToSqr(posOf(rec))or 0;if d<bestD then best,bestD=rec,d end end end;return best
+  for _,rec in ipairs(points)do if not used[rec.id]then local d=wp and wp:DistToSqr(posOf(rec))or 0;if d<bestD then best,bestD=rec,d end end end;return best
  end
+ --[[ ФИКС 19.08 (заказ владельца: «сбивает маршрут, хотя он уже выстроен»).
+      Раньше сверка переписывала точку рейса, как только у неё пропадала
+      привязка к физической мусорке (её могла «увести» соседняя точка, мусорку
+      могло снести уборкой карты на секунду). Маршрут прыгал прямо во время
+      рейса. Теперь точка меняется ТОЛЬКО если сама запись точки удалена из
+      конфигурации карты; отсутствие мусорки маршрут не ломает. ]]
  local function reconcileActive(all,points,dumps)
   local changed=false
   for _,j in pairs(JB.Active or{})do if istable(j)and j.tplId=="garbage"then
    j.points=istable(j.points)and j.points or{};j.pointNames=istable(j.pointNames)and j.pointNames or{}
    local ids=istable(j.garbagePointIDs)and j.garbagePointIDs or{};local collectCount=math.max(0,#j.points-1)
    if#ids==0 then local inferred={};for i=1,collectCount do local rec=nearestUnused(points,j.points[i],inferred);ids[i]=rec and rec.id or"";if rec then inferred[rec.id]=true end end;j.garbagePointIDs=ids;changed=true end
-   local used={};j.routeState="ready"
-   for i=1,collectCount do local id=ids[i];local rec=all[id];if not(rec and JB.GarbageBindings[id])then rec=nearestUnused(points,(j.points or{})[i],used);ids[i]=rec and rec.id or"";changed=true end;if rec and JB.GarbageBindings[rec.id]then used[rec.id]=true;j.points[i]={x=rec.pos.x,y=rec.pos.y,z=rec.pos.z};j.pointNames[i]=rec.name else j.routeState="missing_bin"end end
+   local used={};j.routeState="ready";j.routeBinsMissing=0
+   for i=1,collectCount do
+    local id=ids[i];local rec=all[id]
+    if not rec then rec=nearestUnused(points,(j.points or{})[i],used);ids[i]=rec and rec.id or"";changed=true end
+    if rec then
+     used[rec.id]=true
+     local px,py,pz=math.floor(tonumber(rec.pos.x)or 0),math.floor(tonumber(rec.pos.y)or 0),math.floor(tonumber(rec.pos.z)or 0)
+     local old=j.points[i]or{}
+     if math.floor(tonumber(old.x)or 0)~=px or math.floor(tonumber(old.y)or 0)~=py or math.floor(tonumber(old.z)or 0)~=pz then changed=true end
+     j.points[i]={x=rec.pos.x,y=rec.pos.y,z=rec.pos.z};j.pointNames[i]=rec.name
+     if not JB.GarbageBindings[rec.id]then j.routeBinsMissing=j.routeBinsMissing+1 end
+    else
+     j.routeState="missing_point"
+    end
+   end
    local dump=all[j.garbageDumpID];if not(dump and dump.type=="dump")then dump=dumps[1];j.garbageDumpID=dump and dump.id or"";changed=true end
    if dump then local n=#j.points;j.points[n]={x=dump.pos.x,y=dump.pos.y,z=dump.pos.z};j.pointNames[n]=dump.name else j.routeState="missing_dump"end
    local parts={j.routeState,tostring(j.garbageDumpID or"")};for i,id in ipairs(ids)do local p=j.points[i]or{};parts[#parts+1]=tostring(id)..":"..math.floor(tonumber(p.x)or 0)..":"..math.floor(tonumber(p.y)or 0)..":"..math.floor(tonumber(p.z)or 0)end;local sig=table.concat(parts,"|");if j._garbageTopologySignature~=sig then j._garbageTopologySignature=sig;j._garbageTopologyChanged=true;changed=true end
@@ -62,14 +93,69 @@ if SERVER then
   return JB.GarbageTopology
  end
  local oldRoute=JB.GetRoutePoints
+ --[[ ФИКС 19.08 (заказ владельца: «пишет, что нет маршрута, хотя точки стоят»).
+      Раньше маршрут строился ТОЛЬКО из тех точек сбора, к которым нашлась
+      физическая мусорка grm_garbage_bin в радиусе связи. Нет мусорки (не
+      заспавнена, снесена уборкой карты, стоит дальше радиуса, или две точки
+      претендуют на одну мусорку) — точка выпадала, а при нуле точек биржа
+      писала «Нет связанных точек сбора». Теперь мусорка — ДОПОЛНЕНИЕ к точке,
+      а не условие её существования: маршрут строится по самим точкам. ]]
  function JB.GetRoutePoints(kind)
-  if kind~="garbage"then return oldRoute and oldRoute(kind)end;JB.RefreshGarbageTopology("route request");local source=oldRoute and oldRoute(kind)or{};local out={};for _,obj in ipairs(source or{})do local rec=obj._grmJobPoint;if rec and JB.GarbageBindings[rec.id]then out[#out+1]=obj end end;return#out>0 and out or nil
+  if kind~="garbage"then return oldRoute and oldRoute(kind)end;JB.RefreshGarbageTopology("route request");local source=oldRoute and oldRoute(kind)or{};local out={};for _,obj in ipairs(source or{})do if obj._grmJobPoint then out[#out+1]=obj end end;return#out>0 and out or nil
+ end
+ -- Мусорка, обслуживающая точку маршрута: сначала привязанная, потом любая
+ -- ближайшая в радиусе связи (её мог «увести» соседний контейнер).
+ function JB.BinForPoint(id,pos)
+  local bin=id and JB.GarbageBindings[id];if IsValid(bin)then return bin end
+  if not pos then return nil end
+  local radius=tonumber(JB.WorkConfig and JB.WorkConfig.garbageBindRadius)or 500;local best,bestD=nil,radius*radius
+  for _,b in ipairs(ents.FindByClass("grm_garbage_bin"))do if IsValid(b)then local d=pos:DistToSqr(b:GetPos());if d<bestD then best,bestD=b,d end end end
+  return best
  end
  local oldSearch=JB.SearchGarbageBin
  function JB.SearchGarbageBin(ply,bin)
   if not(IsValid(ply)and IsValid(bin))then return end;JB.RefreshGarbageTopology("bin use");local j=JB.GetActiveJob and JB.GetActiveJob(ply);if not(istable(j)and j.tplId=="garbage")then notify(ply,"Сначала возьмите работу мусоровоза.",false)return end
-  local idx=tonumber(j.pointIndex)or 1;if idx>=#(j.points or{})then notify(ply,"Сейчас нужно ехать на свалку.",false)return end;local id=istable(j.garbagePointIDs)and j.garbagePointIDs[idx]or"";if id==""or JB.GarbageBindings[id]~=bin then notify(ply,"Эта мусорка не связана с текущей точкой маршрута.",false)return end
+  local idx=tonumber(j.pointIndex)or 1;if idx>=#(j.points or{})then notify(ply,"Сейчас нужно ехать на свалку.",false)return end
+  -- Строгую сверку «мусорка обязана быть привязана именно к этой точке»
+  -- заменяем на дистанцию до текущей точки (её считает v4): привязка живёт
+  -- на сервере и может слететь, а игрок стоит у правильного контейнера.
   if oldSearch then return oldSearch(ply,bin)end
+ end
+ --[[ Сбор без физической мусорки (заказ владельца 19.08): если у точки
+      маршрута контейнера нет (не поставили/снесло), рейс всё равно должен
+      идти — пакет собирается на самой точке клавишей G. ]]
+ function JB.CollectAtPoint(ply)
+  if not IsValid(ply)then return end
+  local j=JB.GetActiveJob and JB.GetActiveJob(ply);if not(istable(j)and j.tplId=="garbage")then return end
+  if ply:InVehicle()then notify(ply,"Выйдите из транспорта.",false)return end
+  if IsValid(ply:GetNWEntity("GRM_GarbageBox"))then return end
+  if(ply._grmGarbageSearch or 0)>CurTime()then return end
+  JB.RefreshGarbageTopology("collect at point")
+  local pts=j.points or{};local idx=tonumber(j.pointIndex)or 1
+  if idx>=#pts then notify(ply,"Сейчас нужно ехать на свалку.",false)return end
+  local g=pts[idx];if not istable(g)then return end
+  local gv=Vector(tonumber(g.x)or 0,tonumber(g.y)or 0,tonumber(g.z)or 0)
+  local id=istable(j.garbagePointIDs)and j.garbagePointIDs[idx]or""
+  local bin=JB.BinForPoint(id,gv)
+  if IsValid(bin)then
+   if ply:GetPos():DistToSqr(bin:GetPos())<=200*200 then return JB.SearchGarbageBin(ply,bin)end
+   notify(ply,"Подойдите к мусорке на текущей точке маршрута.",false)return
+  end
+  if ply:GetPos():DistToSqr(gv)>250*250 then notify(ply,"Подойдите к точке маршрута — контейнера здесь нет, отходы собираются на месте.",false)return end
+  local duration=tonumber(JB.WorkConfig and JB.WorkConfig.garbageSearchTime)or 2.5
+  ply._grmGarbageSearch=CurTime()+duration;ply:SetNWBool("GRM_SearchingGarbage",true)
+  notify(ply,"Контейнера на точке нет — собираем отходы вручную...",true)
+  timer.Simple(duration,function()
+   if not IsValid(ply)then return end
+   ply:SetNWBool("GRM_SearchingGarbage",false)
+   if IsValid(ply:GetNWEntity("GRM_GarbageBox"))then return end
+   local cur=JB.GetActiveJob and JB.GetActiveJob(ply);if not(istable(cur)and cur.tplId=="garbage")then return end
+   if(tonumber(cur.pointIndex)or 1)~=idx then return end
+   if ply:GetPos():DistToSqr(gv)>300*300 then return end
+   local box=ents.Create("grm_garbage_box");if not IsValid(box)then return end
+   box:SetPos(ply:GetPos());box:SetSourcePointID(tostring(idx));box:Spawn();box:Activate();box:AttachTo(ply)
+   notify(ply,"Пакет собран. Поднесите его сзади к мусоровозу и нажмите G.",true)
+  end)
  end
  local function unloadTruckFor(ply,seat)
   local direct=rootVehicle(seat);if IsValid(direct)and JB.GetGarbageLoad(direct)>0 then return direct end
@@ -103,7 +189,7 @@ if SERVER then
  hook.Add("PlayerDeath","GRM_Garbage_UnloadDeath",function(ply)local j=JB.GetActiveJob and JB.GetActiveJob(ply);if j and j.garbageUnloadAt then clearUnload(ply,j,nil)end end)
  hook.Add("GRM_Jobs_Failed","GRM_Garbage_UnloadFail",function(ply,j)if j and j.tplId=="garbage"then clearUnload(ply,j,nil)end end)
  function JB.GarbageStateSnapshot()
-  JB.RefreshGarbageTopology("state");local t=JB.GarbageTopology or{};local rows={};for _,rec in ipairs(t.points or{})do local bin=JB.GarbageBindings[rec.id];rows[#rows+1]={kind="collection",id=rec.id,name=rec.name,bound=IsValid(bin),bin=IsValid(bin)and bin:EntIndex()or 0,state=IsValid(bin)and bin:GetNWString("GRM_GarbageState","ready")or"missing",readyIn=IsValid(bin)and math.max(0,math.ceil(bin:GetReadyAt()-CurTime()))or 0,distance=IsValid(bin)and math.floor(posOf(rec):Distance(bin:GetPos()))or 0}end;for _,rec in ipairs(t.dumps or{})do rows[#rows+1]={kind="dump",id=rec.id,name=rec.name,bound=true,state="ready"}end
+  JB.RefreshGarbageTopology("state");local t=JB.GarbageTopology or{};local rows={};for _,rec in ipairs(t.points or{})do local bin=JB.GarbageBindings[rec.id];rows[#rows+1]={kind="collection",id=rec.id,name=rec.name,bound=true,hasBin=IsValid(bin),bin=IsValid(bin)and bin:EntIndex()or 0,state=IsValid(bin)and bin:GetNWString("GRM_GarbageState","ready")or"manual",readyIn=IsValid(bin)and math.max(0,math.ceil(bin:GetReadyAt()-CurTime()))or 0,distance=IsValid(bin)and math.floor(posOf(rec):Distance(bin:GetPos()))or 0}end;for _,rec in ipairs(t.dumps or{})do rows[#rows+1]={kind="dump",id=rec.id,name=rec.name,bound=true,state="ready"}end
   local trucks={};for veh in pairs(JB.GarbageTrucks)do if IsValid(veh)then trucks[#trucks+1]={ent=veh:EntIndex(),load=tonumber(veh.GRM_GarbageLoad)or veh:GetNWInt("GRM_GarbageLoad",0),capacity=veh:GetNWInt("GRM_GarbageCapacity",tonumber(JB.WorkConfig and JB.WorkConfig.garbageCapacity)or 3),state=veh:GetNWString("GRM_GarbageState","idle"),driver=veh:GetNWString("GRM_GarbageDriver","")}else JB.GarbageTrucks[veh]=nil end end
   return{updated=os.time(),rows=rows,trucks=trucks,summary={points=#(t.points or{}),bound=table.Count(JB.GarbageBindings),bins=#(t.bins or{}),dumps=#(t.dumps or{})}}
  end
@@ -119,12 +205,12 @@ end
  hook.Add("EntityRemoved","GRM_Garbage_TopologyRemove",function(e)if e:GetClass()=="grm_garbage_bin"then timer.Simple(0,function()JB.RefreshGarbageTopology("bin removed")end)end end)
 else
  surface.CreateFont("GRMGarbageTitle",{font="Roboto",size=23,weight=900,extended=true});surface.CreateFont("GRMGarbageText",{font="Roboto",size=15,weight=600,extended=true})
- local stateNames={ready="готова",searching="идёт сбор",cooldown="восстановление",unbound="не связана",collecting="сбор",to_dump="к свалке",unloading="выгрузка",empty="пусто",idle="ожидание"}
+ local stateNames={ready="готова",searching="идёт сбор",cooldown="восстановление",manual="сбор на точке",unbound="без контейнера",collecting="сбор",to_dump="к свалке",unloading="выгрузка",empty="пусто",idle="ожидание"}
  local frame,rowsPanel,lastData
  local function request()net.Start(NREQ);net.SendToServer()end
  local function rebuild(data)
   lastData=data;if not IsValid(rowsPanel)then return end;rowsPanel:Clear();local s=data.summary or{};local head=vgui.Create("DPanel",rowsPanel);head:Dock(TOP);head:SetTall(58);head:DockMargin(0,0,0,8);head.Paint=function(_,w,h)draw.RoundedBox(7,0,0,w,h,Color(20,34,48));draw.SimpleText(("ТОЧКИ %d • СВЯЗАНО %d • МУСОРКИ %d • СВАЛКИ %d"):format(s.points or 0,s.bound or 0,s.bins or 0,s.dumps or 0),"GRMGarbageTitle",16,h/2,color_white,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)end
-  for _,r in ipairs(data.rows or{})do local p=vgui.Create("DPanel",rowsPanel);p:Dock(TOP);p:SetTall(62);p:DockMargin(0,0,0,6);p.Paint=function(_,w,h)local good=r.bound and r.state~="missing";draw.RoundedBox(6,0,0,w,h,Color(24,36,51));draw.RoundedBox(2,0,0,5,h,good and Color(65,205,135)or Color(235,85,85));draw.SimpleText((r.kind=="dump"and"СВАЛКА • "or"СБОР • ")..tostring(r.name),"GRMGarbageText",16,19,color_white);local state=r.kind=="dump"and"готова к выгрузке"or(r.bound and((r.state=="cooldown")and("восстановление "..r.readyIn.." сек")or(r.state=="searching"and("идёт сбор • мусорка #"..r.bin)or("мусорка #"..r.bin.." • готова • связь "..r.distance.." юн")))or"НЕТ СВЯЗАННОЙ МУСОРКИ");draw.SimpleText(state,"GRMGarbageText",16,43,good and Color(145,220,175)or Color(245,130,130))end end
+  for _,r in ipairs(data.rows or{})do local p=vgui.Create("DPanel",rowsPanel);p:Dock(TOP);p:SetTall(62);p:DockMargin(0,0,0,6);p.Paint=function(_,w,h)local good=r.bound;draw.RoundedBox(6,0,0,w,h,Color(24,36,51));draw.RoundedBox(2,0,0,5,h,good and Color(65,205,135)or Color(235,85,85));draw.SimpleText((r.kind=="dump"and"СВАЛКА • "or"СБОР • ")..tostring(r.name),"GRMGarbageText",16,19,color_white);local state=r.kind=="dump"and"готова к выгрузке"or(r.hasBin and((r.state=="cooldown")and("восстановление "..r.readyIn.." сек")or(r.state=="searching"and("идёт сбор • мусорка #"..r.bin)or("мусорка #"..r.bin.." • готова • связь "..r.distance.." юн")))or"без контейнера — сбор на точке клавишей G");draw.SimpleText(state,"GRMGarbageText",16,43,good and Color(145,220,175)or Color(245,130,130))end end
   for _,r in ipairs(data.trucks or{})do local p=vgui.Create("DPanel",rowsPanel);p:Dock(TOP);p:SetTall(54);p:DockMargin(0,4,0,4);p.Paint=function(_,w,h)draw.RoundedBox(6,0,0,w,h,Color(37,42,58));draw.SimpleText(("МУСОРОВОЗ #%d • %d/%d • %s • %s"):format(r.ent or 0,r.load or 0,r.capacity or 0,stateNames[r.state]or r.state or"ожидание",r.driver or""),"GRMGarbageText",16,h/2,Color(235,205,115),TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)end end
  end
  function JB.OpenGarbageState()

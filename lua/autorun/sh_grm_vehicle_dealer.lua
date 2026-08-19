@@ -8,7 +8,7 @@ end
 -- GRM Vehicle Dealer & Garage v3.0.0
 if SERVER then AddCSLuaFile() end
 GRM=GRM or{};GRM.VehicleDealer=GRM.VehicleDealer or{};local VD=GRM.VehicleDealer
-VD.Version="3.3.0";VD.DealerFile="grm_vehicle_dealers/";VD.GarageFile="grm_vehicle_garages.json";VD.MaxActive=3;VD.UseDistance=180;VD.DefaultLift=30
+VD.Version="3.4.0";VD.DealerFile="grm_vehicle_dealers/";VD.GarageFile="grm_vehicle_garages.json";VD.MaxActive=3;VD.UseDistance=180;VD.DefaultLift=30
 VD.Dealers=VD.Dealers or{};VD.Garages=VD.Garages or{};VD.Active=VD.Active or{}
 VD.VehicleKinds={personal="Личный купленный",government="Государственный служебный",public="Общественный транспорт",job_taxi="Работа: такси",job_garbage="Работа: мусоровоз",job_courier="Работа: доставка"}
 -- Список организаций для выпадающих списков админки дилера (v3.3.0):
@@ -212,12 +212,40 @@ if SERVER then
  local function garage(ply)local k=key(ply);VD.Garages[k]=VD.Garages[k]or{};return VD.Garages[k],k end
  local function activeCount(ply)local n=0;for _,e in pairs(VD.Active)do if IsValid(e)and e.GRMGarageOwner==ply then n=n+1 end end;return n end
  local function findEntry(dealer,class)for _,e in ipairs(dealer.VD_Vehicles or{})do if e.class==class then return e end end end
- function VD.Push(ply,dealer)local g=garage(ply);local garageRows={}for _,r in pairs(g)do garageRows[#garageRows+1]=r end;local catalog={}for _,e in ipairs(dealer.VD_Vehicles or{})do if VD.CanUseEntry(ply,e)then local i=VD.VehicleInfo(e.class);catalog[#catalog+1]={class=e.class,name=e.name or i.name,model=i.model,system=i.system,price=math.max(0,math.floor(tonumber(e.price)or 0)),category=e.category or"Транспорт",service=VD.EntryKind(e)~="personal",faction=e.faction,factionName=(e.faction and e.faction~=""and((GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(e.faction))or e.faction)or""),ownershipType=VD.EntryKind(e),ownershipName=VD.VehicleKinds[VD.EntryKind(e)]}end end;net.Start("GRM_VD_Open")net.WriteEntity(dealer)net.WriteString(dealer:GetDealerName())net.WriteTable(catalog)net.WriteTable(garageRows)net.Send(ply)end
+ --[[ v3.4.0 (заказ владельца): «Убрать транспорт» теперь есть и в меню дилера,
+      а не только в контекстном C-меню. Для этого дилер присылает список
+      ЖИВОГО транспорта игрока (в т.ч. служебного, у которого нет записи в
+      гараже — раньше такую машину из меню убрать было нечем). ]]
+ function VD.ActiveRows(ply)
+  local rows,k={},key(ply);local g=VD.Garages[k]or{}
+  for id,ent in pairs(VD.Active)do
+   if IsValid(ent)and ent.GRMGarageOwner==ply then
+    local rec=g[id]
+    local class=tostring(ent.VD_Class or rec and rec.class or ent:GetClass())
+    local info=VD.VehicleInfo(class)
+    local kind=tostring(ent.GRMVehicleKind or rec and rec.ownershipType or"personal")
+    rows[#rows+1]={
+     id=id,class=class,name=(rec and rec.name)or info.name or class,model=info.model,
+     ownershipType=kind,ownershipName=VD.VehicleKinds[kind]or"Транспорт",
+     personal=kind=="personal",
+     distance=math.floor(ply:GetPos():Distance(ent:GetPos())),
+     occupied=IsValid(ent.GetDriver and ent:GetDriver()or nil),
+    }
+   end
+  end
+  table.sort(rows,function(a,b)return tostring(a.name)<tostring(b.name)end)
+  return rows
+ end
+ function VD.Push(ply,dealer)local g=garage(ply);local garageRows={}for _,r in pairs(g)do garageRows[#garageRows+1]=r end;local catalog={}for _,e in ipairs(dealer.VD_Vehicles or{})do if VD.CanUseEntry(ply,e)then local i=VD.VehicleInfo(e.class);catalog[#catalog+1]={class=e.class,name=e.name or i.name,model=i.model,system=i.system,price=math.max(0,math.floor(tonumber(e.price)or 0)),category=e.category or"Транспорт",service=VD.EntryKind(e)~="personal",faction=e.faction,factionName=(e.faction and e.faction~=""and((GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(e.faction))or e.faction)or""),ownershipType=VD.EntryKind(e),ownershipName=VD.VehicleKinds[VD.EntryKind(e)]}end end;net.Start("GRM_VD_Open")net.WriteEntity(dealer)net.WriteString(dealer:GetDealerName())net.WriteTable(catalog)net.WriteTable(garageRows)net.WriteTable(VD.ActiveRows(ply))net.Send(ply)end
  local function result(ply,ok,msg)net.Start("GRM_VD_Result")net.WriteBool(ok)net.WriteString(msg)net.Send(ply);if GRM.Notify then GRM.Notify(ply,msg,ok and 100 or 255,ok and 220 or 110,ok and 130 or 90)end end
  net.Receive("GRM_VD_Action",function(_,ply)local dealer,op=net.ReadEntity(),net.ReadString();if not IsValid(dealer)or dealer:GetClass()~="sent_vehicle_dealer"or ply:GetPos():DistToSqr(dealer:GetPos())>300*300 then return end;ply.GRMVDNext=ply.GRMVDNext or 0;if CurTime()<ply.GRMVDNext then return end;ply.GRMVDNext=CurTime()+.35
   if op=="buy"then local class=net.ReadString();local entry=findEntry(dealer,class);if not entry or not VD.CanUseEntry(ply,entry)then result(ply,false,"Транспорт недоступен")return end;local kind=VD.EntryKind(entry);if activeCount(ply)>=VD.MaxActive then result(ply,false,"Лимит активного транспорта")return end;local price=kind~="personal"and 0 or math.max(0,math.floor(tonumber(entry.price)or 0));if price>0 and(not GRM.HasMoney or not GRM.HasMoney(ply,price))then result(ply,false,"Недостаточно средств")return end;local ent,info,spawnErrors=VD.Spawn(class,dealer,ply);if not ent then result(ply,false,(spawnErrors and spawnErrors[1])or"Не удалось создать транспорт")return end;if price>0 and GRM.TakeMoney then GRM.TakeMoney(ply,price,"Покупка транспорта "..class)end;local id=makeID("vehicle");local record={id=id,class=class,name=entry.name or info.name,model=info.model,price=price,stored=false,dealerID=dealer:GetDealerID(),service=kind~="personal",ownershipType=kind};if kind=="personal"then local g=garage(ply);g[id]=record;saveGarage()end;ent.GRMGarageID=id;ent.GRMGarageOwner=ply;ent.VD_Owner=ply;ent.VD_Class=class;ent.VD_Price=price;ent.GRMVehicleKind=kind;ent:SetNWString("GRM_VehicleKind",kind);ent:SetNWString("GRM_WorkVehicle",kind:find("job_",1,true)==1 and kind:sub(5)or"");VD.Active[id]=ent;hook.Run("GRM_VehicleDealerSpawned",ent,ply,class,record,dealer);if GRM.VehicleKeys and GRM.VehicleKeys.SetPlayerOwner then pcall(GRM.VehicleKeys.SetPlayerOwner,ent,ply)elseif VK and VK.SetPlayerOwner then pcall(VK.SetPlayerOwner,ent,ply)end;result(ply,true,"Транспорт выдан: "..record.name);VD.Push(ply,dealer)
   elseif op=="retrieve"then local id=net.ReadString();local g=garage(ply);local r=g[id];if not r or r.service then result(ply,false,"Запись гаража не найдена")return end;if IsValid(VD.Active[id])then result(ply,false,"Транспорт уже выдан")return end;if activeCount(ply)>=VD.MaxActive then result(ply,false,"Лимит активного транспорта")return end;local ent,_,spawnErrors=VD.Spawn(r.class,dealer,ply);if not ent then result(ply,false,(spawnErrors and spawnErrors[1])or"Не удалось выдать транспорт")return end;r.stored=false;saveGarage();ent.GRMGarageID=id;ent.GRMGarageOwner=ply;ent.VD_Owner=ply;ent.VD_Class=r.class;ent.VD_Price=r.price;ent.GRMVehicleKind="personal";ent:SetNWString("GRM_VehicleKind","personal");VD.Active[id]=ent;result(ply,true,"Транспорт выдан из гаража");VD.Push(ply,dealer)
   elseif op=="store"then local id=net.ReadString();local g=garage(ply);local r=g[id];local ent=VD.Active[id];if not r or not IsValid(ent)or ent.GRMGarageOwner~=ply then result(ply,false,"Активный транспорт не найден")return end;if ply:GetPos():DistToSqr(ent:GetPos())>700*700 then result(ply,false,"Подгоните транспорт ближе")return end;ent:Remove();VD.Active[id]=nil;r.stored=true;saveGarage();result(ply,true,"Транспорт помещён в гараж");VD.Push(ply,dealer)
+  elseif op=="remove"then local id=net.ReadString();local ent=VD.Active[id];if not IsValid(ent)or ent.GRMGarageOwner~=ply then result(ply,false,"Активный транспорт не найден")return end
+   local driver=ent.GetDriver and ent:GetDriver()or nil;if IsValid(driver)and driver~=ply then result(ply,false,"В транспорте сидит водитель")return end
+   local g=garage(ply);local r=g[id];ent:Remove();VD.Active[id]=nil;if r then r.stored=true;saveGarage()end
+   result(ply,true,r and"Транспорт убран в гараж"or"Служебный транспорт убран");VD.Push(ply,dealer)
   elseif op=="sell"then local id=net.ReadString();local g=garage(ply);local r=g[id];if not r then return end;local ent=VD.Active[id];if IsValid(ent)then ent:Remove()end;VD.Active[id]=nil;g[id]=nil;local refund=math.floor((r.price or 0)*.5);if refund>0 and GRM.GiveMoney then GRM.GiveMoney(ply,refund,"Продажа транспорта")end;saveGarage();result(ply,true,"Транспорт продан, возврат: "..(GRM.Format and GRM.Format(refund)or refund));VD.Push(ply,dealer)end
  end)
  net.Receive("GRM_VD_ZoneRequest",function(_,ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;local out={}for _,d in ipairs(ents.FindByClass("sent_vehicle_dealer"))do if IsValid(d)then out[#out+1]={id=d:GetDealerID(),name=d:GetDealerName(),pos=vd(d:GetPos()),hasZone=d:GetHasSpawnZone(),min=vd(d:GetSpawnZoneMin()),max=vd(d:GetSpawnZoneMax()),ang=ad(d:GetSpawnAngle()),hasPoint=d:GetHasCustomSpawn(),spawnPos=vd(d:GetSpawnPos()),spawnAng=ad(d:GetSpawnAngle()),lift=tonumber(d.VD_Lift)or VD.DefaultLift}end end;net.Start("GRM_VD_ZoneData")net.WriteTable(out)net.Send(ply)end)

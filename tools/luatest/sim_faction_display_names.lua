@@ -12,7 +12,7 @@ ok(fac:find("GetDisplayName=function",1,true)and fac:find("SetDisplayName=functi
 ok(fac:find('SetNWString("GRM_FactionDisplay"',1,true),"player NW carries public faction name separately")
 ok(fac:find('Регистрационное имя:',1,true)and fac:find('Публичное имя (RU):',1,true),"admin UI clearly separates both fields")
 ok(fac:find('AddColumn("Публичное имя")',1,true)and fac:find('AddColumn("Регистрационное имя")',1,true),"admin list displays both names")
-ok(fac:find("local displayTag=GRM.Factions.DisplayName(factionName)",1,true),"department waves use public name")
+ok(fac:find("local displayTag=GRM.Factions.ChannelTag(",1,true)and fac:find("GRM.Factions.DisplayName(factionName))",1,true),"department waves use public name (+ department tags)")
 ok(fixes:find("GRM.Factions.DisplayName(factionName)",1,true),"government news uses public name")
 ok(roster:find("displayFaction",1,true)and roster:find("GetRegistrationName",1,true),"roster prints public name but resolves system key")
 ok(tab:find("GRM.Factions.DisplayName(getPlayerFaction(ply))",1,true),"TAB displays public faction name")

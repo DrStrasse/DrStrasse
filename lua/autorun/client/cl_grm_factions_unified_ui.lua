@@ -28,7 +28,7 @@ GRM = GRM or {}
 GRM.Factions = GRM.Factions or {}
 GRM.Factions.UnifiedUI = GRM.Factions.UnifiedUI or {}
 local UI = GRM.Factions.UnifiedUI
-UI.Version = "3.1.0"
+UI.Version = "3.2.0"
 
 surface.CreateFont("GRMFac_Title",   { font = "Roboto", size = 20, weight = 800, extended = true })
 surface.CreateFont("GRMFac_Sub",     { font = "Roboto", size = 15, weight = 700, extended = true })
@@ -411,7 +411,9 @@ function UI.Open(requestedFaction)
     currentFrame = f
     if GRM.UI and GRM.UI.Track then GRM.UI.Track("grm_factions_unified", f) end
 
-    f:SetSize(math.Clamp(ScrW() * 0.92, 1100, 1560), math.Clamp(ScrH() * 0.88, 720, 980))
+    -- Заказ владельца 19.08: окно шире и выше — часть кнопок в разделах
+    -- (структура, доступы, вооружение) не влезала на 1560 px.
+    f:SetSize(math.Clamp(ScrW() * 0.95, 1280, 1920), math.Clamp(ScrH() * 0.92, 760, 1120))
     f:Center()
     f:SetTitle("")
     f:SetDraggable(true)
@@ -1035,47 +1037,75 @@ function UI.Open(requestedFaction)
         deptScroll:Dock(FILL)
         deptScroll:DockMargin(10, 42, 10, 50)
 
+        --[[ Карточка отдела 19.08: кнопки больше НЕ расставляются абсолютными
+             координатами от ширины панели (при сборке она ещё 0 — кнопки
+             улетали за край). Теперь шапка отдела и строка подотдела —
+             докнутые ряды, кнопки прижаты вправо и всегда влезают.
+             Добавлено редактирование ТЕГА отдела и подотдела: именно эти теги
+             печатаются в /fr, /frb, /dep, /d, /depb, /db. ]]
         for _, dKey in ipairs(fac.Departments or {}) do
             local dDisp = GRM.Factions.DepartmentDisplayName(fac, dKey)
+            local dTag  = GRM.Factions.DepartmentTag and GRM.Factions.DepartmentTag(fac, dKey) or ""
             local subList = GRM.Factions.GetSubdepartments(fac, dKey)
 
             local dCard = vgui.Create("DPanel", deptScroll)
             dCard:Dock(TOP)
             dCard:DockMargin(0, 0, 0, 8)
-            dCard:SetTall(46 + #subList * 34)
+            dCard:SetTall(52 + #subList * 34)
             dCard.Paint = function(self, w, h)
                 draw.RoundedBox(6, 0, 0, w, h, Color(30, 38, 52, 230))
                 surface.SetDrawColor(C.borderLight.r, C.borderLight.g, C.borderLight.b, 100)
                 surface.DrawOutlinedRect(0, 0, w, h)
-                draw.SimpleText(dDisp, "GRMFac_Sub", 14, 18, C.text)
-                draw.SimpleText("[" .. dKey .. "]", "GRMFac_Small", 18 + surface.GetTextSize(dDisp) + 8, 19, C.dim)
             end
 
-            local dBtnAddSub = mkBtn(dCard, "+ Подотдел", C.teal, C.accentHover, function()
+            local dHead = vgui.Create("DPanel", dCard)
+            dHead:Dock(TOP)
+            dHead:SetTall(34)
+            dHead:DockMargin(8, 8, 8, 0)
+            dHead:SetPaintBackground(false)
+            dHead.Paint = function(_, w, h)
+                local caption = dDisp .. "  [" .. dKey .. "]"
+                draw.SimpleText(caption, "GRMFac_Sub", 6, h / 2, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                local tagText = dTag ~= "" and ("тег: " .. dTag) or "тег не задан"
+                draw.SimpleText(tagText, "GRMFac_Small", 10 + surface.GetTextSize(caption) + 10, h / 2,
+                    dTag ~= "" and C.gold or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
+
+            local dBtnDel = mkBtn(dHead, "✕", C.red, C.redHover, function()
+                Derma_Query("Удалить отдел «" .. dDisp .. "»?", "Подтверждение", "Удалить", function()
+                    sendAction("removeDepartment", { isSA and facName or dKey, isSA and dKey or nil }, refreshView)
+                end, "Отмена")
+            end)
+            dBtnDel:Dock(RIGHT) dBtnDel:SetWide(30) dBtnDel:DockMargin(6, 3, 0, 3)
+
+            local dBtnRename = mkBtn(dHead, "Переименовать", C.cardLight, C.cardHover, function()
+                promptInput("Новое название отдела", dDisp, function(val)
+                    sendAction("renameDepartment", { isSA and facName or dKey, isSA and dKey or val, isSA and val or nil }, refreshView)
+                end)
+            end)
+            dBtnRename:Dock(RIGHT) dBtnRename:SetWide(130) dBtnRename:DockMargin(6, 3, 0, 3)
+
+            local dBtnTag = mkBtn(dHead, "Тег в рацию", C.gold, C.cardHover, function()
+                promptInput("Тег отдела для /fr и /dep (пусто — убрать)", dTag, function(val)
+                    sendAction("setDepartmentTag", { isSA and facName or dKey, isSA and dKey or val, isSA and val or nil }, refreshView)
+                end)
+            end)
+            dBtnTag:Dock(RIGHT) dBtnTag:SetWide(110) dBtnTag:DockMargin(6, 3, 0, 3)
+
+            local dBtnAddSub = mkBtn(dHead, "+ Подотдел", C.teal, C.accentHover, function()
                 promptInput("Системный ключ подотдела (eng)", "sub_1", function(subKey)
                     promptInput("Публичное название подотдела (RU)", "1-й Взвод", function(subName)
-                        promptInput("Тактический тег в рацию (например [ППС-1])", "[ППС-1]", function(subTag)
+                        promptInput("Тег подотдела в рацию (например ППС-1)", "", function(subTag)
                             sendAction("addSubdepartment", { isSA and facName or dKey, isSA and dKey or subKey, isSA and subKey or subName, isSA and subName or subTag, isSA and subTag or 0, isSA and 0 or nil }, refreshView)
                         end)
                     end)
                 end)
-            end); dBtnAddSub:SetSize(96, 26); dBtnAddSub:SetPos(right:GetWide() - 250, 10)
-
-            local dBtnRename = mkBtn(dCard, "Переименовать", C.cardLight, C.cardHover, function()
-                promptInput("Новое название отдела", dDisp, function(val)
-                    sendAction("renameDepartment", { isSA and facName or dKey, isSA and dKey or val, isSA and val or nil }, refreshView)
-                end)
-            end); dBtnRename:SetSize(110, 26); dBtnRename:SetPos(right:GetWide() - 148, 10)
-
-            local dBtnDel = mkBtn(dCard, "✕", C.red, C.redHover, function()
-                Derma_Query("Удалить отдел «" .. dDisp .. "»?", "Подтверждение", "Удалить", function()
-                    sendAction("removeDepartment", { isSA and facName or dKey, isSA and dKey or nil }, refreshView)
-                end, "Отмена")
-            end); dBtnDel:SetSize(28, 26); dBtnDel:SetPos(right:GetWide() - 34, 10)
+            end)
+            dBtnAddSub:Dock(RIGHT) dBtnAddSub:SetWide(110) dBtnAddSub:DockMargin(6, 3, 0, 3)
 
             local subContainer = vgui.Create("DPanel", dCard)
             subContainer:Dock(FILL)
-            subContainer:DockMargin(16, 42, 8, 4)
+            subContainer:DockMargin(20, 4, 8, 6)
             subContainer:SetPaintBackground(false)
 
             for _, sub in ipairs(subList) do
@@ -1085,23 +1115,32 @@ function UI.Open(requestedFaction)
                 subRow:DockMargin(0, 2, 0, 0)
                 subRow.Paint = function(self, w, h)
                     draw.RoundedBox(4, 0, 0, w, h, Color(22, 28, 38, 220))
-                    local tag = sub.tag ~= "" and (" " .. sub.tag) or ""
+                    local tag = (sub.tag ~= "") and ("  •  тег: " .. sub.tag) or "  •  тег не задан"
                     draw.SimpleText(sub.name .. tag, "GRMFac_Normal", 10, h / 2, C.teal, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                     local quotaText = sub.quota > 0 and ("лимит: " .. tostring(sub.quota)) or "без лимита"
-                    draw.SimpleText("[" .. sub.id .. " • " .. quotaText .. "]", "GRMFac_Small", w - 150, h / 2, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                    draw.SimpleText("[" .. sub.id .. " • " .. quotaText .. "]", "GRMFac_Small", w - 250, h / 2, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
                 end
-
-                local sBtnRename = mkBtn(subRow, "Имя", C.cardLight, C.cardHover, function()
-                    promptInput("Новое название подотдела", sub.name, function(val)
-                        sendAction("renameSubdepartment", { isSA and facName or sub.id, isSA and sub.id or val, isSA and val or nil }, refreshView)
-                    end)
-                end); sBtnRename:SetSize(46, 22); sBtnRename:SetPos(right:GetWide() - 140, 4)
 
                 local sBtnDel = mkBtn(subRow, "✕", C.red, C.redHover, function()
                     Derma_Query("Удалить подотдел «" .. sub.name .. "»?", "Подтверждение", "Удалить", function()
                         sendAction("removeSubdepartment", { isSA and facName or sub.id, isSA and sub.id or nil }, refreshView)
                     end, "Отмена")
-                end); sBtnDel:SetSize(24, 22); sBtnDel:SetPos(right:GetWide() - 88, 4)
+                end)
+                sBtnDel:Dock(RIGHT) sBtnDel:SetWide(26) sBtnDel:DockMargin(4, 4, 6, 4)
+
+                local sBtnTag = mkBtn(subRow, "Тег", C.gold, C.cardHover, function()
+                    promptInput("Тег подотдела для /fr и /dep (пусто — убрать)", sub.tag, function(val)
+                        sendAction("setSubdepartmentTag", { isSA and facName or sub.id, isSA and sub.id or val, isSA and val or nil }, refreshView)
+                    end)
+                end)
+                sBtnTag:Dock(RIGHT) sBtnTag:SetWide(52) sBtnTag:DockMargin(4, 4, 0, 4)
+
+                local sBtnRename = mkBtn(subRow, "Имя", C.cardLight, C.cardHover, function()
+                    promptInput("Новое название подотдела", sub.name, function(val)
+                        sendAction("renameSubdepartment", { isSA and facName or sub.id, isSA and sub.id or val, isSA and val or nil }, refreshView)
+                    end)
+                end)
+                sBtnRename:Dock(RIGHT) sBtnRename:SetWide(52) sBtnRename:DockMargin(4, 4, 0, 4)
             end
         end
 

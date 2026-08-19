@@ -388,7 +388,7 @@ if SERVER then
                             zoneRadius = 170, zoneName = "Маршрут вывоза отходов",
                         }
                     else
-                        local reason=#bins==0 and"Нет связанных точек сбора и физических мусорок."or(#dumps==0 and"Не установлена отдельная точка свалки."or"Маршрут мусоровоза ещё не готов.")
+                        local reason=#bins==0 and"Не установлено ни одной точки маршрута мусоровоза (/jobs_admin)."or(#dumps==0 and"Не установлена отдельная точка свалки."or"Маршрут мусоровоза ещё не готов.")
                         offer={tplId=tid,title=tpl.title,desc=reason,jtype=tpl.jtype,needVehicle=true,dist=0,reward=0,timeSec=0,target=cpos,zoneRadius=170,zoneName="Требуется настройка маршрута",blockedReason=reason}
                     end
                 elseif tid=="taxi"then
@@ -539,6 +539,10 @@ if SERVER then
         local sd = sid64(ply)
         local j = JB.Active[sd]
         local st = JB.StatsFor(sd) or { done = 0, earned = 0 }
+        -- Флаг для клавиши G на клиенте: у мусоровоза G собирает пакет даже
+        -- там, где физического контейнера на точке нет.
+        local isGarbage = (istable(j) and (j.tplId == "garbage" or j.jtype == "garbage")) and true or false
+        if ply.SetNWBool and ply:GetNWBool("GRM_GarbageJob", false) ~= isGarbage then ply:SetNWBool("GRM_GarbageJob", isGarbage) end
         net.Start(NET_MYSTATE)
             net.WriteBool(istable(j))
             if istable(j) then
@@ -756,7 +760,7 @@ if SERVER then
                                 elseif pp:DistToSqr(gv)<rad*rad and IsValid(veh)and(tonumber(veh.GRM_GarbageLoad)or 0)>0 then
                                     j.garbageDelivered=tonumber(veh.GRM_GarbageLoad)or 0;veh.GRM_GarbageLoad=0;veh:SetNWInt("GRM_GarbageLoad",0);JB.Complete(ply)
                                 end
-                            elseif(j._hintT or 0)<CurTime()then j._hintT=CurTime()+12;if GRM.Notify then GRM.Notify(ply,"Остановитесь у отмеченной мусорки, выйдите, найдите отходы и загрузите коробку клавишей G сзади мусоровоза.",255,210,100)end end
+                            elseif(j._hintT or 0)<CurTime()then j._hintT=CurTime()+12;if GRM.Notify then GRM.Notify(ply,"Остановитесь у отмеченной точки, выйдите и нажмите E на мусорке (или G прямо на точке, если контейнера нет), затем загрузите пакет клавишей G сзади мусоровоза.",255,210,100)end end
                         elseif j.jtype=="taxi"and j.taxiStandby and JB.TickTaxiJob then
                             JB.TickTaxiJob(ply,j)
                         elseif j.jtype == "taxi" then

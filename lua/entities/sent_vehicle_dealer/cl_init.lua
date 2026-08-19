@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Vehicle Dealer — клиент v4.0.0
+    GRM Vehicle Dealer — клиент v4.1.0
 
     Что изменилось против v3.2:
       • Единый стиль GRM (палитра и шрифты как в /factions): тёмный корпус,
@@ -240,6 +240,7 @@ net.Receive("GRM_VD_Open", function()
     local name    = net.ReadString()
     local catalog = net.ReadTable() or {}
     local garage  = net.ReadTable() or {}
+    local activeVeh = net.ReadTable() or {}
 
     if IsValid(GRM.VehicleDealerFrame) then GRM.VehicleDealerFrame:Remove() end
 
@@ -383,6 +384,41 @@ net.Receive("GRM_VD_Open", function()
         return row
     end
 
+    --[[ v4.1.0 (заказ владельца): раздел «На карте» — убрать транспорт прямо
+         из меню дилера. Раньше кнопка «Убрать Т/С» жила только в C-меню, и
+         служебную машину (у неё нет записи гаража) убрать было нечем. ]]
+    local function activeCard(parent, v)
+        local row = vgui.Create("DPanel", parent)
+        row:Dock(TOP)
+        row:SetTall(110)
+        row:DockMargin(0, 0, 6, 8)
+        row.Paint = function(_, w, h)
+            draw.RoundedBox(8, 0, 0, w, h, C.card)
+            surface.SetDrawColor(C.border)
+            surface.DrawOutlinedRect(0, 0, w, h)
+            draw.SimpleText(v.name or v.class, "GRMVD_Head", 124, 16, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            draw.SimpleText(tostring(v.class or ""), "GRMVD_Small", 124, 42, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            draw.SimpleText(tostring(v.ownershipName or "Транспорт") .. "  •  " .. tostring(v.distance or 0) .. " юн.",
+                "GRMVD_Body", 124, 70, v.personal and C.gold or C.teal, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        end
+        local m = vgui.Create("DModelPanel", row)
+        m:SetPos(9, 9)
+        m:SetSize(104, 92)
+        preview(m, v.model)
+
+        local rm = grmButton(row, v.personal and "УБРАТЬ (В ГАРАЖ)" or "УБРАТЬ ТРАНСПОРТ", C.red)
+        rm:Dock(RIGHT)
+        rm:SetWide(210)
+        rm:DockMargin(6, 34, 12, 34)
+        rm.DoClick = function()
+            Derma_Query(v.personal
+                    and "Убрать транспорт с карты? Он вернётся в гараж."
+                    or "Убрать служебный транспорт с карты?",
+                "Транспорт", "Убрать", function() send(dealer, "remove", v.id) end, "Отмена")
+        end
+        return row
+    end
+
     local function render()
         list:Clear()
         local q = string.lower(string.Trim(search:GetValue() or ""))
@@ -390,13 +426,17 @@ net.Receive("GRM_VD_Open", function()
         for _, v in ipairs(currentRows) do
             if matches(v, q) then
                 shown = shown + 1
-                if currentMode == "garage" then garageCard(list, v) else catalogCard(list, v) end
+                if currentMode == "garage" then garageCard(list, v)
+                elseif currentMode == "active" then activeCard(list, v)
+                else catalogCard(list, v) end
             end
         end
         if shown == 0 then
             emptyNote(list, currentMode == "garage"
                 and "Гараж пуст. Личный транспорт появится здесь после покупки."
-                or "В этом разделе нет доступного транспорта.")
+                or (currentMode == "active"
+                    and "На карте нет вашего транспорта."
+                    or "В этом разделе нет доступного транспорта."))
         end
     end
     search.OnChange = render
@@ -428,6 +468,7 @@ net.Receive("GRM_VD_Open", function()
 
     nav:AddCaption("Мой транспорт")
     nav:AddSection("garage", "Гараж", #garage, function() showRows(garage, "garage") end)
+    nav:AddSection("active", "На карте (убрать)", #activeVeh, function() showRows(activeVeh, "active") end)
 
     if nav.Buttons["all"] then nav.Buttons["all"]:DoClick() end
 end)
