@@ -81,5 +81,13 @@ ok(has(ui, 'action = "cat_flag"') and has(ui, 'action = "cat_member"'), "изм�
 ok(has(ui, "НАСТРОИТЬ КАТЕГОРИИ"), "из администрирования есть переход в редактор")
 ok(has(ui, "Отметьте, кому дверь открывается помимо владельца."), "раздел доступов объясняет себя")
 
+print("\n=== 6. ПРОКРУТКА ОКНА ===")
+ok(has(ui, "local baseVScroll = content.OnVScroll") and has(ui, "if baseVScroll then baseVScroll(pnl, offset) end"),
+    "OnVScroll не подменяется: холст двигает оригинал, мы только запоминаем позицию")
+ok(not ui:find("content%.OnVScroll = function%(_, offset%) lastScroll"),
+    "старая подмена (полоса едет — страница стоит) убрана")
+ok(has(ui, "if key ~= lastTab then lastScroll = 0 end"),
+    "смена раздела не тянет за собой чужую позицию прокрутки")
+
 print(("\nDOOR MENU UI: %d/%d, провалов: %d"):format(total - fails, total, fails))
 if fails > 0 then os.exit(1) end

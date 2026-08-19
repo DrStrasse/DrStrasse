@@ -197,6 +197,7 @@ function D.OpenMenu(ent, d, cats, facTree, canAdmin)
 
     local tabs, tabButtons = {}, {}
     local function selectTab(key)
+        if key ~= lastTab then lastScroll = 0 end
         lastTab = key
         content:Clear()
         if IsValid(content.VBar) then content.VBar:SetScroll(0) end
@@ -505,12 +506,25 @@ function D.OpenMenu(ent, d, cats, facTree, canAdmin)
         end)
     end
 
+    --[[ ЗАПОМИНАНИЕ ПРОКРУТКИ.
+         OnVScroll у DScrollPanel — это НЕ уведомление, а сама механика:
+         именно она двигает холст (pnlCanvas:SetPos). Своя функция поверх неё
+         означала «полоса едет, страница стоит» — как и было во вкладке
+         «Категории». Поэтому оригинал вызываем первым, а offset только
+         запоминаем. ]]
+    local baseVScroll = content.OnVScroll
+    content.OnVScroll = function(pnl, offset)
+        if baseVScroll then baseVScroll(pnl, offset) end
+        lastScroll = math.abs(tonumber(offset) or 0)
+    end
+
     if not tabs[lastTab] then lastTab = "overview" end
     selectTab(lastTab)
-    if lastScroll > 0 and IsValid(content.VBar) then
-        timer.Simple(0, function() if IsValid(content) and IsValid(content.VBar) then content.VBar:SetScroll(lastScroll) end end)
+    if lastScroll > 0 then
+        timer.Simple(0, function()
+            if IsValid(content) and IsValid(content.VBar) then content.VBar:SetScroll(lastScroll) end
+        end)
     end
-    content.OnVScroll = function(_, offset) lastScroll = math.abs(offset or 0) end
 end
 
 net.Receive(NET_OPEN, function()
