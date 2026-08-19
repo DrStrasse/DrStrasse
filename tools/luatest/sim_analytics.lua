@@ -85,5 +85,21 @@ ok(panel:find("local function buildAnalytics", 1, true) ~= nil, "раздел с
 ok(panel:find('tool("Профиль хуков (10 с)"', 1, true) ~= nil, "кнопка профиля хуков")
 ok(panel:find('tool("Двери"', 1, true) ~= nil, "кнопка отчёта по дверям")
 
+print("\n=== 7. МЕТКА ВЗЛОМА ===")
+local mm = read("lua/autorun/sh_grm_minimap.lua")
+local alarm = read("lua/autorun/sh_grm_alarm_integration.lua")
+ok(mm:find("expiresEpoch = os.time()", 1, true) ~= nil,
+    "срок жизни метки считается в единой шкале os.time()")
+ok(mm:find("local alive = epoch and (epoch > os.time())", 1, true) ~= nil,
+    "клиент проверяет срок по своему os.time(), а не по чужому CurTime")
+ok(mm:find('timer.Create("GRM_Minimap_TempSweep"', 1, true) ~= nil,
+    "сторож раз в 5 секунд убирает просроченные метки")
+ok(mm:find("if removed > 0 then send(nil) end", 1, true) ~= nil,
+    "обновление рассылается, только когда что-то реально удалено")
+ok(alarm:find('GRM.Minimap.AddTempPoint("ВЗЛОМ/ВМЕШАТЕЛЬСТВО", pos, 60)', 1, true) ~= nil,
+    "метка взлома живёт 60 секунд")
+ok(alarm:find('GRM.Minimap.RemoveTempPoint("ВЗЛОМ/ВМЕШАТЕЛЬСТВО")', 1, true) ~= nil,
+    "повторный взлом не копит метки, а переставляет одну")
+
 print(("\nANALYTICS: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)

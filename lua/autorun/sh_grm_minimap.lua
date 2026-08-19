@@ -59,12 +59,43 @@ if SERVER then
     function MM.SendTo(ply)
         if IsValid(ply) then send(ply) end
     end
+
+    --[[ Истёкшие временные метки раньше убирались ТОЛЬКО при следующей
+         отправке карты: если после события карту никто не запрашивал, метка
+         оставалась и на сервере, и на экранах. Теперь сторож раз в 5 секунд
+         вычищает просроченное и рассылает обновление — но только когда
+         реально что-то удалил. ]]
+    timer.Create("GRM_Minimap_TempSweep", 5, 0, function()
+        local points = MM.Data and MM.Data.points
+        if not istable(points) or #points == 0 then return end
+        local now, epochNow = CurTime(), os.time()
+        local removed = 0
+        for i = #points, 1, -1 do
+            local p = points[i]
+            if p and p.temp then
+                local expired = (tonumber(p.expiresEpoch) and tonumber(p.expiresEpoch) <= epochNow)
+                    or (not p.expiresEpoch and (tonumber(p.expires) or 0) <= now)
+                if expired then
+                    table.remove(points, i)
+                    removed = removed + 1
+                end
+            end
+        end
+        if removed > 0 then send(nil) end
+    end)
     function MM.AddTempPoint(name, pointPos, duration)
         local p = {
             id = nextID("temp"), name = string.sub(string.Trim(name or "Метка"), 1, 64),
             pos = { x = pointPos.x, y = pointPos.y, z = pointPos.z },
             radius = 0, capture = 0, capturing = "", owner = "", allowedFactions = {},
-            temp = true, expires = CurTime() + (tonumber(duration) or 120),
+            -- ВАЖНО: срок жизни считаем в ЕДИНОЙ шкале os.time().
+            -- Раньше писался серверный CurTime, а клиент сравнивал его со
+            -- СВОИМ CurTime (время с момента коннекта) — у только что зашедшего
+            -- игрока метка «не истекала» и висела часами. Поле expires
+            -- оставлено для совместимости с серверной чисткой.
+            temp = true,
+            expires = CurTime() + (tonumber(duration) or 120),
+            expiresEpoch = os.time() + math.max(5, math.floor(tonumber(duration) or 120)),
         }
         MM.Data.points[#MM.Data.points + 1] = p
         return p.id
@@ -403,7 +434,9 @@ else
         if not IsValid(lp) then return end
         local now = CurTime()
         for _, point in ipairs(data.points or {}) do
-            if point and point.temp and not reachedTemp[tostring(point.id)] and (tonumber(point.expires) or 0) > now then
+            local epoch = tonumber(point and point.expiresEpoch)
+            local alive = epoch and (epoch > os.time()) or ((tonumber(point and point.expires) or 0) > now)
+            if point and point.temp and not reachedTemp[tostring(point.id)] and alive then
                 local target = Vector(point.pos.x, point.pos.y, point.pos.z or lp:GetPos().z)
                 local screen = target:ToScreen()
                 local distance = math.floor(lp:GetPos():Distance(target))

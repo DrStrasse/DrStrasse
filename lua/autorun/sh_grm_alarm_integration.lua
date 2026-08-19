@@ -68,7 +68,10 @@ function AN.NotifyFactions(text, pos)
     end
     -- метка на мини-карте (временный маркер тревоги) — если есть API
     if pos and GRM.Minimap and GRM.Minimap.AddTempPoint then
-        GRM.Minimap.AddTempPoint("ВЗЛОМ/ВМЕШАТЕЛЬСТВО", pos, 90)
+        -- Метка взлома живёт минуту: дальше она только мешает и путает
+        -- патрули (заказ владельца 19.08).
+        if GRM.Minimap.RemoveTempPoint then GRM.Minimap.RemoveTempPoint("ВЗЛОМ/ВМЕШАТЕЛЬСТВО") end
+        GRM.Minimap.AddTempPoint("ВЗЛОМ/ВМЕШАТЕЛЬСТВО", pos, 60)
         if GRM.Minimap.SendTo then
             for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
                 if IsValid(p) then GRM.Minimap.SendTo(p) end

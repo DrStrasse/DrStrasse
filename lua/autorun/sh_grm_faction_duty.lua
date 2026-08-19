@@ -108,43 +108,52 @@ if SERVER then
         return best, bestD
     end
 
-    --[[ Убрать клонов: если в одной точке несколько диспетчеров, оставляем
-         одного. Приоритет — тот, у кого уже есть настроенная фракция, затем
-         закреплённый пермом, затем самый «старый» (меньший EntIndex). ]]
+    --[[ ДЕДУП ТОЛЬКО НАСТОЯЩИХ КОПИЙ.
+         Соседних диспетчеров НЕ трогаем: два поста разных организаций могут
+         стоять вплотную, это нормальная расстановка, и удалять один из них
+         нельзя. Клоном считается только пара с ОДИНАКОВЫМ идентификатором
+         станции — то есть копия, которую породило прежнее восстановление.
+         Если идентификаторы разные, не делаем ничего. ]]
     function FD.DedupeStations()
         local list = ents.FindByClass("grm_duty_npc")
-        local removed = 0
-        for i = 1, #list do
-            local a = list[i]
-            if IsValid(a) then
-                for j = i + 1, #list do
-                    local b = list[j]
-                    if IsValid(b) and dist2({ x = a:GetPos().x, y = a:GetPos().y, z = a:GetPos().z }, b:GetPos())
-                        <= (STATION_DEDUPE * STATION_DEDUPE) then
-                        local function score(ent)
+        local seen, removed = {}, 0
+
+        for _, ent in ipairs(list) do
+            if IsValid(ent) then
+                local id = tostring(ent.GRMDutyID or ent:GetNWString("GRM_DutyID", ""))
+                if id ~= "" then
+                    local keep = seen[id]
+                    if not IsValid(keep) then
+                        seen[id] = ent
+                    else
+                        -- Из копии и оригинала оставляем настроенного и
+                        -- закреплённого пермом.
+                        local function score(e)
                             local n = 0
-                            if tostring(ent.GRMDutyFaction or ent:GetNWString("GRM_DutyFaction", "")) ~= "" then n = n + 10 end
-                            if GRM.Perm and GRM.Perm.IsPerm and GRM.Perm.IsPerm(ent) then n = n + 5 end
-                            return n - (ent:EntIndex() / 100000)
+                            if tostring(e.GRMDutyFaction or e:GetNWString("GRM_DutyFaction", "")) ~= "" then n = n + 10 end
+                            if GRM.Perm and GRM.Perm.IsPerm and GRM.Perm.IsPerm(e) then n = n + 5 end
+                            return n - (e:EntIndex() / 100000)
                         end
-                        local drop = (score(a) >= score(b)) and b or a
-                        local keep = (drop == b) and a or b
-                        -- Настройку не теряем: переносим на выжившего.
-                        if keep.ApplyStationConfig and drop.StationConfig then
+                        local drop = (score(keep) >= score(ent)) and ent or keep
+                        local stay = (drop == ent) and keep or ent
+                        if stay.ApplyStationConfig and drop.StationConfig then
                             local cfg = drop:StationConfig()
                             if tostring(cfg.faction or "") ~= ""
-                                and tostring(keep.GRMDutyFaction or "") == "" then
-                                keep:ApplyStationConfig(cfg)
+                                and tostring(stay.GRMDutyFaction or "") == "" then
+                                stay:ApplyStationConfig(cfg)
                             end
                         end
+                        seen[id] = stay
                         drop:Remove()
                         removed = removed + 1
-                        if drop == a then break end
                     end
                 end
             end
         end
-        if removed > 0 then print(("[GRM Duty] убрано дублирующих диспетчеров: %d"):format(removed)) end
+
+        if removed > 0 then
+            print(("[GRM Duty] убрано копий с одинаковым идентификатором: %d"):format(removed))
+        end
         return removed
     end
 
@@ -281,10 +290,27 @@ if SERVER then
                 taken[target] = true
                 restored = restored + 1
             else
-                -- Создаём только если в точке ВООБЩЕ никого нет: перм-система
-                -- могла поднять диспетчера сама, и второй здесь не нужен.
-                local anyNear = nearestNPC(row.pos, STATION_MATCH, existing)
-                if not IsValid(anyNear) then
+                --[[ Диспетчера создаём, только если его действительно нет.
+                     Соседний пост ЧУЖОЙ организации не помеха: у него свой
+                     идентификатор и своя запись, мы просто встанем рядом —
+                     так и было задумано. А вот ненастроенный NPC ровно в
+                     нашей точке — это наш же диспетчер, потерявший
+                     идентификатор: забираем его, а не плодим копию. ]]
+                local orphan = nil
+                for _, ent in ipairs(existing) do
+                    if IsValid(ent) and not taken[ent]
+                        and dist2(row.pos, ent:GetPos()) <= (STATION_DEDUPE * STATION_DEDUPE)
+                        and tostring(ent.GRMDutyID or ent:GetNWString("GRM_DutyID", "")) == "" then
+                        orphan = ent
+                        break
+                    end
+                end
+
+                if IsValid(orphan) then
+                    target = orphan
+                    taken[target] = true
+                    restored = restored + 1
+                else
                     target = ents.Create("grm_duty_npc")
                     if IsValid(target) then
                         -- Модель ставим ДО Spawn, иначе Initialize возьмёт

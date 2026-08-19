@@ -402,6 +402,11 @@ if SERVER then
 
     local function broadcastExt()
         normalizeExtDefaults()
+        -- Расширенные настройки организаций — второй по объёму пакет после
+        -- снимка фракций (~10 КБ). Шлём частями, чтобы не занимать канал.
+        if GRM.Net and GRM.Net.Stream then
+            if GRM.Net.Stream("factions.ext", FactionsExt, nil, { chunk = 6144, interval = 0.05 }) then return end
+        end
         net.Start(NET_EXT_SYNC)
             net.WriteTable(FactionsExt)
         net.Broadcast()
@@ -2081,6 +2086,14 @@ if CLIENT then
     net.Receive(NET_EXT_SYNC, function()
         FactionsExtData = net.ReadTable() or {}
     end)
+
+    -- Тот же снимок, пришедший частями.
+    if GRM.Net and GRM.Net.Receive then
+        GRM.Net.Receive("factions.ext", function(data)
+            FactionsExtData = istable(data) and data or {}
+            hook.Run("GRM_FactionExtUpdated", FactionsExtData)
+        end)
+    end
 
     net.Receive(NET_EXT_CURFEW, function()
         CurfewState.active = net.ReadBool()

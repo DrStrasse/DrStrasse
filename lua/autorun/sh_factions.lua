@@ -1198,8 +1198,19 @@ if SERVER then
     end
 
     sendFactionDataTo = function(ply)
+        -- Первичный снимок весит десятки килобайт. Одним пакетом он занимает
+        -- канал целиком и даёт рывок; шлём частями через GRM.Net.Stream, а
+        -- прежний одноразовый путь оставляем фолбэком.
+        local data = buildSyncData()
+        if GRM.Net and GRM.Net.Stream then
+            local ok = GRM.Net.Stream("factions.full", data, { ply }, { chunk = 8192, interval = 0.05 })
+            if ok then
+                sendCharacterChoices(ply)
+                return
+            end
+        end
         net.Start(NET_SEND_DATA)
-        net.WriteTable(buildSyncData())
+        net.WriteTable(data)
         net.Send(ply)
         sendCharacterChoices(ply)
     end
@@ -1849,6 +1860,15 @@ if CLIENT then
          mode = "full"   — заменяем запись целиком;
          mode = "public" — обновляем публичную часть (название, тэг, цвет),
                            не затирая уже известный состав. ]]
+    -- Полный снимок, пришедший частями.
+    if GRM.Net and GRM.Net.Receive then
+        GRM.Net.Receive("factions.full", function(data)
+            FactionsData = installClientFactionAliases(istable(data) and data or {})
+            if refreshAllUI then pcall(refreshAllUI, FactionsData) end
+            hook.Run("GRM_FactionUIRefreshed", FactionsData)
+        end)
+    end
+
     net.Receive(NET_SYNC_DELTA, function()
         local payload = net.ReadTable() or {}
         FactionsData = istable(FactionsData) and FactionsData or {}

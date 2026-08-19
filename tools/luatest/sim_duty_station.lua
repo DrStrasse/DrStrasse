@@ -71,10 +71,16 @@ print("\n=== 5. КЛОНЫ И «НАСТРОЙКА РАСПОЛЗЛАСЬ НА �
 ok(duty:find("local STATION_MATCH = 192", 1, true) ~= nil,
     "радиус узнавания станции увеличен: после DropToFloor диспетчер уезжает по Z")
 ok(duty:find("function FD.DedupeStations", 1, true) ~= nil, "есть дедупликация диспетчеров")
+ok(duty:find("Клоном считается только пара с ОДИНАКОВЫМ идентификатором", 1, true) ~= nil,
+    "соседних диспетчеров разных организаций дедуп НЕ трогает")
+ok(duty:find("local id = tostring(ent.GRMDutyID or ent:GetNWString(\"GRM_DutyID\", \"\"))", 1, true) ~= nil,
+    "дедуп работает по идентификатору, а не по расстоянию")
+ok(duty:find("local orphan = nil", 1, true) ~= nil,
+    "ненастроенный NPC в точке подхватывается, а не дублируется")
 ok(duty:find("FD.DedupeStations()", 1, true) ~= nil, "дедуп вызывается при загрузке станций")
 ok(duty:find('concommand.Add("grm_duty_dedupe"', 1, true) ~= nil, "ручная команда очистки клонов")
-ok(duty:find("local anyNear = nearestNPC(row.pos, STATION_MATCH, existing)", 1, true) ~= nil,
-    "новый диспетчер создаётся, только если в точке никого нет (перм мог поднять своего)")
+ok(duty:find("Соседний пост ЧУЖОЙ организации не помеха", 1, true) ~= nil,
+    "рядом стоящий пост другой организации не мешает восстановлению")
 ok(duty:find("taken[target] = true", 1, true) ~= nil,
     "одна станция — один диспетчер: занятый NPC не достаётся другой записи")
 ok(duty:find("local function stationID", 1, true) ~= nil, "у станции есть стабильный идентификатор")

@@ -71,4 +71,122 @@ function N.Number(value, minimum, maximum, integer)
 end
 
 if SERVER then hook.Add("PlayerDisconnected", "GRM_NetGuard_Cleanup", function(ply) N._buckets[ply] = nil end) end
+-----------------------------------------------------------------------
+-- ПОТОКОВАЯ ПЕРЕДАЧА БОЛЬШИХ ТАБЛИЦ (v1.1.0)
+--
+-- Заказ владельца: большие синхронизации слать не единым пакетом, а
+-- последовательно, частями. Крупный net-пакет (снимок организаций — десятки
+-- килобайт) занимает канал целиком и даёт рывок у всех получателей.
+--
+--   GRM.Net.Stream(name, data, targets[, opts])   — сервер: отправить частями
+--   GRM.Net.Receive(name, function(data) end)     — клиент: получить целиком
+--
+-- opts: chunk (байт в куске, по умолчанию 8192), interval (секунд между
+-- кусками, по умолчанию 0.05 — то есть примерно кусок за тик).
+-----------------------------------------------------------------------
+N.Version = "1.1.0"
+N.Streams = N.Streams or {}          -- имя -> { буферы приёма }
+N._streamSeq = N._streamSeq or 0
+
+local STREAM_CHANNEL = "GRM_Net_Stream"
+
+if SERVER then
+    util.AddNetworkString(STREAM_CHANNEL)
+
+    function N.Stream(name, data, targets, opts)
+        name = tostring(name or "")
+        if name == "" then return false end
+        opts = istable(opts) and opts or {}
+
+        local ok, encoded = pcall(util.TableToJSON, istable(data) and data or {})
+        if not ok or not isstring(encoded) then return false end
+        encoded = util.Compress(encoded) or encoded
+
+        local chunkSize = math.Clamp(math.floor(tonumber(opts.chunk) or 8192), 1024, 32768)
+        local interval = math.Clamp(tonumber(opts.interval) or 0.05, 0, 1)
+
+        N._streamSeq = N._streamSeq + 1
+        local id = N._streamSeq
+        local total = math.max(1, math.ceil(#encoded / chunkSize))
+
+        -- Получателей фиксируем сразу: список игроков может измениться.
+        local list = {}
+        if istable(targets) then
+            for _, ply in ipairs(targets) do if IsValid(ply) then list[#list + 1] = ply end end
+        elseif IsValid(targets) then
+            list[1] = targets
+        end
+        if #list == 0 and targets ~= nil then return false end
+
+        local function sendChunk(index)
+            local alive = {}
+            for _, ply in ipairs(list) do if IsValid(ply) then alive[#alive + 1] = ply end end
+            if #list > 0 and #alive == 0 then return end
+
+            local from = (index - 1) * chunkSize + 1
+            local part = string.sub(encoded, from, from + chunkSize - 1)
+
+            net.Start(STREAM_CHANNEL)
+                net.WriteString(name)
+                net.WriteUInt(id, 16)
+                net.WriteUInt(index, 16)
+                net.WriteUInt(total, 16)
+                net.WriteUInt(#part, 16)
+                net.WriteData(part, #part)
+            if #list > 0 then net.Send(alive) else net.Broadcast() end
+
+            if index < total then
+                if interval <= 0 then
+                    sendChunk(index + 1)
+                else
+                    timer.Simple(interval * index, function() sendChunk(index + 1) end)
+                end
+            end
+        end
+
+        sendChunk(1)
+        return true, total, #encoded
+    end
+end
+
+if CLIENT then
+    local inbox = {}
+    local handlers = {}
+
+    function N.Receive(name, fn)
+        if isstring(name) and isfunction(fn) then handlers[name] = fn end
+    end
+
+    net.Receive(STREAM_CHANNEL, function()
+        local name = net.ReadString()
+        local id = net.ReadUInt(16)
+        local index = net.ReadUInt(16)
+        local total = net.ReadUInt(16)
+        local size = net.ReadUInt(16)
+        local part = net.ReadData(size)
+
+        local key = name .. ":" .. id
+        local box = inbox[key]
+        if not box then
+            box = { parts = {}, total = total, got = 0 }
+            inbox[key] = box
+        end
+        if not box.parts[index] then
+            box.parts[index] = part
+            box.got = box.got + 1
+        end
+
+        if box.got < box.total then return end
+        inbox[key] = nil
+
+        local encoded = table.concat(box.parts)
+        local raw = util.Decompress(encoded) or encoded
+        local ok, data = pcall(util.JSONToTable, raw, false, true)
+        if not ok or not istable(data) then return end
+
+        local fn = handlers[name]
+        if fn then pcall(fn, data) end
+    end)
+end
+
 print("[GRM Net] guard v" .. N.Version .. " loaded")

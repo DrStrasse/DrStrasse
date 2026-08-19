@@ -60,5 +60,22 @@ ok(s:find("function broadcastFactionData()", 1, true) ~= nil, "внешний к
 ok(s:find("if not anyFull and #removed == 0 then", 1, true) ~= nil,
     "если ничего не изменилось — сеть не трогаем вовсе")
 
+print("\n=== 6. ПОТОКОВАЯ ОТПРАВКА ЧАСТЯМИ ===")
+local net_ = read("lua/autorun/sh_04_grm_net.lua")
+local fixes = read("lua/autorun/sh_faction_fixes.lua")
+ok(net_:find("function N.Stream", 1, true) ~= nil, "есть потоковая отправка больших таблиц")
+ok(net_:find("function N.Receive", 1, true) ~= nil, "и приём с обратной сборкой")
+ok(net_:find("util.Compress(encoded)", 1, true) ~= nil, "данные сжимаются перед нарезкой")
+ok(net_:find("local chunkSize = math.Clamp(math.floor(tonumber(opts.chunk) or 8192), 1024, 32768)", 1, true) ~= nil,
+    "размер куска ограничен и настраивается")
+ok(net_:find("timer.Simple(interval * index", 1, true) ~= nil, "куски уходят последовательно, а не залпом")
+ok(net_:find("if #list > 0 and #alive == 0 then return end", 1, true) ~= nil,
+    "если получатели вышли — поток прекращается")
+ok(s:find('GRM.Net.Stream("factions.full"', 1, true) ~= nil, "полный снимок организаций идёт частями")
+ok(s:find('GRM.Net.Receive("factions.full"', 1, true) ~= nil, "клиент собирает снимок обратно")
+ok(fixes:find('GRM.Net.Stream("factions.ext"', 1, true) ~= nil, "расширенные настройки тоже частями")
+ok(fixes:find('GRM.Net.Receive("factions.ext"', 1, true) ~= nil, "и собираются на клиенте")
+ok(s:find("net.Start(NET_SEND_DATA)", 1, true) ~= nil, "старый одноразовый путь остался фолбэком")
+
 print(("\nFACTIONS DELTA: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)
