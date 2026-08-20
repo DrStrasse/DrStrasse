@@ -84,6 +84,8 @@ net.Receive("GRM_CityHall_Open", function()
     local tabs = vgui.Create("DPropertySheet", frame)
     tabs:Dock(FILL) tabs:DockMargin(6, 46, 6, 6)
     if GRM.ServiceOrders and GRM.ServiceOrders.AttachTab then GRM.ServiceOrders.AttachTab(tabs) end
+    -- Вкладка «Госбаза»: тот же /pcboard, что и по команде, одним кодом.
+    if GRM.PCBoard and GRM.PCBoard.AttachTab then GRM.PCBoard.AttachTab(tabs) end
 
     -- ════════════ ВКЛАДКА 1: ВЫДАЧА ЛИЦЕНЗИИ НА БИЗНЕС ════════════
     local issuePnl = vgui.Create("DPanel", tabs)

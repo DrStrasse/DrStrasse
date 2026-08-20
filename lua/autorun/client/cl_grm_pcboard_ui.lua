@@ -35,6 +35,18 @@ surface.CreateFont("GRMPCB_Small", { font = "Roboto", size = 13, weight = 400, e
 local cvWindow = CreateClientConVar("grm_cl_pcboard_window", "0", true, false,
     "Открывать справку госбазы отдельным окном (1) или только в чате (0)")
 
+-- Общая кнопка модуля объявлена ВЫШЕ всех, кто её вызывает: замыкание
+-- не видит local, объявленный ниже по файлу.
+local function mkButton(parent, text, color)
+    local b = vgui.Create("DButton", parent)
+    b:SetText("")
+    b.Paint = function(self, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, self:IsHovered() and Color(color.r + 20, color.g + 20, color.b + 20) or color)
+        draw.SimpleText(text, "GRMPCB_Text", w * 0.5, h * 0.5, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+    return b
+end
+
 -----------------------------------------------------------------------
 -- ВЫВОД СПРАВКИ В ЧАТ
 -----------------------------------------------------------------------
@@ -111,18 +123,121 @@ hook.Add("GRM_PCBoardCard", "GRM_PCBoard_Show", function(card)
 end)
 
 -----------------------------------------------------------------------
--- ВКЛАДКА «ГОСБАЗА» В /factions
+-- ВКЛАДКА «ГОСБАЗА» В СЛУЖЕБНЫХ КОМПЬЮТЕРАХ
 -----------------------------------------------------------------------
-local function mkButton(parent, text, color)
-    local b = vgui.Create("DButton", parent)
-    b:SetText("")
-    b.Paint = function(self, w, h)
-        draw.RoundedBox(6, 0, 0, w, h, self:IsHovered() and Color(color.r + 20, color.g + 20, color.b + 20) or color)
-        draw.SimpleText(text, "GRMPCB_Text", w * 0.5, h * 0.5, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+--- Тот же самый /pcboard, только кнопкой: команда уходит на сервер
+--  консольной командой, никакой второй реализации запроса нет.
+function PB.AttachTab(sheet)
+    if not IsValid(sheet) then return end
+
+    local panel = vgui.Create("DPanel", sheet)
+    panel:SetPaintBackground(false)
+    panel:DockPadding(12, 12, 12, 12)
+
+    local top = vgui.Create("DPanel", panel)
+    top:Dock(TOP)
+    top:SetTall(72)
+    top.Paint = function(_, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, C.card)
+        draw.SimpleText("ГОСУДАРСТВЕННАЯ БАЗА ДАННЫХ", "GRMPCB_Sub", 12, 8, C.gold)
+        draw.SimpleText("Номер (ГР-1042), имя или «авто <номер>». Запрос виден окружающим как РП-действие.",
+            "GRMPCB_Small", 12, 30, C.dim)
     end
-    return b
+
+    local row = vgui.Create("DPanel", top)
+    row:Dock(BOTTOM)
+    row:SetTall(30)
+    row:DockMargin(10, 0, 10, 6)
+    row:SetPaintBackground(false)
+
+    local entry = vgui.Create("DTextEntry", row)
+    entry:Dock(FILL)
+    entry:SetPlaceholderText("ГР-1042 / Ганс Мюллер / авто АА-1234")
+
+    local function query(text)
+        text = string.Trim(tostring(text or ""))
+        if text == "" then
+            RunConsoleCommand("grm_pcboard")
+        else
+            RunConsoleCommand("grm_pcboard", unpack(string.Explode(" ", text)))
+        end
+    end
+
+    local run = mkButton(row, "Пробить", C.accent)
+    run:Dock(RIGHT)
+    run:SetWide(120)
+    run:DockMargin(6, 0, 0, 0)
+    run.DoClick = function() query(entry:GetValue()) end
+    entry.OnEnter = function() query(entry:GetValue()) end
+
+    local mine = mkButton(row, "Моя карточка", C.card)
+    mine:Dock(RIGHT)
+    mine:SetWide(130)
+    mine:DockMargin(6, 0, 0, 0)
+    mine.DoClick = function() RunConsoleCommand("grm_pcboard", "я") end
+
+    local logBtn = mkButton(row, "Журнал", C.card)
+    logBtn:Dock(RIGHT)
+    logBtn:SetWide(100)
+    logBtn:DockMargin(6, 0, 0, 0)
+    logBtn.DoClick = function() RunConsoleCommand("grm_pcboard", "журнал") end
+
+    local scroll = vgui.Create("DScrollPanel", panel)
+    scroll:Dock(FILL)
+    scroll:DockMargin(0, 8, 0, 0)
+
+    local function rebuild(card)
+        scroll:Clear()
+        if not istable(card) then
+            local empty = vgui.Create("DLabel", scroll)
+            empty:Dock(TOP)
+            empty:SetTall(30)
+            empty:SetFont("GRMPCB_Text")
+            empty:SetTextColor(C.dim)
+            empty:SetText("Справка появится здесь после запроса.")
+            return
+        end
+        local head = vgui.Create("DPanel", scroll)
+        head:Dock(TOP)
+        head:SetTall(46)
+        head:DockMargin(0, 0, 0, 8)
+        head.Paint = function(_, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, C.card)
+            draw.SimpleText(tostring(card.title or "—") .. "   " .. tostring(card.cid or ""),
+                "GRMPCB_Sub", 12, 8, C.text)
+            draw.SimpleText(tostring(card.levelName or "") .. " · " ..
+                os.date("%d.%m.%Y %H:%M", card.time or os.time()), "GRMPCB_Small", 12, 28, C.dim)
+        end
+        for _, block in ipairs(card.blocks or {}) do
+            local rows = block.rows or {}
+            local pnl = vgui.Create("DPanel", scroll)
+            pnl:Dock(TOP)
+            pnl:DockMargin(0, 0, 0, 6)
+            pnl:SetTall(28 + #rows * 20)
+            pnl.Paint = function(_, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, C.card)
+                draw.SimpleText(tostring(block.label), "GRMPCB_Sub", 12, 5, C.gold)
+                for i, r in ipairs(rows) do
+                    local y = 26 + (i - 1) * 20
+                    draw.SimpleText(tostring(r[1]), "GRMPCB_Text", 16, y, C.dim)
+                    draw.SimpleText(tostring(r[2]), "GRMPCB_Text", 240, y, C.text)
+                end
+            end
+        end
+    end
+    rebuild(PB.LastCard)
+
+    -- Пока окно терминала открыто, новая справка сама ложится во вкладку.
+    hook.Add("GRM_PCBoardCard", panel, function(_, card) if IsValid(panel) then rebuild(card) end end)
+    panel.OnRemove = function() hook.Remove("GRM_PCBoardCard", panel) end
+
+    sheet:AddSheet("Госбаза", panel, "icon16/report_magnify.png")
+    return panel
 end
 
+-----------------------------------------------------------------------
+-- ВКЛАДКА «ГОСБАЗА» В /factions
+-----------------------------------------------------------------------
 --- Узел настроек: организация целиком или её отдел/подотдел/должность.
 local function nodeOf(cfg, facName, field, key)
     cfg.factions = cfg.factions or {}

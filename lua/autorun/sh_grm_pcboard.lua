@@ -435,6 +435,23 @@ if SERVER then
         end,
     })
 
+    PB.RegisterProvider("marks", {
+        label = "Внешность и особые приметы", order = 45,
+        levels = { medical = true, police = true, military = true, special = true, admin = true },
+        collect = function(ctx)
+            local rows = {}
+            local NP = GRM.Nameplate
+            local marks = (NP and NP.Marks) and NP.Marks(ctx.charKey) or ""
+            if marks ~= "" then rows[#rows + 1] = { "Особые приметы", marks } end
+            if IsValid(ctx.target) and GRM.RPDesc and GRM.RPDesc.Get then
+                local desc = GRM.RPDesc.Get(ctx.target)
+                if isstring(desc) and desc ~= "" then rows[#rows + 1] = { "Внешность", desc } end
+            end
+            if #rows == 0 then return { { "Приметы", "не зафиксированы" } } end
+            return rows
+        end,
+    })
+
     PB.RegisterProvider("military", {
         label = "Воинский учёт", order = 50,
         levels = { military = true, special = true, admin = true },
@@ -796,7 +813,12 @@ if SERVER then
             card.self = opts.self == true
             if not (opts.self or hidden) then meAction(actor, s.meDone) end
             sendCard(actor, card)
-            if not opts.self then writeLog(ctx, level, hidden, opts.how) end
+            if not opts.self then
+                writeLog(ctx, level, hidden, opts.how)
+                -- Сотрудник опознал человека: шапка над головой перестаёт
+                -- показывать ему «Неизвестный» (модуль GRM.Nameplate).
+                hook.Run("GRM_PCBoardIdentified", actor, charKey, level)
+            end
         end
         if delay > 0 then timer.Simple(delay, finish) else finish() end
         return true

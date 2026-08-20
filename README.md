@@ -349,6 +349,14 @@ Weather/Time полностью удалён из активной сборки 
 псевдоним `/пробить`. Справку видит только запросивший, окружающие — РП-действие.
 Уровни допуска настраивает суперадмин во вкладке «Госбаза» меню `/factions`.
 
+**Шапка над головой:** имя незнакомым не видно («Неизвестный»), знакомство даётся
+командами `/представиться` (все рядом), `/паспорт` (тому, на кого смотрите) и
+успешным `/pcboard`; `/знакомые` — список известных лиц, `/приметы` — особые приметы
+(видны только в справке `/pcboard`). Настройки сервера: `grm_nameplate_mode`
+(open/acquainted/docs), `grm_nameplate_cid` (never/gov/all), `grm_nameplate_gov_names`,
+`grm_nameplate_intro_dist`; у игрока — `grm_cl_nameplate`, `grm_cl_nameplate_dist`,
+`grm_cl_nameplate_desc`.
+
 **Номера:** `/id` — свой номер персонажа (ГР-####) и игрока (ИГ-####),
 `/id <номер|имя>` — поиск по реестру (администрация).
 
@@ -364,7 +372,7 @@ Weather/Time полностью удалён из активной сборки 
 `grm_phone_shop_admin`, `grm_phone_shop_add_look`, `grm_phone_shop_reload`,
 `grm_phone_access_reload`, `grm_phone_access_debug`,
 `grm_pcboard`, `grm_pcboard_log`, `grm_pcboard_access`, `grm_pcboard_window`,
-`grm_id`, `grm_id_find`,
+`grm_id`, `grm_id_find`, `grm_introduce`, `grm_showid`, `grm_marks`,
 `grm_money <give|take|set|info|list|save>`, `grm_balance`, `grm_economy <save|list>`
 
 Подробный разбор архитектуры и замеченных проблем — в `ANALYSIS.md`.

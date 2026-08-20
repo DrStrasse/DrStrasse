@@ -77,6 +77,8 @@ net.Receive("GRM_CompMilPolice_Open", function()
     tabs:Dock(FILL)
     tabs:DockMargin(4, 38, 4, 4)
     if GRM.ServiceOrders and GRM.ServiceOrders.AttachTab then GRM.ServiceOrders.AttachTab(tabs) end
+    -- Вкладка «Госбаза»: тот же /pcboard, что и по команде, одним кодом.
+    if GRM.PCBoard and GRM.PCBoard.AttachTab then GRM.PCBoard.AttachTab(tabs) end
 
     -- ══════════════════════════════════════════════════════════════
     -- ВКЛАДКА 1: БАЗА РОЗЫСКА (ДЕЗЕРТИРЫ И ВОЕННЫЕ ПРЕСТУПЛЕНИЯ)
