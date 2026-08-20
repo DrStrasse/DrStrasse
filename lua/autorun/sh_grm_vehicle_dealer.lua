@@ -121,7 +121,11 @@ if SERVER then
  function VD.SaveDealer(ent)if not IsValid(ent)or ent:GetClass()~="sent_vehicle_dealer"then return false,"Дилер не найден"end;if ent:GetDealerID()==""then ent:SetDealerID(makeID("dealer"))end;local records=loadDealers();local rec=VD.DealerRecord(ent);local found=false;for i,r in ipairs(records)do if r.id==rec.id then records[i]=rec;found=true break end end;if not found then records[#records+1]=rec end;VD.Dealers[rec.id]=ent;return saveDealers(records),rec.id end
  function VD.DeleteDealer(ent)local records=loadDealers();for i=#records,1,-1 do if records[i].id==ent:GetDealerID()then table.remove(records,i)end end;VD.Dealers[ent:GetDealerID()]=nil;return saveDealers(records)end
  local function apply(ent,r)
-  ent:SetDealerID(r.id);ent:SetDealerName(r.name or"Дилер транспорта");ent:SetDealerModel(util.IsValidModel(r.model or"")and r.model or"models/Humans/Group01/Male_02.mdl");ent:SetModel(ent:GetDealerModel())
+  ent:SetDealerID(r.id);ent:SetDealerName(r.name or"Дилер транспорта")
+  local model=util.IsValidModel(r.model or"")and r.model or"models/Humans/Group01/Male_02.mdl"
+  -- Модель ставим ТОЛЬКО через ApplyDealerModel: он же возвращает idle,
+  -- иначе после каждой загрузки карты дилер стоял в Т-позе.
+  if ent.ApplyDealerModel then ent:ApplyDealerModel(model)else ent:SetDealerModel(model);ent:SetModel(model)end
   local legacyPoint=vec(r.spawnPos or r.pos);local hasPad=r.hasSpawnZone==true
   local padMin=vec(r.spawnZoneMin or r.spawnPos or r.pos);local padMax=vec(r.spawnZoneMax or r.spawnPos or r.pos)
   -- v3.1.2: точка выдачи (hasSpawn без зоны) больше НЕ превращается в площадку —
@@ -481,7 +485,10 @@ if SERVER then
  net.Receive("GRM_VD_AdminSave",function(_,ply)
   if not IsValid(ply)or not ply:IsSuperAdmin()then return end
   local dealer,data=net.ReadEntity(),net.ReadTable()or{};if not IsValid(dealer)or dealer:GetClass()~="sent_vehicle_dealer"or ply:GetPos():DistToSqr(dealer:GetPos())>600*600 then return end
-  dealer:SetDealerName(tostring(data.name or"Дилер транспорта"):sub(1,64));local model=tostring(data.model or"");if util.IsValidModel(model)then dealer:SetDealerModel(model);dealer:SetModel(model)end
+  dealer:SetDealerName(tostring(data.name or"Дилер транспорта"):sub(1,64));local model=tostring(data.model or"")
+  if util.IsValidModel(model)then
+   if dealer.ApplyDealerModel then dealer:ApplyDealerModel(model)else dealer:SetDealerModel(model);dealer:SetModel(model)end
+  elseif dealer.ApplyIdleAnimation then dealer:ApplyIdleAnimation(true)end
   dealer.VD_Delivery=VD.DeliveryModes[tostring(data.delivery or"")]and tostring(data.delivery)or"dealer"
   dealer.VD_ShowRetrieve=data.showRetrieve~=false
   local available={};for _,v in ipairs(VD.AllVehicleClasses())do available[v.class]=true end;dealer.VD_Vehicles={};for _,e in ipairs(istable(data.vehicles)and data.vehicles or{})do if #dealer.VD_Vehicles>=256 then break end;local class=tostring(e.class or"");if available[class]then dealer.VD_Vehicles[#dealer.VD_Vehicles+1]={class=class,name=tostring(e.name or VD.VehicleInfo(class).name):sub(1,64),price=math.Clamp(math.floor(tonumber(e.price)or 0),0,100000000),category=tostring(e.category or"Транспорт"):sub(1,40),faction=tostring(e.faction or""):sub(1,64),service=VD.EntryKind(e)~="personal",ownershipType=VD.VehicleKinds[tostring(e.ownershipType or"")]and e.ownershipType or(e.service and(e.faction and e.faction~=""and"government"or"public")or"personal")}end end

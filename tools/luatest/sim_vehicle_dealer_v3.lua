@@ -29,4 +29,20 @@ ok(has(tool,"vehicle_dealer_tool_direction")and has(tool,"placeSpawnPoint")and h
 ok(has(tool,"ТОЧКА: ")and has(tool,"высота "),"point marker and lift label drawn")
 ok(has(tool,"По взгляду при установке")and has(tool,"Влево от дилера")and has(tool,"Вправо от дилера"),"direction choices: look/left/right")
 ok(has(core,"ent:SetPos(base+Vector(0,0,lift))")and has(core,"b2+Vector(0,0,lift)"),"lift re-applied after drop and after async simfphys settle")
+-- Т-поза дилера после каждой правки настроек (заказ владельца 19.08).
+local shared=read("lua/entities/sent_vehicle_dealer/shared.lua")
+local entInit=read("lua/entities/sent_vehicle_dealer/init.lua")
+local animFix=read("lua/autorun/server/sv_grm_vehicle_dealer_anim_fix.lua")
+ok(has(shared,"function ENT:ApplyIdleAnimation"),"idle-анимация ставится одной общей функцией")
+ok(has(shared,"function ENT:ApplyDealerModel"),"смена модели идёт через ApplyDealerModel (модель + idle)")
+ok(has(shared,'current ~= "reference"'),"сторож узнаёт Т-позу по последовательности reference")
+ok(has(entInit,"self:ApplyIdleAnimation(true)"),"дилер встаёт в idle при создании")
+ok(has(entInit,"function ENT:Think")and has(entInit,"self._grmIdleCheck"),"сторож анимации с троттлингом раз в 2 сек")
+ok(has(core,"if ent.ApplyDealerModel then ent:ApplyDealerModel(model)"),"загрузка карты не оставляет дилера в Т-позе")
+ok(has(core,"if dealer.ApplyDealerModel then dealer:ApplyDealerModel(model)"),"сохранение настроек возвращает анимацию")
+ok(has(core,"elseif dealer.ApplyIdleAnimation then dealer:ApplyIdleAnimation(true)end"),
+    "даже при пустой/неверной модели анимация чинится")
+ok(has(animFix,"if ent.ApplyIdleAnimation then ent:ApplyIdleAnimation(true) return end"),
+    "старый патч анимации делегирует энтити, второй копии списка нет")
+
 print(("VEHICLE DEALER V3: %d/%d failures=%d"):format(checks-failed,checks,failed));if failed>0 then os.exit(1)end

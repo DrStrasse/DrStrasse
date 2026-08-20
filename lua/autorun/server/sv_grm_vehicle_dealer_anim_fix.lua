@@ -29,16 +29,10 @@ local function applyDealerAnimState(ent)
     ent:SetUseType(SIMPLE_USE)
     ent:SetAutomaticFrameAdvance(true)
 
-    local candidates = { "idle_all_01", "idle_all", "idle_subtle", "idle", "idle01", "pose_standing_01" }
-    for _, sequenceName in ipairs(candidates) do
-        local sequence = ent:LookupSequence(sequenceName)
-        if sequence and sequence >= 0 then
-            ent:ResetSequence(sequence)
-            ent:SetPlaybackRate(1)
-            ent:SetCycle(0)
-            return
-        end
-    end
+    -- Список idle-анимаций и их применение живут в самом энтити
+    -- (ENT:ApplyIdleAnimation) — здесь только вызов, чтобы не держать
+    -- вторую копию логики, которая рассинхронизируется с первой.
+    if ent.ApplyIdleAnimation then ent:ApplyIdleAnimation(true) return end
 
     local sequence = ent:SelectWeightedSequence(ACT_IDLE)
     if sequence and sequence >= 0 then
