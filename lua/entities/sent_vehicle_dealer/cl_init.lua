@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Vehicle Dealer — клиент v4.5.0
+    GRM Vehicle Dealer — клиент v4.6.0
 
     Что изменилось против v3.2:
       • Единый стиль GRM (палитра и шрифты как в /factions): тёмный корпус,
@@ -182,6 +182,12 @@ local function grmFrame(title, subtitle, w, h)
 end
 
 -- Боковое меню разделов (как в /factions).
+--[[ ПАМЯТЬ РАЗДЕЛА (заказ владельца 19.08): сервер после каждой операции
+     (покупка, продажа государству, уборка в гараж) пересобирает окно
+     заново — и оно каждый раз открывалось на «Весь каталог». Держим
+     последний выбранный раздел, строку поиска и прокрутку списка. ]]
+local lastSection, lastSearch, lastScroll = "all", "", 0
+
 local function sideNav(parent, width)
     local nav = vgui.Create("DScrollPanel", parent)
     nav:Dock(LEFT)
@@ -215,6 +221,7 @@ local function sideNav(parent, width)
         b.DoClick = function()
             for _, other in pairs(nav.Buttons) do other.isActive = false end
             b.isActive = true
+            lastSection = key
             if GRM.HUD and GRM.HUD.SelectorSound then GRM.HUD.SelectorSound("move", 0.03) end
             onClick()
         end
@@ -398,6 +405,9 @@ net.Receive("GRM_VD_Open", function()
     end
 
     local currentRows, currentMode = catalog, "catalog"
+    -- Пока восстанавливаем раздел после пересборки окна, сброс прокрутки
+    -- выключен: иначе «возврат на место» сам себя обнуляет.
+    local restoring = false
 
     local function garageCard(parent, v)
         local row = vgui.Create("DPanel", parent)
@@ -514,9 +524,21 @@ net.Receive("GRM_VD_Open", function()
                     or "В этом разделе нет доступного транспорта."))
         end
     end
-    search.OnChange = render
+    search.OnChange = function(self)
+        lastSearch = self:GetValue() or ""
+        render()
+    end
+
+    -- OnVScroll у DScrollPanel двигает холст — оригинал вызываем первым,
+    -- позицию только запоминаем (иначе список замирает).
+    local baseVScroll = list.OnVScroll
+    list.OnVScroll = function(pnl, offset)
+        if baseVScroll then baseVScroll(pnl, offset) end
+        lastScroll = math.abs(tonumber(offset) or 0)
+    end
 
     local function showRows(rows, mode)
+        if not restoring and currentMode ~= (mode or "catalog") then lastScroll = 0 end
         currentRows, currentMode = rows or {}, mode or "catalog"
         render()
     end
@@ -545,7 +567,24 @@ net.Receive("GRM_VD_Open", function()
     nav:AddSection("garage", "Гараж", #garage, function() showRows(garage, "garage") end)
     nav:AddSection("active", "На карте (убрать)", #activeVeh, function() showRows(activeVeh, "active") end)
 
-    if nav.Buttons["all"] then nav.Buttons["all"]:DoClick() end
+    -- Возвращаемся в тот же раздел, где игрок был до действия. Если раздел
+    -- исчез (например, продал последнюю машину в гараже) — «Весь каталог».
+    local restore = nav.Buttons[lastSection] or nav.Buttons["all"]
+    restoring = true
+    if restore then restore:DoClick() end
+
+    -- Поиск и прокрутка тоже переживают пересборку окна.
+    if lastSearch ~= "" then
+        search:SetText(lastSearch)
+        render()
+    end
+    local wantScroll = lastScroll
+    restoring = false
+    if wantScroll > 0 then
+        timer.Simple(0, function()
+            if IsValid(list) and IsValid(list.VBar) then list.VBar:SetScroll(wantScroll) end
+        end)
+    end
 end)
 
 net.Receive("GRM_VD_Result", function()
@@ -837,4 +876,4 @@ net.Receive("GRM_VD_AdminOpen", function()
     end
 end)
 
-print("[GRM VehicleDealer] client v4.5.0 loaded (GRM style, garage pick, delivery modes, state buyback)")
+print("[GRM VehicleDealer] client v4.6.0 loaded (GRM style, garage pick, delivery modes, state buyback, sticky tabs)")

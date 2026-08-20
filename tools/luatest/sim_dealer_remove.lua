@@ -45,5 +45,18 @@ print("\n=== 3. C-МЕНЮ НЕ СЛОМАНО ===")
 ok(has(ctx, 'if doAct == "remove" then'), "контекстное «Убрать Т/С» на месте")
 ok(has(core, "function _G.VD_RemoveDealerVehicle"), "общая точка удаления для C-меню сохранена")
 
+print("\n=== 4. РАЗДЕЛ НЕ СБРАСЫВАЕТСЯ ПОСЛЕ ДЕЙСТВИЙ ===")
+ok(has(cl, "local lastSection, lastSearch, lastScroll"), "окно помнит раздел, поиск и прокрутку")
+ok(has(cl, "lastSection = key"), "выбранный раздел запоминается при клике")
+ok(has(cl, 'local restore = nav.Buttons[lastSection] or nav.Buttons["all"]'),
+    "после пересборки открывается тот же раздел, а не «Весь каталог»")
+ok(not has(cl, 'if nav.Buttons["all"] then nav.Buttons["all"]:DoClick() end'),
+    "принудительный переход на первую вкладку убран")
+ok(has(cl, "if baseVScroll then baseVScroll(pnl, offset) end"),
+    "OnVScroll не подменяется — список продолжает прокручиваться")
+ok(has(cl, "local restoring = false") and has(cl, "if not restoring and currentMode ~="),
+    "во время восстановления прокрутка не обнуляется сама собой")
+ok(has(cl, "lastSearch = self:GetValue()"), "строка поиска тоже переживает продажу")
+
 print(("\nDEALER REMOVE: %d/%d, провалов: %d"):format(total - fails, total, fails))
 if fails > 0 then os.exit(1) end

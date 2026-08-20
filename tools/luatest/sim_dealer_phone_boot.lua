@@ -74,7 +74,7 @@ ok(dealerCl:find("local function sideNav", 1, true) ~= nil and dealerCl:find("lo
     "каркас окна GRM: шапка + боковое меню (как в /factions)")
 ok(dealerCl:find("C.gold", 1, true) ~= nil and dealerCl:find("GRMVD_Title", 1, true) ~= nil,
     "палитра и шрифты GRM")
-ok(dealerCl:find("client v4.5.0", 1, true) ~= nil, "клиент дилера v4.5.0 (гаражи, лимит, режимы выдачи, выкуп)")
+ok(dealerCl:find("client v4.6.0", 1, true) ~= nil, "клиент дилера v4.6.0 (гаражи, лимит, выдача, выкуп, память разделов)")
 
 print("\n=== 3. ТОРГОВЕЦ ТЕЛЕФОНАМИ ===")
 ok(vendor:find("V.TypeNames", 1, true) ~= nil and vendor:find("function V.RegisterType", 1, true) ~= nil,
