@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Vehicle Dealer — клиент v4.1.0
+    GRM Vehicle Dealer — клиент v4.2.0
 
     Что изменилось против v3.2:
       • Единый стиль GRM (палитра и шрифты как в /factions): тёмный корпус,
@@ -316,6 +316,15 @@ net.Receive("GRM_VD_Open", function()
             if fac ~= "" then
                 draw.SimpleText("Организация: " .. fac, "GRMVD_Small", 128, 94, C.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
             end
+            -- Лимит одинаковых машин (заказ владельца 19.08): видно ДО покупки,
+            -- сколько таких уже за игроком.
+            local limit = tonumber(v.classLimit) or 0
+            if limit > 0 then
+                local owned = tonumber(v.owned) or 0
+                local full = owned >= limit
+                draw.SimpleText(("У вас: %d из %d"):format(owned, limit), "GRMVD_Small", w - 176, 16,
+                    full and C.red or C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+            end
         end
 
         local m = vgui.Create("DModelPanel", row)
@@ -323,11 +332,16 @@ net.Receive("GRM_VD_Open", function()
         m:SetSize(108, 96)
         preview(m, v.model)
 
-        local buy = grmButton(row, v.ownershipType == "personal" and "КУПИТЬ" or "ВЫДАТЬ",
-            v.ownershipType == "personal" and C.green or C.accent)
+        local limit = tonumber(v.classLimit) or 0
+        local owned = tonumber(v.owned) or 0
+        local capped = limit > 0 and owned >= limit
+
+        local buy = grmButton(row, capped and "ЛИМИТ" or (v.ownershipType == "personal" and "КУПИТЬ" or "ВЫДАТЬ"),
+            capped and C.red or (v.ownershipType == "personal" and C.green or C.accent))
         buy:Dock(RIGHT)
         buy:SetWide(150)
         buy:DockMargin(10, 38, 12, 38)
+        buy:SetEnabled(not capped)
         buy.DoClick = function() send(dealer, "buy", v.class) end
         return row
     end
