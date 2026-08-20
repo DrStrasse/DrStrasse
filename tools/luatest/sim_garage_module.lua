@@ -120,5 +120,16 @@ ok(select(2, prop:gsub('hook%.Run%("GRM_PropertyOwnerChanged"', "")) >= 5,
 ok(has(tool, "GRM.Property.GetByDoor"), "ПКМ по двери дома привязывает гараж к объекту")
 ok(has(ui, "продаётся с объектом"), "в админ-списке видно, с каким домом продаётся гараж")
 
+print("\n=== 9. УДАЛЕНИЕ СТОЙКИ ===")
+local ent = read("lua/entities/grm_garage_terminal/init.lua")
+ok(has(ent, 'return tostring(mode or "") == "grm_garage"'),
+    "стойка пускает свой тул: глухое CanTool=false блокировало её же удаление по R")
+ok(not has(ent, "function ENT:CanTool() return false end"), "старый глухой запрет убран")
+ok(has(ent, "function ENT:PhysgunPickup() return false end"), "физганом стойку по-прежнему не утащить")
+ok(has(core, "function G.RemoveTerminalByID"), "есть удаление стойки по её id")
+ok(has(tool, 'ent:GetClass() == "grm_garage_terminal" and g.RemoveTerminalByID'),
+    "R по стойке удаляет именно её, а не ближайшую")
+ok(has(tool, "Стойка без записи удалена с карты"), "осиротевшая стойка тоже убирается")
+
 print(("\nGARAGE MODULE: %d/%d, провалов: %d"):format(total - fails, total, fails))
 if fails > 0 then os.exit(1) end

@@ -375,6 +375,25 @@ if SERVER then
         return true, term
     end
 
+    --- Удалить конкретную стойку (когда игрок целится прямо в неё).
+    function G.RemoveTerminalByID(terminalID)
+        terminalID = trim(terminalID, 48)
+        if terminalID == "" then return false, "Стойка не опознана" end
+        for _, rec in pairs(G.Garages) do
+            for i, term in ipairs(rec.terminals or {}) do
+                if term.id == terminalID then
+                    table.remove(rec.terminals, i)
+                    for _, ent in ipairs(ents.FindByClass("grm_garage_terminal")) do
+                        if IsValid(ent) and ent:GetTerminalID() == terminalID then ent:Remove() end
+                    end
+                    G.Save("удалена стойка гаража " .. rec.id)
+                    return true, ("Стойка удалена (у гаража «%s» осталось %d)"):format(rec.name, #rec.terminals)
+                end
+            end
+        end
+        return false, "Стойка не найдена в записях гаражей"
+    end
+
     function G.RemoveNearestTerminal(pos, maxDist)
         local bestRec, bestIndex, bestD = nil, nil, (tonumber(maxDist) or 200) ^ 2
         for _, rec in pairs(G.Garages) do

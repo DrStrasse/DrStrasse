@@ -353,6 +353,15 @@ ok(slotRemoved and #G.Get(rec.id).slots == 1, "место удаляется п�
 local termRemoved = G.RemoveNearestTerminal(Vector(300, 300, 0), 200)
 ok(termRemoved and #ents.FindByClass("grm_garage_terminal") == 0, "стойка удаляется вместе с записью")
 
+-- Удаление стойки прицельно (R по самой стойке в туле).
+G.AddTerminal(rec.id, Vector(320, 320, 0), Angle())
+local termEnt = ents.FindByClass("grm_garage_terminal")[1]
+ok(IsValid(termEnt), "стойка поставлена заново")
+local byID, byIDMsg = G.RemoveTerminalByID(termEnt:GetTerminalID())
+ok(byID and #ents.FindByClass("grm_garage_terminal") == 0 and #G.Get(rec.id).terminals == 0,
+    "стойка удаляется по своему id — и с карты, и из записи", byIDMsg)
+ok(select(1, G.RemoveTerminalByID("term_missing")) == false, "чужой id не удаляет ничего")
+
 print("\n=== 9. ВОРОТА ГАРАЖА (ДВЕРИ) ===")
 local gateA, gateB = mkDoor("door_a", Vector(120, 120, 0)), mkDoor("door_b", Vector(140, 120, 0))
 local linkedA, linkMsgA = G.LinkDoor(rec.id, "door_a")

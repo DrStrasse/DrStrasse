@@ -34,6 +34,11 @@ function ENT:Use(ply)
     G.Push(ply, rec)
 end
 
--- Стойку нельзя утащить физганом/удалить случайно: она часть карты гаража.
-function ENT:CanTool() return false end
+--[[ Стойку нельзя утащить физганом и обычными тулами — она часть разметки
+     гаража. НО: Sandbox спрашивает CanTool ДО вызова инструмента, поэтому
+     глухое false блокировало и «свой» тул — стойка не удалялась по R
+     (заказ владельца 19.08). Разрешаем ровно grm_garage. ]]
+function ENT:CanTool(ply, trace, mode)
+    return tostring(mode or "") == "grm_garage"
+end
 function ENT:PhysgunPickup() return false end

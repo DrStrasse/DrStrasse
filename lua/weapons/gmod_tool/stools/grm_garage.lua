@@ -290,7 +290,19 @@ function TOOL:Reload(trace)
     end
 
     if mode == "terminal" then
-        local ok, res = g.RemoveNearestTerminal(trace.HitPos, 260)
+        -- Целимся прямо в стойку — удаляем именно её, иначе ближайшую к точке.
+        local ent = trace.Entity
+        if IsValid(ent) and ent:GetClass() == "grm_garage_terminal" and g.RemoveTerminalByID then
+            local ok, msg = g.RemoveTerminalByID(ent.GetTerminalID and ent:GetTerminalID() or "")
+            if not ok and IsValid(ent) then
+                -- Стойка без записи (осталась от старой разметки) — убираем с карты.
+                ent:Remove()
+                ok, msg = true, "Стойка без записи удалена с карты"
+            end
+            notify(ply, tostring(msg), ok)
+            return ok == true
+        end
+        local ok, res = g.RemoveNearestTerminal(trace.HitPos, 300)
         notify(ply, ok and "Стойка удалена" or tostring(res), ok)
         return ok == true
     end
