@@ -35,6 +35,24 @@ surface.CreateFont("GRMPCB_Small", { font = "Roboto", size = 13, weight = 400, e
 local cvWindow = CreateClientConVar("grm_cl_pcboard_window", "0", true, false,
     "Открывать справку госбазы отдельным окном (1) или только в чате (0)")
 
+--- Обрезка длинной подписи по фактической ширине панели: «Подотдел:
+--- Управление Начальника ВАИ Гарнизона» иначе уезжает под соседний текст.
+local function elide(text, font, maxWidth)
+    text = tostring(text or "")
+    if maxWidth <= 0 then return "" end
+    surface.SetFont(font)
+    if (surface.GetTextSize(text) or 0) <= maxWidth then return text end
+    local cut = text
+    while #cut > 1 do
+        -- шаг по UTF-8, иначе кириллица рвётся пополам и превращается в кракозябры
+        local last = #cut
+        while last > 1 and bit.band(string.byte(cut, last), 0xC0) == 0x80 do last = last - 1 end
+        cut = string.sub(cut, 1, last - 1)
+        if (surface.GetTextSize(cut .. "…") or 0) <= maxWidth then return cut .. "…" end
+    end
+    return "…"
+end
+
 -- Общая кнопка модуля объявлена ВЫШЕ всех, кто её вызывает: замыкание
 -- не видит local, объявленный ниже по файлу.
 local function mkButton(parent, text, color)
@@ -78,7 +96,10 @@ function PB.OpenCardWindow(card)
 
     local frame = vgui.Create("DFrame")
     PB._cardFrame = frame
-    frame:SetSize(560, 620)
+    -- Окно справки тоже тянется под экран: у спецслужб блоков много.
+    frame:SetSize(math.Clamp(math.floor(ScrW() * 0.42), 620, 900),
+        math.Clamp(math.floor(ScrH() * 0.78), 620, 1000))
+    frame:SetSizable(true)
     frame:Center()
     frame:SetTitle("")
     frame:MakePopup()
@@ -264,7 +285,14 @@ function PB.OpenAccessMenu(payload)
     if IsValid(PB._accessFrame) then PB._accessFrame:Remove() end
     local frame = vgui.Create("DFrame")
     PB._accessFrame = frame
-    frame:SetSize(1020, 700)
+    -- Окно тянется под экран (заказ владельца 21.08: «побольше бы в размере»)
+    -- и остаётся изменяемым мышью: на 1080p это ~1500×950, на 4K — больше.
+    local w = math.Clamp(math.floor(ScrW() * 0.86), 1020, 1900)
+    local h = math.Clamp(math.floor(ScrH() * 0.88), 700, 1200)
+    frame:SetSize(w, h)
+    frame:SetMinWidth(1020)
+    frame:SetMinHeight(700)
+    frame:SetSizable(true)
     frame:Center()
     frame:SetTitle("")
     frame:MakePopup()
@@ -279,14 +307,14 @@ function PB.OpenAccessMenu(payload)
     -- ── левая колонка: организации и узлы ──────────────────────────
     local left = vgui.Create("DPanel", frame)
     left:Dock(LEFT)
-    left:SetWide(320)
-    left:DockMargin(10, 62, 6, 54)
+    left:SetWide(math.Clamp(math.floor(frame:GetWide() * 0.30), 320, 460))
+    left:DockMargin(10, 62, 8, 76)
     left.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, C.card) end
 
     local facCombo = vgui.Create("DComboBox", left)
     facCombo:Dock(TOP)
     facCombo:DockMargin(8, 8, 8, 6)
-    facCombo:SetTall(28)
+    facCombo:SetTall(32)
     facCombo:SetValue("Организация…")
 
     local nodeList = vgui.Create("DScrollPanel", left)
@@ -296,7 +324,7 @@ function PB.OpenAccessMenu(payload)
     -- ── правая колонка: уровень и блоки выбранного узла ────────────
     local right = vgui.Create("DPanel", frame)
     right:Dock(FILL)
-    right:DockMargin(0, 62, 10, 54)
+    right:DockMargin(0, 62, 10, 76)
     right.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, C.card) end
 
     local title = vgui.Create("DLabel", right)
@@ -426,16 +454,21 @@ function PB.OpenAccessMenu(payload)
                 or (((cfg.factions[current.fac] or {})[field] or {})[key] or {})
             local btn = vgui.Create("DButton", nodeList)
             btn:Dock(TOP)
-            btn:SetTall(30)
+            btn:SetTall(34)
             btn:DockMargin(0, 0, 0, 3)
             btn:SetText("")
+            btn:SetTooltip(label)
             btn.Paint = function(self, w, h)
                 local active = current.field == field and current.key == key
                 draw.RoundedBox(5, 0, 0, w, h, active and C.accent or (self:IsHovered() and C.line or C.bg))
-                draw.SimpleText(label, "GRMPCB_Text", 10, 7, C.text)
                 local lvl = node.level
-                draw.SimpleText(lvl and ((GRM.PCBoard.Levels[lvl] or {}).short or lvl) or "насл.", "GRMPCB_Small",
-                    w - 10, 9, lvl and C.gold or C.dim, TEXT_ALIGN_RIGHT)
+                local mark = lvl and ((GRM.PCBoard.Levels[lvl] or {}).short or lvl) or "насл."
+                -- Названия отделов длинные: обрезаем по фактической ширине,
+                -- чтобы имя не наезжало на метку уровня справа.
+                surface.SetFont("GRMPCB_Small")
+                local markW = (surface.GetTextSize(mark) or 0) + 18
+                draw.SimpleText(elide(label, "GRMPCB_Text", w - markW - 16), "GRMPCB_Text", 10, 9, C.text)
+                draw.SimpleText(mark, "GRMPCB_Small", w - 10, 11, lvl and C.gold or C.dim, TEXT_ALIGN_RIGHT)
             end
             btn.DoClick = function()
                 current.field, current.key, current.label = field, key, keyLabel or label
@@ -466,25 +499,28 @@ function PB.OpenAccessMenu(payload)
     end
 
     -- ── низ: общие настройки и сохранение ──────────────────────────
+    -- Панель высокая: подпись поля рисуется НАД полем, а не под ним, иначе
+    -- «Кулдаун, с» уезжает под сам ввод (как было на скрине владельца).
     local bottom = vgui.Create("DPanel", frame)
     bottom:Dock(BOTTOM)
-    bottom:SetTall(44)
-    bottom:DockMargin(10, 0, 10, 8)
-    bottom:SetPaintBackground(false)
+    bottom:SetTall(66)
+    bottom:DockMargin(10, 0, 10, 10)
+    bottom.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, C.card) end
 
     local s = cfg.settings
     local function numField(label, field, minv, maxv)
         local wrap = vgui.Create("DPanel", bottom)
         wrap:Dock(LEFT)
-        wrap:SetWide(150)
-        wrap:DockMargin(0, 4, 8, 4)
+        wrap:SetWide(170)
+        wrap:DockMargin(10, 8, 6, 8)
         wrap.Paint = function(_, w, h)
-            draw.RoundedBox(5, 0, 0, w, h, C.card)
-            draw.SimpleText(label, "GRMPCB_Small", 8, 4, C.dim)
+            draw.RoundedBox(5, 0, 0, w, h, C.bg)
+            draw.SimpleText(label, "GRMPCB_Small", 8, 5, C.dim)
         end
         local num = vgui.Create("DNumberWang", wrap)
         num:Dock(BOTTOM)
-        num:DockMargin(8, 0, 8, 4)
+        num:SetTall(24)
+        num:DockMargin(8, 0, 8, 6)
         num:SetMinMax(minv, maxv)
         num:SetValue(tonumber(s[field]) or minv)
         num.OnValueChanged = function(_, v) s[field] = v end
@@ -494,31 +530,48 @@ function PB.OpenAccessMenu(payload)
     numField("Запросов в минуту", "perMinute", 1, 60)
     numField("Время пробития, с", "delay", 0, 30)
 
-    local duty = vgui.Create("DCheckBoxLabel", bottom)
-    duty:Dock(LEFT)
-    duty:DockMargin(6, 14, 12, 0)
-    duty:SetText("Только на службе")
-    duty:SetTextColor(C.text)
-    duty:SetValue(s.requireDuty ~= false and 1 or 0)
-    duty.OnChange = function(_, v) s.requireDuty = v end
-
-    local hiddenChk = vgui.Create("DCheckBoxLabel", bottom)
-    hiddenChk:Dock(LEFT)
-    hiddenChk:DockMargin(0, 14, 12, 0)
-    hiddenChk:SetText("Скрытый запрос спецслужбам")
-    hiddenChk:SetTextColor(C.text)
-    hiddenChk:SetValue(s.allowHidden ~= false and 1 or 0)
-    hiddenChk.OnChange = function(_, v) s.allowHidden = v end
+    -- Галочки: собственная панель с явной шириной. У DCheckBoxLabel в Dock
+    -- ширина не считается от текста — без SetWide подпись просто пропадала.
+    local function checkField(label, get, set, width)
+        local wrap = vgui.Create("DPanel", bottom)
+        wrap:Dock(LEFT)
+        wrap:SetWide(width)
+        wrap:DockMargin(4, 8, 6, 8)
+        wrap.Paint = function(_, w, h) draw.RoundedBox(5, 0, 0, w, h, C.bg) end
+        local chk = vgui.Create("DCheckBoxLabel", wrap)
+        chk:Dock(FILL)
+        chk:DockMargin(10, 0, 8, 0)
+        chk:SetWrap(true)
+        chk:SetFont("GRMPCB_Text")
+        chk:SetText(label)
+        chk:SetTextColor(C.text)
+        chk:SetValue(get() and 1 or 0)
+        chk.OnChange = function(_, v) set(v) end
+        return chk
+    end
+    checkField("Только на службе", function() return s.requireDuty ~= false end,
+        function(v) s.requireDuty = v end, 200)
+    checkField("Скрытый запрос спецслужбам", function() return s.allowHidden ~= false end,
+        function(v) s.allowHidden = v end, 260)
 
     local save = mkButton(bottom, "Сохранить", C.green)
     save:Dock(RIGHT)
-    save:SetWide(160)
-    save:DockMargin(6, 4, 0, 4)
+    save:SetWide(180)
+    save:DockMargin(6, 12, 12, 12)
     save.DoClick = function()
         net.Start(PB.Net.SAVE)
         net.WriteTable(cfg)
         net.SendToServer()
     end
+
+    local hint = vgui.Create("DLabel", bottom)
+    hint:Dock(RIGHT)
+    hint:SetWide(190)
+    hint:DockMargin(0, 12, 6, 12)
+    hint:SetWrap(true)
+    hint:SetFont("GRMPCB_Small")
+    hint:SetTextColor(C.dim)
+    hint:SetText("Изменения применяются после нажатия «Сохранить».")
 end
 
 net.Receive(PB.Net.DATA, function()
