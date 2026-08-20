@@ -26,7 +26,7 @@ if not CLIENT then return end
 GRM = GRM or {}
 GRM.Doors = GRM.Doors or {}
 local D = GRM.Doors
-D.MenuVersion = "2.0.0"
+D.MenuVersion = "2.1.0"
 
 local NET_OPEN = "GRM_Doors_Open"
 local NET_ACT  = "GRM_Doors_Act"
@@ -196,11 +196,28 @@ function D.OpenMenu(ent, d, cats, facTree, canAdmin)
     content:Dock(FILL) content:DockMargin(12, 10, 12, 12)
 
     local tabs, tabButtons = {}, {}
+
+    --[[ ПОЧЕМУ СПИСОК ПРЫГАЛ ВВЕРХ ПОСЛЕ ГАЛОЧКИ.
+         Каждое действие (галочка фракции/роли/категории) сервер отвечает
+         пересборкой окна. Позиция прокрутки запоминалась в OnVScroll — но
+         туда же попадал НАШ СОБСТВЕННЫЙ программный SetScroll(0) при
+         построении вкладки, и запомненная позиция стиралась в ноль.
+         Теперь программные сдвиги помечаются флагом и в память не идут, а
+         восстановление повторяется несколько кадров: DScrollPanel зажимает
+         SetScroll по высоте холста, а она считается уже после раскладки. ]]
+    local scrollSilent = false
+    local function setScroll(value)
+        if not IsValid(content.VBar) then return end
+        scrollSilent = true
+        content.VBar:SetScroll(value)
+        scrollSilent = false
+    end
+
     local function selectTab(key)
         if key ~= lastTab then lastScroll = 0 end
         lastTab = key
         content:Clear()
-        if IsValid(content.VBar) then content.VBar:SetScroll(0) end
+        setScroll(0)
         for id, btn in pairs(tabButtons) do btn.active = (id == key) end
         if tabs[key] then tabs[key](content) end
     end
@@ -515,15 +532,30 @@ function D.OpenMenu(ent, d, cats, facTree, canAdmin)
     local baseVScroll = content.OnVScroll
     content.OnVScroll = function(pnl, offset)
         if baseVScroll then baseVScroll(pnl, offset) end
+        -- Программные сдвиги (построение вкладки, восстановление) в память
+        -- не пишем — иначе позиция сама себя обнуляет.
+        if scrollSilent then return end
         lastScroll = math.abs(tonumber(offset) or 0)
     end
 
     if not tabs[lastTab] then lastTab = "overview" end
+    local wantScroll = lastScroll
     selectTab(lastTab)
-    if lastScroll > 0 then
-        timer.Simple(0, function()
-            if IsValid(content) and IsValid(content.VBar) then content.VBar:SetScroll(lastScroll) end
-        end)
+
+    -- Форвард-декларация: функция вызывает саму себя из таймера.
+    local restoreScroll
+    restoreScroll = function(tries)
+        if not (IsValid(f) and IsValid(content) and IsValid(content.VBar)) then return end
+        content:InvalidateLayout(true)
+        setScroll(wantScroll)
+        local got = content.VBar.GetScroll and content.VBar:GetScroll() or 0
+        if math.abs(got - wantScroll) > 1 and tries > 1 then
+            timer.Simple(0, function() restoreScroll(tries - 1) end)
+        end
+    end
+    if wantScroll > 0 then
+        lastScroll = wantScroll
+        timer.Simple(0, function() restoreScroll(8) end)
     end
 end
 

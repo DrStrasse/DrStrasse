@@ -62,7 +62,7 @@ ok(has(core, "row.subdepartments[#row.subdepartments + 1]"), "в дереве е
 ok(has(core, "catsList[#catsList + 1] = D.NormalizeCategory(c, id)"), "категории уходят клиенту профилем целиком")
 
 print("\n=== 4. ОКНО В СТИЛЕ GRM ===")
-ok(has(ui, 'D.MenuVersion = "2.0.0"'), "окно двери вынесено в отдельный модуль и версионировано")
+ok(ui:find('D.MenuVersion = "2%.%d+%.%d+"') ~= nil, "окно двери вынесено в отдельный модуль и версионировано")
 ok(not has(core, 'sheet:AddSheet("Обзор"'), "старое окно на DPropertySheet удалено из ядра")
 ok(has(core, "Окно «Управление дверью» переехало в отдельный клиентский модуль"), "в ядре осталась ссылка на новый модуль")
 ok(has(ui, "math.Clamp(ScrW() * 0.68, 1000, 1480)"), "окно стало широким")
@@ -88,6 +88,17 @@ ok(not ui:find("content%.OnVScroll = function%(_, offset%) lastScroll"),
     "старая подмена (полоса едет — страница стоит) убрана")
 ok(has(ui, "if key ~= lastTab then lastScroll = 0 end"),
     "смена раздела не тянет за собой чужую позицию прокрутки")
+
+print("\n=== 6.1 ПОЗИЦИЯ СПИСКА ПРИ ГАЛОЧКАХ ===")
+ok(has(ui, "local scrollSilent = false") and has(ui, "if scrollSilent then return end"),
+    "программный SetScroll не пишется в память позиции (из-за него список прыгал вверх)")
+ok(has(ui, "local function setScroll(value)"), "все программные сдвиги идут через одну функцию")
+ok(has(ui, "local wantScroll = lastScroll"), "позиция снимается ДО пересборки вкладки")
+ok(has(ui, "local restoreScroll") and has(ui, "restoreScroll = function(tries)"),
+    "восстановление с форвард-декларацией (правило замыканий соблюдено)")
+ok(has(ui, "content:InvalidateLayout(true)") and has(ui, "restoreScroll(tries - 1)"),
+    "позиция дожимается несколько кадров — холст считает высоту после раскладки")
+ok(has(ui, 'D.MenuVersion = "2.1.0"'), "версия окна двери поднята")
 
 print("\n=== 7. БИНД ОТКРЫТИЯ ===")
 local f4 = read("lua/autorun/sh_grm_f4menu.lua")
