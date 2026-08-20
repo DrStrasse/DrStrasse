@@ -1325,6 +1325,9 @@ timer.Create("GRM_Handcuffs_ReleaseDecay", 0.25, 0, function()
 end)
 
 timer.Create("GRM_Handcuffs_EnforceNoWeaponsWhileCuffed", 0.35, 0, function()
+    -- Аудит 21.08: тот же приём, что и у таймера снятия прогресса — пока
+    -- закованных нет, обход всех игроков три раза в секунду не нужен.
+    if istable(HC.Cuffed) and next(HC.Cuffed) == nil then return end
     for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if HC.IsCuffed(ply) then
             HC.EnforceCuffedWeaponState(ply)

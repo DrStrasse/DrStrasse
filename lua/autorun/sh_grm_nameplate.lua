@@ -133,8 +133,27 @@ if SERVER then
 
     local dirty, marksDirty = false, false
 
+    --[[ Диск трогаем через общую очередь GRM.Save: знакомство пишется на
+         каждое «представился/показал документ», а таких событий в час пик
+         десятки. Очередь сводит их в одну запись. ]]
+    if GRM.Save and GRM.Save.Register then
+        GRM.Save.Register("nameplate.known", { file = FILE, label = "Знакомства над головой",
+            delay = 8, build = function()
+                ensureDir()
+                dirty = false
+                return { version = 1, known = NP.Known }
+            end })
+        GRM.Save.Register("nameplate.marks", { file = MARKS_FILE, label = "Особые приметы",
+            delay = 8, build = function()
+                ensureDir()
+                marksDirty = false
+                return { version = 1, marks = NP.MarksData }
+            end })
+    end
+
     function NP.Save(force)
         if not (dirty or force) then return false end
+        if GRM.Save and GRM.Save.Mark and not force then return GRM.Save.Mark("nameplate.known", "знакомство") end
         ensureDir()
         local ok, raw = pcall(util.TableToJSON, { version = 1, known = NP.Known }, true)
         if not ok or not isstring(raw) then return false end
@@ -145,6 +164,7 @@ if SERVER then
 
     function NP.SaveMarks(force)
         if not (marksDirty or force) then return false end
+        if GRM.Save and GRM.Save.Mark and not force then return GRM.Save.Mark("nameplate.marks", "приметы") end
         ensureDir()
         local ok, raw = pcall(util.TableToJSON, { version = 1, marks = NP.MarksData }, true)
         if not ok or not isstring(raw) then return false end
@@ -452,6 +472,8 @@ if SERVER then
         end, { label = "Шапка над головой: знакомства и приметы" })
     end
 
+    -- При выключении пишем сами и немедленно: очередь до следующего тика
+    -- уже не доживёт.
     hook.Add("ShutDown", "GRM_Nameplate_Save", function()
         NP.Save(true)
         NP.SaveMarks(true)

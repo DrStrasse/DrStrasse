@@ -243,12 +243,16 @@ if SERVER then
         return ok and istable(t) and t or nil
     end
 
-    function R.Save(why)
+    --- Сборка снимка реестра. Вынесена отдельно: её же зовёт очередь записи
+    --  GRM.Save, чтобы сериализация происходила ОДИН раз на пачку правок.
+    local function snapshot()
+        return { version = 1, accounts = R.Data.accounts, chars = R.Data.chars,
+            nextChar = R.Data.nextChar, nextAccount = R.Data.nextAccount }
+    end
+
+    local function writeNow()
         if not file.IsDir(DIR, "DATA") then file.CreateDir(DIR) end
-        local ok, raw = pcall(util.TableToJSON, {
-            version = 1, accounts = R.Data.accounts, chars = R.Data.chars,
-            nextChar = R.Data.nextChar, nextAccount = R.Data.nextAccount,
-        }, true)
+        local ok, raw = pcall(util.TableToJSON, snapshot(), true)
         if not ok or not isstring(raw) then print("[GRM Registry] SAVE FAIL: сериализация") return false end
         file.Write(FILE, raw)
         local back = file.Read(FILE, "DATA")
@@ -257,6 +261,26 @@ if SERVER then
             return false
         end
         return true
+    end
+
+    if GRM.Save and GRM.Save.Register then
+        GRM.Save.Register("registry", { file = FILE, label = "Реестр номеров ГР/ИГ",
+            delay = 5, priority = 2, build = function()
+                if not file.IsDir(DIR, "DATA") then file.CreateDir(DIR) end
+                return snapshot()
+            end })
+    end
+
+    --[[ Раньше каждый вход игрока, каждое имя и каждый новый персонаж писали
+         файл немедленно — на заполненном сервере это очередь синхронных
+         записей в один тик. Теперь правка только помечает реестр грязным, а
+         пишет его общая очередь GRM.Save (не чаще раза в 5 секунд, одна
+         запись за тик). force=true — записать сейчас (выключение, команда). ]]
+    function R.Save(why, force)
+        if GRM.Save and GRM.Save.Mark and not force then
+            return GRM.Save.Mark("registry", why) and true or writeNow()
+        end
+        return writeNow()
     end
 
     function R.Load()

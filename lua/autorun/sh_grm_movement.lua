@@ -63,7 +63,16 @@ if SERVER then
         net.Send(ply)
     end
 
-    timer.Create("GRM_StaminaTick", 0.1, 0, function()
+    --[[ Раньше тик стамины крутился 10 раз в секунду и обходил всех игроков,
+         хотя сама стамина уходит клиенту не чаще 4 раз в секунду. Считаем по
+         РЕАЛЬНОЙ дельте времени: интервал можно менять, скорости трат и
+         восстановления от этого не «поплывут». ]]
+    local STAMINA_TICK = 0.25
+    local staminaLast = CurTime()
+    timer.Create("GRM_StaminaTick", STAMINA_TICK, 0, function()
+        local now = CurTime()
+        local dt = math.Clamp(now - staminaLast, 0.01, 1)
+        staminaLast = now
         for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) and not ply:InVehicle() then
                 local data = getPlayerData(ply)
@@ -71,11 +80,10 @@ if SERVER then
                 local isOnGround = ply:IsOnGround()
 
                 if isRunning and isOnGround then
-                    data.stamina = math.max(0, data.stamina - GRM.Movement.Config.StaminaDrain * 0.1)
-                else
-                    if isOnGround then
-                        data.stamina = math.min(GRM.Movement.Config.StaminaMax, data.stamina + GRM.Movement.Config.StaminaRegen * 0.1)
-                    end
+                    data.stamina = math.max(0, data.stamina - GRM.Movement.Config.StaminaDrain * dt)
+                elseif isOnGround then
+                    data.stamina = math.min(GRM.Movement.Config.StaminaMax,
+                        data.stamina + GRM.Movement.Config.StaminaRegen * dt)
                 end
 
                 syncStamina(ply)

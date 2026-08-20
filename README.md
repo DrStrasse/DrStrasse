@@ -375,4 +375,21 @@ Weather/Time полностью удалён из активной сборки 
 `grm_id`, `grm_id_find`, `grm_introduce`, `grm_showid`, `grm_marks`,
 `grm_money <give|take|set|info|list|save>`, `grm_balance`, `grm_economy <save|list>`
 
+## Производительность: правила для нового кода
+
+Порядок и порционность — обязательны (подробно: `AUDIT_2026-08-21_MICROFREEZE.md`):
+
+* старт подсистемы — `GRM.Boot.OnMapStart(id, tier, fn)`, тир по важности
+  (`critical / early / normal / late / idle`);
+* тяжёлый обход — `GRM.Perf.Spread`, пачка событий — `GRM.Perf.Coalesce`;
+* запись на диск — только `GRM.Save.Register` + `GRM.Save.Mark`
+  (прямой `file.Write` в обработчике события ловится воротами);
+* большие таблицы по сети — `GRM.Net.Stream`, приём — `GRM.Net.Guard`;
+* в покадровых хуках — только кэши `GRM.Perf.Players/Entities/Material/EyeTrace`;
+* `ENT:Think` — обязательный `SetNextThink` или проверка `CurTime()`.
+
+Проверка: `python3 tools/audit_perf.py --gate` (ненулевой код возврата на
+критичных находках), статистика записей — `grm_save_status`, очередь фоновых
+задач — `grm_perf_queue`, очередь старта — `grm_boot_status`.
+
 Подробный разбор архитектуры и замеченных проблем — в `ANALYSIS.md`.

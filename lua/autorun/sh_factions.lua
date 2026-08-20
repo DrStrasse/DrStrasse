@@ -496,10 +496,22 @@ if SERVER then
         return out
     end
 
-    local function sendCharacterChoices(ply)
+    local function sendCharacterChoicesNow(ply)
         net.Start(NET_CHARACTER_CHOICES)
             net.WriteTable(buildCharacterChoices())
         if ply then net.Send(ply) else net.Broadcast() end
+    end
+
+    --[[ Список персонажей строится обходом всех слотов всех игроков и уходит
+         ВСЕМ. Событий, дёргающих его (вход, смена персонажа, приём в
+         организацию), в пиковый момент идёт пачка — сводим в одну рассылку. ]]
+    local function sendCharacterChoices(ply)
+        if not ply and GRM.Perf and GRM.Perf.Coalesce then
+            return GRM.Perf.Coalesce("grm_factions_char_choices", 0.5, function()
+                sendCharacterChoicesNow()
+            end)
+        end
+        return sendCharacterChoicesNow(ply)
     end
 
     local function buildSyncData()

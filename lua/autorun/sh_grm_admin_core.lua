@@ -477,7 +477,17 @@ if SERVER then
     end
 
     -- Синхронизация справочников клиенту (или всем).
+    --[[ Широковещательный снимок прав пересобирается и уходит ВСЕМ. Правки
+         прав идут пачками (галочки в панели), поэтому пачку сводим в одну
+         рассылку: пересборка таблицы и сеть — не на каждый клик. ]]
     function AD.SyncTo(ply)
+        if not IsValid(ply) and GRM.Perf and GRM.Perf.Coalesce then
+            return GRM.Perf.Coalesce("grm_admin_sync_all", 0.5, function() AD.SyncNow() end)
+        end
+        return AD.SyncNow(ply)
+    end
+
+    function AD.SyncNow(ply)
         local perms = {}
         for _, row in ipairs(AD.PermList()) do
             perms[#perms + 1] = {

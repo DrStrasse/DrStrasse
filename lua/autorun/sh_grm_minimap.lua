@@ -37,7 +37,18 @@ if SERVER then
         MM.Data.overview = istable(MM.Data.overview) and MM.Data.overview or nil
     end
     local function pos(t) return { x = t.x, y = t.y, z = t.z } end
+    local sendNow
+    --[[ Карта рассылается всем при любом изменении точки, а во время захвата
+         точки изменения идут потоком. Рассылку всем коалесцируем: игрок и не
+         заметит четверти секунды, зато сеть не пилит пакетами. ]]
     local function send(ply)
+        if not IsValid(ply) and GRM.Perf and GRM.Perf.Coalesce then
+            return GRM.Perf.Coalesce("grm_minimap_send_all", 0.25, function() sendNow() end)
+        end
+        return sendNow(ply)
+    end
+
+    sendNow = function(ply)
         -- Чистим истёкшие временные маркеры и не отправляем их клиентам
         local now = CurTime()
         for i = #(MM.Data.points or {}), 1, -1 do

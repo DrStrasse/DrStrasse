@@ -510,7 +510,16 @@ if SERVER then
         util.AddNetworkString(s)
     end
 
+    -- Снимок настроек Q-меню всем игрокам: пачку правок админа сводим в одну
+    -- рассылку (раньше каждая галочка = новый пакет всем).
     function QM.PushSync(ply)
+        if not IsValid(ply) and GRM.Perf and GRM.Perf.Coalesce then
+            return GRM.Perf.Coalesce("grm_qmenu_sync_all", 0.5, function() QM.PushSyncNow() end)
+        end
+        return QM.PushSyncNow(ply)
+    end
+
+    function QM.PushSyncNow(ply)
         local payload = {}
         for k,v in pairs(QM.Cfg or defaultCfg()) do payload[k]=v end
         payload._factions = {}

@@ -287,10 +287,32 @@ if SERVER then
         return true
     end
 
-    function PB.SaveLog()
-        ensureDir()
+    local function trimLog()
         local limit = PB.Config.settings.logSize or 400
         while #PB.Log > limit do table.remove(PB.Log, 1) end
+    end
+
+    if GRM.Save and GRM.Save.Register then
+        GRM.Save.Register("pcboard.log", { file = LOG_FILE, label = "Журнал запросов госбазы",
+            delay = 10, build = function()
+                ensureDir()
+                trimLog()
+                return { version = 1, rows = PB.Log }
+            end })
+        GRM.Save.Register("pcboard.access", { file = ACCESS_FILE, label = "Доступы госбазы",
+            delay = 2, priority = 1, build = function()
+                ensureDir()
+                return PB.Normalize(PB.Config)
+            end })
+    end
+
+    --[[ Журнал пополняется на КАЖДЫЙ запрос по базе. Синхронная запись файла
+         на каждое пробитие — ровно тот микрофриз, который не должен
+         существовать: помечаем грязным, пишет очередь GRM.Save. ]]
+    function PB.SaveLog(force)
+        if GRM.Save and GRM.Save.Mark and not force then return GRM.Save.Mark("pcboard.log", "запрос") end
+        ensureDir()
+        trimLog()
         local ok, raw = pcall(util.TableToJSON, { version = 1, rows = PB.Log }, true)
         if not ok or not isstring(raw) then return false end
         file.Write(LOG_FILE, raw)
