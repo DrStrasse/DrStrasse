@@ -343,6 +343,15 @@ Weather/Time полностью удалён из активной сборки 
 `!fbudget`, `!fpay`, `!fwithdraw`, `!fpayall`, `!fsettax`, `/mysalary`, `/fine <сумма> [причина]`, `/vlist`, `/myvehicles`,
 `/vshop`, `/phoneshop` (`/teleshop`), `/phone_remove`
 
+**Госслужащий (планшет базы данных):** `/pcboard` — пробить человека в прицеле,
+`/pcboard ГР-1042` — по номеру персонажа, `/pcboard <имя>`, `/pcboard авто <номер>`,
+`/pcboard я` — своя карточка, `/pcboard журнал`, `/pcboard скрытно <цель>` (спецслужбы),
+псевдоним `/пробить`. Справку видит только запросивший, окружающие — РП-действие.
+Уровни допуска настраивает суперадмин во вкладке «Госбаза» меню `/factions`.
+
+**Номера:** `/id` — свой номер персонажа (ГР-####) и игрока (ИГ-####),
+`/id <номер|имя>` — поиск по реестру (администрация).
+
 **Лидер фракции:** `/vaccess` (доступ транспорта для рангов/отделов)
 
 **Админ:** `/factions`, `/door_access`, `/door`, `/warrant`, `/salary_admin`, `/logistics_admin`, `/models_admin`,
@@ -354,6 +363,8 @@ Weather/Time полностью удалён из активной сборки 
 `grm_phone_save/load`, `grm_phone_remove_look`, `grm_phone_admin_remove`,
 `grm_phone_shop_admin`, `grm_phone_shop_add_look`, `grm_phone_shop_reload`,
 `grm_phone_access_reload`, `grm_phone_access_debug`,
+`grm_pcboard`, `grm_pcboard_log`, `grm_pcboard_access`, `grm_pcboard_window`,
+`grm_id`, `grm_id_find`,
 `grm_money <give|take|set|info|list|save>`, `grm_balance`, `grm_economy <save|list>`
 
 Подробный разбор архитектуры и замеченных проблем — в `ANALYSIS.md`.
