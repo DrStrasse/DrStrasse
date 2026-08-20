@@ -138,7 +138,7 @@ local core = read("lua/autorun/sh_grm_vehicle_dealer.lua")
 local cl = read("lua/entities/sent_vehicle_dealer/cl_init.lua")
 local function has(src, n) return src:find(n, 1, true) ~= nil end
 
-ok(has(core, 'VD.Version="3.6.0"'), "версия дилера поднята")
+ok(has(core, 'VD.Version="3.7.0"'), "версия дилера поднята")
 ok(has(core, 'CreateConVar("grm_vd_class_limit", "2"'), "лимит задан конваром со значением 2")
 ok(has(core, "function VD.CountClass") and has(core, "function VD.CanOwnMore"), "счётчик и проверка лимита в дилере")
 ok(has(core, "local allowed,have,limit=VD.CanOwnMore(ply,class)"), "покупка спрашивает лимит")
@@ -150,7 +150,34 @@ ok(has(core, 'VD.TagVehicle(ent,ply,r.class,tostring(r.ownershipType or"personal
 ok(has(core, "function VD.IsDealerVehicle"), "есть публичная проверка «машина от дилера»")
 ok(has(core, "owned=VD.CountClass(ply,e.class),classLimit=VD.ClassLimit()"), "каталог знает про счётчик и лимит")
 ok(has(cl, "У вас: %d из %d"), "в карточке видно, сколько таких машин уже есть")
-ok(has(cl, 'capped and "ЛИМИТ"') and has(cl, "buy:SetEnabled(not capped)"), "кнопка блокируется на пределе")
+ok(has(cl, 'capped and "ЛИМИТ"') and has(cl, "b:SetEnabled(not capped)"), "кнопка блокируется на пределе")
+
+print("\n=== 6. РЕЖИМ ВЫДАЧИ У ДИЛЕРА ===")
+local tool = read("lua/weapons/gmod_tool/stools/vehicle_dealer_tool.lua")
+ok(has(core, "VD.DeliveryModes = {") and has(core, 'dealer = "Выдавать у дилера"')
+    and has(core, 'garage = "Отправлять в гараж"') and has(core, 'both   = "На выбор игрока"'),
+    "три режима выдачи покупок")
+ok(has(core, "function VD.DeliveryMode") and has(core, "function VD.ShowRetrieve"),
+    "режим и показ кнопки «ВЫДАТЬ» читаются из настроек дилера")
+ok(has(core, "delivery=VD.DeliveryMode(ent),showRetrieve=VD.ShowRetrieve(ent)"),
+    "настройки сохраняются в записи дилера (переживают рестарт)")
+ok(has(core, 'ent.VD_Delivery=VD.DeliveryModes[tostring(r.delivery or"")]'), "и читаются при загрузке карты")
+ok(has(core, 'local toGarage=(mode=="garage")or(mode=="both"and wantWay=="garage")'),
+    "покупка уходит в гараж по настройке или по выбору игрока")
+ok(has(core, 'if toGarage and kind~="personal" then toGarage=false end'),
+    "служебный транспорт всегда выдаётся на месте")
+ok(has(core, "record.stored=true;saveGarage()"), "покупка «в гараж» не спавнится на площадке, а сразу на хранении")
+ok(has(core, 'if not VD.ShowRetrieve(dealer)then result(ply,false,"Этот дилер не выдаёт транспорт'),
+    "при выключенной кнопке сервер тоже не выдаёт (не только UI)")
+ok(has(core, "net.WriteString(VD.DeliveryMode(dealer))net.WriteBool(VD.ShowRetrieve(dealer))"),
+    "режим уходит в окно игрока")
+ok(has(cl, 'buyButton("КУПИТЬ В ГАРАЖ"') and has(cl, 'buyButton("КУПИТЬ И ВЫДАТЬ"'),
+    "кнопки покупки зависят от режима")
+ok(has(cl, "ЗАБРАТЬ В ГАРАЖЕ"), "кнопка выдачи из гаража подписана честно, когда дилер не выдаёт")
+ok(has(cl, "Выдача покупок:") and has(cl, "Показывать кнопку «ВЫДАТЬ» из гаража"),
+    "настройки есть в админке дилера")
+ok(has(cl, "delivery = deliveryMode, showRetrieve = showRetrieve"), "админка сохраняет настройки")
+ok(has(tool, "delivery = GRM.VehicleDealer.DeliveryMode(ent)"), "тул отдаёт текущие настройки в админку")
 
 print(("\nVEHICLE CLASS LIMIT: %d/%d, провалов: %d"):format(total - fails, total, fails))
 if fails > 0 then os.exit(1) end

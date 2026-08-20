@@ -23,7 +23,7 @@ local cl   = read("lua/entities/sent_vehicle_dealer/cl_init.lua")
 local ctx  = read("lua/autorun/sh_grm_ctx.lua")
 
 print("\n=== 1. СЕРВЕР ===")
-ok(has(core, 'VD.Version="3.6.0"'), "версия дилера поднята до 3.6.0")
+ok(has(core, 'VD.Version="3.7.0"'), "версия дилера поднята до 3.7.0")
 ok(has(core, "function VD.ActiveRows"), "сервер собирает список живого транспорта игрока")
 ok(has(core, "ent.GRMGarageOwner==ply"), "в список попадает только свой транспорт")
 ok(has(core, "ownershipName=VD.VehicleKinds[kind]"), "видно тип владения (личный/служебный)")

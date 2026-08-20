@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Vehicle Dealer — клиент v4.3.0
+    GRM Vehicle Dealer — клиент v4.4.0
 
     Что изменилось против v3.2:
       • Единый стиль GRM (палитра и шрифты как в /factions): тёмный корпус,
@@ -101,12 +101,13 @@ local function preview(p, model)
     p.LayoutEntity = function(self, ent) ent:SetAngles(Angle(0, RealTime() * 15 % 360, 0)) end
 end
 
-local function send(dealer, op, id, extra)
+local function send(dealer, op, id, extra, extra2)
     net.Start("GRM_VD_Action")
     net.WriteEntity(dealer)
     net.WriteString(op)
     if id then net.WriteString(id) end
     if extra ~= nil then net.WriteString(tostring(extra)) end
+    if extra2 ~= nil then net.WriteString(tostring(extra2)) end
     net.SendToServer()
     if GRM.HUD and GRM.HUD.SelectorSound then GRM.HUD.SelectorSound("pick", 0.05)
     else surface.PlaySound("common/wpn_select.wav") end
@@ -243,6 +244,9 @@ net.Receive("GRM_VD_Open", function()
     local garage  = net.ReadTable() or {}
     local activeVeh = net.ReadTable() or {}
     local garageChoices = net.ReadTable() or {}
+    local deliveryMode = net.ReadString()
+    local showRetrieve = net.ReadBool()
+    if deliveryMode == "" then deliveryMode = "dealer" end
 
     if IsValid(GRM.VehicleDealerFrame) then GRM.VehicleDealerFrame:Remove() end
 
@@ -355,14 +359,31 @@ net.Receive("GRM_VD_Open", function()
         local limit = tonumber(v.classLimit) or 0
         local owned = tonumber(v.owned) or 0
         local capped = limit > 0 and owned >= limit
+        local personal = v.ownershipType == "personal"
 
-        local buy = grmButton(row, capped and "ЛИМИТ" or (v.ownershipType == "personal" and "КУПИТЬ" or "ВЫДАТЬ"),
-            capped and C.red or (v.ownershipType == "personal" and C.green or C.accent))
-        buy:Dock(RIGHT)
-        buy:SetWide(150)
-        buy:DockMargin(10, 38, 12, 38)
-        buy:SetEnabled(not capped)
-        buy.DoClick = function() send(dealer, "buy", v.class, targetGarage) end
+        --[[ Режим выдачи задаётся в настройках дилера:
+             dealer — только «купить и выдать» здесь;
+             garage — покупка сразу уезжает в гараж;
+             both   — обе кнопки, решает игрок. Служебный транспорт всегда
+             выдаётся на месте. ]]
+        local function buyButton(label, color, way, wide)
+            local b = grmButton(row, capped and "ЛИМИТ" or label, capped and C.red or color)
+            b:Dock(RIGHT)
+            b:SetWide(wide or 150)
+            b:DockMargin(6, 38, 8, 38)
+            b:SetEnabled(not capped)
+            b.DoClick = function() send(dealer, "buy", v.class, targetGarage, way) end
+            return b
+        end
+
+        if not personal or deliveryMode == "dealer" then
+            buyButton(personal and "КУПИТЬ" or "ВЫДАТЬ", personal and C.green or C.accent, "dealer")
+        elseif deliveryMode == "garage" then
+            buyButton("КУПИТЬ В ГАРАЖ", C.green, "garage", 190)
+        else
+            buyButton("В ГАРАЖ", C.accent, "garage", 130)
+            buyButton("КУПИТЬ И ВЫДАТЬ", C.green, "dealer", 180)
+        end
         return row
     end
 
@@ -406,10 +427,13 @@ net.Receive("GRM_VD_Open", function()
         actions:DockMargin(6, 12, 12, 12)
         actions:SetPaintBackground(false)
 
-        local main = grmButton(actions, v.stored == false and "В ГАРАЖ" or "ВЫДАТЬ",
-            v.stored == false and C.accent or C.green)
+        local canRetrieve = showRetrieve ~= false
+        local main = grmButton(actions,
+            v.stored == false and "В ГАРАЖ" or (canRetrieve and "ВЫДАТЬ" or "ЗАБРАТЬ В ГАРАЖЕ"),
+            v.stored == false and C.accent or (canRetrieve and C.green or C.cardLight))
         main:Dock(TOP)
         main:SetTall(38)
+        main:SetEnabled(v.stored == false or canRetrieve)
         main.DoClick = function() send(dealer, v.stored == false and "store" or "retrieve", v.id) end
 
         local sell = grmButton(actions, "Продать (возврат 50%)", C.red)
@@ -546,6 +570,38 @@ net.Receive("GRM_VD_AdminOpen", function()
     modelEntry:Dock(FILL)
     modelEntry:DockMargin(0, 10, 10, 10)
     modelEntry:SetText(data.model or "")
+
+    -- Настройки выдачи: где игрок получает купленную машину и показывать ли
+    -- у дилера кнопку «ВЫДАТЬ» (заказ владельца 19.08).
+    local rules = vgui.Create("DPanel", body)
+    rules:Dock(TOP)
+    rules:SetTall(52)
+    rules:DockMargin(12, 0, 12, 6)
+    rules.Paint = function(_, w, h)
+        draw.RoundedBox(7, 0, 0, w, h, C.card)
+        draw.SimpleText("Выдача покупок:", "GRMVD_Body", 12, h / 2, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    end
+
+    local deliveryMode = tostring(data.delivery or "dealer")
+    local delivery = skinCombo(vgui.Create("DComboBox", rules))
+    delivery:Dock(LEFT)
+    delivery:SetWide(320)
+    delivery:DockMargin(140, 11, 8, 11)
+    delivery:AddChoice("Выдавать у дилера", "dealer", deliveryMode == "dealer")
+    delivery:AddChoice("Отправлять в гараж", "garage", deliveryMode == "garage")
+    delivery:AddChoice("На выбор игрока (обе кнопки)", "both", deliveryMode == "both")
+    delivery.OnSelect = function(_, _, _, val) deliveryMode = tostring(val or "dealer") end
+
+    local showRetrieve = data.showRetrieve ~= false
+    local retrieveChk = vgui.Create("DCheckBoxLabel", rules)
+    retrieveChk:Dock(LEFT)
+    retrieveChk:DockMargin(12, 18, 8, 12)
+    retrieveChk:SetWide(330)
+    retrieveChk:SetText("Показывать кнопку «ВЫДАТЬ» из гаража")
+    retrieveChk:SetFont("GRMVD_Body")
+    retrieveChk:SetTextColor(C.text)
+    retrieveChk:SetValue(showRetrieve and 1 or 0)
+    retrieveChk.OnChange = function(_, val) showRetrieve = val and true or false end
 
     local save = grmButton(body, "СОХРАНИТЬ ДИЛЕРА, АССОРТИМЕНТ И ГАРАЖ", C.green)
     save:Dock(BOTTOM)
@@ -760,10 +816,11 @@ net.Receive("GRM_VD_AdminOpen", function()
     save.DoClick = function()
         net.Start("GRM_VD_AdminSave")
         net.WriteEntity(dealer)
-        net.WriteTable({ name = nameEntry:GetValue(), model = modelEntry:GetValue(), vehicles = selected })
+        net.WriteTable({ name = nameEntry:GetValue(), model = modelEntry:GetValue(), vehicles = selected,
+            delivery = deliveryMode, showRetrieve = showRetrieve })
         net.SendToServer()
         surface.PlaySound("buttons/button15.wav")
     end
 end)
 
-print("[GRM VehicleDealer] client v4.0.0 loaded (GRM style, categories, faction picker)")
+print("[GRM VehicleDealer] client v4.4.0 loaded (GRM style, garage pick, delivery modes)")

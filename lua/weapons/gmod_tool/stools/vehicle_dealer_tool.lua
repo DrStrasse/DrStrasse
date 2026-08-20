@@ -150,6 +150,9 @@ function TOOL:RightClick(trace)
         net.WriteTable({
             name = ent:GetDealerName(), model = ent:GetDealerModel(), vehicles = ent.VD_Vehicles or {},
             hasSpawn = ent:GetHasCustomSpawn(), hasSpawnZone = ent:GetHasSpawnZone(),
+            -- Режим выдачи покупок (дилер / гараж / на выбор) и кнопка «ВЫДАТЬ».
+            delivery = GRM.VehicleDealer.DeliveryMode(ent),
+            showRetrieve = GRM.VehicleDealer.ShowRetrieve(ent),
             spawnPos = ent:GetSpawnPos(), spawnAng = ent:GetSpawnAngle(),
             available = GRM.VehicleDealer.AllVehicleClasses(),
             -- v3.3.0: фракции и категории приходят списком — админ выбирает,
