@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Vehicle Dealer — клиент v4.2.0
+    GRM Vehicle Dealer — клиент v4.3.0
 
     Что изменилось против v3.2:
       • Единый стиль GRM (палитра и шрифты как в /factions): тёмный корпус,
@@ -101,11 +101,12 @@ local function preview(p, model)
     p.LayoutEntity = function(self, ent) ent:SetAngles(Angle(0, RealTime() * 15 % 360, 0)) end
 end
 
-local function send(dealer, op, id)
+local function send(dealer, op, id, extra)
     net.Start("GRM_VD_Action")
     net.WriteEntity(dealer)
     net.WriteString(op)
     if id then net.WriteString(id) end
+    if extra ~= nil then net.WriteString(tostring(extra)) end
     net.SendToServer()
     if GRM.HUD and GRM.HUD.SelectorSound then GRM.HUD.SelectorSound("pick", 0.05)
     else surface.PlaySound("common/wpn_select.wav") end
@@ -241,6 +242,7 @@ net.Receive("GRM_VD_Open", function()
     local catalog = net.ReadTable() or {}
     local garage  = net.ReadTable() or {}
     local activeVeh = net.ReadTable() or {}
+    local garageChoices = net.ReadTable() or {}
 
     if IsValid(GRM.VehicleDealerFrame) then GRM.VehicleDealerFrame:Remove() end
 
@@ -264,6 +266,24 @@ net.Receive("GRM_VD_Open", function()
 
     local search = skinEntry(vgui.Create("DTextEntry", searchRow), "Поиск: название, класс, категория…")
     search:Dock(FILL)
+
+    --[[ ВЫБОР ГАРАЖА ДЛЯ ПОКУПКИ (заказ владельца 19.08): игрок сам решает,
+         куда приписать машину, а не «куда система решила». Пустое значение —
+         автоподбор (привязанный к дилеру → личный → ближайший). ]]
+    local targetGarage = ""
+    if #garageChoices > 0 then
+        local gcombo = skinCombo(vgui.Create("DComboBox", searchRow))
+        gcombo:Dock(RIGHT)
+        gcombo:SetWide(330)
+        gcombo:DockMargin(8, 0, 0, 0)
+        gcombo:AddChoice("Гараж: автоматически", "", true)
+        for _, g in ipairs(garageChoices) do
+            local label = ("Гараж: %s — мест %d/%d"):format(tostring(g.name), tonumber(g.free) or 0, tonumber(g.slots) or 0)
+            if g.suggested then label = label .. " ★" end
+            gcombo:AddChoice(label, g.id)
+        end
+        gcombo.OnSelect = function(_, _, _, val) targetGarage = tostring(val or "") end
+    end
 
     local list = vgui.Create("DScrollPanel", right)
     list:Dock(FILL)
@@ -342,7 +362,7 @@ net.Receive("GRM_VD_Open", function()
         buy:SetWide(150)
         buy:DockMargin(10, 38, 12, 38)
         buy:SetEnabled(not capped)
-        buy.DoClick = function() send(dealer, "buy", v.class) end
+        buy.DoClick = function() send(dealer, "buy", v.class, targetGarage) end
         return row
     end
 

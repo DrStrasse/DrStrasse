@@ -393,6 +393,41 @@ ok(togOK and gateA._locked == true, "кнопка ворот закрывает 
 local togOK2 = G.ToggleDoors(drv)
 ok(togOK2 and gateA._locked == false, "повторное нажатие открывает")
 
+print("\n=== 9.1 ВЫБОР ГАРАЖА ПРИ ПОКУПКЕ ===")
+local _, garB = G.Create(admin, Vector(-4000, -4000, 0), Vector(-3000, -3000, 300), { name = "Южный парк" })
+G.AddSlot(garB.id, Vector(-3500, -3500, 0), Angle(), 10, "Юг 1")
+local buyer2 = mkPlayer("Buyer2") buyer2:SetPos(Vector(0, 0, 10))
+
+local choices = G.ChoicesFor(buyer2, dealer)
+ok(#choices >= 2, "игроку предлагается список гаражей", #choices)
+local seesSouth = false
+for _, c in ipairs(choices) do if c.id == garB.id then seesSouth = true end end
+ok(seesSouth, "в списке есть дальний гараж — выбор не ограничен ближайшим")
+ok(choices[1].suggested == true, "первым идёт рекомендованный (автоподбор)")
+
+-- Покупка с явно выбранным гаражом.
+local recPick = { id = "veh20", class = "sim_car", name = "Выбор", stored = false, requestedGarage = garB.id }
+VD.GarageRecords(buyer2)["veh20"] = recPick
+hook.Run("GRM_VehicleDealerSpawned", nil, buyer2, "sim_car", recPick, dealer)
+ok(recPick.garageID == garB.id, "машина уехала именно в выбранный гараж", tostring(recPick.garageID))
+ok(recPick.requestedGarage == nil, "разовый выбор не сохраняется в записи")
+
+-- Выбор мусорного/чужого id — падаем на автоподбор, а не роняем покупку.
+local recBad = { id = "veh21", class = "sim_car", name = "Мусор", stored = false, requestedGarage = "garage_nope" }
+VD.GarageRecords(buyer2)["veh21"] = recBad
+hook.Run("GRM_VehicleDealerSpawned", nil, buyer2, "sim_car", recBad, dealer)
+ok(recBad.garageID ~= nil and recBad.garageID ~= "" and recBad.garageID ~= "garage_nope",
+    "неверный выбор не ломает покупку — работает автоподбор", tostring(recBad.garageID))
+
+-- Гараж без мест выбрать нельзя.
+local _, garEmpty = G.Create(admin, Vector(7000, 7000, 0), Vector(8000, 8000, 300), { name = "Пустырь" })
+ok(select(1, G.ValidateChoice(buyer2, garEmpty.id)) == nil, "гараж без размеченных мест не принимается")
+G.Update(garEmpty.id, { kind = "private", owner = "someone:char1" }, admin)
+G.AddSlot(garEmpty.id, Vector(7500, 7500, 0), Angle(), 10, "П1")
+ok(select(1, G.ValidateChoice(buyer2, garEmpty.id)) == nil, "чужой личный гараж выбрать нельзя")
+G.Remove(garEmpty.id, admin)
+G.Remove(garB.id, admin)
+
 print("\n=== 10. ГАРАЖ ВМЕСТЕ С ДОМОМ ===")
 GRM.Property.Records["prop_home"] = { id = "prop_home", ownerType = "none", ownerKey = "" }
 local linkedProp, linkedPropMsg = G.LinkProperty(rec.id, "prop_home")

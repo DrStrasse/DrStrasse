@@ -641,6 +641,43 @@ if SERVER then
     ------------------------------------------------------------------
     -- СВЯЗЬ С ДИЛЕРОМ
     ------------------------------------------------------------------
+    --[[ Список гаражей, куда игрок реально может отправить покупку.
+         Отдаётся дилеру, чтобы игрок ВЫБИРАЛ гараж сам (заказ владельца
+         19.08), а не получал «куда система решила». ]]
+    function G.ChoicesFor(ply, dealer)
+        local out = {}
+        if not IsValid(ply) then return out end
+        local home = G.HomeGarageFor(ply, dealer)
+        for _, rec in pairs(G.Garages) do
+            if G.CanUse(ply, rec) then
+                local slots = #(rec.slots or {})
+                local free = 0
+                for _, s in ipairs(G.SlotState(rec)) do if s.free then free = free + 1 end end
+                out[#out + 1] = {
+                    id = rec.id, name = rec.name, kind = rec.kind, kindName = G.KindName(rec.kind),
+                    slots = slots, free = free, fee = rec.fee or 0,
+                    suggested = (home and home.id == rec.id) or false,
+                    distance = math.floor(ply:GetPos():Distance(G.ZoneCenter(rec))),
+                }
+            end
+        end
+        table.sort(out, function(a, b)
+            if a.suggested ~= b.suggested then return a.suggested end
+            return a.distance < b.distance
+        end)
+        return out
+    end
+
+    --- Проверка выбранного игроком гаража: существует, доступен, есть места.
+    function G.ValidateChoice(ply, garageID)
+        local rec = G.Get(garageID)
+        if not rec then return nil, "Гараж не найден" end
+        local can, why = G.CanUse(ply, rec)
+        if not can then return nil, why or "Нет доступа к гаражу" end
+        if #(rec.slots or {}) == 0 then return nil, "В этом гараже нет мест стоянки" end
+        return rec
+    end
+
     -- Куда приписать покупку: гараж, привязанный к дилеру → личный гараж
     -- игрока → ближайший доступный.
     function G.HomeGarageFor(ply, dealer)
@@ -681,8 +718,19 @@ if SERVER then
     hook.Add("GRM_VehicleDealerSpawned", "GRM_Garage_AssignHome", function(ent, ply, class, record, dealer)
         if not (IsValid(ply) and istable(record)) then return end
         if record.service then return end
-        local home = G.HomeGarageFor(ply, dealer)
+
+        -- Игрок выбрал гараж прямо в меню дилера — уважаем выбор, если он
+        -- ещё имеет смысл (гараж есть, доступен, размечен).
+        local home, why
+        local wanted = tostring(record.requestedGarage or "")
+        record.requestedGarage = nil
+        if wanted ~= "" then
+            home, why = G.ValidateChoice(ply, wanted)
+            if not home then notify(ply, ("Выбранный гараж не подошёл: %s"):format(tostring(why)), false) end
+        end
+        home = home or G.HomeGarageFor(ply, dealer)
         if not home then return end
+
         record.garageID = home.id
         if GRM.VehicleDealer and GRM.VehicleDealer.SaveGarages then GRM.VehicleDealer.SaveGarages() end
         notify(ply, ("Транспорт закреплён за гаражом «%s»."):format(home.name), true)
