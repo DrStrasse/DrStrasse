@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------
-    GRM Vehicle Dealer — клиент v4.4.0
+    GRM Vehicle Dealer — клиент v4.5.0
 
     Что изменилось против v3.2:
       • Единый стиль GRM (палитра и шрифты как в /factions): тёмный корпус,
@@ -412,6 +412,11 @@ net.Receive("GRM_VD_Open", function()
             draw.SimpleText(tostring(v.class or ""), "GRMVD_Small", 124, 42, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
             draw.SimpleText(v.stored == false and "Выдан на карту" or "В гараже", "GRMVD_Body", 124, 70,
                 v.stored == false and C.gold or C.green, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            local paid = tonumber(v.price) or 0
+            if paid > 0 then
+                draw.SimpleText(("Куплен за %s  •  выкуп %s"):format(money(paid), money(tonumber(v.buyback) or 0)),
+                    "GRMVD_Small", 300, 70, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            end
             local home = tostring(v.homeName or "")
             draw.SimpleText(home ~= "" and ("Гараж: " .. home) or "Гараж не назначен", "GRMVD_Small", 124, 90,
                 home ~= "" and C.teal or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
@@ -436,11 +441,20 @@ net.Receive("GRM_VD_Open", function()
         main:SetEnabled(v.stored == false or canRetrieve)
         main.DoClick = function() send(dealer, v.stored == false and "store" or "retrieve", v.id) end
 
-        local sell = grmButton(actions, "Продать (возврат 50%)", C.red)
+        --[[ Выкуп государством: цена чуть ниже покупки (процент задаётся
+             конваром grm_vd_state_buyback). Сумма видна прямо на кнопке —
+             игрок понимает, сколько получит, до подтверждения. ]]
+        local payout = tonumber(v.buyback) or 0
+        local rate = tonumber(v.buybackRate) or 0
+        local sell = grmButton(actions,
+            payout > 0 and ("ПРОДАТЬ ГОСУДАРСТВУ · " .. money(payout)) or "ГОСУДАРСТВО НЕ ВЫКУПАЕТ", C.red)
         sell:Dock(BOTTOM)
-        sell:SetTall(30)
+        sell:SetTall(32)
+        sell:SetEnabled(payout > 0)
         sell.DoClick = function()
-            Derma_Query("Продать транспорт навсегда?", "Гараж", "Продать", function() send(dealer, "sell", v.id) end, "Отмена")
+            Derma_Query(("Продать «%s» государству за %s?\nЦена покупки: %s (выкуп %d%%). Машина исчезнет навсегда.")
+                    :format(tostring(v.name or v.class), money(payout), money(v.price or 0), rate),
+                "Выкуп государством", "Продать", function() send(dealer, "sell", v.id) end, "Отмена")
         end
         return row
     end
@@ -823,4 +837,4 @@ net.Receive("GRM_VD_AdminOpen", function()
     end
 end)
 
-print("[GRM VehicleDealer] client v4.4.0 loaded (GRM style, garage pick, delivery modes)")
+print("[GRM VehicleDealer] client v4.5.0 loaded (GRM style, garage pick, delivery modes, state buyback)")

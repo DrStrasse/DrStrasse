@@ -132,13 +132,38 @@ ok(ent.nw.GRM_VehicleOwner == "Buyer", "записан владелец")
 ok(ent.nw.GRM_VehicleRecord == "r1", "записан id гаражной записи")
 ok(VD.IsDealerVehicle({ _valid = true }) == false, "чужая машина за дилерскую не считается")
 
+print("\n=== 4.1 ВЫКУП ГОСУДАРСТВОМ ===")
+VD.StateBuybackCvar = CreateConVar("grm_vd_state_buyback", "93", 1, "")
+function VD.StateBuybackRate() return math.Clamp(VD.StateBuybackCvar:GetInt(), 1, 100) end
+function VD.StateBuybackPrice(record)
+    if not istable(record) then return 0 end
+    local price = math.max(0, math.floor(tonumber(record.price) or 0))
+    if price <= 0 then return 0 end
+    return math.max(1, math.floor(price * VD.StateBuybackRate() / 100))
+end
+
+ok(VD.StateBuybackRate() == 93, "ставка выкупа по умолчанию — 93%")
+local sample = { price = 1500200 }
+local payout = VD.StateBuybackPrice(sample)
+ok(payout == 1395186, "выкуп считается от цены покупки", payout)
+ok(payout < sample.price, "государство платит МЕНЬШЕ цены покупки")
+convars["grm_vd_state_buyback"].value = "100"
+ok(VD.StateBuybackPrice(sample) == 1500200, "ставку можно поднять до 100% (цена в цену)")
+convars["grm_vd_state_buyback"].value = "150"
+ok(VD.StateBuybackRate() == 100, "выше 100% ставка не поднимается — навар из воздуха запрещён")
+convars["grm_vd_state_buyback"].value = "0"
+ok(VD.StateBuybackRate() == 1, "ниже 1% тоже не опускается")
+convars["grm_vd_state_buyback"].value = "93"
+ok(VD.StateBuybackPrice({ price = 0 }) == 0, "бесплатная машина не выкупается")
+ok(VD.StateBuybackPrice(nil) == 0, "мусор на входе не ломает расчёт")
+
 print("\n=== 5. ЭТО ЖЕ ВКЛЮЧЕНО В САМОМ ДИЛЕРЕ ===")
 local function read(path) local f = assert(io.open(path, "rb")) local src = f:read("*a") f:close() return src end
 local core = read("lua/autorun/sh_grm_vehicle_dealer.lua")
 local cl = read("lua/entities/sent_vehicle_dealer/cl_init.lua")
 local function has(src, n) return src:find(n, 1, true) ~= nil end
 
-ok(has(core, 'VD.Version="3.7.0"'), "версия дилера поднята")
+ok(has(core, 'VD.Version="3.8.0"'), "версия дилера поднята")
 ok(has(core, 'CreateConVar("grm_vd_class_limit", "2"'), "лимит задан конваром со значением 2")
 ok(has(core, "function VD.CountClass") and has(core, "function VD.CanOwnMore"), "счётчик и проверка лимита в дилере")
 ok(has(core, "local allowed,have,limit=VD.CanOwnMore(ply,class)"), "покупка спрашивает лимит")
@@ -178,6 +203,21 @@ ok(has(cl, "Выдача покупок:") and has(cl, "Показывать к�
     "настройки есть в админке дилера")
 ok(has(cl, "delivery = deliveryMode, showRetrieve = showRetrieve"), "админка сохраняет настройки")
 ok(has(tool, "delivery = GRM.VehicleDealer.DeliveryMode(ent)"), "тул отдаёт текущие настройки в админку")
+
+print("\n=== 7. ВЫКУП ГОСУДАРСТВОМ В КОДЕ ДИЛЕРА ===")
+ok(has(core, 'CreateConVar("grm_vd_state_buyback", "93"'), "ставка выкупа — конвар (93% по умолчанию)")
+ok(has(core, "function VD.StateBuybackPrice"), "цена выкупа считается на сервере")
+ok(has(core, 'if r.service then result(ply,false,"Служебный транспорт не выкупается")return end'),
+    "служебный транспорт государство не выкупает")
+ok(has(core, 'if IsValid(driver)and driver~=ply then result(ply,false,"В транспорте сидит водитель")return end'),
+    "машину с чужим водителем не продать")
+ok(has(core, "GRM.Economy.StateBudgetAdd,-payout"), "выплата списывается из государственного бюджета")
+ok(has(core, '"state.buyback"'), "сделка пишется в аудит")
+ok(has(core, "row.buyback=VD.StateBuybackPrice(r);row.buybackRate=VD.StateBuybackRate()"),
+    "сумма выкупа уходит в окно")
+ok(has(cl, "ПРОДАТЬ ГОСУДАРСТВУ · "), "на кнопке видно, сколько заплатят")
+ok(not has(cl, "Продать (возврат 50%)"), "старый возврат 50% убран")
+ok(has(cl, "Куплен за %s  •  выкуп %s"), "в карточке видно цену покупки и сумму выкупа")
 
 print(("\nVEHICLE CLASS LIMIT: %d/%d, провалов: %d"):format(total - fails, total, fails))
 if fails > 0 then os.exit(1) end

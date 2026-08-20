@@ -8,7 +8,7 @@ end
 -- GRM Vehicle Dealer & Garage v3.0.0
 if SERVER then AddCSLuaFile() end
 GRM=GRM or{};GRM.VehicleDealer=GRM.VehicleDealer or{};local VD=GRM.VehicleDealer
-VD.Version="3.7.0";VD.DealerFile="grm_vehicle_dealers/";VD.GarageFile="grm_vehicle_garages.json";VD.MaxActive=3;VD.UseDistance=180;VD.DefaultLift=30
+VD.Version="3.8.0";VD.DealerFile="grm_vehicle_dealers/";VD.GarageFile="grm_vehicle_garages.json";VD.MaxActive=3;VD.UseDistance=180;VD.DefaultLift=30
 VD.Dealers=VD.Dealers or{};VD.Garages=VD.Garages or{};VD.Active=VD.Active or{}
 VD.VehicleKinds={personal="Личный купленный",government="Государственный служебный",public="Общественный транспорт",job_taxi="Работа: такси",job_garbage="Работа: мусоровоз",job_courier="Работа: доставка"}
 -- Список организаций для выпадающих списков админки дилера (v3.3.0):
@@ -65,6 +65,26 @@ end
 function VD.ShowRetrieve(dealer)
     if not IsValid(dealer) then return true end
     return dealer.VD_ShowRetrieve ~= false
+end
+
+--[[ ВЫКУП ГОСУДАРСТВОМ (v3.8.0, заказ владельца 19.08):
+     «нужна у дилера кнопка продать государству, продажа идёт ниже
+     купленного: машина стоила 1 500 200 — продана будет по цене чуть ниже,
+     скажем 1 400 300».
+     Ставка задаётся конваром в процентах от цены покупки; деньги идут игроку
+     и списываются из государственного бюджета, если модуль экономики
+     подключён (иначе просто выплата, как раньше делал возврат 50%). ]]
+VD.StateBuybackCvar = VD.StateBuybackCvar or CreateConVar("grm_vd_state_buyback", "93",
+    bit.bor(FCVAR_ARCHIVE), "Процент от цены покупки, который государство платит за выкуп транспорта")
+
+function VD.StateBuybackRate() return math.Clamp(VD.StateBuybackCvar:GetInt(), 1, 100) end
+
+--- Сколько государство заплатит за конкретную запись гаража.
+function VD.StateBuybackPrice(record)
+    if not istable(record) then return 0 end
+    local price = math.max(0, math.floor(tonumber(record.price) or 0))
+    if price <= 0 then return 0 end
+    return math.max(1, math.floor(price * VD.StateBuybackRate() / 100))
 end
 
 function VD.EntryKind(entry)local kind=tostring(entry and entry.ownershipType or"");if VD.VehicleKinds[kind]then return kind end;if entry and entry.service then return entry.faction and entry.faction~=""and"government"or"public"end;return"personal"end
@@ -376,6 +396,7 @@ if SERVER then
    -- (модуль GRM.Garage; если его нет — поле просто пустое).
    local row=table.Copy(r);local home=GRM.Garage and GRM.Garage.Get and GRM.Garage.Get(r.garageID)
    row.homeName=home and home.name or"";row.homeID=tostring(r.garageID or"")
+   row.buyback=VD.StateBuybackPrice(r);row.buybackRate=VD.StateBuybackRate()
    garageRows[#garageRows+1]=row
   end
   local catalog={}for _,e in ipairs(dealer.VD_Vehicles or{})do if VD.CanUseEntry(ply,e)then local i=VD.VehicleInfo(e.class);catalog[#catalog+1]={class=e.class,name=e.name or i.name,model=i.model,system=i.system,price=math.max(0,math.floor(tonumber(e.price)or 0)),category=e.category or"Транспорт",service=VD.EntryKind(e)~="personal",faction=e.faction,owned=VD.CountClass(ply,e.class),classLimit=VD.ClassLimit(),factionName=(e.faction and e.faction~=""and((GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(e.faction))or e.faction)or""),ownershipType=VD.EntryKind(e),ownershipName=VD.VehicleKinds[VD.EntryKind(e)]}end end;local garageChoices=(GRM.Garage and GRM.Garage.ChoicesFor)and GRM.Garage.ChoicesFor(ply,dealer)or{}
@@ -427,7 +448,32 @@ if SERVER then
    result(ply,true,"Транспорт выдан из гаража");VD.Push(ply,dealer)
   elseif op=="store"then local id=net.ReadString();local ok,msg=VD.StoreRecord(ply,id,700);result(ply,ok,msg or"Транспорт помещён в гараж");if ok then VD.Push(ply,dealer)end
   elseif op=="remove"then local id=net.ReadString();local ok,msg=VD.StoreRecord(ply,id,nil);result(ply,ok,msg or"Транспорт убран");if ok then VD.Push(ply,dealer)end
-  elseif op=="sell"then local id=net.ReadString();local g=garage(ply);local r=g[id];if not r then return end;local ent=VD.Active[id];if IsValid(ent)then ent:Remove()end;VD.Active[id]=nil;g[id]=nil;local refund=math.floor((r.price or 0)*.5);if refund>0 and GRM.GiveMoney then GRM.GiveMoney(ply,refund,"Продажа транспорта")end;saveGarage();result(ply,true,"Транспорт продан, возврат: "..(GRM.Format and GRM.Format(refund)or refund));VD.Push(ply,dealer)end
+  elseif op=="sell"then
+   -- «Продать государству»: цена — процент от покупки (grm_vd_state_buyback).
+   local id=net.ReadString();local g=garage(ply);local r=g[id]
+   if not r then result(ply,false,"Запись гаража не найдена")return end
+   if r.service then result(ply,false,"Служебный транспорт не выкупается")return end
+   local payout=VD.StateBuybackPrice(r)
+   if payout<=0 then result(ply,false,"Эта машина досталась бесплатно — государство её не выкупает")return end
+   local ent=VD.Active[id]
+   if IsValid(ent)then
+    local driver=ent.GetDriver and ent:GetDriver()or nil
+    if IsValid(driver)and driver~=ply then result(ply,false,"В транспорте сидит водитель")return end
+    ent:Remove()
+   end
+   VD.Active[id]=nil;g[id]=nil;saveGarage()
+   if GRM.GiveMoney then GRM.GiveMoney(ply,payout,"Выкуп транспорта государством")end
+   -- Деньги приходят из казны: если экономика подключена, бюджет уменьшается.
+   if GRM.Economy and GRM.Economy.StateBudgetAdd then
+    pcall(GRM.Economy.StateBudgetAdd,-payout,"Выкуп транспорта у "..ply:Nick())
+   end
+   if GRM.Audit and GRM.Audit.Write then
+    GRM.Audit.Write("vehicle","state.buyback",ply,{record=id,class=r.class},{price=r.price,payout=payout,rate=VD.StateBuybackRate()})
+   end
+   result(ply,true,("Государство выкупило «%s» за %s (%d%% от цены покупки)"):format(
+    tostring(r.name or r.class),GRM.Format and GRM.Format(payout)or payout,VD.StateBuybackRate()))
+   VD.Push(ply,dealer)
+  end
  end)
  net.Receive("GRM_VD_ZoneRequest",function(_,ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;local out={}for _,d in ipairs(ents.FindByClass("sent_vehicle_dealer"))do if IsValid(d)then out[#out+1]={id=d:GetDealerID(),name=d:GetDealerName(),pos=vd(d:GetPos()),hasZone=d:GetHasSpawnZone(),min=vd(d:GetSpawnZoneMin()),max=vd(d:GetSpawnZoneMax()),ang=ad(d:GetSpawnAngle()),hasPoint=d:GetHasCustomSpawn(),spawnPos=vd(d:GetSpawnPos()),spawnAng=ad(d:GetSpawnAngle()),lift=tonumber(d.VD_Lift)or VD.DefaultLift}end end;net.Start("GRM_VD_ZoneData")net.WriteTable(out)net.Send(ply)end)
  net.Receive("VD_RequestVehicleList",function(_,ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;local out={}for _,v in ipairs(VD.AllVehicleClasses())do out[#out+1]={class=v.class,name=v.name,dealer="GRM v3"}end;net.Start("VD_VehicleList")net.WriteTable(out)net.Send(ply)end)
