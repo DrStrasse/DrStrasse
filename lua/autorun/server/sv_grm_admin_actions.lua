@@ -327,6 +327,62 @@ A.ban = { perm = "mod.ban", target = true, label = "Бан",
         return true, ("%s забанен на %d мин: %s"):format(rpNameOf(target), minutes, reason)
     end }
 
+--[[ Бан по НОМЕРУ ИГРОКА (заказ владельца 19.08). Работает и по офлайн-
+     игроку: номер ИГ-#### живёт в реестре, значит забанить можно того, кто
+     уже вышел с сервера. Персонажный номер ГР-#### тоже принимается — он
+     приводится к аккаунту, потому что банят ИГРОКА, а не персонажа. ]]
+A.ban_id = { perm = "mod.ban", target = false, label = "Бан по ID игрока",
+    fn = function(actor, _, args)
+        local query = string.Trim(tostring(args and args.query or ""))
+        if query == "" then return false, "Укажите номер: ИГ-1042 или ГР-4821" end
+        if not (GRM.Registry and GRM.Registry.Resolve) then return false, "Реестр номеров не загружен" end
+
+        local charKey, charRec, account = GRM.Registry.Resolve(query)
+        if not account or account == "" then return false, "Номер не найден в реестре: " .. query end
+
+        local minutes = math.Clamp(math.floor(tonumber(args and args.minutes) or 60), 0, 525600)
+        local reason = string.sub(tostring(args and args.reason or "Нарушение правил"), 1, 120)
+
+        -- Игрок в сети — обычный путь с проверкой иммунитета.
+        local target
+        for _, p in ipairs(player.GetAll()) do
+            if tostring(p:SteamID64() or "") == account then target = p break end
+        end
+        if IsValid(target) then
+            local okTarget, why = AD.CanTarget(actor, target)
+            if not okTarget then return false, why end
+            if ULib and ULib.ban then pcall(ULib.ban, target, minutes, reason, actor)
+            else
+                game.ConsoleCommand(("banid %d %s kick\n"):format(minutes, target:SteamID()))
+                target:Kick(reason)
+            end
+        else
+            local steamID = util.SteamIDFrom64 and util.SteamIDFrom64(account) or account
+            if ULib and ULib.addBan then pcall(ULib.addBan, steamID, minutes, reason, nil, actor)
+            else game.ConsoleCommand(("banid %d %s\n"):format(minutes, steamID)) end
+        end
+
+        local who = charRec and charRec.name ~= "" and charRec.name or (charKey or account)
+        return true, ("Забанен игрок %s (%s) на %d мин: %s"):format(
+            GRM.Registry.PID(account), tostring(who), minutes, reason)
+    end }
+
+--- Поиск по реестру: кто это за номером (без санкций).
+A.id_lookup = { perm = "mod.kick", target = false, label = "Поиск по ID",
+    fn = function(actor, _, args)
+        local query = string.Trim(tostring(args and args.query or ""))
+        if query == "" then return false, "Укажите номер, имя или SteamID64" end
+        if not (GRM.Registry and GRM.Registry.Resolve) then return false, "Реестр номеров не загружен" end
+        local charKey, _, account = GRM.Registry.Resolve(query)
+        if charKey then
+            return true, GRM.Registry.Describe(charKey) .. " • SteamID64 " .. tostring(account or "?")
+        end
+        if account then
+            return true, ("Игрок %s • SteamID64 %s"):format(GRM.Registry.PID(account), account)
+        end
+        return false, "Ничего не найдено: " .. query
+    end }
+
 A.warn = { perm = "mod.warn", target = true, label = "Предупреждение",
     fn = function(actor, target, args)
         local text = string.sub(tostring(args and args.reason or "Соблюдайте правила"), 1, 200)

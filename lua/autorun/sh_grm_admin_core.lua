@@ -498,6 +498,9 @@ if SERVER then
                     sid = tostring(ply:SteamID64() or ""),
                     nick = ply:Nick(),
                     rpName = ply:GetNWString("GRM_RPName", ""),
+                    -- Номера реестра: PID — игрок (по нему банят), CID — персонаж.
+                    pid = ply:GetNWString("GRM_PID", ""),
+                    cid = ply:GetNWString("GRM_CID", ""),
                     group = AD.GroupOf(ply),
                     immunity = AD.Immunity(ply),
                     faction = ply:GetNWString("GRM_Faction", ""),

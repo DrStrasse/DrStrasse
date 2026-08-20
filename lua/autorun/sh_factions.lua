@@ -90,6 +90,22 @@ function GRM.Factions.GetSubdepartments(factionValue,parentDeptId)
     table.sort(out,function(a,b)return a.name:lower()<b.name:lower()end);return out
 end
 
+--[[ Номер персонажа в шапке служебного канала (решение владельца 19.08:
+     «CID в служебных каналах»). В обычный IC-чат номер НЕ идёт — это прямой
+     метагейм. Управляется конваром grm_chat_show_cid (1 по умолчанию). ]]
+if SERVER and not ConVarExists("grm_chat_show_cid") then
+    CreateConVar("grm_chat_show_cid", "1", bit.bor(FCVAR_ARCHIVE, FCVAR_REPLICATED),
+        "1 — показывать номер персонажа (ГР-####) в шапке служебных каналов")
+end
+function GRM.Factions.AppendCID(tag, ply)
+    local cv = GetConVar and GetConVar("grm_chat_show_cid")
+    if cv and not cv:GetBool() then return tag end
+    if not (GRM.Registry and GRM.Registry.CID) then return tag end
+    local cid = GRM.Registry.CID(ply)
+    if cid == "" then return tag end
+    return tostring(tag or "") .. " | " .. cid
+end
+
 -- ============================================================
 -- SHARED ЛИДЕРСКИЙ ХЕЛПЕР (изоляция слотов персонажей)
 -- ============================================================
@@ -434,6 +450,9 @@ if SERVER then
                 local dutyStatus=online and (onDuty and "НА СЛУЖБЕ" or "ВНЕ СЛУЖБЫ") or (savedDuty==false and "ВЫХОДНОЙ" or "НЕ В СЕТИ")
                 local location=IsValid(onlineP) and string.format("%.0f %.0f %.0f",onlineP:GetPos().x,onlineP:GetPos().y,onlineP:GetPos().z) or "—"
                 out[key] = {
+                    -- Номер персонажа в госреестре: по нему кадровик и /pcboard
+                    -- находят человека, не зная SteamID.
+                    _cid = (GRM.Registry and GRM.Registry.CID and GRM.Registry.CID(key)) or "",
                     Role=rec.Role,Department=rec.Department,Subdepartment=tostring(rec.Subdepartment or rec.Subdept or""),Personnel=rec.Personnel and{joinedAt=rec.Personnel.joinedAt,status=rec.Personnel.status,probationUntil=rec.Personnel.probationUntil}or nil,
                     _characterKey = key, _rpName = rp, _online = online, _steamNick = steamNick,
                     _dutyStatus=dutyStatus, _location=location,
@@ -1622,6 +1641,7 @@ if SERVER then
         -- Шапка канала: тег фракции + теги отдела и подотдела (если заданы).
         local tag=GRM.Factions.ChannelTag(f,rec.Department,rec.Subdepartment,
             (f and f.Tag and f.Tag~="") and f.Tag or GRM.Factions.DisplayName(factionName))
+        tag=GRM.Factions.AppendCID(tag,ply)
         -- Формат как у /gnews: шапка отдельной строкой, дальше имя, должность
         -- и текст — раздельными полями, чтобы клиент раскрасил и перенёс строку.
         local rpName = ply:GetNWString("GRM_RPName", "")
@@ -1668,8 +1688,8 @@ if SERVER then
 
         local f = Factions[factionName]
         local recB = (f and f.Members and f.Members[steam]) or {}
-        local tag = GRM.Factions.ChannelTag(f,recB.Department,recB.Subdepartment,
-            (f and f.Tag and f.Tag ~= "") and f.Tag or GRM.Factions.DisplayName(factionName))
+        local tag = GRM.Factions.AppendCID(GRM.Factions.ChannelTag(f,recB.Department,recB.Subdepartment,
+            (f and f.Tag and f.Tag ~= "") and f.Tag or GRM.Factions.DisplayName(factionName)), ply)
         local rpName = ply:GetNWString("GRM_RPName", "")
         if rpName == "" then rpName = ply:Nick() end
         local roleName = (GRM.Factions and GRM.Factions.RoleDisplayName)
@@ -1702,8 +1722,8 @@ if SERVER then
         local factionName, role, tag, color, depAccess, depKey, subKey = getFactionInfoForPlayer(steam)
         if not factionName then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Вы не состоите ни в одной фракции.") return end
         if not depAccess then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Ваша фракция не имеет доступа к волне департамента.") return end
-        local displayTag=GRM.Factions.ChannelTag(Factions and Factions[factionName] or factionName,
-            depKey, subKey, GRM.Factions.DisplayName(factionName))
+        local displayTag=GRM.Factions.AppendCID(GRM.Factions.ChannelTag(Factions and Factions[factionName] or factionName,
+            depKey, subKey, GRM.Factions.DisplayName(factionName)), ply)
         -- Как /gnews: поля отдельно, перенос строки и раскраску делает клиент.
         local rpName = ply:GetNWString("GRM_RPName", "")
         if rpName == "" then rpName = ply:Nick() end
@@ -1736,8 +1756,8 @@ if SERVER then
         local factionName, role, tag, color, depAccess, depKeyB, subKeyB = getFactionInfoForPlayer(steam)
         if not factionName then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Вы не состоите ни в одной фракции.") return end
         if not depAccess then ply:PrintMessage(HUD_PRINTTALK, "[Волна] Ваша фракция не имеет доступа к волне департамента.") return end
-        local displayTag=GRM.Factions.ChannelTag(Factions and Factions[factionName] or factionName,
-            depKeyB, subKeyB, GRM.Factions.DisplayName(factionName))
+        local displayTag=GRM.Factions.AppendCID(GRM.Factions.ChannelTag(Factions and Factions[factionName] or factionName,
+            depKeyB, subKeyB, GRM.Factions.DisplayName(factionName)), ply)
         local rpNameB = ply:GetNWString("GRM_RPName", "")
         if rpNameB == "" then rpNameB = ply:Nick() end
         local fDataB = Factions and Factions[factionName]

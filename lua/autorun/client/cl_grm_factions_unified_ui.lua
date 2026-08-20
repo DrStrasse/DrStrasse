@@ -834,13 +834,16 @@ function UI.Open(requestedFaction, requestedTab)
         local searchBox = vgui.Create("DTextEntry", topBar)
         searchBox:Dock(LEFT)
         searchBox:SetWide(300)
-        searchBox:SetPlaceholderText("Поиск по имени или SteamID...")
+        searchBox:SetPlaceholderText("Поиск по имени, номеру (ГР-…) или SteamID...")
         skinTextEntry(searchBox)
 
         local list = vgui.Create("DListView", pnl)
         list:Dock(FILL)
         list:SetMultiSelect(false)
-        list:AddColumn("Имя / Идентификатор"):SetFixedWidth(250)
+        list:AddColumn("Имя / Идентификатор"):SetFixedWidth(230)
+        -- Номер персонажа в госреестре: по нему кадровик находит человека и
+        -- по нему же пробивают через планшет госслужб.
+        list:AddColumn("ID"):SetFixedWidth(90)
         list:AddColumn("Должность"):SetFixedWidth(180)
         list:AddColumn("Отдел / Подотдел"):SetFixedWidth(280)
         list:AddColumn("Статус службы"):SetFixedWidth(130)
@@ -852,7 +855,9 @@ function UI.Open(requestedFaction, requestedTab)
             filter = filter and string.Trim(filter):lower() or ""
             for key, rec in pairs(fac.Members or {}) do
                 local rp = rec._rpName or tostring(key)
-                if filter == "" or rp:lower():find(filter, 1, true) or tostring(key):lower():find(filter, 1, true) then
+                local cidLower = string.lower(tostring(rec._cid or ""))
+                if filter == "" or rp:lower():find(filter, 1, true) or tostring(key):lower():find(filter, 1, true)
+                    or (cidLower ~= "" and cidLower:find(filter, 1, true)) then
                     local roleDisplay = GRM.Factions.RoleDisplayName(fac, rec.Role)
                     local deptDisplay = GRM.Factions.DepartmentDisplayName(fac, rec.Department)
                     local subDisplay = GRM.Factions.SubdepartmentDisplayName(fac, rec.Subdepartment)
@@ -870,10 +875,14 @@ function UI.Open(requestedFaction, requestedTab)
                     elseif dutyText == "ВЫХОДНОЙ" then dutyCol = C.gold
                     elseif dutyText == "ВНЕ СЛУЖБЫ" then dutyCol = C.teal end
                     local loc = rec._location or "—"
-                    local ln = list:AddLine(rp, roleDisplay, branchText, dutyText, loc)
+                    local cid = tostring(rec._cid or "")
+                    local ln = list:AddLine(rp, cid ~= "" and cid or "—", roleDisplay, branchText, dutyText, loc)
                     skinListViewLine(ln)
-                    if ln.Columns and IsValid(ln.Columns[4]) then
-                        ln.Columns[4]:SetTextColor(dutyCol)
+                    if ln.Columns and IsValid(ln.Columns[5]) then
+                        ln.Columns[5]:SetTextColor(dutyCol)
+                    end
+                    if ln.Columns and IsValid(ln.Columns[2]) then
+                        ln.Columns[2]:SetTextColor(C.gold)
                     end
                     ln.memberKey = key
                 end

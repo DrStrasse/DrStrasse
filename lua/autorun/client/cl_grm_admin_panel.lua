@@ -150,9 +150,57 @@ local function playerRows()
     return rows
 end
 
+--[[ Бан по номеру игрока (заказ владельца 19.08). Отдельный блок, потому
+     что банить приходится и тех, кто уже вышел с сервера: номер ИГ-#### живёт
+     в реестре, а SteamID помнить наизусть никто не обязан. ]]
+local function buildBanByID(parent, canFn)
+    if not canFn("mod.ban") then return end
+    local box = vgui.Create("DPanel", parent)
+    box:Dock(BOTTOM) box:SetTall(92) box:DockMargin(0, 8, 6, 0)
+    box.Paint = function(_, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, C.card)
+        draw.SimpleText("БАН ПО ID ИГРОКА (работает и офлайн)", "GRMAdm_Small", 12, 10, C.gold)
+        draw.SimpleText("Принимает ИГ-1042, ГР-4821 (найдёт игрока по персонажу) или SteamID64",
+            "GRMAdm_Small", 12, 72, C.dim)
+    end
+
+    local query = vgui.Create("DTextEntry", box)
+    query:SetPos(12, 30) query:SetSize(190, 28)
+    query:SetPlaceholderText("ИГ-1042 / ГР-4821")
+
+    local minutes = vgui.Create("DTextEntry", box)
+    minutes:SetPos(208, 30) minutes:SetSize(70, 28)
+    minutes:SetText("60")
+    minutes:SetPlaceholderText("мин")
+
+    local reason = vgui.Create("DTextEntry", box)
+    reason:SetPos(284, 30) reason:SetSize(180, 28)
+    reason:SetPlaceholderText("Причина")
+
+    local find = btn(box, "НАЙТИ", C.accent, function()
+        act("id_lookup", "", { query = query:GetValue() })
+    end)
+    find:SetPos(470, 30) find:SetSize(90, 28)
+
+    local ban = btn(box, "ЗАБАНИТЬ", C.red, function()
+        local q = string.Trim(query:GetValue() or "")
+        if q == "" then return end
+        Derma_Query(("Забанить по номеру «%s» на %s мин?"):format(q, minutes:GetValue() or "60"),
+            "Бан по ID", "Забанить", function()
+                act("ban_id", "", { query = q, minutes = tonumber(minutes:GetValue()) or 60,
+                    reason = reason:GetValue() })
+            end, "Отмена")
+    end)
+    ban:SetPos(566, 30) ban:SetSize(110, 28)
+end
+
 local function buildPlayers(pnl)
-    local search = entry(pnl, "Поиск по нику, RP-имени или SteamID…")
+    local search = entry(pnl, "Поиск по нику, RP-имени, SteamID или номеру (ИГ-/ГР-)…")
     search:Dock(TOP) search:SetTall(30) search:DockMargin(0, 0, 0, 8)
+
+    -- Бан по номеру игрока живёт внизу вкладки: он не требует выбранного
+    -- игрока в списке и работает по офлайн-аккаунту.
+    buildBanByID(pnl, can)
 
     local split = vgui.Create("DPanel", pnl)
     split:Dock(FILL) split:SetPaintBackground(false)
@@ -184,7 +232,11 @@ local function buildPlayers(pnl)
             draw.RoundedBox(8, 0, 0, w, h, C.card)
             draw.SimpleText(current.nick .. (current.rpName ~= "" and ("  ·  " .. current.rpName) or ""),
                 "GRMAdm_Sub", 14, 12, C.text)
-            draw.SimpleText("SteamID64: " .. current.sid, "GRMAdm_Small", 14, 34, C.dim)
+            -- Номера реестра: ИГ — игрок (по нему бан), ГР — текущий персонаж.
+            local ids = "SteamID64: " .. current.sid
+            if tostring(current.pid or "") ~= "" then ids = ids .. "   ·   игрок " .. current.pid end
+            if tostring(current.cid or "") ~= "" then ids = ids .. "   ·   персонаж " .. current.cid end
+            draw.SimpleText(ids, "GRMAdm_Small", 14, 34, C.dim)
             draw.SimpleText(("Группа: %s   ·   иммунитет %d   ·   организация: %s")
                 :format(current.group, current.immunity or 0, current.faction ~= "" and current.faction or "—"),
                 "GRMAdm_Small", 14, 52, C.gold)
@@ -351,7 +403,8 @@ local function buildPlayers(pnl)
         end
 
         for _, row in ipairs(rows) do
-            local hay = string.lower(tostring(row.nick or "") .. " " .. tostring(row.rpName or "") .. " " .. tostring(row.sid or ""))
+            local hay = string.lower(tostring(row.nick or "") .. " " .. tostring(row.rpName or "") .. " "
+                .. tostring(row.sid or "") .. " " .. tostring(row.pid or "") .. " " .. tostring(row.cid or ""))
             if q == "" or string.find(hay, q, 1, true) then
                 shown = shown + 1
                 local item = vgui.Create("DButton", list)
@@ -360,7 +413,9 @@ local function buildPlayers(pnl)
                     local active = current and current.sid == row.sid
                     draw.RoundedBox(6, 0, 0, w, h, active and C.accent or (self:IsHovered() and C.cardHover or C.card))
                     draw.SimpleText(row.nick, "GRMAdm_Body", 12, 10, C.text)
-                    draw.SimpleText((row.rpName ~= "" and row.rpName or row.sid), "GRMAdm_Small", 12, 30, active and C.text or C.dim)
+                    local sub = (row.rpName ~= "" and row.rpName or row.sid)
+                    if tostring(row.pid or "") ~= "" then sub = sub .. "  ·  " .. row.pid end
+                    draw.SimpleText(sub, "GRMAdm_Small", 12, 30, active and C.text or C.dim)
                     draw.SimpleText(tostring(row.group or "user") .. (row.local_ and " ·" or ""),
                         "GRMAdm_Small", w - 12, 10, row.local_ and C.dim or C.gold, TEXT_ALIGN_RIGHT)
                     local flags = {}

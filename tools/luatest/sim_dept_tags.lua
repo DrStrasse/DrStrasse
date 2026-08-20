@@ -53,8 +53,8 @@ local radio = fac:match("net%.Receive%(NET_RADIO,.-end%)") or ""
 local radiob = fac:match("net%.Receive%(NET_RADIOB,.-end%)") or ""
 ok(has(radio, "GRM.Factions.ChannelTag("), "/fr печатает теги отдела и подотдела")
 ok(has(radiob, "GRM.Factions.ChannelTag("), "/frb печатает теги отдела и подотдела")
-ok(select(2, fac:gsub("local displayTag=GRM%.Factions%.ChannelTag%(", "")) == 2,
-    "/dep и /depb (/d, /db) собирают шапку тем же сборщиком")
+ok(select(2, fac:gsub("local displayTag=GRM%.Factions%.AppendCID%(GRM%.Factions%.ChannelTag%(", "")) == 2,
+    "/dep и /depb (/d, /db) собирают шапку тем же сборщиком (+ номер персонажа)")
 ok(has(fac, 'return table.concat(parts," | ")'), "уровни склеиваются одной строкой через | ")
 ok(has(fac, "local dTag=GRM.Factions.DepartmentTag(f,departmentKey);if dTag~=\"\"then"),
     "уровень без тега просто пропускается")
