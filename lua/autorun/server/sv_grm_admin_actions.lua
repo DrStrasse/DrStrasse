@@ -618,6 +618,53 @@ AD.Actions = A
 -----------------------------------------------------------------------
 -- ПРИЁМ ДЕЙСТВИЙ
 -----------------------------------------------------------------------
+--[[ ОБЪЯВЛЕНИЯ О НАКАЗАНИЯХ (заказ владельца 21.08).
+     Раньше о муте, клетке, кике и бане знали только двое: тот, кто выдал,
+     и тот, кто получил. Теперь любое наказание — событие сервера: красная
+     строка всем. Формулировки лежат ОДНОЙ таблицей рядом с действиями, а не
+     размазаны по два ChatPrint внутри каждой функции. ]]
+local PUNISH = {
+    jail      = { verb = "посадил в клетку", release = "выпустил из клетки", toggle = "GRM_AdminJailed", seconds = true },
+    mute      = { verb = "закрыл текстовый чат", release = "вернул текстовый чат", toggle = "GRM_AdminMuted" },
+    gag       = { verb = "закрыл голосовой чат", release = "вернул голос", toggle = "GRM_AdminGagged" },
+    freeze    = { verb = "заморозил", release = "разморозил", toggle = "GRM_AdminFrozen" },
+    ragdoll   = { verb = "уронил в рагдолл", release = "поднял из рагдолла", toggle = "GRM_AdminRagdoll" },
+    slay      = { verb = "убил" },
+    strip     = { verb = "забрал оружие у" },
+    kick      = { verb = "кикнул", reason = true },
+    ban       = { verb = "забанил", reason = true, minutes = true },
+    ban_id    = { verb = "забанил по ID", reason = true, minutes = true },
+    warn      = { verb = "вынес предупреждение", reason = true },
+    respawn   = { verb = "возродил" },
+}
+
+--- Текст объявления по действию. targetWas — состояние ДО выполнения:
+--  по нему видно, посадили человека или выпустили.
+local function punishText(actorName, targetName, op, args, targetWas)
+    local row = PUNISH[op]
+    if not row then return nil end
+    local verb = row.verb
+    if row.toggle and targetWas then verb = row.release or row.verb end
+
+    local tail = ""
+    if row.seconds and not targetWas then
+        local seconds = math.floor(tonumber(args and args.seconds) or 0)
+        if seconds > 0 then tail = (" на %d с"):format(seconds) end
+    end
+    if row.minutes then
+        local minutes = math.floor(tonumber(args and args.minutes) or 0)
+        tail = tail .. (minutes > 0 and (" на %d мин."):format(minutes) or " навсегда")
+    end
+    if row.reason then
+        local reason = string.Trim(tostring((args and args.reason) or ""))
+        if reason ~= "" then tail = tail .. " · причина: " .. string.sub(reason, 1, 120) end
+    end
+    return ("%s %s %s%s"):format(actorName, verb, targetName, tail)
+end
+
+AD.PunishText = punishText
+AD.PunishActions = PUNISH
+
 net.Receive(AD.Net.ACT, function(_, ply)
     if not IsValid(ply) then return end
     if GRM.Net and GRM.Net.Guard and not GRM.Net.Guard(ply, "admin.action", { rate = 0.25, burst = 6 }, {}) then return end
@@ -643,10 +690,23 @@ net.Receive(AD.Net.ACT, function(_, ply)
         if not okTarget then AD.Result(ply, false, why) return end
     end
 
+    -- Состояние ДО действия: по нему объявление отличит «посадил» от
+    -- «выпустил» (кнопка одна и та же, действие переключающее).
+    local row = PUNISH[op]
+    local was = false
+    if row and row.toggle and IsValid(target) then was = target[row.toggle] ~= nil and target[row.toggle] ~= false end
+
     local ok, message = action.fn(ply, target, args)
     audit(ply, op, target, { args = args, ok = ok == true })
     AD.Result(ply, ok == true, message or (ok and "Готово" or "Не выполнено"))
     AD.PushPlayers(nil)
+
+    if ok and AD.Announce then
+        local actorName = ply:GetNWString("GRM_RPName", "") ~= "" and ply:GetNWString("GRM_RPName", "") or ply:Nick()
+        local targetName = IsValid(target) and rpNameOf(target) or tostring(args.name or args.query or "игрок")
+        local text = punishText(actorName, targetName, op, args, was)
+        if text then AD.Announce(text, "mod") end
+    end
 end)
 
 -----------------------------------------------------------------------

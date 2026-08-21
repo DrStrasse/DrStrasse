@@ -70,6 +70,15 @@ if SERVER then
     local function getPlayerRank(ply)
         if not IsValid(ply) then return "user" end
         local sid = ply:SteamID()
+        --[[ 21.08. Группа GRM важнее всего остального: назначение через
+             админ-панель раньше не отражалось в TAB вообще (список смотрел
+             только в ULib и в движковые флаги). ]]
+        if GRM.Admin and GRM.Admin.GroupOf then
+            local group = GRM.Admin.GroupOf(ply)
+            if isstring(group) and group ~= "" then return group end
+        end
+        local nw = ply.GetNWString and ply:GetNWString("GRM_AdminGroup", "") or ""
+        if nw ~= "" then return nw end
         if ULib and ULib.ucl and ULib.ucl.getUserGroup then
             local group = ULib.ucl.getUserGroup(sid)
             if group and group ~= "" then return group end
@@ -134,6 +143,12 @@ if SERVER then
                     nick     = (rpName ~= "" and rpName) or ply:Nick(),
                     steam    = ply:Nick(),
                     rank     = getPlayerRank(ply),
+                    -- Подпись и цвет берём из самой группы: свои группы
+                    -- («Куратор», «Хелпер») больше не показываются обрубком.
+                    rankName = (GRM.Admin and GRM.Admin.GroupLabel)
+                        and select(1, GRM.Admin.GroupLabel(getPlayerRank(ply))) or nil,
+                    rankColor = (GRM.Admin and GRM.Admin.GroupLabel)
+                        and select(2, GRM.Admin.GroupLabel(getPlayerRank(ply))) or nil,
                     faction=GRM.TabMenu.ShowFaction and(GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(getPlayerFaction(ply))or getPlayerFaction(ply))or"",
                     balance  = bal,
                     showBal  = isAdmin or (ply == requester),
@@ -163,6 +178,28 @@ if SERVER then
         net.Send(ply)
     end)
 
+    --[[ Смена группы должна быть видна в TAB СРАЗУ, а не через пять секунд
+         автообновления. Рассылку сводим в одну (пачка назначений подряд —
+         обычное дело), данные у каждого свои: баланс чужих видит только
+         админ, поэтому таблица собирается на каждого отдельно. ]]
+    local function pushTabToAll()
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+            if IsValid(ply) then
+                net.Start("grm_tab_data")
+                    net.WriteTable(buildTabData(ply))
+                net.Send(ply)
+            end
+        end
+    end
+
+    hook.Add("GRM_AdminGroupChanged", "GRM_TabMenu_GroupChanged", function()
+        if GRM.Perf and GRM.Perf.Coalesce then
+            GRM.Perf.Coalesce("grm_tab_group_push", 0.5, pushTabToAll)
+        else
+            pushTabToAll()
+        end
+    end)
+
     net.Receive("grm_tab_action", function(_, admin)
         if not admin:IsAdmin() then return end
         local a = net.ReadTable()
@@ -182,6 +219,16 @@ if SERVER then
             net.Send(admin)
         end
 
+        --[[ 21.08. Кнопки TAB — отдельный путь от админ-панели, и о них
+             раньше тоже никто, кроме двоих, не знал. Объявляем тем же
+             общим слоем GRM.Admin.Announce (красная строка всем). ]]
+        local function announce(verb, target, tail)
+            if not (GRM.Admin and GRM.Admin.Announce and IsValid(target)) then return end
+            local actorName = admin:GetNWString("GRM_RPName", "") ~= "" and admin:GetNWString("GRM_RPName", "") or admin:Nick()
+            local targetName = target:GetNWString("GRM_RPName", "") ~= "" and target:GetNWString("GRM_RPName", "") or target:Nick()
+            GRM.Admin.Announce(("%s %s %s%s"):format(actorName, verb, targetName, tail or ""), "mod")
+        end
+
         if a.type == "gag" or a.type == "ungag" then
             local target = findBySID64(a.sid64)
             if not IsValid(target) then sendResult(false, "Игрок не в сети"); return end
@@ -194,9 +241,11 @@ if SERVER then
             if gag then
                 GRM.Notify(target, "[Система] Вы заглушены в чате администратором " .. admin:Nick(), 255, 80, 80)
                 sendResult(true, "Заглушён: " .. target:Nick())
+                announce("заглушил в чате", target)
             else
                 GRM.Notify(target, "[Система] Вы разглушены администратором " .. admin:Nick(), 100, 220, 100)
                 sendResult(true, "Разглушён: " .. target:Nick())
+                announce("разглушил в чате", target)
             end
 
         elseif a.type == "kick" then
@@ -209,6 +258,7 @@ if SERVER then
             else
                 target:Kick("[GRM] " .. reason)
             end
+            announce("кикнул", target, " · причина: " .. tostring(reason))
             sendResult(true, "Кикнут: " .. target:Nick())
 
         elseif a.type == "ban" then
@@ -234,6 +284,7 @@ if SERVER then
                 end
             end
             local durStr = minutes == 0 and "навсегда" or (minutes .. " мин.")
+            announce("забанил", target, " (" .. durStr .. ") · причина: " .. tostring(reason))
             sendResult(true, "Забанен (" .. durStr .. "): " .. target:Nick())
 
         elseif a.type == "ulx_mute" or a.type == "ulx_unmute" then
@@ -244,6 +295,7 @@ if SERVER then
             if not IsValid(target) then sendResult(false, "Игрок не в сети"); return end
             local muting = (a.type == "ulx_mute")
             ULib.queueFunctionCall(ulx.mute, admin, target, muting and 1 or 0, muting and "Заглушен голос" or "")
+            announce(muting and "заглушил голос" or "вернул голос", target)
             sendResult(true, (muting and "Заглушен голос: " or "Разглушен голос: ") .. target:Nick())
         end
     end)
@@ -303,8 +355,25 @@ if CLIENT then
         user       = { label = "U",     col = C.GREY,   priority = 3 },
     }
 
-    local function getRankInfo(rank)
-        return RANK_INFO[rank] or { label = rank:upper():sub(1,3), col = C.ORANGE, priority = 2 }
+    --[[ pd — строка игрока: если сервер прислал название и цвет группы,
+         показываем их, а не обрубок из трёх букв. ]]
+    local function getRankInfo(rank, pd)
+        local base = RANK_INFO[rank]
+        if not base then
+            base = { label = tostring(rank or "?"):upper():sub(1, 3), col = C.ORANGE, priority = 2 }
+        end
+        if istable(pd) then
+            local label, col = base.label, base.col
+            if isstring(pd.rankName) and pd.rankName ~= "" and not RANK_INFO[rank] then
+                label = utf8 and utf8.upper and utf8.upper(pd.rankName) or pd.rankName
+            end
+            if istable(pd.rankColor) then
+                col = Color(tonumber(pd.rankColor.r) or col.r, tonumber(pd.rankColor.g) or col.g,
+                    tonumber(pd.rankColor.b) or col.b, 255)
+            end
+            return { label = label, col = col, priority = base.priority, full = pd.rankName or base.label }
+        end
+        return base
     end
 
     local _frame        = nil
@@ -598,7 +667,7 @@ if CLIENT then
         end
         _selPanel = sp
 
-        local ri  = getRankInfo(pd.rank)
+        local ri  = getRankInfo(pd.rank, pd)
         local y   = 14
 
         -- Крупная аватарка Steam в карточке игрока.
@@ -803,7 +872,7 @@ if CLIENT then
     local ROW_H = 56
     local function buildPlayerRow(scroll, pd, idx, bodyW, detailParent)
         local isSelf   = IsValid(LocalPlayer()) and LocalPlayer():SteamID64() == pd.sid64
-        local ri       = getRankInfo(pd.rank)
+        local ri       = getRankInfo(pd.rank, pd)
         local isMuted  = _voiceMuted[pd.sid64] or false
         local isGagged = _gagCache[pd.sid64] or false
 

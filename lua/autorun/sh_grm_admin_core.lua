@@ -55,11 +55,24 @@ local NET_ACT    = "GRM_Admin_Act"       -- клиент → сервер: де�
 local NET_PLAYERS= "GRM_Admin_Players"   -- сервер → клиент: срез по игрокам
 local NET_REQ    = "GRM_Admin_Request"   -- клиент → сервер: запрос данных
 local NET_RESULT = "GRM_Admin_Result"    -- сервер → клиент: результат действия
+local NET_ANNOUNCE = "GRM_Admin_Announce" -- сервер → всем: объявление в чат
 
 AD.Net = {
     SYNC = NET_SYNC, SAVE = NET_SAVE, ASSIGN = NET_ASSIGN, ACT = NET_ACT,
-    PLAYERS = NET_PLAYERS, REQ = NET_REQ, RESULT = NET_RESULT,
+    PLAYERS = NET_PLAYERS, REQ = NET_REQ, RESULT = NET_RESULT, ANNOUNCE = NET_ANNOUNCE,
 }
+
+--- Как показать группу в списках: название и цвет берём из самой группы,
+--  а не из захардкоженной таблицы в TAB-меню.
+function AD.GroupLabel(groupID)
+    local group = AD.Groups and AD.Groups[string.lower(tostring(groupID or ""))]
+    if istable(group) then
+        local name = tostring(group.name or groupID)
+        local col = istable(group.color) and group.color or nil
+        return name, col
+    end
+    return tostring(groupID or "user"), nil
+end
 
 -----------------------------------------------------------------------
 -- РЕЕСТР ПРАВ
@@ -322,6 +335,7 @@ if SERVER then
     util.AddNetworkString(NET_PLAYERS)
     util.AddNetworkString(NET_REQ)
     util.AddNetworkString(NET_RESULT)
+    util.AddNetworkString(NET_ANNOUNCE)
 
     local function ensureDir()
         if not file.IsDir("grm_admin", "DATA") then file.CreateDir("grm_admin") end
@@ -471,8 +485,20 @@ if SERVER then
             GRM.Audit.Write("admin", "group.assign", actor,
                 { steamid64 = sid64, nick = ply:Nick() }, { from = old, to = groupID, note = opts.note })
         end
+        -- Группа висит на игроке NW-строкой: TAB-меню и любой другой модуль
+        -- читают её без запроса к серверу и видят изменение сразу.
+        ply:SetNWString("GRM_AdminGroup", groupID)
+
         hook.Run("GRM_AdminGroupChanged", ply, old, groupID)
         AD.SyncTo(nil)
+
+        local oldName = AD.GroupLabel(old)
+        local newName = AD.GroupLabel(groupID)
+        local actorName = IsValid(actor) and (actor:GetNWString("GRM_RPName", "") ~= "" and
+            actor:GetNWString("GRM_RPName", "") or actor:Nick()) or "Консоль"
+        AD.Announce(("%s изменил группу игрока %s: %s → %s"):format(
+            actorName, ply:Nick(), oldName, newName), "group")
+
         return true, ("Группа игрока %s: %s → %s"):format(ply:Nick(), old, groupID)
     end
 
@@ -480,6 +506,20 @@ if SERVER then
     --[[ Широковещательный снимок прав пересобирается и уходит ВСЕМ. Правки
          прав идут пачками (галочки в панели), поэтому пачку сводим в одну
          рассылку: пересборка таблицы и сеть — не на каждый клик. ]]
+    --[[ ОБЪЯВЛЕНИЕ В ЧАТ (заказ владельца 21.08). Назначения групп и любые
+         наказания должны видеть все — красной строкой, как уведомление.
+         Один слой на всё: и группы, и модерация зовут именно его. ]]
+    function AD.Announce(text, kind)
+        text = tostring(text or "")
+        if text == "" then return false end
+        net.Start(NET_ANNOUNCE)
+        net.WriteString(text)
+        net.WriteString(tostring(kind or "mod"))
+        net.Broadcast()
+        print("[GRM Admin] " .. text)
+        return true
+    end
+
     function AD.SyncTo(ply)
         if not IsValid(ply) and GRM.Perf and GRM.Perf.Coalesce then
             return GRM.Perf.Coalesce("grm_admin_sync_all", 0.5, function() AD.SyncNow() end)
@@ -499,6 +539,19 @@ if SERVER then
             net.WriteTable({ groups = AD.Groups, perms = perms, users = AD.Users })
         if IsValid(ply) then net.Send(ply) else net.Broadcast() end
     end
+
+    --- Проставить NW-группу игроку (вход, загрузка назначений, импорт ULib).
+    function AD.PushGroupNW(ply)
+        if not IsValid(ply) then return end
+        local group = AD.GroupOf(ply)
+        if ply:GetNWString("GRM_AdminGroup", "") ~= group then
+            ply:SetNWString("GRM_AdminGroup", group)
+        end
+    end
+
+    hook.Add("PlayerInitialSpawn", "GRM_Admin_GroupNW", function(ply)
+        timer.Simple(3, function() AD.PushGroupNW(ply) end)
+    end)
 
     function AD.PlayerRows()
         local rows = {}
@@ -878,6 +931,16 @@ if CLIENT then
     net.Receive(NET_PLAYERS, function()
         AD.Data.players = net.ReadTable() or {}
         hook.Run("GRM_AdminPlayersUpdated")
+    end)
+
+    --[[ Объявления администрации: красной строкой всем, чтобы наказание и
+         смена группы были событием сервера, а не тихой записью в логе. ]]
+    net.Receive(NET_ANNOUNCE, function()
+        local text = net.ReadString()
+        local kind = net.ReadString()
+        local head = kind == "group" and "[АДМИНИСТРАЦИЯ] " or "[МОДЕРАЦИЯ] "
+        chat.AddText(Color(225, 70, 70), head, Color(240, 220, 220), text)
+        surface.PlaySound("buttons/button17.wav")
     end)
 
     net.Receive(NET_RESULT, function()

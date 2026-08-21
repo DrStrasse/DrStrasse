@@ -202,5 +202,28 @@ ok(unified:find('GRM.Format(budget)', 1, true) ~= nil, "казна выводи�
 ok(unified:find("GRM.Format(fac.Budget or 0)", 1, true) ~= nil, "баланс бюджета — тоже")
 ok(hub:find("GRM.Format(GRM.FactionBudgetGet(fac))", 1, true) ~= nil, "админ-хаб печатает бюджет в GRM")
 
+print("\n=== ОБЪЯВЛЕНИЯ И РАНГИ В TAB (заказ 21.08) ===")
+local function has(src, needle) return src:find(needle, 1, true) ~= nil end
+local tab = read("lua/autorun/sh_grm_tab_menu.lua")
+ok(has(core, "function AD.Announce"), "есть один общий слой объявлений администрации")
+ok(has(core, 'net.Receive(NET_ANNOUNCE'), "клиент принимает объявления")
+ok(has(core, "chat.AddText(Color(225, 70, 70)"), "объявление печатается красным текстом")
+ok(has(core, 'AD.Announce(("%s изменил группу игрока %s: %s → %s")'),
+    "смена группы объявляется всем")
+ok(has(core, 'ply:SetNWString("GRM_AdminGroup", groupID)'),
+    "группа висит на игроке — списки видят её сразу")
+ok(has(core, "function AD.GroupLabel"), "название и цвет группы отдаёт сам модуль групп")
+ok(has(actions, "local PUNISH = {"), "формулировки наказаний собраны одной таблицей")
+ok(has(actions, "local function punishText"), "текст объявления строится одним слоем")
+ok(has(actions, "if ok and AD.Announce then"), "объявление уходит после успешного действия")
+ok(has(actions, "targetWas"), "различается «посадил» и «выпустил» (кнопка одна)")
+ok(has(tab, "if GRM.Admin and GRM.Admin.GroupOf then"), "TAB читает группу из GRM.Admin")
+ok(has(tab, "rankName ="), "в TAB уходит название группы")
+ok(has(tab, "rankColor ="), "и её цвет")
+ok(has(tab, 'hook.Add("GRM_AdminGroupChanged", "GRM_TabMenu_GroupChanged"'),
+    "TAB обновляется сразу после смены группы, а не через 5 секунд")
+ok(has(tab, "local function announce(verb, target, tail)"),
+    "кнопки наказаний в самом TAB тоже объявляются")
+
 print(("\nADMIN CORE: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)
