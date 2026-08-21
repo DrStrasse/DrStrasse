@@ -231,10 +231,10 @@ local function buildBanZone(parent, canFn)
     end)
     show:SetPos(294, 30) show:SetSize(140, 28)
 
-    local list = btn(box, "КТО ОТБЫВАЕТ", C.accent, function()
-        RunConsoleCommand("grm_serverban_list")
+    local list = btn(box, "СПИСОК ЗАБАНЕННЫХ", C.accent, function()
+        RunConsoleCommand("grm_serverban_menu")
     end)
-    list:SetPos(440, 30) list:SetSize(160, 28)
+    list:SetPos(440, 30) list:SetSize(200, 28)
 end
 
 local function buildPlayers(pnl)

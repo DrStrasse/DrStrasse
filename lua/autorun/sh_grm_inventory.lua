@@ -1121,7 +1121,16 @@ if SERVER then
         net.Send(admin)
     end)
 
+    --[[ Отбывающий административное наказание не пользуется инвентарём:
+         одна проверка на все действия — открытие, использование, выброс,
+         перенос, разделение и уборка оружия. ]]
+    local function banGate(ply, what)
+        return GRM.ServerBan and GRM.ServerBan.DenySpeech
+            and GRM.ServerBan.DenySpeech(ply, what or "инвентарь") == true
+    end
+
     net.Receive("grm_inv_open", function(_, ply)
+        if banGate(ply, "инвентарь") then return end
         GRM.Inventory.SyncToClient(ply)
         net.Start("grm_inv_open")
         net.Send(ply)
@@ -1129,6 +1138,7 @@ if SERVER then
 
     -- Использование предмета
     net.Receive("grm_inv_use", function(_, ply)
+        if banGate(ply, "использование предметов") then return end
         local slotIdx = net.ReadUInt(8)
         useItem(ply, slotIdx)
         saveSoon("use")
@@ -1136,6 +1146,7 @@ if SERVER then
 
     -- Выброс предмета
     net.Receive("grm_inv_drop", function(_, ply)
+        if banGate(ply, "выброс предметов") then return end
         local slotIdx = net.ReadUInt(8)
         local count = net.ReadUInt(16)
         dropItem(ply, slotIdx, count)
@@ -1144,6 +1155,7 @@ if SERVER then
 
     -- Перемещение предмета
     net.Receive("grm_inv_move", function(_, ply)
+        if banGate(ply, "инвентарь") then return end
         local fromSlot = net.ReadUInt(8)
         local toSlot = net.ReadUInt(8)
         moveItem(ply, fromSlot, toSlot)
@@ -1152,6 +1164,7 @@ if SERVER then
 
     -- Разделение стака
     net.Receive("grm_inv_split", function(_, ply)
+        if banGate(ply, "инвентарь") then return end
         local slotIdx = net.ReadUInt(8)
         local splitCount = net.ReadUInt(16)
         splitStack(ply, slotIdx, splitCount)
@@ -1160,6 +1173,7 @@ if SERVER then
 
     -- Действие (убрать оружие)
     net.Receive("grm_inv_action", function(_, ply)
+        if banGate(ply, "инвентарь") then return end
         local action = net.ReadString()
         if action == "store_weapon" then
             GRM.Inventory.StoreActiveWeapon(ply)

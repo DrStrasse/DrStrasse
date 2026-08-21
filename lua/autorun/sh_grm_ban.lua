@@ -29,7 +29,7 @@ SB.Version = "1.0.0"
 
 SB.Model = "models/player/skeleton.mdl"
 SB.Material = "debugwhite"
-SB.Net = { SYNC = "GRM_ServerBan_Sync" }
+SB.Net = { SYNC = "GRM_ServerBan_Sync", LIST_REQ = "GRM_ServerBan_ListReq", LIST = "GRM_ServerBan_List" }
 
 SB.Zone = SB.Zone or { pos = nil, radius = 600, map = "" }
 SB.Bans = SB.Bans or {}
@@ -81,7 +81,7 @@ if SERVER then
     -- Диск — через общую очередь: бан пишется в момент действия, а не пачкой.
     if GRM.Save and GRM.Save.Register then
         GRM.Save.Register("serverban.list", { file = BANS_FILE, label = "Баны на сервере", delay = 2, priority = 2,
-            build = function() ensureDir() return { version = 1, bans = SB.Bans } end })
+            build = function() ensureDir() return { version = 1, bans = SB.Bans, history = SB.History } end })
         GRM.Save.Register("serverban.zone", { file = ZONE_FILE, label = "Точка отбывания бана", delay = 2,
             build = function() ensureDir() return { version = 1, zones = SB.Zones or {} } end })
     end
@@ -89,7 +89,7 @@ if SERVER then
     local function saveBans(why)
         if GRM.Save and GRM.Save.Mark then return GRM.Save.Mark("serverban.list", why) end
         ensureDir()
-        local ok, raw = pcall(util.TableToJSON, { version = 1, bans = SB.Bans }, true)
+        local ok, raw = pcall(util.TableToJSON, { version = 1, bans = SB.Bans, history = SB.History }, true)
         if ok and isstring(raw) then file.Write(BANS_FILE, raw) return true end
         return false
     end
@@ -99,6 +99,20 @@ if SERVER then
         local ok, raw = pcall(util.TableToJSON, { version = 1, zones = SB.Zones or {} }, true)
         if ok and isstring(raw) then file.Write(ZONE_FILE, raw) return true end
         return false
+    end
+
+    SB.History = SB.History or {}
+    SB.HistoryCap = 200
+
+    local function pushHistory(kind, sid, rec, actor)
+        SB.History[#SB.History + 1] = {
+            t = os.time(), kind = tostring(kind), sid = tostring(sid or ""),
+            name = tostring((rec and rec.name) or ""), reason = tostring((rec and rec.reason) or ""),
+            by = IsValid(actor) and actor:Nick() or "консоль",
+            minutes = rec and rec["until"] and rec["until"] > 0
+                and math.ceil((rec["until"] - os.time()) / 60) or 0,
+        }
+        while #SB.History > SB.HistoryCap do table.remove(SB.History, 1) end
     end
 
     function SB.Load()
@@ -115,6 +129,12 @@ if SERVER then
                         name = tostring(rec.name or ""),
                     }
                 end
+            end
+        end
+        SB.History = {}
+        if istable(data) and istable(data.history) then
+            for _, row in ipairs(data.history) do
+                if istable(row) then SB.History[#SB.History + 1] = row end
             end
         end
         local zones = jsonT(file.Read(ZONE_FILE, "DATA") or "")
@@ -220,6 +240,7 @@ if SERVER then
             ["until"] = minutes > 0 and (os.time() + minutes * 60) or 0,
             reason = reason, by = actorName(actor), at = os.time(), name = target:Nick(),
         }
+        pushHistory("ban", sid, SB.Bans[sid], actor)
         saveBans("бан " .. sid)
         SB.Apply(target, true)
 
@@ -243,6 +264,7 @@ if SERVER then
             if IsValid(p) and (tostring(p:SteamID64() or "") == sid) then target = p break end
         end
         if not SB.Bans[sid] then return false, "Серверного бана нет" end
+        pushHistory("unban", sid, SB.Bans[sid], actor)
         SB.Bans[sid] = nil
         saveBans("разбан " .. sid)
         if IsValid(target) then
@@ -253,6 +275,46 @@ if SERVER then
             (IsValid(target) and target:Nick() or sid))
         return true, "Серверный бан снят"
     end
+
+    --- Строки для админ-меню: кто отбывает, за что и сколько осталось.
+    function SB.List()
+        local rows = {}
+        for sid, rec in pairs(SB.Bans) do
+            local left = SB.Left(rec)
+            rows[#rows + 1] = {
+                sid = sid,
+                name = tostring(rec.name or ""),
+                reason = tostring(rec.reason or ""),
+                by = tostring(rec.by or ""),
+                at = math.floor(tonumber(rec.at) or 0),
+                left = left == math.huge and -1 or math.floor(left),
+                online = false,
+            }
+        end
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+            if IsValid(ply) then
+                local sid = tostring(ply:SteamID64() or "")
+                for _, row in ipairs(rows) do
+                    if row.sid == sid then row.online = true row.name = ply:Nick() end
+                end
+            end
+        end
+        table.sort(rows, function(a, b) return (a.at or 0) > (b.at or 0) end)
+        return rows
+    end
+
+    net.Receive(SB.Net.LIST_REQ, function(_, ply)
+        if not IsValid(ply) then return end
+        local canSee = ply:IsSuperAdmin() or (GRM.Admin and GRM.Admin.Can and GRM.Admin.Can(ply, "mod.ban"))
+        if not canSee then return end
+        local history = {}
+        for i = #SB.History, math.max(1, #SB.History - 40), -1 do
+            history[#history + 1] = SB.History[i]
+        end
+        net.Start(SB.Net.LIST)
+        net.WriteTable({ bans = SB.List(), history = history })
+        net.Send(ply)
+    end)
 
     -------------------------------------------------------------------
     -- ОГРАНИЧЕНИЯ
@@ -404,6 +466,18 @@ if SERVER then
         if IsValid(ply) then ply:ChatPrint(line) else print(line) end
     end)
 
+    --- Разбан из списка: команда принимает SteamID64 забаненного.
+    concommand.Add("grm_serverban_unban", function(ply, _, args)
+        if IsValid(ply) then
+            local can = ply:IsSuperAdmin() or (GRM.Admin and GRM.Admin.Can and GRM.Admin.Can(ply, "mod.ban"))
+            if not can then return end
+        end
+        local sid = tostring(args and args[1] or "")
+        local ok, msg = SB.Unban(ply, sid)
+        local line = "[Бан] " .. tostring(msg or (ok and "снят" or "не снят"))
+        if IsValid(ply) then ply:ChatPrint(line) else print(line) end
+    end)
+
     concommand.Add("grm_serverban_list", function(ply)
         if IsValid(ply) and not ply:IsSuperAdmin() then return end
         local function out(line)
@@ -468,23 +542,166 @@ if CLIENT then
         end
     end)
 
+    --[[ Таймер в памятке идёт вживую, как пинг в TAB: значение считается в
+         самой отрисовке (os.time() на клиенте), а не приходит с сервера
+         пакетом. Раньше цифра выглядела «замороженной» между обновлениями. ]]
+    local function banLeftText(lp)
+        local until_ = lp:GetNWInt("GRM_ServerBanUntil", 0)
+        if until_ <= 0 then return "бессрочно", -1 end
+        local left = math.max(0, until_ - os.time())
+        local m, sec = math.floor(left / 60), left % 60
+        if m >= 60 then
+            return ("%d ч %02d мин"):format(math.floor(m / 60), m % 60), left
+        end
+        return ("%02d:%02d"):format(m, sec), left
+    end
+    SB.LeftText = banLeftText
+
     -- Самому наказанному — крупная памятка внизу экрана.
     hook.Add("HUDPaint", "GRM_ServerBan_Self", function()
         local lp = LocalPlayer()
         if not (IsValid(lp) and lp:GetNWBool("GRM_ServerBanned", false)) then return end
-        local until_ = lp:GetNWInt("GRM_ServerBanUntil", 0)
-        local left = until_ > 0 and math.max(0, until_ - os.time()) or -1
-        local text = left < 0 and "бессрочно" or (math.ceil(left / 60) .. " мин.")
-        local w, h = 520, 86
+        local text, left = banLeftText(lp)
+        local w, h = 560, 112
         local x, y = ScrW() * 0.5 - w * 0.5, ScrH() - h - 40
         draw.RoundedBox(8, x, y, w, h, Color(28, 10, 12, 235))
         draw.SimpleText("ВЫ ЗАБАНЕНЫ НА СЕРВЕРЕ", "GRM_Ban_Head", x + w * 0.5, y + 22,
             Color(235, 70, 70), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        draw.SimpleText(lp:GetNWString("GRM_ServerBanReason", "нарушение правил") .. " · осталось " .. text,
-            "GRM_Ban_Sub", x + w * 0.5, y + 50, Color(230, 210, 210), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        draw.SimpleText("Меню и оружие недоступны. Ждите решения администрации.",
-            "GRM_Ban_Sub", x + w * 0.5, y + 70, Color(170, 160, 160), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText(lp:GetNWString("GRM_ServerBanReason", "нарушение правил"),
+            "GRM_Ban_Sub", x + w * 0.5, y + 48, Color(230, 210, 210), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Осталось: " .. text,
+            "GRM_Ban_Head", x + w * 0.5, y + 68, left >= 0 and left < 60 and Color(250, 200, 90)
+                or Color(235, 235, 235), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Меню, инвентарь, оружие и волны недоступны. Ждите решения администрации.",
+            "GRM_Ban_Sub", x + w * 0.5, y + 92, Color(170, 160, 160), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end)
+
+    --[[ «Ничего не открывать»: контекстное меню и спавн-меню закрыты хуками,
+         а любое окно, которое всё-таки успел открыть сторонний модуль,
+         закрывается сторожем. Проверка идёт раз в полсекунды — держать это
+         в кадре незачем. ]]
+    hook.Add("ContextMenuOpen", "GRM_ServerBan_NoContext", function()
+        local lp = LocalPlayer()
+        if IsValid(lp) and lp:GetNWBool("GRM_ServerBanned", false) then return false end
+    end)
+    hook.Add("SpawnMenuOpen", "GRM_ServerBan_NoSpawnMenu", function()
+        local lp = LocalPlayer()
+        if IsValid(lp) and lp:GetNWBool("GRM_ServerBanned", false) then return false end
+    end)
+
+    local nextSweep = 0
+    hook.Add("Think", "GRM_ServerBan_CloseWindows", function()
+        if CurTime() < nextSweep then return end
+        nextSweep = CurTime() + 0.5
+        local lp = LocalPlayer()
+        if not (IsValid(lp) and lp:GetNWBool("GRM_ServerBanned", false)) then return end
+        local world = vgui.GetWorldPanel()
+        if not IsValid(world) then return end
+        for _, panel in ipairs(world:GetChildren()) do
+            if IsValid(panel) and panel:IsVisible() and panel.GetTitle and not panel.GRM_BanAllowed then
+                panel:SetVisible(false)
+                panel:Remove()
+            end
+        end
+        if gui and gui.IsGameUIVisible and gui.IsGameUIVisible() then return end
+    end)
+
+    -------------------------------------------------------------------
+    -- СПИСОК ЗАБАНЕННЫХ (для администрации)
+    -------------------------------------------------------------------
+    surface.CreateFont("GRM_Ban_List", { font = "Roboto", size = 14, weight = 500, extended = true })
+
+    local function fmtLeft(left)
+        if (tonumber(left) or -1) < 0 then return "бессрочно" end
+        local m = math.floor(left / 60)
+        if m >= 60 then return ("%d ч %02d мин"):format(math.floor(m / 60), m % 60) end
+        return ("%02d:%02d"):format(m, left % 60)
+    end
+
+    net.Receive(SB.Net.LIST, function()
+        local payload = net.ReadTable() or {}
+        local rows = istable(payload.bans) and payload.bans or {}
+        local history = istable(payload.history) and payload.history or {}
+
+        if IsValid(SB._listFrame) then SB._listFrame:Remove() end
+        local frame = vgui.Create("DFrame")
+        SB._listFrame = frame
+        frame.GRM_BanAllowed = true
+        frame:SetSize(math.Clamp(math.floor(ScrW() * 0.55), 780, 1200), math.Clamp(math.floor(ScrH() * 0.7), 520, 900))
+        frame:Center()
+        frame:SetTitle("")
+        frame:MakePopup()
+        frame.Paint = function(_, w, h)
+            draw.RoundedBox(8, 0, 0, w, h, Color(18, 22, 30, 250))
+            draw.RoundedBox(8, 0, 0, w, 52, Color(28, 34, 46, 255))
+            draw.SimpleText("БАНЫ НА СЕРВЕРЕ", "GRM_Ban_Head", 16, 12, Color(235, 90, 80))
+            draw.SimpleText("Отбывают наказание: " .. #rows .. " · записи хранятся между перезапусками",
+                "GRM_Ban_List", 16, 34, Color(160, 170, 185))
+        end
+
+        local scroll = vgui.Create("DScrollPanel", frame)
+        scroll:Dock(FILL)
+        scroll:DockMargin(10, 58, 10, 10)
+
+        if #rows == 0 then
+            local empty = vgui.Create("DLabel", scroll)
+            empty:Dock(TOP) empty:SetTall(28) empty:SetFont("GRM_Ban_List")
+            empty:SetTextColor(Color(160, 170, 185))
+            empty:SetText("Сейчас никто не отбывает наказание.")
+        end
+
+        for _, row in ipairs(rows) do
+            local line = vgui.Create("DPanel", scroll)
+            line:Dock(TOP) line:SetTall(54) line:DockMargin(0, 0, 0, 6)
+            line.Paint = function(_, w, h)
+                draw.RoundedBox(6, 0, 0, w, h, Color(30, 36, 48, 245))
+                draw.SimpleText((row.name ~= "" and row.name or row.sid) ..
+                    (row.online and "  · в сети" or "  · не в сети"),
+                    "GRM_Ban_Sub", 12, 8, Color(240, 240, 245))
+                draw.SimpleText("Причина: " .. (row.reason ~= "" and row.reason or "не указана") ..
+                    "  ·  выдал: " .. (row.by ~= "" and row.by or "?"),
+                    "GRM_Ban_List", 12, 30, Color(170, 178, 190))
+                draw.SimpleText(fmtLeft(row.left), "GRM_Ban_Sub", w - 160, 18, Color(250, 200, 90),
+                    TEXT_ALIGN_RIGHT)
+            end
+            local unban = vgui.Create("DButton", line)
+            unban:Dock(RIGHT) unban:SetWide(130) unban:DockMargin(6, 10, 10, 10)
+            unban:SetText("")
+            unban.Paint = function(self, w, h)
+                draw.RoundedBox(5, 0, 0, w, h, self:IsHovered() and Color(110, 215, 145) or Color(92, 200, 130))
+                draw.SimpleText("РАЗБАНИТЬ", "GRM_Ban_List", w * 0.5, h * 0.5, Color(20, 25, 34),
+                    TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            end
+            unban.DoClick = function()
+                RunConsoleCommand("grm_serverban_unban", row.sid)
+                frame:Close()
+            end
+        end
+
+        if #history > 0 then
+            local head = vgui.Create("DLabel", scroll)
+            head:Dock(TOP) head:SetTall(26) head:DockMargin(0, 10, 0, 4)
+            head:SetFont("GRM_Ban_Sub") head:SetTextColor(Color(226, 184, 92))
+            head:SetText("История последних наказаний")
+            for _, row in ipairs(history) do
+                local line = vgui.Create("DLabel", scroll)
+                line:Dock(TOP) line:SetTall(20)
+                line:SetFont("GRM_Ban_List") line:SetTextColor(Color(160, 170, 185))
+                line:SetText(("%s · %s · %s · %s · выдал %s"):format(
+                    os.date("%d.%m %H:%M", tonumber(row.t) or 0),
+                    row.kind == "unban" and "снят" or "выдан",
+                    tostring(row.name ~= "" and row.name or row.sid),
+                    tostring(row.reason ~= "" and row.reason or "-"),
+                    tostring(row.by or "?")))
+            end
+        end
+    end)
+
+    function SB.OpenList()
+        net.Start(SB.Net.LIST_REQ)
+        net.SendToServer()
+    end
+    concommand.Add("grm_serverban_menu", function() SB.OpenList() end)
 
     print("[GRM Server Ban] client v" .. SB.Version .. " loaded")
 end

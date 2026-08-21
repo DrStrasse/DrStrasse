@@ -249,12 +249,29 @@ ok(#SB.Bans[target:SteamID64()].reason <= 120, "слишком длинная п
     #SB.Bans[target:SteamID64()].reason)
 SB.Unban(admin, target:SteamID64())
 
+print("\n=== 7в. СПИСОК И ИСТОРИЯ ===")
+SB.Ban(admin, target, 20, "Проверка списка")
+local rows = SB.List()
+ok(#rows == 1, "в списке один отбывающий", #rows)
+ok(rows[1].sid == target:SteamID64(), "в строке SteamID")
+ok(rows[1].reason == "Проверка списка", "в строке причина", rows[1].reason)
+ok(rows[1].by ~= "", "видно, кто выдал", rows[1].by)
+ok(rows[1].left > 0 and rows[1].left <= 20 * 60, "и сколько осталось в секундах", rows[1].left)
+ok(rows[1].online == true, "видно, что игрок в сети")
+ok(#SB.History >= 1 and SB.History[#SB.History].kind == "ban", "запись попала в историю")
+SB.Unban(admin, target:SteamID64())
+ok(SB.History[#SB.History].kind == "unban", "снятие тоже пишется в историю")
+SB.Ban(admin, target, 0, "Бессрочный")
+ok(SB.List()[1].left == -1, "у бессрочного бана в списке -1")
+SB.Unban(admin, target:SteamID64())
+
 print("\n=== 8. ХРАНЕНИЕ ===")
 SB.Ban(admin, target, 45, "Проверка сохранения")
 FS["grm_admin/serverbans.json"] = nil
 ok(SB.Bans[target:SteamID64()] ~= nil, "бан в памяти")
 SB.Load()
 ok(table.Count(SB.Bans) == 0, "битый/пустой файл не роняет модуль")
+ok(istable(SB.History), "история переживает перезагрузку структурой")
 
 print(("\nSERVER BAN: %d/%d, провалов: %d"):format(total - fails, total, fails))
 if fails > 0 then os.exit(1) end
