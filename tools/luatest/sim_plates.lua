@@ -459,5 +459,49 @@ local blocked = HOOKS["PlayerUse"]["GRM_Plates_UseVehicle"](owner, farCar)
 ok(blocked == false, "[E] по машине со знаком в руках не сажает в салон")
 ok(held:GetParent() == farCar, "и сразу крепит знак")
 
+print("\n=== 14. НОМЕР ПОМНИТ КОНКРЕТНУЮ МАШИНУ ===")
+-- машина с записью гаража: удаляем её вместе со знаком и выдаём заново
+local recCar = { id = "veh_2", class = "simfphys_moskvich", name = "Москвич" }
+GRM.VehicleDealer = {
+    FindRecord = function(_, id) return id == "veh_2" and recCar or nil end,
+    SaveGarages = function() end,
+}
+local myCar = ents.Create("sim_car")
+myCar:SetPos(Vector(0, 0, 0))
+myCar.GRMGarageOwner, myCar.GRMGarageID = owner, "veh_2"
+myCar.NearestPoint = function(self, pos) return Vector(math.max(-110, math.min(110, pos.x)), 0, 0) end
+
+local number2 = select(1, PL.Issue({ type = "civil", ownerKey = "civ:char1", ownerName = "Ганс Мюллер",
+    by = "cop:char1", byName = "Копп" })).number
+local myPlate = PL.SpawnPlate(number2, Vector(112, 0, 0), Angle(0, 0, 0), owner)
+ok(select(1, PL.Attach(myPlate, myCar, owner)) == true, "знак закреплён на личной машине")
+local mount = PL.Get(number2).mount
+ok(istable(mount) and mount.vehicleID == "veh_2", "в реестре записан ИДЕНТИФИКАТОР конкретной машины", mount and mount.vehicleID)
+ok(istable(mount.pos) and isnumber(mount.pos.x) and istable(mount.ang),
+   "запомнено и место установки на кузове")
+ok(tostring(mount.vehicle) == "Москвич", "название машины записано для картотеки", mount.vehicle)
+
+-- «машину удалили»: знак уходит вместе с ней, запись остаётся
+myPlate:Remove()
+myCar:Remove()
+ok(#PL.EntitiesOf(number2) == 0, "физического знака больше нет")
+ok(PL.Get(number2).mount ~= nil, "но привязка к машине в реестре сохранилась")
+
+-- машина выдана заново (та же запись гаража)
+local sameCar = ents.Create("sim_car")
+sameCar:SetPos(Vector(500, 0, 0))
+sameCar.GRMGarageOwner, sameCar.GRMGarageID = owner, "veh_2"
+recCar.plates = nil    -- даже если раскладка в гараже потерялась
+local restored = PL.RestoreForVehicle(owner, sameCar, recCar)
+ok(restored == 1, "знак вернулся на ту же машину по идентификатору из реестра", restored)
+ok(sameCar:GetNWString("GRM_PlateNumber", "") == number2, "номер снова читается на машине")
+ok(#PL.VehiclePlates(sameCar) == 1, "дублей знака не появилось")
+
+-- чужая машина знак не получает
+local otherCar = ents.Create("sim_car")
+otherCar:SetPos(Vector(900, 0, 0))
+local otherRec = { id = "veh_3", plates = nil }
+ok(PL.RestoreForVehicle(owner, otherCar, otherRec) == 0, "на другую машину чужой знак не встаёт")
+
 print(("\nPLATES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

@@ -574,6 +574,23 @@ if SERVER then
     end
     PL.RememberLayout = rememberLayout
 
+    --[[ ЛИЧНОСТЬ МАШИНЫ.
+         «Если я удалю машину — номер вернётся именно на неё?» Да: знак
+         привязывается не к энтити (она умирает вместе с машиной), а к
+         ЗАПИСИ транспорта в гараже — это и есть конкретная машина, которая
+         переживает удаление, рестарт и выдачу заново. У служебных и карт-
+         машин записи нет, для них знак живёт только пока живёт машина. ]]
+    function PL.VehicleIdentity(veh)
+        if not IsValid(veh) then return "", "" end
+        local id = tostring(veh.GRMGarageID or "")
+        local name = tostring(veh.VD_Class or veh:GetClass() or "")
+        if id ~= "" and GRM.VehicleDealer and GRM.VehicleDealer.FindRecord and IsValid(veh.GRMGarageOwner) then
+            local rec = GRM.VehicleDealer.FindRecord(veh.GRMGarageOwner, id)
+            if istable(rec) then name = tostring(rec.name or name) end
+        end
+        return id, name
+    end
+
     --- Закрепить знак на транспорте.
     function PL.Attach(plate, veh, actor)
         if not (IsValid(plate) and IsValid(veh)) then return false, "Нужен транспорт рядом" end
@@ -591,8 +608,17 @@ if SERVER then
         local number = PL.NormalizeNumber(plate:GetNWString("GRM_Plate", ""))
         local rec = PL.Get(number)
         if rec then
-            rec.mount = { vehicle = tostring(veh.VD_Class or veh:GetClass()), at = os.time() }
-            addHistory(rec, "закреплён на транспорте", IsValid(actor) and actor:Nick() or "владелец")
+            local vehID, vehName = PL.VehicleIdentity(veh)
+            local lp = veh:WorldToLocal(plate:GetPos())
+            local la = veh:WorldToLocalAngles(plate:GetAngles())
+            rec.mount = {
+                vehicle = vehName, vehicleID = vehID, at = os.time(),
+                -- координаты числами: Vector — userdata, в JSON он пустой
+                pos = { x = lp.x, y = lp.y, z = lp.z },
+                ang = { p = la.p, y = la.y, r = la.r },
+            }
+            addHistory(rec, "закреплён на транспорте" .. (vehName ~= "" and (" (" .. vehName .. ")") or ""),
+                IsValid(actor) and actor:Nick() or "владелец")
             PL.Save("монтаж знака")
         end
         -- номер видно над машиной и в проверках
@@ -741,21 +767,48 @@ if SERVER then
         PL.HandlePlateUse(ply, plate)
     end)
 
-    -- Возврат знаков на место после выдачи машины из гаража.
-    hook.Add("GRM_VehicleIssued", "GRM_Plates_Restore", function(ply, ent, rec)
-        if not (IsValid(ent) and istable(rec) and istable(rec.plates)) then return end
-        for _, saved in ipairs(rec.plates) do
-            local number = PL.NormalizeNumber(saved.number)
+    --[[ ВОЗВРАТ ЗНАКОВ НА КОНКРЕТНУЮ МАШИНУ.
+         Источников два, и это осознанно:
+           1) раскладка в записи гаража (быстро и точно, ставилась при
+              закреплении);
+           2) сам реестр номеров — если запись гаража потеряла список
+              (старое сохранение, ручная правка), знак всё равно найдёт свою
+              машину по mount.vehicleID.
+         Дубли исключаются по номеру. ]]
+    function PL.RestoreForVehicle(ply, ent, record)
+        if not (IsValid(ent) and istable(record)) then return 0 end
+        local done, restored = {}, 0
+
+        local function place(number, pos, ang)
+            number = PL.NormalizeNumber(number)
+            if number == "" or done[number] then return end
             local plateRec = PL.Get(number)
-            if plateRec then
-                local lp = Vector(tonumber(saved.pos and saved.pos.x) or 0,
-                    tonumber(saved.pos and saved.pos.y) or 0, tonumber(saved.pos and saved.pos.z) or 0)
-                local la = Angle(tonumber(saved.ang and saved.ang.p) or 0,
-                    tonumber(saved.ang and saved.ang.y) or 0, tonumber(saved.ang and saved.ang.r) or 0)
-                local plate = PL.SpawnPlate(number, ent:LocalToWorld(lp), ent:LocalToWorldAngles(la), ply)
-                if IsValid(plate) then PL.Attach(plate, ent, ply) end
+            if not plateRec then return end
+            done[number] = true
+            local lp = Vector(tonumber(pos and pos.x) or 0, tonumber(pos and pos.y) or 0, tonumber(pos and pos.z) or 0)
+            local la = Angle(tonumber(ang and ang.p) or 0, tonumber(ang and ang.y) or 0, tonumber(ang and ang.r) or 0)
+            local plate = PL.SpawnPlate(number, ent:LocalToWorld(lp), ent:LocalToWorldAngles(la), ply)
+            if IsValid(plate) and PL.Attach(plate, ent, ply) then restored = restored + 1 end
+        end
+
+        for _, saved in ipairs(istable(record.plates) and record.plates or {}) do
+            place(saved.number, saved.pos, saved.ang)
+        end
+
+        local recID = tostring(record.id or "")
+        if recID ~= "" then
+            for number, plateRec in pairs(PL.Data.plates or {}) do
+                local mount = istable(plateRec.mount) and plateRec.mount or nil
+                if mount and tostring(mount.vehicleID or "") == recID then
+                    place(number, mount.pos, mount.ang)
+                end
             end
         end
+        return restored
+    end
+
+    hook.Add("GRM_VehicleIssued", "GRM_Plates_Restore", function(ply, ent, rec)
+        PL.RestoreForVehicle(ply, ent, rec)
     end)
 
     -- ── команды и сеть ──────────────────────────────────────────────

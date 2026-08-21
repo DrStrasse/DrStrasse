@@ -64,30 +64,31 @@ function ENT:Draw()
     local tw = surface.GetTextSize(text)
     local fit = math.min(1, (w * 0.78) / math.max(1, tw))
 
-    -- обе стороны: наружу по нормали и в противоположную
+    --[[ Рисуем в ДВА прохода на каждую сторону.
+
+         Первая версия масштабировала надпись через cam.PushModelMatrix — а
+         он БЕЗ второго аргумента ЗАМЕНЯЕТ матрицу 3D2D, а не домножает её:
+         номер улетал в мировые координаты, и на знаке оставалась пустая
+         заливка (что владелец и увидел). Никаких матриц: для текста просто
+         открывается второй 3D2D с уменьшенным масштабом. ]]
     for _, side in ipairs({ 1, -1 }) do
-        local nrm = worldDir(self, face.normal * side)
         local up  = worldDir(self, face.up)
         local rgt = worldDir(self, face.right * side)
-
-        local pos = self:LocalToWorld(face.center + face.normal * (face.half + 0.2) * side)
+        local pos = self:LocalToWorld(face.center + face.normal * (face.half + 0.15) * side)
         local ang = rgt:AngleEx(up)
 
         cam.Start3D2D(pos, ang, scale)
             draw.RoundedBox(0, -w / 2, -h / 2, w, h, plateCol)
             draw.RoundedBox(0, -w / 2, -h / 2, w * 0.13, h, bandCol)
-
-            local m = Matrix()
-            m:Translate(Vector(w * 0.065, 0, 0))
-            m:Scale(Vector(fit, fit, 1))
-            cam.PushModelMatrix(m)
-                draw.SimpleText(text, "GRMPlate_Number", 0, 0, textCol, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-            cam.PopModelMatrix()
-
             if status ~= "active" then
                 draw.SimpleText(string.upper(PL.Statuses[status] or status), "GRMPlate_Small",
-                    0, h / 2 - 10, Color(200, 40, 40), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    w * 0.065, h / 2 - 9, Color(200, 40, 40), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
             end
+        cam.End3D2D()
+
+        cam.Start3D2D(pos, ang, scale * fit)
+            draw.SimpleText(text, "GRMPlate_Number", (w * 0.065) / fit, 0, textCol,
+                TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         cam.End3D2D()
     end
 end
