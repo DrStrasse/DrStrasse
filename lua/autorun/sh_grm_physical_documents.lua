@@ -132,8 +132,35 @@ if SERVER then
         return true,copyID
     end
 
+    --[[ ПОЧЕМУ ВОССТАНОВЛЕНИЕ МОЛЧА ДАВАЛО НОЛЬ (фикс 21.08).
+         Меню считало недостающие бланки правильно (4), а восстановление
+         возвращало 0 и НЕ показывало причин: команда `all` собирала ошибки
+         в таблицу и выбрасывала её. При этом типичная причина — общая:
+         хранилище помечено нездоровым (инвентарь или реестр документов
+         загрузились из повреждённого файла), и любая запись блокируется.
+         Тогда выдача бланка откатывалась, а игрок видел «Восстановлено: 0».
+
+         Теперь причина проверяется ДО выдачи и показывается человеку, а на
+         `/docrestore диаг` печатается полная картина по каждому типу. ]]
+    function DOC.StorageBlockedReason()
+        if GRM.Inventory and GRM.Inventory.PersistenceHealthy then
+            local healthy, source = GRM.Inventory.PersistenceHealthy()
+            if healthy == false then
+                return "Инвентарь загружен из повреждённого файла (" .. tostring(source or "?") ..
+                    ") — запись заблокирована. Диагностика: /docrestore диаг"
+            end
+        end
+        if DOC.RegistryHealthy == false then
+            return "Реестр документов загружен из повреждённого файла — запись заблокирована. " ..
+                "Диагностика: /docrestore диаг"
+        end
+        return nil
+    end
+
     function DOC.RestorePhysicalDocument(ply,docType)
         if not IsValid(ply)or not ply:IsPlayer()then return false,"Игрок не найден"end
+        local blocked=DOC.StorageBlockedReason()
+        if blocked then return false,blocked end
         docType=DOC.CanonicalPhysicalType(docType);local ownerKey=keyOf(ply);local rec,def=DOC.PhysicalRecord(ownerKey,docType)
         if not rec or not def then return false,"Документ этого типа не выдавался персонажу"end
         local status=string.lower(tostring(rec.status or"действителен"));if status:find("аннулир",1,true)or status:find("отозван",1,true)then return false,"Документ аннулирован в реестре"end
@@ -161,6 +188,44 @@ if SERVER then
     hook.Add("GRM_CharacterChanged","GRM_PhysicalDocs_Missing",function(ply)timer.Simple(3,function()notifyMissing(ply)end)end)
     hook.Add("PlayerInitialSpawn","GRM_PhysicalDocs_MissingJoin",function(ply)timer.Simple(8,function()notifyMissing(ply)end)end)
 
+    --- Полная картина по восстановлению: что мешает и по какому типу.
+    function DOC.PrintRestoreDiag(ply)
+        if not IsValid(ply) then return end
+        local ownerKey=keyOf(ply)
+        local function out(line) ply:ChatPrint("[Документы] "..tostring(line)) end
+
+        out("Диагностика восстановления бланков, персонаж "..ownerKey)
+        local blocked=DOC.StorageBlockedReason()
+        out("Хранилище: "..(blocked and ("ЗАБЛОКИРОВАНО — "..blocked) or "в порядке"))
+
+        if GRM.Inventory and GRM.Inventory.GetPlayerInv then
+            local inv=GRM.Inventory.GetPlayerInv(ply)
+            local used=0
+            for _,slot in pairs(istable(inv) and inv.slots or {}) do
+                if istable(slot) and slot.id then used=used+1 end
+            end
+            local maxSlots=(GRM.Inventory.Config and GRM.Inventory.Config.MaxSlots) or 0
+            out(("Инвентарь: занято слотов %d из %d"):format(used,maxSlots))
+        else
+            out("Инвентарь: модуль не загружен")
+        end
+
+        local now=os.time()
+        for typ,def in pairs(DOC.PhysicalDefs) do
+            local rec=DOC.PhysicalRecord(ownerKey,typ)
+            if not rec then
+                out(("  %-16s записи в реестре нет"):format(typ))
+            else
+                local copies=copyCount(ply,typ,ownerKey)
+                local status=tostring(rec.status or "действителен")
+                local left=math.max(0,(6*3600)-(now-(tonumber(rec.lastPhysicalRestore) or 0)))
+                out(("  %-16s копий %d · статус «%s»%s"):format(typ,copies,status,
+                    left>0 and (" · повтор через "..math.ceil(left/60).." мин.") or ""))
+            end
+        end
+        out("Выдать один бланк: /docrestore <тип>. Все: /docrestore all")
+    end
+
     local function findOnlineByKey(ownerKey)
         for _,p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do if keyOf(p)==ownerKey then return p end end
     end
@@ -175,8 +240,35 @@ if SERVER then
     end
     local function handleRestoreCommand(ply,text)
         local raw=string.Trim(tostring(text or""));local low=string.lower(raw);local arg
-        if low=="/docrestore"then arg=""elseif low:sub(1,12)=="/docrestore "then arg=string.Trim(raw:sub(13))else return false end;if arg==""then ply:ChatPrint("[Документы] /docrestore passport|badge|military|license|milLicense|weaponLicense|businessLicense|all")return true end
-        if string.lower(arg)=="all"then local restored,errors=0,{};for typ in pairs(DOC.PhysicalDefs)do local rec=DOC.PhysicalRecord(keyOf(ply),typ);if rec and copyCount(ply,typ,keyOf(ply))==0 then local ok,msg=DOC.RestorePhysicalDocument(ply,typ);if ok then restored=restored+1 else errors[#errors+1]=tostring(msg)end end end;if GRM.Notify then GRM.Notify(ply,"Восстановлено документов: "..restored,restored>0 and 100 or 255,restored>0 and 220 or 150,120)end return true end
+        if low=="/docrestore"then arg=""elseif low:sub(1,12)=="/docrestore "then arg=string.Trim(raw:sub(13))else return false end;if arg==""then ply:ChatPrint("[Документы] /docrestore passport|badge|military|license|milLicense|weaponLicense|businessLicense|all|диаг")return true end
+        if string.lower(arg)=="диаг" or string.lower(arg)=="diag" then DOC.PrintRestoreDiag(ply) return true end
+        if string.lower(arg)=="all"then
+            local restored,errors,tried=0,{},0
+            for typ in pairs(DOC.PhysicalDefs)do
+                local rec=DOC.PhysicalRecord(keyOf(ply),typ)
+                if rec and copyCount(ply,typ,keyOf(ply))==0 then
+                    tried=tried+1
+                    local ok,msg=DOC.RestorePhysicalDocument(ply,typ)
+                    if ok then restored=restored+1
+                    else
+                        local text=tostring(msg or "неизвестная причина")
+                        errors[text]=(errors[text] or 0)+1
+                    end
+                end
+            end
+            if GRM.Notify then
+                GRM.Notify(ply,"Восстановлено бланков: "..restored.." из "..tried,
+                    restored>0 and 100 or 255,restored>0 and 220 or 150,120)
+            end
+            -- Молчаливого нуля больше нет: причины уходят в чат.
+            for text,count in pairs(errors) do
+                ply:ChatPrint("[Документы] Не восстановлено ("..count.."): "..text)
+            end
+            if restored==0 and tried>0 then
+                ply:ChatPrint("[Документы] Подробности: /docrestore диаг")
+            end
+            return true
+        end
         local ok,msg=DOC.RestorePhysicalDocument(ply,arg);if GRM.Notify then GRM.Notify(ply,ok and"Физический документ восстановлен."or tostring(msg),ok and 100 or 255,ok and 220 or 140,ok and 130 or 110)end return true
     end
     hook.Add("PlayerSayTransform","GRM_PhysicalDocs_Transform",function(ply,data)if istable(data)and isstring(data[1])and(handleCopyCommand(ply,data[1])or handleRestoreCommand(ply,data[1]))then data[1]="";data.SkipPlayerSay=true end end)

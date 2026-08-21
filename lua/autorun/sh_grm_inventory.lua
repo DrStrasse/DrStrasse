@@ -376,6 +376,50 @@ if SERVER then
     Inventories=loadedInventories or{};persistenceHealthy=loadedHealthy~=false
     GRM.Inventory.PersistenceHealthy=function()return persistenceHealthy,loadedSource end
     GRM.Inventory.SaveNow=function(why)return saveInventories("immediate: "..tostring(why or"api"))end
+
+    --[[ ВЫХОД ИЗ БЛОКИРОВКИ (21.08). Если инвентарь загрузился из
+         повреждённого файла, запись блокируется НА ВСЮ СЕССИЮ: ни выдача
+         бланков, ни подобранные предметы не сохраняются, и внешне это
+         выглядит как «функция просто не работает». Раньше снять блокировку
+         было нечем — только рестарт с ручной правкой файла.
+         Теперь суперадмин видит предупреждение и может принять текущее
+         состояние (лучшую из уцелевших копий) как рабочее. ]]
+    function GRM.Inventory.UnblockPersistence(why)
+        persistenceHealthy = true
+        local ok = saveInventories("unblock: " .. tostring(why or "админ"))
+        if not ok then persistenceHealthy = false end
+        return ok
+    end
+
+    if not persistenceHealthy then
+        print("[GRM Inv][!] ВНИМАНИЕ: инвентарь загружен из повреждённого файла (" ..
+            tostring(loadedSource) .. "). Сохранение ЗАБЛОКИРОВАНО.")
+        print("[GRM Inv][!] Проверить: grm_inv_health · Снять блокировку: grm_inv_unblock confirm")
+    end
+
+    concommand.Add("grm_inv_health", function(ply)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        local line = ("[GRM Inv] хранилище: %s · источник: %s · записей: %d")
+            :format(persistenceHealthy and "в порядке" or "ЗАБЛОКИРОВАНО",
+                tostring(loadedSource), table.Count(Inventories or {}))
+        if IsValid(ply) then ply:PrintMessage(HUD_PRINTCONSOLE, line) else print(line) end
+    end)
+
+    concommand.Add("grm_inv_unblock", function(ply, _, args)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        local function out(line)
+            if IsValid(ply) then ply:PrintMessage(HUD_PRINTCONSOLE, line) else print(line) end
+        end
+        if persistenceHealthy then out("[GRM Inv] блокировки нет, сохранение работает") return end
+        if tostring(args and args[1] or "") ~= "confirm" then
+            out("[GRM Inv] ВНИМАНИЕ: текущее состояние (" .. tostring(loadedSource) ..
+                ") станет основным файлом. Подтвердите: grm_inv_unblock confirm")
+            return
+        end
+        out(GRM.Inventory.UnblockPersistence("команда админа")
+            and "[GRM Inv] блокировка снята, инвентари сохранены"
+            or "[GRM Inv] снять блокировку не удалось — смотрите ошибки записи выше")
+    end)
     if persistenceHealthy and loadedSource~=INV_FILE and loadedSource~="new"then timer.Simple(0,function()saveInventories("heal from "..tostring(loadedSource))end)end
 
     -- Автосохранение
