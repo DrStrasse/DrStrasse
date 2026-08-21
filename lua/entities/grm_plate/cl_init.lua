@@ -25,7 +25,7 @@ local function faceGeometry(ent)
     if ent.GRMFace then return ent.GRMFace end
     local PL = GRM and GRM.Plates
     if not (PL and PL.FaceGeometry) then return nil end
-    ent.GRMFace = PL.FaceGeometry(ent:OBBMins(), ent:OBBMaxs())
+    ent.GRMFace = PL.FaceGeometry(ent:OBBMins(), ent:OBBMaxs(), PL.Render)
     return ent.GRMFace
 end
 

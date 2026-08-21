@@ -54,7 +54,9 @@ concommand = { Add = function() end }
 util = { AddNetworkString = function() end }
 local NETSENT = {}
 net = { Receive = function(m, fn) NETSENT[m] = fn end, Start = function() end, Send = function() end,
+        Broadcast = function() end,
         WriteString = function() end, WriteTable = function() end, WriteBool = function() end,
+        WriteUInt = function() end, WriteFloat = function() end, WriteInt = function() end,
         ReadString = function() return "" end, ReadTable = function() return {} end }
 local CONVARS = {}
 function CreateConVar(name, def)
@@ -412,18 +414,32 @@ ok(tostring(civ.chat) == "" and tostring(LASTNOTIFY):find("служба", 1, tru
 ok(NETSENT[PL.Net.ACT] ~= nil, "приём действий окна зарегистрирован")
 
 print("\n=== 11. ОРИЕНТАЦИЯ НАДПИСИ НА ЗНАКЕ ===")
+-- раскладка настраивается: ось, поворот, зеркало, масштаб
+ok(istable(PL.Render), "настройка раскладки объявлена")
+local base = PL.FaceGeometry(Vector(-12, -36, -0.5), Vector(12, 36, 0.5), { axis = "auto", yaw = 0, scale = 1 })
+ok(base.rightAxis == "y" and base.upAxis == "x", "поворот 0°: строка вдоль длинной стороны")
+local turned = PL.FaceGeometry(Vector(-12, -36, -0.5), Vector(12, 36, 0.5), { axis = "auto", yaw = 90, scale = 1 })
+ok(turned.rightAxis == "x" and turned.upAxis == "y", "поворот 90° меняет оси местами")
+ok(turned.w == base.h and turned.h == base.w, "и размеры поля меняются вместе с ними")
+local flipped = PL.FaceGeometry(Vector(-12, -36, -0.5), Vector(12, 36, 0.5), { axis = "auto", yaw = 0, flip = true, scale = 1 })
+ok(flipped.right.y == -base.right.y, "зеркало разворачивает строку")
+local forced = PL.FaceGeometry(Vector(-12, -36, -0.5), Vector(12, 36, 0.5), { axis = "y", yaw = 0, scale = 1 })
+ok(forced.thin == "y", "ось лица можно задать вручную, если модель нестандартная")
+local scaled = PL.FaceGeometry(Vector(-12, -36, -0.5), Vector(12, 36, 0.5), { axis = "auto", yaw = 0, scale = 0.5 })
+ok(math.abs(scaled.w - base.w * 0.5) < 0.01, "масштаб поля учитывается", scaled.w)
+
 -- габариты hunter-плашки: тонкая по Z, длинная сторона — вдоль Y
-local face = PL.FaceGeometry(Vector(-12, -36, -0.5), Vector(12, 36, 0.5))
+local face = PL.FaceGeometry(Vector(-12, -36, -0.5), Vector(12, 36, 0.5), { axis = "auto", yaw = 0, scale = 1 })
 ok(face.thin == "z", "тонкая ось распознана как толщина знака", face.thin)
 ok(face.rightAxis == "y" and face.upAxis == "x",
    "строка номера идёт вдоль ДЛИННОЙ стороны (номер не боком)", face.rightAxis .. "/" .. face.upAxis)
 ok(face.w > face.h, "поле знака шире, чем выше", face.w .. "x" .. face.h)
 ok(math.abs(face.half - 0.5) < 0.001, "половина толщины посчитана", face.half)
 -- знак, повёрнутый в модели иначе: длинная сторона по X
-local face2 = PL.FaceGeometry(Vector(-36, -12, -0.5), Vector(36, 12, 0.5))
+local face2 = PL.FaceGeometry(Vector(-36, -12, -0.5), Vector(36, 12, 0.5), { axis = "auto", yaw = 0, scale = 1 })
 ok(face2.rightAxis == "x" and face2.upAxis == "y", "для другой модели строка тоже идёт по длинной стороне")
 -- вертикальная плашка (тонкая по Y)
-local face3 = PL.FaceGeometry(Vector(-36, -0.5, -12), Vector(36, 0.5, 12))
+local face3 = PL.FaceGeometry(Vector(-36, -0.5, -12), Vector(36, 0.5, 12), { axis = "auto", yaw = 0, scale = 1 })
 ok(face3.thin == "y" and face3.rightAxis == "x", "нормаль и строка считаются и для вертикальной плашки")
 
 print("\n=== 12. КРЕПЛЕНИЕ: ДАЛЁКИЙ ЦЕНТР МАШИНЫ НЕ МЕШАЕТ ===")
@@ -502,6 +518,21 @@ local otherCar = ents.Create("sim_car")
 otherCar:SetPos(Vector(900, 0, 0))
 local otherRec = { id = "veh_3", plates = nil }
 ok(PL.RestoreForVehicle(owner, otherCar, otherRec) == 0, "на другую машину чужой знак не встаёт")
+
+print("\n=== 15. ПОДГОНКА ЗНАКА В ИГРЕ ===")
+ok(isfunction(PL.RenderCommand), "команды подгонки объявлены")
+local before = PL.Render.yaw
+PL.RenderCommand(root, "yaw", 90)
+ok(PL.Render.yaw == (before + 90) % 360, "поворот крутится по 90°", PL.Render.yaw)
+PL.RenderCommand(root, "axis")
+ok(PL.Render.axis ~= "auto", "ось переключается", PL.Render.axis)
+PL.RenderCommand(root, "flip")
+ok(PL.Render.flip == true, "зеркало переключается")
+PL.RenderCommand(root, "scale", 1.5)
+ok(math.abs(PL.Render.scale - 1.5) < 0.001, "масштаб задаётся числом")
+PL.RenderCommand(civ, "yaw", 90)
+ok(PL.Render.yaw ~= (before + 180) % 360, "обычный игрок настройку не крутит")
+ok(PL.SaveRender() == true and files["grm_plates/render.json"] ~= nil, "раскладка сохраняется на диск")
 
 print(("\nPLATES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

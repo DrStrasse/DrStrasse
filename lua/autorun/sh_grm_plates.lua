@@ -38,6 +38,7 @@ PL.Net = {
     OPEN = "GRM_Plates_Open",
     SYNC = "GRM_Plates_Sync",
     ACT  = "GRM_Plates_Act",
+    RENDER = "GRM_Plates_Render",   -- раскладка надписи на знаке
 }
 
 -----------------------------------------------------------------------
@@ -218,14 +219,34 @@ end
 -- короткая — вверх. Именно поэтому номер стоит правильно, а не поперёк
 -- (первая версия рисовала надпись боком — заказ владельца «повернуть на 90»).
 -----------------------------------------------------------------------
-function PL.FaceGeometry(mins, maxs)
+--[[ Как лежит надпись на знаке.
+
+     Гадать по габаритам модели оказалось ненадёжно: у plate025x075 «тонкая»
+     ось OBB не совпала с видимой плоскостью, и поле знака рисовалось поперёк
+     (владелец: «поверни как следует, я не знаю какую координату ты тронул»).
+
+     Поэтому раскладка НАСТРАИВАЕТСЯ и хранится на сервере:
+       axis — какая ось модели смотрит «наружу» (auto/x/y/z);
+       yaw  — поворот надписи в плоскости знака (0/90/180/270);
+       flip — зеркалить (если надпись читается с изнанки);
+       scale— размер поля относительно габаритов модели.
+     Настраивается прямо в игре командами /номер_поворот, /номер_ось,
+     /номер_масштаб — один раз и на все знаки. ]]
+PL.Render = PL.Render or { axis = "auto", yaw = 90, flip = false, scale = 1 }
+
+--- Геометрия лицевой стороны с учётом настроек раскладки.
+function PL.FaceGeometry(mins, maxs, render)
+    render = istable(render) and render or PL.Render
     local size = maxs - mins
     local center = (mins + maxs) * 0.5
     local dims = { x = math.abs(size.x), y = math.abs(size.y), z = math.abs(size.z) }
 
-    local thin = "x"
-    if dims.y < dims[thin] then thin = "y" end
-    if dims.z < dims[thin] then thin = "z" end
+    local thin = tostring(render.axis or "auto")
+    if thin ~= "x" and thin ~= "y" and thin ~= "z" then
+        thin = "x"
+        if dims.y < dims[thin] then thin = "y" end
+        if dims.z < dims[thin] then thin = "z" end
+    end
 
     local rest = {}
     for _, ax in ipairs({ "x", "y", "z" }) do
@@ -234,12 +255,25 @@ function PL.FaceGeometry(mins, maxs)
     local long, short = rest[1], rest[2]
     if dims[short] > dims[long] then long, short = short, long end
 
+    -- поворот надписи в плоскости знака: меняем местами оси и знаки
+    local yaw = math.floor((tonumber(render.yaw) or 0) / 90 + 0.5) % 4
+    local rightAxis, upAxis = long, short
+    local rightSign, upSign = 1, 1
+    if yaw == 1 then rightAxis, upAxis, rightSign, upSign = short, long, 1, -1
+    elseif yaw == 2 then rightSign, upSign = -1, -1
+    elseif yaw == 3 then rightAxis, upAxis, rightSign, upSign = short, long, -1, 1 end
+    if render.flip then rightSign = -rightSign end
+
     local unit = { x = Vector(1, 0, 0), y = Vector(0, 1, 0), z = Vector(0, 0, 1) }
+    local k = math.Clamp(tonumber(render.scale) or 1, 0.2, 3)
     return {
         center = center,
-        normal = unit[thin], right = unit[long], up = unit[short],
-        thin = thin, rightAxis = long, upAxis = short,
-        half = dims[thin] * 0.5, w = dims[long], h = dims[short],
+        normal = unit[thin],
+        right = unit[rightAxis] * rightSign,
+        up = unit[upAxis] * upSign,
+        thin = thin, rightAxis = rightAxis, upAxis = upAxis,
+        half = dims[thin] * 0.5,
+        w = dims[rightAxis] * k, h = dims[upAxis] * k,
     }
 end
 
@@ -345,6 +379,7 @@ if SERVER then
     util.AddNetworkString(PL.Net.OPEN)
     util.AddNetworkString(PL.Net.SYNC)
     util.AddNetworkString(PL.Net.ACT)
+    util.AddNetworkString(PL.Net.RENDER)
 
     PL.LimitCvar = PL.LimitCvar or CreateConVar("grm_plates_limit", "6", FCVAR_ARCHIVE,
         "Сколько регистрационных номеров может быть у одного персонажа (0 — без предела)")
@@ -353,10 +388,15 @@ if SERVER then
 
     local DIR  = "grm_plates"
     local FILE = DIR .. "/registry.json"
+    local RENDER_FILE = DIR .. "/render.json"
 
     local function ensureDir()
         if not file.IsDir(DIR, "DATA") then file.CreateDir(DIR) end
     end
+
+    -- Форвард-декларация: чат-команды ниже зовут её раньше объявления
+    -- (ловушка Lua, которую ловит sim_forward_locals).
+    local renderCommand
 
     local function charKey(ply)
         if isstring(ply) then return ply end
@@ -410,7 +450,42 @@ if SERVER then
         return PL.SaveNow()
     end
 
+    --[[ Раскладка надписи: хранится файлом и рассылается всем — правишь
+         один раз, видят все и после рестарта. ]]
+    function PL.SaveRender()
+        ensureDir()
+        local ok, txt = pcall(util.TableToJSON, PL.Render, true)
+        if not ok or not isstring(txt) then return false end
+        file.Write(RENDER_FILE, txt)
+        return true
+    end
+
+    function PL.LoadRender()
+        if not file.Exists(RENDER_FILE, "DATA") then return false end
+        local ok, t = pcall(util.JSONToTable, file.Read(RENDER_FILE, "DATA") or "", false, true)
+        if not (ok and istable(t)) then return false end
+        PL.Render.axis = tostring(t.axis or "auto")
+        PL.Render.yaw = math.floor(tonumber(t.yaw) or 0) % 360
+        PL.Render.flip = t.flip == true
+        PL.Render.scale = math.Clamp(tonumber(t.scale) or 1, 0.2, 3)
+        return true
+    end
+
+    function PL.PushRender(ply)
+        net.Start(PL.Net.RENDER)
+            net.WriteString(tostring(PL.Render.axis or "auto"))
+            net.WriteUInt(math.floor((tonumber(PL.Render.yaw) or 0) % 360), 9)
+            net.WriteBool(PL.Render.flip == true)
+            net.WriteFloat(math.Clamp(tonumber(PL.Render.scale) or 1, 0.2, 3))
+        if IsValid(ply) then net.Send(ply) else net.Broadcast() end
+    end
+
+    hook.Add("PlayerInitialSpawn", "GRM_Plates_RenderSync", function(ply)
+        timer.Simple(3, function() if IsValid(ply) then PL.PushRender(ply) end end)
+    end)
+
     function PL.Load()
+        PL.LoadRender()
         PL.Data.plates = {}
         if not file.Exists(FILE, "DATA") then return false end
         local raw = file.Read(FILE, "DATA") or ""
@@ -962,6 +1037,16 @@ if SERVER then
             PL.HandlePlateUse(ply, plate)
             return true
         end
+        if low:find("^/номер_поворот") == 1 or low:find("^/plateyaw") == 1 then
+            renderCommand(ply, "yaw", string.match(msg, "%s(%-?%d+)"))
+            return true
+        end
+        if low:find("^/номер_ось") == 1 then renderCommand(ply, "axis") return true end
+        if low:find("^/номер_зеркало") == 1 then renderCommand(ply, "flip") return true end
+        if low:find("^/номер_масштаб") == 1 then
+            renderCommand(ply, "scale", string.match(msg, "%s([%d%.]+)"))
+            return true
+        end
         if low == "/снятьномер" or low == "/plateoff" then
             local plate = nearestOwnPlate(ply, true)
             if not IsValid(plate) then notify(ply, "Рядом нет закреплённого знака.") return true end
@@ -1000,6 +1085,36 @@ if SERVER then
     end)
 
     concommand.Add("grm_plates", function(ply) PL.Open(ply) end)
+
+    --[[ Подгонка надписи прямо в игре: смотришь на знак, крутишь — видно
+         сразу, и настройка сохраняется для всех. ]]
+    function renderCommand(ply, what, value)
+        if not (IsValid(ply) and ply:IsSuperAdmin()) then
+            notify(ply, "Настройка знаков — только суперадмин.")
+            return
+        end
+        if what == "yaw" then
+            PL.Render.yaw = ((tonumber(PL.Render.yaw) or 0) + (tonumber(value) or 90)) % 360
+        elseif what == "axis" then
+            local order = { auto = "x", x = "y", y = "z", z = "auto" }
+            PL.Render.axis = order[tostring(PL.Render.axis or "auto")] or "auto"
+        elseif what == "flip" then
+            PL.Render.flip = not PL.Render.flip
+        elseif what == "scale" then
+            PL.Render.scale = math.Clamp(tonumber(value) or 1, 0.2, 3)
+        end
+        PL.SaveRender()
+        PL.PushRender()
+        notify(ply, ("Знаки: ось %s, поворот %d°, зеркало %s, масштаб %.2f"):format(
+            tostring(PL.Render.axis), tonumber(PL.Render.yaw) or 0,
+            PL.Render.flip and "да" or "нет", tonumber(PL.Render.scale) or 1), true)
+    end
+    PL.RenderCommand = renderCommand
+
+    concommand.Add("grm_plate_yaw", function(ply, _, args) renderCommand(ply, "yaw", args and args[1]) end)
+    concommand.Add("grm_plate_axis", function(ply) renderCommand(ply, "axis") end)
+    concommand.Add("grm_plate_flip", function(ply) renderCommand(ply, "flip") end)
+    concommand.Add("grm_plate_scale", function(ply, _, args) renderCommand(ply, "scale", args and args[1]) end)
 
     -- ── старт ───────────────────────────────────────────────────────
     local function boot()
@@ -1295,6 +1410,17 @@ if CLIENT then
         return pnl
     end
 
+    net.Receive(PL.Net.RENDER, function()
+        PL.Render.axis = net.ReadString()
+        PL.Render.yaw = net.ReadUInt(9)
+        PL.Render.flip = net.ReadBool()
+        PL.Render.scale = net.ReadFloat()
+        -- сбрасываем кэш граней у всех живых знаков: пересчитаются сами
+        for _, ent in ipairs(ents.FindByClass("grm_plate")) do
+            if IsValid(ent) then ent.GRMFace = nil end
+        end
+    end)
+
     net.Receive(PL.Net.SYNC, function()
         PL.Mine = net.ReadTable() or {}
         PL.IsOfficer = net.ReadBool()
@@ -1360,12 +1486,23 @@ if CLIENT then
         if not number or number == "" then return end
         if lp:GetPos():Distance(ent:GetPos()) > 400 then return end
 
+        local def = PL.TypeDef(kind)
         local text = PL.FormatNumber(number, kind)
         surface.SetFont("GRMPlate_Hud")
-        local tw = surface.GetTextSize(text)
-        local x, y = ScrW() / 2, ScrH() * 0.62
-        draw.RoundedBox(6, x - tw / 2 - 14, y - 16, tw + 28, 32, Color(14, 18, 26, 225))
-        draw.SimpleText(text, "GRMPlate_Hud", x, y, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        local tw, th = surface.GetTextSize(text)
+        local pad, band = 16, 10
+        local w, h = tw + pad * 2 + band, th + 14
+        local x, y = ScrW() / 2 - w / 2, ScrH() * 0.66
+        -- рисуем как маленький знак: поле, цветная полоса и номер по центру
+        draw.RoundedBox(4, x, y, w, h, Color(def.plate[1], def.plate[2], def.plate[3], 245))
+        draw.RoundedBox(4, x, y, band, h, Color(def.band[1], def.band[2], def.band[3], 245))
+        draw.SimpleText(text, "GRMPlate_Hud", x + band + (w - band) / 2, y + h / 2,
+            Color(def.text[1], def.text[2], def.text[3]), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        local status = ent.GetNWString and ent:GetNWString("GRM_PlateStatus", "active") or "active"
+        if status ~= "active" then
+            draw.SimpleText(string.upper(PL.Statuses[status] or status), "GRMPlate_Small",
+                x + w / 2, y + h + 10, Color(220, 80, 80), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
     end)
 end
 
