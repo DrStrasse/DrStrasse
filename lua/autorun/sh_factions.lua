@@ -1328,8 +1328,19 @@ if SERVER then
         local isSuperAdmin=IsValid(fromPlayer)and fromPlayer:IsSuperAdmin();local isLeader=(f.Leader==fromKey)or(IsValid(fromPlayer)and isCharacterLeaderOfFaction(fromPlayer,f));if not isSuperAdmin and not isLeader then return false,"Недостаточно прав"end
         if targetKey==""then return false,"Не выбран персонаж"end;if targetKey==fromKey then return false,"Нельзя пригласить самого себя"end;if getFactionOfPlayer(targetKey)then return false,"Персонаж уже состоит во фракции"end
         local old=normalizeInvite(Invites[targetKey]);if old and old.expires>os.time()then return false,"У персонажа уже есть активное приглашение от «"..GRM.Factions.DisplayName(old.faction).."»"end
+        --[[ Цель ищем ДО записи приглашения. Раньше приглашение сохранялось
+             даже когда персонаж не в сети или играет другим персонажем:
+             окно ему не приходило, а лидер видел «отправлено». Теперь такой
+             случай — честный отказ с объяснением. ]]
+        local target=inviteTarget(targetKey)or player.GetBySteamID(tostring(toSteam or""))or player.GetBySteamID64(tostring(toSteam or""))
+        if not IsValid(target)then
+            return false,"Игрок не в сети или играет другим персонажем — приглашение не доставить"
+        end
+
         local now=os.time();local inv={id="fi_"..now.."_"..math.random(100000,999999),faction=factionName,from=fromKey,fromName=inviteAuthorName(fromPlayer,fromKey),created=now,time=now,expires=now+INVITE_LIFETIME,role=desiredRole,department=desiredDepartment};Invites[targetKey]=inv;saveInvites(Invites)
-        local target=inviteTarget(targetKey)or player.GetBySteamID(tostring(toSteam or""))or player.GetBySteamID64(tostring(toSteam or""));if IsValid(target)then pushInvite(target,inv)end
+        pushInvite(target,inv)
+        print(("[GRM Factions] приглашение %s → %s (%s), истекает через %d с")
+            :format(tostring(fromKey), tostring(targetKey), tostring(factionName), INVITE_LIFETIME))
         if GRM.Audit and GRM.Audit.Write then GRM.Audit.Write("factions","invite.sent",fromPlayer,{characterKey=targetKey,faction=factionName},{inviteID=inv.id,expires=inv.expires})end
         return true,"Приглашение в «"..GRM.Factions.DisplayName(f,factionName).."» отправлено на 5 минут"
     end
@@ -1625,6 +1636,32 @@ if SERVER then
         if not IsValid(ply)then return end;local key=memberKey(ply);local inv=normalizeInvite(Invites[key]);if not inv then if closeMissing then pushInvite(ply,{},"")end return end;if inv.expires<=os.time()then Invites[key]=nil;saveInvites(Invites);pushInvite(ply,inv,"Срок приглашения истёк");return end;Invites[key]=inv;pushInvite(ply,inv)
     end
     hook.Add("PlayerInitialSpawn","Factions_InviteV2Join",function(ply)timer.Simple(3,function()resendInvite(ply,false)end)end)
+    -- Спавн после смерти/смены персонажа тоже возвращает окно приглашения:
+    -- иначе человек, погибший в момент выдачи, теряет его насовсем.
+    hook.Add("PlayerSpawn","Factions_InviteV2Respawn",function(ply)timer.Simple(2,function()resendInvite(ply,false)end)end)
+
+    --[[ Диагностика: видно, есть ли приглашение и кому оно адресовано.
+         Нужна именно потому, что «не пришло» может значить и «не создано»,
+         и «создано не тому персонажу». ]]
+    concommand.Add("grm_faction_invites",function(ply)
+        if IsValid(ply)and not ply:IsSuperAdmin()then return end
+        local function out(line)
+            if IsValid(ply)then ply:PrintMessage(HUD_PRINTCONSOLE,line)else print(line)end
+        end
+        local n=0
+        for key,row in pairs(Invites or{})do
+            local inv=normalizeInvite(row)
+            if inv then
+                n=n+1
+                local target=inviteTarget(key)
+                out(("  %s → %s · от %s · %s · осталось %d с"):format(
+                    key,tostring(inv.faction),tostring(inv.fromName),
+                    IsValid(target)and("в сети: "..target:Nick())or"персонаж НЕ в сети",
+                    math.max(0,inv.expires-os.time())))
+            end
+        end
+        out("[GRM Factions] активных приглашений: "..n)
+    end)
     hook.Add("GRM_CharacterChanged","Factions_InviteV2Character",function(ply)timer.Simple(.5,function()resendInvite(ply,true)end)end)
     timer.Create("Factions_InviteV2Expire",5,0,function()local changed=false;for key,row in pairs(Invites or{})do local inv=normalizeInvite(row);if not inv or inv.expires<=os.time()then local target=inviteTarget(key);if IsValid(target)and inv then pushInvite(target,inv,"Срок приглашения истёк")end;Invites[key]=nil;changed=true else Invites[key]=inv end end;if changed then saveInvites(Invites)end end)
 

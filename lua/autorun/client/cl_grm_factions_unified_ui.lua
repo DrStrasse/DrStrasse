@@ -184,6 +184,23 @@ local function skinCombo(cb)
     end
 end
 
+--[[ ОТВЕТ СЕРВЕРА (фикс 21.08 по жалобе «приглашение не приходит»).
+
+     Меню отправляло действие и само рисовало «Готово», а канал
+     `Factions_ActionResult`, в который сервер пишет настоящий результат,
+     никто не слушал. Поэтому отказы — «Недостаточно прав», «Недопустимая
+     стартовая должность», «Персонаж уже состоит во фракции», «У персонажа
+     уже есть активное приглашение» — были не видны: лидер думал, что
+     приглашение ушло, а его не было вовсе. ]]
+net.Receive("Factions_ActionResult", function()
+    local ok = net.ReadBool()
+    local msg = net.ReadString()
+    if msg == nil or msg == "" then msg = ok and "Готово" or "Не выполнено" end
+    notification.AddLegacy(msg, ok and NOTIFY_GENERIC or NOTIFY_ERROR, 5)
+    surface.PlaySound(ok and "buttons/button15.wav" or "buttons/button10.wav")
+    chat.AddText(ok and Color(120, 220, 140) or Color(225, 90, 80), "[Организации] ", Color(235, 235, 240), msg)
+end)
+
 local function sendAction(action, args, cb)
     net.Start("Factions_Action")
         net.WriteString(action)
@@ -919,14 +936,22 @@ function UI.Open(requestedFaction, requestedTab)
 
             local comboRole = vgui.Create("DComboBox", invModal)
             comboRole:SetPos(16, 90); comboRole:SetSize(388, 28); skinCombo(comboRole)
+            -- Первая должность выбирается сразу: раньше можно было отправить
+            -- приглашение с пустой должностью и получить молчаливый отказ.
+            local firstRole = true
             for _, rKey in ipairs(fac.Roles or {}) do
-                comboRole:AddChoice(GRM.Factions.RoleDisplayName(fac, rKey) .. " [" .. rKey .. "]", rKey)
+                if rKey ~= fac.LeaderRoleName then
+                    comboRole:AddChoice(GRM.Factions.RoleDisplayName(fac, rKey) .. " [" .. rKey .. "]", rKey, firstRole)
+                    firstRole = false
+                end
             end
 
             local comboDept = vgui.Create("DComboBox", invModal)
             comboDept:SetPos(16, 128); comboDept:SetSize(388, 28); skinCombo(comboDept)
+            local firstDept = true
             for _, dKey in ipairs(fac.Departments or {}) do
-                comboDept:AddChoice(GRM.Factions.DepartmentDisplayName(fac, dKey) .. " [" .. dKey .. "]", dKey)
+                comboDept:AddChoice(GRM.Factions.DepartmentDisplayName(fac, dKey) .. " [" .. dKey .. "]", dKey, firstDept)
+                firstDept = false
             end
 
             local btnSend = mkBtn(invModal, "Отправить приглашение", C.accent, C.accentHover, function()
@@ -934,9 +959,10 @@ function UI.Open(requestedFaction, requestedTab)
                 local _, roleKey = comboRole:GetSelected()
                 local _, deptKey = comboDept:GetSelected()
                 if not targetSid or targetSid == "" then notification.AddLegacy("Выберите игрока!", NOTIFY_ERROR, 3) return end
+                -- Результат придёт с сервера (Factions_ActionResult) — своих
+                -- «отправлено» больше не выдумываем.
                 sendAction("inviteMember", { isSA and facName or targetSid, isSA and targetSid or roleKey, isSA and roleKey or deptKey, isSA and deptKey or nil }, refreshView)
                 invModal:Close()
-                notification.AddLegacy("Приглашение отправлено", NOTIFY_GENERIC, 3)
             end)
             btnSend:SetPos(16, 190); btnSend:SetSize(388, 38)
         end):Dock(LEFT); bBar:GetChildren()[1]:SetWide(190)
