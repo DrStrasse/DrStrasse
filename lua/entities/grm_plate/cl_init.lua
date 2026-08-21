@@ -66,18 +66,27 @@ function ENT:Draw()
 
     --[[ Рисуем ОДНУ сторону — ту, что смотрит на игрока.
 
-         Раньше рисовались обе: задняя просвечивала сквозь тонкую модель, и
-         номер выглядел зеркальным. Плюс надпись висела в 0.15 юнита от
-         центра модели, то есть фактически ВНУТРИ пропа — её не было видно
-         (заказ владельца 21.08). Теперь надпись выносится наружу на
-         настраиваемый «вынос» (/номер_вынос). ]]
+         «Вынос» раньше считался вдоль ВЫБРАННОЙ ОСИ модели, а она может не
+         совпадать с направлением взгляда на надпись: у владельца надпись
+         уезжала ВВЕРХ, а не вперёд. Теперь вынос идёт строго по нормали
+         САМОЙ ПЛОСКОСТИ НАДПИСИ (векторное произведение её осей) и всегда
+         в сторону игрока — то есть «вперёд от текста», при любой оси. ]]
+    local center = self:LocalToWorld(face.center)
     local eye = EyePos()
-    local nrmWorld = worldDir(self, face.normal)
-    local side = nrmWorld:Dot(eye - self:LocalToWorld(face.center)) >= 0 and 1 or -1
 
-    local up  = worldDir(self, face.up)
-    local rgt = worldDir(self, face.right * side)
-    local pos = self:LocalToWorld(face.center + face.normal * (face.half + (face.offset or 1.5)) * side)
+    local up = worldDir(self, face.up)
+    local rgt = worldDir(self, face.right)
+    local nrm = rgt:Cross(up)
+    if nrm:Length() < 0.001 then nrm = worldDir(self, face.normal) end
+    nrm:Normalize()
+
+    -- сторона, обращённая к игроку: и нормаль, и строка разворачиваются вместе
+    if nrm:Dot(eye - center) < 0 then
+        nrm = nrm * -1
+        rgt = rgt * -1
+    end
+
+    local pos = center + nrm * (face.half + (face.offset or 1.5))
     local ang = rgt:AngleEx(up)
 
     cam.Start3D2D(pos, ang, scale)

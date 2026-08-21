@@ -548,6 +548,18 @@ ok(math.abs(PL.Render.offset - 3) < 0.001, "вынос надписи от по�
 local faceOff = PL.FaceGeometry(Vector(-12, -36, -0.5), Vector(12, 36, 0.5),
     { axis = "auto", yaw = 0, scale = 1, offset = 3 })
 ok(math.abs(faceOff.offset - 3) < 0.001, "и попадает в геометрию грани — надпись не тонет в пропе")
+
+-- вынос считается по нормали ПЛОСКОСТИ надписи, а не по выбранной оси
+local cl = (function()
+    local f = io.open("lua/entities/grm_plate/cl_init.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+ok(cl:find("rgt:Cross(up)", 1, true) ~= nil,
+   "нормаль берётся как векторное произведение осей надписи (вынос всегда «вперёд от текста»)")
+ok(cl:find("nrm:Dot(eye - center) < 0", 1, true) ~= nil,
+   "сторона выбирается по игроку — нет зеркальной изнанки")
+ok(cl:find("center + nrm * (face.half + (face.offset or 1.5))", 1, true) ~= nil,
+   "надпись выносится от поверхности, а не от центра модели")
 PL.RenderCommand(civ, "yaw", 90)
 ok(PL.Render.yaw ~= (before + 180) % 360, "обычный игрок настройку не крутит")
 ok(PL.SaveRender() == true and files["grm_plates/render.json"] ~= nil, "раскладка сохраняется на диск")
