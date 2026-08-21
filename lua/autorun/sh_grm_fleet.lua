@@ -90,6 +90,45 @@ function FL.EntryAllowed(entry, faction, level, isAdmin)
     return true
 end
 
+--[[ ЗАКРЕПЛЕНИЕ ТЕХНИКИ ЗА ДОЛЖНОСТЯМИ И ОТДЕЛАМИ.
+     «Кому какая машина положена» — обычное требование: патрульная не для
+     штабного, броневик не для стажёра. Пустые списки = техника доступна
+     всем сотрудникам организации. Функция чистая: на вход единица и
+     «актор» { faction, role, department, subdepartment, superadmin }. ]]
+function FL.UnitAllowedFor(unit, actor)
+    if not istable(unit) then return false, "Единица не найдена" end
+    actor = istable(actor) and actor or {}
+    if actor.superadmin then return true end
+    if tostring(actor.faction or "") ~= tostring(unit.faction or "") then
+        return false, "Это техника другой организации"
+    end
+
+    local roles = istable(unit.roles) and unit.roles or {}
+    local depts = istable(unit.depts) and unit.depts or {}
+    if #roles == 0 and #depts == 0 then return true end
+
+    for _, r in ipairs(roles) do
+        if tostring(r) == tostring(actor.role or "") then return true end
+    end
+    for _, d in ipairs(depts) do
+        local dd = tostring(d)
+        if dd == tostring(actor.department or "") or dd == tostring(actor.subdepartment or "") then return true end
+    end
+    return false, "Эта машина закреплена за другими должностями"
+end
+
+--- Человекочитаемое «за кем закреплена».
+function FL.RestrictionText(unit)
+    if not istable(unit) then return "" end
+    local roles = istable(unit.roles) and unit.roles or {}
+    local depts = istable(unit.depts) and unit.depts or {}
+    if #roles == 0 and #depts == 0 then return "доступна всем сотрудникам" end
+    local parts = {}
+    if #roles > 0 then parts[#parts + 1] = "должности: " .. table.concat(roles, ", ") end
+    if #depts > 0 then parts[#parts + 1] = "отделы: " .. table.concat(depts, ", ") end
+    return table.concat(parts, "   •   ")
+end
+
 --- Сколько единиц этого класса уже в парке организации (без списанных).
 function FL.CountClass(faction, class)
     local n = 0
@@ -260,6 +299,37 @@ if SERVER then
         if not IsValid(ply) then return false end
         if ply:IsSuperAdmin() then return true end
         return factionOf(ply) ~= "" and factionOf(ply) == tostring(faction or "")
+    end
+
+    --- «Актор» для проверки закрепления техники за должностью.
+    function FL.ActorOf(ply)
+        if not IsValid(ply) then return {} end
+        return {
+            faction = factionOf(ply),
+            role = ply:GetNWString("GRM_Role", ""),
+            department = ply:GetNWString("GRM_Department", ""),
+            subdepartment = ply:GetNWString("GRM_Subdepartment", ""),
+            superadmin = ply:IsSuperAdmin(),
+        }
+    end
+
+    --- Закрепить технику за должностями/отделами (право «распоряжение парком»).
+    function FL.SetRestriction(ply, unitID, roles, depts)
+        local unit = FL.Unit(unitID)
+        if not unit then return false, "Единица не найдена" end
+        if not FL.CanManage(ply, unit.faction) then return false, "Нет права распоряжаться парком" end
+        local function clean(list)
+            local out = {}
+            for _, v in ipairs(istable(list) and list or {}) do
+                local s = trim(v, 64)
+                if s ~= "" and #out < 12 then out[#out + 1] = s end
+            end
+            return out
+        end
+        unit.roles = clean(roles)
+        unit.depts = clean(depts)
+        FL.SaveFleet("закрепление техники")
+        return true, ("Техника «%s»: %s"):format(tostring(unit.name), FL.RestrictionText(unit))
     end
 
     -- ── хранение ────────────────────────────────────────────────────
@@ -507,6 +577,8 @@ if SERVER then
         if not unit then return nil, "Единица не найдена" end
         if unit.status == "scrap" then return nil, "Эта машина списана" end
         if not FL.CanUse(ply, unit.faction) then return nil, "Это техника другой организации" end
+        local allowed, whyRole = FL.UnitAllowedFor(unit, FL.ActorOf(ply))
+        if not allowed then return nil, whyRole or "Техника закреплена за другими должностями" end
         if IsValid(FL.Active[unit.id]) then return nil, "Машина уже выдана" end
 
         local G = GRM.Garage
@@ -598,6 +670,9 @@ if SERVER then
             onMap = IsValid(FL.Active[unit.id]),
             boughtByName = unit.boughtByName, boughtAt = unit.boughtAt,
             lastUserName = unit.lastUserName or "",
+            roles = istable(unit.roles) and unit.roles or {},
+            depts = istable(unit.depts) and unit.depts or {},
+            restriction = FL.RestrictionText(unit),
         }
     end
 
@@ -624,6 +699,30 @@ if SERVER then
         return out
     end
 
+    --- Должности и отделы организации — чтобы закрепление выбиралось из
+    --  списка, а не набиралось руками (опечатка = машина никому не доступна).
+    function FL.StructureOf(faction)
+        local out = { roles = {}, depts = {} }
+        local f = _G.Factions and _G.Factions[tostring(faction or "")] or nil
+        if not istable(f) then return out end
+        for _, r in ipairs(istable(f.Roles) and f.Roles or {}) do
+            local disp = istable(f.RoleDisplayNames) and f.RoleDisplayNames[r] or nil
+            out.roles[#out.roles + 1] = { key = tostring(r), name = tostring(disp ~= nil and disp ~= "" and disp or r) }
+        end
+        for _, d in ipairs(istable(f.Departments) and f.Departments or {}) do
+            local disp = istable(f.DepartmentDisplayNames) and f.DepartmentDisplayNames[d] or nil
+            out.depts[#out.depts + 1] = { key = tostring(d), name = tostring(disp ~= nil and disp ~= "" and disp or d) }
+        end
+        if istable(f.Subdepartments) then
+            for key, sub in pairs(f.Subdepartments) do
+                if istable(sub) then
+                    out.depts[#out.depts + 1] = { key = tostring(key), name = tostring(sub.name or key) .. " (подотдел)" }
+                end
+            end
+        end
+        return out
+    end
+
     function FL.Push(ply)
         if not IsValid(ply) then return end
         local faction = factionOf(ply)
@@ -646,6 +745,7 @@ if SERVER then
             net.WriteTable(units)
             net.WriteTable(garageChoices(ply, faction))
             net.WriteTable((GRM.VehicleDealer and GRM.VehicleDealer.FactionList) and GRM.VehicleDealer.FactionList() or {})
+            net.WriteTable(FL.StructureOf(faction))
         net.Send(ply)
     end
 
@@ -687,6 +787,11 @@ if SERVER then
         elseif act == "sethome" then
             local ok, msg = FL.SetGarage(ply, data.unitID, data.garageID)
             notify(ply, tostring(msg or (ok and "Приписано" or "Не удалось")), ok)
+            FL.Push(ply)
+
+        elseif act == "restrict" then
+            local ok, msg = FL.SetRestriction(ply, data.unitID, data.roles, data.depts)
+            notify(ply, tostring(msg or (ok and "Закрепление обновлено" or "Не удалось")), ok)
             FL.Push(ply)
 
         elseif act == "scrap" then
@@ -765,7 +870,7 @@ if CLIENT then
         dim     = Color(155, 170, 190),
     }
 
-    FL.State = FL.State or { market = {}, units = {}, garages = {}, factions = {},
+    FL.State = FL.State or { market = {}, units = {}, garages = {}, factions = {}, structure = { roles = {}, depts = {} },
         faction = "", budget = 0, canBuy = false, canManage = false, isAdmin = false }
 
     local function money(n) return GRM.Format and GRM.Format(n) or (tostring(n) .. " GRM") end
@@ -950,6 +1055,11 @@ if CLIENT then
                     draw.SimpleText(("Состояние: %s%s"):format(u.statusName or "",
                         u.lastUserName ~= "" and ("   •   последний водитель: " .. u.lastUserName) or ""),
                         "GRMFleet_Small", 14, 52, u.onMap and C.green or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    if (u.restriction or "") ~= "" then
+                        draw.SimpleText(u.restriction, "GRMFleet_Small", w - 340, h / 2,
+                            (#(u.roles or {}) > 0 or #(u.depts or {}) > 0) and C.gold or C.dim,
+                            TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                    end
                 end
 
                 local main = button(card, u.onMap and "ВЕРНУТЬ В ГАРАЖ" or "ВЫДАТЬ", u.onMap and C.accent or C.green, function()
@@ -958,6 +1068,36 @@ if CLIENT then
                 main:Dock(RIGHT) main:SetWide(190) main:DockMargin(6, 20, 12, 20)
 
                 if FL.State.canManage then
+                    --[[ КОМУ ПОЛОЖЕНА МАШИНА.
+                         Закрепление за должностями и отделами выбирается из
+                         списка структуры организации — руками ключи не
+                         набираются, опечатка невозможна. ]]
+                    local access = button(card, "ДОСТУП", C.cardHov, function()
+                        local menu = DermaMenu()
+                        menu:AddOption("Доступна всем сотрудникам", function()
+                            act("restrict", { unitID = u.id, roles = {}, depts = {} })
+                        end):SetIcon("icon16/group.png")
+                        local st = FL.State.structure or {}
+                        if #(st.roles or {}) > 0 then
+                            local sub = menu:AddSubMenu("Закрепить за должностью")
+                            for _, r in ipairs(st.roles) do
+                                sub:AddOption(r.name, function()
+                                    act("restrict", { unitID = u.id, roles = { r.key }, depts = {} })
+                                end)
+                            end
+                        end
+                        if #(st.depts or {}) > 0 then
+                            local sub = menu:AddSubMenu("Закрепить за отделом")
+                            for _, d in ipairs(st.depts) do
+                                sub:AddOption(d.name, function()
+                                    act("restrict", { unitID = u.id, roles = {}, depts = { d.key } })
+                                end)
+                            end
+                        end
+                        menu:Open()
+                    end)
+                    access:Dock(RIGHT) access:SetWide(120) access:DockMargin(6, 20, 0, 20)
+
                     local scrap = button(card, "СПИСАТЬ", C.red, function()
                         Derma_Query(("Списать «%s» с баланса организации?"):format(u.name), "Автопарк",
                             "Списать", function() act("scrap", { unitID = u.id }) end, "Отмена")
@@ -1071,6 +1211,7 @@ if CLIENT then
         FL.State.units = net.ReadTable() or {}
         FL.State.garages = net.ReadTable() or {}
         FL.State.factions = net.ReadTable() or {}
+        FL.State.structure = net.ReadTable() or { roles = {}, depts = {} }
         if FL._rebuild then FL._rebuild() end
     end)
 

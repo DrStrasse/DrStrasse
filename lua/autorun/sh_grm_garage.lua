@@ -771,25 +771,23 @@ if SERVER then
          Гараж и автопарк — один интерфейс: сотрудник видит и свои личные
          машины, и служебные, приписанные к этому гаражу, и берёт их по
          размеченным местам стоянки. ]]
-    local function fleetRows(ply, garage)
-        local FL = GRM.Fleet
-        local out = {}
-        if not (FL and FL.UnitsInGarage and istable(garage)) then return out end
-        local faction = ply:GetNWString("GRM_Faction", "")
-        if faction == "" and not ply:IsSuperAdmin() then return out end
-        for _, unit in ipairs(FL.UnitsInGarage(garage.id)) do
-            if ply:IsSuperAdmin() or tostring(unit.faction) == faction then
-                out[#out + 1] = {
-                    id = unit.id, name = unit.name, class = unit.class, model = unit.model,
-                    faction = unit.faction, status = unit.status,
-                    onMap = FL.Active and IsValid(FL.Active[unit.id]) or false,
-                    fleet = true,
-                }
+    --[[ ЕДИНЫЙ СЛОЙ ТРАНСПОРТА.
+         Что показывать и что с чем делать, решает GRM.Vehicles — один
+         диспетчер на личные машины (записи гаража) и служебную технику
+         (автопарк организации). Здесь только раскладываем его строки по
+         двум таблицам, потому что окно рисует их разными блоками. ]]
+    local function splitRows(ply, garage)
+        local V = GRM.Vehicles
+        local personal, fleet = {}, {}
+        if V and V.Rows then
+            for _, row in ipairs(V.Rows(ply, garage)) do
+                if row.source == "fleet" then fleet[#fleet + 1] = row else personal[#personal + 1] = row end
             end
+            return personal, fleet
         end
-        return out
+        return vehicleRows(ply, garage), {}
     end
-    G.FleetRows = fleetRows
+    G.FleetRows = function(ply, garage) return select(2, splitRows(ply, garage)) end
 
     function G.Push(ply, garage)
         if not IsValid(ply) then return end
@@ -814,8 +812,9 @@ if SERVER then
             net.WriteUInt(math.min(doors, 255), 8)
             net.WriteBool(locked)
             net.WriteTable(slots)
-            net.WriteTable(vehicleRows(ply, garage))
-            net.WriteTable(fleetRows(ply, garage))
+            local personalRows, fleetOfGarage = splitRows(ply, garage)
+            net.WriteTable(personalRows)
+            net.WriteTable(fleetOfGarage)
         net.Send(ply)
     end
 
@@ -963,22 +962,18 @@ if SERVER then
         local op = tostring(net.ReadString() or "")
         local id = tostring(net.ReadString() or "")
         local ok, msg
-        if op == "retrieve" then ok, msg = G.Retrieve(ply, id)
-        elseif op == "store" then ok, msg = G.Store(ply, id)
+        local V = GRM.Vehicles
+        if op == "retrieve" then ok, msg = V and V.Issue(ply, "personal", id) or G.Retrieve(ply, id)
+        elseif op == "store" then ok, msg = V and V.Store(ply, "personal", id) or G.Store(ply, id)
         elseif op == "fleet_issue" then
             -- служебная техника организации: выдача на свободное место ЭТОГО гаража
-            local FL = GRM.Fleet
             local garage = G.GarageAt(ply)
-            if not (FL and FL.Issue) then ok, msg = false, "Модуль автопарка не загружен"
-            elseif not garage then ok, msg = false, "Вы не в гараже"
-            else
-                local ent, err = FL.Issue(ply, id, garage)
-                ok, msg = IsValid(ent), IsValid(ent) and "Служебная техника подана на место" or (err or "Не удалось выдать")
-            end
+            if not garage then ok, msg = false, "Вы не в гараже"
+            elseif not V then ok, msg = false, "Модуль транспорта не загружен"
+            else ok, msg = V.Issue(ply, "fleet", id, garage) end
         elseif op == "fleet_store" then
-            local FL = GRM.Fleet
-            if not (FL and FL.Store) then ok, msg = false, "Модуль автопарка не загружен"
-            else ok, msg = FL.Store(ply, id) end
+            if not V then ok, msg = false, "Модуль транспорта не загружен"
+            else ok, msg = V.Store(ply, "fleet", id) end
         elseif op == "sethome" then ok, msg = G.SetHome(ply, id)
         elseif op == "doors" then ok, msg = G.ToggleDoors(ply)
         elseif op == "refresh" then G.Push(ply) return

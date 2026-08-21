@@ -123,7 +123,7 @@ function G.OpenWindow(data)
         empty:Dock(TOP) empty:SetTall(64)
         empty.Paint = function(_, w, h)
             draw.SimpleText("Места не размечены.", "GRMGar_Body", 6, 10, C.dim)
-            draw.SimpleText("Админ ставит их тулом «GRM: гаражи».", "GRMGar_Small", 6, 32, C.dim)
+            draw.SimpleText("Админ ставит их тулом «GRM: транспорт».", "GRMGar_Small", 6, 32, C.dim)
         end
     end
     for _, s in ipairs(data.slots or {}) do
@@ -213,14 +213,23 @@ function G.OpenWindow(data)
             draw.SimpleText(tostring(v.class or ""), "GRMGar_Small", 126, 38, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
             draw.SimpleText(v.onMap and "на линии" or "в гараже", "GRMGar_Body", 126, 60,
                 v.onMap and C.gold or C.green, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            local note = v.allowed == false and (v.reason ~= "" and v.reason or "закреплена за другими должностями")
+                or (v.restriction or "")
+            if note ~= "" then
+                draw.SimpleText(note, "GRMGar_Small", 126, 78,
+                    v.allowed == false and C.red or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            end
         end
 
         local m = vgui.Create("DModelPanel", card)
         m:SetPos(10, 8) m:SetSize(106, 80)
         preview(m, v.model)
 
-        local main = button(card, v.onMap and "ВЕРНУТЬ В ГАРАЖ" or "ВЫДАТЬ СЛУЖЕБНУЮ", v.onMap and C.accent or C.green)
+        local allowed = v.allowed ~= false
+        local main = button(card, v.onMap and "ВЕРНУТЬ В ГАРАЖ" or (allowed and "ВЫДАТЬ СЛУЖЕБНУЮ" or "НЕ ПОЛОЖЕНА"),
+            v.onMap and C.accent or (allowed and C.green or C.cardHov))
         main:Dock(RIGHT) main:SetWide(210) main:DockMargin(6, 28, 12, 28)
+        main:SetEnabled(v.onMap or allowed)
         main.DoClick = function() G.SendAction(v.onMap and "fleet_store" or "fleet_issue", v.id) end
     end
 

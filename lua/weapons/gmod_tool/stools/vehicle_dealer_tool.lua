@@ -193,7 +193,9 @@ end
 
 if CLIENT then
     function TOOL.BuildCPanel(panel)
-        panel:AddControl("Header", { Description = "Точка выдачи транспорта: одна точка + направление появления + высота." })
+        panel:AddControl("Header", { Description =
+            "УСТАРЕВШИЙ ТУЛ. Гаражи, места выдачи и дилеры теперь ставятся одним инструментом «GRM: транспорт».\n" ..
+            "Здесь осталась только старая одиночная точка выдачи дилера." })
         panel:TextEntry("Название", "vehicle_dealer_tool_name")
         panel:TextEntry("Модель NPC", "vehicle_dealer_tool_model")
         local dir = panel:ComboBox("Направление появления", "vehicle_dealer_tool_direction")

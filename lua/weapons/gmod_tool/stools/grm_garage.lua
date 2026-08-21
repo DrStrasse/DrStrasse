@@ -34,8 +34,8 @@ TOOL.ClientConVar = {
 local function G() return GRM and GRM.Garage end
 
 if CLIENT then
-    language.Add("tool.grm_garage.name", "GRM: гаражи")
-    language.Add("tool.grm_garage.desc", "Зоны гаражей, места стоянки, стойки вызова")
+    language.Add("tool.grm_garage.name", "GRM: гаражи (устарел — «GRM: транспорт»)")
+    language.Add("tool.grm_garage.desc", "Устаревший тул. Всё то же и дилеры — в едином «GRM: транспорт»")
     language.Add("tool.grm_garage.0", "ЛКМ: поставить выбранное • ПКМ: выбрать гараж / привязать дилера • R: удалить")
 
     local zones = {}

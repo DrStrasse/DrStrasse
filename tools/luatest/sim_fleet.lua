@@ -165,6 +165,8 @@ assert(loadfile("lua/autorun/sh_grm_fleet.lua"))()
 local FL = GRM.Fleet
 assert(loadfile("lua/autorun/sh_grm_garage.lua"))()
 local G = GRM.Garage
+assert(loadfile("lua/autorun/sh_grm_vehicles.lua"))()
+local V = GRM.Vehicles
 
 local function mkPly(nick, faction, super, role)
     local p = { _valid = true, nw = { GRM_Faction = faction or "", GRM_Role = role or "" }, _pos = Vector(0, 0, 0) }
@@ -322,6 +324,59 @@ ok(HOOKS["PlayerSay"] and HOOKS["PlayerSay"]["GRM_Fleet_Chat"] ~= nil, "кома
 ok(HOOKS["PlayerSay"]["GRM_Fleet_Chat"](chief, "/автопарк") == "", "команда съедается и не уходит в чат")
 ok(HOOKS["PlayerSay"]["GRM_Fleet_Chat"](chief, "привет") == nil, "обычная реплика не трогается")
 ok(RECV[FL.Net.ACT] ~= nil, "приём действий окна зарегистрирован")
+
+print("\n=== 13. ТЕХНИКА, ЗАКРЕПЛЁННАЯ ЗА ДОЛЖНОСТЯМИ ===")
+local u = FL.UnitsOf("police")[1]
+ok(isfunction(FL.UnitAllowedFor), "чистая проверка закрепления объявлена")
+ok(select(1, FL.UnitAllowedFor(u, { faction = "police", role = "Офицер" })) == true,
+   "без ограничений машину берёт любой сотрудник")
+ok(FL.RestrictionText(u) == "доступна всем сотрудникам", "и так и написано", FL.RestrictionText(u))
+
+ok(select(1, FL.SetRestriction(cop, u.id, { "Лидер" }, {})) == true, "распорядитель закрепил машину за должностью")
+ok(select(1, FL.UnitAllowedFor(FL.Unit(u.id), { faction = "police", role = "Офицер" })) == false,
+   "офицеру она больше не положена")
+ok(select(1, FL.UnitAllowedFor(FL.Unit(u.id), { faction = "police", role = "Лидер" })) == true,
+   "а начальнику — положена")
+ok(select(1, FL.UnitAllowedFor(FL.Unit(u.id), { faction = "police", role = "Офицер", superadmin = true })) == true,
+   "суперадмину можно всегда")
+ok(FL.RestrictionText(FL.Unit(u.id)):find("Лидер", 1, true) ~= nil, "закрепление видно человеку",
+   FL.RestrictionText(FL.Unit(u.id)))
+
+local denied, whyRole = FL.Issue(cop, u.id, G.Get(second.id))
+ok(denied == nil and tostring(whyRole):find("закреплена", 1, true) ~= nil,
+   "выдача не проходит: машина не по должности", whyRole)
+chief.nw.GRM_Role = "Лидер"
+FL.SetGarage(cop, u.id, second.id)
+local okChief = FL.Issue(chief, u.id, G.Get(second.id))
+ok(IsValid(okChief), "начальнику ту же машину выдают")
+FL.Store(chief, u.id)
+
+ok(select(1, FL.SetRestriction(cop, u.id, {}, { "patrol" })) == true, "можно закрепить и за отделом")
+cop.nw.GRM_Department = "patrol"
+ok(select(1, FL.UnitAllowedFor(FL.Unit(u.id), FL.ActorOf(cop))) == true, "сотрудник отдела получает доступ")
+cop.nw.GRM_Department = "crime"
+ok(select(1, FL.UnitAllowedFor(FL.Unit(u.id), FL.ActorOf(cop))) == false, "из другого отдела — нет")
+ok(select(1, FL.SetRestriction(medic, u.id, {}, {})) == false, "чужой закрепление не меняет")
+FL.SetRestriction(cop, u.id, {}, {})
+
+print("\n=== 14. ЕДИНЫЙ СЛОЙ ТРАНСПОРТА ===")
+ok(isfunction(V.Rows) and isfunction(V.Issue) and isfunction(V.Store), "диспетчер объявлен")
+ok(V.Source("fleet") == "fleet" and V.Source("") == "personal" and V.Source("ерунда") == "personal",
+   "источник нормализуется")
+local rows = V.Rows(cop, G.Get(second.id))
+local fleetRow
+for _, r in ipairs(rows) do if r.source == "fleet" then fleetRow = r end end
+ok(fleetRow ~= nil, "служебная техника попала в общий список")
+ok(fleetRow.allowed == true and fleetRow.restriction ~= "", "в строке видно, кому она положена", fleetRow.restriction)
+ok(#V.Rows(medic, G.Get(second.id)) == 0, "чужой организации в этом гараже показывать нечего")
+
+local okIssue, msgIssue = V.Issue(cop, "fleet", u.id, G.Get(second.id))
+ok(okIssue == true, "выдача через диспетчер работает", msgIssue)
+ok(FL.Unit(u.id).status == "active", "единица на линии")
+ok(select(1, V.Store(cop, "fleet", u.id)) == true, "возврат через диспетчер работает")
+ok(select(1, V.SetHome(cop, "fleet", u.id, garage.id)) == true, "приписка через диспетчер работает")
+ok(FL.Unit(u.id).garageID == garage.id, "гараж сменился")
+ok(select(1, V.Issue(cop, "personal", "нет-такой")) == false, "личная машина без записи — честный отказ")
 
 print(("\nFLEET: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end
