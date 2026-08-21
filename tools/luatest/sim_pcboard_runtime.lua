@@ -262,6 +262,31 @@ ok(PB.BlockAllowed("vehicles", "police", { vehicles = true }) == true, "гало
 ok(PB.BlockAllowed("wanted", "police", { wanted = false }) == false, "галочка закрывает блок вопреки уровню")
 ok(PB.BlockAllowed("wanted", "none") == false, "без допуска не видно ничего")
 
+print("\n=== 2б. НОВЫЕ УРОВНИ: ЮСТИЦИЯ И ПОЖАРНАЯ СЛУЖБА ===")
+ok(PB.LevelName("justice") == "Юстиция", "уровень «Юстиция» объявлен", PB.LevelName("justice"))
+ok(PB.LevelName("fire") == "Пожарная служба", "уровень «Пожарная служба» объявлен", PB.LevelName("fire"))
+ok(PB.BlockAllowed("wanted", "justice") == true, "юстиции виден розыск и статьи")
+ok(PB.BlockAllowed("fines", "justice") == true, "юстиции видны штрафы и задолженности")
+ok(PB.BlockAllowed("military", "justice") == true, "юстиции виден воинский учёт (воинские дела)")
+ok(PB.BlockAllowed("employment", "justice") == true, "юстиции видно место службы")
+ok(PB.BlockAllowed("property", "justice") == true, "юстиции видна недвижимость (иски и аресты)")
+ok(PB.BlockAllowed("vehicles", "justice") == true, "юстиции виден транспорт")
+ok(PB.BlockAllowed("history", "justice") == true, "юстиция видит, кто пробивал лицо (надзор)")
+ok(PB.BlockAllowed("medical", "justice") == false, "медкарта юстиции по умолчанию закрыта")
+ok(PB.BlockAllowed("covers", "justice") == false, "легенды прикрытия юстиции не показывают")
+ok(PB.BlockAllowed("account", "justice") == false, "данные аккаунта — только администрации")
+
+ok(PB.BlockAllowed("identity", "fire") == true, "пожарным видна личность")
+ok(PB.BlockAllowed("marks", "fire") == true, "пожарным видны приметы (опознание пострадавших)")
+ok(PB.BlockAllowed("property", "fire") == true, "пожарным виден владелец недвижимости — ключевое на выезде")
+ok(PB.BlockAllowed("medical", "fire") == true, "пожарным видна медкарта (первая помощь)")
+ok(PB.BlockAllowed("wanted", "fire") == false, "розыск пожарным не показывают")
+ok(PB.BlockAllowed("fines", "fire") == false, "штрафы пожарным не показывают")
+ok(PB.BlockAllowed("military", "fire") == false, "воинский учёт пожарным не показывают")
+ok(PB.BlockAllowed("vehicles", "fire") == false, "транспорт пожарным по умолчанию закрыт")
+ok(PB.BlockAllowed("vehicles", "fire", { vehicles = true }) == true,
+    "но галочкой транспорт пожарным открывается")
+
 print("\n=== 3. УРОВЕНЬ ИГРОКА И ДОПУСК К КОМАНДЕ ===")
 ok(select(1, PB.PlayerLevel(cop)) == "police", "уровень берётся из организации игрока")
 ok(select(1, PB.PlayerLevel(swat)) == "special", "подотдел игрока поднимает уровень")
@@ -346,10 +371,54 @@ ok(blockValue(mcard, "medical", "Группа крови") == "II (A) Rh+", "г�
 ok(findBlock(mcard, "wanted") == nil, "медику розыск не показывают")
 ok(findBlock(mcard, "identity") ~= nil, "личность видна всем уровням")
 
+print("\n=== 7б. ЮСТИЦИЯ И ПОЖАРНЫЕ В ДЕЛЕ ===")
+Factions["Суд"] = { Roles = { "Судья" }, Departments = {}, Subdepartments = {} }
+Factions["Пожарная охрана"] = { Roles = { "Брандмейстер" }, Departments = {}, Subdepartments = {} }
+PB.Config = PB.Normalize({
+    settings = { cooldown = 0, perMinute = 60, delay = 0, requireDuty = false, allowHidden = true },
+    factions = {
+        ["Полиция Порядка"] = { level = "police", subs = { swat = { level = "special" } } },
+        ["Госпиталь"] = { level = "medical" },
+        ["Суд"] = { level = "justice" },
+        ["Пожарная охрана"] = { level = "fire" },
+    },
+})
+local judge = mkPlayer("76561190000000006", { name = "Эрих Ланге", faction = "Суд", role = "Судья", x = 70 })
+local fireman = mkPlayer("76561190000000007", { name = "Пауль Рихтер", faction = "Пожарная охрана",
+    role = "Брандмейстер", x = 80 })
+R.Sync(judge) R.Sync(fireman)
+ok(select(1, PB.PlayerLevel(judge)) == "justice", "судья работает на уровне «Юстиция»")
+ok(select(1, PB.PlayerLevel(fireman)) == "fire", "пожарный работает на уровне «Пожарная служба»")
+
+netSent = {}
+PB.Run(judge, TKEY, {})
+runTimers()
+local jcard = netSent[#netSent].data
+ok(findBlock(jcard, "wanted") ~= nil and findBlock(jcard, "fines") ~= nil,
+    "в справке юстиции есть розыск и штрафы")
+ok(findBlock(jcard, "property") ~= nil and findBlock(jcard, "military") ~= nil,
+    "в справке юстиции есть недвижимость и воинский учёт")
+ok(findBlock(jcard, "medical") == nil and findBlock(jcard, "covers") == nil,
+    "медкарты и легенд в справке юстиции нет")
+
+netSent = {}
+PB.Run(fireman, TKEY, {})
+runTimers()
+local fcard = netSent[#netSent].data
+ok(findBlock(fcard, "property") ~= nil, "в справке пожарного есть недвижимость")
+ok(blockValue(fcard, "property", "Объект 1"):find("Квартира 12", 1, true) ~= nil,
+    "объект взят из модуля недвижимости")
+ok(findBlock(fcard, "medical") ~= nil, "в справке пожарного есть медкарта")
+ok(findBlock(fcard, "wanted") == nil and findBlock(fcard, "fines") == nil,
+    "розыска и штрафов пожарному не показывают")
+local okHiddenFire = PB.Run(fireman, TKEY, { hidden = true })
+ok(okHiddenFire == false, "скрытый запрос пожарным недоступен")
+
 print("\n=== 8. ЖУРНАЛ ===")
 ok(#PB.Log >= 6, "все запросы записаны в журнал", tostring(#PB.Log))
 local last = PB.Log[#PB.Log]
-ok(last.targetKey == TKEY and last.actorKey == GRM.Identity.CharacterKey(medic), "в записи есть кто и кого")
+ok(last.targetKey == TKEY and last.actorKey == GRM.Identity.CharacterKey(fireman),
+    "в записи есть кто и кого")
 local hiddenLogged = false
 for _, row in ipairs(PB.Log) do if row.hidden then hiddenLogged = true end end
 ok(hiddenLogged, "скрытый запрос ТОЖЕ попал в журнал")

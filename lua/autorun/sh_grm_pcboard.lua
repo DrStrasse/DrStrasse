@@ -44,13 +44,15 @@ PB.Net = {
 -- объём справки задаётся не рангом, а набором блоков уровня.
 PB.Levels = {
     none     = { rank = 0, name = "Нет доступа",        short = "—" },
+    fire     = { rank = 1, name = "Пожарная служба",    short = "ПОЖ" },
     medical  = { rank = 1, name = "Медицинский",        short = "МЕД" },
     police   = { rank = 2, name = "Правоохранительный", short = "ПРАВ" },
     military = { rank = 2, name = "Комендатура",        short = "КОМ" },
+    justice  = { rank = 3, name = "Юстиция",            short = "ЮСТ" },
     special  = { rank = 3, name = "Спецслужбы",         short = "СПЕЦ" },
     admin    = { rank = 4, name = "Администрация",      short = "АДМ" },
 }
-PB.LevelOrder = { "none", "medical", "police", "military", "special", "admin" }
+PB.LevelOrder = { "none", "fire", "medical", "police", "military", "justice", "special", "admin" }
 
 function PB.LevelName(level)
     local row = PB.Levels[tostring(level or "none")]
@@ -374,7 +376,7 @@ if SERVER then
 
     PB.RegisterProvider("identity", {
         label = "Личность", order = 10,
-        levels = { medical = true, police = true, military = true, special = true, admin = true },
+        levels = { fire = true, medical = true, police = true, military = true, justice = true, special = true, admin = true },
         collect = function(ctx)
             local rows = {}
             local reg = docRegistry()
@@ -397,7 +399,7 @@ if SERVER then
 
     PB.RegisterProvider("wanted", {
         label = "Розыск и правонарушения", order = 20,
-        levels = { police = true, military = true, special = true, admin = true },
+        levels = { police = true, military = true, justice = true, special = true, admin = true },
         collect = function(ctx)
             local W = GRM.Wanted
             if not (W and W.Records) then return nil end
@@ -420,7 +422,7 @@ if SERVER then
 
     PB.RegisterProvider("fines", {
         label = "Штрафы и задолженности", order = 30,
-        levels = { police = true, military = true, special = true, admin = true },
+        levels = { police = true, military = true, justice = true, special = true, admin = true },
         collect = function(ctx)
             local F = (GRM.Wanted and GRM.Wanted.Fines) or GRM.Fines
             if not (F and F.DebtOf) then return nil end
@@ -437,7 +439,7 @@ if SERVER then
 
     PB.RegisterProvider("licenses", {
         label = "Удостоверения и лицензии", order = 40,
-        levels = { police = true, military = true, special = true, admin = true },
+        levels = { police = true, military = true, justice = true, special = true, admin = true },
         collect = function(ctx)
             local reg = docRegistry()
             if not reg then return nil end
@@ -459,7 +461,7 @@ if SERVER then
 
     PB.RegisterProvider("marks", {
         label = "Внешность и особые приметы", order = 45,
-        levels = { medical = true, police = true, military = true, special = true, admin = true },
+        levels = { fire = true, medical = true, police = true, military = true, justice = true, special = true, admin = true },
         collect = function(ctx)
             local rows = {}
             local NP = GRM.Nameplate
@@ -476,7 +478,7 @@ if SERVER then
 
     PB.RegisterProvider("military", {
         label = "Воинский учёт", order = 50,
-        levels = { military = true, special = true, admin = true },
+        levels = { military = true, justice = true, special = true, admin = true },
         collect = function(ctx)
             local reg = docRegistry()
             if not reg then return nil end
@@ -496,7 +498,7 @@ if SERVER then
 
     PB.RegisterProvider("employment", {
         label = "Место службы", order = 60,
-        levels = { special = true, admin = true },
+        levels = { justice = true, special = true, admin = true },
         collect = function(ctx)
             local rows = {}
             if IsValid(ctx.target) then
@@ -524,7 +526,7 @@ if SERVER then
 
     PB.RegisterProvider("vehicles", {
         label = "Транспорт на имени", order = 70,
-        levels = { special = true, admin = true },
+        levels = { justice = true, special = true, admin = true },
         collect = function(ctx)
             local VD = GRM.VehicleDealer
             if not (VD and istable(VD.Garages)) then return nil end
@@ -546,7 +548,7 @@ if SERVER then
 
     PB.RegisterProvider("property", {
         label = "Недвижимость", order = 80,
-        levels = { special = true, admin = true },
+        levels = { fire = true, justice = true, special = true, admin = true },
         collect = function(ctx)
             local P = GRM.Property
             if not (P and istable(P.Records)) then return nil end
@@ -568,7 +570,7 @@ if SERVER then
 
     PB.RegisterProvider("education", {
         label = "Образование", order = 90,
-        levels = { special = true, admin = true },
+        levels = { justice = true, special = true, admin = true },
         collect = function(ctx)
             local D = GRM.Diplomas
             if not (D and D.For) then return nil end
@@ -587,7 +589,7 @@ if SERVER then
 
     PB.RegisterProvider("medical", {
         label = "Медицинская карта", order = 100,
-        levels = { medical = true, special = true, admin = true },
+        levels = { fire = true, medical = true, special = true, admin = true },
         collect = function(ctx)
             local rows = {}
             -- Постоянная медкарта (GRM.Medical) — она есть и для офлайн-лица.
@@ -634,7 +636,7 @@ if SERVER then
 
     PB.RegisterProvider("history", {
         label = "Кто пробивал это лицо", order = 120,
-        levels = { special = true, admin = true },
+        levels = { justice = true, special = true, admin = true },
         collect = function(ctx)
             local rows, shown = {}, 0
             for i = #PB.Log, 1, -1 do

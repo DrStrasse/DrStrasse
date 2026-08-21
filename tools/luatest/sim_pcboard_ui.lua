@@ -35,15 +35,21 @@ ok(has(core, 'apply((fac.roles or {})[tostring(role or "")], "должность
 ok(has(core, "Ловушка Lua"), "разобран случай false в галочках блоков")
 
 print("\n=== 2. УРОВНИ ДОПУСКА ===")
-for _, level in ipairs({ "police", "military", "medical", "special", "admin" }) do
+for _, level in ipairs({ "police", "military", "medical", "fire", "justice", "special", "admin" }) do
     ok(has(core, level .. "  = {") or has(core, level .. " = {") or has(core, level .. "   = {")
         or has(core, level .. "    = {") or has(core, level .. "     = {"),
         "уровень " .. level .. " объявлен")
 end
-ok(has(core, 'levels = { police = true, military = true, special = true, admin = true }'),
-    "розыск и штрафы — правоохранителям и комендатуре")
-ok(has(core, 'levels = { medical = true, special = true, admin = true }'),
-    "медкарта — медикам и спецслужбам")
+ok(has(core, 'levels = { police = true, military = true, justice = true, special = true, admin = true }'),
+    "розыск и штрафы — правоохранителям, комендатуре и юстиции")
+ok(has(core, 'justice  = { rank = 3, name = "Юстиция"'), "уровень «Юстиция» в таблице уровней")
+ok(has(core, 'fire     = { rank = 1, name = "Пожарная служба"'), "уровень «Пожарная служба» в таблице")
+ok(has(core, '"none", "fire", "medical", "police", "military", "justice", "special", "admin"'),
+    "новые уровни попали в порядок выбора в редакторе")
+ok(has(core, 'levels = { fire = true, medical = true, special = true, admin = true }'),
+    "медкарта — медикам, пожарным и спецслужбам")
+ok(has(core, 'levels = { fire = true, justice = true, special = true, admin = true }'),
+    "недвижимость — пожарным (владелец объекта) и юстиции")
 ok(has(core, 'levels = { admin = true }'), "служебные данные аккаунта — только администрации")
 
 print("\n=== 3. РП И ЗАЩИТА ОТ АБЬЮЗА ===")
