@@ -875,19 +875,45 @@ if CLIENT then
         end
     end)
 
+    --[[ СТРОКА ПОЖАРКИ ВНИЗУ ЭКРАНА.
+
+         Раньше она держалась на NW-ссылке «моя машина»: приняв машину на
+         дежурство, боец видел счётчики воды и пены ВСЕГДА — хоть на другом
+         конце карты (заказ владельца 21.08). Теперь строка показывается
+         только когда она к месту:
+           • боец сидит в самой машине (или в её сиденье);
+           • либо стоит рядом с ней (по умолчанию 350 юнитов);
+           • либо держит в руках пожарный ствол/рукав от этой машины.
+         Дальность настраивается конваром grm_fire_hud_dist. ]]
+    local hudDist = CreateClientConVar("grm_fire_hud_dist", "350", true, false,
+        "На каком расстоянии от пожарной машины видна строка с водой и пеной")
+
+    local function holdingFireGear(ply)
+        local wep = ply:GetActiveWeapon()
+        if not IsValid(wep) then return false end
+        local cls = string.lower(wep:GetClass() or "")
+        return cls:find("fire", 1, true) ~= nil or cls:find("hose", 1, true) ~= nil
+            or cls:find("nozzle", 1, true) ~= nil
+    end
+
     hook.Add("HUDPaint", "GRM_FireTruck_HUD", function()
         local ply = LocalPlayer()
         if not IsValid(ply) then return end
         local veh = ply:GetNWEntity("GRM_FireMyTruck")
-        if not IsValid(veh) or not veh:GetNWBool("GRM_FireTruck", false) then
-            local seat = ply:GetVehicle()
-            if IsValid(seat) then
-                local p = seat:GetParent()
-                if IsValid(p) and p:GetNWBool("GRM_FireTruck", false) then veh = p
-                elseif seat:GetNWBool("GRM_FireTruck", false) then veh = seat end
-            end
+        local seated = false
+        local seat = ply:GetVehicle()
+        if IsValid(seat) then
+            local p = seat:GetParent()
+            if IsValid(p) and p:GetNWBool("GRM_FireTruck", false) then veh, seated = p, true
+            elseif seat:GetNWBool("GRM_FireTruck", false) then veh, seated = seat, true end
         end
         if not IsValid(veh) or not veh:GetNWBool("GRM_FireTruck", false) then return end
+
+        if not seated then
+            local maxDist = math.Clamp(hudDist:GetInt(), 80, 4000)
+            local near = ply:GetPos():Distance(veh:GetPos()) <= maxDist
+            if not (near or holdingFireGear(ply)) then return end
+        end
         local tank = veh:GetNWInt("GRM_FireTank", 0)
         local foam = veh:GetNWInt("GRM_FireFoam", 0)
         local powder = veh:GetNWInt("GRM_FirePowder", 0)
