@@ -528,6 +528,30 @@ function D.GroupLockInSync(records)
     return true
 end
 
+--[[ Подпись набора данных окна двери: категории и структура организаций.
+     Нужна клиенту, чтобы понять, можно ли обновить УЖЕ ОТКРЫТОЕ окно на
+     месте (галочка в категории) или требуется полная пересборка (категорию
+     создали/удалили/переименовали, в организации появился отдел). Пока
+     подпись не менялась, окно не пересобирается — и список не улетает
+     вверх после каждой галочки. ]]
+function D.MenuSignature(cats, facTree)
+    local parts = {}
+    for _, c in ipairs(istable(cats) and cats or {}) do
+        if istable(c) then parts[#parts + 1] = tostring(c.id) .. "=" .. tostring(c.name or "") end
+    end
+    table.sort(parts)
+    local facParts = {}
+    for _, f in ipairs(istable(facTree) and facTree or {}) do
+        if istable(f) then
+            local n = tostring(f.name or "")
+            facParts[#facParts + 1] = n .. ":" .. tostring(#(f.departments or {}))
+                .. "/" .. tostring(#(f.subdepartments or {})) .. "/" .. tostring(#(f.roles or {}))
+        end
+    end
+    table.sort(facParts)
+    return table.concat(parts, ";") .. "|" .. table.concat(facParts, ";")
+end
+
 --- Может ли сотрудник управлять замком двери этой категории.
 function D.CategoryCanLock(cat, actor)
     if not istable(cat) then return true end

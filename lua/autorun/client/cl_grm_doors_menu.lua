@@ -104,8 +104,20 @@ local function checkRow(parent, label, checked, indent, colorOn, onChange)
     chk:SetFont("GRMDoorUI_Body")
     chk:SetTextColor(checked and (colorOn or C.text) or C.dim)
     chk:SetValue(checked and 1 or 0)
-    chk.OnChange = function(_, val) if onChange then onChange(val) end end
-    return r, chk
+    -- Программное обновление галочки НЕ должно улетать на сервер: иначе
+    -- обновление окна само себе шлёт действие и всё зацикливается.
+    local silent = false
+    chk.OnChange = function(_, val)
+        if silent then return end
+        if onChange then onChange(val) end
+    end
+    local function setChecked(on)
+        silent = true
+        chk:SetValue(on and 1 or 0)
+        chk:SetTextColor(on and (colorOn or C.text) or C.dim)
+        silent = false
+    end
+    return r, chk, setChecked
 end
 
 local function skinEntry(entry, placeholder)
@@ -158,12 +170,15 @@ function D.OpenMenu(ent, d, cats, facTree, canAdmin)
     f:SetSize(math.Clamp(ScrW() * 0.68, 1000, 1480), math.Clamp(ScrH() * 0.80, 660, 980))
     f:Center() f:SetTitle("") f:ShowCloseButton(false) f:MakePopup() f:SetSizable(true)
 
-    local ownerDesc = "Ничья / продаётся"
-    if d.owner_type == "player" then ownerDesc = tostring(d.owner_nick or "Игрок")
-    elseif d.owner_type == "faction" then ownerDesc = "Организация: " .. tostring(d.owner_faction or "")
-    elseif d.owner_type == "category" then
-        ownerDesc = "Категория: " .. tostring(d.owner_category_name ~= "" and d.owner_category_name or d.owner_category or "")
+    local function describeOwner(rec)
+        if rec.owner_type == "player" then return tostring(rec.owner_nick or "Игрок") end
+        if rec.owner_type == "faction" then return "Организация: " .. tostring(rec.owner_faction or "") end
+        if rec.owner_type == "category" then
+            return "Категория: " .. tostring(rec.owner_category_name ~= "" and rec.owner_category_name or rec.owner_category or "")
+        end
+        return "Ничья / продаётся"
     end
+    local ownerDesc = describeOwner(d)
 
     f.Paint = function(_, w, h)
         draw.RoundedBox(8, 0, 0, w, h, C.bg)
@@ -206,6 +221,8 @@ function D.OpenMenu(ent, d, cats, facTree, canAdmin)
          восстановление повторяется несколько кадров: DScrollPanel зажимает
          SetScroll по высоте холста, а она считается уже после раскладки. ]]
     local scrollSilent = false
+    -- Обновление уже открытой вкладки «Категории» без пересборки (см. ниже).
+    local catRefresh = nil
     local function setScroll(value)
         if not IsValid(content.VBar) then return end
         scrollSilent = true
@@ -216,6 +233,8 @@ function D.OpenMenu(ent, d, cats, facTree, canAdmin)
     local function selectTab(key)
         if key ~= lastTab then lastScroll = 0 end
         lastTab = key
+        -- Старые ссылки на галочки ведут на уже уничтоженные панели.
+        catRefresh = nil
         content:Clear()
         setScroll(0)
         for id, btn in pairs(tabButtons) do btn.active = (id == key) end
@@ -422,6 +441,25 @@ function D.OpenMenu(ent, d, cats, facTree, canAdmin)
                     end, "Отмена")
             end
 
+            -- Живые ссылки на галочки: по ним вкладка обновляется НА МЕСТЕ,
+            -- без пересборки и без прыжка списка вверх.
+            local memberRows, flagRows = {}, {}
+            catRefresh = function()
+                local map = {}
+                for _, c in ipairs(cats or {}) do map[c.id] = c end
+                local cur = lastCategory and map[lastCategory]
+                if not cur then return false end
+                for _, r in ipairs(memberRows) do
+                    r.set(listHas(cur[r.list], r.value))
+                end
+                for _, r in ipairs(flagRows) do
+                    local on = cur[r.key] == true
+                    if r.key == "canLock" then on = cur.canLock ~= false end
+                    r.set(on)
+                end
+                return true
+            end
+
             -- Флаги поведения.
             local flags = D.CategoryFlags or {}
             local flagCard = card(pnl, 44 + #flags * 42, "ПОВЕДЕНИЕ КАТЕГОРИИ «" .. string.upper(tostring(cat.name)) .. "»")
@@ -443,9 +481,17 @@ function D.OpenMenu(ent, d, cats, facTree, canAdmin)
                 chk:SetFont("GRMDoorUI_Body")
                 chk:SetTextColor(on and C.gold or C.text)
                 chk:SetValue(on and 1 or 0)
+                local flagSilent = false
                 chk.OnChange = function(_, val)
+                    if flagSilent then return end
                     act({ action = "cat_flag", entIndex = ent:EntIndex(), catId = cat.id, flag = flag.key, value = val and true or false })
                 end
+                flagRows[#flagRows + 1] = { key = flag.key, set = function(state)
+                    flagSilent = true
+                    chk:SetValue(state and 1 or 0)
+                    chk:SetTextColor(state and C.gold or C.text)
+                    flagSilent = false
+                end }
             end
 
             -- Кто входит в категорию: организации, отделы, подотделы, должности.
@@ -456,26 +502,22 @@ function D.OpenMenu(ent, d, cats, facTree, canAdmin)
                 local holder = vgui.Create("DPanel", block)
                 holder:Dock(FILL) holder:DockMargin(12, 36, 12, 8) holder:SetPaintBackground(false)
 
-                checkRow(holder, "Вся организация", listHas(cat.factions, fac.name), 0, C.teal, function()
-                    act({ action = "cat_member", entIndex = ent:EntIndex(), catId = cat.id, list = "factions", value = fac.name })
-                end)
-                for _, dept in ipairs(fac.departments or {}) do
-                    local key = fac.name .. "|" .. dept.key
-                    checkRow(holder, "Отдел: " .. tostring(dept.display), listHas(cat.departments, key), 16, C.accent, function()
-                        act({ action = "cat_member", entIndex = ent:EntIndex(), catId = cat.id, list = "departments", value = key })
+                local function member(label, list, value, indent, color)
+                    local _, _, set = checkRow(holder, label, listHas(cat[list], value), indent, color, function()
+                        act({ action = "cat_member", entIndex = ent:EntIndex(), catId = cat.id, list = list, value = value })
                     end)
+                    memberRows[#memberRows + 1] = { list = list, value = value, set = set }
+                end
+
+                member("Вся организация", "factions", fac.name, 0, C.teal)
+                for _, dept in ipairs(fac.departments or {}) do
+                    member("Отдел: " .. tostring(dept.display), "departments", fac.name .. "|" .. dept.key, 16, C.accent)
                 end
                 for _, sub in ipairs(subs) do
-                    local key = fac.name .. "|" .. sub.key
-                    checkRow(holder, "Подотдел: " .. tostring(sub.display), listHas(cat.subdepartments, key), 30, C.gold, function()
-                        act({ action = "cat_member", entIndex = ent:EntIndex(), catId = cat.id, list = "subdepartments", value = key })
-                    end)
+                    member("Подотдел: " .. tostring(sub.display), "subdepartments", fac.name .. "|" .. sub.key, 30, C.gold)
                 end
                 for _, role in ipairs(fac.roles or {}) do
-                    local key = fac.name .. "|" .. role.key
-                    checkRow(holder, "Должность: " .. tostring(role.display), listHas(cat.roles, key), 16, C.text, function()
-                        act({ action = "cat_member", entIndex = ent:EntIndex(), catId = cat.id, list = "roles", value = key })
-                    end)
+                    member("Должность: " .. tostring(role.display), "roles", fac.name .. "|" .. role.key, 16, C.text)
                 end
             end
         end)
@@ -542,6 +584,44 @@ function D.OpenMenu(ent, d, cats, facTree, canAdmin)
     local wantScroll = lastScroll
     selectTab(lastTab)
 
+    --[[ ОБНОВЛЕНИЕ БЕЗ ПЕРЕСБОРКИ ОКНА.
+         Сервер после каждого действия шлёт свежий снимок двери. Раньше на
+         него окно создавалось ЗАНОВО — отсюда и прыжок списка вверх после
+         каждой галочки в категории (восстановление прокрутки не успевало
+         за раскладкой). Теперь при том же объекте окно живёт дальше:
+           • изменилась только принадлежность к категории → правим галочки
+             на месте, ничего не пересобирая и не двигая прокрутку;
+           • изменился состав категорий или структура организаций →
+             пересобираем текущую вкладку и возвращаем прокрутку. ]]
+    f.GRMDoorEnt = ent
+    f.GRMSignature = D.MenuSignature and D.MenuSignature(cats, facTree) or ""
+    f.GRMPatch = function(newD, newCats, newFacTree, newAdmin)
+        if not IsValid(f) then return end
+        d = istable(newD) and newD or d
+        cats = istable(newCats) and newCats or cats
+        facTree = istable(newFacTree) and newFacTree or facTree
+        if newAdmin ~= nil then isAdmin = (d.is_admin == true) or (newAdmin == true) end
+        ownerDesc = describeOwner(d)
+
+        local sig = D.MenuSignature and D.MenuSignature(cats, facTree) or ""
+        local structureSame = (sig == f.GRMSignature)
+        f.GRMSignature = sig
+
+        if structureSame and lastTab == "categories" and catRefresh and catRefresh() then
+            return
+        end
+
+        local keep = IsValid(content.VBar) and content.VBar:GetScroll() or 0
+        selectTab(lastTab)
+        setScroll(keep)
+        lastScroll = keep
+        timer.Simple(0, function()
+            if not (IsValid(f) and IsValid(content)) then return end
+            content:InvalidateLayout(true)
+            setScroll(keep)
+        end)
+    end
+
     -- Форвард-декларация: функция вызывает саму себя из таймера.
     local restoreScroll
     restoreScroll = function(tries)
@@ -566,6 +646,11 @@ net.Receive(NET_OPEN, function()
     local facTree = net.ReadTable() or {}
     local canAdmin = net.ReadBool()
     if not IsValid(ent) then return end
+    local f = D._frame
+    if IsValid(f) and f.GRMDoorEnt == ent and isfunction(f.GRMPatch) then
+        f.GRMPatch(d, cats, facTree, canAdmin)
+        return
+    end
     D.OpenMenu(ent, d, cats, facTree, canAdmin)
 end)
 

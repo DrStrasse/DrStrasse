@@ -408,40 +408,63 @@ if SERVER then
    net.WriteString(VD.DeliveryMode(dealer))net.WriteBool(VD.ShowRetrieve(dealer))net.Send(ply)end
  local function result(ply,ok,msg)net.Start("GRM_VD_Result")net.WriteBool(ok)net.WriteString(msg)net.Send(ply);if GRM.Notify then GRM.Notify(ply,msg,ok and 100 or 255,ok and 220 or 110,ok and 130 or 90)end end
  net.Receive("GRM_VD_Action",function(_,ply)local dealer,op=net.ReadEntity(),net.ReadString();if not IsValid(dealer)or dealer:GetClass()~="sent_vehicle_dealer"or ply:GetPos():DistToSqr(dealer:GetPos())>300*300 then return end;ply.GRMVDNext=ply.GRMVDNext or 0;if CurTime()<ply.GRMVDNext then return end;ply.GRMVDNext=CurTime()+.35
-  if op=="buy"then local class=net.ReadString();local wantGarage=net.ReadString()or"";local wantWay=net.ReadString()or"";local entry=findEntry(dealer,class);if not entry or not VD.CanUseEntry(ply,entry)then result(ply,false,"Транспорт недоступен")return end;local kind=VD.EntryKind(entry);if activeCount(ply)>=VD.MaxActive then result(ply,false,"Лимит активного транспорта")return end
+  if op=="buy"then local class=net.ReadString();local wantGarage=net.ReadString()or"";local wantWay=net.ReadString()or"";local entry=findEntry(dealer,class);if not entry or not VD.CanUseEntry(ply,entry)then result(ply,false,"Транспорт недоступен")return end;local kind=VD.EntryKind(entry)
+   --[[ ПОКУПКА ≠ ВЫДАЧА (заказ владельца 21.08).
+        Раньше кнопка «Купить» сразу спавнила машину (или отправляла её в
+        гараж) — покупка и выдача были одним действием, и настройка дилера
+        решала за игрока. Теперь личный транспорт при покупке ТОЛЬКО
+        оформляется в собственность и встаёт на хранение; на карту он
+        выходит отдельной кнопкой «ВЫДАТЬ», где игрок сам выбирает — у
+        дилера или в гараже. Служебный транспорт покупкой не является:
+        он по-прежнему выдаётся на месте. ]]
+   local personal=(kind=="personal")
    local allowed,have,limit=VD.CanOwnMore(ply,class)
    if not allowed then result(ply,false,("У вас уже %d шт. «%s» — это предел (%d на класс). Продайте одну, чтобы взять ещё."):format(have,tostring(entry.name or class),limit))return end
-   local price=kind~="personal"and 0 or math.max(0,math.floor(tonumber(entry.price)or 0));if price>0 and(not GRM.HasMoney or not GRM.HasMoney(ply,price))then result(ply,false,"Недостаточно средств")return end;local info=VD.VehicleInfo(class)
-   -- Куда девать покупку: решает настройка дилера, при режиме "both" — игрок.
-   local mode=VD.DeliveryMode(dealer)
-   local toGarage=(mode=="garage")or(mode=="both"and wantWay=="garage")
-   if toGarage and kind~="personal" then toGarage=false end -- служебное всегда выдаётся на месте
+   if not personal and activeCount(ply)>=VD.MaxActive then result(ply,false,"Лимит активного транспорта")return end
+   local price=personal and math.max(0,math.floor(tonumber(entry.price)or 0))or 0;if price>0 and(not GRM.HasMoney or not GRM.HasMoney(ply,price))then result(ply,false,"Недостаточно средств")return end;local info=VD.VehicleInfo(class)
    local ent
-   if not toGarage then
+   if not personal then
     local spawnErrors;ent,info,spawnErrors=VD.Spawn(class,dealer,ply)
     if not ent then result(ply,false,(spawnErrors and spawnErrors[1])or"Не удалось создать транспорт")return end
    end
-   if price>0 and GRM.TakeMoney then GRM.TakeMoney(ply,price,"Покупка транспорта "..class)end;local id=makeID("vehicle");local record={id=id,class=class,name=entry.name or info.name,model=info.model,price=price,stored=false,dealerID=dealer:GetDealerID(),service=kind~="personal",ownershipType=kind}
-   -- Гараж, выбранный игроком в меню: сам дилер про гаражи не знает, поле
-   -- читает модуль GRM.Garage в хуке ниже.
-   record.requestedGarage=tostring(wantGarage or""):sub(1,48);if kind=="personal"then local g=garage(ply);g[id]=record;saveGarage()end;if IsValid(ent)then
+   if price>0 and GRM.TakeMoney then GRM.TakeMoney(ply,price,"Покупка транспорта "..class)end;local id=makeID("vehicle");local record={id=id,class=class,name=entry.name or info.name,model=info.model,price=price,stored=true,dealerID=dealer:GetDealerID(),service=not personal,ownershipType=kind}
+   -- Гараж приписки, выбранный игроком в меню: сам дилер про гаражи не
+   -- знает, поле читает модуль GRM.Garage в хуке ниже.
+   record.requestedGarage=tostring(wantGarage or""):sub(1,48);if personal then local g=garage(ply);g[id]=record;saveGarage()end;if IsValid(ent)then
+    record.stored=false
     ent.GRMGarageID=id;ent.GRMGarageOwner=ply;ent.VD_Price=price;VD.TagVehicle(ent,ply,class,kind,record);VD.Active[id]=ent
     if GRM.VehicleKeys and GRM.VehicleKeys.SetPlayerOwner then pcall(GRM.VehicleKeys.SetPlayerOwner,ent,ply)elseif VK and VK.SetPlayerOwner then pcall(VK.SetPlayerOwner,ent,ply)end
-   else
-    -- Машина куплена «в гараж»: на площадке её не спавним, она сразу стоит
-    -- на хранении и забирается в гараже.
-    record.stored=true;saveGarage()
    end
    hook.Run("GRM_VehicleDealerSpawned",ent,ply,class,record,dealer)
    local home=(GRM.Garage and GRM.Garage.Get)and GRM.Garage.Get(record.garageID)or nil
    result(ply,true,IsValid(ent)and("Транспорт выдан: "..record.name)
-    or(home and ("Покупка отправлена в гараж «%s»: %s"):format(home.name,record.name)
-    or("Покупка отправлена в гараж: "..record.name)))
+    or(home and ("Транспорт приобретён: %s. Стоит в гараже «%s» — нажмите «ВЫДАТЬ»."):format(record.name,home.name)
+    or ("Транспорт приобретён: "..record.name..". Нажмите «ВЫДАТЬ», чтобы получить его.")))
    VD.Push(ply,dealer)
-  elseif op=="retrieve"then local id=net.ReadString()
+  elseif op=="retrieve"then local id=net.ReadString();local way=net.ReadString()or"";local wantGarage=net.ReadString()or""
+   --[[ ВЫДАЧА: игрок сам выбирает способ.
+        way="dealer" — машина подаётся здесь, у дилера;
+        way="garage" — машина подаётся на свободное место гаража (своего или
+        выбранного), забирать её нужно там. ]]
+   local rec=VD.FindRecord(ply,id)
+   if not rec then result(ply,false,"Запись гаража не найдена")return end
+   -- Режим дилера ограничивает только выдачу НА МЕСТЕ: "garage" — этот дилер
+   -- машины не отдаёт, забирать в гараже. Подача в гараж доступна всегда,
+   -- пока есть модуль гаражей и доступный гараж.
+   local mode=VD.DeliveryMode(dealer)
+   if way=="" then way=(mode=="garage")and"garage"or"dealer" end
+   if way=="dealer" and mode=="garage" then way="garage" end
+
+   if way=="garage" then
+    if not(GRM.Garage and GRM.Garage.IssueRemote)then result(ply,false,"Модуль гаражей не подключён")return end
+    local okG,msgG=GRM.Garage.IssueRemote(ply,id,wantGarage~=""and wantGarage or rec.garageID)
+    result(ply,okG,msgG or(okG and"Транспорт подан в гараж"or"Не удалось подать транспорт в гараж"))
+    if okG then VD.Push(ply,dealer)end
+    return
+   end
+
    -- Выдача у дилера. Если у машины есть домашний гараж и включён строгий
    -- режим (grm_garage_strict 1) — забирать её нужно именно в гараже.
-   local rec=VD.FindRecord(ply,id)
    if not VD.ShowRetrieve(dealer)then result(ply,false,"Этот дилер не выдаёт транспорт — заберите машину в гараже")return end
    if rec and GRM.Garage and GRM.Garage.DealerIssueBlocked then
     local blocked,why=GRM.Garage.DealerIssueBlocked(ply,rec)
@@ -449,7 +472,7 @@ if SERVER then
    end
    local ent,err=VD.IssueRecord(ply,id,nil,dealer)
    if not ent then result(ply,false,err or"Не удалось выдать транспорт")return end
-   result(ply,true,"Транспорт выдан из гаража");VD.Push(ply,dealer)
+   result(ply,true,"Транспорт выдан у дилера");VD.Push(ply,dealer)
   elseif op=="store"then local id=net.ReadString();local ok,msg=VD.StoreRecord(ply,id,700);result(ply,ok,msg or"Транспорт помещён в гараж");if ok then VD.Push(ply,dealer)end
   elseif op=="remove"then local id=net.ReadString();local ok,msg=VD.StoreRecord(ply,id,nil);result(ply,ok,msg or"Транспорт убран");if ok then VD.Push(ply,dealer)end
   elseif op=="sell"then

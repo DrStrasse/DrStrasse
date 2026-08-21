@@ -368,28 +368,26 @@ net.Receive("GRM_VD_Open", function()
         local capped = limit > 0 and owned >= limit
         local personal = v.ownershipType == "personal"
 
-        --[[ Режим выдачи задаётся в настройках дилера:
-             dealer — только «купить и выдать» здесь;
-             garage — покупка сразу уезжает в гараж;
-             both   — обе кнопки, решает игрок. Служебный транспорт всегда
-             выдаётся на месте. ]]
-        local function buyButton(label, color, way, wide)
-            local b = grmButton(row, capped and "ЛИМИТ" or label, capped and C.red or color)
-            b:Dock(RIGHT)
-            b:SetWide(wide or 150)
-            b:DockMargin(6, 38, 8, 38)
-            b:SetEnabled(not capped)
-            b.DoClick = function() send(dealer, "buy", v.class, targetGarage, way) end
-            return b
-        end
-
-        if not personal or deliveryMode == "dealer" then
-            buyButton(personal and "КУПИТЬ" or "ВЫДАТЬ", personal and C.green or C.accent, "dealer")
-        elseif deliveryMode == "garage" then
-            buyButton("КУПИТЬ В ГАРАЖ", C.green, "garage", 190)
-        else
-            buyButton("В ГАРАЖ", C.accent, "garage", 130)
-            buyButton("КУПИТЬ И ВЫДАТЬ", C.green, "dealer", 180)
+        --[[ ПОКУПКА ≠ ВЫДАЧА (заказ владельца 21.08).
+             Личный транспорт сначала ПРИОБРЕТАЕТСЯ (одна кнопка «КУПИТЬ»),
+             машина встаёт в гараж на хранение. Забирает её игрок отдельно —
+             во вкладке «Мой транспорт» кнопкой «ВЫДАТЬ», выбирая, где
+             получить: у дилера или в гараже. Служебный транспорт покупкой
+             не является и выдаётся сразу. ]]
+        local b = grmButton(row,
+            capped and "ЛИМИТ" or (personal and ("КУПИТЬ · " .. money(v.price or 0)) or "ПОЛУЧИТЬ"),
+            capped and C.red or (personal and C.green or C.accent))
+        b:Dock(RIGHT)
+        b:SetWide(personal and 210 or 150)
+        b:DockMargin(6, 38, 8, 38)
+        b:SetEnabled(not capped)
+        b.DoClick = function()
+            if not personal then send(dealer, "buy", v.class, targetGarage, "dealer") return end
+            Derma_Query(("Приобрести «%s» за %s?\nМашина оформляется в собственность и встаёт на хранение —\nзабрать её можно кнопкой «ВЫДАТЬ» во вкладке «Мой транспорт».")
+                    :format(tostring(v.name or v.class), money(v.price or 0)),
+                "Покупка транспорта",
+                "Купить", function() send(dealer, "buy", v.class, targetGarage, "store") end,
+                "Отмена", function() end)
         end
         return row
     end
@@ -442,14 +440,50 @@ net.Receive("GRM_VD_Open", function()
         actions:DockMargin(6, 12, 12, 12)
         actions:SetPaintBackground(false)
 
-        local canRetrieve = showRetrieve ~= false
+        --[[ ВЫДАЧА С ВЫБОРОМ МЕСТА (заказ владельца 21.08).
+             Купленная машина стоит на хранении; кнопка «ВЫДАТЬ» спрашивает,
+             куда её подать — здесь у дилера или в гараж. Что доступно,
+             решают настройки дилера (режим выдачи + кнопка «ВЫДАТЬ»). ]]
+        local dealerAllowed = (showRetrieve ~= false) and deliveryMode ~= "garage"
+        local garageAllowed = #garageChoices > 0
+        local onMap = v.stored == false
+
         local main = grmButton(actions,
-            v.stored == false and "В ГАРАЖ" or (canRetrieve and "ВЫДАТЬ" or "ЗАБРАТЬ В ГАРАЖЕ"),
-            v.stored == false and C.accent or (canRetrieve and C.green or C.cardLight))
+            onMap and "УБРАТЬ В ГАРАЖ" or "ВЫДАТЬ",
+            onMap and C.accent or C.green)
         main:Dock(TOP)
         main:SetTall(38)
-        main:SetEnabled(v.stored == false or canRetrieve)
-        main.DoClick = function() send(dealer, v.stored == false and "store" or "retrieve", v.id) end
+        main:SetEnabled(onMap or dealerAllowed or garageAllowed)
+        main.DoClick = function()
+            if onMap then send(dealer, "store", v.id) return end
+            if dealerAllowed and not garageAllowed then
+                send(dealer, "retrieve", v.id, "dealer", "")
+                return
+            end
+            if garageAllowed and not dealerAllowed then
+                send(dealer, "retrieve", v.id, "garage", tostring(v.homeID or ""))
+                return
+            end
+            local menu = DermaMenu()
+            if dealerAllowed then
+                menu:AddOption("Выдать здесь, у дилера", function()
+                    send(dealer, "retrieve", v.id, "dealer", "")
+                end):SetIcon("icon16/lorry.png")
+            end
+            if garageAllowed then
+                local home = tostring(v.homeID or "")
+                for _, g in ipairs(garageChoices) do
+                    local label = ("Подать в гараж «%s» — мест %d/%d"):format(tostring(g.name),
+                        tonumber(g.free) or 0, tonumber(g.slots) or 0)
+                    if home ~= "" and tostring(g.id) == home then label = label .. "  (свой)" end
+                    menu:AddOption(label, function()
+                        send(dealer, "retrieve", v.id, "garage", tostring(g.id))
+                    end):SetIcon("icon16/house.png")
+                end
+            end
+            menu:Open()
+        end
+
 
         --[[ Выкуп государством: цена чуть ниже покупки (процент задаётся
              конваром grm_vd_state_buyback). Сумма видна прямо на кнопке —

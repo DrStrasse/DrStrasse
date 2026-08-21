@@ -74,8 +74,8 @@ ok(has(ui, 'addTab("overview"') and has(ui, 'addTab("coowners"') and has(ui, 'ad
 ok(has(ui, "lastTab") and has(ui, "lastCategory"), "после действия окно возвращается в тот же раздел и категорию")
 
 print("\n=== 5. РЕДАКТОР В ОКНЕ ===")
-ok(has(ui, 'list = "departments"') and has(ui, 'list = "subdepartments"') and has(ui, 'list = "roles"')
-    and has(ui, 'list = "factions"'), "чекбоксы организаций, отделов, подотделов и должностей")
+ok(has(ui, '"departments", fac.name') and has(ui, '"subdepartments", fac.name') and has(ui, '"roles", fac.name')
+    and has(ui, '"factions", fac.name'), "чекбоксы организаций, отделов, подотделов и должностей")
 ok(has(ui, "D.CategoryFlags or {}"), "флаги рисуются из общего списка, без дублирования")
 ok(has(ui, 'action = "cat_flag"') and has(ui, 'action = "cat_member"'), "изменения уходят на сервер")
 ok(has(ui, "НАСТРОИТЬ КАТЕГОРИИ"), "из администрирования есть переход в редактор")
@@ -110,6 +110,22 @@ ok(not has(core, 'hook.Add("ShowSpare2"') and not has(core, 'hook.Add("ShowHelp"
 ok(has(core, 'hook.Remove("ShowTeam", "GRM_Doors_ServerOverrideF2")'),
     "старые перехваты снимаются при перезагрузке файла")
 ok(not has(f4, "yieldsToDoor"), "F4-меню больше не уступает прицелу на дверь")
+
+print("\n=== СПИСОК КАТЕГОРИЙ НЕ ПРЫГАЕТ ВВЕРХ ПОСЛЕ ГАЛОЧКИ ===")
+ok(has(core, "function D.MenuSignature"), "подпись набора данных считается в общем слое")
+ok(has(ui, "f.GRMPatch = function"), "окно умеет обновляться на месте, без пересборки")
+ok(has(ui, "if IsValid(f) and f.GRMDoorEnt == ent and isfunction(f.GRMPatch) then"),
+    "свежий снимок той же двери НЕ создаёт окно заново")
+ok(has(ui, "if structureSame and lastTab == \"categories\" and catRefresh and catRefresh() then"),
+    "при смене только галочек правится состояние чекбоксов, а не вкладка")
+ok(has(ui, "memberRows[#memberRows + 1] = { list = list, value = value, set = set }"),
+    "у каждой галочки есть живая ссылка на обновление")
+ok(has(ui, "local function setChecked(on)") and has(ui, "if silent then return end"),
+    "программная установка галочки не шлёт действие на сервер (нет петли)")
+ok(has(ui, "local keep = IsValid(content.VBar) and content.VBar:GetScroll() or 0"),
+    "если вкладку всё же пересобирают — прокрутка запоминается до Clear()")
+ok(has(ui, "catRefresh = nil") and has(ui, "-- Старые ссылки на галочки ведут на уже уничтоженные панели."),
+    "ссылки сбрасываются при смене вкладки")
 
 print(("\nDOOR MENU UI: %d/%d, провалов: %d"):format(total - fails, total, fails))
 if fails > 0 then os.exit(1) end

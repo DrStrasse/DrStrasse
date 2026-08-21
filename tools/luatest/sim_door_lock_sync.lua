@@ -306,5 +306,20 @@ end
 ok(raw ~= nil, "файл дверей записан")
 ok(raw ~= nil and raw:find("lock_at", 1, true) ~= nil, "метка времени замка попадает в файл")
 
+print("\n=== 9. ПОДПИСЬ ДАННЫХ МЕНЮ (ПРОТИВ ПРЫЖКА СПИСКА) ===")
+ok(isfunction(D.MenuSignature), "D.MenuSignature объявлена")
+local catsA = { { id = "gov", name = "Государственная" }, { id = "pub", name = "Общественная" } }
+local facA = { { name = "police", departments = { 1, 2 }, subdepartments = { 1 }, roles = { 1, 2, 3 } } }
+local sigA = D.MenuSignature(catsA, facA)
+-- галочка «фракция входит в категорию» состава категорий НЕ меняет
+local catsB = { { id = "gov", name = "Государственная", factions = { "police" } }, { id = "pub", name = "Общественная" } }
+ok(D.MenuSignature(catsB, facA) == sigA, "простановка галочки не меняет подпись — окно не пересобирается")
+ok(D.MenuSignature(catsA, facA) == D.MenuSignature({ catsA[2], catsA[1] }, facA),
+   "порядок категорий в снимке не важен")
+local catsC = { { id = "gov", name = "Государственная" }, { id = "pub", name = "Общественная" }, { id = "new", name = "Гаражи" } }
+ok(D.MenuSignature(catsC, facA) ~= sigA, "новая категория подпись меняет — нужна пересборка")
+local facB = { { name = "police", departments = { 1, 2, 3 }, subdepartments = { 1 }, roles = { 1, 2, 3 } } }
+ok(D.MenuSignature(catsA, facB) ~= sigA, "новый отдел в организации подпись меняет")
+
 print(("\nDOOR LOCK SYNC: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

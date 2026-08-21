@@ -187,18 +187,21 @@ ok(has(core, "function VD.DeliveryMode") and has(core, "function VD.ShowRetrieve
 ok(has(core, "delivery=VD.DeliveryMode(ent),showRetrieve=VD.ShowRetrieve(ent)"),
     "настройки сохраняются в записи дилера (переживают рестарт)")
 ok(has(core, 'ent.VD_Delivery=VD.DeliveryModes[tostring(r.delivery or"")]'), "и читаются при загрузке карты")
-ok(has(core, 'local toGarage=(mode=="garage")or(mode=="both"and wantWay=="garage")'),
-    "покупка уходит в гараж по настройке или по выбору игрока")
-ok(has(core, 'if toGarage and kind~="personal" then toGarage=false end'),
-    "служебный транспорт всегда выдаётся на месте")
-ok(has(core, "record.stored=true;saveGarage()"), "покупка «в гараж» не спавнится на площадке, а сразу на хранении")
+-- Заказ владельца 21.08: «Купить» ≠ «Выдать».
+ok(has(core, 'local personal=(kind=="personal")') and has(core, "if not personal then"),
+    "покупка личного транспорта ничего не спавнит — спавнится только служебный")
+ok(has(core, 'stored=true,dealerID=dealer:GetDealerID()'),
+    "купленная машина сразу встаёт на хранение (её нужно выдать отдельно)")
+ok(has(core, 'if way=="garage" then') and has(core, "GRM.Garage.IssueRemote(ply,id"),
+    "выдача умеет подать машину в гараж, а не только у дилера")
 ok(has(core, 'if not VD.ShowRetrieve(dealer)then result(ply,false,"Этот дилер не выдаёт транспорт'),
     "при выключенной кнопке сервер тоже не выдаёт (не только UI)")
 ok(has(core, "net.WriteString(VD.DeliveryMode(dealer))net.WriteBool(VD.ShowRetrieve(dealer))"),
     "режим уходит в окно игрока")
-ok(has(cl, 'buyButton("КУПИТЬ В ГАРАЖ"') and has(cl, 'buyButton("КУПИТЬ И ВЫДАТЬ"'),
-    "кнопки покупки зависят от режима")
-ok(has(cl, "ЗАБРАТЬ В ГАРАЖЕ"), "кнопка выдачи из гаража подписана честно, когда дилер не выдаёт")
+ok(has(cl, '"КУПИТЬ · " .. money(v.price or 0)') and has(cl, '"ПОЛУЧИТЬ"'),
+    "в каталоге одна честная кнопка: «КУПИТЬ» для личного, «ПОЛУЧИТЬ» для служебного")
+ok(has(cl, 'send(dealer, "retrieve", v.id, "dealer", "")') and has(cl, 'send(dealer, "retrieve", v.id, "garage"'),
+    "«ВЫДАТЬ» спрашивает, куда подать машину: к дилеру или в гараж")
 ok(has(cl, "Выдача покупок:") and has(cl, "Показывать кнопку «ВЫДАТЬ» из гаража"),
     "настройки есть в админке дилера")
 ok(has(cl, "delivery = deliveryMode, showRetrieve = showRetrieve"), "админка сохраняет настройки")

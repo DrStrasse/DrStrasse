@@ -840,6 +840,44 @@ if SERVER then
         return true, ("Транспорт подан на место «%s»."):format(place.slot and place.slot.name or "стоянка")
     end
 
+    --[[ Подать машину в гараж ИЗДАЛЕКА (заказ владельца 21.08: «Купить» ≠
+         «Выдать»). Игрок покупает транспорт у дилера, а затем сам решает,
+         куда его выдать: здесь у дилера или в гараж. Во втором случае машина
+         встаёт на свободное место гаража, а игрок забирает её там. ]]
+    function G.IssueRemote(ply, recordID, garageID)
+        if not IsValid(ply) then return false, "Игрок не найден" end
+        local VD = GRM.VehicleDealer
+        if not (VD and VD.IssueRecord) then return false, "Модуль дилера не загружен" end
+        local rec = VD.FindRecord(ply, recordID)
+        if not rec then return false, "Запись гаража не найдена" end
+        if rec.service then return false, "Служебный транспорт выдаётся у дилера" end
+
+        local target = G.Get(garageID)
+        if not target then target = G.Get(rec.garageID) end
+        if not target then target = G.HomeGarageFor(ply, nil) end
+        if not target then return false, "У вас нет доступного гаража — заберите транспорт у дилера" end
+
+        local can, why = G.CanUse(ply, target)
+        if not can then return false, why or "Нет доступа к гаражу" end
+        if #(target.slots or {}) == 0 then return false, ("В гараже «%s» нет мест стоянки"):format(target.name) end
+
+        local place, slotErr = G.FreeSlot(target, ply)
+        if not place then return false, slotErr or ("В гараже «%s» нет свободного места"):format(target.name) end
+
+        local fee = math.max(0, math.floor(tonumber(target.fee) or 0))
+        if fee > 0 and GRM.HasMoney and not GRM.HasMoney(ply, fee) then
+            return false, ("Не хватает средств на подачу: %s"):format(GRM.Format and GRM.Format(fee) or fee)
+        end
+
+        local ent, err = VD.IssueRecord(ply, recordID, place, nil)
+        if not ent then return false, err or "Не удалось выдать транспорт" end
+        if fee > 0 and GRM.TakeMoney then GRM.TakeMoney(ply, fee, "Подача транспорта в гараж " .. target.name) end
+        VD.SetRecordGarage(ply, recordID, target.id)
+        audit("garage.issue_remote", ply, { garage = target.id, record = recordID }, { slot = place.slot and place.slot.id, fee = fee })
+        return true, ("Транспорт подан в гараж «%s» на место «%s»."):format(target.name,
+            place.slot and place.slot.name or "стоянка")
+    end
+
     -- Убрать машину в гараж (её можно загонять в любой доступный гараж).
     function G.Store(ply, recordID)
         local garage = G.GarageAt(ply)

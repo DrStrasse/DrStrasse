@@ -142,7 +142,7 @@ ok(has(vd, 'local wantGarage=net.ReadString()or""'), "дилер принима�
 ok(has(vd, 'record.requestedGarage=tostring(wantGarage or"")'), "выбор кладётся в запись для модуля гаражей")
 ok(has(vd, "GRM.Garage.ChoicesFor)and GRM.Garage.ChoicesFor(ply,dealer)"), "список гаражей уходит в окно дилера")
 ok(has(vdcl, "Гараж: автоматически"), "в окне есть выбор «автоматически»")
-ok(has(vdcl, 'send(dealer, "buy", v.class, targetGarage, way)'), "покупка отправляет выбранный гараж")
+ok(has(vdcl, 'send(dealer, "buy", v.class, targetGarage, "store")'), "покупка отправляет выбранный гараж приписки")
 ok(has(vdcl, "мест %d/%d"), "видно свободные места в каждом гараже")
 
 print(("\nGARAGE MODULE: %d/%d, провалов: %d"):format(total - fails, total, fails))
