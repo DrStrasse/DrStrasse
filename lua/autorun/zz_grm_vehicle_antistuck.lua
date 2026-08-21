@@ -60,6 +60,17 @@ AS.Config = AS.Config or {
     IgnoreNoclip = true,
     -- Временно делать игрока COLLISION_GROUP_DEBRIS_TRIGGER после выхода.
     TemporaryPlayerCollisionGroup = true,
+
+    --[[ Заказ владельца 21.08: игрока НИКОГДА не должно сталкивать
+         транспортом, и при выходе его нужно чуть отставлять вбок от КОРПУСА
+         машины (а не от сиденья — у simfphys сиденье это отдельный под,
+         который стоит внутри модели). ]]
+    -- Постоянное отключение столкновения «игрок ↔ транспорт».
+    AlwaysNoCollideWithVehicles = true,
+    -- На сколько юнитов отставить игрока от борта машины при выходе.
+    SideExitOffset = 10,
+    -- Ставить игрока сбоку от машины при каждом выходе.
+    SideExitOnLeave = true,
 }
 
 -- Если файл обновлён поверх старой версии через lua_refresh, мягко переводим старые настройки
@@ -86,6 +97,9 @@ if AS.Config.ProfileVersion < 3 then
 end
 
 -- Безопасные дефолты.
+AS.Config.AlwaysNoCollideWithVehicles = AS.Config.AlwaysNoCollideWithVehicles ~= false
+AS.Config.SideExitOnLeave = AS.Config.SideExitOnLeave ~= false
+AS.Config.SideExitOffset = tonumber(AS.Config.SideExitOffset) or 10
 AS.Config.Enabled = AS.Config.Enabled ~= false
 AS.Config.OnlyAfterVehicleExit = AS.Config.OnlyAfterVehicleExit ~= false
 AS.Config.ForceMoveOnExit = AS.Config.ForceMoveOnExit == true
@@ -111,15 +125,30 @@ local function cfg()
     return AS.Config or {}
 end
 
+--[[ РАСПОЗНАВАНИЕ ТРАНСПОРТА.
+
+     Тут была настоящая причина «сталкивает корпусом»: в списке стояло
+     «sim_fphys», а реальные классы simfphys называются `simfphys_*`
+     (например `simfphys_btr80`). Ни одна машина simfphys под проверку не
+     попадала — значит и корпус не считался транспортом: ни no-collide, ни
+     поиск базы под сиденьем не работали.
+
+     Теперь помимо классов смотрим на признаки самих аддонов: у simfphys это
+     поле `IsSimfphysCar`/`LVS`, их выставляет сам аддон. ]]
+local VEHICLE_CLASS_HINTS = {
+    "prop_vehicle", "gmod_sent_vehicle", "simfphys", "sim_fphys",
+    "lvs_", "lvs", "gred", "glide_",
+}
+
 local function isVehicleLike(ent)
     if not IsValid(ent) then return false end
     if ent:IsVehicle() then return true end
+    if ent.IsSimfphysCar or ent.LVS or ent.IsGlideVehicle then return true end
+    if ent.GetSeatIndex and ent.GetVehicle then return true end
     local class = string.lower(ent:GetClass() or "")
-    if string.find(class, "prop_vehicle", 1, true) then return true end
-    if string.find(class, "gmod_sent_vehicle", 1, true) then return true end
-    if string.find(class, "sim_fphys", 1, true) then return true end
-    if string.find(class, "lvs", 1, true) then return true end
-    if string.find(class, "gred", 1, true) then return true end
+    for _, hint in ipairs(VEHICLE_CLASS_HINTS) do
+        if string.find(class, hint, 1, true) then return true end
+    end
     return false
 end
 
@@ -310,6 +339,33 @@ function AS.TempNoCollide(ply, base, seat, duration)
     end
 end
 
+--[[ ПОСТОЯННОЕ ОТСУТСТВИЕ СТОЛКНОВЕНИЯ «ИГРОК ↔ ТРАНСПОРТ».
+
+     Временного no-collide на полторы секунды не хватало: человека сталкивало
+     корпусом уже после того, как окно защиты закрылось (и особенно на
+     крупной технике вроде simfphys_btr80, где сиденье стоит глубоко внутри
+     модели). Проверка стоит ПЕРЕД разбором пар и стоит копейки: сначала
+     дешёвый IsPlayer, и только потом класс второго объекта. ]]
+local function otherIsVehicle(ent)
+    if not IsValid(ent) then return false end
+    if ent:IsVehicle() then return true end
+    return isVehicleLike(ent)
+end
+
+hook.Add("ShouldCollide", "GRM_VehicleAntiStuck_PlayerVehicle", function(a, b)
+    if not AS.Config or AS.Config.Enabled == false then return end
+    if AS.Config.AlwaysNoCollideWithVehicles == false then return end
+    if not (IsValid(a) and IsValid(b)) then return end
+
+    local ply, other
+    if a:IsPlayer() then ply, other = a, b
+    elseif b:IsPlayer() then ply, other = b, a
+    else return end
+
+    -- Водителя и пассажиров это не касается: они и так «внутри».
+    if otherIsVehicle(other) then return false end
+end)
+
 hook.Add("ShouldCollide", "GRM_VehicleAntiStuck_TempNoCollide", function(a, b)
     if not AS.Config or AS.Config.Enabled == false then return end
     -- ГОРЯЧИЙ ПУТЬ: ShouldCollide вызывается движком для КАЖДОЙ пары
@@ -329,6 +385,67 @@ hook.Add("ShouldCollide", "GRM_VehicleAntiStuck_TempNoCollide", function(a, b)
     end
     return false
 end)
+
+--[[ ВЫХОД СБОКУ ОТ КОРПУСА (заказ 21.08).
+
+     Считаем габариты именно БАЗОВОЙ машины: у simfphys/LVS игрок сидит в
+     prop_vehicle_prisoner_pod, который стоит внутри модели, и «отойти от
+     сиденья» ничего не даёт — человек остаётся в корпусе.
+
+     Сторону выбираем ту, к которой игрок ближе (вышел слева — остался
+     слева), и отставляем на полшины корпуса плюс SideExitOffset. Если там
+     стена или другой объект — пробуем противоположный борт, потом корму и
+     нос. Не нашли ничего свободного — ничего не двигаем: лучше остаться на
+     месте, чем оказаться в стене. ]]
+function AS.SideExitPos(ply, base)
+    if not (IsValid(ply) and IsValid(base)) then return nil end
+
+    local offset = math.max(0, tonumber(cfg().SideExitOffset) or 10)
+    local mins, maxs = base:OBBMins(), base:OBBMaxs()
+    local center = base:LocalToWorld(base:OBBCenter())
+    local ang = base:GetAngles()
+    local right, forward = ang:Right(), ang:Forward()
+
+    local halfWidth = math.abs(maxs.y - mins.y) * 0.5
+    local halfLength = math.abs(maxs.x - mins.x) * 0.5
+
+    -- С какой стороны человек уже находится: туда и выпускаем.
+    local toPlayer = ply:GetPos() - center
+    local sideSign = (toPlayer:Dot(right) >= 0) and 1 or -1
+
+    local hull = { math.abs(offset) + 2, 0 }
+    local candidates = {
+        center + right * sideSign * (halfWidth + offset + 16),
+        center - right * sideSign * (halfWidth + offset + 16),
+        center - forward * (halfLength + offset + 16),
+        center + forward * (halfLength + offset + 16),
+    }
+
+    local filter = collectRelatedEntities(base, base)
+    filter[#filter + 1] = ply
+
+    for _, candidate in ipairs(candidates) do
+        -- Ставим на землю: борт машины может быть выше или ниже игрока.
+        local ground = util.TraceLine({
+            start = candidate + Vector(0, 0, 40),
+            endpos = candidate - Vector(0, 0, 120),
+            filter = filter,
+            mask = MASK_PLAYERSOLID,
+        })
+        local spot = ground.Hit and (ground.HitPos + Vector(0, 0, cfg().GroundOffset or 3)) or candidate
+
+        local room = util.TraceHull({
+            start = spot,
+            endpos = spot,
+            mins = ply:OBBMins(),
+            maxs = ply:OBBMaxs(),
+            filter = filter,
+            mask = MASK_PLAYERSOLID,
+        })
+        if not room.StartSolid then return spot end
+    end
+    return nil
+end
 
 function AS.MovePlayerOutOfVehicle(ply, vehicleOrSeat, reason)
     if not IsValid(ply) or not IsValid(vehicleOrSeat) then return false end
@@ -402,6 +519,21 @@ if SERVER then
         -- Временно отключаем столкновение с машиной сразу после выхода,
         -- но НЕ переносим игрока, если он нормально вышел.
         AS.TempNoCollide(ply, base, vehicle, cfg().NoCollideTime or 1.25)
+
+        --[[ Ставим человека сбоку от КОРПУСА, а не от сиденья: 10 юнитов от
+             борта той стороны, к которой он ближе. Делается следующим тиком,
+             иначе движок ещё держит игрока в поде и SetPos перетрётся. ]]
+        if cfg().SideExitOnLeave and IsValid(base) then
+            timer.Simple(0, function()
+                if not (IsValid(ply) and IsValid(base)) then return end
+                if ply:InVehicle() then return end
+                if cfg().IgnoreNoclip and ply:GetMoveType() == MOVETYPE_NOCLIP then return end
+                local spot = AS.SideExitPos(ply, base)
+                if not spot then return end
+                ply:SetPos(spot)
+                ply:SetLocalVelocity(Vector(0, 0, 0))
+            end)
+        end
 
         if cfg().ForceMoveOnExit then
             timer.Simple(0, function()
