@@ -282,12 +282,17 @@ end
         if not IsValid(ply) then return false end
         local here = A.MapName()
         for _, zone in ipairs(A.Cfg.prisonZones or {}) do
-            if tostring(zone.map or here) ~= here then goto continue end
-            local mn, mx = zone.min or {}, zone.max or {}
-            if ply:GetPos().x >= (mn.x or 0) and ply:GetPos().x <= (mx.x or 0)
-                and ply:GetPos().y >= (mn.y or 0) and ply:GetPos().y <= (mx.y or 0)
-                and ply:GetPos().z >= (mn.z or -math.huge) and ply:GetPos().z <= (mx.z or math.huge) then return true end
-            ::continue::
+            -- В GMod нет goto (continue — зарезервированное слово его парсера),
+            -- поэтому фильтр карты — обычным условием.
+            if tostring(zone.map or here) == here then
+                local mn, mx = zone.min or {}, zone.max or {}
+                local pos = ply:GetPos()
+                if pos.x >= (mn.x or 0) and pos.x <= (mx.x or 0)
+                    and pos.y >= (mn.y or 0) and pos.y <= (mx.y or 0)
+                    and pos.z >= (mn.z or -math.huge) and pos.z <= (mx.z or math.huge) then
+                    return true
+                end
+            end
         end
         return false
     end
