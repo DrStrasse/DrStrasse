@@ -135,6 +135,7 @@ if SERVER then
         if not istable(f.SpawnPoints) then f.SpawnPoints = {} end
         if not istable(f.RoleSpawnPoints) then f.RoleSpawnPoints = {} end
         if not istable(f.DepartmentSpawnPoints) then f.DepartmentSpawnPoints = {} end
+        if not istable(f.SubdeptSpawnPoints) then f.SubdeptSpawnPoints = {} end
     end
 
     -- Полный bundle фракции: points + roles + departments (единый формат)
@@ -144,6 +145,7 @@ if SERVER then
             points = f.SpawnPoints or {},
             roles = f.RoleSpawnPoints or {},
             departments = f.DepartmentSpawnPoints or {},
+            subdepartments = f.SubdeptSpawnPoints or {},
         }
     end
 
@@ -211,16 +213,19 @@ if SERVER then
                         f.SpawnPoints = entry
                         f.RoleSpawnPoints = {}
                         f.DepartmentSpawnPoints = {}
+                        f.SubdeptSpawnPoints = {}
                         needResave = true
                     else
                         f.SpawnPoints = istable(entry.points) and entry.points or {}
                         f.RoleSpawnPoints = istable(entry.roles) and entry.roles or {}
                         f.DepartmentSpawnPoints = istable(entry.departments) and entry.departments or {}
+                        f.SubdeptSpawnPoints = istable(entry.subdepartments) and entry.subdepartments or {}
                     end
                 else
                     f.SpawnPoints = {}
                     f.RoleSpawnPoints = {}
                     f.DepartmentSpawnPoints = {}
+                    f.SubdeptSpawnPoints = {}
                 end
             end
         end
@@ -266,30 +271,69 @@ if SERVER then
     -- 5. Функции работы с точками (используют загруженные данные)
     -- ----------------------------------------------------------------
 
-    --- Собрать данные для отправки клиенту
+    --- Собрать данные для отправки клиенту.
+    --  Кроме самих точек шлём СТРУКТУРУ организации из factions.json:
+    --  должности, отделы и подотделы с публичными названиями, тегами и
+    --  привязкой подотдела к родительскому отделу — меню строит дерево
+    --  «организация → отдел → подотдел → должность» без ручного ввода.
     local function buildSpawnData()
-        local data = { factions = {}, global = GlobalSpawnPoints }
+        local data = { factions = {}, global = GlobalSpawnPoints, map = game.GetMap() }
         if Factions then
             for name, f in pairs(Factions) do
                 ensureFactionSpawnPoints(f)
-                -- meta — реальные роли/отделы/лидер из factions.json (Factions),
-                -- чтобы клиент строил выбор из списков, а не ручной ввод
-                local roles = {}
+                local roles, roleNames = {}, {}
                 if istable(f.Roles) then
                     for _, r in ipairs(f.Roles) do
-                        if r ~= f.LeaderRoleName then roles[#roles + 1] = tostring(r) end
+                        if r ~= f.LeaderRoleName then
+                            roles[#roles + 1] = tostring(r)
+                            local disp = istable(f.RoleDisplayNames) and f.RoleDisplayNames[r] or nil
+                            roleNames[tostring(r)] = tostring((disp ~= nil and disp ~= "") and disp or r)
+                        end
                     end
                 end
-                local depts = {}
+                local depts, deptNames, deptTags = {}, {}, {}
                 if istable(f.Departments) then
-                    for _, d in ipairs(f.Departments) do depts[#depts + 1] = tostring(d) end
+                    for _, d in ipairs(f.Departments) do
+                        depts[#depts + 1] = tostring(d)
+                        local disp = istable(f.DepartmentDisplayNames) and f.DepartmentDisplayNames[d] or nil
+                        deptNames[tostring(d)] = tostring((disp ~= nil and disp ~= "") and disp or d)
+                        local tag = istable(f.DepartmentTags) and f.DepartmentTags[d] or nil
+                        deptTags[tostring(d)] = tostring(tag or "")
+                    end
                 end
+                -- Подотделы: массив, чтобы порядок был предсказуемым, с родителем
+                local subs = {}
+                if istable(f.Subdepartments) then
+                    for subKey, sub in pairs(f.Subdepartments) do
+                        if istable(sub) then
+                            subs[#subs + 1] = {
+                                id = tostring(subKey),
+                                name = tostring((sub.name ~= nil and sub.name ~= "") and sub.name or subKey),
+                                parent = tostring(sub.parentDept or ""),
+                                tag = tostring(sub.tag or ""),
+                                quota = tonumber(sub.quota) or 0,
+                            }
+                        end
+                    end
+                    table.sort(subs, function(a, b)
+                        if a.parent ~= b.parent then return a.parent < b.parent end
+                        return a.name < b.name
+                    end)
+                end
+
                 data.factions[name] = {
                     points = f.SpawnPoints or {},
                     roles = f.RoleSpawnPoints or {},
                     departments = f.DepartmentSpawnPoints or {},
+                    subdepartments = f.SubdeptSpawnPoints or {},
                     rolesList = roles,
+                    roleNames = roleNames,
                     departmentsList = depts,
+                    deptNames = deptNames,
+                    deptTags = deptTags,
+                    subList = subs,
+                    displayName = tostring(f.DisplayName or name),
+                    tag = tostring(f.Tag or ""),
                     leaderRole = tostring(f.LeaderRoleName or ""),
                     leader = tostring(f.Leader or "—"),
                     memberCount = istable(f.Members) and table.Count(f.Members) or 0,
@@ -434,6 +478,68 @@ if SERVER then
         return f.DepartmentSpawnPoints[deptName]
     end
 
+    -- === ТОЧКИ ДЛЯ ПОДОТДЕЛОВ ===
+    -- Подотдел валидируется по f.Subdepartments (ключ подотдела, а не название).
+    local function isValidSubdept(f, subKey)
+        if not istable(f.Subdepartments) then return false end
+        return istable(f.Subdepartments[subKey])
+    end
+
+    function AddSpawnPointForSubdept(factionName, subKey, pos, ang)
+        if not Factions or not Factions[factionName] then return false, "Фракция не найдена" end
+        local f = Factions[factionName]
+        if not isValidSubdept(f, subKey) then
+            return false, "Подотдел «" .. tostring(subKey) .. "» не существует во фракции «" .. factionName .. "»"
+        end
+        ensureFactionSpawnPoints(f)
+        if not f.SubdeptSpawnPoints[subKey] then f.SubdeptSpawnPoints[subKey] = {} end
+        table.insert(f.SubdeptSpawnPoints[subKey], { pos = vecToTable(pos), ang = angToTable(ang) })
+        saveAllFactionSpawnPoints()
+        return true
+    end
+
+    function RemoveSpawnPointFromSubdept(factionName, subKey, index)
+        if not Factions or not Factions[factionName] then return false end
+        local f = Factions[factionName]
+        if not f.SubdeptSpawnPoints or not f.SubdeptSpawnPoints[subKey] then return false end
+        table.remove(f.SubdeptSpawnPoints[subKey], index)
+        if #f.SubdeptSpawnPoints[subKey] == 0 then f.SubdeptSpawnPoints[subKey] = nil end
+        saveAllFactionSpawnPoints()
+        return true
+    end
+
+    function GetSpawnPointsForSubdept(factionName, subKey)
+        if not Factions or not Factions[factionName] then return {} end
+        local f = Factions[factionName]
+        if not f.SubdeptSpawnPoints or not f.SubdeptSpawnPoints[subKey] then return {} end
+        return f.SubdeptSpawnPoints[subKey]
+    end
+
+    -- === ОЧИСТКА ВСЕХ ТОЧЕК УЗЛА (организация / отдел / подотдел / должность) ===
+    function ClearSpawnPoints(scope, factionName, key)
+        if scope == "global" then
+            GlobalSpawnPoints = {}
+            saveGlobalSpawnPoints(GlobalSpawnPoints)
+            return true
+        end
+        if not Factions or not Factions[factionName] then return false, "Фракция не найдена" end
+        local f = Factions[factionName]
+        ensureFactionSpawnPoints(f)
+        if scope == "faction" then
+            f.SpawnPoints = {}
+        elseif scope == "role" then
+            f.RoleSpawnPoints[key] = nil
+        elseif scope == "dept" then
+            f.DepartmentSpawnPoints[key] = nil
+        elseif scope == "sub" then
+            f.SubdeptSpawnPoints[key] = nil
+        else
+            return false, "Неизвестный раздел"
+        end
+        saveAllFactionSpawnPoints()
+        return true
+    end
+
     -- ----------------------------------------------------------------
     -- 6. Основная логика спавна
     -- ----------------------------------------------------------------
@@ -470,7 +576,16 @@ if SERVER then
             return nil
         end
 
-        -- ПРИОРИТЕТ 1: Точки роли (наивысший)
+        -- ПРИОРИТЕТ 1: Точки подотдела (самый узкий уровень)
+        if memberData and memberData.Subdepartment and memberData.Subdepartment ~= "" then
+            local subPoints = GetSpawnPointsForSubdept(factionName, memberData.Subdepartment)
+            if #subPoints > 0 then
+                local point = subPoints[math.random(1, #subPoints)]
+                return tableToVec(point.pos), tableToAng(point.ang)
+            end
+        end
+
+        -- ПРИОРИТЕТ 2: Точки роли
         if memberData and memberData.Role then
             local rolePoints = GetSpawnPointsForRole(factionName, memberData.Role)
             if #rolePoints > 0 then
@@ -479,7 +594,7 @@ if SERVER then
             end
         end
 
-        -- ПРИОРИТЕТ 2: Точки отдела
+        -- ПРИОРИТЕТ 3: Точки отдела
         if memberData and memberData.Department then
             local deptPoints = GetSpawnPointsForDepartment(factionName, memberData.Department)
             if #deptPoints > 0 then
@@ -488,7 +603,7 @@ if SERVER then
             end
         end
 
-        -- ПРИОРИТЕТ 3: Точки фракции
+        -- ПРИОРИТЕТ 4: Точки организации
         local factionPoints = GetSpawnPointsForFaction(factionName)
         if #factionPoints > 0 then
             local point = factionPoints[math.random(1, #factionPoints)]
@@ -534,6 +649,9 @@ if SERVER then
     util.AddNetworkString("SpawnAdmin_RemoveRolePoint")
     util.AddNetworkString("SpawnAdmin_AddDeptPoint")
     util.AddNetworkString("SpawnAdmin_RemoveDeptPoint")
+    util.AddNetworkString("SpawnAdmin_AddSubPoint")
+    util.AddNetworkString("SpawnAdmin_RemoveSubPoint")
+    util.AddNetworkString("SpawnAdmin_ClearPoints")
 
     local function sendSpawnDataToPlayer(ply)
         net.Start("SpawnAdmin_SendData")
@@ -644,47 +762,441 @@ if SERVER then
         sendSpawnDataToPlayer(ply)
     end)
 
+    -- === ТОЧКИ ДЛЯ ПОДОТДЕЛОВ ===
+    net.Receive("SpawnAdmin_AddSubPoint", function(_, ply)
+        if not ply:IsSuperAdmin() then return end
+        local factionName = net.ReadString()
+        local subKey = net.ReadString()
+        local pos = net.ReadVector()
+        local ang = net.ReadAngle()
+        local ok, err = AddSpawnPointForSubdept(factionName, subKey, pos, ang)
+        if not ok and err then
+            ply:PrintMessage(HUD_PRINTTALK, "[SpawnPoints] " .. tostring(err))
+        end
+        sendSpawnDataToPlayer(ply)
+    end)
+
+    net.Receive("SpawnAdmin_RemoveSubPoint", function(_, ply)
+        if not ply:IsSuperAdmin() then return end
+        local factionName = net.ReadString()
+        local subKey = net.ReadString()
+        local index = net.ReadInt(32)
+        RemoveSpawnPointFromSubdept(factionName, subKey, index)
+        sendSpawnDataToPlayer(ply)
+    end)
+
+    -- === ОЧИСТКА ВСЕХ ТОЧЕК УЗЛА ===
+    net.Receive("SpawnAdmin_ClearPoints", function(_, ply)
+        if not ply:IsSuperAdmin() then return end
+        local scope = net.ReadString()
+        local factionName = net.ReadString()
+        local key = net.ReadString()
+        local ok, err = ClearSpawnPoints(scope, factionName, key)
+        if not ok and err then
+            ply:PrintMessage(HUD_PRINTTALK, "[SpawnPoints] " .. tostring(err))
+        end
+        sendSpawnDataToPlayer(ply)
+    end)
+
+    -- Команда чата на стороне сервера: работает и в ванильном чате, и там,
+    -- где клиентский PlayerSayTransform не срабатывает.
+    hook.Add("PlayerSay", "GRM_SpawnPoints_ChatCmd", function(ply, text)
+        local low = string.lower(string.Trim(tostring(text or "")))
+        if low ~= "/spawnmenu" and low ~= "/точкиспавна" then return end
+        if not ply:IsSuperAdmin() then
+            ply:PrintMessage(HUD_PRINTTALK, "[SpawnPoints] Нет прав")
+            return ""
+        end
+        sendSpawnDataToPlayer(ply)
+        return ""
+    end)
+
     print("[SpawnPoints] Серверная часть загружена (карта: " .. game.GetMap() .. ")")
 
 end
 
 -- ================================================================
--- КЛИЕНТСКАЯ ЧАСТЬ (без изменений)
+-- ОБЩИЙ СЛОЙ МЕНЮ (shared): дерево «организация → отдел → подотдел →
+-- должность» строится ЧИСТОЙ функцией, без vgui. Так его можно гонять в
+-- стендах и не держать две копии логики в разных панелях.
 -- ================================================================
+
+GRM = GRM or {}
+GRM.SpawnPoints = GRM.SpawnPoints or {}
+local SP = GRM.SpawnPoints
+SP.Version = "2.0.0"
+
+-- Соответствие «вид узла → раздел хранения»
+SP.Scopes = {
+    global    = "global",
+    facpoints = "faction",
+    dept      = "dept",
+    sub       = "sub",
+    role      = "role",
+}
+
+local function spCount(t)
+    return istable(t) and #t or 0
+end
+
+local function spLower(s)
+    s = string.lower(tostring(s or ""))
+    -- string.lower знает только латиницу: кириллицу приводим вручную,
+    -- иначе поиск «медиц» не находит «Медицина» (класс потери регистра).
+    if not string.find(s, "\208", 1, true) then return s end
+    s = string.gsub(s, "\208([\144-\159])", function(c)
+        return "\208" .. string.char(string.byte(c) + 32)
+    end)
+    s = string.gsub(s, "\208([\160-\175])", function(c)
+        return "\209" .. string.char(string.byte(c) - 32)
+    end)
+    s = string.gsub(s, "\208\129", "\209\145") -- Ё → ё
+    return s
+end
+
+--- Все точки конкретного узла.
+--  sel = { scope = "global"|"faction"|"dept"|"sub"|"role", faction = ..., key = ... }
+function SP.PointsFor(data, sel)
+    if not istable(data) or not istable(sel) then return {} end
+    if sel.scope == "global" then return istable(data.global) and data.global or {} end
+    local fac = istable(data.factions) and data.factions[sel.faction] or nil
+    if not istable(fac) then return {} end
+    if sel.scope == "faction" then return istable(fac.points) and fac.points or {} end
+    local bucket
+    if sel.scope == "role" then bucket = fac.roles
+    elseif sel.scope == "dept" then bucket = fac.departments
+    elseif sel.scope == "sub" then bucket = fac.subdepartments end
+    if not istable(bucket) then return {} end
+    local pts = bucket[sel.key]
+    return istable(pts) and pts or {}
+end
+
+--- Сколько всего точек у организации (общие + должности + отделы + подотделы)
+function SP.FactionTotal(fac)
+    if not istable(fac) then return 0 end
+    local total = spCount(fac.points)
+    for _, bucket in ipairs({ fac.roles, fac.departments, fac.subdepartments }) do
+        if istable(bucket) then
+            for _, pts in pairs(bucket) do total = total + spCount(pts) end
+        end
+    end
+    return total
+end
+
+--- Всего точек на карте
+function SP.GrandTotal(data)
+    if not istable(data) then return 0 end
+    local total = spCount(data.global)
+    if istable(data.factions) then
+        for _, fac in pairs(data.factions) do total = total + SP.FactionTotal(fac) end
+    end
+    return total
+end
+
+--- Построить плоский список строк дерева.
+--  expanded — таблица раскрытых узлов (ключи "fac:ИМЯ" и "dept:ИМЯ/КЛЮЧ").
+--  filter — строка поиска; при непустом поиске всё раскрывается автоматически.
+--  Возвращает массив строк:
+--    { kind, depth, label, note, count, faction, key, scope, expandable, expanded, id }
+function SP.BuildTree(data, filter, expanded)
+    data = istable(data) and data or {}
+    expanded = istable(expanded) and expanded or {}
+    filter = spLower(filter)
+    local searching = filter ~= ""
+    local rows = {}
+
+    local function hit(text)
+        if not searching then return true end
+        return string.find(spLower(text), filter, 1, true) ~= nil
+    end
+
+    rows[#rows + 1] = {
+        kind = "global", depth = 0, id = "global",
+        label = "Глобальные точки", note = "для тех, кто без организации",
+        count = spCount(data.global), scope = "global",
+        icon = "icon16/world.png",
+    }
+
+    local names = {}
+    if istable(data.factions) then
+        for name in pairs(data.factions) do names[#names + 1] = name end
+    end
+    table.sort(names, function(a, b)
+        local fa, fb = data.factions[a], data.factions[b]
+        local la = istable(fa) and tostring(fa.displayName or a) or a
+        local lb = istable(fb) and tostring(fb.displayName or b) or b
+        return spLower(la) < spLower(lb)
+    end)
+
+    for _, name in ipairs(names) do
+        local fac = data.factions[name]
+        if not istable(fac) then fac = { points = fac } end
+
+        local facLabel = tostring(fac.displayName or name)
+        local deptList = istable(fac.departmentsList) and fac.departmentsList or {}
+        local deptNames = istable(fac.deptNames) and fac.deptNames or {}
+        local roleList = istable(fac.rolesList) and fac.rolesList or {}
+        local roleNames = istable(fac.roleNames) and fac.roleNames or {}
+        local subList = istable(fac.subList) and fac.subList or {}
+
+        -- Легаси-узлы: точки есть, а в структуре организации записи уже нет.
+        -- Прятать их нельзя — иначе точку не удалить. Помечаем «вне структуры».
+        local knownDept, knownRole, knownSub = {}, {}, {}
+        for _, d in ipairs(deptList) do knownDept[tostring(d)] = true end
+        for _, r in ipairs(roleList) do knownRole[tostring(r)] = true end
+        for _, s in ipairs(subList) do if istable(s) then knownSub[tostring(s.id)] = true end end
+
+        local orphanDepts, orphanRoles, orphanSubs = {}, {}, {}
+        if istable(fac.departments) then
+            for key in pairs(fac.departments) do
+                if not knownDept[tostring(key)] then orphanDepts[#orphanDepts + 1] = tostring(key) end
+            end
+        end
+        if istable(fac.roles) then
+            for key in pairs(fac.roles) do
+                if not knownRole[tostring(key)] then orphanRoles[#orphanRoles + 1] = tostring(key) end
+            end
+        end
+        if istable(fac.subdepartments) then
+            for key in pairs(fac.subdepartments) do
+                if not knownSub[tostring(key)] then orphanSubs[#orphanSubs + 1] = tostring(key) end
+            end
+        end
+        table.sort(orphanDepts) table.sort(orphanRoles) table.sort(orphanSubs)
+
+        -- Кого показывать при поиске
+        local facHit = hit(facLabel) or hit(name)
+        local matchedChildren = false
+        local function childHit(text)
+            if not searching then return true end
+            if facHit then return true end
+            local m = hit(text)
+            if m then matchedChildren = true end
+            return m
+        end
+
+        local deptRows = {}
+        for _, deptKey in ipairs(deptList) do
+            local dLabel = tostring(deptNames[tostring(deptKey)] or deptKey)
+            local subsHere = {}
+            for _, sub in ipairs(subList) do
+                if istable(sub) and tostring(sub.parent) == tostring(deptKey) then
+                    if childHit(sub.name) or childHit(sub.id) then
+                        subsHere[#subsHere + 1] = sub
+                    end
+                end
+            end
+            if childHit(dLabel) or childHit(deptKey) or #subsHere > 0 then
+                deptRows[#deptRows + 1] = { key = tostring(deptKey), label = dLabel, subs = subsHere,
+                    tag = tostring((istable(fac.deptTags) and fac.deptTags[tostring(deptKey)]) or "") }
+            end
+        end
+        for _, deptKey in ipairs(orphanDepts) do
+            if childHit(deptKey) then
+                deptRows[#deptRows + 1] = { key = deptKey, label = deptKey, subs = {}, orphan = true }
+            end
+        end
+
+        -- Подотделы без живого родителя — отдельной группой, чтобы не потерялись
+        local looseSubs = {}
+        for _, sub in ipairs(subList) do
+            if istable(sub) and not knownDept[tostring(sub.parent)] then
+                if childHit(sub.name) or childHit(sub.id) then looseSubs[#looseSubs + 1] = sub end
+            end
+        end
+        for _, subKey in ipairs(orphanSubs) do
+            if childHit(subKey) then looseSubs[#looseSubs + 1] = { id = subKey, name = subKey, orphan = true } end
+        end
+
+        local roleRows = {}
+        for _, roleKey in ipairs(roleList) do
+            local rLabel = tostring(roleNames[tostring(roleKey)] or roleKey)
+            if childHit(rLabel) or childHit(roleKey) then
+                roleRows[#roleRows + 1] = { key = tostring(roleKey), label = rLabel }
+            end
+        end
+        for _, roleKey in ipairs(orphanRoles) do
+            if childHit(roleKey) then
+                roleRows[#roleRows + 1] = { key = roleKey, label = roleKey, orphan = true }
+            end
+        end
+
+        local show = (not searching) or facHit or matchedChildren
+        if show then
+            local facExpanded = searching or expanded["fac:" .. name] == true
+            rows[#rows + 1] = {
+                kind = "faction", depth = 0, id = "fac:" .. name,
+                label = facLabel, note = tostring(fac.tag or ""),
+                count = SP.FactionTotal(fac), faction = name,
+                expandable = true, expanded = facExpanded,
+                icon = "icon16/building.png",
+            }
+
+            if facExpanded then
+                rows[#rows + 1] = {
+                    kind = "facpoints", depth = 1, id = "facpts:" .. name,
+                    label = "Точки организации", faction = name, scope = "faction",
+                    count = spCount(fac.points), icon = "icon16/flag_blue.png",
+                }
+
+                if #deptRows > 0 then
+                    rows[#rows + 1] = { kind = "header", depth = 1, id = "hdr_d:" .. name, label = "ОТДЕЛЫ" }
+                end
+                for _, d in ipairs(deptRows) do
+                    local deptId = "dept:" .. name .. "/" .. d.key
+                    local deptExpanded = (#d.subs > 0) and (searching or expanded[deptId] == true) or false
+                    rows[#rows + 1] = {
+                        kind = "dept", depth = 1, id = deptId,
+                        label = d.label, note = d.orphan and "вне структуры" or (d.tag ~= "" and d.tag or nil),
+                        faction = name, key = d.key, scope = "dept",
+                        count = spCount(istable(fac.departments) and fac.departments[d.key] or nil),
+                        expandable = #d.subs > 0, expanded = deptExpanded,
+                        icon = "icon16/folder.png",
+                    }
+                    if deptExpanded then
+                        for _, sub in ipairs(d.subs) do
+                            rows[#rows + 1] = {
+                                kind = "sub", depth = 2, id = "sub:" .. name .. "/" .. tostring(sub.id),
+                                label = tostring(sub.name or sub.id), note = tostring(sub.tag or ""),
+                                faction = name, key = tostring(sub.id), scope = "sub",
+                                count = spCount(istable(fac.subdepartments) and fac.subdepartments[tostring(sub.id)] or nil),
+                                icon = "icon16/folder_page.png",
+                            }
+                        end
+                    end
+                end
+
+                if #looseSubs > 0 then
+                    rows[#rows + 1] = { kind = "header", depth = 1, id = "hdr_s:" .. name, label = "ПОДОТДЕЛЫ БЕЗ ОТДЕЛА" }
+                    for _, sub in ipairs(looseSubs) do
+                        rows[#rows + 1] = {
+                            kind = "sub", depth = 1, id = "sub:" .. name .. "/" .. tostring(sub.id),
+                            label = tostring(sub.name or sub.id), note = sub.orphan and "вне структуры" or nil,
+                            faction = name, key = tostring(sub.id), scope = "sub",
+                            count = spCount(istable(fac.subdepartments) and fac.subdepartments[tostring(sub.id)] or nil),
+                            icon = "icon16/folder_page.png",
+                        }
+                    end
+                end
+
+                if #roleRows > 0 then
+                    rows[#rows + 1] = { kind = "header", depth = 1, id = "hdr_r:" .. name, label = "ДОЛЖНОСТИ" }
+                end
+                for _, r in ipairs(roleRows) do
+                    rows[#rows + 1] = {
+                        kind = "role", depth = 1, id = "role:" .. name .. "/" .. r.key,
+                        label = r.label, note = r.orphan and "вне структуры" or nil,
+                        faction = name, key = r.key, scope = "role",
+                        count = spCount(istable(fac.roles) and fac.roles[r.key] or nil),
+                        icon = "icon16/user.png",
+                    }
+                end
+            end
+        end
+    end
+
+    return rows
+end
+
+--- Человеческая «хлебная крошка» выбранного узла
+function SP.SelectionPath(data, sel)
+    if not istable(sel) then return "—" end
+    if sel.scope == "global" then return "Глобальные точки" end
+    local fac = istable(data) and istable(data.factions) and data.factions[sel.faction] or nil
+    local facLabel = istable(fac) and tostring(fac.displayName or sel.faction) or tostring(sel.faction or "—")
+    if sel.scope == "faction" then return facLabel .. "  →  Точки организации" end
+    if sel.scope == "role" then
+        local names = istable(fac) and istable(fac.roleNames) and fac.roleNames or {}
+        return facLabel .. "  →  Должность «" .. tostring(names[sel.key] or sel.key) .. "»"
+    end
+    if sel.scope == "dept" then
+        local names = istable(fac) and istable(fac.deptNames) and fac.deptNames or {}
+        return facLabel .. "  →  Отдел «" .. tostring(names[sel.key] or sel.key) .. "»"
+    end
+    if sel.scope == "sub" then
+        local parentLabel, subLabel = nil, tostring(sel.key)
+        if istable(fac) and istable(fac.subList) then
+            for _, sub in ipairs(fac.subList) do
+                if istable(sub) and tostring(sub.id) == tostring(sel.key) then
+                    subLabel = tostring(sub.name or sub.id)
+                    local dn = istable(fac.deptNames) and fac.deptNames[tostring(sub.parent)] or nil
+                    parentLabel = tostring(dn or sub.parent or "")
+                    break
+                end
+            end
+        end
+        if parentLabel and parentLabel ~= "" then
+            return facLabel .. "  →  Отдел «" .. parentLabel .. "»  →  Подотдел «" .. subLabel .. "»"
+        end
+        return facLabel .. "  →  Подотдел «" .. subLabel .. "»"
+    end
+    return facLabel
+end
+
+--- Приоритет, по которому игрок получит точку (для подсказки в меню)
+SP.PriorityHint = "Приоритет спавна: подотдел → должность → отдел → организация → глобальные"
 
 if CLIENT then
 
-    -- Цветовая схема HUD v10.2
-    local CUI = {
-        bg = Color(19, 24, 33, 248),
-        panel = Color(33, 42, 56, 245),
-        accent = Color(70, 155, 255),
-        green = Color(55, 185, 105),
-        red = Color(205, 70, 65),
-        yellow = Color(235, 180, 60),
-        text = Color(240, 244, 250),
-        dim = Color(166, 176, 191),
+    -- ----------------------------------------------------------------
+    -- Палитра и шрифты — единые с остальным интерфейсом GRM
+    -- ----------------------------------------------------------------
+    local C = {
+        bg        = Color(16, 20, 28, 252),
+        sidebar   = Color(12, 15, 22, 255),
+        card      = Color(22, 28, 38, 240),
+        cardLight = Color(28, 36, 48, 240),
+        cardHover = Color(36, 46, 62, 240),
+        border    = Color(38, 48, 66, 200),
+        accent    = Color(65, 145, 235),
+        accentDim = Color(40, 100, 180),
+        green     = Color(55, 185, 110),
+        gold      = Color(245, 195, 65),
+        red       = Color(225, 70, 70),
+        text      = Color(240, 244, 250),
+        dim       = Color(155, 170, 190),
     }
 
-    surface.CreateFont("GRML_Title", {font="Roboto", size=20, weight=800, extended=true})
-    surface.CreateFont("GRML_Normal", {font="Roboto", size=14, weight=500, extended=true})
-    surface.CreateFont("GRML_Small", {font="Roboto", size=12, weight=400, extended=true})
+    surface.CreateFont("GRMSpawn_Title",  { font = "Roboto", size = 21, weight = 800, extended = true })
+    surface.CreateFont("GRMSpawn_Sub",    { font = "Roboto", size = 15, weight = 700, extended = true })
+    surface.CreateFont("GRMSpawn_Normal", { font = "Roboto", size = 14, weight = 500, extended = true })
+    surface.CreateFont("GRMSpawn_Btn",    { font = "Roboto", size = 13, weight = 600, extended = true })
+    surface.CreateFont("GRMSpawn_Small",  { font = "Roboto", size = 11, weight = 400, extended = true })
+    surface.CreateFont("GRMSpawn_Num",    { font = "Roboto", size = 12, weight = 800, extended = true })
 
-    -- Состояние открытого меню (обновляем в-месте при получении свежих данных)
+    -- Материалы иконок берём через общий кэш (в кадре ни одного Material())
+    local matCache = {}
+    local function icon(path)
+        if GRM.Perf and GRM.Perf.Material then return GRM.Perf.Material(path) end
+        local m = matCache[path]
+        if not m then m = Material(path, "smooth") matCache[path] = m end
+        return m
+    end
+
+    local function drawIcon(path, x, y, size)
+        local m = icon(path)
+        if not m then return end
+        surface.SetDrawColor(255, 255, 255, 235)
+        surface.SetMaterial(m)
+        surface.DrawTexturedRect(x, y, size or 16, size or 16)
+    end
+
+    -- ----------------------------------------------------------------
+    -- Состояние меню
+    -- ----------------------------------------------------------------
     local menuState = {
-        frame         = nil,
-        activeTab     = nil,
-        refreshGlobal = nil,
-        refreshFac    = {},
-        globalPoints  = {},
-        factions      = {},
+        frame    = nil,
+        data     = { factions = {}, global = {} },
+        expanded = {},
+        sel      = { scope = "global" },
+        filter   = "",
+        rebuild  = nil,
+        selectedIndex = nil,
     }
 
     -- ----------------------------------------------------------------
-    -- Вспомогательные функции отображения
+    -- Координаты
     -- ----------------------------------------------------------------
-
-    --- Безопасно получить числовое поле (Vector.x или table[1] или table.x)
     local function safeCoord(t, key1, key2)
         if type(t) == "table" then
             return tonumber(t[key1] or t[key2]) or 0
@@ -694,613 +1206,485 @@ if CLIENT then
         return 0
     end
 
-    local function fmtPos(pos)
-        return
-            string.format("%.1f", safeCoord(pos, "x", 1)),
-            string.format("%.1f", safeCoord(pos, "y", 2)),
-            string.format("%.1f", safeCoord(pos, "z", 3))
-    end
-
-    local function fmtAng(ang)
-        return
-            string.format("%.1f", safeCoord(ang, "p", 1)),
-            string.format("%.1f", safeCoord(ang, "y", 2)),
-            string.format("%.1f", safeCoord(ang, "r", 3))
-    end
-
-    --- Конвертировать plain-таблицу в Vector для net.WriteVector
     local function pointToVec(pos)
         if isvector and isvector(pos) then return pos end
-        return Vector(
-            tonumber(pos.x or pos[1]) or 0,
-            tonumber(pos.y or pos[2]) or 0,
-            tonumber(pos.z or pos[3]) or 0
-        )
+        return Vector(safeCoord(pos, "x", 1), safeCoord(pos, "y", 2), safeCoord(pos, "z", 3))
     end
 
     local function pointToAng(ang)
         if isangle and isangle(ang) then return ang end
-        return Angle(
-            tonumber(ang.p or ang[1]) or 0,
-            tonumber(ang.y or ang[2]) or 0,
-            tonumber(ang.r or ang[3]) or 0
-        )
+        return Angle(safeCoord(ang, "p", 1), safeCoord(ang, "y", 2), safeCoord(ang, "r", 3))
+    end
+
+    local function distanceTo(pos)
+        local lp = LocalPlayer()
+        if not IsValid(lp) then return nil end
+        return lp:GetPos():Distance(pointToVec(pos))
     end
 
     -- ----------------------------------------------------------------
+    -- Элементы в стиле GRM
     -- ----------------------------------------------------------------
-    -- Общие элементы GRM-дизайна (стиль HUD v10.2 / админ-хаба)
-    -- ----------------------------------------------------------------
-
-    local function gBtn(parent, text, color, wide, tall)
+    local function gButton(parent, text, base, hover, iconPath, onClick)
         local b = vgui.Create("DButton", parent)
         b:SetText("")
-        b:SetFont("GRML_Normal")
-        if wide then b:SetWide(wide) end
-        if tall then b:SetTall(tall) end
         b.Paint = function(self, w, h)
-            local col = color
-            if self:IsHovered() then col = Color(math.min(color.r + 22, 255), math.min(color.g + 22, 255), math.min(color.b + 22, 255)) end
-            draw.RoundedBox(5, 0, 0, w, h, col)
-            draw.SimpleText(text, "GRML_Normal", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            local col = self:IsHovered() and hover or base
+            if not self:IsEnabled() then col = C.card end
+            draw.RoundedBox(6, 0, 0, w, h, col)
+            local tx = 12
+            if iconPath then
+                drawIcon(iconPath, 10, h / 2 - 8, 16)
+                tx = 32
+            end
+            draw.SimpleText(text, "GRMSpawn_Btn", tx, h / 2,
+                self:IsEnabled() and C.text or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
+        b.DoClick = function(self)
+            surface.PlaySound("ui/buttonclick.wav")
+            if onClick then onClick(self) end
         end
         return b
     end
 
-    -- Тёмный комбобокс (выбор роли/отдела из factions.json)
-    local function gCombo(parent)
-        local c = vgui.Create("DComboBox", parent)
-        c:SetFont("GRML_Normal")
-        c.Paint = function(self, w, h)
-            draw.RoundedBox(4, 0, 0, w, h, Color(25, 30, 40, 240))
-            surface.SetDrawColor(Color(60, 70, 85, 200))
+    local function gEntry(parent, placeholder)
+        local e = vgui.Create("DTextEntry", parent)
+        e:SetFont("GRMSpawn_Normal")
+        e:SetPlaceholderText(placeholder or "")
+        e:SetDrawLanguageID(false)
+        e.Paint = function(self, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, Color(18, 23, 32, 245))
+            surface.SetDrawColor(C.border)
             surface.DrawOutlinedRect(0, 0, w, h, 1)
-            self:DrawTextEntryText(Color(220, 225, 235), CUI.accent, CUI.text)
+            drawIcon("icon16/magnifier.png", 8, h / 2 - 8, 16)
+            self:DrawTextEntryText(C.text, C.accent, C.text)
         end
-        return c
-    end
-
-    -- Заголовок секции
-    local function gHeader(parent, text, tall)
-        local h = vgui.Create("DPanel", parent)
-        h:Dock(TOP)
-        h:SetTall(tall or 30)
-        h:DockMargin(4, 4, 4, 2)
-        h.Paint = function(_, w, hh)
-            draw.RoundedBox(4, 0, 0, w, hh, Color(40, 50, 65, 245))
-            draw.SimpleText(text, "GRML_Normal", 8, hh / 2, CUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        end
-        return h
-    end
-
-    -- Карточка точки с кнопкой удаления
-    local function gPointCard(parent, index, point, onRemove)
-        local card = vgui.Create("DPanel", parent)
-        card:Dock(TOP)
-        card:SetTall(42)
-        card:DockMargin(8, 2, 4, 2)
-        card.Paint = function(self, w, h)
-            local bg = self:IsHovered() and Color(40, 50, 65, 245) or Color(30, 38, 52, 240)
-            draw.RoundedBox(4, 0, 0, w, h, bg)
-            local px, py, pz = fmtPos(point.pos)
-            local pp, yy, rr = fmtAng(point.ang)
-            draw.SimpleText(string.format("#%d   X:%s  Y:%s  Z:%s", index, px, py, pz), "GRML_Normal", 10, 9, CUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            draw.SimpleText(string.format("Угол: P:%s  Y:%s  R:%s", pp, yy, rr), "GRML_Small", 10, 26, CUI.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-        end
-        local del = gBtn(card, "Удалить", CUI.red, 84, 26)
-        del:Dock(RIGHT)
-        del:DockMargin(4, 8, 8, 8)
-        del.DoClick = onRemove
-        return card
+        e:SetTextInset(28, 0)
+        return e
     end
 
     -- ----------------------------------------------------------------
-    -- Построение вкладки для РОЛЕЙ (выбор из factions.json, не ручной ввод)
+    -- Отправка команд на сервер
     -- ----------------------------------------------------------------
-
-    local function buildRoleTab(panel, factionName, rolesData, rolesList)
-        local scroll = vgui.Create("DScrollPanel", panel)
-        scroll:Dock(FILL)
-        scroll:DockMargin(5, 5, 5, 5)
-        scroll.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
-        local canvas = scroll:GetCanvas()
-
-        -- Панель добавления: комбобокс выбора роли + кнопка
-        local addBar = vgui.Create("DPanel", panel)
-        addBar:Dock(BOTTOM)
-        addBar:SetTall(52)
-        addBar:DockMargin(5, 5, 5, 5)
-        addBar.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
-
-        local hint = vgui.Create("DLabel", addBar)
-        hint:Dock(TOP)
-        hint:SetTall(16)
-        hint:DockMargin(8, 2, 8, 0)
-        hint:SetFont("GRML_Small")
-        hint:SetTextColor(CUI.dim)
-        hint:SetText("Роль выбирается из списка фракции (factions.json). Точка ставится на вашей позиции.")
-
-        local row = vgui.Create("DPanel", addBar)
-        row:Dock(FILL)
-        row:DockMargin(6, 0, 6, 4)
-        row:SetPaintBackground(false)
-
-        local roleCombo = gCombo(row)
-        roleCombo:Dock(LEFT)
-        roleCombo:SetWide(280)
-        roleCombo:DockMargin(0, 4, 6, 4)
-
-        -- Заполняем список ролей (без роли лидера — у лидера свои приоритеты)
-        local hasRoles = false
-        if istable(rolesList) then
-            for _, r in ipairs(rolesList) do
-                roleCombo:AddChoice(tostring(r), tostring(r))
-                hasRoles = true
-            end
-        end
-        -- Легаси-роли, у которых уже есть точки, но которых нет в списке — тоже показываем
-        if istable(rolesData) then
-            for r in pairs(rolesData) do
-                local found = false
-                for _, x in ipairs(rolesList or {}) do if tostring(x) == tostring(r) then found = true break end end
-                if not found then roleCombo:AddChoice(tostring(r), tostring(r)) hasRoles = true end
-            end
-        end
-        if not hasRoles then
-            roleCombo:AddChoice("(роли не заданы)", "")
-        end
-
-        local btnAdd = gBtn(row, "Добавить точку", CUI.green, 180, 30)
-        btnAdd:Dock(LEFT)
-        btnAdd:DockMargin(0, 4, 6, 4)
-
-        btnAdd.DoClick = function()
-            local roleName = roleCombo:GetSelected()
-            if not roleName or roleName == "" then
-                notification.AddLegacy("Выберите роль из списка", NOTIFY_ERROR, 3)
-                return
-            end
-            net.Start("SpawnAdmin_AddRolePoint")
-            net.WriteString(factionName)
-            net.WriteString(roleName)
-            net.WriteVector(LocalPlayer():GetPos())
-            net.WriteAngle(LocalPlayer():GetAngles())
-            net.SendToServer()
-            notification.AddLegacy("Точка для роли «" .. roleName .. "» добавлена", NOTIFY_GENERIC, 2)
-        end
-
-        -- Список точек выбранной роли
-        local function refreshRoleList()
-            for _, ch in ipairs(canvas:GetChildren()) do ch:Remove() end
-            local roleName = roleCombo:GetSelected()
-            if not roleName or roleName == "" then return end
-            local pts = istable(rolesData) and rolesData[roleName] or nil
-            if not istable(pts) or #pts == 0 then
-                gHeader(canvas, "Роль «" .. roleName .. "» — точек пока нет. Встаньте в нужное место и нажмите «Добавить точку».", 30)
-                return
-            end
-            gHeader(canvas, "Роль «" .. roleName .. "» — " .. #pts .. " точек", 30)
-            for i, point in ipairs(pts) do
-                gPointCard(canvas, i, point, function()
-                    net.Start("SpawnAdmin_RemoveRolePoint")
-                    net.WriteString(factionName)
-                    net.WriteString(roleName)
-                    net.WriteInt(i, 32)
-                    net.SendToServer()
-                end)
-            end
-        end
-
-        roleCombo.OnSelect = function() refreshRoleList() end
-        refreshRoleList()
-    end
-
-    -- ----------------------------------------------------------------
-    -- Построение вкладки для ОТДЕЛОВ (выбор из factions.json, не ручной ввод)
-    -- ----------------------------------------------------------------
-
-    local function buildDepartmentTab(panel, factionName, deptsData, deptsList)
-        local scroll = vgui.Create("DScrollPanel", panel)
-        scroll:Dock(FILL)
-        scroll:DockMargin(5, 5, 5, 5)
-        scroll.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
-        local canvas = scroll:GetCanvas()
-
-        local addBar = vgui.Create("DPanel", panel)
-        addBar:Dock(BOTTOM)
-        addBar:SetTall(52)
-        addBar:DockMargin(5, 5, 5, 5)
-        addBar.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
-
-        local hint = vgui.Create("DLabel", addBar)
-        hint:Dock(TOP)
-        hint:SetTall(16)
-        hint:DockMargin(8, 2, 8, 0)
-        hint:SetFont("GRML_Small")
-        hint:SetTextColor(CUI.dim)
-        hint:SetText("Отдел выбирается из списка фракции (factions.json). Точка ставится на вашей позиции.")
-
-        local row = vgui.Create("DPanel", addBar)
-        row:Dock(FILL)
-        row:DockMargin(6, 0, 6, 4)
-        row:SetPaintBackground(false)
-
-        local deptCombo = gCombo(row)
-        deptCombo:Dock(LEFT)
-        deptCombo:SetWide(280)
-        deptCombo:DockMargin(0, 4, 6, 4)
-
-        local hasDepts = false
-        if istable(deptsList) then
-            for _, d in ipairs(deptsList) do
-                deptCombo:AddChoice(tostring(d), tostring(d))
-                hasDepts = true
-            end
-        end
-        if istable(deptsData) then
-            for d in pairs(deptsData) do
-                local found = false
-                for _, x in ipairs(deptsList or {}) do if tostring(x) == tostring(d) then found = true break end end
-                if not found then deptCombo:AddChoice(tostring(d), tostring(d)) hasDepts = true end
-            end
-        end
-        if not hasDepts then
-            deptCombo:AddChoice("(отделы не заданы)", "")
-        end
-
-        local btnAdd = gBtn(row, "Добавить точку", CUI.green, 180, 30)
-        btnAdd:Dock(LEFT)
-        btnAdd:DockMargin(0, 4, 6, 4)
-
-        btnAdd.DoClick = function()
-            local deptName = deptCombo:GetSelected()
-            if not deptName or deptName == "" then
-                notification.AddLegacy("Выберите отдел из списка", NOTIFY_ERROR, 3)
-                return
-            end
-            net.Start("SpawnAdmin_AddDeptPoint")
-            net.WriteString(factionName)
-            net.WriteString(deptName)
-            net.WriteVector(LocalPlayer():GetPos())
-            net.WriteAngle(LocalPlayer():GetAngles())
-            net.SendToServer()
-            notification.AddLegacy("Точка для отдела «" .. deptName .. "» добавлена", NOTIFY_GENERIC, 2)
-        end
-
-        local function refreshDeptList()
-            for _, ch in ipairs(canvas:GetChildren()) do ch:Remove() end
-            local deptName = deptCombo:GetSelected()
-            if not deptName or deptName == "" then return end
-            local pts = istable(deptsData) and deptsData[deptName] or nil
-            if not istable(pts) or #pts == 0 then
-                gHeader(canvas, "Отдел «" .. deptName .. "» — точек пока нет. Встаньте в нужное место и нажмите «Добавить точку».", 30)
-                return
-            end
-            gHeader(canvas, "Отдел «" .. deptName .. "» — " .. #pts .. " точек", 30)
-            for i, point in ipairs(pts) do
-                gPointCard(canvas, i, point, function()
-                    net.Start("SpawnAdmin_RemoveDeptPoint")
-                    net.WriteString(factionName)
-                    net.WriteString(deptName)
-                    net.WriteInt(i, 32)
-                    net.SendToServer()
-                end)
-            end
-        end
-
-        deptCombo.OnSelect = function() refreshDeptList() end
-        refreshDeptList()
-    end
-
-    -- ----------------------------------------------------------------
-    -- Построение вкладки списка точек (тёмная тема HUD v10.2)
-    -- ----------------------------------------------------------------
-
-    local function buildPointTab(panel, points, factionKey)
-        -- Поиск/фильтр
-        local searchBar = vgui.Create("DPanel", panel)
-        searchBar:Dock(TOP)
-        searchBar:SetTall(36)
-        searchBar:DockMargin(5, 5, 5, 5)
-        searchBar.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
-
-        local searchEntry = vgui.Create("DTextEntry", searchBar)
-        searchEntry:Dock(FILL)
-        searchEntry:DockMargin(5, 6, 5, 6)
-        searchEntry:SetPlaceholderText("Поиск по координатам...")
-        searchEntry.Paint = function(self, w, h)
-            draw.RoundedBox(4, 0, 0, w, h, Color(25, 30, 40, 240))
-            surface.SetDrawColor(Color(60, 70, 85, 200))
-            surface.DrawOutlinedRect(0, 0, w, h, 1)
-            self:DrawTextEntryText(Color(220, 225, 235), CUI.accent, CUI.text)
-        end
-
-        -- Список точек (карточки вместо строк)
-        local scroll = vgui.Create("DScrollPanel", panel)
-        scroll:Dock(FILL)
-        scroll:DockMargin(5, 0, 5, 5)
-        scroll.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
-
-        local function refreshList()
-            -- Очищаем старые карточки
-            for _, child in ipairs(scroll:GetCanvas():GetChildren()) do
-                child:Remove()
-            end
-
-            local filter = string.lower(searchEntry:GetValue() or "")
-
-            for i, point in ipairs(points) do
-                -- Фильтрация
-                local showCard = true
-                if filter ~= "" then
-                    local coords = string.format("%.0f %.0f %.0f", safeCoord(point.pos, "x", 1), safeCoord(point.pos, "y", 2), safeCoord(point.pos, "z", 3))
-                    if not string.find(string.lower(coords), filter, 1, true) then
-                        showCard = false
-                    end
-                end
-
-                if showCard then
-                -- Карточка точки
-                local card = vgui.Create("DPanel", scroll:GetCanvas())
-                card:Dock(TOP)
-                card:SetTall(50)
-                card:DockMargin(4, 2, 4, 2)
-                card._dataIndex = i
-                card.Paint = function(self, w, h)
-                    local bg = self:IsHovered() and Color(40, 50, 65, 245) or Color(30, 38, 52, 240)
-                    if self:IsSelected() then bg = Color(50, 80, 140, 200) end
-                    draw.RoundedBox(4, 0, 0, w, h, bg)
-                    -- Координаты
-                    local px, py, pz = fmtPos(point.pos)
-                    draw.SimpleText(string.format("X:%s Y:%s Z:%s", px, py, pz), "GRML_Normal", 8, 8, CUI.text)
-                    draw.SimpleText(string.format("P:%s Y:%s R:%s", fmtAng(point.ang)), "GRML_Small", 8, 26, CUI.dim)
-                    -- Номер
-                    draw.SimpleText("#" .. i, "GRML_Small", w - 12, 8, CUI.dim, TEXT_ALIGN_RIGHT)
-                end
-                card.OnMousePressed = function(self)
-                    for _, c in ipairs(scroll:GetCanvas():GetChildren()) do c:SetSelected(false) end
-                    self:SetSelected(true)
-                end
-                card.IsSelected = function(self) return self._selected or false end
-                card.SetSelected = function(self, v) self._selected = v end
-                end -- if showCard
-            end -- for
-        end
-
-        searchEntry.OnValueChange = function() refreshList() end
-        refreshList()
-
-        -- Получить выбранную карточку
-        local function getSelectedCard()
-            for _, child in ipairs(scroll:GetCanvas():GetChildren()) do
-                if child:IsSelected() then return child end
-            end
-            return nil
-        end
-
-        -- Кнопки действий
-        local btnBar = vgui.Create("DPanel", panel)
-        btnBar:Dock(BOTTOM)
-        btnBar:SetTall(44)
-        btnBar:DockMargin(5, 5, 5, 5)
-        btnBar.Paint = function(_, w, h) draw.RoundedBox(4, 0, 0, w, h, CUI.panel) end
-
-        local btnAdd = gBtn(btnBar, "Добавить (здесь)", CUI.green, 180, 32)
-        btnAdd:Dock(LEFT)
-        btnAdd:DockMargin(5, 6, 5, 6)
-        btnAdd.DoClick = function()
+    local function sendAdd(sel, pos, ang)
+        if sel.scope == "global" then
             net.Start("SpawnAdmin_AddPoint")
-            net.WriteString(factionKey)
-            net.WriteVector(LocalPlayer():GetPos())
-            net.WriteAngle(LocalPlayer():GetAngles())
-            net.SendToServer()
-            notification.AddLegacy("Запрос отправлен...", NOTIFY_GENERIC, 2)
+            net.WriteString("__global")
+            net.WriteVector(pos) net.WriteAngle(ang)
+        elseif sel.scope == "faction" then
+            net.Start("SpawnAdmin_AddPoint")
+            net.WriteString(sel.faction)
+            net.WriteVector(pos) net.WriteAngle(ang)
+        elseif sel.scope == "role" then
+            net.Start("SpawnAdmin_AddRolePoint")
+            net.WriteString(sel.faction) net.WriteString(sel.key)
+            net.WriteVector(pos) net.WriteAngle(ang)
+        elseif sel.scope == "dept" then
+            net.Start("SpawnAdmin_AddDeptPoint")
+            net.WriteString(sel.faction) net.WriteString(sel.key)
+            net.WriteVector(pos) net.WriteAngle(ang)
+        elseif sel.scope == "sub" then
+            net.Start("SpawnAdmin_AddSubPoint")
+            net.WriteString(sel.faction) net.WriteString(sel.key)
+            net.WriteVector(pos) net.WriteAngle(ang)
+        else
+            return
+        end
+        net.SendToServer()
+    end
+
+    local function sendRemove(sel, index)
+        if sel.scope == "global" then
+            net.Start("SpawnAdmin_RemovePoint")
+            net.WriteString("__global") net.WriteInt(index, 32)
+        elseif sel.scope == "faction" then
+            net.Start("SpawnAdmin_RemovePoint")
+            net.WriteString(sel.faction) net.WriteInt(index, 32)
+        elseif sel.scope == "role" then
+            net.Start("SpawnAdmin_RemoveRolePoint")
+            net.WriteString(sel.faction) net.WriteString(sel.key) net.WriteInt(index, 32)
+        elseif sel.scope == "dept" then
+            net.Start("SpawnAdmin_RemoveDeptPoint")
+            net.WriteString(sel.faction) net.WriteString(sel.key) net.WriteInt(index, 32)
+        elseif sel.scope == "sub" then
+            net.Start("SpawnAdmin_RemoveSubPoint")
+            net.WriteString(sel.faction) net.WriteString(sel.key) net.WriteInt(index, 32)
+        else
+            return
+        end
+        net.SendToServer()
+    end
+
+    local function sendClear(sel)
+        net.Start("SpawnAdmin_ClearPoints")
+        net.WriteString(tostring(sel.scope or ""))
+        net.WriteString(tostring(sel.faction or ""))
+        net.WriteString(tostring(sel.key or ""))
+        net.SendToServer()
+    end
+
+    -- ----------------------------------------------------------------
+    -- Правая часть: карточки точек выбранного узла
+    -- ----------------------------------------------------------------
+    local function buildPointList(canvas, sel)
+        canvas:Clear()
+        local points = SP.PointsFor(menuState.data, sel)
+
+        if #points == 0 then
+            local empty = vgui.Create("DPanel", canvas)
+            empty:Dock(TOP)
+            empty:SetTall(90)
+            empty:DockMargin(2, 2, 2, 2)
+            empty.Paint = function(_, w, h)
+                draw.RoundedBox(8, 0, 0, w, h, C.card)
+                drawIcon("icon16/information.png", w / 2 - 8, 20, 16)
+                draw.SimpleText("Здесь пока нет точек", "GRMSpawn_Sub", w / 2, 48, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                draw.SimpleText("Встаньте в нужное место и нажмите «Поставить здесь»", "GRMSpawn_Small",
+                    w / 2, 68, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            end
+            return
         end
 
-        local btnTeleport = gBtn(btnBar, "Телепорт", CUI.accent, 120, 32)
-        btnTeleport:Dock(LEFT)
-        btnTeleport:DockMargin(5, 6, 5, 6)
-        btnTeleport.DoClick = function()
-            local card = getSelectedCard()
-            if not card then
-                notification.AddLegacy("Выберите точку", NOTIFY_ERROR, 3)
-                return
+        for i, point in ipairs(points) do
+            local card = vgui.Create("DPanel", canvas)
+            card:Dock(TOP)
+            card:SetTall(54)
+            card:DockMargin(2, 0, 2, 6)
+            card.Paint = function(self, w, h)
+                local selected = menuState.selectedIndex == i
+                local bg = selected and C.accentDim or (self:IsHovered() and C.cardHover or C.card)
+                draw.RoundedBox(8, 0, 0, w, h, bg)
+                draw.RoundedBox(8, 0, 0, 3, h, selected and C.accent or C.border)
+
+                draw.SimpleText("#" .. i, "GRMSpawn_Num", 14, h / 2, selected and C.text or C.dim,
+                    TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+
+                local px = string.format("%.0f", safeCoord(point.pos, "x", 1))
+                local py = string.format("%.0f", safeCoord(point.pos, "y", 2))
+                local pz = string.format("%.0f", safeCoord(point.pos, "z", 3))
+                draw.SimpleText("X " .. px .. "   Y " .. py .. "   Z " .. pz, "GRMSpawn_Normal",
+                    52, 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+
+                local yaw = string.format("%.0f", safeCoord(point.ang, "y", 2))
+                local info = "Поворот " .. yaw .. "°"
+                local dist = distanceTo(point.pos)
+                if dist then info = info .. "   •   до вас " .. string.format("%.0f", dist / 52.5) .. " м" end
+                draw.SimpleText(info, "GRMSpawn_Small", 52, 36, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             end
-            local point = points[card._dataIndex]
-            if point then
+            card.OnMousePressed = function()
+                menuState.selectedIndex = i
+            end
+
+            local del = gButton(card, "Удалить", C.card, C.red, "icon16/delete.png", function()
+                sendRemove(sel, i)
+                menuState.selectedIndex = nil
+            end)
+            del:Dock(RIGHT)
+            del:SetWide(104)
+            del:DockMargin(6, 10, 10, 10)
+
+            local tp = gButton(card, "Телепорт", C.card, C.accent, "icon16/arrow_right.png", function()
                 net.Start("SpawnAdmin_TeleportToPoint")
                 net.WriteVector(pointToVec(point.pos))
                 net.WriteAngle(pointToAng(point.ang))
                 net.SendToServer()
                 if IsValid(menuState.frame) then menuState.frame:Close() end
-            end
+            end)
+            tp:Dock(RIGHT)
+            tp:SetWide(112)
+            tp:DockMargin(6, 10, 0, 10)
         end
-
-        local btnRemove = gBtn(btnBar, "Удалить", CUI.red, 100, 32)
-        btnRemove:Dock(LEFT)
-        btnRemove:DockMargin(5, 6, 5, 6)
-        btnRemove.DoClick = function()
-            local card = getSelectedCard()
-            if not card then
-                notification.AddLegacy("Выберите точку", NOTIFY_ERROR, 3)
-                return
-            end
-            net.Start("SpawnAdmin_RemovePoint")
-            net.WriteString(factionKey)
-            net.WriteInt(card._dataIndex, 32)
-            net.SendToServer()
-            notification.AddLegacy("Запрос отправлен...", NOTIFY_GENERIC, 2)
-        end
-
-        -- Экспорт/Импорт (справа)
-        local btnExport = gBtn(btnBar, "Экспорт", CUI.yellow, 100, 32)
-        btnExport:Dock(RIGHT)
-        btnExport:DockMargin(5, 6, 5, 6)
-        btnExport.DoClick = function()
-            local data = util.TableToJSON(points, true)
-            SetClipboardText(data)
-            notification.AddLegacy("Точки скопированы в буфер обмена", NOTIFY_GENERIC, 3)
-        end
-
-        return refreshList
     end
 
     -- ----------------------------------------------------------------
-    -- Открытие / перестройка меню (редизайн в стиле GRM)
+    -- Окно
     -- ----------------------------------------------------------------
-
     local function buildMenu(data)
-        menuState.globalPoints = data.global   or {}
-        menuState.factions     = data.factions or {}
-        menuState.refreshGlobal = nil
-        menuState.refreshFac    = {}
-
-        if IsValid(menuState.frame) then menuState.frame:Remove() end
-
-        local frame = vgui.Create("DFrame")
-        frame:SetTitle("")
-        frame:SetSize(980, 700)
-        frame:Center()
-        frame:MakePopup()
-        frame:ShowCloseButton(false)
-        menuState.frame = frame
-
-        -- Шапка в стиле GRM
-        frame.Paint = function(self, w, h)
-            draw.RoundedBox(8, 0, 0, w, h, CUI.bg)
-            draw.RoundedBoxEx(8, 0, 0, w, 46, Color(27, 35, 48), true, true, false, false)
-            draw.SimpleText("Точки спавна", "GRML_Title", 14, 23, CUI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText("/spawnmenu  •  суперадмин", "GRML_Small", 14, 40, CUI.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            local total = #menuState.globalPoints
-            for _, facData in pairs(menuState.factions) do
-                local pts = istable(facData) and facData.points or nil
-                if istable(pts) then total = total + #pts end
-                if istable(facData) and istable(facData.roles) then
-                    for _, rp in pairs(facData.roles) do if istable(rp) then total = total + #rp end end
-                end
-                if istable(facData) and istable(facData.departments) then
-                    for _, dp in pairs(facData.departments) do if istable(dp) then total = total + #dp end end
-                end
-            end
-            draw.SimpleText("Всего точек: " .. total, "GRML_Normal", w - 14, 23, CUI.green, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-        end
-
-        -- Кастомный крестик
-        local closeBtn = vgui.Create("DButton", frame)
-        closeBtn:SetPos(frame:GetWide() - 38, 8)
-        closeBtn:SetSize(30, 30)
-        closeBtn:SetText("")
-        closeBtn.DoClick = function() frame:Close() end
-        closeBtn.Paint = function(s, w, h)
-            draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and CUI.red or Color(46, 56, 74))
-            surface.SetDrawColor(240, 242, 246)
-            surface.DrawLine(8, 8, w - 8, h - 8)
-            surface.DrawLine(8, h - 8, w - 8, 8)
-        end
-
-        local tabs = vgui.Create("DPropertySheet", frame)
-        tabs:Dock(FILL)
-        tabs:DockMargin(6, 52, 6, 6)
-        tabs.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, Color(27, 35, 48)) end
-
-        -- Тёмный стиль вкладок (как в админ-хабе)
-        local function styleTabs(sheet)
-            for _, item in ipairs(sheet.Items or {}) do
-                local tab = item.Tab
-                if IsValid(tab) then
-                    tab:SetFont("GRML_Normal")
-                    tab:SetTextColor(CUI.dim)
-                    tab.Paint = function(self, w, h)
-                        local active = self:IsActive()
-                        draw.RoundedBoxEx(5, 0, 0, w, h, active and CUI.panel or CUI.panel, true, true, false, false)
-                        if active then draw.RoundedBox(0, 0, h - 3, w, 3, CUI.accent) end
-                    end
-                end
-            end
-        end
-
-        -- Вкладка «Глобальные»
-        local globalPanel = vgui.Create("DPanel")
-        globalPanel:SetPaintBackground(false)
-        menuState.refreshGlobal = buildPointTab(globalPanel, menuState.globalPoints, "__global")
-        tabs:AddSheet("Глобальные", globalPanel, "icon16/world.png")
-
-        -- Вкладка для каждой фракции (с подвкладками)
-        local sortedFactions = {}
-        for name in pairs(menuState.factions) do table.insert(sortedFactions, name) end
-        table.sort(sortedFactions)
-
-        for _, factionName in ipairs(sortedFactions) do
-            local facData = menuState.factions[factionName]
-            if not istable(facData) then facData = { points = facData } end
-            local points = istable(facData.points) and facData.points or (istable(facData) and facData or {})
-
-            local factionPanel = vgui.Create("DPropertySheet", tabs)
-            factionPanel.Paint = function(_, w, h) draw.RoundedBox(7, 0, 0, w, h, Color(24, 30, 41)) end
-
-            -- Подвкладка: Фракция (общие точки)
-            local facPointsPanel = vgui.Create("DPanel", factionPanel)
-            facPointsPanel:SetPaintBackground(false)
-            menuState.refreshFac[factionName] = buildPointTab(facPointsPanel, points, factionName)
-            factionPanel:AddSheet("Точки фракции", facPointsPanel, "icon16/group.png")
-
-            -- Подвкладка: Роли (выбор из factions.json)
-            local rolesPanel = vgui.Create("DPanel", factionPanel)
-            rolesPanel:SetPaintBackground(false)
-            buildRoleTab(rolesPanel, factionName, facData.roles or {}, facData.rolesList or {})
-            factionPanel:AddSheet("Роли", rolesPanel, "icon16/user.png")
-
-            -- Подвкладка: Отделы (выбор из factions.json)
-            local deptsPanel = vgui.Create("DPanel", factionPanel)
-            deptsPanel:SetPaintBackground(false)
-            buildDepartmentTab(deptsPanel, factionName, facData.departments or {}, facData.departmentsList or {})
-            factionPanel:AddSheet("Отделы", deptsPanel, "icon16/users.png")
-
-            -- Информация о фракции из factions.json (лидер, роли, отделы)
-            local metaLine = vgui.Create("DPanel", factionPanel)
-            metaLine:Dock(BOTTOM)
-            metaLine:SetTall(26)
-            metaLine:DockMargin(5, 0, 5, 5)
-            metaLine.Paint = function(_, w, h)
-                draw.RoundedBox(4, 0, 0, w, h, Color(33, 42, 56, 245))
-                local info = string.format(
-                    "Лидер: %s   •   Ролей: %d   •   Отделов: %d   •   Состав: %d",
-                    tostring(facData.leader or "—"),
-                    #(facData.rolesList or {}),
-                    #(facData.departmentsList or {}),
-                    tonumber(facData.memberCount) or 0
-                )
-                draw.SimpleText(info, "GRML_Small", 10, h / 2, CUI.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            end
-
-            styleTabs(factionPanel)
-            tabs:AddSheet(factionName, factionPanel, "icon16/group.png")
-        end
-
-        styleTabs(tabs)
-        frame:Show()
-    end
-
-    -- ----------------------------------------------------------------
-    -- NET: получение данных от сервера (зарегистрировано на уровне модуля)
-    -- ----------------------------------------------------------------
-
-    net.Receive("SpawnAdmin_SendData", function()
-        local data = net.ReadTable() or {}
+        menuState.data = istable(data) and data or { factions = {}, global = {} }
+        menuState.data.factions = istable(menuState.data.factions) and menuState.data.factions or {}
+        menuState.data.global = istable(menuState.data.global) and menuState.data.global or {}
 
         if IsValid(menuState.frame) then
-            menuState.globalPoints = data.global   or {}
-            menuState.factions     = data.factions or {}
-            buildMenu(data)
-            notification.AddLegacy("Список точек обновлён", NOTIFY_GENERIC, 2)
-        else
-            buildMenu(data)
+            -- окно уже открыто — просто перерисовываем содержимое, выбор сохраняется
+            if menuState.rebuild then menuState.rebuild() end
+            return
         end
-    end)
+
+        local w = math.min(math.max(ScrW() * 0.72, 960), 1500)
+        local h = math.min(math.max(ScrH() * 0.76, 620), 940)
+
+        local frame = vgui.Create("DFrame")
+        frame:SetSize(w, h)
+        frame:Center()
+        frame:SetTitle("")
+        frame:ShowCloseButton(false)
+        frame:MakePopup()
+        frame:SetDraggable(true)
+        menuState.frame = frame
+        menuState.selectedIndex = nil
+
+        frame.Paint = function(_, fw, fh)
+            draw.RoundedBox(10, 0, 0, fw, fh, C.bg)
+            draw.RoundedBoxEx(10, 0, 0, fw, 56, Color(22, 28, 40), true, true, false, false)
+            draw.RoundedBox(0, 0, 56, fw, 2, C.accent)
+            drawIcon("icon16/map.png", 18, 20, 16)
+            draw.SimpleText("Точки спавна", "GRMSpawn_Title", 42, 20, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("Карта: " .. tostring(menuState.data.map or game.GetMap()) ..
+                "  •  /spawnmenu  •  суперадмин", "GRMSpawn_Small", 42, 39, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("Всего точек: " .. SP.GrandTotal(menuState.data), "GRMSpawn_Sub",
+                fw - 58, 28, C.green, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        end
+
+        local close = vgui.Create("DButton", frame)
+        close:SetText("")
+        close:SetSize(30, 30)
+        close:SetPos(w - 42, 13)
+        close.DoClick = function() frame:Close() end
+        close.Paint = function(self, bw, bh)
+            draw.RoundedBox(6, 0, 0, bw, bh, self:IsHovered() and C.red or Color(34, 42, 58))
+            surface.SetDrawColor(240, 242, 246)
+            surface.DrawLine(9, 9, bw - 9, bh - 9)
+            surface.DrawLine(9, bh - 9, bw - 9, 9)
+        end
+
+        -- ── левая колонка: поиск + дерево ────────────────────────────
+        local left = vgui.Create("DPanel", frame)
+        left:Dock(LEFT)
+        left:SetWide(math.floor(w * 0.33))
+        left:DockMargin(10, 66, 5, 10)
+        left.Paint = function(_, pw, ph) draw.RoundedBox(10, 0, 0, pw, ph, C.sidebar) end
+
+        local search = gEntry(left, "Поиск: организация, отдел, подотдел, должность")
+        search:Dock(TOP)
+        search:SetTall(32)
+        search:DockMargin(10, 10, 10, 8)
+
+        local tree = vgui.Create("DScrollPanel", left)
+        tree:Dock(FILL)
+        tree:DockMargin(6, 0, 6, 10)
+        local treeBar = tree:GetVBar()
+        treeBar:SetWide(6)
+        treeBar.Paint = function(_, bw, bh) draw.RoundedBox(3, 0, 0, bw, bh, Color(18, 23, 32)) end
+        treeBar.btnUp.Paint = function() end
+        treeBar.btnDown.Paint = function() end
+        treeBar.btnGrip.Paint = function(_, bw, bh) draw.RoundedBox(3, 0, 0, bw, bh, C.border) end
+
+        -- ── правая колонка ───────────────────────────────────────────
+        local right = vgui.Create("DPanel", frame)
+        right:Dock(FILL)
+        right:DockMargin(5, 66, 10, 10)
+        right:SetPaintBackground(false)
+
+        local head = vgui.Create("DPanel", right)
+        head:Dock(TOP)
+        head:SetTall(62)
+        head:DockMargin(0, 0, 0, 8)
+        head.Paint = function(_, pw, ph)
+            draw.RoundedBox(10, 0, 0, pw, ph, C.card)
+            local sel = menuState.sel
+            local iconPath = "icon16/world.png"
+            if sel.scope == "faction" then iconPath = "icon16/building.png"
+            elseif sel.scope == "dept" then iconPath = "icon16/folder.png"
+            elseif sel.scope == "sub" then iconPath = "icon16/folder_page.png"
+            elseif sel.scope == "role" then iconPath = "icon16/user.png" end
+            drawIcon(iconPath, 14, 14, 16)
+            draw.SimpleText(SP.SelectionPath(menuState.data, sel), "GRMSpawn_Sub", 38, 20, C.text,
+                TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(SP.PriorityHint, "GRMSpawn_Small", 38, 42, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            local n = #SP.PointsFor(menuState.data, sel)
+            draw.SimpleText(n .. (n == 1 and " точка" or (n >= 2 and n <= 4 and " точки" or " точек")),
+                "GRMSpawn_Sub", pw - 16, ph / 2, n > 0 and C.green or C.gold, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        end
+
+        local bar = vgui.Create("DPanel", right)
+        bar:Dock(TOP)
+        bar:SetTall(46)
+        bar:DockMargin(0, 0, 0, 8)
+        bar.Paint = function(_, pw, ph) draw.RoundedBox(10, 0, 0, pw, ph, C.card) end
+
+        local list = vgui.Create("DScrollPanel", right)
+        list:Dock(FILL)
+        local listBar = list:GetVBar()
+        listBar:SetWide(6)
+        listBar.Paint = function(_, bw, bh) draw.RoundedBox(3, 0, 0, bw, bh, Color(18, 23, 32)) end
+        listBar.btnUp.Paint = function() end
+        listBar.btnDown.Paint = function() end
+        listBar.btnGrip.Paint = function(_, bw, bh) draw.RoundedBox(3, 0, 0, bw, bh, C.border) end
+
+        local hint = vgui.Create("DPanel", right)
+        hint:Dock(BOTTOM)
+        hint:SetTall(26)
+        hint:DockMargin(0, 8, 0, 0)
+        hint.Paint = function(_, pw, ph)
+            draw.RoundedBox(8, 0, 0, pw, ph, C.card)
+            draw.SimpleText("Точка ставится там, где стоите вы (или куда смотрите). Угол берётся из вашего взгляда.",
+                "GRMSpawn_Small", 12, ph / 2, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
+
+        -- Кнопки действий
+        local function currentAngles()
+            local lp = LocalPlayer()
+            if not IsValid(lp) then return Angle(0, 0, 0) end
+            local a = lp:EyeAngles()
+            return Angle(0, a.y, 0)
+        end
+
+        local bHere = gButton(bar, "Поставить здесь", C.accentDim, C.accent, "icon16/add.png", function()
+            local lp = LocalPlayer()
+            if not IsValid(lp) then return end
+            sendAdd(menuState.sel, lp:GetPos(), currentAngles())
+        end)
+        bHere:Dock(LEFT)
+        bHere:SetWide(170)
+        bHere:DockMargin(8, 7, 6, 7)
+
+        local bAim = gButton(bar, "Куда смотрю", C.cardLight, C.cardHover, "icon16/bullet_go.png", function()
+            local lp = LocalPlayer()
+            if not IsValid(lp) then return end
+            local tr = lp:GetEyeTrace()
+            if not tr or not tr.HitPos then return end
+            sendAdd(menuState.sel, tr.HitPos + Vector(0, 0, 6), currentAngles())
+        end)
+        bAim:Dock(LEFT)
+        bAim:SetWide(150)
+        bAim:DockMargin(0, 7, 6, 7)
+
+        local bRefresh = gButton(bar, "Обновить", C.cardLight, C.cardHover, "icon16/arrow_refresh.png", function()
+            net.Start("SpawnAdmin_OpenMenu")
+            net.SendToServer()
+        end)
+        bRefresh:Dock(LEFT)
+        bRefresh:SetWide(130)
+        bRefresh:DockMargin(0, 7, 6, 7)
+
+        local bClear = gButton(bar, "Очистить узел", C.cardLight, C.red, "icon16/bin.png", function()
+            local sel = menuState.sel
+            local n = #SP.PointsFor(menuState.data, sel)
+            if n == 0 then
+                notification.AddLegacy("Здесь и так пусто", NOTIFY_GENERIC, 2)
+                return
+            end
+            Derma_Query("Удалить все точки узла?\n" .. SP.SelectionPath(menuState.data, sel) .. "\nТочек: " .. n,
+                "Точки спавна",
+                "Удалить", function() sendClear(sel) menuState.selectedIndex = nil end,
+                "Отмена", function() end)
+        end)
+        bClear:Dock(RIGHT)
+        bClear:SetWide(150)
+        bClear:DockMargin(0, 7, 8, 7)
+
+        local bExport = gButton(bar, "Экспорт", C.cardLight, C.cardHover, "icon16/page_copy.png", function()
+            local pts = SP.PointsFor(menuState.data, menuState.sel)
+            SetClipboardText(util.TableToJSON(pts, true))
+            notification.AddLegacy("Точки узла скопированы в буфер обмена", NOTIFY_GENERIC, 3)
+        end)
+        bExport:Dock(RIGHT)
+        bExport:SetWide(120)
+        bExport:DockMargin(0, 7, 6, 7)
+
+        -- ── строка дерева ────────────────────────────────────────────
+        local function makeRow(row)
+            local panel = vgui.Create("DButton", tree:GetCanvas())
+            panel:Dock(TOP)
+            panel:SetText("")
+            panel:SetTall(row.kind == "header" and 24 or 34)
+            panel:DockMargin(4 + row.depth * 14, 0, 4, 3)
+
+            if row.kind == "header" then
+                panel:SetMouseInputEnabled(false)
+                panel.Paint = function(_, pw, ph)
+                    draw.SimpleText(row.label, "GRMSpawn_Small", 6, ph / 2, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                end
+                return panel
+            end
+
+            panel.Paint = function(self, pw, ph)
+                local sel = menuState.sel
+                local isSel = row.scope ~= nil and sel.scope == row.scope
+                    and tostring(sel.faction or "") == tostring(row.faction or "")
+                    and tostring(sel.key or "") == tostring(row.key or "")
+                local bg = isSel and C.accentDim or (self:IsHovered() and C.cardHover or C.card)
+                draw.RoundedBox(7, 0, 0, pw, ph, bg)
+                if isSel then draw.RoundedBox(7, 0, 0, 3, ph, C.accent) end
+
+                local x = 10
+                if row.expandable then
+                    drawIcon(row.expanded and "icon16/bullet_arrow_down.png" or "icon16/bullet_arrow_right.png",
+                        x, ph / 2 - 8, 16)
+                    x = x + 18
+                end
+                if row.icon then
+                    drawIcon(row.icon, x, ph / 2 - 8, 16)
+                    x = x + 22
+                end
+
+                local label = row.label
+                local maxW = pw - x - 46
+                surface.SetFont("GRMSpawn_Normal")
+                while surface.GetTextSize(label) > maxW and #label > 4 do
+                    label = string.sub(label, 1, #label - 4) .. "…"
+                end
+                local ty = row.note and row.note ~= "" and (ph / 2 - 7) or (ph / 2)
+                draw.SimpleText(label, "GRMSpawn_Normal", x, ty, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                if row.note and row.note ~= "" then
+                    draw.SimpleText(row.note, "GRMSpawn_Small", x, ph / 2 + 8, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                end
+
+                local cnt = tonumber(row.count) or 0
+                if cnt > 0 then
+                    local bw = math.max(22, 12 + string.len(tostring(cnt)) * 8)
+                    draw.RoundedBox(9, pw - bw - 8, ph / 2 - 9, bw, 18, isSel and C.accent or Color(40, 52, 70))
+                    draw.SimpleText(cnt, "GRMSpawn_Num", pw - bw / 2 - 8, ph / 2, C.text,
+                        TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                end
+            end
+
+            panel.DoClick = function()
+                surface.PlaySound("ui/buttonclickrelease.wav")
+                if row.expandable then
+                    menuState.expanded[row.id] = not menuState.expanded[row.id]
+                end
+                if row.scope then
+                    menuState.sel = { scope = row.scope, faction = row.faction, key = row.key }
+                    menuState.selectedIndex = nil
+                end
+                if menuState.rebuild then menuState.rebuild() end
+            end
+
+            return panel
+        end
+
+        -- ── пересборка содержимого ───────────────────────────────────
+        menuState.rebuild = function()
+            if not IsValid(frame) then return end
+            local scroll = tree:GetVBar() and tree:GetVBar():GetScroll() or 0
+            tree:Clear()
+            local rows = SP.BuildTree(menuState.data, menuState.filter, menuState.expanded)
+            for _, row in ipairs(rows) do makeRow(row) end
+            tree:InvalidateLayout(true)
+            if tree:GetVBar() then tree:GetVBar():SetScroll(scroll) end
+            buildPointList(list:GetCanvas(), menuState.sel)
+        end
+
+        search.OnChange = function(self)
+            menuState.filter = self:GetValue() or ""
+            if menuState.rebuild then menuState.rebuild() end
+        end
+
+        menuState.rebuild()
+        frame.OnClose = function()
+            menuState.rebuild = nil
+            menuState.frame = nil
+        end
+    end
 
     -- ----------------------------------------------------------------
-    -- Открытие меню (запрашивает данные с сервера)
+    -- NET: свежие данные от сервера
     -- ----------------------------------------------------------------
+    net.Receive("SpawnAdmin_SendData", function()
+        local data = net.ReadTable() or {}
+        buildMenu(data)
+    end)
 
     local function openSpawnAdminMenu()
         net.Start("SpawnAdmin_OpenMenu")
@@ -1308,23 +1692,30 @@ if CLIENT then
     end
 
     -- ----------------------------------------------------------------
-    -- Команда /spawnmenu
+    -- Команда /spawnmenu (PlayerSay + PlayerSayTransform — EasyChat)
     -- ----------------------------------------------------------------
-
-    hook.Add("PlayerSayTransform", "SpawnAdminCommand", function(ply, datapack, is_team, is_local)
-        if ply ~= LocalPlayer() then return end
-        local msg = datapack[1]
-        if not msg then return end
-        if msg:lower():find("^/spawnmenu%s*") == 1 then
-            if LocalPlayer():IsSuperAdmin() then
-                openSpawnAdminMenu()
-            else
-                notification.AddLegacy("Нет прав", NOTIFY_ERROR, 3)
-            end
-            datapack[1] = ""
+    local function handleCommand(msg)
+        if not isstring(msg) then return false end
+        local low = string.lower(msg)
+        if low:find("^/spawnmenu%s*") ~= 1 and low:find("^/точкиспавна%s*") ~= 1 then return false end
+        if LocalPlayer():IsSuperAdmin() then
+            openSpawnAdminMenu()
+        else
+            notification.AddLegacy("Нет прав", NOTIFY_ERROR, 3)
         end
+        return true
+    end
+
+    hook.Add("PlayerSayTransform", "SpawnAdminCommand", function(ply, datapack)
+        if ply ~= LocalPlayer() then return end
+        if handleCommand(datapack and datapack[1]) then datapack[1] = "" end
     end)
 
-    print("[SpawnPoints] Клиентская часть загружена (редизайн, выбор ролей/отделов из factions.json)")
+    concommand.Add("grm_spawnmenu", function()
+        if LocalPlayer():IsSuperAdmin() then openSpawnAdminMenu()
+        else notification.AddLegacy("Нет прав", NOTIFY_ERROR, 3) end
+    end)
+
+    print("[SpawnPoints] Клиентская часть v2.0.0 (дерево организация → отдел → подотдел → должность)")
 
 end
