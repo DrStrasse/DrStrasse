@@ -30,8 +30,12 @@ GRM.Char = GRM.Char or {}
 local CH = GRM.Char
 
 CH.Version    = "1.7.0"
-CH.NameMin    = 3     -- минимальная длина RP-имени
-CH.NameMax    = 48
+CH.NameMin    = 3     -- минимальная длина RP-имени (в символах, не байтах)
+CH.NameMax    = 32
+CH.NameWordsMin = 2   -- имя и фамилия
+CH.NameWordsMax = 4   -- «Александр Фон Грённер» и запас на титул
+CH.NamePartMin  = 2   -- минимальная длина слова/части через дефис
+CH.NamePartMax  = 20
     CH.DataFile   = "grm_characters.json"
 CH.MaxSlots    = 3
 CH.PendingSelection = CH.PendingSelection or {}
@@ -45,13 +49,189 @@ local NET_CANCEL   = "GRM_Char_Cancel"
 
 -- ------------------------------------------------------------
 -- SHARED: валидация имени и нормализация внешности
+--
+-- РП-имя — это не ник в стиме: в нём не должно быть эмодзи, цифр,
+-- скобок, «крутых» символов и одинаковых имён у двух персонажей.
+-- Правила (одинаковые на клиенте и сервере, чтобы окно персонажа
+-- подсказывало ровно то, что примет сервер):
+--   • только буквы (кириллица и латиница), пробел, дефис и апостроф;
+--   • от CH.NameMin до CH.NameMax СИМВОЛОВ (utf-8, а не байтов);
+--   • от 2 до 4 слов, каждое слово (и часть через дефис) 2…20 букв;
+--   • без двойных разделителей и без «Ааааа» (4+ одинаковых подряд);
+--   • первая буква каждой части поднимается в верхний регистр.
+-- Уникальность имени проверяется на сервере (CH.FindNameOwner).
 -- ------------------------------------------------------------
+
+--- Разбить строку на utf-8 символы (в Lua 5.1 нет utf8-библиотеки).
+function CH.Chars(s)
+    local out, i, n = {}, 1, #tostring(s or "")
+    s = tostring(s or "")
+    while i <= n do
+        local b = string.byte(s, i) or 0
+        local len = 1
+        if b >= 0xF0 then len = 4
+        elseif b >= 0xE0 then len = 3
+        elseif b >= 0xC0 then len = 2 end
+        out[#out + 1] = string.sub(s, i, i + len - 1)
+        i = i + len
+    end
+    return out
+end
+
+function CH.Len(s) return #CH.Chars(s) end
+
+--- Буква ли это (латиница или кириллица, включая Ё/ё).
+function CH.IsLetter(ch)
+    ch = tostring(ch or "")
+    if #ch == 1 then
+        local b = string.byte(ch)
+        return (b >= 65 and b <= 90) or (b >= 97 and b <= 122)
+    elseif #ch == 2 then
+        local b1, b2 = string.byte(ch, 1), string.byte(ch, 2)
+        if b1 == 0xD0 then return (b2 >= 0x90 and b2 <= 0xBF) or b2 == 0x81 end
+        if b1 == 0xD1 then return (b2 >= 0x80 and b2 <= 0x8F) or b2 == 0x91 end
+    end
+    return false
+end
+
+--- Верхний/нижний регистр одного символа (кириллица + латиница).
+function CH.UpperChar(ch)
+    ch = tostring(ch or "")
+    if #ch == 1 then return string.upper(ch) end
+    if #ch ~= 2 then return ch end
+    local b1, b2 = string.byte(ch, 1), string.byte(ch, 2)
+    if b1 == 0xD0 and b2 >= 0xB0 and b2 <= 0xBF then return string.char(0xD0, b2 - 0x20) end
+    if b1 == 0xD1 and b2 >= 0x80 and b2 <= 0x8F then return string.char(0xD0, b2 + 0x20) end
+    if b1 == 0xD1 and b2 == 0x91 then return string.char(0xD0, 0x81) end
+    return ch
+end
+
+function CH.LowerChar(ch)
+    ch = tostring(ch or "")
+    if #ch == 1 then return string.lower(ch) end
+    if #ch ~= 2 then return ch end
+    local b1, b2 = string.byte(ch, 1), string.byte(ch, 2)
+    if b1 == 0xD0 and b2 >= 0x90 and b2 <= 0x9F then return string.char(0xD0, b2 + 0x20) end
+    if b1 == 0xD0 and b2 >= 0xA0 and b2 <= 0xAF then return string.char(0xD1, b2 - 0x20) end
+    if b1 == 0xD0 and b2 == 0x81 then return string.char(0xD1, 0x91) end
+    return ch
+end
+
+function CH.Lower(s)
+    local out = {}
+    for i, ch in ipairs(CH.Chars(s)) do out[i] = CH.LowerChar(ch) end
+    return table.concat(out)
+end
+
+--- Ключ имени для сравнения: регистр, Ё/ё и дефисы значения не имеют,
+--  чтобы «Мария Готтен-Фон-Штоцкая» и «мария готтен фон штоцкая» считались
+--  одним и тем же именем.
+function CH.NameKey(s)
+    local out = {}
+    for _, ch in ipairs(CH.Chars(s)) do
+        local c = CH.LowerChar(ch)
+        if c == "ё" or c == string.char(0xD1, 0x91) then c = string.char(0xD0, 0xB5) end
+        if c == "-" or c == "'" or c == " " then c = " " end
+        out[#out + 1] = c
+    end
+    local key = table.concat(out)
+    key = string.gsub(key, "%s+", " ")
+    return (string.gsub(key, "^%s*(.-)%s*$", "%1"))
+end
+
+--- Проверка и приведение РП-имени. Возвращает имя либо nil + причину.
 function CH.ValidateName(raw)
     local s = string.Trim(tostring(raw or ""))
     s = string.gsub(s, "%s+", " ")
-    if #s < CH.NameMin then return nil, "Имя короче " .. CH.NameMin .. " символов" end
-    if #s > CH.NameMax then s = string.sub(s, 1, CH.NameMax) end
-    return s
+    local chars = CH.Chars(s)
+
+    if #chars < CH.NameMin then
+        return nil, "Имя короче " .. CH.NameMin .. " символов"
+    end
+    if #chars > CH.NameMax then
+        return nil, "Имя длиннее " .. CH.NameMax .. " символов"
+    end
+
+    local sep = { [" "] = true, ["-"] = true, ["'"] = true }
+    local prevSep, same, prevLower = false, 1, nil
+    for i, ch in ipairs(chars) do
+        if not (CH.IsLetter(ch) or sep[ch]) then
+            return nil, "В имени разрешены только буквы, пробел, дефис и апостроф (без цифр, эмодзи и символов)"
+        end
+        if sep[ch] then
+            if i == 1 or i == #chars then return nil, "Имя не может начинаться или заканчиваться разделителем" end
+            if prevSep then return nil, "Два разделителя подряд" end
+            prevSep, same, prevLower = true, 1, nil
+        else
+            prevSep = false
+            local low = CH.LowerChar(ch)
+            if low == prevLower then
+                same = same + 1
+                if same >= 4 then return nil, "Слишком много одинаковых букв подряд" end
+            else
+                same, prevLower = 1, low
+            end
+        end
+    end
+
+    -- слова и части через дефис
+    local words, cur = {}, {}
+    for _, ch in ipairs(chars) do
+        if ch == " " then
+            if #cur > 0 then words[#words + 1] = table.concat(cur) cur = {} end
+        else
+            cur[#cur + 1] = ch
+        end
+    end
+    if #cur > 0 then words[#words + 1] = table.concat(cur) end
+
+    if #words < CH.NameWordsMin then
+        return nil, "Укажите имя и фамилию (минимум два слова)"
+    end
+    if #words > CH.NameWordsMax then
+        return nil, "Слишком много слов в имени (максимум " .. CH.NameWordsMax .. ")"
+    end
+
+    local rebuilt = {}
+    for wi, word in ipairs(words) do
+        -- слово делится дефисами на части; апостроф живёт ВНУТРИ части
+        -- («О'Брайен» — одна часть, «Готтен-Фон-Штоцкая» — три).
+        local parts, buf = {}, {}
+        for _, ch in ipairs(CH.Chars(word)) do
+            if ch == "-" then
+                parts[#parts + 1] = table.concat(buf)
+                buf = {}
+            else
+                buf[#buf + 1] = ch
+            end
+        end
+        parts[#parts + 1] = table.concat(buf)
+        if #parts > 3 then return nil, "Слишком много частей в слове «" .. word .. "»" end
+
+        local outParts = {}
+        for pi, part in ipairs(parts) do
+            local pc = CH.Chars(part)
+            if pc[1] == "'" or pc[#pc] == "'" then
+                return nil, "Апостроф должен стоять внутри слова"
+            end
+            local letters = 0
+            for _, ch in ipairs(pc) do if CH.IsLetter(ch) then letters = letters + 1 end end
+            if letters < CH.NamePartMin then
+                return nil, "Каждая часть имени — минимум " .. CH.NamePartMin .. " буквы"
+            end
+            if #pc > CH.NamePartMax then
+                return nil, "Слишком длинная часть имени (максимум " .. CH.NamePartMax .. ")"
+            end
+            pc[1] = CH.UpperChar(pc[1])
+            for i = 2, #pc do
+                if pc[i - 1] == "'" then pc[i] = CH.UpperChar(pc[i]) end
+            end
+            outParts[pi] = table.concat(pc)
+        end
+        rebuilt[wi] = table.concat(outParts, "-")
+    end
+
+    return table.concat(rebuilt, " ")
 end
 
 function CH.GetName(plyOrSid64)
@@ -282,13 +462,68 @@ if SERVER then
         return true
     end
 
+    -- ── УНИКАЛЬНОСТЬ РП-ИМЁН ────────────────────────────────────────
+    --[[ Два «Александра Фон Грённера» на сервере — это готовый абуз:
+         подставить чужое имя и делать что угодно от его лица. Поэтому
+         имя занимает тот, кто зарегистрировал его первым; сравнение
+         идёт по ключу (регистр, Ё/ё и дефисы не спасают). ]]
+    local cvUnique = CreateConVar("grm_name_unique", "1", FCVAR_ARCHIVE,
+        "1 — запретить двум персонажам одинаковые РП-имена")
+
+    function CH.UniqueNames() return cvUnique:GetBool() end
+
+    --- Кто уже носит это имя. Возвращает sid64, слот и само имя.
+    function CH.FindNameOwner(name, exceptSid, exceptSlot)
+        local key = CH.NameKey(name)
+        if key == "" then return nil end
+        for sid, rec in pairs(CH.Data or {}) do
+            if istable(rec) then
+                if istable(rec.slots) then
+                    for slot, c in pairs(rec.slots) do
+                        if istable(c) and CH.NameKey(c.name or "") == key
+                            and not (sid == exceptSid and slot == exceptSlot) then
+                            return sid, slot, tostring(c.name or "")
+                        end
+                    end
+                elseif rec.name and CH.NameKey(rec.name) == key and sid ~= exceptSid then
+                    return sid, "char1", tostring(rec.name)
+                end
+            end
+        end
+        return nil
+    end
+
+    concommand.Add("grm_name_owner", function(ply, _, args)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        local q = table.concat(args or {}, " ")
+        local function say(t) if IsValid(ply) then ply:ChatPrint(t) else print(t) end end
+        local clean, err = CH.ValidateName(q)
+        if not clean then say("[Персонаж] " .. tostring(err)) return end
+        local sid, slot, nm = CH.FindNameOwner(clean)
+        if sid then
+            say(("[Персонаж] «%s» занято: %s (%s)"):format(nm, sid, slot))
+        else
+            say(("[Персонаж] «%s» свободно"):format(clean))
+        end
+    end)
+
     function CH.SetName(ply, name, slot)
-        name = CH.ValidateName(name)
-        if not name then return false, "Некорректное имя" end
+        local clean, err = CH.ValidateName(name)
+        if not clean then return false, tostring(err or "Некорректное имя") end
+        local mySid = sid64(ply)
+        local mySlot = tostring(slot or activeSlot(ply))
+        if not mySlot:match("^char[123]$") then mySlot = activeSlot(ply) end
+        if CH.UniqueNames() then
+            local ownerSid, ownerSlot, ownerName = CH.FindNameOwner(clean, mySid, mySlot)
+            if ownerSid then
+                return false, ("Имя «%s» уже занято другим персонажем — придумайте другое."):format(
+                    tostring(ownerName or clean))
+            end
+        end
         local c = ensureChar(ply, slot)
-        c.name = name
+        c.name = clean
         c.updated = os.time()
-        ply:SetNWString("GRM_RPName", name)
+        ply:SetNWString("GRM_RPName", clean)
         saveChars("setname")
         return true
     end
@@ -637,10 +872,15 @@ if SERVER then
         end
         local wasNew = CH.Get(ply) == nil
 
+        -- Имя принято сервером? Если нет (эмодзи, одно слово, занято другим) —
+        -- меню НЕ закрываем, иначе персонаж остаётся без имени.
+        local nameOK = d.name == nil
         if d.name ~= nil then
             local ok, err = CH.SetName(ply, d.name, d.slot)
+            nameOK = ok == true
             if not ok then
                 if GRM.Notify then GRM.Notify(ply, tostring(err), 255, 100, 100) end
+                ply:PrintMessage(HUD_PRINTTALK, "[Персонаж] " .. tostring(err))
             end
         end
 
@@ -671,7 +911,7 @@ if SERVER then
             if ok and GRM.Notify then GRM.Notify(ply, "Внешность персонажа сохранена.", 100, 220, 100) end
         end
 
-        if CH.Get(ply) ~= nil and isstring(d.name) and CH.ValidateName(d.name) then
+        if CH.Get(ply) ~= nil and isstring(d.name) and nameOK then
             setCharacterLock(ply, false)
             if wasNew then
                 hook.Run("GRM_CharacterChanged", ply, nil, CH.GetActiveKey(ply))
@@ -688,7 +928,7 @@ if SERVER then
             end
         end
 
-        if CH.Get(ply) ~= nil and (not d.name or CH.ValidateName(d.name)) then
+        if CH.Get(ply) ~= nil and nameOK then
             timer.Simple(0.05, function() if IsValid(ply) then closeMenu(ply) end end)
         else
             sendMenu(ply)
@@ -886,8 +1126,8 @@ if CLIENT then
         idHint:SetPos(14, 96) idHint:SetSize(left:GetWide() - 28, 20) idHint:SetFont("GRMChar_Small") idHint:SetTextColor(C.dim)
         idHint:SetText("CharacterID: " .. tostring(payload.characterID or "будет создан"))
         local function updHint()
-            local n = CH.ValidateName(draft.name)
-            nameHint:SetText(n and ("✓ «" .. n .. "»") or ("Имя: минимум " .. (payload.nameMin or 3) .. " символа"))
+            local n, err = CH.ValidateName(draft.name)
+            nameHint:SetText(n and ("✓ «" .. n .. "»") or tostring(err or "Имя и фамилия, только буквы"))
             nameHint:SetTextColor(n and C.green or C.red)
         end
         nameEntry.OnChange = function() draft.name = nameEntry:GetValue() updHint() end
@@ -1121,9 +1361,10 @@ if CLIENT then
 
         -- ── Действия ─────────────────────────────────────────────────────
         local function submitCharacter()
-            local nm = CH.ValidateName(draft.name)
+            local nm, nmErr = CH.ValidateName(draft.name)
             if not nm then
-                Derma_Message("Укажите игровое имя (мин. " .. (payload.nameMin or 3) .. " символа).", "Персонаж", "Ок")
+                Derma_Message(tostring(nmErr or "Укажите игровое имя.") ..
+                    "\nПример: Александр Фон Грённер, Мария Готтен-Фон-Штоцкая.", "Персонаж", "Ок")
                 return
             end
             if CH._actionPending then return end;CH._actionPending=true;CH._actionKind="save"

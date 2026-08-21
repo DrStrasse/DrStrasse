@@ -32,7 +32,14 @@ hook = {
     Remove = function() end,
     Run = function(e, ...) for _, fn in pairs(HOOKS[e] or {}) do local r = fn(...) if r ~= nil then return r end end end,
 }
-timer = { Simple = function(_, fn) if fn then fn() end end, Create = function() end, Remove = function() end }
+local TIMERS = {}
+timer = {
+    Simple = function(_, fn) if fn then fn() end end,
+    Create = function(n, d, r, fn) TIMERS[n] = fn end,
+    Exists = function(n) return TIMERS[n] ~= nil end,
+    Remove = function(n) TIMERS[n] = nil end,
+}
+local function tick() if TIMERS["GRM_PropGuard_Pending"] then TIMERS["GRM_PropGuard_Pending"]() end end
 local CMDS = {}
 concommand = { Add = function(n, fn) CMDS[n] = fn end }
 util = { AddNetworkString = function() end }
@@ -48,7 +55,14 @@ function CreateConVar(name, def)
 end
 local PLAYERS = {}
 player = { GetAll = function() return PLAYERS end }
-ents = { FindByClass = function() return {} end, Create = function() return { _valid = false } end }
+MOVETYPE_NOCLIP = 8
+MOVETYPE_WALK = 2
+ents = {
+    FindByClass = function() return {} end,
+    Create = function() return { _valid = false } end,
+    -- в игре это ents.FindInBox: отдаём всех, дальше решает сам модуль
+    FindInBox = function() return PLAYERS end,
+}
 
 local NOTIFY = {}
 GRM = {
@@ -61,12 +75,20 @@ assert(loadfile("lua/autorun/sh_grm_prop_guard.lua"))()
 local PG = GRM.PropGuard
 
 local function mkPly(nick, super)
-    local p = { _valid = true, chat = "" }
+    local p = { _valid = true, chat = "", _min = { x = 900, y = 900, z = 0 }, _max = { x = 916, y = 916, z = 72 },
+                _move = MOVETYPE_WALK, _alive = true }
     function p:IsPlayer() return true end
     function p:IsSuperAdmin() return super == true end
     function p:Nick() return nick end
     function p:SteamID64() return nick end
     function p:ChatPrint(t) self.chat = self.chat .. t .. "\n" end
+    function p:WorldSpaceAABB() return self._min, self._max end
+    function p:GetMoveType() return self._move end
+    function p:Alive() return self._alive end
+    function p:MoveTo(x, y)
+        self._min = { x = x, y = y, z = 0 }
+        self._max = { x = x + 16, y = y + 16, z = 72 }
+    end
     PLAYERS[#PLAYERS + 1] = p
     return p
 end
@@ -84,6 +106,7 @@ local function mkProp()
     function e:SetNWBool(k, v) self._nw[k] = v end
     function e:GetNWBool(k, d) local v = self._nw[k] if v == nil then return d end return v end
     function e:GetPos() return Vector(0, 0, 0) end
+    function e:WorldSpaceAABB() return { x = -20, y = -20, z = 0 }, { x = 20, y = 20, z = 40 } end
     function e:GetPhysicsObject()
         self._phys = self._phys or {
             _valid = true, _move = true,
@@ -191,6 +214,72 @@ local stranger = mkPly("Чужой")
 PG.Block(builder, 60)
 CMDS["grm_prop_unblock"](stranger, nil, { "Строитель" })
 ok(select(1, PG.IsBlocked(builder)) == true, "обычный игрок блокировку не снимает")
+
+print("\n=== 10. ЗОНА ПОСТАНОВКИ: ЧУЖОЙ ИГРОК ДЕРЖИТ ПРОП ПРИЗРАКОМ ===")
+ok(isfunction(PG.BoxesOverlap) and isfunction(PG.ZoneBlockers), "чистые функции зоны объявлены")
+local aMin, aMax = { x = 0, y = 0, z = 0 }, { x = 10, y = 10, z = 10 }
+ok(PG.BoxesOverlap(aMin, aMax, { x = 5, y = 5, z = 5 }, { x = 20, y = 20, z = 20 }, 0) == true,
+   "пересекающиеся коробки видны")
+ok(PG.BoxesOverlap(aMin, aMax, { x = 12, y = 0, z = 0 }, { x = 20, y = 10, z = 10 }, 0) == false,
+   "разнесённые коробки не пересекаются")
+ok(PG.BoxesOverlap(aMin, aMax, { x = 12, y = 0, z = 0 }, { x = 20, y = 10, z = 10 }, 4) == true,
+   "запас margin расширяет зону")
+local actors = {
+    { id = "a", name = "Гость", mins = { x = 5, y = 5, z = 0 }, maxs = { x = 21, y = 21, z = 72 } },
+    { id = "b", name = "Летун", mins = { x = 5, y = 5, z = 0 }, maxs = { x = 21, y = 21, z = 72 }, ignore = true },
+    { id = "c", name = "Далёкий", mins = { x = 500, y = 500, z = 0 }, maxs = { x = 516, y = 516, z = 72 } },
+}
+local blockers = PG.ZoneBlockers(aMin, aMax, actors, 0, nil)
+ok(#blockers == 1 and blockers[1] == "Гость", "в зоне только один мешающий", table.concat(blockers, ","))
+ok(#PG.ZoneBlockers(aMin, aMax, actors, 0, "a") == 0, "себя самого зона не считает")
+
+local victim = mkPly("Жертва")
+victim:MoveTo(0, 0)                      -- встал ровно в проп
+local zoneProp = mkProp()
+HOOKS["PlayerSpawnedProp"]["GRM_PropGuard_Ghost"](builder, "models/props/x.mdl", zoneProp)
+ok(zoneProp.GRMGhost == true, "новый проп — призрак")
+NOTIFY = {}
+HOOKS["PhysgunFreeze"]["GRM_PropGuard_Freeze"](nil, zoneProp:GetPhysicsObject(), zoneProp, builder)
+ok(zoneProp.GRMGhost == true, "в зоне чужой игрок — проп остался призраком")
+ok(zoneProp:GetCollisionGroup() == COLLISION_GROUP_WORLD, "коллизию не вернули")
+ok(zoneProp:GetNWBool("GRM_PropGhostWait", false) == true, "клиенту видно, что проп ждёт")
+ok(table.concat(NOTIFY, " "):find("Жертва", 1, true) ~= nil, "хозяину назвали, кто мешает", NOTIFY[1])
+ok(timer.Exists("GRM_PropGuard_Pending"), "сторож ожидания запущен")
+
+tick()
+ok(zoneProp.GRMGhost == true, "пока игрок стоит внутри — ничего не меняется")
+
+victim:MoveTo(800, 800)                  -- отошёл
+NOTIFY = {}
+tick()
+ok(zoneProp.GRMGhost == nil, "зона освободилась — проп встал сам")
+ok(zoneProp:GetCollisionGroup() == COLLISION_GROUP_NONE, "коллизия вернулась")
+ok(zoneProp:GetNWBool("GRM_PropGhostWait", true) == false, "признак ожидания снят")
+ok(table.concat(NOTIFY, " "):find("освободилась", 1, true) ~= nil, "игроку сказали, что проп закреплён")
+ok(timer.Exists("GRM_PropGuard_Pending") == false, "сторож выключился, когда очередь пуста")
+
+victim:MoveTo(0, 0)
+local mine = mkProp()
+HOOKS["PlayerSpawnedProp"]["GRM_PropGuard_Ghost"](victim, "models/props/x.mdl", mine)
+HOOKS["PhysgunFreeze"]["GRM_PropGuard_Freeze"](nil, mine:GetPhysicsObject(), mine, victim)
+ok(mine.GRMGhost == nil, "сам себе игрок ставить не мешает")
+
+victim:MoveTo(0, 0)
+victim._move = MOVETYPE_NOCLIP
+local noclipProp = mkProp()
+HOOKS["PlayerSpawnedProp"]["GRM_PropGuard_Ghost"](builder, "models/props/x.mdl", noclipProp)
+HOOKS["PhysgunFreeze"]["GRM_PropGuard_Freeze"](nil, noclipProp:GetPhysicsObject(), noclipProp, builder)
+ok(noclipProp.GRMGhost == nil, "игрок в ноклипе постановке не мешает")
+victim._move = MOVETYPE_WALK
+
+CONVARS["grm_prop_zone_guard"]:SetValue("0")
+victim:MoveTo(0, 0)
+local offProp = mkProp()
+HOOKS["PlayerSpawnedProp"]["GRM_PropGuard_Ghost"](builder, "models/props/x.mdl", offProp)
+HOOKS["PhysgunFreeze"]["GRM_PropGuard_Freeze"](nil, offProp:GetPhysicsObject(), offProp, builder)
+ok(offProp.GRMGhost == nil, "сторож зоны выключается конваром")
+CONVARS["grm_prop_zone_guard"]:SetValue("1")
+victim:MoveTo(900, 900)
 
 print(("\nPROP GUARD: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

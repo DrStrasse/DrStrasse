@@ -72,10 +72,11 @@ ok(has(buyerC, "ИНСТРУМЕНТ ДОБЫЧИ") and has(buyerC, "ПОЛУЧ�
     "раздел инструмента с выдачей и сдачей")
 ok(has(buyerC, "ПРОДАТЬ ВСЁ"), "кнопка «продать всё»")
 ok(has(buyerC, "Залог: "), "видно размер залога")
-ok(has(buyerC, "cam.Start3D2D"), "вывеска скупщика 3D2D вместо плоского HUD-прямоугольника")
+ok(has(buyerC, "GRM.Sign.Draw") and has(buyerC, "function ENT:DrawTranslucent"),
+   "вывеска скупщика — общий слой GRM.Sign, один проход за кадр")
 ok(not has(buyerC, 'hook.Add("HUDPaint", "GRM_OreBuyerLabel"'), "перебор всех скупщиков каждый кадр убран")
-ok(has(vendC, "cam.Start3D2D") and not has(vendC, 'hook.Add("HUDPaint", "GRM_VendorLabel"'),
-    "вывеска торгашей тоже переведена на 3D2D в стиле GRM")
+ok(has(vendC, "GRM.Sign.Draw") and not has(vendC, 'hook.Add("HUDPaint", "GRM_VendorLabel"'),
+    "вывеска торгашей тоже идёт через GRM.Sign")
 
 print("\n=== 5. ЧИСТОТА КОДА ===")
 local sellHandlers = 0

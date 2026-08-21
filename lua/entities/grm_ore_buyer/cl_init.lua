@@ -49,25 +49,22 @@ end
 -----------------------------------------------------------------------
 -- ТАБЛИЧКА НАД СКУПЩИКОМ (3D2D вместо плоского HUD-прямоугольника)
 -----------------------------------------------------------------------
+--[[ Как и у торгаша: RenderGroup = BOTH вызывал Draw дважды за кадр,
+     второй проход клал подложку поверх текста — заголовок «пропадал».
+     Теперь вывеска идёт одним проходом через общий слой GRM.Sign. ]]
 function ENT:Draw()
     self:DrawModel()
+end
 
-    local lp = LocalPlayer()
-    if not IsValid(lp) then return end
-    local dist = lp:GetPos():DistToSqr(self:GetPos())
-    if dist > 400 * 400 then return end
-
-    local ang = Angle(0, (lp:EyeAngles().y + 90) % 360, 90)
-    cam.Start3D2D(self:GetPos() + Vector(0, 0, 82), ang, 0.16)
-        draw.RoundedBox(8, -180, -46, 360, 84, Color(12, 17, 25, 235))
-        draw.RoundedBox(8, -180, -46, 360, 6, C.gold)
-        draw.SimpleText("СКУПЩИК РУДЫ", "GRMOre_Sign", 0, -24, C.gold, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-        draw.SimpleText(self:GetNWString("GRMOreBuyerName", "Приём руды • выдача бура"), "GRMOre_Head", 0, 4,
-            C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-        if dist < 220 * 220 then
-            draw.SimpleText("E — открыть", "GRMOre_Body", 0, 24, Color(120, 205, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-        end
-    cam.End3D2D()
+function ENT:DrawTranslucent()
+    if not GRM.Sign then return end
+    GRM.Sign.Draw(self, {
+        title    = "СКУПЩИК РУДЫ",
+        subtitle = self:GetNWString("GRMOreBuyerName", "Приём руды • выдача бура"),
+        hint     = "E — открыть",
+        accent   = C.gold,
+        height   = 82,
+    })
 end
 
 -----------------------------------------------------------------------

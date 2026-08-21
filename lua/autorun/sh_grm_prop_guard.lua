@@ -60,6 +60,46 @@ function PG.BlockLeft(blockedUntil, now)
     return math.ceil(left)
 end
 
+-----------------------------------------------------------------------
+-- ЧИСТАЯ ЛОГИКА ЗОНЫ ПОСТАНОВКИ (гоняется в стенде без игры)
+--
+-- Пока в габаритах пропа стоит другой игрок, проп НЕ имеет права стать
+-- твёрдым: иначе им давят, выталкивают сквозь стены и запирают.
+-- Коробки — обычные таблицы {x=,y=,z=}, чтобы логику можно было
+-- проверить стендом, а не только в игре.
+-----------------------------------------------------------------------
+
+--- Пересекаются ли два AABB с запасом margin по каждой оси.
+function PG.BoxesOverlap(aMin, aMax, bMin, bMax, margin)
+    if not (istable(aMin) and istable(aMax) and istable(bMin) and istable(bMax)) then return false end
+    margin = tonumber(margin) or 0
+    for _, ax in ipairs({ "x", "y", "z" }) do
+        local a1, a2 = (tonumber(aMin[ax]) or 0) - margin, (tonumber(aMax[ax]) or 0) + margin
+        local b1, b2 = tonumber(bMin[ax]) or 0, tonumber(bMax[ax]) or 0
+        if a1 > b2 or b1 > a2 then return false end
+    end
+    return true
+end
+
+--- Кто мешает пропу застыть.
+--  actors — список { id=, name=, mins=, maxs=, ignore=bool }.
+--  Возвращает список имён (пустой = зона свободна).
+function PG.ZoneBlockers(mins, maxs, actors, margin, ignoreID)
+    local names = {}
+    for _, a in ipairs(istable(actors) and actors or {}) do
+        local skip = a.ignore == true or (ignoreID ~= nil and a.id == ignoreID)
+        if not skip and PG.BoxesOverlap(mins, maxs, a.mins, a.maxs, margin) then
+            names[#names + 1] = tostring(a.name or a.id or "?")
+        end
+    end
+    return names
+end
+
+--- Свободна ли зона (обёртка над ZoneBlockers для читаемости).
+function PG.ZoneFree(mins, maxs, actors, margin, ignoreID)
+    return #PG.ZoneBlockers(mins, maxs, actors, margin, ignoreID) == 0
+end
+
 if SERVER then
 
     local cvGhost = CreateConVar("grm_prop_ghost", "1", FCVAR_ARCHIVE,
@@ -74,6 +114,10 @@ if SERVER then
         "На сколько секунд закрывается спавн после спама")
     local cvAdmins = CreateConVar("grm_prop_spam_admins", "0", FCVAR_ARCHIVE,
         "1 — защита от спама действует и на суперадминов")
+    local cvZone = CreateConVar("grm_prop_zone_guard", "1", FCVAR_ARCHIVE,
+        "Не давать пропу коллизию, пока в его габаритах стоит другой игрок")
+    local cvZoneMargin = CreateConVar("grm_prop_zone_margin", "6", FCVAR_ARCHIVE,
+        "Запас вокруг габаритов пропа при проверке зоны (юниты)")
 
     PG.Times = PG.Times or {}      -- ply -> массив времён спавна
     PG.Blocked = PG.Blocked or {}  -- ply -> до какого времени закрыт спавн
@@ -156,12 +200,23 @@ if SERVER then
         local phys = ent:GetPhysicsObject()
         if IsValid(phys) then phys:EnableMotion(false) end
         ent:SetNWBool("GRM_PropGhost", true)
+        if PG.Unpend then PG.Unpend(ent) end
         return true
     end
 
     --- Вернуть пропу физику и коллизию (после заморозки физганом).
-    function PG.Materialize(ent, ply)
+    --  Пока в габаритах пропа стоит другой игрок — переход откладывается:
+    --  проп остаётся призраком и встаёт сам, как только зона освободится.
+    function PG.Materialize(ent, ply, force)
         if not IsValid(ent) or not ent.GRMGhost then return false end
+        if force ~= true then
+            local busy, who = PG.ZoneBusy(ent, ply)
+            if busy then
+                PG.Pend(ent, ply, who)
+                return false, "zone"
+            end
+        end
+        PG.Unpend(ent)
         ent.GRMGhost = nil
         ent:SetCollisionGroup(ent.GRMGhostGroup or COLLISION_GROUP_NONE)
         ent:SetRenderMode(RENDERMODE_NORMAL)
@@ -173,6 +228,118 @@ if SERVER then
         if IsValid(phys) then phys:Wake() end
         hook.Run("GRM_PropMaterialized", ent, ply)
         return true
+    end
+
+    -- ── ЗОНА ПОСТАНОВКИ ─────────────────────────────────────────────
+    --[[ Абуз, который закрываем: игрок ставит проп прямо в другого
+         игрока и замораживает — тот получает коллизию в лицо, его
+         выталкивает, запирает или убивает. Поэтому переход «призрак →
+         твёрдый» разрешён только по свободной зоне. ]]
+
+    function PG.ZoneMargin() return math.Clamp(cvZoneMargin:GetInt(), 0, 64) end
+
+    --- Игроки в габаритах пропа (кроме самого хозяина и тех, кто в ноклипе:
+    --  им коллизия не мешает и абузить ей нельзя).
+    function PG.ActorsAround(ent, margin)
+        local out = {}
+        if not IsValid(ent) then return out end
+        local mins, maxs = ent:WorldSpaceAABB()
+        margin = margin or PG.ZoneMargin()
+        local lo = Vector(mins.x - margin - 32, mins.y - margin - 32, mins.z - margin - 32)
+        local hi = Vector(maxs.x + margin + 32, maxs.y + margin + 32, maxs.z + margin + 32)
+        for _, e in ipairs(ents.FindInBox(lo, hi) or {}) do
+            if IsValid(e) and e:IsPlayer() then
+                local pmin, pmax = e:WorldSpaceAABB()
+                out[#out + 1] = {
+                    id = e,
+                    name = e:Nick(),
+                    mins = { x = pmin.x, y = pmin.y, z = pmin.z },
+                    maxs = { x = pmax.x, y = pmax.y, z = pmax.z },
+                    ignore = (e:GetMoveType() == MOVETYPE_NOCLIP) or not e:Alive(),
+                }
+            end
+        end
+        return out
+    end
+
+    --- Занята ли зона пропа. Возвращает: занята ли, список ников.
+    function PG.ZoneBusy(ent, ignorePly)
+        if not cvZone:GetBool() then return false, {} end
+        if not IsValid(ent) then return false, {} end
+        local margin = PG.ZoneMargin()
+        local mins, maxs = ent:WorldSpaceAABB()
+        local box1 = { x = mins.x, y = mins.y, z = mins.z }
+        local box2 = { x = maxs.x, y = maxs.y, z = maxs.z }
+        local who = PG.ZoneBlockers(box1, box2, PG.ActorsAround(ent, margin), margin,
+            IsValid(ignorePly) and ignorePly or nil)
+        return #who > 0, who
+    end
+
+    PG.Pending = PG.Pending or {}   -- ent -> { ply = , told = , since = }
+
+    local function pendingTick()
+        local alive = 0
+        for ent, info in pairs(PG.Pending) do
+            if not IsValid(ent) or not ent.GRMGhost then
+                PG.Pending[ent] = nil
+            else
+                local phys = ent:GetPhysicsObject()
+                local held = IsValid(phys) and phys:IsMoveable()
+                if held then
+                    -- игрок снова взял проп физганом: ждать нечего
+                    PG.Pending[ent] = nil
+                    ent:SetNWBool("GRM_PropGhostWait", false)
+                else
+                    local busy, who = PG.ZoneBusy(ent, info.ply)
+                    if not busy then
+                        PG.Materialize(ent, info.ply, true)
+                        if IsValid(info.ply) then
+                            notify(info.ply, "Зона освободилась — проп закреплён.", true)
+                        end
+                    else
+                        alive = alive + 1
+                        if CurTime() - (info.told or 0) > 5 then
+                            info.told = CurTime()
+                            if IsValid(info.ply) then
+                                notify(info.ply, ("В зоне пропа игрок: %s. Проп станет твёрдым, когда зона освободится.")
+                                    :format(table.concat(who, ", ")))
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        if alive == 0 and table.Count(PG.Pending) == 0 then
+            timer.Remove("GRM_PropGuard_Pending")
+        end
+    end
+
+    --- Поставить проп в очередь ожидания свободной зоны.
+    function PG.Pend(ent, ply, who)
+        if not IsValid(ent) then return end
+        local first = PG.Pending[ent] == nil
+        PG.Pending[ent] = PG.Pending[ent] or { since = CurTime(), told = 0 }
+        PG.Pending[ent].ply = IsValid(ply) and ply or PG.Pending[ent].ply
+        ent:SetNWBool("GRM_PropGhostWait", true)
+        if first then
+            PG.Pending[ent].told = CurTime()
+            if IsValid(ply) then
+                notify(ply, ("Зона пропа занята (%s) — он останется призраком, пока она не освободится.")
+                    :format(table.concat(who or {}, ", ")))
+            end
+            hook.Run("GRM_PropZoneBusy", ent, ply, who or {})
+        end
+        if not timer.Exists("GRM_PropGuard_Pending") then
+            timer.Create("GRM_PropGuard_Pending", 0.5, 0, pendingTick)
+        end
+    end
+
+    function PG.Unpend(ent)
+        if not IsValid(ent) then return end
+        if PG.Pending[ent] then
+            PG.Pending[ent] = nil
+            ent:SetNWBool("GRM_PropGhostWait", false)
+        end
     end
 
     -- новый проп — сразу призрак
@@ -230,6 +397,10 @@ if SERVER then
         PG.Times[ply], PG.Blocked[ply] = nil, nil
     end)
 
+    hook.Add("EntityRemoved", "GRM_PropGuard_Pending", function(ent)
+        if PG.Pending and PG.Pending[ent] then PG.Pending[ent] = nil end
+    end)
+
     -- ── команды ─────────────────────────────────────────────────────
     concommand.Add("grm_prop_unblock", function(ply, _, args)
         if IsValid(ply) and not ply:IsSuperAdmin() then return end
@@ -250,6 +421,8 @@ if SERVER then
         local function say(t) if IsValid(ply) then ply:ChatPrint(t) else print(t) end end
         say(("[Пропы] лимит %d за %d c, блокировка %d c, призрак %s"):format(
             PG.Limit(), PG.Window(), PG.BlockTime(), PG.GhostEnabled() and "вкл" or "выкл"))
+        say(("[Пропы] сторож зоны %s, запас %d юнитов, ждут освобождения: %d"):format(
+            cvZone:GetBool() and "вкл" or "выкл", PG.ZoneMargin(), table.Count(PG.Pending or {})))
         for _, target in ipairs(player.GetAll()) do
             local blocked, left = PG.IsBlocked(target)
             local recent = #PG.Trim(PG.Times[target] or {}, CurTime(), PG.Window())
@@ -289,10 +462,15 @@ if CLIENT then
         ang:RotateAroundAxis(ang:Right(), -90)
         ang:RotateAroundAxis(ang:Up(), -90)
 
+        local waiting = ent:GetNWBool("GRM_PropGhostWait", false)
+        local text = waiting and "ЗОНА ЗАНЯТА — ОТОЙДИТЕ, ПРОП ВСТАНЕТ САМ"
+            or "ПРИЗРАК — ЗАМОРОЗЬТЕ ФИЗГАНОМ (ПКМ)"
+        local col = waiting and Color(255, 120, 110) or Color(255, 205, 120)
+
         cam.Start3D2D(ent:GetPos() + Vector(0, 0, 18), ang, 0.1)
-            draw.RoundedBox(6, -190, -20, 380, 40, Color(12, 16, 24, 225))
-            draw.SimpleText("ПРИЗРАК — ЗАМОРОЗЬТЕ ФИЗГАНОМ (ПКМ)", "GRMPropGuard_Hint", 0, 0,
-                Color(255, 205, 120), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            draw.RoundedBox(6, -230, -20, 460, 40, Color(12, 16, 24, 225))
+            draw.SimpleText(text, "GRMPropGuard_Hint", 0, 0,
+                col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         cam.End3D2D()
     end)
 end

@@ -6,8 +6,11 @@ ok(perf:find("function P.Entities",1,true)and perf:find("GRM_Perf_EntityCreated"
 ok(perf:find("if not b.dirty then return b.array",1,true),"entity arrays are reused until an event invalidates cache")
 ok(perf:find("function P.NWString",1,true)and perf:find("function P.NWInt",1,true),"change-only NW helpers exist")
 -- 19.08: вывески торгашей и скупщика переехали из HUDPaint (перебор ВСЕХ
--- сущностей каждый кадр) в ENT:Draw с 3D2D — рисуются только когда NPC в кадре.
-ok(vendor:find("cam.Start3D2D",1,true)and ore:find("cam.Start3D2D",1,true)
+-- сущностей каждый кадр) в отрисовку самого энтити — только когда NPC в кадре.
+-- 21.08: рисование ушло в общий слой GRM.Sign и в прозрачный проход
+-- (ENT:DrawTranslucent), иначе RENDERGROUP_BOTH рисовал вывеску дважды.
+ok(vendor:find("GRM.Sign.Draw",1,true)and ore:find("GRM.Sign.Draw",1,true)
+    and vendor:find("function ENT:DrawTranslucent",1,true)and ore:find("function ENT:DrawTranslucent",1,true)
     and not vendor:find('hook.Add("HUDPaint"',1,true)and not ore:find('hook.Add("HUDPaint"',1,true),
     "vendor world labels draw per-entity instead of scanning every frame")
 ok(factoryUI:find('GRM.Perf.Entities("grm_fc_scrap_bin")',1,true)and logisticsUI:find('GRM.Perf.Entities("grm_logistics_crate")',1,true),"factory/logistics render labels use registries")
