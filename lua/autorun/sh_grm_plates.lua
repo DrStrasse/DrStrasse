@@ -1490,29 +1490,21 @@ if CLIENT then
         local lp = LocalPlayer()
         if not IsValid(lp) or not lp:Alive() then return end
 
+        --[[ Плашка с номером — только когда игрок смотрит НА САМ ЗНАК.
+             Раньше она появлялась при взгляде на любую машину с номером и
+             висела посреди экрана поверх всего (заказ владельца 21.08).
+             Трассировка троттлится: покадровых трейсов нет. ]]
         if CurTime() - lastTrace > 0.2 then
             lastTrace = CurTime()
             local tr = (GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(lp) or lp:GetEyeTrace()
             local ent = tr and tr.Entity or nil
-            if IsValid(ent) and ent:GetClass() == "grm_plate" then
-                lastVeh = ent
-            elseif IsValid(ent) and (ent:IsVehicle() or ent:GetNWString("GRM_PlateNumber", "") ~= "") then
-                lastVeh = ent
-            else
-                lastVeh = nil
-            end
+            lastVeh = (IsValid(ent) and ent:GetClass() == "grm_plate") and ent or nil
         end
 
         local ent = lastVeh
         if not IsValid(ent) then return end
-        local number, kind
-        if ent:GetClass() == "grm_plate" then
-            number = ent:GetNWString("GRM_Plate", "")
-            kind = ent:GetNWString("GRM_PlateType", "civil")
-        else
-            number = ent:GetNWString("GRM_PlateNumber", "")
-            kind = ent:GetNWString("GRM_PlateType", "civil")
-        end
+        local number = ent:GetNWString("GRM_Plate", "")
+        local kind = ent:GetNWString("GRM_PlateType", "civil")
         if not number or number == "" then return end
         if lp:GetPos():Distance(ent:GetPos()) > 400 then return end
 

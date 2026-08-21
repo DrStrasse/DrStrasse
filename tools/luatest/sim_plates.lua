@@ -560,6 +560,18 @@ ok(cl:find("nrm:Dot(eye - center) < 0", 1, true) ~= nil,
    "сторона выбирается по игроку — нет зеркальной изнанки")
 ok(cl:find("center + nrm * (face.half + (face.offset or 1.5))", 1, true) ~= nil,
    "надпись выносится от поверхности, а не от центра модели")
+
+-- плашка на экране показывается только при взгляде НА ЗНАК
+local core = (function()
+    local f = io.open("lua/autorun/sh_grm_plates.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+ok(core:find('lastVeh = (IsValid(ent) and ent:GetClass() == "grm_plate") and ent or nil', 1, true) ~= nil,
+   "HUD ловит только сам знак")
+ok(core:find('ent:GetNWString("GRM_PlateNumber", "")', 1, true) == nil
+   or core:find("elseif IsValid(ent) and (ent:IsVehicle()", 1, true) == nil,
+   "взгляд на машину плашку больше не показывает")
+ok(core:find("CurTime() - lastTrace > 0.2", 1, true) ~= nil, "трассировка троттлится")
 PL.RenderCommand(civ, "yaw", 90)
 ok(PL.Render.yaw ~= (before + 180) % 360, "обычный игрок настройку не крутит")
 ok(PL.SaveRender() == true and files["grm_plates/render.json"] ~= nil, "раскладка сохраняется на диск")
