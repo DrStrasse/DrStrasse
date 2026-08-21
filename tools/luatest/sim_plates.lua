@@ -519,6 +519,19 @@ otherCar:SetPos(Vector(900, 0, 0))
 local otherRec = { id = "veh_3", plates = nil }
 ok(PL.RestoreForVehicle(owner, otherCar, otherRec) == 0, "на другую машину чужой знак не встаёт")
 
+print("\n=== 15а. БАЗА НОМЕРОВ НЕ ЗАТИРАЕТСЯ ПУСТОТОЙ ===")
+-- пока файл не прочитан, запись запрещена: иначе очередь сохранит пустую
+-- таблицу поверх выданных номеров
+local keepPlates, keepLoaded = PL.Data.plates, PL._loaded
+PL._loaded = false
+PL.Data.plates = {}
+local savedWhileUnloaded = PL.SaveNow()
+ok(savedWhileUnloaded == false, "до загрузки реестр на диск не пишется")
+ok(files["grm_plates/registry.json"]:find(rec.number, 1, true) ~= nil,
+   "файл с номерами остался целым")
+PL._loaded, PL.Data.plates = keepLoaded, keepPlates
+ok(PL.SaveNow() == true, "после загрузки запись снова разрешена")
+
 print("\n=== 15. ПОДГОНКА ЗНАКА В ИГРЕ ===")
 ok(isfunction(PL.RenderCommand), "команды подгонки объявлены")
 local before = PL.Render.yaw
@@ -530,6 +543,11 @@ PL.RenderCommand(root, "flip")
 ok(PL.Render.flip == true, "зеркало переключается")
 PL.RenderCommand(root, "scale", 1.5)
 ok(math.abs(PL.Render.scale - 1.5) < 0.001, "масштаб задаётся числом")
+PL.RenderCommand(root, "offset", 3)
+ok(math.abs(PL.Render.offset - 3) < 0.001, "вынос надписи от поверхности настраивается", PL.Render.offset)
+local faceOff = PL.FaceGeometry(Vector(-12, -36, -0.5), Vector(12, 36, 0.5),
+    { axis = "auto", yaw = 0, scale = 1, offset = 3 })
+ok(math.abs(faceOff.offset - 3) < 0.001, "и попадает в геометрию грани — надпись не тонет в пропе")
 PL.RenderCommand(civ, "yaw", 90)
 ok(PL.Render.yaw ~= (before + 180) % 360, "обычный игрок настройку не крутит")
 ok(PL.SaveRender() == true and files["grm_plates/render.json"] ~= nil, "раскладка сохраняется на диск")

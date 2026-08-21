@@ -232,7 +232,7 @@ end
        scale— размер поля относительно габаритов модели.
      Настраивается прямо в игре командами /номер_поворот, /номер_ось,
      /номер_масштаб — один раз и на все знаки. ]]
-PL.Render = PL.Render or { axis = "auto", yaw = 90, flip = false, scale = 1 }
+PL.Render = PL.Render or { axis = "auto", yaw = 90, flip = false, scale = 1, offset = 1.5 }
 
 --- Геометрия лицевой стороны с учётом настроек раскладки.
 function PL.FaceGeometry(mins, maxs, render)
@@ -273,6 +273,9 @@ function PL.FaceGeometry(mins, maxs, render)
         up = unit[upAxis] * upSign,
         thin = thin, rightAxis = rightAxis, upAxis = upAxis,
         half = dims[thin] * 0.5,
+        -- насколько надпись вынесена НАРУЖУ от поверхности: при нуле она
+        -- тонет внутри пропа и её не видно (заказ владельца 21.08)
+        offset = math.Clamp(tonumber(render.offset) or 1.5, 0, 12),
         w = dims[rightAxis] * k, h = dims[upAxis] * k,
     }
 end
@@ -416,7 +419,16 @@ if SERVER then
     end
 
     -- ── хранение ────────────────────────────────────────────────────
+    --[[ ЗАЩИТА БАЗЫ ОТ ЗАТИРАНИЯ.
+         Реестр читается при старте карты, а очередь записи живёт с первой
+         секунды. Если что-то пометит реестр «грязным» ДО загрузки (сейв на
+         выключении, смена карты, любой вызов Save), на диск уйдёт ПУСТАЯ
+         таблица и все выданные номера пропадут. Поэтому и сборка, и запись
+         молчат, пока файл не прочитан. ]]
+    PL._loaded = PL._loaded or false
+
     local function buildPayload()
+        if not PL._loaded then return nil end
         local arr = {}
         for number, rec in pairs(PL.Data.plates or {}) do
             if istable(rec) then
@@ -429,6 +441,7 @@ if SERVER then
     end
 
     function PL.SaveNow()
+        if not PL._loaded then return false end
         ensureDir()
         local ok, txt = pcall(util.TableToJSON, buildPayload(), true)
         if not ok or not isstring(txt) then return false end
@@ -444,6 +457,7 @@ if SERVER then
     end
 
     function PL.Save(why)
+        if not PL._loaded then return false end
         if PL._saveRegistered and GRM.Save and GRM.Save.Mark then
             return GRM.Save.Mark("grm_plates", why or "plates")
         end
@@ -468,6 +482,7 @@ if SERVER then
         PL.Render.yaw = math.floor(tonumber(t.yaw) or 0) % 360
         PL.Render.flip = t.flip == true
         PL.Render.scale = math.Clamp(tonumber(t.scale) or 1, 0.2, 3)
+        PL.Render.offset = math.Clamp(tonumber(t.offset) or 1.5, 0, 12)
         return true
     end
 
@@ -477,6 +492,7 @@ if SERVER then
             net.WriteUInt(math.floor((tonumber(PL.Render.yaw) or 0) % 360), 9)
             net.WriteBool(PL.Render.flip == true)
             net.WriteFloat(math.Clamp(tonumber(PL.Render.scale) or 1, 0.2, 3))
+            net.WriteFloat(math.Clamp(tonumber(PL.Render.offset) or 1.5, 0, 12))
         if IsValid(ply) then net.Send(ply) else net.Broadcast() end
     end
 
@@ -487,7 +503,7 @@ if SERVER then
     function PL.Load()
         PL.LoadRender()
         PL.Data.plates = {}
-        if not file.Exists(FILE, "DATA") then return false end
+        if not file.Exists(FILE, "DATA") then PL._loaded = true return false end
         local raw = file.Read(FILE, "DATA") or ""
         local ok, t = pcall(util.JSONToTable, raw, false, true)
         if not ok or not istable(t) then return false end
@@ -501,6 +517,7 @@ if SERVER then
                 end
             end
         end
+        PL._loaded = true
         return true
     end
 
@@ -1047,6 +1064,10 @@ if SERVER then
             renderCommand(ply, "scale", string.match(msg, "%s([%d%.]+)"))
             return true
         end
+        if low:find("^/номер_вынос") == 1 then
+            renderCommand(ply, "offset", string.match(msg, "%s([%d%.]+)"))
+            return true
+        end
         if low == "/снятьномер" or low == "/plateoff" then
             local plate = nearestOwnPlate(ply, true)
             if not IsValid(plate) then notify(ply, "Рядом нет закреплённого знака.") return true end
@@ -1102,12 +1123,15 @@ if SERVER then
             PL.Render.flip = not PL.Render.flip
         elseif what == "scale" then
             PL.Render.scale = math.Clamp(tonumber(value) or 1, 0.2, 3)
+        elseif what == "offset" then
+            PL.Render.offset = math.Clamp(tonumber(value) or 1.5, 0, 12)
         end
         PL.SaveRender()
         PL.PushRender()
-        notify(ply, ("Знаки: ось %s, поворот %d°, зеркало %s, масштаб %.2f"):format(
+        notify(ply, ("Знаки: ось %s, поворот %d°, зеркало %s, масштаб %.2f, вынос %.1f"):format(
             tostring(PL.Render.axis), tonumber(PL.Render.yaw) or 0,
-            PL.Render.flip and "да" or "нет", tonumber(PL.Render.scale) or 1), true)
+            PL.Render.flip and "да" or "нет", tonumber(PL.Render.scale) or 1,
+            tonumber(PL.Render.offset) or 1.5), true)
     end
     PL.RenderCommand = renderCommand
 
@@ -1115,12 +1139,17 @@ if SERVER then
     concommand.Add("grm_plate_axis", function(ply) renderCommand(ply, "axis") end)
     concommand.Add("grm_plate_flip", function(ply) renderCommand(ply, "flip") end)
     concommand.Add("grm_plate_scale", function(ply, _, args) renderCommand(ply, "scale", args and args[1]) end)
+    concommand.Add("grm_plate_offset", function(ply, _, args) renderCommand(ply, "offset", args and args[1]) end)
 
     -- ── старт ───────────────────────────────────────────────────────
     local function boot()
         PL.Load()
         print(("[GRM Plates] реестр номеров загружен: %d"):format(table.Count(PL.Data.plates or {})))
     end
+
+    -- читаем базу СРАЗУ: до этого момента запись заблокирована, но так
+    -- реестр доступен и коду, который стартует раньше карты
+    boot()
     if GRM.Boot and GRM.Boot.OnMapStart then
         GRM.Boot.OnMapStart("GRM_Plates_Load", "normal", boot)
     else
@@ -1415,6 +1444,7 @@ if CLIENT then
         PL.Render.yaw = net.ReadUInt(9)
         PL.Render.flip = net.ReadBool()
         PL.Render.scale = net.ReadFloat()
+        PL.Render.offset = net.ReadFloat()
         -- сбрасываем кэш граней у всех живых знаков: пересчитаются сами
         for _, ent in ipairs(ents.FindByClass("grm_plate")) do
             if IsValid(ent) then ent.GRMFace = nil end

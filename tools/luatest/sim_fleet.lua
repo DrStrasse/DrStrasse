@@ -315,6 +315,13 @@ ok(#rows == 1 and rows[1].fleet == true, "сотрудник видит служ
 ok(#G.FleetRows(medic, G.Get(second.id)) == 0, "чужой организации её не видно")
 
 print("\n=== 11. ХРАНЕНИЕ ===")
+-- та же защита, что и у номеров: пустой парк не затирает закупленное
+local keepUnits, keepLoaded = FL.Units, FL._loaded
+FL._loaded = false
+FL.Units = {}
+ok(FL.SaveFleetNow() == false, "до загрузки парк на диск не пишется")
+ok(FL.SaveMarketNow() == false, "и рынок тоже")
+FL.Units, FL._loaded = keepUnits, keepLoaded
 ok(FL.SaveMarketNow() == true and FS["grm_fleet/market.json"] ~= nil, "рынок записан на диск")
 ok(FL.SaveFleetNow() == true and FS["grm_fleet/fleet_sim_map.json"] ~= nil, "парк записан по карте")
 ok(FS["grm_fleet/fleet_sim_map.json"]:find("Патрульный", 1, true) ~= nil, "в файле парка видна техника")

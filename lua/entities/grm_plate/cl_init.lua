@@ -64,33 +64,35 @@ function ENT:Draw()
     local tw = surface.GetTextSize(text)
     local fit = math.min(1, (w * 0.78) / math.max(1, tw))
 
-    --[[ Рисуем в ДВА прохода на каждую сторону.
+    --[[ Рисуем ОДНУ сторону — ту, что смотрит на игрока.
 
-         Первая версия масштабировала надпись через cam.PushModelMatrix — а
-         он БЕЗ второго аргумента ЗАМЕНЯЕТ матрицу 3D2D, а не домножает её:
-         номер улетал в мировые координаты, и на знаке оставалась пустая
-         заливка (что владелец и увидел). Никаких матриц: для текста просто
-         открывается второй 3D2D с уменьшенным масштабом. ]]
-    for _, side in ipairs({ 1, -1 }) do
-        local up  = worldDir(self, face.up)
-        local rgt = worldDir(self, face.right * side)
-        local pos = self:LocalToWorld(face.center + face.normal * (face.half + 0.15) * side)
-        local ang = rgt:AngleEx(up)
+         Раньше рисовались обе: задняя просвечивала сквозь тонкую модель, и
+         номер выглядел зеркальным. Плюс надпись висела в 0.15 юнита от
+         центра модели, то есть фактически ВНУТРИ пропа — её не было видно
+         (заказ владельца 21.08). Теперь надпись выносится наружу на
+         настраиваемый «вынос» (/номер_вынос). ]]
+    local eye = EyePos()
+    local nrmWorld = worldDir(self, face.normal)
+    local side = nrmWorld:Dot(eye - self:LocalToWorld(face.center)) >= 0 and 1 or -1
 
-        cam.Start3D2D(pos, ang, scale)
-            draw.RoundedBox(0, -w / 2, -h / 2, w, h, plateCol)
-            draw.RoundedBox(0, -w / 2, -h / 2, w * 0.13, h, bandCol)
-            if status ~= "active" then
-                draw.SimpleText(string.upper(PL.Statuses[status] or status), "GRMPlate_Small",
-                    w * 0.065, h / 2 - 9, Color(200, 40, 40), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-            end
-        cam.End3D2D()
+    local up  = worldDir(self, face.up)
+    local rgt = worldDir(self, face.right * side)
+    local pos = self:LocalToWorld(face.center + face.normal * (face.half + (face.offset or 1.5)) * side)
+    local ang = rgt:AngleEx(up)
 
-        cam.Start3D2D(pos, ang, scale * fit)
-            draw.SimpleText(text, "GRMPlate_Number", (w * 0.065) / fit, 0, textCol,
-                TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        cam.End3D2D()
-    end
+    cam.Start3D2D(pos, ang, scale)
+        draw.RoundedBox(0, -w / 2, -h / 2, w, h, plateCol)
+        draw.RoundedBox(0, -w / 2, -h / 2, w * 0.13, h, bandCol)
+        if status ~= "active" then
+            draw.SimpleText(string.upper(PL.Statuses[status] or status), "GRMPlate_Small",
+                w * 0.065, h / 2 - 9, Color(200, 40, 40), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+    cam.End3D2D()
+
+    cam.Start3D2D(pos, ang, scale * fit)
+        draw.SimpleText(text, "GRMPlate_Number", (w * 0.065) / fit, 0, textCol,
+            TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    cam.End3D2D()
 end
 
 function ENT:DrawTranslucent()

@@ -333,7 +333,13 @@ if SERVER then
     end
 
     -- ── хранение ────────────────────────────────────────────────────
+    --[[ Та же защита, что и у номеров: пока рынок и парк не прочитаны с
+         диска, записывать нечего — иначе очередь сохранит пустоту поверх
+         закупленной техники. ]]
+    FL._loaded = FL._loaded or false
+
     local function marketPayload()
+        if not FL._loaded then return nil end
         local arr = {}
         for id, entry in pairs(FL.Market) do
             if istable(entry) then entry.id = id arr[#arr + 1] = entry end
@@ -343,6 +349,7 @@ if SERVER then
     end
 
     local function fleetPayload()
+        if not FL._loaded then return nil end
         local arr = {}
         for id, unit in pairs(FL.Units) do
             if istable(unit) then unit.id = id arr[#arr + 1] = unit end
@@ -359,8 +366,14 @@ if SERVER then
         return file.Read(path, "DATA") == txt
     end
 
-    function FL.SaveMarketNow() return writeJSON(MARKET_FILE, marketPayload()) end
-    function FL.SaveFleetNow() return writeJSON(fleetFile(), fleetPayload()) end
+    function FL.SaveMarketNow()
+        if not FL._loaded then return false end
+        return writeJSON(MARKET_FILE, marketPayload())
+    end
+    function FL.SaveFleetNow()
+        if not FL._loaded then return false end
+        return writeJSON(fleetFile(), fleetPayload())
+    end
 
     if GRM.Save and GRM.Save.Register then
         FL._marketSave = GRM.Save.Register("grm_fleet_market", {
@@ -370,11 +383,13 @@ if SERVER then
     end
 
     function FL.SaveMarket(why)
+        if not FL._loaded then return false end
         if FL._marketSave and GRM.Save and GRM.Save.Mark then return GRM.Save.Mark("grm_fleet_market", why) end
         return FL.SaveMarketNow()
     end
 
     function FL.SaveFleet(why)
+        if not FL._loaded then return false end
         if FL._fleetSave and GRM.Save and GRM.Save.Mark then return GRM.Save.Mark("grm_fleet_units", why) end
         return FL.SaveFleetNow()
     end
@@ -400,6 +415,7 @@ if SERVER then
                 FL.Units[tostring(unit.id)] = unit
             end
         end
+        FL._loaded = true
         return true
     end
 
@@ -843,6 +859,8 @@ if SERVER then
         print(("[GRM Fleet] рынок: %d позиций, парк: %d единиц"):format(
             table.Count(FL.Market), table.Count(FL.Units)))
     end
+    -- читаем сразу: до загрузки запись заблокирована
+    boot()
     if GRM.Boot and GRM.Boot.OnMapStart then
         GRM.Boot.OnMapStart("GRM_Fleet_Load", "normal", boot)
     else
