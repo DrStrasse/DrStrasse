@@ -153,6 +153,7 @@ local BASE_PERMS = {
     { "server.factions",      "Фракционный контроль",                  "Сервер",      "admin" },
     { "server.economy",       "Экономика и казна",                     "Сервер",      "superadmin" },
     { "server.cleanup",       "Очистка мусора и пропов",               "Сервер",      "admin" },
+    { "server.settings",      "Настройки сервера (зона бана и прочее)", "Сервер",      "superadmin" },
 
     -- Права над правами
     { "acl.groups",           "Создание и правка групп",               "Привилегии",  "superadmin" },
@@ -574,6 +575,7 @@ if SERVER then
                     muted = ply.GRM_AdminMuted == true,
                     gagged = ply.GRM_AdminGagged == true,
                     jailed = ply.GRM_AdminJailed == true,
+                    serverBanned = ply:GetNWBool("GRM_ServerBanned", false),
                     frozen = ply.GRM_AdminFrozen == true,
                     ragdolled = IsValid(ply.GRM_AdminRagdoll),
                     god = ply.GRM_AdminGod == true,

@@ -225,5 +225,33 @@ ok(has(tab, 'hook.Add("GRM_AdminGroupChanged", "GRM_TabMenu_GroupChanged"'),
 ok(has(tab, "local function announce(verb, target, tail)"),
     "кнопки наказаний в самом TAB тоже объявляются")
 
+print("\n=== БАН НА СЕРВЕРЕ И ГЛОБАЛЬНЫЙ (заказ 21.08) ===")
+local ban = read("lua/autorun/sh_grm_ban.lua")
+local panel2 = read("lua/autorun/client/cl_grm_admin_panel.lua")
+ok(has(ban, 'SB.Model = "models/player/skeleton.mdl"'), "модель наказанного — скелет")
+ok(has(ban, 'SB.Material = "debugwhite"'), "материал debugwhite")
+ok(has(ban, "ply:SetColor(Color(255, 60, 60, 255))"), "красная подсветка")
+ok(has(ban, "ply:StripWeapons()"), "оружие изымается")
+ok(has(ban, "function SB.SetZone"), "суперадмин задаёт точку отбывания")
+ok(has(ban, 'timer.Create("GRM_ServerBan_Watch", 0.5, 0'),
+    "один сторож: зона, вид и срок")
+ok(has(ban, "CanPlayerSuicide") and has(ban, "PlayerCanPickupWeapon") and has(ban, "CanTool"),
+    "самоубийство, оружие и инструменты закрыты")
+ok(has(ban, 'hook.Add(name, "GRM_ServerBan_NoMenus_"'), "меню F1-F4 закрыты")
+ok(has(ban, "Команды недоступны"), "команды в чате блокируются, обычный чат остаётся")
+ok(has(ban, "GRM_NameplateOverride"), "плашка «ЗАБАНЕН» идёт через общий слой шапки")
+ok(has(ban, "ВЫ ЗАБАНЕНЫ НА СЕРВЕРЕ"), "наказанный видит памятку на экране")
+ok(has(actions, "A.serverban = {"), "действие «Бан на сервере»")
+ok(has(actions, "A.unserverban = {"), "действие «Снять бан на сервере»")
+ok(has(actions, "A.unban = {"), "действие «Снять глобальный бан»")
+ok(has(actions, "A.ban_point = {"), "действие «Точка отбывания»")
+ok(has(actions, 'serverban = { verb = "забанил на сервере"'), "бан на сервере объявляется в чат")
+ok(has(panel2, '"Бан на сервере 60 мин"'), "кнопка бана на сервере в админ-меню")
+ok(has(panel2, '"Глобальный бан 60 мин"') and has(panel2, '"Глобальный бан навсегда"'),
+    "кнопки глобального бана")
+ok(has(panel2, "БАН НА СЕРВЕРЕ · ЗОНА ОТБЫВАНИЯ"), "блок настройки зоны в админ-меню")
+ok(has(panel2, '"РАЗБАНИТЬ"'), "кнопка снятия глобального бана")
+ok(has(panel2, 'flags[#flags + 1] = "БАН НА СЕРВЕРЕ"'), "в карточке видно, что игрок отбывает")
+
 print(("\nADMIN CORE: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)

@@ -633,6 +633,11 @@ if CLIENT then
             out.tag = nil
             out.cid = nil
         end
+
+        -- Другие модули могут заменить содержимое плашки (например, бан на
+        -- сервере рисует «ЗАБАНЕН»). Отрисовка при этом остаётся одна.
+        local override = hook.Run("GRM_NameplateOverride", ply, out)
+        if istable(override) then out = override end
         return out
     end
 

@@ -415,6 +415,53 @@ A.ban = { perm = "mod.ban", target = true, label = "Бан",
         return true, ("%s забанен на %d мин: %s"):format(rpNameOf(target), minutes, reason)
     end }
 
+--[[ БАН НА СЕРВЕРЕ (заказ владельца 21.08). Человек остаётся в игре, но
+     отбывает наказание в отведённой зоне: скелет, белый материал, красная
+     подсветка, ни оружия, ни меню. Логика — в sh_grm_ban.lua. ]]
+A.serverban = { perm = "mod.ban", target = true, label = "Бан на сервере",
+    fn = function(actor, target, args)
+        if not (GRM.ServerBan and GRM.ServerBan.Ban) then return false, "Модуль банов не загружен" end
+        return GRM.ServerBan.Ban(actor, target,
+            tonumber(args and args.minutes) or 60,
+            tostring(args and args.reason or "Нарушение правил"))
+    end }
+
+A.unserverban = { perm = "mod.ban", target = true, label = "Снять бан на сервере",
+    fn = function(actor, target)
+        if not (GRM.ServerBan and GRM.ServerBan.Unban) then return false, "Модуль банов не загружен" end
+        return GRM.ServerBan.Unban(actor, tostring(target:SteamID64() or ""))
+    end }
+
+--- Точку отбывания ставит суперадмин по своей позиции.
+A.ban_point = { perm = "server.settings", target = false, label = "Точка отбывания бана",
+    fn = function(actor, _, args)
+        if not IsValid(actor) then return false, "Только из игры" end
+        if not (GRM.ServerBan and GRM.ServerBan.SetZone) then return false, "Модуль банов не загружен" end
+        return GRM.ServerBan.SetZone(actor, actor:GetPos(), tonumber(args and args.radius) or 600)
+    end }
+
+--- Снятие ГЛОБАЛЬНОГО бана: по SteamID64, работает и по офлайн-игроку.
+A.unban = { perm = "mod.ban", target = false, label = "Снять глобальный бан",
+    fn = function(actor, _, args)
+        local query = string.Trim(tostring(args and args.query or ""))
+        if query == "" then return false, "Укажите SteamID64 или номер ИГ-####" end
+        local sid64 = query
+        if GRM.Registry and GRM.Registry.Resolve then
+            local _, _, acc = GRM.Registry.Resolve(query)
+            if acc and tostring(acc):match("^%d+$") then sid64 = tostring(acc) end
+        end
+        if not sid64:match("^%d+$") then return false, "Не удалось определить SteamID64" end
+        local steamid = util.SteamIDFrom64 and util.SteamIDFrom64(sid64) or nil
+        if ULib and ULib.unban then
+            pcall(ULib.unban, steamid or sid64, actor)
+        else
+            game.ConsoleCommand(("removeid %s\n"):format(steamid or sid64))
+            game.ConsoleCommand("writeid\n")
+        end
+        if GRM.ServerBan and GRM.ServerBan.Unban then GRM.ServerBan.Unban(actor, sid64) end
+        return true, "Бан снят: " .. tostring(steamid or sid64)
+    end }
+
 --[[ Бан по НОМЕРУ ИГРОКА (заказ владельца 19.08). Работает и по офлайн-
      игроку: номер ИГ-#### живёт в реестре, значит забанить можно того, кто
      уже вышел с сервера. Персонажный номер ГР-#### тоже принимается — он
@@ -632,7 +679,10 @@ local PUNISH = {
     slay      = { verb = "убил" },
     strip     = { verb = "забрал оружие у" },
     kick      = { verb = "кикнул", reason = true },
-    ban       = { verb = "забанил", reason = true, minutes = true },
+    ban       = { verb = "забанил глобально", reason = true, minutes = true },
+    serverban = { verb = "забанил на сервере", reason = true, minutes = true },
+    unserverban = { verb = "снял бан на сервере с" },
+    unban     = { verb = "снял глобальный бан" },
     ban_id    = { verb = "забанил по ID", reason = true, minutes = true },
     warn      = { verb = "вынес предупреждение", reason = true },
     respawn   = { verb = "возродил" },

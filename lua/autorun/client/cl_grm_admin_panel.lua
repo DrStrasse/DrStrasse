@@ -192,6 +192,49 @@ local function buildBanByID(parent, canFn)
             end, "Отмена")
     end)
     ban:SetPos(566, 30) ban:SetSize(110, 28)
+
+    -- Снятие глобального бана: тем же полем, без поиска игрока в списке.
+    local unban = btn(box, "РАЗБАНИТЬ", C.green, function()
+        local q = string.Trim(query:GetValue() or "")
+        if q == "" then return end
+        act("unban", "", { query = q })
+    end)
+    unban:SetPos(682, 30) unban:SetSize(110, 28)
+end
+
+--[[ ЗОНА ОТБЫВАНИЯ БАНА (заказ владельца 21.08). Суперадмин встаёт в нужное
+     место и одной кнопкой назначает точку: туда телепортирует забаненных на
+     сервере, за радиус выйти нельзя. ]]
+local function buildBanZone(parent, canFn)
+    if not canFn("server.settings") then return end
+    local box = vgui.Create("DPanel", parent)
+    box:Dock(BOTTOM) box:SetTall(84) box:DockMargin(0, 8, 6, 0)
+    box.Paint = function(_, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, C.card)
+        draw.SimpleText("БАН НА СЕРВЕРЕ · ЗОНА ОТБЫВАНИЯ", "GRMAdm_Small", 12, 10, C.gold)
+        draw.SimpleText("Встаньте в нужном месте и нажмите «Поставить здесь». Радиус — предел свободы наказанного.",
+            "GRMAdm_Small", 12, 64, C.dim)
+    end
+
+    local radius = vgui.Create("DTextEntry", box)
+    radius:SetPos(12, 30) radius:SetSize(90, 28)
+    radius:SetText("600")
+    radius:SetPlaceholderText("радиус")
+
+    local set = btn(box, "ПОСТАВИТЬ ЗДЕСЬ", C.gold, function()
+        act("ban_point", "", { radius = tonumber(radius:GetValue()) or 600 })
+    end)
+    set:SetPos(108, 30) set:SetSize(180, 28)
+
+    local show = btn(box, "ГДЕ ТОЧКА?", C.accent, function()
+        RunConsoleCommand("grm_ban_zone")
+    end)
+    show:SetPos(294, 30) show:SetSize(140, 28)
+
+    local list = btn(box, "КТО ОТБЫВАЕТ", C.accent, function()
+        RunConsoleCommand("grm_serverban_list")
+    end)
+    list:SetPos(440, 30) list:SetSize(160, 28)
 end
 
 local function buildPlayers(pnl)
@@ -201,6 +244,7 @@ local function buildPlayers(pnl)
     -- Бан по номеру игрока живёт внизу вкладки: он не требует выбранного
     -- игрока в списке и работает по офлайн-аккаунту.
     buildBanByID(pnl, can)
+    buildBanZone(pnl, can)
 
     local split = vgui.Create("DPanel", pnl)
     split:Dock(FILL) split:SetPaintBackground(false)
@@ -248,6 +292,7 @@ local function buildPlayers(pnl)
             if current.muted then flags[#flags + 1] = "МУТ" end
             if current.gagged then flags[#flags + 1] = "ГОЛОС" end
             if current.jailed then flags[#flags + 1] = "КЛЕТКА" end
+            if current.serverBanned then flags[#flags + 1] = "БАН НА СЕРВЕРЕ" end
             if current.frozen then flags[#flags + 1] = "ЗАМОРОЗКА" end
             if current.ragdolled then flags[#flags + 1] = "РАГДОЛЛ" end
             if current.god then flags[#flags + 1] = "БОГ" end
@@ -313,7 +358,14 @@ local function buildPlayers(pnl)
         group("Санкции")
         action("Предупреждение", "mod.warn", "warn", C.orange, { reason = "Соблюдайте правила" })
         action("Кик", "mod.kick", "kick", C.red, { reason = "Нарушение правил" })
-        action("Бан 60 мин", "mod.ban", "ban", C.red, { minutes = 60, reason = "Нарушение правил" })
+        --[[ Заказ владельца 21.08: бан делится на два вида. «На сервере» —
+             человек остаётся в игре в зоне отбывания; «глобальный» — вылет
+             с сервера штатным баном. Кнопки разные, чтобы не путать. ]]
+        action(current.serverBanned and "Снять бан сервера" or "Бан на сервере 60 мин",
+            "mod.ban", current.serverBanned and "unserverban" or "serverban", C.orange,
+            { minutes = 60, reason = "Нарушение правил" })
+        action("Глобальный бан 60 мин", "mod.ban", "ban", C.red, { minutes = 60, reason = "Нарушение правил" })
+        action("Глобальный бан навсегда", "mod.ban", "ban", C.red, { minutes = 0, reason = "Нарушение правил" })
 
         if can("cheat.money") or can("cheat.items") or can("cheat.speed") then
             row = nil
