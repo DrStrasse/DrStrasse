@@ -358,14 +358,53 @@ local function buildPlayers(pnl)
         group("Санкции")
         action("Предупреждение", "mod.warn", "warn", C.orange, { reason = "Соблюдайте правила" })
         action("Кик", "mod.kick", "kick", C.red, { reason = "Нарушение правил" })
-        --[[ Заказ владельца 21.08: бан делится на два вида. «На сервере» —
-             человек остаётся в игре в зоне отбывания; «глобальный» — вылет
-             с сервера штатным баном. Кнопки разные, чтобы не путать. ]]
-        action(current.serverBanned and "Снять бан сервера" or "Бан на сервере 60 мин",
-            "mod.ban", current.serverBanned and "unserverban" or "serverban", C.orange,
-            { minutes = 60, reason = "Нарушение правил" })
         action("Глобальный бан 60 мин", "mod.ban", "ban", C.red, { minutes = 60, reason = "Нарушение правил" })
         action("Глобальный бан навсегда", "mod.ban", "ban", C.red, { minutes = 0, reason = "Нарушение правил" })
+
+        --[[ БАН НА СЕРВЕРЕ (заказ владельца 21.08): срок и ПРИЧИНУ пишет
+             админ, а не подставляет система. Кнопки разбана и бана стоят
+             рядом — обе видны всегда, чтобы не гадать, в каком состоянии
+             игрок. ]]
+        if can("mod.ban") then
+            row = nil
+            group("Бан на сервере (деморган)")
+
+            local box = vgui.Create("DPanel", side)
+            box:Dock(TOP) box:SetTall(108) box:DockMargin(0, 0, 6, 6)
+            box.Paint = function(_, w, h)
+                draw.RoundedBox(8, 0, 0, w, h, C.card)
+                draw.SimpleText(current.serverBanned and "ИГРОК ОТБЫВАЕТ НАКАЗАНИЕ" or "Игрок свободен",
+                    "GRMAdm_Small", 12, 10, current.serverBanned and C.red or C.dim)
+                draw.SimpleText("Срок в минутах (0 — бессрочно) и причина попадут игроку и в объявление",
+                    "GRMAdm_Small", 12, 88, C.dim)
+            end
+
+            local minutesEntry = entry(box, "Минуты")
+            minutesEntry:SetPos(12, 30) minutesEntry:SetSize(80, 28)
+            minutesEntry:SetText("60")
+
+            local reasonEntry = entry(box, "Причина бана (обязательно)")
+            reasonEntry:SetPos(98, 30) reasonEntry:SetSize(330, 28)
+
+            local banBtn = btn(box, "ЗАБАНИТЬ НА СЕРВЕРЕ", C.orange, function()
+                local reason = string.Trim(reasonEntry:GetValue() or "")
+                if reason == "" then
+                    notification.AddLegacy("Укажите причину бана", NOTIFY_ERROR, 4)
+                    surface.PlaySound("buttons/button10.wav")
+                    return
+                end
+                act("serverban", current.sid, {
+                    minutes = tonumber(minutesEntry:GetValue()) or 60,
+                    reason = reason,
+                })
+            end)
+            banBtn:SetPos(12, 62) banBtn:SetSize(210, 30)
+
+            local unbanBtn = btn(box, "РАЗБАНИТЬ НА СЕРВЕРЕ", C.green, function()
+                act("unserverban", current.sid, {})
+            end)
+            unbanBtn:SetPos(228, 62) unbanBtn:SetSize(200, 30)
+        end
 
         if can("cheat.money") or can("cheat.items") or can("cheat.speed") then
             row = nil

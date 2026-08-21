@@ -1634,7 +1634,14 @@ if SERVER then
         else ply:PrintMessage(HUD_PRINTTALK, "Ошибка: " .. err) end
     end)
 
+    --[[ Отбывающий административное наказание в эфир не выходит: проверка
+         одна на все волны, текст — из модуля банов. ]]
+    local function banGate(ply, what)
+        return GRM.ServerBan and GRM.ServerBan.DenySpeech and GRM.ServerBan.DenySpeech(ply, what) == true
+    end
+
     net.Receive(NET_RADIO, function(_, ply)
+        if banGate(ply, "рация фракции") then return end
         local text = net.ReadString()
         if not text or text == "" then return end
         local steam = memberKey(ply)
@@ -1685,6 +1692,7 @@ if SERVER then
          сотрудники решали организационные вопросы прямо в РП-эфире.
          Получатели те же, что у /fr — только свои. ]]
     net.Receive(NET_RADIOB, function(_, ply)
+        if banGate(ply, "рация фракции (OOC)") then return end
         local text = net.ReadString()
         if not text or text == "" then return end
         local steam = memberKey(ply)
@@ -1728,6 +1736,7 @@ if SERVER then
     end)
 
     net.Receive(NET_DEP, function(_, ply)
+        if banGate(ply, "государственная волна") then return end
         local text = net.ReadString()
         if not text or text == "" then return end
         local steam = memberKey(ply)
@@ -1762,6 +1771,7 @@ if SERVER then
     end)
 
     net.Receive(NET_DEPB, function(_, ply)
+        if banGate(ply, "государственная волна (OOC)") then return end
         local text = net.ReadString()
         if not text or text == "" then return end
         local steam = memberKey(ply)

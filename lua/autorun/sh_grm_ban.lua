@@ -260,6 +260,27 @@ if SERVER then
     local function banned(ply) return IsValid(ply) and ply:GetNWBool("GRM_ServerBanned", false) end
     SB.PlayerBanned = banned
 
+    --[[ ЕДИНЫЙ ЗАПРЕТ НА ЭФИР (заказ владельца 21.08). Волны и рации идут не
+         через чат, а своими net-пакетами, поэтому блокировка чат-команд их
+         не ловила. Модули зовут одну эту функцию и получают готовый текст —
+         второй реализации запрета нет. ]]
+    function SB.SpeechBlocked(ply, what)
+        if not banned(ply) then return false end
+        local rec = select(2, SB.IsBanned(ply))
+        local left = rec and SB.Left(rec) or 0
+        local when = left == math.huge and "бессрочно" or (math.ceil(left / 60) .. " мин.")
+        return true, ("Вы отбываете административное наказание (деморган), поэтому %s недоступн%s. Осталось: %s")
+            :format(tostring(what or "эфир"), tostring(what or ""):find("рация", 1, true) and "а" or "о", when)
+    end
+
+    --- Помощник для модулей: сам пишет игроку отказ и возвращает true.
+    function SB.DenySpeech(ply, what)
+        local blocked, text = SB.SpeechBlocked(ply, what)
+        if not blocked then return false end
+        if GRM.Notify then GRM.Notify(ply, text, 255, 110, 90) else ply:ChatPrint("[Бан] " .. text) end
+        return true
+    end
+
     hook.Add("CanPlayerSuicide", "GRM_ServerBan_NoSuicide", function(ply)
         if banned(ply) then return false end
     end)
@@ -310,13 +331,22 @@ if SERVER then
     end)
     --[[ Чат остаётся (человеку надо объясниться с админом), но команды —
          нет: иначе через /f4, /inv и прочее он обходит ограничения. ]]
+    SB.WaveCommands = {
+        ["/fr"] = "рация фракции", ["/frb"] = "рация фракции (OOC)", ["/frooc"] = "рация фракции (OOC)",
+        ["/dep"] = "государственная волна", ["/d"] = "государственная волна",
+        ["/depb"] = "государственная волна (OOC)", ["/db"] = "государственная волна (OOC)",
+        ["/gnews"] = "государственные новости", ["/radio"] = "рация",
+        ["/911"] = "экстренный вызов", ["/pcboard"] = "государственная база",
+    }
+
     hook.Add("PlayerSay", "GRM_ServerBan_NoCommands", function(ply, text)
         if not banned(ply) then return end
         local msg = string.Trim(tostring(text or ""))
-        if msg:sub(1, 1) == "/" or msg:sub(1, 1) == "!" then
-            ply:ChatPrint("[Бан] Команды недоступны, пока вы отбываете наказание.")
-            return ""
-        end
+        if msg:sub(1, 1) ~= "/" and msg:sub(1, 1) ~= "!" then return end
+        local cmd = string.lower(string.Explode(" ", msg)[1] or "")
+        local wave = SB.WaveCommands[cmd] or SB.WaveCommands["/" .. cmd:sub(2)]
+        SB.DenySpeech(ply, wave or "команды")
+        return ""
     end)
 
     hook.Add("PlayerSpawn", "GRM_ServerBan_Respawn", function(ply)

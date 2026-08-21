@@ -547,7 +547,12 @@ end
 timer.Create("GRM_Food_HungerTick", 1, 0, function()
     for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(ply) then
-            if not ply:Alive() then
+            if GRM.ServerBan and GRM.ServerBan.PlayerBanned and GRM.ServerBan.PlayerBanned(ply) then
+                -- Отбывающий наказание не голодает: смерть от голода в
+                -- деморгане — это не наказание, а баг.
+                GRM.Food.SetHunger(ply, cfg().HungerMax or 100)
+                GRM.Food.SyncHunger(ply)
+            elseif not ply:Alive() then
                 GRM.Food.SyncHunger(ply)
             else
                 local cur = GRM.Food.GetHunger(ply)

@@ -361,6 +361,11 @@ if SERVER then
     function RN.VoiceRoute(listener, speaker)
         if not IsValid(listener) or not IsValid(speaker) then return nil end
         if listener == speaker then return nil end
+        -- Отбывающий административное наказание в радиоэфир не выходит:
+        -- его голос не уходит дальше собственной зоны.
+        if GRM.ServerBan and GRM.ServerBan.PlayerBanned and GRM.ServerBan.PlayerBanned(speaker) then
+            return false
+        end
         -- ближняя зона: физический голос важнее любой аппаратуры,
         -- отдаём решение локальному голосу/телефонии
         local lpos, spos = listener:GetPos(), speaker:GetPos()

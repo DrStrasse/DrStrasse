@@ -238,7 +238,8 @@ ok(has(ban, 'timer.Create("GRM_ServerBan_Watch", 0.5, 0'),
 ok(has(ban, "CanPlayerSuicide") and has(ban, "PlayerCanPickupWeapon") and has(ban, "CanTool"),
     "самоубийство, оружие и инструменты закрыты")
 ok(has(ban, 'hook.Add(name, "GRM_ServerBan_NoMenus_"'), "меню F1-F4 закрыты")
-ok(has(ban, "Команды недоступны"), "команды в чате блокируются, обычный чат остаётся")
+ok(has(ban, 'hook.Add("PlayerSay", "GRM_ServerBan_NoCommands"'),
+    "команды в чате блокируются, обычный чат остаётся")
 ok(has(ban, "GRM_NameplateOverride"), "плашка «ЗАБАНЕН» идёт через общий слой шапки")
 ok(has(ban, "ВЫ ЗАБАНЕНЫ НА СЕРВЕРЕ"), "наказанный видит памятку на экране")
 ok(has(actions, "A.serverban = {"), "действие «Бан на сервере»")
@@ -246,12 +247,32 @@ ok(has(actions, "A.unserverban = {"), "действие «Снять бан на
 ok(has(actions, "A.unban = {"), "действие «Снять глобальный бан»")
 ok(has(actions, "A.ban_point = {"), "действие «Точка отбывания»")
 ok(has(actions, 'serverban = { verb = "забанил на сервере"'), "бан на сервере объявляется в чат")
-ok(has(panel2, '"Бан на сервере 60 мин"'), "кнопка бана на сервере в админ-меню")
+ok(has(panel2, "ЗАБАНИТЬ НА СЕРВЕРЕ"), "кнопка бана на сервере в админ-меню")
 ok(has(panel2, '"Глобальный бан 60 мин"') and has(panel2, '"Глобальный бан навсегда"'),
     "кнопки глобального бана")
 ok(has(panel2, "БАН НА СЕРВЕРЕ · ЗОНА ОТБЫВАНИЯ"), "блок настройки зоны в админ-меню")
 ok(has(panel2, '"РАЗБАНИТЬ"'), "кнопка снятия глобального бана")
 ok(has(panel2, 'flags[#flags + 1] = "БАН НА СЕРВЕРЕ"'), "в карточке видно, что игрок отбывает")
+
+print("\n=== БАН НА СЕРВЕРЕ: ПРИЧИНА, ЭФИР, ГОЛОД (21.08) ===")
+local ban2 = read("lua/autorun/sh_grm_ban.lua")
+local panel3 = read("lua/autorun/client/cl_grm_admin_panel.lua")
+local fac2 = read("lua/autorun/sh_factions.lua")
+local food = read("lua/autorun/server/sv_grm_food.lua")
+local radio = read("lua/autorun/sh_grm_radionet.lua")
+ok(has(panel3, "ЗАБАНИТЬ НА СЕРВЕРЕ") and has(panel3, "РАЗБАНИТЬ НА СЕРВЕРЕ"),
+    "в меню обе кнопки: бан и разбан на сервере")
+ok(has(panel3, 'entry(box, "Причина бана (обязательно)")'), "поле причины бана")
+ok(has(panel3, "Укажите причину бана"), "без причины бан не выдаётся")
+ok(has(panel3, 'entry(box, "Минуты")'), "поле срока")
+ok(has(ban2, "function SB.SpeechBlocked"), "единый запрет на эфир")
+ok(has(ban2, "function SB.DenySpeech"), "и помощник, который сам пишет игроку")
+ok(has(ban2, "SB.WaveCommands = {"), "перечислены волны и рации")
+ok(has(ban2, "деморган"), "текст про административное наказание/деморган")
+ok(has(fac2, "local function banGate(ply, what)"), "волны организаций закрыты одной проверкой")
+ok(select(2, fac2:gsub("banGate%(ply,", "")) >= 4, "проверка стоит во всех четырёх волнах")
+ok(has(radio, "GRM.ServerBan.PlayerBanned(speaker)"), "радиоэфир наказанного не слышен")
+ok(has(food, "Отбывающий наказание не голодает"), "голод на наказанных не действует")
 
 print(("\nADMIN CORE: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)

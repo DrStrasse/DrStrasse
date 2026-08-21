@@ -18,6 +18,11 @@ function isnumber(v) return type(v) == "number" end
 function isvector(v) return type(v) == "table" and v._vector == true end
 function math.Clamp(v, lo, hi) return math.max(lo, math.min(hi, v)) end
 function string.Trim(s) return (tostring(s):gsub("^%s+", ""):gsub("%s+$", "")) end
+function string.Explode(sep, str)
+    local out = {}
+    for part in tostring(str):gmatch("[^" .. sep .. "]+") do out[#out + 1] = part end
+    return out
+end
 function table.Count(t) local n = 0 for _ in pairs(t) do n = n + 1 end return n end
 function ErrorNoHalt() end
 RENDERMODE_TRANSCOLOR, RENDERMODE_NORMAL, HUD_PRINTCONSOLE = 5, 0, 2
@@ -165,6 +170,32 @@ ok(hook.Run("PlayerSay", target, "/f4") == "", "команды в чате бл�
 ok(hook.Run("PlayerSay", target, "простое сообщение") == nil, "обычный чат остаётся")
 ok(hook.Run("CanPlayerSuicide", admin) == nil, "на свободного игрока ограничения не действуют")
 
+print("\n=== 3б. ЭФИР И ВОЛНЫ (заказ 21.08) ===")
+local blocked, text = SB.SpeechBlocked(target, "государственная волна")
+ok(blocked == true, "наказанному эфир закрыт")
+ok(text:find("административное наказание", 1, true) ~= nil and text:find("деморган", 1, true) ~= nil,
+    "текст объясняет причину", text)
+ok(text:find("Осталось", 1, true) ~= nil, "и показывает остаток срока", text)
+ok(SB.SpeechBlocked(admin, "рация") == false, "свободному игроку эфир открыт")
+
+NOTIFY = {}
+ok(SB.DenySpeech(target, "рация фракции") == true, "помощник для модулей отвечает true")
+ok(#NOTIFY == 1 and NOTIFY[1]:find("рация фракции", 1, true) ~= nil,
+    "и сам пишет игроку, что именно недоступно", NOTIFY[1])
+ok(SB.DenySpeech(admin, "рация фракции") == false, "свободного не трогает")
+
+target.chat = {}
+NOTIFY = {}
+ok(hook.Run("PlayerSay", target, "/dep всем привет") == "", "команда волны перехвачена")
+ok(#NOTIFY == 1 and NOTIFY[1]:find("государственная волна", 1, true) ~= nil,
+    "в ответе названа именно волна", NOTIFY[1])
+NOTIFY = {}
+hook.Run("PlayerSay", target, "/fr доклад")
+ok(NOTIFY[1]:find("рация фракции", 1, true) ~= nil, "для /fr — рация фракции", NOTIFY[1])
+NOTIFY = {}
+hook.Run("PlayerSay", target, "/inv")
+ok(NOTIFY[1]:find("команды", 1, true) ~= nil, "для прочих команд — общий текст", NOTIFY[1])
+
 print("\n=== 4. ЗОНА ДЕРЖИТ ===")
 local watch = timers["GRM_ServerBan_Watch"]
 ok(isfunction(watch), "сторож один на всех")
@@ -200,6 +231,23 @@ ok(SB.IsBanned(target) == false, "запись удалена")
 ok(target.nw.GRM_ServerBanned == false, "флаг снят")
 ok(#ANNOUNCED > 0 and ANNOUNCED[1]:find("снял бан", 1, true) ~= nil, "о снятии объявлено", ANNOUNCED[1])
 ok(select(1, SB.Unban(admin, target:SteamID64())) == false, "повторное снятие отвечает честно")
+
+print("\n=== 7б. ПРИЧИНА БАНА ===")
+NOTIFY, ANNOUNCED = {}, {}
+SB.Ban(admin, target, 15, "  Оскорбление администрации  ")
+ok(SB.Bans[target:SteamID64()].reason == "Оскорбление администрации",
+    "причина сохраняется как есть, без автозамены", SB.Bans[target:SteamID64()].reason)
+ok(target.nw.GRM_ServerBanReason == "Оскорбление администрации", "причина уходит игроку")
+ok(ANNOUNCED[1]:find("Оскорбление администрации", 1, true) ~= nil,
+    "и попадает в объявление", ANNOUNCED[1])
+ok(#NOTIFY > 0 and NOTIFY[1]:find("Оскорбление администрации", 1, true) ~= nil,
+    "наказанный видит причину", NOTIFY[1])
+local long = string.rep("а", 300)
+SB.Unban(admin, target:SteamID64())
+SB.Ban(admin, target, 15, long)
+ok(#SB.Bans[target:SteamID64()].reason <= 120, "слишком длинная причина обрезается",
+    #SB.Bans[target:SteamID64()].reason)
+SB.Unban(admin, target:SteamID64())
 
 print("\n=== 8. ХРАНЕНИЕ ===")
 SB.Ban(admin, target, 45, "Проверка сохранения")
