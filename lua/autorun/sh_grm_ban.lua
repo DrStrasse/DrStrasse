@@ -27,6 +27,18 @@ GRM.ServerBan = GRM.ServerBan or {}
 local SB = GRM.ServerBan
 SB.Version = "1.0.0"
 
+--[[ Звук отбывающего наказание (заказ владельца 21.08): забаненный должен
+     «звучать» — от скелета идут зомби-стоны, его слышно и не спутать с
+     обычным игроком. Список звуков и интервал можно менять конварами. ]]
+SB.ZombieSounds = {
+    "npc/zombie/zombie_voice_idle1.wav",
+    "npc/zombie/zombie_voice_idle2.wav",
+    "npc/zombie/zombie_voice_idle3.wav",
+    "npc/zombie/zombie_voice_idle4.wav",
+    "npc/zombie/zombie_voice_idle5.wav",
+    "npc/zombie/zombie_voice_idle6.wav",
+}
+
 SB.Model = "models/player/skeleton.mdl"
 SB.Material = "debugwhite"
 SB.Net = { SYNC = "GRM_ServerBan_Sync", LIST_REQ = "GRM_ServerBan_ListReq", LIST = "GRM_ServerBan_List" }
@@ -54,6 +66,13 @@ end
 -----------------------------------------------------------------------
 if SERVER then
     util.AddNetworkString(SB.Net.SYNC)
+
+    SB.SoundCvar = SB.SoundCvar or CreateConVar("grm_ban_zombie_sound", "1", FCVAR_ARCHIVE,
+        "Забаненные на сервере издают зомби-звуки (0 — тишина)")
+    SB.SoundMinCvar = SB.SoundMinCvar or CreateConVar("grm_ban_zombie_min", "4", FCVAR_ARCHIVE,
+        "Минимальная пауза между зомби-звуками наказанного, секунд")
+    SB.SoundMaxCvar = SB.SoundMaxCvar or CreateConVar("grm_ban_zombie_max", "9", FCVAR_ARCHIVE,
+        "Максимальная пауза между зомби-звуками наказанного, секунд")
 
     local DIR = "grm_admin"
     local BANS_FILE = DIR .. "/serverbans.json"
@@ -244,6 +263,9 @@ if SERVER then
         saveBans("бан " .. sid)
         SB.Apply(target, true)
 
+        target.GRM_BanNextMoan = 0
+        SB.Moan(target)
+
         local text = ("%s забанен на сервере (%s) · %s"):format(target:Nick(),
             minutes > 0 and (minutes .. " мин.") or "бессрочно", reason)
         announce(actorName(actor) .. " выдал бан на сервере: " .. text)
@@ -431,6 +453,7 @@ if SERVER then
                 local isBanned, rec = SB.IsBanned(ply)
                 if isBanned then
                     SB.Apply(ply, false)
+                    SB.Moan(ply)
                     if zone and isvector(zone.pos) then
                         local r = zone.radius or 600
                         if ply:GetPos():DistToSqr(zone.pos) > r * r then
@@ -448,6 +471,34 @@ if SERVER then
             end
         end
     end)
+
+    --[[ Стон наказанного. Своего таймера на игрока не заводим — работаем в
+         общем стороже: у каждого свой момент следующего звука, поэтому
+         толпа скелетов не воет в унисон. ]]
+    function SB.Moan(ply)
+        if not IsValid(ply) then return false end
+        -- Проверка «наказан ли» живёт здесь же: вызвать Moan может кто угодно,
+        -- и свободный игрок стонать не должен.
+        if not ply:GetNWBool("GRM_ServerBanned", false) then return false end
+        if SB.SoundCvar and not SB.SoundCvar:GetBool() then return false end
+        local now = CurTime()
+        if (ply.GRM_BanNextMoan or 0) > now then return false end
+        local minGap = math.max(1, SB.SoundMinCvar and SB.SoundMinCvar:GetFloat() or 4)
+        local maxGap = math.max(minGap + 0.5, SB.SoundMaxCvar and SB.SoundMaxCvar:GetFloat() or 9)
+        ply.GRM_BanNextMoan = now + math.Rand(minGap, maxGap)
+
+        local path = SB.ZombieSounds[math.random(#SB.ZombieSounds)]
+        if GRM.Sound and GRM.Sound.Resolve then
+            local resolved = GRM.Sound.Resolve(path)
+            if isstring(resolved) and resolved ~= "" then path = resolved end
+        end
+        ply:EmitSound(path, 80, math.random(85, 105), 0.75, CHAN_VOICE)
+        return true, path
+    end
+
+    --[[ Прекэш идёт через общий звуковой слой GRM (sh_07_grm_sound.lua):
+         там уже есть реестр, фолбэки на отсутствующие файлы и один проход
+         на старте карты. Свой прекэш в модуле — это вторая копия логики. ]]
 
     -------------------------------------------------------------------
     -- КОНСОЛЬ

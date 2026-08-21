@@ -190,6 +190,15 @@ S.Register("physics/concrete/concrete_break2.wav") -- запасной звук 
 S.Register("physics/concrete/concrete_break3.wav", "physics/concrete/concrete_break2.wav") -- разрушение узла руды
 S.Register("weapons/extinguisher/release1.wav", "ambient/machines/steam_release_2.wav")
 
+-- Звуки отбывающих наказание на сервере (модуль GRM.ServerBan): скелет
+-- «стонет», чтобы наказанного было слышно и видно.
+S.Register("npc/zombie/zombie_voice_idle1.wav")
+S.Register("npc/zombie/zombie_voice_idle2.wav", "npc/zombie/zombie_voice_idle1.wav")
+S.Register("npc/zombie/zombie_voice_idle3.wav", "npc/zombie/zombie_voice_idle1.wav")
+S.Register("npc/zombie/zombie_voice_idle4.wav", "npc/zombie/zombie_voice_idle1.wav")
+S.Register("npc/zombie/zombie_voice_idle5.wav", "npc/zombie/zombie_voice_idle1.wav")
+S.Register("npc/zombie/zombie_voice_idle6.wav", "npc/zombie/zombie_voice_idle1.wav")
+
 S.Custom = { "kom_hour.wav", "weapons/extinguisher/fire1.wav", "weapons/extinguisher/release1.wav" }
 
 -----------------------------------------------------------------------

@@ -25,6 +25,9 @@ function string.Explode(sep, str)
 end
 function table.Count(t) local n = 0 for _ in pairs(t) do n = n + 1 end return n end
 function ErrorNoHalt() end
+function math.Rand(a, b) return a + (b - a) * 0.5 end
+CHAN_VOICE = 3
+util = util or {}
 RENDERMODE_TRANSCOLOR, RENDERMODE_NORMAL, HUD_PRINTCONSOLE = 5, 0, 2
 NULL = { _valid = false }
 
@@ -57,12 +60,20 @@ local FS = {}
 file = { IsDir = function() return true end, CreateDir = function() end,
          Write = function(p, s) FS[p] = s end, Read = function(p) return FS[p] end,
          Exists = function(p) return FS[p] ~= nil end }
-util = { AddNetworkString = function() end, TableToJSON = function() return "{}" end,
+util = { PrecacheSound = function() end, AddNetworkString = function() end, TableToJSON = function() return "{}" end,
          JSONToTable = function() return {} end, SteamIDFrom64 = function(s) return "STEAM:" .. s end }
 net = { Receive = function() end, Start = function() end, WriteString = function() end,
         WriteTable = function() end, Send = function() end, Broadcast = function() end }
 game = { GetMap = function() return "rp_test" end, ConsoleCommand = function() end }
-CreateConVar = function() return { GetBool = function() return false end, GetInt = function() return 0 end } end
+CreateConVar = function(name, default)
+    local value = tostring(default)
+    return {
+        GetBool = function() return value ~= "0" end,
+        GetInt = function() return math.floor(tonumber(value) or 0) end,
+        GetFloat = function() return tonumber(value) or 0 end,
+        GetString = function() return value end,
+    }
+end
 GetConVar = CreateConVar
 bit = { bor = function() return 0 end }
 FCVAR_ARCHIVE = 1
@@ -108,6 +119,10 @@ local function mkPlayer(nick, sid, x)
     function p:StripAmmo() end
     function p:Spawn() self.spawned = true end
     function p:ChatPrint(m) self.chat[#self.chat + 1] = m end
+    function p:EmitSound(path, lvl, pitch, vol, chan)
+        self.sounds = self.sounds or {}
+        self.sounds[#self.sounds + 1] = { path = path, lvl = lvl, pitch = pitch, vol = vol, chan = chan }
+    end
     ALL[#ALL + 1] = p
     return p
 end
@@ -195,6 +210,33 @@ ok(NOTIFY[1]:find("рация фракции", 1, true) ~= nil, "для /fr — 
 NOTIFY = {}
 hook.Run("PlayerSay", target, "/inv")
 ok(NOTIFY[1]:find("команды", 1, true) ~= nil, "для прочих команд — общий текст", NOTIFY[1])
+
+print("\n=== 3в. ЗВУК ЗОМБИ (заказ 21.08) ===")
+ok(istable(SB.ZombieSounds) and #SB.ZombieSounds >= 3, "список зомби-звуков задан", #SB.ZombieSounds)
+ok(SB.ZombieSounds[1] == "npc/zombie/zombie_voice_idle1.wav",
+    "первый — тот самый npc/zombie/zombie_voice_idle1.wav", SB.ZombieSounds[1])
+ok(istable(target.sounds) and #target.sounds >= 1, "при бане сразу раздался стон",
+    target.sounds and #target.sounds)
+local first = target.sounds[1]
+ok(tostring(first.path):find("zombie", 1, true) ~= nil, "звук зомби", first.path)
+ok(first.chan == CHAN_VOICE, "идёт по голосовому каналу — не глушит остальное")
+
+local before = #target.sounds
+ok(SB.Moan(target) == false, "подряд не воет: работает пауза")
+NOW = NOW + 20
+ok(select(1, SB.Moan(target)) == true, "после паузы стонет снова")
+ok(#target.sounds == before + 1, "звук ровно один за раз", #target.sounds)
+
+CVARS = CVARS or {}
+local savedCvar = SB.SoundCvar
+SB.SoundCvar = { GetBool = function() return false end }
+NOW = NOW + 20
+ok(SB.Moan(target) == false, "конваром звук отключается")
+SB.SoundCvar = savedCvar
+
+admin.sounds = nil
+SB.Moan(admin)
+ok(admin.sounds == nil, "свободный игрок не стонет")
 
 print("\n=== 4. ЗОНА ДЕРЖИТ ===")
 local watch = timers["GRM_ServerBan_Watch"]

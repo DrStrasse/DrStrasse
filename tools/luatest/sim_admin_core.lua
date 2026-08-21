@@ -292,5 +292,17 @@ ok(has(ban3, 'concommand.Add("grm_serverban_unban"'), "разбан из спи�
 ok(has(ban3, "БАНЫ НА СЕРВЕРЕ"), "окно списка забаненных")
 ok(has(panel3, "СПИСОК ЗАБАНЕННЫХ"), "кнопка списка в админ-меню")
 
+print("\n=== ЗВУК НАКАЗАННЫХ (21.08) ===")
+local ban4 = read("lua/autorun/sh_grm_ban.lua")
+ok(has(ban4, '"npc/zombie/zombie_voice_idle1.wav"'), "звук из заказа владельца на месте")
+ok(has(ban4, "function SB.Moan"), "стон вынесен в отдельную функцию")
+ok(has(ban4, "GRM_BanNextMoan"), "у каждого свой момент следующего звука — не воют хором")
+ok(has(read("lua/autorun/sh_07_grm_sound.lua"), 'S.Register("npc/zombie/zombie_voice_idle1.wav")'),
+    "звуки зарегистрированы в общем реестре прекэша, без второй копии логики")
+ok(has(ban4, "GRM.Sound.Resolve"), "путь проходит через звуковой слой с фолбэком")
+ok(has(ban4, 'CreateConVar("grm_ban_zombie_sound"'), "звук отключается конваром")
+ok(has(ban4, "SB.Moan(ply)") and has(ban4, 'timer.Create("GRM_ServerBan_Watch"'),
+    "звук идёт из общего сторожа, без таймера на каждого игрока")
+
 print(("\nADMIN CORE: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)
