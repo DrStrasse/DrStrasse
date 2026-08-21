@@ -31,9 +31,75 @@ local function key(ply)
     return tostring(ply or "")
 end
 
-local function save()
-    if SERVER then file.Write(A.File, util.TableToJSON(A.Cfg, true)) end
+--[[ ДАННЫЕ АРЕСТА РАЗДЕЛЕНЫ НА ДВЕ ЧАСТИ (заказ владельца 21.08).
+
+     Раньше камеры, точки содержания и зоны тюрьмы лежали в ОДНОМ файле
+     grm_arrest.json вместе с категориями и доступами. Файл общий для всех
+     карт, поэтому на новой карте показывались и «срабатывали» точки, которые
+     размечались совсем в другом городе: арестованных телепортировало в
+     пустоту, зоны тюрьмы висели посреди поля.
+
+     Теперь:
+       • ОБЩЕЕ (категории, модели, доступы) — по-прежнему grm_arrest.json;
+       • ПРИВЯЗАННОЕ К КАРТЕ (камеры, точки, зоны) — grm_arrest/<карта>.json.
+     У каждой записи есть поле map: даже если файл подменят руками, чужие
+     записи не загрузятся. Старый общий файл мигрируется в текущую карту
+     один раз и очищается. ]]
+function A.MapName()
+    return string.lower(game and game.GetMap and game.GetMap() or "unknown")
 end
+
+local MAP_DIR = "grm_arrest"
+
+function A.MapFile(mapName)
+    return MAP_DIR .. "/" .. tostring(mapName or A.MapName()) .. ".json"
+end
+
+--- Только записи текущей карты (защита от чужих данных в файле).
+local function ofThisMap(list)
+    local out = {}
+    local here = A.MapName()
+    for _, rec in ipairs(istable(list) and list or {}) do
+        if istable(rec) then
+            local recMap = tostring(rec.map or "")
+            if recMap == "" or recMap == here then
+                rec.map = here
+                out[#out + 1] = rec
+            end
+        end
+    end
+    return out
+end
+A.OfThisMap = ofThisMap
+
+local function saveGlobal()
+    if not SERVER then return end
+    local global = {
+        groups = A.Cfg.groups, access = A.Cfg.access, model = A.Cfg.model,
+        version = 2,
+    }
+    file.Write(A.File, util.TableToJSON(global, true))
+end
+
+local function saveMap()
+    if not SERVER then return end
+    if not file.IsDir(MAP_DIR, "DATA") then file.CreateDir(MAP_DIR) end
+    local payload = {
+        version = 1, map = A.MapName(),
+        cameras = ofThisMap(A.Cfg.cameras),
+        spawns = ofThisMap(A.Cfg.spawns),
+        prisonZones = ofThisMap(A.Cfg.prisonZones),
+    }
+    file.Write(A.MapFile(), util.TableToJSON(payload, true))
+end
+
+local function save()
+    if not SERVER then return end
+    saveGlobal()
+    saveMap()
+end
+A.SaveMapData = saveMap
+A.SaveGlobalData = saveGlobal
 
 local function normalizeConfig()
     A.Cfg.groups = istable(A.Cfg.groups) and A.Cfg.groups or {}
@@ -79,15 +145,94 @@ local function normalizeConfig()
     end
 end
 
+local function readJSON(path)
+    if not file.Exists(path, "DATA") then return nil end
+    local ok, t = pcall(util.JSONToTable, file.Read(path, "DATA") or "", false, true)
+    return (ok and istable(t)) and t or nil
+end
+
 local function load()
     if not SERVER then return end
-    if file.Exists(A.File, "DATA") then
-        local ok, t = pcall(util.JSONToTable, file.Read(A.File, "DATA") or "", false, true)
-        if ok and istable(t) then
-            for k, v in pairs(t) do A.Cfg[k] = v end
+
+    local legacyPoints = nil
+    local global = readJSON(A.File)
+    if global then
+        for k, v in pairs(global) do
+            if k ~= "cameras" and k ~= "spawns" and k ~= "prisonZones" then A.Cfg[k] = v end
+        end
+        -- старый общий файл: точки в нём привязаны к какой-то одной карте
+        if istable(global.cameras) or istable(global.spawns) or istable(global.prisonZones) then
+            legacyPoints = {
+                cameras = istable(global.cameras) and global.cameras or {},
+                spawns = istable(global.spawns) and global.spawns or {},
+                prisonZones = istable(global.prisonZones) and global.prisonZones or {},
+            }
         end
     end
+
+    local mapData = readJSON(A.MapFile())
+    if mapData then
+        A.Cfg.cameras = ofThisMap(mapData.cameras)
+        A.Cfg.spawns = ofThisMap(mapData.spawns)
+        A.Cfg.prisonZones = ofThisMap(mapData.prisonZones)
+    elseif legacyPoints then
+        -- одноразовая миграция: считаем, что старые точки размечены ЗДЕСЬ
+        A.Cfg.cameras = ofThisMap(legacyPoints.cameras)
+        A.Cfg.spawns = ofThisMap(legacyPoints.spawns)
+        A.Cfg.prisonZones = ofThisMap(legacyPoints.prisonZones)
+        A.MigratedFrom = "grm_arrest.json"
+        print(("[GRM Arrest] точки перенесены в карту %s: камер %d, точек %d, зон %d")
+            :format(A.MapName(), #A.Cfg.cameras, #A.Cfg.spawns, #A.Cfg.prisonZones))
+        saveMap()
+        saveGlobal()   -- в общем файле точек больше нет
+    else
+        A.Cfg.cameras, A.Cfg.spawns, A.Cfg.prisonZones = {}, {}, {}
+    end
+
     normalizeConfig()
+    A.Loaded = true
+end
+
+--- Список карт, для которых уже размечены точки.
+function A.MapsWithData()
+    local out = {}
+    if not SERVER then return out end
+    local files = file.Find(MAP_DIR .. "/*.json", "DATA")
+    for _, name in ipairs(files or {}) do
+        out[#out + 1] = string.gsub(tostring(name), "%.json$", "")
+    end
+    table.sort(out)
+    return out
+end
+
+--- Перенести разметку с другой карты (аккуратно: с заменой поля map).
+function A.ImportFromMap(fromMap)
+    if not SERVER then return false, "только сервер" end
+    fromMap = string.lower(tostring(fromMap or ""))
+    if fromMap == "" or fromMap == A.MapName() then return false, "укажите другую карту" end
+    local data = readJSON(A.MapFile(fromMap))
+    if not data then return false, "для этой карты разметки нет" end
+    local here = A.MapName()
+    local function adopt(list)
+        local out = {}
+        for _, rec in ipairs(istable(list) and list or {}) do
+            if istable(rec) then rec.map = here out[#out + 1] = rec end
+        end
+        return out
+    end
+    A.Cfg.cameras = adopt(data.cameras)
+    A.Cfg.spawns = adopt(data.spawns)
+    A.Cfg.prisonZones = adopt(data.prisonZones)
+    saveMap()
+    return true, ("перенесено: камер %d, точек %d, зон %d")
+        :format(#A.Cfg.cameras, #A.Cfg.spawns, #A.Cfg.prisonZones)
+end
+
+--- Убрать всю разметку текущей карты.
+function A.ClearMapData()
+    A.Cfg.cameras, A.Cfg.spawns, A.Cfg.prisonZones = {}, {}, {}
+    if SERVER then saveMap() end
+    return true
 end
 
     local function group(id)
@@ -127,18 +272,22 @@ end
     function A.AddPrisonZone(a, b, name)
         local mn = Vector(math.min(a.x, b.x), math.min(a.y, b.y), math.min(a.z, b.z))
         local mx = Vector(math.max(a.x, b.x), math.max(a.y, b.y), math.max(a.z, b.z))
-        A.Cfg.prisonZones[#A.Cfg.prisonZones + 1] = { name = tostring(name or "Тюрьма"), min = { x = mn.x, y = mn.y, z = mn.z }, max = { x = mx.x, y = mx.y, z = mx.z } }
+        A.Cfg.prisonZones[#A.Cfg.prisonZones + 1] = { name = tostring(name or "Тюрьма"), map = A.MapName(),
+            min = { x = mn.x, y = mn.y, z = mn.z }, max = { x = mx.x, y = mx.y, z = mx.z } }
         save()
         return true
     end
 
     function A.IsInPrisonZone(ply)
         if not IsValid(ply) then return false end
+        local here = A.MapName()
         for _, zone in ipairs(A.Cfg.prisonZones or {}) do
+            if tostring(zone.map or here) ~= here then goto continue end
             local mn, mx = zone.min or {}, zone.max or {}
             if ply:GetPos().x >= (mn.x or 0) and ply:GetPos().x <= (mx.x or 0)
                 and ply:GetPos().y >= (mn.y or 0) and ply:GetPos().y <= (mx.y or 0)
                 and ply:GetPos().z >= (mn.z or -math.huge) and ply:GetPos().z <= (mx.z or math.huge) then return true end
+            ::continue::
         end
         return false
     end
@@ -240,8 +389,24 @@ end
 
     function A.OpenAdmin(ply)
         if not IsValid(ply) or not ply:IsSuperAdmin() then return end
+        --[[ Снимок собираем ЯВНО и только по текущей карте: так админ видит
+             ровно то, что здесь работает, а не свалку со всех карт. ]]
+        local snapshot = {
+            groups = A.Cfg.groups,
+            access = A.Cfg.access,
+            model = A.Cfg.model,
+            cameras = ofThisMap(A.Cfg.cameras),
+            spawns = ofThisMap(A.Cfg.spawns),
+            prisonZones = ofThisMap(A.Cfg.prisonZones),
+            map = A.MapName(),
+            maps = A.MapsWithData(),
+        }
+        if GRM.Net and GRM.Net.Stream then
+            GRM.Net.Stream("GRM_Arrest_AdminData", snapshot, ply, { chunk = 8192, interval = 0.03 })
+            return
+        end
         net.Start("GRM_Arrest_AdminData")
-            net.WriteTable(A.Cfg)
+            net.WriteTable(snapshot)
         net.Send(ply)
     end
 
@@ -545,7 +710,11 @@ end
 
     net.Receive("GRM_Arrest_ZoneRequest", function(_, ply)
         if not IsValid(ply) or not ply:IsSuperAdmin() then return end
-        net.Start("GRM_Arrest_ZoneData") net.WriteTable(A.Cfg.prisonZones or {}) net.Send(ply)
+        -- тулу уходят ТОЛЬКО зоны этой карты
+        net.Start("GRM_Arrest_ZoneData")
+            net.WriteString(A.MapName())
+            net.WriteTable(ofThisMap(A.Cfg.prisonZones))
+        net.Send(ply)
     end)
 
     net.Receive("GRM_Arrest_Admin", function(_, ply) A.OpenAdmin(ply) end)
@@ -555,7 +724,7 @@ end
         local id = string.Trim(net.ReadString() or "")
         if action == "add_camera" then
             local tr = ply:GetEyeTrace()
-            local rec = { id = id ~= "" and id or ("cam_" .. os.time()), name = id ~= "" and id or ("Камера " .. tostring(#A.Cfg.cameras + 1)), group = "criminals", pos = vdata(tr.HitPos), ang = adata(Angle(0, ply:EyeAngles().y, 0)), spawnID = "" }
+            local rec = { id = id ~= "" and id or ("cam_" .. os.time()), name = id ~= "" and id or ("Камера " .. tostring(#A.Cfg.cameras + 1)), group = "criminals", map = A.MapName(), pos = vdata(tr.HitPos), ang = adata(Angle(0, ply:EyeAngles().y, 0)), spawnID = "" }
             A.Cfg.cameras[#A.Cfg.cameras + 1] = rec
             local defaultGroup = A.Cfg.groups.criminals
             if defaultGroup then defaultGroup.cameraIDs[#defaultGroup.cameraIDs + 1] = rec.id end
@@ -580,7 +749,7 @@ end
             end
             save()
         elseif action == "add_spawn" then
-            local rec = { id = id ~= "" and id or ("spawn_" .. os.time()), name = id ~= "" and id or ("Точка ареста " .. tostring(#A.Cfg.spawns + 1)), pos = vdata(ply:GetPos()), ang = adata(ply:EyeAngles()) }
+            local rec = { id = id ~= "" and id or ("spawn_" .. os.time()), name = id ~= "" and id or ("Точка ареста " .. tostring(#A.Cfg.spawns + 1)), map = A.MapName(), pos = vdata(ply:GetPos()), ang = adata(ply:EyeAngles()) }
             A.Cfg.spawns[#A.Cfg.spawns + 1] = rec save()
         elseif action == "delete_spawn" then
             for i = #A.Cfg.spawns, 1, -1 do
@@ -593,6 +762,20 @@ end
                 if tostring(cam.spawnID or "") == id then cam.spawnID = "" end
             end
             save()
+        elseif action == "map_clear" then
+            A.ClearMapData()
+            for _, ent in ipairs(ents.FindByClass("grm_arrest_camera")) do ent:Remove() end
+            if GRM.Notify then GRM.Notify(ply, "Разметка ареста этой карты очищена.", 255, 200, 120) end
+            A.OpenAdmin(ply)
+        elseif action == "map_import" then
+            local okImport, msg = A.ImportFromMap(id)
+            if GRM.Notify then
+                GRM.Notify(ply, okImport and ("Импорт с карты " .. id .. ": " .. tostring(msg))
+                    or ("Импорт не выполнен: " .. tostring(msg)), okImport and 100 or 255,
+                    okImport and 220 or 140, 120)
+            end
+            if okImport then loadCameras() end
+            A.OpenAdmin(ply)
         elseif action == "set_group" then
             local name = string.Trim(net.ReadString() or "")
             local model = string.Trim(net.ReadString() or "")
@@ -711,6 +894,45 @@ end
 
     concommand.Add("grm_arrest_admin", function(ply) A.OpenAdmin(ply) end)
     concommand.Add("grm_arrest_reload", function(ply) if not IsValid(ply) or ply:IsSuperAdmin() then loadCameras() end end)
+
+    --[[ Диагностика и обслуживание разметки по картам. ]]
+    local function printMapReport(ply)
+        local function say(text)
+            if IsValid(ply) then ply:ChatPrint(text) else print(text) end
+        end
+        say(("[Арест] карта %s: камер %d, точек %d, зон %d"):format(
+            A.MapName(), #ofThisMap(A.Cfg.cameras), #ofThisMap(A.Cfg.spawns), #ofThisMap(A.Cfg.prisonZones)))
+        local maps = A.MapsWithData()
+        if #maps > 0 then say("[Арест] разметка есть на картах: " .. table.concat(maps, ", ")) end
+        for _, cam in ipairs(ofThisMap(A.Cfg.cameras)) do
+            say(("   камера %s — точка %s"):format(tostring(cam.id),
+                tostring(cam.spawnID ~= "" and cam.spawnID or "НЕ НАЗНАЧЕНА")))
+        end
+    end
+
+    concommand.Add("grm_arrest_points", function(ply)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        printMapReport(ply)
+    end)
+    concommand.Add("grm_arrest_maps", function(ply)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        local maps = A.MapsWithData()
+        local line = #maps > 0 and table.concat(maps, ", ") or "нет"
+        if IsValid(ply) then ply:ChatPrint("[Арест] карты с разметкой: " .. line) else print(line) end
+    end)
+    concommand.Add("grm_arrest_map_clear", function(ply)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        A.ClearMapData()
+        for _, ent in ipairs(ents.FindByClass("grm_arrest_camera")) do ent:Remove() end
+        if IsValid(ply) then ply:ChatPrint("[Арест] разметка этой карты очищена.") end
+    end)
+    concommand.Add("grm_arrest_import", function(ply, _, args)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        local okImport, msg = A.ImportFromMap(args and args[1])
+        if okImport then loadCameras() end
+        local text = "[Арест] " .. (okImport and ("импорт выполнен: " .. tostring(msg)) or ("импорт не выполнен: " .. tostring(msg)))
+        if IsValid(ply) then ply:ChatPrint(text) else print(text) end
+    end)
 if GRM.Boot and GRM.Boot.Task then
     GRM.Boot.Task("arrest.cameras", "late", function() loadCameras() end, { label = "Арест: камеры содержания" })
 else
@@ -1018,8 +1240,8 @@ if CLIENT then
         end
     end
 
-    net.Receive("GRM_Arrest_AdminData", function()
-        local data = net.ReadTable() or {}
+    local function openAdminWindow(data)
+        data = istable(data) and data or {}
         local f = vgui.Create("DFrame")
         GRM.UI.Track("arrest_admin", f)
         f:SetSize(1120, 760) f:Center() f:MakePopup() f:SetTitle("") f:ShowCloseButton(false) f:SetDeleteOnClose(true)
@@ -1028,6 +1250,12 @@ if CLIENT then
             draw.RoundedBoxEx(10, 0, 0, pw, 66, UI.header, true, true, false, false)
             draw.SimpleText("GRM  /  СИСТЕМА АРЕСТА", "GRMArrestSmall", 24, 19, UI.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             draw.SimpleText("Камеры, группы и точки содержания", "GRMArrestTitle", 24, 45, UI.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            -- карта видна сразу: разметка теперь принадлежит конкретной карте
+            draw.SimpleText("КАРТА: " .. string.upper(tostring(data.map or "?")), "GRMArrestSmall",
+                pw - 64, 19, UI.green, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(("камер %d  •  точек %d  •  зон %d"):format(
+                #(data.cameras or {}), #(data.spawns or {}), #(data.prisonZones or {})),
+                "GRMArrestSmall", pw - 64, 45, UI.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
         local close = button(f, "×", UI.red, 32) close:SetPos(1072, 17) close:SetSize(32, 32) close.DoClick = function() f:Close() end
 
@@ -1047,6 +1275,35 @@ if CLIENT then
         local actionBar = vgui.Create("DPanel", canvas) actionBar:Dock(TOP) actionBar:SetTall(46) actionBar:DockMargin(0, 0, 0, 18) actionBar:SetPaintBackground(false)
         local addCam = button(actionBar, "+  Камера в прицеле", UI.accent, 40) addCam:Dock(LEFT) addCam:SetWide(245) addCam.DoClick = function() sendAction("add_camera", "") end
         local addSpawn = button(actionBar, "+  Точка арестованного", UI.green, 40) addSpawn:Dock(LEFT) addSpawn:DockMargin(10, 0, 0, 0) addSpawn:SetWide(245) addSpawn.DoClick = function() sendAction("add_spawn", "") end
+
+        --[[ РАЗДЕЛ КАРТЫ. Камеры, точки и зоны принадлежат карте: на другой
+             карте они не показываются и не срабатывают. Здесь же — перенос
+             разметки с другой карты и очистка текущей. ]]
+        sectionTitle(canvas, "Карта и разметка",
+            "Разметка привязана к карте " .. string.upper(tostring(data.map or "?")) ..
+            ". Точки других карт сюда не попадают и не срабатывают.")
+        local mapBar = vgui.Create("DPanel", canvas) mapBar:Dock(TOP) mapBar:SetTall(46)
+        mapBar:DockMargin(0, 0, 0, 18) mapBar:SetPaintBackground(false)
+        local mapCombo = vgui.Create("DComboBox", mapBar) mapCombo:Dock(LEFT) mapCombo:SetWide(320)
+        mapCombo:SetValue("Перенести разметку с карты...")
+        local pickedMap = ""
+        for _, m in ipairs(data.maps or {}) do
+            if tostring(m) ~= tostring(data.map) then mapCombo:AddChoice(tostring(m), tostring(m)) end
+        end
+        mapCombo.OnSelect = function(_, _, _, val) pickedMap = tostring(val or "") end
+        local importBtn = button(mapBar, "ПЕРЕНЕСТИ СЮДА", UI.accent, 40)
+        importBtn:Dock(LEFT) importBtn:DockMargin(10, 0, 0, 0) importBtn:SetWide(220)
+        importBtn.DoClick = function()
+            if pickedMap == "" then return end
+            Derma_Query("Перенести разметку ареста с карты «" .. pickedMap .. "» на текущую?\nТекущая разметка будет заменена.",
+                "Система ареста", "Перенести", function() sendAction("map_import", pickedMap) end, "Отмена")
+        end
+        local clearBtn = button(mapBar, "ОЧИСТИТЬ ЭТУ КАРТУ", UI.red, 40)
+        clearBtn:Dock(LEFT) clearBtn:DockMargin(10, 0, 0, 0) clearBtn:SetWide(240)
+        clearBtn.DoClick = function()
+            Derma_Query("Удалить ВСЕ камеры, точки и зоны ареста на карте " .. string.upper(tostring(data.map or "?")) .. "?",
+                "Система ареста", "Удалить", function() sendAction("map_clear", "") end, "Отмена")
+        end
 
         sectionTitle(canvas, "Группы и доступ категорий", "Нажмите «Внешность и доступ фракций»: там задаются модель, bodygroups и фракции, которым разрешена эта категория.")
         for gid, g in pairs(data.groups or {}) do
@@ -1130,6 +1387,15 @@ if CLIENT then
         local gid = vgui.Create("DTextEntry", form) gid:SetPos(565, 18) gid:SetSize(220, 34) gid:SetPlaceholderText("ID: political")
         local create = button(form, "Создать / сохранить группу", UI.orange, 38) create:SetPos(20, 70) create:SetSize(765, 38)
         create.DoClick = function() sendAction("set_group", gid:GetValue(), function() net.WriteString(name:GetValue()) net.WriteString(model:GetValue()) end) end
+    end
+
+    --[[ Снимок админки приходит порциями (GRM.Net.Stream) — окно собирается
+         один раз, без пакета «всё сразу». ]]
+    if GRM.Net and GRM.Net.Receive then
+        GRM.Net.Receive("GRM_Arrest_AdminData", openAdminWindow)
+    end
+    net.Receive("GRM_Arrest_AdminData", function()
+        openAdminWindow(net.ReadTable() or {})
     end)
 
     local arrestAccessPanel
