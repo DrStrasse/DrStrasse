@@ -1087,9 +1087,16 @@ if CLIENT then
         local e = vgui.Create("DTextEntry", parent)
         e:SetFont("GRMPlate_Body")
         e:SetPlaceholderText(placeholder or "")
+        --[[ Со своим Paint GMod НЕ рисует подсказку поля: у окна получались
+             безымянные пустые прямоугольники (заказ владельца 21.08).
+             Рисуем подсказку сами, пока поле пустое и не в фокусе. ]]
         e.Paint = function(self, w, h)
             draw.RoundedBox(6, 0, 0, w, h, Color(18, 23, 32))
             surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h, 1)
+            if (self:GetText() or "") == "" and not self:HasFocus() then
+                draw.SimpleText(placeholder or "", "GRMPlate_Small", 8, h / 2, C.dim,
+                    TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
             self:DrawTextEntryText(C.text, C.accent, C.text)
         end
         return e

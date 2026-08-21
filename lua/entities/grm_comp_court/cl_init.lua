@@ -73,7 +73,9 @@ net.Receive("GRM_CompCourt_Open", function()
 
     local frame = vgui.Create("DFrame")
     frame:SetTitle("")
-    frame:SetSize(860, 640)
+    -- Окно терминала тянется под экран: вкладок много, и на фиксированных
+    -- 960x700 верхний ряд уезжал за край (заказ владельца 21.08).
+    frame:SetSize(math.Clamp(ScrW() * 0.86, 1180, 1720), math.Clamp(ScrH() * 0.88, 760, 1080))
     frame:Center()
     frame:MakePopup()
     frame.Paint = function(_, w, h)
@@ -94,6 +96,10 @@ net.Receive("GRM_CompCourt_Open", function()
     if GRM.ServiceOrders and GRM.ServiceOrders.AttachTab then GRM.ServiceOrders.AttachTab(tabs) end
     -- Вкладка «Госбаза»: тот же /pcboard, что и по команде, одним кодом.
     if GRM.PCBoard and GRM.PCBoard.AttachTab then GRM.PCBoard.AttachTab(tabs) end
+    -- Вкладка «Автопарк»: закупка техники организацией и её выдача в гараже.
+    if GRM.Fleet and GRM.Fleet.AttachTab then GRM.Fleet.AttachTab(tabs) end
+    -- Вкладка «Номерные знаки»: выдача и проверка регистрационных номеров.
+    if GRM.Plates and GRM.Plates.AttachTab then GRM.Plates.AttachTab(tabs) end
 
     -- ════════════ ВКЛАДКА 1: ЗАКОНЫ И СТАТЬИ ════════════
     local lawPnl = vgui.Create("DPanel", tabs)

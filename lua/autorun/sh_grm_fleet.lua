@@ -914,9 +914,16 @@ if CLIENT then
         local e = vgui.Create("DTextEntry", parent)
         e:SetFont("GRMFleet_Body")
         e:SetPlaceholderText(placeholder or "")
+        --[[ Со своим Paint GMod НЕ рисует подсказку поля: у окна получались
+             безымянные пустые прямоугольники (заказ владельца 21.08).
+             Рисуем подсказку сами, пока поле пустое и не в фокусе. ]]
         e.Paint = function(self, w, h)
             draw.RoundedBox(6, 0, 0, w, h, Color(18, 23, 32))
             surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h, 1)
+            if (self:GetText() or "") == "" and not self:HasFocus() then
+                draw.SimpleText(placeholder or "", "GRMFleet_Small", 8, h / 2, C.dim,
+                    TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            end
             self:DrawTextEntryText(C.text, C.accent, C.text)
         end
         return e
@@ -961,8 +968,16 @@ if CLIENT then
             bar:Dock(TOP) bar:SetTall(44) bar:DockMargin(0, 0, 0, 8)
             bar.Paint = function(_, w, h) draw.RoundedBox(8, 0, 0, w, h, C.card) end
 
+            bar:SetTall(64)
+            local barTitle = bar.Paint
+            bar.Paint = function(self, w, h)
+                if barTitle then barTitle(self, w, h) end
+                draw.SimpleText("ГАРАЖ ПРИПИСКИ", "GRMFleet_Small", 12, 6, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                draw.SimpleText("СКОЛЬКО ЕДИНИЦ", "GRMFleet_Small", 342, 6, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            end
+
             local garageCombo = combo(bar)
-            garageCombo:Dock(LEFT) garageCombo:SetWide(320) garageCombo:DockMargin(10, 7, 8, 7)
+            garageCombo:Dock(LEFT) garageCombo:SetWide(320) garageCombo:DockMargin(10, 24, 8, 8)
             garageCombo:SetValue("Гараж приписки...")
             local pickedGarage = ""
             for _, g in ipairs(FL.State.garages) do
@@ -973,11 +988,11 @@ if CLIENT then
             garageCombo.OnSelect = function(_, _, _, val) pickedGarage = tostring(val or "") end
 
             local countEntry = entry(bar, "Сколько единиц")
-            countEntry:Dock(LEFT) countEntry:SetWide(140) countEntry:DockMargin(0, 7, 8, 7)
+            countEntry:Dock(LEFT) countEntry:SetWide(140) countEntry:DockMargin(0, 24, 8, 8)
             countEntry:SetValue("1")
 
             local refresh = button(bar, "Обновить", C.cardHov, function() act("refresh") end)
-            refresh:Dock(RIGHT) refresh:SetWide(130) refresh:DockMargin(8, 7, 10, 7)
+            refresh:Dock(RIGHT) refresh:SetWide(130) refresh:DockMargin(8, 24, 10, 8)
 
             local list = vgui.Create("DScrollPanel", buyPnl)
             list:Dock(FILL)
@@ -1113,31 +1128,40 @@ if CLIENT then
             if not FL.State.isAdmin then return end
 
             local form = vgui.Create("DPanel", adminPnl)
-            form:Dock(TOP) form:SetTall(132) form:DockMargin(0, 0, 0, 8)
+            form:Dock(TOP) form:SetTall(164) form:DockMargin(0, 0, 0, 8)
+            --[[ Каждое поле подписано ЯВНО: раньше в окне стояли четыре
+                 безымянных прямоугольника, и понять, куда что вводить, было
+                 нельзя (заказ владельца 21.08). ]]
             form.Paint = function(_, w, h)
                 draw.RoundedBox(8, 0, 0, w, h, C.card)
                 draw.SimpleText("ДОБАВИТЬ ПОЗИЦИЮ НА РЫНОК", "GRMFleet_Sub", 14, 10, C.green, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                 draw.SimpleText("Класс берётся из установленных на сервере машин; лимит 0 — без предела",
                     "GRMFleet_Small", 14, 32, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                draw.SimpleText("КЛАСС ТРАНСПОРТА", "GRMFleet_Small", 14, 56, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                draw.SimpleText("НАЗВАНИЕ В КАТАЛОГЕ", "GRMFleet_Small", 322, 56, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                draw.SimpleText("ЦЕНА ЗА ЕДИНИЦУ", "GRMFleet_Small", 570, 56, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                draw.SimpleText("ЛИМИТ НА ОРГАНИЗАЦИЮ", "GRMFleet_Small", 728, 56, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                draw.SimpleText("УРОВЕНЬ ДОПУСКА", "GRMFleet_Small", 14, 104, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                draw.SimpleText("КОМУ ПРОДАЁМ", "GRMFleet_Small", 322, 104, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
             end
 
-            local classEntry = entry(form, "Класс транспорта (например simfphys_uaz)")
-            classEntry:SetPos(14, 54) classEntry:SetSize(300, 28)
-            local nameEntry = entry(form, "Название для закупки")
-            nameEntry:SetPos(322, 54) nameEntry:SetSize(240, 28)
-            local priceEntry = entry(form, "Цена за единицу")
-            priceEntry:SetPos(570, 54) priceEntry:SetSize(150, 28)
-            local limitEntry = entry(form, "Лимит на организацию")
-            limitEntry:SetPos(728, 54) limitEntry:SetSize(170, 28)
+            local classEntry = entry(form, "например simfphys_uaz")
+            classEntry:SetPos(14, 72) classEntry:SetSize(300, 28)
+            local nameEntry = entry(form, "Патрульный УАЗ")
+            nameEntry:SetPos(322, 72) nameEntry:SetSize(240, 28)
+            local priceEntry = entry(form, "50000")
+            priceEntry:SetPos(570, 72) priceEntry:SetSize(150, 28)
+            local limitEntry = entry(form, "0 — без предела")
+            limitEntry:SetPos(728, 72) limitEntry:SetSize(170, 28)
 
             local tierCombo = combo(form)
-            tierCombo:SetPos(14, 90) tierCombo:SetSize(300, 28)
+            tierCombo:SetPos(14, 120) tierCombo:SetSize(300, 28)
             local pickedTier = "civil"
             for _, t in ipairs(FL.TierList()) do tierCombo:AddChoice(t.name, t.key, t.key == "civil") end
             tierCombo.OnSelect = function(_, _, _, val) pickedTier = tostring(val or "civil") end
 
             local facCombo = combo(form)
-            facCombo:SetPos(322, 90) facCombo:SetSize(240, 28)
+            facCombo:SetPos(322, 120) facCombo:SetSize(240, 28)
             facCombo:AddChoice("Все организации по уровню", "", true)
             for _, f in ipairs(FL.State.factions) do
                 facCombo:AddChoice(tostring(f.display or f.name or f), tostring(f.name or f))
@@ -1154,7 +1178,7 @@ if CLIENT then
                     factions = pickedFaction ~= "" and { pickedFaction } or {},
                 })
             end)
-            addBtn:SetPos(570, 90) addBtn:SetSize(328, 28)
+            addBtn:SetPos(570, 120) addBtn:SetSize(328, 28)
 
             local list = vgui.Create("DScrollPanel", adminPnl)
             list:Dock(FILL)

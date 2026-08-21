@@ -50,7 +50,9 @@ net.Receive("GRM_CompMilPolice_Open", function()
     GRM_CompTerminal_ActiveJur = jurisdiction
 
     local frame = vgui.Create("DFrame")
-    frame:SetSize(960, 700)
+    -- Окно терминала тянется под экран: вкладок много, и на фиксированных
+    -- 960x700 верхний ряд уезжал за край (заказ владельца 21.08).
+    frame:SetSize(math.Clamp(ScrW() * 0.86, 1180, 1720), math.Clamp(ScrH() * 0.88, 760, 1080))
     frame:Center()
     frame:SetTitle("")
     frame:MakePopup()

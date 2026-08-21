@@ -65,7 +65,7 @@ local function openMenu(ent, data)
     GRM.FireComputerFrame = frame
     if GRM.UI and GRM.UI.Track then GRM.UI.Track("fire_computer",frame) end
     frame:SetTitle("")
-    frame:SetSize(560, 560)
+    frame:SetSize(math.Clamp(ScrW() * 0.62, 820, 1180), math.Clamp(ScrH() * 0.72, 620, 900))
     frame:Center()
     frame:MakePopup()
     frame:ShowCloseButton(false)
