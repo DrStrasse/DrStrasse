@@ -70,6 +70,8 @@ net.Receive("GRM_CompMilitary_Open", function()
     if GRM.ServiceOrders and GRM.ServiceOrders.AttachTab then GRM.ServiceOrders.AttachTab(tabs) end
     -- Вкладка «Госбаза»: тот же /pcboard, что и по команде, одним кодом.
     if GRM.PCBoard and GRM.PCBoard.AttachTab then GRM.PCBoard.AttachTab(tabs) end
+    -- Вкладка «Автопарк»: закупка техники организацией и её выдача в гараже.
+    if GRM.Fleet and GRM.Fleet.AttachTab then GRM.Fleet.AttachTab(tabs) end
 
     -- ══════════════════════════════════════════════════════════════
     -- ВКЛАДКА 1: ОФОРМЛЕНИЕ И ВЫДАЧА ВОЕННЫХ БИЛЕТОВ

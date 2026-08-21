@@ -767,6 +767,30 @@ if SERVER then
         return out
     end
 
+    --[[ ТЕХНИКА ОРГАНИЗАЦИИ В ЭТОМ ГАРАЖЕ (модуль GRM.Fleet).
+         Гараж и автопарк — один интерфейс: сотрудник видит и свои личные
+         машины, и служебные, приписанные к этому гаражу, и берёт их по
+         размеченным местам стоянки. ]]
+    local function fleetRows(ply, garage)
+        local FL = GRM.Fleet
+        local out = {}
+        if not (FL and FL.UnitsInGarage and istable(garage)) then return out end
+        local faction = ply:GetNWString("GRM_Faction", "")
+        if faction == "" and not ply:IsSuperAdmin() then return out end
+        for _, unit in ipairs(FL.UnitsInGarage(garage.id)) do
+            if ply:IsSuperAdmin() or tostring(unit.faction) == faction then
+                out[#out + 1] = {
+                    id = unit.id, name = unit.name, class = unit.class, model = unit.model,
+                    faction = unit.faction, status = unit.status,
+                    onMap = FL.Active and IsValid(FL.Active[unit.id]) or false,
+                    fleet = true,
+                }
+            end
+        end
+        return out
+    end
+    G.FleetRows = fleetRows
+
     function G.Push(ply, garage)
         if not IsValid(ply) then return end
         garage = garage or G.GarageAt(ply)
@@ -791,6 +815,7 @@ if SERVER then
             net.WriteBool(locked)
             net.WriteTable(slots)
             net.WriteTable(vehicleRows(ply, garage))
+            net.WriteTable(fleetRows(ply, garage))
         net.Send(ply)
     end
 
@@ -940,6 +965,20 @@ if SERVER then
         local ok, msg
         if op == "retrieve" then ok, msg = G.Retrieve(ply, id)
         elseif op == "store" then ok, msg = G.Store(ply, id)
+        elseif op == "fleet_issue" then
+            -- служебная техника организации: выдача на свободное место ЭТОГО гаража
+            local FL = GRM.Fleet
+            local garage = G.GarageAt(ply)
+            if not (FL and FL.Issue) then ok, msg = false, "Модуль автопарка не загружен"
+            elseif not garage then ok, msg = false, "Вы не в гараже"
+            else
+                local ent, err = FL.Issue(ply, id, garage)
+                ok, msg = IsValid(ent), IsValid(ent) and "Служебная техника подана на место" or (err or "Не удалось выдать")
+            end
+        elseif op == "fleet_store" then
+            local FL = GRM.Fleet
+            if not (FL and FL.Store) then ok, msg = false, "Модуль автопарка не загружен"
+            else ok, msg = FL.Store(ply, id) end
         elseif op == "sethome" then ok, msg = G.SetHome(ply, id)
         elseif op == "doors" then ok, msg = G.ToggleDoors(ply)
         elseif op == "refresh" then G.Push(ply) return
@@ -1046,6 +1085,7 @@ if CLIENT then
             fee = net.ReadUInt(24), free = net.ReadUInt(8),
             doors = net.ReadUInt(8), doorsLocked = net.ReadBool(),
             slots = net.ReadTable() or {}, vehicles = net.ReadTable() or {},
+            fleet = net.ReadTable() or {},
         }
         G.LastData = data
         if G.OpenWindow then G.OpenWindow(data) end

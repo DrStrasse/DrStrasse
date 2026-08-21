@@ -186,6 +186,44 @@ function G.OpenWindow(data)
         end
     end
 
+    --[[ СЛУЖЕБНАЯ ТЕХНИКА ОРГАНИЗАЦИИ (автопарк, приписанный к этому гаражу).
+         Гараж и автопарк — один экран: сотрудник берёт служебную машину там
+         же, где и личную, и она встаёт на свободное МЕСТО стоянки. ]]
+    local fleet = data.fleet or {}
+    if #fleet > 0 then
+        local head = vgui.Create("DPanel", list)
+        head:Dock(TOP) head:SetTall(34) head:DockMargin(0, 6, 6, 6)
+        head.Paint = function(_, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, Color(26, 33, 45))
+            draw.SimpleText("СЛУЖЕБНЫЙ АВТОПАРК ОРГАНИЗАЦИИ", "GRMGar_Body", 12, h / 2, C.gold,
+                TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("закуплено руководством  •  выдаётся по местам стоянки", "GRMGar_Small",
+                w - 12, h / 2, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        end
+    end
+
+    for _, v in ipairs(fleet) do
+        local card = vgui.Create("DPanel", list)
+        card:Dock(TOP) card:SetTall(96) card:DockMargin(0, 0, 6, 8)
+        card.Paint = function(self, w, h)
+            draw.RoundedBox(8, 0, 0, w, h, self:IsHovered() and C.cardHov or C.card)
+            surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
+            draw.RoundedBox(3, 0, 0, 4, h, C.gold)
+            draw.SimpleText(tostring(v.name or v.class), "GRMGar_Head", 126, 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            draw.SimpleText(tostring(v.class or ""), "GRMGar_Small", 126, 38, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            draw.SimpleText(v.onMap and "на линии" or "в гараже", "GRMGar_Body", 126, 60,
+                v.onMap and C.gold or C.green, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        end
+
+        local m = vgui.Create("DModelPanel", card)
+        m:SetPos(10, 8) m:SetSize(106, 80)
+        preview(m, v.model)
+
+        local main = button(card, v.onMap and "ВЕРНУТЬ В ГАРАЖ" or "ВЫДАТЬ СЛУЖЕБНУЮ", v.onMap and C.accent or C.green)
+        main:Dock(RIGHT) main:SetWide(210) main:DockMargin(6, 28, 12, 28)
+        main.DoClick = function() G.SendAction(v.onMap and "fleet_store" or "fleet_issue", v.id) end
+    end
+
     -- Ворота: одна кнопка на весь набор дверей гаража.
     if (data.doors or 0) > 0 then
         local gates = button(frame, data.doorsLocked and "ОТКРЫТЬ ВОРОТА" or "ЗАКРЫТЬ ВОРОТА",
