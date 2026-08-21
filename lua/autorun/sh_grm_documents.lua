@@ -1591,9 +1591,19 @@ if SERVER then
         end
     end)
 
-    -- Инспекция водительских прав при посадке за руль
+    -- Инспекция водительских прав при посадке за руль.
+    -- Заказ владельца 21.08: система НЕ должна сама проверять В/У у водителя,
+    -- когда он садится в машину или на кресло — никаких «ВАИ проверено (Категория С)».
+    -- Проверка остаётся только по требованию (ГАИ/ВАИ, /pcboard, досмотр документов)
+    -- и включается вручную конваром grm_doc_vehicle_check 1.
+    local cvVehicleCheck = isfunction(CreateConVar)
+        and CreateConVar("grm_doc_vehicle_check", "0", FCVAR_ARCHIVE,
+            "Автопроверка водительских прав при посадке в транспорт (0 - выключено)")
+        or nil
+
     local playerVehicleCooldowns = {}
     hook.Add("PlayerEnteredVehicle", "GRM_Doc_VehicleDriverCheck", function(ply, veh, role)
+        if not (cvVehicleCheck and cvVehicleCheck:GetBool()) then return end
         if not IsValid(ply) or not ply:IsPlayer() then return end
         if not IsValid(veh) then return end
         if role and role ~= 0 then return end
