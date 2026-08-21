@@ -287,5 +287,31 @@ local okFee, msgFee = G.IssueRemote(buyer, recID, garageRec.id)
 ok(okFee == true, "подача с платой прошла", msgFee)
 ok((MONEY[buyer] or 0) == before - 500, "плата за подачу списана", MONEY[buyer])
 
+print("\n=== 7. МЕСТА ГАРАЖА РАБОТАЮТ И У ДИЛЕРА ===")
+-- связываем дилера с гаражом: выдача «у дилера» должна уйти на МЕСТО гаража
+ok(isfunction(VD.ResolveDeliveryPlace), "выбор места вынесен в одну функцию")
+G.LinkDealer(garageRec.id, "dealer1")
+local linked = false
+for _, l in ipairs(G.Get(garageRec.id).linkedDealers or {}) do if l == "dealer1" then linked = true end end
+ok(linked, "дилер связан с гаражом")
+
+fire({ "store", recID })
+local placeBefore = #SPAWNED
+fire({ "retrieve", recID, "dealer", "" })
+ok(#SPAWNED == placeBefore + 1, "машина выдана", #SPAWNED)
+ok(SPAWNED[#SPAWNED].place ~= nil,
+   "выдача У ДИЛЕРА ушла на МЕСТО связанного гаража, а не на площадку перед дилером")
+
+-- без связи и без домашнего гаража — старое поведение (площадка дилера)
+local lone = ents.Create("sent_vehicle_dealer")
+lone.GetDealerID = function() return "dealer_lonely" end
+lone.GetDealerName = function() return "Одинокий" end
+lone.VD_Vehicles = dealerEnt.VD_Vehicles
+records[recID].garageID = ""
+fire({ "store", recID })
+local place2, label2 = VD.ResolveDeliveryPlace(buyer, records[recID], lone, nil)
+ok(place2 == nil and tostring(label2):find("дилера", 1, true) ~= nil,
+   "у дилера без гаражей остаётся его собственная площадка", label2)
+
 print(("\nDEALER BUY/ISSUE: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

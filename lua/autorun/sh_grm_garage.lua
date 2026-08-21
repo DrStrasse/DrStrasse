@@ -469,25 +469,84 @@ if SERVER then
         return rows
     end
 
-    -- Свободное место: сначала пустые слоты, потом — проверка потолка/стен.
-    function G.FreeSlot(garage, ply)
-        if not istable(garage) then return nil, "Гараж не найден" end
-        if #(garage.slots or {}) == 0 then return nil, "В гараже не размечено ни одного места стоянки" end
-        for _, slot in ipairs(garage.slots) do
-            if not IsValid(slotBlocker(slot)) then
-                local pos = vec(slot.pos)
-                local ground = util.TraceLine({ start = pos + Vector(0, 0, 160), endpos = pos - Vector(0, 0, 260), filter = ply, mask = MASK_SOLID })
-                local base = (ground.Hit and not ground.StartSolid) and ground.HitPos or pos
-                local blocked = util.TraceHull({
-                    start = base + Vector(0, 0, 50), endpos = base + Vector(0, 0, 50),
-                    mins = Vector(-60, -105, -40), maxs = Vector(60, 105, 56), filter = ply, mask = MASK_SOLID,
-                })
-                if not (blocked.Hit or blocked.StartSolid) then
-                    return { pos = base, ang = ang(slot.ang), lift = tonumber(slot.lift) or 10, slot = slot }
-                end
+    --[[ СВОБОДНОЕ МЕСТО.
+
+         Первая версия отбраковывала место одним жёстким хуллом размером с
+         машину. В тесном боксе (низкий потолок, близкие стены, колонна)
+         хулл цеплялся всегда — все места считались занятыми, и система
+         молча уезжала к дилеру. Владелец это и увидел: «хоть ты точки ставь
+         и места — ничего».
+
+         Теперь проверка ступенчатая: полный габарит → уменьшенный →
+         «есть земля и рядом нет машины». Причина отказа по каждому месту
+         сохраняется и видна в диагностике (grm_garage_slots). ]]
+    local HULLS = {
+        { mins = Vector(-60, -105, -40), maxs = Vector(60, 105, 56), label = "полный габарит" },
+        { mins = Vector(-45, -85, -30),  maxs = Vector(45, 85, 44),  label = "уменьшенный габарит" },
+    }
+
+    local function slotPlace(slot, ply, why)
+        local pos = vec(slot.pos)
+        local ground = util.TraceLine({
+            start = pos + Vector(0, 0, 160), endpos = pos - Vector(0, 0, 260),
+            filter = ply, mask = MASK_SOLID,
+        })
+        local base = (ground.Hit and not ground.StartSolid) and ground.HitPos or pos
+
+        for _, hull in ipairs(HULLS) do
+            local blocked = util.TraceHull({
+                start = base + Vector(0, 0, 50), endpos = base + Vector(0, 0, 50),
+                mins = hull.mins, maxs = hull.maxs, filter = ply, mask = MASK_SOLID,
+            })
+            if not (blocked.Hit or blocked.StartSolid) then
+                return { pos = base, ang = ang(slot.ang), lift = tonumber(slot.lift) or 10, slot = slot }
             end
         end
+
+        -- последний шанс: земля есть, машин рядом нет — ставим (тесный бокс)
+        if not IsValid(slotBlocker(slot)) then
+            if why then why[slot.id] = "тесно, но машина влезет" end
+            return { pos = base, ang = ang(slot.ang), lift = tonumber(slot.lift) or 10, slot = slot, tight = true }
+        end
+        if why then why[slot.id] = "занято машиной" end
+        return nil
+    end
+
+    function G.FreeSlot(garage, ply)
+        if not istable(garage) then return nil, "Гараж не найден" end
+        if #(garage.slots or {}) == 0 then return nil, "В гараже не размечено ни одного места выдачи" end
+        local why = {}
+        -- сначала честно свободные, потом «тесные»
+        local tight = nil
+        for _, slot in ipairs(garage.slots) do
+            if not IsValid(slotBlocker(slot)) then
+                local place = slotPlace(slot, ply, why)
+                if place and not place.tight then return place end
+                if place and not tight then tight = place end
+            else
+                why[slot.id] = "занято машиной"
+            end
+        end
+        if tight then return tight end
         return nil, "Все места в гараже заняты"
+    end
+
+    --[[ Диагностика мест: почему конкретное место считается занятым.
+         Нужна была буквально: «места не срабатывают» проверяется за секунду. ]]
+    function G.SlotDiagnose(garage, ply)
+        local rows = {}
+        for i, slot in ipairs((garage and garage.slots) or {}) do
+            local blocker = slotBlocker(slot)
+            local place = not IsValid(blocker) and slotPlace(slot, ply, {}) or nil
+            rows[#rows + 1] = {
+                index = i, id = slot.id, name = slot.name,
+                free = place ~= nil,
+                tight = place and place.tight or false,
+                blocker = IsValid(blocker) and blocker:GetClass() or "",
+                pos = slot.pos,
+            }
+        end
+        return rows
     end
 
     ------------------------------------------------------------------
@@ -1031,6 +1090,23 @@ if SERVER then
     end)
 
     concommand.Add("grm_garage_menu", function(ply) if IsValid(ply) then G.OpenFor(ply) end end)
+
+    --- Диагностика мест выдачи: где стоите — то и разбираем.
+    concommand.Add("grm_garage_slots", function(ply)
+        if not (IsValid(ply) and ply:IsSuperAdmin()) then return end
+        local garage = G.GarageAt(ply) or G.Nearest(ply:GetPos(), 4096)
+        if not garage then ply:ChatPrint("[Гараж] Рядом нет гаража.") return end
+        ply:ChatPrint(("[Гараж] «%s» — мест: %d, связанных дилеров: %d"):format(
+            garage.name, #(garage.slots or {}), #(garage.linkedDealers or {})))
+        for _, row in ipairs(G.SlotDiagnose(garage, ply)) do
+            ply:ChatPrint(("  #%d %s — %s%s"):format(row.index, tostring(row.name),
+                row.free and (row.tight and "свободно (тесно)" or "свободно") or "занято",
+                row.blocker ~= "" and ("  [" .. row.blocker .. "]") or ""))
+        end
+        local place, err = G.FreeSlot(garage, ply)
+        ply:ChatPrint(place and ("  → выдача пойдёт на место «%s»"):format(
+            (place.slot and place.slot.name) or "стоянка") or ("  → " .. tostring(err)))
+    end)
     concommand.Add("grm_garage_reload", function(ply)
         if IsValid(ply) and not ply:IsSuperAdmin() then return end
         G.Load()

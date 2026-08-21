@@ -337,6 +337,66 @@ if SERVER then
  end
  -- Выдать машину по записи. place={pos,ang,lift} — место гаража; если места
  -- нет, работает по-старому от дилера.
+ --[[ ГДЕ ПОЯВИТСЯ МАШИНА (заказ владельца 21.08: «места выдачи не
+      срабатывают, транспорт спавнится перед дилером»).
+
+      Раньше выдача у дилера ВООБЩЕ не смотрела на гаражи: место бралось
+      только из точки/площадки самого дилера. Размеченные места гаража
+      использовались лишь в окне гаража — отсюда ощущение, что точки и
+      места «ничего не делают».
+
+      Теперь место выбирается по одному правилу, в порядке убывания
+      конкретности:
+        1) явное место (гараж прислал слот) — как было;
+        2) свободное МЕСТО ГАРАЖА, связанного с этим дилером;
+        3) свободное место домашнего гаража машины, если он рядом с дилером;
+        4) собственная точка/площадка дилера;
+        5) перед дилером — последний фолбэк.
+      Возвращаем ещё и описание места, чтобы игрок видел, куда подали. ]]
+ function VD.ResolveDeliveryPlace(ply,rec,dealer,place)
+  if istable(place)and place.pos then return place,"место гаража" end
+  local G=GRM.Garage
+  if not (G and G.FreeSlot and G.Get)then return nil,"площадка дилера" end
+
+  local function slotOf(garage)
+   if not istable(garage)then return nil end
+   if #(garage.slots or{})==0 then return nil end
+   local p=G.FreeSlot(garage,ply)
+   if p then return p,("место «%s» гаража «%s»"):format(
+     (p.slot and p.slot.name)or"стоянка",tostring(garage.name))end
+   return nil
+  end
+
+  -- 2) гараж, связанный с дилером
+  if IsValid(dealer)and dealer.GetDealerID then
+   local dealerID=tostring(dealer:GetDealerID() or "")
+   if dealerID~="" then
+    for _,garage in pairs(G.Garages or{})do
+     for _,linked in ipairs(garage.linkedDealers or{})do
+      if tostring(linked)==dealerID then
+       local p,label=slotOf(garage)
+       if p then return p,label end
+      end
+     end
+    end
+   end
+  end
+
+  -- 3) домашний гараж машины, если он недалеко от дилера
+  local home=G.Get(rec and rec.garageID or "")
+  if istable(home)then
+   local far=false
+   if IsValid(dealer)and G.ZoneCenter then
+    far=G.ZoneCenter(home):Distance(dealer:GetPos())>3000
+   end
+   if not far then
+    local p,label=slotOf(home)
+    if p then return p,label end
+   end
+  end
+  return nil,"площадка дилера"
+ end
+
  function VD.IssueRecord(ply,id,place,dealer)
   if not IsValid(ply)then return nil,"Игрок не найден"end
   id=tostring(id or"");local r=VD.FindRecord(ply,id)
@@ -344,8 +404,11 @@ if SERVER then
   if r.service then return nil,"Служебный транспорт выдаётся у дилера"end
   if IsValid(VD.Active[id])then return nil,"Транспорт уже выдан"end
   if activeCount(ply)>=VD.MaxActive then return nil,("Лимит активного транспорта: %d"):format(VD.MaxActive)end
+  local resolved,placeLabel=VD.ResolveDeliveryPlace(ply,r,dealer,place)
+  place=resolved or place
   local ent,_,spawnErrors=VD.Spawn(r.class,dealer,ply,place)
   if not ent then return nil,(spawnErrors and spawnErrors[1])or"Не удалось выдать транспорт"end
+  r.lastPlace=tostring(placeLabel or "")
   r.stored=false;saveGarage()
   ent.GRMGarageID=id;ent.GRMGarageOwner=ply;ent.VD_Price=r.price
   VD.TagVehicle(ent,ply,r.class,tostring(r.ownershipType or"personal"),r)
@@ -472,7 +535,8 @@ if SERVER then
    end
    local ent,err=VD.IssueRecord(ply,id,nil,dealer)
    if not ent then result(ply,false,err or"Не удалось выдать транспорт")return end
-   result(ply,true,"Транспорт выдан у дилера");VD.Push(ply,dealer)
+   result(ply,true,("Транспорт выдан: %s"):format(tostring(rec.lastPlace~=""and rec.lastPlace or "площадка дилера")))
+   VD.Push(ply,dealer)
   elseif op=="store"then local id=net.ReadString();local ok,msg=VD.StoreRecord(ply,id,700);result(ply,ok,msg or"Транспорт помещён в гараж");if ok then VD.Push(ply,dealer)end
   elseif op=="remove"then local id=net.ReadString();local ok,msg=VD.StoreRecord(ply,id,nil);result(ply,ok,msg or"Транспорт убран");if ok then VD.Push(ply,dealer)end
   elseif op=="sell"then

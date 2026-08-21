@@ -378,5 +378,23 @@ ok(select(1, V.SetHome(cop, "fleet", u.id, garage.id)) == true, "приписк�
 ok(FL.Unit(u.id).garageID == garage.id, "гараж сменился")
 ok(select(1, V.Issue(cop, "personal", "нет-такой")) == false, "личная машина без записи — честный отказ")
 
+print("\n=== 15. МЕСТА ВЫДАЧИ ПРОТИВ ТЕСНОГО БОКСА ===")
+-- хулл машины «упирается» всегда: раньше место считалось занятым и выдача
+-- уезжала к дилеру. Теперь есть ступенчатая проверка.
+local strict = select(2, G.Create(admin, Vector(-9000, -9000, 0), Vector(-8400, -8400, 300),
+    { name = "Тесный бокс", kind = "public" }))
+G.AddSlot(strict.id, Vector(-8700, -8700, 0), Angle(0, 0, 0), 10, "Бокс")
+util.TraceHull = function() return { Hit = true, StartSolid = false } end
+local place, why = G.FreeSlot(G.Get(strict.id), admin)
+ok(place ~= nil and place.tight == true,
+   "в тесном боксе место всё равно выдаётся (с пометкой «тесно»)", why)
+util.TraceHull = function() return { Hit = false, StartSolid = false } end
+ok(select(1, G.FreeSlot(G.Get(strict.id), admin)) ~= nil, "в свободном боксе место обычное")
+
+print("\n=== 16. ДИАГНОСТИКА МЕСТ ===")
+ok(isfunction(G.SlotDiagnose), "диагностика мест объявлена")
+local diag = G.SlotDiagnose(G.Get(strict.id), admin)
+ok(#diag == 1 and diag[1].free == true, "по каждому месту видно, свободно оно или нет")
+
 print(("\nFLEET: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end
