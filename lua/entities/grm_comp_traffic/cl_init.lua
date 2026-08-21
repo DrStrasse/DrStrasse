@@ -69,6 +69,8 @@ net.Receive("GRM_CompTraffic_Open", function()
     if GRM.ServiceOrders and GRM.ServiceOrders.AttachTab then GRM.ServiceOrders.AttachTab(tabs) end
     -- Вкладка «Госбаза»: тот же /pcboard, что и по команде, одним кодом.
     if GRM.PCBoard and GRM.PCBoard.AttachTab then GRM.PCBoard.AttachTab(tabs) end
+    -- Вкладка «Номерные знаки»: выдача и проверка регистрационных номеров.
+    if GRM.Plates and GRM.Plates.AttachTab then GRM.Plates.AttachTab(tabs) end
 
     -- ══════════════════════════════════════════════════════════════
     -- ВКЛАДКА 1: ДОРОЖНАЯ ИНСПЕКЦИЯ ПП (ГРАЖДАНСКИЕ ПРАВА / АВТОШКОЛА)

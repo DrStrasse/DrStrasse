@@ -1,0 +1,406 @@
+--[[ Живой прогон системы регистрационных номерных знаков (заказ 21.08):
+     выдача в Полиции, реестр, физический знак, ручная установка на машину
+     спереди и сзади, проверка номера, аннулирование.
+     Грузится РЕАЛЬНЫЙ lua/autorun/sh_grm_plates.lua (SERVER=true).
+     Запуск: ./.luabuild/lj/src/luajit tools/luatest/sim_plates.lua ]]
+local pass, fail = 0, 0
+local function ok(v, n, extra)
+    if v then pass = pass + 1 print("  ok   " .. n)
+    else fail = fail + 1 print("  FAIL " .. n .. "  " .. tostring(extra or "")) end
+end
+
+SERVER, CLIENT = true, false
+function AddCSLuaFile() end
+function istable(v) return type(v) == "table" end
+function isstring(v) return type(v) == "string" end
+function isnumber(v) return type(v) == "number" end
+function isfunction(v) return type(v) == "function" end
+function IsValid(v) return type(v) == "table" and v._valid ~= false end
+function CurTime() return 100 end
+function SysTime() return 100 end
+function ErrorNoHalt() end
+function math.Clamp(v, lo, hi) return math.max(lo, math.min(hi, v)) end
+function table.Count(t) local n = 0 for _ in pairs(t or {}) do n = n + 1 end return n end
+function table.Copy(t) if type(t) ~= "table" then return t end local o = {} for k, v in pairs(t) do o[k] = table.Copy(v) end return o end
+function string.Trim(s) return (tostring(s):gsub("^%s+", ""):gsub("%s+$", "")) end
+FCVAR_ARCHIVE = 1
+SOLID_VPHYSICS, SOLID_NONE, MOVETYPE_VPHYSICS, MOVETYPE_NONE = 6, 0, 6, 0
+COLLISION_GROUP_NONE, COLLISION_GROUP_WORLD = 0, 1
+HUD_PRINTTALK = 3
+
+local VMT = {}
+VMT.__index = VMT
+function VMT:DistToSqr(o) local a, b, c = self.x - o.x, self.y - o.y, self.z - o.z return a * a + b * b + c * c end
+function VMT:Distance(o) return math.sqrt(self:DistToSqr(o)) end
+function Vector(x, y, z) return setmetatable({ x = x or 0, y = y or 0, z = z or 0 }, VMT) end
+function Angle(p, y, r) return { p = p or 0, y = y or 0, r = r or 0 } end
+
+local HOOKS = {}
+hook = {
+    Add = function(e, n, fn) HOOKS[e] = HOOKS[e] or {} HOOKS[e][n] = fn end,
+    Remove = function() end,
+    Run = function(e, ...) for _, fn in pairs(HOOKS[e] or {}) do local r = fn(...) if r ~= nil then return r end end end,
+}
+timer = { Simple = function(_, fn) if fn then fn() end end, Create = function() end, Remove = function() end,
+          Exists = function() return false end }
+concommand = { Add = function() end }
+util = { AddNetworkString = function() end }
+local NETSENT = {}
+net = { Receive = function(m, fn) NETSENT[m] = fn end, Start = function() end, Send = function() end,
+        WriteString = function() end, WriteTable = function() end, WriteBool = function() end,
+        ReadString = function() return "" end, ReadTable = function() return {} end }
+local CONVARS = {}
+function CreateConVar(name, def)
+    local cv = { value = def }
+    function cv:GetInt() return math.floor(tonumber(self.value) or 0) end
+    function cv:GetBool() return tostring(self.value) == "1" end
+    function cv:SetValue(v) self.value = v end
+    CONVARS[name] = cv
+    return cv
+end
+game = { GetMap = function() return "sim_map" end }
+player = { GetAll = function() return {} end }
+local WORLD = {}
+ents = {
+    GetAll = function() return WORLD end,
+    FindByClass = function(cls)
+        local out = {}
+        for _, e in ipairs(WORLD) do if e:GetClass() == cls then out[#out + 1] = e end end
+        return out
+    end,
+    FindInSphere = function(pos, r)
+        local out = {}
+        for _, e in ipairs(WORLD) do if e:GetPos():Distance(pos) <= r then out[#out + 1] = e end end
+        return out
+    end,
+    Create = function(cls)
+        local e = { _valid = true, _class = cls, _pos = Vector(0, 0, 0), _ang = Angle(0, 0, 0), _nw = {}, _children = {} }
+        function e:GetClass() return self._class end
+        function e:SetPos(v) self._pos = v end
+        function e:GetPos() return self._pos end
+        function e:SetAngles(a) self._ang = a end
+        function e:GetAngles() return self._ang end
+        function e:Spawn() end
+        function e:Activate() end
+        function e:SetModel() end
+        function e:SetMaterial() end
+        function e:PhysicsInit() end
+        function e:SetMoveType() end
+        function e:SetSolid() end
+        function e:SetUseType() end
+        function e:SetCollisionGroup() end
+        function e:GetPhysicsObject()
+            return { IsValid = function() return true end, EnableMotion = function() end,
+                     Wake = function() end, SetMass = function() end }
+        end
+        function e:SetNWString(k, v) self._nw[k] = v end
+        function e:GetNWString(k, d) local v = self._nw[k] if v == nil then return d end return v end
+        function e:SetNWBool(k, v) self._nw[k] = v end
+        function e:GetNWBool(k, d) local v = self._nw[k] if v == nil then return d end return v end
+        function e:SetParent(p)
+            if IsValid(self._parent) then
+                for i, c in ipairs(self._parent._children) do if c == self then table.remove(self._parent._children, i) break end end
+            end
+            self._parent = p
+            if IsValid(p) then p._children[#p._children + 1] = self end
+        end
+        function e:GetParent() return self._parent end
+        function e:GetChildren() return self._children end
+        function e:IsVehicle() return self._class == "sim_car" end
+        function e:WorldToLocal(v) return Vector(v.x - self._pos.x, v.y - self._pos.y, v.z - self._pos.z) end
+        function e:LocalToWorld(v) return Vector(v.x + self._pos.x, v.y + self._pos.y, v.z + self._pos.z) end
+        function e:WorldToLocalAngles(a) return Angle(a.p, a.y, a.r) end
+        function e:LocalToWorldAngles(a) return Angle(a.p, a.y, a.r) end
+        function e:EmitSound() end
+        function e:Remove() self._valid = false end
+        function e:SetupPlate(rec)
+            self:SetNWString("GRM_Plate", tostring(rec.number or ""))
+            self:SetNWString("GRM_PlateType", tostring(rec.type or "civil"))
+            self:SetNWString("GRM_PlateStatus", tostring(rec.status or "active"))
+            self.GRMPlateOwnerKey = tostring(rec.ownerKey or "")
+        end
+        WORLD[#WORLD + 1] = e
+        return e
+    end,
+}
+-- ── мок файлов: data/<path> → содержимое ──
+local files = {}
+file = {
+  Exists = function(p) return files[p] ~= nil end,
+  Read = function(p) return files[p] end,
+  Write = function(p, s) files[p] = s end,
+}
+-- честный JSON (достаточно для наших структур)
+local function encode(v, indent)
+  indent = indent or 0
+  local pad = string.rep("\t", indent)
+  local t = type(v)
+  if t == "number" then return string.format("%g", v)
+  elseif t == "string" then return string.format("%q", v)
+  elseif t == "boolean" then return tostring(v)
+  elseif t == "table" then
+    local isArr = true
+    for k in pairs(v) do if type(k) ~= "number" or k < 1 or k > #v then isArr = false break end end
+    local parts = {}
+    if isArr and #v > 0 then
+      for i = 1, #v do parts[#parts + 1] = encode(v[i], indent + 1) end
+      return "[\n" .. string.rep("\t", indent + 1) .. table.concat(parts, ",\n" .. string.rep("\t", indent + 1)) .. "\n" .. pad .. "]"
+    end
+    for k, val in pairs(v) do parts[#parts + 1] = string.format("%q: %s", tostring(k), encode(val, indent + 1)) end
+    return "{\n" .. string.rep("\t", indent + 1) .. table.concat(parts, ",\n" .. string.rep("\t", indent + 1)) .. "\n" .. pad .. "}"
+  end
+  return "null"
+end
+util.TableToJSON = function(t) return encode(t) end
+-- Полноценный мини-разбор JSON: вложенные объекты и массивы, экранирование.
+local function jsonDecode(str)
+    local pos = 1
+    local parseValue
+    local function skip()
+        while pos <= #str do
+            local c = str:sub(pos, pos)
+            if c == " " or c == "\t" or c == "\n" or c == "\r" then pos = pos + 1 else break end
+        end
+    end
+    local function parseString()
+        pos = pos + 1
+        local out = {}
+        while pos <= #str do
+            local c = str:sub(pos, pos)
+            if c == "\\" then
+                local n = str:sub(pos + 1, pos + 1)
+                if n == "n" then out[#out + 1] = "\n"
+                elseif n == "t" then out[#out + 1] = "\t"
+                elseif n == "u" then
+                    out[#out + 1] = ""
+                    pos = pos + 4
+                else out[#out + 1] = n end
+                pos = pos + 2
+            elseif c == '"' then
+                pos = pos + 1
+                return table.concat(out)
+            else
+                out[#out + 1] = c
+                pos = pos + 1
+            end
+        end
+        return table.concat(out)
+    end
+    parseValue = function()
+        skip()
+        local c = str:sub(pos, pos)
+        if c == "{" then
+            local t = {}
+            pos = pos + 1
+            skip()
+            if str:sub(pos, pos) == "}" then pos = pos + 1 return t end
+            while pos <= #str do
+                skip()
+                local key = parseString()
+                skip()
+                pos = pos + 1 -- ':'
+                t[key] = parseValue()
+                skip()
+                local ch = str:sub(pos, pos)
+                pos = pos + 1
+                if ch == "}" then break end
+            end
+            return t
+        elseif c == "[" then
+            local t = {}
+            pos = pos + 1
+            skip()
+            if str:sub(pos, pos) == "]" then pos = pos + 1 return t end
+            while pos <= #str do
+                t[#t + 1] = parseValue()
+                skip()
+                local ch = str:sub(pos, pos)
+                pos = pos + 1
+                if ch == "]" then break end
+            end
+            return t
+        elseif c == '"' then
+            return parseString()
+        elseif str:sub(pos, pos + 3) == "true" then pos = pos + 4 return true
+        elseif str:sub(pos, pos + 4) == "false" then pos = pos + 5 return false
+        elseif str:sub(pos, pos + 3) == "null" then pos = pos + 4 return nil
+        else
+            local num = str:match("^%-?%d+%.?%d*[eE]?[%+%-]?%d*", pos)
+            if num then pos = pos + #num return tonumber(num) end
+            pos = pos + 1
+            return nil
+        end
+    end
+    local okParse, value = pcall(parseValue)
+    return okParse and value or nil
+end
+util.JSONToTable = function(s) return jsonDecode(tostring(s or "")) end
+
+
+-- data/-файлы (mock из json-заготовки выше) уже подключены как `files`
+file.IsDir = function() return true end
+file.CreateDir = function() end
+
+GRM = GRM or {}
+GRM.Identity = { CharacterKey = function(p) return p:SteamID64() .. ":char1" end }
+GRM.Notify = function(_, msg) LASTNOTIFY = tostring(msg) end
+GRM.Perf = { Entities = function(cls) return ents.FindByClass(cls) end, Players = function() return PLAYERS or {} end }
+GRM.Audit = { Write = function() end }
+
+assert(loadfile("lua/autorun/sh_grm_plates.lua"))()
+local PL = GRM.Plates
+
+local function mkPly(nick, faction, super, sid)
+    local p = { _valid = true, nw = { GRM_Faction = faction or "" } }
+    function p:IsPlayer() return true end
+    function p:IsSuperAdmin() return super == true end
+    function p:Nick() return nick end
+    function p:SteamID64() return sid or nick end
+    function p:GetNWString(k, d) local v = self.nw[k] if v == nil then return d end return v end
+    function p:GetPos() return Vector(0, 0, 0) end
+    function p:EyeAngles() return Angle(0, 0, 0) end
+    function p:GetAimVector() return Vector(1, 0, 0) end
+    function p:GetEyeTrace() return { HitPos = Vector(30, 0, 0) } end
+    function p:ChatPrint(t) self.chat = (self.chat or "") .. t .. "\n" end
+    return p
+end
+
+local cop  = mkPly("Копп", "Ordnungspolizei")
+local civ  = mkPly("Ганс", "")
+local root = mkPly("Root", "", true)
+PLAYERS = { cop, civ, root }
+player.GetAll = function() return PLAYERS end
+
+print("\n=== 1. НОМЕР: ЧТЕНИЕ, ПРОВЕРКА, ВИД ===")
+ok(PL.NormalizeNumber(" а 123 вс ") == "А123ВС", "пробелы и регистр приводятся к канону", PL.NormalizeNumber(" а 123 вс "))
+ok(PL.NormalizeNumber("A123BC") == "А123ВС", "латиница читается как кириллица — раскладка не мешает", PL.NormalizeNumber("A123BC"))
+ok(PL.NormalizeNumber("A-123_BC") == "А123ВС", "дефисы и подчёркивания игнорируются")
+ok(select(1, PL.ValidNumber("А123ВС", "civil")) == true, "гражданский номер A000AA проходит проверку")
+ok(select(1, PL.ValidNumber("А12ВС", "civil")) == false, "короткий номер отклонён")
+ok(select(1, PL.ValidNumber("Ж123ВС", "civil")) == false, "буква не из набора отклонена")
+ok(select(1, PL.ValidNumber("А1В3ВС", "civil")) == false, "цифра на месте буквы отклонена")
+ok(PL.FormatNumber("А123ВС", "civil") == "А 123 ВС", "номер показывается группами", PL.FormatNumber("А123ВС", "civil"))
+ok(PL.FormatNumber("А1234", "police") == "А 1234", "у полицейской серии своя разбивка", PL.FormatNumber("А1234", "police"))
+
+print("\n=== 2. ГЕНЕРАЦИЯ ===")
+local seen, dup = {}, false
+for i = 1, 60 do
+    local n = PL.GenerateNumber("civil", function(x) return seen[x] end)
+    if not n or seen[n] then dup = true end
+    seen[n] = true
+    if i == 1 then ok(select(1, PL.ValidNumber(n, "civil")) == true, "сгенерированный номер соответствует шаблону", n) end
+end
+ok(not dup, "генератор не выдаёт занятые номера")
+ok(PL.GenerateNumber("police", function() return true end) == nil, "если всё занято — честный nil, а не битый номер")
+
+print("\n=== 3. ДОСТУП ===")
+ok(PL.CanIssue(cop) == true, "полицейский может выдавать номера")
+ok(PL.CanIssue(civ) == false, "гражданский — нет")
+ok(PL.CanIssue(root) == true, "суперадмин может")
+ok(PL.CanCheck(civ) == false, "гражданский не пробивает базу")
+ok(PL.CanCheck(cop) == true, "служба пробивает")
+
+print("\n=== 4. ВЫДАЧА ===")
+local rec, err = PL.Issue({ type = "civil", ownerKey = "civ:char1", ownerName = "Ганс Мюллер",
+    by = "cop:char1", byName = "Копп", vehicle = "Opel" })
+ok(rec ~= nil, "номер выдан", err)
+ok(rec and rec.status == "active", "статус — действителен")
+ok(PL.Get(rec.number) == rec, "номер находится в реестре")
+ok(#PL.ListFor("civ:char1") == 1, "номер числится за владельцем")
+local dup2, errDup = PL.Issue({ type = "civil", number = rec.number, ownerKey = "civ:char1" })
+ok(dup2 == nil and tostring(errDup):find("уже выдан", 1, true) ~= nil, "повторная выдача того же номера отклонена", errDup)
+local bad, errBad = PL.Issue({ type = "spaceship", ownerKey = "civ:char1" })
+ok(bad == nil and isstring(errBad), "неизвестный тип отклонён")
+local noOwner = select(2, PL.Issue({ type = "civil" }))
+ok(isstring(noOwner), "без владельца номер не выдаётся")
+
+CONVARS["grm_plates_limit"]:SetValue("1")
+local overflow, errLimit = PL.Issue({ type = "civil", ownerKey = "civ:char1" })
+ok(overflow == nil and tostring(errLimit):find("предел", 1, true) ~= nil, "лимит знаков на персонажа работает", errLimit)
+CONVARS["grm_plates_limit"]:SetValue("6")
+
+print("\n=== 5. СТАТУСЫ ===")
+ok(select(1, PL.Revoke(rec.number, "Копп")) == true, "номер аннулируется")
+ok(PL.Get(rec.number).status == "revoked", "статус записан")
+ok(#(PL.Get(rec.number).history or {}) >= 2, "история ведётся")
+PL.SetStatus(rec.number, "active", "Копп")
+ok(PL.Get(rec.number).status == "active", "и восстанавливается")
+ok(select(1, PL.SetStatus(rec.number, "чтототакое", "Копп")) == false, "неизвестный статус отклонён")
+ok(select(1, PL.SetStatus("НЕТ000ТТ", "revoked", "Копп")) == false, "несуществующий номер отклонён")
+
+print("\n=== 6. ФИЗИЧЕСКИЙ ЗНАК И РУЧНАЯ УСТАНОВКА ===")
+local plate = PL.SpawnPlate(rec.number, Vector(0, 0, 0), Angle(0, 0, 0), civ)
+ok(IsValid(plate), "бланк знака создан")
+ok(plate:GetNWString("GRM_Plate", "") == rec.number, "на знаке напечатан номер")
+ok(select(1, PL.SpawnPlate("АА999ХХ")) == nil, "незарегистрированный номер бланком не выдаётся")
+
+local car = ents.Create("sim_car")
+car:SetPos(Vector(0, 0, 0))
+car.VD_Class = "simfphys_opel"
+ok(select(1, PL.Attach(plate, car, civ)) == true, "знак закреплён на машине")
+ok(plate:GetParent() == car, "знак стал частью машины")
+ok(car:GetNWString("GRM_PlateNumber", "") == rec.number, "номер машины виден для проверки")
+ok(#PL.VehiclePlates(car) == 1, "машина знает свои знаки")
+
+-- второй знак: перед и зад
+local plate2 = PL.SpawnPlate(rec.number, Vector(0, 0, 0), Angle(0, 0, 0), civ)
+PL.Attach(plate2, car, civ)
+ok(#PL.VehiclePlates(car) == 2, "на машине можно повесить и передний, и задний знак")
+
+ok(select(1, PL.Detach(plate2, civ)) == true, "знак снимается")
+ok(plate2:GetParent() == nil, "снятый знак больше не часть машины")
+ok(#PL.VehiclePlates(car) == 1, "второй остался на месте")
+
+print("\n=== 7. КТО МОЖЕТ ТРОГАТЬ ЗНАК ===")
+local owner = mkPly("Ганс", "", false, "civ")
+ok(PL.CanHandle(owner, plate) == true, "владелец может снять свой знак")
+local stranger = mkPly("Чужой", "", false, "other")
+ok(PL.CanHandle(stranger, plate) == false, "посторонний — нет")
+ok(PL.CanHandle(cop, plate) == true, "сотрудник может изъять знак")
+
+print("\n=== 8. ЗНАКИ ВОЗВРАЩАЮТСЯ ПОСЛЕ ГАРАЖА ===")
+-- эмулируем личный транспорт с записью гаража
+local garageRec = { id = "veh1", class = "simfphys_opel" }
+GRM.VehicleDealer = {
+    FindRecord = function(_, id) return id == "veh1" and garageRec or nil end,
+    SaveGarages = function() end,
+}
+car.GRMGarageOwner, car.GRMGarageID = owner, "veh1"
+PL.RememberLayout(car)
+ok(istable(garageRec.plates) and #garageRec.plates == 1, "раскладка знаков записана в гараж",
+   garageRec.plates and #garageRec.plates)
+ok(istable(garageRec.plates[1].pos) and isnumber(garageRec.plates[1].pos.x),
+   "координаты записаны числами (Vector в JSON не пишется)")
+
+-- машина «убрана и выдана заново»
+plate:Remove()
+car:Remove()
+local car2 = ents.Create("sim_car")
+car2:SetPos(Vector(100, 0, 0))
+hook.Run("GRM_VehicleIssued", owner, car2, garageRec)
+ok(#PL.VehiclePlates(car2) == 1, "после выдачи из гаража знак вернулся на машину", #PL.VehiclePlates(car2))
+ok(car2:GetNWString("GRM_PlateNumber", "") == rec.number, "номер снова виден на машине")
+
+print("\n=== 9. ХРАНЕНИЕ РЕЕСТРА ===")
+ok(PL.SaveNow() == true, "реестр записан на диск")
+local raw = files["grm_plates/registry.json"]
+ok(raw ~= nil and raw:find(rec.number, 1, true) ~= nil, "номер попал в файл")
+PL.Data.plates = {}
+ok(PL.Load() == true and PL.Get(rec.number) ~= nil, "реестр читается обратно")
+ok(PL.Get(rec.number).ownerName == "Ганс Мюллер", "владелец пережил перезагрузку")
+
+print("\n=== 10. КОМАНДЫ И СЕТЬ ===")
+ok(HOOKS["PlayerSay"] and HOOKS["PlayerSay"]["GRM_Plates_Chat"] ~= nil, "чат-команда зарегистрирована")
+local said = HOOKS["PlayerSay"]["GRM_Plates_Chat"]
+cop.chat = ""
+ok(said(cop, "/номер " .. rec.number) == "", "команда проверки съедается")
+ok(tostring(cop.chat):find("Владелец", 1, true) ~= nil, "сотруднику печатается карточка номера", cop.chat)
+civ.chat = ""
+LASTNOTIFY = nil
+said(civ, "/номер " .. rec.number)
+ok(tostring(civ.chat) == "" and tostring(LASTNOTIFY):find("служба", 1, true) ~= nil,
+   "гражданскому база не открывается", tostring(LASTNOTIFY))
+ok(NETSENT[PL.Net.ACT] ~= nil, "приём действий окна зарегистрирован")
+
+print(("\nPLATES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
+if fail > 0 then os.exit(1) end

@@ -172,6 +172,7 @@ local STOCK = {
     "npc/overwatch/radiovoice/off2.wav", "npc/overwatch/radiovoice/on3.wav",
     "physics/cardboard/cardboard_box_impact_soft4.wav", "physics/metal/metal_box_break1.wav",
     "physics/metal/metal_box_impact_soft1.wav", "physics/metal/metal_chainlink_impact_soft2.wav",
+    "physics/metal/metal_solid_impact_hard2.wav",
     "physics/rubber/rubber_tire_impact_soft1.wav", "physics/rubber/rubber_tire_impact_soft2.wav",
     "physics/wood/wood_box_break1.wav", "physics/wood/wood_crate_impact_hard1.wav",
     "physics/wood/wood_crate_impact_hard2.wav",

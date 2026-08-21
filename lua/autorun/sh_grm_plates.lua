@@ -1,0 +1,1143 @@
+--[[--------------------------------------------------------------------
+    GRM Plates v1.0.0 — регистрационные номерные знаки на транспорт
+    (заказ владельца 21.08).
+
+    Логика жизни знака:
+      1. РЕГИСТРАЦИЯ. Сотрудник Полиции / Дорожной инспекции / ВАИ через
+         терминал (вкладка «Номерные знаки») или командой выдаёт владельцу
+         регистрационный номер. Номер попадает в единый реестр: серия, тип,
+         владелец, кто выдал, когда, статус.
+      2. ПОЛУЧЕНИЕ БЛАНКА. Владелец (или сотрудник) получает ФИЗИЧЕСКИЙ знак
+         — энтити grm_plate на модели models/hunter/plates/plate025x075.mdl
+         с материалом models/debug/debugwhite и напечатанным номером.
+         Знаков можно взять два — передний и задний.
+      3. УСТАНОВКА РУКАМИ. Знак ставится физганом куда нужно (бампер спереди,
+         багажник сзади) и закрепляется нажатием [E]: он приваривается к
+         транспорту с сохранением локальной позиции. Повторное [E] снимает.
+      4. ПРОВЕРКА. Сотрудник видит номер над транспортом, пробивает его
+         командой или в терминале: чей, какой тип, статус, на чём стоял.
+      5. АННУЛИРОВАНИЕ / УТЕРЯ. Номер можно аннулировать (знак становится
+         красным «АННУЛИРОВАН») или заявить об утере.
+
+    Хранение: data/grm_plates/registry.json через очередь GRM.Save.
+    Позиции закреплённых знаков хранятся в записи гаража, поэтому знаки
+    возвращаются на место после выдачи машины из гаража.
+----------------------------------------------------------------------]]
+
+if SERVER then AddCSLuaFile() end
+
+GRM = GRM or {}
+GRM.Plates = GRM.Plates or {}
+local PL = GRM.Plates
+PL.Version = "1.0.0"
+
+PL.Model    = "models/hunter/plates/plate025x075.mdl"
+PL.Material = "models/debug/debugwhite"
+
+PL.Net = {
+    OPEN = "GRM_Plates_Open",
+    SYNC = "GRM_Plates_Sync",
+    ACT  = "GRM_Plates_Act",
+}
+
+-----------------------------------------------------------------------
+-- ТИПЫ ЗНАКОВ
+-- pattern: A — буква из PL.Letters, 0 — цифра. Разбивка group — как
+-- показывать номер человеку (по сколько символов ставить пробел).
+-----------------------------------------------------------------------
+PL.Letters = "АВЕКМНОРСТУХ"   -- буквы, читаемые и латиницей, и кириллицей
+
+PL.Types = {
+    civil = {
+        name = "Гражданский", order = 10, pattern = "A000AA", groups = { 1, 3, 2 },
+        plate = { 250, 250, 250 }, text = { 20, 20, 24 }, band = { 40, 70, 140 },
+    },
+    commercial = {
+        name = "Коммерческий", order = 20, pattern = "AA0000", groups = { 2, 4 },
+        plate = { 250, 225, 120 }, text = { 25, 25, 25 }, band = { 120, 90, 30 },
+    },
+    gov = {
+        name = "Государственный", order = 30, pattern = "0000AA", groups = { 4, 2 },
+        plate = { 235, 240, 250 }, text = { 20, 40, 100 }, band = { 30, 60, 120 },
+    },
+    police = {
+        name = "Полицейский", order = 40, pattern = "A0000", groups = { 1, 4 },
+        plate = { 60, 90, 160 }, text = { 245, 248, 255 }, band = { 25, 45, 95 },
+    },
+    military = {
+        name = "Военный", order = 50, pattern = "0000AA", groups = { 4, 2 },
+        plate = { 60, 80, 55 }, text = { 240, 245, 235 }, band = { 30, 45, 28 },
+    },
+    transit = {
+        name = "Транзитный", order = 60, pattern = "AA000", groups = { 2, 3 },
+        plate = { 240, 240, 240 }, text = { 160, 40, 40 }, band = { 150, 60, 40 },
+    },
+}
+
+PL.Statuses = {
+    active  = "действителен",
+    revoked = "аннулирован",
+    lost    = "заявлен утерянным",
+    seized  = "изъят",
+}
+
+function PL.TypeList()
+    local out = {}
+    for key, def in pairs(PL.Types) do
+        out[#out + 1] = { key = key, name = def.name, order = def.order or 100, pattern = def.pattern }
+    end
+    table.sort(out, function(a, b)
+        if a.order == b.order then return a.key < b.key end
+        return a.order < b.order
+    end)
+    return out
+end
+
+function PL.TypeDef(kind)
+    return PL.Types[tostring(kind or "")] or PL.Types.civil
+end
+
+-----------------------------------------------------------------------
+-- НОМЕР: НОРМАЛИЗАЦИЯ, ПРОВЕРКА, ГЕНЕРАЦИЯ (чистые функции)
+-----------------------------------------------------------------------
+
+--- Верхний регистр с кириллицей (string.upper знает только латиницу).
+local function upperRU(s)
+    s = string.upper(tostring(s or ""))
+    if not string.find(s, "\208", 1, true) and not string.find(s, "\209", 1, true) then return s end
+    s = string.gsub(s, "\208([\176-\191])", function(c) return "\208" .. string.char(string.byte(c) - 32) end)
+    s = string.gsub(s, "\209([\128-\143])", function(c) return "\208" .. string.char(string.byte(c) + 32) end)
+    s = string.gsub(s, "\209\145", "\208\129")
+    return s
+end
+PL.Upper = upperRU
+
+--- Латиница, похожая на кириллицу, приводится к кириллице: игрок набирает
+--  «A123BC» в любой раскладке — база всё равно находит знак.
+local LATIN_TO_RU = {
+    A = "А", B = "В", E = "Е", K = "К", M = "М", H = "Н",
+    O = "О", P = "Р", C = "С", T = "Т", Y = "У", X = "Х",
+}
+
+--- Символы номера как массив (UTF-8: кириллица — два байта).
+local function chars(s)
+    local out, i = {}, 1
+    while i <= #s do
+        local b = string.byte(s, i)
+        local len = 1
+        if b >= 240 then len = 4 elseif b >= 224 then len = 3 elseif b >= 192 then len = 2 end
+        out[#out + 1] = string.sub(s, i, i + len - 1)
+        i = i + len
+    end
+    return out
+end
+PL.Chars = chars
+
+--- Номер в каноническом виде: без пробелов, верхний регистр, кириллица.
+function PL.NormalizeNumber(raw)
+    local s = upperRU(tostring(raw or ""))
+    s = string.gsub(s, "[%s%-_·]", "")
+    local out = {}
+    for _, ch in ipairs(chars(s)) do
+        out[#out + 1] = LATIN_TO_RU[ch] or ch
+    end
+    return table.concat(out)
+end
+
+local function letterSet()
+    local set = {}
+    for _, ch in ipairs(chars(PL.Letters)) do set[ch] = true end
+    return set
+end
+
+--- Проверка номера по шаблону типа. Возвращает: ок, причина.
+function PL.ValidNumber(number, kind)
+    number = PL.NormalizeNumber(number)
+    if number == "" then return false, "Номер пуст" end
+    local def = PL.TypeDef(kind)
+    local pat = chars(def.pattern or "A000AA")
+    local got = chars(number)
+    if #got ~= #pat then
+        return false, ("Номер типа «%s» состоит из %d символов"):format(def.name, #pat)
+    end
+    local letters = letterSet()
+    for i, slot in ipairs(pat) do
+        local ch = got[i]
+        if slot == "0" then
+            if not string.match(ch, "^%d$") then return false, ("Позиция %d — цифра"):format(i) end
+        else
+            if not letters[ch] then
+                return false, ("Позиция %d — буква из набора %s"):format(i, PL.Letters)
+            end
+        end
+    end
+    return true
+end
+
+--- Номер, разбитый пробелами для показа: «А 123 ВС».
+function PL.FormatNumber(number, kind)
+    number = PL.NormalizeNumber(number)
+    local def = PL.TypeDef(kind)
+    local groups = def.groups or { #chars(number) }
+    local got, out, idx = chars(number), {}, 1
+    for _, size in ipairs(groups) do
+        local part = {}
+        for _ = 1, size do
+            if got[idx] then part[#part + 1] = got[idx] end
+            idx = idx + 1
+        end
+        if #part > 0 then out[#out + 1] = table.concat(part) end
+    end
+    while got[idx] do out[#out + 1] = got[idx] idx = idx + 1 end
+    return table.concat(out, " ")
+end
+
+--- Сгенерировать свободный номер типа. taken(number) -> true, если занят.
+function PL.GenerateNumber(kind, taken, rnd)
+    local def = PL.TypeDef(kind)
+    local pat = chars(def.pattern or "A000AA")
+    local letters = chars(PL.Letters)
+    rnd = rnd or math.random
+    for _ = 1, 400 do
+        local out = {}
+        for _, slot in ipairs(pat) do
+            if slot == "0" then out[#out + 1] = tostring(rnd(0, 9))
+            else out[#out + 1] = letters[rnd(1, #letters)] end
+        end
+        local number = table.concat(out)
+        if not (taken and taken(number)) then return number end
+    end
+    return nil
+end
+
+-----------------------------------------------------------------------
+-- ДОСТУП
+-----------------------------------------------------------------------
+PL.IssueHints = { "полиц", "police", "ordnung", "инспек", "ваи", "gendarm", "жандарм", "дорожн", "гаи" }
+
+--- Кто вправе выдавать и аннулировать номера.
+function PL.CanIssue(ply)
+    if not IsValid(ply) then return false end
+    if ply.IsSuperAdmin and ply:IsSuperAdmin() then return true end
+    if GRM.Access and GRM.Access.Can and GRM.Access.Can(ply, "plates.issue") then return true end
+
+    local fac = string.lower(ply:GetNWString("GRM_Faction", ""))
+    if fac ~= "" then
+        for _, hint in ipairs(PL.IssueHints) do
+            if string.find(fac, hint, 1, true) then return true end
+        end
+    end
+    if GRM.PCBoard and GRM.PCBoard.PlayerLevel then
+        local level = GRM.PCBoard.PlayerLevel(ply)
+        if level == "police" or level == "military" or level == "admin" then return true end
+    end
+    return false
+end
+
+--- Кто вправе пробивать номер по базе (шире, чем выдача).
+function PL.CanCheck(ply)
+    if PL.CanIssue(ply) then return true end
+    if not IsValid(ply) then return false end
+    if GRM.PCBoard and GRM.PCBoard.PlayerLevel then
+        local level = GRM.PCBoard.PlayerLevel(ply)
+        if level ~= nil and level ~= "none" then return true end
+    end
+    return false
+end
+
+-----------------------------------------------------------------------
+-- РЕЕСТР (общая часть данных; запись — на сервере)
+-----------------------------------------------------------------------
+PL.Data = PL.Data or { plates = {} }
+
+function PL.Get(number)
+    number = PL.NormalizeNumber(number)
+    if number == "" then return nil end
+    return PL.Data.plates and PL.Data.plates[number] or nil
+end
+
+function PL.ListFor(charKey)
+    charKey = tostring(charKey or "")
+    local out = {}
+    for number, rec in pairs(PL.Data.plates or {}) do
+        if istable(rec) and tostring(rec.ownerKey or "") == charKey then
+            rec.number = number
+            out[#out + 1] = rec
+        end
+    end
+    table.sort(out, function(a, b) return tostring(a.number) < tostring(b.number) end)
+    return out
+end
+
+function PL.CountFor(charKey)
+    return #PL.ListFor(charKey)
+end
+
+--- Сколько знаков одному персонажу (0 — без ограничения).
+function PL.Limit()
+    if SERVER and PL.LimitCvar then return math.max(0, PL.LimitCvar:GetInt()) end
+    return 0
+end
+
+if SERVER then
+
+    util.AddNetworkString(PL.Net.OPEN)
+    util.AddNetworkString(PL.Net.SYNC)
+    util.AddNetworkString(PL.Net.ACT)
+
+    PL.LimitCvar = PL.LimitCvar or CreateConVar("grm_plates_limit", "6", FCVAR_ARCHIVE,
+        "Сколько регистрационных номеров может быть у одного персонажа (0 — без предела)")
+    PL.SpawnLimitCvar = PL.SpawnLimitCvar or CreateConVar("grm_plates_blanks", "2", FCVAR_ARCHIVE,
+        "Сколько физических знаков одного номера можно держать на руках (перед и зад)")
+
+    local DIR  = "grm_plates"
+    local FILE = DIR .. "/registry.json"
+
+    local function ensureDir()
+        if not file.IsDir(DIR, "DATA") then file.CreateDir(DIR) end
+    end
+
+    local function charKey(ply)
+        if isstring(ply) then return ply end
+        if not IsValid(ply) then return "" end
+        if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
+        return tostring(ply:SteamID64() or "0") .. ":char1"
+    end
+    PL.CharKey = charKey
+
+    local function notify(ply, text, good)
+        if not IsValid(ply) then return end
+        if GRM.Notify then
+            GRM.Notify(ply, text, good and 100 or 255, good and 220 or 140, good and 130 or 100)
+        else
+            ply:ChatPrint("[Номера] " .. tostring(text))
+        end
+    end
+
+    -- ── хранение ────────────────────────────────────────────────────
+    local function buildPayload()
+        local arr = {}
+        for number, rec in pairs(PL.Data.plates or {}) do
+            if istable(rec) then
+                rec.number = number
+                arr[#arr + 1] = rec
+            end
+        end
+        table.sort(arr, function(a, b) return tostring(a.number) < tostring(b.number) end)
+        return { version = 1, plates = arr }
+    end
+
+    function PL.SaveNow()
+        ensureDir()
+        local ok, txt = pcall(util.TableToJSON, buildPayload(), true)
+        if not ok or not isstring(txt) then return false end
+        file.Write(FILE, txt)
+        return file.Read(FILE, "DATA") == txt
+    end
+
+    if GRM.Save and GRM.Save.Register then
+        PL._saveRegistered = GRM.Save.Register("grm_plates", {
+            file = FILE, delay = 3, priority = 5, label = "номерные знаки",
+            build = buildPayload,
+        })
+    end
+
+    function PL.Save(why)
+        if PL._saveRegistered and GRM.Save and GRM.Save.Mark then
+            return GRM.Save.Mark("grm_plates", why or "plates")
+        end
+        return PL.SaveNow()
+    end
+
+    function PL.Load()
+        PL.Data.plates = {}
+        if not file.Exists(FILE, "DATA") then return false end
+        local raw = file.Read(FILE, "DATA") or ""
+        local ok, t = pcall(util.JSONToTable, raw, false, true)
+        if not ok or not istable(t) then return false end
+        for _, rec in ipairs(istable(t.plates) and t.plates or {}) do
+            if istable(rec) then
+                local number = PL.NormalizeNumber(rec.number)
+                if number ~= "" then
+                    rec.number = number
+                    rec.mount = istable(rec.mount) and rec.mount or nil
+                    PL.Data.plates[number] = rec
+                end
+            end
+        end
+        return true
+    end
+
+    -- ── выдача и статусы ────────────────────────────────────────────
+
+    --- Зарегистрировать номер за персонажем.
+    --  opts: { number (не обязателен), type, ownerKey, ownerName, note, by, byName, vehicle }
+    function PL.Issue(opts)
+        opts = istable(opts) and opts or {}
+        local kind = tostring(opts.type or "civil")
+        if not PL.Types[kind] then return nil, "Неизвестный тип знака" end
+
+        local ownerKey = tostring(opts.ownerKey or "")
+        if ownerKey == "" then return nil, "Не указан владелец" end
+
+        local limit = PL.Limit()
+        if limit > 0 and PL.CountFor(ownerKey) >= limit then
+            return nil, ("У владельца уже %d знаков — это предел"):format(limit)
+        end
+
+        local number = PL.NormalizeNumber(opts.number)
+        if number ~= "" then
+            local okNum, why = PL.ValidNumber(number, kind)
+            if not okNum then return nil, why end
+            if PL.Get(number) then return nil, "Такой номер уже выдан" end
+        else
+            number = PL.GenerateNumber(kind, function(n) return PL.Get(n) ~= nil end)
+            if not number then return nil, "Свободных номеров этой серии не осталось" end
+        end
+
+        local rec = {
+            number = number,
+            type = kind,
+            ownerKey = ownerKey,
+            ownerName = tostring(opts.ownerName or ""),
+            faction = tostring(opts.faction or ""),
+            vehicle = tostring(opts.vehicle or ""),
+            note = string.sub(tostring(opts.note or ""), 1, 160),
+            status = "active",
+            issued = os.time(),
+            by = tostring(opts.by or ""),
+            byName = tostring(opts.byName or "система"),
+            history = { { at = os.time(), what = "выдан", who = tostring(opts.byName or "система") } },
+        }
+        PL.Data.plates[number] = rec
+        PL.Save("выдача номера")
+        hook.Run("GRM_PlateIssued", rec)
+        return rec
+    end
+
+    local function addHistory(rec, what, who)
+        rec.history = istable(rec.history) and rec.history or {}
+        table.insert(rec.history, { at = os.time(), what = tostring(what), who = tostring(who or "система") })
+        while #rec.history > 20 do table.remove(rec.history, 1) end
+    end
+
+    function PL.SetStatus(number, status, whoName)
+        local rec = PL.Get(number)
+        if not rec then return false, "Номер не найден" end
+        if not PL.Statuses[tostring(status or "")] then return false, "Неизвестный статус" end
+        rec.status = status
+        addHistory(rec, PL.Statuses[status], whoName)
+        PL.Save("статус номера")
+        -- живые знаки перекрашиваются сразу
+        for _, ent in ipairs(PL.EntitiesOf(rec.number)) do
+            ent:SetNWString("GRM_PlateStatus", status)
+        end
+        hook.Run("GRM_PlateStatusChanged", rec, status)
+        return true
+    end
+
+    function PL.Revoke(number, whoName)
+        return PL.SetStatus(number, "revoked", whoName)
+    end
+
+    -- ── физические знаки ────────────────────────────────────────────
+
+    --- Все живые знаки с этим номером.
+    function PL.EntitiesOf(number)
+        number = PL.NormalizeNumber(number)
+        local out = {}
+        local list = (GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_plate") or ents.FindByClass("grm_plate")
+        for _, ent in ipairs(list) do
+            if IsValid(ent) and PL.NormalizeNumber(ent:GetNWString("GRM_Plate", "")) == number then
+                out[#out + 1] = ent
+            end
+        end
+        return out
+    end
+
+    --- Создать физический знак.
+    function PL.SpawnPlate(number, pos, ang, owner)
+        local rec = PL.Get(number)
+        if not rec then return nil, "Номер не зарегистрирован" end
+        local ent = ents.Create("grm_plate")
+        if not IsValid(ent) then return nil, "Не удалось создать знак" end
+        ent:SetPos(pos or Vector(0, 0, 0))
+        ent:SetAngles(ang or Angle(0, 0, 0))
+        ent:Spawn()
+        ent:Activate()
+        ent:SetupPlate(rec)
+        if IsValid(owner) then
+            ent.GRMPlateOwner = owner
+            if owner.AddCount then owner:AddCount("grm_plates", ent) end
+        end
+        return ent
+    end
+
+    --- Знаки, закреплённые на транспорте.
+    function PL.VehiclePlates(veh)
+        local out = {}
+        if not IsValid(veh) then return out end
+        for _, child in ipairs(veh:GetChildren() or {}) do
+            if IsValid(child) and child:GetClass() == "grm_plate" then out[#out + 1] = child end
+        end
+        return out
+    end
+
+    --- Запись гаража, к которой относится машина (если это личный транспорт).
+    local function garageRecordOf(veh)
+        local VD = GRM.VehicleDealer
+        if not (VD and VD.FindRecord) then return nil end
+        local ply = IsValid(veh) and veh.GRMGarageOwner or nil
+        local id = IsValid(veh) and veh.GRMGarageID or nil
+        if not (IsValid(ply) and id) then return nil end
+        return VD.FindRecord(ply, id), ply, id
+    end
+
+    --- Запомнить раскладку знаков машины в записи гаража (чтобы знаки
+    --  вернулись на свои места после выдачи из гаража).
+    local function rememberLayout(veh)
+        local rec, ply = garageRecordOf(veh)
+        if not istable(rec) then return end
+        local layout = {}
+        for _, plate in ipairs(PL.VehiclePlates(veh)) do
+            local lp = veh:WorldToLocal(plate:GetPos())
+            local la = veh:WorldToLocalAngles(plate:GetAngles())
+            layout[#layout + 1] = {
+                number = plate:GetNWString("GRM_Plate", ""),
+                pos = { x = lp.x, y = lp.y, z = lp.z },   -- Vector — userdata, в JSON пишем числами
+                ang = { p = la.p, y = la.y, r = la.r },
+            }
+        end
+        rec.plates = layout
+        if GRM.VehicleDealer and GRM.VehicleDealer.SaveGarages then GRM.VehicleDealer.SaveGarages() end
+    end
+    PL.RememberLayout = rememberLayout
+
+    --- Закрепить знак на транспорте.
+    function PL.Attach(plate, veh, actor)
+        if not (IsValid(plate) and IsValid(veh)) then return false, "Нужен транспорт рядом" end
+        if plate:GetParent() == veh then return false, "Знак уже закреплён" end
+
+        plate:SetParent(veh)
+        plate:SetMoveType(MOVETYPE_NONE)
+        plate:SetSolid(SOLID_NONE)
+        plate:SetCollisionGroup(COLLISION_GROUP_WORLD)
+        local phys = plate:GetPhysicsObject()
+        if IsValid(phys) then phys:EnableMotion(false) end
+        plate.GRMPlateVehicle = veh
+        plate:SetNWBool("GRM_PlateMounted", true)
+
+        local number = PL.NormalizeNumber(plate:GetNWString("GRM_Plate", ""))
+        local rec = PL.Get(number)
+        if rec then
+            rec.mount = { vehicle = tostring(veh.VD_Class or veh:GetClass()), at = os.time() }
+            addHistory(rec, "закреплён на транспорте", IsValid(actor) and actor:Nick() or "владелец")
+            PL.Save("монтаж знака")
+        end
+        -- номер видно над машиной и в проверках
+        veh:SetNWString("GRM_PlateNumber", number)
+        veh:SetNWString("GRM_PlateType", plate:GetNWString("GRM_PlateType", "civil"))
+        rememberLayout(veh)
+        hook.Run("GRM_PlateAttached", plate, veh, actor)
+        return true
+    end
+
+    --- Снять знак с транспорта.
+    function PL.Detach(plate, actor, seize)
+        if not IsValid(plate) then return false, "Знак не найден" end
+        local veh = plate:GetParent()
+        plate:SetParent(nil)
+        plate:SetMoveType(MOVETYPE_VPHYSICS)
+        plate:SetSolid(SOLID_VPHYSICS)
+        plate:SetCollisionGroup(COLLISION_GROUP_NONE)
+        plate:PhysicsInit(SOLID_VPHYSICS)
+        local phys = plate:GetPhysicsObject()
+        if IsValid(phys) then phys:Wake() phys:EnableMotion(true) end
+        plate.GRMPlateVehicle = nil
+        plate:SetNWBool("GRM_PlateMounted", false)
+
+        local number = PL.NormalizeNumber(plate:GetNWString("GRM_Plate", ""))
+        local rec = PL.Get(number)
+        if rec then
+            rec.mount = nil
+            addHistory(rec, seize and "изъят сотрудником" or "снят с транспорта",
+                IsValid(actor) and actor:Nick() or "владелец")
+            if seize then rec.status = "seized" end
+            PL.Save("демонтаж знака")
+        end
+        if IsValid(veh) then
+            local rest = PL.VehiclePlates(veh)
+            veh:SetNWString("GRM_PlateNumber", #rest > 0 and rest[1]:GetNWString("GRM_Plate", "") or "")
+            rememberLayout(veh)
+        end
+        hook.Run("GRM_PlateDetached", plate, veh, actor)
+        return true
+    end
+
+    --- Кто может трогать конкретный знак.
+    function PL.CanHandle(ply, plate)
+        if not (IsValid(ply) and IsValid(plate)) then return false end
+        if ply:IsSuperAdmin() then return true, "superadmin" end
+        local rec = PL.Get(plate:GetNWString("GRM_Plate", ""))
+        if rec and tostring(rec.ownerKey) == charKey(ply) then return true, "owner" end
+        if PL.CanIssue(ply) then return true, "police" end
+        return false
+    end
+
+    -- Возврат знаков на место после выдачи машины из гаража.
+    hook.Add("GRM_VehicleIssued", "GRM_Plates_Restore", function(ply, ent, rec)
+        if not (IsValid(ent) and istable(rec) and istable(rec.plates)) then return end
+        for _, saved in ipairs(rec.plates) do
+            local number = PL.NormalizeNumber(saved.number)
+            local plateRec = PL.Get(number)
+            if plateRec then
+                local lp = Vector(tonumber(saved.pos and saved.pos.x) or 0,
+                    tonumber(saved.pos and saved.pos.y) or 0, tonumber(saved.pos and saved.pos.z) or 0)
+                local la = Angle(tonumber(saved.ang and saved.ang.p) or 0,
+                    tonumber(saved.ang and saved.ang.y) or 0, tonumber(saved.ang and saved.ang.r) or 0)
+                local plate = PL.SpawnPlate(number, ent:LocalToWorld(lp), ent:LocalToWorldAngles(la), ply)
+                if IsValid(plate) then PL.Attach(plate, ent, ply) end
+            end
+        end
+    end)
+
+    -- ── команды и сеть ──────────────────────────────────────────────
+
+    local function onlineList()
+        local out = {}
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+            if IsValid(p) then
+                local rp = p:GetNWString("GRM_RPName", "")
+                if rp == "" then rp = p:Nick() end
+                out[#out + 1] = {
+                    key = charKey(p), name = rp, nick = p:Nick(),
+                    faction = p:GetNWString("GRM_Faction", ""),
+                }
+            end
+        end
+        table.sort(out, function(a, b) return tostring(a.name) < tostring(b.name) end)
+        return out
+    end
+
+    local function packRec(rec)
+        if not istable(rec) then return nil end
+        return {
+            number = rec.number, type = rec.type, status = rec.status,
+            ownerName = rec.ownerName, ownerKey = rec.ownerKey, faction = rec.faction,
+            vehicle = rec.vehicle, note = rec.note, issued = rec.issued, byName = rec.byName,
+            mounted = istable(rec.mount) and true or false,
+            mountVehicle = istable(rec.mount) and tostring(rec.mount.vehicle or "") or "",
+        }
+    end
+
+    function PL.Push(ply, found)
+        if not IsValid(ply) then return end
+        local mine = {}
+        for _, rec in ipairs(PL.ListFor(charKey(ply))) do mine[#mine + 1] = packRec(rec) end
+        net.Start(PL.Net.SYNC)
+            net.WriteTable(mine)
+            net.WriteBool(PL.CanIssue(ply))
+            net.WriteTable(PL.CanIssue(ply) and onlineList() or {})
+            net.WriteTable(found and { packRec(found) } or {})
+        net.Send(ply)
+    end
+
+    function PL.Open(ply)
+        if not IsValid(ply) then return end
+        net.Start(PL.Net.OPEN)
+        net.Send(ply)
+        PL.Push(ply)
+    end
+
+    net.Receive(PL.Net.ACT, function(_, ply)
+        if not IsValid(ply) then return end
+        ply.GRMPlateNext = ply.GRMPlateNext or 0
+        if CurTime() < ply.GRMPlateNext then return end
+        ply.GRMPlateNext = CurTime() + 0.35
+
+        local act = net.ReadString()
+        local data = net.ReadTable() or {}
+
+        if act == "refresh" then
+            PL.Push(ply)
+
+        elseif act == "issue" then
+            if not PL.CanIssue(ply) then notify(ply, "Выдавать номера может только Полиция и Автоинспекция.") return end
+            local target = nil
+            for _, p in ipairs(player.GetAll()) do
+                if IsValid(p) and charKey(p) == tostring(data.ownerKey or "") then target = p break end
+            end
+            if not IsValid(target) then notify(ply, "Владелец не в сети.") return end
+            local rec, err = PL.Issue({
+                type = data.type, number = data.number,
+                ownerKey = charKey(target),
+                ownerName = target:GetNWString("GRM_RPName", target:Nick()),
+                faction = target:GetNWString("GRM_Faction", ""),
+                vehicle = data.vehicle, note = data.note,
+                by = charKey(ply), byName = ply:Nick(),
+            })
+            if not rec then notify(ply, tostring(err or "Не удалось выдать номер")) return end
+            notify(ply, ("Номер %s зарегистрирован на %s."):format(PL.FormatNumber(rec.number, rec.type), rec.ownerName), true)
+            notify(target, ("Вам выдан регистрационный номер %s. Получите бланк командой /номера."):format(
+                PL.FormatNumber(rec.number, rec.type)), true)
+            if GRM.Audit and GRM.Audit.Write then
+                GRM.Audit.Write("plates", "issue", ply, { number = rec.number, owner = rec.ownerKey }, { type = rec.type })
+            end
+            PL.Push(ply)
+            PL.Push(target)
+
+        elseif act == "spawn" then
+            local rec = PL.Get(data.number)
+            if not rec then notify(ply, "Номер не найден.") return end
+            local mine = tostring(rec.ownerKey) == charKey(ply)
+            if not (mine or PL.CanIssue(ply)) then notify(ply, "Это чужой номер.") return end
+            if rec.status ~= "active" then
+                notify(ply, ("Номер %s: %s — бланк не выдаётся."):format(
+                    PL.FormatNumber(rec.number, rec.type), PL.Statuses[rec.status] or rec.status))
+                return
+            end
+            local blanks = PL.SpawnLimitCvar:GetInt()
+            if blanks > 0 and #PL.EntitiesOf(rec.number) >= blanks then
+                notify(ply, ("Знаков с номером %s уже %d — больше не выдаём."):format(
+                    PL.FormatNumber(rec.number, rec.type), blanks))
+                return
+            end
+            local tr = ply:GetEyeTrace()
+            local pos = (tr and tr.HitPos or ply:GetPos()) + Vector(0, 0, 6)
+            if pos:Distance(ply:GetPos()) > 200 then pos = ply:GetPos() + ply:GetAimVector() * 60 + Vector(0, 0, 20) end
+            local ent, err = PL.SpawnPlate(rec.number, pos, Angle(0, ply:EyeAngles().y - 90, 0), ply)
+            if not IsValid(ent) then notify(ply, tostring(err or "Не удалось выдать бланк")) return end
+            notify(ply, "Бланк знака выдан. Поставьте его физганом и нажмите [E], чтобы закрепить.", true)
+
+        elseif act == "status" then
+            if not PL.CanIssue(ply) then notify(ply, "Недостаточно прав.") return end
+            local okSet, err = PL.SetStatus(data.number, data.status, ply:Nick())
+            notify(ply, okSet and ("Номер %s: %s."):format(PL.FormatNumber(data.number), PL.Statuses[data.status] or "")
+                or tostring(err), okSet)
+            PL.Push(ply)
+
+        elseif act == "lost" then
+            local rec = PL.Get(data.number)
+            if not rec or tostring(rec.ownerKey) ~= charKey(ply) then notify(ply, "Это не ваш номер.") return end
+            PL.SetStatus(rec.number, "lost", ply:Nick())
+            notify(ply, "Заявление об утере принято. Обратитесь в Автоинспекцию за новым номером.", true)
+            PL.Push(ply)
+
+        elseif act == "find" then
+            if not PL.CanCheck(ply) then notify(ply, "Пробивать номера может только служба.") return end
+            local rec = PL.Get(data.number)
+            if not rec then
+                notify(ply, ("Номер %s в базе не значится."):format(PL.FormatNumber(data.number)))
+                PL.Push(ply)
+                return
+            end
+            if GRM.Audit and GRM.Audit.Write then
+                GRM.Audit.Write("plates", "check", ply, { number = rec.number }, {})
+            end
+            PL.Push(ply, rec)
+        end
+    end)
+
+    -- ── чат-команды ─────────────────────────────────────────────────
+    local function chatCommand(ply, text)
+        local msg = string.Trim(tostring(text or ""))
+        local low = string.lower(msg)
+        if low:find("^/номера") == 1 or low:find("^/plates") == 1 then
+            PL.Open(ply)
+            return true
+        end
+        if low:find("^/номер%s") == 1 or low:find("^/plate%s") == 1 then
+            local arg = string.match(msg, "^%S+%s+(.+)$") or ""
+            if not PL.CanCheck(ply) then
+                notify(ply, "Пробивать номера может только служба.")
+                return true
+            end
+            local rec = PL.Get(arg)
+            if not rec then
+                notify(ply, ("Номер %s в базе не значится."):format(PL.FormatNumber(arg)))
+                return true
+            end
+            ply:ChatPrint(("[Учёт ТС] %s — %s"):format(PL.FormatNumber(rec.number, rec.type), PL.TypeDef(rec.type).name))
+            ply:ChatPrint(("  Владелец: %s%s"):format(tostring(rec.ownerName or "—"),
+                rec.faction ~= "" and (" (" .. rec.faction .. ")") or ""))
+            ply:ChatPrint(("  Статус: %s   •   выдан: %s (%s)"):format(
+                PL.Statuses[rec.status] or tostring(rec.status),
+                os.date("%d.%m.%Y", tonumber(rec.issued) or os.time()), tostring(rec.byName or "—")))
+            if rec.vehicle and rec.vehicle ~= "" then ply:ChatPrint("  Транспорт: " .. rec.vehicle) end
+            return true
+        end
+        return false
+    end
+
+    hook.Add("PlayerSay", "GRM_Plates_Chat", function(ply, text)
+        if chatCommand(ply, text) then return "" end
+    end)
+    hook.Add("PlayerSayTransform", "GRM_Plates_ChatT", function(ply, pack)
+        if not istable(pack) or not isstring(pack[1]) then return end
+        if chatCommand(ply, pack[1]) then pack[1] = "" pack.SkipPlayerSay = true end
+    end)
+
+    concommand.Add("grm_plates", function(ply) PL.Open(ply) end)
+
+    -- ── старт ───────────────────────────────────────────────────────
+    local function boot()
+        PL.Load()
+        print(("[GRM Plates] реестр номеров загружен: %d"):format(table.Count(PL.Data.plates or {})))
+    end
+    if GRM.Boot and GRM.Boot.OnMapStart then
+        GRM.Boot.OnMapStart("GRM_Plates_Load", "normal", boot)
+    else
+        hook.Add("InitPostEntity", "GRM_Plates_Load", boot)
+    end
+
+    -- ── справка госбазы: транспорт человека ─────────────────────────
+    if GRM.PCBoard and GRM.PCBoard.RegisterProvider then
+        GRM.PCBoard.RegisterProvider("plates", {
+            label = "Транспорт и номерные знаки", order = 45,
+            levels = { police = true, military = true, justice = true, special = true, admin = true },
+            collect = function(ctx)
+                local list = PL.ListFor(ctx and ctx.charKey or "")
+                if #list == 0 then return { { "Номерные знаки", "не зарегистрированы" } } end
+                local rows = {}
+                for i, rec in ipairs(list) do
+                    if i > 8 then rows[#rows + 1] = { "Ещё знаков", tostring(#list - 8) } break end
+                    rows[#rows + 1] = {
+                        PL.FormatNumber(rec.number, rec.type),
+                        ("%s · %s%s"):format(PL.TypeDef(rec.type).name,
+                            PL.Statuses[rec.status] or tostring(rec.status),
+                            (rec.vehicle and rec.vehicle ~= "") and (" · " .. rec.vehicle) or ""),
+                    }
+                end
+                return rows
+            end,
+        })
+    end
+end
+
+if CLIENT then
+
+    surface.CreateFont("GRMPlate_Title",  { font = "Roboto", size = 20, weight = 800, extended = true })
+    surface.CreateFont("GRMPlate_Body",   { font = "Roboto", size = 14, weight = 500, extended = true })
+    surface.CreateFont("GRMPlate_Small",  { font = "Roboto", size = 11, weight = 400, extended = true })
+    surface.CreateFont("GRMPlate_Number", { font = "Roboto", size = 42, weight = 900, extended = true })
+    surface.CreateFont("GRMPlate_Hud",    { font = "Roboto", size = 18, weight = 800, extended = true })
+
+    local C = {
+        bg      = Color(16, 20, 28, 252),
+        card    = Color(22, 28, 38, 240),
+        cardHov = Color(32, 42, 56, 240),
+        border  = Color(38, 48, 66, 200),
+        accent  = Color(65, 145, 235),
+        green   = Color(55, 185, 110),
+        gold    = Color(245, 195, 65),
+        red     = Color(225, 70, 70),
+        text    = Color(240, 244, 250),
+        dim     = Color(155, 170, 190),
+    }
+    PL.Colors = C
+
+    PL.Mine, PL.Online, PL.Found, PL.IsOfficer = {}, {}, {}, false
+
+    local function act(name, data)
+        net.Start(PL.Net.ACT)
+        net.WriteString(tostring(name))
+        net.WriteTable(istable(data) and data or {})
+        net.SendToServer()
+    end
+    PL.Act = act
+
+    local function button(parent, label, base, onClick)
+        local b = vgui.Create("DButton", parent)
+        b:SetText("")
+        b.Paint = function(self, w, h)
+            local col = base
+            if not self:IsEnabled() then col = Color(38, 44, 56)
+            elseif self:IsHovered() then col = Color(math.min(255, col.r + 24), math.min(255, col.g + 24), math.min(255, col.b + 24)) end
+            draw.RoundedBox(6, 0, 0, w, h, col)
+            draw.SimpleText(label, "GRMPlate_Body", w / 2, h / 2, self:IsEnabled() and C.text or C.dim,
+                TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+        b.DoClick = function() if onClick then onClick() end end
+        return b
+    end
+
+    local function entry(parent, placeholder)
+        local e = vgui.Create("DTextEntry", parent)
+        e:SetFont("GRMPlate_Body")
+        e:SetPlaceholderText(placeholder or "")
+        e.Paint = function(self, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, Color(18, 23, 32))
+            surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h, 1)
+            self:DrawTextEntryText(C.text, C.accent, C.text)
+        end
+        return e
+    end
+
+    local function combo(parent)
+        local c = vgui.Create("DComboBox", parent)
+        c:SetFont("GRMPlate_Body")
+        c:SetTextColor(C.text)
+        c.Paint = function(_, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, Color(18, 23, 32))
+            surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h, 1)
+        end
+        return c
+    end
+
+    --- Карточка знака: рисуем как настоящий знак — плашка с номером.
+    local function plateCard(parent, rec, opts)
+        opts = istable(opts) and opts or {}
+        local def = PL.TypeDef(rec.type)
+        local card = vgui.Create("DPanel", parent)
+        card:Dock(TOP)
+        card:SetTall(78)
+        card:DockMargin(0, 0, 4, 6)
+        card.Paint = function(self, w, h)
+            draw.RoundedBox(8, 0, 0, w, h, self:IsHovered() and C.cardHov or C.card)
+            surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h, 1)
+
+            -- сам знак
+            local pw, ph = 210, 52
+            draw.RoundedBox(4, 12, 13, pw, ph, Color(def.plate[1], def.plate[2], def.plate[3]))
+            draw.RoundedBox(4, 12, 13, 16, ph, Color(def.band[1], def.band[2], def.band[3]))
+            draw.SimpleText(PL.FormatNumber(rec.number, rec.type), "GRMPlate_Title", 12 + 16 + (pw - 16) / 2, 13 + ph / 2,
+                Color(def.text[1], def.text[2], def.text[3]), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+
+            local statusCol = rec.status == "active" and C.green or (rec.status == "lost" and C.gold or C.red)
+            draw.SimpleText(def.name, "GRMPlate_Body", 240, 16, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            draw.SimpleText(PL.Statuses[rec.status] or tostring(rec.status), "GRMPlate_Body", 240, 36,
+                statusCol, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            local extra = rec.mounted and ("установлен: " .. (rec.mountVehicle ~= "" and rec.mountVehicle or "транспорт"))
+                or "не установлен"
+            if opts.showOwner then
+                extra = ("владелец: %s   •   %s"):format(tostring(rec.ownerName or "—"), extra)
+            end
+            draw.SimpleText(extra, "GRMPlate_Small", 240, 56, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        end
+        return card
+    end
+
+    --- Содержимое раздела «Номерные знаки» — и для окна, и для вкладки
+    --  терминала (один код, без копий).
+    function PL.BuildPanel(parent)
+        parent:DockPadding(10, 10, 10, 10)
+
+        local content = vgui.Create("DScrollPanel", parent)
+        content:Dock(FILL)
+
+        local rebuild
+        rebuild = function()
+            content:Clear()
+
+            -- ── мои знаки ───────────────────────────────────────────
+            local head = vgui.Create("DPanel", content)
+            head:Dock(TOP) head:SetTall(46) head:DockMargin(0, 0, 4, 8)
+            head.Paint = function(_, w, h)
+                draw.RoundedBox(8, 0, 0, w, h, C.card)
+                draw.SimpleText("МОИ РЕГИСТРАЦИОННЫЕ ЗНАКИ", "GRMPlate_Body", 14, 14, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                draw.SimpleText("Получите бланк, поставьте физганом на бампер и нажмите [E], чтобы закрепить",
+                    "GRMPlate_Small", 14, 30, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            end
+            local refresh = button(head, "Обновить", C.cardHov, function() act("refresh") end)
+            refresh:Dock(RIGHT) refresh:SetWide(120) refresh:DockMargin(6, 8, 8, 8)
+
+            if #PL.Mine == 0 then
+                local empty = vgui.Create("DPanel", content)
+                empty:Dock(TOP) empty:SetTall(60) empty:DockMargin(0, 0, 4, 8)
+                empty.Paint = function(_, w, h)
+                    draw.RoundedBox(8, 0, 0, w, h, C.card)
+                    draw.SimpleText("Номеров на вас не зарегистрировано. Обратитесь в Полицию или Автоинспекцию.",
+                        "GRMPlate_Body", w / 2, h / 2, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                end
+            end
+
+            for _, rec in ipairs(PL.Mine) do
+                local card = plateCard(content, rec)
+                local get = button(card, "ПОЛУЧИТЬ БЛАНК", C.green, function() act("spawn", { number = rec.number }) end)
+                get:Dock(RIGHT) get:SetWide(170) get:DockMargin(6, 14, 10, 14)
+                get:SetEnabled(rec.status == "active")
+                local lost = button(card, "УТЕРЯН", C.cardHov, function()
+                    Derma_Query("Заявить об утере номера " .. PL.FormatNumber(rec.number, rec.type) .. "?",
+                        "Номерные знаки", "Заявить", function() act("lost", { number = rec.number }) end, "Отмена")
+                end)
+                lost:Dock(RIGHT) lost:SetWide(110) lost:DockMargin(6, 14, 0, 14)
+                lost:SetEnabled(rec.status == "active")
+            end
+
+            -- ── поиск по номеру ─────────────────────────────────────
+            local findCard = vgui.Create("DPanel", content)
+            findCard:Dock(TOP) findCard:SetTall(84) findCard:DockMargin(0, 8, 4, 8)
+            findCard.Paint = function(_, w, h)
+                draw.RoundedBox(8, 0, 0, w, h, C.card)
+                draw.SimpleText("ПРОВЕРКА НОМЕРА ПО БАЗЕ", "GRMPlate_Body", 14, 12, C.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            end
+            local findEntry = entry(findCard, "Например: А123ВС (можно латиницей)")
+            findEntry:SetPos(14, 40) findEntry:SetSize(300, 30)
+            local findBtn = button(findCard, "ПРОБИТЬ", C.accent, function()
+                act("find", { number = findEntry:GetValue() or "" })
+            end)
+            findBtn:SetPos(324, 40) findBtn:SetSize(140, 30)
+
+            for _, rec in ipairs(PL.Found) do
+                plateCard(content, rec, { showOwner = true })
+            end
+
+            -- ── выдача (только служба) ──────────────────────────────
+            if PL.IsOfficer then
+                local issue = vgui.Create("DPanel", content)
+                issue:Dock(TOP) issue:SetTall(150) issue:DockMargin(0, 8, 4, 8)
+                issue.Paint = function(_, w, h)
+                    draw.RoundedBox(8, 0, 0, w, h, C.card)
+                    draw.SimpleText("РЕГИСТРАЦИЯ НОВОГО ЗНАКА", "GRMPlate_Body", 14, 12, C.green, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("Номер можно оставить пустым — система выдаст свободный по серии типа",
+                        "GRMPlate_Small", 14, 32, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                end
+
+                local who = combo(issue)
+                who:SetPos(14, 54) who:SetSize(330, 30)
+                who:SetValue("Кому выдать...")
+                local pickedKey = ""
+                for _, p in ipairs(PL.Online) do
+                    who:AddChoice(("%s [%s]"):format(tostring(p.name), tostring(p.faction ~= "" and p.faction or "без организации")), p.key)
+                end
+                who.OnSelect = function(_, _, _, val) pickedKey = tostring(val or "") end
+
+                local kind = combo(issue)
+                kind:SetPos(354, 54) kind:SetSize(200, 30)
+                local pickedType = "civil"
+                for _, t in ipairs(PL.TypeList()) do
+                    kind:AddChoice(t.name .. "  (" .. t.pattern .. ")", t.key, t.key == "civil")
+                end
+                kind.OnSelect = function(_, _, _, val) pickedType = tostring(val or "civil") end
+
+                local numEntry = entry(issue, "Номер вручную (не обязательно)")
+                numEntry:SetPos(564, 54) numEntry:SetSize(220, 30)
+
+                local vehEntry = entry(issue, "Транспорт: марка / класс (для картотеки)")
+                vehEntry:SetPos(14, 94) vehEntry:SetSize(540, 30)
+
+                local giveBtn = button(issue, "ЗАРЕГИСТРИРОВАТЬ", C.green, function()
+                    if pickedKey == "" then
+                        notification.AddLegacy("Выберите владельца", NOTIFY_ERROR, 3)
+                        return
+                    end
+                    act("issue", {
+                        ownerKey = pickedKey, type = pickedType,
+                        number = numEntry:GetValue() or "", vehicle = vehEntry:GetValue() or "",
+                    })
+                end)
+                giveBtn:SetPos(564, 94) giveBtn:SetSize(220, 30)
+
+                -- статус найденного номера
+                for _, rec in ipairs(PL.Found) do
+                    local bar = vgui.Create("DPanel", content)
+                    bar:Dock(TOP) bar:SetTall(46) bar:DockMargin(0, 0, 4, 8)
+                    bar.Paint = function(_, w, h)
+                        draw.RoundedBox(8, 0, 0, w, h, C.card)
+                        draw.SimpleText("Действия с номером " .. PL.FormatNumber(rec.number, rec.type),
+                            "GRMPlate_Body", 14, h / 2, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    end
+                    local rev = button(bar, "АННУЛИРОВАТЬ", C.red, function()
+                        act("status", { number = rec.number, status = "revoked" })
+                    end)
+                    rev:Dock(RIGHT) rev:SetWide(170) rev:DockMargin(6, 8, 10, 8)
+                    local back = button(bar, "ВОССТАНОВИТЬ", C.cardHov, function()
+                        act("status", { number = rec.number, status = "active" })
+                    end)
+                    back:Dock(RIGHT) back:SetWide(160) back:DockMargin(6, 8, 0, 8)
+                end
+            end
+        end
+
+        rebuild()
+        PL._rebuild = rebuild
+        parent.OnRemove = function() if PL._rebuild == rebuild then PL._rebuild = nil end end
+        return rebuild
+    end
+
+    --- Вкладка «Номерные знаки» в терминалах (тот же код, что и в окне).
+    function PL.AttachTab(sheet)
+        if not IsValid(sheet) then return end
+        local pnl = vgui.Create("DPanel", sheet)
+        pnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(20, 26, 36, 245)) end
+        PL.BuildPanel(pnl)
+        sheet:AddSheet("Номерные знаки", pnl, "icon16/car.png")
+        act("refresh")
+        return pnl
+    end
+
+    net.Receive(PL.Net.SYNC, function()
+        PL.Mine = net.ReadTable() or {}
+        PL.IsOfficer = net.ReadBool()
+        PL.Online = net.ReadTable() or {}
+        local found = net.ReadTable() or {}
+        if #found > 0 then PL.Found = found end
+        if PL._rebuild then PL._rebuild() end
+    end)
+
+    net.Receive(PL.Net.OPEN, function()
+        if IsValid(PL._frame) then PL._frame:Remove() end
+        local f = vgui.Create("DFrame")
+        f:SetSize(math.Clamp(ScrW() * 0.62, 900, 1200), math.Clamp(ScrH() * 0.7, 600, 860))
+        f:Center() f:SetTitle("") f:ShowCloseButton(false) f:MakePopup()
+        PL._frame = f
+        if GRM.UI and GRM.UI.Track then GRM.UI.Track("grm_plates", f) end
+        f.Paint = function(_, w, h)
+            draw.RoundedBox(10, 0, 0, w, h, C.bg)
+            draw.RoundedBoxEx(10, 0, 0, w, 48, Color(22, 28, 40), true, true, false, false)
+            draw.RoundedBox(0, 0, 48, w, 2, C.accent)
+            draw.SimpleText("УЧЁТ ТРАНСПОРТА · РЕГИСТРАЦИОННЫЕ ЗНАКИ", "GRMPlate_Title", 18, 16, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            draw.SimpleText("/номера  •  выдача в Полиции и Автоинспекции", "GRMPlate_Small", 18, 32, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        end
+        local close = button(f, "✕", C.red, function() f:Remove() end)
+        close:SetSize(32, 28) close:SetPos(f:GetWide() - 42, 10)
+
+        local body = vgui.Create("DPanel", f)
+        body:Dock(FILL) body:DockMargin(6, 52, 6, 6) body:SetPaintBackground(false)
+        PL.BuildPanel(body)
+    end)
+
+    --[[ НОМЕР НАД ТРАНСПОРТОМ.
+         Сотрудник видит номер издалека, обычный игрок — вблизи. Рисуем в
+         общем HUDPaint с троттлингом трассировки: покадровых трейсов нет. ]]
+    local lastTrace, lastVeh = 0, nil
+    hook.Add("HUDPaint", "GRM_Plates_HUD", function()
+        local lp = LocalPlayer()
+        if not IsValid(lp) or not lp:Alive() then return end
+
+        if CurTime() - lastTrace > 0.2 then
+            lastTrace = CurTime()
+            local tr = (GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(lp) or lp:GetEyeTrace()
+            local ent = tr and tr.Entity or nil
+            if IsValid(ent) and ent:GetClass() == "grm_plate" then
+                lastVeh = ent
+            elseif IsValid(ent) and (ent:IsVehicle() or ent:GetNWString("GRM_PlateNumber", "") ~= "") then
+                lastVeh = ent
+            else
+                lastVeh = nil
+            end
+        end
+
+        local ent = lastVeh
+        if not IsValid(ent) then return end
+        local number, kind
+        if ent:GetClass() == "grm_plate" then
+            number = ent:GetNWString("GRM_Plate", "")
+            kind = ent:GetNWString("GRM_PlateType", "civil")
+        else
+            number = ent:GetNWString("GRM_PlateNumber", "")
+            kind = ent:GetNWString("GRM_PlateType", "civil")
+        end
+        if not number or number == "" then return end
+        if lp:GetPos():Distance(ent:GetPos()) > 400 then return end
+
+        local text = PL.FormatNumber(number, kind)
+        surface.SetFont("GRMPlate_Hud")
+        local tw = surface.GetTextSize(text)
+        local x, y = ScrW() / 2, ScrH() * 0.62
+        draw.RoundedBox(6, x - tw / 2 - 14, y - 16, tw + 28, 32, Color(14, 18, 26, 225))
+        draw.SimpleText(text, "GRMPlate_Hud", x, y, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end)
+end
+
+print("[GRM Plates] v" .. PL.Version .. " loaded (" .. (SERVER and "Server" or "Client") .. ")")
