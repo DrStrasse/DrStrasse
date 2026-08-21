@@ -20,7 +20,7 @@ end
 local unified = read("lua/autorun/client/cl_grm_factions_unified_ui.lua")
 local dealerCl = read("lua/entities/sent_vehicle_dealer/cl_init.lua")
 local dealerSh = read("lua/autorun/sh_grm_vehicle_dealer.lua")
-local dealerTool = read("lua/weapons/gmod_tool/stools/vehicle_dealer_tool.lua")
+local dealerTool = read("lua/weapons/gmod_tool/stools/grm_transport.lua")
 local vendor = read("lua/autorun/sh_grm_vendor.lua")
 local vendorTool = read("lua/weapons/gmod_tool/stools/grm_vendor_tool.lua")
 local phoneVendor = read("lua/autorun/sh_grm_phone_vendor.lua")

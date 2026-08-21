@@ -21,7 +21,7 @@ local function has(s, n) return s:find(n, 1, true) ~= nil end
 
 local core = read("lua/autorun/sh_grm_garage.lua")
 local ui   = read("lua/autorun/client/cl_grm_garage_ui.lua")
-local tool = read("lua/weapons/gmod_tool/stools/grm_garage.lua")
+local tool = read("lua/weapons/gmod_tool/stools/grm_transport.lua")
 local entS = read("lua/entities/grm_garage_terminal/shared.lua")
 local entI = read("lua/entities/grm_garage_terminal/init.lua")
 local entC = read("lua/entities/grm_garage_terminal/cl_init.lua")
@@ -48,8 +48,8 @@ ok(has(core, "if not G.PosInZone(rec, pos) then return false, \"Место до�
     "место обязано быть внутри зоны")
 ok(has(core, "function G.FreeSlot"), "поиск свободного места с проверкой габаритов")
 ok(has(core, "function G.SlotState"), "занятость мест считается для интерфейса")
-ok(has(tool, 'mode:AddChoice("Зона гаража (2 клика)", "zone")') and has(tool, '"Место стоянки", "slot"')
-    and has(tool, '"Стойка вызова меню", "terminal"'), "у тула три режима: зона, место, стойка")
+ok(has(tool, 'key = "zone"') and has(tool, 'key = "slot"') and has(tool, 'key = "terminal"'),
+    "у тула есть режимы: зона, место выдачи, стойка")
 ok(has(tool, 'dir:AddChoice("По взгляду при установке", "look")'), "направление выдачи выбирается")
 
 print("\n=== 3. СТОЙКА И ВЫЗОВ МЕНЮ ===")
@@ -95,7 +95,7 @@ ok(has(core, "GRM.Net.Guard(ply, \"garage.action\""), "приём действи
 ok(has(core, "GRM.Net.Guard(ply, \"garage.admin\""), "админ-канал тоже под guard")
 ok(has(hubS, "garages = { save = function()") and has(hubS, '"garages", "quests"'), "гаражи в хабе сохранений")
 ok(has(hubC, '{ id = "garages", name = "Гаражи карты"'), "раздел гаражей виден в /grm_persistence")
-ok(has(qm, '{ id = "grm_garage",'), "тул зарегистрирован в Q-меню")
+ok(has(qm, '{ id = "grm_transport"'), "единый тул зарегистрирован в Q-меню")
 ok(f4 == "" or has(f4, "Гараж (/garage"), "подсказка по гаражу есть в F4")
 
 print("\n=== 7. ВОРОТА ГАРАЖА (ДВЕРИ) ===")
@@ -108,7 +108,7 @@ ok(has(core, "if GRM.Property and GRM.Property.GetByDoorID and GRM.Property.GetB
     "двери объекта недвижимости остаются её правилам — приоритет не спорит")
 ok(has(core, "function G.ApplyDoorState"), "ворота запираются вместе со сменой типа гаража")
 ok(has(core, "function G.ToggleDoors") and has(ui, 'G.SendAction("doors", "")'), "в меню есть кнопка открыть/закрыть ворота")
-ok(has(tool, '"Ворота гаража (двери)", "door"') and has(tool, "g.LinkDoor(rec.id, doorID)"), "режим привязки дверей в туле")
+ok(has(tool, 'key = "door"') and has(tool, "g.LinkDoor(rec.id, doorID)"), "режим привязки ворот в туле")
 
 print("\n=== 8. ГАРАЖ ВМЕСТЕ С ДОМОМ ===")
 ok(has(core, "function G.LinkProperty"), "гараж привязывается к объекту недвижимости")

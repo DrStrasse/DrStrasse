@@ -178,7 +178,7 @@ ok(has(cl, "У вас: %d из %d"), "в карточке видно, сколь
 ok(has(cl, 'capped and "ЛИМИТ"') and has(cl, "b:SetEnabled(not capped)"), "кнопка блокируется на пределе")
 
 print("\n=== 6. РЕЖИМ ВЫДАЧИ У ДИЛЕРА ===")
-local tool = read("lua/weapons/gmod_tool/stools/vehicle_dealer_tool.lua")
+local tool = read("lua/weapons/gmod_tool/stools/grm_transport.lua")
 ok(has(core, "VD.DeliveryModes = {") and has(core, 'dealer = "Выдавать у дилера"')
     and has(core, 'garage = "Отправлять в гараж"') and has(core, 'both   = "На выбор игрока"'),
     "три режима выдачи покупок")
@@ -205,7 +205,7 @@ ok(has(cl, 'send(dealer, "retrieve", v.id, "dealer", "")') and has(cl, 'send(dea
 ok(has(cl, "Выдача покупок:") and has(cl, "Показывать кнопку «ВЫДАТЬ» из гаража"),
     "настройки есть в админке дилера")
 ok(has(cl, "delivery = deliveryMode, showRetrieve = showRetrieve"), "админка сохраняет настройки")
-ok(has(tool, "delivery = GRM.VehicleDealer.DeliveryMode(ent)"), "тул отдаёт текущие настройки в админку")
+ok(has(tool, "delivery = GRM.VehicleDealer.DeliveryMode(trace.Entity)"), "тул отдаёт текущие настройки в админку")
 
 print("\n=== 7. ВЫКУП ГОСУДАРСТВОМ В КОДЕ ДИЛЕРА ===")
 ok(has(core, 'CreateConVar("grm_vd_state_buyback", "93"'), "ставка выкупа — конвар (93% по умолчанию)")
