@@ -375,6 +375,34 @@ SB.Load()
 ok(table.Count(SB.Bans) == 0, "битый/пустой файл не роняет модуль")
 ok(istable(SB.History), "история переживает перезагрузку структурой")
 
+print("\n=== 8а. ВОЗВРАТ НА ИСХОДНОЕ МЕСТО (заказ 21.08) ===")
+target.pos = Vector(4321, -1234, 56)
+SB.Ban(admin, target, 25, "Проверка возврата")
+ok(target.pos:DistToSqr(SB.ZonePos()) < 200, "при бане унесло в зону отбывания")
+local rec = SB.Bans[target:SteamID64()]
+ok(istable(rec.returnPos) and rec.returnPos.x == 4321 and rec.returnPos.y == -1234,
+    "исходная точка запомнена ЧИСЛАМИ в записи бана",
+    rec.returnPos and (rec.returnPos.x .. "/" .. rec.returnPos.y))
+SB.Unban(admin, target:SteamID64())
+ok(target.pos:DistToSqr(Vector(4321, -1234, 56)) < 200,
+    "после разбана игрок вернулся туда, откуда его забрали", tostring(target.pos))
+
+-- то же самое, но по истечении срока и после «рестарта» сервера
+target.pos = Vector(-777, 888, 12)
+SB.Ban(admin, target, 1, "Возврат по сроку")
+SB.Zones, SB.Bans = {}, {}
+SB.Load()
+target.pos = Vector(1000, 1000, 0)
+target.GRM_BanReturn = nil
+SB.Apply(target, false)
+ok(isvector(target.GRM_BanReturn) and target.GRM_BanReturn.x == -777,
+    "точка возврата пережила рестарт и подхватилась при входе",
+    target.GRM_BanReturn and target.GRM_BanReturn.x)
+CLOCK = CLOCK + 120
+timers["GRM_ServerBan_Watch"]()
+ok(target.pos:DistToSqr(Vector(-777, 888, 12)) < 200,
+    "по истечении срока тоже возвращает на место", tostring(target.pos))
+
 print("\n=== 8б. ПОСЛЕ РАЗБАНА ЧЕЛОВЕК СВОБОДЕН (баг 21.08) ===")
 target.model = "models/player/group01/male_02.mdl"
 target.nw.GRM_PreBanModel = ""

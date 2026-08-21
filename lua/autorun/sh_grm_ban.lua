@@ -145,13 +145,21 @@ if SERVER then
         if istable(data) and istable(data.bans) then
             for sid, rec in pairs(data.bans) do
                 if isstring(sid) and istable(rec) then
-                    SB.Bans[sid] = {
+                    local row = {
                         ["until"] = math.floor(tonumber(rec["until"]) or 0),
                         reason = tostring(rec.reason or ""),
                         by = tostring(rec.by or ""),
                         at = math.floor(tonumber(rec.at) or os.time()),
                         name = tostring(rec.name or ""),
                     }
+                    -- Куда вернуть после снятия: переживает рестарт сервера.
+                    if istable(rec.returnPos) then
+                        local x, y, z = tonumber(rec.returnPos.x), tonumber(rec.returnPos.y), tonumber(rec.returnPos.z)
+                        if x and y and z and not (x == 0 and y == 0 and z == 0) then
+                            row.returnPos = { x = x, y = y, z = z }
+                        end
+                    end
+                    SB.Bans[sid] = row
                 end
             end
         end
@@ -244,6 +252,10 @@ if SERVER then
         ply:SetNWString("GRM_ServerBanReason", tostring(rec.reason or ""))
         ply:SetNWInt("GRM_ServerBanUntil", math.floor(tonumber(rec["until"]) or 0))
 
+        if not ply.GRM_BanReturn and istable(rec.returnPos) then
+            ply.GRM_BanReturn = Vector(rec.returnPos.x, rec.returnPos.y, rec.returnPos.z)
+        end
+
         if ply:GetActiveWeapon() ~= NULL and IsValid(ply:GetActiveWeapon()) then ply:StripWeapons() end
         if #ply:GetWeapons() > 0 then ply:StripWeapons() end
         ply:StripAmmo()
@@ -267,7 +279,7 @@ if SERVER then
 
          Теперь: возвращаем вид и подвижность на месте, оружие выдаём штатным
          хуком загрузки снаряжения, респавн не трогаем. ]]
-    function SB.Clear(ply)
+    function SB.Clear(ply, returnPos)
         if not IsValid(ply) then return end
         ply:SetNWBool("GRM_ServerBanned", false)
         ply:SetNWString("GRM_ServerBanReason", "")
@@ -295,6 +307,17 @@ if SERVER then
             local ok = pcall(hook.Run, "PlayerLoadout", ply)
             if not ok then ply:Give("weapon_physcannon") end
         end
+
+        --[[ Возврат на место. Человека забрали из мира в зону отбывания —
+             значит и вернуть надо туда, откуда забрали, а не бросить в
+             деморгане. Точка пережила рестарт вместе с записью бана. ]]
+        local back = returnPos or ply.GRM_BanReturn
+        if isvector(back) and not (back.x == 0 and back.y == 0 and back.z == 0) then
+            ply:SetPos(back + Vector(0, 0, 8))
+            ply:SetVelocity(-ply:GetVelocity())
+            if GRM.Notify then GRM.Notify(ply, "Вы возвращены на прежнее место.", 100, 220, 130) end
+        end
+        ply.GRM_BanReturn = nil
     end
 
     -------------------------------------------------------------------
@@ -313,9 +336,17 @@ if SERVER then
         if target:GetModel() ~= SB.Model then
             target:SetNWString("GRM_PreBanModel", target:GetModel())
         end
+        --[[ Точка, откуда человека забрали, запоминается вместе с баном
+             (заказ 21.08: после разбана вернуть на исходное место). Пишем
+             числами, а не Vector: userdata в JSON превращается в пустышку —
+             на этом уже обжигались с точкой отбывания. ]]
+        local from = target:GetPos()
+        target.GRM_BanReturn = Vector(from.x, from.y, from.z)
+
         SB.Bans[sid] = {
             ["until"] = minutes > 0 and (os.time() + minutes * 60) or 0,
             reason = reason, by = actorName(actor), at = os.time(), name = target:Nick(),
+            returnPos = { x = math.floor(from.x), y = math.floor(from.y), z = math.floor(from.z) },
         }
         pushHistory("ban", sid, SB.Bans[sid], actor)
         saveBans("бан " .. sid)
@@ -344,11 +375,16 @@ if SERVER then
             if IsValid(p) and (tostring(p:SteamID64() or "") == sid) then target = p break end
         end
         if not SB.Bans[sid] then return false, "Серверного бана нет" end
-        pushHistory("unban", sid, SB.Bans[sid], actor)
+        local rec = SB.Bans[sid]
+        local back
+        if istable(rec.returnPos) then
+            back = Vector(rec.returnPos.x, rec.returnPos.y, rec.returnPos.z)
+        end
+        pushHistory("unban", sid, rec, actor)
         SB.Bans[sid] = nil
         saveBans("разбан " .. sid)
         if IsValid(target) then
-            SB.Clear(target)
+            SB.Clear(target, back)
             if GRM.Notify then GRM.Notify(target, "Серверный бан снят.", 100, 220, 130) end
         end
         announce(actorName(actor) .. " снял бан на сервере с " ..

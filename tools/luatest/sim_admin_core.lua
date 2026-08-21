@@ -326,5 +326,13 @@ ok(has(ban6, 'concommand.Add("grm_serverban_fix"'), "есть аварийное
 ok(has(ban6, "Следы наказания на свободном игроке"), "сторож сам чистит следы у свободных")
 ok(has(ban6, "прежнее значение не затираем"), "повторный бан не затирает запомненную модель")
 
+print("\n=== ВОЗВРАТ НА МЕСТО ПОСЛЕ БАНА (21.08) ===")
+local ban7 = read("lua/autorun/sh_grm_ban.lua")
+ok(has(ban7, "returnPos = { x = math.floor(from.x)"), "исходная точка пишется числами")
+ok(has(ban7, "ply.GRM_BanReturn"), "точка возврата висит на игроке")
+ok(has(ban7, "if istable(rec.returnPos) then"), "и подхватывается из записи после рестарта")
+ok(has(ban7, "Вы возвращены на прежнее место."), "игроку сообщают о возврате")
+ok(has(ban7, "function SB.Clear(ply, returnPos)"), "снятие бана принимает точку возврата")
+
 print(("\nADMIN CORE: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)
