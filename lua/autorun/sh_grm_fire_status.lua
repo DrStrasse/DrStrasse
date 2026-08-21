@@ -25,6 +25,12 @@ F.StatusVersion = "1.5.0"
 F.Incidents = F.Incidents or {}
 F._nextInc = F._nextInc or 1
 
+if not F.ChatDupeCvar then
+    F.ChatDupeCvar = CreateConVar("grm_fire_chat_dupe", "0",
+        bit.bor(FCVAR_ARCHIVE, FCVAR_REPLICATED),
+        "1 — дублировать сообщения о пожаре строкой в чат (по умолчанию только уведомление)")
+end
+
 local CLUSTER = 480
 local LOG_FILE = "grm_fire/log.json"
 local LOG_CAP = 80
@@ -57,13 +63,19 @@ function F.NotifyFire(text, r, g, b, pos, inc)
 
     local notified = {}
 
+    --[[ Раньше каждое событие приходило ДВАЖДЫ: тостом и строкой в чат.
+         На пожаре событий много, и половина «спама» была именно этим
+         дублированием. Теперь дубль в чат — по конвару (по умолчанию
+         выключен), а без модуля уведомлений чат остаётся как фолбэк. ]]
+    local dupe = GetConVar and GetConVar("grm_fire_chat_dupe")
+    local wantChat = (dupe and dupe:GetBool()) or not GRM.Notify
+
     local function tellPlayer(p)
         if not IsValid(p) then return end
         if notified[p] then return end
         notified[p] = true
         if GRM.Notify then GRM.Notify(p, text, r, g, b) end
-        -- всегда дубль в чат, чтобы не пропустить тост
-        p:ChatPrint("[Пожар] " .. tostring(text))
+        if wantChat then p:ChatPrint("[Пожар] " .. tostring(text)) end
     end
 
     -- фракции из /grm_fire_notify (legacy, но теперь с ChatPrint доп.)
@@ -129,12 +141,31 @@ if SERVER then
         return out
     end
 
+    --[[ Журнал держим в памяти и пишем через общую очередь GRM.Save:
+         раньше каждое событие пожара читало файл целиком и тут же писало его
+         обратно — синхронный диск в момент, когда на карте и так жарко. ]]
+    F.FireLog = F.FireLog or nil
+
+    local function fireLog()
+        if not F.FireLog then F.FireLog = F.LoadFireLog() end
+        return F.FireLog
+    end
+
+    if GRM.Save and GRM.Save.Register then
+        GRM.Save.Register("fire.log", { file = LOG_FILE, label = "Журнал пожаров", delay = 10,
+            build = function()
+                ensureDir()
+                return fireLog()
+            end })
+    end
+
     function F.AppendFireLog(rec)
         if not istable(rec) then return false end
-        ensureDir()
-        local list = F.LoadFireLog()
+        local list = fireLog()
         table.insert(list, 1, rec)
         while #list > LOG_CAP do list[#list] = nil end
+        if GRM.Save and GRM.Save.Mark then return GRM.Save.Mark("fire.log", "событие пожара") end
+        ensureDir()
         local ok, txt = pcall(util.TableToJSON, list, true)
         if not ok or not isstring(txt) then return false end
         file.Write(LOG_FILE, txt)
@@ -174,21 +205,73 @@ if SERVER then
         return best
     end
 
-    function F.OpenIncident(pos, source)
+    --[[ ПОВТОРНОЕ ЗАГОРАНИЕ И ЛОЖНЫЕ ИНЦИДЕНТЫ (фикс 21.08 по жалобе
+         владельца: «при тушении сыпятся сообщения о том, что потушили, и
+         генерируются новые вызовы»).
+
+         Причина была здесь: `RefreshIncidents(pos)` на КАЖДУЮ погашенную
+         ячейку vFire звал OpenIncident. Инцидент рядом уже помечен `out`,
+         значит findInc его не видит — открывался НОВЫЙ инцидент с peak=1 и
+         cells=0, тут же признавался потушенным («Пожар потушен» ещё раз) и
+         по пути дёргал GRM_FireIncidentOpened, из-за чего диспетчер плодил
+         новые вызовы прямо во время тушения.
+
+         Теперь: инцидент открывается только там, где РЕАЛЬНО горит, а очаг,
+         потушенный только что, при повторной вспышке оживает тем же
+         инцидентом (без нового вызова и без новых объявлений). ]]
+    local REIGNITE_WINDOW = 45
+
+    local function findRecentOut(pos)
         if not pos then return nil end
+        local now, r2 = CurTime(), CLUSTER * CLUSTER
+        local best, bestD
+        for _, inc in ipairs(F.Incidents) do
+            if inc and inc.out and inc.origin and (now - (inc.outAt or 0)) <= REIGNITE_WINDOW then
+                local d = pos:DistToSqr(inc.origin)
+                if d <= r2 and (not best or d < bestD) then best, bestD = inc, d end
+            end
+        end
+        return best
+    end
+
+    function F.OpenIncident(pos, source, opts)
+        if not pos then return nil end
+        opts = istable(opts) and opts or {}
+
         local exist = findInc(pos)
         if exist then
             -- если уже есть, но peak был 0 (баг старых версий при open на remove) — чиним
             if (exist.peak or 0) < 1 then exist.peak = 1 end
             return exist
         end
+
+        -- Нет живого огня рядом — нет и инцидента. Это отсекает «инциденты
+        -- от погашенной ячейки», из-за которых шёл весь спам.
+        if not opts.force and countAround(pos) < 1 then return nil end
+
+        -- Вспышка на месте только что потушенного очага — тот же инцидент.
+        local revived = findRecentOut(pos)
+        if revived then
+            revived.out = false
+            revived.outAt = nil
+            revived.cells = countAround(revived.origin)
+            revived.peak = math.max(revived.peak or 1, revived.cells, 1)
+            revived.lastNew = CurTime()
+            revived.localized = false
+            return revived
+        end
+
         local id = F._nextInc
         F._nextInc = F._nextInc + 1
+        -- peak = сколько ячеек реально видели. Принудительно открытый очаг без
+        -- живого огня получает 0: такой «призрак» никогда не объявит себя
+        -- потушенным (иначе на пустом месте всплывает лишнее сообщение).
+        local seen = countAround(pos)
         local inc = {
             id = id,
             origin = Vector(pos.x, pos.y, pos.z),
             source = tostring(source or "fire"),
-            peak = 1, -- v1.4.1: минимум 1 если видели живой vfire, иначе потушен не сработает
+            peak = math.max(seen, opts.force and 0 or 1),
             cells = 0,
             started = CurTime(),
             lastNew = CurTime(),
@@ -210,7 +293,8 @@ if SERVER then
         pos = pos or (ply.GetEyeTrace and ply:GetEyeTrace().HitPos) or ply:GetPos()
         local inc = findInc(pos)
         if not inc then
-            -- если тушат рядом но инцидент ещё не открыт (скан пропустил) — откроем
+            -- Если тушат рядом, а инцидент ещё не открыт (скан пропустил) —
+            -- откроем, но только когда рядом действительно горит.
             inc = F.OpenIncident(pos, "fire")
         end
         if not inc then return end
@@ -261,6 +345,9 @@ if SERVER then
 
     function F.MarkExtinguished(inc)
         if not inc or inc.out then return false end
+        -- Пустышка (инцидент без единой живой ячейки за всё время) не должна
+        -- объявляться потушенной — это была вторая половина спама.
+        if (inc.peak or 0) < 1 then inc.out = true return false end
         -- v1.4.1: если тушили стволом, но локализован ещё не слали — шлём оба, сначала локализован
         if not inc.localized and inc.fought and (inc.peak or 0) >= 1 then
             -- попытка локализовать перед тушением, но без выхода если не получилось (например out уже)
@@ -280,8 +367,12 @@ if SERVER then
     end
 
     function F.RefreshIncidents(hintPos)
+        --[[ Обновление НЕ создаёт инцидентов: сюда приходят в том числе
+             события «ячейка погасла», и открытие очага отсюда давало
+             бесконечные «потушен» и новые вызовы. Открывает только
+             vFireCreated (там огонь точно есть). ]]
         if hintPos then
-            local inc = F.OpenIncident(hintPos, "fire")
+            local inc = findInc(hintPos)
             if inc then inc.peak = math.max(inc.peak or 0, 1) end
         end
         local now = CurTime()
@@ -323,7 +414,7 @@ if SERVER then
             if IsValid(fire) then
                 local pos = fire.GetPos and fire:GetPos() or nil
                 if pos then
-                    local inc = findInc(pos) or F.OpenIncident(pos, fire._grmSource or "fire")
+                    local inc = findInc(pos) or F.OpenIncident(pos, fire._grmSource or "fire", { force = true })
                     if inc then
                         inc.peak = math.max(inc.peak or 0, 1)
                         found = found + 1

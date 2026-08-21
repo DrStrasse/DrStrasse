@@ -32,6 +32,7 @@ D.Version = "1.0.0"
 D.ReminderDelay = 45      -- через сколько секунд напомнить, если никто не принял
 D.MaxReminders  = 3
 D.CallTTL       = 1800    -- вызов живёт максимум 30 минут
+D.RecallGuard   = 60      -- сколько секунд после закрытия не создавать новый вызов рядом
 D.CardTimeout   = 60      -- сколько секунд карточка висит у пожарного
 
 local NET_NEW    = "GRM_FireCall_New"
@@ -224,10 +225,15 @@ if SERVER then
         if not isvector(origin) then return nil end
         extra = istable(extra) and extra or {}
 
-        -- Не плодим вызовы на один и тот же очаг.
+        --[[ Не плодим вызовы на один и тот же очаг. Второй страховкой —
+             ТОЛЬКО ЧТО ЗАКРЫТЫЙ вызов рядом: во время тушения очаг гаснет и
+             вспыхивает кусками, и раньше каждая вспышка давала пожарным
+             новый вызов «на тот же дом». Минуту после закрытия новый вызов
+             в этом месте не создаём. ]]
         for _, call in pairs(D.Calls) do
-            if call.status ~= "closed" and call.origin:DistToSqr(origin) <= 600 * 600 then
-                return call
+            if call.origin:DistToSqr(origin) <= 600 * 600 then
+                if call.status ~= "closed" then return call end
+                if (CurTime() - (call.closedCT or 0)) < (D.RecallGuard or 60) then return call end
             end
         end
 
@@ -305,6 +311,7 @@ if SERVER then
         if not call or call.status == "closed" then return false end
         call.status = "closed"
         call.closedAt = os.time()
+        call.closedCT = CurTime()
         call.closedReason = tostring(reason or "")
         if call.markerID and GRM.Minimap and GRM.Minimap.RemoveTempPoint then
             GRM.Minimap.RemoveTempPoint("ВЫЗОВ #" .. call.id .. " · ПОЖАР")
