@@ -250,6 +250,18 @@ if SERVER then
         end
     end
 
+    --[[ СНЯТИЕ НАКАЗАНИЯ (переписано 21.08 по жалобе: «разбанили — человек
+         ничего не может и не пишет в чат»).
+
+         Было два виновника:
+           1) здесь вызывался `ply:Spawn()`. Принудительный респавн ломает
+              РП-поток: модуль персонажей заново проводит игрока через свою
+              логику, и человек оставался в «пустом» состоянии;
+           2) клиентский сторож окон УДАЛЯЛ панели (см. ниже) — вместе с
+              панелью чата EasyChat, которая после Remove уже не открывалась.
+
+         Теперь: возвращаем вид и подвижность на месте, оружие выдаём штатным
+         хуком загрузки снаряжения, респавн не трогаем. ]]
     function SB.Clear(ply)
         if not IsValid(ply) then return end
         ply:SetNWBool("GRM_ServerBanned", false)
@@ -258,13 +270,26 @@ if SERVER then
         ply:SetMaterial("")
         ply:SetColor(Color(255, 255, 255, 255))
         ply:SetRenderMode(RENDERMODE_NORMAL)
-        -- Модель вернут модули внешности; страховкой — стандартная.
+
+        -- Подвижность и управление возвращаем явно: мало ли что успело
+        -- застрять, пока человек отбывал наказание.
+        ply:Freeze(false)
+        if ply.SetMoveType and MOVETYPE_WALK then ply:SetMoveType(MOVETYPE_WALK) end
+        ply.GRM_BanNextMoan = nil
+
+        -- Модель вернут модули внешности; страховкой — сохранённая.
         hook.Run("GRM_ServerBanCleared", ply)
         if ply:GetModel() == SB.Model then
             local restored = ply:GetNWString("GRM_PreBanModel", "")
             ply:SetModel(restored ~= "" and restored or "models/player/group01/male_02.mdl")
         end
-        ply:Spawn()
+        ply:SetNWString("GRM_PreBanModel", "")
+
+        -- Снаряжение возвращаем штатным путём, а не респавном.
+        if ply:Alive() then
+            local ok = pcall(hook.Run, "PlayerLoadout", ply)
+            if not ok then ply:Give("weapon_physcannon") end
+        end
     end
 
     -------------------------------------------------------------------
@@ -277,7 +302,12 @@ if SERVER then
         local sid = tostring(target:SteamID64() or "")
         if sid == "" then return false, "Нет SteamID" end
 
-        target:SetNWString("GRM_PreBanModel", target:GetModel())
+        -- Запоминаем модель ДО наказания. Если игрок уже в скелете (повторный
+        -- бан, перезаход после падения сервера), прежнее значение не затираем —
+        -- иначе после разбана человек так и останется скелетом.
+        if target:GetModel() ~= SB.Model then
+            target:SetNWString("GRM_PreBanModel", target:GetModel())
+        end
         SB.Bans[sid] = {
             ["until"] = minutes > 0 and (os.time() + minutes * 60) or 0,
             reason = reason, by = actorName(actor), at = os.time(), name = target:Nick(),
@@ -486,7 +516,10 @@ if SERVER then
                             if GRM.Notify then GRM.Notify(ply, "Выход за пределы зоны запрещён.", 255, 120, 90) end
                         end
                     end
-                elseif ply:GetNWBool("GRM_ServerBanned", false) then
+                elseif ply:GetNWBool("GRM_ServerBanned", false)
+                    or ply:GetMaterial() == SB.Material
+                    or (ply:GetModel() == SB.Model and ply:GetNWString("GRM_PreBanModel", "") ~= "") then
+                    -- Следы наказания на свободном игроке — снимаем сами.
                     -- Срок кончился, пока человек был в сети.
                     SB.Clear(ply)
                     if GRM.Notify then GRM.Notify(ply, "Срок бана истёк.", 100, 220, 130) end
@@ -539,6 +572,28 @@ if SERVER then
         local line = zone and ("[Бан] Точка: " .. tostring(SB.ZonePos(zone)) .. " · радиус " .. zone.radius ..
             " · карта " .. tostring(game.GetMap()))
             or "[Бан] Точка отбывания не задана: встаньте на место и введите grm_ban_point"
+        if IsValid(ply) then ply:ChatPrint(line) else print(line) end
+    end)
+
+    --[[ Аварийное восстановление: снимает следы наказания с игрока, даже
+         если запись бана уже удалена (страховка после старых версий). ]]
+    concommand.Add("grm_serverban_fix", function(ply, _, args)
+        if IsValid(ply) then
+            local can = ply:IsSuperAdmin() or (GRM.Admin and GRM.Admin.Can and GRM.Admin.Can(ply, "mod.ban"))
+            if not can then return end
+        end
+        local query = tostring(args and args[1] or "")
+        local fixed = 0
+        for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+            if IsValid(p) and (query == "" or query == "all" or tostring(p:SteamID64() or "") == query
+                or (query == "me" and p == ply)) then
+                SB.Bans[tostring(p:SteamID64() or "")] = nil
+                SB.Clear(p)
+                fixed = fixed + 1
+            end
+        end
+        saveBans("аварийное снятие")
+        local line = "[Бан] Следы наказания сняты у игроков: " .. fixed
         if IsValid(ply) then ply:ChatPrint(line) else print(line) end
     end)
 
@@ -674,12 +729,26 @@ if CLIENT then
         local world = vgui.GetWorldPanel()
         if not IsValid(world) then return end
         for _, panel in ipairs(world:GetChildren()) do
-            if IsValid(panel) and panel:IsVisible() and panel.GetTitle and not panel.GRM_BanAllowed then
-                panel:SetVisible(false)
-                panel:Remove()
+            --[[ ВАЖНО: только прячем. Раньше здесь стоял panel:Remove(), и
+                 вместе с чужими окнами сносилась панель чата (EasyChat) —
+                 после снятия бана человек уже не мог ни писать, ни открывать
+                 меню, потому что панели физически не существовало. ]]
+            local class = IsValid(panel) and panel.GetClassName and string.lower(tostring(panel:GetClassName() or "")) or ""
+            local name = IsValid(panel) and panel.GetName and string.lower(tostring(panel:GetName() or "")) or ""
+            -- Чат и HUD не трогаем в принципе: наказанному оставлен обычный
+            -- чат, а HUD рисует его же памятку.
+            local protected = class:find("chat", 1, true) or name:find("chat", 1, true)
+                or class:find("hud", 1, true) or name:find("hud", 1, true)
+            if IsValid(panel) and not protected and panel:IsVisible() and panel.GetTitle and not panel.GRM_BanAllowed then
+                if isfunction(panel.Close) then
+                    pcall(panel.Close, panel)
+                else
+                    panel:SetVisible(false)
+                end
+                if isfunction(panel.SetMouseInputEnabled) then panel:SetMouseInputEnabled(false) end
+                if isfunction(panel.SetKeyboardInputEnabled) then panel:SetKeyboardInputEnabled(false) end
             end
         end
-        if gui and gui.IsGameUIVisible and gui.IsGameUIVisible() then return end
     end)
 
     -------------------------------------------------------------------

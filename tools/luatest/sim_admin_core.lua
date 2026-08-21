@@ -314,5 +314,17 @@ ok(has(ban5, 'GRM.Save.Flush("serverban.zone"'), "точка пишется ср
 ok(has(ban5, "not (x == 0 and y == 0 and zz == 0)"), "нули из битого файла не считаются точкой")
 ok(has(ban5, "точка отбывания на карте"), "в консоль печатается, есть ли точка после загрузки")
 
+print("\n=== ПОСЛЕ РАЗБАНА (баг 21.08) ===")
+local ban6 = read("lua/autorun/sh_grm_ban.lua")
+ok(ban6:find("\n%s*panel:Remove%(%)") == nil and has(ban6, "pcall(panel.Close, panel)"),
+    "клиентский сторож больше НЕ удаляет панели, а только закрывает (сносил чат EasyChat)")
+ok(has(ban6, 'class:find("chat", 1, true)'), "чат и HUD сторож не трогает вовсе")
+ok(not has(ban6, "ply:Spawn()\n    end"), "принудительного респавна при снятии бана нет")
+ok(has(ban6, 'pcall(hook.Run, "PlayerLoadout", ply)'), "снаряжение возвращается штатным хуком")
+ok(has(ban6, "ply:Freeze(false)"), "подвижность возвращается явно")
+ok(has(ban6, 'concommand.Add("grm_serverban_fix"'), "есть аварийное снятие следов наказания")
+ok(has(ban6, "Следы наказания на свободном игроке"), "сторож сам чистит следы у свободных")
+ok(has(ban6, "прежнее значение не затираем"), "повторный бан не затирает запомненную модель")
+
 print(("\nADMIN CORE: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)

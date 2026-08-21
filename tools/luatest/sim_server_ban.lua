@@ -29,6 +29,7 @@ function math.Rand(a, b) return a + (b - a) * 0.5 end
 CHAN_VOICE = 3
 util = util or {}
 RENDERMODE_TRANSCOLOR, RENDERMODE_NORMAL, HUD_PRINTCONSOLE = 5, 0, 2
+MOVETYPE_WALK = 2
 NULL = { _valid = false }
 
 function Vector(x, y, z)
@@ -173,6 +174,10 @@ local function mkPlayer(nick, sid, x)
     function p:StripWeapons() self.weapons = {} end
     function p:StripAmmo() end
     function p:Spawn() self.spawned = true end
+    function p:Freeze(v) self.frozen = v end
+    function p:SetMoveType(v) self.movetype = v end
+    function p:Alive() return true end
+    function p:Give() end
     function p:ChatPrint(m) self.chat[#self.chat + 1] = m end
     function p:EmitSound(path, lvl, pitch, vol, chan)
         self.sounds = self.sounds or {}
@@ -369,6 +374,36 @@ ok(SB.Bans[target:SteamID64()] ~= nil, "бан в памяти")
 SB.Load()
 ok(table.Count(SB.Bans) == 0, "битый/пустой файл не роняет модуль")
 ok(istable(SB.History), "история переживает перезагрузку структурой")
+
+print("\n=== 8б. ПОСЛЕ РАЗБАНА ЧЕЛОВЕК СВОБОДЕН (баг 21.08) ===")
+target.model = "models/player/group01/male_02.mdl"
+target.nw.GRM_PreBanModel = ""
+SB.Ban(admin, target, 20, "Проверка снятия")
+ok(target.nw.GRM_PreBanModel == "models/player/group01/male_02.mdl",
+    "модель до наказания запомнена", target.nw.GRM_PreBanModel)
+SB.Ban(admin, target, 20, "Повторный бан поверх")
+ok(target.nw.GRM_PreBanModel == "models/player/group01/male_02.mdl",
+    "повторный бан не затирает запомненную модель скелетом", target.nw.GRM_PreBanModel)
+target.spawned = nil
+local loadoutCalled = false
+hook.Add("PlayerLoadout", "sim_loadout", function() loadoutCalled = true end)
+SB.Unban(admin, target:SteamID64())
+ok(target.spawned ~= true, "принудительного респавна нет — РП-поток не ломается")
+ok(loadoutCalled == true, "снаряжение возвращается штатным хуком загрузки")
+ok(target.material == "", "материал снят")
+ok(target.model ~= "models/player/skeleton.mdl", "модель вернулась", target.model)
+ok(target.frozen == false, "заморозка снята явно")
+ok(target.nw.GRM_ServerBanned == false, "флаг снят — чат и команды снова работают")
+ok(hook.Run("PlayerSay", target, "/dep привет") == nil, "команда волны больше не перехватывается")
+ok(hook.Run("CanPlayerSuicide", target) == nil, "ограничения сняты")
+ok(SB.SpeechBlocked(target, "рация") == false, "эфир открыт")
+
+-- следы старого бана на свободном игроке сторож снимает сам
+target.material = "debugwhite"
+target.nw.GRM_PreBanModel = "models/player/group01/male_02.mdl"
+target.model = "models/player/skeleton.mdl"
+timers["GRM_ServerBan_Watch"]()
+ok(target.material == "", "сторож снимает следы наказания с уже свободного игрока")
 
 print("\n=== 9. ТОЧКА ПЕРЕЖИВАЕТ РЕСТАРТ (заказ 21.08) ===")
 admin.pos = Vector(2345, -678, 91)
