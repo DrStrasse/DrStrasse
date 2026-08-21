@@ -203,8 +203,22 @@ function ENT:StartScan(ply)
             self:ProcessGrant(ply, fac)
         else
             if GRM.Notify then
-                local white = string.Trim(tostring(self:GetFaction() or ""))
-                GRM.Notify(ply, "Сканер: доступ ограничен" .. (white ~= "" and (" [" .. white .. "]") or ""), 255, 100, 100)
+                --[[ Показываем ЧЕЛОВЕЧЕСКИЕ названия организаций, а не
+                     внутренние ключи: игрок читал «Сканер: доступ ограничен
+                     [police_order]» и не понимал, кого сюда пускают. ]]
+                local names = {}
+                for raw in string.gmatch(string.Trim(tostring(self:GetFaction() or "")), "([^,]+)") do
+                    local key = string.Trim(raw)
+                    if key ~= "" then
+                        local display = key
+                        if GRM.Factions and GRM.Factions.DisplayName then
+                            display = GRM.Factions.DisplayName(key) or key
+                        end
+                        names[#names + 1] = display
+                    end
+                end
+                local white = table.concat(names, ", ")
+                GRM.Notify(ply, "Сканер: доступ ограничен" .. (white ~= "" and (" — " .. white) or ""), 255, 100, 100)
             end
             self:ProcessDeny(ply, fac)
         end
