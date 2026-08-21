@@ -18,7 +18,7 @@ GRM.TabMenu = GRM.TabMenu or {}
 GRM.TabMenu.ShowBalance    = true
 GRM.TabMenu.ShowFaction    = true
 GRM.TabMenu.ReplaceDefault = true
-GRM.TabMenu.RefreshInterval = 5
+GRM.TabMenu.RefreshInterval = 2
 
 GRM.GaggedPlayers = GRM.GaggedPlayers or {}
 
@@ -376,6 +376,36 @@ if CLIENT then
         return base
     end
 
+    --[[ ЖИВОЙ ПИНГ (заказ владельца 21.08: «пинг должен меняться, пока
+         держишь TAB, а не только при открытии»).
+
+         Пинг не нужно спрашивать у сервера: `Player:Ping()` доступен на
+         клиенте. Раньше в строке рисовалось значение из снимка, который
+         приходил только при открытии окна и раз в пять секунд — отсюда
+         ощущение «нужно передёрнуть TAB». Теперь строка берёт пинг у живой
+         entity каждый кадр, а список игроков кэшируется на секунду, чтобы
+         не звать player.GetAll() в отрисовке. ]]
+    local _plyBySID, _plyBySIDAt = {}, 0
+    local function playerBySID(sid64)
+        sid64 = tostring(sid64 or "")
+        if sid64 == "" then return nil end
+        if (CurTime() - _plyBySIDAt) > 1 then
+            _plyBySID = {}
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+                if IsValid(p) then _plyBySID[tostring(p:SteamID64() or "")] = p end
+            end
+            _plyBySIDAt = CurTime()
+        end
+        local ply = _plyBySID[sid64]
+        return IsValid(ply) and ply or nil
+    end
+
+    local function livePing(pd)
+        local ply = playerBySID(pd and pd.sid64)
+        if IsValid(ply) then return ply:Ping() end
+        return math.floor(tonumber(pd and pd.pingMs) or 0)
+    end
+
     local _frame        = nil
     local _data         = nil
     local _voiceMuted   = {}
@@ -571,8 +601,34 @@ if CLIENT then
         net.Start("VD_RequestVehicleList"); net.SendToServer()
     end
 
+    --[[ Снимок приходит раз в несколько секунд. Раньше он ЦЕЛИКОМ заменял
+         данные и пересобирал список: прокрутка прыгала, выбранная карточка
+         моргала. Теперь при неизменном составе игроков поля обновляются на
+         месте (строки читают ту же таблицу), а пересборка идёт только когда
+         кто-то зашёл или вышел. ]]
+    local function rosterKey(data)
+        if not (istable(data) and istable(data.players)) then return "" end
+        local ids = {}
+        for _, pd in ipairs(data.players) do ids[#ids + 1] = tostring(pd.sid64 or "") end
+        table.sort(ids)
+        return table.concat(ids, ",")
+    end
+
     net.Receive("grm_tab_data", function()
-        _data = net.ReadTable()
+        local incoming = net.ReadTable()
+        local sameRoster = _data ~= nil and rosterKey(_data) == rosterKey(incoming)
+
+        if sameRoster then
+            local byID = {}
+            for _, pd in ipairs(_data.players or {}) do byID[tostring(pd.sid64 or "")] = pd end
+            for _, fresh in ipairs(incoming.players or {}) do
+                local pd = byID[tostring(fresh.sid64 or "")]
+                if pd then for k, v in pairs(fresh) do pd[k] = v end end
+            end
+        else
+            _data = incoming
+        end
+
         if _data and _data.players then
             for _, pd in ipairs(_data.players) do
                 if pd.isGagged then _gagCache[pd.sid64] = true
@@ -591,7 +647,9 @@ if CLIENT then
                 end
             end
         end
-        if IsValid(_frame) and _frame._refresh then _frame._refresh() end
+        -- Пересобираем список только при смене состава; в остальных случаях
+        -- строки сами перерисуются с обновлёнными полями.
+        if not sameRoster and IsValid(_frame) and _frame._refresh then _frame._refresh() end
     end)
 
     net.Receive("grm_tab_gagupdate", function()
@@ -714,12 +772,20 @@ if CLIENT then
             y = y + 18
         end
 
-        local pingVal = tonumber(pd.pingMs) or 0
         local pingLbl = vgui.Create("DLabel", sp)
         pingLbl:SetPos(12, y); pingLbl:SetSize(dw - 24, 14)
-        pingLbl:SetText("Пинг: " .. pingVal .. " ms")
         pingLbl:SetFont("GRMT_Small")
-        pingLbl:SetTextColor(pingVal < 80 and C.GREEN or pingVal < 150 and C.GOLD or C.RED)
+        -- Обновляем не каждый кадр, а два раза в секунду: чаще человек
+        -- всё равно не читает, а работы меньше.
+        pingLbl._next = 0
+        pingLbl.Think = function(self)
+            if CurTime() < self._next then return end
+            self._next = CurTime() + 0.5
+            local value = livePing(pd)
+            self:SetText("Пинг: " .. value .. " ms")
+            self:SetTextColor(value < 80 and C.GREEN or value < 150 and C.GOLD or C.RED)
+        end
+        pingLbl:Think()
         y = y + 20
 
         local sep1 = vgui.Create("DPanel", sp)
@@ -923,7 +989,8 @@ if CLIENT then
             end
 
             -- Пинг: своя колонка справа с индикатором качества связи.
-            local ping = pd.pingMs or 0
+            -- Значение живое: пока окно открыто, оно меняется само.
+            local ping = livePing(pd)
             local pingCol = ping < 80 and C.GREEN or ping < 150 and C.GOLD or C.RED
             draw.RoundedBox(4, w - 86, h / 2 - 11, 62, 22, Color(0, 0, 0, 90))
             draw.SimpleText(ping .. " ms", "GRMT_Small", w - 30, h / 2, pingCol, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)

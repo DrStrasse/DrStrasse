@@ -30,8 +30,8 @@ ok(s:find('draw.SimpleText(ping .. " ms", "GRMT_Small", w - 30', 1, true) ~= nil
 ok(s:find("draw.RoundedBox(4, w - 86, h / 2 - 11, 62, 22", 1, true) ~= nil, "под пинг выделена плашка")
 ok(s:find("local lit = (i == 1) or (i == 2 and ping < 150) or (i == 3 and ping < 80)", 1, true) ~= nil,
     "рядом индикатор качества связи из трёх полос")
-ok(s:find("pingLbl:SetTextColor(pingVal < 80 and C.GREEN or pingVal < 150 and C.GOLD or C.RED)", 1, true) ~= nil,
-    "в карточке пинг тоже цветной")
+ok(s:find("self:SetTextColor(value < 80 and C.GREEN or value < 150 and C.GOLD or C.RED)", 1, true) ~= nil,
+    "в карточке пинг тоже цветной (и обновляется вживую)")
 
 print("\n=== 3. АВАТАРКИ STEAM ===")
 ok(s:find('local avatar = vgui.Create("AvatarImage", row)', 1, true) ~= nil, "аватар в строке списка")
@@ -52,6 +52,22 @@ ok(s:find("local ROW_H = 56", 1, true) ~= nil, "строки выше — пом
 ok(s:find('draw.SimpleText("ОРГАНИЗАЦИЯ"', 1, true) ~= nil, "организация вынесена в отдельную колонку")
 ok(s:find('surface.DrawOutlinedRect(11, (h - 40) / 2 - 1, 42, 42, 1)', 1, true) ~= nil,
     "аватар обведён рамкой цвета ранга")
+
+print("\n=== 5. ЖИВЫЕ ЗНАЧЕНИЯ, ПОКА ДЕРЖИШЬ TAB (заказ 21.08) ===")
+ok(s:find("local function livePing(pd)", 1, true) ~= nil, "пинг берётся у живой entity, а не из снимка")
+ok(s:find("local ping = livePing(pd)", 1, true) ~= nil, "строка списка рисует живой пинг каждый кадр")
+ok(s:find("pingLbl.Think = function(self)", 1, true) ~= nil, "в карточке игрока пинг обновляется сам")
+ok(s:find("self._next = CurTime() + 0.5", 1, true) ~= nil, "обновление throttled — два раза в секунду")
+ok(s:find("local function playerBySID(sid64)", 1, true) ~= nil, "поиск игрока по SteamID кэшируется")
+ok(s:find("(CurTime() - _plyBySIDAt) > 1", 1, true) ~= nil,
+    "кэш живёт секунду — player.GetAll() не зовётся в отрисовке")
+ok(s:find("local function rosterKey(data)", 1, true) ~= nil, "состав игроков сравнивается по ключу")
+ok(s:find("if sameRoster then", 1, true) ~= nil,
+    "при неизменном составе поля обновляются на месте, без пересборки списка")
+ok(s:find("if not sameRoster and IsValid(_frame)", 1, true) ~= nil,
+    "пересборка (и сброс прокрутки) только когда кто-то зашёл или вышел")
+ok(s:find("GRM.TabMenu.RefreshInterval = 2", 1, true) ~= nil,
+    "снимок с сервера приходит чаще — баланс и группы тоже свежие")
 
 print(("\nTAB MENU: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)
