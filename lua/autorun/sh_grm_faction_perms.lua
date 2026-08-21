@@ -227,8 +227,19 @@ if SERVER then
         local val = net.ReadBool()
         if faction == "" or role == "" or perm == "" then return end
         if not PERMS.Permissions[perm] then return end
-        -- Право менять доступы: суперадмин или лидер этой фракции.
-        if not ply:IsSuperAdmin() and not isLeaderOfFaction(ply, faction) then return end
+        --[[ Право менять доступы: суперадмин или лидер этой организации.
+             Раньше отказ был молчаливым — человек щёлкал галочку, она
+             возвращалась обратно, и выглядело это как баг. Теперь ответ
+             честный, а состояние пересинхронизируется. ]]
+        if not ply:IsSuperAdmin() and not isLeaderOfFaction(ply, faction) then
+            if GRM.Notify then
+                GRM.Notify(ply, "Доступами организации управляет её лидер или суперадмин.", 255, 140, 110)
+            else
+                ply:ChatPrint("[Доступы] Менять их может лидер организации или суперадмин.")
+            end
+            PERMS.SendTo(ply)
+            return
+        end
         if val then
             PERMS.GrantToRole(faction, role, perm)
         else

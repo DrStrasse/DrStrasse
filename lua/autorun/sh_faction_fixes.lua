@@ -3223,7 +3223,37 @@ if CLIENT then
                 factionPerms = GRM.FactionPerms.GetFactionRoles(factionName) or {}
             end
             
-            infoLine(scroll, "Настройка доступов к публикации и удалению законов по ролям фракции.", THEME.textDim, 20)
+            --[[ 21.08. Раздел настроек законов открывался всем, кто дошёл до
+                 вкладки: любой видел галочки «Публикация/Удаление законов».
+                 Менять их всё равно мог только суперадмин или лидер (сервер
+                 отказывал молча), поэтому выглядело как сломанный интерфейс.
+                 Теперь без права раздел показывает состояние и объясняет,
+                 кто им управляет — переключателей просто нет. ]]
+            local canManageLaws = false
+            do
+                local lp = LocalPlayer()
+                if IsValid(lp) then
+                    if lp:IsSuperAdmin() then
+                        canManageLaws = true
+                    else
+                        local data = (FactionsData or {})[factionName]
+                        local key = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(lp))
+                            or tostring(lp:SteamID64() or "")
+                        if istable(data) then
+                            if tostring(data.Leader or "") == key then canManageLaws = true end
+                            local member = istable(data.Members) and data.Members[key]
+                            if istable(member) and (member.IsLeader == true or member.Leader == true) then
+                                canManageLaws = true
+                            end
+                        end
+                    end
+                end
+            end
+
+            infoLine(scroll, canManageLaws
+                and "Настройка доступов к публикации и удалению законов по ролям фракции."
+                or "Доступами к законам управляет лидер организации или суперадмин. Ниже — текущее состояние.",
+                THEME.textDim, 20)
             
             -- Список ролей с чекбоксами для доступов
             for _, role in ipairs(f.Roles or {}) do
@@ -3245,6 +3275,19 @@ if CLIENT then
                 roleLabel:SetTextColor(Color(255, 200, 100))
                 roleLabel:SetFont("FactionsExt_Normal")
                 
+                if not canManageLaws then
+                    -- Только состояние, без переключателей.
+                    local stateLabel = vgui.Create("DLabel", rolePanel)
+                    stateLabel:SetPos(8, 26)
+                    stateLabel:SetSize(320, 20)
+                    stateLabel:SetFont("FactionsExt_Small")
+                    stateLabel:SetTextColor(THEME.textDim)
+                    stateLabel:SetText(("Публикация: %s · удаление: %s"):format(
+                        rolePerms.law_publish and "да" or "нет",
+                        rolePerms.law_remove and "да" or "нет"))
+                    goto continueRole
+                end
+
                 -- Чекбокс law_publish
                 local pubChk = vgui.Create("DCheckBoxLabel", rolePanel)
                 pubChk:SetPos(8, 26)
@@ -3280,6 +3323,8 @@ if CLIENT then
                         end
                     end
                 end
+
+                ::continueRole::
             end
             
             if #(f.Roles or {}) == 0 then

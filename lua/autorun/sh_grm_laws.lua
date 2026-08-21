@@ -236,14 +236,25 @@ if SERVER then
     util.AddNetworkString("GRM_Laws_Action")
     util.AddNetworkString("GRM_Laws_Refresh")
     util.AddNetworkString("GRM_Laws_Result")
+    util.AddNetworkString("GRM_Laws_Changed")
 
     -- Право на правку кодекса: суперадмин, доступ фракции или право
     -- админ-платформы. Регистрируем его, чтобы суперадмин мог выдать
     -- «законотворчество» нужной группе без правки кода.
     if GRM.Admin and GRM.Admin.RegisterPerm then
+        --[[ 21.08. Было minAccess = "admin": право автоматически получала
+             ЛЮБАЯ группа с флагом admin (включая модераторов) и любой
+             engine-админ. Отсюда кнопки «Опубликовать» у людей, которым
+             законотворчество не выдавали. Теперь право только у суперадмина
+             и у тех, кому его выдали явно — группой или должностью во
+             фракции (law_publish / law_remove). ]]
         GRM.Admin.RegisterPerm("laws.edit", {
             label = "Правка законодательства", category = "Документы",
-            minAccess = "admin", desc = "Создание, изменение и удаление статей кодекса",
+            minAccess = "superadmin", desc = "Создание, изменение и удаление статей кодекса",
+        })
+        GRM.Admin.RegisterPerm("laws.remove", {
+            label = "Удаление статей кодекса", category = "Документы",
+            minAccess = "superadmin", desc = "Удаление опубликованных статей",
         })
     end
 
@@ -263,7 +274,10 @@ if SERVER then
         if GRM.FactionEconomy and GRM.FactionEconomy.HasAccess then
             if GRM.FactionEconomy.HasAccess(ply, "law_remove") == true then return true end
         end
-        return canEdit(ply)
+        if GRM.Admin and GRM.Admin.Can and GRM.Admin.Can(ply, "laws.remove") == true then return true end
+        -- Право публиковать больше НЕ означает право удалять: удаление статьи
+        -- закрывается отдельной галочкой (law_remove).
+        return false
     end
     LAWS.CanEdit, LAWS.CanRemove = canEdit, canRemove
 
@@ -306,11 +320,24 @@ if SERVER then
         timer.Simple(0.1, function() if IsValid(ply) then LAWS.SendList(ply) end end)
     end
 
-    -- Обновление получают только те, у кого окно открыто.
+    --[[ Обновление кодекса.
+
+         Раньше свежий список уходил ТОЛЬКО тем, кого сервер считал
+         «зрителями». Список зрителей живёт в памяти и легко расходится с
+         реальностью: игрок переподключился, окно открылось из другого места,
+         сервер перезагрузил модуль — и человек сидит со старым кодексом,
+         не понимая, почему правки не видны.
+
+         Теперь помимо адресной рассылки уходит крошечный сигнал ВСЕМ:
+         «кодекс изменился». У кого окно открыто — сам попросит свежий
+         список, у кого закрыто — сигнал ничего не стоит. ]]
     function LAWS.BroadcastUpdate()
         for ply in pairs(LAWS.Viewers) do
             if IsValid(ply) then LAWS.SendList(ply) else LAWS.Viewers[ply] = nil end
         end
+
+        net.Start("GRM_Laws_Changed")
+        net.Broadcast()
     end
 
     -- Запрос на открытие приходит и из чата, и из контекстного меню (Q):
@@ -563,6 +590,38 @@ if CLIENT then
 
         local editable = state.canEdit
 
+        --[[ Режим просмотра: показываем статью текстом, без единого поля
+             ввода и без кнопок. Раньше зритель видел «редактор» с
+             заблокированными полями — выглядело как «кнопки есть, но не
+             работают». ]]
+        if not editable then
+            local view = vgui.Create("DScrollPanel", editorPanel)
+            view:Dock(FILL)
+
+            local function line(text, font, col, tall)
+                local lbl = vgui.Create("DLabel", view)
+                lbl:Dock(TOP) lbl:DockMargin(0, 0, 0, 6)
+                lbl:SetFont(font or "GRMLaw_Body") lbl:SetTextColor(col or C.text)
+                lbl:SetWrap(true) lbl:SetAutoStretchVertical(true)
+                lbl:SetTall(tall or 20) lbl:SetText(tostring(text or ""))
+                return lbl
+            end
+
+            local catName = law.category
+            for _, cat in ipairs(LAWS.Categories) do
+                if cat.id == law.category then catName = cat.name break end
+            end
+            line("Раздел: " .. tostring(catName), "GRMLaw_Small", C.dim)
+            line(tostring(law.article or "") ~= "" and ("Статья " .. law.article) or "Статья", "GRMLaw_Sub", C.gold)
+            line(tostring(law.title or ""), "GRMLaw_Sub", C.text)
+            line(tostring(law.text or ""), "GRMLaw_Body", C.text)
+            if tostring(law.penalty or "") ~= "" then
+                line("Наказание: " .. law.penalty, "GRMLaw_Body", C.red)
+            end
+            line("Правка кодекса доступна только уполномоченным должностям.", "GRMLaw_Small", C.dim)
+            return
+        end
+
         local catCombo = vgui.Create("DComboBox", editorPanel)
         catCombo:Dock(TOP) catCombo:SetTall(28) catCombo:DockMargin(0, 0, 0, 6)
         catCombo:SetFont("GRMLaw_Body") catCombo:SetTextColor(C.text)
@@ -659,7 +718,7 @@ if CLIENT then
             surface.SetDrawColor(C.border)
             surface.DrawOutlinedRect(0, 0, w, h)
             draw.SimpleText("GRM · СВОД ЗАКОНОВ", "GRMLaw_Title", 18, 23, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText(state.canEdit and "У вас есть доступ к правке кодекса" or "Режим просмотра",
+            draw.SimpleText(state.canEdit and "У вас есть доступ к правке кодекса" or "Режим просмотра · правка недоступна",
                 "GRMLaw_Small", w - 60, 23, state.canEdit and C.green or C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
 
@@ -786,6 +845,13 @@ if CLIENT then
     end)
 
     net.Receive("GRM_Laws_Open", function() LAWS.OpenMenu() end)
+
+    -- Кодекс изменился: если окно открыто — просим свежий список.
+    net.Receive("GRM_Laws_Changed", function()
+        if not IsValid(frame) then return end
+        net.Start("GRM_Laws_Refresh")
+        net.SendToServer()
+    end)
 
     net.Receive("GRM_Laws_Result", function()
         local ok, message = net.ReadBool(), net.ReadString()

@@ -272,7 +272,14 @@ end
        3) "*" в группе — всё;
        4) minAccess права: user — всем, admin — админским группам;
        5) CAMI: спрашиваем внешний админ-мод (ULX и прочие). ]]
-function AD.Can(ply, perm)
+--[[ Проверка БЕЗ обращения к внешнему админ-моду.
+
+     Именно её зовёт наш ответчик CAMI. Раньше и проверка, и ответ ходили
+     через одну функцию AD.Can: она спрашивала CAMI, CAMI дёргал наш хук,
+     хук снова звал AD.Can — и сервер сыпал «[ULib] stack overflow», а любое
+     действие, где проверялось право (публикация закона, например), просто
+     обрывалось на середине. ]]
+function AD.CanLocal(ply, perm)
     perm = string.lower(string.Trim(tostring(perm or "")))
     if perm == "" then return false end
     if not IsValid(ply) then return true end
@@ -305,10 +312,30 @@ function AD.Can(ply, perm)
         end
     end
 
+    return false
+end
+
+--[[ Главная проверка. Порядок:
+       1) консоль сервера и суперадмин — всё;
+       2) явное правило в группе (или её родителях): true/false;
+       3) "*" в группе — всё;
+       4) minAccess права: user — всем, admin — админским группам;
+       5) CAMI: спрашиваем внешний админ-мод (ULX и прочие). ]]
+AD._camiDepth = AD._camiDepth or 0
+
+function AD.Can(ply, perm)
+    perm = string.lower(string.Trim(tostring(perm or "")))
+    if perm == "" then return false end
+    if AD.CanLocal(ply, perm) then return true end
+
     -- Внешний админ-мод может знать больше (например, право выдано в ULX).
-    if CAMI and CAMI.PlayerHasAccess then
-        local allowed = CAMI.PlayerHasAccess(ply, "grm_" .. perm, nil)
-        if allowed == true then return true end
+    -- Глубину сторожим: если мы уже внутри чужого запроса, второй раз в
+    -- CAMI не идём — так рекурсия невозможна в принципе.
+    if CAMI and CAMI.PlayerHasAccess and AD._camiDepth == 0 then
+        AD._camiDepth = 1
+        local ok, allowed = pcall(CAMI.PlayerHasAccess, ply, "grm_" .. perm, nil)
+        AD._camiDepth = 0
+        if ok and allowed == true then return true end
     end
     return false
 end
@@ -849,7 +876,9 @@ if SERVER then
         if not isstring(privilegeName) or privilegeName:sub(1, 4) ~= "grm_" then return end
         local perm = privilegeName:sub(5)
         if not AD.Perms[perm] then return end
-        local allowed = AD.Can(actorPly, perm)
+        -- Отвечаем СВОЕЙ локальной проверкой: спросить CAMI в ответ на
+        -- запрос CAMI — это и есть та самая рекурсия.
+        local allowed = AD.CanLocal(actorPly, perm)
         if isfunction(callback) then callback(allowed, "GRM Admin") end
         return true
     end)
