@@ -17,7 +17,9 @@ tools/audit_perf.py — аудит нагрузки и порядка выпол
   6) большие синхронизации одним пакетом (net.WriteTable + net.Broadcast)
      вместо порционного GRM.Net.Stream;
   7) тяжёлый вход игрока (PlayerInitialSpawn с чтением файлов и полными
-     снимками) — фриз в момент присоединения.
+     снимками) — фриз в момент присоединения;
+  8) незарегистрированные сетевые каналы: таблица имён Net заполнена, а
+     util.AddNetworkString зовётся не на все — «unpooled message name».
 
 Вывод: таблица «файл — тип — деталь», сгруппированная по тяжести.
 Использование: python3 tools/audit_perf.py [--json]
@@ -273,6 +275,25 @@ def scan_extra(rel: str, src: str):
                        f"строка {line}: {tables} таблицы в одном пакете — разбить или слать через GRM.Net.Stream"),
         })
 
+    # 8) сетевые каналы: объявили имя — зарегистрируй строку
+    for m in re.finditer(r'([A-Za-z_][\w.]*\.Net)\s*=\s*\{(.*?)\}', src, re.S):
+        table_name, body = m.group(1), m.group(2)
+        fields = re.findall(r'(\w+)\s*=\s*"', body)
+        if len(fields) < 2:
+            continue
+        loop = re.search(r'for\s+_?,?\s*\w+\s+in\s+pairs\(\s*' + re.escape(table_name) +
+                         r'\s*\)\s*do\s*util\.AddNetworkString', src)
+        if loop:
+            continue
+        registered = len(re.findall(r'util\.AddNetworkString\(', src))
+        if registered < len(fields):
+            line = src[:m.start()].count("\n") + 1
+            findings.append({
+                "file": rel, "kind": "net_unpooled", "score": 6,
+                "detail": (f"строка {line}: в {table_name} каналов {len(fields)}, "
+                           f"а util.AddNetworkString вызван {registered} раз — часть имён не в пуле"),
+            })
+
     # 7) тяжёлый вход игрока
     for m in re.finditer(r'hook\.Add\(\s*"PlayerInitialSpawn"\s*,\s*"([^"]*)"', src):
         body = cut_body(block_of(src, m.end()))
@@ -330,9 +351,10 @@ def main():
         "disk_hotpath": "ЗАПИСЬ НА ДИСК В ГОРЯЧЕМ ПУТИ",
         "big_sync": "КРУПНЫЕ СИНХРОНИЗАЦИИ ОДНИМ ПАКЕТОМ",
         "join_heavy": "ТЯЖЁЛЫЙ ВХОД ИГРОКА",
+        "net_unpooled": "СЕТЕВЫЕ КАНАЛЫ БЕЗ РЕГИСТРАЦИИ ИМЕНИ",
     }
-    for kind in ("frame_hook", "fast_timer", "disk_hotpath", "big_sync", "join_heavy",
-                 "ent_think", "eager_start"):
+    for kind in ("frame_hook", "fast_timer", "disk_hotpath", "net_unpooled", "big_sync",
+                 "join_heavy", "ent_think", "eager_start"):
         rows = sorted(by_kind.get(kind, []), key=lambda r: -r["score"])
         print("\n=== %s (%d) ===" % (titles[kind], len(rows)))
         for r in rows[:40]:
@@ -347,7 +369,7 @@ def main():
     if "--gate" in sys.argv:
         blocking = []
         for f in all_findings:
-            if f["kind"] in ("disk_hotpath", "eager_start", "ent_think"):
+            if f["kind"] in ("disk_hotpath", "eager_start", "ent_think", "net_unpooled"):
                 blocking.append(f)
             elif f["kind"] == "frame_hook" and f["score"] >= 8:
                 blocking.append(f)

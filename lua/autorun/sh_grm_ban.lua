@@ -65,7 +65,12 @@ end
 -- СЕРВЕР
 -----------------------------------------------------------------------
 if SERVER then
-    util.AddNetworkString(SB.Net.SYNC)
+    --[[ Регистрируем ВСЕ имена пакетов модуля, а не только один. Ошибка
+         «Calling net.Start with unpooled message name» вылезла ровно из-за
+         этого: список забаненных добавили позже, а строку сети — нет.
+         Проход по таблице страхует от повторения: добавил канал в SB.Net —
+         он зарегистрирован. ]]
+    for _, name in pairs(SB.Net) do util.AddNetworkString(name) end
 
     SB.SoundCvar = SB.SoundCvar or CreateConVar("grm_ban_zombie_sound", "1", FCVAR_ARCHIVE,
         "Забаненные на сервере издают зомби-звуки (0 — тишина)")

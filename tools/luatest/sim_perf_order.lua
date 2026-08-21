@@ -84,6 +84,14 @@ local hc = read("lua/autorun/server/sv_grm_handcuffs.lua")
 ok(select(2, hc:gsub("next%(HC%.Cuffed%) == nil then return", "")) >= 2,
     "оба таймера наручников выходят сразу, если закованных нет")
 
+print("\n=== 6б. СЕТЕВЫЕ ИМЕНА (баг 21.08) ===")
+local ban = read("lua/autorun/sh_grm_ban.lua")
+ok(has(ban, "for _, name in pairs(SB.Net) do util.AddNetworkString(name) end"),
+    "все каналы модуля банов регистрируются проходом по таблице")
+ok(has(ban, "unpooled message name"), "в коде объяснено, из-за чего была ошибка")
+ok(has(audit, "net_unpooled"), "аудит ловит незарегистрированные каналы")
+ok(has(audit, "часть имён не в пуле"), "и говорит, сколько каналов не зарегистрировано")
+
 print("\n=== 7. АУДИТ КАК ВОРОТА ===")
 ok(has(audit, "disk_hotpath"), "аудит ловит запись на диск в горячем пути")
 ok(has(audit, "big_sync"), "аудит ловит крупные синхронизации одним пакетом")
