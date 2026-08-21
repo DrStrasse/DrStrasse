@@ -304,5 +304,15 @@ ok(has(ban4, 'CreateConVar("grm_ban_zombie_sound"'), "звук отключае�
 ok(has(ban4, "SB.Moan(ply)") and has(ban4, 'timer.Create("GRM_ServerBan_Watch"'),
     "звук идёт из общего сторожа, без таймера на каждого игрока")
 
+print("\n=== ТОЧКА ОТБЫВАНИЯ: ПАМЯТЬ (21.08) ===")
+local ban5 = read("lua/autorun/sh_grm_ban.lua")
+ok(has(ban5, "Vector — это\n             userdata") or has(ban5, "util.TableToJSON пишет его пустышкой"),
+    "разобрана причина, по которой точка слетала")
+ok(has(ban5, "pos = { x = math.floor(pos.x)"), "точка хранится числами, а не Vector")
+ok(has(ban5, "function SB.ZonePos"), "Vector собирается при использовании")
+ok(has(ban5, 'GRM.Save.Flush("serverban.zone"'), "точка пишется сразу, не дожидаясь очереди")
+ok(has(ban5, "not (x == 0 and y == 0 and zz == 0)"), "нули из битого файла не считаются точкой")
+ok(has(ban5, "точка отбывания на карте"), "в консоль печатается, есть ли точка после загрузки")
+
 print(("\nADMIN CORE: %d/%d, провалов: %d"):format(total - fails, total, fails))
 os.exit(fails == 0 and 0 or 1)

@@ -156,17 +156,29 @@ if SERVER then
                 if istable(row) then SB.History[#SB.History + 1] = row end
             end
         end
+        --[[ 21.08. Точка хранится ПЛОСКОЙ таблицей {x,y,z}, а не Vector.
+             Причина, по которой она «слетала» после рестарта: Vector — это
+             userdata, и util.TableToJSON пишет его пустышкой. Файл на диске
+             получался с `pos: {}`, при загрузке координаты читались нулями и
+             зона пропадала. Теперь на диск идут числа, а Vector собирается
+             при использовании. ]]
         local zones = jsonT(file.Read(ZONE_FILE, "DATA") or "")
         if istable(zones) and istable(zones.zones) then
             for map, z in pairs(zones.zones) do
                 if isstring(map) and istable(z) and istable(z.pos) then
-                    SB.Zones[map] = {
-                        pos = Vector(tonumber(z.pos.x) or 0, tonumber(z.pos.y) or 0, tonumber(z.pos.z) or 0),
-                        radius = math.Clamp(math.floor(tonumber(z.radius) or 600), 100, 8000),
-                    }
+                    local x, y, zz = tonumber(z.pos.x), tonumber(z.pos.y), tonumber(z.pos.z)
+                    if x and y and zz and not (x == 0 and y == 0 and zz == 0) then
+                        SB.Zones[map] = {
+                            pos = { x = x, y = y, z = zz },
+                            radius = math.Clamp(math.floor(tonumber(z.radius) or 600), 100, 8000),
+                        }
+                    end
                 end
             end
         end
+        local mine = SB.Zones[mapName()]
+        print(("[GRM Server Ban] загружено: банов %d, точка отбывания на карте %s"):format(
+            table.Count(SB.Bans), mine and ("есть, радиус " .. mine.radius) or "НЕ ЗАДАНА"))
         return true
     end
 
@@ -176,12 +188,23 @@ if SERVER then
         return (SB.Zones or {})[mapName()]
     end
 
+    --- Точка как Vector: наружу отдаём готовый вектор, внутри храним числа.
+    function SB.ZonePos(zone)
+        zone = zone or SB.CurrentZone()
+        if not (istable(zone) and istable(zone.pos)) then return nil end
+        return Vector(tonumber(zone.pos.x) or 0, tonumber(zone.pos.y) or 0, tonumber(zone.pos.z) or 0)
+    end
+
     function SB.SetZone(actor, pos, radius)
         if not isvector(pos) then return false, "Нет позиции" end
         SB.Zones = SB.Zones or {}
-        SB.Zones[mapName()] = { pos = Vector(pos.x, pos.y, pos.z),
-            radius = math.Clamp(math.floor(tonumber(radius) or 600), 100, 8000) }
+        SB.Zones[mapName()] = {
+            pos = { x = math.floor(pos.x), y = math.floor(pos.y), z = math.floor(pos.z) },
+            radius = math.Clamp(math.floor(tonumber(radius) or 600), 100, 8000),
+        }
         saveZone("точка бана " .. mapName())
+        -- Точку теряют реже, чем ищут: пишем сразу, не дожидаясь очереди.
+        if GRM.Save and GRM.Save.Flush then GRM.Save.Flush("serverban.zone", "точка бана") end
         if GRM.Audit and GRM.Audit.Write then
             GRM.Audit.Write("admin", "ban.zone", actor, { map = mapName() },
                 { radius = SB.Zones[mapName()].radius })
@@ -220,9 +243,9 @@ if SERVER then
         if #ply:GetWeapons() > 0 then ply:StripWeapons() end
         ply:StripAmmo()
 
-        local zone = SB.CurrentZone()
-        if teleport and zone and isvector(zone.pos) then
-            ply:SetPos(zone.pos + Vector(0, 0, 8))
+        local zonePos = SB.ZonePos()
+        if teleport and zonePos then
+            ply:SetPos(zonePos + Vector(0, 0, 8))
             ply:SetVelocity(-ply:GetVelocity())
         end
     end
@@ -448,16 +471,17 @@ if SERVER then
          (другие модули любят вернуть модель) и снимает истёкшие баны. ]]
     timer.Create("GRM_ServerBan_Watch", 0.5, 0, function()
         local zone = SB.CurrentZone()
+        local zonePos = SB.ZonePos(zone)
         for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) then
                 local isBanned, rec = SB.IsBanned(ply)
                 if isBanned then
                     SB.Apply(ply, false)
                     SB.Moan(ply)
-                    if zone and isvector(zone.pos) then
+                    if zonePos then
                         local r = zone.radius or 600
-                        if ply:GetPos():DistToSqr(zone.pos) > r * r then
-                            ply:SetPos(zone.pos + Vector(0, 0, 8))
+                        if ply:GetPos():DistToSqr(zonePos) > r * r then
+                            ply:SetPos(zonePos + Vector(0, 0, 8))
                             ply:SetVelocity(-ply:GetVelocity())
                             if GRM.Notify then GRM.Notify(ply, "Выход за пределы зоны запрещён.", 255, 120, 90) end
                         end
@@ -512,7 +536,8 @@ if SERVER then
     concommand.Add("grm_ban_zone", function(ply)
         if IsValid(ply) and not ply:IsSuperAdmin() then return end
         local zone = SB.CurrentZone()
-        local line = zone and ("[Бан] Точка: " .. tostring(zone.pos) .. " · радиус " .. zone.radius)
+        local line = zone and ("[Бан] Точка: " .. tostring(SB.ZonePos(zone)) .. " · радиус " .. zone.radius ..
+            " · карта " .. tostring(game.GetMap()))
             or "[Бан] Точка отбывания не задана: встаньте на место и введите grm_ban_point"
         if IsValid(ply) then ply:ChatPrint(line) else print(line) end
     end)

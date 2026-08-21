@@ -60,8 +60,63 @@ local FS = {}
 file = { IsDir = function() return true end, CreateDir = function() end,
          Write = function(p, s) FS[p] = s end, Read = function(p) return FS[p] end,
          Exists = function(p) return FS[p] ~= nil end }
-util = { PrecacheSound = function() end, AddNetworkString = function() end, TableToJSON = function() return "{}" end,
-         JSONToTable = function() return {} end, SteamIDFrom64 = function(s) return "STEAM:" .. s end }
+-- Мини-JSON: заглушка «{}» скрывала бы ровно ту ошибку, из-за которой точка
+-- отбывания слетала после рестарта, поэтому кодируем по-настоящему.
+local function enc(v)
+    local t = type(v)
+    if t == "number" or t == "boolean" then return tostring(v) end
+    if t == "string" then return string.format("%q", v) end
+    if t ~= "table" then return "null" end            -- userdata (Vector) — как в GMod
+    local parts = {}
+    if #v > 0 then
+        for _, i in ipairs(v) do parts[#parts + 1] = enc(i) end
+        return "[" .. table.concat(parts, ",") .. "]"
+    end
+    for k, i in pairs(v) do parts[#parts + 1] = string.format("%q", tostring(k)) .. ":" .. enc(i) end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+local function dec(str)
+    local pos = 1
+    local function value()
+        while str:sub(pos, pos):match("%s") do pos = pos + 1 end
+        local c = str:sub(pos, pos)
+        if c == "{" then
+            pos = pos + 1 local out = {}
+            if str:sub(pos, pos) == "}" then pos = pos + 1 return out end
+            while true do
+                local k = value() pos = pos + 1
+                out[k] = value()
+                local sep = str:sub(pos, pos) pos = pos + 1
+                if sep == "}" then break end
+            end
+            return out
+        elseif c == "[" then
+            pos = pos + 1 local out = {}
+            if str:sub(pos, pos) == "]" then pos = pos + 1 return out end
+            while true do
+                out[#out + 1] = value()
+                local sep = str:sub(pos, pos) pos = pos + 1
+                if sep == "]" then break end
+            end
+            return out
+        elseif c == '"' then
+            local i, out = pos + 1, {}
+            while str:sub(i, i) ~= '"' do out[#out + 1] = str:sub(i, i) i = i + 1 end
+            pos = i + 1 return table.concat(out)
+        elseif str:sub(pos, pos + 3) == "true" then pos = pos + 4 return true
+        elseif str:sub(pos, pos + 4) == "false" then pos = pos + 5 return false
+        elseif str:sub(pos, pos + 3) == "null" then pos = pos + 4 return nil
+        else
+            local a, b = str:find("[%-%d%.]+", pos) pos = b + 1 return tonumber(str:sub(a, b))
+        end
+    end
+    local ok, res = pcall(value)
+    return ok and res or nil
+end
+util = { PrecacheSound = function() end, AddNetworkString = function() end,
+         TableToJSON = function(t) return enc(t) end,
+         JSONToTable = function(str) return dec(str) end,
+         SteamIDFrom64 = function(s) return "STEAM:" .. s end }
 net = { Receive = function() end, Start = function() end, WriteString = function() end,
         WriteTable = function() end, Send = function() end, Broadcast = function() end }
 game = { GetMap = function() return "rp_test" end, ConsoleCommand = function() end }
@@ -314,6 +369,39 @@ ok(SB.Bans[target:SteamID64()] ~= nil, "бан в памяти")
 SB.Load()
 ok(table.Count(SB.Bans) == 0, "битый/пустой файл не роняет модуль")
 ok(istable(SB.History), "история переживает перезагрузку структурой")
+
+print("\n=== 9. ТОЧКА ПЕРЕЖИВАЕТ РЕСТАРТ (заказ 21.08) ===")
+admin.pos = Vector(2345, -678, 91)
+SB.SetZone(admin, admin:GetPos(), 750)
+local raw = FS["grm_admin/serverban_zone.json"]
+ok(isstring(raw) and raw ~= "", "файл точки записан сразу, без ожидания очереди")
+ok(raw:find("2345", 1, true) ~= nil and raw:find("-678", 1, true) ~= nil,
+    "координаты попали в файл ЧИСЛАМИ (Vector сериализовался бы пустышкой)", raw)
+
+-- «рестарт»: память чистая, читаем только с диска
+SB.Zones, SB.Bans = {}, {}
+SB.Load()
+local restored = SB.CurrentZone()
+ok(restored ~= nil, "точка нашлась после рестарта")
+ok(restored and restored.radius == 750, "радиус тот же", restored and restored.radius)
+local pos = SB.ZonePos()
+ok(pos and pos.x == 2345 and pos.y == -678 and pos.z == 91,
+    "координаты те же", pos and tostring(pos))
+
+-- и она реально работает: наказанного тянет именно туда
+SB.Ban(admin, target, 10, "После рестарта")
+ok(target.pos:DistToSqr(Vector(2345, -678, 91)) < 200, "бан телепортирует в сохранённую точку",
+    tostring(target.pos))
+target.pos = Vector(9000, 9000, 0)
+timers["GRM_ServerBan_Watch"]()
+ok(target.pos:DistToSqr(Vector(2345, -678, 91)) < 200, "и держит в ней", tostring(target.pos))
+SB.Unban(admin, target:SteamID64())
+
+-- битый файл не должен «съесть» точку молча
+FS["grm_admin/serverban_zone.json"] = '{"version":1,"zones":{"rp_test":{"pos":{},"radius":600}}}'
+SB.Zones = {}
+SB.Load()
+ok(SB.CurrentZone() == nil, "пустые координаты в файле не превращаются в точку 0,0,0")
 
 print(("\nSERVER BAN: %d/%d, провалов: %d"):format(total - fails, total, fails))
 if fails > 0 then os.exit(1) end
