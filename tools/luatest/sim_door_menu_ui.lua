@@ -42,7 +42,7 @@ ok(has(core, "if actor.categoryKeepLocked == true and not super then lock = fals
     "режим «всегда заперта» перекрывает замок")
 ok(has(core, "buy = rec.ownable ~= false and actor.categoryBuy == true"),
     "приватизация категорийной двери — только по флагу")
-ok(has(core, "if istable(keepCat) and keepCat.keepLocked == true then locked = true end"),
+ok(has(core, "if istable(keepCat) and keepCat.keepLocked == true and not locked then"),
     "принудительное запирание применяется и при прямом вызове LockDoor")
 ok(has(core, "local fac, role, dept, sub = playerFactionInfo(ply)"), "актор знает отдел и подотдел")
 ok(has(core, 'return name, m.Role, m.Department, tostring(m.Subdepartment or m.Subdept or "")'),

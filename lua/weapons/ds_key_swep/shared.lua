@@ -65,10 +65,17 @@ function SWEP:GetAimedDoor()
     return nil
 end
 
-function SWEP:PrimaryAttack()
+--[[ Общая обработка «повернуть ключ»: одна проверка прав на обе кнопки.
+     Раньше ключи спрашивали только «есть ли доступ» (CanAccessDoor) и не
+     смотрели, разрешено ли этому человеку трогать ЗАМОК. Из-за этого на
+     общественных и «только для администрации» дверях замком щёлкал любой,
+     у кого есть проход, а профиль категории «дверь всегда заперта» молча
+     отменял отпирание — ключи при этом рапортовали «разблокировано». ]]
+local function toggleLock(self, wantLocked)
     if CurTime() < (self._nextAction or 0) then return end
     self._nextAction = CurTime() + ACTION_COOLDOWN
-    self:SetNextPrimaryFire(self._nextAction)
+    if wantLocked then self:SetNextPrimaryFire(self._nextAction)
+    else self:SetNextSecondaryFire(self._nextAction) end
 
     if CLIENT and not IsFirstTimePredicted() then return end
 
@@ -79,48 +86,55 @@ function SWEP:PrimaryAttack()
         local ply = self:GetOwner()
         if not IsValid(ply) or not GRM or not GRM.Doors then return end
 
-        local canAccess = select(1, GRM.Doors.CanAccessDoor(ply, door))
-        if not canAccess then
+        local can, reason
+        if GRM.Doors.CanToggleLock then
+            can, reason = GRM.Doors.CanToggleLock(ply, door, wantLocked)
+        else
+            can = select(1, GRM.Doors.CanAccessDoor(ply, door))
+            reason = "У вас нет ключей от этой двери."
+        end
+        if not can then
             ply:EmitSound("buttons/button10.wav", 65, 100, 0.7)
-            if GRM.Notify then GRM.Notify(ply, "У вас нет ключей от этой двери.", 255, 100, 100) end
+            if GRM.Notify then GRM.Notify(ply, tostring(reason or "Замок не поддаётся."), 255, 100, 100) end
             return
         end
 
-        GRM.Doors.LockDoor(door, true)
-        ply:EmitSound("doors/door_latch1.wav", 65, 100)
-        if GRM.Notify then GRM.Notify(ply, "Замок двери заблокирован.", 100, 220, 100) end
+        -- Если дверь уже в нужном состоянии — не дёргаем замок впустую.
+        local already = GRM.Doors.IsDoorLocked and GRM.Doors.IsDoorLocked(door) or false
+        if already == wantLocked then
+            ply:EmitSound("doors/door_latch1.wav", 60, 110, 0.4)
+            if GRM.Notify then
+                GRM.Notify(ply, wantLocked and "Дверь и так заперта." or "Дверь и так открыта.", 200, 200, 120)
+            end
+            return
+        end
+
+        local ok, state, forced = GRM.Doors.LockDoor(door, wantLocked)
+        if ok == false then
+            if GRM.Notify then GRM.Notify(ply, "Замок не поддаётся.", 255, 100, 100) end
+            return
+        end
+        if forced then
+            ply:EmitSound("buttons/button10.wav", 65, 100, 0.7)
+            if GRM.Notify then GRM.Notify(ply, "Эта дверь всегда заперта — отпереть её нельзя.", 255, 180, 90) end
+            return
+        end
+
+        ply:EmitSound(state and "doors/door_latch1.wav" or "doors/door_latch3.wav", 65, 100)
+        if GRM.Notify then
+            GRM.Notify(ply, state and "Замок двери заблокирован." or "Замок двери разблокирован.", 100, 220, 100)
+        end
     end
 
-    self:SendWeaponAnim(ACT_VM_PRIMARYATTACK)
+    self:SendWeaponAnim(wantLocked and ACT_VM_PRIMARYATTACK or ACT_VM_SECONDARYATTACK)
+end
+
+function SWEP:PrimaryAttack()
+    toggleLock(self, true)
 end
 
 function SWEP:SecondaryAttack()
-    if CurTime() < (self._nextAction or 0) then return end
-    self._nextAction = CurTime() + ACTION_COOLDOWN
-    self:SetNextSecondaryFire(self._nextAction)
-
-    if CLIENT and not IsFirstTimePredicted() then return end
-
-    local door = self:GetAimedDoor()
-    if not IsValid(door) then return end
-
-    if SERVER then
-        local ply = self:GetOwner()
-        if not IsValid(ply) or not GRM or not GRM.Doors then return end
-
-        local canAccess = select(1, GRM.Doors.CanAccessDoor(ply, door))
-        if not canAccess then
-            ply:EmitSound("buttons/button10.wav", 65, 100, 0.7)
-            if GRM.Notify then GRM.Notify(ply, "У вас нет ключей от этой двери.", 255, 100, 100) end
-            return
-        end
-
-        GRM.Doors.LockDoor(door, false)
-        ply:EmitSound("doors/door_latch3.wav", 65, 100)
-        if GRM.Notify then GRM.Notify(ply, "Замок двери разблокирован.", 100, 220, 100) end
-    end
-
-    self:SendWeaponAnim(ACT_VM_SECONDARYATTACK)
+    toggleLock(self, false)
 end
 
 function SWEP:Reload()

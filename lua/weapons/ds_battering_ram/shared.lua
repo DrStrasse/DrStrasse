@@ -128,11 +128,11 @@ function SWEP:PrimaryAttack()
             if GRM.Doors.BreachDoor then
                 GRM.Doors.BreachDoor(door, ply, "battering_ram")
             else
-                GRM.Doors.LockDoor(door, false)
+                GRM.Doors.LockDoor(door, false, { noAutoLock = true })
                 door:Fire("Open", "", 0.05)
                 local partner = GRM.Doors.GetPartnerDoor and GRM.Doors.GetPartnerDoor(door)
                 if IsValid(partner) then
-                    GRM.Doors.LockDoor(partner, false)
+                    GRM.Doors.LockDoor(partner, false, { noAutoLock = true })
                     partner:Fire("Open", "", 0.05)
                 end
             end

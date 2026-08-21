@@ -410,14 +410,14 @@ function D.BreachDoor(ent, breakerPly, method)
     if not IsValid(ent) or not D.IsDoor(ent) then return false end
     method = method or "battering_ram"
 
-    D.LockDoor(ent, false)
+    D.LockDoor(ent, false, { noAutoLock = true })
     ent:Fire("Open", "", 0.05)
     ent._grmBreachedUntil = CurTime() + 300
     ent:SetNWFloat("GRM_BreachedUntil", ent._grmBreachedUntil)
 
     local partner = D.GetPartnerDoor(ent)
     if IsValid(partner) then
-        D.LockDoor(partner, false)
+        D.LockDoor(partner, false, { noAutoLock = true })
         partner:Fire("Open", "", 0.05)
         partner._grmBreachedUntil = CurTime() + 300
         partner:SetNWFloat("GRM_BreachedUntil", partner._grmBreachedUntil)
@@ -480,6 +480,52 @@ function D.CategoryMatch(cat, actor)
     local role = tostring(actor.role or "")
     if role ~= "" and listHas(cat.roles, fac .. "|" .. role) then return true end
     return false
+end
+
+--[[ ЕДИНОЕ СОСТОЯНИЕ ЗАМКА ФИЗИЧЕСКОЙ ДВЕРИ.
+
+     Двустворчатая дверь — это ДВА полотна с двумя разными записями. Раньше
+     `LockDoor` писала состояние только в запись того полотна, по которому
+     кликнули, а сторож замков (`GRM_Doors_LockReconciler`) каждые пару секунд
+     приводил КАЖДУЮ запись к её собственному значению. Итог: отпираешь
+     створку — соседняя запись остаётся «заперта», сторож возвращает замок и
+     дёргает общий сетевой флаг. Со стороны это выглядело как «дверь сама
+     заперлась через несколько секунд после того, как её открыл суперадмин».
+
+     Теперь у группы полотен одно состояние: при каждой смене замка ставится
+     метка времени `lock_at`, а победителем считается САМАЯ СВЕЖАЯ запись.
+     Функция чистая — гоняется в стенде без карты и энтити. ]]
+function D.ResolveGroupLock(records)
+    if not istable(records) then return false, 0 end
+    local best, bestAt = nil, -1
+    for _, rec in pairs(records) do
+        if istable(rec) then
+            local at = tonumber(rec.lock_at) or 0
+            local locked = rec.locked == true
+            if at > bestAt then
+                best, bestAt = locked, at
+            elseif at == bestAt then
+                -- одинаковая давность: безопаснее оставить дверь запертой
+                best = (best == true) or locked
+            end
+        end
+    end
+    if best == nil then return false, 0 end
+    return best == true, math.max(bestAt, 0)
+end
+
+--- Согласованы ли записи группы (для диагностики и сторожа).
+function D.GroupLockInSync(records)
+    if not istable(records) then return true end
+    local first, seen = nil, false
+    for _, rec in pairs(records) do
+        if istable(rec) then
+            local locked = rec.locked == true
+            if not seen then first, seen = locked, true
+            elseif locked ~= first then return false end
+        end
+    end
+    return true
 end
 
 --- Может ли сотрудник управлять замком двери этой категории.
@@ -936,6 +982,9 @@ if SERVER then
             rent_until = tonumber(raw.rent_until) or 0,
             rent_price = math.max(0, math.floor(tonumber(raw.rent_price) or (D.Config.RentPrice or 5000))),
             locked = raw.locked == true,
+            -- метка последней смены замка: по ней сторож понимает, какая из
+            -- записей створок свежее (см. D.ResolveGroupLock)
+            lock_at = math.max(0, math.floor(tonumber(raw.lock_at) or 0)),
             ownable = raw.ownable ~= false,
         }
     end
@@ -951,7 +1000,7 @@ if SERVER then
             owner_faction = "", owner_category = "", co_owners = {}, factions = {},
             roles = {}, categories = {}, rent_until = 0,
             rent_price = tonumber(D.Config.RentPrice) or 5000,
-            locked = locked, ownable = true, _ephemeral = true,
+            locked = locked, lock_at = 0, ownable = true, _ephemeral = true,
         }
     end
 
@@ -997,7 +1046,7 @@ if SERVER then
         end
     end)
 
-    function D.SaveDoors()
+    local function buildDoorsPayload()
         D.CollapseDuplicateRecords()
         local arr = {}
         for id, rec in pairs(D.Data.doors or {}) do
@@ -1008,7 +1057,29 @@ if SERVER then
             end
         end
         table.sort(arr, function(a, b) return tostring(a.id) < tostring(b.id) end)
-        return writeJSON(doorsFile(), { version = 3, doors = arr })
+        return { version = 3, doors = arr }
+    end
+
+    --- Немедленная запись (выключение сервера, ручные команды).
+    function D.SaveDoorsNow()
+        return writeJSON(doorsFile(), buildDoorsPayload())
+    end
+
+    --[[ Обычное сохранение идёт через очередь GRM.Save: замок дёргается часто
+         (ключи, сторож, автоблокировка), а каждая запись реестра дверей на
+         диск в горячем пути — это микрофриз. Если слоя нет — пишем сразу. ]]
+    if GRM.Save and GRM.Save.Register then
+        D._saveRegistered = GRM.Save.Register("grm_doors", {
+            file = doorsFile(), delay = 3, priority = 5,
+            label = "двери", build = buildDoorsPayload,
+        })
+    end
+
+    function D.SaveDoors(why)
+        if D._saveRegistered and GRM.Save and GRM.Save.Mark then
+            return GRM.Save.Mark("grm_doors", why or "doors")
+        end
+        return D.SaveDoorsNow()
     end
 
     function D.LoadDoors()
@@ -1397,24 +1468,126 @@ if SERVER then
         return false
     end
 
-    function D.LockDoor(ent, locked)
-        if not IsValid(ent) then return end
+    --- Все полотна ОДНОЙ физической двери: сама дверь, её дубли на карте,
+    --  вторая створка и дубли второй створки.
+    function D.DoorGroup(ent)
+        local out, seen = {}, {}
+        local function add(e)
+            if IsValid(e) and not seen[e] then seen[e] = true out[#out + 1] = e end
+        end
+        add(ent)
+        for _, eq in ipairs(D.GetEquivalentDoors(ent)) do add(eq) end
+        local partner = D.GetPartnerDoor(ent)
+        if IsValid(partner) then
+            add(partner)
+            for _, eq in ipairs(D.GetEquivalentDoors(partner)) do add(eq) end
+        end
+        return out
+    end
+
+    --- Записи всех полотен группы: { [id] = rec }
+    function D.GroupRecords(ent)
+        local out = {}
+        for _, leaf in ipairs(D.DoorGroup(ent)) do
+            local id = D.GetDoorID(leaf)
+            local rec = id and D.Data.doors and D.Data.doors[id] or nil
+            if istable(rec) then out[id] = rec end
+        end
+        return out
+    end
+
+    --[[ АВТОБЛОКИРОВКА (по умолчанию выключена).
+         `grm_door_autolock 8` — дверь сама запирается через 8 секунд после
+         того, как её отперли. 0 — никогда. Отдельная явная настройка вместо
+         прежнего «само собой запирается непонятно почему». ]]
+    local cvAutoLock = CreateConVar("grm_door_autolock", "0", FCVAR_ARCHIVE,
+        "Через сколько секунд дверь сама запирается после отпирания (0 — никогда)")
+
+    function D.AutoLockDelay()
+        local v = cvAutoLock and cvAutoLock:GetInt() or 0
+        if v <= 0 then return 0 end
+        return math.Clamp(v, 1, 3600)
+    end
+
+    function D.CancelAutoLock(id)
+        if not id then return end
+        local name = "GRM_Doors_AutoLock_" .. tostring(id)
+        if timer.Exists and timer.Exists(name) then timer.Remove(name) end
+    end
+
+    function D.ScheduleAutoLock(ent, id)
+        local delay = D.AutoLockDelay()
+        if delay <= 0 or not IsValid(ent) or not id then return false end
+        timer.Create("GRM_Doors_AutoLock_" .. tostring(id), delay, 1, function()
+            if not IsValid(ent) then return end
+            local rec = D.Data.doors and D.Data.doors[id] or nil
+            if istable(rec) and rec.locked == true then return end
+            D.LockDoor(ent, true, { noAutoLock = true })
+        end)
+        return true
+    end
+
+    function D.LockDoor(ent, locked, opts)
+        if not IsValid(ent) then return false, false, nil end
+        opts = istable(opts) and opts or {}
         local rec, id = getRecord(ent)
         -- Профиль категории «дверь всегда заперта» сильнее любой попытки её открыть.
         local keepCat = D.CategoryOfDoor(rec)
-        if istable(keepCat) and keepCat.keepLocked == true then locked = true end
+        local forced = false
+        if istable(keepCat) and keepCat.keepLocked == true and not locked then
+            locked = true
+            forced = true
+        end
+        locked = locked and true or false
+
         local cmd = locked and "Lock" or "Unlock"
-        for _, equivalent in ipairs(D.GetEquivalentDoors(ent)) do
-            if IsValid(equivalent) then equivalent:Fire(cmd, "", 0) end
+        local stamp = os.time()
+
+        --[[ Замок ставим ВСЕЙ физической двери разом: полотну, его дублям,
+             второй створке и дублям створки. И, главное, пишем состояние в
+             КАЖДУЮ запись — иначе сторож замков вернёт старое значение из
+             записи соседней створки (класс «дверь заперлась сама»). ]]
+        for _, leaf in ipairs(D.DoorGroup(ent)) do
+            leaf:Fire(cmd, "", 0)
+            leaf:SetNWBool("GRM_DoorLocked", locked)
+            local lrec, lid = getRecord(leaf)
+            if lrec and lid then
+                lrec.locked = locked
+                lrec.lock_at = stamp
+                persist(lrec, lid)
+            end
         end
-        local partner = D.GetPartnerDoor(ent)
-        if IsValid(partner) then partner:Fire(cmd, "", 0) end
         D.SyncLockNW(ent, locked)
-        if rec then
-            rec.locked = locked and true or false
-            persist(rec, id)
-            D.SaveDoors()
+        D.SaveDoors()
+
+        -- Необязательная автоблокировка: дверь сама запирается через N секунд
+        -- после отпирания. По умолчанию выключена (grm_door_autolock 0).
+        if id then D.CancelAutoLock(id) end
+        if not locked and not opts.noAutoLock then D.ScheduleAutoLock(ent, id) end
+
+        return true, locked, forced
+    end
+
+    --- Право управлять замком именно этой двери (ключи, меню, терминалы).
+    --  Возвращает: можно ли, причина отказа, «дверь всегда заперта».
+    function D.CanToggleLock(ply, ent, wantLocked)
+        if not IsValid(ply) or not IsValid(ent) then return false, "Недействительный объект" end
+        local rec = select(1, getRecord(ent))
+        local actor = actorOf(ply, rec)
+        local acc = D.EvaluateAccess(rec, actor)
+        if not acc.has_key then return false, "У вас нет ключей от этой двери." end
+        if not acc.lock then
+            local cat = D.CategoryOfDoor(rec)
+            if istable(cat) and cat.lockAdminOnly == true then
+                return false, "Замком этой двери управляет только администрация."
+            end
+            return false, "Вам разрешён только проход — замком этой двери вы управлять не можете."
         end
+        local cat = D.CategoryOfDoor(rec)
+        if wantLocked == false and istable(cat) and cat.keepLocked == true and actor.superadmin ~= true then
+            return false, "Дверь этой категории всегда заперта.", true
+        end
+        return true, nil, istable(cat) and cat.keepLocked == true or false
     end
 
     function D.ClaimDoor(ply, ent, mode)
@@ -1628,18 +1801,38 @@ if SERVER then
         if not istable(D.Data) or not istable(D.Data.doors) then return end
         -- Раньше сверка замков каждые 2 секунды делала ПОЛНЫЙ ents.GetAll()
         -- по всем энтити карты. Теперь берём только двери из event-реестров.
+        --
+        -- И главное: сверяем не «каждое полотно со своей записью», а группу
+        -- полотен одной физической двери с ОДНИМ состоянием (самая свежая
+        -- запись по lock_at). Иначе соседняя створка возвращала замок обратно
+        -- и дверь «запиралась сама» через пару секунд после отпирания.
         for _, ent in ipairs(D.AllDoors()) do
             if IsValid(ent) then
-                local rec = D.Data.doors[D.GetDoorID(ent)]
+                local id = D.GetDoorID(ent)
+                local rec = id and D.Data.doors[id] or nil
                 local okE, engRaw = pcall(function() return ent:GetInternalVariable("m_bLocked") end)
                 if not okE then engRaw = nil end
                 local engLocked = (engRaw == true or engRaw == 1)
-                if rec and (rec.locked == true or (rec.owner_type and rec.owner_type ~= "none")) then
-                    local want = rec.locked == true
+
+                local group = D.GroupRecords(ent)
+                local hasGroup = next(group) ~= nil
+                local groupLocked, stamp = D.ResolveGroupLock(group)
+
+                if hasGroup and (groupLocked == true or (rec and rec.owner_type and rec.owner_type ~= "none")) then
+                    local want = groupLocked
+                    -- Лечим рассинхрон записей створок: у всей группы одно значение.
+                    if not D.GroupLockInSync(group) then
+                        for gid, grec in pairs(group) do
+                            grec.locked = want
+                            grec.lock_at = math.max(tonumber(grec.lock_at) or 0, stamp)
+                            D.Data.doors[gid] = grec
+                        end
+                        D.SaveDoors()
+                    end
                     if engRaw ~= nil and engLocked ~= want then ent:Fire(want and "Lock" or "Unlock", "", 0) end
                     if ent:GetNWBool("GRM_DoorLocked", false) ~= want then D.SyncLockNW(ent, want) end
                 else
-                    local want = (rec and rec.locked == true) or engLocked
+                    local want = (hasGroup and groupLocked) or engLocked
                     if ent:GetNWBool("GRM_DoorLocked", false) ~= want then D.SyncLockNW(ent, want) end
                 end
             end

@@ -162,7 +162,7 @@ if SERVER then
         end
 
         if GRM and GRM.Doors and GRM.Doors.IsDoor and GRM.Doors.IsDoor(target) then
-            GRM.Doors.LockDoor(target, false)
+            GRM.Doors.LockDoor(target, false, { noAutoLock = true })
             target:Fire("Open", "", 0.1)
 
             local partner = GRM.Doors.GetPartnerDoor and GRM.Doors.GetPartnerDoor(target)
