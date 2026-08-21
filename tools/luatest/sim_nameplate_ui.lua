@@ -28,6 +28,19 @@ ok(has(np, "грузится ПОСЛЕ нас"), "объяснено, поче�
 ok(has(np, "local wrapCache"), "перенос строк кэшируется, а не считается каждый кадр")
 ok(has(np, "GRM.Perf.Players"), "проход по игрокам через общий кэш GRM.Perf")
 
+print("\n=== 1б. ДВЕ ПЛАШКИ СРАЗУ (жалоба 21.08) ===")
+local rpdesc = read("lua/autorun/sh_grm_rpdesc.lua")
+local factions0 = read("lua/autorun/sh_factions.lua")
+ok(has(np, "NP.Active = cvEnable:GetBool()"), "у шапки есть флаг активности")
+ok(has(rpdesc, "if GRM.Nameplate and GRM.Nameplate.Active then return end"),
+    "старая плашка описания молчит, пока работает новая")
+ok(has(factions0, "if GRM.Nameplate and GRM.Nameplate.Active then return end"),
+    "старая шапка организации молчит, пока работает новая")
+ok(has(np, 'cvars.AddChangeCallback("grm_cl_nameplate"'),
+    "выключил новую шапку — старые вернулись")
+ok(has(np, "grm_nameplate_debug"), "есть диагностика: кто именно рисует над головами")
+ok(has(np, "veh:OBBMaxs().z"), "в транспорте плашка считается от габаритов машины")
+
 print("\n=== 2. ВИДИМОСТЬ ИМЕНИ ===")
 ok(has(np, "function NP.NameVisible"), "правило видимости имени — одна функция на сервер и клиент")
 ok(has(np, '"grm_nameplate_mode", "docs"'), "по умолчанию «Неизвестный» до предъявления документа")

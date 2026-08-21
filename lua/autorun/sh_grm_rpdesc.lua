@@ -342,6 +342,12 @@ if CLIENT then
     end
 
     hook.Add("HUDPaint", TAG, function()
+        --[[ 21.08. Единая шапка (GRM.Nameplate) рисует имя, тег и описание
+             одной плашкой. Снятия хука по имени оказалось мало: файл
+             грузится ПОСЛЕ модуля шапки и вешал свой HUDPaint заново — над
+             головой было две плашки сразу. Теперь старая отрисовка сама
+             молчит, пока новая включена. ]]
+        if GRM.Nameplate and GRM.Nameplate.Active then return end
         if GetConVar("grm_cl_rpdesc"):GetInt() == 0 then return end
         local lp = LocalPlayer()
         if not IsValid(lp) or not lp:Alive() then return end

@@ -4100,6 +4100,10 @@ if CLIENT then
     end
 
     hook.Add("HUDPaint", "Factions_HUD", function()
+        -- 21.08: шапку организации теперь рисует общий GRM.Nameplate одной
+        -- плашкой вместе с именем и описанием. Пока он активен, старая
+        -- отрисовка молчит (иначе над головой две подписи внахлёст).
+        if GRM.Nameplate and GRM.Nameplate.Active then return end
         local lp = LocalPlayer()
         if not IsValid(lp) then return end
         local radius = GetConVarNumber("rpdesc_radius") or 5000

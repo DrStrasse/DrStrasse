@@ -503,6 +503,14 @@ if CLIENT then
 
     local cvEnable = CreateClientConVar("grm_cl_nameplate", "1", true, false,
         "Показывать шапку над головами")
+
+    --[[ Флаг для СТАРЫХ отрисовок: пока он поднят, `sh_grm_rpdesc.lua` и
+         `Factions_HUD` не рисуют ничего. Выключил новую шапку конваром —
+         старые вернулись, поведение не теряется. ]]
+    NP.Active = cvEnable:GetBool()
+    cvars.AddChangeCallback("grm_cl_nameplate", function(_, _, value)
+        NP.Active = tostring(value) ~= "0"
+    end, "GRM_Nameplate_ActiveFlag")
     local cvDist = CreateClientConVar("grm_cl_nameplate_dist", "200", true, false,
         "Радиус отрисовки шапки над головой")
     local cvDesc = CreateClientConVar("grm_cl_nameplate_desc", "1", true, false,
@@ -702,7 +710,15 @@ if CLIENT then
                 if dist <= maxDist then
                     local info = NP.Describe(ply, lp)
                     if info then
-                        local screen = (ply:GetPos() + Vector(0, 0, 84)):ToScreen()
+                        -- В транспорте кости игрока сидят низко: плашка
+                        -- уезжала в кузов. Берём высоту от самой машины.
+                        local anchor, height = ply, 84
+                        local veh = ply.GetVehicle and ply:GetVehicle() or nil
+                        if IsValid(veh) then
+                            anchor = veh
+                            height = math.max(60, (veh:OBBMaxs().z - veh:OBBMins().z) + 20)
+                        end
+                        local screen = (anchor:GetPos() + Vector(0, 0, height)):ToScreen()
                         if screen.visible then
                             drawPlate(info, screen.x, screen.y, math.Clamp(255 * (1.15 - dist / maxDist), 60, 255))
                         end
@@ -785,6 +801,27 @@ if CLIENT then
             NP.OpenMarksEditor()
             return true
         end
+    end)
+
+    --[[ Диагностика: одной командой видно, кто рисует над головами. Нужна
+         именно потому, что «две плашки сразу» — это чужой HUDPaint, и без
+         списка хуков это гадание. ]]
+    concommand.Add("grm_nameplate_debug", function()
+        local legacy = {}
+        for name in pairs(hook.GetTable()["HUDPaint"] or {}) do
+            if isstring(name) and (name:find("RPDesc") or name == "Factions_HUD") then
+                legacy[#legacy + 1] = name
+            end
+        end
+        local n = 0
+        for _ in pairs(known) do n = n + 1 end
+        print("[GRM Nameplate] активна: " .. tostring(NP.Active) ..
+            " · режим: " .. NP.Mode() .. " · номер: " .. NP.CidMode() ..
+            " · имена госслужащим: " .. tostring(NP.GovNames()))
+        print("[GRM Nameplate] знакомых лиц: " .. n ..
+            " · радиус: " .. cvDist:GetFloat() .. " · описание: " .. tostring(cvDesc:GetBool()))
+        print("[GRM Nameplate] старые отрисовки в HUDPaint: " ..
+            (#legacy > 0 and table.concat(legacy, ", ") .. " (молчат, пока активна новая)" or "нет"))
     end)
 
     print("[GRM Nameplate] client v" .. NP.Version .. " loaded")

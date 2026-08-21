@@ -151,6 +151,37 @@ A.gag = { perm = "mod.gag", target = true, label = "Мут голоса",
         return true, rpNameOf(target) .. (target.GRM_AdminGagged and " лишён голоса" or " вернул голос")
     end }
 
+--[[ КЛЕТКА (переписано 21.08 по жалобе владельца «клетка криво работает»).
+
+     Что было не так на самом деле:
+       • четыре решётки ставились на ФИКСИРОВАННЫЕ 48 юнитов от игрока, а
+         размер модели другой — стенки не сходились, в углах оставались щели,
+         и человек просто выходил боком;
+       • клетка строилась вокруг текущей точки без выравнивания по земле:
+         на склоне и на лестнице решётки висели в воздухе или тонули в полу;
+       • ничто не удерживало внутри: ни потолка, ни «поводка», ноклип не
+         запрещался, а сами решётки — обычные prop_physics: их можно поднять
+         физганом и растащить;
+       • на каждое посаживание заводился отдельный timer.Simple.
+
+     Как сделано теперь:
+       • ширина стенки берётся из ГАБАРИТОВ модели (OBB), стенки стыкуются;
+       • центр клетки выравнивается по земле трейсом вниз, игрок ставится в
+         центр, прежняя позиция запоминается и возвращается при выходе;
+       • «поводок»: раз в полсекунды проверяем, не вышел ли человек за радиус
+         клетки, и возвращаем в центр — это работает при любой геометрии;
+       • ноклип, физган, тулган и урон по решёткам заблокированы;
+       • сроки ведёт ОДИН общий таймер на всех, а не таймер на каждого. ]]
+local JAIL_RADIUS = 52
+
+local function jailBounds(ent)
+    if not IsValid(ent) then return 64, 96 end
+    local mins, maxs = ent:OBBMins(), ent:OBBMaxs()
+    local width = math.max(math.abs(maxs.x - mins.x), math.abs(maxs.y - mins.y))
+    local height = math.abs(maxs.z - mins.z)
+    return width, height
+end
+
 local function releaseJail(target)
     if not IsValid(target) then return end
     if IsValid(target.GRM_AdminJailEnt) then target.GRM_AdminJailEnt:Remove() end
@@ -159,13 +190,51 @@ local function releaseJail(target)
     end
     target.GRM_AdminJailBars = nil
     target.GRM_AdminJailed = nil
+    target.GRM_AdminJailUntil = nil
+    target.GRM_AdminJailCenter = nil
     target:Freeze(false)
-    if istable(target.GRM_AdminJailReturn) then
+    if istable(target.GRM_AdminJailReturn) or isvector(target.GRM_AdminJailReturn) then
         target:SetPos(target.GRM_AdminJailReturn)
         target.GRM_AdminJailReturn = nil
     end
 end
 AD.ReleaseJail = releaseJail
+
+--- Точка пола под игроком: клетка должна стоять на земле, а не в воздухе.
+local function groundPos(pos)
+    local tr = util.TraceLine({
+        start = pos + Vector(0, 0, 16),
+        endpos = pos - Vector(0, 0, 128),
+        mask = MASK_SOLID_BRUSHONLY,
+    })
+    return tr.Hit and tr.HitPos or pos
+end
+
+local function buildJail(target, center)
+    local bars = {}
+    local width
+    for i = 0, 3 do
+        local bar = ents.Create("prop_physics")
+        if IsValid(bar) then
+            bar:SetModel(JAIL_MODEL)
+            bar:Spawn()
+            if not width then width = select(1, jailBounds(bar)) end
+            local offset = math.max(JAIL_RADIUS, width * 0.5)
+            local ang = Angle(0, i * 90, 0)
+            bar:SetPos(center + ang:Forward() * offset)
+            bar:SetAngles(Angle(0, i * 90 + 90, 0))
+            bar:SetMoveType(MOVETYPE_NONE)
+            bar:SetSolid(SOLID_VPHYSICS)
+            bar:SetCollisionGroup(COLLISION_GROUP_NONE)
+            bar.GRMAdminJail = true
+            bar.PhysgunDisabled = true
+            local phys = bar:GetPhysicsObject()
+            if IsValid(phys) then phys:EnableMotion(false) end
+            bars[#bars + 1] = bar
+        end
+    end
+    return bars
+end
 
 A.jail = { perm = "mod.jail", target = true, label = "Клетка",
     fn = function(actor, target, args)
@@ -176,38 +245,57 @@ A.jail = { perm = "mod.jail", target = true, label = "Клетка",
         end
 
         local seconds = math.Clamp(math.floor(tonumber(args and args.seconds) or 120), 10, 3600)
+        local center = groundPos(target:GetPos()) + Vector(0, 0, 2)
+
         target.GRM_AdminJailReturn = target:GetPos()
         target.GRM_AdminJailed = true
-        target.GRM_AdminJailBars = {}
+        target.GRM_AdminJailUntil = CurTime() + seconds
+        target.GRM_AdminJailCenter = center
+        target.GRM_AdminJailBars = buildJail(target, center)
 
-        local center = target:GetPos()
-        -- Клетка из четырёх стен-решёток вокруг игрока.
-        for i = 0, 3 do
-            local ang = Angle(0, i * 90, 0)
-            local bar = ents.Create("prop_physics")
-            if IsValid(bar) then
-                bar:SetModel(JAIL_MODEL)
-                bar:SetPos(center + ang:Forward() * 48 + Vector(0, 0, 0))
-                bar:SetAngles(Angle(0, i * 90 + 90, 0))
-                bar:Spawn()
-                bar:SetMoveType(MOVETYPE_NONE)
-                bar:SetSolid(SOLID_VPHYSICS)
-                bar.GRMAdminJail = true
-                local phys = bar:GetPhysicsObject()
-                if IsValid(phys) then phys:EnableMotion(false) end
-                target.GRM_AdminJailBars[#target.GRM_AdminJailBars + 1] = bar
-            end
-        end
+        -- Ставим человека в центр: иначе он оказывается внутри стенки и его
+        -- выталкивает физикой наружу — ровно то, что выглядело как «клетка
+        -- не работает».
+        target:SetPos(center)
+        target:SetVelocity(-target:GetVelocity())
 
         tell(target, ("Вы помещены в клетку на %d секунд"):format(seconds), false)
-        timer.Simple(seconds, function()
-            if IsValid(target) and target.GRM_AdminJailed then
-                releaseJail(target)
-                tell(target, "Срок в клетке истёк", true)
-            end
-        end)
         return true, ("%s в клетке на %d с"):format(rpNameOf(target), seconds)
     end }
+
+--[[ Один общий надзор вместо таймера на каждого арестанта: срок, «поводок»
+     и уборка решёток после смерти или респавна. ]]
+timer.Create("GRM_Admin_JailWatch", 0.5, 0, function()
+    local now = CurTime()
+    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+        if IsValid(ply) and ply.GRM_AdminJailed then
+            if now >= (ply.GRM_AdminJailUntil or 0) then
+                releaseJail(ply)
+                tell(ply, "Срок в клетке истёк", true)
+            else
+                local center = ply.GRM_AdminJailCenter
+                if center and ply:GetPos():DistToSqr(center) > (JAIL_RADIUS + 24) ^ 2 then
+                    ply:SetPos(center)
+                    ply:SetVelocity(-ply:GetVelocity())
+                end
+            end
+        end
+    end
+end)
+
+-- Из клетки не выйти ноклипом и не разобрать её инструментами.
+hook.Add("PlayerNoClip", "GRM_Admin_JailNoClip", function(ply)
+    if IsValid(ply) and ply.GRM_AdminJailed then return false end
+end)
+hook.Add("PhysgunPickup", "GRM_Admin_JailPhysgun", function(_, ent)
+    if IsValid(ent) and ent.GRMAdminJail then return false end
+end)
+hook.Add("CanTool", "GRM_Admin_JailTool", function(_, tr)
+    if tr and IsValid(tr.Entity) and tr.Entity.GRMAdminJail then return false end
+end)
+hook.Add("EntityTakeDamage", "GRM_Admin_JailDamage", function(ent, _)
+    if IsValid(ent) and ent.GRMAdminJail then return true end
+end)
 
 A.ragdoll = { perm = "mod.ragdoll", target = true, label = "Рагдолл",
     fn = function(_, target, args)
