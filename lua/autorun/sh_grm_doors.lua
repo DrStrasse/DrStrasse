@@ -1310,16 +1310,38 @@ if SERVER then
         return D.CategoryMatch(cat, actor)
     end
 
+    --[[ КТО ЭТОТ ЧЕЛОВЕК ДЛЯ ДВЕРИ.
+
+         Раньше принадлежность бралась ТОЛЬКО из таблицы состава фракций.
+         Если состав ключуется иначе (SteamID против ключа персонажа) или
+         игрок ещё не «подтянулся» в таблицу, функция возвращала пустоту —
+         и категории с фракциями просто не работали: ключи не открывали
+         ведомственные двери (заказ владельца 21.08).
+
+         Теперь есть запасной путь — NW-поля, на которые смотрит весь
+         остальной GRM (шапка над головой, зарплата, доступы). ]]
     local function playerFactionInfo(ply)
-        if not IsValid(ply) or not istable(Factions) then return nil, nil, nil end
-        if not (GRM.Identity and GRM.Identity.FactionMember) then return nil, nil, nil end
-        for name, f in pairs(Factions) do
-            if istable(f) and istable(f.Members) then
-                local m = GRM.Identity.FactionMember(f, ply)
-                if istable(m) then return name, m.Role, m.Department, tostring(m.Subdepartment or m.Subdept or "") end
+        if not IsValid(ply) then return nil, nil, nil, nil end
+
+        if istable(Factions) and GRM.Identity and GRM.Identity.FactionMember then
+            for name, f in pairs(Factions) do
+                if istable(f) and istable(f.Members) then
+                    local m = GRM.Identity.FactionMember(f, ply)
+                    if istable(m) then
+                        return name, m.Role, m.Department, tostring(m.Subdepartment or m.Subdept or "")
+                    end
+                end
             end
         end
-        return nil, nil, nil
+
+        local nwFac = ply.GetNWString and ply:GetNWString("GRM_Faction", "") or ""
+        if nwFac ~= "" then
+            return nwFac,
+                ply:GetNWString("GRM_Role", ""),
+                ply:GetNWString("GRM_Department", ""),
+                ply:GetNWString("GRM_Subdepartment", "")
+        end
+        return nil, nil, nil, nil
     end
 
     function D.HasWarrant(plyOrSid, warrantType)

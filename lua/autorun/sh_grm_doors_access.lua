@@ -873,12 +873,27 @@ if CLIENT then
             for _, it in ipairs(tabs.Items or {}) do
                 if IsValid(it.Tab) and it.Tab:GetText() == restoreName then
                     tabs:SetActiveTab(it.Tab)
-                    if prevScroll and not wantTab then
+                    --[[ ВОЗВРАТ ПРОКРУТКИ.
+                         Одна попытка через timer.Simple(0) не работала:
+                         DScrollPanel зажимает SetScroll по высоте холста, а
+                         она известна только ПОСЛЕ раскладки. Поэтому список
+                         категорий после каждой галочки прыгал наверх (заказ
+                         владельца 21.08). Теперь пробуем несколько кадров,
+                         пока позиция реально не встанет. ]]
+                    if prevScroll and prevScroll > 0 and not wantTab then
                         local rPnl = it.Panel
-                        timer.Simple(0, function()
+                        local restore
+                        restore = function(tries)
+                            if not IsValid(rPnl) then return end
                             local sp = pageScroll(rPnl)
-                            if sp then sp:GetVBar():SetScroll(prevScroll) end
-                        end)
+                            if not (sp and IsValid(sp:GetVBar())) then return end
+                            sp:InvalidateLayout(true)
+                            sp:GetVBar():SetScroll(prevScroll)
+                            if math.abs(sp:GetVBar():GetScroll() - prevScroll) > 1 and tries > 1 then
+                                timer.Simple(0, function() restore(tries - 1) end)
+                            end
+                        end
+                        timer.Simple(0, function() restore(8) end)
                     end
                     break
                 end

@@ -6,8 +6,8 @@ local fail=0
 local function ok(c,n)if c then print("  ok  "..n)else fail=fail+1 print("  FAIL "..n)end end
 ok(docs:find('showDocToTarget(ply, "weaponLicense")',1,true)~=nil,"чат-команда предъявления оружейной лицензии")
 ok(docs:find('showDocToTarget(ply, "businessLicense")',1,true)~=nil,"чат-команда предъявления бизнес-лицензии")
-ok(docs:find('net.WriteString("weaponLicense") net.WriteTable(wl)',1,true)~=nil,"сервер отправляет дизайн оружейной лицензии цели")
-ok(docs:find('net.WriteString("businessLicense") net.WriteTable(bl)',1,true)~=nil,"сервер отправляет дизайн бизнес-лицензии цели")
+ok(docs:find('net.WriteString("weaponLicense") net.WriteTable(forView(wl, ply))',1,true)~=nil,"сервер отправляет дизайн оружейной лицензии цели")
+ok(docs:find('net.WriteString("businessLicense") net.WriteTable(forView(bl, ply))',1,true)~=nil,"сервер отправляет дизайн бизнес-лицензии цели")
 ok(ctx:find("result.hasWeaponLicense",1,true)~=nil and ctx:find("result.hasBusinessLicense",1,true)~=nil,"снимок C-меню содержит обе лицензии")
 ok(ctx:find('id = "doc_weapon_lic"',1,true)~=nil and ctx:find('id = "doc_business_lic"',1,true)~=nil,"кнопки предъявления в C-меню")
 ok(ctx:find('id = "doc_self_weapon_lic"',1,true)~=nil and ctx:find('id = "doc_self_business_lic"',1,true)~=nil,"кнопки личного просмотра в C-меню")

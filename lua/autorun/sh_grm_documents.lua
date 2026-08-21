@@ -988,6 +988,23 @@ if SERVER then
     end
 
     -- Показ документа целевому игроку (в прицеле или явная цель)
+    --[[ ЧЕЙ ЭТО ДОКУМЕНТ.
+         Бланк, показанный другому игроку, должен нести SteamID64 ВЛАДЕЛЬЦА:
+         иначе клиент, не найдя его, подставлял аватар смотрящего — человек
+         видел в чужом удостоверении собственное фото (заказ владельца 21.08).
+         Перед отправкой всегда кладём копию записи с проставленным владельцем. ]]
+    local function forView(rec, ply)
+        local out = istable(rec) and table.Copy(rec) or {}
+        local sid = tostring(out.steamID64 or "")
+        if not sid:match("^%d%d%d%d%d+$") and IsValid(ply) then
+            out.steamID64 = tostring(ply:SteamID64() or "")
+        end
+        out.ownerKey = out.ownerKey or (IsValid(ply) and getCharKey(ply) or nil)
+        out.ownerName = out.ownerName or (IsValid(ply) and getPlayerRPName(ply) or nil)
+        return out
+    end
+    DOC.PackForView = forView
+
     local function showDocToTarget(ply, docType, explicitTarget, subType)
         if not IsValid(ply) then return end
         local target = explicitTarget
@@ -1018,7 +1035,7 @@ if SERVER then
 
             net.Start(NET_RECEIVE_VIEW)
                 net.WriteString("passport")
-                net.WriteTable(pass)
+                net.WriteTable(forView(pass, ply))
                 net.WriteTable(tpl)
                 net.WriteBool(true)
                 net.WriteString(senderName)
@@ -1055,7 +1072,7 @@ if SERVER then
 
             net.Start(NET_RECEIVE_VIEW)
                 net.WriteString("badge")
-                net.WriteTable(badge)
+                net.WriteTable(forView(badge, ply))
                 net.WriteTable(tpl)
                 net.WriteBool(true)
                 net.WriteString(senderName)
@@ -1076,7 +1093,7 @@ if SERVER then
 
             net.Start(NET_RECEIVE_VIEW)
                 net.WriteString("military")
-                net.WriteTable(mil)
+                net.WriteTable(forView(mil, ply))
                 net.WriteTable(tpl)
                 net.WriteBool(true)
                 net.WriteString(senderName)
@@ -1106,7 +1123,7 @@ if SERVER then
 
             net.Start(NET_RECEIVE_VIEW)
                 net.WriteString("license")
-                net.WriteTable(lic)
+                net.WriteTable(forView(lic, ply))
                 net.WriteTable(tpl)
                 net.WriteBool(true)
                 net.WriteString(senderName)
@@ -1127,7 +1144,7 @@ if SERVER then
 
             net.Start(NET_RECEIVE_VIEW)
                 net.WriteString("milLicense")
-                net.WriteTable(milLic)
+                net.WriteTable(forView(milLic, ply))
                 net.WriteTable(tpl)
                 net.WriteBool(true)
                 net.WriteString(senderName)
@@ -1144,7 +1161,7 @@ if SERVER then
             local tpl = DOC.Templates.weaponLicense or {}
             broadcastDocAction(ply, string.format("предъявил(а) лицензию на оружие игроку %s (№%s)", targetName, wl.number or "—"))
             net.Start(NET_RECEIVE_VIEW)
-                net.WriteString("weaponLicense") net.WriteTable(wl) net.WriteTable(tpl)
+                net.WriteString("weaponLicense") net.WriteTable(forView(wl, ply)) net.WriteTable(tpl)
                 net.WriteBool(true) net.WriteString(senderName)
             net.Send(target)
             if GRM.Notify then GRM.Notify(ply, "Вы предъявили лицензию на оружие игроку " .. targetName .. ".", 100, 220, 130) end
@@ -1158,7 +1175,7 @@ if SERVER then
             local tpl = DOC.Templates.businessLicense or {}
             broadcastDocAction(ply, string.format("предъявил(а) лицензию на ведение бизнеса игроку %s (№%s, «%s»)", targetName, bl.number or "—", bl.businessName or "—"))
             net.Start(NET_RECEIVE_VIEW)
-                net.WriteString("businessLicense") net.WriteTable(bl) net.WriteTable(tpl)
+                net.WriteString("businessLicense") net.WriteTable(forView(bl, ply)) net.WriteTable(tpl)
                 net.WriteBool(true) net.WriteString(senderName)
             net.Send(target)
             if GRM.Notify then GRM.Notify(ply, "Вы предъявили лицензию на бизнес игроку " .. targetName .. ".", 100, 220, 130) end
@@ -1176,7 +1193,7 @@ if SERVER then
 
                 net.Start(NET_RECEIVE_VIEW)
                     net.WriteString("medcard")
-                    net.WriteTable(card or {})
+                    net.WriteTable(forView(card or {}, ply))
                     net.WriteTable({ patientName = getPlayerRPName(ply) })
                     net.WriteBool(true)
                     net.WriteString(senderName)
@@ -2437,6 +2454,9 @@ if CLIENT then
     end
 
     -- ── ДВУХФАЗНЫЙ РЕНДЕР ПАСПОРТА ─────────────────────────────
+    -- Форвард-декларации: бланки ниже зовут помощников раньше их объявления
+    local docPhoto, docOwnerSteamID
+
     local function openPassportUI(data, tpl, isShown, senderName)
         tpl = tpl or {}
         local coverCol = tpl.coverColor and Color(tpl.coverColor.r or 85, tpl.coverColor.g or 20, tpl.coverColor.b or 25) or Color(85, 20, 25)
@@ -2593,23 +2613,70 @@ if CLIENT then
                     draw.SimpleText(mrz2:sub(1, 38), "GRMDoc_MRZ", 18, 412, Color(30, 30, 35), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                 end
 
-                local sid64 = data.steamID64 or (LocalPlayer():SteamID64())
-                if data.photoPath and file.Exists(data.photoPath, "DATA") then
-                    local img = vgui.Create("DImage", rightPnl)
-                    img:SetPos(15, 65)
-                    img:SetSize(115, 145)
-                    img:SetImage("../data/"..data.photoPath)
-                else
-                    local avatar = vgui.Create("AvatarImage", rightPnl)
-                    avatar:SetPos(15, 65)
-                    avatar:SetSize(115, 145)
-                    avatar:SetSteamID(sid64, 184)
-                end
+                docPhoto(rightPnl, data, 15, 65, 115, 145, isShown)
             end
         end
 
         setPhase(false)
     end
+
+    --[[ ФОТО В БЛАНКЕ — ОДИН СЛОЙ НА ВСЕ ДОКУМЕНТЫ.
+
+         Раньше каждый бланк сам решал, что рисовать, и при отсутствии
+         SteamID64 в записи подставлял LocalPlayer() — поэтому в ЧУЖОМ
+         удостоверении человек видел собственный аватар. Теперь владелец
+         определяется по данным записи (steamID64 → ключ персонажа →
+         владелец), а если его установить нельзя — рисуется нейтральная
+         заглушка, но НИКОГДА не аватар смотрящего. ]]
+    function docOwnerSteamID(data, isShown)
+        data = istable(data) and data or {}
+        local sid = tostring(data.steamID64 or "")
+        if sid:match("^%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d+$") then return sid end
+        for _, field in ipairs({ data.ownerKey, data.charKey, data.key, data.owner }) do
+            local fromKey = tostring(field or ""):match("^(%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d+)")
+            if fromKey then return fromKey end
+        end
+        -- свой собственный бланк — можно взять себя, чужой — нет
+        if not isShown then
+            local lp = LocalPlayer()
+            if IsValid(lp) then return tostring(lp:SteamID64() or "") end
+        end
+        return nil
+    end
+    DOC.OwnerSteamID = docOwnerSteamID
+
+    function docPhoto(parent, data, x, y, w, h, isShown)
+        data = istable(data) and data or {}
+        if data.photoPath and file.Exists(data.photoPath, "DATA") then
+            local img = vgui.Create("DImage", parent)
+            img:SetPos(x, y) img:SetSize(w, h)
+            img:SetImage("../data/" .. data.photoPath)
+            return img
+        end
+
+        local sid = docOwnerSteamID(data, isShown)
+        if sid and sid ~= "" and sid ~= "0" then
+            local avatar = vgui.Create("AvatarImage", parent)
+            avatar:SetPos(x, y) avatar:SetSize(w, h)
+            avatar:SetSteamID(sid, 184)
+            return avatar
+        end
+
+        -- владелец неизвестен: нейтральная карточка вместо чужого лица
+        local ph = vgui.Create("DPanel", parent)
+        ph:SetPos(x, y) ph:SetSize(w, h)
+        local initials = string.upper(string.sub(tostring(data.fullName or "?"), 1, 1))
+        ph.Paint = function(_, pw, phh)
+            draw.RoundedBox(4, 0, 0, pw, phh, Color(210, 212, 220))
+            draw.RoundedBox(4, 3, 3, pw - 6, phh - 6, Color(178, 182, 194))
+            draw.SimpleText(initials, "GRMDoc_Title", pw / 2, phh / 2 - 8, Color(90, 95, 110),
+                TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            draw.SimpleText("ФОТО", "GRMDoc_Small", pw / 2, phh - 16, Color(90, 95, 110),
+                TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+        return ph
+    end
+    DOC.DocPhoto = docPhoto
 
     -- ── ДВУХФАЗНЫЙ РЕНДЕР СЛУЖЕБНОГО УДОСТОВЕРЕНИЯ (КСИВА) ─────
     local function openBadgeUI(data, tpl, isShown, senderName)
@@ -2752,18 +2819,7 @@ if CLIENT then
                     drawField("СТАТУС:", data.status or "Действителен", (data.status == "Действителен" and Color(20, 140, 50) or Color(180, 40, 40)))
                 end
 
-                local sid64 = data.steamID64 or (LocalPlayer():SteamID64())
-                if data.photoPath and file.Exists(data.photoPath, "DATA") then
-                    local img = vgui.Create("DImage", rightPnl)
-                    img:SetPos(10, 35)
-                    img:SetSize(95, 120)
-                    img:SetImage("../data/"..data.photoPath)
-                else
-                    local avatar = vgui.Create("AvatarImage", rightPnl)
-                    avatar:SetPos(10, 35)
-                    avatar:SetSize(95, 120)
-                    avatar:SetSteamID(sid64, 184)
-                end
+                docPhoto(rightPnl, data, 10, 35, 95, 120, isShown)
             end
         end
 
@@ -2896,18 +2952,7 @@ if CLIENT then
                     draw.SimpleText(tostring(data.fullName or ""), "GRMDoc_Small", 165, 322, Color(25, 45, 110), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                 end
 
-                local sid64 = data.steamID64 or (LocalPlayer():SteamID64())
-                if data.photoPath and file.Exists(data.photoPath, "DATA") then
-                    local img = vgui.Create("DImage", leftPnl)
-                    img:SetPos(24, 70)
-                    img:SetSize(112, 140)
-                    img:SetImage("../data/"..data.photoPath)
-                else
-                    local avatar = vgui.Create("AvatarImage", leftPnl)
-                    avatar:SetPos(24, 70)
-                    avatar:SetSize(112, 140)
-                    avatar:SetSteamID(sid64, 184)
-                end
+                docPhoto(leftPnl, data, 24, 70, 112, 140, isShown)
 
                 -- Правая страница
                 local rightPnl = vgui.Create("DPanel", frame)
@@ -2998,18 +3043,7 @@ if CLIENT then
                     draw.SimpleText("СТАТУС: " .. tostring(data.status or "Действительно"), "GRMDoc_Bold", w - 16, 190, statCol, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
                 end
 
-                local sid64 = data.steamID64 or (LocalPlayer():SteamID64())
-                if data.photoPath and file.Exists(data.photoPath, "DATA") then
-                    local img = vgui.Create("DImage", frame)
-                    img:SetPos(20, 56)
-                    img:SetSize(82, 107)
-                    img:SetImage("../data/"..data.photoPath)
-                else
-                    local avatar = vgui.Create("AvatarImage", frame)
-                    avatar:SetPos(20, 56)
-                    avatar:SetSize(82, 107)
-                    avatar:SetSteamID(sid64, 184)
-                end
+                docPhoto(frame, data, 20, 56, 82, 107, isShown)
 
                 local btnTurn = vgui.Create("DButton", frame)
                 btnTurn:SetSize(320, 32)
@@ -3149,18 +3183,7 @@ if CLIENT then
                     draw.SimpleText("СТАТУС: " .. tostring(data.status or "Действительно (на службе)"), "GRMDoc_Bold", w - 16, 200, statCol, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
                 end
 
-                local sid64 = data.steamID64 or (LocalPlayer():SteamID64())
-                if data.photoPath and file.Exists(data.photoPath, "DATA") then
-                    local img = vgui.Create("DImage", frame)
-                    img:SetPos(20, 56)
-                    img:SetSize(82, 107)
-                    img:SetImage("../data/"..data.photoPath)
-                else
-                    local avatar = vgui.Create("AvatarImage", frame)
-                    avatar:SetPos(20, 56)
-                    avatar:SetSize(82, 107)
-                    avatar:SetSteamID(sid64, 184)
-                end
+                docPhoto(frame, data, 20, 56, 82, 107, isShown)
 
                 -- Печать ВАИ
                 local pnlStamp = vgui.Create("DPanel", frame)
@@ -3319,14 +3342,7 @@ if CLIENT then
                     draw.SimpleText("СТАТУС: " .. tostring(data.status or "Действительна"), "GRMDoc_Bold", w - 16, 190, statCol, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
                 end
 
-                local sid64 = data.steamID64 or (LocalPlayer():SteamID64())
-                if data.photoPath and file.Exists(data.photoPath, "DATA") then
-                    local img = vgui.Create("DImage", frame)
-                    img:SetPos(20, 56); img:SetSize(82, 107); img:SetImage("../data/" .. data.photoPath)
-                else
-                    local avatar = vgui.Create("AvatarImage", frame)
-                    avatar:SetPos(20, 56); avatar:SetSize(82, 107); avatar:SetSteamID(sid64, 184)
-                end
+                docPhoto(frame, data, 20, 56, 82, 107, isShown)
 
                 local btnTurn = vgui.Create("DButton", frame)
                 btnTurn:SetSize(320, 32); btnTurn:SetPos(frame:GetWide() / 2 - 160, 260)
