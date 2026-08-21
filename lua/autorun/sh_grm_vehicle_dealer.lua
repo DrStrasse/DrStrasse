@@ -74,6 +74,9 @@ end
      Ставка задаётся конваром в процентах от цены покупки; деньги идут игроку
      и списываются из государственного бюджета, если модуль экономики
      подключён (иначе просто выплата, как раньше делал возврат 50%). ]]
+VD.SlotDebugCvar = VD.SlotDebugCvar or CreateConVar("grm_vd_slot_debug", "0",
+    bit.bor(FCVAR_ARCHIVE), "Печатать в консоль, почему машина не встала на место гаража")
+
 VD.StateBuybackCvar = VD.StateBuybackCvar or CreateConVar("grm_vd_state_buyback", "93",
     bit.bor(FCVAR_ARCHIVE), "Процент от цены покупки, который государство платит за выкуп транспорта")
 
@@ -358,13 +361,43 @@ if SERVER then
   local G=GRM.Garage
   if not (G and G.FreeSlot and G.Get)then return nil,"площадка дилера" end
 
+  --[[ Разбор ведём с ПРИЧИНАМИ: если место не подошло, игрок (и лог) видят,
+       почему именно — «гараж чужой», «нет мест», «все места заняты». Без
+       этого «ноль реакции» приходилось выяснять экспериментом. ]]
+  local reasons={}
+  local seen={}
   local function slotOf(garage)
    if not istable(garage)then return nil end
-   if #(garage.slots or{})==0 then return nil end
-   local p=G.FreeSlot(garage,ply)
+   if seen[garage.id]then return nil end
+   seen[garage.id]=true
+   if #(garage.slots or{})==0 then
+    reasons[#reasons+1]=("гараж «%s»: не размечено ни одного места"):format(tostring(garage.name))
+    return nil
+   end
+   if IsValid(ply)and G.CanUse and not G.CanUse(ply,garage)then
+    reasons[#reasons+1]=("гараж «%s»: нет доступа"):format(tostring(garage.name))
+    return nil
+   end
+   local p,err=G.FreeSlot(garage,ply)
    if p then return p,("место «%s» гаража «%s»"):format(
      (p.slot and p.slot.name)or"стоянка",tostring(garage.name))end
+   reasons[#reasons+1]=("гараж «%s»: %s"):format(tostring(garage.name),tostring(err or "мест нет"))
    return nil
+  end
+
+  --[[ 1) ГАРАЖ, ГДЕ СТОИТ ИГРОК ИЛИ ДИЛЕР.
+       Самое ожидаемое поведение: разметил места — машины появляются на них,
+       без всякой ручной привязки. Сначала смотрим гараж под ногами игрока,
+       потом гараж, в зоне которого стоит сам дилер, потом ближайший гараж
+       в пределах 1200 юнитов. ]]
+  local near={}
+  if IsValid(ply)and G.FindByPos then near[#near+1]=G.FindByPos(ply:GetPos())end
+  if IsValid(dealer)and G.FindByPos then near[#near+1]=G.FindByPos(dealer:GetPos())end
+  if IsValid(dealer)and G.Nearest then near[#near+1]=G.Nearest(dealer:GetPos(),1200)end
+  if IsValid(ply)and G.Nearest then near[#near+1]=G.Nearest(ply:GetPos(),1200)end
+  for _,garage in ipairs(near)do
+   local p,label=slotOf(garage)
+   if p then return p,label end
   end
 
   -- 2) гараж, связанный с дилером
@@ -393,6 +426,11 @@ if SERVER then
     local p,label=slotOf(home)
     if p then return p,label end
    end
+  end
+  VD.LastPlaceReason=#reasons>0 and table.concat(reasons,"; ")
+   or "рядом нет гаража с местами выдачи"
+  if VD.SlotDebugCvar and VD.SlotDebugCvar:GetBool()then
+   print("[GRM VehicleDealer] место выдачи не найдено: "..VD.LastPlaceReason)
   end
   return nil,"площадка дилера"
  end
@@ -484,10 +522,14 @@ if SERVER then
    local allowed,have,limit=VD.CanOwnMore(ply,class)
    if not allowed then result(ply,false,("У вас уже %d шт. «%s» — это предел (%d на класс). Продайте одну, чтобы взять ещё."):format(have,tostring(entry.name or class),limit))return end
    if not personal and activeCount(ply)>=VD.MaxActive then result(ply,false,"Лимит активного транспорта")return end
+   local record_placeLabel=nil
    local price=personal and math.max(0,math.floor(tonumber(entry.price)or 0))or 0;if price>0 and(not GRM.HasMoney or not GRM.HasMoney(ply,price))then result(ply,false,"Недостаточно средств")return end;local info=VD.VehicleInfo(class)
    local ent
    if not personal then
-    local spawnErrors;ent,info,spawnErrors=VD.Spawn(class,dealer,ply)
+    -- служебная машина тоже встаёт на место гаража, если оно есть
+    local placeSvc,placeLabelSvc=VD.ResolveDeliveryPlace(ply,{class=class},dealer,nil)
+    local spawnErrors;ent,info,spawnErrors=VD.Spawn(class,dealer,ply,placeSvc)
+    if IsValid(ent)then record_placeLabel=placeLabelSvc end
     if not ent then result(ply,false,(spawnErrors and spawnErrors[1])or"Не удалось создать транспорт")return end
    end
    if price>0 and GRM.TakeMoney then GRM.TakeMoney(ply,price,"Покупка транспорта "..class)end;local id=makeID("vehicle");local record={id=id,class=class,name=entry.name or info.name,model=info.model,price=price,stored=true,dealerID=dealer:GetDealerID(),service=not personal,ownershipType=kind}
@@ -500,7 +542,7 @@ if SERVER then
    end
    hook.Run("GRM_VehicleDealerSpawned",ent,ply,class,record,dealer)
    local home=(GRM.Garage and GRM.Garage.Get)and GRM.Garage.Get(record.garageID)or nil
-   result(ply,true,IsValid(ent)and("Транспорт выдан: "..record.name)
+   result(ply,true,IsValid(ent)and(("Транспорт выдан: %s — %s"):format(record.name,tostring(record_placeLabel or "площадка дилера")))
     or(home and ("Транспорт приобретён: %s. Стоит в гараже «%s» — нажмите «ВЫДАТЬ»."):format(record.name,home.name)
     or ("Транспорт приобретён: "..record.name..". Нажмите «ВЫДАТЬ», чтобы получить его.")))
    VD.Push(ply,dealer)
@@ -535,7 +577,12 @@ if SERVER then
    end
    local ent,err=VD.IssueRecord(ply,id,nil,dealer)
    if not ent then result(ply,false,err or"Не удалось выдать транспорт")return end
-   result(ply,true,("Транспорт выдан: %s"):format(tostring(rec.lastPlace~=""and rec.lastPlace or "площадка дилера")))
+   local placeMsg=tostring(rec.lastPlace~=""and rec.lastPlace or "площадка дилера")
+   if rec.lastPlace=="площадка дилера"and ply:IsSuperAdmin()and VD.LastPlaceReason then
+    ply:ChatPrint("[Гараж] Места не сработали: "..tostring(VD.LastPlaceReason)..
+     " (проверьте grm_garage_slots)")
+   end
+   result(ply,true,("Транспорт выдан: %s"):format(placeMsg))
    VD.Push(ply,dealer)
   elseif op=="store"then local id=net.ReadString();local ok,msg=VD.StoreRecord(ply,id,700);result(ply,ok,msg or"Транспорт помещён в гараж");if ok then VD.Push(ply,dealer)end
   elseif op=="remove"then local id=net.ReadString();local ok,msg=VD.StoreRecord(ply,id,nil);result(ply,ok,msg or"Транспорт убран");if ok then VD.Push(ply,dealer)end
@@ -568,7 +615,7 @@ if SERVER then
  end)
  net.Receive("GRM_VD_ZoneRequest",function(_,ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;local out={}for _,d in ipairs(ents.FindByClass("sent_vehicle_dealer"))do if IsValid(d)then out[#out+1]={id=d:GetDealerID(),name=d:GetDealerName(),pos=vd(d:GetPos()),hasZone=d:GetHasSpawnZone(),min=vd(d:GetSpawnZoneMin()),max=vd(d:GetSpawnZoneMax()),ang=ad(d:GetSpawnAngle()),hasPoint=d:GetHasCustomSpawn(),spawnPos=vd(d:GetSpawnPos()),spawnAng=ad(d:GetSpawnAngle()),lift=tonumber(d.VD_Lift)or VD.DefaultLift}end end;net.Start("GRM_VD_ZoneData")net.WriteTable(out)net.Send(ply)end)
  net.Receive("VD_RequestVehicleList",function(_,ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;local out={}for _,v in ipairs(VD.AllVehicleClasses())do out[#out+1]={class=v.class,name=v.name,dealer="GRM v3"}end;net.Start("VD_VehicleList")net.WriteTable(out)net.Send(ply)end)
- net.Receive("VD_AdminSpawnVehicle",function(_,ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;local sid,class=net.ReadString(),net.ReadString();local target;for _,p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll())do if p:SteamID64()==sid then target=p break end end;if not IsValid(target)then return end;local d,best=nil,math.huge;for _,candidate in ipairs(ents.FindByClass("sent_vehicle_dealer"))do local distance=target:GetPos():DistToSqr(candidate:GetPos());if distance<best then d,best=candidate,distance end end;if not IsValid(d)then return end;local ent=VD.Spawn(class,d,target);if IsValid(ent)then local id=makeID("admin_vehicle");ent.GRMGarageID=id;ent.GRMGarageOwner=target;ent.VD_Owner=target;ent.VD_Class=class;VD.Active[id]=ent end end)
+ net.Receive("VD_AdminSpawnVehicle",function(_,ply)if not IsValid(ply)or not ply:IsSuperAdmin()then return end;local sid,class=net.ReadString(),net.ReadString();local target;for _,p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll())do if p:SteamID64()==sid then target=p break end end;if not IsValid(target)then return end;local d,best=nil,math.huge;for _,candidate in ipairs(ents.FindByClass("sent_vehicle_dealer"))do local distance=target:GetPos():DistToSqr(candidate:GetPos());if distance<best then d,best=candidate,distance end end;if not IsValid(d)then return end;local placeAdm=VD.ResolveDeliveryPlace(target,{class=class},d,nil);local ent=VD.Spawn(class,d,target,placeAdm);if IsValid(ent)then local id=makeID("admin_vehicle");ent.GRMGarageID=id;ent.GRMGarageOwner=target;ent.VD_Owner=target;ent.VD_Class=class;VD.Active[id]=ent end end)
  net.Receive("GRM_VD_AdminSave",function(_,ply)
   if not IsValid(ply)or not ply:IsSuperAdmin()then return end
   local dealer,data=net.ReadEntity(),net.ReadTable()or{};if not IsValid(dealer)or dealer:GetClass()~="sent_vehicle_dealer"or ply:GetPos():DistToSqr(dealer:GetPos())>600*600 then return end

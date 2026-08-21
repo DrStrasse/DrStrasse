@@ -307,11 +307,27 @@ local lone = ents.Create("sent_vehicle_dealer")
 lone.GetDealerID = function() return "dealer_lonely" end
 lone.GetDealerName = function() return "Одинокий" end
 lone.VD_Vehicles = dealerEnt.VD_Vehicles
+lone:SetPos(Vector(90000, 90000, 0))          -- в чистом поле, гаражей рядом нет
 records[recID].garageID = ""
 fire({ "store", recID })
+buyer:SetPos(Vector(90000, 90000, 0))
 local place2, label2 = VD.ResolveDeliveryPlace(buyer, records[recID], lone, nil)
 ok(place2 == nil and tostring(label2):find("дилера", 1, true) ~= nil,
-   "у дилера без гаражей остаётся его собственная площадка", label2)
+   "у дилера в чистом поле остаётся его собственная площадка", label2)
+ok(isstring(VD.LastPlaceReason) and VD.LastPlaceReason ~= "",
+   "и система объясняет, почему места не сработали", VD.LastPlaceReason)
+buyer:SetPos(Vector(0, 0, 0))
+
+print("\n=== 8. МЕСТА РАБОТАЮТ БЕЗ ПРИВЯЗКИ ДИЛЕРА ===")
+-- гараж, где стоит игрок, используется сам по себе
+local free = select(2, G.Create(admin, Vector(20000, 20000, 0), Vector(20600, 20600, 300),
+    { name = "Городской", kind = "public" }))
+G.AddSlot(free.id, Vector(20100, 20100, 0), Angle(0, 0, 0), 10, "Место 1")
+buyer:SetPos(Vector(20300, 20300, 0))
+local place3, label3 = VD.ResolveDeliveryPlace(buyer, records[recID], lone, nil)
+ok(place3 ~= nil and tostring(label3):find("Городской", 1, true) ~= nil,
+   "стоишь в гараже — машина подаётся на его место, привязка дилера не нужна", label3)
+buyer:SetPos(Vector(0, 0, 0))
 
 print(("\nDEALER BUY/ISSUE: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end
