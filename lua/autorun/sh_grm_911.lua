@@ -74,12 +74,55 @@ if SERVER then
         for name,f in pairs(Factions or {}) do if istable(f) and istable(f.Members) then local m=GRM.Identity and GRM.Identity.FactionMember and GRM.Identity.FactionMember(f,ply) or f.Members[ply:SteamID64()]; if m then return name end end end
         return nil
     end
-    local function isMedic(ply)
-        if not IsValid(ply) then return false end
-        if ply:IsSuperAdmin() then return true end
-        if GRM.MedicalFull and GRM.MedicalFull.IsMedic then return GRM.MedicalFull.IsMedic(ply) end
-        return GRM.Medical and GRM.Medical.CanTreat and GRM.Medical.CanTreat(ply) or false
+    --[[ КТО МОЖЕТ РЕАНИМИРОВАТЬ (переписано 21.08 по жалобе владельца:
+         «у игрока видна только кнопка стабилизировать, а как реанимировать?»).
+
+         Реальная причина была здесь: проверка обрывалась на первом же
+         источнике — `GRM.MedicalFull.IsMedic` возвращал false (там жёстко
+         зашита фракция «Медики», которой на сервере нет), и дальше ни
+         медицинский допуск фракции, ни аптечка в руках уже не смотрелись.
+         Клиент по этому false просто НЕ РИСОВАЛ кнопку — игрок видел одну
+         «Стабилизировать» и не понимал, чего ему не хватает.
+
+         Теперь это цепочка ИЛИ, и она возвращает ещё и причину отказа —
+         её видно прямо в окне помощи. ]]
+    EM.ReviveItems = EM.ReviveItems or { "med_adrenaline", "med_defibrillator", "medkit", "med_bandage" }
+
+    local function hasReviveItem(ply)
+        if not (GRM.Inventory and GRM.Inventory.CountItem) then return false end
+        for _, id in ipairs(EM.ReviveItems) do
+            local ok, n = pcall(GRM.Inventory.CountItem, ply, id)
+            if ok and (tonumber(n) or 0) > 0 then return true, id end
+        end
+        return false
     end
+    EM.HasReviveItem = hasReviveItem
+
+    local function isMedic(ply)
+        if not IsValid(ply) then return false, "Игрок не найден" end
+        if ply:IsSuperAdmin() then return true end
+
+        if GRM.MedicalFull and GRM.MedicalFull.IsMedic then
+            local ok = pcall(GRM.MedicalFull.IsMedic, ply)
+            if ok and GRM.MedicalFull.IsMedic(ply) then return true end
+        end
+        if GRM.Medical and GRM.Medical.CanTreat and GRM.Medical.CanTreat(ply) then return true end
+
+        -- Допуск госбазы уровня «Медицинский» или «Пожарная служба» — это и
+        -- есть медслужба и спасатели, отдельного списка фракций не нужно.
+        if GRM.PCBoard and GRM.PCBoard.PlayerLevel then
+            local ok, level = pcall(GRM.PCBoard.PlayerLevel, ply)
+            if ok and (level == "medical" or level == "fire") then return true end
+        end
+
+        -- С аптечкой/адреналином в сумке первую помощь оказывает кто угодно:
+        -- иначе раненый в глуши обречён, даже если рядом есть человек с
+        -- медикаментами.
+        if hasReviveItem(ply) then return true end
+
+        return false, "Нужен медик, аптечка или адреналин в инвентаре"
+    end
+
     local function isInvestigator(ply)
         if not IsValid(ply) then return false end
         if ply:IsSuperAdmin() then return true end
@@ -271,7 +314,7 @@ if SERVER then
         if IsValid(ent) and ent:IsPlayer() and ent:GetNWBool("GRM_911_Downed") then patient=ent
         elseif IsValid(ent) and ent:GetNWBool("GRM_911_WoundedRagdoll") and IsValid(ent._grm911Patient) then patient=ent._grm911Patient end
         if IsValid(patient) then
-            if (ply._grm911PatientUseAt or 0)<=CurTime() then ply._grm911PatientUseAt=CurTime()+1; net.Start(NET_PATIENT) net.WriteEntity(patient) net.WriteBool(isMedic(ply)) net.WriteBool(patient:GetNWBool("GRM_911_Stable")) net.WriteUInt(math.max(0,patient:GetNWInt("GRM_911_DeathAt",os.time())-os.time()),12) net.Send(ply) end
+            if (ply._grm911PatientUseAt or 0)<=CurTime() then ply._grm911PatientUseAt=CurTime()+1; local can,why=isMedic(ply); net.Start(NET_PATIENT) net.WriteEntity(patient) net.WriteBool(can==true) net.WriteBool(patient:GetNWBool("GRM_911_Stable")) net.WriteUInt(math.max(0,patient:GetNWInt("GRM_911_DeathAt",os.time())-os.time()),12) net.WriteString(can and "" or tostring(why or "")) net.WriteUInt(math.Clamp(patient:GetNWInt("GRM_Bleed",0),0,100),7) net.WriteUInt(math.Clamp(patient:GetNWInt("GRM_Pain",0),0,100),7) net.Send(ply) end
             return false
         end
         if IsValid(ent) and ent:GetNWBool("GRM_911_Body") then
@@ -337,7 +380,28 @@ if SERVER then
             local ok,msg=kind=="revive" and EM.Revive(actor,target) or EM.Stabilize(actor,target); if IsValid(actor) then if GRM.Notify then GRM.Notify(actor,msg,ok and 80 or 255,ok and 230 or 120,ok and 150 or 110) else actor:ChatPrint("[911] "..msg) end end
         end)
     end
-    net.Receive(NET_TREAT,function(_,ply) local target=net.ReadEntity(); local act=net.ReadString(); local rag=IsValid(target) and woundedRagdoll(target) or nil; local tpos=IsValid(rag) and rag:GetPos() or (IsValid(target) and target:GetPos() or vector_origin); if not IsValid(target) or not target:IsPlayer() or ply:GetPos():DistToSqr(tpos)>160*160 then return end; if act=="stabilize" then delayedTreatment(ply,target,act,6) elseif act=="revive" and isMedic(ply) then delayedTreatment(ply,target,act,10) end end)
+    net.Receive(NET_TREAT,function(_,ply) local target=net.ReadEntity(); local act=net.ReadString(); local rag=IsValid(target) and woundedRagdoll(target) or nil; local tpos=IsValid(rag) and rag:GetPos() or (IsValid(target) and target:GetPos() or vector_origin); if not IsValid(target) or not target:IsPlayer() or ply:GetPos():DistToSqr(tpos)>160*160 then return end; if act=="stabilize" then delayedTreatment(ply,target,act,6)
+        elseif act=="revive" then
+            local can,why=isMedic(ply)
+            if can then delayedTreatment(ply,target,act,10)
+            else ply:ChatPrint("[911] Реанимация недоступна: "..tostring(why or "нет допуска")) end
+        elseif act=="checkup" then
+            -- Осмотр доступен всем: это РП-действие, а не лечение.
+            ply:ChatPrint(("[911] Осмотр: %s · %s · кровопотеря %d%% · боль %d%% · до остановки %d с")
+                :format(rpName(target), target:GetNWBool("GRM_911_Stable") and "стабилизирован" or "критическое",
+                    target:GetNWInt("GRM_Bleed",0), target:GetNWInt("GRM_Pain",0),
+                    math.max(0,target:GetNWInt("GRM_911_DeathAt",os.time())-os.time())))
+            for _,p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+                if IsValid(p) and p:GetPos():DistToSqr(tpos)<=355*355 then
+                    p:ChatPrint("* "..rpName(ply).." осматривает пострадавшего.")
+                end
+            end
+        elseif act=="call" then
+            if (ply._grm911CallAt or 0)>CurTime() then ply:ChatPrint("[911] Вызов уже отправлен, подождите.") return end
+            ply._grm911CallAt=CurTime()+10
+            EM.CreateCall(ply,"medical","Нужна помощь: тяжело ранен "..rpName(target),tpos,target)
+            ply:ChatPrint("[911] Вызов медицинской службы отправлен.")
+        end end)
     net.Receive(NET_CALL_SEND,function(_,ply) if not IsValid(ply) or (ply._grm911CallAt or 0)>CurTime() then return end; ply._grm911CallAt=CurTime()+10; EM.CreateCall(ply,net.ReadString(),net.ReadString(),ply:GetPos(),nil) end)
     net.Receive(NET_CALL_ACT,function(_,ply) if not (isMedic(ply) or isInvestigator(ply)) then return end; local id=net.ReadUInt(32); local act=net.ReadString(); for _,r in ipairs(EM.Calls) do if r.id==id and r.status~="closed" then if act=="take" then r.status="assigned"; r.assigned=key(ply); r.assignedName=rpName(ply); net.Start(NET_MARKER) net.WriteBool(true) net.WriteVector(Vector(r.pos.x,r.pos.y,r.pos.z)) net.WriteUInt(r.id,32) net.Send(ply) elseif act=="close" then r.status="closed"; r.closed=os.time(); r.closedBy=rpName(ply); net.Start(NET_MARKER) net.WriteBool(false) net.Send(ply) end; save(CALL_FILE,{version=1,calls=EM.Calls},"вызов действие"); pushCalls(ply); break end end end)
     net.Receive(NET_ADMIN_SAVE,function(_,ply) if not IsValid(ply) or not ply:IsSuperAdmin() then return end; EM.Config=normCfg(net.ReadTable()); save(CFG_FILE,EM.Config,"админ"); end)
@@ -357,7 +421,7 @@ if SERVER then
         if low=="/911_calls" or low=="/вызовы" then pushCalls(ply) return true end
         if low=="/911_admin" then openAdmin(ply) return true end
         if low=="/911_cases" or low=="/дела911" then sendCases(ply) return true end
-        if low=="/aid" or low=="/помощь" then local aimed=ply:GetEyeTrace().Entity; local target=(IsValid(aimed) and aimed:IsPlayer()) and aimed or (IsValid(aimed) and aimed:GetNWBool("GRM_911_WoundedRagdoll") and aimed._grm911Patient or nil); if IsValid(target) then net.Start(NET_PATIENT) net.WriteEntity(target) net.WriteBool(isMedic(ply)) net.WriteBool(target:GetNWBool("GRM_911_Stable")) net.WriteUInt(math.max(0,target:GetNWInt("GRM_911_DeathAt",os.time())-os.time()),12) net.Send(ply) end return true end
+        if low=="/aid" or low=="/помощь" then local aimed=ply:GetEyeTrace().Entity; local target=(IsValid(aimed) and aimed:IsPlayer()) and aimed or (IsValid(aimed) and aimed:GetNWBool("GRM_911_WoundedRagdoll") and aimed._grm911Patient or nil); if IsValid(target) then local can,why=isMedic(ply); net.Start(NET_PATIENT) net.WriteEntity(target) net.WriteBool(can==true) net.WriteBool(target:GetNWBool("GRM_911_Stable")) net.WriteUInt(math.max(0,target:GetNWInt("GRM_911_DeathAt",os.time())-os.time()),12) net.WriteString(can and "" or tostring(why or "")) net.WriteUInt(math.Clamp(target:GetNWInt("GRM_Bleed",0),0,100),7) net.WriteUInt(math.Clamp(target:GetNWInt("GRM_Pain",0),0,100),7) net.Send(ply) end return true end
         if low=="/forensics" or low=="/осмотр" then examine(ply) return true end
         return false
     end
@@ -371,7 +435,79 @@ else
     local function frame(title,w,h) local f=vgui.Create("DFrame") f:SetSize(w,h) f:Center() f:MakePopup() f:SetTitle("") f:ShowCloseButton(false) f.Paint=function(_,pw,ph) draw.RoundedBox(9,0,0,pw,ph,C.bg); draw.RoundedBoxEx(9,0,0,pw,52,Color(10,22,37),true,true,false,false); draw.SimpleText(title,"GRM911_Title",16,26,C.text,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER) end local x=vgui.Create("DButton",f) x:SetPos(w-42,10) x:SetSize(30,30) x:SetText("✕") x:SetTextColor(color_white) x.DoClick=function() f:Close() end return f end
     local function button(parent,text,y,col,fn) local b=vgui.Create("DButton",parent) b:SetPos(16,y) b:SetSize(parent:GetWide()-32,36) b:SetText(text) b:SetTextColor(color_white) b.Paint=function(s,w,h) draw.RoundedBox(5,0,0,w,h,s:IsHovered() and Color(math.min(255,col.r+20),math.min(255,col.g+20),math.min(255,col.b+20)) or col) end b.DoClick=fn return b end
     net.Receive(NET_CALL_FORM,function() local f=frame("911 • ЭКСТРЕННЫЙ ВЫЗОВ",560,330); local cat=vgui.Create("DComboBox",f) cat:SetPos(16,72) cat:SetSize(528,30) cat:AddChoice("Медицинская помощь","medical",true); cat:AddChoice("Полиция / происшествие","police"); cat:AddChoice("Пожар","fire"); local txt=vgui.Create("DTextEntry",f) txt:SetPos(16,116) txt:SetSize(528,100) txt:SetMultiline(true) txt:SetPlaceholderText("Кратко опишите происшествие и ориентиры..."); button(f,"ОТПРАВИТЬ ВЫЗОВ",238,C.red,function() local _,id=cat:GetSelected(); net.Start(NET_CALL_SEND) net.WriteString(id or "emergency") net.WriteString(txt:GetValue()) net.SendToServer(); f:Close() end) end)
-    net.Receive(NET_PATIENT,function() local target=net.ReadEntity(); local medic=net.ReadBool(); local stable=net.ReadBool(); local left=net.ReadUInt(12); if not IsValid(target) then return end; if IsValid(EM._patientFrame) and EM._patientTarget==target then return end; if IsValid(EM._patientFrame) then EM._patientFrame:Remove() end; local f=frame("911 • ПОСТРАДАВШИЙ",520,300); EM._patientFrame=f; EM._patientTarget=target; f.OnRemove=function() if EM._patientFrame==f then EM._patientFrame=nil; EM._patientTarget=nil end end; local l=vgui.Create("DLabel",f) l:SetPos(16,70) l:SetSize(488,70) l:SetFont("GRM911_Text") l:SetTextColor(C.text) l:SetText(target:Nick().."\nСостояние: "..(stable and "стабилизирован" or "критическое").."\nДо остановки жизненных функций: "..left.." с") button(f,stable and "УЖЕ СТАБИЛИЗИРОВАН" or "СТАБИЛИЗИРОВАТЬ (6 С)",150,C.cyan,function() net.Start(NET_TREAT) net.WriteEntity(target) net.WriteString("stabilize") net.SendToServer(); f:Close() end); if medic then button(f,"РЕАНИМИРОВАТЬ (10 С)",202,C.green,function() net.Start(NET_TREAT) net.WriteEntity(target) net.WriteString("revive") net.SendToServer(); f:Close() end) end end)
+    --[[ ОКНО ПОМОЩИ ПОСТРАДАВШЕМУ (переписано 21.08).
+         Было: кнопка «Реанимировать» просто НЕ создавалась, если сервер
+         посчитал игрока не медиком — человек видел одну «Стабилизировать» и
+         не понимал, что делать дальше. Стало: все действия видны всегда,
+         недоступное подписано причиной, плюс осмотр и вызов медслужбы. ]]
+    local function buttonState(parent, text, y, col, enabled, fn, hint)
+        local b = button(parent, text, y, enabled and col or Color(60, 64, 74), function()
+            if not enabled then
+                if hint and hint ~= "" then chat.AddText(Color(225, 90, 80), "[911] " .. hint) end
+                surface.PlaySound("buttons/button10.wav")
+                return
+            end
+            fn()
+        end)
+        if not enabled then b:SetTextColor(Color(150, 155, 165)) end
+        if hint and hint ~= "" then b:SetTooltip(hint) end
+        return b
+    end
+
+    net.Receive(NET_PATIENT, function()
+        local target = net.ReadEntity()
+        local canRevive = net.ReadBool()
+        local stable = net.ReadBool()
+        local left = net.ReadUInt(12)
+        local why = net.ReadString()
+        local bleed = net.ReadUInt(7)
+        local pain = net.ReadUInt(7)
+        if not IsValid(target) then return end
+        if IsValid(EM._patientFrame) and EM._patientTarget == target then return end
+        if IsValid(EM._patientFrame) then EM._patientFrame:Remove() end
+
+        local f = frame("911 • ПОСТРАДАВШИЙ", 520, 420)
+        EM._patientFrame = f
+        EM._patientTarget = target
+        f.OnRemove = function()
+            if EM._patientFrame == f then EM._patientFrame = nil EM._patientTarget = nil end
+        end
+
+        local rp = target:GetNWString("GRM_RPName", "")
+        local l = vgui.Create("DLabel", f)
+        l:SetPos(16, 66) l:SetSize(488, 84)
+        l:SetFont("GRM911_Text") l:SetTextColor(C.text) l:SetWrap(true)
+        l:SetText((rp ~= "" and rp or target:Nick()) ..
+            "\nСостояние: " .. (stable and "стабилизирован" or "критическое") ..
+            "\nКровопотеря: " .. bleed .. "% · боль: " .. pain .. "%" ..
+            "\nДо остановки жизненных функций: " .. left .. " с")
+
+        local function send(action)
+            net.Start(NET_TREAT)
+            net.WriteEntity(target)
+            net.WriteString(action)
+            net.SendToServer()
+        end
+
+        buttonState(f, stable and "УЖЕ СТАБИЛИЗИРОВАН" or "СТАБИЛИЗИРОВАТЬ (6 С)", 156, C.cyan,
+            not stable, function() send("stabilize") f:Close() end,
+            stable and "Пациент уже стабилизирован" or nil)
+
+        buttonState(f, canRevive and "РЕАНИМИРОВАТЬ (10 С)" or "РЕАНИМИРОВАТЬ — НЕТ ДОПУСКА", 202, C.green,
+            canRevive, function() send("revive") f:Close() end,
+            canRevive and "" or (why ~= "" and why or "Нужен медик, аптечка или адреналин"))
+
+        button(f, "ОСМОТРЕТЬ ПОСТРАДАВШЕГО", 248, C.panel, function() send("checkup") end)
+        button(f, "ВЫЗВАТЬ МЕДИЦИНСКУЮ СЛУЖБУ (911)", 294, C.red, function() send("call") f:Close() end)
+
+        local note = vgui.Create("DLabel", f)
+        note:SetPos(16, 340) note:SetSize(488, 60)
+        note:SetFont("GRM911_Text") note:SetTextColor(C.muted) note:SetWrap(true)
+        note:SetText(canRevive and "Стабилизация продлевает жизнь, реанимация поднимает человека на ноги."
+            or ("Поднять на ноги может медик. " .. (why ~= "" and why or "") ..
+                ". Пока — стабилизируйте и вызовите службу."))
+    end)
+
     net.Receive(NET_CALLS,function() local rows=net.ReadTable() or {}; local f=frame("911 • АКТИВНЫЕ ВЫЗОВЫ",820,600); local sc=vgui.Create("DScrollPanel",f) sc:SetPos(12,62) sc:SetSize(796,526); for _,r in ipairs(rows) do local p=vgui.Create("DPanel",sc) p:Dock(TOP) p:DockMargin(0,0,0,7) p:SetTall(92) p.Paint=function(_,w,h) draw.RoundedBox(6,0,0,w,h,C.panel); draw.SimpleText("#"..r.id.." • "..r.category.." • "..r.status,"GRM911_Text",12,12,C.red); draw.SimpleText(r.text,"GRM911_Text",12,36,C.text); draw.SimpleText(r.callerName..(r.assignedName~="" and " • принял: "..r.assignedName or ""),"GRM911_Text",12,62,C.muted) end local take=vgui.Create("DButton",p) take:SetPos(620,10) take:SetSize(160,30) take:SetText("Принять") take.DoClick=function() net.Start(NET_CALL_ACT) net.WriteUInt(r.id,32) net.WriteString("take") net.SendToServer() end local close=vgui.Create("DButton",p) close:SetPos(620,50) close:SetSize(160,30) close:SetText("Закрыть") close.DoClick=function() net.Start(NET_CALL_ACT) net.WriteUInt(r.id,32) net.WriteString("close") net.SendToServer() end sc:AddItem(p) end end)
     net.Receive(NET_BODY,function() local ent=net.ReadEntity(); local pro=net.ReadBool(); local d=net.ReadTable() or {}; local f=frame("911 • ОСМОТР ТЕЛА",620,440); local text="Личность: "..tostring(d.name or "неизвестно").."\nВремя смерти: "..os.date("%d.%m.%Y %H:%M",tonumber(d.time) or os.time()); if pro then text=text.."\nОрудие/источник: "..tostring(d.weapon).."\nПредполагаемый нападавший: "..tostring(d.attacker).."\nПоследний урон: "..tostring(d.damage).."\nСледов повреждений: "..tostring(#(d.wounds or {})).."\nДокументов при теле: "..tostring(#(d.documents or {})) else text=text.."\nДля подробного заключения нужен медик или следователь." end local l=vgui.Create("DLabel",f) l:SetPos(18,74) l:SetSize(584,240) l:SetFont("GRM911_Text") l:SetTextColor(C.text) l:SetWrap(true) l:SetText(text); if IsValid(ent) then local search=vgui.Create("DButton",f) search:SetPos(18,320) search:SetSize(584,32) search:SetText("ОБЫСКАТЬ ТЕЛО") search.DoClick=function() net.Start(NET_BODY_ACT) net.WriteEntity(ent) net.WriteString("search") net.SendToServer() end end; if pro and IsValid(ent) then local seal=vgui.Create("DButton",f) seal:SetPos(18,360) seal:SetSize(280,36) seal:SetText("ОПЕЧАТАТЬ МЕСТО") seal.DoClick=function() net.Start(NET_BODY_ACT) net.WriteEntity(ent) net.WriteString("seal") net.SendToServer(); f:Close() end local morgue=vgui.Create("DButton",f) morgue:SetPos(316,360) morgue:SetSize(286,36) morgue:SetText("ДОСТАВИТЬ В МОРГ") morgue.DoClick=function() net.Start(NET_BODY_ACT) net.WriteEntity(ent) net.WriteString("morgue") net.SendToServer(); f:Close() end end end)
     net.Receive(NET_LOOT,function()
