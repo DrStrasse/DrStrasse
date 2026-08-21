@@ -1,55 +1,37 @@
 include("shared.lua")
 
---[[ Рисование номера.
-     Размер лицевой стороны берём из габаритов модели, а не из «магических»
-     чисел: если знак когда-нибудь заменят на другую модель, надпись всё
-     равно ляжет по центру и не вылезет за края. ]]
+--[[ РИСОВАНИЕ НОМЕРА НА ЗНАКЕ.
+
+     Первая версия строила плоскость «на глазок» поворотами RotateAroundAxis
+     и промахивалась: надпись уходила ребром к игроку и её не было видно, а
+     поле знака рисовалось поперёк (заказ владельца: «номер повернуть на 90»).
+
+     Теперь плоскость строится честно по габаритам модели:
+       • самая тонкая ось OBB — это толщина знака, её направление и есть
+         нормаль лицевой стороны;
+       • из двух оставшихся осей ДЛИННАЯ всегда идёт вдоль строки номера,
+         короткая — вверх. Поэтому номер стоит правильно на любой модели и
+         при любом развороте знака;
+       • угол собирается через Vector:AngleEx(up) — без ручных поворотов.
+     Номер печатается с ОБЕИХ сторон, чтобы знак читался, как его ни повесь.
+----------------------------------------------------------------------]]
+
 function ENT:Initialize()
     self:SetMaterial(self.Material)
 end
 
+--- Геометрия лицевой стороны: считает общий слой, здесь только кэш.
 local function faceGeometry(ent)
     if ent.GRMFace then return ent.GRMFace end
-    local mins, maxs = ent:OBBMins(), ent:OBBMaxs()
-    local size = maxs - mins
-    local center = (mins + maxs) * 0.5
-
-    -- Самая тонкая ось — толщина знака, значит остальные две дают лицо.
-    local thin = "z"
-    if size.x <= size.y and size.x <= size.z then thin = "x"
-    elseif size.y <= size.x and size.y <= size.z then thin = "y" end
-
-    local face = { thin = thin, center = center }
-    if thin == "z" then
-        face.w, face.h = size.x, size.y
-        face.offset = Vector(center.x, center.y, maxs.z + 0.15)
-        face.rot = { { "up", 0 } }
-    elseif thin == "y" then
-        face.w, face.h = size.x, size.z
-        face.offset = Vector(center.x, maxs.y + 0.15, center.z)
-        face.rot = { { "forward", 90 }, { "right", 90 } }
-    else
-        face.w, face.h = size.y, size.z
-        face.offset = Vector(maxs.x + 0.15, center.y, center.z)
-        face.rot = { { "up", 90 }, { "right", 90 } }
-    end
-    ent.GRMFace = face
-    return face
+    local PL = GRM and GRM.Plates
+    if not (PL and PL.FaceGeometry) then return nil end
+    ent.GRMFace = PL.FaceGeometry(ent:OBBMins(), ent:OBBMaxs())
+    return ent.GRMFace
 end
 
-local function plateAngles(ent, face)
-    local ang = ent:GetAngles()
-    if face.thin == "z" then
-        ang:RotateAroundAxis(ang:Up(), 90)
-        ang:RotateAroundAxis(ang:Right(), 0)
-    elseif face.thin == "y" then
-        ang:RotateAroundAxis(ang:Right(), 90)
-        ang:RotateAroundAxis(ang:Up(), 90)
-    else
-        ang:RotateAroundAxis(ang:Up(), 90)
-        ang:RotateAroundAxis(ang:Forward(), 90)
-    end
-    return ang
+--- Локальное направление → мировое (без ручных поворотов углов).
+local function worldDir(ent, localVec)
+    return (ent:LocalToWorld(localVec) - ent:GetPos()):GetNormalized()
 end
 
 function ENT:Draw()
@@ -61,48 +43,55 @@ function ENT:Draw()
     if number == "" then return end
 
     local lp = LocalPlayer()
-    if IsValid(lp) and lp:GetPos():DistToSqr(self:GetPos()) > 600 * 600 then return end
+    if IsValid(lp) and lp:GetPos():DistToSqr(self:GetPos()) > 700 * 700 then return end
 
-    local kind = self:GetNWString("GRM_PlateType", "civil")
+    local kind   = self:GetNWString("GRM_PlateType", "civil")
     local status = self:GetNWString("GRM_PlateStatus", "active")
-    local def = PL.TypeDef(kind)
-    local face = faceGeometry(self)
-    local text = PL.FormatNumber(number, kind)
+    local def    = PL.TypeDef(kind)
+    local face   = faceGeometry(self)
+    if not face then return end
+    local text   = PL.FormatNumber(number, kind)
 
-    local pos = self:LocalToWorld(face.offset)
-    local ang = plateAngles(self, face)
-
-    local scale = 0.06
+    local scale = 0.05
     local w, h = face.w / scale, face.h / scale
 
-    cam.Start3D2D(pos, ang, scale)
-        -- поле знака и цветная полоса слева
-        draw.RoundedBox(0, -w / 2, -h / 2, w, h, Color(def.plate[1], def.plate[2], def.plate[3]))
-        draw.RoundedBox(0, -w / 2, -h / 2, w * 0.14, h, Color(def.band[1], def.band[2], def.band[3]))
+    local plateCol = Color(def.plate[1], def.plate[2], def.plate[3])
+    local bandCol  = Color(def.band[1], def.band[2], def.band[3])
+    local textCol  = Color(def.text[1], def.text[2], def.text[3])
+    if status ~= "active" then textCol = Color(200, 40, 40) end
 
-        local textCol = Color(def.text[1], def.text[2], def.text[3])
-        if status ~= "active" then textCol = Color(190, 40, 40) end
+    surface.SetFont("GRMPlate_Number")
+    local tw = surface.GetTextSize(text)
+    local fit = math.min(1, (w * 0.78) / math.max(1, tw))
 
-        -- подгоняем надпись под ширину поля
-        surface.SetFont("GRMPlate_Number")
-        local tw, th = surface.GetTextSize(text)
-        local avail = w * 0.80
-        local k = math.min(1, avail / math.max(1, tw))
-        local m = Matrix()
-        m:Translate(Vector(w * 0.07, 0, 0))
-        m:Scale(Vector(k, k, 1))
-        cam.PushModelMatrix(m)
-            draw.SimpleText(text, "GRMPlate_Number", 0, 0, textCol, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        cam.PopModelMatrix()
+    -- обе стороны: наружу по нормали и в противоположную
+    for _, side in ipairs({ 1, -1 }) do
+        local nrm = worldDir(self, face.normal * side)
+        local up  = worldDir(self, face.up)
+        local rgt = worldDir(self, face.right * side)
 
-        if status ~= "active" then
-            draw.SimpleText(string.upper(PL.Statuses[status] or status), "GRMPlate_Small",
-                0, h / 2 - 8, Color(190, 40, 40), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        end
-    cam.End3D2D()
+        local pos = self:LocalToWorld(face.center + face.normal * (face.half + 0.2) * side)
+        local ang = rgt:AngleEx(up)
+
+        cam.Start3D2D(pos, ang, scale)
+            draw.RoundedBox(0, -w / 2, -h / 2, w, h, plateCol)
+            draw.RoundedBox(0, -w / 2, -h / 2, w * 0.13, h, bandCol)
+
+            local m = Matrix()
+            m:Translate(Vector(w * 0.065, 0, 0))
+            m:Scale(Vector(fit, fit, 1))
+            cam.PushModelMatrix(m)
+                draw.SimpleText(text, "GRMPlate_Number", 0, 0, textCol, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            cam.PopModelMatrix()
+
+            if status ~= "active" then
+                draw.SimpleText(string.upper(PL.Statuses[status] or status), "GRMPlate_Small",
+                    0, h / 2 - 10, Color(200, 40, 40), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            end
+        cam.End3D2D()
+    end
 end
 
---- Подсказка при взгляде на незакреплённый знак.
 function ENT:DrawTranslucent()
     self:Draw()
 end

@@ -32,6 +32,13 @@ local VMT = {}
 VMT.__index = VMT
 function VMT:DistToSqr(o) local a, b, c = self.x - o.x, self.y - o.y, self.z - o.z return a * a + b * b + c * c end
 function VMT:Distance(o) return math.sqrt(self:DistToSqr(o)) end
+VMT.__add = function(a, b) return Vector(a.x + b.x, a.y + b.y, a.z + b.z) end
+VMT.__sub = function(a, b) return Vector(a.x - b.x, a.y - b.y, a.z - b.z) end
+VMT.__mul = function(a, b)
+    if type(b) == "number" then return Vector(a.x * b, a.y * b, a.z * b) end
+    if type(a) == "number" then return Vector(b.x * a, b.y * a, b.z * a) end
+    return Vector(a.x * b.x, a.y * b.y, a.z * b.z)
+end
 function Vector(x, y, z) return setmetatable({ x = x or 0, y = y or 0, z = z or 0 }, VMT) end
 function Angle(p, y, r) return { p = p or 0, y = y or 0, r = r or 0 } end
 
@@ -337,6 +344,8 @@ ok(select(1, PL.SpawnPlate("АА999ХХ")) == nil, "незарегистриро
 local car = ents.Create("sim_car")
 car:SetPos(Vector(0, 0, 0))
 car.VD_Class = "simfphys_opel"
+-- «Москвич»: от бампера до центра больше сотни юнитов
+car.NearestPoint = function(self, pos) return Vector(math.max(-110, math.min(110, pos.x)), 0, 0) end
 ok(select(1, PL.Attach(plate, car, civ)) == true, "знак закреплён на машине")
 ok(plate:GetParent() == car, "знак стал частью машины")
 ok(car:GetNWString("GRM_PlateNumber", "") == rec.number, "номер машины виден для проверки")
@@ -401,6 +410,54 @@ said(civ, "/номер " .. rec.number)
 ok(tostring(civ.chat) == "" and tostring(LASTNOTIFY):find("служба", 1, true) ~= nil,
    "гражданскому база не открывается", tostring(LASTNOTIFY))
 ok(NETSENT[PL.Net.ACT] ~= nil, "приём действий окна зарегистрирован")
+
+print("\n=== 11. ОРИЕНТАЦИЯ НАДПИСИ НА ЗНАКЕ ===")
+-- габариты hunter-плашки: тонкая по Z, длинная сторона — вдоль Y
+local face = PL.FaceGeometry(Vector(-12, -36, -0.5), Vector(12, 36, 0.5))
+ok(face.thin == "z", "тонкая ось распознана как толщина знака", face.thin)
+ok(face.rightAxis == "y" and face.upAxis == "x",
+   "строка номера идёт вдоль ДЛИННОЙ стороны (номер не боком)", face.rightAxis .. "/" .. face.upAxis)
+ok(face.w > face.h, "поле знака шире, чем выше", face.w .. "x" .. face.h)
+ok(math.abs(face.half - 0.5) < 0.001, "половина толщины посчитана", face.half)
+-- знак, повёрнутый в модели иначе: длинная сторона по X
+local face2 = PL.FaceGeometry(Vector(-36, -12, -0.5), Vector(36, 12, 0.5))
+ok(face2.rightAxis == "x" and face2.upAxis == "y", "для другой модели строка тоже идёт по длинной стороне")
+-- вертикальная плашка (тонкая по Y)
+local face3 = PL.FaceGeometry(Vector(-36, -0.5, -12), Vector(36, 0.5, 12))
+ok(face3.thin == "y" and face3.rightAxis == "x", "нормаль и строка считаются и для вертикальной плашки")
+
+print("\n=== 12. КРЕПЛЕНИЕ: ДАЛЁКИЙ ЦЕНТР МАШИНЫ НЕ МЕШАЕТ ===")
+local plate3 = PL.SpawnPlate(rec.number, Vector(112, 0, 0), Angle(0, 0, 0), owner)
+local farCar = ents.Create("sim_car")
+farCar:SetPos(Vector(0, 0, 0))
+farCar.NearestPoint = function(self, pos) return Vector(math.max(-110, math.min(110, pos.x)), 0, 0) end
+ok(isfunction(PL.HandlePlateUse), "единая обработка [E] по знаку объявлена")
+ok(isfunction(PL.LooksLikeVehicle) and PL.LooksLikeVehicle(farCar) == true, "машина распознаётся")
+ok(PL.VehicleBase(farCar) == farCar, "база машины — она сама")
+local attached = PL.HandlePlateUse(owner, plate3, farCar)
+ok(attached == true, "знак у бампера крепится, хотя центр машины в сотне юнитов")
+ok(plate3:GetParent() == farCar, "знак стал частью машины")
+LASTNOTIFY = nil
+PL.HandlePlateUse(owner, plate3)
+ok(plate3:GetParent() == nil and tostring(LASTNOTIFY):find("снят", 1, true) ~= nil,
+   "повторное [E] снимает знак и сообщает об этом", tostring(LASTNOTIFY))
+LASTNOTIFY = nil
+PL.HandlePlateUse(stranger, plate3)
+ok(tostring(LASTNOTIFY):find("чужой", 1, true) ~= nil, "чужому отвечают отказом, а не молчанием", tostring(LASTNOTIFY))
+LASTNOTIFY = nil
+local lonely = PL.SpawnPlate(rec.number, Vector(9000, 9000, 0), Angle(0, 0, 0), owner)
+PL.HandlePlateUse(owner, lonely)
+ok(tostring(LASTNOTIFY):find("Рядом нет транспорта", 1, true) ~= nil,
+   "если машины рядом нет — понятная подсказка", tostring(LASTNOTIFY))
+
+print("\n=== 13. ЗНАК В РУКАХ ФИЗГАНА ===")
+local held = PL.SpawnPlate(rec.number, Vector(112, 0, 0), Angle(0, 0, 0), owner)
+HOOKS["PhysgunPickup"]["GRM_Plates_Held"](owner, held)
+ok(owner.GRMHeldPlate == held, "система помнит знак в руках")
+owner.GetActiveWeapon = function() return { GetClass = function() return "weapon_physgun" end, _valid = true } end
+local blocked = HOOKS["PlayerUse"]["GRM_Plates_UseVehicle"](owner, farCar)
+ok(blocked == false, "[E] по машине со знаком в руках не сажает в салон")
+ok(held:GetParent() == farCar, "и сразу крепит знак")
 
 print(("\nPLATES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

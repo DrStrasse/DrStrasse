@@ -211,6 +211,67 @@ function PL.GenerateNumber(kind, taken, rnd)
 end
 
 -----------------------------------------------------------------------
+-- ГЕОМЕТРИЯ ЛИЦЕВОЙ СТОРОНЫ ЗНАКА (чистая функция, гоняется в стенде)
+--
+-- Самая тонкая ось габаритов — толщина знака, её направление и есть
+-- нормаль лица. Из двух оставшихся ДЛИННАЯ идёт вдоль строки номера,
+-- короткая — вверх. Именно поэтому номер стоит правильно, а не поперёк
+-- (первая версия рисовала надпись боком — заказ владельца «повернуть на 90»).
+-----------------------------------------------------------------------
+function PL.FaceGeometry(mins, maxs)
+    local size = maxs - mins
+    local center = (mins + maxs) * 0.5
+    local dims = { x = math.abs(size.x), y = math.abs(size.y), z = math.abs(size.z) }
+
+    local thin = "x"
+    if dims.y < dims[thin] then thin = "y" end
+    if dims.z < dims[thin] then thin = "z" end
+
+    local rest = {}
+    for _, ax in ipairs({ "x", "y", "z" }) do
+        if ax ~= thin then rest[#rest + 1] = ax end
+    end
+    local long, short = rest[1], rest[2]
+    if dims[short] > dims[long] then long, short = short, long end
+
+    local unit = { x = Vector(1, 0, 0), y = Vector(0, 1, 0), z = Vector(0, 0, 1) }
+    return {
+        center = center,
+        normal = unit[thin], right = unit[long], up = unit[short],
+        thin = thin, rightAxis = long, upAxis = short,
+        half = dims[thin] * 0.5, w = dims[long], h = dims[short],
+    }
+end
+
+-----------------------------------------------------------------------
+-- РАСПОЗНАВАНИЕ ТРАНСПОРТА (общее для знака, крепления и проверок)
+-----------------------------------------------------------------------
+--- Похоже ли это на транспорт (включая simfphys / LVS / Glide).
+local function looksLikeVehicle(ent)
+    if not IsValid(ent) then return false end
+    if ent:IsVehicle() then return true end
+    local cls = string.lower(ent:GetClass() or "")
+    if cls:find("simfphys", 1, true) == 1 or cls:find("lvs_", 1, true) == 1
+        or cls:find("prop_vehicle", 1, true) == 1 or cls:find("gmod_sent_vehicle", 1, true) == 1 then
+        return true
+    end
+    return ent.IsSimfphysCar == true or ent.LVS ~= nil or ent.IsGlideVehicle == true
+end
+
+--- База машины: у simfphys/LVS сиденье — отдельная энтити.
+local function vehicleBase(ent)
+    if not IsValid(ent) then return nil end
+    local base = ent
+    if base.GetBase and IsValid(base:GetBase()) then base = base:GetBase() end
+    if base.base and IsValid(base.base) then base = base.base end
+    local parent = base:GetParent()
+    if IsValid(parent) and looksLikeVehicle(parent) then base = parent end
+    return base
+end
+PL.VehicleBase = vehicleBase
+PL.LooksLikeVehicle = looksLikeVehicle
+
+-----------------------------------------------------------------------
 -- ДОСТУП
 -----------------------------------------------------------------------
 PL.IssueHints = { "полиц", "police", "ordnung", "инспек", "ваи", "gendarm", "жандарм", "дорожн", "гаи" }
@@ -584,6 +645,102 @@ if SERVER then
         return false
     end
 
+    --[[ ЕДИНАЯ ОБРАБОТКА «НАЖАЛ E НА ЗНАКЕ».
+         Одна функция на все пути: [E] по самому знаку, [E] по машине с
+         знаком в руках физгана и команда /номер_прикрепить. Игрок всегда
+         получает внятный ответ, а не молчание. ]]
+    function PL.HandlePlateUse(ply, plate, veh)
+        if not (IsValid(ply) and IsValid(plate)) then return false end
+
+        local can, why = PL.CanHandle(ply, plate)
+        if not can then
+            notify(ply, "Это чужой знак — трогать его нельзя.")
+            return false
+        end
+
+        -- уже закреплён → снимаем
+        if IsValid(plate:GetParent()) then
+            local seize = (why == "police") and tostring(plate.GRMPlateOwnerKey or "") ~= charKey(ply)
+            PL.Detach(plate, ply, seize)
+            notify(ply, seize and "Знак изъят с транспорта." or "Знак снят с транспорта.", true)
+            return true
+        end
+
+        if not IsValid(veh) and plate.FindVehicle then
+            veh = plate:FindVehicle()
+        end
+        if not IsValid(veh) then
+            notify(ply, "Рядом нет транспорта. Поднесите знак вплотную к бамперу и нажмите [E].")
+            return false
+        end
+
+        local ok, err = PL.Attach(plate, veh, ply)
+        notify(ply, ok and "Знак закреплён на транспорте." or tostring(err or "Не удалось закрепить"), ok)
+        if ok then plate:EmitSound("physics/metal/metal_solid_impact_hard2.wav", 60, 110) end
+        return ok
+    end
+
+    --[[ ЗНАК В РУКАХ ФИЗГАНА.
+         Держать знак и нажимать [E] по бамперу — самый естественный жест,
+         но [E] по машине сажает в неё. Поэтому: если игрок держит знак
+         физганом и жмёт [E] на транспорт — крепим знак и НЕ пускаем в салон. ]]
+    hook.Add("PhysgunPickup", "GRM_Plates_Held", function(ply, ent)
+        if IsValid(ent) and ent:GetClass() == "grm_plate" then ply.GRMHeldPlate = ent end
+    end)
+    hook.Add("PhysgunDrop", "GRM_Plates_Dropped", function(ply, ent)
+        if IsValid(ent) and ply.GRMHeldPlate == ent then
+            -- знак остаётся «в работе» ещё пару секунд после отпускания
+            ply.GRMHeldPlateUntil = CurTime() + 3
+        end
+    end)
+
+    hook.Add("PlayerUse", "GRM_Plates_UseVehicle", function(ply, ent)
+        if not (IsValid(ply) and IsValid(ent)) then return end
+        local plate = ply.GRMHeldPlate
+        if not IsValid(plate) or IsValid(plate:GetParent()) then return end
+        if (ply.GRMHeldPlateUntil or 0) < CurTime() then
+            local wep = ply:GetActiveWeapon()
+            if not (IsValid(wep) and wep:GetClass() == "weapon_physgun") then return end
+        end
+        if not (PL.LooksLikeVehicle and PL.LooksLikeVehicle(ent)) then return end
+        local base = PL.VehicleBase and PL.VehicleBase(ent) or ent
+        if plate:GetPos():Distance(base.NearestPoint and base:NearestPoint(plate:GetPos()) or base:GetPos()) > 90 then
+            return
+        end
+        PL.HandlePlateUse(ply, plate, base)
+        return false
+    end)
+
+    --- Запасной путь: закрепить/снять ближайший свой знак командой.
+    local function nearestOwnPlate(ply, mounted)
+        local best, bestD = nil, 300
+        local list = (GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities("grm_plate") or ents.FindByClass("grm_plate")
+        for _, ent in ipairs(list) do
+            if IsValid(ent) and PL.CanHandle(ply, ent) then
+                local attached = IsValid(ent:GetParent())
+                if attached == (mounted == true) then
+                    local d = ply:GetPos():Distance(ent:GetPos())
+                    if d < bestD then best, bestD = ent, d end
+                end
+            end
+        end
+        return best
+    end
+
+    concommand.Add("grm_plate_attach", function(ply)
+        if not IsValid(ply) then return end
+        local plate = nearestOwnPlate(ply, false)
+        if not IsValid(plate) then notify(ply, "Рядом нет вашего свободного знака.") return end
+        PL.HandlePlateUse(ply, plate)
+    end)
+
+    concommand.Add("grm_plate_detach", function(ply)
+        if not IsValid(ply) then return end
+        local plate = nearestOwnPlate(ply, true)
+        if not IsValid(plate) then notify(ply, "Рядом нет закреплённого знака.") return end
+        PL.HandlePlateUse(ply, plate)
+    end)
+
     -- Возврат знаков на место после выдачи машины из гаража.
     hook.Add("GRM_VehicleIssued", "GRM_Plates_Restore", function(ply, ent, rec)
         if not (IsValid(ent) and istable(rec) and istable(rec.plates)) then return end
@@ -744,6 +901,18 @@ if SERVER then
         local low = string.lower(msg)
         if low:find("^/номера") == 1 or low:find("^/plates") == 1 then
             PL.Open(ply)
+            return true
+        end
+        if low == "/прикрепить" or low == "/номерприкрепить" or low == "/plateon" then
+            local plate = nearestOwnPlate(ply, false)
+            if not IsValid(plate) then notify(ply, "Рядом нет вашего свободного знака.") return true end
+            PL.HandlePlateUse(ply, plate)
+            return true
+        end
+        if low == "/снятьномер" or low == "/plateoff" then
+            local plate = nearestOwnPlate(ply, true)
+            if not IsValid(plate) then notify(ply, "Рядом нет закреплённого знака.") return true end
+            PL.HandlePlateUse(ply, plate)
             return true
         end
         if low:find("^/номер%s") == 1 or low:find("^/plate%s") == 1 then

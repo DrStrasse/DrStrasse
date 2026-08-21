@@ -35,30 +35,41 @@ function ENT:SetupPlate(rec)
     self.GRMPlateOwnerKey = tostring(rec.ownerKey or "")
 end
 
---- Ближайший транспорт, к которому можно приложить знак.
+--[[ Ближайший транспорт.
+
+     Первая версия мерила расстояние до ЦЕНТРА машины и требовала 90 юнитов.
+     У «Москвича» от заднего бампера до центра как раз около сотни — знак
+     стоял вплотную, а система машину «не видела». Теперь меряем до
+     ПОВЕРХНОСТИ (NearestPoint), ищем в широком радиусе и дополнительно
+     простреливаем в обе стороны от плоскости знака. ]]
 function ENT:FindVehicle(maxDist)
-    maxDist = maxDist or 90
-    local best, bestD = nil, maxDist * maxDist
-    for _, ent in ipairs(ents.FindInSphere(self:GetPos(), maxDist)) do
-        if IsValid(ent) and ent ~= self then
-            local isVeh = ent:IsVehicle()
-            if not isVeh then
-                local cls = string.lower(ent:GetClass() or "")
-                isVeh = cls:find("simfphys", 1, true) == 1 or cls:find("lvs_", 1, true) == 1
-                    or cls:find("prop_vehicle", 1, true) == 1 or ent.IsSimfphysCar == true or ent.LVS ~= nil
-                    or ent.IsGlideVehicle == true
-            end
-            if isVeh then
-                -- у simfphys сиденье — отдельная энтити: берём базу
-                local base = ent
-                if IsValid(ent:GetParent()) and ent:GetParent() ~= self then base = ent:GetParent() end
-                if base.GetBase and IsValid(base:GetBase()) then base = base:GetBase() end
-                local d = self:GetPos():DistToSqr(base:GetPos())
+    local P = PL()
+    if not P then return nil end
+    maxDist = maxDist or 60
+    local pos = self:GetPos()
+    local best, bestD = nil, maxDist
+
+    for _, ent in ipairs(ents.FindInSphere(pos, 400)) do
+        if ent ~= self and P.LooksLikeVehicle(ent) then
+            local base = P.VehicleBase(ent)
+            if IsValid(base) then
+                local near = base.NearestPoint and base:NearestPoint(pos) or base:GetPos()
+                local d = near:Distance(pos)
                 if d <= bestD then best, bestD = base, d end
             end
         end
     end
-    return best
+    if IsValid(best) then return best, bestD end
+
+    -- запасной путь: трассируем в обе стороны от знака
+    for _, dir in ipairs({ self:GetUp(), -self:GetUp(), self:GetForward(), -self:GetForward(),
+                           self:GetRight(), -self:GetRight() }) do
+        local tr = util.TraceLine({ start = pos, endpos = pos + dir * 80, filter = self })
+        if tr.Hit and P.LooksLikeVehicle(tr.Entity) then
+            return P.VehicleBase(tr.Entity), pos:Distance(tr.HitPos)
+        end
+    end
+    return nil
 end
 
 function ENT:Use(ply)
@@ -66,34 +77,7 @@ function ENT:Use(ply)
     if not (IsValid(ply) and P) then return end
     if (self.GRMNextUse or 0) > CurTime() then return end
     self.GRMNextUse = CurTime() + 0.6
-
-    local can, why = P.CanHandle(ply, self)
-    if not can then
-        if GRM.Notify then GRM.Notify(ply, "Это чужой знак — трогать его нельзя.", 255, 140, 100) end
-        return
-    end
-
-    if IsValid(self:GetParent()) then
-        local seize = (why == "police") and self.GRMPlateOwnerKey ~= (P.CharKey and P.CharKey(ply) or "")
-        P.Detach(self, ply, seize)
-        if GRM.Notify then
-            GRM.Notify(ply, seize and "Знак изъят с транспорта." or "Знак снят.", 200, 220, 120)
-        end
-        return
-    end
-
-    local veh = self:FindVehicle()
-    if not IsValid(veh) then
-        if GRM.Notify then GRM.Notify(ply, "Поднесите знак к транспорту физганом и нажмите [E].", 255, 180, 90) end
-        return
-    end
-
-    local ok, err = P.Attach(self, veh, ply)
-    if GRM.Notify then
-        GRM.Notify(ply, ok and "Знак закреплён на транспорте." or tostring(err or "Не удалось закрепить"),
-            ok and 100 or 255, ok and 220 or 140, ok and 130 or 100)
-    end
-    if ok then self:EmitSound("physics/metal/metal_solid_impact_hard2.wav", 60, 110) end
+    P.HandlePlateUse(ply, self)
 end
 
 --- Закреплённый знак физганом не таскают: сначала снимите его [E].
