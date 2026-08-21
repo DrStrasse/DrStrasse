@@ -86,8 +86,17 @@ function ENT:Draw()
         rgt = rgt * -1
     end
 
+    --[[ Тонкая доводка: сдвиг вдоль осей самой надписи и доворот плоскости
+         по трём осям. Всё считается ОТ плоскости текста, поэтому «вправо»
+         это вправо по знаку, а не по миру, и настройка одинаково работает
+         на любой машине и любом развороте знака. ]]
     local pos = center + nrm * (face.half + (face.offset or 1.5))
+        + rgt * (face.moveX or 0) + up * (face.moveY or 0)
+
     local ang = rgt:AngleEx(up)
+    if (face.tiltR or 0) ~= 0 then ang:RotateAroundAxis(ang:Forward(), face.tiltR) end
+    if (face.tiltP or 0) ~= 0 then ang:RotateAroundAxis(ang:Right(), face.tiltP) end
+    if (face.tiltY or 0) ~= 0 then ang:RotateAroundAxis(ang:Up(), face.tiltY) end
 
     cam.Start3D2D(pos, ang, scale)
         draw.RoundedBox(0, -w / 2, -h / 2, w, h, plateCol)

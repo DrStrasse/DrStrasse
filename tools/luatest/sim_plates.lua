@@ -566,15 +566,52 @@ local core = (function()
     local f = io.open("lua/autorun/sh_grm_plates.lua", "rb")
     local t = f:read("*a") f:close() return t
 end)()
-ok(core:find('lastVeh = (IsValid(ent) and ent:GetClass() == "grm_plate") and ent or nil', 1, true) ~= nil,
-   "HUD ловит только сам знак")
-ok(core:find('ent:GetNWString("GRM_PlateNumber", "")', 1, true) == nil
-   or core:find("elseif IsValid(ent) and (ent:IsVehicle()", 1, true) == nil,
-   "взгляд на машину плашку больше не показывает")
-ok(core:find("CurTime() - lastTrace > 0.2", 1, true) ~= nil, "трассировка троттлится")
+ok(core:find('lookPlate = (IsValid(ent) and ent:GetClass() == "grm_plate") and ent or nil', 1, true) ~= nil,
+   "плашка ловит только сам знак")
+ok(core:find('hook.Add("PostDrawTranslucentRenderables", "GRM_Plates_WorldLabel"', 1, true) ~= nil,
+   "номер рисуется 3D2D в мире, а не поверх экрана")
+ok(core:find('hook.Add("HUDPaint", "GRM_Plates_HUD"', 1, true) == nil,
+   "экранной плашки посреди монитора больше нет")
+ok(core:find("CurTime() - lookAt > 0.2", 1, true) ~= nil, "трассировка троттлится, покадровых трейсов нет")
 PL.RenderCommand(civ, "yaw", 90)
 ok(PL.Render.yaw ~= (before + 180) % 360, "обычный игрок настройку не крутит")
 ok(PL.SaveRender() == true and files["grm_plates/render.json"] ~= nil, "раскладка сохраняется на диск")
+
+print("\n=== 16. ПОЛНАЯ ПОДГОНКА ЗНАКА ===")
+ok(istable(PL.RenderKeys) and #PL.RenderKeys == 10, "набор настроек раскладки объявлен", #PL.RenderKeys)
+local norm = PL.NormalizeRender({ axis = "чтото", yaw = 137, scale = 99, offset = -5,
+    tiltP = 400, moveX = 100, flip = 1 })
+ok(norm.axis == "auto", "неизвестная ось падает в auto")
+ok(norm.yaw % 90 == 0, "поворот кратен 90°", norm.yaw)
+ok(norm.scale <= 3 and norm.offset >= 0, "масштаб и вынос зажаты в пределах")
+ok(norm.tiltP <= 180 and norm.moveX <= 24, "наклон и сдвиг зажаты в пределах")
+ok(norm.flip == false, "флаг зеркала — строго логический")
+
+PL.RenderCommand(root, "reset")
+ok(PL.Render.tiltP == 0 and PL.Render.moveX == 0, "сброс возвращает раскладку к базовой")
+PL.RenderCommand(root, "tiltP", 15)
+PL.RenderCommand(root, "tiltY", -30)
+PL.RenderCommand(root, "tiltR", 45)
+ok(PL.Render.tiltP == 15 and PL.Render.tiltY == -30 and PL.Render.tiltR == 45,
+   "наклон крутится по трём осям", PL.Render.tiltP .. "/" .. PL.Render.tiltY .. "/" .. PL.Render.tiltR)
+PL.RenderCommand(root, "moveX", 2)
+PL.RenderCommand(root, "moveX", 2)
+PL.RenderCommand(root, "moveY", -1.5)
+ok(PL.Render.moveX == 4 and PL.Render.moveY == -1.5, "сдвиг накапливается по осям знака",
+   PL.Render.moveX .. "/" .. PL.Render.moveY)
+local faceFull = PL.FaceGeometry(Vector(-12, -36, -0.5), Vector(12, 36, 0.5), PL.Render)
+ok(faceFull.tiltR == 45 and faceFull.moveX == 4, "доводка доходит до геометрии грани")
+ok(cl:find("ang:RotateAroundAxis(ang:Forward(), face.tiltR)", 1, true) ~= nil
+   and cl:find("ang:RotateAroundAxis(ang:Right(), face.tiltP)", 1, true) ~= nil
+   and cl:find("ang:RotateAroundAxis(ang:Up(), face.tiltY)", 1, true) ~= nil,
+   "все три оси поворота применяются при отрисовке")
+ok(cl:find("rgt * (face.moveX or 0) + up * (face.moveY or 0)", 1, true) ~= nil,
+   "сдвиг считается вдоль осей самой надписи")
+
+print("\n=== 17. СНИМОК ОКНА ПОРЦИЯМИ ===")
+ok(core:find("GRM.Net.Stream(PL.Net.SYNC", 1, true) ~= nil,
+   "снимок реестра уходит потоком, а не одним пакетом")
+ok(isfunction(PL.PushSoon), "серия действий схлопывается в одну отправку")
 
 print(("\nPLATES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

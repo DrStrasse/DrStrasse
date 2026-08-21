@@ -232,7 +232,44 @@ end
        scale— размер поля относительно габаритов модели.
      Настраивается прямо в игре командами /номер_поворот, /номер_ось,
      /номер_масштаб — один раз и на все знаки. ]]
-PL.Render = PL.Render or { axis = "auto", yaw = 90, flip = false, scale = 1, offset = 1.5 }
+PL.Render = PL.Render or {
+    axis = "auto",      -- какая ось модели образует плоскость надписи
+    yaw = 90,           -- поворот строки в плоскости (0/90/180/270)
+    flip = false,       -- зеркало
+    scale = 1,          -- размер поля относительно габаритов
+    offset = 1.5,       -- вынос НАРУЖУ (перпендикулярно надписи)
+    -- тонкая доводка: доворот плоскости и сдвиг вдоль её осей
+    tiltP = 0, tiltY = 0, tiltR = 0,   -- наклон / рыскание / крен, градусы
+    moveX = 0, moveY = 0,              -- вправо-влево и вверх-вниз по знаку
+}
+
+--- Полный набор ключей раскладки — общий для сервера, клиента и стендов.
+PL.RenderKeys = { "axis", "yaw", "flip", "scale", "offset",
+    "tiltP", "tiltY", "tiltR", "moveX", "moveY" }
+
+--- Нормализация настроек: числа в разумных пределах, ось из списка.
+function PL.NormalizeRender(src)
+    src = istable(src) and src or {}
+    local axis = tostring(src.axis or "auto")
+    if axis ~= "x" and axis ~= "y" and axis ~= "z" then axis = "auto" end
+    local function num(v, lo, hi, def)
+        local n = tonumber(v)
+        if n == nil then return def end
+        return math.Clamp(n, lo, hi)
+    end
+    return {
+        axis = axis,
+        yaw = math.floor(num(src.yaw, 0, 359, 0) / 90 + 0.5) % 4 * 90,
+        flip = src.flip == true,
+        scale = num(src.scale, 0.2, 3, 1),
+        offset = num(src.offset, 0, 12, 1.5),
+        tiltP = num(src.tiltP, -180, 180, 0),
+        tiltY = num(src.tiltY, -180, 180, 0),
+        tiltR = num(src.tiltR, -180, 180, 0),
+        moveX = num(src.moveX, -24, 24, 0),
+        moveY = num(src.moveY, -24, 24, 0),
+    }
+end
 
 --- Геометрия лицевой стороны с учётом настроек раскладки.
 function PL.FaceGeometry(mins, maxs, render)
@@ -276,6 +313,11 @@ function PL.FaceGeometry(mins, maxs, render)
         -- насколько надпись вынесена НАРУЖУ от поверхности: при нуле она
         -- тонет внутри пропа и её не видно (заказ владельца 21.08)
         offset = math.Clamp(tonumber(render.offset) or 1.5, 0, 12),
+        tiltP = tonumber(render.tiltP) or 0,
+        tiltY = tonumber(render.tiltY) or 0,
+        tiltR = tonumber(render.tiltR) or 0,
+        moveX = tonumber(render.moveX) or 0,
+        moveY = tonumber(render.moveY) or 0,
         w = dims[rightAxis] * k, h = dims[upAxis] * k,
     }
 end
@@ -468,6 +510,7 @@ if SERVER then
          один раз, видят все и после рестарта. ]]
     function PL.SaveRender()
         ensureDir()
+        PL.Render = PL.NormalizeRender(PL.Render)
         local ok, txt = pcall(util.TableToJSON, PL.Render, true)
         if not ok or not isstring(txt) then return false end
         file.Write(RENDER_FILE, txt)
@@ -478,21 +521,21 @@ if SERVER then
         if not file.Exists(RENDER_FILE, "DATA") then return false end
         local ok, t = pcall(util.JSONToTable, file.Read(RENDER_FILE, "DATA") or "", false, true)
         if not (ok and istable(t)) then return false end
-        PL.Render.axis = tostring(t.axis or "auto")
-        PL.Render.yaw = math.floor(tonumber(t.yaw) or 0) % 360
-        PL.Render.flip = t.flip == true
-        PL.Render.scale = math.Clamp(tonumber(t.scale) or 1, 0.2, 3)
-        PL.Render.offset = math.Clamp(tonumber(t.offset) or 1.5, 0, 12)
+        PL.Render = PL.NormalizeRender(t)
         return true
     end
 
     function PL.PushRender(ply)
+        local r = PL.NormalizeRender(PL.Render)
+        PL.Render = r
         net.Start(PL.Net.RENDER)
-            net.WriteString(tostring(PL.Render.axis or "auto"))
-            net.WriteUInt(math.floor((tonumber(PL.Render.yaw) or 0) % 360), 9)
-            net.WriteBool(PL.Render.flip == true)
-            net.WriteFloat(math.Clamp(tonumber(PL.Render.scale) or 1, 0.2, 3))
-            net.WriteFloat(math.Clamp(tonumber(PL.Render.offset) or 1.5, 0, 12))
+            net.WriteString(r.axis)
+            net.WriteUInt(r.yaw, 9)
+            net.WriteBool(r.flip)
+            net.WriteFloat(r.scale)
+            net.WriteFloat(r.offset)
+            net.WriteFloat(r.tiltP) net.WriteFloat(r.tiltY) net.WriteFloat(r.tiltR)
+            net.WriteFloat(r.moveX) net.WriteFloat(r.moveY)
         if IsValid(ply) then net.Send(ply) else net.Broadcast() end
     end
 
@@ -932,16 +975,46 @@ if SERVER then
         }
     end
 
-    function PL.Push(ply, found)
-        if not IsValid(ply) then return end
+    --[[ СНИМОК ОКНА — ПОРЦИЯМИ.
+         Раньше три таблицы (мои знаки, игроки онлайн, найденный номер)
+         уходили одним net.WriteTable: на большом реестре это заметный пакет
+         и микрофриз у получателя. Теперь снимок идёт через GRM.Net.Stream —
+         он режет данные на куски и отдаёт их по кадрам. Плюс серия действий
+         подряд схлопывается в одну отправку (GRM.Perf.Coalesce). ]]
+    local function buildSnapshot(ply, found)
         local mine = {}
         for _, rec in ipairs(PL.ListFor(charKey(ply))) do mine[#mine + 1] = packRec(rec) end
+        local officer = PL.CanIssue(ply)
+        return {
+            mine = mine,
+            officer = officer == true,
+            online = officer and onlineList() or {},
+            found = found and { packRec(found) } or {},
+        }
+    end
+
+    function PL.Push(ply, found)
+        if not IsValid(ply) then return end
+        local payload = buildSnapshot(ply, found)
+        if GRM.Net and GRM.Net.Stream then
+            GRM.Net.Stream(PL.Net.SYNC, payload, ply, { chunk = 8192, interval = 0.03 })
+            return
+        end
         net.Start(PL.Net.SYNC)
-            net.WriteTable(mine)
-            net.WriteBool(PL.CanIssue(ply))
-            net.WriteTable(PL.CanIssue(ply) and onlineList() or {})
-            net.WriteTable(found and { packRec(found) } or {})
+            net.WriteTable(payload.mine)
+            net.WriteBool(payload.officer)
+            net.WriteTable(payload.online)
+            net.WriteTable(payload.found)
         net.Send(ply)
+    end
+
+    --- Отложенная отправка: пачка действий = один снимок.
+    function PL.PushSoon(ply, found)
+        if not IsValid(ply) then return end
+        if found or not (GRM.Perf and GRM.Perf.Coalesce) then return PL.Push(ply, found) end
+        GRM.Perf.Coalesce("plates.push." .. tostring(ply:SteamID64() or ply:EntIndex()), function()
+            if IsValid(ply) then PL.Push(ply) end
+        end, 0.15)
     end
 
     function PL.Open(ply)
@@ -961,7 +1034,7 @@ if SERVER then
         local data = net.ReadTable() or {}
 
         if act == "refresh" then
-            PL.Push(ply)
+            PL.PushSoon(ply)
 
         elseif act == "issue" then
             if not PL.CanIssue(ply) then notify(ply, "Выдавать номера может только Полиция и Автоинспекция.") return end
@@ -985,8 +1058,8 @@ if SERVER then
             if GRM.Audit and GRM.Audit.Write then
                 GRM.Audit.Write("plates", "issue", ply, { number = rec.number, owner = rec.ownerKey }, { type = rec.type })
             end
-            PL.Push(ply)
-            PL.Push(target)
+            PL.PushSoon(ply)
+            PL.PushSoon(target)
 
         elseif act == "spawn" then
             local rec = PL.Get(data.number)
@@ -1016,21 +1089,21 @@ if SERVER then
             local okSet, err = PL.SetStatus(data.number, data.status, ply:Nick())
             notify(ply, okSet and ("Номер %s: %s."):format(PL.FormatNumber(data.number), PL.Statuses[data.status] or "")
                 or tostring(err), okSet)
-            PL.Push(ply)
+            PL.PushSoon(ply)
 
         elseif act == "lost" then
             local rec = PL.Get(data.number)
             if not rec or tostring(rec.ownerKey) ~= charKey(ply) then notify(ply, "Это не ваш номер.") return end
             PL.SetStatus(rec.number, "lost", ply:Nick())
             notify(ply, "Заявление об утере принято. Обратитесь в Автоинспекцию за новым номером.", true)
-            PL.Push(ply)
+            PL.PushSoon(ply)
 
         elseif act == "find" then
             if not PL.CanCheck(ply) then notify(ply, "Пробивать номера может только служба.") return end
             local rec = PL.Get(data.number)
             if not rec then
                 notify(ply, ("Номер %s в базе не значится."):format(PL.FormatNumber(data.number)))
-                PL.Push(ply)
+                PL.PushSoon(ply)
                 return
             end
             if GRM.Audit and GRM.Audit.Write then
@@ -1065,9 +1138,24 @@ if SERVER then
             return true
         end
         if low:find("^/номер_вынос") == 1 then
-            renderCommand(ply, "offset", string.match(msg, "%s([%d%.]+)"))
+            renderCommand(ply, "offset", string.match(msg, "%s([%d%.%-]+)"))
             return true
         end
+        if low:find("^/номер_наклон") == 1 then
+            local ax, val = string.match(msg, "^%S+%s+(%a)%s*(%-?[%d%.]*)")
+            ax = string.lower(tostring(ax or "p"))
+            local key = ax == "y" and "tiltY" or (ax == "r" and "tiltR" or "tiltP")
+            renderCommand(ply, key, val)
+            return true
+        end
+        if low:find("^/номер_сдвиг") == 1 then
+            local ax, val = string.match(msg, "^%S+%s+(%a)%s*(%-?[%d%.]*)")
+            ax = string.lower(tostring(ax or "x"))
+            renderCommand(ply, ax == "y" and "moveY" or "moveX", val)
+            return true
+        end
+        if low:find("^/номер_сброс") == 1 then renderCommand(ply, "reset") return true end
+        if low:find("^/номер_настройки") == 1 then renderCommand(ply, "show") return true end
         if low == "/снятьномер" or low == "/plateoff" then
             local plate = nearestOwnPlate(ply, true)
             if not IsValid(plate) then notify(ply, "Рядом нет закреплённого знака.") return true end
@@ -1125,13 +1213,21 @@ if SERVER then
             PL.Render.scale = math.Clamp(tonumber(value) or 1, 0.2, 3)
         elseif what == "offset" then
             PL.Render.offset = math.Clamp(tonumber(value) or 1.5, 0, 12)
+        elseif what == "tiltP" or what == "tiltY" or what == "tiltR" then
+            PL.Render[what] = math.Clamp((tonumber(PL.Render[what]) or 0) + (tonumber(value) or 15), -180, 180)
+        elseif what == "moveX" or what == "moveY" then
+            PL.Render[what] = math.Clamp((tonumber(PL.Render[what]) or 0) + (tonumber(value) or 1), -24, 24)
+        elseif what == "reset" then
+            PL.Render = PL.NormalizeRender({ axis = "auto", yaw = 90, scale = 1, offset = 1.5 })
         end
+        PL.Render = PL.NormalizeRender(PL.Render)
         PL.SaveRender()
         PL.PushRender()
-        notify(ply, ("Знаки: ось %s, поворот %d°, зеркало %s, масштаб %.2f, вынос %.1f"):format(
-            tostring(PL.Render.axis), tonumber(PL.Render.yaw) or 0,
-            PL.Render.flip and "да" or "нет", tonumber(PL.Render.scale) or 1,
-            tonumber(PL.Render.offset) or 1.5), true)
+        local r = PL.Render
+        notify(ply, ("Знаки: ось %s • поворот %d° • зеркало %s • масштаб %.2f • вынос %.1f"):format(
+            r.axis, r.yaw, r.flip and "да" or "нет", r.scale, r.offset), true)
+        ply:ChatPrint(("[Знаки] наклон P %.0f° / Y %.0f° / R %.0f°   •   сдвиг X %.1f / Y %.1f"):format(
+            r.tiltP, r.tiltY, r.tiltR, r.moveX, r.moveY))
     end
     PL.RenderCommand = renderCommand
 
@@ -1140,6 +1236,17 @@ if SERVER then
     concommand.Add("grm_plate_flip", function(ply) renderCommand(ply, "flip") end)
     concommand.Add("grm_plate_scale", function(ply, _, args) renderCommand(ply, "scale", args and args[1]) end)
     concommand.Add("grm_plate_offset", function(ply, _, args) renderCommand(ply, "offset", args and args[1]) end)
+    concommand.Add("grm_plate_tilt", function(ply, _, args)
+        local ax = string.lower(tostring(args and args[1] or "p"))
+        local key = ax == "y" and "tiltY" or (ax == "r" and "tiltR" or "tiltP")
+        renderCommand(ply, key, args and args[2])
+    end)
+    concommand.Add("grm_plate_move", function(ply, _, args)
+        local ax = string.lower(tostring(args and args[1] or "x"))
+        renderCommand(ply, ax == "y" and "moveY" or "moveX", args and args[2])
+    end)
+    concommand.Add("grm_plate_reset", function(ply) renderCommand(ply, "reset") end)
+    concommand.Add("grm_plate_show", function(ply) renderCommand(ply, "show") end)
 
     -- ── старт ───────────────────────────────────────────────────────
     local function boot()
@@ -1440,24 +1547,39 @@ if CLIENT then
     end
 
     net.Receive(PL.Net.RENDER, function()
-        PL.Render.axis = net.ReadString()
-        PL.Render.yaw = net.ReadUInt(9)
-        PL.Render.flip = net.ReadBool()
-        PL.Render.scale = net.ReadFloat()
-        PL.Render.offset = net.ReadFloat()
+        PL.Render = PL.NormalizeRender({
+            axis = net.ReadString(), yaw = net.ReadUInt(9), flip = net.ReadBool(),
+            scale = net.ReadFloat(), offset = net.ReadFloat(),
+            tiltP = net.ReadFloat(), tiltY = net.ReadFloat(), tiltR = net.ReadFloat(),
+            moveX = net.ReadFloat(), moveY = net.ReadFloat(),
+        })
         -- сбрасываем кэш граней у всех живых знаков: пересчитаются сами
         for _, ent in ipairs(ents.FindByClass("grm_plate")) do
             if IsValid(ent) then ent.GRMFace = nil end
         end
     end)
 
-    net.Receive(PL.Net.SYNC, function()
-        PL.Mine = net.ReadTable() or {}
-        PL.IsOfficer = net.ReadBool()
-        PL.Online = net.ReadTable() or {}
-        local found = net.ReadTable() or {}
-        if #found > 0 then PL.Found = found end
+    local function applySnapshot(data)
+        if not istable(data) then return end
+        PL.Mine = istable(data.mine) and data.mine or {}
+        PL.IsOfficer = data.officer == true
+        PL.Online = istable(data.online) and data.online or {}
+        if istable(data.found) and #data.found > 0 then PL.Found = data.found end
         if PL._rebuild then PL._rebuild() end
+    end
+
+    -- снимок приходит порциями (GRM.Net.Stream) — окно собирается один раз
+    if GRM.Net and GRM.Net.Receive then
+        GRM.Net.Receive(PL.Net.SYNC, applySnapshot)
+    end
+
+    net.Receive(PL.Net.SYNC, function()
+        applySnapshot({
+            mine = net.ReadTable() or {},
+            officer = net.ReadBool(),
+            online = net.ReadTable() or {},
+            found = net.ReadTable() or {},
+        })
     end)
 
     net.Receive(PL.Net.OPEN, function()
@@ -1482,49 +1604,62 @@ if CLIENT then
         PL.BuildPanel(body)
     end)
 
-    --[[ НОМЕР НАД ТРАНСПОРТОМ.
-         Сотрудник видит номер издалека, обычный игрок — вблизи. Рисуем в
-         общем HUDPaint с троттлингом трассировки: покадровых трейсов нет. ]]
-    local lastTrace, lastVeh = 0, nil
-    hook.Add("HUDPaint", "GRM_Plates_HUD", function()
+    --[[ НОМЕР НАД ЗНАКОМ — 3D2D В МИРЕ.
+
+         Экранная плашка посреди монитора мешала (и появлялась не там, где
+         смотришь). Теперь номер рисуется прямо над знаком в мире, лицом к
+         игроку, и только когда прицел наведён НА САМ ЗНАК.
+
+         Порядок работы в кадре сознательно дешёвый:
+           • трассировка — раз в 0.2 с, не каждый кадр;
+           • в кадре только математика билборда и две операции рисования;
+           • дальше 400 юнитов не рисуем вовсе.  ]]
+    local lookPlate, lookAt = nil, 0
+
+    hook.Add("PostDrawTranslucentRenderables", "GRM_Plates_WorldLabel", function(depth, sky, sky3d)
+        if depth or sky or sky3d then return end
         local lp = LocalPlayer()
         if not IsValid(lp) or not lp:Alive() then return end
 
-        --[[ Плашка с номером — только когда игрок смотрит НА САМ ЗНАК.
-             Раньше она появлялась при взгляде на любую машину с номером и
-             висела посреди экрана поверх всего (заказ владельца 21.08).
-             Трассировка троттлится: покадровых трейсов нет. ]]
-        if CurTime() - lastTrace > 0.2 then
-            lastTrace = CurTime()
+        if CurTime() - lookAt > 0.2 then
+            lookAt = CurTime()
             local tr = (GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(lp) or lp:GetEyeTrace()
             local ent = tr and tr.Entity or nil
-            lastVeh = (IsValid(ent) and ent:GetClass() == "grm_plate") and ent or nil
+            lookPlate = (IsValid(ent) and ent:GetClass() == "grm_plate") and ent or nil
         end
 
-        local ent = lastVeh
+        local ent = lookPlate
         if not IsValid(ent) then return end
         local number = ent:GetNWString("GRM_Plate", "")
-        local kind = ent:GetNWString("GRM_PlateType", "civil")
-        if not number or number == "" then return end
-        if lp:GetPos():Distance(ent:GetPos()) > 400 then return end
+        if number == "" then return end
 
+        local origin = ent:GetPos()
+        local dist = lp:GetPos():Distance(origin)
+        if dist > 400 then return end
+
+        local kind = ent:GetNWString("GRM_PlateType", "civil")
+        local status = ent:GetNWString("GRM_PlateStatus", "active")
         local def = PL.TypeDef(kind)
         local text = PL.FormatNumber(number, kind)
+
+        local ang = (lp:EyePos() - origin):Angle()
+        ang:RotateAroundAxis(ang:Right(), -90)
+        ang:RotateAroundAxis(ang:Up(), -90)
+
         surface.SetFont("GRMPlate_Hud")
         local tw, th = surface.GetTextSize(text)
-        local pad, band = 16, 10
-        local w, h = tw + pad * 2 + band, th + 14
-        local x, y = ScrW() / 2 - w / 2, ScrH() * 0.66
-        -- рисуем как маленький знак: поле, цветная полоса и номер по центру
-        draw.RoundedBox(4, x, y, w, h, Color(def.plate[1], def.plate[2], def.plate[3], 245))
-        draw.RoundedBox(4, x, y, band, h, Color(def.band[1], def.band[2], def.band[3], 245))
-        draw.SimpleText(text, "GRMPlate_Hud", x + band + (w - band) / 2, y + h / 2,
-            Color(def.text[1], def.text[2], def.text[3]), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        local status = ent.GetNWString and ent:GetNWString("GRM_PlateStatus", "active") or "active"
-        if status ~= "active" then
-            draw.SimpleText(string.upper(PL.Statuses[status] or status), "GRMPlate_Small",
-                x + w / 2, y + h + 10, Color(220, 80, 80), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        end
+        local w, h = tw + 46, th + 16
+
+        cam.Start3D2D(origin + Vector(0, 0, 14), ang, 0.12)
+            draw.RoundedBox(6, -w / 2, -h / 2, w, h, Color(12, 16, 24, 225))
+            draw.RoundedBox(6, -w / 2, -h / 2, 10, h, Color(def.band[1], def.band[2], def.band[3]))
+            draw.SimpleText(text, "GRMPlate_Hud", 6, 0, Color(def.plate[1], def.plate[2], def.plate[3]),
+                TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            if status ~= "active" then
+                draw.SimpleText(string.upper(PL.Statuses[status] or status), "GRMPlate_Small",
+                    0, h / 2 + 8, Color(215, 75, 75), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            end
+        cam.End3D2D()
     end)
 end
 

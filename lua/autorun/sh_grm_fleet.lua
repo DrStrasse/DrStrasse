@@ -739,30 +739,61 @@ if SERVER then
         return out
     end
 
-    function FL.Push(ply)
-        if not IsValid(ply) then return end
+    --[[ Снимок автопарка тоже уходит порциями: рынок, парк, список гаражей
+         и структура организации в одном пакете давали заметный кусок
+         трафика на каждое действие. GRM.Net.Stream режет его по кадрам, а
+         GRM.Perf.Coalesce схлопывает серию действий в одну отправку. ]]
+    local function snapshot(ply)
         local faction = factionOf(ply)
         local level = levelOf(ply)
         local isAdmin = ply:IsSuperAdmin()
 
         local market = {}
         for _, entry in ipairs(FL.MarketList()) do market[#market + 1] = packEntry(entry, faction, level, isAdmin) end
-
         local units = {}
         for _, unit in ipairs(FL.UnitsOf(faction)) do units[#units + 1] = packUnit(unit) end
 
+        return {
+            faction = faction,
+            budget = math.max(0, math.floor(GRM.FactionBudgetGet and GRM.FactionBudgetGet(faction) or 0)),
+            canBuy = select(1, FL.CanBuy(ply, faction)) == true,
+            canManage = FL.CanManage(ply, faction) == true,
+            isAdmin = isAdmin,
+            market = market, units = units,
+            garages = garageChoices(ply, faction),
+            factions = (GRM.VehicleDealer and GRM.VehicleDealer.FactionList) and GRM.VehicleDealer.FactionList() or {},
+            structure = FL.StructureOf(faction),
+        }
+    end
+
+    function FL.Push(ply)
+        if not IsValid(ply) then return end
+        local data = snapshot(ply)
+        if GRM.Net and GRM.Net.Stream then
+            GRM.Net.Stream(FL.Net.SYNC, data, ply, { chunk = 8192, interval = 0.03 })
+            return
+        end
         net.Start(FL.Net.SYNC)
-            net.WriteString(faction)
-            net.WriteUInt(math.max(0, math.floor(GRM.FactionBudgetGet and GRM.FactionBudgetGet(faction) or 0)), 32)
-            net.WriteBool(select(1, FL.CanBuy(ply, faction)) == true)
-            net.WriteBool(FL.CanManage(ply, faction) == true)
-            net.WriteBool(isAdmin)
-            net.WriteTable(market)
-            net.WriteTable(units)
-            net.WriteTable(garageChoices(ply, faction))
-            net.WriteTable((GRM.VehicleDealer and GRM.VehicleDealer.FactionList) and GRM.VehicleDealer.FactionList() or {})
-            net.WriteTable(FL.StructureOf(faction))
+            net.WriteString(data.faction)
+            net.WriteUInt(data.budget, 32)
+            net.WriteBool(data.canBuy)
+            net.WriteBool(data.canManage)
+            net.WriteBool(data.isAdmin)
+            net.WriteTable(data.market)
+            net.WriteTable(data.units)
+            net.WriteTable(data.garages)
+            net.WriteTable(data.factions)
+            net.WriteTable(data.structure)
         net.Send(ply)
+    end
+
+    --- Пачка действий подряд = одна отправка снимка.
+    function FL.PushSoon(ply)
+        if not IsValid(ply) then return end
+        if not (GRM.Perf and GRM.Perf.Coalesce) then return FL.Push(ply) end
+        GRM.Perf.Coalesce("fleet.push." .. tostring(ply:SteamID64() or ply:EntIndex()), function()
+            if IsValid(ply) then FL.Push(ply) end
+        end, 0.15)
     end
 
     function FL.Open(ply)
@@ -781,57 +812,57 @@ if SERVER then
         local data = net.ReadTable() or {}
 
         if act == "refresh" then
-            FL.Push(ply)
+            FL.PushSoon(ply)
 
         elseif act == "buy" then
             local made, err, total = FL.Buy(ply, data.marketID, data.count, data.garageID)
             if not made then notify(ply, tostring(err or "Закупка не прошла")) FL.Push(ply) return end
             notify(ply, ("Закуплено единиц: %d на сумму %s. Техника в гараже."):format(#made,
                 GRM.Format and GRM.Format(total or 0) or tostring(total or 0)), true)
-            FL.Push(ply)
+            FL.PushSoon(ply)
 
         elseif act == "issue" then
             local ent, err = FL.Issue(ply, data.unitID)
             notify(ply, IsValid(ent) and "Техника подана на место стоянки." or tostring(err or "Не удалось выдать"), IsValid(ent))
-            FL.Push(ply)
+            FL.PushSoon(ply)
 
         elseif act == "store" then
             local ok, msg = FL.Store(ply, data.unitID)
             notify(ply, tostring(msg or (ok and "Возвращено" or "Не удалось")), ok)
-            FL.Push(ply)
+            FL.PushSoon(ply)
 
         elseif act == "sethome" then
             local ok, msg = FL.SetGarage(ply, data.unitID, data.garageID)
             notify(ply, tostring(msg or (ok and "Приписано" or "Не удалось")), ok)
-            FL.Push(ply)
+            FL.PushSoon(ply)
 
         elseif act == "restrict" then
             local ok, msg = FL.SetRestriction(ply, data.unitID, data.roles, data.depts)
             notify(ply, tostring(msg or (ok and "Закрепление обновлено" or "Не удалось")), ok)
-            FL.Push(ply)
+            FL.PushSoon(ply)
 
         elseif act == "scrap" then
             local ok, msg = FL.Scrap(ply, data.unitID)
             notify(ply, tostring(msg or (ok and "Списано" or "Не удалось")), ok)
-            FL.Push(ply)
+            FL.PushSoon(ply)
 
         elseif act == "market_add" then
             if not ply:IsSuperAdmin() then return end
             local entry, err = FL.MarketAdd(data)
             notify(ply, entry and ("Позиция добавлена: " .. entry.name) or tostring(err), entry ~= nil)
-            FL.Push(ply)
+            FL.PushSoon(ply)
 
         elseif act == "market_update" then
             if not ply:IsSuperAdmin() then return end
             local ok, err = FL.MarketUpdate(data.id, data)
             notify(ply, ok and "Позиция обновлена" or tostring(err), ok)
-            FL.Push(ply)
+            FL.PushSoon(ply)
 
         elseif act == "market_remove" then
             if not ply:IsSuperAdmin() then return end
             local ok, err = FL.MarketRemove(data.id)
             notify(ply, ok and "Позиция убрана с рынка" or tostring(err), ok)
-            FL.Push(ply)
+            FL.PushSoon(ply)
         end
     end)
 
@@ -1243,18 +1274,32 @@ if CLIENT then
         return pnl
     end
 
-    net.Receive(FL.Net.SYNC, function()
-        FL.State.faction = net.ReadString()
-        FL.State.budget = net.ReadUInt(32)
-        FL.State.canBuy = net.ReadBool()
-        FL.State.canManage = net.ReadBool()
-        FL.State.isAdmin = net.ReadBool()
-        FL.State.market = net.ReadTable() or {}
-        FL.State.units = net.ReadTable() or {}
-        FL.State.garages = net.ReadTable() or {}
-        FL.State.factions = net.ReadTable() or {}
-        FL.State.structure = net.ReadTable() or { roles = {}, depts = {} }
+    local function applyState(data)
+        if not istable(data) then return end
+        FL.State.faction = tostring(data.faction or "")
+        FL.State.budget = tonumber(data.budget) or 0
+        FL.State.canBuy = data.canBuy == true
+        FL.State.canManage = data.canManage == true
+        FL.State.isAdmin = data.isAdmin == true
+        FL.State.market = istable(data.market) and data.market or {}
+        FL.State.units = istable(data.units) and data.units or {}
+        FL.State.garages = istable(data.garages) and data.garages or {}
+        FL.State.factions = istable(data.factions) and data.factions or {}
+        FL.State.structure = istable(data.structure) and data.structure or { roles = {}, depts = {} }
         if FL._rebuild then FL._rebuild() end
+    end
+
+    if GRM.Net and GRM.Net.Receive then
+        GRM.Net.Receive(FL.Net.SYNC, applyState)
+    end
+
+    net.Receive(FL.Net.SYNC, function()
+        applyState({
+            faction = net.ReadString(), budget = net.ReadUInt(32),
+            canBuy = net.ReadBool(), canManage = net.ReadBool(), isAdmin = net.ReadBool(),
+            market = net.ReadTable(), units = net.ReadTable(), garages = net.ReadTable(),
+            factions = net.ReadTable(), structure = net.ReadTable(),
+        })
     end)
 
     net.Receive(FL.Net.OPEN, function()
