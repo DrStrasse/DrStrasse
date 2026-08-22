@@ -7,6 +7,7 @@
   grm_economy.zip       — экономика, банк, документы, служебные компьютеры
                           и модули розыска/штрафов, от которых они зависят
   grm_fix_hud_tab_currency.zip — точечный фикс HUD/TAB/валюты
+  grm_textscreens.zip   — 3D2D Textscreens (отдельная папка в addons/)
 
 Запуск: python3 tools/build_dist.py
 """
@@ -117,6 +118,28 @@ def build(name, files, prefix=""):
     print("%-34s %4d файлов, %8.1f КБ" % (name, written, size / 1024.0))
 
 
+def build_addon(name, folder, prefix=""):
+    """Отдельный аддон из addons/<folder> — распаковывается в garrysmod/addons."""
+    base = os.path.join(ROOT, "addons", folder)
+    if not os.path.isdir(base):
+        print("  пропуск (нет папки): addons/%s" % folder)
+        return
+    files = []
+    for root, dirs, names in os.walk(base):
+        dirs[:] = [d for d in dirs if d not in (".git", ".github")]
+        for fn in names:
+            full = os.path.join(root, fn)
+            files.append(os.path.relpath(full, base))
+    files.sort()
+    path = os.path.join(DIST, name)
+    tmp = path + ".tmp"
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+        for rel in files:
+            z.write(os.path.join(base, rel), prefix + rel)
+    shutil.move(tmp, path)
+    print("%-34s %4d файлов, %8.1f КБ" % (name, len(files), os.path.getsize(path) / 1024.0))
+
+
 def main():
     os.makedirs(DIST, exist_ok=True)
     everything = collect_all()
@@ -124,6 +147,8 @@ def main():
     build("grm_full_code.zip", everything)
     build("grm_economy.zip", ECONOMY_FILES, prefix="grm/")
     build("grm_fix_hud_tab_currency.zip", HUD_FIX_FILES)
+    # 3D2D Textscreens: отдельный аддон, ставится рядом с grm
+    build_addon("grm_textscreens.zip", "grm_textscreens", prefix="grm_textscreens/")
 
 
 if __name__ == "__main__":
