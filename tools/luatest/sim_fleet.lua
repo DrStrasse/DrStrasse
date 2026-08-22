@@ -303,12 +303,12 @@ local civ = FL.MarketAdd({ class = "sim_civ", name = "Грузовик", price =
 ok(#FL.MarketList() == 3, "в каталоге три позиции", #FL.MarketList())
 ok(select(1, FL.MarketAdd({})) == nil, "позиция без класса не добавляется")
 local pushed = 0
-local savedPushViewers = FL.PushViewers
-FL.PushViewers = function() pushed = pushed + 1 end
+local savedPushLive = FL.PushLive
+FL.PushLive = function() pushed = pushed + 1 end
 FL.MarketUpdate(civ.id, { price = 12000 })
 ok(FL.Entry(civ.id).price == 12000, "цену можно поменять")
-ok(pushed == 1, "правка обычной цены сразу рассылается открытым терминалам", pushed)
-FL.PushViewers = savedPushViewers
+ok(pushed == 1, "правка обычной цены сразу рассылается всем открытым терминалам", pushed)
+FL.PushLive = savedPushLive
 
 do
     local resolved, resolveErr = FL.ResolveVehicleClass({ class = "gmod_sent_vehicle_physics_base", name = "sim_fphys_wolfpolice" })

@@ -826,7 +826,7 @@ if SERVER then
         FL.Market[entry.id] = entry
         FL.SaveMarket("рынок: добавление")
         FL.FlushMarket("рынок: добавление")
-        if FL.PushViewers then FL.PushViewers() end
+        if FL.PushLive then FL.PushLive("market") elseif FL.PushViewers then FL.PushViewers() end
         return entry
     end
 
@@ -849,7 +849,7 @@ if SERVER then
             FL.DealerOverrides[id] = meta
             FL.SaveMarket("рынок: цена позиции дилера")
             FL.FlushMarket("цена позиции дилера")
-            if FL.PushViewers then FL.PushViewers() end
+            if FL.PushLive then FL.PushLive("market") elseif FL.PushViewers then FL.PushViewers() end
             return true
         end
 
@@ -868,7 +868,7 @@ if SERVER then
         -- Не заставляем владельца закрывать и заново открывать терминал:
         -- обычная позиция рынка должна обновить все открытые панели так же,
         -- как дилерская позиция выше.
-        if FL.PushViewers then FL.PushViewers() end
+        if FL.PushLive then FL.PushLive("market") elseif FL.PushViewers then FL.PushViewers() end
         return true
     end
 
@@ -883,7 +883,7 @@ if SERVER then
                 FL.DealerOverrides[id] = nil
                 FL.SaveMarket("рынок: сброс цены позиции дилера")
                 FL.FlushMarket("сброс цены позиции дилера")
-                if FL.PushViewers then FL.PushViewers() end
+                if FL.PushLive then FL.PushLive("market") elseif FL.PushViewers then FL.PushViewers() end
                 return true, "Правка цены позиции дилера сброшена (сама позиция остаётся)"
             end
             return false, "Позиция дилера не удаляется из рынка — измените её в ассортименте дилера"
@@ -893,7 +893,7 @@ if SERVER then
         FL.Market[tostring(id)] = nil
         FL.SaveMarket("рынок: удаление")
         FL.FlushMarket("рынок: удаление")
-        if FL.PushViewers then FL.PushViewers() end
+        if FL.PushLive then FL.PushLive("market") elseif FL.PushViewers then FL.PushViewers() end
         return true
     end
 
@@ -1368,6 +1368,24 @@ if SERVER then
     function FL.PushViewers()
         for ply in pairs(FL.Viewers) do
             if IsValid(ply) then FL.Push(ply) else FL.Viewers[ply] = nil end
+        end
+    end
+
+    -- Рынок меняет суперадмин редко. Рассылаем его снимок всем, а не только
+    -- отмеченным зрителям: вкладка внутри служебного компьютера может быть
+    -- пересоздана чужим UI и потерять watch-подписку, хотя окно визуально
+    -- всё ещё открыто. Так «Обновить» и живое изменение не зависят от
+    -- lifecycle внешнего терминала.
+    function FL.PushLive(reason)
+        local function run()
+            for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+                if IsValid(ply) then FL.Push(ply) end
+            end
+        end
+        if GRM.Perf and GRM.Perf.Coalesce then
+            GRM.Perf.Coalesce("fleet.live." .. tostring(reason or "state"), 0.1, run)
+        else
+            run()
         end
     end
 
