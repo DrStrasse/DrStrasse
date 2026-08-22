@@ -1870,7 +1870,7 @@ if CLIENT then
                             { label = u.onMap and "ВЕРНУТЬ В ГАРАЖ" or "ВЫДАТЬ",
                               color = u.onMap and C.accent or C.green,
                               fn = function() act(u.onMap and "store" or "issue", { unitID = u.id }) end },
-                            FL.State.canManage and { label = "ДОСТУП И СПИСАНИЕ (ПКМ)", color = C.cardHov,
+                            FL.State.canManage and { label = "НАСТРОИТЬ", color = C.cardHov,
                               fn = function()
                                   local m = DermaMenu()
                                   for _, item in ipairs(menu) do
