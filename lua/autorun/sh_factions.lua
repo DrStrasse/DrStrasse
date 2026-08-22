@@ -1316,6 +1316,44 @@ if SERVER then
         return true
     end
 
+    -- Суперадмин назначает СЕБЯ напрямую: это не приглашение и не создаёт
+    -- окно самому себе. Можно выбрать обычную роль либо стать лидером.
+    local function assignSelfToFaction(ply, factionName, role, dept, subdept, leader)
+        if not (IsValid(ply) and ply:IsSuperAdmin()) then return false, "Только суперадмин" end
+        local f = Factions[tostring(factionName or "")]
+        if not f then return false, "Фракция не найдена" end
+        ensureDefaults(f, factionName)
+        local selfKey = memberKey(ply)
+        local current = getFactionOfPlayer(selfKey)
+        if current and current ~= factionName then
+            local ok, err = removeMember(current, selfKey, ply, "superadmin_self_reassign")
+            if not ok then return false, err end
+        end
+        if leader == true then
+            local ok, err = changeLeader(factionName, selfKey)
+            if not ok then return false, err end
+        elseif not f.Members[selfKey] then
+            local ok, err = addMember(factionName, selfKey, role, dept)
+            if not ok then return false, err end
+        end
+        if leader ~= true then
+            local ok, err = setMemberRole(factionName, selfKey, tostring(role or getDefaultMemberRole(f)), ply)
+            if not ok then return false, err end
+        end
+        if dept and tostring(dept) ~= "" then
+            local ok, err = setMemberDepartment(factionName, selfKey, tostring(dept), ply)
+            if not ok then return false, err end
+        end
+        if subdept and tostring(subdept) ~= "" then
+            local ok, err = setMemberSubdepartment(factionName, selfKey, tostring(subdept), ply)
+            if not ok then return false, err end
+        end
+        syncPlayerFactionNW(ply)
+        broadcastFactionData()
+        if GRM.Audit and GRM.Audit.Write then GRM.Audit.Write("factions", "self_assign", ply, { faction=factionName, characterKey=selfKey }, { role=role, department=dept, subdepartment=subdept, leader=leader==true }) end
+        return true, leader == true and "Вы назначены лидером фракции" or "Вы назначены участником фракции"
+    end
+
     -- --------------------
     -- ПРИГЛАШЕНИЯ
     -- --------------------
@@ -1536,6 +1574,10 @@ if SERVER then
             local faction, shift = getFactionAndShift()
             if not faction then return end
             local ok, err = moveDepartment(faction, args[1 + shift], args[2 + shift])
+            done(ok, err)
+        elseif action == "assignSelf" then
+            if not isSuperAdmin then done(false, "Только суперадмин") return end
+            local ok, err = assignSelfToFaction(ply, args[1], args[2], args[3], args[4], args[5] == true)
             done(ok, err)
         elseif action == "inviteMember" then
             local faction, shift = getFactionAndShift()
@@ -3428,6 +3470,30 @@ if CLIENT then
             local steam   = targetEntry:GetText()
             if not faction or faction == "" or steam == "" then return end
             local role,dept=roleCombo:GetValue()or"",deptCombo:GetValue()or"";confirmInvite(faction,steam,role,dept,function()sendAction("inviteMember",{faction,steam,role,dept},function(ok,msg)if ok then notification.AddLegacy(msg~=""and msg or"Приглашение отправлено",NOTIFY_GENERIC,5)else notification.AddLegacy("Ошибка: "..msg,NOTIFY_ERROR,4)end end)end)
+        end
+
+        if LocalPlayer():IsSuperAdmin() then
+            local btnSelf = styledButton(memberPanel, "★ Назначить себя", Color(54, 160, 112), Color(68, 190, 132))
+            btnSelf:SetPos(15, Y + 36) btnSelf:SetSize(190, 30)
+            btnSelf.DoClick = function()
+                local faction = factionCombo3:GetValue()
+                if faction == "" then return end
+                local role, dept = roleCombo:GetValue() or "", deptCombo:GetValue() or ""
+                sendAction("assignSelf", { faction, role, dept, "", false }, function(ok, msg)
+                    notification.AddLegacy(msg or "", ok and NOTIFY_GENERIC or NOTIFY_ERROR, 4)
+                end)
+            end
+            local btnSelfLeader = styledButton(memberPanel, "★ Сделать лидером", Color(170, 120, 48), Color(205, 150, 60))
+            btnSelfLeader:SetPos(210, Y + 36) btnSelfLeader:SetSize(190, 30)
+            btnSelfLeader.DoClick = function()
+                local faction = factionCombo3:GetValue()
+                if faction == "" then return end
+                local dept = deptCombo:GetValue() or ""
+                sendAction("assignSelf", { faction, "", dept, "", true }, function(ok, msg)
+                    notification.AddLegacy(msg or "", ok and NOTIFY_GENERIC or NOTIFY_ERROR, 4)
+                end)
+            end
+            Y = Y + 36
         end
 
         local btnRemoveMember = styledButton(memberPanel, "✕ Удалить", THEME.danger, THEME.dangerHover)
