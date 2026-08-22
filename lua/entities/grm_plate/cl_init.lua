@@ -106,7 +106,12 @@ function ENT:DrawTranslucent()
     local pos = center + nrm * lift
         + right * (face.moveX or 0) + up * (face.moveY or 0)
 
-    local ang = right:AngleEx(up)
+    -- Facepunch cam.Start3D2D: +X идёт по Forward угла, +Y — по -Right.
+    -- Для поля знака dx=right, dy=-up, значит угол строится строго как
+    -- dx:AngleEx(dx:Cross(-dy)) = right:AngleEx(right:Cross(up)).
+    -- Раньше в Up передавался up вместо нормали, и вся 3D2D-плашка
+    -- вставала ребром: белая модель и зелёное поле разъезжались.
+    local ang = right:AngleEx(nrm)
     if (face.tiltR or 0) ~= 0 then ang:RotateAroundAxis(ang:Forward(), face.tiltR) end
     if (face.tiltP or 0) ~= 0 then ang:RotateAroundAxis(ang:Right(), face.tiltP) end
     if (face.tiltY or 0) ~= 0 then ang:RotateAroundAxis(ang:Up(), face.tiltY) end

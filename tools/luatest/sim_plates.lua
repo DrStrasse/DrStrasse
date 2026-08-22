@@ -581,6 +581,8 @@ local cl = (function()
 end)()
 ok(cl:find("right:Cross(up)", 1, true) ~= nil,
    "нормаль берётся как векторное произведение осей надписи")
+ok(cl:find("local ang = right:AngleEx(nrm)", 1, true) ~= nil,
+   "3D2D-угол строится по нормали плоскости, а не по оси up")
 ok(cl:find("local function planeAxes(ent, face)", 1, true) ~= nil
    and cl:find("math.abs(dLong.z) <= math.abs(dShort.z)", 1, true) ~= nil,
    "оси строки выбираются АВТОМАТИЧЕСКИ по положению знака в мире")
