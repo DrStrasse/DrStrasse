@@ -102,21 +102,21 @@ do
         "у дилерской позиции устойчивый идентификатор")
     ok(hasT(fleet, '("dealer:%s:%s:%s"):format(class, faction, tostring(crc))'),
         "id включает цену/категорию — у разных ценников разные позиции")
-    ok(hasT(core, "marketID=inMarket and mk or\"\"") and hasT(core, "marketReady=inMarket"),
-        "дилер кладёт id закупки ТОЛЬКО если класс добавлен суперадмином в каталог")
+    ok(hasT(core, "GRM.Fleet.Entry and GRM.Fleet.Entry(mk)~=nil") and hasT(core, "marketReady=inMarket"),
+        "служебная карточка дилера получает живой id закупки автопарка")
     ok(hasT(core, 'local marketID=net.ReadString()or""'),
         "сервер закупки получает точный id с карточки")
-    ok(hasT(core, "local exact=FL.Market and FL.Market[tostring(marketID)] or nil")
-        and hasT(core, "Эта машина не выставлена в каталог закупки суперадмином"),
-        "закупка принимает только позиции из каталога суперадмина")
-    ok(not hasT(fleet, "for id, entry in pairs(FL.DealerMarket and FL.DealerMarket() or {}) do"),
-        "дилерские позиции НЕ попадают в закупку автоматически — только по каталогу суперадмина")
+    ok(hasT(core, "local exact=FL.Entry and FL.Entry(marketID) or nil")
+        and hasT(core, "Позиция дилера изменилась"),
+        "сервер повторно получает именно текущую позицию дилера")
+    ok(hasT(fleet, "for id, entry in pairs(FL.DealerMarket()) do"),
+        "служебные позиции дилеров автоматически входят в каталог закупки")
     ok(hasT(core, 'elseif op=="fleet_buy"then'),
         "у дилера есть операция закупки в автопарк")
     ok(hasT(core, "local made,err=FL.Buy(ply,pick.id,1,wantGarage)"),
         "закупка идёт через единый FL.Buy: бюджет, лимиты, гараж")
-    ok(hasT(cl, "НЕТ В КАТАЛОГЕ ЗАКУПКИ") and hasT(cl, "marketReady == true"),
-        "служебная позиция: кнопка «ЗАКУПИТЬ» только когда суперадмин добавил её в каталог")
+    ok(hasT(cl, "КАТАЛОГ АВТОПАРКА ЗАГРУЖАЕТСЯ") and hasT(cl, "marketReady == true"),
+        "служебная карточка сообщает только о загрузке каталога, а не требует ручной настройки рынка")
     ok(hasT(cl, 'send(dealer, "fleet_buy", v.class, targetGarage, tostring(v.marketID or ""))'),
         "кнопка шлёт закупку с выбранным гаражом и точным ID позиции")
 

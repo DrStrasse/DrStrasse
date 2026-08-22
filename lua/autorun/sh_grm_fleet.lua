@@ -290,16 +290,28 @@ function FL.Entry(id)
 end
 function FL.Unit(id) return FL.Units[tostring(id or "")] end
 
---[[ СПИСОК ЗАКУПКИ — ТОЛЬКО КАТАЛОГ СУПЕРАДМИНА (заказ владельца 22.08).
-     Раньше сюда автоматически попадали служебные позиции дилеров фракций,
-     и игрок мог «закупить» машину, которую суперадмин для закупки не
-     выставлял. Теперь закупка работает только по позициям, добавленным
-     в `FL.Market` (вкладка «Рынок»). Дилерские карточки остаются у дилера
-     (для выдачи/оформления), но сами в закупку не попадают. ]]
+--[[ Служебный ассортимент дилера — это тоже каталог закупки.
+     Иначе игрок видит полицейскую машину в дилере, но получает тупик «НЕТ
+     В КАТАЛОГЕ ЗАКУПКИ», а терминал говорит «рынок пуст». Именно так
+     служебная машина раньше появлялась на карте без записи автопарка и
+     исчезала при рестарте. Личная техника в этот список не входит.
+
+     Собственный рынок суперадмина остаётся: он нужен для позиций, которых
+     нет у дилера, и для отдельных лимитов/настроек. ]]
 function FL.MarketList()
-    local out = {}
+    local out, seen = {}, {}
     for id, entry in pairs(FL.Market) do
-        if istable(entry) then entry.id = id out[#out + 1] = entry end
+        if istable(entry) then
+            entry.id = id
+            out[#out + 1] = entry
+            seen[tostring(id)] = true
+        end
+    end
+    for id, entry in pairs(FL.DealerMarket()) do
+        if istable(entry) and not seen[tostring(id)] then
+            out[#out + 1] = entry
+            seen[tostring(id)] = true
+        end
     end
     table.sort(out, function(a, b)
         local ta = (FL.Tiers[a.tier or "civil"] or FL.Tiers.civil).order
@@ -684,6 +696,55 @@ if SERVER then
         end
         FL._loaded = true
         return true
+    end
+
+    --[[ Одноразовая миграция старой ошибки: прежний путь дилера мог выдать
+         служебную машину в мир, но не создать единицу FL.Units. После
+         рестарта сама машина исчезала, а физический номер (где уже есть
+         ключ `fleet:<id>`) оставался. По такому номеру можно безопасно
+         восстановить только очевидную запись: ключ, класс, имя, фракцию и
+         свободный гараж этой фракции. Без номера ничего не выдумываем. ]]
+    function FL.RecoverOrphanPlateUnits()
+        if FL._plateRecoveryDone then return 0 end
+        FL._plateRecoveryDone = true
+        local plates = GRM.Plates and GRM.Plates.Data and GRM.Plates.Data.plates
+        local garages = GRM.Garage and GRM.Garage.Garages
+        if not istable(plates) or not istable(garages) then return 0 end
+        local recovered = 0
+        for number, rec in pairs(plates) do
+            local mount = istable(rec) and rec.mount or nil
+            local key = mount and tostring(mount.parentKey or mount.vehicleID or "") or ""
+            local id = key:match("^fleet:(.+)$")
+            if id and id ~= "" and not FL.Units[id] then
+                local faction = tostring(rec.faction or "")
+                local garageID = ""
+                for gid, garage in pairs(garages) do
+                    if istable(garage) and #(garage.slots or {}) > 0
+                        and (tostring(garage.faction or "") == faction or tostring(garage.kind or "") == "public") then
+                        garageID = tostring(gid)
+                        break
+                    end
+                end
+                local class = tostring(mount.parentClass or "")
+                if faction ~= "" and garageID ~= "" and class ~= "" then
+                    FL.Units[id] = {
+                        id = id, faction = faction, class = class,
+                        name = tostring(mount.parentName or class), model = "", price = 0,
+                        kind = "government", garageID = garageID, status = "stored",
+                        boughtAt = os.time(), boughtBy = "migration:plate",
+                        boughtByName = "Восстановление по номерному знаку",
+                        marketID = "legacy_plate_recovery", plate = tostring(number),
+                        recoveredFromPlate = true,
+                    }
+                    recovered = recovered + 1
+                end
+            end
+        end
+        if recovered > 0 then
+            FL.FlushFleet("восстановление потерянных единиц по номерам")
+            print(("[GRM Fleet] восстановлено единиц по номерным знакам: %d"):format(recovered))
+        end
+        return recovered
     end
 
     -- ── рынок (суперадмин) ──────────────────────────────────────────
@@ -1315,6 +1376,11 @@ if SERVER then
            1) читаем базу немедленно (запись разблокирована);
            2) планировщик перечитывает базу ТОЛЬКО при смене карты. ]]
     boot()
+    -- Plates загружается отдельным autorun-файлом позже автопарка.
+    -- Откладываем миграцию до готовности всех данных карты.
+    timer.Simple(2, function()
+        if FL._loaded then FL.RecoverOrphanPlateUnits() end
+    end)
 
     local function mapStart()
         local current = string.lower(game.GetMap() or "unknown")

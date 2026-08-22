@@ -703,5 +703,21 @@ do
     ok(FS[fleetPath] == FS[backupPath], "резерв лечит основной файл после битой записи")
 end
 
+-- Старый дилер мог оставить только номер с fleet:<id>. Такая запись должна
+-- вернуть конкретную единицу в гараж, но не создавать транспорт по номеру
+-- без класса, фракции и места стоянки.
+print("\n=== ВОССТАНОВЛЕНИЕ ПО НОМЕРНОМУ ЗНАКУ ===")
+do
+    GRM.Plates = { Data = { plates = {
+        TEST999 = { faction = "police", mount = { parentKey = "fleet:lost_plate_unit", parentClass = "sim_patrol", parentName = "Потерянный седан" } },
+    } } }
+    FL._plateRecoveryDone = false
+    local restored = FL.RecoverOrphanPlateUnits()
+    ok(restored == 1 and FL.Unit("lost_plate_unit") ~= nil, "номер fleet:id восстанавливает потерянную единицу", restored)
+    local restoredGarage = G.Get(FL.Unit("lost_plate_unit").garageID)
+    ok(restoredGarage and #(restoredGarage.slots or {}) > 0 and FL.Unit("lost_plate_unit").status == "stored",
+        "восстановленная единица лежит в пригодном гараже", FL.Unit("lost_plate_unit").garageID)
+end
+
 print(("\nFLEET: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

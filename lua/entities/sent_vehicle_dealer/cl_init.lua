@@ -347,7 +347,7 @@ net.Receive("GRM_VD_Open", function()
               color = personal and C.gold or C.teal },
             { text = fac ~= "" and ("Организация: " .. fac) or ("Система: " .. tostring(v.system or "source")),
               color = fac ~= "" and C.accent or C.dim },
-            { text = (not personal and not marketReady) and "Добавьте машину в «Рынок» суперадмина, чтобы закупить" or "",
+            { text = (not personal and not marketReady) and "Служебный каталог автопарка ещё не загрузился — обновите окно" or "",
               color = C.dim },
             { text = limit > 0 and ("У вас: %d из %d"):format(owned, limit) or "",
               color = capped and C.red or C.dim },
@@ -357,7 +357,7 @@ net.Receive("GRM_VD_Open", function()
         local buyLabel = capped and "ЛИМИТ"
             or (personal and ("КУПИТЬ · " .. money(v.price or 0))
             or (marketReady and ("ЗАКУПИТЬ В АВТОПАРК · " .. money(v.price or 0))
-            or "НЕТ В КАТАЛОГЕ ЗАКУПКИ"))
+            or "КАТАЛОГ АВТОПАРКА ЗАГРУЖАЕТСЯ"))
 
         return VC.Cell(grid, {
             name = v.name or v.class, class = v.category or v.class, model = v.model,

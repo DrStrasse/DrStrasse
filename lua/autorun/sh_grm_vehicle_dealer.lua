@@ -615,7 +615,7 @@ if SERVER then
     end
    end
   end
-  local catalog={}for _,e in ipairs(dealer.VD_Vehicles or{})do if VD.CanUseEntry(ply,e)then local i=VD.VehicleInfo(e.class);local mk=(GRM.Fleet and GRM.Fleet.DealerEntryID)and GRM.Fleet.DealerEntryID(dealer,e)or"";local personal=VD.EntryKind(e)=="personal";local inMarket=not personal and GRM.Fleet and GRM.Fleet.Market and GRM.Fleet.Market[tostring(mk)]~=nil;catalog[#catalog+1]={class=e.class,name=e.name or i.name,model=i.model,system=i.system,price=math.max(0,math.floor(tonumber(e.price)or 0)),category=e.category or"Транспорт",service=VD.EntryKind(e)~="personal",faction=e.faction,owned=VD.CountClass(ply,e.class),classLimit=VD.ClassLimit(),factionName=(e.faction and e.faction~=""and((GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(e.faction))or e.faction)or""),ownershipType=VD.EntryKind(e),ownershipName=VD.VehicleKinds[VD.EntryKind(e)],marketID=inMarket and mk or"",marketReady=inMarket}end end;local garageChoices=(GRM.Garage and GRM.Garage.ChoicesFor)and GRM.Garage.ChoicesFor(ply,dealer)or{}
+  local catalog={}for _,e in ipairs(dealer.VD_Vehicles or{})do if VD.CanUseEntry(ply,e)then local i=VD.VehicleInfo(e.class);local mk=(GRM.Fleet and GRM.Fleet.DealerEntryID)and GRM.Fleet.DealerEntryID(dealer,e)or"";local personal=VD.EntryKind(e)=="personal";local inMarket=not personal and GRM.Fleet and GRM.Fleet.Entry and GRM.Fleet.Entry(mk)~=nil;catalog[#catalog+1]={class=e.class,name=e.name or i.name,model=i.model,system=i.system,price=math.max(0,math.floor(tonumber(e.price)or 0)),category=e.category or"Транспорт",service=VD.EntryKind(e)~="personal",faction=e.faction,owned=VD.CountClass(ply,e.class),classLimit=VD.ClassLimit(),factionName=(e.faction and e.faction~=""and((GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(e.faction))or e.faction)or""),ownershipType=VD.EntryKind(e),ownershipName=VD.VehicleKinds[VD.EntryKind(e)],marketID=inMarket and mk or"",marketReady=inMarket}end end;local garageChoices=(GRM.Garage and GRM.Garage.ChoicesFor)and GRM.Garage.ChoicesFor(ply,dealer)or{}
   net.Start("GRM_VD_Open")net.WriteEntity(dealer)net.WriteString(dealer:GetDealerName())net.WriteTable(catalog)net.WriteTable(garageRows)net.WriteTable(VD.ActiveRows(ply))net.WriteTable(garageChoices)
    net.WriteString(VD.DeliveryMode(dealer))net.WriteBool(VD.ShowRetrieve(dealer))net.WriteTable(fleetRows)net.Send(ply)end
  local function result(ply,ok,msg)net.Start("GRM_VD_Result")net.WriteBool(ok)net.WriteString(msg)net.Send(ply);if GRM.Notify then GRM.Notify(ply,msg,ok and 100 or 255,ok and 220 or 110,ok and 130 or 90)end end
@@ -711,16 +711,15 @@ if SERVER then
         Клиент шлёт marketID вместе с классом. Если позиция с этим id
         пропала (дилер пересохранён, цена/ассортимент изменились) — не
         подменяем её другой карточкой класса: это была бы чуждая цена. ]]
-   --[[ ЗАКУПКА ТОЛЬКО ИЗ КАТАЛОГА, СОБРАННОГО СУПЕРАДМИНОМ.
-        Дилерская карточка сама по себе НЕ добавляет машину в закупку:
-        пока класса нет во `FL.Market`, закупка невозможна. Тогда «закупить
-        в автопарк» у дилера для таких позиций не проходит. ]]
+   -- Служебная карточка дилера сама является живой позицией автопарка.
+   -- Берём её повторно на сервере: клиент не может подменить класс, цену
+   -- или позицию другого дилера.
    if marketID~="" then
-    local exact=FL.Market and FL.Market[tostring(marketID)] or nil
+    local exact=FL.Entry and FL.Entry(marketID) or nil
     if exact and tostring(exact.class)==class then
      pick=exact
     else
-     result(ply,false,"Эта машина не выставлена в каталог закупки суперадмином")
+     result(ply,false,"Позиция дилера изменилась. Обновите каталог и повторите закупку")
      return
     end
    end
@@ -734,7 +733,7 @@ if SERVER then
      end
     end
    end
-   if not pick then result(ply,false,"Эта машина не выставлена в каталог закупки суперадмином")return end
+   if not pick then result(ply,false,"Позиция закупки не найдена: обновите каталог дилера")return end
    local made,err=FL.Buy(ply,pick.id,1,wantGarage)
    result(ply,made~=nil,made and("Закуплено в автопарк: "..tostring(pick.name))or tostring(err or"Не удалось закупить"))
    if made then VD.Push(ply,dealer)end
