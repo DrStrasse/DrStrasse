@@ -706,6 +706,16 @@ do
     FL.Load()
     ok(table.Count(FL.Units) == before, "битый основной файл восстанавливает закупки из резерва", table.Count(FL.Units))
     ok(FS[fleetPath] == FS[backupPath], "резерв лечит основной файл после битой записи")
+
+    -- Даже если основная пара main/.bak обнулена сторонним писателем,
+    -- независимое зеркало возвращает купленные единицы.
+    local mirrorPath = "grm_fleet/fleet_recovery_sim_map.json"
+    ok(FS[mirrorPath] ~= nil, "есть независимое зеркало автопарка", mirrorPath)
+    FS[fleetPath], FS[backupPath] = "", ""
+    FL.Units, FL.Market, FL.DealerOverrides = {}, {}, {}
+    FL._loaded = false
+    FL.Load()
+    ok(table.Count(FL.Units) == before, "зеркало возвращает парк при потере main и bak", table.Count(FL.Units))
 end
 
 -- Старый дилер мог оставить только номер с fleet:<id>. Такая запись должна

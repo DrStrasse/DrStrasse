@@ -364,7 +364,11 @@ if SERVER then
 
     local DIR = "grm_fleet"
     local MARKET_FILE = DIR .. "/market.json"
-    local function fleetFile() return DIR .. "/fleet_" .. string.lower(game.GetMap() or "unknown") .. ".json" end
+    local function fleetMapName() return string.lower(game.GetMap() or "unknown") end
+    local function fleetFile() return DIR .. "/fleet_" .. fleetMapName() .. ".json" end
+    -- Независимое зеркало: не зарегистрировано в GRM.Save и поэтому не
+    -- может быть переписано его очередью пустого состояния при сбое загрузки.
+    local function fleetMirrorFile() return DIR .. "/fleet_recovery_" .. fleetMapName() .. ".json" end
 
     local function ensureDir()
         if not file.IsDir(DIR, "DATA") then file.CreateDir(DIR) end
@@ -505,7 +509,7 @@ if SERVER then
             if istable(unit) then unit.id = id arr[#arr + 1] = unit end
         end
         table.sort(arr, function(a, b) return tostring(a.id) < tostring(b.id) end)
-        return { version = 1, units = arr }
+        return { version = 2, map = fleetMapName(), savedAt = os.time(), units = arr }
     end
 
     --[[ Двойная запись критичного парка. Одна синхронная file.Write не даёт
@@ -560,9 +564,15 @@ if SERVER then
     function FL.SaveFleetNow()
         if not FL._loaded then return false end
         local data = fleetPayload()
-        local ok = writeJSON(fleetFile(), data)
-        debugPrint(("SAVE fleet ok=%s path=%s units=%d"):format(
-            tostring(ok), fleetFile(), #((istable(data) and data.units) or {})))
+        local mainOK = writeJSON(fleetFile(), data)
+        local mirrorOK = writeJSON(fleetMirrorFile(), data)
+        local ok = mainOK and mirrorOK
+        -- Эта строка намеренно всегда в консоли: при репорте «после
+        -- рестарта пусто» она даёт путь и факт read-back, а не догадки.
+        print(("[GRM Fleet] SAVE %s · units=%d · main=%s · mirror=%s"):format(
+            ok and "OK" or "ОШИБКА", #((istable(data) and data.units) or {}),
+            fleetFile(), fleetMirrorFile()))
+        debugPrint(("SAVE fleet main=%s mirror=%s"):format(tostring(mainOK), tostring(mirrorOK)))
         return ok
     end
 
@@ -682,6 +692,19 @@ if SERVER then
             end
         end
         local f = readJSON(fleetFile())
+        local mirror = readJSON(fleetMirrorFile())
+        local mainCount = #((istable(f) and f.units) or {})
+        local mirrorCount = #((istable(mirror) and mirror.units) or {})
+        local mainAt = tonumber(istable(f) and f.savedAt) or 0
+        local mirrorAt = tonumber(istable(mirror) and mirror.savedAt) or 0
+        -- Если основной файл после рестарта оказался пустым/старее зеркала,
+        -- НЕ считаем парк пустым: берём более свежую подтверждённую копию.
+        if istable(mirror) and (not istable(f) or mirrorAt > mainAt or (mainCount == 0 and mirrorCount > 0)) then
+            f = mirror
+            writeJSON(fleetFile(), mirror)
+            print(("[GRM Fleet] парк восстановлен из независимого зеркала: %s (%d ед.)")
+                :format(fleetMirrorFile(), mirrorCount))
+        end
         for _, unit in ipairs(istable(f) and f.units or {}) do
             if istable(unit) and tostring(unit.id or "") ~= "" then
                 FL.Units[tostring(unit.id)] = unit
@@ -916,7 +939,20 @@ if SERVER then
             made[#made + 1] = unit
         end
         FL.SaveFleet("закупка техники")
-        FL.FlushFleet("закупка техники")
+        if not FL.FlushFleet("закупка техники") then
+            -- Нельзя подтверждать покупку, если read-back не подтвердил
+            -- её на диске: иначе игрок увидит технику до рестарта и потеряет
+            -- её вместе с бюджетом.
+            for _, unit in ipairs(made) do FL.Units[unit.id] = nil end
+            if total > 0 and GRM.FactionBudgetAdd then
+                GRM.FactionBudgetAdd(faction, total, "откат: не записалась закупка техники")
+            end
+            local share = math.Clamp(FL.StateShareCvar:GetInt(), 0, 100)
+            if total > 0 and share > 0 and GRM.Economy and GRM.Economy.StateBudgetAdd then
+                GRM.Economy.StateBudgetAdd(-math.floor(total * share / 100), "откат: не записалась закупка техники")
+            end
+            return nil, "Закупка отменена: автопарк не подтвердил запись на диск. Проверьте консоль сервера"
+        end
 
         if GRM.Audit and GRM.Audit.Write then
             GRM.Audit.Write("fleet", "buy", ply, { faction = faction, class = entry.class },
@@ -1343,10 +1379,12 @@ if SERVER then
             :format(table.Count(FL.Market or {}), table.Count(FL.Units or {})))
         local m = readJSON(MARKET_FILE)
         local f = readJSON(fleetFile())
-        say(("[Автопарк] на диске: рынок %d, парк %d, цены_overrides %d (%s, %s)"):format(
+        local mirror = readJSON(fleetMirrorFile())
+        say(("[Автопарк] на диске: рынок %d, парк %d, зеркало %d, цены_overrides %d"):format(
             #((istable(m) and m.market) or {}), #((istable(f) and f.units) or {}),
-            #((istable(m) and m.overrides) or {}),
-            MARKET_FILE, fleetFile()))
+            #((istable(mirror) and mirror.units) or {}), #((istable(m) and m.overrides) or {})))
+        say(("[Автопарк] пути: рынок %s | парк %s | зеркало %s"):format(
+            MARKET_FILE, fleetFile(), fleetMirrorFile()))
         say(("[Автопарк] в памяти: цены_overrides %d"):format(table.Count(FL.DealerOverrides or {})))
         for id, meta in pairs(FL.DealerOverrides or {}) do
             say(("    %s  →  цена %s"):format(tostring(id), tostring(meta and meta.price or "?")))
