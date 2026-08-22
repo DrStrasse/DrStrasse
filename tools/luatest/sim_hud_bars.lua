@@ -39,14 +39,14 @@ ok(list[1].id == "stamina" and list[2].id == "hunger" and list[3].id == "weight"
    "полосы идут в заданном порядке: выносливость → сытость → вес")
 
 print("\n=== 2. ПАНЕЛЬ СОБИРАЕТСЯ ПОД СОДЕРЖИМОЕ ===")
-ok(has("local ph = pad + #rows * (labelH + barH + gap) + moneyH + pad - gap"),
+ok(has("local ph = headerH + pad + #rows * (rowH + gap) + moneyH + pad - gap"),
    "высота панели считается по числу полос, а не задана константой")
 ok(has('label = "БРОНЯ"'), "броня показывается всегда, даже при 0")
 ok(has('rows[#rows + 1] = { label = "ЗДОРОВЬЕ"'), "здоровье в общем списке, а не отдельным кодом")
 ok(has("local ok, value, max, text, color, hidden = pcall(def.Get)"),
    "чужая полоса вызывается через pcall — ошибка модуля не роняет HUD")
-ok(has('draw.SimpleText("НАЛИЧНЫЕ"') and has('draw.SimpleText("НА СЧЁТУ"'),
-   "деньги внизу панели одним блоком")
+ok(has('label = "НАЛИЧНЫЕ"') and has('label = "СЧЁТ"'),
+   "финансы вынесены в две нижние кассеты")
 
 print("\n=== 3. МОДУЛИ БОЛЬШЕ НЕ РИСУЮТ СВОЁ ===")
 local move = read("lua/autorun/sh_grm_movement.lua")

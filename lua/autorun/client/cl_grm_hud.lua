@@ -513,51 +513,61 @@ local function DrawMainHUD()
         end
     end
 
-    -- ── раскладка панели (GRM/XUI) ──────────────────────────────────
-    local pw = 252
-    local pad, barH, gap, labelH = 12, 14, 8, 12
-    local headerH = 26
-    local moneyH = 46
-    -- Панель не должна уходить за верх экрана ни при каком числе полос.
-    local ph = pad + #rows * (labelH + barH + gap) + moneyH + pad - gap
-    ph = ph + headerH
+    -- ── статусный модуль GRM/XUI ───────────────────────────────────
+    -- Не «форма с подписями», а компактный служебный монитор: каждая
+    -- характеристика — самостоятельная крупная строка с цветным рейлом,
+    -- заливкой и значением внутри. Читается в движении, без микротекста.
+    local pw = 310
+    local pad, rowH, gap = 12, 25, 6
+    local headerH, moneyH = 34, 56
+    local ph = headerH + pad + #rows * (rowH + gap) + moneyH + pad - gap
     ph = math.min(ph, sh - 32)
     local px, py = 16, math.max(16, sh - 16 - ph)
 
-    -- Корпус: тёмный сине-стальной, скругление 8, тонкая неоновая обводка.
-    draw.RoundedBox(8, px + 2, py + 2, pw, ph, cfg.bgShadow)
+    draw.RoundedBox(8, px + 3, py + 3, pw, ph, cfg.bgShadow)
     draw.RoundedBox(8, px, py, pw, ph, cfg.bgColor)
-    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, math.floor(cfg.lineColor.a or 255))
-    surface.DrawOutlinedRect(px, py, pw, ph)
-    -- Шапка: панель темнее, скруглены только верхние углы.
-    draw.RoundedBoxEx(6, px, py, pw, headerH, cfg.panelHeader, true, true, false, false)
-    draw.SimpleText("СОСТОЯНИЕ", "GRM_HUD_Label", px + pad, py + headerH / 2, cfg.textColor,
-        TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    draw.RoundedBox(2, px + pad, py + headerH - 1, pw - pad * 2, 2, cfg.lineColor)
+    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 220)
+    surface.DrawOutlinedRect(px, py, pw, ph, 1)
+    draw.RoundedBoxEx(8, px, py, pw, headerH, cfg.panelHeader, true, true, false, false)
+    draw.RoundedBox(0, px, py, 4, headerH, cfg.hpColorFull)
+    draw.SimpleText("СОСТОЯНИЕ", "GRM_HUD_Value", px + 14, py + 11, cfg.textColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    draw.SimpleText("GRM // LIVE", "GRM_HUD_Label", px + pw - 12, py + 12, cfg.labelColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 180)
+    surface.DrawRect(px + 12, py + headerH - 2, pw - 24, 2)
 
     local x, w = px + pad, pw - pad * 2
     local y = py + headerH + pad
     for _, row in ipairs(rows) do
-        draw.SimpleText(row.label, "GRM_HUD_Label", x, y, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-        draw.SimpleText(row.text, "GRM_HUD_Label", x + w, y, cfg.labelColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
-        y = y + labelH
-        -- Полоса: подложка panel2, заливка неоновым цветом, скругление 4.
-        draw.RoundedBox(4, x, y, w, barH, Color(22, 37, 56, 245))
-        if row.frac > 0 then draw.RoundedBox(4, x, y, math.max(2, w * row.frac), barH, row.color) end
-        y = y + barH + gap
+        local fillW = math.max(0, (w - 4) * row.frac)
+        draw.RoundedBox(4, x, y, w, rowH, Color(17, 29, 45, 255))
+        if fillW > 0 then
+            draw.RoundedBox(4, x + 4, y + 3, math.max(2, fillW), rowH - 6,
+                Color(row.color.r, row.color.g, row.color.b, 185))
+        end
+        draw.RoundedBox(2, x, y, 4, rowH, row.color)
+        draw.SimpleText(row.label, "GRM_HUD_Label", x + 12, y + rowH / 2, cfg.textColor,
+            TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText(row.text, "GRM_HUD_Value", x + w - 10, y + rowH / 2, cfg.textColor,
+            TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        y = y + rowH + gap
     end
 
-    -- ── деньги: наличные и счёт одной строкой каждая ────────────────
-    draw.SimpleText("НАЛИЧНЫЕ", "GRM_HUD_Label", x, y + 2, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    -- Финансы отдельной нижней кассетой: наличные и счёт не смешиваются с
+    -- жизненными показателями и читаются одним взглядом.
+    local half = (w - 6) * 0.5
     local cashTxt = (GRM.Format and GRM.Format(math.Round(anim.bal))) or ("$" .. string.Comma(math.Round(anim.bal)))
-    draw.SimpleText(cashTxt, "GRM_HUD_Money", x + w, y, cfg.moneyColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
-
-    draw.SimpleText("НА СЧЁТУ", "GRM_HUD_Label", x, y + 20, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
     local bankTxt = (GRM.PlayerBank ~= nil)
         and ((GRM.Format and GRM.Format(math.Round(anim.bank))) or ("$" .. string.Comma(math.Round(anim.bank))))
         or "—"
-    draw.SimpleText(bankTxt, "GRM_HUD_Money", x + w, y + 18, cfg.bankColor or cfg.moneyColor,
-        TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+    for i, card in ipairs({
+        { label = "НАЛИЧНЫЕ", value = cashTxt, color = cfg.moneyColor },
+        { label = "СЧЁТ", value = bankTxt, color = cfg.bankColor or cfg.moneyColor },
+    }) do
+        local cx = x + (i - 1) * (half + 6)
+        draw.RoundedBox(4, cx, y + 2, half, moneyH - 10, Color(14, 24, 38, 255))
+        draw.SimpleText(card.label, "GRM_HUD_Label", cx + 8, y + 10, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        draw.SimpleText(card.value, "GRM_HUD_Money", cx + half - 8, y + 29, card.color, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+    end
 
     -- ── патроны: отдельный блок справа снизу ────────────────────────
     if actual.ammo1 >= 0 then
