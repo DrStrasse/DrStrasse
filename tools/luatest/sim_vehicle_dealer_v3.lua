@@ -147,8 +147,8 @@ do
         "пока игрок печатает, окно учёта не трогают")
     ok(hasT(fleet, "local function stateSignature(data)") and hasT(fleet, "if sig == FL._sig then return end"),
         "окно автопарка тоже перестраивается только по изменению")
-    ok(hasT(fleet, "if typingNow() then FL._sigPending = sig return end"),
-        "и не сбивает набранный текст")
+    ok(hasT(fleet, "Поля формы уже живут в FL.Form") and hasT(fleet, "FL._sig, FL._sigPending = sig, nil"),
+        "живой снимок пересобирается сразу, а поля формы переживают пересборку")
 end
 
 print(("VEHICLE DEALER V3: %d/%d failures=%d"):format(checks-failed,checks,failed));if failed>0 then os.exit(1)end

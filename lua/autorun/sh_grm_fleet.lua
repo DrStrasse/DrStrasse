@@ -1129,6 +1129,7 @@ if SERVER then
         ent.GRMFleetFaction = unit.faction
         ent.GRMGarageOwner = ply
         if VD.TagVehicle then VD.TagVehicle(ent, ply, unit.class, tostring(unit.kind or "government"), unit) end
+        if VD.AssignLockOwner then VD.AssignLockOwner(ent,ply,"government",unit.faction) end
         ent:SetNWString("GRM_FleetFaction", tostring(unit.faction))
         FL.Active[unit.id] = ent
         unit.status = "active"

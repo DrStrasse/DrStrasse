@@ -253,7 +253,12 @@ function VK.SyncKeyRing(ply)
 end
 
 function VK.IsFactionMember(ply, factionName)
-    if not IsValid(ply) or not factionName or not istable(Factions) then return false end
+    if not IsValid(ply) or not factionName then return false end
+    -- Фракции GRM после CharacterKey могут хранить состав не по SteamID.
+    -- NW-поле публикуется ядром именно для текущего персонажа и является
+    -- надёжным быстрым путём для замков служебной техники.
+    if tostring(ply:GetNWString("GRM_Faction", "")) == tostring(factionName) then return true end
+    if not istable(Factions) then return false end
 
     local faction = Factions[factionName]
     if not istable(faction) or not istable(faction.Members) then return false end

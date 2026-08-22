@@ -344,6 +344,23 @@ if SERVER then
   if istable(record)and record.id then ent:SetNWString("GRM_VehicleRecord",tostring(record.id))end
  end
 
+ -- Назначение замка выполняется после каждого пути выдачи. simfphys может
+ -- закончить инициализацию позже SpawnVehicle, поэтому повторяем на
+ -- следующем тике: без этого машина выглядит «без владельца» у рядового.
+ function VD.AssignLockOwner(ent,ply,kind,faction)
+  if not IsValid(ent)or not IsValid(ply)then return false end
+  local function apply()
+   if not IsValid(ent)then return end
+   if tostring(kind or"")=="government"and tostring(faction or"")~=""then
+    if VK and VK.SetFactionOwner then VK.SetFactionOwner(ent,tostring(faction))end
+   else
+    if VK and VK.SetPlayerOwner then VK.SetPlayerOwner(ent,ply)end
+   end
+  end
+  apply();timer.Simple(0,function()apply()end);timer.Simple(.35,function()apply()end)
+  return true
+ end
+
  --- Это машина, выданная дилером (для внешних модулей).
  function VD.IsDealerVehicle(ent)
   return IsValid(ent)and(ent.GRMGarageID~=nil or tostring(ent:GetNWString("GRM_VehicleClass",""))~="")
@@ -489,7 +506,7 @@ if SERVER then
   ent.GRMGarageID=id;ent.GRMGarageOwner=ply;ent.VD_Price=r.price
   VD.TagVehicle(ent,ply,r.class,tostring(r.ownershipType or"personal"),r)
   VD.Active[id]=ent
-  if GRM.VehicleKeys and GRM.VehicleKeys.SetPlayerOwner then pcall(GRM.VehicleKeys.SetPlayerOwner,ent,ply)elseif VK and VK.SetPlayerOwner then pcall(VK.SetPlayerOwner,ent,ply)end
+  if VD.AssignLockOwner then VD.AssignLockOwner(ent,ply,"personal") end
   hook.Run("GRM_VehicleIssued",ply,ent,r,place)
   return ent
  end
@@ -674,7 +691,7 @@ if SERVER then
    record.requestedGarage=tostring(wantGarage or""):sub(1,48);if personal then local g=garage(ply);g[id]=record;saveGarage()end;if IsValid(ent)then
     record.stored=false
     ent.GRMGarageID=id;ent.GRMGarageOwner=ply;ent.VD_Price=price;VD.TagVehicle(ent,ply,class,kind,record);VD.Active[id]=ent
-    if GRM.VehicleKeys and GRM.VehicleKeys.SetPlayerOwner then pcall(GRM.VehicleKeys.SetPlayerOwner,ent,ply)elseif VK and VK.SetPlayerOwner then pcall(VK.SetPlayerOwner,ent,ply)end
+    if VD.AssignLockOwner then VD.AssignLockOwner(ent,ply,"personal") end
    end
    hook.Run("GRM_VehicleDealerSpawned",ent,ply,class,record,dealer)
    local home=(GRM.Garage and GRM.Garage.Get)and GRM.Garage.Get(record.garageID)or nil
