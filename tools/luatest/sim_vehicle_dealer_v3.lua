@@ -45,4 +45,38 @@ ok(has(core,"elseif dealer.ApplyIdleAnimation then dealer:ApplyIdleAnimation(tru
 ok(has(animFix,"if ent.ApplyIdleAnimation then ent:ApplyIdleAnimation(true) return end"),
     "старый патч анимации делегирует энтити, второй копии списка нет")
 
+-- ── 22.08: служебная техника поштучно и класс для нескольких организаций ──
+do
+    local core = (function()
+        local f = io.open("lua/autorun/sh_grm_vehicle_dealer.lua", "rb")
+        local t = f:read("*a") f:close() return t
+    end)()
+    local cl = (function()
+        local f = io.open("lua/entities/sent_vehicle_dealer/cl_init.lua", "rb")
+        local t = f:read("*a") f:close() return t
+    end)()
+    local function hasT(src, needle) return src:find(needle, 1, true) ~= nil end
+
+    ok(hasT(core, "local fleetRows={}") and hasT(core, "FL.UnitsOf(faction)"),
+        "дилер отдаёт единицы служебного парка поштучно")
+    ok(hasT(core, 'net.WriteTable(fleetRows)'), "список единиц уходит клиенту")
+    ok(hasT(cl, "local function fleetCell(grid, v)") and hasT(cl, 'showRows(fleetUnits, "fleet")'),
+        "у каждой служебной машины своя ячейка и свой раздел")
+    ok(hasT(core, 'elseif op=="fleet_issue"or op=="fleet_store"then'),
+        "выдача и возврат идут по конкретной единице через единый диспетчер")
+
+    ok(hasT(core, "local function findEntry(dealer,class,ply)"),
+        "позиция ассортимента ищется с учётом игрока: один класс может стоять несколько раз")
+    ok(hasT(cl, "local function countClass(class)") and hasT(cl, "b:SetEnabled(true)"),
+        "класс не исчезает из настроек после назначения организации")
+    ok(not hasT(cl, "local function exists(class)"), "старая проверка «уже добавлен» убрана")
+
+    local cells = (function()
+        local f = io.open("lua/autorun/client/cl_grm_vehicle_cells.lua", "rb")
+        local t = f:read("*a") f:close() return t
+    end)()
+    ok(hasT(cells, "if not info.noPlate then"), "у позиции каталога нет таблички «БЕЗ НОМЕРА»")
+    ok(hasT(cl, "noPlate = true"), "каталог помечает свои ячейки как классы, а не машины")
+end
+
 print(("VEHICLE DEALER V3: %d/%d failures=%d"):format(checks-failed,checks,failed));if failed>0 then os.exit(1)end

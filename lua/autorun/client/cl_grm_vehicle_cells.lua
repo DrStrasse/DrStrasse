@@ -113,14 +113,20 @@ function VC.Cell(parent, info)
             draw.SimpleText(tostring(info.class), "GRMCell_Small", 12, 152, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
         end
 
-        -- номерной знак — как на машине, светлой табличкой
-        local pw = 96
-        draw.RoundedBox(4, 12, 172, pw, 20, plate ~= "" and Color(232, 236, 242) or Color(38, 44, 56))
-        draw.SimpleText(plate ~= "" and plate or "БЕЗ НОМЕРА", "GRMCell_Small", 12 + pw / 2, 182,
-            plate ~= "" and Color(20, 24, 32) or C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        --[[ Табличка номера рисуется только у РЕАЛЬНОЙ машины. У позиции
+             каталога (это класс, а не экземпляр) номера быть не может —
+             «БЕЗ НОМЕРА» там только путало. ]]
+        local stateX = 12
+        if not info.noPlate then
+            local pw = 96
+            draw.RoundedBox(4, 12, 172, pw, 20, plate ~= "" and Color(232, 236, 242) or Color(38, 44, 56))
+            draw.SimpleText(plate ~= "" and plate or "БЕЗ НОМЕРА", "GRMCell_Small", 12 + pw / 2, 182,
+                plate ~= "" and Color(20, 24, 32) or C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            stateX = 118
+        end
 
         if state then
-            draw.SimpleText(tostring(state.text or ""), "GRMCell_Small", 118, 182,
+            draw.SimpleText(tostring(state.text or ""), "GRMCell_Small", stateX, 182,
                 state.good and C.green or C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
 

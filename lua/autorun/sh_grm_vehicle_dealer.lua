@@ -278,7 +278,21 @@ if SERVER then
  end
  local function garage(ply)local k=key(ply);VD.Garages[k]=VD.Garages[k]or{};return VD.Garages[k],k end
  local function activeCount(ply)local n=0;for _,e in pairs(VD.Active)do if IsValid(e)and e.GRMGarageOwner==ply then n=n+1 end end;return n end
- local function findEntry(dealer,class)for _,e in ipairs(dealer.VD_Vehicles or{})do if e.class==class then return e end end end
+ --[[ Одна и та же машина может стоять в ассортименте НЕСКОЛЬКО раз — под
+      разные организации, цены и категории (заказ владельца 22.08). Поэтому
+      ищем не «первую попавшуюся позицию класса», а ту, которой игрок
+      реально может воспользоваться; если подходящей нет — возвращаем
+      первую, чтобы отказ объяснялся обычной проверкой доступа. ]]
+ local function findEntry(dealer,class,ply)
+  local first
+  for _,e in ipairs(dealer.VD_Vehicles or{})do
+   if e.class==class then
+    first=first or e
+    if not IsValid(ply)or VD.CanUseEntry(ply,e)then return e end
+   end
+  end
+  return first
+ end
  --[[ ЛИМИТ ОДИНАКОВЫХ МАШИН (v3.6.0, заказ владельца 19.08).
       «Купленный транспорт должен как-то распознаваться, лимит 2 машины на
       покупку одного и того же класса». Считаем ПО КЛАССУ: и записи гаража
@@ -517,12 +531,38 @@ if SERVER then
    end
    garageRows[#garageRows+1]=row
   end
+  --[[ СЛУЖЕБНЫЙ ПАРК ОРГАНИЗАЦИИ — ПОШТУЧНО (заказ владельца 22.08:
+       «каждая служебная машина должна считаться отдельно»). Каталог
+       показывает КЛАССЫ (что можно закупить), а этот список — реальные
+       единицы техники: у каждой свой номер, состояние и гараж. ]]
+  local fleetRows={}
+  do
+   local FL=GRM.Fleet
+   local faction=ply:GetNWString("GRM_Faction","")
+   if FL and FL.UnitsOf and faction~="" then
+    for _,unit in ipairs(FL.UnitsOf(faction)) do
+     local allowed,why=true,nil
+     if FL.UnitAllowedFor then allowed,why=FL.UnitAllowedFor(unit,FL.ActorOf and FL.ActorOf(ply) or nil) end
+     local garageRec=GRM.Garage and GRM.Garage.Get and GRM.Garage.Get(unit.garageID) or nil
+     fleetRows[#fleetRows+1]={
+      id=unit.id,class=unit.class,name=unit.name,model=unit.model,
+      onMap=FL.Active and IsValid(FL.Active[unit.id]) or false,
+      statusName=FL.UnitStatuses and FL.UnitStatuses[unit.status] or tostring(unit.status or ""),
+      garageName=garageRec and garageRec.name or "",
+      restriction=FL.RestrictionText and FL.RestrictionText(unit) or "",
+      allowed=allowed==true,reason=allowed and "" or tostring(why or ""),
+      plate=(GRM.Plates and GRM.Plates.PlateOfVehicleKey)
+       and tostring(GRM.Plates.PlateOfVehicleKey("fleet:"..tostring(unit.id)) or "") or "",
+     }
+    end
+   end
+  end
   local catalog={}for _,e in ipairs(dealer.VD_Vehicles or{})do if VD.CanUseEntry(ply,e)then local i=VD.VehicleInfo(e.class);catalog[#catalog+1]={class=e.class,name=e.name or i.name,model=i.model,system=i.system,price=math.max(0,math.floor(tonumber(e.price)or 0)),category=e.category or"Транспорт",service=VD.EntryKind(e)~="personal",faction=e.faction,owned=VD.CountClass(ply,e.class),classLimit=VD.ClassLimit(),factionName=(e.faction and e.faction~=""and((GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(e.faction))or e.faction)or""),ownershipType=VD.EntryKind(e),ownershipName=VD.VehicleKinds[VD.EntryKind(e)]}end end;local garageChoices=(GRM.Garage and GRM.Garage.ChoicesFor)and GRM.Garage.ChoicesFor(ply,dealer)or{}
   net.Start("GRM_VD_Open")net.WriteEntity(dealer)net.WriteString(dealer:GetDealerName())net.WriteTable(catalog)net.WriteTable(garageRows)net.WriteTable(VD.ActiveRows(ply))net.WriteTable(garageChoices)
-   net.WriteString(VD.DeliveryMode(dealer))net.WriteBool(VD.ShowRetrieve(dealer))net.Send(ply)end
+   net.WriteString(VD.DeliveryMode(dealer))net.WriteBool(VD.ShowRetrieve(dealer))net.WriteTable(fleetRows)net.Send(ply)end
  local function result(ply,ok,msg)net.Start("GRM_VD_Result")net.WriteBool(ok)net.WriteString(msg)net.Send(ply);if GRM.Notify then GRM.Notify(ply,msg,ok and 100 or 255,ok and 220 or 110,ok and 130 or 90)end end
  net.Receive("GRM_VD_Action",function(_,ply)local dealer,op=net.ReadEntity(),net.ReadString();if not IsValid(dealer)or dealer:GetClass()~="sent_vehicle_dealer"or ply:GetPos():DistToSqr(dealer:GetPos())>300*300 then return end;ply.GRMVDNext=ply.GRMVDNext or 0;if CurTime()<ply.GRMVDNext then return end;ply.GRMVDNext=CurTime()+.35
-  if op=="buy"then local class=net.ReadString();local wantGarage=net.ReadString()or"";local wantWay=net.ReadString()or"";local entry=findEntry(dealer,class);if not entry or not VD.CanUseEntry(ply,entry)then result(ply,false,"Транспорт недоступен")return end;local kind=VD.EntryKind(entry)
+  if op=="buy"then local class=net.ReadString();local wantGarage=net.ReadString()or"";local wantWay=net.ReadString()or"";local entry=findEntry(dealer,class,ply);if not entry or not VD.CanUseEntry(ply,entry)then result(ply,false,"Транспорт недоступен")return end;local kind=VD.EntryKind(entry)
    --[[ ПОКУПКА ≠ ВЫДАЧА (заказ владельца 21.08).
         Раньше кнопка «Купить» сразу спавнила машину (или отправляла её в
         гараж) — покупка и выдача были одним действием, и настройка дилера
@@ -597,6 +637,18 @@ if SERVER then
    end
    result(ply,true,("Транспорт выдан: %s"):format(placeMsg))
    VD.Push(ply,dealer)
+  elseif op=="fleet_issue"or op=="fleet_store"then
+   --[[ Служебная техника поштучно: выдаём и возвращаем КОНКРЕТНУЮ единицу
+        автопарка, а не «какую-нибудь машину этого класса». Вся логика
+        (право по должности, свободное место, статус) живёт в едином
+        диспетчере GRM.Vehicles — дилер только передаёт запрос. ]]
+   local id=net.ReadString()
+   local V=GRM.Vehicles
+   if not V then result(ply,false,"Диспетчер транспорта недоступен")return end
+   local ok,msg
+   if op=="fleet_issue"then ok,msg=V.Issue(ply,"fleet",id,nil) else ok,msg=V.Store(ply,"fleet",id) end
+   result(ply,ok==true,msg or(ok and"Готово"or"Не удалось"))
+   if ok then VD.Push(ply,dealer)end
   elseif op=="store"then local id=net.ReadString();local ok,msg=VD.StoreRecord(ply,id,700);result(ply,ok,msg or"Транспорт помещён в гараж");if ok then VD.Push(ply,dealer)end
   elseif op=="remove"then local id=net.ReadString();local ok,msg=VD.StoreRecord(ply,id,nil);result(ply,ok,msg or"Транспорт убран");if ok then VD.Push(ply,dealer)end
   elseif op=="sell"then

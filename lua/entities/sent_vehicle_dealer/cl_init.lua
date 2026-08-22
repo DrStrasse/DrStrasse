@@ -253,6 +253,8 @@ net.Receive("GRM_VD_Open", function()
     local garageChoices = net.ReadTable() or {}
     local deliveryMode = net.ReadString()
     local showRetrieve = net.ReadBool()
+    -- поштучный служебный парк организации (может не прийти со старого сервера)
+    local fleetUnits = net.ReadTable() or {}
     if deliveryMode == "" then deliveryMode = "dealer" end
 
     if IsValid(GRM.VehicleDealerFrame) then GRM.VehicleDealerFrame:Remove() end
@@ -351,6 +353,7 @@ net.Receive("GRM_VD_Open", function()
 
         return VC.Cell(grid, {
             name = v.name or v.class, class = v.category or v.class, model = v.model,
+            noPlate = true,   -- это класс каталога, номера у него быть не может
             accent = personal and C.gold or C.teal,
             state = { text = personal and "личный" or "служебный", good = personal },
             lines = lines,
@@ -462,6 +465,38 @@ net.Receive("GRM_VD_Open", function()
         })
     end
 
+    --[[ СЛУЖЕБНАЯ МАШИНА — ОТДЕЛЬНАЯ ЯЧЕЙКА (заказ владельца 22.08).
+         В каталоге стоит КЛАСС («что можно закупить»), а здесь — реальные
+         единицы техники организации: у каждой свой номерной знак, своё
+         состояние и свой гараж. Один седан больше не «представляет» весь
+         парк седанов. ]]
+    local function fleetCell(grid, v)
+        local VC = GRM.VehicleCells
+        if not VC then return end
+        local allowed = v.allowed ~= false
+        local note = (v.allowed == false)
+            and ((v.reason or "") ~= "" and v.reason or "закреплена за другими должностями")
+            or ((v.restriction or "") ~= "" and v.restriction or "Доступна всем сотрудникам")
+
+        return VC.Cell(grid, {
+            name = v.name or v.class, class = v.class, model = v.model, plate = v.plate,
+            accent = C.teal,
+            state = { text = v.onMap and "на линии" or (v.statusName ~= "" and v.statusName or "в гараже"),
+                      good = not v.onMap },
+            lines = {
+                { text = (v.garageName or "") ~= "" and ("Гараж: " .. v.garageName) or "Гараж не назначен",
+                  color = (v.garageName or "") ~= "" and C.teal or C.gold },
+                { text = note, color = allowed and C.dim or C.red },
+            },
+            buttons = {
+                { label = v.onMap and "ВЕРНУТЬ В ГАРАЖ" or (allowed and "ВЫДАТЬ" or "НЕ ПОЛОЖЕНА"),
+                  color = v.onMap and C.accent or (allowed and C.green or C.cardHov),
+                  enabled = (v.onMap or allowed) == true,
+                  fn = function() send(dealer, v.onMap and "fleet_store" or "fleet_issue", v.id) end },
+            },
+        })
+    end
+
     --[[ v4.1.0 (заказ владельца): раздел «На карте» — убрать транспорт прямо
          из меню дилера. Раньше кнопка «Убрать Т/С» жила только в C-меню, и
          служебную машину (у неё нет записи гаража) убрать было нечем. ]]
@@ -513,7 +548,9 @@ net.Receive("GRM_VD_Open", function()
         for _, v in ipairs(currentRows) do
             if matches(v, q) then
                 shown = shown + 1
-                if currentMode == "garage" and grid then
+                if currentMode == "fleet" and grid then
+                    fleetCell(grid, v)
+                elseif currentMode == "garage" and grid then
                     garageCell(grid, v)
                 elseif currentMode == "active" then
                     activeCard(list, v)
@@ -524,7 +561,9 @@ net.Receive("GRM_VD_Open", function()
         end
         if grid then grid:InvalidateLayout(true) end
         if shown == 0 then
-            emptyNote(list, currentMode == "garage"
+            emptyNote(list, currentMode == "fleet"
+                and "У организации нет закупленной техники. Закупка — во вкладке «Автопарк»."
+                or currentMode == "garage"
                 and "Гараж пуст. Личный транспорт появится здесь после покупки."
                 or (currentMode == "active"
                     and "На карте нет вашего транспорта."
@@ -568,6 +607,12 @@ net.Receive("GRM_VD_Open", function()
             local rows = byFaction[fac]
             nav:AddSection("fac_" .. fac, fac, #rows, function() showRows(rows, "catalog") end)
         end
+    end
+
+    if #fleetUnits > 0 then
+        nav:AddCaption("Служебный парк")
+        nav:AddSection("fleetunits", "Техника организации", #fleetUnits,
+            function() showRows(fleetUnits, "fleet") end)
     end
 
     nav:AddCaption("Мой транспорт")
@@ -706,9 +751,17 @@ net.Receive("GRM_VD_AdminOpen", function()
     local selectedScroll = vgui.Create("DScrollPanel", right)
     selectedScroll:Dock(FILL)
 
-    local function exists(class)
-        for _, e in ipairs(selected) do if e.class == class then return true end end
-        return false
+    --[[ Сколько раз класс уже в ассортименте.
+         Раньше здесь было «уже добавлен → кнопка неактивна», и это мешало
+         главному: одна и та же машина должна назначаться РАЗНЫМ
+         организациям (жалоба владельца 22.08 — «выдал wolfpolice одной
+         фракции, и она исчезла из настроек»). Позиций с одним классом
+         может быть сколько угодно: у каждой своя цена, категория и
+         организация. ]]
+    local function countClass(class)
+        local n = 0
+        for _, e in ipairs(selected) do if e.class == class then n = n + 1 end end
+        return n
     end
 
     local rebuildSelected, rebuildAvailable
@@ -722,13 +775,14 @@ net.Receive("GRM_VD_AdminOpen", function()
             if q == "" or string.find(hay, q, 1, true) then
                 shown = shown + 1
                 if shown > 400 then break end
-                local taken = exists(v.class)
-                local b = grmButton(available, v.name .. "   [" .. tostring(v.system or "?") .. "]",
-                    taken and C.cardLight or C.accent)
+                local used = countClass(v.class)
+                local b = grmButton(available, v.name .. "   [" .. tostring(v.system or "?") .. "]"
+                        .. (used > 0 and ("   • уже в списке: " .. used) or ""),
+                    used > 0 and C.cardLight or C.accent)
                 b:Dock(TOP)
                 b:SetTall(30)
                 b:DockMargin(0, 0, 4, 4)
-                b:SetEnabled(not taken)
+                b:SetEnabled(true)   -- класс можно добавить ещё раз: другой организации
                 b.DoClick = function()
                     selected[#selected + 1] = {
                         class = v.class, name = v.name, price = 0,
