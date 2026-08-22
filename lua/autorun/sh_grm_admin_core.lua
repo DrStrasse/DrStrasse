@@ -563,8 +563,16 @@ if SERVER then
                 minAccess = row.minAccess, danger = row.danger == true,
             }
         end
+        --[[ Группы, права и назначения — крупная таблица, а рассылалась
+             всем одним пакетом при каждом изменении: заметный рывок у всех
+             сразу. Уходит потоком, куски собираются на клиенте. ]]
+        local payload = { groups = AD.Groups, perms = perms, users = AD.Users }
+        if GRM.Net and GRM.Net.Stream then
+            GRM.Net.Stream(NET_SYNC, payload, IsValid(ply) and ply or nil, { chunk = 8192, interval = 0.05 })
+            return
+        end
         net.Start(NET_SYNC)
-            net.WriteTable({ groups = AD.Groups, perms = perms, users = AD.Users })
+            net.WriteTable(payload)
         if IsValid(ply) then net.Send(ply) else net.Broadcast() end
     end
 
@@ -951,13 +959,16 @@ end
 if CLIENT then
     AD.Data = AD.Data or { groups = {}, perms = {}, users = {}, players = {} }
 
-    net.Receive(NET_SYNC, function()
-        local data = net.ReadTable() or {}
+    local function applyAdminSync(data)
+        data = istable(data) and data or {}
         AD.Data.groups = istable(data.groups) and data.groups or {}
         AD.Data.perms = istable(data.perms) and data.perms or {}
         AD.Data.users = istable(data.users) and data.users or {}
         hook.Run("GRM_AdminDataUpdated")
-    end)
+    end
+
+    net.Receive(NET_SYNC, function() applyAdminSync(net.ReadTable()) end)
+    if GRM.Net and GRM.Net.Receive then GRM.Net.Receive(NET_SYNC, applyAdminSync) end
 
     net.Receive(NET_PLAYERS, function()
         AD.Data.players = net.ReadTable() or {}

@@ -263,6 +263,62 @@ P._jobSeq = P._jobSeq or 0
 local JOB_BUDGET = CreateConVar("grm_perf_budget_ms", SERVER and "1.5" or "2",
     bit.bor(FCVAR_ARCHIVE), "Сколько миллисекунд за кадр GRM тратит на фоновые задачи")
 
+--[[ АДАПТИВНЫЙ БЮДЖЕТ (заказ владельца 22.08 — «микрофризы вернулись»).
+
+     Фиксированный бюджет плох в обе стороны: когда сервер свободен, мы
+     зря тянем фоновые задачи медленно, а когда он захлёбывается (много
+     игроков, взрыв пропов, погоня на машинах) — те же 1.5 мс сверху уже
+     заметны. Поэтому бюджет живой: считаем СРЕДНЮЮ длину кадра и
+
+       • при спокойном кадре (≤ нормы) даём полный бюджет и даже до +50%;
+       • при затяжке (кадр в 1.5–3 нормы) режем бюджет вдвое;
+       • при провале (кадр больше 3 норм) фоновые задачи почти замирают —
+         пусть сначала пройдёт игровой кадр.
+
+     Норма кадра берётся от тикрейта сервера (или 60 к/с на клиенте).
+     Всё это чистая арифметика — считается стендом. ]]
+P.FrameAvg = P.FrameAvg or 0
+P._lastFrameAt = P._lastFrameAt or 0
+
+--- Норма кадра в секундах.
+function P.FrameNorm()
+    if SERVER then
+        local tick = engine and engine.TickInterval and engine.TickInterval() or (1 / 66)
+        return math.Clamp(tonumber(tick) or (1 / 66), 1 / 200, 1 / 20)
+    end
+    return 1 / 60
+end
+
+--- Множитель бюджета по средней длине кадра. Чистая функция.
+function P.BudgetScale(frameTime, norm)
+    frameTime = tonumber(frameTime) or 0
+    norm = math.max(0.0001, tonumber(norm) or (1 / 66))
+    local ratio = frameTime / norm
+    if ratio <= 1.05 then return 1.5 end     -- сервер свободен: можно больше
+    if ratio <= 1.5 then return 1 end        -- норма
+    if ratio <= 3 then return 0.5 end        -- затяжка: ужимаемся
+    return 0.15                              -- провал: почти замираем
+end
+
+--- Обновить среднюю длину кадра (экспоненциальное сглаживание).
+function P.TrackFrame(now)
+    now = tonumber(now) or 0
+    local prev = P._lastFrameAt
+    P._lastFrameAt = now
+    if prev <= 0 then return P.FrameAvg end
+    local dt = now - prev
+    if dt <= 0 or dt > 1 then return P.FrameAvg end
+    P.FrameAvg = P.FrameAvg > 0 and (P.FrameAvg * 0.9 + dt * 0.1) or dt
+    return P.FrameAvg
+end
+
+--- Текущий бюджет фоновых задач в секундах.
+function P.FrameBudget()
+    local base = math.max(0.2, JOB_BUDGET:GetFloat()) / 1000
+    local scale = P.BudgetScale(P.FrameAvg, P.FrameNorm())
+    return base * scale, scale
+end
+
 local function jobsPending()
     return #P.Jobs > 0
 end
@@ -274,7 +330,10 @@ local function jobTick()
         return
     end
 
-    local deadline = SysTime() + math.max(0.2, JOB_BUDGET:GetFloat()) / 1000
+    local now = SysTime()
+    P.TrackFrame(now)
+    local budget = P.FrameBudget()
+    local deadline = now + budget
     while #P.Jobs > 0 and SysTime() < deadline do
         local job = P.Jobs[1]
         local finished = true
@@ -499,6 +558,11 @@ concommand.Add("grm_perf_report", function(ply)
             avg > 0 and (1000 / avg) or 0, P.Stats.max, SPIKE_MS:GetFloat()))
     out(("[GRM Perf] пропущено кадров (фон, меню, прогрев): %d   ·   всплесков: %d   ·   задач в очереди: %d")
         :format(P.Stats.ignored or 0, P.Stats.spikes or 0, #P.Jobs))
+
+    -- Адаптивный бюджет: видно, ужимается ли фон под нагрузкой
+    local budget, scale = P.FrameBudget()
+    out(("[GRM Perf] средний кадр %.2f мс при норме %.2f мс · бюджет фона %.2f мс (×%.2f)")
+        :format((P.FrameAvg or 0) * 1000, P.FrameNorm() * 1000, budget * 1000, scale))
 
     if #P.Spikes == 0 then
         out("[GRM Perf] всплесков не зафиксировано — клиент/сервер идёт ровно")

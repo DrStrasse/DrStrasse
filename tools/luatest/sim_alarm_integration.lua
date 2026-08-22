@@ -89,6 +89,22 @@ GRM = {
 
 -- ══════════════ ЗАГРУЗКА ══════════════
 dofile("lua/autorun/sh_grm_alarm_config.lua")
+-- attempt-guard-convars
+FCVAR_ARCHIVE = FCVAR_ARCHIVE or 1
+if not CreateConVar then
+    local CV = {}
+    function CreateConVar(name, def)
+        local cv = { value = def }
+        function cv:GetInt() return math.floor(tonumber(self.value) or 0) end
+        function cv:GetBool() return tostring(self.value) ~= "0" end
+        function cv:GetFloat() return tonumber(self.value) or 0 end
+        function cv:GetString() return tostring(self.value) end
+        function cv:SetValue(v) self.value = v end
+        CV[name] = cv
+        return cv
+    end
+    function GetConVar(n) return CV[n] end
+end
 dofile("lua/autorun/server/sv_grm_alarm.lua")
 dofile("lua/autorun/sh_grm_alarm_integration.lua")
 local AN = GRM.AlarmNotify

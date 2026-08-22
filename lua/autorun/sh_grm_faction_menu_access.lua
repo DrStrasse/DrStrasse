@@ -186,8 +186,13 @@ if SERVER then
     end
 
     function MA.Sync(ply)
+        local payload = { levels = MA.Config.levels or {}, overrides = MA.Config.overrides or {} }
+        if GRM.Net and GRM.Net.Stream then
+            GRM.Net.Stream(NET_SYNC, payload, IsValid(ply) and ply or nil, { chunk = 8192, interval = 0.05 })
+            return
+        end
         net.Start(NET_SYNC)
-        net.WriteTable({ levels = MA.Config.levels or {}, overrides = MA.Config.overrides or {} })
+        net.WriteTable(payload)
         if IsValid(ply) then net.Send(ply) else net.Broadcast() end
     end
 
@@ -253,12 +258,15 @@ end
 -- КЛИЕНТ
 -----------------------------------------------------------------------
 if CLIENT then
-    net.Receive(NET_SYNC, function()
-        local data = net.ReadTable() or {}
+    local function applyMenuAccess(data)
+        data = istable(data) and data or {}
         MA.Config.levels = istable(data.levels) and data.levels or {}
         MA.Config.overrides = istable(data.overrides) and data.overrides or {}
         hook.Run("GRM_FacMenuAccessUpdated")
-    end)
+    end
+
+    net.Receive(NET_SYNC, function() applyMenuAccess(net.ReadTable()) end)
+    if GRM.Net and GRM.Net.Receive then GRM.Net.Receive(NET_SYNC, applyMenuAccess) end
 
     function MA.RequestSave(levels, overrides)
         net.Start(NET_SAVE)

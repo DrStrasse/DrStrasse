@@ -152,6 +152,22 @@ end
 
 -- ══════════════ ЗАГРУЗКА ══════════════
 dofile("lua/autorun/sh_grm_alarm_config.lua")
+-- attempt-guard-convars
+FCVAR_ARCHIVE = FCVAR_ARCHIVE or 1
+if not CreateConVar then
+    local CV = {}
+    function CreateConVar(name, def)
+        local cv = { value = def }
+        function cv:GetInt() return math.floor(tonumber(self.value) or 0) end
+        function cv:GetBool() return tostring(self.value) ~= "0" end
+        function cv:GetFloat() return tonumber(self.value) or 0 end
+        function cv:GetString() return tostring(self.value) end
+        function cv:SetValue(v) self.value = v end
+        CV[name] = cv
+        return cv
+    end
+    function GetConVar(n) return CV[n] end
+end
 dofile("lua/autorun/server/sv_grm_alarm.lua")
 local A = GRM.Alarm
 ok(A ~= nil and A.StartSiren ~= nil and A.StopSiren ~= nil, "модуль Alarm загружен")
@@ -224,7 +240,8 @@ ok(A.Sirens[hub5:EntIndex()] ~= nil, "ARMED + обычный игрок в ра�
 ok(sensor.lastTrigger == 2000, "датчик зафиксировал время срабатывания")
 A.StopSiren(hub5)
 
--- 5b. Суперадмин НЕ триггерит (friendly через CanControl)
+-- 5b. Суперадмин ТРИГГЕРИТ (жалоба владельца 22.08: «сигнализация не
+-- работает» — он проверял её сам, будучи суперадмином, и был «своим»).
 local hub6 = mkEnt("grm_alarm_hub", "net6")
 A.RegisterDevice(hub6)
 hub6.mode = A.MODE_ARMED
@@ -235,8 +252,27 @@ local admin = mkPly(true, "Админ")
 _G.__players = { admin }
 _G.__now = 3000
 thinkFn()
-ok(A.Sirens[hub6:EntIndex()] == nil, "суперадмин не поднимает тревогу на себя (friendly)")
-ok(sensor6.lastTrigger == nil, "датчик не сработал на суперадмина")
+ok(A.Sirens[hub6:EntIndex()] ~= nil, "по умолчанию датчик замечает и суперадмина — иначе не проверить")
+ok(sensor6.lastTrigger ~= nil, "датчик отметил срабатывание")
+
+-- и наоборот: включили конвар — администрация ходит незаметно
+GetConVar("grm_alarm_ignore_admins"):SetValue("1")
+local hub6b = mkEnt("grm_alarm_hub", "net6b")
+A.RegisterDevice(hub6b)
+hub6b.mode = A.MODE_ARMED
+local sensor6b = mkEnt("grm_alarm_sensor", "net6b")
+A.RegisterDevice(sensor6b)
+sensor6b.active = true
+_G.__players = { admin }
+_G.__now = 3100
+thinkFn()
+ok(A.Sirens[hub6b:EntIndex()] == nil, "с grm_alarm_ignore_admins 1 суперадмин снова «свой»")
+GetConVar("grm_alarm_ignore_admins"):SetValue("0")
+
+-- диагностика объясняет, почему тревоги может не быть
+ok(type(A.Diagnose) == "function", "есть команда диагностики grm_alarm_status")
+local diag = table.concat(A.Diagnose(admin), " | ")
+ok(diag:find("сеть", 1, true) ~= nil, "диагностика перечисляет сети", diag)
 
 -- 5c. PASSIVE → только лог, без сирены
 local hub7 = mkEnt("grm_alarm_hub", "net7")

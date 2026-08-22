@@ -86,6 +86,34 @@ function A.CanControl(ply)
     return ply:IsSuperAdmin()
 end
 
+--[[ КОГО СИГНАЛИЗАЦИЯ НЕ ЗАМЕЧАЕТ.
+
+     Жалоба «сигнализация не работает» имела скучную причину: владелец
+     проверяет её сам, а он суперадмин — а суперадмин считался «своим»
+     БЕЗУСЛОВНО (GRM.Doors.IsFriendlyForAlarm возвращал true первым же
+     условием). Датчик его видел и молчал.
+
+     Теперь это решает конвар: по умолчанию сигнализация срабатывает и на
+     администрацию (иначе её невозможно проверить), а если нужно ходить
+     незаметно — grm_alarm_ignore_admins 1. Своими остаются те, у кого
+     есть доступ к сети по дверной системе. ]]
+local cvIgnoreAdmins = CreateConVar("grm_alarm_ignore_admins", "0", FCVAR_ARCHIVE,
+    "1 — суперадминов датчики движения не замечают (по умолчанию замечают)")
+
+--- Свой ли человек для этой сети сигнализации. Возвращает: свой, причина.
+function A.IsFriendly(ply, networkID)
+    if not IsValid(ply) then return false, "нет игрока" end
+    if ply:IsSuperAdmin() and cvIgnoreAdmins:GetBool() then
+        return true, "суперадмин (grm_alarm_ignore_admins 1)"
+    end
+    if GRM.Doors and GRM.Doors.AccessManager and GRM.Doors.AccessManager.IsFriendly then
+        local ok = GRM.Doors.AccessManager.IsFriendly(ply, networkID) == true
+        if ok then return true, "доступ к объекту по дверной системе" end
+        return false, "нет доступа к объекту"
+    end
+    return false, "нет дверной системы доступа"
+end
+
 function A.RegisterDevice(ent)
     if not IsValid(ent) then return end
     A.Devices[ent:EntIndex()] = ent
@@ -352,12 +380,7 @@ hook.Add("Think", "GRM_Alarm_Scan", function()
                     for _, ply in ipairs(alive) do
                         if origin:DistToSqr(ply:GetPos()) <= radiusSqr then
                             -- Игнор «своих»: доступ управления сигналкой / door friendly / warrant force
-                            local friendly = false
-                            if GRM.Doors and GRM.Doors.IsFriendlyForAlarm then
-                                friendly = GRM.Doors.IsFriendlyForAlarm(ply, netID) == true
-                            elseif A.CanControl and A.CanControl(ply) then
-                                friendly = true
-                            end
+                            local friendly = A.IsFriendly(ply, netID) == true
                             if not friendly then
                                 local last = tonumber(sensor:GetLastTrigger()) or 0
                                 if now - last >= cd then
@@ -660,6 +683,84 @@ hook.Add("PostCleanupMap", "GRM_Alarm_Reload", function()
     timer.Simple(1, function() A.LoadPermanent() end)
 end)
 hook.Add("ShutDown", "GRM_Alarm_Save", function() A.SavePermanent() end)
+
+--[[ ДИАГНОСТИКА СИГНАЛИЗАЦИИ.
+     «Не работает» — это всегда одна из пяти причин, и все они видны здесь:
+     сеть без блока коммутации, блок выключен, датчик выключен, вы «свой»
+     для этой сети, или устройств вообще нет. ]]
+function A.Diagnose(ply)
+    local nets = {}
+    local function net(id)
+        id = A.NormalizeNetwork(id)
+        nets[id] = nets[id] or { hub = nil, sensors = 0, activeSensors = 0, speakers = 0, terminals = 0 }
+        return nets[id]
+    end
+    for _, ent in pairs(A.Devices) do
+        if IsValid(ent) then
+            local row = net(ent:GetNetworkID())
+            local cls = ent:GetClass()
+            if cls == "grm_alarm_hub" then row.hub = ent
+            elseif cls == "grm_alarm_sensor" then
+                row.sensors = row.sensors + 1
+                if ent:GetActive() then row.activeSensors = row.activeSensors + 1 end
+            elseif cls == "grm_alarm_speaker" then row.speakers = row.speakers + 1
+            elseif cls == "grm_alarm_terminal" then row.terminals = row.terminals + 1 end
+        end
+    end
+
+    local lines = {}
+    local function add(t) lines[#lines + 1] = t end
+    local netCount = 0
+    for _ in pairs(nets) do netCount = netCount + 1 end
+    add("[Сигнализация] сети на карте: " .. tostring(netCount))
+    for id, row in pairs(nets) do
+        local mode = IsValid(row.hub) and A.ClampMode(row.hub:GetMode()) or A.MODE_OFF
+        add(("  сеть «%s»: блок %s, режим %s, датчиков %d (включено %d), динамиков %d, пультов %d")
+            :format(id,
+                IsValid(row.hub) and "есть" or "НЕТ — тревога невозможна",
+                A.ModeNames and A.ModeNames[mode] or tostring(mode),
+                row.sensors, row.activeSensors, row.speakers, row.terminals))
+        if not IsValid(row.hub) then
+            add("     → поставьте блок коммутации и укажите ему ту же сеть")
+        elseif mode == A.MODE_OFF then
+            add("     → блок в режиме «Выкл»: включите охрану на пульте или по [E] на блоке")
+        elseif row.activeSensors == 0 then
+            add("     → нет включённых датчиков движения")
+        end
+        if IsValid(ply) then
+            local friendly, why = A.IsFriendly(ply, id)
+            if friendly then
+                add(("     → ВАС эта сеть считает своим (%s) — датчики вас не заметят"):format(tostring(why)))
+            end
+        end
+    end
+    if netCount == 0 then
+        add("  устройств нет: поставьте блок коммутации, датчик и динамик (Q → GRM)")
+    end
+    return lines
+end
+
+concommand.Add("grm_alarm_status", function(ply)
+    if IsValid(ply) and not A.CanView(ply) then return end
+    for _, line in ipairs(A.Diagnose(ply)) do
+        if IsValid(ply) then ply:ChatPrint(line) else print(line) end
+    end
+end)
+
+--- Пробный запуск сирены: проверить звук и оповещение без взлома.
+concommand.Add("grm_alarm_test", function(ply, _, args)
+    if IsValid(ply) and not A.CanControl(ply) then return end
+    local netID = A.NormalizeNetwork(args and args[1] or "")
+    local hub = A.GetHub(netID)
+    if not IsValid(hub) then
+        local text = "[Сигнализация] в сети «" .. netID .. "» нет блока коммутации"
+        if IsValid(ply) then ply:ChatPrint(text) else print(text) end
+        return
+    end
+    A.StartSiren(hub, "Проверка сигнализации", IsValid(ply) and ply or nil)
+    local text = "[Сигнализация] тревога сети «" .. netID .. "» запущена вручную"
+    if IsValid(ply) then ply:ChatPrint(text) else print(text) end
+end)
 
 concommand.Add("grm_alarm_save", function(ply)
     if IsValid(ply) and not ply:IsSuperAdmin() then return end

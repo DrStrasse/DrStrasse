@@ -536,6 +536,10 @@ if SERVER then
         payload._factions = {}
         for name in pairs(Factions or {}) do payload._factions[#payload._factions + 1] = name end
         table.sort(payload._factions, function(a,b) return string.lower(a) < string.lower(b) end)
+        if GRM.Net and GRM.Net.Stream then
+            GRM.Net.Stream(NET_SYNC, payload, IsValid(ply) and ply or nil, { chunk = 8192, interval = 0.05 })
+            return
+        end
         net.Start(NET_SYNC)
             net.WriteTable(payload)
         if IsValid(ply) then net.Send(ply) else net.Broadcast() end
@@ -1147,8 +1151,7 @@ if CLIENT then
         return false
     end
 
-    net.Receive("GRM_QMenu_Sync", function()
-        local t = net.ReadTable()
+    local function applyQMenuSync(t)
         if not istable(t) then return end
         QM.FactionNames = istable(t._factions) and t._factions or QM.FactionNames or {}
         t._factions = nil
@@ -1156,7 +1159,10 @@ if CLIENT then
         for k, v in pairs(t) do d[k] = v end
         GRM.QMenu.Cfg = d
         QM._stale = true
-    end)
+    end
+
+    net.Receive("GRM_QMenu_Sync", function() applyQMenuSync(net.ReadTable()) end)
+    if GRM.Net and GRM.Net.Receive then GRM.Net.Receive("GRM_QMenu_Sync", applyQMenuSync) end
 
     net.Receive("GRM_QMenu_Feedback", function()
         local op = net.ReadUInt(4)

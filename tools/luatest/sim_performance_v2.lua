@@ -33,4 +33,21 @@ ok(custom:find("C.ActiveRenderPlayers",1,true)and custom:find("C.ValidModelCache
 ok(not custom:find("entry.ent:SetupBones()",1,true)and not custom:find("ipairs(player.GetAll())",1,true),"accessory fallback avoids redundant model bones and all-player frame scan")
 ok(dutyTool:find("GRM_DutyToolFactionsUpdated",1,true)and not dutyTool:find("timer.Create",1,true)and not dutyNPC:find("function ENT:Think",1,true)and dutyShared:find('ENT.Type = "anim"',1,true),"duty terminal is event-updated base_anim without AI/watchdog Think")
 ok(questTool:find("local preview=",1,true)and questTool:find("rebuildPreview",1,true)and questTool:find("preview.nextBuild=CurTime()+.5",1,true),"quest placement preview caches converted geometry")
+print("\n=== АДАПТИВНЫЙ БЮДЖЕТ ФОНА (22.08) ===")
+do
+    local src = (function()
+        local f = io.open("lua/autorun/sh_06_grm_performance.lua", "rb")
+        local t = f:read("*a") f:close() return t
+    end)()
+    local function has(n) return src:find(n, 1, true) ~= nil end
+    ok(has("function P.BudgetScale(frameTime, norm)"), "множитель бюджета вынесен в чистую функцию")
+    ok(has("function P.TrackFrame(now)") and has("P.FrameAvg * 0.9 + dt * 0.1"),
+       "средняя длина кадра считается сглаживанием, без всплесков на одном кадре")
+    ok(has("local budget = P.FrameBudget()") and has("local deadline = now + budget"),
+       "планировщик фоновых задач берёт живой бюджет, а не константу")
+    ok(has("if ratio <= 3 then return 0.5 end") and has("return 0.15"),
+       "при затяжке фон ужимается, при провале почти замирает")
+    ok(has("бюджет фона %.2f мс"), "grm_perf_report показывает текущий бюджет")
+end
+
 print(("PERFORMANCE V2: %d/%d failures=%d"):format(n-fail,n,fail));os.exit(fail==0 and 0 or 1)
