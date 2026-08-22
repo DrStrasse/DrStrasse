@@ -428,6 +428,14 @@ if SERVER then
         if not pos then return false end
         ply:SetPos(pos)
         if ang then ply:SetEyeAngles(Angle(0, ang.y or 0, 0)) end
+        -- Персонаж на месте — вот теперь выдаём набор из /weapons_admin.
+        if _G.ApplyWeaponsToPlayer then
+            timer.Simple(0.1, function()
+                if IsValid(ply) and not CH.PendingSelection[ply:SteamID64()] then
+                    _G.ApplyWeaponsToPlayer(ply)
+                end
+            end)
+        end
         return true
     end
 
@@ -883,6 +891,16 @@ if SERVER then
         ply:Freeze(true)
         cmd:ClearMovement()
         cmd:ClearButtons()
+    end)
+
+    --[[ Пока персонаж не выбран, стандартный набор (физган, тулган,
+         камера) тоже не выдаётся: возвращаем true — движок считает, что
+         экипировка уже выдана, и ничего не даёт. ]]
+    hook.Add("PlayerLoadout", "GRM_Char_BlockLoadout", function(ply)
+        if not characterPending(ply) then return end
+        ply:StripWeapons()
+        if ply.RemoveAllAmmo then ply:RemoveAllAmmo() end
+        return true
     end)
 
     hook.Add("PlayerUse", "GRM_Char_BlockUse", function(ply)
@@ -1617,11 +1635,18 @@ if CLIENT then
         end
     end)
 
+    --[[ Закрытие окна по команде сервера.
+         Раньше звали :Close(), но у обязательного окна он специально
+         отключён (чтобы игрок не закрыл его сам) — поэтому меню висело
+         на экране и после выбора персонажа. Сносим панель напрямую. ]]
     net.Receive(NET_CLOSE, function()
+        CH._reopenAt = RealTime() + 2
         if IsValid(CH._frame) then
-            CH._frame:Close()
-            CH._frame = nil
+            CH._frame:SetVisible(false)
+            CH._frame:Remove()
         end
+        CH._frame, CH._frameMode, CH._liveSignature = nil, nil, nil
+        CH._actionPending, CH._actionKind = false, nil
     end)
 
     -- Точка входа гардероба проходит через тот же singleton/dedup guard.

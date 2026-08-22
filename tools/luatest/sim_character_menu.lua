@@ -78,6 +78,23 @@ ok(has('hook.Add("PlayerBindPress", "GRM_Char_BlockBinds"'), "хот-бары и
 ok(has('hook.Add("SpawnMenuOpen", "GRM_Char_BlockSpawnMenu"'), "Q-меню закрыто")
 ok(has('hook.Add("StartCommand", "GRM_Char_BlockInput"'), "движение и кнопки на сервере обнуляются")
 
+print("\n=== 5б. ОРУЖИЕ ТОЛЬКО ПОСЛЕ ПОЯВЛЕНИЯ ===")
+ok(has('hook.Add("PlayerLoadout", "GRM_Char_BlockLoadout"') and has("return true"),
+   "стандартный набор (физган, тулган) в лимбе не выдаётся")
+ok(has("if _G.ApplyWeaponsToPlayer then"),
+   "набор выдаётся после постановки на точку спавна")
+local fixes = (function()
+    local fh = io.open("lua/autorun/sh_faction_fixes.lua", "rb")
+    local t = fh:read("*a") fh:close() return t
+end)()
+ok(fixes:find('if ply:GetNWBool("GRM_CharacterPending", false) then', 1, true) ~= nil,
+   "выдача оружия из /weapons_admin ждёт выбора персонажа")
+
+print("\n=== 5в. ОКНО ЗАКРЫВАЕТСЯ ПОСЛЕ ВЫБОРА ===")
+ok(has("net.Receive(NET_CLOSE, function()") and has("CH._frame:Remove()"),
+   "по команде сервера окно сносится, а не Close (у обязательного окна он отключён)")
+ok(has("CH._reopenAt = RealTime() + 2"), "сторож окна не открывает его обратно сразу после закрытия")
+
 print("\n=== 6. ЖИВАЯ МОДЕЛЬ И ВКЛАДКИ ===")
 ok(has("local function applyPreview(fullModel)") and has("ent:SetBodygroup(tonumber(g) or 0"),
    "изменения применяются к модели сразу, без пересборки окна")

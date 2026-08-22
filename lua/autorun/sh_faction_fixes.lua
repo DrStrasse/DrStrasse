@@ -728,6 +728,14 @@ if SERVER then
     function ApplyWeaponsToPlayer(ply)
         if not IsValid(ply) then return end
         ply:StripWeapons()
+        --[[ Персонаж ещё не выбран — игрок сидит в лимбе за картой, и
+             оружия у него быть не должно вообще (заказ владельца 22.08).
+             Набор из /weapons_admin выдаётся только после подтверждения
+             персонажа и появления на точке спавна. ]]
+        if ply:GetNWBool("GRM_CharacterPending", false) then
+            if ply.RemoveAllAmmo then ply:RemoveAllAmmo() end
+            return
+        end
         if ply:GetNWBool("GRM_Arrested", false) then
             if ply.RemoveAllAmmo then ply:RemoveAllAmmo() end
             return
