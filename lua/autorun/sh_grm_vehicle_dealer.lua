@@ -560,8 +560,11 @@ if SERVER then
    -- под каким номером машина зарегистрирована (заказ владельца 22.08).
    row.plate=tostring(r.plate or"")
    row.uid="veh:"..tostring(r.id or"")
-   if row.plate=="" and GRM.Plates and GRM.Plates.PlateOfVehicleKey then
-    row.plate=tostring(GRM.Plates.PlateOfVehicleKey(row.uid)or"")
+   -- номер, закреплённый физически, должен быть виден сразу, даже если
+   -- поле r.plate не успело обновиться (фикс базы крепления 22.08)
+   if GRM.Plates and GRM.Plates.PlateOfVehicleKey then
+    local db=tostring(GRM.Plates.PlateOfVehicleKey(row.uid)or"")
+    if db~="" then row.plate=db end
    end
    garageRows[#garageRows+1]=row
   end

@@ -506,13 +506,18 @@ local myCar = ents.Create("sim_car")
 myCar:SetPos(Vector(0, 0, 0))
 myCar.GRMGarageOwner, myCar.GRMGarageID = owner, "veh_2"
 myCar.NearestPoint = function(self, pos) return Vector(math.max(-110, math.min(110, pos.x)), 0, 0) end
+-- картотека: имя машины берётся из записи гаража
+local myRec = { id = "veh_2", name = "Москвич" }
+GRM.VehicleDealer = GRM.VehicleDealer or {}
+GRM.VehicleDealer.FindRecord = function(_, id) return id == "veh_2" and myRec or nil end
+GRM.VehicleDealer.SaveGarages = function() end
 
 local number2 = select(1, PL.Issue({ type = "civil", ownerKey = "civ:char1", ownerName = "Ганс Мюллер",
     by = "cop:char1", byName = "Копп" })).number
 local myPlate = PL.SpawnPlate(number2, Vector(112, 0, 0), Angle(0, 0, 0), owner)
 ok(select(1, PL.Attach(myPlate, myCar, owner)) == true, "знак закреплён на личной машине")
 local mount = PL.Get(number2).mount
-ok(istable(mount) and mount.vehicleID == "veh_2", "в реестре записан ИДЕНТИФИКАТОР конкретной машины", mount and mount.vehicleID)
+ok(istable(mount) and mount.vehicleID == "veh:veh_2", "в реестре записан ИДЕНТИФИКАТОР конкретной машины", mount and mount.vehicleID)
 ok(istable(mount.pos) and isnumber(mount.pos.x) and istable(mount.ang),
    "запомнено и место установки на кузове")
 ok(tostring(mount.vehicle) == "Москвич", "название машины записано для картотеки", mount.vehicle)
@@ -830,9 +835,9 @@ ok(psrc:find('hook.Add("GRM_FleetIssued", "GRM_Plates_ServiceAuto"', 1, true) ==
    "автоматической выдачи и крепления номера у машин автопарка больше НЕТ")
 ok(psrc:find('hook.Add("GRM_FleetIssued", "GRM_Plates_FleetRestore"', 1, true) ~= nil,
    "ручной номер за единицей автопарка возвращается при выдаче")
-ok(psrc:find("function PL.RestoreFleetPlate(ent, uid)", 1, true) ~= nil
+ok(psrc:find("function PL.RestoreFleetPlate(ent, uid", 1, true) ~= nil
    and psrc:find("local existing = PL.PlateOfVehicleKey(uid)", 1, true) ~= nil,
-   "RestoreFleetPlate только возвращает существующий номер, новый не создаёт")
+   "RestoreFleetPlate возвращает существующий номер, новый не создаёт")
 ok(psrc:find("function PL.MountOnRear(plate, veh, actor)", 1, true) ~= nil,
    "знак вешается на задний борт по габаритам машины")
 ok(psrc:find('CreateConVar("grm_plates_auto_service", "0"', 1, true) ~= nil,
@@ -879,6 +884,52 @@ ok(psrc:find("function PL.RestoreScroll(list, key)", 1, true) ~= nil
    "прокрутка возвращается на место после обновления")
 ok(psrc:find("if not IsValid(list) or tries > 8 then return end", 1, true) ~= nil,
    "возврат прокрутки повторяется до восьми кадров — холст меряется не сразу")
+
+print("\n=== 24. ПРИВЯЗКА В БАЗЕ: ЛИЧНАЯ И СЛУЖЕБНАЯ (22.08) ===")
+do
+    -- Личная: машина имеет GRMGarageID/GRMGarageOwner, поэтому Attach пишет
+    -- и запись гаража, и реестр номеров; PlateOfVehicleKey должно найти.
+    local owner = civ
+    local car = ents.Create("sim_car")
+    local recID = "veh_789"
+    car.GRMGarageID = recID
+    car.GRMGarageOwner = owner
+    GRM.VehicleDealer = GRM.VehicleDealer or {}
+    GRM.VehicleDealer.FindRecord = function(pl, id)
+        if pl == owner and id == recID then
+            return { id = recID, name = "Седан", plates = {}, plate = "" }
+        end
+        return nil
+    end
+    GRM.VehicleDealer.SaveGarages = function() end
+    local nrec = { number = "А888ВС", type = "civil", ownerKey = civ:GetNWString("SteamID64", "") .. ":char1" }
+    PL.Data.plates[nrec.number] = nrec
+
+    local plate = PL.SpawnPlate(nrec.number, car:GetPos(), car:GetAngles(), owner)
+    PL.Attach(plate, car, owner)
+    local pf = PL.PlateOfVehicleKey(PL.VehicleIdentity(car))
+    ok(pf == nrec.number, "после Attach личная машина в базе привязана", pf)
+    ok(nrec.mount ~= nil and tostring(nrec.mount.parentKey) == PL.VehicleIdentity(car),
+        "у записи номера есть mount.parentKey")
+
+    -- Служебная: машина имеет GRMFleetID, но записи в личном гараже нет.
+    local fleetEnt = ents.Create("sim_car")
+    local fleetID = "fu_plate_1"
+    fleetEnt.GRMFleetID = fleetID
+    GRM.Fleet = GRM.Fleet or {}
+    local unit = { id = fleetID, name = "Патрульная", plates = {}, plate = "" }
+    GRM.Fleet.Unit = function(id) if tostring(id) == fleetID then return unit end return nil end
+    GRM.Fleet.SaveFleet = function() end
+    GRM.VehicleDealer.FindRecord = function() return nil end -- нет личной записи
+
+    local fplate = PL.SpawnPlate(nrec.number, fleetEnt:GetPos(), fleetEnt:GetAngles(), owner)
+    PL.Attach(fplate, fleetEnt, owner)
+    local fpf = PL.PlateOfVehicleKey(PL.VehicleIdentity(fleetEnt))
+    ok(fpf == nrec.number, "после Attach служебная машина в базе привязана", fpf)
+    ok(unit.plate ~= "" or unit.plates ~= nil, "раскладка/номер записаны в единицу автопарка",
+        tostring(unit.plate) .. " / plates=" .. tostring(unit.plates ~= nil))
+    ok(tostring(unit.vehicleUID or "") ~= "", "vehicleUID записан в единицу автопарка", tostring(unit.vehicleUID))
+end
 
 print(("\nPLATES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

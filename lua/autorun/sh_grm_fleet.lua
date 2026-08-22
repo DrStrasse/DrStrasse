@@ -885,6 +885,7 @@ if SERVER then
             -- номер закреплён за конкретной единицей техники (UID автопарка)
             plate = (GRM.Plates and GRM.Plates.PlateOfVehicleKey)
                 and tostring(GRM.Plates.PlateOfVehicleKey("fleet:" .. tostring(unit.id)) or "") or "",
+            vehicleUID = tostring(unit.vehicleUID or ""),
         }
     end
 

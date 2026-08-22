@@ -827,6 +827,8 @@ if SERVER then
             if mount and tostring(mount.parentKey or mount.vehicleID or "") == uid then
                 return number, rec
             end
+            -- защита: запись могла потерять mount, но не vehicleUID
+            if tostring(rec.vehicleUID or "") == uid then return number, rec end
         end
         return ""
     end
@@ -882,11 +884,22 @@ if SERVER then
         return VD.FindRecord(ply, id), ply, id
     end
 
-    --- Запомнить раскладку знаков машины в записи гаража (чтобы знаки
-    --  вернулись на свои места после выдачи из гаража).
+    --[[ СЛУЖЕБНЫЙ ТРАНСПОРТ: у него нет записи в личном гараже дилера, но
+         номер должен привязываться к единице автопарка. Пока это делалось
+         только для личного (garageRecordOf), у служебного привязка оставалась
+         только на энтити и сразу терялась. ]]
+    local function fleetRecordOf(veh)
+        local FL = GRM.Fleet
+        if not (FL and FL.Unit) then return nil end
+        local unit = FL.Unit(tostring(veh.GRMFleetID or ""))
+        return unit, veh.GRMFleetID
+    end
+
+    --- Запомнить раскладку знаков машины в записи гаража или единицы парка.
+    --  Раньше знаки возвращались «на место» только у личного транспорта:
+    --  у служебного запись не писалась, и после уборки в гараж/рестарта
+    --  номер визуально висел, но в базе был не привязан.
     local function rememberLayout(veh)
-        local rec, ply = garageRecordOf(veh)
-        if not istable(rec) then return end
         local layout = {}
         for _, plate in ipairs(PL.VehiclePlates(veh)) do
             local lp = veh:WorldToLocal(plate:GetPos())
@@ -897,10 +910,21 @@ if SERVER then
                 ang = { p = la.p, y = la.y, r = la.r },
             }
         end
-        rec.plates = layout
-        -- номер машины виден в окне дилера и гаража отдельной строкой
-        rec.plate = layout[1] and tostring(layout[1].number or "") or ""
-        if GRM.VehicleDealer and GRM.VehicleDealer.SaveGarages then GRM.VehicleDealer.SaveGarages() end
+
+        local rec, ply = garageRecordOf(veh)
+        if istable(rec) then
+            rec.plates = layout
+            rec.plate = layout[1] and tostring(layout[1].number or "") or ""
+            if GRM.VehicleDealer and GRM.VehicleDealer.SaveGarages then GRM.VehicleDealer.SaveGarages() end
+        end
+
+        -- Служебный автопарк: номер тоже должен читаться из записи единицы.
+        local unit, unitID = fleetRecordOf(veh)
+        if istable(unit) then
+            unit.plates = layout
+            unit.plate = layout[1] and tostring(layout[1].number or "") or ""
+            if FL and FL.SaveFleet then FL.SaveFleet("закрепление знака") end
+        end
     end
     PL.RememberLayout = rememberLayout
 
@@ -915,11 +939,27 @@ if SERVER then
         -- UID единого слоя транспорта: он переживает удаление машины,
         -- уборку в гараж и повторную выдачу (заказ владельца 22.08).
         local uid = (GRM.Vehicles and GRM.Vehicles.EnsureUID) and GRM.Vehicles.EnsureUID(veh) or ""
-        local id = uid ~= "" and uid or tostring(veh.GRMGarageID or "")
+        --[[ НАДЁЖНЫЙ ФОЛБЭК. Раньше при отсутствии GRM.Vehicles возвращался
+             голый GRMGarageID, а GRMFleetID игнорировался — привязка в базе
+             получала ключ, по которому окна её не ищут ("veh:<id>"/"fleet:<id>").
+             Теперь всегда нормализуем к привычным ключам. ]]
+        local id = uid
+        if id == "" then
+            local gid = tostring(veh.GRMGarageID or "")
+            local fid = tostring(veh.GRMFleetID or "")
+            if gid ~= "" then id = "veh:" .. gid
+            elseif fid ~= "" then id = "fleet:" .. fid
+            end
+        end
         local name = tostring(veh.VD_Class or veh:GetClass() or "")
-        if id ~= "" and GRM.VehicleDealer and GRM.VehicleDealer.FindRecord and IsValid(veh.GRMGarageOwner) then
-            local rec = GRM.VehicleDealer.FindRecord(veh.GRMGarageOwner, id)
-            if istable(rec) then name = tostring(rec.name or name) end
+        -- имя ищем по СЫРОМУ id записи гаража: VD.FindRecord ждёт veh_2, а
+        -- привязка в базе хранит "veh:veh_2".
+        if IsValid(veh.GRMGarageOwner) and GRM.VehicleDealer and GRM.VehicleDealer.FindRecord then
+            local rawID = tostring(veh.GRMGarageID or "")
+            if rawID ~= "" then
+                local rec = GRM.VehicleDealer.FindRecord(veh.GRMGarageOwner, rawID)
+                if istable(rec) then name = tostring(rec.name or name) end
+            end
         end
         return id, name
     end
@@ -963,6 +1003,27 @@ if SERVER then
         -- номер видно над машиной и в проверках
         veh:SetNWString("GRM_PlateNumber", number)
         veh:SetNWString("GRM_PlateType", plate:GetNWString("GRM_PlateType", "civil"))
+        --[[ БАЗА ДАННЫХ, А НЕ ТОЛЬКО ФИЗИКА (заказ владельца 22.08).
+             Окна дилера/гаража читают номер из записи, а не с энтити.
+             rememberLayout пишет и личную запись гаража, и единицу
+             автопарка; здесь дополнительно проставляем vehicleUID на
+             запись, чтобы даже при потере mount связь находилась. ]]
+        local VD = GRM.VehicleDealer
+        if IsValid(veh.GRMGarageOwner) and veh.GRMGarageID and VD and VD.FindRecord then
+            local gr = VD.FindRecord(veh.GRMGarageOwner, tostring(veh.GRMGarageID))
+            if istable(gr) then
+                gr.vehicleUID = tostring(vehID or veh.GRMGarageID)
+                if VD.SaveGarages then VD.SaveGarages() end
+            end
+        end
+        local FL = GRM.Fleet
+        if FL and FL.Unit and veh.GRMFleetID then
+            local unit = FL.Unit(tostring(veh.GRMFleetID))
+            if istable(unit) then
+                unit.vehicleUID = tostring(vehID or veh.GRMFleetID)
+                if FL.SaveFleet then FL.SaveFleet("закрепление знака") end
+            end
+        end
         rememberLayout(veh)
         hook.Run("GRM_PlateAttached", plate, veh, actor)
         return true
@@ -1332,13 +1393,32 @@ if SERVER then
          должен вернуться на ту же машину при следующей выдаче — как у
          личного транспорта. Здесь только «вернуть», новый номер НЕ
          создаётся. ]]
-    function PL.RestoreFleetPlate(ent, uid)
+    function PL.RestoreFleetPlate(ent, uid, unit)
         if not IsValid(ent) then return 0 end
         uid = tostring(uid or ((GRM.Vehicles and GRM.Vehicles.EnsureUID) and GRM.Vehicles.EnsureUID(ent) or ""))
         if uid == "" then return 0 end
+        if #PL.VehiclePlates(ent) > 0 then return 1 end
+        if istable(unit) and istable(unit.plates) and #unit.plates > 0 then
+            -- Раскладка из записи единицы автопарка (та, что записана в базе).
+            local restored = 0
+            for _, saved in ipairs(unit.plates) do
+                if istable(saved) then
+                    local number = PL.NormalizeNumber(saved.number)
+                    if number ~= "" and PL.Get(number) then
+                        local lp = Vector(tonumber(saved.pos and saved.pos.x) or 0,
+                            tonumber(saved.pos and saved.pos.y) or 0, tonumber(saved.pos and saved.pos.z) or 0)
+                        local la = Angle(tonumber(saved.ang and saved.ang.p) or 0,
+                            tonumber(saved.ang and saved.ang.y) or 0, tonumber(saved.ang and saved.ang.r) or 0)
+                        local plate = PL.SpawnPlate(number, ent:LocalToWorld(lp), ent:LocalToWorldAngles(la),
+                            IsValid(ent.GRMGarageOwner) and ent.GRMGarageOwner or nil)
+                        if IsValid(plate) and PL.Attach(plate, ent, ent.GRMGarageOwner) then restored = restored + 1 end
+                    end
+                end
+            end
+            return restored
+        end
         local existing = PL.PlateOfVehicleKey(uid)
         if existing == "" then return 0 end
-        if #PL.VehiclePlates(ent) > 0 then return 1 end
         local rec = PL.Get(existing)
         local mount = rec and istable(rec.mount) and rec.mount or nil
         local owner = IsValid(ent.GRMGarageOwner) and ent.GRMGarageOwner or nil
@@ -1359,7 +1439,7 @@ if SERVER then
         if not (IsValid(ent) and istable(unit)) then return end
         timer.Simple(0.2, function()
             if not IsValid(ent) then return end
-            PL.RestoreFleetPlate(ent, "fleet:" .. tostring(unit.id))
+            PL.RestoreFleetPlate(ent, "fleet:" .. tostring(unit.id), unit)
         end)
     end)
 

@@ -127,6 +127,7 @@ if SERVER then
                         -- как окно дилера (учёт ведётся по UID транспорта)
                         plate = (GRM.Plates and GRM.Plates.PlateOfVehicleKey)
                             and tostring(GRM.Plates.PlateOfVehicleKey("veh:" .. id) or "") or "",
+                        vehicleUID = tostring(rec.vehicleUID or ""),
                     }
                 end
             end
