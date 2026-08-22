@@ -290,27 +290,15 @@ function FL.Entry(id)
 end
 function FL.Unit(id) return FL.Units[tostring(id or "")] end
 
---[[ Служебный ассортимент дилера — это тоже каталог закупки.
-     Иначе игрок видит полицейскую машину в дилере, но получает тупик «НЕТ
-     В КАТАЛОГЕ ЗАКУПКИ», а терминал говорит «рынок пуст». Именно так
-     служебная машина раньше появлялась на карте без записи автопарка и
-     исчезала при рестарте. Личная техника в этот список не входит.
-
-     Собственный рынок суперадмина остаётся: он нужен для позиций, которых
-     нет у дилера, и для отдельных лимитов/настроек. ]]
+--[[ Рынок автопарка наполняет ТОЛЬКО суперадмин. Ассортимент дилера —
+     отдельная витрина: служебная машина доступна к закупке только после
+     ручного добавления соответствующей позиции в рынок. ]]
 function FL.MarketList()
-    local out, seen = {}, {}
+    local out = {}
     for id, entry in pairs(FL.Market) do
         if istable(entry) then
             entry.id = id
             out[#out + 1] = entry
-            seen[tostring(id)] = true
-        end
-    end
-    for id, entry in pairs(FL.DealerMarket()) do
-        if istable(entry) and not seen[tostring(id)] then
-            out[#out + 1] = entry
-            seen[tostring(id)] = true
         end
     end
     table.sort(out, function(a, b)
@@ -320,6 +308,23 @@ function FL.MarketList()
         return tostring(a.name) < tostring(b.name)
     end)
     return out
+end
+
+--- Найти вручную созданную позицию рынка для карточки служебного дилера.
+function FL.FindMarketForDealer(entry)
+    if not istable(entry) then return nil end
+    local class = tostring(entry.class or "")
+    local faction = tostring(entry.faction or "")
+    for id, market in pairs(FL.Market or {}) do
+        if istable(market) and tostring(market.class or "") == class then
+            local allowed = not istable(market.factions) or #market.factions == 0
+            for _, f in ipairs(istable(market.factions) and market.factions or {}) do
+                if tostring(f) == faction then allowed = true break end
+            end
+            if allowed then market.id = id return market end
+        end
+    end
+    return nil
 end
 
 function FL.UnitsOf(faction)
