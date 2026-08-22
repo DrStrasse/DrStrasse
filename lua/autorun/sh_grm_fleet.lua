@@ -750,14 +750,24 @@ if SERVER then
             -- машина получает настоящий класс после обновления.
             if id and id ~= "" and (not old or old.recoveredFromPlate == true) then
                 local faction = tostring(rec.faction or (old and old.faction) or "")
-                local garageID = tostring(old and old.garageID or "")
+                -- Миграционная запись не должна навечно оставаться в первом
+                -- попавшемся публичном гараже: ведомственный гараж этой
+                -- организации всегда приоритетнее (Комендатура ≠ Автосалон).
+                local garageID = old and old.recoveredFromPlate ~= true and tostring(old.garageID or "") or ""
                 if garageID == "" then
-                    for gid, garage in pairs(garages) do
-                        if istable(garage) and #(garage.slots or {}) > 0
-                            and (tostring(garage.faction or "") == faction or tostring(garage.kind or "") == "public") then
-                            garageID = tostring(gid)
-                            break
+                    for _, wantFaction in ipairs({ true, false }) do
+                        for gid, garage in pairs(garages) do
+                            if istable(garage) then
+                                local own = tostring(garage.faction or "") == faction
+                                local public = tostring(garage.kind or "") == "public"
+                                if #(garage.slots or {}) > 0
+                                    and ((wantFaction and own) or (not wantFaction and public)) then
+                                    garageID = tostring(gid)
+                                    break
+                                end
+                            end
                         end
+                        if garageID ~= "" then break end
                     end
                 end
                 if faction ~= "" and garageID ~= "" and class ~= "" then
@@ -1823,6 +1833,15 @@ if CLIENT then
                              ключи руками не набираются — опечатка невозможна. ]]
                         menu[#menu + 1] = { label = "Доступна всем сотрудникам", icon = "icon16/group.png",
                             fn = function() act("restrict", { unitID = u.id, roles = {}, depts = {} }) end }
+                        -- Явная приписка: руководитель выбирает именно гараж
+                        -- Комендатуры/организации, а не получает случайный
+                        -- публичный автосалон из старой миграции.
+                        for _, g in ipairs(FL.State.garages or {}) do
+                            menu[#menu + 1] = {
+                                label = "Приписать к гаражу: " .. tostring(g.name), icon = "icon16/garage.png",
+                                fn = function() act("sethome", { unitID = u.id, garageID = g.id }) end,
+                            }
+                        end
                         local st = FL.State.structure or {}
                         for _, r in ipairs(st.roles or {}) do
                             menu[#menu + 1] = { label = "Закрепить за должностью: " .. tostring(r.name),
