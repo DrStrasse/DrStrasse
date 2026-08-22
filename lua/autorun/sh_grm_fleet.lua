@@ -290,13 +290,15 @@ function FL.Entry(id)
 end
 function FL.Unit(id) return FL.Units[tostring(id or "")] end
 
+--[[ СПИСОК ЗАКУПКИ — ТОЛЬКО КАТАЛОГ СУПЕРАДМИНА (заказ владельца 22.08).
+     Раньше сюда автоматически попадали служебные позиции дилеров фракций,
+     и игрок мог «закупить» машину, которую суперадмин для закупки не
+     выставлял. Теперь закупка работает только по позициям, добавленным
+     в `FL.Market` (вкладка «Рынок»). Дилерские карточки остаются у дилера
+     (для выдачи/оформления), но сами в закупку не попадают. ]]
 function FL.MarketList()
     local out = {}
     for id, entry in pairs(FL.Market) do
-        if istable(entry) then entry.id = id out[#out + 1] = entry end
-    end
-    -- позиции дилеров идут тем же списком: закупка у них одинаковая
-    for id, entry in pairs(FL.DealerMarket and FL.DealerMarket() or {}) do
         if istable(entry) then entry.id = id out[#out + 1] = entry end
     end
     table.sort(out, function(a, b)

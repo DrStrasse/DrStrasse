@@ -461,10 +461,10 @@ local function DrawMainHUD()
     rows[#rows + 1] = { label = "ЗДОРОВЬЕ", frac = hpFrac, color = hpColor,
         text = math.Round(anim.hp) .. " / " .. actual.maxHp }
 
-    if (anim.armor or 0) > 0.5 then
-        rows[#rows + 1] = { label = "БРОНЯ", frac = math.Clamp(anim.armor / 100, 0, 1),
-            color = cfg.armorColor, text = tostring(math.Round(anim.armor)) }
-    end
+    -- Броня показывается всегда (даже 0), чтобы игрок видел полосу,
+    -- которую надо пополнять — она не «пропадает» из HUD.
+    rows[#rows + 1] = { label = "БРОНЯ", frac = math.Clamp(anim.armor / 100, 0, 1),
+        color = cfg.armorColor, text = tostring(math.Round(anim.armor)) }
 
     for _, def in ipairs(GRM.HUD.BarList()) do
         local ok, value, max, text, color, hidden = pcall(def.Get)
@@ -480,11 +480,14 @@ local function DrawMainHUD()
     end
 
     -- ── раскладка панели ────────────────────────────────────────────
-    local pw = 236
-    local pad, barH, gap, labelH = 12, 13, 8, 12
-    local moneyH = 40
+    local pw = 248
+    local pad, barH, gap, labelH = 12, 14, 8, 12
+    local moneyH = 42
+    -- Панель не должна уходить за верх экрана ни при каком числе полос:
+    -- если строк много, оставляем минимум 16px сверху.
     local ph = pad + #rows * (labelH + barH + gap) + moneyH + pad - gap
-    local px, py = 16, sh - 16 - ph
+    ph = math.min(ph, sh - 32)
+    local px, py = 16, math.max(16, sh - 16 - ph)
 
     draw.RoundedBox(8, px + 2, py + 2, pw, ph, cfg.bgShadow)
     draw.RoundedBox(8, px, py, pw, ph, cfg.bgColor)
