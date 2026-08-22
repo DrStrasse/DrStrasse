@@ -86,7 +86,14 @@ function ENT:OpenFor(ply)
 end
 
 function ENT:Use(ply)
-    if rateOK(ply,"open",0.4) then self:OpenFor(ply) end
+    if not rateOK(ply,"open",0.4) then return end
+    -- Торговец редкостями может быть настроен как точка входа в единый
+    -- гражданский транспортный рынок; каталог/покупки не дублируются в Vendor.
+    if self.VendorType == "vehicle_market" and GRM.CivilVehicles and GRM.CivilVehicles.Open then
+        GRM.CivilVehicles.Open(ply)
+        return
+    end
+    self:OpenFor(ply)
 end
 
 local function ownedCount(ply, itemID, item)

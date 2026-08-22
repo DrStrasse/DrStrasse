@@ -81,7 +81,10 @@ if SERVER then
    CV.Save()CV.Push(ply)
   end
  end)
- hook.Add("InitPostEntity","GRM_CivilVehicle_Load",CV.Load)
+ hook.Add("InitPostEntity","GRM_CivilVehicle_Load",function()
+  CV.Load()
+  if GRM.Vendor and GRM.Vendor.RegisterType then GRM.Vendor.RegisterType("vehicle_market","Гражданский транспортный рынок","models/gman_high.mdl",{}) end
+ end)
  hook.Add("PlayerSay","GRM_CivilVehicle_Chat",function(ply,text)if string.lower(string.Trim(text or""))=="/transport_market"then CV.Open(ply)return""end end)
  concommand.Add("grm_civil_market",function(ply)if IsValid(ply)then CV.Open(ply)end end)
  concommand.Add("grm_civil_market_add",function(ply,_,args)
