@@ -140,8 +140,17 @@ if CLIENT then
   if IsValid(CV.Frame)then CV.Frame:Remove()end
   local f=vgui.Create("DFrame");CV.Frame=f;f:SetSize(math.Clamp(ScrW()*.78,980,1500),math.Clamp(ScrH()*.78,680,980));f:Center();f:SetTitle("ГРАЖДАНСКИЙ РЫНОК ТРАНСПОРТА");f:MakePopup();act("watch",{on=true})
   f.OnRemove=function()act("watch",{on=false})end
-  local scroll=vgui.Create("DScrollPanel",f);scroll:Dock(FILL);scroll:DockMargin(10,34,10,10)
-  local garage="";local combo=vgui.Create("DComboBox",f);combo:Dock(TOP);combo:DockMargin(10,34,10,4);combo:SetValue("Гараж для покупки")
+  local scroll=vgui.Create("DScrollPanel",f);scroll:Dock(FILL);scroll:DockMargin(10,4,10,10)
+  if state.admin then
+   local admin=vgui.Create("DPanel",f);admin:Dock(TOP);admin:SetTall(64);admin:DockMargin(10,34,10,4)
+   admin.Paint=function(_,w,h)draw.RoundedBox(5,0,0,w,h,Color(14,28,43,255));draw.SimpleText("ДОБАВИТЬ ЛИЧНУЮ ПОЗИЦИЮ НА РЫНОК","DermaDefaultBold",8,7,Color(64,222,147))end
+   local class=vgui.Create("DTextEntry",admin);class:SetPos(8,25);class:SetSize(260,28);class:SetPlaceholderText("Класс: simfphys_...")
+   local name=vgui.Create("DTextEntry",admin);name:SetPos(274,25);name:SetSize(260,28);name:SetPlaceholderText("Название")
+   local price=vgui.Create("DTextEntry",admin);price:SetPos(540,25);price:SetSize(150,28);price:SetPlaceholderText("Цена")
+   local add=vgui.Create("DButton",admin);add:SetPos(698,25);add:SetSize(150,28);add:SetText("ДОБАВИТЬ")
+   add.DoClick=function()act("add",{class=class:GetValue(),name=name:GetValue(),price=tonumber(price:GetValue())or 0,category="Гражданский транспорт",factions={}})end
+  end
+  local garage="";local combo=vgui.Create("DComboBox",f);combo:Dock(TOP);combo:DockMargin(10,4,10,4);combo:SetValue("Гараж для покупки")
   for _,g in ipairs(state.garages)do combo:AddChoice(g.name,g.id,g.suggested)if g.suggested then garage=g.id end end
   combo.OnSelect=function(_,_,_,v)garage=tostring(v or"")end
   for _,e in ipairs(state.entries)do
