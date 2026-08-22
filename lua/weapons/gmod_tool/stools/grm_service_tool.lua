@@ -93,6 +93,14 @@ local TYPES = {
         defTitle  = "ПОЖАРНАЯ СЛУЖБА • ДИСПЕТЧЕРСКАЯ",
         defModel  = "models/props_lab/monitor01a.mdl",
     },
+    civil_vehicle = {
+        id        = "civil_vehicle",
+        class     = "grm_civil_vehicle_computer",
+        label     = "Гражданский транспортный компьютер",
+        desc      = "Личный рынок транспорта: покупка наличными или со счёта, постановка в личный гараж",
+        defTitle  = "ГРАЖДАНСКИЙ РЫНОК ТРАНСПОРТА",
+        defModel  = "models/props_lab/monitor02.mdl",
+    },
     cityhall = {
         id        = "cityhall",
         class     = "grm_comp_cityhall",
