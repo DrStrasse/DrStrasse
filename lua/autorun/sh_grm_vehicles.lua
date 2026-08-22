@@ -51,7 +51,9 @@ function V.UID(ent)
     if not IsValid(ent) then return "" end
     local id = tostring(ent.GRMGarageID or "")
     if id ~= "" then return "veh:" .. id end
-    local fleet = tostring(ent.GRMFleetID or "")
+    -- GRMFleetUnit — старый тег, GRMFleetID — канонический. Учитываем оба,
+    -- чтобы номера распознавали служебную машину даже со старой выдачей.
+    local fleet = tostring(ent.GRMFleetID or ent.GRMFleetUnit or "")
     if fleet ~= "" then return "fleet:" .. fleet end
     local own = tostring(ent.GRMVehicleUID or "")
     if own ~= "" then return own end
@@ -129,6 +131,13 @@ if SERVER then
                             and tostring(GRM.Plates.PlateOfVehicleKey("veh:" .. id) or "") or "",
                         vehicleUID = tostring(rec.vehicleUID or ""),
                     }
+                    -- физический факт: если номер уже на активной машине, а в
+                    -- базе регистр ещё не совпал — показываем его из энтити
+                    local row=out[#out]
+                    if row and row.plate=="" and IsValid(ent) and GRM.Plates and GRM.Plates.VehiclePlates then
+                        local children=GRM.Plates.VehiclePlates(ent)
+                        if #children>0 then row.plate=tostring(children[1]:GetNWString("GRM_Plate","")or"") end
+                    end
                 end
             end
         end
@@ -154,6 +163,12 @@ if SERVER then
                         plate = (GRM.Plates and GRM.Plates.PlateOfVehicleKey)
                             and tostring(GRM.Plates.PlateOfVehicleKey("fleet:" .. tostring(unit.id)) or "") or "",
                     }
+                    local fent=fl.Active and fl.Active[unit.id]
+                    local frow=out[#out]
+                    if frow and frow.plate=="" and IsValid(fent) and GRM.Plates and GRM.Plates.VehiclePlates then
+                        local children=GRM.Plates.VehiclePlates(fent)
+                        if #children>0 then frow.plate=tostring(children[1]:GetNWString("GRM_Plate","")or"") end
+                    end
                 end
             end
         end

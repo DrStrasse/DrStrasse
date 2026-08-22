@@ -560,11 +560,19 @@ if SERVER then
    -- под каким номером машина зарегистрирована (заказ владельца 22.08).
    row.plate=tostring(r.plate or"")
    row.uid="veh:"..tostring(r.id or"")
-   -- номер, закреплённый физически, должен быть виден сразу, даже если
-   -- поле r.plate не успело обновиться (фикс базы крепления 22.08)
+   -- НОМЕР ДОЛЖЕН ВИДЕТЬСЯ У ДИЛЕРА, КАК ТОЛЬКО ЗАКРЕПЛЁН.
+   -- Источники, по порядку: запись гаража → реестр по UID → активная
+   -- машина (если выдана, но запись ещё не синхронизировалась).
    if GRM.Plates and GRM.Plates.PlateOfVehicleKey then
     local db=tostring(GRM.Plates.PlateOfVehicleKey(row.uid)or"")
     if db~="" then row.plate=db end
+   end
+   if row.plate=="" then
+    local ent=VD.Active and VD.Active[r.id]
+    if IsValid(ent) and GRM.Plates and GRM.Plates.VehiclePlates then
+     local children=GRM.Plates.VehiclePlates(ent)
+     if #children>0 then row.plate=tostring(children[1]:GetNWString("GRM_Plate","")or"") end
+    end
    end
    garageRows[#garageRows+1]=row
   end
@@ -582,6 +590,19 @@ if SERVER then
      local allowed,why=true,nil
      if FL.UnitAllowedFor then allowed,why=FL.UnitAllowedFor(unit,FL.ActorOf and FL.ActorOf(ply) or nil) end
      local garageRec=GRM.Garage and GRM.Garage.Get and GRM.Garage.Get(unit.garageID) or nil
+     local fleetUID="fleet:"..tostring(unit.id)
+     local fplate=tostring(unit.plate or"")
+     if GRM.Plates and GRM.Plates.PlateOfVehicleKey then
+      local db=tostring(GRM.Plates.PlateOfVehicleKey(fleetUID)or"")
+      if db~="" then fplate=db end
+     end
+     if fplate=="" then
+      local ent=FL.Active and FL.Active[unit.id]
+      if IsValid(ent) and GRM.Plates and GRM.Plates.VehiclePlates then
+       local children=GRM.Plates.VehiclePlates(ent)
+       if #children>0 then fplate=tostring(children[1]:GetNWString("GRM_Plate","")or"") end
+      end
+     end
      fleetRows[#fleetRows+1]={
       id=unit.id,class=unit.class,name=unit.name,model=unit.model,
       onMap=FL.Active and IsValid(FL.Active[unit.id]) or false,
@@ -589,8 +610,7 @@ if SERVER then
       garageName=garageRec and garageRec.name or "",
       restriction=FL.RestrictionText and FL.RestrictionText(unit) or "",
       allowed=allowed==true,reason=allowed and "" or tostring(why or ""),
-      plate=(GRM.Plates and GRM.Plates.PlateOfVehicleKey)
-       and tostring(GRM.Plates.PlateOfVehicleKey("fleet:"..tostring(unit.id)) or "") or "",
+      plate=fplate,
      }
     end
    end

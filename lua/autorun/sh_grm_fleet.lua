@@ -199,6 +199,20 @@ FL.DealerOverrides = FL.DealerOverrides or {}
         return ""
     end
 
+    --- Детерминированный хэш без util.CRC (заказ владельца 22.08).
+    --  util.CRC может давать разные значения между запусками/окружениями —
+    --  тогда переопределение цены не находилось после рестарта. Хэш на
+    --  чистой арифметике одинаков в GMod и в стендах.
+    local function dealerHash(s)
+        s = tostring(s or "")
+        local h = 0
+        for i = 1, #s do
+            h = (h * 131 + string.byte(s, i)) % 2147483647
+        end
+        return string.format("%08x", h)
+    end
+    FL.DealerHash = dealerHash
+
     --- Устойчивый идентификатор ОДНОЙ карточки ассортимента дилера.
     --  Закупка у дилера из окна каталога должна использовать ту же цену,
     --  которая была показана на карточке. Раньше сервер искал по классу и
@@ -211,7 +225,7 @@ FL.DealerOverrides = FL.DealerOverrides or {}
         local category = tostring(entry and entry.category or "")
         local name = tostring(entry and entry.name or "")
         local key = table.concat({ dealerTag(dealer), class, faction, tostring(price), category, name }, ":")
-        local crc = (util.CRC and util.CRC(key)) or class
+        local crc = dealerHash(key)
         return ("dealer:%s:%s:%s"):format(class, faction, tostring(crc))
     end
 
@@ -507,6 +521,19 @@ if SERVER then
         return FL.SaveMarketNow()
     end
 
+    --[[ ЦЕННИК/ПРАВКУ РЫНКА НУЖНО ПИСАТЬ СРАЗУ (заказ владельца 22.08:
+         «ценник ставится, но после рестарта всё по нулям»). GRM.Save.Mark
+         откладывает запись на 3 секунды; если сервер выключается раньше
+         таймера (или ShutDown не успел), правка теряется. Поэтому после
+         любой правки рынка форсируем запись файла. ]]
+    function FL.FlushMarket(why)
+        if not FL._loaded then return false end
+        if FL._marketSave and GRM.Save and GRM.Save.Flush then
+            GRM.Save.Flush("grm_fleet_market", why or "рынок вручную")
+        end
+        return FL.SaveMarketNow()
+    end
+
     function FL.SaveFleet(why)
         if not FL._loaded then return false end
         if FL._fleetSave and GRM.Save and GRM.Save.Mark then return GRM.Save.Mark("grm_fleet_units", why) end
@@ -605,6 +632,7 @@ if SERVER then
         }
         FL.Market[entry.id] = entry
         FL.SaveMarket("рынок: добавление")
+        FL.FlushMarket("рынок: добавление")
         if FL.PushViewers then FL.PushViewers() end
         return entry
     end
@@ -627,6 +655,7 @@ if SERVER then
             if fields.note ~= nil then meta.note = trim(fields.note, 160) end
             FL.DealerOverrides[id] = meta
             FL.SaveMarket("рынок: цена позиции дилера")
+            FL.FlushMarket("цена позиции дилера")
             if FL.PushViewers then FL.PushViewers() end
             return true
         end
@@ -642,6 +671,7 @@ if SERVER then
         if fields.note ~= nil then entry.note = trim(fields.note, 160) end
         if istable(fields.factions) then entry.factions = fields.factions end
         FL.SaveMarket("рынок: правка")
+        FL.FlushMarket("рынок: правка")
         return true
     end
 
@@ -655,6 +685,7 @@ if SERVER then
             if FL.DealerOverrides and FL.DealerOverrides[id] then
                 FL.DealerOverrides[id] = nil
                 FL.SaveMarket("рынок: сброс цены позиции дилера")
+                FL.FlushMarket("сброс цены позиции дилера")
                 if FL.PushViewers then FL.PushViewers() end
                 return true, "Правка цены позиции дилера сброшена (сама позиция остаётся)"
             end
@@ -664,6 +695,7 @@ if SERVER then
         if not FL.Entry(id) then return false, "Позиция не найдена" end
         FL.Market[tostring(id)] = nil
         FL.SaveMarket("рынок: удаление")
+        FL.FlushMarket("рынок: удаление")
         return true
     end
 
@@ -806,6 +838,7 @@ if SERVER then
         if not IsValid(ent) then return nil, (spawnErrors and spawnErrors[1]) or "Не удалось выдать технику" end
 
         ent.GRMFleetUnit = unit.id
+        ent.GRMFleetID = unit.id          -- ЕДИНЫЙ UID для номеров/восстановления
         ent.GRMFleetFaction = unit.faction
         ent.GRMGarageOwner = ply
         if VD.TagVehicle then VD.TagVehicle(ent, ply, unit.class, tostring(unit.kind or "government"), unit) end
@@ -1155,9 +1188,14 @@ if SERVER then
             :format(table.Count(FL.Market or {}), table.Count(FL.Units or {})))
         local m = readJSON(MARKET_FILE)
         local f = readJSON(fleetFile())
-        say(("[Автопарк] на диске: рынок %d, парк %d (%s, %s)"):format(
+        say(("[Автопарк] на диске: рынок %d, парк %d, цены_overrides %d (%s, %s)"):format(
             #((istable(m) and m.market) or {}), #((istable(f) and f.units) or {}),
+            #((istable(m) and m.overrides) or {}),
             MARKET_FILE, fleetFile()))
+        say(("[Автопарк] в памяти: цены_overrides %d"):format(table.Count(FL.DealerOverrides or {})))
+        for id, meta in pairs(FL.DealerOverrides or {}) do
+            say(("    %s  →  цена %s"):format(tostring(id), tostring(meta and meta.price or "?")))
+        end
         say(("[Автопарк] окон открыто: %d"):format(table.Count(FL.Viewers or {})))
     end)
 

@@ -891,8 +891,9 @@ if SERVER then
     local function fleetRecordOf(veh)
         local FL = GRM.Fleet
         if not (FL and FL.Unit) then return nil end
-        local unit = FL.Unit(tostring(veh.GRMFleetID or ""))
-        return unit, veh.GRMFleetID
+        local fid = tostring(veh.GRMFleetID or veh.GRMFleetUnit or "")
+        local unit = FL.Unit(fid)
+        return unit, fid
     end
 
     --- Запомнить раскладку знаков машины в записи гаража или единицы парка.
@@ -946,7 +947,7 @@ if SERVER then
         local id = uid
         if id == "" then
             local gid = tostring(veh.GRMGarageID or "")
-            local fid = tostring(veh.GRMFleetID or "")
+            local fid = tostring(veh.GRMFleetID or veh.GRMFleetUnit or "")
             if gid ~= "" then id = "veh:" .. gid
             elseif fid ~= "" then id = "fleet:" .. fid
             end
@@ -1017,10 +1018,11 @@ if SERVER then
             end
         end
         local FL = GRM.Fleet
-        if FL and FL.Unit and veh.GRMFleetID then
-            local unit = FL.Unit(tostring(veh.GRMFleetID))
+        local fidAttach = tostring(veh.GRMFleetID or veh.GRMFleetUnit or "")
+        if FL and FL.Unit and fidAttach ~= "" then
+            local unit = FL.Unit(fidAttach)
             if istable(unit) then
-                unit.vehicleUID = tostring(vehID or veh.GRMFleetID)
+                unit.vehicleUID = tostring(vehID or fidAttach)
                 if FL.SaveFleet then FL.SaveFleet("закрепление знака") end
             end
         end

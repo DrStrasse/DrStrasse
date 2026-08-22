@@ -97,7 +97,86 @@ local function encode(v)
 end
 util.TableToJSON = function(t) return encode(t) end
 util.CRC = (function() local n = 0 return function() n = n + 1 return tostring(7000 + n) end end)()
-util.JSONToTable = function() return nil end
+-- Мини-парсер JSON, достаточный для наших структур. Нужен, чтобы стенд
+-- честно проверял «цена записана → FL.Load → цена восстановлена»: без него
+-- мок util.JSONToTable возвращал nil, и загрузка overrides не проверялась.
+local function jsonDecodeF(str)
+    local pos = 1
+    local parseValue
+    local function skip()
+        while pos <= #str do
+            local c = str:sub(pos, pos)
+            if c == " " or c == "\n" or c == "\t" or c == "\r" then pos = pos + 1 else break end
+        end
+    end
+    local function parseString()
+        pos = pos + 1
+        local out = {}
+        while pos <= #str do
+            local c = str:sub(pos, pos)
+            if c == "\\" then
+                local n = str:sub(pos + 1, pos + 1)
+                if n == "n" then out[#out + 1] = "\n" elseif n == "t" then out[#out + 1] = "\t"
+                elseif n == "u" then out[#out + 1] = "" pos = pos + 4 else out[#out + 1] = n end
+                pos = pos + 2
+            elseif c == '"' then
+                pos = pos + 1
+                return table.concat(out)
+            else
+                out[#out + 1] = c
+                pos = pos + 1
+            end
+        end
+        return table.concat(out)
+    end
+    parseValue = function()
+        skip()
+        local c = str:sub(pos, pos)
+        if c == "{" then
+            local t = {}
+            pos = pos + 1
+            skip()
+            if str:sub(pos, pos) == "}" then pos = pos + 1 return t end
+            while pos <= #str do
+                skip()
+                local key = parseString()
+                skip()
+                pos = pos + 1
+                t[key] = parseValue()
+                skip()
+                local ch = str:sub(pos, pos)
+                pos = pos + 1
+                if ch == "}" then break end
+            end
+            return t
+        elseif c == "[" then
+            local t = {}
+            pos = pos + 1
+            skip()
+            if str:sub(pos, pos) == "]" then pos = pos + 1 return t end
+            while pos <= #str do
+                t[#t + 1] = parseValue()
+                skip()
+                local ch = str:sub(pos, pos)
+                pos = pos + 1
+                if ch == "]" then break end
+            end
+            return t
+        elseif c == '"' then
+            return parseString()
+        elseif str:sub(pos, pos + 3) == "true" then pos = pos + 4 return true
+        elseif str:sub(pos, pos + 4) == "false" then pos = pos + 5 return false
+        else
+            local num = str:match("^%-?%d+%.?%d*[eE]?[%+%-]?%d*", pos)
+            if num then pos = pos + #num return tonumber(num) end
+            pos = pos + 1
+            return nil
+        end
+    end
+    local ok, r = pcall(parseValue)
+    return ok and r or nil
+end
+util.JSONToTable = function(s) return jsonDecodeF(tostring(s or "")) end
 
 local ENTS = {}
 ents = {
@@ -277,6 +356,9 @@ local ent, issueErr = FL.Issue(cop, unit.id, G.Get(garage.id))
 ok(IsValid(ent), "сотрудник получил служебную машину", issueErr)
 ok(#SPAWNS == 1 and SPAWNS[1].place ~= nil, "машина подана НА МЕСТО стоянки, а не в точку дилера")
 ok(FL.Unit(unit.id).status == "active", "единица помечена «на линии»")
+ok(ent.GRMFleetID == unit.id and ent.GRMFleetUnit == unit.id,
+   "энтити служебной машины несёт GRMFleetID — его ищут номера/окна",
+   tostring(ent.GRMFleetID))
 local again, againErr = FL.Issue(cop, unit.id, G.Get(garage.id))
 ok(again == nil and tostring(againErr):find("уже выдана", 1, true) ~= nil, "дважды одну машину не выдают", againErr)
 local alien, alienErr = FL.Issue(medic, unit.id, G.Get(garage.id))
@@ -473,16 +555,8 @@ end
 
 print("\n=== ДВА ДИЛЕРА, ОДИН КЛАСС, РАЗНЫЕ ЦЕНЫ (22.08) ===")
 do
-    -- Мок util.CRC в этом файле давал СЛЕДУЮЩИЙ номер на каждый вызов, поэтому
-    -- id получался разным между двумя вызовами. На живом GMod util.CRC
-    -- детерминированный; здесь подменяем только на время стенда.
-    local crcReal = util.CRC
-    util.CRC = function(s)
-        local h = 0
-        s = tostring(s or "")
-        for i = 1, #s do h = (h * 131 + string.byte(s, i)) % 2147483647 end
-        return string.format("%08x", h)
-    end
+    -- id строится через FL.DealerHash на чистой арифметике — он одинаков в
+    -- GMod и здесь, поэтому подменять util.CRC больше не нужно.
 
     GRM.VehicleDealer.EntryKind = function(entry)
         local kind = tostring(entry and entry.ownershipType or "")
@@ -554,6 +628,31 @@ do
     end
 
     util.CRC = crcReal
+
+    --[[ «ПОСЛЕ РЕСТАРТА ВСЁ ПО НУЛЯМ» (заказ владельца 22.08).
+         Цена была записана и сохранена в market.json. Эмулируем рестарт:
+         сбрасываем память модуля и снова вызываем FL.Load. Переопределение
+         цены должно подняться из файла, а не обнулиться. ]]
+    print("\n=== ЦЕННИК ПОСЛЕ РЕСТАРТА (22.08) ===")
+    local starId = FL.DealerEntryID(d1, d1.VD_Vehicles[1])
+    FL.MarketUpdate(starId, { price = 12345 })
+    FL.FlushMarket("перезапуск-тест")
+    ok((FL.Entry(starId) or {}).price == 12345, "цена перед рестартом 12345", FL.Entry(starId) and FL.Entry(starId).price)
+    ok(FS["grm_fleet/market.json"] and FS["grm_fleet/market.json"]:find("12345", 1, true) ~= nil,
+        "значение 12345 реально лежит в market.json", FS["grm_fleet/market.json"] and FS["grm_fleet/market.json"]:sub(1, 80))
+
+    local keepUnits = FL.Units
+    FL.Units = {}
+    FL.Market = {}
+    FL.DealerOverrides = {}
+    FL._loaded = false
+    FL.Load()
+    ok((FL.Entry(starId) or {}).price == 12345,
+        "после FL.Load переопределение восстановилось с диска",
+        FL.Entry(starId) and FL.Entry(starId).price)
+    ok(FL.DealerOverrides[starId] ~= nil and FL.DealerOverrides[starId].price == 12345,
+        "DealerOverrides поднят из файла", FL.DealerOverrides[starId] and FL.DealerOverrides[starId].price)
+    FL.Units = keepUnits
 end
 
 print(("\nFLEET: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
