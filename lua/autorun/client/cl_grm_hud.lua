@@ -26,21 +26,25 @@ if not CLIENT then return end
 GRM = GRM or {}
 GRM.HUD = GRM.HUD or {}
 GRM.HUD.Config = {
-    bgColor        = Color(12, 14, 20, 210),
-    bgShadow       = Color(0, 0, 0, 60),
-    textColor      = Color(230, 230, 235, 255),
-    labelColor     = Color(160, 165, 175, 255),
-    hpColorFull    = Color(80, 210, 120, 255),
-    hpColorMid     = Color(230, 200, 50, 255),
-    hpColorLow     = Color(220, 60, 60, 255),
-    armorColor     = Color(60, 150, 220, 255),
-    moneyColor     = Color(80, 220, 130, 255),
+    -- Каноническая палитра GRM/XUI (cl_grm_ui_theme.lua):
+    -- почти чёрный сине-стальной, неоновые акценты.
+    bgColor        = Color(8, 14, 23, 246),
+    bgShadow       = Color(0, 0, 0, 70),
+    panelHeader    = Color(10, 22, 37, 255),
+    lineColor      = Color(55, 117, 151, 190),
+    textColor      = Color(225, 238, 247, 255),
+    labelColor     = Color(132, 160, 178, 255),
+    hpColorFull    = Color(64, 222, 147, 255),
+    hpColorMid     = Color(250, 185, 63, 255),
+    hpColorLow     = Color(244, 78, 96, 255),
+    armorColor     = Color(48, 204, 255, 255),
+    moneyColor     = Color(64, 222, 147, 255),
     bankColor      = Color(95, 170, 255, 255),
-    ammoColor      = Color(220, 180, 60, 255),
+    ammoColor      = Color(250, 185, 63, 255),
     ammo2Color     = Color(180, 180, 190, 255),
-    slotBg         = Color(20, 22, 30, 220),
-    slotBorder     = Color(60, 65, 80, 200),
-    slotActive     = Color(80, 160, 255, 255),
+    slotBg         = Color(16, 27, 42, 225),
+    slotBorder     = Color(55, 117, 151, 190),
+    slotActive     = Color(48, 204, 255, 255),
     slotHover      = Color(60, 120, 200, 150),
     slotText       = Color(200, 205, 215, 255),
     slotKeyColor   = Color(255, 200, 60, 255),
@@ -479,27 +483,37 @@ local function DrawMainHUD()
         end
     end
 
-    -- ── раскладка панели ────────────────────────────────────────────
-    local pw = 248
+    -- ── раскладка панели (GRM/XUI) ──────────────────────────────────
+    local pw = 252
     local pad, barH, gap, labelH = 12, 14, 8, 12
-    local moneyH = 42
-    -- Панель не должна уходить за верх экрана ни при каком числе полос:
-    -- если строк много, оставляем минимум 16px сверху.
+    local headerH = 26
+    local moneyH = 46
+    -- Панель не должна уходить за верх экрана ни при каком числе полос.
     local ph = pad + #rows * (labelH + barH + gap) + moneyH + pad - gap
+    ph = ph + headerH
     ph = math.min(ph, sh - 32)
     local px, py = 16, math.max(16, sh - 16 - ph)
 
+    -- Корпус: тёмный сине-стальной, скругление 8, тонкая неоновая обводка.
     draw.RoundedBox(8, px + 2, py + 2, pw, ph, cfg.bgShadow)
     draw.RoundedBox(8, px, py, pw, ph, cfg.bgColor)
+    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, math.floor(cfg.lineColor.a or 255))
+    surface.DrawOutlinedRect(px, py, pw, ph)
+    -- Шапка: панель темнее, скруглены только верхние углы.
+    draw.RoundedBoxEx(6, px, py, pw, headerH, cfg.panelHeader, true, true, false, false)
+    draw.SimpleText("СОСТОЯНИЕ", "GRM_HUD_Label", px + pad, py + headerH / 2, cfg.textColor,
+        TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    draw.RoundedBox(2, px + pad, py + headerH - 1, pw - pad * 2, 2, cfg.lineColor)
 
     local x, w = px + pad, pw - pad * 2
-    local y = py + pad
+    local y = py + headerH + pad
     for _, row in ipairs(rows) do
         draw.SimpleText(row.label, "GRM_HUD_Label", x, y, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
         draw.SimpleText(row.text, "GRM_HUD_Label", x + w, y, cfg.labelColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
         y = y + labelH
-        draw.RoundedBox(4, x, y, w, barH, Color(30, 32, 40, 255))
-        if row.frac > 0 then draw.RoundedBox(4, x, y, w * row.frac, barH, row.color) end
+        -- Полоса: подложка panel2, заливка неоновым цветом, скругление 4.
+        draw.RoundedBox(4, x, y, w, barH, Color(22, 37, 56, 245))
+        if row.frac > 0 then draw.RoundedBox(4, x, y, math.max(2, w * row.frac), barH, row.color) end
         y = y + barH + gap
     end
 
@@ -517,10 +531,12 @@ local function DrawMainHUD()
 
     -- ── патроны: отдельный блок справа снизу ────────────────────────
     if actual.ammo1 >= 0 then
-        local ax, ay = sw - 16 - 150, sh - 16 - 60
-        local aw, ah = 150, 54
+        local ax, ay = sw - 16 - 160, sh - 16 - 64
+        local aw, ah = 160, 58
         draw.RoundedBox(8, ax + 2, ay + 2, aw, ah, cfg.bgShadow)
         draw.RoundedBox(8, ax, ay, aw, ah, cfg.bgColor)
+        surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, math.floor(cfg.lineColor.a or 255))
+        surface.DrawOutlinedRect(ax, ay, aw, ah)
         draw.SimpleText("ПАТРОНЫ", "GRM_HUD_Label", ax + aw - 10, ay + 6, cfg.labelColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
         local ammoStr = tostring(math.Round(anim.ammo1))
         draw.SimpleText(ammoStr, "GRM_HUD_Ammo", ax + 12, ay + ah / 2 + 4, cfg.ammoColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)

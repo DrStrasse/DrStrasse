@@ -2293,3 +2293,28 @@ Q-меню: **только** каталог/схема `grm_fire_place`, не л
       остальные полосы по-прежнему через `GRM.HUD.RegisterBar`.
 * Стенды: `sim_vehicle_dealer_v3` — 64 (обновлены ожидания: дилер не
   добавляет в закупку автоматически, кнопка «НЕТ В КАТАЛОГЕ»).
+
+## Ход 22.08 (76) — изучение всей документации и дизайн HUD в стиле GRM/XUI
+
+* ИЗУЧЕНО: все MD текущей ветки + ветки `019fcf9e` (PROJECT_MEMORY,
+  HANDOVER, FULL_ANALYSIS, ANALYSIS_MODULES, ANALYSIS_ALL_LUA,
+  CHARACTER_ARCHITECTURE, QMENU_ANALYSIS), Facepunch commits и wiki
+  (HUDPaint/HUDShouldDraw, surface.CreateFont, OptimizationTips). Ключевое
+  из записей предшественников: не работать от master; ядро — `GRM = GRM or {}`
+  и `Factions`; JSON с SID/CharacterKey только `util.JSONToTable(raw,false,true)`;
+  дизайн-канон — палитра GRM/XUI, Roboto extended, rounded 8/4, тонкая
+  обводка; «порядок загрузки autorun» и «не ломать глобальные контракты».
+* HUD ПЕРЕДЕЛАН В СТИЛЕ GRM/XUI (`cl_grm_hud.lua`):
+  - палитра приведена к cl_grm_ui_theme: bg(8,14,23), panel(10,22,37),
+    line(55,117,151), text(225,238,247), muted(132,160,178), cyan/green/
+    amber/red акценты;
+  - добавлена шапка «СОСТОЯНИЕ» (RoundedBoxEx, скруглены только верхние
+    углы) + неоновая линия под ней, тонкая обводка корпуса;
+  - полосы: подложка panel2 (22,37,56), заливка неоновым цветом с
+    скруглением 4, не выходит за панель;
+  - здоровье/броня/сытость/вес/выносливость в одном списке, панель не
+    уходит за верх экрана, броня видна всегда;
+  - API `GRM.HUD.RegisterBar/BarList` сохранён (модули по-прежнему
+    объявляют свои полосы).
+* Стенды: `sim_hud_bars` — 19/19, `sim_hud_selector` — 0 failures,
+  `sim_fleet` — 143, `sim_plates` — 211, `sim_vehicle_dealer_v3` — 64.

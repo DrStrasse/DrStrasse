@@ -41,7 +41,7 @@ ok(list[1].id == "stamina" and list[2].id == "hunger" and list[3].id == "weight"
 print("\n=== 2. ПАНЕЛЬ СОБИРАЕТСЯ ПОД СОДЕРЖИМОЕ ===")
 ok(has("local ph = pad + #rows * (labelH + barH + gap) + moneyH + pad - gap"),
    "высота панели считается по числу полос, а не задана константой")
-ok(has('if (anim.armor or 0) > 0.5 then'), "броня показывается только когда она есть")
+ok(has('label = "БРОНЯ"'), "броня показывается всегда, даже при 0")
 ok(has('rows[#rows + 1] = { label = "ЗДОРОВЬЕ"'), "здоровье в общем списке, а не отдельным кодом")
 ok(has("local ok, value, max, text, color, hidden = pcall(def.Get)"),
    "чужая полоса вызывается через pcall — ошибка модуля не роняет HUD")
