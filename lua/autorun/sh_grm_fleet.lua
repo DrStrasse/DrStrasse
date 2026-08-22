@@ -69,15 +69,27 @@ end
 
 --- Разрешена ли позиция рынка этой организации на этом уровне допуска.
 --  entry.factions пустой = «всем»; entry.tier ограничивает по уровню госбазы.
+local function factionKey(v)
+    local raw = string.lower(string.Trim(tostring(v or "")))
+    if raw == "" then return "" end
+    for key, f in pairs(_G.Factions or {}) do
+        local display = istable(f) and tostring(f.DisplayName or f.displayName or "") or ""
+        if raw == string.lower(tostring(key)) or (display ~= "" and raw == string.lower(display)) then
+            return tostring(key)
+        end
+    end
+    return raw
+end
+
 function FL.EntryAllowed(entry, faction, level, isAdmin)
     if not istable(entry) then return false, "Позиция не найдена" end
     if isAdmin then return true end
-    faction = tostring(faction or "")
+    faction = factionKey(faction)
     if faction == "" then return false, "Закупка доступна только организациям" end
 
     if istable(entry.factions) and #entry.factions > 0 then
         local hit = false
-        for _, f in ipairs(entry.factions) do if tostring(f) == faction then hit = true break end end
+        for _, f in ipairs(entry.factions) do if factionKey(f) == faction then hit = true break end end
         if not hit then return false, "Эта техника вашей организации не отпускается" end
         return true
     end
@@ -2067,7 +2079,9 @@ if CLIENT then
 
         local sig = stateSignature(data)
         if sig == FL._sig then return end
-        if typingNow() then FL._sigPending = sig return end
+        -- Поля формы уже живут в FL.Form, поэтому пересборка не теряет
+        -- введённое. Не ждём keyboard focus: после окна «Цена» Derma мог
+        -- оставить невидимый focus и навсегда заморозить живой снимок.
         FL._sig, FL._sigPending = sig, nil
         if FL._rebuild then FL._rebuild() end
     end
