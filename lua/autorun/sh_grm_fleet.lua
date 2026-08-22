@@ -577,10 +577,15 @@ if SERVER then
     end
 
     if GRM.Save and GRM.Save.Register then
-        FL._marketSave = GRM.Save.Register("grm_fleet_market", {
+        -- Register возвращает boolean, а не объект записи. Храним здесь
+        -- именно путь: старый код ниже обращался к `true.file`, из-за чего
+        -- FL.Load падал ДО `FL._loaded = true` и навсегда блокировал покупки.
+        GRM.Save.Register("grm_fleet_market", {
             file = MARKET_FILE, delay = 3, label = "рынок техники", build = marketPayload })
-        FL._fleetSave = GRM.Save.Register("grm_fleet_units", {
+        GRM.Save.Register("grm_fleet_units", {
             file = fleetFile(), delay = 3, label = "автопарк", build = fleetPayload })
+        FL._marketSave = MARKET_FILE
+        FL._fleetSave = fleetFile()
     end
 
     function FL.SaveMarket(why)
@@ -675,14 +680,16 @@ if SERVER then
              каждый раз, когда читаем базу. ]]
         if GRM.Save and GRM.Save.Register then
             local wantFleetFile = fleetFile()
-            if not FL._fleetSave or FL._fleetSave.file ~= wantFleetFile then
-                FL._fleetSave = GRM.Save.Register("grm_fleet_units", {
+            if FL._fleetSave ~= wantFleetFile then
+                GRM.Save.Register("grm_fleet_units", {
                     file = wantFleetFile, delay = 3, label = "автопарк", build = fleetPayload })
+                FL._fleetSave = wantFleetFile
             end
             local wantMarketFile = MARKET_FILE
-            if not FL._marketSave or FL._marketSave.file ~= wantMarketFile then
-                FL._marketSave = GRM.Save.Register("grm_fleet_market", {
+            if FL._marketSave ~= wantMarketFile then
+                GRM.Save.Register("grm_fleet_market", {
                     file = wantMarketFile, delay = 3, label = "рынок техники", build = marketPayload })
+                FL._marketSave = wantMarketFile
             end
         end
         local m = readJSON(MARKET_FILE)

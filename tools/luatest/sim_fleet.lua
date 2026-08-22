@@ -220,6 +220,13 @@ GRM = {
     Doors = { IsDoor = function() return false end, GetDoorID = function() return nil end,
               IsDoorLocked = function() return false end, LockDoor = function() end },
     Property = { Records = {} },
+    -- Реальный GRM.Save.Register возвращает boolean, не запись. Это мок
+    -- именно этого контракта: он ловит обращение вида `true.file` в FL.Load.
+    Save = {
+        Register = function() return true end,
+        Mark = function() return true end,
+        Flush = function() return true end,
+    },
 }
 
 -- Дилер: нужен только спавн машины на месте гаража.
@@ -518,10 +525,10 @@ do
         local t = f:read("*a") f:close() return t
     end)()
     ok(src:find("local wantFleetFile = fleetFile()", 1, true) ~= nil
-        and src:find("FL._fleetSave.file ~= wantFleetFile", 1, true) ~= nil,
+        and src:find("FL._fleetSave ~= wantFleetFile", 1, true) ~= nil,
         "при смене карты очередь записи переключается на файл новой карты")
     ok(src:find("local wantMarketFile = MARKET_FILE", 1, true) ~= nil
-        and src:find("FL._marketSave.file ~= wantMarketFile", 1, true) ~= nil,
+        and src:find("FL._marketSave ~= wantMarketFile", 1, true) ~= nil,
         "рынок тоже перерегистрируется, путь тот же но без рассинхрона")
 end
 
