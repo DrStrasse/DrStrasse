@@ -420,6 +420,20 @@ do
        "прокрутка каждой секции возвращается на место")
 end
 
+print("\n=== БАЗА ЗАКУПОК ПИШЕТСЯ НА ТЕКУЩУЮ КАРТУ (22.08) ===")
+do
+    local src = (function()
+        local f = io.open("lua/autorun/sh_grm_fleet.lua", "rb")
+        local t = f:read("*a") f:close() return t
+    end)()
+    ok(src:find("local wantFleetFile = fleetFile()", 1, true) ~= nil
+        and src:find("FL._fleetSave.file ~= wantFleetFile", 1, true) ~= nil,
+        "при смене карты очередь записи переключается на файл новой карты")
+    ok(src:find("local wantMarketFile = MARKET_FILE", 1, true) ~= nil
+        and src:find("FL._marketSave.file ~= wantMarketFile", 1, true) ~= nil,
+        "рынок тоже перерегистрируется, путь тот же но без рассинхрона")
+end
+
 print("\n=== ЖИВОЕ ОКНО И ХРАНЕНИЕ (22.08) ===")
 do
     local src = (function()
@@ -442,6 +456,19 @@ do
     ok(has('concommand.Add("grm_fleet_status"') and has("на диске: рынок %d, парк %d"),
        "есть диагностика: что в памяти и что реально на диске")
     ok(has('concommand.Add("grm_fleet_save"'), "есть принудительная запись с проверкой")
+end
+
+print("\n=== ВОССТАНОВЛЕНИЕ СТАТУСОВ ПОСЛЕ РЕСТАРТА (22.08) ===")
+do
+    local units = FL.NormalizeLoadedUnits({
+        fu_active = { id = "fu_active", status = "active" },
+        fu_stored = { id = "fu_stored", status = "stored" },
+        fu_scrap  = { id = "fu_scrap", status = "scrap" },
+    })
+    ok(units.fu_active.status == "stored", "активная единица после рестарта встаёт в гараж", units.fu_active.status)
+    ok(units.fu_stored.status == "stored", "уже сохранённая остаётся в гараже")
+    ok(units.fu_scrap.status == "scrap", "списанная не возвращается в парк")
+    ok(units.fu_active.restoredFromActive == true, "помечено, что статус восстановлен после рестарта")
 end
 
 print("\n=== ДВА ДИЛЕРА, ОДИН КЛАСС, РАЗНЫЕ ЦЕНЫ (22.08) ===")

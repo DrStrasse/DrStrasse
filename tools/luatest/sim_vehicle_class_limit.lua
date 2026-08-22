@@ -224,7 +224,8 @@ ok(has(core, "row.buyback=VD.StateBuybackPrice(r);row.buybackRate=VD.StateBuybac
     "сумма выкупа уходит в окно")
 ok(has(cl, "ПРОДАТЬ ГОСУДАРСТВУ · "), "на кнопке видно, сколько заплатят")
 ok(not has(cl, "Продать (возврат 50%)"), "старый возврат 50% убран")
-ok(has(cl, "Куплен за %s  •  выкуп %s"), "в карточке видно цену покупки и сумму выкупа")
+ok(has(cl, "VC.TableRow(parent, {") and has(cl, "ПРОДАТЬ ГОСУДАРСТВУ · "),
+   "личная машина в таблице — строка с ценой покупки и суммой выкупа")
 
 print(("\nVEHICLE CLASS LIMIT: %d/%d, провалов: %d"):format(total - fails, total, fails))
 if fails > 0 then os.exit(1) end

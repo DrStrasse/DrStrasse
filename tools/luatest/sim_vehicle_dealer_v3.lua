@@ -60,8 +60,9 @@ do
     ok(hasT(core, "local fleetRows={}") and hasT(core, "FL.UnitsOf(faction)"),
         "дилер отдаёт единицы служебного парка поштучно")
     ok(hasT(core, 'net.WriteTable(fleetRows)'), "список единиц уходит клиенту")
-    ok(hasT(cl, "local function fleetCell(grid, v)") and hasT(cl, 'showRows(fleetUnits, "fleet")'),
-        "у каждой служебной машины своя ячейка и свой раздел")
+    ok(hasT(cl, "local function fleetCell(parent, v)") and hasT(cl, 'showRows(fleetUnits, "fleet")')
+        and hasT(cl, "VC.TableRow(parent, {"),
+        "у каждой служебной машины своя строка таблицы и свой раздел")
     ok(hasT(core, 'elseif op=="fleet_issue"or op=="fleet_store"then'),
         "выдача и возврат идут по конкретной единице через единый диспетчер")
 

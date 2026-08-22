@@ -681,9 +681,10 @@ local dealer = (function()
     local f = io.open("lua/entities/sent_vehicle_dealer/cl_init.lua", "rb")
     local t = f:read("*a") f:close() return t
 end)()
-ok(dealer:find("local function garageCell(grid, v)", 1, true) ~= nil
-   and dealer:find("GRM.VehicleCells.Grid(list)", 1, true) ~= nil,
-   "транспорт у дилера показан ячейками, как инвентарь")
+ok(dealer:find("local function garageCell(parent, v)", 1, true) ~= nil
+   and dealer:find("VC.TableRow(parent, {", 1, true) ~= nil
+   and dealer:find("VC.TableHeader(list", 1, true) ~= nil,
+   "транспорт у дилера показан табличным списком: одна машина = одна строка")
 local cells = (function()
     local f = io.open("lua/autorun/client/cl_grm_vehicle_cells.lua", "rb")
     local t = f:read("*a") f:close() return t
@@ -701,13 +702,14 @@ local fleetSrc = (function()
     local f = io.open("lua/autorun/sh_grm_fleet.lua", "rb")
     local t = f:read("*a") f:close() return t
 end)()
-ok(garageUI:find("VC.Cell(personalGrid", 1, true) ~= nil
-   and garageUI:find("VC.Cell(fleetGrid", 1, true) ~= nil,
-   "в окне гаража ячейки и у личного, и у СЛУЖЕБНОГО транспорта")
-ok(fleetSrc:find("VC.Cell(grid, {", 1, true) ~= nil,
-   "вкладка «Автопарк» организации тоже на ячейках")
+ok(garageUI:find("VC.TableRow(list, {", 1, true) ~= nil
+   and garageUI:find("VC.TableHeader(list", 1, true) ~= nil,
+   "в окне гаража таблица и у личного, и у СЛУЖЕБНОГО транспорта")
+ok(fleetSrc:find("VC.TableRow(list, {", 1, true) ~= nil
+   and fleetSrc:find("VC.TableHeader(list", 1, true) ~= nil,
+   "вкладка «Автопарк» организации тоже табличным списком")
 ok(fleetSrc:find('PlateOfVehicleKey("fleet:"', 1, true) ~= nil,
-   "у служебной техники в ячейке свой номер")
+   "у служебной техники в таблице свой номер")
 ok(dealer:find("local function garageCard", 1, true) == nil,
    "старые строки-карточки гаража удалены, копий разметки нет")
 

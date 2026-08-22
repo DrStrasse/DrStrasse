@@ -153,12 +153,27 @@ function G.OpenWindow(data)
         end
     end
 
-    --[[ Личный транспорт — ячейками (общий слой GRM.VehicleCells): одна и
-         та же карточка у дилера, в гараже и в автопарке. ]]
+    --[[ ТАБЛИЧНЫЙ СПИСОК ТРАНСПОРТА (заказ владельца 22.08): одна реальная
+         машина = одна строка, служебная и личная в одном списке разными
+         блоками. Личный — «МОЙ ТРАНСПОРТ», служебный — «СЛУЖЕБНЫЙ АВТОПАРК». ]]
     local VC = GRM.VehicleCells
-    local personalGrid = (VC and #rows > 0) and VC.Grid(list) or nil
+    local rowsPresent = #rows > 0 or #(data.fleet or {}) > 0
+
+    if #rows > 0 and VC and VC.TableRow then
+        local head = vgui.Create("DPanel", list)
+        head:Dock(TOP) head:SetTall(34) head:DockMargin(0, 0, 6, 6)
+        head.Paint = function(_, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, Color(26, 33, 45))
+            draw.SimpleText("МОЙ ТРАНСПОРТ", "GRMGar_Body", 12, h / 2, C.gold,
+                TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText("личные машины владельца  •  выдаются по местам стоянки", "GRMGar_Small",
+                w - 12, h / 2, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        end
+        VC.TableHeader(list, { { label = "НАЗВАНИЕ" }, { label = "КЛАСС" }, { label = "НОМЕР" },
+            { label = "ГАРАЖ" }, { label = "СТАТУС" } })
+    end
     for _, v in ipairs(rows) do
-        if personalGrid then
+        if VC and VC.TableRow then
             local buttons = {
                 { label = v.onMap and "УБРАТЬ В ГАРАЖ" or "ВЫДАТЬ",
                   color = v.onMap and C.accent or C.green,
@@ -168,14 +183,12 @@ function G.OpenWindow(data)
                 buttons[#buttons + 1] = { label = "ПРИПИСАТЬ СЮДА", color = C.cardHov,
                     fn = function() G.SendAction("sethome", v.id) end }
             end
-            VC.Cell(personalGrid, {
-                name = v.name or v.class, class = v.class, model = v.model, plate = v.plate,
+            VC.TableRow(list, {
+                name = v.name or v.class, class = v.class, plate = v.plate,
+                garage = (v.homeName or "") ~= "" and v.homeName or "—",
                 state = { text = v.onMap and ("на карте • " .. tostring(v.distance or 0) .. " юн.") or "в гараже",
                           good = not v.onMap },
-                lines = {
-                    { text = (v.homeName or "") ~= "" and ("Приписан: " .. v.homeName) or "Гараж не назначен",
-                      color = v.here and C.teal or C.dim },
-                },
+                buttons = buttons,
             })
         end
     end
@@ -184,7 +197,7 @@ function G.OpenWindow(data)
          Гараж и автопарк — один экран: сотрудник берёт служебную машину там
          же, где и личную, и она встаёт на свободное МЕСТО стоянки. ]]
     local fleet = data.fleet or {}
-    if #fleet > 0 then
+    if #fleet > 0 and VC and VC.TableRow then
         local head = vgui.Create("DPanel", list)
         head:Dock(TOP) head:SetTall(34) head:DockMargin(0, 6, 6, 6)
         head.Paint = function(_, w, h)
@@ -194,24 +207,20 @@ function G.OpenWindow(data)
             draw.SimpleText("закуплено руководством  •  выдаётся по местам стоянки", "GRMGar_Small",
                 w - 12, h / 2, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
+        VC.TableHeader(list, { { label = "НАЗВАНИЕ" }, { label = "КЛАСС" }, { label = "НОМЕР" },
+            { label = "ГАРАЖ" }, { label = "СТАТУС" } })
     end
-
-    local fleetGrid = (VC and #fleet > 0) and VC.Grid(list) or nil
     for _, v in ipairs(fleet) do
-        if fleetGrid then
+        if VC and VC.TableRow then
             local allowed = v.allowed ~= false
             local note = (v.allowed == false)
                 and ((v.reason or "") ~= "" and v.reason or "закреплена за другими должностями")
                 or (v.restriction or "")
-            VC.Cell(fleetGrid, {
-                name = v.name or v.class, class = v.class, model = v.model, plate = v.plate,
+            VC.TableRow(list, {
+                name = v.name or v.class, class = v.class, plate = v.plate,
+                garage = (v.homeName or "") ~= "" and v.homeName or "—",
                 accent = C.gold,
                 state = { text = v.onMap and "на линии" or "в гараже", good = not v.onMap },
-                lines = {
-                    { text = note ~= "" and note or "Доступна всем сотрудникам",
-                      color = allowed and C.dim or C.red },
-                    { text = "Служебная техника организации", color = C.gold },
-                },
                 buttons = {
                     { label = v.onMap and "ВЕРНУТЬ В ГАРАЖ" or (allowed and "ВЫДАТЬ СЛУЖЕБНУЮ" or "НЕ ПОЛОЖЕНА"),
                       color = v.onMap and C.accent or (allowed and C.green or C.cardHov),

@@ -488,8 +488,39 @@ if SERVER then
         return (ok and istable(t)) and t or nil
     end
 
+    --[[ Восстановление статусов после чтения базы. Чистая функция: её можно
+         гонять в стенде без GMod. Единица, которая на момент выключения была
+         «на линии», после рестарта физически не существует (FL.Active пуст) —
+         поэтому честный статус на старте — «в гараже». ]]
+    function FL.NormalizeLoadedUnits(units)
+        for _, unit in pairs(units or {}) do
+            if istable(unit) and tostring(unit.status or "") == "active" then
+                unit.status = "stored"
+                unit.restoredFromActive = true
+                unit.lastIn = unit.lastIn or os.time()
+            end
+        end
+        return units
+    end
+
     function FL.Load()
         FL.Market, FL.Units = {}, {}
+        --[[ ЦЕЛЬСЯ В ТЕКУЩУЮ КАРТУ. GRM.Save держит путь в записи; если просто
+             сменилась карта, реестр продолжал бы писать в файл прежней карты
+             и покупки на новой «терялись». Перерегистрируем сборщик парка
+             каждый раз, когда читаем базу. ]]
+        if GRM.Save and GRM.Save.Register then
+            local wantFleetFile = fleetFile()
+            if not FL._fleetSave or FL._fleetSave.file ~= wantFleetFile then
+                FL._fleetSave = GRM.Save.Register("grm_fleet_units", {
+                    file = wantFleetFile, delay = 3, label = "автопарк", build = fleetPayload })
+            end
+            local wantMarketFile = MARKET_FILE
+            if not FL._marketSave or FL._marketSave.file ~= wantMarketFile then
+                FL._marketSave = GRM.Save.Register("grm_fleet_market", {
+                    file = wantMarketFile, delay = 3, label = "рынок техники", build = marketPayload })
+            end
+        end
         local m = readJSON(MARKET_FILE)
         for _, entry in ipairs(istable(m) and m.market or {}) do
             if istable(entry) and tostring(entry.id or "") ~= "" then
@@ -502,6 +533,7 @@ if SERVER then
                 FL.Units[tostring(unit.id)] = unit
             end
         end
+        FL.NormalizeLoadedUnits(FL.Units)
         FL._loaded = true
         return true
     end
@@ -1340,13 +1372,17 @@ if CLIENT then
                 end
             end
 
-            --[[ Автопарк показываем такими же ячейками, как личный
-                 транспорт у дилера и в гараже (общий слой GRM.VehicleCells):
-                 одна карточка на весь сервер, без разнобоя. ]]
+            --[[ АВТОПАРК — ТАБЛИЧНЫМ СПИСКОМ (заказ владельца 22.08).
+                 Одна закупленная единица = одна строка: название, класс,
+                 номер, гараж, статус, кнопки. Ячейки остались в каталоге
+                 (что можно купить), реальные машины — в таблице. ]]
             local VC = GRM.VehicleCells
-            local grid = (VC and #FL.State.units > 0) and VC.Grid(list) or nil
+            if VC and VC.TableRow and #FL.State.units > 0 then
+                VC.TableHeader(list, { { label = "НАЗВАНИЕ" }, { label = "КЛАСС" },
+                    { label = "НОМЕР" }, { label = "ГАРАЖ" }, { label = "СТАТУС" } })
+            end
             for _, u in ipairs(FL.State.units) do
-                if grid then
+                if VC and VC.TableRow then
                     local menu = {}
                     if FL.State.canManage then
                         --[[ КОМУ ПОЛОЖЕНА МАШИНА: список структуры организации,
@@ -1371,19 +1407,12 @@ if CLIENT then
                             end }
                     end
 
-                    VC.Cell(grid, {
-                        name = u.name, class = u.class, model = u.model, plate = u.plate,
+                    VC.TableRow(list, {
+                        name = u.name, class = u.class, plate = u.plate,
+                        garage = (u.garageName or "") ~= "" and u.garageName or "не приписана",
                         accent = C.gold,
                         state = { text = tostring(u.statusName or (u.onMap and "на линии" or "в гараже")),
                                   good = not u.onMap },
-                        lines = {
-                            { text = ("Гараж: %s"):format((u.garageName or "") ~= "" and u.garageName or "не приписана"),
-                              color = (u.garageName or "") ~= "" and C.dim or C.gold },
-                            { text = (u.restriction or "") ~= "" and u.restriction or "Доступна всем сотрудникам",
-                              color = (#(u.roles or {}) > 0 or #(u.depts or {}) > 0) and C.gold or C.dim },
-                            { text = (u.lastUserName or "") ~= "" and ("Последний водитель: " .. u.lastUserName) or "",
-                              color = C.dim },
-                        },
                         buttons = {
                             { label = u.onMap and "ВЕРНУТЬ В ГАРАЖ" or "ВЫДАТЬ",
                               color = u.onMap and C.accent or C.green,
@@ -1403,7 +1432,6 @@ if CLIENT then
                 end
             end
         end
-
         -- ── РЫНОК (суперадмин) ─────────────────────────────────────
         local function buildAdmin()
             adminPnl:Clear()

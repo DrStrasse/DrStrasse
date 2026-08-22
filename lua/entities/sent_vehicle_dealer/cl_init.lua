@@ -419,9 +419,14 @@ net.Receive("GRM_VD_Open", function()
          Гараж — это инвентарь машин, и смотреть его удобнее сеткой. Сама
          карточка живёт в общем слое GRM.VehicleCells: она же используется
          в окне гаража и во вкладке «Автопарк», поэтому вид везде один. ]]
-    local function garageCell(grid, v)
+    --[[ ТАБЛИЧНЫЙ СПИСОК ТРАНСПОРТА (заказ владельца 22.08).
+         «1 машина = 1 строка, табличным списком; служебная и гражданская
+         каждая отдельно». В гараже и «Технике организации» реальные машины
+         больше не сетка ячеек — это колонки: название, класс, номер, гараж,
+         статус, кнопки. Каталог (что продаётся) остаётся витриной-ячейками. ]]
+    local function garageCell(parent, v)
         local VC = GRM.VehicleCells
-        if not VC then return end
+        if not (VC and VC.TableRow) then return end
         local onMap = v.stored == false
         local dealerAllowed = (showRetrieve ~= false) and deliveryMode ~= "garage"
         local garageAllowed = #garageChoices > 0
@@ -443,16 +448,11 @@ net.Receive("GRM_VD_Open", function()
                 end }
         end
 
-        return VC.Cell(grid, {
-            name = v.name or v.class, class = v.class, model = v.model, plate = v.plate,
+        return VC.TableRow(parent, {
+            name = v.name or v.class, class = v.class, plate = v.plate,
+            garage = (v.homeName or "") ~= "" and v.homeName or "—",
+            accent = C.gold,
             state = { text = onMap and "На карте" or "В гараже", good = not onMap },
-            lines = {
-                { text = (v.homeName or "") ~= "" and ("Гараж: " .. v.homeName) or "Гараж не назначен",
-                  color = (v.homeName or "") ~= "" and C.teal or C.dim },
-                { text = (tonumber(v.price) or 0) > 0
-                    and ("Куплен за %s  •  выкуп %s"):format(money(v.price), money(payout)) or "",
-                  color = C.dim },
-            },
             buttons = {
                 { label = onMap and "УБРАТЬ В ГАРАЖ" or "ВЫДАТЬ",
                   color = onMap and C.accent or C.green,
@@ -481,29 +481,25 @@ net.Receive("GRM_VD_Open", function()
         })
     end
 
-    --[[ СЛУЖЕБНАЯ МАШИНА — ОТДЕЛЬНАЯ ЯЧЕЙКА (заказ владельца 22.08).
+    --[[ СЛУЖЕБНАЯ МАШИНА — ОТДЕЛЬНАЯ СТРОКА ТАБЛИЦЫ (заказ владельца 22.08).
          В каталоге стоит КЛАСС («что можно закупить»), а здесь — реальные
          единицы техники организации: у каждой своё состояние и свой гараж,
          а номерной знак показывается, если он зарегистрирован вручную.
          Один седан больше не «представляет» весь парк седанов. ]]
-    local function fleetCell(grid, v)
+    local function fleetCell(parent, v)
         local VC = GRM.VehicleCells
-        if not VC then return end
+        if not (VC and VC.TableRow) then return end
         local allowed = v.allowed ~= false
         local note = (v.allowed == false)
             and ((v.reason or "") ~= "" and v.reason or "закреплена за другими должностями")
             or ((v.restriction or "") ~= "" and v.restriction or "Доступна всем сотрудникам")
 
-        return VC.Cell(grid, {
-            name = v.name or v.class, class = v.class, model = v.model, plate = v.plate,
+        return VC.TableRow(parent, {
+            name = v.name or v.class, class = v.class, plate = v.plate,
+            garage = (v.garageName or "") ~= "" and v.garageName or "—",
             accent = C.teal,
             state = { text = v.onMap and "на линии" or (v.statusName ~= "" and v.statusName or "в гараже"),
                       good = not v.onMap },
-            lines = {
-                { text = (v.garageName or "") ~= "" and ("Гараж: " .. v.garageName) or "Гараж не назначен",
-                  color = (v.garageName or "") ~= "" and C.teal or C.gold },
-                { text = note, color = allowed and C.dim or C.red },
-            },
             buttons = {
                 { label = v.onMap and "ВЕРНУТЬ В ГАРАЖ" or (allowed and "ВЫДАТЬ" or "НЕ ПОЛОЖЕНА"),
                   color = v.onMap and C.accent or (allowed and C.green or C.cardHov),
@@ -564,21 +560,28 @@ net.Receive("GRM_VD_Open", function()
         local q = string.lower(string.Trim(search:GetValue() or ""))
         local shown = 0
 
-        --[[ Сеткой ячеек рисуем и гараж, и каталог (личный и служебный).
-             Строками остаётся только раздел «На карте»: там важны
-             расстояние и владелец, а не витрина. ]]
+        --[[ ГАРАЖ и «ТЕХНИКА ОРГАНИЗАЦИИ» — табличным списком: одна
+             реальная машина = одна строка (название, класс, номер, гараж,
+             статус, кнопки). Каталог (что продаётся) остаётся сеткой ячеек. ]]
+        local VC = GRM.VehicleCells
+        local tableMode = currentMode == "garage" or currentMode == "fleet"
         local grid = nil
-        if currentMode ~= "active" then
-            grid = GRM.VehicleCells and GRM.VehicleCells.Grid(list) or nil
+        if tableMode and VC and VC.TableRow then
+            VC.TableHeader(list, {
+                { label = "НАЗВАНИЕ" }, { label = "КЛАСС" }, { label = "НОМЕР" },
+                { label = "ГАРАЖ" }, { label = "СТАТУС" },
+            })
+        elseif currentMode ~= "active" then
+            grid = VC and VC.Grid and VC.Grid(list) or nil
         end
 
         for _, v in ipairs(currentRows) do
             if matches(v, q) then
                 shown = shown + 1
-                if currentMode == "fleet" and grid then
-                    fleetCell(grid, v)
-                elseif currentMode == "garage" and grid then
-                    garageCell(grid, v)
+                if currentMode == "fleet" and tableMode then
+                    fleetCell(list, v)
+                elseif currentMode == "garage" and tableMode then
+                    garageCell(list, v)
                 elseif currentMode == "active" then
                     activeCard(list, v)
                 elseif grid then
