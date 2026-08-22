@@ -443,7 +443,7 @@ local function buildProfileTab(sc, refresh)
     end
 
     local b2 = block(sc, 96, "Персонаж:")
-    local bChar = mkBtn(b2, "Меню персонажа (внешность)", C.acc)
+    local bChar = mkBtn(b2, "МЕНЮ ПЕРСОНАЖА", C.acc)
     bChar:SetPos(10, 30) bChar:SetSize(250, 30)
     bChar.DoClick = function()
         if IsValid(lp) and lp:GetNWBool("GRM_Arrested", false) then

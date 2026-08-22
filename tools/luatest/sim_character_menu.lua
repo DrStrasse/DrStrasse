@@ -1,0 +1,103 @@
+--[[ Живой прогон меню персонажа v2 (заказ владельца 22.08):
+     окно на весь экран без крестика, мир закрыт до выбора персонажа,
+     игрок ждёт за картой и после выбора попадает на точку спавна,
+     описание персонажа живёт в его записи.
+     Чистые функции грузятся из НАСТОЯЩЕГО lua/autorun/sh_grm_character.lua,
+     остальное проверяется по контракту исходника.
+     Запуск: ./.luabuild/lj/src/luajit tools/luatest/sim_character_menu.lua ]]
+local pass, fail = 0, 0
+local function ok(v, n, extra)
+    if v then pass = pass + 1 print("  ok   " .. n)
+    else fail = fail + 1 print("  FAIL " .. n .. "  " .. tostring(extra or "")) end
+end
+
+SERVER, CLIENT = false, false
+function AddCSLuaFile() end
+function IsValid(v) return type(v) == "table" and v._valid ~= false end
+function istable(v) return type(v) == "table" end
+function isstring(v) return type(v) == "string" end
+function isfunction(v) return type(v) == "function" end
+function string.Trim(s) return (string.gsub(tostring(s or ""), "^%s*(.-)%s*$", "%1")) end
+function math.Clamp(v, lo, hi) return math.max(lo, math.min(hi, v)) end
+function Vector(x, y, z) return { x = x or 0, y = y or 0, z = z or 0 } end
+hook = { Add = function() end, Run = function() end }
+GRM = {}
+
+assert(loadfile("lua/autorun/sh_grm_character.lua"))()
+local CH = GRM.Char
+
+local src = (function()
+    local f = io.open("lua/autorun/sh_grm_character.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+local function has(n) return src:find(n, 1, true) ~= nil end
+
+print("\n=== 1. ОПИСАНИЕ ПЕРСОНАЖА ===")
+ok(isfunction(CH.CleanDesc), "чистая функция описания объявлена")
+ok(CH.CleanDesc("  Ветеран войны  ") == "Ветеран войны", "пробелы по краям убираются",
+   CH.CleanDesc("  Ветеран войны  "))
+ok(CH.CleanDesc("Строка\1\2с мусором") == "Строкас мусором", "управляющие символы вырезаются",
+   CH.CleanDesc("Строка\1\2с мусором"))
+ok(CH.Len(CH.CleanDesc(("Я"):rep(500))) == CH.DescMax, "длина режется по СИМВОЛАМ, а не байтам",
+   CH.Len(CH.CleanDesc(("Я"):rep(500))))
+ok(CH.CleanDesc(nil) == "", "пустое описание — законный ответ")
+ok(has("function CH.SetDesc(ply, text, slot)") and has('saveChars("setdesc")'),
+   "описание сохраняется в записи персонажа")
+ok(has("GRM.RPDesc.SetFor(ply, tostring(c.desc"), "при выборе персонажа описание уходит в RPDesc")
+
+print("\n=== 2. ЛИМБ ДО ВЫБОРА ===")
+ok(has("CH.LimboPos = Vector(0, 0, 15500)"), "точка ожидания вынесена за карту")
+ok(has("function CH.SendToLimbo(ply)") and has("ply:StripWeapons()") and has("ply:SetNoDraw(true)")
+   and has("ply:SetNotSolid(true)") and has("ply:GodEnable()"),
+   "в лимбе игрок без оружия, без модели, без коллизии и неуязвим")
+ok(has("if locked == true then\n            CH.SendToLimbo(ply)"),
+   "лимб включается вместе с блокировкой выбора")
+ok(has("elseif ply.GRMCharLimbo then\n            CH.ReleaseFromLimbo(ply)"),
+   "и выключается, когда персонаж подтверждён")
+
+print("\n=== 3. ТОЧКА СПАВНА ПОСЛЕ ВЫБОРА ===")
+ok(has("function CH.PlaceOnSpawnPoint(ply)") and has("_G.GetSpawnPointForPlayer(ply)"),
+   "точка берётся из системы точек спавна (/spawnmenu)")
+ok(has('ents.FindByClass("info_player_start")'), "если точек нет — запасной вариант карты")
+ok(has("ply.GRMCharPlaceOnSpawn = true") and has('hook.Add("PlayerSpawn", "GRM_Char_PlaceAfterSelect"'),
+   "после спавна игрока ставят на точку принудительно")
+
+print("\n=== 4. ОКНО НА ВЕСЬ ЭКРАН И БЕЗ ВЫХОДА ===")
+ok(has("f:SetSize(ScrW(), ScrH())") and has("f:SetPos(0, 0)"), "окно занимает весь экран")
+ok(has("f:ShowCloseButton(false)") and has("if mandatory then\n            f.Close = function() end"),
+   "обязательное окно не закрывается крестиком")
+ok(has("if mandatory and key == KEY_ESCAPE then return true end"), "ESC окно не закрывает")
+ok(has('hook.Add("OnPauseMenuShow", "GRM_Char_BlockPause"'), "игровое меню по ESC тоже заблокировано")
+ok(has('hook.Add("Think", "GRM_Char_KeepMenu"'), "если окно всё же пропало — оно возвращается само")
+ok(has("if IsValid(CH._frame) then CH._frame:Remove() CH._frame = nil end"),
+   "второе окно не наслаивается на первое")
+
+print("\n=== 5. МИР ЗАКРЫТ ДО ВЫБОРА ===")
+ok(has('hook.Add("HUDShouldDraw", "GRM_Char_HideHUD"'), "весь HUD скрыт (в т.ч. выбор оружия)")
+ok(has('hook.Add("PlayerBindPress", "GRM_Char_BlockBinds"'), "хот-бары и бинды не срабатывают")
+ok(has('hook.Add("SpawnMenuOpen", "GRM_Char_BlockSpawnMenu"'), "Q-меню закрыто")
+ok(has('hook.Add("StartCommand", "GRM_Char_BlockInput"'), "движение и кнопки на сервере обнуляются")
+
+print("\n=== 6. ЖИВАЯ МОДЕЛЬ И ВКЛАДКИ ===")
+ok(has("local function applyPreview(fullModel)") and has("ent:SetBodygroup(tonumber(g) or 0"),
+   "изменения применяются к модели сразу, без пересборки окна")
+ok(has('addTab("look", "ВНЕШНОСТЬ")') and has('addTab("body", "ТЕЛОСЛОЖЕНИЕ")')
+   and has('addTab("info", "ИМЯ И ОПИСАНИЕ")'), "три вкладки настроек")
+ok(has("rebuildBodygroups = function()") and has("ent:GetBodygroupCount(i)"),
+   "бодигруппы читаются с реальной модели")
+ok(has("preview.OnCursorMoved = function(self, x)"), "модель крутится мышью, без ползунков")
+ok(not has("skinSlider"), "лишние ползунки убраны")
+
+print("\n=== 7. СОХРАНЕНИЕ ===")
+ok(has("net.WriteTable({\n                    slot = activeSlot or \"char1\", name = draft.name, desc = draft.desc,"),
+   "имя, описание и внешность уходят одним пакетом")
+ok(has('if d.desc ~= nil then CH.SetDesc(ply, d.desc, d.slot) end'), "сервер принимает описание")
+
+local f4 = (function()
+    local fh = io.open("lua/autorun/sh_grm_f4menu.lua", "rb")
+    local t = fh:read("*a") fh:close() return t
+end)()
+ok(f4:find('mkBtn(b2, "МЕНЮ ПЕРСОНАЖА"', 1, true) ~= nil, "в F4 есть кнопка «МЕНЮ ПЕРСОНАЖА»")
+
+print(("\nCHARACTER MENU: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
+if fail > 0 then os.exit(1) end

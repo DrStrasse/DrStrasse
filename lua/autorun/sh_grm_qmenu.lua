@@ -7,6 +7,9 @@
       панель параметров с нуля — только ручная схема с человеческими
       подписями; авто-дамп ClientConVar в UI не используется
       (это давало a1/b3 у 3D2D Textscreen); нет кнопки +menu.
+    v5.2.0: настройки инструментов строит САМ инструмент (ControlPanel +
+      родной BuildCPanel), как в ванильном меню: материалы, шрифты и
+      пресеты снова на месте; наша схема осталась страховкой.
     v4.0.0: чужой BuildCPanel больше не вызывается; настройки — из схемы
       данных; иконки порциями; ничего не меряем в Paint; раскладка
       константами; HOLD-Q как ваниль (зажал — открыто, отпустил — закрыто).
@@ -21,7 +24,7 @@ GRM = GRM or {}
 GRM.QMenu = GRM.QMenu or {}
 local QM = GRM.QMenu
 
-QM.Version = "5.1.0"
+QM.Version = "5.2.0"
 
 local CONFIG_FILE = "grm_qmenu.json"
 
@@ -1395,6 +1398,64 @@ if CLIENT then
         return ""
     end
 
+    --[[ ПАНЕЛЬ НАСТРОЕК ИНСТРУМЕНТА.
+
+         v5.2.0 (заказ владельца 22.08: «настройки инструментов должны
+         показываться как они есть изначально»).
+
+         Было: своя схема-описание для каждого инструмента. Для
+         GRM-инструментов она подходила, но для чужих (3D2D Textscreen,
+         «Материал», «Цвет», любые аддоны) — нет: там свои виджеты —
+         выбор материала плитками, списки шрифтов, пресеты. Схема их не
+         умеет, поэтому владелец видел не те настройки, что задуманы
+         автором инструмента.
+
+         Стало: сначала строим НАСТОЯЩУЮ панель инструмента — тем же
+         способом, что и ванильное меню: создаём ControlPanel и отдаём её
+         в TOOL.BuildCPanel. Получаем родные ползунки, списки материалов,
+         пресеты и подписи. Если у инструмента нет BuildCPanel или он упал
+         с ошибкой — включается наша схема, а если и её нет — короткая
+         подсказка. Ошибка чужого кода не роняет меню: вызов в pcall. ]]
+
+    --- Достать таблицу инструмента так же, как это делает ванильный тулган.
+    function QM.ToolTable(toolId)
+        toolId = tostring(toolId or "")
+        if toolId == "" then return nil end
+        local gun = weapons and weapons.GetStored and weapons.GetStored("gmod_tool")
+        local tools = gun and gun.Tool or nil
+        if istable(tools) and istable(tools[toolId]) then return tools[toolId] end
+        return nil
+    end
+
+    --- Родная панель инструмента. Возвращает панель либо nil и причину.
+    function QM.NativePanel(parent, toolId)
+        if not IsValid(parent) then return nil, "нет контейнера" end
+        local tool = QM.ToolTable(toolId)
+        if not istable(tool) then return nil, "инструмент не найден" end
+        local build = tool.BuildCPanel
+        if not isfunction(build) then return nil, "у инструмента нет своей панели" end
+
+        local cp = vgui.Create("ControlPanel", parent)
+        if not IsValid(cp) then return nil, "не удалось создать панель" end
+        cp:Dock(TOP)
+        cp:DockMargin(4, 4, 4, 4)
+        cp:SetName(tostring(tool.Name or toolId))
+        -- Родной скин: инструмент рисует себя так, как задумал его автор.
+        cp:SetSkin("Default")
+
+        -- BuildCPanel в GMod зовут ФУНКЦИЕЙ от панели (не методом).
+        local ok, err = pcall(build, cp, tool)
+        if not ok then
+            ok, err = pcall(build, cp)
+        end
+        if not ok then
+            cp:Remove()
+            return nil, tostring(err)
+        end
+        cp:InvalidateLayout(true)
+        return cp
+    end
+
     local function fillSchema(body, toolId)
         if not IsValid(body) then return end
         if isfunction(body.Clear) then body:Clear() end
@@ -1402,9 +1463,25 @@ if CLIENT then
             local l=vgui.Create("DLabel",body); l:Dock(TOP); l:SetTall(86); l:SetFont("GRMQ_Text"); l:SetTextColor(QC.dim); l:SetWrap(true); l:DockMargin(8,8,8,4); l:SetText(txt)
             if isfunction(body.AddItem) then body:AddItem(l) end
         end
-        if not isstring(toolId) or toolId=="" then addHint("Выберите строительный инструмент. Его безопасные параметры появятся в этой колонке.") return end
+        if not isstring(toolId) or toolId=="" then addHint("Выберите строительный инструмент. Его настройки появятся в этой колонке.") return end
+
+        -- 1) родная панель инструмента (как в ванильном меню)
+        local native, why = QM.NativePanel(body, toolId)
+        if IsValid(native) then
+            if isfunction(body.AddItem) then body:AddItem(native) end
+            QM._lastPanelSource = "native"
+            return
+        end
+
+        -- 2) наша схема — для GRM-инструментов и как страховка
         local schema=QM.ResolveSchema(toolId)
-        if not schema then addHint("Для этого инструмента нет параметров в быстром меню. Инструмент уже выбран — работайте им в мире.") return end
+        if not schema then
+            QM._lastPanelSource = "none"
+            addHint("У этого инструмента нет настроек в меню (" .. tostring(why or "нет панели") ..
+                "). Инструмент уже выбран — работайте им в мире.")
+            return
+        end
+        QM._lastPanelSource = "schema"
         for _,row in ipairs(schema) do
             local caption=tostring(row.label or "")
             local kind=tostring(row.type or "text")

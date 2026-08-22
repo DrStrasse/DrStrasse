@@ -134,6 +134,19 @@ if SERVER then
         end)
     end)
 
+    --[[ Установить описание за игрока (меню персонажа): описание живёт у
+         персонажа, поэтому его выставляет ядро персонажей при выборе слота
+         и при сохранении. ]]
+    function RD.SetFor(ply, desc)
+        if not IsValid(ply) then return false end
+        local key = identityKey(ply)
+        local clean = sanitizeDesc(tostring(desc or ""))
+        if clean ~= "" then RPDesc_Descriptions[key] = clean else RPDesc_Descriptions[key] = nil end
+        saveDescs(RPDesc_Descriptions)
+        broadcastUpdate(key, clean)
+        return true
+    end
+
     -- API для серверных модулей (F4, профиль)
     function RD.GetRaw(steamID)
         return RPDesc_Descriptions[tostring(steamID or "")] or ""

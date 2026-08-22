@@ -30,7 +30,7 @@ ok(src:find("fillToolList", 1, true) ~= nil, "список тулов в сре�
 ok(src:find("TOOLS_W", 1, true) ~= nil and src:find("PANEL_W", 1, true) ~= nil,
     "две отдельные колонки: инструменты и панель")
 ok(not bare:find('RunConsoleCommand("+menu")', 1, true), "нет кнопки +menu")
-ok(src:find("нет параметров в быстром меню", 1, true) ~= nil, "честная подсказка без схемы")
+ok(src:find("нет настроек в меню", 1, true) ~= nil, "честная подсказка, когда настроек нет вовсе")
 
 print(("РЕЗУЛЬТАТ: %d/%d, fail=%d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

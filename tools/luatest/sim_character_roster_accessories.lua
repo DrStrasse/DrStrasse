@@ -4,8 +4,12 @@ local ch=read("lua/autorun/sh_grm_character.lua");local duty=read("lua/autorun/s
 local fail=0;local function ok(c,n)if c then print("  ok  "..n)else fail=fail+1 print("  FAIL "..n)end end
 ok(ch:find("factionMembership",1,true)~=nil and ch:find("GRM.Identity.FactionMember",1,true)~=nil,"character menu uses canonical faction membership")
 ok(ch:find("seenOutfits",1,true)~=nil,"duplicate outfit models collapse")
-ok(ch:find('vgui.Create("DComboBox",mid)',1,true)~=nil,"one model selector instead of many outfit buttons")
-ok(ch:find("matchedOutfit",1,true)~=nil and ch:find("not matchedOutfit",1,true)~=nil,"stale model falls back to allowed faction model")
+-- 22.08: список моделей стал сеткой карточек с иконками (одна вкладка
+-- «Внешность»), выпадающий список убран.
+ok(ch:find('local pageLook = addTab("look", "ВНЕШНОСТЬ")',1,true)~=nil
+   and ch:find('vgui.Create("SpawnIcon", row)',1,true)~=nil,
+   "model list is a single outfit tab with icons")
+ok(ch:find("local matched",1,true)~=nil and ch:find("not matched",1,true)~=nil,"stale model falls back to allowed faction model")
 ok(ch:find("GRM_Char_LiveRefresh",1,true)~=nil and ch:find("payloadSignature",1,true)~=nil,"menu refreshes live only when payload changes")
 ok(ch:find('GRM.UI.Track("character.appearance", f)',1,true)~=nil and ch:find("CH.ReceiveMenuPayload",1,true)~=nil,"appearance and wardrobe share one singleton/dedup guard")
 ok(ch:find("CH._opening",1,true)and ch:find("CH._queuedPayload",1,true)and ch:find("Set AFTER old frame removal",1,true),"menu rebuild is reentrant-safe and keeps dedup signature")
