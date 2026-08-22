@@ -1208,6 +1208,26 @@ if SERVER then
         PL.Push(ply)
     end
 
+    --[[ Права выдали — обновляем окна у всех, у кого они открыты.
+         Пачка изменений (лидер щёлкает несколько галочек подряд) схлопывается
+         в одну рассылку через Coalesce: рывка не будет. ]]
+    hook.Add("GRM_AccessChanged", "GRM_Plates_AccessChanged", function()
+        local function pushAll()
+            for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+                if IsValid(p) then PL.Push(p) end
+            end
+        end
+        if GRM.Perf and GRM.Perf.Coalesce then
+            GRM.Perf.Coalesce("plates.access.push", pushAll, 0.5)
+        else
+            timer.Simple(0.5, pushAll)
+        end
+    end)
+
+    hook.Add("GRM_FactionRoleChanged", "GRM_Plates_RoleChanged", function(ply)
+        if IsValid(ply) then timer.Simple(0.3, function() if IsValid(ply) then PL.Push(ply) end end) end
+    end)
+
     net.Receive(PL.Net.ACT, function(_, ply)
         if not IsValid(ply) then return end
         ply.GRMPlateNext = ply.GRMPlateNext or 0

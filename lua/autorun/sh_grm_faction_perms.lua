@@ -141,6 +141,23 @@ function PERMS.PlayerHasPermission(ply, permission)
             end
         end
     end
+
+    --[[ ЗАПАСНОЙ ПУТЬ ПО NW-ПОЛЯМ.
+         Состав организации может быть ключован иначе (SteamID против ключа
+         персонажа) или ещё не подтянуться после входа и смены персонажа —
+         тогда перебор Members возвращает пусто, и выданный доступ «не
+         работает». На NW-поля опирается весь остальной GRM, берём их же.
+         Ровно та же находка, что была с дверными категориями. ]]
+    local nwFaction = ply.GetNWString and ply:GetNWString("GRM_Faction", "") or ""
+    if nwFaction ~= "" then
+        local nwRole = ply:GetNWString("GRM_Role", "")
+        if nwRole ~= "" and PERMS.RoleHasPermission(nwFaction, nwRole, permission) then return true end
+        -- отдел и подотдел тоже могут держать доступ
+        local dept = ply:GetNWString("GRM_Department", "")
+        local sub = ply:GetNWString("GRM_Subdepartment", "")
+        if dept ~= "" and PERMS.RoleHasPermission(nwFaction, dept, permission) then return true end
+        if sub ~= "" and PERMS.RoleHasPermission(nwFaction, sub, permission) then return true end
+    end
     return false
 end
 
@@ -204,6 +221,11 @@ if SERVER then
                 PERMS.SendTo(p)
             end
         end
+        --[[ Права поменялись — окна, которые от них зависят (номерные знаки,
+             автопарк, терминалы), должны обновиться САМИ. Раньше человек
+             выдавал доступ и не понимал, почему компьютер по-прежнему пишет
+             «недоступно»: снимок у него был старый. ]]
+        hook.Run("GRM_AccessChanged", "faction_perms")
     end
 
     -- Локальная проверка лидерства (без зависимости от FactionsAPI).

@@ -742,5 +742,26 @@ ok(psrc:find("PlayerHasPermission(ply, \"plates_check\")", 1, true) ~= nil,
 ok(psrc:find("Руководителю: право даётся в /factions", 1, true) ~= nil,
    "в окне написано, где выдать право")
 
+-- 22.08 (вторая жалоба): выдал доступ — окно должно ОБНОВИТЬСЯ, и право
+-- из /admin должно доходить до модулей.
+ok(psrc:find('hook.Add("GRM_AccessChanged", "GRM_Plates_AccessChanged"', 1, true) ~= nil,
+   "после выдачи прав снимок окна рассылается заново")
+ok(psrc:find('GRM.Perf.Coalesce("plates.access.push"', 1, true) ~= nil,
+   "пачка галочек схлопывается в одну рассылку")
+local admin = (function()
+    local f = io.open("lua/autorun/sh_grm_admin_core.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+ok(admin:find('GRM.Access.RegisterProvider("grm_admin_platform"', 1, true) ~= nil
+   and admin:find("AD.CanLocal(ply, capability)", 1, true) ~= nil,
+   "права /admin работают как capability (мост через провайдер, без CAMI-рекурсии)")
+ok(admin:find('hook.Run("GRM_AccessChanged", "admin_platform")', 1, true) ~= nil,
+   "админ-платформа сообщает об изменении прав")
+ok(perms:find('hook.Run("GRM_AccessChanged", "faction_perms")', 1, true) ~= nil,
+   "доступы организаций тоже сообщают")
+ok(perms:find('ply:GetNWString("GRM_Faction", "")', 1, true) ~= nil
+   and perms:find("PERMS.RoleHasPermission(nwFaction, nwRole, permission)", 1, true) ~= nil,
+   "право находится и по NW-полям, если состав организации ключован иначе")
+
 print(("\nPLATES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

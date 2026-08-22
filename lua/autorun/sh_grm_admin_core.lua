@@ -341,6 +341,25 @@ function AD.Can(ply, perm)
 end
 
 -- Можно ли применять действие к цели (иммунитет).
+--[[ МОСТ ПРАВ (заказ владельца 22.08: «выдал доступ — ничего не изменилось»).
+
+     У сервера два реестра прав, и они не знали друг о друге:
+       • GRM.Access — capability вида `plates.issue`, их спрашивают модули;
+       • админ-платформа — права групп, которые владелец отмечает в /admin.
+     Отметить `plates.issue` в /admin было можно, а модуль об этом не узнавал.
+     Теперь платформа зарегистрирована ПРОВАЙДЕРОМ доступа: любой capability
+     сначала ищется в её группах.
+
+     Зовём именно CanLocal, а не Can: Can ходит в CAMI, CAMI зовёт наш хук —
+     и получается «[ULib] stack overflow». Этот урок уже был. ]]
+if SERVER and GRM.Access and GRM.Access.RegisterProvider then
+    GRM.Access.RegisterProvider("grm_admin_platform", 50, function(ply, capability)
+        if not (IsValid(ply) and isstring(capability)) then return nil end
+        if AD.CanLocal(ply, capability) == true then return true, "admin_platform" end
+        return nil
+    end)
+end
+
 function AD.CanTarget(actor, target)
     if not IsValid(target) then return false, "Цель не найдена" end
     if not IsValid(actor) then return true end
@@ -566,6 +585,7 @@ if SERVER then
         --[[ Группы, права и назначения — крупная таблица, а рассылалась
              всем одним пакетом при каждом изменении: заметный рывок у всех
              сразу. Уходит потоком, куски собираются на клиенте. ]]
+        hook.Run("GRM_AccessChanged", "admin_platform")
         local payload = { groups = AD.Groups, perms = perms, users = AD.Users }
         if GRM.Net and GRM.Net.Stream then
             GRM.Net.Stream(NET_SYNC, payload, IsValid(ply) and ply or nil, { chunk = 8192, interval = 0.05 })
