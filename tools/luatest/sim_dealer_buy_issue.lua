@@ -329,5 +329,23 @@ ok(place3 ~= nil and tostring(label3):find("Городской", 1, true) ~= nil
    "стоишь в гараже — машина подаётся на его место, привязка дилера не нужна", label3)
 buyer:SetPos(Vector(0, 0, 0))
 
+print("\n=== 9. АКТИВНАЯ ТЕХНИКА АВТОПАРКА В «НА КАРТЕ» (22.08) ===")
+buyer.nw.GRM_Faction = "police"
+local fent = ents.Create("sim_vehicle")
+fent:SetPos(Vector(50, 50, 0))
+local funit = { id = "fu_act1", class = "sim_patrol", name = "Патрульный",
+    model = "models/buggy.mdl", kind = "government", faction = "police" }
+GRM.Fleet = GRM.Fleet or {}
+GRM.Fleet.UnitsOf = function(f) if f == "police" then return { funit } end return {} end
+GRM.Fleet.Active = { [funit.id] = fent }
+local activeRows = VD.ActiveRows(buyer)
+local found
+for _, r in ipairs(activeRows) do
+    if r.fleet == true and r.id == funit.id then found = r end
+end
+ok(found ~= nil, "у дилера в «На карте» видна активная служебная машина")
+ok(found ~= nil and found.personal == false, "служебная строка не помечена личной")
+ok(found ~= nil and found.ownershipName ~= "", "у служебной машины есть тип владения")
+
 print(("\nDEALER BUY/ISSUE: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

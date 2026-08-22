@@ -815,7 +815,7 @@ ok(dealer2:find("local function catalogCard(grid, v)", 1, true) ~= nil
 ok(dealer2:find('if currentMode ~= "active" then', 1, true) ~= nil,
    "сетка включена во всех разделах, кроме «На карте»")
 
-print("\n=== 21. СЛУЖЕБНЫЕ НОМЕРА СТАВЯТСЯ САМИ (22.08) ===")
+print("\n=== 21. НОМЕРА ТРАНСПОРТА АВТОПАРКА НЕ ВЕШАЮТСЯ САМИ (22.08) ===")
 ok(isfunction(PL.ServiceKind), "серия определяется по организации")
 ok(PL.ServiceKind("Ordnungspolizei") == "police", "полиция → полицейская серия", PL.ServiceKind("Ordnungspolizei"))
 ok(PL.ServiceKind("Feldgendarmerie") == "police", "жандармерия → полицейская серия", PL.ServiceKind("Feldgendarmerie"))
@@ -823,13 +823,13 @@ ok(PL.ServiceKind("Militarkomendatur") == "military", "комендатура �
 ok(PL.ServiceKind("Ministerium") == "gov", "прочие ведомства → государственная серия", PL.ServiceKind("Ministerium"))
 ok(PL.ServiceKind(nil) == "gov", "без организации — государственная серия")
 ok(psrc:find("function PL.EnsureServicePlate(ply, ent, faction, uid)", 1, true) ~= nil,
-   "есть выдача ведомственного номера при первой выдаче техники")
-ok(psrc:find('hook.Add("GRM_FleetIssued", "GRM_Plates_ServiceAuto"', 1, true) ~= nil,
-   "модуль подписан на выдачу единицы автопарка")
+   "ручной инструмент выдачи служебного номера остался")
+ok(psrc:find('hook.Add("GRM_FleetIssued", "GRM_Plates_ServiceAuto"', 1, true) == nil,
+   "автоматической выдачи и крепления номера у машин автопарка больше НЕТ")
 ok(psrc:find("function PL.MountOnRear(plate, veh, actor)", 1, true) ~= nil,
    "знак вешается на задний борт по габаритам машины")
-ok(psrc:find('CreateConVar("grm_plates_auto_service"', 1, true) ~= nil,
-   "автоматику можно выключить конваром")
+ok(psrc:find('CreateConVar("grm_plates_auto_service", "0"', 1, true) ~= nil,
+   "автоматика по умолчанию выключена (конвар 0)")
 ok(psrc:find('timer.Create("GRM_Plates_ViewersTick", 5, 0', 1, true) ~= nil,
    "открытое окно учёта обновляется само каждые 5 секунд")
 

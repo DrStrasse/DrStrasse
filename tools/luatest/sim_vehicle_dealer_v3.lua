@@ -112,6 +112,18 @@ do
     ok(hasT(cl, 'send(dealer, "fleet_buy", v.class, targetGarage)'),
         "кнопка шлёт закупку с выбранным гаражом приписки")
 
+    --[[ «Убрать в гараж» должно быть доступно и личной машине, и служебному
+         фракционному авто: у дилера в разделе «На карте» активная техника
+         автопарка теперь тоже видна и возвращается через fleet_store. ]]
+    ok(hasT(core, 'local FL=GRM.Fleet') and hasT(core, "FL.Active and FL.Active[unit.id]"),
+        "раздел «На карте» у дилера видит и активные единицы автопарка")
+    ok(hasT(core, 'local faction=tostring(ply:GetNWString("GRM_Faction","")or"")'),
+        "служебная техника берётся по организации игрока, а не только по выдававшему")
+    ok(hasT(cl, 'v.fleet == true') and hasT(cl, 'or (isFleet and "fleet_store" or "remove")'),
+        "у служебной техники кнопка «УБРАТЬ В ГАРАЖ» возвращает её через единый диспетчер")
+    ok(hasT(cl, "Он вернётся в гараж организации."),
+        "подтверждение объясняет: служебная машина вернётся в гараж организации")
+
     local plates = (function()
         local f = io.open("lua/autorun/sh_grm_plates.lua", "rb")
         local t = f:read("*a") f:close() return t

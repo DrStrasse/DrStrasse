@@ -512,6 +512,40 @@ if SERVER then
     }
    end
   end
+
+  --[[ СЛУЖЕБНЫЙ ПАРК ОРГАНИЗАЦИИ В РАЗДЕЛЕ «НА КАРТЕ».
+       Раньше здесь были только личные машины из VD.Active, а единицы
+       автопарка (FL.Active) в списке не появлялись: «убрать в гараж»
+       у дилера для служебного фракционного авто было недоступно.
+       Теперь активная техника организации видна в том же разделе и
+       возвращается в гараж той же командой, что и личная. ]]
+  local FL=GRM.Fleet
+  if FL and FL.UnitsOf then
+   local faction=tostring(ply:GetNWString("GRM_Faction","")or"")
+   if faction~="" then
+    for _,unit in ipairs(FL.UnitsOf(faction))do
+     local ent=FL.Active and FL.Active[unit.id]
+     if IsValid(ent)then
+      local kind=tostring(unit.kind or"government")
+      rows[#rows+1]={
+       id=tostring(unit.id or""),
+       class=tostring(unit.class or""),
+       name=tostring(unit.name or unit.class or""),
+       model=tostring(unit.model or""),
+       ownershipType=kind,
+       ownershipName=VD.VehicleKinds[kind]or"Служебный транспорт",
+       personal=false,
+       fleet=true,
+       distance=math.floor(ply:GetPos():Distance(ent:GetPos())),
+       occupied=IsValid(ent.GetDriver and ent:GetDriver()or nil),
+       plate=(GRM.Plates and GRM.Plates.PlateOfVehicleKey)
+        and tostring(GRM.Plates.PlateOfVehicleKey("fleet:"..tostring(unit.id))or"")or"",
+      }
+     end
+    end
+   end
+  end
+
   table.sort(rows,function(a,b)return tostring(a.name)<tostring(b.name)end)
   return rows
  end
@@ -534,7 +568,8 @@ if SERVER then
   --[[ СЛУЖЕБНЫЙ ПАРК ОРГАНИЗАЦИИ — ПОШТУЧНО (заказ владельца 22.08:
        «каждая служебная машина должна считаться отдельно»). Каталог
        показывает КЛАССЫ (что можно закупить), а этот список — реальные
-       единицы техники: у каждой свой номер, состояние и гараж. ]]
+       единицы техники: у каждой своё состояние и гараж (номер, если есть,
+       берётся из реестра — автоматически он не генерируется). ]]
   local fleetRows={}
   do
    local FL=GRM.Fleet
@@ -641,8 +676,9 @@ if SERVER then
    --[[ ЕДИНЫЙ МЕХАНИЗМ ЗАКУПКИ (заказ владельца 22.08).
         Служебная позиция у дилера — это НЕ «получить машину», а заявка на
         закупку в автопарк организации: деньги идут из бюджета, а на карте
-        появляется отдельная ЕДИНИЦА техники со своим номером и слотом.
-        Выдаётся она потом — из раздела «Техника организации». ]]
+        появляется отдельная ЕДИНИЦА техники со своим слотом. Номер
+        автоматически не генерируется — ставится вручную, как личным
+        машинам. Выдаётся она потом — из раздела «Техника организации». ]]
    local class=net.ReadString();local wantGarage=net.ReadString()or""
    local FL=GRM.Fleet
    if not(FL and FL.Buy and FL.MarketList)then result(ply,false,"Автопарк недоступен")return end
