@@ -345,6 +345,8 @@ if SERVER then
         "Процент стоимости, который возвращается организации при списании техники")
     FL.StateShareCvar = FL.StateShareCvar or CreateConVar("grm_fleet_state_share", "100", FCVAR_ARCHIVE,
         "Какая доля закупки уходит в государственную казну (в процентах)")
+    FL.DebugCvar = FL.DebugCvar or CreateConVar("grm_fleet_debug", "0", FCVAR_ARCHIVE,
+        "Печатать путь/размер/результат записи автопарка и рынка в консоль")
 
     local DIR = "grm_fleet"
     local MARKET_FILE = DIR .. "/market.json"
@@ -500,13 +502,27 @@ if SERVER then
         return file.Read(path, "DATA") == txt
     end
 
+    local function debugPrint(msg)
+        if FL.DebugCvar and FL.DebugCvar:GetBool() then print("[GRM Fleet] " .. tostring(msg)) end
+    end
+
     function FL.SaveMarketNow()
         if not FL._loaded then return false end
-        return writeJSON(MARKET_FILE, marketPayload())
+        local data = marketPayload()
+        local ok = writeJSON(MARKET_FILE, data)
+        debugPrint(("SAVE market ok=%s path=%s entries=%d overrides=%d"):format(
+            tostring(ok), MARKET_FILE,
+            #((istable(data) and data.market) or {}),
+            #((istable(data) and data.overrides) or {})))
+        return ok
     end
     function FL.SaveFleetNow()
         if not FL._loaded then return false end
-        return writeJSON(fleetFile(), fleetPayload())
+        local data = fleetPayload()
+        local ok = writeJSON(fleetFile(), data)
+        debugPrint(("SAVE fleet ok=%s path=%s units=%d"):format(
+            tostring(ok), fleetFile(), #((istable(data) and data.units) or {})))
+        return ok
     end
 
     if GRM.Save and GRM.Save.Register then
@@ -1238,6 +1254,9 @@ if SERVER then
 
     local function boot()
         FL.Load()
+        debugPrint(("LOAD market=%d units=%d path=%s exists=%s"):format(
+            table.Count(FL.Market), table.Count(FL.Units), fleetFile(),
+            tostring(file.Exists(fleetFile(), "DATA"))))
         print(("[GRM Fleet] рынок: %d позиций, парк: %d единиц"):format(
             table.Count(FL.Market), table.Count(FL.Units)))
     end
@@ -1253,6 +1272,18 @@ if SERVER then
     -- Первый вызов выполняется сразу только если планировщика нет; иначе все
     -- стартовые задачи идут через GRM.Boot один раз.
     if not (GRM.Boot and GRM.Boot.OnMapStart) then boot() end
+
+    --[[ ПРИНУДИТЕЛЬНЫЙ СБРОС ПРИ ВЫКЛЮЧЕНИИ И СМЕНЕ КАРТЫ.
+         GRM.Save делает то же самое, но если его очередь/события не успели,
+         парк терялся. Пишем напрямую, потому что закупка — критичные данные. ]]
+    hook.Add("ShutDown", "GRM_Fleet_FlushShutdown", function()
+        FL.FlushFleet("shutdown")
+        FL.FlushMarket("shutdown")
+    end)
+    hook.Add("PreCleanupMap", "GRM_Fleet_FlushMap", function()
+        FL.FlushFleet("очистка карты")
+        FL.FlushMarket("очистка карты")
+    end)
 end
 
 if CLIENT then
