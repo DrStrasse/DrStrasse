@@ -242,6 +242,10 @@ GRM.VehicleDealer = {
 
 assert(loadfile("lua/autorun/sh_grm_fleet.lua"))()
 local FL = GRM.Fleet
+-- КОРЕНЬ «данные прочитаны: НЕТ»: загрузка должна выполняться сразу при
+-- загрузке модуля (даже при наличии GRM.Boot), иначе запись заблокирована.
+ok(FL._loaded == true, "после загрузки модуля база автопарка сразу прочитана (запись не заблокирована)")
+ok(FL._mapLoaded ~= nil, "зафиксирована карта, на которой прочитан парк", FL._mapLoaded)
 assert(loadfile("lua/autorun/sh_grm_garage.lua"))()
 local G = GRM.Garage
 assert(loadfile("lua/autorun/sh_grm_vehicles.lua"))()

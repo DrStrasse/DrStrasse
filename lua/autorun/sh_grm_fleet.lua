@@ -602,6 +602,7 @@ if SERVER then
             FL.FlushFleet("перед сменой карты")
         end
         FL.Market, FL.Units = {}, {}
+        FL._mapLoaded = string.lower(game.GetMap() or "unknown")
         --[[ ЦЕЛЬСЯ В ТЕКУЩУЮ КАРТУ. GRM.Save держит путь в записи; если просто
              сменилась карта, реестр продолжал бы писать в файл прежней карты
              и покупки на новой «терялись». Перерегистрируем сборщик парка
@@ -1260,18 +1261,27 @@ if SERVER then
         print(("[GRM Fleet] рынок: %d позиций, парк: %d единиц"):format(
             table.Count(FL.Market), table.Count(FL.Units)))
     end
-    -- читаем сразу: до загрузки запись заблокирована.
-    -- ВАЖНО: не зовём boot() повторно через планировщик, если он уже вызван.
-    -- Иначе второй FL.Load мог затереть в памяти только что закупленный парк
-    -- свежим чтением из ещё не записанного файла.
-    if GRM.Boot and GRM.Boot.OnMapStart then
-        GRM.Boot.OnMapStart("GRM_Fleet_Load", "normal", boot)
-    else
-        hook.Add("InitPostEntity", "GRM_Fleet_Load", boot)
+
+    --[[ ГЛАВНОЕ: `FL.Load` выполняется СРАЗУ при загрузке модуля.
+         Раньше при наличии GRM.Boot мы откладывали его до
+         `GRM.Boot.OnMapStart`, но на некоторых серверах планировщик не
+         вызывал загрузку — `FL._loaded` оставался false, запись была
+         заблокирована, и закупка жила только в памяти (то, что ты увидел:
+         «данные прочитаны: НЕТ, парк 1»). Теперь:
+           1) читаем базу немедленно (запись разблокирована);
+           2) планировщик перечитывает базу ТОЛЬКО при смене карты. ]]
+    boot()
+
+    local function mapStart()
+        local current = string.lower(game.GetMap() or "unknown")
+        if FL._loaded and FL._mapLoaded == current then return end
+        boot()
     end
-    -- Первый вызов выполняется сразу только если планировщика нет; иначе все
-    -- стартовые задачи идут через GRM.Boot один раз.
-    if not (GRM.Boot and GRM.Boot.OnMapStart) then boot() end
+    if GRM.Boot and GRM.Boot.OnMapStart then
+        GRM.Boot.OnMapStart("GRM_Fleet_Load", "normal", mapStart)
+    else
+        hook.Add("InitPostEntity", "GRM_Fleet_Load", mapStart)
+    end
 
     --[[ ПРИНУДИТЕЛЬНЫЙ СБРОС ПРИ ВЫКЛЮЧЕНИИ И СМЕНЕ КАРТЫ.
          GRM.Save делает то же самое, но если его очередь/события не успели,
