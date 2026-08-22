@@ -1472,6 +1472,29 @@ if SERVER then
             return leaderFaction, 0
         end
 
+        -- Любая правка ЧУЖОЙ фракции не-root суперадмином проходит Root
+        -- Guard. Лидер собственной фракции и root-владелец не попадают в
+        -- очередь; остальные действия fail-closed до approval.
+        local guarded = {
+            setDisplayName=true, renameFaction=true, changeLeader=true,
+            setTag=true, setColor=true, setDepAccess=true, setServiceAccess=true,
+            addRole=true, removeRole=true, renameRole=true, setRoleKey=true, moveRole=true,
+            addDepartment=true, removeDepartment=true, renameDepartment=true, moveDepartment=true,
+            addSubdepartment=true, removeSubdepartment=true, renameSubdepartment=true,
+            setDepartmentTag=true, setSubdepartmentTag=true, setRole=true, setDepartment=true,
+            setSubdepartment=true, removeMember=true, inviteMember=true, assignSelf=true,
+        }
+        if guarded[action] and isSuperAdmin and args[1] and GRM.Root and GRM.Root.RequestFactionApproval then
+            local targetFaction = tostring(args[1])
+            local ownFaction = tostring(getFactionOfPlayer(ply) or "")
+            if ownFaction ~= targetFaction and not GRM.Root.IsRoot(ply) then
+                if not GRM.Root.RequestFactionApproval(ply, action, targetFaction, args) then
+                    done(false, "Изменение чужой фракции ожидает одобрения владельца. После одобрения повторите действие.")
+                    return
+                end
+            end
+        end
+
         if action=="createFaction"then
             if not isSuperAdmin then done(false,"Только суперадмин")return end;local ok,err=createFaction(args[1],args[2],args[1]);done(ok,err)
         elseif action=="createFactionV2"then

@@ -68,6 +68,28 @@ RG.RegisterExecutor("faction_delete", function(payload)
     return ok, err
 end)
 
+-- Одноразовые разрешения на конкретное межфракционное действие. Executor
+-- выдаёт permit только после клика root; следующий идентичный net-action
+-- его потребляет. Так root guard остаётся fail-closed и не исполняет
+-- клиентские payload напрямую.
+RG.FactionPermits = RG.FactionPermits or {}
+RG.RegisterExecutor("faction_approval", function(payload)
+    if not istable(payload) or tostring(payload.token or "") == "" then return false, "битая заявка" end
+    RG.FactionPermits[tostring(payload.token)] = CurTime() + 120
+    return true
+end)
+
+function RG.RequestFactionApproval(actor, action, faction, payload)
+    if RG.IsRoot(actor) then return true end
+    local raw = util.TableToJSON({ action=tostring(action), faction=tostring(faction), args=payload or {}, sid=actor:SteamID() }, false) or ""
+    local token = util.CRC and util.CRC(raw) or raw
+    local untilAt = tonumber(RG.FactionPermits[token]) or 0
+    if untilAt > CurTime() then RG.FactionPermits[token] = nil return true end
+    local title = ("Правка фракции «%s»: %s"):format(tostring(faction), tostring(action))
+    RG.Request(actor, "faction_approval", title, { token=token, faction=faction, action=action })
+    return false
+end
+
 -- ============================================================
 -- СЕРВЕР
 -- ============================================================
