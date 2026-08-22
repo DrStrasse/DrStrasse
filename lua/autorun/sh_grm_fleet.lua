@@ -1099,8 +1099,40 @@ if SERVER then
         unit.lastUser = charKey(ply)
         unit.lastUserName = ply:Nick()
         unit.lastOut = os.time()
+        unit.lastPlace = { x = place.pos.x, y = place.pos.y, z = place.pos.z, slot = tostring(place.slot and place.slot.id or "") }
         FL.SaveFleet("выдача техники")
         FL.FlushFleet("выдача техники")
+
+        -- simfphys нередко заканчивает свою асинхронную инициализацию уже
+        -- ПОСЛЕ SpawnVehicle и может сдвинуть корпус с размеченного места.
+        -- Через 0.4 с подтверждаем живую entity и жёстко возвращаем её на
+        -- точку гаража. Если entity исчезла — не врём «подано»: возвращаем
+        -- единицу в гараж и сообщаем об ошибке.
+        timer.Simple(0.4, function()
+            if not IsValid(ent) then
+                if FL.Active[unit.id] == ent then FL.Active[unit.id] = nil end
+                if FL.Unit(unit.id) then
+                    unit.status = "stored"
+                    unit.lastSpawnError = "сущность исчезла после создания"
+                    FL.SaveFleet("сбой выдачи техники")
+                    FL.FlushFleet("сбой выдачи техники")
+                end
+                notify(ply, "Техника не создана: simfphys удалил сущность после выдачи", false)
+                return
+            end
+            local target = place.pos + Vector(0, 0, math.max(tonumber(place.lift) or 0, 12))
+            local moved = ent:GetPos():DistToSqr(target) > 96 * 96
+            if moved then ent:SetPos(target) end
+            if place.ang then ent:SetAngles(place.ang) end
+            if ent.CollisionRulesChanged then ent:CollisionRulesChanged() end
+            unit.lastSpawnAt = os.time()
+            unit.lastSpawnPos = { x = target.x, y = target.y, z = target.z }
+            FL.SaveFleet("подтверждение позиции техники")
+            FL.FlushFleet("подтверждение позиции техники")
+            if moved then
+                notify(ply, "Техника скорректирована на размеченное место стоянки", true)
+            end
+        end)
 
         hook.Run("GRM_FleetIssued", ply, ent, unit, garage)
         return ent
