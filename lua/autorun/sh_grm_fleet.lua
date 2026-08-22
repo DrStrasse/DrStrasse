@@ -496,12 +496,39 @@ if SERVER then
         return { version = 1, units = arr }
     end
 
+    --[[ Двойная запись критичного парка. Одна синхронная file.Write не даёт
+         гарантии при падении/жёстком рестарте: на диске может остаться пустой
+         или оборванный JSON. Сначала проверяем временную копию, затем основной
+         файл и только после read-back обновляем резерв. При следующем старте
+         readJSON поднимет резерв и вылечит основной файл. ]]
+    local function tempPath(path) return path .. ".tmp" end
+    local function backupPath(path) return path .. ".bak" end
+
+    local function decodeJSON(raw)
+        if not isstring(raw) or raw == "" then return nil end
+        local ok, parsed = pcall(util.JSONToTable, raw, false, true)
+        return (ok and istable(parsed)) and parsed or nil
+    end
+
     local function writeJSON(path, tbl)
         ensureDir()
         local ok, txt = pcall(util.TableToJSON, tbl, true)
-        if not ok or not isstring(txt) then return false end
+        if not ok or not isstring(txt) or txt == "" then return false end
+
+        local tmp = tempPath(path)
+        file.Write(tmp, txt)
+        if file.Read(tmp, "DATA") ~= txt then return false end
+
         file.Write(path, txt)
-        return file.Read(path, "DATA") == txt
+        if file.Read(path, "DATA") ~= txt or not decodeJSON(txt) then
+            return false
+        end
+
+        -- Резерв содержит последнюю ПОДТВЕРЖДЁННУЮ запись, не старую копию.
+        file.Write(backupPath(path), txt)
+        if file.Read(backupPath(path), "DATA") ~= txt then return false end
+        if file.Delete then file.Delete(tmp) end
+        return true
     end
 
     local function debugPrint(msg)
@@ -573,10 +600,25 @@ if SERVER then
     end
 
     local function readJSON(path)
-        if not file.Exists(path, "DATA") then return nil end
-        local raw = file.Read(path, "DATA") or ""
-        local ok, t = pcall(util.JSONToTable, raw, false, true)
-        return (ok and istable(t)) and t or nil
+        local raw = file.Exists(path, "DATA") and (file.Read(path, "DATA") or "") or ""
+        local parsed = decodeJSON(raw)
+        if parsed then return parsed end
+
+        -- Если основной файл оборван/бит, не начинаем «с чистого листа» и
+        -- не перезаписываем закупки: берём последний подтверждённый резерв.
+        local backup = backupPath(path)
+        local backupRaw = file.Exists(backup, "DATA") and (file.Read(backup, "DATA") or "") or ""
+        local recovered = decodeJSON(backupRaw)
+        if recovered then
+            file.Write(path, backupRaw)
+            if file.Read(path, "DATA") == backupRaw then
+                print("[GRM Fleet] восстановлен резерв: " .. path)
+            else
+                print("[GRM Fleet] ВНИМАНИЕ: резерв найден, но основной файл не удалось восстановить: " .. path)
+            end
+            return recovered
+        end
+        return nil
     end
 
     --[[ Восстановление статусов после чтения базы. Чистая функция: её можно

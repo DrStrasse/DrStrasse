@@ -688,6 +688,19 @@ do
     ok(FL.Unit(u1.id) ~= nil and tostring(FL.Unit(u1.id).status) == "stored",
         "выданная единица честно встала в гараж", FL.Unit(u1.id) and FL.Unit(u1.id).status)
     ok(FL.Unit(bought[2].id) ~= nil, "вторая закупленная единица тоже на месте", bought[2].id)
+
+    -- Жёсткий рестарт иногда оставляет нулевой/оборванный основной JSON.
+    -- Резерв обязан вернуть закупку и восстановить рабочий файл, а не
+    -- позволить FL.Load начать парк с пустой таблицы.
+    local fleetPath = "grm_fleet/fleet_sim_map.json"
+    local backupPath = fleetPath .. ".bak"
+    ok(FS[backupPath] ~= nil, "у парка есть подтверждённый резерв", backupPath)
+    FS[fleetPath] = "" -- пустой файл: JSONToTable обязан отвергнуть его
+    FL.Units, FL.Market, FL.DealerOverrides = {}, {}, {}
+    FL._loaded = false
+    FL.Load()
+    ok(table.Count(FL.Units) == before, "битый основной файл восстанавливает закупки из резерва", table.Count(FL.Units))
+    ok(FS[fleetPath] == FS[backupPath], "резерв лечит основной файл после битой записи")
 end
 
 print(("\nFLEET: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
