@@ -1391,12 +1391,19 @@ if SERVER then
 
     net.Receive(FL.Net.ACT, function(_, ply)
         if not IsValid(ply) then return end
-        ply.GRMFleetNext = ply.GRMFleetNext or 0
-        if CurTime() < ply.GRMFleetNext then return end
-        ply.GRMFleetNext = CurTime() + 0.35
-
         local act = net.ReadString()
         local data = net.ReadTable() or {}
+
+        -- `watch` и ручное «Обновить» не меняют мир и не должны теряться
+        -- из-за общего антиспама действий. Раньше панель при открытии
+        -- посылала watch+refresh подряд: второй пакет мог молча отвалиться,
+        -- зритель не регистрировался и данные оживали только после
+        -- переоткрытия компьютера.
+        if act ~= "refresh" and act ~= "watch" then
+            ply.GRMFleetNext = ply.GRMFleetNext or 0
+            if CurTime() < ply.GRMFleetNext then return end
+            ply.GRMFleetNext = CurTime() + 0.35
+        end
 
         if act == "refresh" then
             -- Первый снимок сразу, без схлопывания: окно только открылось.
@@ -1752,7 +1759,10 @@ if CLIENT then
             countEntry:Dock(LEFT) countEntry:SetWide(140) countEntry:DockMargin(0, 24, 8, 8)
             if (countEntry:GetValue() or "") == "" then countEntry:SetValue("1") end
 
-            local refresh = button(bar, "Обновить", C.cardHov, function() act("refresh") end)
+            local refresh = button(bar, "Обновить", C.cardHov, function()
+                FL._sig, FL._sigPending = nil, nil
+                act("refresh")
+            end)
             refresh:Dock(RIGHT) refresh:SetWide(130) refresh:DockMargin(8, 24, 10, 8)
 
             local list = vgui.Create("DScrollPanel", buyPnl)

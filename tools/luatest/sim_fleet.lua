@@ -555,6 +555,8 @@ do
        "сервер знает, у кого открыт автопарк")
     ok(has('timer.Create("GRM_Fleet_ViewersTick", 5, 0, viewersTick)'),
        "открытое окно обновляется само раз в 5 секунд")
+    ok(has('if act ~= "refresh" and act ~= "watch" then') and has("FL._sig, FL._sigPending = nil, nil"),
+       "watch и ручное обновление не теряются из-за антиспама")
     ok(has('elseif act == "watch" then'), "клиент сообщает об открытии и закрытии окна")
     ok(has("FL.SetViewer(ply, true)\n            FL.Push(ply)"),
        "первый снимок уходит сразу, без задержки")
