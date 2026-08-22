@@ -291,8 +291,13 @@ local amb = FL.MarketAdd({ class = "sim_amb", name = "Скорая", price = 400
 local civ = FL.MarketAdd({ class = "sim_civ", name = "Грузовик", price = 10000, tier = "civil" })
 ok(#FL.MarketList() == 3, "в каталоге три позиции", #FL.MarketList())
 ok(select(1, FL.MarketAdd({})) == nil, "позиция без класса не добавляется")
+local pushed = 0
+local savedPushViewers = FL.PushViewers
+FL.PushViewers = function() pushed = pushed + 1 end
 FL.MarketUpdate(civ.id, { price = 12000 })
 ok(FL.Entry(civ.id).price == 12000, "цену можно поменять")
+ok(pushed == 1, "правка обычной цены сразу рассылается открытым терминалам", pushed)
+FL.PushViewers = savedPushViewers
 
 print("\n=== 2. КОМУ ЧТО ПРОДАЮТ ===")
 ok(select(1, FL.EntryAllowed(patrol, "police", "police", false)) == true, "полиции — полицейская техника")

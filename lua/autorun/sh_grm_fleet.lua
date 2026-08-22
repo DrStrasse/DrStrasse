@@ -816,6 +816,10 @@ if SERVER then
         if istable(fields.factions) then entry.factions = fields.factions end
         FL.SaveMarket("рынок: правка")
         FL.FlushMarket("рынок: правка")
+        -- Не заставляем владельца закрывать и заново открывать терминал:
+        -- обычная позиция рынка должна обновить все открытые панели так же,
+        -- как дилерская позиция выше.
+        if FL.PushViewers then FL.PushViewers() end
         return true
     end
 
@@ -840,6 +844,7 @@ if SERVER then
         FL.Market[tostring(id)] = nil
         FL.SaveMarket("рынок: удаление")
         FL.FlushMarket("рынок: удаление")
+        if FL.PushViewers then FL.PushViewers() end
         return true
     end
 
