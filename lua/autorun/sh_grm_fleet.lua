@@ -448,6 +448,7 @@ if SERVER then
         }
         FL.Market[entry.id] = entry
         FL.SaveMarket("рынок: добавление")
+        if FL.PushViewers then FL.PushViewers() end
         return entry
     end
 
@@ -811,6 +812,42 @@ if SERVER then
         })
     end
 
+    --[[ ЖИВОЕ ОКНО АВТОПАРКА (та же схема, что у номерных знаков).
+         Закупка, списание и правка рынка должны быть видны сразу и у всех,
+         у кого открыт терминал: раньше окно показывало старый снимок и
+         казалось, что «рынок пуст, ничего не сохранилось». ]]
+    FL.Viewers = FL.Viewers or {}
+
+    local function viewersTick()
+        local any = false
+        for ply in pairs(FL.Viewers) do
+            if IsValid(ply) then any = true FL.Push(ply) else FL.Viewers[ply] = nil end
+        end
+        if not any then timer.Remove("GRM_Fleet_ViewersTick") end
+    end
+
+    function FL.SetViewer(ply, on)
+        if not IsValid(ply) then return end
+        if on then
+            FL.Viewers[ply] = true
+            if not timer.Exists("GRM_Fleet_ViewersTick") then
+                timer.Create("GRM_Fleet_ViewersTick", 5, 0, viewersTick)
+            end
+        else
+            FL.Viewers[ply] = nil
+        end
+    end
+
+    function FL.PushViewers()
+        for ply in pairs(FL.Viewers) do
+            if IsValid(ply) then FL.Push(ply) else FL.Viewers[ply] = nil end
+        end
+    end
+
+    hook.Add("PlayerDisconnected", "GRM_Fleet_Viewers", function(ply)
+        if FL.Viewers then FL.Viewers[ply] = nil end
+    end)
+
     function FL.PushSoon(ply)
         if not IsValid(ply) then return end
         if not (GRM.Perf and GRM.Perf.Coalesce) then return FL.Push(ply) end
@@ -835,7 +872,13 @@ if SERVER then
         local data = net.ReadTable() or {}
 
         if act == "refresh" then
-            FL.PushSoon(ply)
+            -- Первый снимок сразу, без схлопывания: окно только открылось.
+            FL.SetViewer(ply, true)
+            FL.Push(ply)
+
+        elseif act == "watch" then
+            FL.SetViewer(ply, data.on == true)
+            if data.on == true then FL.Push(ply) end
 
         elseif act == "buy" then
             local made, err, total = FL.Buy(ply, data.marketID, data.count, data.garageID)
@@ -907,6 +950,32 @@ if SERVER then
         if chatCommand(ply, pack[1]) then pack[1] = "" pack.SkipPlayerSay = true end
     end)
     concommand.Add("grm_fleet", function(ply) FL.Open(ply) end)
+
+    --[[ Диагностика хранения: сразу видно, прочитан ли файл, сколько
+         позиций и единиц в памяти и что реально лежит на диске. Именно
+         этого не хватало, когда рынок «не запоминался». ]]
+    concommand.Add("grm_fleet_status", function(ply)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        local function say(t) if IsValid(ply) then ply:ChatPrint(t) else print(t) end end
+        say(("[Автопарк] данные прочитаны: %s"):format(FL._loaded and "да" or "НЕТ — запись заблокирована"))
+        say(("[Автопарк] в памяти: рынок %d позиций, парк %d единиц")
+            :format(table.Count(FL.Market or {}), table.Count(FL.Units or {})))
+        local m = readJSON(MARKET_FILE)
+        local f = readJSON(fleetFile())
+        say(("[Автопарк] на диске: рынок %d, парк %d (%s, %s)"):format(
+            #((istable(m) and m.market) or {}), #((istable(f) and f.units) or {}),
+            MARKET_FILE, fleetFile()))
+        say(("[Автопарк] окон открыто: %d"):format(table.Count(FL.Viewers or {})))
+    end)
+
+    --- Принудительная запись обоих файлов с проверкой результата.
+    concommand.Add("grm_fleet_save", function(ply)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        local okM, okF = FL.SaveMarketNow(), FL.SaveFleetNow()
+        local text = ("[Автопарк] запись: рынок %s, парк %s"):format(
+            okM and "ок" or "ОШИБКА", okF and "ок" or "ОШИБКА")
+        if IsValid(ply) then ply:ChatPrint(text) else print(text) end
+    end)
 
     local function boot()
         FL.Load()
@@ -1004,6 +1073,17 @@ if CLIENT then
     --- Раздел «Автопарк» — общий для окна и вкладки терминала.
     function FL.BuildPanel(parent)
         parent:DockPadding(10, 10, 10, 10)
+
+        --[[ Пока панель открыта, сервер шлёт свежий снимок сам: закупка,
+             списание и правки рынка видны сразу. Закрыли — подписка
+             снимается. Раз в 10 секунд подписка тихо подтверждается. ]]
+        act("watch", { on = true })
+        parent.GRMWatchAt = RealTime() + 10
+        parent.Think = function(self)
+            if (self.GRMWatchAt or 0) > RealTime() then return end
+            self.GRMWatchAt = RealTime() + 10
+            act("watch", { on = true })
+        end
 
         local sheet = vgui.Create("DPropertySheet", parent)
         sheet:Dock(FILL)
@@ -1283,7 +1363,10 @@ if CLIENT then
         end
         rebuild()
         FL._rebuild = rebuild
-        parent.OnRemove = function() if FL._rebuild == rebuild then FL._rebuild = nil end end
+        parent.OnRemove = function()
+            if FL._rebuild == rebuild then FL._rebuild = nil end
+            act("watch", { on = false })
+        end
         return rebuild
     end
 

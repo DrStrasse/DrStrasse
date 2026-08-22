@@ -39,6 +39,21 @@ VMT.__mul = function(a, b)
     if type(a) == "number" then return Vector(b.x * a, b.y * a, b.z * a) end
     return Vector(a.x * b.x, a.y * b.y, a.z * b.z)
 end
+VMT.__unm = function(a) return Vector(-a.x, -a.y, -a.z) end
+function VMT:Length() return math.sqrt(self.x * self.x + self.y * self.y + self.z * self.z) end
+function VMT:Dot(o) return self.x * o.x + self.y * o.y + self.z * o.z end
+function VMT:Normalize()
+    local l = self:Length()
+    if l > 0 then self.x, self.y, self.z = self.x / l, self.y / l, self.z / l end
+    return self
+end
+function VMT:GetNormalized()
+    local l = self:Length()
+    if l <= 0 then return Vector(0, 0, 0) end
+    return Vector(self.x / l, self.y / l, self.z / l)
+end
+function VMT:Angle() return Angle(0, 0, 0) end
+function VMT:AngleEx() return Angle(0, 0, 0) end
 function Vector(x, y, z) return setmetatable({ x = x or 0, y = y or 0, z = z or 0 }, VMT) end
 function Angle(p, y, r) return { p = p or 0, y = y or 0, r = r or 0 } end
 
@@ -86,7 +101,12 @@ ents = {
         local e = { _valid = true, _class = cls, _pos = Vector(0, 0, 0), _ang = Angle(0, 0, 0), _nw = {}, _children = {} }
         function e:GetClass() return self._class end
         function e:SetPos(v) self._pos = v end
-        function e:GetPos() return self._pos end
+        function e:OBBMins() return Vector(-110, -40, 0) end
+    function e:OBBMaxs() return Vector(110, 40, 60) end
+    function e:GetForward() return Vector(1, 0, 0) end
+    function e:GetUp() return Vector(0, 0, 1) end
+    function e:LocalToWorld(v) local p = self:GetPos() return Vector(p.x + v.x, p.y + v.y, p.z + v.z) end
+    function e:GetPos() return self._pos end
         function e:SetAngles(a) self._ang = a end
         function e:GetAngles() return self._ang end
         function e:Spawn() end
@@ -812,6 +832,29 @@ ok(psrc:find('CreateConVar("grm_plates_auto_service"', 1, true) ~= nil,
    "автоматику можно выключить конваром")
 ok(psrc:find('timer.Create("GRM_Plates_ViewersTick", 5, 0', 1, true) ~= nil,
    "открытое окно учёта обновляется само каждые 5 секунд")
+
+print("\n=== 22. КРЕПЛЕНИЕ ПО ЗАМЕРАМ МОДЕЛИ (22.08) ===")
+ok(istable(PL.ModelGeometry) and PL.ModelGeometry.thin == "z"
+   and PL.ModelGeometry.long == "y" and PL.ModelGeometry.short == "x",
+   "оси модели зафиксированы: тонкая z, длинная y, короткая x")
+ok(math.abs((PL.ModelGeometry.halfThickness or 0) - 1.75) < 0.001,
+   "половина толщины знака взята из замера (3.5 / 2)")
+ok(isfunction(PL.SurfaceAngles) and isfunction(PL.PlaceOnSurface),
+   "есть постановка знака на поверхность по нормали")
+ok(psrc:find("return up:AngleEx(n)", 1, true) ~= nil,
+   "углы строятся одной операцией: Forward = верх таблички, Up = нормаль")
+ok(psrc:find("ang:RotateAroundAxis(ang:Up(), 180)", 1, true) == nil,
+   "старый разворот углов машины на 180° убран — он клал знак ребром")
+ok(psrc:find("if math.abs(n:Dot(up)) > 0.95 then", 1, true) ~= nil,
+   "знак на полу или потолке не вырождается: верх подбирается заново")
+ok(psrc:find("up = up - n * up:Dot(n)", 1, true) ~= nil,
+   "верх таблички очищается от составляющей вдоль нормали")
+ok(psrc:find("local hitBase = PL.VehicleBase(tr.Entity) or tr.Entity", 1, true) ~= nil,
+   "по [E] знак встаёт ровно туда, куда смотрит игрок")
+ok(psrc:find("if not ok then ok, err = PL.MountOnRear(plate, veh, ply) end", 1, true) ~= nil,
+   "если игрок не смотрит на кузов — знак уходит на задний борт")
+ok(psrc:find("local localPos = Vector(mins.x + 1, 0, mins.z + (maxs.z - mins.z) * 0.32)", 1, true) ~= nil,
+   "точка заднего борта считается по габаритам машины")
 
 print(("\nPLATES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

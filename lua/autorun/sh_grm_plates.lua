@@ -1039,7 +1039,28 @@ if SERVER then
             return false
         end
 
-        local ok, err = PL.Attach(plate, veh, ply)
+        --[[ КУДА ИМЕННО ВЕШАТЬ.
+             Раньше знак просто «прилипал» туда, где висел в руках, и его
+             приходилось выравнивать вручную. Теперь:
+               • смотрите на кузов — знак встаёт РОВНО в эту точку, лицом
+                 наружу по нормали поверхности (PlaceOnSurface);
+               • не смотрите — уходит на задний борт по габаритам машины
+                 (MountOnRear).
+             В обоих случаях ориентация считается по замерам модели: тонкая
+             ось наружу, длинная вдоль строки, короткая вверх. ]]
+        local placed = false
+        local tr = (GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(ply) or ply:GetEyeTrace()
+        if tr and IsValid(tr.Entity) then
+            local hitBase = PL.VehicleBase(tr.Entity) or tr.Entity
+            if hitBase == veh and tr.HitNormal and tr.HitNormal:Length() > 0.1 then
+                PL.PlaceOnSurface(plate, tr.HitPos, tr.HitNormal, veh:GetUp())
+                placed = PL.Attach(plate, veh, ply)
+            end
+        end
+
+        local ok, err = placed, nil
+        if not ok then ok, err = PL.MountOnRear(plate, veh, ply) end
+
         notify(ply, ok and "Знак закреплён на транспорте." or tostring(err or "Не удалось закрепить"), ok)
         if ok then plate:EmitSound("physics/metal/metal_solid_impact_hard2.wav", 60, 110) end
         return ok
@@ -1188,15 +1209,82 @@ if SERVER then
     end
 
     --- Повесить знак на задний борт машины по её габаритам.
+    --[[--------------------------------------------------------------
+        ГЕОМЕТРИЯ ЗНАКА — ПО ЗАМЕРАМ МОДЕЛИ (владелец прислал 22.08).
+
+        models/hunter/plates/plate025x075.mdl:
+            мин  -6.2 -18 -1.7      макс  6.2 18 1.8
+            габарит 12.4 × 36.1 × 3.5
+            ТОНКАЯ ось z (3.5)  — это НОРМАЛЬ лицевой стороны
+            ДЛИННАЯ ось y (36.1) — вдоль строки номера
+            КОРОТКАЯ ось x (12.4) — высота таблички
+
+        Отсюда правило крепления, которого раньше не было:
+          • локальная +Z знака должна смотреть НАРУЖУ от поверхности;
+          • локальная +X — вверх (высота таблички);
+          • локальная +Y — вдоль строки, горизонтально.
+
+        В GMod у энтити Forward = локальная +X, Up = локальная +Z.
+        Значит нужный угол берётся одной операцией:
+            angles = up:AngleEx(normal)
+        где up — куда смотрит верх таблички, normal — наружу от кузова.
+        Раньше здесь просто разворачивали углы машины на 180° по рысканью:
+        наружу оказывалась локальная X, и знак ложился ребром/плашмя.
+    ----------------------------------------------------------------]]
+    PL.ModelGeometry = {
+        model = "models/hunter/plates/plate025x075.mdl",
+        thin = "z", long = "y", short = "x",
+        size = { x = 12.4, y = 36.1, z = 3.5 },
+        halfThickness = 1.75,
+    }
+
+    --- Углы знака для поверхности с нормалью normal.
+    --  upHint — желаемое «вверх» (по умолчанию мировой верх).
+    function PL.SurfaceAngles(normal, upHint)
+        local n = Vector(normal.x, normal.y, normal.z)
+        if n:Length() < 0.001 then n = Vector(1, 0, 0) end
+        n:Normalize()
+
+        local up = upHint and Vector(upHint.x, upHint.y, upHint.z) or Vector(0, 0, 1)
+        -- верх таблички не может совпадать с нормалью: знак на полу/потолке
+        if math.abs(n:Dot(up)) > 0.95 then up = Vector(1, 0, 0) end
+        -- составляющую вдоль нормали убираем, остаётся чистое «вверх по знаку»
+        up = up - n * up:Dot(n)
+        if up:Length() < 0.001 then up = n:Angle():Up() end
+        up:Normalize()
+
+        -- Forward = локальная +X (высота), Up = локальная +Z (нормаль)
+        return up:AngleEx(n)
+    end
+
+    --- Поставить знак ровно на поверхность: заподлицо, лицом наружу.
+    function PL.PlaceOnSurface(plate, hitPos, normal, upHint)
+        if not IsValid(plate) then return false end
+        local ang = PL.SurfaceAngles(normal, upHint)
+        local lift = (PL.ModelGeometry.halfThickness or 1.75) + 0.2
+        plate:SetAngles(ang)
+        plate:SetPos(Vector(hitPos.x, hitPos.y, hitPos.z) + Vector(normal.x, normal.y, normal.z):GetNormalized() * lift)
+        return true
+    end
+
+    --- Повесить знак на задний борт машины по её габаритам.
     function PL.MountOnRear(plate, veh, actor)
         if not (IsValid(plate) and IsValid(veh)) then return false end
+        -- у нестандартных сущностей габаритов может не быть: тогда просто
+        -- крепим как есть, без вычисления борта
+        if not (isfunction(veh.OBBMins) and isfunction(veh.GetForward) and isfunction(veh.LocalToWorld)) then
+            return PL.Attach(plate, veh, actor)
+        end
+
         local mins, maxs = veh:OBBMins(), veh:OBBMaxs()
-        local z = mins.z + (maxs.z - mins.z) * 0.35
-        local pos = veh:LocalToWorld(Vector(mins.x + 2, 0, z))
-        local ang = veh:GetAngles()
-        ang:RotateAroundAxis(ang:Up(), 180)
-        plate:SetPos(pos)
-        plate:SetAngles(ang)
+        -- задний борт: по локальной X назад, по центру ширины,
+        -- на трети высоты кузова — там, где номер и висит у машин
+        local localPos = Vector(mins.x + 1, 0, mins.z + (maxs.z - mins.z) * 0.32)
+        local pos = veh:LocalToWorld(localPos)
+        local normal = -veh:GetForward()          -- наружу от кормы
+        local up = veh:GetUp()
+
+        PL.PlaceOnSurface(plate, pos, normal, up)
         return PL.Attach(plate, veh, actor)
     end
 

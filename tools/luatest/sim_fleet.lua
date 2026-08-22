@@ -403,5 +403,29 @@ ok(isfunction(G.SlotDiagnose), "диагностика мест объявлен
 local diag = G.SlotDiagnose(G.Get(strict.id), admin)
 ok(#diag == 1 and diag[1].free == true, "по каждому месту видно, свободно оно или нет")
 
+print("\n=== ЖИВОЕ ОКНО И ХРАНЕНИЕ (22.08) ===")
+do
+    local src = (function()
+        local f = io.open("lua/autorun/sh_grm_fleet.lua", "rb")
+        local t = f:read("*a") f:close() return t
+    end)()
+    local function has(n) return src:find(n, 1, true) ~= nil end
+
+    ok(has('GRM.Perf.Coalesce("fleet.push." .. tostring(ply:SteamID64() or ply:EntIndex()), 0.15, function()'),
+       "снимок автопарка схлопывается ПРАВИЛЬНЫМ вызовом (key, delay, fn)")
+    ok(has("FL.Viewers = FL.Viewers or {}") and has("function FL.SetViewer(ply, on)"),
+       "сервер знает, у кого открыт автопарк")
+    ok(has('timer.Create("GRM_Fleet_ViewersTick", 5, 0, viewersTick)'),
+       "открытое окно обновляется само раз в 5 секунд")
+    ok(has('elseif act == "watch" then'), "клиент сообщает об открытии и закрытии окна")
+    ok(has("FL.SetViewer(ply, true)\n            FL.Push(ply)"),
+       "первый снимок уходит сразу, без задержки")
+    ok(has("if FL.PushViewers then FL.PushViewers() end"),
+       "добавление позиции на рынок сразу видно всем, кто смотрит")
+    ok(has('concommand.Add("grm_fleet_status"') and has("на диске: рынок %d, парк %d"),
+       "есть диагностика: что в памяти и что реально на диске")
+    ok(has('concommand.Add("grm_fleet_save"'), "есть принудительная запись с проверкой")
+end
+
 print(("\nFLEET: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end
