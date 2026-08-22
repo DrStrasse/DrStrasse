@@ -443,11 +443,17 @@ PL.IssueHints = { "полиц", "police", "ordnung", "инспек", "ваи", "
        • `/factions` → Доступы — право организации (должностям и отделам),
          оно объявлено в GRM.FactionPerms.Permissions. ]]
 if GRM.Access and GRM.Access.Register then
+    -- Уровни госбазы объявляются прямо у права: единый слой доступа сам
+    -- их проверит, модулю больше не нужно знать про PCBoard.
     GRM.Access.Register("plates.issue", {
         label = "Номерные знаки: регистрация и аннулирование", scope = "character",
+        factionPerm = "plates_issue",
+        levels = { police = true, military = true, admin = true },
     })
     GRM.Access.Register("plates.check", {
         label = "Номерные знаки: проверка по базе", scope = "character",
+        factionPerm = "plates_check",
+        levels = { police = true, military = true, justice = true, special = true, admin = true },
     })
 end
 
@@ -1211,6 +1217,27 @@ if SERVER then
     --[[ Права выдали — обновляем окна у всех, у кого они открыты.
          Пачка изменений (лидер щёлкает несколько галочек подряд) схлопывается
          в одну рассылку через Coalesce: рывка не будет. ]]
+    --[[ Модуль представляется общему реестру: теперь другие подсистемы
+         знают, что знаки есть, а шина обновлений сама позовёт Refresh при
+         любой смене прав, должности или персонажа. ]]
+    if GRM.Modules and GRM.Modules.Register then
+        GRM.Modules.Register("plates", {
+            label = "Номерные знаки", version = PL.Version or "1.0.0",
+            Depends = { "access" },
+            Refresh = function(ply)
+                if IsValid(ply) then PL.Push(ply) return end
+                for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+                    if IsValid(p) then PL.Push(p) end
+                end
+            end,
+            Status = function()
+                local n = 0
+                for _ in pairs(PL.Data.plates or {}) do n = n + 1 end
+                return ("номеров в реестре: %d"):format(n)
+            end,
+        })
+    end
+
     hook.Add("GRM_AccessChanged", "GRM_Plates_AccessChanged", function()
         local function pushAll()
             for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do

@@ -83,6 +83,13 @@ function V.Title(ent)
     return name
 end
 
+if SERVER and GRM.Modules and GRM.Modules.Register then
+    GRM.Modules.Register("vehicles", {
+        label = "Единый диспетчер транспорта", version = V.Version or "1.0.0",
+        Status = function() return "источники: личный гараж и автопарк организаций" end,
+    })
+end
+
 if SERVER then
 
     local function notifyText(ok, good, bad)

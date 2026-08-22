@@ -791,6 +791,26 @@ if SERVER then
     end
 
     --- Пачка действий подряд = одна отправка снимка.
+    --[[ Автопарк в общем реестре: шина сама обновит окна при смене прав,
+         должности или персонажа — модулю не нужно знать чужие хуки. ]]
+    if GRM.Modules and GRM.Modules.Register then
+        GRM.Modules.Register("fleet", {
+            label = "Автопарк организаций", version = FL.Version or "1.0.0",
+            Depends = { "access", "vehicles" },
+            Refresh = function(ply)
+                if IsValid(ply) then FL.Push(ply) return end
+                for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+                    if IsValid(p) then FL.Push(p) end
+                end
+            end,
+            Status = function()
+                local units = 0
+                for _ in pairs(FL.Units or {}) do units = units + 1 end
+                return ("единиц техники: %d"):format(units)
+            end,
+        })
+    end
+
     function FL.PushSoon(ply)
         if not IsValid(ply) then return end
         if not (GRM.Perf and GRM.Perf.Coalesce) then return FL.Push(ply) end

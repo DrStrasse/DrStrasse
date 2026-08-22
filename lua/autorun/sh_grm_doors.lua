@@ -2487,3 +2487,15 @@ if CLIENT then
 
     print("[GRM Doors] Клиентская система дверей v" .. D.Version .. " загружена")
 end
+
+if SERVER and GRM.Modules and GRM.Modules.Register then
+    GRM.Modules.Register("doors", {
+        label = "Двери и замки", version = (GRM.Doors and GRM.Doors.Version) or "5.0.0",
+        Depends = { "access" },
+        Status = function()
+            local n = 0
+            for _ in pairs((GRM.Doors and GRM.Doors.Data and GRM.Doors.Data.doors) or {}) do n = n + 1 end
+            return ("дверей в реестре: %d"):format(n)
+        end,
+    })
+end

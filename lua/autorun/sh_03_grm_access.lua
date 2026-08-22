@@ -120,6 +120,113 @@ function A.Can(ply, capability, context)
     return A.Check(ply, capability, context)
 end
 
+--[[--------------------------------------------------------------------
+    ЕДИНАЯ ТОЧКА ПРАВА (заказ владельца 22.08: «все модули должны знать
+    друг друга»).
+
+    Раньше каждый модуль спрашивал права по-своему: кто-то GRM.Access,
+    кто-то права организации, кто-то уровень госбазы, кто-то просто
+    IsSuperAdmin. Отсюда и «выдал доступ — не работает»: выдал в одном
+    месте, а модуль смотрит в другое.
+
+    Теперь у capability есть штатные источники, и они спрашиваются в
+    понятном порядке:
+       1) явные гранты GRM.Access (точечная выдача);
+       2) админ-платформа (/admin → Привилегии)   — провайдер в admin_core;
+       3) доступы организаций (/factions → Доступы) — правило имени:
+          capability `plates.issue` ↔ право организации `plates_issue`;
+       4) уровень госбазы (police / military / justice / admin ...) —
+          если capability объявила `levels = { police = true }`.
+    Ответ всегда с ПРИЧИНОЙ: A.Why(ply, cap) печатает её человеку.
+----------------------------------------------------------------------]]
+
+--- Имя права организации для capability: точки → подчёркивания.
+function A.FactionPermName(capability)
+    capability = string.lower(string.Trim(tostring(capability or "")))
+    if capability == "" then return "" end
+    local def = A.Capabilities[capability]
+    if def and isstring(def.factionPerm) then return def.factionPerm end
+    return (string.gsub(capability, "%.", "_"))
+end
+
+if SERVER then
+    -- Доступы организаций: /factions → «Доступы»
+    A.RegisterProvider("grm_faction_perms", 40, function(ply, capability)
+        local PERMS = GRM.FactionPerms
+        if not (PERMS and PERMS.PlayerHasPermission) then return nil end
+        local name = A.FactionPermName(capability)
+        if name == "" or not (PERMS.Permissions and PERMS.Permissions[name]) then return nil end
+        if PERMS.PlayerHasPermission(ply, name) == true then return true, "faction_perm:" .. name end
+        return nil
+    end)
+
+    -- Уровень госбазы: capability объявляет, какие уровни ей подходят
+    A.RegisterProvider("grm_pcboard_level", 30, function(ply, capability, _, _, definition)
+        local levels = definition and definition.levels
+        if not istable(levels) then return nil end
+        if not (GRM.PCBoard and GRM.PCBoard.PlayerLevel) then return nil end
+        local level = GRM.PCBoard.PlayerLevel(ply)
+        if level and levels[level] then return true, "pcboard:" .. tostring(level) end
+        return nil
+    end)
+end
+
+--- Почему право есть или нет. Возвращает: можно, причина, список источников.
+function A.Why(ply, capability)
+    capability = string.lower(string.Trim(tostring(capability or "")))
+    local allowed, reason = A.Check(ply, capability)
+    local sources = {}
+    local def = A.Capabilities[capability]
+    if not def then
+        sources[#sources + 1] = "capability не объявлена — модуль её не регистрировал"
+    else
+        sources[#sources + 1] = "право организации: " .. A.FactionPermName(capability)
+        if istable(def.levels) then
+            local names = {}
+            for lv in pairs(def.levels) do names[#names + 1] = lv end
+            table.sort(names)
+            sources[#sources + 1] = "уровни госбазы: " .. table.concat(names, ", ")
+        end
+    end
+    return allowed == true, tostring(reason or "?"), sources
+end
+
+if concommand then
+concommand.Add("grm_access_check", function(caller, _, args)
+    local cap = string.lower(tostring(args and args[1] or ""))
+    local target = caller
+    if SERVER and args and args[2] then
+        local needle = string.lower(args[2])
+        for _, p in ipairs(player.GetAll()) do
+            if string.find(string.lower(p:Nick()), needle, 1, true) then target = p break end
+        end
+    end
+    local function say(t) if IsValid(caller) then caller:ChatPrint(t) else print(t) end end
+    if cap == "" then
+        say("[Доступ] как пользоваться: grm_access_check <право> [ник]")
+        local list = {}
+        for id in pairs(A.Capabilities) do list[#list + 1] = id end
+        table.sort(list)
+        say("[Доступ] известные права: " .. table.concat(list, ", "))
+        return
+    end
+    local allowed, reason, sources = A.Why(target, cap)
+    say(("[Доступ] %s → %s (%s)"):format(cap, allowed and "ЕСТЬ" or "нет", reason))
+    for _, line in ipairs(sources) do say("   · " .. line) end
+end)
+end
+
+if GRM.Modules and GRM.Modules.Register then
+    GRM.Modules.Register("access", {
+        label = "Единый слой доступа", version = A.Version,
+        Status = function()
+            local n = 0
+            for _ in pairs(A.Capabilities) do n = n + 1 end
+            return ("прав объявлено: %d, источников: гранты, /admin, организации, госбаза"):format(n)
+        end,
+    })
+end
+
 function A.List()
     local out = {}
     for id, definition in pairs(A.Capabilities) do out[#out + 1] = { id = id, label = definition.label, scope = definition.scope } end

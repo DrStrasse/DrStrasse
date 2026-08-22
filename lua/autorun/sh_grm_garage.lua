@@ -895,6 +895,18 @@ if SERVER then
     end
     G.FleetRows = function(ply, garage) return select(2, splitRows(ply, garage)) end
 
+    if GRM.Modules and GRM.Modules.Register then
+        GRM.Modules.Register("garage", {
+            label = "Гаражи и места выдачи", version = G.Version or "1.0.0",
+            Depends = { "vehicles" },
+            Status = function()
+                local n = 0
+                for _ in pairs(G.Garages or {}) do n = n + 1 end
+                return ("гаражей на карте: %d"):format(n)
+            end,
+        })
+    end
+
     function G.Push(ply, garage)
         if not IsValid(ply) then return end
         garage = garage or G.GarageAt(ply)

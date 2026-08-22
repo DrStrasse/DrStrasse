@@ -740,6 +740,19 @@ function A.Diagnose(ply)
     return lines
 end
 
+if GRM.Modules and GRM.Modules.Register then
+    GRM.Modules.Register("alarm", {
+        label = "Сигнализация и охрана", version = "1.1.0",
+        Depends = { "access", "doors" },
+        Status = function()
+            local devices, sirens = 0, 0
+            for _ in pairs(A.Devices or {}) do devices = devices + 1 end
+            for _ in pairs(A.Sirens or {}) do sirens = sirens + 1 end
+            return ("устройств: %d,активных тревог: %d"):format(devices, sirens)
+        end,
+    })
+end
+
 concommand.Add("grm_alarm_status", function(ply)
     if IsValid(ply) and not A.CanView(ply) then return end
     for _, line in ipairs(A.Diagnose(ply)) do
