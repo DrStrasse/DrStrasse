@@ -669,5 +669,40 @@ ok(dealer:find('plate ~= "" and plate or "БЕЗ НОМЕРА"', 1, true) ~= nil
 ok(dealer:find("local function garageCard", 1, true) == nil,
    "старые строки-карточки гаража удалены, копий разметки нет")
 
+print("\n=== 19. ГДЕ И КАК РЕГИСТРИРУЮТ НОМЕРА ===")
+ok(isfunction(PL.IssueReason), "право выдачи объясняется причиной, а не молча")
+local okAdm, whyAdm = PL.IssueReason({ _valid = true,
+    IsSuperAdmin = function() return true end,
+    GetNWString = function() return "" end })
+ok(okAdm == true and tostring(whyAdm):find("суперадмин", 1, true) ~= nil,
+   "суперадмин видит основание", tostring(whyAdm))
+local okCiv, whyCiv = PL.IssueReason({ _valid = true,
+    IsSuperAdmin = function() return false end,
+    GetNWString = function() return "" end })
+ok(okCiv == false and tostring(whyCiv) ~= "", "гражданскому объясняют, почему нельзя", tostring(whyCiv))
+local okCop, whyCop = PL.IssueReason({ _valid = true,
+    IsSuperAdmin = function() return false end,
+    GetNWString = function() return "OrdnungPolizei" end })
+ok(okCop == true and tostring(whyCop):find("Ordnung", 1, true) ~= nil,
+   "полиция порядка опознаётся по названию организации", tostring(whyCop))
+
+local psrc = (function()
+    local f = io.open("lua/autorun/sh_grm_plates.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+ok(psrc:find('officerReason = tostring(why or "")', 1, true) ~= nil
+   and psrc:find("PL.OfficerReason = tostring(data.officerReason", 1, true) ~= nil,
+   "причина уходит в окно вместе со снимком")
+ok(psrc:find("ВЫ МОЖЕТЕ РЕГИСТРИРОВАТЬ НОМЕРА", 1, true) ~= nil
+   and psrc:find("КАК ПОЛУЧИТЬ НОМЕР", 1, true) ~= nil,
+   "в окне видно, кто вы и что делать дальше")
+ok(psrc:find('local selfBtn = button(issue, "СЕБЕ"', 1, true) ~= nil,
+   "сотрудник может зарегистрировать номер на себя одной кнопкой")
+ok(psrc:find('low:find("^/номер_выдать") == 1', 1, true) ~= nil
+   and psrc:find('concommand.Add("grm_plate_issue"', 1, true) ~= nil,
+   "выдача доступна и командой: /номер_выдать <ник> [тип] [номер]")
+ok(psrc:find('low == "/номер_статус"', 1, true) ~= nil,
+   "команда /номер_статус объясняет права прямо в чат")
+
 print(("\nPLATES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

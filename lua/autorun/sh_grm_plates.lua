@@ -435,22 +435,41 @@ PL.LooksLikeVehicle = looksLikeVehicle
 PL.IssueHints = { "полиц", "police", "ordnung", "инспек", "ваи", "gendarm", "жандарм", "дорожн", "гаи" }
 
 --- Кто вправе выдавать и аннулировать номера.
-function PL.CanIssue(ply)
-    if not IsValid(ply) then return false end
-    if ply.IsSuperAdmin and ply:IsSuperAdmin() then return true end
-    if GRM.Access and GRM.Access.Can and GRM.Access.Can(ply, "plates.issue") then return true end
+--[[ Кто вправе регистрировать номера — и ПОЧЕМУ.
+     Возвращаем не только да/нет, но и причину: игрок должен видеть в окне,
+     сотрудник он или гражданский, а не гадать, куда делся раздел выдачи
+     (вопрос владельца 22.08: «а как номера регистрировать?»). ]]
+function PL.IssueReason(ply)
+    if not IsValid(ply) then return false, "нет игрока" end
+    if ply.IsSuperAdmin and ply:IsSuperAdmin() then return true, "суперадминистратор" end
+    if GRM.Access and GRM.Access.Can and GRM.Access.Can(ply, "plates.issue") then
+        return true, "право plates.issue"
+    end
+    if GRM.FactionPerms and GRM.FactionPerms.PlayerHasPermission
+        and GRM.FactionPerms.PlayerHasPermission(ply, "plates_issue") then
+        return true, "право организации plates_issue"
+    end
 
     local fac = string.lower(ply:GetNWString("GRM_Faction", ""))
     if fac ~= "" then
         for _, hint in ipairs(PL.IssueHints) do
-            if string.find(fac, hint, 1, true) then return true end
+            if string.find(fac, hint, 1, true) then
+                return true, "организация «" .. ply:GetNWString("GRM_Faction", "") .. "»"
+            end
         end
     end
     if GRM.PCBoard and GRM.PCBoard.PlayerLevel then
         local level = GRM.PCBoard.PlayerLevel(ply)
-        if level == "police" or level == "military" or level == "admin" then return true end
+        if level == "police" or level == "military" or level == "admin" then
+            return true, "уровень госбазы: " .. level
+        end
     end
-    return false
+    return false, fac ~= "" and ("организация «" .. ply:GetNWString("GRM_Faction", "") .. "» не выдаёт номера")
+        or "вы не состоите в органах"
+end
+
+function PL.CanIssue(ply)
+    return (select(1, PL.IssueReason(ply))) == true
 end
 
 --- Кто вправе пробивать номер по базе (шире, чем выдача).
@@ -1127,10 +1146,13 @@ if SERVER then
     local function buildSnapshot(ply, found)
         local mine = {}
         for _, rec in ipairs(PL.ListFor(charKey(ply))) do mine[#mine + 1] = packRec(rec) end
-        local officer = PL.CanIssue(ply)
+        local officer, why = PL.IssueReason(ply)
         return {
             mine = mine,
             officer = officer == true,
+            officerReason = tostring(why or ""),
+            youKey = charKey(ply),
+            youName = ply:GetNWString("GRM_RPName", ply:Nick()),
             online = officer and onlineList() or {},
             found = found and { packRec(found) } or {},
         }
@@ -1305,6 +1327,57 @@ if SERVER then
             PL.HandlePlateUse(ply, plate)
             return true
         end
+        --[[ Выдача номера командой — на случай, когда терминала нет под
+             рукой: /номер_выдать <часть ника> [тип] [номер].
+             Тип по умолчанию civil; номер пустой — система подберёт сама. ]]
+        if low:find("^/номер_выдать") == 1 or low:find("^/plate_issue") == 1 then
+            local okIssue, why = PL.IssueReason(ply)
+            if not okIssue then
+                notify(ply, "Выдавать номера может только служба (" .. tostring(why) .. ").")
+                return true
+            end
+            local args = {}
+            for word in string.gmatch(msg, "%S+") do args[#args + 1] = word end
+            local nick = tostring(args[2] or "")
+            if nick == "" then
+                notify(ply, "Как пользоваться: /номер_выдать <ник> [тип] [номер]. Типы: " ..
+                    table.concat((function() local t = {} for _, d in ipairs(PL.TypeList()) do t[#t + 1] = d.key end return t end)(), ", "))
+                return true
+            end
+            local target
+            local needle = string.lower(nick)
+            for _, p in ipairs(player.GetAll()) do
+                if IsValid(p) and (string.find(string.lower(p:Nick()), needle, 1, true)
+                    or string.find(string.lower(p:GetNWString("GRM_RPName", "")), needle, 1, true)) then
+                    target = p break
+                end
+            end
+            if not IsValid(target) then notify(ply, "Игрок «" .. nick .. "» не найден в сети.") return true end
+            local kind = tostring(args[3] or "civil")
+            if not PL.TypeDef(kind) then kind = "civil" end
+            local rec, err = PL.Issue({
+                type = kind, number = tostring(args[4] or ""),
+                ownerKey = charKey(target),
+                ownerName = target:GetNWString("GRM_RPName", target:Nick()),
+                faction = target:GetNWString("GRM_Faction", ""),
+                by = charKey(ply), byName = ply:Nick(),
+            })
+            if not rec then notify(ply, tostring(err or "Не удалось выдать номер")) return true end
+            notify(ply, ("Номер %s зарегистрирован на %s."):format(
+                PL.FormatNumber(rec.number, rec.type), rec.ownerName), true)
+            notify(target, ("Вам выдан регистрационный номер %s. Бланк — команда /номера."):format(
+                PL.FormatNumber(rec.number, rec.type)), true)
+            PL.PushSoon(ply) PL.PushSoon(target)
+            return true
+        end
+        if low == "/номер_статус" or low == "/plate_status" then
+            local okIssue, why = PL.IssueReason(ply)
+            ply:ChatPrint(("[Номера] Право регистрации: %s (%s)"):format(okIssue and "есть" or "нет", tostring(why)))
+            ply:ChatPrint(("[Номера] Ваша организация: %s"):format(
+                ply:GetNWString("GRM_Faction", "") ~= "" and ply:GetNWString("GRM_Faction", "") or "нет"))
+            ply:ChatPrint(("[Номера] Знаков на вас: %d"):format(#PL.ListFor(charKey(ply))))
+            return true
+        end
         if low:find("^/номер%s") == 1 or low:find("^/plate%s") == 1 then
             local arg = string.match(msg, "^%S+%s+(.+)$") or ""
             if not PL.CanCheck(ply) then
@@ -1337,6 +1410,11 @@ if SERVER then
     end)
 
     concommand.Add("grm_plates", function(ply) PL.Open(ply) end)
+
+    concommand.Add("grm_plate_issue", function(ply, _, args)
+        chatCommand(ply, "/номер_выдать " .. table.concat(args or {}, " "))
+    end)
+    concommand.Add("grm_plate_status", function(ply) chatCommand(ply, "/номер_статус") end)
 
     --[[ Подгонка надписи прямо в игре: смотришь на знак, крутишь — видно
          сразу, и настройка сохраняется для всех. ]]
@@ -1453,6 +1531,7 @@ if CLIENT then
     PL.Colors = C
 
     PL.Mine, PL.Online, PL.Found, PL.IsOfficer = {}, {}, {}, false
+    PL.OfficerReason, PL.YouKey, PL.YouName = "", "", ""
 
     local function act(name, data)
         net.Start(PL.Net.ACT)
@@ -1564,6 +1643,32 @@ if CLIENT then
             local refresh = button(head, "Обновить", C.cardHov, function() act("refresh") end)
             refresh:Dock(RIGHT) refresh:SetWide(120) refresh:DockMargin(6, 8, 8, 8)
 
+            --[[ Строка статуса: человек сразу видит, может ли он
+                 регистрировать номера и почему (вопрос владельца 22.08). ]]
+            local status = vgui.Create("DPanel", content)
+            status:Dock(TOP) status:SetTall(46) status:DockMargin(0, 0, 4, 8)
+            status.Paint = function(_, w, h)
+                draw.RoundedBox(8, 0, 0, w, h, C.card)
+                draw.RoundedBox(8, 0, 0, 5, h, PL.IsOfficer and C.green or C.dim)
+                draw.SimpleText(PL.IsOfficer and "ВЫ МОЖЕТЕ РЕГИСТРИРОВАТЬ НОМЕРА" or "РЕГИСТРАЦИЯ НОМЕРОВ ВАМ НЕДОСТУПНА",
+                    "GRMPlate_Body", 16, 10, PL.IsOfficer and C.green or C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                draw.SimpleText(PL.OfficerReason ~= "" and ("Основание: " .. PL.OfficerReason) or "",
+                    "GRMPlate_Small", 16, 28, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            end
+
+            if not PL.IsOfficer then
+                local howto = vgui.Create("DPanel", content)
+                howto:Dock(TOP) howto:SetTall(62) howto:DockMargin(0, 0, 4, 8)
+                howto.Paint = function(_, w, h)
+                    draw.RoundedBox(8, 0, 0, w, h, C.card)
+                    draw.SimpleText("КАК ПОЛУЧИТЬ НОМЕР", "GRMPlate_Body", 14, 10, C.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("Номер выдаёт сотрудник Полиции порядка, Жандармерии или Автоинспекции в этой же вкладке.",
+                        "GRMPlate_Small", 14, 28, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("Получив номер, возьмите бланк кнопкой «ПОЛУЧИТЬ БЛАНК» и закрепите его на машине по [E].",
+                        "GRMPlate_Small", 14, 42, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                end
+            end
+
             if #PL.Mine == 0 then
                 local empty = vgui.Create("DPanel", content)
                 empty:Dock(TOP) empty:SetTall(60) empty:DockMargin(0, 0, 4, 8)
@@ -1617,13 +1722,24 @@ if CLIENT then
                 end
 
                 local who = combo(issue)
-                who:SetPos(14, 54) who:SetSize(330, 30)
-                who:SetValue("Кому выдать...")
+                who:SetPos(14, 54) who:SetSize(250, 30)
                 local pickedKey = ""
                 for _, p in ipairs(PL.Online) do
-                    who:AddChoice(("%s [%s]"):format(tostring(p.name), tostring(p.faction ~= "" and p.faction or "без организации")), p.key)
+                    local mineOne = (p.key == PL.YouKey)
+                    who:AddChoice(("%s [%s]"):format(tostring(p.name),
+                        tostring(p.faction ~= "" and p.faction or "без организации")), p.key, mineOne)
+                    if mineOne then pickedKey = p.key end
                 end
+                if pickedKey == "" then who:SetValue("Кому выдать...") end
                 who.OnSelect = function(_, _, _, val) pickedKey = tostring(val or "") end
+
+                -- Быстрый путь: зарегистрировать номер на себя.
+                local selfBtn = button(issue, "СЕБЕ", C.cardHov, function()
+                    if PL.YouKey == "" then return end
+                    pickedKey = PL.YouKey
+                    who:SetValue(PL.YouName ~= "" and PL.YouName or "Вы")
+                end)
+                selfBtn:SetPos(270, 54) selfBtn:SetSize(74, 30)
 
                 local kind = combo(issue)
                 kind:SetPos(354, 54) kind:SetSize(200, 30)
@@ -1706,6 +1822,9 @@ if CLIENT then
         if not istable(data) then return end
         PL.Mine = istable(data.mine) and data.mine or {}
         PL.IsOfficer = data.officer == true
+        PL.OfficerReason = tostring(data.officerReason or "")
+        PL.YouKey = tostring(data.youKey or "")
+        PL.YouName = tostring(data.youName or "")
         PL.Online = istable(data.online) and data.online or {}
         if istable(data.found) and #data.found > 0 then PL.Found = data.found end
         if PL._rebuild then PL._rebuild() end
