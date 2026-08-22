@@ -356,6 +356,20 @@ if SERVER then
       сохранение. ]]
  function VD.GarageRecords(ply)local g=garage(ply);return g end
  function VD.SaveGarages()return saveGarage()end
+ -- Единый путь оформления ЛИЧНОЙ машины для дилера и гражданского рынка.
+ -- Не спавнит entity: запись сначала попадает в личный гараж.
+ function VD.CreatePersonalRecord(ply,spec,garageID)
+  if not IsValid(ply)or not istable(spec)then return nil,"Игрок или позиция не найдены"end
+  local class=tostring(spec.class or"");if class==""then return nil,"Не указан класс транспорта"end
+  local allowed,have,limit=VD.CanOwnMore(ply,class)
+  if not allowed then return nil,("У вас уже %d шт. этого класса (предел %d)"):format(have,limit)end
+  local info=VD.VehicleInfo(class);local id=makeID("vehicle")
+  local rec={id=id,class=class,name=tostring(spec.name or info.name or class),model=tostring(spec.model or info.model or""),price=math.max(0,math.floor(tonumber(spec.price)or 0)),stored=true,service=false,ownershipType="personal",requestedGarage=tostring(garageID or""):sub(1,48),marketID=tostring(spec.marketID or"")}
+  local g=garage(ply);g[id]=rec
+  hook.Run("GRM_VehicleDealerSpawned",nil,ply,class,rec,nil)
+  if not saveGarage()then g[id]=nil return nil,"Не удалось сохранить личный гараж"end
+  return rec
+ end
  function VD.ActiveCount(ply)return activeCount(ply)end
  function VD.FindRecord(ply,id)local g=garage(ply);return g[tostring(id or"")]end
  function VD.SetRecordGarage(ply,id,garageID)
