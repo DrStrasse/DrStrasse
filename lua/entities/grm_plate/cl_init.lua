@@ -101,7 +101,10 @@ function ENT:DrawTranslucent()
     -- выбор стороны не влияет.
     nrm = nrm * -1
     right = right * -1
-    if nrm:Dot(lp:EyePos() - center) <= 0 then return end
+
+    -- Не отсекаем сторону по позиции камеры: из водительского кресла камера
+    -- оказывается «за» лицевой гранью и старый cull полностью убирал номер.
+    -- Ориентация при этом остаётся фиксированной, не разворачивается за игроком.
 
     -- надпись лежит на самой поверхности знака, а не висит перед ним
     local lift = (face.thickness or 1) * 0.5 + 0.06 + (tonumber(face.offset) or 0) * 0.0
@@ -120,7 +123,10 @@ function ENT:DrawTranslucent()
 
     -- масштаб 3D2D: поле знака в пикселях
     local scale = 0.05
-    local w, h = faceW / scale, faceH / scale
+    -- Поле чуть меньше физической основы: остаётся аккуратная белая кромка,
+    -- знак не выглядит огромной наклейкой на бампере.
+    local renderScale = 0.86
+    local w, h = (faceW * renderScale) / scale, (faceH * renderScale) / scale
 
     local plateCol = Color(def.plate[1], def.plate[2], def.plate[3])
     local bandCol  = Color(def.band[1], def.band[2], def.band[3])

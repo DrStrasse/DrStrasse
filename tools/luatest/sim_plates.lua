@@ -596,6 +596,8 @@ ok(cl:find("local fit = math.min((room * 0.88)", 1, true) ~= nil,
    "номер автоматически вписывается в поле знака по ширине и высоте")
 ok(cl:find("nrm = nrm * -1", 1, true) ~= nil and cl:find("right = right * -1", 1, true) ~= nil,
    "номер фиксированно рисуется на внешней, противоположной кузову стороне")
+ok(cl:find("local renderScale = 0.86", 1, true) ~= nil,
+   "поле номера чуть меньше физической основы")
 ok(cl:find("local lift = (face.thickness or 1) * 0.5", 1, true) ~= nil,
    "надпись лежит на самой поверхности знака, а не висит перед ним")
 
