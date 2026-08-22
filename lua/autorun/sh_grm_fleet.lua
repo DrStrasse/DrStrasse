@@ -1113,10 +1113,21 @@ if CLIENT then
         return c
     end
 
-    local function entry(parent, placeholder)
+    --[[ ПАМЯТЬ ФОРМЫ (заказ владельца 22.08: «обновление не должно сбивать
+         текст»). Панель периодически пересобирается, и любое поле,
+         созданное заново, теряло набранное. Теперь у поля есть КЛЮЧ: при
+         создании оно читает сохранённое значение, при вводе — пишет его
+         обратно. Пересборка становится незаметной. ]]
+    FL.Form = FL.Form or {}
+
+    local function entry(parent, placeholder, key)
         local e = vgui.Create("DTextEntry", parent)
         e:SetFont("GRMFleet_Body")
         e:SetPlaceholderText(placeholder or "")
+        if key then
+            e:SetValue(tostring(FL.Form[key] or ""))
+            e.OnChange = function(self) FL.Form[key] = self:GetValue() or "" end
+        end
         --[[ Со своим Paint GMod НЕ рисует подсказку поля: у окна получались
              безымянные пустые прямоугольники (заказ владельца 21.08).
              Рисуем подсказку сами, пока поле пустое и не в фокусе. ]]
@@ -1130,6 +1141,33 @@ if CLIENT then
             self:DrawTextEntryText(C.text, C.accent, C.text)
         end
         return e
+    end
+
+    --[[ ПАМЯТЬ ПРОКРУТКИ.
+         DScrollPanel зажимает SetScroll по высоте холста, а она известна
+         только после раскладки — поэтому позицию возвращаем циклом до
+         восьми кадров (тот же приём, что в /door_access). Иначе после
+         каждого снимка список прыгал в начало. ]]
+    FL.Scroll = FL.Scroll or {}
+
+    function FL.RestoreScroll(list, key)
+        if not IsValid(list) then return end
+        local base = list.OnVScroll
+        list.OnVScroll = function(pnl, offset)
+            if base then base(pnl, offset) end
+            FL.Scroll[key] = math.abs(tonumber(offset) or 0)
+        end
+        local want = tonumber(FL.Scroll[key]) or 0
+        if want <= 0 then return end
+        local tries = 0
+        local function restore()
+            tries = tries + 1
+            if not IsValid(list) or tries > 8 then return end
+            list:InvalidateLayout(true)
+            if IsValid(list.VBar) then list.VBar:SetScroll(want) end
+            timer.Simple(0, restore)
+        end
+        timer.Simple(0, restore)
     end
 
     --- Раздел «Автопарк» — общий для окна и вкладки терминала.
@@ -1199,17 +1237,21 @@ if CLIENT then
                 garageCombo:AddChoice(label, g.id, g.mine)
                 if g.mine and pickedGarage == "" then pickedGarage = g.id end
             end
-            garageCombo.OnSelect = function(_, _, _, val) pickedGarage = tostring(val or "") end
+            garageCombo.OnSelect = function(_, _, _, val)
+                pickedGarage = tostring(val or "")
+                FL.Form.buy_garage = pickedGarage
+            end
 
-            local countEntry = entry(bar, "Сколько единиц")
+            local countEntry = entry(bar, "Сколько единиц", "buy_count")
             countEntry:Dock(LEFT) countEntry:SetWide(140) countEntry:DockMargin(0, 24, 8, 8)
-            countEntry:SetValue("1")
+            if (countEntry:GetValue() or "") == "" then countEntry:SetValue("1") end
 
             local refresh = button(bar, "Обновить", C.cardHov, function() act("refresh") end)
             refresh:Dock(RIGHT) refresh:SetWide(130) refresh:DockMargin(8, 24, 10, 8)
 
             local list = vgui.Create("DScrollPanel", buyPnl)
             list:Dock(FILL)
+            FL.RestoreScroll(list, "buy")
 
             for _, e in ipairs(FL.State.market) do
                 local card = vgui.Create("DPanel", list)
@@ -1261,6 +1303,7 @@ if CLIENT then
             parkPnl:Clear()
             local list = vgui.Create("DScrollPanel", parkPnl)
             list:Dock(FILL)
+            FL.RestoreScroll(list, "park")
 
             if #FL.State.units == 0 then
                 local empty = vgui.Create("DPanel", list)
@@ -1359,20 +1402,24 @@ if CLIENT then
                 draw.SimpleText("КОМУ ПРОДАЁМ", "GRMFleet_Small", 322, 104, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
             end
 
-            local classEntry = entry(form, "например simfphys_uaz")
+            local classEntry = entry(form, "например simfphys_uaz", "mk_class")
             classEntry:SetPos(14, 72) classEntry:SetSize(300, 28)
-            local nameEntry = entry(form, "Патрульный УАЗ")
+            local nameEntry = entry(form, "Патрульный УАЗ", "mk_name")
             nameEntry:SetPos(322, 72) nameEntry:SetSize(240, 28)
-            local priceEntry = entry(form, "50000")
+            local priceEntry = entry(form, "50000", "mk_price")
             priceEntry:SetPos(570, 72) priceEntry:SetSize(150, 28)
-            local limitEntry = entry(form, "0 — без предела")
+            local limitEntry = entry(form, "0 — без предела", "mk_limit")
             limitEntry:SetPos(728, 72) limitEntry:SetSize(170, 28)
 
             local tierCombo = combo(form)
             tierCombo:SetPos(14, 120) tierCombo:SetSize(300, 28)
             local pickedTier = "civil"
             for _, t in ipairs(FL.TierList()) do tierCombo:AddChoice(t.name, t.key, t.key == "civil") end
-            tierCombo.OnSelect = function(_, _, _, val) pickedTier = tostring(val or "civil") end
+            tierCombo.OnSelect = function(_, _, _, val)
+                pickedTier = tostring(val or "civil")
+                FL.Form.mk_tier = pickedTier
+            end
+            if FL.Form.mk_tier then pickedTier = FL.Form.mk_tier end
 
             local facCombo = combo(form)
             facCombo:SetPos(322, 120) facCombo:SetSize(240, 28)
@@ -1396,6 +1443,7 @@ if CLIENT then
 
             local list = vgui.Create("DScrollPanel", adminPnl)
             list:Dock(FILL)
+            FL.RestoreScroll(list, "market")
             for _, e in ipairs(FL.State.market) do
                 local row = vgui.Create("DPanel", list)
                 row:Dock(TOP) row:SetTall(58) row:DockMargin(0, 0, 4, 6)

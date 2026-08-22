@@ -403,6 +403,23 @@ ok(isfunction(G.SlotDiagnose), "диагностика мест объявлен
 local diag = G.SlotDiagnose(G.Get(strict.id), admin)
 ok(#diag == 1 and diag[1].free == true, "по каждому месту видно, свободно оно или нет")
 
+print("\n=== ОБНОВЛЕНИЕ НЕ СБИВАЕТ РАБОТУ (22.08) ===")
+do
+    local src = (function()
+        local f = io.open("lua/autorun/sh_grm_fleet.lua", "rb")
+        local t = f:read("*a") f:close() return t
+    end)()
+    local function has(n) return src:find(n, 1, true) ~= nil end
+    ok(has("FL.Form = FL.Form or {}") and has("e.OnChange = function(self) FL.Form[key] = self:GetValue() or \"\" end"),
+       "поля рынка и закупки помнят ввод между обновлениями")
+    ok(has('entry(form, "например simfphys_uaz", "mk_class")') and has('entry(bar, "Сколько единиц", "buy_count")'),
+       "у полей формы есть ключи")
+    ok(has("FL.Form.buy_garage = pickedGarage") and has("FL.Form.mk_tier = pickedTier"),
+       "выбранные гараж и уровень допуска не сбрасываются")
+    ok(has("function FL.RestoreScroll(list, key)") and has('FL.RestoreScroll(list, "park")'),
+       "прокрутка каждой секции возвращается на место")
+end
+
 print("\n=== ЖИВОЕ ОКНО И ХРАНЕНИЕ (22.08) ===")
 do
     local src = (function()

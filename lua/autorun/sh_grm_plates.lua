@@ -1862,10 +1862,43 @@ if CLIENT then
         return b
     end
 
-    local function entry(parent, placeholder)
+    --[[ ПАМЯТЬ ФОРМЫ И ПРОКРУТКИ (заказ владельца 22.08).
+         Панель периодически пересобирается снимком, и всё, что игрок
+         набрал или прокрутил, терялось. Теперь поле знает свой КЛЮЧ и
+         восстанавливает значение само, а прокрутка возвращается циклом до
+         восьми кадров (DScrollPanel зажимает SetScroll по высоте холста,
+         известной только после раскладки). ]]
+    PL.Form = PL.Form or {}
+    PL.Scroll = PL.Scroll or {}
+
+    function PL.RestoreScroll(list, key)
+        if not IsValid(list) then return end
+        local base = list.OnVScroll
+        list.OnVScroll = function(pnl, offset)
+            if base then base(pnl, offset) end
+            PL.Scroll[key] = math.abs(tonumber(offset) or 0)
+        end
+        local want = tonumber(PL.Scroll[key]) or 0
+        if want <= 0 then return end
+        local tries = 0
+        local function restore()
+            tries = tries + 1
+            if not IsValid(list) or tries > 8 then return end
+            list:InvalidateLayout(true)
+            if IsValid(list.VBar) then list.VBar:SetScroll(want) end
+            timer.Simple(0, restore)
+        end
+        timer.Simple(0, restore)
+    end
+
+    local function entry(parent, placeholder, key)
         local e = vgui.Create("DTextEntry", parent)
         e:SetFont("GRMPlate_Body")
         e:SetPlaceholderText(placeholder or "")
+        if key then
+            e:SetValue(tostring(PL.Form[key] or ""))
+            e.OnChange = function(self) PL.Form[key] = self:GetValue() or "" end
+        end
         --[[ Со своим Paint GMod НЕ рисует подсказку поля: у окна получались
              безымянные пустые прямоугольники (заказ владельца 21.08).
              Рисуем подсказку сами, пока поле пустое и не в фокусе. ]]
@@ -1973,6 +2006,7 @@ if CLIENT then
 
         local content = vgui.Create("DScrollPanel", parent)
         content:Dock(FILL)
+        PL.RestoreScroll(content, "main")
 
         --[[ ЖИВОЕ ОКНО.
              Пока панель учёта открыта, сервер знает о ней и присылает
@@ -2069,7 +2103,7 @@ if CLIENT then
                 draw.RoundedBox(8, 0, 0, w, h, C.card)
                 draw.SimpleText("ПРОВЕРКА НОМЕРА ПО БАЗЕ", "GRMPlate_Body", 14, 12, C.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
             end
-            local findEntry = entry(findCard, "Например: А123ВС (можно латиницей)")
+            local findEntry = entry(findCard, "Например: А123ВС (можно латиницей)", "find")
             findEntry:SetPos(14, 40) findEntry:SetSize(300, 30)
             local findBtn = button(findCard, "ПРОБИТЬ", C.accent, function()
                 act("find", { number = findEntry:GetValue() or "" })
@@ -2113,7 +2147,13 @@ if CLIENT then
                     if mineOne then pickedKey = p.key end
                 end
                 if pickedKey == "" then who:SetValue("Кому выдать...") end
-                who.OnSelect = function(_, _, _, val) pickedKey = tostring(val or "") end
+                who.OnSelect = function(_, _, _, val)
+                    pickedKey = tostring(val or "")
+                    PL.Form.issue_owner = pickedKey
+                end
+                if PL.Form.issue_owner and PL.Form.issue_owner ~= "" then
+                    pickedKey = PL.Form.issue_owner
+                end
 
                 -- Быстрый путь: зарегистрировать номер на себя.
                 local selfBtn = button(issue, "СЕБЕ", C.cardHov, function()
@@ -2129,12 +2169,16 @@ if CLIENT then
                 for _, t in ipairs(PL.TypeList()) do
                     kind:AddChoice(t.name .. "  (" .. t.pattern .. ")", t.key, t.key == "civil")
                 end
-                kind.OnSelect = function(_, _, _, val) pickedType = tostring(val or "civil") end
+                kind.OnSelect = function(_, _, _, val)
+                    pickedType = tostring(val or "civil")
+                    PL.Form.issue_type = pickedType
+                end
+                if PL.Form.issue_type then pickedType = PL.Form.issue_type end
 
-                local numEntry = entry(issue, "Номер вручную (не обязательно)")
+                local numEntry = entry(issue, "Номер вручную (не обязательно)", "issue_number")
                 numEntry:SetPos(564, 54) numEntry:SetSize(220, 30)
 
-                local vehEntry = entry(issue, "Транспорт: марка / класс (для картотеки)")
+                local vehEntry = entry(issue, "Транспорт: марка / класс (для картотеки)", "issue_vehicle")
                 vehEntry:SetPos(14, 94) vehEntry:SetSize(540, 30)
 
                 local giveBtn = button(issue, "ЗАРЕГИСТРИРОВАТЬ", C.green, function()

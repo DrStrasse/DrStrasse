@@ -856,5 +856,22 @@ ok(psrc:find("if not ok then ok, err = PL.MountOnRear(plate, veh, ply) end", 1, 
 ok(psrc:find("local localPos = Vector(mins.x + 1, 0, mins.z + (maxs.z - mins.z) * 0.32)", 1, true) ~= nil,
    "точка заднего борта считается по габаритам машины")
 
+print("\n=== 23. ОБНОВЛЕНИЕ НЕ СБИВАЕТ РАБОТУ (22.08) ===")
+ok(psrc:find("PL.Form = PL.Form or {}", 1, true) ~= nil
+   and psrc:find("e.OnChange = function(self) PL.Form[key] = self:GetValue() or \"\" end", 1, true) ~= nil,
+   "поля запоминают набранный текст между пересборками")
+ok(psrc:find('entry(findCard, "Например: А123ВС (можно латиницей)", "find")', 1, true) ~= nil
+   and psrc:find('"issue_number")', 1, true) ~= nil
+   and psrc:find('"issue_vehicle")', 1, true) ~= nil,
+   "поля поиска и регистрации получили свои ключи")
+ok(psrc:find("PL.Form.issue_owner = pickedKey", 1, true) ~= nil
+   and psrc:find("PL.Form.issue_type = pickedType", 1, true) ~= nil,
+   "выбранные владелец и серия не сбрасываются")
+ok(psrc:find("function PL.RestoreScroll(list, key)", 1, true) ~= nil
+   and psrc:find('PL.RestoreScroll(content, "main")', 1, true) ~= nil,
+   "прокрутка возвращается на место после обновления")
+ok(psrc:find("if not IsValid(list) or tries > 8 then return end", 1, true) ~= nil,
+   "возврат прокрутки повторяется до восьми кадров — холст меряется не сразу")
+
 print(("\nPLATES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end
