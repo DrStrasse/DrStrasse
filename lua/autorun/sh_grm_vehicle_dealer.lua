@@ -637,6 +637,29 @@ if SERVER then
    end
    result(ply,true,("Транспорт выдан: %s"):format(placeMsg))
    VD.Push(ply,dealer)
+  elseif op=="fleet_buy"then
+   --[[ ЕДИНЫЙ МЕХАНИЗМ ЗАКУПКИ (заказ владельца 22.08).
+        Служебная позиция у дилера — это НЕ «получить машину», а заявка на
+        закупку в автопарк организации: деньги идут из бюджета, а на карте
+        появляется отдельная ЕДИНИЦА техники со своим номером и слотом.
+        Выдаётся она потом — из раздела «Техника организации». ]]
+   local class=net.ReadString();local wantGarage=net.ReadString()or""
+   local FL=GRM.Fleet
+   if not(FL and FL.Buy and FL.MarketList)then result(ply,false,"Автопарк недоступен")return end
+   local faction=ply:GetNWString("GRM_Faction","")
+   local pick
+   for _,entry in ipairs(FL.MarketList())do
+    if tostring(entry.class)==class then
+     local allowed=FL.EntryAllowed and FL.EntryAllowed(entry,faction,
+      (GRM.PCBoard and GRM.PCBoard.PlayerLevel and GRM.PCBoard.PlayerLevel(ply))or"none",ply:IsSuperAdmin())
+     if allowed or not FL.EntryAllowed then pick=entry break end
+     pick=pick or entry
+    end
+   end
+   if not pick then result(ply,false,"Эта машина не выставлена на закупку")return end
+   local made,err=FL.Buy(ply,pick.id,1,wantGarage)
+   result(ply,made~=nil,made and("Закуплено в автопарк: "..tostring(pick.name))or tostring(err or"Не удалось закупить"))
+   if made then VD.Push(ply,dealer)end
   elseif op=="fleet_issue"or op=="fleet_store"then
    --[[ Служебная техника поштучно: выдаём и возвращаем КОНКРЕТНУЮ единицу
         автопарка, а не «какую-нибудь машину этого класса». Вся логика

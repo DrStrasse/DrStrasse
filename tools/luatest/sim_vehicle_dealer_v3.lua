@@ -79,4 +79,51 @@ do
     ok(hasT(cl, "noPlate = true"), "каталог помечает свои ячейки как классы, а не машины")
 end
 
+-- ── 22.08: единый механизм закупки дилер ↔ автопарк, окно без мерцания ──
+do
+    local core = (function()
+        local f = io.open("lua/autorun/sh_grm_vehicle_dealer.lua", "rb")
+        local t = f:read("*a") f:close() return t
+    end)()
+    local cl = (function()
+        local f = io.open("lua/entities/sent_vehicle_dealer/cl_init.lua", "rb")
+        local t = f:read("*a") f:close() return t
+    end)()
+    local fleet = (function()
+        local f = io.open("lua/autorun/sh_grm_fleet.lua", "rb")
+        local t = f:read("*a") f:close() return t
+    end)()
+    local function hasT(src, needle) return src:find(needle, 1, true) ~= nil end
+
+    ok(hasT(fleet, "function FL.DealerMarket()"),
+        "ассортимент дилеров попадает в рынок закупок автопарка")
+    ok(hasT(fleet, 'local id = "dealer:" .. class .. ":" .. faction'),
+        "у дилерской позиции устойчивый идентификатор")
+    ok(hasT(fleet, 'if string.sub(id, 1, 7) == "dealer:" then return FL.DealerMarket()[id] end'),
+        "закупка находит дилерскую позицию по тому же id")
+    ok(hasT(fleet, "for id, entry in pairs(FL.DealerMarket and FL.DealerMarket() or {}) do"),
+        "список рынка объединяет оба источника")
+    ok(hasT(core, 'elseif op=="fleet_buy"then'),
+        "у дилера есть операция закупки в автопарк")
+    ok(hasT(core, "local made,err=FL.Buy(ply,pick.id,1,wantGarage)"),
+        "закупка идёт через единый FL.Buy: бюджет, лимиты, гараж")
+    ok(hasT(cl, "ЗАКУПИТЬ В АВТОПАРК"),
+        "служебная позиция у дилера теперь закупается, а не выдаётся сразу")
+    ok(hasT(cl, 'send(dealer, "fleet_buy", v.class, targetGarage)'),
+        "кнопка шлёт закупку с выбранным гаражом приписки")
+
+    local plates = (function()
+        local f = io.open("lua/autorun/sh_grm_plates.lua", "rb")
+        local t = f:read("*a") f:close() return t
+    end)()
+    ok(hasT(plates, "local function snapshotSignature(data)") and hasT(plates, "if sig == PL._sig then return end"),
+        "окно учёта не пересобирается, если данные не изменились")
+    ok(hasT(plates, "if typingNow() then PL._sigPending = sig return end"),
+        "пока игрок печатает, окно учёта не трогают")
+    ok(hasT(fleet, "local function stateSignature(data)") and hasT(fleet, "if sig == FL._sig then return end"),
+        "окно автопарка тоже перестраивается только по изменению")
+    ok(hasT(fleet, "if typingNow() then FL._sigPending = sig return end"),
+        "и не сбивает набранный текст")
+end
+
 print(("VEHICLE DEALER V3: %d/%d failures=%d"):format(checks-failed,checks,failed));if failed>0 then os.exit(1)end

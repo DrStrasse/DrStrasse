@@ -171,12 +171,74 @@ FL.Market = FL.Market or {}   -- id -> позиция рынка
 FL.Units  = FL.Units  or {}   -- id -> единица парка
 FL.Active = FL.Active or {}   -- id -> живая машина
 
-function FL.Entry(id) return FL.Market[tostring(id or "")] end
+--[[ ЕДИНЫЙ РЫНОК ЗАКУПОК: свои позиции + ассортимент дилеров.
+
+     Заказ владельца 22.08: «админ лишь вносит в дилера настройку, какие
+     машины на выдаче, но показываются они после закупки; свести воедино
+     закупку и установку между дилером и служебным оборудованием».
+
+     Поэтому позиции для закупки берутся из ДВУХ источников:
+       • собственный рынок автопарка (вкладка «Рынок» у суперадмина);
+       • служебные позиции ассортимента ДИЛЕРОВ на карте — они попадают
+         сюда автоматически, с ценой, организацией и категорией дилера.
+     Идентификатор дилерской позиции: "dealer:<класс>:<организация>".
+     Закупленная техника в обоих случаях становится ЕДИНИЦЕЙ парка —
+     одна машина, один слот, одна ячейка. ]]
+function FL.DealerMarket()
+    local out = {}
+    if not SERVER then return out end
+    local VD = GRM.VehicleDealer
+    if not (VD and VD.VehicleInfo) then return out end
+
+    local seen = {}
+    for _, dealer in ipairs(ents.FindByClass("sent_vehicle_dealer")) do
+        if IsValid(dealer) then
+            for _, entry in ipairs(dealer.VD_Vehicles or {}) do
+                local kind = VD.EntryKind and VD.EntryKind(entry) or "personal"
+                if kind ~= "personal" then
+                    local class = tostring(entry.class or "")
+                    local faction = tostring(entry.faction or "")
+                    local id = "dealer:" .. class .. ":" .. faction
+                    if class ~= "" and not seen[id] then
+                        seen[id] = true
+                        local info = VD.VehicleInfo(class)
+                        out[id] = {
+                            id = id, class = class,
+                            name = tostring(entry.name or info.name or class),
+                            model = tostring(info.model or ""),
+                            price = math.max(0, math.floor(tonumber(entry.price) or 0)),
+                            tier = (kind == "government") and "gov" or "civil",
+                            kind = kind,
+                            factions = faction ~= "" and { faction } or {},
+                            limit = 0,
+                            category = tostring(entry.category or "Служебный транспорт"),
+                            note = "позиция дилера «" .. tostring(dealer:GetDealerName() or "") .. "»",
+                            source = "dealer",
+                        }
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
+function FL.Entry(id)
+    id = tostring(id or "")
+    local own = FL.Market[id]
+    if own then return own end
+    if string.sub(id, 1, 7) == "dealer:" then return FL.DealerMarket()[id] end
+    return nil
+end
 function FL.Unit(id) return FL.Units[tostring(id or "")] end
 
 function FL.MarketList()
     local out = {}
     for id, entry in pairs(FL.Market) do
+        if istable(entry) then entry.id = id out[#out + 1] = entry end
+    end
+    -- позиции дилеров идут тем же списком: закупка у них одинаковая
+    for id, entry in pairs(FL.DealerMarket and FL.DealerMarket() or {}) do
         if istable(entry) then entry.id = id out[#out + 1] = entry end
     end
     table.sort(out, function(a, b)
@@ -1380,6 +1442,29 @@ if CLIENT then
         return pnl
     end
 
+    --[[ Окно автопарка перестраивается только когда данные изменились и
+         игрок не печатает — иначе набранный текст и выбранная вкладка
+         слетали на каждом снимке (заказ владельца 22.08). ]]
+    local function stateSignature(data)
+        local parts = {
+            tostring(data.faction), tostring(data.budget), tostring(data.canBuy),
+            tostring(data.canManage), tostring(data.isAdmin),
+            tostring(#(data.market or {})), tostring(#(data.units or {})),
+        }
+        for _, e in ipairs(data.market or {}) do
+            parts[#parts + 1] = table.concat({ e.id, e.name, e.price, e.tier, e.limit or 0 }, ":")
+        end
+        for _, u in ipairs(data.units or {}) do
+            parts[#parts + 1] = table.concat({ u.id, u.status or "", tostring(u.onMap),
+                tostring(u.garageID or ""), tostring(u.plate or "") }, ":")
+        end
+        return table.concat(parts, "|")
+    end
+
+    local function typingNow()
+        return IsValid(vgui.GetKeyboardFocus())
+    end
+
     local function applyState(data)
         if not istable(data) then return end
         FL.State.faction = tostring(data.faction or "")
@@ -1392,8 +1477,22 @@ if CLIENT then
         FL.State.garages = istable(data.garages) and data.garages or {}
         FL.State.factions = istable(data.factions) and data.factions or {}
         FL.State.structure = istable(data.structure) and data.structure or { roles = {}, depts = {} }
+
+        local sig = stateSignature(data)
+        if sig == FL._sig then return end
+        if typingNow() then FL._sigPending = sig return end
+        FL._sig, FL._sigPending = sig, nil
         if FL._rebuild then FL._rebuild() end
     end
+
+    hook.Add("Think", "GRM_Fleet_PendingRebuild", function()
+        if not FL._sigPending then return end
+        if (FL._pendingAt or 0) > RealTime() then return end
+        FL._pendingAt = RealTime() + 0.5
+        if typingNow() then return end
+        FL._sig, FL._sigPending = FL._sigPending, nil
+        if FL._rebuild then FL._rebuild() end
+    end)
 
     if GRM.Net and GRM.Net.Receive then
         GRM.Net.Receive(FL.Net.SYNC, applyState)

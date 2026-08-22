@@ -2185,6 +2185,38 @@ if CLIENT then
         end
     end)
 
+    --[[ ПЕРЕСБОРКА ТОЛЬКО ПО ДЕЛУ (заказ владельца 22.08: «обновление не
+         должно сбивать текст и рябить»).
+
+         Снимок приходит каждые несколько секунд, но данные в нём чаще всего
+         те же самые. Раньше окно пересобиралось на КАЖДЫЙ пакет: список
+         мигал, набранный в поле текст пропадал, прокрутка прыгала.
+
+         Теперь считаем подпись снимка и сравниваем с прошлой: одинаково —
+         не трогаем окно вообще. И даже при изменениях не пересобираем, пока
+         игрок печатает: правки применятся, как только он уйдёт из поля. ]]
+    local function snapshotSignature(data)
+        local parts = {
+            tostring(data.officer), tostring(data.officerReason),
+            tostring(data.youKey), tostring(#(data.mine or {})), tostring(#(data.found or {})),
+        }
+        for _, rec in ipairs(data.mine or {}) do
+            parts[#parts + 1] = table.concat({ rec.number, rec.type, rec.status,
+                tostring(rec.mounted), tostring(rec.mountVehicle), tostring(rec.mountOffMap) }, ":")
+        end
+        for _, rec in ipairs(data.found or {}) do
+            parts[#parts + 1] = "f:" .. table.concat({ rec.number, rec.status, tostring(rec.ownerName) }, ":")
+        end
+        for _, p in ipairs(data.online or {}) do parts[#parts + 1] = "o:" .. tostring(p.key) end
+        return table.concat(parts, "|")
+    end
+
+    --- Печатает ли игрок прямо сейчас (тогда окно не трогаем).
+    local function typingNow()
+        local focus = vgui.GetKeyboardFocus()
+        return IsValid(focus)
+    end
+
     local function applySnapshot(data)
         if not istable(data) then return end
         PL.Mine = istable(data.mine) and data.mine or {}
@@ -2194,8 +2226,24 @@ if CLIENT then
         PL.YouName = tostring(data.youName or "")
         PL.Online = istable(data.online) and data.online or {}
         if istable(data.found) and #data.found > 0 then PL.Found = data.found end
+
+        local sig = snapshotSignature(data)
+        if sig == PL._sig then return end          -- ничего не изменилось
+        if typingNow() then PL._sigPending = sig return end
+        PL._sig, PL._sigPending = sig, nil
         if PL._rebuild then PL._rebuild() end
     end
+
+    --[[ Если игрок печатал в момент изменения — применяем, как только он
+         освободит клавиатуру. Проверка редкая (раз в полсекунды). ]]
+    hook.Add("Think", "GRM_Plates_PendingRebuild", function()
+        if not PL._sigPending then return end
+        if (PL._pendingAt or 0) > RealTime() then return end
+        PL._pendingAt = RealTime() + 0.5
+        if typingNow() then return end
+        PL._sig, PL._sigPending = PL._sigPending, nil
+        if PL._rebuild then PL._rebuild() end
+    end)
 
     -- снимок приходит порциями (GRM.Net.Stream) — окно собирается один раз
     if GRM.Net and GRM.Net.Receive then

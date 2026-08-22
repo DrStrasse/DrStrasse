@@ -358,11 +358,24 @@ net.Receive("GRM_VD_Open", function()
             state = { text = personal and "личный" or "служебный", good = personal },
             lines = lines,
             buttons = {
-                { label = capped and "ЛИМИТ" or (personal and ("КУПИТЬ · " .. money(v.price or 0)) or "ПОЛУЧИТЬ"),
-                  color = capped and C.red or (personal and C.green or C.accent),
+                { label = capped and "ЛИМИТ"
+                    or (personal and ("КУПИТЬ · " .. money(v.price or 0))
+                    or ("ЗАКУПИТЬ В АВТОПАРК · " .. money(v.price or 0))),
+                  color = capped and C.red or (personal and C.green or C.teal),
                   enabled = not capped,
                   fn = function()
-                      if not personal then send(dealer, "buy", v.class, targetGarage, "dealer") return end
+                      if not personal then
+                          --[[ Служебная позиция закупается в автопарк
+                               организации: на карте появится отдельная
+                               единица со своим номером, а выдать её можно
+                               в разделе «Техника организации». ]]
+                          Derma_Query(("Закупить «%s» в автопарк организации за %s?\nМашина встанет в парк отдельной единицей — выдать её можно будет в разделе «Техника организации».")
+                                  :format(tostring(v.name or v.class), money(v.price or 0)),
+                              "Закупка служебной техники",
+                              "Закупить", function() send(dealer, "fleet_buy", v.class, targetGarage) end,
+                              "Отмена")
+                          return
+                      end
                       --[[ ПОКУПКА ≠ ВЫДАЧА: личная машина оформляется в
                            собственность и встаёт на хранение, забрать её
                            можно во вкладке «Мой транспорт». ]]
