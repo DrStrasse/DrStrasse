@@ -48,6 +48,52 @@ GRM.HUD.Config = {
     selectorTimeout = 3,
 }
 
+--[[--------------------------------------------------------------------
+    ЕДИНАЯ ПАНЕЛЬ СОСТОЯНИЯ (переработка 22.08 по заказу владельца).
+
+    Было: здоровье и броня рисовались здесь, сытость — в своём файле по
+    АБСОЛЮТНЫМ координатам (x = ScrW() - 1066, y = 1044 — на других
+    разрешениях улетало), вес — по центру снизу, выносливость — ещё где-то.
+    Полосы жили каждая своей жизнью, налезали друг на друга и появлялись в
+    разных углах экрана.
+
+    Стало: один список полос. Модуль не рисует ничего сам — он объявляет
+    свою полосу и отдаёт значение:
+
+        GRM.HUD.RegisterBar("hunger", {
+            label = "СЫТОСТЬ", order = 30,
+            Get = function() return value, max, "текст", Color(...) end,
+        })
+
+    Панель сама решает, где всё это стоит, какой ширины и в каком порядке,
+    и растёт по высоте под количество полос. Порядок задаётся числом order:
+    10 здоровье, 20 броня, 30 выносливость, 40 дыхание, 50 сытость, 60 вес.
+----------------------------------------------------------------------]]
+GRM.HUD.Bars = GRM.HUD.Bars or {}
+
+function GRM.HUD.RegisterBar(id, def)
+    id = tostring(id or "")
+    if id == "" or not istable(def) or not isfunction(def.Get) then return false end
+    def.id = id
+    def.label = tostring(def.label or id)
+    def.order = tonumber(def.order) or 100
+    GRM.HUD.Bars[id] = def
+    return true
+end
+
+function GRM.HUD.RemoveBar(id) GRM.HUD.Bars[tostring(id or "")] = nil end
+
+--- Полосы по порядку (чистая функция — гоняется стендом).
+function GRM.HUD.BarList()
+    local out = {}
+    for _, def in pairs(GRM.HUD.Bars) do out[#out + 1] = def end
+    table.sort(out, function(a, b)
+        if a.order == b.order then return a.id < b.id end
+        return a.order < b.order
+    end)
+    return out
+end
+
 -- ШРИФТЫ
 if not GRM.HUD._fontsCreated then
     GRM.HUD._fontsCreated = true
@@ -391,17 +437,18 @@ local function DrawMainHUD()
     UpdateValues()
     AnimateValues()
     if not actual.alive then return end
+
     local cfg = GRM.HUD.Config
     local sh, sw = ScrH(), ScrW()
-    local px, py = 16, sh - 16 - 118
-    local pw, ph = 210, 112
-    draw.RoundedBox(8, px + 2, py + 2, pw, ph, cfg.bgShadow)
-    draw.RoundedBox(8, px, py, pw, ph, cfg.bgColor)
-    local barX, barY = px + 10, py + 20
-    local barW, barH = pw - 20, 14
+
+    --[[ Собираем ВСЁ, что нужно показать, в один список: сначала здоровье и
+         броня (они всегда), затем полосы, которые объявили другие модули
+         (выносливость, дыхание, сытость, вес). Панель считает свою высоту
+         под фактическое число полос — ничего не налезает и не висит в
+         пустоте. ]]
+    local rows = {}
+
     local hpFrac = math.Clamp(anim.hp / actual.maxHp, 0, 1)
-    draw.SimpleText("ЗДОРОВЬЕ", "GRM_HUD_Label", barX, py + 7, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-    draw.RoundedBox(4, barX, barY, barW, barH, Color(30, 32, 40, 255))
     local hpColor
     if hpFrac > 0.6 then hpColor = cfg.hpColorFull
     elseif hpFrac > 0.3 then
@@ -411,28 +458,61 @@ local function DrawMainHUD()
         local t = hpFrac / 0.3
         hpColor = Color(Lerp(t, cfg.hpColorLow.r, cfg.hpColorMid.r), Lerp(t, cfg.hpColorLow.g, cfg.hpColorMid.g), Lerp(t, cfg.hpColorLow.b, cfg.hpColorMid.b), 255)
     end
-    if hpFrac > 0 then draw.RoundedBox(4, barX, barY, barW * hpFrac, barH, hpColor) end
-    draw.SimpleText(math.Round(anim.hp) .. " / " .. actual.maxHp, "GRM_HUD_Value", barX + barW / 2, barY + barH / 2, Color(255, 255, 255, 240), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    rows[#rows + 1] = { label = "ЗДОРОВЬЕ", frac = hpFrac, color = hpColor,
+        text = math.Round(anim.hp) .. " / " .. actual.maxHp }
 
-    local arBarY = barY + barH + 10
-    local arFrac = math.Clamp(anim.armor / 100, 0, 1)
-    draw.SimpleText("БРОНЯ", "GRM_HUD_Label", barX, arBarY - 11, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-    draw.RoundedBox(4, barX, arBarY, barW, barH, Color(30, 32, 40, 255))
-    if arFrac > 0 then draw.RoundedBox(4, barX, arBarY, barW * arFrac, barH, cfg.armorColor) end
-    draw.SimpleText(math.Round(anim.armor), "GRM_HUD_Value", barX + barW / 2, arBarY + barH / 2, Color(255, 255, 255, 240), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    if (anim.armor or 0) > 0.5 then
+        rows[#rows + 1] = { label = "БРОНЯ", frac = math.Clamp(anim.armor / 100, 0, 1),
+            color = cfg.armorColor, text = tostring(math.Round(anim.armor)) }
+    end
 
-    -- GRM-FIX: две строки денег — наличка (кошелёк) и счёт (банк)
-    local moneyY = arBarY + barH + 8
-    draw.SimpleText("НАЛИЧКА", "GRM_HUD_Label", barX, moneyY + 2, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    for _, def in ipairs(GRM.HUD.BarList()) do
+        local ok, value, max, text, color, hidden = pcall(def.Get)
+        if ok and not hidden and value ~= nil then
+            max = math.max(1, tonumber(max) or 100)
+            rows[#rows + 1] = {
+                label = def.label,
+                frac = math.Clamp((tonumber(value) or 0) / max, 0, 1),
+                color = color or cfg.armorColor,
+                text = text or (math.Round(tonumber(value) or 0) .. " / " .. math.Round(max)),
+            }
+        end
+    end
+
+    -- ── раскладка панели ────────────────────────────────────────────
+    local pw = 236
+    local pad, barH, gap, labelH = 12, 13, 8, 12
+    local moneyH = 40
+    local ph = pad + #rows * (labelH + barH + gap) + moneyH + pad - gap
+    local px, py = 16, sh - 16 - ph
+
+    draw.RoundedBox(8, px + 2, py + 2, pw, ph, cfg.bgShadow)
+    draw.RoundedBox(8, px, py, pw, ph, cfg.bgColor)
+
+    local x, w = px + pad, pw - pad * 2
+    local y = py + pad
+    for _, row in ipairs(rows) do
+        draw.SimpleText(row.label, "GRM_HUD_Label", x, y, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        draw.SimpleText(row.text, "GRM_HUD_Label", x + w, y, cfg.labelColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+        y = y + labelH
+        draw.RoundedBox(4, x, y, w, barH, Color(30, 32, 40, 255))
+        if row.frac > 0 then draw.RoundedBox(4, x, y, w * row.frac, barH, row.color) end
+        y = y + barH + gap
+    end
+
+    -- ── деньги: наличные и счёт одной строкой каждая ────────────────
+    draw.SimpleText("НАЛИЧНЫЕ", "GRM_HUD_Label", x, y + 2, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
     local cashTxt = (GRM.Format and GRM.Format(math.Round(anim.bal))) or ("$" .. string.Comma(math.Round(anim.bal)))
-    draw.SimpleText(cashTxt, "GRM_HUD_Money", barX + barW, moneyY, cfg.moneyColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
-    local bankY = moneyY + 18
-    draw.SimpleText("НА СЧЁТУ", "GRM_HUD_Label", barX, bankY + 2, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    draw.SimpleText(cashTxt, "GRM_HUD_Money", x + w, y, cfg.moneyColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+
+    draw.SimpleText("НА СЧЁТУ", "GRM_HUD_Label", x, y + 20, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
     local bankTxt = (GRM.PlayerBank ~= nil)
         and ((GRM.Format and GRM.Format(math.Round(anim.bank))) or ("$" .. string.Comma(math.Round(anim.bank))))
         or "—"
-    draw.SimpleText(bankTxt, "GRM_HUD_Money", barX + barW, bankY, cfg.bankColor or cfg.moneyColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+    draw.SimpleText(bankTxt, "GRM_HUD_Money", x + w, y + 18, cfg.bankColor or cfg.moneyColor,
+        TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
 
+    -- ── патроны: отдельный блок справа снизу ────────────────────────
     if actual.ammo1 >= 0 then
         local ax, ay = sw - 16 - 150, sh - 16 - 60
         local aw, ah = 150, 54

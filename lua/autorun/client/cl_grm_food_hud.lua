@@ -43,44 +43,35 @@ net.Receive("GRM_Food_Sync", function()
     GRM.Food.ClientHunger = net.ReadFloat()
 end)
 
-hook.Add("HUDPaint", "GRM_Food_HUD", function()
-    local cv = GetConVar("grm_cl_foodhud")
-    if cv and cv:GetInt() == 0 then return end
-    local ply = LocalPlayer()
-    if not IsValid(ply) or not ply:Alive() then return end
+--[[ Сытость переехала в общую панель состояния (заказ владельца 22.08).
+     Раньше полоса рисовалась по АБСОЛЮТНЫМ координатам (x = ScrW() - 1066,
+     y = 1044): на любом разрешении, кроме одного, она уезжала за экран или
+     налезала на другие полосы. Теперь модуль только отдаёт значение, а где
+     и как его показать, решает HUD. ]]
+local function hungerColor(frac)
+    if frac < 0.3 then return Color(220, 80, 80) end
+    if frac < 0.6 then return Color(220, 200, 80) end
+    return Color(80, 205, 125)
+end
 
-    -- Читаем глобальное значение, чтобы HUD работал даже если на сервере случайно остался
-    -- старый клиентский файл, который перезаписал net.Receive и обновляет GRM.Food.ClientHunger.
-    local config = GRM.Food.Config or {}
-    local maxHunger = config.HungerMax or 100
-    local hunger = math.Clamp(tonumber(GRM.Food.ClientHunger) or maxHunger, 0, maxHunger)
-    local frac = math.Clamp(hunger / maxHunger, 0, 1)
+local function hungerText(frac, hunger)
+    if frac <= 0 then return "ГОЛОДАНИЕ" end
+    if frac < 0.2 then return "очень голоден · " .. math.floor(hunger) .. "%" end
+    if frac < 0.5 then return "голоден · " .. math.floor(hunger) .. "%" end
+    return math.floor(hunger) .. "%"
+end
 
-    local sw = ScrW()
-    local x = sw - 1066
-    local y = 1044
-    local w = 220
-    local h = 22
-
-    local barColor = Color(80, 220, 80, 240)
-    if frac < 0.3 then
-        barColor = Color(220, 80, 80, 240)
-    elseif frac < 0.6 then
-        barColor = Color(220, 200, 80, 240)
-    end
-
-    local status = "Сытость"
-    if frac <= 0 then
-        status = "ГОЛОДАНИЕ"
-    elseif frac < 0.2 then
-        status = "Очень голоден"
-    elseif frac < 0.5 then
-        status = "Голоден"
-    elseif frac < 0.8 then
-        status = "Нормально"
-    end
-
-    draw.RoundedBox(5, x, y, w, h, Color(30, 32, 40, 210))
-    draw.RoundedBox(5, x + 2, y + 2, (w - 4) * frac, h - 4, barColor)
-    draw.SimpleText(status .. ": " .. math.floor(hunger) .. "%", "DermaDefaultBold", x + w / 2, y + h / 2, Color(255, 255, 255), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-end)
+if GRM.HUD and GRM.HUD.RegisterBar then
+    GRM.HUD.RegisterBar("hunger", {
+        label = "СЫТОСТЬ", order = 50,
+        Get = function()
+            local cv = GetConVar("grm_cl_foodhud")
+            if cv and cv:GetInt() == 0 then return nil end
+            local config = GRM.Food.Config or {}
+            local maxHunger = config.HungerMax or 100
+            local hunger = math.Clamp(tonumber(GRM.Food.ClientHunger) or maxHunger, 0, maxHunger)
+            local frac = hunger / math.max(1, maxHunger)
+            return hunger, maxHunger, hungerText(frac, hunger), hungerColor(frac)
+        end,
+    })
+end

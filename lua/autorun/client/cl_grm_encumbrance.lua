@@ -44,24 +44,32 @@ local function weightColor(state)
     return Color(80, 205, 125)
 end
 
-hook.Add("HUDPaint", "GRM_Weight_HUD", function()
+--[[ Вес тоже показывает общая панель состояния (заказ владельца 22.08):
+     раньше полоса стояла по центру снизу и спорила за место с сытостью и
+     выносливостью. Предупреждения о перегрузе остались отдельной строкой
+     по центру — это важное сообщение, а не постоянный индикатор. ]]
+if GRM.HUD and GRM.HUD.RegisterBar then
+    GRM.HUD.RegisterBar("weight", {
+        label = "ВЕС", order = 60,
+        Get = function()
+            local state = E.ClientState
+            local hard = math.max(1, state.hard or 1)
+            return state.weight, hard,
+                string.format("%.1f / %.0f кг", state.weight or 0, state.capacity or 0),
+                weightColor(state)
+        end,
+    })
+end
+
+hook.Add("HUDPaint", "GRM_Weight_Warning", function()
     local ply = LocalPlayer()
     if not IsValid(ply) or not ply:Alive() then return end
     local state = E.ClientState
+    if not (state.blocked or state.overloaded) then return end
     local sw, sh = ScrW(), ScrH()
-    local width, height = 250, 13
-    local x, y = (sw - width) / 2, sh - 136
-    local fraction = math.Clamp(state.weight / math.max(1, state.hard), 0, 1)
-    local color = weightColor(state)
-    draw.RoundedBox(4, x, y, width, height, Color(30, 32, 40, 210))
-    if fraction > 0 then draw.RoundedBox(4, x, y, width * fraction, height, color) end
-    draw.SimpleText("ВЕС", "GRMWeight_Label", x + 8, y - 14, Color(170, 180, 195), TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-    draw.SimpleText(string.format("%.1f / %.0f кг", state.weight, state.capacity), "GRMWeight_Value", x + width - 8, y + height / 2, Color(255, 255, 255), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-    if state.blocked then
-        draw.SimpleText("ПРЕДЕЛ ПЕРЕНОСА — НЕЛЬЗЯ ПОДНИМАТЬ НОВОЕ", "GRMWeight_Label", sw / 2, y - 28, Color(255, 110, 100), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-    elseif state.overloaded then
-        draw.SimpleText("ПЕРЕГРУЗ: БЕГ ОТКЛЮЧЁН", "GRMWeight_Label", sw / 2, y - 28, Color(255, 200, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
-    end
+    draw.SimpleText(state.blocked and "ПРЕДЕЛ ПЕРЕНОСА — НЕЛЬЗЯ ПОДНИМАТЬ НОВОЕ" or "ПЕРЕГРУЗ: БЕГ ОТКЛЮЧЁН",
+        "GRMWeight_Label", sw / 2, sh - 150,
+        state.blocked and Color(255, 110, 100) or Color(255, 200, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
 end)
 
 concommand.Add("grm_weight", function()

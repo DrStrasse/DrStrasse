@@ -245,31 +245,74 @@ if CLIENT then
         hook.Run("GRM_StaminaUpdated", GRM.LocalStamina)
     end)
 
-    -- Полоса выносливости (центр снизу, над HUD)
-    hook.Add("HUDPaint", "GRM_Movement_StaminaHUD", function()
-        local cv = GetConVar("grm_cl_staminahud")
-        if cv and cv:GetInt() == 0 then return end
+    --[[ Выносливость и дыхание живут в ОБЩЕЙ панели состояния
+         (GRM.HUD.RegisterBar) — заказ владельца 22.08. Своей полосы по
+         центру экрана больше нет: раньше она висела отдельно от здоровья и
+         брони и налезала на вес с сытостью. Если общего HUD почему-то нет
+         (старая сборка), рисуем по-старому. ]]
+    local function staminaColor(frac)
+        if frac < 0.3 then return Color(220, 80, 80) end
+        if frac < 0.6 then return Color(220, 200, 80) end
+        return Color(80, 220, 200)
+    end
+
+    -- Дыхание: под водой считаем запас воздуха. Движок его не отдаёт,
+    -- поэтому ведём свой отсчёт от момента погружения (по умолчанию 12 с,
+    -- как стандартное утопление) — полоса нужна как предупреждение.
+    local breathLeft, breathMax = 12, 12
+    hook.Add("Think", "GRM_Movement_Breath", function()
         local ply = LocalPlayer()
         if not IsValid(ply) or not ply:Alive() then return end
-        local stamina = GRM.LocalStamina or 0
-        local maxStamina = GRM.Movement.Config.StaminaMax
-
-        local sw, sh = ScrW(), ScrH()
-        local barW, barH = 250, 14
-        local x = (sw - barW) / 2
-        local y = sh - 66 -- над основным HUD
-
-        draw.RoundedBox(4, x, y, barW, barH, Color(30, 32, 40, 200))
-
-        local frac = math.Clamp(stamina / maxStamina, 0, 1)
-        local color = Color(80, 220, 200)
-        if frac < 0.3 then color = Color(220, 80, 80)
-        elseif frac < 0.6 then color = Color(220, 200, 80) end
-        draw.RoundedBox(4, x, y, barW * frac, barH, color)
-
-        draw.SimpleText("Выносливость", "GRM_HUD_Label", x + 10, y - 16, Color(160, 165, 175, 255), TEXT_ALIGN_LEFT)
-        draw.SimpleText(math.floor(stamina) .. "%", "GRM_HUD_Value", x + barW - 10, y + barH / 2, Color(255,255,255,240), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        local dt = FrameTime()
+        if ply:WaterLevel() >= 3 then
+            breathLeft = math.max(0, breathLeft - dt)
+        else
+            breathLeft = math.min(breathMax, breathLeft + dt * 3)
+        end
     end)
+
+    if GRM.HUD and GRM.HUD.RegisterBar then
+        GRM.HUD.RegisterBar("stamina", {
+            label = "ВЫНОСЛИВОСТЬ", order = 30,
+            Get = function()
+                local cv = GetConVar("grm_cl_staminahud")
+                if cv and cv:GetInt() == 0 then return nil end
+                local stamina = GRM.LocalStamina or 0
+                local maxStamina = GRM.Movement.Config.StaminaMax
+                local frac = math.Clamp(stamina / math.max(1, maxStamina), 0, 1)
+                return stamina, maxStamina, math.floor(stamina) .. "%", staminaColor(frac)
+            end,
+        })
+
+        GRM.HUD.RegisterBar("breath", {
+            label = "ДЫХАНИЕ", order = 40,
+            Get = function()
+                -- полоса появляется только под водой и пока идёт восстановление
+                if breathLeft >= breathMax - 0.05 then return nil end
+                local frac = breathLeft / breathMax
+                return breathLeft, breathMax, math.ceil(breathLeft) .. " с",
+                    frac < 0.35 and Color(220, 80, 80) or Color(90, 175, 255)
+            end,
+        })
+    else
+        hook.Add("HUDPaint", "GRM_Movement_StaminaHUD", function()
+            local cv = GetConVar("grm_cl_staminahud")
+            if cv and cv:GetInt() == 0 then return end
+            local ply = LocalPlayer()
+            if not IsValid(ply) or not ply:Alive() then return end
+            local stamina = GRM.LocalStamina or 0
+            local maxStamina = GRM.Movement.Config.StaminaMax
+            local sw, sh = ScrW(), ScrH()
+            local barW, barH = 250, 14
+            local x, y = (sw - barW) / 2, sh - 66
+            draw.RoundedBox(4, x, y, barW, barH, Color(30, 32, 40, 200))
+            local frac = math.Clamp(stamina / maxStamina, 0, 1)
+            draw.RoundedBox(4, x, y, barW * frac, barH, staminaColor(frac))
+            draw.SimpleText("Выносливость", "GRM_HUD_Label", x + 10, y - 16, Color(160, 165, 175, 255), TEXT_ALIGN_LEFT)
+            draw.SimpleText(math.floor(stamina) .. "%", "GRM_HUD_Value", x + barW - 10, y + barH / 2,
+                Color(255, 255, 255, 240), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        end)
+    end
 
     -- Статус движения (центр, над полосой)
     hook.Add("HUDPaint", "GRM_Movement_StatusHUD", function()

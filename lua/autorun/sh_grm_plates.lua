@@ -652,6 +652,27 @@ if SERVER then
         if PL.Viewers then PL.Viewers[ply] = nil end
     end)
 
+    --[[ Сердцебиение окна учёта.
+         Права могли выдать в обход событий (правка файла, чужой аддон,
+         импорт из ULX) — и тогда страница ждала бы ручного «пробить».
+         Раз в 5 секунд открытые окна получают свежий снимок. Таймер живёт
+         только пока кто-то смотрит: пустой список — таймера нет. ]]
+    local function viewersTick()
+        local any = false
+        for ply in pairs(PL.Viewers or {}) do
+            if IsValid(ply) then any = true PL.Push(ply) else PL.Viewers[ply] = nil end
+        end
+        if not any then timer.Remove("GRM_Plates_ViewersTick") end
+    end
+
+    local baseSetViewer = PL.SetViewer
+    function PL.SetViewer(ply, on)
+        baseSetViewer(ply, on)
+        if on and not timer.Exists("GRM_Plates_ViewersTick") then
+            timer.Create("GRM_Plates_ViewersTick", 5, 0, viewersTick)
+        end
+    end
+
     function PL.Save(why)
         if not PL._loaded then return false end
         -- Любая правка реестра = обновление у всех, кто смотрит учёт.
@@ -1137,6 +1158,95 @@ if SERVER then
 
     hook.Add("GRM_VehicleIssued", "GRM_Plates_Restore", function(ply, ent, rec)
         PL.RestoreForVehicle(ply, ent, rec)
+    end)
+
+    --[[ СЛУЖЕБНЫЕ НОМЕРА СТАВЯТСЯ САМИ (заказ владельца 22.08).
+
+         Личный транспорт получает номер в отделении: человек идёт,
+         регистрирует, вешает. Служебная техника так работать не может —
+         она принадлежит организации, и номер у неё ведомственный. Поэтому
+         при первой выдаче единицы автопарка модуль сам:
+           1) смотрит, нет ли уже номера за этой машиной (UID fleet:<id>);
+           2) если нет — регистрирует ведомственную серию по уровню
+              организации в госбазе (police / military / gov);
+           3) спавнит знак и крепит его на задний борт по габаритам машины.
+         Выключается конваром grm_plates_auto_service 0. ]]
+    local cvAuto = CreateConVar("grm_plates_auto_service", "1", FCVAR_ARCHIVE,
+        "Служебная техника получает ведомственный номер автоматически при выдаче")
+
+    --- Какая серия положена организации.
+    function PL.ServiceKind(faction)
+        local name = string.lower(tostring(faction or ""))
+        if name == "" then return "gov" end
+        for _, hint in ipairs({ "polizei", "полиц", "ordnung", "порядк", "gendarm", "жандарм", "ваи", "гаи" }) do
+            if string.find(name, hint, 1, true) then return "police" end
+        end
+        for _, hint in ipairs({ "military", "воен", "wehr", "армия", "komendat", "коменд" }) do
+            if string.find(name, hint, 1, true) then return "military" end
+        end
+        return "gov"
+    end
+
+    --- Повесить знак на задний борт машины по её габаритам.
+    function PL.MountOnRear(plate, veh, actor)
+        if not (IsValid(plate) and IsValid(veh)) then return false end
+        local mins, maxs = veh:OBBMins(), veh:OBBMaxs()
+        local z = mins.z + (maxs.z - mins.z) * 0.35
+        local pos = veh:LocalToWorld(Vector(mins.x + 2, 0, z))
+        local ang = veh:GetAngles()
+        ang:RotateAroundAxis(ang:Up(), 180)
+        plate:SetPos(pos)
+        plate:SetAngles(ang)
+        return PL.Attach(plate, veh, actor)
+    end
+
+    --- Выдать и повесить ведомственный номер, если его ещё нет.
+    function PL.EnsureServicePlate(ply, ent, faction, uid)
+        if not cvAuto:GetBool() then return false end
+        if not IsValid(ent) then return false end
+        uid = tostring(uid or ((GRM.Vehicles and GRM.Vehicles.EnsureUID) and GRM.Vehicles.EnsureUID(ent) or ""))
+        if uid == "" then return false end
+
+        -- номер уже закреплён за этой машиной — просто вернём его на место
+        local existing = PL.PlateOfVehicleKey(uid)
+        if existing ~= "" then
+            if #PL.VehiclePlates(ent) > 0 then return true end
+            local rec = PL.Get(existing)
+            local mount = rec and istable(rec.mount) and rec.mount or nil
+            local plate = PL.SpawnPlate(existing,
+                mount and ent:LocalToWorld(Vector(mount.pos.x, mount.pos.y, mount.pos.z)) or ent:GetPos(),
+                mount and ent:LocalToWorldAngles(Angle(mount.ang.p, mount.ang.y, mount.ang.r)) or ent:GetAngles(),
+                ply)
+            if IsValid(plate) then
+                if mount then PL.Attach(plate, ent, ply) else PL.MountOnRear(plate, ent, ply) end
+            end
+            return true
+        end
+
+        local kind = PL.ServiceKind(faction)
+        local rec = PL.Issue({
+            type = kind,
+            ownerKey = "faction:" .. tostring(faction or ""),
+            ownerName = tostring(faction or "Организация"),
+            faction = tostring(faction or ""),
+            vehicle = (GRM.Vehicles and GRM.Vehicles.Title) and GRM.Vehicles.Title(ent) or tostring(ent:GetClass()),
+            byName = "автоучёт",
+            note = "служебный транспорт",
+        })
+        if not rec then return false end
+
+        local plate = PL.SpawnPlate(rec.number, ent:GetPos(), ent:GetAngles(), ply)
+        if not IsValid(plate) then return false end
+        return PL.MountOnRear(plate, ent, ply)
+    end
+
+    hook.Add("GRM_FleetIssued", "GRM_Plates_ServiceAuto", function(ply, ent, unit)
+        if not (IsValid(ent) and istable(unit)) then return end
+        -- ждём кадр: машина должна встать на место и получить физику
+        timer.Simple(0.2, function()
+            if not IsValid(ent) then return end
+            PL.EnsureServicePlate(ply, ent, unit.faction, "fleet:" .. tostring(unit.id))
+        end)
     end)
 
     --[[ МАШИНУ УБРАЛИ — НОМЕР ОСТАЛСЯ ЗА НЕЙ.

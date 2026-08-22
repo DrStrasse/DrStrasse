@@ -260,7 +260,7 @@ net.Receive("GRM_VD_Open", function()
     if IsValid(GRM.VehicleDealerFrame) then GRM.VehicleDealerFrame:Remove() end
 
     local f, body = grmFrame(name ~= "" and name or "Дилер транспорта", "GRM / ТРАНСПОРТНЫЙ ЦЕНТР",
-        math.Clamp(ScrW() * 0.84, 1080, 1520), math.Clamp(ScrH() * 0.86, 700, 950))
+        math.Clamp(ScrW() * 0.92, 1240, 1860), math.Clamp(ScrH() * 0.92, 780, 1120))
     GRM.VehicleDealerFrame = f
     if GRM.UI and GRM.UI.Track then GRM.UI.Track("vehicle_dealer", f) end
 
