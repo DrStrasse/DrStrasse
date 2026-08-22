@@ -413,6 +413,20 @@ if SERVER then
     end
     FL.FactionOf = factionOf
 
+    -- Автопарк не использует городской/чужой гараж. Служебная единица
+    -- привязывается только к ведомственному гаражу ТОЙ ЖЕ организации.
+    function FL.FactionGarageAllowed(ply, garage, faction)
+        if not (IsValid(ply) and istable(garage)) then return false, "Гараж не найден" end
+        if ply:IsSuperAdmin() then return true end
+        if tostring(garage.kind or "") ~= "faction" then
+            return false, "Служебная техника ставится только в ведомственный гараж организации"
+        end
+        if factionKey(garage.faction) ~= factionKey(faction) then
+            return false, "Это ведомственный гараж другой организации"
+        end
+        return true
+    end
+
     local function levelOf(ply)
         if GRM.PCBoard and GRM.PCBoard.PlayerLevel then
             return (GRM.PCBoard.PlayerLevel(ply))
@@ -772,19 +786,13 @@ if SERVER then
                 -- организации всегда приоритетнее (Комендатура ≠ Автосалон).
                 local garageID = old and old.recoveredFromPlate ~= true and tostring(old.garageID or "") or ""
                 if garageID == "" then
-                    for _, wantFaction in ipairs({ true, false }) do
-                        for gid, garage in pairs(garages) do
-                            if istable(garage) then
-                                local own = tostring(garage.faction or "") == faction
-                                local public = tostring(garage.kind or "") == "public"
-                                if #(garage.slots or {}) > 0
-                                    and ((wantFaction and own) or (not wantFaction and public)) then
-                                    garageID = tostring(gid)
-                                    break
-                                end
-                            end
+                    for gid, garage in pairs(garages) do
+                        if istable(garage) and tostring(garage.kind or "") == "faction"
+                            and factionKey(garage.faction) == factionKey(faction)
+                            and #(garage.slots or {}) > 0 then
+                            garageID = tostring(gid)
+                            break
                         end
-                        if garageID ~= "" then break end
                     end
                 end
                 if faction ~= "" and garageID ~= "" and class ~= "" then
@@ -938,9 +946,8 @@ if SERVER then
         local garage = GRM.Garage and GRM.Garage.Get and GRM.Garage.Get(garageID) or nil
         if not istable(garage) then return nil, "Выберите гараж, куда поставить технику" end
         if #(garage.slots or {}) == 0 then return nil, ("В гараже «%s» не размечено ни одного места"):format(garage.name) end
-        if tostring(garage.kind) == "faction" and tostring(garage.faction or "") ~= faction and not ply:IsSuperAdmin() then
-            return nil, "Этот гараж принадлежит другой организации"
-        end
+        local garageOK, garageWhy = FL.FactionGarageAllowed(ply, garage, faction)
+        if not garageOK then return nil, garageWhy end
 
         local total, unitPrice = FL.OrderPrice(entry, count)
         if total > 0 then
@@ -1007,6 +1014,8 @@ if SERVER then
         if not FL.CanManage(ply, unit.faction) then return false, "Нет права распоряжаться парком" end
         local garage = GRM.Garage and GRM.Garage.Get and GRM.Garage.Get(garageID) or nil
         if not istable(garage) then return false, "Гараж не найден" end
+        local garageOK, garageWhy = FL.FactionGarageAllowed(ply, garage, unit.faction)
+        if not garageOK then return false, garageWhy end
         if IsValid(FL.Active[unit.id]) then return false, "Сначала верните машину в гараж" end
         unit.garageID = garage.id
         FL.SaveFleet("приписка техники")
@@ -1241,8 +1250,11 @@ if SERVER then
         if not (G and G.List) then return out end
         for _, rec in ipairs(G.List()) do
             local kind = tostring(rec.kind or "public")
-            local mine = (kind == "faction" and tostring(rec.faction or "") == faction)
-            if ply:IsSuperAdmin() or mine or kind == "public" then
+            local mine = (kind == "faction" and factionKey(rec.faction) == factionKey(faction))
+            -- Рядовой сотрудник видит ТОЛЬКО свой ведомственный гараж.
+            -- Городские и чужие ведомственные гаражи не участвуют в
+            -- служебной закупке и не могут стать местом выдачи.
+            if ply:IsSuperAdmin() or mine then
                 out[#out + 1] = {
                     id = rec.id, name = rec.name, kind = kind, kindName = G.KindName and G.KindName(kind) or kind,
                     faction = rec.faction or "", slots = #(rec.slots or {}),

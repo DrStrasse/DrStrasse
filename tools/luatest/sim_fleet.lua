@@ -296,6 +296,7 @@ end }
 
 print("\n=== 1. РЫНОК СОБИРАЕТ СУПЕРАДМИН ===")
 ok(isfunction(FL.MarketAdd), "API рынка есть")
+ok(isfunction(FL.FactionGarageAllowed), "служебный гараж проверяется отдельной функцией")
 local patrol = FL.MarketAdd({ class = "sim_patrol", name = "Патрульный седан", price = 50000, tier = "police", limit = 3 })
 ok(patrol ~= nil and patrol.id ~= nil, "позиция добавлена")
 local amb = FL.MarketAdd({ class = "sim_amb", name = "Скорая", price = 40000, tier = "gov" })
