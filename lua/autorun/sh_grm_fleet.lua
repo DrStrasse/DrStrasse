@@ -1022,6 +1022,47 @@ if SERVER then
 
     -- ── выдача из гаража ────────────────────────────────────────────
 
+    -- Старые записи и номерные миграции могли сохранить базовый class
+    -- simfphys (`gmod_sent_vehicle_physics_base`) вместо spawn-класса.
+    -- Перед выдачей сопоставляем class/название с реестрами транспорта и
+    -- сразу лечим запись, чтобы следующая выдача не зависела от миграции.
+    function FL.ResolveVehicleClass(unit)
+        if not istable(unit) then return nil, "Запись техники повреждена" end
+        local raw = tostring(unit.class or "")
+        local name = tostring(unit.name or "")
+        local candidates, seen = {}, {}
+        local function add(v)
+            v = tostring(v or "")
+            if v ~= "" and not seen[v] then seen[v] = true candidates[#candidates + 1] = v end
+        end
+        add(raw) add(name)
+        add(raw:gsub("^sim_fphys_", "simfphys_"))
+        add(name:gsub("^sim_fphys_", "simfphys_"))
+        add(raw:gsub("^simfphys_", "sim_fphys_"))
+        add(name:gsub("^simfphys_", "sim_fphys_"))
+
+        local generic = raw == "gmod_sent_vehicle_physics_base"
+            or raw == "gmod_sent_vehicle_base" or raw == "prop_vehicle_jeep"
+        local getList = list and list.Get or function() return {} end
+        local registries = {
+            (getList("simfphys_vehicles") or {}),
+            (getList("Vehicles") or {}),
+            (getList("LVS_Vehicles") or {}),
+        }
+        for _, candidate in ipairs(candidates) do
+            for _, registry in ipairs(registries) do
+                if registry[candidate] then return candidate end
+                for key, data in pairs(registry) do
+                    if tostring(data and data.SpawnList or "") == candidate then return tostring(key) end
+                end
+            end
+        end
+        -- Для обычных записей сохраняем прежнее поведение: внешний аддон
+        -- может спавниться через scripted_ents и не быть в list.Get.
+        if not generic and raw ~= "" then return raw end
+        return nil, ("Не найден spawn-класс техники: %s"):format(name ~= "" and name or raw)
+    end
+
     --- Выдать единицу парка на свободное место её гаража.
     function FL.Issue(ply, unitID, garage)
         local unit = FL.Unit(unitID)
@@ -1044,8 +1085,19 @@ if SERVER then
 
         local VD = GRM.VehicleDealer
         if not (VD and VD.Spawn) then return nil, "Модуль транспорта не загружен" end
-        local ent, _, spawnErrors = VD.Spawn(unit.class, nil, ply, place)
-        if not IsValid(ent) then return nil, (spawnErrors and spawnErrors[1]) or "Не удалось выдать технику" end
+        local spawnClass, classErr = FL.ResolveVehicleClass(unit)
+        if not spawnClass then return nil, classErr end
+        if tostring(unit.class) ~= spawnClass then
+            unit.class = spawnClass
+            unit.classFixedAt = os.time()
+            FL.SaveFleet("исправлен spawn-класс техники")
+            FL.FlushFleet("исправлен spawn-класс техники")
+        end
+        local ent, _, spawnErrors = VD.Spawn(spawnClass, nil, ply, place)
+        if not IsValid(ent) then
+            return nil, (spawnErrors and spawnErrors[1]) or ("Не удалось выдать «%s» на место «%s»")
+                :format(spawnClass, tostring(place.slot and place.slot.name or "стоянка"))
+        end
 
         ent.GRMFleetUnit = unit.id
         ent.GRMFleetID = unit.id          -- ЕДИНЫЙ UID для номеров/восстановления

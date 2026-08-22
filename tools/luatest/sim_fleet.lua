@@ -71,6 +71,10 @@ function CreateConVar(name, def)
 end
 game = { GetMap = function() return "sim_map" end }
 player = { GetAll = function() return PLAYERS or {} end }
+list = { Get = function(kind)
+    if kind == "simfphys_vehicles" then return { simfphys_wolfpolice = { SpawnList = "sim_fphys_wolfpolice" } } end
+    return {}
+end }
 
 local FS = {}
 file = {
@@ -305,6 +309,11 @@ FL.MarketUpdate(civ.id, { price = 12000 })
 ok(FL.Entry(civ.id).price == 12000, "цену можно поменять")
 ok(pushed == 1, "правка обычной цены сразу рассылается открытым терминалам", pushed)
 FL.PushViewers = savedPushViewers
+
+do
+    local resolved, resolveErr = FL.ResolveVehicleClass({ class = "gmod_sent_vehicle_physics_base", name = "sim_fphys_wolfpolice" })
+    ok(resolved == "simfphys_wolfpolice", "generic simfphys class перед выдачей превращается в spawn-класс", resolveErr or resolved)
+end
 
 print("\n=== 2. КОМУ ЧТО ПРОДАЮТ ===")
 ok(select(1, FL.EntryAllowed(patrol, "police", "police", false)) == true, "полиции — полицейская техника")
