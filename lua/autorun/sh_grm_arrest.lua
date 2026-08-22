@@ -1544,3 +1544,16 @@ if CLIENT then
 end
 
 print("[GRM Arrest] v" .. A.Version .. " loaded")
+
+
+--[[ Модуль представляется общему реестру GRM.Modules: соседи знают, что он
+     есть, а шина обновлений сама позовёт его при смене прав, состава,
+     должности или персонажа. ]]
+if GRM.Modules and GRM.Modules.Register then
+    GRM.Modules.Register("arrest", {
+        label = "Арест и содержание",
+        version = (GRM.Arrest and GRM.Arrest.Version) or "1.0.0",
+        Depends = { "access", "doors" },
+        Status = function() local A2 = GRM.Arrest local n = #((A2.Cfg and A2.Cfg.cameras) or {}) return ("камер содержания: %d"):format(n) end,
+    })
+end

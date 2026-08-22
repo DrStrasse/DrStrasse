@@ -123,5 +123,63 @@ for _, file in ipairs({
     ok(src:find(file[2], 1, true) ~= nil, "в реестре: " .. file[1]:match("([^/]+)$"))
 end
 
+print("\n=== 6. СТАРЫЕ МОДУЛИ ТОЖЕ В РЕЕСТРЕ ===")
+for _, file in ipairs({
+    { "lua/autorun/sh_grm_mobile.lua", 'GRM.Modules.Register("mobile"' },
+    { "lua/autorun/sh_grm_phone_access.lua", 'GRM.Modules.Register("phone_access"' },
+    { "lua/autorun/sh_grm_cctv_access.lua", 'GRM.Modules.Register("cctv"' },
+    { "lua/autorun/sh_grm_wanted_board.lua", 'GRM.Modules.Register("wanted"' },
+    { "lua/autorun/sh_grm_arrest.lua", 'GRM.Modules.Register("arrest"' },
+    { "lua/autorun/sh_grm_minimap.lua", 'GRM.Modules.Register("minimap"' },
+    { "lua/autorun/sh_spawn_points.lua", 'GRM.Modules.Register("spawnpoints"' },
+}) do
+    local src = (function()
+        local f = io.open(file[1], "rb")
+        local t = f:read("*a") f:close() return t
+    end)()
+    ok(src:find(file[2], 1, true) ~= nil, "в реестре: " .. file[1]:match("([^/]+)$"))
+end
+
+print("\n=== 7. СВЯЗЬ И НАБЛЮДЕНИЕ ЗНАЮТ ОБЩИЕ ПРАВА ===")
+local phone = (function()
+    local f = io.open("lua/autorun/sh_grm_phone_access.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+ok(phone:find('GRM.Access.Register("phone.equipment"', 1, true) ~= nil
+   and phone:find('GRM.Access.Register("phone.wiretap"', 1, true) ~= nil,
+   "у связи и прослушки есть capability с источниками")
+ok(phone:find('GRM.Access.Can(ply, "phone.equipment")', 1, true) ~= nil,
+   "проверка доступа к оборудованию учитывает общий слой, а не только свою таблицу")
+local cctv = (function()
+    local f = io.open("lua/autorun/sh_grm_cctv_access.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+ok(cctv:find('GRM.Access.Register("cctv.view"', 1, true) ~= nil, "видеонаблюдение объявило права")
+local perms = (function()
+    local f = io.open("lua/autorun/sh_grm_faction_perms.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+ok(perms:find("phone_wiretap = ", 1, true) ~= nil and perms:find("cctv_view = ", 1, true) ~= nil,
+   "эти права появились в /factions → «Доступы»")
+
+print("\n=== 8. ОПТИМИЗАЦИЯ ЭТОГО ХОДА ===")
+local cuffs = (function()
+    local f = io.open("lua/autorun/server/sv_grm_handcuffs.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+ok(cuffs:find("timer.Create(stunName, math.max(0.1, seconds), 1, endStun)", 1, true) ~= nil
+   and cuffs:find('timer.Create("GRM_Stun_" .. target:EntIndex(), 0.2, 0', 1, true) == nil,
+   "конец оглушения ждём одним таймером, а не опросом 5 раз в секунду")
+local radio = (function()
+    local f = io.open("lua/autorun/sh_grm_radionet.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+ok(radio:find('timer.Create("GRM_RN_Watch", 3, 0', 1, true) ~= nil
+   and radio:find("local function radioNetEmpty()", 1, true) ~= nil,
+   "сторож радиосети реже и не крутится на карте без раций")
+ok(radio:find("function RN.EnsureCrackle()", 1, true) ~= nil
+   and radio:find('if not next(fxTalkers) then timer.Remove("GRM_RN_Crackle") return end', 1, true) ~= nil,
+   "треск помех живёт только во время разговора")
+
 print(("\nMODULES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

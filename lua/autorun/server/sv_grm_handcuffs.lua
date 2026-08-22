@@ -368,13 +368,23 @@ function HC.StunPlayer(actor, target, seconds, options)
     target:SetNWFloat("GRM_StunnedUntil", target.GRM_StunnedUntil)
     if not options.silent then target:EmitSound("Weapon_StunStick.Melee_Hit", 75, 100, 1, CHAN_WEAPON) end
     if not options.silentNotify and GRM.Notify then GRM.Notify(target, "Вы оглушены электродубинкой.", 255, 180, 90) end
-    timer.Create("GRM_Stun_" .. target:EntIndex(), 0.2, 0, function()
-        if not IsValid(target) then timer.Remove("GRM_Stun_" .. target:EntIndex()) return end
-        if CurTime() < (target.GRM_StunnedUntil or 0) then return end
+    --[[ Раньше конец оглушения ждали опросом пять раз в секунду на КАЖДОГО
+         оглушённого. Время окончания известно заранее, поэтому достаточно
+         одного отложенного вызова: если оглушение продлили, он сам
+         перезапишется (имя таймера то же), а лишних тиков не будет. ]]
+    local stunName = "GRM_Stun_" .. target:EntIndex()
+    local function endStun()
+        if not IsValid(target) then return end
+        local left = (target.GRM_StunnedUntil or 0) - CurTime()
+        if left > 0.05 then
+            timer.Create(stunName, left, 1, endStun)   -- оглушение продлили
+            return
+        end
         target:SetNWBool("GRM_Stunned", false)
         target:SetNWFloat("GRM_StunnedUntil", 0)
-        timer.Remove("GRM_Stun_" .. target:EntIndex())
-    end)
+        timer.Remove(stunName)
+    end
+    timer.Create(stunName, math.max(0.1, seconds), 1, endStun)
     return true
 end
 

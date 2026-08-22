@@ -770,3 +770,29 @@ if CLIENT then
 
     print("[GRM CCTV] Access Manager client loaded")
 end
+
+
+if GRM.Access and GRM.Access.Register then
+    GRM.Access.Register("cctv.view", {
+        label = "Видеонаблюдение: просмотр камер", scope = "character",
+        factionPerm = "cctv_view",
+        levels = { police = true, military = true, special = true, admin = true },
+    })
+    GRM.Access.Register("cctv.manage", {
+        label = "Видеонаблюдение: настройка камер и серверов", scope = "character",
+        factionPerm = "cctv_manage",
+        levels = { police = true, military = true, admin = true },
+    })
+end
+
+--[[ Модуль представляется общему реестру GRM.Modules: соседи знают, что он
+     есть, а шина обновлений сама позовёт его при смене прав, состава,
+     должности или персонажа. ]]
+if GRM.Modules and GRM.Modules.Register then
+    GRM.Modules.Register("cctv", {
+        label = "Видеонаблюдение",
+        version = (GRM.CCTV and GRM.CCTV.Version) or "1.0.0",
+        Depends = { "access" },
+        Status = function() return "камеры, серверы записи и мониторы" end,
+    })
+end

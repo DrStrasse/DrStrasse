@@ -215,7 +215,15 @@ if SERVER then
         GRM.Phone = GRM.Phone or {}
         GRM.Phone.HasEquipmentAccess = function(ply)
             local ok = hasAccessByData(ply)
-            return ok == true
+            if ok == true then return true end
+            --[[ Единый слой доступа — второй законный источник: право можно
+                 выдать в /admin (capability phone.equipment) или в доступах
+                 организации (phone_equipment). Так модуль «знает» об общих
+                 правах, а не только о своей таблице. ]]
+            if GRM.Access and GRM.Access.Can and GRM.Access.Can(ply, "phone.equipment") then
+                return true
+            end
+            return false
         end
         GRM.Phone.GetEquipmentAccessDebug = function(ply)
             local ok, reason = hasAccessByData(ply)
@@ -543,4 +551,30 @@ if CLIENT then
     hook.Add("GRM_FactionsAdmin_BuildTabs", "GRM_PhoneAccess_Tab", installFactionsMenuIntegration)
 
     print("[GRM Phone] Access Manager client loaded")
+end
+
+
+if GRM.Access and GRM.Access.Register then
+    GRM.Access.Register("phone.equipment", {
+        label = "Связь: доступ к оборудованию (АТС, терминалы)", scope = "character",
+        factionPerm = "phone_equipment",
+        levels = { police = true, military = true, special = true, admin = true },
+    })
+    GRM.Access.Register("phone.wiretap", {
+        label = "Связь: прослушка телефонов и помещений", scope = "character",
+        factionPerm = "phone_wiretap",
+        levels = { police = true, military = true, special = true, justice = true, admin = true },
+    })
+end
+
+--[[ Модуль представляется общему реестру GRM.Modules: соседи знают, что он
+     есть, а шина обновлений сама позовёт его при смене прав, состава,
+     должности или персонажа. ]]
+if GRM.Modules and GRM.Modules.Register then
+    GRM.Modules.Register("phone_access", {
+        label = "Доступ к оборудованию связи",
+        version = (GRM.Phone and GRM.Phone.Version) or "1.0.0",
+        Depends = { "access", "mobile" },
+        Status = function() return "доступ к АТС, прослушке и терминалам связи" end,
+    })
 end

@@ -1719,3 +1719,16 @@ if CLIENT then
     print("[SpawnPoints] Клиентская часть v2.0.0 (дерево организация → отдел → подотдел → должность)")
 
 end
+
+
+--[[ Модуль представляется общему реестру GRM.Modules: соседи знают, что он
+     есть, а шина обновлений сама позовёт его при смене прав, состава,
+     должности или персонажа. ]]
+if GRM.Modules and GRM.Modules.Register then
+    GRM.Modules.Register("spawnpoints", {
+        label = "Точки спавна",
+        version = (GRM.SpawnPoints and GRM.SpawnPoints.Version) or "1.0.0",
+        Depends = { "access" },
+        Status = function() return "дерево точек: организация → отдел → подотдел → должность" end,
+    })
+end

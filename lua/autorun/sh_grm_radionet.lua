@@ -954,7 +954,25 @@ if SERVER then
         end
     end
     RN.Recompute = recompute
-    timer.Create("GRM_RN_Watch", 0.7, 0, recompute)
+
+    --[[ Сторож пересчёта раньше обходил ПЯТЬ реестров сущностей каждые
+         0.7 c — и делал это даже на карте без единой рации. Настоящие
+         изменения (включили стойку, поставили антенну, сняли устройство)
+         и так зовут recompute напрямую, поэтому сторожу достаточно редкого
+         прохода: он остался страховкой, а не основным механизмом. ]]
+    local function radioNetEmpty()
+        local function count(cls)
+            local list = (GRM.Perf and GRM.Perf.Entities) and GRM.Perf.Entities(cls) or ents.FindByClass(cls)
+            return #(list or {})
+        end
+        return (count("grm_server_rack") + count("grm_antenna") + count("grm_broadcast_mic")
+            + count("grm_radio_station") + count("grm_net_console")) == 0
+    end
+
+    timer.Create("GRM_RN_Watch", 3, 0, function()
+        if radioNetEmpty() then return end
+        recompute()
+    end)
     timer.Simple(1, recompute)
 
     ----------------------------------------------------------------
@@ -1314,6 +1332,7 @@ if CLIENT then
         local on = net.ReadBool()
         if on then
             fxTalkers[idx] = kind
+            if RN.EnsureCrackle then RN.EnsureCrackle() end
             if kind == "pa" then surface.PlaySound("buttons/combine_button1.wav")
             elseif kind == "mega" then surface.PlaySound("buttons/button15.wav")
             else surface.PlaySound("buttons/button9.wav") end
@@ -1326,9 +1345,13 @@ if CLIENT then
     -- треск помех: пока «сетевой» говорящий реально говорит, время от
     -- времени проскакивает щелчок статики; если он рядом физически —
     -- не искажаем (слышим живой голос)
-    timer.Create("GRM_RN_Crackle", 0.5, 0, function()
+    --[[ Треск помех нужен только пока кто-то говорит в сеть. Держать ради
+         этого постоянный таймер два раза в секунду незачем: создаём его на
+         время разговора и снимаем, когда говорящих не осталось. ]]
+    local function crackleTick()
         local lp = LocalPlayer()
         if not IsValid(lp) then return end
+        if not next(fxTalkers) then timer.Remove("GRM_RN_Crackle") return end
         for idx, kind in pairs(fxTalkers) do
             local t = Entity(idx)
             if IsValid(t) and t.IsSpeaking and t:IsSpeaking() then
@@ -1341,7 +1364,14 @@ if CLIENT then
                 end
             end
         end
-    end)
+    end
+
+    --- Включить треск, когда появился говорящий (зовётся из приёмника FX).
+    function RN.EnsureCrackle()
+        if next(fxTalkers) == nil then return end
+        if timer.Exists("GRM_RN_Crackle") then return end
+        timer.Create("GRM_RN_Crackle", 0.5, 0, crackleTick)
+    end
 
     ----------------------------------------------------------------
     -- Код 87 — окно пульта радиосети (NetSys)

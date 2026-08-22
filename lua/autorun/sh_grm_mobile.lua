@@ -1880,3 +1880,16 @@ if CLIENT then
         sendAct({op="ping"})
     end)
 end
+
+
+--[[ Модуль представляется общему реестру GRM.Modules: соседи знают, что он
+     есть, а шина обновлений сама позовёт его при смене прав, состава,
+     должности или персонажа. ]]
+if GRM.Modules and GRM.Modules.Register then
+    GRM.Modules.Register("mobile", {
+        label = "Мобильная связь",
+        version = (GRM.Mobile and GRM.Mobile.Version) or "1.0.0",
+        Depends = { "access" },
+        Status = function() local n = 0 for _ in pairs(GRM.Mobile.Numbers or {}) do n = n + 1 end return ("номеров выдано: %d"):format(n) end,
+    })
+end

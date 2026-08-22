@@ -588,3 +588,16 @@ else
         end
     end)
 end
+
+
+--[[ Модуль представляется общему реестру GRM.Modules: соседи знают, что он
+     есть, а шина обновлений сама позовёт его при смене прав, состава,
+     должности или персонажа. ]]
+if GRM.Modules and GRM.Modules.Register then
+    GRM.Modules.Register("minimap", {
+        label = "Карта и GPS",
+        version = (GRM.Minimap and GRM.Minimap.Version) or "1.0.0",
+        Depends = {},
+        Status = function() local d = GRM.Minimap.Data or {} return ("точек на карте: %d"):format(#(d.points or {})) end,
+    })
+end
