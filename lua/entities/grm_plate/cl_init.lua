@@ -95,11 +95,10 @@ function ENT:DrawTranslucent()
     if nrm:Length() < 0.001 then nrm = worldDir(self, face.normal) end
     nrm:Normalize()
 
-    -- рисуем сторону, обращённую к игроку
-    if nrm:Dot(lp:EyePos() - center) < 0 then
-        nrm = nrm * -1
-        right = right * -1
-    end
+    -- Сторона таблички фиксирована её локальной геометрией. Не разворачиваем
+    -- номер вслед за взглядом игрока: у физического знака есть одна лицевая
+    -- сторона, а с обратной текст просто не рисуется.
+    if nrm:Dot(lp:EyePos() - center) <= 0 then return end
 
     -- надпись лежит на самой поверхности знака, а не висит перед ним
     local lift = (face.thickness or 1) * 0.5 + 0.06 + (tonumber(face.offset) or 0) * 0.0

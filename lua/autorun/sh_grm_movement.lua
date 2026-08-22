@@ -296,6 +296,9 @@ if CLIENT then
         })
     else
         hook.Add("HUDPaint", "GRM_Movement_StaminaHUD", function()
+            -- HUD мог загрузиться позже movement: тогда fallback обязан
+            -- отключиться, иначе выносливость рисуется второй полосой.
+            if GRM.HUD and GRM.HUD.RegisterBar then return end
             local cv = GetConVar("grm_cl_staminahud")
             if cv and cv:GetInt() == 0 then return end
             local ply = LocalPlayer()
