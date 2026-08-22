@@ -30,6 +30,9 @@ GRM.Movement.Config = {
     StaminaDrain    = 16,
     StaminaJumpCost = 15,
     StaminaRegen    = 8,
+    -- Сидя в транспорте человек отдыхает: восстановление идёт и чуть быстрее
+    -- обычного (заказ владельца 22.08 — «в машине выносливость не растёт»).
+    StaminaRegenSeated = 12,
     JumpCooldown    = 0.5,
     BhopLimit       = 20,
     StaminaWarningThreshold = 30,
@@ -74,16 +77,25 @@ if SERVER then
         local dt = math.Clamp(now - staminaLast, 0.01, 1)
         staminaLast = now
         for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
-            if IsValid(ply) and not ply:InVehicle() then
+            if IsValid(ply) then
                 local data = getPlayerData(ply)
-                local isRunning = ply:KeyDown(IN_SPEED) and ply:GetVelocity():Length2D() > 50
-                local isOnGround = ply:IsOnGround()
+                local cfg = GRM.Movement.Config
 
-                if isRunning and isOnGround then
-                    data.stamina = math.max(0, data.stamina - GRM.Movement.Config.StaminaDrain * dt)
-                elseif isOnGround then
-                    data.stamina = math.min(GRM.Movement.Config.StaminaMax,
-                        data.stamina + GRM.Movement.Config.StaminaRegen * dt)
+                if ply:InVehicle() then
+                    --[[ В машине игрок раньше выпадал из тика целиком — и
+                         выносливость не восстанавливалась вообще, хотя он
+                         сидит. Теперь сидение считается отдыхом. ]]
+                    data.stamina = math.min(cfg.StaminaMax,
+                        data.stamina + (cfg.StaminaRegenSeated or cfg.StaminaRegen) * dt)
+                else
+                    local isRunning = ply:KeyDown(IN_SPEED) and ply:GetVelocity():Length2D() > 50
+                    local isOnGround = ply:IsOnGround()
+
+                    if isRunning and isOnGround then
+                        data.stamina = math.max(0, data.stamina - cfg.StaminaDrain * dt)
+                    elseif isOnGround then
+                        data.stamina = math.min(cfg.StaminaMax, data.stamina + cfg.StaminaRegen * dt)
+                    end
                 end
 
                 syncStamina(ply)

@@ -118,7 +118,13 @@ function VD.DealerRecord(ent)return{id=ent:GetDealerID(),name=ent:GetDealerName(
 if SERVER then
  for _,n in ipairs({"GRM_VD_Open","GRM_VD_Action","GRM_VD_Result","GRM_VD_AdminOpen","GRM_VD_AdminSave","GRM_VD_ZoneRequest","GRM_VD_ZoneData","VD_RequestVehicleList","VD_VehicleList","VD_AdminSpawnVehicle"})do util.AddNetworkString(n)end
  local function loadDealers()local d=file.Exists(mapFile(),"DATA")and jsonT(file.Read(mapFile(),"DATA"))or{};local src=d and(d.dealers or d)or{};local o={}for _,r in pairs(src)do if istable(r)and r.id and r.pos then o[#o+1]=r end end;return o end
- local function saveDealers(records)return write(mapFile(),{version=3,map=game.GetMap(),dealers=records})end
+ local function saveDealers(records)
+  local okWrite=write(mapFile(),{version=3,map=game.GetMap(),dealers=records})
+  -- Ассортимент поменялся — предзагрузка моделей подхватит новые классы
+  -- (порционно, через GRM.Perf; см. sh_grm_vehicle_precache.lua).
+  hook.Run("GRM_VehicleDealerSaved",records)
+  return okWrite
+ end
  local function loadGarage(markStored)VD.Garages=file.Exists(VD.GarageFile,"DATA")and(jsonT(file.Read(VD.GarageFile,"DATA"))or{})or{};if markStored then for _,garageRows in pairs(VD.Garages)do for _,record in pairs(garageRows)do record.stored=true end end end end;local function saveGarage()return write(VD.GarageFile,VD.Garages)end;loadGarage(true);saveGarage()
  local function makeID(prefix)return prefix.."_"..util.CRC(table.concat({game.GetMap(),SysTime(),math.random()},":"))end
  function VD.SaveDealer(ent)if not IsValid(ent)or ent:GetClass()~="sent_vehicle_dealer"then return false,"Дилер не найден"end;if ent:GetDealerID()==""then ent:SetDealerID(makeID("dealer"))end;local records=loadDealers();local rec=VD.DealerRecord(ent);local found=false;for i,r in ipairs(records)do if r.id==rec.id then records[i]=rec;found=true break end end;if not found then records[#records+1]=rec end;VD.Dealers[rec.id]=ent;return saveDealers(records),rec.id end
