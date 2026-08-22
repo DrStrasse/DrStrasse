@@ -621,8 +621,41 @@ if SERVER then
         })
     end
 
+    --[[ КТО СЕЙЧАС СМОТРИТ УЧЁТ.
+         Терминал жандармерии, комендатуры и полиции порядка — это окно,
+         которое человек держит открытым. Раньше снимок уходил только тому,
+         кто нажал кнопку: коллега зарегистрировал номер — у остальных на
+         экране старые данные (жалоба владельца 22.08). Теперь модуль знает
+         своих зрителей и обновляет их сам. ]]
+    PL.Viewers = PL.Viewers or {}
+
+    function PL.SetViewer(ply, on)
+        if not IsValid(ply) then return end
+        if on then PL.Viewers[ply] = true else PL.Viewers[ply] = nil end
+    end
+
+    --- Разослать снимок всем, у кого окно открыто (порционно и без спама).
+    function PL.PushViewers(reason)
+        local function run()
+            for ply in pairs(PL.Viewers) do
+                if IsValid(ply) then PL.Push(ply) else PL.Viewers[ply] = nil end
+            end
+        end
+        if GRM.Perf and GRM.Perf.Coalesce then
+            GRM.Perf.Coalesce("plates.viewers.push", run, 0.35)
+        else
+            run()
+        end
+    end
+
+    hook.Add("PlayerDisconnected", "GRM_Plates_Viewers", function(ply)
+        if PL.Viewers then PL.Viewers[ply] = nil end
+    end)
+
     function PL.Save(why)
         if not PL._loaded then return false end
+        -- Любая правка реестра = обновление у всех, кто смотрит учёт.
+        PL.PushViewers(why)
         if PL._saveRegistered and GRM.Save and GRM.Save.Mark then
             return GRM.Save.Mark("grm_plates", why or "plates")
         end
@@ -1265,7 +1298,13 @@ if SERVER then
         local data = net.ReadTable() or {}
 
         if act == "refresh" then
+            PL.SetViewer(ply, true)
             PL.PushSoon(ply)
+
+        elseif act == "watch" then
+            -- окно открыли или закрыли: подписка на живые обновления
+            PL.SetViewer(ply, data.on == true)
+            if data.on == true then PL.PushSoon(ply) end
 
         elseif act == "issue" then
             if not PL.CanIssue(ply) then notify(ply, "Выдавать номера может только Полиция и Автоинспекция.") return end
@@ -1653,34 +1692,75 @@ if CLIENT then
     end
 
     --- Карточка знака: рисуем как настоящий знак — плашка с номером.
+    --[[ ЯЧЕЙКА НОМЕРА (переработка 22.08).
+         Раньше это была длинная серая строка. Теперь — карточка размером с
+         настоящий знак: сам номер крупно, под ним тип серии, состояние,
+         владелец и машина, а действия кнопками внизу. Сетка из таких ячеек
+         читается с одного взгляда и одинаково выглядит и в окне /номера, и
+         во вкладке терминала. ]]
+    local function plateGrid(parent)
+        local grid = vgui.Create("DIconLayout", parent)
+        grid:Dock(TOP)
+        grid:DockMargin(0, 0, 4, 8)
+        grid:SetSpaceX(8)
+        grid:SetSpaceY(8)
+        return grid
+    end
+
     local function plateCard(parent, rec, opts)
         opts = istable(opts) and opts or {}
         local def = PL.TypeDef(rec.type)
+        local buttons = istable(opts.buttons) and opts.buttons or {}
+
         local card = vgui.Create("DPanel", parent)
-        card:Dock(TOP)
-        card:SetTall(78)
-        card:DockMargin(0, 0, 4, 6)
+        card:SetSize(262, 168 + math.min(2, #buttons) * 32)
+
         card.Paint = function(self, w, h)
             draw.RoundedBox(8, 0, 0, w, h, self:IsHovered() and C.cardHov or C.card)
             surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h, 1)
 
-            -- сам знак
-            local pw, ph = 210, 52
-            draw.RoundedBox(4, 12, 13, pw, ph, Color(def.plate[1], def.plate[2], def.plate[3]))
-            draw.RoundedBox(4, 12, 13, 16, ph, Color(def.band[1], def.band[2], def.band[3]))
-            draw.SimpleText(PL.FormatNumber(rec.number, rec.type), "GRMPlate_Title", 12 + 16 + (pw - 16) / 2, 13 + ph / 2,
+            -- сам знак: пропорции как у настоящей таблички
+            local pw, ph = w - 24, 58
+            draw.RoundedBox(4, 12, 12, pw, ph, Color(def.plate[1], def.plate[2], def.plate[3]))
+            draw.RoundedBox(4, 12, 12, 18, ph, Color(def.band[1], def.band[2], def.band[3]))
+            draw.SimpleText(PL.FormatNumber(rec.number, rec.type), "GRMPlate_Title",
+                12 + 18 + (pw - 18) / 2, 12 + ph / 2,
                 Color(def.text[1], def.text[2], def.text[3]), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 
-            local statusCol = rec.status == "active" and C.green or (rec.status == "lost" and C.gold or C.red)
-            draw.SimpleText(def.name, "GRMPlate_Body", 240, 16, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            draw.SimpleText(PL.Statuses[rec.status] or tostring(rec.status), "GRMPlate_Body", 240, 36,
-                statusCol, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            local extra = rec.mounted and ("установлен: " .. (rec.mountVehicle ~= "" and rec.mountVehicle or "транспорт"))
+            draw.SimpleText(def.name, "GRMPlate_Body", 12, 80, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+
+            local statusCol = rec.status == "active" and C.green
+                or (rec.status == "lost" and C.gold or C.red)
+            draw.SimpleText(PL.Statuses[rec.status] or tostring(rec.status), "GRMPlate_Small",
+                w - 12, 82, statusCol, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+
+            local mount = rec.mounted
+                and ("на машине: " .. (rec.mountVehicle ~= "" and rec.mountVehicle or "транспорт"))
                 or "не установлен"
+            if rec.mountOffMap then mount = mount .. " (в гараже)" end
+            draw.SimpleText(mount, "GRMPlate_Small", 12, 102,
+                rec.mounted and C.accent or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+
             if opts.showOwner then
-                extra = ("владелец: %s   •   %s"):format(tostring(rec.ownerName or "—"), extra)
+                draw.SimpleText("владелец: " .. tostring(rec.ownerName or "—"), "GRMPlate_Small",
+                    12, 120, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                if (rec.faction or "") ~= "" then
+                    draw.SimpleText(tostring(rec.faction), "GRMPlate_Small", 12, 138, C.gold,
+                        TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                end
+            elseif (rec.vehicle or "") ~= "" then
+                draw.SimpleText("транспорт: " .. tostring(rec.vehicle), "GRMPlate_Small",
+                    12, 120, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
             end
-            draw.SimpleText(extra, "GRMPlate_Small", 240, 56, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+        end
+
+        local y = 168 - 32
+        for i = 1, math.min(2, #buttons) do
+            local defBtn = buttons[i]
+            local b = button(card, tostring(defBtn.label or ""), defBtn.color, defBtn.fn)
+            b:SetPos(12, y) b:SetSize(238, 26)
+            b:SetEnabled(defBtn.enabled ~= false)
+            y = y + 32
         end
         return card
     end
@@ -1692,6 +1772,20 @@ if CLIENT then
 
         local content = vgui.Create("DScrollPanel", parent)
         content:Dock(FILL)
+
+        --[[ ЖИВОЕ ОКНО.
+             Пока панель учёта открыта, сервер знает о ней и присылает
+             свежий снимок сам: коллега зарегистрировал номер — таблица
+             обновилась без единого клика. Плюс редкая страховка раз в
+             10 секунд на случай потерянного пакета. Закрыли окно — подписка
+             снимается, лишних пакетов нет. ]]
+        act("watch", { on = true })
+        parent.GRMWatchAt = RealTime() + 10
+        parent.Think = function(self)
+            if (self.GRMWatchAt or 0) > RealTime() then return end
+            self.GRMWatchAt = RealTime() + 10
+            act("watch", { on = true })
+        end
 
         local rebuild
         rebuild = function()
@@ -1747,17 +1841,24 @@ if CLIENT then
                 end
             end
 
-            for _, rec in ipairs(PL.Mine) do
-                local card = plateCard(content, rec)
-                local get = button(card, "ПОЛУЧИТЬ БЛАНК", C.green, function() act("spawn", { number = rec.number }) end)
-                get:Dock(RIGHT) get:SetWide(170) get:DockMargin(6, 14, 10, 14)
-                get:SetEnabled(rec.status == "active")
-                local lost = button(card, "УТЕРЯН", C.cardHov, function()
-                    Derma_Query("Заявить об утере номера " .. PL.FormatNumber(rec.number, rec.type) .. "?",
-                        "Номерные знаки", "Заявить", function() act("lost", { number = rec.number }) end, "Отмена")
-                end)
-                lost:Dock(RIGHT) lost:SetWide(110) lost:DockMargin(6, 14, 0, 14)
-                lost:SetEnabled(rec.status == "active")
+            if #PL.Mine > 0 then
+                local mineGrid = plateGrid(content)
+                for _, rec in ipairs(PL.Mine) do
+                    plateCard(mineGrid, rec, {
+                        buttons = {
+                            { label = "ПОЛУЧИТЬ БЛАНК", color = C.green,
+                              enabled = rec.status == "active",
+                              fn = function() act("spawn", { number = rec.number }) end },
+                            { label = "ЗАЯВИТЬ ОБ УТЕРЕ", color = C.cardHov,
+                              enabled = rec.status == "active",
+                              fn = function()
+                                  Derma_Query("Заявить об утере номера " .. PL.FormatNumber(rec.number, rec.type) .. "?",
+                                      "Номерные знаки", "Заявить",
+                                      function() act("lost", { number = rec.number }) end, "Отмена")
+                              end },
+                        },
+                    })
+                end
             end
 
             -- ── поиск по номеру ─────────────────────────────────────
@@ -1774,8 +1875,20 @@ if CLIENT then
             end)
             findBtn:SetPos(324, 40) findBtn:SetSize(140, 30)
 
-            for _, rec in ipairs(PL.Found) do
-                plateCard(content, rec, { showOwner = true })
+            if #PL.Found > 0 then
+                local foundGrid = plateGrid(content)
+                for _, rec in ipairs(PL.Found) do
+                    local buttons = {}
+                    if PL.IsOfficer then
+                        buttons[#buttons + 1] = { label = "АННУЛИРОВАТЬ", color = C.red,
+                            enabled = rec.status ~= "revoked",
+                            fn = function() act("status", { number = rec.number, status = "revoked" }) end }
+                        buttons[#buttons + 1] = { label = "ВОССТАНОВИТЬ", color = C.cardHov,
+                            enabled = rec.status ~= "active",
+                            fn = function() act("status", { number = rec.number, status = "active" }) end }
+                    end
+                    plateCard(foundGrid, rec, { showOwner = true, buttons = buttons })
+                end
             end
 
             -- ── выдача (только служба) ──────────────────────────────
@@ -1835,30 +1948,15 @@ if CLIENT then
                 end)
                 giveBtn:SetPos(564, 94) giveBtn:SetSize(220, 30)
 
-                -- статус найденного номера
-                for _, rec in ipairs(PL.Found) do
-                    local bar = vgui.Create("DPanel", content)
-                    bar:Dock(TOP) bar:SetTall(46) bar:DockMargin(0, 0, 4, 8)
-                    bar.Paint = function(_, w, h)
-                        draw.RoundedBox(8, 0, 0, w, h, C.card)
-                        draw.SimpleText("Действия с номером " .. PL.FormatNumber(rec.number, rec.type),
-                            "GRMPlate_Body", 14, h / 2, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    end
-                    local rev = button(bar, "АННУЛИРОВАТЬ", C.red, function()
-                        act("status", { number = rec.number, status = "revoked" })
-                    end)
-                    rev:Dock(RIGHT) rev:SetWide(170) rev:DockMargin(6, 8, 10, 8)
-                    local back = button(bar, "ВОССТАНОВИТЬ", C.cardHov, function()
-                        act("status", { number = rec.number, status = "active" })
-                    end)
-                    back:Dock(RIGHT) back:SetWide(160) back:DockMargin(6, 8, 0, 8)
-                end
             end
         end
 
         rebuild()
         PL._rebuild = rebuild
-        parent.OnRemove = function() if PL._rebuild == rebuild then PL._rebuild = nil end end
+        parent.OnRemove = function()
+            if PL._rebuild == rebuild then PL._rebuild = nil end
+            act("watch", { on = false })
+        end
         return rebuild
     end
 

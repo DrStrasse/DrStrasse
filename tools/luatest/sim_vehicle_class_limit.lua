@@ -175,7 +175,9 @@ ok(has(core, 'VD.TagVehicle(ent,ply,r.class,tostring(r.ownershipType or"personal
 ok(has(core, "function VD.IsDealerVehicle"), "есть публичная проверка «машина от дилера»")
 ok(has(core, "owned=VD.CountClass(ply,e.class),classLimit=VD.ClassLimit()"), "каталог знает про счётчик и лимит")
 ok(has(cl, "У вас: %d из %d"), "в карточке видно, сколько таких машин уже есть")
-ok(has(cl, 'capped and "ЛИМИТ"') and has(cl, "b:SetEnabled(not capped)"), "кнопка блокируется на пределе")
+-- 22.08: карточка каталога стала ячейкой общего слоя, блокировка кнопки
+-- задаётся полем enabled.
+ok(has(cl, 'capped and "ЛИМИТ"') and has(cl, "enabled = not capped"), "кнопка блокируется на пределе")
 
 print("\n=== 6. РЕЖИМ ВЫДАЧИ У ДИЛЕРА ===")
 local tool = read("lua/weapons/gmod_tool/stools/grm_transport.lua")

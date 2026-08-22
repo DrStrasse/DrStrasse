@@ -763,5 +763,37 @@ ok(perms:find('ply:GetNWString("GRM_Faction", "")', 1, true) ~= nil
    and perms:find("PERMS.RoleHasPermission(nwFaction, nwRole, permission)", 1, true) ~= nil,
    "право находится и по NW-полям, если состав организации ключован иначе")
 
+print("\n=== 20. ЖИВОЕ ОКНО УЧЁТА И ЯЧЕЙКИ ЗНАКОВ (22.08) ===")
+ok(psrc:find("PL.Viewers = PL.Viewers or {}", 1, true) ~= nil
+   and psrc:find("function PL.PushViewers(reason)", 1, true) ~= nil,
+   "сервер знает, у кого открыто окно учёта")
+ok(psrc:find("PL.PushViewers(why)", 1, true) ~= nil,
+   "любая правка реестра рассылается зрителям — терминал обновляется сам")
+ok(psrc:find('GRM.Perf.Coalesce("plates.viewers.push"', 1, true) ~= nil,
+   "пачка изменений схлопывается в одну рассылку")
+ok(psrc:find('elseif act == "watch" then', 1, true) ~= nil,
+   "клиент сообщает об открытии и закрытии окна — лишних пакетов нет")
+ok(psrc:find('act("watch", { on = false })', 1, true) ~= nil, "закрыли окно — подписка снята")
+ok(psrc:find("self.GRMWatchAt = RealTime() + 10", 1, true) ~= nil,
+   "есть редкая страховка на случай потерянного пакета")
+
+ok(psrc:find("local function plateGrid(parent)", 1, true) ~= nil,
+   "знаки показаны сеткой ячеек, а не строками")
+ok(psrc:find('draw.RoundedBox(4, 12, 12, 18, ph, Color(def.band[1]', 1, true) ~= nil,
+   "ячейка выглядит как сам знак: поле, цветная полоса, номер")
+ok(psrc:find('label = "ЗАЯВИТЬ ОБ УТЕРЕ"', 1, true) ~= nil
+   and psrc:find('label = "АННУЛИРОВАТЬ"', 1, true) ~= nil,
+   "действия переехали в саму карточку номера")
+
+local dealer2 = (function()
+    local f = io.open("lua/entities/sent_vehicle_dealer/cl_init.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+ok(dealer2:find("local function catalogCard(grid, v)", 1, true) ~= nil
+   and dealer2:find("VC.Cell(grid, {", 1, true) ~= nil,
+   "каталог дилера (в том числе СЛУЖЕБНЫЕ вкладки) тоже на ячейках")
+ok(dealer2:find('if currentMode ~= "active" then', 1, true) ~= nil,
+   "сетка включена во всех разделах, кроме «На карте»")
+
 print(("\nPLATES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

@@ -325,71 +325,56 @@ net.Receive("GRM_VD_Open", function()
         return string.find(hay, q, 1, true) ~= nil
     end
 
-    local function catalogCard(parent, v)
-        local row = vgui.Create("DPanel", parent)
-        row:Dock(TOP)
-        row:SetTall(116)
-        row:DockMargin(0, 0, 6, 8)
-        row.Paint = function(self, w, h)
-            draw.RoundedBox(8, 0, 0, w, h, self:IsHovered() and C.cardHover or C.card)
-            surface.SetDrawColor(C.border)
-            surface.DrawOutlinedRect(0, 0, w, h)
-            draw.SimpleText(v.name or v.class, "GRMVD_Head", 128, 16, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            draw.SimpleText(tostring(v.category or "Транспорт") .. "  •  " .. tostring(v.system or "source") ..
-                "  •  " .. tostring(v.class or ""), "GRMVD_Small", 128, 40, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-
-            if v.ownershipType == "personal" then
-                draw.SimpleText(money(v.price or 0), "GRMVD_Price", 128, 66, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            else
-                draw.SimpleText(tostring(v.ownershipName or "Служебный транспорт"), "GRMVD_Body", 128, 70, C.teal, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            end
-            local fac = tostring(v.factionName or v.faction or "")
-            if fac ~= "" then
-                draw.SimpleText("Организация: " .. fac, "GRMVD_Small", 128, 94, C.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            end
-            -- Лимит одинаковых машин (заказ владельца 19.08): видно ДО покупки,
-            -- сколько таких уже за игроком.
-            local limit = tonumber(v.classLimit) or 0
-            if limit > 0 then
-                local owned = tonumber(v.owned) or 0
-                local full = owned >= limit
-                draw.SimpleText(("У вас: %d из %d"):format(owned, limit), "GRMVD_Small", w - 176, 16,
-                    full and C.red or C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
-            end
-        end
-
-        local m = vgui.Create("DModelPanel", row)
-        m:SetPos(10, 10)
-        m:SetSize(108, 96)
-        preview(m, v.model)
+    --[[ КАТАЛОГ ТОЖЕ ЯЧЕЙКАМИ (заказ владельца 22.08: «на служебных вкладках
+         ячеек так и не увидел»). Раньше сеткой был только раздел «Гараж», а
+         каталог — и личный, и СЛУЖЕБНЫЙ по организациям — оставался
+         строками. Теперь везде одна и та же карточка из общего слоя
+         GRM.VehicleCells. ]]
+    local function catalogCard(grid, v)
+        local VC = GRM.VehicleCells
+        if not VC then return end
 
         local limit = tonumber(v.classLimit) or 0
         local owned = tonumber(v.owned) or 0
         local capped = limit > 0 and owned >= limit
         local personal = v.ownershipType == "personal"
+        local fac = tostring(v.factionName or v.faction or "")
 
-        --[[ ПОКУПКА ≠ ВЫДАЧА (заказ владельца 21.08).
-             Личный транспорт сначала ПРИОБРЕТАЕТСЯ (одна кнопка «КУПИТЬ»),
-             машина встаёт в гараж на хранение. Забирает её игрок отдельно —
-             во вкладке «Мой транспорт» кнопкой «ВЫДАТЬ», выбирая, где
-             получить: у дилера или в гараже. Служебный транспорт покупкой
-             не является и выдаётся сразу. ]]
-        local b = grmButton(row,
-            capped and "ЛИМИТ" or (personal and ("КУПИТЬ · " .. money(v.price or 0)) or "ПОЛУЧИТЬ"),
-            capped and C.red or (personal and C.green or C.accent))
-        b:Dock(RIGHT)
-        b:SetWide(personal and 210 or 150)
-        b:DockMargin(6, 38, 8, 38)
-        b:SetEnabled(not capped)
-        b.DoClick = function()
-            if not personal then send(dealer, "buy", v.class, targetGarage, "dealer") return end
-            Derma_Query(("Приобрести «%s» за %s?\nМашина оформляется в собственность и встаёт на хранение —\nзабрать её можно кнопкой «ВЫДАТЬ» во вкладке «Мой транспорт».")
-                    :format(tostring(v.name or v.class), money(v.price or 0)),
-                "Покупка транспорта",
-                "Купить", function() send(dealer, "buy", v.class, targetGarage, "store") end,
-                "Отмена", function() end)
-        end
-        return row
+        local lines = {
+            { text = personal and money(v.price or 0) or tostring(v.ownershipName or "Служебный транспорт"),
+              color = personal and C.gold or C.teal },
+            { text = fac ~= "" and ("Организация: " .. fac) or ("Система: " .. tostring(v.system or "source")),
+              color = fac ~= "" and C.accent or C.dim },
+            { text = limit > 0 and ("У вас: %d из %d"):format(owned, limit) or "",
+              color = capped and C.red or C.dim },
+        }
+
+        return VC.Cell(grid, {
+            name = v.name or v.class, class = v.category or v.class, model = v.model,
+            accent = personal and C.gold or C.teal,
+            state = { text = personal and "личный" or "служебный", good = personal },
+            lines = lines,
+            buttons = {
+                { label = capped and "ЛИМИТ" or (personal and ("КУПИТЬ · " .. money(v.price or 0)) or "ПОЛУЧИТЬ"),
+                  color = capped and C.red or (personal and C.green or C.accent),
+                  enabled = not capped,
+                  fn = function()
+                      if not personal then send(dealer, "buy", v.class, targetGarage, "dealer") return end
+                      --[[ ПОКУПКА ≠ ВЫДАЧА: личная машина оформляется в
+                           собственность и встаёт на хранение, забрать её
+                           можно во вкладке «Мой транспорт». ]]
+                      Derma_Query(("Приобрести «%s» за %s?\nМашина оформляется в собственность и встаёт на хранение —\nзабрать её можно кнопкой «ВЫДАТЬ» во вкладке «Мой транспорт».")
+                              :format(tostring(v.name or v.class), money(v.price or 0)),
+                          "Покупка транспорта",
+                          "Купить", function() send(dealer, "buy", v.class, targetGarage, "store") end,
+                          "Отмена", function() end)
+                  end },
+            },
+            menu = {
+                { label = "Класс: " .. tostring(v.class or ""), fn = function() end },
+                { label = "Система: " .. tostring(v.system or "source"), fn = function() end },
+            },
+        })
     end
 
     local function emptyNote(parent, text)
@@ -517,9 +502,11 @@ net.Receive("GRM_VD_Open", function()
         local q = string.lower(string.Trim(search:GetValue() or ""))
         local shown = 0
 
-        -- Гараж рисуем сеткой ячеек (инвентарь машин), остальное — строками.
+        --[[ Сеткой ячеек рисуем и гараж, и каталог (личный и служебный).
+             Строками остаётся только раздел «На карте»: там важны
+             расстояние и владелец, а не витрина. ]]
         local grid = nil
-        if currentMode == "garage" then
+        if currentMode ~= "active" then
             grid = GRM.VehicleCells and GRM.VehicleCells.Grid(list) or nil
         end
 
@@ -528,8 +515,11 @@ net.Receive("GRM_VD_Open", function()
                 shown = shown + 1
                 if currentMode == "garage" and grid then
                     garageCell(grid, v)
-                elseif currentMode == "active" then activeCard(list, v)
-                else catalogCard(list, v) end
+                elseif currentMode == "active" then
+                    activeCard(list, v)
+                elseif grid then
+                    catalogCard(grid, v)
+                end
             end
         end
         if grid then grid:InvalidateLayout(true) end
