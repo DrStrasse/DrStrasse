@@ -41,7 +41,27 @@ end
 
 -- Один отложенный вызов на ключ: сколько бы раз ни дёрнули за окно delay,
 -- функция выполнится РОВНО один раз. Заменяет «timer.Simple на каждое событие».
+--[[ ВАЖНО: порядок аргументов — (key, delay, fn).
+
+     Половина модулей звала его как (key, fn, delay) — и вызов молча
+     проваливался: `isfunction(fn)` было false, функция не выполнялась
+     НИКОГДА. Именно из-за этого не обновлялись сами окна учёта номеров,
+     автопарка и шина обновлений модулей (жалоба владельца 22.08:
+     «страница сама не обновляется, пишет доступа нет»).
+
+     Теперь слой терпит оба порядка: если вторым аргументом пришла
+     функция — меняем местами и ОДИН раз пишем в консоль, чтобы ошибку
+     починили в исходнике, а не жили с ней. ]]
 function P.Coalesce(key, delay, fn)
+    if isfunction(delay) and not isfunction(fn) then
+        delay, fn = tonumber(fn) or 0, delay
+        P._coalesceWarned = P._coalesceWarned or {}
+        local warnKey = tostring(key)
+        if not P._coalesceWarned[warnKey] then
+            P._coalesceWarned[warnKey] = true
+            print("[GRM Perf] Coalesce('" .. warnKey .. "'): аргументы перепутаны — ждём (key, delay, fn)")
+        end
+    end
     if not isfunction(fn) then return false end
     key = tostring(key or "")
     local slot = P._coalesce[key]

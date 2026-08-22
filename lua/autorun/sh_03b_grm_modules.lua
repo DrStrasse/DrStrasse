@@ -134,9 +134,9 @@ end
      тянет за собой смену прав и состава, и обновляться трижды незачем. ]]
 local function busTick(reason, ply)
     if GRM.Perf and GRM.Perf.Coalesce then
-        GRM.Perf.Coalesce("modules.bus", function()
+        GRM.Perf.Coalesce("modules.bus", 0.4, function()
             M.RefreshAll(nil, reason)
-        end, 0.4)
+        end)
     else
         M.RefreshAll(ply, reason)
     end

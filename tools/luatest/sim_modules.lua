@@ -32,7 +32,11 @@ local SPREADS = {}
 GRM = {
     Perf = {
         Spread = function(id, list, fn) SPREADS[id] = true for _, v in ipairs(list) do fn(v) end return true end,
-        Coalesce = function(_, fn) fn() end,
+        -- настоящий порядок аргументов слоя: (key, delay, fn)
+        Coalesce = function(_, delay, fn)
+            if isfunction(delay) and not isfunction(fn) then delay, fn = fn, delay end
+            if isfunction(fn) then fn() end
+        end,
         Players = function() return {} end,
     },
 }

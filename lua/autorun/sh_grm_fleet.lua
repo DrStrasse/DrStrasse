@@ -814,9 +814,9 @@ if SERVER then
     function FL.PushSoon(ply)
         if not IsValid(ply) then return end
         if not (GRM.Perf and GRM.Perf.Coalesce) then return FL.Push(ply) end
-        GRM.Perf.Coalesce("fleet.push." .. tostring(ply:SteamID64() or ply:EntIndex()), function()
+        GRM.Perf.Coalesce("fleet.push." .. tostring(ply:SteamID64() or ply:EntIndex()), 0.15, function()
             if IsValid(ply) then FL.Push(ply) end
-        end, 0.15)
+        end)
     end
 
     function FL.Open(ply)

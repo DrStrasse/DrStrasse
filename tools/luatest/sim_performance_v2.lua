@@ -50,4 +50,34 @@ do
     ok(has("бюджет фона %.2f мс"), "grm_perf_report показывает текущий бюджет")
 end
 
+print("\n=== COALESCE: ПОРЯДОК АРГУМЕНТОВ (22.08) ===")
+do
+    local src = (function()
+        local f = io.open("lua/autorun/sh_06_grm_performance.lua", "rb")
+        local t = f:read("*a") f:close() return t
+    end)()
+    ok(src:find("if isfunction(delay) and not isfunction(fn) then", 1, true) ~= nil,
+       "слой терпит перепутанные аргументы и чинит их сам")
+    ok(src:find("аргументы перепутаны", 1, true) ~= nil,
+       "о перепутанном вызове пишется в консоль — ошибку видно, а не заметают")
+
+    --[[ Сторож по всей сборке: вызов вида Coalesce(key, function() ... end)
+         молча НЕ выполнялся никогда — из-за этого не обновлялись окна учёта
+         номеров, автопарка и шина модулей. Пусть стенд краснеет, если такое
+         вернётся. ]]
+    local bad = {}
+    local pipe = io.popen("grep -rn 'Coalesce(' lua addons --include=*.lua 2>/dev/null")
+    if pipe then
+        for line in pipe:lines() do
+            if not line:find("function P.Coalesce") and not line:find("P.Coalesce(key,delay,fn)")
+                and not line:find("isfunction(delay)") then
+                local call = line:match("Coalesce%((.*)")
+                if call and call:match("^[^,]*,%s*function") then bad[#bad + 1] = line end
+            end
+        end
+        pipe:close()
+    end
+    ok(#bad == 0, "нигде не зовут Coalesce(key, fn, delay)", bad[1])
+end
+
 print(("PERFORMANCE V2: %d/%d failures=%d"):format(n-fail,n,fail));os.exit(fail==0 and 0 or 1)

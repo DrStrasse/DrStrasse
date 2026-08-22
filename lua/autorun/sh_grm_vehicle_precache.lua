@@ -200,7 +200,7 @@ end
 -- Дилеров могли поставить уже после старта: обновляем список без спешки.
 hook.Add("GRM_VehicleDealerSaved", "GRM_VehiclePrecache", function()
     if GRM.Perf and GRM.Perf.Coalesce then
-        GRM.Perf.Coalesce("vehicles.precache.resave", function() VP.Run() end, 5)
+        GRM.Perf.Coalesce("vehicles.precache.resave", 5, function() VP.Run() end)
     else
         timer.Simple(5, function() VP.Run() end)
     end

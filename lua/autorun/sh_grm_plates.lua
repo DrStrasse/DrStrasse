@@ -642,7 +642,7 @@ if SERVER then
             end
         end
         if GRM.Perf and GRM.Perf.Coalesce then
-            GRM.Perf.Coalesce("plates.viewers.push", run, 0.35)
+            GRM.Perf.Coalesce("plates.viewers.push", 0.35, run)
         else
             run()
         end
@@ -1345,9 +1345,9 @@ if SERVER then
     function PL.PushSoon(ply, found)
         if not IsValid(ply) then return end
         if found or not (GRM.Perf and GRM.Perf.Coalesce) then return PL.Push(ply, found) end
-        GRM.Perf.Coalesce("plates.push." .. tostring(ply:SteamID64() or ply:EntIndex()), function()
+        GRM.Perf.Coalesce("plates.push." .. tostring(ply:SteamID64() or ply:EntIndex()), 0.15, function()
             if IsValid(ply) then PL.Push(ply) end
-        end, 0.15)
+        end)
     end
 
     function PL.Open(ply)
@@ -1388,7 +1388,7 @@ if SERVER then
             end
         end
         if GRM.Perf and GRM.Perf.Coalesce then
-            GRM.Perf.Coalesce("plates.access.push", pushAll, 0.5)
+            GRM.Perf.Coalesce("plates.access.push", 0.5, pushAll)
         else
             timer.Simple(0.5, pushAll)
         end
@@ -1408,8 +1408,11 @@ if SERVER then
         local data = net.ReadTable() or {}
 
         if act == "refresh" then
+            -- Первый снимок отдаём СРАЗУ: окно только что открылось, и
+            -- ждать даже долю секунды незачем (жалоба владельца: «на старте
+            -- пишет, что доступа нет»).
             PL.SetViewer(ply, true)
-            PL.PushSoon(ply)
+            PL.Push(ply)
 
         elseif act == "watch" then
             -- окно открыли или закрыли: подписка на живые обновления
