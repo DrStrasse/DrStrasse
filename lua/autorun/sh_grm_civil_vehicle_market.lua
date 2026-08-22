@@ -17,6 +17,13 @@ function CV.List()
  local out={} for id,e in pairs(CV.Data.entries or {}) do if istable(e)then e.id=id out[#out+1]=e end end
  table.sort(out,function(a,b)return tostring(a.name)<tostring(b.name)end)return out
 end
+function CV.FindForDealer(entry)
+ if not istable(entry)then return nil end
+ for id,e in pairs(CV.Data.entries or {})do
+  if istable(e)and tostring(e.class or"")==tostring(entry.class or"")then e.id=id return e end
+ end
+ return nil
+end
 
 if SERVER then
  for _,n in pairs(CV.Net)do util.AddNetworkString(n)end

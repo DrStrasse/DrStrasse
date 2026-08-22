@@ -633,7 +633,7 @@ if SERVER then
     end
    end
   end
-  local catalog={}for _,e in ipairs(dealer.VD_Vehicles or{})do if VD.CanUseEntry(ply,e)then local i=VD.VehicleInfo(e.class);local personal=VD.EntryKind(e)=="personal";local market=not personal and GRM.Fleet and GRM.Fleet.FindMarketForDealer and GRM.Fleet.FindMarketForDealer(e)or nil;local inMarket=market~=nil;catalog[#catalog+1]={class=e.class,name=e.name or i.name,model=i.model,system=i.system,price=math.max(0,math.floor(tonumber((market and market.price)or e.price)or 0)),category=e.category or"Транспорт",service=VD.EntryKind(e)~="personal",faction=e.faction,owned=VD.CountClass(ply,e.class),classLimit=VD.ClassLimit(),factionName=(e.faction and e.faction~=""and((GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(e.faction))or e.faction)or""),ownershipType=VD.EntryKind(e),ownershipName=VD.VehicleKinds[VD.EntryKind(e)],marketID=inMarket and market.id or"",marketReady=inMarket}end end;local garageChoices=(GRM.Garage and GRM.Garage.ChoicesFor)and GRM.Garage.ChoicesFor(ply,dealer)or{}
+  local catalog={}for _,e in ipairs(dealer.VD_Vehicles or{})do if VD.CanUseEntry(ply,e)then local i=VD.VehicleInfo(e.class);local personal=VD.EntryKind(e)=="personal";local civil=personal and GRM.CivilVehicles and GRM.CivilVehicles.FindForDealer and GRM.CivilVehicles.FindForDealer(e)or nil;local market=not personal and GRM.Fleet and GRM.Fleet.FindMarketForDealer and GRM.Fleet.FindMarketForDealer(e)or nil;local inMarket=personal and civil~=nil or market~=nil;if not personal or civil then catalog[#catalog+1]={class=e.class,name=(civil and civil.name)or e.name or i.name,model=i.model,system=i.system,price=math.max(0,math.floor(tonumber((civil and civil.price)or(market and market.price)or e.price)or 0)),category=(civil and civil.category)or e.category or"Транспорт",service=VD.EntryKind(e)~="personal",faction=e.faction,owned=VD.CountClass(ply,e.class),classLimit=VD.ClassLimit(),factionName=(e.faction and e.faction~=""and((GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(e.faction))or e.faction)or""),ownershipType=VD.EntryKind(e),ownershipName=VD.VehicleKinds[VD.EntryKind(e)],marketID=inMarket and ((civil and civil.id)or market.id)or"",marketReady=inMarket}end end end;local garageChoices=(GRM.Garage and GRM.Garage.ChoicesFor)and GRM.Garage.ChoicesFor(ply,dealer)or{}
   net.Start("GRM_VD_Open")net.WriteEntity(dealer)net.WriteString(dealer:GetDealerName())net.WriteTable(catalog)net.WriteTable(garageRows)net.WriteTable(VD.ActiveRows(ply))net.WriteTable(garageChoices)
    net.WriteString(VD.DeliveryMode(dealer))net.WriteBool(VD.ShowRetrieve(dealer))net.WriteTable(fleetRows)net.Send(ply)end
  local function result(ply,ok,msg)net.Start("GRM_VD_Result")net.WriteBool(ok)net.WriteString(msg)net.Send(ply);if GRM.Notify then GRM.Notify(ply,msg,ok and 100 or 255,ok and 220 or 110,ok and 130 or 90)end end
@@ -648,6 +648,13 @@ if SERVER then
         дилера или в гараже. Служебный транспорт покупкой не является:
         он по-прежнему выдаётся на месте. ]]
    local personal=(kind=="personal")
+   -- Личный каталог дилера — только ручные позиции гражданского рынка.
+   -- Цена рынка серверно подменяет старую цену ассортимента дилера.
+   if personal and GRM.CivilVehicles and GRM.CivilVehicles.FindForDealer then
+    local civil=GRM.CivilVehicles.FindForDealer(entry)
+    if not civil then result(ply,false,"Эта личная машина не выставлена на гражданском рынке")return end
+    entry=table.Copy(entry);entry.price=civil.price;entry.name=civil.name or entry.name
+   end
    local allowed,have,limit=VD.CanOwnMore(ply,class)
    if not allowed then result(ply,false,("У вас уже %d шт. «%s» — это предел (%d на класс). Продайте одну, чтобы взять ещё."):format(have,tostring(entry.name or class),limit))return end
    if not personal and activeCount(ply)>=VD.MaxActive then result(ply,false,"Лимит активного транспорта")return end
