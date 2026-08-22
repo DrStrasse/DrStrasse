@@ -57,7 +57,15 @@ if SERVER then
                 table.remove(MM.Data.points, i)
             end
         end
-        net.Start("GRM_Minimap_Data") net.WriteTable(MM.Data) if IsValid(ply) then net.Send(ply) else net.Broadcast() end
+        -- Снимок GPS уходит потоком: точки, зоны и захваты — это большая
+        -- таблица, а рассылка шла всем одним пакетом (микрофриз у всех).
+        if GRM.Net and GRM.Net.Stream then
+            GRM.Net.Stream("GRM_Minimap_Data", MM.Data, IsValid(ply) and ply or nil,
+                { chunk = 8192, interval = 0.05 })
+        else
+            net.Start("GRM_Minimap_Data") net.WriteTable(MM.Data)
+            if IsValid(ply) then net.Send(ply) else net.Broadcast() end
+        end
     end
     local function nextID(prefix) return prefix .. "_" .. os.time() .. "_" .. math.random(100, 999) end
     function MM.AddPoint(ply, name, pointPos, radius)
@@ -337,6 +345,12 @@ else
         render.PopRenderTarget()
     end
     net.Receive("GRM_Minimap_Data", function() data = net.ReadTable() or data; mapSnapshotReady = false; nextMapRender = 0 end)
+    if GRM.Net and GRM.Net.Receive then
+        GRM.Net.Receive("GRM_Minimap_Data", function(t)
+            if istable(t) then data = t end
+            mapSnapshotReady = false nextMapRender = 0
+        end)
+    end
     net.Receive("GRM_Minimap_Open", function()
         if IsValid(frame) then frame:Remove() end
         frame = vgui.Create("DFrame") frame:SetSize(980, 720) frame:Center() frame:MakePopup() frame:SetTitle("") frame:ShowCloseButton(false) frame:SetDeleteOnClose(true)

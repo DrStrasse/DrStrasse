@@ -855,8 +855,25 @@ if SERVER then
     end
 
     -- вход: меню при КАЖДОМ заходе -------------------------------
+    --[[ Меню персонажа больше не всплывает само сразу после входа: сперва
+         игрок видит загрузочный экран GROENNERLAND2036 и жмёт «НАЧАТЬ
+         ИГРАТЬ» (sh_grm_loading.lua), и только тогда приходит окно выбора.
+         Если модуль загрузки почему-то не работает, меню придёт по
+         страховочному таймеру — игрок не останется в пустоте. ]]
+    local function menuAfterLoading(ply, delay)
+        timer.Simple(delay or 1.5, function()
+            if not IsValid(ply) then return end
+            if GRM.Loading and GRM.Loading.IsLoading and GRM.Loading.IsLoading(ply) then return end
+            sendMenu(ply)
+        end)
+    end
+
     hook.Add("PlayerInitialSpawn", "GRM_Char_OnJoin", function(ply)
-        timer.Simple(1.5, function() if IsValid(ply) then sendMenu(ply) end end)
+        menuAfterLoading(ply, 1.5)
+        timer.Simple(60, function()
+            -- страховка: экран загрузки завис у клиента — всё равно даём выбрать
+            if IsValid(ply) and CH.PendingSelection[ply:SteamID64()] then sendMenu(ply) end
+        end)
         timer.Simple(0.2, function()
             if not IsValid(ply) then return end
             normalizePlayerData(ply)
@@ -1626,6 +1643,7 @@ if CLIENT then
         return table.concat(parts,"|")
     end
     function CH.ReceiveMenuPayload(payload)
+        hook.Run("GRM_CharacterPayload")
         payload=istable(payload)and payload or{};local sig=payloadSignature(payload);local mode=payload.wardrobe==true and"wardrobe"or"character"
         if IsValid(CH._frame)and CH._liveSignature==sig and CH._frameMode==mode then if CH._actionKind=="preview"then CH._actionPending=false;CH._actionKind=nil end return false end
         if CH._opening then CH._queuedPayload=payload return false end
@@ -1726,6 +1744,8 @@ if CLIENT then
     -- как-то закрыл (сторож окон, чужой аддон), просим меню заново.
     hook.Add("Think", "GRM_Char_KeepMenu", function()
         if not clientCharacterPending() then return end
+        -- пока на экране загрузка проекта, окно выбора не всплывает
+        if GRM.Loading and GRM.Loading.Shown then return end
         if IsValid(CH._frame) then return end
         if (CH._reopenAt or 0) > RealTime() then return end
         CH._reopenAt = RealTime() + 1.5

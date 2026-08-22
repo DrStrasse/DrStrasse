@@ -417,9 +417,13 @@ if SERVER then
             if SetGlobalString and DOC.Templates.passport then
                 SetGlobalString("GRM_StateTitle", tostring(DOC.Templates.passport.stateTitle or "РЕСПУБЛИКА ГРАНД"))
             end
-            net.Start(NET_ADMIN_GET)
-                net.WriteTable(DOC.Templates)
-            net.Broadcast()
+            --[[ Раньше после каждого сохранения шаблоны РАССЫЛАЛИСЬ ВСЕМ
+                 каналом NET_ADMIN_GET. Это была двойная беда: заметный
+                 пакет каждому игроку (микрофриз) и открытие окна админа
+                 документов у всех подряд — клиент на этот канал отвечает
+                 именно открытием окна. Клиент и так запрашивает шаблоны
+                 сам, когда открывает /doc_admin, поэтому рассылки нет. ]]
+            hook.Run("GRM_DocumentTemplatesSaved", DOC.Templates)
             print("[GRM Documents] SAVE ok templates (" .. tostring(why or "?") .. ")")
         end
     end

@@ -497,8 +497,17 @@ if SERVER then
     end
 
     local function sendCharacterChoicesNow(ply)
+        --[[ Список персонажей на большом сервере — это килобайты одним
+             пакетом ВСЕМ сразу: заметный рывок у каждого клиента. Шлём
+             потоком (GRM.Net.Stream): куски по кадрам, приём собирается
+             на клиенте. Прямая отправка осталась запасным путём. ]]
+        local payload = buildCharacterChoices()
+        if GRM.Net and GRM.Net.Stream then
+            GRM.Net.Stream(NET_CHARACTER_CHOICES, payload, ply, { chunk = 8192, interval = 0.05 })
+            return
+        end
         net.Start(NET_CHARACTER_CHOICES)
-            net.WriteTable(buildCharacterChoices())
+            net.WriteTable(payload)
         if ply then net.Send(ply) else net.Broadcast() end
     end
 
@@ -2143,6 +2152,12 @@ if CLIENT then
     net.Receive(NET_CHARACTER_CHOICES, function()
         FactionCharacterChoices = net.ReadTable() or {}
     end)
+
+    if GRM.Net and GRM.Net.Receive then
+        GRM.Net.Receive(NET_CHARACTER_CHOICES, function(data)
+            FactionCharacterChoices = istable(data) and data or {}
+        end)
+    end
 
     --[[ Единый вывод служебных каналов — ровно как у /gnews:
              [Канал] [ТЭГ]
