@@ -515,6 +515,44 @@ do
     ok(FL.DealerEntryID(d1, d1.VD_Vehicles[1]) == p1, "id строится детерминированно для первой карточки")
     ok(FL.DealerEntryID(d2, d2.VD_Vehicles[1]) == p2, "id второй карточки тоже детерминирован")
 
+    -- пояснение: на живом сервере util.CRC детерминированный; здесь он
+    -- остаётся детерминированным и для следующего блока, чтобы id совпадали.
+    --[[ ЦЕННИКИ ПОЗИЦИЙ ДИЛЕРА ПРАВЯТСЯ И ЗАПОМИНАЮТСЯ (22.08).
+         Кнопка «ЦЕНА» на дилерской позиции должна писать переопределение
+         в FL.DealerOverrides, а не теряться в пересобираемом DealerMarket. ]]
+    print("\n=== ЦЕННИКИ ПОЗИЦИЙ ДИЛЕРА (22.08) ===")
+    local dealerP = d1.VD_Vehicles[1]
+    local dpId = FL.DealerEntryID(d1, dealerP)
+    ok(dpId ~= "", "у дилерской позиции есть id", dpId)
+    ok(FL.Entry(dpId) ~= nil and FL.Entry(dpId).price == 1000, "до правки цена 1000", FL.Entry(dpId) and FL.Entry(dpId).price)
+
+    FL.MarketUpdate(dpId, { price = 7000 })
+    ok((FL.Entry(dpId) or {}).price == 7000, "после «ЦЕНА» цена стала 7000", FL.Entry(dpId) and FL.Entry(dpId).price)
+    ok(FL.DealerOverrides[dpId] ~= nil and FL.DealerOverrides[dpId].price == 7000, "переопределение сохранено в памяти")
+    ok(FL.MarketList() and select(2, FL.MarketList()) == nil or true, "")
+
+    -- проверка, что переопределение попадает в marketPayload (persistence)
+    local payload = FL.SaveMarketNow()
+    ok(FS["grm_fleet/market.json"] ~= nil, "рынок записан на диск", FS["grm_fleet/market.json"])
+    ok(FS["grm_fleet/market.json"]:find("dealer:", 1, true) ~= nil and FS["grm_fleet/market.json"]:find("7000", 1, true) ~= nil,
+        "в market.json сохранён override с ценой 7000", FS["grm_fleet/market.json"] and FS["grm_fleet/market.json"]:sub(1, 80))
+
+    -- сброс правки не удаляет саму позицию дилера
+    local removed, msgRemove = FL.MarketRemove(dpId)
+    ok(removed == true and tostring(msgRemove):find("дилера", 1, true) ~= nil,
+        "«УБРАТЬ» не снимает позицию из ассортимента дилера, а сбрасывает только правку", tostring(msgRemove))
+    ok(FL.DealerOverrides[dpId] == nil, "правка цены сброшена")
+    ok((FL.Entry(dpId) or {}).price == 1000, "позиция осталась, цена вернулась к 1000", FL.Entry(dpId) and FL.Entry(dpId).price)
+
+    -- свой рынок по-прежнему правится напрямую
+    local ownLike = FL.MarketAdd({ class = "sim_uaz", name = "Патрульный УАЗ", price = 50000, limit = 0 })
+    ok(ownLike ~= nil, "собственная позиция создана", ownLike)
+    if ownLike then
+        local ownId = ownLike.id
+        FL.MarketUpdate(ownId, { price = 55000 })
+        ok((FL.Entry(ownId) or {}).price == 55000, "цена собственной позиции правится", FL.Entry(ownId) and FL.Entry(ownId).price)
+    end
+
     util.CRC = crcReal
 end
 

@@ -170,6 +170,12 @@ end
 FL.Market = FL.Market or {}   -- id -> позиция рынка
 FL.Units  = FL.Units  or {}   -- id -> единица парка
 FL.Active = FL.Active or {}   -- id -> живая машина
+--[[ ПЕРЕОПРЕДЕЛЁННЫЕ ЦЕНЫ ПОЗИЦИЙ ДИЛЕРОВ (заказ владельца 22.08).
+     FL.DealerMarket() каждый раз собирает ассортимент из энтити дилеров,
+     поэтому правка цены в админ-вкладке «Рынок» раньше не сохранялась.
+     Здесь живут изменения цены/названия/лимита для id "dealer:...":
+     они пишутся в market.json и применяются и к показу, и к закупке. ]]
+FL.DealerOverrides = FL.DealerOverrides or {}
 
 --[[ ЕДИНЫЙ РЫНОК ЗАКУПОК: свои позиции + ассортимент дилеров.
 
@@ -209,44 +215,57 @@ FL.Active = FL.Active or {}   -- id -> живая машина
         return ("dealer:%s:%s:%s"):format(class, faction, tostring(crc))
     end
 
-function FL.DealerMarket()
-    local out = {}
-    if not SERVER then return out end
-    local VD = GRM.VehicleDealer
-    if not (VD and VD.VehicleInfo) then return out end
+    function FL.DealerMarket()
+        local out = {}
+        if not SERVER then return out end
+        local VD = GRM.VehicleDealer
+        if not (VD and VD.VehicleInfo) then return out end
 
-    local seen = {}
-    for _, dealer in ipairs(ents.FindByClass("sent_vehicle_dealer")) do
-        if IsValid(dealer) then
-            for _, entry in ipairs(dealer.VD_Vehicles or {}) do
-                local kind = VD.EntryKind and VD.EntryKind(entry) or "personal"
-                if kind ~= "personal" then
-                    local class = tostring(entry.class or "")
-                    local faction = tostring(entry.faction or "")
-                    local id = FL.DealerEntryID(dealer, entry)
-                    if class ~= "" and id ~= "" and not seen[id] then
-                        seen[id] = true
-                        local info = VD.VehicleInfo(class)
-                        out[id] = {
-                            id = id, class = class,
-                            name = tostring(entry.name or info.name or class),
-                            model = tostring(info.model or ""),
-                            price = math.max(0, math.floor(tonumber(entry.price) or 0)),
-                            tier = (kind == "government") and "gov" or "civil",
-                            kind = kind,
-                            factions = faction ~= "" and { faction } or {},
-                            limit = 0,
-                            category = tostring(entry.category or "Служебный транспорт"),
-                            note = "позиция дилера «" .. tostring(dealer:GetDealerName() or "") .. "»",
-                            source = "dealer",
-                        }
+        local seen = {}
+        for _, dealer in ipairs(ents.FindByClass("sent_vehicle_dealer")) do
+            if IsValid(dealer) then
+                for _, entry in ipairs(dealer.VD_Vehicles or {}) do
+                    local kind = VD.EntryKind and VD.EntryKind(entry) or "personal"
+                    if kind ~= "personal" then
+                        local class = tostring(entry.class or "")
+                        local faction = tostring(entry.faction or "")
+                        local id = FL.DealerEntryID(dealer, entry)
+                        if class ~= "" and id ~= "" and not seen[id] then
+                            seen[id] = true
+                            local info = VD.VehicleInfo(class)
+                            out[id] = {
+                                id = id, class = class,
+                                name = tostring(entry.name or info.name or class),
+                                model = tostring(info.model or ""),
+                                price = math.max(0, math.floor(tonumber(entry.price) or 0)),
+                                tier = (kind == "government") and "gov" or "civil",
+                                kind = kind,
+                                factions = faction ~= "" and { faction } or {},
+                                limit = 0,
+                                category = tostring(entry.category or "Служебный транспорт"),
+                                note = "позиция дилера «" .. tostring(dealer:GetDealerName() or "") .. "»",
+                                source = "dealer",
+                            }
+                        end
                     end
                 end
             end
         end
+
+        --[[ Применяем сохранённые суперадмином правки цены/названия/лимита
+             к позициям дилера. Именно это делало кнопку «ЦЕНА» рабочей. ]]
+        for id, meta in pairs(FL.DealerOverrides or {}) do
+            local row = out[tostring(id)]
+            if istable(row) and istable(meta) then
+                if meta.price ~= nil then row.price = math.max(0, math.floor(tonumber(meta.price) or 0)) end
+                if meta.name ~= nil and tostring(meta.name) ~= "" then row.name = tostring(meta.name) end
+                if meta.limit ~= nil then row.limit = math.max(0, math.floor(tonumber(meta.limit) or 0)) end
+                if meta.category ~= nil and tostring(meta.category) ~= "" then row.category = tostring(meta.category) end
+                row.note = tostring(meta.note or row.note or "")
+            end
+        end
+        return out
     end
-    return out
-end
 
 function FL.Entry(id)
     id = tostring(id or "")
@@ -432,7 +451,20 @@ if SERVER then
             if istable(entry) then entry.id = id arr[#arr + 1] = entry end
         end
         table.sort(arr, function(a, b) return tostring(a.id) < tostring(b.id) end)
-        return { version = 1, market = arr }
+        local ov = {}
+        for id, meta in pairs(FL.DealerOverrides or {}) do
+            if istable(meta) then
+                local row = { id = id }
+                if meta.price ~= nil then row.price = meta.price end
+                if meta.name ~= nil then row.name = meta.name end
+                if meta.limit ~= nil then row.limit = meta.limit end
+                if meta.category ~= nil then row.category = meta.category end
+                if meta.note ~= nil then row.note = meta.note end
+                ov[#ov + 1] = row
+            end
+        end
+        table.sort(ov, function(a, b) return tostring(a.id) < tostring(b.id) end)
+        return { version = 2, market = arr, overrides = ov }
     end
 
     local function fleetPayload()
@@ -534,6 +566,12 @@ if SERVER then
             end
         end
         FL.NormalizeLoadedUnits(FL.Units)
+        FL.DealerOverrides = {}
+        for _, meta in ipairs(istable(m) and m.overrides or {}) do
+            if istable(meta) and tostring(meta.id or "") ~= "" then
+                FL.DealerOverrides[tostring(meta.id)] = meta
+            end
+        end
         FL._loaded = true
         return true
     end
@@ -572,9 +610,29 @@ if SERVER then
     end
 
     function FL.MarketUpdate(id, fields)
+        id = tostring(id or "")
+        fields = istable(fields) and fields or {}
+
+        -- Позиция из ассортимента дилера: правки живут в DealerOverrides,
+        -- потому что сама позиция пересобирается из энтити при каждом вызове.
+        if string.sub(id, 1, 7) == "dealer:" then
+            local entry = FL.Entry(id)
+            if not entry then return false, "Позиция не найдена" end
+            local meta = FL.DealerOverrides[id] or {}
+            meta.id = id
+            if fields.price ~= nil then meta.price = math.max(0, math.floor(tonumber(fields.price) or 0)) end
+            if fields.name ~= nil and tostring(fields.name) ~= "" then meta.name = trim(fields.name, 96) end
+            if fields.limit ~= nil then meta.limit = math.max(0, math.floor(tonumber(fields.limit) or 0)) end
+            if fields.category ~= nil and tostring(fields.category) ~= "" then meta.category = trim(fields.category, 64) end
+            if fields.note ~= nil then meta.note = trim(fields.note, 160) end
+            FL.DealerOverrides[id] = meta
+            FL.SaveMarket("рынок: цена позиции дилера")
+            if FL.PushViewers then FL.PushViewers() end
+            return true
+        end
+
         local entry = FL.Entry(id)
         if not entry then return false, "Позиция не найдена" end
-        fields = istable(fields) and fields or {}
         if fields.name ~= nil then entry.name = trim(fields.name, 96) end
         if fields.price ~= nil then entry.price = math.max(0, math.floor(tonumber(fields.price) or 0)) end
         if fields.limit ~= nil then entry.limit = math.max(0, math.floor(tonumber(fields.limit) or 0)) end
@@ -588,6 +646,21 @@ if SERVER then
     end
 
     function FL.MarketRemove(id)
+        id = tostring(id or "")
+
+        -- Дилерскую позицию нельзя снять с рынка: она в ассортименте дилера.
+        -- «УБРАТЬ» здесь сбрасывает только суперадминскую правку цены.
+        if string.sub(id, 1, 7) == "dealer:" then
+            if not (FL.Entry and FL.Entry(id)) then return false, "Позиция не найдена" end
+            if FL.DealerOverrides and FL.DealerOverrides[id] then
+                FL.DealerOverrides[id] = nil
+                FL.SaveMarket("рынок: сброс цены позиции дилера")
+                if FL.PushViewers then FL.PushViewers() end
+                return true, "Правка цены позиции дилера сброшена (сама позиция остаётся)"
+            end
+            return false, "Позиция дилера не удаляется из рынка — измените её в ассортименте дилера"
+        end
+
         if not FL.Entry(id) then return false, "Позиция не найдена" end
         FL.Market[tostring(id)] = nil
         FL.SaveMarket("рынок: удаление")
