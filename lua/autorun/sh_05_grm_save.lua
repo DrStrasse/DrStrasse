@@ -201,11 +201,55 @@ function S.Status()
     return rows, S.Stats
 end
 
+--[[ ВНЕШНИЕ ХРАНИЛИЩА (заказ владельца 22.08: «чтобы ничего не исчезало»).
+     Часть модулей пишет на диск напрямую, а не через GRM.Save — но у них
+     есть публичные Save*-функции. Здесь на выключение/смену карты мы
+     вызываем их через pcall В ДОПОЛНЕНИЕ к очереди GRM.Save. Если модуль
+     не загружен или функция изменилась — pcall молча пропустит. ]]
+function S.FlushExternal(reason)
+    local calls = {
+        { "GRM.VehicleDealer.SaveAllDealers", {} },
+        { "GRM.VehicleDealer.SaveGarages", {} },
+        { "GRM.Garage.Save", { reason or "страховка" } },
+        { "GRM.Documents.SaveRegistry", { reason or "страховка" } },
+        { "GRM.Documents.SaveTemplates", { reason or "страховка" } },
+        { "GRM.Services.SaveServices", {} },
+        { "GRM.Services.SaveInvoices", {} },
+        { "GRM.Vendor.SaveMapVendors", {} },
+        { "GRM.Wanted.Fines.Save", {} },
+        { "GRM.Mining.SavePrices", { reason or "страховка" } },
+        { "GRM.Broadcast.SaveCfg", {} },
+        { "GRM.News.SaveData", {} },
+    }
+    local n = 0
+    for _, call in ipairs(calls) do
+        local path, args = call[1], call[2]
+        local fn = nil
+        local cur = _G
+        for part in string.gmatch(path, "[^.]+") do
+            cur = istable(cur) and cur[part] or nil
+            if cur == nil then break end
+        end
+        fn = isfunction(cur) and cur or nil
+        if fn then
+            local ok = pcall(fn, unpack(args or {}))
+            if ok then n = n + 1 end
+        end
+    end
+    return n
+end
+
 if SERVER then
     timer.Create("GRM_Save_Tick", 1, 0, function() S.Tick(CurTime()) end)
 
-    hook.Add("ShutDown", "GRM_Save_FlushAll", function() S.FlushAll("выключение") end)
-    hook.Add("PreCleanupMap", "GRM_Save_FlushMap", function() S.FlushAll("очистка карты") end)
+    hook.Add("ShutDown", "GRM_Save_FlushAll", function()
+        S.FlushAll("выключение")
+        S.FlushExternal("выключение")
+    end)
+    hook.Add("PreCleanupMap", "GRM_Save_FlushMap", function()
+        S.FlushAll("очистка карты")
+        S.FlushExternal("очистка карты")
+    end)
 
     concommand.Add("grm_save_status", function(ply)
         if IsValid(ply) and not ply:IsSuperAdmin() then return end

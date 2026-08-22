@@ -247,6 +247,59 @@ PL.Render = PL.Render or {
 PL.RenderKeys = { "axis", "yaw", "flip", "scale", "offset",
     "tiltP", "tiltY", "tiltR", "moveX", "moveY" }
 
+--[[ ПОЛОЖЕНИЕ ЗНАКА НА КОНКРЕТНОЙ МОДЕЛИ (заказ владельца 22.08).
+     `PL.Layouts[class]` переопределяет точку крепления для машин этого
+     класса: pos — локальная точка, normal — локальная нормаль кормы,
+     upHint — локальный «верх». Заполняется командой суперадмина
+     `/номер_layout` и сохраняется в render.json вместе с рекладом.
+     Пока нет layout — работает автоматика по OBB (надёжная). ]]
+PL.Layouts = PL.Layouts or {}
+
+local function normalizeLayout(src)
+    src = istable(src) and src or {}
+    local function vec(t, def)
+        return { x = tonumber(t and t.x) or (def and def.x or 0),
+                 y = tonumber(t and t.y) or (def and def.y or 0),
+                 z = tonumber(t and t.z) or (def and def.z or 0) }
+    end
+    return {
+        enabled = src.enabled ~= false,
+        pos = vec(src.pos, { x = 0, y = 0, z = 0 }),
+        normal = vec(src.normal, { x = -1, y = 0, z = 0 }),
+        upHint = vec(src.upHint, { x = 0, y = 0, z = 1 }),
+    }
+end
+PL.NormalizeLayout = normalizeLayout
+
+--- Layout по машине: сначала точный класс, потом класс без регистра.
+function PL.LayoutFor(veh)
+    if not IsValid(veh) then return nil end
+    local class = tostring(veh:GetClass() or "")
+    local direct = PL.Layouts[class]
+    if istable(direct) then return normalizeLayout(direct) end
+    local lower = string.lower(class)
+    for k, v in pairs(PL.Layouts or {}) do
+        if string.lower(tostring(k)) == lower then return normalizeLayout(v) end
+    end
+    return nil
+end
+
+--- Сохранить/сбросить layout класса. Возвращает нормализованный layout.
+function PL.SetLayout(class, src)
+    class = tostring(class or "")
+    if class == "" then return nil end
+    if src == nil or src.enabled == false then
+        PL.Layouts[class] = nil
+        if SERVER and PL.SaveRender then PL.SaveRender() end
+        return nil
+    end
+    local layout = normalizeLayout(src)
+    layout.id = class
+    PL.Layouts[class] = layout
+    if SERVER and PL.SaveRender then PL.SaveRender() end
+    return layout
+end
+
 --- Нормализация настроек: числа в разумных пределах, ось из списка.
 function PL.NormalizeRender(src)
     src = istable(src) and src or {}
@@ -688,7 +741,19 @@ if SERVER then
     function PL.SaveRender()
         ensureDir()
         PL.Render = PL.NormalizeRender(PL.Render)
-        local ok, txt = pcall(util.TableToJSON, PL.Render, true)
+        -- layouts сохраняются вместе с раскладкой (заказ владельца 22.08).
+        local layouts = {}
+        for class, src in pairs(PL.Layouts or {}) do
+            if istable(src) then
+                local row = { id = class, enabled = src.enabled ~= false }
+                if istable(src.pos) then row.pos = { x = src.pos.x, y = src.pos.y, z = src.pos.z } end
+                if istable(src.normal) then row.normal = { x = src.normal.x, y = src.normal.y, z = src.normal.z } end
+                if istable(src.upHint) then row.upHint = { x = src.upHint.x, y = src.upHint.y, z = src.upHint.z } end
+                layouts[#layouts + 1] = row
+            end
+        end
+        table.sort(layouts, function(a, b) return tostring(a.id) < tostring(b.id) end)
+        local ok, txt = pcall(util.TableToJSON, { render = PL.Render, layouts = layouts }, true)
         if not ok or not isstring(txt) then return false end
         file.Write(RENDER_FILE, txt)
         return true
@@ -698,7 +763,17 @@ if SERVER then
         if not file.Exists(RENDER_FILE, "DATA") then return false end
         local ok, t = pcall(util.JSONToTable, file.Read(RENDER_FILE, "DATA") or "", false, true)
         if not (ok and istable(t)) then return false end
-        PL.Render = PL.NormalizeRender(t)
+        -- новый формат: { render=..., layouts=... }; старый — просто render.
+        local renderSrc = istable(t.render) and t.render or t
+        PL.Render = PL.NormalizeRender(renderSrc)
+        PL.Layouts = {}
+        for _, row in ipairs(istable(t.layouts) and t.layouts or {}) do
+            if istable(row) and tostring(row.id or "") ~= "" then
+                local layout = normalizeLayout(row)
+                layout.id = tostring(row.id)
+                PL.Layouts[layout.id] = layout
+            end
+        end
         return true
     end
 
@@ -1328,24 +1403,52 @@ if SERVER then
         return true
     end
 
+    --[[ ЗАДНИЙ БОРТ МАШИНЫ (заказ владельца 22.08: номер не сидит ровно).
+         Раньше точка бралась из OBB, а нормаль — из `veh:GetForward()`. У
+         simfphys/LVS origin смещена, а `GetForward` может относиться не к
+         корпусу. Поэтому:
+           • задняя точка считается в ЛОКАЛЬНЫХ осях модели: -X корпуса;
+           • нормаль — локальный -X в мире (не зависит от GetForward);
+           • если у энтити есть WorldSpaceAABB — считаем по мировым
+             габаритам, чтобы точка была на корме даже со смещённым
+             origin. ]]
+    function PL.MountPointFor(veh)
+        if not IsValid(veh) then return nil, "Транспорт не найден" end
+        if not (isfunction(veh.OBBMins) and isfunction(veh.OBBMaxs) and isfunction(veh.LocalToWorld)) then
+            return nil, "У модели нет габаритов"
+        end
+
+        -- 1) Настраиваемый layout по классу/модели (сохраняется в render.json).
+        local layout = PL.LayoutFor and PL.LayoutFor(veh)
+        if istable(layout) and layout.enabled ~= false then
+            local p = Vector(layout.pos.x, layout.pos.y, layout.pos.z)
+            local world = veh:LocalToWorld(p)
+            local nrm = (veh:LocalToWorld(Vector(layout.normal.x, layout.normal.y, layout.normal.z)) - veh:GetPos()):GetNormalized()
+            local up = layout.upHint and Vector(layout.upHint.x, layout.upHint.y, layout.upHint.z) or veh:GetUp()
+            return { pos = world, normal = nrm, up = up, layout = layout }
+        end
+
+        -- 2) Автоматика: задний борт по локальной -X.
+        local mins, maxs = veh:OBBMins(), veh:OBBMaxs()
+        local h = (maxs.z - mins.z)
+        local localPos = Vector(mins.x + 1, 0, mins.z + h * 0.32)
+        local pos = veh:LocalToWorld(localPos)
+        local normal = (veh:LocalToWorld(Vector(-1, 0, 0)) - veh:GetPos()):GetNormalized()
+        local up = veh:GetUp()
+
+        return { pos = pos, normal = normal, up = up }
+    end
+
     --- Повесить знак на задний борт машины по её габаритам.
     function PL.MountOnRear(plate, veh, actor)
         if not (IsValid(plate) and IsValid(veh)) then return false end
-        -- у нестандартных сущностей габаритов может не быть: тогда просто
-        -- крепим как есть, без вычисления борта
-        if not (isfunction(veh.OBBMins) and isfunction(veh.GetForward) and isfunction(veh.LocalToWorld)) then
+        local mount = PL.MountPointFor(veh)
+        if not mount then
+            -- у нестандартных сущностей габаритов может не быть: тогда просто
+            -- крепим как есть, без вычисления борта
             return PL.Attach(plate, veh, actor)
         end
-
-        local mins, maxs = veh:OBBMins(), veh:OBBMaxs()
-        -- задний борт: по локальной X назад, по центру ширины,
-        -- на трети высоты кузова — там, где номер и висит у машин
-        local localPos = Vector(mins.x + 1, 0, mins.z + (maxs.z - mins.z) * 0.32)
-        local pos = veh:LocalToWorld(localPos)
-        local normal = -veh:GetForward()          -- наружу от кормы
-        local up = veh:GetUp()
-
-        PL.PlaceOnSurface(plate, pos, normal, up)
+        PL.PlaceOnSurface(plate, mount.pos, mount.normal, mount.up)
         return PL.Attach(plate, veh, actor)
     end
 
@@ -1735,6 +1838,71 @@ if SERVER then
         end
         if low:find("^/номер_сброс") == 1 then renderCommand(ply, "reset") return true end
         if low:find("^/номер_настройки") == 1 then renderCommand(ply, "show") return true end
+        --[[ ПОЛОЖЕНИЕ ЗНАКА НА МОДЕЛИ (заказ владельца 22.08).
+             Без аргументов — сохранить layout машины, на которую смотришь
+             (или на которой уже закреплён знак). С аргументами
+             x y z [nx ny nz] [ux uy uz] — задать вручную. Суперадмин. ]]
+        if low:find("^/номер_layout") == 1 or low:find("^/number_layout") == 1 then
+            if not (IsValid(ply) and ply:IsSuperAdmin()) then
+                notify(ply, "Настройка положения знаков — суперадмин.")
+                return true
+            end
+            local nums = {}
+            for w in string.gmatch(msg, "%-?%d+%.?%d*") do nums[#nums + 1] = tonumber(w) or 0 end
+            local tr = (GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(ply) or ply:GetEyeTrace()
+            local base = tr and tr.Entity and PL.VehicleBase(tr.Entity) or nil
+            if not IsValid(base) then base = nil end
+            -- Если смотришь на знак/машину не нашли — берём машину со знаком
+            if not IsValid(base) then
+                local own = nearestOwnPlate(ply, true)
+                if IsValid(own) and IsValid(own:GetParent()) then base = PL.VehicleBase(own:GetParent()) end
+            end
+            if not IsValid(base) then
+                notify(ply, "Смотрите на транспорт (или на знак) и повторите команду.")
+                return true
+            end
+            local class = tostring(base:GetClass() or "")
+            if #nums >= 3 then
+                local layout = PL.SetLayout(class, {
+                    pos = { x = nums[1], y = nums[2], z = nums[3] },
+                    normal = { x = nums[4] or -1, y = nums[5] or 0, z = nums[6] or 0 },
+                    upHint = { x = nums[7] or 0, y = nums[8] or 0, z = nums[9] or 1 },
+                    enabled = true,
+                })
+                notify(ply, layout and ("Положение знака для «%s» сохранено."):format(class) or "Не сохранилось")
+            else
+                local vp = PL.VehiclePlates(base)
+                local plate = vp and vp[1]
+                if IsValid(plate) then
+                    local lp = base:WorldToLocal(plate:GetPos())
+                    local layout = PL.SetLayout(class, {
+                        pos = { x = lp.x, y = lp.y, z = lp.z },
+                        normal = { x = -1, y = 0, z = 0 },
+                        upHint = { x = 0, y = 0, z = 1 },
+                        enabled = true,
+                    })
+                    notify(ply, layout and ("Положение знака для «%s» запомнено: %.1f, %.1f, %.1f"):format(
+                        class, lp.x, lp.y, lp.z) or "Не запомнилось")
+                else
+                    notify(ply, "На этой машине нет закреплённого знака — сначала закрепите его.")
+                end
+            end
+            return true
+        end
+        if low:find("^/номер_layout_сброс") == 1 or low:find("^/number_layout_reset") == 1 then
+            if not (IsValid(ply) and ply:IsSuperAdmin()) then notification.AddLegacy("Только суперадмин", NOTIFY_ERROR, 3) return true end
+            local tr = (GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(ply) or ply:GetEyeTrace()
+            local base = tr and tr.Entity and PL.VehicleBase(tr.Entity) or nil
+            if not IsValid(base) then
+                local own = nearestOwnPlate(ply, true)
+                if IsValid(own) and IsValid(own:GetParent()) then base = PL.VehicleBase(own:GetParent()) end
+            end
+            if not IsValid(base) then notify(ply, "Смотрите на транспорт.") return true end
+            local class = tostring(base:GetClass() or "")
+            PL.SetLayout(class, nil)
+            notify(ply, ("Ручное положение знака для «%s» убрано — работает автоматика."):format(class))
+            return true
+        end
         if low == "/снятьномер" or low == "/plateoff" then
             local plate = nearestOwnPlate(ply, true)
             if not IsValid(plate) then notify(ply, "Рядом нет закреплённого знака.") return true end

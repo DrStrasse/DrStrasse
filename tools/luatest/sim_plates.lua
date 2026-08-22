@@ -865,8 +865,9 @@ ok(psrc:find("local hitBase = PL.VehicleBase(tr.Entity) or tr.Entity", 1, true) 
    "по [E] знак встаёт ровно туда, куда смотрит игрок")
 ok(psrc:find("if not ok then ok, err = PL.MountOnRear(plate, veh, ply) end", 1, true) ~= nil,
    "если игрок не смотрит на кузов — знак уходит на задний борт")
-ok(psrc:find("local localPos = Vector(mins.x + 1, 0, mins.z + (maxs.z - mins.z) * 0.32)", 1, true) ~= nil,
-   "точка заднего борта считается по габаритам машины")
+ok(psrc:find("local localPos = Vector(mins.x + 1, 0, mins.z + h * 0.32)", 1, true) ~= nil
+   and psrc:find("local normal = (veh:LocalToWorld(Vector(-1, 0, 0)) - veh:GetPos()):GetNormalized()", 1, true) ~= nil,
+   "точка заднего борта по габаритам, нормаль — локальный -X (не GetForward)")
 
 print("\n=== 23. ОБНОВЛЕНИЕ НЕ СБИВАЕТ РАБОТУ (22.08) ===")
 ok(psrc:find("PL.Form = PL.Form or {}", 1, true) ~= nil
@@ -929,6 +930,30 @@ do
     ok(unit.plate ~= "" or unit.plates ~= nil, "раскладка/номер записаны в единицу автопарка",
         tostring(unit.plate) .. " / plates=" .. tostring(unit.plates ~= nil))
     ok(tostring(unit.vehicleUID or "") ~= "", "vehicleUID записан в единицу автопарка", tostring(unit.vehicleUID))
+end
+
+print("\n=== 25. ПОЛОЖЕНИЕ ЗНАКА НА МОДЕЛИ (22.08) ===")
+do
+    ok(isfunction(PL.NormalizeLayout), "layout нормализуется")
+    ok(isfunction(PL.LayoutFor) and isfunction(PL.SetLayout), "layout читается/сохраняется")
+
+    local layoutCar = ents.Create("sim_car")
+    layoutCar._class = "sim_layout_car"
+    local lay = PL.SetLayout("sim_layout_car", {
+        pos = { x = -100, y = 0, z = 50 },
+        normal = { x = -1, y = 0, z = 0 },
+        upHint = { x = 0, y = 0, z = 1 },
+    })
+    ok(lay ~= nil and lay.pos.x == -100, "layout класса сохранён", lay and lay.pos.x)
+    local got = PL.LayoutFor(layoutCar)
+    ok(got ~= nil and got.pos.x == -100 and got.normal.x == -1, "LayoutFor находит layout класса",
+        got and got.pos.x)
+    local mp = PL.MountPointFor(layoutCar)
+    -- В моке LocalToWorld = GetPos() + v, поэтому точка будет -100,0,50
+    ok(mp ~= nil and mp.normal and mp.normal.x < 0 and mp.pos.x == -100, "MountPointFor учитывает layout",
+        mp and tostring(mp.pos.x) .. "/" .. (mp and tostring(mp.normal.x)))
+    PL.SetLayout("sim_layout_car", nil)
+    ok(PL.LayoutFor(layoutCar) == nil, "layout класса сбрасывается")
 end
 
 print(("\nPLATES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
