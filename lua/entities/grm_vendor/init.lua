@@ -90,7 +90,7 @@ function ENT:Use(ply)
     -- Торговец редкостями может быть настроен как точка входа в единый
     -- гражданский транспортный рынок; каталог/покупки не дублируются в Vendor.
     if self.VendorType == "vehicle_market" and GRM.CivilVehicles and GRM.CivilVehicles.Open then
-        GRM.CivilVehicles.Open(ply)
+        GRM.CivilVehicles.Open(ply,self)
         return
     end
     self:OpenFor(ply)

@@ -28,15 +28,29 @@ end
 if SERVER then
  for _,n in pairs(CV.Net)do util.AddNetworkString(n)end
  local function ensure()if not file.IsDir("grm_vehicle_market","DATA")then file.CreateDir("grm_vehicle_market")end end
- function CV.Save()
-  ensure();local rows={}for _,e in ipairs(CV.List())do rows[#rows+1]=e end
-  local ok,raw=pcall(util.TableToJSON,{version=1,entries=rows},true);if not ok or not isstring(raw)then return false end
+ CV._loaded=CV._loaded or false
+ local function payload()
+  if not CV._loaded then return nil end
+  local rows={}for _,e in ipairs(CV.List())do rows[#rows+1]=e end
+  return {version=1,entries=rows}
+ end
+ function CV.SaveNow()
+  if not CV._loaded then return false end
+  ensure();local ok,raw=pcall(util.TableToJSON,payload(),true);if not ok or not isstring(raw)then return false end
   file.Write(FILE,raw)return (file.Read(FILE,"DATA")or"")~=""
+ end
+ function CV.Save(why)
+  if not CV._loaded then return false end
+  if GRM.Save and GRM.Save.Mark then GRM.Save.Mark("grm_civil_vehicle_market",why or"гражданский рынок")end
+  return CV.SaveNow()
  end
  function CV.Load()
   CV.Data.entries={};local raw=file.Read(FILE,"DATA")or"";local ok,t=pcall(util.JSONToTable,raw,false,true)
+  if raw~=""and(not ok or not istable(t))then file.Write(FILE..".broken",raw)end
   for _,e in ipairs(ok and istable(t)and t.entries or{})do if istable(e)and trim(e.id)~=""then CV.Data.entries[trim(e.id)]=e end end
+  CV._loaded=true
  end
+ if GRM.Save and GRM.Save.Register then GRM.Save.Register("grm_civil_vehicle_market",{file=FILE,delay=2,label="гражданский рынок транспорта",build=payload})end
  local function allowed(ply,e)
   if not istable(e) then return false,"Позиция рынка не найдена" end
   if isAdmin(ply)then return true end
@@ -49,10 +63,19 @@ if SERVER then
   local garages=(GRM.Garage and GRM.Garage.ChoicesFor)and GRM.Garage.ChoicesFor(ply,nil)or{}
   return {entries=list,garages=garages,admin=isAdmin(ply)}
  end
+ CV.Viewers=CV.Viewers or {}
  function CV.Push(ply)
   local d=snapshot(ply);net.Start(CV.Net.SYNC)net.WriteTable(d)net.Send(ply)
  end
- function CV.Open(ply)net.Start(CV.Net.OPEN)net.Send(ply)CV.Push(ply)end
+ function CV.PushViewers()
+  for ply in pairs(CV.Viewers)do if IsValid(ply)then CV.Push(ply)else CV.Viewers[ply]=nil end end
+ end
+ function CV.Open(ply,source)
+  if IsValid(source)then ply.GRM_CivilMarketSource=source end
+  CV.Viewers[ply]=true
+  net.Start(CV.Net.OPEN)net.Send(ply)CV.Push(ply)
+ end
+ hook.Add("PlayerDisconnected","GRM_CivilVehicle_Viewers",function(ply)CV.Viewers[ply]=nil end)
  local function pay(ply,amount,method)
   if method=="bank"then
    if not(GRM.Economy and GRM.Economy.BankBalance and GRM.Economy.BankTake)then return false,"Банк недоступен"end
@@ -65,7 +88,13 @@ if SERVER then
  net.Receive(CV.Net.ACT,function(_,ply)
   if not IsValid(ply)then return end
   local op=net.ReadString();local d=net.ReadTable()or{}
-  if op=="refresh"then CV.Push(ply)return end
+  ply.GRM_CivilMarketNext=ply.GRM_CivilMarketNext or 0
+  if op~="refresh"and CurTime()<ply.GRM_CivilMarketNext then return end
+  ply.GRM_CivilMarketNext=CurTime()+0.3
+  local source=ply.GRM_CivilMarketSource
+  if IsValid(source)and ply:GetPos():DistToSqr(source:GetPos())>260*260 then return end
+  if op=="refresh"then CV.Viewers[ply]=true CV.Push(ply)return end
+  if op=="watch"then CV.Viewers[ply]=d.on==true if d.on==true then CV.Push(ply)end return end
   if op=="buy"then
    local e=CV.Data.entries[tostring(d.id or"")];local ok,why=allowed(ply,e)
    if not e or not ok then return end
@@ -88,10 +117,11 @@ if SERVER then
    CV.Save()CV.Push(ply)
   end
  end)
- hook.Add("InitPostEntity","GRM_CivilVehicle_Load",function()
+ local function boot()
   CV.Load()
   if GRM.Vendor and GRM.Vendor.RegisterType then GRM.Vendor.RegisterType("vehicle_market","Гражданский транспортный рынок","models/gman_high.mdl",{}) end
- end)
+ end
+ if GRM.Boot and GRM.Boot.OnMapStart then GRM.Boot.OnMapStart("GRM_CivilVehicle_Load","late",boot,{label="Гражданский рынок транспорта"})else hook.Add("InitPostEntity","GRM_CivilVehicle_Load",boot)end
  hook.Add("PlayerSay","GRM_CivilVehicle_Chat",function(ply,text)if string.lower(string.Trim(text or""))=="/transport_market"then CV.Open(ply)return""end end)
  concommand.Add("grm_civil_market",function(ply)if IsValid(ply)then CV.Open(ply)end end)
  concommand.Add("grm_civil_market_add",function(ply,_,args)
@@ -99,7 +129,7 @@ if SERVER then
   local class=trim(args[1]);local price=math.max(0,math.floor(tonumber(args[2])or 0));if class==""then return end
   local info=GRM.VehicleDealer and GRM.VehicleDealer.VehicleInfo and GRM.VehicleDealer.VehicleInfo(class)or{}
   local id="cv_"..os.time().."_"..math.random(100,999);CV.Data.entries[id]={id=id,class=class,name=trim(table.concat(args," ",3)~=""and table.concat(args," ",3)or info.name),model=tostring(info.model or""),price=price,category="Гражданский транспорт",factions={}}
-  CV.Save();if IsValid(ply)then CV.Push(ply)end
+  CV.Save("добавлена позиция");CV.PushViewers()
  end)
 end
 
@@ -108,7 +138,8 @@ if CLIENT then
  local function act(op,d)net.Start(CV.Net.ACT)net.WriteString(op)net.WriteTable(d or{})net.SendToServer()end
  local function open()
   if IsValid(CV.Frame)then CV.Frame:Remove()end
-  local f=vgui.Create("DFrame");CV.Frame=f;f:SetSize(math.Clamp(ScrW()*.78,980,1500),math.Clamp(ScrH()*.78,680,980));f:Center();f:SetTitle("ГРАЖДАНСКИЙ РЫНОК ТРАНСПОРТА");f:MakePopup()
+  local f=vgui.Create("DFrame");CV.Frame=f;f:SetSize(math.Clamp(ScrW()*.78,980,1500),math.Clamp(ScrH()*.78,680,980));f:Center();f:SetTitle("ГРАЖДАНСКИЙ РЫНОК ТРАНСПОРТА");f:MakePopup();act("watch",{on=true})
+  f.OnRemove=function()act("watch",{on=false})end
   local scroll=vgui.Create("DScrollPanel",f);scroll:Dock(FILL);scroll:DockMargin(10,34,10,10)
   local garage="";local combo=vgui.Create("DComboBox",f);combo:Dock(TOP);combo:DockMargin(10,34,10,4);combo:SetValue("Гараж для покупки")
   for _,g in ipairs(state.garages)do combo:AddChoice(g.name,g.id,g.suggested)if g.suggested then garage=g.id end end

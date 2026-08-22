@@ -120,6 +120,12 @@ function VP.ModelList()
                 if istable(entry) and entry.model then extra[#extra + 1] = entry.model end
             end
         end
+        local CV = GRM.CivilVehicles
+        if CV and istable(CV.Data) and istable(CV.Data.entries) then
+            for _, entry in pairs(CV.Data.entries) do
+                if istable(entry) and entry.model then extra[#extra + 1] = entry.model end
+            end
+        end
         sources[#sources + 1] = extra
     end
 

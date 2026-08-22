@@ -7,5 +7,5 @@ function ENT:Initialize()
  local p=self:GetPhysicsObject()if IsValid(p)then p:Wake()p:EnableMotion(false)end
 end
 function ENT:Use(ply)
- if IsValid(ply)and ply:IsPlayer()and GRM.CivilVehicles and GRM.CivilVehicles.Open then GRM.CivilVehicles.Open(ply)end
+ if IsValid(ply)and ply:IsPlayer()and GRM.CivilVehicles and GRM.CivilVehicles.Open then GRM.CivilVehicles.Open(ply,self)end
 end
