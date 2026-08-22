@@ -594,8 +594,8 @@ ok(cl:find("function ENT:Draw()", 1, true) ~= nil
    "надпись рисуется ОДИН раз за кадр (модель в Draw, номер в DrawTranslucent)")
 ok(cl:find("local fit = math.min((room * 0.88)", 1, true) ~= nil,
    "номер автоматически вписывается в поле знака по ширине и высоте")
-ok(cl:find("nrm:Dot(lp:EyePos() - center) <= 0 then return end", 1, true) ~= nil,
-   "номер фиксирован на лицевой стороне и не переворачивается за игроком")
+ok(cl:find("nrm = nrm * -1", 1, true) ~= nil and cl:find("right = right * -1", 1, true) ~= nil,
+   "номер фиксированно рисуется на внешней, противоположной кузову стороне")
 ok(cl:find("local lift = (face.thickness or 1) * 0.5", 1, true) ~= nil,
    "надпись лежит на самой поверхности знака, а не висит перед ним")
 
