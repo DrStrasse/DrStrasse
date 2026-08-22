@@ -435,6 +435,22 @@ PL.LooksLikeVehicle = looksLikeVehicle
 PL.IssueHints = { "полиц", "police", "ordnung", "инспек", "ваи", "gendarm", "жандарм", "дорожн", "гаи" }
 
 --- Кто вправе выдавать и аннулировать номера.
+--[[ РЕГИСТРАЦИЯ ПРАВ В ДВУХ МЕСТАХ, ГДЕ ИХ ИЩЕТ ВЛАДЕЛЕЦ.
+     Раньше код спрашивал права `plates.issue` и `plates_issue`, но нигде их
+     не объявлял — значит, в списках они не появлялись и выдать их было
+     негде (вопрос владельца 22.08). Теперь:
+       • `/admin` → Привилегии — capability платформы (группам и игрокам);
+       • `/factions` → Доступы — право организации (должностям и отделам),
+         оно объявлено в GRM.FactionPerms.Permissions. ]]
+if GRM.Access and GRM.Access.Register then
+    GRM.Access.Register("plates.issue", {
+        label = "Номерные знаки: регистрация и аннулирование", scope = "character",
+    })
+    GRM.Access.Register("plates.check", {
+        label = "Номерные знаки: проверка по базе", scope = "character",
+    })
+end
+
 --[[ Кто вправе регистрировать номера — и ПОЧЕМУ.
      Возвращаем не только да/нет, но и причину: игрок должен видеть в окне,
      сотрудник он или гражданский, а не гадать, куда делся раздел выдачи
@@ -476,6 +492,9 @@ end
 function PL.CanCheck(ply)
     if PL.CanIssue(ply) then return true end
     if not IsValid(ply) then return false end
+    if GRM.Access and GRM.Access.Can and GRM.Access.Can(ply, "plates.check") then return true end
+    if GRM.FactionPerms and GRM.FactionPerms.PlayerHasPermission
+        and GRM.FactionPerms.PlayerHasPermission(ply, "plates_check") then return true end
     if GRM.PCBoard and GRM.PCBoard.PlayerLevel then
         local level = GRM.PCBoard.PlayerLevel(ply)
         if level ~= nil and level ~= "none" then return true end
@@ -1658,14 +1677,16 @@ if CLIENT then
 
             if not PL.IsOfficer then
                 local howto = vgui.Create("DPanel", content)
-                howto:Dock(TOP) howto:SetTall(62) howto:DockMargin(0, 0, 4, 8)
+                howto:Dock(TOP) howto:SetTall(76) howto:DockMargin(0, 0, 4, 8)
                 howto.Paint = function(_, w, h)
                     draw.RoundedBox(8, 0, 0, w, h, C.card)
                     draw.SimpleText("КАК ПОЛУЧИТЬ НОМЕР", "GRMPlate_Body", 14, 10, C.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                     draw.SimpleText("Номер выдаёт сотрудник Полиции порядка, Жандармерии или Автоинспекции в этой же вкладке.",
-                        "GRMPlate_Small", 14, 28, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                        "GRMPlate_Small", 14, 26, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                     draw.SimpleText("Получив номер, возьмите бланк кнопкой «ПОЛУЧИТЬ БЛАНК» и закрепите его на машине по [E].",
-                        "GRMPlate_Small", 14, 42, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                        "GRMPlate_Small", 14, 40, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText("Руководителю: право даётся в /factions → «Доступы» («Регистрация номерных знаков») или в /admin → «Привилегии» (plates.issue).",
+                        "GRMPlate_Small", 14, 56, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                 end
             end
 

@@ -726,5 +726,21 @@ ok(psrc:find('low:find("^/номер_выдать") == 1', 1, true) ~= nil
 ok(psrc:find('low == "/номер_статус"', 1, true) ~= nil,
    "команда /номер_статус объясняет права прямо в чат")
 
+-- 22.08: право нужно не только проверять, но и ВЫДАВАТЬ — значит оно должно
+-- быть объявлено в обоих списках, где владелец его ищет.
+ok(psrc:find('GRM.Access.Register("plates.issue"', 1, true) ~= nil
+   and psrc:find('GRM.Access.Register("plates.check"', 1, true) ~= nil,
+   "привилегии объявлены в платформе (/admin → Привилегии)")
+local perms = (function()
+    local f = io.open("lua/autorun/sh_grm_faction_perms.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+ok(perms:find("plates_issue = ", 1, true) ~= nil and perms:find("plates_check = ", 1, true) ~= nil,
+   "права организации объявлены (/factions → Доступы)")
+ok(psrc:find("PlayerHasPermission(ply, \"plates_check\")", 1, true) ~= nil,
+   "проверка номеров тоже уважает право организации")
+ok(psrc:find("Руководителю: право даётся в /factions", 1, true) ~= nil,
+   "в окне написано, где выдать право")
+
 print(("\nPLATES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end
