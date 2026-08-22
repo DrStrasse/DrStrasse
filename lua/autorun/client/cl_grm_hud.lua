@@ -87,6 +87,36 @@ end
 
 function GRM.HUD.RemoveBar(id) GRM.HUD.Bars[tostring(id or "")] = nil end
 
+-- Autorun грузится по алфавиту: Food/Movement могут выполниться РАНЬШЕ HUD
+-- и тогда не увидеть RegisterBar. Базовые провайдеры регистрируются здесь
+-- повторно; если модуль загрузился позже, он просто заменит тот же id своим
+-- более детальным вариантом.
+GRM.HUD.RegisterBar("hunger", {
+    label = "СЫТОСТЬ", order = 50,
+    Get = function()
+        local food = GRM.Food or {}
+        local cfg = food.Config or {}
+        local max = tonumber(cfg.HungerMax) or 100
+        local value = math.Clamp(tonumber(food.ClientHunger) or max, 0, max)
+        local frac = value / math.max(1, max)
+        local color = frac < 0.2 and Color(235, 75, 80) or (frac < 0.5 and Color(245, 180, 60) or Color(78, 210, 128))
+        local text = frac <= 0 and "ГОЛОДАНИЕ" or (math.floor(value) .. "%")
+        return value, max, text, color
+    end,
+})
+
+GRM.HUD.RegisterBar("stamina", {
+    label = "ВЫНОСЛИВОСТЬ", order = 30,
+    Get = function()
+        local move = GRM.Movement or {}
+        local max = tonumber(move.Config and move.Config.StaminaMax) or 100
+        local value = math.Clamp(tonumber(GRM.LocalStamina) or max, 0, max)
+        local frac = value / math.max(1, max)
+        local color = frac < 0.3 and Color(220, 80, 80) or (frac < 0.6 and Color(220, 200, 80) or Color(80, 220, 200))
+        return value, max, math.floor(value) .. "%", color
+    end,
+})
+
 --- Полосы по порядку (чистая функция — гоняется стендом).
 function GRM.HUD.BarList()
     local out = {}

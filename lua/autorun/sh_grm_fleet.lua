@@ -1300,10 +1300,10 @@ if SERVER then
     function FL.Push(ply)
         if not IsValid(ply) then return end
         local data = snapshot(ply)
-        if GRM.Net and GRM.Net.Stream then
-            GRM.Net.Stream(FL.Net.SYNC, data, ply, { chunk = 8192, interval = 0.03 })
-            return
-        end
+        -- Снимок автопарка мал (рынок, единицы, гаражи одной организации).
+        -- Для интерактивной вкладки компьютера важнее атомарный ответ на
+        -- кнопку «Обновить», чем поток с отложенными кусками: terminal UI
+        -- может пересоздаться между chunk-пакетами и оставить старый снимок.
         net.Start(FL.Net.SYNC)
             net.WriteString(data.faction)
             net.WriteUInt(data.budget, 32)
