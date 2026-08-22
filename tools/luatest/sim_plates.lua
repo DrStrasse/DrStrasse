@@ -826,6 +826,11 @@ ok(psrc:find("function PL.EnsureServicePlate(ply, ent, faction, uid)", 1, true) 
    "ручной инструмент выдачи служебного номера остался")
 ok(psrc:find('hook.Add("GRM_FleetIssued", "GRM_Plates_ServiceAuto"', 1, true) == nil,
    "автоматической выдачи и крепления номера у машин автопарка больше НЕТ")
+ok(psrc:find('hook.Add("GRM_FleetIssued", "GRM_Plates_FleetRestore"', 1, true) ~= nil,
+   "ручной номер за единицей автопарка возвращается при выдаче")
+ok(psrc:find("function PL.RestoreFleetPlate(ent, uid)", 1, true) ~= nil
+   and psrc:find("local existing = PL.PlateOfVehicleKey(uid)", 1, true) ~= nil,
+   "RestoreFleetPlate только возвращает существующий номер, новый не создаёт")
 ok(psrc:find("function PL.MountOnRear(plate, veh, actor)", 1, true) ~= nil,
    "знак вешается на задний борт по габаритам машины")
 ok(psrc:find('CreateConVar("grm_plates_auto_service", "0"', 1, true) ~= nil,

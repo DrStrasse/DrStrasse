@@ -1326,10 +1326,42 @@ if SERVER then
         return PL.MountOnRear(plate, ent, ply)
     end
 
+    --[[ ВЕРНУТЬ РУЧНОЙ НОМЕР ЗА ЕДИНИЦЕЙ АВТОПАРКА.
+         Автоматическая генерация номера у автопарка отключена, но если
+         сотрудник зарегистрировал номер вручную (UID "fleet:<id>"), он
+         должен вернуться на ту же машину при следующей выдаче — как у
+         личного транспорта. Здесь только «вернуть», новый номер НЕ
+         создаётся. ]]
+    function PL.RestoreFleetPlate(ent, uid)
+        if not IsValid(ent) then return 0 end
+        uid = tostring(uid or ((GRM.Vehicles and GRM.Vehicles.EnsureUID) and GRM.Vehicles.EnsureUID(ent) or ""))
+        if uid == "" then return 0 end
+        local existing = PL.PlateOfVehicleKey(uid)
+        if existing == "" then return 0 end
+        if #PL.VehiclePlates(ent) > 0 then return 1 end
+        local rec = PL.Get(existing)
+        local mount = rec and istable(rec.mount) and rec.mount or nil
+        local owner = IsValid(ent.GRMGarageOwner) and ent.GRMGarageOwner or nil
+        local plate = PL.SpawnPlate(existing,
+            mount and ent:LocalToWorld(Vector(mount.pos.x, mount.pos.y, mount.pos.z)) or ent:GetPos(),
+            mount and ent:LocalToWorldAngles(Angle(mount.ang.p, mount.ang.y, mount.ang.r)) or ent:GetAngles(),
+            owner)
+        if not IsValid(plate) then return 0 end
+        if mount then PL.Attach(plate, ent, owner) else PL.MountOnRear(plate, ent, owner) end
+        return 1
+    end
+
     --[[ Автоматический вызов EnsureServicePlate для единиц автопарка
          убран по заказу владельца 22.08: закупленная в автопарк техника
          не должна получать гражданский/ведомственный номер сама. Номер
          таким машинам ставится вручную, как и личному транспорту. ]]
+    hook.Add("GRM_FleetIssued", "GRM_Plates_FleetRestore", function(ply, ent, unit)
+        if not (IsValid(ent) and istable(unit)) then return end
+        timer.Simple(0.2, function()
+            if not IsValid(ent) then return end
+            PL.RestoreFleetPlate(ent, "fleet:" .. tostring(unit.id))
+        end)
+    end)
 
     --[[ МАШИНУ УБРАЛИ — НОМЕР ОСТАЛСЯ ЗА НЕЙ.
          Когда машина уезжает в гараж или удаляется с карты, её знаки

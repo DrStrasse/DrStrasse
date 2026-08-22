@@ -373,7 +373,9 @@ net.Receive("GRM_VD_Open", function()
                           Derma_Query(("Закупить «%s» в автопарк организации за %s?\nМашина встанет в парк отдельной единицей — выдать её можно будет в разделе «Техника организации».")
                                   :format(tostring(v.name or v.class), money(v.price or 0)),
                               "Закупка служебной техники",
-                              "Закупить", function() send(dealer, "fleet_buy", v.class, targetGarage) end,
+                              "Закупить", function()
+                                  send(dealer, "fleet_buy", v.class, targetGarage, tostring(v.marketID or ""))
+                              end,
                               "Отмена")
                           return
                       end

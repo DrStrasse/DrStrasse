@@ -97,10 +97,16 @@ do
 
     ok(hasT(fleet, "function FL.DealerMarket()"),
         "ассортимент дилеров попадает в рынок закупок автопарка")
-    ok(hasT(fleet, 'local id = "dealer:" .. class .. ":" .. faction'),
+    ok(hasT(fleet, "function FL.DealerEntryID(dealer, entry)"),
         "у дилерской позиции устойчивый идентификатор")
-    ok(hasT(fleet, 'if string.sub(id, 1, 7) == "dealer:" then return FL.DealerMarket()[id] end'),
-        "закупка находит дилерскую позицию по тому же id")
+    ok(hasT(fleet, '("dealer:%s:%s:%s"):format(class, faction, tostring(crc))'),
+        "id включает цену/категорию — у разных ценников разные позиции")
+    ok(hasT(core, "marketID=(VD.EntryKind(e)~=\"personal\")and mk or\"\""),
+        "дилер кладёт в каталог точный id закупаемой позиции")
+    ok(hasT(core, 'local marketID=net.ReadString()or""'),
+        "сервер закупки получает точный id с карточки")
+    ok(hasT(core, 'if exact and tostring(exact.class)==class then') and hasT(core, "Цена позиции изменилась"),
+        "при изменившейся цене сервер не берёт другую карточку молча")
     ok(hasT(fleet, "for id, entry in pairs(FL.DealerMarket and FL.DealerMarket() or {}) do"),
         "список рынка объединяет оба источника")
     ok(hasT(core, 'elseif op=="fleet_buy"then'),
@@ -109,8 +115,8 @@ do
         "закупка идёт через единый FL.Buy: бюджет, лимиты, гараж")
     ok(hasT(cl, "ЗАКУПИТЬ В АВТОПАРК"),
         "служебная позиция у дилера теперь закупается, а не выдаётся сразу")
-    ok(hasT(cl, 'send(dealer, "fleet_buy", v.class, targetGarage)'),
-        "кнопка шлёт закупку с выбранным гаражом приписки")
+    ok(hasT(cl, 'send(dealer, "fleet_buy", v.class, targetGarage, tostring(v.marketID or ""))'),
+        "кнопка шлёт закупку с выбранным гаражом и точным ID позиции")
 
     --[[ «Убрать в гараж» должно быть доступно и личной машине, и служебному
          фракционному авто: у дилера в разделе «На карте» активная техника

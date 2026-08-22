@@ -181,9 +181,34 @@ FL.Active = FL.Active or {}   -- id -> живая машина
        • собственный рынок автопарка (вкладка «Рынок» у суперадмина);
        • служебные позиции ассортимента ДИЛЕРОВ на карте — они попадают
          сюда автоматически, с ценой, организацией и категорией дилера.
-     Идентификатор дилерской позиции: "dealer:<класс>:<организация>".
+     Идентификатор дилерской позиции строится через FL.DealerEntryID:
+     он включает дилера, класс, организацию, ЦЕНУ и категорию — поэтому у
+     двух карточек одного класса с разным ценником НЕ общая позиция.
      Закупленная техника в обоих случаях становится ЕДИНИЦЕЙ парка —
      одна машина, один слот, одна ячейка. ]]
+    local function dealerTag(dealer)
+        if IsValid(dealer) and dealer.GetDealerID then
+            return tostring(dealer:GetDealerID() or "")
+        end
+        return ""
+    end
+
+    --- Устойчивый идентификатор ОДНОЙ карточки ассортимента дилера.
+    --  Закупка у дилера из окна каталога должна использовать ту же цену,
+    --  которая была показана на карточке. Раньше сервер искал по классу и
+    --  мог взять позицию другой организации/другой цены.
+    function FL.DealerEntryID(dealer, entry)
+        local class = tostring(entry and entry.class or "")
+        if class == "" then return "" end
+        local faction = tostring(entry and entry.faction or "")
+        local price = math.max(0, math.floor(tonumber(entry and entry.price) or 0))
+        local category = tostring(entry and entry.category or "")
+        local name = tostring(entry and entry.name or "")
+        local key = table.concat({ dealerTag(dealer), class, faction, tostring(price), category, name }, ":")
+        local crc = (util.CRC and util.CRC(key)) or class
+        return ("dealer:%s:%s:%s"):format(class, faction, tostring(crc))
+    end
+
 function FL.DealerMarket()
     local out = {}
     if not SERVER then return out end
@@ -198,8 +223,8 @@ function FL.DealerMarket()
                 if kind ~= "personal" then
                     local class = tostring(entry.class or "")
                     local faction = tostring(entry.faction or "")
-                    local id = "dealer:" .. class .. ":" .. faction
-                    if class ~= "" and not seen[id] then
+                    local id = FL.DealerEntryID(dealer, entry)
+                    if class ~= "" and id ~= "" and not seen[id] then
                         seen[id] = true
                         local info = VD.VehicleInfo(class)
                         out[id] = {

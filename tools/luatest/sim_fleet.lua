@@ -444,5 +444,52 @@ do
     ok(has('concommand.Add("grm_fleet_save"'), "есть принудительная запись с проверкой")
 end
 
+print("\n=== ДВА ДИЛЕРА, ОДИН КЛАСС, РАЗНЫЕ ЦЕНЫ (22.08) ===")
+do
+    -- Мок util.CRC в этом файле давал СЛЕДУЮЩИЙ номер на каждый вызов, поэтому
+    -- id получался разным между двумя вызовами. На живом GMod util.CRC
+    -- детерминированный; здесь подменяем только на время стенда.
+    local crcReal = util.CRC
+    util.CRC = function(s)
+        local h = 0
+        s = tostring(s or "")
+        for i = 1, #s do h = (h * 131 + string.byte(s, i)) % 2147483647 end
+        return string.format("%08x", h)
+    end
+
+    GRM.VehicleDealer.EntryKind = function(entry)
+        local kind = tostring(entry and entry.ownershipType or "")
+        if kind ~= "" then return kind end
+        if entry and entry.service then return entry.faction and entry.faction ~= "" and "government" or "public" end
+        return "personal"
+    end
+    local d1 = ents.Create("sent_vehicle_dealer")
+    d1.GetDealerID = function() return "dealer_A" end
+    d1.GetDealerName = function() return "Дилер А" end
+    d1.VD_Vehicles = { { class = "sim_patrol", name = "Патрульный", price = 1000,
+        category = "Служебные", faction = "police", service = true, ownershipType = "government" } }
+    local d2 = ents.Create("sent_vehicle_dealer")
+    d2.GetDealerID = function() return "dealer_B" end
+    d2.GetDealerName = function() return "Дилер Б" end
+    d2.VD_Vehicles = { { class = "sim_patrol", name = "Патрульный улучшенный", price = 9999,
+        category = "Служебные", faction = "police", service = true, ownershipType = "government" } }
+
+    local market = FL.DealerMarket()
+    local n, p1, p2 = 0, nil, nil
+    for _, e in pairs(market) do
+        n = n + 1
+        if e.price == 1000 then p1 = e.id end
+        if e.price == 9999 then p2 = e.id end
+    end
+    ok(n == 2, "у двух карточек одного класса с разными ценами — ДВЕ позиции закупки", n)
+    ok(p1 ~= nil and p2 ~= nil and p1 ~= p2, "id позиций не совпадают даже при одном классе", tostring(p1) .. " vs " .. tostring(p2))
+    ok(FL.Entry(p1) and FL.Entry(p1).price == 1000, "FL.Entry по id возвращает цену именно этой карточки", FL.Entry(p1) and FL.Entry(p1).price)
+    ok(FL.Entry(p2) and FL.Entry(p2).price == 9999, "вторая карточка тоже находит СВОЮ цену", FL.Entry(p2) and FL.Entry(p2).price)
+    ok(FL.DealerEntryID(d1, d1.VD_Vehicles[1]) == p1, "id строится детерминированно для первой карточки")
+    ok(FL.DealerEntryID(d2, d2.VD_Vehicles[1]) == p2, "id второй карточки тоже детерминирован")
+
+    util.CRC = crcReal
+end
+
 print(("\nFLEET: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end
