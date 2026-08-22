@@ -512,12 +512,10 @@ if SERVER then
         return { version = 2, map = fleetMapName(), savedAt = os.time(), units = arr }
     end
 
-    --[[ Двойная запись критичного парка. Одна синхронная file.Write не даёт
-         гарантии при падении/жёстком рестарте: на диске может остаться пустой
-         или оборванный JSON. Сначала проверяем временную копию, затем основной
-         файл и только после read-back обновляем резерв. При следующем старте
-         readJSON поднимет резерв и вылечит основной файл. ]]
-    local function tempPath(path) return path .. ".tmp" end
+    -- Запись сделана тем же нативным способом, что у работающего модуля
+    -- гаражей: TableToJSON → file.Write → непустой read-back. Строгая
+    -- самопроверка JSON/tmp/.bak здесь сама блокировала покупку на живом
+    -- сервере, хотя file.Write был доступен.
     local function backupPath(path) return path .. ".bak" end
 
     local function decodeJSON(raw)
@@ -530,20 +528,12 @@ if SERVER then
         ensureDir()
         local ok, txt = pcall(util.TableToJSON, tbl, true)
         if not ok or not isstring(txt) or txt == "" then return false end
-
-        local tmp = tempPath(path)
-        file.Write(tmp, txt)
-        if file.Read(tmp, "DATA") ~= txt then return false end
-
         file.Write(path, txt)
-        if file.Read(path, "DATA") ~= txt or not decodeJSON(txt) then
+        local back = file.Read(path, "DATA")
+        if not back or back == "" then
+            print("[GRM Fleet] SAVE read-back пуст: " .. tostring(path))
             return false
         end
-
-        -- Резерв содержит последнюю ПОДТВЕРЖДЁННУЮ запись, не старую копию.
-        file.Write(backupPath(path), txt)
-        if file.Read(backupPath(path), "DATA") ~= txt then return false end
-        if file.Delete then file.Delete(tmp) end
         return true
     end
 
@@ -565,15 +555,14 @@ if SERVER then
         if not FL._loaded then return false end
         local data = fleetPayload()
         local mainOK = writeJSON(fleetFile(), data)
+        -- Зеркало только страховка; его отказ не отменяет настоящую покупку,
+        -- если основной файл успешно записался и прочитался.
         local mirrorOK = writeJSON(fleetMirrorFile(), data)
-        local ok = mainOK and mirrorOK
-        -- Эта строка намеренно всегда в консоли: при репорте «после
-        -- рестарта пусто» она даёт путь и факт read-back, а не догадки.
         print(("[GRM Fleet] SAVE %s · units=%d · main=%s · mirror=%s"):format(
-            ok and "OK" or "ОШИБКА", #((istable(data) and data.units) or {}),
+            mainOK and "OK" or "ОШИБКА", #((istable(data) and data.units) or {}),
             fleetFile(), fleetMirrorFile()))
         debugPrint(("SAVE fleet main=%s mirror=%s"):format(tostring(mainOK), tostring(mirrorOK)))
-        return ok
+        return mainOK
     end
 
     if GRM.Save and GRM.Save.Register then

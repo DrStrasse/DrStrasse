@@ -711,23 +711,11 @@ do
     ok(FL.Unit(bought[2].id) ~= nil, "вторая закупленная единица тоже на месте", bought[2].id)
 
     -- Жёсткий рестарт иногда оставляет нулевой/оборванный основной JSON.
-    -- Резерв обязан вернуть закупку и восстановить рабочий файл, а не
-    -- позволить FL.Load начать парк с пустой таблицы.
+    -- Независимое зеркало возвращает купленные единицы.
     local fleetPath = "grm_fleet/fleet_sim_map.json"
-    local backupPath = fleetPath .. ".bak"
-    ok(FS[backupPath] ~= nil, "у парка есть подтверждённый резерв", backupPath)
-    FS[fleetPath] = "" -- пустой файл: JSONToTable обязан отвергнуть его
-    FL.Units, FL.Market, FL.DealerOverrides = {}, {}, {}
-    FL._loaded = false
-    FL.Load()
-    ok(table.Count(FL.Units) == before, "битый основной файл восстанавливает закупки из резерва", table.Count(FL.Units))
-    ok(FS[fleetPath] == FS[backupPath], "резерв лечит основной файл после битой записи")
-
-    -- Даже если основная пара main/.bak обнулена сторонним писателем,
-    -- независимое зеркало возвращает купленные единицы.
     local mirrorPath = "grm_fleet/fleet_recovery_sim_map.json"
     ok(FS[mirrorPath] ~= nil, "есть независимое зеркало автопарка", mirrorPath)
-    FS[fleetPath], FS[backupPath] = "", ""
+    FS[fleetPath] = ""
     FL.Units, FL.Market, FL.DealerOverrides = {}, {}, {}
     FL._loaded = false
     FL.Load()
