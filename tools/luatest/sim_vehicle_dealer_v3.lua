@@ -6,6 +6,10 @@ ok(has(core,'VD.Version="3.8.0"'),"dealer v3.8: гаражи, лимит по к
 ok(has(core,"VD.GarageFile")and has(core,"CharacterKey"),"garage persists per CharacterKey")
 ok(has(core,"function VD.VehicleInfo")and has(core,'list.Get("simfphys_vehicles")')and has(core,'list.Get("LVS_Vehicles")'),"Source simfphys and LVS registries")
 ok(has(core,"SpawnVehicleSimple")and has(core,"simfphys fallback")and has(core,"LVS SpawnFunction")and has(core,"scripted entity"),"legacy-compatible multi-stage vehicle spawn fallbacks")
+    local simpleAt = core:find('attempt("simfphys.SpawnVehicleSimple"', 1, true)
+    local guardedAt = core:find('attempt("simfphys.SpawnVehicle"', 1, true)
+    ok(simpleAt and guardedAt and simpleAt < guardedAt,
+        "simfphys SpawnVehicleSimple вызывается раньше конфликтного SpawnVehicle")
 ok(has(core,"function VD.FindDeliveryPosition")and has(core,"function VD.FindSpawnPoint")and has(core,"TraceHull")and has(core,"Площадка выдачи занята"),"delivery point/zone searches safe unoccupied points")
 ok(has(core,"hasSpawnZone")and has(core,"spawnZoneMin")and has(core,"spawnZoneMax")and has(core,"SetSpawnPos(hasPad and((padMin+padMax)*.5)or legacyPoint)"),"zone persisted; legacy point stays a point (v3.1.2)")
 ok(has(tool,"GRM_Transport_ToolReq")and has(tool,"DrawWireframeBox")and has(tool,"spawnPos"),"transport tool requests and draws garages, slots and dealer points")

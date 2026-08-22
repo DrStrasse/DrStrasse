@@ -242,8 +242,12 @@ if SERVER then
   local simList=list.Get("simfphys_vehicles")or{};local simData=simList[class]
   if simData then
    local spawnName=tostring(simData.SpawnList or class)
-   if simfphys and isfunction(simfphys.SpawnVehicle)then attempt("simfphys.SpawnVehicle",function()return simfphys.SpawnVehicle(ply,p,a,spawnName)end)end
-   if not IsValid(ent)and simfphys and isfunction(simfphys.SpawnVehicleSimple)then attempt("simfphys.SpawnVehicleSimple",function()return simfphys.SpawnVehicleSimple(spawnName,p,a)end)end
+   -- SpawnVehicleSimple — штатный API simfphys для серверного создания
+   -- машины по spawn-name. Некоторые armed-паки переопределяют
+   -- SpawnVehicle и возвращают «живую» base-entity без корпуса; из-за
+   -- этого автопарк отмечал технику выданной, а на стоянке было пусто.
+   if simfphys and isfunction(simfphys.SpawnVehicleSimple)then attempt("simfphys.SpawnVehicleSimple",function()return simfphys.SpawnVehicleSimple(spawnName,p,a)end)end
+   if not IsValid(ent)and simfphys and isfunction(simfphys.SpawnVehicle)then attempt("simfphys.SpawnVehicle",function()return simfphys.SpawnVehicle(ply,p,a,spawnName)end)end
   end
   if not IsValid(ent)then
    for registryClass,data in pairs(simList)do if registryClass==class or tostring(data.SpawnList or"")==class then local spawnName=tostring(data.SpawnList or registryClass);if simfphys and isfunction(simfphys.SpawnVehicle)then attempt("simfphys fallback",function()return simfphys.SpawnVehicle(ply,p,a,spawnName)end)end;if IsValid(ent)then break end end end
