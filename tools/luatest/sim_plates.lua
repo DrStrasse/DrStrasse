@@ -661,11 +661,33 @@ local dealer = (function()
     local f = io.open("lua/entities/sent_vehicle_dealer/cl_init.lua", "rb")
     local t = f:read("*a") f:close() return t
 end)()
-ok(dealer:find("local function garageCell(parent, v)", 1, true) ~= nil
-   and dealer:find('vgui.Create("DIconLayout", list)', 1, true) ~= nil,
+ok(dealer:find("local function garageCell(grid, v)", 1, true) ~= nil
+   and dealer:find("GRM.VehicleCells.Grid(list)", 1, true) ~= nil,
    "транспорт у дилера показан ячейками, как инвентарь")
-ok(dealer:find('plate ~= "" and plate or "БЕЗ НОМЕРА"', 1, true) ~= nil,
+local cells = (function()
+    local f = io.open("lua/autorun/client/cl_grm_vehicle_cells.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+ok(cells:find('plate ~= "" and plate or "БЕЗ НОМЕРА"', 1, true) ~= nil,
    "в ячейке видно номерной знак машины")
+ok(dealer:find("plate = v.plate", 1, true) ~= nil, "номер уходит в ячейку у дилера")
+
+-- 22.08: ячейка одна на все окна — дилер, гараж, автопарк
+local garageUI = (function()
+    local f = io.open("lua/autorun/client/cl_grm_garage_ui.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+local fleetSrc = (function()
+    local f = io.open("lua/autorun/sh_grm_fleet.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+ok(garageUI:find("VC.Cell(personalGrid", 1, true) ~= nil
+   and garageUI:find("VC.Cell(fleetGrid", 1, true) ~= nil,
+   "в окне гаража ячейки и у личного, и у СЛУЖЕБНОГО транспорта")
+ok(fleetSrc:find("VC.Cell(grid, {", 1, true) ~= nil,
+   "вкладка «Автопарк» организации тоже на ячейках")
+ok(fleetSrc:find('PlateOfVehicleKey("fleet:"', 1, true) ~= nil,
+   "у служебной техники в ячейке свой номер")
 ok(dealer:find("local function garageCard", 1, true) == nil,
    "старые строки-карточки гаража удалены, копий разметки нет")
 

@@ -1298,12 +1298,20 @@ if CLIENT then
             for g, v in pairs(draft.bodygroups or {}) do
                 ent:SetBodygroup(tonumber(g) or 0, tonumber(v) or 0)
             end
-            -- камера по габаритам модели: персонаж всегда в кадре целиком
+            --[[ Камера по габаритам модели с запасом: персонаж должен
+                 влезать целиком, с воздухом сверху и снизу (заказ 22.08 —
+                 «модельки не влазят»). Расстояние считаем из угла обзора:
+                 половина роста / tg(FOV/2), плюс 35% запаса. ]]
             local mn, mx = ent:GetRenderBounds()
             local center3 = (mn + mx) * 0.5
-            local size = mx.z - mn.z
+            local height = math.max(16, mx.z - mn.z)
+            local width = math.max(16, math.max(mx.x - mn.x, mx.y - mn.y))
+            local fov = 34
+            preview:SetFOV(fov)
+            local need = math.max(height, width * 1.2) * 0.5
+            local dist = (need / math.tan(math.rad(fov * 0.5))) * 1.35
             preview:SetLookAt(Vector(0, 0, center3.z))
-            preview:SetCamPos(Vector(size * 1.05, size * 0.9, center3.z + size * 0.18))
+            preview:SetCamPos(Vector(dist, dist * 0.22, center3.z + height * 0.06))
             modelName:SetText("Модель: " .. tostring(draft.model))
         end
 

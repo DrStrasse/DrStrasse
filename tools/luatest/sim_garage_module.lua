@@ -145,5 +145,22 @@ ok(has(vdcl, "Гараж: автоматически"), "в окне есть в
 ok(has(vdcl, 'send(dealer, "buy", v.class, targetGarage, "store")'), "покупка отправляет выбранный гараж приписки")
 ok(has(vdcl, "мест %d/%d"), "видно свободные места в каждом гараже")
 
+print("\n=== ЗАНЯТОСТЬ МЕСТА СЧИТАЕТСЯ ПО ГАБАРИТАМ ===")
+do
+    local src = (function()
+        local f = io.open("lua/autorun/sh_grm_garage.lua", "rb")
+        local t = f:read("*a") f:close() return t
+    end)()
+    local function has(n) return src:find(n, 1, true) ~= nil end
+    ok(has("function G.BoxesOverlap(aMin, aMax, bMin, bMax, margin)"),
+       "чистая проверка пересечения габаритов объявлена")
+    ok(has("function G.SlotBounds(slot)") and has("G.SlotBox"),
+       "у места есть свой габарит, а не только точка")
+    ok(has("local mn, mx = ent:WorldSpaceAABB()") and has("G.BoxesOverlap(smin, smax"),
+       "занятость решается пересечением кузова с местом, а не расстоянием до origin")
+    ok(has("G.SlotRadius + 320"),
+       "кандидаты ищутся широким радиусом: origin машины может быть далеко от места")
+end
+
 print(("\nGARAGE MODULE: %d/%d, провалов: %d"):format(total - fails, total, fails))
 if fails > 0 then os.exit(1) end

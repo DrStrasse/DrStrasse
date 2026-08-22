@@ -153,36 +153,30 @@ function G.OpenWindow(data)
         end
     end
 
+    --[[ Личный транспорт — ячейками (общий слой GRM.VehicleCells): одна и
+         та же карточка у дилера, в гараже и в автопарке. ]]
+    local VC = GRM.VehicleCells
+    local personalGrid = (VC and #rows > 0) and VC.Grid(list) or nil
     for _, v in ipairs(rows) do
-        local card = vgui.Create("DPanel", list)
-        card:Dock(TOP) card:SetTall(112) card:DockMargin(0, 0, 6, 8)
-        card.Paint = function(self, w, h)
-            draw.RoundedBox(8, 0, 0, w, h, self:IsHovered() and C.cardHov or C.card)
-            surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
-            draw.SimpleText(tostring(v.name or v.class), "GRMGar_Head", 126, 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            draw.SimpleText(tostring(v.class or ""), "GRMGar_Small", 126, 38, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            local state = v.onMap and ("на карте • " .. tostring(v.distance or 0) .. " юн.") or "в гараже"
-            draw.SimpleText(state, "GRMGar_Body", 126, 60, v.onMap and C.gold or C.green, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            local home = v.homeName ~= "" and ("приписан: " .. v.homeName) or "гараж не назначен"
-            draw.SimpleText(home, "GRMGar_Small", 126, 84, v.here and C.teal or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-        end
-
-        local m = vgui.Create("DModelPanel", card)
-        m:SetPos(10, 10) m:SetSize(106, 92)
-        preview(m, v.model)
-
-        local actions = vgui.Create("DPanel", card)
-        actions:Dock(RIGHT) actions:SetWide(210) actions:DockMargin(6, 10, 12, 10)
-        actions:SetPaintBackground(false)
-
-        local main = button(actions, v.onMap and "УБРАТЬ В ГАРАЖ" or "ВЫДАТЬ", v.onMap and C.accent or C.green)
-        main:Dock(TOP) main:SetTall(40)
-        main.DoClick = function() G.SendAction(v.onMap and "store" or "retrieve", v.id) end
-
-        if not v.here then
-            local home = button(actions, "ПРИПИСАТЬ СЮДА", C.cardHov)
-            home:Dock(BOTTOM) home:SetTall(30)
-            home.DoClick = function() G.SendAction("sethome", v.id) end
+        if personalGrid then
+            local buttons = {
+                { label = v.onMap and "УБРАТЬ В ГАРАЖ" or "ВЫДАТЬ",
+                  color = v.onMap and C.accent or C.green,
+                  fn = function() G.SendAction(v.onMap and "store" or "retrieve", v.id) end },
+            }
+            if not v.here then
+                buttons[#buttons + 1] = { label = "ПРИПИСАТЬ СЮДА", color = C.cardHov,
+                    fn = function() G.SendAction("sethome", v.id) end }
+            end
+            VC.Cell(personalGrid, {
+                name = v.name or v.class, class = v.class, model = v.model, plate = v.plate,
+                state = { text = v.onMap and ("на карте • " .. tostring(v.distance or 0) .. " юн.") or "в гараже",
+                          good = not v.onMap },
+                lines = {
+                    { text = (v.homeName or "") ~= "" and ("Приписан: " .. v.homeName) or "Гараж не назначен",
+                      color = v.here and C.teal or C.dim },
+                },
+            })
         end
     end
 
@@ -202,35 +196,30 @@ function G.OpenWindow(data)
         end
     end
 
+    local fleetGrid = (VC and #fleet > 0) and VC.Grid(list) or nil
     for _, v in ipairs(fleet) do
-        local card = vgui.Create("DPanel", list)
-        card:Dock(TOP) card:SetTall(96) card:DockMargin(0, 0, 6, 8)
-        card.Paint = function(self, w, h)
-            draw.RoundedBox(8, 0, 0, w, h, self:IsHovered() and C.cardHov or C.card)
-            surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
-            draw.RoundedBox(3, 0, 0, 4, h, C.gold)
-            draw.SimpleText(tostring(v.name or v.class), "GRMGar_Head", 126, 14, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            draw.SimpleText(tostring(v.class or ""), "GRMGar_Small", 126, 38, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            draw.SimpleText(v.onMap and "на линии" or "в гараже", "GRMGar_Body", 126, 60,
-                v.onMap and C.gold or C.green, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            local note = v.allowed == false and (v.reason ~= "" and v.reason or "закреплена за другими должностями")
+        if fleetGrid then
+            local allowed = v.allowed ~= false
+            local note = (v.allowed == false)
+                and ((v.reason or "") ~= "" and v.reason or "закреплена за другими должностями")
                 or (v.restriction or "")
-            if note ~= "" then
-                draw.SimpleText(note, "GRMGar_Small", 126, 78,
-                    v.allowed == false and C.red or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            end
+            VC.Cell(fleetGrid, {
+                name = v.name or v.class, class = v.class, model = v.model, plate = v.plate,
+                accent = C.gold,
+                state = { text = v.onMap and "на линии" or "в гараже", good = not v.onMap },
+                lines = {
+                    { text = note ~= "" and note or "Доступна всем сотрудникам",
+                      color = allowed and C.dim or C.red },
+                    { text = "Служебная техника организации", color = C.gold },
+                },
+                buttons = {
+                    { label = v.onMap and "ВЕРНУТЬ В ГАРАЖ" or (allowed and "ВЫДАТЬ СЛУЖЕБНУЮ" or "НЕ ПОЛОЖЕНА"),
+                      color = v.onMap and C.accent or (allowed and C.green or C.cardHov),
+                      enabled = (v.onMap or allowed) == true,
+                      fn = function() G.SendAction(v.onMap and "fleet_store" or "fleet_issue", v.id) end },
+                },
+            })
         end
-
-        local m = vgui.Create("DModelPanel", card)
-        m:SetPos(10, 8) m:SetSize(106, 80)
-        preview(m, v.model)
-
-        local allowed = v.allowed ~= false
-        local main = button(card, v.onMap and "ВЕРНУТЬ В ГАРАЖ" or (allowed and "ВЫДАТЬ СЛУЖЕБНУЮ" or "НЕ ПОЛОЖЕНА"),
-            v.onMap and C.accent or (allowed and C.green or C.cardHov))
-        main:Dock(RIGHT) main:SetWide(210) main:DockMargin(6, 28, 12, 28)
-        main:SetEnabled(v.onMap or allowed)
-        main.DoClick = function() G.SendAction(v.onMap and "fleet_store" or "fleet_issue", v.id) end
     end
 
     -- Ворота: одна кнопка на весь набор дверей гаража.

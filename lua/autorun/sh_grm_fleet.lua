@@ -689,6 +689,9 @@ if SERVER then
             roles = istable(unit.roles) and unit.roles or {},
             depts = istable(unit.depts) and unit.depts or {},
             restriction = FL.RestrictionText(unit),
+            -- номер закреплён за конкретной единицей техники (UID автопарка)
+            plate = (GRM.Plates and GRM.Plates.PlateOfVehicleKey)
+                and tostring(GRM.Plates.PlateOfVehicleKey("fleet:" .. tostring(unit.id)) or "") or "",
         }
     end
 
@@ -1107,66 +1110,66 @@ if CLIENT then
                 end
             end
 
+            --[[ Автопарк показываем такими же ячейками, как личный
+                 транспорт у дилера и в гараже (общий слой GRM.VehicleCells):
+                 одна карточка на весь сервер, без разнобоя. ]]
+            local VC = GRM.VehicleCells
+            local grid = (VC and #FL.State.units > 0) and VC.Grid(list) or nil
             for _, u in ipairs(FL.State.units) do
-                local card = vgui.Create("DPanel", list)
-                card:Dock(TOP) card:SetTall(78) card:DockMargin(0, 0, 4, 6)
-                card.Paint = function(self, w, h)
-                    draw.RoundedBox(8, 0, 0, w, h, self:IsHovered() and C.cardHov or C.card)
-                    surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h, 1)
-                    draw.SimpleText(u.name, "GRMFleet_Sub", 14, 10, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    draw.SimpleText(("Гараж: %s"):format(u.garageName ~= "" and u.garageName or "не приписана"),
-                        "GRMFleet_Small", 14, 32, u.garageName ~= "" and C.dim or C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    draw.SimpleText(("Состояние: %s%s"):format(u.statusName or "",
-                        u.lastUserName ~= "" and ("   •   последний водитель: " .. u.lastUserName) or ""),
-                        "GRMFleet_Small", 14, 52, u.onMap and C.green or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    if (u.restriction or "") ~= "" then
-                        draw.SimpleText(u.restriction, "GRMFleet_Small", w - 340, h / 2,
-                            (#(u.roles or {}) > 0 or #(u.depts or {}) > 0) and C.gold or C.dim,
-                            TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-                    end
-                end
-
-                local main = button(card, u.onMap and "ВЕРНУТЬ В ГАРАЖ" or "ВЫДАТЬ", u.onMap and C.accent or C.green, function()
-                    act(u.onMap and "store" or "issue", { unitID = u.id })
-                end)
-                main:Dock(RIGHT) main:SetWide(190) main:DockMargin(6, 20, 12, 20)
-
-                if FL.State.canManage then
-                    --[[ КОМУ ПОЛОЖЕНА МАШИНА.
-                         Закрепление за должностями и отделами выбирается из
-                         списка структуры организации — руками ключи не
-                         набираются, опечатка невозможна. ]]
-                    local access = button(card, "ДОСТУП", C.cardHov, function()
-                        local menu = DermaMenu()
-                        menu:AddOption("Доступна всем сотрудникам", function()
-                            act("restrict", { unitID = u.id, roles = {}, depts = {} })
-                        end):SetIcon("icon16/group.png")
+                if grid then
+                    local menu = {}
+                    if FL.State.canManage then
+                        --[[ КОМУ ПОЛОЖЕНА МАШИНА: список структуры организации,
+                             ключи руками не набираются — опечатка невозможна. ]]
+                        menu[#menu + 1] = { label = "Доступна всем сотрудникам", icon = "icon16/group.png",
+                            fn = function() act("restrict", { unitID = u.id, roles = {}, depts = {} }) end }
                         local st = FL.State.structure or {}
-                        if #(st.roles or {}) > 0 then
-                            local sub = menu:AddSubMenu("Закрепить за должностью")
-                            for _, r in ipairs(st.roles) do
-                                sub:AddOption(r.name, function()
-                                    act("restrict", { unitID = u.id, roles = { r.key }, depts = {} })
-                                end)
-                            end
+                        for _, r in ipairs(st.roles or {}) do
+                            menu[#menu + 1] = { label = "Закрепить за должностью: " .. tostring(r.name),
+                                icon = "icon16/user.png",
+                                fn = function() act("restrict", { unitID = u.id, roles = { r.key }, depts = {} }) end }
                         end
-                        if #(st.depts or {}) > 0 then
-                            local sub = menu:AddSubMenu("Закрепить за отделом")
-                            for _, d in ipairs(st.depts) do
-                                sub:AddOption(d.name, function()
-                                    act("restrict", { unitID = u.id, roles = {}, depts = { d.key } })
-                                end)
-                            end
+                        for _, d in ipairs(st.depts or {}) do
+                            menu[#menu + 1] = { label = "Закрепить за отделом: " .. tostring(d.name),
+                                icon = "icon16/group_gear.png",
+                                fn = function() act("restrict", { unitID = u.id, roles = {}, depts = { d.key } }) end }
                         end
-                        menu:Open()
-                    end)
-                    access:Dock(RIGHT) access:SetWide(120) access:DockMargin(6, 20, 0, 20)
+                        menu[#menu + 1] = { label = "СПИСАТЬ с баланса", icon = "icon16/car_delete.png",
+                            fn = function()
+                                Derma_Query(("Списать «%s» с баланса организации?"):format(u.name), "Автопарк",
+                                    "Списать", function() act("scrap", { unitID = u.id }) end, "Отмена")
+                            end }
+                    end
 
-                    local scrap = button(card, "СПИСАТЬ", C.red, function()
-                        Derma_Query(("Списать «%s» с баланса организации?"):format(u.name), "Автопарк",
-                            "Списать", function() act("scrap", { unitID = u.id }) end, "Отмена")
-                    end)
-                    scrap:Dock(RIGHT) scrap:SetWide(130) scrap:DockMargin(6, 20, 0, 20)
+                    VC.Cell(grid, {
+                        name = u.name, class = u.class, model = u.model, plate = u.plate,
+                        accent = C.gold,
+                        state = { text = tostring(u.statusName or (u.onMap and "на линии" or "в гараже")),
+                                  good = not u.onMap },
+                        lines = {
+                            { text = ("Гараж: %s"):format((u.garageName or "") ~= "" and u.garageName or "не приписана"),
+                              color = (u.garageName or "") ~= "" and C.dim or C.gold },
+                            { text = (u.restriction or "") ~= "" and u.restriction or "Доступна всем сотрудникам",
+                              color = (#(u.roles or {}) > 0 or #(u.depts or {}) > 0) and C.gold or C.dim },
+                            { text = (u.lastUserName or "") ~= "" and ("Последний водитель: " .. u.lastUserName) or "",
+                              color = C.dim },
+                        },
+                        buttons = {
+                            { label = u.onMap and "ВЕРНУТЬ В ГАРАЖ" or "ВЫДАТЬ",
+                              color = u.onMap and C.accent or C.green,
+                              fn = function() act(u.onMap and "store" or "issue", { unitID = u.id }) end },
+                            FL.State.canManage and { label = "ДОСТУП И СПИСАНИЕ (ПКМ)", color = C.cardHov,
+                              fn = function()
+                                  local m = DermaMenu()
+                                  for _, item in ipairs(menu) do
+                                      local opt = m:AddOption(item.label, item.fn)
+                                      if item.icon then opt:SetIcon(item.icon) end
+                                  end
+                                  m:Open()
+                              end } or nil,
+                        },
+                        menu = menu,
+                    })
                 end
             end
         end

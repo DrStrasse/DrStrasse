@@ -47,7 +47,13 @@ G.Kinds = {
 }
 
 G.MinZone      = 200      -- минимальная сторона зоны
-G.SlotRadius   = 150      -- радиус проверки занятости места
+G.SlotRadius   = 150      -- радиус ПОИСКА кандидатов рядом с местом
+--[[ Габарит самого места стоянки: по нему решается, занято оно или нет.
+     Проверять расстояние до ORIGIN машины нельзя — у седана от бампера до
+     центра около 110 юнитов, у грузовика больше: машина стоит поперёк
+     соседнего места, а место считается свободным (заказ владельца 22.08 —
+     «считывание мест в гараже верное?»). ]]
+G.SlotBox      = { x = 190, y = 110, z = 100 }
 G.UseDistance  = 220      -- дальность стойки гаража
 G.MaxSlots     = 24
 G.MaxGarages   = 64
@@ -445,11 +451,52 @@ if SERVER then
     ------------------------------------------------------------------
     -- МЕСТА СТОЯНКИ
     ------------------------------------------------------------------
+    --[[ Пересекаются ли два AABB (таблицы {x,y,z}). Чистая функция —
+         гоняется стендом без игры. ]]
+    function G.BoxesOverlap(aMin, aMax, bMin, bMax, margin)
+        if not (istable(aMin) and istable(aMax) and istable(bMin) and istable(bMax)) then return false end
+        margin = tonumber(margin) or 0
+        for _, axis in ipairs({ "x", "y", "z" }) do
+            local a1 = (tonumber(aMin[axis]) or 0) - margin
+            local a2 = (tonumber(aMax[axis]) or 0) + margin
+            local b1, b2 = tonumber(bMin[axis]) or 0, tonumber(bMax[axis]) or 0
+            if a1 > b2 or b1 > a2 then return false end
+        end
+        return true
+    end
+
+    --- Габарит места стоянки в мировых координатах.
+    function G.SlotBounds(slot)
+        local pos = vec(slot and slot.pos)
+        local box = G.SlotBox
+        local half = math.max(box.x, box.y) * 0.5     -- место может стоять под любым углом
+        return { x = pos.x - half, y = pos.y - half, z = pos.z - 8 },
+               { x = pos.x + half, y = pos.y + half, z = pos.z + box.z }
+    end
+
+    local function isVehicleLike(ent)
+        if not IsValid(ent) then return false end
+        return ent:IsVehicle() or ent.GRMGarageID ~= nil or ent.LVS ~= nil or ent.IsSimfphysCar == true
+    end
+
+    --[[ Кто занимает место. Ищем кандидатов широким радиусом, а решение
+         принимаем по ПЕРЕСЕЧЕНИЮ ГАБАРИТОВ: origin машины может быть далеко
+         от места, при этом кузов стоит ровно на нём. ]]
     local function slotBlocker(slot)
+        local smin, smax = G.SlotBounds(slot)
         local pos = vec(slot.pos)
-        for _, ent in ipairs(ents.FindInSphere(pos, G.SlotRadius)) do
-            if IsValid(ent) and (ent:IsVehicle() or ent.GRMGarageID or ent.LVS or ent.IsSimfphysCar) then
-                return ent
+        for _, ent in ipairs(ents.FindInSphere(pos, G.SlotRadius + 320)) do
+            if isVehicleLike(ent) then
+                if isfunction(ent.WorldSpaceAABB) then
+                    local mn, mx = ent:WorldSpaceAABB()
+                    if G.BoxesOverlap(smin, smax,
+                        { x = mn.x, y = mn.y, z = mn.z }, { x = mx.x, y = mx.y, z = mx.z }) then
+                        return ent
+                    end
+                elseif ent:GetPos():Distance(pos) <= G.SlotRadius then
+                    -- запасной путь для сущностей без габаритов
+                    return ent
+                end
             end
         end
         return nil

@@ -143,6 +143,11 @@ ents = {
         function e:Activate() end
         function e:Remove() self._valid = false for i, x in ipairs(entityList) do if x == self then table.remove(entityList, i) break end end end
         function e:IsVehicle() return false end
+        -- габарит машины: занятость места считается пересечением коробок
+        function e:WorldSpaceAABB()
+            local p = self._pos or Vector(0, 0, 0)
+            return Vector(p.x - 80, p.y - 45, p.z), Vector(p.x + 80, p.y + 45, p.z + 70)
+        end
         function e:GetClass() return self._class end
         function e:SetTerminalID(v) self._term = v end
         function e:GetTerminalID() return self._term or "" end

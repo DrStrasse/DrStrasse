@@ -116,6 +116,10 @@ if SERVER then
                         homeID = homeID, homeName = home and home.name or "",
                         here = (homeID ~= "" and garage and homeID == garage.id) or false,
                         allowed = true,
+                        -- номерной знак машины: карточка показывает его так же,
+                        -- как окно дилера (учёт ведётся по UID транспорта)
+                        plate = (GRM.Plates and GRM.Plates.PlateOfVehicleKey)
+                            and tostring(GRM.Plates.PlateOfVehicleKey("veh:" .. id) or "") or "",
                     }
                 end
             end
@@ -139,6 +143,8 @@ if SERVER then
                         here = true, fleet = true,
                         allowed = allowed == true, reason = allowed and "" or tostring(why or ""),
                         restriction = (fl.RestrictionText and fl.RestrictionText(unit)) or "",
+                        plate = (GRM.Plates and GRM.Plates.PlateOfVehicleKey)
+                            and tostring(GRM.Plates.PlateOfVehicleKey("fleet:" .. tostring(unit.id)) or "") or "",
                     }
                 end
             end
