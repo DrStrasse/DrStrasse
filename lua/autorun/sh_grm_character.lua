@@ -840,13 +840,33 @@ if SERVER then
         }
     end
 
+    --[[ ОДИН ХОЗЯИН ЭКРАНА.
+         Пока игрок на загрузочном экране (GROENNERLAND2036), окно персонажа
+         не отправляется ВООБЩЕ — иначе два полноэкранных окна наслаиваются.
+         Запрос запоминается и уходит сразу после кнопки «НАЧАТЬ ИГРАТЬ». ]]
     local function sendMenu(ply, previewSlot)
         if not IsValid(ply) then return end
+        if GRM.Loading and GRM.Loading.IsLoading and GRM.Loading.IsLoading(ply) then
+            ply.GRMCharMenuPending = previewSlot or true
+            return
+        end
+        ply.GRMCharMenuPending = nil
         net.Start(NET_OPEN)
             net.WriteTable(CH.BuildPayload(ply, { previewSlot = previewSlot }))
         net.Send(ply)
     end
     CH.OpenMenu = sendMenu
+
+    -- Загрузка закончилась: отдаём отложенное окно (если его просили).
+    hook.Add("GRM_LoadingFinished", "GRM_Char_MenuAfterLoading", function(ply)
+        if not IsValid(ply) then return end
+        local wanted = ply.GRMCharMenuPending
+        ply.GRMCharMenuPending = nil
+        timer.Simple(0.1, function()
+            if not IsValid(ply) then return end
+            sendMenu(ply, isstring(wanted) and wanted or nil)
+        end)
+    end)
 
     local function closeMenu(ply)
         if not IsValid(ply) then return end
@@ -1251,16 +1271,10 @@ if CLIENT then
                 pw - 34, 48, mandatory and C.yellow or C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
         end
 
-        -- Кнопка выхода из окна — только когда персонаж уже подтверждён.
-        if not mandatory then
-            local x = vgui.Create("DButton", f)
-            x:SetText("") x:SetSize(120, 30) x:SetPos(f:GetWide() - 150, 20)
-            x.Paint = function(self, pw, ph)
-                draw.RoundedBox(6, 0, 0, pw, ph, self:IsHovered() and Color(90, 60, 70) or Color(46, 52, 66))
-                draw.SimpleText("ЗАКРЫТЬ", "GRMChar_Sub", pw / 2, ph / 2, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-            end
-            x.DoClick = function() f:Remove() end
-        end
+        --[[ Кнопки закрытия в окне НЕТ (прямое требование владельца).
+             Обязательное окно не закрывается вообще, а добровольно
+             открытое (F4 → «МЕНЮ ПЕРСОНАЖА», /char) закрывается по ESC —
+             как любое окно GRM. ]]
 
         local body = vgui.Create("DPanel", f)
         body:Dock(FILL) body:DockMargin(24, 84, 24, 20) body:SetPaintBackground(false)
@@ -1644,6 +1658,12 @@ if CLIENT then
     end
     function CH.ReceiveMenuPayload(payload)
         hook.Run("GRM_CharacterPayload")
+        -- Пока висит экран входа, окно персонажа не строим: оно ляжет
+        -- поверх загрузки. Придержим снимок и откроем сразу после кнопки.
+        if GRM.Loading and GRM.Loading.Shown then
+            CH._afterLoading = istable(payload) and payload or {}
+            return false
+        end
         payload=istable(payload)and payload or{};local sig=payloadSignature(payload);local mode=payload.wardrobe==true and"wardrobe"or"character"
         if IsValid(CH._frame)and CH._liveSignature==sig and CH._frameMode==mode then if CH._actionKind=="preview"then CH._actionPending=false;CH._actionKind=nil end return false end
         if CH._opening then CH._queuedPayload=payload return false end
@@ -1673,6 +1693,15 @@ if CLIENT then
         end
         CH._frame, CH._frameMode, CH._liveSignature = nil, nil, nil
         CH._actionPending, CH._actionKind = false, nil
+    end)
+
+    -- Экран входа закрылся — показываем придержанное окно персонажа.
+    hook.Add("GRM_LoadingClosed", "GRM_Char_ShowAfterLoading", function()
+        local queued = CH._afterLoading
+        CH._afterLoading = nil
+        if istable(queued) then
+            timer.Simple(0.05, function() CH.ReceiveMenuPayload(queued) end)
+        end
     end)
 
     -- Точка входа гардероба проходит через тот же singleton/dedup guard.

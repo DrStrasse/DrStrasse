@@ -189,10 +189,15 @@ if CLIENT then
         if IsValid(frame) then frame:Remove() end
         frame = nil
         LD.Shown = false
+        -- Сообщаем остальным: экран свободен, можно показывать своё окно.
+        hook.Run("GRM_LoadingClosed")
     end
 
     function LD.Open()
         if IsValid(frame) then return end
+        --[[ Экран входа никогда не ложится поверх уже открытого окна
+             персонажа: два полноэкранных окна — это то самое «двоится». ]]
+        if GRM.Char and IsValid(GRM.Char._frame) then return end
         LD.Shown = true
         shown = RealTime()
 

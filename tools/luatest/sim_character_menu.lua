@@ -71,6 +71,27 @@ ok(has('hook.Add("OnPauseMenuShow", "GRM_Char_BlockPause"'), "игровое м�
 ok(has('hook.Add("Think", "GRM_Char_KeepMenu"'), "если окно всё же пропало — оно возвращается само")
 ok(has("if IsValid(CH._frame) then CH._frame:Remove() CH._frame = nil end"),
    "второе окно не наслаивается на первое")
+-- 22.08: кнопки закрытия в окне быть не должно (прямое требование)
+ok(not has('draw.SimpleText("ЗАКРЫТЬ"'), "кнопки «ЗАКРЫТЬ» в меню персонажа нет")
+ok(has("Кнопки закрытия в окне НЕТ"), "решение зафиксировано в коде комментарием")
+
+print("\n=== 4б. КОНФЛИКТ С ЭКРАНОМ ВХОДА ===")
+ok(has("if GRM.Loading and GRM.Loading.IsLoading and GRM.Loading.IsLoading(ply) then")
+   and has("ply.GRMCharMenuPending = previewSlot or true"),
+   "сервер не шлёт окно, пока игрок на загрузочном экране — запрос откладывается")
+ok(has('hook.Add("GRM_LoadingFinished", "GRM_Char_MenuAfterLoading"'),
+   "после кнопки «НАЧАТЬ ИГРАТЬ» отложенное окно уходит игроку")
+ok(has("if GRM.Loading and GRM.Loading.Shown then") and has("CH._afterLoading = istable(payload)"),
+   "клиент придерживает снимок, если экран входа ещё висит")
+ok(has('hook.Add("GRM_LoadingClosed", "GRM_Char_ShowAfterLoading"'),
+   "как только экран закрылся — придержанное окно показывается")
+local ld = (function()
+    local f = io.open("lua/autorun/sh_grm_loading.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+ok(ld:find("if GRM.Char and IsValid(GRM.Char._frame) then return end", 1, true) ~= nil,
+   "и наоборот: экран входа не ложится поверх открытого окна персонажа")
+ok(ld:find('hook.Run("GRM_LoadingClosed")', 1, true) ~= nil, "о закрытии экрана сообщается хуком")
 
 print("\n=== 5. МИР ЗАКРЫТ ДО ВЫБОРА ===")
 ok(has('hook.Add("HUDShouldDraw", "GRM_Char_HideHUD"'), "весь HUD скрыт (в т.ч. выбор оружия)")
