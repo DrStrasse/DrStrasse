@@ -627,7 +627,6 @@ do
         ok((FL.Entry(ownId) or {}).price == 55000, "цена собственной позиции правится", FL.Entry(ownId) and FL.Entry(ownId).price)
     end
 
-    util.CRC = crcReal
 
     --[[ «ПОСЛЕ РЕСТАРТА ВСЁ ПО НУЛЯМ» (заказ владельца 22.08).
          Цена была записана и сохранена в market.json. Эмулируем рестарт:
@@ -653,6 +652,38 @@ do
     ok(FL.DealerOverrides[starId] ~= nil and FL.DealerOverrides[starId].price == 12345,
         "DealerOverrides поднят из файла", FL.DealerOverrides[starId] and FL.DealerOverrides[starId].price)
     FL.Units = keepUnits
+end
+
+--[[ ЗАКУПКА ПЕРЕЖИВАЕТ РЕСТАРТ (заказ владельца 22.08).
+     Моделируем: закупили партию → выдали одну → «рестарт» (сброс памяти,
+     FL.Load) → закупленная техника обязана вернуться из файла. ]]
+print("\n=== ЗАКУПЛЕННЫЙ ТРАНСПОРТ ПОСЛЕ РЕСТАРТА (22.08) ===")
+do
+    local restartGarage = select(2, G.Create(admin, Vector(3000, 3000, 0), Vector(3600, 3600, 300),
+        { name = "Стартовый парк", kind = "faction", faction = "police" }))
+    G.AddSlot(restartGarage.id, Vector(3100, 3100, 0), Angle(0, 0, 0), 10, "Бокс")
+    local mkEntry = FL.MarketAdd({ class = "sim_restart", name = "Машина для рестарта", price = 2000,
+        tier = "civil", kind = "government", limit = 0 })
+    local bought, buyErr = FL.Buy(chief, mkEntry.id, 2, restartGarage.id)
+    ok(bought ~= nil and #bought == 2, "закуплено 2 единицы перед рестартом", buyErr)
+    local u1 = bought[1]
+    local spawned = FL.Issue(chief, u1.id, G.Get(restartGarage.id))
+    ok(IsValid(spawned), "одна единица выдана перед рестартом", u1 and u1.id)
+    FL.FlushFleet("перед рестартом")
+    local before = table.Count(FL.Units)
+
+    -- «рестарт»: сбрасываем память, снова читаем базу.
+    local old = FL.Units
+    FL.Units = {}
+    FL.Market = {}
+    FL.DealerOverrides = {}
+    FL._loaded = true -- Load сам вызовет FlushFleet, если единицы есть; тут пусто
+    FL.Load()
+    local after = table.Count(FL.Units)
+    ok(after == before, "после рестарта единицы вернулись из файла", after .. " из " .. before)
+    ok(FL.Unit(u1.id) ~= nil and tostring(FL.Unit(u1.id).status) == "stored",
+        "выданная единица честно встала в гараж", FL.Unit(u1.id) and FL.Unit(u1.id).status)
+    ok(FL.Unit(bought[2].id) ~= nil, "вторая закупленная единица тоже на месте", bought[2].id)
 end
 
 print(("\nFLEET: %d/%d, провалов: %d"):format(pass, pass + fail, fail))

@@ -449,6 +449,7 @@ if SERVER then
         unit.roles = clean(roles)
         unit.depts = clean(depts)
         FL.SaveFleet("закрепление техники")
+        FL.FlushFleet("закрепление техники")
         return true, ("Техника «%s»: %s"):format(tostring(unit.name), FL.RestrictionText(unit))
     end
 
@@ -540,6 +541,19 @@ if SERVER then
         return FL.SaveFleetNow()
     end
 
+    --[[ ПАРК НУЖНО ПИСАТЬ СРАЗУ (заказ владельца 22.08: «после рестарта
+         закупленный транспорт оказывается не закуплен»). GRM.Save.Mark
+         ждёт 3 секунды; если сервер перезапускается раньше, база парка
+         теряется. После закупки/выдачи/возврата/приписки/списания
+         форсируем запись немедленно. ]]
+    function FL.FlushFleet(why)
+        if not FL._loaded then return false end
+        if FL._fleetSave and GRM.Save and GRM.Save.Flush then
+            GRM.Save.Flush("grm_fleet_units", why or "автопарк вручную")
+        end
+        return FL.SaveFleetNow()
+    end
+
     local function readJSON(path)
         if not file.Exists(path, "DATA") then return nil end
         local raw = file.Read(path, "DATA") or ""
@@ -563,6 +577,14 @@ if SERVER then
     end
 
     function FL.Load()
+        --[[ НЕ ТЕРЯТЬ ПАРК ПРИ СМЕНЕ КАРТЫ (заказ владельца 22.08).
+             Если в памяти уже есть закупленные единицы, а файл новой карты
+             ещё пуст/не успел записаться, очередной сброс FL.Units={} дал
+             бы «после рестарта закупленный транспорт не закуплен».
+             Сохраняем текущий парк на диск перед чтением. ]]
+        if FL._loaded and table.Count(FL.Units or {}) > 0 then
+            FL.FlushFleet("перед сменой карты")
+        end
         FL.Market, FL.Units = {}, {}
         --[[ ЦЕЛЬСЯ В ТЕКУЩУЮ КАРТУ. GRM.Save держит путь в записи; если просто
              сменилась карта, реестр продолжал бы писать в файл прежней карты
@@ -767,6 +789,7 @@ if SERVER then
             made[#made + 1] = unit
         end
         FL.SaveFleet("закупка техники")
+        FL.FlushFleet("закупка техники")
 
         if GRM.Audit and GRM.Audit.Write then
             GRM.Audit.Write("fleet", "buy", ply, { faction = faction, class = entry.class },
@@ -786,6 +809,7 @@ if SERVER then
         if IsValid(FL.Active[unit.id]) then return false, "Сначала верните машину в гараж" end
         unit.garageID = garage.id
         FL.SaveFleet("приписка техники")
+        FL.FlushFleet("приписка техники")
         return true, ("Техника приписана к гаражу «%s»"):format(garage.name)
     end
 
@@ -804,6 +828,7 @@ if SERVER then
         unit.status = "scrap"
         unit.scrappedAt = os.time()
         FL.SaveFleet("списание техники")
+        FL.FlushFleet("списание техники")
         if GRM.Audit and GRM.Audit.Write then
             GRM.Audit.Write("fleet", "scrap", ply, { unit = unit.id, faction = unit.faction }, { payout = payout })
         end
@@ -849,6 +874,7 @@ if SERVER then
         unit.lastUserName = ply:Nick()
         unit.lastOut = os.time()
         FL.SaveFleet("выдача техники")
+        FL.FlushFleet("выдача техники")
 
         hook.Run("GRM_FleetIssued", ply, ent, unit, garage)
         return ent
@@ -863,6 +889,7 @@ if SERVER then
         if not IsValid(ent) then
             unit.status = "stored"
             FL.SaveFleet("возврат техники")
+            FL.FlushFleet("возврат техники")
             return true, "Машина уже не на карте — запись обновлена"
         end
         local driver = ent.GetDriver and ent:GetDriver() or nil
@@ -872,6 +899,7 @@ if SERVER then
         unit.status = "stored"
         unit.lastIn = os.time()
         FL.SaveFleet("возврат техники")
+        FL.FlushFleet("возврат техники")
         hook.Run("GRM_FleetStored", ply, unit)
         return true, "Техника возвращена в гараж"
     end
@@ -1213,13 +1241,18 @@ if SERVER then
         print(("[GRM Fleet] рынок: %d позиций, парк: %d единиц"):format(
             table.Count(FL.Market), table.Count(FL.Units)))
     end
-    -- читаем сразу: до загрузки запись заблокирована
-    boot()
+    -- читаем сразу: до загрузки запись заблокирована.
+    -- ВАЖНО: не зовём boot() повторно через планировщик, если он уже вызван.
+    -- Иначе второй FL.Load мог затереть в памяти только что закупленный парк
+    -- свежим чтением из ещё не записанного файла.
     if GRM.Boot and GRM.Boot.OnMapStart then
         GRM.Boot.OnMapStart("GRM_Fleet_Load", "normal", boot)
     else
         hook.Add("InitPostEntity", "GRM_Fleet_Load", boot)
     end
+    -- Первый вызов выполняется сразу только если планировщика нет; иначе все
+    -- стартовые задачи идут через GRM.Boot один раз.
+    if not (GRM.Boot and GRM.Boot.OnMapStart) then boot() end
 end
 
 if CLIENT then
