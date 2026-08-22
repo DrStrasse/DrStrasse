@@ -34,6 +34,55 @@ function V.Source(src)
     return V.Sources[src] and src or "personal"
 end
 
+--[[ ЛИЧНОСТЬ КОНКРЕТНОЙ МАШИНЫ (UID).
+
+     Энтити машины живёт недолго: её убирают в гараж, удаляют, выдают
+     заново — каждый раз это НОВАЯ энтити. Всё, что должно помнить именно
+     эту машину (номерной знак, техпаспорт, регистрация), обязано опираться
+     не на энтити, а на устойчивый идентификатор.
+
+     Источник UID, по убыванию надёжности:
+       1) запись гаража дилера   — GRMGarageID   (личный транспорт);
+       2) единица автопарка      — GRMFleetID    (служебный транспорт);
+       3) выданный ранее UID     — GRMVehicleUID (карточные и админские);
+     Если ничего нет, UID выдаётся один раз и держится на энтити и в NW,
+     чтобы его видели клиент и другие модули. ]]
+function V.UID(ent)
+    if not IsValid(ent) then return "" end
+    local id = tostring(ent.GRMGarageID or "")
+    if id ~= "" then return "veh:" .. id end
+    local fleet = tostring(ent.GRMFleetID or "")
+    if fleet ~= "" then return "fleet:" .. fleet end
+    local own = tostring(ent.GRMVehicleUID or "")
+    if own ~= "" then return own end
+    if CLIENT then return tostring(ent:GetNWString("GRM_VehicleUID", "")) end
+    return ""
+end
+
+--- Выдать машине UID, если его ещё нет (только сервер).
+function V.EnsureUID(ent)
+    if not SERVER or not IsValid(ent) then return "" end
+    local id = V.UID(ent)
+    if id == "" then
+        id = "map:" .. util.CRC(table.concat({
+            game.GetMap(), tostring(ent:GetClass()), tostring(ent:GetCreationID()),
+            tostring(math.floor(SysTime() * 1000)), tostring(math.random(1, 1e6)),
+        }, ":"))
+        ent.GRMVehicleUID = id
+    end
+    if ent:GetNWString("GRM_VehicleUID", "") ~= id then ent:SetNWString("GRM_VehicleUID", id) end
+    return id
+end
+
+--- Человеческое имя машины (для журналов и окон).
+function V.Title(ent)
+    if not IsValid(ent) then return "" end
+    local name = tostring(ent.VD_Name or ent.PrintName or "")
+    if name == "" then name = tostring(ent:GetNWString("GRM_VehicleName", "")) end
+    if name == "" then name = tostring(ent.VD_Class or ent:GetClass() or "") end
+    return name
+end
+
 if SERVER then
 
     local function notifyText(ok, good, bad)

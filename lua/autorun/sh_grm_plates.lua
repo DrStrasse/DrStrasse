@@ -309,6 +309,13 @@ function PL.FaceGeometry(mins, maxs, render)
         right = unit[rightAxis] * rightSign,
         up = unit[upAxis] * upSign,
         thin = thin, rightAxis = rightAxis, upAxis = upAxis,
+        -- АВТОМАТИКА: две оси плоскости знака как они есть в модели, без
+        -- ручных поворотов. Клиент сам решает, какая из них «вдоль строки»,
+        -- по тому, как знак стоит в мире (заказ владельца 22.08).
+        longAxis = long, shortAxis = short,
+        unitLong = unit[long], unitShort = unit[short],
+        sizeLong = dims[long], sizeShort = dims[short],
+        thickness = dims[thin],
         half = dims[thin] * 0.5,
         -- насколько надпись вынесена НАРУЖУ от поверхности: при нуле она
         -- тонет внутри пропа и её не видно (заказ владельца 21.08)
@@ -320,6 +327,78 @@ function PL.FaceGeometry(mins, maxs, render)
         moveY = tonumber(render.moveY) or 0,
         w = dims[rightAxis] * k, h = dims[upAxis] * k,
     }
+end
+
+-----------------------------------------------------------------------
+-- ПАМЯТЬ КРЕПЛЕНИЯ (чистая часть — гоняется стендом)
+--
+-- Знак должен вставать ровно туда, куда его поставили: на бампер машины,
+-- на щит, на борт пропа. Поэтому крепление хранится не «примерно рядом с
+-- машиной», а точными числами: локальная позиция и локальные углы внутри
+-- РОДИТЕЛЯ плюс нормаль поверхности, к которой знак прижат. Vector в JSON
+-- уходит пустышкой, поэтому всё пишем числами.
+-----------------------------------------------------------------------
+
+PL.NudgeLimits = { move = 64, turn = 180 }
+
+--- Пустое крепление с нулями (чтобы не плодить проверок на nil).
+function PL.BlankMount()
+    return {
+        parentType = "", parentKey = "", parentClass = "", parentName = "",
+        pos = { x = 0, y = 0, z = 0 },
+        ang = { p = 0, y = 0, r = 0 },
+        normal = { x = 0, y = 0, z = 0 },
+    }
+end
+
+--- Привести крепление к нормальному виду (после чтения из файла).
+function PL.NormalizeMount(src)
+    local m = PL.BlankMount()
+    if not istable(src) then return m end
+    for _, k in ipairs({ "parentType", "parentKey", "parentClass", "parentName", "vehicle", "vehicleID" }) do
+        if src[k] ~= nil then m[k] = tostring(src[k]) end
+    end
+    -- старые записи: vehicleID был единственным ключом
+    if m.parentKey == "" and tostring(src.vehicleID or "") ~= "" then
+        m.parentKey, m.parentType = tostring(src.vehicleID), "vehicle"
+    end
+    if m.parentName == "" and tostring(src.vehicle or "") ~= "" then m.parentName = tostring(src.vehicle) end
+    local p, a, n = src.pos, src.ang, src.normal
+    if istable(p) then
+        m.pos = { x = tonumber(p.x) or 0, y = tonumber(p.y) or 0, z = tonumber(p.z) or 0 }
+    end
+    if istable(a) then
+        m.ang = { p = tonumber(a.p) or 0, y = tonumber(a.y) or 0, r = tonumber(a.r) or 0 }
+    end
+    if istable(n) then
+        m.normal = { x = tonumber(n.x) or 0, y = tonumber(n.y) or 0, z = tonumber(n.z) or 0 }
+    end
+    m.at = tonumber(src.at) or 0
+    return m
+end
+
+--- Подвинуть/повернуть сохранённое крепление. kind: "move" | "turn".
+--  Возвращает НОВУЮ таблицу крепления (чистая функция, без побочек).
+function PL.NudgeMount(mount, kind, axis, delta)
+    local m = PL.NormalizeMount(mount)
+    delta = tonumber(delta) or 0
+    axis = string.lower(tostring(axis or ""))
+    if kind == "move" then
+        local lim = PL.NudgeLimits.move
+        if m.pos[axis] == nil then return m, false end
+        m.pos[axis] = math.Clamp(m.pos[axis] + delta, -lim, lim)
+        return m, true
+    elseif kind == "turn" then
+        local lim = PL.NudgeLimits.turn
+        local map = { p = "p", pitch = "p", y = "y", yaw = "y", r = "r", roll = "r" }
+        local key = map[axis]
+        if not key then return m, false end
+        local v = (m.ang[key] + delta) % 360
+        if v > 180 then v = v - 360 end
+        m.ang[key] = math.Clamp(v, -lim, lim)
+        return m, true
+    end
+    return m, false
 end
 
 -----------------------------------------------------------------------
@@ -555,7 +634,9 @@ if SERVER then
                 local number = PL.NormalizeNumber(rec.number)
                 if number ~= "" then
                     rec.number = number
-                    rec.mount = istable(rec.mount) and rec.mount or nil
+                    -- крепление приводим к единому виду: старые записи знали
+                    -- только vehicleID, новые — полный ключ родителя
+                    rec.mount = istable(rec.mount) and PL.NormalizeMount(rec.mount) or nil
                     PL.Data.plates[number] = rec
                 end
             end
@@ -638,6 +719,20 @@ if SERVER then
 
     -- ── физические знаки ────────────────────────────────────────────
 
+    --[[ Какой номер закреплён за машиной с этим UID. Нужен окнам дилера,
+         гаража и госбазам: они работают с записями, а не с энтити. ]]
+    function PL.PlateOfVehicleKey(uid)
+        uid = tostring(uid or "")
+        if uid == "" then return "" end
+        for number, rec in pairs(PL.Data.plates or {}) do
+            local mount = istable(rec.mount) and rec.mount or nil
+            if mount and tostring(mount.parentKey or mount.vehicleID or "") == uid then
+                return number, rec
+            end
+        end
+        return ""
+    end
+
     --- Все живые знаки с этим номером.
     function PL.EntitiesOf(number)
         number = PL.NormalizeNumber(number)
@@ -705,6 +800,8 @@ if SERVER then
             }
         end
         rec.plates = layout
+        -- номер машины виден в окне дилера и гаража отдельной строкой
+        rec.plate = layout[1] and tostring(layout[1].number or "") or ""
         if GRM.VehicleDealer and GRM.VehicleDealer.SaveGarages then GRM.VehicleDealer.SaveGarages() end
     end
     PL.RememberLayout = rememberLayout
@@ -717,7 +814,10 @@ if SERVER then
          машин записи нет, для них знак живёт только пока живёт машина. ]]
     function PL.VehicleIdentity(veh)
         if not IsValid(veh) then return "", "" end
-        local id = tostring(veh.GRMGarageID or "")
+        -- UID единого слоя транспорта: он переживает удаление машины,
+        -- уборку в гараж и повторную выдачу (заказ владельца 22.08).
+        local uid = (GRM.Vehicles and GRM.Vehicles.EnsureUID) and GRM.Vehicles.EnsureUID(veh) or ""
+        local id = uid ~= "" and uid or tostring(veh.GRMGarageID or "")
         local name = tostring(veh.VD_Class or veh:GetClass() or "")
         if id ~= "" and GRM.VehicleDealer and GRM.VehicleDealer.FindRecord and IsValid(veh.GRMGarageOwner) then
             local rec = GRM.VehicleDealer.FindRecord(veh.GRMGarageOwner, id)
@@ -746,12 +846,18 @@ if SERVER then
             local vehID, vehName = PL.VehicleIdentity(veh)
             local lp = veh:WorldToLocal(plate:GetPos())
             local la = veh:WorldToLocalAngles(plate:GetAngles())
-            rec.mount = {
+            rec.mount = PL.NormalizeMount({
                 vehicle = vehName, vehicleID = vehID, at = os.time(),
+                parentType = PL.LooksLikeVehicle(veh) and "vehicle" or "prop",
+                parentKey = vehID,
+                parentClass = tostring(veh:GetClass() or ""),
+                parentName = vehName,
                 -- координаты числами: Vector — userdata, в JSON он пустой
                 pos = { x = lp.x, y = lp.y, z = lp.z },
                 ang = { p = la.p, y = la.y, r = la.r },
-            }
+            })
+            -- обратная связь: машина знает свой номер, номер знает машину
+            rec.vehicleUID = vehID
             addHistory(rec, "закреплён на транспорте" .. (vehName ~= "" and (" (" .. vehName .. ")") or ""),
                 IsValid(actor) and actor:Nick() or "владелец")
             PL.Save("монтаж знака")
@@ -930,13 +1036,23 @@ if SERVER then
             place(saved.number, saved.pos, saved.ang)
         end
 
+        --[[ Второй источник — сам реестр номеров. Ключ крепления это UID
+             машины из единого слоя транспорта: "veh:<id записи гаража>",
+             "fleet:<id единицы автопарка>" или выданный UID. Поэтому знак
+             находит СВОЮ машину даже если раскладка в записи гаража
+             потерялась. ]]
+        local keys = {}
         local recID = tostring(record.id or "")
-        if recID ~= "" then
-            for number, plateRec in pairs(PL.Data.plates or {}) do
-                local mount = istable(plateRec.mount) and plateRec.mount or nil
-                if mount and tostring(mount.vehicleID or "") == recID then
-                    place(number, mount.pos, mount.ang)
-                end
+        if recID ~= "" then keys["veh:" .. recID] = true keys[recID] = true end
+        local uid = (GRM.Vehicles and GRM.Vehicles.EnsureUID) and GRM.Vehicles.EnsureUID(ent) or ""
+        if uid ~= "" then keys[uid] = true end
+
+        for number, plateRec in pairs(PL.Data.plates or {}) do
+            local mount = istable(plateRec.mount) and plateRec.mount or nil
+            local key = mount and tostring(mount.parentKey or mount.vehicleID or "") or ""
+            if key ~= "" and keys[key] then
+                place(number, mount.pos, mount.ang)
+                mount.offMap = nil
             end
         end
         return restored
@@ -944,6 +1060,31 @@ if SERVER then
 
     hook.Add("GRM_VehicleIssued", "GRM_Plates_Restore", function(ply, ent, rec)
         PL.RestoreForVehicle(ply, ent, rec)
+    end)
+
+    --[[ МАШИНУ УБРАЛИ — НОМЕР ОСТАЛСЯ ЗА НЕЙ.
+         Когда машина уезжает в гараж или удаляется с карты, её знаки
+         исчезают вместе с ней (они припаркованы к энтити). Раньше это
+         выглядело как «знак пропал»: в реестре крепление оставалось, но
+         никто не помечал, что машина сейчас не на карте. Теперь запись
+         остаётся с пометкой «в гараже», а сам знак вернётся на ту же
+         машину при следующей выдаче — по UID, а не по имени класса. ]]
+    hook.Add("EntityRemoved", "GRM_Plates_VehicleGone", function(ent)
+        if not IsValid(ent) then return end
+        if ent:GetClass() == "grm_plate" then return end
+        if not (PL.LooksLikeVehicle and PL.LooksLikeVehicle(ent)) then return end
+        local uid = (GRM.Vehicles and GRM.Vehicles.UID) and GRM.Vehicles.UID(ent) or ""
+        if uid == "" then return end
+        local touched = false
+        for _, rec in pairs(PL.Data.plates or {}) do
+            local mount = istable(rec.mount) and rec.mount or nil
+            if mount and tostring(mount.parentKey or mount.vehicleID or "") == uid then
+                mount.offMap = true
+                mount.at = os.time()
+                touched = true
+            end
+        end
+        if touched then PL.Save("машина убрана с карты") end
     end)
 
     -- ── команды и сеть ──────────────────────────────────────────────
@@ -971,7 +1112,9 @@ if SERVER then
             ownerName = rec.ownerName, ownerKey = rec.ownerKey, faction = rec.faction,
             vehicle = rec.vehicle, note = rec.note, issued = rec.issued, byName = rec.byName,
             mounted = istable(rec.mount) and true or false,
-            mountVehicle = istable(rec.mount) and tostring(rec.mount.vehicle or "") or "",
+            mountVehicle = istable(rec.mount) and tostring(rec.mount.parentName or rec.mount.vehicle or "") or "",
+            mountKey = istable(rec.mount) and tostring(rec.mount.parentKey or rec.mount.vehicleID or "") or "",
+            mountOffMap = istable(rec.mount) and rec.mount.offMap == true or false,
         }
     end
 

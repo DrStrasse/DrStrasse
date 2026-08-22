@@ -24,6 +24,7 @@ function Color(r, g, b, a) return { r = r, g = g, b = b, a = a or 255 } end
 function Vector(x, y, z) return { x = x or 0, y = y or 0, z = z or 0 } end
 FCVAR_ARCHIVE = 1
 COLLISION_GROUP_NONE, COLLISION_GROUP_WORLD = 0, 8
+NULL = setmetatable({ _valid = false }, { __tostring = function() return "NULL" end })
 RENDERMODE_NORMAL, RENDERMODE_TRANSALPHA = 0, 4
 
 local HOOKS = {}
@@ -85,6 +86,10 @@ local function mkPly(nick, super)
     function p:WorldSpaceAABB() return self._min, self._max end
     function p:GetMoveType() return self._move end
     function p:Alive() return self._alive end
+    function p:GetGroundEntity() return self._ground end
+    function p:SetGroundEntity(e) self._ground = (e ~= NULL) and e or nil end
+    function p:SetVelocity() end
+    function p:StandOn(e) self._ground = e end
     function p:MoveTo(x, y)
         self._min = { x = x, y = y, z = 0 }
         self._max = { x = x + 16, y = y + 16, z = 72 }
@@ -104,6 +109,8 @@ local function mkProp()
     function e:SetColor(c) self._color = c end
     function e:GetColor() return self._color end
     function e:SetNWBool(k, v) self._nw[k] = v end
+    function e:SetNWEntity(k, v) self._nw[k] = v end
+    function e:GetNWEntity(k, d) local v = self._nw[k] if v == nil then return d end return v end
     function e:GetNWBool(k, d) local v = self._nw[k] if v == nil then return d end return v end
     function e:GetPos() return Vector(0, 0, 0) end
     function e:WorldSpaceAABB() return { x = -20, y = -20, z = 0 }, { x = 20, y = 20, z = 40 } end
@@ -280,6 +287,39 @@ HOOKS["PhysgunFreeze"]["GRM_PropGuard_Freeze"](nil, offProp:GetPhysicsObject(), 
 ok(offProp.GRMGhost == nil, "сторож зоны выключается конваром")
 CONVARS["grm_prop_zone_guard"]:SetValue("1")
 victim:MoveTo(900, 900)
+
+print("\n=== 11. АНТИСЁРФ И АНТИТОЛКАНИЕ ===")
+ok(isfunction(PG.RidersOf), "чистая функция «кто стоит на пропе» объявлена")
+local ridersProp = mkProp()
+local rider = mkPly("Наездник")
+local bystander = mkPly("Прохожий")
+rider:StandOn(ridersProp)
+local found = PG.RidersOf(ridersProp, {
+    { id = rider, ground = ridersProp },
+    { id = bystander, ground = nil },
+    { id = builder, ground = ridersProp, ignore = true },
+})
+ok(#found == 1 and found[1] == rider, "видит только того, кто реально стоит на пропе", #found)
+
+HOOKS["PhysgunPickup"]["GRM_PropGuard_Pickup"](builder, ridersProp)
+ok(rider:GetGroundEntity() == nil, "взяли проп физганом — наездника с него сняли")
+ok(ridersProp.GRMHeldBy == builder, "проп помечен как удерживаемый")
+ok(ridersProp:GetCollisionGroup() == COLLISION_GROUP_WORLD,
+   "проп в руках проходит сквозь игроков — толкать им нельзя")
+ok(table.concat(NOTIFY, " "):find("кататься", 1, true) ~= nil, "наезднику объяснили, почему он падает")
+
+HOOKS["PhysgunDrop"]["GRM_PropGuard_Drop"](builder, ridersProp)
+ok(ridersProp.GRMHeldBy == nil, "после отпускания метка снята")
+
+CONVARS["grm_prop_antisurf"]:SetValue("0")
+local surfProp = mkProp()
+rider:StandOn(surfProp)
+HOOKS["PhysgunPickup"]["GRM_PropGuard_Pickup"](builder, surfProp)
+ok(rider:GetGroundEntity() == surfProp, "антисёрф выключается конваром")
+CONVARS["grm_prop_antisurf"]:SetValue("1")
+rider:StandOn(nil)
+
+ok(PG.InWorld == nil, "запрета на проталкивание сквозь браши нет — так решил владелец")
 
 print(("\nPROP GUARD: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

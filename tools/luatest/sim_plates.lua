@@ -554,12 +554,23 @@ local cl = (function()
     local f = io.open("lua/entities/grm_plate/cl_init.lua", "rb")
     local t = f:read("*a") f:close() return t
 end)()
-ok(cl:find("rgt:Cross(up)", 1, true) ~= nil,
-   "нормаль берётся как векторное произведение осей надписи (вынос всегда «вперёд от текста»)")
-ok(cl:find("nrm:Dot(eye - center) < 0", 1, true) ~= nil,
+ok(cl:find("right:Cross(up)", 1, true) ~= nil,
+   "нормаль берётся как векторное произведение осей надписи")
+ok(cl:find("local function planeAxes(ent, face)", 1, true) ~= nil
+   and cl:find("math.abs(dLong.z) <= math.abs(dShort.z)", 1, true) ~= nil,
+   "оси строки выбираются АВТОМАТИЧЕСКИ по положению знака в мире")
+ok(cl:find("if up.z < 0 then up = up * -1 end", 1, true) ~= nil,
+   "верх надписи всегда смотрит вверх — знак можно вешать как угодно")
+ok(cl:find("function ENT:Draw()", 1, true) ~= nil
+   and cl:find("function ENT:DrawTranslucent()", 1, true) ~= nil
+   and cl:find("self:Draw()", 1, true) == nil,
+   "надпись рисуется ОДИН раз за кадр (модель в Draw, номер в DrawTranslucent)")
+ok(cl:find("local fit = math.min((room * 0.88)", 1, true) ~= nil,
+   "номер автоматически вписывается в поле знака по ширине и высоте")
+ok(cl:find("nrm:Dot(lp:EyePos() - center) < 0", 1, true) ~= nil,
    "сторона выбирается по игроку — нет зеркальной изнанки")
-ok(cl:find("center + nrm * (face.half + (face.offset or 1.5))", 1, true) ~= nil,
-   "надпись выносится от поверхности, а не от центра модели")
+ok(cl:find("local lift = (face.thickness or 1) * 0.5", 1, true) ~= nil,
+   "надпись лежит на самой поверхности знака, а не висит перед ним")
 
 -- плашка на экране показывается только при взгляде НА ЗНАК
 local core = (function()
@@ -605,13 +616,58 @@ ok(cl:find("ang:RotateAroundAxis(ang:Forward(), face.tiltR)", 1, true) ~= nil
    and cl:find("ang:RotateAroundAxis(ang:Right(), face.tiltP)", 1, true) ~= nil
    and cl:find("ang:RotateAroundAxis(ang:Up(), face.tiltY)", 1, true) ~= nil,
    "все три оси поворота применяются при отрисовке")
-ok(cl:find("rgt * (face.moveX or 0) + up * (face.moveY or 0)", 1, true) ~= nil,
-   "сдвиг считается вдоль осей самой надписи")
+ok(cl:find("right * (face.moveX or 0) + up * (face.moveY or 0)", 1, true) ~= nil,
+   "ручной сдвиг по-прежнему считается вдоль осей самой надписи")
 
 print("\n=== 17. СНИМОК ОКНА ПОРЦИЯМИ ===")
 ok(core:find("GRM.Net.Stream(PL.Net.SYNC", 1, true) ~= nil,
    "снимок реестра уходит потоком, а не одним пакетом")
 ok(isfunction(PL.PushSoon), "серия действий схлопывается в одну отправку")
+
+print("\n=== 18. ПАМЯТЬ КРЕПЛЕНИЯ И ПРИВЯЗКА К МАШИНЕ ===")
+ok(isfunction(PL.NormalizeMount) and isfunction(PL.NudgeMount), "чистые функции крепления объявлены")
+local old = PL.NormalizeMount({ vehicleID = "veh:42", vehicle = "Седан",
+    pos = { x = 1, y = 2, z = 3 }, ang = { p = 0, y = 90, r = 0 } })
+ok(old.parentKey == "veh:42" and old.parentType == "vehicle",
+   "старая запись (только vehicleID) читается как полноценное крепление", old.parentKey)
+ok(old.parentName == "Седан" and old.pos.y == 2 and old.ang.y == 90, "координаты и имя сохраняются")
+local blank = PL.NormalizeMount(nil)
+ok(blank.parentKey == "" and blank.pos.x == 0, "мусор превращается в пустое крепление")
+
+local moved = PL.NudgeMount(old, "move", "z", 4)
+ok(moved.pos.z == 7 and old.pos.z == 3, "сдвиг возвращает НОВОЕ крепление, оригинал не портится", moved.pos.z)
+local turned = PL.NudgeMount(old, "turn", "yaw", 100)
+ok(turned.ang.y == -170, "поворот сворачивается в диапазон -180…180", turned.ang.y)
+local _, okAxis = PL.NudgeMount(old, "move", "q", 4)
+ok(okAxis == false, "неизвестная ось отбивается")
+local far = PL.NudgeMount(old, "move", "x", 9999)
+ok(far.pos.x == PL.NudgeLimits.move, "сдвиг зажат пределом", far.pos.x)
+
+local src = (function()
+    local f = io.open("lua/autorun/sh_grm_plates.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+ok(src:find("GRM.Vehicles.EnsureUID", 1, true) ~= nil,
+   "личность машины берётся из единого слоя транспорта (UID), а не из класса")
+ok(src:find('hook.Add("EntityRemoved", "GRM_Plates_VehicleGone"', 1, true) ~= nil
+   and src:find("mount.offMap = true", 1, true) ~= nil,
+   "машину убрали с карты — привязка знака осталась за ней")
+ok(src:find("function PL.PlateOfVehicleKey(uid)", 1, true) ~= nil,
+   "номер машины можно спросить по UID — для окон дилера и госбаз")
+ok(src:find("rec.plate = layout[1]", 1, true) ~= nil,
+   "номер записывается в карточку машины у дилера")
+
+local dealer = (function()
+    local f = io.open("lua/entities/sent_vehicle_dealer/cl_init.lua", "rb")
+    local t = f:read("*a") f:close() return t
+end)()
+ok(dealer:find("local function garageCell(parent, v)", 1, true) ~= nil
+   and dealer:find('vgui.Create("DIconLayout", list)', 1, true) ~= nil,
+   "транспорт у дилера показан ячейками, как инвентарь")
+ok(dealer:find('plate ~= "" and plate or "БЕЗ НОМЕРА"', 1, true) ~= nil,
+   "в ячейке видно номерной знак машины")
+ok(dealer:find("local function garageCard", 1, true) == nil,
+   "старые строки-карточки гаража удалены, копий разметки нет")
 
 print(("\nPLATES: %d/%d, провалов: %d"):format(pass, pass + fail, fail))
 if fail > 0 then os.exit(1) end

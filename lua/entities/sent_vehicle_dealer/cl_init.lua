@@ -407,62 +407,61 @@ net.Receive("GRM_VD_Open", function()
     -- выключен: иначе «возврат на место» сам себя обнуляет.
     local restoring = false
 
-    local function garageCard(parent, v)
-        local row = vgui.Create("DPanel", parent)
-        row:Dock(TOP)
-        row:SetTall(110)
-        row:DockMargin(0, 0, 6, 8)
-        row.Paint = function(_, w, h)
+    --[[ ЯЧЕЙКИ ВМЕСТО ДЛИННЫХ СТРОК (заказ владельца 22.08).
+         Гараж — это по сути инвентарь машин, и смотреть его удобнее
+         сеткой карточек: превью, название, НОМЕРНОЙ ЗНАК, где стоит и что
+         с ней можно сделать. Список строками остаётся для «на карте». ]]
+    local function garageCell(parent, v)
+        local cell = vgui.Create("DPanel", parent)
+        cell:SetSize(228, 268)
+        local onMap = v.stored == false
+        local plate = tostring(v.plate or "")
+
+        cell.Paint = function(_, w, h)
             draw.RoundedBox(8, 0, 0, w, h, C.card)
-            surface.SetDrawColor(C.border)
-            surface.DrawOutlinedRect(0, 0, w, h)
-            draw.SimpleText(v.name or v.class, "GRMVD_Head", 124, 16, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            draw.SimpleText(tostring(v.class or ""), "GRMVD_Small", 124, 42, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-            draw.SimpleText(v.stored == false and "Выдан на карту" or "В гараже", "GRMVD_Body", 124, 70,
-                v.stored == false and C.gold or C.green, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            surface.SetDrawColor(C.border) surface.DrawOutlinedRect(0, 0, w, h)
+            draw.RoundedBox(8, 0, 0, w, 4, onMap and C.gold or C.green)
+
+            draw.SimpleText(v.name or v.class, "GRMVD_Body", 12, 134, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+            draw.SimpleText(tostring(v.class or ""), "GRMVD_Small", 12, 152, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+
+            -- номерной знак машины: как на самой машине, тёмной табличкой
+            local pw = 96
+            draw.RoundedBox(4, 12, 172, pw, 20, plate ~= "" and Color(232, 236, 242) or Color(38, 44, 56))
+            draw.SimpleText(plate ~= "" and plate or "БЕЗ НОМЕРА", "GRMVD_Small", 12 + pw / 2, 182,
+                plate ~= "" and Color(20, 24, 32) or C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+
+            draw.SimpleText(onMap and "На карте" or "В гараже", "GRMVD_Small", 118, 182,
+                onMap and C.gold or C.green, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+
+            local home = tostring(v.homeName or "")
+            draw.SimpleText(home ~= "" and ("Гараж: " .. home) or "Гараж не назначен", "GRMVD_Small",
+                12, 198, home ~= "" and C.teal or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+
             local paid = tonumber(v.price) or 0
             if paid > 0 then
                 draw.SimpleText(("Куплен за %s  •  выкуп %s"):format(money(paid), money(tonumber(v.buyback) or 0)),
-                    "GRMVD_Small", 300, 70, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    "GRMVD_Small", 12, 214, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
             end
-            local home = tostring(v.homeName or "")
-            draw.SimpleText(home ~= "" and ("Гараж: " .. home) or "Гараж не назначен", "GRMVD_Small", 124, 90,
-                home ~= "" and C.teal or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
         end
-        local m = vgui.Create("DModelPanel", row)
-        m:SetPos(9, 9)
-        m:SetSize(104, 92)
+
+        local m = vgui.Create("DModelPanel", cell)
+        m:SetPos(10, 10)
+        m:SetSize(208, 118)
         preview(m, v.model)
 
-        local actions = vgui.Create("DPanel", row)
-        actions:Dock(RIGHT)
-        actions:SetWide(280)
-        actions:DockMargin(6, 12, 12, 12)
-        actions:SetPaintBackground(false)
-
-        --[[ ВЫДАЧА С ВЫБОРОМ МЕСТА (заказ владельца 21.08).
-             Купленная машина стоит на хранении; кнопка «ВЫДАТЬ» спрашивает,
-             куда её подать — здесь у дилера или в гараж. Что доступно,
-             решают настройки дилера (режим выдачи + кнопка «ВЫДАТЬ»). ]]
         local dealerAllowed = (showRetrieve ~= false) and deliveryMode ~= "garage"
         local garageAllowed = #garageChoices > 0
-        local onMap = v.stored == false
 
-        local main = grmButton(actions,
-            onMap and "УБРАТЬ В ГАРАЖ" or "ВЫДАТЬ",
+        local main = grmButton(cell, onMap and "УБРАТЬ В ГАРАЖ" or "ВЫДАТЬ",
             onMap and C.accent or C.green)
-        main:Dock(TOP)
-        main:SetTall(38)
+        main:SetPos(10, 234) main:SetSize(208, 26)
         main:SetEnabled(onMap or dealerAllowed or garageAllowed)
         main.DoClick = function()
             if onMap then send(dealer, "store", v.id) return end
-            if dealerAllowed and not garageAllowed then
-                send(dealer, "retrieve", v.id, "dealer", "")
-                return
-            end
+            if dealerAllowed and not garageAllowed then send(dealer, "retrieve", v.id, "dealer", "") return end
             if garageAllowed and not dealerAllowed then
-                send(dealer, "retrieve", v.id, "garage", tostring(v.homeID or ""))
-                return
+                send(dealer, "retrieve", v.id, "garage", tostring(v.homeID or "")) return
             end
             local menu = DermaMenu()
             if dealerAllowed then
@@ -470,37 +469,32 @@ net.Receive("GRM_VD_Open", function()
                     send(dealer, "retrieve", v.id, "dealer", "")
                 end):SetIcon("icon16/lorry.png")
             end
-            if garageAllowed then
-                local home = tostring(v.homeID or "")
-                for _, g in ipairs(garageChoices) do
-                    local label = ("Подать в гараж «%s» — мест %d/%d"):format(tostring(g.name),
-                        tonumber(g.free) or 0, tonumber(g.slots) or 0)
-                    if home ~= "" and tostring(g.id) == home then label = label .. "  (свой)" end
-                    menu:AddOption(label, function()
-                        send(dealer, "retrieve", v.id, "garage", tostring(g.id))
-                    end):SetIcon("icon16/house.png")
-                end
+            for _, g in ipairs(garageChoices) do
+                menu:AddOption(("Подать в гараж «%s» — мест %d/%d"):format(tostring(g.name),
+                        tonumber(g.free) or 0, tonumber(g.slots) or 0), function()
+                    send(dealer, "retrieve", v.id, "garage", tostring(g.id))
+                end):SetIcon("icon16/house.png")
             end
             menu:Open()
         end
 
-
-        --[[ Выкуп государством: цена чуть ниже покупки (процент задаётся
-             конваром grm_vd_state_buyback). Сумма видна прямо на кнопке —
-             игрок понимает, сколько получит, до подтверждения. ]]
-        local payout = tonumber(v.buyback) or 0
-        local rate = tonumber(v.buybackRate) or 0
-        local sell = grmButton(actions,
-            payout > 0 and ("ПРОДАТЬ ГОСУДАРСТВУ · " .. money(payout)) or "ГОСУДАРСТВО НЕ ВЫКУПАЕТ", C.red)
-        sell:Dock(BOTTOM)
-        sell:SetTall(32)
-        sell:SetEnabled(payout > 0)
-        sell.DoClick = function()
-            Derma_Query(("Продать «%s» государству за %s?\nЦена покупки: %s (выкуп %d%%). Машина исчезнет навсегда.")
-                    :format(tostring(v.name or v.class), money(payout), money(v.price or 0), rate),
-                "Выкуп государством", "Продать", function() send(dealer, "sell", v.id) end, "Отмена")
+        -- ПКМ по ячейке: подробности и выкуп государством
+        cell.OnMousePressed = function(_, code)
+            if code ~= MOUSE_RIGHT then return end
+            local payout = tonumber(v.buyback) or 0
+            local menu = DermaMenu()
+            menu:AddOption(("Номер: %s"):format(plate ~= "" and plate or "не закреплён"), function() end)
+            menu:AddOption(("Куплен за %s"):format(money(tonumber(v.price) or 0)), function() end)
+            if payout > 0 then
+                menu:AddOption(("ПРОДАТЬ ГОСУДАРСТВУ · %s"):format(money(payout)), function()
+                    Derma_Query(("Продать «%s» государству за %s? Машина исчезнет навсегда.")
+                            :format(tostring(v.name or v.class), money(payout)),
+                        "Выкуп государством", "Продать", function() send(dealer, "sell", v.id) end, "Отмена")
+                end):SetIcon("icon16/money_delete.png")
+            end
+            menu:Open()
         end
-        return row
+        return cell
     end
 
     --[[ v4.1.0 (заказ владельца): раздел «На карте» — убрать транспорт прямо
@@ -542,14 +536,28 @@ net.Receive("GRM_VD_Open", function()
         list:Clear()
         local q = string.lower(string.Trim(search:GetValue() or ""))
         local shown = 0
+
+        -- Гараж рисуем сеткой ячеек (инвентарь машин), остальное — строками.
+        local grid = nil
+        if currentMode == "garage" then
+            grid = vgui.Create("DIconLayout", list)
+            grid:Dock(TOP)
+            grid:DockMargin(0, 0, 6, 0)
+            grid:SetSpaceX(8)
+            grid:SetSpaceY(8)
+        end
+
         for _, v in ipairs(currentRows) do
             if matches(v, q) then
                 shown = shown + 1
-                if currentMode == "garage" then garageCard(list, v)
+                if currentMode == "garage" then
+                    local cell = garageCell(grid, v)
+                    grid:Add(cell)
                 elseif currentMode == "active" then activeCard(list, v)
                 else catalogCard(list, v) end
             end
         end
+        if grid then grid:InvalidateLayout(true) end
         if shown == 0 then
             emptyNote(list, currentMode == "garage"
                 and "Гараж пуст. Личный транспорт появится здесь после покупки."

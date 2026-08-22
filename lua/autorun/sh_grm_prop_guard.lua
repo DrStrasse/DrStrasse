@@ -1,8 +1,8 @@
 --[[--------------------------------------------------------------------
-    GRM Prop Guard v1.0.0 — призрачные пропы и защита от спама
-    (заказ владельца 21.08).
+    GRM Prop Guard v1.1.0 — призрачные пропы и антиабуз стройки
+    (заказы владельца 21.08 и 22.08).
 
-    ДВЕ ЗАДАЧИ, ОДИН МОДУЛЬ.
+    ЧЕТЫРЕ ЗАДАЧИ, ОДИН МОДУЛЬ.
 
     1. ПРИЗРАК ПРИ СПАВНЕ. Только что созданный проп не должен «взрываться»
        физикой, толкать игроков и застревать в геометрии. Поэтому он
@@ -24,6 +24,20 @@
       grm_prop_spam_window  8    — за сколько секунд
       grm_prop_spam_block   60   — на сколько секунд закрывать спавн
       grm_prop_spam_admins  0    — 1: правило действует и на суперадминов
+      grm_prop_zone_guard   1    — не твердеть, пока в габаритах чужой игрок
+      grm_prop_zone_margin  6    — запас вокруг габаритов, юниты
+      grm_prop_antisurf     1    — сбрасывать стоящих на пропе, когда его берут
+      grm_prop_antipush     1    — проп в физгане не толкает игроков
+
+    3. ЗОНА ПОСТАНОВКИ. Проп не станет твёрдым, пока в его габаритах стоит
+       другой игрок: иначе им давят, выталкивают сквозь стены и запирают.
+       Ждёт освобождения и встаёт сам.
+
+    4. АНТИАБУЗ ДВИЖЕНИЯ. Пропом нельзя толкать людей и нельзя на нём
+       кататься: пока проп в физгане, он проходит сквозь игроков, а тех,
+       кто стоит сверху, снимает с него в момент захвата. Подсказка о
+       заморозке приходит ЛИЧНО игроку, а не висит над пропом.
+       Проталкивать пропы сквозь браши карты РАЗРЕШЕНО (решение владельца).
 ----------------------------------------------------------------------]]
 
 if SERVER then AddCSLuaFile() end
@@ -31,7 +45,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.PropGuard = GRM.PropGuard or {}
 local PG = GRM.PropGuard
-PG.Version = "1.0.0"
+PG.Version = "1.1.0"
 
 -----------------------------------------------------------------------
 -- ЧИСТАЯ ЛОГИКА ОКНА СПАМА (гоняется в стенде без игры)
@@ -95,6 +109,31 @@ function PG.ZoneBlockers(mins, maxs, actors, margin, ignoreID)
     return names
 end
 
+--- Утоплен ли проп в геометрию карты. samples — глубины проникновения
+--  (числа), allowed — сколько юнитов считается «прижат к стене», а не
+--  «в стене». Чистая функция: гоняется стендом.
+function PG.WorldVerdict(samples, allowed)
+    allowed = tonumber(allowed) or 0
+    local deepest = 0
+    for _, d in ipairs(istable(samples) and samples or {}) do
+        local n = tonumber(d) or 0
+        if n > deepest then deepest = n end
+    end
+    return deepest > allowed, deepest
+end
+
+--- Кто стоит на пропе. actors — список { id=, ground=, ignore= }.
+--  Чистая функция: гоняется стендом без игры.
+function PG.RidersOf(propID, actors)
+    local out = {}
+    for _, a in ipairs(istable(actors) and actors or {}) do
+        if a.ignore ~= true and a.ground ~= nil and a.ground == propID then
+            out[#out + 1] = a.id
+        end
+    end
+    return out
+end
+
 --- Свободна ли зона (обёртка над ZoneBlockers для читаемости).
 function PG.ZoneFree(mins, maxs, actors, margin, ignoreID)
     return #PG.ZoneBlockers(mins, maxs, actors, margin, ignoreID) == 0
@@ -118,6 +157,10 @@ if SERVER then
         "Не давать пропу коллизию, пока в его габаритах стоит другой игрок")
     local cvZoneMargin = CreateConVar("grm_prop_zone_margin", "6", FCVAR_ARCHIVE,
         "Запас вокруг габаритов пропа при проверке зоны (юниты)")
+    local cvSurf = CreateConVar("grm_prop_antisurf", "1", FCVAR_ARCHIVE,
+        "Не давать кататься на пропе: стоящих сверху сбрасывает, когда проп берут физганом")
+    local cvPush = CreateConVar("grm_prop_antipush", "1", FCVAR_ARCHIVE,
+        "Проп в физгане не толкает игроков (проходит сквозь них)")
 
     PG.Times = PG.Times or {}      -- ply -> массив времён спавна
     PG.Blocked = PG.Blocked or {}  -- ply -> до какого времени закрыт спавн
@@ -186,6 +229,20 @@ if SERVER then
 
     -- ── ПРИЗРАЧНЫЙ ПРОП ─────────────────────────────────────────────
 
+    --[[ ПЕРСОНАЛЬНОЕ УВЕДОМЛЕНИЕ.
+         Заказ владельца 22.08: подсказка про заморозку не должна висеть в
+         мире над пропом — её видят все вокруг, она мешает и выдаёт чужие
+         постройки. Пишем лично хозяину, с антиспамом. ]]
+    PG.Told = PG.Told or {}
+    function PG.Tell(ply, text, good)
+        if not IsValid(ply) then return end
+        local key = tostring(text)
+        PG.Told[ply] = PG.Told[ply] or {}
+        if (PG.Told[ply][key] or 0) > CurTime() then return end
+        PG.Told[ply][key] = CurTime() + 3
+        notify(ply, text, good)
+    end
+
     --- Перевести проп в призрак: видно, но никому не мешает.
     function PG.MakeGhost(ent)
         if not IsValid(ent) then return false end
@@ -200,6 +257,7 @@ if SERVER then
         local phys = ent:GetPhysicsObject()
         if IsValid(phys) then phys:EnableMotion(false) end
         ent:SetNWBool("GRM_PropGhost", true)
+        if IsValid(ent.GRMGhostOwner) then ent:SetNWEntity("GRM_PropGhostOwner", ent.GRMGhostOwner) end
         if PG.Unpend then PG.Unpend(ent) end
         return true
     end
@@ -294,14 +352,14 @@ if SERVER then
                     if not busy then
                         PG.Materialize(ent, info.ply, true)
                         if IsValid(info.ply) then
-                            notify(info.ply, "Зона освободилась — проп закреплён.", true)
+                            PG.Tell(info.ply, "Зона освободилась — проп закреплён.", true)
                         end
                     else
                         alive = alive + 1
                         if CurTime() - (info.told or 0) > 5 then
                             info.told = CurTime()
                             if IsValid(info.ply) then
-                                notify(info.ply, ("В зоне пропа игрок: %s. Проп станет твёрдым, когда зона освободится.")
+                                PG.Tell(info.ply, ("В зоне пропа игрок: %s. Проп станет твёрдым, когда зона освободится.")
                                     :format(table.concat(who, ", ")))
                             end
                         end
@@ -324,7 +382,7 @@ if SERVER then
         if first then
             PG.Pending[ent].told = CurTime()
             if IsValid(ply) then
-                notify(ply, ("Зона пропа занята (%s) — он останется призраком, пока она не освободится.")
+                PG.Tell(ply, ("Зона пропа занята (%s) — он останется призраком, пока она не освободится.")
                     :format(table.concat(who or {}, ", ")))
             end
             hook.Run("GRM_PropZoneBusy", ent, ply, who or {})
@@ -342,13 +400,63 @@ if SERVER then
         end
     end
 
+    -- ── АНТИСЁРФ И АНТИТОЛКАНИЕ ─────────────────────────────────────
+    --[[ Два абуза одной природы: проп используют как таран и как лифт.
+         Пока проп в физгане, он проходит сквозь игроков — толкать им
+         никого нельзя. А тех, кто успел встать сверху, снимаем с пропа
+         в момент захвата: иначе игрока катают по карте и закидывают
+         туда, куда ногами не дойти. Пропы сквозь браши карты
+         проталкивать МОЖНО — это решение владельца. ]]
+
+    function PG.AntiSurf() return cvSurf:GetBool() end
+    function PG.AntiPush() return cvPush:GetBool() end
+
+    --- Снять с пропа всех, кто на нём стоит.
+    function PG.ClearRiders(ent, holder)
+        if not IsValid(ent) or not PG.AntiSurf() then return 0 end
+        local list = (GRM.Perf and GRM.Perf.Players and GRM.Perf.Players()) or player.GetAll()
+        local actors = {}
+        for _, ply in ipairs(list) do
+            if IsValid(ply) and ply:Alive() then
+                actors[#actors + 1] = { id = ply, ground = ply:GetGroundEntity() }
+            end
+        end
+        local riders = PG.RidersOf(ent, actors)
+        for _, ply in ipairs(riders) do
+            ply:SetGroundEntity(NULL)
+            -- лёгкий толчок вниз, чтобы движок не «приклеил» игрока обратно
+            ply:SetVelocity(Vector(0, 0, -8))
+            if ply ~= holder then
+                PG.Tell(ply, "Проп под вами взяли физганом — кататься на пропах нельзя.")
+            end
+        end
+        return #riders
+    end
+
+    --- Пока проп в руках — он не толкает людей.
+    function PG.HoldNoPush(ent)
+        if not IsValid(ent) or not PG.AntiPush() then return end
+        if ent.GRMGhost then return end -- призрак и так проходит сквозь всех
+        ent.GRMPushGroup = ent.GRMPushGroup or ent:GetCollisionGroup()
+        ent:SetCollisionGroup(COLLISION_GROUP_WORLD)
+    end
+
+    function PG.ReleaseNoPush(ent)
+        if not IsValid(ent) then return end
+        if ent.GRMPushGroup == nil then return end
+        if not ent.GRMGhost then ent:SetCollisionGroup(ent.GRMPushGroup) end
+        ent.GRMPushGroup = nil
+    end
+
     -- новый проп — сразу призрак
     hook.Add("PlayerSpawnedProp", "GRM_PropGuard_Ghost", function(ply, model, ent)
         if not PG.GhostEnabled() then return end
         if not IsValid(ent) then return end
+        ent.GRMGhostOwner = ply
         PG.MakeGhost(ent)
         if IsValid(ply) then
-            notify(ply, "Проп поставлен призраком: закрепите физганом и заморозьте (ПКМ), чтобы он стал твёрдым.", true)
+            ent:SetNWEntity("GRM_PropGhostOwner", ply)
+            PG.Tell(ply, "Проп поставлен призраком: закрепите физганом и заморозьте (ПКМ), чтобы он стал твёрдым.", true)
         end
     end)
 
@@ -369,6 +477,11 @@ if SERVER then
 
     -- снял с заморозки физганом → снова призрак, чтобы двигать без помех
     hook.Add("PhysgunPickup", "GRM_PropGuard_Pickup", function(ply, ent)
+        if IsValid(ent) then
+            PG.ClearRiders(ent, ply)
+            PG.HoldNoPush(ent)
+            ent.GRMHeldBy = ply
+        end
         if not PG.GhostEnabled() then return end
         if IsValid(ent) and ent:GetClass() == "prop_physics" and not ent.GRMGhost then
             -- призраком делаем только пропы, которые не защищены чужим владельцем
@@ -393,8 +506,14 @@ if SERVER then
     hook.Add("PlayerSpawnEffect", "GRM_PropGuard_LimitEffect", guardSpawn)
     hook.Add("PlayerSpawnSENT", "GRM_PropGuard_LimitSENT", guardSpawn)
 
+    hook.Add("PhysgunDrop", "GRM_PropGuard_Drop", function(ply, ent)
+        if not IsValid(ent) then return end
+        ent.GRMHeldBy = nil
+        PG.ReleaseNoPush(ent)
+    end)
+
     hook.Add("PlayerDisconnected", "GRM_PropGuard_Clear", function(ply)
-        PG.Times[ply], PG.Blocked[ply] = nil, nil
+        PG.Times[ply], PG.Blocked[ply], PG.Told[ply] = nil, nil, nil
     end)
 
     hook.Add("EntityRemoved", "GRM_PropGuard_Pending", function(ent)
@@ -423,6 +542,8 @@ if SERVER then
             PG.Limit(), PG.Window(), PG.BlockTime(), PG.GhostEnabled() and "вкл" or "выкл"))
         say(("[Пропы] сторож зоны %s, запас %d юнитов, ждут освобождения: %d"):format(
             cvZone:GetBool() and "вкл" or "выкл", PG.ZoneMargin(), table.Count(PG.Pending or {})))
+        say(("[Пропы] антисёрф %s, антитолкание %s"):format(
+            cvSurf:GetBool() and "вкл" or "выкл", cvPush:GetBool() and "вкл" or "выкл"))
         for _, target in ipairs(player.GetAll()) do
             local blocked, left = PG.IsBlocked(target)
             local recent = #PG.Trim(PG.Times[target] or {}, CurTime(), PG.Window())
@@ -435,43 +556,50 @@ if SERVER then
 end
 
 if CLIENT then
-    --[[ Подсказка на призрачном пропе: игрок должен понимать, почему проп
-         полупрозрачный и что с ним делать. Рисуем только при взгляде на
-         него и не чаще, чем нужно: трассировка троттлится. ]]
-    surface.CreateFont("GRMPropGuard_Hint", { font = "Roboto", size = 17, weight = 700, extended = true })
+    --[[ ЛИЧНАЯ ПОДСКАЗКА ВМЕСТО НАДПИСИ В МИРЕ (заказ владельца 22.08).
+
+         Было: над каждым призрачным пропом висела 3D2D-табличка «ЗАМОРОЗЬТЕ
+         ФИЗГАНОМ». Её видели все вокруг — она захламляла стройку и выдавала
+         чужие незакреплённые пропы. Стало: строка внизу СВОЕГО экрана и
+         только тогда, когда она к месту — игрок держит призрак физганом или
+         смотрит на свой призрак. Чужие пропы молчат. ]]
+    surface.CreateFont("GRMPropGuard_Hint", { font = "Roboto", size = 19, weight = 700, extended = true })
 
     local lookProp, lookAt = nil, 0
 
-    hook.Add("PostDrawTranslucentRenderables", "GRM_PropGuard_Hint", function(depth, sky, sky3d)
-        if depth or sky or sky3d then return end
+    local function myGhost(ent)
+        if not IsValid(ent) then return false end
+        if not ent:GetNWBool("GRM_PropGhost", false) then return false end
+        local owner = ent:GetNWEntity("GRM_PropGhostOwner", NULL)
+        return (not IsValid(owner)) or owner == LocalPlayer()
+    end
+
+    hook.Add("HUDPaint", "GRM_PropGuard_Hint", function()
         local lp = LocalPlayer()
         if not IsValid(lp) or not lp:Alive() then return end
 
-        if CurTime() - lookAt > 0.25 then
+        -- трассировка не каждый кадр: строке хватает пяти обновлений в секунду
+        if CurTime() - lookAt > 0.2 then
             lookAt = CurTime()
             local tr = (GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(lp) or lp:GetEyeTrace()
             local ent = tr and tr.Entity or nil
-            lookProp = (IsValid(ent) and ent:GetNWBool("GRM_PropGhost", false)) and ent or nil
+            lookProp = myGhost(ent) and ent or nil
         end
 
         local ent = lookProp
         if not IsValid(ent) then return end
-        if lp:GetPos():Distance(ent:GetPos()) > 300 then return end
-
-        local ang = (lp:EyePos() - ent:GetPos()):Angle()
-        ang:RotateAroundAxis(ang:Right(), -90)
-        ang:RotateAroundAxis(ang:Up(), -90)
+        if lp:GetPos():DistToSqr(ent:GetPos()) > 400 * 400 then return end
 
         local waiting = ent:GetNWBool("GRM_PropGhostWait", false)
-        local text = waiting and "ЗОНА ЗАНЯТА — ОТОЙДИТЕ, ПРОП ВСТАНЕТ САМ"
-            or "ПРИЗРАК — ЗАМОРОЗЬТЕ ФИЗГАНОМ (ПКМ)"
+        local text = waiting and "ЗОНА ПРОПА ЗАНЯТА — ОН ЗАКРЕПИТСЯ, КОГДА ИГРОК ОТОЙДЁТ"
+            or "ПРОП НЕ ЗАКРЕПЛЁН — ЗАМОРОЗЬТЕ ЕГО ФИЗГАНОМ (ПКМ)"
         local col = waiting and Color(255, 120, 110) or Color(255, 205, 120)
 
-        cam.Start3D2D(ent:GetPos() + Vector(0, 0, 18), ang, 0.1)
-            draw.RoundedBox(6, -230, -20, 460, 40, Color(12, 16, 24, 225))
-            draw.SimpleText(text, "GRMPropGuard_Hint", 0, 0,
-                col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        cam.End3D2D()
+        surface.SetFont("GRMPropGuard_Hint")
+        local w, h = surface.GetTextSize(text)
+        local x, y = ScrW() / 2, ScrH() - 150
+        draw.RoundedBox(6, x - w / 2 - 14, y - h / 2 - 6, w + 28, h + 12, Color(12, 16, 24, 215))
+        draw.SimpleText(text, "GRMPropGuard_Hint", x, y, col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end)
 end
 
