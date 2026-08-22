@@ -731,11 +731,13 @@ end
 print("\n=== ВОССТАНОВЛЕНИЕ ПО НОМЕРНОМУ ЗНАКУ ===")
 do
     GRM.Plates = { Data = { plates = {
-        TEST999 = { faction = "police", mount = { parentKey = "fleet:lost_plate_unit", parentClass = "sim_patrol", parentName = "Потерянный седан" } },
+        TEST999 = { faction = "police", mount = { parentKey = "fleet:lost_plate_unit", parentClass = "gmod_sent_vehicle_physics_base", parentName = "sim_fphys_wolfpolice" } },
     } } }
     FL._plateRecoveryDone = false
     local restored = FL.RecoverOrphanPlateUnits()
     ok(restored == 1 and FL.Unit("lost_plate_unit") ~= nil, "номер fleet:id восстанавливает потерянную единицу", restored)
+    ok(FL.Unit("lost_plate_unit").class == "sim_fphys_wolfpolice",
+        "миграция берёт класс simfphys из parentName, а не generic base", FL.Unit("lost_plate_unit").class)
     local restoredGarage = G.Get(FL.Unit("lost_plate_unit").garageID)
     ok(restoredGarage and #(restoredGarage.slots or {}) > 0 and FL.Unit("lost_plate_unit").status == "stored",
         "восстановленная единица лежит в пригодном гараже", FL.Unit("lost_plate_unit").garageID)

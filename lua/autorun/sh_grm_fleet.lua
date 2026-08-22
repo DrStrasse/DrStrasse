@@ -745,23 +745,38 @@ if SERVER then
             local mount = istable(rec) and rec.mount or nil
             local key = mount and tostring(mount.parentKey or mount.vehicleID or "") or ""
             local id = key:match("^fleet:(.+)$")
-            if id and id ~= "" and not FL.Units[id] then
-                local faction = tostring(rec.faction or "")
-                local garageID = ""
-                for gid, garage in pairs(garages) do
-                    if istable(garage) and #(garage.slots or {}) > 0
-                        and (tostring(garage.faction or "") == faction or tostring(garage.kind or "") == "public") then
-                        garageID = tostring(gid)
-                        break
+            local old = id ~= "" and FL.Units[id] or nil
+            -- У simfphys/LVS GetClass() часто возвращает общий base-класс,
+            -- например gmod_sent_vehicle_physics_base. Реальный класс для
+            -- VD.Spawn лежит в parentName (VehicleIdentity берёт VD_Class).
+            local rawClass = tostring(mount.parentClass or "")
+            local namedClass = tostring(mount.parentName or "")
+            local class = rawClass
+            local genericBase = rawClass == "gmod_sent_vehicle_physics_base"
+                or rawClass == "gmod_sent_vehicle_base" or rawClass == "prop_vehicle_jeep"
+            if genericBase and namedClass ~= "" then class = namedClass end
+
+            -- Допускаем повторную правку только собственной миграционной
+            -- записи: так уже восстановленная, но невыдаваемая simfphys
+            -- машина получает настоящий класс после обновления.
+            if id and id ~= "" and (not old or old.recoveredFromPlate == true) then
+                local faction = tostring(rec.faction or (old and old.faction) or "")
+                local garageID = tostring(old and old.garageID or "")
+                if garageID == "" then
+                    for gid, garage in pairs(garages) do
+                        if istable(garage) and #(garage.slots or {}) > 0
+                            and (tostring(garage.faction or "") == faction or tostring(garage.kind or "") == "public") then
+                            garageID = tostring(gid)
+                            break
+                        end
                     end
                 end
-                local class = tostring(mount.parentClass or "")
                 if faction ~= "" and garageID ~= "" and class ~= "" then
                     FL.Units[id] = {
                         id = id, faction = faction, class = class,
-                        name = tostring(mount.parentName or class), model = "", price = 0,
+                        name = namedClass ~= "" and namedClass or class, model = "", price = 0,
                         kind = "government", garageID = garageID, status = "stored",
-                        boughtAt = os.time(), boughtBy = "migration:plate",
+                        boughtAt = old and old.boughtAt or os.time(), boughtBy = "migration:plate",
                         boughtByName = "Восстановление по номерному знаку",
                         marketID = "legacy_plate_recovery", plate = tostring(number),
                         recoveredFromPlate = true,
