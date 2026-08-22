@@ -208,6 +208,9 @@ if SERVER then
         local ok = AM.Save(net.ReadTable() or {})
         if ok and GRM.Audit and GRM.Audit.Write then GRM.Audit.Write("access", "fire.legacy.save", ply, {}, {}) end
         sendAccess(ply)
+        -- Права изменились — пересчитать флаг «пожарный» у игроков,
+        -- от него зависит строка с водой и пеной на экране.
+        hook.Run("GRM_FireAccessChanged", ply)
         if GRM.Notify then GRM.Notify(ply, "Доступ пожарных сохранён.", 100, 220, 130) end
     end)
 

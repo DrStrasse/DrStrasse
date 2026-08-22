@@ -258,6 +258,19 @@ function F.GetRootVehicle(ent)
     return getRootVehicle(ent)
 end
 
+--[[ ЧИСТОЕ ПРАВИЛО СТРОКИ ПОЖАРКИ (гоняется стендом без игры).
+
+     Заказ владельца 22.08: счётчики воды и пены показываются, ТОЛЬКО когда
+     боец смотрит на свою машину или сидит в ней — и только тому, у кого
+     есть доступ к системе тушения. Раньше хватало «стоять рядом», а после
+     /firetruck строка загоралась у любого, кто оказался в кабине. ]]
+function F.TruckHUDVisible(crew, seated, looking, dist, maxDist)
+    if crew ~= true then return false end
+    if seated == true then return true end
+    if looking ~= true then return false end
+    return (tonumber(dist) or math.huge) <= (tonumber(maxDist) or 0)
+end
+
 function F.NearbyFireVehicle(ply)
     if not IsValid(ply) then return nil end
     local duty = ply.GetNWEntity and ply:GetNWEntity("GRM_FireMyTruck")
@@ -308,6 +321,7 @@ function F.EnsureTruckPump(ply, veh)
     veh:SetNWBool("GRM_FireTruck", true)
     veh:SetNWString("GRM_FireFaction", tostring(errOrName or ""))
     ply:SetNWEntity("GRM_FireMyTruck", veh)
+    if F.PublishCrewFlag then F.PublishCrewFlag(ply) end
     return pump, veh
 end
 
@@ -385,6 +399,7 @@ function F.CommissionTruck(ply)
     veh:SetNWInt("GRM_FireHoses", pump.GetHosesMax and pump:GetHosesMax() or 4)
     veh:SetNWInt("GRM_FireTank", pump.GetTank and pump:GetTank() or 0)
     ply:SetNWEntity("GRM_FireMyTruck", veh)
+    if F.PublishCrewFlag then F.PublishCrewFlag(ply) end
     tell(ply, "Машина принята. G — панель (взять рукав, связать с гидрантом). E по машине/насосу — ствол. Гидрант: откройте E, подъезд ~6 м или кнопка «Связать».", 100, 220, 130)
     print("[GRM Fire] truck commissioned by " .. ply:Nick() .. " class=" .. veh:GetClass())
     return true, veh, pump
@@ -407,7 +422,10 @@ function F.DecommissionTruck(ply)
     end
     veh:SetNWBool("GRM_FireTruck", false)
     veh:SetNWString("GRM_FireFaction", "")
-    if IsValid(ply) then ply:SetNWEntity("GRM_FireMyTruck", NULL) end
+    if IsValid(ply) then
+        ply:SetNWEntity("GRM_FireMyTruck", NULL)
+        if F.PublishCrewFlag then F.PublishCrewFlag(ply) end
+    end
     tell(ply, "Пожарная машина снята с дежурства (насос на борту остаётся).", 200, 200, 120)
     return true
 end
@@ -670,6 +688,35 @@ if SERVER then
         end)
     end)
 
+    --[[ ПУБЛИКАЦИЯ ДОСТУПА ПОЖАРНОГО.
+         Клиент не может сам спросить менеджер доступа — данные о правах
+         живут на сервере. Поэтому право «работать с пожарной машиной»
+         выкладывается одним флагом GRM_FireCrew, и строку с водой и пеной
+         видит только тот, кому она положена (заказ владельца 22.08).
+         Считается редко: на спавне, при постановке/снятии с дежурства и
+         раз в 20 секунд — сама проверка обходит фракции, в кадре ей не место. ]]
+    function F.PublishCrewFlag(ply)
+        if not IsValid(ply) or not ply:IsPlayer() then return end
+        local can = F.CanUseFireTruck(ply) == true
+        if ply:GetNWBool("GRM_FireCrew", false) ~= can then
+            ply:SetNWBool("GRM_FireCrew", can)
+        end
+    end
+
+    function F.PublishCrewFlags()
+        local list = (GRM.Perf and GRM.Perf.Players and GRM.Perf.Players()) or player.GetAll()
+        for _, ply in ipairs(list) do F.PublishCrewFlag(ply) end
+    end
+
+    hook.Add("PlayerSpawn", "GRM_FireTruck_CrewFlag", function(ply)
+        timer.Simple(1, function() F.PublishCrewFlag(ply) end)
+    end)
+    hook.Add("GRM_FireAccessChanged", "GRM_FireTruck_CrewFlag", function() F.PublishCrewFlags() end)
+    hook.Add("GRM_CharacterChanged", "GRM_FireTruck_CrewFlag", function(ply)
+        timer.Simple(0.5, function() F.PublishCrewFlag(ply) end)
+    end)
+    timer.Create("GRM_FireTruck_CrewFlags", 20, 0, function() F.PublishCrewFlags() end)
+
     print("[GRM Fire] Truck v1.0 loaded")
 end
 
@@ -877,43 +924,66 @@ if CLIENT then
 
     --[[ СТРОКА ПОЖАРКИ ВНИЗУ ЭКРАНА.
 
-         Раньше она держалась на NW-ссылке «моя машина»: приняв машину на
-         дежурство, боец видел счётчики воды и пены ВСЕГДА — хоть на другом
-         конце карты (заказ владельца 21.08). Теперь строка показывается
-         только когда она к месту:
-           • боец сидит в самой машине (или в её сиденье);
-           • либо стоит рядом с ней (по умолчанию 350 юнитов);
-           • либо держит в руках пожарный ствол/рукав от этой машины.
-         Дальность настраивается конваром grm_fire_hud_dist. ]]
+         История правок:
+           • сперва она держалась на NW-ссылке «моя машина» — приняв машину
+             на дежурство, боец видел счётчики ВСЕГДА, хоть на другом конце
+             карты;
+           • потом добавилась близость — и строка загоралась просто оттого,
+             что человек проходил мимо, а в кабине её видел вообще любой,
+             даже без доступа к системе тушения (заказ владельца 22.08).
+
+         Теперь правило одно и жёсткое (F.TruckHUDVisible):
+           • у игрока должен быть доступ пожарного — сервер публикует его
+             одним флагом GRM_FireCrew, клиент ничего не решает сам;
+           • и он либо СИДИТ в пожарной машине, либо СМОТРИТ на неё
+             (трассировка, не радиус) с расстояния не больше
+             grm_fire_hud_dist. ]]
     local hudDist = CreateClientConVar("grm_fire_hud_dist", "350", true, false,
         "На каком расстоянии от пожарной машины видна строка с водой и пеной")
 
-    local function holdingFireGear(ply)
-        local wep = ply:GetActiveWeapon()
-        if not IsValid(wep) then return false end
-        local cls = string.lower(wep:GetClass() or "")
-        return cls:find("fire", 1, true) ~= nil or cls:find("hose", 1, true) ~= nil
-            or cls:find("nozzle", 1, true) ~= nil
+    -- Взгляд считаем не каждый кадр: трассировка дорогая, а строке хватает
+    -- пяти обновлений в секунду.
+    local lookVeh, lookAt = nil, 0
+    local function lookedTruck(ply)
+        if CurTime() - lookAt > 0.2 then
+            lookAt = CurTime()
+            lookVeh = nil
+            local tr = (GRM.Perf and GRM.Perf.EyeTrace) and GRM.Perf.EyeTrace(ply) or ply:GetEyeTrace()
+            local ent = tr and tr.Entity or nil
+            if IsValid(ent) then
+                local root = (F.GetRootVehicle and F.GetRootVehicle(ent)) or ent
+                if IsValid(root) and root.GetNWBool and root:GetNWBool("GRM_FireTruck", false) then
+                    lookVeh = root
+                end
+            end
+        end
+        return IsValid(lookVeh) and lookVeh or nil
+    end
+
+    local function seatedTruck(ply)
+        local seat = ply:GetVehicle()
+        if not IsValid(seat) then return nil end
+        local p = seat:GetParent()
+        if IsValid(p) and p:GetNWBool("GRM_FireTruck", false) then return p end
+        if seat:GetNWBool("GRM_FireTruck", false) then return seat end
+        return nil
     end
 
     hook.Add("HUDPaint", "GRM_FireTruck_HUD", function()
         local ply = LocalPlayer()
         if not IsValid(ply) then return end
-        local veh = ply:GetNWEntity("GRM_FireMyTruck")
-        local seated = false
-        local seat = ply:GetVehicle()
-        if IsValid(seat) then
-            local p = seat:GetParent()
-            if IsValid(p) and p:GetNWBool("GRM_FireTruck", false) then veh, seated = p, true
-            elseif seat:GetNWBool("GRM_FireTruck", false) then veh, seated = seat, true end
-        end
-        if not IsValid(veh) or not veh:GetNWBool("GRM_FireTruck", false) then return end
+        local crew = ply:GetNWBool("GRM_FireCrew", false)
+        if not crew then return end
 
-        if not seated then
-            local maxDist = math.Clamp(hudDist:GetInt(), 80, 4000)
-            local near = ply:GetPos():Distance(veh:GetPos()) <= maxDist
-            if not (near or holdingFireGear(ply)) then return end
-        end
+        local seat = seatedTruck(ply)
+        local look = (not seat) and lookedTruck(ply) or nil
+        local veh = seat or look
+        if not IsValid(veh) then return end
+
+        local maxDist = math.Clamp(hudDist:GetInt(), 80, 4000)
+        local dist = ply:GetPos():Distance(veh:GetPos())
+        if not F.TruckHUDVisible(crew, seat ~= nil, look ~= nil, dist, maxDist) then return end
+
         local tank = veh:GetNWInt("GRM_FireTank", 0)
         local foam = veh:GetNWInt("GRM_FireFoam", 0)
         local powder = veh:GetNWInt("GRM_FirePowder", 0)
