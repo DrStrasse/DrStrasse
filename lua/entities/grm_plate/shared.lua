@@ -20,3 +20,5 @@ ENT.RenderGroup   = RENDERGROUP_BOTH
 
 ENT.Model    = "models/hunter/plates/plate025x075.mdl"
 ENT.Material = "models/debug/debugwhite"
+-- Визуальный масштаб бланка: компактнее стандартной hunter plate.
+ENT.VisualScale = 0.70

@@ -1371,7 +1371,7 @@ if SERVER then
         model = "models/hunter/plates/plate025x075.mdl",
         thin = "z", long = "y", short = "x",
         size = { x = 12.4, y = 36.1, z = 3.5 },
-        halfThickness = 1.75,
+        halfThickness = 1.225, -- модель знака уменьшена до 70%
     }
 
     --- Углы знака для поверхности с нормалью normal.

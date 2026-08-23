@@ -30,6 +30,7 @@ include("shared.lua")
 ----------------------------------------------------------------------]]
 
 function ENT:Initialize()
+    self:SetModelScale(self.VisualScale or 0.70, 0)
     self:SetMaterial(self.Material)
 end
 
@@ -125,7 +126,7 @@ function ENT:DrawTranslucent()
     local scale = 0.05
     -- Поле чуть меньше физической основы: остаётся аккуратная белая кромка,
     -- знак не выглядит огромной наклейкой на бампере.
-    local renderScale = 0.86
+    local renderScale = 0.60
     local w, h = (faceW * renderScale) / scale, (faceH * renderScale) / scale
 
     local plateCol = Color(def.plate[1], def.plate[2], def.plate[3])

@@ -6,6 +6,7 @@ local function PL() return GRM and GRM.Plates end
 
 function ENT:Initialize()
     self:SetModel(self.Model)
+    self:SetModelScale(self.VisualScale or 0.70, 0)
     self:SetMaterial(self.Material)
     self:PhysicsInit(SOLID_VPHYSICS)
     self:SetMoveType(MOVETYPE_VPHYSICS)

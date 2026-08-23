@@ -596,8 +596,8 @@ ok(cl:find("local fit = math.min((room * 0.88)", 1, true) ~= nil,
    "номер автоматически вписывается в поле знака по ширине и высоте")
 ok(cl:find("nrm = nrm * -1", 1, true) ~= nil and cl:find("right = right * -1", 1, true) ~= nil,
    "номер фиксированно рисуется на внешней, противоположной кузову стороне")
-ok(cl:find("local renderScale = 0.86", 1, true) ~= nil,
-   "поле номера чуть меньше физической основы")
+ok(cl:find("local renderScale = 0.60", 1, true) ~= nil,
+   "поле номера уменьшено вместе с моделью знака")
 ok(cl:find("local lift = (face.thickness or 1) * 0.5", 1, true) ~= nil,
    "надпись лежит на самой поверхности знака, а не висит перед ним")
 
@@ -853,7 +853,7 @@ print("\n=== 22. КРЕПЛЕНИЕ ПО ЗАМЕРАМ МОДЕЛИ (22.08) ===
 ok(istable(PL.ModelGeometry) and PL.ModelGeometry.thin == "z"
    and PL.ModelGeometry.long == "y" and PL.ModelGeometry.short == "x",
    "оси модели зафиксированы: тонкая z, длинная y, короткая x")
-ok(math.abs((PL.ModelGeometry.halfThickness or 0) - 1.75) < 0.001,
+ok(math.abs((PL.ModelGeometry.halfThickness or 0) - 1.225) < 0.001,
    "половина толщины знака взята из замера (3.5 / 2)")
 ok(isfunction(PL.SurfaceAngles) and isfunction(PL.PlaceOnSurface),
    "есть постановка знака на поверхность по нормали")
