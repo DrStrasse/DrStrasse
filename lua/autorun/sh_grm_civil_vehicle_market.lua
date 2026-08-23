@@ -5,7 +5,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.CivilVehicles = GRM.CivilVehicles or {}
 local CV = GRM.CivilVehicles
-CV.Version = "1.0.0"
+CV.Version = "1.1.0"
 CV.Net = { OPEN="GRM_CivilVehicle_Open", SYNC="GRM_CivilVehicle_Sync", ACT="GRM_CivilVehicle_Act" }
 CV.Data = CV.Data or { entries = {} }
 local FILE = "grm_vehicle_market/civil.json"
