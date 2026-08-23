@@ -42,6 +42,52 @@ CH.MaxSlots    = 3
 CH.PendingSelection = CH.PendingSelection or {}
 CH.PendingMandatory = CH.PendingMandatory or {}
 
+-- Гражданские citizen-модели HL2: пул по полу для первой регистрации.
+CH.CitizenModels = {
+    male = {
+        "models/player/Group01/male_01.mdl", "models/player/Group01/male_02.mdl",
+        "models/player/Group01/male_03.mdl", "models/player/Group01/male_04.mdl",
+        "models/player/Group01/male_05.mdl", "models/player/Group01/male_06.mdl",
+        "models/player/Group01/male_07.mdl", "models/player/Group01/male_08.mdl",
+        "models/player/Group01/male_09.mdl",
+        "models/player/Group02/male_02.mdl", "models/player/Group02/male_04.mdl",
+        "models/player/Group02/male_06.mdl", "models/player/Group02/male_08.mdl",
+    },
+    female = {
+        "models/player/Group01/female_01.mdl", "models/player/Group01/female_02.mdl",
+        "models/player/Group01/female_03.mdl", "models/player/Group01/female_04.mdl",
+        "models/player/Group01/female_06.mdl", "models/player/Group01/female_07.mdl",
+        "models/player/Group02/female_01.mdl", "models/player/Group02/female_02.mdl",
+        "models/player/Group02/female_03.mdl", "models/player/Group02/female_04.mdl",
+        "models/player/Group02/female_06.mdl", "models/player/Group02/female_07.mdl",
+    },
+}
+
+function CH.NormalizeGender(v)
+    v = string.lower(tostring(v or ""))
+    if v == "female" or v == "f" or v == "ж" or v == "жен" or v == "женский" then return "female" end
+    return "male"
+end
+
+function CH.GenderFromModel(path)
+    path = string.lower(tostring(path or ""))
+    if string.find(path, "female", 1, true) then return "female" end
+    return "male"
+end
+
+function CH.CitizenOutfits(gender)
+    gender = CH.NormalizeGender(gender)
+    local out = {}
+    for _, path in ipairs(CH.CitizenModels[gender] or CH.CitizenModels.male) do
+        out[#out + 1] = { path = path, skin = 0, bodygroups = {}, gender = gender }
+    end
+    return out
+end
+
+function CH.GenderLabel(gender)
+    return CH.NormalizeGender(gender) == "female" and "Женский" or "Мужской"
+end
+
 local NET_OPEN    = "GRM_Char_Open"
 local NET_SAVE    = "GRM_Char_Save"
 local NET_REQUEST = "GRM_Char_Request"
@@ -506,8 +552,14 @@ if SERVER then
         local c = rec.slots[slot]
         c.id = slot
         c.key = sid64(ply) .. ":" .. slot
+        if c.gender == nil or c.gender == "" then
+            c.gender = CH.GenderFromModel(c.model)
+        else
+            c.gender = CH.NormalizeGender(c.gender)
+        end
         ply:SetNWString("GRM_CharacterID", c.id)
         ply:SetNWString("GRM_CharacterKey", c.key)
+        ply:SetNWString("GRM_Gender", c.gender == "female" and "Женский" or "Мужской")
         return c
     end
     CH.Ensure = ensureChar
@@ -524,6 +576,7 @@ if SERVER then
             ply:SetNWString("GRM_CharacterID", tostring(c.id or activeSlot(ply)))
             ply:SetNWString("GRM_CharacterKey", tostring(c.key or CH.GetActiveKey(ply)))
             ply:SetNWString("GRM_RPName", tostring(c.name or ""))
+            ply:SetNWString("GRM_Gender", CH.GenderLabel(c.gender or CH.GenderFromModel(c.model)))
             if GRM.RPDesc and GRM.RPDesc.SetFor then GRM.RPDesc.SetFor(ply, tostring(c.desc or "")) end
             local applied = false
             if isstring(c.model) and c.model ~= "" then
@@ -657,6 +710,12 @@ if SERVER then
     end
 
     local function isAllowedModel(ply, path)
+        path = string.lower(tostring(path or ""))
+        for _, g in ipairs({ "male", "female" }) do
+            for _, p in ipairs((CH.CitizenModels and CH.CitizenModels[g]) or {}) do
+                if string.lower(p) == path then return true end
+            end
+        end
         if _G.IsModelAllowedForPlayer then
             return _G.IsModelAllowedForPlayer(ply, path)
         end
@@ -723,11 +782,22 @@ if SERVER then
     CH.RegisterProvider("civilian", {
         Order = 10,
         Title = function(ply) return "Гражданская внешность" end,
-        Outfits = function(ply)
-            local out = {}
+        Outfits = function(ply, context)
+            local out, seen = {}, {}
+            for _, g in ipairs({ "male", "female" }) do
+                for _, e in ipairs(CH.CitizenOutfits(g)) do
+                    seen[string.lower(e.path)] = true
+                    out[#out + 1] = e
+                end
+            end
             if istable(DefaultModels) then
                 for _, e in ipairs(DefaultModels) do
-                    if istable(e) and isstring(e.path) then out[#out + 1] = { path = e.path, skin = tonumber(e.skin) or 0, bodygroups = table.Copy(istable(e.bodygroups) and e.bodygroups or {}) } end
+                    if istable(e) and isstring(e.path) and not seen[string.lower(e.path)] then
+                        seen[string.lower(e.path)] = true
+                        local g = CH.GenderFromModel(e.path)
+                        out[#out + 1] = { path = e.path, skin = tonumber(e.skin) or 0,
+                            bodygroups = table.Copy(istable(e.bodygroups) and e.bodygroups or {}), gender = g }
+                    end
                 end
             end
             return out
@@ -822,6 +892,7 @@ if SERVER then
             local serverBanned, banRec = GRM.ServerBan and GRM.ServerBan.IsBanned and GRM.ServerBan.IsBanned(slotKey) or false, nil
             if serverBanned and GRM.ServerBan and GRM.ServerBan.IsBanned then _, banRec = GRM.ServerBan.IsBanned(slotKey) end
             slots[#slots + 1] = { id = id, index = i, exists = istable(c), name = istable(c) and tostring(c.name or "") or "",
+                gender = istable(c) and CH.NormalizeGender(c.gender or CH.GenderFromModel(c.model)) or "",
                 model = istable(c) and tostring(c.model or "") or "", skin = istable(c) and tonumber(c.skin) or 0,
                 bodygroups = istable(c) and table.Copy(c.bodygroups or {}) or {}, factionName = slotFaction or "",
                 factionRole = slotMember and tostring(slotMember.Role or "") or "",
@@ -1061,6 +1132,15 @@ if SERVER then
 
         if d.desc ~= nil then CH.SetDesc(ply, d.desc, d.slot) end
 
+        if d.gender ~= nil then
+            local c = ensureChar(ply, d.slot)
+            if istable(c) then
+                c.gender = CH.NormalizeGender(d.gender)
+                ply:SetNWString("GRM_Gender", CH.GenderLabel(c.gender))
+                saveChars("setgender")
+            end
+        end
+
         -- Имя принято сервером? Если нет (эмодзи, одно слово, занято другим) —
         -- меню НЕ закрываем, иначе персонаж остаётся без имени.
         local nameOK = d.name == nil
@@ -1292,6 +1372,11 @@ if SERVER then
                 else
                     ply.GRMCharConfirmed = nil
                     ply:SetNWString("GRM_RPName", "")
+                if leftover then
+                    CH.SetActiveSlot(ply, leftover, true)
+                else
+                    ply.GRMCharConfirmed = nil
+                    ply:SetNWString("GRM_RPName", "")
                     setCharacterLock(ply, true, true)
                     sendMenu(ply)
                 end
@@ -1368,10 +1453,18 @@ if CLIENT then
                 end
             end
         end
-        local defaultOutfit = outfits[1]
-        for _, outfit in ipairs(outfits) do
-            if outfit.provider == "civilian" then defaultOutfit = outfit break end
+        local function outfitGender(o)
+            if o.gender then return CH.NormalizeGender(o.gender) end
+            return CH.GenderFromModel(o.path)
         end
+        local defaultOutfit
+        for _, outfit in ipairs(outfits) do
+            if outfitGender(outfit) == CH.NormalizeGender(payload.gender or (char and char.gender) or "male") then
+                defaultOutfit = outfit
+                if outfit.provider == "civilian" then break end
+            end
+        end
+        defaultOutfit = defaultOutfit or outfits[1]
 
         local slots            = istable(payload.slots) and payload.slots or {}
         local serverActiveSlot = tostring(payload.activeSlot or "char1")
@@ -1383,6 +1476,7 @@ if CLIENT then
         local draft = {
             name = char and tostring(char.name or "") or "",
             desc = char and tostring(char.desc or "") or tostring(payload.desc or ""),
+            gender = CH.NormalizeGender(char and (char.gender or payload.gender) or payload.gender or CH.GenderFromModel(char and char.model)),
             model = char and tostring(char.model or "") or "",
             skin = char and tonumber(char.skin) or 0,
             bodygroups = char and table.Copy(char.bodygroups or {}) or {},
@@ -1614,7 +1708,13 @@ if CLIENT then
         local pageBody = addTab("body", "ТЕЛОСЛОЖЕНИЕ")
         local pageInfo = addTab("info", "ИМЯ И ОПИСАНИЕ")
 
-        -- Вкладка «Внешность»: список разрешённых моделей.
+        -- Вкладка «Внешность»: пол, затем модели.
+        local genderBar = vgui.Create("DPanel", pageLook)
+        genderBar:Dock(TOP) genderBar:SetTall(52) genderBar:DockMargin(0, 0, 6, 8)
+        genderBar.Paint = function(_, pw, ph)
+            draw.RoundedBox(8, 0, 0, pw, ph, C.panel)
+            draw.SimpleText("Пол", "GRMChar_Small", 12, 8, C.dim)
+        end
         local lookScroll = vgui.Create("DScrollPanel", pageLook)
         lookScroll:Dock(FILL)
         local outfitButtons = {}
@@ -1623,44 +1723,81 @@ if CLIENT then
                 ob._on = string.lower(ob._path) == string.lower(draft.model or "")
             end
         end
-        for _, outfit in ipairs(outfits) do
-            local path = tostring(outfit.path or "")
-            if path ~= "" then
-                local row = vgui.Create("DButton", lookScroll)
-                row:SetText("") row:Dock(TOP) row:SetTall(74) row:DockMargin(0, 0, 6, 6)
-                row._path = path
-                outfitButtons[#outfitButtons + 1] = row
-                local icon = vgui.Create("SpawnIcon", row)
-                icon:SetPos(8, 5) icon:SetSize(64, 64)
-                icon:SetModel(path, tonumber(outfit.skin) or 0)
-                icon:SetMouseInputEnabled(false)
-                row.Paint = function(self, pw, ph)
-                    draw.RoundedBox(8, 0, 0, pw, ph, self._on and Color(30, 48, 72) or (self:IsHovered() and C.panel2 or C.panel))
-                    surface.SetDrawColor(self._on and C.acc or C.border) surface.DrawOutlinedRect(0, 0, pw, ph, self._on and 2 or 1)
-                    local nm = (tostring(outfit.label or path):match("([^/]+)$") or path):gsub("%.mdl$", "")
-                    draw.SimpleText(nm, "GRMChar_Normal", 82, 18, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    draw.SimpleText(tostring(outfit.providerTitle or outfit.provider or "Доступная модель"),
-                        "GRMChar_Small", 82, 40, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                end
-                row.DoClick = function()
-                    draft.model = path
-                    draft.skin = tonumber(outfit.skin) or 0
-                    draft.bodygroups = table.Copy(outfit.bodygroups or {})
-                    draft.wardrobeRule = table.Copy(outfit.wardrobeRule or {})
-                    refreshOutfitButtons()
-                    applyPreview(true)
-                    rebuildBodygroups()
-                end
+        local function firstOutfitForGender(g)
+            for _, outfit in ipairs(outfits) do
+                if outfitGender(outfit) == g then return outfit end
             end
         end
-        refreshOutfitButtons()
-        if #outfits == 0 then
-            local none = vgui.Create("DLabel", lookScroll)
-            none:Dock(TOP) none:SetText("Для вашей роли нет доступных моделей.")
-            none:SetFont("GRMChar_Normal") none:SetTextColor(C.dim)
+        local rebuildLook
+        rebuildLook = function()
+            lookScroll:Clear()
+            outfitButtons = {}
+            local shown = 0
+            for _, outfit in ipairs(outfits) do
+                local path = tostring(outfit.path or "")
+                if path ~= "" and (outfit.provider == "faction" or outfitGender(outfit) == draft.gender) then
+                    shown = shown + 1
+                    local row = vgui.Create("DButton", lookScroll)
+                    row:SetText("") row:Dock(TOP) row:SetTall(74) row:DockMargin(0, 0, 6, 6)
+                    row._path = path
+                    outfitButtons[#outfitButtons + 1] = row
+                    local icon = vgui.Create("SpawnIcon", row)
+                    icon:SetPos(8, 5) icon:SetSize(64, 64)
+                    icon:SetModel(path, tonumber(outfit.skin) or 0)
+                    icon:SetMouseInputEnabled(false)
+                    row.Paint = function(self, pw, ph)
+                        draw.RoundedBox(8, 0, 0, pw, ph, self._on and Color(30, 48, 72) or (self:IsHovered() and C.panel2 or C.panel))
+                        surface.SetDrawColor(self._on and C.acc or C.border) surface.DrawOutlinedRect(0, 0, pw, ph, self._on and 2 or 1)
+                        local nm = (tostring(outfit.label or path):match("([^/]+)$") or path):gsub("%.mdl$", "")
+                        draw.SimpleText(nm, "GRMChar_Normal", 82, 18, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                        draw.SimpleText(tostring(outfit.providerTitle or outfit.provider or "Гражданская модель"),
+                            "GRMChar_Small", 82, 40, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    end
+                    row.DoClick = function()
+                        draft.model = path
+                        draft.gender = outfitGender(outfit)
+                        draft.skin = tonumber(outfit.skin) or 0
+                        draft.bodygroups = table.Copy(outfit.bodygroups or {})
+                        draft.wardrobeRule = table.Copy(outfit.wardrobeRule or {})
+                        refreshOutfitButtons()
+                        applyPreview(true)
+                        rebuildBodygroups()
+                    end
+                end
+            end
+            refreshOutfitButtons()
+            if shown == 0 then
+                local none = vgui.Create("DLabel", lookScroll)
+                none:Dock(TOP) none:SetText("Нет гражданских моделей этого пола.")
+                none:SetFont("GRMChar_Normal") none:SetTextColor(C.dim)
+            end
         end
+        local function pickGender(g)
+            draft.gender = g
+            local fo = firstOutfitForGender(g)
+            if fo then
+                draft.model = fo.path
+                draft.skin = tonumber(fo.skin) or 0
+                draft.bodygroups = table.Copy(fo.bodygroups or {})
+            end
+            rebuildLook()
+            applyPreview(true)
+            rebuildBodygroups()
+        end
+        for i, spec in ipairs({ { "Мужской", "male" }, { "Женский", "female" } }) do
+            local b = vgui.Create("DButton", genderBar)
+            b:SetText("") b:SetSize(140, 28)
+            b:SetPos(12 + (i - 1) * 150, 20)
+            b.Paint = function(self, pw, ph)
+                local on = draft.gender == spec[2]
+                draw.RoundedBox(6, 0, 0, pw, ph, on and C.acc or (self:IsHovered() and C.panel2 or C.head))
+                draw.SimpleText(spec[1], "GRMChar_Normal", pw / 2, ph / 2, on and color_white or C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            end
+            b.DoClick = function() pickGender(spec[2]) end
+        end
+        rebuildLook()
 
-        -- Вкладка «Телосложение»: скин и бодигруппы, всё вживую.
+                -- Вкладка «Телосложение»: скин и бодигруппы, всё вживую.
         local bodyScroll = vgui.Create("DScrollPanel", pageBody)
         bodyScroll:Dock(FILL)
 
@@ -1783,7 +1920,7 @@ if CLIENT then
         idLbl:Dock(TOP) idLbl:SetTall(20) idLbl:SetFont("GRMChar_Small") idLbl:SetTextColor(C.dim)
         idLbl:SetText("Ключ персонажа: " .. tostring(payload.characterKey or "будет создан"))
 
-        showPage(char and "look" or "info")
+        showPage("look")
 
         -- ── ФУТЕР: подтверждение ────────────────────────────────────────
         local function submitCharacter()
@@ -1799,6 +1936,7 @@ if CLIENT then
             net.Start(NET_SAVE)
                 net.WriteTable({
                     slot = activeSlot or "char1", name = draft.name, desc = draft.desc,
+                    gender = draft.gender,
                     model = draft.model, skin = draft.skin, bodygroups = draft.bodygroups,
                     wardrobe = isWardrobe, wardrobeEnt = payload.wardrobeEnt, wardrobeRule = draft.wardrobeRule,
                 })
@@ -1889,6 +2027,89 @@ if CLIENT then
     function CH.OpenMenu()
         local lp = LocalPlayer()
         if IsValid(lp) and lp:GetNWBool("GRM_Arrested", false) then
+            notification.AddLegacy("Во время ареста меню персонажа недоступно.", NOTIFY_ERROR, 5)
+            return
+        end
+        if IsValid(CH._frame) and CH._frameMode == "character" then
+            CH._frame:MakePopup(); CH._frame:MoveToFront(); return
+        end
+        if (CH._nextOpenRequest or 0) > RealTime() then return end
+        CH._nextOpenRequest = RealTime() + .5
+        local slot = CH._previewSlot or (IsValid(lp) and lp:GetNWString("GRM_CharacterID", "char1")) or "char1"
+        net.Start(NET_REQUEST); net.WriteString(slot); net.SendToServer()
+    end
+    concommand.Add("grm_character", CH.OpenMenu)
+
+    hook.Add("PlayerSayTransform", "GRM_Char_ChatCl", function(ply, text)
+        if ply ~= LocalPlayer() then return end
+        local msg = string.lower(string.Trim(text and (istable(text) and text[1] or text) or ""))
+        if msg == "/char" or msg == "/chars" or msg == "!char" then
+            CH.OpenMenu()
+            if istable(text) then text[1] = "" end
+            return true
+        end
+    end)
+
+    local function clientCharacterPending()
+        local lp = LocalPlayer()
+        return IsValid(lp) and lp:GetNWBool("GRM_CharacterPending", false)
+    end
+
+    hook.Add("HUDPaintBackground", "GRM_Char_LockScreen", function()
+        if not clientCharacterPending() then return end
+        surface.SetDrawColor(0, 0, 0, 255)
+        surface.DrawRect(0, 0, ScrW(), ScrH())
+        draw.SimpleText("Выберите персонажа", "GRMChar_Title", ScrW() / 2, ScrH() - 84,
+            Color(235, 235, 245), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Игровой мир заблокирован до подтверждения персонажа", "GRMChar_Normal",
+            ScrW() / 2, ScrH() - 58, Color(145, 155, 175), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end)
+
+    hook.Add("HUDShouldDraw", "GRM_Char_HideHUD", function()
+        if clientCharacterPending() then return false end
+    end)
+
+    hook.Add("PlayerBindPress", "GRM_Char_BlockBinds", function(_, bind)
+        if clientCharacterPending() then return true end
+    end)
+
+    hook.Add("SpawnMenuOpen", "GRM_Char_BlockSpawnMenu", function()
+        if clientCharacterPending() then return false end
+    end)
+
+    hook.Add("ContextMenuOpen", "GRM_Char_BlockContextMenu", function()
+        if clientCharacterPending() then return false end
+    end)
+
+    -- ESC не должен ни открывать игровое меню, ни закрывать окно выбора.
+    hook.Add("OnPauseMenuShow", "GRM_Char_BlockPause", function()
+        if clientCharacterPending() then return false end
+    end)
+
+    -- Пока персонаж не выбран, окно всегда на экране: если игрок его
+    -- как-то закрыл (сторож окон, чужой аддон), просим меню заново.
+    hook.Add("Think", "GRM_Char_KeepMenu", function()
+        if not clientCharacterPending() then return end
+        -- пока на экране загрузка проекта, окно выбора не всплывает
+        if GRM.Loading and GRM.Loading.Shown then return end
+        if IsValid(CH._frame) then return end
+        if (CH._reopenAt or 0) > RealTime() then return end
+        CH._reopenAt = RealTime() + 1.5
+        net.Start(NET_REQUEST) net.WriteString(CH._previewSlot or "char1") net.SendToServer()
+    end)
+
+    hook.Add("Think", "GRM_Char_CloseForeignMenus", function()
+        if not clientCharacterPending() then CH._foreignMenuCheckAt=nil return end
+        local now=CurTime();if(CH._foreignMenuCheckAt or 0)>now then return end;CH._foreignMenuCheckAt=now+.1
+        if GRM.Mobile and GRM.Mobile.ClientIsOpen and GRM.Mobile.ClientIsOpen()
+            and GRM.Mobile.ClientClose then
+            GRM.Mobile.ClientClose()
+        end
+    end)
+
+    print("[GRM Char] Ядро персонажей v" .. CH.Version .. " загружено (клиент)")
+end
+hen
             notification.AddLegacy("Во время ареста меню персонажа недоступно.", NOTIFY_ERROR, 5)
             return
         end
