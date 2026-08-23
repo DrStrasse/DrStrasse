@@ -529,8 +529,9 @@ if SERVER then
             if banned(ply) then return false end
         end)
     end
-    -- Меню (F1-F4) и служебные окна отбывающему не открываются.
-    for _, name in ipairs({ "ShowHelp", "ShowTeam", "ShowSpare1", "ShowSpare2" }) do
+    -- F2/F4 оставляем: это вкладки персонажа/игрового меню и не дают
+    -- наказанному игрового преимущества. F1/F3 и служебные окна закрыты.
+    for _, name in ipairs({ "ShowHelp", "ShowSpare1" }) do
         hook.Add(name, "GRM_ServerBan_NoMenus_" .. name, function(ply)
             if banned(ply) then return true end
         end)

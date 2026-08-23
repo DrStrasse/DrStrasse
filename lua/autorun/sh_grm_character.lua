@@ -807,11 +807,17 @@ if SERVER then
             local id = slotID(i)
             local c = rec.slots[id]
             local slotFaction, slotMember = factionMembership(ply, sid64(ply) .. ":" .. id)
+            local slotKey = sid64(ply) .. ":" .. id
+            local serverBanned, banRec = GRM.ServerBan and GRM.ServerBan.IsBanned and GRM.ServerBan.IsBanned(slotKey) or false, nil
+            if serverBanned and GRM.ServerBan and GRM.ServerBan.IsBanned then _, banRec = GRM.ServerBan.IsBanned(slotKey) end
             slots[#slots + 1] = { id = id, index = i, exists = istable(c), name = istable(c) and tostring(c.name or "") or "",
                 model = istable(c) and tostring(c.model or "") or "", skin = istable(c) and tonumber(c.skin) or 0,
                 bodygroups = istable(c) and table.Copy(c.bodygroups or {}) or {}, factionName = slotFaction or "",
                 factionRole = slotMember and tostring(slotMember.Role or "") or "",
-                factionDepartment = slotMember and tostring(slotMember.Department or "") or "" }
+                factionDepartment = slotMember and tostring(slotMember.Department or "") or "",
+                serverBanned = serverBanned == true,
+                serverBanReason = serverBanned and tostring(banRec and banRec.reason or "") or "",
+                serverBanUntil = serverBanned and tonumber(banRec and banRec["until"] or 0) or 0 }
         end
         return {
             char = previewChar,
@@ -1378,8 +1384,11 @@ if CLIENT then
                         draw.SimpleText(tostring(info.model):match("([^/]+)$") or info.model, "GRMChar_Small",
                             18, 60, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                     end
-                    draw.SimpleText(self._active and "АКТИВЕН" or (sel and "ПРОСМОТР" or "ВЫБРАТЬ"), "GRMChar_Small",
-                        pw - 16, ph - 20, sel and C.acc or C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                    local stateText = self._active and "АКТИВЕН" or (sel and "ПРОСМОТР" or "ВЫБРАТЬ")
+                    draw.SimpleText(stateText, "GRMChar_Small", pw - 16, ph - 20, sel and C.acc or C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+                    if has and info.serverBanned then
+                        draw.SimpleText("СЕРВЕРНЫЙ БАН · персонаж можно выбрать", "GRMChar_Small", 18, 82, Color(235, 90, 82), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                    end
                 end
                 b.DoClick = function()
                     if info.id == activeSlot or CH._actionPending then return end

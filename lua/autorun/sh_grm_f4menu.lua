@@ -669,6 +669,9 @@ local function buildMenu()
     if IsValid(F4._frame) then F4._frame:Remove() end
 
     local f = vgui.Create("DFrame")
+    -- Деморган не закрывает F4: это информационные вкладки, а не обход
+    -- ограничения (серверные действия всё равно перепроверяются).
+    f.GRM_BanAllowed = true
     F4._frame = f
     f:SetTitle("")
     f:SetSize(880, 640)
