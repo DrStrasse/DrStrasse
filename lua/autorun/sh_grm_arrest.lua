@@ -1507,7 +1507,11 @@ if CLIENT then
 
     -- Камеры больше не рисуют огромные сферы/лучи для всех игроков.
     -- Только суперадмин видит компактную полупрозрачную метку вблизи.
+    local arrestZoneDrawFrame = -1
     hook.Add("PostDrawTranslucentRenderables", "GRM_Arrest_Zones", function()
+        local frame = FrameNumber()
+        if arrestZoneDrawFrame == frame then return end
+        arrestZoneDrawFrame = frame
         local lp = LocalPlayer()
         if not IsValid(lp) or not lp:IsSuperAdmin() then return end
         local cameras=GRM.Perf and GRM.Perf.Entities and GRM.Perf.Entities("grm_arrest_camera")or ents.FindByClass("grm_arrest_camera")

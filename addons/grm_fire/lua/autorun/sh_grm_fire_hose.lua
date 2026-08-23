@@ -518,8 +518,14 @@ if CLIENT then
         A.HosePaths[id] = { id = id, pts = pts, holder = holder, docked = docked, src = src, tail = tail }
     end)
 
+    local lastHoseDrawFrame = -1
     hook.Add("PostDrawTranslucentRenderables", "GRM_FireHose_Vis", function(_, sky)
         if sky then return end
+        -- Source вызывает translucent render больше одного раза за кадр
+        -- (мир/виды/эффекты). Рукав рисуется максимум один раз на FrameNumber.
+        local frame = FrameNumber()
+        if lastHoseDrawFrame == frame then return end
+        lastHoseDrawFrame = frame
         A.DrawAllHoses()
     end)
 end

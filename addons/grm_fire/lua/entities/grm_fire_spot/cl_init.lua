@@ -54,8 +54,12 @@ function ENT:DrawSpotMarker()
     cam.End3D2D()
 end
 
+local fireSpotDrawFrame = -1
 hook.Add("PostDrawTranslucentRenderables", "GRM_FireSpot_Vis", function(_, sky)
     if sky then return end
+    local frame = FrameNumber()
+    if fireSpotDrawFrame == frame then return end
+    fireSpotDrawFrame = frame
     local ply = LocalPlayer()
     if not holdingPlaceTool(ply) then return end
     -- Покадровый скан класса заменён event-реестром GRM.Perf.
