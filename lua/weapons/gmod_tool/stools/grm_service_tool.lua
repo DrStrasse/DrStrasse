@@ -117,6 +117,14 @@ local TYPES = {
         defTitle  = "ЮСТИЦИЯ • СУД И ПРОКУРАТУРА",
         defModel  = "models/props_lab/monitor02.mdl",
     },
+    public = {
+        id        = "public",
+        class     = "grm_comp_public",
+        label     = "Гражданский терминал самообслуживания",
+        desc      = "Для жителей: долги, госуслуги, проверка диплома, 911, свои ордера и розыск",
+        defTitle  = "ГРАЖДАНСКИЙ ТЕРМИНАЛ • САМООБСЛУЖИВАНИЕ",
+        defModel  = "models/props/cs_office/computer.mdl",
+    },
     general = {
         id        = "general",
         class     = "grm_doc_computer",
