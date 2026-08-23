@@ -60,9 +60,13 @@ T.CharKey = charKey
 -- data/grm_wanted/access.json). Старая эвристика по названию фракции
 -- остаётся ФОЛБЭКОМ: если доступы ещё не настроены, сервер не должен
 -- внезапно потерять работающие терминалы.
-function T.CanManage(ply, jurisdiction)
+function T.CanManage(ply, jurisdiction, ent)
     if not (IsValid(ply) and ply:IsPlayer()) then return false end
     if ply:IsSuperAdmin() then return true end
+    if IsValid(ent) and GRM.CompAccess and GRM.CompAccess.GetRaw(ent) ~= ""
+        and not GRM.CompAccess.Allowed(ent, ply) then
+        return false
+    end
 
     local W = GRM.Wanted
     if W and isfunction(W.CanView) then
@@ -109,7 +113,7 @@ function T.CanEdit(ply, jurisdiction)
         return true
     end
     -- Фолбэк совпадает с CanManage, чтобы не сломать текущие сервера.
-    return T.CanManage(ply, jurisdiction)
+    return T.CanManage(ply, jurisdiction, ply.GRM_CompTerminalEnt)
 end
 
 -----------------------------------------------------------------------
@@ -333,7 +337,7 @@ function T.Open(ent, ply, channel)
     if not (IsValid(ent) and IsValid(ply) and ply:IsPlayer()) then return end
     local jur = ent.Jurisdiction or "civil"
 
-    if not T.CanManage(ply, jur) then
+    if not T.CanManage(ply, jur, ent) then
         notify(ply, ent.AccessDeniedMsg or "Доступ к терминалу запрещён.")
         return
     end

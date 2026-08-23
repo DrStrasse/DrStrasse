@@ -40,6 +40,10 @@ function ENT:Use(ply)
         else ply:ChatPrint("[Учреждение] Компьютер обесточен") end
         return
     end
+    if GRM.CompAccess and GRM.CompAccess.GetRaw(self) ~= "" and not GRM.CompAccess.Allowed(self, ply) then
+        if GRM.Notify then GRM.Notify(ply, "Доступ к этому компьютеру закрыт для вашей организации.", 255, 120, 100) end
+        return
+    end
     if not (GRM.Education and isfunction(GRM.Education.Open)) then
         ply:ChatPrint("[Учреждение] Модуль образования не загружен")
         return

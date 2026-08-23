@@ -27,6 +27,9 @@ end
 function ENT:CanManage(ply)
     if not (IsValid(ply) and ply:IsPlayer()) then return false end
     if ply:IsSuperAdmin() then return true end
+    if GRM.CompAccess and GRM.CompAccess.GetRaw(self) ~= "" then
+        return GRM.CompAccess.Allowed(self, ply)
+    end
 
     local fName = ply:GetNWString("GRM_Faction", "")
     if fName == "" then return false end

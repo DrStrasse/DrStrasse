@@ -34,7 +34,7 @@ function ENT:Initialize()
 end
 
 function ENT:CanManage(ply)
-    return GRM.CompTerminal and GRM.CompTerminal.CanManage(ply, self.Jurisdiction) or false
+    return GRM.CompTerminal and GRM.CompTerminal.CanManage(ply, self.Jurisdiction, self) or false
 end
 
 function ENT:Use(ply)

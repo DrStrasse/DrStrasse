@@ -30,6 +30,9 @@ function ENT:Initialize()
 end
 
 function ENT:CanManage(ply)
+    if GRM.CompAccess and GRM.CompAccess.GetRaw(self) ~= "" then
+        return GRM.CompAccess.Allowed(self, ply)
+    end
     if not (IsValid(ply) and ply:IsPlayer()) then return false end
     if ply:IsSuperAdmin() then return true end
 

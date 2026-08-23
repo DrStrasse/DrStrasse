@@ -20,6 +20,7 @@ TOOL.ClientConVar = {
     model     = "models/props/cs_office/computer.mdl",
     title     = "",
     make_perm = "1",
+    factions  = "",
 }
 
 if CLIENT then
@@ -59,6 +60,14 @@ local TYPES = {
         label     = "Компьютер Военкомата (Учёт и призыв)",
         desc      = "Выдача военных билетов, учёт призывников/мобрезерва, ВВК",
         defTitle  = "ВОЕННЫЙ КОМИССАРИАТ • УЧЁТ И ПРИЗЫВ",
+        defModel  = "models/props/cs_office/computer.mdl",
+    },
+    army = {
+        id        = "army",
+        class     = "grm_comp_military_police",
+        label     = "Служебный компьютер Вооружённых сил",
+        desc      = "Военный розыск, комендатура, ориентировки — доступ задаётся списком организаций на этом ПК",
+        defTitle  = "ВООРУЖЁННЫЕ СИЛЫ • СЛУЖЕБНЫЙ ТЕРМИНАЛ",
         defModel  = "models/props/cs_office/computer.mdl",
     },
     traffic = {
@@ -181,6 +190,9 @@ function TOOL:LeftClick(trace)
     if ent.SetComputerName then
         ent:SetComputerName(customTitle)
     end
+    if GRM.CompAccess and GRM.CompAccess.Set then
+        GRM.CompAccess.Set(ent, self:GetClientInfo("factions") or "")
+    end
 
     local phys = ent:GetPhysicsObject()
     if IsValid(phys) then
@@ -274,6 +286,74 @@ if CLIENT then
         panel:TextEntry("Заголовок на экране:", "grm_service_tool_title")
 
         panel:CheckBox("Автоматически сохранять на карте (Perm)", "grm_service_tool_make_perm")
+
+        local facRows = (GRM.CompAccess and GRM.CompAccess.Rows) or {}
+        local function writeFactions(set)
+            local out = {}
+            for k, on in pairs(set) do if on then out[#out + 1] = k end end
+            table.sort(out)
+            RunConsoleCommand("grm_service_tool_factions", table.concat(out, ","))
+        end
+        local function checkedSet()
+            local set, cv = {}, GetConVar("grm_service_tool_factions")
+            for name in string.gmatch((cv and cv:GetString()) or "", "([^,]+)") do
+                local s = string.Trim(name)
+                if s ~= "" then set[s] = true end
+            end
+            return set
+        end
+        panel:ControlHelp("ДОСТУП ЭТОГО КОМПЬЮТЕРА")
+        panel:Help("Отметьте организации, которым можно пользоваться ЭТИМ ПК. Пусто — как раньше, по ведомству.")
+        local facList = vgui.Create("DScrollPanel", panel)
+        facList:SetTall(180)
+        panel:AddItem(facList)
+        local function rebuildFac()
+            if not IsValid(facList) then return end
+            facList:Clear()
+            local cur = checkedSet()
+            for _, row in ipairs(facRows) do
+                local cb = vgui.Create("DCheckBoxLabel", facList)
+                cb:Dock(TOP) cb:SetTall(18) cb:DockMargin(2, 0, 2, 1)
+                cb:SetText(row.name .. (row.key ~= row.name and ("  [" .. row.key .. "]") or ""))
+                cb:SetChecked(cur[row.key] == true)
+                cb.OnChange = function(_, v)
+                    local set = checkedSet()
+                    set[row.key] = v == true or nil
+                    writeFactions(set)
+                end
+            end
+            if #facRows == 0 then
+                local hint = vgui.Create("DLabel", facList)
+                hint:Dock(TOP) hint:SetWrap(true) hint:SetTall(36)
+                hint:SetText("Список организаций ещё не пришёл — нажмите «Обновить».")
+            end
+        end
+        local facBtns = vgui.Create("DPanel", panel)
+        facBtns:SetTall(26) facBtns:SetPaintBackground(false)
+        panel:AddItem(facBtns)
+        local function smallBtn(txt, w, fn)
+            local b = vgui.Create("DButton", facBtns)
+            b:Dock(LEFT) b:SetWide(w) b:DockMargin(0, 0, 4, 0) b:SetText(txt) b.DoClick = fn
+        end
+        smallBtn("Обновить", 90, function()
+            net.Start("GRM_CompAccess_ListReq") net.SendToServer()
+        end)
+        smallBtn("Снять всё", 80, function()
+            RunConsoleCommand("grm_service_tool_factions", "")
+            rebuildFac()
+        end)
+        smallBtn("Записать на ПК под прицелом", 200, function()
+            local cv = GetConVar("grm_service_tool_factions")
+            net.Start("GRM_CompAccess_Apply")
+            net.WriteString(cv and cv:GetString() or "")
+            net.SendToServer()
+        end)
+        hook.Add("GRM_CompAccess_List", facList, function(_, rows)
+            facRows = istable(rows) and rows or facRows
+            rebuildFac()
+        end)
+        rebuildFac()
+        net.Start("GRM_CompAccess_ListReq") net.SendToServer()
 
         panel:Help(
             "УПРАВЛЕНИЕ:\n" ..

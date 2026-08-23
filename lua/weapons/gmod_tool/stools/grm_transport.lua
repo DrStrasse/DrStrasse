@@ -258,7 +258,22 @@ if CLIENT then
         kind:AddChoice("Городской — пускает всех", "public")
         kind:AddChoice("Ведомственный — только своя организация", "faction")
         kind:AddChoice("Личный — только владелец", "private")
-        panel:TextEntry("Организация (для ведомственного)", "grm_transport_faction")
+        local facCombo = panel:ComboBox("Организация (для ведомственного)", "grm_transport_faction")
+        facCombo:AddChoice("— не выбрана —", "")
+        local function fillFac(rows)
+            if not IsValid(facCombo) then return end
+            local cur = GetConVar("grm_transport_faction")
+            local keep = cur and cur:GetString() or ""
+            facCombo:Clear()
+            facCombo:AddChoice("— не выбрана —", "")
+            for _, row in ipairs(istable(rows) and rows or {}) do
+                facCombo:AddChoice(row.name .. (row.key ~= row.name and ("  [" .. row.key .. "]") or ""), row.key)
+            end
+            if keep ~= "" then facCombo:SetValue(keep) end
+        end
+        hook.Add("GRM_CompAccess_List", facCombo, function(_, rows) fillFac(rows) end)
+        if GRM.CompAccess and istable(GRM.CompAccess.Rows) then fillFac(GRM.CompAccess.Rows) end
+        net.Start("GRM_CompAccess_ListReq") net.SendToServer()
         panel:NumSlider("Плата за выезд", "grm_transport_fee", 0, 5000, 0)
 
         panel:Help("")

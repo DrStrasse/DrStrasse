@@ -51,6 +51,9 @@ if GRM.Access and GRM.Access.Register then
 end
 
 function ENT:CanManage(ply)
+    if GRM.CompAccess and GRM.CompAccess.GetRaw(self) ~= "" then
+        return GRM.CompAccess.Allowed(self, ply)
+    end
     if GRM.Access and GRM.Access.Can then
         return GRM.Access.Can(ply, "medical.computer.use", { entity = self }) == true
     end

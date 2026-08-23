@@ -36,6 +36,9 @@ local function looksLikeJustice(fName)
 end
 
 function ENT:CanManage(ply)
+    if GRM.CompAccess and GRM.CompAccess.GetRaw(self) ~= "" then
+        return GRM.CompAccess.Allowed(self, ply)
+    end
     if not (IsValid(ply) and ply:IsPlayer()) then return false end
     if ply:IsSuperAdmin() then return true end
     if looksLikeJustice(ply:GetNWString("GRM_Faction", "")) then return true end
