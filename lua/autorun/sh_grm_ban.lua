@@ -547,11 +547,20 @@ if SERVER then
             -- Пока открыт GRM Loading, не телепортируем/не применяем вид:
             -- иначе кнопка «НАЧАТЬ ИГРАТЬ» теряет фокус либо экран закрывает
             -- ban-сторож. Наказание встанет сразу после входного экрана.
-            if GRM.Loading and GRM.Loading.IsLoading and GRM.Loading.IsLoading(ply) then return end
+            if (GRM.Loading and GRM.Loading.IsLoading and GRM.Loading.IsLoading(ply))
+                or ply.GRM_BanAwaitCharacter == true or ply:GetNWBool("GRM_CharacterPending", false) then return end
             SB.Apply(ply, true)
         end)
     end)
     hook.Add("GRM_LoadingFinished", "GRM_ServerBan_AfterLoading", function(ply)
+        -- После Loading Screen всегда идёт выбор персонажа. Не применяем
+        -- бан между двумя обязательными экранами: Character Menu должно
+        -- принять слот и только потом выпустить игрока в деморган.
+        if IsValid(ply) and select(1, SB.IsBanned(ply)) then ply.GRM_BanAwaitCharacter = true end
+    end)
+    hook.Add("GRM_CharacterChanged", "GRM_ServerBan_AfterCharacter", function(ply)
+        if not (IsValid(ply) and ply.GRM_BanAwaitCharacter) then return end
+        ply.GRM_BanAwaitCharacter = nil
         timer.Simple(0.25, function()
             if IsValid(ply) and select(1, SB.IsBanned(ply)) then SB.Apply(ply, true) end
         end)
@@ -566,7 +575,9 @@ if SERVER then
             if IsValid(ply) then
                 local isBanned, rec = SB.IsBanned(ply)
                 if isBanned then
-                    local loading = GRM.Loading and GRM.Loading.IsLoading and GRM.Loading.IsLoading(ply)
+                    local loading = (GRM.Loading and GRM.Loading.IsLoading and GRM.Loading.IsLoading(ply))
+                        or ply.GRM_BanAwaitCharacter == true
+                        or ply:GetNWBool("GRM_CharacterPending", false)
                     if not loading then
                         SB.Apply(ply, false)
                         SB.Moan(ply)
