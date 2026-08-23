@@ -153,6 +153,8 @@ if not GRM.HUD._fontsCreated then
         })
     end
 end
+surface.CreateFont("GRM_HUD_Name", { font = "Roboto", size = 16, weight = 700, extended = true, antialias = true })
+surface.CreateFont("GRM_HUD_Meta", { font = "Roboto", size = 12, weight = 500, extended = true, antialias = true })
 
 -- БАЛАНС
 GRM.PlayerBalance = GRM.PlayerBalance or 0
@@ -516,59 +518,92 @@ local function DrawMainHUD()
         end
     end
 
-    -- ── статусный модуль GRM/XUI ───────────────────────────────────
-    -- Не «форма с подписями», а компактный служебный монитор: каждая
-    -- характеристика — самостоятельная крупная строка с цветным рейлом,
-    -- заливкой и значением внутри. Читается в движении, без микротекста.
-    local pw = 336
-    local pad, rowH, gap = 12, 26, 5
-    local headerH, moneyH = 28, 52
-    local ph = headerH + pad + #rows * (rowH + gap) + moneyH + pad - gap
-    ph = math.min(ph, sh - 32)
-    local px, py = 16, math.max(16, sh - 16 - ph)
-
-    draw.RoundedBox(8, px + 3, py + 3, pw, ph, cfg.bgShadow)
-    draw.RoundedBox(8, px, py, pw, ph, cfg.bgColor)
-    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 180)
-    surface.DrawOutlinedRect(px, py, pw, ph, 1)
-    draw.RoundedBoxEx(8, px, py, pw, headerH, cfg.panelHeader, true, true, false, false)
-    draw.RoundedBox(0, px, py, 4, headerH, cfg.hpColorFull)
-    draw.SimpleText("СОСТОЯНИЕ", "GRM_HUD_Value", px + 14, py + headerH / 2, cfg.textColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 140)
-    surface.DrawRect(px + 12, py + headerH - 1, pw - 24, 1)
-
-    local x, w = px + pad, pw - pad * 2
-    local y = py + headerH + pad
-    for _, row in ipairs(rows) do
-        local fillW = math.max(0, (w - 4) * row.frac)
-        draw.RoundedBox(4, x, y, w, rowH, Color(17, 29, 45, 255))
-        if fillW > 0 then
-            draw.RoundedBox(4, x + 4, y + 3, math.max(2, fillW), rowH - 6,
-                Color(row.color.r, row.color.g, row.color.b, 185))
+    local lp = LocalPlayer()
+    local rpName = IsValid(lp) and lp:GetNWString("GRM_RPName", "") or ""
+    if rpName == "" and IsValid(lp) then rpName = lp:Nick() end
+    local facKey = IsValid(lp) and lp:GetNWString("GRM_Faction", "") or ""
+    local facName = "Гражданский"
+    if facKey ~= "" then
+        facName = (GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(facKey)) or facKey
+    end
+    local roleName = IsValid(lp) and lp:GetNWString("GRM_Role", "") or ""
+    if roleName ~= "" then
+        if GRM.Factions and GRM.Factions.RoleDisplayName and Factions and Factions[facKey] then
+            roleName = GRM.Factions.RoleDisplayName(Factions[facKey], roleName) or roleName
         end
-        draw.RoundedBox(2, x, y, 4, rowH, row.color)
-        draw.SimpleText(row.label, "GRM_HUD_Label", x + 12, y + rowH / 2, cfg.textColor,
-            TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText(row.text, "GRM_HUD_Value", x + w - 10, y + rowH / 2, cfg.textColor,
-            TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-        y = y + rowH + gap
+        facName = facName .. " · " .. roleName
     end
 
-    -- Финансы отдельной нижней кассетой: наличные и счёт не смешиваются с
-    -- жизненными показателями и читаются одним взглядом.
-    local half = (w - 6) * 0.5
+    local hx, hy, hw, hh = 16, 16, 300, 72
+    draw.RoundedBox(8, hx, hy, hw, hh, Color(8, 14, 23, 145))
+    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 80)
+    surface.DrawOutlinedRect(hx, hy, hw, hh, 1)
+
+    if IsValid(lp) then
+        if not IsValid(GRM.HUD._avatar) then
+            local av = vgui.Create("AvatarImage")
+            av:SetSize(48, 48)
+            av:SetPaintedManually(true)
+            av:SetMouseInputEnabled(false)
+            av:SetKeyboardInputEnabled(false)
+            GRM.HUD._avatar = av
+        end
+        if GRM.HUD._avatarPly ~= lp then
+            GRM.HUD._avatar:SetPlayer(lp, 64)
+            GRM.HUD._avatarPly = lp
+        end
+        GRM.HUD._avatar:SetPos(hx + 10, hy + 12)
+        GRM.HUD._avatar:SetSize(48, 48)
+        GRM.HUD._avatar:PaintManual()
+    end
+    draw.SimpleText(rpName, "GRM_HUD_Name", hx + 68, hy + 16, cfg.textColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    draw.SimpleText(facName, "GRM_HUD_Meta", hx + 68, hy + 38, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+
     local cashTxt = (GRM.Format and GRM.Format(math.Round(anim.bal))) or ("$" .. string.Comma(math.Round(anim.bal)))
     local bankTxt = (GRM.PlayerBank ~= nil)
         and ((GRM.Format and GRM.Format(math.Round(anim.bank))) or ("$" .. string.Comma(math.Round(anim.bank))))
         or "—"
-    for i, card in ipairs({
-        { label = "НАЛИЧНЫЕ", value = cashTxt, color = cfg.moneyColor },
-        { label = "СЧЁТ", value = bankTxt, color = cfg.bankColor or cfg.moneyColor },
-    }) do
-        local cx = x + (i - 1) * (half + 6)
-        draw.RoundedBox(4, cx, y + 2, half, moneyH - 10, Color(14, 24, 38, 255))
-        draw.SimpleText(card.label, "GRM_HUD_Label", cx + 8, y + 10, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-        draw.SimpleText(card.value, "GRM_HUD_Money", cx + half - 8, y + 29, card.color, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+    local mx, my, mw, mh = 16, hy + hh + 8, 300, 46
+    draw.RoundedBox(8, mx, my, mw, mh, Color(8, 14, 23, 140))
+    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 70)
+    surface.DrawOutlinedRect(mx, my, mw, mh, 1)
+    draw.SimpleText("НАЛИЧНЫЕ", "GRM_HUD_Label", mx + 12, my + 6, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    draw.SimpleText(cashTxt, "GRM_HUD_Money", mx + 12, my + 26, cfg.moneyColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    draw.SimpleText("СЧЁТ", "GRM_HUD_Label", mx + mw - 12, my + 6, cfg.labelColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
+    draw.SimpleText(bankTxt, "GRM_HUD_Money", mx + mw - 12, my + 26, cfg.bankColor or cfg.moneyColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+
+    local pw = 320
+    local pad, rowH, gap = 10, 24, 4
+    local headerH = 24
+    local ph = headerH + pad + #rows * (rowH + gap) + pad - gap
+    ph = math.min(ph, sh - 48)
+    local px, py = 16, math.max(16, sh - 28 - ph)
+
+    GRM.HUD.StatusRect = { x = px, y = py, w = pw, h = ph }
+
+    draw.RoundedBox(8, px + 2, py + 2, pw, ph, cfg.bgShadow)
+    draw.RoundedBox(8, px, py, pw, ph, cfg.bgColor)
+    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 90)
+    surface.DrawOutlinedRect(px, py, pw, ph, 1)
+    draw.RoundedBoxEx(8, px, py, pw, headerH, cfg.panelHeader, true, true, false, false)
+    draw.RoundedBox(0, px, py, 3, headerH, cfg.hpColorFull)
+    draw.SimpleText("СОСТОЯНИЕ", "GRM_HUD_Value", px + 12, py + headerH / 2, cfg.textColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+
+    local x, w = px + pad, pw - pad * 2
+    local y = py + headerH + pad
+    for _, row in ipairs(rows) do
+        local fillW = math.max(0, (w - 3) * row.frac)
+        draw.RoundedBox(4, x, y, w, rowH, Color(17, 29, 45, 120))
+        if fillW > 0 then
+            draw.RoundedBox(4, x + 3, y + 3, math.max(2, fillW), rowH - 6,
+                Color(row.color.r, row.color.g, row.color.b, 150))
+        end
+        draw.RoundedBox(2, x, y, 3, rowH, row.color)
+        draw.SimpleText(row.label, "GRM_HUD_Label", x + 10, y + rowH / 2, cfg.textColor,
+            TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText(row.text, "GRM_HUD_Value", x + w - 8, y + rowH / 2, cfg.textColor,
+            TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        y = y + rowH + gap
     end
 
     -- ── патроны: отдельный блок справа снизу ────────────────────────
