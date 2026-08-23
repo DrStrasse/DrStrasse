@@ -140,6 +140,46 @@ def build_addon(name, folder, prefix=""):
     print("%-34s %4d файлов, %8.1f КБ" % (name, len(files), os.path.getsize(path) / 1024.0))
 
 
+PRONE_ADDON_JSON = """{
+  "title": "SYSTEM PRONE",
+  "type": "effects",
+  "tags": ["roleplay", "realism"],
+  "ignore": []
+}
+"""
+
+
+def pack_system_prone():
+    """Prone Mod — отдельный аддон из SYSTEM PRONE.zip, не смешиваем с lua/ GRM."""
+    src = os.path.join(ROOT, "SYSTEM PRONE.zip")
+    if not os.path.isfile(src):
+        print("  пропуск: нет SYSTEM PRONE.zip")
+        return
+    path = os.path.join(DIST, "system_prone.zip")
+    tmp = path + ".tmp"
+    written = 0
+    with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        wrote_json = False
+        for info in zin.infolist():
+            name = info.filename
+            if name.endswith("/"):
+                continue
+            rel = name.split("/", 1)[-1] if name.startswith("SYSTEM PRONE/") else name
+            if not rel:
+                continue
+            data = zin.read(info)
+            if rel.replace("\\", "/") == "addon.json" and len(data.strip()) == 0:
+                data = PRONE_ADDON_JSON.encode("utf-8")
+                wrote_json = True
+            zout.writestr("system_prone/" + rel.replace("\\", "/"), data)
+            written += 1
+        if not wrote_json:
+            zout.writestr("system_prone/addon.json", PRONE_ADDON_JSON)
+            written += 1
+    shutil.move(tmp, path)
+    print("%-34s %4d файлов, %8.1f КБ" % ("system_prone.zip", written, os.path.getsize(path) / 1024.0))
+
+
 def main():
     os.makedirs(DIST, exist_ok=True)
     everything = collect_all()

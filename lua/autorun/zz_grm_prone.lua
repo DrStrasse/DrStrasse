@@ -1,113 +1,63 @@
---[[ Лежание GRM. Чужой prone-аддон не копируем: если он уже есть — уступаем.
-     Свой режим: /prone, двойной Ctrl, bind grm_prone. ]]
+--[[ Мост GRM ↔ Prone Mod (SYSTEM PRONE). Сам мод не копируем:
+     анимации и модели живут в отдельном аддоне dist/system_prone.zip.
+     Здесь только лимбо/стамина и алиасы. ]]
 if SERVER then AddCSLuaFile() end
 
 GRM = GRM or {}
 GRM.Prone = GRM.Prone or {}
 
-local function foreignProne(ply)
-    if not IsValid(ply) then return false end
-    if ply.IsProne and ply:IsProne() then return true end
-    if ply.GetProne and ply:GetProne() then return true end
-    return false
-end
-
-local function setProne(ply, on)
-    if not IsValid(ply) or not ply:Alive() then return false end
-    if ply:InVehicle() or ply:WaterLevel() >= 2 then return false end
-    if ply:GetNWBool("GRM_CharacterPending", false) then return false end
-    on = on == true
-    ply:SetNWBool("GRM_Prone", on)
-    if on then
-        ply:SetHull(Vector(-16, -16, 0), Vector(16, 16, 24))
-        ply:SetHullDuck(Vector(-16, -16, 0), Vector(16, 16, 24))
-        ply:SetViewOffset(Vector(0, 0, 18))
-        ply:SetViewOffsetDucked(Vector(0, 0, 14))
-        ply:SetWalkSpeed(54)
-        ply:SetRunSpeed(54)
-        ply:SetDuckSpeed(0.1)
-    else
-        ply:ResetHull()
-        ply:SetViewOffset(Vector(0, 0, 64))
-        ply:SetViewOffsetDucked(Vector(0, 0, 28))
-        local cfg = GRM.Movement and GRM.Movement.Config
-        ply:SetWalkSpeed((cfg and cfg.WalkSpeed) or 160)
-        ply:SetRunSpeed((cfg and cfg.RunSpeed) or 220)
-    end
-    return true
+function GRM.Prone.ModLoaded()
+    return istable(prone) and isfunction(prone.Handle)
 end
 
 function GRM.Prone.Is(ply)
-    return IsValid(ply) and (ply:GetNWBool("GRM_Prone", false) or foreignProne(ply))
+    if not IsValid(ply) then return false end
+    if ply.IsProne and ply:IsProne() then return true end
+    return ply:GetNWBool("GRM_Prone", false)
 end
 
-function GRM.Prone.Toggle(ply)
-    if foreignProne(ply) then return false end
-    return setProne(ply, not ply:GetNWBool("GRM_Prone", false))
-end
+hook.Add("Think", "GRM_Prone_Mirror", function()
+    if CLIENT then return end
+    if GRM.Perf and not GRM.Perf.Throttle("prone.mirror", 0.2) then return end
+    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players and GRM.Perf.Players()) or player.GetAll()) do
+        if IsValid(ply) then
+            local on = ply.IsProne and ply:IsProne() or false
+            if ply:GetNWBool("GRM_Prone", false) ~= on then
+                ply:SetNWBool("GRM_Prone", on)
+            end
+        end
+    end
+end)
+
+hook.Add("prone.CanEnter", "GRM_Prone_Gates", function(ply)
+    if not IsValid(ply) then return false end
+    if ply:GetNWBool("GRM_CharacterPending", false) then return false end
+    if ply.GRMCharLimbo then return false end
+    if ply:GetNWBool("GRM_Arrested", false) then return false end
+    if ply:InVehicle() then return false end
+end)
 
 if SERVER then
-    util.AddNetworkString("GRM_ProneToggle")
-
-    net.Receive("GRM_ProneToggle", function(_, ply)
-        if not IsValid(ply) then return end
-        if GRM.Net and GRM.Net.Guard and not GRM.Net.Guard(ply, "prone.toggle", { rate = 0.4, burst = 2, maxBits = 32 }) then return end
-        GRM.Prone.Toggle(ply)
-    end)
-
-    hook.Add("PlayerSpawn", "GRM_Prone_Reset", function(ply)
-        timer.Simple(0, function() if IsValid(ply) then setProne(ply, false) end end)
-    end)
-
-    hook.Add("CanPlayerEnterVehicle", "GRM_Prone_NoVeh", function(ply)
-        if IsValid(ply) and ply:GetNWBool("GRM_Prone", false) then
-            setProne(ply, false)
-        end
-    end)
-
-    hook.Add("Move", "GRM_Prone_Move", function(ply, mv)
-        if not IsValid(ply) or not ply:GetNWBool("GRM_Prone", false) then return end
-        local vel = mv:GetVelocity()
-        local spd = vel:Length2D()
-        if spd > 56 then
-            local r = 56 / spd
-            mv:SetVelocity(Vector(vel.x * r, vel.y * r, vel.z))
-        end
-        if ply:KeyPressed(IN_JUMP) then
-            setProne(ply, false)
-        end
-    end)
-
     hook.Add("PlayerSay", "GRM_Prone_Cmd", function(ply, text)
         local t = string.lower(string.Trim(text or ""))
-        if t == "/prone" or t == "!prone" or t == "/лечь" then
-            GRM.Prone.Toggle(ply)
+        if t ~= "/prone" and t ~= "!prone" and t ~= "/лечь" then return end
+        if GRM.Prone.ModLoaded() then
+            if CLIENT then return "" end
+            -- сервер: клиентский concommand prone шлёт impulse; зовём Handle
+            if isfunction(prone.Handle) then prone.Handle(ply) end
             return ""
         end
+        if GRM.Notify then GRM.Notify(ply, "Аддон лежания не установлен (system_prone).", 255, 180, 80) end
+        return ""
     end)
 end
 
 if CLIENT then
-    local lastDuck = 0
-    hook.Add("PlayerBindPress", "GRM_Prone_DoubleDuck", function(ply, bind, pressed)
-        if not pressed or ply ~= LocalPlayer() then return end
-        if bind ~= "+duck" then return end
-        local now = CurTime()
-        if now - lastDuck < 0.35 then
-            net.Start("GRM_ProneToggle") net.SendToServer()
-            lastDuck = 0
-            return true
-        end
-        lastDuck = now
-    end)
-
     concommand.Add("grm_prone", function()
-        net.Start("GRM_ProneToggle") net.SendToServer()
-    end)
-
-    hook.Add("CalcMainActivity", "GRM_Prone_Anim", function(ply)
-        if not IsValid(ply) or not ply:GetNWBool("GRM_Prone", false) then return end
-        local seq = ply:LookupSequence("zombie_slump_idle_01")
-        if seq and seq >= 0 then return ACT_HL2MP_SWIM_IDLE, seq end
+        if GRM.Prone.ModLoaded() and isfunction(prone.Request) then
+            prone.Request()
+        else
+            RunConsoleCommand("prone")
+        end
     end)
 end
