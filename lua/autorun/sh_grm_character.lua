@@ -1234,6 +1234,9 @@ if CLIENT then
         -- ── окно ────────────────────────────────────────────────────────
         if IsValid(CH._frame) then CH._frame:Remove() CH._frame = nil end
         local f = vgui.Create("DFrame")
+        -- Экран выбора персонажа обязателен и не должен быть закрыт
+        -- серверным бан-сторожем до подтверждения слота.
+        f.GRM_BanAllowed = true
         CH._frame = f
         CH._frameMode = isWardrobe and "wardrobe" or "character"
         f.OnRemove = function()
