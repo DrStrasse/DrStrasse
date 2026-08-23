@@ -150,7 +150,7 @@ local STOCK = {
     "buttons/button24.wav", "buttons/bell1.wav", "buttons/blip1.wav", "buttons/lever4.wav",
     "buttons/lever7.wav", "buttons/lightswitch2.wav", "buttons/combine_button1.wav",
     "buttons/combine_button2.wav", "buttons/combine_button3.wav", "buttons/combine_button7.wav",
-    "garrysmod/ui_click.wav", "garrysmod/save_load1.wav",
+    "garrysmod/ui_click.wav", "garrysmod/ui_hover.wav", "garrysmod/save_load1.wav",
     -- Стоковые звуки выбора оружия HL2 — их же использует ванильный селектор.
     "common/wpn_hudon.wav", "common/wpn_hudoff.wav", "common/wpn_moveselect.wav",
     "common/wpn_select.wav", "common/wpn_denyselect.wav",
@@ -184,6 +184,7 @@ local STOCK = {
 for _, path in ipairs(STOCK) do S.Register(path) end
 
 -- Кастомный контент сборки (может отсутствовать у владельца сервера).
+S.Register("garrysmod/ui_hover.wav", "buttons/lightswitch2.wav")
 S.Register("kom_hour.wav", "ambient/alarms/warningbell1.wav")            -- комендантский час
 S.Register("npc/scanner/scanner_siren2.wav", "ambient/alarms/klaxon1.wav") -- вызов пожарного расчёта
 S.Register("weapons/extinguisher/fire1.wav", "ambient/machines/steam_release_2.wav")

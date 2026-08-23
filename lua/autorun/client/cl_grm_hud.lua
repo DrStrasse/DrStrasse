@@ -353,7 +353,10 @@ local function PrevWeapon()
 end
 
 local function GRM_HUD_MobileOpen()
-    return GRM and GRM.Mobile and GRM.Mobile.ClientIsOpen and GRM.Mobile.ClientIsOpen() == true
+    local MB = GRM and GRM.Mobile
+    if not MB then return false end
+    if MB.ClientBlocksInput and MB.ClientBlocksInput() then return true end
+    return MB.ClientIsOpen and MB.ClientIsOpen() == true
 end
 
 -- Физган/гравиган: ЛКМ = луч/захват, E+мышь = вращение, колесо = дистанция.

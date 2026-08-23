@@ -982,17 +982,19 @@ if CLIENT then
     end
 
     local function snd(kind)
-        if not surface or not surface.PlaySound then return end
         local map = {
             open = "buttons/button14.wav",
             close = "buttons/button19.wav",
             nav = "buttons/lightswitch2.wav",
-            select = "buttons/button15.wav",
-            back = "buttons/button10.wav",
-            err = "buttons/button8.wav",
-            ring = "buttons/button17.wav"
+            select = "ui/buttonclick.wav",
+            back = "ui/buttonclickrelease.wav",
+            err = "common/wpn_denyselect.wav",
+            ring = "buttons/button17.wav",
+            hover = "garrysmod/ui_hover.wav",
         }
-        surface.PlaySound(map[kind] or map.select)
+        local path = map[kind] or map.select
+        if GRM.Sound and GRM.Sound.UI then GRM.Sound.UI(path, kind == "nav" and 0.03 or 0.04)
+        elseif surface and surface.PlaySound then surface.PlaySound(path) end
     end
 
     local function notify(txt)
@@ -1250,6 +1252,10 @@ if CLIENT then
 
     local function pointerFeedback(x, y, w, h, id)
         local over = M.pointerX >= x and M.pointerX <= x + w and M.pointerY >= y and M.pointerY <= y + h
+        if over then
+            local hid = tostring(M.screen) .. ":" .. tostring(id or "")
+            if M._hoverId ~= hid then M._hoverId = hid snd("hover") end
+        end
         local key = tostring(M.screen) .. ":" .. tostring(id or "")
         local current = tonumber(M.hoverAnim[key]) or 0
         local speed = math.min(1, (FrameTime and FrameTime() or 0.016) * 14)
@@ -1747,6 +1753,9 @@ if CLIENT then
     function MB.ClientIsOpen()
         return M.open == true
     end
+    function MB.ClientBlocksInput()
+        return M.open == true
+    end
     function MB.ClientWheel(delta)
         if M.open then move(tonumber(delta) or 1) return true end
         return false
@@ -1844,6 +1853,18 @@ if CLIENT then
         end
         if mouse3Now and not M.poll.mouse3 and M.open then selectCurrent() end
         M.poll.mouse3 = mouse3Now
+    end)
+    hook.Add("CreateMove", "GRM_Mobile_NoWorldFire", function(cmd)
+        if not M.open then return end
+        cmd:RemoveKey(IN_ATTACK)
+        cmd:RemoveKey(IN_ATTACK2)
+        cmd:RemoveKey(IN_RELOAD)
+        cmd:RemoveKey(IN_USE)
+        cmd:RemoveKey(IN_GRENADE1)
+        cmd:RemoveKey(IN_GRENADE2)
+    end)
+    hook.Add("HUDShouldDraw", "GRM_Mobile_HideSelector", function(name)
+        if M.open and (name == "CHudWeaponSelection" or name == "CHudAmmo") then return false end
     end)
     hook.Add("HUDPaint", "GRM_Mobile_CallHUD", function() if M.open and tostring(M.state.lineState or "") == "ringing" then draw.SimpleText("Входящий вызов", "GRMMob_B", ScrW()/2, 120, C.green, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER) end end)
     hook.Add("PlayerBindPress", "GRM_Mobile_BlockSlots", function(_, bind, pressed)

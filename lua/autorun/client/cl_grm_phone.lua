@@ -56,14 +56,43 @@ local function skinEntry(te)
     end
 end
 
+local function uiSound(kind)
+    local path = kind == "hover" and "garrysmod/ui_hover.wav"
+        or kind == "down" and "ui/buttonclick.wav"
+        or kind == "up" and "ui/buttonclickrelease.wav"
+        or "buttons/button15.wav"
+    if GRM.Sound and GRM.Sound.UI then GRM.Sound.UI(path, 0.04) else surface.PlaySound(path) end
+end
+
 local function btn(parent, text, color)
     local b = vgui.Create("DButton", parent)
     b:SetText("")
+    b:SetCursor("hand")
+    b._press = 0
+    b._hov = 0
+    b.OnCursorEntered = function(s)
+        s._wasHover = true
+        uiSound("hover")
+    end
+    b.OnDepressed = function() uiSound("down") end
+    b.OnReleased = function() uiSound("up") end
     b.Paint = function(s, w, h)
+        local dt = FrameTime() * 14
+        s._hov = Lerp(dt, s._hov or 0, s:IsHovered() and 1 or 0)
+        s._press = Lerp(dt, s._press or 0, s:IsDown() and 1 or 0)
         local c = color or C.accent
-        if s:IsHovered() then c = Color(math.min(c.r + 22, 255), math.min(c.g + 22, 255), math.min(c.b + 22, 255)) end
-        draw.RoundedBox(6, 0, 0, w, h, c)
-        draw.SimpleText(text, "GRMPhone_Sub", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        local lift = 18 * s._hov
+        c = Color(
+            math.min(255, c.r + lift),
+            math.min(255, c.g + lift),
+            math.min(255, c.b + lift)
+        )
+        local inset = math.floor(s._press * 2)
+        draw.RoundedBox(6, inset, inset + 1, w - inset * 2, h - inset * 2, Color(0, 0, 0, 70))
+        draw.RoundedBox(6, inset, inset, w - inset * 2, h - inset * 2, c)
+        surface.SetDrawColor(255, 255, 255, 18 + s._hov * 28)
+        surface.DrawOutlinedRect(inset, inset, w - inset * 2, h - inset * 2)
+        draw.SimpleText(text, "GRMPhone_Sub", w / 2, h / 2 + inset, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
     return b
 end
