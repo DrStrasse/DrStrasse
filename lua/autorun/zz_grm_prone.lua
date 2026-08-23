@@ -29,6 +29,47 @@ hook.Add("Think", "GRM_Prone_Mirror", function()
     end
 end)
 
+-- Цикл лечь → встать = отжимание. Сам Prone Mod не трогаем.
+if SERVER then
+    local MIN_HOLD = 0.55
+    local MAX_HOLD = 5.0
+    local REP_GAIN = 0.4
+    local REP_COST = 9
+    local COOLDOWN = 0.45
+
+    hook.Add("prone.OnPlayerEntered", "GRM_Prone_PushDown", function(ply)
+        if not IsValid(ply) then return end
+        ply._grmPushDownAt = CurTime()
+        ply:SetNWBool("GRM_Prone", true)
+        if GRM.Movement and GRM.Movement.TrainFitness then
+            GRM.Movement.TrainFitness(ply, 0, 3)
+        end
+    end)
+
+    hook.Add("prone.OnPlayerExitted", "GRM_Prone_PushUp", function(ply)
+        if not IsValid(ply) then return end
+        ply:SetNWBool("GRM_Prone", false)
+        local t0 = tonumber(ply._grmPushDownAt) or 0
+        ply._grmPushDownAt = nil
+        local held = CurTime() - t0
+        if t0 <= 0 or held < MIN_HOLD or held > MAX_HOLD then return end
+        if (ply._grmPushAt or 0) > CurTime() then return end
+        ply._grmPushAt = CurTime() + COOLDOWN
+        if not (GRM.Movement and GRM.Movement.TrainFitness) then return end
+        if not GRM.Movement.TrainFitness(ply, REP_GAIN, REP_COST) then
+            if GRM.Notify then GRM.Notify(ply, "Нет сил на ещё одно отжимание.", 255, 180, 80) end
+            return
+        end
+        ply._grmPushReps = (ply._grmPushReps or 0) + 1
+        if ply._grmPushReps % 5 == 0 then
+            local _, mx = GRM.Movement.GetFitness(ply)
+            if GRM.Notify then
+                GRM.Notify(ply, ("Отжимания: %d. Потолок выносливости %.0f."):format(ply._grmPushReps, mx), 180, 140, 255)
+            end
+        end
+    end)
+end
+
 hook.Add("prone.CanEnter", "GRM_Prone_Gates", function(ply)
     if not IsValid(ply) then return false end
     if ply:GetNWBool("GRM_CharacterPending", false) then return false end

@@ -105,6 +105,32 @@ if SERVER then
         ply:SetNWFloat("GRM_StaminaMax", data.max)
     end
 
+    --- Прибавка к потолку выносливости (отжимания, бег и т.п.).
+    function GRM.Movement.TrainFitness(ply, gain, cost)
+        if not IsValid(ply) then return false end
+        local data = getPlayerData(ply)
+        local cfg = GRM.Movement.Config
+        cost = tonumber(cost) or 0
+        gain = tonumber(gain) or 0
+        if cost > 0 then
+            if data.stamina < cost then return false end
+            data.stamina = math.max(0, data.stamina - cost)
+        end
+        if gain > 0 then
+            data.max = clampMax(data.max + gain)
+            data.lastTrain = os.time()
+            persistMax(ply, data)
+        end
+        syncStamina(ply, true)
+        return true
+    end
+
+    function GRM.Movement.GetFitness(ply)
+        if not IsValid(ply) then return 0, 0 end
+        local data = getPlayerData(ply)
+        return data.stamina, data.max
+    end
+
     local function syncStamina(ply, force)
         if not IsValid(ply) then return end
         local data = getPlayerData(ply);local now=CurTime()
