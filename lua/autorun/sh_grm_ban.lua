@@ -554,8 +554,17 @@ if SERVER then
     end)
 
     hook.Add("PlayerSpawn", "GRM_ServerBan_Respawn", function(ply)
+        -- Ждём штатную постановку персонажа на его spawn point. Иначе бан
+        -- и Character Core соревнуются: один ставит в зону, другой тут же
+        -- переносит на точку появления фракции.
         timer.Simple(0.5, function()
-            if IsValid(ply) and select(1, SB.IsBanned(ply)) then SB.Apply(ply, true) end
+            if not (IsValid(ply) and select(1, SB.IsBanned(ply))) then return end
+            if ply:GetNWBool("GRM_CharacterPending", false) then
+                ply.GRM_BanAwaitCharacter = true
+                return
+            end
+            ply.GRM_BanAwaitCharacter = nil
+            SB.Apply(ply, true)
         end)
     end)
     hook.Add("PlayerInitialSpawn", "GRM_ServerBan_Join", function(ply)
@@ -576,11 +585,11 @@ if SERVER then
         if IsValid(ply) and select(1, SB.IsBanned(ply)) then ply.GRM_BanAwaitCharacter = true end
     end)
     hook.Add("GRM_CharacterChanged", "GRM_ServerBan_AfterCharacter", function(ply)
-        if not (IsValid(ply) and ply.GRM_BanAwaitCharacter) then return end
-        ply.GRM_BanAwaitCharacter = nil
-        timer.Simple(0.25, function()
-            if IsValid(ply) and select(1, SB.IsBanned(ply)) then SB.Apply(ply, true) end
-        end)
+        if IsValid(ply) and select(1, SB.IsBanned(ply)) then
+            -- SetActiveSlot вызывает PlayerSpawn; именно его отложенный
+            -- обработчик применит бан ПОСЛЕ точки появления персонажа.
+            ply.GRM_BanAwaitCharacter = true
+        end
     end)
 
     --[[ Один сторож на всех: держит наказанных внутри зоны, дожимает вид
