@@ -49,6 +49,10 @@ SB.Bans = SB.Bans or {}
 --- Осталось секунд по записи бана (0 — истёк).
 function SB.Left(rec)
     if not istable(rec) then return 0 end
+    if rec.paused == true then
+        local left = tonumber(rec.remaining)
+        return left and (left < 0 and math.huge or math.max(0, left)) or 0
+    end
     local until_ = tonumber(rec["until"]) or 0
     if until_ <= 0 then return math.huge end -- бессрочно
     return math.max(0, until_ - os.time())
@@ -163,6 +167,8 @@ if SERVER then
                         characterKey = tostring(rec.characterKey or sid),
                         accountSteam = tostring(rec.accountSteam or ""),
                         legacyAccount = not tostring(sid):find(":char[1-3]$"),
+                        paused = rec.paused == true,
+                        remaining = rec.paused == true and tonumber(rec.remaining) or nil,
                     }
                     -- Куда вернуть после снятия: переживает рестарт сервера.
                     if istable(rec.returnPos) then
@@ -251,7 +257,27 @@ if SERVER then
         end
         if not rec then return false end
         if SB.Left(rec) <= 0 then SB.Bans[key] = nil saveBans("истёк " .. key) return false end
-        return true, rec
+        return true, rec, key
+    end
+
+    function SB.Pause(ply)
+        local banned, rec, key = SB.IsBanned(ply)
+        if not banned or not rec or rec.paused then return false end
+        local left = SB.Left(rec)
+        if left == math.huge then return false end -- бессрочный бан не тикает
+        rec.remaining, rec.paused, rec["until"] = math.ceil(left), true, 0
+        saveBans("пауза бана: выход персонажа")
+        if GRM.Save and GRM.Save.Flush then GRM.Save.Flush("serverban.list", "пауза бана") end
+        return true
+    end
+
+    function SB.Resume(rec)
+        if not (istable(rec) and rec.paused) then return false end
+        local left = tonumber(rec.remaining) or 0
+        rec.paused, rec.remaining = false, nil
+        if left >= 0 then rec["until"] = os.time() + left end
+        saveBans("продолжение бана: вход персонажа")
+        return true
     end
 
     --- Наложить визуал и ограничения. Зовётся при бане, при спавне и раз в
@@ -261,6 +287,9 @@ if SERVER then
         if not IsValid(ply) then return end
         local banned, rec = SB.IsBanned(ply)
         if not banned then return end
+        -- Отсчёт продолжает идти только когда этот персонаж снова выбран
+        -- и реально возвращён в мир.
+        if rec.paused then SB.Resume(rec) end
 
         if ply:GetModel() ~= SB.Model then ply:SetModel(SB.Model) end
         if ply:GetMaterial() ~= SB.Material then ply:SetMaterial(SB.Material) end
@@ -586,6 +615,14 @@ if SERVER then
             SB.Apply(ply, true)
         end)
     end)
+    hook.Add("PlayerDisconnected", "GRM_ServerBan_PauseDisconnect", function(ply)
+        SB.Pause(ply)
+    end)
+    hook.Add("ShutDown", "GRM_ServerBan_PauseShutdown", function()
+        for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do SB.Pause(ply) end
+        if GRM.Save and GRM.Save.Flush then GRM.Save.Flush("serverban.list", "пауза банов: shutdown") end
+    end)
+
     hook.Add("PlayerInitialSpawn", "GRM_ServerBan_Join", function(ply)
         timer.Simple(4, function()
             if not IsValid(ply) or not select(1, SB.IsBanned(ply)) then return end
