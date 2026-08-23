@@ -276,6 +276,19 @@ if SERVER then
     print("[GRM Bleedout] server v" .. B.Version .. " loaded")
 end
 
+hook.Remove("CalcMainActivity", "GRM_911_Lie")
+hook.Add("CalcMainActivity", "GRM_Bleedout_Anim", function(ply, vel)
+    if not (IsValid(ply) and ply:GetNWBool("GRM_911_Downed")) then return end
+    if vel and vel:Length2D() > 8 then
+        return ACT_HL2MP_WALK_CROUCH, -1
+    end
+    return ACT_HL2MP_IDLE_CROUCH, -1
+end)
+hook.Add("UpdateAnimation", "GRM_Bleedout_AnimRate", function(ply, vel)
+    if not (IsValid(ply) and ply:GetNWBool("GRM_911_Downed")) then return end
+    ply:SetPlaybackRate((vel and vel:Length2D() or 0) > 8 and 0.7 or 0.4)
+end)
+
 if CLIENT then
     net.Receive("GRM_Bleedout_Alert", function()
         local name = net.ReadString()
