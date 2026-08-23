@@ -29,7 +29,7 @@ if SERVER then
     end
     local function load()
         if file.Exists(MM.File, "DATA") then
-            local ok, d = pcall(util.JSONToTable, file.Read(MM.File, "DATA") or "")
+            local ok, d = pcall(util.JSONToTable, file.Read(MM.File, "DATA") or "", false, true)
             if ok and istable(d) then MM.Data = d end
         end
         MM.Data.districts = istable(MM.Data.districts) and MM.Data.districts or {}
@@ -202,7 +202,9 @@ if SERVER then
         elseif action == "add_point" then
             local name = string.sub(string.Trim(net.ReadString() or "GPS-точка"), 1, 48)
             local radius = math.Clamp(net.ReadUInt(16), 100, 2000)
-            MM.Data.points[#MM.Data.points + 1] = { id = nextID("point"), name = name ~= "" and name or "GPS-точка", pos = pos(ply:GetPos()), radius = radius, capture = 0, capturing = "", owner = "", allowedFactions = {} }
+            local tr = ply:GetEyeTrace()
+            local hit = (tr and tr.HitPos) or ply:GetPos()
+            MM.Data.points[#MM.Data.points + 1] = { id = nextID("point"), name = name ~= "" and name or "GPS-точка", pos = pos(hit), radius = radius, capture = 0, capturing = "", owner = "", allowedFactions = {} }
             save(); send()
         elseif action == "rename_point" then
             local id, newName = net.ReadString(), string.sub(string.Trim(net.ReadString() or "GPS-точка"), 1, 64)
@@ -237,6 +239,14 @@ if SERVER then
     end)
 else
     local data = { districts = {}, points = {} }
+    MM.ClientData = function() return data end
+    local personal = {}
+    local rebuildAdmin
+    local function applyMapData(t)
+        if istable(t) then data = t end
+        MM._data = data
+        if rebuildAdmin then rebuildAdmin() end
+    end
     local MUI = { bg = Color(10, 15, 23, 253), head = Color(19, 28, 41), card = Color(24, 35, 51), card2 = Color(29, 43, 61), line = Color(55, 75, 99), text = Color(235, 242, 250), dim = Color(150, 169, 190), blue = Color(67, 145, 240), green = Color(65, 195, 125), red = Color(215, 75, 84), orange = Color(235, 164, 70) }
     surface.CreateFont("GRMMM_Title", { font = "Roboto", size = 21, weight = 900, extended = true })
     surface.CreateFont("GRMMM_Body", { font = "Roboto", size = 13, weight = 600, extended = true })
@@ -344,12 +354,9 @@ else
         })
         render.PopRenderTarget()
     end
-    net.Receive("GRM_Minimap_Data", function() data = net.ReadTable() or data; mapSnapshotReady = false; nextMapRender = 0 end)
+    net.Receive("GRM_Minimap_Data", function() applyMapData(net.ReadTable() or data) end)
     if GRM.Net and GRM.Net.Receive then
-        GRM.Net.Receive("GRM_Minimap_Data", function(t)
-            if istable(t) then data = t end
-            mapSnapshotReady = false nextMapRender = 0
-        end)
+        GRM.Net.Receive("GRM_Minimap_Data", applyMapData)
     end
     net.Receive("GRM_Minimap_Open", function()
         if IsValid(frame) then frame:Remove() end
@@ -370,7 +377,7 @@ else
             local saveAccess = vgui.Create("DButton", w) saveAccess:Dock(BOTTOM) saveAccess:SetTall(34) saveAccess:SetText("Сохранить доступ")
             saveAccess.DoClick = function() send("set_point_access", function() net.WriteString(point.id); net.WriteTable(selected) end) w:Close() end
         end
-        local function rebuild()
+        rebuildAdmin = function()
             if not IsValid(sc) or not IsValid(frame) then return end
             sc:Clear()
             local title = vgui.Create("DLabel", sc) title:Dock(TOP) title:SetTall(34) title:SetFont("GRMMM_Body") title:SetTextColor(MUI.blue) title:SetText("СОХРАНЕННЫЕ GPS-ТОЧКИ")
@@ -384,13 +391,15 @@ else
                 local b = styleButton(vgui.Create("DButton", row), MUI.red) b:Dock(RIGHT) b:DockMargin(5, 7, 5, 7) b:SetWide(110) b:SetText("Удалить") b.DoClick = function() send("delete_point", function() net.WriteString(p.id) end) end
             end
         end
-        timer.Simple(0, rebuild)
-        net.Receive("GRM_Minimap_Data", function() data = net.ReadTable() or data; mapSnapshotReady = false; nextMapRender = 0; rebuild() end)
+        timer.Simple(0, rebuildAdmin)
     end)
     local gpsTarget
     local reachedTemp={}
     local arrivalSince,nextArrivalCheck=nil,0
-    local function gpsPoint(id)for _,point in ipairs(data.points or{})do if tostring(point.id)==tostring(id)then return point end end end
+    local function gpsPoint(id)
+        for _,point in ipairs(data.points or{})do if tostring(point.id)==tostring(id)then return point end end
+        for _,point in ipairs(personal)do if tostring(point.id)==tostring(id)then return point end end
+    end
     function MM.ClearGPS()gpsTarget=nil;arrivalSince=nil end
     hook.Add("Think","GRM_GPS_AutoArrival",function()
         if not gpsTarget then arrivalSince=nil return end;local now=CurTime();if now<nextArrivalCheck then return end;nextArrivalCheck=now+.15
@@ -421,7 +430,10 @@ else
     hook.Add("HUDPaint", "GRM_GPS_WorldMarkerHUD", function()
         local lp = LocalPlayer()
         if not IsValid(lp) or not gpsTarget then return end
-        for _, point in ipairs(data.points or {}) do
+        local pts = {}
+        for _, p in ipairs(personal or {}) do pts[#pts + 1] = p end
+        for _, p in ipairs(data.points or {}) do pts[#pts + 1] = p end
+        for _, point in ipairs(pts) do
             if tostring(point.id) == tostring(gpsTarget) then
                 local target = Vector(point.pos.x, point.pos.y, point.pos.z or lp:GetPos().z)
                 local screen = target:ToScreen()

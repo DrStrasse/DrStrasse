@@ -29,7 +29,30 @@ function P.HasAccess(p,r)
 end
 function P.CanManage(p,r)if not IsValid(p)then return false end;if P.CanAdmin(p)then return true end;r=P.Normalize(r);return r.ownerType=="character"and r.ownerKey==ck(p)end
 function P.GetByDoorID(id)return P.ByDoor and P.ByDoor[tostring(id or"")]end
-function P.GetByDoor(ent)local id=GRM.Doors and GRM.Doors.GetDoorID and GRM.Doors.GetDoorID(ent);return id and P.GetByDoorID(id),id end
+function P.ResolveDoor(ent)
+    if not IsValid(ent) then return nil end
+    local function doorish(e)
+        if not IsValid(e) then return false end
+        if GRM.Doors and GRM.Doors.IsDoor and GRM.Doors.IsDoor(e) then return true end
+        local c = e:GetClass()
+        return c == "func_door" or c == "func_door_rotating" or c == "prop_door_rotating"
+            or c == "grm_sliding_door" or c == "func_movelinear"
+    end
+    if doorish(ent) then return ent end
+    local par = ent.GetParent and ent:GetParent()
+    if doorish(par) then return par end
+    return nil
+end
+function P.DoorID(ent)
+    ent = P.ResolveDoor(ent)
+    if not ent then return nil, nil end
+    if GRM.Doors and GRM.Doors.GetDoorID then
+        local id = GRM.Doors.GetDoorID(ent)
+        if id then return id, ent end
+    end
+    return "ent_" .. tostring(ent:EntIndex()), ent
+end
+function P.GetByDoor(ent)local id=select(1,P.DoorID(ent));return id and P.GetByDoorID(id),id end
 function P.IsInside(r,pos)if not(istable(r)and istable(r.zone)and pos)then return false end;local a,b=r.zone.mins,r.zone.maxs;if not(a and b)then return false end;return pos.x>=a.x and pos.y>=a.y and pos.z>=a.z and pos.x<=b.x and pos.y<=b.y and pos.z<=b.z end
 function P.CameraIDs(r)return istable(r)and r.cameraIDs or{}end
 function P.AlarmNetwork(r)return istable(r)and tostring(r.alarmNetwork or"")or""end
@@ -57,7 +80,21 @@ if SERVER then
   if GRM.Net and GRM.Net.Guard then return GRM.Net.Guard(p,key,{rate=.35,burst=3,maxBits=max or 262144},{bits=bits})==true end;return IsValid(p)
  end
  function P.OpenForDoor(p,e)local r=P.GetByDoor(e);if not r then tell(p,"Эта дверь не входит в объект недвижимости.",false)return end;send(p,r,false)end
- function P.ToggleDoorSelection(p,e)if not(P.CanAdmin(p)and GRM.Doors and GRM.Doors.IsDoor(e))then return false end;local id=GRM.Doors.GetDoorID(e);P.Selections=P.Selections or{};local s=P.Selections[p]or{};P.Selections[p]=s;if s[id]then s[id]=nil;return true,false,id else s[id]=true;return true,true,id end end
+ local NSEL="GRM_Property_Sel"
+ util.AddNetworkString(NSEL)
+ local function pushSel(p)
+  local ids={}
+  for id in pairs(P.Selections and P.Selections[p]or{})do ids[#ids+1]=id end
+  net.Start(NSEL) net.WriteUInt(#ids,8) for _,id in ipairs(ids)do net.WriteString(tostring(id)) end net.Send(p)
+ end
+ function P.ToggleDoorSelection(p,e)
+  if not P.CanAdmin(p) then return false end
+  local id,door=P.DoorID(e)
+  if not id then return false end
+  P.Selections=P.Selections or{};local s=P.Selections[p]or{};P.Selections[p]=s
+  if s[id] then s[id]=nil;pushSel(p);return true,false,id end
+  s[id]=true;pushSel(p);return true,true,id
+ end
  local function selectedIDs(p)local a={};for id in pairs(P.Selections and P.Selections[p]or{})do a[#a+1]=id end;table.sort(a);return a end
  local function newID()return"prop_"..os.time().."_"..math.random(1000,9999)end
  local function clearOwnership(r)r.ownerType="none";r.ownerKey="";r.ownerName="";r.tenure="none";r.rentUntil=0;r.employees={};r.guests={};r.tempKeys={};r.utilityDebt=0;lockAll(r,false)end
@@ -121,4 +158,28 @@ if CLIENT then
   if admin then local create=btn(f,"СОЗДАТЬ ИЗ ОТМЕЧЕННЫХ ДВЕРЕЙ",C.green,function()Derma_StringRequest("Новый объект","Название","Объект",function(n)send({action="create",name=n,type="apartment",purchasePrice=50000,rentPrice=5000,utilityRate=500})end)end);create:SetPos(18,f:GetTall()-54);create:SetSize(360,34)end
  end
  net.Receive(NOPEN,function()open(net.ReadTable()or{},net.ReadBool(),net.ReadBool(),net.ReadBool(),false)end);net.Receive(NADMIN,function()open(net.ReadTable()or{},net.ReadBool(),net.ReadBool(),net.ReadBool(),true)end);net.Receive(NRESULT,function()notification.AddLegacy(net.ReadString(),NOTIFY_GENERIC,4)end)
+ P._sel={}
+ net.Receive("GRM_Property_Sel",function()
+  local n=net.ReadUInt(8);P._sel={}
+  for i=1,n do P._sel[net.ReadString()]=true end
+ end)
+ hook.Add("PreDrawHalos","GRM_Property_Halos",function()
+  local lp=LocalPlayer();if not IsValid(lp)then return end
+  local wep=lp:GetActiveWeapon()
+  if not(IsValid(wep)and wep:GetClass()=="gmod_tool")then return end
+  local tool=lp.GetTool and lp:GetTool()
+  if not(istable(tool)and tool.Mode=="grm_property")then return end
+  local hover,sel={},{}
+  local tr=lp:GetEyeTrace()
+  local look=P.ResolveDoor(tr and tr.Entity)
+  if IsValid(look)then hover[1]=look end
+  for _,cls in ipairs({"func_door","func_door_rotating","prop_door_rotating","grm_sliding_door","func_movelinear"})do
+   for _,e in ipairs(ents.FindByClass(cls))do
+    local id=select(1,P.DoorID(e))
+    if id and P._sel[id]then sel[#sel+1]=e end
+   end
+  end
+  if #hover>0 then halo.Add(hover,Color(80,200,255),2,2,1,true,true) end
+  if #sel>0 then halo.Add(sel,Color(70,220,120),3,3,2,true,true) end
+ end)
 end

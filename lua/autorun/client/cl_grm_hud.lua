@@ -28,9 +28,9 @@ GRM.HUD = GRM.HUD or {}
 GRM.HUD.Config = {
     -- Каноническая палитра GRM/XUI (cl_grm_ui_theme.lua):
     -- почти чёрный сине-стальной, неоновые акценты.
-    bgColor        = Color(8, 14, 23, 246),
-    bgShadow       = Color(0, 0, 0, 70),
-    panelHeader    = Color(10, 22, 37, 255),
+    bgColor        = Color(8, 14, 23, 150),
+    bgShadow       = Color(0, 0, 0, 36),
+    panelHeader    = Color(10, 22, 37, 165),
     lineColor      = Color(55, 117, 151, 190),
     textColor      = Color(225, 238, 247, 255),
     labelColor     = Color(132, 160, 178, 255),
