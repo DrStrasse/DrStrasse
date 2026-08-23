@@ -101,6 +101,7 @@ if SERVER then
         ply._grmHold = nil
     end)
 
+    hook.Remove("CalcMainActivity", "GRM_911_Lie")
     hook.Remove("StartCommand", "GRM_911_Restrict")
     hook.Add("StartCommand", "GRM_Bleedout_Restrict", function(ply, cmd)
         if not downed(ply) then return end
