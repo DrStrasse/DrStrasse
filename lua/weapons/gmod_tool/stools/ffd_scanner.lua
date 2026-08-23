@@ -310,7 +310,7 @@ function TOOL.BuildCPanel(panel)
     panel.OnRemove = function() hook.Remove("GRM_ScannerTool_ListUpdated", panel) end
 
     rebuild()
-    if isfunction(TOOL.RequestFactions) then TOOL.RequestFactions() end
+    requestFactions()
 
     panel:AddControl("Numpad", { Label = "Сигнал успешного допуска (Granted):", Command = "ffd_scanner_key_granted" })
     panel:AddControl("Numpad", { Label = "Сигнал отказа (Denied):", Command = "ffd_scanner_key_denied" })
