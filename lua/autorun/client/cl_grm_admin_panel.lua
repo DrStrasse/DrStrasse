@@ -1078,12 +1078,12 @@ function AD.OpenPanel()
             -- работать с уже удалёнными панелями.
             hook.Remove("GRM_AdminPlayersUpdated", "GRM_AdminPanel_Players")
             content:Clear()
-            builder(content)
+            if isfunction(builder) then builder(content) end
         end
         buttons[key] = b
         if not selected then
             selected = key
-            builder(content)
+            if isfunction(builder) then builder(content) end
         end
     end
 
