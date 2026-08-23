@@ -189,11 +189,42 @@ net.Receive("GRM_Vending_Open", function()
     if not IsValid(ent) then return end
 
     local frame = vgui.Create("DFrame")
-    GRM.UI.Track("vending", frame)
-    frame:SetSize(500, 400)
+    if GRM.UI and GRM.UI.Track then GRM.UI.Track("vending", frame) end
+    frame:SetSize(520, 460)
     frame:Center()
     frame:SetTitle("Торговый автомат")
     frame:MakePopup()
+
+    local cash = ent.GetNWInt and ent:GetNWInt("GRM_VendCash", 0) or 0
+    local owner = ent.GetNWString and ent:GetNWString("GRM_VendOwner", "") or ""
+    local me = LocalPlayer()
+    local myKey = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(me)) or ""
+    local mine = owner ~= "" and (owner == myKey or me:IsSuperAdmin())
+
+    local bar = vgui.Create("DPanel", frame)
+    bar:Dock(TOP) bar:SetTall(56) bar:DockMargin(8, 8, 8, 0)
+    bar.Paint = function(_, w, h)
+        draw.RoundedBox(6, 0, 0, w, h, Color(28, 34, 44))
+        draw.SimpleText("Касса: " .. tostring(cash) .. " GRM", "DermaDefaultBold", 10, 10, Color(255, 210, 70))
+        draw.SimpleText(owner == "" and "Свободен · /vending_buy — выкупить (8000 GRM)" or "Есть владелец", "DermaDefault", 10, 32, Color(180, 190, 200))
+    end
+    if owner == "" then
+        local buy = vgui.Create("DButton", bar)
+        buy:Dock(RIGHT) buy:SetWide(140) buy:DockMargin(6, 10, 8, 10)
+        buy:SetText("Выкупить")
+        buy.DoClick = function()
+            net.Start("GRM_Vending_Biz") net.WriteString("claim") net.WriteEntity(ent) net.SendToServer()
+            frame:Close()
+        end
+    elseif mine then
+        local take = vgui.Create("DButton", bar)
+        take:Dock(RIGHT) take:SetWide(140) take:DockMargin(6, 10, 8, 10)
+        take:SetText("Снять кассу")
+        take.DoClick = function()
+            net.Start("GRM_Vending_Biz") net.WriteString("withdraw") net.WriteEntity(ent) net.SendToServer()
+            frame:Close()
+        end
+    end
 
     local scroll = vgui.Create("DScrollPanel", frame)
     scroll:Dock(FILL)

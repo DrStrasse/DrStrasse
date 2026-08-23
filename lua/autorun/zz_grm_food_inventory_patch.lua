@@ -592,6 +592,7 @@ local function installVendingBuyPatch()
             if GRM.TakeMoney then
                 GRM.TakeMoney(ply, price)
             end
+            if GRM.VendingBiz and GRM.VendingBiz.AddSale then GRM.VendingBiz.AddSale(ent, price) end
 
             playVendingSound(ent, "VendingSuccessSound")
             notify(ply, "[Автомат] Вы купили " .. (data.name or itemID) .. " — предмет добавлен в инвентарь.", 100, 220, 100)

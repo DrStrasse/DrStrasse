@@ -35,13 +35,46 @@ local function dialogueNodes(value)
 end
 local function playDialogue(npcName,nodes,onAction)
  nodes=dialogueNodes(nodes);if#nodes==0 then if onAction then onAction("finish")end return end
- local f=frame("ДИАЛОГ · "..tostring(npcName),760,680);local byID={};for i,n in ipairs(nodes)do byID[tostring(n.id or i)]=i end;local index=1
- local body=vgui.Create("DPanel",f);body:SetPos(18,62);body:SetSize(724,590);body.Paint=function(_,w,h)draw.RoundedBox(12,0,0,w,h,C.panel)end
+ if IsValid(Q.TalkFrame)then Q.TalkFrame:Remove()end
+ local f=vgui.Create("DFrame");Q.TalkFrame=f
+ f:SetSize(math.min(720,ScrW()-80),math.min(420,ScrH()-80));f:SetPos(40,ScrH()-f:GetTall()-48)
+ f:SetTitle("");f:ShowCloseButton(false);f:MakePopup();f:SetDraggable(false)
+ f.Paint=function(_,w,h)
+  draw.RoundedBox(10,0,0,w,h,Color(12,16,24,236))
+  surface.SetDrawColor(70,110,150,80);surface.DrawOutlinedRect(0,0,w,h,1)
+ end
+ local byID={};for i,n in ipairs(nodes)do byID[tostring(n.id or i)]=i end;local index=1
  local function show(i)
-  index=math.Clamp(tonumber(i)or 1,1,#nodes);local n=nodes[index];body:Clear();label(body,n.speaker~=""and n.speaker or npcName,22,18,680,30,"GRMQ_Head",C.yellow);label(body,n.text or"",22,60,680,145,"GRMQ_Head",C.text)
-  local choices=istable(n.choices)and n.choices or{};local function advance(nextID,action)if action and action~=""and onAction then onAction(action)end;if action=="close"or action=="accept"then f:Close();return end;local ni=byID[tostring(nextID or"")]or(index+1);if ni>#nodes then if onAction then onAction("finish")end;f:Close()else show(ni)end end
-  if#choices>0 then for ci,ch in ipairs(choices)do button(body,ch.text~=""and ch.text or("Ответ "..ci),22,220+(ci-1)*44,680,38,ci==1 and C.blue or C.card,function()advance(ch.next,ch.action)end)end
-  else button(body,index<#nodes and"Продолжить"or"Завершить разговор",22,270,680,44,C.blue,function()advance(n.next,"")end)end
+  index=math.Clamp(tonumber(i)or 1,1,#nodes);local n=nodes[index];f:Clear()
+  local close=vgui.Create("DButton",f);close:SetSize(28,24);close:SetPos(f:GetWide()-36,10);close:SetText("")
+  close.Paint=function(s,w,h)draw.RoundedBox(4,0,0,w,h,s:IsHovered()and C.red or Color(40,48,60));draw.SimpleText("X","GRMQ_Body",w/2,h/2,color_white,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)end
+  close.DoClick=function()f:Close()end
+  label(f,tostring(n.speaker~=""and n.speaker or npcName),20,14,f:GetWide()-70,26,"GRMQ_Head",C.yellow)
+  local wrap=vgui.Create("DLabel",f);wrap:SetPos(20,46);wrap:SetSize(f:GetWide()-40,110);wrap:SetWrap(true);wrap:SetFont("GRMQ_Body");wrap:SetTextColor(C.text);wrap:SetText(tostring(n.text or""))
+  local choices=istable(n.choices)and n.choices or{}
+  local function advance(nextID,action)
+   if action and action~=""and onAction then onAction(action)end
+   if action=="close"or action=="accept"then f:Close();return end
+   local ni=byID[tostring(nextID or"")]or(index+1)
+   if ni>#nodes then if onAction then onAction("finish")end;f:Close()else show(ni)end
+  end
+  local y=168
+  local function opt(num,text,fn)
+   local b=vgui.Create("DButton",f);b:SetPos(20,y);b:SetSize(f:GetWide()-40,42);b:SetText("")
+   b.Paint=function(s,w,h)
+    draw.RoundedBox(6,0,0,w,h,s:IsHovered()and Color(36,52,74)or Color(22,30,44))
+    draw.SimpleText(tostring(num),"GRMQ_Head",16,h/2,C.blue,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+    draw.SimpleText(text,"GRMQ_Body",42,h/2,C.text,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+   end
+   b.DoClick=function()surface.PlaySound("buttons/button15.wav");fn()end
+   y=y+48
+  end
+  if#choices>0 then
+   for ci,ch in ipairs(choices)do opt(ci,ch.text~=""and ch.text or("Ответ "..ci),function()advance(ch.next,ch.action)end)end
+  else
+   opt(1,index<#nodes and"Продолжить"or"Завершить разговор",function()advance(n.next,"")end)
+  end
+  label(f,"Esc — выйти",20,f:GetTall()-28,200,18,"GRMQ_Small",C.dim)
  end
  show(1)
 end

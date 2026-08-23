@@ -86,12 +86,56 @@ local function liveAmmoWeight(ply, breakdown)
     return 0
 end
 
+local BODY_FILE = "grm_body_mass.json"
+local bodyMass = {}
+local function loadBody()
+    if not file.Exists(BODY_FILE, "DATA") then return end
+    local ok, t = pcall(util.JSONToTable, file.Read(BODY_FILE, "DATA") or "", false, true)
+    if ok and istable(t) then bodyMass = t end
+end
+local function saveBody()
+    local ok, enc = pcall(util.TableToJSON, bodyMass, true)
+    if ok and enc then file.Write(BODY_FILE, enc) end
+end
+loadBody()
+local function bodyKey(ply)
+    if GRM.Identity and GRM.Identity.CharacterKey then return GRM.Identity.CharacterKey(ply) end
+    return IsValid(ply) and (ply:SteamID64() or "") or ""
+end
+function E.GetBodyMass(ply)
+    local k = bodyKey(ply)
+    if k == "" then return 0 end
+    return math.max(0, tonumber(bodyMass[k]) or 0)
+end
+function E.SetBodyMass(ply, value)
+    local k = bodyKey(ply)
+    if k == "" then return end
+    local cap = tonumber(C.BodyMassCap) or 12
+    bodyMass[k] = math.Clamp(tonumber(value) or 0, 0, cap)
+    if GRM.Perf and GRM.Perf.Coalesce then
+        GRM.Perf.Coalesce("grm_body_mass_save", 4, saveBody)
+    else
+        saveBody()
+    end
+    E.Refresh(ply)
+end
+function E.AddBodyMassFromFood(ply, hungerRestore)
+    if not IsValid(ply) then return end
+    local h = math.max(0, tonumber(hungerRestore) or 0)
+    local mn = tonumber(C.BodyMassMinAdd) or 0.2
+    local mx = tonumber(C.BodyMassMaxAdd) or 0.5
+    local add = mn + math.Clamp(h / 55, 0, 1) * (mx - mn)
+    E.SetBodyMass(ply, E.GetBodyMass(ply) + add)
+end
+
 function E.CalculateWeight(ply)
-    if not IsValid(ply) then return 0, { inventory = 0, weapons = 0, ammo = 0 } end
-    local breakdown = { inventory = 0, weapons = 0, ammo = 0 }
+    if not IsValid(ply) then return 0, { inventory = 0, weapons = 0, ammo = 0, body = 0 } end
+    local breakdown = { inventory = 0, weapons = 0, ammo = 0, body = 0 }
     local total = inventoryWeight(ply, breakdown)
     total = total + equippedWeaponWeight(ply, breakdown)
     total = total + liveAmmoWeight(ply, breakdown)
+    breakdown.body = E.GetBodyMass(ply)
+    total = total + breakdown.body
     return math.Round(total * 100) / 100, breakdown
 end
 
@@ -169,6 +213,7 @@ local function sync(ply, state)
     net.WriteFloat(state.breakdown.inventory)
     net.WriteFloat(state.breakdown.weapons)
     net.WriteFloat(state.breakdown.ammo)
+    net.WriteFloat(state.breakdown.body or 0)
     net.Send(ply)
 end
 
@@ -198,8 +243,17 @@ function E.Refresh(ply)
 end
 
 timer.Create("GRM_Weight_Update", math.max(0.1, C.UpdateInterval or 0.25), 0, function()
-    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do updatePlayer(ply) end
+    local dt = math.max(0.1, C.UpdateInterval or 0.25)
+    local burn = tonumber(C.BodyMassRunPerSec) or 0.035
+    for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
+        if IsValid(ply) and ply:Alive() and ply:IsSprinting() and ply:GetVelocity():Length2D() > 80 then
+            local cur = E.GetBodyMass(ply)
+            if cur > 0 then E.SetBodyMass(ply, cur - burn * dt) end
+        end
+        updatePlayer(ply)
+    end
 end)
+hook.Add("ShutDown", "GRM_Weight_SaveBody", saveBody)
 
 hook.Add("Move", "GRM_Weight_FinalSpeedCap", function(ply, mv)
     local state = E.GetPlayerState(ply)

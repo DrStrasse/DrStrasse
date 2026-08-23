@@ -571,7 +571,11 @@ end
 
 function GRM.Food.RestoreHunger(ply, amount)
     if not IsValid(ply) then return end
-    GRM.Food.SetHunger(ply, GRM.Food.GetHunger(ply) + (tonumber(amount) or 0))
+    local add = tonumber(amount) or 0
+    GRM.Food.SetHunger(ply, GRM.Food.GetHunger(ply) + add)
+    if add > 0 and GRM.Encumbrance and GRM.Encumbrance.AddBodyMassFromFood then
+        GRM.Encumbrance.AddBodyMassFromFood(ply, add)
+    end
 end
 
 function GRM.Food.RestoreThirst(ply, amount)
@@ -752,6 +756,7 @@ net.Receive("GRM_Vending_Buy", function(_, ply)
     if GRM.TakeMoney then
         GRM.TakeMoney(ply, price)
     end
+    if GRM.VendingBiz and GRM.VendingBiz.AddSale then GRM.VendingBiz.AddSale(ent, price) end
 
     local food = ents.Create("grm_food_item")
     if not IsValid(food) then

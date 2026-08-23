@@ -34,6 +34,7 @@ net.Receive(NET_SYNC, function()
     state.inventory = net.ReadFloat()
     state.weapons = net.ReadFloat()
     state.ammo = net.ReadFloat()
+    if net.BytesLeft and net.BytesLeft() >= 4 then state.body = net.ReadFloat() else state.body = state.body or 0 end
     hook.Run("GRM_InventoryWeightUpdated", state)
 end)
 
@@ -90,7 +91,7 @@ concommand.Add("grm_weight", function()
         draw.SimpleText(string.format("%.1f / %.1f кг", state.weight, state.capacity), "GRMWeight_Value", w / 2, 57, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         draw.SimpleText(string.format("Инвентарь: %.1f кг", state.inventory), "GRMWeight_Label", 14, 81, Color(205, 214, 228))
         draw.SimpleText(string.format("Оружие: %.1f кг", state.weapons), "GRMWeight_Label", 14, 101, Color(205, 214, 228))
-        draw.SimpleText(string.format("Боеприпасы: %.1f кг", state.ammo), "GRMWeight_Label", 14, 121, Color(205, 214, 228))
+        draw.SimpleText(string.format("Тело (еда): %.1f кг", state.body or 0), "GRMWeight_Label", 14, 121, Color(205, 214, 228))
         draw.SimpleText("Скорость: " .. math.floor(state.multiplier * 100) .. "%", "GRMWeight_Label", w - 14, 121, color, TEXT_ALIGN_RIGHT)
     end
 end)

@@ -18,6 +18,10 @@ GRM.Encumbrance.Config = {
     MinimumSpeed    = 0.25,
     UpdateInterval = 0.25,
     SyncInterval   = 0.5,
+    BodyMassMinAdd = 0.2,
+    BodyMassMaxAdd = 0.5,
+    BodyMassCap = 12,
+    BodyMassRunPerSec = 0.035,
 
     AmmoWeights = {
         Pistol        = 0.012,
