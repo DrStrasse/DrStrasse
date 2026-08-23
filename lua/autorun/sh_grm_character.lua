@@ -1631,29 +1631,57 @@ if CLIENT then
             for i = 1, (payload.maxSlots or 3) do
                 local info = slots[i] or { id = "char" .. i, index = i, exists = false }
                 local b = vgui.Create("DButton", left)
-                b:SetText("") b:Dock(TOP) b:SetTall(104) b:DockMargin(0, 0, 0, 10)
+                b:SetText("") b:Dock(TOP) b:SetTall(118) b:DockMargin(0, 0, 0, 10)
                 b._slotID, b._selected, b._active = info.id, info.id == activeSlot, info.id == serverActiveSlot
                 slotButtons[#slotButtons + 1] = b
+                if info.exists and (info.model or "") ~= "" then
+                    local sm = vgui.Create("DModelPanel", b)
+                    sm:SetPos(12, 10)
+                    sm:SetSize(72, 98)
+                    sm:SetFOV(30)
+                    sm:SetAnimated(false)
+                    sm:SetMouseInputEnabled(false)
+                    sm.LayoutEntity = function(_, ent)
+                        if IsValid(ent) then ent:SetAngles(Angle(0, 20, 0)) end
+                    end
+                    sm:SetModel(tostring(info.model))
+                    local sent = sm:GetEntity()
+                    if IsValid(sent) then
+                        sent:SetSkin(math.max(0, math.floor(tonumber(info.skin) or 0)))
+                        for g, v in pairs(istable(info.bodygroups) and info.bodygroups or {}) do
+                            sent:SetBodygroup(tonumber(g) or 0, tonumber(v) or 0)
+                        end
+                        local mn, mx = sent:GetRenderBounds()
+                        local mid = (mn + mx) * 0.5
+                        local hgt = math.max(16, mx.z - mn.z)
+                        local dist = (hgt * 0.55) / math.tan(math.rad(15))
+                        sm:SetLookAt(Vector(0, 0, mid.z))
+                        sm:SetCamPos(Vector(dist, dist * 0.16, mid.z + hgt * 0.04))
+                    end
+                end
                 b.Paint = function(self, pw, ph)
                     local sel, has = self._selected == true, info.exists == true
                     draw.RoundedBox(10, 0, 0, pw, ph, sel and Color(30, 48, 72) or C.panel)
                     surface.SetDrawColor(sel and C.acc or C.border) surface.DrawOutlinedRect(0, 0, pw, ph, sel and 2 or 1)
                     draw.RoundedBox(4, 0, 0, 4, ph, sel and C.acc or (has and C.green or Color(70, 78, 92)))
+                    local tx = has and 96 or 18
                     local nm = has and (info.name ~= "" and info.name or ("Персонаж " .. i)) or ("Свободный слот " .. i)
-                    draw.SimpleText(nm, "GRMChar_Sub", 18, 14, has and C.text or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    draw.SimpleText(nm, "GRMChar_Sub", tx, 14, has and C.text or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
                     local detail = (info.factionName or "") ~= "" and
                         (((GRM.Factions and GRM.Factions.DisplayName and GRM.Factions.DisplayName(info.factionName)) or info.factionName)
                             .. ((info.factionRole or "") ~= "" and (" • " .. info.factionRole) or "")) or "Гражданский"
-                    draw.SimpleText(has and detail or "Нажмите, чтобы создать", "GRMChar_Small", 18, 40,
+                    draw.SimpleText(has and detail or "Нажмите, чтобы создать", "GRMChar_Small", tx, 40,
                         (has and (info.factionName or "") ~= "") and C.yellow or C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                    if has and (info.model or "") ~= "" then
-                        draw.SimpleText(tostring(info.model):match("([^/]+)$") or info.model, "GRMChar_Small",
-                            18, 60, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    if has then
+                        local gtxt = (info.gender == "female") and "Женский" or ((info.gender == "male") and "Мужской" or "")
+                        if gtxt ~= "" then
+                            draw.SimpleText(gtxt, "GRMChar_Small", tx, 60, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                        end
                     end
                     local stateText = self._active and "АКТИВЕН" or (sel and "ПРОСМОТР" or "ВЫБРАТЬ")
                     draw.SimpleText(stateText, "GRMChar_Small", pw - 16, ph - 20, sel and C.acc or C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
                     if has and info.serverBanned then
-                        draw.SimpleText("СЕРВЕРНЫЙ БАН · персонаж можно выбрать", "GRMChar_Small", 18, 82, Color(235, 90, 82), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                        draw.SimpleText("СЕРВЕРНЫЙ БАН", "GRMChar_Small", tx, 82, Color(235, 90, 82), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
                     end
                 end
                 b.DoClick = function()
@@ -1718,6 +1746,28 @@ if CLIENT then
         local lookScroll = vgui.Create("DScrollPanel", pageLook)
         lookScroll:Dock(FILL)
         local outfitButtons = {}
+        local function frameMiniModel(pnl, mdlPath, skin, bodygroups)
+            if not IsValid(pnl) then return end
+            pnl:SetModel(tostring(mdlPath or ""))
+            local ent = pnl:GetEntity()
+            if not IsValid(ent) then return end
+            ent:SetSkin(math.max(0, math.floor(tonumber(skin) or 0)))
+            local count = ent:GetNumBodyGroups() or 0
+            for i = 0, count - 1 do ent:SetBodygroup(i, 0) end
+            for g, v in pairs(istable(bodygroups) and bodygroups or {}) do
+                ent:SetBodygroup(tonumber(g) or 0, tonumber(v) or 0)
+            end
+            local mn, mx = ent:GetRenderBounds()
+            local mid = (mn + mx) * 0.5
+            local height = math.max(16, mx.z - mn.z)
+            local width = math.max(16, math.max(mx.x - mn.x, mx.y - mn.y))
+            local fov = 28
+            pnl:SetFOV(fov)
+            local need = math.max(height, width * 1.15) * 0.5
+            local dist = (need / math.tan(math.rad(fov * 0.5))) * 1.28
+            pnl:SetLookAt(Vector(0, 0, mid.z + height * 0.02))
+            pnl:SetCamPos(Vector(dist, dist * 0.18, mid.z + height * 0.04))
+        end
         local function refreshOutfitButtons()
             for _, ob in ipairs(outfitButtons) do
                 ob._on = string.lower(ob._path) == string.lower(draft.model or "")
@@ -1732,28 +1782,40 @@ if CLIENT then
         rebuildLook = function()
             lookScroll:Clear()
             outfitButtons = {}
+            local grid = vgui.Create("DIconLayout", lookScroll)
+            grid:Dock(TOP)
+            grid:SetSpaceX(8)
+            grid:SetSpaceY(8)
+            grid:SetBorder(2)
             local shown = 0
             for _, outfit in ipairs(outfits) do
                 local path = tostring(outfit.path or "")
                 if path ~= "" and (outfit.provider == "faction" or outfitGender(outfit) == draft.gender) then
                     shown = shown + 1
-                    local row = vgui.Create("DButton", lookScroll)
-                    row:SetText("") row:Dock(TOP) row:SetTall(74) row:DockMargin(0, 0, 6, 6)
-                    row._path = path
-                    outfitButtons[#outfitButtons + 1] = row
-                    local icon = vgui.Create("SpawnIcon", row)
-                    icon:SetPos(8, 5) icon:SetSize(64, 64)
-                    icon:SetModel(path, tonumber(outfit.skin) or 0)
-                    icon:SetMouseInputEnabled(false)
-                    row.Paint = function(self, pw, ph)
-                        draw.RoundedBox(8, 0, 0, pw, ph, self._on and Color(30, 48, 72) or (self:IsHovered() and C.panel2 or C.panel))
-                        surface.SetDrawColor(self._on and C.acc or C.border) surface.DrawOutlinedRect(0, 0, pw, ph, self._on and 2 or 1)
-                        local nm = (tostring(outfit.label or path):match("([^/]+)$") or path):gsub("%.mdl$", "")
-                        draw.SimpleText(nm, "GRMChar_Normal", 82, 18, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-                        draw.SimpleText(tostring(outfit.providerTitle or outfit.provider or "Гражданская модель"),
-                            "GRMChar_Small", 82, 40, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+                    local cell = grid:Add("DButton")
+                    cell:SetText("")
+                    cell:SetSize(128, 176)
+                    cell._path = path
+                    outfitButtons[#outfitButtons + 1] = cell
+                    local mp = vgui.Create("DModelPanel", cell)
+                    mp:SetPos(6, 6)
+                    mp:SetSize(116, 138)
+                    mp:SetFOV(28)
+                    mp:SetAnimated(false)
+                    mp:SetMouseInputEnabled(false)
+                    mp.LayoutEntity = function(_, ent)
+                        if IsValid(ent) then ent:SetAngles(Angle(0, 25, 0)) end
                     end
-                    row.DoClick = function()
+                    frameMiniModel(mp, path, outfit.skin, outfit.bodygroups)
+                    local nm = (tostring(outfit.label or path):match("([^/]+)$") or path):gsub("%.mdl$", "")
+                    cell.Paint = function(self, pw, ph)
+                        draw.RoundedBox(8, 0, 0, pw, ph, self._on and Color(30, 48, 72) or (self:IsHovered() and C.panel2 or C.panel))
+                        surface.SetDrawColor(self._on and C.acc or C.border)
+                        surface.DrawOutlinedRect(0, 0, pw, ph, self._on and 2 or 1)
+                        draw.SimpleText(nm, "GRMChar_Small", pw / 2, ph - 16, self._on and C.text or C.dim,
+                            TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+                    end
+                    cell.DoClick = function()
                         draft.model = path
                         draft.gender = outfitGender(outfit)
                         draft.skin = tonumber(outfit.skin) or 0
@@ -1770,6 +1832,10 @@ if CLIENT then
                 local none = vgui.Create("DLabel", lookScroll)
                 none:Dock(TOP) none:SetText("Нет гражданских моделей этого пола.")
                 none:SetFont("GRMChar_Normal") none:SetTextColor(C.dim)
+            else
+                local cols = 3
+                local rows = math.max(1, math.ceil(shown / cols))
+                grid:SetTall(rows * 184)
             end
         end
         local function pickGender(g)
