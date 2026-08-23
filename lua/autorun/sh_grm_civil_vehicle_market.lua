@@ -1,4 +1,4 @@
---[[ GRM Civil Vehicle Market v1.0.0
+--[[ GRM Civil Vehicle Market v1.1.0
      Личный рынок транспорта: отдельный от GRM.Fleet контур.
      Оплата наличными/счётом, покупка кладёт машину в личный гараж. ]]
 if SERVER then AddCSLuaFile() end
@@ -134,30 +134,171 @@ if SERVER then
 end
 
 if CLIENT then
- local state={entries={},garages={}}
+ surface.CreateFont("GRMCiv_Title",{font="Roboto",size=20,weight=800,extended=true})
+ surface.CreateFont("GRMCiv_Sub",{font="Roboto",size=15,weight=700,extended=true})
+ surface.CreateFont("GRMCiv_Body",{font="Roboto",size=13,weight=550,extended=true})
+ surface.CreateFont("GRMCiv_Small",{font="Roboto",size=11,weight=500,extended=true})
+ local C={
+  bg=Color(16,20,28,252),sidebar=Color(12,15,22,255),card=Color(22,28,38,240),card2=Color(28,36,48,240),
+  border=Color(38,48,66,200),accent=Color(65,145,235),gold=Color(245,195,65),green=Color(55,185,110),
+  red=Color(225,70,70),text=Color(240,244,250),dim=Color(155,170,190)
+ }
+ local state={entries={},garages={},admin=false}
  local function act(op,d)net.Start(CV.Net.ACT)net.WriteString(op)net.WriteTable(d or{})net.SendToServer()end
+ local function uiSound(kind)
+  local path=kind=="hover"and"garrysmod/ui_hover.wav"or kind=="down"and"ui/buttonclick.wav"or"buttons/button15.wav"
+  if GRM.Sound and GRM.Sound.UI then GRM.Sound.UI(path,0.04)else surface.PlaySound(path)end
+ end
+ local function skinEntry(e)
+  e:SetFont("GRMCiv_Body")e:SetTextColor(C.text)
+  e.Paint=function(s,w,h)
+   draw.RoundedBox(5,0,0,w,h,C.card2)surface.SetDrawColor(C.border)surface.DrawOutlinedRect(0,0,w,h)
+   s:DrawTextEntryText(C.text,C.accent,C.text)
+   if s:GetText()==""and s.GetPlaceholderText and s:GetPlaceholderText()then
+    draw.SimpleText(s:GetPlaceholderText(),"GRMCiv_Small",8,h/2,C.dim,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+   end
+  end
+ end
+ local function mkBtn(parent,label,col)
+  local b=vgui.Create("DButton",parent)b:SetText("")b:SetCursor("hand")
+  b.OnCursorEntered=function()uiSound("hover")end
+  b.OnDepressed=function()uiSound("down")end
+  b.Paint=function(s,w,h)
+   local c=col or C.accent
+   if not s:IsEnabled()then c=C.card2
+   elseif s:IsDown()then c=Color(math.max(0,c.r-20),math.max(0,c.g-20),math.max(0,c.b-20))
+   elseif s:IsHovered()then c=Color(math.min(255,c.r+22),math.min(255,c.g+22),math.min(255,c.b+22))end
+   draw.RoundedBox(6,0,0,w,h,c)
+   draw.SimpleText(label,"GRMCiv_Body",w/2,h/2,s:IsEnabled()and color_white or C.dim,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+  end
+  return b
+ end
  local function open()
   if IsValid(CV.Frame)then CV.Frame:Remove()end
-  local f=vgui.Create("DFrame");CV.Frame=f;f:SetSize(math.Clamp(ScrW()*.78,980,1500),math.Clamp(ScrH()*.78,680,980));f:Center();f:SetTitle("ГРАЖДАНСКИЙ РЫНОК ТРАНСПОРТА");f:MakePopup();act("watch",{on=true})
+  local f=vgui.Create("DFrame")CV.Frame=f
+  if GRM.UI and GRM.UI.Track then GRM.UI.Track("grm_civil_market",f)end
+  f:SetSize(math.Clamp(ScrW()*0.86,1100,1680),math.Clamp(ScrH()*0.84,700,1040))
+  f:Center()f:SetTitle("")f:ShowCloseButton(false)f:SetDraggable(true)f:SetSizable(true)f:MakePopup()
+  act("watch",{on=true})
   f.OnRemove=function()act("watch",{on=false})end
-  local scroll=vgui.Create("DScrollPanel",f);scroll:Dock(FILL);scroll:DockMargin(10,4,10,10)
-  if state.admin then
-   local admin=vgui.Create("DPanel",f);admin:Dock(TOP);admin:SetTall(64);admin:DockMargin(10,34,10,4)
-   admin.Paint=function(_,w,h)draw.RoundedBox(5,0,0,w,h,Color(14,28,43,255));draw.SimpleText("ДОБАВИТЬ ЛИЧНУЮ ПОЗИЦИЮ НА РЫНОК","DermaDefaultBold",8,7,Color(64,222,147))end
-   local class=vgui.Create("DTextEntry",admin);class:SetPos(8,25);class:SetSize(260,28);class:SetPlaceholderText("Класс: simfphys_...")
-   local name=vgui.Create("DTextEntry",admin);name:SetPos(274,25);name:SetSize(260,28);name:SetPlaceholderText("Название")
-   local price=vgui.Create("DTextEntry",admin);price:SetPos(540,25);price:SetSize(150,28);price:SetPlaceholderText("Цена")
-   local add=vgui.Create("DButton",admin);add:SetPos(698,25);add:SetSize(150,28);add:SetText("ДОБАВИТЬ")
-   add.DoClick=function()act("add",{class=class:GetValue(),name=name:GetValue(),price=tonumber(price:GetValue())or 0,category="Гражданский транспорт",factions={}})end
+  f.Paint=function(_,w,h)
+   draw.RoundedBox(8,0,0,w,h,C.bg)
+   draw.RoundedBoxEx(8,0,0,w,48,C.sidebar,true,true,false,false)
+   surface.SetDrawColor(C.border)surface.DrawOutlinedRect(0,0,w,h)
+   draw.SimpleText("ГРАЖДАНСКИЙ РЫНОК ТРАНСПОРТА","GRMCiv_Title",18,24,C.gold,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+   draw.SimpleText("Личная покупка · наличные или счёт · в выбранный гараж","GRMCiv_Small",w-56,24,C.dim,TEXT_ALIGN_RIGHT,TEXT_ALIGN_CENTER)
   end
-  local garage="";local combo=vgui.Create("DComboBox",f);combo:Dock(TOP);combo:DockMargin(10,4,10,4);combo:SetValue("Гараж для покупки")
-  for _,g in ipairs(state.garages)do combo:AddChoice(g.name,g.id,g.suggested)if g.suggested then garage=g.id end end
+  local close=vgui.Create("DButton",f)close:SetSize(34,30)close:SetText("")
+  close.Paint=function(s,w,h)
+   if s:IsHovered()then draw.RoundedBox(4,0,0,w,h,C.red)end
+   draw.SimpleText("✕","GRMCiv_Sub",w/2,h/2,s:IsHovered()and color_white or C.dim,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+  end
+  close.DoClick=function()f:Close()end
+  f.PerformLayout=function(self,w)if IsValid(close)then close:SetPos(w-44,9)end end
+
+  local body=vgui.Create("DPanel",f)
+  body:Dock(FILL)body:DockMargin(12,52,12,12)body:SetPaintBackground(false)
+
+  if state.admin then
+   local admin=vgui.Create("DPanel",body)
+   admin:Dock(TOP)admin:SetTall(78)admin:DockMargin(0,0,0,8)
+   admin.Paint=function(_,w,h)
+    draw.RoundedBox(6,0,0,w,h,C.card)
+    draw.SimpleText("ДОБАВИТЬ ПОЗИЦИЮ НА РЫНОК","GRMCiv_Small",14,10,C.gold)
+   end
+   local class=vgui.Create("DTextEntry",admin)class:SetPos(12,32)class:SetSize(280,32)class:SetPlaceholderText("Класс: simfphys_…")skinEntry(class)
+   local name=vgui.Create("DTextEntry",admin)name:SetPos(300,32)name:SetSize(280,32)name:SetPlaceholderText("Название")skinEntry(name)
+   local price=vgui.Create("DTextEntry",admin)price:SetPos(588,32)price:SetSize(140,32)price:SetPlaceholderText("Цена")skinEntry(price)
+   local add=mkBtn(admin,"ДОБАВИТЬ",C.green)add:SetPos(740,32)add:SetSize(150,32)
+   add.DoClick=function()
+    act("add",{class=class:GetValue(),name=name:GetValue(),price=tonumber(price:GetValue())or 0,category="Гражданский транспорт",factions={}})
+   end
+  end
+
+  local bar=vgui.Create("DPanel",body)
+  bar:Dock(TOP)bar:SetTall(44)bar:DockMargin(0,0,0,8)
+  bar.Paint=function(_,w,h)
+   draw.RoundedBox(6,0,0,w,h,C.card)
+   draw.SimpleText("ГАРАЖ ПОСТАНОВКИ","GRMCiv_Small",14,h/2,C.dim,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+  end
+  local garage=""
+  local combo=vgui.Create("DComboBox",bar)
+  combo:Dock(FILL)combo:DockMargin(160,8,12,8)
+  combo:SetFont("GRMCiv_Body")combo:SetTextColor(C.text)
+  combo.Paint=function(s,w,h)
+   draw.RoundedBox(5,0,0,w,h,C.card2)surface.SetDrawColor(C.border)surface.DrawOutlinedRect(0,0,w,h)
+  end
+  combo:SetValue(#(state.garages or{})>0 and "Выберите гараж" or "Нет доступных гаражей")
+  for _,g in ipairs(state.garages or{})do
+   combo:AddChoice(g.name,g.id,g.suggested==true)
+   if g.suggested then garage=tostring(g.id or"")end
+  end
   combo.OnSelect=function(_,_,_,v)garage=tostring(v or"")end
-  for _,e in ipairs(state.entries)do
-   local row=vgui.Create("DPanel",scroll);row:Dock(TOP);row:SetTall(126);row:DockMargin(0,0,4,7)
-   row.Paint=function(_,w,h)draw.RoundedBox(6,0,0,w,h,Color(16,25,38,245));draw.SimpleText(e.name,"DermaLarge",150,16,color_white);draw.SimpleText(e.class.." · "..tostring(e.category or"Транспорт"),"DermaDefault",150,49,Color(150,170,190));draw.SimpleText(GRM.Format and GRM.Format(e.price)or tostring(e.price),"DermaLarge",w-18,20,Color(245,195,65),TEXT_ALIGN_RIGHT)end
-   local m=vgui.Create("DModelPanel",row);m:SetPos(8,8);m:SetSize(130,110);if util.IsValidModel(e.model or"")then m:SetModel(e.model)end
-   for i,pay in ipairs({{"НАЛИЧНЫМИ","cash"},{"СО СЧЁТА","bank"}})do local b=vgui.Create("DButton",row);b:SetText(pay[1]);b:SetSize(130,28);b:SetPos(row:GetWide()-140,70+(i-1)*32);b:DockMargin(0,0,0,0);b:SetEnabled(e.allowed);b.DoClick=function()if garage==""then notification.AddLegacy("Выберите гараж",NOTIFY_ERROR,3)return end;act("buy",{id=e.id,garageID=garage,payment=pay[2]})end end
+
+  local scroll=vgui.Create("DScrollPanel",body)
+  scroll:Dock(FILL)
+  local sbar=scroll:GetVBar()
+  if IsValid(sbar)then
+   sbar:SetWide(6)
+   sbar.Paint=function(_,w,h)draw.RoundedBox(3,0,0,w,h,Color(18,22,32))end
+   sbar.btnUp.Paint,sbar.btnDown.Paint=function()end,function()end
+   sbar.btnGrip.Paint=function(_,w,h)draw.RoundedBox(3,0,0,w,h,C.border)end
+  end
+
+  if #(state.entries or{})==0 then
+   local empty=vgui.Create("DPanel",scroll)
+   empty:Dock(TOP)empty:SetTall(120)
+   empty.Paint=function(_,w,h)
+    draw.RoundedBox(8,0,0,w,h,C.card)
+    draw.SimpleText("На рынке пока нет позиций","GRMCiv_Sub",w/2,h/2-10,C.text,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+    draw.SimpleText(state.admin and "Суперадмин: укажите класс, название и цену сверху." or "Загляните позже — каталог собирает администрация.",
+     "GRMCiv_Small",w/2,h/2+14,C.dim,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+   end
+  end
+
+  for _,e in ipairs(state.entries or{})do
+   local row=vgui.Create("DPanel",scroll)
+   row:Dock(TOP)row:SetTall(138)row:DockMargin(0,0,8,8)
+   row.Paint=function(_,w,h)
+    draw.RoundedBox(8,0,0,w,h,C.card)
+    surface.SetDrawColor(C.border)surface.DrawOutlinedRect(0,0,w,h)
+    draw.SimpleText(tostring(e.name or"Транспорт"),"GRMCiv_Sub",156,18,C.text)
+    draw.SimpleText(tostring(e.class or"").."  ·  "..tostring(e.category or"Гражданский транспорт"),"GRMCiv_Small",156,42,C.dim)
+    local price=GRM.Format and GRM.Format(e.price)or tostring(e.price or 0)
+    draw.SimpleText(price,"GRMCiv_Title",w-18,22,C.gold,TEXT_ALIGN_RIGHT)
+    if e.allowed==false then
+     draw.SimpleText(tostring(e.reason or"Недоступно"),"GRMCiv_Small",156,64,C.red)
+    end
+   end
+   local preview=vgui.Create("DModelPanel",row)
+   preview:SetPos(10,10)preview:SetSize(130,118)
+   if util.IsValidModel(e.model or"")then
+    preview:SetModel(e.model)
+    local ent=preview:GetEntity()
+    if IsValid(ent)then
+     local mn,mx=ent:GetRenderBounds()
+     local mid=(mn+mx)*0.5
+     local size=math.max(16,(mx-mn):Length())
+     preview:SetFOV(36)
+     preview:SetLookAt(Vector(0,0,mid.z))
+     preview:SetCamPos(Vector(size*0.7,size*0.55,mid.z+size*0.08))
+    end
+   end
+   preview.LayoutEntity=function(self,ent)if self.bAnimated then self:RunAnimation()end ent:SetAngles(Angle(0,35,0))end
+   local cash=mkBtn(row,"НАЛИЧНЫМИ",C.green)cash:SetSize(150,30)
+   local bank=mkBtn(row,"СО СЧЁТА",C.accent)bank:SetSize(150,30)
+   cash:SetEnabled(e.allowed~=false)
+   bank:SetEnabled(e.allowed~=false)
+   local function buy(method)
+    if garage==""then notification.AddLegacy("Сначала выберите гараж постановки",NOTIFY_ERROR,3)return end
+    act("buy",{id=e.id,garageID=garage,payment=method})
+   end
+   cash.DoClick=function()buy("cash")end
+   bank.DoClick=function()buy("bank")end
+   row.PerformLayout=function(_,w)
+    cash:SetPos(w-168,62)
+    bank:SetPos(w-168,98)
+   end
   end
  end
  net.Receive(CV.Net.SYNC,function()state=net.ReadTable()or state;if IsValid(CV.Frame)then open()end end)
