@@ -43,9 +43,9 @@ if SERVER then
         rec.guests = rec.guests or {}
         local untilT = os.time() + math.Clamp(math.floor(tonumber(minutes) or 60), 5, 24 * 60) * 60
         for _, g in ipairs(rec.guests) do
-            if tostring(g.key) == tostring(targetKey) then g.until = untilT return true end
+            if tostring(g.key) == tostring(targetKey) then g.untilAt = untilT return true end
         end
-        rec.guests[#rec.guests + 1] = { key = tostring(targetKey), until = untilT }
+        rec.guests[#rec.guests + 1] = { key = tostring(targetKey), untilAt = untilT }
         rec._ephemeral = nil
         if D.SaveDoors then D.SaveDoors("guest") end
         return true

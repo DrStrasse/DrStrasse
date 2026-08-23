@@ -1372,11 +1372,6 @@ if SERVER then
                 else
                     ply.GRMCharConfirmed = nil
                     ply:SetNWString("GRM_RPName", "")
-                if leftover then
-                    CH.SetActiveSlot(ply, leftover, true)
-                else
-                    ply.GRMCharConfirmed = nil
-                    ply:SetNWString("GRM_RPName", "")
                     setCharacterLock(ply, true, true)
                     sendMenu(ply)
                 end
