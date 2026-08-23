@@ -202,6 +202,9 @@ if CLIENT then
         shown = RealTime()
 
         frame = vgui.Create("DFrame")
+        -- Серверный бан не должен закрыть обязательный экран входа: игрок
+        -- обязан иметь возможность нажать «НАЧАТЬ ИГРАТЬ».
+        frame.GRM_BanAllowed = true
         frame:SetSize(ScrW(), ScrH())
         frame:SetPos(0, 0)
         frame:SetTitle("")

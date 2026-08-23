@@ -543,6 +543,16 @@ if SERVER then
     end)
     hook.Add("PlayerInitialSpawn", "GRM_ServerBan_Join", function(ply)
         timer.Simple(4, function()
+            if not IsValid(ply) or not select(1, SB.IsBanned(ply)) then return end
+            -- Пока открыт GRM Loading, не телепортируем/не применяем вид:
+            -- иначе кнопка «НАЧАТЬ ИГРАТЬ» теряет фокус либо экран закрывает
+            -- ban-сторож. Наказание встанет сразу после входного экрана.
+            if GRM.Loading and GRM.Loading.IsLoading and GRM.Loading.IsLoading(ply) then return end
+            SB.Apply(ply, true)
+        end)
+    end)
+    hook.Add("GRM_LoadingFinished", "GRM_ServerBan_AfterLoading", function(ply)
+        timer.Simple(0.25, function()
             if IsValid(ply) and select(1, SB.IsBanned(ply)) then SB.Apply(ply, true) end
         end)
     end)
@@ -556,9 +566,12 @@ if SERVER then
             if IsValid(ply) then
                 local isBanned, rec = SB.IsBanned(ply)
                 if isBanned then
-                    SB.Apply(ply, false)
-                    SB.Moan(ply)
-                    if zonePos then
+                    local loading = GRM.Loading and GRM.Loading.IsLoading and GRM.Loading.IsLoading(ply)
+                    if not loading then
+                        SB.Apply(ply, false)
+                        SB.Moan(ply)
+                    end
+                    if zonePos and not loading then
                         local r = zone.radius or 600
                         if ply:GetPos():DistToSqr(zonePos) > r * r then
                             ply:SetPos(zonePos + Vector(0, 0, 8))
