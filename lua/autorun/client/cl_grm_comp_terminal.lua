@@ -37,6 +37,7 @@ net.Receive("GRM_CompTerminal_Fines", function()
     -- сервер их не шлёт — net.ReadTable() вернёт пустую таблицу, поэтому
     -- клиент совместим с обеими версиями.
     local requests = net.ReadTable() or {}
+    local warrants = net.ReadTable() or {}
 
     local frame = GRM_CompTerminal_ActiveFrame
     if not IsValid(frame) then return end
@@ -45,6 +46,7 @@ net.Receive("GRM_CompTerminal_Fines", function()
     if isfunction(frame._fillWanted) then frame._fillWanted(wanted) end
     if isfunction(frame._fillWantedExchange) then frame._fillWantedExchange(wanted) end
     if isfunction(frame._fillRequests) then frame._fillRequests(requests) end
+    if isfunction(frame._fillWarrants) then frame._fillWarrants(warrants) end
 end)
 
 --- Человеческое имя структуры по коду юрисдикции.
@@ -263,5 +265,97 @@ function GRM_CompTerminal_BuildExchangeTab(tabs, frame, colors, wantedRecs, requ
     end
 
     tabs:AddSheet("Обмен сведениями", pnl, "icon16/arrow_switch.png")
+    return pnl
+end
+
+
+function GRM_CompTerminal_BuildWarrantTab(tabs, frame, colors, onlineList, warrants, canEdit)
+    if not IsValid(tabs) then return end
+    local CC = colors or {}
+    local panel  = CC.panel  or Color(25, 34, 50, 245)
+    local dim    = CC.dim    or Color(150, 165, 185)
+    local gold   = CC.gold   or Color(245, 205, 80)
+    local okCol  = CC.success or Color(60, 190, 100)
+
+    local pnl = vgui.Create("DPanel", tabs)
+    pnl:DockPadding(12, 12, 12, 12)
+    pnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, panel) end
+
+    local hint = vgui.Create("DLabel", pnl)
+    hint:SetPos(16, 8)
+    hint:SetFont("DermaDefaultBold")
+    hint:SetTextColor(gold)
+    hint:SetText("Ходатайство уходит в Компьютер юстиции. Утверждает прокурор.")
+    hint:SizeToContents()
+
+    local list = vgui.Create("DListView", pnl)
+    list:SetPos(16, 32)
+    list:SetSize(910, 280)
+    list:AddColumn("№"):SetFixedWidth(60)
+    list:AddColumn("Тип"):SetFixedWidth(140)
+    list:AddColumn("Фигурант"):SetFixedWidth(200)
+    list:AddColumn("Статус"):SetFixedWidth(110)
+    list:AddColumn("Основание")
+
+    local typeLab = {
+        search = "Обыск", arrest = "Арест",
+        wiretap_judge = "Надзор", eviction = "Опечатывание",
+    }
+    local function fill(rows)
+        list:Clear()
+        for _, w in ipairs(rows or {}) do
+            local st = w.status == "pending" and "ХОДАТАЙСТВО" or (w.status == "active" and "УТВЕРЖДЁН" or tostring(w.status or "—"))
+            list:AddLine(tostring(w.number or w.id or "?"), typeLab[w.type] or tostring(w.type or "ордер"),
+                tostring(w.name or w.sid or "?"), st, tostring(w.reason or ""))
+        end
+    end
+    fill(warrants)
+    if IsValid(frame) then frame._fillWarrants = fill end
+
+    local combo = vgui.Create("DComboBox", pnl)
+    combo:SetPos(16, 326) combo:SetSize(300, 26)
+    combo:AddChoice("— фигурант онлайн —", "")
+    for _, pl in ipairs(onlineList or {}) do
+        combo:AddChoice(string.format("%s  [%s]", pl.rpName or "?", pl.nick or "?"), pl)
+    end
+    local selKey = ""
+    combo.OnSelect = function(_, _, _, pd) if istable(pd) then selKey = pd.key or "" end end
+
+    local comboT = vgui.Create("DComboBox", pnl)
+    comboT:SetPos(326, 326) comboT:SetSize(200, 26)
+    comboT:AddChoice("Обыск жилища", "search", true)
+    comboT:AddChoice("Принудительный арест", "arrest")
+    comboT:AddChoice("Опечатывание", "eviction")
+
+    local mins = vgui.Create("DNumberWang", pnl)
+    mins:SetPos(536, 326) mins:SetSize(70, 26)
+    mins:SetMin(10) mins:SetMax(1440) mins:SetValue(60)
+
+    local reason = vgui.Create("DTextEntry", pnl)
+    reason:SetPos(616, 326) reason:SetSize(310, 26)
+    reason:SetPlaceholderText("Основание ходатайства")
+
+    local btn = vgui.Create("DButton", pnl)
+    btn:SetPos(16, 366) btn:SetSize(280, 32)
+    btn:SetText("Подать ходатайство в Прокуратуру")
+    btn:SetFont("DermaDefaultBold") btn:SetTextColor(color_white)
+    btn.Paint = function(s, w, h)
+        draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and okCol or Color(okCol.r * 0.7, okCol.g * 0.7, okCol.b * 0.7))
+    end
+    btn.DoClick = function()
+        if not canEdit then notification.AddLegacy("Нет прав на ходатайство.", NOTIFY_ERROR, 3) return end
+        if selKey == "" then notification.AddLegacy("Выберите фигуранта.", NOTIFY_ERROR, 3) return end
+        local txt = string.Trim(reason:GetText() or "")
+        if txt == "" then notification.AddLegacy("Укажите основание.", NOTIFY_ERROR, 3) return end
+        local _, wType = comboT:GetSelected()
+        GRM_CompTerminal_Send("warrant_request", selKey, txt, math.floor(mins:GetValue() or 60), wType or "search")
+    end
+
+    local note = vgui.Create("DLabel", pnl)
+    note:SetPos(310, 370) note:SetSize(600, 24)
+    note:SetTextColor(dim)
+    note:SetText("После утверждения на волне /dep: [Правосудие] Прокурор (РП имя) утвердил ордер №…")
+
+    tabs:AddSheet("Ордера и ходатайства", pnl, "icon16/page_white_star.png")
     return pnl
 end

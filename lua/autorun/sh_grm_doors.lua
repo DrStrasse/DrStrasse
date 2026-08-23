@@ -965,13 +965,27 @@ if SERVER then
         return out
     end
 
+    local function rpNick(ply)
+        if not IsValid(ply) then return "" end
+        local rp = ply.GetNWString and ply:GetNWString("GRM_RPName", "") or ""
+        if rp ~= "" then return rp end
+        return ply:Nick()
+    end
+
     local function nickOf(key)
         for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(p) and (charKey(p) == key or p:SteamID64() == key or p:SteamID() == key) then
-                return p:Nick()
+                return rpNick(p)
             end
         end
         return key
+    end
+
+    local function nextWarrantNumber()
+        D.Data = D.Data or {}
+        local n = math.max(1, math.floor(tonumber(D.Data.warrantSeq) or 0) + 1)
+        D.Data.warrantSeq = n
+        return n
     end
 
     local function doorsFile() ensureDir() return DATA_DIR .. "/" .. mapName() .. ".json" end
@@ -1225,18 +1239,26 @@ if SERVER then
         for sid, w in pairs(D.Data.warrants or {}) do
             if istable(w) then w.sid = sid arr[#arr + 1] = w end
         end
-        return writeJSON(warFile(), { version = 3, warrants = arr })
+        return writeJSON(warFile(), { version = 4, warrants = arr, warrantSeq = tonumber(D.Data.warrantSeq) or 0 })
     end
 
     function D.LoadWarrants()
         D.Data.warrants = {}
+        D.Data.warrantSeq = 0
         if not file.Exists(warFile(), "DATA") then return true end
         local t = jsonT(file.Read(warFile(), "DATA") or "")
         if not istable(t) then return false end
+        D.Data.warrantSeq = math.max(0, math.floor(tonumber(t.warrantSeq) or 0))
         local list = istable(t.warrants) and t.warrants or (istable(t[1]) and t or {})
+        local maxN = D.Data.warrantSeq
         for _, w in ipairs(list) do
-            if istable(w) and isstring(w.sid) then D.Data.warrants[w.sid] = w end
+            if istable(w) and isstring(w.sid) then
+                D.Data.warrants[w.sid] = w
+                local n = tonumber(w.number) or 0
+                if n > maxN then maxN = n end
+            end
         end
+        D.Data.warrantSeq = maxN
         return true
     end
 
@@ -1702,18 +1724,20 @@ if SERVER then
         minutes = math.Clamp(math.floor(tonumber(minutes) or 30), 5, 24 * 60)
         D.Data.warrants = D.Data.warrants or {}
         local id = "war_" .. os.time() .. "_" .. math.random(100, 999)
-        local issuerName = IsValid(issuer) and issuer:Nick() or tostring(issuer)
+        local issuerName = IsValid(issuer) and rpNick(issuer) or tostring(issuer)
         local issuerKey = IsValid(issuer) and charKey(issuer) or tostring(issuer)
-        local judgeName = IsValid(approvedBy) and approvedBy:Nick() or (isstring(approvedBy) and approvedBy or "Суд")
+        local judgeName = IsValid(approvedBy) and rpNick(approvedBy) or (isstring(approvedBy) and approvedBy or "Суд")
         local judgeKey = IsValid(approvedBy) and charKey(approvedBy) or (isstring(approvedBy) and approvedBy or "")
         D.Data.warrants[targetSid] = {
             id = id,
+            number = nextWarrantNumber(),
             sid = targetSid,
             type = warrantType,
             name = nickOf(targetSid),
             propertyId = tostring(propertyId or ""),
             reason = utf8cut(tostring(reason or "Судебный ордер"), 200),
             by = issuerKey, byNick = issuerName,
+            issuerFaction = IsValid(issuer) and issuer:GetNWString("GRM_Faction", "") or "",
             approvedBy = judgeKey, approvedByName = judgeName,
             status = "active",
             issued = os.time(), expires = os.time() + minutes * 60,
@@ -1723,7 +1747,7 @@ if SERVER then
         return true, D.Data.warrants[targetSid]
     end
 
-    function D.RequestWarrant(issuer, targetSid, warrantType, minutes, reason, propertyId)
+    function D.RequestWarrant(issuer, targetSid, warrantType, minutes, reason, propertyId, source)
         if not IsValid(issuer) then return false, "Ошибка инициатора" end
         targetSid = charKey(targetSid)
         if targetSid == "" then return false, "Не указан фигурант" end
@@ -1733,12 +1757,16 @@ if SERVER then
         local id = "req_" .. os.time() .. "_" .. math.random(100, 999)
         D.Data.warrants[id] = {
             id = id,
+            number = nextWarrantNumber(),
             sid = targetSid,
             type = warrantType,
             name = nickOf(targetSid),
             propertyId = tostring(propertyId or ""),
             reason = utf8cut(tostring(reason or "Ходатайство на ордер"), 200),
-            by = charKey(issuer), byNick = issuer:Nick(),
+            by = charKey(issuer), byNick = rpNick(issuer),
+            issuerFaction = issuer:GetNWString("GRM_Faction", ""),
+            issuerRole = issuer:GetNWString("GRM_Role", ""),
+            source = tostring(source or ""),
             status = "pending",
             issued = os.time(), expires = os.time() + minutes * 60,
         }
@@ -1756,21 +1784,43 @@ if SERVER then
         minutes = math.Clamp(math.floor(tonumber(minutes) or 60), 5, 24 * 60)
         local targetSid = req.sid
         D.Data.warrants[warrantId] = nil
-        D.Data.warrants[targetSid] = {
+        local rec = {
             id = "war_" .. os.time() .. "_" .. math.random(100, 999),
+            number = tonumber(req.number) or nextWarrantNumber(),
             sid = targetSid,
             type = req.type or "search",
             name = req.name or nickOf(targetSid),
             propertyId = req.propertyId or "",
             reason = req.reason or "Утверждён судом",
             by = req.by or "", byNick = req.byNick or "",
-            approvedBy = charKey(judge), approvedByName = judge:Nick(),
+            issuerFaction = req.issuerFaction or "",
+            source = req.source or "",
+            approvedBy = charKey(judge), approvedByName = rpNick(judge),
             status = "active",
             issued = os.time(), expires = os.time() + minutes * 60,
         }
+        D.Data.warrants[targetSid] = rec
         D.SaveWarrants()
-        hook.Run("GRM_OnWarrantApproved", targetSid, D.Data.warrants[targetSid], judge)
-        return true, D.Data.warrants[targetSid]
+        hook.Run("GRM_OnWarrantApproved", targetSid, rec, judge)
+        D.AnnounceWarrantApproved(judge, rec)
+        return true, rec
+    end
+
+    function D.AnnounceWarrantApproved(judge, rec)
+        if not istable(rec) then return end
+        local rp = IsValid(judge) and rpNick(judge) or tostring(rec.approvedByName or "Прокурор")
+        local role = IsValid(judge) and string.lower(judge:GetNWString("GRM_Role", "") or "") or ""
+        local title = "Прокурор"
+        if string.find(role, "суд", 1, true) or string.find(role, "judge", 1, true) then title = "Судья" end
+        local num = rec.number or rec.id or "?"
+        local reason = tostring(rec.reason or "ходатайство")
+        local who = tostring(rec.name or rec.sid or "неизвестный")
+        local body = string.format("%s (%s) утвердил ордер №%s на %s в отношении %s.",
+            title, rp, tostring(num), reason, who)
+        local BL = GRM.Wanted and GRM.Wanted.Bulletins
+        if BL and isfunction(BL.Raw) then
+            BL.Raw("dep", judge, body, "civil", nil, "[Правосудие] ")
+        end
     end
 
     function D.RejectWarrant(judge, warrantId, reason)
@@ -2478,6 +2528,28 @@ if CLIENT then
     end)
 
     --[[ Окно «Управление дверью» переехало в отдельный клиентский модуль
+         lua/autorun/client/cl_grm_doors_menu.lua (стиль GRM + редактор
+         категорий). Здесь остались HUD, бинды и сеть. ]]
+
+    concommand.Add("grm_door", function()
+        net.Start(NET_ACT) net.WriteTable({ action = "open_menu" }) net.SendToServer()
+    end)
+
+    print("[GRM Doors] Клиентская система дверей v" .. D.Version .. " загружена")
+end
+
+if SERVER and GRM.Modules and GRM.Modules.Register then
+    GRM.Modules.Register("doors", {
+        label = "Двери и замки", version = (GRM.Doors and GRM.Doors.Version) or "5.0.0",
+        Depends = { "access" },
+        Status = function()
+            local n = 0
+            for _ in pairs((GRM.Doors and GRM.Doors.Data and GRM.Doors.Data.doors) or {}) do n = n + 1 end
+            return ("дверей в реестре: %d"):format(n)
+        end,
+    })
+end
+ отдельный клиентский модуль
          lua/autorun/client/cl_grm_doors_menu.lua (стиль GRM + редактор
          категорий). Здесь остались HUD, бинды и сеть. ]]
 

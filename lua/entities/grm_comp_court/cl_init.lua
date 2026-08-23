@@ -221,7 +221,7 @@ net.Receive("GRM_CompCourt_Open", function()
 
     local warList = vgui.Create("DListView", warPnl)
     warList:Dock(TOP) warList:SetTall(250)
-    warList:AddColumn("ID / №"):SetFixedWidth(90)
+    warList:AddColumn("№ ордера"):SetFixedWidth(90)
     warList:AddColumn("Тип ордера"):SetFixedWidth(140)
     warList:AddColumn("Фигурант / Адрес"):SetFixedWidth(200)
     warList:AddColumn("Статус"):SetFixedWidth(100)

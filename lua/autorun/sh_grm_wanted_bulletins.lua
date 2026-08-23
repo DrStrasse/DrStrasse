@@ -171,7 +171,7 @@ if SERVER then
     -- @param text    готовый текст
     -- @param jur     "civil" | "military" — влияет только на цвет
     -- @param targets список получателей (по умолчанию считается сам)
-    function BL.Raw(ch, sender, text, jur, targets)
+    function BL.Raw(ch, sender, text, jur, targets, prefixOverride)
         text = tostring(text or "")
         if text == "" then return 0 end
 
@@ -179,7 +179,10 @@ if SERVER then
         if #rec == 0 then return 0 end
 
         local col = colorFor(ch, jur)
-        local prefix = ch == "dep" and "[Волна • ОРИЕНТИРОВКА] " or "[Ведомство • ОРИЕНТИРОВКА] "
+        local prefix = tostring(prefixOverride or "")
+        if prefix == "" then
+            prefix = ch == "dep" and "[Волна • ОРИЕНТИРОВКА] " or "[Ведомство • ОРИЕНТИРОВКА] "
+        end
 
         net.Start(NET_MSG)
             net.WriteUInt(col.r, 8) net.WriteUInt(col.g, 8) net.WriteUInt(col.b, 8)

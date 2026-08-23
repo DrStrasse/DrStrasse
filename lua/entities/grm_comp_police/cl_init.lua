@@ -47,6 +47,7 @@ net.Receive("GRM_CompPolice_Open", function()
     -- v1.2: заявки соседнего ведомства на передачу сведений.
     -- Старый сервер их не шлёт — ReadTable вернёт пустую таблицу.
     local requests     = net.ReadTable() or {}
+    local warrants     = net.ReadTable() or {}
     GRM_CompTerminal_ActiveJur = jurisdiction
 
     local frame = vgui.Create("DFrame")
@@ -630,5 +631,8 @@ net.Receive("GRM_CompPolice_Open", function()
     -- ══════════════════════════════════════════════════════════════
     if isfunction(GRM_CompTerminal_BuildExchangeTab) then
         GRM_CompTerminal_BuildExchangeTab(tabs, frame, CC, wantedRecs, requests, jurisdiction, canEdit)
+    end
+    if isfunction(GRM_CompTerminal_BuildWarrantTab) then
+        GRM_CompTerminal_BuildWarrantTab(tabs, frame, CC, onlineList, warrants, canEdit)
     end
 end)

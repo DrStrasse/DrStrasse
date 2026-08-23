@@ -19,7 +19,7 @@ if CLIENT then return end
 GRM = GRM or {}
 GRM.CompTerminal = GRM.CompTerminal or {}
 local T = GRM.CompTerminal
-T.Version = "1.1.0 — фото к делу розыска"
+T.Version = "1.2.0 — ходатайства на ордер"
 
 util.AddNetworkString("GRM_CompTerminal_Act")
 util.AddNetworkString("GRM_CompTerminal_Result")
@@ -289,6 +289,27 @@ local function requestSlice(jurisdiction)
 end
 T.RequestSlice = requestSlice
 
+local function warrantSlice()
+    local D = GRM.Doors
+    if not (D and isfunction(D.ListWarrants)) then return {} end
+    local list = D.ListWarrants(nil, true) or {}
+    local out = {}
+    for _, w in ipairs(list) do
+        if istable(w) then
+            out[#out + 1] = {
+                id = w.id, number = w.number, sid = w.sid, type = w.type,
+                name = w.name, reason = w.reason, status = w.status,
+                byNick = w.byNick, approvedByName = w.approvedByName,
+                issuerFaction = w.issuerFaction, source = w.source,
+                expires = w.expires, issued = w.issued, propertyId = w.propertyId,
+            }
+        end
+        if #out >= 80 then break end
+    end
+    return out
+end
+T.WarrantSlice = warrantSlice
+
 local function catalogSlice(jurisdiction)
     local W = GRM.Wanted
     local out = {}
@@ -340,6 +361,7 @@ function T.Open(ent, ply, channel)
         net.WriteTable(catalogSlice(jur))
         -- v1.2: заявки соседнего ведомства на передачу сведений
         net.WriteTable(requestSlice(jur))
+        net.WriteTable(warrantSlice())
     net.Send(ply)
 end
 
@@ -532,12 +554,29 @@ net.Receive("GRM_CompTerminal_Act", function(_, ply)
         return result(ply, true, "Фоторобот прикреплён к делу: " .. (rec.name or key))
     end
 
+    if act == "warrant_request" then
+        local D = GRM.Doors
+        if not (D and isfunction(D.RequestWarrant)) then
+            return result(ply, false, "Модуль ордеров недоступен")
+        end
+        local key = charKey(target)
+        if key == "" then return result(ply, false, "Не выбран фигурант") end
+        local wType = extra ~= "" and extra or "search"
+        local mins = math.Clamp(num > 0 and num or 60, 5, 24 * 60)
+        local src = jur == "military" and "gendarmerie" or "police"
+        local ok, w = D.RequestWarrant(ply, key, wType, mins, text ~= "" and text or "Ходатайство на ордер", "", src)
+        if not ok then return result(ply, false, tostring(w)) end
+        local numTxt = (istable(w) and w.number) and (" №" .. tostring(w.number)) or ""
+        return result(ply, true, "Ходатайство" .. numTxt .. " передано в Прокуратуру")
+    end
+
     -- ── Обновить данные ───────────────────────────────────────────
     if act == "refresh" then
         net.Start("GRM_CompTerminal_Fines")
             net.WriteTable(wantedSlice(jur, T.MaxRecordsSent))
             net.WriteTable(finesSlice(jur, T.MaxFinesSent))
             net.WriteTable(requestSlice(jur))
+            net.WriteTable(warrantSlice())
         net.Send(ply)
         return
     end
