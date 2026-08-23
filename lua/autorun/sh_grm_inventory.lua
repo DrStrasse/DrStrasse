@@ -874,6 +874,19 @@ if SERVER then
 
         local slot = inv.slots[slotIdx]
         if not slot or not slot.id then return end
+        local sdata = istable(slot.data) and slot.data or {}
+        local DOC = GRM.Documents
+        if DOC and DOC.PhysicalRecord then
+            local owner = tostring(sdata.ownerKey or "")
+            local typ = sdata.docType
+            if owner ~= "" and typ then
+                local rec = DOC.PhysicalRecord(owner, typ)
+                if istable(rec) and rec.unlosable == true then
+                    if GRM.Notify then GRM.Notify(ply, "Этот документ помечен как нетеряемый — выбросить нельзя.", 255, 180, 90) end
+                    return
+                end
+            end
+        end
         count = math.min(count or 1, slot.count or 1)
         if count <= 0 then return end
 

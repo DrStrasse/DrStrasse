@@ -157,15 +157,19 @@ if SERVER then
         return nil
     end
 
-    function DOC.RestorePhysicalDocument(ply,docType)
+    function DOC.RestorePhysicalDocument(ply,docType,opts)
         if not IsValid(ply)or not ply:IsPlayer()then return false,"Игрок не найден"end
+        opts=istable(opts)and opts or{}
+        local admin=opts.admin==true
         local blocked=DOC.StorageBlockedReason()
         if blocked then return false,blocked end
         docType=DOC.CanonicalPhysicalType(docType);local ownerKey=keyOf(ply);local rec,def=DOC.PhysicalRecord(ownerKey,docType)
         if not rec or not def then return false,"Документ этого типа не выдавался персонажу"end
-        local status=string.lower(tostring(rec.status or"действителен"));if status:find("аннулир",1,true)or status:find("отозван",1,true)then return false,"Документ аннулирован в реестре"end
-        if copyCount(ply,docType,ownerKey)>0 then return false,"Физический документ уже находится в инвентаре"end
-        local now=os.time();local cooldown=6*3600;if now-(tonumber(rec.lastPhysicalRestore)or 0)<cooldown then return false,"Повторное восстановление будет доступно позже"end
+        local status=string.lower(tostring(rec.status or"действителен"))
+        if not admin and (status:find("аннулир",1,true)or status:find("отозван",1,true))then return false,"Документ аннулирован в реестре"end
+        if not admin and copyCount(ply,docType,ownerKey)>0 then return false,"Физический документ уже находится в инвентаре"end
+        local now=os.time();local cooldown=6*3600
+        if not admin and rec.unlosable~=true and now-(tonumber(rec.lastPhysicalRestore)or 0)<cooldown then return false,"Повторное восстановление будет доступно позже"end
         local oldGeneration=tonumber(rec.physicalGeneration)or 1;rec.physicalGeneration=oldGeneration+1
         if DOC.SaveRegistry and DOC.SaveRegistry("invalidate lost physical copies "..ownerKey.." "..docType)==false then rec.physicalGeneration=oldGeneration;return false,"Реестр документов временно недоступен"end
         local ok,result=DOC.GivePhysicalCopy(ply,docType,ownerKey,ply)

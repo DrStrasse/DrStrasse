@@ -671,6 +671,32 @@ A.docs_wipe = { perm = "docs.wipe", target = true, label = "Стереть до�
             (details and details ~= "") and (" (" .. details .. ")") or "")
     end }
 
+A.docs_restore = { perm = "docs.restore", target = true, label = "Восстановить документы",
+    fn = function(actor, target, args)
+        local DOC = GRM.Documents
+        if not (DOC and isfunction(DOC.AdminRestoreDocuments)) then return false, "Модуль документов не загружен" end
+        local ok, restored, given, notes = DOC.AdminRestoreDocuments(target, {
+            unlosable = args and args.unlosable,
+        })
+        if not ok then return false, tostring(restored) end
+        tell(target, "Администрация восстановила ваши документы", true)
+        local extra = (notes and notes ~= "") and (" · " .. notes) or ""
+        return true, ("Документы %s: записей %s, бланков %s%s"):format(rpNameOf(target), tostring(restored), tostring(given), extra)
+    end }
+
+A.docs_unlosable = { perm = "docs.restore", target = true, label = "Нетеряемые документы",
+    fn = function(actor, target, args)
+        local DOC = GRM.Documents
+        if not (DOC and isfunction(DOC.SetUnlosable)) then return false, "Модуль документов не загружен" end
+        local charKey = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(target))
+            or (tostring(target:SteamID64() or "") .. ":char1")
+        local flag = not (args and args.off == true)
+        local ok, n = DOC.SetUnlosable(charKey, flag)
+        if not ok then return false, tostring(n) end
+        tell(target, flag and "Документы помечены как нетеряемые" or "Нетеряемость документов снята", true)
+        return true, (flag and "Нетеряемые" or "Обычные") .. " документы: " .. rpNameOf(target) .. " (" .. tostring(n) .. ")"
+    end }
+
 A.cleanup = { perm = "server.cleanup", target = false, label = "Очистка мусора",
     fn = function(actor)
         local removed = 0

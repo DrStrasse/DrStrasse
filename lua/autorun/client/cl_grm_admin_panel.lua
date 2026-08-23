@@ -351,6 +351,9 @@ local function buildPlayers(pnl)
 
         row = nil
         group("Документы")
+        action("Восстановить бланки и реестр", "docs.restore", "docs_restore", C.green)
+        action("Нетеряемые: ВКЛ", "docs.restore", "docs_unlosable", C.gold)
+        action("Нетеряемые: ВЫКЛ", "docs.restore", "docs_unlosable", C.orange, { off = true })
         action("Стереть документы", "docs.wipe", "docs_wipe", C.red)
         action("Стереть на всех персонажах", "docs.wipe", "docs_wipe", C.red, { account = true })
 

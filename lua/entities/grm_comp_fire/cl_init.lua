@@ -48,14 +48,16 @@ end
 
 local g_FireEnt = nil
 
--- Заказ владельца 18.08: со станции убраны кнопки ствола/рукава и
--- закрепления машины. Осталась диспетчерская работа: журнал пожаров и
--- журнал вызовов.
 local function requestCalls()
     if not IsValid(g_FireEnt) then return end
     net.Start("GRM_CompFire_Calls")
         net.WriteEntity(g_FireEnt)
     net.SendToServer()
+end
+
+local function paintClose(s, w, h)
+    draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and THEME.danger or Color(45, 50, 60))
+    draw.SimpleText("X", "DermaDefaultBold", w / 2, h / 2, color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 end
 
 local function openMenu(ent, data)
@@ -65,7 +67,7 @@ local function openMenu(ent, data)
     GRM.FireComputerFrame = frame
     if GRM.UI and GRM.UI.Track then GRM.UI.Track("fire_computer",frame) end
     frame:SetTitle("")
-    frame:SetSize(math.Clamp(ScrW() * 0.62, 820, 1180), math.Clamp(ScrH() * 0.72, 620, 900))
+    frame:SetSize(560, 620)
     frame:Center()
     frame:MakePopup()
     frame:ShowCloseButton(false)
@@ -75,16 +77,15 @@ local function openMenu(ent, data)
         draw.RoundedBox(8, 0, 0, w, h, THEME.bg)
         draw.RoundedBoxEx(8, 0, 0, w, 42, THEME.header, true, true, false, false)
         draw.SimpleText(data.name or "ПОЖАРНАЯ СЛУЖБА", "DermaDefaultBold", 16, 21, THEME.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText("Диспетчерская станция", "DermaDefault", w - 16, 21, THEME.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Диспетчерская станция", "DermaDefault", w - 52, 21, THEME.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
     end
 
     local btnClose = vgui.Create("DButton", frame)
-    btnClose:SetSize(28, 24) btnClose:SetPos(frame:GetWide() - 36, 8)
-    btnClose:SetText("✕") btnClose:SetTextColor(THEME.dim) btnClose:SetFont("DermaDefaultBold")
-    btnClose.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and THEME.danger or Color(45, 50, 60)) end
+    btnClose:SetSize(28, 24)
+    btnClose:SetText("")
+    btnClose.Paint = paintClose
     btnClose.DoClick = function() frame:Close() end
 
-    -- Сводка.
     local status = vgui.Create("DPanel", frame)
     status:Dock(TOP) status:DockMargin(12, 52, 12, 6) status:SetTall(96)
     status.Paint = function(_, w, h)
@@ -117,9 +118,9 @@ local function openMenu(ent, data)
         for _,b in ipairs(rows) do b:SetPos(14,b._rowY or 12); b:SetSize(math.max(120,w-28),40) end
     end
 
-    row("📋 Журнал пожаров  (/fire_log)", Color(60, 120, 150), function() RunConsoleCommand("grm_fire_log") end)
-    row("☎ Журнал вызовов (пожар · 911)", Color(150, 90, 60), function() requestCalls() end)
-    row("🚨 Активные вызовы — принять", Color(180, 70, 50), function()
+    row("Журнал пожаров  (/fire_log)", Color(60, 120, 150), function() RunConsoleCommand("grm_fire_log") end)
+    row("Журнал вызовов (пожар / 911)", Color(150, 90, 60), function() requestCalls() end)
+    row("Активные вызовы — принять", Color(180, 70, 50), function()
         if GRM.Fire and GRM.Fire.Dispatch and GRM.Fire.Dispatch.RequestList then
             GRM.Fire.Dispatch.RequestList()
         else
@@ -128,15 +129,18 @@ local function openMenu(ent, data)
     end)
 
     if data.isAdmin then
-        row("🔑 Доступ и оповещение  (/fire_access)", Color(150, 110, 60), function() RunConsoleCommand("grm_fire_access") end)
-        row("📢 Фракции оповещения  (/grm_fire_notify)", Color(120, 100, 60), function() RunConsoleCommand("grm_fire_notify") end)
-        row("🚒 Пожарные машины  (/fire_trucks)", Color(140, 70, 45), function() RunConsoleCommand("grm_fire_trucks") end)
-        row("🔥 Очаги / точки  (/fire_spots)", Color(170, 60, 45), function() RunConsoleCommand("grm_fire_spots") end)
+        row("Доступ и оповещение  (/fire_access)", Color(150, 110, 60), function() RunConsoleCommand("grm_fire_access") end)
+        row("Фракции оповещения  (/grm_fire_notify)", Color(120, 100, 60), function() RunConsoleCommand("grm_fire_notify") end)
+        row("Пожарные машины  (/fire_trucks)", Color(140, 70, 45), function() RunConsoleCommand("grm_fire_trucks") end)
+        row("Очаги / точки  (/fire_spots)", Color(170, 60, 45), function() RunConsoleCommand("grm_fire_spots") end)
     end
 
-    -- Плавно расширяем высоту под контент (кнопок немного — фиксировано).
     frame:SetSize(560, math.min(760, 210 + y))
     frame:Center()
+    if IsValid(btnClose) then btnClose:SetPos(frame:GetWide() - 36, 8) end
+    frame.PerformLayout = function(self, w)
+        if IsValid(btnClose) then btnClose:SetPos(w - 36, 8) end
+    end
 end
 
 net.Receive("GRM_CompFire_Open", function()
@@ -166,14 +170,14 @@ local function openCallsWindow(rows)
     frame.Paint = function(_, w, h)
         draw.RoundedBox(8, 0, 0, w, h, THEME.bg)
         draw.RoundedBoxEx(8, 0, 0, w, 42, THEME.header, true, true, false, false)
-        draw.SimpleText("ЖУРНАЛ ВЫЗОВОВ • ПОЖАРНАЯ СЛУЖБА", "DermaDefaultBold", 16, 21, THEME.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText("Всего записей: " .. #rows, "DermaDefault", w - 16, 21, THEME.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("ЖУРНАЛ ВЫЗОВОВ · ПОЖАРНАЯ СЛУЖБА", "DermaDefaultBold", 16, 21, THEME.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Всего записей: " .. #rows, "DermaDefault", w - 52, 21, THEME.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
     end
 
     local close = vgui.Create("DButton", frame)
     close:SetSize(28, 24)
-    close:SetText("✕") close:SetTextColor(THEME.dim) close:SetFont("DermaDefaultBold")
-    close.Paint = function(s2, w, h) draw.RoundedBox(4, 0, 0, w, h, s2:IsHovered() and THEME.danger or Color(45, 50, 60)) end
+    close:SetText("")
+    close.Paint = paintClose
     close.DoClick = function() frame:Close() end
     frame.PerformLayout = function(self, w) if IsValid(close) then close:SetPos(w - 36, 8) end end
 

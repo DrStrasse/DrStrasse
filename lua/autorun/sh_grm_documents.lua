@@ -1903,8 +1903,14 @@ if SERVER then
                 local store = DOC.Registry and DOC.Registry[registry]
                 if istable(store) then
                     local n = 0
-                    for key in pairs(store) do
-                        if matches(key) then store[key] = nil n = n + 1 end
+                    for key, rec in pairs(store) do
+                        if matches(key) then
+                            if istable(rec) and rec.unlosable == true and opts.force ~= true then
+                                -- нетеряемый документ стирается только force-wipe
+                            else
+                                store[key] = nil n = n + 1
+                            end
+                        end
                     end
                     if n > 0 then
                         removed = removed + n
@@ -1954,6 +1960,93 @@ if SERVER then
         return true, removed, table.concat(details, ", ")
     end
 
+    local STATUS_VALID = {
+        passports = "Действителен", badges = "Действителен", coverBadges = "Действителен",
+        military = "Действителен", licenses = "Действительно", milLicenses = "Действительно (на службе)",
+        weaponLicenses = "Действительна", businessLicenses = "Действительна",
+    }
+
+    function DOC.SetUnlosable(charKey, flag)
+        charKey = tostring(charKey or "")
+        if charKey == "" then return false, "нет ключа" end
+        local n = 0
+        for registry in pairs(REGISTRY_LABELS) do
+            if registry ~= "exams" and registry ~= "badgeWallet" then
+                local rec = DOC.Registry and DOC.Registry[registry] and DOC.Registry[registry][charKey]
+                if istable(rec) then rec.unlosable = flag == true or nil n = n + 1 end
+            end
+        end
+        if DOC.Registry and istable(DOC.Registry.badgeWallet) and istable(DOC.Registry.badgeWallet[charKey]) then
+            for _, rec in ipairs(DOC.Registry.badgeWallet[charKey]) do
+                if istable(rec) then rec.unlosable = flag == true or nil n = n + 1 end
+            end
+        end
+        if n > 0 then DOC.SaveRegistry("unlosable " .. tostring(flag) .. " " .. charKey) end
+        return true, n
+    end
+
+    function DOC.RecordIsUnlosable(rec)
+        return istable(rec) and rec.unlosable == true
+    end
+
+    -- Суперадмин: реактивировать записи реестра + выдать бланки без кулдауна.
+    function DOC.AdminRestoreDocuments(target, opts)
+        if not IsValid(target) or not target:IsPlayer() then return false, "игрок не в сети" end
+        opts = istable(opts) and opts or {}
+        local key = getCharKey(target)
+        if key == "" then return false, "нет ключа персонажа" end
+        local restored, given, notes = 0, 0, {}
+
+        if DOC.EnsurePassport then
+            local p = DOC.EnsurePassport(target)
+            if istable(p) then
+                p.status = STATUS_VALID.passports
+                p.updated = os.time()
+                restored = restored + 1
+            end
+        end
+        if DOC.EnsureBadge then
+            local b = DOC.EnsureBadge(target)
+            if istable(b) then
+                if tostring(b.status or ""):find("Аннул", 1, true) or tostring(b.status or ""):find("Изъят", 1, true) then
+                    b.status = STATUS_VALID.badges
+                    b.updated = os.time()
+                end
+                restored = restored + 1
+            end
+        end
+
+        for registry, valid in pairs(STATUS_VALID) do
+            local rec = DOC.Registry and DOC.Registry[registry] and DOC.Registry[registry][key]
+            if istable(rec) then
+                rec.status = valid
+                rec.updated = os.time()
+                restored = restored + 1
+            end
+        end
+
+        if opts.unlosable == true or opts.unlosable == false then
+            DOC.SetUnlosable(key, opts.unlosable == true)
+        end
+
+        DOC.SaveRegistry("admin restore " .. key)
+
+        if DOC.GivePhysicalCopy then
+            local types = { "passport", "badge", "military", "license", "milLicense", "weaponLicense", "businessLicense" }
+            for _, typ in ipairs(types) do
+                local rec = DOC.PhysicalRecord and select(1, DOC.PhysicalRecord(key, typ))
+                if istable(rec) then
+                    rec.lastPhysicalRestore = 0
+                    local ok, err = DOC.GivePhysicalCopy(target, typ, key, target)
+                    if ok then given = given + 1
+                    else notes[#notes + 1] = tostring(typ) .. ": " .. tostring(err) end
+                end
+            end
+        end
+
+        return true, restored, given, table.concat(notes, "; ")
+    end
+
     -- Найти игрока по нику, части ника, SteamID или SteamID64.
     local function findTarget(query)
         query = string.lower(string.Trim(tostring(query or "")))
@@ -1982,6 +2075,11 @@ if SERVER then
             label = "Удаление всех документов игрока",
             category = "Документы", minAccess = "superadmin", danger = true,
             desc = "Полностью стирает документы персонажа из всех баз",
+        })
+        GRM.Admin.RegisterPerm("docs.restore", {
+            label = "Восстановление документов игрока",
+            category = "Документы", minAccess = "superadmin",
+            desc = "Реактивирует записи реестра и выдаёт физические бланки без кулдауна",
         })
     end
 
