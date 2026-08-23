@@ -1146,6 +1146,160 @@ if SERVER then
     -- автосохранение уже не нужно (каждый Save пишет сразу), но подстрахуемся на выключении
     hook.Add("ShutDown", "GRM_Char_Save", function() saveChars("shutdown") end)
 
+    local function dropFactionSeat(characterKey)
+        characterKey = tostring(characterKey or "")
+        if characterKey == "" then return end
+        for _, f in pairs(Factions or {}) do
+            if istable(f) and istable(f.Members) and f.Members[characterKey] then
+                f.Members[characterKey] = nil
+            end
+        end
+        if FactionsAPI and FactionsAPI.Save then pcall(FactionsAPI.Save) end
+    end
+
+    function CH.AdminAccountSlots(sid)
+        sid = tostring(sid or "")
+        local rec = CH.Data and CH.Data[sid]
+        if not istable(rec) then return {} end
+        if not istable(rec.slots) then
+            if rec.name or rec.model then
+                return { { id = "char1", name = tostring(rec.name or ""), model = tostring(rec.model or ""),
+                    key = sid .. ":char1", active = true } }
+            end
+            return {}
+        end
+        local out = {}
+        for i = 1, CH.MaxSlots or 3 do
+            local id = "char" .. i
+            local c = rec.slots[id]
+            local key = sid .. ":" .. id
+            local fac = select(1, factionMembership(nil, key))
+            out[#out + 1] = {
+                id = id, index = i,
+                exists = istable(c) and tostring(c.name or "") ~= "",
+                name = istable(c) and tostring(c.name or "") or "",
+                model = istable(c) and tostring(c.model or "") or "",
+                key = key,
+                factionName = fac or "",
+                active = tostring(rec.active or "char1") == id,
+            }
+        end
+        return out
+    end
+
+    function CH.AdminSearch(query, limit)
+        query = string.lower(string.Trim(tostring(query or "")))
+        limit = math.Clamp(math.floor(tonumber(limit) or 40), 1, 80)
+        local hits, seen = {}, {}
+
+        local function consider(sid, hintNick)
+            sid = tostring(sid or "")
+            if sid == "" or seen[sid] or not sid:match("^%d+$") then return end
+            local slots = CH.AdminAccountSlots(sid)
+            local hay = sid .. " " .. tostring(hintNick or "")
+            for _, sl in ipairs(slots) do hay = hay .. " " .. string.lower(sl.name or "") end
+            if query ~= "" and not string.find(string.lower(hay), query, 1, true) then return end
+            seen[sid] = true
+            local online
+            for _, p in ipairs(player.GetAll()) do
+                if tostring(p:SteamID64() or "") == sid then online = p break end
+            end
+            hits[#hits + 1] = {
+                sid = sid,
+                nick = IsValid(online) and online:Nick() or tostring(hintNick or ""),
+                online = IsValid(online),
+                rpName = IsValid(online) and online:GetNWString("GRM_RPName", "") or "",
+                slots = slots,
+            }
+        end
+
+        for _, ply in ipairs(player.GetAll()) do
+            if IsValid(ply) then consider(ply:SteamID64(), ply:Nick()) end
+        end
+        for sid, rec in pairs(CH.Data or {}) do
+            local hint = ""
+            if istable(rec) and istable(rec.slots) then
+                for _, c in pairs(rec.slots) do
+                    if istable(c) and tostring(c.name or "") ~= "" then hint = c.name break end
+                end
+            elseif istable(rec) then hint = tostring(rec.name or "") end
+            consider(sid, hint)
+            if #hits >= limit then break end
+        end
+        table.sort(hits, function(a, b)
+            if a.online ~= b.online then return a.online end
+            return string.lower(a.nick or a.sid) < string.lower(b.nick or b.sid)
+        end)
+        return hits
+    end
+
+    function CH.AdminSendRoster(to, query)
+        if not IsValid(to) then return false end
+        net.Start("GRM_Char_AdminRoster")
+            net.WriteTable({ query = tostring(query or ""), accounts = CH.AdminSearch(query, 40) })
+        net.Send(to)
+        return true
+    end
+
+    function CH.AdminSetName(sid, slot, name)
+        sid = tostring(sid or "")
+        slot = tostring(slot or "char1")
+        if not sid:match("^%d+$") or not slot:match("^char[123]$") then return false, "Некорректный слот" end
+        local clean, err = CH.ValidateName(name)
+        if not clean then return false, tostring(err or "Некорректное имя") end
+        if CH.UniqueNames() then
+            local ownerSid, ownerSlot = CH.FindNameOwner(clean, sid, slot)
+            if ownerSid then return false, "Имя уже занято" end
+        end
+        CH.Data[sid] = istable(CH.Data[sid]) and CH.Data[sid] or { active = "char1", slots = {} }
+        local rec = CH.Data[sid]
+        rec.slots = istable(rec.slots) and rec.slots or {}
+        rec.slots[slot] = istable(rec.slots[slot]) and rec.slots[slot] or { id = slot, key = sid .. ":" .. slot }
+        rec.slots[slot].name = clean
+        rec.slots[slot].updated = os.time()
+        saveChars("admin-rename")
+        for _, ply in ipairs(player.GetAll()) do
+            if tostring(ply:SteamID64() or "") == sid and tostring(ply:GetNWString("GRM_CharacterID", "")) == slot then
+                ply:SetNWString("GRM_RPName", clean)
+            end
+        end
+        return true, clean
+    end
+
+    function CH.AdminDeleteSlot(sid, slot)
+        sid = tostring(sid or "")
+        slot = tostring(slot or "")
+        if not sid:match("^%d+$") or not slot:match("^char[123]$") then return false, "Некорректный слот" end
+        local rec = CH.Data[sid]
+        if not istable(rec) then return false, "Аккаунт без персонажей" end
+        rec.slots = istable(rec.slots) and rec.slots or {}
+        local had = rec.slots[slot]
+        if not istable(had) or tostring(had.name or "") == "" then return false, "Слот пуст" end
+        local key = sid .. ":" .. slot
+        rec.slots[slot] = nil
+        dropFactionSeat(key)
+        local leftover
+        for i = 1, CH.MaxSlots or 3 do
+            local id = "char" .. i
+            if istable(rec.slots[id]) and tostring(rec.slots[id].name or "") ~= "" then leftover = leftover or id end
+        end
+        rec.active = leftover or "char1"
+        saveChars("admin-delete")
+        for _, ply in ipairs(player.GetAll()) do
+            if tostring(ply:SteamID64() or "") == sid then
+                if leftover then
+                    CH.SetActiveSlot(ply, leftover, true)
+                else
+                    ply.GRMCharConfirmed = nil
+                    ply:SetNWString("GRM_RPName", "")
+                    setCharacterLock(ply, true, true)
+                    sendMenu(ply)
+                end
+            end
+        end
+        return true, leftover and ("Удалён " .. slot .. ", активен " .. leftover) or ("Удалён " .. slot .. ", слотов не осталось")
+    end
+
     print("[GRM Char] Ядро персонажей v" .. CH.Version .. " загружено (сервер)")
 end
 

@@ -635,6 +635,29 @@ A.item = { perm = "cheat.items", target = true, label = "Выдать предм
         return false, "Не удалось выдать: неизвестный класс"
     end }
 
+A.char_search = { perm = "char.manage", target = false, label = "Поиск персонажей",
+    fn = function(actor, _, args)
+        if not (GRM.Char and GRM.Char.AdminSendRoster) then return false, "Ядро персонажей не загружено" end
+        GRM.Char.AdminSendRoster(actor, args and args.query or "")
+        return true, "Список персонажей обновлён"
+    end }
+
+A.char_rename = { perm = "char.manage", target = false, label = "Сменить РП-имя",
+    fn = function(actor, _, args)
+        if not (GRM.Char and GRM.Char.AdminSetName) then return false, "Ядро персонажей не загружено" end
+        local ok, msg = GRM.Char.AdminSetName(args and args.sid, args and args.slot, args and args.name)
+        if ok and GRM.Char.AdminSendRoster then GRM.Char.AdminSendRoster(actor, args and args.query or "") end
+        return ok, ok and ("Имя слота " .. tostring(args.slot) .. ": " .. tostring(msg)) or msg
+    end }
+
+A.char_delete = { perm = "char.manage", target = false, label = "Удалить персонажа",
+    fn = function(actor, _, args)
+        if not (GRM.Char and GRM.Char.AdminDeleteSlot) then return false, "Ядро персонажей не загружено" end
+        local ok, msg = GRM.Char.AdminDeleteSlot(args and args.sid, args and args.slot)
+        if ok and GRM.Char.AdminSendRoster then GRM.Char.AdminSendRoster(actor, args and args.query or "") end
+        return ok, msg
+    end }
+
 A.docs_wipe = { perm = "docs.wipe", target = true, label = "Стереть документы",
     fn = function(actor, target, args)
         local DOC = GRM.Documents

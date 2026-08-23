@@ -1006,6 +1006,112 @@ local function buildAnalytics(pnl)
 end
 
 -----------------------------------------------------------------------
+-- РАЗДЕЛ: ПЕРСОНАЖИ
+-----------------------------------------------------------------------
+local CHAR_ROSTER = { query = "", accounts = {} }
+
+net.Receive("GRM_Char_AdminRoster", function()
+    CHAR_ROSTER = net.ReadTable() or { query = "", accounts = {} }
+    hook.Run("GRM_AdminCharsUpdated")
+end)
+
+local function buildChars(pnl)
+    if not can("char.manage") then
+        local warn = vgui.Create("DLabel", pnl)
+        warn:Dock(TOP) warn:SetTall(40) warn:SetFont("GRMAdm_Sub") warn:SetTextColor(C.red)
+        warn:SetText("Нужно право «Управление персонажами и РП-именами».")
+        return
+    end
+
+    local head = vgui.Create("DPanel", pnl)
+    head:Dock(TOP) head:SetTall(86) head:DockMargin(0, 0, 0, 8)
+    head.Paint = function(_, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, C.card)
+        draw.SimpleText("КОНТРОЛЬ ПЕРСОНАЖЕЙ", "GRMAdm_Sub", 14, 10, C.gold)
+        draw.SimpleText("Поиск по SteamID64, нику или РП-имени. Удаление слота снимает имя и фракционное место.",
+            "GRMAdm_Small", 14, 32, C.dim)
+    end
+
+    local search = entry(head, "Ник, РП-имя или SteamID64…")
+    search:SetPos(14, 50) search:SetSize(420, 28)
+    search:SetText(tostring(CHAR_ROSTER.query or ""))
+
+    local find = btn(head, "НАЙТИ", C.accent, function()
+        act("char_search", "", { query = search:GetValue() })
+    end)
+    find:SetPos(442, 50) find:SetSize(110, 28)
+
+    local scroll = vgui.Create("DScrollPanel", pnl)
+    scroll:Dock(FILL)
+
+    local function paintRoster()
+        if not IsValid(scroll) then return end
+        scroll:Clear()
+        local accounts = istable(CHAR_ROSTER.accounts) and CHAR_ROSTER.accounts or {}
+        if #accounts == 0 then
+            local empty = vgui.Create("DPanel", scroll)
+            empty:Dock(TOP) empty:SetTall(70)
+            empty.Paint = function(_, w, h)
+                draw.RoundedBox(8, 0, 0, w, h, C.card)
+                draw.SimpleText("Ничего не найдено. Введите запрос и нажмите «Найти».",
+                    "GRMAdm_Body", w / 2, h / 2, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            end
+            return
+        end
+        for _, acc in ipairs(accounts) do
+            local card = vgui.Create("DPanel", scroll)
+            card:Dock(TOP) card:SetTall(188) card:DockMargin(0, 0, 6, 8)
+            card.Paint = function(_, w, h)
+                draw.RoundedBox(8, 0, 0, w, h, C.card)
+                local title = (acc.nick ~= "" and acc.nick or acc.sid) .. (acc.online and "  ·  в сети" or "  ·  офлайн")
+                draw.SimpleText(title, "GRMAdm_Sub", 14, 10, C.text)
+                draw.SimpleText("SteamID64: " .. tostring(acc.sid), "GRMAdm_Small", 14, 32, C.dim)
+            end
+            for i, sl in ipairs(acc.slots or {}) do
+                local line = vgui.Create("DPanel", card)
+                line:SetPos(12, 52 + (i - 1) * 42) line:SetSize(980, 38)
+                line.Paint = function(_, w, h)
+                    draw.RoundedBox(6, 0, 0, w, h, C.cardLight)
+                    local nm = sl.exists and (sl.name ~= "" and sl.name or ("Слот " .. i)) or ("Пустой слот " .. i)
+                    draw.SimpleText(nm, "GRMAdm_Body", 10, 8, sl.exists and C.text or C.dim)
+                    local extra = sl.exists and ((sl.factionName ~= "" and sl.factionName or "гражданин")
+                        .. (sl.active and "  ·  активен" or "")) or "—"
+                    draw.SimpleText(extra, "GRMAdm_Small", 10, 24, sl.active and C.gold or C.dim)
+                end
+                if sl.exists then
+                    local rename = btn(line, "ИМЯ", C.accent, function()
+                        Derma_StringRequest("РП-имя", "Новое имя и фамилия для " .. tostring(sl.id),
+                            sl.name or "", function(text)
+                                act("char_rename", "", { sid = acc.sid, slot = sl.id, name = text, query = search:GetValue() })
+                            end)
+                    end)
+                    rename:SetPos(720, 5) rename:SetSize(90, 28)
+                    local del = btn(line, "УДАЛИТЬ", C.red, function()
+                        Derma_Query(("Удалить персонажа «%s» (%s) у %s?\nРП-имя освободится, слот станет пустым.")
+                            :format(sl.name ~= "" and sl.name or sl.id, sl.id, acc.sid),
+                            "Удаление персонажа", "Удалить", function()
+                                act("char_delete", "", { sid = acc.sid, slot = sl.id, query = search:GetValue() })
+                            end, "Отмена")
+                    end)
+                    del:SetPos(818, 5) del:SetSize(110, 28)
+                end
+            end
+        end
+    end
+
+    paintRoster()
+    hook.Add("GRM_AdminCharsUpdated", "GRM_AdminPanel_Chars", function()
+        if not IsValid(scroll) then
+            hook.Remove("GRM_AdminCharsUpdated", "GRM_AdminPanel_Chars")
+            return
+        end
+        paintRoster()
+    end)
+    scroll.OnRemove = function() hook.Remove("GRM_AdminCharsUpdated", "GRM_AdminPanel_Chars") end
+    act("char_search", "", { query = search:GetValue() })
+end
+
+-----------------------------------------------------------------------
 -- ОКНО
 -----------------------------------------------------------------------
 function AD.OpenPanel()

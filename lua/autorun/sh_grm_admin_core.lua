@@ -197,6 +197,7 @@ AD.DefaultGroups = {
         perms = {
             ["mod.jail"] = true, ["mod.ragdoll"] = true, ["mod.slay"] = true, ["mod.respawn"] = true,
             ["mod.heal"] = true, ["mod.strip"] = true, ["mod.kick"] = true,
+            ["char.manage"] = true,
             ["server.factions"] = true, ["server.cleanup"] = true, ["menu.modules"] = true,
         },
     },
