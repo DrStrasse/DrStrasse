@@ -21,7 +21,7 @@ if SERVER then
                 for i = #rec.guests, 1, -1 do
                     local g = rec.guests[i]
                     if istable(g) and tostring(g.key) == key then
-                        if (tonumber(g.until) or 0) > now then
+                        if (tonumber(g.untilAt) or 0) > now then
                             acc.has_key = true
                             acc.walk_locked = true
                             acc.lock = acc.lock or false

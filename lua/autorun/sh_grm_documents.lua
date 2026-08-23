@@ -1361,7 +1361,8 @@ if SERVER then
             GRM.Inventory.RegisterUseHandler("doc_passport_view", function(ply) sendOwnDoc(ply, "passport") return true end)
             GRM.Inventory.RegisterUseHandler("doc_badge_view", function(ply) sendOwnDoc(ply, "badge") return true end)
             GRM.Inventory.RegisterUseHandler("doc_military_view", function(ply) sendOwnDoc(ply, "military") return true end)
-            GRM.Inventory.RegisterUseHandlc(ply, "milLicense", "military") return true end)
+            GRM.Inventory.RegisterUseHandler("doc_license_view", function(ply) sendOwnDoc(ply, "license") return true end)
+            GRM.Inventory.RegisterUseHandler("doc_mil_license_view", function(ply) sendOwnDoc(ply, "milLicense") return true end)
         end
     end
     regInventoryItems()
@@ -4142,5 +4143,70 @@ if CLIENT then
                 Color(math.min(255, c.r + 8), math.min(255, c.g + 8), math.min(255, c.b + 8)))
             local title = entCoverTitle and entCoverTitle:GetValue() or ""
             if title == "" then title = comboFac:GetValue() or "ОРГАНИЗАЦИЯ" end
-            draw.SimpleText(title, "GRMDoc_Bold", w / 2, 58, foil.co() or "ОРГАНИЗАЦИЯ" end
-            draw.SimpleText(title, "GRMDoc_Bold", w / 2, 58, foil.co
+            draw.SimpleText(title, "GRMDoc_Bold", w / 2, 58, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            draw.SimpleText("УДОСТОВЕРЕНИЕ", "GRMDoc_CoverTitle", w / 2, 110, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        end
+
+        comboFac.OnSelect = function(_, _, value)
+            local f = tpl.factions[value] or {}
+            entCoverTitle:SetText(tostring(f.coverTitle or value or ""))
+            entPrefix:SetText(tostring(f.prefix or ""))
+            if istable(f.coverColor) then
+                curCover = { r = tonumber(f.coverColor.r) or 18, g = tonumber(f.coverColor.g) or 32, b = tonumber(f.coverColor.b) or 60 }
+            end
+            curFoil = f.foilStyle or "gold"
+        end
+
+        tabs:AddSheet("Удостоверения", facPnl, "icon16/vcard.png")
+
+        local btnSave = vgui.Create("DButton", frame)
+        btnSave:Dock(BOTTOM)
+        btnSave:SetTall(36)
+        btnSave:SetText("Сохранить шаблоны")
+        btnSave:SetFont("GRMDoc_Bold")
+        btnSave:SetTextColor(color_white)
+        btnSave.Paint = function(s, w, h) draw.RoundedBox(6, 4, 4, w - 8, h - 8, s:IsHovered() and Color(40, 150, 80) or Color(30, 120, 65)) end
+        btnSave.DoClick = function()
+            tpl.passport.stateTitle = entState:GetValue()
+            tpl.passport.defaultSeries = entSeries:GetValue()
+            tpl.passport.countryCode = entCountry:GetValue()
+            tpl.passport.defaultNationality = entNat:GetValue()
+            tpl.passport.defaultBirthPlace = entBPlace:GetValue()
+            tpl.military.stateTitle = entMilTitle:GetValue()
+            tpl.military.defaultPrefix = entMilPfx:GetValue()
+            tpl.military.defaultIssuer = entMilIssuer:GetValue()
+            tpl.license.stateTitle = entLicTitle:GetValue()
+            tpl.license.defaultPrefix = entLicPfx:GetValue()
+            tpl.license.defaultIssuer = entLicIssuer:GetValue()
+            tpl.fees.license = tonumber(entLicFee:GetValue()) or 500
+            tpl.weaponLicense.stateTitle = entWLicTitle:GetValue()
+            tpl.weaponLicense.defaultPrefix = entWLicPfx:GetValue()
+            tpl.weaponLicense.defaultIssuer = entWLicIssuer:GetValue()
+            tpl.fees.weaponLicense = tonumber(entWLicFee:GetValue()) or 1500
+            tpl.businessLicense.stateTitle = entBLicTitle:GetValue()
+            tpl.businessLicense.defaultPrefix = entBLicPfx:GetValue()
+            tpl.businessLicense.defaultIssuer = entBLicIssuer:GetValue()
+            tpl.fees.businessLicense = tonumber(entBLicFee:GetValue()) or 3000
+            tpl.militaryLicense.stateTitle = entMilLicTitle:GetValue()
+            tpl.militaryLicense.defaultPrefix = entMilLicPfx:GetValue()
+            tpl.militaryLicense.defaultIssuer = entMilLicIssuer:GetValue()
+            local facName = comboFac:GetValue()
+            if facName and facName ~= "" then
+                tpl.factions[facName] = tpl.factions[facName] or {}
+                tpl.factions[facName].coverTitle = entCoverTitle:GetValue()
+                tpl.factions[facName].prefix = entPrefix:GetValue()
+                tpl.factions[facName].coverColor = { r = curCover.r, g = curCover.g, b = curCover.b }
+                tpl.factions[facName].foilStyle = curFoil
+            end
+            net.Start(NET_ADMIN_SAVE)
+                net.WriteTable(tpl)
+            net.SendToServer()
+        end
+    end
+
+    net.Receive(NET_ADMIN_GET, function()
+        openAdminUI(net.ReadTable() or {})
+    end)
+
+    print("[GRM Documents] Core v" .. DOC.Version .. " (Client) loaded")
+end
