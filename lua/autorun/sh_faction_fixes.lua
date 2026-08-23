@@ -595,19 +595,19 @@ if SERVER then
         if not factionName or not f then return DefaultModels end
         local role = member.Role
         local dept = member.Department
-        local sub = member.Subdepartment
-        -- Приоритет: ПОДОТДЕЛ (самый частный уровень) → роль → отдел → фракция.
-        -- Раньше подотдел не учитывался вовсе, хотя его списки редактируются
-        -- в структуре фракции и хранятся в f.Subdepartments[key].models.
-        if sub and sub ~= "" and istable(f.Subdepartments) and istable(f.Subdepartments[sub])
+        local sub = tostring(member.Subdepartment or member.Subdept or "")
+        -- Приоритет: ПОДОТДЕЛ → ОТДЕЛ → роль → фракция.
+        -- Перевод в отдел/подотдел должен надевать их форму, даже если
+        -- у должности тоже есть модели (иначе перевод «ничего не меняет»).
+        if sub ~= "" and istable(f.Subdepartments) and istable(f.Subdepartments[sub])
             and istable(f.Subdepartments[sub].models) and #f.Subdepartments[sub].models > 0 then
             return f.Subdepartments[sub].models
         end
+        if dept and dept ~= "" and istable(f.DepartmentModels) and istable(f.DepartmentModels[dept]) and #f.DepartmentModels[dept] > 0 then
+            return f.DepartmentModels[dept]
+        end
         if role and istable(f.RoleModels) and istable(f.RoleModels[role]) and #f.RoleModels[role] > 0 then
             return f.RoleModels[role]
-        end
-        if dept and istable(f.DepartmentModels) and istable(f.DepartmentModels[dept]) and #f.DepartmentModels[dept] > 0 then
-            return f.DepartmentModels[dept]
         end
         if istable(f.Models) and #f.Models > 0 then return f.Models end
         return DefaultModels
@@ -746,6 +746,54 @@ if SERVER then
             end
         end
     end
+
+    local function applyUniformForCharacter(key)
+        key = tostring(key or "")
+        if key == "" then return end
+        local ply
+        if GRM.Identity and GRM.Identity.ResolveCharacter then
+            ply = GRM.Identity.ResolveCharacter(key)
+        end
+        if not IsValid(ply) then
+            for _, p in ipairs(player.GetAll()) do
+                local ck = GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(p)
+                if ck == key then ply = p break end
+            end
+        end
+        if not IsValid(ply) or not ply:Alive() then return end
+        if ply:GetNWBool("GRM_CharacterPending", false) then return end
+        if ply:GetNWBool("IsMasked", false) then return end
+        if ply:GetNWBool("GRM_Arrested", false) then return end
+        local fname, member = getFactionMemberByPlayer(ply)
+        if fname and member then
+            ply:SetNWString("GRM_Department", tostring(member.Department or ""))
+            ply:SetNWString("GRM_Subdepartment", tostring(member.Subdepartment or member.Subdept or ""))
+        end
+        local list = GetModelsForPlayer(ply)
+        local entry = istable(list) and list[1] and normalizeModelEntry(list[1]) or nil
+        if entry and entry.path ~= "" then
+            ply.FactionsExt_DesiredModelData = nil
+            ApplyModelSettings(ply, entry)
+            if GRM.Char and isfunction(GRM.Char.ApplyAppearance) then
+                pcall(GRM.Char.ApplyAppearance, ply, { path = entry.path, skin = entry.skin, bodygroups = entry.bodygroups })
+            end
+        end
+        ApplyWeaponsToPlayer(ply)
+        sendModelsToPlayer(ply)
+    end
+
+    hook.Add("GRM_FactionMemberDepartmentChanged", "FactionsExt_ApplyDeptUniform", function(_, key)
+        timer.Simple(0, function() applyUniformForCharacter(key) end)
+    end)
+    hook.Add("GRM_FactionMemberSubdepartmentChanged", "FactionsExt_ApplySubUniform", function(_, key)
+        timer.Simple(0, function() applyUniformForCharacter(key) end)
+    end)
+    hook.Add("GRM_FactionMemberRoleChanged", "FactionsExt_ApplyRoleUniform", function(_, key)
+        timer.Simple(0, function() applyUniformForCharacter(key) end)
+    end)
+    hook.Add("GRM_FactionMemberJoined", "FactionsExt_ApplyJoinUniform", function(_, key)
+        timer.Simple(0.1, function() applyUniformForCharacter(key) end)
+    end)
 
     local function applyWeaponsToTargetGroup(targetFaction, targetRole, targetDept, targetSub)
         for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
@@ -973,6 +1021,7 @@ if SERVER then
             if istable(f.Subdepartments[key]) then
                 f.Subdepartments[key].models = models
             end
+            if FactionsAPI and FactionsAPI.Save then pcall(FactionsAPI.Save) end
         end
 
         saveFactionExtras()
@@ -2221,15 +2270,7 @@ if CLIENT then
             header.Paint = function(_, w, h)
                 draw.RoundedBox(5, 0, 0, w, h, THEME.deptBg)
                 draw.SimpleText(deptName, "FactionsExt_Normal", 10, h / 2, THEME.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            end
-
-            for idx, entry in ipairs(available[deptName] or {}) do
-                entry = normalizeMaskEntry(entry, "Маскировка")
-
-                local row = scroll:Add("DPanel")
-                row:Dock(TOP)
-                row:SetTall(116)
-                row:DockMargin(0, 0, 0, 6)
+            en, 0, 6)
                 row.Paint = function(_, w, h)
                     draw.RoundedBox(6, 0, 0, w, h, THEME.bgLight)
                     draw.SimpleText(entry.name, "FactionsExt_Title", 118, 22, THEME.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
@@ -3604,6 +3645,20 @@ if CLIENT then
                 net.Start("GNews_Send")
                     net.WriteString(text)
                 net.SendToServer()
+            end
+            datapack[1] = ""
+            return
+        end
+    end)
+
+    timer.Simple(1, function()
+        net.Start(NET_MODELS_REQUEST)
+        net.SendToServer()
+    end)
+
+    print("[Factions Extended] Client loaded: fixed UI/model-browser/mask-v2")
+end
+t.SendToServer()
             end
             datapack[1] = ""
             return
