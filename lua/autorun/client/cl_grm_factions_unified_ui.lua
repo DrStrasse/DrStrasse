@@ -740,6 +740,10 @@ function UI.Open(requestedFaction, requestedTab)
 
     -- ════════════ 1. ОБЗОР ════════════
     local function buildOverviewTab(pnl, facName, facData)
+        -- Снимок фракций может прийти раньше выбранного узла после live-sync.
+        -- Overview обязан показать пустую карточку, а не падать на nil
+        -- конкатенации и не ломать всё меню.
+        facName = tostring(facName or "")
         local fac = facData and facData[facName] or {}
         local dispName = GRM.Factions.DisplayName(facName)
         local ldrKey = tostring(fac.Leader or "Не назначен")
