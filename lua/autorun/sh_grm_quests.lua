@@ -7,17 +7,20 @@ end
 GRM = GRM or {}
 GRM.Quests = GRM.Quests or {}
 local Q = GRM.Quests
-Q.Version = "1.4.0"
+Q.Version = "1.5.0"
 Q.Definitions = Q.Definitions or {}
 Q.Progress = Q.Progress or {}
 Q.NPCs = Q.NPCs or {}
 Q.EventTypes = {
     generic="Событие", mining="Добыча руды", factory_produce="Производство",
     inventory_gain="Получение предмета", visit="Посещение", talk="Разговор",
+    invoice_paid="Оплата счёта", warrant_approved="Ордер утверждён", call_911="Вызов 911",
+    ore_sell="Продажа руды",
 }
 
 local function trim(value, limit)
     value = string.Trim(tostring(value or ""))
+    if GRM.Utf8Sub then return GRM.Utf8Sub(value, limit or 128) end
     return string.sub(value, 1, limit or 128)
 end
 local function characterKey(ply)
@@ -103,7 +106,7 @@ if SERVER then
             return{{id=phase.."_1",speaker="",text=trim(value,1200),next="",choices={}}}
         end
         local source=istable(value)and(value.nodes or value)or{};local out={}
-        for i,node in ipairs(source)do if#out>=64 then break end;node=istable(node)and node or{};local choices={};for _,choice in ipairs(istable(node.choices)and node.choices or{})do if#choices<8 then choices[#choices+1]={text=trim(choice.text,160),next=trim(choice.next,64),action=trim(choice.action,24)}end end;out[#out+1]={id=trim(node.id and node.id~=""and node.id or(phase.."_"..i),64),speaker=trim(node.speaker,80),text=trim(node.text,1200),next=trim(node.next,64),choices=choices}end
+        for i,node in ipairs(source)do if#out>=64 then break end;node=istable(node)and node or{};local choices={};for _,choice in ipairs(istable(node.choices)and node.choices or{})do if#choices<8 then choices[#choices+1]={text=trim(choice.text,160),next=trim(choice.next,64),action=trim(choice.action,24),actionArg=trim(choice.actionArg,96),cond=trim(choice.cond,96)}end end;out[#out+1]={id=trim(node.id and node.id~=""and node.id or(phase.."_"..i),64),speaker=trim(node.speaker,80),text=trim(node.text,1200),next=trim(node.next,64),choices=choices}end
         return out
     end
     local function normalizeDialogue(value)
@@ -128,7 +131,7 @@ if SERVER then
         for itemID,count in pairs(istable(raw.rewards and raw.rewards.items)and raw.rewards.items or {})do rewards.items[trim(itemID,96)]=math.Clamp(math.floor(tonumber(count)or 1),1,10000)end
         local prerequisites={};for _,v in ipairs(istable(raw.prerequisites)and raw.prerequisites or {})do prerequisites[#prerequisites+1]=trim(v,64)end
         local title,summary=trim(raw.title,100),trim(raw.summary,400);local notifications=istable(raw.notifications)and raw.notifications or{}
-        return {id=id,title=title,draft=draft,summary=summary,category=trim(raw.category,48),npc=trim(raw.npc,64),repeatable=raw.repeatable==true,autoStart=raw.autoStart==true,enabled=raw.enabled~=false,prerequisites=prerequisites,steps=steps,rewards=rewards,achievement=normalizeAchievement(raw.achievement,id,title,summary),notifications={start=normalizeNotification(notifications.start,"Получен квест: {title}",false),step=normalizeNotification(notifications.step,"Этап выполнен: {step}",false),complete=normalizeNotification(notifications.complete,"Квест завершён: {title}",true)},dialogue=normalizeDialogue(raw.dialogue),cutscene={accept=normalizeCutscene(raw.cutscene and raw.cutscene.accept),complete=normalizeCutscene(raw.cutscene and raw.cutscene.complete)}}
+        return {id=id,title=title,draft=draft,summary=summary,category=trim(raw.category,48),npc=trim(raw.npc,64),repeatable=raw.repeatable==true,autoStart=raw.autoStart==true,enabled=raw.enabled~=false,requireFaction=trim(raw.requireFaction,64),requireFlag=trim(raw.requireFlag,64),requireMoney=math.Clamp(math.floor(tonumber(raw.requireMoney)or 0),0,100000000),prerequisites=prerequisites,steps=steps,rewards=rewards,achievement=normalizeAchievement(raw.achievement,id,title,summary),notifications={start=normalizeNotification(notifications.start,"Получен квест: {title}",false),step=normalizeNotification(notifications.step,"Этап выполнен: {step}",false),complete=normalizeNotification(notifications.complete,"Квест завершён: {title}",true)},dialogue=normalizeDialogue(raw.dialogue),cutscene={accept=normalizeCutscene(raw.cutscene and raw.cutscene.accept),complete=normalizeCutscene(raw.cutscene and raw.cutscene.complete)}}
     end
 
     function Q.SaveDefinitions()
@@ -136,9 +139,15 @@ if SERVER then
         local npcs={};for _,ent in ipairs(ents.FindByClass("grm_quest_npc"))do if IsValid(ent)then npcs[#npcs+1]={id=ent:GetQuestNPCID(),name=ent:GetQuestNPCName(),model=ent:GetModel(),pos=vectorData(ent:GetPos()),ang=angleData(ent:GetAngles())}end end
         return writeJSON(Q.DefFile,{version=1,map=game.GetMap(),quests=records,npcs=npcs})
     end
-    function Q.SaveProgress()
+    function Q.SaveProgressNow()
         local records={};for key,quests in pairs(Q.Progress)do records[#records+1]={key=key,quests=quests}end
         return writeJSON(Q.ProgressFile,{version=1,records=records})
+    end
+    function Q.SaveProgress()
+        if GRM.Perf and GRM.Perf.Coalesce then
+            return GRM.Perf.Coalesce("quests.progress", 1.5, Q.SaveProgressNow)
+        end
+        return Q.SaveProgressNow()
     end
     function Q.LoadData()
         Q.Definitions={};local defs=readJSON(Q.DefFile)or {}
@@ -176,6 +185,12 @@ if SERVER then
         if old and old.status=="active"then return false,"Квест уже выполняется"end
         if old and old.status=="completed"and not def.repeatable then return false,"Квест уже завершён"end
         for _,id in ipairs(def.prerequisites or {})do if not all[id]or all[id].status~="completed"then return false,"Не выполнено условие: "..id end end
+        if tostring(def.requireFaction or "")~="" and string.lower(ply:GetNWString("GRM_Faction","")or"")~=string.lower(def.requireFaction)then return false,"Нужна фракция: "..def.requireFaction end
+        if tostring(def.requireFlag or "")~="" and not(Q.GetFlag and Q.GetFlag(ply,def.requireFlag))then return false,"Нужен флаг: "..def.requireFlag end
+        if (tonumber(def.requireMoney)or 0)>0 then
+            local have=(GRM.GetBalance and GRM.GetBalance(ply)or 0)+((GRM.Economy and GRM.Economy.BankBalance)and GRM.Economy.BankBalance(ply)or 0)
+            if have<(tonumber(def.requireMoney)or 0)then return false,"Недостаточно денег" end
+        end
         return true
     end
     sync=function(ply)
@@ -264,6 +279,13 @@ if SERVER then
         if not IsValid(ply)then return end;ply.GRMQuestNext=ply.GRMQuestNext or 0;if CurTime()<ply.GRMQuestNext then return end;ply.GRMQuestNext=CurTime()+.2
         local op=net.ReadString();local id=net.ReadString()
         if op=="accept"then local ok,why=Q.Start(ply,id);if not ok then notice(ply,false,why)end
+        elseif op=="dialogue"then
+            local npc=ply:GetEyeTrace().Entity
+            if not(IsValid(npc)and npc:GetClass()=="grm_quest_npc")then notice(ply,false,"Подойдите к персонажу")return end
+            local def=Q.Definitions[id];if not def then return end
+            local all=progressFor(ply);local p=all[id]
+            local phase=not p and"offer"or(p.status=="active"and"active"or"complete")
+            if not(Q.BeginDialogue and Q.BeginDialogue(ply,npc,id,phase))then notice(ply,false,"У этого задания нет диалога")end
         elseif op=="restart"then local def=Q.Definitions[id];local all=progressFor(ply);if not def or not def.repeatable then notice(ply,false,"Квест нельзя повторять")elseif not all[id]or all[id].status~="completed"then notice(ply,false,"Сначала завершите квест")else all[id]=nil;local ok,why=Q.Start(ply,id);if not ok then notice(ply,false,why)end end
         elseif op=="abandon"then local all=progressFor(ply);if all[id]and all[id].status=="active"then all[id]=nil;Q.SaveProgress();sync(ply);notice(ply,true,"Квест отменён")end end
     end)
