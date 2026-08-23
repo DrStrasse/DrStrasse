@@ -275,27 +275,22 @@ local function nodeOf(cfg, facName, field, key)
     return fac[field][key]
 end
 
-function PB.OpenAccessMenu(payload)
+--- Редактор доступов. parent = вкладка /factions (клики идут туда же, куда
+-- и остальное меню) либо отдельный DFrame.
+function PB.BuildAccessEditor(host, payload)
+    if not IsValid(host) then return end
+    host:Clear()
+    payload = istable(payload) and payload or {}
     local cfg = istable(payload.config) and payload.config or { settings = {}, factions = {} }
     local tree = istable(payload.tree) and payload.tree or {}
     local blocks = istable(payload.blocks) and payload.blocks or {}
     cfg.settings = istable(cfg.settings) and cfg.settings or {}
     cfg.factions = istable(cfg.factions) and cfg.factions or {}
 
-    if IsValid(PB._accessFrame) then PB._accessFrame:Remove() end
-    local frame = vgui.Create("DFrame")
-    PB._accessFrame = frame
-    -- Окно тянется под экран (заказ владельца 21.08: «побольше бы в размере»)
-    -- и остаётся изменяемым мышью: на 1080p это ~1500×950, на 4K — больше.
-    local w = math.Clamp(math.floor(ScrW() * 0.86), 1020, 1900)
-    local h = math.Clamp(math.floor(ScrH() * 0.88), 700, 1200)
-    frame:SetSize(w, h)
-    frame:SetMinWidth(1020)
-    frame:SetMinHeight(700)
-    frame:SetSizable(true)
-    frame:Center()
-    frame:SetTitle("")
-    frame:MakePopup()
+    local frame = vgui.Create("DPanel", host)
+    frame:Dock(FILL)
+    frame:DockMargin(0, 0, 0, 0)
+    frame:SetPaintBackground(false)
     frame.Paint = function(_, w, h)
         draw.RoundedBox(8, 0, 0, w, h, C.bg)
         draw.RoundedBox(8, 0, 0, w, 56, C.card)
@@ -361,7 +356,7 @@ function PB.OpenAccessMenu(payload)
     local function levelChoices(withInherit)
         local out = {}
         if withInherit then out[#out + 1] = { id = "", name = "Наследовать" } end
-        for _, id in ipairs(GRM.PCBoard.LevelOrder) do
+        for _, id in ipairs(GRM.PCBoard.LevelOrder or {}) do
             out[#out + 1] = { id = id, name = GRM.PCBoard.LevelName(id) }
         end
         return out
@@ -425,7 +420,13 @@ function PB.OpenAccessMenu(payload)
             levelCombo:AddChoice(row.name, row.id, (chosen or "") == row.id or (isRoot and chosen == nil and row.id == "none"))
         end
         levelCombo:SetValue(chosen and GRM.PCBoard.LevelName(chosen) or (isRoot and GRM.PCBoard.LevelName("none") or "Наследовать"))
-        levelCombo.OnSelect = function(_, _, _, id)
+        levelCombo.OnSelect = function(_, _, value, id)
+            if id == nil then
+                for _, row in ipairs(levelChoices(not isRoot)) do
+                    if row.name == value then id = row.id break end
+                end
+            end
+            id = tostring(id or "")
             if id == "" then node.level = nil else node.level = id end
             rebuildBlocks(node, id ~= "" and id or "none")
             if rebuildNodes then rebuildNodes() end
@@ -488,14 +489,42 @@ function PB.OpenAccessMenu(payload)
         end
     end
 
-    for _, row in ipairs(tree) do
-        facCombo:AddChoice(tostring(row.display or row.name), row.name)
+    table.sort(tree, function(a, b)
+        return string.lower(tostring(a.display or a.name or "")) < string.lower(tostring(b.display or b.name or ""))
+    end)
+    if #tree == 0 then
+        local empty = vgui.Create("DLabel", nodeList)
+        empty:Dock(TOP)
+        empty:SetTall(48)
+        empty:SetWrap(true)
+        empty:SetFont("GRMPCB_Small")
+        empty:SetTextColor(C.dim)
+        empty:SetText("Список организаций пуст. Откройте /factions и создайте организацию, затем нажмите «Обновить».")
     end
-    facCombo.OnSelect = function(_, _, _, name)
+    for _, row in ipairs(tree) do
+        local id = tostring(row.name or row.display or "")
+        if id ~= "" then
+            facCombo:AddChoice(tostring(row.display or id), id)
+        end
+    end
+    -- GMod зовёт OnSelect(index, value, data). Четвёртый аргумент бывает nil.
+    facCombo.OnSelect = function(_, _, value, data)
+        local name = tostring(data or value or "")
+        if name == "" or name == "Организация…" then return end
         current.fac, current.field, current.key, current.label = name, nil, nil, nil
         nodeOf(cfg, name)
         rebuildNodes()
         rebuildRight()
+    end
+    if tree[1] then
+        local first = tostring(tree[1].name or tree[1].display or "")
+        facCombo:SetValue(tostring(tree[1].display or first))
+        if first ~= "" then
+            current.fac = first
+            nodeOf(cfg, first)
+            rebuildNodes()
+            rebuildRight()
+        end
     end
 
     -- ── низ: общие настройки и сохранение ──────────────────────────
@@ -572,6 +601,36 @@ function PB.OpenAccessMenu(payload)
     hint:SetFont("GRMPCB_Small")
     hint:SetTextColor(C.dim)
     hint:SetText("Изменения применяются после нажатия «Сохранить».")
+
+    local refresh = mkButton(bottom, "Обновить", C.accent)
+    refresh:Dock(RIGHT)
+    refresh:SetWide(120)
+    refresh:DockMargin(6, 12, 0, 12)
+    refresh.DoClick = function() PB.RequestAccessMenu() end
+end
+
+function PB.OpenAccessMenu(payload)
+    if IsValid(PB._accessHost) then
+        PB.BuildAccessEditor(PB._accessHost, payload)
+        return
+    end
+    if IsValid(PB._accessFrame) then PB._accessFrame:Remove() end
+    local wrap = vgui.Create("DFrame")
+    PB._accessFrame = wrap
+    local w = math.Clamp(math.floor(ScrW() * 0.86), 1020, 1900)
+    local h = math.Clamp(math.floor(ScrH() * 0.88), 700, 1200)
+    wrap:SetSize(w, h)
+    wrap:SetMinWidth(1020)
+    wrap:SetMinHeight(700)
+    wrap:SetSizable(true)
+    wrap:Center()
+    wrap:SetTitle("Госбаза /pcboard")
+    wrap:MakePopup()
+    wrap:DoModal()
+    wrap:MoveToFront()
+    wrap:SetKeyboardInputEnabled(true)
+    wrap:SetMouseInputEnabled(true)
+    PB.BuildAccessEditor(wrap, payload)
 end
 
 net.Receive(PB.Net.DATA, function()
@@ -592,30 +651,21 @@ local function installTab(sheet)
 
     local panel = vgui.Create("DPanel")
     panel:SetPaintBackground(false)
+    PB._accessHost = panel
+    panel.OnRemove = function()
+        if PB._accessHost == panel then PB._accessHost = nil end
+    end
 
-    local info = vgui.Create("DLabel", panel)
-    info:Dock(TOP)
-    info:SetTall(96)
-    info:DockMargin(12, 12, 12, 4)
-    info:SetWrap(true)
-    info:SetFont("GRMPCB_Text")
-    info:SetTextColor(C.text)
-    info:SetText("Планшет госслужащего /pcboard: сотрудник на службе пробивает человека по базе, " ..
-        "справку видит только он, окружающие — отыгранное системой РП-действие.\n" ..
-        "Здесь задаётся уровень допуска организации (правоохранительный, комендатура, медицинский, спецслужбы) " ..
-        "и точечные исключения по отделам, подотделам и должностям.")
+    local wait = vgui.Create("DLabel", panel)
+    wait:Dock(FILL)
+    wait:SetFont("GRMPCB_Text")
+    wait:SetTextColor(C.dim)
+    wait:SetContentAlignment(5)
+    wait:SetText("Загрузка допусков госбазы…")
 
-    local open = mkButton(panel, "Открыть настройку допусков", C.accent)
-    open:Dock(TOP)
-    open:SetTall(36)
-    open:DockMargin(12, 8, 12, 0)
-    open.DoClick = PB.RequestAccessMenu
-
-    local log = mkButton(panel, "Журнал запросов (в консоль/чат)", C.card)
-    log:Dock(TOP)
-    log:SetTall(32)
-    log:DockMargin(12, 8, 12, 0)
-    log.DoClick = function() RunConsoleCommand("grm_pcboard_log") end
+    timer.Simple(0, function()
+        if IsValid(panel) then PB.RequestAccessMenu() end
+    end)
 
     sheet:AddSheet("Госбаза", panel, "icon16/report_magnify.png")
 end
