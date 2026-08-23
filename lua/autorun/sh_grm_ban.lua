@@ -267,6 +267,7 @@ if SERVER then
         ply:SetColor(Color(255, 60, 60, 255))
         ply:SetRenderMode(RENDERMODE_TRANSCOLOR)
         ply:SetNWBool("GRM_ServerBanned", true)
+        ply.GRM_BanCharacterKey = tostring(rec.characterKey or characterKey(ply))
         ply:SetNWString("GRM_ServerBanReason", tostring(rec.reason or ""))
         ply:SetNWInt("GRM_ServerBanUntil", math.floor(tonumber(rec["until"]) or 0))
 
@@ -329,13 +330,22 @@ if SERVER then
         --[[ Возврат на место. Человека забрали из мира в зону отбывания —
              значит и вернуть надо туда, откуда забрали, а не бросить в
              деморгане. Точка пережила рестарт вместе с записью бана. ]]
-        local back = returnPos or ply.GRM_BanReturn
+        local bannedCharacter = tostring(ply.GRM_BanCharacterKey or "")
+        local sameCharacter = bannedCharacter ~= "" and bannedCharacter == characterKey(ply)
+        local back = sameCharacter and (returnPos or ply.GRM_BanReturn) or nil
         if isvector(back) and not (back.x == 0 and back.y == 0 and back.z == 0) then
             ply:SetPos(back + Vector(0, 0, 8))
             ply:SetVelocity(-ply:GetVelocity())
             if GRM.Notify then GRM.Notify(ply, "Вы возвращены на прежнее место.", 100, 220, 130) end
+        elseif not sameCharacter and GRM.Char and GRM.Char.PlaceOnSpawnPoint then
+            -- Другой персонаж не наследует координаты деморгана. Он должен
+            -- появиться на обычной точке своей фракции из /spawnmenu.
+            timer.Simple(0, function()
+                if IsValid(ply) then GRM.Char.PlaceOnSpawnPoint(ply) end
+            end)
+            if GRM.Notify then GRM.Notify(ply, "Выбран другой персонаж: отправлен на его точку появления.", 100, 220, 130) end
         end
-        ply.GRM_BanReturn = nil
+        ply.GRM_BanReturn, ply.GRM_BanCharacterKey = nil, nil
     end
 
     -------------------------------------------------------------------
