@@ -832,6 +832,36 @@ local function buildFactions(pnl)
     launchCard(scroll, "Документы", "Бланки, удостоверения, цвета и доступы", "/doc_admin")
 end
 
+local function buildCatalog(pnl)
+    local scroll = vgui.Create("DScrollPanel", pnl)
+    scroll:Dock(FILL)
+    local links = (GRM.AdminHub and GRM.AdminHub.MenuLinks) or {
+        { "Организации", "/factions", "Состав и структура" },
+        { "Экономика", "/salary_admin", "Зарплаты, бюджеты, банк" },
+        { "Двери", "/door_access", "Доступы дверей" },
+        { "Пожарные доступы", "/fire_access", "Рукава и очаги" },
+        { "Магазин телефонов", "/phoneshop_admin", "Каталог трубок и АТС" },
+        { "Телефонный доступ", "/phone_access", "Кто пользуется связью" },
+        { "Розыск", "/wanted", "Дела и статьи" },
+        { "Точки спавна", "/spawnmenu", "Точки по структуре" },
+    }
+    for _, m in ipairs(links) do
+        if not m[4] then
+            launchCard(scroll, m[1], m[3] or "", m[2], C.accent)
+        end
+    end
+end
+
+local function buildPhones(pnl)
+    local scroll = vgui.Create("DScrollPanel", pnl)
+    scroll:Dock(FILL)
+    launchCard(scroll, "Магазин телефонов", "Мобильные и стационарные аппараты, цены и лимиты", "/phoneshop_admin", C.gold)
+    launchCard(scroll, "Доступ к оборудованию связи", "Кто ставит АТС, таксофоны и прослушку", "/phone_access", C.accent)
+    launchCard(scroll, "Прослушка помещений", "RoomTap: доступ и заявки", "roomtap_access", C.accent)
+    launchCard(scroll, "Магазин прослушки", "Выдача аппаратуры оперативникам", "roomtap_shop")
+    launchCard(scroll, "Торговец связью", "Перечитать ассортимент салона", "grm_phone_vendor_reload")
+end
+
 local function buildModules(pnl)
     local scroll = vgui.Create("DScrollPanel", pnl)
     scroll:Dock(FILL)
