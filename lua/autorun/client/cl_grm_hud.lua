@@ -534,43 +534,41 @@ local function DrawMainHUD()
         facName = facName .. " · " .. roleName
     end
 
-    local hx, hy, hw, hh = 16, 16, 300, 72
-    draw.RoundedBox(8, hx, hy, hw, hh, Color(8, 14, 23, 145))
-    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 80)
-    surface.DrawOutlinedRect(hx, hy, hw, hh, 1)
-
-    if IsValid(lp) then
-        if not IsValid(GRM.HUD._avatar) then
-            local av = vgui.Create("AvatarImage")
-            av:SetSize(48, 48)
-            av:SetPaintedManually(true)
-            av:SetMouseInputEnabled(false)
-            av:SetKeyboardInputEnabled(false)
-            GRM.HUD._avatar = av
-        end
-        if GRM.HUD._avatarPly ~= lp then
-            GRM.HUD._avatar:SetPlayer(lp, 64)
-            GRM.HUD._avatarPly = lp
-        end
-        GRM.HUD._avatar:SetPos(hx + 10, hy + 12)
-        GRM.HUD._avatar:SetSize(48, 48)
-        GRM.HUD._avatar:PaintManual()
-    end
-    draw.SimpleText(rpName, "GRM_HUD_Name", hx + 68, hy + 16, cfg.textColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-    draw.SimpleText(facName, "GRM_HUD_Meta", hx + 68, hy + 38, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-
     local cashTxt = (GRM.Format and GRM.Format(math.Round(anim.bal))) or ("$" .. string.Comma(math.Round(anim.bal)))
     local bankTxt = (GRM.PlayerBank ~= nil)
         and ((GRM.Format and GRM.Format(math.Round(anim.bank))) or ("$" .. string.Comma(math.Round(anim.bank))))
         or "—"
-    local mx, my, mw, mh = 16, hy + hh + 8, 300, 46
-    draw.RoundedBox(8, mx, my, mw, mh, Color(8, 14, 23, 140))
-    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 70)
-    surface.DrawOutlinedRect(mx, my, mw, mh, 1)
-    draw.SimpleText("НАЛИЧНЫЕ", "GRM_HUD_Label", mx + 12, my + 6, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-    draw.SimpleText(cashTxt, "GRM_HUD_Money", mx + 12, my + 26, cfg.moneyColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    draw.SimpleText("СЧЁТ", "GRM_HUD_Label", mx + mw - 12, my + 6, cfg.labelColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
-    draw.SimpleText(bankTxt, "GRM_HUD_Money", mx + mw - 12, my + 26, cfg.bankColor or cfg.moneyColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+
+    local hx, hy, hw, hh = 16, 16, 312, 108
+    draw.RoundedBox(8, hx, hy, hw, hh, Color(8, 14, 23, 150))
+    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 85)
+    surface.DrawOutlinedRect(hx, hy, hw, hh, 1)
+
+    if IsValid(lp) then
+        pcall(function()
+            if not IsValid(GRM.HUD._avatar) then
+                local av = vgui.Create("AvatarImage")
+                av:SetSize(44, 44)
+                av:SetPaintedManually(true)
+                av:SetMouseInputEnabled(false)
+                av:SetKeyboardInputEnabled(false)
+                GRM.HUD._avatar = av
+            end
+            if GRM.HUD._avatarPly ~= lp then
+                GRM.HUD._avatar:SetPlayer(lp, 64)
+                GRM.HUD._avatarPly = lp
+            end
+            GRM.HUD._avatar:SetPos(hx + 10, hy + 10)
+            GRM.HUD._avatar:SetSize(44, 44)
+            GRM.HUD._avatar:PaintManual()
+        end)
+    end
+    draw.SimpleText(rpName, "GRM_HUD_Name", hx + 64, hy + 12, cfg.textColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    draw.SimpleText(facName, "GRM_HUD_Meta", hx + 64, hy + 34, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
+    draw.SimpleText("НАЛИЧНЫЕ  " .. cashTxt, "GRM_HUD_Money", hx + 12, hy + 68, cfg.moneyColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    draw.SimpleText("СЧЁТ  " .. bankTxt, "GRM_HUD_Money", hx + hw - 12, hy + 68, cfg.bankColor or cfg.moneyColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+    draw.SimpleText("НАЛИЧНЫЕ", "GRM_HUD_Label", hx + 12, hy + 86, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    draw.SimpleText("СЧЁТ", "GRM_HUD_Label", hx + hw - 12, hy + 86, cfg.labelColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
 
     local pw = 320
     local pad, rowH, gap = 10, 24, 4
@@ -728,15 +726,19 @@ local function DrawNotifications()
 end
 
 hook.Add("HUDPaint", "GRM_HUD_Main", function()
-    pcall(DrawMainHUD)
+    local ok, err = pcall(DrawMainHUD)
+    if not ok and (GRM.HUD._lastErr or "") ~= tostring(err) then
+        GRM.HUD._lastErr = tostring(err)
+        ErrorNoHalt("[GRM HUD] " .. tostring(err) .. "\n")
+    end
     pcall(DrawWeaponSelector)
     pcall(DrawNotifications)
 end)
 
 grmBootStart("GRM_HUD_Welcome", "late", function()
     timer.Simple(4, function()
-        if IsValid(LocalPlayer()) then GRM.AddNotification("HUD v10.4 загружен — колёсико для выбора оружия", 5, Color(100, 180, 255)) end
+        if IsValid(LocalPlayer()) then GRM.AddNotification("HUD v10.5 — шапка и деньги слева сверху", 5, Color(100, 180, 255)) end
     end)
 end)
 
-print("[GRM] HUD v10.4 загружен")
+print("[GRM] HUD v10.5 загружен")
