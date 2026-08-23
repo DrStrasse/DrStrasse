@@ -262,15 +262,6 @@ if SERVER then
         local banned, rec = SB.IsBanned(ply)
         if not banned then return end
 
-        -- Аварийный self-recovery: суперадмин не должен запереть сам себя
-        -- в деморгане без доступа к /admin и списку банов. Запись и история
-        -- остаются, но визуальные/клиентские ограничения с него не вешаются,
-        -- чтобы он мог открыть админ-панель и снять бан штатно.
-        if ply:IsSuperAdmin() then
-            if ply:GetNWBool("GRM_ServerBanned", false) then SB.Clear(ply) end
-            return
-        end
-
         if ply:GetModel() ~= SB.Model then ply:SetModel(SB.Model) end
         if ply:GetMaterial() ~= SB.Material then ply:SetMaterial(SB.Material) end
         ply:SetColor(Color(255, 60, 60, 255))
