@@ -1062,6 +1062,8 @@ function AD.OpenPanel()
     addTab("assign", "Назначения", "acl.assign", buildAssignments)
     addTab("persist", "Сохранения и карта", "server.persistence", buildPersistence)
     addTab("factions", "Фракционный контроль", "server.factions", buildFactions)
+    addTab("catalog", "Каталог меню", "menu.open", buildCatalog)
+    addTab("phones", "Связь и телефоны", "menu.open", buildPhones)
     addTab("modules", "Модули сборки", "menu.modules", buildModules)
     addTab("analytics", "Анализ нагрузки", "menu.modules", buildAnalytics)
     addTab("super", "Суперадмин", "cheat.god", buildSuper)
@@ -1084,7 +1086,7 @@ concommand.Add("grm_admin_panel", function() AD.OpenPanel() end)
 hook.Add("PlayerSayTransform", "GRM_AdminPanel_Chat", function(ply, pack)
     if not istable(pack) or not isstring(pack[1]) then return end
     local low = string.lower(string.Trim(pack[1]))
-    if low == "/admin" or low == "/админ" or low == "/grm_admin_panel" then
+    if low == "/admin" or low == "/админ" or low == "/grm_admin" or low == "/grm_admin_panel" then
         AD.OpenPanel()
         pack[1] = ""
         pack.SkipPlayerSay = true

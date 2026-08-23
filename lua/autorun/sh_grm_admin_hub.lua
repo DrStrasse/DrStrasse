@@ -28,7 +28,7 @@ GRM = GRM or {}
 GRM.AdminHub = GRM.AdminHub or {}
 local HB = GRM.AdminHub
 
-HB.Version = "1.3.0"
+HB.Version = "1.4.0"
 
 local NET_GET  = "GRM_HUB_Get"
 local NET_DATA = "GRM_HUB_Data"
@@ -467,8 +467,8 @@ if SERVER then
         if not istable(datapack) then return end
         local msg = datapack[1]
         if not isstring(msg) then return end
-        -- алиас "/admin" сознательно НЕ занимаем: его могут использовать внешние аддоны
-        if string.lower(string.Trim(msg)) == "/grm_admin" then
+        local low = string.lower(string.Trim(msg))
+        if low == "/grm_admin" or low == "/admin" or low == "/админ" then
             if openHub(ply) then
                 datapack[1] = ""
                 datapack.SkipPlayerSay = true
@@ -480,7 +480,8 @@ if SERVER then
         local text = datapack[1]
         if not isstring(text) then return end
         
-        if string.lower(string.Trim(text)) == "/grm_admin" then
+        local low = string.lower(string.Trim(text))
+        if low == "/grm_admin" or low == "/admin" or low == "/админ" then
             if openHub(ply) then
                 datapack.SkipPlayerSay = true
                 datapack[1] = ""
@@ -798,7 +799,7 @@ if CLIENT then
         sc:Clear()
         local hint = vgui.Create("DLabel", sc)
         hint:Dock(TOP) hint:SetTall(30) hint:SetFont("GRMHub_Small") hint:SetTextColor(C.dim)
-        hint:SetText("Полная экономическая панель (зарплаты, налоги, штрафы, банк, настройки): /feco_admin.  Здесь — быстрые денежные операции.")
+        hint:SetText("Полная экономическая панель: /feco_admin. Здесь — быстрые денежные операции.")
         hint:SetWrap(true) hint:SetAutoStretchVertical(true)
 
         -- Доступ к экономике (находка 172): суперадмин выдаёт полномочия фракциям
@@ -1009,6 +1010,10 @@ if CLIENT then
         local isSuper = net.ReadBool()
         HB._econOnly = (econAccess == true and isSuper ~= true)
         HB._isSuper = isSuper == true
+        if isSuper and GRM.Admin and GRM.Admin.OpenPanel then
+            GRM.Admin.OpenPanel()
+            return
+        end
         if IsValid(HB._frame) then HB._frame:Remove() end
         local f = vgui.Create("DFrame")
         HB._frame = f
@@ -1194,6 +1199,10 @@ if CLIENT then
         HB._lastEconPayload = d
         _origEconBuild(sc, d)
     end
+
+    HB.AskTab = askTab
+    HB.MenuLinks = MENU_LINKS
+    HB.Launch = launchAdminCommand
 
     print("[GRM Hub] Клиент единой админ-панели v" .. HB.Version .. " загружен")
 end

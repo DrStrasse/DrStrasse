@@ -19,7 +19,7 @@ MB.SmsCap = 40
 MB.ContactsCap = 50
 MB.NotesCap = 30
 MB.Version = "1.2.2" -- network/data compatibility
-MB.UIVersion = "3.3.0"
+MB.UIVersion = "3.4.0"
 
 MB.Tiers = {
     crappy = {
@@ -928,10 +928,10 @@ if CLIENT then
     surface.CreateFont("GRMMob_XS", { font = "Roboto", size = 11, weight = 400, extended = true })
 
     local C = {
-        shell = Color(8, 10, 16, 252), bg = Color(18, 22, 32, 248), top = Color(30, 38, 54, 248),
-        row = Color(38, 47, 65, 242), row2 = Color(48, 61, 84, 245), accent = Color(75, 155, 255),
-        text = Color(240, 244, 250), dim = Color(165, 176, 192), green = Color(70, 205, 120), red = Color(225, 80, 75), yellow = Color(245, 195, 70),
-        card = Color(26, 32, 46, 246), card2 = Color(34, 43, 62, 246), violet = Color(135, 110, 255)
+        shell = Color(12, 15, 22, 252), bg = Color(16, 20, 28, 248), top = Color(12, 15, 22, 248),
+        row = Color(22, 28, 38, 242), row2 = Color(28, 36, 48, 245), accent = Color(65, 145, 235),
+        text = Color(240, 244, 250), dim = Color(155, 170, 190), green = Color(55, 185, 110), red = Color(225, 70, 70), yellow = Color(245, 195, 65),
+        card = Color(22, 28, 38, 246), card2 = Color(28, 36, 48, 246), violet = Color(65, 145, 235)
     }
 
     local APP_META = {
