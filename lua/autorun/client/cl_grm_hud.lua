@@ -99,7 +99,7 @@ GRM.HUD.RegisterBar("hunger", {
         local max = tonumber(cfg.HungerMax) or 100
         local value = math.Clamp(tonumber(food.ClientHunger) or max, 0, max)
         local frac = value / math.max(1, max)
-        local color = frac < 0.2 and Color(235, 75, 80) or (frac < 0.5 and Color(245, 180, 60) or Color(78, 210, 128))
+        local color = frac < 0.2 and Color(210, 95, 40) or (frac < 0.5 and Color(235, 155, 45) or Color(245, 185, 55))
         local text = frac <= 0 and "ГОЛОДАНИЕ" or (math.floor(value) .. "%")
         return value, max, text, color
     end,
@@ -112,7 +112,7 @@ GRM.HUD.RegisterBar("stamina", {
         local max = tonumber(move.Config and move.Config.StaminaMax) or 100
         local value = math.Clamp(tonumber(GRM.LocalStamina) or max, 0, max)
         local frac = value / math.max(1, max)
-        local color = frac < 0.3 and Color(220, 80, 80) or (frac < 0.6 and Color(220, 200, 80) or Color(80, 220, 200))
+        local color = frac < 0.3 and Color(120, 55, 190) or (frac < 0.6 and Color(145, 75, 220) or Color(165, 95, 235))
         return value, max, math.floor(value) .. "%", color
     end,
 })

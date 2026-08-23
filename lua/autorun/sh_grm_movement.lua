@@ -251,9 +251,9 @@ if CLIENT then
          брони и налезала на вес с сытостью. Если общего HUD почему-то нет
          (старая сборка), рисуем по-старому. ]]
     local function staminaColor(frac)
-        if frac < 0.3 then return Color(220, 80, 80) end
-        if frac < 0.6 then return Color(220, 200, 80) end
-        return Color(80, 220, 200)
+        if frac < 0.3 then return Color(120, 55, 190) end
+        if frac < 0.6 then return Color(145, 75, 220) end
+        return Color(165, 95, 235)
     end
 
     -- Дыхание: под водой считаем запас воздуха. Движок его не отдаёт,
