@@ -346,6 +346,15 @@ if SERVER then
             if GRM.Notify then GRM.Notify(ply, "Выбран другой персонаж: отправлен на его точку появления.", 100, 220, 130) end
         end
         ply.GRM_BanReturn, ply.GRM_BanCharacterKey = nil, nil
+
+        -- PlayerLoadout возвращает базовый Sandbox-набор, но штатное
+        -- вооружение фракции живёт в /weapons_admin и выдаётся отдельным
+        -- контуром. После снятия наказания применяем его ещё раз, уже после
+        -- возврата/постановки персонажа на точку.
+        timer.Simple(0.15, function()
+            if not IsValid(ply) or select(1, SB.IsBanned(ply)) then return end
+            if _G.ApplyWeaponsToPlayer then pcall(_G.ApplyWeaponsToPlayer, ply) end
+        end)
     end
 
     -------------------------------------------------------------------
