@@ -104,7 +104,9 @@ function S.Draw(ent, opts)
         showHint and (textWide(hint, S.Font.hint) + 50) or 0)
     local tall = showHint and 84 or 62
 
-    local ang = Angle(0, (lp:EyeAngles().y + 90) % 360, 90)
+    -- Стандартный billboard 3D2D: +90 разворачивал матрицу изнанкой,
+    -- поэтому оставалась подложка/иконки, а глифы текста отбрасывались.
+    local ang = Angle(0, (lp:EyeAngles().y - 90) % 360, 90)
     cam.Start3D2D(ent:GetPos() + Vector(0, 0, height), ang, scale)
     local ok, err = pcall(function()
         draw.RoundedBox(8, -wide / 2, -tall / 2, wide, tall, Color(12, 17, 25, 235))
