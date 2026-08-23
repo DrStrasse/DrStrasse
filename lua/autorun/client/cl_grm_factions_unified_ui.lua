@@ -434,6 +434,8 @@ function UI.Open(requestedFaction, requestedTab)
     end
 
     local f = vgui.Create("DFrame")
+    -- Фракционные вкладки — информационный F2-контур, бан-сторож их не закрывает.
+    f.GRM_BanAllowed = true
     currentFrame = f
     if GRM.UI and GRM.UI.Track then GRM.UI.Track("grm_factions_unified", f) end
 
