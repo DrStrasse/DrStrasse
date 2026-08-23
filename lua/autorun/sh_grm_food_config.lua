@@ -195,7 +195,31 @@ GRM.Food.Config = {
             healthRestore = 0,
             price = 0,
             icon = "icon16/bin_closed.png",
-            spoiled = true, -- есть бессмысленно: «сейчас это не нужно», выбрось
+            spoiled = true,
+        },
+        ["grm_food_yeast"] = {
+            name = "Дрожжи",
+            model = "models/props_lab/jar01a.mdl",
+            hungerRestore = 0, thirstRestore = 0, healthRestore = 0,
+            price = 18, icon = "icon16/brick.png", raw = true,
+        },
+        ["grm_food_sugar"] = {
+            name = "Сахар",
+            model = "models/props_junk/garbage_metalcan002a.mdl",
+            hungerRestore = 1, thirstRestore = 0, healthRestore = 0,
+            price = 12, icon = "icon16/cup.png", raw = true,
+        },
+        ["grm_food_beer"] = {
+            name = "Бутылка пива",
+            model = "models/props_junk/garbage_glassbottle003a.mdl",
+            hungerRestore = 4, thirstRestore = 16, healthRestore = 0,
+            price = 45, icon = "icon16/drink.png", cooked = true, alcohol = 0.35,
+        },
+        ["grm_food_kvass"] = {
+            name = "Бутылка кваса",
+            model = "models/props_junk/garbage_glassbottle001a.mdl",
+            hungerRestore = 6, thirstRestore = 24, healthRestore = 1,
+            price = 28, icon = "icon16/drink.png", cooked = true, alcohol = 0.08,
         },
     },
 
@@ -269,6 +293,14 @@ GRM.Food.Kitchen = {
             n = 1,
             time = 70,
             raw = { grm_food_noodles = 1, grm_food_carrot = 1 },
+        },
+        ["brew_beer"] = {
+            name = "Пиво (варка)", out = "grm_food_beer", n = 2, time = 120, needKettle = true,
+            raw = { grm_food_bread = 1, grm_food_water = 1, grm_food_yeast = 1 },
+        },
+        ["brew_kvass"] = {
+            name = "Квас (варка)", out = "grm_food_kvass", n = 2, time = 90, needKettle = true,
+            raw = { grm_food_bread = 1, grm_food_water = 1, grm_food_sugar = 1 },
         },
     },
 

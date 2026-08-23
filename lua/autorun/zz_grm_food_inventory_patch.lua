@@ -201,8 +201,9 @@ local function canUseFoodNow(ply, data)
     local restoresHunger = (tonumber(data.hungerRestore) or 0) > 0 and hunger < hungerMax
     local restoresThirst = (tonumber(data.thirstRestore) or 0) > 0 and thirst < thirstMax
     local restoresHealth = (tonumber(data.healthRestore) or 0) > 0 and ply:Health() < ply:GetMaxHealth()
+    local isDrink = (tonumber(data.alcohol) or 0) > 0
 
-    return restoresHunger or restoresThirst or restoresHealth
+    return restoresHunger or restoresThirst or restoresHealth or isDrink
 end
 
 local function useFoodFromInventory(ply, slotIdx, slot, itemID, data)
@@ -229,6 +230,10 @@ local function useFoodFromInventory(ply, slotIdx, slot, itemID, data)
 
     if GRM.Inventory and GRM.Inventory.RemoveFromSlot then
         GRM.Inventory.RemoveFromSlot(ply, slotIdx, 1)
+    end
+
+    if tonumber(data.alcohol) and GRM.Alcohol and GRM.Alcohol.Add then
+        GRM.Alcohol.Add(ply, tonumber(data.alcohol))
     end
 
     ply:EmitSound("npc/barnacle/barnacle_gulp1.wav", 70, 100)
