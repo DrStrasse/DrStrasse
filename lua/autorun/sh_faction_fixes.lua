@@ -2270,7 +2270,14 @@ if CLIENT then
             header.Paint = function(_, w, h)
                 draw.RoundedBox(5, 0, 0, w, h, THEME.deptBg)
                 draw.SimpleText(deptName, "FactionsExt_Normal", 10, h / 2, THEME.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            en, 0, 6)
+            end
+
+            for idx, entry in ipairs(available[deptName] or {}) do
+                entry = normalizeMaskEntry(entry, "Маскировка " .. idx)
+                local row = scroll:Add("DPanel")
+                row:Dock(TOP)
+                row:SetTall(116)
+                row:DockMargin(0, 0, 0, 6)
                 row.Paint = function(_, w, h)
                     draw.RoundedBox(6, 0, 0, w, h, THEME.bgLight)
                     draw.SimpleText(entry.name, "FactionsExt_Title", 118, 22, THEME.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
@@ -2315,8 +2322,11 @@ if CLIENT then
     local pendingModelsCb = nil
     net.Receive(NET_ADMIN_MODELS_DATA, function()
         local data = net.ReadTable() or {}
-        -- Новый интерфейс регистрирует свой приёмник поверх этого; сюда
-        -- попадаем только при фолбэке на старое окно.
+        if GRM.LoadoutAdmin and GRM.LoadoutAdmin._pendingModels and GRM.LoadoutAdmin.Open then
+            GRM.LoadoutAdmin._pendingModels = nil
+            GRM.LoadoutAdmin.Open("models", data)
+            return
+        end
         if pendingModelsCb then local cb = pendingModelsCb pendingModelsCb = nil cb(data) end
     end)
 
@@ -2595,6 +2605,11 @@ if CLIENT then
     local pendingWeaponsCb = nil
     net.Receive(NET_ADMIN_WEAPONS_DATA, function()
         local data = net.ReadTable() or {}
+        if GRM.LoadoutAdmin and GRM.LoadoutAdmin._pendingWeapons and GRM.LoadoutAdmin.Open then
+            GRM.LoadoutAdmin._pendingWeapons = nil
+            GRM.LoadoutAdmin.Open("weapons", data)
+            return
+        end
         if pendingWeaponsCb then local cb = pendingWeaponsCb pendingWeaponsCb = nil cb(data) end
     end)
 
@@ -3645,20 +3660,6 @@ if CLIENT then
                 net.Start("GNews_Send")
                     net.WriteString(text)
                 net.SendToServer()
-            end
-            datapack[1] = ""
-            return
-        end
-    end)
-
-    timer.Simple(1, function()
-        net.Start(NET_MODELS_REQUEST)
-        net.SendToServer()
-    end)
-
-    print("[Factions Extended] Client loaded: fixed UI/model-browser/mask-v2")
-end
-t.SendToServer()
             end
             datapack[1] = ""
             return

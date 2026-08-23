@@ -814,4 +814,32 @@ function LA.OpenWeapons()
     net.SendToServer()
 end
 
+-- Команды живут и здесь: если sh_faction_fixes на клиенте не поднялся
+-- (синтаксис / порядок загрузки), кнопки фракций и чат всё равно открывают меню.
+local function tryOpen(kind)
+    local lp = LocalPlayer()
+    if not IsValid(lp) or not lp:IsSuperAdmin() then return end
+    if kind == "models" then LA.OpenModels() else LA.OpenWeapons() end
+end
+
+concommand.Add("models_admin", function() tryOpen("models") end)
+concommand.Add("weapons_admin", function() tryOpen("weapons") end)
+
+hook.Add("PlayerSayTransform", "GRM_LoadoutAdmin_Chat", function(ply, datapack)
+    if ply ~= LocalPlayer() or not istable(datapack) then return end
+    local msg = string.Trim(string.lower(tostring(datapack[1] or "")))
+    if msg == "/models_admin" or msg == "!models_admin" then
+        tryOpen("models")
+        datapack[1] = ""
+        datapack.SkipPlayerSay = true
+        return
+    end
+    if msg == "/weapons_admin" or msg == "!weapons_admin" then
+        tryOpen("weapons")
+        datapack[1] = ""
+        datapack.SkipPlayerSay = true
+        return
+    end
+end)
+
 print("[GRM Loadout Admin] v" .. LA.Version .. ": одежда и вооружение по структуре фракции")
