@@ -102,6 +102,15 @@ if SERVER then
         return rp ~= "" and rp or ply:Nick()
     end
 
+    -- Серверный бан — RP-наказание конкретного персонажа. SteamID64 нужен
+    -- только для legacy-миграции и глобального аккаунтного бана.
+    local function characterKey(ply)
+        if not IsValid(ply) then return "" end
+        if GRM.Identity and GRM.Identity.CharacterKey then return tostring(GRM.Identity.CharacterKey(ply) or "") end
+        return tostring(ply:SteamID64() or "") .. ":char1"
+    end
+    local function accountKey(ply) return IsValid(ply) and tostring(ply:SteamID64() or "") or "" end
+
     -- Диск — через общую очередь: бан пишется в момент действия, а не пачкой.
     if GRM.Save and GRM.Save.Register then
         GRM.Save.Register("serverban.list", { file = BANS_FILE, label = "Баны на сервере", delay = 2, priority = 2,
@@ -151,6 +160,9 @@ if SERVER then
                         by = tostring(rec.by or ""),
                         at = math.floor(tonumber(rec.at) or os.time()),
                         name = tostring(rec.name or ""),
+                        characterKey = tostring(rec.characterKey or sid),
+                        accountSteam = tostring(rec.accountSteam or ""),
+                        legacyAccount = not tostring(sid):find(":char[1-3]$"),
                     }
                     -- Куда вернуть после снятия: переживает рестарт сервера.
                     if istable(rec.returnPos) then
@@ -229,10 +241,16 @@ if SERVER then
     -- ПРИМЕНЕНИЕ НАКАЗАНИЯ
     -------------------------------------------------------------------
     function SB.IsBanned(v)
-        local sid = IsValid(v) and tostring(v:SteamID64() or "") or tostring(v or "")
-        local rec = SB.Bans[sid]
+        local key = IsValid(v) and characterKey(v) or tostring(v or "")
+        local rec = SB.Bans[key]
+        -- Старые записи SteamID64 остаются account-wide только как legacy,
+        -- новые баны никогда не попадают сюда.
+        if not rec and IsValid(v) then
+            local old = accountKey(v)
+            if SB.Bans[old] and SB.Bans[old].legacyAccount then key, rec = old, SB.Bans[old] end
+        end
         if not rec then return false end
-        if SB.Left(rec) <= 0 then SB.Bans[sid] = nil saveBans("истёк " .. sid) return false end
+        if SB.Left(rec) <= 0 then SB.Bans[key] = nil saveBans("истёк " .. key) return false end
         return true, rec
     end
 
@@ -336,8 +354,8 @@ if SERVER then
         if not IsValid(target) or not target:IsPlayer() then return false, "Игрок не в сети" end
         minutes = math.Clamp(math.floor(tonumber(minutes) or 60), 0, 525600)
         reason = string.sub(string.Trim(tostring(reason or "Нарушение правил")), 1, 120)
-        local sid = tostring(target:SteamID64() or "")
-        if sid == "" then return false, "Нет SteamID" end
+        local sid = characterKey(target)
+        if sid == "" then return false, "Нет активного персонажа" end
 
         -- Запоминаем модель ДО наказания. Если игрок уже в скелете (повторный
         -- бан, перезаход после падения сервера), прежнее значение не затираем —
@@ -354,7 +372,9 @@ if SERVER then
 
         SB.Bans[sid] = {
             ["until"] = minutes > 0 and (os.time() + minutes * 60) or 0,
-            reason = reason, by = actorName(actor), at = os.time(), name = target:Nick(),
+            reason = reason, by = actorName(actor), at = os.time(),
+            name = target:GetNWString("GRM_RPName", target:Nick()),
+            characterKey = sid, accountSteam = accountKey(target),
             returnPos = { x = math.floor(from.x), y = math.floor(from.y), z = math.floor(from.z) },
         }
         pushHistory("ban", sid, SB.Bans[sid], actor)
@@ -371,7 +391,7 @@ if SERVER then
             GRM.Notify(target, "Вы забанены на сервере: " .. reason, 255, 90, 90)
         end
         if GRM.Audit and GRM.Audit.Write then
-            GRM.Audit.Write("admin", "ban.server", actor, { steamid64 = sid, nick = target:Nick() },
+            GRM.Audit.Write("admin", "ban.server", actor, { characterKey = sid, steamid64 = accountKey(target), nick = target:Nick() },
                 { minutes = minutes, reason = reason })
         end
         return true, text
@@ -381,7 +401,7 @@ if SERVER then
         local sid = tostring(query or "")
         local target
         for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
-            if IsValid(p) and (tostring(p:SteamID64() or "") == sid) then target = p break end
+            if IsValid(p) and (characterKey(p) == sid or (SB.Bans[sid] and SB.Bans[sid].legacyAccount and accountKey(p) == sid)) then target = p break end
         end
         if not SB.Bans[sid] then return false, "Серверного бана нет" end
         local rec = SB.Bans[sid]
@@ -413,14 +433,19 @@ if SERVER then
                 by = tostring(rec.by or ""),
                 at = math.floor(tonumber(rec.at) or 0),
                 left = left == math.huge and -1 or math.floor(left),
+                characterKey = tostring(rec.characterKey or sid),
+                legacyAccount = rec.legacyAccount == true,
                 online = false,
             }
         end
         for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
             if IsValid(ply) then
-                local sid = tostring(ply:SteamID64() or "")
+                local key = characterKey(ply)
                 for _, row in ipairs(rows) do
-                    if row.sid == sid then row.online = true row.name = ply:Nick() end
+                    if row.sid == key or (row.legacyAccount and row.sid == accountKey(ply)) then
+                        row.online = true
+                        row.name = ply:GetNWString("GRM_RPName", ply:Nick())
+                    end
                 end
             end
         end
@@ -659,9 +684,11 @@ if SERVER then
         local query = tostring(args and args[1] or "")
         local fixed = 0
         for _, p in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
-            if IsValid(p) and (query == "" or query == "all" or tostring(p:SteamID64() or "") == query
+            local ck, ak = characterKey(p), accountKey(p)
+            if IsValid(p) and (query == "" or query == "all" or ck == query or ak == query
                 or (query == "me" and p == ply)) then
-                SB.Bans[tostring(p:SteamID64() or "")] = nil
+                SB.Bans[ck] = nil
+                if SB.Bans[ak] and SB.Bans[ak].legacyAccount then SB.Bans[ak] = nil end
                 SB.Clear(p)
                 fixed = fixed + 1
             end
