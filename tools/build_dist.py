@@ -189,6 +189,7 @@ def main():
     build("grm_fix_hud_tab_currency.zip", HUD_FIX_FILES)
     # 3D2D Textscreens: отдельный аддон, ставится рядом с grm
     build_addon("grm_textscreens.zip", "grm_textscreens", prefix="grm_textscreens/")
+    pack_system_prone()
 
 
 if __name__ == "__main__":
