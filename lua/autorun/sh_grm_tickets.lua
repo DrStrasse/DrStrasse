@@ -153,7 +153,7 @@ else
         b.Paint = function(self, w, h) local c = self:IsHovered() and Color(math.min(col.r + 18, 255), math.min(col.g + 18, 255), math.min(col.b + 18, 255)) or col; draw.RoundedBox(6, 0, 0, w, h, c) end return b
     end
     local function openRating(id)
-        local f = vgui.Create("DFrame") f:SetSize(420, 150) f:Center() f:MakePopup() f:SetTitle("GRM — Оценка тикета #" .. tostring(id))
+        local f = vgui.Create("DFrame") f.GRM_BanAllowed=true f:SetSize(420, 150) f:Center() f:MakePopup() f:SetTitle("GRM — Оценка тикета #" .. tostring(id))
         local l = vgui.Create("DLabel", f) l:SetPos(16, 32) l:SetSize(388, 24) l:SetText("Оцените работу администратора:") l:SetTextColor(C.dim)
         for i = 1, 5 do local b = button(f, string.rep("★", i), Color(200, 155, 45)) b:SetPos(16 + (i - 1) * 77, 70) b:SetSize(68, 36) b.DoClick = function() net.Start("GRM_Ticket_Rate") net.WriteUInt(tonumber(id) or 0, 24) net.WriteUInt(i, 3) net.SendToServer() f:Close() end end
     end
@@ -162,7 +162,7 @@ else
     local function showPlayerTicket(ticket)
         currentPlayerTicket = ticket
         if IsValid(playerFrame) then playerFrame:Remove() end
-        playerFrame = vgui.Create("DFrame") playerFrame:SetSize(430, 280) playerFrame:SetPos(ScrW() - 450, ScrH() - 310) playerFrame:SetTitle("GRM — Тикет #" .. tostring(ticket.id)) playerFrame:MakePopup()
+        playerFrame = vgui.Create("DFrame") playerFrame.GRM_BanAllowed=true playerFrame:SetSize(430, 280) playerFrame:SetPos(ScrW() - 450, ScrH() - 310) playerFrame:SetTitle("GRM — Тикет #" .. tostring(ticket.id)) playerFrame:MakePopup()
         local info = vgui.Create("DLabel", playerFrame) info:SetPos(12, 32) info:SetSize(405, 45) info:SetText("Статус: " .. tostring(ticket.status) .. "\nВаше обращение: " .. tostring(ticket.text)) info:SetTextColor(C.dim) info:SetWrap(true)
         local list = vgui.Create("DScrollPanel", playerFrame) list:SetPos(12, 82) list:SetSize(405, 105)
         for _, msg in ipairs(ticket.messages or {}) do local line = vgui.Create("DLabel", list) line:Dock(TOP) line:SetTall(24) line:SetText(tostring(msg.from) .. ": " .. tostring(msg.text)) line:SetTextColor(C.text) end
@@ -175,6 +175,7 @@ else
 
     local function openCreate()
         local f = vgui.Create("DFrame")
+        f.GRM_BanAllowed = true
         if GRM.UI and GRM.UI.Track then GRM.UI.Track("ticket_create", f) end
         f:SetSize(680, 360) f:Center() f:MakePopup() f:SetTitle("") f:ShowCloseButton(false)
         f.Paint = function(_, w, h) draw.RoundedBox(10, 0, 0, w, h, C.bg); draw.RoundedBoxEx(10, 0, 0, w, 58, C.head, true, true, false, false); draw.SimpleText("GRM  /  ОБРАЩЕНИЕ", "GRMTicketBody", 18, 17, C.blue, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER); draw.SimpleText("Новый тикет", "GRMTicketTitle", 18, 40, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end
@@ -189,6 +190,7 @@ else
         local zones = istable(payload) and payload.zones or {}
         local history = istable(payload) and payload.history or {}
         local f = vgui.Create("DFrame")
+        f.GRM_BanAllowed = true
         if GRM.UI and GRM.UI.Track then GRM.UI.Track("ticket_admin", f) end
         f:SetSize(1080, 760) f:Center() f:MakePopup() f:SetTitle("") f:ShowCloseButton(false)
         f.Paint = function(_, w, h) draw.RoundedBox(10, 0, 0, w, h, C.bg); draw.RoundedBoxEx(10, 0, 0, w, 58, C.head, true, true, false, false); draw.SimpleText("GRM  /  ЦЕНТР ТИКЕТОВ", "GRMTicketBody", 18, 17, C.blue, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER); draw.SimpleText("Обращения игроков", "GRMTicketTitle", 18, 40, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER) end

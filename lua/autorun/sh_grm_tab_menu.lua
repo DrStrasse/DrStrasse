@@ -1026,6 +1026,8 @@ if CLIENT then
         H = math.min(H, SH - 40)
 
         local f = vgui.Create("DFrame")
+        -- TAB — справочный список, разрешён даже при server-ban.
+        f.GRM_BanAllowed = true
         f:SetTitle("")
         f:SetSize(W, H)
         f:Center()
