@@ -314,7 +314,21 @@ if SERVER then
         if IsValid(ent) and ent:IsPlayer() and ent:GetNWBool("GRM_911_Downed") then patient=ent
         elseif IsValid(ent) and ent:GetNWBool("GRM_911_WoundedRagdoll") and IsValid(ent._grm911Patient) then patient=ent._grm911Patient end
         if IsValid(patient) then
-            if (ply._grm911PatientUseAt or 0)<=CurTime() then ply._grm911PatientUseAt=CurTime()+1; local can,why=isMedic(ply); net.Start(NET_PATIENT) net.WriteEntity(patient) net.WriteBool(can==true) net.WriteBool(patient:GetNWBool("GRM_911_Stable")) net.WriteUInt(math.max(0,patient:GetNWInt("GRM_911_DeathAt",os.time())-os.time()),12) net.WriteString(can and "" or tostring(why or "")) net.WriteUInt(math.Clamp(patient:GetNWInt("GRM_Bleed",0),0,100),7) net.WriteUInt(math.Clamp(patient:GetNWInt("GRM_Pain",0),0,100),7) net.Send(ply) end
+            -- E на раненом = удержание реанимации (bleedout). Меню на E
+            -- перехватывает мышь и срывает подъём. Окно — только /aid или ALT+E.
+            if ply:KeyDown(IN_WALK) and (ply._grm911PatientUseAt or 0) <= CurTime() then
+                ply._grm911PatientUseAt = CurTime() + 1
+                local can, why = isMedic(ply)
+                net.Start(NET_PATIENT)
+                net.WriteEntity(patient)
+                net.WriteBool(can == true)
+                net.WriteBool(patient:GetNWBool("GRM_911_Stable"))
+                net.WriteUInt(math.max(0, patient:GetNWInt("GRM_911_DeathAt", os.time()) - os.time()), 12)
+                net.WriteString(can and "" or tostring(why or ""))
+                net.WriteUInt(math.Clamp(patient:GetNWInt("GRM_Bleed", 0), 0, 100), 7)
+                net.WriteUInt(math.Clamp(patient:GetNWInt("GRM_Pain", 0), 0, 100), 7)
+                net.Send(ply)
+            end
             return false
         end
         if IsValid(ent) and ent:GetNWBool("GRM_911_Body") then

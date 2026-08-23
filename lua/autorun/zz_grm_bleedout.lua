@@ -229,7 +229,7 @@ if SERVER then
             else
                 -- чужой: держит E
                     local tgt = lookDowned(ply)
-                if tgt and ply:KeyDown(IN_USE) then
+                if tgt and ply:KeyDown(IN_USE) and not ply:KeyDown(IN_WALK) then
                     local canRevive = EM.IsMedic and select(1, EM.IsMedic(ply))
                     local kind
                     if canRevive then
@@ -348,6 +348,7 @@ if CLIENT then
                 local kind = ent:GetNWString("GRM_911_HoldKind", "")
                 local label = kind == "revive" and "Реанимация" or "Стабилизация"
                 draw.SimpleText("Удерживайте [E] — " .. label, "DermaLarge", ScrW() / 2, ScrH() * 0.72, Color(230, 240, 245), TEXT_ALIGN_CENTER)
+                draw.SimpleText("меню помощи: /aid  ·  ALT+E", "DermaDefault", ScrW() / 2, ScrH() * 0.72 + 46, Color(170, 180, 190), TEXT_ALIGN_CENTER)
                 if prog > 0 then
                     local w = 280
                     draw.RoundedBox(4, ScrW() / 2 - w / 2, ScrH() * 0.72 + 28, w, 10, Color(20, 20, 28, 220))
