@@ -332,7 +332,15 @@ if SERVER then
 
     loadChars()
 
-    local function sid64(ply) return IsValid(ply) and ply:SteamID64() or "" end
+    local function accountID(ply)
+        if not IsValid(ply) then return "" end
+        local id = ply.SteamID64 and ply:SteamID64()
+        if isstring(id) and id ~= "" and id ~= "0" then return id end
+        local sid = ply.SteamID and ply:SteamID()
+        if isstring(sid) and sid ~= "" and sid ~= "STEAM_ID_PENDING" then return sid end
+        return "uid:" .. tostring(ply:UserID())
+    end
+    local function sid64(ply) return accountID(ply) end
     local function clampSlot(n)
         n = math.floor(tonumber(n) or 1)
         if n < 1 then return 1 end
@@ -431,7 +439,7 @@ if SERVER then
         -- Персонаж на месте — вот теперь выдаём набор из /weapons_admin.
         if _G.ApplyWeaponsToPlayer then
             timer.Simple(0.1, function()
-                if IsValid(ply) and not CH.PendingSelection[ply:SteamID64()] then
+                if IsValid(ply) and not CH.PendingSelection[sid64(ply)] then
                     _G.ApplyWeaponsToPlayer(ply)
                 end
             end)
@@ -469,7 +477,9 @@ if SERVER then
 
     local function setCharacterLock(ply, locked, mandatory)
         if not IsValid(ply) then return end
-        local sid = ply:SteamID64()
+        if locked == true and ply.GRMCharConfirmed == true then return end
+        local sid = accountID(ply)
+        if sid == "" then return end
         CH.PendingSelection[sid] = locked == true or nil
         CH.PendingMandatory[sid] = locked == true and mandatory == true or nil
         if ply.SetNWBool then
@@ -480,8 +490,9 @@ if SERVER then
         -- Лимб включается вместе с блокировкой и выключается вместе с ней.
         if locked == true then
             CH.SendToLimbo(ply)
-        elseif ply.GRMCharLimbo then
-            CH.ReleaseFromLimbo(ply)
+        else
+            ply.GRMCharConfirmed = true
+            if ply.GRMCharLimbo then CH.ReleaseFromLimbo(ply) end
         end
     end
 
@@ -896,19 +907,20 @@ if SERVER then
     end
 
     hook.Add("PlayerInitialSpawn", "GRM_Char_OnJoin", function(ply)
+        ply.GRMCharConfirmed = nil
         menuAfterLoading(ply, 1.5)
         timer.Simple(60, function()
             -- страховка: экран загрузки завис у клиента — всё равно даём выбрать
-            if IsValid(ply) and CH.PendingSelection[ply:SteamID64()] then sendMenu(ply) end
+            if IsValid(ply) and not ply.GRMCharConfirmed and CH.PendingSelection[sid64(ply)] then sendMenu(ply) end
         end)
         timer.Simple(0.2, function()
-            if not IsValid(ply) then return end
+            if not IsValid(ply) or ply.GRMCharConfirmed then return end
             normalizePlayerData(ply)
             -- При каждом входе игрок обязан явно подтвердить персонажа.
             setCharacterLock(ply, true, true)
         end)
         timer.Simple(2.2, function()
-            if not IsValid(ply) then return end
+            if not IsValid(ply) or ply.GRMCharConfirmed then return end
             normalizePlayerData(ply)
             applyActiveCharacter(ply)
             setCharacterLock(ply, true, true)
@@ -918,8 +930,8 @@ if SERVER then
     hook.Add("PlayerSpawn", "GRM_Char_BlockUnselectedSpawn", function(ply)
         timer.Simple(0, function()
             if not IsValid(ply) then return end
-            if CH.PendingSelection[ply:SteamID64()] then
-                setCharacterLock(ply, true, CH.PendingMandatory[ply:SteamID64()] == true)
+            if not ply.GRMCharConfirmed and CH.PendingSelection[sid64(ply)] then
+                setCharacterLock(ply, true, CH.PendingMandatory[sid64(ply)] == true)
                 -- Меню уже открывается одним таймером PlayerInitialSpawn.
                 -- Не отправляем его из каждого PlayerSpawn, иначе окна наслаиваются.
             end
@@ -927,7 +939,7 @@ if SERVER then
     end)
 
     local function characterPending(ply)
-        return IsValid(ply) and CH.PendingSelection[ply:SteamID64()] == true
+        return IsValid(ply) and ply.GRMCharConfirmed ~= true and CH.PendingSelection[sid64(ply)] == true
     end
 
     hook.Add("StartCommand", "GRM_Char_BlockInput", function(ply, cmd)
@@ -969,8 +981,8 @@ if SERVER then
 
     hook.Add("PlayerDisconnected", "GRM_Char_ClearPending", function(ply)
         if IsValid(ply) then
-            CH.PendingSelection[ply:SteamID64()] = nil
-            CH.PendingMandatory[ply:SteamID64()] = nil
+            CH.PendingSelection[sid64(ply)] = nil
+            CH.PendingMandatory[sid64(ply)] = nil
             saveChars("disconnect")
         end
     end)
@@ -988,9 +1000,11 @@ if SERVER then
         local previewSlot = ""
         if bits and bits >= 8 then previewSlot = tostring(net.ReadString() or "") end
         if not previewSlot:match("^char[123]$") then previewSlot = activeSlot(ply) end
-        -- Открытие персонажей через F4 /char переводит игрока в тот же
-        -- безопасный режим выбора: мир затемняется и блокируется до подтверждения.
-        setCharacterLock(ply, true, false)
+        -- Превью слота и живое обновление меню не должны снова запирать
+        -- уже подтверждённого игрока и не сбрасывают обязательный вход.
+        if not ply.GRMCharConfirmed and not CH.PendingSelection[sid64(ply)] then
+            setCharacterLock(ply, true, false)
+        end
         sendMenu(ply, previewSlot)
     end)
 
@@ -1000,7 +1014,7 @@ if SERVER then
             closeMenu(ply)
             return
         end
-        if CH.PendingMandatory[ply:SteamID64()] == true then
+        if CH.PendingMandatory[sid64(ply)] == true then
             -- Первичный вход нельзя закрыть крестиком: меню возвращается,
             -- игрок остаётся заблокирован до подтверждения персонажа.
             sendMenu(ply)
@@ -1025,7 +1039,7 @@ if SERVER then
             local slot = tostring(d.slot or "char1")
             if not slot:match("^char[123]$") then return end
             local sameActive = slot == activeSlot(ply)
-            local mandatory = CH.PendingMandatory[ply:SteamID64()] == true
+            local mandatory = CH.PendingMandatory[sid64(ply)] == true
             if sameActive and not mandatory then
                 -- Anti-abuse: повторный выбор уже активного персонажа не
                 -- вызывает Spawn, телепорт, reset inventory или повторный gear-flow.
@@ -1038,7 +1052,7 @@ if SERVER then
             return
         end
         local requestedSlot = tostring(d.slot or activeSlot(ply))
-        local mandatory = CH.PendingMandatory[ply:SteamID64()] == true
+        local mandatory = CH.PendingMandatory[sid64(ply)] == true
         local sameActive = requestedSlot == activeSlot(ply)
         if not sameActive or mandatory then
             CH.SetActiveSlot(ply, requestedSlot, mandatory)
@@ -1688,11 +1702,9 @@ if CLIENT then
         return true
     end
     net.Receive(NET_OPEN,function() CH.ReceiveMenuPayload(net.ReadTable() or {}) end)
-    timer.Create("GRM_Char_LiveRefresh",2,0,function()
-        if IsValid(CH._frame)and CH._frameMode=="character"and not CH._actionPending and not CH._opening then
-            net.Start(NET_REQUEST); net.WriteString(CH._previewSlot or "char1"); net.SendToServer()
-        end
-    end)
+    if timer.Exists("GRM_Char_LiveRefresh") then timer.Remove("GRM_Char_LiveRefresh") end
+    -- Живой опрос каждые 2 с ломал выбор: сервер снова запирал игрока
+    -- и пересобирал окно в момент клика. Обновляем только по действию.
 
     --[[ Закрытие окна по команде сервера.
          Раньше звали :Close(), но у обязательного окна он специально
