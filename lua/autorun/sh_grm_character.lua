@@ -54,12 +54,14 @@ CH.CitizenModels = {
         "models/player/Group02/male_06.mdl", "models/player/Group02/male_08.mdl",
     },
     female = {
+        -- Group02 в HL2 — только мужчины-повстанцы. Женские citizen:
+        -- Group01 (ситизенки) и Group03 (повстанки). female_05 нет нигде.
         "models/player/Group01/female_01.mdl", "models/player/Group01/female_02.mdl",
         "models/player/Group01/female_03.mdl", "models/player/Group01/female_04.mdl",
         "models/player/Group01/female_06.mdl", "models/player/Group01/female_07.mdl",
-        "models/player/Group02/female_01.mdl", "models/player/Group02/female_02.mdl",
-        "models/player/Group02/female_03.mdl", "models/player/Group02/female_04.mdl",
-        "models/player/Group02/female_06.mdl", "models/player/Group02/female_07.mdl",
+        "models/player/Group03/female_01.mdl", "models/player/Group03/female_02.mdl",
+        "models/player/Group03/female_03.mdl", "models/player/Group03/female_04.mdl",
+        "models/player/Group03/female_06.mdl", "models/player/Group03/female_07.mdl",
     },
 }
 
@@ -72,14 +74,24 @@ end
 function CH.GenderFromModel(path)
     path = string.lower(tostring(path or ""))
     if string.find(path, "female", 1, true) then return "female" end
-    return "male"
+    if string.find(path, "male_", 1, true) or string.find(path, "/male", 1, true) then return "male" end
+    return nil
+end
+
+function CH.ModelLooksValid(path)
+    path = tostring(path or "")
+    if path == "" then return false end
+    if util.IsValidModel and not util.IsValidModel(path) then return false end
+    return true
 end
 
 function CH.CitizenOutfits(gender)
     gender = CH.NormalizeGender(gender)
     local out = {}
     for _, path in ipairs(CH.CitizenModels[gender] or CH.CitizenModels.male) do
-        out[#out + 1] = { path = path, skin = 0, bodygroups = {}, gender = gender }
+        if CH.ModelLooksValid(path) then
+            out[#out + 1] = { path = path, skin = 0, bodygroups = {}, gender = gender }
+        end
     end
     return out
 end
@@ -553,7 +565,7 @@ if SERVER then
         c.id = slot
         c.key = sid64(ply) .. ":" .. slot
         if c.gender == nil or c.gender == "" then
-            c.gender = CH.GenderFromModel(c.model)
+            c.gender = CH.GenderFromModel(c.model) or "male"
         else
             c.gender = CH.NormalizeGender(c.gender)
         end
@@ -792,11 +804,12 @@ if SERVER then
             end
             if istable(DefaultModels) then
                 for _, e in ipairs(DefaultModels) do
-                    if istable(e) and isstring(e.path) and not seen[string.lower(e.path)] then
+                    if istable(e) and isstring(e.path) and not seen[string.lower(e.path)] and CH.ModelLooksValid(e.path) then
                         seen[string.lower(e.path)] = true
-                        local g = CH.GenderFromModel(e.path)
+                        local g = e.gender or CH.GenderFromModel(e.path)
                         out[#out + 1] = { path = e.path, skin = tonumber(e.skin) or 0,
-                            bodygroups = table.Copy(istable(e.bodygroups) and e.bodygroups or {}), gender = g }
+                            bodygroups = table.Copy(istable(e.bodygroups) and e.bodygroups or {}),
+                            gender = g, unisex = g == nil }
                     end
                 end
             end
@@ -1785,7 +1798,8 @@ if CLIENT then
             local shown = 0
             for _, outfit in ipairs(outfits) do
                 local path = tostring(outfit.path or "")
-                if path ~= "" and (outfit.provider == "faction" or outfitGender(outfit) == draft.gender) then
+                if path ~= "" and CH.ModelLooksValid(path)
+                    and (outfit.provider == "faction" or outfit.unisex or outfitGender(outfit) == draft.gender) then
                     shown = shown + 1
                     local cell = grid:Add("DButton")
                     cell:SetText("")

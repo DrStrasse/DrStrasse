@@ -27,6 +27,10 @@ GRM.Movement.Config = {
     RunSpeed        = 220,
     ExhaustedSpeed  = 80,
     StaminaMax      = 100,
+    StaminaMaxMin   = 80,
+    StaminaMaxCap   = 160,
+    StaminaTrain    = 0.045,
+    StaminaDecay    = 0.004,
     StaminaDrain    = 16,
     StaminaJumpCost = 15,
     StaminaRegen    = 8,
@@ -43,16 +47,62 @@ GRM.Movement.Config = {
 -- ============================================================
 if SERVER then
     local playerData = {}
+    local FIT_FILE = "grm_fitness.json"
+    local fitness = {}
+
+    local function jsonT(txt)
+        local ok, t = pcall(util.JSONToTable, txt, false, true)
+        return (ok and istable(t)) and t or nil
+    end
+
+    local function loadFitness()
+        if not file.Exists(FIT_FILE, "DATA") then return end
+        local t = jsonT(file.Read(FIT_FILE, "DATA") or "")
+        if istable(t) then fitness = t end
+    end
+
+    local function saveFitness()
+        if GRM.Perf and GRM.Perf.Coalesce then
+            GRM.Perf.Coalesce("fitness.save", 4, function()
+                local ok, txt = pcall(util.TableToJSON, fitness, true)
+                if ok and txt then file.Write(FIT_FILE, txt) end
+            end)
+        else
+            local ok, txt = pcall(util.TableToJSON, fitness, true)
+            if ok and txt then file.Write(FIT_FILE, txt) end
+        end
+    end
+    loadFitness()
+
+    local function charKey(ply)
+        return (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64()
+    end
+
+    local function clampMax(v)
+        local cfg = GRM.Movement.Config
+        return math.Clamp(tonumber(v) or cfg.StaminaMax, cfg.StaminaMaxMin or 80, cfg.StaminaMaxCap or 160)
+    end
 
     local function getPlayerData(ply)
-        local sid = (GRM.Identity and GRM.Identity.CharacterKey and GRM.Identity.CharacterKey(ply)) or ply:SteamID64()
+        local sid = charKey(ply)
         if not playerData[sid] then
+            local rec = istable(fitness[sid]) and fitness[sid] or {}
+            local mx = clampMax(rec.max or GRM.Movement.Config.StaminaMax)
             playerData[sid] = {
-                stamina = GRM.Movement.Config.StaminaMax,
+                stamina = mx,
+                max = mx,
                 lastJump = 0,
+                lastTrain = tonumber(rec.lastTrain) or 0,
             }
         end
         return playerData[sid]
+    end
+
+    local function persistMax(ply, data)
+        local sid = charKey(ply)
+        fitness[sid] = { max = data.max, lastTrain = data.lastTrain or os.time() }
+        saveFitness()
+        ply:SetNWFloat("GRM_StaminaMax", data.max)
     end
 
     local function syncStamina(ply, force)
@@ -63,6 +113,7 @@ if SERVER then
         data.nextSync=now+.25;data.lastSynced=data.stamina
         net.Start("GRM_Stamina_Sync")
         net.WriteFloat(data.stamina)
+        net.WriteFloat(data.max or GRM.Movement.Config.StaminaMax)
         net.Send(ply)
     end
 
@@ -81,20 +132,31 @@ if SERVER then
                 local data = getPlayerData(ply)
                 local cfg = GRM.Movement.Config
 
+                data.max = clampMax(data.max or cfg.StaminaMax)
                 if ply:InVehicle() then
                     --[[ В машине игрок раньше выпадал из тика целиком — и
                          выносливость не восстанавливалась вообще, хотя он
                          сидит. Теперь сидение считается отдыхом. ]]
-                    data.stamina = math.min(cfg.StaminaMax,
+                    data.stamina = math.min(data.max,
                         data.stamina + (cfg.StaminaRegenSeated or cfg.StaminaRegen) * dt)
                 else
                     local isRunning = ply:KeyDown(IN_SPEED) and ply:GetVelocity():Length2D() > 50
                     local isOnGround = ply:IsOnGround()
+                    local prone = ply:GetNWBool("GRM_Prone", false)
 
-                    if isRunning and isOnGround then
+                    if isRunning and isOnGround and not prone then
                         data.stamina = math.max(0, data.stamina - cfg.StaminaDrain * dt)
+                        if data.stamina > 12 then
+                            local before = data.max
+                            data.max = clampMax(data.max + (cfg.StaminaTrain or 0.045) * dt)
+                            data.lastTrain = os.time()
+                            if math.abs(data.max - before) > 0.2 then persistMax(ply, data) end
+                        end
                     elseif isOnGround then
-                        data.stamina = math.min(cfg.StaminaMax, data.stamina + cfg.StaminaRegen * dt)
+                        data.stamina = math.min(data.max, data.stamina + cfg.StaminaRegen * dt)
+                        if (os.time() - (data.lastTrain or 0)) > 6 * 3600 then
+                            data.max = clampMax(data.max - (cfg.StaminaDecay or 0.004) * dt)
+                        end
                     end
                 end
 
@@ -149,10 +211,19 @@ if SERVER then
     hook.Add("PlayerInitialSpawn", "GRM_Movement_Init", function(ply)
         timer.Simple(0.5, function()
             if IsValid(ply) then
-                getPlayerData(ply)
+                local d = getPlayerData(ply)
+                ply:SetNWFloat("GRM_StaminaMax", d.max)
                 syncStamina(ply, true)
             end
         end)
+    end)
+
+    hook.Add("GRM_CharacterChanged", "GRM_Movement_SwapFit", function(ply)
+        if not IsValid(ply) then return end
+        playerData[charKey(ply)] = nil
+        local d = getPlayerData(ply)
+        persistMax(ply, d)
+        syncStamina(ply, true)
     end)
 
     grmBootStart("GRM_Movement_ClearData", "normal", function()
@@ -168,6 +239,7 @@ end
 if CLIENT then
     CreateClientConVar("grm_cl_staminahud", "1", true, false) -- F4 → Настройки
     GRM.LocalStamina = GRM.LocalStamina or GRM.Movement.Config.StaminaMax
+    GRM.LocalStaminaMax = GRM.LocalStaminaMax or GRM.Movement.Config.StaminaMax
 
     local breathSound = nil
     local isBreathing = false
@@ -201,7 +273,7 @@ if CLIENT then
     hook.Add("Think", "GRM_StaminaSound", function()
         if GRM.Perf and not GRM.Perf.Throttle("movement.breath.client",.1)then return end
         local stamina = GRM.LocalStamina or 0
-        local maxStamina = GRM.Movement.Config.StaminaMax
+        local maxStamina = GRM.LocalStaminaMax or GRM.Movement.Config.StaminaMax
         local threshold = maxStamina * (GRM.Movement.Config.StaminaWarningThreshold / 100)
 
         -- Звук должен играть: стамина > 0 и стамина <= порога (30%)
@@ -242,6 +314,7 @@ if CLIENT then
     -- Синхронизация стамины с сервера
     net.Receive("GRM_Stamina_Sync", function()
         GRM.LocalStamina = net.ReadFloat()
+        GRM.LocalStaminaMax = net.ReadFloat()
         hook.Run("GRM_StaminaUpdated", GRM.LocalStamina)
     end)
 
@@ -278,9 +351,9 @@ if CLIENT then
                 local cv = GetConVar("grm_cl_staminahud")
                 if cv and cv:GetInt() == 0 then return nil end
                 local stamina = GRM.LocalStamina or 0
-                local maxStamina = GRM.Movement.Config.StaminaMax
+                local maxStamina = GRM.LocalStaminaMax or GRM.Movement.Config.StaminaMax
                 local frac = math.Clamp(stamina / math.max(1, maxStamina), 0, 1)
-                return stamina, maxStamina, math.floor(stamina) .. "%", staminaColor(frac)
+                return stamina, maxStamina, math.floor(stamina) .. " / " .. math.floor(maxStamina), staminaColor(frac)
             end,
         })
 
@@ -304,7 +377,7 @@ if CLIENT then
             local ply = LocalPlayer()
             if not IsValid(ply) or not ply:Alive() then return end
             local stamina = GRM.LocalStamina or 0
-            local maxStamina = GRM.Movement.Config.StaminaMax
+            local maxStamina = GRM.LocalStaminaMax or GRM.Movement.Config.StaminaMax
             local sw, sh = ScrW(), ScrH()
             local barW, barH = 250, 14
             local x, y = (sw - barW) / 2, sh - 66
