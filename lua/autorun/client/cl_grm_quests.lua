@@ -78,6 +78,7 @@ local function playDialogue(npcName,nodes,onAction)
  end
  show(1)
 end
+Q._previewDialogue=playDialogue
 
 local function openNPC()
  local npc=net.ReadEntity();local npcName=net.ReadString();local rows=net.ReadTable()or {};local f=frame(npcName,760,600)

@@ -51,9 +51,9 @@ end)
      налезала на другие полосы. Теперь модуль только отдаёт значение, а где
      и как его показать, решает HUD. ]]
 local function hungerColor(frac)
-    if frac < 0.3 then return Color(210, 95, 40) end
-    if frac < 0.6 then return Color(235, 155, 45) end
-    return Color(245, 185, 55)
+    if frac < 0.3 then return Color(220, 90, 30) end
+    if frac < 0.6 then return Color(240, 150, 40) end
+    return Color(250, 175, 45)
 end
 
 local function hungerText(frac, hunger)
