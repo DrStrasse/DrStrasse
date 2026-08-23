@@ -174,17 +174,21 @@ end
      как витрина для других модулей. ]]
 local factionRows = {}
 
+local function requestFactions()
+    if not CLIENT then return end
+    net.Start(NET_LIST_REQ)
+    net.SendToServer()
+end
+
 if CLIENT then
     net.Receive(NET_LIST, function()
         local rows = net.ReadTable()
         factionRows = istable(rows) and rows or {}
-        TOOL.FactionRows = factionRows
         hook.Run("GRM_ScannerTool_ListUpdated", factionRows)
     end)
 
     function TOOL.RequestFactions()
-        net.Start(NET_LIST_REQ)
-        net.SendToServer()
+        requestFactions()
     end
 end
 
@@ -251,7 +255,7 @@ function TOOL.BuildCPanel(panel)
         if rebuild then rebuild() end
     end)
     toolButton("Обновить список", 130, function()
-        if isfunction(TOOL.RequestFactions) then TOOL.RequestFactions() end
+        requestFactions()
     end)
 
     rebuild = function()
