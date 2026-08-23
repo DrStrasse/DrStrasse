@@ -25,7 +25,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.ServerBan = GRM.ServerBan or {}
 local SB = GRM.ServerBan
-SB.Version = "1.0.0"
+SB.Version = "1.1.0"
 
 --[[ Звук отбывающего наказание (заказ владельца 21.08): забаненный должен
      «звучать» — от скелета идут зомби-стоны, его слышно и не спутать с
@@ -47,14 +47,25 @@ SB.Zone = SB.Zone or { pos = nil, radius = 600, map = "" }
 SB.Bans = SB.Bans or {}
 
 --- Осталось секунд по записи бана (0 — истёк).
+-- Источник истины для срочного бана — remaining. Стенные часы (until)
+-- тикают ТОЛЬКО пока персонаж реально отбывает наказание в мире.
+-- Рестарт / оффлайн / выбор другого слота срок не жрут.
 function SB.Left(rec)
     if not istable(rec) then return 0 end
-    if rec.paused == true then
+    if rec.permanent == true then return math.huge end
+    if rec.paused == true or tonumber(rec["until"]) == 0 then
         local left = tonumber(rec.remaining)
-        return left and (left < 0 and math.huge or math.max(0, left)) or 0
+        if left == nil then return 0 end
+        if left < 0 then return math.huge end
+        return math.max(0, left)
     end
     local until_ = tonumber(rec["until"]) or 0
-    if until_ <= 0 then return math.huge end -- бессрочно
+    if until_ <= 0 then
+        local left = tonumber(rec.remaining)
+        if left == nil then return math.huge end
+        if left < 0 then return math.huge end
+        return math.max(0, left)
+    end
     return math.max(0, until_ - os.time())
 end
 
@@ -158,17 +169,31 @@ if SERVER then
         if istable(data) and istable(data.bans) then
             for sid, rec in pairs(data.bans) do
                 if isstring(sid) and istable(rec) then
+                    local duration = tonumber(rec.duration)
+                    local remaining = tonumber(rec.remaining)
+                    local until_ = math.floor(tonumber(rec["until"]) or 0)
+                    local at = math.floor(tonumber(rec.at) or os.time())
+                    local permanent = rec.permanent == true or (until_ <= 0 and remaining == nil and rec.paused ~= true)
+                    if not duration and until_ > at then duration = until_ - at end
+                    -- Рестарт: стенное until уже убежало вперёд, пока сервера не было.
+                    -- Берём последний записанный remaining, иначе исходный срок.
+                    if not remaining then
+                        remaining = duration
+                    end
+                    if remaining and remaining < 0 then remaining = nil permanent = true end
                     local row = {
-                        ["until"] = math.floor(tonumber(rec["until"]) or 0),
+                        ["until"] = 0,
                         reason = tostring(rec.reason or ""),
                         by = tostring(rec.by or ""),
-                        at = math.floor(tonumber(rec.at) or os.time()),
+                        at = at,
                         name = tostring(rec.name or ""),
                         characterKey = tostring(rec.characterKey or sid),
                         accountSteam = tostring(rec.accountSteam or ""),
                         legacyAccount = not tostring(sid):find(":char[1-3]$"),
-                        paused = rec.paused == true,
-                        remaining = rec.paused == true and tonumber(rec.remaining) or nil,
+                        paused = not permanent,
+                        remaining = permanent and nil or math.max(0, math.floor(remaining or 0)),
+                        duration = duration and math.max(0, math.floor(duration)) or nil,
+                        permanent = permanent or nil,
                     }
                     -- Куда вернуть после снятия: переживает рестарт сервера.
                     if istable(rec.returnPos) then
@@ -260,24 +285,44 @@ if SERVER then
         return true, rec, key
     end
 
-    function SB.Pause(ply)
-        local banned, rec, key = SB.IsBanned(ply)
-        if not banned or not rec or rec.paused then return false end
+    function SB.FreezeRecord(rec, why)
+        if not istable(rec) or rec.permanent then return false end
         local left = SB.Left(rec)
-        if left == math.huge then return false end -- бессрочный бан не тикает
+        if left == math.huge then rec.permanent = true rec["until"] = 0 rec.paused = false return false end
         rec.remaining, rec.paused, rec["until"] = math.ceil(left), true, 0
-        saveBans("пауза бана: выход персонажа")
-        if GRM.Save and GRM.Save.Flush then GRM.Save.Flush("serverban.list", "пауза бана") end
+        saveBans(why or "пауза бана")
+        if GRM.Save and GRM.Save.Flush then GRM.Save.Flush("serverban.list", why or "пауза бана") end
         return true
+    end
+
+    function SB.Pause(ply)
+        local banned, rec = SB.IsBanned(ply)
+        if not banned or not rec or rec.paused then return false end
+        return SB.FreezeRecord(rec, "пауза бана: выход персонажа")
     end
 
     function SB.Resume(rec)
         if not (istable(rec) and rec.paused) then return false end
+        if rec.permanent then rec.paused = false rec["until"] = 0 return true end
         local left = tonumber(rec.remaining) or 0
-        rec.paused, rec.remaining = false, nil
-        if left >= 0 then rec["until"] = os.time() + left end
+        rec.paused = false
+        rec.remaining = math.max(0, math.ceil(left))
+        rec["until"] = os.time() + rec.remaining
         saveBans("продолжение бана: вход персонажа")
         return true
+    end
+
+    function SB.SyncClient(ply, rec)
+        if not IsValid(ply) then return end
+        rec = rec or select(2, SB.IsBanned(ply))
+        if not istable(rec) then return end
+        local left = SB.Left(rec)
+        ply:SetNWBool("GRM_ServerBanned", true)
+        ply:SetNWString("GRM_ServerBanReason", tostring(rec.reason or ""))
+        ply:SetNWInt("GRM_ServerBanUntil", (rec.paused or rec.permanent or left == math.huge)
+            and 0 or math.floor(tonumber(rec["until"]) or 0))
+        ply:SetNWInt("GRM_ServerBanLeft", left == math.huge and -1 or math.floor(left))
+        ply:SetNWInt("GRM_ServerBanSync", os.time())
     end
 
     --- Наложить визуал и ограничения. Зовётся при бане, при спавне и раз в
@@ -295,10 +340,8 @@ if SERVER then
         if ply:GetMaterial() ~= SB.Material then ply:SetMaterial(SB.Material) end
         ply:SetColor(Color(255, 60, 60, 255))
         ply:SetRenderMode(RENDERMODE_TRANSCOLOR)
-        ply:SetNWBool("GRM_ServerBanned", true)
         ply.GRM_BanCharacterKey = tostring(rec.characterKey or characterKey(ply))
-        ply:SetNWString("GRM_ServerBanReason", tostring(rec.reason or ""))
-        ply:SetNWInt("GRM_ServerBanUntil", math.floor(tonumber(rec["until"]) or 0))
+        SB.SyncClient(ply, rec)
 
         if not ply.GRM_BanReturn and istable(rec.returnPos) then
             ply.GRM_BanReturn = Vector(rec.returnPos.x, rec.returnPos.y, rec.returnPos.z)
@@ -332,6 +375,8 @@ if SERVER then
         ply:SetNWBool("GRM_ServerBanned", false)
         ply:SetNWString("GRM_ServerBanReason", "")
         ply:SetNWInt("GRM_ServerBanUntil", 0)
+        ply:SetNWInt("GRM_ServerBanLeft", 0)
+        ply:SetNWInt("GRM_ServerBanSync", 0)
         ply:SetMaterial("")
         ply:SetColor(Color(255, 255, 255, 255))
         ply:SetRenderMode(RENDERMODE_NORMAL)
@@ -618,10 +663,15 @@ if SERVER then
     hook.Add("PlayerDisconnected", "GRM_ServerBan_PauseDisconnect", function(ply)
         SB.Pause(ply)
     end)
-    hook.Add("ShutDown", "GRM_ServerBan_PauseShutdown", function()
+    local function freezeEveryone(why)
         for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do SB.Pause(ply) end
-        if GRM.Save and GRM.Save.Flush then GRM.Save.Flush("serverban.list", "пауза банов: shutdown") end
-    end)
+        for _, rec in pairs(SB.Bans) do
+            if istable(rec) and not rec.paused and not rec.permanent then SB.FreezeRecord(rec, why) end
+        end
+        if GRM.Save and GRM.Save.Flush then GRM.Save.Flush("serverban.list", why) end
+    end
+    hook.Add("ShutDown", "GRM_ServerBan_PauseShutdown", function() freezeEveryone("пауза банов: shutdown") end)
+    hook.Add("PreCleanupMap", "GRM_ServerBan_PauseCleanup", function() freezeEveryone("пауза банов: смена карты") end)
 
     hook.Add("PlayerInitialSpawn", "GRM_ServerBan_Join", function(ply)
         timer.Simple(4, function()
@@ -663,6 +713,14 @@ if SERVER then
                     if not loading then
                         SB.Apply(ply, false)
                         SB.Moan(ply)
+                        if rec and not rec.paused and not rec.permanent then
+                            rec.remaining = math.ceil(SB.Left(rec))
+                            if (rec._persistAt or 0) + 8 <= os.time() then
+                                rec._persistAt = os.time()
+                                saveBans("тик срока")
+                            end
+                            SB.SyncClient(ply, rec)
+                        end
                     end
                     if zonePos and not loading then
                         local r = zone.radius or 600
@@ -836,8 +894,18 @@ if CLIENT then
          пакетом. Раньше цифра выглядела «замороженной» между обновлениями. ]]
     local function banLeftText(lp)
         local until_ = lp:GetNWInt("GRM_ServerBanUntil", 0)
-        if until_ <= 0 then return "бессрочно", -1 end
-        local left = math.max(0, until_ - os.time())
+        local stored = lp:GetNWInt("GRM_ServerBanLeft", 0)
+        local sync = lp:GetNWInt("GRM_ServerBanSync", 0)
+        local left
+        if until_ > 0 then
+            left = math.max(0, until_ - os.time())
+        elseif stored < 0 then
+            return "бессрочно", -1
+        else
+            -- Пауза (рестарт / не тот персонаж): цифра с сервера, часы не тикают.
+            left = math.max(0, stored)
+            if sync > 0 and until_ > 0 then left = math.max(0, stored - (os.time() - sync)) end
+        end
         local m, sec = math.floor(left / 60), left % 60
         if m >= 60 then
             return ("%d ч %02d мин"):format(math.floor(m / 60), m % 60), left

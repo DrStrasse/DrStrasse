@@ -817,7 +817,8 @@ if SERVER then
                 factionDepartment = slotMember and tostring(slotMember.Department or "") or "",
                 serverBanned = serverBanned == true,
                 serverBanReason = serverBanned and tostring(banRec and banRec.reason or "") or "",
-                serverBanUntil = serverBanned and tonumber(banRec and banRec["until"] or 0) or 0 }
+                serverBanUntil = serverBanned and tonumber(banRec and banRec["until"] or 0) or 0,
+                serverBanLeft = serverBanned and (GRM.ServerBan.Left and GRM.ServerBan.Left(banRec) or 0) or 0 }
         end
         return {
             char = previewChar,

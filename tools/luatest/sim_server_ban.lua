@@ -139,6 +139,7 @@ player = { GetAll = function() return ALL end }
 ents = { FindByClass = function() return {} end }
 
 GRM = { Identity = {}, Perf = {}, Audit = { Write = function() end } }
+GRM.Identity.CharacterKey = function(ply) return IsValid(ply) and ply:SteamID64() or "" end
 GRM.Perf.Players = function() return ALL end
 local NOTIFY = {}
 GRM.Notify = function(p, text) NOTIFY[#NOTIFY + 1] = tostring(text) end
@@ -465,6 +466,38 @@ FS["grm_admin/serverban_zone.json"] = '{"version":1,"zones":{"rp_test":{"pos":{}
 SB.Zones = {}
 SB.Load()
 ok(SB.CurrentZone() == nil, "пустые координаты в файле не превращаются в точку 0,0,0")
+
+print("\n=== 10. РЕСТАРТ НЕ СЪЕДАЕТ СРОК ===")
+target.pos = Vector(1000, 1000, 0)
+SB.Ban(admin, target, 4, "Четыре минуты")
+local rec4 = SB.Bans[target:SteamID64()]
+ok(rec4 and rec4.remaining == 240, "в записи лежит remaining=240", rec4 and rec4.remaining)
+CLOCK = CLOCK + 20
+ok(SB.Left(rec4) <= 220 and SB.Left(rec4) >= 219, "в мире прошло 20 секунд", SB.Left(rec4))
+ok(SB.Pause(target) == true, "выход/рестарт ставит срок на паузу")
+ok(rec4.paused == true and rec4["until"] == 0, "until обнулён, remaining заморожен")
+local frozen = rec4.remaining
+CLOCK = CLOCK + 3 * 3600
+ok(SB.Left(rec4) == frozen, "три часа оффлайна не тикают", tostring(SB.Left(rec4)) .. " vs " .. tostring(frozen))
+SB.Bans = {}
+SB.Load()
+local loaded = SB.Bans[target:SteamID64()]
+ok(loaded ~= nil and loaded.paused == true, "после чтения с диска бан на паузе")
+ok(math.abs((loaded.remaining or 0) - frozen) <= 1, "remaining с диска тот же", loaded and loaded.remaining)
+SB.Apply(target, true)
+ok(loaded.paused == false, "вход в мир снимает паузу")
+ok(SB.Left(loaded) >= frozen - 1 and SB.Left(loaded) <= frozen, "таймер снова ~3:40, не 00:20", SB.Left(loaded))
+ok(target.nw.GRM_ServerBanLeft and target.nw.GRM_ServerBanLeft >= frozen - 1,
+    "клиенту уходит leftover", target.nw.GRM_ServerBanLeft)
+SB.Unban(admin, target:SteamID64())
+
+SB.Ban(admin, target, 4, "Краш")
+CLOCK = CLOCK + 220
+SB.Bans = {}
+SB.Load()
+local crash = SB.Bans[target:SteamID64()]
+ok(crash and (crash.remaining or 0) >= 230, "краш не оставляет 20 секунд от четырёх минут", crash and crash.remaining)
+SB.Unban(admin, target:SteamID64())
 
 print(("\nSERVER BAN: %d/%d, провалов: %d"):format(total - fails, total, fails))
 if fails > 0 then os.exit(1) end
