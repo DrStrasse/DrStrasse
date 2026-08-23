@@ -317,39 +317,7 @@ if CLIENT then
         end)
     end
 
-    -- Статус движения (центр, над полосой)
-    hook.Add("HUDPaint", "GRM_Movement_StatusHUD", function()
-        local ply = LocalPlayer()
-        if not IsValid(ply) or not ply:Alive() then return end
-        local stamina = GRM.LocalStamina or 0
-        local isRunning = ply:KeyDown(IN_SPEED)
-        local vel = ply:GetVelocity():Length2D()
-        local isMoving = vel > 50
-
-        local status = "Ходьба"
-        local color = Color(200,200,200)
-
-        if isMoving then
-            if isRunning then
-                if stamina > 0 then
-                    status = "Бег"
-                    color = Color(80,220,200)
-                else
-                    status = "Выдохся"
-                    color = Color(220,80,80)
-                end
-            else
-                status = "Ходьба"
-                color = Color(200,200,200)
-            end
-        else
-            status = "Стою"
-            color = Color(150,150,150)
-        end
-
-        local sw, sh = ScrW(), ScrH()
-        draw.SimpleText(status, "GRM_HUD_Label", sw/2, sh - 100, color, TEXT_ALIGN_CENTER, TEXT_ALIGN_BOTTOM)
-    end)
+    hook.Remove("HUDPaint", "GRM_Movement_StatusHUD")
 
     print("[GRM] Movement System (клиент) загружена")
 end

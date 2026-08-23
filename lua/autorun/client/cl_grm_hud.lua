@@ -71,7 +71,7 @@ GRM.HUD.Config = {
 
     Панель сама решает, где всё это стоит, какой ширины и в каком порядке,
     и растёт по высоте под количество полос. Порядок задаётся числом order:
-    10 здоровье, 20 броня, 30 выносливость, 40 дыхание, 50 сытость, 60 вес.
+    10 здоровье, 20 броня, 30 выносливость, 40 дыхание, 50 сытость, 55 жажда, 60 вес.
 ----------------------------------------------------------------------]]
 GRM.HUD.Bars = GRM.HUD.Bars or {}
 
@@ -520,23 +520,22 @@ local function DrawMainHUD()
     -- Не «форма с подписями», а компактный служебный монитор: каждая
     -- характеристика — самостоятельная крупная строка с цветным рейлом,
     -- заливкой и значением внутри. Читается в движении, без микротекста.
-    local pw = 310
-    local pad, rowH, gap = 12, 25, 6
-    local headerH, moneyH = 34, 56
+    local pw = 336
+    local pad, rowH, gap = 12, 26, 5
+    local headerH, moneyH = 28, 52
     local ph = headerH + pad + #rows * (rowH + gap) + moneyH + pad - gap
     ph = math.min(ph, sh - 32)
     local px, py = 16, math.max(16, sh - 16 - ph)
 
     draw.RoundedBox(8, px + 3, py + 3, pw, ph, cfg.bgShadow)
     draw.RoundedBox(8, px, py, pw, ph, cfg.bgColor)
-    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 220)
+    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 180)
     surface.DrawOutlinedRect(px, py, pw, ph, 1)
     draw.RoundedBoxEx(8, px, py, pw, headerH, cfg.panelHeader, true, true, false, false)
     draw.RoundedBox(0, px, py, 4, headerH, cfg.hpColorFull)
-    draw.SimpleText("СОСТОЯНИЕ", "GRM_HUD_Value", px + 14, py + 11, cfg.textColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    draw.SimpleText("GRM // LIVE", "GRM_HUD_Label", px + pw - 12, py + 12, cfg.labelColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 180)
-    surface.DrawRect(px + 12, py + headerH - 2, pw - 24, 2)
+    draw.SimpleText("СОСТОЯНИЕ", "GRM_HUD_Value", px + 14, py + headerH / 2, cfg.textColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    surface.SetDrawColor(cfg.lineColor.r, cfg.lineColor.g, cfg.lineColor.b, 140)
+    surface.DrawRect(px + 12, py + headerH - 1, pw - 24, 1)
 
     local x, w = px + pad, pw - pad * 2
     local y = py + headerH + pad

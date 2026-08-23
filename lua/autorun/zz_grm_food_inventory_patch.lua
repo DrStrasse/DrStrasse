@@ -131,7 +131,9 @@ local function registerFoodItemsInInventory()
         GRM.Inventory.RegisterItem(itemID, {
             type = "item",
             name = data.name or itemID,
-            desc = "Еда/напиток. Сытость: +" .. tostring(data.hungerRestore or 0) .. ", HP: +" .. tostring(data.healthRestore or 0),
+            desc = "Еда/напиток. Сытость: +" .. tostring(data.hungerRestore or 0)
+                .. ", жажда: +" .. tostring(data.thirstRestore or 0)
+                .. ", HP: +" .. tostring(data.healthRestore or 0),
             icon = data.icon or "icon16/cup.png",
             model = data.model,
             maxStack = data.maxStack or itemMaxStack,
@@ -190,15 +192,22 @@ local function canUseFoodNow(ply, data)
         hunger = GRM.Food.GetHunger(ply) or hungerMax
     end
 
+    local thirstMax = foodCfg() and foodCfg().ThirstMax or 100
+    local thirst = thirstMax
+    if GRM.Food.GetThirst then
+        thirst = GRM.Food.GetThirst(ply) or thirstMax
+    end
+
     local restoresHunger = (tonumber(data.hungerRestore) or 0) > 0 and hunger < hungerMax
+    local restoresThirst = (tonumber(data.thirstRestore) or 0) > 0 and thirst < thirstMax
     local restoresHealth = (tonumber(data.healthRestore) or 0) > 0 and ply:Health() < ply:GetMaxHealth()
 
-    return restoresHunger or restoresHealth
+    return restoresHunger or restoresThirst or restoresHealth
 end
 
 local function useFoodFromInventory(ply, slotIdx, slot, itemID, data)
     if not canUseFoodNow(ply, data) then
-        notify(ply, "[Еда] Сейчас это не нужно: сытость/здоровье уже полные.", 255, 180, 60)
+        notify(ply, "[Еда] Сейчас это не нужно: сытость, жажда и здоровье уже полные.", 255, 180, 60)
         return
     end
 
@@ -206,6 +215,11 @@ local function useFoodFromInventory(ply, slotIdx, slot, itemID, data)
         GRM.Food.RestoreHunger(ply, tonumber(data.hungerRestore) or 0)
     elseif GRM.Food.SetHunger and GRM.Food.GetHunger then
         GRM.Food.SetHunger(ply, (GRM.Food.GetHunger(ply) or 0) + (tonumber(data.hungerRestore) or 0))
+    end
+    if GRM.Food.RestoreThirst then
+        GRM.Food.RestoreThirst(ply, tonumber(data.thirstRestore) or 0)
+    elseif GRM.Food.SetThirst and GRM.Food.GetThirst then
+        GRM.Food.SetThirst(ply, (GRM.Food.GetThirst(ply) or 0) + (tonumber(data.thirstRestore) or 0))
     end
 
     local hpRestore = tonumber(data.healthRestore) or 0

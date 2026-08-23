@@ -31,6 +31,33 @@ end
 
 print("[GRM UI] lifecycle guard loaded")
 
+-- Полосы HUD регистрируются из нескольких файлов. Autorun идёт по алфавиту,
+-- поэтому RegisterBar должен жить ЗДЕСЬ (грузится первым), иначе вес и
+-- сытость тихо не попадали в панель.
+if CLIENT then
+    GRM.HUD = GRM.HUD or {}
+    GRM.HUD.Bars = GRM.HUD.Bars or {}
+    function GRM.HUD.RegisterBar(id, def)
+        id = tostring(id or "")
+        if id == "" or not istable(def) or not isfunction(def.Get) then return false end
+        def.id = id
+        def.label = tostring(def.label or id)
+        def.order = tonumber(def.order) or 100
+        GRM.HUD.Bars[id] = def
+        return true
+    end
+    function GRM.HUD.RemoveBar(id) GRM.HUD.Bars[tostring(id or "")] = nil end
+    function GRM.HUD.BarList()
+        local out = {}
+        for _, def in pairs(GRM.HUD.Bars) do out[#out + 1] = def end
+        table.sort(out, function(a, b)
+            if a.order == b.order then return tostring(a.id) < tostring(b.id) end
+            return a.order < b.order
+        end)
+        return out
+    end
+end
+
 --[[--------------------------------------------------------------------
     UTF-8 БЕЗОПАСНАЯ ОБРЕЗКА (задача 10, дефект «Дзержинског»)
 

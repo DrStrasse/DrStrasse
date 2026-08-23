@@ -138,9 +138,13 @@ function FOOD:Use(activator)
     end
 
     local hungerRestore = tonumber(data.hungerRestore) or 0
+    local thirstRestore = tonumber(data.thirstRestore) or 0
 
     if GRM.Food.RestoreHunger then
         GRM.Food.RestoreHunger(activator, hungerRestore)
+    end
+    if GRM.Food.RestoreThirst then
+        GRM.Food.RestoreThirst(activator, thirstRestore)
     end
 
     local healthRestore = tonumber(data.healthRestore) or 0
@@ -156,7 +160,8 @@ function FOOD:Use(activator)
     end
 
     activator:EmitSound("npc/barnacle/barnacle_gulp1.wav", 70, 100)
-    activator:ChatPrint("[Еда] Вы использовали: " .. (data.name or itemID) .. " (+" .. hungerRestore .. " сытости).")
+    activator:ChatPrint("[Еда] Вы использовали: " .. (data.name or itemID)
+        .. " (+" .. hungerRestore .. " сытости, +" .. thirstRestore .. " жажды).")
 
     self:Remove()
 end
@@ -449,13 +454,17 @@ end)
 timer.Simple(0, registerULXCommands)
 
 -- ============================================================
--- ЛОГИКА ГОЛОДА
+-- ЛОГИКА ГОЛОДА И ЖАЖДЫ
 -- ============================================================
 
 local hungerData = {}
+local thirstData = {}
 local nextHungerDamage = {}
 local nextHungerWarning = {}
+local nextThirstDamage = {}
+local nextThirstWarning = {}
 local SAVE_FILE = "grm_hunger.json"
+local THIRST_SAVE_FILE = "grm_thirst.json"
 
 local function getPlayerID(ply)
     if not IsValid(ply) then return nil end
@@ -482,7 +491,26 @@ local function saveHunger()
     end
 end
 
+local function loadThirst()
+    if not file.Exists(THIRST_SAVE_FILE, "DATA") then return end
+    local raw = file.Read(THIRST_SAVE_FILE, "DATA")
+    if not raw or raw == "" then return end
+    local ok, data = pcall(util.JSONToTable, raw, false, true)
+    if ok and istable(data) then thirstData = data end
+end
+
+local function saveThirst()
+    local ok, enc = pcall(util.TableToJSON, thirstData, true)
+    if ok and enc then file.Write(THIRST_SAVE_FILE, enc) end
+end
+
+local function saveVitals()
+    saveHunger()
+    saveThirst()
+end
+
 loadHunger()
+loadThirst()
 
 -- Legacy hunger records were keyed by account SteamID64. Move them to
 -- char1 once Character Core is available so the old value is not lost.
@@ -521,10 +549,24 @@ function GRM.Food.SetHunger(ply, value)
 
     local maxHunger = cfg().HungerMax or 100
     hungerData[sid] = math.Clamp(tonumber(value) or maxHunger, 0, maxHunger)
+    GRM.Food.SyncHunger(ply)
+end
 
-    net.Start("GRM_Food_Sync")
-        net.WriteFloat(hungerData[sid])
-    net.Send(ply)
+function GRM.Food.GetThirst(ply)
+    if not IsValid(ply) then return cfg().ThirstMax or 100 end
+    local sid = getPlayerID(ply)
+    if not sid then return cfg().ThirstMax or 100 end
+    if thirstData[sid] == nil then thirstData[sid] = cfg().ThirstMax or 100 end
+    return tonumber(thirstData[sid]) or (cfg().ThirstMax or 100)
+end
+
+function GRM.Food.SetThirst(ply, value)
+    if not IsValid(ply) then return end
+    local sid = getPlayerID(ply)
+    if not sid then return end
+    local maxT = cfg().ThirstMax or 100
+    thirstData[sid] = math.Clamp(tonumber(value) or maxT, 0, maxT)
+    GRM.Food.SyncHunger(ply)
 end
 
 function GRM.Food.RestoreHunger(ply, amount)
@@ -532,11 +574,17 @@ function GRM.Food.RestoreHunger(ply, amount)
     GRM.Food.SetHunger(ply, GRM.Food.GetHunger(ply) + (tonumber(amount) or 0))
 end
 
+function GRM.Food.RestoreThirst(ply, amount)
+    if not IsValid(ply) then return end
+    GRM.Food.SetThirst(ply, GRM.Food.GetThirst(ply) + (tonumber(amount) or 0))
+end
+
 function GRM.Food.SyncHunger(ply)
     if not IsValid(ply) then return end
 
     net.Start("GRM_Food_Sync")
         net.WriteFloat(GRM.Food.GetHunger(ply))
+        net.WriteFloat(GRM.Food.GetThirst(ply))
     net.Send(ply)
 end
 
@@ -548,35 +596,52 @@ timer.Create("GRM_Food_HungerTick", 1, 0, function()
     for _, ply in ipairs((GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()) do
         if IsValid(ply) then
             if GRM.ServerBan and GRM.ServerBan.PlayerBanned and GRM.ServerBan.PlayerBanned(ply) then
-                -- Отбывающий наказание не голодает: смерть от голода в
-                -- деморгане — это не наказание, а баг.
                 GRM.Food.SetHunger(ply, cfg().HungerMax or 100)
-                GRM.Food.SyncHunger(ply)
+                GRM.Food.SetThirst(ply, cfg().ThirstMax or 100)
             elseif not ply:Alive() then
                 GRM.Food.SyncHunger(ply)
             else
                 local cur = GRM.Food.GetHunger(ply)
                 local newVal = math.max(0, cur - (cfg().HungerDrainPerSecond or 0.02))
-
                 GRM.Food.SetHunger(ply, newVal)
 
-        if newVal <= 0 then
-            nextHungerDamage[ply] = nextHungerDamage[ply] or 0
+                local tcur = GRM.Food.GetThirst(ply)
+                local tnew = math.max(0, tcur - (cfg().ThirstDrainPerSecond or 0.035))
+                GRM.Food.SetThirst(ply, tnew)
 
-            if CurTime() >= nextHungerDamage[ply] then
-                nextHungerDamage[ply] = CurTime() + (cfg().HungerDamageInterval or 10)
-                ply:TakeDamage(cfg().HungerDamageAmount or 2, game.GetWorld(), game.GetWorld())
-                ply:ChatPrint("[Голод] Вы умираете от голода!")
-            end
-        end
+                if newVal <= 0 then
+                    nextHungerDamage[ply] = nextHungerDamage[ply] or 0
+                    if CurTime() >= nextHungerDamage[ply] then
+                        nextHungerDamage[ply] = CurTime() + (cfg().HungerDamageInterval or 10)
+                        ply:TakeDamage(cfg().HungerDamageAmount or 2, game.GetWorld(), game.GetWorld())
+                        ply:ChatPrint("[Голод] Вы умираете от голода!")
+                    end
+                end
+
+                if tnew <= 0 then
+                    nextThirstDamage[ply] = nextThirstDamage[ply] or 0
+                    if CurTime() >= nextThirstDamage[ply] then
+                        nextThirstDamage[ply] = CurTime() + (cfg().ThirstDamageInterval or 8)
+                        ply:TakeDamage(cfg().ThirstDamageAmount or 2, game.GetWorld(), game.GetWorld())
+                        ply:ChatPrint("[Жажда] Вы умираете от жажды!")
+                    end
+                end
 
                 local warningThreshold = (cfg().HungerMax or 100) * ((cfg().HungerWarningThreshold or 20) / 100)
                 if newVal <= warningThreshold and newVal > 0 then
                     nextHungerWarning[ply] = nextHungerWarning[ply] or 0
-
                     if CurTime() >= nextHungerWarning[ply] then
                         nextHungerWarning[ply] = CurTime() + 10
                         ply:ChatPrint("[Голод] Вы голодны! Найдите еду.")
+                    end
+                end
+
+                local tWarn = (cfg().ThirstMax or 100) * ((cfg().ThirstWarningThreshold or 20) / 100)
+                if tnew <= tWarn and tnew > 0 then
+                    nextThirstWarning[ply] = nextThirstWarning[ply] or 0
+                    if CurTime() >= nextThirstWarning[ply] then
+                        nextThirstWarning[ply] = CurTime() + 10
+                        ply:ChatPrint("[Жажда] Вы хотите пить! Найдите воду.")
                     end
                 end
             end
@@ -622,10 +687,12 @@ end)
 hook.Add("PlayerDisconnected", "GRM_Food_OnLeave", function(ply)
     nextHungerDamage[ply] = nil
     nextHungerWarning[ply] = nil
-    saveHunger()
+    nextThirstDamage[ply] = nil
+    nextThirstWarning[ply] = nil
+    saveVitals()
 end)
 
-hook.Add("ShutDown", "GRM_Food_Shutdown", saveHunger)
+hook.Add("ShutDown", "GRM_Food_Shutdown", saveVitals)
 
 -- ============================================================
 -- ОБРАБОТЧИК ПОКУПКИ
