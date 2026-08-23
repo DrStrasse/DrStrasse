@@ -151,11 +151,27 @@ if SERVER then
 
         local hasCover = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.coverBadges and GRM.Documents.Registry.coverBadges[key] and GRM.Documents.Registry.coverBadges[key].status == "Действителен"
         local coverRec = hasCover and GRM.Documents.Registry.coverBadges[key] or nil
-        local badge = GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.badges and GRM.Documents.Registry.badges[key]
-        local hasOfficial = (factionName ~= nil and (badge == nil or badge.status == "Действителен"))
+        local badge = GRM.Documents and GRM.Documents.GetOfficialBadge and GRM.Documents.GetOfficialBadge(key)
+            or (GRM.Documents and GRM.Documents.Registry and GRM.Documents.Registry.badges and GRM.Documents.Registry.badges[key])
+        local officialList = GRM.Documents and GRM.Documents.AllOfficialBadges and GRM.Documents.AllOfficialBadges(key) or (istable(badge) and { badge } or {})
+        local hasOfficial = false
+        for _, rec in ipairs(officialList) do
+            if rec.status ~= "Аннулирован / Изъят" then hasOfficial = true break end
+        end
         local hasBadgeItem=hasOwnItem("badge","badge")
         result.badgeChoices={}
-        if hasBadgeItem and hasOfficial then result.badgeChoices[#result.badgeChoices+1]={subType="official",label="Служебное: "..tostring(badge and badge.faction or factionName),number=tostring(badge and badge.number or"")} end
+        if hasBadgeItem then
+            for _, rec in ipairs(officialList) do
+                if rec.status ~= "Аннулирован / Изъят" then
+                    local tag = (rec.kind == "special" or rec.lockFaction) and "Спецслужбы" or "Служебное"
+                    result.badgeChoices[#result.badgeChoices+1]={
+                        subType="official:"..tostring(rec.faction or ""),
+                        label=tag..": "..tostring(rec.faction or factionName),
+                        number=tostring(rec.number or""),
+                    }
+                end
+            end
+        end
         local covers=GRM.SpecialService and GRM.SpecialService.ListCovers and GRM.SpecialService.ListCovers(key) or{}
         if hasBadgeItem then for _,c in ipairs(covers)do if c.status=="Действителен"then result.badgeChoices[#result.badgeChoices+1]={subType="cover:"..tostring(c.index),label="Прикрытие: "..tostring(c.label).." — "..tostring(c.fullName),number=tostring(c.number or""),active=c.active==true}end end end
         result.hasBadge = #result.badgeChoices>0

@@ -509,51 +509,143 @@ if SERVER then
     end
     DOC.EnsurePassport = ensurePassport
 
+    -- Служебные удостоверения разных организаций живут отдельно.
+    -- Перевод во фракцию больше не переписывает уже выданную ксиву
+    -- (удостоверение спецслужб остаётся своим документом).
+    local function isSpecialFactionName(name)
+        name = tostring(name or "")
+        if name == "" then return false end
+        local acc = DOC.Templates and DOC.Templates.access and DOC.Templates.access.coverDocs
+        if istable(acc) and acc[name] == true then return true end
+        local SS = GRM.SpecialService
+        if SS and SS.Get then
+            local d = SS.Get()
+            if istable(d) and istable(d.agents) and istable(d.agents.Factions) and d.agents.Factions[name] == true then
+                return true
+            end
+        end
+        local low = string.lower(name)
+        for _, pat in ipairs({ "gestapo", "гестапо", "комитет", "komitet", "спецслужб", "тайная полиция", "abwehr", "абвер", "контрразвед" }) do
+            if string.find(low, pat, 1, true) then return true end
+        end
+        return false
+    end
+    DOC.IsSpecialFactionName = isSpecialFactionName
+
+    local function badgeWalletOf(key)
+        DOC.Registry.badgeWallet = DOC.Registry.badgeWallet or {}
+        local w = DOC.Registry.badgeWallet[key]
+        if not istable(w) then w = {} DOC.Registry.badgeWallet[key] = w end
+        return w
+    end
+
+    local function badgeSame(a, b)
+        if not (istable(a) and istable(b)) then return false end
+        return tostring(a.number or "") == tostring(b.number or "")
+            and tostring(a.faction or "") == tostring(b.faction or "")
+    end
+
+    local function archiveOfficialBadge(key, rec)
+        if not istable(rec) then return end
+        local w = badgeWalletOf(key)
+        for _, old in ipairs(w) do
+            if badgeSame(old, rec) then return end
+        end
+        w[#w + 1] = tblCopy(rec)
+    end
+
+    function DOC.AllOfficialBadges(key)
+        key = tostring(key or "")
+        local out, seen = {}, {}
+        local function add(rec)
+            if not istable(rec) then return end
+            local id = tostring(rec.faction or "") .. "|" .. tostring(rec.number or "")
+            if seen[id] then return end
+            seen[id] = true
+            out[#out + 1] = rec
+        end
+        add(DOC.Registry.badges and DOC.Registry.badges[key])
+        for _, rec in ipairs(badgeWalletOf(key)) do add(rec) end
+        return out
+    end
+
+    function DOC.GetOfficialBadge(key, factionName)
+        key = tostring(key or "")
+        factionName = tostring(factionName or "")
+        local list = DOC.AllOfficialBadges(key)
+        if factionName ~= "" then
+            for _, rec in ipairs(list) do
+                if tostring(rec.faction or "") == factionName and rec.status ~= "Аннулирован / Изъят" then
+                    return rec
+                end
+            end
+        end
+        for _, rec in ipairs(list) do
+            if rec.kind == "special" or rec.lockFaction == true or isSpecialFactionName(rec.faction) then
+                if rec.status ~= "Аннулирован / Изъят" then return rec end
+            end
+        end
+        for _, rec in ipairs(list) do
+            if rec.status ~= "Аннулирован / Изъят" then return rec end
+        end
+        return list[1]
+    end
+
     -- Получение служебного удостоверения персонажа
     local function ensureBadge(ply)
         local key = getCharKey(ply)
         if key == "" then return nil end
         DOC.Registry.badges = DOC.Registry.badges or {}
         local b = DOC.Registry.badges[key]
-
         local factionName = ply:GetNWString("GRM_Faction", "")
-        if factionName == "" then return nil end
+
+        if istable(b) then
+            if b.kind == "special" or b.lockFaction == true or isSpecialFactionName(b.faction) then
+                return b
+            end
+            if factionName ~= "" and tostring(b.faction or "") ~= "" and tostring(b.faction) ~= factionName then
+                archiveOfficialBadge(key, b)
+                local kept = DOC.GetOfficialBadge(key, factionName)
+                if istable(kept) then return kept end
+                return b
+            end
+            return b
+        end
+
+        if factionName == "" then
+            return DOC.GetOfficialBadge(key)
+        end
+
+        local existing = DOC.GetOfficialBadge(key, factionName) or DOC.GetOfficialBadge(key)
+        if istable(existing) then return existing end
 
         local roleName = ply:GetNWString("GRM_Role", "")
         local deptName = ply:GetNWString("GRM_Department", "")
         if deptName == "" then deptName = "Главное Управление" end
-
         local tpl = (DOC.Templates.factions and DOC.Templates.factions[factionName]) or {}
         local pfx = tpl.prefix or (factionName:sub(1, 3):upper() .. "-")
         local sid64 = ply:SteamID64() or "0"
         local shortSid = sid64:sub(-4)
-
-        if not istable(b) then
-            b = {
-                fullName    = getPlayerRPName(ply),
-                faction     = factionName,
-                role        = roleName,
-                department  = deptName,
-                number      = pfx .. shortSid,
-                permissions = tblCopy(tpl.defaultPerms or { weapon = true, transport = true }),
-                issuedBy    = "Руководство ведомства " .. factionName,
-                issueDate   = os.date("%d.%m.%Y"),
-                validUntil  = "Бессрочно",
-                status      = "Действителен",
-                steamID64   = sid64,
-                isCover     = false,
-                created     = os.time(),
-                updated     = os.time(),
-            }
-            DOC.Registry.badges[key] = b
-            DOC.SaveRegistry("auto create badge for " .. key)
-        else
-            b.faction = factionName
-            b.role = roleName
-            if not b.department or b.department == "" or b.department == "Основной" or b.department == "—" then
-                b.department = deptName
-            end
-        end
+        b = {
+            fullName    = getPlayerRPName(ply),
+            faction     = factionName,
+            role        = roleName,
+            department  = deptName,
+            number      = pfx .. shortSid,
+            permissions = tblCopy(tpl.defaultPerms or { weapon = true, transport = true }),
+            issuedBy    = "Руководство ведомства " .. factionName,
+            issueDate   = os.date("%d.%m.%Y"),
+            validUntil  = "Бессрочно",
+            status      = "Действителен",
+            steamID64   = sid64,
+            isCover     = false,
+            kind        = isSpecialFactionName(factionName) and "special" or "official",
+            lockFaction = isSpecialFactionName(factionName) and true or nil,
+            created     = os.time(),
+            updated     = os.time(),
+        }
+        DOC.Registry.badges[key] = b
+        DOC.SaveRegistry("auto create badge for " .. key)
         return b
     end
     DOC.EnsureBadge = ensureBadge
@@ -866,8 +958,9 @@ if SERVER then
                     return
                 end
                 tpl = badgeTemplate(payload)
-            elseif subType == "official" then
-                payload = ensureBadge(ply)
+            elseif subType == "official" or string.StartWith(tostring(subType or ""), "official:") then
+                local wantFac = string.match(tostring(subType or ""), "^official:(.+)$")
+                payload = DOC.GetOfficialBadge(key, wantFac) or ensureBadge(ply)
                 if not payload then
                     if GRM.Notify then GRM.Notify(ply, "У вас нет служебного удостоверения (вы не состоите во фракции).", 255, 140, 110) end
                     return
@@ -879,7 +972,7 @@ if SERVER then
                     payload = cover
                     tpl = badgeTemplate(payload)
                 else
-                    payload = ensureBadge(ply)
+                    payload = DOC.GetOfficialBadge(key) or ensureBadge(ply)
                     if not payload then
                         if GRM.Notify then GRM.Notify(ply, "У вас нет служебного удостоверения (вы не состоите во фракции).", 255, 140, 110) end
                         return
@@ -1058,8 +1151,9 @@ if SERVER then
                 if not (istable(badge) and badge.status=="Действителен") then badge=nil end
             elseif subType == "cover" then
                 badge = DOC.Registry.coverBadges and DOC.Registry.coverBadges[key]
-            elseif subType == "official" then
-                badge = ensureBadge(ply)
+            elseif subType == "official" or string.StartWith(tostring(subType or ""), "official:") then
+                local wantFac = string.match(tostring(subType or ""), "^official:(.+)$")
+                badge = DOC.GetOfficialBadge(key, wantFac) or ensureBadge(ply)
             else
                 badge = (DOC.Registry.coverBadges and DOC.Registry.coverBadges[key] and DOC.Registry.coverBadges[key].status == "Действителен" and DOC.Registry.coverBadges[key])
                     or ensureBadge(ply)
@@ -1267,8 +1361,7 @@ if SERVER then
             GRM.Inventory.RegisterUseHandler("doc_passport_view", function(ply) sendOwnDoc(ply, "passport") return true end)
             GRM.Inventory.RegisterUseHandler("doc_badge_view", function(ply) sendOwnDoc(ply, "badge") return true end)
             GRM.Inventory.RegisterUseHandler("doc_military_view", function(ply) sendOwnDoc(ply, "military") return true end)
-            GRM.Inventory.RegisterUseHandler("doc_license_view", function(ply) sendOwnDoc(ply, "license", "civilian") return true end)
-            GRM.Inventory.RegisterUseHandler("doc_mil_license_view", function(ply) sendOwnDoc(ply, "milLicense", "military") return true end)
+            GRM.Inventory.RegisterUseHandlc(ply, "milLicense", "military") return true end)
         end
     end
     regInventoryItems()
@@ -1391,6 +1484,16 @@ if SERVER then
                 if not DOC.CanIssueBadges(ply, data.faction) then
                     if GRM.Notify then GRM.Notify(ply, "У вас нет права выдавать удостоверения этой организации!", 255, 100, 100) end
                     return
+                end
+                if isSpecialFactionName(data.faction) then
+                    data.kind = "special"
+                    data.lockFaction = true
+                else
+                    data.kind = data.kind or "official"
+                end
+                local prev = DOC.Registry.badges[targetKey]
+                if istable(prev) and not badgeSame(prev, data) then
+                    archiveOfficialBadge(targetKey, prev)
                 end
                 DOC.Registry.badges[targetKey] = data
                 DOC.SaveRegistry("issue badge " .. targetKey .. " by " .. ply:Nick())
@@ -1767,6 +1870,7 @@ if SERVER then
     local REGISTRY_LABELS = {
         passports = "паспорта",
         badges = "служебные удостоверения",
+        badgeWallet = "архив служебных удостоверений",
         coverBadges = "документы прикрытия",
         military = "военные билеты",
         licenses = "водительские права",
@@ -3940,560 +4044,5 @@ if CLIENT then
                 Color(math.min(255, c.r + 8), math.min(255, c.g + 8), math.min(255, c.b + 8)))
             local title = entCoverTitle and entCoverTitle:GetValue() or ""
             if title == "" then title = comboFac:GetValue() or "ОРГАНИЗАЦИЯ" end
-            draw.SimpleText(title, "GRMDoc_Bold", w / 2, 58, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-            draw.SimpleText("★", "GRMDoc_CoverTitle", w / 2, 100, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-            draw.SimpleText("УДОСТОВЕРЕНИЕ", "GRMDoc_Bold", w / 2, 140, foil.col, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-            draw.SimpleText(string.format("RGB %d, %d, %d", curCover.r, curCover.g, curCover.b),
-                "GRMDoc_Small", w / 2, h - 18, Color(220, 225, 235, 190), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        end
-
-        local lblPrev = vgui.Create("DLabel", facPnl)
-        lblPrev:SetPos(400, 76) lblPrev:SetText("Так корочка выглядит у игрока:") lblPrev:SetFont("GRMDoc_Bold") lblPrev:SizeToContents()
-
-        local mixer = vgui.Create("DColorMixer", facPnl)
-        mixer:SetPos(400, 322) mixer:SetSize(300, 150)
-        mixer:SetPalette(true) mixer:SetAlphaBar(false) mixer:SetWangs(true)
-        mixer.ValueChanged = function(_, col)
-            curCover = { r = math.floor(col.r), g = math.floor(col.g), b = math.floor(col.b) }
-            comboCol:SetValue(coverPresetName(curCover))
-        end
-
-        comboCol.OnSelect = function(_, _, _, data)
-            if istable(data) and data.col then
-                curCover = { r = data.col.r, g = data.col.g, b = data.col.b }
-                mixer:SetColor(Color(curCover.r, curCover.g, curCover.b))
-            end
-        end
-
-        comboFoil.OnSelect = function(_, _, _, foilId)
-            if isstring(foilId) then curFoil = foilId end
-        end
-
-        local function loadFactionSettings(fname)
-            tpl.factions = tpl.factions or {}
-            local cfg = tpl.factions[fname] or {}
-            entCoverTitle:SetText(cfg.coverTitle or fname)
-            entPrefix:SetText(cfg.prefix or (fname:sub(1, 3):upper() .. "-"))
-
-            -- ЗАПОМИНАНИЕ ЦВЕТА: показываем реально сохранённый цвет обложки
-            -- этой организации (пресет по имени либо «свой цвет RGB»).
-            local saved = istable(cfg.coverColor) and cfg.coverColor or nil
-            curCover = {
-                r = math.Clamp(math.floor(tonumber(saved and saved.r) or 18), 0, 255),
-                g = math.Clamp(math.floor(tonumber(saved and saved.g) or 32), 0, 255),
-                b = math.Clamp(math.floor(tonumber(saved and saved.b) or 60), 0, 255),
-            }
-            curFoil = DOC.FoilStyles[cfg.foilStyle or "gold"] and (cfg.foilStyle or "gold") or "gold"
-            comboCol:SetValue(coverPresetName(curCover))
-            if IsValid(mixer) then mixer:SetColor(Color(curCover.r, curCover.g, curCover.b)) end
-            comboFoil:SetValue(DOC.FoilStyles[curFoil].name)
-            comboIcon:SetValue(DOC.BadgeIcons[cfg.badgeIcon or "star"] or "★ Звезда")
-        end
-
-        -- Правки по КАЖДОЙ организации переносим в буфер шаблона сразу при
-        -- переключении: раньше «Сохранить» отправляло только ту организацию,
-        -- что была выбрана в момент нажатия, остальные правки терялись.
-        local currentFactionName = nil
-        local function commitFactionSettings()
-            if not currentFactionName or currentFactionName == "" then return end
-            tpl.factions = tpl.factions or {}
-            local cfg = tpl.factions[currentFactionName] or {}
-            cfg.coverTitle = entCoverTitle:GetText()
-            cfg.prefix = entPrefix:GetText()
-            cfg.coverColor = { r = curCover.r, g = curCover.g, b = curCover.b }
-            cfg.foilStyle = curFoil
-            local _, iconId = comboIcon:GetSelected()
-            if isstring(iconId) then cfg.badgeIcon = iconId end
-            tpl.factions[currentFactionName] = cfg
-        end
-        adminCommitFaction = commitFactionSettings
-
-        comboFac.OnSelect = function(_, _, fname)
-            commitFactionSettings()
-            currentFactionName = fname
-            loadFactionSettings(fname)
-        end
-
-        if #names > 0 then
-            currentFactionName = names[1]
-            comboFac:SetValue(names[1])
-            loadFactionSettings(names[1])
-        end
-
-        -- Применение цвета к уже выданным документам (заказ владельца):
-        -- раньше запись удостоверения хранила цвет НА МОМЕНТ ВЫДАЧИ и
-        -- перекрывала шаблон, поэтому смена цвета в /doc_admin не касалась
-        -- уже выданных корочек.
-        local applyPanel = vgui.Create("DPanel", facPnl)
-        applyPanel:SetPos(16, 470)
-        applyPanel:SetSize(680, 74)
-        applyPanel.Paint = function(_, w, h)
-            draw.RoundedBox(6, 0, 0, w, h, Color(26, 32, 44))
-            draw.SimpleText("ПРИМЕНЕНИЕ ЦВЕТА К УЖЕ ВЫДАННЫМ ДОКУМЕНТАМ", "GRMDoc_Small", 12, 10, Color(235, 195, 90))
-        end
-
-        local chkApply = vgui.Create("DCheckBoxLabel", applyPanel)
-        chkApply:SetPos(12, 32)
-        chkApply:SetText("Перекрасить служебные удостоверения этой организации")
-        chkApply:SetTextColor(Color(225, 232, 240))
-        chkApply:SizeToContents()
-        chkApply:SetValue(true)
-
-        local chkApplyCover = vgui.Create("DCheckBoxLabel", applyPanel)
-        chkApplyCover:SetPos(12, 52)
-        chkApplyCover:SetText("Включая документы прикрытия с этой легендой")
-        chkApplyCover:SetTextColor(Color(190, 200, 215))
-        chkApplyCover:SizeToContents()
-        chkApplyCover:SetValue(false)
-
-        adminApplyFlags = function()
-            return chkApply:GetChecked() == true, chkApplyCover:GetChecked() == true
-        end
-
-        tabs:AddSheet("Служебные удостоверения", facPnl, "icon16/shield.png")
-
-        -- Вкладка 6: Права доступа к Компьютеру
-        local accPnl = vgui.Create("DPanel", tabs)
-        accPnl:DockPadding(10, 10, 10, 10)
-        accPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(30, 35, 45)) end
-
-        local accScroll = vgui.Create("DScrollPanel", accPnl)
-        accScroll:Dock(FILL)
-
-        local function mkSection(title, col)
-            local lbl = vgui.Create("DLabel", accScroll)
-            lbl:Dock(TOP)
-            lbl:DockMargin(0, 10, 0, 4)
-            lbl:SetText(title)
-            lbl:SetFont("GRMDoc_Bold")
-            lbl:SetTextColor(col or Color(80, 160, 255))
-            lbl:SetTall(22)
-            return lbl
-        end
-
-        -- 1. Паспорта
-        mkSection("1. Фракции с правом оформления паспортов (Паспортный стол):", Color(245, 200, 70))
-        local passBoxes = {}
-        for _, fname in ipairs(names) do
-            local chk = vgui.Create("DCheckBoxLabel", accScroll)
-            chk:Dock(TOP) chk:DockMargin(12, 2, 0, 2)
-            chk:SetText(fname)
-            chk:SetValue(tpl.access.passports and tpl.access.passports[fname] == true)
-            passBoxes[fname] = chk
-        end
-
-        -- 2. Служебные удостоверения
-        mkSection("2. Фракции с правом выдачи служебных удостоверений (Отдел кадров):", Color(80, 160, 255))
-        local badgeBoxes = {}
-        for _, fname in ipairs(names) do
-            local chk = vgui.Create("DCheckBoxLabel", accScroll)
-            chk:Dock(TOP) chk:DockMargin(12, 2, 0, 2)
-            chk:SetText(fname)
-            chk:SetValue(tpl.access.badges and tpl.access.badges[fname] == true)
-            badgeBoxes[fname] = chk
-        end
-
-        -- 3. Военные билеты
-        mkSection("3. Фракции с правом выдачи военных билетов (Военкомат / Комендатура):", Color(120, 220, 140))
-        local milBoxes = {}
-        for _, fname in ipairs(names) do
-            local chk = vgui.Create("DCheckBoxLabel", accScroll)
-            chk:Dock(TOP) chk:DockMargin(12, 2, 0, 2)
-            chk:SetText(fname)
-            chk:SetValue(tpl.access.military and tpl.access.military[fname] == true)
-            milBoxes[fname] = chk
-        end
-
-        -- 4. Гражданские водительские права
-        mkSection("4. Фракции с правом выдачи гражданских прав (Автошкола / Дорожная Инспекция):", Color(80, 190, 240))
-        local licBoxes = {}
-        for _, fname in ipairs(names) do
-            local chk = vgui.Create("DCheckBoxLabel", accScroll)
-            chk:Dock(TOP) chk:DockMargin(12, 2, 0, 2)
-            chk:SetText(fname)
-            chk:SetValue(tpl.access.licenses and tpl.access.licenses[fname] == true)
-            licBoxes[fname] = chk
-        end
-
-        -- 5. Военные водительские права
-        mkSection("5. Фракции с правом выдачи военных прав (ВАИ / Полевая Жандармерия / ВС):", Color(100, 210, 120))
-        local milLicBoxes = {}
-        for _, fname in ipairs(names) do
-            local chk = vgui.Create("DCheckBoxLabel", accScroll)
-            chk:Dock(TOP) chk:DockMargin(12, 2, 0, 2)
-            chk:SetText(fname)
-            chk:SetValue(tpl.access.milLicenses and tpl.access.milLicenses[fname] == true)
-            milLicBoxes[fname] = chk
-        end
-
-        -- 6. Документы прикрытия
-        mkSection("6. Фракции с допуском к документам прикрытия (Спецслужбы / Контрразведка):", Color(240, 120, 50))
-        local coverBoxes = {}
-        for _, fname in ipairs(names) do
-            local chk = vgui.Create("DCheckBoxLabel", accScroll)
-            chk:Dock(TOP) chk:DockMargin(12, 2, 0, 2)
-            chk:SetText(fname)
-            chk:SetValue(tpl.access.coverDocs and tpl.access.coverDocs[fname] == true)
-            coverBoxes[fname] = chk
-        end
-
-        -- 7. Лицензии на оружие
-        mkSection("7. Фракции с правом выдачи лицензий на оружие (ОЛРР):", Color(160, 120, 60))
-        local weaponBoxes = {}
-        for _, fname in ipairs(names) do
-            local chk = vgui.Create("DCheckBoxLabel", accScroll)
-            chk:Dock(TOP) chk:DockMargin(12, 2, 0, 2)
-            chk:SetText(fname)
-            chk:SetValue(tpl.access.weaponLicenses and tpl.access.weaponLicenses[fname] == true)
-            weaponBoxes[fname] = chk
-        end
-
-        -- 8. Лицензии на бизнес
-        mkSection("8. Фракции с правом выдачи лицензий на бизнес (Экономическое управление):", Color(80, 200, 200))
-        local businessBoxes = {}
-        for _, fname in ipairs(names) do
-            local chk = vgui.Create("DCheckBoxLabel", accScroll)
-            chk:Dock(TOP) chk:DockMargin(12, 2, 0, 2)
-            chk:SetText(fname)
-            chk:SetValue(tpl.access.businessLicenses and tpl.access.businessLicenses[fname] == true)
-            businessBoxes[fname] = chk
-        end
-
-        -- 9. Медицинский компьютер госпиталя
-        mkSection("9. Фракции с доступом к медицинскому компьютеру госпиталя:", Color(90, 210, 170))
-        local medicalComputerBoxes = {}
-        for _, fname in ipairs(names) do
-            local chk = vgui.Create("DCheckBoxLabel", accScroll)
-            chk:Dock(TOP) chk:DockMargin(12, 2, 0, 2)
-            chk:SetText(fname)
-            chk:SetValue(tpl.access.medicalComputer and tpl.access.medicalComputer[fname] == true)
-            medicalComputerBoxes[fname] = chk
-        end
-
-        tabs:AddSheet("Права доступа к Компьютеру", accPnl, "icon16/key.png")
-
-        -- Кнопка сохранения
-        local btnSave = vgui.Create("DButton", frame)
-        btnSave:Dock(BOTTOM)
-        btnSave:DockMargin(16, 8, 16, 12)
-        btnSave:SetTall(36)
-        btnSave:SetText("✔ Сохранить шаблоны документов и права доступа")
-        btnSave:SetFont("GRMDoc_Bold")
-        btnSave:SetTextColor(color_white)
-        btnSave.Paint = function(s, w, h)
-            draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and Color(40, 180, 90) or Color(30, 150, 75))
-        end
-        btnSave.DoClick = function()
-            -- Шаблон мог прийти из старого файла без части разделов: тогда
-            -- первое же обращение к nil-таблице роняло весь обработчик, и
-            -- «Сохранить» визуально не делало НИЧЕГО. Нормализуем структуру.
-            for _, key in ipairs({ "passport", "military", "license", "weaponLicense",
-                "businessLicense", "militaryLicense", "fees", "factions", "access" }) do
-                if not istable(tpl[key]) then tpl[key] = {} end
-            end
-
-            if adminCommitFaction then adminCommitFaction() end
-
-            tpl.passport.stateTitle = entState:GetText()
-            tpl.passport.defaultSeries = entSeries:GetText()
-
-            local cc = string.upper(entCountry:GetText() or ""):gsub("[^A-Z]", "")
-            tpl.passport.countryCode = (#cc >= 3) and cc:sub(1, 3) or "GRM"
-            tpl.passport.defaultNationality = entNat:GetText()
-            tpl.passport.defaultBirthPlace = entBPlace:GetText()
-
-            tpl.military.stateTitle = entMilTitle:GetText()
-            tpl.military.defaultPrefix = entMilPfx:GetText()
-            tpl.military.defaultIssuer = entMilIssuer:GetText()
-
-            tpl.license.stateTitle = entLicTitle:GetText()
-            tpl.license.defaultPrefix = entLicPfx:GetText()
-            tpl.license.defaultIssuer = entLicIssuer:GetText()
-
-            tpl.weaponLicense.stateTitle = entWLicTitle:GetText()
-            tpl.weaponLicense.defaultPrefix = entWLicPfx:GetText()
-            tpl.weaponLicense.defaultIssuer = entWLicIssuer:GetText()
-
-            tpl.businessLicense.stateTitle = entBLicTitle:GetText()
-            tpl.businessLicense.defaultPrefix = entBLicPfx:GetText()
-            tpl.businessLicense.defaultIssuer = entBLicIssuer:GetText()
-
-            tpl.fees = tpl.fees or {}
-            tpl.fees.license = math.floor(tonumber(entLicFee:GetValue()) or 0)
-            tpl.fees.weaponLicense = math.floor(tonumber(entWLicFee:GetValue()) or 0)
-            tpl.fees.businessLicense = math.floor(tonumber(entBLicFee:GetValue()) or 0)
-
-            tpl.militaryLicense.stateTitle = entMilLicTitle:GetText()
-            tpl.militaryLicense.defaultPrefix = entMilLicPfx:GetText()
-            tpl.militaryLicense.defaultIssuer = entMilLicIssuer:GetText()
-
-            local curFac = comboFac:GetValue()
-            if curFac and curFac ~= "" then
-                tpl.factions = tpl.factions or {}
-                local fCfg = tpl.factions[curFac] or {}
-                fCfg.coverTitle = entCoverTitle:GetText()
-                fCfg.prefix = entPrefix:GetText()
-
-                -- Цвет берём из живого состояния панели (пресет ИЛИ палитра),
-                -- поэтому он сохраняется всегда, а не только когда в этот заход
-                -- кликнули пункт выпадающего списка.
-                fCfg.coverColor = { r = curCover.r, g = curCover.g, b = curCover.b }
-                fCfg.foilStyle = curFoil
-
-                local _, foilId = comboFoil:GetSelected()
-                if isstring(foilId) then fCfg.foilStyle = foilId end
-
-                local _, iconId = comboIcon:GetSelected()
-                if isstring(iconId) then fCfg.badgeIcon = iconId end
-
-                tpl.factions[curFac] = fCfg
-            end
-
-            tpl.access.passports = {}
-            for fn, cb in pairs(passBoxes) do if cb:GetChecked() then tpl.access.passports[fn] = true end end
-
-            tpl.access.badges = {}
-            for fn, cb in pairs(badgeBoxes) do if cb:GetChecked() then tpl.access.badges[fn] = true end end
-
-            tpl.access.military = {}
-            for fn, cb in pairs(milBoxes) do if cb:GetChecked() then tpl.access.military[fn] = true end end
-
-            tpl.access.licenses = {}
-            for fn, cb in pairs(licBoxes) do if cb:GetChecked() then tpl.access.licenses[fn] = true end end
-
-            tpl.access.milLicenses = {}
-            for fn, cb in pairs(milLicBoxes) do if cb:GetChecked() then tpl.access.milLicenses[fn] = true end end
-
-            tpl.access.weaponLicenses = {}
-            for fn, cb in pairs(weaponBoxes) do if cb:GetChecked() then tpl.access.weaponLicenses[fn] = true end end
-
-            tpl.access.businessLicenses = {}
-            for fn, cb in pairs(businessBoxes) do if cb:GetChecked() then tpl.access.businessLicenses[fn] = true end end
-
-            tpl.access.medicalComputer = {}
-            for fn, cb in pairs(medicalComputerBoxes) do if cb:GetChecked() then tpl.access.medicalComputer[fn] = true end end
-
-            tpl.access.coverDocs = {}
-            for fn, cb in pairs(coverBoxes) do if cb:GetChecked() then tpl.access.coverDocs[fn] = true end end
-
-            local applyIssued, applyCovers = false, false
-            if adminApplyFlags then applyIssued, applyCovers = adminApplyFlags() end
-            tpl._applyIssuedColors = applyIssued
-            tpl._applyIssuedCovers = applyCovers
-
-            net.Start(NET_ADMIN_SAVE)
-                net.WriteTable(tpl)
-            net.SendToServer()
-            surface.PlaySound("buttons/button15.wav")
-            frame:Close()
-        end
-    end
-
-    net.Receive(NET_ADMIN_GET, function()
-        local tpl = net.ReadTable()
-        openAdminUI(tpl)
-    end)
-
-    -- Быстрый вызов через клиентские хуки чата
-    hook.Add("PlayerSayTransform", "GRM_Doc_ClientTransform", function(ply, datapack)
-        if not istable(datapack) then return end
-        local txt = datapack[1] or ""
-        local low = string.lower(string.Trim(txt))
-
-        -- Паспорт
-        if low == "/passport" or low == "/pass" or low == "/myid" or low == "/id" or low == "/mypasport" or low == "/паспорт" or low == "/пас" then
-            net.Start(NET_OPEN_DOC)
-            net.WriteString("passport")
-            net.SendToServer()
-            datapack[1] = ""
-            datapack.SkipPlayerSay = true
-            return
-        end
-
-        if low == "/showpassport" or low == "/showpass" or low == "/showid" or low == "/показатьпаспорт" or low == "/покпас" then
-            local tr = LocalPlayer():GetEyeTrace()
-            net.Start(NET_SHOW_DOC)
-                net.WriteString("passport")
-                net.WriteEntity(tr.Entity)
-            net.SendToServer()
-            datapack[1] = ""
-            datapack.SkipPlayerSay = true
-            return
-        end
-
-        -- Удостоверение
-        if low == "/badge" or low == "/mybadge" or low == "/udost" or low == "/myudost" or low == "/ксива" or low == "/удостоверение" or low == "/удост" then
-            net.Start(NET_OPEN_DOC)
-            net.WriteString("badge")
-            net.SendToServer()
-            datapack[1] = ""
-            datapack.SkipPlayerSay = true
-            return
-        end
-
-        if low == "/showbadge" or low == "/showudost" or low == "/показатьудостоверение" or low == "/показатьксиву" or low == "/покудост" then
-            local tr = LocalPlayer():GetEyeTrace()
-            net.Start(NET_SHOW_DOC)
-                net.WriteString("badge")
-                net.WriteEntity(tr.Entity)
-            net.SendToServer()
-            datapack[1] = ""
-            datapack.SkipPlayerSay = true
-            return
-        end
-
-        -- Военный билет
-        if low == "/military" or low == "/militaryid" or low == "/milcard" or low == "/warcard" or low == "/vb" or low == "/военник" or low == "/военныйбилет" or low == "/вб" then
-            net.Start(NET_OPEN_DOC)
-            net.WriteString("military")
-            net.SendToServer()
-            datapack[1] = ""
-            datapack.SkipPlayerSay = true
-            return
-        end
-
-        if low == "/showmilitary" or low == "/showmilitaryid" or low == "/showmil" or low == "/showwarcard" or low == "/showvb" or low == "/показатьвоенник" or low == "/показатьвоенныйбилет" or low == "/поквб" then
-            local tr = LocalPlayer():GetEyeTrace()
-            net.Start(NET_SHOW_DOC)
-                net.WriteString("military")
-                net.WriteEntity(tr.Entity)
-            net.SendToServer()
-            datapack[1] = ""
-            datapack.SkipPlayerSay = true
-            return
-        end
-
-        -- Гражданские права (Дорожная Инспекция)
-        if low == "/civlicense" or low == "/civprava" or low == "/гражданскиеправа" or low == "/граждправа" then
-            net.Start(NET_OPEN_DOC)
-                net.WriteString("license")
-                net.WriteString("civilian")
-            net.SendToServer()
-            datapack[1] = ""
-            datapack.SkipPlayerSay = true
-            return
-        end
-
-        if low == "/showcivlicense" or low == "/showcivprava" or low == "/показатьгражданскиеправа" or low == "/покграждправа" then
-            local tr = LocalPlayer():GetEyeTrace()
-            net.Start(NET_SHOW_DOC)
-                net.WriteString("license")
-                net.WriteEntity(tr.Entity)
-                net.WriteString("civilian")
-            net.SendToServer()
-            datapack[1] = ""
-            datapack.SkipPlayerSay = true
-            return
-        end
-
-        -- Военные права (ВАИ)
-        if low == "/millicense" or low == "/milprava" or low == "/mallicense" or low == "/военныеправа" or low == "/ваиправа" or low == "/вуваи" or low == "/увв" or low == "/военноеву" or low == "/прававаи" or low == "/военныеводправа" then
-            net.Start(NET_OPEN_DOC)
-                net.WriteString("milLicense")
-                net.WriteString("military")
-            net.SendToServer()
-            datapack[1] = ""
-            datapack.SkipPlayerSay = true
-            return
-        end
-
-        if low == "/showmillicense" or low == "/showmilprava" or low == "/показатьваи" or low == "/показатьвоенныеправа" or low == "/покваи" or low == "/покувв" or low == "/показатьувв" or low == "/поквоенправа" then
-            local tr = LocalPlayer():GetEyeTrace()
-            net.Start(NET_SHOW_DOC)
-                net.WriteString("milLicense")
-                net.WriteEntity(tr.Entity)
-                net.WriteString("military")
-            net.SendToServer()
-            datapack[1] = ""
-            datapack.SkipPlayerSay = true
-            return
-        end
-
-        -- Общие права
-        if low == "/license" or low == "/prava" or low == "/mylicense" or low == "/driverlicense" or low == "/права" or low == "/водправа" or low == "/водительское" or low == "/ву" then
-            net.Start(NET_OPEN_DOC)
-            net.WriteString("license")
-            net.SendToServer()
-            datapack[1] = ""
-            datapack.SkipPlayerSay = true
-            return
-        end
-
-        if low == "/showlicense" or low == "/showprava" or low == "/showdriverlicense" or low == "/показатьправа" or low == "/показатьводправа" or low == "/покправа" or low == "/покву" then
-            local tr = LocalPlayer():GetEyeTrace()
-            net.Start(NET_SHOW_DOC)
-                net.WriteString("license")
-                net.WriteEntity(tr.Entity)
-            net.SendToServer()
-            datapack[1] = ""
-            datapack.SkipPlayerSay = true
-            return
-        end
-
-        -- Медкарта
-        if low == "/medcard" or low == "/mycard" or low == "/med" or low == "/медкарта" or low == "/мед" then
-            net.Start(NET_OPEN_DOC)
-            net.WriteString("medcard")
-            net.SendToServer()
-            datapack[1] = ""
-            datapack.SkipPlayerSay = true
-            return
-        end
-
-        if low == "/showmedcard" or low == "/showmed" or low == "/показатьмедкарту" or low == "/покмед" then
-            local tr = LocalPlayer():GetEyeTrace()
-            net.Start(NET_SHOW_DOC)
-                net.WriteString("medcard")
-                net.WriteEntity(tr.Entity)
-            net.SendToServer()
-            datapack[1] = ""
-            datapack.SkipPlayerSay = true
-            return
-        end
-
-        -- Админка
-        if low == "/doc_admin" or low == "/doccfg" or low == "/docadmin" or low == "/документы" or low == "/докадмин" then
-            if LocalPlayer():IsSuperAdmin() then
-                net.Start(NET_ADMIN_GET)
-                net.SendToServer()
-            end
-            datapack[1] = ""
-            datapack.SkipPlayerSay = true
-            return
-        end
-    end)
-
-    -- Консольные команды
-    concommand.Add("passport", function() net.Start(NET_OPEN_DOC) net.WriteString("passport") net.SendToServer() end)
-    concommand.Add("badge", function() net.Start(NET_OPEN_DOC) net.WriteString("badge") net.SendToServer() end)
-    concommand.Add("military", function() net.Start(NET_OPEN_DOC) net.WriteString("military") net.SendToServer() end)
-    concommand.Add("license", function() net.Start(NET_OPEN_DOC) net.WriteString("license") net.SendToServer() end)
-    concommand.Add("millicense", function() net.Start(NET_OPEN_DOC) net.WriteString("milLicense") net.WriteString("military") net.SendToServer() end)
-    concommand.Add("medcard", function() net.Start(NET_OPEN_DOC) net.WriteString("medcard") net.SendToServer() end)
-    concommand.Add("showpassport", function()
-        local tr = LocalPlayer():GetEyeTrace()
-        net.Start(NET_SHOW_DOC) net.WriteString("passport") net.WriteEntity(tr.Entity) net.SendToServer()
-    end)
-    concommand.Add("showbadge", function()
-        local tr = LocalPlayer():GetEyeTrace()
-        net.Start(NET_SHOW_DOC) net.WriteString("badge") net.WriteEntity(tr.Entity) net.SendToServer()
-    end)
-    concommand.Add("showmilitary", function()
-        local tr = LocalPlayer():GetEyeTrace()
-        net.Start(NET_SHOW_DOC) net.WriteString("military") net.WriteEntity(tr.Entity) net.SendToServer()
-    end)
-    concommand.Add("showlicense", function()
-        local tr = LocalPlayer():GetEyeTrace()
-        net.Start(NET_SHOW_DOC) net.WriteString("license") net.WriteEntity(tr.Entity) net.SendToServer()
-    end)
-    concommand.Add("showmillicense", function()
-        local tr = LocalPlayer():GetEyeTrace()
-        net.Start(NET_SHOW_DOC) net.WriteString("milLicense") net.WriteEntity(tr.Entity) net.WriteString("military") net.SendToServer()
-    end)
-    concommand.Add("showmedcard", function()
-        local tr = LocalPlayer():GetEyeTrace()
-        net.Start(NET_SHOW_DOC) net.WriteString("medcard") net.WriteEntity(tr.Entity) net.SendToServer()
-    end)
-
-    print("[GRM Documents] Core v" .. DOC.Version .. " (Client) loaded")
-end
+            draw.SimpleText(title, "GRMDoc_Bold", w / 2, 58, foil.co() or "ОРГАНИЗАЦИЯ" end
+            draw.SimpleText(title, "GRMDoc_Bold", w / 2, 58, foil.co
