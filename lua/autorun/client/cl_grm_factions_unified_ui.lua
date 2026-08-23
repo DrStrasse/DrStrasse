@@ -921,7 +921,7 @@ function UI.Open(requestedFaction, requestedTab)
 
         mkBtn(bBar, "+ Пригласить игрока", C.green, C.greenHover, function()
             local invModal = vgui.Create("DFrame")
-            invModal:SetTitle(""); invModal:SetSize(420, 270); invModal:Center(); invModal:MakePopup()
+            invModal:SetTitle(""); invModal:SetSize(420, isSA and 350 or 270); invModal:Center(); invModal:MakePopup()
             invModal.Paint = function(_, w, h)
                 draw.RoundedBox(8, 0, 0, w, h, C.bg)
                 draw.RoundedBox(8, 0, 0, w, 38, C.sidebar)
@@ -958,6 +958,32 @@ function UI.Open(requestedFaction, requestedTab)
                 firstDept = false
             end
 
+            local comboSub = vgui.Create("DComboBox", invModal)
+            comboSub:SetPos(16, 166); comboSub:SetSize(388, 28); skinCombo(comboSub)
+            local function fillSub(dept)
+                comboSub:Clear(); comboSub:AddChoice("Без подотдела", "", true)
+                for _, sub in ipairs(GRM.Factions.GetSubdepartments(fac, dept)) do
+                    comboSub:AddChoice(sub.name .. " [" .. sub.id .. "]", sub.id)
+                end
+            end
+            local _, initialDept = comboDept:GetSelected(); fillSub(initialDept)
+            comboDept.OnSelect = function(_, _, _, dept) fillSub(dept) end
+
+            if isSA then
+                local btnSelf = mkBtn(invModal, "★ Назначить себя", C.green, C.greenHover, function()
+                    local _, roleKey = comboRole:GetSelected(); local _, deptKey = comboDept:GetSelected(); local _, subKey = comboSub:GetSelected()
+                    sendAction("assignSelf", { facName, roleKey or "", deptKey or "", subKey or "", false }, refreshView)
+                    invModal:Close()
+                end)
+                btnSelf:SetPos(16, 204); btnSelf:SetSize(190, 34)
+                local btnLeader = mkBtn(invModal, "★ Сделать лидером", C.gold, C.cardHover, function()
+                    local _, deptKey = comboDept:GetSelected(); local _, subKey = comboSub:GetSelected()
+                    sendAction("assignSelf", { facName, "", deptKey or "", subKey or "", true }, refreshView)
+                    invModal:Close()
+                end)
+                btnLeader:SetPos(214, 204); btnLeader:SetSize(190, 34)
+            end
+
             local btnSend = mkBtn(invModal, "Отправить приглашение", C.accent, C.accentHover, function()
                 local _, targetSid = comboPly:GetSelected()
                 local _, roleKey = comboRole:GetSelected()
@@ -968,7 +994,7 @@ function UI.Open(requestedFaction, requestedTab)
                 sendAction("inviteMember", { isSA and facName or targetSid, isSA and targetSid or roleKey, isSA and roleKey or deptKey, isSA and deptKey or nil }, refreshView)
                 invModal:Close()
             end)
-            btnSend:SetPos(16, 190); btnSend:SetSize(388, 38)
+            btnSend:SetPos(16, isSA and 260 or 190); btnSend:SetSize(388, 38)
         end):Dock(LEFT); bBar:GetChildren()[1]:SetWide(190)
 
         mkBtn(bBar, "Изменить должность", C.cardLight, C.cardHover, function()
