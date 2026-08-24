@@ -20,7 +20,7 @@ MB.SmsCap = 40
 MB.ContactsCap = 50
 MB.NotesCap = 30
 MB.Version = "1.2.2" -- network/data compatibility
-MB.UIVersion = "3.5.0"
+MB.UIVersion = "3.6.0"
 
 MB.Tiers = {
     crappy = {
@@ -155,6 +155,7 @@ function MB.AvailableApps(tierKey)
         apps[#apps + 1] = "Биржа"
         apps[#apps + 1] = "Моя фракция"
         apps[#apps + 1] = "Форум"
+        apps[#apps + 1] = "GPS"
     end
     apps[#apps + 1] = "Такси"
     return apps
@@ -995,6 +996,7 @@ if CLIENT then
         dial={icon="icon16/telephone.png",color=Color(60,190,110)}, sms={icon="icon16/email.png",color=Color(65,145,240)},
         contacts={icon="icon16/group.png",color=Color(236,158,67)}, notes={icon="icon16/note.png",color=Color(235,198,76)},
         jobs={icon="icon16/briefcase.png",color=Color(70,174,205)},taxi={icon="icon16/car.png",color=Color(235,175,60)},fac={icon="icon16/shield.png",color=Color(202,83,91)},
+        gps={icon="icon16/map.png",color=Color(235,175,60)},
         forum={icon="icon16/comments.png",color=Color(135,105,235)}, calc={icon="icon16/calculator.png",color=Color(90,110,140)},
         power={icon="icon16/disconnect.png",color=Color(190,72,82)},
     }
@@ -1083,7 +1085,7 @@ if CLIENT then
         if t.contacts then out[#out+1] = { id="contacts", name="Контакты" } end
         if t.notes then out[#out+1] = { id="notes", name="Заметки" } end
         if t.apps then
-            out[#out+1]={id="jobs",name="Биржа"};out[#out+1]={id="fac",name="Моя фракция"};out[#out+1]={id="forum",name="Форум"}
+            out[#out+1]={id="jobs",name="Биржа"};out[#out+1]={id="fac",name="Моя фракция"};out[#out+1]={id="gps",name="GPS"};out[#out+1]={id="forum",name="Форум"}
         end
         out[#out+1] = { id="taxi", name="Такси" }
         out[#out+1] = { id="calc", name="Калькулятор" }
@@ -1170,6 +1172,7 @@ if CLIENT then
                     elseif a.id=="jobs"then setScreen("jobs");sendAct({op="jobs_query"})
                     elseif a.id=="taxi"then setScreen("taxi");sendAct({op="taxi_query"})
                     elseif a.id == "fac" then setScreen("fac"); sendAct({op="fac_query"})
+                    elseif a.id == "gps" then setScreen("gps")
                     elseif a.id == "forum" then setScreen("forum"); sendAct({op="forum_query"})
                     elseif a.id == "calc" then setScreen("calc")
                     elseif a.id == "power" then setScreen("power") end
@@ -1542,6 +1545,7 @@ if CLIENT then
         if not callControls and M.screen == "forum" then drawForumFeed(w, startY, maxY, items) return end
         if not callControls and M.screen == "forum_detail" then drawForumDetail(w, startY, maxY, items) return end
         if not callControls and M.screen == "fac" then drawFacRoster(w, startY, maxY, items) return end
+        if not callControls and M.screen == "gps" then drawGpsRoster(w, startY, maxY, items) return end
 
         if not callControls and M.screen == "home" and smartForm() then
             local cols,gap=3,10
@@ -1719,7 +1723,7 @@ if CLIENT then
                 end
 
                 local callControls = st == "ringing" or st == "dialing" or st == "call"
-                local title = ({ home="Главное меню", dial="Набор номера", sms="SMS", sms_dialog="Диалог " .. tostring(M.smsThread or ""), contacts="Контакты", contact_actions="Контакт", notes="Заметки",jobs="Биржа труда",taxi="Вызов такси",fac="Моя фракция", forum="Городской форум", forum_detail="Публикация", calc="Калькулятор", power="Телефон", deactivate_confirm="Подтверждение" })[M.screen] or M.screen
+                local title = ({ home="Главное меню", dial="Набор номера", sms="SMS", sms_dialog="Диалог " .. tostring(M.smsThread or ""), contacts="Контакты", contact_actions="Контакт", notes="Заметки",jobs="Биржа труда",taxi="Вызов такси",fac="Моя фракция", gps="GPS-метки", forum="Городской форум", forum_detail="Публикация", calc="Калькулятор", power="Телефон", deactivate_confirm="Подтверждение" })[M.screen] or M.screen
                 if st == "ringing" then title = "Управление вызовом"
                 elseif st == "dialing" then title = "Исходящий вызов"
                 elseif st == "call" then title = "Разговор" end
@@ -2018,6 +2022,119 @@ if CLIENT then
 
         -- Middle mouse confirms/selects. Different configs expose it as +attack3/mouse3.
         if bind == "+attack3" or bind == "attack3" or bind == "mouse3" or bind == "+mouse3" then
+            selectCurrent()
+            return true
+        end
+
+        -- Block weapon selector, weapon slots and all gameplay actions while phone UI is open.
+        if bind:match("^slot%d") or bind == "lastinv" or bind == "phys_swap" then return true end
+        if bind == "+attack" or bind == "+attack2" or bind == "+reload" or bind == "+use" then return true end
+        if bind == "+jump" or bind == "+duck" or bind == "+speed" or bind == "+walk" then return true end
+        if bind == "gmod_undo" or bind == "undo" or bind == "gm_showhelp" or bind == "gm_showteam" or bind == "gm_showspare1" or bind == "gm_showspare2" then return true end
+
+        -- Conservative default: if the phone is open, do not let unknown press-binds leak
+        -- into gameplay/addons. DOWN arrow or close button handles closing.
+        return true
+    end)
+    timer.Create("GRM_Mob_Tick", 1, 0, function()
+        if not M.open then return end
+        local p=lp(); if p and p.Alive and not p:Alive() then closePhone(true); return end
+        sendAct({op="ping"})
+    end)
+end
+
+
+--[[ Модуль представляется общему реестру GRM.Modules: соседи знают, что он
+     есть, а шина обновлений сама позовёт его при смене прав, состава,
+     должности или персонажа. ]]
+if GRM.Modules and GRM.Modules.Register then
+    GRM.Modules.Register("mobile", {
+        label = "Мобильная связь",
+        version = (GRM.Mobile and GRM.Mobile.Version) or "1.0.0",
+        Depends = { "access" },
+        Status = function() local n = 0 for _ in pairs(GRM.Mobile.Numbers or {}) do n = n + 1 end return ("номеров выдано: %d"):format(n) end,
+    })
+end
+   if bind == "+attack3" or bind == "attack3" or bind == "mouse3" or bind == "+mouse3" then
+            selectCurrent()
+            return true
+        end
+
+        -- Block weapon selector, weapon slots and all gameplay actions while phone UI is open.
+        if bind:match("^slot%d") or bind == "lastinv" or bind == "phys_swap" then return true end
+        if bind == "+attack" or bind == "+attack2" or bind == "+reload" or bind == "+use" then return true end
+        if bind == "+jump" or bind == "+duck" or bind == "+speed" or bind == "+walk" then return true end
+        if bind == "gmod_undo" or bind == "undo" or bind == "gm_showhelp" or bind == "gm_showteam" or bind == "gm_showspare1" or bind == "gm_showspare2" then return true end
+
+        -- Conservative default: if the phone is open, do not let unknown press-binds leak
+        -- into gameplay/addons. DOWN arrow or close button handles closing.
+        return true
+    end)
+    timer.Create("GRM_Mob_Tick", 1, 0, function()
+        if not M.open then return end
+        local p=lp(); if p and p.Alive and not p:Alive() then closePhone(true); return end
+        sendAct({op="ping"})
+    end)
+end
+
+
+--[[ Модуль представляется общему реестру GRM.Modules: соседи знают, что он
+     есть, а шина обновлений сама позовёт его при смене прав, состава,
+     должности или персонажа. ]]
+if GRM.Modules and GRM.Modules.Register then
+    GRM.Modules.Register("mobile", {
+        label = "Мобильная связь",
+        version = (GRM.Mobile and GRM.Mobile.Version) or "1.0.0",
+        Depends = { "access" },
+        Status = function() local n = 0 for _ in pairs(GRM.Mobile.Numbers or {}) do n = n + 1 end return ("номеров выдано: %d"):format(n) end,
+    })
+end
+"))
+
+        if not pressed then
+            return false
+        end
+
+        -- Mouse wheel is the only navigation channel while the phone is open.
+        if bind == "invnext" then move(1); return true end
+        if bind == "invprev" then move(-1); return true end
+
+        -- Middle mouse confirms/selects. Different configs expose it as +attack3/mouse3.
+        if bind == "+attack3" or bind == "attack3" or bind == "mouse3" or bind == "+mouse3" then
+            selectCurrent()
+            return true
+        end
+
+        -- Block weapon selector, weapon slots and all gameplay actions while phone UI is open.
+        if bind:match("^slot%d") or bind == "lastinv" or bind == "phys_swap" then return true end
+        if bind == "+attack" or bind == "+attack2" or bind == "+reload" or bind == "+use" then return true end
+        if bind == "+jump" or bind == "+duck" or bind == "+speed" or bind == "+walk" then return true end
+        if bind == "gmod_undo" or bind == "undo" or bind == "gm_showhelp" or bind == "gm_showteam" or bind == "gm_showspare1" or bind == "gm_showspare2" then return true end
+
+        -- Conservative default: if the phone is open, do not let unknown press-binds leak
+        -- into gameplay/addons. DOWN arrow or close button handles closing.
+        return true
+    end)
+    timer.Create("GRM_Mob_Tick", 1, 0, function()
+        if not M.open then return end
+        local p=lp(); if p and p.Alive and not p:Alive() then closePhone(true); return end
+        sendAct({op="ping"})
+    end)
+end
+
+
+--[[ Модуль представляется общему реестру GRM.Modules: соседи знают, что он
+     есть, а шина обновлений сама позовёт его при смене прав, состава,
+     должности или персонажа. ]]
+if GRM.Modules and GRM.Modules.Register then
+    GRM.Modules.Register("mobile", {
+        label = "Мобильная связь",
+        version = (GRM.Mobile and GRM.Mobile.Version) or "1.0.0",
+        Depends = { "access" },
+        Status = function() local n = 0 for _ in pairs(GRM.Mobile.Numbers or {}) do n = n + 1 end return ("номеров выдано: %d"):format(n) end,
+    })
+end
+   if bind == "+attack3" or bind == "attack3" or bind == "mouse3" or bind == "+mouse3" then
             selectCurrent()
             return true
         end

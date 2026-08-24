@@ -443,48 +443,55 @@ else
     hook.Add("PlayerSayTransform", "GRM_Minimap_GPSCommand", function(ply, pack)
         if ply ~= LocalPlayer() then return end
         local text = string.lower(string.Trim(pack and pack[1] or ""))
-        if text == "/gps" then pack[1] = "" return true end
-    end)
-    hook.Add("HUDPaint", "GRM_GPS_WorldMarkerHUD", function() if true then return end
-        local lp = LocalPlayer()
-        if not IsValid(lp) or not gpsTarget then return end
-        local pts = {}
-        for _, p in ipairs(personal or {}) do pts[#pts + 1] = p end
-        for _, p in ipairs(data.points or {}) do pts[#pts + 1] = p end
-        for _, point in ipairs(pts) do
-            if tostring(point.id) == tostring(gpsTarget) then
-                local target = Vector(point.pos.x, point.pos.y, point.pos.z or lp:GetPos().z)
-                local screen = target:ToScreen()
-                local distance = math.floor(lp:GetPos():Distance(target))
-                local sw, sh = ScrW(), ScrH()
-                local visible = screen.visible == true and screen.x > 0 and screen.x < sw and screen.y > 0 and screen.y < sh
-                local x, y = screen.x or sw / 2, screen.y or sh / 2
-                local radius = math.Clamp(8 + distance / 450, 9, 20)
-                if not visible then
-                    local dx, dy = x - sw / 2, y - sh / 2
-                    local len = math.max(1, math.sqrt(dx * dx + dy * dy))
-                    dx, dy = dx / len, dy / len
-                    x = math.Clamp(sw / 2 + dx * (sw / 2 - 34), 24, sw - 24)
-                    y = math.Clamp(sh / 2 + dy * (sh / 2 - 34), 24, sh - 24)
-                    surface.SetDrawColor(255, 215, 70, 255)
-                    surface.DrawPoly({ { x = x + dx * 18, y = y + dy * 18 }, { x = x - dx * 10 - dy * 10, y = y - dy * 10 + dx * 10 }, { x = x - dx * 10 + dy * 10, y = y - dy * 10 - dx * 10 } })
-                end
-                local pulse = math.sin(CurTime() * 4) * 3
-                surface.SetDrawColor(255, 215, 70, 255)
-                surface.DrawCircle(x, y, radius + pulse, 255, 215, 70, 255)
-                surface.SetDrawColor(8, 14, 23, 240)
-                surface.DrawCircle(x, y, math.max(3, radius - 4), 8, 14, 23, 240)
-                local textX = math.Clamp(x + radius + 12, 12, sw - 12)
-                local align = textX > sw - 180 and TEXT_ALIGN_RIGHT or TEXT_ALIGN_LEFT
-                draw.SimpleTextOutlined(tostring(point.name), "GRMMM_Body", textX, y - 10, color_white, align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
-                draw.SimpleTextOutlined(distance .. " юн.", "GRMMM_Small", textX, y + 10, Color(255, 215, 70), align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
-                break
-            end
-        end
+        if text == "/gps" then pack[1] = "" openGPS() return true end
     end)
 
-    -- Временные маркеры (temp): рисуются ВСЕГДА, пока не истекли (смерть спец-юнита).
-    hook.Add("HUDPaint", "GRM_GPS_TempMarkers", function() if true then return end
+    -- Кружок на экране всегда: в кадре — на точке мира, за кадром — на краю экрана.
+    -- Стрелку не рисуем: по ней нельзя понять, куда идти через карту.
+    local function projectWorldCircle(pos)
+        local sw, sh = ScrW(), ScrH()
+        local pad = 36
+        local scr = pos:ToScreen()
+        local x, y = tonumber(scr.x) or (sw / 2), tonumber(scr.y) or (sh / 2)
+        local on = (scr.visible ~= false) and x > pad and x < sw - pad and y > pad and y < sh - pad
+        if on then return x, y, true end
+        local cx, cy = sw * 0.5, sh * 0.5
+        local dx, dy = x - cx, y - cy
+        if scr.visible == false then dx, dy = -dx, -dy end
+        if math.abs(dx) < 0.001 and math.abs(dy) < 0.001 then dx = 1 end
+        local sx = (cx - pad) / math.max(0.001, math.abs(dx))
+        local sy = (cy - pad) / math.max(0.001, math.abs(dy))
+        local t = math.min(sx, sy)
+        return cx + dx * t, cy + dy * t, false
+    end
+
+    local function paintGpsCircle(point, col, rMin, rMax)
+        local lp = LocalPlayer()
+        if not (IsValid(lp) and istable(point) and istable(point.pos)) then return end
+        local target = Vector(point.pos.x, point.pos.y, point.pos.z or lp:GetPos().z)
+        local distance = math.floor(lp:GetPos():Distance(target))
+        local x, y = projectWorldCircle(target)
+        local radius = math.Clamp((rMin or 10) + distance / 450, rMin or 10, rMax or 22)
+        local pulse = math.sin(CurTime() * 4) * 3
+        surface.DrawCircle(x, y, radius + pulse, col.r, col.g, col.b, 255)
+        surface.DrawCircle(x, y, math.max(3, radius - 4), 8, 14, 23, 240)
+        surface.DrawCircle(x, y, 2, col.r, col.g, col.b, 255)
+        local sw = ScrW()
+        local textX = math.Clamp(x + radius + 12, 12, sw - 12)
+        local align = textX > sw - 180 and TEXT_ALIGN_RIGHT or TEXT_ALIGN_LEFT
+        draw.SimpleTextOutlined(tostring(point.name or "GPS"), "GRMMM_Body", textX, y - 10, color_white, align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
+        draw.SimpleTextOutlined(distance .. " юн.", "GRMMM_Small", textX, y + 10, col, align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
+    end
+
+    hook.Add("HUDPaint", "GRM_GPS_WorldMarkerHUD", function()
+        local lp = LocalPlayer()
+        if not IsValid(lp) or not gpsTarget then return end
+        local point = gpsPoint(gpsTarget)
+        if not point then return end
+        paintGpsCircle(point, Color(255, 215, 70), 9, 20)
+    end)
+
+    hook.Add("HUDPaint", "GRM_GPS_TempMarkers", function()
         local lp = LocalPlayer()
         if not IsValid(lp) then return end
         local now = CurTime()
@@ -492,31 +499,11 @@ else
             local epoch = tonumber(point and point.expiresEpoch)
             local alive = epoch and (epoch > os.time()) or ((tonumber(point and point.expires) or 0) > now)
             if point and point.temp and not reachedTemp[tostring(point.id)] and alive then
-                local target = Vector(point.pos.x, point.pos.y, point.pos.z or lp:GetPos().z)
-                local screen = target:ToScreen()
-                local distance = math.floor(lp:GetPos():Distance(target))
-                local sw, sh = ScrW(), ScrH()
-                local visible = screen.visible == true and screen.x > 0 and screen.x < sw and screen.y > 0 and screen.y < sh
-                local x, y = screen.x or sw / 2, screen.y or sh / 2
-                local radius = math.Clamp(9 + distance / 450, 10, 22)
-                if not visible then
-                    local dx, dy = x - sw / 2, y - sh / 2
-                    local len = math.max(1, math.sqrt(dx * dx + dy * dy))
-                    dx, dy = dx / len, dy / len
-                    x = math.Clamp(sw / 2 + dx * (sw / 2 - 40), 24, sw - 24)
-                    y = math.Clamp(sh / 2 + dy * (sh / 2 - 40), 24, sh - 24)
-                    surface.SetDrawColor(255, 90, 70, 255)
-                    surface.DrawPoly({ { x = x + dx * 18, y = y + dy * 18 }, { x = x - dx * 10 - dy * 10, y = y - dy * 10 + dx * 10 }, { x = x - dx * 10 + dy * 10, y = y - dy * 10 - dx * 10 } })
+                if gpsTarget and tostring(point.id) == tostring(gpsTarget) then
+                    -- активная цель уже нарисована жёлтым кружком
+                else
+                    paintGpsCircle(point, Color(255, 90, 70), 10, 22)
                 end
-                local pulse = math.sin(CurTime() * 5) * 3
-                surface.SetDrawColor(255, 90, 70, 255)
-                surface.DrawCircle(x, y, radius + pulse, 255, 90, 70, 255)
-                surface.SetDrawColor(8, 14, 23, 240)
-                surface.DrawCircle(x, y, math.max(3, radius - 4), 8, 14, 23, 240)
-                local textX = math.Clamp(x + radius + 12, 12, sw - 12)
-                local align = textX > sw - 240 and TEXT_ALIGN_RIGHT or TEXT_ALIGN_LEFT
-                draw.SimpleTextOutlined(tostring(point.name), "GRMMM_Body", textX, y - 10, Color(255, 170, 150), align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
-                draw.SimpleTextOutlined(distance .. " юн.", "GRMMM_Small", textX, y + 10, Color(255, 90, 70), align, TEXT_ALIGN_CENTER, 2, Color(8, 14, 23, 235))
             end
         end
     end)
@@ -600,29 +587,10 @@ else
         end
     end)
 
-    -- Мини-карта и GPS-HUD сняты (точки плыли). API точек остаётся для серверных меток.
-    hook.Remove("HUDPaint", "GRM_GPS_WorldMarkerHUD")
-    hook.Remove("HUDPaint", "GRM_GPS_TempMarkers")
+    -- Мини-карта/атлас сняты. Кружки GPS и временные метки остаются.
     hook.Remove("HUDPaint", "GRM_Minimap_HUD")
     hook.Remove("HUDPaint", "GRM_GPS_HUD")
-
-    hook.Add("HUDPaint", "GRM_GPS_HUD_OFF", function() -- disabled
-        local lp = LocalPlayer()
-        if not IsValid(lp) or not gpsTarget then return end
-        for _, point in ipairs(data.points or {}) do
-            if tostring(point.id) == tostring(gpsTarget) then
-                local target = Vector(point.pos.x, point.pos.y, point.pos.z or lp:GetPos().z)
-                local relative = math.rad((target - lp:GetPos()):Angle().y - lp:EyeAngles().y)
-                local dir = Vector(math.cos(relative), math.sin(relative), 0)
-                local side = Vector(-dir.y, dir.x, 0)
-                local ax, ay = ScrW() / 2, ScrH() - 105
-                surface.SetDrawColor(255, 220, 90, 255)
-                surface.DrawPoly({ { x = ax + dir.x * 22, y = ay + dir.y * 22 }, { x = ax - dir.x * 12 + side.x * 10, y = ay - dir.y * 12 + side.y * 10 }, { x = ax - dir.x * 12 - side.x * 10, y = ay - dir.y * 12 - side.y * 10 } })
-                draw.SimpleText("GPS: " .. tostring(point.name) .. "  •  " .. math.floor(lp:GetPos():Distance(target)) .. " юн.", "DermaDefaultBold", ScrW() / 2, ScrH() - 70, Color(255, 220, 90), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-                break
-            end
-        end
-    end)
+    hook.Remove("HUDPaint", "GRM_GPS_HUD_OFF")
 end
 
 
