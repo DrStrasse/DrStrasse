@@ -85,9 +85,17 @@ function T.CanManage(ply, jurisdiction, ent)
     if fName == "" then return false end
     local low = string.lower(fName)
 
-    local patterns = (jurisdiction == "military")
-        and { "feldgendarmerie", "жандарм", "военн", "комендат" }
-        or  { "ordnung", "polizei", "полиц", "порядк" }
+    local armyDesk = IsValid(ent) and ent.IsArmyDesk and ent:IsArmyDesk()
+    local patterns
+    if armyDesk then
+        -- ПК ВС: не жандармерия. «Вооружённые силы» не содержит «военн».
+        if low == "вс" or low == "vs" or low == "bundeswehr" then return true end
+        patterns = { "вооруж", "armed", "armee", "bundeswehr", "вермахт", "wehr", "army" }
+    elseif jurisdiction == "military" then
+        patterns = { "feldgendarmerie", "жандарм", "военн", "комендат" }
+    else
+        patterns = { "ordnung", "polizei", "полиц", "порядк" }
+    end
 
     for _, pat in ipairs(patterns) do
         if string.find(low, pat, 1, true) then return true end
@@ -595,41 +603,6 @@ local function legacyAct(_, ply)
     local target = net.ReadString()
     local reason = net.ReadString()
     local level  = net.ReadUInt(4)
-
-    local jur = ply.GRM_CompTerminalJur or "civil"
-    if not T.CanEdit(ply, jur) then
-        return notify(ply, "У вас нет прав на изменение базы розыска.")
-    end
-
-    local W = GRM.Wanted
-    if not W then return end
-    local key = charKey(target)
-    if key == "" then return end
-
-    if act == "add" then
-        local ok, err = W.AddCustomCharge(ply, key, {
-            id = "terminal", code = jur == "military" and "ВУ-ПР" or "УК-ПР",
-            title = reason ~= "" and reason or "Ориентировка",
-            type = "crime", jurisdiction = jur,
-            level = math.Clamp(level, 1, 5), manual = true,
-            trusted = true,
-        })
-        notify(ply, ok and "Ориентировка внесена." or tostring(err), ok and 120 or 255, ok and 220 or 120, ok and 140 or 100)
-    elseif act == "clear" then
-        local ok, err = W.Clear(ply, key, reason ~= "" and reason or "Снят с розыска", true)
-        notify(ply, ok and "Розыск снят." or tostring(err), ok and 120 or 255, ok and 220 or 120, ok and 140 or 100)
-    end
-end
-
--- Гражданский терминал (исторический канал).
-net.Receive("GRM_CompPolice_WantedAct", legacyAct)
--- Д2: у военного терминала свой канал. Раньше его клиент писал в
--- полицейский, из-за чего сообщение обрабатывалось как гражданское,
--- а util.AddNetworkString("GRM_CompMilPolice_Act") висел без приёмника.
-net.Receive("GRM_CompMilPolice_Act", legacyAct)
-
-print("[GRM CompTerminal] v" .. T.Version .. " загружен")
-ReadUInt(4)
 
     local jur = ply.GRM_CompTerminalJur or "civil"
     if not T.CanEdit(ply, jur) then

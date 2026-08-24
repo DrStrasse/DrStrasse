@@ -803,8 +803,15 @@ local function launchCard(parent, title, desc, command, col)
         draw.SimpleText(desc, "GRMAdm_Small", 14, 34, C.dim)
     end
     local b = btn(card, "ОТКРЫТЬ", col or C.accent, function()
-        if command:sub(1, 1) == "/" then
-            LocalPlayer():ConCommand('say "' .. command .. '"')
+        if command == "/doc_admin" or command == "/doccfg" or command == "/docadmin" then
+            net.Start("GRM_Doc_AdminGet")
+            net.SendToServer()
+        elseif command:sub(1, 1) == "/" then
+            if GRM.AdminHub and GRM.AdminHub.Launch then
+                GRM.AdminHub.Launch(command)
+            else
+                LocalPlayer():ConCommand("say " .. command)
+            end
         else
             RunConsoleCommand(command)
         end

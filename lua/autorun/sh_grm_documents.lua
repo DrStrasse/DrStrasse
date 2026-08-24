@@ -4208,5 +4208,22 @@ if CLIENT then
         openAdminUI(net.ReadTable() or {})
     end)
 
+    function DOC.RequestAdmin()
+        net.Start(NET_ADMIN_GET)
+        net.SendToServer()
+    end
+    concommand.Add("grm_doc_admin", function() DOC.RequestAdmin() end)
+    concommand.Add("doc_admin", function() DOC.RequestAdmin() end)
+
+    hook.Add("PlayerSayTransform", "GRM_Doc_AdminClient", function(ply, pack)
+        if ply ~= LocalPlayer() or not istable(pack) then return end
+        local low = string.lower(string.Trim(tostring(pack[1] or "")))
+        if low == "/doc_admin" or low == "/doccfg" or low == "/docadmin" or low == "/документы" or low == "/докадмин" then
+            DOC.RequestAdmin()
+            pack[1] = ""
+            pack.SkipPlayerSay = true
+        end
+    end)
+
     print("[GRM Documents] Core v" .. DOC.Version .. " (Client) loaded")
 end
