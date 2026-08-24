@@ -565,10 +565,10 @@ local function DrawMainHUD()
     end
     draw.SimpleText(rpName, "GRM_HUD_Name", hx + 64, hy + 12, cfg.textColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
     draw.SimpleText(facName, "GRM_HUD_Meta", hx + 64, hy + 34, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_TOP)
-    draw.SimpleText("НАЛИЧНЫЕ  " .. cashTxt, "GRM_HUD_Money", hx + 12, hy + 68, cfg.moneyColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    draw.SimpleText("СЧЁТ  " .. bankTxt, "GRM_HUD_Money", hx + hw - 12, hy + 68, cfg.bankColor or cfg.moneyColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-    draw.SimpleText("НАЛИЧНЫЕ", "GRM_HUD_Label", hx + 12, hy + 86, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    draw.SimpleText("СЧЁТ", "GRM_HUD_Label", hx + hw - 12, hy + 86, cfg.labelColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+    draw.SimpleText("НАЛИЧНЫЕ", "GRM_HUD_Label", hx + 12, hy + 62, cfg.labelColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    draw.SimpleText(cashTxt, "GRM_HUD_Money", hx + 12, hy + 82, cfg.moneyColor, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    draw.SimpleText("СЧЁТ", "GRM_HUD_Label", hx + hw - 12, hy + 62, cfg.labelColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+    draw.SimpleText(bankTxt, "GRM_HUD_Money", hx + hw - 12, hy + 82, cfg.bankColor or cfg.moneyColor, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
 
     local pw = 320
     local pad, rowH, gap = 10, 24, 4
