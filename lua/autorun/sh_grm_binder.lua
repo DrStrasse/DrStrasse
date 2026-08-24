@@ -78,7 +78,7 @@ end
 GRM = GRM or {}
 GRM.Binder = GRM.Binder or {}
 local BD = GRM.Binder
-BD.Version = "2.0.0"
+BD.Version = "2.1.0"
 
 BD.MaxSlots      = 40
 BD.DefaultSlots  = 20
@@ -317,7 +317,7 @@ local function normalizeSlot(row, i)
         for _, st in ipairs(row.steps) do
             if istable(st) and #slot.steps < BD.MaxSteps then
                 slot.steps[#slot.steps + 1] = {
-                    mode = (st.mode == "console") and "console" or "chat",
+                    mode = (st.mode == "console" and "console") or (st.mode == "anim" and "anim") or "chat",
                     text = tostring(st.text or ""),
                     delay = math.Clamp(tonumber(st.delay) or 0, 0, 60),
                     enabled = st.enabled ~= false,
@@ -492,6 +492,9 @@ local function runStep(step)
     if text == "" then return false end
     if step.mode == "console" then
         LocalPlayer():ConCommand(text .. "\n")
+    elseif step.mode == "anim" then
+        if GRM.Social and GRM.Social.Request then GRM.Social.Request(text)
+        else RunConsoleCommand("grm_social", text) end
     else
         sendChat(text)
     end
@@ -896,6 +899,32 @@ local function openPresetPicker(onPick)
     scroll:Dock(FILL) scroll:DockMargin(12, 52, 12, 12)
 
     local lastGroup
+    local soc = GRM.Social and GRM.Social.List
+    if istable(soc) then
+        for _, p in ipairs(soc) do
+            if p.id then
+                local hdrNeed = lastGroup ~= "Анимации"
+                if hdrNeed then
+                    lastGroup = "Анимации"
+                    local hdr = vgui.Create("DLabel", scroll)
+                    hdr:Dock(TOP) hdr:SetTall(24) hdr:DockMargin(0, 8, 0, 2)
+                    hdr:SetFont("GRMBind_Small") hdr:SetTextColor(C.acc)
+                    hdr:SetText("— АНИМАЦИИ")
+                end
+                local row = vgui.Create("DButton", scroll)
+                row:Dock(TOP) row:SetTall(40) row:DockMargin(0, 0, 0, 4) row:SetText("")
+                row.Paint = function(s, w, h)
+                    draw.RoundedBox(6, 0, 0, w, h, s:IsHovered() and C.step or C.card)
+                    draw.SimpleText(p.name or p.id, "GRMBind_Body", 12, h / 2, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                end
+                row.DoClick = function()
+                    click()
+                    onPick({ name = p.name or p.id, steps = { { mode = "anim", text = p.id, delay = 0 } } })
+                    f:Close()
+                end
+            end
+        end
+    end
     for _, preset in ipairs(BD.Presets) do
         if preset.group ~= lastGroup then
             lastGroup = preset.group
@@ -1108,7 +1137,7 @@ function BD.Open()
     hint:SetTall(60)
     hint.Paint = function(_, w, h)
         draw.RoundedBox(6, 0, 0, w, h, C.card)
-        draw.SimpleText("Шаг «в чат» уходит как обычное сообщение — работают /me, /do, /dep, /gnews, /fr, /frb. Шаг «в консоль» — команды вроде act salute.",
+        draw.SimpleText("Шаг «в чат» — /me /do /dep. «В консоль» — act salute. «АНИМ» — поза из студии, кнопка «поза…» или сцена из пресетов.",
             "GRMBind_Small", 14, 14, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         draw.SimpleText("Пауза указывается ПЕРЕД шагом; между сообщениями в чат автоматически держится минимум " .. BD.MinChatGap .. " с, чтобы антифлуд не съел строки.",
             "GRMBind_Small", 14, 30, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
@@ -1135,17 +1164,75 @@ function BD.Open()
             draw.SimpleText(idx .. ".", "GRMBind_Small", 12, h / 2, C.dim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
 
-        local modeBtn = mkBtn(row, step.mode == "console" and "КОНСОЛЬ" or "ЧАТ",
-            step.mode == "console" and C.violet or C.green, function()
-                step.mode = (step.mode == "console") and "chat" or "console"
-                BD.MarkDirty() rebuild()
-            end)
+        local modeLabel = (step.mode == "console" and "КОНСОЛЬ") or (step.mode == "anim" and "АНИМ") or "ЧАТ"
+        local modeCol = (step.mode == "console" and C.violet) or (step.mode == "anim" and C.gold) or C.green
+        local modeBtn = mkBtn(row, modeLabel, modeCol, function()
+            step.mode = (step.mode == "chat" and "console") or (step.mode == "console" and "anim") or "chat"
+            BD.MarkDirty() rebuild()
+        end)
         modeBtn:SetPos(32, 4) modeBtn:SetSize(90, 24)
 
+        local textW = (step.mode == "anim") and 400 or 520
         local text = mkEntry(row,
-            step.mode == "console" and "act salute" or "/me поправляет фуражку",
+            (step.mode == "console" and "act salute") or (step.mode == "anim" and "id позы из студии") or "/me поправляет фуражку",
             step.text, function(v) step.text = v BD.MarkDirty() end)
-        text:SetPos(128, 4) text:SetSize(520, 24)
+        text:SetPos(128, 4) text:SetSize(textW, 24)
+
+        if step.mode == "anim" then
+            local pick = mkBtn(row, "поза…", C.gold, function()
+                local pf = vgui.Create("DFrame")
+                pf:SetSize(360, 420) pf:Center() pf:MakePopup() pf:SetTitle("")
+                pf.Paint = function(_, w, h)
+                    draw.RoundedBox(7, 0, 0, w, h, C.bg)
+                    draw.SimpleText("ПОЗА В СЛОТ", "GRMBind_Head", 14, 18, C.gold, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                end
+                local sc = vgui.Create("DScrollPanel", pf)
+                sc:Dock(FILL) sc:DockMargin(10, 40, 10, 10)
+                local last
+                local poses = (GRM.Social and GRM.Social.List) or {}
+                local cats = (GRM.Social and GRM.Social.Categories and GRM.Social.Categories()) or {}
+                local byCat = {}
+                for _, p in ipairs(poses) do
+                    local c = tostring(p.cat or "general")
+                    byCat[c] = byCat[c] or {}
+                    byCat[c][#byCat[c] + 1] = p
+                end
+                local function addHdr(title)
+                    local hdr = vgui.Create("DLabel", sc)
+                    hdr:Dock(TOP) hdr:SetTall(20) hdr:SetFont("GRMBind_Small") hdr:SetTextColor(C.acc)
+                    hdr:SetText(string.upper(title or ""))
+                end
+                if #cats == 0 then addHdr("Общее") end
+                local function dump(list)
+                    for _, p in ipairs(list or {}) do
+                        local b = vgui.Create("DButton", sc)
+                        b:Dock(TOP) b:SetTall(28) b:DockMargin(0, 0, 0, 3) b:SetText("")
+                        b.Paint = function(s, w, h)
+                            draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and C.acc or C.card)
+                            draw.SimpleText(p.name or p.id, "GRMBind_Body", 10, h / 2, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+                        end
+                        b.DoClick = function()
+                            step.text = p.id
+                            BD.MarkDirty()
+                            pf:Close()
+                            rebuild()
+                        end
+                    end
+                end
+                if #cats > 0 then
+                    for _, cat in ipairs(cats) do
+                        addHdr(cat.name)
+                        dump(byCat[cat.id])
+                    end
+                else
+                    dump(poses)
+                end
+                local stop = vgui.Create("DButton", sc)
+                stop:Dock(TOP) stop:SetTall(26) stop:SetText("снять позу (stop)")
+                stop.DoClick = function() step.text = "stop" BD.MarkDirty() pf:Close() rebuild() end
+            end)
+            pick:SetPos(534, 4) pick:SetSize(114, 24)
+        end
 
         local delayLbl = vgui.Create("DLabel", row)
         delayLbl:SetPos(656, 6) delayLbl:SetSize(50, 20)

@@ -27,15 +27,28 @@ if SERVER then
     S.Catalog = S.Catalog or {}
 
     function S.LoadCatalog()
-        if not file.Exists(S.StudioFile, "DATA") then S.Catalog = {} return end
+        if not file.Exists(S.StudioFile, "DATA") then
+            S.Catalog = {}
+            S.CatList = { { id = "general", name = "Общее" }, { id = "docs", name = "Документы" } }
+            return
+        end
         local t = jsonT(file.Read(S.StudioFile, "DATA") or "")
-        S.Catalog = (istable(t) and istable(t.poses)) and t.poses or (istable(t) and t or {})
-        if S.ApplyCatalog then S.ApplyCatalog(S.Catalog) end
+        if istable(t) and istable(t.poses) then
+            S.Catalog = t.poses
+            S.CatList = istable(t.cats) and t.cats or {}
+        else
+            S.Catalog = istable(t) and t or {}
+            S.CatList = {}
+        end
+        if #(S.CatList or {}) == 0 then
+            S.CatList = { { id = "general", name = "Общее" }, { id = "docs", name = "Документы" } }
+        end
+        if S.ApplyCatalog then S.ApplyCatalog(S.Catalog, S.CatList) end
     end
 
     function S.SaveCatalog()
         local fn = function()
-            local ok, txt = pcall(util.TableToJSON, { poses = S.Catalog or {} }, false)
+            local ok, txt = pcall(util.TableToJSON, { poses = S.Catalog or {}, cats = S.CatList or {} }, false)
             if ok and txt then file.Write(S.StudioFile, txt) end
         end
         if GRM.Perf and GRM.Perf.Coalesce then GRM.Perf.Coalesce("grm_socstudio_save", 0.4, fn) else fn() end
@@ -43,7 +56,7 @@ if SERVER then
 
     function S.SyncCatalog(ply)
         net.Start("GRM_SocStudio_Sync")
-        net.WriteTable(S.Catalog or {})
+        net.WriteTable({ poses = S.Catalog or {}, cats = S.CatList or {} })
         if IsValid(ply) then net.Send(ply) else net.Broadcast() end
     end
 
@@ -105,6 +118,20 @@ if SERVER then
             rec.sequence = tostring(rec.sequence or "")
             rec.bones = istable(rec.bones) and rec.bones or {}
             rec.prop = tostring(rec.prop or "")
+            rec.cat = slug(rec.cat or rec.catName or "general")
+            rec.catName = string.sub(string.Trim(tostring(rec.catName or rec.cat)), 1, 32)
+            S.CatList = S.CatList or {}
+            local haveCat
+            for i = 1, #S.CatList do
+                if S.CatList[i].id == rec.cat then
+                    if rec.catName ~= "" then S.CatList[i].name = rec.catName end
+                    haveCat = true
+                    break
+                end
+            end
+            if not haveCat then
+                S.CatList[#S.CatList + 1] = { id = rec.cat, name = rec.catName ~= "" and rec.catName or rec.cat }
+            end
             local found
             for i = 1, #(S.Catalog or {}) do
                 if S.Catalog[i].id == rec.id then S.Catalog[i] = rec found = true break end
@@ -124,6 +151,17 @@ if SERVER then
             for i = #(S.Catalog or {}), 1, -1 do
                 if S.Catalog[i].id == id then table.remove(S.Catalog, i) end
             end
+            S.SaveCatalog()
+            S.SyncCatalog()
+            return
+        end
+        if op == "addcat" then
+            local name = string.sub(string.Trim(tostring(net.ReadString() or "")), 1, 32)
+            if name == "" then return end
+            local id = slug(name)
+            S.CatList = S.CatList or {}
+            for i = 1, #S.CatList do if S.CatList[i].id == id then return end end
+            S.CatList[#S.CatList + 1] = { id = id, name = name }
             S.SaveCatalog()
             S.SyncCatalog()
             return
@@ -485,15 +523,40 @@ local function openStudio()
     local chkW = vgui.Create("DCheckBoxLabel", left)
     chkW:SetPos(200, 40) chkW:SetText("Ходьба") chkW:SetValue(1) chkW:SetTextColor(color_white)
 
+    local catBox = vgui.Create("DComboBox", left)
+    catBox:SetPos(10, 68) catBox:SetSize(168, 24)
+    catBox:SetValue("Общее")
+    function ST.rebuildCats()
+        if not IsValid(catBox) then return end
+        local keep = catBox:GetOptionData(catBox:GetSelectedID() or 0) or "general"
+        catBox:Clear()
+        local cats = ST.cats or (GRM.Social and GRM.Social.CatList) or {}
+        if #cats == 0 then cats = { { id = "general", name = "Общее" } } end
+        local sel = false
+        for _, c in ipairs(cats) do
+            local on = c.id == keep
+            catBox:AddChoice(c.name or c.id, c.id, on)
+            if on then sel = true end
+        end
+        if not sel then catBox:AddChoice("Общее", "general", true) end
+    end
+    ST.rebuildCats()
+    local catNew = vgui.Create("DTextEntry", left)
+    catNew:SetPos(182, 68) catNew:SetSize(54, 24) catNew:SetPlaceholderText("+кат")
+    catNew.OnEnter = function(s)
+        local n = string.Trim(s:GetValue() or "")
+        if n ~= "" then sendAct("addcat", n) s:SetText("") end
+    end
+
     local stance = vgui.Create("DComboBox", left)
-    stance:SetPos(10, 68) stance:SetSize(126, 24)
+    stance:SetPos(10, 96) stance:SetSize(126, 24)
     stance:AddChoice("T-pose", "tpose", true)
     stance:AddChoice("Стойка", "idle")
     stance:AddChoice("Присед", "crouch")
     stance.OnSelect = function(_, _, _, v) sendAct("stance", v or "tpose") end
 
     local seq = vgui.Create("DComboBox", left)
-    seq:SetPos(142, 68) seq:SetSize(128, 24)
+    seq:SetPos(142, 96) seq:SetSize(128, 24)
     seq:SetValue("sequence")
     seq:AddChoice("(нет)", "", true)
     if IsValid(lp) and lp.GetSequenceList then
@@ -508,14 +571,15 @@ local function openStudio()
     seq.OnSelect = function(_, _, _, v) sendAct("seq", v or "") end
 
     local list = vgui.Create("DListView", left)
-    list:SetPos(10, 100) list:SetSize(260, 180)
+    list:SetPos(10, 128) list:SetSize(260, 160)
     list:AddColumn("Сохранённые позы")
     list:SetMultiSelect(false)
     function ST.rebuildList()
         if not IsValid(list) then return end
         list:Clear()
         for _, p in ipairs(ST.catalog or {}) do
-            local line = list:AddLine((p.players ~= false and "● " or "○ ") .. (p.name or p.id))
+            local cat = p.catName or p.cat or "общее"
+            local line = list:AddLine((p.players ~= false and "● " or "○ ") .. (p.name or p.id) .. "  [" .. tostring(cat) .. "]")
             line._id = p.id
         end
     end
@@ -529,6 +593,13 @@ local function openStudio()
                 chkP:SetValue(p.players ~= false)
                 chkC:SetValue(p.crouch == true)
                 chkW:SetValue(p.walk ~= false)
+                if IsValid(catBox) then
+                    for i = 1, 48 do
+                        local d = catBox:GetOptionData(i)
+                        if not d then break end
+                        if d == (p.cat or "general") then catBox:ChooseOptionID(i) break end
+                    end
+                end
                 ST.bones = {}
                 for bn, rec in pairs(p.bones or {}) do
                     if isangle(rec) then
@@ -551,7 +622,7 @@ local function openStudio()
     end
 
     local bonesc = vgui.Create("DScrollPanel", left)
-    bonesc:SetPos(10, 288) bonesc:SetSize(260, ScrH() - 430)
+    bonesc:SetPos(10, 296) bonesc:SetSize(260, ScrH() - 438)
     for _, n in ipairs(names) do
         local b = vgui.Create("DButton", bonesc)
         b:Dock(TOP) b:SetTall(20) b:DockMargin(0, 0, 0, 1)

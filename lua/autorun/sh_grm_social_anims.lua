@@ -4,7 +4,8 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Social = GRM.Social or {}
 local S = GRM.Social
-S.Version = "1.0.0"
+S.Version = "1.1.0"
+S.CatList = S.CatList or { { id = "general", name = "Общее" } }
 
 -- Поза трубки: не в радиальном меню, ставит модуль телефона.
 S.PhonePose = {
@@ -22,6 +23,7 @@ S.List = {
     {
         id = "hands",
         name = "Руки вверх",
+        cat = "general",
         hold = true,
         walk = true,
         bones = {
@@ -36,6 +38,7 @@ S.List = {
     {
         id = "back",
         name = "Руки за спиной",
+        cat = "general",
         hold = true,
         walk = true,
         bones = {
@@ -50,6 +53,7 @@ S.List = {
     {
         id = "kneel",
         name = "Руки вверх, на коленях",
+        cat = "general",
         hold = true,
         crouch = true,
         walk = false,
@@ -65,6 +69,7 @@ S.List = {
     {
         id = "docs",
         name = "Рассматривать документы",
+        cat = "docs",
         hold = true,
         walk = true,
         prop = "models/props_lab/clipboard.mdl",
@@ -205,7 +210,7 @@ if SERVER then
     hook.Add("PlayerSay", "GRM_Soc_Chat", function(ply, text)
         local t = string.lower(string.Trim(tostring(text or "")))
         if t == "/anim" or t == "/аним" or t == "/анимации" or t == "/social" then
-            if GRM.Notify then GRM.Notify(ply, "Соц.анимации: удержите клавишу из F4 → Настройки.", 180, 210, 240) end
+            if GRM.Notify then GRM.Notify(ply, "Соц.анимации: клавиша из F4 → Настройки. Позы также в /binder как шаг АНИМ.", 180, 210, 240) end
             return ""
         end
         if t == "/animstop" or t == "/стоппоза" then
@@ -353,9 +358,10 @@ local function sendPlay(id)
     net.SendToServer()
 end
 
+S.Request = sendPlay
 S.Open = S.Open
 S.RadialOpen = false
-S.RadialPick = 0
+S._menuCat = "general"
 
 local function inputBusy()
     if gui.IsGameUIVisible() or gui.IsConsoleVisible() then return true end
@@ -369,165 +375,143 @@ local function keyNum()
     return math.Clamp(math.floor(GetConVarNumber("grm_cl_social_key") or 18), 0, 159)
 end
 
-function S.OpenRadial()
-    if S.RadialOpen then return end
+function S.CloseMenu()
+    S.RadialOpen = false
+    if IsValid(S._menu) then S._menu:Remove() end
+    S._menu = nil
+    gui.EnableScreenClicker(false)
+end
+
+function S.OpenMenu()
+    if IsValid(S._menu) then S._menu:MakePopup() return end
+    local cats = S.Categories()
+    local have
+    for i = 1, #cats do if cats[i].id == S._menuCat then have = true break end end
+    if not have then S._menuCat = cats[1] and cats[1].id or "general" end
+
+    local f = vgui.Create("DFrame")
+    S._menu = f
     S.RadialOpen = true
-    S.RadialPick = 0
-    S.RadialAnim = {}
-    gui.EnableScreenClicker(true)
+    f:SetTitle("")
+    f:SetSize(460, 420)
+    f:Center()
+    f:MakePopup()
+    f:ShowCloseButton(false)
+    f:SetKeyboardInputEnabled(false)
+    f.Paint = function(_, w, h)
+        draw.RoundedBox(8, 0, 0, w, h, Color(16, 20, 28, 252))
+        draw.RoundedBox(8, 0, 0, w, 40, Color(12, 15, 22, 255))
+        draw.SimpleText("СОЦ. АНИМАЦИИ", "GRMSoc_Head", 14, 20, Color(245, 195, 65), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        local cur = LocalPlayer():GetNWString("GRM_SocAnim", "")
+        local mine = S.ByID(cur)
+        if mine then
+            draw.SimpleText("сейчас: " .. mine.name, "GRMSoc_Sm", w - 48, 20, Color(90, 200, 120), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        end
+    end
+    f.OnRemove = function() S.RadialOpen = false S._menu = nil end
+
+    local x = vgui.Create("DButton", f)
+    x:SetPos(426, 8) x:SetSize(24, 24) x:SetText("✕")
+    x:SetTextColor(Color(200, 210, 220))
+    x.Paint = function(s, w, h) if s:IsHovered() then draw.RoundedBox(4, 0, 0, w, h, Color(180, 60, 60)) end end
+    x.DoClick = function() S.CloseMenu() end
+
+    local tabs = vgui.Create("DHorizontalScroller", f)
+    tabs:SetPos(10, 46) tabs:SetSize(440, 30)
+    tabs:SetOverlap(-4)
+
+    local grid = vgui.Create("DScrollPanel", f)
+    grid:SetPos(10, 82) grid:SetSize(440, 292)
+
+    local function fill()
+        grid:Clear()
+        local items = S.InCat(S._menuCat)
+        local col, bw, bh, gap = 2, 210, 36, 8
+        for i, def in ipairs(items) do
+            local r = math.floor((i - 1) / col)
+            local c = (i - 1) % col
+            local b = vgui.Create("DButton", grid)
+            b:SetPos(c * (bw + gap), r * (bh + gap))
+            b:SetSize(bw, bh)
+            b:SetText(def.name)
+            b:SetFont("GRMSoc_Body")
+            b:SetTextColor(Color(240, 244, 250))
+            b.Paint = function(s, w, h)
+                local on = LocalPlayer():GetNWString("GRM_SocAnim", "") == def.id
+                local bg = on and Color(50, 130, 90) or (s:IsHovered() and Color(55, 120, 210) or Color(32, 40, 54))
+                draw.RoundedBox(5, 0, 0, w, h, bg)
+            end
+            b.DoClick = function()
+                if surface and surface.PlaySound then surface.PlaySound("common/wpn_select.wav") end
+                sendPlay(def.id)
+                S.CloseMenu()
+            end
+        end
+        if #items == 0 then
+            local empty = vgui.Create("DLabel", grid)
+            empty:SetPos(8, 8) empty:SetSize(400, 24)
+            empty:SetText("В этой категории нет поз. Добавьте в /animstudio.")
+            empty:SetTextColor(Color(160, 175, 190))
+        end
+    end
+
+    for _, cat in ipairs(cats) do
+        local b = vgui.Create("DButton", tabs)
+        b:SetSize(math.max(88, utf8 and utf8.len(cat.name) and (#cat.name * 8 + 24) or (#cat.name * 8 + 24)), 28)
+        b:SetText(cat.name)
+        b:SetFont("GRMSoc_Sm")
+        b:SetTextColor(Color(240, 244, 250))
+        b.Paint = function(s, w, h)
+            draw.RoundedBox(4, 0, 0, w, h, S._menuCat == cat.id and Color(65, 145, 235) or Color(36, 44, 58))
+        end
+        b.DoClick = function() S._menuCat = cat.id fill() end
+        tabs:AddPanel(b)
+    end
+    fill()
+
+    local stop = vgui.Create("DButton", f)
+    stop:SetPos(10, 380) stop:SetSize(216, 30) stop:SetText("Снять позу")
+    stop:SetTextColor(Color(240, 244, 250))
+    stop.Paint = function(s, w, h) draw.RoundedBox(5, 0, 0, w, h, s:IsHovered() and Color(180, 80, 70) or Color(140, 60, 55)) end
+    stop.DoClick = function() sendPlay("stop") S.CloseMenu() end
+    local hint = vgui.Create("DLabel", f)
+    hint:SetPos(236, 384) hint:SetSize(210, 22)
+    hint:SetText("ПКМ / ✕ — закрыть")
+    hint:SetTextColor(Color(150, 165, 180))
     if surface and surface.PlaySound then surface.PlaySound("common/wpn_hudon.wav") end
 end
 
-function S.CloseRadial(execute)
-    if not S.RadialOpen then return end
-    S.RadialOpen = false
-    S._fromCtx = false
-    timer.Remove("GRM_Soc_CtxHold")
-    gui.EnableScreenClicker(false)
-    local pick = S.RadialPick
-    S.RadialPick = 0
-    if execute and pick > 0 and S.List[pick] then
-        if surface and surface.PlaySound then surface.PlaySound("common/wpn_select.wav") end
-        sendPlay(S.List[pick].id)
-        return
-    end
-    if surface and surface.PlaySound then surface.PlaySound("common/wpn_hudoff.wav") end
-end
+function S.OpenRadial() S.OpenMenu() end
+function S.CloseRadial() S.CloseMenu() end
 
 hook.Add("PlayerButtonDown", "GRM_Soc_Key", function(ply, key)
     if ply ~= LocalPlayer() then return end
-    if S.RadialOpen then
-        if key == MOUSE_LEFT then S.CloseRadial(true) return end
-        if key == MOUSE_RIGHT then S.CloseRadial(false) return end
+    if IsValid(S._menu) then
+        if key == MOUSE_RIGHT or key == KEY_ESCAPE then S.CloseMenu() return end
     end
     if key ~= keyNum() or key <= 0 then return end
     if inputBusy() then return end
-    S.OpenRadial()
+    if IsValid(S._menu) then S.CloseMenu() else S.OpenMenu() end
 end)
 
-hook.Add("PlayerButtonUp", "GRM_Soc_KeyUp", function(ply, key)
-    if ply ~= LocalPlayer() then return end
-    if key ~= keyNum() then return end
-    if S.RadialOpen then S.CloseRadial(false) end
-end)
-
-hook.Add("StartCommand", "GRM_Soc_RadialFreeze", function(ply, cmd)
-    if not S.RadialOpen then return end
+hook.Add("StartCommand", "GRM_Soc_MenuFreeze", function(ply, cmd)
+    if not IsValid(S._menu) then return end
     if ply ~= LocalPlayer() then return end
     cmd:ClearMovement()
-    cmd:ClearButtons()
-end)
-
-hook.Add("Think", "GRM_Soc_RadialGuard", function()
-    if not S.RadialOpen then return end
-    local k = keyNum()
-    if k <= 0 then S.CloseRadial(false) return end
-    if not input.IsKeyDown(k) and not input.IsMouseDown(k) and not S._fromCtx then
-        S.CloseRadial(false)
-    end
-end)
-
-hook.Add("HUDPaint", "GRM_Soc_Radial", function()
-    if not S.RadialOpen then return end
-    local count = #S.List
-    local sw, sh = ScrW(), ScrH()
-    local cx, cy = sw / 2, sh / 2
-    local outer = math.min(sw, sh) * 0.26
-    local inner = outer * 0.40
-    local mx, my = gui.MousePos()
-    if mx == 0 and my == 0 then mx, my = cx, cy end
-    local dx, dy = mx - cx, my - cy
-    local pick = 0
-    if (dx * dx + dy * dy) >= (inner * inner) then
-        local ang = math.deg(math.atan2(dx, -dy))
-        if ang < 0 then ang = ang + 360 end
-        pick = math.floor((ang + (180 / count)) / (360 / count)) + 1
-        if pick > count then pick = 1 end
-    end
-    if pick ~= S.RadialPick and pick > 0 and surface and surface.PlaySound then
-        surface.PlaySound("common/wpn_moveselect.wav")
-    end
-    S.RadialPick = pick
-    S.RadialAnim = S.RadialAnim or {}
-    local ft = math.min(FrameTime() * 9, 1)
-    for i = 1, count do
-        local target = (pick == i) and 1 or 0
-        S.RadialAnim[i] = (S.RadialAnim[i] or 0) + (target - (S.RadialAnim[i] or 0)) * ft
-    end
-    surface.SetDrawColor(0, 0, 0, 160)
-    surface.DrawRect(0, 0, sw, sh)
-    local step = 360 / count
-    for i, def in ipairs(S.List) do
-        local anim = S.RadialAnim[i] or 0
-        local startAng = (i - 1) * step - step / 2 - 90
-        local segs = math.max(8, math.floor(step / 3))
-        local r1 = outer + 14 * anim
-        local r0 = inner - 3 * anim
-        local gap = math.rad(1.4)
-        local poly = {}
-        for s2 = 0, segs do
-            local a = math.rad(startAng) + gap + (math.rad(step) - gap * 2) * (s2 / segs)
-            poly[#poly + 1] = { x = cx + math.cos(a) * r1, y = cy + math.sin(a) * r1 }
-        end
-        for s2 = segs, 0, -1 do
-            local a = math.rad(startAng) + gap + (math.rad(step) - gap * 2) * (s2 / segs)
-            poly[#poly + 1] = { x = cx + math.cos(a) * r0, y = cy + math.sin(a) * r0 }
-        end
-        draw.NoTexture()
-        surface.SetDrawColor(Lerp(anim, 28, 70), Lerp(anim, 36, 150), Lerp(anim, 48, 235), 230)
-        surface.DrawPoly(poly)
-        local midA = math.rad(startAng + step / 2)
-        local tr = (r0 + r1) / 2
-        draw.SimpleTextOutlined(def.name, "GRMSoc_Body", cx + math.cos(midA) * tr, cy + math.sin(midA) * tr,
-            color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 2, Color(8, 12, 18, 230))
-    end
-    draw.SimpleText("СОЦ. АНИМАЦИИ", "GRMSoc_Head", cx, cy - 14, Color(245, 195, 65), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-    local cur = LocalPlayer():GetNWString("GRM_SocAnim", "")
-    local hint = (pick > 0) and "ЛКМ — выбрать" or (cur ~= "" and "повтор позы снимет её" or "наведите сектор")
-    draw.SimpleText(hint, "GRMSoc_Sm", cx, cy + 10, Color(180, 195, 210), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-    local mine = S.ByID(cur)
-    if mine then
-        draw.SimpleText("сейчас: " .. mine.name, "GRMSoc_Sm", cx, cy + 26, Color(90, 200, 120), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-    end
+    cmd:RemoveKey(IN_ATTACK)
+    cmd:RemoveKey(IN_ATTACK2)
 end)
 
 function S.OpenPicker()
-    if IsValid(S._picker) then S._picker:Remove() end
-    local f = vgui.Create("DFrame")
-    S._picker = f
-    f:SetTitle("")
-    f:SetSize(320, 250)
-    f:Center()
-    f:MakePopup()
-    f:ShowCloseButton(true)
-    f.Paint = function(_, w, h)
-        draw.RoundedBox(8, 0, 0, w, h, Color(16, 20, 28, 250))
-        draw.SimpleText("Соц. анимации", "GRMSoc_Head", 14, 18, Color(245, 195, 65), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    end
-    local y = 42
-    for _, def in ipairs(S.List) do
-        local b = vgui.Create("DButton", f)
-        b:SetPos(16, y) b:SetSize(288, 36) b:SetText(def.name)
-        b:SetFont("GRMSoc_Body")
-        b.DoClick = function() sendPlay(def.id) if IsValid(f) then f:Close() end end
-        y = y + 42
-    end
-    local stop = vgui.Create("DButton", f)
-    stop:SetPos(16, y) stop:SetSize(288, 32) stop:SetText("Снять позу")
-    stop.DoClick = function() sendPlay("stop") if IsValid(f) then f:Close() end end
+    S.OpenMenu()
 end
 
 function S.OpenFromContext()
-    S.OpenPicker()
+    S.OpenMenu()
 end
 
 function S._OpenFromContextLegacy()
-    S._fromCtx = true
-    S.OpenRadial()
-    timer.Create("GRM_Soc_CtxHold", 8, 1, function()
-        S._fromCtx = false
-        if S.RadialOpen then S.CloseRadial(false) end
-    end)
+    S.OpenMenu()
 end
 
 concommand.Add("grm_social", function(_, _, args)
