@@ -33,7 +33,7 @@ GRM = GRM or {}
 GRM.Trunk = GRM.Trunk or {}
 local TK = GRM.Trunk
 
-TK.Version       = "1.0.0"
+TK.Version       = "1.1.0"
 TK.DataFile      = "grm_trunks.json"
 TK.MaxSlots      = 24
 TK.MaxWeight     = 120
@@ -532,83 +532,71 @@ if CLIENT then
         end
     end
 
-    local function rebuild(scInv, scTrunk)
-        if not IsValid(scInv) or not IsValid(scTrunk) then return end
-        scInv:Clear()
-        scTrunk:Clear()
-
-        local inv = (GRM.Inventory and GRM.Inventory.LocalSlots) or {}
-        local nInv = 0
-        for i = 1, 64 do if istable(inv[i]) and inv[i].id then nInv = nInv + 1 end end
-        if nInv == 0 then
-            local l = vgui.Create("DLabel", scInv)
-            l:Dock(TOP) l:SetTall(22) l:SetFont("GRMTrunk_Normal") l:SetTextColor(C.dim)
-            l:SetText("  Инвентарь пуст. Откройте свой /inv — так видно все слоты.")
+    local function paintCell(self, pw, ph)
+        local hov = self:IsHovered()
+        local filled = istable(self._slot) and self._slot.id
+        draw.RoundedBox(6, 0, 0, pw, ph, hov and Color(48, 72, 108, 250) or (filled and Color(30, 38, 52, 250) or Color(18, 22, 30, 250)))
+        surface.SetDrawColor(filled and 70 or 42, filled and 150 or 52, filled and 230 or 70, hov and 220 or 140)
+        surface.DrawOutlinedRect(0, 0, pw, ph, 1)
+        if not filled then
+            draw.SimpleText(tostring(self._idx or ""), "GRMTrunk_Small", pw / 2, ph / 2, Color(70, 82, 98), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            return
         end
-        for i = 1, 64 do
-            local slot = inv[i]
-            if istable(slot) and slot.id then
-                local name = itemLabel(slot)
-                local row = vgui.Create("DButton", scInv)
-                row:Dock(TOP) row:SetTall(30) row:DockMargin(0, 0, 0, 3)
-                row:SetText("")
-                row._name = name
-                row._cnt = tonumber(slot.count) or 1
-                row._idx = i
-                row.Paint = function(self, pw, ph)
-                    draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and Color(46, 56, 72) or C.panel2)
-                    draw.SimpleText(self._name, "GRMTrunk_Normal", 8, ph / 2, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    draw.SimpleText("×" .. tostring(self._cnt) .. "   →", "GRMTrunk_Normal", pw - 10, ph / 2, C.yellow, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-                end
-                row.DoClick = function()
-                    if not IsValid(TK._veh) then return end
-                    net.Start(NET_XFER)
-                        net.WriteEntity(TK._veh)
-                        net.WriteBool(true)
-                        net.WriteUInt(i, 8)
-                        net.WriteUInt(input.IsKeyDown(KEY_LSHIFT) and 1 or 999, 16)
-                    net.SendToServer()
-                end
+        local icon = self._icon
+        if isstring(icon) and icon ~= "" then
+            local mat = Material(icon, "smooth")
+            if mat and not mat:IsError() then
+                surface.SetMaterial(mat)
+                surface.SetDrawColor(255, 255, 255, 230)
+                surface.DrawTexturedRect(pw / 2 - 12, 8, 24, 24)
             end
         end
-
-        local nT = 0
-        for i = 1, 64 do if istable(TK._slots[i]) and TK._slots[i].id then nT = nT + 1 end end
-        if nT == 0 then
-            local l = vgui.Create("DLabel", scTrunk)
-            l:Dock(TOP) l:SetTall(22) l:SetFont("GRMTrunk_Normal") l:SetTextColor(C.dim)
-            l:SetText("  Багажник пуст.")
-        end
-        for i = 1, 64 do
-            local slot = TK._slots[i]
-            if istable(slot) and slot.id then
-                local name = itemLabel(slot)
-                local row = vgui.Create("DButton", scTrunk)
-                row:Dock(TOP) row:SetTall(30) row:DockMargin(0, 0, 0, 3)
-                row:SetText("")
-                row._name = name
-                row._cnt = tonumber(slot.count) or 1
-                row.Paint = function(self, pw, ph)
-                    draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and Color(46, 56, 72) or C.panel2)
-                    draw.SimpleText("←   ×" .. tostring(self._cnt), "GRMTrunk_Normal", 8, ph / 2, C.yellow, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-                    draw.SimpleText(self._name, "GRMTrunk_Normal", pw - 8, ph / 2, C.text, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-                end
-                row.DoClick = function()
-                    if not IsValid(TK._veh) then return end
-                    net.Start(NET_XFER)
-                        net.WriteEntity(TK._veh)
-                        net.WriteBool(false)
-                        net.WriteUInt(i, 8)
-                        net.WriteUInt(input.IsKeyDown(KEY_LSHIFT) and 1 or 999, 16)
-                    net.SendToServer()
-                end
-            end
+        draw.SimpleText(self._name or "", "GRMTrunk_Small", pw / 2, ph - 18, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        if (self._cnt or 1) > 1 then
+            draw.SimpleText("×" .. tostring(self._cnt), "GRMTrunk_Small", pw - 6, 6, C.yellow, TEXT_ALIGN_RIGHT, TEXT_ALIGN_TOP)
         end
     end
 
+    local function fillGrid(host, slots, count, toTrunk)
+        if not IsValid(host) then return end
+        host:Clear()
+        local cols, gap = 6, 6
+        local canvas = host:GetCanvas()
+        local wide = math.max(300, (IsValid(canvas) and canvas:GetWide() or host:GetWide()) - 12)
+        local cell = math.floor((wide - (cols - 1) * gap) / cols)
+        for i = 1, count do
+            local slot = slots[i]
+            local name, icon = itemLabel(slot)
+            local b = vgui.Create("DButton", host)
+            local c, r = (i - 1) % cols, math.floor((i - 1) / cols)
+            b:SetPos(c * (cell + gap), r * (cell + gap))
+            b:SetSize(cell, cell)
+            b:SetText("")
+            b._idx, b._slot, b._name, b._icon, b._cnt = i, slot, name, icon, istable(slot) and (tonumber(slot.count) or 1) or 0
+            b.Paint = paintCell
+            b.DoClick = function()
+                if not IsValid(TK._veh) then return end
+                if not (istable(slot) and slot.id) then return end
+                net.Start(NET_XFER)
+                    net.WriteEntity(TK._veh)
+                    net.WriteBool(toTrunk)
+                    net.WriteUInt(i, 8)
+                    net.WriteUInt(input.IsKeyDown(KEY_LSHIFT) and 1 or 999, 16)
+                net.SendToServer()
+            end
+        end
+        host:GetCanvas():SetTall(math.ceil(count / cols) * (cell + gap))
+    end
+
+    local function rebuild(scInv, scTrunk)
+        if not IsValid(scInv) or not IsValid(scTrunk) then return end
+        local inv = (GRM.Inventory and GRM.Inventory.LocalSlots) or {}
+        fillGrid(scInv, inv, 24, true)
+        fillGrid(scTrunk, TK._slots or {}, math.max(1, tonumber(TK._maxSlots) or 24), false)
+    end
+
     local function stateLine()
-        return "Багажник: " .. tostring(math.floor((TK._weight or 0) * 10) / 10) .. " / " .. tostring(math.floor(TK._maxWeight or 120)) ..
-            " кг   •   ЛКМ — переложить стак, SHIFT+ЛКМ — 1 шт.   •   E/дверь закрываем: /trunk"
+        return string.format("%.1f / %.0f кг   ·   ЛКМ стак  ·  SHIFT+ЛКМ 1 шт.", TK._weight or 0, TK._maxWeight or 120)
     end
 
     local function openFrame()
@@ -616,40 +604,43 @@ if CLIENT then
         local f = vgui.Create("DFrame")
         TK._frame = f
         f:SetTitle("")
-        f:SetSize(920, 500)
+        f:SetSize(math.min(980, ScrW() - 40), math.min(620, ScrH() - 40))
         f:Center()
         f:MakePopup()
         f:ShowCloseButton(false)
+        if GRM.UI and GRM.UI.Track then GRM.UI.Track("trunk", f) end
         f.OnClose = function() sendClose() end
         f.Paint = function(_, pw, ph)
             draw.RoundedBox(8, 0, 0, pw, ph, C.bg)
-            draw.RoundedBoxEx(8, 0, 0, pw, 46, C.head, true, true, false, false)
-            draw.SimpleText("Багажник — " .. tostring(TK._vehName), "GRMTrunk_Title", 14, 23, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-            draw.SimpleText(stateLine(), "GRMTrunk_Small", pw - 48, 23, C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            draw.RoundedBoxEx(8, 0, 0, pw, 50, C.head, true, true, false, false)
+            draw.SimpleText("БАГАЖНИК — " .. tostring(TK._vehName), "GRMTrunk_Title", 16, 16, Color(245, 195, 65))
+            draw.SimpleText(stateLine(), "GRMTrunk_Small", 16, 36, C.dim)
         end
         local x = vgui.Create("DButton", f)
-        x:SetText("X") x:SetFont("GRMTrunk_Title") x:SetTextColor(color_white)
-        x:SetPos(876, 8) x:SetSize(32, 30)
+        x:SetText("✕") x:SetFont("GRMTrunk_Title") x:SetTextColor(color_white)
+        x:SetSize(34, 30)
         x.DoClick = function() f:Close() end
         x.Paint = function(self, pw, ph) draw.RoundedBox(4, 0, 0, pw, ph, self:IsHovered() and C.red or Color(45, 52, 68)) end
+        x.Think = function(s) s:SetPos(f:GetWide() - 42, 10) end
 
         local lp = vgui.Create("DPanel", f)
-        lp:Dock(LEFT) lp:SetWide(445) lp:DockMargin(10, 56, 5, 40) lp:SetPaintBackground(false)
+        lp:Dock(LEFT) lp:SetWide(470) lp:DockMargin(12, 58, 6, 14) lp:SetPaintBackground(false)
         local lt = vgui.Create("DLabel", lp)
-        lt:Dock(TOP) lt:SetTall(20) lt:SetFont("GRMTrunk_Sub") lt:SetTextColor(C.yellow) lt:SetText("МОЙ ИНВЕНТАРЬ")
+        lt:Dock(TOP) lt:SetTall(22) lt:SetFont("GRMTrunk_Sub") lt:SetTextColor(C.yellow) lt:SetText("ИНВЕНТАРЬ")
         local scInv = vgui.Create("DScrollPanel", lp)
         scInv:Dock(FILL)
 
         local rp = vgui.Create("DPanel", f)
-        rp:Dock(FILL) rp:DockMargin(5, 56, 10, 40) rp:SetPaintBackground(false)
+        rp:Dock(FILL) rp:DockMargin(6, 58, 12, 14) rp:SetPaintBackground(false)
         local rt = vgui.Create("DLabel", rp)
-        rt:Dock(TOP) rt:SetTall(20) rt:SetFont("GRMTrunk_Sub") rt:SetTextColor(C.green) rt:SetText("БАГАЖНИК")
+        rt:Dock(TOP) rt:SetTall(22) rt:SetFont("GRMTrunk_Sub") rt:SetTextColor(C.green)
+        rt:SetText("БАГАЖНИК  ·  " .. tostring(TK._maxSlots or 24) .. " ячеек")
         local scTrunk = vgui.Create("DScrollPanel", rp)
         scTrunk:Dock(FILL)
 
         hook.Add("GRM_InventoryUpdated", f, function() rebuild(scInv, scTrunk) end)
         f._rebuild = function() rebuild(scInv, scTrunk) end
-        rebuild(scInv, scTrunk)
+        timer.Simple(0, function() if IsValid(f) then rebuild(scInv, scTrunk) end end)
     end
 
     net.Receive(NET_OPEN, function()

@@ -53,6 +53,7 @@ end
 function SWEP:GetAimedVehicle()
     local ply = self:GetOwner()
     if not IsValid(ply) then return nil end
+    if ply.InVehicle and ply:InVehicle() then return nil end
 
     local trace = util.TraceLine({
         start = ply:EyePos(),
@@ -106,6 +107,8 @@ local function deny(ply, message)
 end
 
 function SWEP:PrimaryAttack()
+    local owner = self:GetOwner()
+    if IsValid(owner) and owner.InVehicle and owner:InVehicle() then return end
     if CurTime() < (self._nextAction or 0) then return end
     self._nextAction = CurTime() + ACTION_COOLDOWN
     self:SetNextPrimaryFire(self._nextAction)
@@ -139,6 +142,8 @@ function SWEP:PrimaryAttack()
 end
 
 function SWEP:SecondaryAttack()
+    local owner = self:GetOwner()
+    if IsValid(owner) and owner.InVehicle and owner:InVehicle() then return end
     if CurTime() < (self._nextAction or 0) then return end
     self._nextAction = CurTime() + ACTION_COOLDOWN
     self:SetNextSecondaryFire(self._nextAction)
@@ -199,6 +204,7 @@ if CLIENT then
     function SWEP:DrawHUD()
         local ply = self:GetOwner()
         if ply ~= LocalPlayer() then return end
+        if ply.InVehicle and ply:InVehicle() then return end
 
         local veh = self:GetAimedVehicle()
         if not IsValid(veh) then return end

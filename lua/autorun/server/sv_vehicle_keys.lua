@@ -23,9 +23,11 @@ local NET_SEND_LIST = "VK_SendPlayerList"
 local NET_GIVE_KEY = "VK_Keys_Give"
 local NET_REVOKE_KEY = "VK_Keys_Revoke"
 
+local NET_TOGGLE_LOCK = "VK_ToggleLock"
+
 for _, name in ipairs({
     NET_SYNC_VEHICLE, NET_RESULT, NET_KEYS_SYNC, NET_REQUEST_LIST,
-    NET_SEND_LIST, NET_GIVE_KEY, NET_REVOKE_KEY,
+    NET_SEND_LIST, NET_GIVE_KEY, NET_REVOKE_KEY, NET_TOGGLE_LOCK,
 }) do
     util.AddNetworkString(name)
 end
@@ -466,6 +468,37 @@ end
 
 hook.Add("PlayerUse", "VK_LockCheckUse", denyLockedEntry)
 hook.Add("CanPlayerEnterVehicle", "VK_LockCheckEnter", denyLockedEntry)
+
+function VK.ToggleLock(ply, veh)
+    if not IsValid(ply) or ply:InVehicle() then return false end
+    veh = veh or VK.GetAimedVehicle(ply)
+    if not IsValid(veh) then
+        VK.Result(ply, false, "Посмотрите на машину")
+        return false
+    end
+    if not VK.CanInteract(veh, ply, false) then
+        ply:EmitSound(VK.SND.DENY, 65, 100, 0.7)
+        VK.Result(ply, false, "Нет ключа или доступа")
+        return false
+    end
+    if not veh.VK_OwnerType then
+        VK.Result(ply, false, "У машины нет владельца")
+        return false
+    end
+    veh.VK_Locked = not (veh.VK_Locked == true)
+    ply:EmitSound(veh.VK_Locked and VK.SND.LOCK or VK.SND.UNLOCK, 65, 100)
+    VK.SyncVehicle(veh)
+    VK.Result(ply, true, veh.VK_Locked and "Машина заблокирована" or "Машина разблокирована")
+    return true
+end
+
+net.Receive(NET_TOGGLE_LOCK, function(_, ply)
+    if not IsValid(ply) then return end
+    ply._vkLockTs = ply._vkLockTs or 0
+    if CurTime() < ply._vkLockTs then return end
+    ply._vkLockTs = CurTime() + 0.4
+    VK.ToggleLock(ply, net.ReadEntity())
+end)
 
 function VK.ToggleDoors(veh)
     if not IsValid(veh) then return false end

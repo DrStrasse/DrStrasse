@@ -128,3 +128,28 @@ function VK.GetOwnerState(veh)
     return veh.VK_OwnerType or "", veh.VK_OwnerSteam or "", veh.VK_OwnerNick or "",
         veh.VK_FactionName or "", veh.VK_Locked == true
 end
+
+if CLIENT then
+    CreateClientConVar("grm_cl_vehlock_key", "0", true, false, "Клавиша замка ТС (KEY_*, 0 = выкл)")
+
+    hook.Add("PlayerButtonDown", "GRM_VK_LockBind", function(ply, key)
+        if ply ~= LocalPlayer() then return end
+        local want = math.floor(GetConVarNumber("grm_cl_vehlock_key") or 0)
+        if want <= 0 or key ~= want then return end
+        if ply:InVehicle() then return end
+        if gui.IsGameUIVisible() or gui.IsConsoleVisible() then return end
+        if ply.IsTyping and ply:IsTyping() then return end
+        local now = CurTime()
+        if now < (VK._lockBindAt or 0) then return end
+        VK._lockBindAt = now + 0.35
+        local veh = VK.GetAimedVehicle and VK.GetAimedVehicle(ply) or nil
+        if not IsValid(veh) then
+            local tr = ply:GetEyeTrace()
+            veh = IsValid(tr.Entity) and VK.IsVehicle(tr.Entity) and tr.Entity or nil
+        end
+        if not IsValid(veh) then return end
+        net.Start("VK_ToggleLock")
+        net.WriteEntity(veh)
+        net.SendToServer()
+    end)
+end
