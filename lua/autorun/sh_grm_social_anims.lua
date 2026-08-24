@@ -92,8 +92,37 @@ local ALL_BONES = {}
 local function markBones(t)
     for name in pairs(t or {}) do ALL_BONES[name] = true end
 end
-for i = 1, #S.List do markBones(S.List[i].bones) end
-markBones(S.PhonePose.bones)
+function S.MarkAllBones()
+    ALL_BONES = {}
+    for i = 1, #S.List do markBones(S.List[i].bones) end
+    markBones(S.PhonePose.bones)
+end
+S.MarkAllBones()
+
+function S.BoneToAngle(rec)
+    if isangle(rec) then return rec end
+    if not istable(rec) then return Angle(0, 0, 0) end
+    return Angle(tonumber(rec.p) or 0, tonumber(rec.yaw or rec.y) or 0, tonumber(rec.r) or 0)
+end
+
+function S.BoneToPos(rec)
+    if not istable(rec) then return Vector(0, 0, 0) end
+    return Vector(tonumber(rec.px or rec.x) or 0, tonumber(rec.py) or 0, tonumber(rec.pz or rec.z) or 0)
+end
+
+function S.ApplyCatalog(list)
+    if not istable(list) then return end
+    S.Catalog = list
+    local out = {}
+    for i = 1, #list do
+        local p = list[i]
+        if istable(p) and p.players ~= false and p.id then
+            out[#out + 1] = p
+        end
+    end
+    if #out > 0 then S.List = out end
+    S.MarkAllBones()
+end
 
 if SERVER then
     util.AddNetworkString("GRM_Soc_Set")
