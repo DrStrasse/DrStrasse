@@ -1488,16 +1488,51 @@ function UI.Open(requestedFaction, requestedTab)
     -- ════════════ 9. КАЗНА И ЭКОНОМИКА ════════════
     local function buildFinanceTab(pnl, facName, facData)
         local fac = facData and facData[facName] or {}
-        local p = vgui.Create("DPanel", pnl)
-        p:Dock(FILL)
-        p.Paint = function(self, w, h)
-            draw.RoundedBox(6, 0, 0, w, h, C.card)
-            draw.SimpleText("Казна и финансы организации", "GRMFac_Sub", 16, 16, C.gold)
-            draw.SimpleText("Текущий баланс бюджета: " ..
-                ((GRM.Format and GRM.Format(fac.Budget or 0)) or (tostring(fac.Budget or 0) .. " GRM")),
-                "GRMFac_StatVal", 16, 50, C.gold)
-            draw.SimpleText("Налоговая ставка: " .. tostring(math.floor((fac.TaxRate or 0.05) * 100)) .. "%", "GRMFac_Normal", 16, 90, C.dim)
+        local eco = GRM.Economy and GRM.Economy.Local
+        local fromEco = (eco and eco.faction == facName and istable(eco.data)) and tonumber(eco.data.budget) or nil
+        local treasury = math.max(0, math.floor(fromEco or fac.Budget or 0))
+        local taxPct = math.floor((tonumber(fac.TaxRate) or (eco and eco.data and eco.data.taxRate) or 0.05) * 100)
+        local stateBud = (GRM.StateBudgetGet and GRM.StateBudgetGet()) or 0
+        local fmt = function(n) return (GRM.Format and GRM.Format(n)) or (tostring(n) .. " GRM") end
+
+        local scroll = vgui.Create("DScrollPanel", pnl)
+        scroll:Dock(FILL)
+
+        local cards = vgui.Create("DPanel", scroll)
+        cards:Dock(TOP)
+        cards:SetTall(118)
+        cards:SetPaintBackground(false)
+        cards.Paint = function(self, w, h)
+            local cw = math.floor((w - 16) / 3)
+            local function box(x, title, val, col)
+                draw.RoundedBox(6, x, 0, cw, h, C.card)
+                surface.SetDrawColor(C.border.r, C.border.g, C.border.b, C.border.a)
+                surface.DrawOutlinedRect(x, 0, cw, h)
+                draw.SimpleText(title, "GRMFac_Small", x + 14, 16, C.dim)
+                draw.SimpleText(val, "GRMFac_StatVal", x + 14, 48, col)
+            end
+            box(0, "КАЗНА ФРАКЦИИ", fmt(treasury), C.gold)
+            box(cw + 8, "ГОСБЮДЖЕТ", fmt(stateBud), C.accent)
+            box((cw + 8) * 2, "НАЛОГ С ЗП", tostring(taxPct) .. "%", C.green)
         end
+
+        local help = vgui.Create("DPanel", scroll)
+        help:Dock(TOP)
+        help:SetTall(86)
+        help:DockMargin(0, 10, 0, 8)
+        help.Paint = function(_, w, h)
+            draw.RoundedBox(6, 0, 0, w, h, C.card)
+            draw.SimpleText("Единая казна GRM", "GRMFac_Sub", 16, 14, C.text)
+            draw.SimpleText("Субсидии с банковского ПК и /feco_admin пишутся сюда же. Закупка транспорта списывает эту казну.", "GRMFac_Small", 16, 40, C.dim)
+            draw.SimpleText("Пополнение: госбюджет → фракция. Снятие лидером: банкомат / !fwithdraw.", "GRMFac_Small", 16, 58, C.dim)
+        end
+
+        launchCard(scroll, "Полная панель экономики",
+            "Госбюджет, казны фракций, зарплаты, налоги, фин.лог.",
+            "icon16/money.png", "grm_salary_admin", C.gold)
+        launchCard(scroll, "Автопарк организации",
+            "Закупка техники из казны фракции.",
+            "icon16/lorry.png", "grm_fleet", C.accent)
     end
 
     -- ════════════ 10. СОЗДАТЬ ОРГАНИЗАЦИЮ (SUPERADMIN) ════════════

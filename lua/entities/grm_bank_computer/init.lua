@@ -111,7 +111,9 @@ function ENT:SendMenu(ply)
         for fName, f in pairs(Factions) do
             if istable(f) then
                 local b = (GRM.FactionBudgetGet and GRM.FactionBudgetGet(fName)) or (f.Budget or 0)
-                local tax = (GRM.Economy and GRM.Economy.TaxRateGet and GRM.Economy.TaxRateGet(fName)) or 0.05
+                local tax = (GRM.FactionTaxGet and GRM.FactionTaxGet(fName))
+                    or (GRM.Economy and GRM.Economy.TaxRateGet and GRM.Economy.TaxRateGet(fName))
+                    or 0.05
                 factionsList[fName] = {
                     budget = b,
                     taxRate = tax,

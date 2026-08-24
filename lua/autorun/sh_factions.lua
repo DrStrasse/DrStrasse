@@ -529,7 +529,9 @@ if SERVER then
             if type(f) == "table" then
                 ensureDefaults(f,name)
                 local b = (GRM.FactionBudgetGet and GRM.FactionBudgetGet(name)) or f.Budget or 0
-                local tax = (GRM.Economy and GRM.Economy.TaxRateGet and GRM.Economy.TaxRateGet(name)) or 0.05
+                local tax = (GRM.FactionTaxGet and GRM.FactionTaxGet(name))
+                    or (GRM.Economy and GRM.Economy.TaxRateGet and GRM.Economy.TaxRateGet(name))
+                    or 0.05
                 data[name] = {
                     Leader           = f.Leader,
                     DisplayName      = f.DisplayName,
@@ -865,6 +867,7 @@ if SERVER then
         Factions[newName] = Factions[oldName]
         Factions[oldName] = nil
         saveFactions(Factions)
+        hook.Run("GRM_FactionRenamed", oldName, newName)
         return true
     end
 

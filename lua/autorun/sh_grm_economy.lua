@@ -1068,33 +1068,93 @@ if SERVER then
         return true, acc.balance
     end
 
+    -- Системный ключ фракции: DisplayName / Tag / регистр не должны плодить
+    -- вторую казну. Субсидия с ПК банка и закупка флота обязаны бить в одну запись.
+    local function resolveFactionKey(name)
+        name = tostring(name or "")
+        if name == "" then return nil end
+        if istable(Factions) and istable(Factions[name]) then return name end
+        if istable(E.Data.factions) and istable(E.Data.factions[name]) then return name end
+        if FactionsAPI and isfunction(FactionsAPI.GetRegistrationName) then
+            local key = FactionsAPI.GetRegistrationName(name)
+            if isstring(key) and key ~= "" then return key end
+        end
+        local low = string.lower(name)
+        if istable(Factions) then
+            for key, f in pairs(Factions) do
+                if istable(f) then
+                    if string.lower(tostring(key)) == low then return key end
+                    if string.lower(tostring(f.DisplayName or "")) == low then return key end
+                    if string.lower(tostring(f.Tag or "")) == low then return key end
+                end
+            end
+        end
+        if istable(E.Data.factions) then
+            for key in pairs(E.Data.factions) do
+                if string.lower(tostring(key)) == low then return key end
+            end
+        end
+        return name
+    end
+    E.ResolveFactionKey = resolveFactionKey
+
+    local function mirrorFactionBudget(key, amount)
+        amount = math.max(0, math.floor(tonumber(amount) or 0))
+        if istable(Factions) and istable(Factions[key]) then
+            Factions[key].Budget = amount
+        end
+        if CLIENT and istable(FactionsData) and istable(FactionsData[key]) then
+            FactionsData[key].Budget = amount
+        end
+        if GRM.Perf and GRM.Perf.Coalesce then
+            GRM.Perf.Coalesce("grm_eco_fac_budget_" .. tostring(key), 0.2, function()
+                if FactionsAPI and isfunction(FactionsAPI.Broadcast) then
+                    FactionsAPI.Broadcast()
+                end
+            end)
+        elseif FactionsAPI and isfunction(FactionsAPI.Broadcast) then
+            FactionsAPI.Broadcast()
+        end
+    end
+
     -- ========================================================
     -- ПУБЛИЧНОЕ API (совместимость с Кодом 13 и др.)
     -- ========================================================
     function GRM.FactionBudgetGet(name)
-        if not name then return 0 end
-        local e = E.Data.factions[name]
-        return e and e.budget or 0
+        local key = resolveFactionKey(name)
+        if not key then return 0 end
+        local e = E.Data.factions[key]
+        if not e then return 0 end
+        return math.max(0, math.floor(tonumber(e.budget) or 0))
     end
 
     function GRM.FactionBudgetAdd(name, delta, silentReason)
-        if not name then return 0 end
+        local key = resolveFactionKey(name)
+        if not key then return 0 end
         delta = math.floor(tonumber(delta) or 0)
-        if delta == 0 then return GRM.FactionBudgetGet(name) end
-        local e = entry(name)
+        if delta == 0 then return GRM.FactionBudgetGet(key) end
+        local e = entry(key)
         e.budget = math.max(0, e.budget + delta)
         dirty = true
-        if silentReason then addHistory(name, silentReason) end
-        hook.Run("GRM_FactionBudgetChanged", name, e.budget, delta)
+        if silentReason then addHistory(key, silentReason) end
+        mirrorFactionBudget(key, e.budget)
+        hook.Run("GRM_FactionBudgetChanged", key, e.budget, delta)
         return e.budget
     end
 
     function GRM.FactionBudgetSet(name, value)
-        if not name then return end
-        local e = entry(name)
+        local key = resolveFactionKey(name)
+        if not key then return end
+        local e = entry(key)
         e.budget = math.max(0, math.floor(tonumber(value) or 0))
         dirty = true
-        hook.Run("GRM_FactionBudgetChanged", name, e.budget, 0)
+        mirrorFactionBudget(key, e.budget)
+        hook.Run("GRM_FactionBudgetChanged", key, e.budget, 0)
+        return e.budget
+    end
+
+    function E.TaxRateGet(name)
+        return GRM.FactionTaxGet(name)
     end
 
     -- ── Гос.бюджет (публичный доступ для единой админ-панели, Код 82) ──
@@ -1136,14 +1196,16 @@ if SERVER then
     end
 
     function GRM.FactionTaxGet(name)
-        if not name then return E.Config.DefaultTaxRate end
-        local e = E.Data.factions[name]
+        local key = resolveFactionKey(name)
+        if not key then return E.Config.DefaultTaxRate end
+        local e = E.Data.factions[key]
         return e and e.taxRate or E.Config.DefaultTaxRate
     end
 
     function GRM.FactionTaxSet(name, rate)
-        if not name then return end
-        entry(name).taxRate = math.Clamp(tonumber(rate) or 0, 0, E.Config.MaxTaxRate)
+        local key = resolveFactionKey(name)
+        if not key then return end
+        entry(key).taxRate = math.Clamp(tonumber(rate) or 0, 0, E.Config.MaxTaxRate)
         dirty = true
     end
 
@@ -1887,9 +1949,7 @@ if SERVER then
             if amt <= 0 then return end
             local e = entry(name)
             if e.budget < amt then notify(ply, "В бюджете только: " .. money(e.budget), 255, 100, 100) return end
-            e.budget = e.budget - amt
-            dirty = true
-            addHistory(name, ("Лидер %s снял %s"):format(ply:Nick(), money(amt)))
+            GRM.FactionBudgetAdd(name, -amt, ("Лидер %s снял %s"):format(ply:Nick(), money(amt)))
             GRM.GiveMoney(ply, amt)
             notify(ply, "Снято из бюджета: " .. money(amt), 100, 220, 100)
         elseif a.type == "transfer" then
@@ -1958,9 +2018,7 @@ if SERVER then
             if not isLeaderOf(ply, f) then notify(ply, "Только лидер фракции.", 255, 100, 100) return "" end
             local e = entry(name)
             if e.budget < amt then notify(ply, "В бюджете только: " .. money(e.budget), 255, 100, 100) return "" end
-            e.budget = e.budget - amt
-            addHistory(name, ("Лидер %s снял %s"):format(ply:Nick(), money(amt)))
-            dirty = true
+            GRM.FactionBudgetAdd(name, -amt, ("Лидер %s снял %s"):format(ply:Nick(), money(amt)))
             GRM.GiveMoney(ply, amt)
             notify(ply, "Выведено из бюджета: " .. money(amt), 100, 220, 100)
             syncPlayer(ply)
@@ -1979,13 +2037,11 @@ if SERVER then
                 notify(ply, "Не хватает бюджета: нужно " .. money(total) .. ", есть " .. money(e.budget), 255, 100, 100)
                 return ""
             end
-            e.budget = e.budget - total
-            dirty = true
+            GRM.FactionBudgetAdd(name, -total, ("Лидер %s выплатил %s × %d"):format(ply:Nick(), money(amt), #members))
             for _, p in ipairs(members) do
                 GRM.GiveMoney(p, amt)
                 notify(p, "Премия от фракции [" .. name .. "]: " .. money(amt), 100, 200, 255)
             end
-            addHistory(name, ("Лидер %s выплатил %s × %d"):format(ply:Nick(), money(amt), #members))
             notify(ply, "Выплачено " .. money(amt) .. " × " .. #members .. " (итого " .. money(total) .. ")", 100, 220, 100)
             syncPlayer(ply)
             return ""
@@ -2120,6 +2176,33 @@ if SERVER then
     if SetGlobalDouble and E.Data and E.Data.state then
         SetGlobalDouble("GRM_StateBudget", tonumber(E.Data.state.budget) or 0)
     end
+    hook.Add("InitPostEntity", "GRM_Economy_MirrorFactionBudgets", function()
+        timer.Simple(1, function()
+            if not istable(Factions) or not istable(E.Data.factions) then return end
+            for name, f in pairs(Factions) do
+                if istable(f) then
+                    local e = E.Data.factions[name]
+                    if istable(e) then
+                        f.Budget = math.max(0, math.floor(tonumber(e.budget) or 0))
+                    end
+                end
+            end
+        end)
+    end)
+    hook.Add("GRM_FactionRenamed", "GRM_Economy_RenameKey", function(oldName, newName)
+        oldName, newName = tostring(oldName or ""), tostring(newName or "")
+        if oldName == "" or newName == "" or oldName == newName then return end
+        if istable(E.Data.factions) and istable(E.Data.factions[oldName]) then
+            if not E.Data.factions[newName] then
+                E.Data.factions[newName] = E.Data.factions[oldName]
+            else
+                local a, b = E.Data.factions[newName], E.Data.factions[oldName]
+                a.budget = math.max(tonumber(a.budget) or 0, tonumber(b.budget) or 0)
+            end
+            E.Data.factions[oldName] = nil
+            dirty = true
+        end
+    end)
     lastDiskTxt = file.Exists(DATA_FILE, "DATA") and (file.Read(DATA_FILE, "DATA") or "") or nil
     print(("[GRM Economy] Unified Economy v3.0.2 (переписано с нуля) загружена (путь: %s, база: data/%s): фракций %d, счетов %d"):format(
         tostring(debug.getinfo(1, "S").short_src), DATA_FILE,
