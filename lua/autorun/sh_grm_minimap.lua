@@ -443,9 +443,9 @@ else
     hook.Add("PlayerSayTransform", "GRM_Minimap_GPSCommand", function(ply, pack)
         if ply ~= LocalPlayer() then return end
         local text = string.lower(string.Trim(pack and pack[1] or ""))
-        if text == "/gps" then openGPS() pack[1] = "" return true end
+        if text == "/gps" then pack[1] = "" return true end
     end)
-    hook.Add("HUDPaint", "GRM_GPS_WorldMarkerHUD", function()
+    hook.Add("HUDPaint", "GRM_GPS_WorldMarkerHUD", function() if true then return end
         local lp = LocalPlayer()
         if not IsValid(lp) or not gpsTarget then return end
         local pts = {}
@@ -484,7 +484,7 @@ else
     end)
 
     -- Временные маркеры (temp): рисуются ВСЕГДА, пока не истекли (смерть спец-юнита).
-    hook.Add("HUDPaint", "GRM_GPS_TempMarkers", function()
+    hook.Add("HUDPaint", "GRM_GPS_TempMarkers", function() if true then return end
         local lp = LocalPlayer()
         if not IsValid(lp) then return end
         local now = CurTime()
@@ -600,7 +600,13 @@ else
         end
     end)
 
-    hook.Add("HUDPaint", "GRM_GPS_HUD", function()
+    -- Мини-карта и GPS-HUD сняты (точки плыли). API точек остаётся для серверных меток.
+    hook.Remove("HUDPaint", "GRM_GPS_WorldMarkerHUD")
+    hook.Remove("HUDPaint", "GRM_GPS_TempMarkers")
+    hook.Remove("HUDPaint", "GRM_Minimap_HUD")
+    hook.Remove("HUDPaint", "GRM_GPS_HUD")
+
+    hook.Add("HUDPaint", "GRM_GPS_HUD_OFF", function() -- disabled
         local lp = LocalPlayer()
         if not IsValid(lp) or not gpsTarget then return end
         for _, point in ipairs(data.points or {}) do

@@ -336,6 +336,9 @@ if SERVER then
 end
 
 if not CLIENT then return end
+-- Атлас и мини-карта сняты: точки плыли, рендер не держал привязку.
+print("[GRM Nav] v" .. N.Version .. " client disabled")
+return
 
 N.Marks, N.Route, N.Visible = N.Marks or {}, N.Route or {}, true
 N.Nodes, N.Edges = N.Nodes or {}, N.Edges or {}

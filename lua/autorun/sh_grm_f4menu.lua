@@ -559,27 +559,6 @@ local function buildSettingsTab(sc)
     note:SetText("Стандарт RPDesc — 200 юнитов (~5 метров). Настройки хранятся на вашем ПК (garrysmod/cfg).")
     note:SetWrap(true) note:SetAutoStretchVertical(true)
 
-    local bMap = block(sc, 120, "Карта местности:")
-    local mapLbl = vgui.Create("DLabel", bMap)
-    mapLbl:SetPos(14, 32) mapLbl:SetSize(400, 22) mapLbl:SetFont("GRMF4_Normal") mapLbl:SetTextColor(C.text)
-    mapLbl:SetText("Клавиша атласа (по умолчанию M)")
-    local binder = vgui.Create("DBinder", bMap)
-    binder:SetPos(14, 58) binder:SetSize(200, 32)
-    local navCv = GetConVar("grm_nav_key")
-    local curKey = KEY_M
-    if navCv then
-        local code = input.GetKeyCode(string.upper(navCv:GetString() or "M"))
-        if isnumber(code) and code > 0 then curKey = code end
-    end
-    binder:SetValue(curKey)
-    binder.OnChange = function(_, key)
-        if not key or key <= 0 then key = KEY_M end
-        RunConsoleCommand("grm_nav_key", input.GetKeyName(key) or "M")
-    end
-    local hint2 = vgui.Create("DLabel", bMap)
-    hint2:SetPos(230, 64) hint2:SetSize(480, 22)
-    hint2:SetFont("GRMF4_Normal") hint2:SetTextColor(C.dim)
-    hint2:SetText("Нажмите кнопку, затем новую клавишу.")
 end
 
 -----------------------------------------------------------

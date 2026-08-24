@@ -376,9 +376,5 @@ function Q.OpenGraphStudio(data)
     if defs[1] then loadWork(defs[1]) else rebuildProps() end
 end
 
--- Перехватываем админ-открытие: старый табличный конструктор больше не главный.
-net.Receive("GRM_Quest_AdminOpen", function()
-    Q.OpenGraphStudio(net.ReadTable() or {})
-end)
-
-print("[GRM Quest Studio] graph UI loaded")
+-- Не перехватываем GRM_Quest_AdminOpen: полный конструктор в cl_grm_quests.lua.
+print("[GRM Quest Studio] graph canvas ready (optional)")
