@@ -3228,24 +3228,3 @@ if CLIENT then
 
     print("[GRM Economy] Unified Economy v3.0.3 — клиент загружен")
 end
- hist = vgui.Create("DScrollPanel", p3)
-                hist:SetPos(14, 142) hist:SetSize(535, 290)
-                hist.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CUI.panel) end
-                local h = d.factionData.history
-                for i = #h, math.max(1, #h - 30), -1 do
-                    local rec = h[i]
-                    local l = vgui.Create("DLabel", hist)
-                    l:Dock(TOP) l:SetTall(16) l:DockMargin(8, 2, 4, 1)
-                    l:SetFont("GRM_Eco_Small") l:SetTextColor(CUI.dim)
-                    l:SetText(os.date("%d.%m %H:%M", rec.t or 0) .. " — " .. tostring(rec.s or ""))
-                end
-            end
-        end
-    end)
-
-    concommand.Add("grm_salary_admin", function()
-        net.Start(NET_OPEN_ADMIN) net.SendToServer()
-    end)
-
-    print("[GRM Economy] Unified Economy v3.0.3 — клиент загружен")
-end

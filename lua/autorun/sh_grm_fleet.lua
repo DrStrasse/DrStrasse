@@ -959,7 +959,13 @@ if SERVER then
 
         local total, unitPrice = FL.OrderPrice(entry, count)
         if total > 0 then
-            local budget = GRM.FactionBudgetGet and GRM.FactionBudgetGet(faction) or 0
+            if GRM.Economy and GRM.Economy.ResolveFactionKey then
+                faction = tostring(GRM.Economy.ResolveFactionKey(faction) or faction)
+            end
+            local budget = 0
+            if GRM.FactionBudgetGet then budget = math.floor(tonumber(GRM.FactionBudgetGet(faction)) or 0) end
+            local fac = istable(Factions) and Factions[faction]
+            if istable(fac) then budget = math.max(budget, math.floor(tonumber(fac.Budget) or 0)) end
             if budget < total then
                 return nil, ("Не хватает бюджета: нужно %s, в казне организации %s"):format(
                     GRM.Format and GRM.Format(total) or total, GRM.Format and GRM.Format(budget) or budget)
@@ -2154,12 +2160,6 @@ if CLIENT then
 
         local body = vgui.Create("DPanel", f)
         body:Dock(FILL) body:DockMargin(6, 52, 6, 6) body:SetPaintBackground(false)
-        FL.BuildPanel(body)
-    end)
-end
-
-print("[GRM Fleet] v" .. FL.Version .. " loaded (" .. (SERVER and "Server" or "Client") .. ")")
-e)
         FL.BuildPanel(body)
     end)
 end

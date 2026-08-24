@@ -187,10 +187,17 @@ end
 
 grmBootStart("GRM_HUD_ReqBal", "late", function()
     timer.Simple(1, function()
-        net.Start("grm_request_bal")
-        net.SendToServer()
-        net.Start("GRM_Bank_Request")  -- банковский счёт (экономика)
-        net.SendToServer()
+        local function pooled(name)
+            return util.NetworkStringToID and util.NetworkStringToID(name) ~= 0
+        end
+        if pooled("grm_request_bal") then
+            net.Start("grm_request_bal")
+            net.SendToServer()
+        end
+        if pooled("GRM_Bank_Request") then
+            net.Start("GRM_Bank_Request")
+            net.SendToServer()
+        end
     end)
 end)
 
