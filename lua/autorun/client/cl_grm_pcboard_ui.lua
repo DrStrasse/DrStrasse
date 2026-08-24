@@ -717,14 +717,3 @@ end
 hook.Add("GRM_FactionsAdmin_BuildTabs", "GRM_PCBoard_Tab", installTab)
 
 print("[GRM PCBoard] UI v1.0.0 loaded")
-�осбазы…")
-
-    timer.Simple(0, function()
-        if IsValid(panel) then PB.RequestAccessMenu() end
-    end)
-
-    sheet:AddSheet("Госбаза", panel, "icon16/report_magnify.png")
-end
-hook.Add("GRM_FactionsAdmin_BuildTabs", "GRM_PCBoard_Tab", installTab)
-
-print("[GRM PCBoard] UI v1.0.0 loaded")

@@ -208,31 +208,6 @@ if SERVER then
 
     net.Receive("GRM_Photo_Print", function(_, ply)
         if IsValid(ply) then notify(ply, "Печать фотороботов снята со сборки.", false) end
-        return
-        if not (IsValid(ply) and P.CanOfficial(ply)) then return end
-        local photoId = string.sub(net.ReadString() or "", 1, 16)
-        local headline = string.sub(net.ReadString() or "", 1, 80)
-        local body = string.sub(net.ReadString() or "", 1, 160)
-        local rec = findPhoto(photoId)
-        if not rec then notify(ply, "Фото не найдено.", false) return end
-        if headline == "" then headline = "ВНИМАНИЕ! РОЗЫСК!" end
-        P.Public[photoId] = true
-        if GRM.Wanted and istable(GRM.Wanted.Records) and rec.subject and rec.subject ~= "" then
-            local sub = string.lower(rec.subject)
-            for _, wr in pairs(GRM.Wanted.Records) do
-                if istable(wr) and string.lower(tostring(wr.name or "")) == sub then
-                    wr.photoId = photoId
-                    break
-                end
-            end
-        end
-        if GRM.Inventory and GRM.Inventory.AddItem then
-            GRM.Inventory.AddItem(ply, "grm_wanted_poster", 1, {
-                photoId = photoId, headline = headline, body = body, subject = rec.subject or "",
-            })
-        end
-        P.SendSheet(ply, photoId, headline, body)
-        notify(ply, "Лист готов.", true)
     end)
 
     net.Receive("GRM_Photo_OpenUI", function(_, ply)
@@ -382,10 +357,6 @@ function P.OpenStudio()
     if IsValid(P._frame) then P._frame:Remove() end
     local fr = vgui.Create("DFrame")
     P._frame = fr
-  ()
-    if IsValid(P._frame) then P._frame:Remove() end
-    local fr = vgui.Create("DFrame")
-    P._frame = fr
     fr:SetSize(800, 520) fr:Center() fr:SetTitle("") fr:MakePopup()
     fr.Paint = function(_, w, h)
         draw.RoundedBox(8, 0, 0, w, h, Color(12, 16, 24, 250))
@@ -432,51 +403,6 @@ function P.OpenStudio()
 end
 
 function P.AttachTab(tabs)
-    return
-    if not IsValid(tabs) then return end
-    local pnl = vgui.Create("DPanel", tabs)
-    pnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(20, 28, 40, 245)) end
-    local list = vgui.Create("DListView", pnl)
-    list:Dock(LEFT) list:SetWide(280) list:DockMargin(8, 8, 8, 8)
-    list:AddColumn("От кого") list:AddColumn("Объект")
-    local right = vgui.Create("DPanel", pnl)
-    right:Dock(FILL) right:DockMargin(0, 8, 8, 8)
-    right.Paint = function() end
-    local html = vgui.Create("DHTML", right)
-    html:Dock(FILL)
-    local cur = ""
-    local function fill()
-        list:Clear()
-        local jur = GRM_CompTerminal_ActiveJur == "military" and "military" or "civil"
-        for _, m in ipairs(P.MailRows[jur] or {}) do
-            local line = list:AddLine(m.fromName or "?", m.subject or "—")
-            line._pid = m.photoId
-        end
-    end
-    fill()
-    hook.Add("GRM_PhotoMail", "GRM_PhotoTab", function() if IsValid(list) then fill() end end)
-    hook.Add("GRM_PhotoBlob", "GRM_PhotoTab", function(id)
-        if id == cur and IsValid(html) then P.BindHTML(html, cur, true) end
-    end)
-    list.OnRowSelected = function(_, _, line)
-        if not (line and line._pid) then return end
-        cur = line._pid
-        P.RequestBlob(cur)
-        P.BindHTML(html, cur, true)
-    end
-    local btn = vgui.Create("DButton", right)
-    btn:Dock(BOTTOM) btn:SetTall(32) btn:SetText("Печать — ВНИМАНИЕ! РОЗЫСК!") btn:SetTextColor(color_white)
-    btn.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(190, 45, 45) or Color(140, 32, 36)) end
-    btn.DoClick = function() if cur ~= "" then P.PrintPoster(cur, "ВНИМАНИЕ! РОЗЫСК!", "") end end
-    local btn2 = vgui.Create("DButton", right)
-    btn2:Dock(BOTTOM) btn2:SetTall(26) btn2:SetText("Личный альбом")
-    btn2.DoClick = function() P.OpenStudio() end
-    net.Start("GRM_Photo_OpenUI") net.SendToServer()
-    tabs:AddSheet("Фото и почта", pnl, "icon16/camera.png")
-end
-
-print("[GRM Photo] v" .. P.Version .. " client")
-camera.png")
 end
 
 print("[GRM Photo] v" .. P.Version .. " client")
