@@ -1,12 +1,12 @@
 --[[--------------------------------------------------------------------
-    GRM Nav Atlas v1.3 — зум атласа, граф маршрута, редактор меток.
+    GRM Nav Atlas v1.4 — пан, без тумана, схема построек.
 ----------------------------------------------------------------------]]
 if SERVER then AddCSLuaFile() end
 
 GRM = GRM or {}
 GRM.Nav = GRM.Nav or {}
 local N = GRM.Nav
-N.Version = "1.3.0"
+N.Version = "1.4.0"
 N.File = "grm_navatlas_" .. string.lower(game.GetMap() or "unknown") .. ".json"
 
 N.Kinds = {
@@ -339,7 +339,7 @@ if not CLIENT then return end
 
 N.Marks, N.Route, N.Visible = N.Marks or {}, N.Route or {}, true
 N.Nodes, N.Edges = N.Nodes or {}, N.Edges or {}
-N.Opt = N.Opt or { gps = true, admin = true, me = true, players = true, grid = true, graph = true }
+N.Opt = N.Opt or { gps = true, admin = true, me = true, players = true, grid = false, graph = true, scheme = true }
 CreateClientConVar("grm_nav_key", "M", true, false)
 
 local COL = {
@@ -409,18 +409,72 @@ end
 if not file.IsDir("grm_navatlas", "DATA") then file.CreateDir("grm_navatlas") end
 loadJpeg()
 
--- Мини + живой атлас: один PostRender, без JPEG-слайдов.
-local peekRT = GetRenderTarget("GRM_NavPeek3", 128, 128, false)
-local peekMat = CreateMaterial("GRM_NavPeek3Mat", "UnlitGeneric", {
+-- Живой слой: камера не улетает в туман — зум = охват (span), высота фиксирована.
+local peekRT = GetRenderTarget("GRM_NavPeek4", 128, 128, false)
+local peekMat = CreateMaterial("GRM_NavPeek4Mat", "UnlitGeneric", {
     ["$basetexture"] = peekRT:GetName(), ["$vertexalpha"] = 1, ["$vertexcolor"] = 1,
 })
 local peekAt, peekPos, peekYaw, peekBusy = 0, Vector(0, 0, 0), 0, false
-local atlasRT = GetRenderTarget("GRM_NavLiveRT", 512, 512, false)
-local atlasLiveMat = CreateMaterial("GRM_NavLiveMat", "UnlitGeneric", {
+local atlasRT = GetRenderTarget("GRM_NavLiveRT4", 512, 512, false)
+local atlasLiveMat = CreateMaterial("GRM_NavLiveMat4", "UnlitGeneric", {
     ["$basetexture"] = atlasRT:GetName(), ["$vertexalpha"] = 1, ["$vertexcolor"] = 1,
 })
 local atlasShotAt, atlasBusy = 0, false
-N._atlasCam = N._atlasCam or { x = 0, y = 0, z = 4000, span = 8000 }
+N._atlasCam = N._atlasCam or { x = 0, y = 0, z = 2800 }
+
+local CAM_H = 1450
+local function camSpan()
+    return math.max(220, N._atlasCam.z or 2800)
+end
+local function camFov()
+    return math.Clamp(math.deg(2 * math.atan(camSpan() / CAM_H)), 12, 92)
+end
+local function groundZ(x, y, fallback)
+    local hi = (fallback or 0) + 4000
+    local tr = util.TraceLine({
+        start = Vector(x, y, hi),
+        endpos = Vector(x, y, hi - 16000),
+        mask = MASK_SOLID_BRUSHONLY,
+    })
+    if tr.Hit then return tr.HitPos.z end
+    return fallback or 0
+end
+
+local function killFog()
+    render.FogMode(MATERIAL_FOG_NONE)
+    render.FogStart(999999)
+    render.FogEnd(999999)
+    render.FogMaxDensity(0)
+end
+hook.Add("SetupWorldFog", "GRM_Nav_NoFog", function()
+    if N._capturing then
+        killFog()
+        return true
+    end
+end)
+hook.Add("SetupSkyboxFog", "GRM_Nav_NoFogSky", function()
+    if N._capturing then
+        killFog()
+        return true
+    end
+end)
+
+local function captureView(rt, origin, ang, w, h, fov)
+    N._capturing = true
+    killFog()
+    render.PushRenderTarget(rt)
+    render.Clear(22, 26, 30, 255, true, true)
+    render.RenderView({
+        origin = origin,
+        angles = ang,
+        x = 0, y = 0, w = w, h = h,
+        fov = fov, znear = 8, zfar = 20000,
+        drawhud = false, drawviewmodel = false, drawskybox = false,
+        dopostprocess = false, drawmonitors = false,
+    })
+    render.PopRenderTarget()
+    N._capturing = false
+end
 
 hook.Add("PostRender", "GRM_Nav_Peek", function()
     if peekBusy or atlasBusy then return end
@@ -428,20 +482,11 @@ hook.Add("PostRender", "GRM_Nav_Peek", function()
     if not IsValid(lp) or not lp:Alive() then return end
     if N._open then
         local now = CurTime()
-        if now - atlasShotAt < 0.15 then return end
+        if now - atlasShotAt < 0.12 then return end
         atlasBusy, atlasShotAt = true, now
         local cam = N._atlasCam
-        local lpz = lp:GetPos().z
-        render.PushRenderTarget(atlasRT)
-        render.Clear(8, 14, 23, 255, true, true)
-        render.RenderView({
-            origin = Vector(cam.x, cam.y, lpz + (cam.z or 2200)),
-            angles = Angle(90, 90, 0),
-            x = 0, y = 0, w = 512, h = 512,
-            fov = 62, znear = 16, zfar = math.max(14000, (cam.z or 4000) + 8000),
-            drawhud = false, drawviewmodel = false, drawskybox = false,
-        })
-        render.PopRenderTarget()
+        local gz = groundZ(cam.x, cam.y, lp:GetPos().z)
+        captureView(atlasRT, Vector(cam.x, cam.y, gz + CAM_H), Angle(90, 90, 0), 512, 512, camFov())
         atlasBusy = false
         return
     end
@@ -450,17 +495,56 @@ hook.Add("PostRender", "GRM_Nav_Peek", function()
     local moved = pos:DistToSqr(peekPos) > 36 * 36 or math.abs(math.AngleDifference(yaw, peekYaw)) > 6
     if now - peekAt < (moved and 0.16 or 0.5) then return end
     peekBusy, peekAt, peekPos, peekYaw = true, now, pos, yaw
-    render.PushRenderTarget(peekRT)
-    render.Clear(8, 14, 23, 255, true, true)
-    render.RenderView({
-        origin = pos + Vector(0, 0, 1600),
-        angles = Angle(90, yaw, 0),
-        x = 0, y = 0, w = 128, h = 128,
-        fov = 62, znear = 24, zfar = 10000,
-        drawhud = false, drawviewmodel = false, drawskybox = false,
-    })
-    render.PopRenderTarget()
+    captureView(peekRT, pos + Vector(0, 0, CAM_H), Angle(90, yaw, 0), 128, 128, 58)
     peekBusy = false
+end)
+
+-- Схема: сетка трассировок → дороги / коробки домов. Не чужой атлас.
+N.Scheme = N.Scheme or { cells = nil, step = 280, ready = false, i = 0 }
+local SCHEME_N = 52
+local function schemeClassify(tr, baseZ)
+    if not tr.Hit or tr.HitSky then return 0 end
+    local tex = string.lower(tostring(tr.HitTexture or ""))
+    if string.find(tex, "water", 1, true) or string.find(tex, "cheapwater", 1, true) then return 3 end
+    local rise = (tr.HitPos.z or 0) - (baseZ or 0)
+    if rise > 90 then return 2 end
+    if string.find(tex, "road", 1, true) or string.find(tex, "asphalt", 1, true)
+        or string.find(tex, "street", 1, true) or string.find(tex, "concrete", 1, true)
+        or string.find(tex, "pavement", 1, true) or string.find(tex, "gravel", 1, true)
+        or string.find(tex, "dirt", 1, true) or string.find(tex, "sand", 1, true) then
+        return 1
+    end
+    if rise > 28 then return 2 end
+    return 1
+end
+local function schemeKick()
+    ensureBounds()
+    local s = N.Scheme
+    s.ox, s.oy = atlasW, atlasS
+    s.step = math.max(180, math.max(atlasE - atlasW, atlasN - atlasS) / SCHEME_N)
+    s.cells = {}
+    s.i, s.ready = 0, false
+    s.base = IsValid(LocalPlayer()) and LocalPlayer():GetPos().z or 0
+end
+hook.Add("Think", "GRM_Nav_SchemeScan", function()
+    local s = N.Scheme
+    if not s.cells or s.ready then return end
+    if not N._open and s.i == 0 then return end
+    local n = SCHEME_N
+    for _ = 1, 48 do
+        if s.i >= n * n then s.ready = true return end
+        local ix = s.i % n
+        local iy = math.floor(s.i / n)
+        local wx = (s.ox or 0) + (ix + 0.5) * s.step
+        local wy = (s.oy or 0) + (iy + 0.5) * s.step
+        local tr = util.TraceLine({
+            start = Vector(wx, wy, (s.base or 0) + 3500),
+            endpos = Vector(wx, wy, (s.base or 0) - 8000),
+            mask = MASK_SOLID_BRUSHONLY,
+        })
+        s.cells[s.i + 1] = schemeClassify(tr, s.base)
+        s.i = s.i + 1
+    end
 end)
 
 local function worldToMap(pos, x, y, w, h, zoom, ox, oy)
@@ -706,18 +790,53 @@ end
 
 local function camToScreen(world, x, y, w, h)
     local cam = N._atlasCam
-    local half = math.tan(math.rad(31)) * (cam.z or 2200)
+    local half = camSpan()
     local dx, dy = world.x - cam.x, world.y - cam.y
     return x + w * 0.5 + (dx / half) * (w * 0.5), y + h * 0.5 - (dy / half) * (h * 0.5)
 end
 
 local function screenToCam(mx, my, x, y, w, h)
     local cam = N._atlasCam
-    local half = math.tan(math.rad(31)) * (cam.z or 2200)
+    local half = camSpan()
     local ux = (mx - x) / w - 0.5
     local uy = 0.5 - (my - y) / h
     local lp = LocalPlayer()
     return Vector(cam.x + ux * 2 * half, cam.y + uy * 2 * half, IsValid(lp) and lp:GetPos().z or 0)
+end
+
+local function drawScheme(x, y, w, h)
+    local s = N.Scheme
+    if not s.cells or N.Opt.scheme == false then return end
+    local n, step = SCHEME_N, s.step or 280
+    local ox, oy = s.ox or 0, s.oy or 0
+    local zoomOut = math.Clamp((camSpan() - 800) / 6000, 0, 1)
+    local aRoad = math.floor(40 + 120 * zoomOut)
+    local aBld = math.floor(50 + 150 * zoomOut)
+    for iy = 0, n - 1 do
+        for ix = 0, n - 1 do
+            local kind = s.cells[iy * n + ix + 1]
+            if kind and kind > 0 then
+                local wx, wy = ox + ix * step, oy + iy * step
+                local ax, ay = camToScreen(Vector(wx, wy + step, 0), x, y, w, h)
+                local bx, by = camToScreen(Vector(wx + step, wy, 0), x, y, w, h)
+                local rw, rh = bx - ax, by - ay
+                if rw > 1 and rh > 1 then
+                    if kind == 2 then
+                        surface.SetDrawColor(48, 50, 54, aBld)
+                        surface.DrawRect(ax, ay, rw, rh)
+                        surface.SetDrawColor(18, 18, 20, aBld)
+                        surface.DrawOutlinedRect(ax, ay, rw, rh, 1)
+                    elseif kind == 3 then
+                        surface.SetDrawColor(50, 62, 78, aRoad)
+                        surface.DrawRect(ax, ay, rw, rh)
+                    else
+                        surface.SetDrawColor(72, 74, 78, aRoad)
+                        surface.DrawRect(ax + 1, ay + 1, math.max(1, rw - 2), math.max(1, rh - 2))
+                    end
+                end
+            end
+        end
+    end
 end
 
 function N.CloseAtlas()
@@ -743,27 +862,129 @@ local function atlasZoom(delta, mx, my)
     end
 end
 
+local drag
 function N.OpenAtlas()
     net.Start("GRM_Nav_Act") net.WriteString("sync") net.SendToServer()
     local lp = LocalPlayer()
     local pos = IsValid(lp) and lp:GetPos() or Vector(0, 0, 0)
-    N._atlasCam = { x = pos.x, y = pos.y, z = 4800 }
+    N._atlasCam = { x = pos.x, y = pos.y, z = 3200 }
     N._mode = N._mode or "nav"
     N._open = true
+    if not N.Scheme.cells then schemeKick() end
     if IsValid(N._frame) then N._frame:Remove() end
     if IsValid(N._catch) then N._catch:Remove() end
-    local catch = vgui.Create("DPanel")
+    local mapX, mapY = 12, 12
+    local mapW, mapH = ScrW() - 276 - 28, ScrH() - 24
+    local catch = vgui.Create("DFrame")
     N._catch = catch
-    catch:SetPos(12, 12)
-    catch:SetSize(ScrW() - 276 - 28, ScrH() - 24)
-    catch:SetPaintBackground(false)
-    catch:SetMouseInputEnabled(true)
+    catch:SetPos(mapX, mapY)
+    catch:SetSize(mapW, mapH)
+    catch:SetTitle("")
+    catch:ShowCloseButton(false)
+    catch:SetDraggable(false)
+    catch:SetSizable(false)
+    catch:MakePopup()
     catch:SetKeyboardInputEnabled(false)
+    catch.Paint = function() end
     catch.OnMouseWheeled = function(_, d)
         atlasZoom(d, gui.MouseX(), gui.MouseY())
         return true
     end
-    catch.OnMousePressed = function() end
+    catch.OnMousePressed = function(_, code)
+        local mx, my = gui.MousePos()
+        drag = { x = mx, y = my, cx = N._atlasCam.x, cy = N._atlasCam.y, moved = false, btn = code }
+        local world = screenToCam(mx, my, mapX, mapY, mapW, mapH)
+        N._clickAt = { t = CurTime(), w = world, code = code }
+    end
+    catch.OnCursorMoved = function()
+        if not drag then return end
+        local mx, my = gui.MousePos()
+        if math.abs(mx - drag.x) + math.abs(my - drag.y) > 5 then drag.moved = true end
+        if not drag.moved then return end
+        local half = camSpan()
+        N._atlasCam.x = drag.cx - (mx - drag.x) / mapW * half * 2
+        N._atlasCam.y = drag.cy + (my - drag.y) / mapH * half * 2
+        N._clickAt = nil
+    end
+    catch.OnMouseReleased = function(_, code)
+        local was = N._clickAt
+        local didDrag = drag and drag.moved
+        drag = nil
+        N._clickAt = nil
+        if didDrag or not was then return end
+        local mx, my = gui.MousePos()
+        local world = was.w
+        if code == MOUSE_RIGHT then
+            if N._mode == "graph" and LocalPlayer():IsSuperAdmin() then
+                local hitN
+                for _, n in ipairs(N.Nodes or {}) do
+                    local px, py = camToScreen(Vector(n.x, n.y, n.z or 0), mapX, mapY, mapW, mapH)
+                    if math.abs(px - mx) < 12 and math.abs(py - my) < 12 then hitN = n break end
+                end
+                if hitN then
+                    net.Start("GRM_Nav_Act") net.WriteString("gdel") net.WriteString(hitN.id) net.SendToServer()
+                    if N._lastNode == hitN.id then N._lastNode = nil end
+                else
+                    N._lastNode = nil
+                end
+                return
+            end
+            return
+        end
+        if N._mode == "graph" and LocalPlayer():IsSuperAdmin() then
+            local hitN
+            for _, n in ipairs(N.Nodes or {}) do
+                local px, py = camToScreen(Vector(n.x, n.y, n.z or 0), mapX, mapY, mapW, mapH)
+                if math.abs(px - mx) < 12 and math.abs(py - my) < 12 then hitN = n break end
+            end
+            if hitN and N._lastNode and N._lastNode ~= hitN.id then
+                net.Start("GRM_Nav_Act") net.WriteString("glink") net.WriteString(N._lastNode) net.WriteString(hitN.id) net.SendToServer()
+                N._lastNode = hitN.id
+            elseif hitN then
+                N._lastNode = hitN.id
+            else
+                net.Start("GRM_Nav_Act")
+                    net.WriteString("gadd")
+                    net.WriteFloat(world.x) net.WriteFloat(world.y) net.WriteFloat(world.z)
+                    net.WriteString(N._lastNode or "")
+                net.SendToServer()
+                N._graphWait = Vector(world.x, world.y, world.z)
+            end
+            return
+        end
+        if N._mode == "sign" and LocalPlayer():IsSuperAdmin() then
+            net.Start("GRM_Nav_Act")
+                net.WriteString("add")
+                net.WriteString(N._signName or "")
+                net.WriteString(N._signKind or "pin")
+                net.WriteBool(N._signPin ~= false)
+                net.WriteFloat(world.x) net.WriteFloat(world.y) net.WriteFloat(world.z)
+            net.SendToServer()
+            return
+        end
+        if N._mode == "gps" and LocalPlayer():IsSuperAdmin() then
+            net.Start("GRM_Minimap_Action")
+                net.WriteString("add_point_at")
+                net.WriteString((N._signName and N._signName ~= "") and N._signName or "GPS")
+                net.WriteUInt(180, 16)
+                net.WriteFloat(world.x) net.WriteFloat(world.y) net.WriteFloat(world.z)
+            net.SendToServer()
+            return
+        end
+        local hit
+        for _, b in ipairs(collectBlips()) do
+            local px, py = camToScreen(b.pos, mapX, mapY, mapW, mapH)
+            if math.abs(px - mx) < 14 and math.abs(py - my) < 14 then hit = b break end
+        end
+        if hit then
+            N.SetWaypoint(hit.pos, hit.name, hit.id)
+        elseif GRM.Minimap and GRM.Minimap.AddPersonal then
+            local p = GRM.Minimap.AddPersonal("Точка", world)
+            N.SetWaypoint(world, "Точка", p.id)
+        else
+            N.SetWaypoint(world, "Точка")
+        end
+    end
 
     local sideW = 276
     local fr = vgui.Create("DFrame")
@@ -779,7 +1000,7 @@ function N.OpenAtlas()
         surface.SetDrawColor(COL.line)
         surface.DrawOutlinedRect(0, 0, w, h, 1)
         draw.SimpleText("АТЛАС", "GRMNav_Big", 14, 18, COL.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText("живой вид, как мини", "GRMNav_Tiny", 14, 38, COL.dim)
+        draw.SimpleText("тяни карту · без тумана", "GRMNav_Tiny", 14, 38, COL.dim)
     end
     fr.OnRemove = function()
         N._open = false
@@ -807,6 +1028,7 @@ function N.OpenAtlas()
     chk("Личные точки", "me")
     chk("Игроки", "players")
     chk("Сетка узлов", "graph")
+    chk("Схема кварталов", "scheme")
 
     local labM = vgui.Create("DLabel", fr)
     labM:SetPos(14, yy + 6) labM:SetSize(240, 20) labM:SetFont("GRMNav_Mid") labM:SetTextColor(COL.gold) labM:SetText("РЕЖИМ")
@@ -919,10 +1141,12 @@ hook.Add("HUDPaint", "GRM_Nav_AtlasHUD", function()
     surface.DrawOutlinedRect(x, y, w, h, 1)
     render.SetScissorRect(x + 2, y + 2, x + w - 2, y + h - 2, true)
     if atlasLiveMat then
+        local fade = math.floor(255 - 90 * math.Clamp((camSpan() - 900) / 7000, 0, 1))
         surface.SetMaterial(atlasLiveMat)
-        surface.SetDrawColor(255, 255, 255, 255)
+        surface.SetDrawColor(255, 255, 255, fade)
         surface.DrawTexturedRect(x + 3, y + 3, w - 6, h - 6)
     end
+    drawScheme(x, y, w, h)
     local function toS(vec)
         local px, py = camToScreen(vec, x, y, w, h)
         return { x = px, y = py }
@@ -958,125 +1182,27 @@ hook.Add("HUDPaint", "GRM_Nav_AtlasHUD", function()
     end
     render.SetScissorRect(0, 0, 0, 0, false)
     local zoomTxt = string.format("зум %d м", math.floor(N._atlasCam.z or 0))
-    draw.SimpleText("колёсико зум  ·  ЛКМ тяни / точка  ·  режим справа  ·  " .. zoomTxt, "GRMNav_Tiny", x + 12, y + h - 18, COL.dim)
-end)
-
-local drag
-hook.Add("GUIMousePressed", "GRM_Nav_AtlasClick", function(code)
-    if not N._open then return end
-    local mx, my = gui.MousePos()
-    local x, y, w, h = 12, 12, ScrW() - 276 - 28, ScrH() - 24
-    if mx < x or my < y or mx > x + w or my > y + h then return end
-    if code == MOUSE_LEFT then
-        drag = { x = mx, y = my, cx = N._atlasCam.x, cy = N._atlasCam.y }
-        local world = screenToCam(mx, my, x, y, w, h)
-        if N._mode == "graph" and LocalPlayer():IsSuperAdmin() then
-            local hitN
-            for _, n in ipairs(N.Nodes or {}) do
-                local px, py = camToScreen(Vector(n.x, n.y, n.z or 0), x, y, w, h)
-                if math.abs(px - mx) < 12 and math.abs(py - my) < 12 then hitN = n break end
-            end
-            if hitN and N._lastNode and N._lastNode ~= hitN.id then
-                net.Start("GRM_Nav_Act") net.WriteString("glink") net.WriteString(N._lastNode) net.WriteString(hitN.id) net.SendToServer()
-                N._lastNode = hitN.id
-            elseif hitN then
-                N._lastNode = hitN.id
-            else
-                net.Start("GRM_Nav_Act")
-                    net.WriteString("gadd")
-                    net.WriteFloat(world.x) net.WriteFloat(world.y) net.WriteFloat(world.z)
-                    net.WriteString(N._lastNode or "")
-                net.SendToServer()
-            end
-            return true
-        end
-        if N._mode == "sign" and LocalPlayer():IsSuperAdmin() then
-            net.Start("GRM_Nav_Act")
-                net.WriteString("add")
-                net.WriteString(N._signName or "")
-                net.WriteString(N._signKind or "pin")
-                net.WriteBool(N._signPin ~= false)
-                net.WriteFloat(world.x) net.WriteFloat(world.y) net.WriteFloat(world.z)
-            net.SendToServer()
-            return true
-        end
-        if N._mode == "gps" and LocalPlayer():IsSuperAdmin() then
-            net.Start("GRM_Minimap_Action")
-                net.WriteString("add_point_at")
-                net.WriteString(N._signName ~= "" and N._signName or "GPS")
-                net.WriteUInt(180, 16)
-                net.WriteFloat(world.x) net.WriteFloat(world.y) net.WriteFloat(world.z)
-            net.SendToServer()
-            return true
-        end
-        local hit
-        for _, b in ipairs(collectBlips()) do
-            local px, py = camToScreen(b.pos, x, y, w, h)
-            if math.abs(px - mx) < 14 and math.abs(py - my) < 14 then hit = b break end
-        end
-        if hit then N.SetWaypoint(hit.pos, hit.name, hit.id)
-        else N._clickAt = { t = CurTime(), w = world } end
-        return true
-    elseif code == MOUSE_RIGHT then
-        if N._mode == "graph" and LocalPlayer():IsSuperAdmin() then
-            local hitN
-            for _, n in ipairs(N.Nodes or {}) do
-                local px, py = camToScreen(Vector(n.x, n.y, n.z or 0), x, y, w, h)
-                if math.abs(px - mx) < 12 and math.abs(py - my) < 12 then hitN = n break end
-            end
-            if hitN then
-                net.Start("GRM_Nav_Act") net.WriteString("gdel") net.WriteString(hitN.id) net.SendToServer()
-                if N._lastNode == hitN.id then N._lastNode = nil end
-            else
-                N._lastNode = nil
-            end
-            return true
-        end
-        if not LocalPlayer():IsSuperAdmin() then return end
-        local world = screenToCam(mx, my, x, y, w, h)
-        net.Start("GRM_Nav_Act")
-            net.WriteString("add")
-            net.WriteString(N._signName or "")
-            net.WriteString(N._signKind or "pin")
-            net.WriteBool(N._signPin ~= false)
-            net.WriteFloat(world.x) net.WriteFloat(world.y) net.WriteFloat(world.z)
-        net.SendToServer()
-        return true
-    end
-end)
-
-hook.Add("GUIMouseReleased", "GRM_Nav_AtlasRel", function(code)
-    if not N._open then return end
-    if code == MOUSE_LEFT and N._clickAt and CurTime() - N._clickAt.t < 0.22 then
-        local world = N._clickAt.w
-        if GRM.Minimap and GRM.Minimap.AddPersonal then
-            local p = GRM.Minimap.AddPersonal("Точка", world)
-            N.SetWaypoint(world, "Точка", p.id)
-        else
-            N.SetWaypoint(world, "Точка")
-        end
-    end
-    drag, N._clickAt = nil, nil
+    draw.SimpleText("ЛКМ/ПКМ тяни карту  ·  колёсико зум  ·  клик — точка  ·  " .. zoomTxt, "GRMNav_Tiny", x + 12, y + h - 18, COL.dim)
 end)
 
 hook.Add("Think", "GRM_Nav_AtlasDrag", function()
-    if not N._open or not drag then return end
-    if not input.IsMouseDown(MOUSE_LEFT) then drag = nil return end
+    if not N._open or not drag or not drag.moved then return end
+    if not (input.IsMouseDown(MOUSE_LEFT) or input.IsMouseDown(MOUSE_RIGHT)) then return end
     local mx, my = gui.MousePos()
-    local half = math.tan(math.rad(31)) * (N._atlasCam.z or 2200)
-    local w = ScrW() - 276 - 28
+    local half = camSpan()
+    local w, h = ScrW() - 276 - 28, ScrH() - 24
     N._atlasCam.x = drag.cx - (mx - drag.x) / w * half * 2
-    N._atlasCam.y = drag.cy + (my - drag.y) / (ScrH() - 24) * half * 2
+    N._atlasCam.y = drag.cy + (my - drag.y) / h * half * 2
 end)
 
 hook.Add("PlayerBindPress", "GRM_Nav_AtlasWheel", function(ply, bind, pressed)
     if not N._open or not pressed then return end
     if bind == "invnext" then
-        N._atlasCam.z = math.Clamp((N._atlasCam.z or 2000) + 280, 900, 7000)
+        atlasZoom(-1, gui.MouseX(), gui.MouseY())
         return true
     end
     if bind == "invprev" then
-        N._atlasCam.z = math.Clamp((N._atlasCam.z or 2000) - 280, 900, 7000)
+        atlasZoom(1, gui.MouseX(), gui.MouseY())
         return true
     end
 end)
