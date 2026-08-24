@@ -4,7 +4,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Fuel = GRM.Fuel or {}
 local F = GRM.Fuel
-F.Version = "1.2.2"
+F.Version = "1.2.3"
 F.File = "grm_fuel.json"
 F.PumpFile = "grm_fuel_pumps_" .. string.lower(game.GetMap() or "unknown") .. ".json"
 F.PricePerLiter = 8
@@ -111,6 +111,25 @@ if SERVER then
             file.Write(F.PumpFile, util.TableToJSON(rows, false) or "[]")
         end
         if GRM.Perf and GRM.Perf.Coalesce then GRM.Perf.Coalesce("grm_fuel_pumps", 1, fn) else fn() end
+    end
+
+    function F.SavePumpsNow()
+        if GRM.Perf and GRM.Perf.Cancel then pcall(GRM.Perf.Cancel, "grm_fuel_pumps") end
+        local rows = {}
+        for _, e in ipairs(ents.FindByClass("grm_fuel_pump")) do
+            if IsValid(e) then
+                rows[#rows + 1] = {
+                    pos = { x = e:GetPos().x, y = e:GetPos().y, z = e:GetPos().z },
+                    ang = { p = e:GetAngles().p, y = e:GetAngles().y, r = e:GetAngles().r },
+                    kind = e:GetFuelKind(),
+                    owner = e:GetOwnerKey(),
+                    station = e:GetStationID(),
+                    price = e:GetPriceL(),
+                    cash = e:GetCash(),
+                }
+            end
+        end
+        file.Write(F.PumpFile, util.TableToJSON(rows, false) or "[]")
     end
 
     function F.LoadPumps()
@@ -398,6 +417,26 @@ if SERVER then
         return true, "Снято " .. sum .. " GRM"
     end
 
+    function F.DeletePump(ply, pump)
+        if not IsValid(pump) or pump:GetClass() ~= "grm_fuel_pump" then
+            return false, "Нет колонки"
+        end
+        if IsValid(ply) and ply:GetPos():DistToSqr(pump:GetPos()) > 280 * 280 and not ply:IsSuperAdmin() then
+            return false, "Подойдите ближе"
+        end
+        F.ClearHose(pump)
+        local pos = pump:GetPos()
+        if GRM.Perm and GRM.Perm.Remove then
+            pcall(GRM.Perm.Remove, ply, pump, false)
+        end
+        if GRM.Perm and GRM.Perm.EraseNear then
+            pcall(GRM.Perm.EraseNear, "grm_fuel_pump", pos, 80)
+        end
+        SafeRemoveEntity(pump)
+        F.SavePumpsNow()
+        return true, "Колонка снята с карты и из перма"
+    end
+
     net.Receive("GRM_Fuel_Station", function(_, ply)
         if not IsValid(ply) then return end
         ply._grmFuelMenu = ply._grmFuelMenu or 0
@@ -551,7 +590,13 @@ if SERVER then
             F.ScrubOrphanRopes()
         end)
     end)
-    hook.Add("ShutDown", "GRM_Fuel_SavePumps", function() F.SavePumps() end)
+    hook.Add("ShutDown", "GRM_Fuel_SavePumps", function() F.SavePumpsNow() end)
+    hook.Add("EntityRemoved", "GRM_Fuel_PumpGone", function(ent)
+        if not IsValid(ent) or ent:GetClass() ~= "grm_fuel_pump" then return end
+        timer.Simple(0, function()
+            if F.SavePumpsNow then F.SavePumpsNow() end
+        end)
+    end)
 
     concommand.Add("grm_fuel_scrub", function(ply)
         if IsValid(ply) and not ply:IsSuperAdmin() then return end

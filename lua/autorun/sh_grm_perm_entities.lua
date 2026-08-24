@@ -1135,6 +1135,31 @@ if SERVER then
         return true, "removed", rec
     end
 
+    -- Широкий вырез записи (колонка и т.п.): позиция могла уехать дальше PERM_RANGE.
+    function P.EraseNear(class, pos, radius)
+        class = tostring(class or "")
+        if class == "" or not istable(pos) and not (pos and pos.x) then return 0 end
+        radius = tonumber(radius) or 80
+        local r2 = radius * radius
+        local list = loadDB()
+        local map = game.GetMap()
+        local n = 0
+        for i = #list, 1, -1 do
+            local rec = list[i]
+            if rec.map == map and rec.class == class then
+                local dx = (tonumber(rec.pos and rec.pos.x) or 0) - pos.x
+                local dy = (tonumber(rec.pos and rec.pos.y) or 0) - pos.y
+                local dz = (tonumber(rec.pos and rec.pos.z) or 0) - pos.z
+                if dx * dx + dy * dy + dz * dz <= r2 then
+                    table.remove(list, i)
+                    n = n + 1
+                end
+            end
+        end
+        if n > 0 then saveList(list) end
+        return n
+    end
+
     -- Обновить запись под текущее состояние объекта (позиция, данные,
     -- владение, метка). Используется тулом и PhysgunDrop.
     function P.Update(ply, ent, opts)
