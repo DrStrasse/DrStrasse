@@ -55,6 +55,21 @@ local function rpName(ply)
     return n
 end
 
+if GRM.Inventory and GRM.Inventory.RegisterItem then
+    GRM.Inventory.RegisterItem("grm_photo", {
+        type = "item", name = "Фотоснимок",
+        desc = "Кадр с камеры. «Использовать» — открыть.",
+        icon = "icon16/camera.png", maxStack = 1, weight = 0.05,
+        model = "models/props_lab/frame002a.mdl", useFunc = "grm_photo_view",
+    })
+    GRM.Inventory.RegisterItem("grm_wanted_poster", {
+        type = "item", name = "Лист розыска",
+        desc = "Ориентировка с фото. «Использовать» — развернуть лист.",
+        icon = "icon16/page_error.png", maxStack = 5, weight = 0.08,
+        model = "models/props_junk/garbage_newspaper001a.mdl", useFunc = "grm_poster_view",
+    })
+end
+
 function P.CanOfficial(ply)
     if not IsValid(ply) then return false end
     if ply:IsSuperAdmin() then return true end
@@ -82,13 +97,54 @@ if SERVER then
     util.AddNetworkString("GRM_Photo_Print")
     util.AddNetworkString("GRM_Photo_OpenUI")
     util.AddNetworkString("GRM_Photo_Notify")
+    util.AddNetworkString("GRM_Photo_Sheet")
 
     P.Index = P.Index or jsonLoad(IDX)
     P.Mail = P.Mail or jsonLoad(MAIL)
+    P.Public = P.Public or {}
 
     local function saveAll()
-        jsonSave(IDX, P.Index)
-        jsonSave(MAIL, P.Mail)
+        local fn = function()
+            jsonSave(IDX, P.Index)
+            jsonSave(MAIL, P.Mail)
+        end
+        if GRM.Perf and GRM.Perf.Coalesce then
+            GRM.Perf.Coalesce("grm_photo_save", 0.6, fn)
+        else
+            fn()
+        end
+    end
+
+    local function sendSheet(ply, id, headline, body, filter)
+        if not IsValid(ply) then return end
+        local bytes = P.ReadBytes(id)
+        net.Start("GRM_Photo_Sheet")
+            net.WriteString(tostring(id or ""))
+            net.WriteString(string.sub(tostring(headline or ""), 1, 80))
+            net.WriteString(string.sub(tostring(body or ""), 1, 180))
+            net.WriteString(string.sub(tostring(filter or "stamp"), 1, 16))
+            local n = bytes and #bytes or 0
+            if n > 65535 then n = 0 bytes = nil end
+            net.WriteUInt(n, 16)
+            if n > 0 then net.WriteData(bytes, n) end
+        net.Send(ply)
+    end
+    P.SendSheet = sendSheet
+
+    local function bindWantedPhoto(photoId, rec)
+        local W = GRM.Wanted
+        if not (W and istable(W.Records) and rec) then return end
+        local sub = string.lower(tostring(rec.subject or ""))
+        if sub == "" then return end
+        for key, wr in pairs(W.Records) do
+            if istable(wr) and string.lower(tostring(wr.name or "")) == sub then
+                wr.photoId = photoId
+                wr.photoPath = "grm_photos/" .. photoId .. ".jpg"
+                wr.updated = os.time()
+                if W.Save then W.Save() end
+                return key
+            end
+        end
     end
 
     local function notify(ply, msg, ok)
@@ -222,7 +278,7 @@ if SERVER then
                 if m.photoId == id then mailHit = true break end
             end
         end
-        if not (own or mailHit or P.CanOfficial(ply)) then return end
+        if not (own or mailHit or P.Public[id] or P.CanOfficial(ply)) then return end
         local bytes = P.ReadBytes(id)
         if not bytes then return end
         net.Start("GRM_Photo_Blob")
@@ -269,6 +325,8 @@ if SERVER then
         local rec = findPhoto(photoId)
         if not rec then notify(ply, "Фото не найдено.", false) return end
         if headline == "" then headline = "ВНИМАНИЕ! РОЗЫСК!" end
+        P.Public[photoId] = true
+        bindWantedPhoto(photoId, rec)
         if GRM.Inventory and GRM.Inventory.AddItem then
             local left = GRM.Inventory.AddItem(ply, "grm_wanted_poster", 1, {
                 photoId = photoId, headline = headline, body = body,
@@ -283,7 +341,8 @@ if SERVER then
             ent:Spawn()
             if ent.SetPosterData then ent:SetPosterData(photoId, headline, body, rec.subject or "") end
         end
-        notify(ply, "Лист отпечатан.", true)
+        sendSheet(ply, photoId, headline, body, "stamp")
+        notify(ply, "Лист отпечатан — смотри кадр.", true)
     end)
 
     net.Receive("GRM_Photo_OpenUI", function(_, ply)
@@ -384,7 +443,16 @@ if CLIENT then
         if not file.Exists("grm_photos_cache", "DATA") then file.CreateDir("grm_photos_cache") end
         local path = "grm_photos_cache/" .. id .. ".jpg"
         file.Write(path, bytes)
-        P.Mats[id] = Material("data/" .. path, "smooth")
+        P._matGen = (P._matGen or 0) + 1
+        P.Mats[id] = CreateMaterial("grm_ph_" .. id .. "_" .. P._matGen, "UnlitGeneric", {
+            ["$basetexture"] = "../data/" .. path,
+            ["$vertexalpha"] = 1,
+            ["$vertexcolor"] = 1,
+            ["$translucent"] = 1,
+        })
+        if not P.Mats[id] or P.Mats[id]:IsError() then
+            P.Mats[id] = Material("data/" .. path, "smooth noclamp")
+        end
         return P.Mats[id]
     end
 
@@ -448,6 +516,55 @@ if CLIENT then
     net.Receive("GRM_Photo_OpenUI", function()
         if P.OpenStudio then P.OpenStudio() end
     end)
+
+    net.Receive("GRM_Photo_Sheet", function()
+        local id = net.ReadString()
+        local head = net.ReadString()
+        local body = net.ReadString()
+        local filt = net.ReadString()
+        local n = net.ReadUInt(16)
+        if n > 0 then cacheMat(id, net.ReadData(n)) end
+        if P.OpenSheet then P.OpenSheet(id, head, body, filt) end
+    end)
+
+    function P.OpenSheet(id, headline, body, filter)
+        if IsValid(P._sheet) then P._sheet:Remove() end
+        local fr = vgui.Create("DFrame")
+        P._sheet = fr
+        fr:SetSize(560, 640)
+        fr:Center()
+        fr:SetTitle("")
+        fr:MakePopup()
+        fr.Paint = function(_, w, h)
+            draw.RoundedBox(8, 0, 0, w, h, Color(16, 20, 28, 250))
+            draw.SimpleText(headline ~= "" and headline or "ЛИСТ", "DermaDefaultBold", w / 2, 18, Color(230, 70, 60), TEXT_ALIGN_CENTER)
+        end
+        local prev = vgui.Create("DPanel", fr)
+        prev:SetPos(20, 40)
+        prev:SetSize(520, 480)
+        prev.Paint = function(_, w, h)
+            P.DrawPreview(id, 0, 0, w, h, filter or "stamp")
+        end
+        local lab = vgui.Create("DLabel", fr)
+        lab:SetPos(20, 528)
+        lab:SetSize(520, 50)
+        lab:SetWrap(true)
+        lab:SetTextColor(Color(220, 228, 236))
+        lab:SetText(tostring(body or ""))
+        local close = vgui.Create("DButton", fr)
+        close:SetPos(20, 590) close:SetSize(520, 34)
+        close:SetText("Закрыть") close:SetTextColor(color_white)
+        close.Paint = function(s, w, h)
+            draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(70, 80, 95) or Color(45, 52, 64))
+        end
+        close.DoClick = function() fr:Close() end
+        if id ~= "" and (not P.Mats[id] or P.Mats[id]:IsError()) then
+            P.RequestBlob(id)
+        end
+        hook.Add("GRM_PhotoBlob", "GRM_PhotoSheet", function()
+            if IsValid(prev) then prev:InvalidateLayout(true) end
+        end)
+    end
 
     function P.RequestBlob(id)
         if not id or id == "" then return end

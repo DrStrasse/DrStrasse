@@ -21,18 +21,13 @@ end
 
 function ENT:Use(ply)
     if not IsValid(ply) then return end
+    local id = self:GetPhotoID()
+    if GRM.Photo and GRM.Photo.SendSheet and id ~= "" then
+        if GRM.Photo.Public then GRM.Photo.Public[id] = true end
+        GRM.Photo.SendSheet(ply, id, self:GetHeadline(), self:GetBody() ~= "" and self:GetBody() or self:GetSubjectName(), "stamp")
+        return
+    end
     if GRM.Notify then
         GRM.Notify(ply, self:GetHeadline() .. "  " .. self:GetSubjectName(), 230, 70, 60)
-    end
-    if GRM.Photo and GRM.Photo.ReadBytes and self:GetPhotoID() ~= "" then
-        local bytes = GRM.Photo.ReadBytes(self:GetPhotoID())
-        if bytes then
-            net.Start("GRM_Photo_Blob")
-                net.WriteString(self:GetPhotoID())
-                net.WriteString("stamp")
-                net.WriteUInt(#bytes, 16)
-                net.WriteData(bytes, #bytes)
-            net.Send(ply)
-        end
     end
 end

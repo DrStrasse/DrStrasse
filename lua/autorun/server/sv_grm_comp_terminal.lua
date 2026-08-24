@@ -546,16 +546,21 @@ net.Receive("GRM_CompTerminal_Act", function(_, ply)
         if not rec then return result(ply, false, "Дело не найдено") end
         local photoPath = string.sub(extra ~= "" and extra or text or "", 1, 128)
         if photoPath == "" then return result(ply, false, "Не указана фотография") end
-        -- базовая валидация пути
-        if not (photoPath:find("grm_computer/images") or photoPath:find("grm_photos") or photoPath:find("grm_import") or photoPath:find("%.jpg") or photoPath:find("%.png")) then
-            return result(ply, false, "Некорректный путь фото (ожидается grm_computer/images/...)")
+        local hexId = photoPath:match("^(%x%x%x%x%x%x%x%x)$")
+        if hexId then
+            rec.photoId = hexId
+            rec.photoPath = "grm_photos/" .. hexId .. ".jpg"
+        elseif photoPath:find("grm_computer/images", 1, true) or photoPath:find("grm_photos", 1, true)
+            or photoPath:find("grm_import", 1, true) or photoPath:find(".jpg", 1, true) or photoPath:find(".png", 1, true) then
+            rec.photoPath = photoPath
+        else
+            return result(ply, false, "Нужен id снимка (8 знаков) или путь grm_photos/…")
         end
-        rec.photoPath = photoPath
         rec.photoAttachedBy = ply:Nick()
         rec.photoAttachedAt = os.time()
         rec.updated = os.time()
         if W.Save then W.Save() end
-        return result(ply, true, "Фоторобот прикреплён к делу: " .. (rec.name or key))
+        return result(ply, true, "Фото прикреплено к делу: " .. (rec.name or key))
     end
 
     if act == "warrant_request" then
