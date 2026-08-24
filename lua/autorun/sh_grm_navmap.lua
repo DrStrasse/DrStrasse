@@ -276,18 +276,19 @@ hook.Add("PostRender", "GRM_Nav_Peek", function()
     if peekBusy or atlasBusy then return end
     local lp = LocalPlayer()
     if not IsValid(lp) or not lp:Alive() then return end
-    if IsValid(N._frame) then
+    if N._open then
         local now = CurTime()
-        if now - atlasShotAt < 0.18 then return end
+        if now - atlasShotAt < 0.15 then return end
         atlasBusy, atlasShotAt = true, now
         local cam = N._atlasCam
+        local lpz = lp:GetPos().z
         render.PushRenderTarget(atlasRT)
         render.Clear(8, 14, 23, 255, true, true)
         render.RenderView({
-            origin = Vector(cam.x, cam.y, cam.z),
+            origin = Vector(cam.x, cam.y, lpz + (cam.z or 2200)),
             angles = Angle(90, 90, 0),
             x = 0, y = 0, w = 512, h = 512,
-            fov = 70, znear = 24, zfar = 40000,
+            fov = 62, znear = 16, zfar = 14000,
             drawhud = false, drawviewmodel = false, drawskybox = false,
         })
         render.PopRenderTarget()
@@ -354,7 +355,7 @@ local function collectBlips()
     if N.Opt.me and MM and MM.PersonalPoints then
         for _, p in ipairs(MM.PersonalPoints() or {}) do
             if istable(p.pos) then
-                out[#out + 1] = { id = p.id, name = p.name, kind = "me", pos = Vector(p.pos.x, p.pos.y, p.pos.z or 0) }
+                out[#out + 1] = { id = p.id, name = p.name, kind = "me", src = "me", pos = Vector(p.pos.x, p.pos.y, p.pos.z or 0) }
             end
         end
     end
@@ -493,7 +494,7 @@ local function paintGround(x, y, w, h)
 end
 
 hook.Add("HUDPaint", "GRM_Nav_Mini", function()
-    if not N.Visible then return end
+    if not N.Visible or N._open then return end
     local lp = LocalPlayer()
     if not IsValid(lp) or not lp:Alive() then return end
     if GRM.AugHUD and GRM.AugHUD.IsActive and GRM.AugHUD.IsActive() then return end
@@ -537,214 +538,266 @@ hook.Add("HUDPaint", "GRM_Nav_Mini", function()
     end
 end)
 
+
 local function grmBtn(parent, txt, col)
     local b = vgui.Create("DButton", parent)
     b:SetText(txt)
     b:SetFont("GRMNav_Mid")
     b:SetTextColor(COL.text)
     b.Paint = function(s, w, h)
-        local c = col or Color(32, 48, 68)
-        if s:IsHovered() then c = Color(math.min(255, c.r + 28), math.min(255, c.g + 28), math.min(255, c.b + 28)) end
+        local c = col or Color(22, 34, 50)
+        if s:IsHovered() then c = Color(math.min(255, c.r + 30), math.min(255, c.g + 30), math.min(255, c.b + 30)) end
         draw.RoundedBox(6, 0, 0, w, h, c)
-        surface.SetDrawColor(COL.line)
+        surface.SetDrawColor(55, 117, 151, 180)
         surface.DrawOutlinedRect(0, 0, w, h, 1)
     end
     return b
 end
 
+local function camToScreen(world, x, y, w, h)
+    local cam = N._atlasCam
+    local half = math.tan(math.rad(31)) * (cam.z or 2200)
+    local dx, dy = world.x - cam.x, world.y - cam.y
+    return x + w * 0.5 + (dx / half) * (w * 0.5), y + h * 0.5 - (dy / half) * (h * 0.5)
+end
+
+local function screenToCam(mx, my, x, y, w, h)
+    local cam = N._atlasCam
+    local half = math.tan(math.rad(31)) * (cam.z or 2200)
+    local ux = (mx - x) / w - 0.5
+    local uy = 0.5 - (my - y) / h
+    local lp = LocalPlayer()
+    return Vector(cam.x + ux * 2 * half, cam.y + uy * 2 * half, IsValid(lp) and lp:GetPos().z or 0)
+end
+
+function N.CloseAtlas()
+    N._open = false
+    gui.EnableScreenClicker(false)
+    if IsValid(N._frame) then N._frame:Remove() end
+end
+
 function N.OpenAtlas()
     net.Start("GRM_Nav_Act") net.WriteString("sync") net.SendToServer()
-    ensureBounds()
+    local lp = LocalPlayer()
+    local pos = IsValid(lp) and lp:GetPos() or Vector(0, 0, 0)
+    N._atlasCam = { x = pos.x, y = pos.y, z = 2000 }
+    N._open = true
     if IsValid(N._frame) then N._frame:Remove() end
+
+    local sideW = 276
     local fr = vgui.Create("DFrame")
     N._frame = fr
-    local W, H = math.max(ScrW() - 24, 900), math.max(ScrH() - 24, 640)
-    fr:SetSize(W, H)
-    fr:Center()
+    fr:SetSize(sideW, ScrH() - 24)
+    fr:SetPos(ScrW() - sideW - 12, 12)
     fr:SetTitle("")
     fr:MakePopup()
     fr:ShowCloseButton(false)
+    fr:SetKeyboardInputEnabled(false)
     fr.Paint = function(_, w, h)
-        draw.RoundedBox(8, 0, 0, w, h, COL.panel)
-        draw.SimpleText("АТЛАС", "GRMNav_Big", 18, 20, COL.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText("ЛКМ маршрут  ·  колёсико зум  ·  СКМ перетаскивание  ·  ПКМ знак (админ)", "GRMNav_Tiny", 18, 42, COL.dim)
+        draw.RoundedBox(8, 0, 0, w, h, Color(8, 14, 23, 242))
+        surface.SetDrawColor(COL.line)
+        surface.DrawOutlinedRect(0, 0, w, h, 1)
+        draw.SimpleText("АТЛАС", "GRMNav_Big", 14, 18, COL.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("живой вид, как мини", "GRMNav_Tiny", 14, 38, COL.dim)
     end
+    fr.OnRemove = function() N._open = false gui.EnableScreenClicker(false) end
 
-    local close = vgui.Create("DButton", fr)
-    close:SetSize(32, 28) close:SetPos(W - 44, 12) close:SetText("×") close:SetTextColor(color_white)
-    close.Paint = function(s, w, h) draw.RoundedBox(4, 0, 0, w, h, s:IsHovered() and Color(180, 50, 50) or Color(45, 55, 70)) end
-    close.DoClick = function() fr:Close() end
+    local close = grmBtn(fr, "✕", Color(120, 40, 44))
+    close:SetPos(sideW - 40, 10) close:SetSize(28, 26)
+    close.DoClick = N.CloseAtlas
 
-    local map = vgui.Create("DPanel", fr)
-    map:SetPos(12, 56)
-    map:SetSize(W - 300, H - 70)
-    local zoom, ox, oy, drag = 1, 0, 0, nil
-
-    map.OnMouseWheeled = function(_, d)
-        zoom = math.Clamp(zoom + d * 0.12, 0.5, 4)
-    end
-    map.OnMousePressed = function(self, code)
-        local mx, my = self:CursorPos()
-        local w, h = self:GetWide(), self:GetTall()
-        if code == MOUSE_MIDDLE then
-            drag = { x = mx, y = my, ox = ox, oy = oy }
-            return
-        end
-        local world = mapToWorld(mx, my, 0, 0, w, h, zoom, ox, oy)
-        if code == MOUSE_LEFT then
-            local hit
-            for _, b in ipairs(collectBlips()) do
-                local px, py = worldToMap(b.pos, 0, 0, w, h, zoom, ox, oy)
-                if math.abs(px - mx) < 14 and math.abs(py - my) < 14 then hit = b break end
-            end
-            if hit then N.SetWaypoint(hit.pos, hit.name, hit.id)
-            else
-                if GRM.Minimap and GRM.Minimap.AddPersonal then
-                    local p = GRM.Minimap.AddPersonal("Точка", world)
-                    N.SetWaypoint(world, "Точка", p.id)
-                else
-                    N.SetWaypoint(world, "Точка")
-                end
-            end
-            surface.PlaySound("buttons/button14.wav")
-        elseif code == MOUSE_RIGHT then
-            if not LocalPlayer():IsSuperAdmin() then
-                notification.AddLegacy("Знаки ставит администратор.", NOTIFY_ERROR, 3)
-                return
-            end
-            net.Start("GRM_Nav_Act")
-                net.WriteString("add")
-                net.WriteString(N._signName or "")
-                net.WriteString(N._signKind or "pin")
-                net.WriteBool(N._signPin ~= false)
-                net.WriteFloat(world.x) net.WriteFloat(world.y) net.WriteFloat(world.z)
-            net.SendToServer()
-        end
-    end
-    map.OnMouseReleased = function() drag = nil end
-    map.Think = function(self)
-        if drag and input.IsMouseDown(MOUSE_MIDDLE) then
-            local mx, my = self:CursorPos()
-            ox = drag.ox + (mx - drag.x)
-            oy = drag.oy + (my - drag.y)
-        end
-    end
-
-    map.Paint = function(self, w, h)
-        ensureBounds()
-        local mid = mapToWorld(w * 0.5, h * 0.5, 0, 0, w, h, zoom, ox, oy)
-        local span = math.max(math.abs(atlasE - atlasW), math.abs(atlasN - atlasS), 2000) / math.max(zoom, 0.5)
-        local lpz = IsValid(LocalPlayer()) and LocalPlayer():GetPos().z or 0
-        N._atlasCam = {
-            x = mid.x, y = mid.y,
-            z = lpz + math.Clamp(span * 0.42, 1400, 12000),
-            span = span,
-        }
-        paintGround(0, 0, w, h)
-        local function toS(vec)
-            local px, py = worldToMap(vec, 0, 0, w, h, zoom, ox, oy)
-            return { x = px, y = py }
-        end
-        drawRoute(toS)
-        for _, b in ipairs(collectBlips()) do
-            local p = toS(b.pos)
-            drawBlip(p.x, p.y, kindCol(b.kind), b.name, true)
-        end
-        if N.Opt.players ~= false then
-            eachPlayer(function(pl)
-                local p = toS(pl:GetPos())
-                drawPlayerDot(p.x, p.y, plyNick(pl), pl == LocalPlayer(), true)
-            end)
-        end
-    end
-
-    local side = vgui.Create("DScrollPanel", fr)
-    side:SetPos(W - 276, 56)
-    side:SetSize(264, H - 70)
-
+    local yy = 52
     local function chk(txt, key)
-        local c = vgui.Create("DCheckBoxLabel", side)
-        c:Dock(TOP) c:DockMargin(4, 4, 4, 2) c:SetText(txt) c:SetTextColor(COL.text)
-        c:SetValue(N.Opt[key] ~= false)
+        local c = vgui.Create("DCheckBoxLabel", fr)
+        c:SetPos(14, yy) c:SetSize(240, 20)
+        c:SetText(txt) c:SetTextColor(COL.text) c:SetValue(N.Opt[key] ~= false)
         c.OnChange = function(_, v) N.Opt[key] = v blipAt = 0 end
+        yy = yy + 22
     end
-    local lab = vgui.Create("DLabel", side)
-    lab:Dock(TOP) lab:SetTall(22) lab:SetText("  СЛОИ") lab:SetFont("GRMNav_Mid") lab:SetTextColor(COL.gold)
+    local lab = vgui.Create("DLabel", fr)
+    lab:SetPos(14, yy) lab:SetSize(240, 20) lab:SetFont("GRMNav_Mid") lab:SetTextColor(COL.gold) lab:SetText("СЛОИ")
+    yy = yy + 22
     chk("GPS-точки", "gps")
     chk("Знаки админа", "admin")
     chk("Личные точки", "me")
     chk("Игроки", "players")
-    chk("Сетка", "grid")
 
-    local lab2 = vgui.Create("DLabel", side)
-    lab2:Dock(TOP) lab2:SetTall(28) lab2:SetText("  ЗНАК АДМИНА") lab2:SetFont("GRMNav_Mid") lab2:SetTextColor(COL.gold)
-    local kindBox = vgui.Create("DComboBox", side)
-    kindBox:Dock(TOP) kindBox:SetTall(26) kindBox:DockMargin(4, 2, 4, 4)
+    local lab2 = vgui.Create("DLabel", fr)
+    lab2:SetPos(14, yy + 6) lab2:SetSize(240, 20) lab2:SetFont("GRMNav_Mid") lab2:SetTextColor(COL.gold) lab2:SetText("ЗНАК АДМИНА")
+    yy = yy + 30
+    local kindBox = vgui.Create("DComboBox", fr)
+    kindBox:SetPos(14, yy) kindBox:SetSize(248, 24)
     for k, def in pairs(N.Kinds) do kindBox:AddChoice(def.label, k) end
     kindBox:ChooseOptionID(1)
     kindBox.OnSelect = function(_, _, _, k) N._signKind = k end
-    local nameEnt = vgui.Create("DTextEntry", side)
-    nameEnt:Dock(TOP) nameEnt:SetTall(26) nameEnt:DockMargin(4, 2, 4, 4)
-    nameEnt:SetPlaceholderText("Подпись")
+    yy = yy + 28
+    local nameEnt = vgui.Create("DTextEntry", fr)
+    nameEnt:SetPos(14, yy) nameEnt:SetSize(248, 24) nameEnt:SetPlaceholderText("Подпись знака")
     nameEnt.OnChange = function(s) N._signName = s:GetValue() end
-    local pinChk = vgui.Create("DCheckBoxLabel", side)
-    pinChk:Dock(TOP) pinChk:DockMargin(4, 2, 4, 6) pinChk:SetText("Закрепить на мини") pinChk:SetTextColor(COL.text) pinChk:SetValue(true)
+    yy = yy + 28
+    local pinChk = vgui.Create("DCheckBoxLabel", fr)
+    pinChk:SetPos(14, yy) pinChk:SetSize(248, 20) pinChk:SetText("Закрепить на мини") pinChk:SetTextColor(COL.text) pinChk:SetValue(true)
     pinChk.OnChange = function(_, v) N._signPin = v end
+    yy = yy + 28
 
-    local list = vgui.Create("DListView", side)
-    list:Dock(TOP) list:SetTall(220) list:DockMargin(4, 4, 4, 4)
-    list:AddColumn("Все метки")
+    local list = vgui.Create("DListView", fr)
+    list:SetPos(14, yy) list:SetSize(248, math.max(120, ScrH() - yy - 200))
+    list:AddColumn("Метки")
     local function refill()
         if not IsValid(list) then return end
         list:Clear()
         for _, b in ipairs(collectBlips()) do
-            local line = list:AddLine((b.pin and "★ " or "") .. (b.name or b.id))
-            line._id = b.id
-            line._pos = b.pos
-            line._name = b.name
+            local tag = b.src == "gps" and "GPS · " or (b.src == "me" and "моё · " or "")
+            local line = list:AddLine((b.pin and "★ " or "") .. tag .. (b.name or b.id))
+            line._id, line._pos, line._name, line._src = b.id, b.pos, b.name, b.src
         end
     end
     refill()
     list.OnRowSelected = function(_, _, line)
-        if line and line._pos then N.SetWaypoint(line._pos, line._name, line._id) end
-    end
-
-    local btnShot = vgui.Create("DButton", side)
-    btnShot:Dock(TOP) btnShot:SetTall(30) btnShot:DockMargin(4, 6, 4, 4)
-    btnShot:SetText("Переснять местность")
-    btnShot.DoClick = function()
-        if file.Exists(JPEG, "DATA") then file.Delete(JPEG) end
-        jpegOk = false
-        N._needShot = true
-        notification.AddLegacy("Закрой атлас на секунду — снимок сохранится.", NOTIFY_GENERIC, 4)
-    end
-    local btnClr = vgui.Create("DButton", side)
-    btnClr:Dock(TOP) btnClr:SetTall(30) btnClr:DockMargin(4, 2, 4, 4)
-    btnClr:SetText("Сбросить маршрут")
-    btnClr.DoClick = function() N.ClearWaypoint() end
-    local btnPin = vgui.Create("DButton", side)
-    btnPin:Dock(TOP) btnPin:SetTall(28) btnPin:DockMargin(4, 8, 4, 2)
-    btnPin:SetText("Закрепить выбранный знак")
-    btnPin.DoClick = function()
-        local i = list:GetSelectedLine()
-        local row = i and list:GetLine(i)
-        if row and row._id then
-            net.Start("GRM_Nav_Act") net.WriteString("pin") net.WriteString(row._id) net.SendToServer()
+        if line and line._pos then
+            N._atlasCam.x, N._atlasCam.y = line._pos.x, line._pos.y
+            N.SetWaypoint(line._pos, line._name, line._id)
         end
     end
-    local btnDel = vgui.Create("DButton", side)
-    btnDel:Dock(TOP) btnDel:SetTall(28) btnDel:DockMargin(4, 2, 4, 4)
-    btnDel:SetText("Удалить знак")
-    btnDel.DoClick = function()
-        local i = list:GetSelectedLine()
-        local row = i and list:GetLine(i)
-        if row and row._id then
-            net.Start("GRM_Nav_Act") net.WriteString("del") net.WriteString(row._id) net.SendToServer()
-        end
-    end
-
     hook.Add("GRM_NavMarks", "GRM_NavAtlasList", refill)
+
+    local by = ScrH() - 24 - 12 - 148
+    local function sel()
+        local i = list:GetSelectedLine()
+        return i and list:GetLine(i)
+    end
+    local b1 = grmBtn(fr, "ВЕСТИ СЮДА", Color(28, 88, 54))
+    b1:SetPos(14, by) b1:SetSize(248, 32)
+    b1.DoClick = function()
+        local row = sel()
+        if row and row._pos then N.SetWaypoint(row._pos, row._name, row._id) end
+    end
+    local b2 = grmBtn(fr, "СБРОСИТЬ МАРШРУТ", Color(78, 58, 22))
+    b2:SetPos(14, by + 36) b2:SetSize(248, 30)
+    b2.DoClick = N.ClearWaypoint
+    local b3 = grmBtn(fr, "УДАЛИТЬ МЕТКУ", Color(118, 34, 38))
+    b3:SetPos(14, by + 70) b3:SetSize(248, 32)
+    b3.DoClick = function()
+        local row = sel()
+        if not row or not row._id then notification.AddLegacy("Выбери метку.", NOTIFY_ERROR, 3) return end
+        if (row._src == "gps" or row._src == "admin") and not LocalPlayer():IsSuperAdmin() then
+            notification.AddLegacy("GPS снимает администратор.", NOTIFY_ERROR, 3)
+            return
+        end
+        N.DeleteMark(row._id, row._src)
+        timer.Simple(0.25, refill)
+    end
+    local b4 = grmBtn(fr, "КО МНЕ", Color(28, 52, 82))
+    b4:SetPos(14, by + 106) b4:SetSize(248, 28)
+    b4.DoClick = function()
+        if IsValid(LocalPlayer()) then
+            local q = LocalPlayer():GetPos()
+            N._atlasCam.x, N._atlasCam.y = q.x, q.y
+        end
+    end
+    gui.EnableScreenClicker(true)
 end
+
+hook.Add("HUDPaint", "GRM_Nav_AtlasHUD", function()
+    if not N._open then return end
+    local lp = LocalPlayer()
+    if not IsValid(lp) then return end
+    local x, y = 12, 12
+    local w, h = ScrW() - 276 - 28, ScrH() - 24
+    draw.RoundedBox(8, x, y, w, h, Color(8, 14, 23, 230))
+    surface.SetDrawColor(COL.line)
+    surface.DrawOutlinedRect(x, y, w, h, 1)
+    render.SetScissorRect(x + 2, y + 2, x + w - 2, y + h - 2, true)
+    if atlasLiveMat then
+        surface.SetMaterial(atlasLiveMat)
+        surface.SetDrawColor(255, 255, 255, 255)
+        surface.DrawTexturedRect(x + 3, y + 3, w - 6, h - 6)
+    end
+    local function toS(vec)
+        local px, py = camToScreen(vec, x, y, w, h)
+        return { x = px, y = py }
+    end
+    drawRoute(toS)
+    for _, b in ipairs(collectBlips()) do
+        local pt = toS(b.pos)
+        drawBlip(pt.x, pt.y, kindCol(b.kind), b.name, true)
+    end
+    if N.Opt.players ~= false then
+        eachPlayer(function(pl)
+            local pt = toS(pl:GetPos())
+            drawPlayerDot(pt.x, pt.y, plyNick(pl), pl == lp, true)
+        end)
+    end
+    render.SetScissorRect(0, 0, 0, 0, false)
+    draw.SimpleText("ЛКМ маршрут  ·  колёсико высота  ·  тяни карту  ·  ПКМ знак", "GRMNav_Tiny", x + 12, y + h - 18, COL.dim)
+end)
+
+local drag
+hook.Add("GUIMousePressed", "GRM_Nav_AtlasClick", function(code)
+    if not N._open then return end
+    local mx, my = gui.MousePos()
+    local x, y, w, h = 12, 12, ScrW() - 276 - 28, ScrH() - 24
+    if mx < x or my < y or mx > x + w or my > y + h then return end
+    if code == MOUSE_LEFT then
+        drag = { x = mx, y = my, cx = N._atlasCam.x, cy = N._atlasCam.y }
+        local world = screenToCam(mx, my, x, y, w, h)
+        local hit
+        for _, b in ipairs(collectBlips()) do
+            local px, py = camToScreen(b.pos, x, y, w, h)
+            if math.abs(px - mx) < 14 and math.abs(py - my) < 14 then hit = b break end
+        end
+        if hit then N.SetWaypoint(hit.pos, hit.name, hit.id)
+        else N._clickAt = { t = CurTime(), w = world } end
+        return true
+    elseif code == MOUSE_RIGHT then
+        if not LocalPlayer():IsSuperAdmin() then return end
+        local world = screenToCam(mx, my, x, y, w, h)
+        net.Start("GRM_Nav_Act")
+            net.WriteString("add")
+            net.WriteString(N._signName or "")
+            net.WriteString(N._signKind or "pin")
+            net.WriteBool(N._signPin ~= false)
+            net.WriteFloat(world.x) net.WriteFloat(world.y) net.WriteFloat(world.z)
+        net.SendToServer()
+        return true
+    end
+end)
+
+hook.Add("GUIMouseReleased", "GRM_Nav_AtlasRel", function(code)
+    if not N._open then return end
+    if code == MOUSE_LEFT and N._clickAt and CurTime() - N._clickAt.t < 0.22 then
+        local world = N._clickAt.w
+        if GRM.Minimap and GRM.Minimap.AddPersonal then
+            local p = GRM.Minimap.AddPersonal("Точка", world)
+            N.SetWaypoint(world, "Точка", p.id)
+        else
+            N.SetWaypoint(world, "Точка")
+        end
+    end
+    drag, N._clickAt = nil, nil
+end)
+
+hook.Add("Think", "GRM_Nav_AtlasDrag", function()
+    if not N._open or not drag then return end
+    if not input.IsMouseDown(MOUSE_LEFT) then drag = nil return end
+    local mx, my = gui.MousePos()
+    local half = math.tan(math.rad(31)) * (N._atlasCam.z or 2200)
+    local w = ScrW() - 276 - 28
+    N._atlasCam.x = drag.cx - (mx - drag.x) / w * half * 2
+    N._atlasCam.y = drag.cy + (my - drag.y) / (ScrH() - 24) * half * 2
+end)
+
+hook.Add("PlayerBindPress", "GRM_Nav_AtlasWheel", function(ply, bind, pressed)
+    if not N._open or not pressed then return end
+    if bind == "invnext" then
+        N._atlasCam.z = math.Clamp((N._atlasCam.z or 2000) + 280, 900, 7000)
+        return true
+    end
+    if bind == "invprev" then
+        N._atlasCam.z = math.Clamp((N._atlasCam.z or 2000) - 280, 900, 7000)
+        return true
+    end
+end)
 
 local function navKey()
     local cv = GetConVar("grm_nav_key")
@@ -758,7 +811,7 @@ hook.Add("PlayerButtonDown", "GRM_Nav_Key", function(ply, btn)
     if ply ~= LocalPlayer() or btn ~= navKey() then return end
     if vgui.GetKeyboardFocus() then return end
     if gui.IsGameUIVisible and gui.IsGameUIVisible() then return end
-    if IsValid(N._frame) then N._frame:Close() else N.OpenAtlas() end
+    if N._open then N.CloseAtlas() else N.OpenAtlas() end
 end)
 
 hook.Add("PlayerSayTransform", "GRM_Nav_Chat", function(ply, pack)
@@ -766,12 +819,6 @@ hook.Add("PlayerSayTransform", "GRM_Nav_Chat", function(ply, pack)
     local t = string.lower(string.Trim(pack and pack[1] or ""))
     if t == "/карта" or t == "/map" or t == "/atlas" then N.OpenAtlas() pack[1] = "" return true end
     if t == "/миникарта" or t == "/minimap" then N.Visible = not N.Visible pack[1] = "" return true end
-    if t == "/карта_переснять" then
-        if file.Exists(JPEG, "DATA") then file.Delete(JPEG) end
-        jpegOk, N._needShot = false, true
-        pack[1] = ""
-        return true
-    end
 end)
 
 concommand.Add("grm_atlas", function() N.OpenAtlas() end)
