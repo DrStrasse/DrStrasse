@@ -1,10 +1,10 @@
---[[ Прочность любого ТС: урон, поломка, починка. Свой слой, не копия simfphys. ]]
+--[[ Прочность ТС. Max/текущее = simfphys (MaxHealth/CurHealth), иначе 100. ]]
 if SERVER then AddCSLuaFile() end
 
 GRM = GRM or {}
 GRM.VehHP = GRM.VehHP or {}
 local H = GRM.VehHP
-H.Version = "1.0.0"
+H.Version = "1.1.0"
 H.File = "grm_vehicle_hp.json"
 H.Max = 100
 H.RepairPrice = 45
@@ -61,20 +61,80 @@ if SERVER then
         return H.Data[uid]
     end
 
+    function H.NativeMax(ent)
+        if not IsValid(ent) then return H.Max end
+        local m
+        pcall(function()
+            if ent.GetMaxHealth then m = tonumber(ent:GetMaxHealth()) end
+            if (not m or m <= 1) and tonumber(ent.MaxHealth) then m = tonumber(ent.MaxHealth) end
+            if (not m or m <= 1) and istable(ent.GetVehicleParams) then
+                local p = ent:GetVehicleParams()
+                if istable(p) then m = tonumber(p.MaxHealth or (p.Engine and p.Engine.MaxHealth)) end
+            end
+            if (not m or m <= 1) and ent.GetMaxHP then m = tonumber(ent:GetMaxHP()) end
+        end)
+        if not m or m <= 1 then m = H.Max end
+        return math.max(1, m)
+    end
+
+    function H.NativeCur(ent)
+        if not IsValid(ent) then return nil end
+        local c
+        pcall(function()
+            if ent.GetCurHealth then c = tonumber(ent:GetCurHealth()) end
+            if c == nil and ent.GetHP then c = tonumber(ent:GetHP()) end
+            if c == nil and ent.Health then c = tonumber(ent:Health()) end
+        end)
+        return c
+    end
+
+    function H.PushNative(ent, hp, mx)
+        if not IsValid(ent) then return end
+        hp = math.max(0, tonumber(hp) or 0)
+        mx = math.max(1, tonumber(mx) or H.NativeMax(ent))
+        pcall(function()
+            if ent.SetCurHealth then ent:SetCurHealth(hp) end
+            if ent.SetHP then ent:SetHP(hp) end
+            if ent.SetHealth then ent:SetHealth(hp) end
+            if hp > 0 then
+                ent.Destroyed = false
+                if ent.SetDestroyed then ent:SetDestroyed(false) end
+                if ent.SetOnFire then ent:SetOnFire(false) end
+                if ent.SetOnSmoke then ent:SetOnSmoke(false) end
+                if ent.StopOnFire then ent:StopOnFire() end
+            end
+            if hp >= mx * 0.999 and ent.RepairVehicle then ent:RepairVehicle() end
+        end)
+    end
+
+    function H.Ceiling(ent, rec)
+        local mx = H.NativeMax(ent)
+        rec = rec or H.Get(uidOf(ent))
+        if rec.max == nil and rec.hp ~= nil then
+            local old = tonumber(rec.hp) or H.Max
+            if old <= H.Max + 0.01 then
+                rec.hp = (old / H.Max) * mx
+            end
+        end
+        rec.max = mx
+        rec.hp = math.Clamp(tonumber(rec.hp) or mx, 0, mx)
+        return rec, mx
+    end
+
     function H.Apply(ent)
         if not IsValid(ent) or not isVeh(ent) then return end
         ent = root(ent) or ent
-        local rec = H.Get(uidOf(ent))
-        rec.hp = math.Clamp(tonumber(rec.hp) or H.Max, 0, H.Max)
+        local rec, mx = H.Ceiling(ent, H.Get(uidOf(ent)))
         if GRM.Perf and GRM.Perf.NWFloat then
             GRM.Perf.NWFloat(ent, "GRM_VehHP", rec.hp, 0.2)
-            GRM.Perf.NWFloat(ent, "GRM_VehHPMax", H.Max, 0.1)
+            GRM.Perf.NWFloat(ent, "GRM_VehHPMax", mx, 0.1)
             GRM.Perf.NWBool(ent, "GRM_VehBroken", rec.hp <= 0)
         else
             ent:SetNWFloat("GRM_VehHP", rec.hp)
-            ent:SetNWFloat("GRM_VehHPMax", H.Max)
+            ent:SetNWFloat("GRM_VehHPMax", mx)
             ent:SetNWBool("GRM_VehBroken", rec.hp <= 0)
         end
+        H.PushNative(ent, rec.hp, mx)
         if rec.hp <= 0 then H.Break(ent) end
         return rec.hp
     end
@@ -103,9 +163,9 @@ if SERVER then
         if not IsValid(ent) then return 0 end
         ent = root(ent) or ent
         if not isVeh(ent) then return 0 end
-        local rec = H.Get(uidOf(ent))
+        local rec, mx = H.Ceiling(ent, H.Get(uidOf(ent)))
         local before = rec.hp
-        rec.hp = math.Clamp(rec.hp - math.max(0, tonumber(amount) or 0), 0, H.Max)
+        rec.hp = math.Clamp(rec.hp - math.max(0, tonumber(amount) or 0), 0, mx)
         H.Apply(ent)
         H.Save()
         if before > 0 and rec.hp <= 0 then
@@ -117,8 +177,8 @@ if SERVER then
     function H.Repair(ent, amount)
         if not IsValid(ent) then return 0 end
         ent = root(ent) or ent
-        local rec = H.Get(uidOf(ent))
-        local room = H.Max - rec.hp
+        local rec, mx = H.Ceiling(ent, H.Get(uidOf(ent)))
+        local room = mx - rec.hp
         local add = math.min(room, math.max(0, tonumber(amount) or 0))
         rec.hp = rec.hp + add
         if rec.hp > 0 then
@@ -127,6 +187,12 @@ if SERVER then
             pcall(function()
                 if ent.EnableEngine then ent:EnableEngine(true) end
             end)
+        end
+        if rec.hp >= mx * 0.999 then
+            pcall(function()
+                if ent.Repair then ent:Repair() end
+            end)
+            rec.hp = mx
         end
         H.Apply(ent)
         H.Save()
@@ -138,10 +204,10 @@ if SERVER then
         ent = root(ent)
         if not isVeh(ent) then return false, "Это не транспорт" end
         if ply:GetPos():DistToSqr(ent:GetPos()) > 180 * 180 then return false, "Ближе" end
-        local rec = H.Get(uidOf(ent))
-        if rec.hp >= H.Max then return false, "целая" end
-        local add = math.min(H.WrenchPerSec * 0.2, H.Max - rec.hp)
-        local cost = math.ceil(add * H.WrenchPrice)
+        local rec, mx = H.Ceiling(ent, H.Get(uidOf(ent)))
+        if rec.hp >= mx then return false, "целая" end
+        local add = math.min((H.WrenchPerSec / H.Max) * mx * 0.2, mx - rec.hp)
+        local cost = math.ceil((add / mx) * H.Max * H.WrenchPrice)
         if not ply:IsSuperAdmin() and cost > 0 then
             if GRM.HasMoney and not GRM.HasMoney(ply, cost) then
                 return false, "Нужно " .. cost .. " GRM"
@@ -151,7 +217,7 @@ if SERVER then
             cost = 0
         end
         H.Repair(ent, add)
-        return true, rec.hp, H.Max, cost
+        return true, rec.hp, mx, cost
     end
 
     function H.TryRepair(ply, ent)
@@ -159,10 +225,10 @@ if SERVER then
         ent = root(ent)
         if not isVeh(ent) then return false, "Это не транспорт" end
         if ply:GetPos():DistToSqr(ent:GetPos()) > 220 * 220 then return false, "Подойди ближе" end
-        local rec = H.Get(uidOf(ent))
-        local need = H.Max - rec.hp
+        local rec, mx = H.Ceiling(ent, H.Get(uidOf(ent)))
+        local need = mx - rec.hp
         if need <= 0 then return false, "Машина целая" end
-        local cost = math.ceil(need * H.RepairPrice)
+        local cost = math.ceil((need / mx) * H.Max * H.RepairPrice)
         if not ply:IsSuperAdmin() then
             if GRM.HasMoney and not GRM.HasMoney(ply, cost) then
                 return false, "Нужно " .. cost .. " GRM"
@@ -209,12 +275,35 @@ if SERVER then
     end)
 
     hook.Add("OnEntityCreated", "GRM_VehHP_Spawn", function(ent)
-        if GRM.Perf and GRM.Perf.Queue then
-            GRM.Perf.Queue("vehhp.spawn", function()
-                if IsValid(ent) and isVeh(ent) then H.Apply(ent) end
-            end)
-        else
-            timer.Simple(0.25, function() if IsValid(ent) and isVeh(ent) then H.Apply(ent) end end)
+        timer.Simple(0.8, function()
+            if not (IsValid(ent) and isVeh(ent)) then return end
+            ent = root(ent) or ent
+            local rec = H.Get(uidOf(ent))
+            local mx = H.NativeMax(ent)
+            local cur = H.NativeCur(ent)
+            if rec.max == nil and cur and mx > 1 then
+                rec.hp = math.Clamp(cur, 0, mx)
+                rec.max = mx
+            end
+            H.Apply(ent)
+        end)
+    end)
+
+    hook.Add("Think", "GRM_VehHP_SyncNative", function()
+        if GRM.Perf and GRM.Perf.Throttle and not GRM.Perf.Throttle("vehhp.sync", 0.7) then return end
+        local list = (GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()
+        for i = 1, #list do
+            local ply = list[i]
+            if not (IsValid(ply) and ply:InVehicle()) then continue end
+            local veh = root(ply:GetVehicle())
+            if not isVeh(veh) then continue end
+            local rec, mx = H.Ceiling(veh, H.Get(uidOf(veh)))
+            local cur = H.NativeCur(veh)
+            if cur and cur + 1 < rec.hp then
+                rec.hp = math.Clamp(cur, 0, mx)
+                H.Apply(veh)
+                H.Save()
+            end
         end
     end)
 
