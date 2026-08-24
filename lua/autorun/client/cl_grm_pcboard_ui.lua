@@ -55,12 +55,29 @@ end
 
 -- Общая кнопка модуля объявлена ВЫШЕ всех, кто её вызывает: замыкание
 -- не видит local, объявленный ниже по файлу.
+local function clickSnd(kind)
+    local path = kind == "hover" and "garrysmod/ui_hover.wav" or "ui/buttonclick.wav"
+    if GRM.Sound and GRM.Sound.UI then GRM.Sound.UI(path, kind == "hover" and 0.02 or 0.05)
+    elseif surface and surface.PlaySound then surface.PlaySound(path) end
+end
+
 local function mkButton(parent, text, color)
     local b = vgui.Create("DButton", parent)
     b:SetText("")
+    b:SetCursor("hand")
     b.Paint = function(self, w, h)
-        draw.RoundedBox(6, 0, 0, w, h, self:IsHovered() and Color(color.r + 20, color.g + 20, color.b + 20) or color)
-        draw.SimpleText(text, "GRMPCB_Text", w * 0.5, h * 0.5, C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        local hov, down = self:IsHovered(), self:IsDown()
+        if hov and self._hov ~= true then clickSnd("hover") end
+        self._hov = hov
+        local c = color or C.accent
+        if down then c = Color(math.max(c.r - 28, 0), math.max(c.g - 28, 0), math.max(c.b - 28, 0))
+        elseif hov then c = Color(math.min(c.r + 22, 255), math.min(c.g + 22, 255), math.min(c.b + 22, 255)) end
+        draw.RoundedBox(6, 0, down and 1 or 0, w, h - (down and 1 or 0), c)
+        if hov and not down then draw.RoundedBox(6, 1, 1, w - 2, 2, Color(255, 255, 255, 40)) end
+        draw.SimpleText(text, "GRMPCB_Text", w * 0.5, h * 0.5 + (down and 1 or 0), C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    end
+    b.OnDepressed = function()
+        clickSnd("click")
     end
     return b
 end
@@ -304,7 +321,7 @@ function PB.BuildAccessEditor(host, payload)
     local left = vgui.Create("DPanel", frame)
     left:Dock(LEFT)
     left:SetWide(360)
-    left:DockMargin(10, 62, 8, 76)
+    left:DockMargin(10, 62, 8, 118)
     left.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, C.card) end
     frame.PerformLayout = function(_, w)
         if IsValid(left) then left:SetWide(math.Clamp(math.floor((w or 800) * 0.32), 300, 480)) end
@@ -323,7 +340,7 @@ function PB.BuildAccessEditor(host, payload)
     -- ── правая колонка: уровень и блоки выбранного узла ────────────
     local right = vgui.Create("DPanel", frame)
     right:Dock(FILL)
-    right:DockMargin(0, 62, 10, 76)
+    right:DockMargin(0, 62, 10, 118)
     right.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, C.card) end
 
     local title = vgui.Create("DLabel", right)
@@ -547,29 +564,37 @@ function PB.BuildAccessEditor(host, payload)
     end
     timer.Simple(0, function() if IsValid(facCombo) then facCombo._grmSilent = false end end)
 
-    -- ── низ: общие настройки и сохранение ──────────────────────────
-    -- Панель высокая: подпись поля рисуется НАД полем, а не под ним, иначе
-    -- «Кулдаун, с» уезжает под сам ввод (как было на скрине владельца).
+    -- Низ двумя рядами: поля не дерутся с кнопками.
     local bottom = vgui.Create("DPanel", frame)
     bottom:Dock(BOTTOM)
-    bottom:SetTall(66)
+    bottom:SetTall(108)
     bottom:DockMargin(10, 0, 10, 10)
     bottom.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, C.card) end
 
+    local settings = vgui.Create("DPanel", bottom)
+    settings:Dock(TOP)
+    settings:SetTall(56)
+    settings:SetPaintBackground(false)
+
+    local actions = vgui.Create("DPanel", bottom)
+    actions:Dock(FILL)
+    actions:DockMargin(0, 0, 0, 0)
+    actions:SetPaintBackground(false)
+
     local s = cfg.settings
     local function numField(label, field, minv, maxv)
-        local wrap = vgui.Create("DPanel", bottom)
+        local wrap = vgui.Create("DPanel", settings)
         wrap:Dock(LEFT)
-        wrap:SetWide(170)
-        wrap:DockMargin(10, 8, 6, 8)
+        wrap:SetWide(168)
+        wrap:DockMargin(10, 8, 6, 4)
         wrap.Paint = function(_, w, h)
             draw.RoundedBox(5, 0, 0, w, h, C.bg)
-            draw.SimpleText(label, "GRMPCB_Small", 8, 5, C.dim)
+            draw.SimpleText(label, "GRMPCB_Small", 8, 4, C.dim)
         end
         local num = vgui.Create("DNumberWang", wrap)
         num:Dock(BOTTOM)
-        num:SetTall(24)
-        num:DockMargin(8, 0, 8, 6)
+        num:SetTall(22)
+        num:DockMargin(8, 0, 8, 5)
         num:SetMinMax(minv, maxv)
         num:SetValue(tonumber(s[field]) or minv)
         num.OnValueChanged = function(_, v) s[field] = v end
@@ -579,54 +604,54 @@ function PB.BuildAccessEditor(host, payload)
     numField("Запросов в минуту", "perMinute", 1, 60)
     numField("Время пробития, с", "delay", 0, 30)
 
-    -- Галочки: собственная панель с явной шириной. У DCheckBoxLabel в Dock
-    -- ширина не считается от текста — без SetWide подпись просто пропадала.
     local function checkField(label, get, set, width)
-        local wrap = vgui.Create("DPanel", bottom)
+        local wrap = vgui.Create("DPanel", settings)
         wrap:Dock(LEFT)
         wrap:SetWide(width)
-        wrap:DockMargin(4, 8, 6, 8)
+        wrap:DockMargin(4, 8, 6, 4)
         wrap.Paint = function(_, w, h) draw.RoundedBox(5, 0, 0, w, h, C.bg) end
         local chk = vgui.Create("DCheckBoxLabel", wrap)
         chk:Dock(FILL)
         chk:DockMargin(10, 0, 8, 0)
-        chk:SetWrap(true)
         chk:SetFont("GRMPCB_Text")
         chk:SetText(label)
         chk:SetTextColor(C.text)
         chk:SetValue(get() and 1 or 0)
-        chk.OnChange = function(_, v) set(v) end
+        chk.OnChange = function(_, v)
+            clickSnd("click")
+            set(v)
+        end
         return chk
     end
     checkField("Только на службе", function() return s.requireDuty ~= false end,
-        function(v) s.requireDuty = v end, 200)
+        function(v) s.requireDuty = v end, 176)
     checkField("Скрытый запрос спецслужбам", function() return s.allowHidden ~= false end,
-        function(v) s.allowHidden = v end, 260)
+        function(v) s.allowHidden = v end, 240)
 
-    local save = mkButton(bottom, "Сохранить", C.green)
+    local save = mkButton(actions, "Сохранить", C.green)
     save:Dock(RIGHT)
-    save:SetWide(180)
-    save:DockMargin(6, 12, 12, 12)
+    save:SetWide(168)
+    save:DockMargin(8, 8, 12, 10)
     save.DoClick = function()
         net.Start(PB.Net.SAVE)
         net.WriteTable(cfg)
         net.SendToServer()
     end
 
-    local hint = vgui.Create("DLabel", bottom)
-    hint:Dock(RIGHT)
-    hint:SetWide(190)
-    hint:DockMargin(0, 12, 6, 12)
+    local refresh = mkButton(actions, "Обновить", C.accent)
+    refresh:Dock(RIGHT)
+    refresh:SetWide(132)
+    refresh:DockMargin(8, 8, 0, 10)
+    refresh.DoClick = function() PB.RequestAccessMenu() end
+
+    local hint = vgui.Create("DLabel", actions)
+    hint:Dock(FILL)
+    hint:DockMargin(14, 10, 8, 10)
     hint:SetWrap(true)
     hint:SetFont("GRMPCB_Small")
     hint:SetTextColor(C.dim)
-    hint:SetText("Изменения применяются после нажатия «Сохранить».")
-
-    local refresh = mkButton(bottom, "Обновить", C.accent)
-    refresh:Dock(RIGHT)
-    refresh:SetWide(120)
-    refresh:DockMargin(6, 12, 0, 12)
-    refresh.DoClick = function() PB.RequestAccessMenu() end
+    hint:SetContentAlignment(4)
+    hint:SetText("Изменения применяются только после «Сохранить».")
 end
 
 function PB.OpenAccessMenu(payload)
@@ -682,6 +707,17 @@ local function installTab(sheet)
     wait:SetTextColor(C.dim)
     wait:SetContentAlignment(5)
     wait:SetText("Загрузка допусков госбазы…")
+
+    timer.Simple(0, function()
+        if IsValid(panel) then PB.RequestAccessMenu() end
+    end)
+
+    sheet:AddSheet("Госбаза", panel, "icon16/report_magnify.png")
+end
+hook.Add("GRM_FactionsAdmin_BuildTabs", "GRM_PCBoard_Tab", installTab)
+
+print("[GRM PCBoard] UI v1.0.0 loaded")
+�осбазы…")
 
     timer.Simple(0, function()
         if IsValid(panel) then PB.RequestAccessMenu() end

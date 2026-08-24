@@ -28,7 +28,7 @@ GRM = GRM or {}
 GRM.Factions = GRM.Factions or {}
 GRM.Factions.UnifiedUI = GRM.Factions.UnifiedUI or {}
 local UI = GRM.Factions.UnifiedUI
-UI.Version = "3.2.0"
+UI.Version = "3.2.1"
 
 surface.CreateFont("GRMFac_Title",   { font = "Roboto", size = 20, weight = 800, extended = true })
 surface.CreateFont("GRMFac_Sub",     { font = "Roboto", size = 15, weight = 700, extended = true })
@@ -230,17 +230,29 @@ local function mkBtn(parent, text, col, hoverCol, doClick)
     local b = vgui.Create("DButton", parent)
     b:SetText("")
     b:SetFont("GRMFac_Btn")
+    b:SetCursor("hand")
     b.Paint = function(s, w, h)
         local isHov = s:IsHovered()
+        local isDown = s:IsDown()
         local isDis = not s:IsEnabled()
-        local bgCol = isDis and Color(34, 40, 52) or (isHov and (hoverCol or C.accentHover) or (col or C.accent))
-        draw.RoundedBox(5, 0, 0, w, h, bgCol)
+        if isHov and not isDis and s._hov ~= true then
+            if surface and surface.PlaySound then surface.PlaySound("garrysmod/ui_hover.wav") end
+        end
+        s._hov = isHov
+        local bgCol = col or C.accent
+        if isDis then bgCol = Color(34, 40, 52)
+        elseif isDown then bgCol = Color(math.max(bgCol.r - 30, 0), math.max(bgCol.g - 30, 0), math.max(bgCol.b - 30, 0))
+        elseif isHov then bgCol = hoverCol or C.accentHover end
+        draw.RoundedBox(5, 0, isDown and 1 or 0, w, h - (isDown and 1 or 0), bgCol)
+        if isHov and not isDown and not isDis then
+            draw.RoundedBox(5, 1, 1, w - 2, 2, Color(255, 255, 255, 38))
+        end
         surface.SetDrawColor(255, 255, 255, isDis and 10 or 25)
-        surface.DrawOutlinedRect(0, 0, w, h)
-        draw.SimpleText(text, "GRMFac_Btn", w / 2, h / 2, isDis and C.dim or color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        surface.DrawOutlinedRect(0, isDown and 1 or 0, w, h - (isDown and 1 or 0))
+        draw.SimpleText(text, "GRMFac_Btn", w / 2, h / 2 + (isDown and 1 or 0), isDis and C.dim or color_white, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
     b.DoClick = function()
-        surface.PlaySound("buttons/button15.wav")
+        surface.PlaySound("ui/buttonclick.wav")
         if doClick then doClick() end
     end
     return b
@@ -730,19 +742,26 @@ function UI.Open(requestedFaction, requestedTab)
 
         btn.Paint = function(self, w, h)
             local isHov = self:IsHovered()
+            local isDown = self:IsDown()
             local isAct = self.isActive
+            if isHov and self._hov ~= true then surface.PlaySound("garrysmod/ui_hover.wav") end
+            self._hov = isHov
+            local oy = isDown and 1 or 0
             if isAct then
-                draw.RoundedBox(6, 0, 0, w, h, C.accent)
+                draw.RoundedBox(6, 0, oy, w, h - oy, C.accent)
+            elseif isDown then
+                draw.RoundedBox(6, 0, oy, w, h - oy, Color(28, 38, 54))
             elseif isHov then
                 draw.RoundedBox(6, 0, 0, w, h, C.cardHover)
+                draw.RoundedBox(6, 1, 1, w - 2, 2, Color(255, 255, 255, 28))
             end
             if iconMat then
                 surface.SetMaterial(iconMat)
                 surface.SetDrawColor(isAct and color_white or (isHov and C.text or C.dim))
-                surface.DrawTexturedRect(12, h / 2 - 8, 16, 16)
+                surface.DrawTexturedRect(12, h / 2 - 8 + oy, 16, 16)
             end
             local col = isAct and color_white or (isHov and C.text or C.dim)
-            draw.SimpleText(label, "GRMFac_Btn", iconMat and 36 or 16, h / 2, col, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(label, "GRMFac_Btn", iconMat and 36 or 16, h / 2 + oy, col, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
 
         btn.DoClick = function() selectTab(tabKey, builderFn) end
