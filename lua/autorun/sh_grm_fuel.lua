@@ -4,7 +4,7 @@ if SERVER then AddCSLuaFile() end
 GRM = GRM or {}
 GRM.Fuel = GRM.Fuel or {}
 local F = GRM.Fuel
-F.Version = "1.2.1"
+F.Version = "1.2.2"
 F.File = "grm_fuel.json"
 F.PumpFile = "grm_fuel_pumps_" .. string.lower(game.GetMap() or "unknown") .. ".json"
 F.PricePerLiter = 8
@@ -402,33 +402,50 @@ if SERVER then
     end)
 
     hook.Add("Think", "GRM_Fuel_Consume", function()
-        if GRM.Perf and GRM.Perf.Throttle and not GRM.Perf.Throttle("fuel.tick", 0.35) then return end
-        for _, ply in ipairs(player.GetAll()) do
+        if GRM.Perf and GRM.Perf.Throttle and not GRM.Perf.Throttle("fuel.tick", 0.5) then return end
+        local list = (GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()
+        local dirty
+        for i = 1, #list do
+            local ply = list[i]
             if not (IsValid(ply) and ply:InVehicle()) then continue end
             local veh = F.RootVehicle(ply:GetVehicle())
             if not IsValid(veh) then continue end
-            local VK = _G.VK or GRM.VehicleKeys
-            if VK and VK.IsVehicle then
-                if not VK.IsVehicle(veh) then continue end
-            elseif not (veh.IsVehicle and veh:IsVehicle()) and not veh.IsSimfphysCar and not veh.LVS then
-                continue
+            local uid = F.UID(veh)
+            if uid == "" then
+                F.ApplyNW(veh)
+                uid = F.UID(veh)
             end
-            F.ApplyNW(veh)
-            local rec = F.Get(F.UID(veh))
+            if uid == "" then continue end
+            local rec = F.Get(uid)
             if rec.liters <= 0 then
-                killEngine(veh)
+                if not veh:GetNWBool("GRM_OutOfFuel", false) then killEngine(veh) end
                 continue
             end
-            veh:SetNWBool("GRM_OutOfFuel", false)
-            local burn = 0.018
-            if ply:KeyDown(IN_FORWARD) then burn = burn + 0.04 end
-            if ply:KeyDown(IN_SPEED) then burn = burn + 0.03 end
+            local burn = 0.026
+            if ply:KeyDown(IN_FORWARD) then burn = burn + 0.055 end
+            if ply:KeyDown(IN_SPEED) then burn = burn + 0.04 end
             rec.liters = math.max(0, rec.liters - burn)
-            veh:SetNWFloat("GRM_Fuel", rec.liters)
+            if GRM.Perf and GRM.Perf.NWFloat then
+                GRM.Perf.NWFloat(veh, "GRM_Fuel", rec.liters, 0.05)
+                GRM.Perf.NWBool(veh, "GRM_OutOfFuel", false)
+            else
+                veh:SetNWFloat("GRM_Fuel", rec.liters)
+                veh:SetNWBool("GRM_OutOfFuel", false)
+            end
+            dirty = true
         end
+        if dirty then F.Save() end
     end)
 
     hook.Add("OnEntityCreated", "GRM_Fuel_Spawn", function(ent)
+        if GRM.Perf and GRM.Perf.Queue then
+            GRM.Perf.Queue("fuel.spawn." .. tostring(ent), function()
+                if not IsValid(ent) then return end
+                local VK = GRM.VehicleKeys or _G.VK
+                if VK and VK.IsVehicle and VK.IsVehicle(ent) then F.ApplyNW(ent) end
+            end)
+            return
+        end
         timer.Simple(0.2, function()
             if not IsValid(ent) then return end
             local VK = GRM.VehicleKeys or _G.VK
@@ -436,12 +453,40 @@ if SERVER then
         end)
     end)
 
+    function F.ScrubOrphanRopes()
+        local ropes = ents.FindByClass("keyframe_rope")
+        if #ropes == 0 then return end
+        local fn = function(e)
+            if not IsValid(e) then return end
+            local a = e.Ent1 or e.GetInternalVariable and e:GetInternalVariable("m_hStartPoint")
+            local b = e.Ent2 or e.GetInternalVariable and e:GetInternalVariable("m_hEndPoint")
+            local dead = (not IsValid(a) and not IsValid(b))
+            if dead then SafeRemoveEntity(e) end
+        end
+        if GRM.Perf and GRM.Perf.Spread then
+            GRM.Perf.Spread("fuel.scrub_ropes", ropes, fn, { chunk = 24 })
+        else
+            for i = 1, #ropes do fn(ropes[i]) end
+        end
+        for _, pump in ipairs(ents.FindByClass("grm_fuel_pump")) do
+            if IsValid(pump) then F.ClearHose(pump) end
+        end
+    end
+
     hook.Add("InitPostEntity", "GRM_Fuel_LoadPumps", function()
         timer.Simple(2, function()
             if #ents.FindByClass("grm_fuel_pump") == 0 then F.LoadPumps() end
+            F.ScrubOrphanRopes()
         end)
     end)
     hook.Add("ShutDown", "GRM_Fuel_SavePumps", function() F.SavePumps() end)
+
+    concommand.Add("grm_fuel_scrub", function(ply)
+        if IsValid(ply) and not ply:IsSuperAdmin() then return end
+        F.ScrubOrphanRopes()
+        local msg = "[GRM Fuel] сиротские верёвки сняты порциями"
+        if IsValid(ply) then ply:PrintMessage(HUD_PRINTCONSOLE, msg) else print(msg) end
+    end)
 
     F.Load()
     print("[GRM Fuel] server v" .. F.Version)

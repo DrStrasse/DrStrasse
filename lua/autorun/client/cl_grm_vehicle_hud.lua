@@ -18,7 +18,7 @@ local function hideStock()
     end
 end
 hook.Add("InitPostEntity", "GRM_VehHUD_HideStock", hideStock)
-timer.Create("GRM_VehHUD_HideStock", 8, 0, hideStock)
+timer.Create("GRM_VehHUD_HideStock", 12, 2, hideStock)
 
 hook.Add("HUDShouldDraw", "GRM_VehHUD_HideNames", function(name)
     local lp = LocalPlayer()

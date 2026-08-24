@@ -111,8 +111,15 @@ if SERVER then
     hook.Add("PlayerDeath", "GRM_Cruise_Die", function(ply) clear(ply) end)
 
     hook.Add("Think", "GRM_Cruise_Drive", function()
-        if GRM.Perf and GRM.Perf.Throttle and not GRM.Perf.Throttle("cruise.drv", 0.03) then return end
-        for _, ply in ipairs(player.GetAll()) do
+        if GRM.Perf and GRM.Perf.Throttle and not GRM.Perf.Throttle("cruise.drv", 0.05) then return end
+        local list = (GRM.Perf and GRM.Perf.Players) and GRM.Perf.Players() or player.GetAll()
+        local any
+        for i = 1, #list do
+            local p = list[i]
+            if IsValid(p) and p:GetNWBool("GRM_CruiseOn") then any = true break end
+        end
+        if not any then return end
+        for _, ply in ipairs(list) do
             if not (IsValid(ply) and ply:InVehicle() and ply:GetNWBool("GRM_CruiseOn")) then continue end
             local cap = ply:GetNWInt("GRM_CruiseKmh", 0)
             if cap <= 0 then continue end
@@ -126,7 +133,10 @@ if SERVER then
                     if GRM.Notify then GRM.Notify(ply, "Автопилот снят.", 180, 210, 140) end
                     continue
                 end
-                wakeEngine(veh)
+                if (ply._grmWakeAt or 0) < CurTime() then
+                    ply._grmWakeAt = CurTime() + 2
+                    wakeEngine(veh)
+                end
                 local need = speed < cap - 0.6
                 pressW(veh, need or (speed < cap + 0.4))
                 if need and IsValid(ph) then
