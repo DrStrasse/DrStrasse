@@ -409,7 +409,15 @@ if SERVER then
     end
 
     local function factionOf(ply)
-        return IsValid(ply) and ply:GetNWString("GRM_Faction", "") or ""
+        local raw = IsValid(ply) and ply:GetNWString("GRM_Faction", "") or ""
+        if raw == "" then return "" end
+        if GRM.Economy and GRM.Economy.ResolveFactionKey then
+            return tostring(GRM.Economy.ResolveFactionKey(raw) or raw)
+        end
+        if FactionsAPI and FactionsAPI.GetRegistrationName then
+            return tostring(FactionsAPI.GetRegistrationName(raw) or raw)
+        end
+        return raw
     end
     FL.FactionOf = factionOf
 

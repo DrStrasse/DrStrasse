@@ -1074,7 +1074,6 @@ if SERVER then
         name = tostring(name or "")
         if name == "" then return nil end
         if istable(Factions) and istable(Factions[name]) then return name end
-        if istable(E.Data.factions) and istable(E.Data.factions[name]) then return name end
         if FactionsAPI and isfunction(FactionsAPI.GetRegistrationName) then
             local key = FactionsAPI.GetRegistrationName(name)
             if isstring(key) and key ~= "" then return key end
@@ -1089,6 +1088,7 @@ if SERVER then
                 end
             end
         end
+        if istable(E.Data.factions) and istable(E.Data.factions[name]) then return name end
         if istable(E.Data.factions) then
             for key in pairs(E.Data.factions) do
                 if string.lower(tostring(key)) == low then return key end
@@ -1097,6 +1097,66 @@ if SERVER then
         return name
     end
     E.ResolveFactionKey = resolveFactionKey
+
+    -- Все алиасы одной организации: регистрационное имя, витрина, тег, казна в JSON.
+    local function factionAliases(name)
+        local key = resolveFactionKey(name)
+        if not key then return {} end
+        local seen, out = {}, {}
+        local function add(v)
+            v = tostring(v or "")
+            if v == "" or seen[v] then return end
+            seen[v] = true
+            out[#out + 1] = v
+        end
+        add(key)
+        add(name)
+        local f = istable(Factions) and Factions[key] or nil
+        if istable(f) then
+            add(f.DisplayName)
+            add(f.displayName)
+            add(f.Tag)
+        end
+        local low = string.lower(key)
+        if istable(E.Data.factions) then
+            for k in pairs(E.Data.factions) do
+                if string.lower(tostring(k)) == low then add(k) end
+            end
+        end
+        return out, key
+    end
+
+    -- Поднять казну из зеркала Factions.Budget / разъехавшихся ключей JSON.
+    local function foldFactionBudget(name)
+        local aliases, key = factionAliases(name)
+        if not key then return 0, nil end
+        local best = 0
+        for _, alias in ipairs(aliases) do
+            local e = istable(E.Data.factions) and E.Data.factions[alias]
+            best = math.max(best, math.floor(tonumber(e and e.budget) or 0))
+            local fac = istable(Factions) and Factions[alias]
+            best = math.max(best, math.floor(tonumber(fac and fac.Budget) or 0))
+        end
+        local e = entry(key)
+        local changed = false
+        if best > (tonumber(e.budget) or 0) then
+            e.budget = best
+            dirty = true
+            changed = true
+        end
+        for _, alias in ipairs(aliases) do
+            if alias ~= key and istable(E.Data.factions) and istable(E.Data.factions[alias]) then
+                local other = E.Data.factions[alias]
+                if (tonumber(other.budget) or 0) > 0 then
+                    other.budget = 0
+                    dirty = true
+                    changed = true
+                end
+            end
+        end
+        if changed then mirrorFactionBudget(key, e.budget) end
+        return e.budget, key
+    end
 
     local function mirrorFactionBudget(key, amount)
         amount = math.max(0, math.floor(tonumber(amount) or 0))
@@ -2178,14 +2238,9 @@ if SERVER then
     end
     hook.Add("InitPostEntity", "GRM_Economy_MirrorFactionBudgets", function()
         timer.Simple(1, function()
-            if not istable(Factions) or not istable(E.Data.factions) then return end
+            if not istable(Factions) then return end
             for name, f in pairs(Factions) do
-                if istable(f) then
-                    local e = E.Data.factions[name]
-                    if istable(e) then
-                        f.Budget = math.max(0, math.floor(tonumber(e.budget) or 0))
-                    end
-                end
+                if istable(f) then foldFactionBudget(name) end
             end
         end)
     end)
