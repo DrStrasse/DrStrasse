@@ -15,6 +15,7 @@ GRM.Mobile = GRM.Mobile or {}
 local MB = GRM.Mobile
 
 MB.DataFile = "grm_mobile.json"
+MB.ForumFile = "grm_mobile_forum.json"
 MB.SmsCap = 40
 MB.ContactsCap = 50
 MB.NotesCap = 30
@@ -414,9 +415,6 @@ function MB.Hangup(ply)
     return true
 end
 
-function MB.FindLineByNuturn true
-end
-
 function MB.FindLineByNumber(num)
     num = tostring(num or "")
     for _, line in pairs(MB.Lines or {}) do
@@ -662,6 +660,7 @@ function MB.HandleAction(ply, act)
         post.likes = istable(post.likes) and post.likes or {}
         for i, liker in ipairs(post.likes) do if tostring(liker) == key then found = i break end end
         if found then table.remove(post.likes, found) else post.likes[#post.likes + 1] = key end
+        if MB.SaveForum then MB.SaveForum() end
         MB.PushData(ply, "forum")
         return
     elseif op == "forum_query" then
@@ -799,6 +798,45 @@ function MB.ActivateInventoryPhone(ply, slotIdx, slot)
 end
 
 if SERVER then
+    local function jsonT(txt)
+        local ok, t = pcall(util.JSONToTable, txt, false, true)
+        return (ok and istable(t)) and t or nil
+    end
+
+    function MB.LoadForum()
+        if not file.Exists(MB.ForumFile, "DATA") then return end
+        local t = jsonT(file.Read(MB.ForumFile, "DATA") or "")
+        if not istable(t) then return end
+        local posts = istable(t.posts) and t.posts or t
+        local out = {}
+        for _, p in ipairs(posts) do
+            if istable(p) and tostring(p.text or "") ~= "" then
+                out[#out + 1] = {
+                    id = math.floor(tonumber(p.id) or 0),
+                    author = tostring(p.author or "Горожанин"):sub(1, 64),
+                    authorKey = tostring(p.authorKey or ""),
+                    text = tostring(p.text or ""):sub(1, 500),
+                    time = tonumber(p.time or p.ts) or 0,
+                    likes = istable(p.likes) and p.likes or {},
+                    replyTo = math.floor(tonumber(p.replyTo) or 0),
+                    replyAuthor = tostring(p.replyAuthor or ""),
+                }
+            end
+        end
+        MB.Forum.posts = out
+        MB.Forum.nextID = math.max(1, math.floor(tonumber(t.nextID) or 1))
+        normalizeForumPosts()
+    end
+
+    function MB.SaveForum()
+        local fn = function()
+            local pack = { nextID = MB.Forum.nextID or 1, posts = MB.Forum.posts or {} }
+            local ok, txt = pcall(util.TableToJSON, pack, false)
+            if ok and txt then file.Write(MB.ForumFile, txt) end
+        end
+        if GRM.Perf and GRM.Perf.Coalesce then GRM.Perf.Coalesce("grm_mob_forum", 0.6, fn) else fn() end
+    end
+
     util.AddNetworkString("GRM_Mobile_Open")
     util.AddNetworkString("GRM_Mob_State")
     util.AddNetworkString("GRM_Mob_Data")
@@ -1905,35 +1943,6 @@ if CLIENT then
         end
 
         -- Block weapon selector, weapon slots and all gameplay actions while phone UI is open.
-        if bind:match("^slot%d") or bind == "lastinv" or bind == "phys_swap" then return true end
-        if bind == "+attack" or bind == "+attack2" or bind == "+reload" or bind == "+use" then return true end
-        if bind == "+jump" or bind == "+duck" or bind == "+speed" or bind == "+walk" then return true end
-        if bind == "gmod_undo" or bind == "undo" or bind == "gm_showhelp" or bind == "gm_showteam" or bind == "gm_showspare1" or bind == "gm_showspare2" then return true end
-
-        -- Conservative default: if the phone is open, do not let unknown press-binds leak
-        -- into gameplay/addons. DOWN arrow or close button handles closing.
-        return true
-    end)
-    timer.Create("GRM_Mob_Tick", 1, 0, function()
-        if not M.open then return end
-        local p=lp(); if p and p.Alive and not p:Alive() then closePhone(true); return end
-        sendAct({op="ping"})
-    end)
-end
-
-
---[[ Модуль представляется общему реестру GRM.Modules: соседи знают, что он
-     есть, а шина обновлений сама позовёт его при смене прав, состава,
-     должности или персонажа. ]]
-if GRM.Modules and GRM.Modules.Register then
-    GRM.Modules.Register("mobile", {
-        label = "Мобильная связь",
-        version = (GRM.Mobile and GRM.Mobile.Version) or "1.0.0",
-        Depends = { "access" },
-        Status = function() local n = 0 for _ in pairs(GRM.Mobile.Numbers or {}) do n = n + 1 end return ("номеров выдано: %d"):format(n) end,
-    })
-end
- actions while phone UI is open.
         if bind:match("^slot%d") or bind == "lastinv" or bind == "phys_swap" then return true end
         if bind == "+attack" or bind == "+attack2" or bind == "+reload" or bind == "+use" then return true end
         if bind == "+jump" or bind == "+duck" or bind == "+speed" or bind == "+walk" then return true end
