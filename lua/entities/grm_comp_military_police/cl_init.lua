@@ -25,8 +25,12 @@ function ENT:Draw()
 
     cam.Start3D2D(pos, ang, 0.08)
         draw.RoundedBox(6, -150, -50, 300, 100, Color(14, 22, 16, 240))
-        draw.SimpleText("ПОЛЕВАЯ ЖАНДАРМЕРИЯ", "DermaDefaultBold", 0, -25, Color(110, 220, 130), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        draw.SimpleText("Feldgendarmerie Kommandantur", "DermaDefault", 0, -5, Color(220, 240, 225), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        local army = self.IsArmyDesk and self:IsArmyDesk()
+        local head = army and "ВООРУЖЁННЫЕ СИЛЫ" or "ПОЛЕВАЯ ЖАНДАРМЕРИЯ"
+        local sub = tostring(self:GetComputerName() or "")
+        if sub == "" then sub = army and "Служебный терминал" or "Feldgendarmerie" end
+        draw.SimpleText(head, "DermaDefaultBold", 0, -25, Color(110, 220, 130), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText(sub, "DermaDefault", 0, -5, Color(220, 240, 225), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         draw.SimpleText("Нажмите [E] для входа в систему", "DermaDefault", 0, 20, Color(150, 190, 160), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     cam.End3D2D()
 end
@@ -59,10 +63,16 @@ net.Receive("GRM_CompMilPolice_Open", function()
     frame:MakePopup()
     frame:ShowCloseButton(false)
 
+    local isArmy = IsValid(ent) and ent.IsArmyDesk and ent:IsArmyDesk()
+    local deskTitle = (IsValid(ent) and ent.GetComputerName and ent:GetComputerName()) or ""
+    if deskTitle == "" then
+        deskTitle = isArmy and "ВООРУЖЁННЫЕ СИЛЫ • СЛУЖЕБНЫЙ ТЕРМИНАЛ" or "ТЕРМИНАЛ КОМЕНДАТУРЫ • ПОЛЕВАЯ ЖАНДАРМЕРИЯ"
+    end
+
     frame.Paint = function(_, w, h)
         draw.RoundedBox(8, 0, 0, w, h, CC.bg)
         draw.RoundedBoxEx(8, 0, 0, w, 40, CC.header, true, true, false, false)
-        draw.SimpleText("ТЕРМИНАЛ КОМЕНДАТУРЫ • ПОЛЕВАЯ ЖАНДАРМЕРИЯ (Feldgendarmerie)", "DermaDefaultBold", 16, 20, CC.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText(deskTitle, "DermaDefaultBold", 16, 20, CC.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
 
     local btnClose = vgui.Create("DButton", frame)
@@ -86,12 +96,13 @@ net.Receive("GRM_CompMilPolice_Open", function()
     if GRM.Fleet and GRM.Fleet.AttachTab then GRM.Fleet.AttachTab(tabs) end
     -- Вкладка «Номерные знаки»: выдача и проверка регистрационных номеров.
     if GRM.Plates and GRM.Plates.AttachTab then GRM.Plates.AttachTab(tabs) end
-    if GRM.Photo and GRM.Photo.AttachTab then GRM.Photo.AttachTab(tabs) end
+    -- фоторобот / печать ориентировок сняты со сборки
 
     -- ══════════════════════════════════════════════════════════════
-    -- ВКЛАДКА 1: БАЗА РОЗЫСКА (ДЕЗЕРТИРЫ И ВОЕННЫЕ ПРЕСТУПЛЕНИЯ)
+    -- ВКЛАДКА 1: БАЗА РОЗЫСКА — только жандармерия, не ПК Вооружённых сил
     -- ══════════════════════════════════════════════════════════════
-    local wantPnl = vgui.Create("DPanel", tabs)
+    local wantPnl = (not isArmy) and vgui.Create("DPanel", tabs) or nil
+    if wantPnl then
     wantPnl:DockPadding(12, 12, 12, 12)
     wantPnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
 
@@ -180,30 +191,6 @@ net.Receive("GRM_CompMilPolice_Open", function()
         local row = listWanted:GetLine(line)
         if row and row._targetKey then
             GRM_CompTerminal_Send("wanted_clear", row._targetKey, "Снят с розыска комендатурой Feldgendarmerie", 0, "")
-        end
-    end
-
-    -- Фото к делу розыска: путь в data/ и кнопка прикрепления.
-    local lblPhoto = vgui.Create("DLabel", wantPnl)
-    lblPhoto:SetPos(330, 565) lblPhoto:SetText("Фото к делу (путь data/):") lblPhoto:SetTextColor(CC.dim) lblPhoto:SizeToContents()
-    local entPhotoPath = vgui.Create("DTextEntry", wantPnl)
-    entPhotoPath:SetPos(480, 565) entPhotoPath:SetSize(280, 26)
-    entPhotoPath:SetPlaceholderText("grm_computer/images/xxx.jpg")
-    local btnAttachPhoto = vgui.Create("DButton", wantPnl)
-    btnAttachPhoto:SetPos(770, 565) btnAttachPhoto:SetSize(150, 26)
-    btnAttachPhoto:SetText("📸 Прикрепить фото")
-    btnAttachPhoto:SetFont("DermaDefaultBold")
-    btnAttachPhoto:SetTextColor(color_white)
-    btnAttachPhoto.Paint = function(s,w,h) draw.RoundedBox(4,0,0,w,h,s:IsHovered() and Color(80,130,200) or Color(50,100,160)) end
-    btnAttachPhoto.DoClick = function()
-        if not canEdit then notification.AddLegacy("Нет прав!", NOTIFY_ERROR, 3) return end
-        local line = listWanted:GetSelectedLine()
-        if not line then notification.AddLegacy("Выберите запись!", NOTIFY_ERROR, 3) return end
-        local row = listWanted:GetLine(line)
-        local path = string.Trim(entPhotoPath:GetText() or "")
-        if path=="" then notification.AddLegacy("Укажите путь", NOTIFY_ERROR, 3) return end
-        if row and row._targetKey then
-            GRM_CompTerminal_Send("attach_photo", row._targetKey, "", 0, path)
         end
     end
 
@@ -350,6 +337,7 @@ net.Receive("GRM_CompMilPolice_Open", function()
     GRM_CompTerminal_ActiveFrame = frame
 
     tabs:AddSheet("Взыскания комендатуры", finePnl, "icon16/money.png")
+    end
 
     -- ══════════════════════════════════════════════════════════════
     -- ВКЛАДКА 3: БАЗА ВОЕННЫХ БИЛЕТОВ (РЕЕСТР ВС)
@@ -383,7 +371,7 @@ net.Receive("GRM_CompMilPolice_Open", function()
     badgePnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, CC.panel) end
 
     local lblBTarget = vgui.Create("DLabel", badgePnl)
-    lblBTarget:SetPos(16, 16) lblBTarget:SetText("Служебные удостоверения жандармов (Feldgendarmerie):") lblBTarget:SetFont("DermaDefaultBold") lblBTarget:SetTextColor(CC.accent) lblBTarget:SizeToContents()
+    lblBTarget:SetPos(16, 16) lblBTarget:SetText(isArmy and "Служебные удостоверения Вооружённых сил:" or "Служебные удостоверения жандармов (Feldgendarmerie):") lblBTarget:SetFont("DermaDefaultBold") lblBTarget:SetTextColor(CC.accent) lblBTarget:SizeToContents()
 
     local comboBadgeTarget = vgui.Create("DComboBox", badgePnl)
     comboBadgeTarget:SetPos(16, 36) comboBadgeTarget:SetSize(420, 28)
@@ -465,7 +453,8 @@ net.Receive("GRM_CompMilPolice_Open", function()
         frame:Close()
     end
 
-    tabs:AddSheet("Отдел кадров Feldgendarmerie", badgePnl, "icon16/shield.png")
+    tabs:AddSheet(isArmy and "Кадровый отдел ВС" or "Отдел кадров Feldgendarmerie", badgePnl, "icon16/shield.png")
+    GRM_CompTerminal_ActiveFrame = frame
 
     -- ══════════════════════════════════════════════════════════════
     -- ВКЛАДКА: МЕЖВЕДОМСТВЕННЫЙ ОБМЕН СВЕДЕНИЯМИ

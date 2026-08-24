@@ -207,6 +207,8 @@ if SERVER then
     end)
 
     net.Receive("GRM_Photo_Print", function(_, ply)
+        if IsValid(ply) then notify(ply, "Печать фотороботов снята со сборки.", false) end
+        return
         if not (IsValid(ply) and P.CanOfficial(ply)) then return end
         local photoId = string.sub(net.ReadString() or "", 1, 16)
         local headline = string.sub(net.ReadString() or "", 1, 80)
@@ -348,12 +350,8 @@ function P.SendMail(photoId, inbox, caption)
     net.SendToServer()
 end
 
-function P.PrintPoster(photoId, headline, body)
-    net.Start("GRM_Photo_Print")
-        net.WriteString(photoId or "")
-        net.WriteString(headline or "ВНИМАНИЕ! РОЗЫСК!")
-        net.WriteString(body or "")
-    net.SendToServer()
+function P.PrintPoster()
+    notification.AddLegacy("Печать фотороботов снята со сборки.", NOTIFY_ERROR, 4)
 end
 
 function P.OpenSheet(id, headline, body)
@@ -381,6 +379,10 @@ function P.OpenSheet(id, headline, body)
 end
 
 function P.OpenStudio()
+    if IsValid(P._frame) then P._frame:Remove() end
+    local fr = vgui.Create("DFrame")
+    P._frame = fr
+  ()
     if IsValid(P._frame) then P._frame:Remove() end
     local fr = vgui.Create("DFrame")
     P._frame = fr
@@ -426,11 +428,11 @@ function P.OpenStudio()
     end
     mk(12, 404, 260, "На полицейский ПК", Color(50, 110, 190), function() if cur ~= "" then P.SendMail(cur, "civil", cap:GetValue()) end end)
     mk(12, 436, 260, "На ПК жандармерии", Color(140, 90, 40), function() if cur ~= "" then P.SendMail(cur, "military", cap:GetValue()) end end)
-    mk(284, 404, 246, "Печать РОЗЫСК", Color(180, 40, 40), function() if cur ~= "" then P.PrintPoster(cur, "ВНИМАНИЕ! РОЗЫСК!", cap:GetValue()) end end)
-    mk(538, 404, 246, "Закрыть", Color(50, 55, 65), function() fr:Close() end)
+    mk(284, 404, 500, "Закрыть", Color(50, 55, 65), function() fr:Close() end)
 end
 
 function P.AttachTab(tabs)
+    return
     if not IsValid(tabs) then return end
     local pnl = vgui.Create("DPanel", tabs)
     pnl.Paint = function(_, w, h) draw.RoundedBox(6, 0, 0, w, h, Color(20, 28, 40, 245)) end
@@ -471,6 +473,10 @@ function P.AttachTab(tabs)
     btn2.DoClick = function() P.OpenStudio() end
     net.Start("GRM_Photo_OpenUI") net.SendToServer()
     tabs:AddSheet("Фото и почта", pnl, "icon16/camera.png")
+end
+
+print("[GRM Photo] v" .. P.Version .. " client")
+camera.png")
 end
 
 print("[GRM Photo] v" .. P.Version .. " client")

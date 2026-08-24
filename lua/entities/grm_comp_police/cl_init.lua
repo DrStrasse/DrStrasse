@@ -86,7 +86,7 @@ net.Receive("GRM_CompPolice_Open", function()
     if GRM.Fleet and GRM.Fleet.AttachTab then GRM.Fleet.AttachTab(tabs) end
     -- Вкладка «Номерные знаки»: выдача и проверка регистрационных номеров.
     if GRM.Plates and GRM.Plates.AttachTab then GRM.Plates.AttachTab(tabs) end
-    if GRM.Photo and GRM.Photo.AttachTab then GRM.Photo.AttachTab(tabs) end
+    -- фоторобот / печать ориентировок сняты со сборки
 
     -- ══════════════════════════════════════════════════════════════
     -- ВКЛАДКА 1: ОБЩАЯ БАЗА РОЗЫСКА (WANTED)
@@ -186,30 +186,6 @@ net.Receive("GRM_CompPolice_Open", function()
         if row and row._targetKey then
             -- Не снимаем строку и не рисуем тост до ответа сервера.
             GRM_CompTerminal_Send("wanted_clear", row._targetKey, "Снят с розыска в терминале OrdnungPolizei", 0, "")
-        end
-    end
-
-    -- Фото к делу розыска: путь в data/ и кнопка прикрепления.
-    local lblPhoto = vgui.Create("DLabel", wantPnl)
-    lblPhoto:SetPos(330, 565) lblPhoto:SetText("Фото к делу (путь data/):") lblPhoto:SetTextColor(CC.dim) lblPhoto:SizeToContents()
-    local entPhotoPath = vgui.Create("DTextEntry", wantPnl)
-    entPhotoPath:SetPos(480, 565) entPhotoPath:SetSize(280, 26)
-    entPhotoPath:SetPlaceholderText("id снимка (8 знаков) или grm_photos/….jpg")
-    local btnAttachPhoto = vgui.Create("DButton", wantPnl)
-    btnAttachPhoto:SetPos(770, 565) btnAttachPhoto:SetSize(150, 26)
-    btnAttachPhoto:SetText("📸 Прикрепить фото")
-    btnAttachPhoto:SetFont("DermaDefaultBold")
-    btnAttachPhoto:SetTextColor(color_white)
-    btnAttachPhoto.Paint = function(s,w,h) draw.RoundedBox(4,0,0,w,h,s:IsHovered() and Color(80,130,200) or Color(50,100,160)) end
-    btnAttachPhoto.DoClick = function()
-        if not canEdit then notification.AddLegacy("Нет прав!", NOTIFY_ERROR, 3) return end
-        local line = listWanted:GetSelectedLine()
-        if not line then notification.AddLegacy("Выберите запись!", NOTIFY_ERROR, 3) return end
-        local row = listWanted:GetLine(line)
-        local path = string.Trim(entPhotoPath:GetText() or "")
-        if path=="" then notification.AddLegacy("Укажите путь к фото", NOTIFY_ERROR, 3) return end
-        if row and row._targetKey then
-            GRM_CompTerminal_Send("attach_photo", row._targetKey, "", 0, path)
         end
     end
 

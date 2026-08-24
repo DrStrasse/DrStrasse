@@ -66,7 +66,7 @@ local TYPES = {
         id        = "army",
         class     = "grm_comp_military_police",
         label     = "Служебный компьютер Вооружённых сил",
-        desc      = "Военный розыск, комендатура, ориентировки — доступ задаётся списком организаций на этом ПК",
+        desc      = "Кадры, военники, служебные удостоверения — без розыска и штрафов комендатуры",
         defTitle  = "ВООРУЖЁННЫЕ СИЛЫ • СЛУЖЕБНЫЙ ТЕРМИНАЛ",
         defModel  = "models/props/cs_office/computer.mdl",
     },
@@ -189,6 +189,9 @@ function TOOL:LeftClick(trace)
 
     if ent.SetComputerName then
         ent:SetComputerName(customTitle)
+    end
+    if ent.SetServiceProfile then
+        ent:SetServiceProfile(typeKey == "army" and "army" or (typeKey == "military_police" and "gendarmerie" or ""))
     end
     if GRM.CompAccess and GRM.CompAccess.Set then
         GRM.CompAccess.Set(ent, self:GetClientInfo("factions") or "")
@@ -363,6 +366,7 @@ if CLIENT then
             "СПЕЦИАЛИЗАЦИЯ:\n" ..
             "• OrdnungPolizei — Розыск, штрафы, паспорта, ксивы полиции\n" ..
             "• Feldgendarmerie — Военный розыск, штрафы, военники, ксивы ВП\n" ..
+            "• Вооружённые силы — Кадры и военники, без розыска и штрафов\n" ..
             "• Gestapo / Komitet — Полный надзор, досье, прикрытие, прослушка\n" ..
             "• Военкомат — Выдача военных билетов, учёт призывников, ВВК\n" ..
             "• Автоинспекция — Права Дорожной Инспекции ПП и ВАИ, спецдопуски\n" ..

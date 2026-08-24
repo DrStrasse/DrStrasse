@@ -1417,14 +1417,23 @@ if SERVER then
         GRM.PermData.Extract[class] = function(ent)
             if not IsValid(ent) or not isfunction(ent.GetComputerName) then return nil end
             local name = tostring(ent:GetComputerName() or "")
-            if name == "" then return nil end
-            return { computerName = name }
+            local out = {}
+            if name ~= "" then out.computerName = name end
+            if isfunction(ent.GetServiceProfile) then
+                local p = tostring(ent:GetServiceProfile() or "")
+                if p ~= "" then out.serviceProfile = p end
+            end
+            return next(out) and out or nil
         end
         GRM.PermData.Apply[class] = function(ent, data)
             if not IsValid(ent) or not istable(data) then return end
             if isstring(data.computerName) and data.computerName ~= ""
                 and isfunction(ent.SetComputerName) then
                 ent:SetComputerName(data.computerName)
+            end
+            if isstring(data.serviceProfile) and data.serviceProfile ~= ""
+                and isfunction(ent.SetServiceProfile) then
+                ent:SetServiceProfile(data.serviceProfile)
             end
         end
     end

@@ -28,6 +28,9 @@ function ENT:Initialize()
     if self:GetComputerName() == "" then
         self:SetComputerName("ПОЛЕВАЯ ЖАНДАРМЕРИЯ (Feldgendarmerie)")
     end
+    if self:GetServiceProfile() == "" then
+        self:SetServiceProfile(self:IsArmyDesk() and "army" or "gendarmerie")
+    end
 
     local phys = self:GetPhysicsObject()
     if IsValid(phys) then phys:Wake() phys:EnableMotion(false) end

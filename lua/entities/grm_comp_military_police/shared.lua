@@ -15,4 +15,12 @@ ENT.ModelFallback = "models/props_lab/monitor02.mdl"
 
 function ENT:SetupDataTables()
     self:NetworkVar("String", 0, "ComputerName")
+    self:NetworkVar("String", 1, "ServiceProfile")
+end
+
+function ENT:IsArmyDesk()
+    local p = tostring(self.GetServiceProfile and self:GetServiceProfile() or "")
+    if p == "army" then return true end
+    local n = string.upper(tostring(self.GetComputerName and self:GetComputerName() or ""))
+    return n:find("ВООРУЖ", 1, true) ~= nil or n:find("ARMED", 1, true) ~= nil
 end

@@ -414,6 +414,13 @@ net.Receive("GRM_CompTerminal_Act", function(_, ply)
         return result(ply, false, "У вас нет прав на изменение базы")
     end
 
+    local desk = ply.GRM_CompTerminalEnt
+    local armyDesk = IsValid(desk) and desk.IsArmyDesk and desk:IsArmyDesk()
+    if armyDesk and (act == "wanted_add" or act == "wanted_clear"
+        or act == "fine_issue" or act == "fine_cancel") then
+        return result(ply, false, "На терминале Вооружённых сил нет розыска и штрафов комендатуры")
+    end
+
     local W = GRM.Wanted
     local F = W and W.Fines
 
@@ -540,27 +547,7 @@ net.Receive("GRM_CompTerminal_Act", function(_, ply)
 
     -- ── Фоторобот: прикрепить к делу ────────────────────────────
     if act == "attach_photo" or act == "photo_attach" or act == "case_attach_photo" then
-        local key = charKey(target)
-        if key == "" then return result(ply, false, "Не выбрано дело") end
-        local rec = W and W.Records and W.Records[key]
-        if not rec then return result(ply, false, "Дело не найдено") end
-        local photoPath = string.sub(extra ~= "" and extra or text or "", 1, 128)
-        if photoPath == "" then return result(ply, false, "Не указана фотография") end
-        local hexId = photoPath:match("^(%x%x%x%x%x%x%x%x)$")
-        if hexId then
-            rec.photoId = hexId
-            rec.photoPath = "grm_photos/" .. hexId .. ".jpg"
-        elseif photoPath:find("grm_computer/images", 1, true) or photoPath:find("grm_photos", 1, true)
-            or photoPath:find("grm_import", 1, true) or photoPath:find(".jpg", 1, true) or photoPath:find(".png", 1, true) then
-            rec.photoPath = photoPath
-        else
-            return result(ply, false, "Нужен id снимка (8 знаков) или путь grm_photos/…")
-        end
-        rec.photoAttachedBy = ply:Nick()
-        rec.photoAttachedAt = os.time()
-        rec.updated = os.time()
-        if W.Save then W.Save() end
-        return result(ply, true, "Фото прикреплено к делу: " .. (rec.name or key))
+        return result(ply, false, "Фоторобот и печать ориентировок сняты со сборки")
     end
 
     if act == "warrant_request" then
@@ -608,6 +595,41 @@ local function legacyAct(_, ply)
     local target = net.ReadString()
     local reason = net.ReadString()
     local level  = net.ReadUInt(4)
+
+    local jur = ply.GRM_CompTerminalJur or "civil"
+    if not T.CanEdit(ply, jur) then
+        return notify(ply, "У вас нет прав на изменение базы розыска.")
+    end
+
+    local W = GRM.Wanted
+    if not W then return end
+    local key = charKey(target)
+    if key == "" then return end
+
+    if act == "add" then
+        local ok, err = W.AddCustomCharge(ply, key, {
+            id = "terminal", code = jur == "military" and "ВУ-ПР" or "УК-ПР",
+            title = reason ~= "" and reason or "Ориентировка",
+            type = "crime", jurisdiction = jur,
+            level = math.Clamp(level, 1, 5), manual = true,
+            trusted = true,
+        })
+        notify(ply, ok and "Ориентировка внесена." or tostring(err), ok and 120 or 255, ok and 220 or 120, ok and 140 or 100)
+    elseif act == "clear" then
+        local ok, err = W.Clear(ply, key, reason ~= "" and reason or "Снят с розыска", true)
+        notify(ply, ok and "Розыск снят." or tostring(err), ok and 120 or 255, ok and 220 or 120, ok and 140 or 100)
+    end
+end
+
+-- Гражданский терминал (исторический канал).
+net.Receive("GRM_CompPolice_WantedAct", legacyAct)
+-- Д2: у военного терминала свой канал. Раньше его клиент писал в
+-- полицейский, из-за чего сообщение обрабатывалось как гражданское,
+-- а util.AddNetworkString("GRM_CompMilPolice_Act") висел без приёмника.
+net.Receive("GRM_CompMilPolice_Act", legacyAct)
+
+print("[GRM CompTerminal] v" .. T.Version .. " загружен")
+ReadUInt(4)
 
     local jur = ply.GRM_CompTerminalJur or "civil"
     if not T.CanEdit(ply, jur) then
