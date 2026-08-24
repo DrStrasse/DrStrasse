@@ -559,19 +559,21 @@ local function buildSettingsTab(sc)
     note:SetText("Стандарт RPDesc — 200 юнитов (~5 метров). Настройки хранятся на вашем ПК (garrysmod/cfg).")
     note:SetWrap(true) note:SetAutoStretchVertical(true)
 
-    local ba = block(sc, 170, "Социальные анимации:")
+    local ba = block(sc, 200, "Социальные анимации:")
     local hintA = vgui.Create("DLabel", ba)
     hintA:SetPos(14, 28) hintA:SetSize(700, 20)
     hintA:SetFont("GRMF4_Normal") hintA:SetTextColor(C.dim)
-    hintA:SetText("Также: C-меню (четыре кнопки) и вкладка «Анимации».")
-    local names = { { "hands", "Руки вверх" }, { "kneel", "На коленях" }, { "docs", "Документы" } }
+    hintA:SetText("Вкладка «Анимации» и назначенная клавиша. В C-меню кнопок нет.")
+    local names = { { "hands", "Руки вверх" }, { "back", "За спиной" }, { "kneel", "На коленях" }, { "docs", "Документы" } }
     for i, row in ipairs(names) do
         local b = mkBtn(ba, row[2], C.acc)
-        b:SetPos(14 + (i - 1) * 180, 56) b:SetSize(170, 30)
+        local col = (i - 1) % 2
+        local rowi = math.floor((i - 1) / 2)
+        b:SetPos(14 + col * 180, 56 + rowi * 34) b:SetSize(170, 30)
         b.DoClick = function() RunConsoleCommand("grm_social", row[1]) end
     end
     local st = mkBtn(ba, "Снять позу", C.red)
-    st:SetPos(14, 96) st:SetSize(170, 28)
+    st:SetPos(14, 128) st:SetSize(170, 28)
     st.DoClick = function() RunConsoleCommand("grm_social_stop") end
     local bindL = vgui.Create("DLabel", ba)
     bindL:SetPos(200, 100) bindL:SetSize(160, 22)

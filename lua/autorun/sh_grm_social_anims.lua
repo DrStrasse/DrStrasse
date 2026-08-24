@@ -25,6 +25,20 @@ S.List = {
         hold = true,
         walk = true,
         bones = {
+            ["ValveBiped.Bip01_R_UpperArm"] = Angle(-22, -82, -12),
+            ["ValveBiped.Bip01_R_Forearm"]  = Angle(4, -18, 6),
+            ["ValveBiped.Bip01_R_Hand"]     = Angle(0, 8, 10),
+            ["ValveBiped.Bip01_L_UpperArm"] = Angle(22, -82, 12),
+            ["ValveBiped.Bip01_L_Forearm"]  = Angle(-4, -18, -6),
+            ["ValveBiped.Bip01_L_Hand"]     = Angle(0, 8, -10),
+        },
+    },
+    {
+        id = "back",
+        name = "Руки за спиной",
+        hold = true,
+        walk = true,
+        bones = {
             ["ValveBiped.Bip01_R_UpperArm"] = Angle(-8, -12, -88),
             ["ValveBiped.Bip01_R_Forearm"]  = Angle(6, -28, 8),
             ["ValveBiped.Bip01_R_Hand"]     = Angle(0, 4, 12),
@@ -40,12 +54,12 @@ S.List = {
         crouch = true,
         walk = false,
         bones = {
-            ["ValveBiped.Bip01_R_UpperArm"] = Angle(-8, -12, -88),
-            ["ValveBiped.Bip01_R_Forearm"]  = Angle(6, -28, 8),
-            ["ValveBiped.Bip01_R_Hand"]     = Angle(0, 4, 12),
-            ["ValveBiped.Bip01_L_UpperArm"] = Angle(8, -12, 88),
-            ["ValveBiped.Bip01_L_Forearm"]  = Angle(-6, -28, -8),
-            ["ValveBiped.Bip01_L_Hand"]     = Angle(0, 4, -12),
+            ["ValveBiped.Bip01_R_UpperArm"] = Angle(-22, -82, -12),
+            ["ValveBiped.Bip01_R_Forearm"]  = Angle(4, -18, 6),
+            ["ValveBiped.Bip01_R_Hand"]     = Angle(0, 8, 10),
+            ["ValveBiped.Bip01_L_UpperArm"] = Angle(22, -82, 12),
+            ["ValveBiped.Bip01_L_Forearm"]  = Angle(-4, -18, -6),
+            ["ValveBiped.Bip01_L_Hand"]     = Angle(0, 8, -10),
         },
     },
     {
@@ -494,7 +508,7 @@ hook.Add("GRM_F4_BuildTabs", "GRM_Soc_F4", function(sheet)
     local sc = vgui.Create("DScrollPanel", p)
     sc:Dock(FILL)
     local card = vgui.Create("DPanel", sc)
-    card:Dock(TOP) card:SetTall(220) card:DockMargin(4, 4, 4, 4)
+    card:Dock(TOP) card:SetTall(270) card:DockMargin(4, 4, 4, 4)
     card.Paint = function(_, w, h)
         draw.RoundedBox(6, 0, 0, w, h, Color(32, 38, 50, 245))
         draw.SimpleText("Социальные анимации", "GRMF4_Sub" , 12, 16, Color(230, 180, 60), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
